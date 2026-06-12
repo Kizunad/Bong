@@ -19,6 +19,7 @@ from ..fields import (
     encode_spans_arrays,
 )
 from ..spans_fold import spans_for_tile
+from ..carvers import Carver, apply_carver_chain, build_carver
 from ..profiles import (
     GLOBAL_DECORATION_PALETTE,
     PROFILE_DECORATION_OFFSETS,
@@ -101,14 +102,103 @@ def _write_u8_layer(path: Path, values: np.ndarray) -> None:
     path.write_bytes(arr.tobytes())
 
 
-def _write_spans(tile_dir: Path, buffer) -> None:
-    """Fold the tile's blended 2D layers into spans and write both files.
+# worldgen-v4 P3 §8.1 #1 — fixed world-level carve seed. The worldgen pipeline
+# is deterministic (no per-world MC seed is plumbed through), so the carve seed
+# is a constant; spatial variation comes from world (wx, wz) coordinates fed
+# into the 3D noise.  Two regen passes therefore produce byte-identical spans.
+CARVE_SEED = 0x_C0FF_EE17
+
+
+def _zone_carver_chains(
+    plan: Optional[TerrainGenerationPlan],
+) -> dict[str, list[Carver]]:
+    """Build ``zone_name -> carver chain`` from each zone's profile declaration.
+
+    A profile (``TerrainProfileGenerator.carvers``) declares an ordered tuple of
+    ``CarverSpec(kind, params)``; this materializes each into a real ``Carver``
+    so the export hook can run them after the span fold.  Returns an empty map
+    when ``plan`` is None (the incremental console path that has no plan) so the
+    fold falls back to the un-carved 2.5D spans rather than crashing.
+
+    A ``zone_plan`` whose ``profile_name`` has no registered generator is a real
+    inconsistency (``build_generation_plan`` already validated zone→profile, so a
+    miss here means a profile in the catalog with no Python generator).  We
+    fail fast instead of swallowing the ``KeyError`` and silently shipping that
+    zone *un-carved* — a flat zone where the design called for canyon / isle /
+    cave geometry is a wrong export, not a degraded-but-valid one.
+    """
+    chains: dict[str, list[Carver]] = {}
+    if plan is None:
+        return chains
+    for zone_plan in plan.zone_plans:
+        try:
+            generator = get_profile_generator(zone_plan.profile_name)
+        except KeyError as exc:
+            raise KeyError(
+                f"zone '{zone_plan.zone_name}' references profile "
+                f"'{zone_plan.profile_name}' that has no registered terrain "
+                f"generator — cannot resolve its carver chain. Register the "
+                f"generator or fix the zone's profile_name (failing fast rather "
+                f"than silently exporting this zone un-carved)."
+            ) from exc
+        specs = getattr(generator, "carvers", ())
+        if not specs:
+            continue
+        chains[zone_plan.zone_name] = [
+            build_carver(spec.kind, spec.params) for spec in specs
+        ]
+    return chains
+
+
+def _tile_carver_chain(
+    buffer, zone_chains: dict[str, list[Carver]]
+) -> list[Carver]:
+    """Resolve the carver chain for *buffer* from its contributing zones.
+
+    A tile's geometry is dominated by its first contributing zone (the base
+    zone the wilderness/overlay blend was applied onto), so the carve chain is
+    taken from that zone.  Carvers are self-gating on 3D noise, so a boundary
+    column that does not meet a carver's threshold is left as its flat fold —
+    the chain only sculpts where the landscape actually warrants it.  Returns
+    an empty chain (no carve) when no contributing zone declares carvers.
+    """
+    for zone_name in buffer.contributing_zones:
+        chain = zone_chains.get(zone_name)
+        if chain:
+            return chain
+    return []
+
+
+def _write_spans(
+    tile_dir: Path, buffer, zone_chains: Optional[dict[str, list[Carver]]] = None
+) -> None:
+    """Fold the tile's blended 2D layers into spans, carve, and write both files.
 
     spans_count.bin : u8 per column (0..=MAX_SPANS)
     spans.bin       : SPAN_BYTES_PER_COLUMN bytes per column, little-endian i16
                       pairs, sentinel-padded; Rust mmaps at col_idx * stride.
+
+    worldgen-v4 P3 §8.1 #1: after the 2.5D fold, the tile's zone carver chain
+    (canyon / floating_island / cave_network) sculpts the columns into 3D
+    geometry.  Carving mutates only spans — it never adds a raster layer — and
+    is deterministic for a given world coordinate + ``CARVE_SEED``.
     """
-    columns = spans_for_tile(buffer)
+    chain = _tile_carver_chain(buffer, zone_chains or {})
+    # worldgen-v4 P3 §6.1 双源收口: when a floating_island carver owns the isle
+    # geometry, suppress the redundant 2D sky_island_base_y/thickness fold so the
+    # carver is the SOLE isle source (otherwise the flat fold slab + the carver's
+    # 3D body double-source the column → 3~4 redundant stacked spans).
+    suppress_fold_isle = any(c.name == "floating_island" for c in chain)
+    columns = spans_for_tile(buffer, suppress_fold_isle=suppress_fold_isle)
+    if chain:
+        columns = apply_carver_chain(
+            columns,
+            chain,
+            origin_x=buffer.tile.min_x,
+            origin_z=buffer.tile.min_z,
+            tile_size=buffer.tile_size,
+            seed=CARVE_SEED,
+        )
     count_arr, spans_arr = encode_spans_arrays(columns)
     (tile_dir / SPANS_COUNT_FILE).write_bytes(count_arr.tobytes())
     (tile_dir / SPANS_FILE).write_bytes(spans_arr.tobytes())
@@ -134,13 +224,16 @@ def export_rasters(
 
     manifest_tiles: list[dict[str, object]] = []
     written_layer_names: set[str] = set()
+    # worldgen-v4 P3 §8.1 #1 — materialize the per-zone carver chains once for
+    # the whole export so every tile sculpts with the same deterministic chain.
+    zone_chains = _zone_carver_chains(plan)
     for tile in fields.tiles:
         tile_dir = output_dir / tile.tile.tile_id
         # worldgen-v4 P0: spans replace height + the deleted vertical layers.
         # plan-terrain-wiring-v1 P2 #10 bake-time biome_id guard lives in the
         # shared writer.
         written_layers = _write_tile_rasters(
-            tile_dir, tile, fields, layer_whitelist, written_layer_names
+            tile_dir, tile, fields, layer_whitelist, written_layer_names, zone_chains
         )
 
         manifest_tiles.append(
@@ -293,15 +386,20 @@ def _write_tile_rasters(
     fields: GeneratedFieldSet,
     layer_whitelist: Optional[set[str]],
     written_layer_names: set[str],
+    zone_chains: Optional[dict[str, list[Carver]]] = None,
 ) -> list[str]:
     """Write one tile's spans + standalone layer rasters; return layer names.
 
     Shared by the full ``export_rasters`` loop and the incremental
     ``regen_zone`` path so both produce byte-identical on-disk tiles.
+
+    ``zone_chains`` (worldgen-v4 P3 §8.1 #1) carries the per-zone carver chains
+    so the span fold can be sculpted into 3D geometry; None = un-carved fold.
     """
     tile_dir.mkdir(parents=True, exist_ok=True)
     # worldgen-v4 P0: spans replace height + the deleted vertical layers.
-    _write_spans(tile_dir, tile)
+    # worldgen-v4 P3: carve the folded spans into 3D landscape geometry.
+    _write_spans(tile_dir, tile, zone_chains)
 
     written_layers: list[str] = []
     for layer_name in fields.layers:
@@ -374,10 +472,13 @@ def regen_zone(
     written_layer_names: set[str] = set()
     rewritten: dict[str, dict[str, object]] = {}
     rewritten_ids: list[str] = []
+    # worldgen-v4 P3 §8.1 #1 — same carver chains as the full export so an
+    # incremental regen produces byte-identical carved spans for its tiles.
+    zone_chains = _zone_carver_chains(plan)
     for tile in fields.tiles:
         tile_dir = output_dir / tile.tile.tile_id
         written_layers = _write_tile_rasters(
-            tile_dir, tile, fields, layer_whitelist, written_layer_names
+            tile_dir, tile, fields, layer_whitelist, written_layer_names, zone_chains
         )
         rewritten[tile.tile.tile_id] = {
             "tile_x": tile.tile.tile_x,

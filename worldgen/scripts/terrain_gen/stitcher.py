@@ -687,7 +687,23 @@ def synthesize_fields(
     those tiles transparently pick up their neighbor zones.  ``zone_filter``
     only narrows *which tiles* get touched, never *which zones* contribute to a
     touched tile.
+
+    A ``zone_filter`` naming a zone that does not exist in the blueprint is a
+    caller error (typo on ``--zone-filter`` / a stale console request), not a
+    silent no-op: it would otherwise select *zero* tiles and export an empty
+    world that looks successful.  We fail fast with the unknown name(s) and the
+    available zone names so the mistake is obvious.
     """
+    if zone_filter:
+        known_zones = {zone.name for zone in plan.blueprint_zones}
+        unknown = sorted(zone_filter - known_zones)
+        if unknown:
+            available = ", ".join(sorted(known_zones)) or "(none)"
+            raise ValueError(
+                f"zone_filter names unknown zone(s) {unknown}; the blueprint "
+                f"defines no such zone, so they would select no tiles and "
+                f"silently export an empty world. Available zones: {available}"
+            )
     palette = SurfacePalette()
     palette.extend(("stone", "coarse_dirt", "gravel"))
 

@@ -8,6 +8,7 @@ from ..dsl import QiGrade
 from ..fields import SurfacePalette, TileFieldBuffer, WorldTile
 from ..noise import _tile_coords
 from .base import (
+    CarverSpec,
     DecorationSpec,
     EcologySpec,
     ProfileContext,
@@ -76,6 +77,33 @@ class CaveNetworkGenerator(TerrainProfileGenerator):
         ambient_effects=("dripstone_drip", "cool_cave_echo"),
         notes="幽暗地穴生态：入口处血藤成帘，内部光苔钟柱遍布提供照明，"
               "深处偶立禁制柱（古修士封印）。陷穴石铺满侧道。",
+    )
+    # worldgen-v4 P3 §8.1 #1 — 幽暗地穴：cave_network_carver 在 spans_fold 的单层
+    # 洞穴空腔之下再雕多层连通 3D 噪声画廊（多个空气夹层 = 多段实体）。surface_cap
+    # 保证地表不直接破口；layers=3 + 较窄 carve_band 让画廊在不同深度蜿蜒连通。
+    #
+    # P3 perf 收口：cave_network 是 worldgen bake 的绝对热点（多层 3D 噪声覆盖整
+    # 个洞穴体积，全量 pipeline 因此推过 snapshot CI 的 30min 预算）。三手降本，
+    # 几何近无损（scale≈28 下密度沿各轴平滑，carve_band 是平滑场上的阈值）：
+    #   octaves=1   —— 单层密度足以蜿蜒连通，噪声评估减半；
+    #   y_step=4    —— 沿绝对世界 Y 每 4 格采样密度、线性插值；
+    #   xz_step=3   —— 沿绝对世界 X/Z 每 3 格采样、双线性插值。
+    # 三轴粗采样在绝对世界格上锚定，scalar/vector 逐块等价。单 512 tile 雕刻
+    # ~128s→~14s，画廊仍多层连通、剖面 multi-span/overhang 统计零差异。
+    carvers = (
+        CarverSpec(
+            kind="cave_network",
+            params={
+                "surface_cap": 6,
+                "floor_buffer": 8,
+                "carve_band": (-0.07, 0.07),
+                "scale": 28.0,
+                "layers": 3,
+                "octaves": 1,
+                "y_step": 4,
+                "xz_step": 3,
+            },
+        ),
     )
 
     def build_notes(self, context: ProfileContext) -> tuple[str, ...]:

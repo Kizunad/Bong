@@ -128,6 +128,60 @@ class ColumnFoldingTest(unittest.TestCase):
             "the floating isle must NOT become the surface — ground stays span[0]",
         )
 
+    def test_suppress_fold_isle_drops_the_2d_isle_span(self) -> None:
+        # worldgen-v4 P3 §6.1 双源收口 — the double-source guard.  The *exact*
+        # inputs that fold a (300,320) isle span above the ground must produce
+        # ONLY the ground span when suppress_fold_isle=True, so a profile with a
+        # floating_island carver does not get a redundant flat slab under the
+        # carver's 3D island (raster_export sets suppress=True for such tiles).
+        kwargs = dict(
+            surface_y=72,
+            cave_mask=0.0,
+            ceiling_height=0.0,
+            sky_mask=0.5,
+            sky_base_y=300.0,
+            sky_thickness=20.0,
+        )
+        with_isle = column_spans_for_index(**kwargs)
+        self.assertEqual(
+            with_isle.spans,
+            ((-64, 72), (300, 320)),
+            "baseline (suppress off) folds the 2D isle span — without this the "
+            "suppress assertion below would be vacuous",
+        )
+        suppressed = column_spans_for_index(**kwargs, suppress_fold_isle=True)
+        self.assertEqual(
+            suppressed.spans,
+            ((-64, 72),),
+            "suppress_fold_isle must drop the 2D fold isle so the floating_island "
+            f"carver is the sole isle source; got {suppressed.spans}",
+        )
+        self.assertEqual(
+            suppressed.surface_ceiling_y,
+            72,
+            "suppression must not touch the ground span — query_surface stays 72",
+        )
+
+    def test_suppress_fold_isle_is_noop_without_an_isle(self) -> None:
+        # When the column has no qualifying isle at all, the suppress flag is a
+        # no-op (nothing to drop) — proves the flag only gates the isle fold and
+        # never disturbs an ordinary column (the sky_isle export fixture's tiles
+        # are exactly this case, which is why the round-trip test alone can't
+        # observe suppression).
+        plain = dict(
+            surface_y=72,
+            cave_mask=0.0,
+            ceiling_height=0.0,
+            sky_mask=0.0,
+            sky_base_y=NO_ISLE_BASE,
+            sky_thickness=0.0,
+        )
+        self.assertEqual(
+            column_spans_for_index(**plain).spans,
+            column_spans_for_index(**plain, suppress_fold_isle=True).spans,
+            "suppress_fold_isle must be a no-op on a column with no isle",
+        )
+
     def test_sky_isle_below_mask_gate_is_ignored(self) -> None:
         col = column_spans_for_index(
             surface_y=72,

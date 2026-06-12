@@ -19,11 +19,15 @@ import unittest
 from pathlib import Path
 
 from scripts.terrain_gen.bakers.raster_export import (
+    CARVE_SEED,
     SPANS_COUNT_FILE,
     SPANS_FILE,
+    _tile_carver_chain,
+    _zone_carver_chains,
     build_raster_bake_plan,
     export_rasters,
 )
+from scripts.terrain_gen.carvers import apply_carver_chain
 from scripts.terrain_gen.blueprint import (
     BlueprintZone,
     BoundarySpec,
@@ -109,13 +113,13 @@ def _export(profile: str, temp_dir: str):
     fields = synthesize_fields(plan)
     artifacts = export_rasters(plan, fields)
     manifest = json.loads(artifacts["manifest"].read_text(encoding="utf-8"))
-    return manifest, artifacts["raster_dir"], fields
+    return manifest, artifacts["raster_dir"], fields, plan
 
 
 class SpansExportLayoutTest(unittest.TestCase):
     def test_manifest_is_version_2_with_spans_encoding(self) -> None:
         with tempfile.TemporaryDirectory() as td:
-            manifest, _raster_dir, _fields = _export("sky_isle", td)
+            manifest, _raster_dir, _fields, _plan = _export("sky_isle", td)
         self.assertEqual(manifest["version"], 2)
         enc = manifest["spans_encoding"]
         self.assertEqual(enc["max_spans"], 4)
@@ -141,7 +145,7 @@ class SpansExportLayoutTest(unittest.TestCase):
         for profile, want in expected.items():
             with self.subTest(profile=profile):
                 with tempfile.TemporaryDirectory() as td:
-                    manifest, raster_dir, _fields = _export(profile, td)
+                    manifest, raster_dir, _fields, _plan = _export(profile, td)
                 self.assertEqual(
                     manifest["vertical_layers"],
                     want,
@@ -153,7 +157,7 @@ class SpansExportLayoutTest(unittest.TestCase):
 
     def test_span_files_have_exact_byte_lengths(self) -> None:
         with tempfile.TemporaryDirectory() as td:
-            manifest, raster_dir, _fields = _export("cave_network", td)
+            manifest, raster_dir, _fields, _plan = _export("cave_network", td)
             area = TILE_SIZE * TILE_SIZE
             for tile in manifest["tiles"]:
                 self.assertTrue(tile.get("spans"), "tile must flag spans=True")
@@ -172,7 +176,7 @@ class SpansExportLayoutTest(unittest.TestCase):
 
     def test_height_and_deleted_layers_not_written(self) -> None:
         with tempfile.TemporaryDirectory() as td:
-            manifest, raster_dir, _fields = _export("sky_isle", td)
+            manifest, raster_dir, _fields, _plan = _export("sky_isle", td)
             for tile in manifest["tiles"]:
                 tile_dir = raster_dir / tile["dir"]
                 self.assertFalse(
@@ -189,7 +193,7 @@ class SpansExportLayoutTest(unittest.TestCase):
 
     def test_semantic_vertical_rasters_still_written(self) -> None:
         with tempfile.TemporaryDirectory() as td:
-            manifest, raster_dir, _fields = _export("sky_isle", td)
+            manifest, raster_dir, _fields, _plan = _export("sky_isle", td)
             tile = manifest["tiles"][0]
             tile_dir = raster_dir / tile["dir"]
             self.assertTrue((tile_dir / "sky_island_mask.bin").exists())
@@ -202,7 +206,7 @@ class SpansExportLayoutTest(unittest.TestCase):
         # otherwise the Rust reader mmaps a missing file.  A registry-only gate
         # would silently re-introduce the mismatch this test guards against.
         with tempfile.TemporaryDirectory() as td:
-            manifest, raster_dir, _fields = _export("sky_isle", td)
+            manifest, raster_dir, _fields, _plan = _export("sky_isle", td)
             declared = manifest["vertical_layers"]
             self.assertTrue(
                 declared,
@@ -231,7 +235,7 @@ class SpansExportLayoutTest(unittest.TestCase):
         # fossil POIs, so fossil_bbox must NOT appear; and any layer that IS declared
         # must have a real .bin on disk (else the Rust reader mmaps a missing file).
         with tempfile.TemporaryDirectory() as td:
-            manifest, raster_dir, _fields = _export("sky_isle", td)
+            manifest, raster_dir, _fields, _plan = _export("sky_isle", td)
             self.assertNotIn(
                 "fossil_bbox", manifest["structure_layers"],
                 "sky_isle writes no fossils, yet structure_layers still declares "
@@ -246,30 +250,168 @@ class SpansExportLayoutTest(unittest.TestCase):
                         f"{tile['dir']}/{layer}.bin is absent — manifest↔disk mismatch",
                     )
 
-    def test_decoded_column_surface_matches_span_fold(self) -> None:
+    def test_decoded_column_surface_matches_span_fold_and_carve(self) -> None:
         # The bytes on disk must decode (offset = col_idx * stride) to exactly
-        # what spans_fold folded — the binary path is the contract, not an
-        # internal re-fold.
+        # what the export wrote: spans_fold THEN the zone's P3 carver chain
+        # (sky_isle = floating_island).  The binary path is the contract — we
+        # reproduce fold+carve here and assert byte-for-byte, so a regression in
+        # the carve hook or the encoding offset turns this red.
         with tempfile.TemporaryDirectory() as td:
-            manifest, raster_dir, fields = _export("sky_isle", td)
+            manifest, raster_dir, fields, plan = _export("sky_isle", td)
             tile_meta = manifest["tiles"][0]
             tile_dir = raster_dir / tile_meta["dir"]
             count_bytes = (tile_dir / SPANS_COUNT_FILE).read_bytes()
             spans_bytes = (tile_dir / SPANS_FILE).read_bytes()
 
-            # Find the matching in-memory tile buffer and re-fold it.
+            # Find the matching in-memory tile buffer, fold, then carve exactly
+            # as the export does (same chain lookup + CARVE_SEED).
             buf = next(
                 t for t in fields.tiles if t.tile.tile_id == tile_meta["dir"]
             )
-            folded = spans_for_tile(buf)
-            for col_idx in (0, 100, len(folded) // 2, len(folded) - 1):
+            zone_chains = _zone_carver_chains(plan)
+            chain = _tile_carver_chain(buf, zone_chains)
+            self.assertTrue(
+                chain,
+                "sky_isle tile must resolve a floating_island carver chain — "
+                "the export carves it, so the round-trip reference must too",
+            )
+            # worldgen-v4 P3 §6.1 双源收口: the export folds with
+            # suppress_fold_isle=True whenever the chain owns the isle, so the
+            # round-trip baseline MUST mirror that flag or it would silently
+            # diverge from the on-disk bytes when the 2D fold also has isle data.
+            suppress_fold_isle = any(c.name == "floating_island" for c in chain)
+            folded = spans_for_tile(buf, suppress_fold_isle=suppress_fold_isle)
+            carved = apply_carver_chain(
+                folded,
+                chain,
+                origin_x=buf.tile.min_x,
+                origin_z=buf.tile.min_z,
+                tile_size=buf.tile_size,
+                seed=CARVE_SEED,
+            )
+            # The chain actually changed at least one column (a real isle span),
+            # else this test would pass even if carving silently no-op'd.
+            self.assertNotEqual(
+                [c.spans for c in carved],
+                [c.spans for c in folded],
+                "sky_isle carve must add isle spans to some columns",
+            )
+            for col_idx in (0, 100, len(carved) // 2, len(carved) - 1):
                 decoded = decode_spans_column(count_bytes, spans_bytes, col_idx)
                 self.assertEqual(
                     decoded.spans,
-                    folded[col_idx].spans,
-                    f"column {col_idx} on disk != span fold (offset "
+                    carved[col_idx].spans,
+                    f"column {col_idx} on disk != fold+carve (offset "
                     f"{col_idx * SPAN_BYTES_PER_COLUMN})",
                 )
+
+
+class _StubZonePlan:
+    def __init__(self, zone_name: str, profile_name: str) -> None:
+        self.zone_name = zone_name
+        self.profile_name = profile_name
+
+
+class _StubPlan:
+    def __init__(self, zone_plans) -> None:
+        self.zone_plans = zone_plans
+
+
+class ZoneCarverChainResolutionTest(unittest.TestCase):
+    """_zone_carver_chains must fail fast on an unregistered profile."""
+
+    def test_none_plan_yields_empty_map(self) -> None:
+        # The incremental console path has no plan — no carving, no crash.
+        self.assertEqual(_zone_carver_chains(None), {})
+
+    def test_known_profile_resolves_its_chain(self) -> None:
+        # sky_isle declares a floating_island chain; it must materialize.
+        plan = _StubPlan([_StubZonePlan("z", "sky_isle")])
+        chains = _zone_carver_chains(plan)
+        self.assertIn("z", chains)
+        self.assertTrue(
+            chains["z"],
+            "sky_isle must resolve a non-empty floating_island carver chain",
+        )
+
+    def test_unregistered_profile_raises_not_silently_skipped(self) -> None:
+        # A zone referencing a profile with no generator is a misconfig — the
+        # export must fail loudly, not ship that zone flat/un-carved.
+        plan = _StubPlan([_StubZonePlan("ghost_zone", "no_such_profile_xyz")])
+        with self.assertRaises(KeyError) as ctx:
+            _zone_carver_chains(plan)
+        msg = str(ctx.exception)
+        self.assertIn("ghost_zone", msg)
+        self.assertIn("no_such_profile_xyz", msg)
+
+
+class ZoneFilterValidationTest(unittest.TestCase):
+    """synthesize_fields must fail fast on an unknown zone_filter name."""
+
+    def _plan(self, td: str):
+        zone = _build_zone("cave_network")
+        blueprint = WorldBlueprint(
+            version=1,
+            world_name="filter_world",
+            spawn_zone=zone.name,
+            bounds_xz=zone.bounds_xz,
+            notes=(),
+            zones=(zone,),
+        )
+        catalog = TerrainProfileCatalog(
+            version=1,
+            profiles={
+                "cave_network": TerrainProfileSpec(
+                    name="cave_network",
+                    boundary=BoundarySpec(mode="soft", width=24),
+                    height={"base": [60, 80], "peak": 96},
+                    surface=("grass_block", "stone", "gravel"),
+                    water={"level": "none", "coverage": 0.0},
+                    passability="medium",
+                    extras={},
+                )
+            },
+        )
+        return build_generation_plan(
+            blueprint=blueprint,
+            profile_catalog=catalog,
+            blueprint_path=Path("b.json"),
+            profiles_path=Path("p.json"),
+            output_dir=Path(td),
+            tile_size=TILE_SIZE,
+        ), zone.name
+
+    def test_unknown_zone_filter_raises_with_candidates(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            plan, known_name = self._plan(td)
+            with self.assertRaises(ValueError) as ctx:
+                synthesize_fields(plan, zone_filter={"does_not_exist"})
+        msg = str(ctx.exception)
+        self.assertIn(
+            "does_not_exist", msg,
+            "the error must name the offending unknown zone so the typo is "
+            f"obvious; got: {msg!r}",
+        )
+        self.assertIn(
+            known_name, msg,
+            "the error must list the available zone names as candidates; got: "
+            f"{msg!r}",
+        )
+
+    def test_known_zone_filter_is_accepted(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            plan, known_name = self._plan(td)
+            fields = synthesize_fields(plan, zone_filter={known_name})
+        self.assertTrue(
+            fields.tiles,
+            "a valid zone_filter must still synthesize that zone's tiles",
+        )
+
+    def test_none_zone_filter_skips_validation(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            plan, _ = self._plan(td)
+            fields = synthesize_fields(plan, zone_filter=None)
+        self.assertTrue(fields.tiles, "no filter must export the full world")
 
 
 if __name__ == "__main__":

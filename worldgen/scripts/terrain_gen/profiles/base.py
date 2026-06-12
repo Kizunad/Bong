@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from types import MappingProxyType
+from typing import Any, Mapping
 
 from ..blueprint import BlueprintZone, TerrainProfileSpec
 from ..fields import DEFAULT_FIELD_LAYERS, ZoneFieldPlan
@@ -50,6 +52,40 @@ class EcologySpec:
 
 
 @dataclass(frozen=True)
+class CarverSpec:
+    """A declarative span-carver entry on a terrain profile (worldgen-v4 P3 §8.1 #1).
+
+    ``kind`` names a carver in ``carvers.CARVER_REGISTRY`` (canyon /
+    floating_island / arch / cave_network); ``params`` are its constructor
+    kwargs.  A profile declares an ordered tuple of these as its ``carvers``
+    class attribute; the export hook (``raster_export._zone_carver_chain``)
+    folds them into a real ``Carver`` chain that runs **after** the 2.5D span
+    fold and **before** raster export — turning the flat span columns into 3D
+    overhang / floating-isle / arch / cave-network geometry without adding any
+    new raster layer (§8.1 #1/#12).
+
+    Declared on the profile (not the blueprint) so the carve chain lives next to
+    the surface logic it sculpts and is versioned with it.
+
+    ``params`` is wrapped in a read-only ``MappingProxyType`` at construction so a
+    spec declared as a **class-level constant** (the common case — profiles list
+    their carvers in a class attribute) cannot have its params dict mutated at
+    runtime by a downstream consumer (``build_carver`` reads them per export).
+    Without this freeze, one export run popping/editing the shared dict would
+    silently corrupt the chain for every subsequent run in the same process.
+    """
+
+    kind: str
+    params: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        # frozen=True ⇒ must bypass the field assignment guard to re-wrap.
+        object.__setattr__(
+            self, "params", MappingProxyType(dict(self.params))
+        )
+
+
+@dataclass(frozen=True)
 class ProfileContext:
     zone: BlueprintZone
     profile_spec: TerrainProfileSpec
@@ -62,6 +98,11 @@ class TerrainProfileGenerator(ABC):
     profile_name: str = ""
     extra_layers: tuple[str, ...] = ()
     ecology: EcologySpec = _DEFAULT_ECOLOGY
+    # worldgen-v4 P3 §8.1 #1 — declarative carver chain. Empty for flat profiles;
+    # the landscape profiles (rift_valley → canyon, sky_isle → floating_island,
+    # cave_network → cave_network) declare a chain that the export hook applies to
+    # the folded span columns. Order matters: later carvers see earlier output.
+    carvers: tuple[CarverSpec, ...] = ()
 
     def plan(self, context: ProfileContext) -> ZoneFieldPlan:
         required_layers = tuple(dict.fromkeys(DEFAULT_FIELD_LAYERS + self.extra_layers))

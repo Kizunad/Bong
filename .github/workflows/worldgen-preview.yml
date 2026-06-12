@@ -96,9 +96,12 @@ jobs:
         # iso ±400 视角拍到真实 (synthetic rolling hills) 起伏地形而不是 fallback
         # flat world 的 16×16 chunk 边界外纯虚空。
         #
-        # focus-{layout,surface,height}-preview.png + zone-*-preview.png 仍正常产出。
+        # snapshot 只需要 spawn 周围 ±400 client 真画面 + raster 拼图总览；
+        # 全图 128 tile raster 在 worldgen-v4 P3 后超过 30min workflow 预算。
+        # CLI zone-filter 复用 console 增量重生语义：只窄化“哪些 tiles 合成”，
+        # tile 内仍混合所有相交 zone，运行时全量 worldgen 语义不变。
         working-directory: worldgen
-        run: bash pipeline.sh ../server/zones.worldview.example.json generated/snapshot anvil 128
+        run: bash pipeline.sh ../server/zones.worldview.example.json generated/snapshot anvil 128 spawn
 
       - name: Cache Rust target
         uses: actions/cache@v4
