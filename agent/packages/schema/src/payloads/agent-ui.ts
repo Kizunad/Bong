@@ -79,11 +79,26 @@ export type AgentUiRequestPayloadV1 = Static<typeof AgentUiRequestPayloadV1>;
 // ─── Schema 3：Client → Server CustomPayload + Server → Agent Redis ───────────
 
 /**
+ * error action 的 reason 字面量联合（文档化 + TypeScript 类型安全）。
+ *
+ * - realm_gate_rejected: 玩家境界不足，server 拒绝面板请求
+ * - invalid_button_id:   玩家点击了 allowed_button_ids 之外的按钮
+ * - player_offline:      目标玩家已离线，server 无法路由
+ *
+ * 通过 AgentUiResponsePayloadV1ErrorReasonV1 可在调用方做完整 switch 校验。
+ * params 字段仍保持 Record<string, string>（可扩展），此联合仅用于 TS 静态检查。
+ */
+export type AgentUiErrorReasonV1 =
+  | "realm_gate_rejected"
+  | "invalid_button_id"
+  | "player_offline";
+
+/**
  * 玩家面板交互响应，双向使用（C2S CustomPayload + server→agent Redis）。
  *
  * params 为 Record<string, string> 以保留可扩展性：
  *   button_click → params.button_id = "<id>"
- *   error        → params.reason = "realm_gate_rejected" | "invalid_button_id" | "player_offline"
+ *   error        → params.reason: AgentUiErrorReasonV1（见上方联合类型）
  *                  realm_gate_rejected 还有 params.player_realm / params.required_realm
  */
 export const AgentUiResponsePayloadV1 = Type.Object(

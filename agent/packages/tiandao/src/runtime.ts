@@ -1093,6 +1093,14 @@ export async function processTsyZoneActivatedForUi(args: {
 
 /**
  * danger_level (0-7) → 中文危险等级字符串（TSY 面板展示用）
+ *
+ * 阈值设计（来源：worldgen/scripts/terrain_gen/fields.py danger_level 定义）：
+ *   0-1 低危：探索型区域，无明显威胁
+ *   2-3 中危：有已知危险存在，需谨慎
+ *   4-5 高危：强力威胁，推荐凝脉境+才入
+ *   6-7 极危：极端危险，极少数通灵境以上可应对
+ *
+ * 如需调整分档，同步更新 docs/worldview.md §活坍缩渊危险等级 与对应测试。
  */
 function resolveTsyDangerTier(dangerLevel: number): string {
   if (dangerLevel <= 1) return "低危";
