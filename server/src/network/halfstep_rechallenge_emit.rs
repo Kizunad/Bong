@@ -31,6 +31,8 @@ pub const HALFSTEP_RECHALLENGE_AUDIO_RECIPE: &str = "halfstep_rechallenge_trigge
 /// P1 zone echo 音效 recipe id（plan-halfstep-buff-v1 P3 spec）。
 pub const HALFSTEP_RECHALLENGE_ZONE_ECHO_AUDIO_RECIPE: &str =
     "halfstep_rechallenge_trigger_zone_echo";
+/// P1 名额空出广播音效 recipe id（`AscensionQuotaOpened` 时发 broadcast，plan-halfstep-buff-v1 P3 spec）。
+pub const HALFSTEP_QUOTA_RELEASE_BROADCAST_AUDIO_RECIPE: &str = "halfstep_quota_release_broadcast";
 
 /// 监听 `HalfStepRechallengeTriggerEvent`，向非 dormant 玩家 targeted 发 HUD trigger payload
 /// 并触发音效。dormant NPC 跳过（HUD 无客户端接收方）。
@@ -194,9 +196,12 @@ mod tests {
         HalfStepRechallengeTriggerEvent, HalfStepState, TribulationSettled,
     };
     use crate::network::agent_bridge::SERVER_DATA_CHANNEL;
+    use crate::network::redis_bridge::RedisOutbound;
+    use crate::schema::halfstep_rechallenge::HalfStepRechallengeTriggerPayloadV1;
     use crate::schema::server_data::{HalfStepRechallengeV1, ServerDataPayloadV1, ServerDataV1};
     use crate::schema::tribulation::{DuXuOutcomeV1, DuXuResultV1};
-    use valence::prelude::{bevy_ecs, App, Entity, Events, Update};
+    use crossbeam_channel::Receiver;
+    use valence::prelude::{bevy_ecs, App, Entity, Events, Position, Update};
     use valence::protocol::packets::play::CustomPayloadS2c;
     use valence::testing::{create_mock_client, MockClientHelper};
 
@@ -211,6 +216,15 @@ mod tests {
             .spawn((bundle, HalfStepState::new(at_tick)))
             .id();
         (helper, entity)
+    }
+
+    fn spawn_halfstep_entity(app: &mut App, at_tick: u64) -> Entity {
+        app.world_mut()
+            .spawn((
+                Position::new([0.0_f64, 64.0, 0.0]),
+                HalfStepState::new(at_tick),
+            ))
+            .id()
     }
 
     fn flush_client_packets(app: &mut App) {
@@ -258,6 +272,44 @@ mod tests {
             ),
         );
         app
+    }
+
+    /// 返回 (App, rx_outbound)，仅含 publish_halfstep_rechallenge_to_redis 系统。
+    fn make_redis_app() -> (App, Receiver<RedisOutbound>) {
+        let (tx_outbound, rx_outbound) = crossbeam_channel::unbounded::<RedisOutbound>();
+        let (_tx_inbound, rx_inbound) = crossbeam_channel::unbounded();
+        let mut app = App::new();
+        app.add_event::<HalfStepRechallengeTriggerEvent>();
+        app.add_event::<PlaySoundRecipeRequest>();
+        app.insert_resource(RedisBridgeResource {
+            tx_outbound,
+            rx_inbound,
+        });
+        app.add_systems(Update, publish_halfstep_rechallenge_to_redis);
+        (app, rx_outbound)
+    }
+
+    fn drain_redis_outbound(rx: &Receiver<RedisOutbound>) -> Vec<RedisOutbound> {
+        let mut msgs = Vec::new();
+        while let Ok(msg) = rx.try_recv() {
+            msgs.push(msg);
+        }
+        msgs
+    }
+
+    fn drain_halfstep_trigger_payloads(
+        rx: &Receiver<RedisOutbound>,
+    ) -> Vec<HalfStepRechallengeTriggerPayloadV1> {
+        drain_redis_outbound(rx)
+            .into_iter()
+            .filter_map(|msg| {
+                if let RedisOutbound::HalfStepRechallengeTrigger(p) = msg {
+                    Some(p)
+                } else {
+                    None
+                }
+            })
+            .collect()
     }
 
     /// happy path：非 dormant 玩家收到 trigger payload，active=true，window 字段正确。
@@ -484,6 +536,189 @@ mod tests {
             requests[0].recipient,
             AudioRecipient::Single(entity),
             "音效应 targeted 到当事玩家 entity"
+        );
+    }
+
+    // ─── publish_halfstep_rechallenge_to_redis tests ─────────────────────────
+
+    /// happy path：非 dormant 单实体触发 → HalfStepRechallengeTrigger 入队，字段正确，
+    /// zone_halfstep_count == 1（单 zone，无 zone echo 音效）。
+    #[test]
+    fn redis_publish_enqueues_trigger_payload_for_non_dormant() {
+        let (mut app, rx) = make_redis_app();
+        let at_tick: u64 = 5_000;
+        let entity = spawn_halfstep_entity(&mut app, at_tick);
+
+        app.world_mut()
+            .resource_mut::<Events<HalfStepRechallengeTriggerEvent>>()
+            .send(HalfStepRechallengeTriggerEvent {
+                char_id: "offline:Azure".to_string(),
+                entity,
+                is_dormant: false,
+                at_tick,
+            });
+
+        app.update();
+
+        let payloads = drain_halfstep_trigger_payloads(&rx);
+        assert_eq!(
+            payloads.len(),
+            1,
+            "非 dormant 触发应入队 1 条 HalfStepRechallengeTrigger payload，实际 {}",
+            payloads.len()
+        );
+        assert_eq!(
+            payloads[0].char_id, "offline:Azure",
+            "char_id 必须与事件一致，实际 {:?}",
+            payloads[0].char_id
+        );
+        assert_eq!(
+            payloads[0].at_tick, at_tick,
+            "at_tick 必须与事件一致，实际 {}",
+            payloads[0].at_tick
+        );
+        assert_eq!(
+            payloads[0].zone_halfstep_count, 1,
+            "单实体触发时 zone_halfstep_count 应为 1（仅含触发方自身），实际 {}；\
+             off-by-one 错误会导致 zone echo 音效在单人时误触发",
+            payloads[0].zone_halfstep_count
+        );
+    }
+
+    /// zone_halfstep_count off-by-one 边界：两个 HalfStep 实体时 count == 2 → zone echo 音效触发。
+    #[test]
+    fn redis_publish_zone_count_ge2_triggers_zone_echo_audio() {
+        let (mut app, rx) = make_redis_app();
+        let at_tick: u64 = 6_000;
+
+        // 两个 HalfStep 实体在同一 zone（无 ZoneRegistry → 都归 spawn zone）
+        let entity_a = spawn_halfstep_entity(&mut app, at_tick);
+        let _entity_b = spawn_halfstep_entity(&mut app, at_tick);
+
+        app.world_mut()
+            .resource_mut::<Events<HalfStepRechallengeTriggerEvent>>()
+            .send(HalfStepRechallengeTriggerEvent {
+                char_id: "offline:Azure".to_string(),
+                entity: entity_a,
+                is_dormant: false,
+                at_tick,
+            });
+
+        app.update();
+
+        let payloads = drain_halfstep_trigger_payloads(&rx);
+        assert_eq!(payloads.len(), 1, "应入队 1 条 trigger payload");
+        assert_eq!(
+            payloads[0].zone_halfstep_count, 2,
+            "两个 HalfStep 实体时 zone_halfstep_count 应为 2，实际 {}；\
+             必须 ≥2 才触发 zone echo narration 和音效",
+            payloads[0].zone_halfstep_count
+        );
+
+        // zone echo 音效应发出
+        let audio_events = app.world().resource::<Events<PlaySoundRecipeRequest>>();
+        let mut reader = bevy_ecs::event::ManualEventReader::default();
+        let audio_reqs: Vec<_> = reader.read(audio_events).collect();
+        let zone_echo_count = audio_reqs
+            .iter()
+            .filter(|r| r.recipe_id == HALFSTEP_RECHALLENGE_ZONE_ECHO_AUDIO_RECIPE)
+            .count();
+        assert_eq!(
+            zone_echo_count, 1,
+            "zone_halfstep_count==2 时必须发出 1 条 zone echo 音效（{}），实际 {}",
+            HALFSTEP_RECHALLENGE_ZONE_ECHO_AUDIO_RECIPE, zone_echo_count
+        );
+    }
+
+    /// off-by-one 边界：单个 HalfStep 实体（count == 1）时不发 zone echo 音效。
+    #[test]
+    fn redis_publish_zone_count_1_no_zone_echo_audio() {
+        let (mut app, _rx) = make_redis_app();
+        let at_tick: u64 = 7_000;
+        let entity = spawn_halfstep_entity(&mut app, at_tick);
+
+        app.world_mut()
+            .resource_mut::<Events<HalfStepRechallengeTriggerEvent>>()
+            .send(HalfStepRechallengeTriggerEvent {
+                char_id: "offline:Beryl".to_string(),
+                entity,
+                is_dormant: false,
+                at_tick,
+            });
+
+        app.update();
+
+        let audio_events = app.world().resource::<Events<PlaySoundRecipeRequest>>();
+        let mut reader = bevy_ecs::event::ManualEventReader::default();
+        let audio_reqs: Vec<_> = reader.read(audio_events).collect();
+        let zone_echo_count = audio_reqs
+            .iter()
+            .filter(|r| r.recipe_id == HALFSTEP_RECHALLENGE_ZONE_ECHO_AUDIO_RECIPE)
+            .count();
+        assert_eq!(
+            zone_echo_count, 0,
+            "zone_halfstep_count==1 時絕不能發 zone echo 音效，實際發了 {}，\
+             off-by-one 邊界（計數閾值 ≥2 不含 == 1）",
+            zone_echo_count
+        );
+    }
+
+    /// dormant 触发：不入队 Redis payload（dormant 实体无位置，agent 不产 zone echo），
+    /// 但 dormant fallback zone_name == "dormant" / zone_halfstep_count == 0 的逻辑
+    /// 仍会走，确认入队一条 payload（dormant 路径需要 agent 记录触发但不 echo）。
+    #[test]
+    fn redis_publish_dormant_enqueues_payload_with_dormant_zone() {
+        let (mut app, rx) = make_redis_app();
+        let at_tick: u64 = 8_000;
+        // dormant 实体通常没有 Position component；这里用虚构 entity id 模拟
+        let dummy_entity = app.world_mut().spawn_empty().id();
+
+        app.world_mut()
+            .resource_mut::<Events<HalfStepRechallengeTriggerEvent>>()
+            .send(HalfStepRechallengeTriggerEvent {
+                char_id: "npc:dormant_azure".to_string(),
+                entity: dummy_entity,
+                is_dormant: true,
+                at_tick,
+            });
+
+        app.update();
+
+        let payloads = drain_halfstep_trigger_payloads(&rx);
+        assert_eq!(
+            payloads.len(),
+            1,
+            "dormant 触发仍应入队 1 条 Redis payload（agent 记录用），实际 {}",
+            payloads.len()
+        );
+        assert_eq!(
+            payloads[0].char_id, "npc:dormant_azure",
+            "dormant payload char_id 应保留原始值"
+        );
+        assert_eq!(
+            payloads[0].zone_name, "dormant",
+            "dormant 触发方无 Position，zone_name 应 fallback 为 \"dormant\"，实际 {:?};\
+             agent 读取 zone_name==\"dormant\" 时跳过 zone echo narration",
+            payloads[0].zone_name
+        );
+        assert_eq!(
+            payloads[0].zone_halfstep_count, 0,
+            "dormant 触发时 zone_halfstep_count 应为 0（无 Position 无法统计），实际 {}",
+            payloads[0].zone_halfstep_count
+        );
+
+        // dormant 触发不发 zone echo 音效
+        let audio_events = app.world().resource::<Events<PlaySoundRecipeRequest>>();
+        let mut reader = bevy_ecs::event::ManualEventReader::default();
+        let audio_reqs: Vec<_> = reader.read(audio_events).collect();
+        let zone_echo_count = audio_reqs
+            .iter()
+            .filter(|r| r.recipe_id == HALFSTEP_RECHALLENGE_ZONE_ECHO_AUDIO_RECIPE)
+            .count();
+        assert_eq!(
+            zone_echo_count, 0,
+            "dormant 触发不应发 zone echo 音效（zone_halfstep_count == 0 < 2），实际 {}",
+            zone_echo_count
         );
     }
 }
