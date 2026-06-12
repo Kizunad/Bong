@@ -5,7 +5,8 @@ use crate::network::RedisBridgeResource;
 use crate::schema::zhenfa_v2::{ZhenfaArrayKindV2, ZhenfaV2EventKind, ZhenfaV2EventV1};
 use crate::zhenfa::{
     ArrayBreakthroughEvent, ArrayDecayEvent, DeceiveHeavenEvent, DeceiveHeavenExposedEvent,
-    IllusionArrayDeployEvent, LingArrayDeployEvent, WardArrayDeployEvent, ZhenfaKind,
+    IllusionArrayDeployEvent, LingArrayDeployEvent, NetworkArrayDeployEvent, WardArrayDeployEvent,
+    ZhenfaKind,
 };
 
 #[allow(clippy::too_many_arguments)]
@@ -16,6 +17,7 @@ pub fn publish_zhenfa_v2_events(
     mut deceive: EventReader<DeceiveHeavenEvent>,
     mut deceive_exposed: EventReader<DeceiveHeavenExposedEvent>,
     mut illusion: EventReader<IllusionArrayDeployEvent>,
+    mut network: EventReader<NetworkArrayDeployEvent>,
     mut decay: EventReader<ArrayDecayEvent>,
     mut breakthrough: EventReader<ArrayBreakthroughEvent>,
 ) {
@@ -83,6 +85,19 @@ pub fn publish_zhenfa_v2_events(
             event.placed_at_tick,
         );
         payload.reveal_threshold = Some(event.reveal_threshold);
+        send_zhenfa_v2_event(&redis, payload);
+    }
+    for event in network.read() {
+        let mut payload = deploy_payload(
+            event.array_id,
+            ZhenfaArrayKindV2::NetworkArray,
+            event.owner_player_id.as_str(),
+            event.pos,
+            event.placed_at_tick,
+        );
+        payload.radius = Some(f64::from(event.radius));
+        payload.density_multiplier = Some(event.density_multiplier);
+        payload.tiandao_gaze_weight = Some(event.tiandao_gaze_weight);
         send_zhenfa_v2_event(&redis, payload);
     }
     for event in decay.read() {
@@ -163,6 +178,7 @@ fn map_kind(kind: ZhenfaKind) -> ZhenfaArrayKindV2 {
         ZhenfaKind::Lingju => ZhenfaArrayKindV2::Lingju,
         ZhenfaKind::DeceiveHeaven => ZhenfaArrayKindV2::DeceiveHeaven,
         ZhenfaKind::Illusion => ZhenfaArrayKindV2::Illusion,
+        ZhenfaKind::NetworkArray => ZhenfaArrayKindV2::NetworkArray,
     }
 }
 

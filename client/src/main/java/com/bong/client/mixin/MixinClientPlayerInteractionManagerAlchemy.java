@@ -42,6 +42,8 @@ public abstract class MixinClientPlayerInteractionManagerAlchemy {
     private static final String SLOW_TRAP_ITEM_ID = "slow_trap";
     private static final String GATHER_ARRAY_BASE_ITEM_ID = "gather_array_base";
     private static final String QI_SCATTER_BEAD_ITEM_ID = "qi_scatter_bead";
+    private static final String ARRAY_FLAG_BASIC_ITEM_ID = "array_flag_basic";
+    private static final String ARRAY_EYE_BASIC_ITEM_ID = "array_eye_basic";
 
     @Inject(method = "attackEntity", at = @At("TAIL"))
     @SuppressWarnings({"unused", "PMD.UnusedPrivateMethod"})
@@ -182,6 +184,7 @@ public abstract class MixinClientPlayerInteractionManagerAlchemy {
             case BLAST_TRAP_ITEM_ID -> ClientRequestProtocol.ZhenfaKind.BLAST_TRAP;
             case SLOW_TRAP_ITEM_ID -> ClientRequestProtocol.ZhenfaKind.SLOW_TRAP;
             case GATHER_ARRAY_BASE_ITEM_ID -> ClientRequestProtocol.ZhenfaKind.LINGJU;
+            case ARRAY_FLAG_BASIC_ITEM_ID, ARRAY_EYE_BASIC_ITEM_ID -> ClientRequestProtocol.ZhenfaKind.NETWORK_ARRAY;
             default -> null;
         };
     }

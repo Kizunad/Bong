@@ -2197,7 +2197,7 @@ mod tests {
     // ------------------------------------------------------------------------
 
     use crate::botany::{GrowthCost, PlantKind, PlantKindRegistry, PlantRarity};
-    use crate::lingtian::environment::{PlotBiome, PlotEnvironment};
+    use crate::lingtian::environment::{PlotBiome, PlotEnvironment, PlotLingjuTier};
     use crate::lingtian::plot::CropInstance;
     use crate::lingtian::qi_account::BEVY_TICKS_PER_LINGTIAN_TICK;
     use crate::world::season::Season;
@@ -3404,7 +3404,7 @@ mod tests {
             environment: PlotEnvironment {
                 water_adjacent: true,
                 biome: PlotBiome::Wetland,
-                zhenfa_jvling: true,
+                zhenfa_lingju_tier: PlotLingjuTier::Full,
                 season: Season::SummerToWinter,
                 active_weather: None,
             },

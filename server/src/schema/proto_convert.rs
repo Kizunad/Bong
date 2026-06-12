@@ -2985,6 +2985,7 @@ fn zhenfa_kind_to_proto(k: &crate::zhenfa::ZhenfaKind) -> i32 {
         ZhenfaKind::Lingju => bong::ZhenfaKind::Lingju as i32,
         ZhenfaKind::DeceiveHeaven => bong::ZhenfaKind::DeceiveHeaven as i32,
         ZhenfaKind::Illusion => bong::ZhenfaKind::Illusion as i32,
+        ZhenfaKind::NetworkArray => bong::ZhenfaKind::NetworkArray as i32,
     }
 }
 

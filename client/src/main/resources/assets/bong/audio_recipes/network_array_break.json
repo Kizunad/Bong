@@ -1,0 +1,21 @@
+{
+  "id": "network_array_break",
+  "layers": [
+    {
+      "sound": "minecraft:block.beacon.deactivate",
+      "volume": 0.5,
+      "pitch": 0.9,
+      "delay_ticks": 0
+    },
+    {
+      "sound": "minecraft:block.glass.break",
+      "volume": 0.4,
+      "pitch": 0.7,
+      "delay_ticks": 2
+    }
+  ],
+  "priority": 58,
+  "attenuation": "world_3d",
+  "category": "BLOCKS",
+  "bus": "ENVIRONMENT"
+}

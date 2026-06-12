@@ -792,6 +792,7 @@ export const ZhenfaKindV1 = Type.Union([
   Type.Literal("lingju"),
   Type.Literal("deceive_heaven"),
   Type.Literal("illusion"),
+  Type.Literal("network_array"),
 ]);
 export type ZhenfaKindV1 = Static<typeof ZhenfaKindV1>;
 

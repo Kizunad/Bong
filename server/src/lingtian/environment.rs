@@ -18,6 +18,7 @@ use valence::prelude::{BlockKind, BlockPos, ChunkLayer};
 
 use super::plot::{PLOT_QI_CAP_BASE, PLOT_QI_CAP_MAX};
 use super::weather::WeatherEvent;
+use crate::qi_physics::constants::QI_NETWORK_ARRAY_LINGJU_CAP_BONUS;
 use crate::world::season::Season;
 
 pub const QI_LINGJU_ARRAY_CAP_BONUS: f32 = 1.0;
@@ -32,12 +33,31 @@ pub enum PlotBiome {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlotLingjuTier {
+    #[default]
+    None,
+    Network,
+    Full,
+}
+
+impl PlotLingjuTier {
+    pub const fn cap_bonus(self) -> f32 {
+        match self {
+            Self::None => 0.0,
+            Self::Network => QI_NETWORK_ARRAY_LINGJU_CAP_BONUS,
+            Self::Full => QI_LINGJU_ARRAY_CAP_BONUS,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct PlotEnvironment {
     /// 5 格内有水方块（plan §1.1 +0.3）。
     pub water_adjacent: bool,
     pub biome: PlotBiome,
-    /// 处于聚灵阵覆盖（plan §1.1 +1.0；plan-zhenfa-v1 落地后由该模块填）。
-    pub zhenfa_jvling: bool,
+    /// 处于聚灵阵覆盖：组网阵 +0.5，完整聚灵阵 +1.0，叠加取最高 tier。
+    pub zhenfa_lingju_tier: PlotLingjuTier,
     /// plan-lingtian-weather-v1 §2 — 当前 zone 季节相位（jiezeq-v1 全服同步）。
     /// 由 [`crate::world::season::query_season`] 派生填入；默认 Summer 与
     /// `query_season("", 0)` 一致。
@@ -52,7 +72,7 @@ impl PlotEnvironment {
         Self {
             water_adjacent: false,
             biome: PlotBiome::Other,
-            zhenfa_jvling: false,
+            zhenfa_lingju_tier: PlotLingjuTier::None,
             season: Season::Summer,
             active_weather: None,
         }
@@ -62,7 +82,7 @@ impl PlotEnvironment {
 /// 扫描 `pos` 周围 ±5 格水平范围（y 层不变）内是否有 Water 方块，用于
 /// `water_adjacent` 判定（plan §1.1）。半径 5 足够覆盖一个典型"近水田"。
 ///
-/// biome / zhenfa_jvling 两项暂不自动派生：biome 需 valence biome 读取 API，
+/// biome / zhenfa_lingju_tier 两项暂不自动派生：biome 需 valence biome 读取 API，
 /// zhenfa 要等 plan-zhenfa-v1 的阵法系统落地，目前默认 false。
 /// season / active_weather 由 P1 / P2 系统在调用此函数后注入（保持纯静态读取
 /// 接口，避免 Resource 跨越）。
@@ -71,7 +91,7 @@ pub fn read_environment_at(layer: &ChunkLayer, pos: BlockPos) -> PlotEnvironment
     PlotEnvironment {
         water_adjacent,
         biome: PlotBiome::Other,
-        zhenfa_jvling: false,
+        zhenfa_lingju_tier: PlotLingjuTier::None,
         season: Season::Summer,
         active_weather: None,
     }
@@ -100,7 +120,7 @@ fn scan_water_near(layer: &ChunkLayer, center: BlockPos, radius: i32) -> bool {
 /// 公式：base 1.0
 ///   + (water_adjacent ? 0.3 : 0)
 ///   + (wetland ? 0.5 : 0)
-///   + (zhenfa_jvling ? QI_LINGJU_ARRAY_CAP_BONUS : 0)
+///   + zhenfa_lingju_tier cap bonus（Network +0.5 / Full +1.0）
 ///   + season modifier（夏 -0.2 / 冬 +0.2 / 汐转 0 基线）
 ///   + active_weather modifier（雷暴 -0.2 / 灵雾 +0.2 / 其他 0）
 ///
@@ -116,9 +136,7 @@ pub fn compute_plot_qi_cap(env: &PlotEnvironment) -> f32 {
     if matches!(env.biome, PlotBiome::Wetland) {
         cap += 0.5;
     }
-    if env.zhenfa_jvling {
-        cap += QI_LINGJU_ARRAY_CAP_BONUS;
-    }
+    cap += env.zhenfa_lingju_tier.cap_bonus();
     cap += env.season.plot_qi_cap_modifier();
     if let Some(weather) = env.active_weather {
         cap += weather.plot_qi_cap_delta();
@@ -201,7 +219,7 @@ mod tests {
         );
 
         let e = PlotEnvironment {
-            zhenfa_jvling: true,
+            zhenfa_lingju_tier: PlotLingjuTier::Full,
             ..PlotEnvironment::base()
         };
         assert!(
@@ -216,7 +234,7 @@ mod tests {
         let e = PlotEnvironment {
             water_adjacent: true,
             biome: PlotBiome::Wetland,
-            zhenfa_jvling: true,
+            zhenfa_lingju_tier: PlotLingjuTier::Full,
             season: Season::Winter,
             active_weather: None,
         };

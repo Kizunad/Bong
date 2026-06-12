@@ -18,6 +18,20 @@ class ZhenfaKindForItemTest {
     }
 
     @Test
+    void networkArrayItemsMapToNetworkArray() {
+        assertEquals(
+            ClientRequestProtocol.ZhenfaKind.NETWORK_ARRAY,
+            MixinClientPlayerInteractionManagerAlchemy.bong$zhenfaKindForItem(item("array_flag_basic")),
+            "array_flag_basic 必须走 network_array 放置协议，否则阵旗无法参与组网"
+        );
+        assertEquals(
+            ClientRequestProtocol.ZhenfaKind.NETWORK_ARRAY,
+            MixinClientPlayerInteractionManagerAlchemy.bong$zhenfaKindForItem(item("array_eye_basic")),
+            "array_eye_basic 必须走 network_array 放置协议，否则阵眼无法激活旗圈"
+        );
+    }
+
+    @Test
     void nonZhenfaItemDoesNotTriggerLingjuPlacement() {
         assertNull(
             MixinClientPlayerInteractionManagerAlchemy.bong$zhenfaKindForItem(item("qi_scatter_bead")),
