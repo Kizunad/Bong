@@ -1,4 +1,5 @@
 pub mod agent_bridge;
+pub mod agent_ui;
 pub mod alchemy_bridge;
 pub mod alchemy_snapshot_emit;
 pub mod animation_trigger;
@@ -969,6 +970,21 @@ pub fn register(app: &mut App) {
     app.add_event::<crate::combat::weapon::WeaponBroken>();
     app.add_event::<crate::combat::weapon::ShieldBroken>();
     app.add_event::<crate::combat::weapon::ShieldBlockHit>();
+
+    // ─── plan-agent-ui-data-v1 P0：天道 UI-as-Data 会话状态机 ─────────────
+    app.add_event::<agent_ui::AgentUiCmdEvent>();
+    app.add_event::<agent_ui::AgentUiResponseEvent>();
+    app.init_resource::<agent_ui::AgentUiSessionStore>();
+    app.init_resource::<agent_ui::CurrentTickResource>();
+    app.add_systems(
+        Update,
+        (
+            agent_ui::receive_agent_ui_cmd_system.after(process_redis_inbound),
+            agent_ui::agent_ui_tick_system,
+            agent_ui::receive_agent_ui_response_system,
+            agent_ui::receive_player_disconnect_system,
+        ),
+    );
 }
 
 fn redis_url_from_env() -> String {
@@ -2259,6 +2275,7 @@ fn process_redis_inbound(
     audio_events: Option<ResMut<Events<audio_event_emit::PlaySoundRecipeRequest>>>,
     persistence_settings: Option<Res<PersistenceSettings>>,
     runtime_mirror_redis: Option<Res<RuntimeMirrorRedisConfig>>,
+    mut agent_ui_cmd_tx: EventWriter<agent_ui::AgentUiCmdEvent>,
 ) {
     let mut audio_events = audio_events;
     let mut drained_messages = 0;
@@ -2389,6 +2406,10 @@ fn process_redis_inbound(
                         &mut clients,
                     );
                 }
+            }
+            // ─── plan-agent-ui-data-v1 P0：天道 UI 指令 ─────────────────────
+            RedisInbound::AgentUiCmd(cmd) => {
+                agent_ui_cmd_tx.send(agent_ui::AgentUiCmdEvent(cmd));
             }
         }
     }
@@ -3192,6 +3213,8 @@ mod tests {
         app.insert_resource(CommandExecutorResource::default());
         app.insert_resource(NarrationDedupeResource::default());
         app.add_event::<crate::cultivation::insight::InsightOffer>();
+        // plan-agent-ui-data-v1 P0 — process_redis_inbound 需要 AgentUiCmdEvent。
+        app.add_event::<agent_ui::AgentUiCmdEvent>();
         app.add_systems(Update, process_redis_inbound);
 
         let (client_bundle, _helper) = create_mock_client("Azure");
@@ -4109,6 +4132,8 @@ mod tests {
             }
 
             app.add_event::<crate::cultivation::insight::InsightOffer>();
+            // plan-agent-ui-data-v1 P0 — process_redis_inbound 需要 AgentUiCmdEvent。
+            app.add_event::<agent_ui::AgentUiCmdEvent>();
             app.add_systems(Update, process_redis_inbound);
 
             (app, tx_inbound)

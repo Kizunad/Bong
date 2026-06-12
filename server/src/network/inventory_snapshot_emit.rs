@@ -481,6 +481,8 @@ mod tests {
         // plan-shield-block-v1 P1 — 举盾 intent events（ClientRequestDispatchParams 需要）。
         app.add_event::<crate::combat::shield_block::RaiseShieldIntent>();
         app.add_event::<crate::combat::shield_block::LowerShieldIntent>();
+        // plan-agent-ui-data-v1 P0 — handle_client_request_payloads 需要 AgentUiResponseEvent。
+        app.add_event::<crate::network::agent_ui::AgentUiResponseEvent>();
 
         // Run request handler, then broadcast dropped_loot_sync if the registry changed.
         app.add_systems(

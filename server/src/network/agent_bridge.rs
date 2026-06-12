@@ -186,6 +186,9 @@ pub fn payload_type_label(payload_type: ServerDataType) -> &'static str {
         ServerDataType::FreshnessUpdate => "freshness_update",
         // ─── plan-exploration-probe-return-v1 P2 ────────────────────
         ServerDataType::InsightOffer => "insight_offer",
+        // ─── plan-agent-ui-data-v1 P0：天道 UI-as-Data ──────────────
+        ServerDataType::AgentUiRequest => "agent_ui_request",
+        ServerDataType::AgentUiClose => "agent_ui_close",
     }
 }
 
