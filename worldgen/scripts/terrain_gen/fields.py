@@ -42,9 +42,17 @@ SPAN_BYTES_PER_COLUMN = MAX_SPANS * 2 * 2  # 4 spans × (i16 floor + i16 ceiling
 class ColumnSpans:
     """Up to ``MAX_SPANS`` inclusive solid ``(floor_y, ceiling_y)`` ranges.
 
-    Spans are kept sorted bottom-to-top and must be non-overlapping with
-    ``floor_y <= ceiling_y`` per span.  Construction validates these invariants
-    so an illegal column can never be silently serialized.
+    Invariants (validated at construction, never silently serialized illegal):
+      * each span has ``floor_y <= ceiling_y`` and both in world Y range;
+      * spans are pairwise non-overlapping with a real air gap (no touching);
+      * **span[0] is the ground/surface span** — its ceiling is the walkable
+        surface and is what ``query_surface()`` returns (§8.1 #2 "最低段顶").
+        Extra spans (cave-floor remnant below, sky-isle above) follow in any
+        order; only span[0] is privileged.
+
+    Keeping span[0] as the surface (rather than the geometrically lowest span)
+    is what makes ``surface_ceiling_y == round(height)`` hold for every column
+    shape — including caves, where the void is carved *below* the walkable top.
     """
 
     spans: tuple[tuple[int, int], ...]
@@ -54,7 +62,6 @@ class ColumnSpans:
             raise ValueError(
                 f"ColumnSpans accepts at most {MAX_SPANS} spans, got {len(self.spans)}"
             )
-        prev_ceiling: int | None = None
         for floor_y, ceiling_y in self.spans:
             if not (SPAN_MIN_Y <= floor_y <= SPAN_MAX_Y):
                 raise ValueError(
@@ -70,10 +77,16 @@ class ColumnSpans:
                 raise ValueError(
                     f"span floor_y={floor_y} must be <= ceiling_y={ceiling_y}"
                 )
-            if prev_ceiling is not None and floor_y <= prev_ceiling:
+        # Pairwise non-overlap with a gap — order-independent so span[0] can be
+        # the surface span even when a cave-floor remnant sits below it.
+        ordered = sorted(self.spans)
+        prev_ceiling: int | None = None
+        for floor_y, ceiling_y in ordered:
+            if prev_ceiling is not None and floor_y <= prev_ceiling + 1:
                 raise ValueError(
-                    f"spans must be sorted, non-overlapping with a gap: "
-                    f"floor_y={floor_y} <= previous ceiling_y={prev_ceiling}"
+                    f"spans must be non-overlapping with an air gap: "
+                    f"floor_y={floor_y} touches/overlaps previous "
+                    f"ceiling_y={prev_ceiling}"
                 )
             prev_ceiling = ceiling_y
 
@@ -83,10 +96,11 @@ class ColumnSpans:
 
     @property
     def surface_ceiling_y(self) -> int | None:
-        """Top face of the lowest solid span (NPC/decoration surface anchor).
+        """Walkable surface y = ceiling of the ground span (span[0]).
 
         Returns ``None`` for a fully void column.  §8.1 #2: ``query_surface``
-        semantics = the lowest solid span's ceiling.
+        reads span[0].ceiling so NPC navigation / decoration anchoring stay on
+        the original ground regardless of caves below or isles above.
         """
         if not self.spans:
             return None
