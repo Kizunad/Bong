@@ -8,9 +8,9 @@ import pytest
 
 from anim_common import VALID_PARTS
 from video2emotecraft import (
+    FrameSampler,
     LandmarkFrame,
     PoseToEmotecraft,
-    _matrix_to_euler_xyz,
     parse_args,
     sample_frame_indices,
     smooth_angle_degrees,
@@ -180,26 +180,17 @@ def test_antiparallel_torso_rotation_is_finite() -> None:
     )
 
 
-def test_matrix_to_euler_handles_gimbal_lock_branch() -> None:
-    """Verify yaw≈90° matrices use the gimbal-lock branch safely."""
-    matrix = np.array(
-        [
-            [0.0, 0.0, 1.0],
-            [0.0, 1.0, 0.0],
-            [-1.0, 0.0, 0.0],
-        ],
-        dtype=float,
-    )
+def test_near_gimbal_arm_pose_is_finite_through_public_api() -> None:
+    """Verify sideways-to-front arm input remains finite through frame_to_pose."""
+    landmarks = canonical_t_pose()
+    landmarks[13] = Lm(-0.2, 1.2, -1.0)
+    landmarks[15] = Lm(-0.2, 1.2, -2.0)
 
-    pitch, yaw, roll = _matrix_to_euler_xyz(matrix)
+    pose = PoseToEmotecraft().frame_to_pose(landmarks)
 
-    assert math.isclose(yaw, math.pi / 2.0, abs_tol=1e-7), (
-        f"expected yaw≈π/2 in gimbal-lock branch, actual {yaw}"
+    assert all(math.isfinite(pose["leftArm"][axis]) for axis in ("pitch", "yaw", "roll")), (
+        f"expected finite public leftArm axes for near-gimbal input, actual {pose['leftArm']}"
     )
-    assert math.isclose(roll, 0.0, abs_tol=1e-9), (
-        f"expected gimbal-lock branch to pin roll=0, actual {roll}"
-    )
-    assert math.isfinite(pitch), f"expected finite pitch in gimbal-lock branch, actual {pitch}"
 
 
 def test_missing_landmarks_frame_is_skipped() -> None:
@@ -267,10 +258,52 @@ def test_sample_frame_indices_do_not_duplicate_low_fps_source() -> None:
     )
 
 
-def test_non_positive_fps_is_rejected() -> None:
+def test_low_fps_source_ticks_preserve_duration() -> None:
+    """Verify low-fps input maps source time onto sparse target ticks."""
+    sampler = FrameSampler(source_fps=10.0, target_fps=20)
+    ticks = [sampler.tick_for_frame(frame_index) for frame_index in range(10)]
+
+    assert ticks == list(range(0, 20, 2)), (
+        "expected 10fps source frames to land on even 20tps ticks so one second remains one second, "
+        f"actual {ticks}"
+    )
+
+
+@pytest.mark.parametrize(
+    ("frame_count", "expected"),
+    [
+        (0, []),
+        (1, [0]),
+    ],
+)
+def test_sample_frame_indices_boundary_cases(frame_count: int, expected: list[int]) -> None:
+    """Verify empty and one-frame sampling boundaries."""
+    indices = sample_frame_indices(frame_count=frame_count, source_fps=30.0, target_fps=20)
+
+    assert indices == expected, (
+        f"expected {expected} because empty/single-frame inputs must preserve boundaries, actual {indices}"
+    )
+
+
+def test_sample_frame_indices_rejects_negative_frame_count() -> None:
+    """Verify negative frame counts surface the explicit validation error."""
+    with pytest.raises(ValueError, match="frame_count must be >= 0"):
+        sample_frame_indices(frame_count=-1, source_fps=30.0, target_fps=20)
+
+
+@pytest.mark.parametrize("fps", ["0", "-1"])
+def test_non_positive_fps_is_rejected(fps: str, capsys: pytest.CaptureFixture[str]) -> None:
     """Verify CLI rejects zero FPS before video sampling."""
-    with pytest.raises(SystemExit):
-        parse_args(["input.mp4", "-o", "bad", "--fps", "0"])
+    with pytest.raises(SystemExit) as exc_info:
+        parse_args(["input.mp4", "-o", "bad", "--fps", fps])
+
+    stderr = capsys.readouterr().err
+    assert exc_info.value.code != 0, (
+        f"expected non-zero SystemExit because --fps={fps} is invalid, actual {exc_info.value.code}"
+    )
+    assert "must be > 0" in stderr, (
+        f"expected argparse stderr to include the FPS validation message, actual stderr={stderr!r}"
+    )
 
 
 def canonical_t_pose() -> list[Lm]:
