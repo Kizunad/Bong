@@ -271,7 +271,7 @@ pub const CH_BAOMAI_V4_RESONANCE_LOCK_END: &str = "bong:baomai_v4/resonance_lock
 /// 注意：P3 agent 侧暂无订阅 runtime；push_zone 兜底保证不依赖 agent 即 in-game 可见。
 pub const CH_TERRITORY_NARRATION_REQUEST: &str = "bong:territory_narration_request";
 
-// ─── 天道 UI-as-Data（plan-agent-ui-data-v1 P0） ─────────────────────────────
+// ─── 天道 UI-as-Data（plan-agent-ui-data-v1 P0/P1） ─────────────────────────────
 
 /// Agent → Server: 天道 UI 面板指令（含 realm_gate / allowed_button_ids，Pub/Sub）。
 /// 对齐 agent `CHANNELS.AGENT_UI_CMD`。
@@ -280,6 +280,22 @@ pub const CH_AGENT_UI_CMD: &str = "bong:agent_ui_cmd";
 /// Server → Agent: 天道 UI 面板响应（Pub/Sub）。
 /// 对齐 agent `CHANNELS.AGENT_UI_RESPONSE`。
 pub const CH_AGENT_UI_RESPONSE: &str = "bong:agent_ui_response";
+
+/// Server → Client: 天道 UI 面板请求（专属 JSON channel，裸 AgentUiRequestPayloadV1，无 envelope）。
+///
+/// 绕开 `bong:server_data` proto 路径（`proto_convert.rs` 对 AgentUiRequest 是
+/// `unreachable!()`，生产会 panic）。client 侧 `BongNetworkHandler.registerAgentUiChannels()`
+/// 注册同名 channel listener。
+/// 对齐 `network::agent_ui::AGENT_UI_REQUEST_CHANNEL`（两处必须保持一致）。
+pub const CH_AGENT_UI_REQUEST: &str = "bong:agent_ui_request";
+
+/// Server → Client: 天道 UI 面板关闭信号（专属 JSON channel，裸 AgentUiClosePayloadV1，无 envelope）。
+///
+/// 绕开 `bong:server_data` proto 路径（`proto_convert.rs` 对 AgentUiClose 是
+/// `unreachable!()`，生产会 panic）。client 侧 `BongNetworkHandler.registerAgentUiChannels()`
+/// 注册同名 channel listener。
+/// 对齐 `network::agent_ui::AGENT_UI_CLOSE_CHANNEL`（两处必须保持一致）。
+pub const CH_AGENT_UI_CLOSE: &str = "bong:agent_ui_close";
 
 #[cfg(test)]
 mod tests {
@@ -510,6 +526,45 @@ mod tests {
         assert_ne!(
             CH_AGENT_UI_CMD, CH_AGENT_UI_RESPONSE,
             "CH_AGENT_UI_CMD 与 CH_AGENT_UI_RESPONSE 必须不同"
+        );
+    }
+
+    #[test]
+    fn agent_ui_s2c_channel_pin() {
+        // fix-s2c-proto-panic / plan-agent-ui-data-v1 P1：
+        // S2C 专属 JSON channel 常量 pin，防漂移。
+        // client BongNetworkHandler.registerAgentUiChannels() 必须注册同名 channel。
+        assert_eq!(
+            CH_AGENT_UI_REQUEST, "bong:agent_ui_request",
+            "CH_AGENT_UI_REQUEST 必须是 \"bong:agent_ui_request\"（fix-s2c-proto-panic）"
+        );
+        assert_eq!(
+            CH_AGENT_UI_CLOSE, "bong:agent_ui_close",
+            "CH_AGENT_UI_CLOSE 必须是 \"bong:agent_ui_close\"（fix-s2c-proto-panic）"
+        );
+        // 两个 S2C channel 不能相同（防 client 端 listener 串联）
+        assert_ne!(
+            CH_AGENT_UI_REQUEST, CH_AGENT_UI_CLOSE,
+            "CH_AGENT_UI_REQUEST 与 CH_AGENT_UI_CLOSE 必须不同"
+        );
+        // S2C channel 与 cmd/response channel 不能相混（防路由串联）
+        assert_ne!(
+            CH_AGENT_UI_REQUEST, CH_AGENT_UI_CMD,
+            "CH_AGENT_UI_REQUEST 与 CH_AGENT_UI_CMD 必须不同"
+        );
+        assert_ne!(
+            CH_AGENT_UI_CLOSE, CH_AGENT_UI_RESPONSE,
+            "CH_AGENT_UI_CLOSE 与 CH_AGENT_UI_RESPONSE 必须不同"
+        );
+        // 对齐 network::agent_ui 局部常量（两处定义必须一致，此 pin 兜底）
+        use crate::network::agent_ui as nai;
+        assert_eq!(
+            CH_AGENT_UI_REQUEST, nai::AGENT_UI_REQUEST_CHANNEL,
+            "schema::channels::CH_AGENT_UI_REQUEST 必须与 network::agent_ui::AGENT_UI_REQUEST_CHANNEL 一致"
+        );
+        assert_eq!(
+            CH_AGENT_UI_CLOSE, nai::AGENT_UI_CLOSE_CHANNEL,
+            "schema::channels::CH_AGENT_UI_CLOSE 必须与 network::agent_ui::AGENT_UI_CLOSE_CHANNEL 一致"
         );
     }
 }

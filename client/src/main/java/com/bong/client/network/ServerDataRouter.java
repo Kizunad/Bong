@@ -261,10 +261,11 @@ public final class ServerDataRouter {
         handlers.put("mineral_probe_result", new MineralProbeResultHandler());
         // plan-exploration-probe-return-v1 P2：修炼顿悟邀约（InsightOfferStore → InsightOfferScreen）
         handlers.put("insight_offer", new InsightOfferHandler());
-        // plan-agent-ui-data-v1 P1 — 天道动态 UI 面板（AgentUiPayloadHandler 同时处理 request + close）
-        AgentUiPayloadHandler agentUiPayloadHandler = new AgentUiPayloadHandler();
-        handlers.put("agent_ui_request", agentUiPayloadHandler);
-        handlers.put("agent_ui_close", agentUiPayloadHandler);
+        // plan-agent-ui-data-v1 P1 — 天道动态 UI 面板
+        // NOTE: AgentUiRequest/AgentUiClose 已迁移到专属 JSON channel，
+        // 不再经 bong:server_data / proto 路径（proto_convert.rs 对这两个 variant 是 unreachable!()，
+        // 生产会 panic）。ServerDataRouter 不再注册 agent_ui_request/agent_ui_close。
+        // 接收和解析由 BongNetworkHandler.registerAgentUiChannels() 负责。
         // plan-halfstep-rechallenge-integration-v1 P0：半步化虚重渡触发 HUD
         // NOTE: HalfStepRechallenge 已迁移到专属 bong:halfstep_rechallenge channel（JSON），
         // 不再经 bong:server_data / proto 路径。ServerDataRouter 不再注册此 key。

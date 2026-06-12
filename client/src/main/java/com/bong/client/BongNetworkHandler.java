@@ -112,6 +112,8 @@ public class BongNetworkHandler {
         registerElderEncounterChannel();
         // plan-era-state-v1 P3 — 时代天象 S2C CustomPayload（realm gate 由 server 执行）
         registerEraAmbianceChannel();
+        // plan-agent-ui-data-v1 P1 — 天道动态 UI 面板（专属 JSON channel，绕开 proto 路径）
+        registerAgentUiChannels();
         // plan-halfstep-rechallenge-integration-v1 P0 — 半步化虚重渡触发 HUD（专属 JSON channel）
         registerHalfStepRechallengeChannel();
         // plan-era-state-v1 M2 — EraAmbianceState 渐变计数器每游戏 tick 推进（非渲染帧）。
@@ -150,6 +152,8 @@ public class BongNetworkHandler {
                 com.bong.client.dying_elder.DyingElderEncounterStore.clearOnDisconnect();
                 // plan-era-state-v1 P3 — 断线时重置时代天象状态
                 com.bong.client.era.EraAmbianceState.reset();
+                // plan-agent-ui-data-v1 P1 — 断线时清理天道 UI 面板状态
+                com.bong.client.agentui.AgentUiStore.clear();
                 // plan-halfstep-rechallenge-integration-v1 P0 — 断线时清理半步重渡触发状态
                 com.bong.client.combat.store.HalfStepRechallengeStore.clear();
             })
@@ -997,6 +1001,65 @@ public class BongNetworkHandler {
             iterator.next();
             iterator.remove();
         }
+    }
+
+    // ── plan-agent-ui-data-v1 P1 — 天道动态 UI 面板专属 channel ──────────────────────────
+
+    /**
+     * 注册 {@code bong:agent_ui_request} 和 {@code bong:agent_ui_close} 专属 channel。
+     *
+     * <p>payload 是裸 {@code AgentUiRequestPayloadV1} / {@code AgentUiClosePayloadV1} JSON
+     * （无 {@code ServerDataV1} envelope），由 {@link com.bong.client.network.AgentUiPayloadHandler}
+     * 的专属方法解析后写入 {@link com.bong.client.agentui.AgentUiStore}。
+     *
+     * <p>设计对齐 {@code bong:halfstep_rechallenge} 专属 channel 模式，不经过 {@code ServerDataRouter}
+     * / {@code ProtoServerDataBridge}（避免 proto 不支持 AgentUiRequest/AgentUiClose variant
+     * 导致的 unreachable!() panic）。
+     */
+    private static void registerAgentUiChannels() {
+        // bong:agent_ui_request — 裸 AgentUiRequestPayloadV1 JSON
+        ClientPlayNetworking.registerGlobalReceiver(
+            new Identifier("bong", "agent_ui_request"),
+            (client, handler, buf, responseSender) -> {
+                int readableBytes = buf.readableBytes();
+                byte[] bytes = new byte[readableBytes];
+                buf.readBytes(bytes);
+                String jsonPayload = ServerDataEnvelope.decodeUtf8(bytes);
+                markConnectionPayload();
+                client.execute(() -> {
+                    try {
+                        com.bong.client.network.AgentUiPayloadHandler.handleRawRequest(
+                            jsonPayload, client);
+                        BongClient.LOGGER.debug(
+                            "Processed bong:agent_ui_request payload ({} bytes)", readableBytes);
+                    } catch (Exception ex) {
+                        BongClient.LOGGER.error(
+                            "Failed to handle bong:agent_ui_request payload: {}", ex.getMessage());
+                    }
+                });
+            }
+        );
+        // bong:agent_ui_close — 裸 AgentUiClosePayloadV1 JSON
+        ClientPlayNetworking.registerGlobalReceiver(
+            new Identifier("bong", "agent_ui_close"),
+            (client, handler, buf, responseSender) -> {
+                int readableBytes = buf.readableBytes();
+                byte[] bytes = new byte[readableBytes];
+                buf.readBytes(bytes);
+                String jsonPayload = ServerDataEnvelope.decodeUtf8(bytes);
+                markConnectionPayload();
+                client.execute(() -> {
+                    try {
+                        com.bong.client.network.AgentUiPayloadHandler.handleRawClose(jsonPayload);
+                        BongClient.LOGGER.debug(
+                            "Processed bong:agent_ui_close payload ({} bytes)", readableBytes);
+                    } catch (Exception ex) {
+                        BongClient.LOGGER.error(
+                            "Failed to handle bong:agent_ui_close payload: {}", ex.getMessage());
+                    }
+                });
+            }
+        );
     }
 
     // ── plan-halfstep-rechallenge-integration-v1 P0 — 半步化虚重渡触发 HUD channel ─────

@@ -175,14 +175,32 @@ public class ServerDataRouterTest {
             // plan-exploration-probe-return-v1 P0 — 神识感知矿脉回执 S2C
             "mineral_probe_result",
             // plan-exploration-probe-return-v1 P2 — 修炼顿悟邀约 S2C
-            "insight_offer",
-            // plan-agent-ui-data-v1 P1 — 天道动态 UI 面板 S2C（request + close 同 handler）
-            "agent_ui_request",
-            "agent_ui_close"
+            "insight_offer"
+            // NOTE: plan-agent-ui-data-v1 P1 — "agent_ui_request" / "agent_ui_close" 已迁移
+            // 到专属 bong:agent_ui_request / bong:agent_ui_close channel（JSON），
+            // 不再经 bong:server_data / proto 路径（proto_convert.rs unreachable!() panic）。
+            // BongNetworkHandler.registerAgentUiChannels() 负责接收和解析。
             // NOTE: plan-halfstep-rechallenge-integration-v1 P0 — "half_step_rechallenge" 已迁移
             // 到专属 bong:halfstep_rechallenge channel（JSON），不再经 ServerDataRouter 路由。
             // BongNetworkHandler.registerHalfStepRechallengeChannel() 负责接收和解析。
         ), router.registeredTypes());
+    }
+
+    /**
+     * 防回归：agent_ui_request/agent_ui_close 已迁移到专属 channel，不应再出现在 ServerDataRouter 注册表。
+     * 若此测试失败，说明有人误将 AgentUi 迁回 server_data 路径，会导致 production proto panic。
+     */
+    @Test
+    void defaultRouter_doesNotRegisterAgentUiKeys() {
+        ServerDataRouter router = ServerDataRouter.createDefault();
+        assertFalse(
+            router.registeredTypes().contains("agent_ui_request"),
+            "ServerDataRouter 不应注册 'agent_ui_request'（已迁移到专属 bong:agent_ui_request channel）"
+        );
+        assertFalse(
+            router.registeredTypes().contains("agent_ui_close"),
+            "ServerDataRouter 不应注册 'agent_ui_close'（已迁移到专属 bong:agent_ui_close channel）"
+        );
     }
 
     @Test
