@@ -1,5 +1,5 @@
 /**
- * plan-agent-ui-data-v1 P2/P3 — xmlTemplates / uiRenderer / uiResponseConsumer 饱和测试
+ * plan-agent-ui-data-v1 P2/P3 — xmlTemplates / uiRenderer / uiResponseConsumer / agentUiRuntime 饱和测试
  *
  * 测试覆盖：
  * 1. xmlEscape: happy path / null-undefined→"" / 所有 5 个转义字符 / 链式转义顺序
@@ -14,6 +14,10 @@
  *    replaced→静默 / parse_error→warn / realm_gate_rejected→narration /
  *    player_offline→warn / invalid_button_id→warn / 无效 JSON / schema 不符 /
  *    stats 计数器全覆盖
+ * 9. AgentUiRuntime e2e（P2 验收）：
+ *    mock 推演:生成活坍缩渊面板→emit AgentUiRequestCommandV1→点进入→收 button_click→
+ *    drainPendingButtonClicks 注入推演；realm_gate_rejected→emit narration；
+ *    session_end(dismissed/timeout)→drainPendingSessionEnds
  */
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -31,6 +35,7 @@ import {
 } from "./xmlTemplates.js";
 import { UiRenderer } from "./uiRenderer.js";
 import { UiResponseConsumer, REALM_GATE_NARRATION_TEXT } from "./uiResponseConsumer.js";
+import { AgentUiRuntime } from "./agentUiRuntime.js";
 
 const { AGENT_UI_RESPONSE, AGENT_NARRATE, AGENT_UI_CMD } = CHANNELS;
 
@@ -820,5 +825,286 @@ describe("UiResponseConsumer", () => {
     expect(consumer.stats.timeout).toBe(1);
     expect(consumer.stats.replaced).toBe(1);
     expect(consumer.stats.received).toBe(5);
+  });
+});
+
+// ─── 9. AgentUiRuntime e2e（P2 验收）────────────────────────────────────────
+//
+// plan §3 P2 验收：
+//   mock 推演:生成活坍缩渊面板→emit AgentUiRequestCommandV1 到 bong:agent_ui_cmd
+//            →玩家点进入→收 button_click→drainPendingButtonClicks 注入推演
+//   realm_gate_rejected→emit narration 到 bong:agent_narrate
+//   session_end(dismissed/timeout)→drainPendingSessionEnds
+
+describe("AgentUiRuntime e2e (P2 验收)", () => {
+  /** 构造一个完整 mock client，同时支持 pub（publish）和 sub（subscribe/on/off/unsubscribe/disconnect）接口 */
+  function makeFullMockClient() {
+    const listeners: Map<string, ((ch: string, msg: string) => void)[]> = new Map();
+    return {
+      subscribe: vi.fn(async (_channel: string) => {}),
+      on: vi.fn((event: string, listener: (ch: string, msg: string) => void) => {
+        const arr = listeners.get(event) ?? [];
+        arr.push(listener);
+        listeners.set(event, arr);
+      }),
+      off: vi.fn((event: string, listener: (ch: string, msg: string) => void) => {
+        const arr = listeners.get(event) ?? [];
+        const idx = arr.indexOf(listener);
+        if (idx !== -1) arr.splice(idx, 1);
+        listeners.set(event, arr);
+      }),
+      unsubscribe: vi.fn(async () => {}),
+      disconnect: vi.fn(() => {}),
+      publish: vi.fn(async (_channel: string, _message: string) => 1),
+      /** 模拟服务器向 bong:agent_ui_response 发布消息 */
+      emitUiResponse(payload: unknown) {
+        (listeners.get("message") ?? []).forEach((l) =>
+          l(AGENT_UI_RESPONSE, JSON.stringify(payload)),
+        );
+      },
+    };
+  }
+
+  const tsyPlayer = {
+    uuid: "player-uuid-e2e-001",
+    name: "E2EPlayer",
+    realm: "Condense", // rank=3 == tsy_discovery realm_gate=3
+    composite_power: 0.6,
+    breakdown: { combat: 0.6, wealth: 0.5, social: 0.5, karma: 0.0, territory: 0.5 },
+    trend: "rising" as const,
+    active_hours: 20,
+    zone: "tsy_zone",
+    pos: [100, 64, 200] as [number, number, number],
+    recent_kills: 0,
+    recent_deaths: 0,
+  };
+
+  it("e2e: 生成活坍缩渊面板 → emit AgentUiRequestCommandV1 到 bong:agent_ui_cmd（P2 §3）", async () => {
+    const pub = makeFullMockClient();
+    const sub = makeFullMockClient();
+    const runtime = new AgentUiRuntime({ pub, sub });
+    await runtime.connect();
+
+    const result = await runtime.triggerUi({
+      scenario: "tsy_discovery",
+      targetPlayer: tsyPlayer,
+      params: {
+        zone_name: "活坍缩渊",
+        spirit_qi_display: "0.72",
+        danger_tier: "高危",
+        agent_narrative: "天道感知到此处有一道裂缝正在收拢",
+      },
+    });
+
+    // 验证 AgentUiRequestCommandV1 已发布到 bong:agent_ui_cmd
+    expect(pub.publish).toHaveBeenCalledOnce();
+    const [channel, raw] = pub.publish.mock.calls[0];
+    expect(channel, "应发布到 AGENT_UI_CMD").toBe(AGENT_UI_CMD);
+
+    const cmd = JSON.parse(raw as string);
+    expect(cmd.request_id, "request_id 应与 result 一致").toBe(result.requestId);
+    expect(cmd.target_player, "目标玩家 uuid 正确").toBe(tsyPlayer.uuid);
+    expect(cmd.realm_gate, "凝脉境+ realm_gate=3").toBe(3);
+    expect(cmd.xml, "XML 含面板内容").toContain("活坍缩渊");
+    expect(cmd.xml, "XML 含 owo-ui 根元素").toContain("<owo-ui>");
+    expect(cmd.allowed_button_ids, "含 enter_realm 按钮").toContain("enter_realm");
+    expect(cmd.allowed_button_ids, "含 dismiss 按钮").toContain("dismiss");
+    expect(result.sentBlurVersion, "realm 足够不发模糊版").toBe(false);
+
+    await runtime.disconnect();
+  });
+
+  it("e2e: 玩家点击进入按钮 → button_click 进入 pendingButtonClicks 队列 → drain 后注入推演（P2 §3）", async () => {
+    const pub = makeFullMockClient();
+    const sub = makeFullMockClient();
+    const runtime = new AgentUiRuntime({ pub, sub });
+    await runtime.connect();
+
+    // 触发面板
+    const result = await runtime.triggerUi({
+      scenario: "tsy_discovery",
+      targetPlayer: tsyPlayer,
+      params: {
+        zone_name: "活坍缩渊",
+        spirit_qi_display: "0.72",
+        danger_tier: "高危",
+        agent_narrative: "裂缝收拢中",
+      },
+    });
+
+    // 模拟 server 向 bong:agent_ui_response 发布 button_click（玩家点击"踏入探寻"）
+    sub.emitUiResponse({
+      request_id: result.requestId,
+      action: "button_click",
+      params: { button_id: "enter_realm" },
+    });
+
+    // 给异步 handler 跑完
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // 验证 button_click 已进队列
+    const clicks = runtime.drainPendingButtonClicks();
+    expect(clicks, "应有 1 个 button_click").toHaveLength(1);
+    expect(clicks[0].action, "action 为 button_click").toBe("button_click");
+    expect(clicks[0].params["button_id"], "button_id 为 enter_realm").toBe("enter_realm");
+    expect(clicks[0].request_id, "request_id 与面板一致").toBe(result.requestId);
+
+    // drain 后队列清空
+    expect(runtime.drainPendingButtonClicks(), "drain 后队列为空").toHaveLength(0);
+
+    // stats 正确
+    expect(runtime.stats.buttonClick, "stats.buttonClick=1").toBe(1);
+
+    await runtime.disconnect();
+  });
+
+  it("e2e: realm_gate_rejected → emit narration 到 bong:agent_narrate（P2 §3）", async () => {
+    const pub = makeFullMockClient();
+    const sub = makeFullMockClient();
+    const runtime = new AgentUiRuntime({ pub, sub });
+    await runtime.connect();
+
+    // 触发面板
+    const result = await runtime.triggerUi({
+      scenario: "tsy_discovery",
+      targetPlayer: tsyPlayer,
+      params: {
+        zone_name: "活坍缩渊",
+        spirit_qi_display: "0.72",
+        danger_tier: "高危",
+        agent_narrative: "裂缝收拢中",
+      },
+    });
+
+    // 清除 pub.publish 调用（已有 triggerUi 的调用）
+    pub.publish.mockClear();
+
+    // 模拟 server 向 bong:agent_ui_response 发布 realm_gate_rejected error
+    sub.emitUiResponse({
+      request_id: result.requestId,
+      action: "error",
+      params: {
+        reason: "realm_gate_rejected",
+        player_realm: "1",
+        required_realm: "3",
+      },
+    });
+
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // 验证 narration 已发布到 bong:agent_narrate
+    expect(pub.publish, "应 emit 叙事").toHaveBeenCalledOnce();
+    const [narChannel, narRaw] = pub.publish.mock.calls[0];
+    expect(narChannel, "应发布到 AGENT_NARRATE").toBe(AGENT_NARRATE);
+
+    const narMsg = JSON.parse(narRaw as string);
+    expect(narMsg.v, "narration 包版本 v=1").toBe(1);
+    expect(narMsg.narrations, "有 narrations 数组").toHaveLength(1);
+    expect(narMsg.narrations[0].text, "叙事文本正确").toBe(REALM_GATE_NARRATION_TEXT);
+    expect(narMsg.narrations[0].style, "style=system_warning").toBe("system_warning");
+
+    // stats 正确
+    expect(runtime.stats.realmGateRejected, "stats.realmGateRejected=1").toBe(1);
+    expect(runtime.stats.narrationPublished, "stats.narrationPublished=1").toBe(1);
+
+    await runtime.disconnect();
+  });
+
+  it("e2e: dismissed → drainPendingSessionEnds 队列收到 session 结束事件", async () => {
+    const pub = makeFullMockClient();
+    const sub = makeFullMockClient();
+    const runtime = new AgentUiRuntime({ pub, sub });
+    await runtime.connect();
+
+    const result = await runtime.triggerUi({
+      scenario: "elder_legacy",
+      targetPlayer: tsyPlayer,
+      params: { elder_title: "老者", elder_narration: "传承在此", qi_cost: "100" },
+    });
+
+    sub.emitUiResponse({
+      request_id: result.requestId,
+      action: "dismissed",
+      params: {},
+    });
+
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const ends = runtime.drainPendingSessionEnds();
+    expect(ends, "dismissed 进入 sessionEnds 队列").toHaveLength(1);
+    expect(ends[0].action).toBe("dismissed");
+    expect(runtime.stats.dismissed, "stats.dismissed=1").toBe(1);
+
+    await runtime.disconnect();
+  });
+
+  it("e2e: timeout → drainPendingSessionEnds 队列收到 session 结束事件", async () => {
+    const pub = makeFullMockClient();
+    const sub = makeFullMockClient();
+    const runtime = new AgentUiRuntime({ pub, sub });
+    await runtime.connect();
+
+    const result = await runtime.triggerUi({
+      scenario: "tiandao_revelation",
+      targetPlayer: { ...tsyPlayer, realm: "Spirit" }, // rank=5 == realm_gate=5
+      params: { tiandao_message: "气运将至" },
+    });
+
+    sub.emitUiResponse({
+      request_id: result.requestId,
+      action: "timeout",
+      params: {},
+    });
+
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const ends = runtime.drainPendingSessionEnds();
+    expect(ends, "timeout 进入 sessionEnds 队列").toHaveLength(1);
+    expect(ends[0].action).toBe("timeout");
+    expect(runtime.stats.timeout, "stats.timeout=1").toBe(1);
+
+    await runtime.disconnect();
+  });
+
+  it("e2e: realm 不足时发布模糊版（不门控），blur=true，realm_gate=0", async () => {
+    const pub = makeFullMockClient();
+    const sub = makeFullMockClient();
+    const runtime = new AgentUiRuntime({ pub, sub });
+    await runtime.connect();
+
+    const result = await runtime.triggerUi({
+      scenario: "tsy_discovery",
+      targetPlayer: { ...tsyPlayer, realm: "Awaken" }, // rank=1 < realm_gate=3
+      params: {
+        zone_name: "活坍缩渊",
+        spirit_qi_display: "0.5",
+        danger_tier: "中危",
+        agent_narrative: "有所感应",
+      },
+    });
+
+    expect(result.sentBlurVersion, "realm 不足发模糊版").toBe(true);
+
+    const [, raw] = pub.publish.mock.calls[0];
+    const cmd = JSON.parse(raw as string);
+    expect(cmd.realm_gate, "模糊版 realm_gate=0").toBe(0);
+    expect(cmd.allowed_button_ids, "模糊版只有 dismiss").toEqual(["dismiss"]);
+
+    await runtime.disconnect();
+  });
+
+  it("e2e: connect 后生命周期正常 disconnect，不抛错", async () => {
+    const pub = makeFullMockClient();
+    const sub = makeFullMockClient();
+    const runtime = new AgentUiRuntime({ pub, sub });
+
+    await runtime.connect();
+    await expect(runtime.disconnect()).resolves.not.toThrow();
+    expect(sub.unsubscribe, "disconnect 调用 unsubscribe").toHaveBeenCalled();
+    expect(sub.disconnect, "disconnect 调用 sub.disconnect").toHaveBeenCalled();
   });
 });

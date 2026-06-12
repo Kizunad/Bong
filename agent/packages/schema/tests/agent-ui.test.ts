@@ -1,9 +1,22 @@
 /**
  * plan-agent-ui-data-v1 P0 — AgentUi schema 三个 TypeBox schema 的 roundtrip + 正负样本测试。
+ *
+ * sample roundtrip（项目惯例双端对拍）：
+ *   4 个新 sample 文件均做 readFileSync→TypeBox.Check 对拍，确保 sample 与 schema 保持一致。
  */
 
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { Value } from "@sinclair/typebox/value";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const samplesDir = join(__dirname, "..", "samples");
+
+function loadSample(name: string): unknown {
+  return JSON.parse(readFileSync(join(samplesDir, name), "utf-8"));
+}
 
 import {
   AgentUiRequestCommandV1,
@@ -284,5 +297,75 @@ describe("AgentUiClosePayloadV1", () => {
   it("负样本: 缺失 request_id", () => {
     const payload = { reason: "replaced" };
     expect(Value.Check(AgentUiClosePayloadV1, payload)).toBe(false);
+  });
+});
+
+// ─── sample roundtrip（项目惯例双端 sample 对拍）─────────────────────────────
+//
+// 4 个 plan-agent-ui-data-v1 新增 sample 文件的 TypeBox roundtrip 验证。
+// 确保 sample.json ↔ TypeBox schema 双端对齐（Rust include_str! 由 server 侧负责）。
+
+describe("sample roundtrip: agent_ui_request_command.sample.json", () => {
+  it("符合 AgentUiRequestCommandV1 schema", () => {
+    const sample = loadSample("agent_ui_request_command.sample.json");
+    const result = Value.Check(AgentUiRequestCommandV1, sample);
+    expect(
+      result,
+      `agent_ui_request_command.sample.json 应通过 AgentUiRequestCommandV1 校验`,
+    ).toBe(true);
+  });
+});
+
+describe("sample roundtrip: client-request.agent-ui-response.sample.json", () => {
+  it("符合 AgentUiResponsePayloadV1 schema（button_click action）", () => {
+    const sample = loadSample("client-request.agent-ui-response.sample.json");
+    // sample 含 v/type 额外字段（C2S CustomPayload 格式），提取 agent-facing 字段做校验
+    const asRecord = sample as Record<string, unknown>;
+    const agentPayload = {
+      request_id: asRecord["request_id"],
+      action: asRecord["action"],
+      params: asRecord["params"],
+    };
+    const result = Value.Check(AgentUiResponsePayloadV1, agentPayload);
+    expect(
+      result,
+      `client-request.agent-ui-response.sample.json 的 agent-facing 字段应通过 AgentUiResponsePayloadV1 校验`,
+    ).toBe(true);
+  });
+});
+
+describe("sample roundtrip: server-data.agent-ui-close.sample.json", () => {
+  it("符合 AgentUiClosePayloadV1 schema", () => {
+    const sample = loadSample("server-data.agent-ui-close.sample.json");
+    // sample 含 v/type 额外字段，提取 close-facing 字段
+    const asRecord = sample as Record<string, unknown>;
+    const closePayload = {
+      request_id: asRecord["request_id"],
+      ...(asRecord["reason"] !== undefined ? { reason: asRecord["reason"] } : {}),
+    };
+    const result = Value.Check(AgentUiClosePayloadV1, closePayload);
+    expect(
+      result,
+      `server-data.agent-ui-close.sample.json 的 close 字段应通过 AgentUiClosePayloadV1 校验`,
+    ).toBe(true);
+  });
+});
+
+describe("sample roundtrip: server-data.agent-ui-request.sample.json", () => {
+  it("符合 AgentUiRequestPayloadV1 schema（server→client server_data）", () => {
+    const sample = loadSample("server-data.agent-ui-request.sample.json");
+    // sample 含 v/type 额外字段，提取 payload 字段做校验
+    const asRecord = sample as Record<string, unknown>;
+    const requestPayload = {
+      request_id: asRecord["request_id"],
+      target_player: asRecord["target_player"],
+      xml: asRecord["xml"],
+      timeout_ticks: asRecord["timeout_ticks"],
+    };
+    const result = Value.Check(AgentUiRequestPayloadV1, requestPayload);
+    expect(
+      result,
+      `server-data.agent-ui-request.sample.json 的 payload 字段应通过 AgentUiRequestPayloadV1 校验`,
+    ).toBe(true);
   });
 });
