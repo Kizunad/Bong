@@ -11,6 +11,7 @@ from ..fields import SurfacePalette, TileFieldBuffer, WorldTile
 from ..noise import _tile_coords
 from ..spirit_eye_selector import select_spirit_eye_candidates
 from .base import (
+    CarverSpec,
     DecorationSpec,
     EcologySpec,
     ProfileContext,
@@ -76,6 +77,31 @@ class RiftValleyGenerator(TerrainProfileGenerator):
         ambient_effects=("sulfur_puff", "distant_roar", "blood_moon_haze"),
         notes="血谷生态：赤骨树沿裂隙生长，火脉仙人掌在断层边吐热气，"
               "血碑散布谷底。绯血苔藓铺地，红黑主调。",
+    )
+    # worldgen-v4 P3 §6.1 round 3/3 — 真·大峡谷：canyon_carver 把谷壁雕成层叠
+    # 悬壁（上部岩架 + 空气带 + 下部谷底）。wall_threshold 低=峡谷壁大面积出
+    # 悬壁；void_height/shelf_thickness 控制层叠岩带的虚实节奏；scale 控悬壁沿高
+    # 起伏频率。两道 canyon 链（不同 scale/salt 由参数微调）叠出多层岩带——上层
+    # 大岩架、下层细悬挑，读起来像被流水冲刷千年的赤色大峡谷断壁。
+    carvers = (
+        CarverSpec(
+            kind="canyon",
+            params={
+                "wall_threshold": 0.30,
+                "void_height": 16,
+                "shelf_thickness": 10,
+                "scale": 64.0,
+            },
+        ),
+        CarverSpec(
+            kind="canyon",
+            params={
+                "wall_threshold": 0.52,
+                "void_height": 9,
+                "shelf_thickness": 6,
+                "scale": 38.0,
+            },
+        ),
     )
 
     def build_notes(self, context: ProfileContext) -> tuple[str, ...]:
