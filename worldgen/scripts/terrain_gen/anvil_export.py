@@ -211,6 +211,8 @@ def _build_section_blocks(
 
     每一 (x, z) 列：y == bottom_y(WORLD_MIN_Y) 放 bottom_block；y < height 放 filler；
     y == height 放 top；y > height 放 air。
+
+    这是单段（height）路径；spans 路径见 ``_build_section_blocks_from_spans``。
     """
     blocks: list[str] = []
     section_min_y = section_y * SECTION_HEIGHT
@@ -230,17 +232,70 @@ def _build_section_blocks(
     return blocks
 
 
-def _write_section(
-    buf: BytesIO,
-    section_y: int,
-    heights: list[list[int]],
+def _column_surface_y(spans: list[tuple[int, int]]) -> int | None:
+    """Walkable surface y = ceiling of span[0] (§8.1 #2); None for a void column."""
+    if not spans:
+        return None
+    return spans[0][1]
+
+
+def _block_at_in_spans(
+    world_y: int,
+    spans: list[tuple[int, int]],
+    surface_y: int | None,
     top_block: str,
     filler_block: str,
     bottom_block: str,
-) -> None:
-    section_blocks = _build_section_blocks(
-        section_y, heights, top_block, filler_block, bottom_block
-    )
+) -> str:
+    """worldgen-v4 P0 §8.1 #8 — block at *world_y* given a column's spans.
+
+    Fill order (loop over segments):
+      * y == WORLD_MIN_Y → bedrock floor
+      * y inside any solid span → top_block at the surface span's ceiling, else
+        filler_block (caves carved below / isle floors above stay solid)
+      * otherwise air (the cave void and the gap below a floating isle)
+    """
+    if world_y == WORLD_MIN_Y:
+        return bottom_block
+    for floor_y, ceiling_y in spans:
+        if floor_y <= world_y <= ceiling_y:
+            if surface_y is not None and world_y == surface_y:
+                return top_block
+            return filler_block
+    return AIR
+
+
+def _build_section_blocks_from_spans(
+    section_y: int,
+    spans_grid: list[list[list[tuple[int, int]]]],
+    top_block: str,
+    filler_block: str,
+    bottom_block: str,
+) -> list[str]:
+    """spans 路径：按段 loop fill 一个 section 的 4096 方块名列表。
+
+    ``spans_grid[z][x]`` = 该列的 solid spans 列表（inclusive (floor_y, ceiling_y)）。
+    与 ``_build_section_blocks`` 同 block 顺序（y-major / z / x）。
+    """
+    blocks: list[str] = []
+    section_min_y = section_y * SECTION_HEIGHT
+    for local_y in range(SECTION_HEIGHT):
+        world_y = section_min_y + local_y
+        for z in range(CHUNK_WIDTH):
+            for x in range(CHUNK_WIDTH):
+                spans = spans_grid[z][x]
+                surface_y = _column_surface_y(spans)
+                blocks.append(
+                    _block_at_in_spans(
+                        world_y, spans, surface_y,
+                        top_block, filler_block, bottom_block,
+                    )
+                )
+    return blocks
+
+
+def _write_section_blocks(buf: BytesIO, section_y: int, section_blocks: list[str]) -> None:
+    """Common section serialization given the already-built 4096 block names."""
     palette, data_longs = _section_block_palette_and_data(section_blocks)
 
     # Y
@@ -253,6 +308,34 @@ def _write_section(
     _write_named_tag(buf, TAG_COMPOUND, "biomes")
     _write_biomes(buf)
     _write_compound_end(buf)
+
+
+def _write_section(
+    buf: BytesIO,
+    section_y: int,
+    heights: list[list[int]],
+    top_block: str,
+    filler_block: str,
+    bottom_block: str,
+) -> None:
+    section_blocks = _build_section_blocks(
+        section_y, heights, top_block, filler_block, bottom_block
+    )
+    _write_section_blocks(buf, section_y, section_blocks)
+
+
+def _write_section_from_spans(
+    buf: BytesIO,
+    section_y: int,
+    spans_grid: list[list[list[tuple[int, int]]]],
+    top_block: str,
+    filler_block: str,
+    bottom_block: str,
+) -> None:
+    section_blocks = _build_section_blocks_from_spans(
+        section_y, spans_grid, top_block, filler_block, bottom_block
+    )
+    _write_section_blocks(buf, section_y, section_blocks)
 
 
 # ----- Heightmap -----
@@ -409,4 +492,145 @@ def chunk_to_nbt_compressed(
 ) -> bytes:
     """chunk_to_nbt 的 zlib 压缩版本，region writer 直接写入。"""
     raw = chunk_to_nbt(chunk_x, chunk_z, heights, **kwargs)
+    return zlib.compress(raw, level=6)
+
+
+# ----- spans 路径（worldgen-v4 P0 §8.1 #8）-----
+
+
+def _encode_heightmap_from_spans(
+    spans_grid: list[list[list[tuple[int, int]]]],
+) -> list[int]:
+    """Heightmap from per-column spans: stored value = surface_y + 1 - WORLD_MIN_Y.
+
+    Surface = span[0].ceiling (§8.1 #2).  A void column stores WORLD_MIN_Y so the
+    motion-blocking heightmap stays in range (no solid above bedrock).
+    """
+    encoded_values: list[int] = []
+    for z in range(CHUNK_WIDTH):
+        for x in range(CHUNK_WIDTH):
+            spans = spans_grid[z][x]
+            surface_y = _column_surface_y(spans)
+            h = surface_y if surface_y is not None else WORLD_MIN_Y
+            stored = h + 1 - WORLD_MIN_Y
+            if stored < 0 or stored >= (1 << HEIGHTMAP_BITS):
+                raise ValueError(
+                    f"heightmap value out of range: surface={h} stored={stored} "
+                    f"max={(1 << HEIGHTMAP_BITS) - 1}"
+                )
+            encoded_values.append(stored)
+
+    indices_per_long = 64 // HEIGHTMAP_BITS
+    longs: list[int] = []
+    long_value = 0
+    in_current = 0
+    for v in encoded_values:
+        long_value |= (v & ((1 << HEIGHTMAP_BITS) - 1)) << (in_current * HEIGHTMAP_BITS)
+        in_current += 1
+        if in_current == indices_per_long:
+            longs.append(_to_signed_long(long_value))
+            long_value = 0
+            in_current = 0
+    if in_current > 0:
+        longs.append(_to_signed_long(long_value))
+    return longs
+
+
+def _validate_spans_grid(spans_grid: list[list[list[tuple[int, int]]]]) -> None:
+    if len(spans_grid) != CHUNK_WIDTH:
+        raise ValueError(
+            f"spans_grid 必须 {CHUNK_WIDTH}x{CHUNK_WIDTH}，外层 row 数 {len(spans_grid)}"
+        )
+    for z, row in enumerate(spans_grid):
+        if len(row) != CHUNK_WIDTH:
+            raise ValueError(f"spans_grid[{z}] 长度必须 {CHUNK_WIDTH}，实际 {len(row)}")
+        for x, spans in enumerate(row):
+            prev_ceiling: int | None = None
+            for floor_y, ceiling_y in sorted(spans):
+                if floor_y < WORLD_MIN_Y or ceiling_y >= WORLD_MAX_Y:
+                    raise ValueError(
+                        f"spans_grid[{z}][{x}] span ({floor_y},{ceiling_y}) 超出 "
+                        f"[{WORLD_MIN_Y}, {WORLD_MAX_Y})"
+                    )
+                if floor_y > ceiling_y:
+                    raise ValueError(
+                        f"spans_grid[{z}][{x}] floor_y={floor_y} > ceiling_y={ceiling_y}"
+                    )
+                if prev_ceiling is not None and floor_y <= prev_ceiling + 1:
+                    raise ValueError(
+                        f"spans_grid[{z}][{x}] 段重叠/相邻: floor_y={floor_y} "
+                        f"<= prev ceiling_y={prev_ceiling} + 1"
+                    )
+                prev_ceiling = ceiling_y
+
+
+def chunk_to_nbt_from_spans(
+    chunk_x: int,
+    chunk_z: int,
+    spans_grid: list[list[list[tuple[int, int]]]],
+    top_block: str = DEFAULT_TOP_BLOCK,
+    filler_block: str = DEFAULT_FILLER_BLOCK,
+    bottom_block: str = DEFAULT_BOTTOM_BLOCK,
+) -> bytes:
+    """spans 版 chunk NBT 编码：按段 loop fill 而非单 height（§8.1 #8）。
+
+    Args:
+        spans_grid: 16x16，``spans_grid[z][x]`` = 该列 inclusive (floor_y, ceiling_y)
+                    solid spans 列表（来自 spans.bin 解码）。空列 = []（全虚空）。
+    其余同 ``chunk_to_nbt``。
+    """
+    if not isinstance(chunk_x, int) or not isinstance(chunk_z, int):
+        raise TypeError(
+            f"chunk_x / chunk_z 必须 int，实际 {type(chunk_x).__name__} / {type(chunk_z).__name__}"
+        )
+    _validate_spans_grid(spans_grid)
+
+    buf = BytesIO()
+    _write_named_tag(buf, TAG_COMPOUND, "")
+
+    _write_named_tag(buf, TAG_INT, "DataVersion")
+    _write_int(buf, DATA_VERSION)
+    _write_named_tag(buf, TAG_INT, "xPos")
+    _write_int(buf, chunk_x)
+    _write_named_tag(buf, TAG_INT, "yPos")
+    _write_int(buf, MIN_SECTION_Y)
+    _write_named_tag(buf, TAG_INT, "zPos")
+    _write_int(buf, chunk_z)
+    _write_named_tag(buf, TAG_STRING, "Status")
+    _write_string(buf, "minecraft:full")
+    _write_named_tag(buf, TAG_LONG, "LastUpdate")
+    _write_long(buf, 0)
+    _write_named_tag(buf, TAG_LONG, "InhabitedTime")
+    _write_long(buf, 0)
+
+    _write_named_tag(buf, TAG_LIST, "sections")
+    _write_list_header(buf, TAG_COMPOUND, TOTAL_SECTIONS)
+    for section_y in range(MIN_SECTION_Y, MAX_SECTION_Y + 1):
+        _write_section_from_spans(
+            buf, section_y, spans_grid, top_block, filler_block, bottom_block
+        )
+
+    _write_named_tag(buf, TAG_LIST, "block_entities")
+    _write_list_header(buf, TAG_END, 0)
+
+    _write_named_tag(buf, TAG_COMPOUND, "Heightmaps")
+    heightmap_longs = _encode_heightmap_from_spans(spans_grid)
+    _write_named_tag(buf, TAG_LONG_ARRAY, "MOTION_BLOCKING")
+    _write_long_array(buf, heightmap_longs)
+    _write_named_tag(buf, TAG_LONG_ARRAY, "WORLD_SURFACE")
+    _write_long_array(buf, heightmap_longs)
+    _write_compound_end(buf)
+
+    _write_compound_end(buf)
+    return buf.getvalue()
+
+
+def chunk_to_nbt_from_spans_compressed(
+    chunk_x: int,
+    chunk_z: int,
+    spans_grid: list[list[list[tuple[int, int]]]],
+    **kwargs,
+) -> bytes:
+    """chunk_to_nbt_from_spans 的 zlib 压缩版本。"""
+    raw = chunk_to_nbt_from_spans(chunk_x, chunk_z, spans_grid, **kwargs)
     return zlib.compress(raw, level=6)

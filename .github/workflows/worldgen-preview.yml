@@ -60,13 +60,28 @@ jobs:
       - name: Install Python deps (worldgen + compose_grid + validator)
         run: pip install numpy pillow
 
-      - name: Unit tests — anvil_export + anvil_region_writer
-        # plan-worldgen-anvil-export-v1 §1.4 + §2.4: 39 个饱和单测
-        # 在 pipeline 跑前早跑，编码 / region 文件格式 bug 立即撞红
+      - name: Unit tests — anvil_export + anvil_region_writer + spans
+        # plan-worldgen-anvil-export-v1 §1.4 + §2.4: 饱和单测
+        # plan-worldgen-v4 P0 §8.1 #8: anvil spans 路径（按段 loop fill）
+        # 在 pipeline 跑前早跑，编码 / region / span 文件格式 bug 立即撞红
         working-directory: worldgen/scripts/terrain_gen
         run: |
           python3 -m unittest test_anvil_export -v
           python3 -m unittest test_anvil_region_writer -v
+          python3 -m unittest test_anvil_spans -v
+
+      - name: Unit tests — worldgen-v4 spans (codec / shim / blend / export / check)
+        # plan-worldgen-v4 P0: span 表示地基的 Python 侧饱和单测。worldgen/tests/
+        # 目录历史不在 CI；P0 显式纳入 span 相关用例防回归。
+        working-directory: worldgen
+        run: |
+          python3 -m unittest discover -s tests -p 'test_spans.py' -v
+          python3 -m unittest discover -s tests -p 'test_spans_shim.py' -v
+          python3 -m unittest discover -s tests -p 'test_span_blend.py' -v
+          python3 -m unittest discover -s tests -p 'test_spans_export.py' -v
+          python3 -m unittest discover -s tests -p 'test_raster_check_spans.py' -v
+          python3 -m unittest discover -s tests -p 'test_v3_behavior_baseline.py' -v
+          python3 -m unittest discover -s tests -p 'test_layer_registry_fixture.py' -v
 
       - name: Unit tests — validate_snapshots
         # plan-worldgen-snapshot-v1 §4.3：validator 自身有饱和单测（31 个），
