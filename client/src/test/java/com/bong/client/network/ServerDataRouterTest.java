@@ -175,7 +175,10 @@ public class ServerDataRouterTest {
             // plan-exploration-probe-return-v1 P0 — 神识感知矿脉回执 S2C
             "mineral_probe_result",
             // plan-exploration-probe-return-v1 P2 — 修炼顿悟邀约 S2C
-            "insight_offer"
+            "insight_offer",
+            // plan-agent-ui-data-v1 P1 — 天道动态 UI 面板 S2C（request + close 同 handler）
+            "agent_ui_request",
+            "agent_ui_close"
         ), router.registeredTypes());
     }
 

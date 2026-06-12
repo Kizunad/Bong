@@ -1,4 +1,5 @@
 import type {
+  AgentUiResponsePayloadV1,
   AgentWorldModelEnvelopeV1,
   BotanyEcologySnapshotV1,
   ChatMessageV1,
@@ -8,10 +9,12 @@ import type {
   NpcDeathV1,
   PriceIndexV1,
   RatPhaseChangeEventV1,
+  TsyZoneActivatedV1,
   WeatherEventUpdateV1,
   WorldStateV1,
   ZonePressureCrossedV1,
 } from "@bong/schema";
+import type { AgentUiRuntime } from "./ui/agentUiRuntime.js";
 import dotenv from "dotenv";
 import { mkdir, readdir, unlink, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
@@ -130,6 +133,11 @@ export interface TickAgent {
   setWorldModel?(worldModel: WorldModel): void;
   /** plan-offscreen-war-v1 P4：注入本窗口离屏 death 事件（喂 offscreenWarBlock）。 */
   setNpcDeathEvents?(events: NpcDeathV1[]): void;
+  /**
+   * plan-agent-ui-data-v1 P2 — 注入本轮玩家 UI button_click 事件。
+   * Arbiter/Agent tick 把 button_click 追加到推演上下文，让天道感知玩家意图。
+   */
+  setButtonClickEvents?(events: AgentUiResponsePayloadV1[]): void;
 }
 
 export interface RuntimeRedis {
@@ -139,6 +147,8 @@ export interface RuntimeRedis {
   drainRatPhaseEvents?(): RatPhaseChangeEventV1[];
   /** plan-offscreen-war-v1 P4：drain 本窗口 bong:npc/death 事件喂 offscreenWarBlock（context）。 */
   drainNpcDeathEvents?(): NpcDeathV1[];
+  /** plan-agent-ui-data-v1 P2：drain tsy_zone_activated 事件供 triggerUi 生产路径消费。 */
+  drainTsyZoneActivatedEvents?(): TsyZoneActivatedV1[];
   drainPriceIndexEvents?(): PriceIndexV1[];
   drainWeatherEventUpdates?(): WeatherEventUpdateV1[];
   drainBotanyEcologyEvents?(): BotanyEcologySnapshotV1[];
@@ -166,6 +176,12 @@ export interface RuntimeDeps {
   maxLoopIterations?: number;
   telemetrySink?: TelemetrySink;
   deterministicNpcProducer?: DeterministicNpcProducer;
+  /**
+   * plan-agent-ui-data-v1 P2 — 天道 UI runtime；若提供则：
+   *   - 每轮 tick 前 drain pendingButtonClicks → 注入该轮推演输入
+   *   - fresh state 后 drain tsy_zone_activated → 触发 triggerUi TSY 秘境面板
+   */
+  agentUiRuntime?: AgentUiRuntime;
 }
 
 interface WorldStateCursor {
@@ -182,6 +198,11 @@ export interface TickDeps {
   chatSignals?: ChatSignal[];
   /** plan-offscreen-war-v1 P4：本窗口离屏 death 事件，喂 offscreenWarBlock（变化/演绎时代）。 */
   npcDeathEvents?: NpcDeathV1[];
+  /**
+   * plan-agent-ui-data-v1 P2 — 上轮 AgentUiRuntime.drainPendingButtonClicks() 的结果，
+   * 注入本轮推演作为玩家 UI 交互上下文（Arbiter 合并前由 context/agent 消费）。
+   */
+  buttonClickEvents?: AgentUiResponsePayloadV1[];
   worldModel?: WorldModel;
   publishCommands: (request: CommandPublishRequest) => Promise<void>;
   publishNarrations: (request: NarrationPublishRequest) => Promise<void>;
@@ -418,6 +439,7 @@ export async function runTick(state: WorldStateV1, deps: TickDeps): Promise<Tick
     modelOverrides,
     chatSignals,
     npcDeathEvents,
+    buttonClickEvents,
     worldModel,
     publishCommands,
     publishNarrations,
@@ -431,6 +453,17 @@ export async function runTick(state: WorldStateV1, deps: TickDeps): Promise<Tick
     telemetryWarnLogger,
     deterministicNpcProducer,
   } = deps;
+
+  // plan-agent-ui-data-v1 P2 — 把上轮 drainPendingButtonClicks 结果注入推演日志，
+  // 让 agent context 感知玩家 UI 交互（button_click 事件作为玩家意图信号）。
+  // 注意：实际注入 agents 在 applyButtonClickEventsToAgents 完成（见下方）。
+  if (buttonClickEvents && buttonClickEvents.length > 0) {
+    logger.log(
+      `[tiandao] button_click inject: count=${buttonClickEvents.length} ` +
+      `ids=${buttonClickEvents.map((e) => e.params["button_id"] ?? "(none)").join(",")} ` +
+      `(player ui interaction context for this tick)`,
+    );
+  }
   const measuredTickStartMs = tickStartedAtMs ?? Date.now();
   const effectiveModelOverrides = modelOverrides ?? {
     default: model,
@@ -464,6 +497,8 @@ export async function runTick(state: WorldStateV1, deps: TickDeps): Promise<Tick
   applyWorldModelToAgents(agents, worldModel);
   applyChatSignalsToAgents(agents, chatSignals ?? []);
   applyNpcDeathEventsToAgents(agents, npcDeathEvents ?? []);
+  // plan-agent-ui-data-v1 P2 — button_click 真注入：玩家 UI 交互信号进每个 agent 推演上下文。
+  applyButtonClickEventsToAgents(agents, buttonClickEvents ?? []);
   logger.log("[tiandao] === tick start ===");
   logger.log(
     `[tiandao] tick: ${state.tick}, players: ${state.players.length}, zones: ${state.zones.length}, correlation_id: ${metadata.correlationId}`,
@@ -726,6 +761,21 @@ function applyNpcDeathEventsToAgents(agents: TickAgent[], events: NpcDeathV1[]):
   }
 }
 
+/**
+ * plan-agent-ui-data-v1 P2 — 把 button_click 事件注入每个 agent 的推演上下文。
+ * 仿照 applyNpcDeathEventsToAgents：遍历 agents，调用可选的 setButtonClickEvents。
+ */
+function applyButtonClickEventsToAgents(
+  agents: TickAgent[],
+  events: AgentUiResponsePayloadV1[],
+): void {
+  for (const agent of agents) {
+    if (typeof agent.setButtonClickEvents === "function") {
+      agent.setButtonClickEvents(events);
+    }
+  }
+}
+
 function applyWorldModelToAgents(agents: TickAgent[], worldModel?: WorldModel): void {
   if (!worldModel) {
     return;
@@ -974,11 +1024,97 @@ function isLocustSwarmSpawnCommand(command: Command): boolean {
     && command.params.tide_kind === "locust_swarm";
 }
 
+/**
+ * plan-agent-ui-data-v1 P2 Fix① — TSY 秘境激活 → triggerUi 参考生产路径。
+ *
+ * 当 tsy_zone_activated 事件到达时，从 world state 找出秘境内（zone 名匹配 family_id）
+ * 或全体在线玩家（若秘境内无人），选第一个玩家触发 tsy_discovery UI 面板。
+ *
+ * 设计决议（plan §P2 验收 line 167-170）：
+ *   - 仅作为"参考生产路径"：垂死传承/天道启示触发源属下游 skeleton plan，不在本 plan 范围
+ *   - dangerTier 从 zone snapshot 的 danger_level 推算（0-7 → 低危/中危/高危/极危）
+ *   - 若无在线玩家则静默跳过（不 emit）
+ */
+export async function processTsyZoneActivatedForUi(args: {
+  state: WorldStateV1;
+  events: TsyZoneActivatedV1[];
+  agentUiRuntime: AgentUiRuntime;
+  logger: Pick<typeof console, "log" | "warn">;
+}): Promise<void> {
+  const { state, events, agentUiRuntime, logger } = args;
+  for (const event of events) {
+    // 优先用 event.player_id 直接命中触发玩家（server bridge 已解析为 canonical_player_id）；
+    // 旧逻辑「p.zone === event.family_id」在 zone 名带 _shallow/_mid/_deep 后缀时永不匹配，
+    // 已弃用。fallback 到在线第一个玩家以确保面板总能送达。
+    const targetPlayer =
+      state.players.find((p) => p.uuid === event.player_id) ?? state.players[0];
+    if (!targetPlayer) {
+      logger.log(
+        `[tiandao] tsy_zone_activated family=${event.family_id} tick=${event.tick}: ` +
+        `no online players, skipping triggerUi`,
+      );
+      continue;
+    }
+
+    // 从 zone snapshot 推算展示信息
+    const zoneSnap = state.zones.find((z) => z.name === event.family_id);
+    const spiritQiDisplay = zoneSnap
+      ? zoneSnap.spirit_qi.toFixed(2)
+      : "0.50";
+    const dangerTier = resolveTsyDangerTier(zoneSnap?.danger_level ?? 3);
+    const agentNarrative =
+      `天道感知到${event.family_id}（${event.source_class}遗址）出现活坍缩渊，` +
+      `灵气浓度异常，宜速做决断。`;
+
+    try {
+      const result = await agentUiRuntime.triggerUi({
+        scenario: "tsy_discovery",
+        targetPlayer,
+        params: {
+          zone_name: event.family_id,
+          spirit_qi_display: spiritQiDisplay,
+          danger_tier: dangerTier,
+          agent_narrative: agentNarrative,
+        },
+      });
+      logger.log(
+        `[tiandao] triggerUi tsy_discovery: family=${event.family_id} ` +
+        `player=${targetPlayer.uuid} request_id=${result.requestId} ` +
+        `blur=${result.sentBlurVersion}`,
+      );
+    } catch (error) {
+      logger.warn(
+        `[tiandao] triggerUi failed for family=${event.family_id}:`,
+        error,
+      );
+    }
+  }
+}
+
+/**
+ * danger_level (0-7) → 中文危险等级字符串（TSY 面板展示用）
+ *
+ * 阈值设计（来源：worldgen/scripts/terrain_gen/fields.py danger_level 定义）：
+ *   0-1 低危：探索型区域，无明显威胁
+ *   2-3 中危：有已知危险存在，需谨慎
+ *   4-5 高危：强力威胁，推荐凝脉境+才入
+ *   6-7 极危：极端危险，极少数通灵境以上可应对
+ *
+ * 如需调整分档，同步更新 docs/worldview.md §活坍缩渊危险等级 与对应测试。
+ */
+function resolveTsyDangerTier(dangerLevel: number): string {
+  if (dangerLevel <= 1) return "低危";
+  if (dangerLevel <= 3) return "中危";
+  if (dangerLevel <= 5) return "高危";
+  return "极危";
+}
+
 export async function runRuntime(
   config: RuntimeConfig,
   deps: RuntimeDeps = {},
 ): Promise<void> {
   const logger = deps.logger ?? console;
+  const agentUiRuntime = deps.agentUiRuntime;
   const modelOverrides = resolveModelOverrides(config);
   const agents = deps.agents ?? createDefaultAgents({ modelOverrides });
   const llmClientsByRole = createRuntimeClients(
@@ -1156,6 +1292,29 @@ export async function runRuntime(
             );
             pendingStaleSkip = true;
           } else {
+            // plan-agent-ui-data-v1 P2 Fix②: drain pendingButtonClicks 注入本轮推演输入。
+            // 必须在 runTick 之前 drain，让 button_click 作为玩家 UI 交互上下文进入本轮推演。
+            const drainedButtonClicks = agentUiRuntime?.drainPendingButtonClicks() ?? [];
+            if (drainedButtonClicks.length > 0) {
+              logger.log(
+                `[tiandao] ui button_click drain: count=${drainedButtonClicks.length} ` +
+                `(injecting into tick=${state.tick} as player interaction context)`,
+              );
+            }
+
+            // plan-agent-ui-data-v1 P2 — session_end drain 接线：
+            // 消费 dismissed / timeout / completed 信号，标记当前面板上下文已结束。
+            // 防止 pendingSessionEnds 队列无界增长（内存泄漏），同时为下游 plan 提供扩展点。
+            const drainedSessionEnds = agentUiRuntime?.drainPendingSessionEnds() ?? [];
+            if (drainedSessionEnds.length > 0) {
+              for (const se of drainedSessionEnds) {
+                logger.log(
+                  `[tiandao] ui session_end: action=${se.action} request_id=${se.request_id} ` +
+                  `(panel context ended, tick=${state.tick})`,
+                );
+              }
+            }
+
             await runFreshTickWithPublish({
               worldModel,
               run: async () => {
@@ -1167,6 +1326,7 @@ export async function runRuntime(
                   modelOverrides,
                   chatSignals: latestChatSignals,
                   npcDeathEvents: drainedNpcDeaths,
+                  buttonClickEvents: drainedButtonClicks,
                   worldModel,
                   publishCommands: (request) => redis.publishCommands(request),
                   publishNarrations: (request) => redis.publishNarrations(request),
@@ -1205,6 +1365,21 @@ export async function runRuntime(
                     },
                   });
                 }
+
+                // plan-agent-ui-data-v1 P2 Fix①: TSY 秘境发现 → triggerUi 生产路径接通。
+                // drain tsy_zone_activated 事件，为秘境内的玩家触发 tsy_discovery UI 面板。
+                if (agentUiRuntime) {
+                  const tsyActivatedEvents = redis.drainTsyZoneActivatedEvents?.() ?? [];
+                  if (tsyActivatedEvents.length > 0) {
+                    await processTsyZoneActivatedForUi({
+                      state,
+                      events: tsyActivatedEvents,
+                      agentUiRuntime,
+                      logger,
+                    });
+                  }
+                }
+
                 await persistWorldModelAfterFreshTick({
                   worldModel,
                   redis,

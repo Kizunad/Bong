@@ -44,6 +44,21 @@ impl Realm {
             Realm::Void => 20,
         }
     }
+
+    /// plan-agent-ui-data-v1 P0 — 境界 1-indexed rank（与 `realm_gate` 比较）。
+    ///
+    /// 醒灵=1, 引气=2, 凝脉=3, 固元=4, 通灵=5, 化虚=6。
+    /// realm_gate=0 表示不门控，判断时 player_rank >= realm_gate（0 恒真）。
+    pub fn rank(self) -> u8 {
+        match self {
+            Realm::Awaken => 1,
+            Realm::Induce => 2,
+            Realm::Condense => 3,
+            Realm::Solidify => 4,
+            Realm::Spirit => 5,
+            Realm::Void => 6,
+        }
+    }
 }
 
 /// 20 条经脉（12 正经 + 8 奇经）。
@@ -415,6 +430,51 @@ mod tests {
     fn realm_previous_chain() {
         assert_eq!(Realm::Awaken.previous(), None);
         assert_eq!(Realm::Void.previous(), Some(Realm::Spirit));
+    }
+
+    /// plan-agent-ui-data-v1 — Realm::rank() 枚举映射 pin 测试。
+    ///
+    /// 每个变体独立断言：
+    ///   醒灵=1, 引气=2, 凝脉=3, 固元=4, 通灵=5, 化虚=6。
+    /// 与 realm_gate 上限 6 一起，确保"仅化虚可见（realm_gate=6）"可被正确表达。
+    #[test]
+    fn realm_rank_pin_all_variants() {
+        assert_eq!(
+            Realm::Awaken.rank(),
+            1,
+            "醒灵 rank 期望=1（realm_gate=1 表示醒灵+），实为 {}",
+            Realm::Awaken.rank()
+        );
+        assert_eq!(
+            Realm::Induce.rank(),
+            2,
+            "引气 rank 期望=2，实为 {}",
+            Realm::Induce.rank()
+        );
+        assert_eq!(
+            Realm::Condense.rank(),
+            3,
+            "凝脉 rank 期望=3，实为 {}",
+            Realm::Condense.rank()
+        );
+        assert_eq!(
+            Realm::Solidify.rank(),
+            4,
+            "固元 rank 期望=4，实为 {}",
+            Realm::Solidify.rank()
+        );
+        assert_eq!(
+            Realm::Spirit.rank(),
+            5,
+            "通灵 rank 期望=5，实为 {}",
+            Realm::Spirit.rank()
+        );
+        assert_eq!(
+            Realm::Void.rank(),
+            6,
+            "化虚 rank 期望=6（realm_gate 上限，仅化虚可见），实为 {}",
+            Realm::Void.rank()
+        );
     }
 
     #[test]

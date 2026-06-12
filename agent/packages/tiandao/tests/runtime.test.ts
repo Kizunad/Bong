@@ -13,6 +13,7 @@ import {
   runTick,
   runRuntime,
   processLocustSwarmEvents,
+  processTsyZoneActivatedForUi,
   type RuntimeModelOverrides,
   type CommandPublishRequest,
   type NarrationPublishRequest,
@@ -22,7 +23,7 @@ import { LlmBackoffError, LlmTimeoutError, type LlmClient } from "../src/llm.js"
 import type { TelemetrySink } from "../src/telemetry.js";
 import { WorldModel, type WorldModelSnapshot } from "../src/world-model.js";
 import { FakeAgent, createTestWorldState } from "./support/fakes.js";
-import type { AgentWorldModelEnvelopeV1, ChatMessageV1, Command, Narration, NpcDeathV1, RatPhaseChangeEventV1 } from "@bong/schema";
+import type { AgentUiResponsePayloadV1, AgentWorldModelEnvelopeV1, ChatMessageV1, Command, Narration, NpcDeathV1, RatPhaseChangeEventV1, TsyZoneActivatedV1 } from "@bong/schema";
 
 function createStructuredChatResult(content: string, model: string) {
   return {
@@ -2235,5 +2236,604 @@ describe("runRuntime", () => {
       process.chdir(previousCwd);
       await rm(tempDir, { recursive: true, force: true });
     }
+  });
+});
+
+// ─── plan-agent-ui-data-v1 P2 Fix①: triggerUi 在 TSY 秘境信号下被调 → emit AGENT_UI_CMD ─────
+
+describe("processTsyZoneActivatedForUi (Fix①: triggerUi production path)", () => {
+  /** 构造一个最小 mock AgentUiRuntime，只暴露 triggerUi */
+  function makeMockUiRuntime() {
+    return {
+      triggerUi: vi.fn(async (_opts: unknown) => ({
+        requestId: "mock-request-id-001",
+        sentBlurVersion: false,
+      })),
+      drainPendingButtonClicks: vi.fn(() => [] as AgentUiResponsePayloadV1[]),
+      drainPendingSessionEnds: vi.fn(() => [] as AgentUiResponsePayloadV1[]),
+    };
+  }
+
+  function makeTsyZoneActivatedV1(overrides: Partial<TsyZoneActivatedV1> = {}): TsyZoneActivatedV1 {
+    return {
+      v: 1,
+      kind: "tsy_zone_activated",
+      tick: 1000,
+      family_id: "tsy_lingxu_01",
+      source_class: "dao_lord",
+      // 默认 player_id 对应 createTestWorldState() 中唯一的在线玩家
+      player_id: "offline:test-player",
+      ...overrides,
+    };
+  }
+
+  it("calls triggerUi with tsy_discovery scenario when a TSY zone activates with a player online", async () => {
+    const uiRuntime = makeMockUiRuntime();
+    const state = createTestWorldState(); // has player with uuid "offline:test-player"
+    // player_id 直接命中 state.players[0].uuid，无需 zone 名匹配
+    const event = makeTsyZoneActivatedV1({ player_id: "offline:test-player" });
+
+    await processTsyZoneActivatedForUi({
+      state,
+      events: [event],
+      agentUiRuntime: uiRuntime as never,
+      logger: { log: vi.fn(), warn: vi.fn() },
+    });
+
+    expect(uiRuntime.triggerUi, "triggerUi must be called once for a TSY activation event").toHaveBeenCalledOnce();
+    const opts = uiRuntime.triggerUi.mock.calls[0][0] as Record<string, unknown>;
+    expect(opts["scenario"], "scenario must be tsy_discovery").toBe("tsy_discovery");
+    expect(opts["targetPlayer"], "targetPlayer must be set to the online player").toBeTruthy();
+    const target = opts["targetPlayer"] as { uuid: string };
+    expect(target.uuid, "targetPlayer must be the player_id from the event").toBe("offline:test-player");
+    const params = opts["params"] as Record<string, string>;
+    expect(params["zone_name"], "zone_name must match family_id").toBe("tsy_lingxu_01");
+    expect(params["danger_tier"], "danger_tier must be resolved from zone snapshot").toBeTruthy();
+    expect(params["agent_narrative"], "agent_narrative must contain family_id").toContain("tsy_lingxu_01");
+  });
+
+  it("player_id 直接命中目标玩家（不靠 zone 名匹配）", async () => {
+    // 回归：旧逻辑 p.zone===event.family_id 在 zone 名带 _shallow/_mid/_deep 后缀时永远不匹配；
+    // 新逻辑 p.uuid===event.player_id 直接命中，family_id 与 zone 名不一致也能正确送达。
+    const uiRuntime = makeMockUiRuntime();
+    const state = createTestWorldState(); // player zone="starter_zone"，uuid="offline:test-player"
+    // family_id 是秘境 id（"tsy_lingxu_01"），不是 zone 名；player_id 直接给出目标
+    const event = makeTsyZoneActivatedV1({
+      family_id: "tsy_lingxu_01",
+      player_id: "offline:test-player",
+    });
+
+    await processTsyZoneActivatedForUi({
+      state,
+      events: [event],
+      agentUiRuntime: uiRuntime as never,
+      logger: { log: vi.fn(), warn: vi.fn() },
+    });
+
+    expect(uiRuntime.triggerUi, "即使 zone 名与 family_id 不匹配，player_id 直接命中应调用 triggerUi").toHaveBeenCalledOnce();
+    const opts = uiRuntime.triggerUi.mock.calls[0][0] as Record<string, unknown>;
+    const target = opts["targetPlayer"] as { uuid: string };
+    expect(target.uuid, "targetPlayer 应为 player_id 指定的玩家").toBe("offline:test-player");
+  });
+
+  it("falls back to first online player when player_id not found in state", async () => {
+    const uiRuntime = makeMockUiRuntime();
+    const state = createTestWorldState(); // player uuid="offline:test-player"
+    // player_id 指向一个不在线的玩家 → 回退到在线第一个
+    const event = makeTsyZoneActivatedV1({ player_id: "offline:unknown-player" });
+
+    await processTsyZoneActivatedForUi({
+      state,
+      events: [event],
+      agentUiRuntime: uiRuntime as never,
+      logger: { log: vi.fn(), warn: vi.fn() },
+    });
+
+    // Falls back to first online player
+    expect(uiRuntime.triggerUi, "should fallback to first online player").toHaveBeenCalledOnce();
+    const opts = uiRuntime.triggerUi.mock.calls[0][0] as Record<string, unknown>;
+    const target = opts["targetPlayer"] as { uuid: string };
+    expect(target.uuid, "target player uuid is the first online player").toBe("offline:test-player");
+  });
+
+  it("skips triggerUi and logs when there are no online players", async () => {
+    const uiRuntime = makeMockUiRuntime();
+    const state = { ...createTestWorldState(), players: [] };
+    const event = makeTsyZoneActivatedV1();
+    const logSpy = vi.fn();
+
+    await processTsyZoneActivatedForUi({
+      state,
+      events: [event],
+      agentUiRuntime: uiRuntime as never,
+      logger: { log: logSpy, warn: vi.fn() },
+    });
+
+    expect(uiRuntime.triggerUi, "no players → triggerUi must NOT be called").not.toHaveBeenCalled();
+    expect(logSpy, "should log skip message").toHaveBeenCalledWith(
+      expect.stringContaining("no online players"),
+    );
+  });
+
+  it("processes multiple TSY activation events in one batch", async () => {
+    const uiRuntime = makeMockUiRuntime();
+    const state = createTestWorldState();
+    const events = [
+      makeTsyZoneActivatedV1({ family_id: "tsy_a", tick: 100 }),
+      makeTsyZoneActivatedV1({ family_id: "tsy_b", tick: 101 }),
+      makeTsyZoneActivatedV1({ family_id: "tsy_c", tick: 102 }),
+    ];
+
+    await processTsyZoneActivatedForUi({
+      state,
+      events,
+      agentUiRuntime: uiRuntime as never,
+      logger: { log: vi.fn(), warn: vi.fn() },
+    });
+
+    expect(
+      uiRuntime.triggerUi.mock.calls,
+      `expected 3 triggerUi calls because all TSY activation events should be attempted, actual ${uiRuntime.triggerUi.mock.calls.length}`,
+    ).toHaveLength(3);
+  });
+
+  it("warns and continues when triggerUi throws for one event", async () => {
+    const uiRuntime = makeMockUiRuntime();
+    uiRuntime.triggerUi
+      .mockRejectedValueOnce(new Error("redis down"))
+      .mockResolvedValueOnce({ requestId: "req-002", sentBlurVersion: false });
+
+    const state = createTestWorldState();
+    const events = [
+      makeTsyZoneActivatedV1({ family_id: "tsy_fail", tick: 200 }),
+      makeTsyZoneActivatedV1({ family_id: "tsy_ok", tick: 201 }),
+    ];
+    const warnSpy = vi.fn();
+
+    await processTsyZoneActivatedForUi({
+      state,
+      events,
+      agentUiRuntime: uiRuntime as never,
+      logger: { log: vi.fn(), warn: warnSpy },
+    });
+
+    // Both events attempted
+    expect(
+      uiRuntime.triggerUi.mock.calls,
+      `expected 2 triggerUi calls because failure in one event must not stop the batch, actual ${uiRuntime.triggerUi.mock.calls.length}`,
+    ).toHaveLength(2);
+    expect(warnSpy, "should warn on triggerUi failure").toHaveBeenCalledOnce();
+    expect(
+      warnSpy.mock.calls[0][0],
+      `expected warning to mention triggerUi failed, actual ${warnSpy.mock.calls[0]?.[0]}`,
+    ).toContain("triggerUi failed");
+  });
+
+  it("emits AGENT_UI_CMD via agentUiRuntime.triggerUi for dao_lord source class", async () => {
+    const uiRuntime = makeMockUiRuntime();
+    const state = createTestWorldState();
+    const event = makeTsyZoneActivatedV1({ source_class: "dao_lord" });
+
+    await processTsyZoneActivatedForUi({
+      state, events: [event], agentUiRuntime: uiRuntime as never, logger: { log: vi.fn(), warn: vi.fn() },
+    });
+
+    const params = (uiRuntime.triggerUi.mock.calls[0][0] as Record<string, unknown>)["params"] as Record<string, string>;
+    expect(params["agent_narrative"], "narrative references source class").toContain("dao_lord");
+  });
+});
+
+// ─── plan-agent-ui-data-v1 P2 Fix②: Arbiter loop drain → button_click 进推演输入 ─────────────
+
+describe("runRuntime Fix②: drainPendingButtonClicks injected into tick before each Arbiter run", () => {
+  /** 扩展 SequenceRuntimeRedis 支持 drainTsyZoneActivatedEvents（返回空） */
+  class AgentUiAwareRuntimeRedis implements RuntimeRedis {
+    public readonly connect = vi.fn(async () => {});
+    public readonly disconnect = vi.fn(async () => {});
+    public readonly drainPlayerChat = vi.fn(async (): Promise<ChatMessageV1[]> => []);
+    public readonly publishCommands = vi.fn(async (_r: CommandPublishRequest) => {});
+    public readonly publishNarrations = vi.fn(async (_r: NarrationPublishRequest) => {});
+    public readonly drainTsyZoneActivatedEvents = vi.fn(() => [] as TsyZoneActivatedV1[]);
+    private index = 0;
+    constructor(private readonly states: Array<ReturnType<typeof createTestWorldState> | null>) {}
+    getLatestState() {
+      const s = this.states[Math.min(this.index, this.states.length - 1)] ?? null;
+      this.index += 1;
+      return s;
+    }
+  }
+
+  it("drain is called exactly once per fresh-state tick and button_clicks logged as injected (Fix②)", async () => {
+    const clickEvent: AgentUiResponsePayloadV1 = {
+      request_id: "req-fix2-001",
+      action: "button_click",
+      params: { button_id: "enter_realm" },
+    };
+    const mockUiRuntime = {
+      triggerUi: vi.fn(async () => ({ requestId: "r", sentBlurVersion: false })),
+      drainPendingButtonClicks: vi.fn()
+        .mockReturnValueOnce([clickEvent]) // first tick: one click
+        .mockReturnValue([]),              // subsequent ticks: empty
+      drainPendingSessionEnds: vi.fn(() => []),
+    };
+
+    const state1 = createTestWorldState();
+    const state2 = { ...createTestWorldState(), tick: 124, ts: state1.ts + 5 };
+    const redis = new AgentUiAwareRuntimeRedis([state1, state2, null]);
+    const logger = { log: vi.fn(), error: vi.fn(), warn: vi.fn() };
+
+    const tempDir = await mkdtemp(join(tmpdir(), "tiandao-fix2-"));
+    const prevCwd = process.cwd();
+    try {
+      process.chdir(tempDir);
+      await mkdir(join(tempDir, "data"), { recursive: true });
+
+      await runRuntime(
+        {
+          mockMode: false,
+          model: DEFAULT_MODEL,
+          redisUrl: DEFAULT_REDIS_URL,
+          baseUrl: "https://llm.example.test/v1",
+          apiKey: "k_test",
+        },
+        {
+          createRedis: () => redis,
+          createClient: () => ({ chat: vi.fn(async (m: string) => ({ content: "[]", durationMs: 0, requestId: "r", model: m })) }),
+          agents: [new FakeAgent("calamity", { commands: [], narrations: [], reasoning: "ok" })],
+          sleep: vi.fn(async () => {}),
+          logger,
+          maxLoopIterations: 3,
+          agentUiRuntime: mockUiRuntime as never,
+        },
+      );
+    } finally {
+      process.chdir(prevCwd);
+      await rm(tempDir, { recursive: true, force: true });
+    }
+
+    // Fix②: drainPendingButtonClicks 必须在每轮 fresh-state tick 时被调
+    expect(
+      mockUiRuntime.drainPendingButtonClicks.mock.calls.length,
+      "drainPendingButtonClicks should be called for each fresh-state tick",
+    ).toBeGreaterThanOrEqual(1);
+
+    // Fix②: button_click 注入时应有 log 记录
+    const logLines = logger.log.mock.calls.flatMap((c) => c.map(String));
+    const injectLog = logLines.find((l) => l.includes("button_click inject") && l.includes("enter_realm"));
+    expect(injectLog, "should log button_click inject with button_id=enter_realm").toBeTruthy();
+  });
+
+  it("runRuntime with no agentUiRuntime proceeds without error (drain skipped gracefully)", async () => {
+    const redis = new AgentUiAwareRuntimeRedis([createTestWorldState(), null]);
+    const logger = { log: vi.fn(), error: vi.fn(), warn: vi.fn() };
+
+    const tempDir = await mkdtemp(join(tmpdir(), "tiandao-fix2-noop-"));
+    const prevCwd = process.cwd();
+    try {
+      process.chdir(tempDir);
+      await mkdir(join(tempDir, "data"), { recursive: true });
+
+      await expect(
+        runRuntime(
+          {
+            mockMode: false,
+            model: DEFAULT_MODEL,
+            redisUrl: DEFAULT_REDIS_URL,
+            baseUrl: "https://llm.example.test/v1",
+            apiKey: "k_test",
+          },
+          {
+            createRedis: () => redis,
+            createClient: () => ({ chat: vi.fn(async (m: string) => ({ content: "[]", durationMs: 0, requestId: "r", model: m })) }),
+            agents: [new FakeAgent("calamity", { commands: [], narrations: [], reasoning: "ok" })],
+            sleep: vi.fn(async () => {}),
+            logger,
+            maxLoopIterations: 2,
+            // agentUiRuntime intentionally omitted
+          },
+        ),
+      ).resolves.toBeUndefined();
+    } finally {
+      process.chdir(prevCwd);
+      await rm(tempDir, { recursive: true, force: true });
+    }
+
+    expect(logger.error, "no errors when agentUiRuntime is absent").not.toHaveBeenCalled();
+  });
+
+  // ─── session_end drain 接线 ────────────────────────────────────────────────
+
+  it("drainPendingSessionEnds is called in runRuntime loop and session_end is logged (接线验收)", async () => {
+    const sessionEndEvent: AgentUiResponsePayloadV1 = {
+      request_id: "req-se-001",
+      action: "dismissed",
+      params: {},
+    };
+    const mockUiRuntime = {
+      triggerUi: vi.fn(async () => ({ requestId: "r", sentBlurVersion: false })),
+      drainPendingButtonClicks: vi.fn(() => []),
+      drainPendingSessionEnds: vi.fn()
+        .mockReturnValueOnce([sessionEndEvent]) // first tick: one session_end
+        .mockReturnValue([]),
+    };
+
+    const state1 = createTestWorldState();
+    const redis = new AgentUiAwareRuntimeRedis([state1, null]);
+    const logger = { log: vi.fn(), error: vi.fn(), warn: vi.fn() };
+
+    const tempDir = await mkdtemp(join(tmpdir(), "tiandao-se-drain-"));
+    const prevCwd = process.cwd();
+    try {
+      process.chdir(tempDir);
+      await mkdir(join(tempDir, "data"), { recursive: true });
+
+      await runRuntime(
+        {
+          mockMode: false,
+          model: DEFAULT_MODEL,
+          redisUrl: DEFAULT_REDIS_URL,
+          baseUrl: "https://llm.example.test/v1",
+          apiKey: "k_test",
+        },
+        {
+          createRedis: () => redis,
+          createClient: () => ({ chat: vi.fn(async (m: string) => ({ content: "[]", durationMs: 0, requestId: "r", model: m })) }),
+          agents: [new FakeAgent("calamity", { commands: [], narrations: [], reasoning: "ok" })],
+          sleep: vi.fn(async () => {}),
+          logger,
+          maxLoopIterations: 2,
+          agentUiRuntime: mockUiRuntime as never,
+        },
+      );
+    } finally {
+      process.chdir(prevCwd);
+      await rm(tempDir, { recursive: true, force: true });
+    }
+
+    // drainPendingSessionEnds 必须在每轮 fresh-state tick 时被调
+    expect(
+      mockUiRuntime.drainPendingSessionEnds.mock.calls.length,
+      "drainPendingSessionEnds must be called at least once in the loop",
+    ).toBeGreaterThanOrEqual(1);
+
+    // session_end 消费时应有 log 记录（action=dismissed, request_id）
+    const logLines = logger.log.mock.calls.flatMap((c) => c.map(String));
+    const sessionEndLog = logLines.find(
+      (l) => l.includes("session_end") && l.includes("dismissed") && l.includes("req-se-001"),
+    );
+    expect(
+      sessionEndLog,
+      "should log session_end with action=dismissed and request_id=req-se-001",
+    ).toBeTruthy();
+  });
+});
+
+// ─── plan-agent-ui-data-v1 P2 Fix③: button_click 真注入 agent 推演上下文 ──────────────────────
+
+describe("runTick button_click 真注入: applyButtonClickEventsToAgents 进 agent.setButtonClickEvents", () => {
+  /** TickAgent 实现了 setButtonClickEvents，用于验证注入路径 */
+  class ButtonClickAwareAgent extends FakeAgent {
+    public receivedButtonClicks: AgentUiResponsePayloadV1[] = [];
+
+    setButtonClickEvents(events: AgentUiResponsePayloadV1[]): void {
+      this.receivedButtonClicks = events;
+    }
+  }
+
+  it("runTick calls setButtonClickEvents on agent with button_click events", async () => {
+    const clickEvent: AgentUiResponsePayloadV1 = {
+      request_id: "req-inject-001",
+      action: "button_click",
+      params: { button_id: "enter_realm" },
+    };
+    const agent = new ButtonClickAwareAgent("calamity", { commands: [], narrations: [], reasoning: "ok" });
+    const state = createTestWorldState();
+
+    await runTick(state, {
+      agents: [agent],
+      llmClient: { chat: vi.fn(async (m: string) => ({ content: "[]", durationMs: 0, requestId: "r", model: m })) },
+      model: DEFAULT_MODEL,
+      buttonClickEvents: [clickEvent],
+      publishCommands: vi.fn(async () => {}),
+      publishNarrations: vi.fn(async () => {}),
+      logger: { log: vi.fn(), error: vi.fn() },
+    });
+
+    expect(
+      agent.receivedButtonClicks,
+      "agent.setButtonClickEvents must be called with the button_click events (真注入验收)",
+    ).toHaveLength(1);
+    expect(
+      agent.receivedButtonClicks[0].params["button_id"],
+      "injected button_id must match the original click event",
+    ).toBe("enter_realm");
+  });
+
+  it("runTick with empty buttonClickEvents does not call setButtonClickEvents", async () => {
+    const agent = new ButtonClickAwareAgent("calamity", { commands: [], narrations: [], reasoning: "ok" });
+    const state = createTestWorldState();
+
+    await runTick(state, {
+      agents: [agent],
+      llmClient: { chat: vi.fn(async (m: string) => ({ content: "[]", durationMs: 0, requestId: "r", model: m })) },
+      model: DEFAULT_MODEL,
+      buttonClickEvents: [], // empty
+      publishCommands: vi.fn(async () => {}),
+      publishNarrations: vi.fn(async () => {}),
+      logger: { log: vi.fn(), error: vi.fn() },
+    });
+
+    // setButtonClickEvents is called with empty array (not undefined), queue size stays 0
+    expect(
+      agent.receivedButtonClicks,
+      "empty buttonClickEvents: agent receives empty array (no residual from prior state)",
+    ).toHaveLength(0);
+  });
+
+  it("runTick with no buttonClickEvents field calls setButtonClickEvents with empty array", async () => {
+    const agent = new ButtonClickAwareAgent("era", { commands: [], narrations: [], reasoning: "ok" });
+    const state = createTestWorldState();
+
+    await runTick(state, {
+      agents: [agent],
+      llmClient: { chat: vi.fn(async (m: string) => ({ content: "[]", durationMs: 0, requestId: "r", model: m })) },
+      model: DEFAULT_MODEL,
+      // buttonClickEvents omitted
+      publishCommands: vi.fn(async () => {}),
+      publishNarrations: vi.fn(async () => {}),
+      logger: { log: vi.fn(), error: vi.fn() },
+    });
+
+    expect(
+      agent.receivedButtonClicks,
+      "omitted buttonClickEvents: agent receives empty array (setButtonClickEvents called with [])",
+    ).toHaveLength(0);
+  });
+
+  it("multiple button_click events all reach agent.setButtonClickEvents", async () => {
+    const clicks: AgentUiResponsePayloadV1[] = [
+      { request_id: "r1", action: "button_click", params: { button_id: "enter_realm" } },
+      { request_id: "r2", action: "button_click", params: { button_id: "observe_only" } },
+    ];
+    const agent = new ButtonClickAwareAgent("mutation", { commands: [], narrations: [], reasoning: "ok" });
+    const state = createTestWorldState();
+
+    await runTick(state, {
+      agents: [agent],
+      llmClient: { chat: vi.fn(async (m: string) => ({ content: "[]", durationMs: 0, requestId: "r", model: m })) },
+      model: DEFAULT_MODEL,
+      buttonClickEvents: clicks,
+      publishCommands: vi.fn(async () => {}),
+      publishNarrations: vi.fn(async () => {}),
+      logger: { log: vi.fn(), error: vi.fn() },
+    });
+
+    expect(
+      agent.receivedButtonClicks,
+      `expected 2 button click events to be injected into agent, actual ${agent.receivedButtonClicks.length}`,
+    ).toHaveLength(2);
+    expect(
+      agent.receivedButtonClicks[0].params["button_id"],
+      `expected first button_id enter_realm because order must be preserved, actual ${agent.receivedButtonClicks[0].params["button_id"]}`,
+    ).toBe("enter_realm");
+    expect(
+      agent.receivedButtonClicks[1].params["button_id"],
+      `expected second button_id observe_only because order must be preserved, actual ${agent.receivedButtonClicks[1].params["button_id"]}`,
+    ).toBe("observe_only");
+  });
+
+  it("agent without setButtonClickEvents is not affected (graceful no-op)", async () => {
+    // FakeAgent does NOT implement setButtonClickEvents → should not throw
+    const agentWithout = new FakeAgent("calamity", { commands: [], narrations: [], reasoning: "ok" });
+    const agentWith = new ButtonClickAwareAgent("era", { commands: [], narrations: [], reasoning: "ok" });
+    const state = createTestWorldState();
+    const clicks: AgentUiResponsePayloadV1[] = [
+      { request_id: "r1", action: "button_click", params: { button_id: "dismiss" } },
+    ];
+
+    const result = await runTick(state, {
+      agents: [agentWithout, agentWith],
+      llmClient: { chat: vi.fn(async (m: string) => ({ content: "[]", durationMs: 0, requestId: "r", model: m })) },
+      model: DEFAULT_MODEL,
+      buttonClickEvents: clicks,
+      publishCommands: vi.fn(async () => {}),
+      publishNarrations: vi.fn(async () => {}),
+      logger: { log: vi.fn(), error: vi.fn() },
+    });
+    expect(result, "expected runTick to resolve with TickResult when an agent lacks setButtonClickEvents").toBeDefined();
+
+    // agent with setButtonClickEvents received the events
+    expect(
+      agentWith.receivedButtonClicks,
+      `expected setButtonClickEvents-capable agent to receive 1 click, actual ${agentWith.receivedButtonClicks.length}`,
+    ).toHaveLength(1);
+  });
+});
+
+// ─── plan-agent-ui-data-v1 P2 BLOCKER: target_player canonical format ─────────────────────────
+
+describe("processTsyZoneActivatedForUi target_player canonical format (BLOCKER-身份键)", () => {
+  it("target_player passed to triggerUi is the player.uuid field (offline:X canonical format)", async () => {
+    const uiRuntime = {
+      triggerUi: vi.fn(async (_opts: unknown) => ({
+        requestId: "mock-request-id-canonical",
+        sentBlurVersion: false,
+      })),
+      drainPendingButtonClicks: vi.fn(() => [] as AgentUiResponsePayloadV1[]),
+      drainPendingSessionEnds: vi.fn(() => [] as AgentUiResponsePayloadV1[]),
+    };
+
+    // createTestWorldState() already uses uuid: "offline:test-player" (canonical format)
+    const state = createTestWorldState();
+    const event: TsyZoneActivatedV1 = {
+      v: 1,
+      kind: "tsy_zone_activated",
+      tick: 1001,
+      family_id: "tsy_canonical_test",
+      source_class: "dao_lord",
+      // player_id 直接给出 canonical 格式 id，与 server bridge 解析一致
+      player_id: "offline:test-player",
+    };
+
+    await processTsyZoneActivatedForUi({
+      state,
+      events: [event],
+      agentUiRuntime: uiRuntime as never,
+      logger: { log: vi.fn(), warn: vi.fn() },
+    });
+
+    expect(uiRuntime.triggerUi, "expected triggerUi to be called once for canonical target_player event").toHaveBeenCalledOnce();
+    const opts = uiRuntime.triggerUi.mock.calls[0][0] as Record<string, unknown>;
+    const targetPlayer = opts["targetPlayer"] as { uuid: string; name: string };
+
+    // BLOCKER 契约 pin：target_player 必须是 "offline:X" 格式（canonical_player_id）
+    // 与 server agent_ui.rs 的 canonical_player_id(username.0.as_str()) 比较逻辑对齐
+    expect(
+      targetPlayer.uuid,
+      "target_player.uuid must be 'offline:X' (canonical_player_id format) to match server lookup",
+    ).toBe("offline:test-player");
+    expect(
+      targetPlayer.uuid,
+      "canonical id must start with 'offline:' prefix",
+    ).toMatch(/^offline:/);
+  });
+
+  it("target_player canonical id is preserved intact through triggerUi → renderUi → command.target_player", async () => {
+    // End-to-end: processTsyZoneActivatedForUi → agentUiRuntime.triggerUi → target_player field
+    // The triggerUi receives targetPlayer.uuid which is the world-state canonical id.
+    // This pin test verifies the uuid string is never transformed (no stripping, no concatenation).
+    const state = createTestWorldState();
+    // UUID is "offline:test-player" — canonical format
+    expect(
+      state.players[0].uuid,
+      "createTestWorldState player.uuid must be in canonical 'offline:X' format (world-state contract)",
+    ).toMatch(/^offline:/);
+
+    const capturedTargetPlayer: { uuid: string }[] = [];
+    const uiRuntime = {
+      triggerUi: vi.fn(async (opts: unknown) => {
+        const o = opts as Record<string, unknown>;
+        capturedTargetPlayer.push(o["targetPlayer"] as { uuid: string });
+        return { requestId: "r-canon", sentBlurVersion: false };
+      }),
+      drainPendingButtonClicks: vi.fn(() => [] as AgentUiResponsePayloadV1[]),
+      drainPendingSessionEnds: vi.fn(() => [] as AgentUiResponsePayloadV1[]),
+    };
+
+    await processTsyZoneActivatedForUi({
+      state,
+      events: [{ v: 1, kind: "tsy_zone_activated", tick: 2000, family_id: "tsy_lingxu_01", source_class: "sect_ruins", player_id: state.players[0].uuid }],
+      agentUiRuntime: uiRuntime as never,
+      logger: { log: vi.fn(), warn: vi.fn() },
+    });
+
+    expect(
+      capturedTargetPlayer,
+      `expected exactly 1 captured targetPlayer because one TSY event was processed, actual ${capturedTargetPlayer.length}`,
+    ).toHaveLength(1);
+    expect(
+      capturedTargetPlayer[0].uuid,
+      "targetPlayer.uuid passed to triggerUi must equal the world-state player.uuid unchanged",
+    ).toBe(state.players[0].uuid);
   });
 });

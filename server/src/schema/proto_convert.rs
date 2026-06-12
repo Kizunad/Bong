@@ -1443,6 +1443,15 @@ impl From<&ServerDataPayloadV1> for Payload {
                 y: position[1],
                 z: position[2],
             }),
+            // ─── plan-agent-ui-data-v1 P0：天道 UI-as-Data（无 proto 定义，JSON 旁路）
+            // AgentUiRequest / AgentUiClose 通过 JSON CustomPayload 发送给 client，
+            // 不走 proto 编码路径。若此分支被触发，说明调用方走错了路径。
+            ServerDataPayloadV1::AgentUiRequest(_) | ServerDataPayloadV1::AgentUiClose(_) => {
+                unreachable!(
+                    "AgentUiRequest/AgentUiClose 经由 JSON CustomPayload 发送，不走 proto 编码路径；\
+                    此分支不可达——若触发说明调用方绕过了 JSON bypass 契约"
+                )
+            }
         }
     }
 }
@@ -3856,6 +3865,15 @@ impl From<&super::client_request::ClientRequestV1> for bong::client_request_enve
             // plan-shield-block-v1 P1 — 持续举盾 / 放盾 C2S
             ClientRequestV1::RaiseShield { .. } => Payload::RaiseShield(bong::RaiseShield {}),
             ClientRequestV1::LowerShield { .. } => Payload::LowerShield(bong::LowerShield {}),
+            // ─── plan-agent-ui-data-v1 P0：天道 UI 响应（JSON CustomPayload，无 proto 定义）
+            // AgentUiResponse 通过 JSON CustomPayload 接收，不走 proto 编码路径。
+            // 若此分支被触发，说明调用方走错了路径（proto bypass 契约被破坏）。
+            ClientRequestV1::AgentUiResponse { .. } => {
+                unreachable!(
+                    "AgentUiResponse 经由 JSON CustomPayload 接收，不走 proto 编码路径；\
+                    此分支不可达——若触发说明调用方绕过了 JSON bypass 契约"
+                )
+            }
         }
     }
 }
@@ -4746,5 +4764,113 @@ mod tests {
                  confirms the payload is not silently mapped to another variant"
             ),
         }
+    }
+
+    // ─── plan-agent-ui-data-v1 P0：AgentUi JSON-bypass 协议契约 pin 测试 ───────
+
+    /// AgentUiResponse 协议契约：JSON CustomPayload 路径有效，proto 路径不可达。
+    ///
+    /// 此测试锁死两条重要约束：
+    /// 1. AgentUiResponsePayloadV1 JSON 正样本 roundtrip 正确（JSON 路径真实可用）。
+    /// 2. C2S proto 转换函数中 AgentUiResponse 分支标记为 unreachable（检查代码注释+结构）。
+    ///
+    /// 保护目的：防止将来切换 proto 编码时无意触发此分支（footgun 消除 pin）。
+    #[test]
+    fn agent_ui_response_json_bypass_contract_pin() {
+        use crate::schema::agent_ui::{AgentUiActionType, AgentUiResponsePayloadV1};
+        use std::collections::HashMap;
+
+        // JSON 路径正样本 roundtrip（验证 JSON bypass 路径真实可用）
+        let response = AgentUiResponsePayloadV1 {
+            request_id: "pin-test-req".to_string(),
+            action: AgentUiActionType::ButtonClick,
+            params: {
+                let mut m = HashMap::new();
+                m.insert("button_id".to_string(), "confirm".to_string());
+                m
+            },
+        };
+        let json =
+            serde_json::to_string(&response).expect("AgentUiResponsePayloadV1 JSON 序列化不应失败");
+        let decoded: AgentUiResponsePayloadV1 =
+            serde_json::from_str(&json).expect("AgentUiResponsePayloadV1 JSON 反序列化不应失败");
+
+        assert_eq!(
+            decoded.request_id, "pin-test-req",
+            "AgentUiResponsePayloadV1 request_id 应在 JSON roundtrip 后保持，期望 pin-test-req，实为 {}",
+            decoded.request_id
+        );
+        assert_eq!(
+            decoded.action,
+            AgentUiActionType::ButtonClick,
+            "AgentUiResponsePayloadV1 action 应在 JSON roundtrip 后保持 ButtonClick"
+        );
+        assert_eq!(
+            decoded.params.get("button_id").map(String::as_str),
+            Some("confirm"),
+            "AgentUiResponsePayloadV1 params.button_id 应在 JSON roundtrip 后保持 confirm"
+        );
+
+        // S2C AgentUiRequest/Close 同样走 JSON bypass，不走 proto。
+        // 以下验证 JSON bypass 路径对 AgentUiRequestPayloadV1 也正确。
+        use crate::schema::agent_ui::AgentUiRequestPayloadV1;
+        let request = AgentUiRequestPayloadV1 {
+            request_id: "pin-req".to_string(),
+            target_player: "pin-player".to_string(),
+            xml: "<owo-ui><components><label>test</label></components></owo-ui>".to_string(),
+            timeout_ticks: 600,
+        };
+        let json2 =
+            serde_json::to_string(&request).expect("AgentUiRequestPayloadV1 JSON 序列化不应失败");
+        let decoded2: AgentUiRequestPayloadV1 =
+            serde_json::from_str(&json2).expect("AgentUiRequestPayloadV1 JSON 反序列化不应失败");
+        assert_eq!(
+            decoded2.timeout_ticks, 600,
+            "AgentUiRequestPayloadV1 timeout_ticks 应在 JSON roundtrip 后保持 600"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "AgentUiRequest/AgentUiClose 经由 JSON CustomPayload 发送")]
+    fn agent_ui_request_panics_if_proto_path_is_used() {
+        use crate::schema::agent_ui::AgentUiRequestPayloadV1;
+
+        let payload = ServerDataPayloadV1::AgentUiRequest(AgentUiRequestPayloadV1 {
+            request_id: "pin-req".to_string(),
+            target_player: "offline:Kiz".to_string(),
+            xml: "<owo-ui><components><label>test</label></components></owo-ui>".to_string(),
+            timeout_ticks: 600,
+        });
+        let _: bong::server_data_envelope::Payload = (&payload).into();
+    }
+
+    #[test]
+    #[should_panic(expected = "AgentUiRequest/AgentUiClose 经由 JSON CustomPayload 发送")]
+    fn agent_ui_close_panics_if_proto_path_is_used() {
+        use crate::schema::agent_ui::AgentUiClosePayloadV1;
+
+        let payload = ServerDataPayloadV1::AgentUiClose(AgentUiClosePayloadV1 {
+            request_id: "pin-req".to_string(),
+            reason: Some("session_expired".to_string()),
+        });
+        let _: bong::server_data_envelope::Payload = (&payload).into();
+    }
+
+    #[test]
+    #[should_panic(expected = "AgentUiResponse 经由 JSON CustomPayload 接收")]
+    fn agent_ui_response_panics_if_proto_path_is_used() {
+        use crate::schema::agent_ui::AgentUiActionType;
+        use crate::schema::client_request::ClientRequestV1;
+
+        let req = ClientRequestV1::AgentUiResponse {
+            v: 1,
+            request_id: "pin-req".to_string(),
+            action: AgentUiActionType::ButtonClick,
+            params: std::collections::HashMap::from([(
+                "button_id".to_string(),
+                "enter_realm".to_string(),
+            )]),
+        };
+        let _: bong::client_request_envelope::Payload = (&req).into();
     }
 }

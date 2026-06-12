@@ -326,6 +326,8 @@ pub struct ClientRequestDispatchParams<'w> {
     // ─── plan-shield-block-v1 P1：持续举盾 intent ─────────────────────────
     pub raise_shield_tx: EventWriter<'w, RaiseShieldIntent>,
     pub lower_shield_tx: EventWriter<'w, LowerShieldIntent>,
+    // ─── plan-agent-ui-data-v1 P0：天道 UI 面板响应 ─────────────────────────
+    pub agent_ui_response_tx: EventWriter<'w, crate::network::agent_ui::AgentUiResponseEvent>,
 }
 // NOTE: plan-qi-handling-attrition-v1 P0/P1 磨损写权限已合并入 AlchemyRequestParams.zones
 // (ResMut) 和 AlchemyRequestParams.attrition_qi_transfers，避免与 AlchemyRequestParams.zones
@@ -559,7 +561,8 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::ExternalContainerClose { v, .. }
             | ClientRequestV1::GiveDanToElder { v, .. }
             | ClientRequestV1::RaiseShield { v }
-            | ClientRequestV1::LowerShield { v } => *v,
+            | ClientRequestV1::LowerShield { v }
+            | ClientRequestV1::AgentUiResponse { v, .. } => *v,
         };
         if v != SUPPORTED_VERSION {
             tracing::warn!(
@@ -2441,6 +2444,28 @@ pub fn handle_client_request_payloads(
                     .lower_shield_tx
                     .send(LowerShieldIntent { player: ev.client });
             }
+            // ─── plan-agent-ui-data-v1 P0：天道 UI 面板响应 ─────────────
+            // agent_ui.rs 的 receive_agent_ui_response_system 负责处理；
+            // 此处仅记录 trace 并发出 AgentUiResponseEvent Bevy event。
+            ClientRequestV1::AgentUiResponse {
+                request_id,
+                action,
+                params,
+                ..
+            } => {
+                tracing::debug!(
+                    "[bong][agent_ui] AgentUiResponse received entity={:?} request_id={request_id}",
+                    ev.client,
+                );
+                dispatch.agent_ui_response_tx.send(
+                    crate::network::agent_ui::AgentUiResponseEvent {
+                        player: ev.client,
+                        request_id: request_id.clone(),
+                        action: action.clone(),
+                        params: params.clone(),
+                    },
+                );
+            }
         }
     }
 }
@@ -3702,6 +3727,8 @@ mod tests {
         // plan-shield-block-v1 P1 — 举盾 intent events（ClientRequestDispatchParams 需要）。
         app.add_event::<crate::combat::shield_block::RaiseShieldIntent>();
         app.add_event::<crate::combat::shield_block::LowerShieldIntent>();
+        // plan-agent-ui-data-v1 P0 — 天道 UI 响应 event（ClientRequestDispatchParams 需要）。
+        app.add_event::<crate::network::agent_ui::AgentUiResponseEvent>();
         app.add_systems(
             Update,
             (
@@ -4526,6 +4553,7 @@ mod tests {
         // plan-shield-block-v1 P1 — 举盾 intent events（ClientRequestDispatchParams 需要）。
         app.add_event::<crate::combat::shield_block::RaiseShieldIntent>();
         app.add_event::<crate::combat::shield_block::LowerShieldIntent>();
+        app.add_event::<crate::network::agent_ui::AgentUiResponseEvent>();
         app.add_systems(
             Update,
             (
@@ -4961,6 +4989,7 @@ mod tests {
         // plan-shield-block-v1 P1 — 举盾 intent events（ClientRequestDispatchParams 需要）。
         app.add_event::<crate::combat::shield_block::RaiseShieldIntent>();
         app.add_event::<crate::combat::shield_block::LowerShieldIntent>();
+        app.add_event::<crate::network::agent_ui::AgentUiResponseEvent>();
         app.add_systems(
             Update,
             (handle_client_request_payloads, capture_mineral_probes).chain(),
@@ -5027,6 +5056,7 @@ mod tests {
         // plan-shield-block-v1 P1 — 举盾 intent events（ClientRequestDispatchParams 需要）。
         app.add_event::<crate::combat::shield_block::RaiseShieldIntent>();
         app.add_event::<crate::combat::shield_block::LowerShieldIntent>();
+        app.add_event::<crate::network::agent_ui::AgentUiResponseEvent>();
         app.add_systems(
             Update,
             (handle_client_request_payloads, capture_spirit_niche_places).chain(),
@@ -5256,6 +5286,7 @@ mod tests {
         // plan-shield-block-v1 P1 — 举盾 intent events（ClientRequestDispatchParams 需要）。
         app.add_event::<crate::combat::shield_block::RaiseShieldIntent>();
         app.add_event::<crate::combat::shield_block::LowerShieldIntent>();
+        app.add_event::<crate::network::agent_ui::AgentUiResponseEvent>();
         app.add_systems(
             Update,
             (
@@ -5336,6 +5367,7 @@ mod tests {
         // plan-shield-block-v1 P1 — 举盾 intent events（ClientRequestDispatchParams 需要）。
         app.add_event::<crate::combat::shield_block::RaiseShieldIntent>();
         app.add_event::<crate::combat::shield_block::LowerShieldIntent>();
+        app.add_event::<crate::network::agent_ui::AgentUiResponseEvent>();
         app.add_systems(
             Update,
             (handle_client_request_payloads, capture_mineral_probes).chain(),
@@ -5394,6 +5426,7 @@ mod tests {
         // plan-shield-block-v1 P1 — 举盾 intent events（ClientRequestDispatchParams 需要）。
         app.add_event::<crate::combat::shield_block::RaiseShieldIntent>();
         app.add_event::<crate::combat::shield_block::LowerShieldIntent>();
+        app.add_event::<crate::network::agent_ui::AgentUiResponseEvent>();
         app.add_systems(
             Update,
             (handle_client_request_payloads, capture_mineral_probes).chain(),
@@ -5517,6 +5550,7 @@ mod tests {
         // plan-shield-block-v1 P1 — 举盾 intent events（ClientRequestDispatchParams 需要）。
         app.add_event::<crate::combat::shield_block::RaiseShieldIntent>();
         app.add_event::<crate::combat::shield_block::LowerShieldIntent>();
+        app.add_event::<crate::network::agent_ui::AgentUiResponseEvent>();
         app.add_systems(Update, handle_client_request_payloads);
 
         let (client_bundle, _helper) = create_mock_client("Azure");
@@ -5603,6 +5637,7 @@ mod tests {
         // plan-shield-block-v1 P1 — 举盾 intent events（ClientRequestDispatchParams 需要）。
         app.add_event::<crate::combat::shield_block::RaiseShieldIntent>();
         app.add_event::<crate::combat::shield_block::LowerShieldIntent>();
+        app.add_event::<crate::network::agent_ui::AgentUiResponseEvent>();
         app.add_systems(Update, handle_client_request_payloads);
 
         let (client_bundle, mut helper) = create_mock_client("Azure");
@@ -5691,6 +5726,7 @@ mod tests {
         // plan-shield-block-v1 P1 — 举盾 intent events（ClientRequestDispatchParams 需要）。
         app.add_event::<crate::combat::shield_block::RaiseShieldIntent>();
         app.add_event::<crate::combat::shield_block::LowerShieldIntent>();
+        app.add_event::<crate::network::agent_ui::AgentUiResponseEvent>();
         app.add_event::<InscriptionScrollSubmit>();
         app.add_systems(Update, handle_client_request_payloads);
 
@@ -5757,6 +5793,7 @@ mod tests {
         // plan-shield-block-v1 P1 — 举盾 intent events（ClientRequestDispatchParams 需要）。
         app.add_event::<crate::combat::shield_block::RaiseShieldIntent>();
         app.add_event::<crate::combat::shield_block::LowerShieldIntent>();
+        app.add_event::<crate::network::agent_ui::AgentUiResponseEvent>();
         app.add_event::<InscriptionScrollSubmit>();
         app.add_systems(
             Update,
@@ -5828,6 +5865,7 @@ mod tests {
         // plan-shield-block-v1 P1 — 举盾 intent events（ClientRequestDispatchParams 需要）。
         app.add_event::<crate::combat::shield_block::RaiseShieldIntent>();
         app.add_event::<crate::combat::shield_block::LowerShieldIntent>();
+        app.add_event::<crate::network::agent_ui::AgentUiResponseEvent>();
         app.add_event::<InscriptionScrollSubmit>();
         app.add_systems(
             Update,
@@ -5897,6 +5935,7 @@ mod tests {
         // plan-shield-block-v1 P1 — 举盾 intent events（ClientRequestDispatchParams 需要）。
         app.add_event::<crate::combat::shield_block::RaiseShieldIntent>();
         app.add_event::<crate::combat::shield_block::LowerShieldIntent>();
+        app.add_event::<crate::network::agent_ui::AgentUiResponseEvent>();
         app.add_event::<TemperingHit>();
         app.add_systems(
             Update,
@@ -5957,6 +5996,7 @@ mod tests {
         // plan-shield-block-v1 P1 — 举盾 intent events（ClientRequestDispatchParams 需要）。
         app.add_event::<crate::combat::shield_block::RaiseShieldIntent>();
         app.add_event::<crate::combat::shield_block::LowerShieldIntent>();
+        app.add_event::<crate::network::agent_ui::AgentUiResponseEvent>();
         app.add_event::<TemperingHit>();
         app.add_systems(
             Update,
@@ -6013,6 +6053,7 @@ mod tests {
         // plan-shield-block-v1 P1 — 举盾 intent events（ClientRequestDispatchParams 需要）。
         app.add_event::<crate::combat::shield_block::RaiseShieldIntent>();
         app.add_event::<crate::combat::shield_block::LowerShieldIntent>();
+        app.add_event::<crate::network::agent_ui::AgentUiResponseEvent>();
         app.add_event::<ConsecrationInject>();
         app.add_systems(
             Update,
@@ -6073,6 +6114,7 @@ mod tests {
         // plan-shield-block-v1 P1 — 举盾 intent events（ClientRequestDispatchParams 需要）。
         app.add_event::<crate::combat::shield_block::RaiseShieldIntent>();
         app.add_event::<crate::combat::shield_block::LowerShieldIntent>();
+        app.add_event::<crate::network::agent_ui::AgentUiResponseEvent>();
         app.add_event::<ConsecrationInject>();
         app.add_systems(
             Update,
@@ -6129,6 +6171,7 @@ mod tests {
         // plan-shield-block-v1 P1 — 举盾 intent events（ClientRequestDispatchParams 需要）。
         app.add_event::<crate::combat::shield_block::RaiseShieldIntent>();
         app.add_event::<crate::combat::shield_block::LowerShieldIntent>();
+        app.add_event::<crate::network::agent_ui::AgentUiResponseEvent>();
         app.add_event::<StepAdvance>();
         app.add_systems(
             Update,
@@ -6189,6 +6232,7 @@ mod tests {
         // plan-shield-block-v1 P1 — 举盾 intent events（ClientRequestDispatchParams 需要）。
         app.add_event::<crate::combat::shield_block::RaiseShieldIntent>();
         app.add_event::<crate::combat::shield_block::LowerShieldIntent>();
+        app.add_event::<crate::network::agent_ui::AgentUiResponseEvent>();
         app.add_event::<TemperingHit>();
         app.add_event::<ConsecrationInject>();
         app.add_event::<StepAdvance>();
@@ -11314,6 +11358,7 @@ mod freshness_probe_handler_tests {
         // plan-shield-block-v1 P1 — 举盾 intent events（ClientRequestDispatchParams 需要）。
         app.add_event::<crate::combat::shield_block::RaiseShieldIntent>();
         app.add_event::<crate::combat::shield_block::LowerShieldIntent>();
+        app.add_event::<crate::network::agent_ui::AgentUiResponseEvent>();
         app.add_systems(
             Update,
             (handle_client_request_payloads, capture_freshness_probes).chain(),
@@ -11653,6 +11698,7 @@ mod freshness_probe_handler_tests {
         app.add_event::<SkillScrollUsed>();
         app.add_event::<crate::combat::shield_block::RaiseShieldIntent>();
         app.add_event::<crate::combat::shield_block::LowerShieldIntent>();
+        app.add_event::<crate::network::agent_ui::AgentUiResponseEvent>();
         app.add_systems(
             Update,
             (

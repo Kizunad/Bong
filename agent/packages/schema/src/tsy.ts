@@ -116,6 +116,9 @@ export function validateTsyCorpseSpawnEventV1Contract(data: unknown): Validation
  *  Server → Agent 单向；agent 用此事件做"某座坍缩渊被发现"narration / 风险评估。
  *  - `source_class`: 来源大类（"dao_lord" / "sect_ruins" / "battle_sediment"）—
  *    与 Rust `AncientRelicSource` 的 serde 形态对齐。
+ *  - `player_id`: 触发 first-enter 的玩家 canonical_player_id（"offline:<name>"）；
+ *    server bridge 从 ECS entity 解析写入，agent 直接用此字段找目标玩家，
+ *    无需再靠 zone 名匹配（zone 名带 _shallow/_mid/_deep 后缀，family_id 不带）。
  */
 export const TsyZoneActivatedV1 = Type.Object(
   {
@@ -128,6 +131,9 @@ export const TsyZoneActivatedV1 = Type.Object(
       Type.Literal("sect_ruins"),
       Type.Literal("battle_sediment"),
     ]),
+    /** 触发首次进入的玩家 canonical_player_id（"offline:<name>" 格式）。
+     *  agent 直接用此字段作为 triggerUi targetPlayer 选人依据。 */
+    player_id: Type.String({ minLength: 1 }),
   },
   { additionalProperties: false },
 );

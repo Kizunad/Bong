@@ -33,7 +33,9 @@ public final class UiOpenHandler implements ServerDataHandler {
 
     private static final String ROOT_ELEMENT = "owo-ui";
     private static final String COMPONENTS_ELEMENT = "components";
-    private static final Set<String> ALLOWED_COMPONENT_ELEMENTS = Set.of("flow-layout", "label");
+    private static final Set<String> ALLOWED_COMPONENT_ELEMENTS = Set.of(
+        "flow-layout", "label"
+    );
     private static final Map<String, Set<String>> ALLOWED_ATTRIBUTES_BY_ELEMENT = Map.of(
         ROOT_ELEMENT, Set.of(),
         COMPONENTS_ELEMENT, Set.of(),

@@ -6,7 +6,8 @@
     "kind",
     "tick",
     "family_id",
-    "source_class"
+    "source_class",
+    "player_id"
   ],
   "properties": {
     "v": {
@@ -40,6 +41,10 @@
           "type": "string"
         }
       ]
+    },
+    "player_id": {
+      "minLength": 1,
+      "type": "string"
     }
   }
 }

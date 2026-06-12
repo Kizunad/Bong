@@ -7,6 +7,7 @@ use crate::cultivation::void::components::VoidActionKind;
 use crate::fauna::rat_phase::RatPhaseChangeEvent;
 use crate::npc::dormant::NPC_DORMANT_REDIS_KEY;
 use crate::schema::agent_command::AgentCommandV1;
+use crate::schema::agent_ui::{AgentUiRequestCommandV1, AgentUiResponsePayloadV1};
 use crate::schema::agent_world_model::AgentWorldModelEnvelopeV1;
 use crate::schema::alchemy::{
     AlchemyInsightV1, AlchemyInterventionResultV1, AlchemySessionEndV1, AlchemySessionStartV1,
@@ -23,14 +24,15 @@ use crate::schema::baomai_v4::{
 };
 use crate::schema::botany::BotanyEcologySnapshotV1;
 use crate::schema::channels::{
-    CH_AGENT_COMMAND, CH_AGENT_NARRATE, CH_AGENT_WORLD_MODEL, CH_AGING, CH_ALCHEMY_INSIGHT,
-    CH_ALCHEMY_INTERVENTION_RESULT, CH_ALCHEMY_SESSION_END, CH_ALCHEMY_SESSION_START,
-    CH_ANQI_CARRIER_ABRASION, CH_ANQI_CARRIER_CHARGED, CH_ANQI_CARRIER_IMPACT,
-    CH_ANQI_CONTAINER_SWAP, CH_ANQI_ECHO_FRACTAL, CH_ANQI_MULTI_SHOT, CH_ANQI_PROJECTILE_DESPAWNED,
-    CH_ANQI_QI_INJECTION, CH_ANTICHEAT, CH_ARMOR_DURABILITY_CHANGED, CH_BAOMAI_V3_BLOOD_BURN,
-    CH_BAOMAI_V3_MOUNTAIN_SHAKE, CH_BAOMAI_V3_OVERLOAD_RIPPLE, CH_BAOMAI_V3_SKILL_EVENT,
-    CH_BAOMAI_V3_TRANSCENDENCE_EXPIRED, CH_BAOMAI_V4_IRON_COCOON_STAGE_UP,
-    CH_BAOMAI_V4_RESONANCE_LOCK, CH_BAOMAI_V4_RESONANCE_LOCK_END, CH_BAOMAI_V4_SCAR_CIRCUIT_BROKEN,
+    CH_AGENT_COMMAND, CH_AGENT_NARRATE, CH_AGENT_UI_CMD, CH_AGENT_UI_RESPONSE,
+    CH_AGENT_WORLD_MODEL, CH_AGING, CH_ALCHEMY_INSIGHT, CH_ALCHEMY_INTERVENTION_RESULT,
+    CH_ALCHEMY_SESSION_END, CH_ALCHEMY_SESSION_START, CH_ANQI_CARRIER_ABRASION,
+    CH_ANQI_CARRIER_CHARGED, CH_ANQI_CARRIER_IMPACT, CH_ANQI_CONTAINER_SWAP, CH_ANQI_ECHO_FRACTAL,
+    CH_ANQI_MULTI_SHOT, CH_ANQI_PROJECTILE_DESPAWNED, CH_ANQI_QI_INJECTION, CH_ANTICHEAT,
+    CH_ARMOR_DURABILITY_CHANGED, CH_BAOMAI_V3_BLOOD_BURN, CH_BAOMAI_V3_MOUNTAIN_SHAKE,
+    CH_BAOMAI_V3_OVERLOAD_RIPPLE, CH_BAOMAI_V3_SKILL_EVENT, CH_BAOMAI_V3_TRANSCENDENCE_EXPIRED,
+    CH_BAOMAI_V4_IRON_COCOON_STAGE_UP, CH_BAOMAI_V4_RESONANCE_LOCK,
+    CH_BAOMAI_V4_RESONANCE_LOCK_END, CH_BAOMAI_V4_SCAR_CIRCUIT_BROKEN,
     CH_BAOMAI_V4_SCAR_CIRCUIT_FORMED, CH_BONE_COIN_TICK, CH_BOTANY_ECOLOGY,
     CH_BREAKTHROUGH_CINEMATIC, CH_BREAKTHROUGH_EVENT, CH_COMBAT_REALTIME, CH_COMBAT_SUMMARY,
     CH_CULTIVATION_DEATH, CH_DEATH_CINEMATIC, CH_DEATH_INSIGHT, CH_DUGU_POISON_PROGRESS,
@@ -107,7 +109,7 @@ use crate::schema::style_balance::StyleBalanceTelemetryEventV1;
 use crate::schema::territory_narration::TerritoryDominanceNarrationRequestV1;
 use crate::schema::tiandao_hunt_narration::TiandaoHuntNarrationRequestV1;
 use crate::schema::tribulation::{TribulationEventV1, TribulationKindV1, TribulationPhaseV1};
-use crate::schema::tsy::{TsyEnterEventV1, TsyExitEventV1};
+use crate::schema::tsy::{TsyEnterEventV1, TsyExitEventV1, TsyZoneActivatedEventV1};
 use crate::schema::tsy_hostile::{TsyNpcSpawnedV1, TsySentinelPhaseChangedV1};
 use crate::schema::tuike::ShedEventV1;
 use crate::schema::tuike_v2::{TuikeAshDecayV1, TuikeSkillEventV1};
@@ -140,6 +142,9 @@ pub enum RedisInbound {
     InsightOffer(InsightOfferV1),
     HeartDemonOffer(HeartDemonOfferV1),
     SpiritTreasureDialogue(SpiritTreasureDialogueV1),
+    // ─── plan-agent-ui-data-v1 P0 ───────────────────────────────────
+    /// 天道 Agent 发布的 UI 面板指令（bong:agent_ui_cmd）。
+    AgentUiCmd(AgentUiRequestCommandV1),
 }
 
 #[derive(Debug, Clone)]
@@ -206,6 +211,9 @@ pub enum RedisOutbound {
     TsyExit(TsyExitEventV1),
     TsyNpcSpawned(TsyNpcSpawnedV1),
     TsySentinelPhaseChanged(TsySentinelPhaseChangedV1),
+    /// plan-agent-ui-data-v1 server fix — 坍缩渊首次激活（bong:tsy_event kind=tsy_zone_activated）。
+    /// agent 消费此事件触发秘境发现 UI 面板（drainTsyZoneActivatedEvents）。
+    TsyZoneActivated(TsyZoneActivatedEventV1),
     PoiSpawned(PoiSpawnedEventV1),
     PoiTrespass(TrespassEventV1),
     SocialExposure(SocialExposureEventV1),
@@ -287,6 +295,9 @@ pub enum RedisOutbound {
     /// plan-territory-v1 P3 — 领地霸主变动叙事请求（bong:territory_narration_request）。
     /// 三时刻：新霸主确立 / 霸主被驱逐 / 区域灵气耗尽。匿名（境界段，非 char_id）。
     TerritoryDominanceNarration(TerritoryDominanceNarrationRequestV1),
+    // ─── plan-agent-ui-data-v1 P0 ───────────────────────────────────
+    /// 玩家天道 UI 面板交互响应（bong:agent_ui_response）。
+    AgentUiResponse(AgentUiResponsePayloadV1),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1081,6 +1092,17 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
                 payload,
             })
         }
+        RedisOutbound::TsyZoneActivated(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!(
+                    "failed to serialize TsyZoneActivatedEventV1: {error}"
+                ))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_TSY_EVENT,
+                payload,
+            })
+        }
         RedisOutbound::PoiSpawned(evt) => {
             let payload = serde_json::to_string(&evt).map_err(|error| {
                 ValidationError::new(format!("failed to serialize PoiSpawnedEventV1: {error}"))
@@ -1606,6 +1628,18 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
                 payload,
             })
         }
+        // ─── plan-agent-ui-data-v1 P0 ───────────────────────────────
+        RedisOutbound::AgentUiResponse(resp) => {
+            let payload = serde_json::to_string(&resp).map_err(|error| {
+                ValidationError::new(format!(
+                    "failed to serialize AgentUiResponsePayloadV1: {error}"
+                ))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_AGENT_UI_RESPONSE,
+                payload,
+            })
+        }
     }
 }
 
@@ -2014,6 +2048,12 @@ async fn subscribe_inbound_channels(pubsub: &mut redis::aio::PubSub) -> Result<(
             format!("failed to subscribe to {CH_SPIRIT_TREASURE_DIALOGUE}: {error}")
         })?;
 
+    // ─── plan-agent-ui-data-v1 P0 ───────────────────────────────────
+    pubsub
+        .subscribe(CH_AGENT_UI_CMD)
+        .await
+        .map_err(|error| format!("failed to subscribe to {CH_AGENT_UI_CMD}: {error}"))?;
+
     Ok(())
 }
 
@@ -2146,6 +2186,12 @@ async fn run_subscriber_task(
                         dialogue.request_id,
                         dialogue.tone
                     ),
+                    // ─── plan-agent-ui-data-v1 P0 ──────────────────────────────────────
+                    RedisInbound::AgentUiCmd(cmd) => tracing::info!(
+                        "[bong][redis] received agent_ui_cmd: request_id={} target={}",
+                        cmd.request_id,
+                        cmd.target_player,
+                    ),
                 }
 
                 if tx_to_game.send(inbound).is_err() {
@@ -2234,6 +2280,16 @@ fn parse_inbound_message(
                     ))
                 })?;
             Ok(Some(RedisInbound::SpiritTreasureDialogue(dialogue)))
+        }
+        // ─── plan-agent-ui-data-v1 P0 ───────────────────────────────
+        CH_AGENT_UI_CMD => {
+            let cmd =
+                serde_json::from_value::<AgentUiRequestCommandV1>(value).map_err(|error| {
+                    ValidationError::new(format!(
+                        "failed to deserialize AgentUiRequestCommandV1: {error}"
+                    ))
+                })?;
+            Ok(Some(RedisInbound::AgentUiCmd(cmd)))
         }
         _ => Ok(None),
     }

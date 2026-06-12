@@ -1,6 +1,7 @@
 use serde::{de::Error as _, Deserialize, Deserializer, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use super::agent_ui::{AgentUiClosePayloadV1, AgentUiRequestPayloadV1};
 use super::alchemy::{
     AlchemyContaminationDataV1, AlchemyFurnaceDataV1, AlchemyOutcomeForecastDataV1,
     AlchemyOutcomeResolvedDataV1, AlchemyRecipeBookDataV1, AlchemySessionDataV1,
@@ -270,6 +271,11 @@ pub enum ServerDataType {
     FreshnessUpdate,
     // ─── plan-exploration-probe-return-v1 P2：修炼顿悟 S2C ──────────
     InsightOffer,
+    // ─── plan-agent-ui-data-v1 P0：天道 UI-as-Data S2C ──────────────
+    /// 天道 UI 面板请求（不含 realm_gate / allowed_button_ids 安全字段）。
+    AgentUiRequest,
+    /// 天道 UI 面板关闭信号（Replaced / 错误 / session_expired）。
+    AgentUiClose,
 }
 
 #[derive(Debug, Clone)]
@@ -545,6 +551,11 @@ pub enum ServerDataPayloadV1 {
     // ─── plan-exploration-probe-return-v1 P2：修炼顿悟 S2C ──────────
     /// 修炼顿悟邀约（只读传输，不涉及 qi_physics 守恒）。复用 InsightOfferV1。
     InsightOffer(InsightOfferV1),
+    // ─── plan-agent-ui-data-v1 P0：天道 UI-as-Data S2C ──────────────
+    /// 天道 UI 面板请求（不含 realm_gate / allowed_button_ids 安全字段）。
+    AgentUiRequest(AgentUiRequestPayloadV1),
+    /// 天道 UI 面板关闭信号（Replaced / 错误 / session_expired）。
+    AgentUiClose(AgentUiClosePayloadV1),
 }
 
 /// 神识感知矿脉回执 S2C。扁平化 `MineralProbeResult` 枚举。
@@ -1654,6 +1665,17 @@ enum ServerDataPayloadWireV1 {
         #[serde(flatten)]
         data: InsightOfferV1,
     },
+    // ─── plan-agent-ui-data-v1 P0：天道 UI-as-Data S2C ──────────────
+    /// 天道 UI 面板请求（不含 realm_gate / allowed_button_ids 安全字段）。
+    AgentUiRequest {
+        #[serde(flatten)]
+        data: AgentUiRequestPayloadV1,
+    },
+    /// 天道 UI 面板关闭信号。
+    AgentUiClose {
+        #[serde(flatten)]
+        data: AgentUiClosePayloadV1,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2518,6 +2540,8 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
             }
             ServerDataPayloadWireV1::FreshnessUpdate { data } => Ok(Self::FreshnessUpdate(data)),
             ServerDataPayloadWireV1::InsightOffer { data } => Ok(Self::InsightOffer(data)),
+            ServerDataPayloadWireV1::AgentUiRequest { data } => Ok(Self::AgentUiRequest(data)),
+            ServerDataPayloadWireV1::AgentUiClose { data } => Ok(Self::AgentUiClose(data)),
         }
     }
 }
@@ -3088,6 +3112,10 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
                 Self::FreshnessUpdate { data: data.clone() }
             }
             ServerDataPayloadV1::InsightOffer(data) => Self::InsightOffer { data: data.clone() },
+            ServerDataPayloadV1::AgentUiRequest(data) => {
+                Self::AgentUiRequest { data: data.clone() }
+            }
+            ServerDataPayloadV1::AgentUiClose(data) => Self::AgentUiClose { data: data.clone() },
         }
     }
 }
@@ -3414,6 +3442,9 @@ impl ServerDataPayloadV1 {
             Self::FreshnessUpdate(..) => ServerDataType::FreshnessUpdate,
             // ─── plan-exploration-probe-return-v1 P2 ────────────────
             Self::InsightOffer(..) => ServerDataType::InsightOffer,
+            // ─── plan-agent-ui-data-v1 P0 ───────────────────────────
+            Self::AgentUiRequest(..) => ServerDataType::AgentUiRequest,
+            Self::AgentUiClose(..) => ServerDataType::AgentUiClose,
         }
     }
 }
@@ -3937,6 +3968,17 @@ mod tests {
                     cost_flavor: None,
                 }],
             }),
+            // ─── plan-agent-ui-data-v1 P0: Agent UI wire/label guard ─────────
+            ServerDataPayloadV1::AgentUiRequest(AgentUiRequestPayloadV1 {
+                request_id: "agent-ui-req".to_string(),
+                target_player: "offline:Kiz".to_string(),
+                xml: "<owo-ui><components><label>test</label></components></owo-ui>".to_string(),
+                timeout_ticks: 600,
+            }),
+            ServerDataPayloadV1::AgentUiClose(AgentUiClosePayloadV1 {
+                request_id: "agent-ui-req".to_string(),
+                reason: Some("invalid_button_id".to_string()),
+            }),
         ];
 
         for payload in cases {
@@ -4251,6 +4293,12 @@ mod tests {
             ),
             include_str!(
                 "../../../agent/packages/schema/samples/server-data.spirit-treasure-dialogue.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.agent-ui-request.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.agent-ui-close.sample.json"
             ),
             // plan-coffin-tiers-v1 P0 charge #7：四档 + no-grade serde pin samples
             include_str!(

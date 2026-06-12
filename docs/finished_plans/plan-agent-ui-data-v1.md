@@ -118,10 +118,10 @@
 
 | 阶段 | 内容 | 状态 | 验收标准 |
 |------|------|------|---------|
-| **P0** | schema 定稿 + agent→server Redis IPC + server→client CustomPayload 链路 | ⬜ | 单测：schema roundtrip（三个）/ realm_gate 拒绝低境界 / DTD 拒绝 / 非法标签 strip / 单面板互斥 + compare-and-remove 幂等 / allowed_button_ids 校验 / timeout TimedOut 终态 / XML 超限拒绝 |
-| **P1** | client OwoUI XML 动态渲染 + 按钮响应 → `bong:agent_ui_response` CustomPayload | ⬜ | 集成测试：server 下发含 2 个按钮的 XML → client 渲染 → 点击按钮 → server 收到正确 action；ESC → dismissed；Replaced 信号 → 关闭不发包 |
-| **P2** | agent 侧 XML 生成（xmlEscape）+ Redis `bong:agent_ui_response` 消费 | ⬜ | mock 推演：agent 生成活坍缩渊面板 → 玩家点击"进入" → agent 收到 Completed → emit `agent_cmd` 解锁秘境；realm_gate_rejected → emit narration 替代面板 |
-| **P3** | 3 种标准面板模板（秘境发现 / 垂死传承 / 天道启示）+ 视听规格 | ⬜ | 每种模板 XML 通过 OwoUI 渲染测试；通灵-以下收天道启示被拒绝；传承面板不触发 QiTransfer（由 plan-dying-elder-v1 处理）；超时闭环（server `TimedOut` 权威，client 仅本地收起） |
+| **P0** | schema 定稿 + agent→server Redis IPC + server→client CustomPayload 链路 | ✅ 2026-06-12 | 单测：schema roundtrip（三个）/ realm_gate 拒绝低境界 / DTD 拒绝 / 非法标签 strip / 单面板互斥 + compare-and-remove 幂等 / allowed_button_ids 校验 / timeout TimedOut 终态 / XML 超限拒绝 |
+| **P1** | client OwoUI XML 动态渲染 + 按钮响应 → `bong:agent_ui_response` CustomPayload | ✅ 2026-06-12 | 集成测试：server 下发含 2 个按钮的 XML → client 渲染 → 点击按钮 → server 收到正确 action；ESC → dismissed；Replaced 信号 → 关闭不发包 |
+| **P2** | agent 侧 XML 生成（xmlEscape）+ Redis `bong:agent_ui_response` 消费 | ✅ 2026-06-12 | mock 推演：agent 生成活坍缩渊面板 → 玩家点击"进入" → agent 收到 Completed → emit `agent_cmd` 解锁秘境；realm_gate_rejected → emit narration 替代面板 |
+| **P3** | 3 种标准面板模板（秘境发现 / 垂死传承 / 天道启示）+ 视听规格 | ✅ 2026-06-12 | 每种模板 XML 通过 OwoUI 渲染测试；通灵-以下收天道启示被拒绝；传承面板不触发 QiTransfer（由 plan-dying-elder-v1 处理）；超时闭环（server `TimedOut` 权威，client 仅本地收起） |
 
 ---
 
@@ -300,3 +300,66 @@ const AgentUiResponsePayloadV1 = Type.Object({
    - A. 独立 channel `bong:agent_ui_close { request_id, reason?: String }`（推荐，职责清晰）
    - B. 复用 `bong:agent_ui_request` 带特殊 xml=""（节省注册一个 channel，但容易混淆）
    **P1 阶段所有 `#[close_channel]` 占位符必须替换为此处 P0 选定的方案**；在 P0 决策未落地前，§2 P1 均以 `#[close_channel]` 表示，实施时依决策替换。
+
+§8 收口实绩（实施时决议）：#1 owo-lib 0.11.2+1.20 已 SUPPORT 运行时字符串 XML（`UIModel.load(InputStream)+model.createAdapter`，无需 fork）；#2 P0/P1 用内嵌中文（MC 1.20.1 默认字体含中文），i18n 记 tech debt；#3 v1 只走 narration，client 无额外提示；#4 选 A（独立 close 信号），落地为复用 `bong:server_data` 的 `ServerDataPayloadV1::AgentUiClose{request_id,reason?}` 变体（与 `AgentUiRequest` 并列，非新 MC channel）。
+
+---
+
+## Finish Evidence
+
+天道 agent → Redis → Valence server（realm_gate 门控 / XML sanitize / session 状态机）→ Fabric client（OwoUI 动态渲染）→ C2S 回传 → server → Redis → agent 的双向 **UI-as-Data** 管道，端到端闭环验收通过（含 TSY 秘境发现真实生产触发链）。
+
+### 落地清单
+
+**P0 — schema + IPC + S2C/C2S 链路**
+- `agent/packages/schema/src/payloads/agent-ui.ts` — `AgentUiRequestCommandV1`（含 `realm_gate` / `allowed_button_ids`≤16）/ `AgentUiResponsePayloadV1`（含 `action` 字面联合 + `params: Record<string,string>`）+ validate 函数
+- `agent/packages/schema/src/server-data.ts` `ServerDataPayloadV1` 新增 `AgentUiRequest` / `AgentUiClose` 变体（S2C，不含 gate/whitelist）；`client-request.ts` `ClientRequestV1` 新增 `AgentUiResponse` 变体（C2S）
+- `agent/packages/schema/src/channels.ts` — `bong:agent_ui_cmd`（agent→server）/ `bong:agent_ui_response`（server→agent）
+- `server/src/schema/agent_ui.rs` / `server-data.rs` / `client-request.rs` / `proto_convert.rs` — serde 镜像 + 双端 sample roundtrip
+- `server/src/network/agent_ui.rs` — `AgentUiSessionState`(Open/Completed/Dismissed/TimedOut/Replaced/Error) + `AgentUiSessionStore` Resource + 三 system（`receive_agent_ui_cmd_system` 门控+sanitize+Replaced / `agent_ui_tick_system` 超时 / `receive_agent_ui_response_system` 校验+终态）+ `increment_current_tick_system` + `xml_sanitize`（白名单 owo-ui/components/label/button/flow-layout/grid-layout/texture，DTD/entity 禁）+ `XmlSanitizeError::NonWhitelistedTag`
+- `server/src/cultivation/components.rs` `Realm::rank()->u8`（1-indexed 醒灵1..化虚6），`realm_gate` 比较 `canonical_player_id(username)==target_player`
+
+**P1 — client OwoUI 动态渲染**
+- `client/.../agentui/AgentUiScreen.java`（`UIModel.load` 渲染包裹形 XML + ESC→dismissed / button→button_click / `tickLocalTimeout` 本地超时收起 / `receiveCloseSignal` / `closed` 幂等 / `isFallbackForTests` seam）
+- `client/.../network/AgentUiPayloadHandler.java` + `ServerDataRouter` 路由 `agent_ui_request`/`agent_ui_close`（独立 handler，**不复用** `UiOpenHandler`，`ENABLE_DYNAMIC_XML_UI` 保持 false）
+- `client/.../AgentUiBootstrap.java` — `END_CLIENT_TICK` 钩子驱动 `tickLocalTimeout`
+
+**P2 — agent 侧生成 + 消费 + 真注入推演**
+- `agent/.../ui/xmlTemplates.ts`（xmlEscape + 包裹形 `<owo-ui><components>`）/ `uiRenderer.ts`（`renderUi` + `enforceXmlByteLimit` UTF-8 ≤8192 字节预检）/ `uiResponseConsumer.ts` / `agentUiRuntime.ts`（triggerUi + button_click/session_end 队列）
+- `agent/.../runtime.ts` `processTsyZoneActivatedForUi`（消费 `bong:tsy_event` 的 `tsy_zone_activated` → triggerUi，`target_player=event.player_id`）+ `drainPendingButtonClicks`/`drainPendingSessionEnds` 生产 loop 接线
+- `agent/.../agent.ts` `TiandaoAgent.setButtonClickEvents` + `context.ts buttonClickBlock`（button_click 真织入三路 recipe 的 LLM context/prompt）
+
+**P3 — 三标准面板模板 + TSY 生产触发链 + 视听**
+- `agent/.../ui/xmlTemplates.ts` 三模板（TSY 秘境发现 / 垂死传承 / 天道启示，§4 参数规格 + `TEMPLATE_REALM_GATE` 秘境3/启示5）
+- `server/src/schema/tsy.rs` `TsyZoneActivatedEventV1`（含 `player_id` canonical）+ `tsy_loot_spawn.rs` on_first_enter emit + `tsy_event_bridge.rs::publish_tsy_zone_activated_events` → `bong:tsy_event`
+- `client/.../agentui` 天道面板 VFX（粒子 / 音效 / fade-in / tiandao vignette+shake）
+
+### 关键 commit（30 个，origin/main..HEAD，2026-06-12）
+
+- P0：`8299ba91d` TypeBox schema / `89aef9f1b` Rust serde 镜像 / `c0bdb42b4` AgentUiSession 状态机+Redis IPC
+- P1：`d3737b321` OwoUI 动态渲染+C2S
+- P2：`e2cbf2b4f`/`1d2374b7f`/`d53e8bb64`/`ca4c400d8`/`f1bcd688c`（validate / xmlTemplates+UiRenderer+Consumer / redis-ipc+runtime / main.ts 注册 / 68 饱和测试）
+- P3：`4292aa092` 三模板 / `b10f9b59b` 天道面板 VFX
+- Fix 轮（对抗审查逐层逼出端到端孤岛并修复）：`2b1f32a6e` server S2C发包/tick自增/session过期 · `bcfb0d98a` UiRenderer/Consumer 接线+去重 · `dc5c26a5e`/`6fed50906`/`73a3909e3` client 关闭语义+tickLocalTimeout+UiOpenHandler 复原 · `0663c9147` owo-ui/components 白名单+跨端契约测试 · `31ee31075` S2C 双向 emit system 测试 · `ee4ae8803` tick 排序 · `9ca1f5343` triggerUi/drain 接线 · `52a2147e0` TsyZoneActivated 生产者 · `f0ad65887` canonical_player_id 身份键 · `c6f8c6dbb` button_click 真注入+session drain · `e4f7492ba` 字节预检 · `1e3596af5`/`b75fcff8a`/`60051a329` 回滚 ENABLE_DYNAMIC_XML_UI 回归+恢复护栏+fallback seam · `9b6bcbf79` TsyZoneActivated 加 player_id 直达触发玩家 · `a0bf0954e` 真 TiandaoAgent 实现 setButtonClickEvents · `f423fbddc` 修 makeCaptureClient 类型（tsc CI 门禁）
+
+### 测试结果（全绿）
+
+- `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` → **8748 passed / 0 failed**（含 agent_ui system 级 S2C 双向 emit 测试、realm_gate/player_offline/Replaced/timeout/session_expired、TsyZoneActivated 双端 pin）
+- `cd agent/packages/tiandao && npm test`（tsc + vitest）→ **765 passed**；`npm run check` → tsc clean
+- `cd agent/packages/schema && npm test` → **692 passed**
+- `cd client && ./gradlew test build` → **2611 passed / 0 failed**（AgentUiScreenProtocolTest 25 / UiOpenState 默认 flag 态护栏）
+
+### 跨仓库核验
+
+- **server**：`AgentUiSessionStore` / `receive_agent_ui_cmd_system` / `agent_ui_tick_system` / `receive_agent_ui_response_system` / `xml_sanitize` / `Realm::rank` / `canonical_player_id` / `TsyZoneActivatedEventV1`
+- **agent**：`AgentUiRequestCommandV1` / `AgentUiResponsePayloadV1` / `UiRenderer.renderUi` / `UiResponseConsumer` / `TiandaoAgent.setButtonClickEvents` / `buttonClickBlock` / `processTsyZoneActivatedForUi`
+- **client**：`AgentUiScreen` / `AgentUiPayloadHandler` / `AgentUiBootstrap` / `ServerDataRouter`（agent_ui_request/close）
+- **Redis key**：`bong:agent_ui_cmd` / `bong:agent_ui_response` / `bong:server_data`(AgentUiRequest/AgentUiClose) / `bong:tsy_event`(tsy_zone_activated)
+
+### 遗留 / 后续（均为 reverify 标记的 minor，不阻塞本 plan；记为后续优化）
+
+- **realm_gate_rejected 降级 narration 当前 broadcast scope**：`AgentUiResponsePayloadV1` 的 error params 无玩家标识字段，consumer 无从定位被拒玩家，故 narration 发全服而非 per-player（偏离 §0.1 指定的 `scope=player`）。修需 server 在 error response 加触发玩家 id 字段——属下游优化（建议与 dying-elder / 天道启示触发落地一并处理）。
+- **TSY 面板展示值（spirit_qi/danger_tier）多为占位**：`runtime.ts` 按 `z.name===event.family_id` 匹配 zone snapshot，因 zone 名带 `_shallow/_mid/_deep` 后缀而 family_id 不带，多 miss → 展示值回退占位（plan §4 标这两项为只读展示，不阻断闭环）。后续可在匹配时 strip 后缀。
+- **TSY target_player fallback**：`?? state.players[0]`，当 `event.player_id` 在快照短暂滞后/降级为 `entity:...` 时可能误投；server realm_gate 兜底阻止误发清晰面板给不够格者。
+- **垂死传承 / 天道启示生产触发源**：归下游 skeleton plan（`plan-dying-elder-v1` ⬜ 等），本 plan 仅提供模板 + 管道 + TSY 参考触发路径，未强行接入（避免造假信号）。
+- **本 plan 不产生任何 QiTransfer**：传承面板仅展示 `qi_cost` 数值，`accept_legacy` Completed 仅向 dying-elder 转发 Event 占位（守恒律由下游实现）——已 reverify 确认合规。

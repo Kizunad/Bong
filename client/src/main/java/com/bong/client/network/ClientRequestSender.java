@@ -545,6 +545,23 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodeLowerShield());
     }
 
+    // ─── plan-agent-ui-data-v1 P1：天道 UI 响应 C2S ─────────────────────────
+
+    /**
+     * plan-agent-ui-data-v1 P1 — 向 server 发送天道 UI 面板交互响应。
+     *
+     * @param requestId  server 下发的 request_id
+     * @param action     动作字面量（"button_click" / "dismissed" / "parse_error" 等）
+     * @param params     附加参数（如 button_click 时的 {@code {"button_id":"enter_realm"}}）
+     */
+    public static void sendAgentUiResponse(
+        String requestId,
+        String action,
+        java.util.Map<String, String> params
+    ) {
+        dispatch(ClientRequestProtocol.encodeAgentUiResponse(requestId, action, params));
+    }
+
     private static void dispatch(String json) {
         backend.send(CHANNEL, json.getBytes(StandardCharsets.UTF_8));
     }

@@ -45,6 +45,27 @@ pub struct TsyExitEventV1 {
     pub qi_drained_total: f64,
 }
 
+/// plan-agent-ui-data-v1 server 栈修复 — 坍缩渊首次激活事件 wire 结构。
+///
+/// 与 `agent/packages/schema/src/tsy.ts` `TsyZoneActivatedV1` TypeBox 1:1 对齐：
+/// - `source_class` 使用 snake_case 字面量（"dao_lord" / "sect_ruins" / "battle_sediment"）。
+/// - `player_id`：触发 first-enter 的玩家 canonical_player_id（"offline:<name>"），
+///   由 tsy_event_bridge 在 publish 时从 `TsyZoneActivated.triggering_player_entity`
+///   解析写入；agent 直接用作 `target_player` 选人，不再靠 zone 名瞎匹配。
+/// - 通过 `agent/packages/schema/samples/tsy-zone-activated.sample.json` 双端校验。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TsyZoneActivatedEventV1 {
+    pub v: u8,
+    pub kind: String,
+    pub tick: u64,
+    pub family_id: String,
+    /// snake_case 字面量：`"dao_lord"` / `"sect_ruins"` / `"battle_sediment"`。
+    pub source_class: String,
+    /// 触发首次进入的玩家 canonical_player_id（"offline:<name>" 格式）。
+    /// agent 直接用此字段找目标玩家，无需再靠 zone 名猜测。
+    pub player_id: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -117,5 +138,100 @@ mod tests {
         let json = serde_json::to_string(&ev).expect("serialize");
         let parsed: TsyExitEventV1 = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(parsed, ev);
+    }
+
+    // ── TsyZoneActivatedEventV1 ──────────────────────────────────────────────
+
+    /// 跨端契约 pin 测试：tsy-zone-activated.sample.json 双端对齐
+    /// （server Rust ↔ agent TypeBox TsyZoneActivatedV1）。
+    #[test]
+    fn deserialize_tsy_zone_activated_sample() {
+        let json =
+            include_str!("../../../agent/packages/schema/samples/tsy-zone-activated.sample.json");
+        let ev: TsyZoneActivatedEventV1 =
+            serde_json::from_str(json).expect("tsy-zone-activated.sample.json should deserialize");
+        assert_eq!(ev.v, 1, "v 应为 1");
+        assert_eq!(
+            ev.kind, "tsy_zone_activated",
+            "kind 应为 tsy_zone_activated"
+        );
+        assert_eq!(ev.tick, 12345, "tick 应为 12345");
+        assert_eq!(ev.family_id, "tsy_lingxu_01", "family_id 对齐");
+        assert_eq!(ev.source_class, "dao_lord", "source_class 应为 dao_lord");
+        assert_eq!(
+            ev.player_id, "offline:Kiz",
+            "player_id 应为 offline:Kiz（触发玩家）"
+        );
+    }
+
+    /// round-trip：每个 source_class 变体均序列化为正确 snake_case 字面量。
+    #[test]
+    fn tsy_zone_activated_source_class_literals() {
+        for (source_class, expected) in [
+            ("dao_lord", "\"dao_lord\""),
+            ("sect_ruins", "\"sect_ruins\""),
+            ("battle_sediment", "\"battle_sediment\""),
+        ] {
+            let ev = TsyZoneActivatedEventV1 {
+                v: 1,
+                kind: "tsy_zone_activated".to_string(),
+                tick: 0,
+                family_id: "tsy_test".to_string(),
+                source_class: source_class.to_string(),
+                player_id: "offline:TestPlayer".to_string(),
+            };
+            let json = serde_json::to_string(&ev).expect("serialize");
+            assert!(
+                json.contains(expected),
+                "source_class={source_class} 序列化后应含 {expected}，实为 {json}"
+            );
+            // 反序列化 round-trip
+            let parsed: TsyZoneActivatedEventV1 = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(
+                parsed.source_class, source_class,
+                "round-trip source_class 应为 {source_class}"
+            );
+        }
+    }
+
+    /// 含 player_id — 与 TS 端对齐（bridge 解析触发玩家 entity → canonical_player_id 写入）。
+    #[test]
+    fn tsy_zone_activated_has_player_id_field() {
+        let ev = TsyZoneActivatedEventV1 {
+            v: 1,
+            kind: "tsy_zone_activated".to_string(),
+            tick: 500,
+            family_id: "tsy_lingxu_01".to_string(),
+            source_class: "sect_ruins".to_string(),
+            player_id: "offline:Kiz".to_string(),
+        };
+        let json = serde_json::to_string(&ev).expect("serialize");
+        assert!(
+            json.contains("player_id"),
+            "TsyZoneActivatedEventV1 应含 player_id 字段，实为 {json}"
+        );
+        assert!(
+            json.contains("offline:Kiz"),
+            "player_id 值应为 'offline:Kiz'，实为 {json}"
+        );
+    }
+
+    /// player_id round-trip：序列化后反序列化回完全一致。
+    #[test]
+    fn tsy_zone_activated_player_id_round_trip() {
+        let ev = TsyZoneActivatedEventV1 {
+            v: 1,
+            kind: "tsy_zone_activated".to_string(),
+            tick: 500,
+            family_id: "tsy_lingxu_01".to_string(),
+            source_class: "sect_ruins".to_string(),
+            player_id: "offline:WanLingFeng".to_string(),
+        };
+        let json = serde_json::to_string(&ev).expect("serialize");
+        let parsed: TsyZoneActivatedEventV1 = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(
+            parsed.player_id, "offline:WanLingFeng",
+            "player_id round-trip 应保持原值"
+        );
     }
 }

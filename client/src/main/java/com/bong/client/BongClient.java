@@ -142,6 +142,8 @@ public class BongClient implements ClientModInitializer {
         PreviewHarnessClient.install();
         IrisBootstrap.register();
         SodiumChunkReload.register();
+        // plan-agent-ui-data-v1 P1 — 天道动态 UI 面板本地超时 tick 驱动
+        com.bong.client.agentui.AgentUiBootstrap.register();
 
         LOGGER.info("Bong Client bootstrap ready: network, HUD, keybinding scheduler, /vfx /anim /bonghud /bong_shader commands active.");
     }

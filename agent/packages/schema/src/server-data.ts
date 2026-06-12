@@ -97,6 +97,10 @@ import {
   SpiritTreasureDialoguePayloadV1,
   SpiritTreasureStatePayloadV1,
 } from "./spirit-treasure.js";
+import {
+  AgentUiRequestPayloadV1,
+  AgentUiClosePayloadV1,
+} from "./payloads/agent-ui.js";
 
 const MERIDIAN_CHANNEL_COUNT = 20;
 
@@ -252,6 +256,9 @@ export const ServerDataType = Type.Union([
   Type.Literal("insight_offer"),
   // plan-exploration-probe-return-v1 P0 — 神识感知矿脉回执（补���：原始 union 遗漏此字面量）
   Type.Literal("mineral_probe_result"),
+  // plan-agent-ui-data-v1 P0 — 天道 UI 面板请求 + 关闭信号
+  Type.Literal("agent_ui_request"),
+  Type.Literal("agent_ui_close"),
 ]);
 export type ServerDataType = Static<typeof ServerDataType>;
 
@@ -1695,6 +1702,36 @@ export const ServerDataMineralProbeResultV1 = Type.Object(
 );
 export type ServerDataMineralProbeResultV1 = Static<typeof ServerDataMineralProbeResultV1>;
 
+// ── plan-agent-ui-data-v1 P0 ── 天道 UI 面板 S2C ──────────────────────────────
+
+/**
+ * server → client：动态 UI 面板请求。
+ * 不含 realm_gate / allowed_button_ids（安全字段仅在 server 内部处理）。
+ */
+export const ServerDataAgentUiRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("agent_ui_request"),
+    ...AgentUiRequestPayloadV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataAgentUiRequestV1 = Static<typeof ServerDataAgentUiRequestV1>;
+
+/**
+ * server → client：关闭信号（Replaced / invalid_button_id / session_expired）。
+ * reason 为空 = Replaced（client 关闭不发任何 response）。
+ */
+export const ServerDataAgentUiCloseV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("agent_ui_close"),
+    ...AgentUiClosePayloadV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataAgentUiCloseV1 = Static<typeof ServerDataAgentUiCloseV1>;
+
 export const ServerDataV1 = Type.Union([
   ServerDataWelcomeV1,
   ServerDataHeartbeatV1,
@@ -1793,5 +1830,8 @@ export const ServerDataV1 = Type.Union([
   ServerDataMineralProbeResultV1,
   // plan-exploration-probe-return-v1 P2
   ServerDataInsightOfferV1,
+  // plan-agent-ui-data-v1 P0 — 天道 UI 面板请求 + 关闭信号
+  ServerDataAgentUiRequestV1,
+  ServerDataAgentUiCloseV1,
 ]);
 export type ServerDataV1 = Static<typeof ServerDataV1>;

@@ -1,4 +1,5 @@
 pub mod agent_bridge;
+pub mod agent_ui;
 pub mod alchemy_bridge;
 pub mod alchemy_snapshot_emit;
 pub mod animation_trigger;
@@ -651,6 +652,9 @@ pub fn register(app: &mut App) {
             tsy_event_bridge::publish_tsy_npc_spawned_events
                 .after(crate::npc::tsy_hostile::emit_tsy_hostile_spawn_summary),
             tsy_event_bridge::publish_tsy_sentinel_phase_changed_events,
+            // plan-agent-ui-data-v1 server fix — TsyZoneActivated → bong:tsy_event
+            tsy_event_bridge::publish_tsy_zone_activated_events
+                .after(crate::inventory::tsy_loot_spawn::tsy_loot_spawn_on_enter),
             poi_novice_bridge::publish_poi_spawned_events,
             poi_novice_bridge::publish_trespass_events,
             forge_snapshot_emit::emit_join_forge_snapshots
@@ -969,6 +973,29 @@ pub fn register(app: &mut App) {
     app.add_event::<crate::combat::weapon::WeaponBroken>();
     app.add_event::<crate::combat::weapon::ShieldBroken>();
     app.add_event::<crate::combat::weapon::ShieldBlockHit>();
+
+    // ─── plan-agent-ui-data-v1 P0：天道 UI-as-Data 会话状态机 ─────────────
+    app.add_event::<agent_ui::AgentUiCmdEvent>();
+    app.add_event::<agent_ui::AgentUiResponseEvent>();
+    app.init_resource::<agent_ui::AgentUiSessionStore>();
+    app.init_resource::<agent_ui::CurrentTickResource>();
+    app.add_systems(
+        Update,
+        (
+            // increment_current_tick_system 必须在 agent_ui_tick_system /
+            // receive_agent_ui_cmd_system 之前运行，使同帧看到一致的 current_tick。
+            // MINOR 修复：receive_agent_ui_cmd_system 也加 .after(increment_current_tick_system)，
+            // 确保 expire_tick = current_tick + timeout_ticks 与 agent_ui_tick_system 基准一致
+            // （否则 cmd_system 看到 tick N-1，ticker 看到 tick N，边界偏 1）。
+            agent_ui::increment_current_tick_system,
+            agent_ui::receive_agent_ui_cmd_system
+                .after(process_redis_inbound)
+                .after(agent_ui::increment_current_tick_system),
+            agent_ui::agent_ui_tick_system.after(agent_ui::increment_current_tick_system),
+            agent_ui::receive_agent_ui_response_system,
+            agent_ui::receive_player_disconnect_system,
+        ),
+    );
 }
 
 fn redis_url_from_env() -> String {
@@ -2259,6 +2286,7 @@ fn process_redis_inbound(
     audio_events: Option<ResMut<Events<audio_event_emit::PlaySoundRecipeRequest>>>,
     persistence_settings: Option<Res<PersistenceSettings>>,
     runtime_mirror_redis: Option<Res<RuntimeMirrorRedisConfig>>,
+    mut agent_ui_cmd_tx: EventWriter<agent_ui::AgentUiCmdEvent>,
 ) {
     let mut audio_events = audio_events;
     let mut drained_messages = 0;
@@ -2389,6 +2417,10 @@ fn process_redis_inbound(
                         &mut clients,
                     );
                 }
+            }
+            // ─── plan-agent-ui-data-v1 P0：天道 UI 指令 ─────────────────────
+            RedisInbound::AgentUiCmd(cmd) => {
+                agent_ui_cmd_tx.send(agent_ui::AgentUiCmdEvent(cmd));
             }
         }
     }
@@ -3192,6 +3224,8 @@ mod tests {
         app.insert_resource(CommandExecutorResource::default());
         app.insert_resource(NarrationDedupeResource::default());
         app.add_event::<crate::cultivation::insight::InsightOffer>();
+        // plan-agent-ui-data-v1 P0 — process_redis_inbound 需要 AgentUiCmdEvent。
+        app.add_event::<agent_ui::AgentUiCmdEvent>();
         app.add_systems(Update, process_redis_inbound);
 
         let (client_bundle, _helper) = create_mock_client("Azure");
@@ -4109,6 +4143,8 @@ mod tests {
             }
 
             app.add_event::<crate::cultivation::insight::InsightOffer>();
+            // plan-agent-ui-data-v1 P0 — process_redis_inbound 需要 AgentUiCmdEvent。
+            app.add_event::<agent_ui::AgentUiCmdEvent>();
             app.add_systems(Update, process_redis_inbound);
 
             (app, tx_inbound)

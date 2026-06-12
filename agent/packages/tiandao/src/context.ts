@@ -5,6 +5,7 @@ import type {
   GameEvent,
   ChatSignal,
   NpcDeathV1,
+  AgentUiResponsePayloadV1,
 } from "@bong/schema";
 import { buildChatSignalsBlock } from "./chat-processor.js";
 import {
@@ -26,6 +27,13 @@ export interface ContextInput {
    * Agent 推演上下文。默认空数组（无事件 → 不渲染该块）。
    */
   npcDeathEvents?: NpcDeathV1[];
+  /**
+   * plan-agent-ui-data-v1 P2 — 本推演窗口内玩家 UI button_click 事件。
+   * buttonClickBlock 把 button_id/request_id 格式化进 LLM 推演上下文，
+   * 让天道 Agent 感知玩家在天道面板上的意图选择（进入秘境/仅观察/关闭）。
+   * 默认空数组（无点击 → 不渲染该块）。
+   */
+  buttonClickEvents?: AgentUiResponsePayloadV1[];
 }
 
 export interface ContextBlock {
@@ -53,6 +61,7 @@ export function createContextInput(
     agentName?: string;
     worldModel?: WorldModel;
     npcDeathEvents?: NpcDeathV1[];
+    buttonClickEvents?: AgentUiResponsePayloadV1[];
   } = {},
 ): ContextInput {
   return {
@@ -62,6 +71,7 @@ export function createContextInput(
     agentName: options.agentName,
     worldModel: options.worldModel,
     npcDeathEvents: options.npcDeathEvents,
+    buttonClickEvents: options.buttonClickEvents,
   };
 }
 
@@ -266,6 +276,32 @@ export const offscreenWarBlock: ContextBlock = {
   },
 };
 
+/**
+ * plan-agent-ui-data-v1 P2 — 玩家 UI button_click 意图信号。
+ * 把本窗口玩家在天道面板上的按钮点击（button_id / request_id）格式化进 LLM 推演上下文，
+ * 让天道 Agent 在下一轮推演中感知玩家意图（进入秘境 / 仅观察 / 关闭等选择）。
+ * 无点击事件时返回空串，整块不渲染（优化上下文体积）。
+ */
+export const buttonClickBlock: ContextBlock = {
+  name: "button_click_signals",
+  priority: 2,
+  required: false,
+  render({ buttonClickEvents }) {
+    if (!buttonClickEvents || buttonClickEvents.length === 0) {
+      return "";
+    }
+    const lines = buttonClickEvents.map((e) => {
+      const buttonId = e.params["button_id"] ?? "(unknown)";
+      return `- request_id=${e.request_id} button_id=${buttonId}`;
+    });
+    return [
+      "## 玩家天道面板交互",
+      "以下是本窗口玩家在天道面板上的按钮选择，代表其当前意图，应纳入本轮推演：",
+      ...lines,
+    ].join("\n");
+  },
+};
+
 export const peerDecisionsBlock: ContextBlock = {
   name: "peer_decisions",
   priority: 3,
@@ -422,7 +458,9 @@ export const CALAMITY_RECIPE: ContextRecipe = {
     { ...recentNarrationsBlock, priority: 6, required: false },
     { ...peerDecisionsBlock, priority: 7, required: false },
     { ...chatSignalsBlock, priority: 8, required: false },
-    { ...worldSnapshotBlock, priority: 9, required: false },
+    // plan-agent-ui-data-v1 P2 — 玩家天道面板 button_click 意图信号进灾劫推演
+    { ...buttonClickBlock, priority: 9, required: false },
+    { ...worldSnapshotBlock, priority: 10, required: false },
   ],
 };
 
@@ -440,6 +478,8 @@ export const MUTATION_RECIPE: ContextRecipe = {
     { ...peerDecisionsBlock, priority: 6, required: false },
     { ...chatSignalsBlock, priority: 7, required: false },
     { ...recentEventsBlock, priority: 8, required: false },
+    // plan-agent-ui-data-v1 P2 — 玩家天道面板 button_click 意图信号进变化推演
+    { ...buttonClickBlock, priority: 9, required: false },
   ],
 };
 
@@ -459,6 +499,8 @@ export const ERA_RECIPE: ContextRecipe = {
     { ...recentEventsBlock, priority: 8, required: true },
     { ...keyPlayerBlock, priority: 9, required: false },
     { ...chatSignalsBlock, priority: 10, required: false },
+    // plan-agent-ui-data-v1 P2 — 玩家天道面板 button_click 意图信号进演绎推演
+    { ...buttonClickBlock, priority: 11, required: false },
   ],
 };
 

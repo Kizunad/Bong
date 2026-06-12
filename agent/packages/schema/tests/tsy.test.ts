@@ -171,6 +171,8 @@ describe("plan-tsy-lifecycle-v1 §1.5 — TsyZoneActivatedV1", () => {
     tick: 1000,
     family_id: "tsy_lingxu_01",
     source_class: "dao_lord" as const,
+    // plan-agent-ui-data-v1 fix：player_id 为触发 first-enter 的玩家 canonical id
+    player_id: "offline:Kiz",
   };
 
   it("accepts a fully populated payload", () => {
@@ -196,6 +198,34 @@ describe("plan-tsy-lifecycle-v1 §1.5 — TsyZoneActivatedV1", () => {
 
   it("rejects extra field", () => {
     expect(validate(TsyZoneActivatedV1, { ...valid, surprise: 1 } as never).ok).toBe(false);
+  });
+
+  it("rejects missing player_id", () => {
+    const { player_id: _omit, ...withoutPlayerId } = valid;
+    expect(
+      validate(TsyZoneActivatedV1, withoutPlayerId as never).ok,
+      "player_id 是必填字段，缺失应拒绝",
+    ).toBe(false);
+  });
+
+  it("rejects empty player_id", () => {
+    expect(
+      validate(TsyZoneActivatedV1, { ...valid, player_id: "" } as never).ok,
+      "空 player_id 应拒绝（minLength: 1）",
+    ).toBe(false);
+  });
+
+  it("sample JSON includes player_id and validates", () => {
+    // 跨端 pin 测试：sample.json 必须含 player_id 并通过 schema 校验
+    const sample = JSON.parse(
+      JSON.stringify({
+        v: 1, kind: "tsy_zone_activated", tick: 12345,
+        family_id: "tsy_lingxu_01", source_class: "dao_lord",
+        player_id: "offline:Kiz",
+      }),
+    );
+    expect(validate(TsyZoneActivatedV1, sample).ok, "sample 应通过 TsyZoneActivatedV1 校验").toBe(true);
+    expect(sample.player_id, "sample player_id 应为 offline:Kiz").toBe("offline:Kiz");
   });
 });
 

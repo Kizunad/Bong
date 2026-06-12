@@ -24,6 +24,10 @@ import { MovementActionRequestV1 } from "./movement.js";
 import { GuardianKindV1 } from "./social.js";
 import { FalseSkinKindV1 } from "./tuike.js";
 import { VoidActionRequestV1 } from "./void-actions.js";
+import {
+  AgentUiActionType,
+  AgentUiResponsePayloadV1,
+} from "./payloads/agent-ui.js";
 
 const JS_SAFE_INTEGER_MAX = Number.MAX_SAFE_INTEGER;
 const HOTBAR_SLOT_COUNT = 9;
@@ -1010,6 +1014,22 @@ export const BlockPlaceRequestV1 = Type.Object(
 );
 export type BlockPlaceRequestV1 = Static<typeof BlockPlaceRequestV1>;
 
+// ─── 天道 UI 面板响应（plan-agent-ui-data-v1 P0） ────────────────────────────
+
+/**
+ * 玩家天道 UI 面板交互响应（client → server CustomPayload）。
+ * 与 server→agent Redis 使用同一 payload 结构 AgentUiResponsePayloadV1。
+ */
+export const AgentUiResponseRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("agent_ui_response"),
+    ...AgentUiResponsePayloadV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type AgentUiResponseRequestV1 = Static<typeof AgentUiResponseRequestV1>;
+
 // plan-shield-block-v1 P1 — 盾牌举盾 / 放盾请求。
 // 对应 Rust ClientRequestV1::RaiseShield / LowerShield。
 // 玩家 off_hand 持盾时按住右键边沿发送 RaiseShield；松开右键边沿发送 LowerShield。
@@ -1112,5 +1132,7 @@ export const ClientRequestV1 = Type.Union([
   BlockPlaceRequestV1,
   RaiseShieldRequestV1,
   LowerShieldRequestV1,
+  // plan-agent-ui-data-v1 P0 — 天道 UI 面板响应
+  AgentUiResponseRequestV1,
 ]);
 export type ClientRequestV1 = Static<typeof ClientRequestV1>;

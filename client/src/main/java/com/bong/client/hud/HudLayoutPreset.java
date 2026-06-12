@@ -131,6 +131,8 @@ public enum HudLayoutPreset {
             case VISUAL, SPIRITUAL_SENSE, DAMAGE_FLOATER, FLIGHT_HUD, CONNECTION_STATUS,
                 HALLUCINATION -> Widget.CRITICAL;
             case YIDAO -> Widget.CRITICAL;
+            // plan-agent-ui-data-v1 P3：天道动态面板 VFX（fade-in/vignette/shake）归 CRITICAL（常驻）
+            case AGENT_UI -> Widget.CRITICAL;
         };
     }
 

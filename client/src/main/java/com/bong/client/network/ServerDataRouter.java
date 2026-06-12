@@ -261,6 +261,10 @@ public final class ServerDataRouter {
         handlers.put("mineral_probe_result", new MineralProbeResultHandler());
         // plan-exploration-probe-return-v1 P2：修炼顿悟邀约（InsightOfferStore → InsightOfferScreen）
         handlers.put("insight_offer", new InsightOfferHandler());
+        // plan-agent-ui-data-v1 P1 — 天道动态 UI 面板（AgentUiPayloadHandler 同时处理 request + close）
+        AgentUiPayloadHandler agentUiPayloadHandler = new AgentUiPayloadHandler();
+        handlers.put("agent_ui_request", agentUiPayloadHandler);
+        handlers.put("agent_ui_close", agentUiPayloadHandler);
         return new ServerDataRouter(handlers);
     }
 

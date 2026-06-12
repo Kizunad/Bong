@@ -57,5 +57,7 @@ public enum HudRenderLayer {
     /** plan-fauna-stitched-beast-v1 P3：兽核吸收幻觉层（绿边像差/bar偏移/视野旋转）。 */
     HALLUCINATION,
     /** plan-dying-elder-v1 P3：垂死大能遭遇 HUD（真元进度条 + 三按钮 + 背叛概率）。 */
-    DYING_ELDER
+    DYING_ELDER,
+    /** plan-agent-ui-data-v1 P3：天道动态面板 VFX overlay（粒子底噪、vignette、shake）。 */
+    AGENT_UI
 }

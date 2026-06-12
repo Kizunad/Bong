@@ -16,6 +16,7 @@ import {
   validateTrespassEventV1Contract,
   validateTsyNpcSpawnedV1Contract,
   validateTsySentinelPhaseChangedV1Contract,
+  validateTsyZoneActivatedV1Contract,
   validateWeatherEventUpdateV1Contract,
   validateZonePressureCrossedV1Contract,
 } from "@bong/schema";
@@ -37,6 +38,7 @@ import type {
   TrespassEventV1,
   TsyNpcSpawnedV1,
   TsySentinelPhaseChangedV1,
+  TsyZoneActivatedV1,
   WeatherEventUpdateV1,
   WorldStateV1,
   ZonePressureCrossedV1,
@@ -96,6 +98,7 @@ const {
 
 const DEFAULT_CHAT_DRAIN_WINDOW = 128;
 const TSY_HOSTILE_EVENT_BUFFER_LIMIT = 128;
+const TSY_ZONE_ACTIVATED_BUFFER_LIMIT = 64;
 const NPC_EVENT_BUFFER_LIMIT = 128;
 const ALCHEMY_EVENT_BUFFER_LIMIT = 128;
 const POI_NOVICE_EVENT_BUFFER_LIMIT = 128;
@@ -230,6 +233,8 @@ export class RedisIpc {
   private pub: RedisIpcClient;
   private latestState: WorldStateV1 | null = null;
   private latestTsyHostileEvents: TsyHostileEventV1[] = [];
+  /** plan-agent-ui-data-v1 P2 — tsy_zone_activated drain 队列，供 triggerUi 参考生产路径使用。 */
+  private latestTsyZoneActivatedEvents: TsyZoneActivatedV1[] = [];
   private latestNpcEvents: NpcRuntimeEventV1[] = [];
   // plan-offscreen-war-v1 P4：仅 death 事件的 drain 队列（喂 offscreenWarBlock context）。
   // 与 latestNpcEvents（spawn+death+faction 混合，供 getLatestNpcEvents/callback）分开，
@@ -260,7 +265,6 @@ export class RedisIpc {
       this.handleWorldStateMessage(message);
       return;
     }
-
 
     if (channel === TSY_EVENT) {
       this.handleTsyEventMessage(message);
@@ -356,6 +360,20 @@ export class RedisIpc {
           return;
         }
         this.recordTsyHostileEvent(data as TsySentinelPhaseChangedV1);
+        return;
+      }
+
+      // plan-agent-ui-data-v1 P2：秘境激活事件 → drain 队列供 triggerUi 参考生产路径消费。
+      if (data.kind === "tsy_zone_activated") {
+        const result = validateTsyZoneActivatedV1Contract(data);
+        if (!result.ok) {
+          console.warn(
+            "[redis-ipc] invalid tsy_zone_activated event:",
+            result.errors.join("; "),
+          );
+          return;
+        }
+        this.recordTsyZoneActivatedEvent(data as TsyZoneActivatedV1);
       }
     } catch (e) {
       console.warn("[redis-ipc] failed to parse tsy_event:", e);
@@ -369,6 +387,14 @@ export class RedisIpc {
     }
     for (const cb of this.tsyHostileCallbacks) {
       cb(event);
+    }
+  }
+
+  private recordTsyZoneActivatedEvent(event: TsyZoneActivatedV1): void {
+    this.latestTsyZoneActivatedEvents.push(event);
+    if (this.latestTsyZoneActivatedEvents.length > TSY_ZONE_ACTIVATED_BUFFER_LIMIT) {
+      this.latestTsyZoneActivatedEvents =
+        this.latestTsyZoneActivatedEvents.slice(-TSY_ZONE_ACTIVATED_BUFFER_LIMIT);
     }
   }
 
@@ -681,6 +707,16 @@ export class RedisIpc {
 
   onTsyHostileEvent(cb: (event: TsyHostileEventV1) => void): void {
     this.tsyHostileCallbacks.push(cb);
+  }
+
+  /**
+   * plan-agent-ui-data-v1 P2 — drain 自上次 drain 以来累积的 tsy_zone_activated 事件。
+   * 供 runRuntime 每轮 tick 消费，触发 AgentUiRuntime.triggerUi() TSY 秘境发现面板。
+   */
+  drainTsyZoneActivatedEvents(): TsyZoneActivatedV1[] {
+    const events = [...this.latestTsyZoneActivatedEvents];
+    this.latestTsyZoneActivatedEvents = [];
+    return events;
   }
 
   getLatestNpcEvents(): NpcRuntimeEventV1[] {

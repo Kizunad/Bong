@@ -8,6 +8,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+use super::agent_ui::AgentUiActionType;
 use super::alchemy::AlchemyInterventionV1;
 use super::combat_carrier::AnqiContainerKindV1;
 use super::inventory::{EquipSlotV1, InventoryLocationV1};
@@ -646,6 +647,16 @@ pub enum ClientRequestV1 {
     LowerShield {
         v: u8,
     },
+    // ─── plan-agent-ui-data-v1 P0：天道 UI 面板交互响应 ──────────────
+    /// 玩家面板交互响应（button_click / dismissed / timeout / parse_error 等）。
+    /// server 校验 request_id / allowed_button_ids 后转 `bong:agent_ui_response`。
+    AgentUiResponse {
+        v: u8,
+        request_id: String,
+        action: AgentUiActionType,
+        #[serde(default)]
+        params: std::collections::HashMap<String, String>,
+    },
 }
 
 fn default_craft_quantity() -> u32 {
@@ -959,6 +970,67 @@ mod tests {
             ),
             "coffin_menu_reclaim negative coords should parse correctly; \
              期望 CoffinMenuReclaim{{x:-64,y:0,z:-128}}，实得 {req:?}"
+        );
+    }
+
+    #[test]
+    fn agent_ui_response_roundtrip_with_button_click() {
+        let json = r#"{"type":"agent_ui_response","v":1,"request_id":"req_1","action":"button_click","params":{"button_id":"enter_realm"}}"#;
+        let req: ClientRequestV1 =
+            serde_json::from_str(json).expect("agent_ui_response button_click 应能反序列化");
+        match req {
+            ClientRequestV1::AgentUiResponse {
+                v,
+                request_id,
+                action,
+                params,
+            } => {
+                assert_eq!(v, 1, "wire version 期望=1，实为 {v}");
+                assert_eq!(
+                    request_id, "req_1",
+                    "request_id 应保持 req_1，实为 {request_id}"
+                );
+                assert_eq!(
+                    action,
+                    AgentUiActionType::ButtonClick,
+                    "action 应为 button_click，实为 {action:?}"
+                );
+                assert_eq!(
+                    params.get("button_id").map(String::as_str),
+                    Some("enter_realm"),
+                    "params.button_id 应为 enter_realm，实为 {params:?}"
+                );
+            }
+            other => panic!("expected AgentUiResponse, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn agent_ui_response_defaults_missing_params_to_empty_map() {
+        let json =
+            r#"{"type":"agent_ui_response","v":1,"request_id":"req_2","action":"dismissed"}"#;
+        let req: ClientRequestV1 =
+            serde_json::from_str(json).expect("agent_ui_response 缺 params 应默认空 map");
+        assert!(
+            matches!(req, ClientRequestV1::AgentUiResponse { ref params, .. } if params.is_empty()),
+            "缺 params 应反序列化为空 map，实为 {req:?}"
+        );
+    }
+
+    #[test]
+    fn agent_ui_response_rejects_invalid_action_and_extra_fields() {
+        let bad_action = r#"{"type":"agent_ui_response","v":1,"request_id":"req_3","action":"teleport","params":{}}"#;
+        let bad_action_result: Result<ClientRequestV1, _> = serde_json::from_str(bad_action);
+        assert!(
+            bad_action_result.is_err(),
+            "未知 action=teleport 应被 serde 拒绝，实为 {bad_action_result:?}"
+        );
+
+        let extra = r#"{"type":"agent_ui_response","v":1,"request_id":"req_4","action":"dismissed","params":{},"surprise":true}"#;
+        let extra_result: Result<ClientRequestV1, _> = serde_json::from_str(extra);
+        assert!(
+            extra_result.is_err(),
+            "agent_ui_response 额外字段 surprise 应被 deny_unknown_fields 拒绝，实为 {extra_result:?}"
         );
     }
 
