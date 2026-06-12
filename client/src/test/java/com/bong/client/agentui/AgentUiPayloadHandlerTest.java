@@ -294,21 +294,30 @@ public class AgentUiPayloadHandlerTest {
             "getActive() 应返回新 screen 对象而非旧对象");
     }
 
-    // ─── ServerDataRouter 注册 ───────────────────────────────────────────────
+    // ─── ServerDataRouter 防回归（专属 channel 迁移后不再注册）────────────────────────────
 
+    /**
+     * 防回归：AgentUiRequest/AgentUiClose 已迁移到专属 bong:agent_ui_request/bong:agent_ui_close
+     * JSON channel，不再经 bong:server_data / proto 路径（proto_convert.rs 对这两个 variant 是
+     * unreachable!()，生产 panic）。ServerDataRouter 不应再注册这两个 key。
+     *
+     * <p>若此测试失败，说明有人误将 agent_ui 迁回 server_data 路径，会导致 production proto panic。
+     */
     @Test
-    void defaultRouter_registersAgentUiRequest() {
-        assertTrue(
+    void defaultRouter_doesNotRegisterAgentUiRequest() {
+        assertFalse(
             ServerDataRouter.createDefault().registeredTypes().contains("agent_ui_request"),
-            "ServerDataRouter.createDefault() 应注册 'agent_ui_request' type"
+            "ServerDataRouter 不应注册 'agent_ui_request'（已迁移到专属 bong:agent_ui_request channel，" +
+            "server_data 路径 production 会 proto_convert.rs unreachable!() panic）"
         );
     }
 
     @Test
-    void defaultRouter_registersAgentUiClose() {
-        assertTrue(
+    void defaultRouter_doesNotRegisterAgentUiClose() {
+        assertFalse(
             ServerDataRouter.createDefault().registeredTypes().contains("agent_ui_close"),
-            "ServerDataRouter.createDefault() 应注册 'agent_ui_close' type"
+            "ServerDataRouter 不应注册 'agent_ui_close'（已迁移到专属 bong:agent_ui_close channel，" +
+            "server_data 路径 production 会 proto_convert.rs unreachable!() panic）"
         );
     }
 

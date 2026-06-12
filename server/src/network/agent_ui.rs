@@ -4,7 +4,7 @@
 //!   Redis `bong:agent_ui_cmd` → `process_redis_inbound` → `AgentUiCmdEvent`
 //!     → `receive_agent_ui_cmd_system`
 //!       → 境界门控 → XML sanitize → 替换旧 session（Replaced 终态）
-//!       → 新 `AgentUiSession`（Open）→ [P1] `ServerDataPayloadV1::AgentUiRequest` → client
+//!       → 新 `AgentUiSession`（Open）→ [P1] 专属 JSON channel → client
 //!
 //!   client CustomPayload `agent_ui_response` → `AgentUiResponseEvent`
 //!     → `receive_agent_ui_response_system`
@@ -13,24 +13,41 @@
 //!   `agent_ui_tick_system` — 每 tick 扫过期 session → TimedOut 终态
 //!
 //!   `receive_player_disconnect_system` — 断线 → Dismissed 终态
+//!
+//! ## Wire protocol（JSON 专属 channel，不走 bong:server_data/proto 路径）
+//!
+//! server 直接序列化 `AgentUiRequestPayloadV1` / `AgentUiClosePayloadV1` 为 JSON 字节，通过
+//! `client.send_custom_payload(ident!("bong:agent_ui_request") / ident!("bong:agent_ui_close"))` 发送。
+//! client 注册专属 channel listener（`BongNetworkHandler.registerAgentUiChannels()`），
+//! 解析 JSON 后写入 `AgentUiStore`。
+//!
+//! 这绕开了 `bong:server_data` proto 路径（proto_convert.rs 对 AgentUiRequest/AgentUiClose
+//! 是 `unreachable!()`），消除了生产 panic。仿照 halfstep_rechallenge_emit.rs 的专属 channel 模式。
 
 use std::collections::HashMap;
 
+use valence::ident;
 use valence::prelude::{
     bevy_ecs, Client, Entity, Event, EventReader, Query, RemovedComponents, Res, ResMut, Resource,
     Username, With,
 };
 
-use super::agent_bridge::{payload_type_label, serialize_server_data_payload};
 use super::redis_bridge::RedisOutbound;
-use super::{log_payload_build_error, send_server_data_payload, RedisBridgeResource};
+use super::RedisBridgeResource;
 use crate::cultivation::components::Cultivation;
 use crate::player::state::canonical_player_id;
 use crate::schema::agent_ui::{
     AgentUiActionType, AgentUiClosePayloadV1, AgentUiRequestCommandV1, AgentUiRequestPayloadV1,
     AgentUiResponsePayloadV1,
 };
-use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
+
+/// S2C channel identifier for AgentUiRequest payloads（专属 JSON channel）。
+/// client 侧 `BongNetworkHandler.registerAgentUiChannels()` 注册相同 channel。
+pub const AGENT_UI_REQUEST_CHANNEL: &str = "bong:agent_ui_request";
+
+/// S2C channel identifier for AgentUiClose payloads（专属 JSON channel）。
+/// client 侧 `BongNetworkHandler.registerAgentUiChannels()` 注册相同 channel。
+pub const AGENT_UI_CLOSE_CHANNEL: &str = "bong:agent_ui_close";
 
 // ─── 公开事件 ────────────────────────────────────────────────────────────────
 
@@ -437,47 +454,60 @@ fn process_agent_ui_cmd(
             .tx_outbound
             .send(RedisOutbound::AgentUiResponse(replaced_resp));
         // 向 client 发 AgentUiClose（reason=None 表示 Replaced，client 静默关闭）
-        let close_payload =
-            ServerDataV1::new(ServerDataPayloadV1::AgentUiClose(AgentUiClosePayloadV1 {
-                request_id: old.request_id.clone(),
-                reason: None,
-            }));
-        let close_type = payload_type_label(close_payload.payload_type());
-        match serialize_server_data_payload(&close_payload) {
+        // 走专属 bong:agent_ui_close JSON channel，绕开 bong:server_data/proto 路径
+        // （proto_convert.rs 对 AgentUiClose 是 unreachable!()，生产会 panic）。
+        let close_payload = AgentUiClosePayloadV1 {
+            request_id: old.request_id.clone(),
+            reason: None,
+        };
+        match serde_json::to_vec(&close_payload) {
             Ok(bytes) => {
                 if let Ok(mut client) = clients.get_mut(player_entity) {
-                    send_server_data_payload(&mut client.3, &bytes);
+                    client
+                        .3
+                        .send_custom_payload(ident!("bong:agent_ui_close"), &bytes);
                     tracing::debug!(
                         "[bong][agent_ui] sent AgentUiClose(Replaced) for old request_id={}",
                         old.request_id
                     );
                 }
             }
-            Err(e) => log_payload_build_error(close_type, &e),
+            Err(e) => {
+                tracing::error!(
+                    "[bong][agent_ui] failed to serialize AgentUiClosePayloadV1 for channel {}: {e}",
+                    AGENT_UI_CLOSE_CHANNEL
+                );
+            }
         }
     }
 
     // 向 client 发 AgentUiRequest（携带 sanitized XML，不含安全字段）
-    let request_payload = ServerDataV1::new(ServerDataPayloadV1::AgentUiRequest(
-        AgentUiRequestPayloadV1 {
-            request_id: cmd.request_id.clone(),
-            target_player: cmd.target_player.clone(),
-            xml: _sanitized_xml,
-            timeout_ticks: cmd.timeout_ticks,
-        },
-    ));
-    let request_type = payload_type_label(request_payload.payload_type());
-    match serialize_server_data_payload(&request_payload) {
+    // 走专属 bong:agent_ui_request JSON channel，绕开 bong:server_data/proto 路径
+    // （proto_convert.rs 对 AgentUiRequest 是 unreachable!()，生产会 panic）。
+    let request_payload = AgentUiRequestPayloadV1 {
+        request_id: cmd.request_id.clone(),
+        target_player: cmd.target_player.clone(),
+        xml: _sanitized_xml,
+        timeout_ticks: cmd.timeout_ticks,
+    };
+    match serde_json::to_vec(&request_payload) {
         Ok(bytes) => {
             if let Ok(mut client) = clients.get_mut(player_entity) {
-                send_server_data_payload(&mut client.3, &bytes);
+                client
+                    .3
+                    .send_custom_payload(ident!("bong:agent_ui_request"), &bytes);
                 tracing::info!(
                     "[bong][agent_ui] sent AgentUiRequest request_id={} expire_tick={expire_tick}",
                     cmd.request_id,
                 );
             }
         }
-        Err(e) => log_payload_build_error(request_type, &e),
+        Err(e) => {
+            tracing::error!(
+                "[bong][agent_ui] failed to serialize AgentUiRequestPayloadV1 for channel {}: {e}",
+                AGENT_UI_REQUEST_CHANNEL
+            );
+        }
     }
     tracing::info!(
         "[bong][agent_ui] session created request_id={} expire_tick={expire_tick}",
@@ -485,27 +515,33 @@ fn process_agent_ui_cmd(
     );
 }
 
-/// 向指定 client entity 发送 `ServerDataPayloadV1::AgentUiClose`。
+/// 向指定 client entity 发送 `AgentUiClosePayloadV1`（专属 bong:agent_ui_close JSON channel）。
 /// `reason` = None 表示 Replaced（client 静默关闭），Some(str) 表示具体原因。
+///
+/// 不走 `bong:server_data` / proto 路径（proto_convert.rs 对 AgentUiClose 是 unreachable!()，
+/// 生产会 panic）。
 fn send_agent_ui_close_to_client(
     player: Entity,
     request_id: &str,
     reason: Option<&str>,
     clients: &mut Query<&mut Client>,
 ) {
-    let close_payload =
-        ServerDataV1::new(ServerDataPayloadV1::AgentUiClose(AgentUiClosePayloadV1 {
-            request_id: request_id.to_string(),
-            reason: reason.map(|r| r.to_string()),
-        }));
-    let close_type = payload_type_label(close_payload.payload_type());
-    match serialize_server_data_payload(&close_payload) {
+    let close_payload = AgentUiClosePayloadV1 {
+        request_id: request_id.to_string(),
+        reason: reason.map(|r| r.to_string()),
+    };
+    match serde_json::to_vec(&close_payload) {
         Ok(bytes) => {
             if let Ok(mut client) = clients.get_mut(player) {
-                send_server_data_payload(&mut client, &bytes);
+                client.send_custom_payload(ident!("bong:agent_ui_close"), &bytes);
             }
         }
-        Err(e) => log_payload_build_error(close_type, &e),
+        Err(e) => {
+            tracing::error!(
+                "[bong][agent_ui] failed to serialize AgentUiClosePayloadV1 for channel {}: {e}",
+                AGENT_UI_CLOSE_CHANNEL
+            );
+        }
     }
 }
 
@@ -1535,27 +1571,80 @@ mod tests {
         );
     }
 
-    // ── S2C 双向 emit 系统测试（MAJOR 修复：锁住 Redis + client-facing S2C 双路）──────
+    // ── S2C 双向 emit 系统测试（fix-s2c-proto-panic：锁住 Redis + client-facing S2C 专属 channel）
 
     use valence::protocol::packets::play::CustomPayloadS2c;
     use valence::testing::MockClientHelper;
 
-    use crate::network::agent_bridge::SERVER_DATA_CHANNEL;
+    /// flush 所有 mock client packets（让 Client 内部缓冲写到 MockClientHelper）。
+    fn flush_all_clients(app: &mut App) {
+        let world = app.world_mut();
+        let mut q = world.query::<&mut valence::prelude::Client>();
+        for mut c in q.iter_mut(world) {
+            c.flush_packets().expect("mock client flush should succeed");
+        }
+    }
 
-    /// 从 MockClientHelper 抽取所有 bong:server_data channel 的 JSON payload。
-    fn drain_s2c_server_data(
+    /// 从 MockClientHelper 抽取 bong:agent_ui_request 专属 channel 的裸 JSON payloads。
+    ///
+    /// payload 直接是 `AgentUiRequestPayloadV1` JSON（无 ServerDataV1 外层 envelope）。
+    /// 防回归：不从 bong:server_data channel 采集，确保修复后不走 proto 路径。
+    fn collect_agent_ui_request_payloads(
         app: &mut App,
         helper: &mut MockClientHelper,
     ) -> Vec<serde_json::Value> {
-        // 先 flush，让 Client 内部缓冲写到 MockClientHelper
-        {
-            let world = app.world_mut();
-            let mut q = world.query::<&mut valence::prelude::Client>();
-            for mut c in q.iter_mut(world) {
-                c.flush_packets().expect("mock client flush should succeed");
+        flush_all_clients(app);
+        let mut payloads = Vec::new();
+        for frame in helper.collect_received().0 {
+            let Ok(packet) = frame.decode::<CustomPayloadS2c>() else {
+                continue;
+            };
+            if packet.channel.as_str() != AGENT_UI_REQUEST_CHANNEL {
+                continue;
+            }
+            match serde_json::from_slice::<serde_json::Value>(packet.data.0 .0) {
+                Ok(v) => payloads.push(v),
+                Err(e) => panic!(
+                    "bong:agent_ui_request payload 无法反序列化为 JSON：{e}\nbytes={:?}",
+                    packet.data.0 .0
+                ),
             }
         }
+        payloads
+    }
+
+    /// 从 MockClientHelper 抽取 bong:agent_ui_close 专属 channel 的裸 JSON payloads。
+    ///
+    /// payload 直接是 `AgentUiClosePayloadV1` JSON（无 ServerDataV1 外层 envelope）。
+    fn collect_agent_ui_close_payloads(
+        app: &mut App,
+        helper: &mut MockClientHelper,
+    ) -> Vec<serde_json::Value> {
+        flush_all_clients(app);
         let mut payloads = Vec::new();
+        for frame in helper.collect_received().0 {
+            let Ok(packet) = frame.decode::<CustomPayloadS2c>() else {
+                continue;
+            };
+            if packet.channel.as_str() != AGENT_UI_CLOSE_CHANNEL {
+                continue;
+            }
+            match serde_json::from_slice::<serde_json::Value>(packet.data.0 .0) {
+                Ok(v) => payloads.push(v),
+                Err(e) => panic!(
+                    "bong:agent_ui_close payload 无法反序列化为 JSON：{e}\nbytes={:?}",
+                    packet.data.0 .0
+                ),
+            }
+        }
+        payloads
+    }
+
+    /// 防回归：AgentUiRequest/AgentUiClose 绝不通过 bong:server_data channel 发送。
+    /// 若未来代码意外地把 agent_ui 改回 server_data 路径，此测试立即撞红，
+    /// 防止 production proto_convert.rs unreachable!() panic 再次出现。
+    fn assert_no_agent_ui_on_server_data_channel(helper: &mut MockClientHelper) {
+        use crate::network::agent_bridge::SERVER_DATA_CHANNEL;
         for frame in helper.collect_received().0 {
             let Ok(packet) = frame.decode::<CustomPayloadS2c>() else {
                 continue;
@@ -1564,17 +1653,25 @@ mod tests {
                 continue;
             }
             if let Ok(v) = serde_json::from_slice::<serde_json::Value>(packet.data.0 .0) {
-                payloads.push(v);
+                let payload_type = v.get("type").and_then(|t| t.as_str()).unwrap_or("");
+                if payload_type == "agent_ui_request" || payload_type == "agent_ui_close" {
+                    panic!(
+                        "AgentUiRequest/AgentUiClose 不应经由 bong:server_data channel 发送\
+                         （production proto_convert.rs 会 unreachable!() panic）；\
+                         应使用专属 bong:agent_ui_request/bong:agent_ui_close channel；\
+                         实际 payload type='{payload_type}'"
+                    );
+                }
             }
         }
-        payloads
     }
 
-    /// happy path：session 创建 → 真向 client 发 AgentUiRequest S2C 包（双向 emit 锁住）。
+    /// happy path：session 创建 → 真向 client 发 AgentUiRequest S2C 包（专属 channel）。
     ///
     /// 断言：
     /// - Redis 无 error response
-    /// - S2C payload type=agent_ui_request, request_id 对齐, xml 非空
+    /// - S2C payload 经由 bong:agent_ui_request channel，request_id 对齐，xml 非空
+    /// - 防回归：bong:server_data channel 上无 agent_ui_request
     #[test]
     fn system_session_open_sends_agent_ui_request_s2c() {
         let (mut app, rx) = build_agent_ui_app();
@@ -1603,16 +1700,15 @@ mod tests {
             "session 成功创建时不应有 Redis error response，实际 msgs={redis_msgs:?}"
         );
 
-        // S2C：应向 client 发 agent_ui_request 包
-        let payloads = drain_s2c_server_data(&mut app, &mut helper);
-        let agent_ui_req = payloads
-            .iter()
-            .find(|p| p["type"].as_str() == Some("agent_ui_request"));
-        assert!(
-            agent_ui_req.is_some(),
-            "session 创建后应向 client 发 S2C type=agent_ui_request，实际 payloads={payloads:?}"
+        // S2C：应经由 bong:agent_ui_request channel 发包（非 bong:server_data）
+        let payloads = collect_agent_ui_request_payloads(&mut app, &mut helper);
+        assert_eq!(
+            payloads.len(),
+            1,
+            "session 创建后应向 client 发 1 条 bong:agent_ui_request S2C，实际 {} 条",
+            payloads.len()
         );
-        let req = agent_ui_req.unwrap();
+        let req = &payloads[0];
         assert_eq!(
             req["request_id"].as_str(),
             Some("req-s2c-open"),
@@ -1624,10 +1720,61 @@ mod tests {
             "S2C agent_ui_request 的 xml 字段应非空，实为 {}",
             req["xml"]
         );
+        // 防回归：bong:server_data channel 上无 agent_ui_request
+        assert_no_agent_ui_on_server_data_channel(&mut helper);
     }
 
-    /// Replaced：新 cmd 替换旧 session → client 收 AgentUiClose S2C + Redis replaced；
-    /// 新 session → client 再收 AgentUiRequest S2C（双向 emit 完整链路锁住）。
+    /// wire JSON 结构 pin：bong:agent_ui_request payload 是裸 AgentUiRequestPayloadV1 JSON，
+    /// 无 ServerDataV1 外层 envelope（无 "v"/"type" 包装字段）。
+    /// client 侧 BongNetworkHandler.registerAgentUiChannels() 直接解析这个结构。
+    #[test]
+    fn agent_ui_request_wire_json_is_bare_payload_v1() {
+        let (mut app, _rx) = build_agent_ui_app();
+        let (bundle, mut helper) = create_mock_client("WireTest");
+        let player = app.world_mut().spawn(bundle).id();
+        app.world_mut().entity_mut(player).insert(Cultivation {
+            realm: Realm::Condense,
+            ..Cultivation::default()
+        });
+
+        let cmd = make_cmd("req-wire-pin", "WireTest", 0);
+        app.world_mut().send_event(AgentUiCmdEvent(cmd));
+        app.update();
+
+        let payloads = collect_agent_ui_request_payloads(&mut app, &mut helper);
+        assert_eq!(
+            payloads.len(),
+            1,
+            "应收到 1 条 bong:agent_ui_request payload"
+        );
+        let value = &payloads[0];
+
+        // 裸 AgentUiRequestPayloadV1：应有 request_id/target_player/xml/timeout_ticks
+        assert!(
+            value.get("request_id").is_some(),
+            "裸 AgentUiRequestPayloadV1 必须包含 'request_id'；当前 JSON={value}"
+        );
+        assert!(
+            value.get("xml").is_some(),
+            "裸 AgentUiRequestPayloadV1 必须包含 'xml'；当前 JSON={value}"
+        );
+        assert!(
+            value.get("timeout_ticks").is_some(),
+            "裸 AgentUiRequestPayloadV1 必须包含 'timeout_ticks'；当前 JSON={value}"
+        );
+        // 绝对不应有 ServerDataV1 外层 envelope 字段（否则 client 解析结构错误）
+        assert!(
+            value.get("v").is_none(),
+            "payload 不应包含 ServerDataV1 envelope 的 'v' 版本字段；当前 JSON={value}"
+        );
+        assert!(
+            value.get("type").is_none(),
+            "payload 不应包含 ServerDataV1 envelope 的 'type' 字段；当前 JSON={value}"
+        );
+    }
+
+    /// Replaced：新 cmd 替换旧 session → client 收 bong:agent_ui_close + Redis replaced；
+    /// 新 session → client 再收 bong:agent_ui_request（双向 emit 完整链路锁住）。
     #[test]
     fn system_replaced_sends_agent_ui_close_then_request_s2c() {
         let (mut app, rx) = build_agent_ui_app();
@@ -1644,7 +1791,9 @@ mod tests {
         app.update();
         // 清掉第一轮 Redis 和 S2C
         while rx.try_recv().is_ok() {}
-        drain_s2c_server_data(&mut app, &mut helper);
+        // 消费掉第一轮 S2C（agent_ui_request）
+        flush_all_clients(&mut app);
+        let _ = helper.collect_received();
 
         // 第二条 cmd → Replaced
         let cmd2 = make_cmd("req-new-s2c", "Cultivator2", 0);
@@ -1665,38 +1814,55 @@ mod tests {
             "Replaced 时 Redis 应有 request_id=req-old-s2c 的 replaced response，实为 {redis_msgs:?}"
         );
 
-        // S2C：应先收 AgentUiClose（for req-old-s2c），再收 AgentUiRequest（for req-new-s2c）
-        let payloads = drain_s2c_server_data(&mut app, &mut helper);
-        let close_payload = payloads
-            .iter()
-            .find(|p| p["type"].as_str() == Some("agent_ui_close"));
-        assert!(
-            close_payload.is_some(),
-            "Replaced 时 client 应收 S2C type=agent_ui_close，实际 payloads={payloads:?}"
+        // S2C：一次 flush + collect，同时检查 close 和 request（两者在同一 update 轮产生）。
+        // 注意：collect_agent_ui_close_payloads/collect_agent_ui_request_payloads 各自会
+        // flush + collect_received，消费性调用不可连用（第二次 collect 为空）。
+        // 此处直接 flush 一次，收集所有帧，按 channel 分类。
+        flush_all_clients(&mut app);
+        let mut close_payloads: Vec<serde_json::Value> = Vec::new();
+        let mut request_payloads: Vec<serde_json::Value> = Vec::new();
+        for frame in helper.collect_received().0 {
+            let Ok(packet) = frame.decode::<CustomPayloadS2c>() else {
+                continue;
+            };
+            if packet.channel.as_str() == AGENT_UI_CLOSE_CHANNEL {
+                if let Ok(v) = serde_json::from_slice::<serde_json::Value>(packet.data.0 .0) {
+                    close_payloads.push(v);
+                }
+            } else if packet.channel.as_str() == AGENT_UI_REQUEST_CHANNEL {
+                if let Ok(v) = serde_json::from_slice::<serde_json::Value>(packet.data.0 .0) {
+                    request_payloads.push(v);
+                }
+            }
+        }
+
+        assert_eq!(
+            close_payloads.len(),
+            1,
+            "Replaced 时 client 应收 1 条 bong:agent_ui_close S2C，实际 {}",
+            close_payloads.len()
         );
         assert_eq!(
-            close_payload.unwrap()["request_id"].as_str(),
+            close_payloads[0]["request_id"].as_str(),
             Some("req-old-s2c"),
             "AgentUiClose 的 request_id 应为 req-old-s2c（被替换的旧 session），实为 {}",
-            close_payload.unwrap()["request_id"]
-        );
-
-        let new_req = payloads
-            .iter()
-            .find(|p| p["type"].as_str() == Some("agent_ui_request"));
-        assert!(
-            new_req.is_some(),
-            "Replaced 后 client 还应收 S2C type=agent_ui_request（新 session），实际 payloads={payloads:?}"
+            close_payloads[0]["request_id"]
         );
         assert_eq!(
-            new_req.unwrap()["request_id"].as_str(),
+            request_payloads.len(),
+            1,
+            "Replaced 后 client 应收 1 条 bong:agent_ui_request S2C（新 session），实际 {}",
+            request_payloads.len()
+        );
+        assert_eq!(
+            request_payloads[0]["request_id"].as_str(),
             Some("req-new-s2c"),
             "新 AgentUiRequest 的 request_id 应为 req-new-s2c，实为 {}",
-            new_req.unwrap()["request_id"]
+            request_payloads[0]["request_id"]
         );
     }
 
-    /// session_expired：玩家响应时 session 已不存在 → client 收 AgentUiClose(session_expired) S2C。
+    /// session_expired：玩家响应时 session 已不存在 → client 收 bong:agent_ui_close S2C。
     #[test]
     fn system_session_expired_sends_agent_ui_close_s2c() {
         let (mut app, rx) = build_agent_ui_app();
@@ -1728,16 +1894,15 @@ mod tests {
             "session_expired 时 Redis 不应转发 response，实为 {redis_msgs:?}"
         );
 
-        // S2C：client 应收到 agent_ui_close with reason=session_expired
-        let payloads = drain_s2c_server_data(&mut app, &mut helper);
-        let close = payloads
-            .iter()
-            .find(|p| p["type"].as_str() == Some("agent_ui_close"));
-        assert!(
-            close.is_some(),
-            "session_expired 时 client 应收 S2C type=agent_ui_close，实际 payloads={payloads:?}"
+        // S2C：client 应经由 bong:agent_ui_close channel 收到 close payload
+        let payloads = collect_agent_ui_close_payloads(&mut app, &mut helper);
+        assert_eq!(
+            payloads.len(),
+            1,
+            "session_expired 时 client 应收 1 条 bong:agent_ui_close S2C，实际 {}",
+            payloads.len()
         );
-        let close = close.unwrap();
+        let close = &payloads[0];
         assert_eq!(
             close["request_id"].as_str(),
             Some("req-expired"),
@@ -1750,5 +1915,29 @@ mod tests {
             "AgentUiClose 的 reason 应为 session_expired，实为 {}",
             close["reason"]
         );
+        // 防回归：bong:server_data channel 上无 agent_ui_close
+        assert_no_agent_ui_on_server_data_channel(&mut helper);
+    }
+
+    /// 防回归：agent_ui_request/close 不经由 bong:server_data channel 发送。
+    /// 若未来有人误将 AgentUi 改回 server_data 路径，此测试立即撞红，
+    /// 防止 production proto_convert.rs unreachable!() panic 再次出现。
+    #[test]
+    fn agent_ui_request_not_sent_on_server_data_channel() {
+        let (mut app, _rx) = build_agent_ui_app();
+        let (bundle, mut helper) = create_mock_client("AntiReg");
+        let player = app.world_mut().spawn(bundle).id();
+        app.world_mut().entity_mut(player).insert(Cultivation {
+            realm: Realm::Condense,
+            ..Cultivation::default()
+        });
+
+        let cmd = make_cmd("req-antireg", "AntiReg", 0);
+        app.world_mut().send_event(AgentUiCmdEvent(cmd));
+        app.update();
+        flush_all_clients(&mut app);
+        // assert_no_agent_ui_on_server_data_channel 是消费性的；
+        // 确保此处独立 collect_received 而非依赖之前调用。
+        assert_no_agent_ui_on_server_data_channel(&mut helper);
     }
 }
