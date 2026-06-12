@@ -1,5 +1,5 @@
 /**
- * plan-agent-ui-data-v1 P2 — XML 模板字符串 + xmlEscape + {{param}} 插值
+ * plan-agent-ui-data-v1 P2/P3 — XML 模板字符串 + xmlEscape + {{param}} 插值
  *
  * 安全策略：
  * - 所有用户/世界数据插值前必须经 xmlEscape 转义（&→&amp; <→&lt; >→&gt; "→&quot; '→&apos;）
@@ -9,11 +9,16 @@
  *
  * 面板类型及 realm_gate（设计决议 §0.1）：
  *   - 活坍缩渊秘境发现  realm_gate=3（凝脉境+）
- *   - 垂死大能传承对话  realm_gate=0（不门控）
+ *   - 垂死大能传承对话  realm_gate=3（凝脉境+，plan §4）
  *   - 天道启示          realm_gate=5（通灵境+）
  *
  * 模板格式：<owo-ui><components><flow-layout ...>...</flow-layout></components></owo-ui>
  * （owo-lib UIModel.load 要求 root 元素为 <owo-ui>，plan §P3 模板修正）
+ *
+ * P3 标准模板（plan §4）：
+ *   - TSY 秘境发现：zone_name / spirit_qi_display / danger_tier / agent_narrative（均必填）
+ *   - 垂死大能传承：elder_title / elder_narration / qi_cost（必填）；question_0（可选，缺失则省略 ask_question_0 按钮）
+ *   - 天道启示：tiandao_message（必填）
  */
 
 // ─── XML Escape ──────────────────────────────────────────────────────────────
@@ -67,66 +72,106 @@ export type UiTemplateKind =
   | "blur_insufficient"; // 境界不足模糊版（无门控限制，纯文字）
 
 /**
- * realm_gate 按面板类型设定（设计决议 §0.1）：
- *   - 天道启示=5, 活坍缩渊=3, 垂死传承=0, 模糊版=0（内容已模糊，无需门控）
+ * realm_gate 按面板类型设定（设计决议 §0.1 + plan §4）：
+ *   - 天道启示=5（通灵境+）, 活坍缩渊=3（凝脉境+）, 垂死传承=3（凝脉境+，plan §4）, 模糊版=0（内容已模糊，无需门控）
  */
 export const TEMPLATE_REALM_GATE: Record<UiTemplateKind, number> = {
   tsy_discovery:      3,
-  elder_legacy:       0,
+  elder_legacy:       3,
   tiandao_revelation: 5,
   blur_insufficient:  0,
 };
 
 /**
- * 活坍缩渊秘境发现面板（realm_gate=3）
+ * 活坍缩渊秘境发现面板（realm_gate=3，凝脉境+）
  *
- * 必填参数：zone_name, spirit_qi_display
- * 可选按钮：enter_realm（如不传 enter_label 则省略）
+ * P3 标准模板（plan §4）
+ * 必填参数：zone_name, spirit_qi_display, danger_tier, agent_narrative
+ * allowed_button_ids: ["enter_realm", "observe_only", "dismiss"]
  */
 export const TSY_DISCOVERY_TEMPLATE = `<owo-ui>
   <components>
     <flow-layout direction="vertical" gap="4">
-      <label style="color:#C8A060;bold">{{zone_name}}</label>
-      <label style="color:#88C8E0">灵气浓度：{{spirit_qi_display}}</label>
-      <label style="color:#AAAAAA">天道感知到此处有一道裂缝正在收拢</label>
-      <button id="enter_realm" style="color:#E0B060">踏入探寻</button>
-      <button id="observe_only" style="color:#AAAAAA">远观片刻</button>
-      <button id="dismiss" style="color:#888888">离开</button>
+      <label style="color:#C8A060;font=bold">【活坍缩渊】{{zone_name}}</label>
+      <label style="color:#888888">残留灵压：{{spirit_qi_display}} ／ 危险等级：{{danger_tier}}</label>
+      <label>{{agent_narrative}}</label>
+      <flow-layout direction="horizontal" gap="8">
+        <button id="enter_realm" style="color:#FFD700">踏入探寻</button>
+        <button id="observe_only" style="color:#AAAAAA">神识探查（不入）</button>
+        <button id="dismiss">离开</button>
+      </flow-layout>
     </flow-layout>
   </components>
 </owo-ui>`;
 
 /**
- * 垂死大能传承对话面板（realm_gate=0）
+ * 垂死大能传承对话面板（realm_gate=3，凝脉境+）
  *
- * 必填参数：elder_name, qi_cost_display
+ * P3 标准模板（plan §4）
+ * 必填参数：elder_title, elder_narration, qi_cost
+ * 可选参数：question_0（缺失时省略 ask_question_0 按钮）
+ * allowed_button_ids: ["accept_legacy", "ask_question_0"（可选）, "dismiss"]
+ *
+ * 注意：qi_cost 为只读展示值，"接受传承"按钮点击后由 server 向 plan-dying-elder-v1
+ * 的 legacy_accept_system 转发事件，本 plan 不发起任何 QiTransfer。
  */
-export const ELDER_LEGACY_TEMPLATE = `<owo-ui>
+export const ELDER_LEGACY_TEMPLATE_BASE = `<owo-ui>
   <components>
     <flow-layout direction="vertical" gap="4">
-      <label style="color:#D0A0FF;bold">{{elder_name}}——最后的话</label>
-      <label style="color:#AAAAAA">真元耗费：{{qi_cost_display}}</label>
-      <label style="color:#CC8888">大能气息衰竭，机会稍纵即逝</label>
-      <button id="accept_legacy" style="color:#A0E0A0">接受传承</button>
-      <button id="refuse_legacy" style="color:#CC6666">婉拒</button>
-      <button id="dismiss" style="color:#888888">离开</button>
+      <label style="color:#FF6666;font=bold">{{elder_title}} 的残余神识</label>
+      <label style="color:#CCCCCC">{{elder_narration}}</label>
+      <label style="color:#888888">接受传承需消耗 {{qi_cost}} 真元（由天道见证，不可撤回）</label>
+      <flow-layout direction="horizontal" gap="8">
+        <button id="accept_legacy">接受传承</button>
+        {{OPTIONAL_QUESTION_BUTTON}}
+        <button id="dismiss">离开</button>
+      </flow-layout>
     </flow-layout>
   </components>
 </owo-ui>`;
 
+/** question_0 存在时插入的可选按钮片段 */
+const QUESTION_BUTTON_SNIPPET = `<button id="ask_question_0">{{question_0}}</button>`;
+
 /**
- * 天道启示面板（realm_gate=5，通灵境专属）
+ * 渲染垂死大能传承面板，支持 question_0 可选按钮。
  *
- * 必填参数：revelation_text
+ * @throws {Error} elder_title / elder_narration / qi_cost 必填参数缺失时
+ */
+export function renderElderLegacyTemplate(params: Record<string, unknown>): string {
+  const hasQuestion = "question_0" in params &&
+    params["question_0"] !== null &&
+    params["question_0"] !== undefined;
+
+  const questionSnippet = hasQuestion
+    ? interpolate(QUESTION_BUTTON_SNIPPET, { question_0: params["question_0"] })
+    : "";
+
+  // Substitute OPTIONAL_QUESTION_BUTTON first, then interpolate required params
+  const withOptional = ELDER_LEGACY_TEMPLATE_BASE.replace(
+    "{{OPTIONAL_QUESTION_BUTTON}}",
+    questionSnippet,
+  );
+
+  // Remove question_0 from params to avoid "missing param" error (already handled)
+  const { question_0: _q, ...requiredParams } = params as Record<string, unknown>;
+  return interpolate(withOptional, requiredParams);
+}
+
+/** 天道启示面板（realm_gate=5，通灵境专属）
+ *
+ * P3 标准模板（plan §4）
+ * 必填参数：tiandao_message
+ * allowed_button_ids: ["dismiss"]
+ * 低境界（realm<5）玩家收到 realm_gate_rejected，Agent 降级发 narration（设计决议 §8 Q3）
  */
 export const TIANDAO_REVELATION_TEMPLATE = `<owo-ui>
   <components>
     <flow-layout direction="vertical" gap="6">
-      <label style="color:#FFD700;bold">天道示机</label>
-      <label style="color:#E8E0C0">{{revelation_text}}</label>
-      <label style="color:#AAAAAA">此机难言，只可意会</label>
-      <button id="acknowledge" style="color:#A0C0E0">已知晓</button>
-      <button id="dismiss" style="color:#888888">关闭</button>
+      <label style="color:#8888FF;font=bold">天意</label>
+      <label style="color:#CCCCCC">{{tiandao_message}}</label>
+      <label style="color:#666666;font=italic">（此感应无需回应——天道不等你）</label>
+      <button id="dismiss" style="color:#AAAAAA">闭目冥思</button>
     </flow-layout>
   </components>
 </owo-ui>`;
@@ -147,9 +192,8 @@ export const BLUR_INSUFFICIENT_TEMPLATE = `<owo-ui>
   </components>
 </owo-ui>`;
 
-const TEMPLATE_MAP: Record<UiTemplateKind, string> = {
+const TEMPLATE_MAP: Record<Exclude<UiTemplateKind, "elder_legacy">, string> = {
   tsy_discovery:      TSY_DISCOVERY_TEMPLATE,
-  elder_legacy:       ELDER_LEGACY_TEMPLATE,
   tiandao_revelation: TIANDAO_REVELATION_TEMPLATE,
   blur_insufficient:  BLUR_INSUFFICIENT_TEMPLATE,
 };
@@ -164,10 +208,16 @@ export interface RenderTemplateOptions {
 /**
  * 渲染面板 XML 字符串。
  *
+ * - elder_legacy 支持 question_0 可选按钮（缺失则省略 ask_question_0）
+ * - 其余面板使用简单 {{param}} 插值（必填缺失抛 Error）
+ *
  * @throws {Error} 如果 params 缺少必填参数
  */
 export function renderTemplate(options: RenderTemplateOptions): string {
   const { kind, params } = options;
+  if (kind === "elder_legacy") {
+    return renderElderLegacyTemplate(params);
+  }
   const template = TEMPLATE_MAP[kind];
   return interpolate(template, params);
 }

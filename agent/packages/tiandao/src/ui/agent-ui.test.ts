@@ -1,14 +1,14 @@
 /**
- * plan-agent-ui-data-v1 P2 — xmlTemplates / uiRenderer / uiResponseConsumer 饱和测试
+ * plan-agent-ui-data-v1 P2/P3 — xmlTemplates / uiRenderer / uiResponseConsumer 饱和测试
  *
  * 测试覆盖：
  * 1. xmlEscape: happy path / null-undefined→"" / 所有 5 个转义字符 / 链式转义顺序
  * 2. interpolate: happy path / 必填缺失抛 Error / null 值→"" / 多 key / 嵌套 key 不存在
- * 3. renderTemplate: 各模板类型 / 缺失必填参数抛 Error / 特殊字符转义
+ * 3. renderTemplate: P3 §4 三标准模板（TSY/elder/tiandao）/ question_0 可选按钮省略 / 缺失必填参数抛 Error / 特殊字符转义
  * 4. realmStringToRank: 6 个境界值 / 未知值→0 / null/undefined→0
- * 5. TEMPLATE_REALM_GATE: 四种面板的 realm_gate 值锁定
+ * 5. TEMPLATE_REALM_GATE: 四种面板的 realm_gate 值锁定（elder_legacy=3，P3 §4）
  * 6. extractButtonIds: happy path / 超过 16 个截断 / 无 button / 单引号属性
- * 7. UiRenderer: happy path / blur 降级 / realm 足够时清晰版 / 失败抛错
+ * 7. UiRenderer: happy path / blur 降级 / realm 足够时清晰版 / 失败抛错 / P3 elder_legacy realm_gate=3
  * 8. UiResponseConsumer: connect/disconnect 生命周期 /
  *    button_click→onButtonClick / dismissed→onSessionEnd / timeout→onSessionEnd /
  *    replaced→静默 / parse_error→warn / realm_gate_rejected→narration /
@@ -24,6 +24,7 @@ import {
   xmlEscape,
   interpolate,
   renderTemplate,
+  renderElderLegacyTemplate,
   realmStringToRank,
   TEMPLATE_REALM_GATE,
   extractButtonIds,
@@ -171,38 +172,94 @@ describe("interpolate", () => {
 // ─── 3. renderTemplate ────────────────────────────────────────────────────────
 
 describe("renderTemplate", () => {
-  it("renders tsy_discovery template with required params", () => {
+  // P3 §4 TSY 秘境发现：必填 zone_name / spirit_qi_display / danger_tier / agent_narrative
+  it("renders tsy_discovery template with all required params (P3 §4)", () => {
     const xml = renderTemplate({
       kind: "tsy_discovery",
-      params: { zone_name: "活坍缩渊", spirit_qi_display: "0.85" },
+      params: {
+        zone_name: "活坍缩渊",
+        spirit_qi_display: "0.85",
+        danger_tier: "极危",
+        agent_narrative: "天道感知到此处有一道裂缝正在收拢",
+      },
     });
     expect(xml).toContain("活坍缩渊");
     expect(xml).toContain("0.85");
-    expect(xml).toContain("enter_realm");
-    expect(xml).toContain("dismiss");
+    expect(xml).toContain("极危");
+    expect(xml).toContain("天道感知到此处有一道裂缝正在收拢");
+    expect(xml).toContain('id="enter_realm"');
+    expect(xml).toContain('id="observe_only"');
+    expect(xml).toContain('id="dismiss"');
     expect(xml).toContain("<owo-ui>");
     expect(xml).toContain("</owo-ui>");
+    expect(xml).toContain("【活坍缩渊】");
   });
 
-  it("renders elder_legacy template with required params", () => {
+  // P3 §4 垂死大能传承：必填 elder_title / elder_narration / qi_cost；question_0 可选
+  it("renders elder_legacy template with all required params, question_0 present (P3 §4)", () => {
     const xml = renderTemplate({
       kind: "elder_legacy",
-      params: { elder_name: "张三大能", qi_cost_display: "500" },
+      params: {
+        elder_title: "张三大能",
+        elder_narration: "我的传承等待了数百年……",
+        qi_cost: "500",
+        question_0: "你是谁？",
+      },
     });
     expect(xml).toContain("张三大能");
+    expect(xml).toContain("我的传承等待了数百年……");
     expect(xml).toContain("500");
-    expect(xml).toContain("accept_legacy");
-    expect(xml).toContain("refuse_legacy");
+    expect(xml).toContain("你是谁？");
+    expect(xml).toContain('id="accept_legacy"');
+    expect(xml).toContain('id="ask_question_0"');
+    expect(xml).toContain('id="dismiss"');
+    expect(xml).toContain("天道见证");
+    expect(xml).toContain("<owo-ui>");
   });
 
-  it("renders tiandao_revelation template with required params", () => {
+  it("renders elder_legacy template with question_0 absent → ask_question_0 button omitted (P3 §4)", () => {
+    const xml = renderTemplate({
+      kind: "elder_legacy",
+      params: {
+        elder_title: "李四大能",
+        elder_narration: "时间不多了……",
+        qi_cost: "200",
+        // question_0 intentionally absent
+      },
+    });
+    expect(xml).toContain('id="accept_legacy"');
+    expect(xml).toContain('id="dismiss"');
+    expect(xml).not.toContain('id="ask_question_0"');
+    expect(xml).not.toContain("{{question_0}}");
+    expect(xml).not.toContain("{{OPTIONAL_QUESTION_BUTTON}}");
+  });
+
+  it("renders elder_legacy template with question_0=null → ask_question_0 button omitted", () => {
+    const xml = renderTemplate({
+      kind: "elder_legacy",
+      params: {
+        elder_title: "王五大能",
+        elder_narration: "传承在此",
+        qi_cost: "300",
+        question_0: null,
+      },
+    });
+    expect(xml).not.toContain('id="ask_question_0"');
+  });
+
+  // P3 §4 天道启示：必填 tiandao_message；realm_gate=5；only dismiss button
+  it("renders tiandao_revelation template with tiandao_message (P3 §4)", () => {
     const xml = renderTemplate({
       kind: "tiandao_revelation",
-      params: { revelation_text: "天道示机，气运将至" },
+      params: { tiandao_message: "气运将至，天机不可泄露" },
     });
-    expect(xml).toContain("天道示机");
-    expect(xml).toContain("气运将至");
-    expect(xml).toContain("acknowledge");
+    expect(xml).toContain("气运将至，天机不可泄露");
+    expect(xml).toContain('id="dismiss"');
+    // P3 spec: only dismiss button (no acknowledge)
+    expect(xml).not.toContain('id="acknowledge"');
+    expect(xml).toContain("天意");
+    expect(xml).toContain("天道不等你");
+    expect(xml).toContain("<owo-ui>");
   });
 
   it("renders blur_insufficient template with required params", () => {
@@ -217,19 +274,71 @@ describe("renderTemplate", () => {
   it("XML-escapes dangerous characters in params", () => {
     const xml = renderTemplate({
       kind: "tiandao_revelation",
-      params: { revelation_text: '<script>alert("xss")</script>' },
+      params: { tiandao_message: '<script>alert("xss")</script>' },
     });
     expect(xml).not.toContain("<script>");
     expect(xml).toContain("&lt;script&gt;");
   });
 
-  it("throws for missing required param in tsy_discovery", () => {
+  it("XML-escapes dangerous characters in elder_legacy params", () => {
+    const xml = renderTemplate({
+      kind: "elder_legacy",
+      params: {
+        elder_title: "<evil>",
+        elder_narration: 'say "hello" & goodbye',
+        qi_cost: "100",
+      },
+    });
+    expect(xml).not.toContain("<evil>");
+    expect(xml).toContain("&lt;evil&gt;");
+    expect(xml).toContain("&quot;hello&quot;");
+    expect(xml).toContain("&amp;");
+  });
+
+  it("throws for missing required param in tsy_discovery (zone_name)", () => {
     expect(() =>
       renderTemplate({
         kind: "tsy_discovery",
-        params: { zone_name: "test" }, // 缺少 spirit_qi_display
+        params: {
+          spirit_qi_display: "0.85",
+          danger_tier: "中危",
+          agent_narrative: "裂缝正在收拢",
+          // zone_name absent
+        },
       }),
-    ).toThrow(/必填参数缺失.*spirit_qi_display/);
+    ).toThrow(/必填参数缺失.*zone_name/);
+  });
+
+  it("throws for missing required param in tsy_discovery (danger_tier)", () => {
+    expect(() =>
+      renderTemplate({
+        kind: "tsy_discovery",
+        params: {
+          zone_name: "test",
+          spirit_qi_display: "0.85",
+          agent_narrative: "裂缝正在收拢",
+          // danger_tier absent
+        },
+      }),
+    ).toThrow(/必填参数缺失.*danger_tier/);
+  });
+
+  it("throws for missing required param in elder_legacy (elder_title)", () => {
+    expect(() =>
+      renderTemplate({
+        kind: "elder_legacy",
+        params: { elder_narration: "传承", qi_cost: "100" },
+      }),
+    ).toThrow(/必填参数缺失.*elder_title/);
+  });
+
+  it("throws for missing required param in tiandao_revelation (tiandao_message)", () => {
+    expect(() =>
+      renderTemplate({
+        kind: "tiandao_revelation",
+        params: {},
+      }),
+    ).toThrow(/必填参数缺失.*tiandao_message/);
   });
 });
 
@@ -284,8 +393,8 @@ describe("TEMPLATE_REALM_GATE", () => {
     expect(TEMPLATE_REALM_GATE.tiandao_revelation).toBe(5);
   });
 
-  it("elder_legacy realm_gate = 0（不门控）", () => {
-    expect(TEMPLATE_REALM_GATE.elder_legacy).toBe(0);
+  it("elder_legacy realm_gate = 3（凝脉境+，plan §4）", () => {
+    expect(TEMPLATE_REALM_GATE.elder_legacy).toBe(3);
   });
 
   it("blur_insufficient realm_gate = 0（内容已模糊）", () => {
@@ -356,7 +465,12 @@ describe("UiRenderer", () => {
     const result = await renderer.renderUi({
       scenario: "tsy_discovery",
       targetPlayer: { ...basePlayer, realm: "Condense" }, // rank=3 == realm_gate=3
-      params: { zone_name: "活坍缩渊", spirit_qi_display: "0.85" },
+      params: {
+        zone_name: "活坍缩渊",
+        spirit_qi_display: "0.85",
+        danger_tier: "极危",
+        agent_narrative: "天道感知到此处有一道裂缝正在收拢",
+      },
     });
 
     expect(result.requestId).toBe(fixedRequestId);
@@ -382,7 +496,12 @@ describe("UiRenderer", () => {
     const result = await renderer.renderUi({
       scenario: "tsy_discovery",
       targetPlayer: { ...basePlayer, realm: "Awaken" }, // rank=1 < 3
-      params: { zone_name: "活坍缩渊", spirit_qi_display: "0.85" },
+      params: {
+        zone_name: "活坍缩渊",
+        spirit_qi_display: "0.85",
+        danger_tier: "极危",
+        agent_narrative: "裂缝收拢",
+      },
     });
 
     expect(result.sentBlurVersion).toBe(true);
@@ -402,7 +521,7 @@ describe("UiRenderer", () => {
     const result = await renderer.renderUi({
       scenario: "tiandao_revelation",
       targetPlayer: { ...basePlayer, realm: "Solidify" }, // rank=4 < 5
-      params: { revelation_text: "天机" },
+      params: { tiandao_message: "天机" },
     });
     expect(result.sentBlurVersion).toBe(true);
   });
@@ -411,23 +530,42 @@ describe("UiRenderer", () => {
     const result = await renderer.renderUi({
       scenario: "tiandao_revelation",
       targetPlayer: { ...basePlayer, realm: "Spirit" }, // rank=5 == realm_gate=5
-      params: { revelation_text: "气运将至" },
+      params: { tiandao_message: "气运将至" },
     });
     expect(result.sentBlurVersion).toBe(false);
     const cmd = JSON.parse((pub.publish.mock.calls[0][1]) as string);
     expect(cmd.realm_gate).toBe(5);
     expect(cmd.xml).toContain("气运将至");
+    // P3: tiandao_revelation only has dismiss button
+    expect(cmd.allowed_button_ids).toEqual(["dismiss"]);
   });
 
-  it("applies custom timeoutTicks", async () => {
+  it("applies custom timeoutTicks for elder_legacy (P3 §4 params)", async () => {
     await renderer.renderUi({
       scenario: "elder_legacy",
-      targetPlayer: { ...basePlayer, realm: "Awaken" },
-      params: { elder_name: "老者", qi_cost_display: "100" },
+      targetPlayer: { ...basePlayer, realm: "Condense" }, // realm_gate=3, rank=3 sufficient
+      params: { elder_title: "老者", elder_narration: "传承在此", qi_cost: "100" },
       timeoutTicks: 1200,
     });
     const cmd = JSON.parse((pub.publish.mock.calls[0][1]) as string);
     expect(cmd.timeout_ticks).toBe(1200);
+    // elder_legacy realm_gate=3
+    expect(cmd.realm_gate).toBe(3);
+    expect(cmd.allowed_button_ids).toContain("accept_legacy");
+    expect(cmd.allowed_button_ids).toContain("dismiss");
+  });
+
+  it("elder_legacy sends blur when player realm < 3 (凝脉境)", async () => {
+    // elder_legacy realm_gate=3 (plan §4), Awaken rank=1 < 3
+    const result = await renderer.renderUi({
+      scenario: "elder_legacy",
+      targetPlayer: { ...basePlayer, realm: "Awaken" }, // rank=1 < realm_gate=3
+      params: { elder_title: "老者", elder_narration: "传承在此", qi_cost: "100" },
+    });
+    expect(result.sentBlurVersion).toBe(true);
+    const cmd = JSON.parse((pub.publish.mock.calls[0][1]) as string);
+    expect(cmd.realm_gate).toBe(0); // blur version has no gate
+    expect(cmd.xml).not.toContain("accept_legacy");
   });
 
   it("re-throws if publish fails", async () => {
@@ -435,8 +573,8 @@ describe("UiRenderer", () => {
     await expect(
       renderer.renderUi({
         scenario: "elder_legacy",
-        targetPlayer: basePlayer,
-        params: { elder_name: "老者", qi_cost_display: "100" },
+        targetPlayer: { ...basePlayer, realm: "Condense" },
+        params: { elder_title: "老者", elder_narration: "传承", qi_cost: "100" },
       }),
     ).rejects.toThrow("redis down");
   });
