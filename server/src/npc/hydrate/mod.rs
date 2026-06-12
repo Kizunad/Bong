@@ -8,8 +8,8 @@ use std::collections::{BTreeMap, HashSet};
 use valence::client::ClientMarker;
 use valence::prelude::bevy_ecs::system::SystemParam;
 use valence::prelude::{
-    bevy_ecs, App, Commands, Despawned, Entity, EventWriter, IntoSystemConfigs, Position, Query,
-    Res, ResMut, Update, With, Without,
+    bevy_ecs, App, Commands, Despawned, Entity, EventReader, EventWriter, IntoSystemConfigs,
+    Position, Query, Res, ResMut, Update, With, Without,
 };
 
 use crate::combat::components::Lifecycle;
@@ -17,7 +17,9 @@ use crate::cultivation::components::{Contamination, Cultivation, MeridianSystem}
 use crate::cultivation::life_record::LifeRecord;
 use crate::cultivation::lifespan::{DeathRegistry, LifespanComponent, LifespanExtensionLedger};
 use crate::cultivation::meridian::severed::MeridianSeveredPermanent;
-use crate::cultivation::tribulation::{du_xu_prereqs_met, InitiateXuhuaTribulation};
+use crate::cultivation::tribulation::{
+    du_xu_prereqs_met, HalfStepRechallengeTriggerEvent, InitiateXuhuaTribulation,
+};
 use crate::npc::brain::NPC_TRIBULATION_WAVES_DEFAULT;
 use crate::npc::dormant::{
     dvec3_from_array, planar_distance, vec3_to_array, DormantBehaviorIntent,
@@ -70,6 +72,7 @@ pub fn register(app: &mut App) {
         Update,
         (
             hydrate_dormant_near_players_system,
+            hydrate_dormant_on_rechallenge_trigger,
             dehydrate_far_npcs_system,
         )
             .chain(),
@@ -158,6 +161,86 @@ pub fn hydrate_dormant_near_players_system(
             normal_slots = normal_slots.saturating_sub(1);
         }
         tracing::debug!("[bong][npc] hydrated dormant NPC into entity {entity:?}");
+    }
+}
+
+/// plan-halfstep-rechallenge-integration-v1 P2：dormant HalfStep NPC 收到重渡触发时强制 hydrate。
+///
+/// 当 `dispatch_rechallenge_on_quota_opened_system` emit `HalfStepRechallengeTriggerEvent`
+/// 且 `is_dormant==true` 时，本系统从 `NpcDormantStore` 按 `char_id` 移除快照，调用
+/// `spawn_from_snapshot` 在世界中创建 NPC entity，并立即发送 `InitiateXuhuaTribulation`
+/// 使其进入渡劫流程。
+///
+/// **设计决议**（§8 #2）：`HalfStepRechallengeTriggerEvent` 是 Bevy ECS Event，dispatch
+/// system（cultivation）与本 hydrate system（npc）注册在同一 `App::new()` 实例，
+/// 故直接通过 ECS event 通信，无需 Redis 回环。
+///
+/// **不响应 `is_dormant==false` 的事件**——那些是 hydrated 玩家/NPC，已在世界中。
+///
+/// **store 中无该 char_id 时安全跳过**——entry 可能已被
+/// `hydrate_dormant_near_players_system` 抢先 hydrate（player 邻近触发），或被过期清理。
+#[allow(clippy::too_many_arguments)]
+pub fn hydrate_dormant_on_rechallenge_trigger(
+    mut events: EventReader<HalfStepRechallengeTriggerEvent>,
+    mut store: ResMut<NpcDormantStore>,
+    mut commands: Commands,
+    dimension_layers: Option<Res<DimensionLayers>>,
+    game_tick: Option<Res<GameTick>>,
+    pois: Option<Res<PoiNoviceRegistry>>,
+    mut skin_pool: Option<ResMut<SkinPool>>,
+    mut tribulations: EventWriter<InitiateXuhuaTribulation>,
+) {
+    let tick = crate::npc::dormant::current_tick(game_tick.as_deref());
+    let Some(dimension_layers) = dimension_layers.as_deref() else {
+        // DimensionLayers 未初始化（常见于单元测试不注册 layer 的情况）——先收集事件避免
+        // EventReader 积压，然后跳过。
+        for event in events.read() {
+            if event.is_dormant {
+                tracing::warn!(
+                    "[bong][npc] hydrate_dormant_on_rechallenge_trigger: DimensionLayers not ready, \
+                     skipping dormant hydrate for char_id={}", event.char_id
+                );
+            }
+        }
+        return;
+    };
+
+    for event in events.read() {
+        if !event.is_dormant {
+            // hydrated entity（玩家或已在世界中的 NPC），不需 hydrate，跳过
+            continue;
+        }
+
+        let Some(snapshot) = store.remove(&event.char_id) else {
+            // store 中无该 char_id：已被邻近 hydrate 抢先处理，或 entry 已过期——安全跳过
+            tracing::debug!(
+                "[bong][npc] hydrate_dormant_on_rechallenge_trigger: char_id={} not in dormant store \
+                 (may have been hydrated already), skipping",
+                event.char_id
+            );
+            continue;
+        };
+
+        let entity = spawn_from_snapshot(
+            &mut commands,
+            snapshot,
+            dimension_layers,
+            tick,
+            pois.as_deref(),
+            skin_pool.as_deref_mut(),
+        );
+
+        tribulations.send(InitiateXuhuaTribulation {
+            entity,
+            waves_total: NPC_TRIBULATION_WAVES_DEFAULT,
+            started_tick: tick,
+        });
+
+        tracing::info!(
+            "[bong][npc] hydrate_dormant_on_rechallenge_trigger: dormant NPC char_id={} hydrated \
+             into entity {entity:?}, InitiateXuhuaTribulation sent",
+            event.char_id
+        );
     }
 }
 
@@ -1634,6 +1717,347 @@ mod tests {
         assert!(
             !player_zones.contains(far_other_zone_npc.zone_name.as_str()),
             "different-zone NPC should be eligible for dehydration"
+        );
+    }
+
+    // ─── plan-halfstep-rechallenge-integration-v1 P2 tests ───────────────────
+
+    /// 构造最小 App：注入 DimensionLayers + NpcDormantStore + Events，添加
+    /// `hydrate_dormant_on_rechallenge_trigger` 系统。
+    fn rechallenge_trigger_app(store: NpcDormantStore) -> App {
+        let mut app = App::new();
+        app.add_event::<HalfStepRechallengeTriggerEvent>();
+        app.add_event::<InitiateXuhuaTribulation>();
+
+        let overworld = app.world_mut().spawn_empty().id();
+        let tsy = app.world_mut().spawn_empty().id();
+        app.insert_resource(DimensionLayers { overworld, tsy });
+        app.insert_resource(store);
+        app.add_systems(Update, hydrate_dormant_on_rechallenge_trigger);
+        app
+    }
+
+    fn dormant_halfstep_snapshot(char_id: &str) -> NpcDormantSnapshot {
+        let cultivation = crate::cultivation::components::Cultivation {
+            realm: crate::cultivation::components::Realm::Spirit,
+            qi_current: 900.0,
+            qi_max: 1000.0,
+            ..Default::default()
+        };
+        let mut s = NpcDormantSnapshot {
+            char_id: char_id.to_string(),
+            archetype: NpcArchetype::Rogue,
+            dimension: DimensionKind::Overworld,
+            zone_name: DEFAULT_SPAWN_ZONE_NAME.to_string(),
+            position: vec3_to_array(DVec3::new(10.0, 64.0, 10.0)),
+            schedule_seed: None,
+            cultivation: cultivation.clone(),
+            meridian_system: crate::cultivation::components::MeridianSystem::default(),
+            meridian_severed:
+                crate::cultivation::meridian::severed::MeridianSeveredPermanent::default(),
+            contamination: crate::cultivation::components::Contamination::default(),
+            lifespan: crate::npc::lifecycle::NpcLifespan::new(0.0, 1_000.0),
+            shared_lifespan: crate::cultivation::lifespan::LifespanComponent::for_realm(
+                cultivation.realm,
+            ),
+            lifespan_extension_ledger:
+                crate::cultivation::lifespan::LifespanExtensionLedger::default(),
+            death_registry: crate::cultivation::lifespan::DeathRegistry::new(char_id),
+            life_record: crate::cultivation::life_record::LifeRecord::new(char_id),
+            faction: None,
+            emergent_group: None,
+            patrol: None,
+            loot_table: None,
+            guardian_relic: None,
+            tsy_hostile: None,
+            intent: crate::npc::dormant::DormantBehaviorIntent::Cultivate {
+                zone: DEFAULT_SPAWN_ZONE_NAME.to_string(),
+            },
+            dormant_since_tick: 0,
+            last_dormant_tick_processed: 0,
+            initial_qi: cultivation.qi_current,
+            qi_ledger_net: 0.0,
+            combat_dead_pending_release: false,
+        };
+        // Open all meridians so dormant_tribulation_ready passes
+        for meridian in s.meridian_system.iter_mut() {
+            meridian.opened = true;
+        }
+        s
+    }
+
+    fn send_rechallenge_event(app: &mut App, char_id: &str, is_dormant: bool) {
+        use valence::prelude::Entity;
+        app.world_mut()
+            .resource_mut::<Events<HalfStepRechallengeTriggerEvent>>()
+            .send(HalfStepRechallengeTriggerEvent {
+                char_id: char_id.to_string(),
+                entity: Entity::PLACEHOLDER,
+                is_dormant,
+                at_tick: 0,
+            });
+    }
+
+    /// P2 happy path: dormant NPC 收到 trigger(is_dormant=true) → 从 store 移除 + entity 创建
+    /// (不为 DespawnMarker/non-NpcMarker) + InitiateXuhuaTribulation 发出。
+    #[test]
+    fn rechallenge_trigger_dormant_hydrates_and_sends_tribulation() {
+        let mut store = NpcDormantStore::default();
+        store.insert(dormant_halfstep_snapshot("npc_rechallenge_dormant"));
+        let mut app = rechallenge_trigger_app(store);
+
+        send_rechallenge_event(&mut app, "npc_rechallenge_dormant", true);
+        app.update();
+
+        assert!(
+            app.world().resource::<NpcDormantStore>().is_empty(),
+            "dormant snapshot must be removed from NpcDormantStore after rechallenge trigger; \
+             store still contains entries"
+        );
+
+        // InitiateXuhuaTribulation must have been emitted
+        let trib_events = app.world().resource::<Events<InitiateXuhuaTribulation>>();
+        let all: Vec<_> = trib_events.iter_current_update_events().collect();
+        assert_eq!(
+            all.len(),
+            1,
+            "exactly one InitiateXuhuaTribulation must be emitted after dormant rechallenge trigger; \
+             got {} events",
+            all.len()
+        );
+        assert_eq!(
+            all[0].waves_total, NPC_TRIBULATION_WAVES_DEFAULT,
+            "hydrated rechallenge NPC must use NPC_TRIBULATION_WAVES_DEFAULT; \
+             expected {NPC_TRIBULATION_WAVES_DEFAULT}, got {}",
+            all[0].waves_total
+        );
+    }
+
+    /// P2 non-dormant event must NOT trigger hydrate: is_dormant=false 走玩家路径，
+    /// store 保持不变，不发 InitiateXuhuaTribulation。
+    #[test]
+    fn rechallenge_trigger_not_dormant_skips_hydrate() {
+        let mut store = NpcDormantStore::default();
+        store.insert(dormant_halfstep_snapshot("npc_live"));
+        let mut app = rechallenge_trigger_app(store);
+
+        // Send event with is_dormant=false (live entity path, not dormant)
+        send_rechallenge_event(&mut app, "npc_live", false);
+        app.update();
+
+        assert!(
+            !app.world().resource::<NpcDormantStore>().is_empty(),
+            "is_dormant=false event must not remove snapshot from NpcDormantStore; \
+             store was incorrectly drained"
+        );
+
+        let trib_events = app.world().resource::<Events<InitiateXuhuaTribulation>>();
+        let all: Vec<_> = trib_events.iter_current_update_events().collect();
+        assert_eq!(
+            all.len(),
+            0,
+            "is_dormant=false rechallenge trigger must NOT emit InitiateXuhuaTribulation; \
+             got {} events",
+            all.len()
+        );
+    }
+
+    /// P2 store 中无该 char_id 时安全跳过（entry 已被邻近 hydrate 预先消费）。
+    #[test]
+    fn rechallenge_trigger_missing_char_id_safe_skip() {
+        // Empty store — no snapshot for "npc_gone"
+        let store = NpcDormantStore::default();
+        let mut app = rechallenge_trigger_app(store);
+
+        send_rechallenge_event(&mut app, "npc_gone", true);
+        // Must not panic, must not emit tribulation
+        app.update();
+
+        let trib_events = app.world().resource::<Events<InitiateXuhuaTribulation>>();
+        let all: Vec<_> = trib_events.iter_current_update_events().collect();
+        assert_eq!(
+            all.len(),
+            0,
+            "missing char_id in dormant store must produce 0 InitiateXuhuaTribulation events; \
+             got {}",
+            all.len()
+        );
+    }
+
+    /// P2 e2e 集成测试：dormant HalfStep NPC 入 HalfStepRechallengeQueue →
+    /// AscensionQuotaOpened → dispatch_rechallenge_on_quota_opened_system emit trigger(is_dormant=true)
+    /// → hydrate_dormant_on_rechallenge_trigger 消费 → NpcDormantStore 移除 + entity spawn +
+    /// InitiateXuhuaTribulation 发出。单 App 一个 update 链路跑通（确认无 Redis 回环）。
+    #[test]
+    fn e2e_dormant_halfstep_rechallenge_full_chain_no_redis() {
+        use crate::combat::CombatClock;
+        use crate::cultivation::tribulation::{
+            AscensionQuotaOpened, HalfStepRechallengeEntry, HalfStepRechallengeQueue,
+            HalfStepRechallengeTriggerEvent, RECHALLENGE_WINDOW_TICKS,
+        };
+
+        let mut store = NpcDormantStore::default();
+        let snap = dormant_halfstep_snapshot("npc_e2e_dormant");
+        store.insert(snap);
+
+        let mut app = App::new();
+        // -- Events --
+        app.add_event::<AscensionQuotaOpened>();
+        app.add_event::<HalfStepRechallengeTriggerEvent>();
+        app.add_event::<InitiateXuhuaTribulation>();
+        // -- Resources --
+        let overworld = app.world_mut().spawn_empty().id();
+        let tsy = app.world_mut().spawn_empty().id();
+        app.insert_resource(DimensionLayers { overworld, tsy });
+        app.insert_resource(store);
+        app.insert_resource(CombatClock { tick: 100 });
+        // Pre-populate queue with dormant NPC entry (is_dormant=true)
+        let mut queue = HalfStepRechallengeQueue::default();
+        queue.enqueue(HalfStepRechallengeEntry {
+            char_id: "npc_e2e_dormant".to_string(),
+            entity: valence::prelude::Entity::PLACEHOLDER,
+            entered_at: 50,
+            rechallenge_window_until: 50 + RECHALLENGE_WINDOW_TICKS,
+            is_dormant: true,
+            buff_applied: false,
+        });
+        app.insert_resource(queue);
+        // -- Systems: dispatch_rechallenge (cultivation) then hydrate (npc) --
+        app.add_systems(
+            Update,
+            (
+                crate::cultivation::tribulation::dispatch_rechallenge_on_quota_opened_system,
+                hydrate_dormant_on_rechallenge_trigger,
+            )
+                .chain(),
+        );
+
+        // Fire AscensionQuotaOpened event — kicks off the full chain
+        app.world_mut()
+            .resource_mut::<Events<AscensionQuotaOpened>>()
+            .send(AscensionQuotaOpened { occupied_slots: 0 });
+
+        app.update();
+
+        // 1) NpcDormantStore must be empty — snapshot was consumed by hydrate
+        assert!(
+            app.world().resource::<NpcDormantStore>().is_empty(),
+            "e2e: NpcDormantStore must be empty after full rechallenge chain; \
+             AscensionQuotaOpened → dispatch trigger → hydrate removed snapshot"
+        );
+
+        // 2) At least one NpcMarker entity must exist (hydrated NPC)
+        let npc_count = {
+            let world = app.world_mut();
+            let mut q = world.query_filtered::<Entity, With<NpcMarker>>();
+            q.iter(world).count()
+        };
+        assert!(
+            npc_count >= 1,
+            "e2e: at least 1 NpcMarker entity must be spawned after rechallenge-triggered hydrate; \
+             found {npc_count}"
+        );
+
+        // 3) InitiateXuhuaTribulation must have been emitted (dormant NPC enters tribulation)
+        let trib_events = app.world().resource::<Events<InitiateXuhuaTribulation>>();
+        let all: Vec<_> = trib_events.iter_current_update_events().collect();
+        assert_eq!(
+            all.len(),
+            1,
+            "e2e: exactly 1 InitiateXuhuaTribulation must be emitted via full rechallenge chain \
+             (dormant→hydrate→tribulation); got {}",
+            all.len()
+        );
+        assert_eq!(
+            all[0].waves_total, NPC_TRIBULATION_WAVES_DEFAULT,
+            "e2e: tribulation waves must equal NPC_TRIBULATION_WAVES_DEFAULT={}; got {}",
+            NPC_TRIBULATION_WAVES_DEFAULT, all[0].waves_total
+        );
+
+        // 4) HalfStepRechallengeQueue must be empty — entry was consumed by dispatch system
+        let queue = app.world().resource::<HalfStepRechallengeQueue>();
+        assert!(
+            queue.is_empty(),
+            "e2e: HalfStepRechallengeQueue must be empty after dispatch consumed the dormant entry; \
+             {} entries remain",
+            queue.len()
+        );
+    }
+
+    /// P2 hydrated entity 收 trigger 后 NpcMarker 被创建（实体存在于世界）。
+    #[test]
+    fn rechallenge_trigger_dormant_entity_is_spawned_into_world() {
+        let mut store = NpcDormantStore::default();
+        store.insert(dormant_halfstep_snapshot("npc_spawned"));
+        let mut app = rechallenge_trigger_app(store);
+
+        send_rechallenge_event(&mut app, "npc_spawned", true);
+        app.update();
+
+        // At least one NpcMarker entity must exist after hydration
+        let npc_count = {
+            let world = app.world_mut();
+            let mut q = world.query_filtered::<Entity, With<NpcMarker>>();
+            q.iter(world).count()
+        };
+        assert!(
+            npc_count >= 1,
+            "after rechallenge-triggered hydrate, at least 1 NpcMarker entity must exist; \
+             found {npc_count}"
+        );
+    }
+
+    /// P2 FIFO 顺序：多个 dormant NPC trigger 按事件顺序各自 hydrate，store 全空。
+    #[test]
+    fn rechallenge_trigger_multiple_dormant_all_hydrated_fifo() {
+        let mut store = NpcDormantStore::default();
+        store.insert(dormant_halfstep_snapshot("npc_fifo_a"));
+        store.insert(dormant_halfstep_snapshot("npc_fifo_b"));
+        let mut app = rechallenge_trigger_app(store);
+
+        // Send both triggers in a single update
+        send_rechallenge_event(&mut app, "npc_fifo_a", true);
+        send_rechallenge_event(&mut app, "npc_fifo_b", true);
+        app.update();
+
+        assert!(
+            app.world()
+                .resource::<NpcDormantStore>()
+                .is_empty(),
+            "both dormant snapshots must be drained from NpcDormantStore after two rechallenge triggers; \
+             store still has {} entries",
+            app.world().resource::<NpcDormantStore>().len()
+        );
+
+        let trib_events = app.world().resource::<Events<InitiateXuhuaTribulation>>();
+        let all: Vec<_> = trib_events.iter_current_update_events().collect();
+        assert_eq!(
+            all.len(),
+            2,
+            "two dormant rechallenge triggers must emit exactly 2 InitiateXuhuaTribulation events; \
+             got {}",
+            all.len()
+        );
+    }
+
+    /// P2 hydrated NPC 保持 is_dormant=false 路径（NpcDormantStore 中存有快照但 trigger 为 live）——
+    /// 确保 store 不被误清。
+    #[test]
+    fn rechallenge_trigger_live_entity_does_not_drain_store() {
+        let mut store = NpcDormantStore::default();
+        store.insert(dormant_halfstep_snapshot("npc_shared"));
+        let store_len_before = store.len();
+        let mut app = rechallenge_trigger_app(store);
+
+        // Same char_id but is_dormant=false (live entity path)
+        send_rechallenge_event(&mut app, "npc_shared", false);
+        app.update();
+
+        let store_len_after = app.world().resource::<NpcDormantStore>().len();
+        assert_eq!(
+            store_len_after, store_len_before,
+            "is_dormant=false trigger for char_id with dormant snapshot must NOT remove it; \
+             store had {store_len_before} before, has {store_len_after} after"
         );
     }
 }

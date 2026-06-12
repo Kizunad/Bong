@@ -36,6 +36,11 @@ pub const CH_TRIBULATION_WAVE: &str = "bong:tribulation/wave";
 pub const CH_TRIBULATION_SETTLE: &str = "bong:tribulation/settle";
 pub const CH_TRIBULATION_COLLAPSE: &str = "bong:tribulation/collapse";
 
+// plan-halfstep-rechallenge-integration-v1 P1：半步化虚重渡触发 → agent narration。
+// server 将 `HalfStepRechallengeTriggerEvent` 序列化后 publish 到此 channel；
+// agent 订阅后按 zone_halfstep_count 路由 player / zone narration。
+pub const CH_HALFSTEP_RECHALLENGE: &str = "bong:tribulation/halfstep_rechallenge";
+
 // 化虚专属 action（plan-void-actions-v1）：四类行为各自 fanout，agent 侧
 // 订阅后统一生成全服 narration。
 pub const CH_VOID_ACTION_SUPPRESS_TSY: &str = "bong:void_action/suppress_tsy";
@@ -279,6 +284,21 @@ pub const CH_AGENT_UI_RESPONSE: &str = "bong:agent_ui_response";
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn halfstep_rechallenge_channel_pin() {
+        // plan-halfstep-rechallenge-integration-v1 P1：双端 pin，防 channels.ts 漂移。
+        assert_eq!(
+            CH_HALFSTEP_RECHALLENGE,
+            "bong:tribulation/halfstep_rechallenge",
+            "CH_HALFSTEP_RECHALLENGE 必须是 \"bong:tribulation/halfstep_rechallenge\"（plan-halfstep-rechallenge-integration-v1 P1）"
+        );
+        // 不允许与主 tribulation channel 撞名（防 agent 收双份 event）
+        assert_ne!(
+            CH_HALFSTEP_RECHALLENGE, CH_TRIBULATION,
+            "CH_HALFSTEP_RECHALLENGE 绝不能等于 CH_TRIBULATION（防 agent fanout 混淆）"
+        );
+    }
 
     #[test]
     fn redis_v1_channel_constants_remain_frozen() {

@@ -86,6 +86,15 @@ export const CHANNELS = {
   TRIBULATION_SETTLE: "bong:tribulation/settle",
   TRIBULATION_COLLAPSE: "bong:tribulation/collapse",
 
+  /**
+   * Server → Agent: 半步化虚重渡触发事件（plan-halfstep-rechallenge-integration-v1 P1）。
+   *
+   * payload 形态：`HalfStepRechallengeTriggerPayloadV1`
+   * （char_id / zone_name / zone_halfstep_count / at_tick）。
+   * agent 据 zone_halfstep_count >= 2 决定是否 emit zone echo narration。
+   */
+  HALFSTEP_RECHALLENGE: "bong:tribulation/halfstep_rechallenge",
+
   /** Server → Agent: 化虚四类世界级 action 公告（plan-void-actions-v1） */
   VOID_ACTION_SUPPRESS_TSY: "bong:void_action/suppress_tsy",
   VOID_ACTION_EXPLODE_ZONE: "bong:void_action/explode_zone",
@@ -511,6 +520,8 @@ export const REDIS_V1_CHANNELS = [
   // plan-agent-ui-data-v1 P0 — 天道 UI 面板 IPC 通道
   CHANNELS.AGENT_UI_CMD,
   CHANNELS.AGENT_UI_RESPONSE,
+  // plan-halfstep-rechallenge-integration-v1 P1 — 半步重渡触发 agent narration 通道
+  CHANNELS.HALFSTEP_RECHALLENGE,
 ] as const;
 
 export type ChannelName = (typeof CHANNELS)[keyof typeof CHANNELS];

@@ -38,10 +38,10 @@ use crate::schema::channels::{
     CH_CULTIVATION_DEATH, CH_DEATH_CINEMATIC, CH_DEATH_INSIGHT, CH_DUGU_POISON_PROGRESS,
     CH_DUGU_V2_CAST, CH_DUGU_V2_REVERSE, CH_DUGU_V2_SELF_CURE, CH_DUO_SHE_EVENT,
     CH_ELDER_ENCOUNTER, CH_FACTION_EVENT, CH_FACTION_STATE, CH_FACTION_WAR, CH_FORGE_EVENT,
-    CH_FORGE_OUTCOME, CH_FORGE_START, CH_HEART_DEMON_OFFER, CH_HEART_DEMON_REQUEST,
-    CH_HIGH_RENOWN_MILESTONE, CH_INSIGHT_OFFER, CH_INSIGHT_REQUEST, CH_LIFESPAN_EVENT,
-    CH_MERIDIAN_SEVERED, CH_MUTATION_EVENT, CH_NPC_COMBAT, CH_NPC_DEATH, CH_NPC_RELIC,
-    CH_NPC_SPAWN, CH_PLAYER_CHAT, CH_POISON_DOSE_EVENT, CH_POISON_OVERDOSE_EVENT,
+    CH_FORGE_OUTCOME, CH_FORGE_START, CH_HALFSTEP_RECHALLENGE, CH_HEART_DEMON_OFFER,
+    CH_HEART_DEMON_REQUEST, CH_HIGH_RENOWN_MILESTONE, CH_INSIGHT_OFFER, CH_INSIGHT_REQUEST,
+    CH_LIFESPAN_EVENT, CH_MERIDIAN_SEVERED, CH_MUTATION_EVENT, CH_NPC_COMBAT, CH_NPC_DEATH,
+    CH_NPC_RELIC, CH_NPC_SPAWN, CH_PLAYER_CHAT, CH_POISON_DOSE_EVENT, CH_POISON_OVERDOSE_EVENT,
     CH_POI_NOVICE_EVENT, CH_PRICE_INDEX, CH_PSEUDO_VEIN_ACTIVE, CH_PSEUDO_VEIN_DISSIPATE,
     CH_RAT_PHASE_EVENT, CH_REBIRTH, CH_SEASON_CHANGED, CH_SKILL_CAP_CHANGED, CH_SKILL_LV_UP,
     CH_SKILL_SCROLL_USED, CH_SKILL_XP_GAIN, CH_SOCIAL_EXPOSURE, CH_SOCIAL_FEUD,
@@ -298,6 +298,11 @@ pub enum RedisOutbound {
     // ─── plan-agent-ui-data-v1 P0 ───────────────────────────────────
     /// 玩家天道 UI 面板交互响应（bong:agent_ui_response）。
     AgentUiResponse(AgentUiResponsePayloadV1),
+    // ─── plan-halfstep-rechallenge-integration-v1 P1 ────────────────
+    /// 半步化虚重渡触发（bong:tribulation/halfstep_rechallenge），agent narration 用。
+    HalfStepRechallengeTrigger(
+        crate::schema::halfstep_rechallenge::HalfStepRechallengeTriggerPayloadV1,
+    ),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1637,6 +1642,18 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
             })?;
             Ok(RedisIoCommand::Publish {
                 channel: CH_AGENT_UI_RESPONSE,
+                payload,
+            })
+        }
+        // ─── plan-halfstep-rechallenge-integration-v1 P1 ────────────
+        RedisOutbound::HalfStepRechallengeTrigger(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!(
+                    "failed to serialize HalfStepRechallengeTriggerPayloadV1: {error}"
+                ))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_HALFSTEP_RECHALLENGE,
                 payload,
             })
         }
@@ -5168,6 +5185,58 @@ mod redis_bridge_tests {
             other => panic!(
                 "expected RedisIoCommand::Publish for VoidErosionEvent, got {other:?} — \
                  VoidErosionEvent must not fan-out; single-channel publish only"
+            ),
+        }
+    }
+
+    /// `prepare_outbound_command(RedisOutbound::HalfStepRechallengeTrigger(..))` 必须发布到
+    /// `CH_HALFSTEP_RECHALLENGE`（`"bong:tribulation/halfstep_rechallenge"`）。
+    ///
+    /// agent 天道层订阅此 channel 以路由 player/zone scope narration；若 arm 被误改或
+    /// channel 常量漂移，agent 静默收不到触发事件。本测试锁住该契约。
+    #[test]
+    fn publishes_halfstep_rechallenge_trigger_on_correct_channel() {
+        use crate::schema::halfstep_rechallenge::HalfStepRechallengeTriggerPayloadV1;
+
+        let payload = HalfStepRechallengeTriggerPayloadV1 {
+            char_id: "offline:Azure".to_string(),
+            zone_name: "qingyun_peaks".to_string(),
+            zone_halfstep_count: 2,
+            at_tick: 99_000,
+        };
+
+        let command = prepare_outbound_command(RedisOutbound::HalfStepRechallengeTrigger(payload))
+            .expect("HalfStepRechallengeTrigger payload should serialize without error");
+
+        match command {
+            RedisIoCommand::Publish { channel, payload } => {
+                assert_eq!(
+                    channel, CH_HALFSTEP_RECHALLENGE,
+                    "HalfStepRechallengeTrigger must publish to CH_HALFSTEP_RECHALLENGE \
+                     (\"bong:tribulation/halfstep_rechallenge\"); got {channel:?} — \
+                     changing the channel silently breaks agent narration subscription"
+                );
+                assert_eq!(
+                    channel, "bong:tribulation/halfstep_rechallenge",
+                    "channel literal must stay 'bong:tribulation/halfstep_rechallenge' \
+                     for agent IPC contract (plan-halfstep-rechallenge-integration-v1 P1)"
+                );
+                let v: serde_json::Value =
+                    serde_json::from_str(payload.as_str()).expect("payload must be valid JSON");
+                assert_eq!(
+                    v["char_id"], "offline:Azure",
+                    "char_id round-trips through payload serialization"
+                );
+                assert_eq!(v["zone_name"], "qingyun_peaks", "zone_name round-trips");
+                assert_eq!(
+                    v["zone_halfstep_count"], 2,
+                    "zone_halfstep_count round-trips; agent uses this for zone echo threshold"
+                );
+                assert_eq!(v["at_tick"], 99_000, "at_tick round-trips");
+            }
+            other => panic!(
+                "expected RedisIoCommand::Publish for HalfStepRechallengeTrigger, got {other:?} — \
+                 HalfStepRechallengeTrigger must not fan-out; single-channel publish only"
             ),
         }
     }

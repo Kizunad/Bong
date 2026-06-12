@@ -33,6 +33,8 @@ pub mod economy;
 pub mod elder_encounter;
 pub mod forge;
 pub mod forge_bridge;
+// plan-halfstep-rechallenge-integration-v1 P1：半步重渡 Redis → agent payload schema。
+pub mod halfstep_rechallenge;
 pub mod identity;
 pub mod inventory;
 pub mod lingtian;

@@ -179,6 +179,9 @@ public class ServerDataRouterTest {
             // plan-agent-ui-data-v1 P1 — 天道动态 UI 面板 S2C（request + close 同 handler）
             "agent_ui_request",
             "agent_ui_close"
+            // NOTE: plan-halfstep-rechallenge-integration-v1 P0 — "half_step_rechallenge" 已迁移
+            // 到专属 bong:halfstep_rechallenge channel（JSON），不再经 ServerDataRouter 路由。
+            // BongNetworkHandler.registerHalfStepRechallengeChannel() 负责接收和解析。
         ), router.registeredTypes());
     }
 

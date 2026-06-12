@@ -59,5 +59,7 @@ public enum HudRenderLayer {
     /** plan-dying-elder-v1 P3：垂死大能遭遇 HUD（真元进度条 + 三按钮 + 背叛概率）。 */
     DYING_ELDER,
     /** plan-agent-ui-data-v1 P3：天道动态面板 VFX overlay（粒子底噪、vignette、shake）。 */
-    AGENT_UI
+    AGENT_UI,
+    /** plan-halfstep-rechallenge-integration-v1 P0：半步化虚重渡触发 HUD（灵机涌现 + 倒计时）。 */
+    HALFSTEP_RECHALLENGE
 }

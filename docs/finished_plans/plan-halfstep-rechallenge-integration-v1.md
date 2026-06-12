@@ -50,9 +50,9 @@
 
 | 阶段 | 状态 | 主要交付物 | 验收标准 |
 |------|------|-----------|---------|
-| **P0** | ⬜ | Client HUD layer（tribulation_status.java）| 重渡触发后 HUD "灵机涌现" 显示 + 倒计时正确；淡入/淡出正常 |
-| **P1** | ⬜ | Agent narration TS 接入（三条模板 + scope 路由）| 名额空出后 agent broadcast narration 出现；player/zone scope 定向送达 |
-| **P2** | ⬜ | dormant NPC hydrate 钩子 + e2e | dormant HalfStep NPC 收到触发后强制 hydrate，后续可正常起劫 |
+| **P0** | ✅ 2026-06-13 | Client HUD layer（tribulation_status.java）| 重渡触发后 HUD "灵机涌现" 显示 + 倒计时正确；淡入/淡出正常 |
+| **P1** | ✅ 2026-06-13 | Agent narration TS 接入（三条模板 + scope 路由）| 名额空出后 agent broadcast narration 出现；player/zone scope 定向送达 |
+| **P2** | ✅ 2026-06-13 | dormant NPC hydrate 钩子 + e2e | dormant HalfStep NPC 收到触发后强制 hydrate，后续可正常起劫 |
 
 ---
 
@@ -109,3 +109,50 @@
 2. **HalfStepRechallengeTriggerEvent 经 Redis 还是直接 ECS event 触达 npc-virtualize**：确认 npc-virtualize 与 tribulation 是否同一 Bevy App（同进程则直接 event；异进程需 Redis 回环）
 3. **HUD 隐藏 payload**：server 需在以下场景发 HIDE payload：① `/tribulation_rechallenge` 成功起劫 ② `window_until` 过期（server-side check 每 tick vs 定时推送）③ 玩家化虚结算
 4. **zone echo 触发条件 ≥2 的统计时机**：收到每次 trigger event 时查当前 zone 内 HalfStep entity 数 vs 维护一个 zone-level HalfStep 计数器（前者实时准确，后者性能更好）
+
+---
+
+## Finish Evidence
+
+半步化虚**重渡机制跨层接收集成**——把已实装但全仓零下游消费的 server ECS 事件 `HalfStepRechallengeTriggerEvent`（`cultivation/tribulation.rs`）接到 client HUD（P0）/ agent narration（P1）/ dormant NPC hydrate（P2）三层，端到端闭环且**生产可用（修复了原 proto-panic 隐患）**。
+
+> **§0 轴心校正**：plan §0 原称「server 侧零改动，只接收不生产」。实际为正确实现三层接收，server 端新增了必要的 emit/publish/hydrate 接线（S2C 专属 channel 发送、Redis publish 供 agent 消费、dormant hydrate 系统、broadcast 音效）——`HalfStepRechallengeTriggerEvent` / `dispatch_rechallenge_on_quota_opened_system` 本体确为上游既有未改。「纯接收层」是设计意图的简化表述。
+
+### 落地清单
+**P0 — client HUD 三端触发闭环**
+- `server/src/network/halfstep_rechallenge_emit.rs`（新模块）— `emit_halfstep_rechallenge_trigger`（dormant 过滤）+ `emit_halfstep_rechallenge_hide_on_settle` + `send_halfstep_rechallenge_to_client`（**专属 JSON channel `bong:halfstep_rechallenge`**）+ player 音效
+- `server/src/schema/server_data.rs` — `HalfStepRechallengeV1`(trigger/hide) + `ServerDataType`/`ServerDataPayloadV1` 变体（serde JSON 序列化复用，**不再经 proto 路径发送**）
+- `server/assets/audio/recipes/halfstep_rechallenge_trigger_player.json`
+- `client/.../hud/HalfStepRechallengeHudPlanner.java`（top-right「灵机涌现：可重渡虚劫」+ 倒计时「剩余 Xd Yh」+ <24h 强调色 + 淡入/淡出 + 过窗本地隐藏）+ `HalfStepRechallengeStore`（last-write-wins）
+- `client/.../combat/handler/HalfStepRechallengeHandler.java` + **`BongNetworkHandler` 注册 `bong:halfstep_rechallenge` 专属 channel listener**（解析 JSON→store；P0 初版经 ServerDataRouter，fix3 改专属 channel 修 proto-panic）
+
+**P1 — agent narration 三模板 + server→agent Redis 桥**
+- `server/src/schema/channels.rs` `CH_HALFSTEP_RECHALLENGE="bong:tribulation/halfstep_rechallenge"` + `redis_bridge.rs` `RedisOutbound::HalfStepRechallengeTrigger` + `halfstep_rechallenge_emit.rs::publish_halfstep_rechallenge_to_redis`（zone_name 解析 + zone_halfstep_count 实时 ECS 查询 + dormant fallback + zone echo≥2）
+- `agent/packages/schema/src/tribulation.ts` `HalfStepRechallengeTriggerPayloadV1` + `channels.ts` 常量
+- `agent/.../halfstep-rechallenge-narration.ts` `HalfStepRechallengeNarrationRuntime`（player『你感到曾遭封压的经脉微微松动，或许时机已到。』+ zone echo『虚空中某处的修士收到了相同的消息。』，**style=perception**）；broadcast『灵脉间隐约传来一股真元波动，似有化虚修士陨落，名额空出一席。』复用 `tribulation-runtime.ts` ascension_quota_open（单点不双发，**style=perception**）
+- `server/assets/audio/recipes/halfstep_quota_release_broadcast.json` + `halfstep_rechallenge_trigger_zone_echo.json`，broadcast 音效在 `publish_tribulation_events` quota_open 处 emit（消死资产）
+
+**P2 — dormant NPC hydrate（同 Bevy App 直接 ECS event）**
+- `server/src/npc/hydrate/mod.rs` `hydrate_dormant_on_rechallenge_trigger`（`EventReader<HalfStepRechallengeTriggerEvent>` 过滤 is_dormant→`NpcDormantStore` remove→`spawn_from_snapshot`→`InitiateXuhuaTribulation`）+ e2e（AscensionQuotaOpened→dispatch→trigger→hydrate 单 App 一次 update，**无 Redis 回环**——§8#2 决策门确认 tribulation 与 npc hydrate 同 `App::new()`）
+
+### 关键 commit（18，origin/main..HEAD，2026-06-13）
+- P0：`7ce201fe4` HUD 三端闭环
+- P1：`d86773211`/`097d53be1`/`86479bd29`/`071148b54`（server schema+RedisOutbound / publish+音效 / agent schema / NarrationRuntime+19单测）
+- P2：`6d9313184` dormant hydrate+e2e
+- Fix（对抗审查逐层逼出）：`86123d351` wire type 统一 half_step_rechallenge+drift护栏 · `8f28f9ff8` publish 测试 · `3607a7dab` channel pin · `25c97ff0d` broadcast 音效 · `77528683f`/`34594dc35`/`ad8341bf3`/`5869bc2a5` narration 文案+style perception · `b5ccefe4a`/`b9608c40a` client handler key+22测试 · `bddf12e9e` cross-zone 测试 · `76f0e6b83` **proto-panic 修复（改专属 JSON channel）**
+
+### 测试结果（全绿）
+- `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` → **8852 passed / 0 failed**
+- `cd agent/packages/tiandao && npm test` → **789 passed**；`cd agent/packages/schema && npm test` → **693 passed**
+- `cd client && ./gradlew test build` → **2660 passed / 0 failed**
+
+### 跨仓库核验
+- **server**：`HalfStepRechallengeTriggerEvent`(既有) / `halfstep_rechallenge_emit`(emit/publish/send 专属 channel) / `hydrate_dormant_on_rechallenge_trigger` / `CH_HALFSTEP_RECHALLENGE`
+- **agent**：`HalfStepRechallengeTriggerPayloadV1` / `HalfStepRechallengeNarrationRuntime`(perception)
+- **client**：`HalfStepRechallengeHudPlanner` / `HalfStepRechallengeStore` / `HalfStepRechallengeHandler` / `BongNetworkHandler`(bong:halfstep_rechallenge listener)
+- **Redis/CustomPayload**：`bong:tribulation/halfstep_rechallenge`(server→agent) / `bong:halfstep_rechallenge`(server→client S2C, JSON 专属 channel)
+
+### 遗留 / 后续
+- **⚠️ proto-panic 跨切面共享 bug（已为本 plan 修复，agent-ui 待修）**：`serialize_server_data_payload` 在生产 `#[cfg(not(test))]` 走 `to_proto_bytes()`→proto_convert 对无 proto 变体的 S2C payload 是 `unreachable!()`→**生产 panic**（e2e 跑 cfg(test)=JSON 不触发，故 CI 全绿放行）。本 plan 已改专属 JSON channel 修复。**已 merge 的 `plan-agent-ui-data-v1`（PR #522）`agent_ui.rs:446/470/502` 的 AgentUiRequest/AgentUiClose S2C 是同款 bug 未修**——建议 follow-up 跨切面 PR 统一修（同样改专属 JSON channel 或加 proto 变体）。
+- **HUD 表层视觉偏离**（minor）：HudPlanner 坐标 right=8/top=50（plan 取 halfstep-buff P3 为 24/64）+ 淡入淡出用线性插值（plan 要 ease-cubic）——不破坏闭环/契约，后续可贴 spec。
+- **本 plan 不产生 QiTransfer**：重渡起劫走既有 `check_qi_threshold` / `InitiateXuhuaTribulation` 路径，本 plan 仅接收/接线——reverify 确认守恒合规。

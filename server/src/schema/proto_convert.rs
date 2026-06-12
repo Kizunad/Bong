@@ -1452,6 +1452,14 @@ impl From<&ServerDataPayloadV1> for Payload {
                     此分支不可达——若触发说明调用方绕过了 JSON bypass 契约"
                 )
             }
+            // ─── plan-halfstep-rechallenge-integration-v1 P0：HalfStepRechallenge（JSON 旁路）
+            // HalfStepRechallenge 通过 bong:server_data JSON CustomPayload 发送，不走 proto 路径。
+            ServerDataPayloadV1::HalfStepRechallenge(_) => {
+                unreachable!(
+                    "HalfStepRechallenge 经由 JSON CustomPayload 发送，不走 proto 编码路径；\
+                    此分支不可达——若触发说明调用方绕过了 JSON bypass 契约"
+                )
+            }
         }
     }
 }

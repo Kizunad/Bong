@@ -24,6 +24,8 @@ use crate::cultivation::death_hooks::CultivationDeathTrigger;
 use crate::cultivation::life_record::{BiographyEntry, HeartDemonOutcome, LifeRecord};
 use crate::cultivation::lifespan::{LifespanCapTable, LifespanComponent};
 use crate::inventory::{transfer_all_inventory_contents, PlayerInventory};
+use crate::network::audio_event_emit::{AudioRecipient, PlaySoundRecipeRequest};
+use crate::network::halfstep_rechallenge_emit::HALFSTEP_QUOTA_RELEASE_BROADCAST_AUDIO_RECIPE;
 use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::network::RedisBridgeResource;
 use crate::qi_physics::{
@@ -3565,6 +3567,7 @@ pub fn tribulation_intercept_death_system(
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn publish_tribulation_events(
     redis: Res<RedisBridgeResource>,
+    mut audio: EventWriter<PlaySoundRecipeRequest>,
     mut announce: EventReader<TribulationAnnounce>,
     mut juebi_triggered: EventReader<JueBiTriggeredEvent>,
     mut locked: EventReader<TribulationLocked>,
@@ -3713,6 +3716,17 @@ pub fn publish_tribulation_events(
         let _ = redis
             .tx_outbound
             .send(crate::network::redis_bridge::RedisOutbound::TribulationEvent(payload));
+        // plan-halfstep-rechallenge-integration-v1 P1：名额空出时广播音效。
+        // 消除 halfstep_quota_release_broadcast recipe 的死资产状态。
+        audio.send(PlaySoundRecipeRequest {
+            recipe_id: HALFSTEP_QUOTA_RELEASE_BROADCAST_AUDIO_RECIPE.to_string(),
+            instance_id: 0,
+            pos: None,
+            flag: None,
+            volume_mul: 1.0,
+            pitch_shift: 0.0,
+            recipient: AudioRecipient::All,
+        });
     }
 }
 
@@ -5600,6 +5614,7 @@ mod tests {
 
     #[test]
     fn publish_lock_event_to_tribulation_channel() {
+        use crate::network::audio_event_emit::PlaySoundRecipeRequest;
         let mut app = App::new();
         let (tx_outbound, rx_outbound) = crossbeam_channel::unbounded();
         let (_tx_inbound, rx_inbound) = crossbeam_channel::unbounded();
@@ -5613,6 +5628,7 @@ mod tests {
         app.add_event::<TribulationSettled>();
         app.add_event::<JueBiTriggeredEvent>();
         app.add_event::<AscensionQuotaOpened>();
+        app.add_event::<PlaySoundRecipeRequest>();
         app.add_systems(Update, publish_tribulation_events);
 
         app.world_mut()
@@ -5644,6 +5660,7 @@ mod tests {
 
     #[test]
     fn publish_wave_event_keeps_tribulator_identity() {
+        use crate::network::audio_event_emit::PlaySoundRecipeRequest;
         let mut app = App::new();
         let (tx_outbound, rx_outbound) = crossbeam_channel::unbounded();
         let (_tx_inbound, rx_inbound) = crossbeam_channel::unbounded();
@@ -5657,6 +5674,7 @@ mod tests {
         app.add_event::<TribulationSettled>();
         app.add_event::<JueBiTriggeredEvent>();
         app.add_event::<AscensionQuotaOpened>();
+        app.add_event::<PlaySoundRecipeRequest>();
         app.add_systems(Update, publish_tribulation_events);
 
         let entity = app
@@ -5705,6 +5723,7 @@ mod tests {
 
     #[test]
     fn publish_settle_event_uses_actor_name() {
+        use crate::network::audio_event_emit::PlaySoundRecipeRequest;
         let mut app = App::new();
         let (tx_outbound, rx_outbound) = crossbeam_channel::unbounded();
         let (_tx_inbound, rx_inbound) = crossbeam_channel::unbounded();
@@ -5718,6 +5737,7 @@ mod tests {
         app.add_event::<TribulationSettled>();
         app.add_event::<JueBiTriggeredEvent>();
         app.add_event::<AscensionQuotaOpened>();
+        app.add_event::<PlaySoundRecipeRequest>();
         app.add_systems(Update, publish_tribulation_events);
 
         let entity = app
@@ -5766,6 +5786,7 @@ mod tests {
 
     #[test]
     fn publish_ascension_quota_open_event_to_tribulation_channel() {
+        use crate::network::audio_event_emit::PlaySoundRecipeRequest;
         let mut app = App::new();
         let (tx_outbound, rx_outbound) = crossbeam_channel::unbounded();
         let (_tx_inbound, rx_inbound) = crossbeam_channel::unbounded();
@@ -5779,6 +5800,7 @@ mod tests {
         app.add_event::<TribulationSettled>();
         app.add_event::<JueBiTriggeredEvent>();
         app.add_event::<AscensionQuotaOpened>();
+        app.add_event::<PlaySoundRecipeRequest>();
         app.add_systems(Update, publish_tribulation_events);
 
         app.world_mut()
@@ -5801,6 +5823,64 @@ mod tests {
             }
             other => panic!("unexpected outbound payload: {other:?}"),
         }
+    }
+
+    /// plan-halfstep-rechallenge-integration-v1 P1：
+    /// `AscensionQuotaOpened` 时必须广播 `halfstep_quota_release_broadcast` 音效。
+    /// 消除死资产：recipe 在 audio registry 注册，此测试锁住 emit 路径。
+    #[test]
+    fn ascension_quota_open_emits_broadcast_audio() {
+        use crate::network::audio_event_emit::PlaySoundRecipeRequest;
+        use crate::network::halfstep_rechallenge_emit::HALFSTEP_QUOTA_RELEASE_BROADCAST_AUDIO_RECIPE;
+
+        let mut app = App::new();
+        let (tx_outbound, _rx_outbound) = crossbeam_channel::unbounded();
+        let (_tx_inbound, rx_inbound) = crossbeam_channel::unbounded();
+        app.insert_resource(RedisBridgeResource {
+            tx_outbound,
+            rx_inbound,
+        });
+        app.add_event::<TribulationAnnounce>();
+        app.add_event::<TribulationLocked>();
+        app.add_event::<TribulationWaveCleared>();
+        app.add_event::<TribulationSettled>();
+        app.add_event::<JueBiTriggeredEvent>();
+        app.add_event::<AscensionQuotaOpened>();
+        app.add_event::<PlaySoundRecipeRequest>();
+        app.add_systems(Update, publish_tribulation_events);
+
+        app.world_mut()
+            .resource_mut::<Events<AscensionQuotaOpened>>()
+            .send(AscensionQuotaOpened { occupied_slots: 0 });
+
+        app.update();
+
+        let audio_events = app.world().resource::<Events<PlaySoundRecipeRequest>>();
+        let mut reader = bevy_ecs::event::ManualEventReader::default();
+        let requests: Vec<_> = reader.read(audio_events).collect();
+        let broadcast_count = requests
+            .iter()
+            .filter(|r| r.recipe_id == HALFSTEP_QUOTA_RELEASE_BROADCAST_AUDIO_RECIPE)
+            .count();
+        assert_eq!(
+            broadcast_count, 1,
+            "AscensionQuotaOpened 必须发出 1 条 {} 广播音效请求，实际 {}；\
+             该 recipe 在 audio registry 已注册，不 emit 是死资产",
+            HALFSTEP_QUOTA_RELEASE_BROADCAST_AUDIO_RECIPE, broadcast_count
+        );
+        // 确认是 All recipient（全服广播）
+        let req = requests
+            .iter()
+            .find(|r| r.recipe_id == HALFSTEP_QUOTA_RELEASE_BROADCAST_AUDIO_RECIPE)
+            .unwrap();
+        assert!(
+            matches!(
+                req.recipient,
+                crate::network::audio_event_emit::AudioRecipient::All
+            ),
+            "名额空出广播音效必须 recipient=All（全服），实际 {:?}",
+            req.recipient
+        );
     }
 
     #[test]

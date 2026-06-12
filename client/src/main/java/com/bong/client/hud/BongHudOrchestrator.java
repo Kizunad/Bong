@@ -370,6 +370,8 @@ public final class BongHudOrchestrator {
             commands.addAll(DamageFloaterHudPlanner.buildCommands(screenWidth, screenHeight, nowMillis));
             commands.addAll(FlightHudPlanner.buildCommands(screenWidth, screenHeight, nowMillis));
             commands.addAll(TribulationBroadcastHudPlanner.buildCommands(screenWidth, screenHeight, nowMillis));
+            // plan-halfstep-rechallenge-integration-v1 P0：半步化虚重渡触发 HUD（右上角）。
+            commands.addAll(HalfStepRechallengeHudPlanner.buildCommands(screenWidth, screenHeight, nowMillis));
             // plan-offscreen-war-v1 P9：战事双色血条 + WarPhase 文字（y=50，不压 tribulation y=28）。
             commands.addAll(com.bong.client.hud.war.FactionWarHudPlanner.buildCommands(screenWidth, screenHeight, nowMillis));
         commands.addAll(TargetInfoHudPlanner.buildCommands(

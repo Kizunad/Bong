@@ -189,6 +189,8 @@ pub fn payload_type_label(payload_type: ServerDataType) -> &'static str {
         // ─── plan-agent-ui-data-v1 P0：天道 UI-as-Data ──────────────
         ServerDataType::AgentUiRequest => "agent_ui_request",
         ServerDataType::AgentUiClose => "agent_ui_close",
+        // ─── plan-halfstep-rechallenge-integration-v1 P0 ────────────────
+        ServerDataType::HalfStepRechallenge => "half_step_rechallenge",
     }
 }
 

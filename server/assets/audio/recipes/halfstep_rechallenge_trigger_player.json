@@ -1,0 +1,21 @@
+{
+  "id": "halfstep_rechallenge_trigger_player",
+  "layers": [
+    {
+      "sound": "minecraft:entity.experience_orb.pickup",
+      "volume": 0.7,
+      "pitch": 1.4,
+      "delay_ticks": 0
+    },
+    {
+      "sound": "minecraft:block.beacon.activate",
+      "volume": 0.5,
+      "pitch": 1.1,
+      "delay_ticks": 8
+    }
+  ],
+  "priority": 90,
+  "attenuation": "player_local",
+  "category": "AMBIENT",
+  "bus": "ENVIRONMENT"
+}

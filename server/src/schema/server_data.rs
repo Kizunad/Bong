@@ -276,6 +276,9 @@ pub enum ServerDataType {
     AgentUiRequest,
     /// 天道 UI 面板关闭信号（Replaced / 错误 / session_expired）。
     AgentUiClose,
+    // ─── plan-halfstep-rechallenge-integration-v1 P0：半步化虚重渡触发 HUD ─
+    /// 半步重渡触发通知（targeted→当事玩家）：灵机涌现提示 + 倒计时。
+    HalfStepRechallenge,
 }
 
 #[derive(Debug, Clone)]
@@ -556,6 +559,9 @@ pub enum ServerDataPayloadV1 {
     AgentUiRequest(AgentUiRequestPayloadV1),
     /// 天道 UI 面板关闭信号（Replaced / 错误 / session_expired）。
     AgentUiClose(AgentUiClosePayloadV1),
+    // ─── plan-halfstep-rechallenge-integration-v1 P0：半步化虚重渡触发 HUD ─
+    /// 半步重渡触发通知（targeted→当事玩家）。
+    HalfStepRechallenge(HalfStepRechallengeV1),
 }
 
 /// 神识感知矿脉回执 S2C。扁平化 `MineralProbeResult` 枚举。
@@ -952,6 +958,47 @@ impl AscensionQuotaV1 {
                 0.0
             },
             quota_basis: quota_basis.into(),
+        }
+    }
+}
+
+/// plan-halfstep-rechallenge-integration-v1 P0：半步化虚重渡触发通知（targeted→玩家）。
+///
+/// `active=true` 表示触发/刷新；`active=false` 为显式 HIDE（成功渡劫 / 化虚 settle 时追发）。
+/// 过窗（`currentTick > rechallenge_window_until`）由 client 本地判定自动淡出，不需每 tick 推送。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct HalfStepRechallengeV1 {
+    /// 是否激活（false = 明确清场，client 立即淡出）。
+    pub active: bool,
+    /// 触发者 char_id（用于 client 校验是否为本地玩家）。
+    pub char_id: String,
+    /// 重渡窗口截止 tick（client 用于倒计时 + 过窗自动淡出）。
+    pub rechallenge_window_until: u64,
+    /// 触发时服务器当前 tick（client 参考值）。
+    pub at_tick: u64,
+}
+
+impl HalfStepRechallengeV1 {
+    pub fn trigger(
+        char_id: impl Into<String>,
+        rechallenge_window_until: u64,
+        at_tick: u64,
+    ) -> Self {
+        Self {
+            active: true,
+            char_id: char_id.into(),
+            rechallenge_window_until,
+            at_tick,
+        }
+    }
+
+    pub fn hide(char_id: impl Into<String>) -> Self {
+        Self {
+            active: false,
+            char_id: char_id.into(),
+            rechallenge_window_until: 0,
+            at_tick: 0,
         }
     }
 }
@@ -1675,6 +1722,12 @@ enum ServerDataPayloadWireV1 {
     AgentUiClose {
         #[serde(flatten)]
         data: AgentUiClosePayloadV1,
+    },
+    // ─── plan-halfstep-rechallenge-integration-v1 P0 ────────────────
+    /// 半步重渡触发通知（targeted→玩家）。
+    HalfStepRechallenge {
+        #[serde(flatten)]
+        data: HalfStepRechallengeV1,
     },
 }
 
@@ -2542,6 +2595,10 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
             ServerDataPayloadWireV1::InsightOffer { data } => Ok(Self::InsightOffer(data)),
             ServerDataPayloadWireV1::AgentUiRequest { data } => Ok(Self::AgentUiRequest(data)),
             ServerDataPayloadWireV1::AgentUiClose { data } => Ok(Self::AgentUiClose(data)),
+            // ─── plan-halfstep-rechallenge-integration-v1 P0 ────────────────
+            ServerDataPayloadWireV1::HalfStepRechallenge { data } => {
+                Ok(Self::HalfStepRechallenge(data))
+            }
         }
     }
 }
@@ -3116,6 +3173,10 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
                 Self::AgentUiRequest { data: data.clone() }
             }
             ServerDataPayloadV1::AgentUiClose(data) => Self::AgentUiClose { data: data.clone() },
+            // ─── plan-halfstep-rechallenge-integration-v1 P0 ────────────────
+            ServerDataPayloadV1::HalfStepRechallenge(data) => {
+                Self::HalfStepRechallenge { data: data.clone() }
+            }
         }
     }
 }
@@ -3445,6 +3506,8 @@ impl ServerDataPayloadV1 {
             // ─── plan-agent-ui-data-v1 P0 ───────────────────────────
             Self::AgentUiRequest(..) => ServerDataType::AgentUiRequest,
             Self::AgentUiClose(..) => ServerDataType::AgentUiClose,
+            // ─── plan-halfstep-rechallenge-integration-v1 P0 ────────────────
+            Self::HalfStepRechallenge(..) => ServerDataType::HalfStepRechallenge,
         }
     }
 }
@@ -3978,6 +4041,13 @@ mod tests {
             ServerDataPayloadV1::AgentUiClose(AgentUiClosePayloadV1 {
                 request_id: "agent-ui-req".to_string(),
                 reason: Some("invalid_button_id".to_string()),
+            }),
+            // ─── plan-halfstep-rechallenge-integration-v1 P0 wire/label guard ─────
+            ServerDataPayloadV1::HalfStepRechallenge(HalfStepRechallengeV1 {
+                active: true,
+                char_id: "offline:Kiz".to_string(),
+                rechallenge_window_until: 50_000,
+                at_tick: 1_000,
             }),
         ];
 

@@ -265,6 +265,10 @@ public final class ServerDataRouter {
         AgentUiPayloadHandler agentUiPayloadHandler = new AgentUiPayloadHandler();
         handlers.put("agent_ui_request", agentUiPayloadHandler);
         handlers.put("agent_ui_close", agentUiPayloadHandler);
+        // plan-halfstep-rechallenge-integration-v1 P0：半步化虚重渡触发 HUD
+        // NOTE: HalfStepRechallenge 已迁移到专属 bong:halfstep_rechallenge channel（JSON），
+        // 不再经 bong:server_data / proto 路径。ServerDataRouter 不再注册此 key。
+        // 接收和解析由 BongNetworkHandler.registerHalfStepRechallengeChannel() 负责。
         return new ServerDataRouter(handlers);
     }
 
