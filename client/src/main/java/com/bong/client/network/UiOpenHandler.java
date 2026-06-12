@@ -28,25 +28,19 @@ import java.util.Set;
 import java.util.function.BiPredicate;
 
 public final class UiOpenHandler implements ServerDataHandler {
-    // plan-agent-ui-data-v1 P1: 放宽到 8192B / 8192 chars（与 server xml_sanitize 上限对齐）
-    static final int MAX_XML_LAYOUT_BYTES = 8192;
-    static final int MAX_XML_LAYOUT_CHARACTERS = 8192;
+    static final int MAX_XML_LAYOUT_BYTES = 512;
+    static final int MAX_XML_LAYOUT_CHARACTERS = 384;
 
     private static final String ROOT_ELEMENT = "owo-ui";
     private static final String COMPONENTS_ELEMENT = "components";
-    // plan-agent-ui-data-v1 P1: 增加 button / grid-layout / texture 白名单
     private static final Set<String> ALLOWED_COMPONENT_ELEMENTS = Set.of(
-        "flow-layout", "label", "button", "grid-layout", "texture"
+        "flow-layout", "label"
     );
     private static final Map<String, Set<String>> ALLOWED_ATTRIBUTES_BY_ELEMENT = Map.of(
         ROOT_ELEMENT, Set.of(),
         COMPONENTS_ELEMENT, Set.of(),
-        // plan-agent-ui-data-v1 P1: 允许布局/样式属性
-        "flow-layout", Set.of("direction", "gap", "padding", "id", "style"),
-        "grid-layout", Set.of("columns", "rows", "gap", "padding", "id", "style"),
-        "label", Set.of("style", "id", "color", "font"),
-        "button", Set.of("id", "style", "color"),
-        "texture", Set.of("id", "style", "path", "blend-mode", "u", "v", "region-width", "region-height", "texture-width", "texture-height")
+        "flow-layout", Set.of(),
+        "label", Set.of()
     );
 
     private final boolean templateModeEnabled;

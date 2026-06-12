@@ -225,6 +225,9 @@ public final class AgentUiScreen extends BaseOwoScreen<FlowLayout> {
 
     /**
      * ESC 关闭 → 发 dismissed response + 清除 P3 VFX 状态。
+     *
+     * <p>{@code super.close()} 调用 {@code MinecraftClient.setScreen(null)}；
+     * 单元测试环境中 {@code client} 为 null，必须加护卫，否则 NPE。
      */
     @Override
     public void close() {
@@ -233,7 +236,9 @@ public final class AgentUiScreen extends BaseOwoScreen<FlowLayout> {
             sendResponse("dismissed", Map.of());
         }
         AgentUiVfxStore.clear();
-        super.close();
+        if (client != null) {
+            super.close();
+        }
     }
 
     // ─── 内部 helpers ─────────────────────────────────────────────────────────
@@ -298,6 +303,24 @@ public final class AgentUiScreen extends BaseOwoScreen<FlowLayout> {
     /** P3：是否为天道启示面板（测试 + AgentUiVfxState 使用）。 */
     public boolean isTiandaoRevelation() {
         return isTiandaoRevelation;
+    }
+
+    // ─── 测试 seam（package-private）────────────────────────────────────────
+
+    /**
+     * 单元测试用：模拟玩家点击指定 ID 的按钮，触发 {@code button_click} 响应逻辑。
+     * 不依赖 MC OwoUI 组件树，供 {@code AgentUiScreenProtocolTest} 捕获 sentPayloads。
+     */
+    void simulateButtonClickForTests(String buttonId) {
+        onButtonClicked(buttonId);
+    }
+
+    /**
+     * 单元测试用：查询 {@code closed} 标志当前状态。
+     * 用于断言幂等性（"二次操作不再发包"）。
+     */
+    boolean isClosedForTests() {
+        return closed;
     }
 
     // ─── P3 VFX helpers ──────────────────────────────────────────────────────
