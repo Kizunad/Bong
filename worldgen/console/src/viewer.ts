@@ -110,9 +110,15 @@ export class Viewer {
     const meshes: THREE.Object3D[] = [];
 
     meshes.push(this.buildTerrainMesh(tile, surfacePalette, stride, "terrain"));
-    const qi = this.buildTerrainMesh(tile, surfacePalette, stride, "qi");
-    this.qiGroup.add(qi);
-    meshes.push(qi);
+    // Only build the qi heatmap mesh when the tile actually carries qi_density;
+    // without it the mesher falls back to surface_id == 0 and paints a flat
+    // (and misleading) heat color over the whole tile. Absent layer -> no qi
+    // mesh, the qi toggle simply shows nothing for that tile.
+    if (tile.qiDensity) {
+      const qi = this.buildTerrainMesh(tile, surfacePalette, stride, "qi");
+      this.qiGroup.add(qi);
+      meshes.push(qi);
+    }
 
     const water = this.buildWaterMesh(tile, stride);
     if (water) {
