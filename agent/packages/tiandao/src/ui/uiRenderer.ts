@@ -221,7 +221,10 @@ export function enforceXmlByteLimit(
     return xml;
   }
 
-  const TRUNCATION_SUFFIX = "…（天道叙事已截断）</label></widget></owo-ui>";
+  // 截断后缀：关闭 label / flow-layout / components / owo-ui（与模板实际嵌套层级对应）。
+  // 模板结构：<owo-ui><components><flow-layout>...<label>TEXT</label>...</flow-layout></components></owo-ui>
+  // 旧版本误用 </widget>（owo-ui 无此标签），已改为正确层级。
+  const TRUNCATION_SUFFIX = "…（天道叙事已截断）</label></flow-layout></components></owo-ui>";
   const suffixBytes = Buffer.byteLength(TRUNCATION_SUFFIX, "utf8");
   const targetBytes = byteLimit - suffixBytes;
 
