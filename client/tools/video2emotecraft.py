@@ -454,7 +454,7 @@ def batch_convert(
     skipped: list[Path] = []
     for video_path in iter_video_files(input_dir):
         out_path = output_dir / f"{video_path.stem}.json"
-        if out_path.exists():
+        if out_path.exists() and out_path.stat().st_size > 0:
             skipped.append(out_path)
             continue
         if convert_one is None:
@@ -731,7 +731,7 @@ def _format_source_comment(frame_index: int | None, frame_time: float | None) ->
 
 def _safe_gen_name(name: str) -> str:
     """Return a filename-safe suffix for gen_NAME.py."""
-    safe = re.sub(r"[^0-9A-Za-z_]+", "_", name).strip("_")
+    safe = re.sub(r"[^\w]+", "_", name, flags=re.UNICODE).strip("_")
     if not safe:
         raise ValueError("export-gen name must contain a filename-safe character")
     if safe[0].isdigit():
@@ -759,7 +759,7 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     )
     parser.add_argument(
         "--key-threshold",
-        type=float,
+        type=_non_negative_float,
         default=5.0,
         help="minimum angular delta in degrees for --export-gen keyframes",
     )
@@ -788,6 +788,14 @@ def _positive_int(value: str) -> int:
     parsed = int(value)
     if parsed <= 0:
         raise argparse.ArgumentTypeError("must be > 0")
+    return parsed
+
+
+def _non_negative_float(value: str) -> float:
+    """Parse a non-negative float for argparse."""
+    parsed = float(value)
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("must be >= 0")
     return parsed
 
 

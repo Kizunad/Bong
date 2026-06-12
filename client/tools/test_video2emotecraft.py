@@ -19,6 +19,7 @@ from video2emotecraft import (
     sample_frame_indices,
     select_key_pose_table,
     smooth_angle_degrees,
+    _safe_gen_name,
     write_gen_script,
 )
 
@@ -312,6 +313,20 @@ def test_non_positive_fps_is_rejected(fps: str, capsys: pytest.CaptureFixture[st
     )
 
 
+def test_negative_key_threshold_is_rejected(capsys: pytest.CaptureFixture[str]) -> None:
+    """Verify CLI rejects impossible export-gen keyframe thresholds before conversion."""
+    with pytest.raises(SystemExit) as exc_info:
+        parse_args(["input.mp4", "--export-gen", "unit", "--key-threshold", "-0.5"])
+
+    stderr = capsys.readouterr().err
+    assert exc_info.value.code != 0, (
+        f"expected non-zero SystemExit because --key-threshold=-0.5 is invalid, actual {exc_info.value.code}"
+    )
+    assert "must be >= 0" in stderr, (
+        f"expected argparse stderr to include the threshold validation message, actual stderr={stderr!r}"
+    )
+
+
 @pytest.mark.parametrize(
     ("source_fps", "target_fps", "message"),
     [
@@ -379,6 +394,15 @@ def test_export_gen_script_runs_with_emit_json_contract(tmp_path) -> None:
     )
 
 
+def test_export_gen_accepts_unicode_filename_suffix() -> None:
+    """Verify non-ASCII animation names do not crash export-gen filename sanitization."""
+    safe_name = _safe_gen_name("动画")
+
+    assert safe_name == "动画", (
+        f"expected Chinese export-gen names to remain usable on local filesystems, actual {safe_name!r}"
+    )
+
+
 def test_keyframe_filter_keeps_sparse_angle_changes() -> None:
     """Verify export-gen keeps key frames rather than every sampled frame."""
     pose_table = {tick: {"rightArm": {"pitch": float(tick)}} for tick in range(60)}
@@ -442,6 +466,34 @@ def test_batch_convert_is_idempotent(tmp_path) -> None:
     )
     assert [path.name for path in second.skipped] == ["a.json", "b.json"], (
         f"expected second run to report skipped outputs, actual skipped={second.skipped}"
+    )
+
+
+def test_batch_convert_retries_zero_byte_outputs(tmp_path) -> None:
+    """Verify batch mode does not treat a crash-left empty JSON as a completed output."""
+    input_dir = tmp_path / "videos"
+    output_dir = tmp_path / "out"
+    input_dir.mkdir()
+    output_dir.mkdir()
+    (input_dir / "a.mp4").write_bytes(b"fake")
+    (output_dir / "a.json").write_bytes(b"")
+    calls: list[str] = []
+
+    def fake_convert(video_path, out_path):
+        calls.append(video_path.name)
+        out_path.write_text('{"ok":true}')
+        return out_path
+
+    result = batch_convert(input_dir, output_dir, convert_one=fake_convert)
+
+    assert calls == ["a.mp4"], (
+        f"expected zero-byte output to be retried because prior conversion was incomplete, actual calls={calls}"
+    )
+    assert [path.name for path in result.converted] == ["a.json"], (
+        f"expected retried output to be reported as converted, actual converted={result.converted}"
+    )
+    assert result.skipped == [], (
+        f"expected zero-byte output not to be reported as skipped, actual skipped={result.skipped}"
     )
 
 
