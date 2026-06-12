@@ -8,6 +8,7 @@ import { loadTile, tilesByDistanceToSpawn } from "./tile-loader";
 import { Viewer, type ViewerLayers } from "./viewer";
 import type { Manifest, ManifestTile } from "./types";
 import { ZONE_COLORS, ZONE_FALLBACK, type RGB } from "./palette";
+import { editableSubset, parseOverrides } from "./params";
 
 const statusEl = document.getElementById("status")!;
 const zoneListEl = document.getElementById("zone-list") as HTMLUListElement;
@@ -24,7 +25,8 @@ const layers: ViewerLayers = { terrain: true, water: false, qi: false, decoratio
 interface ZoneInfo {
   name: string;
   profile: string;
-  raw: unknown; // the blueprint zone object, for the param editor
+  /** Editable blueprint subset shown in the param panel; POSTed as overrides. */
+  editable: Record<string, unknown>;
 }
 
 let manifest: Manifest;
@@ -59,46 +61,26 @@ function buildLayerToggles(): void {
   }
 }
 
-async function loadBlueprintZones(): Promise<void> {
-  // The FastAPI console_server exposes the blueprint only indirectly: tile.zones
-  // tells us which zones touch which tiles, and POST /api/regen re-bakes a zone
-  // from the server's own blueprint copy (it takes only `zone_name`). So the
-  // param panel shows the manifest facts the console actually has about a zone —
-  // the tiles it spans, its POIs, the pois' qi affinities — as an editable JSON
-  // view. Editing is local-only context (the server is the blueprint source of
-  // truth on regen); we never pretend an edited field round-trips to the bake.
-  const zoneTiles = new Map<string, string[]>();
-  for (const tile of manifest.tiles) {
-    for (const z of tile.zones) {
-      const list = zoneTiles.get(z) ?? [];
-      list.push(tile.dir);
-      zoneTiles.set(z, list);
-    }
-  }
-  const zonePois = new Map<string, typeof manifest.pois>();
-  for (const poi of manifest.pois) {
-    const list = zonePois.get(poi.zone) ?? [];
-    list.push(poi);
-    zonePois.set(poi.zone, list);
-  }
-  blueprintZones = [...zoneTiles.keys()].sort().map((name) => ({
-    name,
-    profile: "", // profile not surfaced per-zone by the manifest; swatch falls back
-    raw: {
-      name,
-      tiles: zoneTiles.get(name) ?? [],
-      pois: (zonePois.get(name) ?? []).map((p) => ({
-        kind: p.kind,
-        name: p.name,
-        pos_xyz: p.pos_xyz,
-        qi_affinity: p.qi_affinity,
-      })),
-    },
-  }));
+function loadBlueprintZones(): void {
+  // manifest.zones carries the per-zone editable blueprint subset the server
+  // exposes (spirit_qi / danger_level / display_name / worldgen) plus its
+  // terrain_profile for the swatch. The param panel edits THIS and POSTs it back
+  // as /api/regen `overrides`, so an edit truly re-bakes the zone with the new
+  // parameters — it is a live control, not a read-only view.
+  const zones = manifest.zones ?? [];
+  blueprintZones = [...zones]
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map((z) => ({
+      name: z.name,
+      profile: z.terrain_profile ?? "",
+      editable: editableSubset(z),
+    }));
 }
 
-function zoneSwatch(profile: string): RGB {
-  return ZONE_COLORS[profile] ?? ZONE_FALLBACK;
+function zoneSwatch(zone: ZoneInfo): RGB {
+  // Color by the zone's real terrain_profile (now surfaced in manifest.zones),
+  // matching the PNG previews. Unknown profiles fall back to magenta for now.
+  return ZONE_COLORS[zone.profile] ?? ZONE_FALLBACK;
 }
 
 function buildZoneList(): void {
@@ -108,7 +90,7 @@ function buildZoneList(): void {
     li.dataset.zone = zone.name;
     const sw = document.createElement("span");
     sw.className = "zone-swatch";
-    sw.style.background = rgbCss(zoneSwatch(zone.profile));
+    sw.style.background = rgbCss(zoneSwatch(zone));
     li.appendChild(sw);
     li.appendChild(document.createTextNode(zone.name));
     li.addEventListener("click", () => selectZone(zone.name));
@@ -122,7 +104,9 @@ function selectZone(name: string): void {
     li.classList.toggle("selected", li.dataset.zone === name);
   }
   const zone = blueprintZones.find((z) => z.name === name);
-  paramEdit.value = JSON.stringify(zone?.raw ?? { name }, null, 2);
+  // Load the editable blueprint subset into the textarea; the user edits these
+  // fields and the regen sends them as overrides.
+  paramEdit.value = JSON.stringify(zone?.editable ?? {}, null, 2);
   regenBtn.disabled = false;
 }
 
@@ -159,10 +143,22 @@ async function reloadTiles(tileDirs: string[]): Promise<void> {
 
 async function onRegen(): Promise<void> {
   if (!selectedZone) return;
-  regenBtn.disabled = true;
-  setStatus(`重生成 zone '${selectedZone}'…`);
+
+  // Parse the edited params FIRST — invalid JSON must surface as a UI error and
+  // never fire the request (we don't silently fall back to "no overrides").
+  let overrides: Record<string, unknown>;
   try {
-    const result = await postRegen(selectedZone);
+    overrides = parseOverrides(paramEdit.value);
+  } catch (err) {
+    setStatus(`重生成已取消 — ${(err as Error).message}`);
+    return;
+  }
+
+  regenBtn.disabled = true;
+  const hasOverrides = Object.keys(overrides).length > 0;
+  setStatus(`重生成 zone '${selectedZone}'${hasOverrides ? "（含参数覆盖）" : ""}…`);
+  try {
+    const result = await postRegen(selectedZone, overrides);
     // Refresh the manifest (tile zone membership / palette may shift) then
     // re-fetch + re-mesh exactly the rewritten tiles.
     manifest = await fetchManifest();
@@ -190,7 +186,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  await loadBlueprintZones();
+  loadBlueprintZones();
   buildZoneList();
   viewer.setPoiMarkers(manifest);
   viewer.setLayers({ ...layers });

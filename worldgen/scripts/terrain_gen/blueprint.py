@@ -146,7 +146,16 @@ def _pop_known(raw: dict[str, Any], keys: tuple[str, ...]) -> dict[str, Any]:
 def load_blueprint(path: Path) -> WorldBlueprint:
     with path.open(encoding="utf-8") as handle:
         raw = json.load(handle)
+    return parse_blueprint(raw)
 
+
+def parse_blueprint(raw: dict[str, Any]) -> WorldBlueprint:
+    """Parse an already-loaded blueprint mapping into a ``WorldBlueprint``.
+
+    Split out from ``load_blueprint`` so callers that hold an in-memory blueprint
+    dict (e.g. the dev console applying per-zone parameter overrides without
+    touching the on-disk source) reuse the exact same parsing + validation.
+    """
     world_raw = raw["world"]
     zones: list[BlueprintZone] = []
     for zone_raw in raw["zones"]:

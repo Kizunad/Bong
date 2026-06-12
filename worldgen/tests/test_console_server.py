@@ -219,6 +219,32 @@ def test_manifest_tile_entries_declare_spans(client: TestClient) -> None:
         assert {"tile_x", "tile_z", "dir", "zones", "layers"} <= set(tile.keys())
 
 
+def test_manifest_exposes_per_zone_params_with_profile(client: TestClient) -> None:
+    """manifest.zones carries the editable blueprint subset per zone, including
+    terrain_profile (so the console swatch can color by profile, not magenta)."""
+    m = client.get("/api/manifest").json()
+    zones = m["zones"]
+    assert isinstance(zones, list) and zones, "manifest.zones must be a non-empty list"
+    by_name = {z["name"]: z for z in zones}
+    assert {"spawn", "peaks"} <= set(by_name), (
+        f"both tiny-world zones must appear in manifest.zones; got {sorted(by_name)}"
+    )
+    spawn = by_name["spawn"]
+    peaks = by_name["peaks"]
+    # terrain_profile is surfaced top-level for the swatch + inside worldgen.
+    assert spawn["terrain_profile"] == "spawn_plain", (
+        f"spawn must carry its profile for swatch coloring; got {spawn.get('terrain_profile')}"
+    )
+    assert peaks["terrain_profile"] == "broken_peaks"
+    assert spawn["terrain_profile"] != peaks["terrain_profile"], (
+        "distinct zones must have distinguishable profiles (else all-magenta swatch bug)"
+    )
+    # Editable numeric fields the param panel POSTs back as overrides.
+    assert spawn["spirit_qi"] == 0.3 and peaks["spirit_qi"] == 0.5
+    assert spawn["worldgen"]["terrain_profile"] == "spawn_plain"
+    assert {"spirit_qi", "danger_level", "display_name", "worldgen"} <= set(spawn)
+
+
 # ---------------------------------------------------------------------------
 # GET /api/tile/{x}/{z}/{layer}
 # ---------------------------------------------------------------------------
@@ -471,6 +497,182 @@ def test_regen_before_any_bake_returns_503(unbaked_client: TestClient) -> None:
     detail = resp.json()["detail"]
     assert "no baked world yet" in detail or "manifest" in detail, (
         f"503 detail must point the operator at running the pipeline; got: {detail}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# POST /api/regen — live blueprint parameter overrides
+# ---------------------------------------------------------------------------
+
+
+def _peaks_qi_density_after_regen(
+    tmp_path: Path,
+    overrides: dict | None,
+) -> dict[str, bytes]:
+    """Full-bake the tiny world, regen 'peaks' (optionally with overrides) via
+    the API, and return {tile_id: qi_density.bin bytes} for every peaks tile.
+
+    Used to prove an override actually changes the generated output: two runs
+    differing only in ``overrides`` must produce different qi_density bytes.
+    """
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    blueprint_path = tmp_path / "bp.json"
+    blueprint_path.write_text(json.dumps(_TINY_BLUEPRINT), encoding="utf-8")
+    out_dir = tmp_path / "out"
+    _full_bake(out_dir, blueprint_path)
+    rasters = out_dir / "rasters"
+
+    app = create_app(
+        rasters,
+        blueprint_path=blueprint_path,
+        profiles_path=PROFILES_PATH,
+        tile_size=TILE_SIZE,
+        output_dir=out_dir,
+    )
+    c = TestClient(app)
+    body: dict = {"zone_name": "peaks"}
+    if overrides is not None:
+        body["overrides"] = overrides
+    resp = c.post("/api/regen", json=body)
+    assert resp.status_code == 200, (
+        f"regen must succeed, got {resp.status_code}: {resp.text}"
+    )
+    rewritten = resp.json()["rewritten_tiles"]
+    assert rewritten, "regen must rewrite at least one peaks tile"
+    return {
+        tile_id: (rasters / tile_id / "qi_density.bin").read_bytes()
+        for tile_id in rewritten
+        if (rasters / tile_id / "qi_density.bin").exists()
+    }
+
+
+def test_regen_overrides_change_generated_output(tmp_path) -> None:
+    """An override on spirit_qi must produce DIFFERENT tiles than no override.
+
+    qi_density scales by (0.5 + spirit_qi) in every profile, so bumping
+    spirit_qi from 0.5 → 0.95 must change qi_density.bin bytes for the regen'd
+    peaks tiles. This is the end-to-end proof that the param panel is live, not
+    a placeholder that the server ignores.
+    """
+    baseline = _peaks_qi_density_after_regen(tmp_path / "base", overrides=None)
+    bumped = _peaks_qi_density_after_regen(
+        tmp_path / "bump", overrides={"spirit_qi": 0.95}
+    )
+
+    assert set(baseline) == set(bumped), (
+        "the same peaks tiles must be rewritten regardless of override value"
+    )
+    assert baseline, "must have at least one qi_density tile to compare"
+    differing = [tid for tid in baseline if baseline[tid] != bumped[tid]]
+    assert differing, (
+        "raising spirit_qi must change qi_density.bin for at least one peaks "
+        "tile — if bytes are identical the override was silently ignored "
+        "(zombie param panel)"
+    )
+
+
+def test_regen_overrides_do_not_rewrite_disk_blueprint(tmp_path) -> None:
+    """Overrides are in-memory only: the on-disk blueprint source is untouched."""
+    blueprint_path = tmp_path / "bp.json"
+    original_text = json.dumps(_TINY_BLUEPRINT)
+    blueprint_path.write_text(original_text, encoding="utf-8")
+    out_dir = tmp_path / "out"
+    _full_bake(out_dir, blueprint_path)
+
+    app = create_app(
+        out_dir / "rasters",
+        blueprint_path=blueprint_path,
+        profiles_path=PROFILES_PATH,
+        tile_size=TILE_SIZE,
+        output_dir=out_dir,
+    )
+    c = TestClient(app)
+    resp = c.post(
+        "/api/regen", json={"zone_name": "peaks", "overrides": {"spirit_qi": 0.95}}
+    )
+    assert resp.status_code == 200, resp.text
+
+    # The source blueprint file must be byte-identical: overrides never persist.
+    on_disk = json.loads(blueprint_path.read_text(encoding="utf-8"))
+    peaks = next(z for z in on_disk["zones"] if z["name"] == "peaks")
+    assert peaks["spirit_qi"] == 0.5, (
+        "disk blueprint spirit_qi must remain 0.5 — overrides are in-memory only, "
+        f"got {peaks['spirit_qi']}"
+    )
+
+
+def test_regen_worldgen_override_changes_terrain(tmp_path) -> None:
+    """A nested worldgen override (terrain_profile swap) re-bakes with the new
+    profile, changing the span bytes — proves worldgen sub-dict merges live."""
+    blueprint_path = tmp_path / "bp.json"
+    blueprint_path.write_text(json.dumps(_TINY_BLUEPRINT), encoding="utf-8")
+    out_dir = tmp_path / "out"
+    _full_bake(out_dir, blueprint_path)
+    rasters = out_dir / "rasters"
+
+    app = create_app(
+        rasters,
+        blueprint_path=blueprint_path,
+        profiles_path=PROFILES_PATH,
+        tile_size=TILE_SIZE,
+        output_dir=out_dir,
+    )
+    c = TestClient(app)
+    # Capture the affected tiles' spans before the override regen.
+    affected = c.post("/api/regen", json={"zone_name": "peaks"}).json()[
+        "rewritten_tiles"
+    ]
+    before = {
+        tid: (rasters / tid / SPANS_FILE).read_bytes() for tid in affected
+    }
+    # Now override the peaks profile to spawn_plain (much lower terrain).
+    resp = c.post(
+        "/api/regen",
+        json={
+            "zone_name": "peaks",
+            "overrides": {"worldgen": {"terrain_profile": "spawn_plain"}},
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    after = {tid: (rasters / tid / SPANS_FILE).read_bytes() for tid in affected}
+    differing = [t for t in before if before[t] != after[t]]
+    assert differing, (
+        "swapping terrain_profile via a worldgen override must change spans.bin "
+        "for the affected tiles — worldgen sub-dict merge is live"
+    )
+
+
+def test_regen_unknown_override_field_returns_400(client: TestClient) -> None:
+    resp = client.post(
+        "/api/regen",
+        json={"zone_name": "peaks", "overrides": {"not_a_field": 1}},
+    )
+    assert resp.status_code == 400, (
+        "an unknown override field must be a 400 (bad request), never silently "
+        f"ignored or a 500; got {resp.status_code}"
+    )
+    assert "not_a_field" in resp.json()["detail"]
+
+
+def test_regen_typed_override_error_returns_400(client: TestClient) -> None:
+    # spirit_qi must be a float; a string makes parse_blueprint raise → 400.
+    resp = client.post(
+        "/api/regen",
+        json={"zone_name": "peaks", "overrides": {"spirit_qi": "very high"}},
+    )
+    assert resp.status_code == 400, (
+        "a type-invalid override (spirit_qi as a non-numeric string) must be a "
+        f"400, not a 500 traceback; got {resp.status_code}"
+    )
+
+
+def test_regen_empty_overrides_behaves_like_no_overrides(tmp_path) -> None:
+    """An empty/absent overrides object must NOT change the bake (falsy → skip)."""
+    none_run = _peaks_qi_density_after_regen(tmp_path / "none", overrides=None)
+    empty_run = _peaks_qi_density_after_regen(tmp_path / "empty", overrides={})
+    assert none_run == empty_run, (
+        "an empty overrides dict must produce byte-identical tiles to no "
+        "overrides at all (it is a no-op, not an error)"
     )
 
 

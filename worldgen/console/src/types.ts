@@ -46,6 +46,21 @@ export interface ManifestPoi {
   danger_bias: number;
 }
 
+/**
+ * Per-zone editable blueprint subset (manifest.zones). The console param panel
+ * renders this as JSON, lets the user edit it, and POSTs the edited fields back
+ * to /api/regen as `overrides`. `terrain_profile` also colors the zone swatch.
+ */
+export interface ManifestZone {
+  name: string;
+  display_name: string;
+  terrain_profile: string;
+  spirit_qi: number;
+  danger_level: number;
+  worldgen: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
 export interface Manifest {
   version: number;
   backend: string;
@@ -58,6 +73,8 @@ export interface Manifest {
   biome_palette: string[];
   tiles: ManifestTile[];
   pois: ManifestPoi[];
+  /** Per-zone editable blueprint subset (param panel source + swatch profile). */
+  zones: ManifestZone[];
   semantic_layers: string[];
   vertical_layers: string[];
   [key: string]: unknown;

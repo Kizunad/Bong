@@ -2,7 +2,7 @@
 // Endpoints:
 //   GET  /api/manifest            -> manifest v2 JSON
 //   GET  /api/tile/{x}/{z}/{layer}-> raw octet-stream (.bin); 404 = absent layer
-//   POST /api/regen {zone_name}   -> { zone_name, rewritten_tiles[], tile_count }
+//   POST /api/regen {zone_name, overrides?} -> { zone_name, rewritten_tiles[], tile_count }
 //
 // All requests go through the vite dev proxy (/api -> :8765), so paths are relative.
 
@@ -48,11 +48,28 @@ export async function fetchTileLayer(
   return resp.arrayBuffer();
 }
 
-export async function postRegen(zoneName: string): Promise<RegenResult> {
+/**
+ * Re-bake a zone. When `overrides` is a non-empty object it is POSTed as a
+ * partial blueprint patch (e.g. `{ spirit_qi: 0.8 }` or
+ * `{ worldgen: { terrain_profile: "..." } }`) so the server re-bakes the zone
+ * with those parameters — the param panel is live, not a read-only view. An
+ * unknown/invalid override field comes back as a 400 and surfaces as the thrown
+ * error's message.
+ */
+export async function postRegen(
+  zoneName: string,
+  overrides?: Record<string, unknown>,
+): Promise<RegenResult> {
+  const body: { zone_name: string; overrides?: Record<string, unknown> } = {
+    zone_name: zoneName,
+  };
+  if (overrides && Object.keys(overrides).length > 0) {
+    body.overrides = overrides;
+  }
   const resp = await fetch("/api/regen", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ zone_name: zoneName }),
+    body: JSON.stringify(body),
   });
   if (!resp.ok) {
     let detail = `${resp.status} ${resp.statusText}`;

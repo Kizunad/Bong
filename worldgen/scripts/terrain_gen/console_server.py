@@ -36,6 +36,7 @@ from .blueprint import (
     load_blueprint,
     load_profile_catalog,
     load_zone_overlays,
+    parse_blueprint,
 )
 from .bakers.raster_export import (
     SPANS_COUNT_FILE,
@@ -63,10 +64,112 @@ _DEV_ORIGINS = [
 _SPAN_FILES = (SPANS_COUNT_FILE, SPANS_FILE)
 
 
+# Zone blueprint fields the console may override on a regen. These map 1:1 onto
+# the on-disk blueprint zone entry (server/zones.worldview.example.json). Editing
+# anything outside this set is rejected (400) so a typo / unknown field never
+# silently no-ops — the param panel is a *live* control, not a scratch pad.
+_OVERRIDABLE_ZONE_FIELDS = frozenset(
+    {
+        "spirit_qi",
+        "danger_level",
+        "display_name",
+        "worldgen",
+    }
+)
+
+
 class RegenRequest(BaseModel):
-    """POST /api/regen body."""
+    """POST /api/regen body.
+
+    ``overrides`` is an optional partial zone-blueprint patch. When non-empty it
+    is merged onto the named zone's on-disk blueprint entry (in memory only — the
+    source file is never rewritten) and the zone is re-baked from the override
+    blueprint, so editing e.g. ``spirit_qi`` truly changes the generated tiles.
+    """
 
     zone_name: str
+    overrides: Optional[dict[str, Any]] = None
+
+
+class OverrideError(Exception):
+    """Raised when ``overrides`` names an unknown field or fails type parsing.
+
+    Translated to an HTTP 400 by ``post_regen`` (bad request, not a 500): the
+    operator edited the param panel into an invalid blueprint.
+    """
+
+
+def _apply_zone_overrides(
+    blueprint_raw: dict[str, Any],
+    zone_name: str,
+    overrides: dict[str, Any],
+) -> dict[str, Any]:
+    """Return a deep copy of ``blueprint_raw`` with ``overrides`` merged into the
+    ``zone_name`` zone entry.
+
+    Only keys in ``_OVERRIDABLE_ZONE_FIELDS`` are accepted at the zone top level;
+    ``worldgen`` (itself a dict) is shallow-merged so a partial worldgen patch
+    (e.g. just ``terrain_profile``) keeps the rest of the section. Unknown keys
+    raise ``OverrideError`` (→ 400). The source dict is never mutated.
+    """
+    import copy
+
+    if not isinstance(overrides, dict):
+        raise OverrideError(
+            f"overrides must be a JSON object, got {type(overrides).__name__}"
+        )
+    unknown = set(overrides) - _OVERRIDABLE_ZONE_FIELDS
+    if unknown:
+        raise OverrideError(
+            f"unknown override field(s) {sorted(unknown)}; "
+            f"editable: {sorted(_OVERRIDABLE_ZONE_FIELDS)}"
+        )
+
+    merged = copy.deepcopy(blueprint_raw)
+    zone_entry = None
+    for entry in merged.get("zones", []):
+        if entry.get("name") == zone_name:
+            zone_entry = entry
+            break
+    if zone_entry is None:
+        # Should be unreachable (caller validates the zone exists first), but
+        # keep it a 400 rather than an AttributeError.
+        raise OverrideError(f"zone '{zone_name}' not found in blueprint")
+
+    for key, value in overrides.items():
+        if key == "worldgen" and isinstance(value, dict):
+            wg = dict(zone_entry.get("worldgen", {}))
+            wg.update(value)
+            zone_entry["worldgen"] = wg
+        else:
+            zone_entry[key] = value
+    return merged
+
+
+def _load_blueprint_with_overrides(
+    blueprint_path: Path,
+    zone_name: str,
+    overrides: Optional[dict[str, Any]],
+):
+    """Load the blueprint and, when ``overrides`` is non-empty, merge them onto
+    the named zone in memory.
+
+    Returns the parsed ``WorldBlueprint``. Type errors from re-parsing an
+    overridden zone (e.g. ``spirit_qi: "high"``) surface as ``OverrideError`` so
+    the caller can answer 400 instead of leaking a 500.
+    """
+    if not overrides:
+        return load_blueprint(blueprint_path)
+
+    with blueprint_path.open(encoding="utf-8") as handle:
+        blueprint_raw = json.load(handle)
+    merged_raw = _apply_zone_overrides(blueprint_raw, zone_name, overrides)
+    try:
+        return parse_blueprint(merged_raw)
+    except (ValueError, TypeError, KeyError) as exc:
+        raise OverrideError(
+            f"overrides produced an invalid blueprint zone: {exc}"
+        ) from exc
 
 
 def _read_manifest(rasters_dir: Path) -> dict[str, Any]:
@@ -185,9 +288,15 @@ def create_app(
         tiles and overwrites their span/semantic binaries + the manifest
         entries, leaving the rest of the world untouched.  Returns the list of
         rewritten tile ids so the viewer knows which tiles to refetch.
+
+        ``req.overrides`` (optional) patches the named zone's blueprint entry in
+        memory before baking, so editing parameters in the console truly changes
+        the generated tiles. The on-disk blueprint source is never rewritten.
         """
-        blueprint = load_blueprint(blueprint_path)
-        zone_names = {zone.name for zone in blueprint.zones}
+        # Validate the zone name against the *unmodified* blueprint first so an
+        # unknown zone is a clean 400 before we try to apply overrides to it.
+        base_blueprint = load_blueprint(blueprint_path)
+        zone_names = {zone.name for zone in base_blueprint.zones}
         if req.zone_name not in zone_names:
             raise HTTPException(
                 status_code=400,
@@ -196,6 +305,13 @@ def create_app(
                     f"known zones: {sorted(zone_names)}"
                 ),
             )
+
+        try:
+            blueprint = _load_blueprint_with_overrides(
+                blueprint_path, req.zone_name, req.overrides
+            )
+        except OverrideError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
         profile_catalog = load_profile_catalog(profiles_path)
         zone_overlays = load_zone_overlays(None)

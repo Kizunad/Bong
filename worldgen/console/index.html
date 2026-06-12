@@ -124,11 +124,12 @@
         <div id="layer-toggles"></div>
         <h2>Zones</h2>
         <ul id="zone-list"></ul>
-        <h2>Zone 参数 (manifest JSON)</h2>
+        <h2>Zone 参数 (可编辑 · 重生成生效)</h2>
         <div id="param-panel">
           <textarea id="param-edit" spellcheck="false" placeholder="选择一个 zone…"></textarea>
           <p style="font-size: 11px; color: var(--text-dim); margin: 4px 0 0">
-            只读视图：重生成由 server 端 blueprint 真重跑该 zone tiles。
+            编辑 spirit_qi / danger_level / worldgen 等字段，点「重生成」后作为
+            overrides 重跑该 zone tiles（不改磁盘 blueprint 源）。
           </p>
           <button id="regen-btn" class="action" disabled>重生成 zone</button>
         </div>

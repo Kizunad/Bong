@@ -158,6 +158,7 @@ def export_rasters(
 
     pois_payload = _collect_poi_payload(plan.blueprint_zones)
     pois_payload.extend(build_novice_poi_manifest_payload(fields))
+    zone_params_payload = _collect_zone_params(plan.blueprint_zones)
     ecology_payload = _collect_profile_ecology()
     global_decoration_palette = _collect_global_decoration_palette()
     collapsed_zones_payload = _collect_collapsed_zone_payload(plan)
@@ -192,6 +193,11 @@ def export_rasters(
         "biome_palette": list(BIOME_PALETTE),
         "tiles": manifest_tiles,
         "pois": pois_payload,
+        # worldgen-v4 P1 §8.1 #7 — per-zone editable blueprint subset for the
+        # dev console: the param panel renders this, edits it, and POSTs it back
+        # as /api/regen overrides. ``terrain_profile`` here also drives the
+        # zone-list swatch color (so zones are distinguishable, not all magenta).
+        "zones": zone_params_payload,
         "semantic_layers": [
             name
             for name in (
@@ -424,6 +430,43 @@ def _collect_poi_payload(zones: list[BlueprintZone]) -> list[dict[str, object]]:
                     continue
                 payload.append(_poi_dict(zone.name, poi))
                 seen.add((poi.kind, poi.name))
+    return payload
+
+
+def _collect_zone_params(zones: list[BlueprintZone]) -> list[dict[str, object]]:
+    """Per-zone editable blueprint subset for the dev console (§8.1 #7).
+
+    Surfaces the fields the console param panel can edit (and POST back as
+    ``overrides`` to /api/regen): spirit_qi / danger_level / display_name and the
+    ``worldgen`` section (terrain_profile etc.). ``terrain_profile`` is also
+    promoted to the top level so the zone-list swatch can color by profile
+    without digging into worldgen.
+    """
+    payload: list[dict[str, object]] = []
+    for zone in zones:
+        wg = zone.worldgen
+        worldgen_view: dict[str, object] = {
+            "terrain_profile": wg.terrain_profile,
+            "shape": wg.shape,
+            "boundary": {"mode": wg.boundary.mode, "width": wg.boundary.width},
+            "height_model": dict(wg.height_model),
+        }
+        if wg.surface_palette:
+            worldgen_view["surface_palette"] = list(wg.surface_palette)
+        if wg.biome_mix:
+            worldgen_view["biome_mix"] = list(wg.biome_mix)
+        if wg.landmarks:
+            worldgen_view["landmarks"] = list(wg.landmarks)
+        payload.append(
+            {
+                "name": zone.name,
+                "display_name": zone.display_name,
+                "terrain_profile": wg.terrain_profile,
+                "spirit_qi": zone.spirit_qi,
+                "danger_level": zone.danger_level,
+                "worldgen": worldgen_view,
+            }
+        )
     return payload
 
 
