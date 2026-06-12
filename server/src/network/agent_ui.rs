@@ -25,6 +25,7 @@ use super::agent_bridge::{payload_type_label, serialize_server_data_payload};
 use super::redis_bridge::RedisOutbound;
 use super::{log_payload_build_error, send_server_data_payload, RedisBridgeResource};
 use crate::cultivation::components::Cultivation;
+use crate::player::state::canonical_player_id;
 use crate::schema::agent_ui::{
     AgentUiActionType, AgentUiClosePayloadV1, AgentUiRequestCommandV1, AgentUiRequestPayloadV1,
     AgentUiResponsePayloadV1,
@@ -194,7 +195,13 @@ fn is_allowed_tag(tag: &str) -> bool {
 /// 注：生产品质的 XML 清洗应使用 roxmltree 或 quick-xml；
 ///     此处轻量实现满足 P0 测试覆盖要求（full parser 在 P1 引入）。
 pub fn xml_sanitize(xml: &str) -> Result<String, XmlSanitizeError> {
-    // 1. 长度检查
+    // 1. 长度检查（字节口径）
+    // 注：TypeBox schema 的 maxLength:8192 按 Unicode 码点计，server 此处按 UTF-8 字节计。
+    // 汉字通常 3 字节，若 agent 产出的叙事 XML 含大量汉字，char < 8192 但 byte > 8192 会被拒。
+    // 解决方案（plan-agent-ui-data-v1 MINOR-字节/字符口径）：
+    //   - server 这里保持字节口径（更安全，防 payload 膨胀）；
+    //   - agent 侧 uiRenderer.ts 在发布前做字节预检（Buffer.byteLength(xml,'utf8') <= 8192），
+    //     确保叙事 XML 在字节上不超限。
     if xml.len() > 8192 {
         return Err(XmlSanitizeError::TooLarge(xml.len()));
     }
@@ -321,10 +328,13 @@ fn process_agent_ui_cmd(
         cmd.realm_gate,
     );
 
-    // 2. 找目标玩家（target_player = username）
+    // 2. 找目标玩家（target_player = canonical_player_id，即 "offline:<name>"）。
+    //    world-state emit 把 PlayerProfile.uuid 填成 canonical_player_id("offline:<name>")，
+    //    agent 侧从 world_state 取 player.uuid 作为 target_player 发回。
+    //    因此这里必须用 canonical_player_id(username) 作比较键，而非裸 username.0。
     let player_info: Option<(Entity, u8)> = clients
         .iter()
-        .find(|(_, _, username, _)| username.0 == cmd.target_player)
+        .find(|(_, _, username, _)| canonical_player_id(username.0.as_str()) == cmd.target_player)
         .map(|(entity, cult, _, _)| (entity, cult.realm.rank()));
 
     // 3. 离线拒绝
@@ -717,9 +727,13 @@ mod tests {
     fn make_cmd(request_id: &str, target: &str, realm_gate: u8) -> AgentUiRequestCommandV1 {
         // XML 使用与 agent xmlTemplates.ts 真实产出一致的 <owo-ui><components> 包裹形，
         // 确保 xml_sanitize 对真实流量的测试不会通过裸 flow-layout 蒙混（BLOCKER 修复）。
+        //
+        // target_player 使用 canonical_player_id 格式（"offline:<name>"），
+        // 与 agent 侧 uiRenderer.ts 发送 `target_player: targetPlayer.uuid` 对齐
+        // （uuid 由 world-state canonical_player_id 赋值，格式为 "offline:<username>"）。
         AgentUiRequestCommandV1 {
             request_id: request_id.to_string(),
-            target_player: target.to_string(),
+            target_player: format!("offline:{target}"),
             xml: r#"<owo-ui><components><flow-layout direction="vertical" gap="4"><button id="btn_a">确认</button></flow-layout></components></owo-ui>"#.to_string(),
             timeout_ticks: 600,
             realm_gate,
@@ -792,6 +806,73 @@ mod tests {
             Some("player_offline"),
             "reason 应为 player_offline，实为 {:?}",
             resp.params.get("reason")
+        );
+    }
+
+    /// BLOCKER-身份键契约 pin 测试：agent 发 target_player="offline:Kiz"（canonical_player_id 格式），
+    /// server 能正确解析到 username="Kiz" 的 ECS entity，session 成功创建（不误判 player_offline）。
+    #[test]
+    fn system_canonical_player_id_format_resolves_correctly() {
+        let (mut app, rx) = build_agent_ui_app();
+        spawn_test_player(&mut app, "Kiz", Realm::Condense);
+
+        // agent 发送 canonical id（"offline:Kiz"）
+        let cmd = AgentUiRequestCommandV1 {
+            request_id: "req-canonical".to_string(),
+            target_player: "offline:Kiz".to_string(),
+            xml: r#"<owo-ui><components><flow-layout><label>test</label></flow-layout></components></owo-ui>"#.to_string(),
+            timeout_ticks: 600,
+            realm_gate: 0,
+            allowed_button_ids: vec![],
+        };
+        app.world_mut().send_event(AgentUiCmdEvent(cmd));
+        app.update();
+
+        let msgs: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
+        // 不应有 player_offline 错误
+        let player_offline = msgs.iter().any(|m| {
+            if let RedisOutbound::AgentUiResponse(r) = m {
+                r.params.get("reason").map(|s| s.as_str()) == Some("player_offline")
+            } else {
+                false
+            }
+        });
+        assert!(
+            !player_offline,
+            "canonical id 'offline:Kiz' 应能找到 username=Kiz 的玩家，不应返回 player_offline，实际 msgs={msgs:?}"
+        );
+    }
+
+    /// 对应负例：裸 username 格式（不加 offline: 前缀）不应匹配到在线玩家（验证旧 bug 已修）。
+    #[test]
+    fn system_bare_username_format_returns_player_offline() {
+        let (mut app, rx) = build_agent_ui_app();
+        spawn_test_player(&mut app, "Kiz", Realm::Condense);
+
+        // 旧 bug：agent 发裸 "Kiz" 而非 "offline:Kiz"，会被 server 误匹配；
+        // 修复后 canonical_player_id 比较，"Kiz" ≠ "offline:Kiz" → player_offline。
+        let cmd = AgentUiRequestCommandV1 {
+            request_id: "req-bare-username".to_string(),
+            target_player: "Kiz".to_string(), // 裸 username，非 canonical
+            xml: r#"<owo-ui><components><flow-layout><label>test</label></flow-layout></components></owo-ui>"#.to_string(),
+            timeout_ticks: 600,
+            realm_gate: 0,
+            allowed_button_ids: vec![],
+        };
+        app.world_mut().send_event(AgentUiCmdEvent(cmd));
+        app.update();
+
+        let msgs: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
+        let player_offline = msgs.iter().any(|m| {
+            if let RedisOutbound::AgentUiResponse(r) = m {
+                r.params.get("reason").map(|s| s.as_str()) == Some("player_offline")
+            } else {
+                false
+            }
+        });
+        assert!(
+            player_offline,
+            "裸 username 'Kiz' 不应匹配 canonical 'offline:Kiz' → 应返回 player_offline，实际 msgs={msgs:?}"
         );
     }
 
