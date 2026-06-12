@@ -323,6 +323,15 @@ public final class AgentUiScreen extends BaseOwoScreen<FlowLayout> {
         return closed;
     }
 
+    /**
+     * 单元测试用：是否为 parse_error fallback 面板。
+     * valid XML 创建的 screen 应返回 false；空/畸形 XML 走 fallback 路径的 screen 返回 true。
+     * 用于区分 "UIModel.load 真正接受了 XML" vs "静默降级到 fallback"。
+     */
+    boolean isFallbackForTests() {
+        return isFallback;
+    }
+
     // ─── P3 VFX helpers ──────────────────────────────────────────────────────
 
     /**

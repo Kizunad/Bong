@@ -150,6 +150,28 @@ public class AgentUiScreenProtocolTest {
         assertNotNull(screen, "valid XML 创建的 screen 不应为 null");
         assertEquals("req-create-001", screen.requestId(),
             "screen.requestId() 应等于传入的 requestId，实际=" + screen.requestId());
+        assertFalse(screen.isFallbackForTests(),
+            "valid XML 传入时 UIModel.load 应成功接受，isFallback 应为 false；"
+            + "若为 true，说明包裹层 <owo-ui><components> 格式不被接受或 UIModel.load 在测试环境失败");
+    }
+
+    @Test
+    void agentUiScreen_create_emptyXml_isFallback() {
+        AgentUiScreen screen = AgentUiScreen.create("req-fallback-seam", "", 600, 0L);
+
+        assertNotNull(screen, "空 XML 时应创建 fallback screen");
+        assertTrue(screen.isFallbackForTests(),
+            "空 XML 走 fallback 路径，isFallback 应为 true；"
+            + "若为 false，说明 tryLoadModel 未正确返回 null");
+    }
+
+    @Test
+    void agentUiScreen_create_malformedXml_isFallback() {
+        AgentUiScreen screen = AgentUiScreen.create("req-malformed-seam", "<<<not xml>>>", 600, 0L);
+
+        assertNotNull(screen, "畸形 XML 时应创建 fallback screen");
+        assertTrue(screen.isFallbackForTests(),
+            "畸形 XML 走 fallback 路径，isFallback 应为 true");
     }
 
     @Test
