@@ -10,15 +10,16 @@ from __future__ import annotations
 
 import argparse
 import math
+import re
 import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Sequence
+from typing import Callable, Iterable, Sequence
 
 import numpy as np
 
-from anim_common import VALID_PARTS, build_doc, resolve_output_path, write_json
+from anim_common import ANGLE_AXES, VALID_PARTS, build_doc, resolve_output_path, write_json
 
 
 LM_NOSE = 0
@@ -39,6 +40,11 @@ LM_RIGHT_KNEE = 26
 LM_LEFT_ANKLE = 27
 LM_RIGHT_ANKLE = 28
 
+VIDEO_EXTENSIONS = frozenset({".mp4", ".mov"})
+PART_ORDER = ("body", "torso", "head", "leftArm", "rightArm", "leftLeg", "rightLeg")
+AXIS_ORDER = ("x", "y", "z", "pitch", "yaw", "roll", "bend", "axis")
+LINEAR_AXES = frozenset({"x", "y", "z"})
+
 
 @dataclass(frozen=True)
 class LandmarkFrame:
@@ -47,6 +53,16 @@ class LandmarkFrame:
     tick: int
     world_landmarks: Sequence[object] | None
     image_landmarks: Sequence[object] | None
+    source_frame_index: int | None = None
+    source_time_seconds: float | None = None
+
+
+@dataclass(frozen=True)
+class BatchResult:
+    """Summary of a batch conversion run."""
+
+    converted: list[Path]
+    skipped: list[Path]
 
 
 class VideoPoser:
@@ -106,7 +122,15 @@ class VideoPoser:
                     if result.pose_landmarks is not None
                     else None
                 )
-                frames.append(LandmarkFrame(tick=tick, world_landmarks=world, image_landmarks=image))
+                frames.append(
+                    LandmarkFrame(
+                        tick=tick,
+                        world_landmarks=world,
+                        image_landmarks=image,
+                        source_frame_index=frame_index,
+                        source_time_seconds=frame_index / source_fps,
+                    )
+                )
                 frame_index += 1
         finally:
             cap.release()
@@ -303,6 +327,164 @@ def sample_frame_indices(frame_count: int, source_fps: float, target_fps: int) -
     ]
 
 
+def select_key_pose_table(
+    pose_table: dict[int, dict],
+    *,
+    angle_threshold_degrees: float = 5.0,
+) -> dict[int, dict]:
+    """Return sparse key poses whose angle deltas exceed a threshold."""
+    if not math.isfinite(angle_threshold_degrees) or angle_threshold_degrees < 0:
+        raise ValueError("angle_threshold_degrees must be >= 0 and finite")
+    ticks = sorted(pose_table)
+    if len(ticks) <= 2:
+        return {tick: pose_table[tick] for tick in ticks}
+
+    selected: list[int] = [ticks[0]]
+    last_kept = ticks[0]
+    for tick in ticks[1:-1]:
+        delta = _max_angle_delta(pose_table[last_kept], pose_table[tick])
+        if delta >= angle_threshold_degrees:
+            selected.append(tick)
+            last_kept = tick
+    if selected[-1] != ticks[-1]:
+        selected.append(ticks[-1])
+    return {tick: pose_table[tick] for tick in selected}
+
+
+def write_gen_script(
+    pose_table: dict[int, dict],
+    *,
+    name: str,
+    out_path: Path | None = None,
+    source_info: dict[int, tuple[int | None, float | None]] | None = None,
+    loop: bool = False,
+    angle_threshold_degrees: float = 5.0,
+) -> Path:
+    """Write a hand-editable gen_NAME.py script from a dense pose table."""
+    if not pose_table:
+        raise ValueError("no valid pose frames found")
+    out_path = out_path or Path(__file__).resolve().parent / f"gen_{_safe_gen_name(name)}.py"
+    key_pose_table = select_key_pose_table(
+        pose_table,
+        angle_threshold_degrees=angle_threshold_degrees,
+    )
+    rounded_pose_table = _round_pose_table_for_gen(key_pose_table)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(
+        _build_gen_script_source(
+            rounded_pose_table,
+            name=name,
+            source_info=source_info or {},
+            loop=loop,
+        )
+    )
+    return out_path
+
+
+def frame_source_info(frames: Iterable[LandmarkFrame]) -> dict[int, tuple[int | None, float | None]]:
+    """Return source frame/time metadata keyed by output tick."""
+    return {
+        frame.tick: (frame.source_frame_index, frame.source_time_seconds)
+        for frame in frames
+        if frame.world_landmarks is not None
+    }
+
+
+def convert_video_file(
+    input_video: Path,
+    *,
+    output_name: str,
+    fps: int = 20,
+    model_complexity: int = 2,
+    translate: bool = False,
+    smooth: bool = True,
+    loop: bool = False,
+    preview: bool = False,
+    output_path: Path | None = None,
+    export_gen_name: str | None = None,
+    angle_threshold_degrees: float = 5.0,
+) -> Path:
+    """Convert one video into either JSON or a hand-editable gen script."""
+    poser = VideoPoser(fps=fps, model_complexity=model_complexity)
+    frames = poser.sample(input_video)
+    converter = PoseToEmotecraft(translate=translate)
+    pose_table = converter.convert_frames(frames, smooth=smooth, loop=loop)
+    if export_gen_name is not None:
+        gen_path = write_gen_script(
+            pose_table,
+            name=export_gen_name,
+            source_info=frame_source_info(frames),
+            loop=loop,
+            angle_threshold_degrees=angle_threshold_degrees,
+        )
+        keyframes = len(
+            select_key_pose_table(
+                pose_table,
+                angle_threshold_degrees=angle_threshold_degrees,
+            )
+        )
+        print(f"wrote {gen_path} keyframes={keyframes}")
+        return gen_path
+
+    doc = converter.build_doc(pose_table, name=output_name, loop=loop)
+    out_path = write_json(doc, output_path or resolve_output_path(output_name))
+    print(f"wrote {out_path} frames={len(pose_table)} moves={len(doc['emote']['moves'])}")
+    if preview:
+        _run_preview(out_path)
+    return out_path
+
+
+def batch_convert(
+    input_dir: Path,
+    output_dir: Path,
+    *,
+    fps: int = 20,
+    model_complexity: int = 2,
+    translate: bool = False,
+    smooth: bool = True,
+    loop: bool = False,
+    preview: bool = False,
+    convert_one: Callable[[Path, Path], Path] | None = None,
+) -> BatchResult:
+    """Convert all supported videos in a directory, skipping existing JSON."""
+    if not input_dir.is_dir():
+        raise ValueError(f"input_dir must be a directory: {input_dir}")
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    converted: list[Path] = []
+    skipped: list[Path] = []
+    for video_path in iter_video_files(input_dir):
+        out_path = output_dir / f"{video_path.stem}.json"
+        if out_path.exists() and out_path.stat().st_size > 0:
+            skipped.append(out_path)
+            continue
+        if convert_one is None:
+            written = convert_video_file(
+                video_path,
+                output_name=video_path.stem,
+                fps=fps,
+                model_complexity=model_complexity,
+                translate=translate,
+                smooth=smooth,
+                loop=loop,
+                preview=preview,
+                output_path=out_path,
+            )
+        else:
+            written = convert_one(video_path, out_path)
+        converted.append(written)
+    return BatchResult(converted=converted, skipped=skipped)
+
+
+def iter_video_files(input_dir: Path) -> list[Path]:
+    """Return supported video files in stable batch order."""
+    return sorted(
+        path
+        for path in input_dir.iterdir()
+        if path.is_file() and path.suffix.lower() in VIDEO_EXTENSIONS
+    )
+
+
 class FrameSampler:
     """Streaming source-frame sampler for a target animation tick cadence."""
 
@@ -319,7 +501,7 @@ class FrameSampler:
     def tick_for_frame(self, frame_index: int) -> int | None:
         """Return the time-preserving output tick, or None for duplicate ticks."""
         frame_time = frame_index / self.source_fps
-        tick = math.floor(frame_time * float(self.target_fps) + 1e-9)
+        tick = math.floor(frame_time * self.target_fps + 1e-9)
         if tick == self._last_tick:
             return None
         self._last_tick = tick
@@ -442,18 +624,171 @@ def _merge_boundary_pose(last_pose: dict, first_pose: dict) -> dict:
     return merged
 
 
+def _max_angle_delta(previous_pose: dict, current_pose: dict) -> float:
+    """Return the largest angular delta, preserving any linear-axis change."""
+    largest = 0.0
+    for part in set(previous_pose) | set(current_pose):
+        previous_axes = previous_pose.get(part, {})
+        current_axes = current_pose.get(part, {})
+        if not isinstance(previous_axes, dict) or not isinstance(current_axes, dict):
+            continue
+        for axis in ANGLE_AXES:
+            has_previous = axis in previous_axes
+            has_current = axis in current_axes
+            if has_previous != has_current:
+                return math.inf
+            if has_previous and has_current:
+                largest = max(largest, abs(float(current_axes[axis]) - float(previous_axes[axis])))
+        for axis in LINEAR_AXES:
+            has_previous = axis in previous_axes
+            has_current = axis in current_axes
+            if has_previous != has_current:
+                return math.inf
+            if has_previous and has_current and float(current_axes[axis]) != float(previous_axes[axis]):
+                return math.inf
+    return largest
+
+
+def _round_pose_table_for_gen(pose_table: dict[int, dict]) -> dict[int, dict]:
+    """Round a pose table for hand-editable generator output."""
+    rounded: dict[int, dict] = {}
+    for tick, pose in pose_table.items():
+        rounded_pose: dict = {}
+        for part in PART_ORDER:
+            axes = pose.get(part)
+            if not isinstance(axes, dict):
+                continue
+            rounded_pose[part] = {
+                axis: _round_gen_axis(axis, axes[axis])
+                for axis in AXIS_ORDER
+                if axis in axes
+            }
+        rounded[tick] = rounded_pose
+    return rounded
+
+
+def _round_gen_axis(axis: str, value: object) -> float:
+    """Round angles to 0.5° and linear axes to 4 decimals."""
+    numeric = float(value)
+    if axis in ANGLE_AXES:
+        return round(round(numeric * 2.0) / 2.0, 1)
+    return round(numeric, 4)
+
+
+def _build_gen_script_source(
+    pose_table: dict[int, dict],
+    *,
+    name: str,
+    source_info: dict[int, tuple[int | None, float | None]],
+    loop: bool,
+) -> str:
+    """Build Python source for a generated gen_NAME.py script."""
+    end_tick = max(pose_table)
+    lines = [
+        "#!/usr/bin/env python3",
+        '"""Generated by video2emotecraft --export-gen.',
+        "",
+        "Edit POSE, then run this file to emit the rough animation JSON.",
+        '"""',
+        "",
+        "from __future__ import annotations",
+        "",
+        "from anim_common import emit_json",
+        "",
+        "",
+        "POSE = {",
+    ]
+    for tick in sorted(pose_table):
+        frame_index, frame_time = source_info.get(tick, (None, None))
+        lines.append(f"    # {_format_source_comment(frame_index, frame_time)}")
+        lines.append(f"    {tick}: {{")
+        pose = pose_table[tick]
+        for part in PART_ORDER:
+            axes = pose.get(part)
+            if not axes:
+                continue
+            axis_items = ", ".join(f"{axis!r}: {axes[axis]!r}" for axis in AXIS_ORDER if axis in axes)
+            lines.append(f"        {part!r}: {{{axis_items}}},")
+        lines.append("    },")
+    lines.extend(
+        [
+            "}",
+            "",
+            "",
+            'if __name__ == "__main__":',
+            "    emit_json(",
+            "        POSE,",
+            f"        name={name!r},",
+            f"        description={'video2emotecraft exported rough animation: ' + name!r},",
+            f"        end_tick={end_tick},",
+            f"        stop_tick={end_tick + 2},",
+            f"        is_loop={loop!r},",
+            "    )",
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def _format_source_comment(frame_index: int | None, frame_time: float | None) -> str:
+    """Format source frame metadata for generated script comments."""
+    if frame_index is None or frame_time is None:
+        return "source frame unknown"
+    return f"source frame {frame_index} @ {frame_time:.3f}s"
+
+
+def _safe_gen_name(name: str) -> str:
+    """Return a filename-safe suffix for gen_NAME.py."""
+    safe = re.sub(r"[^\w]+", "_", name, flags=re.UNICODE).strip("_")
+    if not safe:
+        raise ValueError("export-gen name must contain a filename-safe character")
+    if safe[0].isdigit():
+        safe = f"anim_{safe}"
+    return safe
+
+
 def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     """Parse CLI arguments for the video converter."""
+    if argv and argv[0] == "batch":
+        parser = argparse.ArgumentParser(description="Batch convert pose videos to Bong Emotecraft v3 JSON")
+        parser.add_argument("command", choices=("batch",))
+        parser.add_argument("input_dir", type=Path)
+        parser.add_argument("-o", "--output", required=True, type=Path, help="output directory")
+        _add_common_cli_args(parser)
+        return parser.parse_args(argv)
+
     parser = argparse.ArgumentParser(description="Convert pose video to Bong Emotecraft v3 JSON")
     parser.add_argument("input_video", type=Path)
-    parser.add_argument("-o", "--output", required=True, help="animation name without .json")
+    parser.add_argument("-o", "--output", help="animation name without .json")
+    parser.add_argument(
+        "--export-gen",
+        metavar="NAME",
+        help="write client/tools/gen_NAME.py instead of direct JSON",
+    )
+    parser.add_argument(
+        "--key-threshold",
+        type=_non_negative_float,
+        default=5.0,
+        help="minimum angular delta in degrees for --export-gen keyframes",
+    )
+    _add_common_cli_args(parser)
+    args = parser.parse_args(argv)
+    if args.output is None and args.export_gen is None:
+        parser.error("-o/--output is required unless --export-gen NAME is used")
+    if args.output is not None and args.export_gen is not None and args.output != args.export_gen:
+        parser.error("--export-gen NAME and -o/--output NAME must match when both are set")
+    args.command = "convert"
+    return args
+
+
+def _add_common_cli_args(parser: argparse.ArgumentParser) -> None:
+    """Add flags shared by single-file and batch conversion."""
     parser.add_argument("--fps", type=_positive_int, default=20)
     parser.add_argument("--complexity", type=int, default=2, choices=(0, 1, 2))
     parser.add_argument("--translate", action="store_true")
     parser.add_argument("--no-smooth", action="store_true")
     parser.add_argument("--loop", action="store_true")
     parser.add_argument("--preview", action="store_true")
-    return parser.parse_args(argv)
 
 
 def _positive_int(value: str) -> int:
@@ -464,24 +799,51 @@ def _positive_int(value: str) -> int:
     return parsed
 
 
+def _non_negative_float(value: str) -> float:
+    """Parse a non-negative float for argparse."""
+    parsed = float(value)
+    if not math.isfinite(parsed) or parsed < 0:
+        raise argparse.ArgumentTypeError("must be >= 0 and finite")
+    return parsed
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the video-to-animation CLI pipeline."""
     args = parse_args(sys.argv[1:] if argv is None else argv)
-    poser = VideoPoser(fps=args.fps, model_complexity=args.complexity)
-    frames = poser.sample(args.input_video)
-    converter = PoseToEmotecraft(translate=args.translate)
-    pose_table = converter.convert_frames(frames, smooth=not args.no_smooth, loop=args.loop)
-    doc = converter.build_doc(pose_table, name=args.output, loop=args.loop)
-    out_path = write_json(doc, resolve_output_path(args.output))
-    print(f"wrote {out_path} frames={len(pose_table)} moves={len(doc['emote']['moves'])}")
-    if args.preview:
-        _run_preview(out_path)
+    if args.command == "batch":
+        result = batch_convert(
+            args.input_dir,
+            args.output,
+            fps=args.fps,
+            model_complexity=args.complexity,
+            translate=args.translate,
+            smooth=not args.no_smooth,
+            loop=args.loop,
+            preview=args.preview,
+        )
+        print(f"batch converted={len(result.converted)} skipped={len(result.skipped)}")
+        return 0
+
+    output_name = args.export_gen or args.output
+    convert_video_file(
+        args.input_video,
+        output_name=output_name,
+        fps=args.fps,
+        model_complexity=args.complexity,
+        translate=args.translate,
+        smooth=not args.no_smooth,
+        loop=args.loop,
+        preview=args.preview,
+        export_gen_name=args.export_gen,
+        angle_threshold_degrees=args.key_threshold,
+    )
     return 0
 
 
 def _run_preview(out_path: Path) -> None:
     """Render a preview grid for the generated animation JSON."""
-    preview_dir = Path(tempfile.mkdtemp(prefix=f"video2anim_{out_path.stem}_"))
+    preview_dir = Path(tempfile.gettempdir()) / "video2anim_preview" / out_path.stem
+    preview_dir.mkdir(parents=True, exist_ok=True)
     try:
         from render_animation import render_grid
 

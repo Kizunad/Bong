@@ -1,19 +1,27 @@
 from __future__ import annotations
 
 import math
+import subprocess
+import sys
 from itertools import pairwise
+from pathlib import Path
 
 import numpy as np
 import pytest
 
 from anim_common import VALID_PARTS
 from video2emotecraft import (
+    batch_convert,
     FrameSampler,
+    iter_video_files,
     LandmarkFrame,
     PoseToEmotecraft,
     parse_args,
     sample_frame_indices,
+    select_key_pose_table,
     smooth_angle_degrees,
+    _safe_gen_name,
+    write_gen_script,
 )
 
 
@@ -303,6 +311,244 @@ def test_non_positive_fps_is_rejected(fps: str, capsys: pytest.CaptureFixture[st
     )
     assert "must be > 0" in stderr, (
         f"expected argparse stderr to include the FPS validation message, actual stderr={stderr!r}"
+    )
+
+
+@pytest.mark.parametrize("threshold", ["-0.5", "nan", "inf"])
+def test_invalid_key_threshold_is_rejected(
+    threshold: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Verify CLI rejects impossible export-gen keyframe thresholds before conversion."""
+    with pytest.raises(SystemExit) as exc_info:
+        parse_args(["input.mp4", "--export-gen", "unit", "--key-threshold", threshold])
+
+    stderr = capsys.readouterr().err
+    assert exc_info.value.code != 0, (
+        f"expected non-zero SystemExit because --key-threshold={threshold} is invalid, "
+        f"actual {exc_info.value.code}"
+    )
+    assert "must be >= 0" in stderr, (
+        f"expected argparse stderr to include the threshold validation message, actual stderr={stderr!r}"
+    )
+
+
+@pytest.mark.parametrize(
+    ("source_fps", "target_fps", "message"),
+    [
+        (0.0, 20, "source_fps must be > 0"),
+        (-1.0, 20, "source_fps must be > 0"),
+        (float("nan"), 20, "source_fps must be > 0"),
+        (30.0, 0, "target_fps must be > 0"),
+    ],
+)
+def test_frame_sampler_rejects_invalid_fps(
+    source_fps: float,
+    target_fps: int,
+    message: str,
+) -> None:
+    """Verify direct FrameSampler guard branches are pinned."""
+    with pytest.raises(ValueError, match=message):
+        FrameSampler(source_fps=source_fps, target_fps=target_fps)
+
+
+def test_export_gen_script_is_valid_python_with_source_comments(tmp_path) -> None:
+    """Verify exported gen script compiles and carries source frame comments."""
+    out_path = tmp_path / "gen_unit_export.py"
+    written = write_gen_script(
+        {
+            0: {"rightArm": {"pitch": 0.0, "bend": 0.0, "axis": 180.0}},
+            10: {"rightArm": {"pitch": 40.0, "bend": 20.0, "axis": 180.0}},
+        },
+        name="unit_export",
+        out_path=out_path,
+        source_info={0: (0, 0.0), 10: (20, 1.0)},
+    )
+
+    source = written.read_text()
+    compile(source, str(written), "exec")
+    assert "# source frame 0 @ 0.000s" in source, (
+        f"expected generated script to document original source frame, actual source={source}"
+    )
+    assert "name='unit_export'" in source, (
+        f"expected generated script to emit the requested animation name, actual source={source}"
+    )
+
+
+def test_export_gen_script_runs_with_emit_json_contract(tmp_path) -> None:
+    """Verify exported gen script can run as a standalone Python file."""
+    script_path = tmp_path / "gen_run_unit.py"
+    write_gen_script(
+        {
+            0: {"rightArm": {"pitch": 0.0, "bend": 0.0, "axis": 180.0}},
+            5: {"rightArm": {"pitch": 30.0, "bend": 15.0, "axis": 180.0}},
+        },
+        name="run_unit",
+        out_path=script_path,
+    )
+    (tmp_path / "anim_common.py").write_text(
+        "from pathlib import Path\n"
+        "def emit_json(pose_table, **kwargs):\n"
+        "    Path('emitted.txt').write_text(f\"{kwargs['name']}:{len(pose_table)}\")\n"
+        "    return Path('emitted.txt')\n"
+    )
+
+    subprocess.run([sys.executable, str(script_path)], cwd=tmp_path, check=True)
+
+    emitted = (tmp_path / "emitted.txt").read_text()
+    assert emitted == "run_unit:2", (
+        f"expected generated script to call emit_json with pose table and name, actual {emitted!r}"
+    )
+
+
+def test_export_gen_accepts_unicode_filename_suffix() -> None:
+    """Verify non-ASCII animation names do not crash export-gen filename sanitization."""
+    safe_name = _safe_gen_name("动画")
+
+    assert safe_name == "动画", (
+        f"expected Chinese export-gen names to remain usable on local filesystems, actual {safe_name!r}"
+    )
+
+
+def test_export_gen_rejects_empty_filename_suffix() -> None:
+    """Verify export-gen still rejects names with no usable filename characters."""
+    with pytest.raises(ValueError, match="filename-safe character"):
+        _safe_gen_name("!!!")
+
+
+def test_export_gen_prefixes_digit_filename_suffix() -> None:
+    """Verify digit-leading export-gen names are prefixed into valid script stems."""
+    safe_name = _safe_gen_name("1name")
+
+    assert safe_name == "anim_1name", (
+        f"expected digit-leading export-gen names to gain anim_ prefix, actual {safe_name!r}"
+    )
+
+
+def test_keyframe_filter_keeps_sparse_angle_changes() -> None:
+    """Verify export-gen keeps key frames rather than every sampled frame."""
+    pose_table = {tick: {"rightArm": {"pitch": float(tick)}} for tick in range(60)}
+
+    selected = select_key_pose_table(pose_table, angle_threshold_degrees=5.0)
+
+    expected_ticks = list(range(0, 60, 5)) + [59]
+    assert list(selected) == expected_ticks, (
+        "expected sparse keyframes every 5° plus final boundary because threshold is 5°, "
+        f"actual ticks={list(selected)}"
+    )
+    assert 0 in selected and 59 in selected, (
+        f"expected export-gen to preserve boundary keyframes, actual ticks={sorted(selected)}"
+    )
+
+
+def test_keyframe_filter_preserves_translate_only_changes() -> None:
+    """Verify --translate poses are not collapsed when only body xyz changes."""
+    pose_table = {tick: {"body": {"x": tick * 0.1}} for tick in range(4)}
+
+    selected = select_key_pose_table(pose_table, angle_threshold_degrees=5.0)
+
+    assert list(selected) == [0, 1, 2, 3], (
+        f"expected translate-only frames to be preserved because body.x is observable, actual {list(selected)}"
+    )
+
+
+@pytest.mark.parametrize("threshold", [-1.0, float("nan"), float("inf")])
+def test_keyframe_filter_rejects_invalid_thresholds(threshold: float) -> None:
+    """Verify direct keyframe selection rejects non-finite and negative thresholds."""
+    with pytest.raises(ValueError, match="angle_threshold_degrees must be >= 0"):
+        select_key_pose_table({0: {"rightArm": {"pitch": 0.0}}}, angle_threshold_degrees=threshold)
+
+
+def test_export_gen_rounds_angles_to_half_degree(tmp_path) -> None:
+    """Verify exported angle values are rounded to hand-editable 0.5° precision."""
+    out_path = tmp_path / "gen_rounding.py"
+    write_gen_script(
+        {
+            0: {"rightArm": {"pitch": 12.24, "bend": 90.26, "axis": 179.76}},
+            1: {"rightArm": {"pitch": 12.76, "bend": 89.74, "axis": 180.24}},
+        },
+        name="rounding",
+        out_path=out_path,
+        angle_threshold_degrees=0.0,
+    )
+
+    source = out_path.read_text()
+    assert "'pitch': 12.0" in source and "'bend': 90.5" in source and "'axis': 180.0" in source, (
+        f"expected generated angle literals on the 0.5° grid, actual source={source}"
+    )
+
+
+def test_batch_convert_is_idempotent(tmp_path) -> None:
+    """Verify batch mode skips JSON files already generated in a prior run."""
+    input_dir = tmp_path / "videos"
+    output_dir = tmp_path / "out"
+    input_dir.mkdir()
+    output_dir.mkdir()
+    (input_dir / "a.mp4").write_bytes(b"fake")
+    (input_dir / "b.mov").write_bytes(b"fake")
+    (input_dir / "ignore.txt").write_text("not a video")
+    calls: list[str] = []
+
+    def fake_convert(video_path, out_path) -> Path:
+        calls.append(video_path.name)
+        out_path.write_text("{}")
+        return out_path
+
+    first = batch_convert(input_dir, output_dir, convert_one=fake_convert)
+    second = batch_convert(input_dir, output_dir, convert_one=fake_convert)
+
+    assert calls == ["a.mp4", "b.mov"], (
+        f"expected first batch run to convert each supported video once, actual calls={calls}"
+    )
+    assert [path.name for path in first.converted] == ["a.json", "b.json"], (
+        f"expected first run outputs for supported videos only, actual {first.converted}"
+    )
+    assert second.converted == [], (
+        f"expected second run to skip all existing outputs, actual converted={second.converted}"
+    )
+    assert [path.name for path in second.skipped] == ["a.json", "b.json"], (
+        f"expected second run to report skipped outputs, actual skipped={second.skipped}"
+    )
+
+
+def test_batch_convert_retries_zero_byte_outputs(tmp_path) -> None:
+    """Verify batch mode does not treat a crash-left empty JSON as a completed output."""
+    input_dir = tmp_path / "videos"
+    output_dir = tmp_path / "out"
+    input_dir.mkdir()
+    output_dir.mkdir()
+    (input_dir / "a.mp4").write_bytes(b"fake")
+    (output_dir / "a.json").write_bytes(b"")
+    calls: list[str] = []
+
+    def fake_convert(video_path, out_path) -> Path:
+        calls.append(video_path.name)
+        out_path.write_text('{"ok":true}')
+        return out_path
+
+    result = batch_convert(input_dir, output_dir, convert_one=fake_convert)
+
+    assert calls == ["a.mp4"], (
+        f"expected zero-byte output to be retried because prior conversion was incomplete, actual calls={calls}"
+    )
+    assert [path.name for path in result.converted] == ["a.json"], (
+        f"expected retried output to be reported as converted, actual converted={result.converted}"
+    )
+    assert result.skipped == [], (
+        f"expected zero-byte output not to be reported as skipped, actual skipped={result.skipped}"
+    )
+
+
+def test_iter_video_files_uses_supported_extensions_only(tmp_path) -> None:
+    """Verify batch discovery is stable and extension-filtered."""
+    (tmp_path / "b.MOV").write_bytes(b"fake")
+    (tmp_path / "a.mp4").write_bytes(b"fake")
+    (tmp_path / "c.avi").write_bytes(b"fake")
+
+    videos = iter_video_files(tmp_path)
+
+    assert [path.name for path in videos] == ["a.mp4", "b.MOV"], (
+        f"expected only .mp4/.mov files in sorted order, actual {[path.name for path in videos]}"
     )
 
 
