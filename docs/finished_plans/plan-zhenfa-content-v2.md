@@ -12,10 +12,10 @@
 
 | 阶段 | 主题 | 状态 |
 |------|------|------|
-| P0 | qi_physics 扩展(`ContainerKind::EmbeddedTrap` + 散珠/组网常数)+ ID 统一裁决落地 | ⬜ |
-| P1 | `gather_array_base` 接通 `ZhenfaKind::Lingju`(聚灵真生效) | ⬜ |
-| P2 | `qi_scatter_bead` 守恒散逸(use handler + ledger transfer) | ⬜ |
-| P3 | 阵旗组网:旗圈边界 + 阵眼激活(`ZhenfaKind::NetworkArray`) | ⬜ |
+| P0 | qi_physics 扩展(`ContainerKind::EmbeddedTrap` + 散珠/组网常数)+ ID 统一裁决落地 | ✅ 2026-06-12 |
+| P1 | `gather_array_base` 接通 `ZhenfaKind::Lingju`(聚灵真生效) | ✅ 2026-06-12 |
+| P2 | `qi_scatter_bead` 守恒散逸(use handler + ledger transfer) | ✅ 2026-06-12 |
+| P3 | 阵旗组网:旗圈边界 + 阵眼激活(`ZhenfaKind::NetworkArray`) | ✅ 2026-06-12 |
 
 ---
 
@@ -354,3 +354,45 @@ Agent(
 ### §10.5 单次 consume-plan 全自动到 merge
 
 用户提交 `/consume-plan plan-zhenfa-content-v2` 后即可下班——醒来看 plan 是否已迁入 `docs/finished_plans/`。全程 worktree 隔离,P0→P1→P2→P3 序列化,各 PR 走 §10.4 等待协议,全 ✅ + Finish Evidence 填完后归档。
+
+## Finish Evidence
+
+### 落地清单
+
+- **P0 qi_physics 扩展与 ID 裁决**:`server/src/qi_physics/env.rs` 新增 `ContainerKind::EmbeddedTrap`,`server/src/qi_physics/constants.rs` 新增 `QI_SCATTER_BEAD_CAPACITY`/`QI_NETWORK_ARRAY_LINGJU_CAP_BONUS`,`server/src/craft/mod.rs`、`server/src/craft/workbench_recipes.rs`、`server/src/zhenfa/mod.rs` 补齐 `gather_array_base`/`qi_scatter_bead`/`array_flag_basic` 语义锚定。
+- **P1 聚灵阵接通**:`server/src/zhenfa/mod.rs` 落地 `apply_lingju_effect`/`clear_lingju_effect` 与 `Lingju` tick 分发,`server/src/lingtian/environment.rs` 接入 plot cap 计算,`client/src/main/java/com/bong/client/mixin/MixinClientPlayerInteractionManagerAlchemy.java` 映射 `gather_array_base -> LINGJU`,并补 `LingjuActivatePlayer`/`lingju_activate.json` 视听。
+- **P2 散灵珠守恒散逸**:`server/src/zhenfa/mod.rs` 落地 `handle_scatter_bead_use`/`tick_scatter_bead_excretion`,通过 `qi_release_to_zone` + `WorldQiAccount::transfer` 闭合 ledger,并接 `ScatterBurstPlayer`、`scatter_burst.json`、C2S `QiScatterBeadUse` 协议与 resourcepack manifest。
+- **P3 阵旗组网**:`server/src/zhenfa/network_array.rs` 落地 `try_form_network` 几何,`server/src/zhenfa/mod.rs` 落地 `ZhenfaKind::NetworkArray`、`try_form_network_array`、`network_warning_tick`、`dissolve_network`/破阵反馈与凡阶聚灵,`proto/bong/envelope.proto`、`server/src/schema/proto_convert.rs`、`agent/packages/schema/src/zhenfa-v2.ts`、`agent/packages/schema/src/client-request.ts`、`client/src/main/java/com/bong/client/network/ClientRequestProtocol.java` 完成三端契约,`NetworkArrayFormPlayer`、`network_array_form.json`、`network_array_break.json` 与 `local_models/ArrayFlagBasic.bbmodel` 完成视听/模型。
+
+### 关键 commit / PR
+
+- `3321c06f44f2e8941bf061f5132b7564dcaafa36` · 2026-06-11 · PR #513 `plan-zhenfa-content-v2 P0：qi_physics 扩展与 ID 裁决` · merged。
+- `8a39837c59b1ce67f100d60c2b5d2d185f071672` · 2026-06-11 · PR #514 `plan-zhenfa-content-v2 P1：聚灵阵接通玩法与视听` · merged。
+- `4a2c985df95090d7d80260947d91a2b8596afe4b` · 2026-06-11 · PR #515 `plan-zhenfa-content-v2 P2：散灵珠守恒散逸与视听` · merged。
+- `2b6d93694153a691280c64d42d7507f1bf81519d` · 2026-06-12 · PR #517 `实现阵旗组网 P3` · merged；P3 资产按 `(round 1/3)`、`(round 2/3)`、`(round 3/3)` 三轮提交,终轮 commit 含 `<PROMISE>` 担保。
+
+### 测试结果
+
+- `cd client && JAVA_HOME="$HOME/.sdkman/candidates/java/17.0.18-amzn" ./gradlew --no-daemon test build --max-workers=2` · 通过。
+- `cd agent && npm test --workspace @bong/schema` · 通过。
+- `cd server && CARGO_BUILD_JOBS=2 cargo fmt --check` · 通过。
+- `cd server && CARGO_BUILD_JOBS=2 cargo test network_array -- --test-threads=2` · 通过。
+- `cd server && CARGO_BUILD_JOBS=2 cargo test -- --test-threads=2` · 8699 passed,0 failed,1 ignored。
+- PR #513 CI:`e2e` SUCCESS；PR #514/#515/#517 CI:`Build resource pack` SUCCESS,`e2e` SUCCESS,`Publish release asset` SKIPPED。
+
+### 跨仓库核验
+
+- **server**:`ContainerKind::EmbeddedTrap`、`QI_SCATTER_BEAD_CAPACITY`、`QI_NETWORK_ARRAY_LINGJU_CAP_BONUS`、`ZhenfaKind::NetworkArray`、`try_form_network`、`handle_scatter_bead_use`、`tick_scatter_bead_excretion`、`network_warning_tick` 均可 grep 命中。
+- **proto / Rust schema**:`ZHENFA_KIND_NETWORK_ARRAY = 10`、`zhenfa_kind_to_proto` 的 `ZhenfaKind::NetworkArray` arm、`ZhenfaArrayKindV2::NetworkArray` serde 正反测试均已落地。
+- **agent schema**:`agent/packages/schema/src/zhenfa-v2.ts` 与 `agent/packages/schema/src/client-request.ts` 均包含 `Type.Literal("network_array")`,generated JSON 已同步。
+- **client**:`ClientRequestProtocol.ZhenfaKind.NETWORK_ARRAY("network_array")`、`bong$zhenfaKindForItem` 的 `array_flag_basic`/`array_eye_basic` 映射、`NetworkArrayFormPlayer` 与 VFX registry 均已接通。
+
+### Review / CI 结论
+
+- PR #513/#514/#515/#517 均已 merge；`/review` 均已触发,其中 PR #517 最终评论为「所有 10 个 finder 均已确认完毕,无新增阻塞问题」。
+- CodeRabbit 多次返回 `Review limit reached` / usage credits 不足,按 `AGENTS.md` review gate 视为计费/限流噪声,不是代码阻塞；已有 `/review` 与 CI 结果足以归档。
+
+### 遗留 / 后续
+
+- 散灵珠 `scatter_disturbance` tag 的追踪/嗅探消费方仍属未来追踪类 plan,本 plan 已确保 tag 不是 emit-only 孤岛:zone 浓度变化通过 ledger 真实落账。
+- inventory rollback、`zone_name_for_block` 与 `zone_name_at_pos` 合并、冗余 `init_resource`/`add_event` 清理为后续技术债,均非本 plan 阻塞项。
