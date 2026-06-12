@@ -35,6 +35,8 @@ import { MeridianSeveredNarrationRuntime } from "./meridian-severed-runtime.js";
 import { VoidErosionNarrationRuntime } from "./void_erosion_runtime.js";
 import { MutationNarrationRuntime } from "./mutation-narration-runtime.js";
 import { BreakthroughCinematicNarrationRuntime } from "./breakthrough-cinematic-narration.js";
+// plan-halfstep-rechallenge-integration-v1 P1：半步化虚重渡窗口叙事 runtime
+import { HalfStepRechallengeNarrationRuntime } from "./halfstep-rechallenge-narration.js";
 import { createClient as createLlmClient, createMockClient, type LlmClient } from "./llm.js";
 import { createMockWorldState } from "./mock-state.js";
 import {
@@ -243,6 +245,10 @@ async function startAuxiliaryRuntimes(config: RuntimeConfig): Promise<AuxiliaryR
   const elderEncounterCleanup = await startElderEncounterRuntime({
     redisUrl: config.redisUrl,
   });
+  // plan-halfstep-rechallenge-integration-v1 P1：半步化虚重渡窗口叙事（订阅 bong:tribulation/halfstep_rechallenge）。
+  const halfStepRechallengeCleanup = await startHalfStepRechallengeNarrationRuntime({
+    redisUrl: config.redisUrl,
+  });
   const scatteredCultivatorCleanup = await startScatteredCultivatorRuntime({
     redisUrl: config.redisUrl,
   });
@@ -302,6 +308,7 @@ async function startAuxiliaryRuntimes(config: RuntimeConfig): Promise<AuxiliaryR
       duguCleanup,
       poisonTraitCleanup,
       elderEncounterCleanup,
+      halfStepRechallengeCleanup,
       scatteredCultivatorCleanup,
       offscreenWarCleanup,
       warOutcomeCleanup,
@@ -806,6 +813,38 @@ async function startElderEncounterRuntime(opts: {
       await Promise.race([runtime.disconnect(), timeout]);
     } catch (error) {
       console.warn("[tiandao] elder encounter runtime disconnect error:", error);
+    }
+  };
+}
+
+// plan-halfstep-rechallenge-integration-v1 P1
+async function startHalfStepRechallengeNarrationRuntime(opts: {
+  redisUrl: string;
+}): Promise<() => Promise<void>> {
+  const IORedisCtor = ((Redis as unknown as { default?: unknown }).default ??
+    Redis) as new (url: string) => unknown;
+  const sub = new IORedisCtor(opts.redisUrl) as ConstructorParameters<
+    typeof HalfStepRechallengeNarrationRuntime
+  >[0]["sub"];
+  const pub = new IORedisCtor(opts.redisUrl) as ConstructorParameters<
+    typeof HalfStepRechallengeNarrationRuntime
+  >[0]["pub"];
+
+  const runtime = new HalfStepRechallengeNarrationRuntime({ sub, pub });
+  runtime
+    .connect()
+    .then(() =>
+      console.log("[tiandao] halfstep rechallenge narration runtime online"),
+    )
+    .catch((error) =>
+      console.warn("[tiandao] halfstep rechallenge runtime failed to start:", error),
+    );
+  return async () => {
+    const timeout = new Promise<void>((resolve) => setTimeout(resolve, 500));
+    try {
+      await Promise.race([runtime.disconnect(), timeout]);
+    } catch (error) {
+      console.warn("[tiandao] halfstep rechallenge runtime disconnect error:", error);
     }
   };
 }
