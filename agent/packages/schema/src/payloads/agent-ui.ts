@@ -8,6 +8,7 @@
  */
 
 import { Type, type Static } from "@sinclair/typebox";
+import { validate, type ValidationResult } from "../validate.js";
 
 // ─── Action 字面联合 ─────────────────────────────────────────────────────────
 
@@ -111,3 +112,15 @@ export const AgentUiClosePayloadV1 = Type.Object(
   { additionalProperties: false },
 );
 export type AgentUiClosePayloadV1 = Static<typeof AgentUiClosePayloadV1>;
+
+// ─── Validate helpers ────────────────────────────────────────────────────────
+
+/** TypeBox 契约校验：AgentUiResponsePayloadV1（server → agent Redis channel） */
+export function validateAgentUiResponsePayloadV1Contract(data: unknown): ValidationResult {
+  return validate(AgentUiResponsePayloadV1, data);
+}
+
+/** TypeBox 契约校验：AgentUiRequestCommandV1（agent → server Redis channel） */
+export function validateAgentUiRequestCommandV1Contract(data: unknown): ValidationResult {
+  return validate(AgentUiRequestCommandV1, data);
+}
