@@ -629,6 +629,42 @@ class ScatterOpsTest(unittest.TestCase):
         self.assertEqual(out[0, 1], 0)
         self.assertEqual(out[0, 2], 0)
 
+    def test_flora_variant_by_noise_threshold_is_strictly_greater(self) -> None:
+        # band/pick use strict `>` against the threshold: a field value EXACTLY
+        # equal to the threshold (0.5 > 0.5 == False) must NOT place the variant.
+        # This off-by-one pins the boundary so a `>=` regression撞红.
+        band = np.array([[0.5, 0.5, 0.6, 0.6]])
+        pick = np.array([[0.6, 0.5, 0.5, 0.6]])
+        out = dsl.flora_variant_by_noise(
+            band_field=band,
+            pick_field=pick,
+            band_threshold=0.5,
+            pick_threshold=0.5,
+            variant_id=9,
+        )
+        self.assertEqual(out[0, 0], 0, "band==threshold (0.5>0.5=False) → not placed")
+        self.assertEqual(out[0, 1], 0, "both ==threshold → not placed")
+        self.assertEqual(out[0, 2], 0, "pick==threshold → not placed")
+        self.assertEqual(
+            out[0, 3], 9, "both strictly above threshold → placed"
+        )
+
+    def test_anomaly_compete_tie_breaks_to_first_field(self) -> None:
+        # When two anomaly fields are exactly equal at a column, np.argmax breaks
+        # the tie to the LOWEST index — so the FIRST listed field's kind_id wins.
+        # Pin this so a reordering / argmax-flavor change is caught.
+        f1 = np.full((2, 2), 0.6)
+        f2 = np.full((2, 2), 0.6)  # identical to f1 → tie.
+        f3 = np.full((2, 2), 0.3)
+        intensity, kind = dsl.anomaly_compete(
+            fields=[f1, f2, f3], kind_ids=[11, 22, 33], threshold=0.0
+        )
+        self.assertTrue(np.allclose(intensity, 0.6), "tie intensity = the shared max")
+        self.assertTrue(
+            np.all(kind == 11),
+            "tie between f1 and f2 → argmax index 0 → first field's kind_id (11)",
+        )
+
     def test_anomaly_compete_argmax_and_threshold(self) -> None:
         f1 = np.full((2, 2), 0.2)
         f2 = np.full((2, 2), 0.8)
