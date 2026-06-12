@@ -29,6 +29,15 @@ class ZoneWorldgenConfig:
     biome_mix: tuple[str, ...] = ()
     landmarks: tuple[str, ...] = ()
     extras: dict[str, Any] = field(default_factory=dict)
+    # --- worldgen-v4 P2 DSL fields (§P2 + §8.1 #4) ---
+    # The declarative terrain DSL (terrain_style / surface_palette / flora_table /
+    # qi_grade / qi_override).  Populated from the blueprint zone's optional DSL
+    # block; absent → safe defaults (empty style, common qi_grade, no override) so
+    # legacy blueprints without these fields still parse.  ``dsl`` is None when
+    # the zone declares no DSL block at all (distinguish "not yet migrated" from
+    # "explicitly empty").  Typed as Any to avoid a fields.py ↔ dsl.py import
+    # cycle; the concrete type is dsl.ZoneTerrainDSL.
+    dsl: Any | None = None
 
 
 @dataclass(frozen=True)
@@ -105,6 +114,12 @@ class TerrainProfileSpec:
     # --- layout infrastructure (plan-dandao-path-v1 PR-1) ---
     architectural_layout: str | None = None
     compound_flatten_radius: int | None = None
+    # --- worldgen-v4 P2 DSL fields (§P2 + §8.1 #4) ---
+    # A profile-level declarative DSL default (terrain_style / surface_palette /
+    # flora_table / qi_grade / qi_override) the catalog can declare so a zone may
+    # inherit it.  None when the profile declares no DSL block.  Typed Any to
+    # avoid the fields.py ↔ dsl.py import cycle (concrete: dsl.ZoneTerrainDSL).
+    dsl: Any | None = None
 
 
 @dataclass(frozen=True)
@@ -143,6 +158,19 @@ def _pop_known(raw: dict[str, Any], keys: tuple[str, ...]) -> dict[str, Any]:
     return {key: value for key, value in raw.items() if key not in keys}
 
 
+# worldgen-v4 P2: inline-DSL marker keys.  ``surface_palette`` is DELIBERATELY
+# excluded — it already exists as the legacy block-override list[str] on
+# ZoneWorldgenConfig (a string list, not structured DSL rules).  Structured DSL
+# surface rules are only read from the nested ``worldgen.dsl`` block, so the two
+# representations never collide.  Plan §P2 risk "surface_palette 字段歧义" resolved
+# here: top-level surface_palette = block list; dsl.surface_palette = rules.
+_INLINE_DSL_KEYS = ("terrain_style", "flora_table", "qi_grade", "qi_override")
+
+
+def _has_inline_dsl(worldgen_raw: dict[str, Any]) -> bool:
+    return any(key in worldgen_raw for key in _INLINE_DSL_KEYS)
+
+
 def load_blueprint(path: Path) -> WorldBlueprint:
     with path.open(encoding="utf-8") as handle:
         raw = json.load(handle)
@@ -156,10 +184,33 @@ def parse_blueprint(raw: dict[str, Any]) -> WorldBlueprint:
     dict (e.g. the dev console applying per-zone parameter overrides without
     touching the on-disk source) reuse the exact same parsing + validation.
     """
+    # Deferred import — dsl.py imports only noise (no blueprint), so this is safe
+    # and keeps the module top-level free of a potential future cycle.
+    from .dsl import parse_zone_terrain_dsl
+
     world_raw = raw["world"]
     zones: list[BlueprintZone] = []
     for zone_raw in raw["zones"]:
         worldgen_raw = zone_raw["worldgen"]
+        # worldgen-v4 P2: the declarative DSL block lives under worldgen.dsl, OR
+        # the DSL fields (terrain_style / surface_palette / flora_table /
+        # qi_grade / qi_override) sit directly in the worldgen section.  We只在
+        # 至少声明了一个 DSL 字段时构造 ZoneTerrainDSL，否则 dsl=None（区分"未迁移"
+        # 与"显式空"），保持旧 blueprint 向后兼容。
+        dsl_obj = None
+        dsl_raw = worldgen_raw.get("dsl")
+        if dsl_raw is None and _has_inline_dsl(worldgen_raw):
+            # Inline DSL: read only the DSL marker keys, NOT the legacy
+            # surface_palette block list (which would crash the structured rule
+            # parser). Structured surface rules must use the nested dsl block.
+            dsl_raw = {
+                key: worldgen_raw[key]
+                for key in _INLINE_DSL_KEYS
+                if key in worldgen_raw
+            }
+        if dsl_raw is not None:
+            dsl_obj = parse_zone_terrain_dsl(dsl_raw)
+
         worldgen = ZoneWorldgenConfig(
             terrain_profile=str(worldgen_raw["terrain_profile"]),
             shape=str(worldgen_raw.get("shape", "unknown")),
@@ -180,8 +231,15 @@ def parse_blueprint(raw: dict[str, Any]) -> WorldBlueprint:
                     "surface_palette",
                     "biome_mix",
                     "landmarks",
+                    # DSL keys are not free-form extras.
+                    "dsl",
+                    "terrain_style",
+                    "flora_table",
+                    "qi_grade",
+                    "qi_override",
                 ),
             ),
+            dsl=dsl_obj,
         )
         center_x, center_z = zone_raw.get("center_xz", [0, 0])
         size_x, size_z = zone_raw.get("size_xz", [0, 0])
@@ -267,12 +325,28 @@ def load_zone_overlays(path: Path | None) -> tuple[ZoneOverlaySpec, ...]:
 
 
 def load_profile_catalog(path: Path) -> TerrainProfileCatalog:
+    from .dsl import parse_zone_terrain_dsl
+
     with path.open(encoding="utf-8") as handle:
         raw = json.load(handle)
 
     profiles: dict[str, TerrainProfileSpec] = {}
     for profile_name, profile_raw in raw["profiles"].items():
         height_raw = dict(profile_raw.get("height", {}))
+        # worldgen-v4 P2: profile-level DSL default. Read from nested ``dsl`` block
+        # or the inline marker keys (terrain_style / flora_table / qi_grade /
+        # qi_override). The legacy ``surface`` block list never collides because
+        # the structured DSL surface rules live under ``dsl.surface_palette``.
+        dsl_obj = None
+        profile_dsl_raw = profile_raw.get("dsl")
+        if profile_dsl_raw is None and _has_inline_dsl(profile_raw):
+            profile_dsl_raw = {
+                key: profile_raw[key]
+                for key in _INLINE_DSL_KEYS
+                if key in profile_raw
+            }
+        if profile_dsl_raw is not None:
+            dsl_obj = parse_zone_terrain_dsl(profile_dsl_raw)
         # Extract compound_flatten_radius from height sub-dict if present.
         compound_flatten_radius: int | None = None
         if "compound_flatten_radius" in height_raw:
@@ -293,10 +367,14 @@ def load_profile_catalog(path: Path) -> TerrainProfileCatalog:
                     "boundary", "height", "surface", "water",
                     "passability", "architectural_layout",
                     "compound_flatten_radius",
+                    # DSL keys are not free-form extras.
+                    "dsl", "terrain_style", "flora_table",
+                    "qi_grade", "qi_override",
                 ),
             ),
             architectural_layout=profile_raw.get("architectural_layout"),
             compound_flatten_radius=compound_flatten_radius,
+            dsl=dsl_obj,
         )
 
     return TerrainProfileCatalog(version=int(raw.get("version", 1)), profiles=profiles)
