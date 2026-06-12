@@ -107,7 +107,7 @@ describe("HalfStepRechallengeNarrationRuntime", () => {
     expect(pub.publish, "player scope 路径应触发恰好一次 publish").toHaveBeenCalledOnce();
     const [channel, msg] = pub.publish.mock.calls[0] as [string, string];
     expect(channel, `叙事应发往 ${AGENT_NARRATE}`).toBe(AGENT_NARRATE);
-    const envelope = JSON.parse(msg) as { v: number; narrations: Array<{ scope: string; target: string }> };
+    const envelope = JSON.parse(msg) as { v: number; narrations: Array<{ scope: string; target: string; text: string; style: string }> };
     expect(envelope.v, "NarrationV1 envelope 应包含 v:1").toBe(1);
     expect(envelope.narrations, "zone_halfstep_count=1 应恰好产 1 条叙事").toHaveLength(1);
     expect(envelope.narrations[0]?.scope, "单条叙事 scope 应为 player").toBe("player");
@@ -115,6 +115,14 @@ describe("HalfStepRechallengeNarrationRuntime", () => {
       envelope.narrations[0]?.target,
       "player scope narration target 应为 char_id",
     ).toBe("player_001");
+    expect(
+      envelope.narrations[0]?.text,
+      "player narration 文案应为 plan P1 确切串",
+    ).toBe("你感到曾遭封压的经脉微微松动，或许时机已到。");
+    expect(
+      envelope.narrations[0]?.style,
+      "player narration style 应为 perception（修士感知，非叙述者旁白）",
+    ).toBe("perception");
     expect(runtime.stats.received, "处理后 received 应自增至 1").toBe(1);
     expect(runtime.stats.published, "处理后 published 应自增至 1").toBe(1);
   });
@@ -133,16 +141,24 @@ describe("HalfStepRechallengeNarrationRuntime", () => {
     expect(scopes, "应含 zone scope").toContain("zone");
   });
 
-  it("zone_halfstep_count=5 → zone scope target 为 zone_name", async () => {
+  it("zone_halfstep_count=5 → zone scope target 为 zone_name，文案+style 锁定", async () => {
     await runtime.handlePayload(makePayload({ zone_halfstep_count: 5, zone_name: "spring_marsh" }));
     const [, msg] = pub.publish.mock.calls[0] as [string, string];
-    const envelope = JSON.parse(msg) as { narrations: Array<{ scope: string; target: string }> };
+    const envelope = JSON.parse(msg) as { narrations: Array<{ scope: string; target: string; text: string; style: string }> };
     const zoneNarration = envelope.narrations.find((n) => n.scope === "zone");
     expect(zoneNarration, "zone scope narration 应存在").toBeDefined();
     expect(
       zoneNarration?.target,
       "zone scope narration target 应为 zone_name",
     ).toBe("spring_marsh");
+    expect(
+      zoneNarration?.text,
+      "zone echo 文案应为 plan P1 确切串",
+    ).toBe("虚空中某处的修士收到了相同的消息。");
+    expect(
+      zoneNarration?.style,
+      "zone echo narration style 应为 perception",
+    ).toBe("perception");
   });
 
   it("zone_halfstep_count=0 → 仅产 player scope，不产 zone scope", async () => {
@@ -252,15 +268,30 @@ describe("renderPlayerNarration", () => {
     expect(result.target, "player scope narration 的 target 应为 char_id").toBe("cultivator_007");
   });
 
-  it("文本不为空且为字符串", () => {
+  it("文本精确等于 plan P1 确切串", () => {
     const result = renderPlayerNarration({
       char_id: "any",
       zone_name: "spawn",
       zone_halfstep_count: 0,
       at_tick: 0,
     });
-    expect(typeof result.text).toBe("string");
-    expect(result.text.length, "narration 文本不应为空").toBeGreaterThan(0);
+    expect(
+      result.text,
+      "player narration 文案漂移检测：应精确等于 plan P1 规定的确切串",
+    ).toBe("你感到曾遭封压的经脉微微松动，或许时机已到。");
+  });
+
+  it("style 严格为 perception", () => {
+    const result = renderPlayerNarration({
+      char_id: "any",
+      zone_name: "spawn",
+      zone_halfstep_count: 0,
+      at_tick: 0,
+    });
+    expect(
+      result.style,
+      "player narration style 应为 perception（修士第一人称感知），而非叙述者旁白 narration",
+    ).toBe("perception");
   });
 
   it("schema sample 正向对拍：合法 payload 产出符合 Narration 结构的对象", () => {
@@ -271,10 +302,10 @@ describe("renderPlayerNarration", () => {
       at_tick: 1,
     });
     // scope / target / text / style 是 Narration 要求字段
-    expect(result).toHaveProperty("scope");
-    expect(result).toHaveProperty("target");
-    expect(result).toHaveProperty("text");
-    expect(result).toHaveProperty("style");
+    expect(result).toHaveProperty("scope", "player");
+    expect(result).toHaveProperty("target", "sample_player");
+    expect(result).toHaveProperty("text", "你感到曾遭封压的经脉微微松动，或许时机已到。");
+    expect(result).toHaveProperty("style", "perception");
   });
 });
 
@@ -290,14 +321,29 @@ describe("renderZoneEchoNarration", () => {
     expect(result.target, "zone echo narration 的 target 应为 zone_name").toBe("lingquan_marsh");
   });
 
-  it("文本为字符串且不为空", () => {
+  it("文案精确等于 plan P1 确切串", () => {
     const result = renderZoneEchoNarration({
       char_id: "any",
       zone_name: "north_wastes",
       zone_halfstep_count: 2,
       at_tick: 0,
     });
-    expect(typeof result.text).toBe("string");
-    expect(result.text.length, "zone echo 叙事文本不应为空").toBeGreaterThan(0);
+    expect(
+      result.text,
+      "zone echo 文案漂移检测：应精确等于 plan P1 规定的确切串",
+    ).toBe("虚空中某处的修士收到了相同的消息。");
+  });
+
+  it("style 严格为 perception", () => {
+    const result = renderZoneEchoNarration({
+      char_id: "any",
+      zone_name: "north_wastes",
+      zone_halfstep_count: 2,
+      at_tick: 0,
+    });
+    expect(
+      result.style,
+      "zone echo narration style 应为 perception（隐约感应，非直接告知），而非叙述者旁白 narration",
+    ).toBe("perception");
   });
 });
