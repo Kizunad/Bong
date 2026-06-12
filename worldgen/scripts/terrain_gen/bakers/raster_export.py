@@ -319,11 +319,16 @@ def _write_tile_rasters(
             if layer_name == "biome_id":
                 max_biome_id = int(values.max()) if len(values) > 0 else 0
                 palette_len = len(BIOME_PALETTE)
-                assert max_biome_id < palette_len, (
-                    f"biome_id max={max_biome_id} >= len(BIOME_PALETTE)={palette_len} "
-                    f"in tile {tile.tile.tile_id}; "
-                    f"extend BIOME_PALETTE (append-only) to cover this id"
-                )
+                # raise (not assert): a palette overflow corrupts the on-disk
+                # biome_id -> name mapping the Rust reader trusts.  `assert` would
+                # be stripped under `python -O`, letting the bad raster ship
+                # silently — this is a data-integrity guard, not a debug check.
+                if max_biome_id >= palette_len:
+                    raise ValueError(
+                        f"biome_id max={max_biome_id} >= len(BIOME_PALETTE)={palette_len} "
+                        f"in tile {tile.tile.tile_id}; "
+                        f"extend BIOME_PALETTE (append-only) to cover this id"
+                    )
             _write_u8_layer(layer_path, values)
         else:
             raise ValueError(f"unsupported raster layer '{layer_name}'")
