@@ -178,7 +178,9 @@ public class ServerDataRouterTest {
             "insight_offer",
             // plan-agent-ui-data-v1 P1 — 天道动态 UI 面板 S2C（request + close 同 handler）
             "agent_ui_request",
-            "agent_ui_close"
+            "agent_ui_close",
+            // plan-halfstep-rechallenge-integration-v1 P0 — 半步化虚重渡触发 HUD S2C
+            "halfstep_rechallenge"
         ), router.registeredTypes());
     }
 

@@ -74,6 +74,8 @@ pub mod elder_encounter_emit;
 pub mod era_ambiance_emit;
 // plan-fauna-mimic-spider-v1 P2 — 拟态蛛伪装状态 S2C CustomPayload
 pub mod spider_disguise_emit;
+// plan-halfstep-rechallenge-integration-v1 P0：半步化虚重渡触发 HUD S2C
+pub mod halfstep_rechallenge_emit;
 pub mod spirit_treasure_emit;
 pub mod status_snapshot_emit;
 pub mod sword_bond_state_emit;
@@ -543,6 +545,16 @@ pub fn register(app: &mut App) {
     app.add_systems(
         Update,
         cultivation_insight_offer_emit::emit_cultivation_insight_offers,
+    );
+    // plan-halfstep-rechallenge-integration-v1 P0：半步化虚重渡触发 HUD + HIDE S2C。
+    app.add_systems(
+        Update,
+        (
+            halfstep_rechallenge_emit::emit_halfstep_rechallenge_trigger.after(
+                crate::cultivation::tribulation::dispatch_rechallenge_on_quota_opened_system,
+            ),
+            halfstep_rechallenge_emit::emit_halfstep_rechallenge_hide_on_settle,
+        ),
     );
     app.add_systems(Update, tuike_event_bridge::publish_tuike_v2_skill_events);
     // plan-combat-skill-feedback-bridges-v1 P6：蜕壳灰烬入包 + VFX + Redis（FalseSkinDecayedToAshEvent）

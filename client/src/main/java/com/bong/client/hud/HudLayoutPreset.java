@@ -133,6 +133,8 @@ public enum HudLayoutPreset {
             case YIDAO -> Widget.CRITICAL;
             // plan-agent-ui-data-v1 P3：天道动态面板 VFX（fade-in/vignette/shake）归 CRITICAL（常驻）
             case AGENT_UI -> Widget.CRITICAL;
+            // plan-halfstep-rechallenge-integration-v1 P0：重渡触发 HUD 归 CRITICAL（时限通知，常驻）
+            case HALFSTEP_RECHALLENGE -> Widget.CRITICAL;
         };
     }
 
