@@ -12,15 +12,20 @@ from __future__ import annotations
 
 import numpy as np
 
+from .. import dsl
 from ..blueprint import BlueprintZone
+from ..dsl import QiGrade
 from ..fields import SurfacePalette, TileFieldBuffer, WorldTile
-from ..noise import _tile_coords, fbm_2d, ridge_2d, warped_fbm_2d
+from ..noise import _tile_coords
 from .base import (
     DecorationSpec,
     EcologySpec,
     ProfileContext,
     TerrainProfileGenerator,
 )
+
+# §8.1 #4 — TSY 战场沉淀：残灵浓厚反转主世界（qi 0.85–1.0，font 上界对齐 §8.1 #4）。
+QI_GRADE = QiGrade.FONT
 
 ZHANCHANG_DECORATIONS = (
     DecorationSpec(
@@ -114,23 +119,25 @@ def fill_tsy_zhanchang_tile(
     wx, wz = _tile_coords(tile.min_x, tile.min_z, tile_size)
     area = tile_size * tile_size
 
+    # depth_tier 三分支各自独立地形公式（DSL fbm_height / ridge_height /
+    # warped_height，amplitude=1=裸噪声）。
     if depth_tier == "shallow":
-        base = 62.0 + fbm_2d(wx, wz, scale=140.0, octaves=3, seed=4100) * 4.0
-        ruin = np.clip(0.45 + fbm_2d(wx, wz, scale=80.0, octaves=2, seed=4110) * 0.25, 0.2, 0.85)
-        qi = np.clip(0.86 + fbm_2d(wx, wz, scale=120.0, octaves=2, seed=4120) * 0.06, 0.78, 1.0)
+        base = 62.0 + dsl.fbm_height(wx, wz, scale=140.0, octaves=3, seed=4100) * 4.0
+        ruin = np.clip(0.45 + dsl.fbm_height(wx, wz, scale=80.0, octaves=2, seed=4110) * 0.25, 0.2, 0.85)
+        qi = np.clip(0.86 + dsl.fbm_height(wx, wz, scale=120.0, octaves=2, seed=4120) * 0.06, 0.78, 1.0)
         decay = np.clip(0.14, 0.05, 0.25)
     elif depth_tier == "mid":
-        base = 10.0 + ridge_2d(wx, wz, scale=70.0, octaves=4, seed=4200) * 5.0
-        ruin = np.clip(0.65 + warped_fbm_2d(wx, wz, scale=80.0, octaves=3, warp_scale=120.0, warp_strength=40.0, seed=4210) * 0.20, 0.4, 0.95)
-        qi = np.clip(0.90 + fbm_2d(wx, wz, scale=110.0, octaves=2, seed=4220) * 0.05, 0.82, 1.0)
+        base = 10.0 + dsl.ridge_height(wx, wz, scale=70.0, octaves=4, seed=4200) * 5.0
+        ruin = np.clip(0.65 + dsl.warped_height(wx, wz, scale=80.0, octaves=3, warp_scale=120.0, warp_strength=40.0, seed=4210) * 0.20, 0.4, 0.95)
+        qi = np.clip(0.90 + dsl.fbm_height(wx, wz, scale=110.0, octaves=2, seed=4220) * 0.05, 0.82, 1.0)
         decay = np.clip(0.12, 0.06, 0.25)
     else:  # deep
-        base = -24.0 + fbm_2d(wx, wz, scale=160.0, octaves=3, seed=4300) * 4.0
-        ruin = np.clip(0.55 + fbm_2d(wx, wz, scale=70.0, octaves=2, seed=4310) * 0.20, 0.3, 0.85)
-        qi = np.clip(0.93 + fbm_2d(wx, wz, scale=180.0, octaves=2, seed=4320) * 0.05, 0.86, 1.0)
+        base = -24.0 + dsl.fbm_height(wx, wz, scale=160.0, octaves=3, seed=4300) * 4.0
+        ruin = np.clip(0.55 + dsl.fbm_height(wx, wz, scale=70.0, octaves=2, seed=4310) * 0.20, 0.3, 0.85)
+        qi = np.clip(0.93 + dsl.fbm_height(wx, wz, scale=180.0, octaves=2, seed=4320) * 0.05, 0.86, 1.0)
         decay = np.clip(0.09, 0.03, 0.18)
 
-    fracture = np.maximum(0.0, ridge_2d(wx, wz, scale=90.0, octaves=4, seed=4400 + depth_id * 100))
+    fracture = np.maximum(0.0, dsl.ridge_height(wx, wz, scale=90.0, octaves=4, seed=4400 + depth_id * 100))
     qi_vein = np.clip(fracture * 0.6 + ruin * 0.3, 0.0, 1.0)
 
     bone_block_id = palette.ensure("bone_block")
@@ -146,13 +153,13 @@ def fill_tsy_zhanchang_tile(
         surface_id = np.where(qi_vein > 0.6, red_sand_id, surface_id)
 
     anomaly_seed = 4500 + depth_id * 100
-    anomaly_field = warped_fbm_2d(wx, wz, scale=200.0, octaves=3, warp_scale=240.0, warp_strength=70.0, seed=anomaly_seed)
+    anomaly_field = dsl.warped_height(wx, wz, scale=200.0, octaves=3, warp_scale=240.0, warp_strength=70.0, seed=anomaly_seed)
     anomaly_threshold = {"shallow": 0.50, "mid": 0.40, "deep": 0.30}[depth_tier]
     anomaly_intensity = np.clip((anomaly_field - anomaly_threshold) * 3.0, 0.0, 1.0)
     # 默认 cursed_echo（4）；mid/deep 偶发 blood_moon_anchor（3）
     anomaly_kind = np.where(anomaly_intensity > 0.15, 4, 0).astype(np.int32)
     if depth_tier != "shallow":
-        moon_field = fbm_2d(wx, wz, scale=240.0, octaves=2, seed=4600)
+        moon_field = dsl.fbm_height(wx, wz, scale=240.0, octaves=2, seed=4600)
         moon_strong = (moon_field > 0.40) & (anomaly_intensity < 0.25)
         anomaly_intensity = np.where(moon_strong, np.clip(moon_field * 0.85, 0.0, 1.0), anomaly_intensity)
         anomaly_kind = np.where(moon_strong, 3, anomaly_kind)
