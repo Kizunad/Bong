@@ -41,7 +41,7 @@ from ..blueprint import (
     WorldBlueprint,
     ZoneWorldgenConfig,
 )
-from ..carvers import apply_carver_chain, build_carver
+from ..carvers import build_carver
 from ..fields import (
     Bounds2D,
     ColumnSpans,
@@ -56,7 +56,6 @@ from ..profiles.rift_valley import fill_rift_valley_tile
 from ..profiles.sky_isle import fill_sky_isle_tile
 from ..spans_fold import (
     column_spans_for_index,
-    spans_for_tile,
     v3_surface_top_y,
 )
 from ..stitcher import build_generation_plan, synthesize_fields
