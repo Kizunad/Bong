@@ -51,6 +51,18 @@ describe("zhenfa-v2 schema", () => {
 
     expect(contentResult.ok).toBe(true);
 
+    const networkArrayResult = validate(ClientRequestV1, {
+      v: 1,
+      type: "zhenfa_place",
+      x: 3,
+      y: 64,
+      z: -4,
+      kind: "network_array",
+      qi_invest_ratio: 0,
+      item_instance_id: 9003,
+    });
+    expect(networkArrayResult.ok).toBe(true);
+
     const omittedFaceResult = validate(ClientRequestV1, {
       v: 1,
       type: "zhenfa_place",
@@ -142,6 +154,37 @@ describe("zhenfa-v2 schema", () => {
         reveal_threshold: 50,
       }).ok,
     ).toBe(true);
+
+    expect(
+      validateZhenfaV2EventV1Contract({
+        v: 1,
+        event: "deploy",
+        array_id: 11,
+        kind: "network_array",
+        owner: "offline:Azure",
+        x: 12,
+        y: 64,
+        z: -9,
+        tick: 200,
+        radius: 12,
+        density_multiplier: 1.0,
+        tiandao_gaze_weight: 0.5,
+      }).ok,
+    ).toBe(true);
+
+    expect(
+      validateZhenfaV2EventV1Contract({
+        v: 1,
+        event: "deploy",
+        array_id: 12,
+        kind: "unknown_array",
+        owner: "offline:Azure",
+        x: 12,
+        y: 64,
+        z: -9,
+        tick: 201,
+      }).ok,
+    ).toBe(false);
 
     expect(
       validateZhenfaV2EventV1Contract({

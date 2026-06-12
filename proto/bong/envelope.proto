@@ -3509,6 +3509,7 @@ enum ZhenfaKind {
   ZHENFA_KIND_LINGJU         = 7;
   ZHENFA_KIND_DECEIVE_HEAVEN = 8;
   ZHENFA_KIND_ILLUSION       = 9;
+  ZHENFA_KIND_NETWORK_ARRAY  = 10;
 }
 
 enum ZhenfaCarrierKind {

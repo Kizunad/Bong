@@ -28,7 +28,9 @@ use crate::lingtian::{LingtianPlot, PLOT_QI_CAP_MAX, QI_LINGJU_ARRAY_CAP_BONUS};
 use crate::network::{gameplay_vfx, vfx_event_emit::VfxEventRequest};
 use crate::player::gameplay::PendingGameplayNarrations;
 use crate::player::state::canonical_player_id;
-use crate::qi_physics::constants::{QI_EPSILON, QI_SCATTER_BEAD_CAPACITY, QI_ZONE_UNIT_CAPACITY};
+use crate::qi_physics::constants::{
+    QI_EPSILON, QI_NETWORK_ARRAY_LINGJU_CAP_BONUS, QI_SCATTER_BEAD_CAPACITY, QI_ZONE_UNIT_CAPACITY,
+};
 use crate::qi_physics::{
     qi_excretion, qi_release_to_zone, CarrierGrade, ContainerKind, EnvField, MediumKind,
     QiAccountId, QiTransfer, QiTransferReason, StyleAttack, StyleDefense, WorldQiAccount,
@@ -43,6 +45,7 @@ use crate::world::{
     zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME},
 };
 
+mod network_array;
 pub mod trap_content;
 
 const TICKS_PER_SECOND: u64 = 20;
@@ -55,6 +58,8 @@ const CHAIN_DELAY_TICKS: u64 = 6;
 const WARD_ALERT_THROTTLE_TICKS: u64 = 60 * TICKS_PER_SECOND;
 const DISARM_RANGE: f64 = 4.5;
 const QI_SCATTER_BEAD_ITEM_ID: &str = "qi_scatter_bead";
+const NETWORK_ARRAY_FLAG_ITEM_ID: &str = "array_flag_basic";
+const NETWORK_ARRAY_EYE_ITEM_ID: &str = "array_eye_basic";
 const SCATTER_DISTURBANCE_EVENT: &str = "scatter_disturbance";
 const SCATTER_DISTURBANCE_DURATION_TICKS: u64 = 30 * TICKS_PER_SECOND;
 pub const DECEIVE_HEAVEN_DURATION_TICKS: u64 = 30 * 60 * TICKS_PER_SECOND;
@@ -77,6 +82,7 @@ pub enum ZhenfaKind {
     Lingju,
     DeceiveHeaven,
     Illusion,
+    NetworkArray,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SystemSet)]
@@ -288,6 +294,18 @@ pub struct IllusionArrayDeployEvent {
 }
 
 #[derive(Debug, Clone, Event, PartialEq)]
+pub struct NetworkArrayDeployEvent {
+    pub owner: Entity,
+    pub owner_player_id: String,
+    pub array_id: u64,
+    pub pos: [i32; 3],
+    pub radius: u8,
+    pub density_multiplier: f64,
+    pub tiandao_gaze_weight: f64,
+    pub placed_at_tick: u64,
+}
+
+#[derive(Debug, Clone, Event, PartialEq)]
 pub struct ArrayDecayEvent {
     pub owner: Entity,
     pub owner_player_id: String,
@@ -330,6 +348,7 @@ pub struct ArrayMastery {
     pub lingju: f64,
     pub deceive_heaven: f64,
     pub illusion: f64,
+    pub network_array: f64,
 }
 
 impl Default for ArrayMastery {
@@ -341,6 +360,7 @@ impl Default for ArrayMastery {
             lingju: 0.0,
             deceive_heaven: 0.0,
             illusion: 0.0,
+            network_array: 0.0,
         }
     }
 }
@@ -357,6 +377,7 @@ impl ArrayMastery {
             ZhenfaKind::Lingju => self.lingju,
             ZhenfaKind::DeceiveHeaven => self.deceive_heaven,
             ZhenfaKind::Illusion => self.illusion,
+            ZhenfaKind::NetworkArray => self.network_array,
         }
     }
 
@@ -379,6 +400,7 @@ impl ArrayMastery {
             ZhenfaKind::Lingju => &mut self.lingju,
             ZhenfaKind::DeceiveHeaven => &mut self.deceive_heaven,
             ZhenfaKind::Illusion => &mut self.illusion,
+            ZhenfaKind::NetworkArray => &mut self.network_array,
         };
         *slot = (*slot + amount).clamp(0.0, 100.0);
     }
@@ -484,6 +506,42 @@ struct PendingChainTrigger {
     due_tick: u64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NetworkArrayPlaceItem {
+    Flag,
+    Eye,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum PlotCapSource {
+    Lingju(u64),
+    NetworkArray(u64),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct ActiveNetworkArray {
+    id: u64,
+    owner: Entity,
+    owner_player_id: String,
+    eye_instance_id: u64,
+    eye_pos: [i32; 3],
+    flag_instance_ids: Vec<u64>,
+    flag_positions: Vec<[i32; 3]>,
+    hull: Vec<[i32; 3]>,
+    area: f64,
+    formed_at_tick: u64,
+}
+
+#[derive(Debug, Default)]
+struct NetworkArrayRegistry {
+    flags: HashSet<u64>,
+    eyes: HashSet<u64>,
+    flag_to_network: HashMap<u64, u64>,
+    eye_to_network: HashMap<u64, u64>,
+    active: HashMap<u64, ActiveNetworkArray>,
+    dissolved: Vec<ActiveNetworkArray>,
+}
+
 #[derive(Debug, Default, Resource)]
 pub struct ZhenfaRegistry {
     next_id: u64,
@@ -494,8 +552,10 @@ pub struct ZhenfaRegistry {
     ward_inside: HashSet<(u64, Entity)>,
     slow_charges_remaining: HashMap<u64, u8>,
     slow_inside: HashSet<(u64, Entity)>,
-    lingju_plot_coverers: HashMap<BlockPos, HashSet<u64>>,
-    lingju_plot_base_caps: HashMap<BlockPos, f32>,
+    network_inside: HashSet<(u64, Entity)>,
+    network_arrays: NetworkArrayRegistry,
+    plot_cap_sources: HashMap<BlockPos, HashMap<PlotCapSource, f32>>,
+    plot_cap_base_caps: HashMap<BlockPos, f32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -528,6 +588,7 @@ pub fn register(app: &mut App) {
     app.add_event::<DeceiveHeavenEvent>();
     app.add_event::<DeceiveHeavenExposedEvent>();
     app.add_event::<IllusionArrayDeployEvent>();
+    app.add_event::<NetworkArrayDeployEvent>();
     app.add_event::<ArrayDecayEvent>();
     app.add_event::<ArrayBreakthroughEvent>();
     app.add_event::<QiTransfer>();
@@ -547,6 +608,94 @@ pub fn register(app: &mut App) {
             .chain()
             .in_set(ZhenfaSystemSet::Runtime),
     );
+}
+
+impl NetworkArrayRegistry {
+    fn mark_flag(&mut self, instance_id: u64) {
+        self.flags.insert(instance_id);
+    }
+
+    fn mark_eye(&mut self, instance_id: u64) {
+        self.eyes.insert(instance_id);
+    }
+
+    fn try_form_network(
+        &mut self,
+        eye: &ZhenfaInstance,
+        instances: &HashMap<u64, ZhenfaInstance>,
+        formed_at_tick: u64,
+    ) -> Option<ActiveNetworkArray> {
+        if !self.eyes.contains(&eye.id) || self.eye_to_network.contains_key(&eye.id) {
+            return None;
+        }
+        let flags = self
+            .flags
+            .iter()
+            .filter(|id| !self.flag_to_network.contains_key(id))
+            .filter_map(|id| instances.get(id))
+            .map(|instance| network_array::NetworkFlag {
+                instance_id: instance.id,
+                owner: instance.owner,
+                pos: instance.pos,
+            })
+            .collect::<Vec<_>>();
+        let geometry = network_array::try_form_network(
+            eye.pos,
+            eye.owner,
+            &flags,
+            network_array::NETWORK_ARRAY_MAX_AREA,
+            network_array::NETWORK_ARRAY_EYE_FLAG_MAX_DISTANCE,
+        )?;
+        let network = ActiveNetworkArray {
+            id: eye.id,
+            owner: eye.owner,
+            owner_player_id: eye.owner_player_id.clone(),
+            eye_instance_id: eye.id,
+            eye_pos: eye.pos,
+            flag_instance_ids: geometry.flag_instance_ids,
+            flag_positions: geometry.flag_positions,
+            hull: geometry.hull,
+            area: geometry.area,
+            formed_at_tick,
+        };
+        for flag_id in &network.flag_instance_ids {
+            self.flag_to_network.insert(*flag_id, network.id);
+        }
+        self.eye_to_network.insert(eye.id, network.id);
+        self.active.insert(network.id, network.clone());
+        Some(network)
+    }
+
+    fn active_networks(&self) -> impl Iterator<Item = &ActiveNetworkArray> {
+        self.active.values()
+    }
+
+    fn remove_instance(&mut self, instance_id: u64) {
+        self.flags.remove(&instance_id);
+        self.eyes.remove(&instance_id);
+        if let Some(network_id) = self
+            .flag_to_network
+            .remove(&instance_id)
+            .or_else(|| self.eye_to_network.remove(&instance_id))
+        {
+            self.dissolve(network_id);
+        }
+    }
+
+    fn dissolve(&mut self, network_id: u64) {
+        let Some(network) = self.active.remove(&network_id) else {
+            return;
+        };
+        self.eye_to_network.remove(&network.eye_instance_id);
+        for flag_id in &network.flag_instance_ids {
+            self.flag_to_network.remove(flag_id);
+        }
+        self.dissolved.push(network);
+    }
+
+    fn drain_dissolved(&mut self) -> Vec<ActiveNetworkArray> {
+        std::mem::take(&mut self.dissolved)
+    }
 }
 
 impl ZhenfaRegistry {
@@ -628,6 +777,8 @@ impl ZhenfaRegistry {
         self.ward_inside.retain(|(array_id, _)| *array_id != id);
         self.slow_charges_remaining.remove(&id);
         self.slow_inside.retain(|(array_id, _)| *array_id != id);
+        self.network_arrays.remove_instance(id);
+        self.network_inside.retain(|(array_id, _)| *array_id != id);
         Some(removed)
     }
 
@@ -720,6 +871,38 @@ impl ZhenfaRegistry {
         self.trigger_now(due_ids, tick)
     }
 
+    fn mark_network_node(&mut self, id: u64, role: NetworkArrayPlaceItem) {
+        match role {
+            NetworkArrayPlaceItem::Flag => self.network_arrays.mark_flag(id),
+            NetworkArrayPlaceItem::Eye => self.network_arrays.mark_eye(id),
+        }
+    }
+
+    fn try_form_network_array(
+        &mut self,
+        eye_id: u64,
+        formed_at_tick: u64,
+    ) -> Option<ActiveNetworkArray> {
+        let eye = self.instances.get(&eye_id)?.clone();
+        self.network_arrays
+            .try_form_network(&eye, &self.instances, formed_at_tick)
+    }
+
+    fn active_network_arrays(&self) -> impl Iterator<Item = &ActiveNetworkArray> {
+        self.network_arrays.active_networks()
+    }
+
+    fn drain_network_dissolutions(&mut self) -> Vec<ActiveNetworkArray> {
+        let dissolved = self.network_arrays.drain_dissolved();
+        for network in &dissolved {
+            self.network_inside
+                .retain(|(array_id, _)| *array_id != network.id);
+            self.ward_alert_seen
+                .retain(|(array_id, _), _| *array_id != network.id);
+        }
+        dissolved
+    }
+
     fn schedule_neighbors(&mut self, source_id: u64, source_pos: [i32; 3], tick: u64) {
         let mut neighbors = self
             .instances
@@ -758,22 +941,13 @@ fn apply_lingju_effect(
     registry: &mut ZhenfaRegistry,
     plot_env_writer: &mut Query<&mut LingtianPlot>,
 ) {
-    for mut plot in plot_env_writer.iter_mut() {
-        if !lingju_covers_plot(instance, plot.pos) {
-            continue;
-        }
-        let coverers = registry.lingju_plot_coverers.entry(plot.pos).or_default();
-        let was_covered = !coverers.is_empty();
-        coverers.insert(instance.id);
-        if was_covered {
-            continue;
-        }
-        registry
-            .lingju_plot_base_caps
-            .entry(plot.pos)
-            .or_insert(plot.plot_qi_cap);
-        plot.plot_qi_cap = (plot.plot_qi_cap + QI_LINGJU_ARRAY_CAP_BONUS).min(PLOT_QI_CAP_MAX);
-    }
+    apply_plot_cap_source(
+        PlotCapSource::Lingju(instance.id),
+        QI_LINGJU_ARRAY_CAP_BONUS,
+        |pos| lingju_covers_plot(instance, pos),
+        registry,
+        plot_env_writer.iter_mut(),
+    );
 }
 
 fn clear_lingju_effect(
@@ -789,29 +963,7 @@ fn clear_lingju_effect_for_plots<'a>(
     registry: &mut ZhenfaRegistry,
     plots: impl Iterator<Item = Mut<'a, LingtianPlot>>,
 ) {
-    let mut uncovered = Vec::new();
-    for (pos, coverers) in &mut registry.lingju_plot_coverers {
-        coverers.remove(&instance.id);
-        if coverers.is_empty() {
-            uncovered.push(*pos);
-        }
-    }
-
-    let mut restored_caps = Vec::new();
-    for pos in uncovered {
-        registry.lingju_plot_coverers.remove(&pos);
-        let Some(base_cap) = registry.lingju_plot_base_caps.remove(&pos) else {
-            continue;
-        };
-        restored_caps.push((pos, base_cap));
-    }
-
-    for mut plot in plots {
-        if let Some((_, base_cap)) = restored_caps.iter().find(|(pos, _)| *pos == plot.pos) {
-            plot.plot_qi_cap = *base_cap;
-            plot.plot_qi = plot.plot_qi.min(plot.plot_qi_cap);
-        }
-    }
+    clear_plot_cap_source(PlotCapSource::Lingju(instance.id), registry, plots);
 }
 
 fn lingju_covers_plot(instance: &ZhenfaInstance, pos: BlockPos) -> bool {
@@ -824,6 +976,157 @@ fn lingju_covers_plot(instance: &ZhenfaInstance, pos: BlockPos) -> bool {
         instance.pos,
         instance.effect_radius,
     )
+}
+
+fn apply_network_array_effect(
+    network: &ActiveNetworkArray,
+    registry: &mut ZhenfaRegistry,
+    plot_env_writer: &mut Query<&mut LingtianPlot>,
+) {
+    apply_plot_cap_source(
+        PlotCapSource::NetworkArray(network.id),
+        QI_NETWORK_ARRAY_LINGJU_CAP_BONUS,
+        |pos| network_array_covers_plot(network, pos),
+        registry,
+        plot_env_writer.iter_mut(),
+    );
+}
+
+fn clear_network_array_effect(
+    network: &ActiveNetworkArray,
+    registry: &mut ZhenfaRegistry,
+    plot_env_writer: &mut Query<&mut LingtianPlot>,
+) {
+    clear_plot_cap_source(
+        PlotCapSource::NetworkArray(network.id),
+        registry,
+        plot_env_writer.iter_mut(),
+    );
+}
+
+fn apply_plot_cap_source<'a>(
+    source: PlotCapSource,
+    bonus: f32,
+    covers: impl Fn(BlockPos) -> bool,
+    registry: &mut ZhenfaRegistry,
+    plots: impl Iterator<Item = Mut<'a, LingtianPlot>>,
+) {
+    for mut plot in plots {
+        if !covers(plot.pos) {
+            continue;
+        }
+        {
+            let sources = registry.plot_cap_sources.entry(plot.pos).or_default();
+            if sources.is_empty() {
+                registry
+                    .plot_cap_base_caps
+                    .entry(plot.pos)
+                    .or_insert(plot.plot_qi_cap);
+            }
+            sources.insert(source, bonus);
+        }
+        recompute_plot_cap(&mut plot, registry);
+    }
+}
+
+fn clear_plot_cap_source<'a>(
+    source: PlotCapSource,
+    registry: &mut ZhenfaRegistry,
+    plots: impl Iterator<Item = Mut<'a, LingtianPlot>>,
+) {
+    let mut touched = Vec::new();
+    for (pos, sources) in &mut registry.plot_cap_sources {
+        if sources.remove(&source).is_some() {
+            touched.push(*pos);
+        }
+    }
+    for pos in touched {
+        if registry
+            .plot_cap_sources
+            .get(&pos)
+            .is_some_and(|sources| sources.is_empty())
+        {
+            registry.plot_cap_sources.remove(&pos);
+        }
+    }
+
+    for mut plot in plots {
+        if !registry.plot_cap_sources.contains_key(&plot.pos)
+            && !registry.plot_cap_base_caps.contains_key(&plot.pos)
+        {
+            continue;
+        }
+        recompute_plot_cap(&mut plot, registry);
+    }
+}
+
+fn recompute_plot_cap(plot: &mut LingtianPlot, registry: &mut ZhenfaRegistry) {
+    let Some(base_cap) = registry.plot_cap_base_caps.get(&plot.pos).copied() else {
+        return;
+    };
+    let Some(sources) = registry.plot_cap_sources.get(&plot.pos) else {
+        plot.plot_qi_cap = base_cap;
+        plot.plot_qi = plot.plot_qi.min(plot.plot_qi_cap);
+        registry.plot_cap_base_caps.remove(&plot.pos);
+        return;
+    };
+    if sources.is_empty() {
+        plot.plot_qi_cap = base_cap;
+        plot.plot_qi = plot.plot_qi.min(plot.plot_qi_cap);
+        registry.plot_cap_base_caps.remove(&plot.pos);
+        return;
+    }
+    let bonus = sources
+        .values()
+        .copied()
+        .fold(0.0_f32, |max_bonus, source_bonus| {
+            max_bonus.max(source_bonus)
+        });
+    plot.plot_qi_cap = (base_cap + bonus).min(PLOT_QI_CAP_MAX);
+    plot.plot_qi = plot.plot_qi.min(plot.plot_qi_cap);
+}
+
+fn network_array_covers_plot(network: &ActiveNetworkArray, pos: BlockPos) -> bool {
+    network_array::point_inside_hull_xz([pos.x, pos.y, pos.z], &network.hull)
+        && (pos.y - network.eye_pos[1]).abs() <= 3
+}
+
+fn network_array_covers_position(network: &ActiveNetworkArray, position: DVec3) -> bool {
+    network_array::point_inside_hull_xz_f64(position.x, position.z, &network.hull)
+        && (position.y - f64::from(network.eye_pos[1])).abs() <= 3.0
+}
+
+fn network_warning_tick(
+    network: &ActiveNetworkArray,
+    now: u64,
+    registry: &mut ZhenfaRegistry,
+    ward_positions: &Query<(Entity, &Position), Without<ZhenfaAnchor>>,
+    current_network_inside: &mut HashSet<(u64, Entity)>,
+    network_alerts: &mut Vec<(u64, Entity, Entity, String, [i32; 3])>,
+) {
+    for (target, position) in ward_positions.iter() {
+        if target == network.owner {
+            continue;
+        }
+        if !network_array_covers_position(network, position.get()) {
+            continue;
+        }
+        let key = (network.id, target);
+        current_network_inside.insert(key);
+        if registry.network_inside.contains(&key) {
+            continue;
+        }
+        let last = registry.ward_alert_seen.get(&key).copied();
+        if last.is_none_or(|tick| now.saturating_sub(tick) >= WARD_ALERT_THROTTLE_TICKS) {
+            network_alerts.push((
+                network.id,
+                target,
+                network.owner,
+                network.owner_player_id.clone(),
+                network.eye_pos,
+            ));
+        }
+    }
 }
 
 pub fn carrier_spec(carrier: ZhenfaCarrierKind) -> CarrierSpec {
@@ -1027,6 +1330,18 @@ pub fn zhenfa_kind_profile(
             reveal_chance: 0.0,
             reflect_ratio: 0.0,
         },
+        ZhenfaKind::NetworkArray => ZhenfaKindProfile {
+            min_invest_ratio: 0.0,
+            cap_invest_ratio: 0.0,
+            cast_time_ticks: cast_time_between(1, 1, mastery_ratio),
+            duration_ticks: duration_with_mastery(6 * 60 * 60 * TICKS_PER_SECOND, mastery_ratio),
+            radius: network_array::NETWORK_ARRAY_EYE_FLAG_MAX_DISTANCE as u8,
+            density_multiplier: 1.0,
+            tiandao_gaze_weight: 0.5,
+            reveal_threshold: 30.0,
+            reveal_chance: 0.0,
+            reflect_ratio: 0.0,
+        },
     }
 }
 
@@ -1162,6 +1477,7 @@ pub fn zhenfa_meridian_dependencies(kind: ZhenfaKind) -> &'static [MeridianId] {
             MeridianId::Heart,
         ],
         ZhenfaKind::Illusion => &[MeridianId::Kidney],
+        ZhenfaKind::NetworkArray => &[MeridianId::Ren, MeridianId::Du],
     }
 }
 
@@ -1200,6 +1516,7 @@ fn handle_zhenfa_place_requests(
     mut ling_events: EventWriter<LingArrayDeployEvent>,
     mut deceive_events: EventWriter<DeceiveHeavenEvent>,
     mut illusion_events: EventWriter<IllusionArrayDeployEvent>,
+    mut network_events: EventWriter<NetworkArrayDeployEvent>,
     mut pending_narrations: Option<ResMut<PendingGameplayNarrations>>,
     mut vfx_events: Option<ResMut<Events<VfxEventRequest>>>,
 ) {
@@ -1222,7 +1539,24 @@ fn handle_zhenfa_place_requests(
             continue;
         };
         let ordinary_trap = trap_content::OrdinaryTrapKind::from_zhenfa_kind(req.kind);
-        if ordinary_trap.is_none() && !has_zhenfa_flag(inventory.as_deref()) {
+        let network_item = match validate_network_array_place_item(
+            req.kind,
+            inventory.as_deref(),
+            req.item_instance_id,
+        ) {
+            Ok(item) => item,
+            Err(error) => {
+                tracing::warn!(
+                    "[bong][zhenfa] network array place rejected: player {:?} {error}",
+                    req.player
+                );
+                continue;
+            }
+        };
+        if ordinary_trap.is_none()
+            && req.kind != ZhenfaKind::NetworkArray
+            && !has_zhenfa_flag(inventory.as_deref())
+        {
             tracing::warn!(
                 "[bong][zhenfa] place rejected: player {:?} has no array flag",
                 req.player
@@ -1324,7 +1658,8 @@ fn handle_zhenfa_place_requests(
                 profile.min_invest_ratio,
                 profile.cap_invest_ratio,
             );
-            let effect_radius = if req.kind == ZhenfaKind::Lingju {
+            let effect_radius = if matches!(req.kind, ZhenfaKind::Lingju | ZhenfaKind::NetworkArray)
+            {
                 profile.radius
             } else {
                 trap_effect_radius(invest_ratio)
@@ -1438,7 +1773,7 @@ fn handle_zhenfa_place_requests(
                     }
                 }
                 if let Some(item_instance_id) = req.item_instance_id {
-                    if ordinary_trap.is_some() {
+                    if ordinary_trap.is_some() || network_item.is_some() {
                         let consume_result = inventory
                             .as_deref_mut()
                             .ok_or_else(|| "inventory missing".to_string())
@@ -1473,6 +1808,7 @@ fn handle_zhenfa_place_requests(
                     &mut ling_events,
                     &mut deceive_events,
                     &mut illusion_events,
+                    &mut network_events,
                 );
                 emit_lingju_activate_feedback(
                     req.kind,
@@ -1481,6 +1817,31 @@ fn handle_zhenfa_place_requests(
                     pending_narrations.as_deref_mut(),
                     vfx_events.as_deref_mut(),
                 );
+                if let Some(network_item) = network_item {
+                    match network_item {
+                        NetworkArrayPlaceItem::Flag => {
+                            registry.mark_network_node(id, NetworkArrayPlaceItem::Flag);
+                        }
+                        NetworkArrayPlaceItem::Eye => {
+                            registry.mark_network_node(id, NetworkArrayPlaceItem::Eye);
+                            if let Some(network) =
+                                registry.try_form_network_array(id, req.requested_at_tick)
+                            {
+                                emit_network_array_deploy_event(
+                                    &network,
+                                    &profile,
+                                    &mut network_events,
+                                );
+                                emit_network_array_form_feedback(
+                                    &network,
+                                    zones.as_deref(),
+                                    pending_narrations.as_deref_mut(),
+                                    vfx_events.as_deref_mut(),
+                                );
+                            }
+                        }
+                    }
+                }
                 tracing::info!(
                     "[bong][zhenfa] placed {:?} id={} owner={:?} pos={:?} ratio={:.3}",
                     req.kind,
@@ -1601,6 +1962,7 @@ fn emit_deploy_event(
     ling_events: &mut EventWriter<LingArrayDeployEvent>,
     deceive_events: &mut EventWriter<DeceiveHeavenEvent>,
     illusion_events: &mut EventWriter<IllusionArrayDeployEvent>,
+    _network_events: &mut EventWriter<NetworkArrayDeployEvent>,
 ) {
     match kind {
         ZhenfaKind::ShrineWard => {
@@ -1652,8 +2014,26 @@ fn emit_deploy_event(
         | ZhenfaKind::Ward
         | ZhenfaKind::WarningTrap
         | ZhenfaKind::BlastTrap
-        | ZhenfaKind::SlowTrap => {}
+        | ZhenfaKind::SlowTrap
+        | ZhenfaKind::NetworkArray => {}
     }
+}
+
+fn emit_network_array_deploy_event(
+    network: &ActiveNetworkArray,
+    profile: &ZhenfaKindProfile,
+    network_events: &mut EventWriter<NetworkArrayDeployEvent>,
+) {
+    network_events.send(NetworkArrayDeployEvent {
+        owner: network.owner,
+        owner_player_id: network.owner_player_id.clone(),
+        array_id: network.id,
+        pos: network.eye_pos,
+        radius: profile.radius,
+        density_multiplier: profile.density_multiplier,
+        tiandao_gaze_weight: profile.tiandao_gaze_weight,
+        placed_at_tick: network.formed_at_tick,
+    });
 }
 
 fn emit_lingju_activate_feedback(
@@ -1691,6 +2071,61 @@ fn emit_lingju_activate_feedback(
         "#7FD8A8",
         0.65,
         8,
+        20,
+    );
+}
+
+fn emit_network_array_form_feedback(
+    network: &ActiveNetworkArray,
+    zones: Option<&ZoneRegistry>,
+    pending_narrations: Option<&mut PendingGameplayNarrations>,
+    vfx_events: Option<&mut Events<VfxEventRequest>>,
+) {
+    if let Some(pending_narrations) = pending_narrations {
+        pending_narrations.push_player(
+            network.owner_player_id.as_str(),
+            format!(
+                "组网阵已成，边界 {} 旗已连通。",
+                network.flag_instance_ids.len()
+            ),
+            NarrationStyle::Perception,
+        );
+        pending_narrations.push_zone(
+            zone_name_at_pos(zones, network.eye_pos).as_str(),
+            "旗影相连，一道无形的网在脚下铺开。",
+            NarrationStyle::Narration,
+        );
+    }
+    emit_zhenfa_vfx(
+        vfx_events,
+        gameplay_vfx::NETWORK_ARRAY_FORM,
+        network.eye_pos,
+        "#96D6EC",
+        0.70,
+        network.flag_instance_ids.len().max(3) as u32,
+        30,
+    );
+}
+
+fn emit_network_array_break_feedback(
+    network: &ActiveNetworkArray,
+    pending_narrations: Option<&mut PendingGameplayNarrations>,
+    vfx_events: Option<&mut Events<VfxEventRequest>>,
+) {
+    if let Some(pending_narrations) = pending_narrations {
+        pending_narrations.push_player(
+            network.owner_player_id.as_str(),
+            "阵破：旗眼失衡，组网阵溃散。",
+            NarrationStyle::Perception,
+        );
+    }
+    emit_zhenfa_vfx(
+        vfx_events,
+        gameplay_vfx::NETWORK_ARRAY_BREAK,
+        network.eye_pos,
+        "#D96666",
+        0.65,
+        network.flag_instance_ids.len().max(3) as u32,
         20,
     );
 }
@@ -2283,16 +2718,27 @@ fn tick_zhenfa_registry(
             30,
         );
     }
+    let dissolved_networks = registry.drain_network_dissolutions();
+    for network in &dissolved_networks {
+        clear_network_array_effect(network, &mut registry, &mut plots);
+        emit_network_array_break_feedback(
+            network,
+            pending_narrations.as_deref_mut(),
+            vfx_events.as_deref_mut(),
+        );
+    }
 
     let mut passive_triggers = Vec::new();
     let mut blast_triggers = Vec::new();
     let mut warning_alerts = Vec::new();
     let mut slow_triggers = Vec::new();
     let mut ward_alerts = Vec::new();
+    let mut network_alerts = Vec::new();
     let mut deceived_exposed = Vec::new();
     let mut lingju_instances = Vec::new();
     let mut current_ward_inside = HashSet::new();
     let mut current_slow_inside = HashSet::new();
+    let mut current_network_inside = HashSet::new();
     for instance in registry
         .active_instances()
         .filter(|instance| instance.placed_at_tick < now)
@@ -2436,10 +2882,26 @@ fn tick_zhenfa_registry(
                 }
             }
             ZhenfaKind::Illusion => {}
+            ZhenfaKind::NetworkArray => {}
         }
     }
     for instance in &lingju_instances {
         apply_lingju_effect(instance, &mut registry, &mut plots);
+    }
+    let active_networks = registry
+        .active_network_arrays()
+        .cloned()
+        .collect::<Vec<_>>();
+    for network in &active_networks {
+        apply_network_array_effect(network, &mut registry, &mut plots);
+        network_warning_tick(
+            network,
+            now,
+            &mut registry,
+            &ward_positions,
+            &mut current_network_inside,
+            &mut network_alerts,
+        );
     }
     registry
         .ward_inside
@@ -2450,6 +2912,11 @@ fn tick_zhenfa_registry(
         .slow_inside
         .retain(|key| current_slow_inside.contains(key));
     registry.slow_inside.extend(current_slow_inside);
+
+    registry
+        .network_inside
+        .retain(|key| current_network_inside.contains(key));
+    registry.network_inside.extend(current_network_inside);
 
     for (id, intruder, owner, owner_player_id, pos) in ward_alerts {
         registry.ward_alert_seen.insert((id, intruder), now);
@@ -2475,6 +2942,33 @@ fn tick_zhenfa_registry(
             0.7,
             20,
             60,
+        );
+    }
+
+    for (id, intruder, owner, owner_player_id, pos) in network_alerts {
+        registry.ward_alert_seen.insert((id, intruder), now);
+        if let Some(pending_narrations) = pending_narrations.as_deref_mut() {
+            pending_narrations.push_player(
+                owner_player_id.as_str(),
+                "阵内有动静——有目标闯入组网阵。",
+                NarrationStyle::Perception,
+            );
+        }
+        events.sense_pulses.send(ZhenfaSensePulse {
+            owner,
+            kind: SenseKindV1::ZhenfaWardAlert,
+            pos,
+            intensity: 0.75,
+            generation: now,
+        });
+        emit_zhenfa_vfx(
+            vfx_events.as_deref_mut(),
+            gameplay_vfx::NETWORK_ARRAY_FORM,
+            pos,
+            "#96D6EC",
+            0.45,
+            6,
+            20,
         );
     }
 
@@ -2620,6 +3114,8 @@ fn handle_zhenfa_disarm_requests(
     item_registry: Option<Res<ItemRegistry>>,
     mut allocator: Option<ResMut<InventoryInstanceIdAllocator>>,
     mut breakthrough_events: EventWriter<ArrayBreakthroughEvent>,
+    mut pending_narrations: Option<ResMut<PendingGameplayNarrations>>,
+    mut vfx_events: Option<ResMut<Events<VfxEventRequest>>>,
 ) {
     for req in requests.read() {
         let Ok((position, username, mut wounds, contamination, meridians, modifiers, inventory)) =
@@ -2704,6 +3200,15 @@ fn handle_zhenfa_disarm_requests(
                     }
                 }
             }
+        }
+        let dissolved_networks = registry.drain_network_dissolutions();
+        for network in &dissolved_networks {
+            clear_network_array_effect(network, &mut registry, &mut plots);
+            emit_network_array_break_feedback(
+                network,
+                pending_narrations.as_deref_mut(),
+                vfx_events.as_deref_mut(),
+            );
         }
     }
 }
@@ -3151,6 +3656,7 @@ fn ward_radius(
             | ZhenfaKind::Lingju
             | ZhenfaKind::DeceiveHeaven
             | ZhenfaKind::Illusion
+            | ZhenfaKind::NetworkArray
     ) {
         return profile_radius.max(1);
     }
@@ -3284,6 +3790,28 @@ fn has_zhenfa_flag(inventory: Option<&PlayerInventory>) -> bool {
         .any(|item| item.template_id == ZHENFA_FLAG_ITEM_ID)
 }
 
+fn validate_network_array_place_item(
+    kind: ZhenfaKind,
+    inventory: Option<&PlayerInventory>,
+    item_instance_id: Option<u64>,
+) -> Result<Option<NetworkArrayPlaceItem>, String> {
+    if kind != ZhenfaKind::NetworkArray {
+        return Ok(None);
+    }
+    let item_instance_id =
+        item_instance_id.ok_or_else(|| "missing item_instance_id".to_string())?;
+    let inventory = inventory.ok_or_else(|| "inventory missing".to_string())?;
+    let item = inventory_item_by_instance_borrow(inventory, item_instance_id)
+        .ok_or_else(|| format!("missing item instance {item_instance_id}"))?;
+    match item.template_id.as_str() {
+        NETWORK_ARRAY_FLAG_ITEM_ID => Ok(Some(NetworkArrayPlaceItem::Flag)),
+        NETWORK_ARRAY_EYE_ITEM_ID => Ok(Some(NetworkArrayPlaceItem::Eye)),
+        other => Err(format!(
+            "item {other} must be {NETWORK_ARRAY_FLAG_ITEM_ID} or {NETWORK_ARRAY_EYE_ITEM_ID}"
+        )),
+    }
+}
+
 fn backlash_contam_delta(kind: ZhenfaKind) -> f64 {
     match kind {
         ZhenfaKind::Trap | ZhenfaKind::BlastTrap => 0.5,
@@ -3294,6 +3822,7 @@ fn backlash_contam_delta(kind: ZhenfaKind) -> f64 {
         ZhenfaKind::Lingju => 0.25,
         ZhenfaKind::DeceiveHeaven => 1.5,
         ZhenfaKind::Illusion => 0.2,
+        ZhenfaKind::NetworkArray => 0.2,
     }
 }
 
@@ -3733,6 +4262,7 @@ mod tests {
         app.add_event::<DeceiveHeavenEvent>();
         app.add_event::<DeceiveHeavenExposedEvent>();
         app.add_event::<IllusionArrayDeployEvent>();
+        app.add_event::<NetworkArrayDeployEvent>();
         app.add_event::<ArrayDecayEvent>();
         app.add_event::<ArrayBreakthroughEvent>();
         app.add_event::<QiTransfer>();
@@ -3980,6 +4510,279 @@ mod tests {
         assert!(
             (plot_cap(&mut app, [10, 64, 0]) - PLOT_QI_CAP_BASE).abs() < 1e-6,
             "最后一个 Lingju 清除后 plot cap 才恢复基线"
+        );
+    }
+
+    #[test]
+    fn network_array_three_flags_and_eye_form_active_cap_feedback_and_consume_items() {
+        let mut app = app_with_loaded_zhenfa();
+        app.insert_resource(ZoneRegistry::fallback());
+        app.add_event::<VfxEventRequest>();
+        let owner = spawn_player_with_inventory(
+            &mut app,
+            "Alice",
+            [0.5, 64.0, 0.5],
+            network_array_test_inventory(),
+        );
+        spawn_plot(&mut app, [2, 64, 2], PLOT_QI_CAP_BASE);
+
+        place_basic_network_array(&mut app, owner, 1);
+
+        let registry = app.world().resource::<ZhenfaRegistry>();
+        let networks = registry.active_network_arrays().collect::<Vec<_>>();
+        assert_eq!(networks.len(), 1, "三旗 + 圈内阵眼必须激活一个组网阵");
+        assert_eq!(
+            networks[0].flag_instance_ids.len(),
+            3,
+            "成阵后必须记录 3 面阵旗，供破阵和 HUD 文案使用"
+        );
+        assert!(
+            (plot_cap(&mut app, [2, 64, 2])
+                - (PLOT_QI_CAP_BASE + QI_NETWORK_ARRAY_LINGJU_CAP_BONUS))
+                .abs()
+                < 1e-6,
+            "圈内 plot 应获得凡阶组网阵 +QI_NETWORK_ARRAY_LINGJU_CAP_BONUS cap"
+        );
+
+        let network_events = app.world().resource::<Events<NetworkArrayDeployEvent>>();
+        let deploy = network_events
+            .iter_current_update_events()
+            .last()
+            .expect("阵眼激活应发 NetworkArrayDeployEvent");
+        assert_eq!(deploy.pos, [1, 64, 1]);
+        assert_eq!(deploy.owner, owner);
+
+        let vfx_events = app.world().resource::<Events<VfxEventRequest>>();
+        assert!(
+            vfx_events
+                .iter_current_update_events()
+                .any(|event| matches!(
+                    &event.payload,
+                    crate::schema::vfx_event::VfxEventPayloadV1::SpawnParticle { event_id, .. }
+                        if event_id == gameplay_vfx::NETWORK_ARRAY_FORM
+                )),
+            "成阵必须发 bong:network_array_form VFX"
+        );
+        assert!(
+            app.world_mut()
+                .resource_mut::<PendingGameplayNarrations>()
+                .drain()
+                .iter()
+                .any(|entry| entry.text.contains("组网阵已成")),
+            "成阵必须给 owner 推 HUD/narration 文案"
+        );
+        for instance_id in [8101, 8102, 8103, 8201] {
+            assert!(
+                !inventory_still_has_item(&app, owner, instance_id),
+                "network array item instance {instance_id} 应在放置成功后被消耗"
+            );
+        }
+    }
+
+    #[test]
+    fn network_array_two_flags_and_eye_do_not_activate_or_boost_plot() {
+        let mut app = app_with_loaded_zhenfa();
+        let owner = spawn_player_with_inventory(
+            &mut app,
+            "Alice",
+            [0.5, 64.0, 0.5],
+            network_array_inventory(&[
+                (8101, NETWORK_ARRAY_FLAG_ITEM_ID),
+                (8102, NETWORK_ARRAY_FLAG_ITEM_ID),
+                (8201, NETWORK_ARRAY_EYE_ITEM_ID),
+            ]),
+        );
+        spawn_plot(&mut app, [2, 64, 2], PLOT_QI_CAP_BASE);
+
+        place_network_array_node(&mut app, owner, [0, 64, 0], 8101, 1);
+        place_network_array_node(&mut app, owner, [6, 64, 0], 8102, 2);
+        place_network_array_node(&mut app, owner, [1, 64, 1], 8201, 3);
+
+        assert_eq!(
+            app.world()
+                .resource::<ZhenfaRegistry>()
+                .active_network_arrays()
+                .count(),
+            0,
+            "两旗低于凸多边形下限，阵眼不应激活组网阵"
+        );
+        assert!(
+            (plot_cap(&mut app, [2, 64, 2]) - PLOT_QI_CAP_BASE).abs() < 1e-6,
+            "未成阵时 plot cap 必须保持基线"
+        );
+        assert!(
+            app.world()
+                .resource::<Events<NetworkArrayDeployEvent>>()
+                .iter_current_update_events()
+                .next()
+                .is_none(),
+            "未成阵不得广播 network_array deploy，避免 agent 误报"
+        );
+    }
+
+    #[test]
+    fn network_array_breaking_flag_dissolves_network_and_restores_cap() {
+        let mut app = app_with_loaded_zhenfa();
+        app.add_event::<VfxEventRequest>();
+        let owner = spawn_player_with_inventory(
+            &mut app,
+            "Alice",
+            [0.5, 64.0, 0.5],
+            network_array_test_inventory(),
+        );
+        spawn_plot(&mut app, [2, 64, 2], PLOT_QI_CAP_BASE);
+        place_basic_network_array(&mut app, owner, 1);
+        assert!(
+            (plot_cap(&mut app, [2, 64, 2])
+                - (PLOT_QI_CAP_BASE + QI_NETWORK_ARRAY_LINGJU_CAP_BONUS))
+                .abs()
+                < 1e-6
+        );
+
+        app.world_mut().send_event(ZhenfaDisarmRequest {
+            player: owner,
+            pos: [0, 64, 0],
+            mode: ZhenfaDisarmMode::ForceBreak,
+            requested_at_tick: 10,
+        });
+        app.update();
+
+        assert_eq!(
+            app.world()
+                .resource::<ZhenfaRegistry>()
+                .active_network_arrays()
+                .count(),
+            0,
+            "任一阵旗被拆后 active network 必须失效"
+        );
+        assert!(
+            (plot_cap(&mut app, [2, 64, 2]) - PLOT_QI_CAP_BASE).abs() < 1e-6,
+            "组网阵破后 plot cap 必须恢复基线"
+        );
+        assert!(
+            app.world_mut()
+                .resource_mut::<PendingGameplayNarrations>()
+                .drain()
+                .iter()
+                .any(|entry| entry.text.contains("阵破")),
+            "破阵必须给 owner 推阵破提示"
+        );
+    }
+
+    #[test]
+    fn network_array_and_full_lingju_use_max_bonus_not_stacking() {
+        let mut app = app_with_loaded_zhenfa();
+        let owner = spawn_player_with_inventory(
+            &mut app,
+            "Alice",
+            [0.5, 64.0, 0.5],
+            network_array_test_inventory(),
+        );
+        spawn_plot(&mut app, [2, 64, 2], PLOT_QI_CAP_BASE);
+
+        send_lingju_place(&mut app, owner, [8, 64, 8], 1);
+        app.update();
+        place_basic_network_array(&mut app, owner, 2);
+        app.world_mut().resource_mut::<CombatClock>().tick = 10;
+        app.update();
+
+        let expected = PLOT_QI_CAP_BASE + QI_LINGJU_ARRAY_CAP_BONUS;
+        assert!(
+            (plot_cap(&mut app, [2, 64, 2]) - expected).abs() < 1e-6,
+            "Full Lingju + NetworkArray 覆盖同 plot 必须取 max(+1.0)，不能叠加到 +1.5"
+        );
+    }
+
+    #[test]
+    fn network_array_alerts_on_entry_and_respects_ward_throttle() {
+        let mut app = app_with_loaded_zhenfa();
+        let owner = spawn_player_with_inventory(
+            &mut app,
+            "Alice",
+            [0.5, 64.0, 0.5],
+            network_array_test_inventory(),
+        );
+        place_basic_network_array(&mut app, owner, 1);
+        app.world_mut()
+            .resource_mut::<PendingGameplayNarrations>()
+            .drain();
+
+        let intruder = app.world_mut().spawn(Position::new([2.5, 64.0, 2.5])).id();
+        app.world_mut().resource_mut::<CombatClock>().tick = 10;
+        app.update();
+        assert_eq!(
+            app.world_mut()
+                .resource_mut::<PendingGameplayNarrations>()
+                .drain()
+                .iter()
+                .filter(|entry| entry.text.contains("阵内有动静"))
+                .count(),
+            1,
+            "首次进入组网阵应给 owner 发警戒提示"
+        );
+
+        app.world_mut()
+            .entity_mut(intruder)
+            .insert(Position::new([20.0, 64.0, 20.0]));
+        app.world_mut().resource_mut::<CombatClock>().tick = 11;
+        app.update();
+        app.world_mut()
+            .entity_mut(intruder)
+            .insert(Position::new([2.5, 64.0, 2.5]));
+        app.world_mut().resource_mut::<CombatClock>().tick = 12;
+        app.update();
+        assert!(
+            app.world_mut()
+                .resource_mut::<PendingGameplayNarrations>()
+                .drain()
+                .is_empty(),
+            "WARD_ALERT_THROTTLE_TICKS 内重复进入不得刷屏"
+        );
+
+        app.world_mut()
+            .entity_mut(intruder)
+            .insert(Position::new([20.0, 64.0, 20.0]));
+        app.world_mut().resource_mut::<CombatClock>().tick = 13;
+        app.update();
+        app.world_mut()
+            .entity_mut(intruder)
+            .insert(Position::new([2.5, 64.0, 2.5]));
+        app.world_mut().resource_mut::<CombatClock>().tick =
+            10_u64.saturating_add(WARD_ALERT_THROTTLE_TICKS);
+        app.update();
+        assert_eq!(
+            app.world_mut()
+                .resource_mut::<PendingGameplayNarrations>()
+                .drain()
+                .iter()
+                .filter(|entry| entry.text.contains("阵内有动静"))
+                .count(),
+            1,
+            "超过 WARD_ALERT_THROTTLE_TICKS 后再次进入应重新警戒"
+        );
+    }
+
+    #[test]
+    fn network_array_rejects_non_matching_item_without_consuming_it() {
+        let mut app = app_with_loaded_zhenfa();
+        let owner = spawn_player_with_inventory(
+            &mut app,
+            "Alice",
+            [0.5, 64.0, 0.5],
+            network_array_inventory(&[(8301, ZHENFA_FLAG_ITEM_ID)]),
+        );
+
+        send_network_array_place(&mut app, owner, [0, 64, 0], 8301, 1);
+        app.update();
+
+        assert_eq!(
+            app.world().resource::<ZhenfaRegistry>().len(),
+            0,
+            "旧 array_flag 不能冒充 array_flag_basic 参与 NetworkArray 放置"
+        );
+        assert!(
+            inventory_still_has_item(&app, owner, 8301),
+            "NetworkArray 拒绝非匹配 item 时不得消耗玩家物品"
         );
     }
 
@@ -4566,6 +5369,78 @@ mod tests {
 
     fn scatter_bead_item(instance_id: u64) -> ItemInstance {
         trap_item(instance_id, QI_SCATTER_BEAD_ITEM_ID, "散灵珠")
+    }
+
+    fn network_array_item(instance_id: u64, template_id: &str) -> ItemInstance {
+        let mut item = trap_item(instance_id, template_id, template_id);
+        item.spirit_quality = match template_id {
+            NETWORK_ARRAY_EYE_ITEM_ID => 0.5,
+            NETWORK_ARRAY_FLAG_ITEM_ID => 0.0,
+            _ => item.spirit_quality,
+        };
+        item
+    }
+
+    fn network_array_inventory(items: &[(u64, &str)]) -> PlayerInventory {
+        let mut inventory = zhenfa_flag_inventory();
+        for (slot, (instance_id, template_id)) in items.iter().enumerate() {
+            inventory.hotbar[slot] = Some(network_array_item(*instance_id, template_id));
+        }
+        inventory
+    }
+
+    fn network_array_test_inventory() -> PlayerInventory {
+        network_array_inventory(&[
+            (8101, NETWORK_ARRAY_FLAG_ITEM_ID),
+            (8102, NETWORK_ARRAY_FLAG_ITEM_ID),
+            (8103, NETWORK_ARRAY_FLAG_ITEM_ID),
+            (8201, NETWORK_ARRAY_EYE_ITEM_ID),
+        ])
+    }
+
+    fn send_network_array_place(
+        app: &mut App,
+        player: Entity,
+        pos: [i32; 3],
+        item_instance_id: u64,
+        tick: u64,
+    ) {
+        app.world_mut().send_event(ZhenfaPlaceRequest {
+            player,
+            pos,
+            kind: ZhenfaKind::NetworkArray,
+            carrier: ZhenfaCarrierKind::CommonStone,
+            qi_invest_ratio: 0.0,
+            trigger: None,
+            item_instance_id: Some(item_instance_id),
+            target_face: None,
+            requested_at_tick: tick,
+        });
+    }
+
+    fn place_network_array_node(
+        app: &mut App,
+        player: Entity,
+        pos: [i32; 3],
+        item_instance_id: u64,
+        tick: u64,
+    ) {
+        send_network_array_place(app, player, pos, item_instance_id, tick);
+        app.update();
+    }
+
+    fn place_basic_network_array(app: &mut App, owner: Entity, start_tick: u64) {
+        place_network_array_node(app, owner, [0, 64, 0], 8101, start_tick);
+        place_network_array_node(app, owner, [6, 64, 0], 8102, start_tick + 1);
+        place_network_array_node(app, owner, [0, 64, 6], 8103, start_tick + 2);
+        place_network_array_node(app, owner, [1, 64, 1], 8201, start_tick + 3);
+    }
+
+    fn inventory_still_has_item(app: &App, player: Entity, instance_id: u64) -> bool {
+        app.world()
+            .get::<PlayerInventory>(player)
+            .and_then(|inventory| inventory_item_by_instance_borrow(inventory, instance_id))
+            .is_some()
     }
 
     fn released_zhenfa_qi_total(transfers: &Events<QiTransfer>) -> f64 {

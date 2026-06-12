@@ -9,6 +9,7 @@ pub enum ZhenfaArrayKindV2 {
     Lingju,
     DeceiveHeaven,
     Illusion,
+    NetworkArray,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -113,5 +114,28 @@ mod tests {
         let json = serde_json::to_value(&event).unwrap();
         assert_eq!(json["breaker"], "offline:Breaker");
         assert_eq!(json["zone"], "spawn");
+    }
+
+    #[test]
+    fn network_array_kind_uses_snake_case_contract() {
+        let event = ZhenfaV2EventV1::deploy(
+            11,
+            ZhenfaArrayKindV2::NetworkArray,
+            "offline:Azure",
+            [0, 64, 0],
+            40,
+        );
+
+        let json = serde_json::to_value(&event).unwrap();
+        assert_eq!(json["kind"], "network_array");
+        let decoded: ZhenfaV2EventV1 = serde_json::from_value(json).unwrap();
+        assert_eq!(decoded.kind, ZhenfaArrayKindV2::NetworkArray);
+        assert!(
+            serde_json::from_str::<ZhenfaV2EventV1>(
+                r#"{"v":1,"event":"deploy","array_id":1,"kind":"unknown","owner":"offline:Azure","x":0,"y":64,"z":0,"tick":1}"#
+            )
+            .is_err(),
+            "未知 kind 必须被 Rust schema 拒绝"
+        );
     }
 }

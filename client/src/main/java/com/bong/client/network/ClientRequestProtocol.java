@@ -93,7 +93,8 @@ public final class ClientRequestProtocol {
         SHRINE_WARD("shrine_ward"),
         LINGJU("lingju"),
         DECEIVE_HEAVEN("deceive_heaven"),
-        ILLUSION("illusion");
+        ILLUSION("illusion"),
+        NETWORK_ARRAY("network_array");
 
         private final String wireName;
 

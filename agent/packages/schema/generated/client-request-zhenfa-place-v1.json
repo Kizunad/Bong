@@ -65,6 +65,10 @@
         {
           "const": "illusion",
           "type": "string"
+        },
+        {
+          "const": "network_array",
+          "type": "string"
         }
       ]
     },
