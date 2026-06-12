@@ -266,7 +266,7 @@ public final class ServerDataRouter {
         handlers.put("agent_ui_request", agentUiPayloadHandler);
         handlers.put("agent_ui_close", agentUiPayloadHandler);
         // plan-halfstep-rechallenge-integration-v1 P0：半步化虚重渡触发 HUD
-        handlers.put("halfstep_rechallenge",
+        handlers.put("half_step_rechallenge",
             new com.bong.client.combat.handler.HalfStepRechallengeHandler());
         return new ServerDataRouter(handlers);
     }

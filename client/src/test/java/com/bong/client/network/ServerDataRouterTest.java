@@ -180,7 +180,7 @@ public class ServerDataRouterTest {
             "agent_ui_request",
             "agent_ui_close",
             // plan-halfstep-rechallenge-integration-v1 P0 — 半步化虚重渡触发 HUD S2C
-            "halfstep_rechallenge"
+            "half_step_rechallenge"
         ), router.registeredTypes());
     }
 

@@ -9,7 +9,7 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonPrimitive;
 
 /**
- * Handles {@code halfstep_rechallenge} payloads (plan-halfstep-rechallenge-integration-v1 P0).
+ * Handles {@code half_step_rechallenge} payloads (plan-halfstep-rechallenge-integration-v1 P0).
  * Last-write-wins. {@code active=false} → {@link HalfStepRechallengeStore#clear()}.
  *
  * <pre>{@code
