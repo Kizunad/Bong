@@ -89,12 +89,24 @@ function buildZoneList(): void {
   for (const zone of blueprintZones) {
     const li = document.createElement("li");
     li.dataset.zone = zone.name;
+    // Keyboard-accessible: each zone is a focusable button-like option so it can
+    // be reached by Tab and activated with Enter/Space, not mouse-only.
+    li.tabIndex = 0;
+    li.setAttribute("role", "button");
+    li.setAttribute("aria-label", `选择 zone ${zone.name}`);
     const sw = document.createElement("span");
     sw.className = "zone-swatch";
     sw.style.background = rgbCss(zoneSwatch(zone));
     li.appendChild(sw);
     li.appendChild(document.createTextNode(zone.name));
     li.addEventListener("click", () => selectZone(zone.name));
+    li.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault(); // Space would otherwise scroll the sidebar
+        selectZone(zone.name);
+      }
+    });
+    if (zone.name === selectedZone) li.classList.add("selected");
     zoneListEl.appendChild(li);
   }
 }
