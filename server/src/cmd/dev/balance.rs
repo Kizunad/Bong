@@ -830,7 +830,49 @@ mod tests {
         // 不 panic 即通过：handle 已正确读取所有资源并输出报告
     }
 
-    /// ⑧ handle graceful fallback：各资源缺失时均不 panic，仅发提示 chat。
+    // ─── 辅助：带 helper 的客户端创建 + 数据包捕获 ───────────────────────────
+
+    use valence::prelude::Position;
+    use valence::protocol::packets::play::GameMessageS2c;
+    use valence::testing::create_mock_client;
+
+    fn spawn_client_with_helper(
+        app: &mut App,
+        username: &str,
+        position: [f64; 3],
+    ) -> (valence::prelude::Entity, valence::testing::MockClientHelper) {
+        let (mut bundle, helper) = create_mock_client(username);
+        bundle.player.position = Position::new(position);
+        let entity = app.world_mut().spawn(bundle).id();
+        (entity, helper)
+    }
+
+    fn flush_all_packets(app: &mut App) {
+        let world = app.world_mut();
+        let mut query = world.query::<&mut valence::client::Client>();
+        for mut client in query.iter_mut(world) {
+            client
+                .flush_packets()
+                .expect("mock client flush should succeed");
+        }
+    }
+
+    fn collect_chat_messages(helper: &mut valence::testing::MockClientHelper) -> Vec<String> {
+        helper
+            .collect_received()
+            .0
+            .into_iter()
+            .filter_map(|frame| {
+                frame
+                    .decode::<GameMessageS2c>()
+                    .ok()
+                    .map(|pkt| pkt.chat.to_legacy_lossy())
+            })
+            .collect()
+    }
+
+    /// ⑧ handle graceful fallback：各资源缺失时不 panic，且必须 emit 含对应资源名的缺失提示 chat 消息。
+    /// 断言可观测行为：client 收到 "resource missing" 文案，而非静默失效后测试仍过。
     #[test]
     fn handle_graceful_when_metrics_missing() {
         let mut app = App::new();
@@ -840,8 +882,30 @@ mod tests {
         app.init_resource::<TribulationBalanceConfig>();
         app.add_event::<CommandResultEvent<BalanceCmd>>();
         app.add_systems(Update, handle);
-        let player = spawn_test_client(&mut app, "Bob", [0.0, 0.0, 0.0]);
-        dispatch_balance_tribulation(&mut app, player);
+        let (player, mut helper) = spawn_client_with_helper(&mut app, "Bob", [0.0, 0.0, 0.0]);
+
+        app.world_mut()
+            .resource_mut::<Events<CommandResultEvent<BalanceCmd>>>()
+            .send(CommandResultEvent {
+                result: BalanceCmd::Tribulation,
+                executor: player,
+                modifiers: Default::default(),
+            });
+        app.update();
+        flush_all_packets(&mut app);
+
+        let messages = collect_chat_messages(&mut helper);
+        assert!(
+            !messages.is_empty(),
+            "handle() 缺少 TribulationMetrics 时应 emit 至少一条 chat 消息，但收到零条；\
+             graceful 分支静默失效"
+        );
+        let combined = messages.join("\n");
+        assert!(
+            combined.contains("TribulationMetrics resource missing"),
+            "缺少 TribulationMetrics 时 chat 应包含 \"TribulationMetrics resource missing\"，\
+             got:\n{combined}"
+        );
     }
 
     #[test]
@@ -853,8 +917,30 @@ mod tests {
         app.init_resource::<TribulationBalanceConfig>();
         app.add_event::<CommandResultEvent<BalanceCmd>>();
         app.add_systems(Update, handle);
-        let player = spawn_test_client(&mut app, "Carol", [0.0, 0.0, 0.0]);
-        dispatch_balance_tribulation(&mut app, player);
+        let (player, mut helper) = spawn_client_with_helper(&mut app, "Carol", [0.0, 0.0, 0.0]);
+
+        app.world_mut()
+            .resource_mut::<Events<CommandResultEvent<BalanceCmd>>>()
+            .send(CommandResultEvent {
+                result: BalanceCmd::Tribulation,
+                executor: player,
+                modifiers: Default::default(),
+            });
+        app.update();
+        flush_all_packets(&mut app);
+
+        let messages = collect_chat_messages(&mut helper);
+        assert!(
+            !messages.is_empty(),
+            "handle() 缺少 QuotaFullTracker 时应 emit 至少一条 chat 消息，但收到零条；\
+             graceful 分支静默失效"
+        );
+        let combined = messages.join("\n");
+        assert!(
+            combined.contains("QuotaFullTracker resource missing"),
+            "缺少 QuotaFullTracker 时 chat 应包含 \"QuotaFullTracker resource missing\"，\
+             got:\n{combined}"
+        );
     }
 
     #[test]
@@ -866,8 +952,30 @@ mod tests {
         // 故意不 init TribulationBalanceConfig
         app.add_event::<CommandResultEvent<BalanceCmd>>();
         app.add_systems(Update, handle);
-        let player = spawn_test_client(&mut app, "Dave", [0.0, 0.0, 0.0]);
-        dispatch_balance_tribulation(&mut app, player);
+        let (player, mut helper) = spawn_client_with_helper(&mut app, "Dave", [0.0, 0.0, 0.0]);
+
+        app.world_mut()
+            .resource_mut::<Events<CommandResultEvent<BalanceCmd>>>()
+            .send(CommandResultEvent {
+                result: BalanceCmd::Tribulation,
+                executor: player,
+                modifiers: Default::default(),
+            });
+        app.update();
+        flush_all_packets(&mut app);
+
+        let messages = collect_chat_messages(&mut helper);
+        assert!(
+            !messages.is_empty(),
+            "handle() 缺少 TribulationBalanceConfig 时应 emit 至少一条 chat 消息，但收到零条；\
+             graceful 分支静默失效"
+        );
+        let combined = messages.join("\n");
+        assert!(
+            combined.contains("TribulationBalanceConfig resource missing"),
+            "缺少 TribulationBalanceConfig 时 chat 应包含 \"TribulationBalanceConfig resource missing\"，\
+             got:\n{combined}"
+        );
     }
 
     #[test]
@@ -879,8 +987,30 @@ mod tests {
         app.init_resource::<TribulationBalanceConfig>();
         app.add_event::<CommandResultEvent<BalanceCmd>>();
         app.add_systems(Update, handle);
-        let player = spawn_test_client(&mut app, "Eve", [0.0, 0.0, 0.0]);
-        dispatch_balance_tribulation(&mut app, player);
+        let (player, mut helper) = spawn_client_with_helper(&mut app, "Eve", [0.0, 0.0, 0.0]);
+
+        app.world_mut()
+            .resource_mut::<Events<CommandResultEvent<BalanceCmd>>>()
+            .send(CommandResultEvent {
+                result: BalanceCmd::Tribulation,
+                executor: player,
+                modifiers: Default::default(),
+            });
+        app.update();
+        flush_all_packets(&mut app);
+
+        let messages = collect_chat_messages(&mut helper);
+        assert!(
+            !messages.is_empty(),
+            "handle() 缺少 CombatClock 时应 emit 至少一条 chat 消息，但收到零条；\
+             graceful 分支静默失效"
+        );
+        let combined = messages.join("\n");
+        assert!(
+            combined.contains("CombatClock resource missing"),
+            "缺少 CombatClock 时 chat 应包含 \"CombatClock resource missing\"，\
+             got:\n{combined}"
+        );
     }
 
     #[test]
@@ -940,10 +1070,6 @@ mod tests {
     ///   删除 handle() L220 的 `live_config.quota_k = vq.quota_k` 生产行后此测试必须变红。
     #[test]
     fn handle_emits_live_void_quota_k_in_chat_not_default() {
-        use valence::prelude::Position;
-        use valence::protocol::packets::play::GameMessageS2c;
-        use valence::testing::create_mock_client;
-
         let live_quota_k = 80.0_f64; // 与 DEFAULT_VOID_QUOTA_K=50.0 明显不同
 
         let mut app = App::new();
