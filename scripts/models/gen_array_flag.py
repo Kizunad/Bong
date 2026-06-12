@@ -54,6 +54,7 @@ def part_base():
     return [
         ("base", "wood", "base_stake", [-1.9, 0.0, -1.9], [1.9, 0.75, 1.9]),
         ("base", "wood", "front_wedge", [-1.2, 0.75, 1.1], [1.2, 1.25, 1.9]),
+        ("base", "wood", "rear_ground_brace", [-0.45, 0.75, -1.9], [0.45, 1.15, -0.65]),
         ("bone", "bone", "base_bone_pin_l", [-1.7, 1.25, -0.35], [-0.75, 1.85, 0.35]),
         ("bone", "bone", "base_bone_pin_r", [0.75, 1.25, -0.35], [1.7, 1.85, 0.35]),
     ]
@@ -86,6 +87,7 @@ def part_runes():
         ("rune", "rune", "rune_upper_slash", [1.25, 10.9, 0.26], [4.25, 11.18, 0.35]),
         ("rune", "rune", "rune_lower_slash", [1.6, 8.85, 0.26], [4.65, 9.13, 0.35]),
         ("rune", "rune", "rune_eye", [2.25, 9.65, 0.27], [3.15, 10.55, 0.36]),
+        ("rune", "rune", "rune_faded_chip", [3.55, 8.18, 0.27], [4.1, 8.42, 0.35]),
         ("bone", "bone", "top_rope_lash", [0.35, 12.58, 0.23], [1.35, 12.88, 0.43]),
         ("bone", "bone", "lower_rope_lash", [0.35, 7.18, 0.2], [1.2, 7.42, 0.38]),
         ("bone", "bone", "cloth_bone_tag", [4.5, 7.1, 0.24], [5.05, 7.95, 0.42]),

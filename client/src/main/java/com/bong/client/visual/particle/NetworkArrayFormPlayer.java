@@ -87,7 +87,7 @@ public final class NetworkArrayFormPlayer implements VfxPlayer {
     ) {
         double radius = 2.15 + strength * 0.9;
         GameplayVfxUtil.spawnDecal(client, world, BongParticles.lingqiRippleSprites,
-            ox, oy + 0.02, oz, rgb, 0.58f, maxAge, radius * 0.72);
+            ox, oy + 0.02, oz, rgb, 0.52f, maxAge, radius * 0.78);
         for (int i = 0; i < count; i++) {
             double a0 = Math.PI * 2.0 * i / count - Math.PI / 2.0;
             double a1 = Math.PI * 2.0 * ((i + 1) % count) / count - Math.PI / 2.0;
@@ -158,7 +158,7 @@ public final class NetworkArrayFormPlayer implements VfxPlayer {
     ) {
         GameplayVfxUtil.spawnDecal(client, world, BongParticles.lingqiRippleSprites,
             ox, oy + 0.02, oz, rgb, 0.45f, maxAge, 1.55);
-        int burstCount = count * 4;
+        int burstCount = count * 5;
         for (int i = 0; i < burstCount; i++) {
             double theta = Math.PI * 2.0 * i / burstCount + (world.random.nextDouble() - 0.5) * 0.35;
             double speed = 0.08 + world.random.nextDouble() * 0.08;
@@ -174,7 +174,7 @@ public final class NetworkArrayFormPlayer implements VfxPlayer {
                 Math.sin(theta) * speed,
                 rgb,
                 0.66f,
-                maxAge,
+                Math.min(maxAge, 16),
                 0.14f
             );
             if (i < count) {
