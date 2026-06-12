@@ -10052,6 +10052,7 @@ mod persistence_tests {
                 threat_assessment: None,
                 self_interest_decision: None,
                 retaliation_target: None,
+                decoy_target: None,
             },
             Some("offline:Azure"),
             &NpcCombatLoadout::fighter(NpcMeleeArchetype::Sword),

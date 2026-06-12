@@ -182,6 +182,10 @@ public final class VfxBootstrap {
             new ZhenfaActionVfxPlayer(ZhenfaActionVfxPlayer.Kind.BITE_SNAP));
         registry.register(ZhenfaActionVfxPlayer.TRIP_WIRE_TRIGGER,
             new ZhenfaActionVfxPlayer(ZhenfaActionVfxPlayer.Kind.TRIP_WIRE));
+        registry.register(ZhenfaActionVfxPlayer.DECOY_BREAK,
+            new ZhenfaActionVfxPlayer(ZhenfaActionVfxPlayer.Kind.STRAW_SCATTER));
+        registry.register(ZhenfaActionVfxPlayer.DECOY_TAUNT,
+            new ZhenfaActionVfxPlayer(ZhenfaActionVfxPlayer.Kind.TAUNT_PULSE));
         registry.register(LingjuActivatePlayer.EVENT_ID,
             new LingjuActivatePlayer());
         registry.register(ScatterBurstPlayer.EVENT_ID,

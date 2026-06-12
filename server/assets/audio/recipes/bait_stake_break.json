@@ -1,0 +1,11 @@
+{
+  "id": "bait_stake_break",
+  "layers": [
+    { "sound": "minecraft:block.wood.break", "volume": 0.8, "pitch": 0.7, "delay_ticks": 0 },
+    { "sound": "minecraft:block.bamboo.break", "volume": 0.4, "pitch": 0.9, "delay_ticks": 1 }
+  ],
+  "priority": 55,
+  "attenuation": "world_3d",
+  "category": "BLOCKS",
+  "bus": "ENVIRONMENT"
+}

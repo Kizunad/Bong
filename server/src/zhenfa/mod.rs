@@ -9,7 +9,9 @@ use valence::prelude::{
 };
 
 use crate::combat::components::{BodyPart, Lifecycle, LifecycleState, Wound, WoundKind, Wounds};
-use crate::combat::events::{ApplyStatusEffectIntent, CombatEvent, DeathEvent, StatusEffectKind};
+use crate::combat::events::{
+    ApplyStatusEffectIntent, AttackIntent, CombatEvent, DeathEvent, StatusEffectKind,
+};
 use crate::combat::CombatClock;
 use crate::cultivation::color::{record_style_practice, PracticeLog};
 use crate::cultivation::components::{
@@ -27,6 +29,7 @@ use crate::inventory::{
 };
 use crate::lingtian::{LingtianPlot, PLOT_QI_CAP_MAX, QI_LINGJU_ARRAY_CAP_BONUS};
 use crate::network::{gameplay_vfx, vfx_event_emit::VfxEventRequest};
+use crate::npc::spawn::DecoyTarget;
 use crate::player::gameplay::PendingGameplayNarrations;
 use crate::player::state::canonical_player_id;
 use crate::qi_physics::constants::{
@@ -59,6 +62,7 @@ const CHAIN_DELAY_TICKS: u64 = 6;
 const WARD_ALERT_THROTTLE_TICKS: u64 = 60 * TICKS_PER_SECOND;
 const BEAST_TRAP_IMMOBILIZED_TICKS: u64 = 8 * TICKS_PER_SECOND;
 const BEAST_TRAP_SNAP_DAMAGE: f32 = 2.0;
+const BAIT_STAKE_DURABILITY_HITS: u8 = 4;
 const DISARM_RANGE: f64 = 4.5;
 const QI_SCATTER_BEAD_ITEM_ID: &str = "qi_scatter_bead";
 const NETWORK_ARRAY_FLAG_ITEM_ID: &str = "array_flag_basic";
@@ -339,6 +343,17 @@ pub struct ZhenfaAnchor {
     pub id: u64,
 }
 
+#[derive(Debug, Clone, Copy, Component, PartialEq, Eq)]
+pub struct BaitDurability {
+    pub remaining_hits: u8,
+}
+
+impl BaitDurability {
+    pub const fn new(remaining_hits: u8) -> Self {
+        Self { remaining_hits }
+    }
+}
+
 #[derive(Debug, Clone, Component, PartialEq)]
 pub struct ArrayImprint {
     pub kind: ZhenfaKind,
@@ -603,6 +618,7 @@ pub fn register(app: &mut App) {
     app.add_event::<NetworkArrayDeployEvent>();
     app.add_event::<ArrayDecayEvent>();
     app.add_event::<ArrayBreakthroughEvent>();
+    app.add_event::<AttackIntent>();
     app.add_event::<QiTransfer>();
     app.add_systems(
         Update,
@@ -614,6 +630,7 @@ pub fn register(app: &mut App) {
             handle_zhenfa_disarm_requests,
             tick_scatter_bead_excretion,
             tick_scatter_disturbance_zones,
+            handle_decoy_stake_attack_intents,
             tick_zhenfa_registry,
             emit_zhenfa_sense_pulses,
         )
@@ -1858,7 +1875,15 @@ fn handle_zhenfa_place_requests(
                     }
                 }
                 cultivation.qi_current = (cultivation.qi_current - qi_cost).max(0.0);
-                commands.entity(anchor_entity).insert(ZhenfaAnchor { id });
+                if req.kind == ZhenfaKind::DecoyStake {
+                    commands.entity(anchor_entity).insert((
+                        ZhenfaAnchor { id },
+                        DecoyTarget(req.player),
+                        BaitDurability::new(BAIT_STAKE_DURABILITY_HITS),
+                    ));
+                } else {
+                    commands.entity(anchor_entity).insert(ZhenfaAnchor { id });
+                }
                 if let Some(mut mastery) = mastery {
                     mastery.add_cast(req.kind);
                 }
@@ -2011,6 +2036,54 @@ fn handle_zhenfa_trigger_requests(
             &mut status_effects,
             &mut sense_pulses,
             vfx_events.as_deref_mut(),
+        );
+    }
+}
+
+fn handle_decoy_stake_attack_intents(
+    mut intents: EventReader<AttackIntent>,
+    mut registry: ResMut<ZhenfaRegistry>,
+    mut commands: Commands,
+    mut layers: Query<&mut ChunkLayer, With<OverworldLayer>>,
+    mut decoys: Query<(Entity, &ZhenfaAnchor, &Position, &mut BaitDurability), With<DecoyTarget>>,
+    mut vfx_events: Option<ResMut<Events<VfxEventRequest>>>,
+) {
+    let mut destroyed = HashSet::new();
+    for intent in intents.read() {
+        let Some(target) = intent.target else {
+            continue;
+        };
+        if destroyed.contains(&target) {
+            continue;
+        }
+        let Ok((entity, anchor, position, mut durability)) = decoys.get_mut(target) else {
+            continue;
+        };
+        if anchor.id == 0 {
+            continue;
+        }
+
+        durability.remaining_hits = durability.remaining_hits.saturating_sub(1);
+        if durability.remaining_hits > 0 {
+            continue;
+        }
+
+        let fallback_pos = player_block_pos(position.get());
+        let pos = registry
+            .remove(anchor.id)
+            .map(|instance| instance.pos)
+            .unwrap_or(fallback_pos);
+        remove_zhenfa_anchor_block(&mut layers, pos);
+        commands.entity(entity).despawn();
+        destroyed.insert(target);
+        emit_zhenfa_vfx(
+            vfx_events.as_deref_mut(),
+            gameplay_vfx::DECOY_BREAK,
+            pos,
+            "#C8B878",
+            0.80,
+            10,
+            18,
         );
     }
 }
@@ -2954,7 +3027,19 @@ fn tick_zhenfa_registry(
                     }
                 }
             }
-            ZhenfaKind::DecoyStake => {}
+            ZhenfaKind::DecoyStake => {
+                if now % 10 == 0 {
+                    emit_zhenfa_vfx(
+                        vfx_events.as_deref_mut(),
+                        gameplay_vfx::DECOY_TAUNT,
+                        instance.pos,
+                        "#D86060",
+                        0.45,
+                        1,
+                        12,
+                    );
+                }
+            }
             ZhenfaKind::Ward => {
                 for (target, position) in &ward_positions {
                     if target == instance.owner {
@@ -4515,6 +4600,7 @@ mod tests {
         app.add_event::<JueBiTriggerEvent>();
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
+        app.add_event::<AttackIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
         app.insert_resource(ZhenfaRegistry::default());
         app.add_systems(
@@ -4527,6 +4613,7 @@ mod tests {
                 handle_zhenfa_disarm_requests,
                 tick_scatter_bead_excretion,
                 tick_scatter_disturbance_zones,
+                handle_decoy_stake_attack_intents,
                 tick_zhenfa_registry,
             )
                 .chain(),
@@ -6754,8 +6841,172 @@ mod tests {
         );
     }
 
+    fn send_bait_attack(app: &mut App, attacker: Entity, target: Entity, tick: u64) {
+        app.world_mut().send_event(AttackIntent {
+            attacker,
+            target: Some(target),
+            issued_at_tick: tick,
+            reach: crate::combat::events::FIST_REACH,
+            qi_invest: 0.0,
+            wound_kind: WoundKind::Blunt,
+            source: crate::combat::events::AttackSource::Melee,
+            debug_command: None,
+        });
+    }
+
     #[test]
-    fn trap_runtime_p1_audio_recipes_are_pinned() {
+    fn bait_stake_places_decoy_component_and_taunt_pulse() {
+        let mut app = app_with_loaded_zhenfa();
+        app.add_event::<VfxEventRequest>();
+        let owner = spawn_player(&mut app, "Alice", [0.0, 64.0, 0.0]);
+        app.world_mut()
+            .entity_mut(owner)
+            .insert(ordinary_trap_inventory(trap_item(
+                9405,
+                trap_content::BAIT_STAKE_ITEM_ID,
+                trap_content::BAIT_STAKE_ITEM_ID,
+            )));
+
+        app.world_mut().send_event(ZhenfaPlaceRequest {
+            player: owner,
+            pos: [1, 64, 1],
+            kind: ZhenfaKind::DecoyStake,
+            carrier: ZhenfaCarrierKind::CommonStone,
+            qi_invest_ratio: 1.0,
+            trigger: None,
+            item_instance_id: Some(9405),
+            target_face: Some(trap_content::TrapTargetFace::Top),
+            requested_at_tick: 10,
+        });
+        app.update();
+
+        let instance = app
+            .world()
+            .resource::<ZhenfaRegistry>()
+            .find_at([1, 64, 1])
+            .expect("bait_stake should create a DecoyStake zhenfa instance");
+        let anchor = instance.anchor_entity;
+        assert_eq!(
+            app.world()
+                .get::<DecoyTarget>(anchor)
+                .map(|target| target.0),
+            Some(owner),
+            "bait_stake anchor must expose DecoyTarget(owner) for NPC blackboard scans"
+        );
+        assert_eq!(
+            app.world()
+                .get::<BaitDurability>(anchor)
+                .map(|durability| durability.remaining_hits),
+            Some(BAIT_STAKE_DURABILITY_HITS),
+            "bait_stake must start with the P2 four-hit durability contract"
+        );
+
+        app.world_mut().resource_mut::<CombatClock>().tick = 20;
+        app.update();
+        assert!(
+            app.world()
+                .resource::<Events<VfxEventRequest>>()
+                .iter_current_update_events()
+                .any(|event| {
+                    matches!(
+                        &event.payload,
+                        crate::schema::vfx_event::VfxEventPayloadV1::SpawnParticle { event_id, .. }
+                            if event_id == gameplay_vfx::DECOY_TAUNT
+                    )
+                }),
+            "active bait_stake must emit the decoy_taunt pulse for client top-marker VFX"
+        );
+    }
+
+    #[test]
+    fn bait_stake_breaks_after_four_attacks_and_emits_break_vfx() {
+        let mut app = app_with_loaded_zhenfa();
+        app.add_event::<VfxEventRequest>();
+        let owner = spawn_player(&mut app, "Alice", [0.0, 64.0, 0.0]);
+        let attacker = spawn_player(&mut app, "Bob", [1.5, 64.0, 1.5]);
+        app.world_mut()
+            .entity_mut(owner)
+            .insert(ordinary_trap_inventory(trap_item(
+                9406,
+                trap_content::BAIT_STAKE_ITEM_ID,
+                trap_content::BAIT_STAKE_ITEM_ID,
+            )));
+
+        app.world_mut().send_event(ZhenfaPlaceRequest {
+            player: owner,
+            pos: [1, 64, 1],
+            kind: ZhenfaKind::DecoyStake,
+            carrier: ZhenfaCarrierKind::CommonStone,
+            qi_invest_ratio: 1.0,
+            trigger: None,
+            item_instance_id: Some(9406),
+            target_face: Some(trap_content::TrapTargetFace::Top),
+            requested_at_tick: 10,
+        });
+        app.update();
+        let anchor = app
+            .world()
+            .resource::<ZhenfaRegistry>()
+            .find_at([1, 64, 1])
+            .expect("bait_stake should be placed before attack test")
+            .anchor_entity;
+
+        for tick in 11..14 {
+            send_bait_attack(&mut app, attacker, anchor, tick);
+            app.update();
+        }
+        assert!(
+            app.world()
+                .resource::<ZhenfaRegistry>()
+                .find_at([1, 64, 1])
+                .is_some(),
+            "bait_stake must survive the first three attacks"
+        );
+        assert_eq!(
+            app.world()
+                .get::<BaitDurability>(anchor)
+                .map(|durability| durability.remaining_hits),
+            Some(1),
+            "bait_stake durability should decrement once per attack intent"
+        );
+
+        send_bait_attack(&mut app, attacker, anchor, 14);
+        app.update();
+
+        assert!(
+            app.world()
+                .resource::<ZhenfaRegistry>()
+                .find_at([1, 64, 1])
+                .is_none(),
+            "fourth attack must remove the bait_stake zhenfa instance"
+        );
+        assert!(
+            app.world().get::<DecoyTarget>(anchor).is_none(),
+            "broken bait_stake anchor entity must be despawned so blackboard decoy query clears next tick"
+        );
+        assert!(
+            app.world()
+                .resource::<Events<VfxEventRequest>>()
+                .iter_current_update_events()
+                .any(|event| {
+                    matches!(
+                        &event.payload,
+                        crate::schema::vfx_event::VfxEventPayloadV1::SpawnParticle {
+                            event_id,
+                            count,
+                            duration_ticks,
+                            ..
+                        } if event_id == gameplay_vfx::DECOY_BREAK
+                            && *count == Some(10)
+                            && *duration_ticks == Some(18)
+                    )
+                }),
+            "bait_stake break must emit decoy_break with the pinned straw scatter burst shape"
+        );
+    }
+
+    #[test]
+    fn trap_runtime_audio_recipes_are_pinned() {
         let beast: serde_json::Value = serde_json::from_str(include_str!(
             "../../assets/audio/recipes/beast_trap_snap.json"
         ))
@@ -6778,6 +7029,19 @@ mod tests {
         assert_eq!(trip["layers"][1]["sound"], "minecraft:block.note_block.hat");
         assert_eq!(trip["attenuation"], "world_3d");
         assert_eq!(trip["bus"], "ENVIRONMENT");
+
+        let bait: serde_json::Value = serde_json::from_str(include_str!(
+            "../../assets/audio/recipes/bait_stake_break.json"
+        ))
+        .expect("bait_stake_break audio recipe must parse");
+        assert_eq!(bait["id"], "bait_stake_break");
+        assert_eq!(bait["layers"][0]["sound"], "minecraft:block.wood.break");
+        assert_eq!(bait["layers"][0]["volume"], 0.8);
+        assert_eq!(bait["layers"][0]["pitch"], 0.7);
+        assert_eq!(bait["layers"][1]["sound"], "minecraft:block.bamboo.break");
+        assert_eq!(bait["layers"][1]["delay_ticks"], 1);
+        assert_eq!(bait["attenuation"], "world_3d");
+        assert_eq!(bait["bus"], "ENVIRONMENT");
     }
 
     #[test]

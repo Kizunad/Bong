@@ -531,6 +531,17 @@ spirit_quality_initial = 0.0
 description = "铁夹绳套的陷阱，夹住野兽腿。"
 
 [[item]]
+id = "bait_stake"
+name = "诱饵桩"
+category = "misc"
+grid_w = 1
+grid_h = 2
+base_weight = 2.0
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "稻草捆人形，挂破布残肉。野兽与散修远远见了便要扑上来撕咬。"
+
+[[item]]
 id = "qi_scatter_bead"
 name = "散真元珠"
 category = "misc"
