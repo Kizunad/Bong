@@ -246,4 +246,149 @@ public class AgentUiScreenProtocolTest {
         assertNull(AgentUiStore.getActive(),
             "clear() 后 getActive() 应为 null");
     }
+
+    // ─── 关闭语义四条状态转换 ────────────────────────────────────────────────
+
+    /**
+     * ① ESC close() → 发 dismissed 包。
+     * client 为 null（测试环境），close() 不应 NPE（guard 已加）。
+     */
+    @Test
+    void agentUiScreen_close_esc_sendsDismissedPacket() {
+        String xml = "<owo-ui><components><flow-layout/></components></owo-ui>";
+        AgentUiScreen screen = AgentUiScreen.create("req-esc-001", xml, 600, 1000L);
+
+        screen.close();
+
+        assertEquals(1, sentPayloads.size(),
+            "ESC close() 应发送 1 个包（dismissed），实际=" + sentPayloads.size());
+        JsonObject obj = JsonParser.parseString(sentPayloads.get(0)).getAsJsonObject();
+        assertEquals("agent_ui_response", obj.get("type").getAsString(),
+            "包 type 应为 'agent_ui_response'");
+        assertEquals("dismissed", obj.get("action").getAsString(),
+            "ESC 关闭的 action 应为 'dismissed'");
+        assertEquals("req-esc-001", obj.get("request_id").getAsString(),
+            "dismissed 包 request_id 应为 'req-esc-001'");
+    }
+
+    /**
+     * ② onButtonClicked → 发 button_click 包（含 button_id）。
+     */
+    @Test
+    void agentUiScreen_buttonClick_sendsButtonClickPacket() {
+        String xml = "<owo-ui><components><flow-layout/></components></owo-ui>";
+        AgentUiScreen screen = AgentUiScreen.create("req-btn-001", xml, 600, 1000L);
+
+        screen.simulateButtonClickForTests("enter_realm");
+
+        assertEquals(1, sentPayloads.size(),
+            "simulateButtonClick 应发送 1 个包（button_click），实际=" + sentPayloads.size());
+        JsonObject obj = JsonParser.parseString(sentPayloads.get(0)).getAsJsonObject();
+        assertEquals("agent_ui_response", obj.get("type").getAsString(),
+            "包 type 应为 'agent_ui_response'");
+        assertEquals("button_click", obj.get("action").getAsString(),
+            "按钮点击 action 应为 'button_click'");
+        assertEquals("enter_realm", obj.getAsJsonObject("params").get("button_id").getAsString(),
+            "params.button_id 应为 'enter_realm'");
+        assertEquals("req-btn-001", obj.get("request_id").getAsString(),
+            "button_click 包 request_id 应为 'req-btn-001'");
+    }
+
+    /**
+     * ③ tickLocalTimeout(currentTick >= expireTick + grace) → 不发任何包（server TimedOut 权威）。
+     */
+    @Test
+    void agentUiScreen_tickLocalTimeout_atExpiry_sendsNoPacket() {
+        String xml = "<owo-ui><components><flow-layout/></components></owo-ui>";
+        long currentTick = 1000L;
+        int timeoutTicks = 600;
+        // expireTick = currentTick + timeoutTicks + LOCAL_TIMEOUT_GRACE_TICKS = 1620
+        AgentUiScreen screen = AgentUiScreen.create("req-timeout-001", xml, timeoutTicks, currentTick);
+        long expireTick = currentTick + timeoutTicks + AgentUiScreen.LOCAL_TIMEOUT_GRACE_TICKS;
+
+        // 精确在 expireTick 触发超时
+        screen.tickLocalTimeout(expireTick);
+
+        assertEquals(0, sentPayloads.size(),
+            "tickLocalTimeout 超时后不应发任何包（server 权威），实际发了 " + sentPayloads.size() + " 个包");
+        assertTrue(screen.isClosedForTests(),
+            "超时后 closed 标志应为 true");
+    }
+
+    /**
+     * ④ receiveCloseSignal()（Replaced/server close）→ 不发任何包。
+     */
+    @Test
+    void agentUiScreen_receiveCloseSignal_sendsNoPacket() {
+        String xml = "<owo-ui><components><flow-layout/></components></owo-ui>";
+        AgentUiScreen screen = AgentUiScreen.create("req-server-close-001", xml, 600, 1000L);
+
+        screen.receiveCloseSignal();
+
+        assertEquals(0, sentPayloads.size(),
+            "receiveCloseSignal 后不应发任何包，实际发了 " + sentPayloads.size() + " 个包");
+    }
+
+    /**
+     * ⑤ closed 标志幂等：simulateButtonClick 后再 close() 不发第二包。
+     */
+    @Test
+    void agentUiScreen_closedFlag_idempotent_buttonThenClose() {
+        String xml = "<owo-ui><components><flow-layout/></components></owo-ui>";
+        AgentUiScreen screen = AgentUiScreen.create("req-idem-001", xml, 600, 1000L);
+
+        screen.simulateButtonClickForTests("confirm");
+        assertEquals(1, sentPayloads.size(),
+            "第一次 simulateButtonClick 应发 1 包，实际=" + sentPayloads.size());
+
+        // 再次 close()（模拟 ESC）：因 closed=true，不应再发包
+        screen.close();
+
+        assertEquals(1, sentPayloads.size(),
+            "closed=true 后再次 close() 不应发第二包，实际总包数=" + sentPayloads.size());
+    }
+
+    /**
+     * ⑥ closed 标志幂等：close() 后再 simulateButtonClick 不发第二包。
+     */
+    @Test
+    void agentUiScreen_closedFlag_idempotent_closeThenButton() {
+        String xml = "<owo-ui><components><flow-layout/></components></owo-ui>";
+        AgentUiScreen screen = AgentUiScreen.create("req-idem-002", xml, 600, 1000L);
+
+        screen.close();
+        assertEquals(1, sentPayloads.size(),
+            "close() 应发 1 包（dismissed），实际=" + sentPayloads.size());
+
+        // 再次点击：因 closed=true，不应再发包
+        screen.simulateButtonClickForTests("enter_realm");
+
+        assertEquals(1, sentPayloads.size(),
+            "closed=true 后 simulateButtonClick 不应发第二包，实际总包数=" + sentPayloads.size());
+    }
+
+    /**
+     * tickLocalTimeout 在 expireTick-1 时不触发关闭，screen 仍可正常 close() 发包。
+     */
+    @Test
+    void agentUiScreen_tickLocalTimeout_beforeExpiry_doesNotClose() {
+        String xml = "<owo-ui><components><flow-layout/></components></owo-ui>";
+        long currentTick = 1000L;
+        int timeoutTicks = 600;
+        AgentUiScreen screen = AgentUiScreen.create("req-timeout-before-001", xml, timeoutTicks, currentTick);
+        long expireTick = currentTick + timeoutTicks + AgentUiScreen.LOCAL_TIMEOUT_GRACE_TICKS;
+
+        // expireTick - 1：不应触发超时关闭
+        screen.tickLocalTimeout(expireTick - 1);
+
+        assertFalse(screen.isClosedForTests(),
+            "expireTick-1 时 closed 标志应仍为 false");
+        assertEquals(0, sentPayloads.size(),
+            "expireTick-1 时不应发任何包");
+
+        // 随后 ESC 关闭应正常工作
+        screen.close();
+        assertEquals(1, sentPayloads.size(),
+            "expireTick-1 后正常 close() 应发 1 包（dismissed）");
+    }
 }

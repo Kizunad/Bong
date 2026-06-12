@@ -144,9 +144,9 @@ public class UiOpenHandlerTest {
 
     @Test
     void rejectsOverlongRawXmlByStringLengthBeforeParsingIntoUiModel() throws IOException {
-        // plan-agent-ui-data-v1 P1: MAX_XML_LAYOUT_BYTES = MAX_XML_LAYOUT_CHARACTERS = 8192。
-        // 字节上限检查在字符长度检查前运行；超长 XML（>8192B）触发字节超限拒绝（"exceeds max supported size"）。
-        // 两个检查都保护同一上限，字节检查先命中。
+        // MAX_XML_LAYOUT_BYTES=512，MAX_XML_LAYOUT_CHARACTERS=384（ui_open 原始上限）。
+        // 字节上限检查在字符长度检查前运行；超长 XML（fixture=8193B）触发字节超限拒绝。
+        // agent_ui_request 走独立 AgentUiPayloadHandler 路径，不受此限制影响。
         ServerDataDispatch dispatch = new UiOpenHandler(true, true)
             .handle(parseEnvelope(PayloadFixtureLoader.readText("invalid-ui-open-overlong-xml.json")));
 
