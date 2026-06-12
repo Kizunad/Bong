@@ -1409,4 +1409,221 @@ mod tests {
             "take 不存在的 entity 应返回 None，实为 {result:?}"
         );
     }
+
+    // ── S2C 双向 emit 系统测试（MAJOR 修复：锁住 Redis + client-facing S2C 双路）──────
+
+    use valence::protocol::packets::play::CustomPayloadS2c;
+    use valence::testing::MockClientHelper;
+
+    use crate::network::agent_bridge::SERVER_DATA_CHANNEL;
+
+    /// 从 MockClientHelper 抽取所有 bong:server_data channel 的 JSON payload。
+    fn drain_s2c_server_data(
+        app: &mut App,
+        helper: &mut MockClientHelper,
+    ) -> Vec<serde_json::Value> {
+        // 先 flush，让 Client 内部缓冲写到 MockClientHelper
+        {
+            let world = app.world_mut();
+            let mut q = world.query::<&mut valence::prelude::Client>();
+            for mut c in q.iter_mut(world) {
+                c.flush_packets().expect("mock client flush should succeed");
+            }
+        }
+        let mut payloads = Vec::new();
+        for frame in helper.collect_received().0 {
+            let Ok(packet) = frame.decode::<CustomPayloadS2c>() else {
+                continue;
+            };
+            if packet.channel.as_str() != SERVER_DATA_CHANNEL {
+                continue;
+            }
+            if let Ok(v) = serde_json::from_slice::<serde_json::Value>(packet.data.0 .0) {
+                payloads.push(v);
+            }
+        }
+        payloads
+    }
+
+    /// happy path：session 创建 → 真向 client 发 AgentUiRequest S2C 包（双向 emit 锁住）。
+    ///
+    /// 断言：
+    /// - Redis 无 error response
+    /// - S2C payload type=agent_ui_request, request_id 对齐, xml 非空
+    #[test]
+    fn system_session_open_sends_agent_ui_request_s2c() {
+        let (mut app, rx) = build_agent_ui_app();
+        let (bundle, mut helper) = create_mock_client("Cultivator");
+        let player = app.world_mut().spawn(bundle).id();
+        app.world_mut().entity_mut(player).insert(Cultivation {
+            realm: Realm::Condense,
+            ..Cultivation::default()
+        });
+
+        let cmd = make_cmd("req-s2c-open", "Cultivator", 0);
+        app.world_mut().send_event(AgentUiCmdEvent(cmd));
+        app.update();
+
+        // Redis 不应有 error（session 应成功创建）
+        let redis_msgs: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
+        let has_error = redis_msgs.iter().any(|m| {
+            if let RedisOutbound::AgentUiResponse(r) = m {
+                matches!(r.action, AgentUiActionType::Error)
+            } else {
+                false
+            }
+        });
+        assert!(
+            !has_error,
+            "session 成功创建时不应有 Redis error response，实际 msgs={redis_msgs:?}"
+        );
+
+        // S2C：应向 client 发 agent_ui_request 包
+        let payloads = drain_s2c_server_data(&mut app, &mut helper);
+        let agent_ui_req = payloads
+            .iter()
+            .find(|p| p["type"].as_str() == Some("agent_ui_request"));
+        assert!(
+            agent_ui_req.is_some(),
+            "session 创建后应向 client 发 S2C type=agent_ui_request，实际 payloads={payloads:?}"
+        );
+        let req = agent_ui_req.unwrap();
+        assert_eq!(
+            req["request_id"].as_str(),
+            Some("req-s2c-open"),
+            "S2C agent_ui_request 的 request_id 应为 req-s2c-open，实为 {}",
+            req["request_id"]
+        );
+        assert!(
+            req["xml"].as_str().is_some_and(|x| !x.is_empty()),
+            "S2C agent_ui_request 的 xml 字段应非空，实为 {}",
+            req["xml"]
+        );
+    }
+
+    /// Replaced：新 cmd 替换旧 session → client 收 AgentUiClose S2C + Redis replaced；
+    /// 新 session → client 再收 AgentUiRequest S2C（双向 emit 完整链路锁住）。
+    #[test]
+    fn system_replaced_sends_agent_ui_close_then_request_s2c() {
+        let (mut app, rx) = build_agent_ui_app();
+        let (bundle, mut helper) = create_mock_client("Cultivator2");
+        let player = app.world_mut().spawn(bundle).id();
+        app.world_mut().entity_mut(player).insert(Cultivation {
+            realm: Realm::Condense,
+            ..Cultivation::default()
+        });
+
+        // 第一条 cmd → 建立 Open session
+        let cmd1 = make_cmd("req-old-s2c", "Cultivator2", 0);
+        app.world_mut().send_event(AgentUiCmdEvent(cmd1));
+        app.update();
+        // 清掉第一轮 Redis 和 S2C
+        while rx.try_recv().is_ok() {}
+        drain_s2c_server_data(&mut app, &mut helper);
+
+        // 第二条 cmd → Replaced
+        let cmd2 = make_cmd("req-new-s2c", "Cultivator2", 0);
+        app.world_mut().send_event(AgentUiCmdEvent(cmd2));
+        app.update();
+
+        // Redis 应有 replaced response for req-old-s2c
+        let redis_msgs: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
+        let replaced = redis_msgs.iter().find(|m| {
+            if let RedisOutbound::AgentUiResponse(r) = m {
+                r.request_id == "req-old-s2c" && matches!(r.action, AgentUiActionType::Replaced)
+            } else {
+                false
+            }
+        });
+        assert!(
+            replaced.is_some(),
+            "Replaced 时 Redis 应有 request_id=req-old-s2c 的 replaced response，实为 {redis_msgs:?}"
+        );
+
+        // S2C：应先收 AgentUiClose（for req-old-s2c），再收 AgentUiRequest（for req-new-s2c）
+        let payloads = drain_s2c_server_data(&mut app, &mut helper);
+        let close_payload = payloads
+            .iter()
+            .find(|p| p["type"].as_str() == Some("agent_ui_close"));
+        assert!(
+            close_payload.is_some(),
+            "Replaced 时 client 应收 S2C type=agent_ui_close，实际 payloads={payloads:?}"
+        );
+        assert_eq!(
+            close_payload.unwrap()["request_id"].as_str(),
+            Some("req-old-s2c"),
+            "AgentUiClose 的 request_id 应为 req-old-s2c（被替换的旧 session），实为 {}",
+            close_payload.unwrap()["request_id"]
+        );
+
+        let new_req = payloads
+            .iter()
+            .find(|p| p["type"].as_str() == Some("agent_ui_request"));
+        assert!(
+            new_req.is_some(),
+            "Replaced 后 client 还应收 S2C type=agent_ui_request（新 session），实际 payloads={payloads:?}"
+        );
+        assert_eq!(
+            new_req.unwrap()["request_id"].as_str(),
+            Some("req-new-s2c"),
+            "新 AgentUiRequest 的 request_id 应为 req-new-s2c，实为 {}",
+            new_req.unwrap()["request_id"]
+        );
+    }
+
+    /// session_expired：玩家响应时 session 已不存在 → client 收 AgentUiClose(session_expired) S2C。
+    #[test]
+    fn system_session_expired_sends_agent_ui_close_s2c() {
+        let (mut app, rx) = build_agent_ui_app();
+        let (bundle, mut helper) = create_mock_client("Cultivator3");
+        let player = app.world_mut().spawn(bundle).id();
+        app.world_mut().entity_mut(player).insert(Cultivation {
+            realm: Realm::Condense,
+            ..Cultivation::default()
+        });
+
+        // 不建立 session，直接发 response → 触发 session_expired close
+        app.world_mut().send_event(AgentUiResponseEvent {
+            player,
+            request_id: "req-expired".to_string(),
+            action: AgentUiActionType::ButtonClick,
+            params: [("button_id".to_string(), "dismiss".to_string())]
+                .into_iter()
+                .collect(),
+        });
+        app.update();
+
+        // Redis 不应有任何 AgentUiResponse（session_expired 走 close，不 forward）
+        let redis_msgs: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
+        let has_response = redis_msgs
+            .iter()
+            .any(|m| matches!(m, RedisOutbound::AgentUiResponse(_)));
+        assert!(
+            !has_response,
+            "session_expired 时 Redis 不应转发 response，实为 {redis_msgs:?}"
+        );
+
+        // S2C：client 应收到 agent_ui_close with reason=session_expired
+        let payloads = drain_s2c_server_data(&mut app, &mut helper);
+        let close = payloads
+            .iter()
+            .find(|p| p["type"].as_str() == Some("agent_ui_close"));
+        assert!(
+            close.is_some(),
+            "session_expired 时 client 应收 S2C type=agent_ui_close，实际 payloads={payloads:?}"
+        );
+        let close = close.unwrap();
+        assert_eq!(
+            close["request_id"].as_str(),
+            Some("req-expired"),
+            "AgentUiClose 的 request_id 应为 req-expired，实为 {}",
+            close["request_id"]
+        );
+        assert_eq!(
+            close["reason"].as_str(),
+            Some("session_expired"),
+            "AgentUiClose 的 reason 应为 session_expired，实为 {}",
+            close["reason"]
+        );
+    }
 }
