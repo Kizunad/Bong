@@ -233,10 +233,31 @@ def _build_section_blocks(
 
 
 def _column_surface_y(spans: list[tuple[int, int]]) -> int | None:
-    """Walkable surface y = ceiling of span[0] (§8.1 #2); None for a void column."""
+    """Walkable surface y = ceiling of span[0] (§8.1 #2); None for a void column.
+
+    This is the *navigation* surface (NPC pathing / decoration anchoring), which
+    by §8.1 #2 convention is the ground span (``span[0]``) ceiling — deliberately
+    NOT the geometrically highest block when a sky-isle floats above.  Block
+    placement uses this to decide which y gets ``top_block``.
+    """
     if not spans:
         return None
     return spans[0][1]
+
+
+def _column_highest_solid_y(spans: list[tuple[int, int]]) -> int | None:
+    """Highest solid block y in the column = ``max`` ceiling over *all* spans.
+
+    The MC ``WORLD_SURFACE`` / ``MOTION_BLOCKING`` heightmaps encode the topmost
+    non-air block of a column (+1), independent of which span is the walkable
+    ground.  A sky-isle span (e.g. ``(290, 310)``) sits above ``span[0]`` and its
+    blocks *are* written into the sections; the heightmap must report ``310`` so
+    client lighting / occlusion / motion-blocking does not treat that range as
+    open sky.  Returns ``None`` for a fully void column.
+    """
+    if not spans:
+        return None
+    return max(ceiling_y for _floor_y, ceiling_y in spans)
 
 
 def _block_at_in_spans(
@@ -501,17 +522,21 @@ def chunk_to_nbt_compressed(
 def _encode_heightmap_from_spans(
     spans_grid: list[list[list[tuple[int, int]]]],
 ) -> list[int]:
-    """Heightmap from per-column spans: stored value = surface_y + 1 - WORLD_MIN_Y.
+    """Heightmap from per-column spans: stored value = top_solid_y + 1 - WORLD_MIN_Y.
 
-    Surface = span[0].ceiling (§8.1 #2).  A void column stores WORLD_MIN_Y so the
-    motion-blocking heightmap stays in range (no solid above bedrock).
+    MC ``WORLD_SURFACE`` / ``MOTION_BLOCKING`` encode the *highest* solid block of
+    the column, not the walkable ground.  When a sky-isle span floats above
+    ``span[0]`` its blocks are written, so the heightmap must report that isle top
+    (``max`` ceiling over all spans) — otherwise the client treats the isle range
+    as open sky (broken lighting / occlusion).  A void column stores WORLD_MIN_Y
+    so the heightmap stays in range (no solid above bedrock).
     """
     encoded_values: list[int] = []
     for z in range(CHUNK_WIDTH):
         for x in range(CHUNK_WIDTH):
             spans = spans_grid[z][x]
-            surface_y = _column_surface_y(spans)
-            h = surface_y if surface_y is not None else WORLD_MIN_Y
+            top_solid_y = _column_highest_solid_y(spans)
+            h = top_solid_y if top_solid_y is not None else WORLD_MIN_Y
             stored = h + 1 - WORLD_MIN_Y
             if stored < 0 or stored >= (1 << HEIGHTMAP_BITS):
                 raise ValueError(

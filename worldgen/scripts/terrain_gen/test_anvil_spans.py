@@ -8,7 +8,8 @@
   ② 洞穴列：地表段顶=top_block，地表段内=filler，洞穴空腔=air，残底实心
   ③ 浮岛列：地表段 + 高位悬空段都实心，二者之间气隙=air
   ④ 空虚空列：除 bedrock 外整列 air，heightmap 退到世界底
-  ⑤ heightmap 取 span[0].ceiling（地表段顶）
+  ⑤ heightmap 取列内最高实心段顶（max ceiling）：洞穴列=地表段顶；浮岛列=岛顶而非地表
+     段顶（岛方块实写，heightmap 必须报岛顶否则客户端把岛段当天空）
   ⑥ invalid spans_grid：维度错 / 段重叠 / 段出世界范围 → ValueError
   ⑦ compressed 变体 zlib round-trip
   ⑧ DataVersion / section 数与 height-path 一致
@@ -105,27 +106,51 @@ class AnvilSpansShapeTest(unittest.TestCase):
         self.assertEqual(block_at(chunk, 0, 0, 0), "minecraft:air")
         self.assertEqual(block_at(chunk, 0, 64, 0), "minecraft:air")
 
-    def test_heightmap_uses_surface_span_ceiling(self) -> None:
-        spans = uniform_spans([(69, 70), (-64, 40)])  # surface = 70
-        chunk = parse_nbt(ax.chunk_to_nbt_from_spans(0, 0, spans))
+    def _first_column_heightmap(self, chunk: dict) -> int:
+        """Decode the (x=0, z=0) MOTION_BLOCKING heightmap entry to its raw y+1."""
         first_long = chunk["Heightmaps"]["MOTION_BLOCKING"][0]
         if first_long < 0:
             first_long += 1 << 64
-        decoded = first_long & ((1 << 9) - 1)
+        return first_long & ((1 << 9) - 1)
+
+    def test_heightmap_uses_highest_solid_for_cave_column(self) -> None:
+        # Cave column: surface cap (69,70) on top, floor remnant (-64,40) below.
+        # Highest solid == the surface cap ceiling (70), so the heightmap is 70
+        # whether we read span[0].ceiling or max-over-spans — this pins that the
+        # floor remnant (40) is NOT mistaken for the top.
+        spans = uniform_spans([(69, 70), (-64, 40)])
+        chunk = parse_nbt(ax.chunk_to_nbt_from_spans(0, 0, spans))
         self.assertEqual(
-            decoded,
+            self._first_column_heightmap(chunk),
             70 + 1 - ax.WORLD_MIN_Y,
-            "heightmap must store the walkable surface (span[0].ceiling=70), not "
-            "the floor remnant",
+            "heightmap must store the highest solid block (cap ceiling=70), not "
+            "the carved-below floor remnant (40)",
+        )
+
+    def test_heightmap_uses_isle_top_not_ground_span(self) -> None:
+        # Sky-isle column: ground span[0]=(-64,72) is the *walkable* surface, but
+        # an isle span (290,310) floats above and its blocks ARE written into the
+        # sections.  MC WORLD_SURFACE/MOTION_BLOCKING must report the isle top
+        # (310), NOT span[0].ceiling (72) — otherwise the client treats 73..310
+        # as open sky and lighting/occlusion break above the ground.
+        spans = uniform_spans([(-64, 72), (290, 310)])
+        chunk = parse_nbt(ax.chunk_to_nbt_from_spans(0, 0, spans))
+        # Sanity: the isle block really is solid at 310 (so the heightmap claim
+        # is backed by a real block).
+        self.assertEqual(block_at(chunk, 0, 310, 0), "minecraft:stone")
+        self.assertEqual(
+            self._first_column_heightmap(chunk),
+            310 + 1 - ax.WORLD_MIN_Y,
+            "heightmap must store the highest solid block (isle top=310), not the "
+            "walkable ground span[0].ceiling=72 — solid blocks exist up to 310",
         )
 
     def test_void_column_heightmap_floors_to_world_min(self) -> None:
         chunk = parse_nbt(ax.chunk_to_nbt_from_spans(0, 0, uniform_spans([])))
-        first_long = chunk["Heightmaps"]["MOTION_BLOCKING"][0]
-        if first_long < 0:
-            first_long += 1 << 64
-        decoded = first_long & ((1 << 9) - 1)
-        self.assertEqual(decoded, ax.WORLD_MIN_Y + 1 - ax.WORLD_MIN_Y)
+        self.assertEqual(
+            self._first_column_heightmap(chunk),
+            ax.WORLD_MIN_Y + 1 - ax.WORLD_MIN_Y,
+        )
 
 
 class AnvilSpansValidationTest(unittest.TestCase):
