@@ -8062,8 +8062,7 @@ mod tests {
     // plan-halfstep-buff-v1 P0：遥测 + quota 满时长追踪测试
     // ─────────────────────────────────────────────────────────────
 
-    // plan-tribulation-balance-v1 P0：pub(crate) 供跨模块测试复用（balance.rs mock 结算测试）
-    pub(crate) fn make_settled_event(entity: Entity, outcome: DuXuOutcomeV1) -> TribulationSettled {
+    fn make_settled_event(entity: Entity, outcome: DuXuOutcomeV1) -> TribulationSettled {
         make_settled_event_with_source(entity, outcome, JueBiTriggerSource::VoidQuotaExceeded)
     }
 
@@ -8086,8 +8085,7 @@ mod tests {
         }
     }
 
-    // plan-tribulation-balance-v1 P0：pub(crate) 供跨模块测试复用
-    pub(crate) fn p0_metrics_test_app() -> App {
+    fn p0_metrics_test_app() -> App {
         let mut app = App::new();
         app.insert_resource(CombatClock::default());
         app.init_resource::<TribulationMetrics>();

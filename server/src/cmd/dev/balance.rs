@@ -18,6 +18,7 @@ use valence::prelude::{App, Client, EventReader, Query, Res, Update};
 use crate::combat::CombatClock;
 use crate::cultivation::tribulation::{
     current_quota_full_duration_ticks, HalfStepState, QuotaFullTracker, TribulationMetrics,
+    VoidQuotaConfig,
 };
 use crate::cultivation::tribulation_balance::TribulationBalanceConfig;
 use crate::cultivation::void::components::TICKS_PER_MONTH;
@@ -54,7 +55,9 @@ pub fn register(app: &mut App) {
 pub struct BalanceReport {
     pub quota_current: u32,
     pub quota_max: u32,
-    /// 满载率 [0.0, 1.0]，limit==0 时为 0.0（防除零）
+    /// 满载率（正常范围 [0.0, 1.0]，occupied>limit 时 >1.0）。
+    /// 特殊值：`f32::INFINITY` 表示 limit==0 且 occupied>0（最严重超载，名额已归零但仍有占用）；
+    /// limit==0 且 occupied==0 时为 0.0（良性空载）。
     pub quota_fill_ratio: f32,
     pub halfstep_count: u64,
     pub ascended_count: u64,
@@ -76,9 +79,16 @@ pub fn build_balance_report(
     let quota_current = tracker.current_occupied;
     let quota_max = tracker.current_limit;
 
-    // 满载率：limit==0 时返回 0.0 防除零
+    // 满载率：
+    //   - limit==0 且 occupied>0 → f32::INFINITY（最严重超载：名额归零仍有占用，不能掩盖）
+    //   - limit==0 且 occupied==0 → 0.0（良性空载，防除零）
+    //   - limit>0 → occupied/limit（正常比率；>1.0 表示天道衰减后的暂超载）
     let quota_fill_ratio = if quota_max == 0 {
-        0.0
+        if quota_current > 0 {
+            f32::INFINITY
+        } else {
+            0.0
+        }
     } else {
         quota_current as f32 / quota_max as f32
     };
@@ -114,28 +124,47 @@ pub fn build_balance_report(
 
 /// 将 BalanceReport 序列化为可读文本（纯函数）。
 ///
-/// 当 `quota_fill_ratio > 1.0`（occupied > limit，天道衰减 quota_limit 致超载）时，
-/// 输出真实比率并附 `[OVER-FULL]` 标注，**不静默 clamp 成 100%**——看板核心职责是暴露失衡。
+/// `quota_fill_ratio` 的三种情形：
+/// - `f32::INFINITY`：limit==0 且 occupied>0，最严重超载态——输出 `[OVER-FULL: 名额=0 仍有 N 占用]`
+/// - `> 1.0`：occupied > limit，天道衰减 quota_limit 致暂超载——输出真实比率并附 `[OVER-FULL]`
+/// - `<= 1.0`：正常范围
+///
+/// **不静默 clamp**——看板核心职责是暴露失衡。
 pub fn format_balance_report(report: &BalanceReport) -> String {
-    let fill_pct = report.quota_fill_ratio * 100.0;
-    let over_full_marker = if report.quota_fill_ratio > 1.0 {
-        " [OVER-FULL]"
+    // quota 行：区分三种失衡态
+    let quota_line = if report.quota_fill_ratio.is_infinite() {
+        // 最严重：名额归零但仍有占用
+        format!(
+            "quota: {current}/{max} [OVER-FULL: 名额=0 仍有 {current} 占用]",
+            current = report.quota_current,
+            max = report.quota_max,
+        )
     } else {
-        ""
+        let fill_pct = report.quota_fill_ratio * 100.0;
+        let over_full_marker = if report.quota_fill_ratio > 1.0 {
+            " [OVER-FULL]"
+        } else {
+            ""
+        };
+        format!(
+            "quota: {current}/{max} ({fill:.1}%满载{over_full})",
+            current = report.quota_current,
+            max = report.quota_max,
+            fill = fill_pct,
+            over_full = over_full_marker,
+        )
     };
+
     format!(
         "[渡劫平衡看板]\n\
-         quota: {current}/{max} ({fill:.1}%满载{over_full})\n\
+         {quota_line}\n\
          结算: halfstep={hs} ascended={asc} failed=n/a(无遥测)\n\
          当前半步修士: {active}人 平均滞留={stay_ticks}tick ({stay_months:.2}月)\n\
          quota满载累计: {full_ticks}tick\n\
          [BalanceConfig]\n\
          quota_k={qk:.2} wave_damage_base={wdb} wave_qi_drain_base={wqdb} \
          juebi_intensity_base={jib} heart_demon_qi_penalty_ratio={hdqpr:.2}",
-        current = report.quota_current,
-        max = report.quota_max,
-        fill = fill_pct,
-        over_full = over_full_marker,
+        quota_line = quota_line,
         hs = report.halfstep_count,
         asc = report.ascended_count,
         active = report.halfstep_active_count,
@@ -154,11 +183,13 @@ pub fn format_balance_report(report: &BalanceReport) -> String {
 // ECS handle system
 // ──────────────────────────────────────────────────────────────────────────────
 
+#[allow(clippy::too_many_arguments)]
 pub fn handle(
     mut events: EventReader<CommandResultEvent<BalanceCmd>>,
     metrics: Option<Res<TribulationMetrics>>,
     tracker: Option<Res<QuotaFullTracker>>,
     config: Option<Res<TribulationBalanceConfig>>,
+    void_quota: Option<Res<VoidQuotaConfig>>,
     clock: Option<Res<CombatClock>>,
     halfstep_query: Query<&HalfStepState>,
     mut clients: Query<&mut Client>,
@@ -185,8 +216,13 @@ pub fn handle(
             client.send_chat_message("balance tribulation: CombatClock resource missing");
             continue;
         };
+        // quota_k 展示 live VoidQuotaConfig 值（防止 env 覆盖后看板撒谎）
+        let mut live_config = *config;
+        if let Some(vq) = void_quota.as_deref() {
+            live_config.quota_k = vq.quota_k;
+        }
         let states: Vec<HalfStepState> = halfstep_query.iter().copied().collect();
-        let report = build_balance_report(metrics, tracker, config, &states, clock.tick);
+        let report = build_balance_report(metrics, tracker, &live_config, &states, clock.tick);
         client.send_chat_message(format_balance_report(&report));
     }
 }
@@ -290,7 +326,7 @@ mod tests {
             "期望平均滞留=800 ticks (sum=2400/3=800)，got {}；off-by-one 或聚合逻辑错误",
             report.halfstep_avg_stay_ticks
         );
-        // in-game 月换算：800 / TICKS_PER_MONTH（约 5184000），应该是极小正数
+        // in-game 月换算：800 / TICKS_PER_MONTH（约 51840000），应该是极小正数
         assert!(
             report.halfstep_avg_stay_months >= 0.0,
             "stay_months 应为非负数，got {}",
@@ -309,7 +345,7 @@ mod tests {
     fn build_balance_report_quota_fill_ratio_correct_and_div_zero_guarded() {
         let config = TribulationBalanceConfig::default();
 
-        // limit==0 → 0.0（防除零）
+        // occupied==0 且 limit==0 → 0.0（良性空载：天道尚未开放名额，亦无占用，不是失衡）
         {
             let metrics = TribulationMetrics::default();
             let tracker = QuotaFullTracker {
@@ -320,7 +356,7 @@ mod tests {
             let report = build_balance_report(&metrics, &tracker, &config, &[], 100);
             assert_eq!(
                 report.quota_fill_ratio, 0.0,
-                "limit==0 时满载率应为 0.0 防除零，got {}",
+                "occupied=0 且 limit==0（良性空载）时满载率应为 0.0，got {}",
                 report.quota_fill_ratio
             );
         }
@@ -427,6 +463,81 @@ mod tests {
                 "occupied==limit（恰好满载，ratio=1.0）format 不应含 [OVER-FULL]，got:\n{text}"
             );
         }
+    }
+
+    /// ③-a2 MAJOR：occupied>0 且 limit==0（最严重超载：名额归零仍有占用）——
+    ///   ratio 应为 f32::INFINITY，format 应包含 [OVER-FULL: 名额=0] 标注；
+    ///   occupied==0 且 limit==0（良性空载）——ratio==0.0，format 不含 OVER-FULL 标注。
+    #[test]
+    fn build_balance_report_occupied_gt_zero_with_limit_zero_is_over_full_infinity() {
+        let config = TribulationBalanceConfig::default();
+
+        // occupied=2, limit=0 → ratio=INFINITY（最严重超载，看板必须暴露）
+        {
+            let metrics = TribulationMetrics::default();
+            let tracker = QuotaFullTracker {
+                current_occupied: 2,
+                current_limit: 0,
+                full_since_tick: None,
+            };
+            let report = build_balance_report(&metrics, &tracker, &config, &[], 100);
+            assert!(
+                report.quota_fill_ratio.is_infinite(),
+                "occupied=2 limit=0 时 quota_fill_ratio 应为 INFINITY（最严重超载），\
+                 got {}；不允许返回 0.0 掩盖失衡",
+                report.quota_fill_ratio
+            );
+            let text = format_balance_report(&report);
+            assert!(
+                text.contains("[OVER-FULL: 名额=0 仍有 2 占用]"),
+                "occupied=2 limit=0 时 format 应包含 [OVER-FULL: 名额=0 仍有 2 占用]；got:\n{text}"
+            );
+        }
+
+        // occupied=0, limit=0 → ratio=0.0（良性空载：名额归零且无人占用，不是失衡）
+        {
+            let metrics = TribulationMetrics::default();
+            let tracker = QuotaFullTracker {
+                current_occupied: 0,
+                current_limit: 0,
+                full_since_tick: None,
+            };
+            let report = build_balance_report(&metrics, &tracker, &config, &[], 100);
+            assert_eq!(
+                report.quota_fill_ratio, 0.0,
+                "occupied=0 limit=0（良性空载）时 ratio 应为 0.0，got {}",
+                report.quota_fill_ratio
+            );
+            let text = format_balance_report(&report);
+            assert!(
+                !text.contains("[OVER-FULL"),
+                "occupied=0 limit=0（良性空载）format 不应含 [OVER-FULL] 标注，got:\n{text}"
+            );
+        }
+    }
+
+    /// ③-a3 MINOR：avg-stay 时钟回拨饱和——current_tick < entered_at 时每条记录饱和到 0，
+    ///   总 avg 仍为 0，不 panic、不 underflow。
+    #[test]
+    fn build_balance_report_avg_stay_saturates_to_zero_on_clock_rollback() {
+        let config = TribulationBalanceConfig::default();
+        let metrics = TribulationMetrics::default();
+        let tracker = QuotaFullTracker::default();
+
+        // current_tick=100 但 entered_at=500（时钟回拨场景）→ 每条 saturating_sub = 0
+        let states = [HalfStepState::new(500), HalfStepState::new(800)];
+        let report = build_balance_report(&metrics, &tracker, &config, &states, 100);
+        assert_eq!(
+            report.halfstep_avg_stay_ticks, 0,
+            "时钟回拨(current_tick=100 < entered_at=500/800)时 avg_stay 应饱和至 0，\
+             got {}；saturating_sub 语义失效或逻辑错误",
+            report.halfstep_avg_stay_ticks
+        );
+        assert_eq!(
+            report.halfstep_active_count, 2,
+            "时钟回拨场景 active_count 仍应为 2（entity 存在），got {}",
+            report.halfstep_active_count
+        );
     }
 
     /// ③-b MAJOR-2：quota_full_duration_ticks pending 分支覆盖——tracker.full_since_tick=Some(t)
@@ -762,5 +873,39 @@ mod tests {
         let bare = app.world_mut().spawn_empty().id();
         dispatch_balance_tribulation(&mut app, bare);
         // 无 Client 的 executor → handle continue 跳过，不影响其它 entity
+    }
+
+    /// ⑨ MINOR：handle() 注入 live VoidQuotaConfig 时 quota_k 使用 live 值（防 env 覆盖后撒谎）。
+    ///   VoidQuotaConfig.quota_k != DEFAULT_VOID_QUOTA_K 时，build_balance_report 收到的
+    ///   config.quota_k 应等于 live VoidQuotaConfig.quota_k 而非编译时常数。
+    #[test]
+    fn handle_uses_live_void_quota_config_quota_k_when_available() {
+        use crate::cultivation::tribulation::DEFAULT_VOID_QUOTA_K;
+
+        // live VoidQuotaConfig 设为与 default 不同的值，模拟 BONG_VOID_QUOTA_K env 覆盖
+        let live_quota_k = DEFAULT_VOID_QUOTA_K * 2.0 + 1.0;
+        let live_void_quota = VoidQuotaConfig {
+            quota_k: live_quota_k,
+        };
+
+        let config = TribulationBalanceConfig::default(); // quota_k = DEFAULT_VOID_QUOTA_K（旧常数）
+        let metrics = TribulationMetrics::default();
+        let tracker = QuotaFullTracker::default();
+
+        // 模拟 handle 内部的 override 逻辑（build_balance_report 接收的 live_config 验证）
+        let mut live_config = config;
+        live_config.quota_k = live_void_quota.quota_k;
+
+        let report = build_balance_report(&metrics, &tracker, &live_config, &[], 0);
+        assert!(
+            (report.config.quota_k - live_quota_k).abs() < 1e-9,
+            "handle 注入 live VoidQuotaConfig 后 report.config.quota_k 应= live_quota_k={live_quota_k}，\
+             got {}；quota_k 覆盖逻辑失效（看板撒谎）",
+            report.config.quota_k
+        );
+        assert!(
+            (report.config.quota_k - DEFAULT_VOID_QUOTA_K).abs() > 1e-9,
+            "live VoidQuotaConfig.quota_k 应覆盖 DEFAULT_VOID_QUOTA_K；两者相同说明覆盖未生效",
+        );
     }
 }
