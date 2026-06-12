@@ -54,6 +54,12 @@ describe("AgentUiRequestCommandV1", () => {
     );
   });
 
+  it("happy path: realm_gate=6 化虚+ 专属（上限值，最高境界）", () => {
+    expect(Value.Check(AgentUiRequestCommandV1, { ...validCommand, realm_gate: 6 })).toBe(
+      true,
+    );
+  });
+
   it("happy path: allowed_button_ids 空数组（不门控任何按钮）", () => {
     expect(
       Value.Check(AgentUiRequestCommandV1, { ...validCommand, allowed_button_ids: [] }),
@@ -74,9 +80,9 @@ describe("AgentUiRequestCommandV1", () => {
     ).toBe(false);
   });
 
-  it("负样本: realm_gate=6 → 超出 maximum:5", () => {
+  it("负样本: realm_gate=7 → 超出 maximum:6", () => {
     expect(
-      Value.Check(AgentUiRequestCommandV1, { ...validCommand, realm_gate: 6 }),
+      Value.Check(AgentUiRequestCommandV1, { ...validCommand, realm_gate: 7 }),
     ).toBe(false);
   });
 

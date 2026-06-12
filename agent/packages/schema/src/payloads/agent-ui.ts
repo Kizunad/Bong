@@ -44,9 +44,9 @@ export const AgentUiRequestCommandV1 = Type.Object(
     /**
      * 境界门控（1-indexed realm rank）：
      *   0 = 不门控（任意境界可见）
-     *   1 = 醒灵+  2 = 引气+  3 = 凝脉+  4 = 固元+  5 = 通灵+
+     *   1 = 醒灵+  2 = 引气+  3 = 凝脉+  4 = 固元+  5 = 通灵+  6 = 化虚+（最高境界）
      */
-    realm_gate: Type.Integer({ minimum: 0, maximum: 5, default: 0 }),
+    realm_gate: Type.Integer({ minimum: 0, maximum: 6, default: 0 }),
     /**
      * 允许的按钮 ID 白名单，最多 16 条。
      * server 校验 button_click.params.button_id ∈ allowed_button_ids。

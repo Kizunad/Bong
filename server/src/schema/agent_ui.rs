@@ -42,17 +42,19 @@ pub struct AgentUiRequestCommandV1 {
     pub xml: String,
     /// 超时时间（ticks），范围 20..=2400，默认 600。
     pub timeout_ticks: u32,
-    /// 境界门控（1-indexed rank）：0=不门控，1=醒灵+，..，5=通灵+。
+    /// 境界门控（1-indexed rank）：0=不门控，1=醒灵+，2=引气+，3=凝脉+，4=固元+，5=通灵+，6=化虚+。
     pub realm_gate: u8,
     /// 允许的按钮 ID 白名单，最多 16 条。不下发给 client。
     pub allowed_button_ids: Vec<String>,
 }
 
 impl AgentUiRequestCommandV1 {
-    /// 校验：realm_gate ∈ [0,5] && allowed_button_ids.len() ≤ 16 && timeout_ticks ∈ [20,2400]
+    /// 校验：realm_gate ∈ [0,6] && allowed_button_ids.len() ≤ 16 && timeout_ticks ∈ [20,2400]
+    ///
+    /// realm_gate 范围：0=不门控，1=醒灵+，2=引气+，3=凝脉+，4=固元+，5=通灵+，6=化虚+（最高境界）。
     pub fn validate(&self) -> Result<(), String> {
-        if self.realm_gate > 5 {
-            return Err(format!("realm_gate={} 超出范围 0..=5", self.realm_gate));
+        if self.realm_gate > 6 {
+            return Err(format!("realm_gate={} 超出范围 0..=6", self.realm_gate));
         }
         if self.allowed_button_ids.len() > 16 {
             return Err(format!(
@@ -179,7 +181,8 @@ mod tests {
     }
 
     #[test]
-    fn agent_ui_request_command_realm_gate_six_rejected() {
+    fn agent_ui_request_command_realm_gate_six_passes() {
+        // 化虚=rank6 是最高境界，realm_gate=6 表示"仅化虚可见"，范围上限放宽到 6。
         let json = r#"{
             "request_id": "test",
             "target_player": "test",
@@ -189,12 +192,31 @@ mod tests {
             "allowed_button_ids": []
         }"#;
         let cmd: AgentUiRequestCommandV1 = serde_json::from_str(json).unwrap();
+        assert!(
+            cmd.validate().is_ok(),
+            "realm_gate=6（化虚+，上限值）应通过校验，实为：{:?}",
+            cmd.validate()
+        );
+    }
+
+    #[test]
+    fn agent_ui_request_command_realm_gate_seven_rejected() {
+        // 7 超出 0..=6，应被拒绝。
+        let json = r#"{
+            "request_id": "test",
+            "target_player": "test",
+            "xml": "x",
+            "timeout_ticks": 600,
+            "realm_gate": 7,
+            "allowed_button_ids": []
+        }"#;
+        let cmd: AgentUiRequestCommandV1 = serde_json::from_str(json).unwrap();
         let err = cmd
             .validate()
-            .expect_err("realm_gate=6 超出范围，应被 validate() 拒绝");
+            .expect_err("realm_gate=7 超出范围 0..=6，应被 validate() 拒绝");
         assert!(
-            err.contains("realm_gate=6"),
-            "错误信息应包含 realm_gate=6，实为：{err}"
+            err.contains("realm_gate=7"),
+            "错误信息应包含 realm_gate=7，实为：{err}"
         );
     }
 
