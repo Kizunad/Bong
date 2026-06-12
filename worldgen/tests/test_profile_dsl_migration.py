@@ -50,6 +50,7 @@ MIGRATED_PROFILES: tuple[tuple[str, str], ...] = (
     ("sky_isle", "scripts.terrain_gen.profiles.sky_isle"),
     ("waste_plateau", "scripts.terrain_gen.profiles.waste_plateau"),
     ("tribulation_scorch", "scripts.terrain_gen.profiles.tribulation_scorch"),
+    ("wangyintai", "scripts.terrain_gen.profiles.wangyintai"),
 )
 
 # 迁移后不应再裸 import 的低层 noise 函数（应改走 dsl 算子库封装）。
@@ -146,6 +147,48 @@ class AshDeadZoneInvariantTest(unittest.TestCase):
             0.0,
             "ash_dead_zone must have a dead core column with qi_density==0.0; "
             f"min qi_density={float(qi.min())} after migration",
+        )
+
+
+class WangyintaiNegativeQiInvariantTest(unittest.TestCase):
+    """忘音台负灵域不变量：DSL 迁移后 qi_density 必须仍写入负值（最易回归点）。
+
+    wangyintai 是 batch-2 唯一 NEGATIVE 档 profile（spirit_qi=-0.15）。DSL 迁移
+    若误把负 qi clamp 到 0 或取绝对值（常见错误），此 pin 立即撞红——锁住
+    §8.1 #4 negative 档 / qi_override 负值域路径。
+    """
+
+    def test_qi_density_field_carries_negative_values(self) -> None:
+        from v3_full_profile_baseline import build_full_profile_buffer
+
+        buffer = build_full_profile_buffer("wangyintai")
+        qi = np.asarray(buffer.layers["qi_density"])
+        self.assertLess(
+            float(qi.min()),
+            0.0,
+            "wangyintai must write a negative qi_density column (void resonance "
+            f"吞噬真元); min qi_density={float(qi.min())} >= 0 means the DSL "
+            "migration clamped/abs'd the negative qi field away",
+        )
+        # native 值域下界：忘音台实写 [-0.25, 0.0]（§8.1 #4 negative 档下边界 -0.1
+        # 之外的连续值，P4 qi_override 收口）。锁住绝不越出 -0.25 native 地板。
+        self.assertGreaterEqual(
+            float(qi.min()),
+            -0.25,
+            "wangyintai qi_density must stay within its authored [-0.25, 0.0] "
+            f"floor; min={float(qi.min())} drifted below -0.25",
+        )
+
+    def test_no_qi_vein_flow_layer(self) -> None:
+        # 涡流宗灵脉已断：wangyintai 不导出 qi_vein_flow 层（§profile 注释）。
+        from v3_full_profile_baseline import build_full_profile_buffer
+
+        buffer = build_full_profile_buffer("wangyintai")
+        self.assertNotIn(
+            "qi_vein_flow",
+            buffer.layers,
+            "wangyintai must NOT emit a qi_vein_flow layer (涡流宗灵脉已断); "
+            "DSL migration leaked a vein flow layer",
         )
 
 

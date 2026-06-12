@@ -15,10 +15,16 @@ from __future__ import annotations
 
 import numpy as np
 
+from .. import dsl
 from ..blueprint import BlueprintZone
+from ..dsl import QiGrade
 from ..fields import SurfacePalette, TileFieldBuffer, WorldTile
-from ..noise import _tile_coords, fbm_2d, warped_fbm_2d
+from ..noise import _tile_coords
 from .base import DecorationSpec, EcologySpec, ProfileContext, TerrainProfileGenerator
+
+# §8.1 #4 — 忘音台：涡流宗负灵域（spirit_qi=-0.15，qi_density∈[-0.25,0]）归 negative 档。
+# 灵脉已断（无 qi_vein_flow 层），千年虚蚀吞噬真元。
+QI_GRADE = QiGrade.NEGATIVE
 
 
 WANGYINTAI_DECORATIONS = (
@@ -112,15 +118,16 @@ def fill_wangyintai_tile(
 
     wx, wz = _tile_coords(tile.min_x, tile.min_z, tile_size)
 
-    # Edge warp for organic zone boundary
-    edge_warp = 1.0 + fbm_2d(wx, wz, scale=500.0, octaves=3, seed=2200) * 0.12
+    # Edge warp for organic zone boundary（DSL fbm_height / warped_height，
+    # amplitude=1=裸噪声）。
+    edge_warp = 1.0 + dsl.fbm_height(wx, wz, scale=500.0, octaves=3, seed=2200) * 0.12
     dx = (wx - center_x) / (half_w * edge_warp)
     dz = (wz - center_z) / (half_d * edge_warp)
     radial = np.sqrt(dx * dx + dz * dz)
     interior = radial <= 1.0
 
     # Noise layers
-    terrain_noise = warped_fbm_2d(
+    terrain_noise = dsl.warped_height(
         wx,
         wz,
         scale=350.0,
@@ -129,7 +136,7 @@ def fill_wangyintai_tile(
         warp_strength=30.0,
         seed=2210,
     )
-    detail_noise = fbm_2d(wx, wz, scale=90.0, octaves=3, seed=2220)
+    detail_noise = dsl.fbm_height(wx, wz, scale=90.0, octaves=3, seed=2220)
 
     # Height field: base [68,86], peak 98
     height_base = 77.0 + terrain_noise * 7.0 + detail_noise * 2.0
@@ -140,7 +147,7 @@ def fill_wangyintai_tile(
     )
 
     # Surface: smooth_basalt dominant with vitrified stone patterns
-    vitrify_noise = fbm_2d(wx, wz, scale=100.0, octaves=3, seed=2230)
+    vitrify_noise = dsl.fbm_height(wx, wz, scale=100.0, octaves=3, seed=2230)
     surface_id = np.full_like(height, smooth_basalt_id, dtype=np.int32)
     surface_id = np.where(vitrify_noise > 0.25, deepslate_id, surface_id)
     surface_id = np.where(vitrify_noise < -0.20, calcite_id, surface_id)
@@ -163,7 +170,7 @@ def fill_wangyintai_tile(
     flora_variant = np.zeros_like(height, dtype=np.int32)
 
     # Variant 1 = silent_rubble (more common, outer zone debris)
-    rubble_noise = fbm_2d(wx, wz, scale=110.0, octaves=3, seed=2240)
+    rubble_noise = dsl.fbm_height(wx, wz, scale=110.0, octaves=3, seed=2240)
     rubble_mask = interior & (rubble_noise > 0.0) & (radial > 0.25)
     flora_variant = np.where(rubble_mask, 1, flora_variant)
     flora_density = np.where(
@@ -171,7 +178,7 @@ def fill_wangyintai_tile(
     )
 
     # Variant 2 = cracked_disc_fragment (rarer, closer to center)
-    disc_noise = fbm_2d(wx, wz, scale=140.0, octaves=2, seed=2250)
+    disc_noise = dsl.fbm_height(wx, wz, scale=140.0, octaves=2, seed=2250)
     disc_mask = interior & (disc_noise > 0.20) & (radial < 0.70)
     flora_variant = np.where(disc_mask, 2, flora_variant)
     flora_density = np.where(
