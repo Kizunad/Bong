@@ -562,6 +562,22 @@ def _encode_heightmap_from_spans(
 
 
 def _validate_spans_grid(spans_grid: list[list[list[tuple[int, int]]]]) -> None:
+    """Validate a 16x16 raw spans grid against what the renderer actually consumes.
+
+    The renderer reads spans in **raw order**: ``_block_at_in_spans`` fills every
+    span (solidity is order-independent) and ``_column_surface_y`` privileges
+    ``spans[0]`` as the walkable surface (§8.1 #2).  Per the ``ColumnSpans`` spec
+    (fields.py), ``spans[0]`` is the surface *by convention* — it need not be the
+    geometrically lowest segment (a carved cave remnant may sit below it, a
+    sky-isle above), so validation must NOT impose a positional ordering on it.
+
+    To keep validation and consumption in the same idiom we:
+      1. check per-span bounds / ``floor <= ceiling`` in **raw order** (the order
+         the renderer iterates), so the failing span index matches what fills;
+      2. check pairwise non-overlap with an air gap — this is an order-independent
+         invariant, so a ``sorted`` view is the only correct way to verify it and
+         the sort here carries no surface-ordering meaning.
+    """
     if len(spans_grid) != CHUNK_WIDTH:
         raise ValueError(
             f"spans_grid 必须 {CHUNK_WIDTH}x{CHUNK_WIDTH}，外层 row 数 {len(spans_grid)}"
@@ -570,8 +586,8 @@ def _validate_spans_grid(spans_grid: list[list[list[tuple[int, int]]]]) -> None:
         if len(row) != CHUNK_WIDTH:
             raise ValueError(f"spans_grid[{z}] 长度必须 {CHUNK_WIDTH}，实际 {len(row)}")
         for x, spans in enumerate(row):
-            prev_ceiling: int | None = None
-            for floor_y, ceiling_y in sorted(spans):
+            # Pass 1 — per-span bounds / floor<=ceiling in the consumer's raw order.
+            for floor_y, ceiling_y in spans:
                 if floor_y < WORLD_MIN_Y or ceiling_y >= WORLD_MAX_Y:
                     raise ValueError(
                         f"spans_grid[{z}][{x}] span ({floor_y},{ceiling_y}) 超出 "
@@ -581,6 +597,10 @@ def _validate_spans_grid(spans_grid: list[list[list[tuple[int, int]]]]) -> None:
                     raise ValueError(
                         f"spans_grid[{z}][{x}] floor_y={floor_y} > ceiling_y={ceiling_y}"
                     )
+            # Pass 2 — pairwise non-overlap with an air gap (order-independent).
+            ordered = sorted(spans)
+            prev_ceiling: int | None = None
+            for floor_y, ceiling_y in ordered:
                 if prev_ceiling is not None and floor_y <= prev_ceiling + 1:
                     raise ValueError(
                         f"spans_grid[{z}][{x}] 段重叠/相邻: floor_y={floor_y} "

@@ -173,6 +173,42 @@ class AnvilSpansValidationTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "floor_y=50 > ceiling_y=10"):
             ax.chunk_to_nbt_from_spans(0, 0, grid)
 
+    def test_overlap_rejected_regardless_of_raw_order(self) -> None:
+        # Non-overlap is an order-independent invariant — validation uses a sorted
+        # view to verify it, so the SAME overlapping pair is rejected whether the
+        # producer lists it ascending or descending.  Pins that the sort in
+        # validation is purely for the overlap check, not a surface ordering.
+        for raw in ([(-64, 50), (40, 72)], [(40, 72), (-64, 50)]):
+            with self.assertRaisesRegex(
+                ValueError, "段重叠",
+                msg=f"overlapping pair {raw} must be rejected in any raw order",
+            ):
+                ax.chunk_to_nbt_from_spans(0, 0, uniform_spans(raw))
+
+    def test_validation_and_render_agree_on_surface_above_remnant(self) -> None:
+        # §8.1 #2 / ColumnSpans spec: spans[0] is the surface BY CONVENTION and may
+        # sit ABOVE a carved-below remnant — it need not be the lowest segment.
+        # Validation must accept it (no false geometric-order rejection) AND the
+        # renderer must read the surface from raw spans[0] — same idiom both sides.
+        spans = uniform_spans([(60, 64), (-64, 30)])  # surface cap above remnant
+        chunk = parse_nbt(ax.chunk_to_nbt_from_spans(0, 0, spans))  # must not raise
+        self.assertEqual(
+            block_at(chunk, 0, 64, 0), "minecraft:grass_block",
+            "renderer reads surface from raw spans[0].ceiling=64 (the cap), so "
+            "top_block lands at 64 — validation accepted the same raw layout",
+        )
+        self.assertEqual(
+            block_at(chunk, 0, 30, 0), "minecraft:stone",
+            "lower remnant top = filler, NOT a second surface",
+        )
+
+    def test_malformed_span_at_nonzero_index_rejected_in_raw_order(self) -> None:
+        # Pass 1 iterates raw order: a bad span at index 1 (not [0]) is still
+        # caught, and the reported index matches what the renderer would fill.
+        grid = uniform_spans([(-64, 40), (50, 10)])  # second span floor>ceiling
+        with self.assertRaisesRegex(ValueError, "floor_y=50 > ceiling_y=10"):
+            ax.chunk_to_nbt_from_spans(0, 0, grid)
+
 
 class AnvilSpansCompressedTest(unittest.TestCase):
     def test_compressed_round_trips(self) -> None:
