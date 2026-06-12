@@ -34,10 +34,13 @@ public class UiOpenStateTest {
 
     @Test
     void rawXmlStaysDisabledByDefaultAndRejectsUnsafeContent() {
-        UiOpenState defaultDisabled = UiOpenState.dynamicXml("cultivation_panel", "<flow-layout/> ");
+        // plan-agent-ui-data-v1 P1: ENABLE_DYNAMIC_XML_UI 已设为 true；
+        // 用显式 enabled=false 参数验证"关闭"分支行为仍正确（2-arg 变体已反映新默认值）。
+        UiOpenState explicitlyDisabled = UiOpenState.dynamicXml("cultivation_panel", "<flow-layout/> ", false);
         UiOpenState unsafe = UiOpenState.dynamicXml("cultivation_panel", "<!DOCTYPE foo><flow-layout/>", true);
 
-        assertTrue(defaultDisabled.isEmpty(), "dynamic XML should be blocked by the default feature flag");
+        assertTrue(explicitlyDisabled.isEmpty(),
+            "enabled=false 时 dynamicXml 应返回 empty，实际非空（2026 P1）");
         assertTrue(unsafe.isEmpty());
     }
 

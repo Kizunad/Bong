@@ -1319,6 +1319,38 @@ public final class ClientRequestProtocol {
         return obj.toString();
     }
 
+    // ─── plan-agent-ui-data-v1 P1：天道 UI 响应 C2S ─────────────────────────
+
+    /**
+     * plan-agent-ui-data-v1 P1 — 玩家与天道 UI 面板交互后向 server 发送响应。
+     *
+     * <p>消息形状：{@code {"type":"agent_ui_response","v":1,"request_id":"...","action":"...","params":{...}}}。</p>
+     *
+     * @param requestId  server 下发的 request_id，必须非空
+     * @param action     动作字面量（如 "button_click" / "dismissed" / "parse_error"）
+     * @param params     附加参数（如 button_click 时的 {@code {"button_id":"enter_realm"}}）；空 map 合法
+     * @throws IllegalArgumentException 若 requestId 或 action 为空
+     */
+    public static String encodeAgentUiResponse(
+        String requestId,
+        String action,
+        java.util.Map<String, String> params
+    ) {
+        requireNonBlank(requestId, "requestId");
+        requireNonBlank(action, "action");
+        JsonObject obj = envelope("agent_ui_response");
+        obj.addProperty("request_id", requestId);
+        obj.addProperty("action", action);
+        JsonObject paramsObj = new JsonObject();
+        if (params != null) {
+            for (var entry : params.entrySet()) {
+                paramsObj.addProperty(entry.getKey(), entry.getValue());
+            }
+        }
+        obj.add("params", paramsObj);
+        return obj.toString();
+    }
+
     private static String requireNonBlank(String value, String field) {
         if (value == null || value.isBlank()) {
             throw new IllegalArgumentException(field + " must not be blank");

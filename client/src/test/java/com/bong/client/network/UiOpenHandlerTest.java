@@ -97,13 +97,19 @@ public class UiOpenHandlerTest {
 
     @Test
     void rawXmlStaysBlockedWhenFeatureFlagIsDisabled() throws IOException {
+        // plan-agent-ui-data-v1 P1: BongClientFeatures.ENABLE_DYNAMIC_XML_UI 已启用。
+        // 使用显式 dynamicXmlEnabled=false 构造验证"关闭"分支仍拒绝 raw XML。
         String json = PayloadFixtureLoader.readText("valid-ui-open-xml-disabled.json");
+        UiOpenHandler handlerWithXmlDisabled = new UiOpenHandler(true, false);
 
-        ServerDataDispatch dispatch = defaultHandler.handle(parseEnvelope(json));
+        ServerDataDispatch dispatch = handlerWithXmlDisabled.handle(parseEnvelope(json));
 
-        assertFalse(dispatch.handled());
-        assertTrue(dispatch.uiOpenState().isEmpty());
-        assertTrue(dispatch.logMessage().contains("dynamic XML is disabled"));
+        assertFalse(dispatch.handled(),
+            "dynamicXmlEnabled=false 时 raw XML 应被拒绝（handled=false），实际=" + dispatch.handled());
+        assertTrue(dispatch.uiOpenState().isEmpty(),
+            "dynamicXmlEnabled=false 时 uiOpenState 应为空");
+        assertTrue(dispatch.logMessage().contains("dynamic XML is disabled"),
+            "拒绝消息应含 'dynamic XML is disabled'，实际=" + dispatch.logMessage());
     }
 
     @Test
@@ -138,12 +144,18 @@ public class UiOpenHandlerTest {
 
     @Test
     void rejectsOverlongRawXmlByStringLengthBeforeParsingIntoUiModel() throws IOException {
+        // plan-agent-ui-data-v1 P1: MAX_XML_LAYOUT_BYTES = MAX_XML_LAYOUT_CHARACTERS = 8192。
+        // 字节上限检查在字符长度检查前运行；超长 XML（>8192B）触发字节超限拒绝（"exceeds max supported size"）。
+        // 两个检查都保护同一上限，字节检查先命中。
         ServerDataDispatch dispatch = new UiOpenHandler(true, true)
             .handle(parseEnvelope(PayloadFixtureLoader.readText("invalid-ui-open-overlong-xml.json")));
 
-        assertFalse(dispatch.handled());
-        assertTrue(dispatch.uiOpenState().isEmpty());
-        assertTrue(dispatch.logMessage().contains("exceeds max supported length"));
+        assertFalse(dispatch.handled(),
+            "超长 XML 应被拒绝（handled=false），实际=" + dispatch.handled());
+        assertTrue(dispatch.uiOpenState().isEmpty(),
+            "超长 XML 拒绝后 uiOpenState 应为空");
+        assertTrue(dispatch.logMessage().contains("exceeds max supported"),
+            "拒绝消息应含 'exceeds max supported'（字节或长度检查均命中），实际=" + dispatch.logMessage());
     }
 
     @Test
