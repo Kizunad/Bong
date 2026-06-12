@@ -1,0 +1,11 @@
+{
+  "id": "trip_wire_trigger",
+  "layers": [
+    { "sound": "minecraft:block.tripwire.click_on", "volume": 0.55, "pitch": 0.95, "delay_ticks": 0 },
+    { "sound": "minecraft:block.note_block.hat", "volume": 0.25, "pitch": 1.35, "delay_ticks": 1 }
+  ],
+  "priority": 55,
+  "attenuation": "world_3d",
+  "category": "BLOCKS",
+  "bus": "ENVIRONMENT"
+}
