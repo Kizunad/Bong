@@ -210,12 +210,25 @@ def create_app(
         )
         plan.bake_plan = build_raster_bake_plan(plan, output_dir)
         fields = synthesize_fields(plan, zone_filter={req.zone_name})
-        rewritten = regen_zone(
-            plan,
-            fields,
-            req.zone_name,
-            layer_whitelist=regen_whitelist,
-        )
+        try:
+            rewritten = regen_zone(
+                plan,
+                fields,
+                req.zone_name,
+                layer_whitelist=regen_whitelist,
+            )
+        except FileNotFoundError as exc:
+            # No prior full bake → manifest.json is absent. Incremental regen has
+            # nothing to patch; the operator must run the pipeline once first.
+            # Surface this as 503 (service not yet ready), never a 500 traceback.
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "no baked world yet — run "
+                    "`python -m scripts.terrain_gen --backend raster` once before "
+                    f"regenerating a zone ({exc})"
+                ),
+            ) from exc
         return {
             "zone_name": req.zone_name,
             "rewritten_tiles": rewritten,

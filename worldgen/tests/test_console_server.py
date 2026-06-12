@@ -417,6 +417,63 @@ def test_regen_unknown_zone_returns_400(client: TestClient) -> None:
     assert "no_such_zone" in resp.json()["detail"]
 
 
+def test_regen_missing_zone_name_returns_422(client: TestClient) -> None:
+    # The pydantic body model requires zone_name; omitting it is a request schema
+    # error → FastAPI 422 (validation), never a 500.
+    resp = client.post("/api/regen", json={})
+    assert resp.status_code == 422, (
+        "POST /api/regen without zone_name must be a 422 (missing required field), "
+        f"got {resp.status_code}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# No-bake-yet: manifest.json absent (first run, before any pipeline bake)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def unbaked_client(tmp_path) -> TestClient:
+    """A console app pointed at an empty rasters dir (no manifest.json yet)."""
+    blueprint_path = tmp_path / "bp.json"
+    blueprint_path.write_text(json.dumps(_TINY_BLUEPRINT), encoding="utf-8")
+    output_dir = tmp_path / "out"
+    rasters_dir = output_dir / "rasters"
+    rasters_dir.mkdir(parents=True)  # exists but holds no manifest.json
+    app = create_app(
+        rasters_dir,
+        blueprint_path=blueprint_path,
+        profiles_path=PROFILES_PATH,
+        tile_size=TILE_SIZE,
+        output_dir=output_dir,
+    )
+    return TestClient(app)
+
+
+def test_manifest_missing_returns_503(unbaked_client: TestClient) -> None:
+    resp = unbaked_client.get("/api/manifest")
+    assert resp.status_code == 503, (
+        "GET /api/manifest before any bake must be a 503 (run pipeline first), "
+        f"not a 500/404; got {resp.status_code}"
+    )
+    assert "manifest not found" in resp.json()["detail"]
+
+
+def test_regen_before_any_bake_returns_503(unbaked_client: TestClient) -> None:
+    # regen_zone raises FileNotFoundError when manifest.json is absent (no prior
+    # full bake). post_regen must translate that into a 503, never an uncaught
+    # 500 traceback.
+    resp = unbaked_client.post("/api/regen", json={"zone_name": "peaks"})
+    assert resp.status_code == 503, (
+        "POST /api/regen before any full bake must be a 503 (manifest missing), "
+        f"not a 500 traceback; got {resp.status_code}"
+    )
+    detail = resp.json()["detail"]
+    assert "no baked world yet" in detail or "manifest" in detail, (
+        f"503 detail must point the operator at running the pipeline; got: {detail}"
+    )
+
+
 def test_regen_is_byte_identical_to_full_bake(tmp_path) -> None:
     """Incremental regen of a zone must produce the same bytes as a full bake.
 
