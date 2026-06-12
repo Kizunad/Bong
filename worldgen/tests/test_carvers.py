@@ -860,5 +860,39 @@ class CarverRegistryTest(unittest.TestCase):
         self.assertIn("available", str(cm.exception))
 
 
+class CarverSpecFreezeTest(unittest.TestCase):
+    """CodeRabbit profiles/base.py:74 — CarverSpec.params must be immutable."""
+
+    def test_params_are_frozen_against_runtime_mutation(self) -> None:
+        from scripts.terrain_gen.profiles.base import CarverSpec
+
+        spec = CarverSpec(kind="canyon", params={"void_height": 12})
+        with self.assertRaises(TypeError):
+            spec.params["void_height"] = 99  # type: ignore[index]
+        with self.assertRaises(TypeError):
+            spec.params["new_key"] = 1  # type: ignore[index]
+
+    def test_params_copy_decouples_from_source_dict(self) -> None:
+        # Mutating the dict the caller passed in must NOT leak into the spec —
+        # the spec snapshots its own copy at construction.
+        from scripts.terrain_gen.profiles.base import CarverSpec
+
+        source = {"void_height": 12}
+        spec = CarverSpec(kind="canyon", params=source)
+        source["void_height"] = 999
+        self.assertEqual(
+            dict(spec.params), {"void_height": 12},
+            "the spec must snapshot params, not alias the caller's dict",
+        )
+
+    def test_frozen_params_still_build_a_carver(self) -> None:
+        from scripts.terrain_gen.profiles.base import CarverSpec
+
+        spec = CarverSpec(kind="canyon", params={"void_height": 20})
+        carver = build_carver(spec.kind, spec.params)
+        self.assertIsInstance(carver, CanyonCarver)
+        self.assertEqual(carver.void_height, 20)
+
+
 if __name__ == "__main__":
     unittest.main()

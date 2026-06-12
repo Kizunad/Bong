@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Any, Mapping
 
 from ..blueprint import BlueprintZone, TerrainProfileSpec
@@ -64,13 +65,24 @@ class CarverSpec:
     new raster layer (§8.1 #1/#12).
 
     Declared on the profile (not the blueprint) so the carve chain lives next to
-    the surface logic it sculpts and is versioned with it.  ``params`` is frozen
-    via tuple-ization at the call site (dicts are passed by value to the
-    constructor) — the dataclass stays hashable-friendly by storing a Mapping.
+    the surface logic it sculpts and is versioned with it.
+
+    ``params`` is wrapped in a read-only ``MappingProxyType`` at construction so a
+    spec declared as a **class-level constant** (the common case — profiles list
+    their carvers in a class attribute) cannot have its params dict mutated at
+    runtime by a downstream consumer (``build_carver`` reads them per export).
+    Without this freeze, one export run popping/editing the shared dict would
+    silently corrupt the chain for every subsequent run in the same process.
     """
 
     kind: str
     params: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        # frozen=True ⇒ must bypass the field assignment guard to re-wrap.
+        object.__setattr__(
+            self, "params", MappingProxyType(dict(self.params))
+        )
 
 
 @dataclass(frozen=True)
