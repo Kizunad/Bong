@@ -502,17 +502,84 @@ class CarveOpsTest(unittest.TestCase):
         carved = dsl.neg_pressure_carve(h, neg_pressure=neg)
         self.assertTrue(np.allclose(carved, 90.0))
 
-    def test_snowline_split_picks_per_height(self) -> None:
+    def test_carve_chain_rejects_surface_op(self) -> None:
+        # A surface op (snowline_split) returns block IDs, not a height field; if
+        # it ever ran in a carve chain it would replace the height field with the
+        # block-ID constants and destroy the geometry. evaluate_carve_ops must
+        # reject any non-carve step at eval time, not silently corrupt height.
+        h = np.full_like(self.wx, 80.0)
+        with self.assertRaises(ValueError) as ctx:
+            dsl.evaluate_carve_ops(
+                [
+                    dsl.OpStep(
+                        "surface",
+                        "snowline_split",
+                        {"snowline_y": 285.0, "below_value": 1.0, "above_value": 2.0},
+                    )
+                ],
+                h,
+                fields={},
+            )
+        self.assertIn("carve", str(ctx.exception))
+
+
+# ===========================================================================
+# surface ops 饱和（按高度阈值出块 ID —— 不改高度场）
+# ===========================================================================
+
+
+class SurfaceOpsTest(unittest.TestCase):
+    def test_snowline_split_picks_block_id_per_height(self) -> None:
+        # snowline_split is a SURFACE selector: its first positional arg is the
+        # height field used as the THRESHOLD criterion; it returns block-ID
+        # constants (above/below), never a modified height. Mirrors broken_peaks
+        # `surface_id = np.where(height > SNOW_LINE_Y, snow_id, surface_id)`.
         h = np.array([[100.0, 300.0]])
         out = dsl.snowline_split(
-            np.zeros_like(h),
-            height=h,
+            h,
             snowline_y=285.0,
             below_value=1.0,
             above_value=2.0,
         )
-        self.assertEqual(out[0, 0], 1.0, "below snowline → below_value")
-        self.assertEqual(out[0, 1], 2.0, "above snowline → above_value")
+        self.assertEqual(out[0, 0], 1.0, "below snowline → below_value block id")
+        self.assertEqual(out[0, 1], 2.0, "above snowline → above_value block id")
+
+    def test_snowline_split_threshold_is_inclusive_at_snowline(self) -> None:
+        # height == snowline_y must take the ABOVE value (>= boundary), so the
+        # snowline pixel itself is snow, not the below block.
+        h = np.array([[284.0, 285.0, 286.0]])
+        out = dsl.snowline_split(
+            h, snowline_y=285.0, below_value=10.0, above_value=20.0
+        )
+        self.assertEqual(out[0, 0], 10.0, "strictly below snowline → below_value")
+        self.assertEqual(
+            out[0, 1], 20.0, "exactly at snowline (>=) → above_value (inclusive)"
+        )
+        self.assertEqual(out[0, 2], 20.0, "above snowline → above_value")
+
+    def test_snowline_split_does_not_modify_height(self) -> None:
+        # The output is a block-ID field, distinct from the input height — proves
+        # it is a selector, not a height modifier (the latent-bug guard).
+        h = np.full((4, 4), 90.0)
+        out = dsl.snowline_split(
+            h, snowline_y=285.0, below_value=3.0, above_value=7.0
+        )
+        self.assertTrue(
+            np.all(out == 3.0),
+            "all columns below snowline → uniform below block id, not the height",
+        )
+        self.assertFalse(
+            np.array_equal(out, h),
+            "snowline_split must NOT echo the height field; it returns block ids",
+        )
+
+    def test_snowline_split_registered_under_surface_not_carve(self) -> None:
+        # Pin the reclassification: snowline_split is a surface op, never a carve.
+        self.assertIs(
+            dsl.resolve_op("surface", "snowline_split"), dsl.snowline_split
+        )
+        with self.assertRaises(KeyError):
+            dsl.resolve_op("carve", "snowline_split")
 
 
 # ===========================================================================

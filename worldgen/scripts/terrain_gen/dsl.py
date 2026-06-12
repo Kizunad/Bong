@@ -2,10 +2,11 @@
 
 P2 目标：把 20 个手写 numpy profile 重写为**声明式 DSL 组合**。这个模块提供：
 
-1. **算子库** —— 从 Scout 归纳的 profile 共性抽取的可复用原语，分四类：
+1. **算子库** —— 从 Scout 归纳的 profile 共性抽取的可复用原语，分五类：
      * height ops  —— 基底高度场（fbm / ridge / warped / radial 隆起 / 轴向剖面）
      * mask ops    —— 掩码（radial / 同心带 / 轴向 SDF / 锚点 SDF / 模数网格散点）
-     * carve ops   —— 雕刻器（rift / fracture / neg_pressure / 雪线分段）
+     * carve ops   —— 雕刻器（rift / fracture / neg_pressure）—— **改高度场**
+     * surface ops —— 表面块选择（按高度阈值选块，如雪线分块）—— **不改高度，出块 ID**
      * scatter ops —— 散布（noise band 选变种 / anomaly argmax 竞争）
    每个算子是纯函数（输入 numpy 场 → 输出 numpy 场），可独立单测。
 
@@ -375,7 +376,7 @@ def modulo_grid_scatter(
     return (gx & gz).astype(np.float64)
 
 
-# --- carve ops：雕刻器（高度场上的减法 / 分段）-------------------------------
+# --- carve ops：雕刻器（高度场上的减法）— 输入 height → 输出**改后的 height** ----
 
 
 def rift_carve(
@@ -429,17 +430,29 @@ def neg_pressure_carve(
     )
 
 
+# --- surface ops：表面块选择（按字段阈值出块 ID）—— **不改高度场** ------------
+#
+# carve op 拿 height 还回**改后的 height**；surface op 拿 height 还回**块 ID 场**。
+# 两者签名都以 height 为首参，但语义正交：surface op 永远不能进 carve 链（否则会把
+# 高度场替换成块 ID 常量，毁掉几何）。故单列一类，evaluate_carve_ops 不解析它。
+
+
 def snowline_split(
-    field: np.ndarray,
-    *,
     height: np.ndarray,
+    *,
     snowline_y: float,
     below_value: float,
     above_value: float,
 ) -> np.ndarray:
-    """雪线分段：height >= snowline 取 above_value，否则 below_value。
+    """雪线分块（surface op）：height >= snowline 出 above_value 块 ID，否则 below_value。
 
-    覆盖 broken_peaks 的雪线 285m surface 分段（也可复用为任意高度阈值的两段赋值）。
+    **这是表面块选择器，不是 carve**——输入高度场，输出**块 ID 场**（不修改高度）。
+    覆盖 broken_peaks 的雪线 285m surface 分段
+    （``surface_id = np.where(height > SNOW_LINE_Y, snow_id, surface_id)`` 同语义），
+    也可复用为任意高度阈值的两段块赋值。
+
+    above/below 是块 ID 常量；首参 ``height`` 是判据高度场而非待修改的高度——
+    与 carve op "改 height" 的语义正交，故归 ``surface`` 类，不入 carve 链。
     """
     return np.where(height >= snowline_y, above_value, below_value)
 
@@ -514,6 +527,8 @@ _BUILTIN_OPS: dict[str, dict[str, OpFn]] = {
         "rift_carve": rift_carve,
         "fracture_carve": fracture_carve,
         "neg_pressure_carve": neg_pressure_carve,
+    },
+    "surface": {
         "snowline_split": snowline_split,
     },
     "scatter": {
@@ -848,9 +863,20 @@ def evaluate_carve_ops(
     carve op 的非 (wx,wz) 输入（rift_axis_sdf / fracture_mask / neg_pressure ...）
     从 ``fields`` 取。每个 carve op 的 params 给标量参数（threshold/strength），
     其 mask/sdf ndarray 入参由 op params 里的字符串 ``"field:<name>"`` 引用解析。
+
+    **只接受 ``carve``（及 ``custom:``）类算子**：carve op 拿 height 还回改后的
+    height；混进 surface op（出块 ID）会把高度场替换成块 ID 常量、毁掉几何，故在此
+    显式拒绝非 carve 类步骤。
     """
     out = np.asarray(height, dtype=np.float64)
     for step in steps:
+        if step.category != "carve" and not step.op.startswith(CUSTOM_OP_PREFIX):
+            raise ValueError(
+                f"evaluate_carve_ops only accepts carve ops; step "
+                f"{step.category}:{step.op} modifies the height field but its "
+                f"category is {step.category!r} (surface/mask/scatter ops do not "
+                "return a height field and must not run in a carve chain)"
+            )
         fn = resolve_op(step.category, step.op)
         _control, kwargs = _split_op_params(step.params)
         resolved = _resolve_field_refs(kwargs, fields)
