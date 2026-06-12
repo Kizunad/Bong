@@ -618,6 +618,7 @@ pub fn register(app: &mut App) {
     app.add_event::<NetworkArrayDeployEvent>();
     app.add_event::<ArrayDecayEvent>();
     app.add_event::<ArrayBreakthroughEvent>();
+    app.add_event::<AttackIntent>();
     app.add_event::<QiTransfer>();
     app.add_systems(
         Update,
