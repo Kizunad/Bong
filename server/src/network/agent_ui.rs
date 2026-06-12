@@ -18,15 +18,18 @@ use std::collections::HashMap;
 
 use valence::prelude::{
     bevy_ecs, Client, Entity, Event, EventReader, Query, RemovedComponents, Res, ResMut, Resource,
-    With,
+    Username, With,
 };
 
+use super::agent_bridge::{payload_type_label, serialize_server_data_payload};
 use super::redis_bridge::RedisOutbound;
-use super::RedisBridgeResource;
+use super::{log_payload_build_error, send_server_data_payload, RedisBridgeResource};
 use crate::cultivation::components::Cultivation;
 use crate::schema::agent_ui::{
-    AgentUiActionType, AgentUiRequestCommandV1, AgentUiResponsePayloadV1,
+    AgentUiActionType, AgentUiClosePayloadV1, AgentUiRequestCommandV1, AgentUiRequestPayloadV1,
+    AgentUiResponsePayloadV1,
 };
+use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 
 // ─── 公开事件 ────────────────────────────────────────────────────────────────
 
@@ -138,6 +141,8 @@ pub enum XmlSanitizeError {
     TooDeep,
     /// 节点数超出 64（防御宽度炸弹）。
     TooManyNodes,
+    /// 检测到非白名单标签（仅允许 label/button/flow-layout/grid-layout/texture）。
+    NonWhitelistedTag(String),
 }
 
 impl std::fmt::Display for XmlSanitizeError {
@@ -149,6 +154,9 @@ impl std::fmt::Display for XmlSanitizeError {
             }
             XmlSanitizeError::TooDeep => write!(f, "xml depth exceeds limit 6"),
             XmlSanitizeError::TooManyNodes => write!(f, "xml node count exceeds limit 64"),
+            XmlSanitizeError::NonWhitelistedTag(tag) => {
+                write!(f, "xml contains non-whitelisted tag: <{tag}>")
+            }
         }
     }
 }
@@ -230,7 +238,7 @@ pub fn xml_sanitize(xml: &str) -> Result<String, XmlSanitizeError> {
             // 校验白名单（忽略空 tag_name 防止越界）
             if !tag_name.is_empty() && !is_allowed_tag(tag_name) {
                 // 非白名单标签 → 拒绝整个 xml（与 TypeBox 层的 additionalProperties 对称）
-                return Err(XmlSanitizeError::DoctypeOrEntity);
+                return Err(XmlSanitizeError::NonWhitelistedTag(tag_name.to_string()));
             }
 
             // 节点计数
@@ -262,25 +270,26 @@ pub fn xml_sanitize(xml: &str) -> Result<String, XmlSanitizeError> {
 
 /// 接收 `AgentUiCmdEvent`（由 `process_redis_inbound` 在 mod.rs 中 emit），
 /// 进行 cmd 合法性校验 + 境界门控 + XML 清洗 + session 管理，
-/// 并通过 Redis 发送 error response（session 创建后 P1+ 会向 client 推 S2C）。
+/// 并向 client 推送 `ServerDataPayloadV1::AgentUiRequest`；
+/// 替换旧 session 时向 client 推 `AgentUiClose` 并向 Redis 发 `Replaced` response。
 pub fn receive_agent_ui_cmd_system(
     mut cmd_events: EventReader<AgentUiCmdEvent>,
     mut store: ResMut<AgentUiSessionStore>,
-    clients: Query<(Entity, &Cultivation, &valence::prelude::Username), With<Client>>,
+    mut clients: Query<(Entity, &Cultivation, &Username, &mut Client), With<Client>>,
     tick_resource: Option<Res<CurrentTickResource>>,
     redis: Res<RedisBridgeResource>,
 ) {
     let current_tick = tick_resource.as_ref().map(|r| r.0).unwrap_or(0);
 
     for AgentUiCmdEvent(cmd) in cmd_events.read() {
-        process_agent_ui_cmd(cmd, &mut store, &clients, current_tick, &redis);
+        process_agent_ui_cmd(cmd, &mut store, &mut clients, current_tick, &redis);
     }
 }
 
 fn process_agent_ui_cmd(
     cmd: &AgentUiRequestCommandV1,
     store: &mut AgentUiSessionStore,
-    clients: &Query<(Entity, &Cultivation, &valence::prelude::Username), With<Client>>,
+    clients: &mut Query<(Entity, &Cultivation, &Username, &mut Client), With<Client>>,
     current_tick: u64,
     redis: &RedisBridgeResource,
 ) {
@@ -301,8 +310,8 @@ fn process_agent_ui_cmd(
     // 2. 找目标玩家（target_player = username）
     let player_info: Option<(Entity, u8)> = clients
         .iter()
-        .find(|(_, _, username)| username.0 == cmd.target_player)
-        .map(|(entity, cult, _)| (entity, cult.realm.rank()));
+        .find(|(_, _, username, _)| username.0 == cmd.target_player)
+        .map(|(entity, cult, _, _)| (entity, cult.realm.rank()));
 
     // 3. 离线拒绝
     if player_info.is_none() {
@@ -378,14 +387,86 @@ fn process_agent_ui_cmd(
             "[bong][agent_ui] replacing old session request_id={}",
             old.request_id
         );
-        // P1: push ServerDataPayloadV1::AgentUiClose({ request_id: old.request_id, reason: None })
+        // Replaced 终态：向 Redis 发 replaced response（agent uiResponseConsumer.ts:196）
+        let replaced_resp = AgentUiResponsePayloadV1 {
+            request_id: old.request_id.clone(),
+            action: AgentUiActionType::Replaced,
+            params: HashMap::new(),
+        };
+        let _ = redis
+            .tx_outbound
+            .send(RedisOutbound::AgentUiResponse(replaced_resp));
+        // 向 client 发 AgentUiClose（reason=None 表示 Replaced，client 静默关闭）
+        let close_payload =
+            ServerDataV1::new(ServerDataPayloadV1::AgentUiClose(AgentUiClosePayloadV1 {
+                request_id: old.request_id.clone(),
+                reason: None,
+            }));
+        let close_type = payload_type_label(close_payload.payload_type());
+        match serialize_server_data_payload(&close_payload) {
+            Ok(bytes) => {
+                if let Ok(mut client) = clients.get_mut(player_entity) {
+                    send_server_data_payload(&mut client.3, &bytes);
+                    tracing::debug!(
+                        "[bong][agent_ui] sent AgentUiClose(Replaced) for old request_id={}",
+                        old.request_id
+                    );
+                }
+            }
+            Err(e) => log_payload_build_error(close_type, &e),
+        }
     }
 
-    // P1: push ServerDataPayloadV1::AgentUiRequest(_sanitized_xml) to client
+    // 向 client 发 AgentUiRequest（携带 sanitized XML，不含安全字段）
+    let request_payload = ServerDataV1::new(ServerDataPayloadV1::AgentUiRequest(
+        AgentUiRequestPayloadV1 {
+            request_id: cmd.request_id.clone(),
+            target_player: cmd.target_player.clone(),
+            xml: _sanitized_xml,
+            timeout_ticks: cmd.timeout_ticks,
+        },
+    ));
+    let request_type = payload_type_label(request_payload.payload_type());
+    match serialize_server_data_payload(&request_payload) {
+        Ok(bytes) => {
+            if let Ok(mut client) = clients.get_mut(player_entity) {
+                send_server_data_payload(&mut client.3, &bytes);
+                tracing::info!(
+                    "[bong][agent_ui] sent AgentUiRequest request_id={} expire_tick={expire_tick}",
+                    cmd.request_id,
+                );
+            }
+        }
+        Err(e) => log_payload_build_error(request_type, &e),
+    }
     tracing::info!(
         "[bong][agent_ui] session created request_id={} expire_tick={expire_tick}",
         cmd.request_id,
     );
+}
+
+/// 向指定 client entity 发送 `ServerDataPayloadV1::AgentUiClose`。
+/// `reason` = None 表示 Replaced（client 静默关闭），Some(str) 表示具体原因。
+fn send_agent_ui_close_to_client(
+    player: Entity,
+    request_id: &str,
+    reason: Option<&str>,
+    clients: &mut Query<&mut Client>,
+) {
+    let close_payload =
+        ServerDataV1::new(ServerDataPayloadV1::AgentUiClose(AgentUiClosePayloadV1 {
+            request_id: request_id.to_string(),
+            reason: reason.map(|r| r.to_string()),
+        }));
+    let close_type = payload_type_label(close_payload.payload_type());
+    match serialize_server_data_payload(&close_payload) {
+        Ok(bytes) => {
+            if let Ok(mut client) = clients.get_mut(player) {
+                send_server_data_payload(&mut client, &bytes);
+            }
+        }
+        Err(e) => log_payload_build_error(close_type, &e),
+    }
 }
 
 fn send_error_response(redis: &RedisBridgeResource, request_id: &str, reason: &str) {
@@ -404,6 +485,12 @@ fn send_error_response(redis: &RedisBridgeResource, request_id: &str, reason: &s
 /// 可选的当前 tick 资源（由 network/mod.rs 注入）。
 #[derive(Default, Resource)]
 pub struct CurrentTickResource(pub u64);
+
+/// 每帧自增 `CurrentTickResource`，驱动 agent_ui_tick_system 的超时判断。
+/// 在 `mod.rs` 中注册到 `Update` schedule，与其他 agent_ui 系统并列。
+pub fn increment_current_tick_system(mut tick: ResMut<CurrentTickResource>) {
+    tick.0 = tick.0.wrapping_add(1);
+}
 
 /// 每 tick 扫描 Open session，超过 expire_tick 则 → TimedOut，
 /// 并发 timeout response 到 Redis（bong:agent_ui_response）。
@@ -441,27 +528,42 @@ pub fn agent_ui_tick_system(
 
 /// 处理 `AgentUiResponseEvent`（来自 client_request_handler dispatch）。
 /// 校验：request_id 匹配 Open session + action = button_click → allowed_button_ids 校验。
+/// 无活跃 session 或 request_id 不匹配时，向 client 发 AgentUiClose(session_expired) 防 UI 悬空。
 pub fn receive_agent_ui_response_system(
     mut events: EventReader<AgentUiResponseEvent>,
     mut store: ResMut<AgentUiSessionStore>,
+    mut clients: Query<&mut Client>,
     redis: Res<RedisBridgeResource>,
 ) {
     for ev in events.read() {
-        let Some(session) = store.get(ev.player) else {
-            // 无活跃 session，忽略
+        let session_opt = store.get(ev.player);
+        let Some(session) = session_opt else {
+            // 无活跃 session → 发 AgentUiClose(session_expired) 防 UI 悬空
             tracing::debug!(
-                "[bong][agent_ui] response for unknown session request_id={}",
+                "[bong][agent_ui] response for unknown session request_id={}, sending AgentUiClose",
                 ev.request_id
+            );
+            send_agent_ui_close_to_client(
+                ev.player,
+                &ev.request_id,
+                Some("session_expired"),
+                &mut clients,
             );
             continue;
         };
 
-        // request_id 不匹配 → stale response
+        // request_id 不匹配 → stale response → 发 AgentUiClose(session_expired) 防 UI 悬空
         if session.request_id != ev.request_id {
             tracing::debug!(
-                "[bong][agent_ui] stale response request_id={} (current={})",
+                "[bong][agent_ui] stale response request_id={} (current={}), sending AgentUiClose",
                 ev.request_id,
                 session.request_id,
+            );
+            send_agent_ui_close_to_client(
+                ev.player,
+                &ev.request_id,
+                Some("session_expired"),
+                &mut clients,
             );
             continue;
         }
@@ -550,6 +652,308 @@ pub fn receive_player_disconnect_system(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── Bevy App 级系统测试（驱动真 system，断言 Redis emit payload）───────────
+
+    use crossbeam_channel::unbounded;
+    use valence::prelude::{App, IntoSystemConfigs, Update};
+    use valence::testing::create_mock_client;
+
+    use crate::cultivation::components::{Cultivation, Realm};
+    use crate::schema::agent_ui::AgentUiRequestCommandV1;
+
+    /// 构造最小 App：RedisBridgeResource + 所有 agent_ui 系统 + event。
+    fn build_agent_ui_app() -> (App, crossbeam_channel::Receiver<RedisOutbound>) {
+        let mut app = App::new();
+        let (tx_outbound, rx_outbound) = unbounded();
+        let (_tx_inbound, rx_inbound) = unbounded::<crate::network::redis_bridge::RedisInbound>();
+        app.insert_resource(RedisBridgeResource {
+            tx_outbound,
+            rx_inbound,
+        });
+        app.add_event::<AgentUiCmdEvent>();
+        app.add_event::<AgentUiResponseEvent>();
+        app.init_resource::<AgentUiSessionStore>();
+        app.init_resource::<CurrentTickResource>();
+        app.add_systems(
+            Update,
+            (
+                increment_current_tick_system,
+                receive_agent_ui_cmd_system.after(increment_current_tick_system),
+                agent_ui_tick_system.after(increment_current_tick_system),
+                receive_agent_ui_response_system,
+                receive_player_disconnect_system,
+            ),
+        );
+        (app, rx_outbound)
+    }
+
+    /// 在 app 中 spawn 一个带 Client / Cultivation / Username 的测试玩家。
+    fn spawn_test_player(app: &mut App, username: &str, realm: Realm) -> Entity {
+        let (bundle, _helper) = create_mock_client(username);
+        let entity = app.world_mut().spawn(bundle).id();
+        let cultivation = Cultivation {
+            realm,
+            ..Cultivation::default()
+        };
+        app.world_mut().entity_mut(entity).insert(cultivation);
+        entity
+    }
+
+    fn make_cmd(request_id: &str, target: &str, realm_gate: u8) -> AgentUiRequestCommandV1 {
+        AgentUiRequestCommandV1 {
+            request_id: request_id.to_string(),
+            target_player: target.to_string(),
+            xml: r#"<flow-layout><button id="btn_a">确认</button></flow-layout>"#.to_string(),
+            timeout_ticks: 600,
+            realm_gate,
+            allowed_button_ids: vec!["btn_a".to_string(), "btn_b".to_string()],
+        }
+    }
+
+    /// realm_gate 拒绝低境界 → Redis emit AgentUiResponse{action:error, reason:realm_gate_rejected}
+    #[test]
+    fn system_realm_gate_rejected_emits_error_response() {
+        let (mut app, rx) = build_agent_ui_app();
+        // 引气 rank=2，realm_gate=3 → 拒绝
+        spawn_test_player(&mut app, "TestPlayer", Realm::Induce);
+        let cmd = make_cmd("req-realm-gate", "TestPlayer", 3);
+        app.world_mut().send_event(AgentUiCmdEvent(cmd));
+        app.update();
+
+        let resp = match rx.try_recv().expect("realm_gate 拒绝应发 Redis response") {
+            RedisOutbound::AgentUiResponse(r) => r,
+            other => panic!("期望 AgentUiResponse，实为 {other:?}"),
+        };
+        assert_eq!(
+            resp.request_id, "req-realm-gate",
+            "request_id 应对齐，实为 {}",
+            resp.request_id
+        );
+        assert!(
+            matches!(resp.action, AgentUiActionType::Error),
+            "action 应为 Error（realm_gate_rejected），实为 {:?}",
+            resp.action
+        );
+        assert_eq!(
+            resp.params.get("reason").map(|s| s.as_str()),
+            Some("realm_gate_rejected"),
+            "reason 应为 realm_gate_rejected，实为 {:?}",
+            resp.params.get("reason")
+        );
+        assert!(
+            resp.params.contains_key("player_realm"),
+            "params 应含 player_realm 字段，实为 {:?}",
+            resp.params
+        );
+        assert!(
+            resp.params.contains_key("required_realm"),
+            "params 应含 required_realm 字段，实为 {:?}",
+            resp.params
+        );
+    }
+
+    /// 玩家离线（target_player 不存在）→ Redis emit {action:error, reason:player_offline}
+    #[test]
+    fn system_player_offline_emits_error_response() {
+        let (mut app, rx) = build_agent_ui_app();
+        // 不 spawn 任何玩家
+        let cmd = make_cmd("req-offline", "GhostPlayer", 0);
+        app.world_mut().send_event(AgentUiCmdEvent(cmd));
+        app.update();
+
+        let resp = match rx.try_recv().expect("离线拒绝应发 Redis response") {
+            RedisOutbound::AgentUiResponse(r) => r,
+            other => panic!("期望 AgentUiResponse，实为 {other:?}"),
+        };
+        assert!(
+            matches!(resp.action, AgentUiActionType::Error),
+            "action 应为 Error，实为 {:?}",
+            resp.action
+        );
+        assert_eq!(
+            resp.params.get("reason").map(|s| s.as_str()),
+            Some("player_offline"),
+            "reason 应为 player_offline，实为 {:?}",
+            resp.params.get("reason")
+        );
+    }
+
+    /// Replaced：新 cmd 替换旧 Open session → Redis emit {action:replaced} for old request_id
+    #[test]
+    fn system_replaced_session_emits_replaced_response() {
+        let (mut app, rx) = build_agent_ui_app();
+        spawn_test_player(&mut app, "TestPlayer", Realm::Condense);
+
+        // 第一条 cmd
+        let cmd1 = make_cmd("req-old", "TestPlayer", 0);
+        app.world_mut().send_event(AgentUiCmdEvent(cmd1));
+        app.update();
+        // 收掉第一轮可能的消息（req-old 不应有 error；只有 session 创建成功）
+        while rx.try_recv().is_ok() {}
+
+        // 第二条 cmd → 替换
+        let cmd2 = make_cmd("req-new", "TestPlayer", 0);
+        app.world_mut().send_event(AgentUiCmdEvent(cmd2));
+        app.update();
+
+        // 应有 replaced response for req-old
+        let resps: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
+        let replaced = resps.iter().find(|r| {
+            if let RedisOutbound::AgentUiResponse(r) = r {
+                matches!(r.action, AgentUiActionType::Replaced)
+            } else {
+                false
+            }
+        });
+        assert!(
+            replaced.is_some(),
+            "替换旧 session 应发 replaced response，实际 resps: {resps:?}"
+        );
+        if let Some(RedisOutbound::AgentUiResponse(r)) = replaced {
+            assert_eq!(
+                r.request_id, "req-old",
+                "replaced response 的 request_id 应为 req-old，实为 {}",
+                r.request_id
+            );
+        }
+    }
+
+    /// allowed_button_ids 非法 → Redis emit {action:error, reason:invalid_button_id}；session 保持 Open
+    #[test]
+    fn system_invalid_button_id_emits_error_response() {
+        let (mut app, rx) = build_agent_ui_app();
+        let entity = spawn_test_player(&mut app, "TestPlayer", Realm::Induce);
+
+        // 建立 Open session
+        let cmd = make_cmd("req-btn", "TestPlayer", 0);
+        app.world_mut().send_event(AgentUiCmdEvent(cmd));
+        app.update();
+        while rx.try_recv().is_ok() {} // 清掉 session 创建时的消息
+
+        // 发非法 button_id
+        app.world_mut().send_event(AgentUiResponseEvent {
+            player: entity,
+            request_id: "req-btn".to_string(),
+            action: AgentUiActionType::ButtonClick,
+            params: [("button_id".to_string(), "invalid_btn".to_string())]
+                .into_iter()
+                .collect(),
+        });
+        app.update();
+
+        let resp = match rx
+            .try_recv()
+            .expect("非法 button_id 应发 Redis error response")
+        {
+            RedisOutbound::AgentUiResponse(r) => r,
+            other => panic!("期望 AgentUiResponse，实为 {other:?}"),
+        };
+        assert!(
+            matches!(resp.action, AgentUiActionType::Error),
+            "action 应为 Error（invalid_button_id），实为 {:?}",
+            resp.action
+        );
+        assert_eq!(
+            resp.params.get("reason").map(|s| s.as_str()),
+            Some("invalid_button_id"),
+            "reason 应为 invalid_button_id，实为 {:?}",
+            resp.params.get("reason")
+        );
+        // session 应仍为 Open
+        let store = app.world().resource::<AgentUiSessionStore>();
+        assert!(
+            store.get(entity).is_some(),
+            "invalid_button_id 后 session 应仍为 Open"
+        );
+    }
+
+    /// timeout：tick 推进 >= expire_tick → TimedOut + Redis{action:timeout}
+    #[test]
+    fn system_timeout_emits_timeout_response() {
+        let (mut app, rx) = build_agent_ui_app();
+        let entity = spawn_test_player(&mut app, "TestPlayer", Realm::Awaken);
+
+        // 直接在 store 插入 Open session，expire_tick=20
+        // 然后把 CurrentTickResource 设为 19 → 下次 update 后 increment 到 20 → timeout 触发
+        {
+            let mut store = app.world_mut().resource_mut::<AgentUiSessionStore>();
+            store.upsert(
+                entity,
+                AgentUiSession {
+                    request_id: "req-timeout".to_string(),
+                    state: AgentUiSessionState::Open,
+                    expire_tick: 20,
+                    allowed_button_ids: vec![],
+                },
+            );
+        }
+        app.world_mut().resource_mut::<CurrentTickResource>().0 = 19;
+
+        // 一次 update：increment → tick=20，agent_ui_tick_system 判 20>=20 → TimedOut
+        app.update();
+
+        let all_resps: Vec<RedisOutbound> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
+        let found_timeout = all_resps.iter().any(|r| {
+            if let RedisOutbound::AgentUiResponse(r) = r {
+                matches!(r.action, AgentUiActionType::Timeout)
+            } else {
+                false
+            }
+        });
+        assert!(
+            found_timeout,
+            "tick(20) >= expire_tick(20) 后应发 timeout response，实际 resps: {all_resps:?}"
+        );
+        // session 应已被清除
+        let store = app.world().resource::<AgentUiSessionStore>();
+        assert!(
+            store.get(entity).is_none(),
+            "timeout 后 session 应已被清除，实为 {:?}",
+            store.get(entity)
+        );
+    }
+
+    /// 玩家离线（Client 组件移除）→ Redis{action:dismissed}
+    #[test]
+    fn system_player_disconnect_emits_dismissed_response() {
+        let (mut app, rx) = build_agent_ui_app();
+        let entity = spawn_test_player(&mut app, "TestPlayer", Realm::Awaken);
+
+        // 建立 Open session（手动插入，绕过 cmd 系统，保证 session 存在）
+        {
+            let mut store = app.world_mut().resource_mut::<AgentUiSessionStore>();
+            store.upsert(
+                entity,
+                AgentUiSession {
+                    request_id: "req-disconnect".to_string(),
+                    state: AgentUiSessionState::Open,
+                    expire_tick: 99999,
+                    allowed_button_ids: vec![],
+                },
+            );
+        }
+
+        // 移除 Client 组件触发 receive_player_disconnect_system
+        use valence::prelude::Client as ValenceClient;
+        app.world_mut().entity_mut(entity).remove::<ValenceClient>();
+        app.update();
+
+        let resp = match rx.try_recv().expect("玩家断线应发 dismissed response") {
+            RedisOutbound::AgentUiResponse(r) => r,
+            other => panic!("期望 AgentUiResponse，实为 {other:?}"),
+        };
+        assert!(
+            matches!(resp.action, AgentUiActionType::Dismissed),
+            "action 应为 Dismissed，实为 {:?}",
+            resp.action
+        );
+        assert_eq!(
+            resp.request_id, "req-disconnect",
+            "request_id 应为 req-disconnect，实为 {}",
+            resp.request_id
+        );
+    }
 
     // ── AgentUiSessionState ──────────────────────────────────────────────────
 
@@ -768,7 +1172,10 @@ mod tests {
     fn xml_sanitize_rejects_non_whitelisted_tag() {
         let xml = r#"<flow-layout><script>alert(1)</script></flow-layout>"#;
         let result = xml_sanitize(xml);
-        assert!(result.is_err(), "非白名单标签 <script> 应被拒绝，实为 Ok");
+        assert!(
+            matches!(result, Err(XmlSanitizeError::NonWhitelistedTag(ref t)) if t == "script"),
+            "非白名单标签 <script> 应返回 NonWhitelistedTag(\"script\")，实为 {result:?}"
+        );
     }
 
     #[test]

@@ -3689,7 +3689,6 @@ mod tests {
         // plan-shield-block-v1 P1 — 举盾 intent events（ClientRequestDispatchParams 需要）。
         app.add_event::<crate::combat::shield_block::RaiseShieldIntent>();
         app.add_event::<crate::combat::shield_block::LowerShieldIntent>();
-        app.add_event::<crate::network::agent_ui::AgentUiResponseEvent>();
         // plan-agent-ui-data-v1 P0 — 天道 UI 响应 event（ClientRequestDispatchParams 需要）。
         app.add_event::<crate::network::agent_ui::AgentUiResponseEvent>();
         app.add_systems(
@@ -4443,7 +4442,6 @@ mod tests {
         // plan-shield-block-v1 P1 — 举盾 intent events（ClientRequestDispatchParams 需要）。
         app.add_event::<crate::combat::shield_block::RaiseShieldIntent>();
         app.add_event::<crate::combat::shield_block::LowerShieldIntent>();
-        app.add_event::<crate::network::agent_ui::AgentUiResponseEvent>();
         app.add_event::<crate::network::agent_ui::AgentUiResponseEvent>();
         app.add_systems(
             Update,

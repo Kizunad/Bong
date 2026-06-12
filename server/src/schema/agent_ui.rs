@@ -409,6 +409,152 @@ mod tests {
         );
     }
 
+    // ── include_str! sample 文件 roundtrip（跨栈契约对拍）────────────────────
+
+    /// agent_ui_request_command.sample.json → AgentUiRequestCommandV1 roundtrip
+    #[test]
+    fn sample_agent_ui_request_command_roundtrip() {
+        let json = include_str!(
+            "../../../agent/packages/schema/samples/agent_ui_request_command.sample.json"
+        );
+        let cmd: AgentUiRequestCommandV1 =
+            serde_json::from_str(json).expect("agent_ui_request_command.sample.json 应能反序列化");
+        assert!(
+            cmd.validate().is_ok(),
+            "sample 应通过 validate()，错误：{:?}",
+            cmd.validate()
+        );
+        // roundtrip：序列化后再反序列化
+        let serialized = serde_json::to_string(&cmd).expect("AgentUiRequestCommandV1 应能序列化");
+        let cmd2: AgentUiRequestCommandV1 = serde_json::from_str(&serialized)
+            .expect("AgentUiRequestCommandV1 roundtrip 应能反序列化");
+        assert_eq!(
+            cmd.request_id, cmd2.request_id,
+            "roundtrip 后 request_id 应一致"
+        );
+    }
+
+    /// server-data.agent-ui-request.sample.json → AgentUiRequestPayloadV1 roundtrip
+    #[test]
+    fn sample_server_data_agent_ui_request_roundtrip() {
+        let json = include_str!(
+            "../../../agent/packages/schema/samples/server-data.agent-ui-request.sample.json"
+        );
+        // sample 是 ServerDataV1 信封格式 {"v":1,"type":"agent_ui_request","request_id":...}
+        // 字段平铺在信封层；用 serde_json::Value 提取业务字段后再转换
+        let val: serde_json::Value = serde_json::from_str(json)
+            .expect("server-data.agent-ui-request sample 应能解析为 JSON");
+        assert_eq!(
+            val["type"].as_str(),
+            Some("agent_ui_request"),
+            "sample type 字段应为 agent_ui_request"
+        );
+        // 只取业务字段（剥离 v / type 元字段），AgentUiRequestPayloadV1 有 deny_unknown_fields
+        let payload_val = serde_json::json!({
+            "request_id": val["request_id"],
+            "target_player": val["target_player"],
+            "xml": val["xml"],
+            "timeout_ticks": val["timeout_ticks"],
+        });
+        let payload: AgentUiRequestPayloadV1 = serde_json::from_value(payload_val).expect(
+            "server-data.agent-ui-request sample 业务字段应能反序列化为 AgentUiRequestPayloadV1",
+        );
+        let serialized =
+            serde_json::to_string(&payload).expect("AgentUiRequestPayloadV1 应能序列化");
+        let payload2: AgentUiRequestPayloadV1 = serde_json::from_str(&serialized)
+            .expect("AgentUiRequestPayloadV1 roundtrip 应能反序列化");
+        assert_eq!(
+            payload.request_id, payload2.request_id,
+            "roundtrip 后 request_id 应一致"
+        );
+        assert_eq!(
+            payload.timeout_ticks, 600,
+            "sample timeout_ticks 应为 600，实为 {}",
+            payload.timeout_ticks
+        );
+    }
+
+    /// server-data.agent-ui-close.sample.json → AgentUiClosePayloadV1 roundtrip
+    #[test]
+    fn sample_server_data_agent_ui_close_roundtrip() {
+        let json = include_str!(
+            "../../../agent/packages/schema/samples/server-data.agent-ui-close.sample.json"
+        );
+        let val: serde_json::Value =
+            serde_json::from_str(json).expect("server-data.agent-ui-close sample 应能解析为 JSON");
+        assert_eq!(
+            val["type"].as_str(),
+            Some("agent_ui_close"),
+            "sample type 字段应为 agent_ui_close"
+        );
+        // 只取业务字段
+        let mut payload_val = serde_json::json!({
+            "request_id": val["request_id"],
+        });
+        if !val["reason"].is_null() && val.get("reason").is_some() {
+            payload_val["reason"] = val["reason"].clone();
+        }
+        let payload: AgentUiClosePayloadV1 = serde_json::from_value(payload_val).expect(
+            "server-data.agent-ui-close sample 业务字段应能反序列化为 AgentUiClosePayloadV1",
+        );
+        assert_eq!(
+            payload.reason,
+            Some("invalid_button_id".to_string()),
+            "sample reason 应为 invalid_button_id，实为 {:?}",
+            payload.reason
+        );
+        let serialized = serde_json::to_string(&payload).expect("AgentUiClosePayloadV1 应能序列化");
+        let payload2: AgentUiClosePayloadV1 = serde_json::from_str(&serialized)
+            .expect("AgentUiClosePayloadV1 roundtrip 应能反序列化");
+        assert_eq!(
+            payload.request_id, payload2.request_id,
+            "roundtrip 后 request_id 应一致"
+        );
+    }
+
+    /// client-request.agent-ui-response.sample.json → AgentUiResponsePayloadV1 roundtrip
+    #[test]
+    fn sample_client_request_agent_ui_response_roundtrip() {
+        let json = include_str!(
+            "../../../agent/packages/schema/samples/client-request.agent-ui-response.sample.json"
+        );
+        let val: serde_json::Value = serde_json::from_str(json)
+            .expect("client-request.agent-ui-response sample 应能解析为 JSON");
+        assert_eq!(
+            val["type"].as_str(),
+            Some("agent_ui_response"),
+            "sample type 字段应为 agent_ui_response"
+        );
+        // AgentUiResponsePayloadV1 有 deny_unknown_fields，只取业务字段
+        let payload_val = serde_json::json!({
+            "request_id": val["request_id"],
+            "action": val["action"],
+            "params": val["params"],
+        });
+        let payload: AgentUiResponsePayloadV1 = serde_json::from_value(payload_val).expect(
+            "client-request.agent-ui-response sample 应能反序列化为 AgentUiResponsePayloadV1",
+        );
+        assert!(
+            matches!(payload.action, AgentUiActionType::ButtonClick),
+            "sample action 应为 button_click，实为 {:?}",
+            payload.action
+        );
+        assert_eq!(
+            payload.params.get("button_id").map(|s| s.as_str()),
+            Some("enter_realm"),
+            "sample params.button_id 应为 enter_realm，实为 {:?}",
+            payload.params.get("button_id")
+        );
+        let serialized =
+            serde_json::to_string(&payload).expect("AgentUiResponsePayloadV1 应能序列化");
+        let payload2: AgentUiResponsePayloadV1 = serde_json::from_str(&serialized)
+            .expect("AgentUiResponsePayloadV1 roundtrip 应能反序列化");
+        assert_eq!(
+            payload.request_id, payload2.request_id,
+            "roundtrip 后 request_id 应一致"
+        );
+    }
+
     // ── AgentUiActionType 变体枚举 pin 测试 ─────────────────────────────────
 
     #[test]

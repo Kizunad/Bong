@@ -979,8 +979,10 @@ pub fn register(app: &mut App) {
     app.add_systems(
         Update,
         (
+            // increment_current_tick_system 必须在 agent_ui_tick_system 之前运行
+            agent_ui::increment_current_tick_system,
             agent_ui::receive_agent_ui_cmd_system.after(process_redis_inbound),
-            agent_ui::agent_ui_tick_system,
+            agent_ui::agent_ui_tick_system.after(agent_ui::increment_current_tick_system),
             agent_ui::receive_agent_ui_response_system,
             agent_ui::receive_player_disconnect_system,
         ),
