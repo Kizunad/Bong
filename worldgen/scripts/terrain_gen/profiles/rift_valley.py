@@ -4,9 +4,11 @@ import math
 
 import numpy as np
 
+from .. import dsl
 from ..blueprint import BlueprintZone
+from ..dsl import QiGrade
 from ..fields import SurfacePalette, TileFieldBuffer, WorldTile
-from ..noise import _tile_coords, fbm_2d, ridge_2d, warped_fbm_2d
+from ..noise import _tile_coords
 from ..spirit_eye_selector import select_spirit_eye_candidates
 from .base import (
     DecorationSpec,
@@ -14,6 +16,10 @@ from .base import (
     ProfileContext,
     TerrainProfileGenerator,
 )
+
+# §8.1 #4 — 血谷：末法重、灵气稀薄但沿裂隙轴线有残脉，主世界常量区，归 common 档。
+# 现有 zone spirit_qi=0.30（blood_valley）就近归档。
+QI_GRADE = QiGrade.COMMON
 
 
 RIFT_VALLEY_DECORATIONS = (
@@ -128,15 +134,15 @@ def fill_rift_valley_tile(
     along_ratio = np.clip(along / half_l, -1.0, 1.0)
     cross_ratio = cross / half_w
 
-    # Width variation along rift — FBM for organic wobble
-    width_warp = fbm_2d(along, cross, scale=200.0, octaves=3, seed=300)
+    # Width variation along rift — FBM for organic wobble（旋转坐标系上求值）
+    width_warp = dsl.fbm_height(along, cross, scale=200.0, octaves=3, seed=300)
     width_noise = 1.0 + width_warp * 0.4
     normalized_cross = np.abs(cross_ratio) / np.maximum(width_noise, 0.35)
 
     axial_profile = np.maximum(0.0, 1.0 - np.abs(along_ratio) ** 1.25)
 
     # Branch canyons — warped noise for organic branching
-    branch = warped_fbm_2d(
+    branch = dsl.warped_height(
         wx, wz, scale=110.0, octaves=4, warp_scale=180.0, warp_strength=45.0, seed=310
     )
     valley_strength = np.maximum(0.0, 1.0 - normalized_cross**1.42) * axial_profile
@@ -145,11 +151,11 @@ def fill_rift_valley_tile(
     )
 
     # Rim detail
-    rim_fbm = fbm_2d(wx, wz, scale=130.0, octaves=4, seed=320)
+    rim_fbm = dsl.fbm_height(wx, wz, scale=130.0, octaves=4, seed=320)
     rim_height = 108.0 + 13.0 * axial_profile + rim_fbm * 5.0
 
-    # Valley floor detail
-    floor_fbm = fbm_2d(along, cross, scale=160.0, octaves=4, seed=330)
+    # Valley floor detail（旋转坐标系上求值）
+    floor_fbm = dsl.fbm_height(along, cross, scale=160.0, octaves=4, seed=330)
     floor_height = 40.0 + floor_fbm * 8.0
 
     height = rim_height - (rim_height - floor_height) * valley_strength
@@ -186,7 +192,7 @@ def fill_rift_valley_tile(
     )
 
     rim_edge_mask = np.maximum(0.0, 1.0 - np.abs(normalized_cross - 1.0) * 3.6)
-    fracture_noise = ridge_2d(wx, wz, scale=60.0, octaves=5, seed=340)
+    fracture_noise = dsl.ridge_height(wx, wz, scale=60.0, octaves=5, seed=340)
     fracture_mask = np.where(
         valley_strength > 0.4,
         np.maximum(0.0, fracture_noise) * valley_strength,
@@ -201,7 +207,9 @@ def fill_rift_valley_tile(
     # qi_vein_flow 集中在 axis 附近（normalized_cross 接近 0），随 branch 扩散。
     qi_base = float(getattr(zone, "spirit_qi", 0.3))
     axis_core = np.maximum(0.0, 1.0 - normalized_cross * 2.4) * axial_profile
-    vein_wiggle = 0.5 + fbm_2d(wx, wz, scale=180.0, octaves=3, seed=360) * 0.5
+    vein_wiggle = dsl.fbm_height(
+        wx, wz, scale=180.0, octaves=3, seed=360, amplitude=0.5, base=0.5
+    )
     qi_vein_flow = np.clip(axis_core * vein_wiggle, 0.0, 1.0)
     # 灵气：谷底贴着灵脉略高，谷壁和裂隙更低（断裂吸散灵气）
     qi_density = np.clip(
