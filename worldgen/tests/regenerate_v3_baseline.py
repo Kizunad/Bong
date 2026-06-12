@@ -5,12 +5,20 @@ Run from the worldgen/ directory:
     python3 -m tests.regenerate_v3_baseline
 
 The output is the frozen behaviour-equivalence golden for worldgen-v4 P0.
-It is captured ONCE from the untouched v3 generators (height + 2D patch
-layers) and must NOT be regenerated after the span shim lands — doing so would
-defeat the purpose of pinning v3 landscape behaviour.
+It is captured from the untouched v3 generators (height + carve masks) fed
+through ``v3_surface_top_y`` — the Python mirror of the v3 Rust carve — so the
+golden is the REAL v3 walkable surface, not ``round(height)``.  It must NOT be
+regenerated after the span shim lands unless a profile legitimately changes,
+because the whole point is to pin v3 landscape behaviour.
 
-Each entry records, per sampled column, the observable 2D contract:
-  surface_y = round(height)              (top solid block y)
+CRITICAL (worldgen-v4 P0 BLOCKER): the previous golden recorded
+``surface_y = round(height)`` and never applied the v3 rift/fracture/neg/
+entrance sculpting, so it pinned ``round(height)`` against ``round(height)`` —
+a circular no-op that could never catch the surface regression.  Now the golden
+anchors on the carved surface and the profile matrix spans every carve branch.
+
+Each entry records, per sampled column, the observable contract:
+  surface_y = v3 carved top_y          (rift→fracture→neg→entrance, clamped)
   water_y   = round(water_level) or null (-1 sentinel → no water)
   biome_id  = uint8 biome index
 """
@@ -29,6 +37,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from scripts.terrain_gen.spans_shim import v3_surface_top_y  # noqa: E402
 from v3_baseline_zones import (  # noqa: E402
     BASELINE_PROFILES,
     SAMPLE_COLUMNS,
@@ -44,11 +53,36 @@ def _col_index(local_x: int, local_z: int) -> int:
     return local_z * TILE_SIZE + local_x
 
 
+def _layer(buffer, name: str, area: int, default: float) -> np.ndarray:
+    if name in buffer.layers:
+        return np.asarray(buffer.layers[name], dtype=np.float64).reshape(area)
+    return np.full(area, default, dtype=np.float64)
+
+
+def v3_carved_surface(buffer, idx: int) -> int:
+    """The frozen golden surface = v3 carved top_y at one sampled column."""
+    area = buffer.tile_size * buffer.tile_size
+    height = np.asarray(buffer.layers["height"], dtype=np.float64).reshape(area)
+    # rift_axis_sdf defaults to 99 (no rift); everything else to 0 (no effect).
+    rift = _layer(buffer, "rift_axis_sdf", area, 99.0)
+    rim = _layer(buffer, "rim_edge_mask", area, 0.0)
+    frac = _layer(buffer, "fracture_mask", area, 0.0)
+    neg = _layer(buffer, "neg_pressure", area, 0.0)
+    ent = _layer(buffer, "entrance_mask", area, 0.0)
+    return v3_surface_top_y(
+        height=float(height[idx]),
+        rift_axis_sdf=float(rift[idx]),
+        rim_edge_mask=float(rim[idx]),
+        fracture_mask=float(frac[idx]),
+        neg_pressure=float(neg[idx]),
+        entrance_mask=float(ent[idx]),
+    )
+
+
 def capture_baseline() -> list[dict]:
     rows: list[dict] = []
     for profile_key, _fill_fn, _zone in BASELINE_PROFILES:
         buffer = build_baseline_buffer(profile_key)
-        height = np.asarray(buffer.layers["height"])
         water = np.asarray(buffer.layers["water_level"])
         biome = np.asarray(buffer.layers["biome_id"])
         for local_x, local_z in SAMPLE_COLUMNS:
@@ -59,7 +93,7 @@ def capture_baseline() -> list[dict]:
                     "profile": profile_key,
                     "local_x": local_x,
                     "local_z": local_z,
-                    "surface_y": int(round(float(height[idx]))),
+                    "surface_y": v3_carved_surface(buffer, idx),
                     "water_y": (
                         int(round(water_level)) if water_level >= 0.0 else None
                     ),

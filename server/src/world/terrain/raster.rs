@@ -485,8 +485,36 @@ struct TileFields {
     tsy_depth_tier: Option<Mmap>,
 }
 
+/// worldgen-v4 P0 §8.1 #1 — manifest schema version the Rust reader expects.
+/// v2 introduced the span column encoding (spans_count.bin + spans.bin) that
+/// replaced height.bin + the deleted vertical patch layers; a v1 manifest has
+/// no spans on disk and would mmap garbage, so the loader must reject it loudly
+/// instead of letting serde default the field and read a bad layout.
+const EXPECTED_RASTER_MANIFEST_VERSION: u32 = 2;
+
+/// Reject any raster manifest whose schema version is not the one the span
+/// reader understands. A mismatched manifest (e.g. v1 with height.bin and no
+/// spans.bin) would mmap the wrong on-disk layout, so this fails loudly rather
+/// than letting the reader produce silent garbage. Mirrors the PlacementManifest
+/// `version` field convention, but actually enforced.
+fn validate_manifest_version(version: u32, manifest_path: &Path) -> Result<(), String> {
+    if version == EXPECTED_RASTER_MANIFEST_VERSION {
+        return Ok(());
+    }
+    Err(format!(
+        "terrain raster manifest {} has unsupported version {version} \
+         (this server expects v{EXPECTED_RASTER_MANIFEST_VERSION}, the span column \
+         encoding — regenerate the rasters with worldgen-v4)",
+        manifest_path.display(),
+    ))
+}
+
 #[derive(Debug, Deserialize)]
 struct RasterManifest {
+    /// Manifest schema version (written by worldgen raster_export). Validated in
+    /// `load()` against `EXPECTED_RASTER_MANIFEST_VERSION`. No serde default — a
+    /// manifest missing the field fails to parse rather than silently passing.
+    version: u32,
     tile_size: i32,
     world_bounds: ManifestBounds,
     surface_palette: Vec<String>,
@@ -669,6 +697,8 @@ impl TerrainProvider {
                 manifest_path.display()
             )
         })?;
+
+        validate_manifest_version(manifest.version, manifest_path)?;
 
         let tile_area = (manifest.tile_size as usize)
             .checked_mul(manifest.tile_size as usize)
@@ -1732,6 +1762,71 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
+    // worldgen-v4 P0 §8.1 #1 — RasterManifest version validation
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn manifest_version_accepts_expected_and_rejects_others() {
+        let path = Path::new("/tmp/manifest.json");
+        // The current span encoding (v2) is accepted.
+        assert!(
+            validate_manifest_version(EXPECTED_RASTER_MANIFEST_VERSION, path).is_ok(),
+            "v{EXPECTED_RASTER_MANIFEST_VERSION} (span encoding) must load"
+        );
+        // A pre-span v1 manifest (height.bin, no spans.bin) must be rejected so
+        // the reader never mmaps the wrong layout.
+        let err = validate_manifest_version(1, path)
+            .expect_err("v1 (pre-span height.bin layout) must be rejected, not silently loaded");
+        assert!(
+            err.contains("unsupported version 1") && err.contains("v2"),
+            "the error must name the bad version and the expected one for diagnosis; got: {err}"
+        );
+        // A future v3 is also rejected (forward-incompat is loud too).
+        assert!(
+            validate_manifest_version(3, path).is_err(),
+            "an unknown future version must be rejected, not best-effort loaded"
+        );
+    }
+
+    #[test]
+    fn manifest_missing_version_field_fails_to_parse() {
+        // `version` has no serde default — a manifest that omits it (e.g. a
+        // hand-edited or truncated file) must error at parse time rather than
+        // defaulting to 0 and slipping past the version gate.
+        let json = r#"{
+            "tile_size": 1,
+            "world_bounds": {"min_x":0,"max_x":0,"min_z":0,"max_z":0},
+            "surface_palette": ["minecraft:stone"],
+            "biome_palette": ["minecraft:plains"],
+            "tiles": []
+        }"#;
+        let parsed: Result<RasterManifest, _> = serde_json::from_str(json);
+        assert!(
+            parsed.is_err(),
+            "a manifest with no `version` field must fail to deserialize (no default), \
+             so a missing version can never be mistaken for a supported one"
+        );
+    }
+
+    #[test]
+    fn manifest_with_version_field_parses() {
+        // Sanity: the same shape WITH version=2 parses, proving the field is the
+        // only thing the previous case was missing.
+        let json = r#"{
+            "version": 2,
+            "tile_size": 1,
+            "world_bounds": {"min_x":0,"max_x":0,"min_z":0,"max_z":0},
+            "surface_palette": ["minecraft:stone"],
+            "biome_palette": ["minecraft:plains"],
+            "tiles": []
+        }"#;
+        let manifest: RasterManifest =
+            serde_json::from_str(json).expect("a v2 manifest with all required fields must parse");
+        assert_eq!(manifest.version, 2);
+        assert_eq!(manifest.tile_size, 1);
+    }
+
+    // -----------------------------------------------------------------------
     // P1 — PlacementManifest serde contract tests (断链 #2,
     //       plan-terrain-wiring-v1 §P1 "契约对拍" requirement)
     // -----------------------------------------------------------------------
@@ -2206,37 +2301,245 @@ mod tests {
         }
     }
 
+    /// Build a provider that also carries the §8.1 #12 SEMANTIC layers
+    /// (sky_island_mask + underground_tier) so the 5 灵草 env-locks can be
+    /// exercised through the REAL span → ColumnSample → env_sky_island path.
+    /// Each column: (spans, sky_island_mask, underground_tier).
+    fn build_botany_provider(cols: &[(ColumnSpanList, f32, u8)]) -> RasterFixture {
+        let root = unique_temp_dir();
+        let tile_dir = root.join("tile_0_0");
+        fs::create_dir_all(&tile_dir).expect("tile dir");
+        let tile_size = cols.len() as i32;
+        let area = cols.len();
+
+        let span_cols: Vec<ColumnSpanList> = cols.iter().map(|(s, _, _)| s.clone()).collect();
+        let (count_bytes, spans_bytes) = encode_spans_bytes(&span_cols);
+        fs::write(tile_dir.join("spans_count.bin"), count_bytes).expect("count");
+        fs::write(tile_dir.join("spans.bin"), spans_bytes).expect("spans");
+
+        write_f32_layer(&tile_dir.join("water_level.bin"), -1.0, area);
+        write_u8_layer(&tile_dir.join("biome_id.bin"), 0, area);
+        write_u8_layer(&tile_dir.join("surface_id.bin"), 0, area);
+        write_u8_layer(&tile_dir.join("subsurface_id.bin"), 0, area);
+        write_f32_layer(&tile_dir.join("feature_mask.bin"), 0.0, area);
+        write_f32_layer(&tile_dir.join("boundary_weight.bin"), 0.0, area);
+
+        // The semantic layers the 5 灵草 lock off (§8.1 #12 — retained, not folded).
+        let mut sky_mask = Vec::with_capacity(area * 4);
+        for (_, m, _) in cols {
+            sky_mask.extend_from_slice(&m.to_le_bytes());
+        }
+        fs::write(tile_dir.join("sky_island_mask.bin"), sky_mask).expect("sky mask");
+        let tiers: Vec<u8> = cols.iter().map(|(_, _, t)| *t).collect();
+        fs::write(tile_dir.join("underground_tier.bin"), &tiers).expect("tier");
+        // qi_vein_flow is needed by yuan_ni_hong_yu; give it a high constant.
+        write_f32_layer(&tile_dir.join("qi_vein_flow.bin"), 1.0, area);
+
+        let optional = vec![
+            "sky_island_mask".to_string(),
+            "underground_tier".to_string(),
+            "qi_vein_flow".to_string(),
+        ];
+        let tile = TileFields::load(&tile_dir, &optional, area).expect("botany tile loads");
+        let mut tiles = HashMap::new();
+        tiles.insert((0, 0), tile);
+        let provider = TerrainProvider {
+            tiles,
+            tile_size,
+            world_bounds: Bounds2D {
+                min_x: 0,
+                max_x: tile_size - 1,
+                min_z: 0,
+                max_z: 0,
+            },
+            surface_palette: vec![BlockState::STONE; 4],
+            biome_palette: vec![BiomeId::DEFAULT; 32],
+            default_wilderness_biome: BiomeId::DEFAULT,
+            forest_wilderness_biome: BiomeId::DEFAULT,
+            river_wilderness_biome: BiomeId::DEFAULT,
+            pois: Vec::new(),
+            anomaly_kinds: HashMap::new(),
+            decoration_palette: Vec::new(),
+            abyssal_tier_floor_y: HashMap::new(),
+            fossil_bboxes: Vec::new(),
+            placement_index: HashMap::new(),
+            placement_block_count: 0,
+        };
+        RasterFixture {
+            provider: Some(provider),
+            root,
+        }
+    }
+
+    /// worldgen-v4 P0 §8.1 #12 — the 5 灵草 lock off sky_island_mask +
+    /// underground_tier; the span refactor must NOT drift their generation
+    /// positions. Old (round-height) and new (span) representations must agree on
+    /// every column for all five, exercising the real span → env_sky_island path
+    /// (botany/registry.rs:181-223 EnvLock specs).
+    #[test]
+    fn spirit_herbs_env_locks_unchanged_after_span_refactor() {
+        use crate::botany::env_lock::check_env_lock;
+        use crate::botany::registry::{DecorationLock, EnvLock, SkyIsleSurface};
+
+        // 5 columns laid along x at z=0. Each crafted to make EXACTLY one herb's
+        // primary geometry lock pass, isolating sky-isle Top/Bottom and the three
+        // underground tiers:
+        //   x=0 yun_ding_lan   — sky isle present (mask>=0.2, base<9000)        → Top
+        //   x=1 xuan_gen_wei   — sky isle present (thickness>0)                 → Bottom
+        //   x=2 ying_yuan_gu   — underground_tier 1
+        //   x=3 xuan_rong_tai  — underground_tier 2
+        //   x=4 yuan_ni_hong_yu— underground_tier 3 (+ qi_vein_flow constant 1.0)
+        let isle: ColumnSpanList = smallvec::smallvec![(-64, 72), (260, 280)];
+        let cols: Vec<(ColumnSpanList, f32, u8)> = vec![
+            (isle.clone(), 0.5, 0), // sky isle, no tier
+            (isle.clone(), 0.5, 0), // sky isle, no tier
+            (smallvec::smallvec![(-64, 60)], 0.0, 1),
+            (smallvec::smallvec![(-64, 60)], 0.0, 2),
+            (smallvec::smallvec![(-64, 60)], 0.0, 3),
+        ];
+        let fixture = build_botany_provider(&cols);
+        let provider = fixture.provider();
+        let zone = crate::world::zone::Zone {
+            name: "botany_test".to_string(),
+            dimension: crate::world::dimension::DimensionKind::Overworld,
+            bounds: (
+                valence::prelude::DVec3::new(0.0, 0.0, 0.0),
+                valence::prelude::DVec3::new(16.0, 320.0, 16.0),
+            ),
+            spirit_qi: 0.0,
+            danger_level: 1,
+            active_events: vec![],
+            patrol_anchors: vec![],
+            blocked_tiles: vec![],
+        };
+        let manifest = crate::botany::env_lock::DecorationManifest::from_terrain_provider(provider);
+
+        // First, prove env_sky_island derives a real (base_y, thickness) from the
+        // span (the §8.1 #12 swap point) — base 260, thickness 20.
+        use crate::botany::env_lock::EnvLayerSampler;
+        assert_eq!(
+            provider.env_sky_island(0, 0),
+            Some((260.0, 20.0)),
+            "sky-isle (base_y, thickness) must come from the span (260, 280), not a \
+             deleted base_y/thickness field"
+        );
+
+        // Each herb's primary geometry lock at its intended column → PASS.
+        let yun_ding_lan = EnvLock::SkyIslandMask {
+            min: 0.2,
+            surface: SkyIsleSurface::Top,
+        };
+        let xuan_gen_wei = EnvLock::SkyIslandMask {
+            min: 0.2,
+            surface: SkyIsleSurface::Bottom,
+        };
+        assert!(
+            check_env_lock(yun_ding_lan, 0, 0, provider, &zone, &manifest),
+            "yun_ding_lan (sky-isle Top) must pass on the isle column via the span path"
+        );
+        assert!(
+            check_env_lock(xuan_gen_wei, 1, 0, provider, &zone, &manifest),
+            "xuan_gen_wei (sky-isle Bottom) must pass on the isle column"
+        );
+        assert!(
+            check_env_lock(
+                EnvLock::UndergroundTier { tier: 1 },
+                2,
+                0,
+                provider,
+                &zone,
+                &manifest
+            ),
+            "ying_yuan_gu (tier 1) must pass on the tier-1 column"
+        );
+        assert!(
+            check_env_lock(
+                EnvLock::UndergroundTier { tier: 2 },
+                3,
+                0,
+                provider,
+                &zone,
+                &manifest
+            ),
+            "xuan_rong_tai (tier 2) must pass on the tier-2 column"
+        );
+        assert!(
+            check_env_lock(
+                EnvLock::UndergroundTier { tier: 3 },
+                4,
+                0,
+                provider,
+                &zone,
+                &manifest
+            ),
+            "yuan_ni_hong_yu (tier 3) must pass on the tier-3 column"
+        );
+
+        // And each lock must FAIL where its semantic layer is absent — proving the
+        // span refactor did not silently make every column pass (position drift).
+        assert!(
+            !check_env_lock(yun_ding_lan, 2, 0, provider, &zone, &manifest),
+            "sky-isle Top must NOT pass on a non-isle underground column"
+        );
+        assert!(
+            !check_env_lock(
+                EnvLock::UndergroundTier { tier: 3 },
+                2,
+                0,
+                provider,
+                &zone,
+                &manifest
+            ),
+            "tier-3 lock must NOT pass on a tier-1 column (no position drift)"
+        );
+        // qi_vein_flow lock (part of yuan_ni_hong_yu) reads its own layer, set 1.0.
+        assert!(
+            check_env_lock(
+                EnvLock::QiVeinFlow { min: 0.5 },
+                4,
+                0,
+                provider,
+                &zone,
+                &manifest
+            ),
+            "yuan_ni_hong_yu qi_vein_flow lock must pass with the constant 1.0 layer"
+        );
+        let _ = DecorationLock::One("yuan_ni_ebony"); // keep the import meaningful
+    }
+
     #[test]
     fn behavior_equivalence_surface_water_biome_match_v3_golden() {
         use super::super::SurfaceProvider;
-        // Frozen v3 golden sample (subset of worldgen/fixtures/v3_surface_baseline.json):
-        // (surface_y, water_y_opt, biome_id). The span surface == round(height)
-        // is the §8.1 #2 equivalence contract; the Python golden pins the same
-        // numbers (test_v3_behavior_baseline.py). water_level<0 → no water.
-        // Shapes: normal / water / sky_isle (isle above) / cave (carved).
-        // Exact frozen golden rows (in-range subset) from
-        // worldgen/fixtures/v3_surface_baseline.json:
-        //   normal  (60,100)  surface 307, no water,  biome 9
-        //   water   (100,100) surface 44,  water 44,  biome 10
-        //   sky_isle(100,100) surface 74,  no water,  biome 4
-        //   cave    (100,100) surface 67,  no water,  biome 5
-        //   abyssal (100,100) surface 70,  no water,  biome 5
+        // Frozen v3 golden sample (subset of worldgen/fixtures/v3_surface_baseline.json).
+        // These are the REAL v3 carved surfaces (rift/fracture/neg/entrance
+        // sculpting baked in), NOT round(height) — the Python golden records the
+        // exact same numbers via v3_surface_top_y (test_v3_behavior_baseline.py).
+        // For a carved column the surface span ceiling already == carved top_y, so
+        // the byte path here (mmap → ColumnSample → query_surface) reproduces the
+        // carved surface. water_level<0 → no water.
+        // Exact frozen golden rows from worldgen/fixtures/v3_surface_baseline.json:
+        //   normal  (60,100)  surface 307, no water,  biome 9   (no carve)
+        //   water   (100,100) surface 44,  water 44,  biome 10  (no carve)
+        //   sky_isle(100,100) surface 75,  no water,  biome 4   (height 74.5 →
+        //                     f32 round-half-away = 75, NOT banker's 74)
+        //   cave    (100,100) surface 63,  no water,  biome 5   (entrance sink 4)
+        //   abyssal (100,100) surface 57,  no water,  biome 5   (neg 9 + entrance 4)
         let cols: Vec<(ColumnSpanList, f32, u8)> = vec![
             (smallvec::smallvec![(-64, 307)], -1.0, 9),
             (smallvec::smallvec![(-64, 44)], 44.0, 10),
-            // sky_isle: ground 74 + isle span above; surface stays 74.
-            (smallvec::smallvec![(-64, 74), (260, 272)], -1.0, 4),
-            // cave: surface cap ceiling 67 + a floor remnant below; surface 67.
-            (smallvec::smallvec![(60, 67), (-64, 30)], -1.0, 5),
-            // abyssal: surface cap 70 + remnant; surface 70.
-            (smallvec::smallvec![(64, 70), (-64, 20)], -1.0, 5),
+            // sky_isle: ground 75 + isle span above; surface stays 75.
+            (smallvec::smallvec![(-64, 75), (260, 272)], -1.0, 4),
+            // cave: carved surface cap ceiling 63 + a floor remnant below.
+            (smallvec::smallvec![(58, 63), (-64, 30)], -1.0, 5),
+            // abyssal: carved surface cap 57 (neg+entrance) + remnant.
+            (smallvec::smallvec![(40, 57), (-64, 20)], -1.0, 5),
         ];
         let expected: [(i32, Option<i32>, u8); 5] = [
             (307, None, 9),
             (44, Some(44), 10),
-            (74, None, 4),
-            (67, None, 5),
-            (70, None, 5),
+            (75, None, 4),
+            (63, None, 5),
+            (57, None, 5),
         ];
 
         let fixture = build_spans_provider(&cols);
@@ -2247,8 +2550,8 @@ mod tests {
             let sample = provider.sample(x as i32, 0);
             assert_eq!(
                 surface.y, *want_y,
-                "column {x}: query_surface().y should equal the span ceiling \
-                 (v3 golden surface_y={want_y}), got {}",
+                "column {x}: query_surface().y should equal the carved v3 surface \
+                 (golden surface_y={want_y}), got {}",
                 surface.y
             );
             let got_water = if surface.water_y == i32::MIN {
@@ -2264,6 +2567,45 @@ mod tests {
                 sample.biome_id, *want_biome,
                 "column {x}: biome_id should match v3 golden ({want_biome}), got {}",
                 sample.biome_id
+            );
+        }
+    }
+
+    /// Anti-circular literal anchors for the carved surfaces above. v4 Rust no
+    /// longer carves (the rift/fracture/neg/entrance sculpt moved into the Python
+    /// span shim — `surface_y_for_sample` now just reads `spans[0].ceiling`), so
+    /// the carve FORMULA is pinned by hand-calced literals on the Python side
+    /// (`worldgen/tests/test_v3_behavior_baseline.py::HandCalcedV3CarveAnchors`).
+    /// Here we pin the CONSUMER contract: a span whose ceiling already equals the
+    /// hand-computed carved top_y must surface at exactly that Y through the real
+    /// mmap → ColumnSample → query_surface path, so a span-decode regression撞红.
+    #[test]
+    fn carved_surface_spans_query_to_hand_calced_top_y() {
+        use super::super::SurfaceProvider;
+        // Each row: a surface span whose ceiling is the hand-computed v3 carved
+        // top_y (matching the Python literals), plus the expected query_surface.
+        //   rift     80 - round((1-0.5)*22 + 0.25*4)=12          → 68
+        //   fracture 100 - int(f32(0.90-0.7)*300=59.99→59)       → 41
+        //   neg      90 - round(0.5*14)=7                         → 83
+        //   entrance 72 - round(0.45*10)=round(4.5)=5             → 67
+        //   stacked  95 - 9(rift) - 30(frac) - 4(neg) - 2(ent)   → 50
+        let cols: Vec<(ColumnSpanList, f32, u8)> = vec![
+            (smallvec::smallvec![(-64, 68)], -1.0, 3),
+            (smallvec::smallvec![(-64, 41)], -1.0, 3),
+            (smallvec::smallvec![(-64, 83)], -1.0, 6),
+            (smallvec::smallvec![(-64, 67)], -1.0, 5),
+            (smallvec::smallvec![(-64, 50)], -1.0, 3),
+        ];
+        let expected = [68, 41, 83, 67, 50];
+        let fixture = build_spans_provider(&cols);
+        let provider = fixture.provider();
+        for (x, want) in expected.iter().enumerate() {
+            let surface = provider.query_surface(x as i32, 0);
+            assert_eq!(
+                surface.y, *want,
+                "column {x}: carved-surface span must query to the hand-calced \
+                 v3 top_y {want}, got {}",
+                surface.y
             );
         }
     }

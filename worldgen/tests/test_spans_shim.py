@@ -19,8 +19,13 @@ from pathlib import Path
 
 import numpy as np
 
+from regenerate_v3_baseline import v3_carved_surface
 from scripts.terrain_gen.fields import SPAN_MAX_Y
-from scripts.terrain_gen.spans_shim import column_spans_for_index, spans_for_tile
+from scripts.terrain_gen.spans_shim import (
+    column_spans_for_index,
+    spans_for_tile,
+    v3_surface_top_y,
+)
 from v3_baseline_zones import TILE_SIZE, build_baseline_buffer
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -163,8 +168,41 @@ class ColumnFoldingTest(unittest.TestCase):
         )
 
 
+class V3SurfaceCarveUnitTest(unittest.TestCase):
+    """``v3_surface_top_y`` reproduces the column.rs carve, branch by branch."""
+
+    def test_no_masks_is_clamped_round_height(self) -> None:
+        self.assertEqual(v3_surface_top_y(72.0, 99.0, 0.0, 0.0, 0.0, 0.0), 72)
+        # Above the world ceiling clamps via clamp_world_y to 429.
+        self.assertEqual(v3_surface_top_y(999.0, 99.0, 0.0, 0.0, 0.0, 0.0), 429)
+
+    def test_rift_branch_carves(self) -> None:
+        # round((1-0.5)*22 + 0.25*4) = 12 off 80 → 68.
+        self.assertEqual(v3_surface_top_y(80.0, 0.5, 0.25, 0.0, 0.0, 0.0), 68)
+        # sdf >= 0.9 → no carve.
+        self.assertEqual(v3_surface_top_y(80.0, 0.9, 1.0, 0.0, 0.0, 0.0), 80)
+
+    def test_fracture_branch_truncates(self) -> None:
+        # f32 (0.90-0.7)*300 = 59.99… truncates to 59 off 100 → 41 (matches the
+        # v3 Rust f32 path; f64 would give 60 → 40).
+        self.assertEqual(v3_surface_top_y(100.0, 99.0, 0.0, 0.90, 0.0, 0.0), 41)
+        # mask <= 0.7 → no carve.
+        self.assertEqual(v3_surface_top_y(100.0, 99.0, 0.0, 0.70, 0.0, 0.0), 100)
+
+    def test_neg_pressure_branch_sinks(self) -> None:
+        self.assertEqual(v3_surface_top_y(90.0, 99.0, 0.0, 0.0, 0.5, 0.0), 83)
+        # neg <= 0.18 → no sink.
+        self.assertEqual(v3_surface_top_y(90.0, 99.0, 0.0, 0.0, 0.18, 0.0), 90)
+
+    def test_entrance_branch_sinks_half_away(self) -> None:
+        # round(0.45*10)=round(4.5)=5 (half away, like Rust f32::round) off 72 → 67.
+        self.assertEqual(v3_surface_top_y(72.0, 99.0, 0.0, 0.0, 0.0, 0.45), 67)
+        # entrance <= 0.16 → no sink.
+        self.assertEqual(v3_surface_top_y(72.0, 99.0, 0.0, 0.0, 0.0, 0.16), 72)
+
+
 class ShimBehaviourEquivalenceTest(unittest.TestCase):
-    """Folding the v3 tiles must reproduce the frozen baseline surfaces."""
+    """Folding the v3 tiles must reproduce the frozen carved baseline surfaces."""
 
     def setUp(self) -> None:
         self.baseline = json.loads(BASELINE_PATH.read_text(encoding="utf-8"))
@@ -183,30 +221,35 @@ class ShimBehaviourEquivalenceTest(unittest.TestCase):
             for row in rows:
                 idx = self._col_index(row["local_x"], row["local_z"])
                 surface = columns[idx].surface_ceiling_y
-                expected = min(row["surface_y"], SPAN_MAX_Y)
+                # The golden surface is the carved v3 top_y (already clamped to
+                # the v3 world range, which is <= SPAN_MAX_Y).
+                expected = row["surface_y"]
                 self.assertEqual(
                     surface,
                     expected,
                     f"{profile_key}({row['local_x']},{row['local_z']}): folded "
-                    f"span surface {surface} != v3 baseline {expected}",
+                    f"span surface {surface} != v3 carved baseline {expected}; the "
+                    f"shim must reproduce the rift/fracture/neg/entrance sculpt",
                 )
 
     def test_whole_tile_surface_equivalence_and_legality(self) -> None:
-        for profile_key in ("normal", "water", "sky_isle", "cave", "abyssal"):
+        for profile_key in (
+            "normal", "water", "sky_isle", "cave", "abyssal", "rift", "waste",
+        ):
             buffer = build_baseline_buffer(profile_key)
             height = np.asarray(buffer.layers["height"], dtype=np.float64)
             columns = spans_for_tile(buffer)
             self.assertEqual(len(columns), len(height))
             for idx, col in enumerate(columns):
                 # Every folded column must be a legal ColumnSpans (construction
-                # already enforced it) and its surface must match round(height)
-                # clamped to the world ceiling.
-                expected = min(int(round(float(height[idx]))), SPAN_MAX_Y)
+                # already enforced it) and its surface must match the v3 carved
+                # top_y derived independently from the same buffer.
+                expected = v3_carved_surface(buffer, idx)
                 self.assertEqual(
                     col.surface_ceiling_y,
                     expected,
-                    f"{profile_key} col {idx}: surface {col.surface_ceiling_y} "
-                    f"!= clamped round(height) {expected}",
+                    f"{profile_key} col {idx}: folded surface "
+                    f"{col.surface_ceiling_y} != v3 carved top_y {expected}",
                 )
 
     def test_water_columns_unaffected_by_folding(self) -> None:
