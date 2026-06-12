@@ -959,9 +959,10 @@ describe("AgentUiRuntime e2e (P2 验收)", () => {
     await runtime.disconnect();
   });
 
-  it("e2e: realm_gate_rejected → emit narration 到 bong:agent_narrate（P2 §3）", async () => {
+  it("e2e: realm_gate_rejected → emit narration 到 bong:agent_narrate（P2 §3，无 narPub 回退到 sub）", async () => {
     const pub = makeFullMockClient();
     const sub = makeFullMockClient();
+    // 不传 narPub → 内部回退到 sub（sub 有 publish + disconnect，类型安全）
     const runtime = new AgentUiRuntime({ pub, sub });
     await runtime.connect();
 
@@ -977,7 +978,8 @@ describe("AgentUiRuntime e2e (P2 验收)", () => {
       },
     });
 
-    // 清除 pub.publish 调用（已有 triggerUi 的调用）
+    // 清除 sub.publish 调用（已有 subscribe 等调用）
+    sub.publish.mockClear();
     pub.publish.mockClear();
 
     // 模拟 server 向 bong:agent_ui_response 发布 realm_gate_rejected error
@@ -994,9 +996,10 @@ describe("AgentUiRuntime e2e (P2 验收)", () => {
     await Promise.resolve();
     await Promise.resolve();
 
-    // 验证 narration 已发布到 bong:agent_narrate
-    expect(pub.publish, "应 emit 叙事").toHaveBeenCalledOnce();
-    const [narChannel, narRaw] = pub.publish.mock.calls[0];
+    // narPub 回退到 sub → narration 走 sub.publish（不走 pub.publish）
+    expect(sub.publish, "narPub 回退到 sub：应 emit 叙事到 sub.publish").toHaveBeenCalledOnce();
+    expect(pub.publish, "pub.publish 不应被 narration 调用（narPub 回退到 sub）").not.toHaveBeenCalled();
+    const [narChannel, narRaw] = sub.publish.mock.calls[0];
     expect(narChannel, "应发布到 AGENT_NARRATE").toBe(AGENT_NARRATE);
 
     const narMsg = JSON.parse(narRaw as string);
@@ -1010,6 +1013,48 @@ describe("AgentUiRuntime e2e (P2 验收)", () => {
     expect(runtime.stats.narrationPublished, "stats.narrationPublished=1").toBe(1);
 
     await runtime.disconnect();
+  });
+
+  it("e2e: realm_gate_rejected → 显式传 narPub 时 narration 走 narPub 而非 sub（断连路径不崩溃）", async () => {
+    // 测试显式 narPub 路径：narPub 有独立 publish + disconnect，不依赖 sub 或 pub
+    const listeners: Map<string, ((ch: string, msg: string) => void)[]> = new Map();
+    const narPub = {
+      publish: vi.fn(async (_channel: string, _message: string) => 1),
+      disconnect: vi.fn(() => {}),
+    };
+    const pub = makeFullMockClient();
+    const sub = makeFullMockClient();
+
+    const runtime = new AgentUiRuntime({ pub, sub, narPub });
+    await runtime.connect();
+
+    const result = await runtime.triggerUi({
+      scenario: "tiandao_revelation",
+      targetPlayer: { ...tsyPlayer, realm: "Spirit" }, // realm_gate=5 通过
+      params: { tiandao_message: "天机将至" },
+    });
+
+    sub.publish.mockClear();
+    pub.publish.mockClear();
+
+    sub.emitUiResponse({
+      request_id: result.requestId,
+      action: "error",
+      params: { reason: "realm_gate_rejected" },
+    });
+
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // 显式 narPub 时 narration 走 narPub.publish，sub.publish / pub.publish 均不调用
+    expect(narPub.publish, "显式 narPub：narration 走 narPub.publish").toHaveBeenCalledOnce();
+    expect(sub.publish, "sub.publish 不参与 narration").not.toHaveBeenCalled();
+    expect(pub.publish, "pub.publish 不参与 narration").not.toHaveBeenCalled();
+
+    // disconnect 时调用 narPub.disconnect（不崩溃）
+    await runtime.disconnect();
+    expect(narPub.disconnect, "disconnect 时 narPub.disconnect 被调用").toHaveBeenCalled();
+    void listeners; // suppress unused warning
   });
 
   it("e2e: dismissed → drainPendingSessionEnds 队列收到 session 结束事件", async () => {
@@ -1290,5 +1335,58 @@ describe("enforceXmlByteLimit (MINOR-字节预检)", () => {
     ).toBeLessThanOrEqual(8192);
     // Result must indicate blur=false (realm sufficient) and have a requestId
     expect(result.requestId).toBe("req-byte-test");
+  });
+
+  // ── TRUNCATION_SUFFIX 不含非法 XML 标签（回归锁定，防 </widget> 复现）──────────
+
+  it("truncated suffix closes with </owo-ui> and does NOT contain invalid </widget> tag", () => {
+    // 回归 pin：旧版本 TRUNCATION_SUFFIX 含 </widget>（owo-ui 无此标签），
+    // 现已改为 </label></flow-layout></components></owo-ui>。
+    const longXml = "<owo-ui>" + "x".repeat(9000) + "</owo-ui>";
+    const result = enforceXmlByteLimit(longXml, 8192, noopLogger);
+
+    expect(result, "truncated result must not contain invalid </widget>").not.toContain("</widget>");
+    expect(result, "truncated result must end with </owo-ui>").toMatch(/<\/owo-ui>$/);
+  });
+
+  it("truncated suffix does not introduce </widget> in real template truncation scenario", async () => {
+    // 用 TSY_DISCOVERY_TEMPLATE 大叙事测试真实截断不产出 </widget>
+    const longNarrative = "天道叙事内容".repeat(500); // force truncation
+    const pub = { publish: vi.fn(async () => 1) };
+    const renderer = new UiRenderer({
+      pub,
+      logger: { info: vi.fn(), warn: vi.fn() },
+      generateRequestId: () => "req-suffix-test",
+    });
+    const player = {
+      uuid: "offline:SuffixTest",
+      name: "SuffixTest",
+      realm: "Condense",
+      composite_power: 0.5,
+      breakdown: { combat: 0.5, wealth: 0.5, social: 0.5, karma: 0.0, territory: 0.5 },
+      trend: "stable" as const,
+      active_hours: 10,
+      zone: "test_zone",
+      pos: [0, 64, 0] as [number, number, number],
+      recent_kills: 0,
+      recent_deaths: 0,
+    };
+
+    await renderer.renderUi({
+      scenario: "tsy_discovery",
+      targetPlayer: player,
+      params: {
+        zone_name: "截断测试渊",
+        spirit_qi_display: "0.9",
+        danger_tier: "极危",
+        agent_narrative: longNarrative,
+      },
+    });
+
+    const publishArgs = pub.publish.mock.calls[0] as unknown as [string, string];
+    const cmd = JSON.parse(publishArgs[1] as string) as Record<string, string>;
+    expect(cmd["xml"], "truncated tsy_discovery xml must not contain </widget>").not.toContain("</widget>");
+    expect(cmd["xml"], "truncated tsy_discovery xml must end with </owo-ui>").toMatch(/<\/owo-ui>$/);
+    expect(Buffer.byteLength(cmd["xml"], "utf8")).toBeLessThanOrEqual(8192);
   });
 });
