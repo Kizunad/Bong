@@ -48,6 +48,8 @@ LM_RIGHT_ANKLE = 28
 
 @dataclass(frozen=True)
 class LandmarkFrame:
+    """MediaPipe landmark pair sampled for one output animation tick."""
+
     tick: int
     world_landmarks: Sequence[object] | None
     image_landmarks: Sequence[object] | None
@@ -57,6 +59,7 @@ class VideoPoser:
     """Sample MediaPipe Pose landmarks from a video at Minecraft tick cadence."""
 
     def __init__(self, *, fps: int = 20, model_complexity: int = 2) -> None:
+        """Create a MediaPipe-backed sampler with validated target FPS."""
         if fps <= 0:
             raise ValueError("fps must be > 0")
         self.fps = fps
@@ -77,6 +80,7 @@ class VideoPoser:
         )
 
     def sample(self, video_path: Path) -> list[LandmarkFrame]:
+        """Read a video file and return sampled world/image landmarks."""
         cap = self._cv2.VideoCapture(str(video_path))
         if not cap.isOpened():
             raise ValueError(f"cannot open video: {video_path}")
@@ -119,6 +123,7 @@ class PoseToEmotecraft:
     """Map MediaPipe landmarks to Bong PlayerAnimator pose tables."""
 
     def __init__(self, *, translate: bool = False, body_scale: float = 1.0) -> None:
+        """Create a landmark converter with optional body translation output."""
         self.translate = translate
         self.body_scale = body_scale
 
@@ -135,6 +140,7 @@ class PoseToEmotecraft:
         smooth: bool = True,
         loop: bool = False,
     ) -> dict[int, dict]:
+        """Convert sampled landmark frames into an anim_common pose table."""
         pose_table: dict[int, dict] = {}
         for frame in frames:
             if frame.world_landmarks is None:
@@ -157,6 +163,7 @@ class PoseToEmotecraft:
         world_landmarks: Sequence[object],
         image_landmarks: Sequence[object] | None = None,
     ) -> dict:
+        """Convert one valid MediaPipe landmark frame into part axes."""
         points = {idx: self._p(world_landmarks[idx]) for idx in _REQUIRED_WORLD_LANDMARKS}
 
         shoulder_mid = _mid(points[LM_LEFT_SHOULDER], points[LM_RIGHT_SHOULDER])
@@ -193,6 +200,7 @@ class PoseToEmotecraft:
         return {part: axes for part, axes in pose.items() if axes}
 
     def _body_translation(self, image_landmarks: Sequence[object] | None) -> dict:
+        """Return body xyz translation from normalized hip landmarks."""
         if not self.translate or image_landmarks is None:
             return {}
         hip = _mid(_vec_from_any(image_landmarks[LM_LEFT_HIP]), _vec_from_any(image_landmarks[LM_RIGHT_HIP]))
@@ -203,6 +211,7 @@ class PoseToEmotecraft:
         }
 
     def _head_pose(self, points: dict[int, np.ndarray], torso_vec: np.ndarray) -> dict:
+        """Estimate head pitch/yaw/roll from face landmark direction."""
         face_center = _mid(
             _mid(points[LM_LEFT_EYE], points[LM_RIGHT_EYE]),
             _mid(points[LM_MOUTH_LEFT], points[LM_MOUTH_RIGHT]),
@@ -220,6 +229,7 @@ class PoseToEmotecraft:
         *,
         reference: np.ndarray,
     ) -> dict:
+        """Estimate upper-arm rotation and lower-arm bend axes."""
         upper = elbow - shoulder
         lower = wrist - elbow
         axes = _vector_pose(upper, reference)
@@ -229,6 +239,7 @@ class PoseToEmotecraft:
         return axes
 
     def _leg_pose(self, hip: np.ndarray, knee: np.ndarray, ankle: np.ndarray) -> dict:
+        """Estimate thigh rotation and knee bend axes."""
         thigh = knee - hip
         calf = ankle - knee
         axes = _vector_pose(thigh, np.array([0.0, -1.0, 0.0]))
@@ -244,6 +255,7 @@ class PoseToEmotecraft:
         *,
         is_leg: bool = False,
     ) -> tuple[float, float]:
+        """Return bend magnitude and bend axis in radians."""
         parent = _normalize(parent_vec)
         child = _normalize(child_vec)
         bend = math.acos(_clamp(float(np.dot(parent, child)), -1.0, 1.0))
@@ -262,6 +274,7 @@ class PoseToEmotecraft:
         name: str,
         loop: bool = False,
     ) -> dict:
+        """Build an Emotecraft v3 JSON document from a pose table."""
         if not pose_table:
             raise ValueError("no valid pose frames found")
         end_tick = max(pose_table)
@@ -276,6 +289,7 @@ class PoseToEmotecraft:
 
 
 def _xyz(point: object) -> tuple[float, float, float]:
+    """Read x/y/z from a MediaPipe-like object or tuple."""
     if hasattr(point, "x") and hasattr(point, "y"):
         return float(point.x), float(point.y), float(getattr(point, "z", 0.0))
     if isinstance(point, np.ndarray):
@@ -299,6 +313,7 @@ class FrameSampler:
     """Streaming source-frame sampler for a target animation tick cadence."""
 
     def __init__(self, *, source_fps: float, target_fps: int) -> None:
+        """Create a streaming sampler for source fps to target fps conversion."""
         if not math.isfinite(source_fps) or source_fps <= 0:
             raise ValueError("source_fps must be > 0")
         if target_fps <= 0:
@@ -309,6 +324,7 @@ class FrameSampler:
         self._next_sample_time = 0.0
 
     def tick_for_frame(self, frame_index: int) -> int | None:
+        """Return output tick for this source frame, or None when skipped."""
         frame_time = frame_index / self.source_fps
         if frame_time + 1e-9 < self._next_sample_time:
             return None
@@ -319,14 +335,17 @@ class FrameSampler:
 
 
 def _vec_from_any(point: object) -> np.ndarray:
+    """Return a numpy vector from any supported landmark point."""
     return np.array(_xyz(point), dtype=float)
 
 
 def _mid(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    """Return the midpoint between two vectors."""
     return (a + b) * 0.5
 
 
 def _normalize(vec: np.ndarray) -> np.ndarray:
+    """Return a unit vector, or zero for near-zero input."""
     norm = float(np.linalg.norm(vec))
     if norm < 1e-9:
         return np.zeros(3, dtype=float)
@@ -334,10 +353,12 @@ def _normalize(vec: np.ndarray) -> np.ndarray:
 
 
 def _clamp(value: float, lo: float, hi: float) -> float:
+    """Clamp a scalar into an inclusive range."""
     return max(lo, min(hi, value))
 
 
 def _vector_pose(vector: np.ndarray, reference: np.ndarray) -> dict[str, float]:
+    """Return pitch/yaw/roll degrees rotating reference onto vector."""
     matrix = _rotation_between(reference, vector)
     pitch, yaw, roll = _matrix_to_euler_xyz(matrix)
     return {
@@ -348,6 +369,7 @@ def _vector_pose(vector: np.ndarray, reference: np.ndarray) -> dict[str, float]:
 
 
 def _rotation_between(reference: np.ndarray, target: np.ndarray) -> np.ndarray:
+    """Build a rotation matrix that aligns reference to target."""
     ref = _normalize(reference)
     tgt = _normalize(target)
     if np.linalg.norm(ref) < 1e-9 or np.linalg.norm(tgt) < 1e-9:
@@ -365,6 +387,7 @@ def _rotation_between(reference: np.ndarray, target: np.ndarray) -> np.ndarray:
 
 
 def _axis_angle(axis: np.ndarray, angle: float) -> np.ndarray:
+    """Build a 3x3 rotation matrix from axis-angle input."""
     x, y, z = axis
     c = math.cos(angle)
     s = math.sin(angle)
@@ -380,6 +403,7 @@ def _axis_angle(axis: np.ndarray, angle: float) -> np.ndarray:
 
 
 def _matrix_to_euler_xyz(matrix: np.ndarray) -> tuple[float, float, float]:
+    """Extract approximate PlayerAnimator pitch/yaw/roll radians."""
     sy = _clamp(float(matrix[0, 2]), -1.0, 1.0)
     yaw = math.asin(sy)
     if abs(sy) < 0.999999:
@@ -392,6 +416,7 @@ def _matrix_to_euler_xyz(matrix: np.ndarray) -> tuple[float, float, float]:
 
 
 def _smooth_pose_table(pose_table: dict[int, dict]) -> None:
+    """Unwrap angular axes in-place to avoid ±180° discontinuities."""
     if len(pose_table) < 2:
         return
     for part in VALID_PARTS:
@@ -409,11 +434,13 @@ def _smooth_pose_table(pose_table: dict[int, dict]) -> None:
 
 
 def smooth_angle_degrees(values: Sequence[float]) -> list[float]:
+    """Unwrap a degree sequence across the ±180° boundary."""
     radians = np.radians(np.array(values, dtype=float))
     return [float(v) for v in np.degrees(np.unwrap(radians))]
 
 
 def _merge_boundary_pose(last_pose: dict, first_pose: dict) -> dict:
+    """Copy first-pose axes onto the loop boundary pose."""
     merged = {part: dict(axes) if isinstance(axes, dict) else axes for part, axes in last_pose.items()}
     for part, axes in first_pose.items():
         if isinstance(axes, dict):
@@ -424,6 +451,7 @@ def _merge_boundary_pose(last_pose: dict, first_pose: dict) -> dict:
 
 
 def parse_args(argv: Sequence[str]) -> argparse.Namespace:
+    """Parse CLI arguments for the video converter."""
     parser = argparse.ArgumentParser(description="Convert pose video to Bong Emotecraft v3 JSON")
     parser.add_argument("input_video", type=Path)
     parser.add_argument("-o", "--output", required=True, help="animation name without .json")
@@ -437,6 +465,7 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
 
 
 def _positive_int(value: str) -> int:
+    """Parse a strictly positive integer for argparse."""
     parsed = int(value)
     if parsed <= 0:
         raise argparse.ArgumentTypeError("must be > 0")
@@ -444,6 +473,7 @@ def _positive_int(value: str) -> int:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """Run the video-to-animation CLI pipeline."""
     args = parse_args(sys.argv[1:] if argv is None else argv)
     poser = VideoPoser(fps=args.fps, model_complexity=args.complexity)
     frames = poser.sample(args.input_video)
@@ -458,6 +488,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 def _run_preview(out_path: Path) -> None:
+    """Render a preview grid for the generated animation JSON."""
     preview_dir = Path(tempfile.mkdtemp(prefix=f"video2anim_{out_path.stem}_"))
     try:
         from render_animation import render_grid

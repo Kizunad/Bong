@@ -17,13 +17,17 @@ from video2emotecraft import (
 
 
 class Lm:
+    """Tiny MediaPipe-like landmark object for tests."""
+
     def __init__(self, x: float, y: float, z: float = 0.0) -> None:
+        """Store x/y/z coordinates with MediaPipe attribute names."""
         self.x = x
         self.y = y
         self.z = z
 
 
 def test_body_translation_signs_through_public_pose() -> None:
+    """Verify public pose output preserves body translation signs."""
     image_landmarks = [Lm(0.0, 0.0, 0.0) for _ in range(33)]
     image_landmarks[23] = Lm(0.75, 0.25, 0.0)
     image_landmarks[24] = Lm(0.75, 0.25, 0.0)
@@ -40,6 +44,7 @@ def test_body_translation_signs_through_public_pose() -> None:
 
 
 def test_t_pose_maps_to_near_zero_rotations() -> None:
+    """Verify canonical T-pose is the neutral rotation baseline."""
     pose = PoseToEmotecraft().frame_to_pose(canonical_t_pose())
 
     for part in ("torso", "head", "leftArm", "rightArm", "leftLeg", "rightLeg"):
@@ -52,6 +57,7 @@ def test_t_pose_maps_to_near_zero_rotations() -> None:
 
 
 def test_public_pose_reports_left_arm_bend_90_degrees() -> None:
+    """Verify arm bend through the public frame_to_pose API."""
     landmarks = canonical_t_pose()
     landmarks[15] = Lm(-0.7, -1.7, 0.0)
 
@@ -68,6 +74,7 @@ def test_public_pose_reports_left_arm_bend_90_degrees() -> None:
 
 
 def test_public_pose_reports_left_leg_bend_45_degrees() -> None:
+    """Verify leg bend through the public frame_to_pose API."""
     landmarks = canonical_t_pose()
     landmarks[27] = Lm(-0.65, 1.05, 0.0)
 
@@ -83,6 +90,7 @@ def test_public_pose_reports_left_leg_bend_45_degrees() -> None:
 
 
 def test_output_json_uses_radians_and_degrees_false() -> None:
+    """Verify generated Emotecraft JSON stores angle moves as radians."""
     converter = PoseToEmotecraft()
     doc = converter.build_doc(
         {
@@ -110,6 +118,7 @@ def test_output_json_uses_radians_and_degrees_false() -> None:
 
 
 def test_pose_table_structure_and_valid_parts() -> None:
+    """Verify pose table keys and part names match anim_common contracts."""
     frames = [LandmarkFrame(0, canonical_t_pose(), None)]
     pose_table = PoseToEmotecraft().convert_frames(frames)
 
@@ -125,6 +134,7 @@ def test_pose_table_structure_and_valid_parts() -> None:
 
 
 def test_missing_landmarks_frame_is_skipped() -> None:
+    """Verify frames with missing landmarks are skipped safely."""
     frames = [
         LandmarkFrame(0, None, None),
         LandmarkFrame(1, canonical_t_pose(), None),
@@ -139,6 +149,7 @@ def test_missing_landmarks_frame_is_skipped() -> None:
 
 
 def test_angle_continuity_unwraps_180_boundary() -> None:
+    """Verify angle unwrap removes discontinuity across ±180 degrees."""
     smoothed = smooth_angle_degrees([170.0, 179.0, -179.0, -170.0])
     deltas = [abs(b - a) for a, b in pairwise(smoothed)]
 
@@ -151,6 +162,7 @@ def test_angle_continuity_unwraps_180_boundary() -> None:
 
 
 def test_loop_mode_closes_boundary_pose() -> None:
+    """Verify loop mode copies tick zero pose to the boundary tick."""
     landmarks0 = canonical_t_pose()
     landmarks1 = canonical_t_pose()
     landmarks1[15] = Lm(-0.4, -1.0, 0.0)
@@ -167,6 +179,7 @@ def test_loop_mode_closes_boundary_pose() -> None:
 
 
 def test_sample_frame_indices_preserve_30_to_20_fps_duration() -> None:
+    """Verify 30fps source sampling keeps one second at 20 ticks."""
     indices = sample_frame_indices(frame_count=30, source_fps=30.0, target_fps=20)
 
     assert len(indices) == 20, (
@@ -176,6 +189,7 @@ def test_sample_frame_indices_preserve_30_to_20_fps_duration() -> None:
 
 
 def test_sample_frame_indices_do_not_duplicate_low_fps_source() -> None:
+    """Verify low-fps sources are sampled once per available source frame."""
     indices = sample_frame_indices(frame_count=10, source_fps=10.0, target_fps=20)
 
     assert indices == list(range(10)), (
@@ -185,11 +199,13 @@ def test_sample_frame_indices_do_not_duplicate_low_fps_source() -> None:
 
 
 def test_non_positive_fps_is_rejected() -> None:
+    """Verify CLI rejects zero FPS before video sampling."""
     with pytest.raises(SystemExit):
         parse_args(["input.mp4", "-o", "bad", "--fps", "0"])
 
 
 def canonical_t_pose() -> list[Lm]:
+    """Build a 33-landmark neutral pose compatible with MediaPipe indices."""
     landmarks = [Lm(0.0, 0.0, 0.0) for _ in range(33)]
 
     # Values are pre-transform MediaPipe-like coordinates.  After conversion:
