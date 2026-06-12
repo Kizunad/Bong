@@ -7,6 +7,7 @@ import { describe, it, expect } from "vitest";
 import {
   MAX_SPANS,
   SPAN_BYTES_PER_COLUMN,
+  SPAN_MIN_Y,
   SPAN_SENTINEL,
   decodeColumn,
   decodeTile,
@@ -199,22 +200,64 @@ describe("spansToVoxelGeometry — sky isle (multi-span, floating) ", () => {
 
 describe("spansToVoxelGeometry — cave (lower span carved under air)", () => {
   it("a column with a roof span + floor span exposes the cave's inner faces", () => {
-    // span[0] = walkable surface/roof region [40, 80] (surface=80),
-    // span[1] = a cave floor remnant below [-64, 20] with air between.
+    // span[0] = carved roof region [40, 80] (surface=80) FLOATING above air,
+    // span[1] = a cave floor remnant resting on bedrock [-64, 20].
     const tile = tileFrom(1, [[[40, 80], [-64, 20]]]);
     const geo = spansToVoxelGeometry(tile, PALETTE);
-    // span[0] roof: top(1) + 4 sides = 5 (it's span[0] so no bottom emitted...
-    //   the carved ceiling underside is the cave roof — modeled as the lower
-    //   span's top, see below).
-    // span[1] floor: top(1) + bottom(1) + 4 sides = 6.
+    // span[0] roof: top(1) + bottom(1, floor=40 > MIN_Y so the cave CEILING
+    //   underside shows) + 4 sides = 6.
+    // span[1] floor: top(1) + 4 sides = 5 (floor=-64 touches bedrock → no bottom).
     expect(quadCount(geo)).toBe(11);
     const ys = Array.from(geo.positions).filter((_, i) => i % 3 === 1);
     // Cave floor top = 21 (the surface NPCs would stand on inside the cave).
     expect(ys).toContain(21);
     // Roof top = 81.
     expect(ys).toContain(81);
+    // Cave ceiling underside = span[0].floor = 40 (now visible when looking up
+    // inside the cave — the whole point of the bottom-face fix).
+    expect(ys).toContain(40);
     // surface (walkable outer top) is span[0].ceiling = 80.
     expect(surfaceY(tile.columns[0])).toBe(80);
+  });
+});
+
+describe("spansToVoxelGeometry — bottom face culling by world floor", () => {
+  it("a span[0] resting on bedrock (floor=MIN_Y) emits NO bottom face", () => {
+    // Ground column touching the world floor: underside is solid, hidden.
+    const tile = tileFrom(1, [[[SPAN_MIN_Y, 64]]]);
+    const geo = spansToVoxelGeometry(tile, PALETTE);
+    // top(1) + 4 sides = 5, no bottom.
+    expect(quadCount(geo)).toBe(5);
+    const ys = Array.from(geo.positions).filter((_, i) => i % 3 === 1);
+    // No -Y face at the floor: every face at y=MIN_Y is a SIDE (it spans
+    // [floor, top]); a bottom quad would put all 4 of its verts at y=MIN_Y.
+    // Count verts sitting exactly at MIN_Y: a bottom quad contributes 4 such
+    // verts; here the 4 side quads each contribute 2 (their bottom edge) = 8.
+    const atFloor = ys.filter((y) => y === SPAN_MIN_Y).length;
+    expect(atFloor).toBe(8); // 4 sides * 2 bottom-edge verts, no bottom quad's 4
+  });
+
+  it("a single floating span[0] (floor > MIN_Y) DOES emit a bottom face", () => {
+    // A floating platform whose span[0] sits above bedrock — its underside is
+    // exposed air and must render (sky-isle / arch / overhang underside).
+    const floor = 120;
+    const tile = tileFrom(1, [[[floor, 140]]]);
+    const geo = spansToVoxelGeometry(tile, PALETTE);
+    // top(1) + bottom(1, floor=120 > MIN_Y) + 4 sides = 6.
+    expect(quadCount(geo)).toBe(6);
+    // A -Y normal must be present (the bottom face), unlike the bedrock case.
+    const normals = geo.normals;
+    let hasDownFace = false;
+    for (let i = 0; i < normals.length; i += 3) {
+      if (normals[i] === 0 && normals[i + 1] === -1 && normals[i + 2] === 0) {
+        hasDownFace = true;
+        break;
+      }
+    }
+    expect(hasDownFace).toBe(true);
+    // The bottom quad's 4 verts sit at y=floor.
+    const ys = Array.from(geo.positions).filter((_, i) => i % 3 === 1);
+    expect(ys.filter((y) => y === floor).length).toBeGreaterThanOrEqual(4);
   });
 });
 

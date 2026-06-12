@@ -15,6 +15,9 @@ import { qiHeatColor, surfaceColorForId, type RGB } from "./palette";
 export const MAX_SPANS = 4;
 export const SPAN_SENTINEL = 32767;
 export const SPAN_BYTES_PER_COLUMN = MAX_SPANS * 2 * 2; // 16
+/** World floor (bedrock) Y — SPAN_MIN_Y in fields.py. A span whose floor sits
+ *  here touches the world bottom, so its underside is never exposed to air. */
+export const SPAN_MIN_Y = -64;
 
 export interface DecodeParams {
   tileSize: number;
@@ -221,14 +224,18 @@ export function spansToVoxelGeometry(
           ],
         });
 
-        // Bottom face (-Y) — only when air sits below (span[0] ground floor at
-        // world bottom never shows; a cave-floor / sky-isle underside does).
-        // Heuristic: emit if this is not the ground span OR its floor is above
-        // the world floor sentinel range — but the cheap, correct signal is "is
-        // there another span strictly below this one in the same column?". If
-        // not and it's span[0], it's the ground and the underside is hidden.
-        const isGroundFloor = si === 0;
-        if (!isGroundFloor) {
+        // Bottom face (-Y) — exposed whenever this span's floor does NOT touch
+        // the world bottom (bedrock). A span resting on SPAN_MIN_Y is solid all
+        // the way down, so its underside is hidden; anything floating above the
+        // floor (a cave CEILING viewed from inside, a sky-isle underside, a
+        // floating platform) has air below and must show its bottom.
+        //
+        // The old `si === 0` heuristic wrongly hid EVERY span[0] underside,
+        // erasing cave ceilings (where span[0] is the carved roof region above
+        // air) and floating-platform bottoms. floor_y > SPAN_MIN_Y is the
+        // correct, position-based signal and is independent of span ordering.
+        const touchesWorldFloor = span.floorY <= SPAN_MIN_Y;
+        if (!touchesWorldFloor) {
           quads.push({
             normal: [0, -1, 0],
             color,
