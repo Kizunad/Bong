@@ -31,6 +31,12 @@ worldgen/server/mofa-world/
 worldgen/.venv/
 worldgen/generated/
 
+# Worldgen-v4 dev console (vite + three.js) — build/install artifacts only;
+# package-lock.json IS committed.  (node_modules/ + dist/ are also covered by
+# the global rules below, listed here explicitly for clarity.)
+worldgen/console/node_modules/
+worldgen/console/dist/
+
 # IDE
 .idea/
 .vscode/
