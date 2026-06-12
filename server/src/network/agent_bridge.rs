@@ -780,6 +780,20 @@ mod server_data_tests {
     }
 
     #[test]
+    fn labels_agent_ui_payload_types() {
+        assert_eq!(
+            payload_type_label(ServerDataType::AgentUiRequest),
+            "agent_ui_request",
+            "Agent UI request wire label 必须稳定为 agent_ui_request"
+        );
+        assert_eq!(
+            payload_type_label(ServerDataType::AgentUiClose),
+            "agent_ui_close",
+            "Agent UI close wire label 必须稳定为 agent_ui_close"
+        );
+    }
+
+    #[test]
     fn serializes_inventory_payloads() {
         let snapshot_payload = ServerDataV1::new(ServerDataPayloadV1::InventorySnapshot(Box::new(
             sample_inventory_snapshot(),

@@ -4776,4 +4776,48 @@ mod tests {
             "AgentUiRequestPayloadV1 timeout_ticks 应在 JSON roundtrip 后保持 600"
         );
     }
+
+    #[test]
+    #[should_panic(expected = "AgentUiRequest/AgentUiClose 经由 JSON CustomPayload 发送")]
+    fn agent_ui_request_panics_if_proto_path_is_used() {
+        use crate::schema::agent_ui::AgentUiRequestPayloadV1;
+
+        let payload = ServerDataPayloadV1::AgentUiRequest(AgentUiRequestPayloadV1 {
+            request_id: "pin-req".to_string(),
+            target_player: "offline:Kiz".to_string(),
+            xml: "<owo-ui><components><label>test</label></components></owo-ui>".to_string(),
+            timeout_ticks: 600,
+        });
+        let _: bong::server_data_envelope::Payload = (&payload).into();
+    }
+
+    #[test]
+    #[should_panic(expected = "AgentUiRequest/AgentUiClose 经由 JSON CustomPayload 发送")]
+    fn agent_ui_close_panics_if_proto_path_is_used() {
+        use crate::schema::agent_ui::AgentUiClosePayloadV1;
+
+        let payload = ServerDataPayloadV1::AgentUiClose(AgentUiClosePayloadV1 {
+            request_id: "pin-req".to_string(),
+            reason: Some("session_expired".to_string()),
+        });
+        let _: bong::server_data_envelope::Payload = (&payload).into();
+    }
+
+    #[test]
+    #[should_panic(expected = "AgentUiResponse 经由 JSON CustomPayload 接收")]
+    fn agent_ui_response_panics_if_proto_path_is_used() {
+        use crate::schema::agent_ui::AgentUiActionType;
+        use crate::schema::client_request::ClientRequestV1;
+
+        let req = ClientRequestV1::AgentUiResponse {
+            v: 1,
+            request_id: "pin-req".to_string(),
+            action: AgentUiActionType::ButtonClick,
+            params: std::collections::HashMap::from([(
+                "button_id".to_string(),
+                "enter_realm".to_string(),
+            )]),
+        };
+        let _: bong::client_request_envelope::Payload = (&req).into();
+    }
 }

@@ -3968,6 +3968,17 @@ mod tests {
                     cost_flavor: None,
                 }],
             }),
+            // ─── plan-agent-ui-data-v1 P0: Agent UI wire/label guard ─────────
+            ServerDataPayloadV1::AgentUiRequest(AgentUiRequestPayloadV1 {
+                request_id: "agent-ui-req".to_string(),
+                target_player: "offline:Kiz".to_string(),
+                xml: "<owo-ui><components><label>test</label></components></owo-ui>".to_string(),
+                timeout_ticks: 600,
+            }),
+            ServerDataPayloadV1::AgentUiClose(AgentUiClosePayloadV1 {
+                request_id: "agent-ui-req".to_string(),
+                reason: Some("invalid_button_id".to_string()),
+            }),
         ];
 
         for payload in cases {
@@ -4282,6 +4293,12 @@ mod tests {
             ),
             include_str!(
                 "../../../agent/packages/schema/samples/server-data.spirit-treasure-dialogue.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.agent-ui-request.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.agent-ui-close.sample.json"
             ),
             // plan-coffin-tiers-v1 P0 charge #7：四档 + no-grade serde pin samples
             include_str!(
