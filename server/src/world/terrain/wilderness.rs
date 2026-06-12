@@ -1,5 +1,5 @@
-use valence::prelude::{BiomeId, BlockState};
 use smallvec::smallvec;
+use valence::prelude::{BiomeId, BlockState};
 
 use super::raster::ColumnSample;
 use super::MIN_Y;
