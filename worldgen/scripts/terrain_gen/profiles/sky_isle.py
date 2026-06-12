@@ -112,8 +112,10 @@ class SkyIsleGenerator(TerrainProfileGenerator):
                 "altitude": 248,
                 "body_thickness": 26,
                 "silhouette_threshold": 0.52,
-                "drip_depth": 18,
+                "drip_depth": 22,
                 "scale": 150.0,
+                "drip_scale": 22.0,
+                "drip_sharpness": 1.9,
             },
         ),
         CarverSpec(
@@ -122,8 +124,10 @@ class SkyIsleGenerator(TerrainProfileGenerator):
                 "altitude": 322,
                 "body_thickness": 16,
                 "silhouette_threshold": 0.60,
-                "drip_depth": 12,
+                "drip_depth": 14,
                 "scale": 110.0,
+                "drip_scale": 18.0,
+                "drip_sharpness": 1.9,
             },
         ),
     )

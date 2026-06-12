@@ -48,12 +48,21 @@ class FloatingIslandCarver(BaseCarver):
         silhouette_threshold: float = 0.55,
         drip_depth: int = 14,
         scale: float = 130.0,
+        drip_scale: float = 44.0,
+        drip_sharpness: float = 1.0,
     ) -> None:
         self.altitude = clamp_y(altitude)
         self.body_thickness = max(6, body_thickness)
         self.silhouette_threshold = silhouette_threshold
         self.drip_depth = max(2, drip_depth)
         self.scale = scale
+        # Underside stalactite feel: ``drip_scale`` is the 3D-noise feature size
+        # of the hanging drips (smaller = tighter, more numerous stalactites);
+        # ``drip_sharpness`` is the exponent on the [0,1] drip field — >1 biases
+        # most columns to hang a little and a few to hang a lot, so the underside
+        # reads as spiky 钟乳 points instead of a smooth wavy slab.
+        self.drip_scale = max(8.0, drip_scale)
+        self.drip_sharpness = max(0.25, drip_sharpness)
 
     def _silhouette(self, wx: int, wz: int, seed: int) -> float:
         # Warped 2.5D-ish blob sampled at the island altitude → island plan view.
@@ -83,10 +92,15 @@ class FloatingIslandCarver(BaseCarver):
         nominal_floor = island_top - thickness
 
         # Stalactite underside: a 3D drip field hangs the floor down unevenly.
+        # A higher-frequency tight field + a sharpness exponent turns the smooth
+        # wave into spiky 钟乳 points — most columns hang a little, a few hang a
+        # lot — so the bottom face reads as irregular drips, not a flat slab.
         drip = fbm_3d(
-            float(wx), float(nominal_floor), float(wz), scale=44.0, seed=seed + 29
+            float(wx), float(nominal_floor), float(wz),
+            scale=self.drip_scale, seed=seed + 29,
         )
-        drip_amount = int(round((drip + 1.0) * 0.5 * self.drip_depth))
+        drip01 = ((drip + 1.0) * 0.5) ** self.drip_sharpness
+        drip_amount = int(round(drip01 * self.drip_depth))
         island_floor = clamp_y(nominal_floor - drip_amount)
 
         surface_y = col.surface_y
