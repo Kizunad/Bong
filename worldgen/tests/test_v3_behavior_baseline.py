@@ -8,8 +8,8 @@ walkable surface (rift→fracture→neg→entrance sculpting, then clamps), NOT
 1. Re-running the v3 generators + carve math today still yields the exact
    baseline numbers (catches accidental landscape drift across every
    representative profile before the span refactor changes anything).
-2. (after P0 shim lands) the spans folded from those same 2D outputs reproduce
-   the baseline surface — see ``test_spans_shim.py``.
+2. The spans folded from those same 2D outputs reproduce the baseline surface —
+   see ``test_spans_fold.py``.
 3. ANTI-CIRCULARITY: hand-computed literal anchors (``HandCalcedV3CarveAnchors``)
    pin specific (height, mask…) inputs to a v3 ``top_y`` value worked out by hand
    from column.rs, covering rift / fracture / neg_pressure / entrance.  If the
@@ -31,7 +31,7 @@ from pathlib import Path
 import numpy as np
 
 from regenerate_v3_baseline import v3_carved_surface
-from scripts.terrain_gen.spans_shim import v3_surface_top_y
+from scripts.terrain_gen.spans_fold import v3_surface_top_y
 from v3_baseline_zones import TILE_SIZE, build_baseline_buffer
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -247,7 +247,7 @@ class V3SurfaceBaselineTest(unittest.TestCase):
             len(water_rows),
             0,
             "water profile baseline must contain at least one flooded column so "
-            "the shim's water_y equivalence is actually exercised",
+            "the fold's water_y equivalence is actually exercised",
         )
 
     def test_v3_generators_still_match_frozen_baseline(self) -> None:

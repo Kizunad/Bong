@@ -206,11 +206,11 @@ def _compute_boundary_weight_array(
 # ---------------------------------------------------------------------------
 
 
-# worldgen-v4 P0 §8.1 #1: blend modes for the legacy vertical patch layers that
-# were removed from LAYER_REGISTRY (folded into spans) but are still emitted by
-# the unrewritten profiles and consumed by the shim.  Mirrors the modes those
-# layers carried in v3 so the span fold reproduces the v3 landscape verbatim.
-SHIM_PATCH_BLEND_MODES: dict[str, str] = {
+# worldgen-v4 §8.1 #1: blend modes for the vertical patch layers that were
+# removed from LAYER_REGISTRY (folded into spans) but are still emitted by the
+# DSL profiles and consumed by spans_fold.  Mirrors the modes those layers
+# carried in v3 so the span fold reproduces the v3 landscape verbatim.
+FOLD_PATCH_BLEND_MODES: dict[str, str] = {
     "cave_mask": "maximum",
     "ceiling_height": "maximum",
     "entrance_mask": "maximum",
@@ -371,16 +371,16 @@ def _blend_tile_layers(
             continue
         base_arr = base_tile.layers[extra_layer]
         spec = LAYER_REGISTRY.get(extra_layer)
-        # worldgen-v4 P0: cave_mask / ceiling_height / sky_island_base_y etc.
-        # are no longer in LAYER_REGISTRY (folded into spans at export) but the
-        # shim still reads them per column.  Blend them with their ORIGINAL v3
-        # modes so the folded spans reproduce the v3 landscape across zone
+        # worldgen-v4 §8.1 #1: cave_mask / ceiling_height / sky_island_base_y etc.
+        # are no longer in LAYER_REGISTRY (folded into spans at export) but
+        # spans_fold still reads them per column.  Blend them with their ORIGINAL
+        # v3 modes so the folded spans reproduce the v3 landscape across zone
         # boundaries — a coordinate layer like sky_island_base_y must keep its
         # `minimum` blend (sentinel 9999 preserved), not default to maximum.
         if spec is not None:
             blend = spec.blend_mode
         else:
-            blend = SHIM_PATCH_BLEND_MODES.get(extra_layer, "maximum")
+            blend = FOLD_PATCH_BLEND_MODES.get(extra_layer, "maximum")
         if blend == "minimum":
             blended = np.minimum(base_arr, overlay_arr)
         elif blend == "lerp":

@@ -6,7 +6,7 @@ Run from the worldgen/ directory:
 
 This captures the full-profile equivalence golden for the P2 DSL migration: for
 EVERY registered terrain profile, it folds the profile's 2D output through the
-SAME ``spans_shim.spans_for_tile`` the raster export uses and records, per
+SAME ``spans_fold.spans_for_tile`` the raster export uses and records, per
 sampled column, the observable contract a migrated DSL profile must reproduce:
 
   surface_y   = span[0].ceiling_y     (the carved walkable surface)
@@ -32,7 +32,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from scripts.terrain_gen.spans_shim import spans_for_tile  # noqa: E402
+from scripts.terrain_gen.spans_fold import spans_for_tile  # noqa: E402
 from v3_full_profile_baseline import (  # noqa: E402
     FULL_PROFILE_BASELINE,
     build_full_profile_buffer,

@@ -70,13 +70,13 @@ jobs:
           python3 -m unittest test_anvil_region_writer -v
           python3 -m unittest test_anvil_spans -v
 
-      - name: Unit tests — worldgen-v4 spans (codec / shim / blend / export / check)
+      - name: Unit tests — worldgen-v4 spans (codec / fold / blend / export / check)
         # plan-worldgen-v4 P0: span 表示地基的 Python 侧饱和单测。worldgen/tests/
         # 目录历史不在 CI；P0 显式纳入 span 相关用例防回归。
         working-directory: worldgen
         run: |
           python3 -m unittest discover -s tests -p 'test_spans.py' -v
-          python3 -m unittest discover -s tests -p 'test_spans_shim.py' -v
+          python3 -m unittest discover -s tests -p 'test_spans_fold.py' -v
           python3 -m unittest discover -s tests -p 'test_span_blend.py' -v
           python3 -m unittest discover -s tests -p 'test_spans_export.py' -v
           python3 -m unittest discover -s tests -p 'test_raster_check_spans.py' -v

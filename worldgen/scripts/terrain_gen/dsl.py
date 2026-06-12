@@ -389,7 +389,7 @@ def rift_carve(
 ) -> np.ndarray:
     """轴向裂谷下切：sdf < threshold 处 height -= (1-sdf)*axis + rim*rim_strength。
 
-    与 spans_shim.v3_surface_top_y 步骤①同公式（这里作用在连续 height 场而非
+    与 spans_fold.v3_surface_top_y 步骤①同公式（这里作用在连续 height 场而非
     整数 top_y，迁移后由 fold 统一离散化）。覆盖 rift_valley 的轴向雕刻。
     """
     carve = (1.0 - rift_axis_sdf) * axis_strength + rim_edge_mask * rim_strength
@@ -406,7 +406,7 @@ def fracture_carve(
 ) -> np.ndarray:
     """碎裂深切：mask > threshold 处 height = max(floor_y, height - (mask-thr)*crack)。
 
-    与 spans_shim 步骤②同公式。覆盖 rift_valley / ancient_battlefield 的裂缝深沟。
+    与 spans_fold 步骤②同公式。覆盖 rift_valley / ancient_battlefield 的裂缝深沟。
     """
     crack = (fracture_mask - mask_threshold) * crack_strength
     carved = np.maximum(floor_y, height - crack)
@@ -422,7 +422,7 @@ def neg_pressure_carve(
 ) -> np.ndarray:
     """负压沉降：neg > threshold 处 height -= neg*strength。
 
-    与 spans_shim 步骤③同公式。覆盖 waste_plateau / rift_mouth 的死域沉陷。
+    与 spans_fold 步骤③同公式。覆盖 waste_plateau / rift_mouth 的死域沉陷。
     """
     return np.where(
         neg_pressure > threshold, height - neg_pressure * strength, height

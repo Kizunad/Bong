@@ -14,8 +14,8 @@
    常量，落在六档枚举内（现有 zone spirit_qi 就近归档）。P2 只锁 schema 声明，
    实际灵气场生成在 P4。
 
-迁移一个 profile 就把它的 key 追加进 ``MIGRATED_PROFILES``，pin 立即生效；未迁移
-的 profile 不在此列，不受约束（仍走手写 numpy + spans_shim）。
+迁移一个 profile 就把它的 key 追加进 ``MIGRATED_PROFILES``，pin 立即生效。P2 收尾
+后全部 profile 已迁；其 2D 层经统一 spans_fold 折成 spans（"换表示不换景观"）。
 """
 
 from __future__ import annotations

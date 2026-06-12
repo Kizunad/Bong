@@ -1,4 +1,4 @@
-"""worldgen-v4 P0 — 2D → spans shim folding + behaviour-equivalence pin.
+"""worldgen-v4 — 2D → spans fold + behaviour-equivalence pin.
 
 Two layers of coverage:
 
@@ -21,7 +21,7 @@ import numpy as np
 
 from regenerate_v3_baseline import v3_carved_surface
 from scripts.terrain_gen.fields import SPAN_MAX_Y
-from scripts.terrain_gen.spans_shim import (
+from scripts.terrain_gen.spans_fold import (
     column_spans_for_index,
     spans_for_tile,
     v3_surface_top_y,
@@ -229,7 +229,7 @@ class ShimBehaviourEquivalenceTest(unittest.TestCase):
                     expected,
                     f"{profile_key}({row['local_x']},{row['local_z']}): folded "
                     f"span surface {surface} != v3 carved baseline {expected}; the "
-                    f"shim must reproduce the rift/fracture/neg/entrance sculpt",
+                    f"fold must reproduce the rift/fracture/neg/entrance sculpt",
                 )
 
     def test_whole_tile_surface_equivalence_and_legality(self) -> None:
@@ -253,7 +253,7 @@ class ShimBehaviourEquivalenceTest(unittest.TestCase):
                 )
 
     def test_water_columns_unaffected_by_folding(self) -> None:
-        # The shim folds only the solid structure; water_level must be readable
+        # The fold folds only the solid structure; water_level must be readable
         # unchanged from the same buffer (the spans layer is orthogonal to it).
         buffer = build_baseline_buffer("water")
         water = np.asarray(buffer.layers["water_level"], dtype=np.float64)

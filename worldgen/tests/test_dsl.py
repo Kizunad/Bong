@@ -445,7 +445,7 @@ class MaskOpsTest(unittest.TestCase):
 
 
 # ===========================================================================
-# carve ops 饱和（与 spans_shim 公式同源）
+# carve ops 饱和（与 spans_fold 公式同源）
 # ===========================================================================
 
 
@@ -467,8 +467,8 @@ class CarveOpsTest(unittest.TestCase):
         untouched = np.isclose(carved, 80.0)
         self.assertTrue(untouched.any(), "far-from-axis columns stay at 80")
 
-    def test_rift_carve_formula_matches_shim_anchor(self) -> None:
-        # Mirror the spans_shim literal anchor: sdf=0.5, rim=0.25 →
+    def test_rift_carve_formula_matches_fold_anchor(self) -> None:
+        # Mirror the spans_fold literal anchor: sdf=0.5, rim=0.25 →
         # carve = (1-0.5)*22 + 0.25*4 = 11 + 1 = 12 → 80 - 12 = 68.
         h = np.array([[80.0]])
         carved = dsl.rift_carve(

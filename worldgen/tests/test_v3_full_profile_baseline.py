@@ -9,10 +9,10 @@ sky-isle second spans).  Plan §P2 验收 is容差等价 (NOT byte-exact like P0
 This test freezes that contract for ALL 20 registered profiles in
 ``worldgen/fixtures/v3_full_profile_baseline.json``.  Three guarantees:
 
-1. Re-running the current (pre-migration) generators + the span shim today still
-   yields the exact baseline numbers — catches accidental landscape drift on any
-   profile before a single DSL line is written (the equivalence对拍物 itself must
-   be stable, or every later migration check is built on sand).
+1. Re-running the generators + the span fold today still yields the exact
+   baseline numbers — catches accidental landscape drift on any profile (the
+   equivalence对拍物 itself must be stable, or every migration check is built on
+   sand).
 2. The golden actually exercises the structural folds it claims to lock: at least
    one cave void column (2 spans) and the sky-isle floating second span are
    present, so the matrix isn't a degenerate "every column is one flat span"
@@ -20,9 +20,9 @@ This test freezes that contract for ALL 20 registered profiles in
 3. Coverage: the golden covers every profile in ``_GENERATORS`` — no profile can
    be silently migrated without an equivalence pin.
 
-When a profile is later migrated to the DSL and stops folding through the shim,
-its DSL-built ColumnSpans must reproduce these numbers within tolerance.  If a
-profile legitimately changes its landscape, regenerate with
+Every profile is now DSL-driven; its 2D layers fold through the canonical
+span fold and must reproduce these numbers within tolerance.  If a profile
+legitimately changes its landscape, regenerate with
 ``python3 tests/regenerate_v3_full_profile_baseline.py`` and review the diff —
 never hand-edit the JSON to silence this test.
 """
@@ -36,7 +36,7 @@ from pathlib import Path
 import numpy as np
 
 from scripts.terrain_gen.profiles import list_profile_generators
-from scripts.terrain_gen.spans_shim import spans_for_tile
+from scripts.terrain_gen.spans_fold import spans_for_tile
 from v3_full_profile_baseline import (
     FULL_PROFILE_BASELINE,
     build_full_profile_buffer,
@@ -138,9 +138,9 @@ class V3FullProfileBaselineTest(unittest.TestCase):
         )
 
     def test_generators_still_match_frozen_baseline(self) -> None:
-        # Run each generator once, fold through the shim, and compare every
-        # sampled column to the golden.  This is BOTH a pre-migration drift guard
-        # AND, post-migration, the contract the DSL profile must reproduce.
+        # Run each generator once, fold through the canonical span fold, and
+        # compare every sampled column to the golden.  This is the contract the
+        # DSL profile must reproduce — "换表示不换景观".
         for profile_key, rows in self.by_profile.items():
             buffer = build_full_profile_buffer(profile_key)
             columns = spans_for_tile(buffer)
