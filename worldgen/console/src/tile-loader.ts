@@ -11,21 +11,35 @@ const SPANS = "spans.bin";
 
 /**
  * Load + decode a single tile. Spans are mandatory (every tile carries them in
- * P0); surface_id / water_level / qi_density are optional (absent -> undefined,
- * the decoder/mesh fall back to defaults).
+ * P0); surface_id / water_level / qi_density / flora_variant_id are optional and
+ * are fetched ONLY when `tile.layers` declares the tile actually wrote them.
+ *
+ * The manifest already tells us which optional layers each tile carries, so
+ * requesting the others would just generate a 404 per absent layer per tile — a
+ * 404 storm across the whole world on every load. Gating on `tile.layers`
+ * fetches exactly what exists (and absent layers stay undefined, the decoder /
+ * mesh fall back to safe defaults).
  */
 export async function loadTile(
   manifest: Manifest,
   tile: ManifestTile,
 ): Promise<DecodedTile> {
   const ts = manifest.tile_size;
+  // tile.layers holds bare layer names (no ".bin"); the endpoint takes the
+  // file name. Only fetch a layer the manifest says this tile wrote.
+  const has = (layer: string): boolean => tile.layers.includes(layer);
+  const fetchIf = (layer: string): Promise<ArrayBuffer | null> =>
+    has(layer)
+      ? fetchTileLayer(tile.tile_x, tile.tile_z, `${layer}.bin`)
+      : Promise.resolve(null);
+
   const [countBuf, spansBuf, surfaceBuf, waterBuf, qiBuf, floraBuf] = await Promise.all([
     fetchTileLayer(tile.tile_x, tile.tile_z, SPANS_COUNT),
     fetchTileLayer(tile.tile_x, tile.tile_z, SPANS),
-    fetchTileLayer(tile.tile_x, tile.tile_z, "surface_id.bin"),
-    fetchTileLayer(tile.tile_x, tile.tile_z, "water_level.bin"),
-    fetchTileLayer(tile.tile_x, tile.tile_z, "qi_density.bin"),
-    fetchTileLayer(tile.tile_x, tile.tile_z, "flora_variant_id.bin"),
+    fetchIf("surface_id"),
+    fetchIf("water_level"),
+    fetchIf("qi_density"),
+    fetchIf("flora_variant_id"),
   ]);
 
   if (!countBuf || !spansBuf) {
