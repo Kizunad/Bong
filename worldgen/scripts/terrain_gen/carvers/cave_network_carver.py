@@ -81,6 +81,7 @@ class CaveNetworkCarver(BaseCarver):
         layers: int = 2,
         octaves: int = 2,
         y_step: int = 1,
+        xz_step: int = 1,
     ) -> None:
         self.surface_cap = max(2, surface_cap)
         self.floor_buffer = max(2, floor_buffer)
@@ -93,6 +94,41 @@ class CaveNetworkCarver(BaseCarver):
         # Scalar + vectorized paths share this so they stay byte-identical.
         self.octaves = max(1, octaves)
         self.y_step = max(1, y_step)
+        # Coarse density sampling on an absolute world lattice + interpolation:
+        # ``y_step`` strides the vertical axis, ``xz_step`` strides the two
+        # horizontal axes.  Together they sample the density on a coarse 3D
+        # lattice and trilinearly interpolate the in-between blocks.  Keying the
+        # lattice on absolute world (x, y, z) — never a tile-relative index —
+        # keeps the scalar single-column and vectorized whole-tile paths
+        # byte-identical: both reach for the same lattice anchors around any
+        # given world coordinate.
+        self.xz_step = max(1, xz_step)
+
+    @staticmethod
+    def _axis_anchors(coords: np.ndarray, step: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Absolute-lattice anchor bracket + lerp weight for each world coordinate.
+
+        Returns ``(anchor_values, idx_into_unique, weight)`` where every input
+        coordinate ``c`` is bracketed by lattice points ``a0 = floor(c/step)·step``
+        and ``a1 = a0 + step`` with weight ``(c - a0)/step``.  ``anchor_values``
+        is the sorted unique set of all bracketing lattice points (so the noise
+        is sampled once per unique anchor, not once per column), and ``idx`` maps
+        each coordinate to the position of its ``a0`` within ``anchor_values``
+        (its ``a1`` is the next entry).  Because the lattice is the absolute
+        world grid, a single column and a whole tile that contain the same world
+        coordinate resolve to the identical anchors + weight.
+        """
+        a0 = np.floor(coords / step) * step
+        weight = (coords - a0) / step
+        # A CONTIGUOUS anchor lattice from the lowest to the highest bracket,
+        # spaced by ``step``, so a0 and its partner a0+step are always adjacent
+        # entries (idx, idx+1) — sampling only the lattice points the columns
+        # actually bracket, but never letting a sparse gap split a bracket pair.
+        lo_a = float(a0.min())
+        hi_a = float(a0.max()) + step
+        anchors = np.arange(lo_a, hi_a + 0.5 * step, step, dtype=np.float64)
+        idx = np.rint((a0 - lo_a) / step).astype(np.int64)
+        return anchors, idx, weight
 
     # ------------------------------------------------------------------
     # Shared density core — both the scalar and vectorized carve paths call
@@ -122,47 +158,58 @@ class CaveNetworkCarver(BaseCarver):
         if depth <= 0 or ncols == 0:
             return np.zeros((max(depth, 0), ncols), dtype=bool)
 
-        # Absolute world-Y anchors keyed on ``carve_bottom`` + k·step, stepping
-        # PAST ``carve_top`` so the final lerp segment always brackets the top
-        # row.  Crucially the anchor offsets ``{0, step, 2·step, …}`` do NOT
-        # depend on ``carve_top`` — every caller (a single column with its own
-        # surface, or the whole-tile grid with the max surface) lays anchors on
-        # the identical world-Y lattice, so a shorter column is an exact prefix
-        # of a taller one.  That prefix property is what makes the scalar
-        # ``_carve`` (per-column top) and the vectorized ``carve_tile`` (global
-        # top, then sliced per column) byte-identical for every column.
+        # --- Vertical anchors: carve_bottom + k·y_step, stepping PAST carve_top
+        # so the final lerp segment always brackets the top row.  The anchor
+        # OFFSETS ``{0, y_step, 2·y_step, …}`` do NOT depend on carve_top, so a
+        # shorter column is an exact prefix of a taller one — that prefix
+        # property is what makes the scalar ``_carve`` (per-column top) and the
+        # vectorized ``carve_tile`` (global top, then sliced per column)
+        # byte-identical for every column.
         last_off = ((depth - 1) // self.y_step) * self.y_step
         if last_off < depth - 1:
             last_off += self.y_step
-        anchor_off = np.arange(0, last_off + 1, self.y_step)
-        ys_anchor = (carve_bottom + anchor_off).astype(np.float64)
-        nanchor = anchor_off.shape[0]
-
-        # For each full-Y row, the anchor segment it falls in + the lerp weight.
+        y_off = np.arange(0, last_off + 1, self.y_step)
+        ys_anchor = (carve_bottom + y_off).astype(np.float64)
+        ny = y_off.shape[0]
         rows = np.arange(depth)
-        seg = np.clip(np.searchsorted(anchor_off, rows, side="right") - 1, 0, nanchor - 2)
-        a0 = anchor_off[seg]
-        a1 = anchor_off[seg + 1]
-        weight = ((rows - a0) / np.maximum(a1 - a0, 1)).astype(np.float64)
+        yseg = np.clip(np.searchsorted(y_off, rows, side="right") - 1, 0, ny - 2)
+        yw = ((rows - y_off[yseg]) / np.maximum(y_off[yseg + 1] - y_off[yseg], 1)).astype(
+            np.float64
+        )
 
-        wx_g = wx[None, :]
-        wz_g = wz[None, :]
+        # --- Horizontal anchors on the absolute world lattice (floor(c/step)·step
+        # bracket per coordinate, with the noise sampled once per UNIQUE anchor).
+        xa, xidx, xw = self._axis_anchors(wx, self.xz_step)
+        za, zidx, zw = self._axis_anchors(wz, self.xz_step)
+        nxa = xa.shape[0]
+        nza = za.shape[0]
+
         lo, hi = self.carve_band
         mask = np.zeros((depth, ncols), dtype=bool)
+        # Lattice grid for the noise sample: (ny, nza, nxa).
+        xa_g = xa[None, None, :]
+        za_g = za[None, :, None]
         for layer in range(self.layers):
-            # Each layer uses a different vertical frequency so the galleries
-            # appear at different depths, then merge where they overlap.
-            ys_layer = (ys_anchor * (1.0 + 0.35 * layer))[:, None]
+            ys_layer = (ys_anchor * (1.0 + 0.35 * layer))[:, None, None]
             sampled = fbm_3d(
-                np.broadcast_to(wx_g, (nanchor, ncols)),
-                np.broadcast_to(ys_layer, (nanchor, ncols)),
-                np.broadcast_to(wz_g, (nanchor, ncols)),
+                np.broadcast_to(xa_g, (ny, nza, nxa)),
+                np.broadcast_to(ys_layer, (ny, nza, nxa)),
+                np.broadcast_to(za_g, (ny, nza, nxa)),
                 scale=self.scale * (1.0 + 0.25 * layer),
                 octaves=self.octaves,
                 seed=seed + 41 + layer * 7,
             )
-            # Linearly interpolate the sampled anchors back to every world-Y row.
-            v = sampled[seg] * (1.0 - weight)[:, None] + sampled[seg + 1] * weight[:, None]
+            # Trilinear gather → (ny, ncols): bilinear over the X/Z lattice per
+            # column, then it stays on the coarse Y anchors for the Y lerp below.
+            s00 = sampled[:, zidx, xidx]
+            s10 = sampled[:, zidx, xidx + 1]
+            s01 = sampled[:, zidx + 1, xidx]
+            s11 = sampled[:, zidx + 1, xidx + 1]
+            sx0 = s00 * (1.0 - xw)[None, :] + s10 * xw[None, :]
+            sx1 = s01 * (1.0 - xw)[None, :] + s11 * xw[None, :]
+            anchor_col = sx0 * (1.0 - zw)[None, :] + sx1 * zw[None, :]  # (ny, ncols)
+            # Linearly interpolate the coarse-Y anchors back to every world-Y row.
+            v = anchor_col[yseg] * (1.0 - yw)[:, None] + anchor_col[yseg + 1] * yw[:, None]
             mask |= (v >= lo) & (v <= hi)
         return mask
 

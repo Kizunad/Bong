@@ -83,10 +83,13 @@ class CaveNetworkGenerator(TerrainProfileGenerator):
     # 保证地表不直接破口；layers=3 + 较窄 carve_band 让画廊在不同深度蜿蜒连通。
     #
     # P3 perf 收口：cave_network 是 worldgen bake 的绝对热点（多层 3D 噪声覆盖整
-    # 个洞穴体积，全量 pipeline 因此推过 snapshot CI 的 30min 预算）。octaves=1
-    # （单层密度足以蜿蜒）+ y_step=4（沿绝对世界 Y 每 4 格采样密度、线性插值——
-    # scale≈28 下亚步长抖动小于 1 格洞壁）把单 tile 雕刻从 ~128s 降到 ~22s，画廊
-    # 仍多层连通、剖面无退化。
+    # 个洞穴体积，全量 pipeline 因此推过 snapshot CI 的 30min 预算）。三手降本，
+    # 几何近无损（scale≈28 下密度沿各轴平滑，carve_band 是平滑场上的阈值）：
+    #   octaves=1   —— 单层密度足以蜿蜒连通，噪声评估减半；
+    #   y_step=4    —— 沿绝对世界 Y 每 4 格采样密度、线性插值；
+    #   xz_step=3   —— 沿绝对世界 X/Z 每 3 格采样、双线性插值。
+    # 三轴粗采样在绝对世界格上锚定，scalar/vector 逐块等价。单 512 tile 雕刻
+    # ~128s→~14s，画廊仍多层连通、剖面 multi-span/overhang 统计零差异。
     carvers = (
         CarverSpec(
             kind="cave_network",
@@ -98,6 +101,7 @@ class CaveNetworkGenerator(TerrainProfileGenerator):
                 "layers": 3,
                 "octaves": 1,
                 "y_step": 4,
+                "xz_step": 3,
             },
         ),
     )

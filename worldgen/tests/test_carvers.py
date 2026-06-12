@@ -657,25 +657,28 @@ class CarveTileEquivalenceTest(unittest.TestCase):
             cols, ts, (333, 888),
         )
 
-    def test_cave_network_coarse_y_mixed_surface_equals_scalar(self) -> None:
+    def test_cave_network_coarse_lattice_mixed_surface_equals_scalar(self) -> None:
         # worldgen-v4 P3 perf: the cave carver samples density on a coarse
-        # absolute world-Y grid (y_step > 1) and interpolates.  A REAL cave zone
-        # has an undulating surface, so columns have DIFFERENT carve tops — the
-        # vectorized path builds the grid to the GLOBAL top and slices each
-        # column, while the scalar path anchors on each column's OWN top.  If the
-        # Y-anchor lattice were keyed on the per-column top instead of absolute
-        # world Y, the lerp would diverge near the surface cap on every column
-        # whose top is not a step multiple.  This pins the absolute-anchor
-        # equivalence across a staggered surface for the production y_step.
+        # absolute world lattice — y_step strides Y, xz_step strides X/Z — and
+        # trilinearly interpolates.  A REAL cave zone has an undulating surface,
+        # so columns have DIFFERENT carve tops: the vectorized path builds the
+        # grid to the GLOBAL top and slices each column, while the scalar path
+        # anchors on each column's OWN top and on its own single (x, z) lattice
+        # bracket.  If any axis lattice were keyed on a tile-relative index (or a
+        # per-column top) instead of absolute world coords, the interpolation
+        # would diverge.  This pins the absolute-anchor equivalence across a
+        # staggered surface for every production (y_step, xz_step) combination.
         ts = 18
         rng = __import__("random").Random(20240613)
         cols = [
             ColumnSpans(((SPAN_MIN_Y, 60 + rng.randint(0, 40)),))
             for _ in range(ts * ts)
         ]
-        for y_step in (1, 3, 4, 5):
+        for y_step, xz_step in [(1, 1), (4, 1), (1, 3), (4, 3), (3, 3), (5, 2)]:
             self._assert_chain_equiv(
-                CaveNetworkCarver(layers=3, octaves=1, y_step=y_step),
+                CaveNetworkCarver(
+                    layers=3, octaves=1, y_step=y_step, xz_step=xz_step
+                ),
                 cols, ts, (333, 888),
             )
 
