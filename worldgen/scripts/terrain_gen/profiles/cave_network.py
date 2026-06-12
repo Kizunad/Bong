@@ -8,6 +8,7 @@ from ..dsl import QiGrade
 from ..fields import SurfacePalette, TileFieldBuffer, WorldTile
 from ..noise import _tile_coords
 from .base import (
+    CarverSpec,
     DecorationSpec,
     EcologySpec,
     ProfileContext,
@@ -76,6 +77,21 @@ class CaveNetworkGenerator(TerrainProfileGenerator):
         ambient_effects=("dripstone_drip", "cool_cave_echo"),
         notes="幽暗地穴生态：入口处血藤成帘，内部光苔钟柱遍布提供照明，"
               "深处偶立禁制柱（古修士封印）。陷穴石铺满侧道。",
+    )
+    # worldgen-v4 P3 §8.1 #1 — 幽暗地穴：cave_network_carver 在 spans_fold 的单层
+    # 洞穴空腔之下再雕多层连通 3D 噪声画廊（多个空气夹层 = 多段实体）。surface_cap
+    # 保证地表不直接破口；layers=3 + 较窄 carve_band 让画廊在不同深度蜿蜒连通。
+    carvers = (
+        CarverSpec(
+            kind="cave_network",
+            params={
+                "surface_cap": 6,
+                "floor_buffer": 8,
+                "carve_band": (-0.07, 0.07),
+                "scale": 28.0,
+                "layers": 3,
+            },
+        ),
     )
 
     def build_notes(self, context: ProfileContext) -> tuple[str, ...]:
