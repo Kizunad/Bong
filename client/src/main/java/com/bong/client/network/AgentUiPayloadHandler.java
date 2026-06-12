@@ -15,100 +15,29 @@ import java.util.function.Consumer;
 /**
  * plan-agent-ui-data-v1 P1 — 天道 UI payload handler。
  *
- * <p>处理两个 payload 类型，通过两条路径接收：
- * <ol>
- *   <li><strong>专属 JSON channel（生产路径）</strong>：{@code bong:agent_ui_request} /
- *       {@code bong:agent_ui_close} channel 发来的裸 JSON（无 ServerDataV1 envelope），
- *       由 {@link #handleRawRequest(String, MinecraftClient)} / {@link #handleRawClose(String)}
- *       直接解析——这是正确的路径，绕开 proto_convert.rs 的 unreachable!() 分支。</li>
- *   <li><strong>ServerDataRouter 路由（已废弃，仅保留测试兼容）</strong>：曾经通过
- *       {@code bong:server_data} channel 发送，在 proto 路径下 production 会 panic。
- *       ServerDataRouter 不再注册 agent_ui_request/agent_ui_close。</li>
- * </ol>
+ * <p>处理两个 payload 类型，均通过专属 JSON channel 接收：
+ * <ul>
+ *   <li>{@code bong:agent_ui_request} channel 发来的裸 {@code AgentUiRequestPayloadV1} JSON
+ *       （无 ServerDataV1 envelope），由 {@link #handleRawRequest(String, MinecraftClient)} 解析。</li>
+ *   <li>{@code bong:agent_ui_close} channel 发来的裸 {@code AgentUiClosePayloadV1} JSON，
+ *       由 {@link #handleRawClose(String)} 解析。</li>
+ * </ul>
+ *
+ * <p>这两条路径绕开了 {@code bong:server_data} proto 路径（{@code proto_convert.rs} 对
+ * AgentUiRequest/AgentUiClose 是 {@code unreachable!()}，生产会 panic），
+ * 消除了 fix-s2c-proto-panic 修复的根因。
  *
  * <p>payload 字段说明：
  * <ul>
- *   <li>{@code agent_ui_request}：request_id / xml / timeout_ticks（+ target_player）</li>
- *   <li>{@code agent_ui_close}：request_id, reason?</li>
+ *   <li>{@code bong:agent_ui_request}：request_id / target_player / xml / timeout_ticks</li>
+ *   <li>{@code bong:agent_ui_close}：request_id, reason?（reason 为 null 时 serde skip，表示 Replaced）</li>
  * </ul>
+ *
+ * <p>注册入口：{@code BongNetworkHandler.registerAgentUiChannels()}。
+ * ServerDataRouter 不再注册 agent_ui_request/agent_ui_close。
  */
-public final class AgentUiPayloadHandler implements ServerDataHandler {
+public final class AgentUiPayloadHandler {
     private static final Logger LOGGER = LoggerFactory.getLogger(AgentUiPayloadHandler.class);
-
-    @Override
-    public ServerDataDispatch handle(ServerDataEnvelope envelope) {
-        return switch (envelope.type()) {
-            case "agent_ui_request" -> handleRequest(envelope);
-            case "agent_ui_close"   -> handleClose(envelope);
-            default -> ServerDataDispatch.noOp(
-                envelope.type(),
-                "AgentUiPayloadHandler: unknown type '" + envelope.type() + "'"
-            );
-        };
-    }
-
-    // ─── agent_ui_request ───────────────────────────────────────────────────
-
-    private static ServerDataDispatch handleRequest(ServerDataEnvelope envelope) {
-        JsonObject payload = envelope.payload();
-
-        String requestId = readString(payload, "request_id");
-        if (requestId == null || requestId.isBlank()) {
-            return ServerDataDispatch.noOp(
-                envelope.type(),
-                "agent_ui_request: 'request_id' 缺失，payload 忽略"
-            );
-        }
-
-        String xml = readString(payload, "xml");
-        if (xml == null) {
-            xml = "";
-        }
-
-        int timeoutTicks = readInt(payload, "timeout_ticks", 600);
-        if (timeoutTicks <= 0) {
-            LOGGER.warn(
-                "[bong][agent_ui] agent_ui_request timeout_ticks={} 非法，回退为 1 tick request_id={}",
-                timeoutTicks,
-                requestId
-            );
-            timeoutTicks = 1;
-        }
-
-        final String finalXml = xml;
-        final String finalRequestId = requestId;
-        final int finalTimeoutTicks = timeoutTicks;
-
-        MinecraftClient client = MinecraftClient.getInstance();
-        if (client == null || client.player == null) {
-            return ServerDataDispatch.noOp(
-                envelope.type(),
-                "agent_ui_request: MinecraftClient/player 未就绪，payload 忽略 request_id='" + finalRequestId + "'"
-            );
-        }
-
-        client.execute(() -> {
-            if (client.player == null) {
-                return;
-            }
-            openReadyRequestForTests(
-                envelope.type(),
-                finalRequestId,
-                finalXml,
-                finalTimeoutTicks,
-                getClientTick(client),
-                screen -> {
-                    AgentUiStore.setActive(screen);
-                    client.setScreen(screen);
-                }
-            );
-        });
-
-        return ServerDataDispatch.handled(
-            envelope.type(),
-            "agent_ui_request 已打开面板 request_id='" + finalRequestId + "'"
-        );
-    }
 
     static ServerDataDispatch openReadyRequestForTests(
         String payloadType,
@@ -129,29 +58,6 @@ public final class AgentUiPayloadHandler implements ServerDataHandler {
         return ServerDataDispatch.handled(
             payloadType,
             "agent_ui_request 已打开面板 request_id='" + requestId + "'"
-        );
-    }
-
-    // ─── agent_ui_close ─────────────────────────────────────────────────────
-
-    private static ServerDataDispatch handleClose(ServerDataEnvelope envelope) {
-        JsonObject payload = envelope.payload();
-
-        String requestId = readString(payload, "request_id");
-        if (requestId == null || requestId.isBlank()) {
-            return ServerDataDispatch.noOp(
-                envelope.type(),
-                "agent_ui_close: 'request_id' 缺失，payload 忽略"
-            );
-        }
-
-        @Nullable String reason = readString(payload, "reason");
-
-        AgentUiStore.receiveClose(requestId, reason);
-
-        return ServerDataDispatch.handled(
-            envelope.type(),
-            "agent_ui_close 已处理 request_id='" + requestId + "' reason=" + reason
         );
     }
 
@@ -204,8 +110,8 @@ public final class AgentUiPayloadHandler implements ServerDataHandler {
      * {"request_id":"...", "target_player":"...", "xml":"...", "timeout_ticks":600}
      * }</pre>
      *
-     * <p>与 {@link #handleRequest(ServerDataEnvelope)} 共用 {@link #openReadyRequestForTests} 逻辑；
-     * 入口改为直接解析 JsonObject（绕开 ServerDataEnvelope.parse）。
+     * <p>共用 {@link #openReadyRequestForTests} 逻辑；
+     * 直接解析 JsonObject（绕开 ServerDataEnvelope.parse）。
      *
      * @param jsonPayload 裸 JSON 字符串（来自 bong:agent_ui_request channel）
      * @param client      当前 MinecraftClient 实例（由 channel listener 传入，已在主线程执行）
@@ -269,7 +175,7 @@ public final class AgentUiPayloadHandler implements ServerDataHandler {
      * {"request_id":"...", "reason":null}
      * }</pre>
      *
-     * <p>与 {@link #handleClose(ServerDataEnvelope)} 共用 {@link AgentUiStore#receiveClose} 逻辑。
+     * <p>共用 {@link AgentUiStore#receiveClose} 逻辑。
      *
      * @param jsonPayload 裸 JSON 字符串（来自 bong:agent_ui_close channel）
      */
