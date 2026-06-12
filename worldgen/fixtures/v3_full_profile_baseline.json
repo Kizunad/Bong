@@ -1298,6 +1298,78 @@
     ]
   },
   {
+    "profile": "sky_isle",
+    "local_x": 37,
+    "local_z": 122,
+    "surface_y": 73,
+    "water_y": null,
+    "biome_id": 11,
+    "spans": [
+      [
+        -64,
+        73
+      ],
+      [
+        279,
+        289
+      ]
+    ]
+  },
+  {
+    "profile": "sky_isle",
+    "local_x": 51,
+    "local_z": 134,
+    "surface_y": 73,
+    "water_y": null,
+    "biome_id": 11,
+    "spans": [
+      [
+        -64,
+        73
+      ],
+      [
+        278,
+        289
+      ]
+    ]
+  },
+  {
+    "profile": "sky_isle",
+    "local_x": 70,
+    "local_z": 145,
+    "surface_y": 73,
+    "water_y": null,
+    "biome_id": 11,
+    "spans": [
+      [
+        -64,
+        73
+      ],
+      [
+        277,
+        287
+      ]
+    ]
+  },
+  {
+    "profile": "sky_isle",
+    "local_x": 61,
+    "local_z": 155,
+    "surface_y": 73,
+    "water_y": null,
+    "biome_id": 11,
+    "spans": [
+      [
+        -64,
+        73
+      ],
+      [
+        276,
+        286
+      ]
+    ]
+  },
+  {
     "profile": "ash_dead_zone",
     "local_x": 100,
     "local_z": 100,

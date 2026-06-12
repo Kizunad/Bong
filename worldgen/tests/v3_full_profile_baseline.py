@@ -97,10 +97,21 @@ SAMPLE_COLUMNS = (
 # from the deterministic v3 output (nearest multi-span column to the tile
 # center) and are stable as long as the noise/perm cache is unchanged.
 EXTRA_SAMPLE_COLUMNS: dict[str, tuple[tuple[int, int], ...]] = {
-    # (75,132): mask>=0.2 → folds to spans[1] = the floating isle block above
-    # the ground span — the exact "sky_island_mask → second span" equivalence
-    # the DSL carve op must reproduce.
-    "sky_isle": ((75, 132),),
+    # sky_isle: each of these mask>=0.2 columns folds to spans[1] = a floating
+    # isle block above the ground span — the exact "sky_island_mask → second
+    # span" equivalence the DSL carve op must reproduce.  We sample SEVERAL
+    # multi-span columns spread across the isle footprint (distinct isle
+    # ceilings: 286 / 287 / 289) rather than a single column, so a regression
+    # that drops the float on part of the isle isn't masked by the one pinned
+    # column happening to survive.  (996 multi-span columns exist; these are a
+    # stable, well-separated subset located from the deterministic v3 output.)
+    "sky_isle": (
+        (75, 132),
+        (37, 122),
+        (51, 134),
+        (70, 145),
+        (61, 155),
+    ),
     # (100,100): cave_mask>0.58 → ground span carved into surface cap + floor
     # remnant (2 spans). Pins the cave-void fold.
     "cave_network": ((100, 100),),
