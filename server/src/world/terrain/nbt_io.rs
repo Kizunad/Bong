@@ -106,6 +106,32 @@ impl PaletteEntry {
         self.name.strip_prefix("minecraft:").unwrap_or(&self.name)
     }
 
+    /// Build a palette entry from a runtime [`BlockState`] — the inverse of
+    /// [`PaletteEntry::block_state`]. Used by `/structure save` to serialize a
+    /// gallery region back to a structure `.nbt`.
+    ///
+    /// The block name carries the `minecraft:` namespace (matching the on-disk
+    /// authored assets and `nbt_builder.py` output), and every property the
+    /// state actually has is captured in `PropName` declaration order so the
+    /// resulting palette entry round-trips through `block_state()`.
+    pub fn from_block_state(state: BlockState) -> Self {
+        let name = format!("minecraft:{}", state.to_kind().to_str());
+        let properties = state
+            .to_kind()
+            .props()
+            .iter()
+            .filter_map(|&prop_name| {
+                state.get(prop_name).map(|prop_value| {
+                    (
+                        prop_name.to_str().to_string(),
+                        prop_value.to_str().to_string(),
+                    )
+                })
+            })
+            .collect();
+        PaletteEntry { name, properties }
+    }
+
     /// Lower this palette entry into a runtime [`BlockState`], applying any
     /// properties valence recognises. Returns `None` when the bare block name
     /// is unknown to `block_from_name` (the caller decides whether to warn and
@@ -871,6 +897,54 @@ mod tests {
             state.get(PropName::Half),
             Some(PropValue::Bottom),
             "half property should be applied to the lowered BlockState"
+        );
+    }
+
+    // ── ⑥ from_block_state is the exact inverse of block_state() ────────────
+
+    #[test]
+    fn palette_entry_from_block_state_round_trips_back_to_state() {
+        // Pick a state with non-default properties so the property capture path
+        // is exercised, not just the bare-kind path.
+        let original = BlockState::STONE_BRICK_STAIRS
+            .set(PropName::Facing, PropValue::South)
+            .set(PropName::Half, PropValue::Top);
+
+        let entry = PaletteEntry::from_block_state(original);
+        assert_eq!(
+            entry.name, "minecraft:stone_brick_stairs",
+            "from_block_state must emit the namespaced block name, got {}",
+            entry.name
+        );
+        // Every captured property must reproduce the original state on re-lowering.
+        let recovered = entry
+            .block_state()
+            .expect("entry built from a real state must lower back");
+        assert_eq!(
+            recovered.get(PropName::Facing),
+            Some(PropValue::South),
+            "facing must survive from_block_state → block_state round-trip"
+        );
+        assert_eq!(
+            recovered.get(PropName::Half),
+            Some(PropValue::Top),
+            "half must survive from_block_state → block_state round-trip"
+        );
+        assert_eq!(
+            recovered, original,
+            "from_block_state(state).block_state() must equal the original state \
+             (this is the /structure save serialization contract)"
+        );
+    }
+
+    #[test]
+    fn palette_entry_from_simple_block_state_has_no_spurious_properties() {
+        let entry = PaletteEntry::from_block_state(BlockState::STONE);
+        assert_eq!(entry.name, "minecraft:stone");
+        assert!(
+            entry.properties.is_empty(),
+            "a property-less block must serialize with no Properties, got {:?}",
+            entry.properties
         );
     }
 

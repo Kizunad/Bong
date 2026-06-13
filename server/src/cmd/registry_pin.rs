@@ -9,6 +9,8 @@ pub const COMMAND_NAMES: &[&str] = &[
     "coffin",
     // plan-offscreen-war-v1 P6：玩家参与涌现冲突（/faction join|mercenary|intercept）
     "faction",
+    // plan-worldgen-v4 P5：画廊审阅闭环 stamp 命令（/gallery）
+    "gallery",
     "give",
     "gm",
     "health",
@@ -29,6 +31,8 @@ pub const COMMAND_NAMES: &[&str] = &[
     "shrine",
     "spawn",
     "stamina",
+    // plan-worldgen-v4 P5：画廊审阅闭环 save 命令（/structure save <name>）
+    "structure",
     "summon",
     "supply_coffin",
     "technique",
@@ -65,6 +69,8 @@ pub const COMMAND_TREE_PATHS: &[&str] = &[
     "faction join <group:integer>",
     "faction list",
     "faction mercenary <group:integer>",
+    // plan-worldgen-v4 P5：画廊审阅闭环 stamp 命令（无参数）
+    "gallery",
     "give <id:string>",
     "give <id:string> <count:integer>",
     "gm <mode:string>",
@@ -92,6 +98,8 @@ pub const COMMAND_TREE_PATHS: &[&str] = &[
     "shrine <action:string>",
     "spawn",
     "stamina set <value:float>",
+    // plan-worldgen-v4 P5：画廊审阅闭环 save 命令（覆盖原 .nbt）
+    "structure save <name:string>",
     "summon heiwushi",
     "summon rat",
     "supply_coffin cooldown <grade:string> <secs:integer>",
@@ -144,6 +152,7 @@ mod tests {
                 "clearinv",
                 "coffin",
                 "faction",
+                "gallery",
                 "give",
                 "gm",
                 "health",
@@ -163,6 +172,7 @@ mod tests {
                 "shrine",
                 "spawn",
                 "stamina",
+                "structure",
                 "summon",
                 "supply_coffin",
                 "technique",

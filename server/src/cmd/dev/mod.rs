@@ -4,6 +4,7 @@ pub mod baolongwang;
 pub mod block_picker;
 pub mod clearinv;
 pub mod coffin;
+pub mod gallery;
 pub mod give;
 pub mod gm;
 pub mod health;
@@ -44,6 +45,7 @@ pub fn register(app: &mut App) {
     balance::register(app);
     baolongwang::register(app);
     block_picker::register(app);
+    gallery::register(app);
     coffin::register(app);
     clearinv::register(app);
     give::register(app);
