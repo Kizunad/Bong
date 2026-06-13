@@ -1,0 +1,7 @@
+{
+  "v": 1,
+  "type": "block_picker_give",
+  "block_id": "stone_bricks",
+  "count": 16,
+  "surprise": true
+}

@@ -3525,6 +3525,35 @@
       "type": "object",
       "required": [
         "v",
+        "type",
+        "block_id",
+        "count"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "block_picker_give",
+          "type": "string"
+        },
+        "block_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "count": {
+          "minimum": 1,
+          "maximum": 64,
+          "type": "integer"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
         "type"
       ],
       "properties": {

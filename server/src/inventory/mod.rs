@@ -1035,6 +1035,74 @@ fn instantiate_item_instance(
     })
 }
 
+/// plan-worldgen-v4 P5 §8.1#5 — vanilla 方块物品模板 ID 前缀。
+///
+/// 启动期为**每个** vanilla `BlockKind` 自动生成一个 `template_id = "vanilla:<block_id>"`
+/// 的 `category = Block` 模板，让画廊 dev-only give-block 链路（BlockPickerGive）
+/// 不必为每个 vanilla 方块手写 TOML。`block_id` 为 valence `BlockKind::to_str()` 短名
+/// （不含 `minecraft:` namespace），与 `block_place::block_item_to_state` 的 `vanilla:`
+/// 直通分支严格对齐。
+pub const VANILLA_TEMPLATE_PREFIX: &str = "vanilla:";
+
+/// 为单个 vanilla 方块短名构造最小化 `Block` 模板（dev-only give-block 用）。
+fn vanilla_block_template(block_id: &str) -> ItemTemplate {
+    ItemTemplate {
+        id: format!("{VANILLA_TEMPLATE_PREFIX}{block_id}"),
+        display_name: block_id.to_string(),
+        category: ItemCategory::Block,
+        // placeable=None：放置走 block_place::block_item_to_state 的 vanilla: 直通分支，
+        // 不经 PlaceableBlockKind（那是 Bong custom 方块的语义）。
+        placeable: None,
+        max_stack_count: default_max_stack_count_for_category(ItemCategory::Block),
+        grid_w: 1,
+        grid_h: 1,
+        base_weight: 0.1,
+        rarity: ItemRarity::Common,
+        spirit_quality_initial: 0.0,
+        description: format!("vanilla {block_id}（dev-only 画廊方块）"),
+        effect: None,
+        cast_duration_ms: DEFAULT_CAST_DURATION_MS,
+        cooldown_ms: DEFAULT_COOLDOWN_MS,
+        weapon_spec: None,
+        forge_station_spec: None,
+        blueprint_scroll_spec: None,
+        inscription_scroll_spec: None,
+        technique_scroll_spec: None,
+        recipe_fragment_spec: None,
+        container_spec: None,
+        shield_spec: None,
+        shelflife_profile: None,
+        shelflife_track: None,
+    }
+}
+
+/// 为全部 vanilla `BlockKind` 注入 `vanilla:<block_id>` 模板。
+///
+/// `air` 跳过（无可给予物品）。若某个 `vanilla:<id>` 与手工 TOML 撞 key，返回 Err —
+/// 保护手写映射不被静默覆盖（与 TOML 重复检测同语义）。
+fn inject_vanilla_block_templates(
+    templates: &mut HashMap<String, ItemTemplate>,
+) -> Result<usize, String> {
+    use valence::prelude::BlockKind;
+    let mut injected = 0usize;
+    for kind in BlockKind::ALL {
+        let block_id = kind.to_str();
+        if block_id == "air" {
+            continue;
+        }
+        let template = vanilla_block_template(block_id);
+        let template_id = template.id.clone();
+        if templates.insert(template_id.clone(), template).is_some() {
+            return Err(format!(
+                "vanilla block template `{template_id}` collides with a hand-authored item template; \
+                 rename the TOML item or remove the conflicting vanilla mapping"
+            ));
+        }
+        injected += 1;
+    }
+    Ok(injected)
+}
+
 pub fn load_item_registry() -> Result<ItemRegistry, String> {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(DEFAULT_ITEMS_DIR);
     load_item_registry_from_dir(path)
@@ -1077,6 +1145,10 @@ fn load_item_registry_from_dir(path: impl AsRef<Path>) -> Result<ItemRegistry, S
             }
         }
     }
+
+    // plan-worldgen-v4 P5 §8.1#5 — 在手工 TOML 全部加载后注入 vanilla:<block_id> 模板，
+    // 供画廊 dev-only give-block（BlockPickerGive）链路使用。撞 key 即 Err 保护手写映射。
+    inject_vanilla_block_templates(&mut templates)?;
 
     Ok(ItemRegistry { templates })
 }
