@@ -62,6 +62,8 @@ mod spiritwood;
 // register() 注入 SupplyCoffinRegistry resource + interact/refresh systems +
 // SupplyCoffinOpened event。
 mod supply_coffin;
+#[cfg(test)]
+mod test_coverage_guards;
 // shelflife：M3a 注册 DecayProfileRegistry resource；compute_* / container_* 等
 // 辅助仍未被 system 调用（M5 消费侧接入前）— 故保留 #[allow(dead_code)]。
 #[allow(dead_code)]
