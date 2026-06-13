@@ -274,11 +274,23 @@ mod tests {
     fn storage_crate_kind_uses_trade_template_and_4x4_grid() {
         let kind = ContainerBlockKind::StorageCrate { is_herb: false };
 
-        assert_eq!(kind.grid_dimensions(), (4, 4));
-        assert_eq!(kind.item_template_id(), "trade_crate");
+        assert_eq!(
+            kind.grid_dimensions(),
+            (4, 4),
+            "expected trade crate to expose a 4x4 grid because P0 storage crates use crate capacity, actual {:?}",
+            kind.grid_dimensions()
+        );
+        assert_eq!(
+            kind.item_template_id(),
+            "trade_crate",
+            "expected non-herb storage crate to drop trade_crate because it maps to the trade template, actual {}",
+            kind.item_template_id()
+        );
         assert_eq!(
             kind.external_kind(),
-            ExternalContainerKind::StorageCrate { is_herb: false }
+            ExternalContainerKind::StorageCrate { is_herb: false },
+            "expected non-herb storage crate to preserve is_herb=false in ExternalContainerKind, actual {:?}",
+            kind.external_kind()
         );
     }
 
@@ -286,11 +298,23 @@ mod tests {
     fn herb_crate_kind_uses_dedicated_template_and_4x4_grid() {
         let kind = ContainerBlockKind::StorageCrate { is_herb: true };
 
-        assert_eq!(kind.grid_dimensions(), (4, 4));
-        assert_eq!(kind.item_template_id(), "herb_crate_placed");
+        assert_eq!(
+            kind.grid_dimensions(),
+            (4, 4),
+            "expected placed herb crate to expose a 4x4 grid because it shares storage crate capacity, actual {:?}",
+            kind.grid_dimensions()
+        );
+        assert_eq!(
+            kind.item_template_id(),
+            "herb_crate_placed",
+            "expected herb storage crate to drop the dedicated placed template, actual {}",
+            kind.item_template_id()
+        );
         assert_eq!(
             kind.external_kind(),
-            ExternalContainerKind::StorageCrate { is_herb: true }
+            ExternalContainerKind::StorageCrate { is_herb: true },
+            "expected herb storage crate to preserve is_herb=true in ExternalContainerKind, actual {:?}",
+            kind.external_kind()
         );
     }
 
@@ -298,26 +322,148 @@ mod tests {
     fn dead_drop_kind_uses_dead_drop_template_and_3x3_grid() {
         let kind = ContainerBlockKind::DeadDrop;
 
-        assert_eq!(kind.grid_dimensions(), (3, 3));
-        assert_eq!(kind.item_template_id(), "dead_drop_box");
-        assert_eq!(kind.external_kind(), ExternalContainerKind::DeadDrop);
+        assert_eq!(
+            kind.grid_dimensions(),
+            (3, 3),
+            "expected dead drop to expose a 3x3 grid because P0 reserves smaller dead-drop storage, actual {:?}",
+            kind.grid_dimensions()
+        );
+        assert_eq!(
+            kind.item_template_id(),
+            "dead_drop_box",
+            "expected dead drop break to drop dead_drop_box template, actual {}",
+            kind.item_template_id()
+        );
+        assert_eq!(
+            kind.external_kind(),
+            ExternalContainerKind::DeadDrop,
+            "expected dead drop to map to ExternalContainerKind::DeadDrop, actual {:?}",
+            kind.external_kind()
+        );
+    }
+
+    #[test]
+    fn handle_container_block_place_spawns_dimensioned_external_container() {
+        let mut app = App::new();
+        let placed_by = app.world_mut().spawn_empty().id();
+        let mut registry = ExternalContainerRegistry::default();
+        let pos = BlockPos::new(-2, 63, 4);
+        let kind = ContainerBlockKind::DeadDrop;
+
+        let entity = handle_container_block_place(
+            &mut app.world_mut().commands(),
+            &mut registry,
+            pos,
+            DimensionKind::Tsy,
+            placed_by,
+            77,
+            kind,
+        );
+        app.world_mut().flush();
+
+        let block = app
+            .world()
+            .get::<ContainerBlock>(entity)
+            .expect("placed container entity should carry ContainerBlock");
+        assert_eq!(
+            block.kind, kind,
+            "expected placed entity to store requested ContainerBlockKind because break routing uses it, actual {:?}",
+            block.kind
+        );
+        assert_eq!(
+            block.placed_by, placed_by,
+            "expected placed_by to preserve the placing player for later ownership rules, actual {:?}",
+            block.placed_by
+        );
+        assert_eq!(
+            block.placed_at_tick, 77,
+            "expected placed_at_tick to preserve placement tick for lifecycle logic, actual {}",
+            block.placed_at_tick
+        );
+
+        let position = app
+            .world()
+            .get::<Position>(entity)
+            .expect("placed container entity should carry Position");
+        assert_eq!(
+            position.0,
+            DVec3::new(-1.5, 63.0, 4.5),
+            "expected container marker to sit at block center because break matching floors marker position, actual {:?}",
+            position.0
+        );
+        let dimension = app
+            .world()
+            .get::<CurrentDimension>(entity)
+            .expect("placed container entity should carry CurrentDimension");
+        assert_eq!(
+            dimension.0,
+            DimensionKind::Tsy,
+            "expected placed container to store requested dimension because break matching is dimension-scoped, actual {:?}",
+            dimension.0
+        );
+
+        let ext = app
+            .world()
+            .get::<ExternalContainer>(entity)
+            .expect("placed container entity should carry ExternalContainer");
+        assert_eq!(
+            ext.session_id, 0,
+            "expected first allocated external container session to be 0, actual {}",
+            ext.session_id
+        );
+        assert_eq!(
+            registry.sessions.get(&ext.session_id),
+            Some(&entity),
+            "expected ExternalContainerRegistry to map session to placed entity, actual {:?}",
+            registry.sessions.get(&ext.session_id)
+        );
     }
 
     #[test]
     fn build_external_container_sets_session_and_source_kind() {
         let ext = build_external_container(42, ContainerBlockKind::StorageCrate { is_herb: true });
 
-        assert_eq!(ext.session_id, 42);
-        assert_eq!(ext.container.id, "ext_42");
-        assert_eq!(ext.container.name, "灵草箱");
-        assert_eq!(ext.container.rows, 4);
-        assert_eq!(ext.container.cols, 4);
+        assert_eq!(
+            ext.session_id, 42,
+            "expected ExternalContainer to preserve allocated session id, actual {}",
+            ext.session_id
+        );
+        assert_eq!(
+            ext.container.id, "ext_42",
+            "expected container id to derive from session id, actual {}",
+            ext.container.id
+        );
+        assert_eq!(
+            ext.container.name, "灵草箱",
+            "expected herb crate display name because UI uses container.name, actual {}",
+            ext.container.name
+        );
+        assert_eq!(
+            ext.container.rows, 4,
+            "expected herb crate rows to match 4x4 grid, actual {}",
+            ext.container.rows
+        );
+        assert_eq!(
+            ext.container.cols, 4,
+            "expected herb crate cols to match 4x4 grid, actual {}",
+            ext.container.cols
+        );
         assert_eq!(
             ext.source_kind,
-            ExternalContainerKind::StorageCrate { is_herb: true }
+            ExternalContainerKind::StorageCrate { is_herb: true },
+            "expected source_kind to preserve herb storage semantics for later open payload mapping, actual {:?}",
+            ext.source_kind
         );
-        assert_eq!(ext.opened_by, None);
-        assert_eq!(ext.timeout_wall_secs, 0);
+        assert_eq!(
+            ext.opened_by, None,
+            "expected freshly placed container to start closed, actual {:?}",
+            ext.opened_by
+        );
+        assert_eq!(
+            ext.timeout_wall_secs, 0,
+            "expected placed container P0 to have no timeout, actual {}",
+            ext.timeout_wall_secs
+        );
     }
 
     #[test]
@@ -337,18 +483,51 @@ mod tests {
             DimensionKind::Tsy,
         );
 
-        assert_eq!(count, 1);
+        assert_eq!(
+            count, 1,
+            "expected exactly one placed item to drain into dropped loot, actual {count}"
+        );
         let entry = registry
             .entries
             .get(&9001)
             .expect("placed item instance should become dropped loot");
-        assert_eq!(entry.source_container_id, "ext_7");
-        assert_eq!(entry.source_row, 1);
-        assert_eq!(entry.source_col, 2);
-        assert_eq!(entry.world_pos, [10.5, 64.0, -2.5]);
-        assert_eq!(entry.dimension, DimensionKind::Tsy);
-        assert_eq!(entry.item.template_id, "bone_coin_stack");
-        assert_eq!(entry.item.stack_count, 3);
+        assert_eq!(
+            entry.source_container_id, "ext_7",
+            "expected dropped loot to preserve source container id for auditability, actual {}",
+            entry.source_container_id
+        );
+        assert_eq!(
+            entry.source_row, 1,
+            "expected dropped loot to preserve source row, actual {}",
+            entry.source_row
+        );
+        assert_eq!(
+            entry.source_col, 2,
+            "expected dropped loot to preserve source col, actual {}",
+            entry.source_col
+        );
+        assert_eq!(
+            entry.world_pos,
+            [10.5, 64.0, -2.5],
+            "expected dropped loot world_pos to match destroyed container marker, actual {:?}",
+            entry.world_pos
+        );
+        assert_eq!(
+            entry.dimension,
+            DimensionKind::Tsy,
+            "expected dropped loot dimension to match breaker/container dimension, actual {:?}",
+            entry.dimension
+        );
+        assert_eq!(
+            entry.item.template_id, "bone_coin_stack",
+            "expected dropped loot to preserve item template id, actual {}",
+            entry.item.template_id
+        );
+        assert_eq!(
+            entry.item.stack_count, 3,
+            "expected dropped loot to preserve stack count, actual {}",
+            entry.item.stack_count
+        );
     }
 
     #[test]
@@ -363,15 +542,27 @@ mod tests {
             DimensionKind::Overworld,
         );
 
-        assert_eq!(count, 0);
-        assert!(registry.entries.is_empty());
+        assert_eq!(
+            count, 0,
+            "expected empty container drain to report zero dropped entries, actual {count}"
+        );
+        assert!(
+            registry.entries.is_empty(),
+            "expected empty container drain to leave DroppedLootRegistry empty, actual {:?}",
+            registry.entries
+        );
     }
 
     #[test]
     fn container_block_pos_floors_marker_position_to_block_pos() {
         let position = Position(DVec3::new(3.5, 64.0, -7.5));
 
-        assert_eq!(container_block_pos(&position), [3, 64, -8]);
+        assert_eq!(
+            container_block_pos(&position),
+            [3, 64, -8],
+            "expected marker position to floor to containing block coordinates, actual {:?}",
+            container_block_pos(&position)
+        );
     }
 
     fn test_item(instance_id: u64, template_id: &str, stack_count: u32) -> ItemInstance {
