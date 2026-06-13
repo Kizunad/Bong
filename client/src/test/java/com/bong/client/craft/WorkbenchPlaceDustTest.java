@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class WorkbenchPlaceDustTest {
@@ -31,5 +32,16 @@ class WorkbenchPlaceDustTest {
         assertEquals(12, WorkbenchPlaceDust.LIFETIME_TICKS);
         assertEquals(0.65f, WorkbenchPlaceDust.ALPHA, 1e-5f);
         assertEquals(0.12f, WorkbenchPlaceDust.SCALE, 1e-5f);
+    }
+
+    @Test
+    void dustBurstAppliesToWorkbenchAndPlaceableContainersOnly() {
+        assertTrue(WorkbenchPlaceDust.shouldSpawnForItem("workbench_item"));
+        assertTrue(WorkbenchPlaceDust.shouldSpawnForItem("trade_crate"));
+        assertTrue(WorkbenchPlaceDust.shouldSpawnForItem("herb_crate_placed"));
+        assertTrue(WorkbenchPlaceDust.shouldSpawnForItem("dead_drop_box"));
+        assertFalse(WorkbenchPlaceDust.shouldSpawnForItem("herb_crate"));
+        assertFalse(WorkbenchPlaceDust.shouldSpawnForItem("bone_coin"));
+        assertFalse(WorkbenchPlaceDust.shouldSpawnForItem(null));
     }
 }

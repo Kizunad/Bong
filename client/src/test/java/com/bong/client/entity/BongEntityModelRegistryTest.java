@@ -32,7 +32,7 @@ public class BongEntityModelRegistryTest {
     void rawIdsStayAfterFaunaWithoutShiftingExistingContract() {
         // raw_id 146-159: contiguous block (plan-entity-model-v1 / plan-supply-coffin-v1).
         // raw_id 160-163: plan-coffin-tiers-v1 延寿棺四档，与上面同在一个注册循环里连号。
-        // Baolongwang BOSS（独立 bootstrap）取 164；Workbench deferred 注册取 165。
+        // Baolongwang BOSS（独立 bootstrap）取 164；deferred marker 注册取 165..=168。
         int expectedRawId = 146;
         for (BongEntityModelKind kind : BongEntityRegistry.baseKindsForTests()) {
             assertEquals(
@@ -43,9 +43,23 @@ public class BongEntityModelRegistryTest {
         }
         assertEquals(164, BaolongwangEntities.EXPECTED_RAW_ID,
             "Baolongwang must keep raw_id=164 between base model entities and deferred workbench");
-        assertEquals(List.of(BongEntityModelKind.WORKBENCH), BongEntityRegistry.deferredKindsForTests());
+        assertEquals(
+            List.of(
+                BongEntityModelKind.WORKBENCH,
+                BongEntityModelKind.TRADE_CRATE,
+                BongEntityModelKind.HERB_CRATE_PLACED,
+                BongEntityModelKind.DEAD_DROP_BOX
+            ),
+            BongEntityRegistry.deferredKindsForTests()
+        );
         assertEquals(165, BongEntityModelKind.WORKBENCH.expectedRawId(),
             "WORKBENCH raw_id must match server WORKBENCH_ENTITY_KIND=165");
+        assertEquals(166, BongEntityModelKind.TRADE_CRATE.expectedRawId(),
+            "TRADE_CRATE raw_id must match server TRADE_CRATE_ENTITY_KIND=166");
+        assertEquals(167, BongEntityModelKind.HERB_CRATE_PLACED.expectedRawId(),
+            "HERB_CRATE_PLACED raw_id must match server HERB_CRATE_PLACED_ENTITY_KIND=167");
+        assertEquals(168, BongEntityModelKind.DEAD_DROP_BOX.expectedRawId(),
+            "DEAD_DROP_BOX raw_id must match server DEAD_DROP_BOX_ENTITY_KIND=168");
     }
 
     @Test
@@ -142,6 +156,13 @@ public class BongEntityModelRegistryTest {
     @Test
     void workbenchRendererRegistersAfterBaolongwangSlot() {
         assertRenderer(BongEntityModelKind.WORKBENCH, WorkbenchRenderer.class, 1);
+    }
+
+    @Test
+    void placeableContainerRenderersRegisterAfterWorkbenchSlot() {
+        assertRenderer(BongEntityModelKind.TRADE_CRATE, TradeCrateRenderer.class, 1);
+        assertRenderer(BongEntityModelKind.HERB_CRATE_PLACED, HerbCratePlacedRenderer.class, 1);
+        assertRenderer(BongEntityModelKind.DEAD_DROP_BOX, DeadDropBoxRenderer.class, 1);
     }
 
     @Test

@@ -36,7 +36,6 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 @Mixin(ClientPlayerInteractionManager.class)
 public abstract class MixinClientPlayerInteractionManagerAlchemy {
     private static final String MUNDANE_COFFIN_ITEM_ID = "mundane_coffin";
-    private static final String WORKBENCH_ITEM_ID = "workbench_item";
 
     @Inject(method = "attackEntity", at = @At("TAIL"))
     @SuppressWarnings({"unused", "PMD.UnusedPrivateMethod"})
@@ -143,7 +142,7 @@ public abstract class MixinClientPlayerInteractionManagerAlchemy {
         );
         if (blockPlace != null) {
             ClientRequestSender.sendBlockPlace(blockPlace.placePos(), blockPlace.instanceId(), blockPlace.face());
-            if (selectedBlockItem != null && WORKBENCH_ITEM_ID.equals(selectedBlockItem.itemId())) {
+            if (selectedBlockItem != null && WorkbenchPlaceDust.shouldSpawnForItem(selectedBlockItem.itemId())) {
                 WorkbenchPlaceDust.spawn(client, blockPlace.placePos());
             }
             player.swingHand(Hand.MAIN_HAND);

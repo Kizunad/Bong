@@ -2,7 +2,8 @@
 
 use valence::message::SendMessage;
 use valence::prelude::{
-    bevy_ecs, App, Client, Entity, Event, EventReader, Position, Query, Res, Update, Username,
+    bevy_ecs, App, Client, Entity, Event, EventReader, Events, Position, Query, Res, ResMut,
+    Update, Username,
 };
 
 use crate::cultivation::components::Cultivation;
@@ -11,6 +12,7 @@ use crate::inventory::external_container::{
 };
 use crate::inventory::PlayerInventory;
 use crate::network::agent_bridge::{payload_type_label, serialize_server_data_payload};
+use crate::network::audio_event_emit::PlaySoundRecipeRequest;
 use crate::network::inventory_snapshot_emit::{
     item_view_from_instance, send_inventory_snapshot_to_client,
 };
@@ -18,6 +20,7 @@ use crate::network::{log_payload_build_error, send_server_data_payload};
 use crate::player::state::PlayerState;
 use crate::schema::inventory::PlacedInventoryItemV1;
 use crate::schema::server_data::{LootContainerOpenV1, ServerDataPayloadV1, ServerDataV1};
+use crate::world::container_block::{container_open_audio_cue, send_container_audio};
 use crate::world::dimension::{CurrentDimension, DimensionKind};
 
 const OPEN_RANGE_BLOCKS: f64 = 4.0;
@@ -50,6 +53,7 @@ pub fn handle_container_open(
     registry: Res<ExternalContainerRegistry>,
     mut players: Query<PlayerQueryItem<'_>>,
     mut containers: Query<(&mut ExternalContainer, &Position, Option<&CurrentDimension>)>,
+    mut audio_events: Option<ResMut<Events<PlaySoundRecipeRequest>>>,
 ) {
     for ev in requests.read() {
         let Ok((
@@ -111,6 +115,7 @@ pub fn handle_container_open(
 
         let previous_opened_by = ext.opened_by;
         ext.opened_by = Some(ev.client);
+        let (audio_recipe_id, pitch_shift) = container_open_audio_cue(&ext.source_kind);
         let open_payload = ServerDataV1::new(ServerDataPayloadV1::LootContainerOpen(
             loot_container_open_from_external_container(&ext),
         ));
@@ -131,6 +136,16 @@ pub fn handle_container_open(
             player_state,
             cultivation,
             "container_open",
+        );
+        send_container_audio(
+            audio_events.as_deref_mut(),
+            audio_recipe_id,
+            [
+                container_pos.0.x.floor() as i32,
+                container_pos.0.y.floor() as i32,
+                container_pos.0.z.floor() as i32,
+            ],
+            pitch_shift,
         );
     }
 }

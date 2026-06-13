@@ -1,5 +1,6 @@
 package com.bong.client.inventory;
 
+import com.bong.client.entity.BongEntityModelKind;
 import com.bong.client.entity.BongModeledEntity;
 import com.bong.client.input.InteractCandidate;
 import com.bong.client.input.InteractIntent;
@@ -20,7 +21,7 @@ final class ContainerOpenIntentSupport {
     static Optional<InteractCandidate> candidate(
         MinecraftClient client,
         String debugPrefix,
-        Predicate<String> modelIdPredicate
+        Predicate<BongEntityModelKind> modelKindPredicate
     ) {
         EntityHitResult hit = entityHit(client);
         if (hit == null) {
@@ -29,7 +30,7 @@ final class ContainerOpenIntentSupport {
         if (!(hit.getEntity() instanceof BongModeledEntity modeled)) {
             return Optional.empty();
         }
-        if (!modelIdPredicate.test(modeled.modelKind().entityId())) {
+        if (!modelKindPredicate.test(modeled.modelKind())) {
             return Optional.empty();
         }
         double distSq = client.player.squaredDistanceTo(hit.getEntity());

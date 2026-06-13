@@ -1,0 +1,10 @@
+{
+  "id": "container_place",
+  "layers": [
+    { "sound": "minecraft:block.wood.place", "volume": 0.8, "pitch": 0.9, "delay_ticks": 0 }
+  ],
+  "priority": 50,
+  "attenuation": "world_3d",
+  "category": "BLOCKS",
+  "bus": "ENVIRONMENT"
+}

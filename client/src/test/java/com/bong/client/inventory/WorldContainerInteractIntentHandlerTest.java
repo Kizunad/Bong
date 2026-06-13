@@ -1,5 +1,6 @@
 package com.bong.client.inventory;
 
+import com.bong.client.entity.BongEntityModelKind;
 import com.bong.client.input.InteractCandidate;
 import com.bong.client.input.InteractIntent;
 import org.junit.jupiter.api.Test;
@@ -12,20 +13,20 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class WorldContainerInteractIntentHandlerTest {
     @Test
-    void storageCrateModelIdsAreRecognised() {
-        assertStorageCrateModel("trade_crate", true);
-        assertStorageCrateModel("herb_crate_placed", true);
-        assertStorageCrateModel("dead_drop_box", false);
-        assertStorageCrateModel("workbench", false);
-        assertStorageCrateModel(null, false);
+    void storageCrateKindsAreRecognised() {
+        assertStorageCrateKind(BongEntityModelKind.TRADE_CRATE, true);
+        assertStorageCrateKind(BongEntityModelKind.HERB_CRATE_PLACED, true);
+        assertStorageCrateKind(BongEntityModelKind.DEAD_DROP_BOX, false);
+        assertStorageCrateKind(BongEntityModelKind.WORKBENCH, false);
+        assertStorageCrateKind(null, false);
     }
 
     @Test
-    void deadDropModelIdIsRecognised() {
-        assertDeadDropModel("dead_drop_box", true);
-        assertDeadDropModel("trade_crate", false);
-        assertDeadDropModel("herb_crate_placed", false);
-        assertDeadDropModel(null, false);
+    void deadDropKindIsRecognised() {
+        assertDeadDropKind(BongEntityModelKind.DEAD_DROP_BOX, true);
+        assertDeadDropKind(BongEntityModelKind.TRADE_CRATE, false);
+        assertDeadDropKind(BongEntityModelKind.HERB_CRATE_PLACED, false);
+        assertDeadDropKind(null, false);
     }
 
     @Test
@@ -75,22 +76,22 @@ class WorldContainerInteractIntentHandlerTest {
         assertEquals(-1, StorageCrateInteractIntentHandler.candidateEntityId(bad));
     }
 
-    private static void assertStorageCrateModel(String modelId, boolean expected) {
-        boolean actual = StorageCrateInteractIntentHandler.isStorageCrateModelId(modelId);
+    private static void assertStorageCrateKind(BongEntityModelKind kind, boolean expected) {
+        boolean actual = StorageCrateInteractIntentHandler.isStorageCrateKind(kind);
         assertEquals(
             expected,
             actual,
-            "expected " + expected + " because modelId='" + modelId
+            "expected " + expected + " because kind='" + kind
                 + "' must match storage-crate mapping only, actual " + actual
         );
     }
 
-    private static void assertDeadDropModel(String modelId, boolean expected) {
-        boolean actual = DeadDropInteractIntentHandler.isDeadDropModelId(modelId);
+    private static void assertDeadDropKind(BongEntityModelKind kind, boolean expected) {
+        boolean actual = DeadDropInteractIntentHandler.isDeadDropKind(kind);
         assertEquals(
             expected,
             actual,
-            "expected " + expected + " because modelId='" + modelId
+            "expected " + expected + " because kind='" + kind
                 + "' must match dead-drop mapping only, actual " + actual
         );
     }

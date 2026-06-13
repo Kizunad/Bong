@@ -13,6 +13,7 @@
 //! `164`:       Baolongwang BOSS（见 `fauna::visual::BAOLONGWANG_ENTITY_KIND`），
 //!              客户端独立 bootstrap 在四档之后注册，故取最高号 164。
 //! `165`:       Workbench。
+//! `166..=168`: plan-placeable-container-blocks-v1 P2 — 货箱 / 灵草箱 / 死信箱。
 
 use std::collections::{HashMap, HashSet};
 
@@ -61,6 +62,9 @@ pub const COFFIN_JADE_ENTITY_KIND: EntityKind = EntityKind::new(161);
 pub const COFFIN_STONE_ENTITY_KIND: EntityKind = EntityKind::new(162);
 pub const COFFIN_BRONZE_ENTITY_KIND: EntityKind = EntityKind::new(163);
 pub const WORKBENCH_ENTITY_KIND: EntityKind = EntityKind::new(165);
+pub const TRADE_CRATE_ENTITY_KIND: EntityKind = EntityKind::new(166);
+pub const HERB_CRATE_PLACED_ENTITY_KIND: EntityKind = EntityKind::new(167);
+pub const DEAD_DROP_BOX_ENTITY_KIND: EntityKind = EntityKind::new(168);
 
 const BONG_VISUAL_STATE_INDEX: u8 = 8;
 const TRACKED_DATA_TYPE_INTEGER: u8 = 1;
@@ -93,6 +97,9 @@ pub enum BongVisualKind {
     CoffinStone,
     CoffinBronze,
     Workbench,
+    TradeCrate,
+    HerbCratePlaced,
+    DeadDropBox,
 }
 
 impl BongVisualKind {
@@ -117,6 +124,9 @@ impl BongVisualKind {
             Self::CoffinStone => COFFIN_STONE_ENTITY_KIND,
             Self::CoffinBronze => COFFIN_BRONZE_ENTITY_KIND,
             Self::Workbench => WORKBENCH_ENTITY_KIND,
+            Self::TradeCrate => TRADE_CRATE_ENTITY_KIND,
+            Self::HerbCratePlaced => HERB_CRATE_PLACED_ENTITY_KIND,
+            Self::DeadDropBox => DEAD_DROP_BOX_ENTITY_KIND,
         }
     }
 }
@@ -629,6 +639,9 @@ mod tests {
             COFFIN_STONE_ENTITY_KIND,
             COFFIN_BRONZE_ENTITY_KIND,
             WORKBENCH_ENTITY_KIND,
+            TRADE_CRATE_ENTITY_KIND,
+            HERB_CRATE_PLACED_ENTITY_KIND,
+            DEAD_DROP_BOX_ENTITY_KIND,
         ]
         .map(|kind| kind.get());
 
@@ -636,19 +649,34 @@ mod tests {
             ids,
             [
                 146, 147, 148, 149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161,
-                162, 163, 165
+                162, 163, 165, 166, 167, 168
             ],
             "entity raw_id contract drifted: client BongEntityModelKind must stay 1:1; \
-             延寿棺四档连号 160-163，Baolongwang=164，Workbench=165"
+             延寿棺四档连号 160-163，Baolongwang=164，Workbench=165，容器=166..=168"
         );
     }
 
     #[test]
-    fn workbench_visual_kind_maps_to_raw_id_165() {
+    fn deferred_visual_kinds_map_to_raw_ids_165_to_168() {
         assert_eq!(
             BongVisualKind::Workbench.entity_kind(),
             WORKBENCH_ENTITY_KIND,
             "Workbench visual entity must keep raw_id 165 for client renderer parity"
+        );
+        assert_eq!(
+            BongVisualKind::TradeCrate.entity_kind(),
+            TRADE_CRATE_ENTITY_KIND,
+            "TradeCrate visual entity must keep raw_id 166 for client renderer parity"
+        );
+        assert_eq!(
+            BongVisualKind::HerbCratePlaced.entity_kind(),
+            HERB_CRATE_PLACED_ENTITY_KIND,
+            "HerbCratePlaced visual entity must keep raw_id 167 for client renderer parity"
+        );
+        assert_eq!(
+            BongVisualKind::DeadDropBox.entity_kind(),
+            DEAD_DROP_BOX_ENTITY_KIND,
+            "DeadDropBox visual entity must keep raw_id 168 for client renderer parity"
         );
     }
 

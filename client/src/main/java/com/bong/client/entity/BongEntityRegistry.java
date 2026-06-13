@@ -39,8 +39,9 @@ public final class BongEntityRegistry {
     /**
      * Registers entity model kinds that must come after another bootstrap.
      *
-     * <p>Workbench must stay raw_id=165 because Baolongwang occupies 164 on both
-     * server and client. Keeping it deferred avoids shifting either contract.</p>
+     * <p>Workbench and the placeable container shells must stay raw_id=165..=168 because
+     * Baolongwang occupies 164 on both server and client. Keeping them deferred avoids
+     * shifting either contract.</p>
      */
     public static void registerDeferred() {
         registerKinds(deferredKindsForTests());
@@ -52,12 +53,17 @@ public final class BongEntityRegistry {
 
     public static List<BongEntityModelKind> baseKindsForTests() {
         return Arrays.stream(BongEntityModelKind.values())
-            .filter(kind -> kind != BongEntityModelKind.WORKBENCH)
+            .filter(kind -> !deferredKindsForTests().contains(kind))
             .toList();
     }
 
     public static List<BongEntityModelKind> deferredKindsForTests() {
-        return List.of(BongEntityModelKind.WORKBENCH);
+        return List.of(
+            BongEntityModelKind.WORKBENCH,
+            BongEntityModelKind.TRADE_CRATE,
+            BongEntityModelKind.HERB_CRATE_PLACED,
+            BongEntityModelKind.DEAD_DROP_BOX
+        );
     }
 
     public static Map<BongEntityModelKind, Integer> expectedRawIdsForTests() {
