@@ -44,8 +44,26 @@ pub fn serialize_server_data_payload(payload: &ServerDataV1) -> Result<Vec<u8>, 
     //
     // In test builds we still emit JSON so that the 70+ integration tests that
     // intercept raw packets via `serde_json::from_slice` keep passing.
-    // The proto encoding path is fully exercised by the dedicated proto_convert
-    // round-trip tests (106 variants) and the `to_proto_bytes` unit tests.
+    //
+    // The proto encoding path is exhaustively guarded by:
+    //   - `s2c_all_proto_variants_encode_without_panic` (proto_convert.rs) — covers all 122
+    //     proto-encodable `ServerDataPayloadV1` variants; will panic-red if any proto arm is
+    //     deleted or a new variant is added without a proto arm.
+    //   - `c2s_all_proto_variants_encode_without_panic` (proto_convert.rs) — covers all 97
+    //     proto-encodable `ClientRequestV1` variants.
+    //   - 3 `#[should_panic]` tests for the JSON-bypass variants (AgentUiRequest / AgentUiClose /
+    //     HalfStepRechallenge) that must NEVER reach the proto path.
+    //   - `ServerDataPayloadV1::is_json_bypass(&self) -> bool` (server_data.rs) — exhaustive
+    //     match with NO catch-all `_`; adding a new variant without classifying it here causes
+    //     rustc E0004 (non-exhaustive patterns), breaking the build immediately.
+    //
+    // RULE: Every new `ServerDataPayloadV1` / `ClientRequestV1` variant MUST be added to:
+    //   1. `is_json_bypass` (or the C2S equivalent) with `true` (bypass) or `false` (proto).
+    //   2. The corresponding `From<&…>` proto arm in proto_convert.rs (if `false`).
+    //   3. The exhaustive-guard fixture list in `s2c_all_proto_variants_encode_without_panic` /
+    //      `c2s_all_proto_variants_encode_without_panic`.
+    // Failure to do so causes either a compile error (missing is_json_bypass arm) or a test
+    // panic (missing fixture in guard / missing proto arm).
     #[cfg(test)]
     {
         payload.to_json_bytes_checked()

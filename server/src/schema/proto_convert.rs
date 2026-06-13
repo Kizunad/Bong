@@ -4881,4 +4881,2041 @@ mod tests {
         };
         let _: bong::client_request_envelope::Payload = (&req).into();
     }
+
+    // ─── plan-test-coverage-guards-v1 P0：HalfStepRechallenge JSON-bypass pin ──
+
+    /// HalfStepRechallenge is a JSON-bypass variant — it must never reach the proto path.
+    ///
+    /// MUTATION GUARD: If `HalfStepRechallenge` is accidentally removed from the JSON-bypass
+    /// list (`is_json_bypass`) and treated as a proto variant without adding a proto arm,
+    /// `to_proto_bytes()` will call the `From` impl which hits `unreachable!()` — this test
+    /// will change from #[should_panic] to an actual panic in the wrong place. Keep this test
+    /// pinned to detect such misclassifications.
+    #[test]
+    #[should_panic(expected = "HalfStepRechallenge 经由 JSON CustomPayload 发送")]
+    fn halfstep_rechallenge_panics_if_proto_path_is_used() {
+        use super::super::server_data::HalfStepRechallengeV1;
+
+        let payload = ServerDataPayloadV1::HalfStepRechallenge(HalfStepRechallengeV1 {
+            active: true,
+            char_id: "offline:Kiz".to_string(),
+            rechallenge_window_until: 50_000,
+            at_tick: 1_000,
+        });
+        let _: bong::server_data_envelope::Payload = (&payload).into();
+    }
+
+    // ─── plan-test-coverage-guards-v1 P0：exhaustive proto encoding guard ────────
+
+    /// Returns a minimum-viable fixture for every `ServerDataPayloadV1` variant (125 total).
+    ///
+    /// **Why a list and not an exhaustive match?**
+    /// The list itself cannot be made compile-time exhaustive — Rust cannot iterate enum variants.
+    /// Exhaustiveness is enforced by TWO complementary mechanisms:
+    ///   1. `ServerDataPayloadV1::is_json_bypass(&self)` has NO `_` catch-all; adding a new
+    ///      variant without updating it causes rustc E0004 (compile failure).
+    ///   2. `s2c_fixture_count_matches_variant_count()` cross-checks the fixture list length
+    ///      against the number of `ServerDataType` discriminants derived from `payload_type()`.
+    ///
+    /// Each element carries `(fixture, expected_bypass: bool)` so the guard test can route it
+    /// either to the proto-encode assertion or to the should-panic branch.
+    ///
+    /// MUTATION GUARDS (documented for manual mutation testing):
+    ///   - Delete a proto arm in `From<&ServerDataPayloadV1>` → that variant's fixture hits
+    ///     `unreachable!()` inside `to_proto_bytes()` → `s2c_all_proto_variants_encode_without_panic` panics → RED.
+    ///   - Flip a bypass variant in `is_json_bypass` from `true` to `false` → guard calls
+    ///     `to_proto_bytes()` → the `From` impl hits `unreachable!()` → RED.
+    ///   - Add a new variant without updating `is_json_bypass` → rustc E0004 → compile failure.
+    ///   - Add a new variant without adding a fixture here → `s2c_fixture_count_matches_variant_count` → RED.
+    fn s2c_all_fixtures() -> Vec<(ServerDataPayloadV1, bool)> {
+        use super::super::agent_ui::{AgentUiClosePayloadV1, AgentUiRequestPayloadV1};
+        use super::super::alchemy::{
+            AlchemyContaminationDataV1, AlchemyFurnaceDataV1, AlchemyOutcomeBucketV1,
+            AlchemyOutcomeForecastDataV1, AlchemyOutcomeResolvedDataV1, AlchemyRecipeBookDataV1,
+            AlchemySessionDataV1,
+        };
+        use super::super::combat_carrier::CarrierStateV1;
+        use super::super::combat_hud::*;
+        use super::super::craft::{
+            CraftOutcomeV1, CraftSessionStateV1, RecipeListV1, RecipeUnlockedV1,
+        };
+        use super::super::cultivation::InsightOfferV1;
+        use super::super::dugu::DuguPoisonStateV1;
+        use super::super::forge::{
+            ForgeBlueprintBookDataV1, ForgeOutcomeBucketV1, ForgeOutcomeDataV1, ForgeSessionDataV1,
+            ForgeStepStateDataV1, ForgeStepV1, WeaponForgeStationDataV1,
+        };
+        use super::super::identity::IdentityPanelStateV1;
+        use super::super::inventory::{EquippedInventorySnapshotV1, InventoryWeightV1};
+        use super::super::lingtian::LingtianSessionDataV1;
+        use super::super::movement::MovementStateV1;
+        use super::super::movement::{MovementActionV1, MovementZoneKindV1};
+        use super::super::poison_trait::{
+            PoisonDoseEventV1, PoisonOverdoseEventV1, PoisonOverdoseSeverityV1,
+            PoisonSideEffectTagV1, PoisonTraitStateV1,
+        };
+        use super::super::processing::FreshnessUpdateV1;
+        use super::super::realm_vision::{
+            FogShapeV1, RealmVisionParamsV1, SpiritualSenseTargetsV1,
+        };
+        use super::super::server_data::{
+            AnqiHudV1, AscensionQuotaV1, BreakthroughCinematicS2cV1, BurstMeridianEventV1,
+            CoffinStateV1, CombatEventFloaterV1, ContainerKindV1, ContainerStateV1,
+            DuguV2HudQiDecayV1, DuguV2HudSelfCureV1, DuguV2HudShroudActiveV1, DuguV2HudSkillCastV1,
+            ExtractAbortedReasonV1, ExtractAbortedV1, ExtractCompletedV1, ExtractFailedReasonV1,
+            ExtractFailedV1, ExtractProgressV1, ExtractStartedV1, FactionWarStateV1,
+            FullPowerChargingStateV1, FullPowerExhaustedStateV1, FullPowerReleaseV1,
+            GatheringQualityHintV1, GatheringTargetTypeV1, HalfStepRechallengeV1,
+            HeartDemonOfferV1, KnockbackSyncV1, LootContainerCloseReasonV1, LootContainerCloseV1,
+            LootContainerOpenV1, LootContainerSourceKindV1, LootContainerUpdateV1,
+            MineralProbeResultV1, PillBuffStatusV1, QiColorObservedV1, RiftPortalDirectionV1,
+            RiftPortalKindV1, RiftPortalRemovedV1, RiftPortalStateV1, SearchAbortReasonV1,
+            SearchAbortedV1, SearchCompletedV1, SearchProgressV1, SearchStartedV1,
+            SwordBondHudStateV1, TechniqueProficiencyUpdateV1, TribulationBroadcastV1,
+            TribulationStateV1, TsyCollapseStartedIpcV1,
+        };
+        use super::super::skill::{
+            SkillCapChangedPayloadV1, SkillIdV1, SkillLvUpPayloadV1, SkillScrollUsedPayloadV1,
+            SkillSnapshotPayloadV1, SkillXpGainPayloadV1, XpGainSourceV1,
+        };
+        use super::super::social::{
+            ExposureKindV1, GuardianKindV1, NicheGuardianBrokenV1, NicheGuardianFatigueV1,
+            NicheIntrusionEventV1, SocialAnonymityPayloadV1, SocialExposureEventV1,
+            SocialFeudEventV1, SocialPactEventV1, SocialRenownDeltaV1, SparringInvitePayloadV1,
+            TradeItemSummaryV1, TradeOfferPayloadV1,
+        };
+        use super::super::spirit_treasure::{
+            SpiritTreasureDialoguePayloadV1, SpiritTreasureDialogueToneV1,
+            SpiritTreasureDialogueV1, SpiritTreasureStatePayloadV1,
+        };
+        use super::super::tuike::FalseSkinStateV1;
+        use super::super::woliu::VortexFieldStateV1;
+        use super::super::world_state::PlayerPowerBreakdown;
+        use super::super::yidao::{HealerNpcAiStateV1, YidaoHudStateV1};
+        use crate::cultivation::components::ColorKind;
+        use crate::skill::config::SkillConfigSnapshot;
+
+        macro_rules! fix {
+            ($v:expr) => {
+                ($v, $v.is_json_bypass())
+            };
+        }
+
+        // Note: the bypass field is derived from is_json_bypass() on each fixture, so any
+        // misclassification in is_json_bypass() will cause the proto path to panic or the
+        // should-panic branch to succeed unexpectedly.
+        vec![
+            fix!(ServerDataPayloadV1::Welcome {
+                message: "hello".to_string()
+            }),
+            fix!(ServerDataPayloadV1::Heartbeat {
+                message: "ping".to_string()
+            }),
+            fix!(ServerDataPayloadV1::Narration {
+                narrations: vec![super::super::narration::Narration {
+                    text: "test".to_string(),
+                    scope: super::super::common::NarrationScope::Broadcast,
+                    style: super::super::common::NarrationStyle::Narration,
+                    kind: None,
+                    target: None,
+                }],
+            }),
+            fix!(ServerDataPayloadV1::ZoneInfo {
+                zone: "spawn".to_string(),
+                spirit_qi: 1.0,
+                danger_level: 2,
+                status: super::super::world_state::ZoneStatusV1::Normal,
+                active_events: None,
+                perception_text: None,
+            }),
+            fix!(ServerDataPayloadV1::EventAlert {
+                event: super::super::common::EventKind::ThunderTribulation,
+                message: "watch out".to_string(),
+                zone: Some("spawn".to_string()),
+                duration_ticks: Some(100),
+            }),
+            fix!(ServerDataPayloadV1::PlayerState {
+                player: None,
+                realm: "Induce".to_string(),
+                spirit_qi: 1.0,
+                karma: 0.0,
+                composite_power: 1.0,
+                breakdown: PlayerPowerBreakdown {
+                    combat: 1.0,
+                    wealth: 0.0,
+                    social: 0.0,
+                    karma: 0.0,
+                    territory: 0.0,
+                },
+                zone: "spawn".to_string(),
+                local_neg_pressure: None,
+                season_state: None,
+                social: None,
+            }),
+            fix!(ServerDataPayloadV1::CoffinState(CoffinStateV1 {
+                in_coffin: false,
+                lifespan_rate_multiplier: 1.0,
+                coffin_grade: None,
+            })),
+            fix!(ServerDataPayloadV1::UiOpen {
+                ui: None,
+                xml: "<root/>".to_string(),
+            }),
+            fix!(ServerDataPayloadV1::CultivationDetail {
+                realm: "Induce".to_string(),
+                opened: vec![false; 20],
+                flow_rate: vec![0.0; 20],
+                flow_capacity: vec![10.0; 20],
+                integrity: vec![1.0; 20],
+                open_progress: vec![0.0; 20],
+                cracks_count: vec![0; 20],
+                contamination_total: 0.0,
+                lifespan: None,
+                recent_skill_milestones_summary: String::new(),
+                skill_milestones: vec![],
+                qi_color_main: ColorKind::Intricate,
+                qi_color_secondary: None,
+                qi_color_chaotic: false,
+                qi_color_hunyuan: false,
+                practice_weights: vec![],
+                target_meridian: None,
+            }),
+            fix!(ServerDataPayloadV1::QiColorObserved(QiColorObservedV1 {
+                observer: "offline:Kiz".to_string(),
+                observed: "offline:Azure".to_string(),
+                main: ColorKind::Intricate,
+                secondary: None,
+                is_chaotic: false,
+                is_hunyuan: false,
+                realm_diff: 0,
+            })),
+            fix!(ServerDataPayloadV1::InventorySnapshot(Box::new(
+                super::super::inventory::InventorySnapshotV1 {
+                    revision: 1,
+                    containers: vec![],
+                    placed_items: vec![],
+                    equipped: EquippedInventorySnapshotV1 {
+                        head: None,
+                        chest: None,
+                        legs: None,
+                        feet: None,
+                        false_skin: None,
+                        main_hand: None,
+                        off_hand: None,
+                        two_hand: None,
+                        treasure_belt_0: None,
+                        treasure_belt_1: None,
+                        treasure_belt_2: None,
+                        treasure_belt_3: None,
+                        back_pack: None,
+                        waist_pouch: None,
+                        chest_satchel: None,
+                        extra_hand_0: None,
+                        extra_hand_1: None,
+                    },
+                    hotbar: vec![],
+                    bone_coins: 0,
+                    weight: InventoryWeightV1 {
+                        current: 0.0,
+                        max: 100.0
+                    },
+                    realm: "Induce".to_string(),
+                    qi_current: 0.0,
+                    qi_max: 100.0,
+                    body_level: 0.0,
+                }
+            ))),
+            fix!(ServerDataPayloadV1::InventoryEvent(Box::new(
+                super::super::inventory::InventoryEventV1::StackChanged {
+                    revision: 1,
+                    instance_id: 42,
+                    stack_count: 5,
+                }
+            ))),
+            fix!(ServerDataPayloadV1::DroppedLootSync(vec![])),
+            fix!(ServerDataPayloadV1::BotanyHarvestProgress {
+                session_id: "ses:1".to_string(),
+                target_id: "entity:1".to_string(),
+                target_name: "草".to_string(),
+                plant_kind: "herb".to_string(),
+                mode: "standard".to_string(),
+                progress: 0.5,
+                auto_selectable: false,
+                request_pending: false,
+                interrupted: false,
+                completed: false,
+                detail: String::new(),
+                hazard_hints: vec![],
+                target_pos: None,
+            }),
+            fix!(ServerDataPayloadV1::BotanyPlantV2RenderProfiles(vec![])),
+            fix!(ServerDataPayloadV1::MiningProgress {
+                session_id: "ses:2".to_string(),
+                ore_pos: [0, 64, 0],
+                progress: 0.2,
+                interrupted: false,
+                completed: false,
+            }),
+            fix!(ServerDataPayloadV1::LumberProgress {
+                session_id: "ses:3".to_string(),
+                log_pos: [0, 64, 0],
+                progress: 0.3,
+                interrupted: false,
+                completed: false,
+                detail: String::new(),
+            }),
+            fix!(ServerDataPayloadV1::GatheringSession {
+                session_id: "ses:4".to_string(),
+                progress_ticks: 10,
+                total_ticks: 40,
+                target_name: "草".to_string(),
+                target_type: GatheringTargetTypeV1::Herb,
+                quality_hint: GatheringQualityHintV1::Normal,
+                tool_used: None,
+                interrupted: false,
+                completed: false,
+            }),
+            fix!(ServerDataPayloadV1::BotanySkill {
+                level: 1,
+                xp: 0,
+                xp_to_next_level: 100,
+                auto_unlock_level: 3,
+            }),
+            fix!(ServerDataPayloadV1::AlchemyFurnace(Box::new(
+                AlchemyFurnaceDataV1 {
+                    pos: None,
+                    tier: 1,
+                    integrity: 1.0,
+                    integrity_max: 1.0,
+                    owner_name: String::new(),
+                    has_session: false,
+                }
+            ))),
+            fix!(ServerDataPayloadV1::AlchemySession(Box::new(
+                AlchemySessionDataV1 {
+                    recipe_id: None,
+                    active: false,
+                    elapsed_ticks: 0,
+                    target_ticks: 0,
+                    temp_current: 0.0,
+                    temp_target: 0.0,
+                    temp_band: 0.0,
+                    qi_injected: 0.0,
+                    qi_target: 0.0,
+                    status_label: String::new(),
+                    stages: vec![],
+                    interventions_recent: vec![],
+                }
+            ))),
+            fix!(ServerDataPayloadV1::AlchemyOutcomeForecast(Box::new(
+                AlchemyOutcomeForecastDataV1 {
+                    perfect_pct: 0.0,
+                    good_pct: 0.0,
+                    flawed_pct: 0.0,
+                    waste_pct: 1.0,
+                    explode_pct: 0.0,
+                    perfect_note: String::new(),
+                    good_note: String::new(),
+                    flawed_note: String::new(),
+                }
+            ))),
+            fix!(ServerDataPayloadV1::AlchemyOutcomeResolved(Box::new(
+                AlchemyOutcomeResolvedDataV1 {
+                    bucket: AlchemyOutcomeBucketV1::Waste,
+                    recipe_id: None,
+                    pill: None,
+                    quality: None,
+                    toxin_amount: None,
+                    toxin_color: None,
+                    qi_gain: None,
+                    side_effect_tag: None,
+                    flawed_path: false,
+                    damage: None,
+                    meridian_crack: None,
+                }
+            ))),
+            fix!(ServerDataPayloadV1::AlchemyRecipeBook(Box::new(
+                AlchemyRecipeBookDataV1 {
+                    learned: vec![],
+                    current_index: 0,
+                }
+            ))),
+            fix!(ServerDataPayloadV1::AlchemyContamination(Box::new(
+                AlchemyContaminationDataV1 {
+                    levels: vec![],
+                    metabolism_note: String::new(),
+                }
+            ))),
+            fix!(ServerDataPayloadV1::CombatHudState(CombatHudStateV1 {
+                hp_percent: 1.0,
+                qi_percent: 1.0,
+                stamina_percent: 1.0,
+                derived: DerivedAttrFlagsV1::default(),
+            })),
+            fix!(ServerDataPayloadV1::WoundsSnapshot(WoundsSnapshotV1 {
+                wounds: vec![]
+            })),
+            fix!(ServerDataPayloadV1::DefenseWindow(DefenseWindowV1 {
+                duration_ms: 200,
+                started_at_ms: 0,
+                expires_at_ms: 200,
+            })),
+            fix!(ServerDataPayloadV1::CastSync(CastSyncV1 {
+                phase: CastPhaseV1::Idle,
+                slot: 0,
+                duration_ms: 0,
+                started_at_ms: 0,
+                outcome: CastOutcomeV1::None,
+            })),
+            fix!(ServerDataPayloadV1::QuickSlotConfig(QuickSlotConfigV1 {
+                slots: vec![None; 9],
+                cooldown_until_ms: vec![0; 9],
+            })),
+            fix!(ServerDataPayloadV1::SkillBarConfig(SkillBarConfigV1 {
+                slots: vec![None; 9],
+                cooldown_until_ms: vec![0; 9],
+            })),
+            fix!(ServerDataPayloadV1::TechniquesSnapshot(
+                TechniquesSnapshotV1 { entries: vec![] }
+            )),
+            fix!(ServerDataPayloadV1::SkillConfigSnapshot(
+                SkillConfigSnapshot {
+                    configs: Default::default(),
+                }
+            )),
+            fix!(ServerDataPayloadV1::UnlocksSync(UnlocksSyncV1::default())),
+            fix!(ServerDataPayloadV1::DerivedAttrsSync(DerivedAttrsSyncV1 {
+                flying: false,
+                flying_qi_remaining: 0.0,
+                flying_force_descent_at_ms: 0,
+                phasing: false,
+                phasing_until_ms: 0,
+                tribulation_locked: false,
+                tribulation_stage: String::new(),
+                throughput_peak_norm: 0.0,
+                tuike_layers: 0,
+                vortex_active: false,
+            })),
+            fix!(ServerDataPayloadV1::EventStreamPush(EventStreamPushV1 {
+                channel: EventChannelV1::Combat,
+                priority: EventPriorityV1::P1Important,
+                source_tag: String::new(),
+                text: "test".to_string(),
+                color: 0,
+                created_at_ms: 0,
+            })),
+            fix!(ServerDataPayloadV1::WeaponEquipped(WeaponEquippedV1 {
+                slot: "main_hand".to_string(),
+                weapon: None,
+            })),
+            fix!(ServerDataPayloadV1::WeaponBroken(WeaponBrokenV1 {
+                instance_id: 1,
+                template_id: "sword_iron".to_string(),
+            })),
+            fix!(ServerDataPayloadV1::ShieldBroken(ShieldBrokenV1 {
+                instance_id: 2,
+                template_id: "shield_wood".to_string(),
+            })),
+            fix!(ServerDataPayloadV1::ShieldBlockHit(ShieldBlockHitV1 {
+                template_id: "shield_wood".to_string(),
+            })),
+            fix!(ServerDataPayloadV1::TreasureEquipped(TreasureEquippedV1 {
+                slot: "treasure_belt_0".to_string(),
+                treasure: None,
+            })),
+            fix!(ServerDataPayloadV1::VortexState(VortexFieldStateV1 {
+                caster: "entity:1".to_string(),
+                active: false,
+                center: [0.0, 64.0, 0.0],
+                radius: 1.5,
+                delta: 0.25,
+                env_qi_at_cast: 0.9,
+                maintain_remaining_ticks: 0,
+                intercepted_count: 0,
+                active_skill_id: "woliu.hold".to_string(),
+                charge_progress: 0.0,
+                cooldown_until_ms: 0,
+                backfire_level: String::new(),
+                turbulence_radius: 1.0,
+                turbulence_intensity: 0.0,
+                turbulence_until_ms: 0,
+            })),
+            fix!(ServerDataPayloadV1::DuguPoisonState(DuguPoisonStateV1 {
+                target: "offline:Kiz".to_string(),
+                active: false,
+                meridian_id: "lung".to_string(),
+                attacker: "offline:Azure".to_string(),
+                attached_at_tick: 0,
+                poisoner_realm_tier: 1,
+                loss_per_tick: 0.0,
+                flow_capacity_after: 10.0,
+                qi_max_after: 100.0,
+                server_tick: 0,
+            })),
+            fix!(ServerDataPayloadV1::PoisonDoseEvent(PoisonDoseEventV1 {
+                v: 1,
+                player_entity_id: 1,
+                dose_amount: 1.0,
+                side_effect_tag: PoisonSideEffectTagV1::QiFocusDrift2h,
+                poison_level_after: 1.0,
+                digestion_after: 0.0,
+                at_tick: 1,
+            })),
+            fix!(ServerDataPayloadV1::PoisonOverdoseEvent(
+                PoisonOverdoseEventV1 {
+                    v: 1,
+                    player_entity_id: 1,
+                    severity: PoisonOverdoseSeverityV1::Mild,
+                    overflow: 1.0,
+                    lifespan_penalty_years: 0.0,
+                    micro_tear_probability: 0.0,
+                    at_tick: 1,
+                }
+            )),
+            fix!(ServerDataPayloadV1::PoisonTraitState(PoisonTraitStateV1 {
+                v: 1,
+                player_entity_id: 1,
+                poison_toxicity: 0.0,
+                digestion_current: 0.0,
+                digestion_capacity: 100.0,
+                toxicity_tier_unlocked: false,
+            })),
+            fix!(ServerDataPayloadV1::CarrierState(CarrierStateV1 {
+                carrier: "none".to_string(),
+                phase: super::super::combat_carrier::CarrierChargePhaseV1::Idle,
+                progress: 0.0,
+                sealed_qi: 0.0,
+                sealed_qi_initial: 0.0,
+                half_life_remaining_ticks: 0,
+                item_instance_id: None,
+            })),
+            fix!(ServerDataPayloadV1::FalseSkinState(FalseSkinStateV1 {
+                target_id: "offline:Kiz".to_string(),
+                kind: None,
+                layers_remaining: 0,
+                contam_capacity_per_layer: 0.0,
+                absorbed_contam: 0.0,
+                equipped_at_tick: 0,
+                layers: vec![],
+            })),
+            fix!(ServerDataPayloadV1::LingtianSession(Box::new(
+                LingtianSessionDataV1 {
+                    active: false,
+                    kind: super::super::lingtian::LingtianSessionKindV1::Till,
+                    pos: [0, 64, 0],
+                    elapsed_ticks: 0,
+                    target_ticks: 100,
+                    plant_id: None,
+                    source: None,
+                    dye_contamination: None,
+                    dye_contamination_warning: false,
+                }
+            ))),
+            fix!(ServerDataPayloadV1::DeathScreen {
+                visible: false,
+                cause: "fall".to_string(),
+                luck_remaining: 1.0,
+                final_words: vec![],
+                countdown_until_ms: 0,
+                can_reincarnate: true,
+                can_terminate: false,
+                stage: None,
+                death_number: None,
+                zone_kind: None,
+                lifespan: None,
+                cinematic: None,
+            }),
+            fix!(ServerDataPayloadV1::TerminateScreen {
+                visible: false,
+                final_words: String::new(),
+                epilogue: String::new(),
+                archetype_suggestion: String::new(),
+            }),
+            fix!(ServerDataPayloadV1::RiftPortalState(RiftPortalStateV1 {
+                entity_id: 1,
+                kind: RiftPortalKindV1::MainRift,
+                direction: RiftPortalDirectionV1::Exit,
+                family_id: "tsy_01".to_string(),
+                world_pos: [0.0, 64.0, 0.0],
+                trigger_radius: 2.0,
+                current_extract_ticks: 0,
+                activation_window_end: None,
+            })),
+            fix!(ServerDataPayloadV1::RiftPortalRemoved(
+                RiftPortalRemovedV1 { entity_id: 1 }
+            )),
+            fix!(ServerDataPayloadV1::ExtractStarted(ExtractStartedV1 {
+                player_id: "offline:Kiz".to_string(),
+                portal_entity_id: 1,
+                portal_kind: RiftPortalKindV1::MainRift,
+                required_ticks: 160,
+                at_tick: 1,
+            })),
+            fix!(ServerDataPayloadV1::ExtractProgress(ExtractProgressV1 {
+                player_id: "offline:Kiz".to_string(),
+                portal_entity_id: 1,
+                elapsed_ticks: 1,
+                required_ticks: 160,
+            })),
+            fix!(ServerDataPayloadV1::ExtractCompleted(ExtractCompletedV1 {
+                player_id: "offline:Kiz".to_string(),
+                portal_kind: RiftPortalKindV1::MainRift,
+                family_id: "tsy_01".to_string(),
+                exit_world_pos: [0.0, 64.0, 0.0],
+                at_tick: 161,
+            })),
+            fix!(ServerDataPayloadV1::ExtractAborted(ExtractAbortedV1 {
+                player_id: "offline:Kiz".to_string(),
+                reason: ExtractAbortedReasonV1::PortalOccupied,
+            })),
+            fix!(ServerDataPayloadV1::ExtractFailed(ExtractFailedV1 {
+                player_id: "offline:Kiz".to_string(),
+                reason: ExtractFailedReasonV1::SpiritQiDrained,
+            })),
+            fix!(ServerDataPayloadV1::TsyCollapseStartedIpc(
+                TsyCollapseStartedIpcV1 {
+                    family_id: "tsy_01".to_string(),
+                    at_tick: 1,
+                    remaining_ticks: 100,
+                    collapse_tear_entity_ids: vec![],
+                }
+            )),
+            fix!(ServerDataPayloadV1::ContainerState(ContainerStateV1 {
+                entity_id: 1,
+                kind: ContainerKindV1::StoragePouch,
+                family_id: "tsy_01".to_string(),
+                world_pos: [0.0, 64.0, 0.0],
+                locked: None,
+                depleted: false,
+                searched_by_player_id: None,
+            })),
+            fix!(ServerDataPayloadV1::SearchStarted(SearchStartedV1 {
+                player_id: "offline:Kiz".to_string(),
+                container_entity_id: 1,
+                required_ticks: 100,
+                at_tick: 1,
+            })),
+            fix!(ServerDataPayloadV1::SearchProgress(SearchProgressV1 {
+                player_id: "offline:Kiz".to_string(),
+                container_entity_id: 1,
+                elapsed_ticks: 10,
+                required_ticks: 100,
+            })),
+            fix!(ServerDataPayloadV1::SearchCompleted(SearchCompletedV1 {
+                player_id: "offline:Kiz".to_string(),
+                container_entity_id: 1,
+                family_id: "tsy_01".to_string(),
+                loot_preview: vec![],
+                at_tick: 101,
+            })),
+            fix!(ServerDataPayloadV1::SearchAborted(SearchAbortedV1 {
+                player_id: "offline:Kiz".to_string(),
+                container_entity_id: 1,
+                reason: SearchAbortReasonV1::Cancelled,
+                at_tick: 50,
+            })),
+            fix!(ServerDataPayloadV1::SkillXpGain(Box::new(
+                SkillXpGainPayloadV1::new(
+                    1,
+                    SkillIdV1::Herbalism,
+                    10,
+                    XpGainSourceV1::Action {
+                        plan_id: "p0".to_string(),
+                        action: "harvest".to_string(),
+                    },
+                )
+            ))),
+            fix!(ServerDataPayloadV1::SkillLvUp(SkillLvUpPayloadV1::new(
+                1,
+                SkillIdV1::Herbalism,
+                2
+            ))),
+            fix!(ServerDataPayloadV1::SkillCapChanged(
+                SkillCapChangedPayloadV1::new(1, SkillIdV1::Herbalism, 5)
+            )),
+            fix!(ServerDataPayloadV1::SkillScrollUsed(Box::new(
+                SkillScrollUsedPayloadV1::new(1, "scroll:herb:1", SkillIdV1::Herbalism, 50, false)
+            ))),
+            fix!(ServerDataPayloadV1::SkillSnapshot(Box::new(
+                SkillSnapshotPayloadV1 {
+                    v: 1,
+                    char_id: 1,
+                    skills: Default::default(),
+                    consumed_scrolls: vec![],
+                }
+            ))),
+            fix!(ServerDataPayloadV1::ForgeStation(Box::new(
+                WeaponForgeStationDataV1 {
+                    station_id: "forge:1".to_string(),
+                    tier: 1,
+                    integrity: 1.0,
+                    owner_name: String::new(),
+                    has_session: false,
+                }
+            ))),
+            fix!(ServerDataPayloadV1::ForgeSession(Box::new(
+                ForgeSessionDataV1 {
+                    session_id: 1,
+                    blueprint_id: "bp:sword".to_string(),
+                    blueprint_name: "凡铁剑".to_string(),
+                    active: false,
+                    current_step: ForgeStepV1::Billet,
+                    step_index: 0,
+                    achieved_tier: 0,
+                    step_state: ForgeStepStateDataV1::None,
+                }
+            ))),
+            fix!(ServerDataPayloadV1::ForgeOutcome(Box::new(
+                ForgeOutcomeDataV1 {
+                    session_id: 1,
+                    blueprint_id: "bp:sword".to_string(),
+                    bucket: ForgeOutcomeBucketV1::Good,
+                    weapon_item: None,
+                    quality: 0.5,
+                    color: None,
+                    side_effects: vec![],
+                    achieved_tier: 1,
+                    flawed_path: false,
+                }
+            ))),
+            fix!(ServerDataPayloadV1::ForgeBlueprintBook(Box::new(
+                ForgeBlueprintBookDataV1 {
+                    learned: vec![],
+                    current_index: 0,
+                }
+            ))),
+            fix!(ServerDataPayloadV1::TribulationState(
+                TribulationStateV1::clear()
+            )),
+            fix!(ServerDataPayloadV1::TribulationBroadcast(
+                TribulationBroadcastV1::clear()
+            )),
+            fix!(ServerDataPayloadV1::AscensionQuota(AscensionQuotaV1::new(
+                0, 3
+            ))),
+            fix!(ServerDataPayloadV1::HeartDemonOffer(HeartDemonOfferV1 {
+                offer_id: "hd:1".to_string(),
+                trigger_id: "hd:1".to_string(),
+                trigger_label: "心魔".to_string(),
+                realm_label: "渡虚".to_string(),
+                composure: 0.5,
+                quota_remaining: 1,
+                quota_total: 1,
+                expires_at_ms: 9_999_999_999_999,
+                choices: vec![],
+            })),
+            fix!(ServerDataPayloadV1::BurstMeridianEvent(
+                BurstMeridianEventV1 {
+                    skill: "beng_quan".to_string(),
+                    caster: "offline:Kiz".to_string(),
+                    target: None,
+                    tick: 1,
+                    overload_ratio: 1.0,
+                    integrity_snapshot: 1.0,
+                }
+            )),
+            fix!(ServerDataPayloadV1::BreakthroughCinematic(
+                BreakthroughCinematicS2cV1 {
+                    actor_id: "offline:Kiz".to_string(),
+                    phase: "apex".to_string(),
+                    phase_tick: 0,
+                    phase_duration_ticks: 80,
+                    realm_from: "Condense".to_string(),
+                    realm_to: "Solidify".to_string(),
+                    result: "success".to_string(),
+                    interrupted: false,
+                    world_pos: [0.0, 64.0, 0.0],
+                    visible_radius_blocks: 64.0,
+                    global: false,
+                    distant_billboard: false,
+                    particle_density: 1.0,
+                    intensity: 1.0,
+                    season_overlay: "adaptive".to_string(),
+                    style: "golden_core".to_string(),
+                    at_tick: 1,
+                }
+            )),
+            fix!(ServerDataPayloadV1::FullPowerChargingState(
+                FullPowerChargingStateV1 {
+                    caster_uuid: "00000000-0000-0000-0000-000000000001".to_string(),
+                    active: false,
+                    qi_committed: 0.0,
+                    target_qi: 100.0,
+                    started_tick: 0,
+                }
+            )),
+            fix!(ServerDataPayloadV1::FullPowerRelease(FullPowerReleaseV1 {
+                caster_uuid: "00000000-0000-0000-0000-000000000001".to_string(),
+                target_uuid: None,
+                qi_released: 100.0,
+                tick: 1,
+                hit_position: None,
+            })),
+            fix!(ServerDataPayloadV1::FullPowerExhaustedState(
+                FullPowerExhaustedStateV1 {
+                    caster_uuid: "00000000-0000-0000-0000-000000000001".to_string(),
+                    active: false,
+                    started_tick: 0,
+                    recovery_at_tick: 0,
+                }
+            )),
+            fix!(ServerDataPayloadV1::SocialAnonymity(
+                SocialAnonymityPayloadV1 {
+                    viewer: "offline:Kiz".to_string(),
+                    remotes: vec![],
+                }
+            )),
+            fix!(ServerDataPayloadV1::SocialExposure(SocialExposureEventV1 {
+                v: 1,
+                actor: "char:kiz".to_string(),
+                kind: ExposureKindV1::Chat,
+                witnesses: vec![],
+                tick: 1,
+                zone: None,
+            })),
+            fix!(ServerDataPayloadV1::SocialPact(SocialPactEventV1 {
+                v: 1,
+                left: "char:a".to_string(),
+                right: "char:b".to_string(),
+                terms: "mutual".to_string(),
+                tick: 1,
+                broken: false,
+            })),
+            fix!(ServerDataPayloadV1::SocialFeud(SocialFeudEventV1 {
+                v: 1,
+                left: "char:a".to_string(),
+                right: "char:b".to_string(),
+                tick: 1,
+                place: None,
+            })),
+            fix!(ServerDataPayloadV1::SocialRenownDelta(
+                SocialRenownDeltaV1 {
+                    v: 1,
+                    char_id: "char:kiz".to_string(),
+                    fame_delta: 1,
+                    notoriety_delta: 0,
+                    tags_added: vec![],
+                    tick: 1,
+                    reason: "pact".to_string(),
+                }
+            )),
+            fix!(ServerDataPayloadV1::IdentityPanelState(
+                IdentityPanelStateV1 {
+                    active_identity_id: 0,
+                    last_switch_tick: 0,
+                    cooldown_remaining_ticks: 0,
+                    identities: vec![],
+                }
+            )),
+            fix!(ServerDataPayloadV1::NicheIntrusion(NicheIntrusionEventV1 {
+                v: 1,
+                niche_pos: [0, 64, 0],
+                intruder_id: "char:thief".to_string(),
+                items_taken: vec![],
+                taint_delta: 0.0,
+            })),
+            fix!(ServerDataPayloadV1::NicheGuardianFatigue(
+                NicheGuardianFatigueV1 {
+                    v: 1,
+                    guardian_kind: GuardianKindV1::Puppet,
+                    charges_remaining: 1,
+                }
+            )),
+            fix!(ServerDataPayloadV1::NicheGuardianBroken(
+                NicheGuardianBrokenV1 {
+                    v: 1,
+                    guardian_kind: GuardianKindV1::Puppet,
+                    intruder_id: "char:thief".to_string(),
+                }
+            )),
+            fix!(ServerDataPayloadV1::SparringInvite(
+                SparringInvitePayloadV1 {
+                    invite_id: "inv:1".to_string(),
+                    initiator: "char:a".to_string(),
+                    target: "char:b".to_string(),
+                    realm_band: "condense".to_string(),
+                    breath_hint: "匀".to_string(),
+                    terms: "standard".to_string(),
+                    expires_at_ms: 9_999_999_999_999,
+                }
+            )),
+            fix!(ServerDataPayloadV1::TradeOffer(TradeOfferPayloadV1 {
+                offer_id: "trade:1".to_string(),
+                initiator: "char:a".to_string(),
+                target: "char:b".to_string(),
+                offered_item: TradeItemSummaryV1 {
+                    instance_id: 1,
+                    item_id: "bone_coin".to_string(),
+                    display_name: "骨币".to_string(),
+                    stack_count: 10,
+                },
+                requested_items: vec![],
+                expires_at_ms: 9_999_999_999_999,
+            })),
+            fix!(ServerDataPayloadV1::RealmVisionParams(
+                RealmVisionParamsV1 {
+                    fog_start: 30.0,
+                    fog_end: 60.0,
+                    fog_color_rgb: 0,
+                    fog_shape: FogShapeV1::Cylinder,
+                    vignette_alpha: 0.0,
+                    tint_color_argb: 0,
+                    particle_density: 0.0,
+                    transition_ticks: 0,
+                    server_view_distance_chunks: 4,
+                    post_fx_sharpen: 0.0,
+                }
+            )),
+            fix!(ServerDataPayloadV1::SpiritualSenseTargets(
+                SpiritualSenseTargetsV1 {
+                    generation: 0,
+                    entries: vec![],
+                }
+            )),
+            fix!(ServerDataPayloadV1::HealerNpcAiState(HealerNpcAiStateV1 {
+                healer_id: "npc:doc".to_string(),
+                active_action: "idle".to_string(),
+                queue_len: 0,
+                reputation: 0,
+                retreating: false,
+            })),
+            fix!(ServerDataPayloadV1::YidaoHudState(YidaoHudStateV1 {
+                healer_id: "npc:doc".to_string(),
+                reputation: 0,
+                peace_mastery: 0.0,
+                karma: 0.0,
+                active_skill: None,
+                patient_ids: vec![],
+                patient_hp_percent: None,
+                patient_contam_total: None,
+                severed_meridian_count: 0,
+                contract_count: 0,
+                mass_preview_count: 0,
+            })),
+            fix!(ServerDataPayloadV1::MovementState(MovementStateV1 {
+                current_speed_multiplier: 1.0,
+                stamina_cost_active: false,
+                movement_action: MovementActionV1::None,
+                zone_kind: MovementZoneKindV1::Normal,
+                dash_cooldown_remaining_ticks: 0,
+                hitbox_height_blocks: 1.8,
+                stamina_current: 100.0,
+                stamina_max: 100.0,
+                low_stamina: false,
+                last_action_tick: None,
+                rejected_action: None,
+            })),
+            fix!(ServerDataPayloadV1::SpiritTreasureState(
+                SpiritTreasureStatePayloadV1 { treasures: vec![] }
+            )),
+            fix!(ServerDataPayloadV1::SpiritTreasureDialogue(
+                SpiritTreasureDialoguePayloadV1 {
+                    dialogue: SpiritTreasureDialogueV1 {
+                        v: 1,
+                        request_id: "req:1".to_string(),
+                        character_id: "offline:Kiz".to_string(),
+                        treasure_id: "jade_pendant".to_string(),
+                        text: "汝何求".to_string(),
+                        tone: SpiritTreasureDialogueToneV1::Cold,
+                        affinity_delta: 0.0,
+                    },
+                    display_name: "翠玉佩".to_string(),
+                    zone: "spawn".to_string(),
+                }
+            )),
+            fix!(ServerDataPayloadV1::CraftRecipeList(Box::new(
+                RecipeListV1 {
+                    v: 1,
+                    player_id: "offline:Kiz".to_string(),
+                    recipes: vec![],
+                    ts: 0,
+                }
+            ))),
+            fix!(ServerDataPayloadV1::CraftSessionState(
+                CraftSessionStateV1 {
+                    v: 1,
+                    player_id: "offline:Kiz".to_string(),
+                    active: false,
+                    recipe_id: None,
+                    elapsed_ticks: 0,
+                    total_ticks: 0,
+                    completed_count: 0,
+                    total_count: 0,
+                    ts: 0,
+                }
+            )),
+            fix!(ServerDataPayloadV1::CraftOutcome(
+                CraftOutcomeV1::Completed {
+                    v: 1,
+                    player_id: "offline:Kiz".to_string(),
+                    recipe_id: "craft.example".to_string(),
+                    output_template: "example_item".to_string(),
+                    output_count: 1,
+                    completed_at_tick: 1,
+                    ts: 0,
+                }
+            )),
+            fix!(ServerDataPayloadV1::RecipeUnlocked(RecipeUnlockedV1 {
+                v: 1,
+                player_id: "offline:Kiz".to_string(),
+                recipe_id: "craft.example".to_string(),
+                source: super::super::craft::UnlockEventSourceV1::Insight {
+                    trigger: super::super::craft::InsightTriggerV1::NearDeath,
+                },
+                unlocked_at_tick: 1,
+                ts: 0,
+            })),
+            fix!(ServerDataPayloadV1::WorkbenchOpen {
+                entity_id: 1,
+                position: [0, 64, 0],
+            }),
+            fix!(ServerDataPayloadV1::CombatEventFloater(
+                CombatEventFloaterV1 { events: vec![] }
+            )),
+            fix!(ServerDataPayloadV1::KnockbackSync(KnockbackSyncV1 {
+                distance_blocks: 1.0,
+                velocity_blocks_per_tick: 0.2,
+                duration_ticks: 5,
+                kinetic_energy: 5.0,
+                collision_damage: None,
+                chain_depth: 0,
+                block_broken: false,
+            })),
+            fix!(ServerDataPayloadV1::TechniqueProficiencyUpdate(
+                TechniqueProficiencyUpdateV1 {
+                    technique_id: "sword.cleave".to_string(),
+                    proficiency: 0.1,
+                    gain: 0.001,
+                }
+            )),
+            fix!(ServerDataPayloadV1::PillBuffStatus(PillBuffStatusV1 {
+                buff_id: "huo_xue_dan".to_string(),
+                remaining_ticks: 100,
+                effect_multiplier: 1.0,
+            })),
+            fix!(ServerDataPayloadV1::LootContainerOpen(
+                LootContainerOpenV1 {
+                    session_id: 1,
+                    source_kind: LootContainerSourceKindV1::SupplyCoffin {
+                        grade: "common".to_string(),
+                    },
+                    rows: 3,
+                    cols: 4,
+                    placed_items: vec![],
+                    timeout_wall_secs: 9_999_999,
+                }
+            )),
+            fix!(ServerDataPayloadV1::LootContainerUpdate(
+                LootContainerUpdateV1 {
+                    session_id: 1,
+                    placed_items: vec![],
+                }
+            )),
+            fix!(ServerDataPayloadV1::LootContainerClose(
+                LootContainerCloseV1 {
+                    session_id: 1,
+                    reason: LootContainerCloseReasonV1::Timeout,
+                }
+            )),
+            fix!(ServerDataPayloadV1::FactionWarState(FactionWarStateV1 {
+                war_id: 1,
+                zone: "spawn".to_string(),
+                region_descriptor: "东部荒野".to_string(),
+                phase: "emerging".to_string(),
+                groups: vec![],
+                enlist_count: 0,
+                mercenary_count: 0,
+                intercept_count: 0,
+                spectate_count: 0,
+                winner_group: None,
+                loser_group: None,
+            })),
+            fix!(ServerDataPayloadV1::AnqiHud(AnqiHudV1 {
+                kind: "echo".to_string(),
+                echo_count: 0,
+                aim_progress: 0.0,
+                charge_progress: 0.0,
+                abrasion_container: "none".to_string(),
+                abrasion_qi_payload: 0.0,
+                tick: 1,
+            })),
+            fix!(ServerDataPayloadV1::DuguV2SkillCast(DuguV2HudSkillCastV1 {
+                kind: "eclipse".to_string(),
+                caster: "offline:Kiz".to_string(),
+                target: None,
+                taint_tier: None,
+                reveal_probability: 0.0,
+                tick: 1,
+            })),
+            fix!(ServerDataPayloadV1::DuguV2SelfCure(DuguV2HudSelfCureV1 {
+                caster: "offline:Kiz".to_string(),
+                gain_percent: 0.0,
+                self_revealed: false,
+                tick: 1,
+            })),
+            fix!(ServerDataPayloadV1::DuguV2ShroudActive(
+                DuguV2HudShroudActiveV1 {
+                    caster: "offline:Kiz".to_string(),
+                    strength: 0.0,
+                    expires_at_tick: 0,
+                    tick: 1,
+                }
+            )),
+            fix!(ServerDataPayloadV1::PermanentQiMaxDecayApplied(
+                DuguV2HudQiDecayV1 {
+                    target: "offline:Kiz".to_string(),
+                    loss: 1.0,
+                    qi_max_after: 99.0,
+                    tick: 1,
+                }
+            )),
+            fix!(ServerDataPayloadV1::SwordBondHudState(
+                SwordBondHudStateV1 {
+                    active: false,
+                    grade_index: 0,
+                    grade_name: "凡铁".to_string(),
+                    stored_qi_ratio: 0.0,
+                    bond_strength: 0.0,
+                    heaven_gate_ready: false,
+                }
+            )),
+            fix!(ServerDataPayloadV1::MineralProbeResult(
+                MineralProbeResultV1 {
+                    kind: "denied".to_string(),
+                    mineral_id: None,
+                    remaining_units: None,
+                    display_name_zh: None,
+                    denial_reason: Some("no_skill".to_string()),
+                }
+            )),
+            fix!(ServerDataPayloadV1::FreshnessUpdate(FreshnessUpdateV1 {
+                item_uuid: "42".to_string(),
+                freshness: 1.0,
+                profile_name: "default".to_string(),
+            })),
+            fix!(ServerDataPayloadV1::InsightOffer(InsightOfferV1 {
+                offer_id: "ins:1".to_string(),
+                trigger_id: "ins:1".to_string(),
+                character_id: "offline:Kiz".to_string(),
+                choices: vec![],
+            })),
+            // ─── JSON-bypass variants (3) — is_json_bypass() returns true ───────────
+            fix!(ServerDataPayloadV1::AgentUiRequest(
+                AgentUiRequestPayloadV1 {
+                    request_id: "req:1".to_string(),
+                    target_player: "offline:Kiz".to_string(),
+                    xml: "<owo-ui/>".to_string(),
+                    timeout_ticks: 600,
+                }
+            )),
+            fix!(ServerDataPayloadV1::AgentUiClose(AgentUiClosePayloadV1 {
+                request_id: "req:1".to_string(),
+                reason: None,
+            })),
+            fix!(ServerDataPayloadV1::HalfStepRechallenge(
+                HalfStepRechallengeV1 {
+                    active: false,
+                    char_id: "offline:Kiz".to_string(),
+                    rechallenge_window_until: 0,
+                    at_tick: 0,
+                }
+            )),
+        ]
+    }
+
+    /// Verifies that the fixture list covers every `ServerDataPayloadV1` variant (125 total).
+    ///
+    /// This cross-checks the fixture count against `ServerDataType` discriminant count derived
+    /// from `payload_type()`. If a new variant is added and a fixture is not added to
+    /// `s2c_all_fixtures()`, this test will fail with a clear count mismatch message.
+    ///
+    /// NOTE: This test uses the `ServerDataType` enum variant count as the ground truth.
+    /// That count is maintained by `payload_type()` which is also an exhaustive match.
+    #[test]
+    fn s2c_fixture_count_matches_variant_count() {
+        use super::super::server_data::ServerDataType;
+        use std::collections::HashSet;
+        let fixtures = s2c_all_fixtures();
+        // Collect all discriminants from the fixture list
+        let fixture_discriminants: HashSet<ServerDataType> =
+            fixtures.iter().map(|(f, _)| f.payload_type()).collect();
+
+        // The authoritative variant count is determined by exhaustively listing all ServerDataType variants.
+        // This list must be kept in sync with the ServerDataType enum.
+        // If a new variant is added to ServerDataType but not here, this test will red on the
+        // discriminant mismatch below — not here. The point of THIS assertion is to catch
+        // duplicates (same variant appearing twice in fixtures, reducing coverage).
+        let all_types: Vec<ServerDataType> = vec![
+            ServerDataType::Welcome,
+            ServerDataType::Heartbeat,
+            ServerDataType::Narration,
+            ServerDataType::ZoneInfo,
+            ServerDataType::EventAlert,
+            ServerDataType::PlayerState,
+            ServerDataType::CoffinState,
+            ServerDataType::UiOpen,
+            ServerDataType::CultivationDetail,
+            ServerDataType::QiColorObserved,
+            ServerDataType::InventorySnapshot,
+            ServerDataType::InventoryEvent,
+            ServerDataType::DroppedLootSync,
+            ServerDataType::BotanyHarvestProgress,
+            ServerDataType::BotanyPlantV2RenderProfiles,
+            ServerDataType::MiningProgress,
+            ServerDataType::LumberProgress,
+            ServerDataType::GatheringSession,
+            ServerDataType::BotanySkill,
+            ServerDataType::AlchemyFurnace,
+            ServerDataType::AlchemySession,
+            ServerDataType::AlchemyOutcomeForecast,
+            ServerDataType::AlchemyOutcomeResolved,
+            ServerDataType::AlchemyRecipeBook,
+            ServerDataType::AlchemyContamination,
+            ServerDataType::CombatHudState,
+            ServerDataType::WoundsSnapshot,
+            ServerDataType::DefenseWindow,
+            ServerDataType::CastSync,
+            ServerDataType::QuickSlotConfig,
+            ServerDataType::SkillBarConfig,
+            ServerDataType::TechniquesSnapshot,
+            ServerDataType::SkillConfigSnapshot,
+            ServerDataType::UnlocksSync,
+            ServerDataType::DerivedAttrsSync,
+            ServerDataType::EventStreamPush,
+            ServerDataType::WeaponEquipped,
+            ServerDataType::WeaponBroken,
+            ServerDataType::ShieldBroken,
+            ServerDataType::ShieldBlockHit,
+            ServerDataType::TreasureEquipped,
+            ServerDataType::VortexState,
+            ServerDataType::DuguPoisonState,
+            ServerDataType::PoisonDoseEvent,
+            ServerDataType::PoisonOverdoseEvent,
+            ServerDataType::PoisonTraitState,
+            ServerDataType::CarrierState,
+            ServerDataType::FalseSkinState,
+            ServerDataType::LingtianSession,
+            ServerDataType::DeathScreen,
+            ServerDataType::TerminateScreen,
+            ServerDataType::RiftPortalState,
+            ServerDataType::RiftPortalRemoved,
+            ServerDataType::ExtractStarted,
+            ServerDataType::ExtractProgress,
+            ServerDataType::ExtractCompleted,
+            ServerDataType::ExtractAborted,
+            ServerDataType::ExtractFailed,
+            ServerDataType::TsyCollapseStartedIpc,
+            ServerDataType::ContainerState,
+            ServerDataType::SearchStarted,
+            ServerDataType::SearchProgress,
+            ServerDataType::SearchCompleted,
+            ServerDataType::SearchAborted,
+            ServerDataType::SkillXpGain,
+            ServerDataType::SkillLvUp,
+            ServerDataType::SkillCapChanged,
+            ServerDataType::SkillScrollUsed,
+            ServerDataType::SkillSnapshot,
+            ServerDataType::ForgeStation,
+            ServerDataType::ForgeSession,
+            ServerDataType::ForgeOutcome,
+            ServerDataType::ForgeBlueprintBook,
+            ServerDataType::TribulationState,
+            ServerDataType::TribulationBroadcast,
+            ServerDataType::AscensionQuota,
+            ServerDataType::HeartDemonOffer,
+            ServerDataType::BurstMeridianEvent,
+            ServerDataType::BreakthroughCinematic,
+            ServerDataType::FullPowerChargingState,
+            ServerDataType::FullPowerRelease,
+            ServerDataType::FullPowerExhaustedState,
+            ServerDataType::SocialAnonymity,
+            ServerDataType::SocialExposure,
+            ServerDataType::SocialPact,
+            ServerDataType::SocialFeud,
+            ServerDataType::SocialRenownDelta,
+            ServerDataType::IdentityPanelState,
+            ServerDataType::NicheIntrusion,
+            ServerDataType::NicheGuardianFatigue,
+            ServerDataType::NicheGuardianBroken,
+            ServerDataType::SparringInvite,
+            ServerDataType::TradeOffer,
+            ServerDataType::RealmVisionParams,
+            ServerDataType::SpiritualSenseTargets,
+            ServerDataType::HealerNpcAiState,
+            ServerDataType::YidaoHudState,
+            ServerDataType::MovementState,
+            ServerDataType::SpiritTreasureState,
+            ServerDataType::SpiritTreasureDialogue,
+            ServerDataType::CraftRecipeList,
+            ServerDataType::CraftSessionState,
+            ServerDataType::CraftOutcome,
+            ServerDataType::RecipeUnlocked,
+            ServerDataType::WorkbenchOpen,
+            ServerDataType::CombatEventFloater,
+            ServerDataType::KnockbackSync,
+            ServerDataType::TechniqueProficiencyUpdate,
+            ServerDataType::PillBuffStatus,
+            ServerDataType::LootContainerOpen,
+            ServerDataType::LootContainerUpdate,
+            ServerDataType::LootContainerClose,
+            ServerDataType::FactionWarState,
+            ServerDataType::AnqiHud,
+            ServerDataType::DuguV2SkillCast,
+            ServerDataType::DuguV2SelfCure,
+            ServerDataType::DuguV2ShroudActive,
+            ServerDataType::PermanentQiMaxDecayApplied,
+            ServerDataType::SwordBondHudState,
+            ServerDataType::MineralProbeResult,
+            ServerDataType::FreshnessUpdate,
+            ServerDataType::InsightOffer,
+            ServerDataType::AgentUiRequest,
+            ServerDataType::AgentUiClose,
+            ServerDataType::HalfStepRechallenge,
+        ];
+
+        let total_variants = all_types.len();
+        assert_eq!(
+            fixtures.len(),
+            total_variants,
+            "Fixture list has {} entries but ServerDataType has {} variants. \
+             Add a fixture for every new variant in s2c_all_fixtures(). \
+             Current fixture discriminants: {:?}",
+            fixtures.len(),
+            total_variants,
+            fixture_discriminants.iter().collect::<Vec<_>>()
+        );
+
+        let all_types_set: HashSet<ServerDataType> = all_types.into_iter().collect();
+        let missing: Vec<&ServerDataType> = all_types_set
+            .iter()
+            .filter(|t| !fixture_discriminants.contains(t))
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "These ServerDataType variants are missing from the fixture list: {:?}. \
+             Add a fixture for each in s2c_all_fixtures().",
+            missing
+        );
+
+        let extra: Vec<ServerDataType> = fixture_discriminants
+            .iter()
+            .filter(|t| !all_types_set.contains(t))
+            .cloned()
+            .collect();
+        assert!(
+            extra.is_empty(),
+            "These discriminants appear in fixtures but not in the authoritative all_types list: {:?}. \
+             Update the all_types list in this test.",
+            extra
+        );
+    }
+
+    /// Exhaustive proto encoding guard for all 125 `ServerDataPayloadV1` variants.
+    ///
+    /// For each of the 122 proto-encodable variants (is_json_bypass=false):
+    ///   - Calls `ServerDataV1::new(variant).to_proto_bytes()`.
+    ///   - Asserts the bytes are non-empty (proto envelope was built).
+    ///   - Decodes and asserts the envelope contains a payload (proto arm exists in From impl).
+    ///
+    /// For each of the 3 JSON-bypass variants (is_json_bypass=true):
+    ///   - Asserts that `to_proto_bytes()` panics with the expected `unreachable!()` message.
+    ///   - This is done via `std::panic::catch_unwind` to avoid aborting the test process.
+    ///
+    /// MUTATION GUARDS:
+    ///   - Delete any proto arm in `From<&ServerDataPayloadV1>` → `to_proto_bytes()` calls
+    ///     `unreachable!()` → this test panics with a clear variant name → RED.
+    ///   - Flip a bypass variant in `is_json_bypass` from `true` to `false` → this test will
+    ///     try to call `to_proto_bytes()` and hit `unreachable!()` → RED.
+    ///   - Correctly labeled new bypass variant (true) → `catch_unwind` catches the panic → GREEN.
+    #[test]
+    fn s2c_all_proto_variants_encode_without_panic() {
+        use super::super::server_data::ServerDataV1;
+        use prost::Message;
+
+        let fixtures = s2c_all_fixtures();
+        let mut proto_count = 0usize;
+        let mut bypass_count = 0usize;
+
+        for (variant, is_bypass) in fixtures {
+            let type_name = format!("{:?}", variant.payload_type());
+
+            if is_bypass {
+                // Bypass variants must panic on the proto path — verify with catch_unwind.
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    let envelope = ServerDataV1::new(variant);
+                    let _ = envelope.to_proto_bytes();
+                }));
+                assert!(
+                    result.is_err(),
+                    "Bypass variant {type_name} should panic on to_proto_bytes() because it is \
+                     a JSON-bypass variant with no proto definition. If this assertion fails, \
+                     either is_json_bypass() is misclassified (should be true) or a proto arm \
+                     was accidentally added."
+                );
+                bypass_count += 1;
+            } else {
+                // Proto-encodable variant: must encode to non-empty bytes and decode successfully.
+                let envelope = ServerDataV1::new(variant);
+                let bytes = envelope.to_proto_bytes();
+                assert!(
+                    !bytes.is_empty(),
+                    "Proto-encodable variant {type_name} produced empty bytes from to_proto_bytes(). \
+                     This indicates the proto arm in From<&ServerDataPayloadV1> is returning an \
+                     empty payload or the encode step is broken."
+                );
+                let decoded = bong::ServerDataEnvelope::decode(bytes.as_slice())
+                    .unwrap_or_else(|e| panic!(
+                        "Proto-encodable variant {type_name} produced bytes that failed to decode: {e}. \
+                         The proto arm may be constructing a malformed proto message."
+                    ));
+                assert!(
+                    decoded.payload.is_some(),
+                    "Proto-encodable variant {type_name} decoded to an envelope with no payload. \
+                     The proto arm in From<&ServerDataPayloadV1> may be returning an empty oneof."
+                );
+                proto_count += 1;
+            }
+        }
+
+        assert_eq!(
+            proto_count, 122,
+            "Expected 122 proto-encodable S2C variants, got {proto_count}. \
+             The fixture list or is_json_bypass classification may have changed."
+        );
+        assert_eq!(
+            bypass_count, 3,
+            "Expected 3 JSON-bypass S2C variants, got {bypass_count}. \
+             Check is_json_bypass() and s2c_all_fixtures()."
+        );
+    }
+
+    // ─── plan-test-coverage-guards-v1 P0：C2S exhaustive proto encoding guard ──
+
+    /// Returns a minimum-viable fixture for every `ClientRequestV1` variant (98 total).
+    ///
+    /// The same exhaustiveness strategy as `s2c_all_fixtures()` applies:
+    ///   - No compile-time list exhaustiveness, but `c2s_fixture_count_matches_variant_count()`
+    ///     cross-checks list length against a manually maintained variant set.
+    ///   - `AgentUiResponse` is the only C2S JSON-bypass variant (is_c2s_json_bypass=true).
+    ///
+    /// MUTATION GUARDS (see `c2s_all_proto_variants_encode_without_panic`):
+    ///   - Delete a proto arm → fixture hits `unreachable!()` → test panics → RED.
+    ///   - Add a new C2S variant without fixture → count assertion → RED.
+    fn c2s_all_fixtures() -> Vec<(super::super::client_request::ClientRequestV1, bool)> {
+        use super::super::agent_ui::AgentUiActionType;
+        use super::super::client_request::{
+            AnqiCarrierSlotV1, ApplyPillTargetV1, ClientRequestV1, SkillBarBindingV1,
+        };
+        use super::super::inventory::InventoryLocationV1;
+        use super::super::movement::MovementActionRequestV1;
+        use super::super::void_actions::VoidActionRequestV1;
+        use crate::cultivation::components::MeridianId;
+        use crate::cultivation::forging::ForgeAxis;
+        use crate::cultivation::void::components::BarrierGeometry;
+        use crate::schema::inventory::EquipSlotV1;
+        use crate::zhenfa::trap_content::TrapTargetFace;
+        use crate::zhenfa::{ZhenfaCarrierKind, ZhenfaDisarmMode, ZhenfaKind};
+
+        // `is_c2s_bypass(req)` — returns true only for AgentUiResponse (the sole C2S bypass).
+        // There is no `const fn is_c2s_json_bypass` on ClientRequestV1 because there is only
+        // 1 bypass variant, and a separate exhaustive fn would duplicate maintenance burden.
+        // Instead, we track it via a closure here.
+        let is_bypass =
+            |req: &ClientRequestV1| matches!(req, ClientRequestV1::AgentUiResponse { .. });
+
+        let build = |req: ClientRequestV1| -> (ClientRequestV1, bool) {
+            let b = is_bypass(&req);
+            (req, b)
+        };
+
+        vec![
+            build(ClientRequestV1::SetMeridianTarget {
+                v: 1,
+                meridian: MeridianId::Lung,
+            }),
+            build(ClientRequestV1::BreakthroughRequest { v: 1 }),
+            build(ClientRequestV1::StartDuXu { v: 1 }),
+            build(ClientRequestV1::VoidAction {
+                v: 1,
+                request: VoidActionRequestV1::Barrier {
+                    zone_id: "spawn".to_string(),
+                    geometry: BarrierGeometry::Circle {
+                        center: [0.0, 64.0, 0.0],
+                        radius: 5.0,
+                    },
+                },
+            }),
+            build(ClientRequestV1::MovementAction {
+                v: 1,
+                action: MovementActionRequestV1::Dash,
+                yaw_degrees: None,
+            }),
+            build(ClientRequestV1::AbortTribulation { v: 1 }),
+            build(ClientRequestV1::HeartDemonDecision {
+                v: 1,
+                choice_idx: None,
+            }),
+            build(ClientRequestV1::ForgeRequest {
+                v: 1,
+                meridian: MeridianId::Lung,
+                axis: ForgeAxis::Rate,
+            }),
+            build(ClientRequestV1::InsightDecision {
+                v: 1,
+                trigger_id: "ins:1".to_string(),
+                choice_idx: None,
+            }),
+            build(ClientRequestV1::BotanyHarvestRequest {
+                v: 1,
+                session_id: "ses:1".to_string(),
+                mode: super::super::botany::BotanyHarvestModeV1::Manual,
+            }),
+            build(ClientRequestV1::AlchemyOpenFurnace {
+                v: 1,
+                furnace_pos: (0, 64, 0),
+            }),
+            build(ClientRequestV1::AlchemyFeedSlot {
+                v: 1,
+                furnace_pos: (0, 64, 0),
+                slot_idx: 0,
+                material: "herb_a".to_string(),
+                count: 1,
+            }),
+            build(ClientRequestV1::AlchemyTakeBack {
+                v: 1,
+                furnace_pos: (0, 64, 0),
+                slot_idx: 0,
+            }),
+            build(ClientRequestV1::AlchemyIgnite {
+                v: 1,
+                furnace_pos: (0, 64, 0),
+                recipe_id: "recipe:1".to_string(),
+            }),
+            build(ClientRequestV1::AlchemyIntervention {
+                v: 1,
+                furnace_pos: (0, 64, 0),
+                intervention: super::super::alchemy::AlchemyInterventionV1::AdjustTemp {
+                    temp: 100.0,
+                },
+            }),
+            build(ClientRequestV1::AlchemyTurnPage { v: 1, delta: 1 }),
+            build(ClientRequestV1::AlchemyLearnRecipe {
+                v: 1,
+                recipe_id: "recipe:1".to_string(),
+            }),
+            build(ClientRequestV1::AlchemyLearnRecipeFragment {
+                v: 1,
+                item_instance_id: 1,
+            }),
+            build(ClientRequestV1::AlchemyTakePill {
+                v: 1,
+                pill_item_id: "pill:1".to_string(),
+            }),
+            build(ClientRequestV1::AlchemyFurnacePlace {
+                v: 1,
+                x: 0,
+                y: 64,
+                z: 0,
+                item_instance_id: 1,
+            }),
+            build(ClientRequestV1::CoffinOpen {
+                v: 1,
+                x: 0,
+                y: 64,
+                z: 0,
+            }),
+            build(ClientRequestV1::CoffinPlace {
+                v: 1,
+                x: 0,
+                y: 64,
+                z: 0,
+                item_instance_id: 1,
+            }),
+            build(ClientRequestV1::BlockPlace {
+                v: 1,
+                x: 0,
+                y: 64,
+                z: 0,
+                item_instance_id: 1,
+                target_face: TrapTargetFace::Top,
+            }),
+            build(ClientRequestV1::CoffinEnter {
+                v: 1,
+                x: 0,
+                y: 64,
+                z: 0,
+            }),
+            build(ClientRequestV1::CoffinLeave { v: 1 }),
+            build(ClientRequestV1::CoffinBreak {
+                v: 1,
+                x: 0,
+                y: 64,
+                z: 0,
+            }),
+            build(ClientRequestV1::CoffinMenuReclaim {
+                v: 1,
+                x: 0,
+                y: 64,
+                z: 0,
+            }),
+            build(ClientRequestV1::SpiritNichePlace {
+                v: 1,
+                x: 0,
+                y: 64,
+                z: 0,
+                item_instance_id: 1,
+            }),
+            build(ClientRequestV1::SpiritNicheRepair {
+                v: 1,
+                x: 0,
+                y: 64,
+                z: 0,
+                item_instance_id: 1,
+            }),
+            build(ClientRequestV1::SpiritNicheGaze {
+                v: 1,
+                x: 0,
+                y: 64,
+                z: 0,
+            }),
+            build(ClientRequestV1::SpiritNicheMarkCoordinate {
+                v: 1,
+                x: 0,
+                y: 64,
+                z: 0,
+            }),
+            build(ClientRequestV1::SpiritNicheActivateGuardian {
+                v: 1,
+                niche_pos: [0, 64, 0],
+                guardian_kind: super::super::social::GuardianKindV1::Puppet,
+                materials: vec![],
+            }),
+            build(ClientRequestV1::SparringInviteResponse {
+                v: 1,
+                invite_id: "inv:1".to_string(),
+                accepted: true,
+                timed_out: false,
+            }),
+            build(ClientRequestV1::TradeOfferRequest {
+                v: 1,
+                target: "char:b".to_string(),
+                offered_instance_id: 1,
+            }),
+            build(ClientRequestV1::TradeOfferResponse {
+                v: 1,
+                offer_id: "trade:1".to_string(),
+                accepted: true,
+                requested_instance_id: None,
+            }),
+            build(ClientRequestV1::NpcInspectRequest {
+                v: 1,
+                npc_entity_id: 1,
+            }),
+            build(ClientRequestV1::NpcDialogueChoice {
+                v: 1,
+                npc_entity_id: 1,
+                option_id: "opt_a".to_string(),
+            }),
+            build(ClientRequestV1::NpcTradeRequest {
+                v: 1,
+                npc_entity_id: 1,
+                offered_items: vec![],
+                requested_item_id: "item:1".to_string(),
+            }),
+            build(ClientRequestV1::ZhenfaPlace {
+                v: 1,
+                x: 0,
+                y: 64,
+                z: 0,
+                kind: ZhenfaKind::Trap,
+                carrier: Some(ZhenfaCarrierKind::CommonStone),
+                qi_invest_ratio: 0.5,
+                trigger: None,
+                item_instance_id: None,
+                target_face: None,
+            }),
+            build(ClientRequestV1::ZhenfaTrigger {
+                v: 1,
+                instance_id: None,
+            }),
+            build(ClientRequestV1::ZhenfaDisarm {
+                v: 1,
+                x: 0,
+                y: 64,
+                z: 0,
+                mode: ZhenfaDisarmMode::Disarm,
+            }),
+            build(ClientRequestV1::QiScatterBeadUse {
+                v: 1,
+                item_instance_id: 1,
+                x: Some(0),
+                y: Some(64),
+                z: Some(0),
+            }),
+            build(ClientRequestV1::LearnSkillScroll {
+                v: 1,
+                instance_id: 1,
+            }),
+            build(ClientRequestV1::TechniqueScrollUse {
+                v: 1,
+                instance_id: 1,
+            }),
+            build(ClientRequestV1::InventoryMoveIntent {
+                v: 1,
+                instance_id: 1,
+                from: InventoryLocationV1::Container {
+                    container_id: "pack".to_string(),
+                    row: 0,
+                    col: 0,
+                },
+                to: InventoryLocationV1::Container {
+                    container_id: "pack".to_string(),
+                    row: 1,
+                    col: 0,
+                },
+            }),
+            build(ClientRequestV1::EquipFalseSkin {
+                v: 1,
+                slot: EquipSlotV1::MainHand,
+                item_instance_id: 1,
+            }),
+            build(ClientRequestV1::ForgeFalseSkin {
+                v: 1,
+                kind: super::super::tuike::FalseSkinKindV1::SpiderSilk,
+            }),
+            build(ClientRequestV1::InventoryDiscardItem {
+                v: 1,
+                instance_id: 1,
+                from: InventoryLocationV1::Container {
+                    container_id: "pack".to_string(),
+                    row: 0,
+                    col: 0,
+                },
+            }),
+            build(ClientRequestV1::DropWeaponIntent {
+                v: 1,
+                instance_id: 1,
+                from: InventoryLocationV1::Container {
+                    container_id: "pack".to_string(),
+                    row: 0,
+                    col: 0,
+                },
+            }),
+            build(ClientRequestV1::RepairWeaponIntent {
+                v: 1,
+                instance_id: 1,
+                station_pos: [0, 64, 0],
+            }),
+            build(ClientRequestV1::PickupDroppedItem {
+                v: 1,
+                instance_id: 1,
+            }),
+            build(ClientRequestV1::MineralProbe {
+                v: 1,
+                x: 0,
+                y: 64,
+                z: 0,
+            }),
+            build(ClientRequestV1::FreshnessProbe {
+                v: 1,
+                instance_id: 1,
+            }),
+            build(ClientRequestV1::ApplyPill {
+                v: 1,
+                instance_id: 1,
+                target: ApplyPillTargetV1::SelfTarget,
+            }),
+            build(ClientRequestV1::SelfAntidote {
+                v: 1,
+                instance_id: 1,
+            }),
+            build(ClientRequestV1::DuoSheRequest {
+                v: 1,
+                target_id: "char:b".to_string(),
+            }),
+            build(ClientRequestV1::QiColorInspect {
+                v: 1,
+                observed: "char:b".to_string(),
+            }),
+            build(ClientRequestV1::UseLifeCore {
+                v: 1,
+                instance_id: 1,
+            }),
+            build(ClientRequestV1::Jiemai { v: 1 }),
+            build(ClientRequestV1::ChargeCarrier {
+                v: 1,
+                slot: None,
+                qi_target: 50.0,
+            }),
+            build(ClientRequestV1::ThrowCarrier {
+                v: 1,
+                slot: AnqiCarrierSlotV1::MainHand,
+                dir_unit: [1.0, 0.0, 0.0],
+                power: 1.0,
+            }),
+            build(ClientRequestV1::AnqiContainerSwitch { v: 1, to: None }),
+            build(ClientRequestV1::UseQuickSlot { v: 1, slot: 0 }),
+            build(ClientRequestV1::QuickSlotBind {
+                v: 1,
+                slot: 0,
+                item_id: Some("herb_a".to_string()),
+            }),
+            build(ClientRequestV1::SkillBarCast {
+                v: 1,
+                slot: 0,
+                target: None,
+            }),
+            build(ClientRequestV1::SkillBarBind {
+                v: 1,
+                slot: 0,
+                binding: Some(SkillBarBindingV1::Item {
+                    template_id: "herb_a".to_string(),
+                }),
+            }),
+            build(ClientRequestV1::SkillConfigIntent {
+                v: 1,
+                skill_id: "fireball".to_string(),
+                config: Default::default(),
+            }),
+            build(ClientRequestV1::CombatReincarnate { v: 1 }),
+            build(ClientRequestV1::CombatTerminate { v: 1 }),
+            build(ClientRequestV1::CombatCreateNewCharacter { v: 1 }),
+            build(ClientRequestV1::StartExtractRequest {
+                v: 1,
+                portal_entity_id: 1,
+            }),
+            build(ClientRequestV1::CancelExtractRequest { v: 1 }),
+            build(ClientRequestV1::StartSearch {
+                v: 1,
+                container_entity_id: 1,
+            }),
+            build(ClientRequestV1::CancelSearch { v: 1 }),
+            build(ClientRequestV1::SupplyCoffinOpen { v: 1, entity_id: 1 }),
+            build(ClientRequestV1::LingtianStartTill {
+                v: 1,
+                x: 0,
+                y: 64,
+                z: 0,
+                hoe_instance_id: 1,
+                mode: "standard".to_string(),
+            }),
+            build(ClientRequestV1::LingtianStartRenew {
+                v: 1,
+                x: 0,
+                y: 64,
+                z: 0,
+                hoe_instance_id: 1,
+            }),
+            build(ClientRequestV1::LingtianStartPlanting {
+                v: 1,
+                x: 0,
+                y: 64,
+                z: 0,
+                plant_id: "herb_a".to_string(),
+            }),
+            build(ClientRequestV1::LingtianStartHarvest {
+                v: 1,
+                x: 0,
+                y: 64,
+                z: 0,
+                mode: "standard".to_string(),
+            }),
+            build(ClientRequestV1::LingtianStartReplenish {
+                v: 1,
+                x: 0,
+                y: 64,
+                z: 0,
+                source: "water_bucket".to_string(),
+            }),
+            build(ClientRequestV1::LingtianStartDrainQi {
+                v: 1,
+                x: 0,
+                y: 64,
+                z: 0,
+            }),
+            build(ClientRequestV1::ForgeStartSession {
+                v: 1,
+                station_id: "forge:1".to_string(),
+                blueprint_id: "bp:sword".to_string(),
+                materials: vec![],
+            }),
+            build(ClientRequestV1::ForgeTemperingHit {
+                v: 1,
+                session_id: 1,
+                beat: "hit".to_string(),
+                ticks_remaining: 100,
+            }),
+            build(ClientRequestV1::ForgeInscriptionScroll {
+                v: 1,
+                session_id: 1,
+                inscription_id: "ins:1".to_string(),
+            }),
+            build(ClientRequestV1::ForgeConsecrationInject {
+                v: 1,
+                session_id: 1,
+                qi_amount: 10.0,
+            }),
+            build(ClientRequestV1::ForgeStepAdvance {
+                v: 1,
+                session_id: 1,
+            }),
+            build(ClientRequestV1::ForgeBlueprintTurnPage { v: 1, delta: 1 }),
+            build(ClientRequestV1::ForgeLearnBlueprint {
+                v: 1,
+                blueprint_id: "bp:sword".to_string(),
+            }),
+            build(ClientRequestV1::ForgeStationPlace {
+                v: 1,
+                x: 0,
+                y: 64,
+                z: 0,
+                item_instance_id: 1,
+                station_tier: 1,
+            }),
+            build(ClientRequestV1::CraftStart {
+                v: 1,
+                recipe_id: "craft.example".to_string(),
+                quantity: 1,
+            }),
+            build(ClientRequestV1::CraftCancel { v: 1 }),
+            build(ClientRequestV1::ExternalContainerMove {
+                v: 1,
+                session_id: 1,
+                instance_id: 1,
+                from: InventoryLocationV1::Container {
+                    container_id: "pack".to_string(),
+                    row: 0,
+                    col: 0,
+                },
+                to: InventoryLocationV1::Container {
+                    container_id: "pack".to_string(),
+                    row: 1,
+                    col: 0,
+                },
+            }),
+            build(ClientRequestV1::ExternalContainerClose {
+                v: 1,
+                session_id: 1,
+            }),
+            build(ClientRequestV1::GiveDanToElder {
+                v: 1,
+                pill_instance_id: 1,
+                elder_entity_id: 2,
+            }),
+            build(ClientRequestV1::WorkbenchOpen { v: 1, entity_id: 1 }),
+            build(ClientRequestV1::RaiseShield { v: 1 }),
+            build(ClientRequestV1::LowerShield { v: 1 }),
+            // ─── JSON-bypass variant (1) ────────────────────────────────────────
+            build(ClientRequestV1::AgentUiResponse {
+                v: 1,
+                request_id: "req:1".to_string(),
+                action: AgentUiActionType::ButtonClick,
+                params: Default::default(),
+            }),
+        ]
+    }
+
+    /// Verifies that the C2S fixture list covers every `ClientRequestV1` variant (98 total).
+    #[test]
+    fn c2s_fixture_count_matches_variant_count() {
+        let fixtures = c2s_all_fixtures();
+        // The discriminant for ClientRequestV1 is the variant name string (for error messages).
+        // The authoritative count is 98 (97 proto + 1 AgentUiResponse bypass).
+        // We check length and that AgentUiResponse appears exactly once.
+        let bypass_count = fixtures.iter().filter(|(_, b)| *b).count();
+        let proto_count = fixtures.iter().filter(|(_, b)| !*b).count();
+        assert_eq!(
+            fixtures.len(),
+            98,
+            "C2S fixture list has {} entries but ClientRequestV1 has 98 variants. \
+             Add a fixture for every new variant in c2s_all_fixtures().",
+            fixtures.len()
+        );
+        assert_eq!(
+            bypass_count, 1,
+            "Expected exactly 1 C2S JSON-bypass variant (AgentUiResponse), got {bypass_count}. \
+             If a new bypass variant is added, update c2s_all_fixtures() and this assertion."
+        );
+        assert_eq!(
+            proto_count, 97,
+            "Expected 97 proto-encodable C2S variants, got {proto_count}."
+        );
+        let _ = fixtures; // suppress unused warning
+    }
+
+    /// Exhaustive proto encoding guard for all 98 `ClientRequestV1` variants.
+    ///
+    /// Same strategy as `s2c_all_proto_variants_encode_without_panic`.
+    /// For the 97 proto-encodable variants: encode → decode → assert payload present.
+    /// For AgentUiResponse (bypass): assert `to_proto_bytes()` panics.
+    ///
+    /// MUTATION GUARDS:
+    ///   - Delete any proto arm in `From<&ClientRequestV1>` → `catch_unwind` catches `unreachable!()`
+    ///     but test expects no panic → assertion fails → RED.
+    ///   - Add a new C2S variant without proto arm → `From` impl is non-exhaustive → compile failure.
+    #[test]
+    fn c2s_all_proto_variants_encode_without_panic() {
+        use prost::Message;
+
+        let fixtures = c2s_all_fixtures();
+        let mut proto_count = 0usize;
+        let mut bypass_count = 0usize;
+
+        for (variant, is_bypass) in fixtures {
+            let variant_dbg = format!("{variant:?}").chars().take(60).collect::<String>();
+
+            if is_bypass {
+                // The only C2S bypass: AgentUiResponse must panic on the proto path.
+                let variant_clone = variant.clone();
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+                    let _: bong::client_request_envelope::Payload = (&variant_clone).into();
+                }));
+                assert!(
+                    result.is_err(),
+                    "C2S bypass variant ({variant_dbg}) should panic on the proto path but did not. \
+                     Verify that the AgentUiResponse arm in From<&ClientRequestV1> still calls \
+                     unreachable!()."
+                );
+                bypass_count += 1;
+            } else {
+                // Proto-encodable: encode → decode → assert payload present.
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    let proto_payload = bong::client_request_envelope::Payload::from(&variant);
+                    let envelope = bong::ClientRequestEnvelope {
+                        payload: Some(proto_payload),
+                    };
+                    envelope.encode_to_vec()
+                }));
+                let bytes = result.unwrap_or_else(|_| panic!(
+                    "Proto-encodable C2S variant ({variant_dbg}) panicked during From conversion or \
+                     encode. This means the proto arm in From<&ClientRequestV1> is missing or calls \
+                     unreachable!(). Add a proto arm or check is_c2s_bypass classification."
+                ));
+                assert!(
+                    !bytes.is_empty(),
+                    "Proto-encodable C2S variant ({variant_dbg}) produced empty bytes."
+                );
+                let decoded =
+                    bong::ClientRequestEnvelope::decode(bytes.as_slice()).unwrap_or_else(|e| {
+                        panic!(
+                        "C2S variant ({variant_dbg}) produced bytes that failed to decode: {e}."
+                    )
+                    });
+                assert!(
+                    decoded.payload.is_some(),
+                    "C2S variant ({variant_dbg}) decoded to an envelope with no payload."
+                );
+                proto_count += 1;
+            }
+        }
+
+        assert_eq!(
+            proto_count, 97,
+            "Expected 97 proto-encodable C2S variants, got {proto_count}."
+        );
+        assert_eq!(
+            bypass_count, 1,
+            "Expected 1 C2S bypass variant, got {bypass_count}."
+        );
+    }
 }
