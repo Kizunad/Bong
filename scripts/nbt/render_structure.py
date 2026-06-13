@@ -10,6 +10,11 @@ solid-looking voxels.
 Usage:
     python3 scripts/nbt/render_structure.py <file.nbt> [out.png]
     python3 scripts/nbt/render_structure.py --all          # all decorations
+    python3 scripts/nbt/render_structure.py --ascii <file.nbt>  # per-Y slices
+
+The `--ascii` mode prints top-down layer slices (high y first) so anchor / base
+row occupancy / footprint symmetry / internal gaps are reviewable where a single
+oblique PNG would hide them.
 """
 
 from __future__ import annotations
@@ -187,6 +192,64 @@ def render(path: str, out_png: str, *, cell: int = 14) -> dict:
     return {"path": path, "out": out_png, "size": (sx, sy, sz), "blocks": len(blocks)}
 
 
+# ── per-Y ASCII layer slices ────────────────────────────────────────────────
+# A single oblique PNG hides anchor/symmetry/connectivity defects (a crystal that
+# collapsed to a 1-wide sliver still looks "tall" from one angle). The layer
+# slices below print every Y plane top-down so footprint symmetry, base-row
+# occupancy and internal gaps are reviewable at a glance — the instrument the
+# P6 round-2 review used to catch lopsided clusters / floating vines / noisy
+# bridge decks.
+_GLYPH: dict[str, str] = {
+    "oak_log": "H", "birch_log": "H", "spruce_log": "H", "stripped_oak_log": "h",
+    "oak_leaves": "*", "birch_leaves": "*", "spruce_leaves": "*",
+    "flowering_azalea_leaves": "%", "vine": "|", "moss_block": "m", "moss_carpet": "r",
+    "mossy_cobblestone": "M", "cobblestone": "C", "stone": ".", "dead_bush": "x",
+    "fern": "f", "sweet_berry_bush": "b", "sugar_cane": "i", "snow_block": "S",
+    "packed_ice": "I", "blue_ice": "B", "pointed_dripstone": "^",
+    "crimson_nylium": "n", "crimson_roots": "R", "crimson_hyphae": "Y",
+    "weeping_vines": "w", "shroomlight": "O", "red_mushroom_block": "#",
+    "brown_mushroom_block": "#", "mushroom_stem": "|", "red_mushroom": "u",
+    "brown_mushroom": "u", "amethyst_block": "A", "amethyst_cluster": "a",
+    "budding_amethyst": "d", "purple_stained_glass": "g", "soul_lantern": "L",
+    "obsidian": "o", "crying_obsidian": "Q", "deepslate": "D", "andesite": "N",
+    "cobbled_deepslate": "j", "bone_block": "b", "calcite": "c", "gravel": "v",
+    "prismarine": "p", "skeleton_skull": "K", "soul_sand": "s", "soul_soil": "t",
+    "stone_bricks": "=", "mossy_stone_bricks": "M", "cracked_stone_bricks": "k",
+    "chiseled_stone_bricks": "Z", "polished_blackstone": "#",
+    "polished_blackstone_bricks": "P", "chiseled_polished_blackstone": "X",
+    "lodestone": "@", "end_rod": "!", "iron_bars": "+", "spruce_planks": "-",
+    "dark_oak_planks": "-", "basalt": "T", "polished_basalt": "y",
+    "smooth_basalt": "T", "blackstone": "K", "oak_sign": "Y", "emerald_ore": "e",
+    "deepslate_emerald_ore": "E", "polished_diorite": "Q",
+}
+
+
+def ascii_slices(path: str) -> str:
+    """Return per-Y top-down ASCII slices (high y first) for visual review."""
+    blocks = load_structure(path)
+    by_pos = {b.pos: b.block_name.replace("minecraft:", "") for b in blocks}
+    xs = [p[0] for p in by_pos]
+    ys = [p[1] for p in by_pos]
+    zs = [p[2] for p in by_pos]
+    minx, maxx = min(xs), max(xs)
+    miny, maxy = min(ys), max(ys)
+    minz, maxz = min(zs), max(zs)
+    lines = [
+        f"{os.path.basename(path)}  "
+        f"{maxx - minx + 1}x{maxy - miny + 1}x{maxz - minz + 1}  {len(blocks)} blocks"
+    ]
+    for y in range(maxy, miny - 1, -1):
+        rows = []
+        for z in range(minz, maxz + 1):
+            row = "".join(
+                _GLYPH.get(by_pos[(x, y, z)], "?") if (x, y, z) in by_pos else "."
+                for x in range(minx, maxx + 1)
+            )
+            rows.append(row)
+        lines.append(f" y={y:2d}: " + " | ".join(rows))
+    return "\n".join(lines)
+
+
 def _all() -> None:
     repo = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
     deco_root = os.path.join(repo, "server", "structures", "decorations")
@@ -211,6 +274,12 @@ if __name__ == "__main__":
     args = sys.argv[1:]
     if args and args[0] == "--all":
         _all()
+    elif args and args[0] == "--ascii":
+        # `--ascii <file.nbt>` — print per-Y layer slices for layout review.
+        if len(args) < 2:
+            print("usage: render_structure.py --ascii <file.nbt>")
+        else:
+            print(ascii_slices(args[1]))
     elif args:
         src = args[0]
         out = args[1] if len(args) > 1 else src.replace(".nbt", ".png")
