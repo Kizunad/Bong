@@ -2336,6 +2336,51 @@ mod tests {
     }
 
     #[test]
+    fn container_open_with_zero_entity_id() {
+        let json = r#"{"type":"container_open","v":1,"entity_id":0}"#;
+        let req: ClientRequestV1 =
+            serde_json::from_str(json).expect("zero entity_id should be valid at schema level");
+        match req {
+            ClientRequestV1::ContainerOpen { entity_id, .. } => {
+                assert_eq!(entity_id, 0, "entity_id should be 0");
+            }
+            other => panic!("expected ContainerOpen, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn container_open_with_max_entity_id() {
+        let json = format!(
+            r#"{{"type":"container_open","v":1,"entity_id":{}}}"#,
+            i32::MAX
+        );
+        let req: ClientRequestV1 =
+            serde_json::from_str(&json).expect("i32::MAX entity_id should be valid");
+        match req {
+            ClientRequestV1::ContainerOpen { entity_id, .. } => {
+                assert_eq!(entity_id, i32::MAX, "entity_id should be i32::MAX");
+            }
+            other => panic!("expected ContainerOpen, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn container_open_with_min_entity_id() {
+        let json = format!(
+            r#"{{"type":"container_open","v":1,"entity_id":{}}}"#,
+            i32::MIN
+        );
+        let req: ClientRequestV1 = serde_json::from_str(&json)
+            .expect("i32::MIN entity_id should be valid at schema level");
+        match req {
+            ClientRequestV1::ContainerOpen { entity_id, .. } => {
+                assert_eq!(entity_id, i32::MIN, "entity_id should be i32::MIN");
+            }
+            other => panic!("expected ContainerOpen, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn container_open_rejects_missing_entity_id() {
         let json = r#"{"type":"container_open","v":1}"#;
         assert!(

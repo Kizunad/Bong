@@ -26,8 +26,8 @@ public final class InteractKeyRouter {
         handlers.add(handler);
     }
 
-    public synchronized int handlerCountForTests() {
-        return handlers.size();
+    synchronized boolean hasHandlerForTests(Class<? extends IntentHandler> handlerType) {
+        return handlers.stream().anyMatch(handlerType::isInstance);
     }
 
     public boolean route(MinecraftClient client) {

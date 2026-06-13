@@ -4602,6 +4602,31 @@ mod tests {
     }
 
     #[test]
+    fn c2s_container_open_proto_roundtrip_asserts_variant_and_entity_id() {
+        use prost::Message;
+        let req = super::super::client_request::ClientRequestV1::ContainerOpen {
+            v: 1,
+            entity_id: 165,
+        };
+        let proto_payload = bong::client_request_envelope::Payload::from(&req);
+        let envelope = bong::ClientRequestEnvelope {
+            payload: Some(proto_payload),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded = bong::ClientRequestEnvelope::decode(bytes.as_slice())
+            .expect("C2S ContainerOpen proto decode should succeed");
+        match decoded.payload {
+            Some(bong::client_request_envelope::Payload::ContainerOpen(open)) => {
+                assert_eq!(
+                    open.entity_id, 165,
+                    "ContainerOpen.entity_id should survive proto roundtrip"
+                );
+            }
+            other => panic!("expected ContainerOpen payload, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn c2s_workbench_open_roundtrip() {
         c2s_encode_decode_roundtrip(
             super::super::client_request::ClientRequestV1::WorkbenchOpen {

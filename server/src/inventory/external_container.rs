@@ -559,12 +559,30 @@ mod tests {
     fn external_kind_to_source_kind_maps_all_variants() {
         assert_eq!(
             external_kind_to_source_kind(&ExternalContainerKind::SupplyCoffin {
+                grade: SupplyCoffinGrade::Common
+            }),
+            LootContainerSourceKindV1::SupplyCoffin {
+                grade: "common".to_string()
+            },
+            "supply coffin source kind must preserve common grade"
+        );
+        assert_eq!(
+            external_kind_to_source_kind(&ExternalContainerKind::SupplyCoffin {
                 grade: SupplyCoffinGrade::Rare
             }),
             LootContainerSourceKindV1::SupplyCoffin {
                 grade: "rare".to_string()
             },
-            "supply coffin source kind must preserve grade"
+            "supply coffin source kind must preserve rare grade"
+        );
+        assert_eq!(
+            external_kind_to_source_kind(&ExternalContainerKind::SupplyCoffin {
+                grade: SupplyCoffinGrade::Precious
+            }),
+            LootContainerSourceKindV1::SupplyCoffin {
+                grade: "precious".to_string()
+            },
+            "supply coffin source kind must preserve precious grade"
         );
         assert_eq!(
             external_kind_to_source_kind(&ExternalContainerKind::StorageCrate { is_herb: false }),

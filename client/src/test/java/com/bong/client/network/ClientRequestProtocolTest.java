@@ -905,6 +905,16 @@ public class ClientRequestProtocolTest {
         );
     }
 
+    @Test
+    void encodesContainerOpenWithMaxIntId() {
+        String json = ClientRequestProtocol.encodeContainerOpen(Integer.MAX_VALUE);
+        assertEquals(
+            "{\"type\":\"container_open\",\"v\":1,\"entity_id\":2147483647}",
+            json,
+            "entity_id max int should be encoded without truncation"
+        );
+    }
+
     // ─── plan-workbench-place-runtime-v1 P2：workbench_open ──────────
 
     @Test

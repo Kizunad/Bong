@@ -75,6 +75,35 @@ class LootContainerHandlerTest {
     }
 
     @Test
+    void openTreatsNullSourceKindAsUnknown() {
+        assertOpenSourceKindFallback("null", "unknown", "common");
+    }
+
+    @Test
+    void openTreatsArraySourceKindAsUnknown() {
+        assertOpenSourceKindFallback("[]", "unknown", "common");
+    }
+
+    @Test
+    void openTreatsUnknownObjectSourceKindAsUnknown() {
+        assertOpenSourceKindFallback("{\"unexpected\":true}", "unknown", "common");
+    }
+
+    @Test
+    void openTreatsStorageCrateMissingHerbFlagAsTradeCrate() {
+        assertOpenSourceKindFallback("{\"storage_crate\":{}}", "storage_crate", "trade");
+    }
+
+    @Test
+    void openTreatsStorageCrateNullHerbFlagAsTradeCrate() {
+        assertOpenSourceKindFallback(
+            "{\"storage_crate\":{\"is_herb\":null}}",
+            "storage_crate",
+            "trade"
+        );
+    }
+
+    @Test
     void openParsesRustExternalTaggedDeadDropSourceKind() {
         String json = """
             {"type":"loot_container_open","v":1,"session_id":44,"source_kind":"dead_drop","rows":3,"cols":3,"placed_items":[],"timeout_wall_secs":0}
@@ -146,6 +175,27 @@ class LootContainerHandlerTest {
             "placedItems should be empty after update with empty placed_items");
         assertEquals(42, session.sessionId(),
             "sessionId should still match after update");
+    }
+
+    private static void assertOpenSourceKindFallback(
+        String sourceKindJson,
+        String expectedSourceKind,
+        String expectedGrade
+    ) {
+        String json = """
+            {"type":"loot_container_open","v":1,"session_id":45,"source_kind":SOURCE_KIND,"rows":4,"cols":4,"placed_items":[],"timeout_wall_secs":0}
+            """.replace("SOURCE_KIND", sourceKindJson);
+
+        ServerDataRouter.RouteResult result = ServerDataRouter.createDefault()
+            .route(json, json.getBytes(StandardCharsets.UTF_8).length);
+
+        assertTrue(result.isHandled(), "source_kind fallback payload should still be handled");
+        LootContainerStateStore.OpenSession session =
+            assertInstanceOf(LootContainerStateStore.OpenSession.class, LootContainerStateStore.current());
+        assertEquals(expectedSourceKind, session.sourceKind());
+        assertEquals(expectedGrade, session.grade());
+        assertEquals(4, session.rows());
+        assertEquals(4, session.cols());
     }
 
     @Test

@@ -13,19 +13,19 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class WorldContainerInteractIntentHandlerTest {
     @Test
     void storageCrateModelIdsAreRecognised() {
-        assertTrue(StorageCrateInteractIntentHandler.isStorageCrateModelId("trade_crate"));
-        assertTrue(StorageCrateInteractIntentHandler.isStorageCrateModelId("herb_crate_placed"));
-        assertFalse(StorageCrateInteractIntentHandler.isStorageCrateModelId("dead_drop_box"));
-        assertFalse(StorageCrateInteractIntentHandler.isStorageCrateModelId("workbench"));
-        assertFalse(StorageCrateInteractIntentHandler.isStorageCrateModelId(null));
+        assertStorageCrateModel("trade_crate", true);
+        assertStorageCrateModel("herb_crate_placed", true);
+        assertStorageCrateModel("dead_drop_box", false);
+        assertStorageCrateModel("workbench", false);
+        assertStorageCrateModel(null, false);
     }
 
     @Test
     void deadDropModelIdIsRecognised() {
-        assertTrue(DeadDropInteractIntentHandler.isDeadDropModelId("dead_drop_box"));
-        assertFalse(DeadDropInteractIntentHandler.isDeadDropModelId("trade_crate"));
-        assertFalse(DeadDropInteractIntentHandler.isDeadDropModelId("herb_crate_placed"));
-        assertFalse(DeadDropInteractIntentHandler.isDeadDropModelId(null));
+        assertDeadDropModel("dead_drop_box", true);
+        assertDeadDropModel("trade_crate", false);
+        assertDeadDropModel("herb_crate_placed", false);
+        assertDeadDropModel(null, false);
     }
 
     @Test
@@ -73,5 +73,25 @@ class WorldContainerInteractIntentHandlerTest {
             "storage_crate:not_a_number"
         );
         assertEquals(-1, StorageCrateInteractIntentHandler.candidateEntityId(bad));
+    }
+
+    private static void assertStorageCrateModel(String modelId, boolean expected) {
+        boolean actual = StorageCrateInteractIntentHandler.isStorageCrateModelId(modelId);
+        assertEquals(
+            expected,
+            actual,
+            "expected " + expected + " because modelId='" + modelId
+                + "' must match storage-crate mapping only, actual " + actual
+        );
+    }
+
+    private static void assertDeadDropModel(String modelId, boolean expected) {
+        boolean actual = DeadDropInteractIntentHandler.isDeadDropModelId(modelId);
+        assertEquals(
+            expected,
+            actual,
+            "expected " + expected + " because modelId='" + modelId
+                + "' must match dead-drop mapping only, actual " + actual
+        );
     }
 }

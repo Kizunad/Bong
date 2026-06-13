@@ -517,6 +517,30 @@ public class ClientRequestSenderTest {
     }
 
     @Test
+    void sendContainerOpenWithZeroIdUsesCorrectChannelAndJson() {
+        install();
+        ClientRequestSender.sendContainerOpen(0);
+        assertEquals(1, sent.size());
+        assertEquals(new Identifier("bong", "client_request"), sent.get(0).channel());
+        assertEquals(
+            "{\"type\":\"container_open\",\"v\":1,\"entity_id\":0}",
+            sent.get(0).body()
+        );
+    }
+
+    @Test
+    void sendContainerOpenWithNegativeIdUsesCorrectChannelAndJson() {
+        install();
+        ClientRequestSender.sendContainerOpen(-1);
+        assertEquals(1, sent.size());
+        assertEquals(new Identifier("bong", "client_request"), sent.get(0).channel());
+        assertEquals(
+            "{\"type\":\"container_open\",\"v\":1,\"entity_id\":-1}",
+            sent.get(0).body()
+        );
+    }
+
+    @Test
     void sendWorkbenchOpenUsesCorrectChannelAndJson() {
         install();
         ClientRequestSender.sendWorkbenchOpen(42);
