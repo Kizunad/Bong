@@ -2,6 +2,7 @@ use crossbeam_channel::{Receiver, Sender};
 use std::{thread, time::Duration};
 use valence::prelude::Resource;
 
+use crate::schema::common::MAX_PAYLOAD_BYTES;
 use crate::schema::server_data::{ServerDataBuildError, ServerDataType, ServerDataV1};
 
 pub const SERVER_DATA_CHANNEL: &str = "bong:server_data";
@@ -70,8 +71,23 @@ pub fn serialize_server_data_payload(payload: &ServerDataV1) -> Result<Vec<u8>, 
     }
     #[cfg(not(test))]
     {
-        Ok(payload.to_proto_bytes())
+        to_proto_bytes_checked(payload)
     }
+}
+
+fn to_proto_bytes_checked(payload: &ServerDataV1) -> Result<Vec<u8>, PayloadBuildError> {
+    enforce_payload_size(payload.to_proto_bytes())
+}
+
+fn enforce_payload_size(bytes: Vec<u8>) -> Result<Vec<u8>, PayloadBuildError> {
+    if bytes.len() > MAX_PAYLOAD_BYTES {
+        return Err(PayloadBuildError::Oversize {
+            size: bytes.len(),
+            max: MAX_PAYLOAD_BYTES,
+        });
+    }
+
+    Ok(bytes)
 }
 
 pub fn payload_type_label(payload_type: ServerDataType) -> &'static str {
@@ -745,6 +761,37 @@ mod server_data_tests {
                 panic!("unexpected json error while testing oversize rejection: {err}");
             }
         }
+    }
+
+    #[test]
+    fn proto_path_rejects_oversize_payloads() {
+        let payload = ServerDataV1::welcome("x".repeat(MAX_PAYLOAD_BYTES * 2));
+
+        let error =
+            to_proto_bytes_checked(&payload).expect_err("oversized proto payload should fail");
+
+        match error {
+            PayloadBuildError::Oversize { size, max } => {
+                assert!(
+                    size > max,
+                    "proto payload should report actual encoded size above cap"
+                );
+                assert_eq!(max, MAX_PAYLOAD_BYTES);
+            }
+            PayloadBuildError::Json(err) => {
+                panic!("proto size check should not route through JSON serialization: {err}");
+            }
+        }
+    }
+
+    #[test]
+    fn payload_size_guard_accepts_exact_cap() {
+        let bytes = vec![0_u8; MAX_PAYLOAD_BYTES];
+
+        let checked = enforce_payload_size(bytes.clone())
+            .expect("payload exactly at MAX_PAYLOAD_BYTES should be accepted");
+
+        assert_eq!(checked.len(), bytes.len());
     }
 
     #[test]
