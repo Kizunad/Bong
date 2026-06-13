@@ -5,6 +5,8 @@ use valence::prelude::{
     Events, GameMode, IntoSystemConfigs, Position, Query, Res, ResMut, Update, With,
 };
 
+use crate::combat::components::{BodyPart, WoundKind, TICKS_PER_SECOND};
+use crate::combat::events::{ApplyStatusEffectIntent, AttackSource, CombatEvent, StatusEffectKind};
 use crate::inventory::external_container::{
     ExternalContainer, ExternalContainerKind, ExternalContainerRegistry,
 };
@@ -14,7 +16,8 @@ use crate::inventory::{
 };
 use crate::network::agent_bridge::{payload_type_label, serialize_server_data_payload};
 use crate::network::audio_event_emit::{AudioRecipient, PlaySoundRecipeRequest, AUDIO_AREA_RADIUS};
-use crate::network::{log_payload_build_error, send_server_data_payload};
+use crate::network::vfx_event_emit::VfxEventRequest;
+use crate::network::{gameplay_vfx, log_payload_build_error, send_server_data_payload};
 use crate::player::gameplay::GameplayTick;
 use crate::schema::server_data::{
     LootContainerCloseReasonV1, LootContainerCloseV1, ServerDataPayloadV1, ServerDataV1,
@@ -29,6 +32,12 @@ pub const CONTAINER_PLACE_DEADDROP_AUDIO_RECIPE_ID: &str = "container_place_dead
 pub const CONTAINER_OPEN_AUDIO_RECIPE_ID: &str = "container_open";
 pub const CONTAINER_OPEN_DEADDROP_AUDIO_RECIPE_ID: &str = "container_open_deaddrop";
 pub const CONTAINER_BREAK_AUDIO_RECIPE_ID: &str = "container_break";
+pub const DEAD_DROP_WARD_BREAK_AUDIO_RECIPE_ID: &str = "dead_drop_ward_break";
+pub const DEAD_DROP_WARD_RADIUS: f64 = 3.0;
+pub const DEAD_DROP_WARD_DAMAGE: f32 = 8.0;
+pub const DEAD_DROP_WARD_CONTAM_DELTA: f64 = 0.15;
+pub const DEAD_DROP_WARD_SLOW_MAGNITUDE: f32 = 0.4;
+pub const DEAD_DROP_WARD_SLOW_DURATION_TICKS: u64 = 4 * TICKS_PER_SECOND;
 
 #[derive(Debug, Clone, Copy, Component, PartialEq, Eq)]
 pub struct ContainerBlock {
@@ -41,6 +50,12 @@ pub struct ContainerBlock {
 pub enum ContainerBlockKind {
     StorageCrate { is_herb: bool },
     DeadDrop,
+}
+
+#[derive(Debug, Clone, Copy, Component, PartialEq, Eq)]
+pub struct DeadDropWard {
+    pub owner: Entity,
+    pub ward_active: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -128,6 +143,12 @@ pub fn handle_container_block_place(
         CurrentDimension(placement.dimension),
         build_external_container(session_id, placement.kind),
     ));
+    if matches!(placement.kind, ContainerBlockKind::DeadDrop) {
+        commands.entity(entity).insert(DeadDropWard {
+            owner: placement.placed_by,
+            ward_active: true,
+        });
+    }
     entity
 }
 
@@ -148,6 +169,15 @@ pub fn build_external_container(session_id: u64, kind: ContainerBlockKind) -> Ex
     }
 }
 
+type ContainerBlockBreakQueryItem<'a> = (
+    Entity,
+    &'a Position,
+    Option<&'a CurrentDimension>,
+    &'a ContainerBlock,
+    &'a ExternalContainer,
+    Option<&'a DeadDropWard>,
+);
+
 #[allow(clippy::too_many_arguments)]
 pub fn handle_container_block_break(
     mut commands: Commands,
@@ -158,15 +188,13 @@ pub fn handle_container_block_break(
     mut dropped_registry: ResMut<DroppedLootRegistry>,
     mut ext_registry: ResMut<ExternalContainerRegistry>,
     breakers: Query<(&GameMode, Option<&CurrentDimension>), With<Client>>,
-    containers: Query<(
-        Entity,
-        &Position,
-        Option<&CurrentDimension>,
-        &ContainerBlock,
-        &ExternalContainer,
-    )>,
+    players: Query<(Entity, &Position, Option<&CurrentDimension>), With<Client>>,
+    containers: Query<ContainerBlockBreakQueryItem<'_>>,
     mut clients: Query<&mut Client, With<Client>>,
     mut audio_events: Option<ResMut<Events<PlaySoundRecipeRequest>>>,
+    mut combat_events: Option<ResMut<Events<CombatEvent>>>,
+    mut status_effects: Option<ResMut<Events<ApplyStatusEffectIntent>>>,
+    mut vfx_events: Option<ResMut<Events<VfxEventRequest>>>,
 ) {
     let mut handled_entities = HashSet::new();
     for event in digs.read() {
@@ -179,17 +207,16 @@ pub fn handle_container_block_break(
         let dimension = current_dimension
             .map(|component| component.0)
             .unwrap_or(DimensionKind::Overworld);
-        let Some((entity, position, _container_dimension, block, ext)) =
-            containers
-                .iter()
-                .find(|(_, position, container_dimension, _, _)| {
-                    container_block_pos(position)
-                        == [event.position.x, event.position.y, event.position.z]
-                        && container_dimension
-                            .map(|component| component.0)
-                            .unwrap_or(DimensionKind::Overworld)
-                            == dimension
-                })
+        let Some((entity, position, _container_dimension, block, ext, ward)) = containers
+            .iter()
+            .find(|(_, position, container_dimension, _, _, _)| {
+                container_block_pos(position)
+                    == [event.position.x, event.position.y, event.position.z]
+                    && container_dimension
+                        .map(|component| component.0)
+                        .unwrap_or(DimensionKind::Overworld)
+                        == dimension
+            })
         else {
             continue;
         };
@@ -202,6 +229,27 @@ pub fn handle_container_block_break(
             .map(|tick| tick.current_tick())
             .unwrap_or(0);
         let world_pos = [position.0.x, position.0.y, position.0.z];
+
+        if let Some(player) = ext.opened_by {
+            send_container_destroyed_close(ext.session_id, &mut clients, player);
+        }
+
+        if is_illegal_dead_drop_break(event.client, block.kind, ward) {
+            trigger_dead_drop_ward(
+                ward.expect("illegal dead drop break requires active ward"),
+                [event.position.x, event.position.y, event.position.z],
+                dimension,
+                now,
+                &players,
+                combat_events.as_deref_mut(),
+                status_effects.as_deref_mut(),
+                vfx_events.as_deref_mut(),
+                audio_events.as_deref_mut(),
+            );
+            ext_registry.remove_session(ext.session_id);
+            commands.entity(entity).insert(valence::prelude::Despawned);
+            continue;
+        }
 
         if let Err(error) = spawn_template_dropped_loot(
             &mut dropped_registry,
@@ -221,9 +269,6 @@ pub fn handle_container_block_break(
             );
         }
 
-        if let Some(player) = ext.opened_by {
-            send_container_destroyed_close(ext.session_id, &mut clients, player);
-        }
         drain_container_items_to_drops(&mut dropped_registry, ext, world_pos, dimension);
         ext_registry.remove_session(ext.session_id);
         commands.entity(entity).insert(valence::prelude::Despawned);
@@ -234,6 +279,122 @@ pub fn handle_container_block_break(
             0.0,
         );
     }
+}
+
+fn is_illegal_dead_drop_break(
+    breaker: Entity,
+    kind: ContainerBlockKind,
+    ward: Option<&DeadDropWard>,
+) -> bool {
+    matches!(kind, ContainerBlockKind::DeadDrop)
+        && ward.is_some_and(|ward| ward.ward_active && ward.owner != breaker)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn trigger_dead_drop_ward(
+    ward: &DeadDropWard,
+    block_pos: [i32; 3],
+    dimension: DimensionKind,
+    now: u64,
+    players: &Query<(Entity, &Position, Option<&CurrentDimension>), With<Client>>,
+    combat_events: Option<&mut Events<CombatEvent>>,
+    status_effects: Option<&mut Events<ApplyStatusEffectIntent>>,
+    vfx_events: Option<&mut Events<VfxEventRequest>>,
+    audio_events: Option<&mut Events<PlaySoundRecipeRequest>>,
+) {
+    emit_dead_drop_ward_combat(
+        ward,
+        block_pos,
+        dimension,
+        now,
+        players,
+        combat_events,
+        status_effects,
+    );
+    emit_dead_drop_ward_vfx(vfx_events, block_pos);
+    send_container_audio(
+        audio_events,
+        DEAD_DROP_WARD_BREAK_AUDIO_RECIPE_ID,
+        block_pos,
+        0.0,
+    );
+}
+
+fn emit_dead_drop_ward_combat(
+    ward: &DeadDropWard,
+    block_pos: [i32; 3],
+    dimension: DimensionKind,
+    now: u64,
+    players: &Query<(Entity, &Position, Option<&CurrentDimension>), With<Client>>,
+    mut combat_events: Option<&mut Events<CombatEvent>>,
+    mut status_effects: Option<&mut Events<ApplyStatusEffectIntent>>,
+) {
+    if combat_events.is_none() && status_effects.is_none() {
+        return;
+    }
+
+    let origin = gameplay_vfx::block_center(block_pos);
+    for (target, position, target_dimension) in players.iter() {
+        let target_dimension = target_dimension
+            .map(|component| component.0)
+            .unwrap_or(DimensionKind::Overworld);
+        if target_dimension != dimension || !in_dead_drop_ward_radius(origin, position.0) {
+            continue;
+        }
+
+        if let Some(events) = combat_events.as_deref_mut() {
+            events.send(CombatEvent {
+                attacker: ward.owner,
+                target,
+                resolved_at_tick: now,
+                body_part: BodyPart::Chest,
+                wound_kind: WoundKind::Blunt,
+                source: AttackSource::Melee,
+                debug_command: false,
+                physical_damage: 0.0,
+                damage: DEAD_DROP_WARD_DAMAGE,
+                contam_delta: DEAD_DROP_WARD_CONTAM_DELTA,
+                description: "dead_drop_ward_break".to_string(),
+                defense_kind: None,
+                defense_effectiveness: None,
+                defense_contam_reduced: None,
+                defense_wound_severity: None,
+            });
+        }
+        if let Some(events) = status_effects.as_deref_mut() {
+            events.send(ApplyStatusEffectIntent {
+                target,
+                kind: StatusEffectKind::Slowed,
+                magnitude: DEAD_DROP_WARD_SLOW_MAGNITUDE,
+                duration_ticks: DEAD_DROP_WARD_SLOW_DURATION_TICKS,
+                issued_at_tick: now,
+            });
+        }
+    }
+}
+
+fn in_dead_drop_ward_radius(origin: DVec3, target: DVec3) -> bool {
+    let dx = origin.x - target.x;
+    let dz = origin.z - target.z;
+    dx * dx + dz * dz <= DEAD_DROP_WARD_RADIUS * DEAD_DROP_WARD_RADIUS
+}
+
+fn emit_dead_drop_ward_vfx(events: Option<&mut Events<VfxEventRequest>>, block_pos: [i32; 3]) {
+    let Some(events) = events else {
+        return;
+    };
+    gameplay_vfx::send_spawn(
+        events,
+        gameplay_vfx::spawn_request(
+            gameplay_vfx::DEAD_DROP_WARD_BREAK,
+            gameplay_vfx::block_center(block_pos),
+            Some([0.0, 1.0, 0.0]),
+            "#3AA0C0",
+            0.85,
+            12,
+            20,
+        ),
+    );
 }
 
 pub const fn container_place_audio_recipe_id(kind: ContainerBlockKind) -> &'static str {
@@ -589,6 +750,19 @@ mod tests {
             "expected ExternalContainerRegistry to map session to placed entity, actual {:?}",
             registry.sessions.get(&ext.session_id)
         );
+        let ward = app
+            .world()
+            .get::<DeadDropWard>(entity)
+            .expect("placed dead drop should carry active DeadDropWard");
+        assert_eq!(
+            ward.owner, placed_by,
+            "expected dead drop ward owner to equal placing entity for attacker attribution, actual {:?}",
+            ward.owner
+        );
+        assert!(
+            ward.ward_active,
+            "expected freshly placed dead drop ward to start active"
+        );
     }
 
     #[test]
@@ -722,6 +896,28 @@ mod tests {
             registry.entries.is_empty(),
             "expected empty container drain to leave DroppedLootRegistry empty, actual {:?}",
             registry.entries
+        );
+    }
+
+    #[test]
+    fn dead_drop_ward_break_constants_match_p3_contract() {
+        assert_eq!(DEAD_DROP_WARD_RADIUS, 3.0);
+        assert_eq!(DEAD_DROP_WARD_DAMAGE, 8.0);
+        assert_eq!(DEAD_DROP_WARD_CONTAM_DELTA, 0.15);
+        assert_eq!(DEAD_DROP_WARD_SLOW_MAGNITUDE, 0.4);
+        assert_eq!(
+            DEAD_DROP_WARD_SLOW_DURATION_TICKS,
+            4 * TICKS_PER_SECOND,
+            "slow duration must be tied to TICKS_PER_SECOND, not a magic literal"
+        );
+        assert_eq!(
+            DEAD_DROP_WARD_BREAK_AUDIO_RECIPE_ID, "dead_drop_ward_break",
+            "server audio recipe id must match the P3 three-layer SFX asset"
+        );
+        assert_eq!(
+            gameplay_vfx::DEAD_DROP_WARD_BREAK,
+            "bong:dead_drop_ward_break",
+            "server vfx event id must use the registered bong namespace"
         );
     }
 

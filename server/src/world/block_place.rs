@@ -619,8 +619,12 @@ fn block_cell_intersects_player(pos: BlockPos, player_pos: valence::math::DVec3)
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
 
+    use crate::combat::components::{BodyPart, WoundKind};
+    use crate::combat::events::{
+        ApplyStatusEffectIntent, AttackSource, CombatEvent, StatusEffectKind,
+    };
     use crate::craft::workbench::workbench_block_pos;
     use crate::craft::{WorkbenchBlock, WORKBENCH_ITEM_TEMPLATE};
     use crate::inventory::external_container::{ExternalContainer, ExternalContainerKind};
@@ -629,10 +633,18 @@ mod tests {
         ItemTemplate, PlacedItemState,
     };
     use crate::network::agent_bridge::SERVER_DATA_CHANNEL;
+    use crate::network::audio_event_emit::PlaySoundRecipeRequest;
+    use crate::network::gameplay_vfx;
+    use crate::network::vfx_event_emit::VfxEventRequest;
     use crate::schema::server_data::{
         LootContainerCloseReasonV1, ServerDataPayloadV1, ServerDataV1,
     };
-    use crate::world::container_block::{container_block_pos, ContainerBlock, ContainerBlockKind};
+    use crate::schema::vfx_event::VfxEventPayloadV1;
+    use crate::world::container_block::{
+        container_block_pos, ContainerBlock, ContainerBlockKind, DeadDropWard,
+        DEAD_DROP_WARD_BREAK_AUDIO_RECIPE_ID, DEAD_DROP_WARD_CONTAM_DELTA, DEAD_DROP_WARD_DAMAGE,
+        DEAD_DROP_WARD_SLOW_DURATION_TICKS, DEAD_DROP_WARD_SLOW_MAGNITUDE,
+    };
     use crate::world::entity_model::{BongVisualEntity, BongVisualKind};
     use crate::world::furniture::FurnitureKind;
     use valence::prelude::{
@@ -1261,6 +1273,45 @@ mod tests {
     }
 
     #[test]
+    fn handler_places_dead_drop_with_active_ward_owner() {
+        let (mut app, client, _layer_entity, _helper) = block_place_app(
+            inventory_with_item(item_instance(9501, "dead_drop_box", 1)),
+            DimensionKind::Overworld,
+        );
+        app.insert_resource(ItemRegistry::from_map(HashMap::from([
+            item_template_with_placeable("dead_drop_box", ItemCategory::Misc, Some("dead_drop")),
+        ])));
+
+        app.world_mut().send_event(BlockPlaceRequest {
+            client,
+            x: 1,
+            y: 64,
+            z: 1,
+            item_instance_id: 9501,
+            target_face: TrapTargetFace::Top,
+        });
+        app.update();
+
+        let mut query = app
+            .world_mut()
+            .query::<(&ContainerBlock, &ExternalContainer, &DeadDropWard)>();
+        let (block, ext, ward) = query
+            .iter(app.world())
+            .next()
+            .expect("dead_drop_box placement should spawn one warded container");
+        assert_eq!(block.kind, ContainerBlockKind::DeadDrop);
+        assert_eq!(ext.source_kind, ExternalContainerKind::DeadDrop);
+        assert_eq!(
+            ward.owner, client,
+            "dead drop ward owner must be the placing player for break attribution"
+        );
+        assert!(
+            ward.ward_active,
+            "dead drop ward must default active immediately after placement"
+        );
+    }
+
+    #[test]
     fn breaking_open_container_entity_closes_session_and_drops_contents() {
         let (mut app, client, _layer_entity, mut helper) = block_place_app(
             inventory_with_item(item_instance(9601, "trade_crate", 1)),
@@ -1684,6 +1735,232 @@ mod tests {
     }
 
     #[test]
+    fn breaking_empty_dead_drop_by_non_owner_triggers_ward_without_drops() {
+        let (mut app, owner, _layer_entity, _helper) = dead_drop_break_app(9801);
+        let pos = place_dead_drop(&mut app, owner, 9801);
+        move_client(
+            &mut app,
+            owner,
+            [12.5, 64.0, 12.5],
+            DimensionKind::Overworld,
+        );
+        let breaker = spawn_test_client(
+            &mut app,
+            "Breaker",
+            [1.5, 64.0, 1.5],
+            DimensionKind::Overworld,
+        );
+
+        send_stop_break(&mut app, breaker, pos);
+        app.update();
+
+        assert_eq!(
+            dropped_template_count(&app, "dead_drop_box"),
+            0,
+            "illegal empty dead drop break should ash the container instead of dropping it"
+        );
+        assert!(
+            app.world()
+                .resource::<Events<CombatEvent>>()
+                .iter_current_update_events()
+                .any(|event| event.target == breaker && event.attacker == owner),
+            "illegal empty dead drop break should still trigger poison AoE against the breaker"
+        );
+    }
+
+    #[test]
+    fn breaking_full_open_dead_drop_by_non_owner_ashes_contents_and_emits_ward_feedback() {
+        let (mut app, owner, _layer_entity, mut helper) = dead_drop_break_app(9811);
+        let pos = place_dead_drop(&mut app, owner, 9811);
+        move_client(
+            &mut app,
+            owner,
+            [12.5, 64.0, 12.5],
+            DimensionKind::Overworld,
+        );
+        let breaker = spawn_test_client(
+            &mut app,
+            "Breaker",
+            [1.5, 64.0, 1.5],
+            DimensionKind::Overworld,
+        );
+        let boundary_target = spawn_test_client(
+            &mut app,
+            "Boundary",
+            [4.5, 64.0, 1.5],
+            DimensionKind::Overworld,
+        );
+        let outside_target = spawn_test_client(
+            &mut app,
+            "Outside",
+            [4.51, 64.0, 1.5],
+            DimensionKind::Overworld,
+        );
+        let container_entity = fill_open_dead_drop(&mut app, owner, 9, 9820);
+        let session_id = app
+            .world()
+            .get::<ExternalContainer>(container_entity)
+            .expect("dead drop should exist before illegal break")
+            .session_id;
+
+        send_stop_break(&mut app, breaker, pos);
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        assert!(
+            app.world().get_entity(container_entity).is_none(),
+            "illegal break should despawn the dead drop marker"
+        );
+        assert!(
+            !app.world()
+                .resource::<ExternalContainerRegistry>()
+                .sessions
+                .contains_key(&session_id),
+            "illegal break should remove the external container session"
+        );
+        assert!(
+            app.world()
+                .resource::<crate::inventory::DroppedLootRegistry>()
+                .entries
+                .is_empty(),
+            "full illegal dead drop break should ash both container and contents with zero dropped loot"
+        );
+        assert!(
+            has_loot_container_close_payload(
+                &mut helper,
+                LootContainerCloseReasonV1::ContainerDestroyed
+            ),
+            "open illegal break must force-close the owner UI before the ash branch"
+        );
+
+        let combat_events = app
+            .world()
+            .resource::<Events<CombatEvent>>()
+            .iter_current_update_events()
+            .cloned()
+            .collect::<Vec<_>>();
+        let hit_targets = combat_events
+            .iter()
+            .map(|event| event.target)
+            .collect::<HashSet<_>>();
+        assert_eq!(
+            hit_targets,
+            HashSet::from([breaker, boundary_target]),
+            "ward AoE should include breaker and exact 3.0-block boundary target, but exclude outside target {:?}",
+            outside_target
+        );
+        for event in &combat_events {
+            assert_eq!(event.attacker, owner, "ward attacker should be owner");
+            assert_eq!(event.body_part, BodyPart::Chest);
+            assert_eq!(event.wound_kind, WoundKind::Blunt);
+            assert_eq!(event.source, AttackSource::Melee);
+            assert_eq!(event.damage, DEAD_DROP_WARD_DAMAGE);
+            assert_eq!(event.contam_delta, DEAD_DROP_WARD_CONTAM_DELTA);
+        }
+
+        let status_events = app
+            .world()
+            .resource::<Events<ApplyStatusEffectIntent>>()
+            .iter_current_update_events()
+            .cloned()
+            .collect::<Vec<_>>();
+        let slowed_targets = status_events
+            .iter()
+            .map(|event| event.target)
+            .collect::<HashSet<_>>();
+        assert_eq!(
+            slowed_targets,
+            HashSet::from([breaker, boundary_target]),
+            "ward status AoE should match combat AoE target set"
+        );
+        for event in &status_events {
+            assert_eq!(event.kind, StatusEffectKind::Slowed);
+            assert_eq!(event.magnitude, DEAD_DROP_WARD_SLOW_MAGNITUDE);
+            assert_eq!(event.duration_ticks, DEAD_DROP_WARD_SLOW_DURATION_TICKS);
+        }
+
+        let vfx_events = app
+            .world()
+            .resource::<Events<VfxEventRequest>>()
+            .iter_current_update_events()
+            .cloned()
+            .collect::<Vec<_>>();
+        assert_eq!(vfx_events.len(), 1, "ward break should emit one VFX event");
+        match &vfx_events[0].payload {
+            VfxEventPayloadV1::SpawnParticle {
+                event_id,
+                color,
+                count,
+                duration_ticks,
+                ..
+            } => {
+                assert_eq!(event_id, gameplay_vfx::DEAD_DROP_WARD_BREAK);
+                assert_eq!(color.as_deref(), Some("#3AA0C0"));
+                assert_eq!(*count, Some(12));
+                assert_eq!(*duration_ticks, Some(20));
+            }
+            other => panic!("expected SpawnParticle ward VFX payload, got {other:?}"),
+        }
+
+        let audio_events = app
+            .world()
+            .resource::<Events<PlaySoundRecipeRequest>>()
+            .iter_current_update_events()
+            .cloned()
+            .collect::<Vec<_>>();
+        assert!(
+            audio_events
+                .iter()
+                .any(|event| event.recipe_id == DEAD_DROP_WARD_BREAK_AUDIO_RECIPE_ID),
+            "illegal break should emit the three-layer dead_drop_ward_break SFX recipe"
+        );
+    }
+
+    #[test]
+    fn breaking_dead_drop_by_owner_uses_normal_drop_without_ward_feedback() {
+        let (mut app, owner, _layer_entity, _helper) = dead_drop_break_app(9901);
+        let pos = place_dead_drop(&mut app, owner, 9901);
+        fill_open_dead_drop(&mut app, owner, 1, 9910);
+
+        send_stop_break(&mut app, owner, pos);
+        app.update();
+
+        assert_eq!(
+            dropped_template_count(&app, "dead_drop_box"),
+            1,
+            "owner break should preserve P0 common container drop path"
+        );
+        assert_eq!(
+            dropped_template_count(&app, "bone_coin_stack"),
+            1,
+            "owner break should drain stored contents instead of ashing them"
+        );
+        assert!(
+            app.world()
+                .resource::<Events<CombatEvent>>()
+                .iter_current_update_events()
+                .next()
+                .is_none(),
+            "owner break must not trigger ward combat"
+        );
+        assert!(
+            app.world()
+                .resource::<Events<VfxEventRequest>>()
+                .iter_current_update_events()
+                .next()
+                .is_none(),
+            "owner break must not trigger ward VFX"
+        );
+        let ward_audio_count = app
+            .world()
+            .resource::<Events<PlaySoundRecipeRequest>>()
+            .iter_current_update_events()
+            .filter(|event| event.recipe_id == DEAD_DROP_WARD_BREAK_AUDIO_RECIPE_ID)
+            .count();
+        assert_eq!(ward_audio_count, 0, "owner break must not play ward SFX");
+    }
+
+    #[test]
     fn handler_rejects_missing_instance_without_consuming_or_writing() {
         let (mut app, client, layer_entity, _helper) = block_place_app(
             inventory_with_item(item_instance(9101, "earth_crumb", 1)),
@@ -1904,6 +2181,104 @@ mod tests {
             block_state_at(&app, layer_entity, pos),
             Some(BlockState::AIR)
         );
+    }
+
+    fn dead_drop_break_app(item_instance_id: u64) -> (App, Entity, Entity, MockClientHelper) {
+        let (mut app, client, layer_entity, helper) = block_place_app(
+            inventory_with_item(item_instance(item_instance_id, "dead_drop_box", 1)),
+            DimensionKind::Overworld,
+        );
+        app.insert_resource(ItemRegistry::from_map(HashMap::from([
+            item_template_with_placeable("dead_drop_box", ItemCategory::Misc, Some("dead_drop")),
+            item_template("bone_coin_stack", ItemCategory::Misc),
+        ])));
+        app.insert_resource(InventoryInstanceIdAllocator::new(20_000));
+        app.init_resource::<crate::inventory::DroppedLootRegistry>();
+        app.add_event::<DiggingEvent>();
+        app.add_event::<CombatEvent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<VfxEventRequest>();
+        app.add_event::<PlaySoundRecipeRequest>();
+        app.add_systems(
+            Update,
+            crate::world::container_block::handle_container_block_break,
+        );
+        app.world_mut().entity_mut(client).insert((
+            GameMode::Survival,
+            CurrentDimension(DimensionKind::Overworld),
+        ));
+        move_other_clients_far(&mut app, client);
+        (app, client, layer_entity, helper)
+    }
+
+    fn place_dead_drop(app: &mut App, client: Entity, item_instance_id: u64) -> BlockPos {
+        let pos = BlockPos::new(1, 64, 1);
+        app.world_mut().send_event(BlockPlaceRequest {
+            client,
+            x: pos.x,
+            y: pos.y,
+            z: pos.z,
+            item_instance_id,
+            target_face: TrapTargetFace::Top,
+        });
+        app.update();
+        pos
+    }
+
+    fn fill_open_dead_drop(
+        app: &mut App,
+        opened_by: Entity,
+        item_count: usize,
+        first_instance_id: u64,
+    ) -> Entity {
+        let mut query = app.world_mut().query::<(Entity, &mut ExternalContainer)>();
+        let (entity, mut ext) = query
+            .iter_mut(app.world_mut())
+            .find(|(_, ext)| ext.source_kind == ExternalContainerKind::DeadDrop)
+            .expect("placed dead drop should spawn an ExternalContainer");
+        ext.opened_by = Some(opened_by);
+        ext.container.items.clear();
+        for index in 0..item_count {
+            ext.container.items.push(PlacedItemState {
+                row: (index / 3) as u8,
+                col: (index % 3) as u8,
+                instance: item_instance(first_instance_id + index as u64, "bone_coin_stack", 1),
+            });
+        }
+        entity
+    }
+
+    fn spawn_test_client(
+        app: &mut App,
+        username: &str,
+        position: [f64; 3],
+        dimension: DimensionKind,
+    ) -> Entity {
+        let (mut bundle, _helper) = create_mock_client(username);
+        bundle.player.position = Position::new(position);
+        let entity = app.world_mut().spawn(bundle).id();
+        app.world_mut()
+            .entity_mut(entity)
+            .insert((GameMode::Survival, CurrentDimension(dimension)));
+        entity
+    }
+
+    fn move_client(app: &mut App, entity: Entity, position: [f64; 3], dimension: DimensionKind) {
+        app.world_mut()
+            .entity_mut(entity)
+            .insert((Position::new(position), CurrentDimension(dimension)));
+    }
+
+    fn move_other_clients_far(app: &mut App, keep: Entity) {
+        let extras = app
+            .world_mut()
+            .query_filtered::<Entity, With<Client>>()
+            .iter(app.world())
+            .filter(|entity| *entity != keep)
+            .collect::<Vec<_>>();
+        for entity in extras {
+            move_client(app, entity, [12.5, 64.0, 12.5], DimensionKind::Overworld);
+        }
     }
 
     fn block_place_app(
