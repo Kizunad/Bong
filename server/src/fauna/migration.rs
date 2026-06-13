@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use valence::prelude::{
     bevy_ecs, Commands, Component, DVec3, Entity, Event, EventReader, EventWriter, Position, Query,
@@ -21,6 +22,7 @@ use crate::world::events::{ActiveEventsResource, EVENT_BEAST_TIDE};
 use crate::world::zone::{Zone, ZoneRegistry};
 
 pub const MIGRATION_THRESHOLD: f64 = 0.05;
+pub const HORDE_TRIGGER_THRESHOLD: f64 = MIGRATION_THRESHOLD;
 pub const MIGRATION_SUSTAIN_TICKS: u64 = 600;
 pub const MIGRATION_MIN_DURATION_TICKS: u32 = 6_000;
 pub const MIGRATION_MAX_DURATION_TICKS: u32 = 12_000;
@@ -32,6 +34,14 @@ const MIGRATION_RUMBLE_RADIUS_BLOCKS: f64 = 100.0;
 const MIGRATION_NEAR_STEP_BLOCKS: f64 = 0.6;
 const MIGRATION_FAR_STEP_BLOCKS: f64 = 5.0;
 const MIGRATION_REACH_DISTANCE: f64 = 2.0;
+
+#[derive(Debug, Clone, PartialEq, Event)]
+pub struct ZoneDepletionEvent {
+    pub zone: String,
+    pub spirit_qi: f64,
+    pub spirit_qi_rate_of_change: f64,
+    pub tick: u64,
+}
 
 #[derive(Debug, Clone, PartialEq, Event)]
 pub struct ZoneQiCriticalEvent {
@@ -49,6 +59,32 @@ pub struct MigrationEvent {
     pub started_at_tick: u64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HordePhase {
+    Gathering,
+    Migrating,
+    Dispersed,
+    Annihilated,
+}
+
+#[derive(Debug, Clone, PartialEq, Event)]
+pub struct BeastHordeEvent {
+    pub source_zone: String,
+    pub target_zone: String,
+    pub beast_count: u32,
+    pub phase: HordePhase,
+    pub tick: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Event)]
+pub struct FlowFieldPrototype {
+    pub source_zone: String,
+    pub target_zone: String,
+    pub direction: [f64; 3],
+    pub computed_tick: u64,
+}
+
 #[derive(Debug, Clone, Component, PartialEq)]
 pub struct MigrationTarget {
     pub origin_zone: String,
@@ -58,11 +94,80 @@ pub struct MigrationTarget {
     pub started_at_tick: u64,
 }
 
+#[derive(Debug, Clone, Component, PartialEq)]
+pub struct HordeMigrationComponent {
+    pub target_zone: String,
+    pub assigned_flow_field: Option<String>,
+}
+
 #[derive(Debug, Clone, Default, Resource)]
 pub struct FaunaMigrationState {
     critical_ticks_by_zone: HashMap<String, u64>,
     active_until_by_zone: HashMap<String, u64>,
+    last_spirit_qi_by_zone: HashMap<String, f64>,
     last_tick: Option<u64>,
+}
+
+#[derive(Debug, Clone, Default, Resource)]
+pub struct BeastHordeState {
+    phase_by_source_zone: HashMap<String, HordePhase>,
+}
+
+impl BeastHordeState {
+    fn is_active(&self, source_zone: &str) -> bool {
+        matches!(
+            self.phase_by_source_zone.get(source_zone),
+            Some(HordePhase::Gathering | HordePhase::Migrating)
+        )
+    }
+
+    fn mark_active(&mut self, source_zone: String, phase: HordePhase) {
+        self.phase_by_source_zone.insert(source_zone, phase);
+    }
+}
+
+#[derive(Debug, Clone, Default, Resource)]
+pub struct ZoneGraph {
+    adjacency_by_zone: HashMap<String, Vec<String>>,
+}
+
+impl ZoneGraph {
+    pub fn from_edges<I, L, R>(edges: I) -> Self
+    where
+        I: IntoIterator<Item = (L, R)>,
+        L: Into<String>,
+        R: Into<String>,
+    {
+        let mut graph = Self::default();
+        for (left, right) in edges {
+            graph.add_undirected_edge(left, right);
+        }
+        graph
+    }
+
+    pub fn add_undirected_edge(&mut self, left: impl Into<String>, right: impl Into<String>) {
+        let left = left.into();
+        let right = right.into();
+        self.adjacency_by_zone
+            .entry(left.clone())
+            .or_default()
+            .push(right.clone());
+        self.adjacency_by_zone.entry(right).or_default().push(left);
+    }
+
+    fn is_empty(&self) -> bool {
+        self.adjacency_by_zone.is_empty()
+    }
+
+    fn neighbors<'a>(&self, source_zone: &str, zones: &'a [Zone]) -> Vec<&'a Zone> {
+        let Some(neighbor_names) = self.adjacency_by_zone.get(source_zone) else {
+            return Vec::new();
+        };
+        zones
+            .iter()
+            .filter(|zone| neighbor_names.iter().any(|name| name == &zone.name))
+            .collect()
+    }
 }
 
 type MigrationTriggerNpcQuery<'w, 's> = Query<
@@ -70,6 +175,17 @@ type MigrationTriggerNpcQuery<'w, 's> = Query<
     's,
     (
         Entity,
+        &'static Position,
+        Option<&'static FaunaTag>,
+        Option<&'static NpcArchetype>,
+    ),
+    With<NpcMarker>,
+>;
+
+type BeastHordeNpcQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
         &'static Position,
         Option<&'static FaunaTag>,
         Option<&'static NpcArchetype>,
@@ -90,17 +206,25 @@ type MigrationMoveQuery<'w, 's> = Query<
     With<NpcMarker>,
 >;
 
+#[derive(bevy_ecs::system::SystemParam)]
+pub struct FaunaMigrationEventWriters<'w> {
+    depletion_events: EventWriter<'w, ZoneDepletionEvent>,
+    critical_events: EventWriter<'w, ZoneQiCriticalEvent>,
+    migration_events: EventWriter<'w, MigrationEvent>,
+    vfx_events: EventWriter<'w, VfxEventRequest>,
+    audio_events: EventWriter<'w, PlaySoundRecipeRequest>,
+}
+
 pub fn fauna_migration_system(
     zones: Option<Res<ZoneRegistry>>,
+    graph: Option<Res<ZoneGraph>>,
     clock: Option<Res<CultivationClock>>,
     mut state: ResMut<FaunaMigrationState>,
-    mut critical_events: EventWriter<ZoneQiCriticalEvent>,
-    mut migration_events: EventWriter<MigrationEvent>,
-    mut vfx_events: EventWriter<VfxEventRequest>,
-    mut audio_events: EventWriter<PlaySoundRecipeRequest>,
+    mut events: FaunaMigrationEventWriters,
 ) {
     let Some(zones) = zones else {
         state.critical_ticks_by_zone.clear();
+        state.last_spirit_qi_by_zone.clear();
         state.last_tick = None;
         return;
     };
@@ -108,7 +232,18 @@ pub fn fauna_migration_system(
     let elapsed = state.elapsed_ticks(now);
 
     for zone in &zones.zones {
-        if zone.spirit_qi >= MIGRATION_THRESHOLD {
+        let previous_spirit_qi = state
+            .last_spirit_qi_by_zone
+            .insert(zone.name.clone(), zone.spirit_qi);
+        let spirit_qi_rate_of_change = previous_spirit_qi
+            .map(|previous| (zone.spirit_qi - previous) / elapsed.max(1) as f64)
+            .unwrap_or(0.0);
+
+        if zone.spirit_qi >= HORDE_TRIGGER_THRESHOLD {
+            state.critical_ticks_by_zone.remove(zone.name.as_str());
+            continue;
+        }
+        if spirit_qi_rate_of_change > 0.0 {
             state.critical_ticks_by_zone.remove(zone.name.as_str());
             continue;
         }
@@ -131,7 +266,8 @@ pub fn fauna_migration_system(
             continue;
         }
 
-        let Some(target_zone) = select_migration_target_zone(zone, &zones.zones) else {
+        let Some(target_zone) = select_migration_target_zone(zone, &zones.zones, graph.as_deref())
+        else {
             continue;
         };
         let duration = migration_duration_ticks(zone);
@@ -143,7 +279,7 @@ pub fn fauna_migration_system(
         let critical_event = ZoneQiCriticalEvent {
             zone_id: zone.name.clone(),
             spirit_qi: zone.spirit_qi,
-            neighbors: migration_neighbors(zone, &zones.zones),
+            neighbors: migration_neighbors(zone, &zones.zones, graph.as_deref()),
         };
         let migration_event = MigrationEvent {
             zone_id: zone.name.clone(),
@@ -152,11 +288,72 @@ pub fn fauna_migration_system(
             duration_ticks: duration,
             started_at_tick: now,
         };
+        let depletion_event = ZoneDepletionEvent {
+            zone: zone.name.clone(),
+            spirit_qi: zone.spirit_qi,
+            spirit_qi_rate_of_change,
+            tick: now,
+        };
 
-        critical_events.send(critical_event);
-        migration_events.send(migration_event.clone());
-        vfx_events.send(migration_vfx_request(zone, &migration_event));
-        audio_events.send(migration_rumble_request(zone));
+        events.depletion_events.send(depletion_event);
+        events.critical_events.send(critical_event);
+        events.migration_events.send(migration_event.clone());
+        events
+            .vfx_events
+            .send(migration_vfx_request(zone, &migration_event));
+        events.audio_events.send(migration_rumble_request(zone));
+    }
+}
+
+pub fn beast_horde_detect_system(
+    mut depletion_events: EventReader<ZoneDepletionEvent>,
+    zones: Option<Res<ZoneRegistry>>,
+    graph: Option<Res<ZoneGraph>>,
+    mut state: ResMut<BeastHordeState>,
+    npcs: BeastHordeNpcQuery<'_, '_>,
+    mut horde_events: EventWriter<BeastHordeEvent>,
+    mut flow_field_events: EventWriter<FlowFieldPrototype>,
+) {
+    let Some(zones) = zones else {
+        return;
+    };
+
+    for event in depletion_events.read() {
+        if state.is_active(event.zone.as_str()) {
+            continue;
+        }
+        if event.spirit_qi > HORDE_TRIGGER_THRESHOLD || event.spirit_qi_rate_of_change > 0.0 {
+            continue;
+        }
+
+        let Some(source_zone) = zones.find_zone_by_name(event.zone.as_str()) else {
+            continue;
+        };
+        let Some(target_zone) =
+            select_migration_target_zone(source_zone, &zones.zones, graph.as_deref())
+        else {
+            continue;
+        };
+        let beast_count = count_horde_beasts_in_zone(source_zone, &npcs);
+        if beast_count == 0 {
+            continue;
+        }
+
+        state.mark_active(source_zone.name.clone(), HordePhase::Gathering);
+        let direction = refuge_direction(source_zone, target_zone);
+        horde_events.send(BeastHordeEvent {
+            source_zone: source_zone.name.clone(),
+            target_zone: target_zone.name.clone(),
+            beast_count,
+            phase: HordePhase::Gathering,
+            tick: event.tick,
+        });
+        flow_field_events.send(FlowFieldPrototype {
+            source_zone: source_zone.name.clone(),
+            target_zone: target_zone.name.clone(),
+            direction,
+            computed_tick: event.tick,
+        });
     }
 }
 
@@ -299,13 +496,27 @@ fn migration_speed_multiplier(
     fauna_tag: Option<&FaunaTag>,
     archetype: Option<&NpcArchetype>,
 ) -> Option<f64> {
-    if fauna_tag.is_some() || archetype == Some(&NpcArchetype::Beast) {
+    if is_horde_beast(fauna_tag, archetype) {
         Some(1.5)
     } else if archetype.is_some() {
         Some(1.2)
     } else {
         None
     }
+}
+
+fn is_horde_beast(fauna_tag: Option<&FaunaTag>, archetype: Option<&NpcArchetype>) -> bool {
+    fauna_tag.is_some() || archetype == Some(&NpcArchetype::Beast)
+}
+
+fn count_horde_beasts_in_zone(source_zone: &Zone, npcs: &BeastHordeNpcQuery<'_, '_>) -> u32 {
+    npcs.iter()
+        .filter(|(position, fauna_tag, archetype)| {
+            source_zone.contains(position.get()) && is_horde_beast(*fauna_tag, *archetype)
+        })
+        .count()
+        .try_into()
+        .unwrap_or(u32::MAX)
 }
 
 fn migration_beast_tide_command(target_zone: &str, beast_count: usize) -> Command {
@@ -376,16 +587,53 @@ fn migration_duration_ticks(zone: &Zone) -> u32 {
     ) as u32
 }
 
-fn select_migration_target_zone<'a>(source: &Zone, zones: &'a [Zone]) -> Option<&'a Zone> {
-    zones
+fn select_migration_target_zone<'a>(
+    source: &Zone,
+    zones: &'a [Zone],
+    graph: Option<&ZoneGraph>,
+) -> Option<&'a Zone> {
+    let graph_neighbors = graph
+        .filter(|graph| !graph.is_empty())
+        .map(|graph| graph.neighbors(source.name.as_str(), zones));
+    let fallback_neighbors: Vec<&Zone>;
+    let candidates: &[&Zone] = match graph_neighbors.as_deref() {
+        Some(neighbors) => neighbors,
+        None => {
+            fallback_neighbors = zones.iter().collect::<Vec<_>>();
+            fallback_neighbors.as_slice()
+        }
+    };
+
+    candidates
         .iter()
+        .copied()
         .filter(|zone| zone.name != source.name && zone.spirit_qi > source.spirit_qi)
         .max_by(|left, right| left.spirit_qi.total_cmp(&right.spirit_qi))
 }
 
-fn migration_neighbors(source: &Zone, zones: &[Zone]) -> Vec<(String, f64)> {
-    zones
+fn migration_neighbors(
+    source: &Zone,
+    zones: &[Zone],
+    graph: Option<&ZoneGraph>,
+) -> Vec<(String, f64)> {
+    let graph_neighbors = graph
+        .filter(|graph| !graph.is_empty())
+        .map(|graph| graph.neighbors(source.name.as_str(), zones));
+    let fallback_neighbors: Vec<&Zone>;
+    let candidates: &[&Zone] = match graph_neighbors.as_deref() {
+        Some(neighbors) => neighbors,
+        None => {
+            fallback_neighbors = zones
+                .iter()
+                .filter(|zone| zone.name != source.name)
+                .collect();
+            fallback_neighbors.as_slice()
+        }
+    };
+
+    candidates
         .iter()
+        .copied()
         .filter(|zone| zone.name != source.name)
         .map(|zone| (zone.name.clone(), zone.spirit_qi))
         .collect()
@@ -431,6 +679,7 @@ mod tests {
         app.insert_resource(ZoneRegistry {
             zones: vec![zone("draining", 0.52, 0.0), zone("refuge", 0.90, 64.0)],
         });
+        app.add_event::<ZoneDepletionEvent>();
         app.add_event::<ZoneQiCriticalEvent>();
         app.add_event::<MigrationEvent>();
         app.add_event::<VfxEventRequest>();
@@ -478,6 +727,81 @@ mod tests {
     }
 
     #[test]
+    fn depletion_event_carries_rate_without_mutating_zone_qi() {
+        let mut app = App::new();
+        app.insert_resource(CultivationClock { tick: 0 });
+        app.insert_resource(FaunaMigrationState::default());
+        app.insert_resource(ZoneRegistry {
+            zones: vec![zone("draining", 0.06, 0.0), zone("refuge", 0.90, 64.0)],
+        });
+        app.add_event::<ZoneDepletionEvent>();
+        app.add_event::<ZoneQiCriticalEvent>();
+        app.add_event::<MigrationEvent>();
+        app.add_event::<VfxEventRequest>();
+        app.add_event::<PlaySoundRecipeRequest>();
+        app.add_systems(Update, fauna_migration_system);
+
+        app.update();
+        {
+            let mut zones = app.world_mut().resource_mut::<ZoneRegistry>();
+            zones.zones[0].spirit_qi = 0.04;
+        }
+        app.world_mut().resource_mut::<CultivationClock>().tick = MIGRATION_SUSTAIN_TICKS;
+        app.update();
+
+        let depletion = drain_events::<ZoneDepletionEvent>(&app);
+        assert_eq!(depletion.len(), 1);
+        assert_eq!(depletion[0].zone, "draining");
+        assert_eq!(depletion[0].spirit_qi, 0.04);
+        assert!(
+            depletion[0].spirit_qi_rate_of_change < 0.0,
+            "ZoneDepletionEvent 必须携带下降速率，供兽潮检测做守恒链路审计"
+        );
+        assert_eq!(
+            app.world()
+                .resource::<ZoneRegistry>()
+                .find_zone_by_name("draining")
+                .unwrap()
+                .spirit_qi,
+            0.04,
+            "检测事件只能传递 qi 状态，不得修改 zone.spirit_qi"
+        );
+    }
+
+    #[test]
+    fn improving_low_qi_resets_horde_trigger_window() {
+        let mut app = App::new();
+        app.insert_resource(CultivationClock { tick: 0 });
+        app.insert_resource(FaunaMigrationState::default());
+        app.insert_resource(ZoneRegistry {
+            zones: vec![zone("recovering", 0.04, 0.0), zone("refuge", 0.90, 64.0)],
+        });
+        app.add_event::<ZoneDepletionEvent>();
+        app.add_event::<ZoneQiCriticalEvent>();
+        app.add_event::<MigrationEvent>();
+        app.add_event::<VfxEventRequest>();
+        app.add_event::<PlaySoundRecipeRequest>();
+        app.add_systems(Update, fauna_migration_system);
+
+        app.update();
+        {
+            let mut zones = app.world_mut().resource_mut::<ZoneRegistry>();
+            zones.zones[0].spirit_qi = 0.045;
+        }
+        app.world_mut().resource_mut::<CultivationClock>().tick = MIGRATION_SUSTAIN_TICKS;
+        app.update();
+
+        assert!(
+            drain_events::<ZoneDepletionEvent>(&app).is_empty(),
+            "低灵气但正在回升时不应触发 ZoneDepletionEvent"
+        );
+        assert!(
+            drain_events::<MigrationEvent>(&app).is_empty(),
+            "低灵气回升不能误报迁徙"
+        );
+    }
+
+    #[test]
     fn migration_target_is_highest_qi_neighbor() {
         let zones = vec![
             zone("source", 0.02, 0.0),
@@ -485,10 +809,124 @@ mod tests {
             zone("rich", 0.90, 64.0),
         ];
 
-        let target = select_migration_target_zone(&zones[0], &zones)
+        let target = select_migration_target_zone(&zones[0], &zones, None)
             .expect("migration should find richest neighboring zone");
 
         assert_eq!(target.name, "rich");
+    }
+
+    #[test]
+    fn zone_graph_limits_target_selection_to_declared_neighbors() {
+        let zones = vec![
+            zone("source", 0.02, 0.0),
+            zone("adjacent", 0.60, 32.0),
+            zone("far_rich", 0.95, 96.0),
+        ];
+        let graph = ZoneGraph::from_edges([("source", "adjacent")]);
+
+        let target = select_migration_target_zone(&zones[0], &zones, Some(&graph))
+            .expect("source should choose the highest qi declared neighbor");
+
+        assert_eq!(
+            target.name, "adjacent",
+            "ZoneGraph 存在时不得跨过邻接表直接涌向更远高灵气区"
+        );
+    }
+
+    #[test]
+    fn beast_horde_detect_emits_event_and_flow_field_prototype() {
+        let mut app = App::new();
+        app.insert_resource(ZoneRegistry {
+            zones: vec![
+                zone("source", 0.02, 0.0),
+                zone("adjacent", 0.60, 32.0),
+                zone("far_rich", 0.95, 96.0),
+            ],
+        });
+        app.insert_resource(ZoneGraph::from_edges([("source", "adjacent")]));
+        app.insert_resource(BeastHordeState::default());
+        app.add_event::<ZoneDepletionEvent>();
+        app.add_event::<BeastHordeEvent>();
+        app.add_event::<FlowFieldPrototype>();
+        app.add_systems(Update, beast_horde_detect_system);
+
+        for x in [4.0, 8.0] {
+            app.world_mut().spawn((
+                NpcMarker,
+                FaunaTag::new(BeastKind::Rat),
+                Position::new([x, 66.0, 8.0]),
+            ));
+        }
+        app.world_mut().spawn((
+            NpcMarker,
+            NpcArchetype::Rogue,
+            Position::new([12.0, 66.0, 8.0]),
+        ));
+        app.world_mut()
+            .resource_mut::<Events<ZoneDepletionEvent>>()
+            .send(ZoneDepletionEvent {
+                zone: "source".to_string(),
+                spirit_qi: 0.02,
+                spirit_qi_rate_of_change: -0.001,
+                tick: 42,
+            });
+
+        app.update();
+
+        let hordes = drain_events::<BeastHordeEvent>(&app);
+        assert_eq!(hordes.len(), 1);
+        assert_eq!(hordes[0].source_zone, "source");
+        assert_eq!(hordes[0].target_zone, "adjacent");
+        assert_eq!(hordes[0].beast_count, 2);
+        assert_eq!(hordes[0].phase, HordePhase::Gathering);
+        assert_eq!(hordes[0].tick, 42);
+
+        let flow_fields = drain_events::<FlowFieldPrototype>(&app);
+        assert_eq!(flow_fields.len(), 1);
+        assert_eq!(flow_fields[0].source_zone, "source");
+        assert_eq!(flow_fields[0].target_zone, "adjacent");
+        assert!(
+            flow_fields[0].direction[0] > 0.9,
+            "P0 flow field 原型至少要给出朝目标 zone 的单位方向"
+        );
+        assert_eq!(flow_fields[0].computed_tick, 42);
+    }
+
+    #[test]
+    fn active_beast_horde_does_not_duplicate() {
+        let mut app = App::new();
+        app.insert_resource(ZoneRegistry {
+            zones: vec![zone("source", 0.02, 0.0), zone("refuge", 0.90, 64.0)],
+        });
+        app.insert_resource(BeastHordeState::default());
+        app.add_event::<ZoneDepletionEvent>();
+        app.add_event::<BeastHordeEvent>();
+        app.add_event::<FlowFieldPrototype>();
+        app.add_systems(Update, beast_horde_detect_system);
+        app.world_mut().spawn((
+            NpcMarker,
+            FaunaTag::new(BeastKind::Rat),
+            Position::new([8.0, 66.0, 8.0]),
+        ));
+
+        for tick in [1, 2] {
+            app.world_mut()
+                .resource_mut::<Events<ZoneDepletionEvent>>()
+                .send(ZoneDepletionEvent {
+                    zone: "source".to_string(),
+                    spirit_qi: 0.02,
+                    spirit_qi_rate_of_change: -0.001,
+                    tick,
+                });
+            app.update();
+        }
+
+        let hordes = drain_events::<BeastHordeEvent>(&app);
+        assert_eq!(
+            hordes.len(),
+            1,
+            "同一 source zone 已有 Gathering/Migrating 兽潮时不得重复触发"
+        );
     }
 
     #[test]
@@ -671,6 +1109,7 @@ mod tests {
         app.insert_resource(ZoneRegistry {
             zones: vec![zone("draining", 0.04, 0.0), zone("refuge", 0.90, 64.0)],
         });
+        app.add_event::<ZoneDepletionEvent>();
         app.add_event::<ZoneQiCriticalEvent>();
         app.add_event::<MigrationEvent>();
         app.add_event::<VfxEventRequest>();
