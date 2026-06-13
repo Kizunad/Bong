@@ -1640,6 +1640,59 @@ mod tests {
     }
 
     #[test]
+    fn horde_migration_system_moves_200_far_beasts_under_five_ms_budget() {
+        let mut app = App::new();
+        app.insert_resource(CultivationClock { tick: 1_199 });
+        app.insert_resource(ZoneRegistry {
+            zones: vec![zone("source", 0.02, 0.0), zone("refuge", 0.90, 64.0)],
+        });
+        let mut flow_fields = FlowFields::default();
+        flow_fields.insert(FlowField::from_zones(
+            &zone("source", 0.02, 0.0),
+            &zone("refuge", 0.90, 64.0),
+            5,
+        ));
+        app.insert_resource(flow_fields);
+        app.add_systems(Update, horde_migration_system);
+        let entities = (0..200)
+            .map(|index| {
+                spawn_horde_entity(
+                    &mut app,
+                    DVec3::new(2.0 + (index % 10) as f64, 96.0, 2.0 + (index / 10) as f64),
+                    NpcLodTier::Far,
+                    5,
+                )
+            })
+            .collect::<Vec<_>>();
+
+        app.update();
+        app.world_mut().resource_mut::<CultivationClock>().tick = 1_200;
+        let started_at = std::time::Instant::now();
+        app.update();
+        let elapsed = started_at.elapsed();
+
+        assert!(
+            elapsed <= std::time::Duration::from_millis(5),
+            "200 兽 FlowField 迁移单 tick 应控制在 5ms 内，实际耗时 {elapsed:?}"
+        );
+        let moved_count = entities
+            .iter()
+            .filter(|entity| {
+                app.world()
+                    .get::<Position>(**entity)
+                    .expect("测试实体应仍有 Position")
+                    .get()
+                    .x
+                    > 2.0
+            })
+            .count();
+        assert_eq!(
+            moved_count, 200,
+            "性能验收 tick 不能只空跑，200 只 Far 兽必须全部按流场推进"
+        );
+    }
+
+    #[test]
     fn multiple_hordes_keep_independent_flow_fields() {
         let mut app = App::new();
         app.insert_resource(ZoneRegistry {
