@@ -545,5 +545,66 @@ class PlateauKernelTest(unittest.TestCase):
             )
 
 
+# ===========================================================================
+# 4g. 半开区间 AABB —— 相邻 zone 共边界列恰属一个 zone（CodeRabbit P4 #3）
+# ===========================================================================
+
+
+class HalfOpenAabbBoundaryTest(unittest.TestCase):
+    """共享边界采样线在半开 [min,max) 下归属确定、与 zone 顺序无关。"""
+
+    @staticmethod
+    def _adjacent_specs() -> list[dict]:
+        # 两 zone 沿 x=0 接壤：A=[-20,0]×[-10,10] target=-0.6（负灵）；
+        # B=[0,20]×[-10,10] target=0.5（常灵）。x=0 是共享边界列。
+        a = {
+            "center_xz": (-10.0, 0.0), "half_w": 10.0, "half_d": 10.0,
+            "target": -0.6, "bounds_xz": (-20.0, 0.0, -10.0, 10.0),
+            "plateau_ratio": 0.6,
+        }
+        b = {
+            "center_xz": (10.0, 0.0), "half_w": 10.0, "half_d": 10.0,
+            "target": 0.5, "bounds_xz": (0.0, 20.0, -10.0, 10.0),
+            "plateau_ratio": 0.6,
+        }
+        return [a, b]
+
+    def test_shared_boundary_column_belongs_to_exactly_one_zone(self) -> None:
+        # 半开 [min,max)：x=0 列对 A 右开（不含）、对 B 左含（含）→ 恰属 B。
+        # 在 x=0、y=0 处采样：该列应取 B 的 target，而非 A/B tie-break 的不定值。
+        specs = self._adjacent_specs()
+        wx = np.array([[0.0]])
+        wz = np.array([[0.0]])
+        field = qf.build_qi_field(wx, wz, zone_kernels=specs, enable_veins=False)
+        # B 在 x=0 的核心 plateau 区铺 0.5；x=0 归 B（左含）→ 值应 == B.target。
+        self.assertAlmostEqual(
+            float(field[0, 0]), 0.5, places=6,
+            msg=(
+                "共享边界列 x=0 半开归属应确定取 B（左含 [0,20)）的 target=0.5，"
+                f"不是 A/B tie-break 的不定值；得 {float(field[0, 0])}"
+            ),
+        )
+
+    def test_boundary_assignment_independent_of_zone_order(self) -> None:
+        # 关键契约：共边界列的 field 值与 zone_kernels 排列顺序无关（消除 tie-break
+        # 不稳定）。闭区间下 x=0 同属 A、B → 由 sort 顺序决定，交换顺序值会变。
+        specs = self._adjacent_specs()
+        # 沿 x=0 整条采样线（z 从 -10 到 10）。
+        zs = np.linspace(-10.0, 10.0, 11)
+        wx = np.zeros((zs.size, 1))
+        wz = zs.reshape(-1, 1)
+        f_ab = qf.build_qi_field(wx, wz, zone_kernels=specs, enable_veins=False)
+        f_ba = qf.build_qi_field(
+            wx, wz, zone_kernels=list(reversed(specs)), enable_veins=False
+        )
+        np.testing.assert_allclose(
+            f_ab, f_ba, atol=1e-9,
+            err_msg=(
+                "共边界采样线的 field 必须与 zone 顺序无关（半开归属确定）；"
+                "[A,B] 与 [B,A] 输出分叉说明仍有 tie-break 抖动"
+            ),
+        )
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

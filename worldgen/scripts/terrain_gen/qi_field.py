@@ -303,9 +303,13 @@ def build_qi_field(
             plateau_ratio=plateau_ratio,
         )
         bx0, bx1, bz0, bz1 = _spec_true_bounds(spec)
+        # 半开区间 [min, max)：左/下边界含、右/上边界不含。闭区间会把两相邻 zone 的
+        # 共享边界采样线同时算进两个 AABB，使接壤 zone 的派生 spirit_qi 取决于排序/
+        # tie-break 而非"正被采样的那个 zone"——半开后每列恰属一个 zone（共边界列归
+        # 右上邻 zone，归属确定、采样稳定）。
         inside = (
-            (wx_arr >= bx0) & (wx_arr <= bx1)
-            & (wz_arr >= bz0) & (wz_arr <= bz1)
+            (wx_arr >= bx0) & (wx_arr < bx1)
+            & (wz_arr >= bz0) & (wz_arr < bz1)
         )
         area = max(bx1 - bx0, 0.0) * max(bz1 - bz0, 0.0)
         processed.append(
