@@ -206,16 +206,21 @@ type MigrationMoveQuery<'w, 's> = Query<
     With<NpcMarker>,
 >;
 
+#[derive(bevy_ecs::system::SystemParam)]
+pub struct FaunaMigrationEventWriters<'w> {
+    depletion_events: EventWriter<'w, ZoneDepletionEvent>,
+    critical_events: EventWriter<'w, ZoneQiCriticalEvent>,
+    migration_events: EventWriter<'w, MigrationEvent>,
+    vfx_events: EventWriter<'w, VfxEventRequest>,
+    audio_events: EventWriter<'w, PlaySoundRecipeRequest>,
+}
+
 pub fn fauna_migration_system(
     zones: Option<Res<ZoneRegistry>>,
     graph: Option<Res<ZoneGraph>>,
     clock: Option<Res<CultivationClock>>,
     mut state: ResMut<FaunaMigrationState>,
-    mut depletion_events: EventWriter<ZoneDepletionEvent>,
-    mut critical_events: EventWriter<ZoneQiCriticalEvent>,
-    mut migration_events: EventWriter<MigrationEvent>,
-    mut vfx_events: EventWriter<VfxEventRequest>,
-    mut audio_events: EventWriter<PlaySoundRecipeRequest>,
+    mut events: FaunaMigrationEventWriters,
 ) {
     let Some(zones) = zones else {
         state.critical_ticks_by_zone.clear();
@@ -290,11 +295,13 @@ pub fn fauna_migration_system(
             tick: now,
         };
 
-        depletion_events.send(depletion_event);
-        critical_events.send(critical_event);
-        migration_events.send(migration_event.clone());
-        vfx_events.send(migration_vfx_request(zone, &migration_event));
-        audio_events.send(migration_rumble_request(zone));
+        events.depletion_events.send(depletion_event);
+        events.critical_events.send(critical_event);
+        events.migration_events.send(migration_event.clone());
+        events
+            .vfx_events
+            .send(migration_vfx_request(zone, &migration_event));
+        events.audio_events.send(migration_rumble_request(zone));
     }
 }
 
