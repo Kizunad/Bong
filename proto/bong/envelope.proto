@@ -288,6 +288,8 @@ message ClientRequestEnvelope {
     LowerShield                 lower_shield                  = 94;
     // plan-workbench-place-runtime-v1 P2 — 制作台 marker 右键打开。
     WorkbenchOpenReq            workbench_open                = 95;
+    // plan-placeable-container-blocks-v1 P1 — 通用世界容器 marker 右键打开。
+    ContainerOpenReq            container_open                = 98;
   }
 }
 
@@ -3777,6 +3779,11 @@ message ExternalContainerCloseReq {
 
 // 与 Rust ClientRequestV1::SupplyCoffinOpen 精确对应。
 message SupplyCoffinOpenReq {
+  int32 entity_id = 1;
+}
+
+// 与 Rust ClientRequestV1::ContainerOpen 精确对应。
+message ContainerOpenReq {
   int32 entity_id = 1;
 }
 

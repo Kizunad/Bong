@@ -633,6 +633,8 @@ pub struct PillBuffStatusV1 {
 #[serde(deny_unknown_fields, rename_all = "snake_case")]
 pub enum LootContainerSourceKindV1 {
     SupplyCoffin { grade: String },
+    StorageCrate { is_herb: bool },
+    DeadDrop,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -5056,6 +5058,41 @@ mod tests {
             json.contains("\"grade\":\"common\""),
             "source_kind wire should contain grade field, got: {json}"
         );
+    }
+
+    #[test]
+    fn loot_container_source_kind_storage_crate_wire_format() {
+        let kind = LootContainerSourceKindV1::StorageCrate { is_herb: true };
+        let json = serde_json::to_string(&kind)
+            .expect("LootContainerSourceKindV1::StorageCrate should serialize");
+        assert!(
+            json.contains("\"storage_crate\""),
+            "source_kind wire should use snake_case tag, got: {json}"
+        );
+        assert!(
+            json.contains("\"is_herb\":true"),
+            "source_kind wire should contain is_herb field, got: {json}"
+        );
+        let back: LootContainerSourceKindV1 =
+            serde_json::from_str(&json).expect("StorageCrate source_kind should deserialize");
+        assert_eq!(
+            kind, back,
+            "StorageCrate source_kind must roundtrip without losing is_herb"
+        );
+    }
+
+    #[test]
+    fn loot_container_source_kind_dead_drop_wire_format() {
+        let kind = LootContainerSourceKindV1::DeadDrop;
+        let json = serde_json::to_string(&kind)
+            .expect("LootContainerSourceKindV1::DeadDrop should serialize");
+        assert_eq!(
+            json, "\"dead_drop\"",
+            "unit source_kind wire should be the snake_case tag"
+        );
+        let back: LootContainerSourceKindV1 =
+            serde_json::from_str(&json).expect("DeadDrop source_kind should deserialize");
+        assert_eq!(kind, back, "DeadDrop source_kind must roundtrip");
     }
 
     #[test]

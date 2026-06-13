@@ -497,6 +497,14 @@ pub enum ClientRequestV1 {
         v: u8,
         entity_id: i32,
     },
+    // ─── plan-placeable-container-blocks-v1 P1：通用世界容器 open ────
+    /// 玩家右键带 `ExternalContainer` 组件的世界容器 marker 后发送此请求。
+    /// server 解析 MC protocol entity_id → ECS Entity，再由通用 open system
+    /// 按目标实体的 `ExternalContainer.source_kind` 构造 `LootContainerOpen`。
+    ContainerOpen {
+        v: u8,
+        entity_id: i32,
+    },
     // ─── plan-workbench-place-runtime-v1 P2：entity-based workbench open ────
     /// 玩家右键制作台 Marker entity 后发送此请求。server 解析 MC protocol
     /// entity_id → ECS Entity，再交给 `WorkbenchOpenRequest` 做距离校验与开屏。
@@ -2296,6 +2304,53 @@ mod tests {
             }
             other => panic!("expected SupplyCoffinOpen, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn container_open_roundtrip() {
+        let json = r#"{"type":"container_open","v":1,"entity_id":42}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+        match req {
+            ClientRequestV1::ContainerOpen { v, entity_id } => {
+                assert_eq!(v, 1, "version should be 1");
+                assert_eq!(entity_id, 42, "entity_id should be 42");
+            }
+            other => panic!("expected ContainerOpen, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn container_open_negative_entity_id() {
+        let json = r#"{"type":"container_open","v":1,"entity_id":-1}"#;
+        let req: ClientRequestV1 =
+            serde_json::from_str(json).expect("negative entity_id is valid i32 at schema level");
+        match req {
+            ClientRequestV1::ContainerOpen { entity_id, .. } => {
+                assert_eq!(
+                    entity_id, -1,
+                    "negative entity_id should pass schema (rejected at runtime)"
+                );
+            }
+            other => panic!("expected ContainerOpen, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn container_open_rejects_missing_entity_id() {
+        let json = r#"{"type":"container_open","v":1}"#;
+        assert!(
+            serde_json::from_str::<ClientRequestV1>(json).is_err(),
+            "missing entity_id should fail"
+        );
+    }
+
+    #[test]
+    fn container_open_rejects_extra_fields() {
+        let json = r#"{"type":"container_open","v":1,"entity_id":42,"extra":true}"#;
+        assert!(
+            serde_json::from_str::<ClientRequestV1>(json).is_err(),
+            "extra field should fail due to deny_unknown_fields"
+        );
     }
 
     #[test]
