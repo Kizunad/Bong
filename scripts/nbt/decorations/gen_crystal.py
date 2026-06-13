@@ -26,20 +26,36 @@ KIND = "crystal"
 
 def _crystal(seed: int, h: int, body: str, tip: str, accent: str,
              *, body_props=None, tip_props=None) -> StructureBuilder:
+    """A *cluster* (not a lone pole): a tall central spire ringed by shorter
+    satellite shards so the silhouette reads as a crystal growth, and the
+    footprint stays a symmetric 3x3 instead of collapsing to a 1-wide sliver.
+
+    The retired `place_crystal` used a single column + 3/8-chance base stubs,
+    which with a fixed seed routinely landed lopsided (one stub, off to one
+    side). We replace the coin-flip stubs with a *deterministic* satellite ring
+    whose heights step down with distance, giving every variant the same
+    legible, balanced cluster shape regardless of seed.
+    """
     random.seed(seed)
     sb = StructureBuilder(5, h + 3, 5)
     cx = cz = 2
+    # Central spire.
     for y in range(h):
         sb.set_block(cx, y, cz, body, body_props)
     sb.set_block(cx, h, cz, tip, tip_props)
     if h > 4:
         sb.set_block(cx, h + 1, cz, tip, tip_props)
-    # Base stubs in the 4 cardinal directions.
+    # Satellite shards: 4 cardinal companions (always present) at ~half the
+    # spire's height, each tipped with a cluster, plus 4 diagonal stubs for a
+    # rocky base so the cluster sits in a little crystal bed.
+    sat_h = max(2, h // 2)
     for dx, dz in [(1, 0), (-1, 0), (0, 1), (0, -1)]:
-        if random.random() < 3 / 8:
-            stub_h = random.randint(1, 2)
-            for sy in range(stub_h):
-                sb.set_block(cx + dx, sy, cz + dz, accent, tip_props if accent == tip else None)
+        for sy in range(sat_h):
+            sb.set_block(cx + dx, sy, cz + dz, body, body_props)
+        sb.set_block(cx + dx, sat_h, cz + dz, tip, tip_props)
+    # Diagonal base stubs (1 tall) — the accent material, framing the bed.
+    for dx, dz in [(1, 1), (-1, 1), (1, -1), (-1, -1)]:
+        sb.set_block(cx + dx, 0, cz + dz, accent, tip_props if accent == tip else None)
     return sb
 
 
@@ -61,8 +77,14 @@ def build_obsidian_pillar() -> StructureBuilder:
         sb.set_block(cx, y, cz, block)
     sb.set_block(cx, h, cz, "amethyst_block")
     sb.set_block(cx, h + 1, cz, "amethyst_cluster", {"facing": "up"})
-    for dx, dz in [(1, 0), (0, 1)]:
-        sb.set_block(cx + dx, 0, cz + dz, "obsidian")
+    # Satellite obsidian shards (cardinal, ~1/3 height) tipped with amethyst, so
+    # the xuan-jing pillar reads as a dark crystal cluster, not a single needle.
+    sat_h = max(2, h // 3)
+    for dx, dz in [(1, 0), (-1, 0), (0, 1), (0, -1)]:
+        for sy in range(sat_h):
+            block = "crying_obsidian" if random.random() < 0.2 else "obsidian"
+            sb.set_block(cx + dx, sy, cz + dz, block)
+        sb.set_block(cx + dx, sat_h, cz + dz, "amethyst_cluster", {"facing": "up"})
     return sb
 
 
@@ -84,7 +106,15 @@ def build_phantom_qi() -> StructureBuilder:
         sb.set_block(cx, y, cz, block, props)
     sb.set_block(cx, h, cz, "amethyst_cluster", {"facing": "up"})
     sb.set_block(cx, h + 1, cz, "amethyst_cluster", {"facing": "up"})
-    for dx, dz in [(1, 0), (-1, 0)]:
+    # Glowing satellite shards (cardinal) + soul-lantern braziers on the
+    # diagonals, so the phantom-qi pillar sits in a ring of pseudo-vein light.
+    sat_h = max(2, h // 2)
+    for dx, dz in [(1, 0), (-1, 0), (0, 1), (0, -1)]:
+        for sy in range(sat_h):
+            block = "purple_stained_glass" if sy % 2 == 1 else "amethyst_block"
+            sb.set_block(cx + dx, sy, cz + dz, block)
+        sb.set_block(cx + dx, sat_h, cz + dz, "amethyst_cluster", {"facing": "up"})
+    for dx, dz in [(1, 1), (-1, -1)]:
         sb.set_block(cx + dx, 0, cz + dz, "soul_lantern", {"hanging": "false"})
     return sb
 

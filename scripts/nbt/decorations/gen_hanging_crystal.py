@@ -38,10 +38,10 @@ def _hanging(seed: int, h: int, body: str, tip: str, accent: str,
         sb.set_block(cx, y, cz, body, body_props)
     # Tip at the very bottom (y=0).
     sb.set_block(cx, 0, cz, tip, tip_props)
-    # Accent stubs clinging near the top attachment row.
+    # Accent stubs clinging near the top attachment row — placed on all four
+    # sides (deterministic) so the crown is a balanced ring, not a flat bar.
     for dx, dz in [(1, 0), (-1, 0), (0, 1), (0, -1)]:
-        if random.random() < 2 / 8:
-            sb.set_block(cx + dx, h - 1, cz + dz, accent, accent_props)
+        sb.set_block(cx + dx, h - 1, cz + dz, accent, accent_props)
     return sb
 
 
@@ -68,7 +68,8 @@ def build_deep_pendant() -> StructureBuilder:
     # Two-block tip.
     sb.set_block(cx, 1, cz, "budding_amethyst")
     sb.set_block(cx, 0, cz, "amethyst_cluster", {"facing": "down"})
-    for dx, dz in [(1, 0), (0, -1)]:
+    # Balanced crown ring on all four sides for a fuller attachment.
+    for dx, dz in [(1, 0), (-1, 0), (0, 1), (0, -1)]:
         sb.set_block(cx + dx, h - 1, cz + dz, "amethyst_block")
     return sb
 

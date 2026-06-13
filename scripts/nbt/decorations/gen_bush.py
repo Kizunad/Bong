@@ -25,20 +25,25 @@ KIND = "bush"
 
 
 def build_leafy() -> StructureBuilder:
-    """Lush leafy bush — azalea leaves clump with berry + fern accents."""
+    """Lush leafy bush — azalea leaves clump with berry + fern accents.
+
+    Accents are placed on all four sides (not a 75% coin flip) so the bush
+    fills its 3x3 footprint as a balanced clump instead of collapsing to a
+    lopsided 2x3 sliver under an unlucky seed.
+    """
     random.seed(61_001)
     sb = StructureBuilder(5, 4, 5)
     cx = cz = 2
     # 2-tall core of oak leaves.
     for y in range(2):
         sb.set_block(cx, y, cz, "oak_leaves", {"persistent": "true"})
-    # 4-dir flowering azalea accents.
+    # 4-dir flowering azalea accents — all sides for a symmetric clump.
     for dx, dz in [(1, 0), (-1, 0), (0, 1), (0, -1)]:
-        if random.random() < 0.75:
-            sb.set_block(cx + dx, 0, cz + dz, "flowering_azalea_leaves", {"persistent": "true"})
-    # Fern + berry crown.
+        sb.set_block(cx + dx, 0, cz + dz, "flowering_azalea_leaves", {"persistent": "true"})
+    # Fern + berry crown; ferns on two opposite corners to balance.
     sb.set_block(cx, 2, cz, "sweet_berry_bush", {"age": "3"})
     sb.set_block(cx + 1, 0, cz + 1, "fern")
+    sb.set_block(cx - 1, 0, cz - 1, "fern")
     return sb
 
 
@@ -51,12 +56,14 @@ def build_ice_thorn() -> StructureBuilder:
     for y in range(3):
         sb.set_block(cx, y, cz, "packed_ice")
     sb.set_block(cx, 3, cz, "blue_ice")
-    # Snow-block skirt + dripstone thorns radiating out.
-    for dx, dz in [(1, 0), (-1, 0), (0, 1), (0, -1)]:
+    # Snow-block skirt on all sides + dripstone thorns radiating out.
+    # Thorns alternate frustum/tip per side so the spire reads jagged but the
+    # skirt stays a full symmetric ring rather than a random partial one.
+    for i, (dx, dz) in enumerate([(1, 0), (-1, 0), (0, 1), (0, -1)]):
         sb.set_block(cx + dx, 0, cz + dz, "snow_block")
-        if random.random() < 0.6:
-            sb.set_block(cx + dx, 1, cz + dz, "pointed_dripstone",
-                         {"vertical_direction": "up", "thickness": "tip"})
+        thickness = "tip" if i % 2 == 0 else "frustum"
+        sb.set_block(cx + dx, 1, cz + dz, "pointed_dripstone",
+                     {"vertical_direction": "up", "thickness": thickness})
     return sb
 
 

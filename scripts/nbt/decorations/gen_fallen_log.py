@@ -61,12 +61,14 @@ def build_mossy_decayed() -> StructureBuilder:
         # Mix in stripped/mossy sections to read as decayed.
         block = "stripped_oak_log" if random.random() < 0.4 else "oak_log"
         sb.set_block(x, 0, cz, block, {"axis": "x"})
-        # Moss carpet draped on top of some segments.
+        # Moss carpet draped on top of some segments...
         if random.random() < 0.5:
             sb.set_block(x, 1, cz, "moss_carpet")
-        # A clinging mushroom here and there.
-        if random.random() < 0.3:
-            sb.set_block(x, 1, cz, "brown_mushroom")
+        # ...and a clinging mushroom sprouting at the log's *side* (offset z),
+        # so it sits beside the moss instead of overwriting it.
+        elif random.random() < 0.4:
+            side = cz + (1 if random.random() < 0.5 else -1)
+            sb.set_block(x, 1, side, "brown_mushroom")
     return sb
 
 

@@ -42,6 +42,7 @@ def build_oak() -> StructureBuilder:
 
     canopy_y = trunk_h
     radius = 3
+    leaf_cells: set[tuple[int, int, int]] = set()
     for dx, dy, dz in sphere_offsets(radius, y_min=-1, y_max=radius):
         x, y, z = cx + dx, canopy_y + dy, cz + dz
         if not (0 <= x < w and 0 <= z < d):
@@ -53,22 +54,20 @@ def build_oak() -> StructureBuilder:
         if (x, y, z) == (cx, canopy_y, cz):
             continue  # leave trunk top for the log
         sb.set_block(x, y, z, "oak_leaves", {"persistent": "true"})
+        leaf_cells.add((x, y, z))
 
-    # Moss accent flecks inside the canopy.
-    for _ in range(4):
-        ax = random.randint(cx - 2, cx + 2)
-        az = random.randint(cz - 2, cz + 2)
-        ay = random.randint(canopy_y, canopy_y + 2)
-        if 0 <= ax < w and 0 <= az < d:
-            sb.set_block(ax, ay, az, "moss_block")
+    # Moss accent flecks — only where a leaf already exists, so moss never
+    # floats in a gap the ragged rim cull opened up.
+    moss_candidates = [c for c in leaf_cells if c[1] >= canopy_y]
+    random.shuffle(moss_candidates)
+    for ax, ay, az in moss_candidates[:4]:
+        sb.set_block(ax, ay, az, "moss_block")
 
-    # A few vine strands draping off the lower canopy rim.
-    for _ in range(5):
-        edge = random.choice([(cx - radius, cz), (cx + radius, cz), (cx, cz - radius), (cx, cz + radius)])
-        vx, vz = edge
-        if not (0 <= vx < w and 0 <= vz < d):
-            continue
-        for vy in range(canopy_y, max(canopy_y - 3, 0), -1):
+    # Vine strands drape only from canopy-bottom leaf cells (so each vine hangs
+    # from a real leaf, never from empty air where the rim was culled).
+    bottom_leaves = sorted(c for c in leaf_cells if c[1] == canopy_y - 1)
+    for vx, vy0, vz in bottom_leaves[:4]:
+        for vy in range(vy0 - 1, max(vy0 - 3, 0), -1):
             sb.set_block(vx, vy, vz, "vine", {"south": "true"})
     return sb
 

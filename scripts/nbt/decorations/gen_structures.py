@@ -230,6 +230,15 @@ RIFT_BRIDGE = "rift_bridge"
 
 def _rift_bridge(seed: int, span_half: int, deck_half_w: int, pylon_h: int,
                  *, axis: str, broken: bool) -> StructureBuilder:
+    """A remnant rope/plank span between two stone pylons.
+
+    The deck reads as *one* coherent plank material (a real walkway), not a
+    per-block material lottery. Pylons are a single banded stone so they read
+    as masonry towers. The catenary deck dips toward the middle and the
+    iron-bar railings line both edges along the whole span. Broken variants
+    drop the middle plank section out, leaving the gap a rift bridge should
+    have once the ropes rotted.
+    """
     random.seed(seed)
     if axis == "x":
         sx_span = 2 * span_half + 1
@@ -239,7 +248,6 @@ def _rift_bridge(seed: int, span_half: int, deck_half_w: int, pylon_h: int,
         sz_span = 2 * span_half + 1
     sb = StructureBuilder(sx_span, pylon_h + 4, sz_span)
     along_ctr = span_half
-    cross_ctr = deck_half_w
 
     def place(along, cross, y, block, props=None):
         if axis == "x":
@@ -247,33 +255,37 @@ def _rift_bridge(seed: int, span_half: int, deck_half_w: int, pylon_h: int,
         else:
             sb.set_block(cross, y, along, block, props)
 
-    # Pylons at both ends.
+    # One deck plank species + one pylon stone per bridge, chosen by seed so
+    # each instance differs but is internally consistent.
+    deck_plank = random.choice(["spruce_planks", "dark_oak_planks"])
+    pylon_stone = random.choice(["polished_basalt", "blackstone", "stone_bricks"])
+    pylon_cap = "basalt"
+
+    # Pylons at both ends — solid stone towers, banded with a darker cap row.
     for end in (0, 2 * span_half):
         for cross in range(0, 2 * deck_half_w + 1):
             for py in range(pylon_h):
-                block = random.choice(["polished_basalt", "blackstone", "basalt", "stone_bricks"])
+                block = pylon_cap if py == pylon_h - 1 else pylon_stone
                 place(end, cross, py, block)
+
+    # Railing prop: bars connect along the span axis so they read as a rail.
+    rail_props = ({"north": "true", "south": "true"} if axis == "x"
+                  else {"east": "true", "west": "true"})
 
     # Catenary deck: dips toward the middle (sag).
     max_sag = max(1, span_half // 3)
-    for along in range(2 * span_half + 1):
+    for along in range(1, 2 * span_half):  # skip the pylon columns themselves
         rel = along - along_ctr
         sag = int(max_sag * (1 - (rel / max(span_half, 1)) ** 2))
-        deck_y = pylon_h - 1 - sag
-        if deck_y < 0:
-            deck_y = 0
+        deck_y = max(0, pylon_h - 1 - sag)
         # Broken bridges drop a middle plank section out.
         if broken and abs(rel) <= 1:
             continue
         for cross in range(2 * deck_half_w + 1):
-            block = random.choice(["spruce_planks", "dark_oak_planks", "smooth_basalt",
-                                   "polished_basalt", "basalt"])
-            place(along, cross, deck_y, block)
-            # Chain / iron-bar railing on the deck edges.
+            place(along, cross, deck_y, deck_plank)
+            # Iron-bar railing on both deck edges, one block above the planks.
             if cross in (0, 2 * deck_half_w):
-                place(along, cross, deck_y + 1, "iron_bars",
-                      {"north": "true", "south": "true"} if axis == "x"
-                      else {"east": "true", "west": "true"})
+                place(along, cross, deck_y + 1, "iron_bars", rail_props)
     return sb
 
 

@@ -30,11 +30,15 @@ def _mushroom(seed: int, stem_h: int, cap: str, stem: str, accent: str,
     for y in range(stem_h):
         sb.set_block(cx, y, cz, stem)
     cap_y = stem_h
+    # Cardinal rim cells are always kept so the cap never loses a whole side and
+    # collapse into a lopsided sliver; only the *corner* rim cells get the
+    # organic jagged cull.
+    cardinals = {(cap_radius, 0), (-cap_radius, 0), (0, cap_radius), (0, -cap_radius)}
     for dx, dz in disc_offsets(cap_radius):
         x, z = cx + dx, cz + dz
-        # Jagged rim cull.
-        if dx * dx + dz * dz == cap_radius * cap_radius and random.random() < 1 / 3:
-            continue
+        on_rim = dx * dx + dz * dz == cap_radius * cap_radius
+        if on_rim and (dx, dz) not in cardinals and random.random() < 1 / 3:
+            continue  # ragged corner
         sb.set_block(x, cap_y, z, cap, cap_props)
     # Center accent above the cap.
     sb.set_block(cx, cap_y + 1, cz, accent, {"facing": "up"} if "amethyst" in accent else None)
