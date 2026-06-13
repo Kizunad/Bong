@@ -43,6 +43,16 @@ pub enum ContainerBlockKind {
     DeadDrop,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ContainerBlockPlacement {
+    pub layer: Entity,
+    pub pos: BlockPos,
+    pub dimension: DimensionKind,
+    pub placed_by: Entity,
+    pub placed_at_tick: u64,
+    pub kind: ContainerBlockKind,
+}
+
 impl ContainerBlockKind {
     pub const fn external_kind(self) -> ExternalContainerKind {
         match self {
@@ -94,34 +104,29 @@ pub fn register(app: &mut App) {
 pub fn handle_container_block_place(
     commands: &mut Commands,
     registry: &mut ExternalContainerRegistry,
-    layer: Entity,
-    pos: BlockPos,
-    dimension: DimensionKind,
-    placed_by: Entity,
-    placed_at_tick: u64,
-    kind: ContainerBlockKind,
+    placement: ContainerBlockPlacement,
 ) -> Entity {
     let entity = spawn_visual_marker(
         commands,
-        layer,
+        placement.layer,
         None,
-        kind.visual_kind(),
+        placement.kind.visual_kind(),
         DVec3::new(
-            f64::from(pos.x) + 0.5,
-            f64::from(pos.y),
-            f64::from(pos.z) + 0.5,
+            f64::from(placement.pos.x) + 0.5,
+            f64::from(placement.pos.y),
+            f64::from(placement.pos.z) + 0.5,
         ),
         0,
     );
     let session_id = registry.allocate_session(entity);
     commands.entity(entity).insert((
         ContainerBlock {
-            kind,
-            placed_by,
-            placed_at_tick,
+            kind: placement.kind,
+            placed_by: placement.placed_by,
+            placed_at_tick: placement.placed_at_tick,
         },
-        CurrentDimension(dimension),
-        build_external_container(session_id, kind),
+        CurrentDimension(placement.dimension),
+        build_external_container(session_id, placement.kind),
     ));
     entity
 }
@@ -507,12 +512,14 @@ mod tests {
         let entity = handle_container_block_place(
             &mut app.world_mut().commands(),
             &mut registry,
-            layer,
-            pos,
-            DimensionKind::Tsy,
-            placed_by,
-            77,
-            kind,
+            ContainerBlockPlacement {
+                layer,
+                pos,
+                dimension: DimensionKind::Tsy,
+                placed_by,
+                placed_at_tick: 77,
+                kind,
+            },
         );
         app.world_mut().flush();
 

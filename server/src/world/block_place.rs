@@ -19,7 +19,7 @@ use crate::player::state::PlayerState;
 use crate::world::bong_blocks::{is_bong_block, place_bong_block};
 use crate::world::container_block::{
     container_place_audio_recipe_id, handle_container_block_place, send_container_audio,
-    ContainerBlockKind,
+    ContainerBlockKind, ContainerBlockPlacement,
 };
 use crate::world::dimension::{CurrentDimension, DimensionKind, DimensionLayers};
 use crate::world::furniture::{furniture_kind_for_template_id, FurnitureRegistry};
@@ -458,22 +458,26 @@ fn place_placeable(
         PlaceableBlockKind::StorageCrate { is_herb } => Ok(handle_container_block_place(
             commands,
             ext_registry,
-            placement.layer,
-            placement.pos,
-            placement.dimension,
-            placement.placed_by,
-            placement.placed_at_tick,
-            ContainerBlockKind::StorageCrate { is_herb },
+            ContainerBlockPlacement {
+                layer: placement.layer,
+                pos: placement.pos,
+                dimension: placement.dimension,
+                placed_by: placement.placed_by,
+                placed_at_tick: placement.placed_at_tick,
+                kind: ContainerBlockKind::StorageCrate { is_herb },
+            },
         )),
         PlaceableBlockKind::DeadDrop => Ok(handle_container_block_place(
             commands,
             ext_registry,
-            placement.layer,
-            placement.pos,
-            placement.dimension,
-            placement.placed_by,
-            placement.placed_at_tick,
-            ContainerBlockKind::DeadDrop,
+            ContainerBlockPlacement {
+                layer: placement.layer,
+                pos: placement.pos,
+                dimension: placement.dimension,
+                placed_by: placement.placed_by,
+                placed_at_tick: placement.placed_at_tick,
+                kind: ContainerBlockKind::DeadDrop,
+            },
         )),
     }
 }
