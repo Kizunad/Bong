@@ -226,6 +226,7 @@ description = "灵铁箍的密封小匣，高灵物短存最佳。"
 id = "dead_drop_box"
 name = "死信箱"
 category = "misc"
+placeable = "dead_drop"
 grid_w = 2
 grid_h = 2
 base_weight = 3.0
@@ -270,6 +271,7 @@ description = "兽皮缝的水袋，远征不渴。"
 id = "trade_crate"
 name = "货箱"
 category = "misc"
+placeable = "storage_crate"
 grid_w = 2
 grid_h = 2
 base_weight = 2.0
@@ -287,6 +289,18 @@ base_weight = 1.5
 rarity = "common"
 spirit_quality_initial = 0.0
 description = "木板内衬粗布的存放箱，灵草批量少磨损。"
+
+[[item]]
+id = "herb_crate_placed"
+name = "灵草箱"
+category = "misc"
+placeable = "storage_crate"
+grid_w = 2
+grid_h = 2
+base_weight = 1.5
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "可落地的粗木灵草箱，搬运后能作为世界容器使用。"
 
 [[item]]
 id = "sealed_envelope"

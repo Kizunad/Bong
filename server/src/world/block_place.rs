@@ -1,12 +1,13 @@
-use std::fmt;
+use std::{collections::HashSet, fmt};
 
 use valence::prelude::{
     bevy_ecs, App, BlockPos, BlockState, ChunkLayer, Client, Commands, Entity, Event, EventReader,
-    Events, IntoSystemConfigs, Position, Query, Res, ResMut, Update, Username,
+    Events, IntoSystemConfigs, Position, Query, Res, ResMut, Update, Username, With,
 };
 
 use crate::craft::{handle_workbench_place, send_workbench_audio, WORKBENCH_PLACE_AUDIO_RECIPE_ID};
 use crate::cultivation::components::Cultivation;
+use crate::inventory::external_container::ExternalContainerRegistry;
 use crate::inventory::{
     consume_item_instance_once, inventory_item_by_instance_borrow, ItemCategory, ItemRegistry,
     PlayerInventory,
@@ -16,12 +17,14 @@ use crate::network::inventory_snapshot_emit::send_inventory_snapshot_to_client;
 use crate::player::gameplay::GameplayTick;
 use crate::player::state::PlayerState;
 use crate::world::bong_blocks::{is_bong_block, place_bong_block};
+use crate::world::container_block::{handle_container_block_place, ContainerBlockKind};
 use crate::world::dimension::{CurrentDimension, DimensionKind, DimensionLayers};
 use crate::world::furniture::{furniture_kind_for_template_id, FurnitureRegistry};
 use crate::zhenfa::trap_content::TrapTargetFace;
 
 const PLAYER_HALF_WIDTH: f64 = 0.3;
 const PLAYER_HEIGHT: f64 = 1.8;
+const HERB_CRATE_PLACED_TEMPLATE: &str = "herb_crate_placed";
 
 #[derive(Debug, Clone, Copy, Event)]
 pub struct BlockPlaceRequest {
@@ -42,14 +45,21 @@ pub enum PlaceableBlockKind {
 
 impl PlaceableBlockKind {
     fn is_runtime_supported(self) -> bool {
-        matches!(self, Self::Workbench)
+        matches!(
+            self,
+            Self::Workbench | Self::StorageCrate { .. } | Self::DeadDrop
+        )
+    }
+
+    fn is_container_backed(self) -> bool {
+        matches!(self, Self::StorageCrate { .. } | Self::DeadDrop)
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BlockPlaceRejectReason {
     UnknownBlockItem,
-    UnsupportedPlaceableKind(PlaceableBlockKind),
+    ContainerBreakRequiresContainerSystem(PlaceableBlockKind),
     ChunkNotLoaded,
     YOutOfBounds,
     TargetNotReplaceable(BlockState),
@@ -61,8 +71,11 @@ impl fmt::Display for BlockPlaceRejectReason {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::UnknownBlockItem => write!(f, "unknown block item"),
-            Self::UnsupportedPlaceableKind(kind) => {
-                write!(f, "unsupported placeable block kind {kind:?}")
+            Self::ContainerBreakRequiresContainerSystem(kind) => {
+                write!(
+                    f,
+                    "container break kind {kind:?} must use container block system"
+                )
             }
             Self::ChunkNotLoaded => write!(f, "target chunk is not loaded"),
             Self::YOutOfBounds => write!(f, "target y is outside layer bounds"),
@@ -76,6 +89,7 @@ impl fmt::Display for BlockPlaceRejectReason {
 }
 
 pub fn register(app: &mut App) {
+    app.init_resource::<ExternalContainerRegistry>();
     app.add_event::<BlockPlaceRequest>().add_systems(
         Update,
         handle_block_place_requests
@@ -93,10 +107,27 @@ pub fn handle_block_place_requests(
     mut layers: Query<&mut ChunkLayer>,
     mut inventories: Query<&mut PlayerInventory>,
     player_positions: Query<(&Position, Option<&CurrentDimension>)>,
+    container_blocks: Query<
+        (&Position, Option<&CurrentDimension>),
+        With<crate::world::container_block::ContainerBlock>,
+    >,
     mut clients: Query<(&Username, &mut Client, &PlayerState, Option<&Cultivation>)>,
     mut audio_events: Option<ResMut<Events<PlaySoundRecipeRequest>>>,
     mut furniture_registry: Option<ResMut<FurnitureRegistry>>,
+    mut ext_registry: ResMut<ExternalContainerRegistry>,
 ) {
+    let mut reserved_container_positions: HashSet<([i32; 3], DimensionKind)> = container_blocks
+        .iter()
+        .map(|(position, dimension)| {
+            (
+                crate::world::container_block::container_block_pos(position),
+                dimension
+                    .map(|component| component.0)
+                    .unwrap_or(DimensionKind::Overworld),
+            )
+        })
+        .collect();
+
     for req in requests.read() {
         let pos = BlockPos::new(req.x, req.y, req.z);
         let Ok((player_position, current_dimension)) = player_positions.get(req.client) else {
@@ -158,6 +189,25 @@ pub fn handle_block_place_requests(
             continue;
         }
 
+        let container_position_key = match &target {
+            BlockPlaceTarget::Placeable { kind, .. } if kind.is_container_backed() => {
+                Some(([pos.x, pos.y, pos.z], dimension))
+            }
+            _ => None,
+        };
+        if let Some(key) = container_position_key {
+            if reserved_container_positions.contains(&key) {
+                tracing::warn!(
+                    "[bong][block_place] rejected: player={:?} pos={:?} dimension={:?} item=`{}` reason=entity-backed container already occupies target",
+                    req.client,
+                    pos,
+                    dimension,
+                    template_id
+                );
+                continue;
+            }
+        }
+
         let Ok(mut inventory) = inventories.get_mut(req.client) else {
             tracing::warn!(
                 "[bong][block_place] rejected: player {:?} has no PlayerInventory",
@@ -171,6 +221,9 @@ pub fn handle_block_place_requests(
                 req.item_instance_id
             );
             continue;
+        }
+        if let Some(key) = container_position_key {
+            reserved_container_positions.insert(key);
         }
 
         let placement = match target {
@@ -186,8 +239,18 @@ pub fn handle_block_place_requests(
                     .as_ref()
                     .map(|tick| tick.current_tick())
                     .unwrap_or(0);
-                let placed =
-                    place_placeable(kind, &mut commands, layer_entity, pos, req.client, now);
+                let placed = place_placeable(
+                    kind,
+                    &mut commands,
+                    &mut ext_registry,
+                    PlaceablePlacement {
+                        layer: layer_entity,
+                        pos,
+                        dimension,
+                        placed_by: req.client,
+                        placed_at_tick: now,
+                    },
+                );
                 if placed.is_ok() && kind == PlaceableBlockKind::Workbench {
                     send_workbench_audio(
                         audio_events.as_deref_mut(),
@@ -298,16 +361,8 @@ fn block_place_target_for_request(
         );
         return None;
     };
-    if template.category != ItemCategory::Block {
-        tracing::warn!(
-            "[bong][block_place] rejected: item `{}` category {:?} is not Block",
-            item.template_id,
-            template.category
-        );
-        return None;
-    }
     if let Some(placeable) = template.placeable.as_deref() {
-        let Some(kind) = placeable_kind_from_str(placeable) else {
+        let Some(kind) = placeable_kind_for_item(&item.template_id, placeable) else {
             tracing::warn!(
                 "[bong][block_place] rejected: block item `{}` has unknown placeable kind `{}`",
                 item.template_id,
@@ -319,6 +374,14 @@ fn block_place_target_for_request(
             template_id: item.template_id.clone(),
             kind,
         });
+    }
+    if template.category != ItemCategory::Block {
+        tracing::warn!(
+            "[bong][block_place] rejected: item `{}` category {:?} is not Block and has no placeable marker",
+            item.template_id,
+            template.category
+        );
+        return None;
     }
     let Some(state) = block_item_to_state(&item.template_id, req.target_face) else {
         tracing::warn!(
@@ -346,25 +409,57 @@ pub fn placeable_kind_from_str(raw: &str) -> Option<PlaceableBlockKind> {
     }
 }
 
-pub fn place_placeable(
-    kind: PlaceableBlockKind,
-    commands: &mut Commands,
+fn placeable_kind_for_item(template_id: &str, raw: &str) -> Option<PlaceableBlockKind> {
+    let kind = placeable_kind_from_str(raw)?;
+    if matches!(kind, PlaceableBlockKind::StorageCrate { is_herb: false })
+        && template_id == HERB_CRATE_PLACED_TEMPLATE
+    {
+        return Some(PlaceableBlockKind::StorageCrate { is_herb: true });
+    }
+    Some(kind)
+}
+
+#[derive(Debug, Clone, Copy)]
+struct PlaceablePlacement {
     layer: Entity,
     pos: BlockPos,
+    dimension: DimensionKind,
     placed_by: Entity,
     placed_at_tick: u64,
+}
+
+fn place_placeable(
+    kind: PlaceableBlockKind,
+    commands: &mut Commands,
+    ext_registry: &mut ExternalContainerRegistry,
+    placement: PlaceablePlacement,
 ) -> Result<Entity, BlockPlaceRejectReason> {
     match kind {
         PlaceableBlockKind::Workbench => Ok(handle_workbench_place(
             commands,
-            layer,
-            placed_by,
-            pos,
-            placed_at_tick,
+            placement.layer,
+            placement.placed_by,
+            placement.pos,
+            placement.placed_at_tick,
         )),
-        PlaceableBlockKind::StorageCrate { .. } | PlaceableBlockKind::DeadDrop => {
-            Err(BlockPlaceRejectReason::UnsupportedPlaceableKind(kind))
-        }
+        PlaceableBlockKind::StorageCrate { is_herb } => Ok(handle_container_block_place(
+            commands,
+            ext_registry,
+            placement.pos,
+            placement.dimension,
+            placement.placed_by,
+            placement.placed_at_tick,
+            ContainerBlockKind::StorageCrate { is_herb },
+        )),
+        PlaceableBlockKind::DeadDrop => Ok(handle_container_block_place(
+            commands,
+            ext_registry,
+            placement.pos,
+            placement.dimension,
+            placement.placed_by,
+            placement.placed_at_tick,
+            ContainerBlockKind::DeadDrop,
+        )),
     }
 }
 
@@ -379,7 +474,7 @@ pub fn break_placeable(
             Ok(())
         }
         PlaceableBlockKind::StorageCrate { .. } | PlaceableBlockKind::DeadDrop => {
-            Err(BlockPlaceRejectReason::UnsupportedPlaceableKind(kind))
+            Err(BlockPlaceRejectReason::ContainerBreakRequiresContainerSystem(kind))
         }
     }
 }
@@ -499,17 +594,21 @@ mod tests {
 
     use crate::craft::workbench::workbench_block_pos;
     use crate::craft::{WorkbenchBlock, WORKBENCH_ITEM_TEMPLATE};
+    use crate::inventory::external_container::{ExternalContainer, ExternalContainerKind};
     use crate::inventory::{
         ContainerState, InventoryInstanceIdAllocator, InventoryRevision, ItemInstance, ItemRarity,
         ItemTemplate, PlacedItemState,
     };
     use crate::network::agent_bridge::SERVER_DATA_CHANNEL;
-    use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
+    use crate::schema::server_data::{
+        LootContainerCloseReasonV1, ServerDataPayloadV1, ServerDataV1,
+    };
+    use crate::world::container_block::{container_block_pos, ContainerBlock, ContainerBlockKind};
     use crate::world::entity_model::{BongVisualEntity, BongVisualKind};
     use crate::world::furniture::FurnitureKind;
     use valence::prelude::{
         ident, App, BiomeRegistry, DiggingEvent, DiggingState, DimensionTypeRegistry, GameMode,
-        IntoSystemConfigs, Server, UnloadedChunk, Update, VisibleChunkLayer,
+        IntoSystemConfigs, Server, UnloadedChunk, Update, VisibleChunkLayer, With,
     };
     use valence::protocol::packets::play::CustomPayloadS2c;
     use valence::testing::{create_mock_client, MockClientHelper, ScenarioSingleClient};
@@ -626,6 +725,36 @@ mod tests {
             None,
             "unknown placeable values must reject without falling into vanilla placement"
         );
+        assert_eq!(
+            placeable_kind_from_str("  STORAGE_CRATE  "),
+            Some(PlaceableBlockKind::StorageCrate { is_herb: false }),
+            "placeable parser should trim and normalize declared TOML markers"
+        );
+        assert_eq!(
+            placeable_kind_from_str("   "),
+            None,
+            "blank placeable markers must reject instead of routing to a default"
+        );
+    }
+
+    #[test]
+    fn break_placeable_rejects_container_kinds_without_container_system() {
+        let (mut app, _) = test_layer();
+        let entity = app.world_mut().spawn_empty().id();
+
+        for kind in [
+            PlaceableBlockKind::DeadDrop,
+            PlaceableBlockKind::StorageCrate { is_herb: false },
+            PlaceableBlockKind::StorageCrate { is_herb: true },
+        ] {
+            let result = break_placeable(kind, &mut app.world_mut().commands(), entity);
+
+            assert_eq!(
+                result,
+                Err(BlockPlaceRejectReason::ContainerBreakRequiresContainerSystem(kind)),
+                "expected {kind:?} break to require the container block system"
+            );
+        }
     }
 
     #[test]
@@ -944,6 +1073,588 @@ mod tests {
     }
 
     #[test]
+    fn handler_places_container_entities_from_misc_placeable_templates() {
+        let cases = [
+            (
+                "trade_crate",
+                "storage_crate",
+                ContainerBlockKind::StorageCrate { is_herb: false },
+                ExternalContainerKind::StorageCrate { is_herb: false },
+                (4, 4),
+            ),
+            (
+                "herb_crate_placed",
+                "storage_crate",
+                ContainerBlockKind::StorageCrate { is_herb: true },
+                ExternalContainerKind::StorageCrate { is_herb: true },
+                (4, 4),
+            ),
+            (
+                "dead_drop_box",
+                "dead_drop",
+                ContainerBlockKind::DeadDrop,
+                ExternalContainerKind::DeadDrop,
+                (3, 3),
+            ),
+        ];
+
+        for (index, (template_id, placeable, expected_kind, expected_source, (rows, cols))) in
+            cases.into_iter().enumerate()
+        {
+            let item_instance_id = 9401 + index as u64;
+            let (mut app, client, layer_entity, mut helper) = block_place_app(
+                inventory_with_item(item_instance(item_instance_id, template_id, 1)),
+                DimensionKind::Overworld,
+            );
+            app.insert_resource(ItemRegistry::from_map(HashMap::from([
+                item_template_with_placeable(template_id, ItemCategory::Misc, Some(placeable)),
+            ])));
+
+            app.world_mut().send_event(BlockPlaceRequest {
+                client,
+                x: 1,
+                y: 64,
+                z: 1,
+                item_instance_id,
+                target_face: TrapTargetFace::Top,
+            });
+            app.update();
+            flush_all_client_packets(&mut app);
+
+            assert_eq!(
+                block_state_at(&app, layer_entity, BlockPos::new(1, 64, 1)),
+                Some(BlockState::AIR),
+                "{template_id} is entity-backed and must not write a vanilla block"
+            );
+            let mut query = app.world_mut().query::<(
+                &ContainerBlock,
+                &ExternalContainer,
+                &Position,
+                &CurrentDimension,
+            )>();
+            let containers = query.iter(app.world()).collect::<Vec<_>>();
+            assert_eq!(
+                containers.len(),
+                1,
+                "placing {template_id} should spawn exactly one container entity"
+            );
+            let (block, ext, position, container_dimension) = containers[0];
+            assert_eq!(block.kind, expected_kind, "{template_id} block kind");
+            assert_eq!(block.placed_by, client, "{template_id} placed_by");
+            assert_eq!(block.placed_at_tick, 0, "{template_id} placed_at_tick");
+            assert_eq!(
+                ext.source_kind, expected_source,
+                "{template_id} source kind"
+            );
+            assert_eq!(ext.container.rows, rows, "{template_id} rows");
+            assert_eq!(ext.container.cols, cols, "{template_id} cols");
+            assert_eq!(
+                container_block_pos(position),
+                [1, 64, 1],
+                "{template_id} block position"
+            );
+            assert_eq!(
+                container_dimension.0,
+                DimensionKind::Overworld,
+                "{template_id} container entity should store its placed dimension"
+            );
+            assert_eq!(
+                app.world()
+                    .resource::<ExternalContainerRegistry>()
+                    .sessions
+                    .len(),
+                1,
+                "{template_id} should register one ExternalContainer session"
+            );
+            assert_eq!(
+                inventory_template_count(&app, client, template_id),
+                0,
+                "successful {template_id} placement should consume the held item"
+            );
+            assert!(
+                has_inventory_snapshot_payload(&mut helper),
+                "successful {template_id} placement should push a corrective inventory snapshot"
+            );
+        }
+    }
+
+    #[test]
+    fn handler_rejects_same_tick_duplicate_container_position_without_consuming_second_item() {
+        let (mut app, client, layer_entity, _helper) = block_place_app(
+            inventory_with_item(item_instance(9451, "trade_crate", 2)),
+            DimensionKind::Overworld,
+        );
+        app.insert_resource(ItemRegistry::from_map(HashMap::from([
+            item_template_with_placeable("trade_crate", ItemCategory::Misc, Some("storage_crate")),
+        ])));
+
+        let pos = BlockPos::new(1, 64, 1);
+        for _ in 0..2 {
+            app.world_mut().send_event(BlockPlaceRequest {
+                client,
+                x: pos.x,
+                y: pos.y,
+                z: pos.z,
+                item_instance_id: 9451,
+                target_face: TrapTargetFace::Top,
+            });
+        }
+
+        app.update();
+
+        assert_eq!(
+            block_state_at(&app, layer_entity, pos),
+            Some(BlockState::AIR),
+            "container placement stays pure entity-backed and must not hide occupancy in ChunkLayer"
+        );
+        let container_count = app
+            .world_mut()
+            .query_filtered::<Entity, With<ContainerBlock>>()
+            .iter(app.world())
+            .count();
+        assert_eq!(
+            container_count, 1,
+            "same-tick duplicate placement must reserve the entity-backed target and spawn one container"
+        );
+        assert_eq!(
+            app.world()
+                .resource::<ExternalContainerRegistry>()
+                .sessions
+                .len(),
+            1,
+            "duplicate placement must not allocate a hidden second external container session"
+        );
+        assert_eq!(
+            inventory_template_count(&app, client, "trade_crate"),
+            1,
+            "duplicate entity-backed placement must reject before consuming the second stack item"
+        );
+    }
+
+    #[test]
+    fn breaking_open_container_entity_closes_session_and_drops_contents() {
+        let (mut app, client, _layer_entity, mut helper) = block_place_app(
+            inventory_with_item(item_instance(9601, "trade_crate", 1)),
+            DimensionKind::Overworld,
+        );
+        app.insert_resource(ItemRegistry::from_map(HashMap::from([
+            item_template_with_placeable("trade_crate", ItemCategory::Misc, Some("storage_crate")),
+            item_template("bone_coin_stack", ItemCategory::Misc),
+        ])));
+        app.insert_resource(InventoryInstanceIdAllocator::new(9700));
+        app.init_resource::<crate::inventory::DroppedLootRegistry>();
+        app.world_mut().entity_mut(client).insert((
+            GameMode::Survival,
+            CurrentDimension(DimensionKind::Overworld),
+        ));
+        app.add_event::<DiggingEvent>();
+        app.add_systems(
+            Update,
+            crate::world::container_block::handle_container_block_break,
+        );
+
+        let pos = BlockPos::new(1, 64, 1);
+        app.world_mut().send_event(BlockPlaceRequest {
+            client,
+            x: pos.x,
+            y: pos.y,
+            z: pos.z,
+            item_instance_id: 9601,
+            target_face: TrapTargetFace::Top,
+        });
+        app.update();
+
+        let container_entity = {
+            let mut query = app.world_mut().query::<(Entity, &mut ExternalContainer)>();
+            let (entity, mut ext) = query
+                .iter_mut(app.world_mut())
+                .next()
+                .expect("placed crate should spawn an ExternalContainer");
+            ext.opened_by = Some(client);
+            ext.container.items.push(PlacedItemState {
+                row: 0,
+                col: 0,
+                instance: item_instance(9602, "bone_coin_stack", 3),
+            });
+            entity
+        };
+        let session_id = app
+            .world()
+            .get::<ExternalContainer>(container_entity)
+            .expect("container should still exist before break")
+            .session_id;
+
+        send_stop_break(&mut app, client, pos);
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        assert!(
+            app.world().get_entity(container_entity).is_none(),
+            "breaking the container marker should despawn the entity"
+        );
+        assert!(
+            !app.world()
+                .resource::<ExternalContainerRegistry>()
+                .sessions
+                .contains_key(&session_id),
+            "breaking should remove the external container session"
+        );
+        let dropped = app
+            .world()
+            .resource::<crate::inventory::DroppedLootRegistry>();
+        assert!(
+            dropped
+                .entries
+                .values()
+                .any(|entry| entry.item.template_id == "trade_crate"),
+            "breaking should drop the container item itself"
+        );
+        assert!(
+            dropped
+                .entries
+                .values()
+                .any(|entry| entry.item.template_id == "bone_coin_stack"
+                    && entry.item.stack_count == 3),
+            "breaking should drop every item stored inside"
+        );
+        assert!(
+            has_loot_container_close_payload(
+                &mut helper,
+                LootContainerCloseReasonV1::ContainerDestroyed
+            ),
+            "breaking an opened container should force-close the player's loot UI"
+        );
+    }
+
+    #[test]
+    fn breaking_closed_empty_container_drops_only_container_without_close_payload() {
+        let (mut app, client, _layer_entity, mut helper) = block_place_app(
+            inventory_with_item(item_instance(9611, "trade_crate", 1)),
+            DimensionKind::Overworld,
+        );
+        app.insert_resource(ItemRegistry::from_map(HashMap::from([
+            item_template_with_placeable("trade_crate", ItemCategory::Misc, Some("storage_crate")),
+        ])));
+        app.insert_resource(InventoryInstanceIdAllocator::new(9710));
+        app.init_resource::<crate::inventory::DroppedLootRegistry>();
+        app.world_mut().entity_mut(client).insert((
+            GameMode::Survival,
+            CurrentDimension(DimensionKind::Overworld),
+        ));
+        app.add_event::<DiggingEvent>();
+        app.add_systems(
+            Update,
+            crate::world::container_block::handle_container_block_break,
+        );
+
+        let pos = BlockPos::new(1, 64, 1);
+        app.world_mut().send_event(BlockPlaceRequest {
+            client,
+            x: pos.x,
+            y: pos.y,
+            z: pos.z,
+            item_instance_id: 9611,
+            target_face: TrapTargetFace::Top,
+        });
+        app.update();
+
+        let container_entity = app
+            .world_mut()
+            .query_filtered::<Entity, With<ExternalContainer>>()
+            .iter(app.world())
+            .next()
+            .expect("placed crate should spawn an ExternalContainer");
+        let session_id = app
+            .world()
+            .get::<ExternalContainer>(container_entity)
+            .expect("container should still exist before break")
+            .session_id;
+
+        send_stop_break(&mut app, client, pos);
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        assert!(
+            app.world().get_entity(container_entity).is_none(),
+            "breaking a closed empty container should despawn the entity"
+        );
+        assert!(
+            !app.world()
+                .resource::<ExternalContainerRegistry>()
+                .sessions
+                .contains_key(&session_id),
+            "breaking should remove the closed container session"
+        );
+        let dropped = app
+            .world()
+            .resource::<crate::inventory::DroppedLootRegistry>();
+        assert_eq!(
+            dropped.entries.len(),
+            1,
+            "empty container break should drop only the container item"
+        );
+        assert!(
+            dropped
+                .entries
+                .values()
+                .all(|entry| entry.item.template_id == "trade_crate"),
+            "empty container break should not invent content drops"
+        );
+        assert!(
+            !has_loot_container_close_payload(
+                &mut helper,
+                LootContainerCloseReasonV1::ContainerDestroyed
+            ),
+            "closed container break should not emit a loot close payload"
+        );
+    }
+
+    #[test]
+    fn breaking_container_cleans_session_when_container_item_drop_fails() {
+        let (mut app, client, _layer_entity, mut helper) = block_place_app(
+            inventory_with_item(item_instance(9621, "trade_crate", 1)),
+            DimensionKind::Overworld,
+        );
+        app.insert_resource(ItemRegistry::from_map(HashMap::from([
+            item_template_with_placeable("trade_crate", ItemCategory::Misc, Some("storage_crate")),
+            item_template("bone_coin_stack", ItemCategory::Misc),
+        ])));
+        app.insert_resource(InventoryInstanceIdAllocator::new(9720));
+        app.init_resource::<crate::inventory::DroppedLootRegistry>();
+        app.world_mut().entity_mut(client).insert((
+            GameMode::Survival,
+            CurrentDimension(DimensionKind::Overworld),
+        ));
+        app.add_event::<DiggingEvent>();
+        app.add_systems(
+            Update,
+            crate::world::container_block::handle_container_block_break,
+        );
+
+        let pos = BlockPos::new(1, 64, 1);
+        app.world_mut().send_event(BlockPlaceRequest {
+            client,
+            x: pos.x,
+            y: pos.y,
+            z: pos.z,
+            item_instance_id: 9621,
+            target_face: TrapTargetFace::Top,
+        });
+        app.update();
+
+        let container_entity = {
+            let mut query = app.world_mut().query::<(Entity, &mut ExternalContainer)>();
+            let (entity, mut ext) = query
+                .iter_mut(app.world_mut())
+                .next()
+                .expect("placed crate should spawn an ExternalContainer");
+            ext.opened_by = Some(client);
+            ext.container.items.push(PlacedItemState {
+                row: 0,
+                col: 0,
+                instance: item_instance(9622, "bone_coin_stack", 3),
+            });
+            entity
+        };
+        let session_id = app
+            .world()
+            .get::<ExternalContainer>(container_entity)
+            .expect("container should still exist before break")
+            .session_id;
+
+        app.insert_resource(ItemRegistry::from_map(HashMap::from([item_template(
+            "bone_coin_stack",
+            ItemCategory::Misc,
+        )])));
+
+        send_stop_break(&mut app, client, pos);
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        assert!(
+            app.world().get_entity(container_entity).is_none(),
+            "failed container item drop must not leave a zombie container entity"
+        );
+        assert!(
+            !app.world()
+                .resource::<ExternalContainerRegistry>()
+                .sessions
+                .contains_key(&session_id),
+            "failed container item drop must still remove the session"
+        );
+        let dropped = app
+            .world()
+            .resource::<crate::inventory::DroppedLootRegistry>();
+        assert!(
+            dropped
+                .entries
+                .values()
+                .any(|entry| entry.item.template_id == "bone_coin_stack"
+                    && entry.item.stack_count == 3),
+            "failed container item drop should still drop stored contents"
+        );
+        assert!(
+            dropped
+                .entries
+                .values()
+                .all(|entry| entry.item.template_id != "trade_crate"),
+            "missing container template should skip only the container item drop"
+        );
+        assert!(
+            has_loot_container_close_payload(
+                &mut helper,
+                LootContainerCloseReasonV1::ContainerDestroyed
+            ),
+            "failed container item drop should still force-close an opened container"
+        );
+    }
+
+    #[test]
+    fn breaking_container_twice_in_same_tick_drops_once() {
+        let (mut app, client, _layer_entity, _helper) = block_place_app(
+            inventory_with_item(item_instance(9631, "trade_crate", 1)),
+            DimensionKind::Overworld,
+        );
+        app.insert_resource(ItemRegistry::from_map(HashMap::from([
+            item_template_with_placeable("trade_crate", ItemCategory::Misc, Some("storage_crate")),
+            item_template("bone_coin_stack", ItemCategory::Misc),
+        ])));
+        app.insert_resource(InventoryInstanceIdAllocator::new(9730));
+        app.init_resource::<crate::inventory::DroppedLootRegistry>();
+        app.world_mut().entity_mut(client).insert((
+            GameMode::Survival,
+            CurrentDimension(DimensionKind::Overworld),
+        ));
+        app.add_event::<DiggingEvent>();
+        app.add_systems(
+            Update,
+            crate::world::container_block::handle_container_block_break,
+        );
+
+        let pos = BlockPos::new(1, 64, 1);
+        app.world_mut().send_event(BlockPlaceRequest {
+            client,
+            x: pos.x,
+            y: pos.y,
+            z: pos.z,
+            item_instance_id: 9631,
+            target_face: TrapTargetFace::Top,
+        });
+        app.update();
+
+        {
+            let mut query = app.world_mut().query::<&mut ExternalContainer>();
+            let mut ext = query
+                .iter_mut(app.world_mut())
+                .next()
+                .expect("placed crate should spawn an ExternalContainer");
+            ext.container.items.push(PlacedItemState {
+                row: 0,
+                col: 0,
+                instance: item_instance(9632, "bone_coin_stack", 3),
+            });
+        }
+
+        send_stop_break(&mut app, client, pos);
+        send_stop_break(&mut app, client, pos);
+        app.update();
+
+        assert_eq!(
+            dropped_template_count(&app, "trade_crate"),
+            1,
+            "two same-tick break events should drop one container item, not duplicate economy output"
+        );
+        assert_eq!(
+            dropped_template_count(&app, "bone_coin_stack"),
+            1,
+            "two same-tick break events should drain stored contents once"
+        );
+    }
+
+    #[test]
+    fn breaking_container_matches_player_dimension() {
+        let (mut app, client, _layer_entity, _helper) = block_place_app(
+            inventory_with_item(item_instance(9641, "trade_crate", 1)),
+            DimensionKind::Tsy,
+        );
+        app.insert_resource(ItemRegistry::from_map(HashMap::from([
+            item_template_with_placeable("trade_crate", ItemCategory::Misc, Some("storage_crate")),
+        ])));
+        app.insert_resource(InventoryInstanceIdAllocator::new(9740));
+        app.init_resource::<crate::inventory::DroppedLootRegistry>();
+        app.world_mut()
+            .entity_mut(client)
+            .insert((GameMode::Survival, CurrentDimension(DimensionKind::Tsy)));
+        app.add_event::<DiggingEvent>();
+        app.add_systems(
+            Update,
+            crate::world::container_block::handle_container_block_break,
+        );
+
+        let pos = BlockPos::new(1, 64, 1);
+        app.world_mut().send_event(BlockPlaceRequest {
+            client,
+            x: pos.x,
+            y: pos.y,
+            z: pos.z,
+            item_instance_id: 9641,
+            target_face: TrapTargetFace::Top,
+        });
+        app.update();
+
+        let container_entity = app
+            .world_mut()
+            .query_filtered::<Entity, With<ExternalContainer>>()
+            .iter(app.world())
+            .next()
+            .expect("TSY placement should spawn a container entity");
+        let session_id = app
+            .world()
+            .get::<ExternalContainer>(container_entity)
+            .expect("container should carry external state")
+            .session_id;
+
+        app.world_mut()
+            .entity_mut(client)
+            .insert(CurrentDimension(DimensionKind::Overworld));
+        send_stop_break(&mut app, client, pos);
+        app.update();
+
+        assert!(
+            app.world().get_entity(container_entity).is_some(),
+            "Overworld break event at same coordinates must not despawn a TSY container"
+        );
+        assert!(
+            app.world()
+                .resource::<ExternalContainerRegistry>()
+                .sessions
+                .contains_key(&session_id),
+            "cross-dimension miss must keep the TSY container session registered"
+        );
+        assert_eq!(
+            dropped_template_count(&app, "trade_crate"),
+            0,
+            "cross-dimension miss must not create dropped loot"
+        );
+
+        app.world_mut()
+            .entity_mut(client)
+            .insert(CurrentDimension(DimensionKind::Tsy));
+        send_stop_break(&mut app, client, pos);
+        app.update();
+
+        assert!(
+            app.world().get_entity(container_entity).is_none(),
+            "TSY break event should despawn the TSY container"
+        );
+        assert_eq!(
+            dropped_template_dimension_count(&app, "trade_crate", DimensionKind::Tsy),
+            1,
+            "matched TSY break should drop the container item in TSY"
+        );
+    }
+
+    #[test]
     fn handler_rejects_missing_instance_without_consuming_or_writing() {
         let (mut app, client, layer_entity, _helper) = block_place_app(
             inventory_with_item(item_instance(9101, "earth_crumb", 1)),
@@ -972,6 +1683,49 @@ mod tests {
             inventory_template_count(&app, client, "earth_crumb"),
             1,
             "missing instance rejection must not consume inventory"
+        );
+    }
+
+    #[test]
+    fn handler_rejects_unknown_placeable_without_consuming_or_writing() {
+        let (mut app, client, layer_entity, _helper) = block_place_app(
+            inventory_with_item(item_instance(9501, "bad_crate", 1)),
+            DimensionKind::Overworld,
+        );
+        app.insert_resource(ItemRegistry::from_map(HashMap::from([
+            item_template_with_placeable("bad_crate", ItemCategory::Misc, Some("unknown_crate")),
+        ])));
+        app.world_mut().send_event(BlockPlaceRequest {
+            client,
+            x: 1,
+            y: 64,
+            z: 1,
+            item_instance_id: 9501,
+            target_face: TrapTargetFace::Top,
+        });
+
+        app.update();
+
+        assert_eq!(
+            block_state_at(&app, layer_entity, BlockPos::new(1, 64, 1)),
+            Some(BlockState::AIR)
+        );
+        assert_eq!(
+            inventory_template_count(&app, client, "bad_crate"),
+            1,
+            "unknown placeable marker must reject before consuming inventory"
+        );
+    }
+
+    #[test]
+    fn herb_crate_placed_uses_storage_crate_marker_but_places_herb_variant() {
+        assert_eq!(
+            placeable_kind_for_item("trade_crate", "storage_crate"),
+            Some(PlaceableBlockKind::StorageCrate { is_herb: false })
+        );
+        assert_eq!(
+            placeable_kind_for_item("herb_crate_placed", "storage_crate"),
+            Some(PlaceableBlockKind::StorageCrate { is_herb: true })
         );
     }
 
@@ -1139,6 +1893,7 @@ mod tests {
             tsy: scenario.layer,
         });
         app.insert_resource(FurnitureRegistry::default());
+        app.init_resource::<ExternalContainerRegistry>();
         app.add_event::<BlockPlaceRequest>();
         app.add_systems(Update, handle_block_place_requests);
 
@@ -1216,6 +1971,29 @@ mod tests {
             };
             if matches!(payload.payload, ServerDataPayloadV1::InventorySnapshot(_)) {
                 return true;
+            }
+        }
+        false
+    }
+
+    fn has_loot_container_close_payload(
+        helper: &mut MockClientHelper,
+        expected_reason: LootContainerCloseReasonV1,
+    ) -> bool {
+        for frame in helper.collect_received().0 {
+            let Ok(packet) = frame.decode::<CustomPayloadS2c>() else {
+                continue;
+            };
+            if packet.channel.as_str() != SERVER_DATA_CHANNEL {
+                continue;
+            }
+            let Ok(payload) = serde_json::from_slice::<ServerDataV1>(packet.data.0 .0) else {
+                continue;
+            };
+            if let ServerDataPayloadV1::LootContainerClose(close) = payload.payload {
+                if close.reason == expected_reason {
+                    return true;
+                }
             }
         }
         false
@@ -1339,5 +2117,27 @@ mod tests {
             .filter(|item| item.template_id == template_id)
             .map(|item| item.stack_count)
             .sum()
+    }
+
+    fn dropped_template_count(app: &App, template_id: &str) -> usize {
+        app.world()
+            .resource::<crate::inventory::DroppedLootRegistry>()
+            .entries
+            .values()
+            .filter(|entry| entry.item.template_id == template_id)
+            .count()
+    }
+
+    fn dropped_template_dimension_count(
+        app: &App,
+        template_id: &str,
+        dimension: DimensionKind,
+    ) -> usize {
+        app.world()
+            .resource::<crate::inventory::DroppedLootRegistry>()
+            .entries
+            .values()
+            .filter(|entry| entry.item.template_id == template_id && entry.dimension == dimension)
+            .count()
     }
 }

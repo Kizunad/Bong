@@ -87,9 +87,20 @@ public final class LootContainerHandler implements ServerDataHandler {
             return ServerDataDispatch.noOp(type, "Ignoring loot_container_close: missing session_id");
         }
         String reason = readString(payload, "reason", "unknown");
+        if (!isKnownCloseReason(reason)) {
+            return ServerDataDispatch.noOp(type,
+                "Ignoring loot_container_close: unknown reason " + reason);
+        }
         LootContainerStateStore.close(sessionId, reason);
         return ServerDataDispatch.handled(type,
             "loot_container_close session=" + sessionId + " reason=" + reason);
+    }
+
+    private static boolean isKnownCloseReason(String reason) {
+        return switch (reason) {
+            case "timeout", "distance", "player_closed", "coffin_destroyed", "container_destroyed" -> true;
+            default -> false;
+        };
     }
 
     static List<InventoryModel.GridEntry> parsePlacedItems(
