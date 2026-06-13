@@ -19,7 +19,11 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
+import textwrap
 import unittest
+from pathlib import Path
 
 from scripts.terrain_gen.dsl import QiGrade
 from scripts.terrain_gen.qi_field import QI_FIELD_BASE, qi_density_from_field
@@ -35,6 +39,10 @@ from scripts.terrain_gen.zones_export import (
     merge_zone_spirit_qi,
     resolve_spirit_qi_total,
 )
+
+
+# worldgen/ 目录（tests/ 的父）—— spawn 的 -O 子进程以此为 cwd 才能 import scripts.*.
+WORLDGEN_DIR = Path(__file__).resolve().parent.parent
 
 
 def _zone(name: str, *, cx: float, cz: float, half: float, grade: QiGrade,
@@ -259,6 +267,56 @@ class BudgetBalanceTest(unittest.TestCase):
         # 三 zone 各落不同档（font/common/negative），计数总和 == zone 数。
         total_zones = sum(b["zone_count"] for b in report.histogram)
         self.assertEqual(total_zones, len(self.zones))
+
+    def test_conservation_guard_survives_python_optimize(self) -> None:
+        # CodeRabbit P4 #1 — 守恒护栏是 P4 命脉，**不能用 assert**：``python -O``
+        # 会剥离 assert，届时即便配平违反也静默返回自相矛盾的 QiBudgetReport。
+        # 这里 spawn 一个 ``python3 -O`` 子进程，把 QI_BUDGET_EPSILON 调成负数让护栏
+        # 条件恒真（任何场景都触发），证明护栏在 -O 下仍 raise（=不是被剥离的 assert）。
+        code = textwrap.dedent(
+            """
+            import sys
+            assert not __debug__, "subprocess must run under -O (assert stripped)"
+            from scripts.terrain_gen import zones_export as ze
+            from scripts.terrain_gen.dsl import QiGrade
+            from scripts.terrain_gen.zones_export import (
+                ZoneQiInput, balance_qi_budget, derive_zone_spirit_qi,
+            )
+            # 容差设负 → abs(diff) >= -1 恒真 → 护栏必触发（若仍是 assert，-O 下静默放行）。
+            ze.QI_BUDGET_EPSILON = -1.0
+            zones = [ZoneQiInput(
+                name="a", bounds_xz=(-100, 100, -100, 100), grade=QiGrade.FONT,
+            )]
+            derived = derive_zone_spirit_qi(zones, enable_veins=False)
+            try:
+                balance_qi_budget(
+                    zones, derived, world_area=10_000_000.0, budget=100.0
+                )
+            except ValueError as exc:
+                assert "qi budget balance failed" in str(exc), str(exc)
+                print("GUARD_RAISED")
+                sys.exit(0)
+            print("GUARD_SILENT")
+            sys.exit(1)
+            """
+        )
+        proc = subprocess.run(
+            [sys.executable, "-O", "-c", code],
+            cwd=str(WORLDGEN_DIR),
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(
+            proc.returncode, 0,
+            msg=(
+                "守恒护栏在 python -O 下必须仍 raise ValueError（不是被剥离的 "
+                f"assert）；子进程 stdout={proc.stdout!r} stderr={proc.stderr!r}"
+            ),
+        )
+        self.assertIn(
+            "GUARD_RAISED", proc.stdout,
+            msg=f"-O 子进程未触发守恒护栏；stdout={proc.stdout!r}",
+        )
 
 
 # ===========================================================================

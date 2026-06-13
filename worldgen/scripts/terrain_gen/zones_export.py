@@ -408,12 +408,15 @@ def balance_qi_budget(
     wild_share = k * wild_mass
     zone_sum = float(sum(zone_shares.values()))
 
-    # 配平断言：归一后份额总和精确等于预算（守恒收口）。
-    assert abs(zone_sum + wild_share - budget) < QI_BUDGET_EPSILON, (
-        f"qi budget balance failed: Σ zone_shares ({zone_sum}) + wilderness "
-        f"({wild_share}) = {zone_sum + wild_share} != budget {budget} "
-        f"(tolerance {QI_BUDGET_EPSILON})"
-    )
+    # 配平守恒护栏：归一后份额总和精确等于预算。这是 P4 守恒命脉，**不能用
+    # assert**——``python -O`` 会剥离 assert，届时即便 zone_sum+wild_share != budget
+    # 也会静默返回一份自相矛盾的 QiBudgetReport。用显式 raise（-O 下仍生效）。
+    if abs(zone_sum + wild_share - budget) >= QI_BUDGET_EPSILON:
+        raise ValueError(
+            f"qi budget balance failed: Σ zone_shares ({zone_sum}) + wilderness "
+            f"({wild_share}) = {zone_sum + wild_share} != budget {budget} "
+            f"(tolerance {QI_BUDGET_EPSILON})"
+        )
 
     histogram = _grade_histogram(zones, derived_spirit_qi, zone_shares)
     return QiBudgetReport(
