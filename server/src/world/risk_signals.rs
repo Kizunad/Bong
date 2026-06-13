@@ -289,6 +289,7 @@ pub fn update_risk_signals(
 
     for zone in &zones.zones {
         let axes = heatmap.axes_for_zone(&zone.name);
+        // 以凝脉境作为 zone 基准感知，保持环境信号不随单个玩家境界波动。
         let profile = risk_signal_profile(zone.spirit_qi, axes, Realm::Condense);
         signal_map.by_zone.insert(zone.name.clone(), profile);
     }
@@ -305,12 +306,45 @@ mod tests {
     use crate::audio::SoundRecipeRegistry;
 
     #[test]
-    fn flora_signal_by_qi_covers_dead_sparse_gift_lush_and_negative() {
-        assert_eq!(flora_signal_for_qi(-0.1), FloraRiskSignal::InvertedMoss);
-        assert_eq!(flora_signal_for_qi(0.0), FloraRiskSignal::DeadAsh);
-        assert_eq!(flora_signal_for_qi(0.2), FloraRiskSignal::SparseGrey);
-        assert_eq!(flora_signal_for_qi(0.4), FloraRiskSignal::GiftGrowth);
-        assert_eq!(flora_signal_for_qi(0.6), FloraRiskSignal::LushBright);
+    fn flora_density_by_qi() {
+        for (spirit_qi, expected) in [
+            (-0.1, FloraRiskSignal::InvertedMoss),
+            (0.0, FloraRiskSignal::DeadAsh),
+            (0.1, FloraRiskSignal::DeadAsh),
+            (0.100001, FloraRiskSignal::SparseGrey),
+            (0.299999, FloraRiskSignal::SparseGrey),
+            (0.3, FloraRiskSignal::GiftGrowth),
+            (0.5, FloraRiskSignal::GiftGrowth),
+            (0.500001, FloraRiskSignal::LushBright),
+        ] {
+            assert_eq!(
+                flora_signal_for_qi(spirit_qi),
+                expected,
+                "spirit_qi={spirit_qi} 必须落入 plan P1 声明的植被风险区间"
+            );
+        }
+    }
+
+    #[test]
+    fn risk_signal_tier_from_score_covers_threshold_edges() {
+        for (score, expected) in [
+            (0, RiskSignalTier::Quiet),
+            (19, RiskSignalTier::Quiet),
+            (20, RiskSignalTier::Watchful),
+            (39, RiskSignalTier::Watchful),
+            (40, RiskSignalTier::Tense),
+            (59, RiskSignalTier::Tense),
+            (60, RiskSignalTier::Dangerous),
+            (79, RiskSignalTier::Dangerous),
+            (80, RiskSignalTier::Critical),
+            (100, RiskSignalTier::Critical),
+        ] {
+            assert_eq!(
+                RiskSignalTier::from_score(RiskScore(score)),
+                expected,
+                "RiskScore({score}) 必须映射到稳定的环境风险层级"
+            );
+        }
     }
 
     #[test]
