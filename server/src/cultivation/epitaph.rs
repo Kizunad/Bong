@@ -472,6 +472,30 @@ mod tests {
     }
 
     #[test]
+    fn summarize_peak_realm_takes_max_not_last_breakthrough() {
+        // 判别性 case：高境界先 push（tick=100），低境界后 push（tick=500）。
+        // .last() / .min_by_key() 均会选出 Induce；只有 .max_by_key(rank) 才返回 Spirit。
+        // 这把方向性 mutation 锁住。
+        let mut lr = make_life_record("Alice");
+        lr.push(BiographyEntry::BreakthroughSucceeded {
+            realm: Realm::Spirit, // 高境界在前
+            tick: 100,
+        });
+        lr.push(BiographyEntry::BreakthroughSucceeded {
+            realm: Realm::Induce, // 低境界在后（更晚 tick）
+            tick: 500,
+        });
+        let summary = summarize(&lr, 0);
+        assert_eq!(
+            summary.peak_realm,
+            Realm::Spirit,
+            "期望 peak_realm=Spirit（最高 rank），而非末项 Induce；\
+             若取 .last() 或 .min() 此断言会红——实际={:?}",
+            summary.peak_realm
+        );
+    }
+
+    #[test]
     fn summarize_pvp_encounter_death_fight_does_not_count_as_kill() {
         // PvpEncounter{outcome="death_fight"} 是对称记录：被杀的输家和击杀的赢家双方各收一条。
         // 无方向区分，直接计数会给输家凭空 +1 击杀（幻影战绩）。
@@ -1591,33 +1615,38 @@ mod tests {
 
     #[test]
     fn summarize_final_zone_empty_string_zone_is_skipped() {
-        // PvpEncounter 的 zone 为空串时不应被选为 final_zone（跳过逻辑：`!zone.is_empty()`）
+        // PvpEncounter 的 zone 为空串时不应被选为 final_zone（跳过逻辑：`!zone.is_empty()`）。
+        //
+        // 判别性布局：非空条目先 push（biography[0]），空串条目后 push（biography[1]）。
+        // .rev() 从末尾开始：先遇到空串 → !zone.is_empty() 守卫拒绝 → 再遇到非空 → 选中。
+        // 若删掉守卫，空串会被直接返回，断言红——mutation-proof。
         let mut lr = make_life_record("Alice");
+        lr.push(BiographyEntry::PvpEncounter {
+            counterparty_id: "offline:Charlie".to_string(),
+            outcome: "probe_fight".to_string(),
+            zone: "blood_valley".to_string(), // 先 push，biography[0]
+            context: "resource_point".to_string(),
+            observed_style: None,
+            appearance_hint: None,
+            qi_color_hint: None,
+            tick: 50,
+        });
         lr.push(BiographyEntry::PvpEncounter {
             counterparty_id: "offline:Bob".to_string(),
             outcome: "fled".to_string(),
-            zone: "".to_string(), // 空串，应跳过
+            zone: "".to_string(), // 后 push（biography[1]），.rev() 先遇到，应跳过
             context: "wilderness".to_string(),
             observed_style: None,
             appearance_hint: None,
             qi_color_hint: None,
             tick: 100,
         });
-        lr.push(BiographyEntry::PvpEncounter {
-            counterparty_id: "offline:Charlie".to_string(),
-            outcome: "probe_fight".to_string(),
-            zone: "blood_valley".to_string(), // 非空，应被选
-            context: "resource_point".to_string(),
-            observed_style: None,
-            appearance_hint: None,
-            qi_color_hint: None,
-            tick: 50, // tick 更早，但倒序扫所以先遇到 tick=100 的条目
-        });
-        // 倒序扫：先看 tick=100 空串（跳过），再看 tick=50 非空 → blood_valley
+        // .rev() 扫：先看 biography[1] 空串（!zone.is_empty() 拒绝），
+        // 再看 biography[0] "blood_valley"（通过）→ final_zone="blood_valley"
         let summary = summarize(&lr, 0);
         assert_eq!(
             summary.final_zone, "blood_valley",
-            "期望空串 zone 被跳过，最后一条非空 zone=blood_valley 被选中，实际={}",
+            "期望空串 zone 被 !zone.is_empty() 守卫跳过，回退到更早的非空 zone=blood_valley，实际={}",
             summary.final_zone
         );
     }
@@ -1642,28 +1671,36 @@ mod tests {
 
     #[test]
     fn summarize_final_zone_spirit_eye_empty_zone_string_is_skipped() {
-        // SpiritEyeBreakthrough.zone=Some("") 空串也应跳过（`!z.is_empty()` 守卫）
+        // SpiritEyeBreakthrough.zone=Some("") 空串也应跳过（`!z.is_empty()` 守卫）。
+        //
+        // 判别性布局：非空 PvpEncounter 先 push（biography[0]），
+        // 空串 SpiritEye 后 push（biography[1]）。
+        // .rev() 从末尾开始：先遇到 SpiritEye 空串 → !z.is_empty() 拒绝 →
+        // 再遇到 PvpEncounter rift_valley → 选中。
+        // 若删掉守卫，空串 Some("") 会被展开返回 ""，断言红——mutation-proof。
         let mut lr = make_life_record("Alice");
-        lr.push(BiographyEntry::SpiritEyeBreakthrough {
-            eye_id: "eye_02".to_string(),
-            zone: Some("".to_string()), // Some 但空串
-            tick: 150,
-        });
         lr.push(BiographyEntry::PvpEncounter {
             counterparty_id: "offline:Bob".to_string(),
             outcome: "fled".to_string(),
-            zone: "rift_valley".to_string(),
+            zone: "rift_valley".to_string(), // 先 push，biography[0]
             context: "wilderness".to_string(),
             observed_style: None,
             appearance_hint: None,
             qi_color_hint: None,
             tick: 50,
         });
-        // 倒序：先看 SpiritEye 空串（跳过），再看 PvpEncounter zone=rift_valley（选中）
+        lr.push(BiographyEntry::SpiritEyeBreakthrough {
+            eye_id: "eye_02".to_string(),
+            zone: Some("".to_string()), // 后 push（biography[1]），.rev() 先遇到，应跳过
+            tick: 150,
+        });
+        // .rev() 扫：先看 biography[1] SpiritEye 空串（!z.is_empty() 拒绝），
+        // 再看 biography[0] PvpEncounter zone=rift_valley（通过）→ final_zone="rift_valley"
         let summary = summarize(&lr, 0);
         assert_eq!(
             summary.final_zone, "rift_valley",
-            "期望 SpiritEyeBreakthrough.zone=Some(\"\") 跳过后，回退到更早的 PvpEncounter zone=rift_valley，实际={}",
+            "期望 SpiritEyeBreakthrough.zone=Some(\"\") 被 !z.is_empty() 守卫跳过，\
+             回退到更早的 PvpEncounter zone=rift_valley，实际={}",
             summary.final_zone
         );
     }
@@ -1811,6 +1848,59 @@ mod tests {
             entry.record_summary.peak_realm,
             Realm::Condense,
             "期望 record_summary.peak_realm 也为 Condense，与 EpitaphEntry.peak_realm 一致，实际={:?}",
+            entry.record_summary.peak_realm
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn system_peak_realm_max_by_rank_not_last_entry() {
+        // 判别性 case（系统层）：Spirit 先写入（tick=100），Induce 后写入（tick=500）。
+        // 若实现是 .last() 则 peak_realm=Induce；只有 .max_by_key(rank) 才返回 Spirit。
+        let (settings, root) = temp_persistence("sys-peak-realm-max");
+        let mut app = App::new();
+        app.insert_resource(settings.clone());
+        app.init_resource::<WorldEpitaphRegistry>();
+        app.add_event::<PlayerTerminated>();
+        app.add_systems(valence::prelude::Update, epitaph_generation_system);
+
+        let mut lr = LifeRecord::new(canonical_player_id("RuoXi"));
+        lr.push(BiographyEntry::BreakthroughSucceeded {
+            realm: Realm::Spirit, // 高境界先写入
+            tick: 100,
+        });
+        lr.push(BiographyEntry::BreakthroughSucceeded {
+            realm: Realm::Induce, // 低境界后写入（末条）
+            tick: 500,
+        });
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                lr,
+                crate::combat::components::Lifecycle {
+                    character_id: canonical_player_id("RuoXi"),
+                    death_count: 1,
+                    ..Default::default()
+                },
+            ))
+            .id();
+        app.world_mut().send_event(PlayerTerminated { entity });
+        app.update();
+
+        let registry = app.world().resource::<WorldEpitaphRegistry>();
+        let entry = registry.entries.values().next().expect("应生成一条碑刻");
+        assert_eq!(
+            entry.peak_realm,
+            Realm::Spirit,
+            "期望 peak_realm=Spirit（rank 最高），不能取末条 Induce；\
+             若实现是 .last() 此断言会红——实际={:?}",
+            entry.peak_realm
+        );
+        assert_eq!(
+            entry.record_summary.peak_realm,
+            Realm::Spirit,
+            "期望 record_summary.peak_realm 与 EpitaphEntry.peak_realm 一致=Spirit，实际={:?}",
             entry.record_summary.peak_realm
         );
         let _ = std::fs::remove_dir_all(root);
