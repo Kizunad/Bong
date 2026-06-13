@@ -4,6 +4,7 @@ pub mod block_place;
 pub mod bong_blocks;
 pub mod calamity;
 pub mod container_block;
+pub mod container_open;
 pub mod dimension;
 pub mod dimension_transfer;
 pub mod entity_model;
@@ -127,6 +128,7 @@ pub fn register(app: &mut App) {
     block_break::register(app);
     block_drop::register(app);
     container_block::register(app);
+    container_open::register(app);
     block_place::register(app);
     zone::register(app);
     environment::register(app);

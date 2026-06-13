@@ -322,6 +322,8 @@ pub struct ClientRequestDispatchParams<'w> {
         Option<ResMut<'w, crate::inventory::external_container::ExternalContainerRegistry>>,
     pub supply_coffin_open_tx:
         Option<ResMut<'w, Events<crate::supply_coffin::interact::SupplyCoffinOpenRequest>>>,
+    pub container_open_tx:
+        Option<ResMut<'w, Events<crate::world::container_open::ContainerOpenRequest>>>,
     // ─── plan-dying-elder-v1 P1：垂死大能给丹 C2S ──────────────────
     pub give_dan_to_elder_tx:
         Option<ResMut<'w, Events<crate::fauna::dying_elder::GiveDanToElderIntent>>>,
@@ -560,6 +562,7 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::CraftStart { v, .. }
             | ClientRequestV1::CraftCancel { v }
             | ClientRequestV1::SupplyCoffinOpen { v, .. }
+            | ClientRequestV1::ContainerOpen { v, .. }
             | ClientRequestV1::WorkbenchOpen { v, .. }
             | ClientRequestV1::ExternalContainerMove { v, .. }
             | ClientRequestV1::ExternalContainerClose { v, .. }
@@ -2132,6 +2135,38 @@ pub fn handle_client_request_payloads(
                 } else {
                     tracing::warn!(
                         "[bong][network] dropped supply_coffin_open because SupplyCoffinOpenRequest event resource is missing"
+                    );
+                }
+            }
+            // ── 通用世界容器 entity-based open（plan-placeable-container-blocks-v1 P1）──
+            ClientRequestV1::ContainerOpen { entity_id, .. } => {
+                tracing::info!(
+                    "[bong][network] client_request container_open entity={:?} target_id={entity_id}",
+                    ev.client
+                );
+                let Some(entity_manager) = combat_params.entity_manager.as_deref() else {
+                    tracing::warn!(
+                        "[bong][network] dropped container_open because EntityManager resource is missing"
+                    );
+                    continue;
+                };
+                let Some(target) = entity_manager.get_by_id(entity_id) else {
+                    tracing::debug!(
+                        "[bong][network] container_open rejected: no entity for protocol id {entity_id}"
+                    );
+                    if let Ok((_username, mut client)) = clients.get_mut(ev.client) {
+                        client.send_chat_message("§c[容器] 目标不存在。");
+                    }
+                    continue;
+                };
+                if let Some(container_open_tx) = dispatch.container_open_tx.as_deref_mut() {
+                    container_open_tx.send(crate::world::container_open::ContainerOpenRequest {
+                        client: ev.client,
+                        target,
+                    });
+                } else {
+                    tracing::warn!(
+                        "[bong][network] dropped container_open because ContainerOpenRequest event resource is missing"
                     );
                 }
             }
@@ -3719,6 +3754,7 @@ mod tests {
         app.add_event::<crate::coffin::CoffinBreakRequest>();
         app.add_event::<crate::coffin::CoffinMenuReclaimRequest>();
         app.add_event::<crate::craft::WorkbenchOpenRequest>();
+        app.add_event::<crate::world::container_open::ContainerOpenRequest>();
         app.add_event::<StartTillRequest>();
         app.add_event::<StartRenewRequest>();
         app.add_event::<StartPlantingRequest>();
@@ -4096,6 +4132,35 @@ mod tests {
             events.iter_current_update_events().count(),
             0,
             "workbench_open must not fabricate an ECS entity when EntityManager is unavailable"
+        );
+    }
+
+    #[test]
+    fn container_open_payload_requires_entity_manager_before_dispatch() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let client = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"container_open","v":1,"entity_id":42}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+
+        app.update();
+
+        let events = app
+            .world()
+            .resource::<valence::prelude::Events<crate::world::container_open::ContainerOpenRequest>>();
+        assert_eq!(
+            events.iter_current_update_events().count(),
+            0,
+            "container_open must not fabricate an ECS entity when EntityManager is unavailable"
         );
     }
 
