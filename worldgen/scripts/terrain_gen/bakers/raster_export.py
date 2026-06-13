@@ -300,6 +300,7 @@ def export_rasters(
         # worldgen-v4 P4 §8.1 #3 — 导出期灵气预算配平报表（zone 份额 + wilderness
         # 余量 + qi_grade 六档直方图）。total == BONG_SPIRIT_QI_TOTAL 预算口径。
         "qi_budget_report": qi_budget_report,
+        "qi_density_source": "qi_field",
         "semantic_layers": [
             name
             for name in (
