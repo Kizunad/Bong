@@ -45,7 +45,7 @@
 
 | 阶段 | 状态 | 主要交付物 | 验收标准 |
 |------|------|-----------|---------|
-| **P0** | ⬜ | `EpitaphEntry` 数据模型 + `WorldEpitaphRegistry` + `FinalDeathEvent` → 碑刻生成系统（Server 内存 + SQLite 持久化）| multi-life-v1 触发最终死亡 → EpitaphRegistry 有新条目 + ≥ 8 单测 |
+| **P0** | ✅ 2026-06-13 | `EpitaphEntry` 数据模型 + `WorldEpitaphRegistry` + `FinalDeathEvent` → 碑刻生成系统（Server 内存 + SQLite 持久化）| multi-life-v1 触发最终死亡 → EpitaphRegistry 有新条目 + ≥ 8 单测 |
 | **P1** | ⬜ | `EpitaphBlock` structure 置入世界（最后灵龛坐标）+ `FinalThoughtSubmitC2s` 临终遗念提交 | 最终死亡 → 灵龛坐标产生遗念碑方块；存活玩家可查看到碑刻 |
 | **P2** | ⬜ | Client 查阅 UI（`EpitaphInspectS2c`）：右键碑 → 显示生平摘要面板（最高境界/击杀数/遗念） | 查阅全链路 e2e；面板内容与 LifeRecordSummary 对齐 |
 | **P3** | ⬜ | Agent 接入：`world_state.epitaphs` 字段 + era.md "新一世开场叙事"引用亡者博物馆条目 | agent narration 可引用最近一位陨落修士；era_decree 叙事有碑刻素材 |
@@ -134,3 +134,33 @@
 **决议**：属 P1 `EpitaphBlock` 世界置入范围，P0 无 block 实体，不实装。Valence 实现方式待 P1 调研。
 
 **落点**：plan §P1（P1 实施时补落点）
+
+---
+
+## P0 落地记录（多 PR plan 阶段进展，非归档 Finish Evidence）
+
+碑刻数据模型 + 生成系统落地（纯 server，无 client/agent，无 QiTransfer）。终死亡 → 提取生平摘要 → 创建碑刻 → 写 Registry + SQLite 持久化，端到端闭环。
+
+### 落地清单
+- `server/src/cultivation/epitaph.rs`（新）：`EpitaphId`(uuid v7) + `LifeRecordSummary{peak_realm, total_kills, total_deaths, signature_skill_ids, final_zone}` + `FinalThought{None|LocationHint|RevengeHint|InsightHint}`(补 None 占位变体) + `EpitaphEntry` + `WorldEpitaphRegistry{IndexMap, max_cap:1000}`(超 cap 淘汰最旧 entry，SQLite 永久保留) + `PendingFinalThoughtStore`(P1 软依赖占位) + `EpitaphGenerationSystem`
+- `server/src/persistence/mod.rs`：SQLite 迁移 **v30→v31** `epitaphs` 表（epitaph_id PK + entry_json + ...，仿 deceased_snapshots）+ `persist_epitaph` upsert + round-trip
+- `server/Cargo.toml`：加 `indexmap`(serde) 依赖
+- `server/src/cultivation/components.rs`：`Realm::rank()`（Realm 未 derive Ord，用 rank 取峰值）
+
+### 关键 commit（5，2026-06-13）
+`4a2d3e65f` P0 数据模型+系统+SQLite · `fba8d3876`/`8644273f6` total_kills 方向修正（见下）+ final_realm→peak_realm + player_name · `be635b910` peak_realm/final_zone mutation-proof 测试 · `4b37b411c` §8.1 决议
+
+### 测试
+`cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` → **8933 passed / 0 failed**（epitaph 模块 45 测试：Summary 字段提取 / Registry cap1000 淘汰 / SQLite round-trip / PlayerTerminated 触发生成 / NpcMarker 过滤 / FinalThought 装配 / peak_realm 取 max 判别 / death_fight 不计 kills）
+
+### ⚠️ 设计偏差决议（plan 假设 vs 真实代码）
+- **§8#1 终死亡信号**：plan 假设的 `FinalDeathEvent` / `is_multilife_terminal` **全仓不存在**。真实终死亡信号是 **`PlayerTerminated`**（`death_hooks.rs:54`，由 `combat/lifecycle.rs:1532/1572` 仅在不可再生路径 emit，重生路径绝不 emit）。`EpitaphGenerationSystem` 监听它 + 过滤 `NpcMarker`（PlayerTerminated 也为 NPC 终死亡 emit）生成玩家碑刻。**用既有 event，不造 FinalDeathEvent**。（详见 §8.1）
+- **total_kills 只数定向 `TribulationIntercepted`**：对抗审查 3 轮逼正——`JueBiKilled`（死者自己绝壁劫殁亡，语义反向）和 `PvpEncounter{outcome="death_fight"}`（**对称记录**，格斗双方 biography 都写、无 killer/victim 方向 → 被杀输家也算击杀=幻影战绩）均**不计入**。唯一定向击杀是 `TribulationIntercepted`（只截劫者记）。**死代码/对称 over-count 已彻底剔除**。
+- **`final_realm`→`peak_realm`（诚实降级）**：P0 读不到死时境界（`Cultivation` 在 `on_player_terminated` 已 remove，biography 只有 `BreakthroughSucceeded` 峰值无回退记录），故诚实记录峰值境界。
+
+### 遗留 / 后续（P1+）
+- **PvP 定向击杀**：`PvpEncounter` 模型缺 winner/survived 字段，P1 补字段后把 PvP 致死击杀（赢家+1）接回 `total_kills`（当前碑刻战绩仅含截劫，偏低但不虚高）。
+- **死时境界快照**：P1 在 `PlayerTerminated` 前把死时 realm 快照进 LifeRecord，区分 `peak` vs `at_death`。
+- **P1 世界置入**：碑刻坐标选择（死亡 vs 灵龛）、`PendingFinalThoughtStore` 实装、每玩家最多 3 碑、`EpitaphBlock` 不可破坏方块、遗念隐语渲染（§8#2-#5）。
+- **player_name**：当前优先 Username component，fallback character_id；P2 client UI 接线时确认显示名来源。
+- 本 P0 **不产生 QiTransfer**（纯只读 LifeRecord 生成碑刻）——reverify 守恒确认。
