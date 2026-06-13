@@ -426,6 +426,38 @@ class ZonesJsonMergeTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "not in"):
             merge_zone_spirit_qi(self._doc()["zones"], {"gamma": 0.5})
 
+    def test_idempotent_whitelist_is_the_governance_contract(self) -> None:
+        # IDEMPOTENT_ZONE_FIELDS 是 §8.1 #11 写权限护栏的白名单（load-bearing，
+        # 非纯文档常量）：导出只允许覆写这些字段。
+        self.assertEqual(
+            ze.IDEMPOTENT_ZONE_FIELDS,
+            ("name", "aabb", "spirit_qi", "danger_level"),
+        )
+
+    def test_spirit_qi_write_passes_whitelist_guard(self) -> None:
+        # 正例：只覆写 spirit_qi（白名单内）→ 护栏不误报，运行时字段全保留。
+        merged = merge_zone_spirit_qi(
+            self._doc()["zones"], {"alpha": 0.4, "beta": 0.4}
+        )
+        by_name = {z["name"]: z for z in merged}
+        self.assertAlmostEqual(by_name["alpha"]["spirit_qi"], 0.4)
+        self.assertEqual(by_name["alpha"]["active_events"], ["e1"])
+
+    def test_whitelist_guard_catches_runtime_field_clobber(self) -> None:
+        # 反例：若导出意外改了非白名单的运行时字段（active_events），护栏必须撞红。
+        # merge 自身只写 spirit_qi，故构造一个"派生写入会顺手改运行时字段"的场景：
+        # 用一个把 active_events 也塞进派生映射的子类化无法触发，改为直接验证护栏逻辑
+        # ——把现有 zone 的 active_events 与导出值制造差异后调用底层断言路径。
+        # 这里通过一个伪造的 merge：临时给白名单收紧（去掉 spirit_qi）使合法写也撞红，
+        # 证明护栏确实以 IDEMPOTENT_ZONE_FIELDS 驱动（白名单收紧→spirit_qi 写被拦）。
+        import unittest.mock as mock
+
+        with mock.patch.object(
+            ze, "IDEMPOTENT_ZONE_FIELDS", ("name", "aabb", "danger_level")
+        ):
+            with self.assertRaisesRegex(AssertionError, "clobbered non-idempotent"):
+                merge_zone_spirit_qi(self._doc()["zones"], {"alpha": 0.99})
+
     def test_build_zones_file_stamps_generated_by_and_keeps_top_keys(self) -> None:
         doc = self._doc()
         doc["some_other_top_key"] = "keep_me"

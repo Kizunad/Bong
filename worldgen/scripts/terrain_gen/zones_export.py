@@ -107,7 +107,10 @@ def resolve_spirit_qi_total() -> float:
 # 归一是单次乘法（k = budget / M），误差只来自 float64 累加舍入，1e-6 足够紧。
 QI_BUDGET_EPSILON = 1e-6
 
-# 幂等字段白名单（§8.1 #11）—— 导出只覆写这些；其余字段 merge 保留。
+# 幂等字段白名单（§8.1 #11）—— 导出**只允许覆写**这些；其余字段（运行时手工
+# active_events / patrol_anchors / blocked_tiles + 扩展 ambient_recipe_id ...）一律
+# merge 保留。``merge_zone_spirit_qi`` 用它做**写权限护栏**：合并后逐字段对拍，断言
+# 任何值发生变化的 key 都落在此白名单内，否则即 clobber 了运行时字段（红线，宁炸）。
 IDEMPOTENT_ZONE_FIELDS = ("name", "aabb", "spirit_qi", "danger_level")
 
 
@@ -460,6 +463,21 @@ def merge_zone_spirit_qi(
             sq = float(np.clip(derived_spirit_qi[name], QI_FIELD_MIN, QI_FIELD_MAX))
             # 6 位小数足够（场派生噪声远粗于此），避免 float64 尾巴污染 diff。
             new_zone["spirit_qi"] = round(sq, 6)
+        # 写权限护栏（§8.1 #11）：merge 后任何值变化的 key 都必须落在幂等白名单内，
+        # 否则即 clobber 了运行时手工字段（active_events / patrol_anchors / ...）—— 红线。
+        # 以白名单驱动，使 IDEMPOTENT_ZONE_FIELDS 真正 load-bearing 而非纯文档常量。
+        clobbered = [
+            key
+            for key in set(zone) | set(new_zone)
+            if key not in IDEMPOTENT_ZONE_FIELDS
+            and zone.get(key) != new_zone.get(key)
+        ]
+        if clobbered:
+            raise AssertionError(
+                f"merge_zone_spirit_qi clobbered non-idempotent field(s) "
+                f"{sorted(clobbered)} on zone {name!r}; export may only mutate "
+                f"{IDEMPOTENT_ZONE_FIELDS} (§8.1 #11 绝不 clobber 运行时字段)"
+            )
         merged.append(new_zone)
     return merged
 
