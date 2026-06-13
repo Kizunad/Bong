@@ -8,6 +8,7 @@ mod flora;
 mod giant_sword;
 pub(crate) mod mega_tree;
 pub(crate) mod nbt_io;
+pub(crate) mod nbt_registry;
 mod noise;
 mod raster;
 mod spatial;
@@ -98,6 +99,17 @@ struct GeneratedChunks {
 impl Resource for GeneratedChunks {}
 
 pub fn register(app: &mut App) {
+    // worldgen-v4 P6 §8.1 #10 — decompress every decoration NBT template once at
+    // app-build time and hold it resident for the process lifetime, so chunk-gen
+    // stamps are memcpy-level (no runtime gzip). Bootstrap-path agnostic: inserted
+    // for raster / flat / anvil worlds alike. A missing `decorations/` dir (assets
+    // authored in a later P6 stage) loads an empty registry — never panics.
+    let deco_registry = nbt_registry::DecorationNbtRegistry::load_default();
+    tracing::info!(
+        "[bong][world] decoration NBT registry: {} templates resident",
+        deco_registry.len()
+    );
+    app.insert_resource(deco_registry);
     app.insert_resource(GeneratedChunks::default())
         .insert_resource(TickRateProbe::default())
         .add_systems(

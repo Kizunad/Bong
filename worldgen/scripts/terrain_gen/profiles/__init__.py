@@ -3,7 +3,12 @@ from __future__ import annotations
 from .ash_dead_zone import AshDeadZoneGenerator
 from .abyssal_maze import AbyssalMazeGenerator
 from .ancient_battlefield import AncientBattlefieldGenerator
-from .base import DecorationSpec, ProfileContext, TerrainProfileGenerator
+from .base import (
+    DecorationSpec,
+    ProfileContext,
+    TerrainProfileGenerator,
+    decoration_payload,
+)
 from .broken_peaks import BrokenPeaksGenerator
 from .dan_zong_yi_yuan import DanZongYiYuanGenerator
 from .cave_network import CaveNetworkGenerator
@@ -119,12 +124,7 @@ def _build_global_decoration_palette() -> tuple[
                 "global_id": next_id + local_idx,
                 "profile": "wilderness",
                 "local_id": local_idx + 1,
-                "name": deco.name,
-                "kind": deco.kind,
-                "blocks": list(deco.blocks),
-                "size_range": list(deco.size_range),
-                "rarity": deco.rarity,
-                "notes": deco.notes,
+                **decoration_payload(deco),
             }
         )
     next_id += len(WILDERNESS_GROUND_COVER)
@@ -140,12 +140,7 @@ def _build_global_decoration_palette() -> tuple[
                     "global_id": next_id + local_idx,
                     "profile": profile_name,
                     "local_id": local_idx + 1,
-                    "name": deco.name,
-                    "kind": deco.kind,
-                    "blocks": list(deco.blocks),
-                    "size_range": list(deco.size_range),
-                    "rarity": deco.rarity,
-                    "notes": deco.notes,
+                    **decoration_payload(deco),
                 }
             )
         next_id += len(gen.ecology.decorations)

@@ -9,6 +9,15 @@ from ..blueprint import BlueprintZone, TerrainProfileSpec
 from ..fields import DEFAULT_FIELD_LAYERS, ZoneFieldPlan
 
 
+# worldgen-v4 P6 §8.1 — anchor enum for NBT-driven decorations. Mirrors the Rust
+# `DecorationAnchor` variants in `server/src/world/terrain/nbt_registry.rs`; any
+# change here must change there (and the serde rename pin test) in lockstep.
+#   "ground"        — stamp origin sits on the ground surface (top_y + 1).
+#   "embedded"      — stamp sinks one block into the surface (grave_mound dome).
+#   "hanging"       — stamp hangs below a sky-isle underside (bottom_y − 1).
+DECORATION_ANCHORS: tuple[str, ...] = ("ground", "embedded", "hanging")
+
+
 @dataclass(frozen=True)
 class DecorationSpec:
     """A single piece of large-scale terrain flora/decor.
@@ -27,6 +36,16 @@ class DecorationSpec:
         "mushroom"  — wide-capped growth (overworld / nether hybrid)
         "flower"    — small single-block flora
         "coral"     — branching underwater / hanging structure
+
+    worldgen-v4 P6 §8.1 NBT pipeline:
+        ``nbt_templates`` — relative paths (under ``server/structures/``) of the
+        authored NBT variants for this decoration; the server picks one
+        deterministically per placement and stamps it (memcpy-level, no runtime
+        gzip). Empty tuple ⇒ this spec stays on the §8.1 #9 procedural path
+        (mega_tree / decoration.rs / ground cover / aquatic / single-block flower).
+        ``anchor`` — how the stamped template is positioned relative to the
+        column surface; one of :data:`DECORATION_ANCHORS`. ``size_range`` is the
+        legacy procedural knob and is ignored once ``nbt_templates`` is set.
     """
 
     name: str
@@ -35,6 +54,40 @@ class DecorationSpec:
     size_range: tuple[int, int] = (3, 6)
     rarity: float = 0.5
     notes: str = ""
+    # P6 §8.1 — NBT-driven placement. Default empty/ground keeps every existing
+    # spec on the procedural path, so adding these fields is backward-compatible.
+    nbt_templates: tuple[str, ...] = ()
+    anchor: str = "ground"
+
+    def __post_init__(self) -> None:
+        if self.anchor not in DECORATION_ANCHORS:
+            raise ValueError(
+                f"DecorationSpec '{self.name}' has anchor={self.anchor!r}; "
+                f"must be one of {DECORATION_ANCHORS}. Mismatch with the Rust "
+                f"DecorationAnchor enum would silently mis-place stamps."
+            )
+
+
+def decoration_payload(deco: DecorationSpec) -> dict[str, object]:
+    """The spec → manifest dict fields shared by every palette serializer.
+
+    Both the global palette builder (``profiles/__init__.py``) and the
+    per-profile ecology view (``bakers/raster_export.py``) route through this so
+    a new ``DecorationSpec`` field shows up in *both* manifest paths with no
+    chance of one going stale. Callers add their own ``global_id`` / ``local_id``
+    keys on top.
+    """
+    return {
+        "name": deco.name,
+        "kind": deco.kind,
+        "blocks": list(deco.blocks),
+        "size_range": list(deco.size_range),
+        "rarity": deco.rarity,
+        "notes": deco.notes,
+        # P6 §8.1 — NBT-driven placement fields.
+        "nbt_templates": list(deco.nbt_templates),
+        "anchor": deco.anchor,
+    }
 
 
 @dataclass(frozen=True)
