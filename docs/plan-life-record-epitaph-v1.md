@@ -97,3 +97,40 @@
 3. **碑刻位置选择**：最后灵龛坐标 vs 实际死亡坐标。灵龛坐标更有意义（玩家"经营"的据点），死亡坐标更有戏剧性（战场/险地）。建议：以死亡坐标为主；若死亡在坍缩渊（负灵域/另一维度），则 fallback 到最后灵龛坐标
 4. **遗念内容格式**：`FinalThought::LocationHint` 的 `content` 字段是坐标字符串还是语义描述？明确坐标（"X:-2400, Z:800"）vs 隐语（"血谷东侧 200 格的地下"）——建议 LocationHint 存坐标但 client 以隐语渲染，不直接暴露数字
 5. **碑刻不可破坏**：设计意图是"永久遗物"，但 Minecraft 原版任何方块都可以被破坏。是否给 EpitaphBlock 加 `unbreakable` flag？建议是；但需确认 Valence 如何实现方块不可破坏（自定义 CustomBlock 或 Bedrock block 类型）
+
+全部已在 §8.1 收口。原表保留以备追溯，**实施时以 §8.1 决议为准**。
+
+## §8.1 决议（pre-P0 收口，2026-06-13）
+
+### #1 真实终死亡信号（P0 核心接入面）
+
+**决议**：
+1. P0 使用真实存在的 `PlayerTerminated` event，而非 plan 文档虚构的 `FinalDeathEvent`。
+2. `PlayerTerminated` 由 `combat/lifecycle.rs:1532` 和 `:1572` 在不可再生路径 emit；`death_hooks.rs:54` 声明该 struct。`EpitaphGenerationSystem` 监听 `EventReader<PlayerTerminated>`，通过 `Without<NpcMarker>` query filter 排除 NPC entity，只为玩家生成碑刻。
+3. plan §P0 中所有 `FinalDeathEvent` 引用均已由 `PlayerTerminated` 替代——P0 已实装，信号命名已收口，后续阶段不再沿用 plan 原虚构名。
+
+**落点**：`server/src/cultivation/death_hooks.rs:54`（struct 声明）·`server/src/combat/lifecycle.rs:1532,1572`（emit 点）·`server/src/cultivation/epitaph.rs:262-279`（EpitaphGenerationSystem 监听 + Without<NpcMarker>）
+
+### #2 碑刻数量上限（P1）
+
+**决议**：属 P1 世界置入范围，P0 不实装。`WorldEpitaphRegistry` 内存上限已实装为 1000 条（`registry_cap_exactly_1000_does_not_evict` 测试覆盖），SQLite 永久存档不受上限影响；每玩家展示限制待 P1 设计。
+
+**落点**：`server/src/cultivation/epitaph.rs`（P0 已落，P1 扩展）
+
+### #3 碑刻位置选择（P1）
+
+**决议**：属 P1 `EpitaphPlacementSystem` 范围，P0 不实装。死亡坐标优先、坍缩渊 fallback 灵龛坐标的逻辑待 P1 立项时落地。
+
+**落点**：plan §P1（P1 实施时补落点）
+
+### #4 遗念内容格式（P1）
+
+**决议**：属 P1 临终遗念提交范围。`FinalThought` struct 已在 P0 定义（`LocationHint/RevengeHint/InsightHint/None`），格式细节（坐标字符串 vs 语义描述）待 P1 实装时决议。
+
+**落点**：`server/src/cultivation/epitaph.rs`（FinalThought struct，P1 扩展格式）
+
+### #5 碑刻不可破坏（P1）
+
+**决议**：属 P1 `EpitaphBlock` 世界置入范围，P0 无 block 实体，不实装。Valence 实现方式待 P1 调研。
+
+**落点**：plan §P1（P1 实施时补落点）
