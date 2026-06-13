@@ -37,8 +37,8 @@ pub mod identity;
 pub const DEFAULT_DATABASE_PATH: &str = "data/bong.db";
 pub const SQLITE_BUSY_TIMEOUT_MS: u64 = 15_000;
 const DEFAULT_DECEASED_PUBLIC_DIR: &str = "../library-web/public/deceased";
-/// plan-faction-expansion-v1 P0：v30 新增 social_faction_memberships.named_faction 列。
-const CURRENT_USER_VERSION: i32 = 30;
+/// plan-life-record-epitaph-v1 P0：v31 新增 epitaphs 碑刻表。
+const CURRENT_USER_VERSION: i32 = 31;
 const AGENT_WORLD_MODEL_ROW_ID: i64 = 1;
 const ASCENSION_QUOTA_ROW_ID: i64 = 1;
 const TRIBULATION_KIND_DU_XU: &str = "du_xu";
@@ -1887,6 +1887,34 @@ fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<()> {
         }
         // 无论表是否存在，均升版本号（前置 migration 会在 v15 建表，本 migration 幂等）。
         transaction.execute_batch("PRAGMA user_version = 30;")?;
+        transaction.commit()?;
+    }
+
+    let current_version: i32 =
+        connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
+    if current_version < 31 {
+        // plan-life-record-epitaph-v1 P0：碑刻持久化表。
+        //
+        // epitaph_id TEXT PRIMARY KEY（UUID v7，时序可排序）；
+        // entry_json TEXT NOT NULL（EpitaphEntry serde_json 全量序列化）；
+        // death_tick / schema_version / last_updated_wall 便于运维查询与版本迁移。
+        // 永久保留语义：内存 WorldEpitaphRegistry 超 cap 淘汰时不删除本表行。
+        let transaction = connection.transaction()?;
+        transaction.execute_batch(
+            "
+            CREATE TABLE IF NOT EXISTS epitaphs (
+                epitaph_id          TEXT PRIMARY KEY,
+                character_id        TEXT NOT NULL,
+                entry_json          TEXT NOT NULL,
+                death_tick          INTEGER NOT NULL CHECK (death_tick >= 0),
+                schema_version      INTEGER NOT NULL CHECK (schema_version >= 1),
+                last_updated_wall   INTEGER NOT NULL CHECK (last_updated_wall >= 0)
+            );
+            CREATE INDEX IF NOT EXISTS idx_epitaphs_character_id
+            ON epitaphs (character_id);
+            PRAGMA user_version = 31;
+            ",
+        )?;
         transaction.commit()?;
     }
 
@@ -6622,6 +6650,83 @@ fn collect_files_with_suffix(root: &Path, suffix: &str) -> io::Result<Vec<PathBu
         }
     }
     Ok(files)
+}
+
+// ─── plan-life-record-epitaph-v1 P0：碑刻持久化 ───────────────────────────────
+
+/// 持久化一条碑刻到 SQLite epitaphs 表（幂等 ON CONFLICT DO UPDATE）。
+///
+/// 仿 `upsert_deceased_snapshot` 的 INSERT...ON CONFLICT 模式（:5926-:5963）。
+/// SQLite epitaphs 表永久保留——即使 WorldEpitaphRegistry 内存 cap 淘汰也不删表行。
+pub fn persist_epitaph(
+    settings: &PersistenceSettings,
+    entry: &crate::cultivation::epitaph::EpitaphEntry,
+) -> io::Result<()> {
+    let mut connection = open_persistence_connection(settings)?;
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(io::Error::other)?;
+    let entry_json = serde_json::to_string(entry)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    let wall_clock = current_unix_seconds();
+    transaction
+        .execute(
+            "
+            INSERT INTO epitaphs (
+                epitaph_id,
+                character_id,
+                entry_json,
+                death_tick,
+                schema_version,
+                last_updated_wall
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            ON CONFLICT(epitaph_id) DO UPDATE SET
+                character_id      = excluded.character_id,
+                entry_json        = excluded.entry_json,
+                death_tick        = excluded.death_tick,
+                schema_version    = excluded.schema_version,
+                last_updated_wall = excluded.last_updated_wall
+            ",
+            params![
+                entry.id.0,
+                entry.character_id,
+                entry_json,
+                tick_to_sql(entry.death_tick)?,
+                EVENT_SCHEMA_VERSION,
+                wall_clock
+            ],
+        )
+        .map_err(io::Error::other)?;
+    transaction.commit().map_err(io::Error::other)?;
+    Ok(())
+}
+
+/// 按 epitaph_id 读回单条碑刻（用于测试 round-trip 与运维查询）。
+#[allow(dead_code)]
+pub fn load_epitaph(
+    settings: &PersistenceSettings,
+    epitaph_id: &str,
+) -> io::Result<Option<crate::cultivation::epitaph::EpitaphEntry>> {
+    let connection = open_persistence_connection(settings)?;
+    let result = connection
+        .query_row(
+            "SELECT entry_json FROM epitaphs WHERE epitaph_id = ?1",
+            params![epitaph_id],
+            |row| {
+                let json: String = row.get(0)?;
+                Ok(json)
+            },
+        )
+        .optional()
+        .map_err(io::Error::other)?;
+    match result {
+        None => Ok(None),
+        Some(json) => {
+            let entry: crate::cultivation::epitaph::EpitaphEntry = serde_json::from_str(&json)
+                .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+            Ok(Some(entry))
+        }
+    }
 }
 
 #[cfg(test)]
@@ -12985,8 +13090,8 @@ mod persistence_tests {
             .query_row("PRAGMA user_version;", [], |row| row.get(0))
             .expect("user_version should be readable");
         assert_eq!(
-            user_version, 30,
-            "v30 migration 完成后 user_version 必须是 30，实际 {user_version}"
+            user_version, CURRENT_USER_VERSION,
+            "v30 迁移完成后 user_version 必须是 CURRENT_USER_VERSION={CURRENT_USER_VERSION}，实际 {user_version}"
         );
     }
 

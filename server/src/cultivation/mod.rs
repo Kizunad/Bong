@@ -40,6 +40,7 @@ pub mod contamination;
 pub mod dead_zone;
 pub mod death_hooks;
 pub mod dugu;
+pub mod epitaph;
 pub mod first_hit_dash;
 pub mod forging;
 pub mod full_power_strike;
@@ -246,6 +247,8 @@ pub fn register(app: &mut App) {
     realm_taint::register(app);
     void::register(app);
     full_power_strike::register(app);
+    // plan-life-record-epitaph-v1 P0：碑刻生成系统
+    epitaph::register(app);
 
     // 事件（plan §3/§4/§5 全家桶）
     app.add_event::<BreakthroughRequest>();
