@@ -94,14 +94,15 @@ emit→consumer **接线守护 + 孤岛 triage** 落地，防止 Bevy `EventWrit
 - `server/src/main.rs`：以 `#[cfg(test)] mod test_coverage_guards;` 挂载测试期守护模块，不进入生产运行路径。
 - `server/src/test_coverage_guards.rs`：新增 `event_emitters_have_readers_or_triage_entries()`，扫描 `server/src/**/*.rs` 的 `EventWriter<E>` / `EventReader<E>`，要求 writer-only 事件必须进入 `INTENTIONAL_UNCONSUMED_EVENTS`。
 - `server/src/test_coverage_guards.rs`：`INTENTIONAL_UNCONSUMED_EVENTS` 为当前 writer-only 事件逐条写明 `reason` + `follow_up`；`QiTransfer` 标为 `DirectResourceConsumer`，原因是守恒余额由 `WorldQiAccount` / qi ledger 调用点直接 apply，不依赖 EventReader。
-- `server/src/test_coverage_guards.rs`：新增 stale triage 守护；白名单事件一旦出现真实 `EventReader`，测试会红，要求移出 triage，避免白名单永久堆积。
+- `server/src/test_coverage_guards.rs`：新增 stale / orphan triage 守护；白名单事件一旦出现真实 `EventReader`，或代码中不再存在对应 `EventWriter`，测试会红，要求移出或更新 triage，避免白名单永久堆积。
+- `server/src/test_coverage_guards.rs`：补 scanner 边界回归，覆盖 nested generic、字符串字面量干扰、lifetime 归一化与长 location 截断。
 - 14 个原始审计点已逐项处理：`BeastHordeEvent` 当前已有真实 reader，不入白名单；其余仍 writer-only 的领域/反馈事件进入 triage 并指向后续反馈、叙事、UI 或清理 plan。
 
 ### 关键 commit
 `81770280a` P1 事件接线守护（2 files / +588，含 scanner、triage 白名单、stale whitelist pin、lifetime/path/comment fixture 测试）
 
 ### 测试
-`CARGO_BUILD_JOBS=2 cargo test test_coverage_guards -- --nocapture` → **5 passed / 0 failed**；`CARGO_BUILD_JOBS=2 cargo fmt --check && CARGO_BUILD_JOBS=2 cargo clippy --all-targets -- -D warnings && CARGO_BUILD_JOBS=2 cargo test` → **9002 passed / 0 failed / 1 ignored**。
+`CARGO_BUILD_JOBS=2 cargo test test_coverage_guards -- --nocapture` → **8 passed / 0 failed**；`CARGO_BUILD_JOBS=2 cargo fmt --check && CARGO_BUILD_JOBS=2 cargo clippy --all-targets -- -D warnings && CARGO_BUILD_JOBS=2 cargo test` → **9002 passed / 0 failed / 1 ignored**。
 
 ### 后续（P2-P3 ⬜）
 - **P2**：e2e.yml 补 client `./gradlew test` + full-app startup smoke + `to_proto_bytes` oversize cap。

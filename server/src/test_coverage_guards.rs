@@ -306,11 +306,68 @@ fn triage_entry_becomes_stale_when_reader_exists() {
     );
 }
 
+#[test]
+fn orphan_triage_entry_is_reported_when_writer_disappears() {
+    let index = EventUsageIndex::default();
+
+    let err = find_orphan_triage_entries(&index).expect_err("triage without writer should fail");
+    assert!(
+        err.contains("AntidoteResultEvent"),
+        "orphan triage error should name deleted or renamed event, got: {err}"
+    );
+}
+
+#[test]
+fn scanner_handles_nested_generics_and_escaped_strings() {
+    let source = r#"
+        fn writer(
+            a: EventWriter<'w, crate::foo::NestedEvent<Result<u8, ()>, Vec<(u8, u8)>>>,
+            b: EventReader<'w, crate::foo::NestedEvent<Result<u8, ()>, Vec<(u8, u8)>>>,
+        ) {
+            let _s = "escaped \" EventWriter<StringLiteralEvent>";
+        }
+    "#;
+
+    let cleaned = strip_comments_and_strings(source);
+    let writers = extract_event_param_types(&cleaned, "EventWriter");
+    let readers = extract_event_param_types(&cleaned, "EventReader");
+
+    assert_eq!(writers, BTreeSet::from(["NestedEvent".to_string()]));
+    assert_eq!(readers, BTreeSet::from(["NestedEvent".to_string()]));
+    assert_eq!(normalize_event_type("'w"), None);
+}
+
+#[test]
+fn format_locations_truncates_long_location_sets() {
+    let locations = BTreeSet::from([
+        "01.rs".to_string(),
+        "02.rs".to_string(),
+        "03.rs".to_string(),
+        "04.rs".to_string(),
+        "05.rs".to_string(),
+        "06.rs".to_string(),
+        "07.rs".to_string(),
+    ]);
+
+    let formatted = format_locations(&locations);
+    assert!(
+        formatted.contains("01.rs") && formatted.contains("06.rs"),
+        "formatted locations should include the first six sorted paths, got: {formatted}"
+    );
+    assert!(
+        !formatted.contains("07.rs"),
+        "formatted locations should truncate after six paths, got: {formatted}"
+    );
+}
+
 fn assert_unconsumed_writers_are_triaged(index: &EventUsageIndex) {
     if let Err(error) = find_untriaged_unconsumed_writers(index) {
         panic!("{error}");
     }
     if let Err(error) = find_stale_triage_entries(index) {
+        panic!("{error}");
+    }
+    if let Err(error) = find_orphan_triage_entries(index) {
         panic!("{error}");
     }
 }
@@ -362,6 +419,23 @@ fn find_stale_triage_entries(index: &EventUsageIndex) -> Result<(), String> {
         Err(format!(
             "以下 unconsumed triage 已过期，应从 INTENTIONAL_UNCONSUMED_EVENTS 移除：\n{}",
             stale.join("\n")
+        ))
+    }
+}
+
+fn find_orphan_triage_entries(index: &EventUsageIndex) -> Result<(), String> {
+    let orphaned: Vec<String> = INTENTIONAL_UNCONSUMED_EVENTS
+        .iter()
+        .filter(|entry| !index.writers.contains_key(entry.event))
+        .map(|entry| entry.event.to_string())
+        .collect();
+
+    if orphaned.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "以下 unconsumed triage 找不到对应 EventWriter，应删除或更新事件名：\n{}",
+            orphaned.join("\n")
         ))
     }
 }
