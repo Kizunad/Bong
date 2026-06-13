@@ -405,6 +405,12 @@ pub fn place_block_for_kind(
 }
 
 pub fn block_item_to_state(template_id: &str, _target_face: TrapTargetFace) -> Option<BlockState> {
+    // plan-worldgen-v4 P5 §8.1#5 — vanilla:<block_id> 直通分支：剥前缀后用
+    // valence BlockKind 解析为默认 BlockState，避免为每个 vanilla 方块穷举映射。
+    // 与 inventory::VANILLA_TEMPLATE_PREFIX / vanilla_block_template 严格对齐。
+    if let Some(bare) = template_id.strip_prefix(crate::inventory::VANILLA_TEMPLATE_PREFIX) {
+        return valence::prelude::BlockKind::from_str(bare).map(|kind| kind.to_state());
+    }
     match template_id {
         "earth_crumb" => Some(BlockState::DIRT),
         "hardened_soil" => Some(BlockState::COARSE_DIRT),

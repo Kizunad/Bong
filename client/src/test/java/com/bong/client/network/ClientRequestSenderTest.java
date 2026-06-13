@@ -515,4 +515,37 @@ public class ClientRequestSenderTest {
             sent.get(0).body()
         );
     }
+
+    // ─── plan-worldgen-v4 P5 §8.1#5：block_picker_give C2S 真发对拍 ──────────
+
+    @Test
+    void sendBlockPickerGiveUsesCorrectChannelAndJson() {
+        install();
+        ClientRequestSender.sendBlockPickerGive("stone_bricks", 16);
+        assertEquals(1, sent.size(),
+            "sendBlockPickerGive must produce exactly one client_request, actual sent=" + sent);
+        assertEquals(new Identifier("bong", "client_request"), sent.get(0).channel());
+        assertEquals(
+            "{\"type\":\"block_picker_give\",\"v\":1,\"block_id\":\"stone_bricks\",\"count\":16}",
+            sent.get(0).body(),
+            "wire payload must match TS BlockPickerActionV1 / Rust BlockPickerGive, actual=" + sent.get(0).body()
+        );
+    }
+
+    @Test
+    void sendBlockPickerGiveRejectsInvalidArgumentsBeforeSend() {
+        install();
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> ClientRequestSender.sendBlockPickerGive("", 1),
+            "blank block_id must throw before dispatch"
+        );
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> ClientRequestSender.sendBlockPickerGive("stone", 0),
+            "count=0 must throw before dispatch"
+        );
+        assertEquals(0, sent.size(),
+            "no client_request should be sent when arguments are invalid, actual sent=" + sent);
+    }
 }

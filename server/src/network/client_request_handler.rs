@@ -305,6 +305,9 @@ pub struct ClientRequestDispatchParams<'w> {
     pub trade_offer_request_tx: Option<ResMut<'w, Events<TradeOfferRequest>>>,
     pub trade_offer_response_tx: Option<ResMut<'w, Events<TradeOfferResponseEvent>>>,
     pub block_place_tx: Option<ResMut<'w, Events<BlockPlaceRequest>>>,
+    /// plan-worldgen-v4 P5 §8.1#5 — 画廊 dev-only give-block intent。
+    pub block_picker_give_tx:
+        Option<ResMut<'w, Events<crate::cmd::dev::block_picker::BlockPickerGiveIntent>>>,
     pub zhenfa_place_tx: Option<ResMut<'w, Events<ZhenfaPlaceRequest>>>,
     pub zhenfa_trigger_tx: Option<ResMut<'w, Events<ZhenfaTriggerRequest>>>,
     pub zhenfa_disarm_tx: Option<ResMut<'w, Events<ZhenfaDisarmRequest>>>,
@@ -488,6 +491,7 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::CoffinOpen { v, .. }
             | ClientRequestV1::CoffinPlace { v, .. }
             | ClientRequestV1::BlockPlace { v, .. }
+            | ClientRequestV1::BlockPickerGive { v, .. }
             | ClientRequestV1::CoffinEnter { v, .. }
             | ClientRequestV1::CoffinLeave { v }
             | ClientRequestV1::CoffinBreak { v, .. }
@@ -894,6 +898,26 @@ pub fn handle_client_request_payloads(
                     z,
                     item_instance_id,
                     target_face,
+                });
+            }
+            ClientRequestV1::BlockPickerGive {
+                block_id, count, ..
+            } => {
+                tracing::info!(
+                    "[bong][network][dev] block_picker_give entity={:?} block_id={block_id} count={count}",
+                    ev.client
+                );
+                let Some(block_picker_give_tx) = dispatch.block_picker_give_tx.as_deref_mut()
+                else {
+                    tracing::warn!(
+                        "[bong][network] dropped block_picker_give because BlockPickerGiveIntent event resource is missing"
+                    );
+                    continue;
+                };
+                block_picker_give_tx.send(crate::cmd::dev::block_picker::BlockPickerGiveIntent {
+                    player: ev.client,
+                    block_id,
+                    count,
                 });
             }
             ClientRequestV1::CoffinEnter { x, y, z, .. } => {

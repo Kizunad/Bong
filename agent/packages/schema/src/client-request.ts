@@ -1051,6 +1051,24 @@ export const LowerShieldRequestV1 = Type.Object(
 );
 export type LowerShieldRequestV1 = Static<typeof LowerShieldRequestV1>;
 
+// plan-worldgen-v4 P5 §8.1#5 — 画廊审阅 owo 方块面板 dev-only give-block C2S。
+// 玩家在 InspectScreen 内 BlockPickerPanel 点击某个 vanilla 方块条目后发送此包，
+// server dev handler 经 gamemode 校验后从 ItemRegistry 取 "vanilla:<block_id>"
+// 模板，把对应 vanilla 方块物品放进背包（**非生产 gameplay**，dev/creative 限定）。
+// 对应 Rust ClientRequestV1::BlockPickerGive { v, block_id, count }。
+export const BlockPickerActionV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("block_picker_give"),
+    // 不含 namespace 的 vanilla 方块短名，如 "stone_bricks"。server 拼 "vanilla:" 前缀查 registry。
+    block_id: Type.String({ minLength: 1 }),
+    // 给予数量；1..=64（一组上限）。
+    count: Type.Integer({ minimum: 1, maximum: 64 }),
+  },
+  { additionalProperties: false },
+);
+export type BlockPickerActionV1 = Static<typeof BlockPickerActionV1>;
+
 export const ClientRequestV1 = Type.Union([
   SetMeridianTargetRequestV1,
   BreakthroughRequestV1,
@@ -1130,6 +1148,7 @@ export const ClientRequestV1 = Type.Union([
   ForgeLearnBlueprintRequestV1,
   ForgeStationPlaceRequestV1,
   BlockPlaceRequestV1,
+  BlockPickerActionV1,
   RaiseShieldRequestV1,
   LowerShieldRequestV1,
   // plan-agent-ui-data-v1 P0 — 天道 UI 面板响应

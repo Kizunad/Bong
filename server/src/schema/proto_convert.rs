@@ -3882,6 +3882,15 @@ impl From<&super::client_request::ClientRequestV1> for bong::client_request_enve
                     此分支不可达——若触发说明调用方绕过了 JSON bypass 契约"
                 )
             }
+            ClientRequestV1::BlockPickerGive { .. } => {
+                // plan-worldgen-v4 P5 §8.1#5 — 画廊 dev-only give-block 仅在 server
+                // 本地 dev handler 处理（gamemode 门控），不转发给天道 agent IPC，
+                // 因此不需要 proto 编码路径。
+                unreachable!(
+                    "BlockPickerGive 为 dev-only 本地请求，不走 proto 编码路径；\
+                    此分支不可达——若触发说明调用方误把 dev 请求转发到了 agent IPC"
+                )
+            }
         }
     }
 }

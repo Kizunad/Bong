@@ -1680,6 +1680,7 @@ describe("sample files pass schema validation", () => {
     "client-request.forge-consecration-inject.sample.json",
     "client-request.forge-station-place.sample.json",
     "client-request.block-place.sample.json",
+    "client-request.block-picker-give.sample.json",
     "client-request.spirit-niche-repair.sample.json",
   ]) {
     it(sample, () => {
@@ -2208,6 +2209,9 @@ describe("negative sample files fail schema validation", () => {
   for (const sample of [
     "client-request.block-place.invalid-extra-field.sample.json",
     "client-request.block-place.invalid-target-face.sample.json",
+    "client-request.block-picker-give.invalid-extra-field.sample.json",
+    "client-request.block-picker-give.invalid-count-zero.sample.json",
+    "client-request.block-picker-give.invalid-empty-block-id.sample.json",
     "client-request.spirit-niche-repair.invalid-extra-field.sample.json",
   ]) {
     it(sample, () => {

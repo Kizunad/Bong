@@ -158,6 +158,16 @@ pub enum ClientRequestV1 {
         item_instance_id: u64,
         target_face: TrapTargetFace,
     },
+    /// plan-worldgen-v4 P5 §8.1#5 — 画廊审阅 owo 方块面板 dev-only give-block C2S。
+    /// 玩家在 InspectScreen 内 BlockPickerPanel 点击 vanilla 方块条目后发送。
+    /// server dev handler 经 gamemode 校验后，从 ItemRegistry 取 `vanilla:<block_id>`
+    /// 模板把对应 vanilla 方块物品放进背包（**非生产 gameplay**，dev/creative 限定）。
+    /// `block_id` 为不含 namespace 的短名（如 `stone_bricks`）；`count` ∈ 1..=64。
+    BlockPickerGive {
+        v: u8,
+        block_id: String,
+        count: u32,
+    },
     /// plan-coffin-v1 — 右键凡物棺材任一半，进入卧棺状态。
     CoffinEnter {
         v: u8,
@@ -2853,6 +2863,79 @@ mod tests {
             raise_json, lower_json,
             "RaiseShield and LowerShield must produce different wire JSON; \
              raise={raise_json} lower={lower_json}"
+        );
+    }
+
+    // ─── plan-worldgen-v4 P5 §8.1#5 — BlockPickerGive C2S 双端 sample 对拍 ───
+
+    /// 正样本对拍：直接 include_str! TS 端 sample（TypeBox source of truth），
+    /// Rust serde 必须反序列化为 BlockPickerGive 且字段全等。这是 TS↔Rust 契约 pin：
+    /// TypeBox schema 或 Rust enum 任一改动若破坏对齐，此测试立即撞红。
+    #[test]
+    fn block_picker_give_ts_sample_deserializes_in_rust() {
+        let json = include_str!(
+            "../../../agent/packages/schema/samples/client-request.block-picker-give.sample.json"
+        );
+        let req: ClientRequestV1 = serde_json::from_str(json).unwrap_or_else(|e| {
+            panic!("TS block-picker-give 正样本必须能被 Rust serde 反序列化: {e}; body={json}")
+        });
+        match req {
+            ClientRequestV1::BlockPickerGive {
+                v,
+                ref block_id,
+                count,
+            } => {
+                assert_eq!(v, 1, "wire version 期望=1，实为 {v}");
+                assert_eq!(
+                    block_id, "stone_bricks",
+                    "block_id 应与 TS sample 一致（stone_bricks），实为 {block_id}"
+                );
+                assert_eq!(count, 16, "count 应与 TS sample 一致（16），实为 {count}");
+            }
+            other => panic!("expected BlockPickerGive, got {other:?}"),
+        }
+    }
+
+    /// 反样本：count=0 在 TS 端被 Type.Integer({minimum:1}) 拒绝；Rust 端 u32 能解出 0，
+    /// 故 wire-level deny 由 TS schema 守门——这里 pin Rust 至少能解出值（不 panic），
+    /// 真正的 0/65 边界拒绝锁在 agent schema.test.ts。此测试确保 Rust 变体形状不漂移。
+    #[test]
+    fn block_picker_give_extra_field_rejected_by_deny_unknown_fields() {
+        // ClientRequestV1 带 deny_unknown_fields：TS 反样本（含 surprise 多字段）
+        // 在 Rust 端也必须被拒，双端 additionalProperties:false / deny_unknown_fields 一致。
+        let json = include_str!(
+            "../../../agent/packages/schema/samples/\
+             client-request.block-picker-give.invalid-extra-field.sample.json"
+        );
+        let result: Result<ClientRequestV1, _> = serde_json::from_str(json);
+        assert!(
+            result.is_err(),
+            "block_picker_give 含未知字段必须被 deny_unknown_fields 拒绝（与 TS additionalProperties:false 对齐），实为 {result:?}"
+        );
+    }
+
+    /// 边界：count 与 block_id 都按原样 round-trip，负坐标无关，单变体语义独立。
+    #[test]
+    fn block_picker_give_roundtrip_preserves_fields() {
+        let req = ClientRequestV1::BlockPickerGive {
+            v: 1,
+            block_id: "polished_blackstone".to_string(),
+            count: 64,
+        };
+        let encoded = serde_json::to_string(&req).expect("serialize");
+        let decoded: ClientRequestV1 = serde_json::from_str(&encoded).expect("deserialize");
+        assert!(
+            matches!(
+                decoded,
+                ClientRequestV1::BlockPickerGive { v: 1, ref block_id, count: 64 }
+                    if block_id == "polished_blackstone"
+            ),
+            "block_picker_give round-trip 必须保字段，实为 {decoded:?}"
+        );
+        // tag 必须是 snake_case "block_picker_give"
+        assert!(
+            encoded.contains("\"type\":\"block_picker_give\""),
+            "wire tag 必须是 block_picker_give（snake_case），实为 {encoded}"
         );
     }
 }
