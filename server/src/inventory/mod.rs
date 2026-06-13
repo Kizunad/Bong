@@ -1889,12 +1889,6 @@ impl ItemTemplateToml {
                     .map(|value| value.trim().to_ascii_lowercase())
             })
             .transpose()?;
-        if placeable.is_some() && category != ItemCategory::Block {
-            return Err(format!(
-                "{} item `{id}` has placeable marker but category != Block",
-                source_path.display()
-            ));
-        }
         let rarity = parse_item_rarity(self.rarity.as_str(), source_path, id.as_str())?;
         let max_stack_count = self
             .max_stack_count
@@ -11661,6 +11655,33 @@ cols = 4
             (spec.stamina_drain_per_s - 3.0).abs() < 1e-4,
             "bone_shield.stamina_drain_per_s 应为 3.0，实际 {}",
             spec.stamina_drain_per_s
+        );
+    }
+
+    #[test]
+    fn placeable_container_templates_load_from_workbench_materials_toml() {
+        let registry = load_item_registry().expect("item registry 应从 assets/items/*.toml 加载");
+        for (id, placeable) in [
+            ("trade_crate", "storage_crate"),
+            ("herb_crate_placed", "storage_crate"),
+            ("dead_drop_box", "dead_drop"),
+        ] {
+            let tpl = registry
+                .get(id)
+                .unwrap_or_else(|| panic!("{id} 应存在于 registry"));
+            assert_eq!(tpl.category, ItemCategory::Misc, "{id} 应保持 misc 类别");
+            assert_eq!(
+                tpl.placeable.as_deref(),
+                Some(placeable),
+                "{id} 应声明正确 placeable 标记"
+            );
+        }
+        let carried_herb = registry
+            .get("herb_crate")
+            .expect("随身版 herb_crate 应继续存在");
+        assert_eq!(
+            carried_herb.placeable, None,
+            "随身版 herb_crate 不应被放置链路消费"
         );
     }
 

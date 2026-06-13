@@ -16,6 +16,8 @@ use crate::supply_coffin::SupplyCoffinGrade;
 #[derive(Debug, Clone, PartialEq)]
 pub enum ExternalContainerKind {
     SupplyCoffin { grade: SupplyCoffinGrade },
+    StorageCrate { is_herb: bool },
+    DeadDrop,
 }
 
 /// 附加到 world entity 上的外部容器 ECS 组件。
