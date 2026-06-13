@@ -551,6 +551,7 @@ dependencies = [
  "big-brain",
  "crossbeam-channel",
  "dotenvy",
+ "flate2",
  "futures-util",
  "indexmap",
  "memmap2",
@@ -573,6 +574,7 @@ dependencies = [
  "valence",
  "valence_command",
  "valence_command_macros",
+ "valence_nbt",
  "wiremock",
  "zstd",
 ]

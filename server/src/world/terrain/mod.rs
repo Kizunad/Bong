@@ -7,6 +7,7 @@ mod decoration;
 mod flora;
 mod giant_sword;
 pub(crate) mod mega_tree;
+pub(crate) mod nbt_io;
 mod noise;
 mod raster;
 mod spatial;

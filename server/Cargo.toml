@@ -8,6 +8,16 @@ dev-techniques = []
 
 [dependencies]
 valence = { git = "https://github.com/valence-rs/valence", rev = "2b705351" }
+# Direct dep purely to opt the shared valence_nbt instance into `preserve_order`
+# (IndexMap-backed Compound, insertion order). plan-worldgen-v4 P5 nbt_io.rs needs
+# byte-stable round-trips against scripts/nbt/nbt_builder.py, which writes fields
+# in insertion order; the default BTreeMap-backed Compound sorts keys and breaks
+# byte-identity. Cargo feature unification turns this on for the single shared
+# valence_nbt 0.8.0 (same git rev), so valence's own usage benefits too. Key order
+# is invisible to MC clients, so this is behaviour-neutral elsewhere.
+valence_nbt = { git = "https://github.com/valence-rs/valence", rev = "2b705351", features = [
+    "preserve_order",
+] }
 valence_command = { git = "https://github.com/valence-rs/valence", rev = "2b705351" }
 valence_command_macros = { git = "https://github.com/valence-rs/valence", rev = "2b705351" }
 big-brain = "0.21"
@@ -24,6 +34,7 @@ tracing-subscriber = "0.3"
 redis = { version = "0.27", features = ["tokio-comp"] }
 futures-util = "0.3"
 memmap2 = "0.9"
+flate2 = "1"
 smallvec = "1"
 toml = "0.8"
 indexmap = { version = "2", features = ["serde"] }
