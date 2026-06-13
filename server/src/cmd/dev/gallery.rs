@@ -153,7 +153,10 @@ fn collect_nbt(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-/// 把结构 NBT lower 成 `(world BlockPos, BlockState, block_nbt)` 列表（在 `origin` 落位）。
+/// 一个 stamp 落位：世界坐标 + BlockState + 逐块 block entity nbt（透传，告示牌/箱子/旗帜）。
+pub type StampPlacement = (BlockPos, BlockState, Option<Compound>);
+
+/// 把结构 NBT lower 成 [`StampPlacement`] 列表（在 `origin` 落位）。
 ///
 /// 返回 `(placements, unresolved)`：`unresolved` 是 palette 里 `block_from_name` 解析不出的
 /// 块名（caller 应 warn——这些块会被跳过，对应 scout 风险「palette 含未知 block 时结果中该块
@@ -162,7 +165,7 @@ fn collect_nbt(dir: &Path, out: &mut Vec<PathBuf>) {
 pub fn structure_placements(
     structure: &StructureNbt,
     origin: [i32; 3],
-) -> (Vec<(BlockPos, BlockState, Option<Compound>)>, Vec<String>) {
+) -> (Vec<StampPlacement>, Vec<String>) {
     let unresolved = structure.unresolved_palette_blocks();
     let mut placements = Vec::with_capacity(structure.blocks.len());
     for block in &structure.blocks {
