@@ -43,4 +43,29 @@ class AgentUiPayloadHandlerReadyClientTest {
         assertEquals("req-new", active.requestId(),
             "active requestId 应为 req-new，说明新 request 覆盖旧面板，实际=" + active.requestId());
     }
+
+    @Test
+    void handleRawRequest_wire_barePayloadWithReadyClient_opensScreen() {
+        String serverWireJson =
+            "{\"request_id\":\"req-wire-ready\","
+                + "\"target_player\":\"offline:Kiz\","
+                + "\"xml\":\"<owo-ui><components><flow-layout><label>天道降示</label></flow-layout></components></owo-ui>\","
+                + "\"timeout_ticks\":600}";
+
+        ServerDataDispatch dispatch = AgentUiPayloadHandler.handleRawRequestForReadyClientTests(
+            serverWireJson,
+            42L,
+            AgentUiStore::setActive
+        );
+
+        assertTrue(dispatch.handled(),
+            "ready-client stub 应跑完整 handleRawRequest happy path，不能只靠 null-client NPE 证明解析");
+        assertEquals("agent_ui_request", dispatch.routeType(),
+            "dispatch routeType 应保持 agent_ui_request，实际=" + dispatch.routeType());
+        AgentUiScreen active = AgentUiStore.getActive();
+        assertNotNull(active,
+            "ready-client stub opener 应写入 AgentUiStore，证明 parse→open 全链路执行");
+        assertEquals("req-wire-ready", active.requestId(),
+            "active requestId 应来自 server 裸 wire payload，实际=" + active.requestId());
+    }
 }

@@ -61,6 +61,23 @@ public final class AgentUiPayloadHandler {
         );
     }
 
+    static ServerDataDispatch handleRawRequestForReadyClientTests(
+        String jsonPayload,
+        long currentTick,
+        Consumer<AgentUiScreen> opener
+    ) {
+        ServerDataDispatch dispatch = parseAndMaybeOpenRawRequest(
+            jsonPayload,
+            true,
+            currentTick,
+            opener
+        );
+        if (dispatch == null) {
+            throw new AssertionError("ready-client test payload 应打开 AgentUiScreen，但实际被忽略");
+        }
+        return dispatch;
+    }
+
     // ─── JSON helpers ────────────────────────────────────────────────────────
 
     @Nullable
@@ -117,18 +134,36 @@ public final class AgentUiPayloadHandler {
      * @param client      当前 MinecraftClient 实例（由 channel listener 传入，已在主线程执行）
      */
     public static void handleRawRequest(String jsonPayload, MinecraftClient client) {
+        parseAndMaybeOpenRawRequest(
+            jsonPayload,
+            client != null && client.player != null,
+            client == null ? 0L : getClientTick(client),
+            screen -> {
+                AgentUiStore.setActive(screen);
+                client.setScreen(screen);
+            }
+        );
+    }
+
+    @Nullable
+    private static ServerDataDispatch parseAndMaybeOpenRawRequest(
+        String jsonPayload,
+        boolean playerReady,
+        long currentTick,
+        Consumer<AgentUiScreen> opener
+    ) {
         JsonObject payload;
         try {
             payload = JsonParser.parseString(jsonPayload).getAsJsonObject();
         } catch (Exception e) {
             LOGGER.error("[bong][agent_ui] bong:agent_ui_request payload parse error: {}", e.getMessage());
-            return;
+            return null;
         }
 
         String requestId = readString(payload, "request_id");
         if (requestId == null || requestId.isBlank()) {
             LOGGER.warn("[bong][agent_ui] bong:agent_ui_request: 'request_id' 缺失，payload 忽略");
-            return;
+            return null;
         }
 
         String xml = readString(payload, "xml");
@@ -145,25 +180,19 @@ public final class AgentUiPayloadHandler {
             timeoutTicks = 1;
         }
 
-        if (client.player == null) {
+        if (!playerReady) {
             LOGGER.warn("[bong][agent_ui] bong:agent_ui_request: player 未就绪，payload 忽略 request_id='{}'",
                 requestId);
-            return;
+            return null;
         }
 
-        final String finalRequestId = requestId;
-        final String finalXml = xml;
-        final int finalTimeoutTicks = timeoutTicks;
-        openReadyRequestForTests(
+        return openReadyRequestForTests(
             "agent_ui_request",
-            finalRequestId,
-            finalXml,
-            finalTimeoutTicks,
-            getClientTick(client),
-            screen -> {
-                AgentUiStore.setActive(screen);
-                client.setScreen(screen);
-            }
+            requestId,
+            xml,
+            timeoutTicks,
+            currentTick,
+            opener
         );
     }
 
