@@ -630,6 +630,15 @@ def _collect_zone_params(zones: list[BlueprintZone]) -> list[dict[str, object]]:
                 "terrain_profile": wg.terrain_profile,
                 "spirit_qi": zone.spirit_qi,
                 "danger_level": zone.danger_level,
+                # worldgen-v4 P4 §8.1 #8 — zone xz AABB，供 raster_check 的同源断言做
+                # per-zone mask 均值比对（只在该 zone 覆盖的列上算 qi_density 均值，
+                # 避免多-zone tile 用整 tile 均值误报）。
+                "bounds_xz": {
+                    "min_x": zone.bounds_xz.min_x,
+                    "max_x": zone.bounds_xz.max_x,
+                    "min_z": zone.bounds_xz.min_z,
+                    "max_z": zone.bounds_xz.max_z,
+                },
                 "worldgen": worldgen_view,
             }
         )

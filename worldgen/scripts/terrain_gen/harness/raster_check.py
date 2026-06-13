@@ -76,10 +76,19 @@ def validate_rasters(raster_dir: str | Path) -> tuple[bool, str]:
     # 在两份漂移阶段误报。zone spirit_qi 来自 manifest.zones（导出物，已携带）。
     qi_source_is_field = manifest.get("qi_density_source") == "qi_field"
     zone_spirit_qi: dict[str, float] = {}
+    zone_bounds_xz: dict[str, tuple[float, float, float, float]] = {}
     for zone_param in manifest.get("zones", []):
         name = zone_param.get("name")
         if name is not None and "spirit_qi" in zone_param:
             zone_spirit_qi[str(name)] = float(zone_param["spirit_qi"])
+        bounds = zone_param.get("bounds_xz")
+        if name is not None and bounds is not None:
+            zone_bounds_xz[str(name)] = (
+                float(bounds["min_x"]),
+                float(bounds["max_x"]),
+                float(bounds["min_z"]),
+                float(bounds["max_z"]),
+            )
 
     for tile_info in tiles:
         tile_dir = raster_path / tile_info["dir"]
@@ -176,6 +185,11 @@ def validate_rasters(raster_dir: str | Path) -> tuple[bool, str]:
         # 一份统一场两种导出后，zone 内 qi_density 均值必须与声明 spirit_qi 派生的
         # 期望值 clamp01((spirit_qi+1)/2) 一致（±tolerance）。系统性偏离 = 两份漂移
         # 复发（qi_density 不再同源派生），HARD ERROR。仅在 qi_source_is_field 激活。
+        #
+        # **per-zone mask 比对**：均值只在该 zone xz AABB 覆盖的列上算（不是整 tile
+        # 均值）——多个 zone 共占一个 tile 时，整 tile 均值会把各 zone 平均成一团，对
+        # 任一 zone 都误报。zone AABB 来自 manifest.zones[].bounds_xz；缺 bounds 的 zone
+        # 退回整 tile 均值（向后兼容旧 manifest）。
         if qi_source_is_field and zones:
             qi_file = tile_dir / "qi_density.bin"
             if qi_file.exists():
@@ -187,12 +201,23 @@ def validate_rasters(raster_dir: str | Path) -> tuple[bool, str]:
                             continue
                         sq = zone_spirit_qi[zone_name]
                         expected = _expected_qi_density_from_spirit_qi(sq)
-                        delta = abs(tile_qi_mean - expected)
+                        zone_mean = _zone_masked_qi_mean(
+                            qi_data,
+                            tile_size,
+                            int(tile_info.get("tile_x", 0)),
+                            int(tile_info.get("tile_z", 0)),
+                            zone_bounds_xz.get(zone_name),
+                        )
+                        if zone_mean is None:
+                            # 缺 AABB 或该 zone 在本 tile 无覆盖列 → 退回整 tile 均值
+                            # （旧 manifest 兼容；无 bounds 时与历史行为一致）。
+                            zone_mean = tile_qi_mean
+                        delta = abs(zone_mean - expected)
                         if delta > QI_DENSITY_TOLERANCE:
                             errors.append(
-                                f"{tile_id}: qi_density mean={tile_qi_mean:.3f} "
-                                f"diverges from zone '{zone_name}' spirit_qi={sq:.3f} "
-                                f"(expected qi_density≈{expected:.3f} via "
+                                f"{tile_id}: qi_density mean={zone_mean:.3f} "
+                                f"diverges from zone '{zone_name}' spirit_qi="
+                                f"{sq:.3f} (expected qi_density≈{expected:.3f} via "
                                 f"clamp01((spirit_qi+1)/2), |Δ|={delta:.3f} > "
                                 f"tol={QI_DENSITY_TOLERANCE}) — qi_density no longer "
                                 f"same-source-derived from the unified qi field"
@@ -407,6 +432,47 @@ def validate_rasters(raster_dir: str | Path) -> tuple[bool, str]:
         )
 
     return len(errors) == 0, "\n".join(lines)
+
+
+def _zone_masked_qi_mean(
+    qi_data: list[float],
+    tile_size: int,
+    tile_x: int,
+    tile_z: int,
+    bounds_xz: tuple[float, float, float, float] | None,
+) -> float | None:
+    """Mean of qi_density over the cells inside *bounds_xz* for this tile.
+
+    worldgen-v4 P4 §8.1 #8 — per-zone mask so multi-zone tiles don't false-flag.
+    Cell (local_x, local_z) maps to world (tile_x*tile_size + local_x,
+    tile_z*tile_size + local_z); flat index = local_z * tile_size + local_x
+    (row-major z-then-x, matching ``_count_fossil_cells_in_bbox`` /
+    ``raster_export`` write order).  Returns None when *bounds_xz* is missing or
+    no cell of this tile falls inside the AABB (caller falls back to tile mean).
+    """
+    if bounds_xz is None:
+        return None
+    min_x, max_x, min_z, max_z = bounds_xz
+    tile_min_x = tile_x * tile_size
+    tile_min_z = tile_z * tile_size
+    total = 0.0
+    count = 0
+    for local_z in range(tile_size):
+        world_z = tile_min_z + local_z
+        if world_z < min_z or world_z > max_z:
+            continue
+        row_offset = local_z * tile_size
+        for local_x in range(tile_size):
+            world_x = tile_min_x + local_x
+            if world_x < min_x or world_x > max_x:
+                continue
+            idx = row_offset + local_x
+            if idx < len(qi_data):
+                total += qi_data[idx]
+                count += 1
+    if count == 0:
+        return None
+    return total / count
 
 
 def _read_float_layer(path: Path, expected_count: int) -> list[float] | None:
