@@ -33,8 +33,10 @@ pub fn register(app: &mut App) {
     app.add_event::<migration::MigrationEvent>();
     app.add_event::<migration::BeastHordeEvent>();
     app.add_event::<migration::FlowFieldPrototype>();
+    app.add_event::<migration::FlowFieldComputeTask>();
     app.insert_resource(migration::FaunaMigrationState::default());
     app.insert_resource(migration::BeastHordeState::default());
+    app.insert_resource(migration::FlowFields::default());
     app.insert_resource(migration::ZoneGraph::default());
     app.insert_resource(ghost::GhostZoneRegistry::default());
     app.add_event::<rat_phase::RatPhaseChangeEvent>();
@@ -54,14 +56,27 @@ pub fn register(app: &mut App) {
             experience::emit_fauna_attack_audio_system,
             experience::emit_fauna_death_vfx_audio_system.before(drop::fauna_drop_system),
             experience::emit_rat_bite_audio_system,
-            migration::fauna_migration_system,
-            migration::beast_horde_detect_system.after(migration::fauna_migration_system),
-            migration::migration_trigger_system.after(migration::beast_horde_detect_system),
-            migration::migration_move_system.after(migration::migration_trigger_system),
-            migration::migration_to_beast_tide_system.after(migration::migration_move_system),
             butcher::handle_butcher_requests,
             bone_coin::handle_bone_coin_craft_requests,
             drop::fauna_drop_system,
+        ),
+    );
+    app.add_systems(
+        valence::prelude::Update,
+        (
+            migration::fauna_migration_system,
+            migration::beast_horde_detect_system.after(migration::fauna_migration_system),
+            migration::flow_field_compute_system.after(migration::beast_horde_detect_system),
+            migration::horde_migration_assignment_system
+                .after(migration::flow_field_compute_system),
+            migration::migration_trigger_system.after(migration::beast_horde_detect_system),
+            migration::horde_migration_system
+                .after(migration::horde_migration_assignment_system)
+                .after(migration::migration_trigger_system),
+            migration::migration_move_system.after(migration::migration_trigger_system),
+            migration::migration_to_beast_tide_system
+                .after(migration::migration_move_system)
+                .after(migration::horde_migration_system),
         ),
     );
     // plan-neg-domain-fauna-v1 P0：诡影系统（单独注册，避免超过 Bevy 元组系统上限）
