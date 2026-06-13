@@ -201,15 +201,27 @@ class ZoneSchemaTests(unittest.TestCase):
 
     def test_baolongwang_negative_spirit_qi(self):
         # worldgen-v4 P4 §8.1 #4/#11 — spirit_qi 从历史手填值（-0.80）重构为统一灵气
-        # 场的面积加权均值。baolongwang 的 AABB 与正灵 zhanhun_plain(0.4) 重叠，max-blend
-        # 让相邻灵气填补部分负压 → 派生值约 -0.43（仍负灵域，天道盲点意图保留）。P4 后
-        # 稳定契约是 **spirit_qi < 0（负灵域，吞噬真元）**，不再是精确 -0.80（要锁精确
-        # 深负值须在 blueprint 声明 qi_override 并避开正灵邻接）。
+        # 场的面积加权均值。footprint 越界修复 + 半开区间共边界归属（P4 CodeRabbit #3）
+        # 后，baolongwang 自身 AABB 由它自己的负灵核主导，派生值落回 **深负** ≈-0.73
+        # （右上边界采样列归邻 zone / 走过渡，较声明 -0.80 略向 base 抬升）。
+        #
+        # 收紧（CodeRabbit）：不只锁 NEGATIVE 档——历史 spirit_qi 作 target 透传 + 自身
+        # 主导，本就该钉住"仍深负"。只锁 <-0.1 时退化到 -0.11 也会蒙混；故同时锁
+        # ① NEGATIVE 档隐含于 ② 深负下界 <-0.4（排除浅负退化）③ 贴近实测 -0.73。
         zone = next(z for z in self.zones if z["name"] == "baolongwang_cavern_deep")
         self.assertLess(
-            zone["spirit_qi"], -0.1,
-            f"baolongwang_cavern_deep spirit_qi must stay in NEGATIVE grade (< -0.1, "
-            f"tiandao blindspot that devours qi, plan S8.1 #3); got {zone['spirit_qi']}",
+            zone["spirit_qi"], -0.4,
+            f"baolongwang_cavern_deep spirit_qi must stay DEEPLY negative (< -0.4, "
+            f"tiandao blindspot that devours qi, plan S8.1 #3; 不被邻常灵核抬成浅负 "
+            f"-0.11 这类退化); got {zone['spirit_qi']}",
+        )
+        self.assertAlmostEqual(
+            zone["spirit_qi"], -0.73, delta=0.08,
+            msg=(
+                f"baolongwang_cavern_deep derived spirit_qi should stay near -0.73 "
+                f"(声明 -0.80 经半开边界归属后的稳定值); 偏离 >0.08 说明 kernel/边界"
+                f"规则漂移; got {zone['spirit_qi']}"
+            ),
         )
 
     def test_aabb_no_overlap_dan_zong(self):

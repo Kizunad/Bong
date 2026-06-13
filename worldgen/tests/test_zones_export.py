@@ -659,9 +659,16 @@ class BakeZoneQiE2ETest(unittest.TestCase):
             )
 
     def test_baolongwang_cavern_stays_negative_not_lifted(self) -> None:
-        # 实证回归 pin（对峙自检 major）：baolongwang_cavern_deep 声明 negative(-0.80)，
-        # 曾被相邻 zhanhun_plain(0.4) 常灵核越界抬成 -0.43。修复后必须落回 negative
-        # (<-0.1) 并贴近其声明精确值 -0.80（自身 bounds 由它自己的核主导）。
+        # 实证回归 pin（对峙自检 major + CodeRabbit）：baolongwang_cavern_deep 声明
+        # negative(-0.80)，曾被相邻 zhanhun_plain(0.4) 常灵核越界抬成 -0.43。footprint
+        # 越界修复 + 半开区间共边界归属（P4 CodeRabbit #3）后，自身 bounds 由它自己的
+        # 核主导，派生值落回 **深负** ≈-0.73（右上边界采样列归邻 zone / 走过渡，较
+        # 声明 -0.80 略向 base 抬升，但仍稳稳深负）。
+        #
+        # 收紧依据：这里不是"只要还在 NEGATIVE 档就行"的弱 case——历史 spirit_qi 作
+        # target_value 透传 + 自身 AABB 主导，所以本来就该钉住"仍深负"。只锁 <-0.1 时，
+        # 退化到 -0.11 也会蒙混过关；故同时锁 ① NEGATIVE 档 ② 深负下界 <-0.4（排除
+        # 浅负退化）③ 贴近实测 -0.73（delta 0.08，抓档内漂移）。
         from scripts.terrain_gen.blueprint import (
             DEFAULT_BLUEPRINT_PATH,
             load_blueprint,
@@ -680,8 +687,16 @@ class BakeZoneQiE2ETest(unittest.TestCase):
             f"baolongwang 必须落回 negative（负灵域），不被邻常灵核抬高；得 {sq:+.4f}",
         )
         self.assertLess(
-            sq, -0.1,
-            f"baolongwang 派生 spirit_qi={sq:+.4f} 必须 <-0.1（negative 档）",
+            sq, -0.4,
+            f"baolongwang 派生 spirit_qi={sq:+.4f} 必须 <-0.4（深负灵域，"
+            f"不被邻常灵核抬成浅负 -0.11 这类退化）",
+        )
+        self.assertAlmostEqual(
+            sq, -0.73, delta=0.08,
+            msg=(
+                f"baolongwang 派生 spirit_qi 应贴近实测 -0.73（声明 -0.80 经半开边界"
+                f"归属后的稳定值），偏离 >0.08 说明 kernel/边界规则漂移；得 {sq:+.4f}"
+            ),
         )
 
 
