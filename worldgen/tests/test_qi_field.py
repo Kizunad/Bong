@@ -84,13 +84,19 @@ class QiDensityDerivationTest(unittest.TestCase):
         self.assertEqual(float(qf.qi_density_from_field(5.0)), 1.0)
 
     def test_array_path_matches_scalar_path(self) -> None:
-        # ndarray 路径与逐标量路径逐元素一致（向量化无偏差）。
+        # ndarray 路径与逐标量路径逐元素一致（向量化无偏差）。必须真比向量化输出
+        # arr[idx] vs 标量分支——否则两边都跑标量、向量化分叉也照样绿。
         field = np.array([-1.0, -0.5, 0.0, 0.5, 1.0])
         arr = np.asarray(qf.qi_density_from_field(field))
-        for v in field:
+        for idx, v in enumerate(field):
+            scalar = float(qf.qi_density_from_field(float(v)))
             self.assertAlmostEqual(
-                float(qf.qi_density_from_field(float(v))),
-                float(np.asarray(qf.qi_density_from_field(float(v)))),
+                float(arr[idx]),
+                scalar,
+                msg=(
+                    f"array path value at idx={idx} (field={float(v)}) must match "
+                    f"scalar path {scalar} (向量化无偏差), got {float(arr[idx])}"
+                ),
             )
         np.testing.assert_allclose(arr, (field + 1.0) / 2.0)
 

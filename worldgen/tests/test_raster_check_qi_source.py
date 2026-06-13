@@ -224,7 +224,7 @@ class RasterCheckQiSourceTest(unittest.TestCase):
             )
             ok, msg = validate_rasters(raster_dir)
             self.assertFalse(
-                ok, "deviation just over tolerance must fail"
+                ok, f"deviation just over tolerance must fail: {msg}"
             )
 
     def test_zone_without_declared_spirit_qi_is_skipped(self) -> None:
