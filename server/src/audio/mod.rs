@@ -176,7 +176,7 @@ mod tests {
             SoundRecipeRegistry::load_default().expect("default audio recipes should load");
         assert_eq!(
             registry.len(),
-            233,
+            234,
             "audio registry should exclude removed slide and double-jump movement recipes \
              plus include 7 supply_coffin recipes (break + open common/rare/precious + emerge) \
              plus 1 ambient_dan_zong recipe \
@@ -191,7 +191,8 @@ mod tests {
              plus 1 trap runtime P2 recipe (bait_stake_break) \
              plus 1 halfstep_rechallenge_trigger_player recipe (plan-halfstep-rechallenge-integration-v1 P0) \
              plus 2 halfstep P1 recipes (halfstep_quota_release_broadcast + halfstep_rechallenge_trigger_zone_echo) \
-             plus 5 placeable container runtime recipes"
+             plus 5 placeable container runtime recipes \
+             plus 1 dead_drop_ward_break recipe"
         );
         assert!(
             registry.get("beast_trap_snap").is_some(),
@@ -255,10 +256,11 @@ mod tests {
             "container_open",
             "container_open_deaddrop",
             "container_break",
+            "dead_drop_ward_break",
         ] {
             assert!(
                 registry.get(key).is_some(),
-                "plan-placeable-container-blocks-v1 P2：容器音效 recipe `{key}` 必须加载"
+                "plan-placeable-container-blocks-v1 P2/P3：容器音效 recipe `{key}` 必须加载"
             );
         }
         // plan-supply-coffin-v1 P2.2 audio
