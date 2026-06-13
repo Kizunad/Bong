@@ -249,6 +249,19 @@ public final class BongHudOrchestrator {
             screenWidth,
             screenHeight
         ));
+        if (!playerState.isEmpty()) {
+            ExtractDecisionStateStore.markPlayerInWorld(nowMillis);
+        }
+        commands.addAll(ExtractDecisionHudPlanner.buildCommands(
+            playerState,
+            com.bong.client.inventory.state.InventoryStateStore.snapshot(),
+            com.bong.client.state.SeasonStateStore.snapshot(),
+            ExtractDecisionStateStore.snapshot(),
+            widthMeasurer,
+            screenWidth,
+            screenHeight,
+            nowMillis
+        ));
 
         if (BongClientFeatures.ENABLE_COMBAT_HUD) {
             commands.addAll(MiniBodyHudPlanner.buildCommands(

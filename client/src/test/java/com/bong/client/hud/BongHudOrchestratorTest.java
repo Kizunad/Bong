@@ -44,6 +44,7 @@ public class BongHudOrchestratorTest {
         com.bong.client.tsy.TsyDeathVfxStore.resetForTests();
         HudImmersionMode.resetForTests();
         ForgeProgressHudPlanner.resetForTests();
+        ExtractDecisionStateStore.resetForTests();
     }
 
     @Test
@@ -278,6 +279,67 @@ public class BongHudOrchestratorTest {
         );
 
         assertTrue(commands.stream().anyMatch(cmd -> cmd.layer() == HudRenderLayer.BOTANY));
+    }
+
+    @Test
+    void extractDecisionChecklistJoinsHudWhenPlayerStateExists() {
+        PlayerStateStore.replace(PlayerStateViewModel.create(
+            "Induce",
+            "offline:Azure",
+            25.0,
+            100.0,
+            0.0,
+            0.4,
+            PlayerStateViewModel.PowerBreakdown.empty(),
+            PlayerStateViewModel.SocialSnapshot.empty(),
+            "spawn",
+            "荒坡",
+            0.35
+        ));
+        ExtractDecisionStateStore.replaceRiskScore(70, true, 1_000L);
+
+        List<HudRenderCommand> commands = BongHudOrchestrator.buildCommands(
+            BongHudStateSnapshot.empty(),
+            1_000L,
+            FIXED_WIDTH,
+            220,
+            320,
+            180
+        );
+
+        assertTrue(
+            commands.stream().anyMatch(command -> command.layer() == HudRenderLayer.EXTRACT_DECISION),
+            "expected EXTRACT_DECISION layer because player state and risk state should invoke P2 HUD, actual commands: "
+                + commands
+        );
+    }
+
+    @Test
+    void extractDecisionRunClockStartsFromPlayerHudSnapshot() {
+        PlayerStateStore.replace(PlayerStateViewModel.create(
+            "Induce",
+            "offline:Azure",
+            80.0,
+            100.0,
+            0.0,
+            0.4,
+            PlayerStateViewModel.PowerBreakdown.empty(),
+            PlayerStateViewModel.SocialSnapshot.empty(),
+            "spawn",
+            "荒坡",
+            0.35
+        ));
+
+        BongHudOrchestrator.buildCommands(
+            BongHudStateSnapshot.empty(),
+            7_000L,
+            FIXED_WIDTH,
+            220,
+            320,
+            180
+        );
+
+        assertEquals(7_000L, ExtractDecisionStateStore.snapshot().runStartedAtMs());
     }
 
     @Test
