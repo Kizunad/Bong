@@ -226,7 +226,7 @@ pub fn handle_container_block_break(
         }
         drain_container_items_to_drops(&mut dropped_registry, ext, world_pos, dimension);
         ext_registry.remove_session(ext.session_id);
-        commands.entity(entity).despawn();
+        commands.entity(entity).insert(valence::prelude::Despawned);
         send_container_audio(
             audio_events.as_deref_mut(),
             CONTAINER_BREAK_AUDIO_RECIPE_ID,

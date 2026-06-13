@@ -499,7 +499,7 @@ pub fn break_placeable(
 ) -> Result<(), BlockPlaceRejectReason> {
     match kind {
         PlaceableBlockKind::Workbench => {
-            commands.entity(entity).despawn();
+            commands.entity(entity).insert(valence::prelude::Despawned);
             Ok(())
         }
         PlaceableBlockKind::StorageCrate { .. } | PlaceableBlockKind::DeadDrop => {
