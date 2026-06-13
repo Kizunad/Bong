@@ -3,6 +3,7 @@ pub mod block_drop;
 pub mod block_place;
 pub mod bong_blocks;
 pub mod calamity;
+pub mod container_block;
 pub mod dimension;
 pub mod dimension_transfer;
 pub mod entity_model;
@@ -125,6 +126,7 @@ pub fn register(app: &mut App) {
     // chunk —— 否则 vanilla / 普通方块挖了会"复原"。
     block_break::register(app);
     block_drop::register(app);
+    container_block::register(app);
     block_place::register(app);
     zone::register(app);
     environment::register(app);
