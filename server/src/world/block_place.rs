@@ -554,7 +554,7 @@ mod tests {
     use crate::world::furniture::FurnitureKind;
     use valence::prelude::{
         ident, App, BiomeRegistry, DiggingEvent, DiggingState, DimensionTypeRegistry, GameMode,
-        IntoSystemConfigs, Server, UnloadedChunk, Update, VisibleChunkLayer,
+        IntoSystemConfigs, Server, UnloadedChunk, Update, VisibleChunkLayer, With,
     };
     use valence::protocol::packets::play::CustomPayloadS2c;
     use valence::testing::{create_mock_client, MockClientHelper, ScenarioSingleClient};
@@ -1199,6 +1199,189 @@ mod tests {
                 LootContainerCloseReasonV1::ContainerDestroyed
             ),
             "breaking an opened container should force-close the player's loot UI"
+        );
+    }
+
+    #[test]
+    fn breaking_closed_empty_container_drops_only_container_without_close_payload() {
+        let (mut app, client, _layer_entity, mut helper) = block_place_app(
+            inventory_with_item(item_instance(9611, "trade_crate", 1)),
+            DimensionKind::Overworld,
+        );
+        app.insert_resource(ItemRegistry::from_map(HashMap::from([
+            item_template_with_placeable("trade_crate", ItemCategory::Misc, Some("storage_crate")),
+        ])));
+        app.insert_resource(InventoryInstanceIdAllocator::new(9710));
+        app.init_resource::<crate::inventory::DroppedLootRegistry>();
+        app.world_mut().entity_mut(client).insert((
+            GameMode::Survival,
+            CurrentDimension(DimensionKind::Overworld),
+        ));
+        app.add_event::<DiggingEvent>();
+        app.add_systems(
+            Update,
+            crate::world::container_block::handle_container_block_break,
+        );
+
+        let pos = BlockPos::new(1, 64, 1);
+        app.world_mut().send_event(BlockPlaceRequest {
+            client,
+            x: pos.x,
+            y: pos.y,
+            z: pos.z,
+            item_instance_id: 9611,
+            target_face: TrapTargetFace::Top,
+        });
+        app.update();
+
+        let container_entity = app
+            .world_mut()
+            .query_filtered::<Entity, With<ExternalContainer>>()
+            .iter(app.world())
+            .next()
+            .expect("placed crate should spawn an ExternalContainer");
+        let session_id = app
+            .world()
+            .get::<ExternalContainer>(container_entity)
+            .expect("container should still exist before break")
+            .session_id;
+
+        send_stop_break(&mut app, client, pos);
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        assert!(
+            app.world().get_entity(container_entity).is_none(),
+            "breaking a closed empty container should despawn the entity"
+        );
+        assert!(
+            !app.world()
+                .resource::<ExternalContainerRegistry>()
+                .sessions
+                .contains_key(&session_id),
+            "breaking should remove the closed container session"
+        );
+        let dropped = app
+            .world()
+            .resource::<crate::inventory::DroppedLootRegistry>();
+        assert_eq!(
+            dropped.entries.len(),
+            1,
+            "empty container break should drop only the container item"
+        );
+        assert!(
+            dropped
+                .entries
+                .values()
+                .all(|entry| entry.item.template_id == "trade_crate"),
+            "empty container break should not invent content drops"
+        );
+        assert!(
+            !has_loot_container_close_payload(
+                &mut helper,
+                LootContainerCloseReasonV1::ContainerDestroyed
+            ),
+            "closed container break should not emit a loot close payload"
+        );
+    }
+
+    #[test]
+    fn breaking_container_cleans_session_when_container_item_drop_fails() {
+        let (mut app, client, _layer_entity, mut helper) = block_place_app(
+            inventory_with_item(item_instance(9621, "trade_crate", 1)),
+            DimensionKind::Overworld,
+        );
+        app.insert_resource(ItemRegistry::from_map(HashMap::from([
+            item_template_with_placeable("trade_crate", ItemCategory::Misc, Some("storage_crate")),
+            item_template("bone_coin_stack", ItemCategory::Misc),
+        ])));
+        app.insert_resource(InventoryInstanceIdAllocator::new(9720));
+        app.init_resource::<crate::inventory::DroppedLootRegistry>();
+        app.world_mut().entity_mut(client).insert((
+            GameMode::Survival,
+            CurrentDimension(DimensionKind::Overworld),
+        ));
+        app.add_event::<DiggingEvent>();
+        app.add_systems(
+            Update,
+            crate::world::container_block::handle_container_block_break,
+        );
+
+        let pos = BlockPos::new(1, 64, 1);
+        app.world_mut().send_event(BlockPlaceRequest {
+            client,
+            x: pos.x,
+            y: pos.y,
+            z: pos.z,
+            item_instance_id: 9621,
+            target_face: TrapTargetFace::Top,
+        });
+        app.update();
+
+        let container_entity = {
+            let mut query = app.world_mut().query::<(Entity, &mut ExternalContainer)>();
+            let (entity, mut ext) = query
+                .iter_mut(app.world_mut())
+                .next()
+                .expect("placed crate should spawn an ExternalContainer");
+            ext.opened_by = Some(client);
+            ext.container.items.push(PlacedItemState {
+                row: 0,
+                col: 0,
+                instance: item_instance(9622, "bone_coin_stack", 3),
+            });
+            entity
+        };
+        let session_id = app
+            .world()
+            .get::<ExternalContainer>(container_entity)
+            .expect("container should still exist before break")
+            .session_id;
+
+        app.insert_resource(ItemRegistry::from_map(HashMap::from([item_template(
+            "bone_coin_stack",
+            ItemCategory::Misc,
+        )])));
+
+        send_stop_break(&mut app, client, pos);
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        assert!(
+            app.world().get_entity(container_entity).is_none(),
+            "failed container item drop must not leave a zombie container entity"
+        );
+        assert!(
+            !app.world()
+                .resource::<ExternalContainerRegistry>()
+                .sessions
+                .contains_key(&session_id),
+            "failed container item drop must still remove the session"
+        );
+        let dropped = app
+            .world()
+            .resource::<crate::inventory::DroppedLootRegistry>();
+        assert!(
+            dropped
+                .entries
+                .values()
+                .any(|entry| entry.item.template_id == "bone_coin_stack"
+                    && entry.item.stack_count == 3),
+            "failed container item drop should still drop stored contents"
+        );
+        assert!(
+            dropped
+                .entries
+                .values()
+                .all(|entry| entry.item.template_id != "trade_crate"),
+            "missing container template should skip only the container item drop"
+        );
+        assert!(
+            has_loot_container_close_payload(
+                &mut helper,
+                LootContainerCloseReasonV1::ContainerDestroyed
+            ),
+            "failed container item drop should still force-close an opened container"
         );
     }
 

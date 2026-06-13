@@ -166,7 +166,6 @@ pub fn handle_container_block_break(
                 "[bong][container_block] rejected break: failed to drop `{}`: {error}",
                 block.kind.item_template_id()
             );
-            continue;
         }
 
         if let Some(player) = ext.opened_by {
