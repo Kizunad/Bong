@@ -14,7 +14,7 @@
           -2650.0
         ]
       },
-      "spirit_qi": 0.321374,
+      "spirit_qi": 0.071423,
       "danger_level": 5,
       "active_events": [
         "rift_mouth_entry"
@@ -42,7 +42,7 @@
           -8350.0
         ]
       },
-      "spirit_qi": 0.209579,
+      "spirit_qi": 0.068934,
       "danger_level": 5,
       "active_events": [
         "rift_mouth_entry"
@@ -70,7 +70,7 @@
           -7650.0
         ]
       },
-      "spirit_qi": 0.304125,
+      "spirit_qi": 0.074125,
       "danger_level": 5,
       "active_events": [
         "rift_mouth_entry"
@@ -98,7 +98,7 @@
           5650.0
         ]
       },
-      "spirit_qi": 0.04021,
+      "spirit_qi": 0.059619,
       "danger_level": 5,
       "active_events": [
         "rift_mouth_entry"
@@ -126,7 +126,7 @@
           -4800.0
         ]
       },
-      "spirit_qi": -0.433821,
+      "spirit_qi": -0.8,
       "danger_level": 5,
       "ambient_recipe_id": "ambient_wilderness",
       "active_events": [],
@@ -153,7 +153,7 @@
           -2300.0
         ]
       },
-      "spirit_qi": 0.299881,
+      "spirit_qi": 0.323866,
       "danger_level": 6,
       "active_events": [
         "tribulation_scorch"
@@ -186,7 +186,7 @@
           -8100.0
         ]
       },
-      "spirit_qi": 0.394713,
+      "spirit_qi": 0.412435,
       "danger_level": 6,
       "active_events": [],
       "patrol_anchors": [
@@ -222,7 +222,7 @@
           -600.0
         ]
       },
-      "spirit_qi": 0.39387,
+      "spirit_qi": 0.421308,
       "danger_level": 6,
       "active_events": [],
       "patrol_anchors": [
@@ -258,7 +258,7 @@
           4400.0
         ]
       },
-      "spirit_qi": 0.39018,
+      "spirit_qi": 0.417838,
       "danger_level": 6,
       "active_events": [],
       "patrol_anchors": [
@@ -294,7 +294,7 @@
           6400.0
         ]
       },
-      "spirit_qi": 0.392974,
+      "spirit_qi": 0.4205,
       "danger_level": 6,
       "active_events": [],
       "patrol_anchors": [
@@ -330,7 +330,7 @@
           -9600.0
         ]
       },
-      "spirit_qi": 0.394161,
+      "spirit_qi": 0.421569,
       "danger_level": 6,
       "active_events": [],
       "patrol_anchors": [
@@ -366,7 +366,7 @@
           1900.0
         ]
       },
-      "spirit_qi": 0.397081,
+      "spirit_qi": 0.424785,
       "danger_level": 6,
       "active_events": [],
       "patrol_anchors": [
@@ -402,7 +402,7 @@
           4900.0
         ]
       },
-      "spirit_qi": 0.391529,
+      "spirit_qi": 0.41942,
       "danger_level": 6,
       "active_events": [],
       "patrol_anchors": [
@@ -438,7 +438,7 @@
           3000.0
         ]
       },
-      "spirit_qi": 0.682164,
+      "spirit_qi": 0.716659,
       "danger_level": 3,
       "ambient_recipe_id": "ambient_spring_marsh",
       "active_events": [],
@@ -475,7 +475,7 @@
           -1150.0
         ]
       },
-      "spirit_qi": -0.162131,
+      "spirit_qi": -0.15,
       "danger_level": 3,
       "ambient_recipe_id": "ambient_wangyintai",
       "active_events": [],
@@ -507,7 +507,7 @@
           4500.0
         ]
       },
-      "spirit_qi": 0.314654,
+      "spirit_qi": 0.340416,
       "danger_level": 5,
       "active_events": [
         "tribulation_scorch"
@@ -540,7 +540,7 @@
           -1750.0
         ]
       },
-      "spirit_qi": 0.309057,
+      "spirit_qi": 0.302779,
       "danger_level": 4,
       "ambient_recipe_id": "ambient_rift_valley",
       "active_events": [],
@@ -577,7 +577,7 @@
           -7500.0
         ]
       },
-      "spirit_qi": 0.274942,
+      "spirit_qi": 0.282529,
       "danger_level": 7,
       "active_events": [
         "tribulation_scorch",
@@ -611,7 +611,7 @@
           -1400.0
         ]
       },
-      "spirit_qi": 0.489135,
+      "spirit_qi": 0.518905,
       "danger_level": 2,
       "ambient_recipe_id": "ambient_qingyun_peaks",
       "active_events": [],
@@ -648,7 +648,7 @@
           3600.0
         ]
       },
-      "spirit_qi": 0.388003,
+      "spirit_qi": 0.415721,
       "danger_level": 4,
       "ambient_recipe_id": "ambient_wilderness",
       "active_events": [],
@@ -685,7 +685,7 @@
           750.0
         ]
       },
-      "spirit_qi": 0.297921,
+      "spirit_qi": 0.323568,
       "danger_level": 1,
       "ambient_recipe_id": "ambient_spawn_plain",
       "active_events": [],
@@ -786,7 +786,7 @@
           4800.0
         ]
       },
-      "spirit_qi": 0.393095,
+      "spirit_qi": 0.421345,
       "danger_level": 4,
       "ambient_recipe_id": "ambient_dan_zong",
       "active_events": [],
@@ -823,7 +823,7 @@
           2000.0
         ]
       },
-      "spirit_qi": 0.828773,
+      "spirit_qi": 0.866363,
       "danger_level": 3,
       "active_events": [],
       "patrol_anchors": [
@@ -854,7 +854,7 @@
           2300.0
         ]
       },
-      "spirit_qi": 0.541582,
+      "spirit_qi": 0.572533,
       "danger_level": 5,
       "active_events": [],
       "patrol_anchors": [
@@ -890,7 +890,7 @@
           -3200.0
         ]
       },
-      "spirit_qi": 0.396256,
+      "spirit_qi": 0.408826,
       "danger_level": 4,
       "active_events": [],
       "patrol_anchors": [
@@ -926,7 +926,7 @@
           9000.0
         ]
       },
-      "spirit_qi": -0.017957,
+      "spirit_qi": 0.0,
       "danger_level": 5,
       "active_events": [
         "no_cadence"
@@ -964,7 +964,7 @@
           -6000.0
         ]
       },
-      "spirit_qi": 0.053881,
+      "spirit_qi": 0.070988,
       "danger_level": 5,
       "ambient_recipe_id": "ambient_north_wastes",
       "active_events": [],
@@ -988,5 +988,5 @@
       "blocked_tiles": []
     }
   ],
-  "generated_by": "worldgen-v4 64353f392"
+  "generated_by": "worldgen-v4 e686b1e2a"
 }

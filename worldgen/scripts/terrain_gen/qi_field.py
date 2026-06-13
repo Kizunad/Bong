@@ -206,6 +206,27 @@ def vein_network_field(
     return lift
 
 
+def _spec_true_bounds(spec: dict) -> tuple[float, float, float, float]:
+    """一个 zone_kernel spec 的**真实 AABB**（min_x, max_x, min_z, max_z）.
+
+    优先取 spec 显式携带的 ``bounds_xz``（``kernel_spec_from_grade`` 从**未放大**的
+    half-extent 写入——footprint_scale 只放大 falloff 核的 half_w/half_d，不动真实
+    bounds）。缺省时（手搓 dict spec）从 ``center_xz ± half_w/half_d`` 反推——这些
+    手搓 spec 的 half 即真实半径，未经 footprint 放大。
+
+    真实 bounds 是 in-AABB 主导规则的依据：zone 自身 bounds 内由它自己的核以 target
+    铺满，邻核的 falloff（仅伸进 wilderness）不得越界压过。
+    """
+    bounds = spec.get("bounds_xz")
+    if bounds is not None:
+        bx0, bx1, bz0, bz1 = bounds
+        return float(bx0), float(bx1), float(bz0), float(bz1)
+    cx, cz = spec["center_xz"]
+    half_w = float(spec["half_w"])
+    half_d = float(spec["half_d"])
+    return cx - half_w, cx + half_w, cz - half_d, cz + half_d
+
+
 def build_qi_field(
     wx: np.ndarray,
     wz: np.ndarray,
@@ -216,29 +237,41 @@ def build_qi_field(
     vein_strength: float = 0.22,
     enable_veins: bool = True,
 ) -> np.ndarray:
-    """合成全图统一灵气场 [-1, 1]：base + zone 贡献核（取最强核）+ 灵脉抬升.
+    """合成全图统一灵气场 [-1, 1]：base + bounds 主导的 zone 核 + wilderness 过渡 + 灵脉.
 
     ``zone_kernels`` 每项是一个 dict：
         center_xz, half_w, half_d, target （必填）
+        bounds_xz （可选 (min_x,max_x,min_z,max_z) 真实 AABB；缺省从 center±half 反推）
         falloff_exponent （可选，默认 1.6）
         override （可选 float | None；非 None 时该核为**硬约束核**，核心区直接铺
                   override 值且不被 veins 抬升稀释——§8.1 #4 #2）
 
-    合成规则：
+    **合成规则（bounds-confined + specificity-ordered，修 footprint over-reach）**：
+
       1. 从全图 ``base`` 起步。
-      2. 逐 zone 算贡献核，**取逐元素最大**叠加（zone 灵气以最强源主导，避免相邻
-         zone 核相加超界；与 LAYER_REGISTRY qi 层"overlay 抬升"语义一致）。
-      3. **灵脉抬升**只作用在正灵域（field > 0 的列），死域 / 负灵域不长脉。
-      4. **override 硬约束**：override 核覆盖区（mask 高于 0.5 的核心）锁定 override
-         值，跳过 veins 抬升——精调浓度铺死，不被网络稀释。
-      5. 全图 clamp 到 [-1, 1]。
+      2. **wilderness 过渡层**：对每个核，仅在**不属于任何 zone 真实 AABB** 的列上
+         取逐元素最大叠加（核的 falloff 尾巴只伸进 wilderness，给 raster 平滑过渡）。
+      3. **in-AABB 主导层**：落在 ≥1 个 zone 真实 AABB 内的列，由**面积最小（最具体）
+         的覆盖 zone** 主导，整片铺该 zone 的 ``eff_target``（平顶 = target）。这让：
+           · 每个 zone 自身 bounds 内读它声明的档位（派生 spirit_qi 落回声明档），
+           · 嵌套小 zone（rift_mouth 落在 blood_valley 内）覆盖外层大 zone，
+           · **邻核 footprint 不再越界污染**——邻 zone 的 falloff 只在 wilderness 生效，
+             伸不进别的 zone 的 bounds（max-blend over-reach 根因消除）。
+         同面积平手时取**较大值**（退化回 max-blend，共心核测试仍由强源主导）。
+      4. **灵脉抬升**只作用在正灵域（field > 0 的列），死域 / 负灵域不长脉。
+      5. **override 硬约束**：override zone 的 AABB 列铺 override 值且跳过 veins 抬升。
+      6. 全图 clamp 到 [-1, 1]。
 
     返回 native 灵气场（float64，同 ``wx`` shape）。纯函数，无 IO。
     """
-    field = np.full_like(np.asarray(wx, dtype=np.float64), float(base))
-    # override 硬约束掩码：记录哪些列被 override 核锁定（跳过 veins 稀释）。
+    wx_arr = np.asarray(wx, dtype=np.float64)
+    wz_arr = np.asarray(wz, dtype=np.float64)
+    field = np.full_like(wx_arr, float(base))
+    # override 硬约束掩码：记录哪些列被 override zone 的 AABB 锁定（跳过 veins 稀释）。
     override_lock = np.zeros_like(field, dtype=bool)
 
+    # 预处理每个 spec：算 falloff 核、真实 AABB inside 掩码、eff_target、面积。
+    processed: list[dict] = []
     for spec in zone_kernels:
         center = spec["center_xz"]
         half_w = float(spec["half_w"])
@@ -249,11 +282,11 @@ def build_qi_field(
         override = spec.get("override", None)
         eff_target = target
         if override is not None:
-            # override 是硬约束铺场值——校验 native 值域，核心铺 override。
+            # override 是硬约束铺场值——校验 native 值域，AABB 内铺 override。
             eff_target = validate_qi_override(float(override))
         kernel = zone_contribution_kernel(
-            wx,
-            wz,
+            wx_arr,
+            wz_arr,
             center_xz=center,
             half_w=half_w,
             half_d=half_d,
@@ -262,24 +295,43 @@ def build_qi_field(
             falloff_exponent=exponent,
             plateau_ratio=plateau_ratio,
         )
-        field = np.maximum(field, kernel)
-        if override is not None:
-            # 核心区（径向掩码 > 0.5，即接近 target 的内圈）锁为 override 硬约束。
-            # 用与核同款的（平顶 / 尖核）掩码，使平顶核的整片内圈都被锁死。
-            cx, cz = center
-            dx = (wx - cx) / max(half_w, 1.0)
-            dz = (wz - cz) / max(half_d, 1.0)
-            radial = np.sqrt(dx * dx + dz * dz)
-            if plateau_ratio <= 0.0:
-                mask = np.clip(1.0 - radial**exponent, 0.0, 1.0)
-            else:
-                denom = max(1.0 - plateau_ratio, 1e-6)
-                transition = np.clip((radial - plateau_ratio) / denom, 0.0, 1.0)
-                mask = np.clip(1.0 - transition**exponent, 0.0, 1.0)
-            override_lock |= mask > 0.5
+        bx0, bx1, bz0, bz1 = _spec_true_bounds(spec)
+        inside = (
+            (wx_arr >= bx0) & (wx_arr <= bx1)
+            & (wz_arr >= bz0) & (wz_arr <= bz1)
+        )
+        area = max(bx1 - bx0, 0.0) * max(bz1 - bz0, 0.0)
+        processed.append(
+            {
+                "kernel": kernel,
+                "inside": inside,
+                "eff_target": eff_target,
+                "area": area,
+                "is_override": override is not None,
+            }
+        )
+
+    if processed:
+        # 任一 zone AABB 覆盖的列（in-AABB 主导层 vs wilderness 过渡层的分界）。
+        any_inside = np.zeros_like(field, dtype=bool)
+        for p in processed:
+            any_inside |= p["inside"]
+
+        # (2) wilderness 过渡层：核 falloff 只在不属任何 AABB 的列上 max 叠加。
+        wild = ~any_inside
+        for p in processed:
+            field = np.where(wild, np.maximum(field, p["kernel"]), field)
+
+        # (3) in-AABB 主导层：面积大→小依次写入（小面积最后写 = 最具体者胜）；
+        #     同面积按 eff_target 升序（大值最后写 = 平手取强源，退化回 max-blend）。
+        for p in sorted(processed, key=lambda q: (-q["area"], q["eff_target"])):
+            field = np.where(p["inside"], p["eff_target"], field)
+            if p["is_override"]:
+                override_lock |= p["inside"]
 
     if enable_veins:
-        veins = vein_network_field(wx, wz, seed=vein_seed, strength=vein_strength)
+        veins = vein_network_field(wx_arr, wz_arr, seed=vein_seed,
+                                   strength=vein_strength)
         # 灵脉只抬升正灵域（field > 0），死域 / 负灵域不长脉；override 锁定列不抬升。
         liftable = (field > 0.0) & (~override_lock)
         field = np.where(liftable, field + veins, field)
@@ -287,11 +339,12 @@ def build_qi_field(
     return np.clip(field, QI_FIELD_MIN, QI_FIELD_MAX)
 
 
-# 平顶核默认形参（zone bounds 读自身档位浓度，过渡发生在 bounds 外缘）。
-#   FOOTPRINT —— 核 half-extent 相对 zone 半径的放大倍率：1.7 让过渡环越过 AABB
-#                角落（radial ≈ 1.41），zone 整片落在平顶 + 内过渡区。
-#   PLATEAU   —— 平顶占核半径比例：0.6 内圈铺死 target，外 0.4 衰减到 base。
-# 这两个默认值经实证标定（六档 zone 的 AABB 面积加权均值各落回声明档位区间）。
+# 平顶核默认形参。``build_qi_field`` 的 in-AABB 主导层已**精确铺满** zone 真实 bounds
+# 为 target（不再靠核 footprint 把均值抬回档位），故 footprint / plateau 现在**只塑形
+# wilderness 过渡**（核 falloff 尾巴伸进 zone 外的余区，给 raster 平滑过渡）：
+#   FOOTPRINT —— falloff 核 half-extent 相对 zone 半径的放大倍率，让过渡环伸进
+#                wilderness（in-AABB 列已被 eff_target 覆盖，不受此放大影响）。
+#   PLATEAU   —— falloff 核平顶占比（过渡环起点），保证 AABB 外缘附近不会骤降到 base。
 GRADE_KERNEL_FOOTPRINT = 1.7
 GRADE_KERNEL_PLATEAU_RATIO = 0.6
 
@@ -310,14 +363,18 @@ def kernel_spec_from_grade(
     """便捷构造一个 ``build_qi_field`` zone_kernel dict（按 qi_grade 取目标值）.
 
     ``grade`` 决定核心目标值（``qi_grade_target``）；``override`` 非 None 时为硬约束
-    （精调浓度铺死）。``footprint_scale`` 放大核 half-extent 让过渡发生在 zone bounds
-    之外，``plateau_ratio`` 使 zone 内部整片读 target —— 两者保证 **zone 自身 bounds
-    的面积加权均值落回声明档位**（派生 spirit_qi 的核心不变量；否则 edge 的 base 会
-    把均值拉低、所有 zone 误判负灵域）。返回的 dict 直接喂给
-    ``build_qi_field(zone_kernels=[...])``。
+    （精调浓度铺死）。spec 携带 zone 的**真实 AABB** ``bounds_xz``（从**未放大**的
+    ``half_w/half_d`` 算）—— ``build_qi_field`` 的 in-AABB 主导层据此把 zone 自身
+    bounds 整片铺 target，保证 **zone 面积加权均值落回声明档位**，且**邻核 footprint
+    不越界污染**（footprint over-reach 根因消除）。``footprint_scale`` / ``plateau_ratio``
+    现在只放大 falloff 核塑形 wilderness 过渡，不影响 in-AABB 读数。返回的 dict 直接
+    喂给 ``build_qi_field(zone_kernels=[...])``。
     """
+    cx, cz = center_xz
     return {
         "center_xz": center_xz,
+        # 真实 AABB（未放大）—— in-AABB 主导规则的依据。
+        "bounds_xz": (cx - half_w, cx + half_w, cz - half_d, cz + half_d),
         "half_w": half_w * footprint_scale,
         "half_d": half_d * footprint_scale,
         "target": qi_grade_target(grade),

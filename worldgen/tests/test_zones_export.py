@@ -107,15 +107,41 @@ class SpiritQiDerivationPinTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "duplicate zone name"):
             derive_zone_spirit_qi([z1, z2])
 
-    def test_neighbor_kernel_bleeds_in_via_max_blend(self) -> None:
-        # 邻 zone 强核 max-blend 抬升相邻弱 zone 的派生 spirit_qi（一份场两种导出）。
+    def test_neighbor_kernel_does_not_overreach_into_disjoint_zone(self) -> None:
+        # footprint over-reach 修复 pin：一个**不与 weak zone AABB 相交**的强 font
+        # 邻 zone，其核 falloff 只伸进 wilderness，**不得**抬高 weak zone 自身 bounds
+        # 的派生 spirit_qi（否则坍缩渊口被邻常灵区抬成常灵——违 worldview）。
         weak = _zone("weak", cx=0, cz=0, half=150, grade=QiGrade.TRACE)
-        strong = _zone("strong", cx=200, cz=0, half=300, grade=QiGrade.FONT)
+        # strong AABB [400,1000] 与 weak AABB [-150,150] 不相交（间隔 250）。
+        strong = _zone("strong", cx=700, cz=0, half=300, grade=QiGrade.FONT)
         solo = derive_zone_spirit_qi([weak], enable_veins=False)["weak"]
         withnb = derive_zone_spirit_qi([weak, strong], enable_veins=False)["weak"]
-        self.assertGreater(
-            withnb, solo,
-            "邻接 font 核 max-blend 必须抬升 weak zone 派生 spirit_qi（场两种导出同源）",
+        self.assertEqual(
+            archive_grade_from_spirit_qi(withnb), QiGrade.TRACE,
+            f"disjoint font 邻 zone 不得把 weak zone 抬出 trace 档；得 {withnb:+.4f}",
+        )
+        self.assertAlmostEqual(
+            withnb, solo, delta=1e-9,
+            msg=f"不相交邻 zone 的核 falloff 不得伸进 weak bounds；solo={solo:+.4f} "
+            f"withnb={withnb:+.4f}",
+        )
+
+    def test_nested_smaller_zone_overrides_larger_enclosing_zone(self) -> None:
+        # 嵌套 containment：小 trace zone 完全落在大 font zone 内（rift_mouth 落在
+        # blood_valley 内的几何）。**最具体（面积最小）的 zone 在自身 bounds 内主导**，
+        # 小 trace zone 读 trace（不被外层大 zone 抬成 font），外层 font zone 仍读 font。
+        big = _zone("big", cx=0, cz=0, half=600, grade=QiGrade.FONT)
+        small = _zone("small", cx=0, cz=0, half=80, grade=QiGrade.TRACE)
+        derived = derive_zone_spirit_qi([big, small], enable_veins=False)
+        self.assertEqual(
+            archive_grade_from_spirit_qi(derived["small"]), QiGrade.TRACE,
+            f"嵌套小 trace zone 必须在自身 bounds 内主导读 trace；得 "
+            f"{derived['small']:+.4f}（外层 font 不得越界压过）",
+        )
+        self.assertEqual(
+            archive_grade_from_spirit_qi(derived["big"]), QiGrade.FONT,
+            f"外层大 font zone 自身均值仍读 font（小洞只占极小面积）；得 "
+            f"{derived['big']:+.4f}",
         )
 
 
@@ -470,6 +496,103 @@ class BakeZoneQiE2ETest(unittest.TestCase):
         )
         # wilderness 份额 > 0（薄灵也有质量）。
         self.assertGreater(report.wilderness_share, 0.0)
+
+    def test_every_blueprint_zone_derives_into_its_declared_grade(self) -> None:
+        # footprint over-reach 修复的**硬不变量**（全 zone 扫）：在真实 blueprint 上，
+        # 每个 zone 自身 bounds 的派生 spirit_qi（面积加权均值，含邻核 + 灵脉真实叠加）
+        # 必须归档回它**声明的 qi_grade 档位**。邻核 footprint 越界污染会让弱/负灵 zone
+        # 被相邻常灵区抬出档位（rift_mouth → common、baolongwang → 被抬高）——本测试
+        # 把"每 zone 落自身声明档"焊死，任何越界回归立即撞红。
+        from scripts.terrain_gen.blueprint import (
+            DEFAULT_BLUEPRINT_PATH,
+            load_blueprint,
+        )
+        from scripts.terrain_gen.zones_export import (
+            bake_zone_qi,
+            _world_area_from_bounds,
+            zone_qi_input_from_blueprint,
+        )
+
+        bp = load_blueprint(DEFAULT_BLUEPRINT_PATH)
+        world_area = _world_area_from_bounds(bp.bounds_xz)
+        result = bake_zone_qi(bp.zones, world_area=world_area, budget=100.0)
+        declared = {
+            zi.name: zi.grade
+            for zi in (zone_qi_input_from_blueprint(z) for z in bp.zones)
+        }
+        offenders: list[str] = []
+        for name, sq in result.derived_spirit_qi.items():
+            got = archive_grade_from_spirit_qi(sq)
+            if got != declared[name]:
+                offenders.append(
+                    f"{name}: declared={declared[name].value} derived={sq:+.4f} "
+                    f"-> {got.value}"
+                )
+        self.assertEqual(
+            offenders, [],
+            "每个 blueprint zone 的派生 spirit_qi 必须落回声明 qi_grade 档位 "
+            f"（邻核 footprint 不得越界污染）；越界 zone:\n"
+            + "\n".join(offenders),
+        )
+
+    def test_rift_mouth_zones_stay_trace_not_pulled_to_common(self) -> None:
+        # 实证回归 pin（对峙自检 major）：4 个坍缩渊口 rift_mouth 声明 trace，曾被相邻
+        # blood_valley / north_waste / jiuzong 常灵核越界抬成 common（违 worldview——
+        # 坍缩渊口应低灵）。修复后必须落回 trace [0.02, 0.15)。
+        from scripts.terrain_gen.blueprint import (
+            DEFAULT_BLUEPRINT_PATH,
+            load_blueprint,
+        )
+        from scripts.terrain_gen.zones_export import (
+            bake_zone_qi,
+            _world_area_from_bounds,
+        )
+
+        bp = load_blueprint(DEFAULT_BLUEPRINT_PATH)
+        world_area = _world_area_from_bounds(bp.bounds_xz)
+        result = bake_zone_qi(bp.zones, world_area=world_area, budget=100.0)
+        for name in (
+            "rift_mouth_north_001",
+            "rift_mouth_north_002",
+            "rift_mouth_blood_001",
+            "rift_mouth_west_001",
+        ):
+            sq = result.derived_spirit_qi[name]
+            self.assertEqual(
+                archive_grade_from_spirit_qi(sq), QiGrade.TRACE,
+                f"{name} 必须落回 trace（坍缩渊口低灵），不被邻常灵区抬成 common；"
+                f"得 {sq:+.4f}",
+            )
+            self.assertTrue(
+                0.02 <= sq < 0.15,
+                f"{name} 派生 spirit_qi={sq:+.4f} 必须落 trace 档区间 [0.02, 0.15)",
+            )
+
+    def test_baolongwang_cavern_stays_negative_not_lifted(self) -> None:
+        # 实证回归 pin（对峙自检 major）：baolongwang_cavern_deep 声明 negative(-0.80)，
+        # 曾被相邻 zhanhun_plain(0.4) 常灵核越界抬成 -0.43。修复后必须落回 negative
+        # (<-0.1) 并贴近其声明精确值 -0.80（自身 bounds 由它自己的核主导）。
+        from scripts.terrain_gen.blueprint import (
+            DEFAULT_BLUEPRINT_PATH,
+            load_blueprint,
+        )
+        from scripts.terrain_gen.zones_export import (
+            bake_zone_qi,
+            _world_area_from_bounds,
+        )
+
+        bp = load_blueprint(DEFAULT_BLUEPRINT_PATH)
+        world_area = _world_area_from_bounds(bp.bounds_xz)
+        result = bake_zone_qi(bp.zones, world_area=world_area, budget=100.0)
+        sq = result.derived_spirit_qi["baolongwang_cavern_deep"]
+        self.assertEqual(
+            archive_grade_from_spirit_qi(sq), QiGrade.NEGATIVE,
+            f"baolongwang 必须落回 negative（负灵域），不被邻常灵核抬高；得 {sq:+.4f}",
+        )
+        self.assertLess(
+            sq, -0.1,
+            f"baolongwang 派生 spirit_qi={sq:+.4f} 必须 <-0.1（negative 档）",
+        )
 
 
 if __name__ == "__main__":  # pragma: no cover
