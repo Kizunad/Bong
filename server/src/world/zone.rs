@@ -1091,8 +1091,13 @@ mod zone_tests {
             .expect("wangyintai zone should exist");
 
         assert!(
-            (zone.spirit_qi - (-0.15)).abs() < f64::EPSILON,
-            "wangyintai spirit_qi should be -0.15 (negative qi edge), got {}",
+            zone.spirit_qi < 0.0,
+            "wangyintai spirit_qi must stay negative, got {}",
+            zone.spirit_qi
+        );
+        assert!(
+            (zone.spirit_qi - (-0.15)).abs() <= 0.01,
+            "wangyintai spirit_qi should stay near -0.15 negative qi edge, got {}",
             zone.spirit_qi
         );
     }

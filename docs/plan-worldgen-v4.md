@@ -19,7 +19,7 @@
 | P1 | Web 3D 预览控制台（只读查看器 + zone 级重生成按钮） | ✅ 2026-06-12 |
 | P2 | Zone 地形 DSL + 19 个 profile 全量重写为声明式组合 | ✅ 2026-06-13 |
 | P3 | 3D 噪声雕刻奇幻地貌（大峡谷悬壁 / 浮空岛群 / 拱门 / 多层洞穴） | ✅ 2026-06-13 |
-| P4 | 全局灵气配平（统一灵气场 → zone spirit_qi 预算 → zones.json，对齐 `SPIRIT_QI_TOTAL`） | ⬜ |
+| P4 | 全局灵气配平（统一灵气场 → zone spirit_qi 预算 → zones.json，对齐 `SPIRIT_QI_TOTAL`） | ✅ 2026-06-13 |
 | P5 | 画廊审阅闭环（Rust NBT IO + `/gallery` + structure save 回写 + owo 方块面板） | ⬜ |
 | P6 | NBT 装饰资产管线（DecorationSpec→NBT 模板 + 运行时 stamp + 程序生成保留清单） | ⬜ |
 | P7 | 迁移收口与验收（死层清理 / snapshot CI / anvil export / 性能基准 / e2e） | ⬜ |

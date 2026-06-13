@@ -7,7 +7,10 @@ Catches known data integrity issues before they reach the Rust server:
 - water level above surrounding terrain (floating water)
 - missing layers in tiles
 - qi_density / mofa_decay outside [0, 1]
-- qi_density vs zone.spirit_qi declared gross mismatch
+- qi_density vs zone.spirit_qi same-source derivation (worldgen-v4 P4 §8.1 #8):
+  when manifest declares qi_density_source == "qi_field", each tile's per-zone
+  qi_density mean must match clamp01((spirit_qi+1)/2) within QI_DENSITY_TOLERANCE
+  (a HARD ERROR — replaces the never-implemented "gross mismatch" warning)
 - underground_tier outside {0,1,2,3}
 - anomaly_kind outside {0..5} or present without anomaly_intensity
 - fossil_bbox outside {0,1,2} or manifest fossil_bboxes with no raster cells
@@ -28,6 +31,25 @@ SPAN_BYTES_PER_COLUMN = SPAN_MAX_SPANS * 2 * 2  # 16
 SPAN_MIN_Y = -64
 SPAN_MAX_Y = 431
 
+# worldgen-v4 P4 §8.1 #8 — qi_density vs zone.spirit_qi 同源派生硬断言.
+#
+# 统一灵气场 [-1,1] 两种导出（terrain_gen.qi_field 是单一真相）：
+#     qi_density = clamp01((field+1)/2)        zone spirit_qi = 面积加权均值(field)
+# 故 zone 内 qi_density 均值 ≈ clamp01((spirit_qi+1)/2)。容差吸收 zone 内灵脉抬升 /
+# 边界过渡的空间噪声（与 qi_field.QI_DENSITY_TOLERANCE 同值，单源一致）。
+# 这两个常量与 qi_field.py 手工对齐——harness 刻意不重 import terrain_gen 全栈，
+# 改动时两端同步（与 SPAN_* 常量同策略）。
+QI_DENSITY_TOLERANCE = 0.2
+
+
+def _expected_qi_density_from_spirit_qi(spirit_qi: float) -> float:
+    """zone 声明 spirit_qi [-1,1] → 期望 qi_density [0,1]：clamp01((sq+1)/2).
+
+    与 ``terrain_gen.qi_field.qi_density_from_field`` 同公式（统一场两种导出的
+    同源派生），单列在 harness 避免重 import。
+    """
+    return max(0.0, min(1.0, (spirit_qi + 1.0) / 2.0))
+
 
 
 def validate_rasters(raster_dir: str | Path) -> tuple[bool, str]:
@@ -47,6 +69,26 @@ def validate_rasters(raster_dir: str | Path) -> tuple[bool, str]:
     collapse_mask_tiles = 0
     collapse_mask_has_positive = False
     fossil_cell_count = 0
+
+    # worldgen-v4 P4 §8.1 #8 — 同源派生硬断言开关与 zone spirit_qi 查表。
+    # 仅当 manifest 声明 ``qi_density_source == "qi_field"`` 时激活（profile 迁移
+    # 到统一场后由导出端置位）；未迁移的旧 manifest 保持旧行为，规则休眠，避免
+    # 在两份漂移阶段误报。zone spirit_qi 来自 manifest.zones（导出物，已携带）。
+    qi_source_is_field = manifest.get("qi_density_source") == "qi_field"
+    zone_spirit_qi: dict[str, float] = {}
+    zone_bounds_xz: dict[str, tuple[float, float, float, float]] = {}
+    for zone_param in manifest.get("zones", []):
+        name = zone_param.get("name")
+        if name is not None and "spirit_qi" in zone_param:
+            zone_spirit_qi[str(name)] = float(zone_param["spirit_qi"])
+        bounds = zone_param.get("bounds_xz")
+        if name is not None and bounds is not None:
+            zone_bounds_xz[str(name)] = (
+                float(bounds["min_x"]),
+                float(bounds["max_x"]),
+                float(bounds["min_z"]),
+                float(bounds["max_z"]),
+            )
 
     for tile_info in tiles:
         tile_dir = raster_path / tile_info["dir"]
@@ -138,6 +180,48 @@ def validate_rasters(raster_dir: str | Path) -> tuple[bool, str]:
                     f"{tile_id}: {semantic_layer} range=[{s_min:.3f},{s_max:.3f}] "
                     f"outside [0,1] (zones={zones})"
                 )
+
+        # worldgen-v4 P4 §8.1 #8 — qi_density vs zone.spirit_qi 同源派生硬断言.
+        # 一份统一场两种导出后，zone 内 qi_density 均值必须与声明 spirit_qi 派生的
+        # 期望值 clamp01((spirit_qi+1)/2) 一致（±tolerance）。系统性偏离 = 两份漂移
+        # 复发（qi_density 不再同源派生），HARD ERROR。仅在 qi_source_is_field 激活。
+        #
+        # **per-zone mask 比对**：均值只在该 zone xz AABB 覆盖的列上算（不是整 tile
+        # 均值）——多个 zone 共占一个 tile 时，整 tile 均值会把各 zone 平均成一团，对
+        # 任一 zone 都误报。zone AABB 来自 manifest.zones[].bounds_xz；缺 bounds 的 zone
+        # 退回整 tile 均值（向后兼容旧 manifest）。
+        if qi_source_is_field and zones:
+            qi_file = tile_dir / "qi_density.bin"
+            if qi_file.exists():
+                qi_data = _read_float_layer(qi_file, area)
+                if qi_data is not None:
+                    tile_qi_mean = sum(qi_data) / len(qi_data)
+                    for zone_name in zones:
+                        if zone_name not in zone_spirit_qi:
+                            continue
+                        sq = zone_spirit_qi[zone_name]
+                        expected = _expected_qi_density_from_spirit_qi(sq)
+                        zone_mean = _zone_masked_qi_mean(
+                            qi_data,
+                            tile_size,
+                            int(tile_info.get("tile_x", 0)),
+                            int(tile_info.get("tile_z", 0)),
+                            zone_bounds_xz.get(zone_name),
+                        )
+                        if zone_mean is None:
+                            # 缺 AABB 或该 zone 在本 tile 无覆盖列 → 退回整 tile 均值
+                            # （旧 manifest 兼容；无 bounds 时与历史行为一致）。
+                            zone_mean = tile_qi_mean
+                        delta = abs(zone_mean - expected)
+                        if delta > QI_DENSITY_TOLERANCE:
+                            errors.append(
+                                f"{tile_id}: qi_density mean={zone_mean:.3f} "
+                                f"diverges from zone '{zone_name}' spirit_qi="
+                                f"{sq:.3f} (expected qi_density≈{expected:.3f} via "
+                                f"clamp01((spirit_qi+1)/2), |Δ|={delta:.3f} > "
+                                f"tol={QI_DENSITY_TOLERANCE}) — qi_density no longer "
+                                f"same-source-derived from the unified qi field"
+                            )
 
         collapse_file = tile_dir / "realm_collapse_mask.bin"
         if collapse_file.exists():
@@ -348,6 +432,47 @@ def validate_rasters(raster_dir: str | Path) -> tuple[bool, str]:
         )
 
     return len(errors) == 0, "\n".join(lines)
+
+
+def _zone_masked_qi_mean(
+    qi_data: list[float],
+    tile_size: int,
+    tile_x: int,
+    tile_z: int,
+    bounds_xz: tuple[float, float, float, float] | None,
+) -> float | None:
+    """Mean of qi_density over the cells inside *bounds_xz* for this tile.
+
+    worldgen-v4 P4 §8.1 #8 — per-zone mask so multi-zone tiles don't false-flag.
+    Cell (local_x, local_z) maps to world (tile_x*tile_size + local_x,
+    tile_z*tile_size + local_z); flat index = local_z * tile_size + local_x
+    (row-major z-then-x, matching ``_count_fossil_cells_in_bbox`` /
+    ``raster_export`` write order).  Returns None when *bounds_xz* is missing or
+    no cell of this tile falls inside the AABB (caller falls back to tile mean).
+    """
+    if bounds_xz is None:
+        return None
+    min_x, max_x, min_z, max_z = bounds_xz
+    tile_min_x = tile_x * tile_size
+    tile_min_z = tile_z * tile_size
+    total = 0.0
+    count = 0
+    for local_z in range(tile_size):
+        world_z = tile_min_z + local_z
+        if world_z < min_z or world_z > max_z:
+            continue
+        row_offset = local_z * tile_size
+        for local_x in range(tile_size):
+            world_x = tile_min_x + local_x
+            if world_x < min_x or world_x > max_x:
+                continue
+            idx = row_offset + local_x
+            if idx < len(qi_data):
+                total += qi_data[idx]
+                count += 1
+    if count == 0:
+        return None
+    return total / count
 
 
 def _read_float_layer(path: Path, expected_count: int) -> list[float] | None:

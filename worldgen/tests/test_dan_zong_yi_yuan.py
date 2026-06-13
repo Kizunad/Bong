@@ -176,10 +176,20 @@ class ZoneSchemaTests(unittest.TestCase):
         )
 
     def test_dan_zong_spirit_qi(self):
+        # worldgen-v4 P4 §8.1 #4/#11 — spirit_qi 从历史手填值（0.40）重构为统一灵气
+        # 场的面积加权均值（派生值 ≈0.39）。P4 后稳定的契约是 **qi_grade 档位**
+        # （dan_zong 仍是 common 档 [0.15, 0.45)），精确标量由场派生决定（要锁精确值
+        # 须在 blueprint 声明 qi_override）。校验落档 + 接近原值，而非旧定值 0.40。
         zone = next(z for z in self.zones if z["name"] == "dan_zong_yi_yuan")
+        self.assertTrue(
+            0.15 <= zone["spirit_qi"] < 0.45,
+            f"dan_zong_yi_yuan spirit_qi should stay in COMMON grade [0.15, 0.45) "
+            f"after P4 field derivation (plan S9.2 中阶丹宗); got {zone['spirit_qi']}",
+        )
         self.assertAlmostEqual(
-            zone["spirit_qi"], 0.40, places=2,
-            msg="dan_zong_yi_yuan spirit_qi should be 0.40 (plan S9.2)",
+            zone["spirit_qi"], 0.40, delta=0.10,
+            msg="dan_zong_yi_yuan derived spirit_qi should stay near the historical "
+            "0.40 anchor (P4 target-preserving kernel); large drift = bug",
         )
 
     def test_dan_zong_danger_level(self):
@@ -190,12 +200,27 @@ class ZoneSchemaTests(unittest.TestCase):
         )
 
     def test_baolongwang_negative_spirit_qi(self):
+        # worldgen-v4 P4 §8.1 #4/#11 — spirit_qi 从历史手填值（-0.80）重构为统一灵气
+        # 场的面积加权均值。footprint 越界修复 + 半开区间共边界归属（P4 CodeRabbit #3）
+        # 后，baolongwang 自身 AABB 由它自己的负灵核主导，派生值落回 **深负** ≈-0.73
+        # （右上边界采样列归邻 zone / 走过渡，较声明 -0.80 略向 base 抬升）。
+        #
+        # 收紧（CodeRabbit）：不只锁 NEGATIVE 档——历史 spirit_qi 作 target 透传 + 自身
+        # 主导，本就该钉住"仍深负"。只锁 <-0.1 时退化到 -0.11 也会蒙混；故同时锁
+        # ① NEGATIVE 档隐含于 ② 深负下界 <-0.4（排除浅负退化）③ 贴近实测 -0.73。
         zone = next(z for z in self.zones if z["name"] == "baolongwang_cavern_deep")
+        self.assertLess(
+            zone["spirit_qi"], -0.4,
+            f"baolongwang_cavern_deep spirit_qi must stay DEEPLY negative (< -0.4, "
+            f"tiandao blindspot that devours qi, plan S8.1 #3; 不被邻常灵核抬成浅负 "
+            f"-0.11 这类退化); got {zone['spirit_qi']}",
+        )
         self.assertAlmostEqual(
-            zone["spirit_qi"], -0.80, places=2,
+            zone["spirit_qi"], -0.73, delta=0.08,
             msg=(
-                "baolongwang_cavern_deep spirit_qi should be -0.80 "
-                "(negative field for tiandao blindspot, plan S8.1 #3)"
+                f"baolongwang_cavern_deep derived spirit_qi should stay near -0.73 "
+                f"(声明 -0.80 经半开边界归属后的稳定值); 偏离 >0.08 说明 kernel/边界"
+                f"规则漂移; got {zone['spirit_qi']}"
             ),
         )
 

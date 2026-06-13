@@ -127,6 +127,8 @@ class SpansExportLayoutTest(unittest.TestCase):
         self.assertEqual(enc["sentinel"], SPAN_SENTINEL)
         self.assertEqual(enc["count_file"], SPANS_COUNT_FILE)
         self.assertEqual(enc["spans_file"], SPANS_FILE)
+        self.assertEqual(manifest["qi_density_source"], "qi_field")
+        self.assertIn("qi_density", manifest["semantic_layers"])
 
     def test_vertical_layers_reflect_actually_written_per_profile(self) -> None:
         # worldgen-v4 P0 Major #3: vertical_layers is gated on written_layer_names,

@@ -32,6 +32,7 @@ from ..structures.ascension_pit import ascension_pits_for_zone
 from ..structures.corpse_mound import corpse_mounds_for_zone
 from ..structures.whale_fossil import fossil_bboxes_for_zone
 from ...poi_novice_selector import build_novice_poi_manifest_payload
+from ..zones_export import bake_zone_qi
 
 BIOME_PALETTE = (
     # ---- indices 0-11 (frozen — raster.rs hardcodes forest=7, river=8) ----
@@ -258,6 +259,11 @@ def export_rasters(
     fossil_bboxes = _collect_fossil_bboxes(plan.blueprint_zones)
     corpse_mounds = _collect_corpse_mounds(plan.blueprint_zones)
     ascension_pits = _collect_ascension_pits(plan.blueprint_zones)
+    # worldgen-v4 P4 §8.1 #3 — 全图统一灵气场积分在导出期归一为预算口径，产出各
+    # zone 份额 + wilderness 余量报表（不写字面 100：budget 从 BONG_SPIRIT_QI_TOTAL
+    # env var / Rust DEFAULT_SPIRIT_QI_TOTAL 默认锚解析）。份额来自同一份场，与写
+    # 进 zones.json 的 spirit_qi（面积加权均值）是一份场两种导出。
+    qi_budget_report = _collect_qi_budget_report(plan)
 
     manifest = {
         "version": 2,
@@ -291,6 +297,10 @@ def export_rasters(
         # as /api/regen overrides. ``terrain_profile`` here also drives the
         # zone-list swatch color (so zones are distinguishable, not all magenta).
         "zones": zone_params_payload,
+        # worldgen-v4 P4 §8.1 #3 — 导出期灵气预算配平报表（zone 份额 + wilderness
+        # 余量 + qi_grade 六档直方图）。total == BONG_SPIRIT_QI_TOTAL 预算口径。
+        "qi_budget_report": qi_budget_report,
+        "qi_density_source": "qi_field",
         "semantic_layers": [
             name
             for name in (
@@ -523,6 +533,11 @@ def regen_zone(
     manifest["corpse_mounds"] = _collect_corpse_mounds(plan.blueprint_zones)
     manifest["ascension_pits"] = _collect_ascension_pits(plan.blueprint_zones)
     manifest["collapsed_zones"] = _collect_collapsed_zone_payload(plan)
+    # worldgen-v4 P4 §8.1 #3 (CodeRabbit) — 预算配平报表同样从 blueprint zones 派生
+    # （spirit_qi / worldgen.* override 会改派生场 → 改份额分布）。只刷 zones[] 而留
+    # 旧 qi_budget_report 会让 manifest 同时含新 zone 参数 + 陈旧报表，破坏"同一份
+    # blueprint 派生出的 manifest 必须自洽"合同。和上面那批一样是 O(n_zones) 纯派生。
+    manifest["qi_budget_report"] = _collect_qi_budget_report(plan)
 
     with manifest_path.open("w", encoding="utf-8") as handle:
         json.dump(manifest, handle, ensure_ascii=False, indent=2)
@@ -559,6 +574,37 @@ def _collect_poi_payload(zones: list[BlueprintZone]) -> list[dict[str, object]]:
     return payload
 
 
+def _collect_qi_budget_report(plan: TerrainGenerationPlan) -> dict[str, object]:
+    """worldgen-v4 P4 §8.1 #3 — 全图灵气预算配平报表（进 manifest qi_budget_report）.
+
+    从 ``plan.blueprint_zones`` 端到端派生 zone spirit_qi（面积加权均值）+ 配平到
+    预算口径（``BONG_SPIRIT_QI_TOTAL`` env var / Rust 默认锚，**不写字面 100**），
+    返回 ``QiBudgetReport.to_manifest()``。world_area 取 plan world bounds 的 xz 面积
+    （wilderness 余区面积分母）。
+
+    防御：合成测试 fixture 常用极小 world bounds 而 zone 较大（zone area 溢出世界），
+    ``balance_qi_budget`` 会硬报错。manifest 报表是附属物、非硬 gate，故此处把
+    world_area 抬到 ≥ Σ zone area（wilderness 面积退化为 0，全预算归 zone），让小世界
+    fixture 也能产出报表而不炸导出主链。生产 blueprint（408M >> zone area）此 clamp
+    不触发。standalone zones.json 导出仍走 bake_zones_json_file 的真实 bounds + 硬
+    guard，配置错误照样撞红。
+    """
+    wb = plan.world_bounds
+    bounds_area = float(
+        max(wb.max_x - wb.min_x, 0.0) * max(wb.max_z - wb.min_z, 0.0)
+    )
+    zone_area_sum = float(
+        sum(
+            max(z.bounds_xz.max_x - z.bounds_xz.min_x, 0)
+            * max(z.bounds_xz.max_z - z.bounds_xz.min_z, 0)
+            for z in plan.blueprint_zones
+        )
+    )
+    world_area = max(bounds_area, zone_area_sum)
+    result = bake_zone_qi(plan.blueprint_zones, world_area=world_area)
+    return result.budget_report.to_manifest()
+
+
 def _collect_zone_params(zones: list[BlueprintZone]) -> list[dict[str, object]]:
     """Per-zone editable blueprint subset for the dev console (§8.1 #7).
 
@@ -590,6 +636,15 @@ def _collect_zone_params(zones: list[BlueprintZone]) -> list[dict[str, object]]:
                 "terrain_profile": wg.terrain_profile,
                 "spirit_qi": zone.spirit_qi,
                 "danger_level": zone.danger_level,
+                # worldgen-v4 P4 §8.1 #8 — zone xz AABB，供 raster_check 的同源断言做
+                # per-zone mask 均值比对（只在该 zone 覆盖的列上算 qi_density 均值，
+                # 避免多-zone tile 用整 tile 均值误报）。
+                "bounds_xz": {
+                    "min_x": zone.bounds_xz.min_x,
+                    "max_x": zone.bounds_xz.max_x,
+                    "min_z": zone.bounds_xz.min_z,
+                    "max_z": zone.bounds_xz.max_z,
+                },
                 "worldgen": worldgen_view,
             }
         )
