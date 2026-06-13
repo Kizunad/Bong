@@ -8,7 +8,7 @@
 |------|------|------|------|
 | **P0** | proto 序列化穷举守护（每变体必须 proto 或 JSON-bypass 白名单 + 生产路径 #[test] 遍历 + #[should_panic] pin） | ✅ 2026-06-13 | `s2c_all_proto_variants_encode_without_panic` / `c2s_*` 遍历全变体；新增无 proto 变体 → 测试红；HalfStepRechallenge `#[should_panic]` pin |
 | **P1** | emit→consumer 接线守护 + 14 个孤岛事件 triage（wiring-assert 机制 + 白名单 by-design） | ✅ 2026-06-14 | `event_emitters_have_readers_or_triage_entries` 测试期校验；每个 `EventWriter<E>` 要么有 `EventReader<E>`，要么在 intentional triage 白名单 |
-| **P2** | e2e CI 范围补全（client `./gradlew test` 进 CI + full-app startup smoke + `to_proto_bytes` oversize cap） | ⬜ | e2e.yml 跑 client gradlew；`full_app_startup.rs` 断言核心 resource 就绪；proto 编码超限返 Err |
+| **P2** | e2e CI 范围补全（client `./gradlew test` 进 CI + full-app startup smoke + `to_proto_bytes` oversize cap） | ✅ 2026-06-14 | e2e.yml 跑 client gradlew；`full_app_startup.rs` 断言核心 resource 就绪；proto 编码超限返 Err |
 | **P3** | mock-masking 真 impl 契约测试（真 TiandaoAgent 注入 + assert_no_halfstep 改 proto decode） | ⬜ | 真 TiandaoAgent setXxx→LLM prompt 含内容的集成测试；`assert_no_*_on_server_data_channel` 用 `prost::decode` 而非 `serde_json::from_slice` |
 
 > 优先级：P0 最高杠杆（直接防 proto-panic 类复发，编译期+穷举双保险）。P1 涉真功能孤岛（与「bug+代码断连狩猎」重叠，本 plan 做守护机制，孤岛修复可交狩猎）。P2/P3 收口 CI 与 mock 盲区。
@@ -80,8 +80,7 @@ proto 序列化**穷举编译期守护**落地，彻底防 proto-panic 类（新
 ### 测试 + mutation 验证
 `cargo test proto_convert` → **53 passed / 0 failed**（reverify 3 维全 PASS）。mutation 验证：删任一普通变体 proto arm → 遍历守护测试红；HalfStepRechallenge 走 proto → should_panic；is_json_bypass 漏标新变体 → E0004 编译不过；漏写 fixture → 覆盖断言红。
 
-### 后续（P2-P3 ⬜）
-- **P2**：e2e.yml 补 client `./gradlew test`（当前 CI 从不跑 client 测试）+ full-app startup smoke + `to_proto_bytes` oversize cap。
+### 后续（P3 ⬜）
 - **P3**：mock-masking 真 TiandaoAgent 契约测试 + `assert_no_*_on_server_data_channel` 改 proto decode。
 
 ---
@@ -104,6 +103,30 @@ emit→consumer **接线守护 + 孤岛 triage** 落地，防止 Bevy `EventWrit
 ### 测试
 `CARGO_BUILD_JOBS=2 cargo test test_coverage_guards -- --nocapture` → **8 passed / 0 failed**；`CARGO_BUILD_JOBS=2 cargo fmt --check && CARGO_BUILD_JOBS=2 cargo clippy --all-targets -- -D warnings && CARGO_BUILD_JOBS=2 cargo test` → **9002 passed / 0 failed / 1 ignored**。
 
-### 后续（P2-P3 ⬜）
-- **P2**：e2e.yml 补 client `./gradlew test` + full-app startup smoke + `to_proto_bytes` oversize cap。
+### 后续（P3 ⬜）
+- **P3**：mock-masking 真 TiandaoAgent 契约测试 + `assert_no_*_on_server_data_channel` 改 proto decode。
+
+---
+
+## P2 落地记录（多 PR plan 阶段进展，非归档 Finish Evidence）
+
+e2e CI 范围补全落地，覆盖此前 client 测试不进 CI、完整 App 无启动 smoke、生产 proto 路径缺少 oversize cap 三类测试盲区。
+
+### 落地清单
+- `.github/workflows/e2e.yml`：push / PR paths 纳入 `client/**`；新增 `actions/setup-java@v4` Java 17 + Gradle cache；Redis 前新增 `Client stage (gradlew test)`，在 `client/` 运行 `./gradlew test`。
+- `server/src/main.rs`：拆出 `build_server_app() -> App`；新增 `BONG_FULL_APP_STARTUP_SMOKE=1` 路径，构建完整 App、替换临时 `PersistenceSettings`、断言 `NetworkSettings` / `NetworkBridgeResource` / `RedisBridgeResource` / `PersistenceSettings` 就绪并 tick 一帧。
+- `server/tests/full_app_startup.rs`：新增 binary integration smoke，启动 `CARGO_BIN_EXE_bong-server`，设置 `BONG_SKIP_SKIN_PREFETCH=1` 与不可达 `REDIS_URL`，断言成功退出并输出 `full app startup smoke ok`。
+- `server/src/network/agent_bridge.rs`：生产 proto path 改走 `to_proto_bytes_checked()`；新增 `enforce_payload_size()`，对 `MAX_PAYLOAD_BYTES` 以上 payload 返回 `PayloadBuildError::Oversize`。
+- `server/src/persistence/mod.rs`：`PersistenceSettings::with_paths` 从 test-only constructor 调整为 runtime 可用 constructor，供 smoke binary 使用临时数据路径，避免污染真实 `data/bong.db`。
+
+### 测试
+- `CARGO_BUILD_JOBS=2 cargo fmt --check`
+- `CARGO_BUILD_JOBS=2 cargo clippy --all-targets -- -D warnings`
+- `CARGO_BUILD_JOBS=2 cargo test proto_path_rejects_oversize_payloads -- --nocapture` → 1 passed
+- `CARGO_BUILD_JOBS=2 cargo test payload_size_guard_accepts_exact_cap -- --nocapture` → 1 passed
+- `CARGO_BUILD_JOBS=2 cargo test --test full_app_startup -- --nocapture` → 1 passed
+- `CARGO_BUILD_JOBS=2 cargo test` → 9026 passed / 0 failed / 1 ignored，另 `tests/full_app_startup.rs` 1 passed
+- `JAVA_HOME=$HOME/.sdkman/candidates/java/17.0.18-amzn ./gradlew --max-workers=2 test build` → BUILD SUCCESSFUL
+
+### 后续（P3 ⬜）
 - **P3**：mock-masking 真 TiandaoAgent 契约测试 + `assert_no_*_on_server_data_channel` 改 proto decode。
