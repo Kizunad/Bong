@@ -101,7 +101,7 @@ emit→consumer **接线守护 + 孤岛 triage** 落地，防止 Bevy `EventWrit
 `b1834b7cd` P1 事件接线守护（2 files / +588，含 scanner、triage 白名单、stale whitelist pin、lifetime/path/comment fixture 测试）
 
 ### 测试
-`CARGO_BUILD_JOBS=2 cargo test test_coverage_guards -- --nocapture` → **5 passed / 0 failed**；`CARGO_BUILD_JOBS=2 cargo fmt --check` → pass。
+`CARGO_BUILD_JOBS=2 cargo test test_coverage_guards -- --nocapture` → **5 passed / 0 failed**；`CARGO_BUILD_JOBS=2 cargo fmt --check && CARGO_BUILD_JOBS=2 cargo clippy --all-targets -- -D warnings && CARGO_BUILD_JOBS=2 cargo test` → **8998 passed / 0 failed / 1 ignored**。
 
 ### 后续（P2-P3 ⬜）
 - **P2**：e2e.yml 补 client `./gradlew test` + full-app startup smoke + `to_proto_bytes` oversize cap。
