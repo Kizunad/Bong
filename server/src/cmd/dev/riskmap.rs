@@ -12,6 +12,7 @@ use valence::prelude::{App, Client, EventReader, Position, Query, Res, Update};
 use crate::cultivation::components::{Cultivation, Realm};
 use crate::world::dimension::DimensionKind;
 use crate::world::risk_heatmap::{risk_score, RiskHeatmap};
+use crate::world::risk_signals::{RiskSignalMap, RiskSignalProfile};
 use crate::world::zone::ZoneRegistry;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -39,13 +40,20 @@ pub fn format_riskmap_line(
     axes: crate::world::risk_heatmap::RiskAxes,
     score: crate::world::risk_heatmap::RiskScore,
     realm: crate::cultivation::components::Realm,
+    signals: Option<&RiskSignalProfile>,
 ) -> String {
-    format!(
+    let mut line = format!(
         "[dev] riskmap zone={zone_name} \
          qi={:.1} fauna={:.1} npc={:.1} player={:.1} \
          RiskScore={} realm={realm:?}",
         axes.qi, axes.fauna, axes.npc, axes.player, score.0
-    )
+    );
+    if let Some(signals) = signals {
+        line.push_str(" signals={");
+        line.push_str(&signals.summary_tokens());
+        line.push('}');
+    }
+    line
 }
 
 pub fn register(app: &mut App) {
@@ -56,6 +64,7 @@ pub fn register(app: &mut App) {
 pub fn handle_riskmap(
     mut events: EventReader<CommandResultEvent<RiskmapCmd>>,
     heatmap: Option<Res<RiskHeatmap>>,
+    signals: Option<Res<RiskSignalMap>>,
     zones: Option<Res<ZoneRegistry>>,
     mut clients: Query<(&mut Client, &Position, Option<&Cultivation>)>,
 ) {
@@ -97,8 +106,17 @@ pub fn handle_riskmap(
         let axes = heatmap.axes_for_zone(zone_name);
         let player_realm = cultivation.map(|c| c.realm).unwrap_or(Realm::Condense);
         let score = risk_score(axes, player_realm);
+        let signal_profile = signals
+            .as_ref()
+            .and_then(|signals| signals.profile_for_zone(zone_name));
 
-        client.send_chat_message(format_riskmap_line(zone_name, axes, score, player_realm));
+        client.send_chat_message(format_riskmap_line(
+            zone_name,
+            axes,
+            score,
+            player_realm,
+            signal_profile,
+        ));
     }
 }
 
@@ -178,7 +196,7 @@ mod tests {
             player: 4.0,
         };
         let score = RiskScore(37);
-        let line = format_riskmap_line("qingyun_peaks", axes, score, Realm::Spirit);
+        let line = format_riskmap_line("qingyun_peaks", axes, score, Realm::Spirit, None);
         assert!(
             line.contains("zone=qingyun_peaks"),
             "输出行必须含 zone 名称，实际=`{line}`"
@@ -194,7 +212,7 @@ mod tests {
             player: 4.0,
         };
         let score = RiskScore(37);
-        let line = format_riskmap_line("spawn", axes, score, Realm::Condense);
+        let line = format_riskmap_line("spawn", axes, score, Realm::Condense, None);
         assert!(
             line.contains("qi=15.0"),
             "输出行必须含 qi 分量，实际=`{line}`"
@@ -222,7 +240,7 @@ mod tests {
             player: 4.0,
         };
         let score = RiskScore(37);
-        let line = format_riskmap_line("spawn", axes, score, Realm::Condense);
+        let line = format_riskmap_line("spawn", axes, score, Realm::Condense, None);
         assert!(
             line.contains("RiskScore=37"),
             "输出行必须含 RiskScore 值，实际=`{line}`"
@@ -233,8 +251,8 @@ mod tests {
     fn format_riskmap_line_contains_realm() {
         let axes = RiskAxes::default();
         let score = RiskScore(0);
-        let spirit_line = format_riskmap_line("spawn", axes, score, Realm::Spirit);
-        let induce_line = format_riskmap_line("spawn", axes, score, Realm::Induce);
+        let spirit_line = format_riskmap_line("spawn", axes, score, Realm::Spirit, None);
+        let induce_line = format_riskmap_line("spawn", axes, score, Realm::Induce, None);
         assert!(
             spirit_line.contains("realm=Spirit"),
             "通灵输出行必须含 realm=Spirit，实际=`{spirit_line}`"
@@ -253,6 +271,7 @@ mod tests {
             RiskAxes::default(),
             RiskScore(0),
             Realm::Condense,
+            None,
         );
         assert!(
             line.contains("zone=<unknown>"),
@@ -353,6 +372,67 @@ mod tests {
         assert!(
             msg.contains("realm=Condense"),
             "无 Cultivation 时 realm 应为 Condense，实际=`{msg}`"
+        );
+    }
+
+    #[test]
+    fn riskmap_normal_output_includes_p1_environment_signal_tokens_when_available() {
+        let mut app = setup_app();
+        app.insert_resource(ZoneRegistry::fallback());
+
+        let mut heatmap = RiskHeatmap::default();
+        heatmap.by_zone.insert(
+            "spawn".to_string(),
+            RiskAxes {
+                qi: 30.0,
+                fauna: 25.0,
+                npc: 0.0,
+                player: 0.0,
+            },
+        );
+        app.insert_resource(heatmap);
+
+        let mut signal_map = RiskSignalMap::default();
+        signal_map.by_zone.insert(
+            "spawn".to_string(),
+            RiskSignalProfile {
+                tier: crate::world::risk_signals::RiskSignalTier::Dangerous,
+                flora: crate::world::risk_signals::FloraRiskSignal::LushBright,
+                audio: crate::world::risk_signals::AudioRiskSignal::RatScreechAndBranches,
+                particle: crate::world::risk_signals::ParticleRiskSignal::DarkSpores,
+                npc_behavior: crate::world::risk_signals::NpcBehaviorRiskSignal::FaunaFleeLine,
+            },
+        );
+        app.insert_resource(signal_map);
+
+        let (player, mut helper) =
+            spawn_client_with_helper(&mut app, "SignalTester", [8.0, 66.0, 8.0]);
+        send_cmd(&mut app, player);
+        app.update();
+        flush_packets(&mut app);
+
+        let messages = collect_messages(&mut helper);
+        let msg = messages
+            .iter()
+            .find(|m| m.contains("riskmap"))
+            .cloned()
+            .unwrap_or_else(|| panic!("期望收到 riskmap 消息，实际={messages:?}"));
+
+        assert!(
+            msg.contains("signals={tier=dangerous"),
+            "P1 signal summary 应随 riskmap 输出，实际=`{msg}`"
+        );
+        assert!(
+            msg.contains("flora=lush_bright"),
+            "P1 植被信号应可见，实际=`{msg}`"
+        );
+        assert!(
+            msg.contains("particle=bong:risk_dark_spores"),
+            "P1 粒子信号 event_id 应可见，实际=`{msg}`"
+        );
+        assert!(
+            msg.contains("npc=fauna_flee_line"),
+            "P1 NPC 行为信号应可见，实际=`{msg}`"
         );
     }
 
