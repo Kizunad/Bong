@@ -1653,6 +1653,11 @@ fn source_uses_prepaid_qi(source: AttackSource) -> bool {
             | AttackSource::SwordPathResonance
             | AttackSource::SwordPathManifest
             | AttackSource::SwordPathHeavenGate
+            // bug-hunt-1: QiNeedle 在 cast 阶段（needle.rs:87）已无条件预扣
+            // QI_NEEDLE_QI_COST(=1.0) 自 qi_current，与 BurstMeridian 同构地 emit
+            // AttackIntent{qi_invest:1.0}。漏掉 prepaid 白名单会让 resolver 再扣一次
+            // qi_invest(=1.0)，每发气针命中后净扣 2.0 真元（double-spend）。
+            | AttackSource::QiNeedle
     )
 }
 
@@ -1866,6 +1871,29 @@ fn first_open_or_fallback_meridian(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// bug-hunt-1: QiNeedle 在 cast 阶段（needle.rs:87）已预扣 QI_NEEDLE_QI_COST(=1.0) 自
+    /// qi_current，并 emit AttackIntent{qi_invest:1.0, source:QiNeedle}。若 QiNeedle 不在
+    /// prepaid 白名单，resolver 会按 resolve.rs:447 再扣一次 qi_invest → 每发命中净扣 2.0
+    /// 真元（double-spend）。本测试锁定 QiNeedle 与 BurstMeridian（同样 cast 阶段预扣）一致
+    /// 归类为 prepaid，防回归。
+    #[test]
+    fn qi_needle_is_prepaid_source_preventing_double_spend() {
+        assert!(
+            source_uses_prepaid_qi(AttackSource::QiNeedle),
+            "QiNeedle 必须是 prepaid 源：cast 阶段已预扣真元，否则 resolver 二次扣 → double-spend"
+        );
+        assert_eq!(
+            source_uses_prepaid_qi(AttackSource::QiNeedle),
+            source_uses_prepaid_qi(AttackSource::BurstMeridian),
+            "QiNeedle 与 BurstMeridian 同为 cast 阶段预扣，prepaid 分类必须一致"
+        );
+        // 负锚点：普通近战不预扣，仍走 resolver 扣费，确保白名单非恒真
+        assert!(
+            !source_uses_prepaid_qi(AttackSource::Melee),
+            "Melee 非 cast 预扣源，不应被误判为 prepaid（否则白名单恒真无意义）"
+        );
+    }
 
     use crate::combat::anticheat::AntiCheatCounter;
     use crate::combat::armor::{ArmorProfile, ArmorProfileRegistry};
