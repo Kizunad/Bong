@@ -3753,6 +3753,8 @@ mod tests {
         app.add_event::<crate::combat::shield_block::LowerShieldIntent>();
         // plan-agent-ui-data-v1 P0 — 天道 UI 响应 event（ClientRequestDispatchParams 需要）。
         app.add_event::<crate::network::agent_ui::AgentUiResponseEvent>();
+        // plan-worldgen-v4 P5 §8.1#5 — dev give-block intent（ClientRequestDispatchParams 需要）。
+        app.add_event::<crate::cmd::dev::block_picker::BlockPickerGiveIntent>();
         app.add_systems(
             Update,
             (
@@ -3949,6 +3951,123 @@ mod tests {
         assert_eq!((request.x, request.y, request.z), (8, 64, 8));
         assert_eq!(request.item_instance_id, 4242);
         assert_eq!(request.target_face, TrapTargetFace::North);
+    }
+
+    // ─── plan-worldgen-v4 P5 §8.1#5 — block_picker_give 路由测试矩阵 ───
+
+    /// 把一段 wire JSON 喂给 handler，返回这一轮 emit 的 BlockPickerGiveIntent 列表。
+    fn dispatch_block_picker_give(
+        json: &[u8],
+    ) -> (
+        App,
+        valence::prelude::Entity,
+        Vec<crate::cmd::dev::block_picker::BlockPickerGiveIntent>,
+    ) {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: json.to_vec().into_boxed_slice(),
+            });
+        app.update();
+        let events = app
+            .world()
+            .resource::<valence::prelude::Events<crate::cmd::dev::block_picker::BlockPickerGiveIntent>>();
+        let collected = events
+            .iter_current_update_events()
+            .cloned()
+            .collect::<Vec<_>>();
+        (app, entity, collected)
+    }
+
+    /// happy path + 链路：合法 block_picker_give payload → 恰好 1 次 BlockPickerGiveIntent，
+    /// 且 block_id / count / player 字段一路透传。
+    #[test]
+    fn block_picker_give_payload_dispatches_intent_with_fields() {
+        let (_app, entity, intents) = dispatch_block_picker_give(
+            br#"{"type":"block_picker_give","v":1,"block_id":"stone_bricks","count":16}"#,
+        );
+        assert_eq!(
+            intents.len(),
+            1,
+            "一条合法 block_picker_give payload 应 emit 恰好 1 次 BlockPickerGiveIntent，实为 {}",
+            intents.len()
+        );
+        assert_eq!(intents[0].player, entity, "intent 必须带回发起玩家 entity");
+        assert_eq!(
+            intents[0].block_id, "stone_bricks",
+            "block_id 必须透传，实为 {}",
+            intents[0].block_id
+        );
+        assert_eq!(
+            intents[0].count, 16,
+            "count 必须透传，实为 {}",
+            intents[0].count
+        );
+    }
+
+    /// 边界透传：count=1（下界）与 count=64（上界）合法值都能派发并保值。
+    #[test]
+    fn block_picker_give_boundary_counts_dispatch() {
+        for count in [1u32, 64u32] {
+            let json = format!(
+                r#"{{"type":"block_picker_give","v":1,"block_id":"stone","count":{count}}}"#
+            );
+            let (_app, _entity, intents) = dispatch_block_picker_give(json.as_bytes());
+            assert_eq!(
+                intents.len(),
+                1,
+                "count={count} 是合法边界，应 emit 1 次 intent，实为 {}",
+                intents.len()
+            );
+            assert_eq!(
+                intents[0].count, count,
+                "count={count} 应透传保值，实为 {}",
+                intents[0].count
+            );
+        }
+    }
+
+    /// 错误分支：count=0 / count=65 越界 payload 在 wire serde 层即被拒，handler 不 emit 任何 intent
+    /// （schema serde deserialize_block_picker_count 守门，未通过 → 整个 payload 反序列化失败 → drop）。
+    #[test]
+    fn block_picker_give_out_of_range_count_is_dropped_before_dispatch() {
+        for bad in [
+            &br#"{"type":"block_picker_give","v":1,"block_id":"stone","count":0}"#[..],
+            &br#"{"type":"block_picker_give","v":1,"block_id":"stone","count":65}"#[..],
+        ] {
+            let (_app, _entity, intents) = dispatch_block_picker_give(bad);
+            assert!(
+                intents.is_empty(),
+                "越界 count payload 必须在 serde 层被拒、handler 不派发任何 intent，实为 {} 条",
+                intents.len()
+            );
+        }
+    }
+
+    /// 错误分支：malformed JSON / 未知字段 payload 不得 emit intent（坏包安静丢弃）。
+    #[test]
+    fn block_picker_give_malformed_payload_is_dropped() {
+        for bad in [
+            &b"{not json at all"[..],
+            // 多了未知字段 surprise，deny_unknown_fields 拒绝。
+            &br#"{"type":"block_picker_give","v":1,"block_id":"stone","count":4,"surprise":true}"#
+                [..],
+            // 缺 block_id 必填字段。
+            &br#"{"type":"block_picker_give","v":1,"count":4}"#[..],
+        ] {
+            let (_app, _entity, intents) = dispatch_block_picker_give(bad);
+            assert!(
+                intents.is_empty(),
+                "malformed / 非法 block_picker_give payload 不得派发 intent，实为 {} 条",
+                intents.len()
+            );
+        }
     }
 
     #[test]
