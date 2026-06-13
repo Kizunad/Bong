@@ -875,6 +875,36 @@ public class ClientRequestProtocolTest {
         );
     }
 
+    @Test
+    void encodesContainerOpen() {
+        String json = ClientRequestProtocol.encodeContainerOpen(42);
+        assertEquals(
+            "{\"type\":\"container_open\",\"v\":1,\"entity_id\":42}",
+            json,
+            "container_open should encode type + v + entity_id"
+        );
+    }
+
+    @Test
+    void encodesContainerOpenWithZeroId() {
+        String json = ClientRequestProtocol.encodeContainerOpen(0);
+        assertEquals(
+            "{\"type\":\"container_open\",\"v\":1,\"entity_id\":0}",
+            json,
+            "entity_id 0 is a valid MC protocol entity id"
+        );
+    }
+
+    @Test
+    void encodesContainerOpenWithNegativeId() {
+        String json = ClientRequestProtocol.encodeContainerOpen(-1);
+        assertEquals(
+            "{\"type\":\"container_open\",\"v\":1,\"entity_id\":-1}",
+            json,
+            "negative entity_id should be encoded without client-side validation"
+        );
+    }
+
     // ─── plan-workbench-place-runtime-v1 P2：workbench_open ──────────
 
     @Test

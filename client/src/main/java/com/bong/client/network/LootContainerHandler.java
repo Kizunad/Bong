@@ -37,22 +37,13 @@ public final class LootContainerHandler implements ServerDataHandler {
         long timeoutWallSecs = readLong(payload, "timeout_wall_secs") != null
             ? readLong(payload, "timeout_wall_secs") : 0L;
 
-        String sourceKind = "unknown";
-        String grade = "common";
-        JsonElement sourceKindEl = payload.get("source_kind");
-        if (sourceKindEl != null && sourceKindEl.isJsonObject()) {
-            JsonObject sk = sourceKindEl.getAsJsonObject();
-            sourceKind = readString(sk, "kind", "unknown");
-            grade = readString(sk, "grade", "common");
-        } else if (sourceKindEl != null && sourceKindEl.isJsonPrimitive()) {
-            sourceKind = sourceKindEl.getAsString();
-        }
+        SourceKindInfo sourceKind = parseSourceKind(payload.get("source_kind"));
 
         String containerId = "ext_" + sessionId;
         List<InventoryModel.GridEntry> items = parsePlacedItems(payload, containerId, rows, cols);
 
         LootContainerStateStore.open(new LootContainerStateStore.OpenSession(
-            sessionId, sourceKind, grade, rows, cols, timeoutWallSecs, items
+            sessionId, sourceKind.kind(), sourceKind.grade(), rows, cols, timeoutWallSecs, items
         ));
 
         return ServerDataDispatch.handled(type,
@@ -102,6 +93,40 @@ public final class LootContainerHandler implements ServerDataHandler {
             default -> false;
         };
     }
+
+    static SourceKindInfo parseSourceKind(JsonElement sourceKindEl) {
+        if (sourceKindEl == null) {
+            return new SourceKindInfo("unknown", "common");
+        }
+        if (sourceKindEl.isJsonPrimitive()) {
+            return new SourceKindInfo(sourceKindEl.getAsString(), "common");
+        }
+        if (!sourceKindEl.isJsonObject()) {
+            return new SourceKindInfo("unknown", "common");
+        }
+        JsonObject sk = sourceKindEl.getAsJsonObject();
+        if (sk.has("kind")) {
+            return new SourceKindInfo(
+                readString(sk, "kind", "unknown"),
+                readString(sk, "grade", "common")
+            );
+        }
+        if (sk.has("supply_coffin") && sk.get("supply_coffin").isJsonObject()) {
+            JsonObject supply = sk.getAsJsonObject("supply_coffin");
+            return new SourceKindInfo("supply_coffin", readString(supply, "grade", "common"));
+        }
+        if (sk.has("storage_crate") && sk.get("storage_crate").isJsonObject()) {
+            JsonObject crate = sk.getAsJsonObject("storage_crate");
+            boolean isHerb = readBoolean(crate, "is_herb", false);
+            return new SourceKindInfo("storage_crate", isHerb ? "herb" : "trade");
+        }
+        if (sk.has("dead_drop")) {
+            return new SourceKindInfo("dead_drop", "common");
+        }
+        return new SourceKindInfo("unknown", "common");
+    }
+
+    record SourceKindInfo(String kind, String grade) {}
 
     static List<InventoryModel.GridEntry> parsePlacedItems(
         JsonObject payload, String containerId, int maxRows, int maxCols
@@ -159,5 +184,14 @@ public final class LootContainerHandler implements ServerDataHandler {
             return defaultValue;
         }
         return element.getAsString();
+    }
+
+    private static boolean readBoolean(JsonObject obj, String field, boolean defaultValue) {
+        JsonElement element = obj.get(field);
+        if (element == null || element.isJsonNull() || !element.isJsonPrimitive()) {
+            return defaultValue;
+        }
+        JsonPrimitive primitive = element.getAsJsonPrimitive();
+        return primitive.isBoolean() ? primitive.getAsBoolean() : defaultValue;
     }
 }
