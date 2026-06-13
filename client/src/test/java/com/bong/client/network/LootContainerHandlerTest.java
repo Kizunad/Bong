@@ -166,4 +166,31 @@ class LootContainerHandlerTest {
             LootContainerStateStore.removeListener(listener);
         }
     }
+
+    @Test
+    void closeRejectsUnknownReasonWithoutClosingOrNotifying() {
+        LootContainerStateStore.open(new LootContainerStateStore.OpenSession(
+            1, "supply_coffin", "common", 3, 4, 0L, java.util.List.of()
+        ));
+        var received = new java.util.concurrent.atomic.AtomicReference<LootContainerStateStore.Session>();
+        LootContainerStateStore.Listener listener = received::set;
+        LootContainerStateStore.addListener(listener);
+
+        try {
+            String json = """
+                {"type":"loot_container_close","v":1,"session_id":1,"reason":"invalid_reason"}
+                """;
+            ServerDataRouter.RouteResult result = ServerDataRouter.createDefault()
+                .route(json, json.getBytes(StandardCharsets.UTF_8).length);
+
+            assertTrue(result.isNoOp(),
+                "close with an unknown reason should be rejected as a schema violation");
+            assertTrue(LootContainerStateStore.isOpen(),
+                "store should remain open after an unknown close reason");
+            assertNull(received.get(),
+                "listener should not receive Closed for an unknown close reason");
+        } finally {
+            LootContainerStateStore.removeListener(listener);
+        }
+    }
 }

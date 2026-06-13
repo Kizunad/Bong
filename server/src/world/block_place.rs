@@ -1,8 +1,8 @@
-use std::fmt;
+use std::{collections::HashSet, fmt};
 
 use valence::prelude::{
     bevy_ecs, App, BlockPos, BlockState, ChunkLayer, Client, Commands, Entity, Event, EventReader,
-    Events, IntoSystemConfigs, Position, Query, Res, ResMut, Update, Username,
+    Events, IntoSystemConfigs, Position, Query, Res, ResMut, Update, Username, With,
 };
 
 use crate::craft::{handle_workbench_place, send_workbench_audio, WORKBENCH_PLACE_AUDIO_RECIPE_ID};
@@ -49,6 +49,10 @@ impl PlaceableBlockKind {
             self,
             Self::Workbench | Self::StorageCrate { .. } | Self::DeadDrop
         )
+    }
+
+    fn is_container_backed(self) -> bool {
+        matches!(self, Self::StorageCrate { .. } | Self::DeadDrop)
     }
 }
 
@@ -103,11 +107,27 @@ pub fn handle_block_place_requests(
     mut layers: Query<&mut ChunkLayer>,
     mut inventories: Query<&mut PlayerInventory>,
     player_positions: Query<(&Position, Option<&CurrentDimension>)>,
+    container_blocks: Query<
+        (&Position, Option<&CurrentDimension>),
+        With<crate::world::container_block::ContainerBlock>,
+    >,
     mut clients: Query<(&Username, &mut Client, &PlayerState, Option<&Cultivation>)>,
     mut audio_events: Option<ResMut<Events<PlaySoundRecipeRequest>>>,
     mut furniture_registry: Option<ResMut<FurnitureRegistry>>,
     mut ext_registry: ResMut<ExternalContainerRegistry>,
 ) {
+    let mut reserved_container_positions: HashSet<([i32; 3], DimensionKind)> = container_blocks
+        .iter()
+        .map(|(position, dimension)| {
+            (
+                crate::world::container_block::container_block_pos(position),
+                dimension
+                    .map(|component| component.0)
+                    .unwrap_or(DimensionKind::Overworld),
+            )
+        })
+        .collect();
+
     for req in requests.read() {
         let pos = BlockPos::new(req.x, req.y, req.z);
         let Ok((player_position, current_dimension)) = player_positions.get(req.client) else {
@@ -169,6 +189,25 @@ pub fn handle_block_place_requests(
             continue;
         }
 
+        let container_position_key = match &target {
+            BlockPlaceTarget::Placeable { kind, .. } if kind.is_container_backed() => {
+                Some(([pos.x, pos.y, pos.z], dimension))
+            }
+            _ => None,
+        };
+        if let Some(key) = container_position_key {
+            if reserved_container_positions.contains(&key) {
+                tracing::warn!(
+                    "[bong][block_place] rejected: player={:?} pos={:?} dimension={:?} item=`{}` reason=entity-backed container already occupies target",
+                    req.client,
+                    pos,
+                    dimension,
+                    template_id
+                );
+                continue;
+            }
+        }
+
         let Ok(mut inventory) = inventories.get_mut(req.client) else {
             tracing::warn!(
                 "[bong][block_place] rejected: player {:?} has no PlayerInventory",
@@ -182,6 +221,9 @@ pub fn handle_block_place_requests(
                 req.item_instance_id
             );
             continue;
+        }
+        if let Some(key) = container_position_key {
+            reserved_container_positions.insert(key);
         }
 
         let placement = match target {
@@ -1134,6 +1176,59 @@ mod tests {
                 "successful {template_id} placement should push a corrective inventory snapshot"
             );
         }
+    }
+
+    #[test]
+    fn handler_rejects_same_tick_duplicate_container_position_without_consuming_second_item() {
+        let (mut app, client, layer_entity, _helper) = block_place_app(
+            inventory_with_item(item_instance(9451, "trade_crate", 2)),
+            DimensionKind::Overworld,
+        );
+        app.insert_resource(ItemRegistry::from_map(HashMap::from([
+            item_template_with_placeable("trade_crate", ItemCategory::Misc, Some("storage_crate")),
+        ])));
+
+        let pos = BlockPos::new(1, 64, 1);
+        for _ in 0..2 {
+            app.world_mut().send_event(BlockPlaceRequest {
+                client,
+                x: pos.x,
+                y: pos.y,
+                z: pos.z,
+                item_instance_id: 9451,
+                target_face: TrapTargetFace::Top,
+            });
+        }
+
+        app.update();
+
+        assert_eq!(
+            block_state_at(&app, layer_entity, pos),
+            Some(BlockState::AIR),
+            "container placement stays pure entity-backed and must not hide occupancy in ChunkLayer"
+        );
+        let container_count = app
+            .world_mut()
+            .query_filtered::<Entity, With<ContainerBlock>>()
+            .iter(app.world())
+            .count();
+        assert_eq!(
+            container_count, 1,
+            "same-tick duplicate placement must reserve the entity-backed target and spawn one container"
+        );
+        assert_eq!(
+            app.world()
+                .resource::<ExternalContainerRegistry>()
+                .sessions
+                .len(),
+            1,
+            "duplicate placement must not allocate a hidden second external container session"
+        );
+        assert_eq!(
+            inventory_template_count(&app, client, "trade_crate"),
+            1,
+            "duplicate entity-backed placement must reject before consuming the second stack item"
+        );
     }
 
     #[test]
