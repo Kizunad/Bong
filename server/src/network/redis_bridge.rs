@@ -2553,6 +2553,15 @@ fn validate_narration_entry(value: &Value, index: usize) -> Result<(), Validatio
                 | "npc_farm_pressure"
                 | "scattered_cultivator"
                 | "political_jianghu"
+                // bug-hunt-1: 与 NarrationKind enum（common.rs）+ agent TypeBox
+                // （common.ts:81-87）对齐，补 war_outcome / dying_elder_* 这 6 个，
+                // 否则天道发的大战结局与濒死老者剧情 narration 被此处校验拒收丢弃。
+                | "war_outcome"
+                | "dying_elder_appeared"
+                | "dying_elder_dan_received"
+                | "dying_elder_betrayal"
+                | "dying_elder_dead_natural"
+                | "dying_elder_dead_player_kill"
         ) {
             return Err(ValidationError::new(format!(
                 "{context}.kind has unsupported value `{kind}`"
@@ -2639,6 +2648,49 @@ fn expect_array_field<'a>(
 #[cfg(test)]
 mod redis_bridge_tests {
     use super::*;
+
+    /// bug-hunt-1: war_outcome / dying_elder_* 是 agent 端生产 narration kind
+    /// （war-outcome-narration.ts / elder-encounter-narration.ts）。此前 server 白名单
+    /// 漏列导致 validate_narration_entry 拒收 → 整 batch 在 redis_bridge.rs:2224
+    /// tracing::warn! 丢弃，玩家收不到大战结局 / 濒死老者剧情。锁定 6 个新 kind 均通过校验。
+    #[test]
+    fn validate_narration_entry_accepts_new_agent_narration_kinds() {
+        for kind in [
+            "war_outcome",
+            "dying_elder_appeared",
+            "dying_elder_dan_received",
+            "dying_elder_betrayal",
+            "dying_elder_dead_natural",
+            "dying_elder_dead_player_kill",
+        ] {
+            let entry = serde_json::json!({
+                "scope": "broadcast",
+                "text": "测试播报",
+                "style": "narration",
+                "kind": kind,
+            });
+            assert!(
+                validate_narration_entry(&entry, 0).is_ok(),
+                "kind `{kind}` 应被 validate_narration_entry 接受（agent 端有效 narration kind，否则整 batch 被丢弃）"
+            );
+        }
+    }
+
+    /// 负锚点：未知 kind 仍应被拒，确保白名单非恒真。
+    #[test]
+    fn validate_narration_entry_rejects_unknown_kind() {
+        let entry = serde_json::json!({
+            "scope": "broadcast",
+            "text": "x",
+            "style": "narration",
+            "kind": "totally_bogus_kind",
+        });
+        assert!(
+            validate_narration_entry(&entry, 0).is_err(),
+            "未知 kind 必须被拒，否则白名单形同虚设"
+        );
+    }
+
     use crate::fauna::rat_phase::RatPhase;
     use crate::schema::anticheat::{AntiCheatReportV1, ViolationKindV1};
     use crate::schema::combat_event::{
