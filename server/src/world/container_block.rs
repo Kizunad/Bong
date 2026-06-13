@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use valence::prelude::{
     bevy_ecs, App, BlockPos, Client, Commands, Component, DVec3, DiggingEvent, Entity, EventReader,
     GameMode, IntoSystemConfigs, Position, Query, Res, ResMut, Update, With,
@@ -76,6 +78,7 @@ pub fn handle_container_block_place(
     commands: &mut Commands,
     registry: &mut ExternalContainerRegistry,
     pos: BlockPos,
+    dimension: DimensionKind,
     placed_by: Entity,
     placed_at_tick: u64,
     kind: ContainerBlockKind,
@@ -93,6 +96,7 @@ pub fn handle_container_block_place(
             f64::from(pos.y),
             f64::from(pos.z) + 0.5,
         )),
+        CurrentDimension(dimension),
         build_external_container(session_id, kind),
     ));
     entity
@@ -125,9 +129,16 @@ pub fn handle_container_block_break(
     mut dropped_registry: ResMut<DroppedLootRegistry>,
     mut ext_registry: ResMut<ExternalContainerRegistry>,
     breakers: Query<(&GameMode, Option<&CurrentDimension>), With<Client>>,
-    containers: Query<(Entity, &Position, &ContainerBlock, &ExternalContainer)>,
+    containers: Query<(
+        Entity,
+        &Position,
+        Option<&CurrentDimension>,
+        &ContainerBlock,
+        &ExternalContainer,
+    )>,
     mut clients: Query<&mut Client, With<Client>>,
 ) {
+    let mut handled_entities = HashSet::new();
     for event in digs.read() {
         let Ok((game_mode, current_dimension)) = breakers.get(event.client) else {
             continue;
@@ -135,19 +146,31 @@ pub fn handle_container_block_break(
         if !should_apply_default_break(event.state, *game_mode) {
             continue;
         }
-        let Some((entity, position, block, ext)) = containers.iter().find(|(_, position, _, _)| {
-            container_block_pos(position) == [event.position.x, event.position.y, event.position.z]
-        }) else {
+        let dimension = current_dimension
+            .map(|component| component.0)
+            .unwrap_or(DimensionKind::Overworld);
+        let Some((entity, position, _container_dimension, block, ext)) =
+            containers
+                .iter()
+                .find(|(_, position, container_dimension, _, _)| {
+                    container_block_pos(position)
+                        == [event.position.x, event.position.y, event.position.z]
+                        && container_dimension
+                            .map(|component| component.0)
+                            .unwrap_or(DimensionKind::Overworld)
+                            == dimension
+                })
+        else {
             continue;
         };
+        if !handled_entities.insert(entity) {
+            continue;
+        }
 
         let now = current_tick
             .as_ref()
             .map(|tick| tick.current_tick())
             .unwrap_or(0);
-        let dimension = current_dimension
-            .map(|component| component.0)
-            .unwrap_or(DimensionKind::Overworld);
         let world_pos = [position.0.x, position.0.y, position.0.z];
 
         if let Err(error) = spawn_template_dropped_loot(

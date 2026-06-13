@@ -5004,6 +5004,35 @@ mod tests {
         }
     }
 
+    fn raw_item_template_toml(id: &str, category: &str) -> ItemTemplateToml {
+        ItemTemplateToml {
+            id: id.to_string(),
+            placeable: None,
+            name: id.to_string(),
+            category: category.to_string(),
+            grid_w: 1,
+            grid_h: 1,
+            base_weight: 0.1,
+            rarity: "common".to_string(),
+            spirit_quality_initial: 0.0,
+            description: "test item".to_string(),
+            max_stack_count: None,
+            effect: None,
+            cast_duration_ms: None,
+            cooldown_ms: None,
+            weapon: None,
+            forge_station: None,
+            blueprint_scroll: None,
+            inscription_scroll: None,
+            technique_scroll: None,
+            recipe_fragment: None,
+            container: None,
+            shield_spec: None,
+            shelflife_profile: None,
+            shelflife_track: None,
+        }
+    }
+
     fn registry_from_templates(templates: Vec<ItemTemplate>) -> ItemRegistry {
         ItemRegistry {
             templates: templates
@@ -11682,6 +11711,42 @@ cols = 4
         assert_eq!(
             carried_herb.placeable, None,
             "随身版 herb_crate 不应被放置链路消费"
+        );
+    }
+
+    #[test]
+    fn item_template_toml_normalizes_non_block_placeable_marker() {
+        let mut raw = raw_item_template_toml("portable_trade_crate", "misc");
+        raw.placeable = Some("  STORAGE_CRATE  ".to_string());
+
+        let tpl = raw
+            .try_into_item_template(std::path::Path::new("test_placeable.toml"))
+            .expect("非 Block 模板应允许声明 placeable");
+
+        assert_eq!(
+            tpl.category,
+            ItemCategory::Misc,
+            "非 Block placeable 模板应保持自身物品分类"
+        );
+        assert_eq!(
+            tpl.placeable.as_deref(),
+            Some("storage_crate"),
+            "placeable 标记应 trim 并归一化为小写"
+        );
+    }
+
+    #[test]
+    fn item_template_toml_rejects_blank_placeable_marker() {
+        let mut raw = raw_item_template_toml("blank_placeable_crate", "misc");
+        raw.placeable = Some("   ".to_string());
+
+        let error = raw
+            .try_into_item_template(std::path::Path::new("test_placeable.toml"))
+            .expect_err("空白 placeable 标记必须报错");
+
+        assert!(
+            error.contains("placeable"),
+            "错误信息应指出 placeable 字段为空，实际 {error}"
         );
     }
 

@@ -139,19 +139,31 @@ class LootContainerHandlerTest {
             "coffin_destroyed",
             "container_destroyed"
         };
-        for (String reason : reasons) {
-            LootContainerStateStore.open(new LootContainerStateStore.OpenSession(
-                1, "supply_coffin", "common", 3, 4, 0L, java.util.List.of()
-            ));
-            String json = """
-                {"type":"loot_container_close","v":1,"session_id":1,"reason":"%s"}
-                """.formatted(reason);
-            ServerDataRouter.RouteResult result = ServerDataRouter.createDefault()
-                .route(json, json.getBytes(StandardCharsets.UTF_8).length);
-            assertTrue(result.isHandled(),
-                "close with reason '" + reason + "' should be handled");
-            assertFalse(LootContainerStateStore.isOpen(),
-                "store should be closed after reason '" + reason + "'");
+        var received = new java.util.concurrent.atomic.AtomicReference<LootContainerStateStore.Session>();
+        LootContainerStateStore.Listener listener = received::set;
+        LootContainerStateStore.addListener(listener);
+        try {
+            for (String reason : reasons) {
+                LootContainerStateStore.open(new LootContainerStateStore.OpenSession(
+                    1, "supply_coffin", "common", 3, 4, 0L, java.util.List.of()
+                ));
+                String json = """
+                    {"type":"loot_container_close","v":1,"session_id":1,"reason":"%s"}
+                    """.formatted(reason);
+                ServerDataRouter.RouteResult result = ServerDataRouter.createDefault()
+                    .route(json, json.getBytes(StandardCharsets.UTF_8).length);
+                assertTrue(result.isHandled(),
+                    "close with reason '" + reason + "' should be handled");
+                assertFalse(LootContainerStateStore.isOpen(),
+                    "store should be closed after reason '" + reason + "'");
+                LootContainerStateStore.Closed closed =
+                    assertInstanceOf(LootContainerStateStore.Closed.class, received.get(),
+                        "listener should receive Closed after reason '" + reason + "'");
+                assertEquals(reason, closed.reason(),
+                    "closed payload reason should be preserved for '" + reason + "'");
+            }
+        } finally {
+            LootContainerStateStore.removeListener(listener);
         }
     }
 }
