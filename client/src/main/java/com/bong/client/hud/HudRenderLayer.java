@@ -35,6 +35,8 @@ public enum HudRenderLayer {
     TRIBULATION,
     NEAR_DEATH,
     TSY_EXTRACT,
+    /** plan-sou-da-che-v1 P2：搜打撤五维撤退决策 checklist。 */
+    EXTRACT_DECISION,
     REALM_COLLAPSE,
     MERIDIAN_OPEN,
     CONNECTION_STATUS,
