@@ -156,6 +156,8 @@ public class BongNetworkHandler {
                 com.bong.client.agentui.AgentUiStore.clear();
                 // plan-halfstep-rechallenge-integration-v1 P0 — 断线时清理半步重渡触发状态
                 com.bong.client.combat.store.HalfStepRechallengeStore.clear();
+                // plan-sou-da-che-v1 P2 — 断线时清理本次 run 的撤退决策窗口。
+                com.bong.client.hud.ExtractDecisionStateStore.clearOnDisconnect();
             })
         );
         ClientPlayConnectionEvents.JOIN.register(
