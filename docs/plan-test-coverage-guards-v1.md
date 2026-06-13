@@ -98,7 +98,7 @@ emit→consumer **接线守护 + 孤岛 triage** 落地，防止 Bevy `EventWrit
 - 14 个原始审计点已逐项处理：`BeastHordeEvent` 当前已有真实 reader，不入白名单；其余仍 writer-only 的领域/反馈事件进入 triage 并指向后续反馈、叙事、UI 或清理 plan。
 
 ### 关键 commit
-`b1834b7cd` P1 事件接线守护（2 files / +588，含 scanner、triage 白名单、stale whitelist pin、lifetime/path/comment fixture 测试）
+`81770280a` P1 事件接线守护（2 files / +588，含 scanner、triage 白名单、stale whitelist pin、lifetime/path/comment fixture 测试）
 
 ### 测试
 `CARGO_BUILD_JOBS=2 cargo test test_coverage_guards -- --nocapture` → **5 passed / 0 failed**；`CARGO_BUILD_JOBS=2 cargo fmt --check && CARGO_BUILD_JOBS=2 cargo clippy --all-targets -- -D warnings && CARGO_BUILD_JOBS=2 cargo test` → **8998 passed / 0 failed / 1 ignored**。
