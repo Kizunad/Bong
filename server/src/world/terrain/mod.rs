@@ -380,6 +380,7 @@ fn generate_chunks_around_players(
     mineral_index: Option<Res<MineralOreIndex>>,
     mineral_nodes: Query<&MineralOreNode>,
     harvested_spiritwood: Option<Res<crate::spiritwood::SpiritWoodHarvestedLogs>>,
+    deco_registry: Res<nbt_registry::DecorationNbtRegistry>,
 ) {
     let Some(providers) = providers else {
         return;
@@ -431,6 +432,7 @@ fn generate_chunks_around_players(
                 mineral_index.as_deref(),
                 &mineral_nodes,
                 harvested_spiritwood.as_deref(),
+                &deco_registry,
             );
             if !already {
                 client_budget -= 1;
@@ -485,6 +487,7 @@ fn chunk_is_visible_in_any_view(pos: ChunkPos, views: impl IntoIterator<Item = C
     views.into_iter().any(|view| view.contains(pos))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn ensure_chunk_generated(
     layer: &mut ChunkLayer,
     pos: ChunkPos,
@@ -493,6 +496,7 @@ fn ensure_chunk_generated(
     mineral_index: Option<&MineralOreIndex>,
     mineral_nodes: &Query<&MineralOreNode>,
     harvested_spiritwood: Option<&crate::spiritwood::SpiritWoodHarvestedLogs>,
+    deco_registry: &nbt_registry::DecorationNbtRegistry,
 ) {
     if generated.contains(&pos) || layer.chunk(pos).is_some() {
         return;
@@ -512,8 +516,15 @@ fn ensure_chunk_generated(
     }
 
     decoration::decorate_chunk(&mut chunk, pos, min_y, terrain, &top_y_by_column);
-    flora::decorate_chunk(&mut chunk, pos, min_y, terrain, &top_y_by_column);
-    structures::decorate_chunk(&mut chunk, pos, min_y, terrain);
+    flora::decorate_chunk(
+        &mut chunk,
+        pos,
+        min_y,
+        terrain,
+        &top_y_by_column,
+        deco_registry,
+    );
+    structures::decorate_chunk(&mut chunk, pos, min_y, terrain, deco_registry);
     // P1 — stamp authored structures from placement_manifest.json sidecar.
     // Runs after procedural decoration so authored buildings override them;
     // density mask (P0 worldgen) already removed flora inside compound radius.

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from functools import lru_cache
 from types import MappingProxyType
 from typing import Any, Mapping
 
@@ -16,6 +18,87 @@ from ..fields import DEFAULT_FIELD_LAYERS, ZoneFieldPlan
 #   "embedded"      — stamp sinks one block into the surface (grave_mound dome).
 #   "hanging"       — stamp hangs below a sky-isle underside (bottom_y − 1).
 DECORATION_ANCHORS: tuple[str, ...] = ("ground", "embedded", "hanging")
+
+
+# worldgen-v4 P6 §8.1 #9 / §6.1 — which decoration kinds retire their procedural
+# geometry for authored NBT stamping, and the `server/structures/decorations/<dir>`
+# they stamp from + the anchor they use. Kinds not listed here (flower / carver /
+# tutorial / coral) keep their procedural path (single-block flora, ground cover,
+# carvers, authored compounds) — §8.1 #9's explicit retain list.
+#
+# `tian_mai_crystal` is the one by-name override: it is `kind="crystal"` but hangs
+# from a sky-isle underside, so it maps to the `hanging_crystal/` assets with the
+# `hanging` anchor (the Rust `stamp_anchor_for` mirrors this special case).
+_KIND_NBT_DIR: dict[str, str] = {
+    "tree": "small_tree",
+    "shrub": "bush",
+    "boulder": "boulder",
+    "crystal": "crystal",
+    "mushroom": "big_mushroom",
+    "fallen_log": "fallen_log",
+    "grave_mound": "grave",
+}
+_KIND_NBT_ANCHOR: dict[str, str] = {
+    # Most stamped kinds sit on the surface; grave mounds sink one block.
+    "grave_mound": "embedded",
+}
+# By-name overrides (template dir, anchor) that beat the kind mapping.
+_NAME_NBT_OVERRIDE: dict[str, tuple[str, str]] = {
+    "tian_mai_crystal": ("hanging_crystal", "hanging"),
+}
+
+# Repo-root-relative authored asset dir, discovered once so the template lists
+# stay authoritative against the actual files (no hardcoded filename drift).
+_DECORATIONS_ROOT = os.path.normpath(
+    os.path.join(
+        os.path.dirname(__file__),
+        "..",
+        "..",
+        "..",
+        "..",
+        "server",
+        "structures",
+        "decorations",
+    )
+)
+
+
+@lru_cache(maxsize=None)
+def _variants_for_dir(template_dir: str) -> tuple[str, ...]:
+    """Sorted ``decorations/<dir>/<variant>.nbt`` ids authored under ``<dir>``.
+
+    Sorted so the manifest order is deterministic across machines (the Rust
+    `variants_for_kind` sorts identically before its `% len` pick, so the two
+    sides agree on which variant a given hash selects). Empty when the dir does
+    not exist yet — the spec then stays on its procedural path, exactly as if no
+    NBT mapping had been declared.
+    """
+    kind_path = os.path.join(_DECORATIONS_ROOT, template_dir)
+    if not os.path.isdir(kind_path):
+        return ()
+    names = sorted(
+        f[: -len(".nbt")] for f in os.listdir(kind_path) if f.endswith(".nbt")
+    )
+    return tuple(f"decorations/{template_dir}/{name}.nbt" for name in names)
+
+
+def nbt_placement_for(name: str, kind: str) -> tuple[tuple[str, ...], str]:
+    """Resolve ``(nbt_templates, anchor)`` for a decoration by name + kind.
+
+    Returns the authored variant template-id list and the anchor the server
+    stamps them with. ``((), "ground")`` when the kind/name retires no procedural
+    geometry (flowers, carvers, tutorial structures) or no assets are authored —
+    the spec then stays on its procedural placement path (§8.1 #9 fallback).
+    """
+    override = _NAME_NBT_OVERRIDE.get(name)
+    if override is not None:
+        template_dir, anchor = override
+        return _variants_for_dir(template_dir), anchor
+    template_dir = _KIND_NBT_DIR.get(kind)
+    if template_dir is None:
+        return (), "ground"
+    anchor = _KIND_NBT_ANCHOR.get(kind, "ground")
+    return _variants_for_dir(template_dir), anchor
 
 
 @dataclass(frozen=True)
@@ -76,7 +159,18 @@ def decoration_payload(deco: DecorationSpec) -> dict[str, object]:
     a new ``DecorationSpec`` field shows up in *both* manifest paths with no
     chance of one going stale. Callers add their own ``global_id`` / ``local_id``
     keys on top.
+
+    P6 §8.1: when a spec does not pin its own ``nbt_templates`` explicitly, the
+    NBT placement is auto-resolved from its name/kind via
+    :func:`nbt_placement_for` (so a profile author does not have to enumerate the
+    authored variant filenames on every spec). An explicit ``nbt_templates`` on
+    the spec wins — that is the escape hatch for a future bespoke variant set.
     """
+    if deco.nbt_templates:
+        nbt_templates: tuple[str, ...] = deco.nbt_templates
+        anchor = deco.anchor
+    else:
+        nbt_templates, anchor = nbt_placement_for(deco.name, deco.kind)
     return {
         "name": deco.name,
         "kind": deco.kind,
@@ -84,9 +178,10 @@ def decoration_payload(deco: DecorationSpec) -> dict[str, object]:
         "size_range": list(deco.size_range),
         "rarity": deco.rarity,
         "notes": deco.notes,
-        # P6 §8.1 — NBT-driven placement fields.
-        "nbt_templates": list(deco.nbt_templates),
-        "anchor": deco.anchor,
+        # P6 §8.1 — NBT-driven placement fields (auto-resolved by kind unless the
+        # spec pinned its own templates).
+        "nbt_templates": list(nbt_templates),
+        "anchor": anchor,
     }
 
 

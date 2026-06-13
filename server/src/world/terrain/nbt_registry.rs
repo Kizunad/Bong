@@ -333,6 +333,65 @@ impl DecorationNbtRegistry {
         }
         Some((placements, unresolved))
     }
+
+    /// The sorted list of resident template ids that live directly under
+    /// `decorations/<kind>/` (e.g. `kind = "small_tree"` →
+    /// `["decorations/small_tree/birch_tall_v2.nbt",
+    ///   "decorations/small_tree/oak_round_v1.nbt", …]`).
+    ///
+    /// Sorted so a deterministic `index % len` pick is stable across runs (the
+    /// `HashMap` iteration order is not). Empty when no variants are resident for
+    /// the kind (the caller then falls back to its procedural geometry path).
+    ///
+    /// This is how the flora / structures wiring resolves "give me the variant
+    /// pool for this decoration kind" without each profile having to enumerate
+    /// the authored filenames — the registry is the single source of truth for
+    /// which `.nbt` assets exist.
+    pub fn variants_for_kind(&self, kind: &str) -> Vec<&str> {
+        let prefix = format!("decorations/{kind}/");
+        let mut ids: Vec<&str> = self
+            .templates
+            .keys()
+            .filter(|id| {
+                // Direct children of the kind dir only — `decorations/small_tree/x.nbt`
+                // matches, `decorations/small_tree/sub/x.nbt` does not (no nested
+                // kinds today, but keep the contract tight).
+                id.strip_prefix(&prefix)
+                    .is_some_and(|rest| !rest.contains('/'))
+            })
+            .map(|id| id.as_str())
+            .collect();
+        ids.sort_unstable();
+        ids
+    }
+
+    /// Deterministically pick one of `kind`'s resident variant ids using a hash
+    /// value (typically a per-placement `decoration_hash`). `None` when the kind
+    /// has no resident variants (caller falls back to procedural).
+    ///
+    /// Picking from the sorted [`variants_for_kind`] list keeps the choice stable
+    /// for a given `(kind, hash)` regardless of `HashMap` iteration order — the
+    /// determinism the §8.1 #10 stamp contract requires.
+    ///
+    /// [`variants_for_kind`]: DecorationNbtRegistry::variants_for_kind
+    pub fn pick_variant(&self, kind: &str, hash: u32) -> Option<String> {
+        let variants = self.variants_for_kind(kind);
+        if variants.is_empty() {
+            return None;
+        }
+        Some(variants[(hash as usize) % variants.len()].to_string())
+    }
+
+    /// Whether the registry holds at least one variant under `decorations/<kind>/`.
+    /// The flora / structures wiring uses this to decide NBT-stamp vs. procedural
+    /// without allocating the full variant list.
+    pub fn has_kind(&self, kind: &str) -> bool {
+        let prefix = format!("decorations/{kind}/");
+        self.templates.keys().any(|id| {
+            id.strip_prefix(&prefix)
+                .is_some_and(|rest| !rest.contains('/'))
+        })
+    }
 }
 
 /// Recursively collect every `*.nbt` file under `dir` into `out`. Missing dir is

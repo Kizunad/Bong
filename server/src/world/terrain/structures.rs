@@ -1,8 +1,31 @@
 use std::collections::HashMap;
 
-use valence::prelude::{BlockState, Chunk, ChunkPos, PropName, PropValue, UnloadedChunk};
+use valence::prelude::{BlockPos, BlockState, Chunk, ChunkPos, PropName, PropValue, UnloadedChunk};
 
+use super::nbt_registry::{DecorationAnchor, DecorationNbtRegistry, Rotation};
 use super::{column, raster::TerrainProvider, spatial::ChunkBounds};
+
+/// worldgen-v4 P6 §6.2 — the `decorations/<kind>/` directory each mid-size
+/// scatter structure stamps from when authored variants are resident. These are
+/// scatter features (broken pillars / urns / bone heaps / ore veins / bridge
+/// remnants / spawn portal), so per-instance NBT stamping is appropriate (vs.
+/// a fixed deterministic compound layout, which would live in `authored.rs`).
+const RUIN_PILLAR_KIND: &str = "ruins_pillar";
+const BROKEN_ALTAR_KIND: &str = "broken_urn";
+const SPIRIT_ORE_KIND: &str = "spirit_ore_vein";
+const RIFT_BRIDGE_KIND: &str = "rift_bridge";
+const BONE_PILE_KIND: &str = "bone_pile";
+const SPAWN_PORTAL_KIND: &str = "spawn_portal";
+
+/// Priority used for every block of an NBT-stamped scatter structure. Matches the
+/// "≥4 ⇒ overwrite non-structure blocks" tier the procedural geometry's core
+/// pieces used, so a stamped structure beats flora / ground cover but still yields
+/// to bedrock / water / protected-natural (logs, mega-tree) via [`can_replace`].
+const NBT_STRUCTURE_PRIORITY: u8 = 6;
+/// Hash salt for choosing which authored variant a structure instance stamps —
+/// distinct from the geometry-parameter salts so variant choice is independent
+/// of the per-instance dimensions the procedural fallback reads.
+const NBT_STRUCTURE_VARIANT_SALT: u64 = 0x57A3_9E27_1201_C0DE;
 
 const RUIN_PILLAR_PROFILE: RuinPillarProfile = RuinPillarProfile {
     biome_matches: super::raster::ColumnSample::is_wastes_biome,
@@ -102,6 +125,7 @@ pub(super) fn decorate_chunk(
     pos: ChunkPos,
     min_y: i32,
     terrain: &TerrainProvider,
+    registry: &DecorationNbtRegistry,
 ) {
     // Sword sea has its own dedicated structure generator
     if super::giant_sword::is_in_sword_sea(pos.x * 16, pos.z * 16)
@@ -132,7 +156,7 @@ pub(super) fn decorate_chunk(
             if !instance.bounds.intersects_chunk(&bounds) {
                 continue;
             }
-            place_ruin_pillar_in_chunk(chunk, min_y, &bounds, &instance);
+            place_ruin_pillar_in_chunk(chunk, min_y, &bounds, &instance, registry);
         }
     }
 
@@ -155,7 +179,7 @@ pub(super) fn decorate_chunk(
             if !instance.bounds.intersects_chunk(&bounds) {
                 continue;
             }
-            place_broken_altar_in_chunk(chunk, min_y, &bounds, &instance);
+            place_broken_altar_in_chunk(chunk, min_y, &bounds, &instance, registry);
         }
     }
 
@@ -178,7 +202,7 @@ pub(super) fn decorate_chunk(
             if !instance.bounds.intersects_chunk(&bounds) {
                 continue;
             }
-            place_spirit_ore_vein_in_chunk(chunk, min_y, &bounds, &instance);
+            place_spirit_ore_vein_in_chunk(chunk, min_y, &bounds, &instance, registry);
         }
     }
 
@@ -201,7 +225,7 @@ pub(super) fn decorate_chunk(
             if !instance.bounds.intersects_chunk(&bounds) {
                 continue;
             }
-            place_rift_bridge_remnant_in_chunk(chunk, min_y, &bounds, &instance);
+            place_rift_bridge_remnant_in_chunk(chunk, min_y, &bounds, &instance, registry);
         }
     }
 
@@ -224,7 +248,7 @@ pub(super) fn decorate_chunk(
             if !instance.bounds.intersects_chunk(&bounds) {
                 continue;
             }
-            place_bone_pile_in_chunk(chunk, min_y, &bounds, &instance);
+            place_bone_pile_in_chunk(chunk, min_y, &bounds, &instance, registry);
         }
     }
 
@@ -247,7 +271,7 @@ pub(super) fn decorate_chunk(
             if !instance.bounds.intersects_chunk(&bounds) {
                 continue;
             }
-            place_spawn_portal_in_chunk(chunk, min_y, &bounds, &instance);
+            place_spawn_portal_in_chunk(chunk, min_y, &bounds, &instance, registry);
         }
     }
 
@@ -543,12 +567,24 @@ fn place_ruin_pillar_in_chunk(
     min_y: i32,
     chunk_bounds: &ChunkBounds,
     instance: &RuinPillarInstance,
+    registry: &DecorationNbtRegistry,
 ) {
     let mut placements = HashMap::new();
-    rasterize_foundation(&mut placements, chunk_bounds, instance);
-    rasterize_column(&mut placements, chunk_bounds, instance);
-    rasterize_crown(&mut placements, chunk_bounds, instance);
-    rasterize_fragments(&mut placements, chunk_bounds, instance);
+    if !stamp_structure(
+        &mut placements,
+        chunk_bounds,
+        registry,
+        RUIN_PILLAR_KIND,
+        instance.seed,
+        instance.origin_x,
+        instance.base_y,
+        instance.origin_z,
+    ) {
+        rasterize_foundation(&mut placements, chunk_bounds, instance);
+        rasterize_column(&mut placements, chunk_bounds, instance);
+        rasterize_crown(&mut placements, chunk_bounds, instance);
+        rasterize_fragments(&mut placements, chunk_bounds, instance);
+    }
 
     for ((world_x, world_y, world_z), placement) in placements {
         if !chunk_bounds.contains(world_x, world_z) {
@@ -657,13 +693,25 @@ fn place_broken_altar_in_chunk(
     min_y: i32,
     chunk_bounds: &ChunkBounds,
     instance: &BrokenAltarInstance,
+    registry: &DecorationNbtRegistry,
 ) {
     let mut placements = HashMap::new();
-    rasterize_altar_platform(&mut placements, chunk_bounds, instance);
-    rasterize_altar_dais(&mut placements, chunk_bounds, instance);
-    rasterize_altar_posts(&mut placements, chunk_bounds, instance);
-    rasterize_altar_core(&mut placements, chunk_bounds, instance);
-    rasterize_altar_rubble(&mut placements, chunk_bounds, instance);
+    if !stamp_structure(
+        &mut placements,
+        chunk_bounds,
+        registry,
+        BROKEN_ALTAR_KIND,
+        instance.seed,
+        instance.origin_x,
+        instance.base_y,
+        instance.origin_z,
+    ) {
+        rasterize_altar_platform(&mut placements, chunk_bounds, instance);
+        rasterize_altar_dais(&mut placements, chunk_bounds, instance);
+        rasterize_altar_posts(&mut placements, chunk_bounds, instance);
+        rasterize_altar_core(&mut placements, chunk_bounds, instance);
+        rasterize_altar_rubble(&mut placements, chunk_bounds, instance);
+    }
 
     for ((world_x, world_y, world_z), placement) in placements {
         if !chunk_bounds.contains(world_x, world_z) {
@@ -758,11 +806,23 @@ fn place_spirit_ore_vein_in_chunk(
     min_y: i32,
     chunk_bounds: &ChunkBounds,
     instance: &SpiritOreVeinInstance,
+    registry: &DecorationNbtRegistry,
 ) {
     let mut placements = HashMap::new();
-    rasterize_ore_outcrop(&mut placements, chunk_bounds, instance);
-    rasterize_ore_shards(&mut placements, chunk_bounds, instance);
-    rasterize_ore_scatter(&mut placements, chunk_bounds, instance);
+    if !stamp_structure(
+        &mut placements,
+        chunk_bounds,
+        registry,
+        SPIRIT_ORE_KIND,
+        instance.seed,
+        instance.origin_x,
+        instance.base_y,
+        instance.origin_z,
+    ) {
+        rasterize_ore_outcrop(&mut placements, chunk_bounds, instance);
+        rasterize_ore_shards(&mut placements, chunk_bounds, instance);
+        rasterize_ore_scatter(&mut placements, chunk_bounds, instance);
+    }
 
     for ((world_x, world_y, world_z), placement) in placements {
         if !chunk_bounds.contains(world_x, world_z) {
@@ -863,12 +923,24 @@ fn place_rift_bridge_remnant_in_chunk(
     min_y: i32,
     chunk_bounds: &ChunkBounds,
     instance: &RiftBridgeRemnantInstance,
+    registry: &DecorationNbtRegistry,
 ) {
     let mut placements = HashMap::new();
-    rasterize_bridge_pylons(&mut placements, chunk_bounds, instance);
-    rasterize_bridge_deck(&mut placements, chunk_bounds, instance);
-    rasterize_bridge_chains(&mut placements, chunk_bounds, instance);
-    rasterize_bridge_rubble(&mut placements, chunk_bounds, instance);
+    if !stamp_structure(
+        &mut placements,
+        chunk_bounds,
+        registry,
+        RIFT_BRIDGE_KIND,
+        instance.seed,
+        instance.origin_x,
+        instance.base_y,
+        instance.origin_z,
+    ) {
+        rasterize_bridge_pylons(&mut placements, chunk_bounds, instance);
+        rasterize_bridge_deck(&mut placements, chunk_bounds, instance);
+        rasterize_bridge_chains(&mut placements, chunk_bounds, instance);
+        rasterize_bridge_rubble(&mut placements, chunk_bounds, instance);
+    }
 
     for ((world_x, world_y, world_z), placement) in placements {
         if !chunk_bounds.contains(world_x, world_z) {
@@ -1245,9 +1317,47 @@ fn place_bone_pile_in_chunk(
     min_y: i32,
     chunk_bounds: &ChunkBounds,
     instance: &BonePileInstance,
+    registry: &DecorationNbtRegistry,
 ) {
     let mut placements = HashMap::new();
+    if !stamp_structure(
+        &mut placements,
+        chunk_bounds,
+        registry,
+        BONE_PILE_KIND,
+        instance.seed,
+        instance.origin_x,
+        instance.base_y,
+        instance.origin_z,
+    ) {
+        rasterize_bone_pile(&mut placements, chunk_bounds, instance);
+    }
 
+    for ((world_x, world_y, world_z), placement) in placements {
+        if !chunk_bounds.contains(world_x, world_z) {
+            continue;
+        }
+        let local_y = world_y - min_y;
+        if local_y < 0 || local_y >= chunk.height() as i32 {
+            continue;
+        }
+        let local_x = (world_x - chunk_bounds.min_x) as u32;
+        let local_z = (world_z - chunk_bounds.min_z) as u32;
+        let existing = chunk.block_state(local_x, local_y as u32, local_z);
+        if !can_replace(existing, placement.block, placement.priority) {
+            continue;
+        }
+        chunk.set_block_state(local_x, local_y as u32, local_z, placement.block);
+    }
+}
+
+/// Procedural fallback geometry for a bone pile (used when no NBT variant is
+/// resident). Bone-block ellipsoid + scattered skulls + a debris ring.
+fn rasterize_bone_pile(
+    placements: &mut HashMap<(i32, i32, i32), Placement>,
+    chunk_bounds: &ChunkBounds,
+    instance: &BonePileInstance,
+) {
     for dz in -instance.pile_radius..=instance.pile_radius {
         for dx in -instance.pile_radius..=instance.pile_radius {
             let dist = dx.abs() + dz.abs();
@@ -1267,7 +1377,7 @@ fn place_bone_pile_in_chunk(
                     _ => BlockState::COBBLESTONE,
                 };
                 upsert_block(
-                    &mut placements,
+                    placements,
                     chunk_bounds,
                     instance.origin_x + dx,
                     instance.base_y + dy,
@@ -1291,7 +1401,7 @@ fn place_bone_pile_in_chunk(
         let skull_y = instance.base_y + (instance.pile_height - dist_from_center).max(0) + 1;
         let rotation = (instance.seed.rotate_left(index as u32 + 41) % 16) as u16;
         upsert_block(
-            &mut placements,
+            placements,
             chunk_bounds,
             sx,
             skull_y,
@@ -1317,7 +1427,7 @@ fn place_bone_pile_in_chunk(
             _ => BlockState::GRAVEL,
         };
         upsert_block(
-            &mut placements,
+            placements,
             chunk_bounds,
             world_x,
             instance.base_y - 1,
@@ -1325,23 +1435,6 @@ fn place_bone_pile_in_chunk(
             block,
             3,
         );
-    }
-
-    for ((world_x, world_y, world_z), placement) in placements {
-        if !chunk_bounds.contains(world_x, world_z) {
-            continue;
-        }
-        let local_y = world_y - min_y;
-        if local_y < 0 || local_y >= chunk.height() as i32 {
-            continue;
-        }
-        let local_x = (world_x - chunk_bounds.min_x) as u32;
-        let local_z = (world_z - chunk_bounds.min_z) as u32;
-        let existing = chunk.block_state(local_x, local_y as u32, local_z);
-        if !can_replace(existing, placement.block, placement.priority) {
-            continue;
-        }
-        chunk.set_block_state(local_x, local_y as u32, local_z, placement.block);
     }
 }
 
@@ -1417,123 +1510,20 @@ fn place_spawn_portal_in_chunk(
     min_y: i32,
     chunk_bounds: &ChunkBounds,
     instance: &SpawnPortalInstance,
+    registry: &DecorationNbtRegistry,
 ) {
     let mut placements = HashMap::new();
-    let r = instance.platform_radius;
-
-    for dz in -r..=r {
-        for dx in -r..=r {
-            let dist_sq = dx * dx + dz * dz;
-            if dist_sq > r * r + r {
-                continue;
-            }
-            let ring = dx.abs().max(dz.abs());
-            let block = if ring <= 1 {
-                portal_core_block(instance.seed, dx, dz)
-            } else if (dx.abs() + dz.abs()) % 2 == 0 {
-                BlockState::END_STONE_BRICKS
-            } else {
-                BlockState::PURPUR_BLOCK
-            };
-            upsert_block(
-                &mut placements,
-                chunk_bounds,
-                instance.origin_x + dx,
-                instance.base_y - 1,
-                instance.origin_z + dz,
-                block,
-                6,
-            );
-
-            if ring >= 2 && sample_u01(hash_coords(dx, dz, instance.seed.rotate_left(3))) < 0.12 {
-                upsert_block(
-                    &mut placements,
-                    chunk_bounds,
-                    instance.origin_x + dx,
-                    instance.base_y,
-                    instance.origin_z + dz,
-                    candle_state(
-                        1 + (hash_coords(dx, dz, instance.seed.rotate_left(5)) % 3) as u16,
-                        true,
-                    ),
-                    4,
-                );
-            }
-        }
-    }
-
-    upsert_block(
+    if !stamp_structure(
         &mut placements,
         chunk_bounds,
+        registry,
+        SPAWN_PORTAL_KIND,
+        instance.seed,
         instance.origin_x,
         instance.base_y,
         instance.origin_z,
-        BlockState::LODESTONE,
-        7,
-    );
-    upsert_block(
-        &mut placements,
-        chunk_bounds,
-        instance.origin_x,
-        instance.base_y + 1,
-        instance.origin_z,
-        BlockState::END_ROD,
-        7,
-    );
-
-    let pillar_offsets = [(-r, -r), (r, -r), (-r, r), (r, r)];
-    for (index, (px, pz)) in pillar_offsets.into_iter().enumerate() {
-        for dy in 0..instance.pillar_height {
-            let block = if dy == 0 {
-                BlockState::CHISELED_POLISHED_BLACKSTONE
-            } else {
-                portal_pillar_block(instance.seed, index, dy)
-            };
-            upsert_block(
-                &mut placements,
-                chunk_bounds,
-                instance.origin_x + px,
-                instance.base_y + dy,
-                instance.origin_z + pz,
-                block,
-                6,
-            );
-        }
-        upsert_block(
-            &mut placements,
-            chunk_bounds,
-            instance.origin_x + px,
-            instance.base_y + instance.pillar_height,
-            instance.origin_z + pz,
-            BlockState::SOUL_LANTERN,
-            5,
-        );
-    }
-
-    let cardinal = [(0, -r - 1), (0, r + 1), (-r - 1, 0), (r + 1, 0)];
-    for (index, (cx, cz)) in cardinal.into_iter().enumerate() {
-        let broken = sample_u01(instance.seed.rotate_left(index as u32 + 11)) < 0.3;
-        if broken {
-            continue;
-        }
-        upsert_block(
-            &mut placements,
-            chunk_bounds,
-            instance.origin_x + cx,
-            instance.base_y - 1,
-            instance.origin_z + cz,
-            BlockState::CRYING_OBSIDIAN,
-            5,
-        );
-        upsert_block(
-            &mut placements,
-            chunk_bounds,
-            instance.origin_x + cx,
-            instance.base_y,
-            instance.origin_z + cz,
-            BlockState::END_ROD,
-            5,
-        );
+    ) {
+        rasterize_spawn_portal(&mut placements, chunk_bounds, instance);
     }
 
     for ((world_x, world_y, world_z), placement) in placements {
@@ -1551,6 +1541,132 @@ fn place_spawn_portal_in_chunk(
             continue;
         }
         chunk.set_block_state(local_x, local_y as u32, local_z, placement.block);
+    }
+}
+
+/// Procedural fallback geometry for a spawn portal (used when no NBT variant is
+/// resident). Circular platform + corner pillars + lodestone/end-rod core +
+/// cardinal markers.
+fn rasterize_spawn_portal(
+    placements: &mut HashMap<(i32, i32, i32), Placement>,
+    chunk_bounds: &ChunkBounds,
+    instance: &SpawnPortalInstance,
+) {
+    let r = instance.platform_radius;
+
+    for dz in -r..=r {
+        for dx in -r..=r {
+            let dist_sq = dx * dx + dz * dz;
+            if dist_sq > r * r + r {
+                continue;
+            }
+            let ring = dx.abs().max(dz.abs());
+            let block = if ring <= 1 {
+                portal_core_block(instance.seed, dx, dz)
+            } else if (dx.abs() + dz.abs()) % 2 == 0 {
+                BlockState::END_STONE_BRICKS
+            } else {
+                BlockState::PURPUR_BLOCK
+            };
+            upsert_block(
+                placements,
+                chunk_bounds,
+                instance.origin_x + dx,
+                instance.base_y - 1,
+                instance.origin_z + dz,
+                block,
+                6,
+            );
+
+            if ring >= 2 && sample_u01(hash_coords(dx, dz, instance.seed.rotate_left(3))) < 0.12 {
+                upsert_block(
+                    placements,
+                    chunk_bounds,
+                    instance.origin_x + dx,
+                    instance.base_y,
+                    instance.origin_z + dz,
+                    candle_state(
+                        1 + (hash_coords(dx, dz, instance.seed.rotate_left(5)) % 3) as u16,
+                        true,
+                    ),
+                    4,
+                );
+            }
+        }
+    }
+
+    upsert_block(
+        placements,
+        chunk_bounds,
+        instance.origin_x,
+        instance.base_y,
+        instance.origin_z,
+        BlockState::LODESTONE,
+        7,
+    );
+    upsert_block(
+        placements,
+        chunk_bounds,
+        instance.origin_x,
+        instance.base_y + 1,
+        instance.origin_z,
+        BlockState::END_ROD,
+        7,
+    );
+
+    let pillar_offsets = [(-r, -r), (r, -r), (-r, r), (r, r)];
+    for (index, (px, pz)) in pillar_offsets.into_iter().enumerate() {
+        for dy in 0..instance.pillar_height {
+            let block = if dy == 0 {
+                BlockState::CHISELED_POLISHED_BLACKSTONE
+            } else {
+                portal_pillar_block(instance.seed, index, dy)
+            };
+            upsert_block(
+                placements,
+                chunk_bounds,
+                instance.origin_x + px,
+                instance.base_y + dy,
+                instance.origin_z + pz,
+                block,
+                6,
+            );
+        }
+        upsert_block(
+            placements,
+            chunk_bounds,
+            instance.origin_x + px,
+            instance.base_y + instance.pillar_height,
+            instance.origin_z + pz,
+            BlockState::SOUL_LANTERN,
+            5,
+        );
+    }
+
+    let cardinal = [(0, -r - 1), (0, r + 1), (-r - 1, 0), (r + 1, 0)];
+    for (index, (cx, cz)) in cardinal.into_iter().enumerate() {
+        let broken = sample_u01(instance.seed.rotate_left(index as u32 + 11)) < 0.3;
+        if broken {
+            continue;
+        }
+        upsert_block(
+            placements,
+            chunk_bounds,
+            instance.origin_x + cx,
+            instance.base_y - 1,
+            instance.origin_z + cz,
+            BlockState::CRYING_OBSIDIAN,
+            5,
+        );
+        upsert_block(
+            placements,
+            chunk_bounds,
+            instance.origin_x + cx,
+            instance.base_y,
+            instance.origin_z + cz,
+            BlockState::END_ROD,
+            5,
+        );
     }
 }
 
@@ -2362,6 +2478,67 @@ fn surface_slope(
     max_surface - min_surface
 }
 
+/// worldgen-v4 P6 §6.2 — stamp an authored NBT variant for a mid-size scatter
+/// structure into the chunk's `Placement` map, replacing the procedural geometry.
+///
+/// Returns `true` when a resident variant was found and queued (the caller skips
+/// its procedural `rasterize_*` / loop); `false` when no variant exists for the
+/// kind — the caller then runs procedural geometry (the §8.1 fallback). The
+/// `base_y` is the procedural bottom row of the structure (`surface_y + 1`, or
+/// `+ 2` for the bridge); the template's local y=0 row is aligned to it, so the
+/// absolute y-range gating already enforced in `instantiate_*` is preserved.
+///
+/// memcpy-level (§8.1 #10): goes through [`DecorationNbtRegistry::stamp`], which
+/// only walks the resident block list. Stamped blocks share the priority +
+/// [`can_replace`] overlap rules of the procedural pieces (they never overwrite
+/// bedrock / water / protected-natural), routed through the same final commit
+/// loop in each `place_*_in_chunk`.
+#[allow(clippy::too_many_arguments)]
+fn stamp_structure(
+    placements: &mut HashMap<(i32, i32, i32), Placement>,
+    chunk_bounds: &ChunkBounds,
+    registry: &DecorationNbtRegistry,
+    kind: &str,
+    seed: u64,
+    origin_x: i32,
+    base_y: i32,
+    origin_z: i32,
+) -> bool {
+    // Pick the variant + rotation deterministically from the instance seed so a
+    // re-generated chunk stamps the identical structure.
+    let variant_hash = hash_coords(origin_x, origin_z, seed ^ NBT_STRUCTURE_VARIANT_SALT);
+    let Some(template_id) = registry.pick_variant(kind, variant_hash as u32) else {
+        return false;
+    };
+    let rotation = Rotation::from_index((seed >> 7) as u32);
+
+    // Ground anchor: registry places template[0,0,0] at surface_pos.y + 1, so to
+    // land the template's bottom row at the procedural `base_y`, the surface is
+    // base_y - 1. origin_x/z is the structure centre (template local [0,0,0]).
+    let surface_pos = BlockPos::new(origin_x, base_y - 1, origin_z);
+    let Some((stamped, _unresolved)) = registry.stamp(
+        &template_id,
+        surface_pos,
+        DecorationAnchor::Ground,
+        rotation,
+    ) else {
+        return false;
+    };
+
+    for (pos, state, _block_nbt) in stamped {
+        upsert_block(
+            placements,
+            chunk_bounds,
+            pos.x,
+            pos.y,
+            pos.z,
+            state,
+            NBT_STRUCTURE_PRIORITY,
+        );
+    }
+    true
+}
+
 fn upsert_block(
     placements: &mut HashMap<(i32, i32, i32), Placement>,
     chunk_bounds: &ChunkBounds,
@@ -2471,3 +2648,362 @@ const COBBLESTONE_WALL: BlockState = BlockState::COBBLESTONE_WALL
     .set(PropName::Waterlogged, PropValue::False);
 
 const CHISELED_STONE_BRICKS: BlockState = BlockState::CHISELED_STONE_BRICKS;
+
+#[cfg(test)]
+mod nbt_stamp_tests {
+    //! worldgen-v4 P6 §6.2 — mid-size scatter structure NBT stamp wiring.
+    //!
+    //! Locks: (1) `stamp_structure` queues an authored variant at the procedural
+    //! `base_y` via the Placement map so priority + `can_replace` overlap rules
+    //! still apply; (2) no resident variant ⇒ returns false so the caller runs
+    //! procedural geometry (the §8.1 fallback); (3) the absolute Y range — owned
+    //! by `instantiate_*` (untouched) — is honoured because the stamp aligns to
+    //! `base_y`; (4) determinism; (5) bedrock / water never overwritten.
+    use super::*;
+    use crate::world::terrain::nbt_io::{
+        write_structure_nbt, PaletteEntry, StructureBlockEntry, StructureNbt, DATA_VERSION,
+    };
+    use std::collections::HashSet;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+
+    fn single_block_template(block_name: &str, pos: [i32; 3]) -> StructureNbt {
+        StructureNbt {
+            data_version: DATA_VERSION,
+            size: [pos[0].max(0) + 1, pos[1].max(0) + 1, pos[2].max(0) + 1],
+            palette: vec![PaletteEntry {
+                name: format!("minecraft:{block_name}"),
+                properties: vec![],
+            }],
+            blocks: vec![StructureBlockEntry {
+                pos,
+                state: 0,
+                block_nbt: None,
+            }],
+            entities: vec![],
+        }
+    }
+
+    fn temp_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "bong_struct_stamp_{}_{}_{:p}",
+            tag,
+            std::process::id(),
+            &tag as *const _
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn write_template(dir: &Path, rel: &str, s: &StructureNbt) {
+        let path = dir.join(rel);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        write_structure_nbt(s, &path).unwrap();
+    }
+
+    /// A chunk-bounds whose 18-block margin comfortably contains the test origin.
+    fn bounds_at(chunk_x: i32, chunk_z: i32) -> ChunkBounds {
+        ChunkBounds::from_chunk_pos(ChunkPos::new(chunk_x, chunk_z))
+    }
+
+    // ── ① stamp_structure queues the authored block at base_y ────────────────
+
+    #[test]
+    fn stamp_structure_places_template_block_at_base_y() {
+        let dir = temp_dir("ore_base_y");
+        // Template block at local (0,0,0): with Ground anchor + surface=base_y-1 it
+        // must land at exactly base_y.
+        write_template(
+            &dir,
+            "decorations/spirit_ore_vein/small_v1.nbt",
+            &single_block_template("emerald_ore", [0, 0, 0]),
+        );
+        let reg = DecorationNbtRegistry::load(&dir).unwrap();
+
+        let mut placements = HashMap::new();
+        let bounds = bounds_at(0, 0);
+        let base_y = 200;
+        let stamped = stamp_structure(
+            &mut placements,
+            &bounds,
+            &reg,
+            SPIRIT_ORE_KIND,
+            0xDEAD_BEEF,
+            4,
+            base_y,
+            4,
+        );
+        assert!(stamped, "a resident spirit_ore_vein variant must stamp");
+        let p = placements
+            .get(&(4, base_y, 4))
+            .expect("template[0,0,0] must land at (origin_x, base_y, origin_z)");
+        assert_eq!(
+            p.block,
+            BlockState::EMERALD_ORE,
+            "the stamped block must be the authored template block"
+        );
+        assert_eq!(
+            p.priority, NBT_STRUCTURE_PRIORITY,
+            "stamped structure blocks use the structure priority so they beat flora"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // ── ② no resident variant ⇒ false ⇒ caller falls back to procedural ──────
+
+    #[test]
+    fn stamp_structure_returns_false_when_kind_absent() {
+        let reg = DecorationNbtRegistry::empty();
+        let mut placements = HashMap::new();
+        let bounds = bounds_at(0, 0);
+        let stamped = stamp_structure(
+            &mut placements,
+            &bounds,
+            &reg,
+            RUIN_PILLAR_KIND,
+            42,
+            4,
+            70,
+            4,
+        );
+        assert!(
+            !stamped,
+            "an empty registry must report no stamp so place_*_in_chunk runs the \
+             procedural rasterize_* fallback"
+        );
+        assert!(
+            placements.is_empty(),
+            "a failed stamp must not queue any blocks"
+        );
+    }
+
+    // ── ③ absolute Y alignment — stamp bottom row sits at base_y for all kinds ─
+
+    #[test]
+    fn stamp_aligns_bottom_row_to_base_y_across_y_ranges() {
+        // The Y-range gate lives in instantiate_* (a structure is only created when
+        // surface_y ∈ [min,max]); base_y = surface_y + 1/2. The stamp must put the
+        // template bottom row AT base_y so the structure stays in its authored band.
+        let dir = temp_dir("y_align");
+        // A 1×3×1 column at y=0..2.
+        let col = StructureNbt {
+            data_version: DATA_VERSION,
+            size: [1, 3, 1],
+            palette: vec![PaletteEntry {
+                name: "minecraft:end_stone_bricks".into(),
+                properties: vec![],
+            }],
+            blocks: (0..3)
+                .map(|y| StructureBlockEntry {
+                    pos: [0, y, 0],
+                    state: 0,
+                    block_nbt: None,
+                })
+                .collect(),
+            entities: vec![],
+        };
+        write_template(&dir, "decorations/spawn_portal/main_v1.nbt", &col);
+        let reg = DecorationNbtRegistry::load(&dir).unwrap();
+
+        for base_y in [62, 128, 300] {
+            let mut placements = HashMap::new();
+            let bounds = bounds_at(0, 0);
+            assert!(stamp_structure(
+                &mut placements,
+                &bounds,
+                &reg,
+                SPAWN_PORTAL_KIND,
+                7,
+                4,
+                base_y,
+                4,
+            ));
+            let min_stamped_y = placements.keys().map(|(_, y, _)| *y).min().unwrap();
+            assert_eq!(
+                min_stamped_y, base_y,
+                "the template bottom row must sit at base_y={base_y} so the structure \
+                 stays within the absolute Y band instantiate_* gated"
+            );
+        }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // ── ④ determinism — same instance stamps identical placements ────────────
+
+    #[test]
+    fn stamp_structure_is_deterministic() {
+        let dir = temp_dir("determinism");
+        write_template(
+            &dir,
+            "decorations/bone_pile/a_v1.nbt",
+            &single_block_template("bone_block", [0, 0, 0]),
+        );
+        write_template(
+            &dir,
+            "decorations/bone_pile/b_v2.nbt",
+            &single_block_template("soul_sand", [0, 0, 0]),
+        );
+        let reg = DecorationNbtRegistry::load(&dir).unwrap();
+
+        let run = || {
+            let mut placements = HashMap::new();
+            let bounds = bounds_at(2, -3);
+            stamp_structure(
+                &mut placements,
+                &bounds,
+                &reg,
+                BONE_PILE_KIND,
+                0x1234_5678_9ABC_DEF0,
+                40,
+                90,
+                -45,
+            );
+            let mut v: Vec<_> = placements
+                .into_iter()
+                .map(|((x, y, z), p)| (x, y, z, p.block))
+                .collect();
+            v.sort();
+            v
+        };
+        assert_eq!(
+            run(),
+            run(),
+            "the same instance seed + origin must stamp identical placements"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn stamp_structure_variant_spreads_over_instances() {
+        let dir = temp_dir("variant_spread");
+        write_template(
+            &dir,
+            "decorations/ruins_pillar/a_v1.nbt",
+            &single_block_template("stone_bricks", [0, 0, 0]),
+        );
+        write_template(
+            &dir,
+            "decorations/ruins_pillar/b_v2.nbt",
+            &single_block_template("mossy_stone_bricks", [0, 0, 0]),
+        );
+        write_template(
+            &dir,
+            "decorations/ruins_pillar/c_v3.nbt",
+            &single_block_template("cracked_stone_bricks", [0, 0, 0]),
+        );
+        let reg = DecorationNbtRegistry::load(&dir).unwrap();
+
+        let mut seen: HashSet<BlockState> = HashSet::new();
+        for i in 0..200i64 {
+            let mut placements = HashMap::new();
+            let bounds = bounds_at(0, 0);
+            let seed = (i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ 0xABCD;
+            stamp_structure(
+                &mut placements,
+                &bounds,
+                &reg,
+                RUIN_PILLAR_KIND,
+                seed,
+                4,
+                80,
+                4,
+            );
+            if let Some(p) = placements.get(&(4, 80, 4)) {
+                seen.insert(p.block);
+            }
+        }
+        assert!(
+            seen.len() >= 2,
+            "variant pick across 200 instances must hit >=2 distinct variants, hit {}",
+            seen.len()
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // ── ⑤ priority / can_replace — stamped block beats flora, yields to bedrock/water
+
+    #[test]
+    fn stamped_structure_priority_beats_flora_but_can_replace_guards_bedrock() {
+        // The stamp uses NBT_STRUCTURE_PRIORITY (>=4), so when committed the
+        // can_replace rule lets it overwrite flora/air but never bedrock/water.
+        // Compile-time pin: the priority must stay in the ≥4 overwrite tier.
+        const _: () = assert!(
+            NBT_STRUCTURE_PRIORITY >= 4,
+            "structure stamp priority must be in the overwrite tier"
+        );
+        // can_replace at the structure priority: replaces air, refuses bedrock/water.
+        assert!(
+            can_replace(
+                BlockState::AIR,
+                BlockState::STONE_BRICKS,
+                NBT_STRUCTURE_PRIORITY
+            ),
+            "stamped structure must overwrite air"
+        );
+        assert!(
+            !can_replace(
+                BlockState::BEDROCK,
+                BlockState::STONE_BRICKS,
+                NBT_STRUCTURE_PRIORITY
+            ),
+            "stamped structure must NOT overwrite bedrock"
+        );
+        assert!(
+            !can_replace(
+                BlockState::WATER,
+                BlockState::STONE_BRICKS,
+                NBT_STRUCTURE_PRIORITY
+            ),
+            "stamped structure must NOT overwrite water"
+        );
+        assert!(
+            !can_replace(
+                BlockState::OAK_LOG,
+                BlockState::STONE_BRICKS,
+                NBT_STRUCTURE_PRIORITY
+            ),
+            "stamped structure must NOT overwrite protected-natural (mega-tree logs)"
+        );
+    }
+
+    // ── ⑥ real authored structure assets resolve for every scatter kind ──────
+
+    #[test]
+    fn real_structure_assets_stamp_for_every_scatter_kind() {
+        let reg = DecorationNbtRegistry::load_default();
+        assert!(
+            !reg.is_empty(),
+            "authored decoration assets must be present (run gen_decorations.py)"
+        );
+        for kind in [
+            RUIN_PILLAR_KIND,
+            BROKEN_ALTAR_KIND,
+            SPIRIT_ORE_KIND,
+            RIFT_BRIDGE_KIND,
+            BONE_PILE_KIND,
+            SPAWN_PORTAL_KIND,
+        ] {
+            let mut placements = HashMap::new();
+            let bounds = bounds_at(0, 0);
+            let stamped = stamp_structure(
+                &mut placements,
+                &bounds,
+                &reg,
+                kind,
+                0xC0FF_EE00_1234_5678,
+                4,
+                90,
+                4,
+            );
+            assert!(
+                stamped,
+                "kind '{kind}' must have a resident authored variant that stamps"
+            );
+            assert!(
+                !placements.is_empty(),
+                "kind '{kind}' stamp must queue at least one block"
+            );
+        }
+    }
+}

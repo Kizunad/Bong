@@ -131,7 +131,16 @@ pub fn register(app: &mut App) {
         );
 }
 
+/// The `server/structures/` subdir of authored decoration templates. The gallery
+/// review grid is for the large authored compounds (dan_zong / wangyintai); the
+/// small worldgen-v4 P6 decoration variants under this subdir have their own
+/// review path (the `scripts/nbt/render_structure.py` PNG renders) and their own
+/// runtime registry ([`crate::world::terrain::nbt_registry::DecorationNbtRegistry`]),
+/// so they are excluded from the gallery sweep to keep the grid uncluttered.
+const GALLERY_EXCLUDED_SUBDIR: &str = "decorations";
+
 /// 递归收集 `dir` 下全部 `.nbt`，按相对路径排序（稳定网格顺序）。纯 I/O，不碰 ECS。
+/// 跳过 `decorations/`（P6 装饰模板，有独立 registry + 渲染审阅路径）。
 pub fn discover_structure_nbt_paths(dir: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
     collect_nbt(dir, &mut out);
@@ -146,6 +155,11 @@ fn collect_nbt(dir: &Path, out: &mut Vec<PathBuf>) {
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
+            // Skip the P6 decoration template tree — it has its own registry +
+            // render review path and would clutter the large-layout gallery grid.
+            if path.file_name().and_then(|n| n.to_str()) == Some(GALLERY_EXCLUDED_SUBDIR) {
+                continue;
+            }
             collect_nbt(&path, out);
         } else if path.extension().and_then(|e| e.to_str()) == Some("nbt") {
             out.push(path);
@@ -432,16 +446,27 @@ mod tests {
     }
 
     #[test]
-    fn discover_finds_all_eleven_authored_assets() {
+    fn discover_finds_the_large_layout_assets_and_excludes_decorations() {
         let root = structures_root();
         let paths = discover_structure_nbt_paths(&root);
+        // The 11 large authored compounds (dan_zong ×7 + wangyintai ×4) are the
+        // gallery's review subjects. P6 added small decoration templates under
+        // `decorations/`; those have their own registry + render review path and
+        // must NOT show up in the large-layout gallery grid.
         assert_eq!(
             paths.len(),
             11,
-            "expected 11 authored .nbt under {}, found {}: {:?}",
+            "expected the 11 large-layout .nbt under {} (decorations/ excluded), found {}: {:?}",
             root.display(),
             paths.len(),
             paths
+        );
+        assert!(
+            paths
+                .iter()
+                .all(|p| !p.components().any(|c| c.as_os_str() == "decorations")),
+            "the gallery sweep must skip the decorations/ subdir (P6 templates have \
+             a dedicated registry + render review path), but a decorations path leaked: {paths:?}"
         );
         // sorted + every path ends in .nbt
         assert!(

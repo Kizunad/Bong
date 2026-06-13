@@ -193,22 +193,99 @@ class DecorationNbtSchemaTests(unittest.TestCase):
                 f"{DECORATION_ANCHORS}",
             )
 
-    def test_existing_decorations_default_to_procedural_ground(self) -> None:
-        # No existing spec has opted into the NBT path yet (Stage 2 authors the
-        # assets). So every current palette entry must default to empty
-        # templates + ground anchor — i.e. stay on the procedural placement path.
+    # P6 §8.1 #9 — the kinds that RETIRE procedural geometry for NBT stamping
+    # (flora.rs place_* + structures via the registry) vs. those that stay
+    # procedural (single-block flora, carvers, tutorial / authored compounds).
+    NBT_DRIVEN_KINDS = {
+        "tree",
+        "shrub",
+        "boulder",
+        "crystal",
+        "mushroom",
+        "fallen_log",
+        "grave_mound",
+    }
+    PROCEDURAL_KINDS = {
+        "flower",  # single-block ground cover — §8.1 #9 retain
+        "canyon",
+        "cave_network",
+        "floating_island",  # carvers, not flora geometry
+        "spawn_tutorial_coffin",
+        "tutorial_chest",
+        "tutorial_lingquan",
+        "tutorial_rat_path",
+        "tutorial_rogue_anchor",
+        "coral",
+    }
+
+    def test_nbt_driven_kinds_carry_authored_templates(self) -> None:
+        # Stage 2 authored the assets and Stage 3 wired the kind→template mapping,
+        # so every NBT-driven kind must now ship a non-empty, well-formed template
+        # list in the manifest (the path the Rust flora stamp reads). Each template
+        # id must be the `decorations/<dir>/<variant>.nbt` shape the registry keys.
         for deco in GLOBAL_DECORATION_PALETTE:
+            kind = deco["kind"]
+            if kind not in self.NBT_DRIVEN_KINDS:
+                continue
+            templates = deco["nbt_templates"]
+            self.assertTrue(
+                templates,
+                f"{deco['profile']}/{deco['name']} (kind={kind}) must carry NBT "
+                f"templates now that Stage 2 authored decorations/<kind>/ assets",
+            )
+            for tid in templates:
+                self.assertRegex(
+                    tid,
+                    r"^decorations/[a-z_]+/[a-z0-9_]+\.nbt$",
+                    f"{deco['name']} template id {tid!r} is not a "
+                    f"decorations/<dir>/<variant>.nbt path",
+                )
+
+    def test_grave_mound_uses_embedded_and_tian_mai_hangs(self) -> None:
+        # Anchor overrides: grave mounds sink (embedded), the sky-isle crystal
+        # hangs (hanging) and points at the hanging_crystal/ assets — everything
+        # else stamps on the surface (ground).
+        by_name = {d["name"]: d for d in GLOBAL_DECORATION_PALETTE}
+        for deco in GLOBAL_DECORATION_PALETTE:
+            if deco["kind"] == "grave_mound":
+                self.assertEqual(
+                    deco["anchor"],
+                    "embedded",
+                    f"{deco['name']} grave mound must stamp with the embedded anchor",
+                )
+        tian_mai = by_name.get("tian_mai_crystal")
+        if tian_mai is not None:
+            self.assertEqual(
+                tian_mai["anchor"],
+                "hanging",
+                "tian_mai_crystal must hang from the sky-isle underside",
+            )
+            self.assertTrue(
+                all(
+                    t.startswith("decorations/hanging_crystal/")
+                    for t in tian_mai["nbt_templates"]
+                ),
+                f"tian_mai_crystal must stamp hanging_crystal/ assets, got "
+                f"{tian_mai['nbt_templates']}",
+            )
+
+    def test_procedural_kinds_stay_empty_ground(self) -> None:
+        # Retained-procedural kinds (single-block flora, carvers, tutorial /
+        # authored compounds) must NOT pick up NBT templates — they keep their
+        # §8.1 #9 procedural path with the ground default.
+        for deco in GLOBAL_DECORATION_PALETTE:
+            if deco["kind"] not in self.PROCEDURAL_KINDS:
+                continue
             self.assertEqual(
                 deco["nbt_templates"],
                 [],
-                f"{deco['name']} unexpectedly declares NBT templates before "
-                f"Stage 2 authored any assets: {deco['nbt_templates']}",
+                f"{deco['name']} (kind={deco['kind']}) is a retained-procedural "
+                f"kind and must not declare NBT templates: {deco['nbt_templates']}",
             )
             self.assertEqual(
                 deco["anchor"],
                 "ground",
-                f"{deco['name']} anchor should default to 'ground' until an "
-                f"NBT-driven variant opts into a different anchor",
+                f"{deco['name']} retained-procedural kind must keep the ground anchor",
             )
 
     def test_decoration_payload_round_trips_nbt_fields(self) -> None:

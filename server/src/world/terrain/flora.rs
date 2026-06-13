@@ -10,14 +10,23 @@
 //!   one per column max, but independent from flora — a column can host both
 //!   a tree AND meadow grass.
 //!
-//! Each `DecorationSpec.kind` maps to a small procedural geometry:
+//! Placement (where / whether / which variant) is decided by the cluster +
+//! density gate below — **unchanged** by worldgen-v4 P6. P6 only swaps the
+//! *geometry source*: once a decoration carries authored NBT variants
+//! (`Decoration::is_nbt_driven`), the chosen-by-seed variant is **stamped** from
+//! the resident [`DecorationNbtRegistry`] (memcpy-level, no runtime gzip — §8.1
+//! #10) instead of built procedurally. A decoration with no templates keeps its
+//! procedural geometry (the §8.1 #9 fallback), so the two paths share the exact
+//! same gate and produce the same placement positions for a given seed.
+//!
+//! Each NBT-less `DecorationSpec.kind` keeps a small procedural geometry:
 //!
 //!   tree      — trunk column of blocks[0] with blocks[1] canopy sphere at top
 //!   shrub     — 1..3 block tall cluster, blocks[0] primary, blocks[1] accent
 //!   boulder   — half-dome of blocks[0] with blocks[1] flecks
 //!   crystal   — vertical pillar of blocks[0] tipped with blocks[1], blocks[2] stubs
 //!   mushroom  — blocks[1] stem + blocks[0] cap disc, blocks[2] accent
-//!   flower    — single blocks[0] plant (typical ground-cover form)
+//!   flower    — single blocks[0] plant (typical ground-cover form; never NBT)
 //!
 //! Both layers share an 8×8 + 16×16 cluster gate so flora and ground cover
 //! cluster naturally instead of dusting uniformly across the world. Feature
@@ -29,11 +38,20 @@
 //! out of the current chunk simply gets clipped. Mega-scale trees remain the
 //! domain of `mega_tree.rs`.
 
-use valence::prelude::{BlockState, Chunk, ChunkPos, PropName, PropValue, UnloadedChunk};
+use valence::prelude::{BlockPos, BlockState, Chunk, ChunkPos, PropName, PropValue, UnloadedChunk};
 
 use super::blocks::block_from_name;
 use super::column;
+use super::nbt_registry::{DecorationAnchor, DecorationNbtRegistry, Rotation};
 use super::raster::{ColumnSample, Decoration, TerrainProvider};
+
+/// Hash salt for picking which authored NBT variant a placement stamps. Distinct
+/// from the placement-roll salt (997) so variant choice does not lock-step with
+/// the place/skip decision — same column can win placement yet vary its variant.
+const NBT_VARIANT_SALT: u32 = 619;
+/// Hash salt for the quarter-turn rotation applied to a stamped NBT variant, so
+/// a single authored template appears in four orientations across the world.
+const NBT_ROTATION_SALT: u32 = 623;
 
 const CHUNK_SIZE: i32 = 16;
 /// Minimum flora_density before we even roll placement. Mirrors the 0..1
@@ -59,6 +77,7 @@ pub fn decorate_chunk(
     min_y: i32,
     terrain: &TerrainProvider,
     top_y_by_column: &[[i32; 16]; 16],
+    registry: &DecorationNbtRegistry,
 ) {
     // Sword sea zone: no vegetation — only bare stone and swords
     if super::giant_sword::is_in_sword_sea(pos.x * 16, pos.z * 16)
@@ -142,6 +161,7 @@ pub fn decorate_chunk(
                                 deco,
                                 world_x,
                                 world_z,
+                                registry,
                             );
                             feature_occupied[local_z][local_x] = true;
                         }
@@ -202,6 +222,7 @@ pub fn decorate_chunk(
                 deco,
                 world_x,
                 world_z,
+                registry,
             );
         }
     }
@@ -289,7 +310,26 @@ fn place_decoration(
     deco: &Decoration,
     world_x: i32,
     world_z: i32,
+    registry: &DecorationNbtRegistry,
 ) {
+    // worldgen-v4 P6 §8.1 — NBT-driven path. The placement decision (this column,
+    // this base_y) is already made by the cluster + density gate above; here we
+    // only choose the geometry SOURCE. A decoration carrying authored NBT
+    // variants stamps one (chosen deterministically by seed) instead of running
+    // procedural geometry; flowers stay procedural (single block, never NBT).
+    //
+    // If the stamp resolves we are done; otherwise (template missing / fully
+    // clipped / unresolved palette) we fall through to procedural so the column
+    // is never left bare.
+    let takes_nbt_path = deco.is_nbt_driven() && deco.kind != "flower";
+    if takes_nbt_path
+        && stamp_nbt_decoration(
+            chunk, local_x, base_y, local_z, min_y, deco, world_x, world_z, registry,
+        )
+    {
+        return;
+    }
+
     let blocks: Vec<BlockState> = deco
         .blocks
         .iter()
@@ -335,6 +375,111 @@ fn place_decoration(
             set_block_if_air(chunk, local_x, base_y, local_z, min_y, blocks[0]);
         }
     }
+}
+
+/// Resolve which [`DecorationAnchor`] a decoration stamps with. Sky-isle hanging
+/// crystals always hang regardless of the manifest field (the procedural path
+/// already special-cases them via `is_sky_isle_bottom_flora`); otherwise the
+/// manifest `anchor` drives it (Ground / Embedded for grave mounds).
+fn stamp_anchor_for(deco: &Decoration) -> DecorationAnchor {
+    if is_sky_isle_bottom_flora(deco) {
+        DecorationAnchor::Hanging
+    } else {
+        deco.anchor
+    }
+}
+
+/// Stamp an authored NBT variant for `deco` so it lands at the same anchor point
+/// the procedural path would have used (`base_y` is that anchor — one block above
+/// the surface for Ground, the underside block for Hanging). Returns `true` when
+/// a variant was resident and at least one block was written; `false` when the
+/// chosen template was missing / fully unresolved, so the caller can fall back to
+/// procedural geometry.
+///
+/// **memcpy-level** (§8.1 #10): goes through [`DecorationNbtRegistry::stamp`],
+/// which only walks the already-decompressed block list — no runtime gzip.
+///
+/// Write mode mirrors the procedural geometry it replaces:
+/// * `Embedded` (grave mounds) overwrites unconditionally so the dome "sinks"
+///   into the surface (matching `place_grave_mound`'s `set_block_at_world`).
+/// * `Ground` / `Hanging` write air-only so a stamp never erases neighbouring
+///   terrain / structures (matching `set_block_if_air`).
+#[allow(clippy::too_many_arguments)]
+fn stamp_nbt_decoration(
+    chunk: &mut UnloadedChunk,
+    local_x: i32,
+    base_y: i32,
+    local_z: i32,
+    min_y: i32,
+    deco: &Decoration,
+    world_x: i32,
+    world_z: i32,
+    registry: &DecorationNbtRegistry,
+) -> bool {
+    // Choose the variant + rotation deterministically from the placement seed so
+    // re-generating the same chunk stamps the identical bytes.
+    let variant_idx = decoration_hash(world_x, world_z, NBT_VARIANT_SALT);
+    let template_id = pick_nbt_template(deco, variant_idx);
+    let Some(template_id) = template_id else {
+        return false;
+    };
+    let anchor = stamp_anchor_for(deco);
+
+    // Map the procedural anchor `base_y` to the registry's `surface_pos` so the
+    // stamped origin lands exactly where the procedural geometry started:
+    //   Ground   — procedural first block sits AT base_y; registry Ground places
+    //              template[0,0,0] at surface_pos.y + 1 ⇒ surface_pos.y = base_y - 1.
+    //   Embedded — procedural grave dome base sits at base_y - 1; registry
+    //              Embedded places template[0,0,0] at surface_pos.y ⇒
+    //              surface_pos.y = base_y - 1.
+    //   Hanging  — procedural top body sits at base_y; registry Hanging places the
+    //              template top at surface_pos.y - 1 ⇒ surface_pos.y = base_y + 1.
+    let surface_y = match anchor {
+        DecorationAnchor::Ground | DecorationAnchor::Embedded => base_y - 1,
+        DecorationAnchor::Hanging => base_y + 1,
+    };
+    // The placement loop passes true world_x/world_z; the chunk origin is just
+    // world − local, so we can turn the stamp's absolute world positions back
+    // into chunk-local coordinates.
+    let surface_pos = BlockPos::new(world_x, surface_y, world_z);
+    let chunk_origin_x = world_x - local_x;
+    let chunk_origin_z = world_z - local_z;
+
+    // Directional variety: a quarter-turn about the column. Templates whose look
+    // does not hinge on a `facing` property (logs, boulders, mounds, crystals)
+    // rotate correctly with positions alone.
+    let rotation = Rotation::from_index(decoration_hash(world_x, world_z, NBT_ROTATION_SALT));
+
+    let Some((placements, _unresolved)) =
+        registry.stamp(&template_id, surface_pos, anchor, rotation)
+    else {
+        return false;
+    };
+
+    let mut wrote_any = false;
+    let overwrite = anchor == DecorationAnchor::Embedded;
+    for (pos, state, _block_nbt) in placements {
+        let lx = pos.x - chunk_origin_x;
+        let lz = pos.z - chunk_origin_z;
+        let wrote = if overwrite {
+            set_block_at_world(chunk, lx, pos.y, lz, min_y, state)
+        } else {
+            set_block_if_air(chunk, lx, pos.y, lz, min_y, state)
+        };
+        wrote_any |= wrote;
+    }
+    wrote_any
+}
+
+/// Pick the NBT template id this placement stamps from `deco.nbt_templates`,
+/// indexed deterministically by `hash`. `None` when the decoration carries no
+/// templates (caller falls back to procedural).
+fn pick_nbt_template(deco: &Decoration, hash: u32) -> Option<String> {
+    if deco.nbt_templates.is_empty() {
+        return None;
+    }
+    let idx = (hash as usize) % deco.nbt_templates.len();
+    Some(deco.nbt_templates[idx].clone())
 }
 
 fn sample_size(deco: &Decoration, world_x: i32, world_z: i32) -> i32 {
@@ -911,6 +1056,10 @@ fn place_grave_mound(
 // Local helpers (self-contained — decoration.rs's equivalents are module-private)
 // ---------------------------------------------------------------------------
 
+/// Write `block` only if the target cell is air and in-bounds. Returns `true`
+/// when a block was actually written (used by the NBT-stamp path to know whether
+/// a variant produced any visible geometry, so it can fall back to procedural if
+/// every cell was clipped / occupied).
 fn set_block_if_air(
     chunk: &mut UnloadedChunk,
     local_x: i32,
@@ -918,23 +1067,25 @@ fn set_block_if_air(
     local_z: i32,
     min_y: i32,
     block: BlockState,
-) {
+) -> bool {
     if !(0..CHUNK_SIZE).contains(&local_x) || !(0..CHUNK_SIZE).contains(&local_z) {
-        return;
+        return false;
     }
     let local_y = world_y - min_y;
     if local_y < 0 || local_y >= chunk.height() as i32 {
-        return;
+        return false;
     }
     let state = chunk.block_state(local_x as u32, local_y as u32, local_z as u32);
     if !state.is_air() {
-        return;
+        return false;
     }
     chunk.set_block_state(local_x as u32, local_y as u32, local_z as u32, block);
+    true
 }
 
 /// 无条件覆盖（不检查 air）—— 用于 grave_mound 这种要"切下去 / 半埋"的几何，
-/// 让 dome 强制替换地表 grass_block / dirt 制造下沉视觉。
+/// 让 dome 强制替换地表 grass_block / dirt 制造下沉视觉。Returns `true` when the
+/// cell was in-bounds and written.
 fn set_block_at_world(
     chunk: &mut UnloadedChunk,
     local_x: i32,
@@ -942,15 +1093,16 @@ fn set_block_at_world(
     local_z: i32,
     min_y: i32,
     block: BlockState,
-) {
+) -> bool {
     if !(0..CHUNK_SIZE).contains(&local_x) || !(0..CHUNK_SIZE).contains(&local_z) {
-        return;
+        return false;
     }
     let local_y = world_y - min_y;
     if local_y < 0 || local_y >= chunk.height() as i32 {
-        return;
+        return false;
     }
     chunk.set_block_state(local_x as u32, local_y as u32, local_z as u32, block);
+    true
 }
 
 /// Same mix function as `decoration.rs::decoration_hash` but kept local so
@@ -963,4 +1115,618 @@ fn decoration_hash(world_x: i32, world_z: i32, salt: u32) -> u32 {
     h = h.wrapping_mul(0xC2B2_AE3D);
     h ^= h >> 16;
     h
+}
+
+#[cfg(test)]
+mod nbt_stamp_tests {
+    //! worldgen-v4 P6 §6.1 / §8.1 #9 — flora NBT stamp wiring.
+    //!
+    //! These lock the *swap of geometry source*: an NBT-driven decoration stamps
+    //! its authored variant, a template-less one keeps procedural geometry, and a
+    //! decoration whose template is missing falls back rather than leaving a bare
+    //! column. They also pin anchor placement (Ground / Embedded / Hanging),
+    //! variant determinism + spread, and that single-block flowers never stamp.
+    use super::*;
+    use crate::world::terrain::nbt_io::{
+        write_structure_nbt, PaletteEntry, StructureBlockEntry, StructureNbt, DATA_VERSION,
+    };
+    use crate::world::terrain::{MIN_Y, WORLD_HEIGHT};
+    use std::collections::HashSet;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+
+    const TEST_MIN_Y: i32 = MIN_Y;
+
+    fn make_chunk() -> UnloadedChunk {
+        UnloadedChunk::with_height(WORLD_HEIGHT)
+    }
+
+    fn block_at(chunk: &UnloadedChunk, local_x: i32, world_y: i32, local_z: i32) -> BlockState {
+        let local_y = (world_y - TEST_MIN_Y) as u32;
+        chunk.block_state(local_x as u32, local_y, local_z as u32)
+    }
+
+    /// A single-block template of `block_name` at template-local origin (so anchor
+    /// landing is observable by one cell).
+    fn single_block_template(block_name: &str) -> StructureNbt {
+        StructureNbt {
+            data_version: DATA_VERSION,
+            size: [1, 1, 1],
+            palette: vec![PaletteEntry {
+                name: format!("minecraft:{block_name}"),
+                properties: vec![],
+            }],
+            blocks: vec![StructureBlockEntry {
+                pos: [0, 0, 0],
+                state: 0,
+                block_nbt: None,
+            }],
+            entities: vec![],
+        }
+    }
+
+    /// A 1×3×1 column (y=0,1,2) of `block_name` — for hanging-anchor depth checks.
+    fn column_template(block_name: &str) -> StructureNbt {
+        StructureNbt {
+            data_version: DATA_VERSION,
+            size: [1, 3, 1],
+            palette: vec![PaletteEntry {
+                name: format!("minecraft:{block_name}"),
+                properties: vec![],
+            }],
+            blocks: (0..3)
+                .map(|y| StructureBlockEntry {
+                    pos: [0, y, 0],
+                    state: 0,
+                    block_nbt: None,
+                })
+                .collect(),
+            entities: vec![],
+        }
+    }
+
+    fn temp_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "bong_flora_stamp_{}_{}_{:p}",
+            tag,
+            std::process::id(),
+            &tag as *const _
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn write_template(dir: &Path, rel: &str, s: &StructureNbt) {
+        let path = dir.join(rel);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        write_structure_nbt(s, &path).unwrap();
+    }
+
+    fn deco(name: &str, kind: &str, templates: &[&str], anchor: DecorationAnchor) -> Decoration {
+        Decoration {
+            global_id: 1,
+            profile: "spawn".into(),
+            local_id: 1,
+            name: name.into(),
+            kind: kind.into(),
+            blocks: vec!["oak_log".into(), "oak_leaves".into(), "moss_block".into()],
+            size_range: [3, 6],
+            rarity: 0.5,
+            notes: String::new(),
+            nbt_templates: templates.iter().map(|t| t.to_string()).collect(),
+            anchor,
+        }
+    }
+
+    // ── ① NBT-driven path stamps the authored variant ───────────────────────
+
+    #[test]
+    fn nbt_driven_tree_stamps_template_block_at_ground_anchor() {
+        let dir = temp_dir("ground_tree");
+        write_template(
+            &dir,
+            "decorations/small_tree/oak_round_v1.nbt",
+            &single_block_template("amethyst_block"),
+        );
+        let reg = DecorationNbtRegistry::load(&dir).unwrap();
+        let d = deco(
+            "elder_oak",
+            "tree",
+            &["decorations/small_tree/oak_round_v1.nbt"],
+            DecorationAnchor::Ground,
+        );
+
+        let mut chunk = make_chunk();
+        let base_y = 70; // ground anchor: procedural would place first trunk block AT base_y
+        place_decoration(&mut chunk, 5, base_y, 5, TEST_MIN_Y, &d, 105, 205, &reg);
+
+        // The single-block template's y=0 must land at base_y (not the procedural
+        // oak_log trunk — the authored amethyst_block proves the NBT path ran).
+        assert_eq!(
+            block_at(&chunk, 5, base_y, 5),
+            BlockState::AMETHYST_BLOCK,
+            "Ground NBT stamp must place the authored template block at base_y, \
+             proving the procedural trunk geometry was retired"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // ── ② template-less decoration keeps procedural geometry (backward compat) ─
+
+    #[test]
+    fn template_less_decoration_runs_procedural_geometry() {
+        // Empty registry + a deco with NO templates → procedural tree: an oak_log
+        // trunk at base_y. This is the §8.1 #9 fallback / backward-compat path.
+        let reg = DecorationNbtRegistry::empty();
+        let d = deco("elder_oak", "tree", &[], DecorationAnchor::Ground);
+
+        let mut chunk = make_chunk();
+        let base_y = 70;
+        place_decoration(&mut chunk, 5, base_y, 5, TEST_MIN_Y, &d, 105, 205, &reg);
+
+        assert_eq!(
+            block_at(&chunk, 5, base_y, 5),
+            BlockState::OAK_LOG,
+            "a template-less tree must still build the procedural oak trunk (the \
+             §8.1 #9 procedural fallback is unchanged)"
+        );
+    }
+
+    // ── ③ NBT-driven but template missing → procedural fallback (never bare) ──
+
+    #[test]
+    fn nbt_driven_with_missing_template_falls_back_to_procedural() {
+        let reg = DecorationNbtRegistry::empty(); // no templates resident
+        let d = deco(
+            "elder_oak",
+            "tree",
+            &["decorations/small_tree/does_not_exist.nbt"],
+            DecorationAnchor::Ground,
+        );
+
+        let mut chunk = make_chunk();
+        let base_y = 70;
+        place_decoration(&mut chunk, 5, base_y, 5, TEST_MIN_Y, &d, 105, 205, &reg);
+
+        assert_eq!(
+            block_at(&chunk, 5, base_y, 5),
+            BlockState::OAK_LOG,
+            "when a referenced template is not resident the column must fall back \
+             to procedural geometry (never left bare)"
+        );
+    }
+
+    // ── ④ stamp determinism — same seed/pos stamps the identical chunk twice ──
+
+    #[test]
+    fn stamp_is_deterministic_across_two_runs() {
+        let dir = temp_dir("determinism");
+        // Two distinct variants so the variant pick is observable.
+        write_template(
+            &dir,
+            "decorations/boulder/a_v1.nbt",
+            &single_block_template("cobblestone"),
+        );
+        write_template(
+            &dir,
+            "decorations/boulder/b_v2.nbt",
+            &single_block_template("mossy_cobblestone"),
+        );
+        let reg = DecorationNbtRegistry::load(&dir).unwrap();
+        let d = deco(
+            "wayfarer_rock",
+            "boulder",
+            &[
+                "decorations/boulder/a_v1.nbt",
+                "decorations/boulder/b_v2.nbt",
+            ],
+            DecorationAnchor::Ground,
+        );
+
+        let stamp_once = || {
+            let mut chunk = make_chunk();
+            place_decoration(&mut chunk, 8, 72, 8, TEST_MIN_Y, &d, 312, -417, &reg);
+            block_at(&chunk, 8, 72, 8)
+        };
+        let a = stamp_once();
+        let b = stamp_once();
+        assert_eq!(
+            a, b,
+            "the same (deco, world pos) must stamp the identical variant block \
+             both times (deterministic variant pick)"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // ── ⑤ anchor tri-state: Ground / Embedded / Hanging land correctly ───────
+
+    #[test]
+    fn embedded_anchor_sinks_one_block_below_base_y() {
+        let dir = temp_dir("embedded");
+        write_template(
+            &dir,
+            "decorations/grave/small_v1.nbt",
+            &single_block_template("cobblestone"),
+        );
+        let reg = DecorationNbtRegistry::load(&dir).unwrap();
+        let d = deco(
+            "wayfarer_grave",
+            "grave_mound",
+            &["decorations/grave/small_v1.nbt"],
+            DecorationAnchor::Embedded,
+        );
+
+        let mut chunk = make_chunk();
+        let base_y = 70;
+        place_decoration(&mut chunk, 4, base_y, 4, TEST_MIN_Y, &d, 304, 404, &reg);
+
+        // Embedded: surface_pos.y = base_y - 1, template[0,0,0] lands AT surface_pos.y.
+        assert_eq!(
+            block_at(&chunk, 4, base_y - 1, 4),
+            BlockState::COBBLESTONE,
+            "Embedded grave must sink the dome base one block below base_y (matching \
+             the procedural dome_base = base_y - 1)"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn embedded_anchor_overwrites_existing_surface_block() {
+        // Embedded must overwrite (the half-buried look), not skip occupied cells.
+        let dir = temp_dir("embedded_overwrite");
+        write_template(
+            &dir,
+            "decorations/grave/small_v1.nbt",
+            &single_block_template("cobblestone"),
+        );
+        let reg = DecorationNbtRegistry::load(&dir).unwrap();
+        let d = deco(
+            "wayfarer_grave",
+            "grave_mound",
+            &["decorations/grave/small_v1.nbt"],
+            DecorationAnchor::Embedded,
+        );
+
+        let mut chunk = make_chunk();
+        let base_y = 70;
+        // Pre-fill the sink cell with dirt — Embedded must replace it.
+        let sink_local_y = (base_y - 1 - TEST_MIN_Y) as u32;
+        chunk.set_block_state(4, sink_local_y, 4, BlockState::DIRT);
+        place_decoration(&mut chunk, 4, base_y, 4, TEST_MIN_Y, &d, 304, 404, &reg);
+
+        assert_eq!(
+            block_at(&chunk, 4, base_y - 1, 4),
+            BlockState::COBBLESTONE,
+            "Embedded stamp must overwrite the existing surface block (half-buried \
+             dome), not be clipped by the occupied cell"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn hanging_anchor_grows_downward_from_underside() {
+        let dir = temp_dir("hanging");
+        write_template(
+            &dir,
+            "decorations/hanging_crystal/amethyst_stalactite_v1.nbt",
+            &column_template("amethyst_block"),
+        );
+        let reg = DecorationNbtRegistry::load(&dir).unwrap();
+        // tian_mai_crystal: sky_isle + crystal name triggers is_sky_isle_bottom_flora,
+        // which forces the Hanging anchor regardless of the manifest field.
+        let mut d = deco(
+            "tian_mai_crystal",
+            "crystal",
+            &["decorations/hanging_crystal/amethyst_stalactite_v1.nbt"],
+            DecorationAnchor::Hanging,
+        );
+        d.profile = "sky_isle".into();
+
+        let mut chunk = make_chunk();
+        let base_y = 200; // the underside anchor (procedural top body sits here)
+        place_decoration(&mut chunk, 6, base_y, 6, TEST_MIN_Y, &d, 306, 406, &reg);
+
+        // Hanging: surface_pos.y = base_y + 1; registry places the column top at
+        // surface_pos.y - 1 = base_y, growing down to base_y - 2.
+        for y in (base_y - 2)..=base_y {
+            assert_eq!(
+                block_at(&chunk, 6, y, 6),
+                BlockState::AMETHYST_BLOCK,
+                "Hanging column must occupy y={y} (top at base_y={base_y}, growing down)"
+            );
+        }
+        assert!(
+            block_at(&chunk, 6, base_y + 1, 6).is_air(),
+            "Hanging stamp must not place anything above base_y (no block at base_y+1)"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn stamp_anchor_for_forces_hanging_on_sky_isle_crystal() {
+        // Even if the manifest said Ground, the sky-isle bottom crystal must hang.
+        let mut d = deco("tian_mai_crystal", "crystal", &[], DecorationAnchor::Ground);
+        d.profile = "sky_isle".into();
+        assert_eq!(
+            stamp_anchor_for(&d),
+            DecorationAnchor::Hanging,
+            "tian_mai_crystal always hangs (sky-isle underside special case)"
+        );
+        // A normal ground crystal keeps its manifest anchor.
+        let g = deco("xuan_jing_pillar", "crystal", &[], DecorationAnchor::Ground);
+        assert_eq!(stamp_anchor_for(&g), DecorationAnchor::Ground);
+    }
+
+    // ── ⑥ variant coverage — many placements hit more than one variant ───────
+
+    #[test]
+    fn variant_pick_spreads_across_the_pool() {
+        let dir = temp_dir("variant_spread");
+        write_template(
+            &dir,
+            "decorations/boulder/a_v1.nbt",
+            &single_block_template("cobblestone"),
+        );
+        write_template(
+            &dir,
+            "decorations/boulder/b_v2.nbt",
+            &single_block_template("mossy_cobblestone"),
+        );
+        write_template(
+            &dir,
+            "decorations/boulder/c_v3.nbt",
+            &single_block_template("stone"),
+        );
+        let reg = DecorationNbtRegistry::load(&dir).unwrap();
+        let d = deco(
+            "wayfarer_rock",
+            "boulder",
+            &[
+                "decorations/boulder/a_v1.nbt",
+                "decorations/boulder/b_v2.nbt",
+                "decorations/boulder/c_v3.nbt",
+            ],
+            DecorationAnchor::Ground,
+        );
+
+        let mut seen: HashSet<BlockState> = HashSet::new();
+        for i in 0..200 {
+            let wx = 1000 + i * 7;
+            let wz = -2000 + i * 13;
+            let mut chunk = make_chunk();
+            place_decoration(&mut chunk, 0, 72, 0, TEST_MIN_Y, &d, wx, wz, &reg);
+            seen.insert(block_at(&chunk, 0, 72, 0));
+        }
+        assert!(
+            seen.len() >= 2,
+            "across 200 placements the variant pick must hit >=2 distinct variants \
+             (it hit {}); a single-variant result means pick_nbt_template is stuck",
+            seen.len()
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn pick_nbt_template_indexes_in_range_and_is_deterministic() {
+        let d = deco(
+            "x",
+            "boulder",
+            &[
+                "decorations/boulder/a_v1.nbt",
+                "decorations/boulder/b_v2.nbt",
+            ],
+            DecorationAnchor::Ground,
+        );
+        for hash in [0u32, 1, 2, 3, 99, u32::MAX] {
+            let a = pick_nbt_template(&d, hash);
+            let b = pick_nbt_template(&d, hash);
+            assert_eq!(a, b, "pick must be deterministic for hash {hash}");
+            let t = a.unwrap();
+            assert!(
+                d.nbt_templates.contains(&t),
+                "pick {t:?} must be one of the deco's templates"
+            );
+        }
+        // Empty templates → None.
+        let none = deco("x", "boulder", &[], DecorationAnchor::Ground);
+        assert!(pick_nbt_template(&none, 7).is_none());
+    }
+
+    // ── ⑦ flowers never stamp — single-block procedural always ───────────────
+
+    #[test]
+    fn flower_stays_procedural_even_with_templates() {
+        // A flower spec that (wrongly) carries templates must still place its single
+        // procedural block, never an NBT stamp. blocks[0] for a flower deco = poppy.
+        let dir = temp_dir("flower_proc");
+        write_template(
+            &dir,
+            "decorations/small_tree/oak_round_v1.nbt",
+            &single_block_template("amethyst_block"),
+        );
+        let reg = DecorationNbtRegistry::load(&dir).unwrap();
+        let mut d = deco(
+            "meadow_poppy",
+            "flower",
+            &["decorations/small_tree/oak_round_v1.nbt"],
+            DecorationAnchor::Ground,
+        );
+        d.blocks = vec!["poppy".into()];
+
+        let mut chunk = make_chunk();
+        place_decoration(&mut chunk, 2, 65, 2, TEST_MIN_Y, &d, 102, 202, &reg);
+        assert_eq!(
+            block_at(&chunk, 2, 65, 2),
+            BlockState::POPPY,
+            "flowers must always place their single procedural block (never an NBT \
+             stamp), even if a template slipped onto the spec"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // ── ⑨ geometry-source swap leaves the placement ANCHOR invariant ─────────
+
+    #[test]
+    fn swap_to_nbt_keeps_the_placement_anchor_at_base_y() {
+        // The cluster + density gate (in decorate_chunk) decides the column and
+        // base_y; place_decoration only chooses the geometry SOURCE. So both the
+        // procedural and NBT path must anchor at the SAME base_y — proving the
+        // swap does not shift where decorations land for a given seed. Procedural
+        // tree → oak_log trunk AT base_y; NBT tree → template block AT base_y.
+        let dir = temp_dir("anchor_invariant");
+        write_template(
+            &dir,
+            "decorations/small_tree/oak_round_v1.nbt",
+            &single_block_template("amethyst_block"),
+        );
+        let reg_nbt = DecorationNbtRegistry::load(&dir).unwrap();
+        let reg_empty = DecorationNbtRegistry::empty();
+
+        let base_y = 71;
+        let proc_deco = deco("elder_oak", "tree", &[], DecorationAnchor::Ground);
+        let nbt_deco = deco(
+            "elder_oak",
+            "tree",
+            &["decorations/small_tree/oak_round_v1.nbt"],
+            DecorationAnchor::Ground,
+        );
+
+        let mut proc_chunk = make_chunk();
+        place_decoration(
+            &mut proc_chunk,
+            7,
+            base_y,
+            7,
+            TEST_MIN_Y,
+            &proc_deco,
+            700,
+            700,
+            &reg_empty,
+        );
+        let mut nbt_chunk = make_chunk();
+        place_decoration(
+            &mut nbt_chunk,
+            7,
+            base_y,
+            7,
+            TEST_MIN_Y,
+            &nbt_deco,
+            700,
+            700,
+            &reg_nbt,
+        );
+
+        // Both anchor at base_y (just different block — geometry source swapped).
+        assert!(
+            !proc_chunk
+                .block_state(7, (base_y - TEST_MIN_Y) as u32, 7)
+                .is_air(),
+            "procedural path must occupy the base_y anchor"
+        );
+        assert_eq!(
+            block_at(&nbt_chunk, 7, base_y, 7),
+            BlockState::AMETHYST_BLOCK,
+            "NBT path must occupy the SAME base_y anchor (placement position invariant)"
+        );
+        assert_ne!(
+            block_at(&proc_chunk, 7, base_y, 7),
+            block_at(&nbt_chunk, 7, base_y, 7),
+            "only the geometry source changed — the procedural trunk vs the authored \
+             template block differ at the same anchor"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // ── ⑩ §8.1 #9 retain — only NBT-driven non-flower kinds take the stamp path
+
+    #[test]
+    fn only_nbt_driven_non_flower_takes_stamp_path() {
+        let dir = temp_dir("retain_gate");
+        write_template(
+            &dir,
+            "decorations/boulder/a_v1.nbt",
+            &single_block_template("amethyst_block"),
+        );
+        let reg = DecorationNbtRegistry::load(&dir).unwrap();
+
+        // (a) NBT-driven boulder → stamps the template block.
+        let boulder = deco(
+            "wayfarer_rock",
+            "boulder",
+            &["decorations/boulder/a_v1.nbt"],
+            DecorationAnchor::Ground,
+        );
+        let mut c1 = make_chunk();
+        place_decoration(&mut c1, 1, 72, 1, TEST_MIN_Y, &boulder, 11, 11, &reg);
+        assert_eq!(
+            block_at(&c1, 1, 72, 1),
+            BlockState::AMETHYST_BLOCK,
+            "(a) NBT-driven boulder must stamp the authored template"
+        );
+
+        // (b) template-less boulder → procedural (cobblestone family at base_y).
+        let proc_boulder = deco("wayfarer_rock", "boulder", &[], DecorationAnchor::Ground);
+        let mut c2 = make_chunk();
+        place_decoration(&mut c2, 1, 72, 1, TEST_MIN_Y, &proc_boulder, 11, 11, &reg);
+        assert_ne!(
+            block_at(&c2, 1, 72, 1),
+            BlockState::AMETHYST_BLOCK,
+            "(b) a template-less boulder must NOT stamp — it stays procedural"
+        );
+
+        // (c) flower with templates → still procedural single block (§8.1 #9 retain).
+        let mut flower = deco(
+            "wild_grass",
+            "flower",
+            &["decorations/boulder/a_v1.nbt"],
+            DecorationAnchor::Ground,
+        );
+        flower.blocks = vec!["grass".into()];
+        let mut c3 = make_chunk();
+        place_decoration(&mut c3, 1, 65, 1, TEST_MIN_Y, &flower, 11, 11, &reg);
+        assert_eq!(
+            block_at(&c3, 1, 65, 1),
+            BlockState::GRASS,
+            "(c) flowers are §8.1 #9 retained-procedural — never stamp even with templates"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // ── ⑧ stamp returns false (so caller can fall back) when fully clipped ───
+
+    #[test]
+    fn ground_stamp_falls_back_when_every_cell_is_occupied() {
+        // If a Ground stamp's cells are all non-air, set_block_if_air writes nothing
+        // and stamp_nbt_decoration returns false → caller falls back to procedural.
+        let dir = temp_dir("clipped");
+        write_template(
+            &dir,
+            "decorations/boulder/a_v1.nbt",
+            &single_block_template("amethyst_block"),
+        );
+        let reg = DecorationNbtRegistry::load(&dir).unwrap();
+        let d = deco(
+            "wayfarer_rock",
+            "boulder",
+            &["decorations/boulder/a_v1.nbt"],
+            DecorationAnchor::Ground,
+        );
+
+        let mut chunk = make_chunk();
+        let base_y = 72;
+        // Occupy the Ground stamp target (base_y) with stone — the air-only stamp
+        // writes nothing there.
+        let occ_y = (base_y - TEST_MIN_Y) as u32;
+        chunk.set_block_state(3, occ_y, 3, BlockState::STONE);
+        let wrote = stamp_nbt_decoration(&mut chunk, 3, base_y, 3, TEST_MIN_Y, &d, 303, 303, &reg);
+        assert!(
+            !wrote,
+            "a fully-clipped Ground stamp must report no blocks written so the caller \
+             falls back to procedural"
+        );
+        // Pre-existing block is untouched (air-only stamp).
+        assert_eq!(block_at(&chunk, 3, base_y, 3), BlockState::STONE);
+        let _ = fs::remove_dir_all(&dir);
+    }
 }
