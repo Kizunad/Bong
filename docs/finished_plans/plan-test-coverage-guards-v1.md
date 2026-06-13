@@ -9,7 +9,7 @@
 | **P0** | proto 序列化穷举守护（每变体必须 proto 或 JSON-bypass 白名单 + 生产路径 #[test] 遍历 + #[should_panic] pin） | ✅ 2026-06-13 | `s2c_all_proto_variants_encode_without_panic` / `c2s_*` 遍历全变体；新增无 proto 变体 → 测试红；HalfStepRechallenge `#[should_panic]` pin |
 | **P1** | emit→consumer 接线守护 + 14 个孤岛事件 triage（wiring-assert 机制 + 白名单 by-design） | ✅ 2026-06-14 | `event_emitters_have_readers_or_triage_entries` 测试期校验；每个 `EventWriter<E>` 要么有 `EventReader<E>`，要么在 intentional triage 白名单 |
 | **P2** | e2e CI 范围补全（client `./gradlew test` 进 CI + full-app startup smoke + `to_proto_bytes` oversize cap） | ✅ 2026-06-14 | e2e.yml 跑 client gradlew；`full_app_startup.rs` 断言核心 resource 就绪；proto 编码超限返 Err |
-| **P3** | mock-masking 真 impl 契约测试（真 TiandaoAgent 注入 + assert_no_halfstep 改 proto decode） | ⬜ | 真 TiandaoAgent setXxx→LLM prompt 含内容的集成测试；`assert_no_*_on_server_data_channel` 用 `prost::decode` 而非 `serde_json::from_slice` |
+| **P3** | mock-masking 真 impl 契约测试（真 TiandaoAgent 注入 + assert_no_halfstep 改 proto decode） | ✅ 2026-06-14 | 真 TiandaoAgent setXxx→LLM prompt 含内容的集成测试；`assert_no_*_on_server_data_channel` 用 `prost::decode` 而非 `serde_json::from_slice` |
 
 > 优先级：P0 最高杠杆（直接防 proto-panic 类复发，编译期+穷举双保险）。P1 涉真功能孤岛（与「bug+代码断连狩猎」重叠，本 plan 做守护机制，孤岛修复可交狩猎）。P2/P3 收口 CI 与 mock 盲区。
 
@@ -27,12 +27,12 @@
 
 ### 交付物
 
-- [ ] `server/src/schema/proto_convert.rs` 测试：`fn s2c_all_proto_variants_encode_without_panic()` —— 遍历**每个** `ServerDataPayloadV1` 变体的最小 fixture（复用 `server_data.rs::hud_payload_wire_type_matches_label` 测试已有的变体样本列表），对每个调 `ServerDataV1::new(variant).to_proto_bytes()`，断言非空 / 不 panic。**JSON-bypass 3 变体（AgentUiRequest/AgentUiClose/HalfStepRechallenge）显式排除**（断言它们走 `#[should_panic]`，不在正常遍历内）。
-- [ ] 同款 `fn c2s_all_proto_variants_encode_without_panic()` 覆盖 `ClientRequestV1` 全变体（约 37 个无 roundtrip 测试）。
-- [ ] `HalfStepRechallenge` 补 `#[test] #[should_panic(expected="HalfStepRechallenge 经由 JSON CustomPayload 发送")]`（仿 proto_convert.rs:4842/4856 已有的 `agent_ui_request_panics_if_proto_path_is_used`）。
-- [ ] **编译期 JSON-bypass 白名单**：`ServerDataPayloadV1` 加 `const fn is_json_bypass(&self) -> bool`（match 穷举，3 个 bypass 变体返 true），守护测试用它区分「应有 proto」vs「应 panic」——新增 bypass 变体必须显式标注，新增普通变体必须有 proto arm 否则遍历测试红。
-- [ ] 修正 `serialize_server_data_payload` 的**误导性注释**（"proto_convert round-trip tests (106 variants)" 与实际不符）→ 规范性说明「每个新变体 MUST 加入穷举守护」。
-- [ ] ≥ 2 防回归：删一个变体的 proto arm（mutation）→ 遍历测试 panic 红；把一个 bypass 变体误判为非 bypass → 测试红。
+- [x] `server/src/schema/proto_convert.rs` 测试：`fn s2c_all_proto_variants_encode_without_panic()` —— 遍历**每个** `ServerDataPayloadV1` 变体的最小 fixture（复用 `server_data.rs::hud_payload_wire_type_matches_label` 测试已有的变体样本列表），对每个调 `ServerDataV1::new(variant).to_proto_bytes()`，断言非空 / 不 panic。**JSON-bypass 3 变体（AgentUiRequest/AgentUiClose/HalfStepRechallenge）显式排除**（断言它们走 `#[should_panic]`，不在正常遍历内）。
+- [x] 同款 `fn c2s_all_proto_variants_encode_without_panic()` 覆盖 `ClientRequestV1` 全变体（约 37 个无 roundtrip 测试）。
+- [x] `HalfStepRechallenge` 补 `#[test] #[should_panic(expected="HalfStepRechallenge 经由 JSON CustomPayload 发送")]`（仿 proto_convert.rs:4842/4856 已有的 `agent_ui_request_panics_if_proto_path_is_used`）。
+- [x] **编译期 JSON-bypass 白名单**：`ServerDataPayloadV1` 加 `const fn is_json_bypass(&self) -> bool`（match 穷举，3 个 bypass 变体返 true），守护测试用它区分「应有 proto」vs「应 panic」——新增 bypass 变体必须显式标注，新增普通变体必须有 proto arm 否则遍历测试红。
+- [x] 修正 `serialize_server_data_payload` 的**误导性注释**（"proto_convert round-trip tests (106 variants)" 与实际不符）→ 规范性说明「每个新变体 MUST 加入穷举守护」。
+- [x] ≥ 2 防回归：删一个变体的 proto arm（mutation）→ 遍历测试 panic 红；把一个 bypass 变体误判为非 bypass → 测试红。
 
 ### P0 验收
 `cargo test proto_convert` 全绿；删任一普通变体 proto arm 或漏标 bypass → 遍历守护测试撞红（mutation 验证）；新增 `ServerDataPayloadV1`/`ClientRequestV1` 变体不分类（proto arm 或 bypass 白名单）→ 编译/测试不过。
@@ -47,15 +47,15 @@
 
 ## P2 — e2e CI 范围补全
 
-- [ ] `.github/workflows/e2e.yml` 加 **client `./gradlew test`** 步骤（当前 CI **从不**跑 client 测试，`ProtoServerDataBridgeTest` 只本地 smoke-test.sh 跑）。
-- [ ] `server/tests/full_app_startup.rs`：构建完整 `run_server()` App 一帧，断言核心 resource（`RedisBridgeResource` 等）就绪 + 注册无 panic（当前无任何测试实例化完整 App）。
-- [ ] `to_proto_bytes()` 加 `MAX_PAYLOAD_BYTES` 超限校验（当前生产 proto 编码无 size cap，oversize 守护只在 JSON test 路径）。
+- [x] `.github/workflows/e2e.yml` 加 **client `./gradlew test`** 步骤（当前 CI **从不**跑 client 测试，`ProtoServerDataBridgeTest` 只本地 smoke-test.sh 跑）。
+- [x] `server/tests/full_app_startup.rs`：构建完整 `run_server()` App 一帧，断言核心 resource（`RedisBridgeResource` 等）就绪 + 注册无 panic（当前无任何测试实例化完整 App）。
+- [x] `to_proto_bytes()` 加 `MAX_PAYLOAD_BYTES` 超限校验（当前生产 proto 编码无 size cap，oversize 守护只在 JSON test 路径）。
 
 ## P3 — mock-masking 真 impl 契约测试
 
-- [ ] 真 `TiandaoAgent`（非 `ButtonClickAwareAgent`/`ChatAwareFakeAgent`/`DeathAwareFakeAgent` 子类）+ mock LlmClient spy prompt 的集成测试：`setButtonClickEvents`/`setChatSignals`/`setNpcDeathEvents` 注入 → 断言 LLM user message 真含内容。
-- [ ] `assert_no_halfstep_on_server_data_channel`（及同类）改用 `prost::Message::decode` 解 proto 而非 `serde_json::from_slice`（后者只在 test/JSON 有效，生产 proto 测不到路由回归）。
-- [ ] client `handleRawRequest_wire_*` 用 stub MinecraftClient（非 NPE-as-proxy）测真 happy-path。
+- [x] 真 `TiandaoAgent`（非 `ButtonClickAwareAgent`/`ChatAwareFakeAgent`/`DeathAwareFakeAgent` 子类）+ mock LlmClient spy prompt 的集成测试：`setButtonClickEvents`/`setChatSignals`/`setNpcDeathEvents` 注入 → 断言 LLM user message 真含内容。
+- [x] `assert_no_halfstep_on_server_data_channel`（及同类）改用 `prost::Message::decode` 解 proto 而非 `serde_json::from_slice`（后者只在 test/JSON 有效，生产 proto 测不到路由回归）。
+- [x] client `handleRawRequest_wire_*` 用 stub MinecraftClient（非 NPE-as-proxy）测真 happy-path。
 
 ## §8 开放问题
 
@@ -83,9 +83,9 @@ proto 序列化**穷举编译期守护**落地，彻底防 proto-panic 类（新
 
 `cargo test proto_convert` → **53 passed / 0 failed**（reverify 3 维全 PASS）。mutation 验证：删任一普通变体 proto arm → 遍历守护测试红；HalfStepRechallenge 走 proto → should_panic；is_json_bypass 漏标新变体 → E0004 编译不过；漏写 fixture → 覆盖断言红。
 
-### 后续（P3 ⬜）
+### 后续（P3 已完成）
 
-- **P3**：mock-masking 真 TiandaoAgent 契约测试 + `assert_no_*_on_server_data_channel` 改 proto decode。
+- 无。P3 已完成，本 plan 全阶段收口。
 
 ---
 
@@ -110,9 +110,9 @@ emit→consumer **接线守护 + 孤岛 triage** 落地，防止 Bevy `EventWrit
 
 `CARGO_BUILD_JOBS=2 cargo test test_coverage_guards -- --nocapture` → **8 passed / 0 failed**；`CARGO_BUILD_JOBS=2 cargo fmt --check && CARGO_BUILD_JOBS=2 cargo clippy --all-targets -- -D warnings && CARGO_BUILD_JOBS=2 cargo test` → **9002 passed / 0 failed / 1 ignored**。
 
-### 后续（P3 ⬜）
+### 后续（P3 已完成）
 
-- **P3**：mock-masking 真 TiandaoAgent 契约测试 + `assert_no_*_on_server_data_channel` 改 proto decode。
+- 无。P3 已完成，本 plan 全阶段收口。
 
 ---
 
@@ -139,6 +139,75 @@ e2e CI 范围补全落地，覆盖此前 client 测试不进 CI、完整 App 无
 - `CARGO_BUILD_JOBS=2 cargo test` → 9026 passed / 0 failed / 1 ignored，另 `tests/full_app_startup.rs` 1 passed
 - `JAVA_HOME=$HOME/.sdkman/candidates/java/17.0.18-amzn ./gradlew --max-workers=2 test build` → BUILD SUCCESSFUL
 
-### 后续（P3 ⬜）
+### 后续（P3 已完成）
 
-- **P3**：mock-masking 真 TiandaoAgent 契约测试 + `assert_no_*_on_server_data_channel` 改 proto decode。
+- 无。P3 已完成，本 plan 全阶段收口。
+
+---
+
+## P3 落地记录（多 PR plan 阶段进展，非归档 Finish Evidence）
+
+mock-masking 真实现契约守护落地，覆盖此前 fake agent / test-only JSON / null-client NPE 三类“测试替身过强，生产路径未被验证”的盲区。
+
+### 落地清单
+
+- `agent/packages/tiandao/tests/agent-real-context-injection.test.ts`：新增真 `TiandaoAgent` + spy `LlmClient` 集成测试，分别覆盖 `setChatSignals`、`setNpcDeathEvents`、`setButtonClickEvents` 注入后进入 LLM user message。
+- `server/src/network/halfstep_rechallenge_emit.rs`：`assert_no_halfstep_on_server_data_channel` 改为 `prost::Message::decode` 生产 proto envelope；若测试 JSON 误入 `bong:server_data` 直接 panic。
+- `server/src/network/agent_ui.rs`：`assert_no_agent_ui_on_server_data_channel` 同步改为 proto decode，守护 `AgentUiRequest` / `AgentUiClose` 继续走专属 channel。
+- `client/src/main/java/com/bong/client/network/AgentUiPayloadHandler.java`：抽出 `parseAndMaybeOpenRawRequest(...)`，保留生产 `handleRawRequest(...)` 行为并提供 package-private ready-client 测试 seam。
+- `client/src/test/java/com/bong/client/network/AgentUiPayloadHandlerReadyClientTest.java`：用 stub opener 覆盖 server 裸 payload parse → open happy path。
+- `client/src/test/java/com/bong/client/agentui/AgentUiPayloadHandlerTest.java`：移除 null-client NPE-as-proxy 断言，改锁定 null client 不抛、不写 store。
+
+### 关键 commit
+
+- `b2d17fc97` test(agent): 补天道真实现上下文注入守护
+- `e84f7e9aa` test(server): 用 proto 解码守护专属通道路由
+- `8439d3cd6` test(client): 用 ready stub 覆盖 Agent UI 原始请求
+
+### 测试
+
+- `cd server && CARGO_BUILD_JOBS=2 cargo fmt --check`
+- `cd server && CARGO_BUILD_JOBS=2 cargo clippy --all-targets -- -D warnings`
+- `cd server && CARGO_BUILD_JOBS=2 cargo test` → **9029 passed / 0 failed / 1 ignored**，`tests/full_app_startup.rs` **1 passed**
+- `cd client && JAVA_HOME=$HOME/.sdkman/candidates/java/17.0.18-amzn ./gradlew --max-workers=2 test build` → **BUILD SUCCESSFUL**
+- `cd agent && npm run build` → **schema + tiandao build passed**
+- `cd agent/packages/tiandao && npm test` → **71 files passed / 792 tests passed**
+- `cd agent/packages/schema && npm test` → **27 files passed / 704 tests passed**
+
+---
+
+## Finish Evidence
+
+### 落地清单
+
+- **P0 proto 序列化穷举守护**：`server/src/schema/server_data.rs`、`server/src/schema/proto_convert.rs`、`server/src/network/agent_bridge.rs`；新增 S2C/C2S 全变体 proto encode 守护、JSON-bypass 显式分类与 HalfStepRechallenge proto panic pin。
+- **P1 emit→consumer 接线守护**：`server/src/main.rs`、`server/src/test_coverage_guards.rs`；新增 `EventWriter<E>` / `EventReader<E>` 扫描、writer-only triage 白名单与 stale/orphan 反向守护。
+- **P2 e2e CI 范围补全**：`.github/workflows/e2e.yml`、`server/src/main.rs`、`server/tests/full_app_startup.rs`、`server/src/network/agent_bridge.rs`、`server/src/persistence/mod.rs`；client test 入 e2e CI、完整 App startup smoke、proto payload size cap。
+- **P3 mock-masking 真 impl 契约测试**：`agent/packages/tiandao/tests/agent-real-context-injection.test.ts`、`server/src/network/halfstep_rechallenge_emit.rs`、`server/src/network/agent_ui.rs`、`client/src/main/java/com/bong/client/network/AgentUiPayloadHandler.java`、`client/src/test/java/com/bong/client/network/AgentUiPayloadHandlerReadyClientTest.java`、`client/src/test/java/com/bong/client/agentui/AgentUiPayloadHandlerTest.java`；真 TiandaoAgent prompt 注入、production proto decode guard、ready-client stub happy path。
+
+### 关键 commit
+
+- `50083a4d3` plan-test-coverage-guards-v1 P0：proto 序列化穷举编译期守护（防 proto-panic 类复发）
+- `20132c058` plan-test-coverage-guards-v1 P1：EventWriter 接线守护
+- `fbbe7f5af` plan-test-coverage-guards-v1 P2：补齐 e2e CI 与启动守护
+- `b2d17fc97` test(agent): 补天道真实现上下文注入守护
+- `e84f7e9aa` test(server): 用 proto 解码守护专属通道路由
+- `8439d3cd6` test(client): 用 ready stub 覆盖 Agent UI 原始请求
+
+### 测试结果
+
+- **P0**：`cargo test proto_convert` → **53 passed / 0 failed**；mutation 验证覆盖漏 proto arm、漏 bypass 分类、漏 fixture。
+- **P1**：`CARGO_BUILD_JOBS=2 cargo test test_coverage_guards -- --nocapture` → **8 passed / 0 failed**；`cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` → **9002 passed / 0 failed / 1 ignored**。
+- **P2**：`CARGO_BUILD_JOBS=2 cargo test` → **9026 passed / 0 failed / 1 ignored**；`cargo test --test full_app_startup` → **1 passed**；`JAVA_HOME=$HOME/.sdkman/candidates/java/17.0.18-amzn ./gradlew --max-workers=2 test build` → **BUILD SUCCESSFUL**。
+- **P3**：`CARGO_BUILD_JOBS=2 cargo fmt --check && CARGO_BUILD_JOBS=2 cargo clippy --all-targets -- -D warnings && CARGO_BUILD_JOBS=2 cargo test` → **9029 passed / 0 failed / 1 ignored**，`tests/full_app_startup.rs` **1 passed**；client Gradle **BUILD SUCCESSFUL**；agent `npm run build` + tiandao/schema tests **792 + 704 passed**。
+
+### 跨仓库核验
+
+- **server**：`ServerDataPayloadV1::is_json_bypass`、`ServerDataV1::to_proto_bytes()`、`assert_no_halfstep_on_server_data_channel`、`assert_no_agent_ui_on_server_data_channel`、`event_emitters_have_readers_or_triage_entries`、`build_server_app()`。
+- **agent**：`TiandaoAgent.setChatSignals`、`TiandaoAgent.setNpcDeathEvents`、`TiandaoAgent.setButtonClickEvents`、`LlmClient.chat` user message prompt。
+- **client**：`AgentUiPayloadHandler.handleRawRequest`、`parseAndMaybeOpenRawRequest`、`handleRawRequestForReadyClientTests`、`AgentUiPayloadHandlerReadyClientTest`。
+- **CI / e2e**：`.github/workflows/e2e.yml` client test stage、`server/tests/full_app_startup.rs` full-app startup smoke。
+
+### 遗留 / 后续
+
+- 无遗留阻塞。本 plan 范围是测试盲区守护，不承担 P1 triage 中列出的业务孤岛修复；这些仍按后续 gameplay / 代码断连狩猎 plan 消费。

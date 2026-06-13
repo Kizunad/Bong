@@ -1645,6 +1645,9 @@ mod tests {
     /// 防止 production proto_convert.rs unreachable!() panic 再次出现。
     fn assert_no_agent_ui_on_server_data_channel(helper: &mut MockClientHelper) {
         use crate::network::agent_bridge::SERVER_DATA_CHANNEL;
+        use crate::schema::proto_gen::bong;
+        use prost::Message;
+
         for frame in helper.collect_received().0 {
             let Ok(packet) = frame.decode::<CustomPayloadS2c>() else {
                 continue;
@@ -1652,17 +1655,20 @@ mod tests {
             if packet.channel.as_str() != SERVER_DATA_CHANNEL {
                 continue;
             }
-            if let Ok(v) = serde_json::from_slice::<serde_json::Value>(packet.data.0 .0) {
-                let payload_type = v.get("type").and_then(|t| t.as_str()).unwrap_or("");
-                if payload_type == "agent_ui_request" || payload_type == "agent_ui_close" {
+            let envelope =
+                bong::ServerDataEnvelope::decode(packet.data.0 .0).unwrap_or_else(|err| {
                     panic!(
-                        "AgentUiRequest/AgentUiClose 不应经由 bong:server_data channel 发送\
-                         （production proto_convert.rs 会 unreachable!() panic）；\
-                         应使用专属 bong:agent_ui_request/bong:agent_ui_close channel；\
-                         实际 payload type='{payload_type}'"
-                    );
-                }
-            }
+                        "bong:server_data channel 必须是 production proto envelope，不能依赖 test-only JSON decode；\
+                         若这里出现 AgentUiRequest/AgentUiClose JSON，说明它们被错误路由到旧 server_data channel。\
+                         decode error={err}; bytes={:?}",
+                        packet.data.0 .0
+                    )
+                });
+            assert!(
+                envelope.payload.is_some(),
+                "bong:server_data proto envelope 不应为空；AgentUiRequest/AgentUiClose 必须走专属 \
+                 bong:agent_ui_request/bong:agent_ui_close channel"
+            );
         }
     }
 

@@ -16,7 +16,9 @@ import static org.junit.jupiter.api.Assertions.*;
  *   <li>覆盖 {@link AgentUiPayloadHandler#handleRawRequest(String, net.minecraft.client.MinecraftClient)}
  *       可无 client 到达的早退出路径（JSON 解析错误 / 缺 request_id / 空白 request_id）</li>
  *   <li>wire 对拍：使用 server {@code serde_json} 真实序列化形态（裸 AgentUiRequestPayloadV1/
- *       AgentUiClosePayloadV1，无 v/type 字段；reason=null 时 Rust skip_serializing 省略）</li>
+ *       AgentUiClosePayloadV1，无 v/type 字段；reason=null 时 Rust skip_serializing 省略）；
+ *       ready-client happy path 由 {@code AgentUiPayloadHandlerReadyClientTest} 用 stub opener 覆盖，
+ *       不再用 null-client NPE 充当解析成功信号。</li>
  *   <li>防回归 pin：ServerDataRouter 不再注册 agent_ui_request/agent_ui_close</li>
  * </ul>
  */
@@ -364,27 +366,18 @@ public class AgentUiPayloadHandlerTest {
         // server 真实 wire JSON（serde_json AgentUiRequestPayloadV1）：
         // {"request_id":"...","target_player":"...","xml":"...","timeout_ticks":600}
         // 无 "v" / "type" 字段（那是 ServerDataV1 外层）。
-        // 此测试不能完整验证 client.player 路径，但至少验证 JSON 解析不会因 "v"/"type" 缺失而报错，
-        // 且 request_id 存在时解析正常通过（早退出路径不触发）。
+        // ready-client happy path 见 AgentUiPayloadHandlerReadyClientTest；此处只锁 null client
+        // 在 headless JVM 中不抛异常、不写 store。
         String serverWireJson =
             "{\"request_id\":\"req-wire-bare\","
                 + "\"target_player\":\"offline:Kiz\","
                 + "\"xml\":\"<owo-ui><components><flow-layout><label>天道降示</label></flow-layout></components></owo-ui>\","
                 + "\"timeout_ticks\":600}";
 
-        // 传 null client → 会在 client.player 处 NPE；但我们只验证解析层的行为。
-        // 若 NPE 出现在 try-catch 之内会被吞，若在外面会抛。
-        // 实际代码在 if (client.player == null) 之前 client 未做 null 判断 → NPE 会抛。
-        // 这里不测 client 路径——改用 openReadyRequestForTests 直接验证 ready-client 行为（见 ReadyClientTest）。
-        // 此用例仅验证：server wire JSON（无 v/type）的 request_id 能被正确解析（不被误判为缺失）。
-        // 方法：把 client 参数设为 null，确认 NPE 发生在 client.player 处（而非 JSON 解析处）。
-        try {
-            AgentUiPayloadHandler.handleRawRequest(serverWireJson, null);
-            // 若到这里说明 client 未被访问（不应发生，保险起见）
-        } catch (NullPointerException npe) {
-            // 期望行为：NPE 发生在 client.player 处，证明 JSON 解析通过了
-            // （如果 JSON 解析失败，会走 catch(Exception e) 分支返回，不会到达 client.player）
-        }
+        assertDoesNotThrow(
+            () -> AgentUiPayloadHandler.handleRawRequest(serverWireJson, null),
+            "server wire bare JSON 传 null client 时不应靠 NPE 证明解析成功"
+        );
         // AgentUiStore 不应被写入（client 为 null 时流程中止）
         assertNull(AgentUiStore.getActive(),
             "server wire bare JSON 传 null client 时 AgentUiStore 不应被写入；"
@@ -392,25 +385,16 @@ public class AgentUiPayloadHandlerTest {
     }
 
     @Test
-    void handleRawRequest_wire_noEnvelopeTypeField_doesNotExitEarly() {
-        // 验证：无 "type" 字段不会导致 request_id 缺失 false-positive（防止意外绑死 envelope 格式）。
-        // server 发的裸 payload 不含 type 字段，client 只读 request_id 即可正常工作。
+    void handleRawRequest_wire_noEnvelopeTypeField_withNullClientDoesNotThrow() {
+        // 验证：无 "type" 字段的 server 裸 payload 在 headless/null client 下不抛异常。
+        // parse→open happy path 由 ready-client stub 测试锁住。
         String barePayloadNoType =
             "{\"request_id\":\"req-no-type\",\"xml\":\"\",\"timeout_ticks\":100}";
 
-        boolean npeAtClientPlayer = false;
-        try {
-            AgentUiPayloadHandler.handleRawRequest(barePayloadNoType, null);
-        } catch (NullPointerException npe) {
-            npeAtClientPlayer = true;
-        }
-
-        // NPE 在 client.player 处说明流程执行到了 request_id 校验通过之后
-        // （如果 request_id 被误判为缺失，会直接 return，不会到 client.player）
-        assertTrue(npeAtClientPlayer,
-            "无 type 字段的裸 payload 中 request_id 应被正确读到，"
-                + "流程应继续直到 client.player 检查（null client 此处 NPE），"
-                + "而非因 request_id 缺失提前 return");
+        assertDoesNotThrow(
+            () -> AgentUiPayloadHandler.handleRawRequest(barePayloadNoType, null),
+            "无 type 字段的裸 payload 传 null client 不应抛 NPE"
+        );
         assertNull(AgentUiStore.getActive(),
             "传 null client 时 AgentUiStore 不应被写入");
     }
