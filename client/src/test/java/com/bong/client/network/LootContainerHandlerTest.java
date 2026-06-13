@@ -132,7 +132,13 @@ class LootContainerHandlerTest {
 
     @Test
     void allCloseReasonsAccepted() {
-        String[] reasons = {"timeout", "distance", "player_closed", "coffin_destroyed"};
+        String[] reasons = {
+            "timeout",
+            "distance",
+            "player_closed",
+            "coffin_destroyed",
+            "container_destroyed"
+        };
         for (String reason : reasons) {
             LootContainerStateStore.open(new LootContainerStateStore.OpenSession(
                 1, "supply_coffin", "common", 3, 4, 0L, java.util.List.of()

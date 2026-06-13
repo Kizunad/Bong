@@ -660,6 +660,7 @@ pub enum LootContainerCloseReasonV1 {
     Distance,
     PlayerClosed,
     CoffinDestroyed,
+    ContainerDestroyed,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -5005,6 +5006,7 @@ mod tests {
             LootContainerCloseReasonV1::Distance,
             LootContainerCloseReasonV1::PlayerClosed,
             LootContainerCloseReasonV1::CoffinDestroyed,
+            LootContainerCloseReasonV1::ContainerDestroyed,
         ];
         for reason in reasons {
             let close = LootContainerCloseV1 {
@@ -5068,6 +5070,10 @@ mod tests {
             (
                 LootContainerCloseReasonV1::CoffinDestroyed,
                 "\"coffin_destroyed\"",
+            ),
+            (
+                LootContainerCloseReasonV1::ContainerDestroyed,
+                "\"container_destroyed\"",
             ),
         ];
         for (reason, expected) in cases {

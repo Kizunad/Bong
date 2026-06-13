@@ -1495,6 +1495,7 @@ fn loot_container_close_reason_to_proto(
         LootContainerCloseReasonV1::Distance => "distance",
         LootContainerCloseReasonV1::PlayerClosed => "player_closed",
         LootContainerCloseReasonV1::CoffinDestroyed => "coffin_destroyed",
+        LootContainerCloseReasonV1::ContainerDestroyed => "container_destroyed",
     }
     .to_string()
 }
@@ -4465,7 +4466,7 @@ mod tests {
         let payload = ServerDataPayloadV1::LootContainerClose(
             super::super::server_data::LootContainerCloseV1 {
                 session_id: 99,
-                reason: super::super::server_data::LootContainerCloseReasonV1::Timeout,
+                reason: super::super::server_data::LootContainerCloseReasonV1::ContainerDestroyed,
             },
         );
         s2c_encode_decode_roundtrip(payload.clone());
@@ -4482,8 +4483,8 @@ mod tests {
             Some(bong::server_data_envelope::Payload::LootContainerClose(close)) => {
                 assert_eq!(close.session_id, 99, "session_id should survive roundtrip");
                 assert_eq!(
-                    close.reason, "timeout",
-                    "reason should be 'timeout' after roundtrip"
+                    close.reason, "container_destroyed",
+                    "reason should be 'container_destroyed' after roundtrip"
                 );
             }
             other => panic!("expected LootContainerClose payload, got {other:?}"),
