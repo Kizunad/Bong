@@ -21,6 +21,7 @@ pub mod poi_respawn_tick;
 pub mod pseudo_vein_runtime;
 pub mod rift_portal;
 pub mod risk_heatmap;
+pub mod risk_signals;
 pub mod season;
 pub mod spawn_tutorial;
 pub mod spirit_eye;
@@ -169,6 +170,7 @@ pub fn register(app: &mut App) {
     tsy_lifecycle::register(app);
     // plan-tsy-extract-v1 — TSY 定点撤离倒计时 + race-out 裂口。
     risk_heatmap::register(app);
+    risk_signals::register(app);
     extract_system::register(app);
     // plan-tsy-container-v1 §2 — 搜刮 system + event 总线
     tsy_container_search::register(app);
