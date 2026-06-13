@@ -17,7 +17,10 @@ use crate::network::inventory_snapshot_emit::send_inventory_snapshot_to_client;
 use crate::player::gameplay::GameplayTick;
 use crate::player::state::PlayerState;
 use crate::world::bong_blocks::{is_bong_block, place_bong_block};
-use crate::world::container_block::{handle_container_block_place, ContainerBlockKind};
+use crate::world::container_block::{
+    container_place_audio_recipe_id, handle_container_block_place, send_container_audio,
+    ContainerBlockKind,
+};
 use crate::world::dimension::{CurrentDimension, DimensionKind, DimensionLayers};
 use crate::world::furniture::{furniture_kind_for_template_id, FurnitureRegistry};
 use crate::zhenfa::trap_content::TrapTargetFace;
@@ -258,6 +261,16 @@ pub fn handle_block_place_requests(
                         [pos.x, pos.y, pos.z],
                     );
                 }
+                if placed.is_ok() {
+                    if let Some(container_kind) = container_block_kind(kind) {
+                        send_container_audio(
+                            audio_events.as_deref_mut(),
+                            container_place_audio_recipe_id(container_kind),
+                            [pos.x, pos.y, pos.z],
+                            0.0,
+                        );
+                    }
+                }
                 placed.map(|entity| format!("entity={entity:?} kind={kind:?}"))
             }
         };
@@ -445,6 +458,7 @@ fn place_placeable(
         PlaceableBlockKind::StorageCrate { is_herb } => Ok(handle_container_block_place(
             commands,
             ext_registry,
+            placement.layer,
             placement.pos,
             placement.dimension,
             placement.placed_by,
@@ -454,12 +468,23 @@ fn place_placeable(
         PlaceableBlockKind::DeadDrop => Ok(handle_container_block_place(
             commands,
             ext_registry,
+            placement.layer,
             placement.pos,
             placement.dimension,
             placement.placed_by,
             placement.placed_at_tick,
             ContainerBlockKind::DeadDrop,
         )),
+    }
+}
+
+fn container_block_kind(kind: PlaceableBlockKind) -> Option<ContainerBlockKind> {
+    match kind {
+        PlaceableBlockKind::StorageCrate { is_herb } => {
+            Some(ContainerBlockKind::StorageCrate { is_herb })
+        }
+        PlaceableBlockKind::DeadDrop => Some(ContainerBlockKind::DeadDrop),
+        PlaceableBlockKind::Workbench => None,
     }
 }
 

@@ -1,0 +1,10 @@
+{
+  "id": "container_open",
+  "layers": [
+    { "sound": "minecraft:block.barrel.open", "volume": 0.7, "pitch": 1.0, "delay_ticks": 0 }
+  ],
+  "priority": 50,
+  "attenuation": "world_3d",
+  "category": "BLOCKS",
+  "bus": "ENVIRONMENT"
+}

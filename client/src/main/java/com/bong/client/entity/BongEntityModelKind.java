@@ -247,6 +247,41 @@ public enum BongEntityModelKind {
         10,
         0.25f,
         "intact"
+    ),
+    // plan-placeable-container-blocks-v1 P2 — 三种可放置世界容器 marker。
+    // 这些 kind 与 WORKBENCH 同属 deferred 注册，紧随 165 取 166..=168。
+    TRADE_CRATE(
+        "trade_crate",
+        "TradeCrate.bbmodel",
+        166,
+        1.0f,
+        1.0f,
+        64,
+        10,
+        0.25f,
+        "intact"
+    ),
+    HERB_CRATE_PLACED(
+        "herb_crate_placed",
+        "HerbCrate.bbmodel",
+        167,
+        1.0f,
+        1.0f,
+        64,
+        10,
+        0.22f,
+        "intact"
+    ),
+    DEAD_DROP_BOX(
+        "dead_drop_box",
+        "DeadDropBox.bbmodel",
+        168,
+        1.0f,
+        0.75f,
+        64,
+        10,
+        0.20f,
+        "intact"
     );
 
     private static final String MOD_ID = "bong";

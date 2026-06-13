@@ -38,7 +38,14 @@ public final class BongEntityRenderBootstrap {
         new RendererBinding(BongEntityModelKind.COFFIN_BRONZE, CoffinBronzeRenderer.class, CoffinBronzeRenderer::new)
     );
     private static final List<RendererBinding> DEFERRED_BINDINGS = List.of(
-        new RendererBinding(BongEntityModelKind.WORKBENCH, WorkbenchRenderer.class, WorkbenchRenderer::new)
+        new RendererBinding(BongEntityModelKind.WORKBENCH, WorkbenchRenderer.class, WorkbenchRenderer::new),
+        new RendererBinding(BongEntityModelKind.TRADE_CRATE, TradeCrateRenderer.class, TradeCrateRenderer::new),
+        new RendererBinding(
+            BongEntityModelKind.HERB_CRATE_PLACED,
+            HerbCratePlacedRenderer.class,
+            HerbCratePlacedRenderer::new
+        ),
+        new RendererBinding(BongEntityModelKind.DEAD_DROP_BOX, DeadDropBoxRenderer.class, DeadDropBoxRenderer::new)
     );
 
     private static final Map<BongEntityModelKind, Class<? extends BongModeledEntityRenderer>> RENDERER_CLASSES =

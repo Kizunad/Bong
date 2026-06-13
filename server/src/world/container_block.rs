@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use valence::prelude::{
     bevy_ecs, App, BlockPos, Client, Commands, Component, DVec3, DiggingEvent, Entity, EventReader,
-    GameMode, IntoSystemConfigs, Position, Query, Res, ResMut, Update, With,
+    Events, GameMode, IntoSystemConfigs, Position, Query, Res, ResMut, Update, With,
 };
 
 use crate::inventory::external_container::{
@@ -13,13 +13,22 @@ use crate::inventory::{
     InventoryInstanceIdAllocator, ItemRegistry, PlacedItemState, TemplateDroppedLootRequest,
 };
 use crate::network::agent_bridge::{payload_type_label, serialize_server_data_payload};
+use crate::network::audio_event_emit::{AudioRecipient, PlaySoundRecipeRequest, AUDIO_AREA_RADIUS};
 use crate::network::{log_payload_build_error, send_server_data_payload};
 use crate::player::gameplay::GameplayTick;
 use crate::schema::server_data::{
     LootContainerCloseReasonV1, LootContainerCloseV1, ServerDataPayloadV1, ServerDataV1,
 };
+use crate::supply_coffin::SupplyCoffinGrade;
 use crate::world::block_break::should_apply_default_break;
 use crate::world::dimension::{CurrentDimension, DimensionKind};
+use crate::world::entity_model::{spawn_visual_marker, BongVisualKind};
+
+pub const CONTAINER_PLACE_AUDIO_RECIPE_ID: &str = "container_place";
+pub const CONTAINER_PLACE_DEADDROP_AUDIO_RECIPE_ID: &str = "container_place_deaddrop";
+pub const CONTAINER_OPEN_AUDIO_RECIPE_ID: &str = "container_open";
+pub const CONTAINER_OPEN_DEADDROP_AUDIO_RECIPE_ID: &str = "container_open_deaddrop";
+pub const CONTAINER_BREAK_AUDIO_RECIPE_ID: &str = "container_break";
 
 #[derive(Debug, Clone, Copy, Component, PartialEq, Eq)]
 pub struct ContainerBlock {
@@ -57,6 +66,14 @@ impl ContainerBlockKind {
         }
     }
 
+    pub const fn visual_kind(self) -> BongVisualKind {
+        match self {
+            Self::StorageCrate { is_herb: false } => BongVisualKind::TradeCrate,
+            Self::StorageCrate { is_herb: true } => BongVisualKind::HerbCratePlaced,
+            Self::DeadDrop => BongVisualKind::DeadDropBox,
+        }
+    }
+
     const fn display_name(self) -> &'static str {
         match self {
             Self::StorageCrate { is_herb: false } => "货箱",
@@ -77,13 +94,25 @@ pub fn register(app: &mut App) {
 pub fn handle_container_block_place(
     commands: &mut Commands,
     registry: &mut ExternalContainerRegistry,
+    layer: Entity,
     pos: BlockPos,
     dimension: DimensionKind,
     placed_by: Entity,
     placed_at_tick: u64,
     kind: ContainerBlockKind,
 ) -> Entity {
-    let entity = commands.spawn_empty().id();
+    let entity = spawn_visual_marker(
+        commands,
+        layer,
+        None,
+        kind.visual_kind(),
+        DVec3::new(
+            f64::from(pos.x) + 0.5,
+            f64::from(pos.y),
+            f64::from(pos.z) + 0.5,
+        ),
+        0,
+    );
     let session_id = registry.allocate_session(entity);
     commands.entity(entity).insert((
         ContainerBlock {
@@ -91,11 +120,6 @@ pub fn handle_container_block_place(
             placed_by,
             placed_at_tick,
         },
-        Position(DVec3::new(
-            f64::from(pos.x) + 0.5,
-            f64::from(pos.y),
-            f64::from(pos.z) + 0.5,
-        )),
         CurrentDimension(dimension),
         build_external_container(session_id, kind),
     ));
@@ -137,6 +161,7 @@ pub fn handle_container_block_break(
         &ExternalContainer,
     )>,
     mut clients: Query<&mut Client, With<Client>>,
+    mut audio_events: Option<ResMut<Events<PlaySoundRecipeRequest>>>,
 ) {
     let mut handled_entities = HashSet::new();
     for event in digs.read() {
@@ -197,7 +222,65 @@ pub fn handle_container_block_break(
         drain_container_items_to_drops(&mut dropped_registry, ext, world_pos, dimension);
         ext_registry.remove_session(ext.session_id);
         commands.entity(entity).despawn();
+        send_container_audio(
+            audio_events.as_deref_mut(),
+            CONTAINER_BREAK_AUDIO_RECIPE_ID,
+            [event.position.x, event.position.y, event.position.z],
+            0.0,
+        );
     }
+}
+
+pub const fn container_place_audio_recipe_id(kind: ContainerBlockKind) -> &'static str {
+    match kind {
+        ContainerBlockKind::StorageCrate { .. } => CONTAINER_PLACE_AUDIO_RECIPE_ID,
+        ContainerBlockKind::DeadDrop => CONTAINER_PLACE_DEADDROP_AUDIO_RECIPE_ID,
+    }
+}
+
+pub const fn container_open_audio_cue(kind: &ExternalContainerKind) -> (&'static str, f32) {
+    match kind {
+        ExternalContainerKind::StorageCrate { is_herb: false } => {
+            (CONTAINER_OPEN_AUDIO_RECIPE_ID, 0.0)
+        }
+        ExternalContainerKind::StorageCrate { is_herb: true } => {
+            (CONTAINER_OPEN_AUDIO_RECIPE_ID, 0.1)
+        }
+        ExternalContainerKind::DeadDrop => (CONTAINER_OPEN_DEADDROP_AUDIO_RECIPE_ID, 0.0),
+        ExternalContainerKind::SupplyCoffin { grade } => match grade {
+            SupplyCoffinGrade::Common => ("supply_coffin_open_common", 0.0),
+            SupplyCoffinGrade::Rare => ("supply_coffin_open_rare", 0.0),
+            SupplyCoffinGrade::Precious => ("supply_coffin_open_precious", 0.0),
+        },
+    }
+}
+
+pub fn send_container_audio(
+    audio_events: Option<&mut Events<PlaySoundRecipeRequest>>,
+    recipe_id: &str,
+    block_pos: [i32; 3],
+    pitch_shift: f32,
+) {
+    let Some(audio_events) = audio_events else {
+        return;
+    };
+    let origin = DVec3::new(
+        f64::from(block_pos[0]) + 0.5,
+        f64::from(block_pos[1]) + 0.5,
+        f64::from(block_pos[2]) + 0.5,
+    );
+    audio_events.send(PlaySoundRecipeRequest {
+        recipe_id: recipe_id.to_string(),
+        instance_id: 0,
+        pos: Some(block_pos),
+        flag: None,
+        volume_mul: 1.0,
+        pitch_shift,
+        recipient: AudioRecipient::Radius {
+            origin,
+            radius: AUDIO_AREA_RADIUS,
+        },
+    });
 }
 
 pub fn drain_container_items_to_drops(
@@ -292,6 +375,11 @@ mod tests {
             "expected non-herb storage crate to preserve is_herb=false in ExternalContainerKind, actual {:?}",
             kind.external_kind()
         );
+        assert_eq!(
+            kind.visual_kind().entity_kind(),
+            crate::world::entity_model::TRADE_CRATE_ENTITY_KIND,
+            "expected trade crate visual kind to use raw_id 166"
+        );
     }
 
     #[test]
@@ -315,6 +403,11 @@ mod tests {
             ExternalContainerKind::StorageCrate { is_herb: true },
             "expected herb storage crate to preserve is_herb=true in ExternalContainerKind, actual {:?}",
             kind.external_kind()
+        );
+        assert_eq!(
+            kind.visual_kind().entity_kind(),
+            crate::world::entity_model::HERB_CRATE_PLACED_ENTITY_KIND,
+            "expected herb crate visual kind to use raw_id 167"
         );
     }
 
@@ -340,11 +433,72 @@ mod tests {
             "expected dead drop to map to ExternalContainerKind::DeadDrop, actual {:?}",
             kind.external_kind()
         );
+        assert_eq!(
+            kind.visual_kind().entity_kind(),
+            crate::world::entity_model::DEAD_DROP_BOX_ENTITY_KIND,
+            "expected dead drop visual kind to use raw_id 168"
+        );
+    }
+
+    #[test]
+    fn container_audio_cues_match_placeable_container_spec() {
+        assert_eq!(
+            container_place_audio_recipe_id(ContainerBlockKind::StorageCrate { is_herb: false }),
+            CONTAINER_PLACE_AUDIO_RECIPE_ID,
+            "trade crate placement should use the plain wood placement recipe"
+        );
+        assert_eq!(
+            container_place_audio_recipe_id(ContainerBlockKind::StorageCrate { is_herb: true }),
+            CONTAINER_PLACE_AUDIO_RECIPE_ID,
+            "herb crate placement should use the plain wood placement recipe"
+        );
+        assert_eq!(
+            container_place_audio_recipe_id(ContainerBlockKind::DeadDrop),
+            CONTAINER_PLACE_DEADDROP_AUDIO_RECIPE_ID,
+            "dead drop placement should use the deaddrop recipe with the buried gravel layer"
+        );
+        assert_eq!(
+            container_open_audio_cue(&ExternalContainerKind::StorageCrate { is_herb: false }),
+            (CONTAINER_OPEN_AUDIO_RECIPE_ID, 0.0),
+            "trade crate open should use barrel open at base pitch"
+        );
+        assert_eq!(
+            container_open_audio_cue(&ExternalContainerKind::StorageCrate { is_herb: true }),
+            (CONTAINER_OPEN_AUDIO_RECIPE_ID, 0.1),
+            "herb crate open should lift barrel pitch by +0.1"
+        );
+        assert_eq!(
+            container_open_audio_cue(&ExternalContainerKind::DeadDrop),
+            (CONTAINER_OPEN_DEADDROP_AUDIO_RECIPE_ID, 0.0),
+            "dead drop open should use its chest + chime recipe"
+        );
+        assert_eq!(
+            container_open_audio_cue(&ExternalContainerKind::SupplyCoffin {
+                grade: SupplyCoffinGrade::Common,
+            }),
+            ("supply_coffin_open_common", 0.0),
+            "generic open fallback must preserve existing common supply coffin audio"
+        );
+        assert_eq!(
+            container_open_audio_cue(&ExternalContainerKind::SupplyCoffin {
+                grade: SupplyCoffinGrade::Rare,
+            }),
+            ("supply_coffin_open_rare", 0.0),
+            "generic open fallback must preserve existing rare supply coffin audio"
+        );
+        assert_eq!(
+            container_open_audio_cue(&ExternalContainerKind::SupplyCoffin {
+                grade: SupplyCoffinGrade::Precious,
+            }),
+            ("supply_coffin_open_precious", 0.0),
+            "generic open fallback must preserve existing precious supply coffin audio"
+        );
     }
 
     #[test]
     fn handle_container_block_place_spawns_dimensioned_external_container() {
         let mut app = App::new();
+        let layer = app.world_mut().spawn_empty().id();
         let placed_by = app.world_mut().spawn_empty().id();
         let mut registry = ExternalContainerRegistry::default();
         let pos = BlockPos::new(-2, 63, 4);
@@ -353,6 +507,7 @@ mod tests {
         let entity = handle_container_block_place(
             &mut app.world_mut().commands(),
             &mut registry,
+            layer,
             pos,
             DimensionKind::Tsy,
             placed_by,
@@ -369,6 +524,16 @@ mod tests {
             block.kind, kind,
             "expected placed entity to store requested ContainerBlockKind because break routing uses it, actual {:?}",
             block.kind
+        );
+        let visual = app
+            .world()
+            .get::<crate::world::entity_model::BongVisualEntity>(entity)
+            .expect("placed container entity should be a Bong visual marker");
+        assert_eq!(
+            visual.kind,
+            BongVisualKind::DeadDropBox,
+            "expected dead_drop_box placement to expose DEAD_DROP_BOX marker raw id, actual {:?}",
+            visual.kind
         );
         assert_eq!(
             block.placed_by, placed_by,

@@ -15,6 +15,10 @@ public final class WorkbenchPlaceDust {
     public static final int LIFETIME_TICKS = 12;
     public static final float ALPHA = 0.65f;
     public static final float SCALE = 0.12f;
+    private static final String WORKBENCH_ITEM_ID = "workbench_item";
+    private static final String TRADE_CRATE_ITEM_ID = "trade_crate";
+    private static final String HERB_CRATE_PLACED_ITEM_ID = "herb_crate_placed";
+    private static final String DEAD_DROP_BOX_ITEM_ID = "dead_drop_box";
 
     private WorkbenchPlaceDust() {
     }
@@ -29,6 +33,13 @@ public final class WorkbenchPlaceDust {
             new ParticleSpec(cx + 0.08, cy, cz - 0.18, 0.020, -0.007, -0.045),
             new ParticleSpec(cx - 0.16, cy, cz - 0.08, -0.040, -0.006, -0.020)
         );
+    }
+
+    public static boolean shouldSpawnForItem(String itemId) {
+        return WORKBENCH_ITEM_ID.equals(itemId)
+            || TRADE_CRATE_ITEM_ID.equals(itemId)
+            || HERB_CRATE_PLACED_ITEM_ID.equals(itemId)
+            || DEAD_DROP_BOX_ITEM_ID.equals(itemId);
     }
 
     public static void spawn(MinecraftClient client, BlockPos pos) {
