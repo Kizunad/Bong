@@ -149,7 +149,6 @@ impl Default for PersistenceSettings {
 }
 
 impl PersistenceSettings {
-    #[cfg(test)]
     pub fn with_paths(
         db_path: impl Into<PathBuf>,
         deceased_public_dir: impl Into<PathBuf>,

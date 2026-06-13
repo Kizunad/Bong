@@ -86,6 +86,7 @@ use crossbeam_channel::unbounded;
 use network::agent_bridge::{
     spawn_mock_bridge_daemon, AgentCommand, GameEvent, NetworkBridgeResource,
 };
+use network::RedisBridgeResource;
 use persistence::{
     bootstrap_sqlite, export_zone_persistence, import_zone_persistence, PersistenceSettings,
     ZoneExportBundle,
@@ -111,10 +112,19 @@ fn main() {
         std::process::exit(code);
     }
 
-    run_server();
+    if std::env::var_os("BONG_FULL_APP_STARTUP_SMOKE").is_some() {
+        run_full_app_startup_smoke();
+    } else {
+        run_server();
+    }
 }
 
 fn run_server() {
+    let mut app = build_server_app();
+    app.run();
+}
+
+fn build_server_app() -> App {
     let (tx_to_game, rx_from_agent) = unbounded::<AgentCommand>();
     let (tx_to_agent, rx_from_game) = unbounded::<GameEvent>();
 
@@ -165,7 +175,45 @@ fn run_server() {
     persistence::register(&mut app);
     preview::register(&mut app);
 
-    app.run();
+    app
+}
+
+fn run_full_app_startup_smoke() {
+    let mut app = build_server_app();
+    let db_root = std::env::temp_dir().join(format!(
+        "bong-full-app-startup-smoke-{}",
+        std::process::id()
+    ));
+    app.insert_resource(PersistenceSettings::with_paths(
+        db_root.join("data").join("bong.db"),
+        db_root.join("deceased"),
+        "full-app-startup-smoke",
+    ));
+
+    assert_full_app_core_resources(&app);
+    app.update();
+    assert_full_app_core_resources(&app);
+    println!("full app startup smoke ok");
+}
+
+fn assert_full_app_core_resources(app: &App) {
+    let world = app.world();
+    assert!(
+        world.contains_resource::<NetworkSettings>(),
+        "full server App must install Valence NetworkSettings"
+    );
+    assert!(
+        world.contains_resource::<NetworkBridgeResource>(),
+        "full server App must install NetworkBridgeResource"
+    );
+    assert!(
+        world.contains_resource::<RedisBridgeResource>(),
+        "full server App must install RedisBridgeResource"
+    );
+    assert!(
+        world.contains_resource::<PersistenceSettings>(),
+        "full server App must install PersistenceSettings"
+    );
 }
 
 fn run_cli(args: impl Iterator<Item = String>) -> Result<(), i32> {
