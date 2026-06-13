@@ -532,6 +532,11 @@ def regen_zone(
     manifest["corpse_mounds"] = _collect_corpse_mounds(plan.blueprint_zones)
     manifest["ascension_pits"] = _collect_ascension_pits(plan.blueprint_zones)
     manifest["collapsed_zones"] = _collect_collapsed_zone_payload(plan)
+    # worldgen-v4 P4 §8.1 #3 (CodeRabbit) — 预算配平报表同样从 blueprint zones 派生
+    # （spirit_qi / worldgen.* override 会改派生场 → 改份额分布）。只刷 zones[] 而留
+    # 旧 qi_budget_report 会让 manifest 同时含新 zone 参数 + 陈旧报表，破坏"同一份
+    # blueprint 派生出的 manifest 必须自洽"合同。和上面那批一样是 O(n_zones) 纯派生。
+    manifest["qi_budget_report"] = _collect_qi_budget_report(plan)
 
     with manifest_path.open("w", encoding="utf-8") as handle:
         json.dump(manifest, handle, ensure_ascii=False, indent=2)

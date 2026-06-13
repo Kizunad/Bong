@@ -583,6 +583,78 @@ def test_regen_overrides_change_generated_output(tmp_path) -> None:
     )
 
 
+def _read_manifest_qi_budget(rasters_dir: Path) -> dict:
+    manifest = json.loads((rasters_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert "qi_budget_report" in manifest, (
+        "full bake manifest must carry qi_budget_report (P4 §8.1 #3)"
+    )
+    return manifest["qi_budget_report"]
+
+
+def test_regen_refreshes_qi_budget_report_not_stale(tmp_path) -> None:
+    """CodeRabbit P4 #4 — regen_zone must refresh manifest.qi_budget_report.
+
+    The report is derived from blueprint zone spirit_qi; a spirit_qi override
+    changes the derived qi field → changes the budget shares. If regen only
+    patched zones[]/tiles[] (the pre-fix behaviour), the manifest would carry
+    NEW zone params alongside a STALE report — violating "one blueprint derives
+    one self-consistent manifest". This locks the report to refresh on regen and
+    to stay internally consistent (Σ shares + wilderness == total).
+    """
+    blueprint_path = tmp_path / "bp.json"
+    blueprint_path.write_text(json.dumps(_TINY_BLUEPRINT), encoding="utf-8")
+    out_dir = tmp_path / "out"
+    _full_bake(out_dir, blueprint_path)
+    rasters = out_dir / "rasters"
+
+    report_before = _read_manifest_qi_budget(rasters)
+    # Sanity: the full-bake report is already self-consistent.
+    assert abs(
+        report_before["zone_sum"] + report_before["wilderness_share"]
+        - report_before["total"]
+    ) < 1e-6, "full-bake qi_budget_report must satisfy conservation"
+
+    app = create_app(
+        rasters,
+        blueprint_path=blueprint_path,
+        profiles_path=PROFILES_PATH,
+        tile_size=TILE_SIZE,
+        output_dir=out_dir,
+    )
+    c = TestClient(app)
+    # Override peaks spirit_qi 0.5 → -0.9 (common → negative): a large grade swap
+    # that must move the histogram + shares, so a stale report is detectable.
+    resp = c.post(
+        "/api/regen", json={"zone_name": "peaks", "overrides": {"spirit_qi": -0.9}}
+    )
+    assert resp.status_code == 200, resp.text
+
+    report_after = _read_manifest_qi_budget(rasters)
+    # (1) Still self-consistent after the incremental regen.
+    assert abs(
+        report_after["zone_sum"] + report_after["wilderness_share"]
+        - report_after["total"]
+    ) < 1e-6, (
+        "regen'd qi_budget_report must still satisfy Σ shares + wilderness == "
+        f"total; got {report_after}"
+    )
+    # (2) The report actually changed — proves it was recomputed, not left stale.
+    #     peaks dropping common→negative shifts both its share and the histogram.
+    assert report_after != report_before, (
+        "regen with a spirit_qi override must REFRESH qi_budget_report; identical "
+        "report means regen_zone left the manifest's report stale (the bug)"
+    )
+    # (3) The histogram reflects the new grade: peaks is now negative, so the
+    #     negative bucket must hold at least one zone after the override.
+    neg_bucket = next(
+        b for b in report_after["histogram"] if b["grade"] == "negative"
+    )
+    assert neg_bucket["zone_count"] >= 1, (
+        "after overriding peaks spirit_qi to -0.9 the negative histogram bucket "
+        f"must count it; got histogram={report_after['histogram']}"
+    )
+
+
 def test_regen_overrides_do_not_rewrite_disk_blueprint(tmp_path) -> None:
     """Overrides are in-memory only: the on-disk blueprint source is untouched."""
     blueprint_path = tmp_path / "bp.json"
