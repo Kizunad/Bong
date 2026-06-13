@@ -477,6 +477,38 @@ class PlateauKernelTest(unittest.TestCase):
                 target=0.3, plateau_ratio=1.0,
             )
 
+    def test_falloff_exponent_zero_raises(self) -> None:
+        # falloff_exponent==0 让 radial**0==1 → 整核退回 base（zone 核静默算错）。
+        # ZoneQiInput.falloff_exponent 原样透传，必须显式拒绝而非静默错算。
+        wx, wz = _centered_grid(40)
+        with self.assertRaisesRegex(ValueError, "falloff_exponent must be > 0"):
+            qf.zone_contribution_kernel(
+                wx, wz, center_xz=(0, 0), half_w=10, half_d=10,
+                target=0.3, falloff_exponent=0.0,
+            )
+
+    def test_falloff_exponent_negative_raises(self) -> None:
+        # 负 exponent 在中心点触发 0**负 → 核心到不了 target，同样静默算错。
+        wx, wz = _centered_grid(40)
+        with self.assertRaisesRegex(ValueError, "falloff_exponent must be > 0"):
+            qf.zone_contribution_kernel(
+                wx, wz, center_xz=(0, 0), half_w=10, half_d=10,
+                target=0.3, falloff_exponent=-1.6,
+            )
+
+    def test_falloff_exponent_positive_ok(self) -> None:
+        # 正常正 exponent 不报错（边界 just-above-zero 与默认值都可用）。
+        wx, wz = _centered_grid(40)
+        for exp in (1e-6, 1.0, 1.6, 4.0):
+            kernel = qf.zone_contribution_kernel(
+                wx, wz, center_xz=(0, 0), half_w=10, half_d=10,
+                target=0.3, base=-0.5, falloff_exponent=exp,
+            )
+            self.assertEqual(
+                kernel.shape, wx.shape,
+                f"falloff_exponent={exp} (>0) must produce a valid kernel",
+            )
+
     def test_kernel_spec_from_grade_uses_plateau_and_footprint(self) -> None:
         # kernel_spec_from_grade 默认带 plateau_ratio + footprint_scale（zone 读自身档）。
         spec = qf.kernel_spec_from_grade(

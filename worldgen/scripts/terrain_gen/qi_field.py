@@ -164,6 +164,13 @@ def zone_contribution_kernel(
     合成阶段（``build_qi_field``）统一 clamp，使多核叠加 + veins 抬升的中间量不被
     过早截断。
     """
+    if falloff_exponent <= 0.0:
+        # exponent==0 让 radial**0==1（整核退回 base）；负数在中心点触发 0**负
+        # （核心到不了 target）。ZoneQiInput.falloff_exponent 会原样透传进来，一次
+        # 配置错误就会把整片 zone 的导出值算错且无显式失败——这里直接拒绝。
+        raise ValueError(
+            f"falloff_exponent must be > 0; got {falloff_exponent}"
+        )
     if not (0.0 <= plateau_ratio < 1.0):
         raise ValueError(
             f"plateau_ratio must be in [0, 1); got {plateau_ratio} "
