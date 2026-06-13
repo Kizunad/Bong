@@ -953,4 +953,241 @@ mod tests {
         }
         let _ = fs::remove_dir_all(&dir);
     }
+
+    // ── ⑥ real authored decoration assets (P6 Stage 2) ──────────────────────
+    //
+    // These exercise the actual `server/structures/decorations/**/*.nbt` files
+    // the gen scripts produce, not synthetic fixtures, so a broken / renamed /
+    // missing asset trips the suite. They are the runtime counterpart to the
+    // Python `gen_decorations.py` round-trip report.
+
+    /// The 14 NBT-ised decoration kinds, each with the >=3-variant contract.
+    /// Mirrors the `<kind>` directories under `server/structures/decorations/`.
+    const DECORATION_KINDS: &[&str] = &[
+        "small_tree",
+        "bush",
+        "boulder",
+        "crystal",
+        "big_mushroom",
+        "fallen_log",
+        "grave",
+        "hanging_crystal",
+        "ruins_pillar",
+        "broken_urn",
+        "bone_pile",
+        "spirit_ore_vein",
+        "rift_bridge",
+        "spawn_portal",
+    ];
+
+    #[test]
+    fn real_decoration_assets_load_and_round_trip() {
+        let reg = DecorationNbtRegistry::load_default();
+        assert!(
+            !reg.is_empty(),
+            "the authored decoration assets must load; if this is empty either \
+             server/structures/decorations/ is missing or every .nbt failed to parse \
+             (run scripts/nbt/decorations/gen_decorations.py)"
+        );
+
+        // Each resident template must be a well-formed MC 1.20.1 structure:
+        // correct DataVersion, positive size, a palette, and at least one block.
+        for (id, structure) in reg.iter() {
+            assert_eq!(
+                structure.data_version,
+                nbt_io::DATA_VERSION,
+                "template '{id}' must carry MC 1.20.1 DataVersion {} (got {})",
+                nbt_io::DATA_VERSION,
+                structure.data_version,
+            );
+            assert!(
+                structure.size.iter().all(|&d| d > 0),
+                "template '{id}' has a non-positive size dimension: {:?}",
+                structure.size,
+            );
+            assert!(
+                !structure.palette.is_empty(),
+                "template '{id}' has an empty palette (no block types)"
+            );
+            assert!(
+                !structure.blocks.is_empty(),
+                "template '{id}' has no blocks — an empty decoration would stamp nothing"
+            );
+            // Every block index must be in palette range (no dangling state ref).
+            for block in &structure.blocks {
+                assert!(
+                    (block.state as usize) < structure.palette.len(),
+                    "template '{id}' block at {:?} references palette index {} \
+                     but palette has only {} entries",
+                    block.pos,
+                    block.state,
+                    structure.palette.len(),
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn real_decoration_assets_have_no_unresolved_palette_blocks() {
+        // The §contract: every authored palette block must resolve via
+        // `blocks::block_from_name`, else the stamp silently drops it (a hole).
+        // This is the runtime mirror of the Python name<->blocks.rs cross-check.
+        let reg = DecorationNbtRegistry::load_default();
+        assert!(!reg.is_empty(), "decoration assets must be present");
+
+        let mut offenders: Vec<(String, Vec<String>)> = Vec::new();
+        for (id, structure) in reg.iter() {
+            let unresolved = structure.unresolved_palette_blocks();
+            if !unresolved.is_empty() {
+                offenders.push((id.to_string(), unresolved));
+            }
+        }
+        assert!(
+            offenders.is_empty(),
+            "these decoration templates contain palette blocks that do NOT resolve \
+             in block_from_name (they would stamp as holes). Add each block name to \
+             server/src/world/terrain/blocks.rs::block_from_name:\n{offenders:#?}"
+        );
+    }
+
+    #[test]
+    fn every_decoration_kind_has_at_least_three_variants() {
+        // §6.1 hard requirement: each NBT-ised kind ships >=3 form variants.
+        let reg = DecorationNbtRegistry::load_default();
+        assert!(!reg.is_empty(), "decoration assets must be present");
+
+        for kind in DECORATION_KINDS {
+            let prefix = format!("decorations/{kind}/");
+            let count = reg.iter().filter(|(id, _)| id.starts_with(&prefix)).count();
+            assert!(
+                count >= 3,
+                "decoration kind '{kind}' has only {count} variant(s) under {prefix}; \
+                 the §6.1 contract requires >=3 distinct form variants"
+            );
+        }
+    }
+
+    #[test]
+    fn decoration_variants_within_a_kind_differ() {
+        // Variants must be genuinely different shapes, not copies — compare the
+        // (size, block-count, palette) signature within each kind and require
+        // at least two distinct signatures (so we never ship 3 identical files).
+        let reg = DecorationNbtRegistry::load_default();
+        assert!(!reg.is_empty(), "decoration assets must be present");
+
+        for kind in DECORATION_KINDS {
+            let prefix = format!("decorations/{kind}/");
+            let mut signatures = std::collections::HashSet::new();
+            for (_, s) in reg.iter().filter(|(id, _)| id.starts_with(&prefix)) {
+                signatures.insert((s.size, s.blocks.len(), s.palette.len()));
+            }
+            assert!(
+                signatures.len() >= 2,
+                "decoration kind '{kind}' variants are not distinct enough: only \
+                 {} unique (size, block_count, palette_size) signature(s) across all \
+                 variants — variants must differ in height/density/completeness",
+                signatures.len()
+            );
+        }
+    }
+
+    #[test]
+    fn fallen_log_and_rift_bridge_ship_orientation_variants() {
+        // Directional kinds bake explicit orientation variants so the runtime
+        // can place them along either world axis without re-authoring.
+        let reg = DecorationNbtRegistry::load_default();
+        assert!(!reg.is_empty(), "decoration assets must be present");
+
+        // Fallen log: an X-axis run and a Z-axis run have transposed bounding
+        // boxes (size_x vs size_z dominant). Confirm both exist.
+        let log_x = reg.get("decorations/fallen_log/oak_x_v1.nbt");
+        let log_z = reg.get("decorations/fallen_log/spruce_z_v2.nbt");
+        assert!(log_x.is_some(), "fallen_log X-axis variant must be present");
+        assert!(log_z.is_some(), "fallen_log Z-axis variant must be present");
+        let lx = log_x.unwrap();
+        let lz = log_z.unwrap();
+        assert!(
+            lx.size[0] > lx.size[2],
+            "oak_x_v1 must be longer along X (got size {:?})",
+            lx.size
+        );
+        assert!(
+            lz.size[2] > lz.size[0],
+            "spruce_z_v2 must be longer along Z (got size {:?})",
+            lz.size
+        );
+
+        // Rift bridge: X-span and Z-span variants present (transposed footprints).
+        let bridge_x = reg.get("decorations/rift_bridge/x_v1.nbt");
+        let bridge_z = reg.get("decorations/rift_bridge/z_v2.nbt");
+        assert!(bridge_x.is_some(), "rift_bridge X variant must be present");
+        assert!(bridge_z.is_some(), "rift_bridge Z variant must be present");
+        let bx = bridge_x.unwrap();
+        let bz = bridge_z.unwrap();
+        assert!(
+            bx.size[0] > bx.size[2] && bz.size[2] > bz.size[0],
+            "rift_bridge x_v1 must span X (size {:?}) and z_v2 must span Z (size {:?})",
+            bx.size,
+            bz.size
+        );
+    }
+
+    #[test]
+    fn grave_assets_are_authored_for_embedded_stamping() {
+        // Grave mounds use the Embedded anchor (sink one block). The dome must
+        // start at template y=0 so the lowest row replaces the surface soil.
+        let reg = DecorationNbtRegistry::load_default();
+        let grave = reg
+            .get("decorations/grave/small_v1.nbt")
+            .expect("grave small_v1 must be present");
+        let min_y = grave.blocks.iter().map(|b| b.pos[1]).min().unwrap();
+        assert_eq!(
+            min_y, 0,
+            "grave dome must start at template y=0 so an Embedded stamp sinks the \
+             base row into the surface (got min y={min_y})"
+        );
+        // Stamping with Embedded at a surface puts the base row AT the surface.
+        let (placements, unresolved) = reg
+            .stamp(
+                "decorations/grave/small_v1.nbt",
+                BlockPos::new(10, 70, 10),
+                DecorationAnchor::Embedded,
+                Rotation::None,
+            )
+            .expect("grave stamp resolves");
+        assert!(unresolved.is_empty(), "grave palette must fully resolve");
+        let base_row = placements.iter().filter(|(p, _, _)| p.y == 70).count();
+        assert!(
+            base_row > 0,
+            "Embedded grave must place blocks at the surface y (70) — the sunken base row"
+        );
+    }
+
+    #[test]
+    fn hanging_crystal_assets_grow_downward_under_hanging_anchor() {
+        // Hanging crystals attach at the template top and the tip is at y=0, so
+        // a Hanging stamp puts the whole structure BELOW the underside surface.
+        let reg = DecorationNbtRegistry::load_default();
+        let id = "decorations/hanging_crystal/amethyst_stalactite_v1.nbt";
+        let crystal = reg.get(id).expect("hanging crystal v1 must be present");
+        let (placements, unresolved) = reg
+            .stamp(
+                id,
+                BlockPos::new(0, 200, 0),
+                DecorationAnchor::Hanging,
+                Rotation::None,
+            )
+            .expect("hanging crystal stamp resolves");
+        assert!(
+            unresolved.is_empty(),
+            "hanging crystal palette must fully resolve"
+        );
+        let max_y = placements.iter().map(|(p, _, _)| p.y).max().unwrap();
+        assert!(
+            max_y < 200,
+            "a Hanging stamp must place every block strictly below the underside \
+             surface (y=200); got top block at y={max_y}. size={:?}",
+            crystal.size
+        );
+    }
 }
