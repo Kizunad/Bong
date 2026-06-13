@@ -371,6 +371,13 @@ public class VfxRegistryTest {
             "bootstrap should register social_feud_mark");
         assertTrue(VfxRegistry.instance().contains(PoisonMistPlayer.EVENT_ID),
             "bootstrap should register poison_mist");
+        assertTrue(VfxRegistry.instance().contains(DeadDropBreakPlayer.EVENT_ID),
+            "bootstrap should register dead_drop_ward_break");
+        assertTrue(
+            VfxRegistry.instance().lookup(DeadDropBreakPlayer.EVENT_ID).get()
+                instanceof DeadDropBreakPlayer,
+            "dead_drop_ward_break should route to DeadDropBreakPlayer"
+        );
         assertTrue(VfxRegistry.instance().contains(MovementVfxPlayer.DASH),
             "bootstrap should register movement_dash");
         for (Identifier eventId : AlchemyCombatPillVfxPlayer.EVENT_IDS) {

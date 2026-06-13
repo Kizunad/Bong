@@ -203,6 +203,7 @@ public final class VfxBootstrap {
         registry.register(SocialLinkVfxPlayer.FEUD_MARK,
             new SocialLinkVfxPlayer(SocialLinkVfxPlayer.Kind.FEUD_MARK));
         registry.register(PoisonMistPlayer.EVENT_ID,            new PoisonMistPlayer());
+        registry.register(DeadDropBreakPlayer.EVENT_ID,         new DeadDropBreakPlayer());
         registry.register(MovementVfxPlayer.DASH,
             new MovementVfxPlayer(MovementVfxPlayer.Kind.DASH));
         AlchemyCombatPillVfxPlayer combatPills = new AlchemyCombatPillVfxPlayer();
