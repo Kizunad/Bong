@@ -4921,10 +4921,13 @@ mod tests {
     /// either to the proto-encode assertion or to the should-panic branch.
     ///
     /// MUTATION GUARDS (documented for manual mutation testing):
-    ///   - Delete a proto arm in `From<&ServerDataPayloadV1>` → that variant's fixture hits
-    ///     `unreachable!()` inside `to_proto_bytes()` → `s2c_all_proto_variants_encode_without_panic` panics → RED.
+    ///   - Delete a proto arm in `From<&ServerDataPayloadV1>` → the `From` match is exhaustive
+    ///     with NO catch-all, so removing an arm is rustc E0004 (compile failure), caught even
+    ///     earlier than a test. The `catch_unwind` in the guard test is defense-in-depth: if a
+    ///     future refactor adds a `_ => unreachable!()` catch-all, a deleted arm would fall
+    ///     through to it at runtime and `s2c_all_proto_variants_encode_without_panic` reds instead.
     ///   - Flip a bypass variant in `is_json_bypass` from `true` to `false` → guard calls
-    ///     `to_proto_bytes()` → the `From` impl hits `unreachable!()` → RED.
+    ///     `to_proto_bytes()` → the `From` impl hits the bypass `unreachable!()` arm → RED.
     ///   - Add a new variant without updating `is_json_bypass` → rustc E0004 → compile failure.
     ///   - Add a new variant without adding a fixture here → `s2c_fixture_count_matches_variant_count` → RED.
     fn s2c_all_fixtures() -> Vec<(ServerDataPayloadV1, bool)> {
@@ -6818,10 +6821,11 @@ mod tests {
     /// Verifies that the C2S fixture list covers every `ClientRequestV1` variant (98 total).
     #[test]
     fn c2s_fixture_count_matches_variant_count() {
+        use crate::schema::client_request::ClientRequestV1;
+        use std::collections::HashSet;
+        use std::mem::{discriminant, Discriminant};
         let fixtures = c2s_all_fixtures();
-        // The discriminant for ClientRequestV1 is the variant name string (for error messages).
         // The authoritative count is 98 (97 proto + 1 AgentUiResponse bypass).
-        // We check length and that AgentUiResponse appears exactly once.
         let bypass_count = fixtures.iter().filter(|(_, b)| *b).count();
         let proto_count = fixtures.iter().filter(|(_, b)| !*b).count();
         assert_eq!(
@@ -6840,7 +6844,24 @@ mod tests {
             proto_count, 97,
             "Expected 97 proto-encodable C2S variants, got {proto_count}."
         );
-        let _ = fixtures; // suppress unused warning
+
+        // Set-intersection coverage (mirrors the S2C `payload_type()` HashSet check, but keyed
+        // on `mem::discriminant` since ClientRequestV1 has no payload_type() discriminant enum).
+        // `discriminant` yields one key per enum variant regardless of field values, so duplicate
+        // variants collapse. This closes the "swap escape" the length+count checks alone miss —
+        // e.g. deleting variant A's fixture and duplicating variant B's keeps len==98 but drops
+        // the DISTINCT-variant count to 97, reding this assertion. Without it, variant A would
+        // silently lose its proto-encode coverage while the counts still look correct.
+        let distinct: HashSet<Discriminant<ClientRequestV1>> =
+            fixtures.iter().map(|(v, _)| discriminant(v)).collect();
+        assert_eq!(
+            distinct.len(),
+            98,
+            "C2S fixtures cover only {} DISTINCT ClientRequestV1 variants but there are 98. \
+             A variant's fixture was likely deleted and another duplicated — every variant must \
+             have its OWN fixture or the proto guard silently skips it.",
+            distinct.len()
+        );
     }
 
     /// Exhaustive proto encoding guard for all 98 `ClientRequestV1` variants.
@@ -6850,8 +6871,11 @@ mod tests {
     /// For AgentUiResponse (bypass): assert `to_proto_bytes()` panics.
     ///
     /// MUTATION GUARDS:
-    ///   - Delete any proto arm in `From<&ClientRequestV1>` → `catch_unwind` catches `unreachable!()`
-    ///     but test expects no panic → assertion fails → RED.
+    ///   - Delete any proto arm in `From<&ClientRequestV1>` → the `From` match is exhaustive with
+    ///     NO catch-all, so this is rustc E0004 (compile failure), caught earlier than any test.
+    ///     The `catch_unwind` here is defense-in-depth: if a future refactor adds a
+    ///     `_ => unreachable!()` catch-all, a deleted arm falls through to it at runtime and the
+    ///     guard reds (it expects no panic) instead.
     ///   - Add a new C2S variant without proto arm → `From` impl is non-exhaustive → compile failure.
     #[test]
     fn c2s_all_proto_variants_encode_without_panic() {
