@@ -515,6 +515,10 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodeSupplyCoffinOpen(entityId));
     }
 
+    public static void sendContainerOpen(int entityId) {
+        dispatch(ClientRequestProtocol.encodeContainerOpen(entityId));
+    }
+
     public static void sendWorkbenchOpen(int entityId) {
         dispatch(ClientRequestProtocol.encodeWorkbenchOpen(entityId));
     }

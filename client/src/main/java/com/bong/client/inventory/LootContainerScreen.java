@@ -46,6 +46,7 @@ public final class LootContainerScreen extends BaseOwoScreen<FlowLayout> {
     private static final int TIMER_BAR_URGENT = 0xFFCC3333;
 
     private final long sessionId;
+    private final String sourceKind;
     private final String grade;
     private final int lootRows;
     private final int lootCols;
@@ -67,6 +68,7 @@ public final class LootContainerScreen extends BaseOwoScreen<FlowLayout> {
     public LootContainerScreen(LootContainerStateStore.OpenSession session) {
         super(TITLE);
         this.sessionId = session.sessionId();
+        this.sourceKind = session.sourceKind();
         this.grade = session.grade();
         this.lootRows = session.rows();
         this.lootCols = session.cols();
@@ -93,13 +95,7 @@ public final class LootContainerScreen extends BaseOwoScreen<FlowLayout> {
         panel.padding(Insets.of(8));
         panel.gap(4);
 
-        // Title
-        String gradeLabel = switch (grade) {
-            case "rare" -> "§6漆棺";
-            case "precious" -> "§e祭坛棺";
-            default -> "§7松木棺";
-        };
-        panel.child(Components.label(Text.literal(gradeLabel + " §r— 物资搜刮"))
+        panel.child(Components.label(Text.literal(containerTitle() + " §r— 物资搜刮"))
             .horizontalTextAlignment(HorizontalAlignment.CENTER));
 
         // Main content: [player containers] | [loot grid]
@@ -183,6 +179,18 @@ public final class LootContainerScreen extends BaseOwoScreen<FlowLayout> {
         updateTimer();
     }
 
+    private String containerTitle() {
+        return switch (sourceKind) {
+            case "storage_crate" -> "herb".equals(grade) ? "§a灵草箱" : "§6货箱";
+            case "dead_drop" -> "§3死信箱";
+            default -> switch (grade) {
+                case "rare" -> "§6漆棺";
+                case "precious" -> "§e祭坛棺";
+                default -> "§7松木棺";
+            };
+        };
+    }
+
     private void populateLootGrid() {
         lootGrid.clearAll();
         LootContainerStateStore.Session session = LootContainerStateStore.current();
@@ -209,6 +217,15 @@ public final class LootContainerScreen extends BaseOwoScreen<FlowLayout> {
 
     private void updateTimer() {
         if (timerLabel == null || timerBarFill == null) return;
+        if (timeoutWallSecs == 0) {
+            timerLabel.text(Text.literal("无时限"));
+            timerBarFill.sizing(
+                Sizing.fixed(lootCols * GridSlotComponent.CELL_SIZE),
+                Sizing.fixed(6)
+            );
+            timerBarFill.surface(Surface.flat(TIMER_BAR_FILL));
+            return;
+        }
         long now = System.currentTimeMillis() / 1000;
         long remaining = Math.max(0, timeoutWallSecs - now);
         long totalDuration = Math.max(1, timeoutWallSecs - openedAtSecs);

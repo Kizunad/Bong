@@ -1293,6 +1293,13 @@ public final class ClientRequestProtocol {
         return obj.toString();
     }
 
+    /** 玩家右键世界容器实体，发送 entity_id 让 server 按 ExternalContainer 打开。 */
+    public static String encodeContainerOpen(int entityId) {
+        JsonObject obj = envelope("container_open");
+        obj.addProperty("entity_id", entityId);
+        return obj.toString();
+    }
+
     // ─── plan-workbench-place-runtime-v1 P2：workbench open (entity-based) ──
 
     /** 玩家右键制作台实体，发送 entity_id 让 server 校验距离并打开制作 UI。 */

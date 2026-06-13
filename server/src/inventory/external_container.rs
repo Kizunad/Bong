@@ -10,6 +10,7 @@ use super::{
     find_free_slot, ContainerState, InventoryInstanceIdAllocator, ItemInstance, ItemRegistry,
     ItemTemplate, PlacedItemState,
 };
+use crate::schema::server_data::LootContainerSourceKindV1;
 use crate::supply_coffin::SupplyCoffinGrade;
 
 /// 外部容器的来源类型。
@@ -20,6 +21,18 @@ pub enum ExternalContainerKind {
     DeadDrop,
 }
 
+pub fn external_kind_to_source_kind(kind: &ExternalContainerKind) -> LootContainerSourceKindV1 {
+    match kind {
+        ExternalContainerKind::SupplyCoffin { grade } => LootContainerSourceKindV1::SupplyCoffin {
+            grade: grade.as_str().to_string(),
+        },
+        ExternalContainerKind::StorageCrate { is_herb } => {
+            LootContainerSourceKindV1::StorageCrate { is_herb: *is_herb }
+        }
+        ExternalContainerKind::DeadDrop => LootContainerSourceKindV1::DeadDrop,
+    }
+}
+
 /// 附加到 world entity 上的外部容器 ECS 组件。
 #[derive(Debug, Clone, Component)]
 pub struct ExternalContainer {
@@ -28,7 +41,6 @@ pub struct ExternalContainer {
     pub opened_by: Option<Entity>,
     /// 绝对 wall-clock 截止时间（秒）。
     pub timeout_wall_secs: u64,
-    #[allow(dead_code)]
     pub source_kind: ExternalContainerKind,
 }
 
@@ -541,5 +553,51 @@ mod tests {
     fn container_id_format() {
         assert_eq!(ExternalContainer::container_id(42), "ext_42");
         assert_eq!(ExternalContainer::container_id(0), "ext_0");
+    }
+
+    #[test]
+    fn external_kind_to_source_kind_maps_all_variants() {
+        assert_eq!(
+            external_kind_to_source_kind(&ExternalContainerKind::SupplyCoffin {
+                grade: SupplyCoffinGrade::Common
+            }),
+            LootContainerSourceKindV1::SupplyCoffin {
+                grade: "common".to_string()
+            },
+            "supply coffin source kind must preserve common grade"
+        );
+        assert_eq!(
+            external_kind_to_source_kind(&ExternalContainerKind::SupplyCoffin {
+                grade: SupplyCoffinGrade::Rare
+            }),
+            LootContainerSourceKindV1::SupplyCoffin {
+                grade: "rare".to_string()
+            },
+            "supply coffin source kind must preserve rare grade"
+        );
+        assert_eq!(
+            external_kind_to_source_kind(&ExternalContainerKind::SupplyCoffin {
+                grade: SupplyCoffinGrade::Precious
+            }),
+            LootContainerSourceKindV1::SupplyCoffin {
+                grade: "precious".to_string()
+            },
+            "supply coffin source kind must preserve precious grade"
+        );
+        assert_eq!(
+            external_kind_to_source_kind(&ExternalContainerKind::StorageCrate { is_herb: false }),
+            LootContainerSourceKindV1::StorageCrate { is_herb: false },
+            "trade crate source kind must preserve is_herb=false"
+        );
+        assert_eq!(
+            external_kind_to_source_kind(&ExternalContainerKind::StorageCrate { is_herb: true }),
+            LootContainerSourceKindV1::StorageCrate { is_herb: true },
+            "herb crate source kind must preserve is_herb=true"
+        );
+        assert_eq!(
+            external_kind_to_source_kind(&ExternalContainerKind::DeadDrop),
+            LootContainerSourceKindV1::DeadDrop,
+            "dead drop source kind must be distinct"
+        );
     }
 }

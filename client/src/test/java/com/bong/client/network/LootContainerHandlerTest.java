@@ -33,9 +33,91 @@ class LootContainerHandlerTest {
         LootContainerStateStore.OpenSession session =
             assertInstanceOf(LootContainerStateStore.OpenSession.class, LootContainerStateStore.current());
         assertEquals(42, session.sessionId());
+        assertEquals("supply_coffin", session.sourceKind());
+        assertEquals("common", session.grade());
         assertEquals(3, session.rows());
         assertEquals(4, session.cols());
         assertEquals(1716872400L, session.timeoutWallSecs());
+    }
+
+    @Test
+    void openParsesRustExternalTaggedStorageCrateSourceKind() {
+        String json = """
+            {"type":"loot_container_open","v":1,"session_id":43,"source_kind":{"storage_crate":{"is_herb":true}},"rows":4,"cols":4,"placed_items":[],"timeout_wall_secs":0}
+            """;
+
+        ServerDataRouter.RouteResult result = ServerDataRouter.createDefault()
+            .route(json, json.getBytes(StandardCharsets.UTF_8).length);
+
+        assertTrue(result.isHandled(), "storage crate loot_container_open should be handled");
+        LootContainerStateStore.OpenSession session =
+            assertInstanceOf(LootContainerStateStore.OpenSession.class, LootContainerStateStore.current());
+        assertEquals("storage_crate", session.sourceKind());
+        assertEquals("herb", session.grade(), "is_herb=true should be preserved for UI labels");
+        assertEquals(4, session.rows());
+        assertEquals(4, session.cols());
+    }
+
+    @Test
+    void openTreatsMalformedStorageCrateHerbFlagAsTradeCrate() {
+        String json = """
+            {"type":"loot_container_open","v":1,"session_id":43,"source_kind":{"storage_crate":{"is_herb":"yes"}},"rows":4,"cols":4,"placed_items":[],"timeout_wall_secs":0}
+            """;
+
+        ServerDataRouter.RouteResult result = ServerDataRouter.createDefault()
+            .route(json, json.getBytes(StandardCharsets.UTF_8).length);
+
+        assertTrue(result.isHandled(), "malformed is_herb should not crash the handler");
+        LootContainerStateStore.OpenSession session =
+            assertInstanceOf(LootContainerStateStore.OpenSession.class, LootContainerStateStore.current());
+        assertEquals("storage_crate", session.sourceKind());
+        assertEquals("trade", session.grade(), "non-boolean is_herb should fall back to trade crate");
+    }
+
+    @Test
+    void openTreatsNullSourceKindAsUnknown() {
+        assertOpenSourceKindFallback("null", "unknown", "common");
+    }
+
+    @Test
+    void openTreatsArraySourceKindAsUnknown() {
+        assertOpenSourceKindFallback("[]", "unknown", "common");
+    }
+
+    @Test
+    void openTreatsUnknownObjectSourceKindAsUnknown() {
+        assertOpenSourceKindFallback("{\"unexpected\":true}", "unknown", "common");
+    }
+
+    @Test
+    void openTreatsStorageCrateMissingHerbFlagAsTradeCrate() {
+        assertOpenSourceKindFallback("{\"storage_crate\":{}}", "storage_crate", "trade");
+    }
+
+    @Test
+    void openTreatsStorageCrateNullHerbFlagAsTradeCrate() {
+        assertOpenSourceKindFallback(
+            "{\"storage_crate\":{\"is_herb\":null}}",
+            "storage_crate",
+            "trade"
+        );
+    }
+
+    @Test
+    void openParsesRustExternalTaggedDeadDropSourceKind() {
+        String json = """
+            {"type":"loot_container_open","v":1,"session_id":44,"source_kind":"dead_drop","rows":3,"cols":3,"placed_items":[],"timeout_wall_secs":0}
+            """;
+
+        ServerDataRouter.RouteResult result = ServerDataRouter.createDefault()
+            .route(json, json.getBytes(StandardCharsets.UTF_8).length);
+
+        assertTrue(result.isHandled(), "dead drop loot_container_open should be handled");
+        LootContainerStateStore.OpenSession session =
+            assertInstanceOf(LootContainerStateStore.OpenSession.class, LootContainerStateStore.current());
+        assertEquals("dead_drop", session.sourceKind());
+        assertEquals(3, session.rows());
+        assertEquals(3, session.cols());
     }
 
     @Test
@@ -93,6 +175,27 @@ class LootContainerHandlerTest {
             "placedItems should be empty after update with empty placed_items");
         assertEquals(42, session.sessionId(),
             "sessionId should still match after update");
+    }
+
+    private static void assertOpenSourceKindFallback(
+        String sourceKindJson,
+        String expectedSourceKind,
+        String expectedGrade
+    ) {
+        String json = """
+            {"type":"loot_container_open","v":1,"session_id":45,"source_kind":SOURCE_KIND,"rows":4,"cols":4,"placed_items":[],"timeout_wall_secs":0}
+            """.replace("SOURCE_KIND", sourceKindJson);
+
+        ServerDataRouter.RouteResult result = ServerDataRouter.createDefault()
+            .route(json, json.getBytes(StandardCharsets.UTF_8).length);
+
+        assertTrue(result.isHandled(), "source_kind fallback payload should still be handled");
+        LootContainerStateStore.OpenSession session =
+            assertInstanceOf(LootContainerStateStore.OpenSession.class, LootContainerStateStore.current());
+        assertEquals(expectedSourceKind, session.sourceKind());
+        assertEquals(expectedGrade, session.grade());
+        assertEquals(4, session.rows());
+        assertEquals(4, session.cols());
     }
 
     @Test

@@ -3857,6 +3857,11 @@ impl From<&super::client_request::ClientRequestV1> for bong::client_request_enve
                     entity_id: *entity_id,
                 })
             }
+            ClientRequestV1::ContainerOpen { entity_id, .. } => {
+                Payload::ContainerOpen(bong::ContainerOpenReq {
+                    entity_id: *entity_id,
+                })
+            }
             // ── plan-dying-elder-v1 P1：垂死大能给丹 C2S ─────────────────────
             ClientRequestV1::GiveDanToElder {
                 pill_instance_id,
@@ -4567,6 +4572,58 @@ mod tests {
                 entity_id: i32::MAX,
             },
         );
+    }
+
+    #[test]
+    fn c2s_container_open_roundtrip() {
+        c2s_encode_decode_roundtrip(
+            super::super::client_request::ClientRequestV1::ContainerOpen {
+                v: 1,
+                entity_id: 42,
+            },
+        );
+    }
+
+    #[test]
+    fn c2s_container_open_zero_entity_id_roundtrip() {
+        c2s_encode_decode_roundtrip(
+            super::super::client_request::ClientRequestV1::ContainerOpen { v: 1, entity_id: 0 },
+        );
+    }
+
+    #[test]
+    fn c2s_container_open_max_entity_id_roundtrip() {
+        c2s_encode_decode_roundtrip(
+            super::super::client_request::ClientRequestV1::ContainerOpen {
+                v: 1,
+                entity_id: i32::MAX,
+            },
+        );
+    }
+
+    #[test]
+    fn c2s_container_open_proto_roundtrip_asserts_variant_and_entity_id() {
+        use prost::Message;
+        let req = super::super::client_request::ClientRequestV1::ContainerOpen {
+            v: 1,
+            entity_id: 165,
+        };
+        let proto_payload = bong::client_request_envelope::Payload::from(&req);
+        let envelope = bong::ClientRequestEnvelope {
+            payload: Some(proto_payload),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded = bong::ClientRequestEnvelope::decode(bytes.as_slice())
+            .expect("C2S ContainerOpen proto decode should succeed");
+        match decoded.payload {
+            Some(bong::client_request_envelope::Payload::ContainerOpen(open)) => {
+                assert_eq!(
+                    open.entity_id, 165,
+                    "ContainerOpen.entity_id should survive proto roundtrip"
+                );
+            }
+            other => panic!("expected ContainerOpen payload, got {other:?}"),
+        }
     }
 
     #[test]
@@ -6324,7 +6381,7 @@ mod tests {
 
     // ─── plan-test-coverage-guards-v1 P0：C2S exhaustive proto encoding guard ──
 
-    /// Returns a minimum-viable fixture for every `ClientRequestV1` variant (98 total).
+    /// Returns a minimum-viable fixture for every `ClientRequestV1` variant (99 total).
     ///
     /// The same exhaustiveness strategy as `s2c_all_fixtures()` applies:
     ///   - No compile-time list exhaustiveness, but `c2s_fixture_count_matches_variant_count()`
@@ -6724,6 +6781,7 @@ mod tests {
             }),
             build(ClientRequestV1::CancelSearch { v: 1 }),
             build(ClientRequestV1::SupplyCoffinOpen { v: 1, entity_id: 1 }),
+            build(ClientRequestV1::ContainerOpen { v: 1, entity_id: 1 }),
             build(ClientRequestV1::LingtianStartTill {
                 v: 1,
                 x: 0,
@@ -6848,20 +6906,20 @@ mod tests {
         ]
     }
 
-    /// Verifies that the C2S fixture list covers every `ClientRequestV1` variant (98 total).
+    /// Verifies that the C2S fixture list covers every `ClientRequestV1` variant (99 total).
     #[test]
     fn c2s_fixture_count_matches_variant_count() {
         use crate::schema::client_request::ClientRequestV1;
         use std::collections::HashSet;
         use std::mem::{discriminant, Discriminant};
         let fixtures = c2s_all_fixtures();
-        // The authoritative count is 98 (97 proto + 1 AgentUiResponse bypass).
+        // The authoritative count is 99 (98 proto + 1 AgentUiResponse bypass).
         let bypass_count = fixtures.iter().filter(|(_, b)| *b).count();
         let proto_count = fixtures.iter().filter(|(_, b)| !*b).count();
         assert_eq!(
             fixtures.len(),
-            98,
-            "C2S fixture list has {} entries but ClientRequestV1 has 98 variants. \
+            99,
+            "C2S fixture list has {} entries but ClientRequestV1 has 99 variants. \
              Add a fixture for every new variant in c2s_all_fixtures().",
             fixtures.len()
         );
@@ -6871,33 +6929,33 @@ mod tests {
              If a new bypass variant is added, update c2s_all_fixtures() and this assertion."
         );
         assert_eq!(
-            proto_count, 97,
-            "Expected 97 proto-encodable C2S variants, got {proto_count}."
+            proto_count, 98,
+            "Expected 98 proto-encodable C2S variants, got {proto_count}."
         );
 
         // Set-intersection coverage (mirrors the S2C `payload_type()` HashSet check, but keyed
         // on `mem::discriminant` since ClientRequestV1 has no payload_type() discriminant enum).
         // `discriminant` yields one key per enum variant regardless of field values, so duplicate
         // variants collapse. This closes the "swap escape" the length+count checks alone miss —
-        // e.g. deleting variant A's fixture and duplicating variant B's keeps len==98 but drops
-        // the DISTINCT-variant count to 97, reding this assertion. Without it, variant A would
+        // e.g. deleting variant A's fixture and duplicating variant B's keeps len==99 but drops
+        // the DISTINCT-variant count to 98, reding this assertion. Without it, variant A would
         // silently lose its proto-encode coverage while the counts still look correct.
         let distinct: HashSet<Discriminant<ClientRequestV1>> =
             fixtures.iter().map(|(v, _)| discriminant(v)).collect();
         assert_eq!(
             distinct.len(),
-            98,
-            "C2S fixtures cover only {} DISTINCT ClientRequestV1 variants but there are 98. \
+            99,
+            "C2S fixtures cover only {} DISTINCT ClientRequestV1 variants but there are 99. \
              A variant's fixture was likely deleted and another duplicated — every variant must \
              have its OWN fixture or the proto guard silently skips it.",
             distinct.len()
         );
     }
 
-    /// Exhaustive proto encoding guard for all 98 `ClientRequestV1` variants.
+    /// Exhaustive proto encoding guard for all 99 `ClientRequestV1` variants.
     ///
     /// Same strategy as `s2c_all_proto_variants_encode_without_panic`.
-    /// For the 97 proto-encodable variants: encode → decode → assert payload present.
+    /// For the 98 proto-encodable variants: encode → decode → assert payload present.
     /// For AgentUiResponse (bypass): assert `to_proto_bytes()` panics.
     ///
     /// MUTATION GUARDS:
@@ -6964,8 +7022,8 @@ mod tests {
         }
 
         assert_eq!(
-            proto_count, 97,
-            "Expected 97 proto-encodable C2S variants, got {proto_count}."
+            proto_count, 98,
+            "Expected 98 proto-encodable C2S variants, got {proto_count}."
         );
         assert_eq!(
             bypass_count, 1,

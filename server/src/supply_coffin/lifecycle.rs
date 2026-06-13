@@ -10,7 +10,9 @@ use valence::prelude::{
 };
 
 use crate::cultivation::components::Cultivation;
-use crate::inventory::external_container::{ExternalContainer, ExternalContainerRegistry};
+use crate::inventory::external_container::{
+    ExternalContainer, ExternalContainerKind, ExternalContainerRegistry,
+};
 use crate::inventory::PlayerInventory;
 use crate::network::agent_bridge::{payload_type_label, serialize_server_data_payload};
 use crate::network::audio_event_emit::{AudioRecipient, PlaySoundRecipeRequest, AUDIO_AREA_RADIUS};
@@ -51,6 +53,9 @@ pub fn external_container_lifecycle_tick(
     let now = current_wall_clock_secs();
 
     for (coffin_entity, ext) in ext_containers.iter() {
+        if !is_supply_coffin_lifecycle_managed(ext) {
+            continue;
+        }
         let session_id = ext.session_id;
 
         // 超时检查
@@ -113,6 +118,10 @@ pub fn external_container_lifecycle_tick(
             );
         }
     }
+}
+
+pub fn is_supply_coffin_lifecycle_managed(ext: &ExternalContainer) -> bool {
+    matches!(ext.source_kind, ExternalContainerKind::SupplyCoffin { .. })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -231,5 +240,54 @@ fn send_close_payload(
 
     if let Ok((_, _, mut client, _, _, _, _)) = players.get_mut(player_entity) {
         send_server_data_payload(&mut client, bytes.as_slice());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::inventory::ContainerState;
+
+    #[test]
+    fn lifecycle_manages_only_supply_coffins() {
+        let supply = ext_with_kind(ExternalContainerKind::SupplyCoffin {
+            grade: SupplyCoffinGrade::Common,
+        });
+        let trade_crate = ext_with_kind(ExternalContainerKind::StorageCrate { is_herb: false });
+        let herb_crate = ext_with_kind(ExternalContainerKind::StorageCrate { is_herb: true });
+        let dead_drop = ext_with_kind(ExternalContainerKind::DeadDrop);
+
+        assert!(
+            is_supply_coffin_lifecycle_managed(&supply),
+            "supply coffin sessions remain owned by supply_coffin lifecycle"
+        );
+        assert!(
+            !is_supply_coffin_lifecycle_managed(&trade_crate),
+            "trade crate must not be timed out by supply_coffin lifecycle"
+        );
+        assert!(
+            !is_supply_coffin_lifecycle_managed(&herb_crate),
+            "herb crate must not be timed out by supply_coffin lifecycle"
+        );
+        assert!(
+            !is_supply_coffin_lifecycle_managed(&dead_drop),
+            "dead drop must not be timed out by supply_coffin lifecycle"
+        );
+    }
+
+    fn ext_with_kind(source_kind: ExternalContainerKind) -> ExternalContainer {
+        ExternalContainer {
+            session_id: 1,
+            container: ContainerState {
+                id: ExternalContainer::container_id(1),
+                name: "container".to_string(),
+                rows: 1,
+                cols: 1,
+                items: vec![],
+            },
+            opened_by: None,
+            timeout_wall_secs: 0,
+            source_kind,
+        }
     }
 }
