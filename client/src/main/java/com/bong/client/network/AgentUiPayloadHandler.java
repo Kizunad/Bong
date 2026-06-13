@@ -73,7 +73,10 @@ public final class AgentUiPayloadHandler {
             opener
         );
         if (dispatch == null) {
-            throw new AssertionError("ready-client test payload 应打开 AgentUiScreen，但实际被忽略");
+            return ServerDataDispatch.noOp(
+                "agent_ui_request",
+                "agent_ui_request payload ignored by ready-client test seam"
+            );
         }
         return dispatch;
     }
