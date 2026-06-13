@@ -29,15 +29,67 @@ DECORATION_ANCHORS: tuple[str, ...] = ("ground", "embedded", "hanging")
 # `tian_mai_crystal` is the one by-name override: it is `kind="crystal"` but hangs
 # from a sky-isle underside, so it maps to the `hanging_crystal/` assets with the
 # `hanging` anchor (the Rust `stamp_anchor_for` mirrors this special case).
+#
+# `shrub` has NO single dir: a shrub's biome (its *name*'s ecology) decides which
+# `bush_<ecology>/` pool it stamps from (see `_SHRUB_ECOLOGY` below). Resolving
+# every shrub to one shared `bush/` pool let the runtime `hash % len` pick stamp
+# a frozen ice thorn or a nether crimson patch into the spawn starter meadow —
+# the worldgen-v4 P6 ecology bug this split fixes.
 _KIND_NBT_DIR: dict[str, str] = {
     "tree": "small_tree",
-    "shrub": "bush",
     "boulder": "boulder",
     "crystal": "crystal",
     "mushroom": "big_mushroom",
     "fallen_log": "fallen_log",
     "grave_mound": "grave",
 }
+
+# worldgen-v4 P6 ecology fix — every authored `kind="shrub"` name, routed to one
+# of the four `bush_<ecology>/` pools (decorations/bush_{temperate,cold,marsh,
+# nether}/, see scripts/nbt/decorations/gen_bush.py). The ecology is picked from
+# each shrub's biome/palette so a name only ever resolves variants that belong in
+# its biome. Names NOT listed fall back to `_SHRUB_DEFAULT_ECOLOGY` (temperate) —
+# the safe overworld pool — never a nether/cold one. Adding a new shrub name in a
+# profile should add it here too (the mutual-exclusivity pin test enumerates the
+# authored names, so an unmapped name that wants a non-temperate look fails loud).
+_SHRUB_ECOLOGY: dict[str, str] = {
+    # --- temperate: lush / dry overworld foliage, ruins, farmland, bone ---
+    "starter_shrub": "temperate",          # spawn_plain meadow
+    "yun_lan_shrub": "temperate",          # sky_isle azalea
+    "lush_grass_overlay": "temperate",     # pseudo_vein_oasis flowers
+    "tea_herb_patch": "temperate",         # tsy_gaoshou_hermitage herbs
+    "bamboo_shoot_patch": "temperate",     # tsy_gaoshou_hermitage bamboo
+    "abandoned_farmland_patch": "temperate",
+    "dust_thorn": "temperate",             # waste_plateau dead bush
+    "small_rubble": "temperate",           # dan_zong_yi_yuan ruins
+    "scattered_bone_fragment": "temperate",
+    "bone_pile": "temperate",              # ancient_battlefield bone
+    "cantan_block_drift": "temperate",     # ash_dead_zone dirt/gravel drift
+    "vanished_path_marker": "temperate",   # ash_dead_zone cobble marker
+    "cracked_disc_fragment": "temperate",  # wangyintai basalt shard
+    "iron_lattice_slag": "temperate",      # tribulation_scorch metal slag
+    "magnetized_copper_slag": "temperate",
+    "rusted_web_thicket": "temperate",     # tsy_zhanchang iron/cobweb
+    # --- cold: frozen alpine ---
+    "ice_thorn": "cold",                   # broken_peaks
+    # --- marsh: wetland reeds / damp cave ---
+    "reed_thicket": "marsh",               # spring_marsh
+    "glow_lichen_column": "marsh",         # cave_network damp column
+    # --- nether: crimson / warped / scorched rift growth ---
+    "red_vine_curtain": "nether",          # cave_network crimson vines
+    "nether_nylium_patch": "nether",       # rift_valley
+    "fire_vein_cactus": "nether",          # rift_valley magma/blackstone
+    "gu_teng_creeper": "nether",           # abyssal_maze warped/crimson
+    "wild_herb_clump": "nether",           # dan_zong_yi_yuan crimson/warped roots
+    "scorched_earth_ring": "nether",       # tsy_daneng_crater magma/basalt
+    "blood_ley_line": "nether",            # tsy_zhanchang red/magma
+    "dark_loam_patch": "nether",           # tsy_zongmen_ruin soul_sand
+}
+# Shrubs with no explicit ecology stamp the safe overworld pool — never a
+# nether/cold pool that would jar with an unknown biome.
+_SHRUB_DEFAULT_ECOLOGY = "temperate"
+# The valid ecology labels; the corresponding asset dir is `bush_<ecology>`.
+_SHRUB_ECOLOGIES: tuple[str, ...] = ("temperate", "cold", "marsh", "nether")
 _KIND_NBT_ANCHOR: dict[str, str] = {
     # Most stamped kinds sit on the surface; grave mounds sink one block.
     "grave_mound": "embedded",
@@ -82,6 +134,16 @@ def _variants_for_dir(template_dir: str) -> tuple[str, ...]:
     return tuple(f"decorations/{template_dir}/{name}.nbt" for name in names)
 
 
+def shrub_ecology_for(name: str) -> str:
+    """The ecology label a `kind="shrub"` *name* stamps from.
+
+    Listed names use their curated ecology; everything else falls back to the
+    safe overworld pool (`_SHRUB_DEFAULT_ECOLOGY`). The return is always one of
+    :data:`_SHRUB_ECOLOGIES`, so the resolved dir `bush_<ecology>` always exists.
+    """
+    return _SHRUB_ECOLOGY.get(name, _SHRUB_DEFAULT_ECOLOGY)
+
+
 def nbt_placement_for(name: str, kind: str) -> tuple[tuple[str, ...], str]:
     """Resolve ``(nbt_templates, anchor)`` for a decoration by name + kind.
 
@@ -89,11 +151,18 @@ def nbt_placement_for(name: str, kind: str) -> tuple[tuple[str, ...], str]:
     stamps them with. ``((), "ground")`` when the kind/name retires no procedural
     geometry (flowers, carvers, tutorial structures) or no assets are authored —
     the spec then stays on its procedural placement path (§8.1 #9 fallback).
+
+    `kind="shrub"` is routed by ecology: a shrub's *name* picks one of the four
+    `bush_<ecology>/` pools so it never stamps a variant from another biome
+    (worldgen-v4 P6 ecology fix). All shrubs use the ground anchor.
     """
     override = _NAME_NBT_OVERRIDE.get(name)
     if override is not None:
         template_dir, anchor = override
         return _variants_for_dir(template_dir), anchor
+    if kind == "shrub":
+        template_dir = f"bush_{shrub_ecology_for(name)}"
+        return _variants_for_dir(template_dir), "ground"
     template_dir = _KIND_NBT_DIR.get(kind)
     if template_dir is None:
         return (), "ground"

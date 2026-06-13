@@ -1020,11 +1020,18 @@ mod tests {
     // missing asset trips the suite. They are the runtime counterpart to the
     // Python `gen_decorations.py` round-trip report.
 
-    /// The 14 NBT-ised decoration kinds, each with the >=3-variant contract.
+    /// The NBT-ised decoration kind dirs, each with the >=3-variant contract.
     /// Mirrors the `<kind>` directories under `server/structures/decorations/`.
+    /// `bush` is split into four ecology pools (`bush_temperate` / `bush_cold` /
+    /// `bush_marsh` / `bush_nether`) so a `kind="shrub"` decoration only ever
+    /// stamps variants from its own biome — see `profiles/base.py`
+    /// `_SHRUB_ECOLOGY` and `gen_bush.py`.
     const DECORATION_KINDS: &[&str] = &[
         "small_tree",
-        "bush",
+        "bush_temperate",
+        "bush_cold",
+        "bush_marsh",
+        "bush_nether",
         "boulder",
         "crystal",
         "big_mushroom",

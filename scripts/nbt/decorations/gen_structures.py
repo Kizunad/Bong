@@ -105,13 +105,20 @@ def _altar(seed: int, platform_r: int, dais_r: int, *, with_posts: bool) -> Stru
     sb.set_block(cx, 2, cz, "crying_obsidian")
     sb.set_block(cx, 3, cz, "amethyst_block")
 
-    # Corner posts.
+    # Rim posts. The posts must stand on the platform, so they go on the four
+    # cardinal RIM points (±platform_r, 0)/(0, ±platform_r) — those lie exactly
+    # on the disc (dist² == platform_r²), unlike the (±r, ±r) corners (dist² ==
+    # 2·r²) which fall OUTSIDE the disc footprint and would float over AIR. We
+    # also stamp a guaranteed footing at y=0 under each post so the broken-edge
+    # roll above (which can delete the rim ring block) never leaves a post
+    # hanging in the air.
     if with_posts:
-        for sx in (-platform_r, platform_r):
-            for sz in (-platform_r, platform_r):
-                if random.random() < 0.7:
-                    for py in range(1, 4):
-                        sb.set_block(cx + sx, py, cz + sz, "polished_blackstone")
+        rim_points = [(platform_r, 0), (-platform_r, 0), (0, platform_r), (0, -platform_r)]
+        for sx, sz in rim_points:
+            if random.random() < 0.7:
+                sb.set_block(cx + sx, 0, cz + sz, "polished_blackstone_bricks")
+                for py in range(1, 4):
+                    sb.set_block(cx + sx, py, cz + sz, "polished_blackstone")
     return sb
 
 
@@ -140,6 +147,11 @@ def _bone_pile(seed: int, radius: int, height: int) -> StructureBuilder:
     span = 2 * radius + 1
     sb = StructureBuilder(span, height + 2, span)
     cx = cz = radius
+    # Track the absolute (x, z) of the TOP mound layer so skulls perch on real
+    # mound blocks — a floor `skeleton_skull` needs a solid block below it or it
+    # pops into a dropped item the instant the chunk loads.
+    top_cells: list[tuple[int, int]] = []
+    top_dy = height - 1
     for dy in range(height):
         layer_r = max(1, int(radius * (1 - dy / max(height, 1))))
         for dx, dz in disc_offsets(layer_r):
@@ -154,10 +166,12 @@ def _bone_pile(seed: int, radius: int, height: int) -> StructureBuilder:
                 block = "gravel"
             props = {"axis": random.choice(["x", "y", "z"])} if block == "bone_block" else None
             sb.set_block(cx + dx, dy, cz + dz, block, props)
-    # Skulls perched on top.
-    for _ in range(max(1, radius - 1)):
-        sx = random.randint(cx - 1, cx + 1)
-        sz = random.randint(cz - 1, cz + 1)
+            if dy == top_dy:
+                top_cells.append((cx + dx, cz + dz))
+    # Skulls perched on top — seated ONLY on top-layer mound cells (guaranteed
+    # solid support directly below), so no skull ever hangs over AIR.
+    n_skulls = min(max(1, radius - 1), len(top_cells))
+    for sx, sz in random.sample(top_cells, n_skulls):
         sb.set_block(sx, height, sz, "skeleton_skull", {"rotation": str(random.randint(0, 15))})
     return sb
 
@@ -187,7 +201,13 @@ def _ore_vein(seed: int, radius: int, height: int, rich: bool) -> StructureBuild
     span = 2 * radius + 1
     sb = StructureBuilder(span, height + 2, span)
     cx = cz = radius
-    # Outcrop: rocky matrix hemisphere.
+    # Outcrop: rocky matrix hemisphere. Remember the absolute (x, z) of every
+    # cell on the TOP layer so the upward amethyst clusters can be seated on a
+    # real solid block — a `facing=up` AmethystClusterBlock needs a solid
+    # support face below it in MC 1.20.1, or it pops off into a dropped item the
+    # instant the chunk loads.
+    top_cells: list[tuple[int, int]] = []
+    top_dy = height - 1
     for dy in range(height):
         layer_r = max(1, radius - dy)
         for dx, dz in disc_offsets(layer_r):
@@ -196,15 +216,18 @@ def _ore_vein(seed: int, radius: int, height: int, rich: bool) -> StructureBuild
             if roll < node_chance:
                 block = random.choice(["amethyst_block", "budding_amethyst",
                                        "deepslate_emerald_ore", "emerald_ore"])
-                props = {"facing": "up"} if False else None
+                props = None
             else:
                 block = random.choice(["calcite", "smooth_basalt", "deepslate", "stone"])
                 props = None
             sb.set_block(cx + dx, dy, cz + dz, block, props)
-    # Amethyst cluster shards poking from the top.
-    for _ in range(max(2, radius)):
-        sx = random.randint(cx - radius + 1, cx + radius - 1)
-        sz = random.randint(cz - radius + 1, cz + radius - 1)
+            if dy == top_dy:
+                top_cells.append((cx + dx, cz + dz))
+    # Amethyst cluster shards poking from the top — seated ONLY on top-layer
+    # outcrop cells (guaranteed solid support directly below), so no shard ever
+    # hangs over AIR. Pick a deterministic subset so each variant differs.
+    n_shards = min(max(2, radius), len(top_cells))
+    for sx, sz in random.sample(top_cells, n_shards):
         sb.set_block(sx, height, sz, "amethyst_cluster", {"facing": "up"})
     return sb
 

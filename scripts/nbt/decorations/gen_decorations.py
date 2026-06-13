@@ -31,7 +31,9 @@ import gen_tree  # noqa: E402
 # Each entry: (kind label, module.generate) — flora kinds first, then structures.
 GENERATORS = [
     ("small_tree", gen_tree.generate),
-    ("bush", gen_bush.generate),
+    # bush is split into bush_<ecology>/ subdirs so a shrub never stamps a
+    # cross-biome variant (worldgen-v4 P6 ecology fix); generate() emits all four.
+    ("bush_*", gen_bush.generate),
     ("boulder", gen_boulder.generate),
     ("crystal", gen_crystal.generate),
     ("big_mushroom", gen_big_mushroom.generate),

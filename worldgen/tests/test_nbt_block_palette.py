@@ -98,27 +98,40 @@ AUTHORED_STRUCTURE_BLOCKS: frozenset[str] = frozenset(
 )
 
 
-def _load_all_nbt_blocks() -> dict[str, set[str]]:
-    """Return {nbt_path: {bare_block_name, ...}} for every .nbt under server/structures/."""
+# The dual-pin fixture below is the dan_zong / wangyintai authored-structure
+# contract (see module docstring). The P6 `decorations/` asset family is a
+# separate, much larger palette that has its own blocks.rs-resolution contract
+# (see DecorationNbtPaletteTest below and worldgen/tests/test_decoration_contract
+# .py), so the dual-pin walk is scoped to its own subdirs — folding decorations
+# into AUTHORED_STRUCTURE_BLOCKS would make the dual-pin meaningless.
+DUAL_PIN_SUBDIRS = ("dan_zong", "wangyintai")
+
+
+def _load_all_nbt_blocks(subdirs: tuple[str, ...] = DUAL_PIN_SUBDIRS) -> dict[str, set[str]]:
+    """Return {nbt_path: {bare_block_name, ...}} for every .nbt under the given subdirs."""
     from nbt_builder import load_structure
 
     result: dict[str, set[str]] = {}
-    for root, _, files in os.walk(SERVER_STRUCTURES_DIR):
-        for fname in files:
-            if not fname.endswith(".nbt"):
-                continue
-            path = str(Path(root) / fname)
-            try:
-                blocks = load_structure(path)
-            except Exception as exc:
-                raise RuntimeError(f"Failed to parse {path}: {exc}") from exc
-            names: set[str] = set()
-            for sb in blocks:
-                name = sb.block_name
-                if name.startswith("minecraft:"):
-                    name = name[len("minecraft:"):]
-                names.add(name)
-            result[path] = names
+    roots = [SERVER_STRUCTURES_DIR / sub for sub in subdirs]
+    for base in roots:
+        if not base.exists():
+            continue
+        for root, _, files in os.walk(base):
+            for fname in files:
+                if not fname.endswith(".nbt"):
+                    continue
+                path = str(Path(root) / fname)
+                try:
+                    blocks = load_structure(path)
+                except Exception as exc:
+                    raise RuntimeError(f"Failed to parse {path}: {exc}") from exc
+                names: set[str] = set()
+                for sb in blocks:
+                    name = sb.block_name
+                    if name.startswith("minecraft:"):
+                        name = name[len("minecraft:"):]
+                    names.add(name)
+                result[path] = names
     return result
 
 
@@ -195,6 +208,73 @@ class NbtPaletteSubsetTest(unittest.TestCase):
             unexpected_extras,
             f"AUTHORED_STRUCTURE_BLOCKS contains names not found in any NBT file: "
             f"{sorted(unexpected_extras)}. Remove stale entries.",
+        )
+
+
+class DecorationNbtPaletteTest(unittest.TestCase):
+    """worldgen-v4 P6 — every `decorations/**/*.nbt` block resolves in blocks.rs.
+
+    The decoration asset family is far larger than the dan_zong / wangyintai
+    dual-pin fixture, so it gets its own contract: each block the runtime
+    `DecorationNbtRegistry` will stamp must be a name `block_from_name` knows, or
+    the stamp would silently drop it (a hole in the decoration).  This is the
+    cross-boundary guard for the ecology-split bush pools and the structure
+    fixes — a regenerated asset using an unknown block trips here.
+    """
+
+    BLOCKS_RS = REPO_ROOT / "server" / "src" / "world" / "terrain" / "blocks.rs"
+    DECORATIONS_DIR = SERVER_STRUCTURES_DIR / "decorations"
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.deco_blocks_by_file = _load_all_nbt_blocks(("decorations",))
+
+    def _resolved_block_names(self) -> set[str]:
+        import re
+
+        source = self.BLOCKS_RS.read_text(encoding="utf-8")
+        return set(re.findall(r'"([a-z0-9_]+)"\s*=>\s*BlockState::', source))
+
+    def test_decoration_assets_present(self) -> None:
+        self.assertTrue(
+            self.deco_blocks_by_file,
+            "no decorations/**/*.nbt assets found; run "
+            "scripts/nbt/decorations/gen_decorations.py",
+        )
+
+    def test_every_decoration_nbt_block_resolves_in_blocks_rs(self) -> None:
+        resolved = self._resolved_block_names()
+        missing: dict[str, set[str]] = {}
+        for path, names in self.deco_blocks_by_file.items():
+            unknown = names - resolved
+            if unknown:
+                missing[Path(path).name] = unknown
+        self.assertFalse(
+            missing,
+            "These decoration NBT files use blocks NOT resolvable by "
+            "block_from_name in server/src/world/terrain/blocks.rs (the runtime "
+            "registry would stamp a hole):\n"
+            + "\n".join(f"  {f}: {sorted(s)}" for f, s in sorted(missing.items())),
+        )
+
+    def test_bush_ecology_subdirs_present(self) -> None:
+        # The ecology split must ship all four bush_<ecology>/ pools so a shrub
+        # never resolves a cross-biome variant (worldgen-v4 P6 ecology fix).
+        for eco in ("bush_temperate", "bush_cold", "bush_marsh", "bush_nether"):
+            nbts = list((self.DECORATIONS_DIR / eco).glob("*.nbt"))
+            self.assertGreaterEqual(
+                len(nbts),
+                3,
+                f"decorations/{eco}/ must ship >=3 variants (found {len(nbts)})",
+            )
+
+    def test_old_unsplit_bush_dir_is_gone(self) -> None:
+        # The pre-split shared bush/ pool must not coexist with the ecology
+        # subdirs, or the runtime would still load its cross-biome variants.
+        self.assertFalse(
+            (self.DECORATIONS_DIR / "bush").exists(),
+            "the old shared decorations/bush/ pool must be removed after the "
+            "ecology split; its cross-biome variants would still be stamped",
         )
 
 
