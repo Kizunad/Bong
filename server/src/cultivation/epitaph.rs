@@ -13,7 +13,8 @@ use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use valence::prelude::{
-    bevy_ecs, EventReader, IntoSystemConfigs, Position, Query, Res, ResMut, Resource, Without,
+    bevy_ecs, EventReader, IntoSystemConfigs, Position, Query, Res, ResMut, Resource, Username,
+    Without,
 };
 
 use super::components::Realm;
@@ -51,7 +52,11 @@ impl Default for EpitaphId {
 pub struct LifeRecordSummary {
     /// 本角色有生以来达到的最高境界（无 BreakthroughSucceeded 时 fallback Awaken）。
     pub peak_realm: Realm,
-    /// 合计 PvP 击杀数（PvpEncounter outcome = "death_fight" + TribulationIntercepted）。
+    /// 合计定向击杀数（仅 TribulationIntercepted——截劫者专属，记录在截劫者一方）。
+    ///
+    /// PvpEncounter{outcome="death_fight"} **不**计入：该条目由双方（winner+loser）对称写入，
+    /// 无法区分击杀方与被击杀方，直接计数会给被杀的输家凭空+1击杀（幻影战绩）。
+    /// PvpEncounter 的方向性击杀语义留 P1 在 PvpEncounter 模型加 winner/survived 字段后补全。
     pub total_kills: u32,
     /// 合计死亡次数（取 Lifecycle.death_count）。
     pub total_deaths: u32,
@@ -81,10 +86,17 @@ pub struct EpitaphEntry {
     pub id: EpitaphId,
     /// 对应角色 ID（与 LifeRecord.character_id 对齐）。
     pub character_id: String,
-    /// 玩家用户名（游戏内显示名）。
+    /// 玩家游戏内显示名（取自 Username component）。
+    ///
+    /// EpitaphGenerationSystem 优先从 Username component 读取；若 terminate 时
+    /// Username component 已不存在（如非 Client entity），则回退到 lifecycle.character_id。
     pub player_name: String,
-    /// 终死亡时的境界。
-    pub final_realm: Realm,
+    /// 有生以来最高境界（= LifeRecordSummary.peak_realm）。
+    ///
+    /// P0 无法从死亡事件快照死时境界（on_player_terminated 时 Cultivation 组件已 remove，
+    /// biography 只有 BreakthroughSucceeded 峰值，无回退记录）。故 P0 诚实记录峰值境界。
+    /// 死亡时实际境界（若与峰值不同）留 P1 在 PlayerTerminated 前快照进 LifeRecord 后补全。
+    pub peak_realm: Realm,
     /// 终死亡的 tick（来自 Lifecycle.last_death_tick 或 biography Terminated.tick）。
     pub death_tick: u64,
     /// 碑刻预期放置坐标（P1 EpitaphPlacementSystem 填充；P0 存死亡时的 Position 或 None）。
@@ -161,21 +173,21 @@ impl PendingFinalThoughtStore {
 /// 最多取前 N 个最高级别的技能。
 const SIGNATURE_SKILL_TOP_N: usize = 3;
 
-/// PvpEncounter.outcome 中被认定为「本玩家是击杀方」的精确字面值。
-///
-/// "death_fight" 是 EncounterOutcome::DeathFight 的 wire name（见 pvp_encounter.rs），
-/// 表示致死格斗；参与者一方确认为击杀方。其余 outcome（bypass/peaceful_separation/
-/// probe_fight/temporary_cooperation/betrayal）均不构成"击杀对手"语义。
-const KILL_OUTCOME_EXACT: &str = "death_fight";
+// NOTE: PvpEncounter{outcome="death_fight"} 不用于计算 total_kills。
+// "death_fight" 是对称记录（pvp_encounter.rs record_life_entries 给格斗双方各写一条
+// outcome="death_fight"），PvpEncounter 模型无 killer/victim 方向区分。
+// 直接计数会给被击杀的输家凭空 +1 击杀（幻影战绩）。
+// PvpEncounter 方向性字段（winner/survived）由 P1 补全后再重新接入 total_kills。
 
 /// 从 LifeRecord + Lifecycle.death_count 提取 LifeRecordSummary。
 ///
 /// # 字段语义
 /// * `peak_realm`：biography 中 BreakthroughSucceeded{realm} 取最高（按 Realm::rank()），无则 Awaken
-/// * `total_kills`：PvpEncounter{outcome} == "death_fight"（致死格斗） + TribulationIntercepted（截劫）
+/// * `total_kills`：仅 TribulationIntercepted（截劫，方向性——只写入截劫方）。
+///   PvpEncounter{outcome="death_fight"} 是对称记录（双方均收到），不计入此处以避免幻影战绩。
 /// * `total_deaths`：传入 lifecycle.death_count（Lifecycle component 最精确）
-/// * `signature_skill_ids`：skill_milestones 按 new_lv 降序取前 3
-/// * `final_zone`：最后一条带 zone 的 biography entry（SpiritEyeBreakthrough/PvpEncounter）
+/// * `signature_skill_ids`：skill_milestones 按 new_lv 降序取前 3（同 skill 去重取最高 level）
+/// * `final_zone`：最后一条带非空 zone 的 biography entry（倒序扫，PvpEncounter/SpiritEyeBreakthrough）
 pub fn summarize(life_record: &LifeRecord, death_count: u32) -> LifeRecordSummary {
     // peak_realm
     let peak_realm = life_record
@@ -191,18 +203,16 @@ pub fn summarize(life_record: &LifeRecord, death_count: u32) -> LifeRecordSummar
         .max_by_key(|r| r.rank())
         .unwrap_or(Realm::Awaken);
 
-    // total_kills：PvpEncounter.outcome == "death_fight"（致死格斗）+ TribulationIntercepted（截劫）
+    // total_kills：仅计 TribulationIntercepted（截劫，方向性记录，只写入截劫者一方）。
     //
-    // JueBiKilled 表示本玩家自己在绝壁劫中殒命，属死亡语义而非击杀对手，不计入此处。
-    // "death_fight" 是 EncounterOutcome::DeathFight 唯一的 wire name，精确匹配排除伪阳性。
+    // PvpEncounter{outcome="death_fight"} **不**计入：pvp_encounter.rs record_life_entries
+    // 给格斗双方各写一条 outcome="death_fight"，无法区分击杀方与被击杀方，
+    // 直接计数会给被击杀的输家凭空 +1 击杀（幻影战绩）。
+    // PvpEncounter 方向性 kill 由 P1 加 winner/survived 字段后接入。
     let total_kills = life_record
         .biography
         .iter()
-        .filter(|entry| match entry {
-            BiographyEntry::PvpEncounter { outcome, .. } => outcome == KILL_OUTCOME_EXACT,
-            BiographyEntry::TribulationIntercepted { .. } => true,
-            _ => false,
-        })
+        .filter(|entry| matches!(entry, BiographyEntry::TribulationIntercepted { .. }))
         .count() as u32;
 
     // total_deaths：直接取 Lifecycle.death_count
@@ -254,10 +264,18 @@ pub fn epitaph_generation_system(
     mut events: EventReader<PlayerTerminated>,
     mut registry: ResMut<WorldEpitaphRegistry>,
     mut pending_store: Option<ResMut<PendingFinalThoughtStore>>,
-    players: Query<(&LifeRecord, &Lifecycle, Option<&Position>), Without<NpcMarker>>,
+    players: Query<
+        (
+            &LifeRecord,
+            &Lifecycle,
+            Option<&Position>,
+            Option<&Username>,
+        ),
+        Without<NpcMarker>,
+    >,
 ) {
     for ev in events.read() {
-        let Ok((life_record, lifecycle, position)) = players.get(ev.entity) else {
+        let Ok((life_record, lifecycle, position, username)) = players.get(ev.entity) else {
             // 实体不含 LifeRecord / 或含 NpcMarker（被 Without<NpcMarker> 过滤）
             continue;
         };
@@ -294,11 +312,16 @@ pub fn epitaph_generation_system(
             })
             .unwrap_or(0);
 
+        // 游戏内显示名：优先 Username component，回退 lifecycle.character_id
+        let player_name = username
+            .map(|u| u.0.as_str().to_string())
+            .unwrap_or_else(|| lifecycle.character_id.clone());
+
         let entry = EpitaphEntry {
             id: EpitaphId::new(),
             character_id: life_record.character_id.clone(),
-            player_name: lifecycle.character_id.clone(),
-            final_realm: record_summary.peak_realm,
+            player_name,
+            peak_realm: record_summary.peak_realm,
             death_tick,
             niche_pos,
             record_summary,
@@ -449,9 +472,12 @@ mod tests {
     }
 
     #[test]
-    fn summarize_pvp_encounter_with_kill_outcome_counts_kills() {
+    fn summarize_pvp_encounter_death_fight_does_not_count_as_kill() {
+        // PvpEncounter{outcome="death_fight"} 是对称记录：被杀的输家和击杀的赢家双方各收一条。
+        // 无方向区分，直接计数会给输家凭空 +1 击杀（幻影战绩）。
+        // P0 修正：death_fight 完全不计入 total_kills，等 P1 补 winner/survived 字段后再接入。
         let mut lr = make_life_record("Alice");
-        // "death_fight" — EncounterOutcome::DeathFight 唯一 wire name，计为击杀
+        // 两条 death_fight（alice 可能是被杀方，不该有幻影击杀）
         lr.push(BiographyEntry::PvpEncounter {
             counterparty_id: "offline:Bob".to_string(),
             outcome: "death_fight".to_string(),
@@ -462,7 +488,6 @@ mod tests {
             qi_color_hint: None,
             tick: 200,
         });
-        // 第二条 death_fight
         lr.push(BiographyEntry::PvpEncounter {
             counterparty_id: "offline:Charlie".to_string(),
             outcome: "death_fight".to_string(),
@@ -473,7 +498,7 @@ mod tests {
             qi_color_hint: None,
             tick: 400,
         });
-        // 非击杀 outcome（不计）："betrayal" / "probe_fight" / "bypass" 均不算击杀对手
+        // 其他非击杀 outcome 也不计：betrayal/probe_fight/bypass
         lr.push(BiographyEntry::PvpEncounter {
             counterparty_id: "offline:Dave".to_string(),
             outcome: "betrayal".to_string(),
@@ -506,8 +531,9 @@ mod tests {
         });
         let summary = summarize(&lr, 0);
         assert_eq!(
-            summary.total_kills, 2,
-            "期望只有 outcome=death_fight 的 2 条 PvpEncounter 被计入击杀，实际={}（非death_fight的outcome如betrayal/probe_fight/bypass不应计入）",
+            summary.total_kills, 0,
+            "期望 PvpEncounter(death_fight) 不计入 total_kills（对称记录，无方向区分，幻影战绩）\
+             —— 无论多少条 death_fight，total_kills 必须为 0；非 death_fight outcome 同样不计。实际={}",
             summary.total_kills
         );
     }
@@ -531,13 +557,14 @@ mod tests {
 
     #[test]
     fn summarize_juebi_killed_does_not_inflate_kills_mixed_with_real_kills() {
-        // 混入真实击杀（death_fight + TribulationIntercepted）后，
-        // JueBiKilled 仍不应虚增 kills 计数。
+        // JueBiKilled 不计入 kills，death_fight 也不计入（对称记录无方向），
+        // 只有 TribulationIntercepted 才是真实定向击杀。
         let mut lr = make_life_record("Alice");
         lr.push(BiographyEntry::JueBiKilled {
             source: "void_quota_exceeded".to_string(),
             tick: 50,
         });
+        // death_fight 是对称记录，Alice 可能是被杀方，不应计为 kill
         lr.push(BiographyEntry::PvpEncounter {
             counterparty_id: "offline:Bob".to_string(),
             outcome: "death_fight".to_string(),
@@ -548,6 +575,7 @@ mod tests {
             qi_color_hint: None,
             tick: 200,
         });
+        // TribulationIntercepted 是定向记录，只写截劫方，确认是击杀
         lr.push(BiographyEntry::TribulationIntercepted {
             victim_id: "offline:Charlie".to_string(),
             tag: "戮道者 · 截劫".to_string(),
@@ -555,8 +583,8 @@ mod tests {
         });
         let summary = summarize(&lr, 0);
         assert_eq!(
-            summary.total_kills, 2,
-            "期望 JueBiKilled 不虚增 kills：1 death_fight + 1 TribulationIntercepted = 2，实际={}",
+            summary.total_kills, 1,
+            "期望 JueBiKilled(0) + death_fight(0，对称不计) + TribulationIntercepted(1) = 1，实际={}",
             summary.total_kills
         );
     }
@@ -1343,6 +1371,451 @@ mod tests {
         let _ = std::fs::remove_dir_all(root);
     }
 
+    // ─── 系统级集成测试：total_kills / signature_skill_ids / final_zone 端到端 ─
+
+    #[test]
+    fn system_total_kills_only_tribulation_intercepted_not_death_fight() {
+        // 端到端：biography 有 death_fight × 2 + TribulationIntercepted × 1
+        // → total_kills 必须为 1（仅截劫，death_fight 不计）
+        let (settings, root) = temp_persistence("sys-kills-direction");
+        let mut app = App::new();
+        app.insert_resource(settings.clone());
+        app.init_resource::<WorldEpitaphRegistry>();
+        app.add_event::<PlayerTerminated>();
+        app.add_systems(valence::prelude::Update, epitaph_generation_system);
+
+        let mut lr = LifeRecord::new(canonical_player_id("Iris"));
+        // 两条 death_fight（Iris 可能是被杀输家，不应贡献 kill）
+        lr.push(BiographyEntry::PvpEncounter {
+            counterparty_id: "offline:X1".to_string(),
+            outcome: "death_fight".to_string(),
+            zone: "spawn".to_string(),
+            context: "wilderness".to_string(),
+            observed_style: None,
+            appearance_hint: None,
+            qi_color_hint: None,
+            tick: 100,
+        });
+        lr.push(BiographyEntry::PvpEncounter {
+            counterparty_id: "offline:X2".to_string(),
+            outcome: "death_fight".to_string(),
+            zone: "spawn".to_string(),
+            context: "wilderness".to_string(),
+            observed_style: None,
+            appearance_hint: None,
+            qi_color_hint: None,
+            tick: 200,
+        });
+        // 一条截劫（定向 kill，只写截劫方）
+        lr.push(BiographyEntry::TribulationIntercepted {
+            victim_id: "offline:Y1".to_string(),
+            tag: "戮道者 · 截劫".to_string(),
+            tick: 300,
+        });
+        let entity = app
+            .world_mut()
+            .spawn((
+                lr,
+                crate::combat::components::Lifecycle {
+                    character_id: canonical_player_id("Iris"),
+                    death_count: 2,
+                    ..Default::default()
+                },
+            ))
+            .id();
+        app.world_mut().send_event(PlayerTerminated { entity });
+        app.update();
+
+        let registry = app.world().resource::<WorldEpitaphRegistry>();
+        let entry = registry.entries.values().next().expect("应生成一条碑刻");
+        assert_eq!(
+            entry.record_summary.total_kills, 1,
+            "期望端到端：2×death_fight(不计) + 1×TribulationIntercepted = total_kills=1，\
+             death_fight 是对称记录，计入会给被杀输家造成幻影战绩。实际={}",
+            entry.record_summary.total_kills
+        );
+        assert_eq!(
+            entry.record_summary.total_deaths, 2,
+            "期望 total_deaths 端到端=lifecycle.death_count=2，实际={}",
+            entry.record_summary.total_deaths
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn system_signature_skill_ids_dedup_same_skill_takes_highest_level() {
+        // 同一 skill 多条 milestone（不同 level），去重后只取最高 level 那条。
+        let (settings, root) = temp_persistence("sys-skills-dedup");
+        let mut app = App::new();
+        app.insert_resource(settings.clone());
+        app.init_resource::<WorldEpitaphRegistry>();
+        app.add_event::<PlayerTerminated>();
+        app.add_systems(valence::prelude::Update, epitaph_generation_system);
+
+        let mut lr = LifeRecord::new(canonical_player_id("Jade"));
+        // Combat lv1 先出现
+        lr.push_skill_milestone(SkillMilestone {
+            skill: SkillId::Combat,
+            new_lv: 1,
+            achieved_at: 50,
+            narration: "初识拳脚。".to_string(),
+            total_xp_at: 30,
+        });
+        // Alchemy lv3
+        lr.push_skill_milestone(SkillMilestone {
+            skill: SkillId::Alchemy,
+            new_lv: 3,
+            achieved_at: 100,
+            narration: "炉火稍熟。".to_string(),
+            total_xp_at: 200,
+        });
+        // Combat lv5 后出现（更高级，去重后应选这条）
+        lr.push_skill_milestone(SkillMilestone {
+            skill: SkillId::Combat,
+            new_lv: 5,
+            achieved_at: 300,
+            narration: "拳意初成。".to_string(),
+            total_xp_at: 500,
+        });
+        // Herbalism lv2
+        lr.push_skill_milestone(SkillMilestone {
+            skill: SkillId::Herbalism,
+            new_lv: 2,
+            achieved_at: 150,
+            narration: "识草有道。".to_string(),
+            total_xp_at: 120,
+        });
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                lr,
+                crate::combat::components::Lifecycle {
+                    character_id: canonical_player_id("Jade"),
+                    death_count: 1,
+                    ..Default::default()
+                },
+            ))
+            .id();
+        app.world_mut().send_event(PlayerTerminated { entity });
+        app.update();
+
+        let registry = app.world().resource::<WorldEpitaphRegistry>();
+        let entry = registry.entries.values().next().expect("应生成一条碑刻");
+        let skills = &entry.record_summary.signature_skill_ids;
+        assert_eq!(
+            skills.len(),
+            3,
+            "期望 4 条 milestone(Combat×2去重) → 前3技能，实际={:?}",
+            skills
+        );
+        // 按 new_lv 降序：Combat(5) > Alchemy(3) > Herbalism(2)
+        assert_eq!(
+            skills[0],
+            SkillId::Combat,
+            "期望第一名为去重后最高 lv=5 的 Combat，实际={:?}",
+            skills[0]
+        );
+        assert_eq!(
+            skills[1],
+            SkillId::Alchemy,
+            "期望第二名为 lv=3 的 Alchemy，实际={:?}",
+            skills[1]
+        );
+        // Combat 不应出现两次
+        assert!(
+            !skills.iter().skip(1).any(|s| *s == SkillId::Combat),
+            "期望同一 skill 去重后只出现一次，Combat 不应重复出现，实际={:?}",
+            skills
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn system_final_zone_end_to_end_takes_last_nonempty_zone() {
+        // 端到端：biography 有多条 PvpEncounter，取最后一条非空 zone。
+        let (settings, root) = temp_persistence("sys-final-zone-e2e");
+        let mut app = App::new();
+        app.insert_resource(settings.clone());
+        app.init_resource::<WorldEpitaphRegistry>();
+        app.add_event::<PlayerTerminated>();
+        app.add_systems(valence::prelude::Update, epitaph_generation_system);
+
+        let mut lr = LifeRecord::new(canonical_player_id("Kai"));
+        lr.push(BiographyEntry::PvpEncounter {
+            counterparty_id: "offline:A".to_string(),
+            outcome: "fled".to_string(),
+            zone: "spawn".to_string(),
+            context: "wilderness".to_string(),
+            observed_style: None,
+            appearance_hint: None,
+            qi_color_hint: None,
+            tick: 100,
+        });
+        lr.push(BiographyEntry::PvpEncounter {
+            counterparty_id: "offline:B".to_string(),
+            outcome: "death_fight".to_string(),
+            zone: "qingyun_peaks".to_string(),
+            context: "resource_point".to_string(),
+            observed_style: None,
+            appearance_hint: None,
+            qi_color_hint: None,
+            tick: 500,
+        });
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                lr,
+                crate::combat::components::Lifecycle {
+                    character_id: canonical_player_id("Kai"),
+                    death_count: 1,
+                    ..Default::default()
+                },
+            ))
+            .id();
+        app.world_mut().send_event(PlayerTerminated { entity });
+        app.update();
+
+        let registry = app.world().resource::<WorldEpitaphRegistry>();
+        let entry = registry.entries.values().next().expect("应生成一条碑刻");
+        assert_eq!(
+            entry.record_summary.final_zone, "qingyun_peaks",
+            "期望 final_zone 端到端取最后一条 PvpEncounter 的 zone=qingyun_peaks，实际={}",
+            entry.record_summary.final_zone
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    // ─── final_zone 边界：空串跳过 / None 跳过 / 无条目返空 ──────────────────
+
+    #[test]
+    fn summarize_final_zone_empty_string_zone_is_skipped() {
+        // PvpEncounter 的 zone 为空串时不应被选为 final_zone（跳过逻辑：`!zone.is_empty()`）
+        let mut lr = make_life_record("Alice");
+        lr.push(BiographyEntry::PvpEncounter {
+            counterparty_id: "offline:Bob".to_string(),
+            outcome: "fled".to_string(),
+            zone: "".to_string(), // 空串，应跳过
+            context: "wilderness".to_string(),
+            observed_style: None,
+            appearance_hint: None,
+            qi_color_hint: None,
+            tick: 100,
+        });
+        lr.push(BiographyEntry::PvpEncounter {
+            counterparty_id: "offline:Charlie".to_string(),
+            outcome: "probe_fight".to_string(),
+            zone: "blood_valley".to_string(), // 非空，应被选
+            context: "resource_point".to_string(),
+            observed_style: None,
+            appearance_hint: None,
+            qi_color_hint: None,
+            tick: 50, // tick 更早，但倒序扫所以先遇到 tick=100 的条目
+        });
+        // 倒序扫：先看 tick=100 空串（跳过），再看 tick=50 非空 → blood_valley
+        let summary = summarize(&lr, 0);
+        assert_eq!(
+            summary.final_zone, "blood_valley",
+            "期望空串 zone 被跳过，最后一条非空 zone=blood_valley 被选中，实际={}",
+            summary.final_zone
+        );
+    }
+
+    #[test]
+    fn summarize_final_zone_spirit_eye_none_zone_is_skipped() {
+        // SpiritEyeBreakthrough.zone=None 时应跳过（不贡献 final_zone）
+        let mut lr = make_life_record("Alice");
+        lr.push(BiographyEntry::SpiritEyeBreakthrough {
+            eye_id: "eye_01".to_string(),
+            zone: None, // None，应跳过
+            tick: 200,
+        });
+        // 没有其他带 zone 的条目
+        let summary = summarize(&lr, 0);
+        assert!(
+            summary.final_zone.is_empty(),
+            "期望 SpiritEyeBreakthrough.zone=None 跳过后 final_zone 为空，实际={}",
+            summary.final_zone
+        );
+    }
+
+    #[test]
+    fn summarize_final_zone_spirit_eye_empty_zone_string_is_skipped() {
+        // SpiritEyeBreakthrough.zone=Some("") 空串也应跳过（`!z.is_empty()` 守卫）
+        let mut lr = make_life_record("Alice");
+        lr.push(BiographyEntry::SpiritEyeBreakthrough {
+            eye_id: "eye_02".to_string(),
+            zone: Some("".to_string()), // Some 但空串
+            tick: 150,
+        });
+        lr.push(BiographyEntry::PvpEncounter {
+            counterparty_id: "offline:Bob".to_string(),
+            outcome: "fled".to_string(),
+            zone: "rift_valley".to_string(),
+            context: "wilderness".to_string(),
+            observed_style: None,
+            appearance_hint: None,
+            qi_color_hint: None,
+            tick: 50,
+        });
+        // 倒序：先看 SpiritEye 空串（跳过），再看 PvpEncounter zone=rift_valley（选中）
+        let summary = summarize(&lr, 0);
+        assert_eq!(
+            summary.final_zone, "rift_valley",
+            "期望 SpiritEyeBreakthrough.zone=Some(\"\") 跳过后，回退到更早的 PvpEncounter zone=rift_valley，实际={}",
+            summary.final_zone
+        );
+    }
+
+    #[test]
+    fn summarize_final_zone_no_zone_entries_returns_empty() {
+        // biography 只有无 zone 字段的条目（BreakthroughSucceeded/Terminated 等）→ final_zone 为空
+        let mut lr = make_life_record("Alice");
+        lr.push(BiographyEntry::BreakthroughSucceeded {
+            realm: Realm::Induce,
+            tick: 100,
+        });
+        lr.push(BiographyEntry::Terminated {
+            cause: "tribulation".to_string(),
+            tick: 500,
+        });
+        let summary = summarize(&lr, 1);
+        assert!(
+            summary.final_zone.is_empty(),
+            "期望无带 zone 条目时 final_zone 为空，实际={}",
+            summary.final_zone
+        );
+    }
+
+    // ─── player_name：Username component 优先 / fallback lifecycle.character_id ─
+
+    #[test]
+    fn system_player_name_uses_lifecycle_character_id_when_no_username() {
+        // 无 Username component 时 player_name 回退到 lifecycle.character_id
+        let (settings, root) = temp_persistence("sys-name-fallback");
+        let mut app = App::new();
+        app.insert_resource(settings.clone());
+        app.init_resource::<WorldEpitaphRegistry>();
+        app.add_event::<PlayerTerminated>();
+        app.add_systems(valence::prelude::Update, epitaph_generation_system);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                LifeRecord::new(canonical_player_id("Luna")),
+                crate::combat::components::Lifecycle {
+                    character_id: canonical_player_id("Luna"),
+                    death_count: 1,
+                    ..Default::default()
+                },
+                // 故意不附加 Username component
+            ))
+            .id();
+        app.world_mut().send_event(PlayerTerminated { entity });
+        app.update();
+
+        let registry = app.world().resource::<WorldEpitaphRegistry>();
+        let entry = registry.entries.values().next().expect("应生成一条碑刻");
+        assert_eq!(
+            entry.player_name,
+            canonical_player_id("Luna"),
+            "期望无 Username component 时 player_name 回退到 lifecycle.character_id=offline:Luna，实际={}",
+            entry.player_name
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn system_player_name_from_username_component_when_present() {
+        // 有 Username component 时 player_name 取真实显示名
+        let (settings, root) = temp_persistence("sys-name-username");
+        let mut app = App::new();
+        app.insert_resource(settings.clone());
+        app.init_resource::<WorldEpitaphRegistry>();
+        app.add_event::<PlayerTerminated>();
+        app.add_systems(valence::prelude::Update, epitaph_generation_system);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                LifeRecord::new(canonical_player_id("Marco")),
+                crate::combat::components::Lifecycle {
+                    character_id: canonical_player_id("Marco"),
+                    death_count: 1,
+                    ..Default::default()
+                },
+                Username("Marco".to_string()),
+            ))
+            .id();
+        app.world_mut().send_event(PlayerTerminated { entity });
+        app.update();
+
+        let registry = app.world().resource::<WorldEpitaphRegistry>();
+        let entry = registry.entries.values().next().expect("应生成一条碑刻");
+        assert_eq!(
+            entry.player_name, "Marco",
+            "期望有 Username component 时 player_name 取显示名 Marco（非 offline:Marco），实际={}",
+            entry.player_name
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    // ─── peak_realm 字段语义（原 final_realm 已重命名）──────────────────────────
+
+    #[test]
+    fn system_peak_realm_reflects_highest_breakthrough_not_death_time_realm() {
+        // EpitaphEntry.peak_realm 取 biography 中最高突破境界（Realm::rank() 最大），
+        // 不代表死亡时境界（P1 遗留）
+        let (settings, root) = temp_persistence("sys-peak-realm");
+        let mut app = App::new();
+        app.insert_resource(settings.clone());
+        app.init_resource::<WorldEpitaphRegistry>();
+        app.add_event::<PlayerTerminated>();
+        app.add_systems(valence::prelude::Update, epitaph_generation_system);
+
+        let mut lr = LifeRecord::new(canonical_player_id("Ning"));
+        lr.push(BiographyEntry::BreakthroughSucceeded {
+            realm: Realm::Induce,
+            tick: 100,
+        });
+        lr.push(BiographyEntry::BreakthroughSucceeded {
+            realm: Realm::Condense,
+            tick: 500,
+        });
+        // 假设死时因某原因境界有回退（P0 无法记录回退，peak 是 Condense）
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                lr,
+                crate::combat::components::Lifecycle {
+                    character_id: canonical_player_id("Ning"),
+                    death_count: 1,
+                    ..Default::default()
+                },
+            ))
+            .id();
+        app.world_mut().send_event(PlayerTerminated { entity });
+        app.update();
+
+        let registry = app.world().resource::<WorldEpitaphRegistry>();
+        let entry = registry.entries.values().next().expect("应生成一条碑刻");
+        assert_eq!(
+            entry.peak_realm,
+            Realm::Condense,
+            "期望 peak_realm 反映有生以来最高突破境界 Condense，实际={:?}",
+            entry.peak_realm
+        );
+        assert_eq!(
+            entry.record_summary.peak_realm,
+            Realm::Condense,
+            "期望 record_summary.peak_realm 也为 Condense，与 EpitaphEntry.peak_realm 一致，实际={:?}",
+            entry.record_summary.peak_realm
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
     // ─── 辅助：构造测试用 EpitaphEntry ─────────────────────────────────────
 
     fn make_test_entry(character_id: &str, death_tick: u64) -> EpitaphEntry {
@@ -1350,7 +1823,7 @@ mod tests {
             id: EpitaphId::new(),
             character_id: character_id.to_string(),
             player_name: character_id.to_string(),
-            final_realm: Realm::Induce,
+            peak_realm: Realm::Induce,
             death_tick,
             niche_pos: Some([10, 64, -5]),
             record_summary: LifeRecordSummary {
