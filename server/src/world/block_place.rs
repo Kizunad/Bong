@@ -1769,6 +1769,44 @@ mod tests {
     }
 
     #[test]
+    fn breaking_legacy_dead_drop_without_ward_uses_placed_by_as_owner() {
+        let (mut app, owner, _layer_entity, _helper) = dead_drop_break_app(9806);
+        let pos = place_dead_drop(&mut app, owner, 9806);
+        let container_entity = placed_dead_drop_entity(&mut app);
+        app.world_mut()
+            .entity_mut(container_entity)
+            .remove::<DeadDropWard>();
+        move_client(
+            &mut app,
+            owner,
+            [12.5, 64.0, 12.5],
+            DimensionKind::Overworld,
+        );
+        let breaker = spawn_test_client(
+            &mut app,
+            "Breaker",
+            [1.5, 64.0, 1.5],
+            DimensionKind::Overworld,
+        );
+
+        send_stop_break(&mut app, breaker, pos);
+        app.update();
+
+        assert_eq!(
+            dropped_template_count(&app, "dead_drop_box"),
+            0,
+            "legacy dead drop without DeadDropWard must not fall through to normal drops"
+        );
+        assert!(
+            app.world()
+                .resource::<Events<CombatEvent>>()
+                .iter_current_update_events()
+                .any(|event| event.target == breaker && event.attacker == owner),
+            "legacy dead drop without DeadDropWard should fall back to ContainerBlock::placed_by for attacker attribution"
+        );
+    }
+
+    #[test]
     fn breaking_full_open_dead_drop_by_non_owner_ashes_contents_and_emits_ward_feedback() {
         let (mut app, owner, _layer_entity, mut helper) = dead_drop_break_app(9811);
         let pos = place_dead_drop(&mut app, owner, 9811);
@@ -2223,6 +2261,15 @@ mod tests {
         });
         app.update();
         pos
+    }
+
+    fn placed_dead_drop_entity(app: &mut App) -> Entity {
+        let mut query = app.world_mut().query::<(Entity, &ContainerBlock)>();
+        query
+            .iter(app.world())
+            .find(|(_, block)| block.kind == ContainerBlockKind::DeadDrop)
+            .map(|(entity, _)| entity)
+            .expect("placed dead drop should spawn a ContainerBlock entity")
     }
 
     fn fill_open_dead_drop(

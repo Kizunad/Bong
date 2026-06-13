@@ -234,9 +234,9 @@ pub fn handle_container_block_break(
             send_container_destroyed_close(ext.session_id, &mut clients, player);
         }
 
-        if is_illegal_dead_drop_break(event.client, block.kind, ward) {
+        if let Some(active_ward) = illegal_dead_drop_break_ward(event.client, block, ward) {
             trigger_dead_drop_ward(
-                ward.expect("illegal dead drop break requires active ward"),
+                &active_ward,
                 [event.position.x, event.position.y, event.position.z],
                 dimension,
                 now,
@@ -281,13 +281,19 @@ pub fn handle_container_block_break(
     }
 }
 
-fn is_illegal_dead_drop_break(
+fn illegal_dead_drop_break_ward(
     breaker: Entity,
-    kind: ContainerBlockKind,
+    block: &ContainerBlock,
     ward: Option<&DeadDropWard>,
-) -> bool {
-    matches!(kind, ContainerBlockKind::DeadDrop)
-        && ward.is_some_and(|ward| ward.ward_active && ward.owner != breaker)
+) -> Option<DeadDropWard> {
+    if !matches!(block.kind, ContainerBlockKind::DeadDrop) {
+        return None;
+    }
+    let active_ward = ward.copied().unwrap_or(DeadDropWard {
+        owner: block.placed_by,
+        ward_active: true,
+    });
+    (active_ward.ward_active && active_ward.owner != breaker).then_some(active_ward)
 }
 
 #[allow(clippy::too_many_arguments)]

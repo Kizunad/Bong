@@ -17,6 +17,7 @@ public final class DeadDropBreakPlayer implements VfxPlayer {
     private static final int GAS_RGB = 0x6B8E23;
     private static final int GAS_TICKS = 10;
     private static final int GAS_PARTICLES_PER_TICK = 8;
+    private static final int MAX_PENDING_GAS_BURSTS = 64;
     private static final Object GAS_LOCK = new Object();
     private static final List<GasBurst> GAS_BURSTS = new ArrayList<>();
     private static boolean tickerRegistered;
@@ -71,6 +72,9 @@ public final class DeadDropBreakPlayer implements VfxPlayer {
 
     private static void enqueueGasBurst(double ox, double oy, double oz) {
         synchronized (GAS_LOCK) {
+            if (GAS_BURSTS.size() >= MAX_PENDING_GAS_BURSTS) {
+                GAS_BURSTS.remove(0);
+            }
             GAS_BURSTS.add(new GasBurst(ox, oy, oz, GAS_TICKS));
         }
     }
@@ -85,8 +89,7 @@ public final class DeadDropBreakPlayer implements VfxPlayer {
             while (iterator.hasNext()) {
                 GasBurst burst = iterator.next();
                 spawnGasTick(client, world, burst);
-                burst.remainingTicks--;
-                if (burst.remainingTicks <= 0) {
+                if (advanceGasBurst(burst)) {
                     iterator.remove();
                 }
             }
@@ -116,9 +119,43 @@ public final class DeadDropBreakPlayer implements VfxPlayer {
         }
     }
 
+    private static boolean advanceGasBurst(GasBurst burst) {
+        burst.remainingTicks--;
+        return burst.remainingTicks <= 0;
+    }
+
     static int pendingGasBurstsForTests() {
         synchronized (GAS_LOCK) {
             return GAS_BURSTS.size();
+        }
+    }
+
+    static int gasTicksForTests() {
+        return GAS_TICKS;
+    }
+
+    static int maxPendingGasBurstsForTests() {
+        return MAX_PENDING_GAS_BURSTS;
+    }
+
+    static void enqueueGasBurstForTests(double ox, double oy, double oz) {
+        enqueueGasBurst(ox, oy, oz);
+    }
+
+    static void advanceGasBurstsForTests() {
+        synchronized (GAS_LOCK) {
+            Iterator<GasBurst> iterator = GAS_BURSTS.iterator();
+            while (iterator.hasNext()) {
+                if (advanceGasBurst(iterator.next())) {
+                    iterator.remove();
+                }
+            }
+        }
+    }
+
+    static void clearGasBurstsForTests() {
+        synchronized (GAS_LOCK) {
+            GAS_BURSTS.clear();
         }
     }
 
