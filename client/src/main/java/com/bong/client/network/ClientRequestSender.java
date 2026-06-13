@@ -545,6 +545,21 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodeLowerShield());
     }
 
+    // ─── plan-worldgen-v4 P5 §8.1#5：画廊审阅 owo 方块面板 dev-only give-block C2S ──
+
+    /**
+     * plan-worldgen-v4 P5 §8.1#5 — dev-only 方块面板点击某 vanilla 方块后发送 give-block 请求。
+     *
+     * <p>对应 server {@code ClientRequestV1::BlockPickerGive}（dev/creative 门控，把
+     * {@code vanilla:<block_id>} 模板物品放进背包，**非生产 gameplay**）。</p>
+     *
+     * @param blockId 不含 namespace 的 vanilla 方块短名（如 {@code "stone_bricks"}）
+     * @param count   给予数量，1..=64
+     */
+    public static void sendBlockPickerGive(String blockId, int count) {
+        dispatch(ClientRequestProtocol.encodeBlockPickerGive(blockId, count));
+    }
+
     // ─── plan-agent-ui-data-v1 P1：天道 UI 响应 C2S ─────────────────────────
 
     /**

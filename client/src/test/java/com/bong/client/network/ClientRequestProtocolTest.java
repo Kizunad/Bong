@@ -1138,4 +1138,69 @@ public class ClientRequestProtocolTest {
         assertEquals(false, raise.equals(lower),
             "encodeRaiseShield and encodeLowerShield must produce different payloads — raise=" + raise + " lower=" + lower);
     }
+
+    // ─── plan-worldgen-v4 P5 §8.1#5：encodeBlockPickerGive 双端契约 encode 测试 ───
+
+    @Test
+    void encodesBlockPickerGiveExactPayload() {
+        String json = ClientRequestProtocol.encodeBlockPickerGive("stone_bricks", 16);
+        assertEquals(
+            "{\"type\":\"block_picker_give\",\"v\":1,\"block_id\":\"stone_bricks\",\"count\":16}",
+            json,
+            "encodeBlockPickerGive must match TS BlockPickerActionV1 / Rust BlockPickerGive wire shape, actual=" + json
+        );
+    }
+
+    @Test
+    void encodeBlockPickerGiveTypeAndVersionMatchServerSerde() {
+        JsonObject obj = com.google.gson.JsonParser
+            .parseString(ClientRequestProtocol.encodeBlockPickerGive("dirt", 1)).getAsJsonObject();
+        assertEquals("block_picker_give", obj.get("type").getAsString(),
+            "type field must be 'block_picker_give' to match server ClientRequestV1::BlockPickerGive serde tag, actual=" + obj.get("type"));
+        assertEquals(1, obj.get("v").getAsInt(),
+            "v must be 1 for server serde, actual=" + obj.get("v"));
+        assertEquals(4, obj.size(),
+            "payload must contain exactly type+v+block_id+count (schema additionalProperties:false), actual size=" + obj.size() + " json=" + obj);
+    }
+
+    @Test
+    void encodeBlockPickerGiveAcceptsCountBoundaries() {
+        assertEquals(
+            "{\"type\":\"block_picker_give\",\"v\":1,\"block_id\":\"sand\",\"count\":1}",
+            ClientRequestProtocol.encodeBlockPickerGive("sand", 1),
+            "count=1 is the lower bound and must encode cleanly"
+        );
+        assertEquals(
+            "{\"type\":\"block_picker_give\",\"v\":1,\"block_id\":\"sand\",\"count\":64}",
+            ClientRequestProtocol.encodeBlockPickerGive("sand", ClientRequestProtocol.BLOCK_PICKER_MAX_COUNT),
+            "count=64 is the upper bound (one stack) and must encode cleanly"
+        );
+    }
+
+    @Test
+    void encodeBlockPickerGiveRejectsBlankBlockId() {
+        for (String bad : List.of("", "   ")) {
+            assertThrows(
+                IllegalArgumentException.class,
+                () -> ClientRequestProtocol.encodeBlockPickerGive(bad, 1),
+                "blank block_id must be rejected because schema requires minLength 1, input=[" + bad + "]"
+            );
+        }
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> ClientRequestProtocol.encodeBlockPickerGive(null, 1),
+            "null block_id must be rejected before send"
+        );
+    }
+
+    @Test
+    void encodeBlockPickerGiveRejectsCountOutOfRange() {
+        for (int bad : new int[] {0, -1, 65, 1000}) {
+            assertThrows(
+                IllegalArgumentException.class,
+                () -> ClientRequestProtocol.encodeBlockPickerGive("stone", bad),
+                "count outside [1,64] must be rejected because schema bounds count to a stack, count=" + bad
+            );
+        }
+    }
 }

@@ -1322,6 +1322,36 @@ public final class ClientRequestProtocol {
         return envelope("lower_shield").toString();
     }
 
+    // ─── plan-worldgen-v4 P5 §8.1#5：画廊审阅 owo 方块面板 dev-only give-block C2S ──
+
+    /** give-block 数量上限（与 schema BlockPickerActionV1 count Integer(1..64) 对齐）。 */
+    public static final int BLOCK_PICKER_MAX_COUNT = 64;
+
+    /**
+     * plan-worldgen-v4 P5 §8.1#5 — 编码 dev-only 方块面板 give-block 请求。
+     *
+     * <p>消息形状：{@code {"type":"block_picker_give","v":1,"block_id":"<short>","count":<1..64>}}，
+     * 对应 server {@code ClientRequestV1::BlockPickerGive { v, block_id, count }} 与
+     * TS {@code BlockPickerActionV1}。{@code blockId} 为不含 namespace 的 vanilla 方块短名
+     * （如 {@code "stone_bricks"}）；server 拼 {@code "vanilla:"} 前缀查 ItemRegistry。</p>
+     *
+     * @param blockId vanilla 方块短名，必须非空
+     * @param count   给予数量，必须 ∈ [1, {@link #BLOCK_PICKER_MAX_COUNT}]
+     * @throws IllegalArgumentException 若 blockId 为空或 count 越界
+     */
+    public static String encodeBlockPickerGive(String blockId, int count) {
+        String resolved = requireNonBlank(blockId, "blockId");
+        if (count < 1 || count > BLOCK_PICKER_MAX_COUNT) {
+            throw new IllegalArgumentException(
+                "count must be in [1, " + BLOCK_PICKER_MAX_COUNT + "] to match schema BlockPickerActionV1, got " + count
+            );
+        }
+        JsonObject obj = envelope("block_picker_give");
+        obj.addProperty("block_id", resolved);
+        obj.addProperty("count", count);
+        return obj.toString();
+    }
+
     // ─── plan-supply-coffin-loot-ui P1：外部容器 C2S ──────────────────
 
     public static String encodeExternalContainerMove(

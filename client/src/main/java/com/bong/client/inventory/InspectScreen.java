@@ -145,6 +145,10 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     private FlowLayout lootPanelLayout;
     private LootContainerStateStore.Listener lootStoreListener;
 
+    // Block picker panel (plan-worldgen-v4 P5 §8.1#5 — dev-only 方块审阅浮窗)
+    private BlockPickerPanel blockPickerPanel;
+    private FlowLayout blockPickerPanelLayout;
+
     // Body inspect (cultivation tab) — dual-layer: physical + meridian
     private BodyInspectComponent bodyInspect;
     private QiColorVectorHud qiColorVectorHud;
@@ -222,6 +226,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             LootContainerStateStore.removeListener(lootStoreListener);
             lootStoreListener = null;
         }
+        unmountBlockPickerPanel();
         super.removed();
     }
 
@@ -628,6 +633,9 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             });
         };
         LootContainerStateStore.addListener(lootStoreListener);
+
+        // Mount dev-only block picker panel (隐藏而非灰态：非 dev/creative 完全不挂载)
+        mountBlockPickerPanelIfDev();
 
         root.child(outerRow);
         populateFromModel();
@@ -3419,6 +3427,39 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             outerRow.removeChild(lootPanelLayout);
             lootPanelLayout = null;
         }
+    }
+
+    // ==================== Block picker panel mount/unmount (P5 §8.1#5) ====
+
+    /**
+     * plan-worldgen-v4 P5 §8.1#5 — 仅 dev/creative 时挂载方块审阅浮窗。
+     *
+     * <p>对齐 HUD conditional display：非 dev/creative 完全不挂载（隐藏而非灰态）。
+     * 挂在 outerRow 末尾（discardStrip 之后）。</p>
+     */
+    private void mountBlockPickerPanelIfDev() {
+        if (outerRow == null) return;
+        if (!com.bong.client.block.BlockPickerGate.isDevOrCreative()) return;
+        if (blockPickerPanel != null) return; // already mounted
+        blockPickerPanel = BlockPickerPanel.fromVanillaRegistry();
+        blockPickerPanelLayout = blockPickerPanel.build();
+        outerRow.child(blockPickerPanelLayout);
+    }
+
+    private void unmountBlockPickerPanel() {
+        if (blockPickerPanelLayout != null && outerRow != null) {
+            outerRow.removeChild(blockPickerPanelLayout);
+        }
+        blockPickerPanelLayout = null;
+        blockPickerPanel = null;
+    }
+
+    /**
+     * 测试 seam：mount 决策与 {@link com.bong.client.block.BlockPickerGate#isDevOrCreative()}
+     * 等价（隐藏而非灰态）。headless 单测据此锁定 dev-gate，不必跑 owo build()。
+     */
+    static boolean shouldMountBlockPickerForTests() {
+        return com.bong.client.block.BlockPickerGate.isDevOrCreative();
     }
 
     private double mouseX() {

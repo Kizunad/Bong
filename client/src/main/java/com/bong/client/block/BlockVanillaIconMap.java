@@ -1,8 +1,12 @@
 package com.bong.client.block;
 
+import net.minecraft.block.Block;
+import net.minecraft.item.BlockItem;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
+import net.minecraft.registry.Registries;
+import net.minecraft.util.Identifier;
 
 import java.util.Map;
 import java.util.Optional;
@@ -49,6 +53,37 @@ public final class BlockVanillaIconMap {
 
     public static boolean isKnownBlockItem(String templateId) {
         return HOST_ITEMS.containsKey(templateId);
+    }
+
+    /**
+     * plan-worldgen-v4 P5 §8.1#5 — 按 vanilla 方块短名（如 {@code "stone_bricks"}）取渲染用
+     * {@link ItemStack}，供 dev-only 方块审阅面板展示图标。
+     *
+     * <p>查 {@link Registries#BLOCK}，方块必须拥有可给予的 {@link BlockItem} 才返回 stack；
+     * 否则（air / 无 item / 短名非法）返回 {@link Optional#empty()}。该路径与
+     * {@link BlockPickerCatalog#vanillaBlockShortNames()} 同源，保证面板每个条目可渲染。</p>
+     *
+     * @param blockShortId 不含 namespace 的 vanilla 方块短名
+     */
+    public static Optional<ItemStack> createVanillaBlockStack(String blockShortId) {
+        if (blockShortId == null || blockShortId.isBlank()) {
+            return Optional.empty();
+        }
+        Identifier id;
+        try {
+            id = new Identifier("minecraft", blockShortId);
+        } catch (RuntimeException invalidId) {
+            return Optional.empty();
+        }
+        if (!Registries.BLOCK.containsId(id)) {
+            return Optional.empty();
+        }
+        Block block = Registries.BLOCK.get(id);
+        Item item = block.asItem();
+        if (!(item instanceof BlockItem)) {
+            return Optional.empty();
+        }
+        return Optional.of(new ItemStack(item));
     }
 
     static String vanillaItemIdForTests(String templateId) {
