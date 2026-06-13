@@ -94,11 +94,16 @@ class ExtractDecisionHudPlannerTest {
         );
 
         Pattern digit = Pattern.compile("\\d");
-        assertFalse(commands.isEmpty());
+        assertFalse(
+            commands.isEmpty(),
+            "expected checklist commands because active emergency/risk state should render P2 HUD, actual: " + commands
+        );
         assertTrue(commands.stream()
             .filter(HudRenderCommand::isText)
             .map(HudRenderCommand::text)
-            .noneMatch(text -> digit.matcher(text).find()));
+            .noneMatch(text -> digit.matcher(text).find()),
+            "expected checklist text without digits because P2 uses visual/short-word signals, actual: " + textCommands(commands)
+        );
     }
 
     @Test
@@ -136,19 +141,33 @@ class ExtractDecisionHudPlannerTest {
             2_000L
         );
 
-        assertTrue(commands.stream().anyMatch(HudRenderCommand::isEdgeVignette));
-        assertTrue(commands.stream().anyMatch(command -> "快撤".equals(command.text())));
+        assertTrue(
+            commands.stream().anyMatch(HudRenderCommand::isEdgeVignette),
+            "expected edge vignette because emergency window is active, actual commands: " + commands
+        );
+        assertTrue(
+            commands.stream().anyMatch(command -> "快撤".equals(command.text())),
+            "expected 快撤 text because emergency window is active, actual text commands: " + textCommands(commands)
+        );
     }
 
     @Test
     void riskSpikeOpensEmergencyWindowOnlyWhenRealmMismatched() {
         ExtractDecisionStateStore.replaceRiskScore(55, true, 1_000L);
         ExtractDecisionStateStore.replaceRiskScore(85, false, 2_000L);
-        assertFalse(ExtractDecisionStateStore.snapshot().emergencyActive(2_100L));
+        assertFalse(
+            ExtractDecisionStateStore.snapshot().emergencyActive(2_100L),
+            "expected no emergency window because risk spike lacks realm mismatch, actual snapshot: "
+                + ExtractDecisionStateStore.snapshot()
+        );
 
         ExtractDecisionStateStore.replaceRiskScore(55, true, 3_000L);
         ExtractDecisionStateStore.replaceRiskScore(85, true, 4_000L);
-        assertTrue(ExtractDecisionStateStore.snapshot().emergencyActive(4_100L));
+        assertTrue(
+            ExtractDecisionStateStore.snapshot().emergencyActive(4_100L),
+            "expected emergency window because risk spike has realm mismatch, actual snapshot: "
+                + ExtractDecisionStateStore.snapshot()
+        );
     }
 
     @Test
@@ -174,7 +193,10 @@ class ExtractDecisionHudPlannerTest {
         assertEquals(1_000L, ExtractDecisionStateStore.snapshot().runStartedAtMs());
 
         ExtractDecisionStateStore.clearOnDisconnect();
-        assertFalse(ExtractDecisionStateStore.snapshot().hasRunClock());
+        assertFalse(
+            ExtractDecisionStateStore.snapshot().hasRunClock(),
+            "expected run clock cleared on disconnect, actual snapshot: " + ExtractDecisionStateStore.snapshot()
+        );
     }
 
     @Test
@@ -190,7 +212,10 @@ class ExtractDecisionHudPlannerTest {
             0L
         );
 
-        assertTrue(commands.isEmpty());
+        assertTrue(
+            commands.isEmpty(),
+            "expected no commands because player, risk and run state are inactive, actual: " + commands
+        );
     }
 
     @Test
@@ -206,7 +231,10 @@ class ExtractDecisionHudPlannerTest {
             0L
         );
 
-        assertTrue(commands.isEmpty());
+        assertTrue(
+            commands.isEmpty(),
+            "expected no commands because invalid screen bounds cannot render HUD, actual: " + commands
+        );
     }
 
     private static ExtractDecisionHudPlanner.DecisionRow row(
@@ -217,5 +245,12 @@ class ExtractDecisionHudPlannerTest {
             .filter(row -> label.equals(row.label()))
             .findFirst()
             .orElseThrow();
+    }
+
+    private static List<String> textCommands(List<HudRenderCommand> commands) {
+        return commands.stream()
+            .filter(HudRenderCommand::isText)
+            .map(HudRenderCommand::text)
+            .toList();
     }
 }

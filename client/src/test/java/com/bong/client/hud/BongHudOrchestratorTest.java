@@ -307,7 +307,11 @@ public class BongHudOrchestratorTest {
             180
         );
 
-        assertTrue(commands.stream().anyMatch(command -> command.layer() == HudRenderLayer.EXTRACT_DECISION));
+        assertTrue(
+            commands.stream().anyMatch(command -> command.layer() == HudRenderLayer.EXTRACT_DECISION),
+            "expected EXTRACT_DECISION layer because player state and risk state should invoke P2 HUD, actual commands: "
+                + commands
+        );
     }
 
     @Test

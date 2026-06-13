@@ -24,7 +24,6 @@ public final class ExtractDecisionHudPlanner {
     private static final int BORDER = 0x805F745F;
     private static final int TRACK_BG = 0x70202A24;
     private static final int TEXT = 0xFFE9F2DD;
-    private static final int MUTED = 0xFF9EAD99;
     private static final int EMERGENCY = 0xE0D04030;
 
     private ExtractDecisionHudPlanner() {
