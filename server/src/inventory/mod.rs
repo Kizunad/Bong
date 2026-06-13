@@ -1148,6 +1148,17 @@ fn load_item_registry_from_dir(path: impl AsRef<Path>) -> Result<ItemRegistry, S
 
     // plan-worldgen-v4 P5 §8.1#5 — 在手工 TOML 全部加载后注入 vanilla:<block_id> 模板，
     // 供画廊 dev-only give-block（BlockPickerGive）链路使用。撞 key 即 Err 保护手写映射。
+    //
+    // 为何无条件注入而非 feature-gate / dev-flag（CodeRabbit 关注点的裁决）：
+    // 1. 注入是**纯数据**——只往 ItemRegistry 加 ~760 个 `vanilla:<id>` / category=Block 的
+    //    最小模板，不触发任何 gameplay 副作用、不进 qi_physics ledger、不改自然修炼规则。
+    // 2. 唯一取用面是 dev give-block handler（cmd::dev::block_picker），它在**运行时**用
+    //    GameMode::Creative 门控——生产玩家默认 Survival，每次请求都被拒，比"启动标志"
+    //    更强（标志可配错，gamemode 门控逐请求生效）。block_place 的 `vanilla:` 直通也只
+    //    对已持有 vanilla:<id> instance 的玩家生效，而该 instance 仅能经 Creative give-block 取得。
+    // 3. server 是单一 offline-mode binary，没有干净的 dev/creative 启动开关；引入 feature
+    //    flag 会把 load_item_registry 劈成生产/dev 两条路径，破坏现有统一加载链与全部既有测试。
+    // 故选「纯数据 + Creative-gated 唯一消费者」这条安全且不破坏现有路径的方案。
     inject_vanilla_block_templates(&mut templates)?;
 
     Ok(ItemRegistry { templates })
@@ -11746,5 +11757,105 @@ cols = 4
         };
         let result = raw.try_into_item_template(&path);
         assert!(result.is_err(), "非盾 category 带 shield_spec 块时应报错");
+    }
+
+    // ─── plan-worldgen-v4 P5 §8.1#5 — vanilla 模板注入专属矩阵 ───
+
+    /// happy path：注入把全部非 air vanilla BlockKind 注册为 `vanilla:<id>` 模板，
+    /// 数量 = BlockKind::ALL 中非 air 的个数，且空 map 注入后 air 不在结果里。
+    #[test]
+    fn inject_vanilla_block_templates_covers_all_non_air_kinds() {
+        use valence::prelude::BlockKind;
+
+        let expected = BlockKind::ALL
+            .iter()
+            .filter(|k| k.to_str() != "air")
+            .count();
+
+        let mut templates = HashMap::new();
+        let injected = inject_vanilla_block_templates(&mut templates)
+            .expect("空 registry 注入 vanilla 模板应成功");
+
+        assert_eq!(
+            injected, expected,
+            "注入数量应等于非 air vanilla BlockKind 数（{expected}），实为 {injected}"
+        );
+        assert_eq!(
+            templates.len(),
+            expected,
+            "templates map 大小应等于注入数（无重复），实为 {}",
+            templates.len()
+        );
+        // air 跳过：既无 `vanilla:air`，也没把 air 当成可给予物品。
+        assert!(
+            !templates.contains_key("vanilla:air"),
+            "air 必须被跳过，不得注册 vanilla:air 模板"
+        );
+        // 抽样确认常见块在内。
+        assert!(
+            templates.contains_key("vanilla:stone"),
+            "vanilla:stone 应被注入"
+        );
+        assert!(
+            templates.contains_key("vanilla:stone_bricks"),
+            "vanilla:stone_bricks 应被注入"
+        );
+    }
+
+    /// 字段契约：注入的 `vanilla:<id>` 模板形态固定（id/category/max_stack/placeable），
+    /// 与 block_place vanilla: 直通分支与 ItemCategory::Block 默认堆叠上限对齐。
+    #[test]
+    fn vanilla_block_template_field_contract() {
+        let template = vanilla_block_template("stone_bricks");
+        assert_eq!(
+            template.id, "vanilla:stone_bricks",
+            "id 必须是 vanilla:<bare>，实为 {}",
+            template.id
+        );
+        assert_eq!(
+            template.category,
+            ItemCategory::Block,
+            "vanilla 方块模板 category 必须为 Block"
+        );
+        assert_eq!(
+            template.max_stack_count,
+            default_max_stack_count_for_category(ItemCategory::Block),
+            "max_stack_count 必须取 Block 默认堆叠上限（64）"
+        );
+        assert!(
+            template.placeable.is_none(),
+            "placeable 必须为 None——放置走 block_place 的 vanilla: 直通分支，不经 PlaceableBlockKind"
+        );
+    }
+
+    /// 错误分支：注入若与已存在的同名 key（手写 TOML 或重复注入）撞车，必须返回 Err，
+    /// 保护手写映射不被静默覆盖。
+    #[test]
+    fn inject_vanilla_block_templates_errors_on_key_collision() {
+        let mut templates = HashMap::new();
+        // 预置一个会与 vanilla:stone 撞 key 的手写模板。
+        templates.insert("vanilla:stone".to_string(), vanilla_block_template("stone"));
+
+        let err = inject_vanilla_block_templates(&mut templates)
+            .expect_err("撞 key 必须返回 Err，不得静默覆盖手写映射");
+        assert!(
+            err.contains("vanilla:stone") && err.contains("collides"),
+            "撞 key 错误信息应指明冲突的 vanilla:stone，实为: {err}"
+        );
+    }
+
+    /// 集成：生产 load_item_registry() 末尾确实注入了 vanilla 模板，
+    /// 锁住「give-block 链路依赖的 vanilla:<id> 在真 registry 里可查」。
+    #[test]
+    fn load_item_registry_includes_injected_vanilla_templates() {
+        let registry = load_item_registry().expect("真 registry 加载应含 vanilla 模板");
+        assert!(
+            registry.get("vanilla:stone_bricks").is_some(),
+            "真 ItemRegistry 必须含 vanilla:stone_bricks（give-block 链路依赖）"
+        );
+        assert!(
+            registry.get("vanilla:air").is_none(),
+            "真 ItemRegistry 不得含 vanilla:air"
+        );
     }
 }

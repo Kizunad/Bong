@@ -171,6 +171,12 @@ pub struct StructureNbt {
     pub size: [i32; 3],
     pub palette: Vec<PaletteEntry>,
     pub blocks: Vec<StructureBlockEntry>,
+    /// Verbatim root-level `entities` list (armor stands, item frames, …),
+    /// held raw so a `read → write` round-trip never silently drops them.
+    /// The current authored assets all carry an empty list; `/structure save`
+    /// reconstructs structures from `ChunkLayer` blocks only and so always
+    /// emits an empty list (there is no world-entity source on that path).
+    pub entities: Vec<Compound>,
 }
 
 impl StructureNbt {
@@ -286,11 +292,24 @@ fn structure_from_compound(root: &Compound) -> Result<StructureNbt, NbtIoError> 
         None => return Err(NbtIoError::Malformed("missing blocks".into())),
     };
 
+    // Root-level entities are held verbatim so a read → write round-trip never
+    // drops armor stands / item frames. Missing or empty → empty list.
+    let entities = match root.get("entities") {
+        Some(Value::List(List::Compound(entries))) => entries.clone(),
+        Some(Value::List(List::End)) | None => Vec::new(),
+        Some(other) => {
+            return Err(NbtIoError::Malformed(format!(
+                "entities must be TAG_List<Compound>, got {other:?}"
+            )))
+        }
+    };
+
     Ok(StructureNbt {
         data_version,
         size,
         palette,
         blocks,
+        entities,
     })
 }
 
@@ -396,11 +415,14 @@ fn compound_from_structure(structure: &StructureNbt) -> Compound {
         .collect();
     root.insert("blocks", Value::List(List::Compound(blocks)));
 
-    // Empty entities list. The Python builder emits TAG_List<Compound> of length
-    // zero here; valence serializes List::Compound(vec![]) the same way (element
-    // tag = Compound, length = 0), so we keep that variant for parity rather
-    // than List::End.
-    root.insert("entities", Value::List(List::Compound(Vec::new())));
+    // Root-level entities, written back verbatim. The Python builder emits
+    // TAG_List<Compound> of length zero when empty; valence serializes
+    // List::Compound(vec![]) the same way (element tag = Compound, length = 0),
+    // so an empty list keeps byte parity rather than collapsing to List::End.
+    root.insert(
+        "entities",
+        Value::List(List::Compound(structure.entities.clone())),
+    );
 
     root
 }
@@ -617,6 +639,7 @@ mod tests {
                     block_nbt: None,
                 },
             ],
+            entities: vec![],
         };
 
         let dir = std::env::temp_dir();
@@ -728,6 +751,7 @@ mod tests {
                 state: 0,
                 block_nbt: None,
             }],
+            entities: vec![],
         };
         let root = compound_from_structure(&structure);
         let mut raw = Vec::new();
@@ -766,6 +790,7 @@ mod tests {
             size: [0, 0, 0],
             palette: vec![],
             blocks: vec![],
+            entities: vec![],
         };
         let bytes = write_structure_nbt_bytes(&structure).expect("write empty");
         let reparsed = read_structure_nbt_bytes(&bytes).expect("read empty");
@@ -793,12 +818,93 @@ mod tests {
                 state: 0,
                 block_nbt: Some(sign_text),
             }],
+            entities: vec![],
         };
         let bytes = write_structure_nbt_bytes(&structure).expect("write block-entity nbt");
         let reparsed = read_structure_nbt_bytes(&bytes).expect("read block-entity nbt");
         assert_eq!(
             structure, reparsed,
             "per-block nbt compound must round-trip verbatim"
+        );
+    }
+
+    #[test]
+    fn root_level_entities_round_trip_verbatim() {
+        // Armor stands / item frames live in the root `entities` list. The
+        // memory model holds them raw; a read → write → read cycle must keep
+        // them byte-for-byte rather than collapsing the list to empty.
+        let mut armor_stand = Compound::new();
+        armor_stand.insert("pos", Value::List(List::Double(vec![0.5, 64.0, 0.5])));
+        armor_stand.insert("blockPos", Value::List(List::Int(vec![0, 64, 0])));
+        let mut nbt = Compound::new();
+        nbt.insert("id", Value::String("minecraft:armor_stand".into()));
+        nbt.insert("Invisible", Value::Byte(1));
+        armor_stand.insert("nbt", Value::Compound(nbt));
+
+        let structure = StructureNbt {
+            data_version: DATA_VERSION,
+            size: [1, 1, 1],
+            palette: vec![PaletteEntry {
+                name: "minecraft:stone".into(),
+                properties: vec![],
+            }],
+            blocks: vec![StructureBlockEntry {
+                pos: [0, 0, 0],
+                state: 0,
+                block_nbt: None,
+            }],
+            entities: vec![armor_stand.clone()],
+        };
+
+        let bytes = write_structure_nbt_bytes(&structure).expect("write entities");
+        let reparsed = read_structure_nbt_bytes(&bytes).expect("read entities");
+        assert_eq!(
+            structure, reparsed,
+            "root-level entities must round-trip verbatim; \
+             一个 armor_stand 写出后读回应保持 pos/blockPos/nbt 全字段不丢"
+        );
+        assert_eq!(
+            reparsed.entities.len(),
+            1,
+            "expected exactly one round-tripped entity, got {}",
+            reparsed.entities.len()
+        );
+        assert_eq!(
+            reparsed.entities[0], armor_stand,
+            "the single entity compound must equal the source verbatim"
+        );
+    }
+
+    #[test]
+    fn missing_entities_field_reads_as_empty_and_writes_empty_list() {
+        // A structure compound without an `entities` key (older/foreign writers)
+        // must read as an empty list, never error, and re-emit an empty list.
+        let mut root = Compound::new();
+        root.insert("DataVersion", Value::Int(DATA_VERSION));
+        root.insert("size", int_triple_value([0, 0, 0]));
+        root.insert("palette", Value::List(List::Compound(Vec::new())));
+        root.insert("blocks", Value::List(List::Compound(Vec::new())));
+        // intentionally no "entities" key
+
+        let mut raw = Vec::new();
+        to_binary(&root, &mut raw, "").expect("encode no-entities root");
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(&raw).expect("gzip");
+        let bytes = encoder.finish().expect("finish gzip");
+
+        let parsed = read_structure_nbt_bytes(&bytes).expect("read no-entities structure");
+        assert!(
+            parsed.entities.is_empty(),
+            "missing entities key must read as empty list, got {} entries",
+            parsed.entities.len()
+        );
+
+        // Round-trip back out: an empty list serializes as List::Compound(vec![]).
+        let rewritten = write_structure_nbt_bytes(&parsed).expect("rewrite");
+        let reparsed = read_structure_nbt_bytes(&rewritten).expect("reread");
+        assert!(
+            reparsed.entities.is_empty(),
+            "empty entities must survive a write → read cycle as empty"
         );
     }
 
@@ -866,6 +972,7 @@ mod tests {
                 },
             ],
             blocks: vec![],
+            entities: vec![],
         };
         let unresolved = structure.unresolved_palette_blocks();
         assert_eq!(

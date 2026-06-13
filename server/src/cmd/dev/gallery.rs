@@ -19,7 +19,7 @@ use valence::command::handler::CommandResultEvent;
 use valence::command::parsers::CommandArg;
 use valence::command::{AddCommand, Command};
 use valence::message::SendMessage;
-use valence::nbt::{compound, List};
+use valence::nbt::{compound, Compound, List};
 use valence::prelude::{
     bevy_ecs, App, Block, BlockPos, BlockState, ChunkLayer, Client, EventReader, IntoSystemConfigs,
     PropName, PropValue, Query, Res, ResMut, Resource, Update,
@@ -153,15 +153,19 @@ fn collect_nbt(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-/// 把结构 NBT lower 成 `(world BlockPos, BlockState)` 列表（在 `origin` 落位）。
+/// 一个 stamp 落位：世界坐标 + BlockState + 逐块 block entity nbt（透传，告示牌/箱子/旗帜）。
+pub type StampPlacement = (BlockPos, BlockState, Option<Compound>);
+
+/// 把结构 NBT lower 成 [`StampPlacement`] 列表（在 `origin` 落位）。
 ///
 /// 返回 `(placements, unresolved)`：`unresolved` 是 palette 里 `block_from_name` 解析不出的
 /// 块名（caller 应 warn——这些块会被跳过，对应 scout 风险「palette 含未知 block 时结果中该块
-/// 被跳过」）。air 块（state 指向 air palette 项）正常 lower 为 AIR，由 caller 决定是否写。
+/// 被跳过」）。逐块 `block_nbt`（告示牌文本 / 箱子 loot / 旗帜图案等 block entity 数据）原样
+/// 透传给 caller，让 `/gallery` stamp 时一并写进世界——否则一次画廊编辑闭环就会把它清空。
 pub fn structure_placements(
     structure: &StructureNbt,
     origin: [i32; 3],
-) -> (Vec<(BlockPos, BlockState)>, Vec<String>) {
+) -> (Vec<StampPlacement>, Vec<String>) {
     let unresolved = structure.unresolved_palette_blocks();
     let mut placements = Vec::with_capacity(structure.blocks.len());
     for block in &structure.blocks {
@@ -177,21 +181,27 @@ pub fn structure_placements(
             origin[1] + block.pos[1],
             origin[2] + block.pos[2],
         );
-        placements.push((pos, state));
+        placements.push((pos, state, block.block_nbt.clone()));
     }
     (placements, unresolved)
 }
 
-/// 从画廊格包围盒区域读 `BlockState` 重建 `StructureNbt`（`/structure save` 用）。
+/// 从画廊格包围盒区域读 `(BlockState, block_nbt)` 重建 `StructureNbt`（`/structure save` 用）。
 ///
-/// `read_block` 给定世界坐标返回该格的 `BlockState`（None = chunk 未加载，按 air 处理）。
-/// palette 去重保持首次出现顺序；air 块跳过（与 `nbt_builder.py::load_structure` 的
-/// air-filter 语义对齐——写出的 blocks 不含 air，re-read 行为一致）。纯函数，便于单测对拍。
+/// `read_block` 给定世界坐标返回 `Some((state, block_nbt))`，或 `None` 表示**该格 chunk 未加载**。
+///
+/// **未加载即失败**：只要区域内任一格 chunk 未加载（玩家离开画廊 / 视距缩小 / slot 超出已加载
+/// 范围），立即返回 `Err`——绝不把未加载格降级成 air 然后确定性地把原 `.nbt` 写没。caller 应提示
+/// 玩家重新靠近后重试。已加载的 air 格正常跳过（与 `nbt_builder.py::load_structure` 的 air-filter
+/// 语义对齐——写出的 blocks 不含 air，re-read 行为一致）。
+///
+/// 逐块 `block_nbt`（告示牌 / 箱子 / 旗帜等 block entity 数据）原样保留进 `StructureBlockEntry`，
+/// 让 save→write→read 闭环不丢这些数据。palette 去重保持首次出现顺序。纯函数，便于单测对拍。
 pub fn structure_from_region(
     origin: [i32; 3],
     size: [i32; 3],
-    mut read_block: impl FnMut(BlockPos) -> Option<BlockState>,
-) -> StructureNbt {
+    mut read_block: impl FnMut(BlockPos) -> Option<(BlockState, Option<Compound>)>,
+) -> Result<StructureNbt, String> {
     let mut palette: Vec<PaletteEntry> = Vec::new();
     let mut blocks: Vec<StructureBlockEntry> = Vec::new();
 
@@ -199,7 +209,14 @@ pub fn structure_from_region(
         for dy in 0..size[1] {
             for dz in 0..size[2] {
                 let world = BlockPos::new(origin[0] + dx, origin[1] + dy, origin[2] + dz);
-                let state = read_block(world).unwrap_or(BlockState::AIR);
+                let Some((state, block_nbt)) = read_block(world) else {
+                    return Err(format!(
+                        "block at [{},{},{}] is in an unloaded chunk; move closer to the gallery \
+                         slot so the whole bounding box is loaded, then retry /structure save \
+                         (refusing to write the region: unloaded blocks would be lost as air)",
+                        world.x, world.y, world.z
+                    ));
+                };
                 if state.is_air() {
                     continue;
                 }
@@ -214,18 +231,22 @@ pub fn structure_from_region(
                 blocks.push(StructureBlockEntry {
                     pos: [dx, dy, dz],
                     state: palette_idx as i32,
-                    block_nbt: None,
+                    block_nbt,
                 });
             }
         }
     }
 
-    StructureNbt {
+    Ok(StructureNbt {
         data_version: nbt_io::DATA_VERSION,
         size,
         palette,
         blocks,
-    }
+        // `/structure save` 从 ChunkLayer 的方块重建结构，没有世界 entity 来源，恒为空列表。
+        // 根级 entities 的无损 round-trip 由 nbt_io::read/write_structure_nbt 负责（外部带
+        // entity 的 .nbt 经 read→write 不丢），此处保持空与现有 11 个 authored 资产一致。
+        entities: Vec::new(),
+    })
 }
 
 /// dev 命令处理：`/gallery` stamp / `/structure save <name>`。
@@ -299,8 +320,10 @@ fn stamp_gallery(layer: &mut ChunkLayer, gallery: &mut GalleryState) -> String {
             );
             warnings += 1;
         }
-        for (pos, state) in placements {
-            layer.set_block(pos, state);
+        for (pos, state, block_nbt) in placements {
+            // 透传逐块 block entity nbt（告示牌 / 箱子 / 旗帜等），否则 stamp 出来的方块会丢
+            // 掉这些数据，下一次 /structure save 又把空数据写回原 .nbt，一次闭环即清空。
+            layer.set_block(pos, Block::new(state, block_nbt));
         }
         // 名牌挂在该格 origin 正上方一格（结构顶 + 2）。
         let sign_pos = BlockPos::new(origin[0], origin[1] + structure.size[1] + 2, origin[2]);
@@ -328,9 +351,14 @@ fn save_structure(layer: &ChunkLayer, gallery: &GalleryState, name: &str) -> Str
     let Some(slot) = gallery.find(name) else {
         return format!("§c[dev] structure save: no gallery slot `{name}` (run /gallery first)");
     };
-    let structure = structure_from_region(slot.origin, slot.size, |pos| {
-        layer.block(pos).map(|b| b.state)
-    });
+    // layer.block(pos) 对未加载 chunk 返回 None → structure_from_region 据此 Err，避免把
+    // 未加载格写成 air；已加载的 air 格返回 Some((AIR, _)) 正常跳过。block entity nbt 一并读出。
+    let structure = match structure_from_region(slot.origin, slot.size, |pos| {
+        layer.block(pos).map(|b| (b.state, b.nbt.cloned()))
+    }) {
+        Ok(structure) => structure,
+        Err(err) => return format!("§c[dev] structure save `{name}` aborted: {err}"),
+    };
     match nbt_io::write_structure_nbt(&structure, &slot.nbt_path) {
         Ok(()) => format!(
             "§a[dev] structure saved `{name}` ({} blocks) → {}",
@@ -451,16 +479,52 @@ mod tests {
                     block_nbt: None,
                 },
             ],
+            entities: vec![],
         };
         let (placements, unresolved) = structure_placements(&structure, [100, 64, -50]);
         assert!(unresolved.is_empty(), "stone palette must resolve");
         assert_eq!(
             placements,
             vec![
-                (BlockPos::new(100, 64, -50), BlockState::STONE),
-                (BlockPos::new(101, 64, -50), BlockState::STONE),
+                (BlockPos::new(100, 64, -50), BlockState::STONE, None),
+                (BlockPos::new(101, 64, -50), BlockState::STONE, None),
             ],
-            "blocks must be offset by origin and keep palette state"
+            "blocks must be offset by origin and keep palette state (no block entity nbt here)"
+        );
+    }
+
+    /// 逐块 block entity nbt（告示牌文本等）必须从结构透传到 placements，
+    /// 否则 /gallery stamp 时丢 block entity → /structure save 写回空数据清空原 .nbt。
+    #[test]
+    fn structure_placements_preserve_per_block_entity_nbt() {
+        let mut sign_text = Compound::new();
+        sign_text.insert("Text1", valence::nbt::Value::String("\"残碑\"".into()));
+        let structure = StructureNbt {
+            data_version: nbt_io::DATA_VERSION,
+            size: [1, 1, 1],
+            palette: vec![PaletteEntry {
+                name: "minecraft:oak_sign".into(),
+                properties: vec![("rotation".into(), "0".into())],
+            }],
+            blocks: vec![StructureBlockEntry {
+                pos: [0, 0, 0],
+                state: 0,
+                block_nbt: Some(sign_text.clone()),
+            }],
+            entities: vec![],
+        };
+        let (placements, unresolved) = structure_placements(&structure, [5, 64, 5]);
+        assert!(unresolved.is_empty(), "oak_sign palette must resolve");
+        assert_eq!(placements.len(), 1, "single sign block expected");
+        assert_eq!(
+            placements[0].0,
+            BlockPos::new(5, 64, 5),
+            "sign must land at origin"
+        );
+        assert_eq!(
+            placements[0].2,
+            Some(sign_text),
+            "per-block sign nbt must be carried through to the placement so /gallery stamp keeps it"
         );
     }
 
@@ -491,6 +555,7 @@ mod tests {
                     block_nbt: None,
                 },
             ],
+            entities: vec![],
         };
         let (placements, unresolved) = structure_placements(&structure, [0, 0, 0]);
         assert_eq!(
@@ -523,7 +588,11 @@ mod tests {
         world.insert(BlockPos::new(11, 64, 21), BlockState::STONE);
 
         let size = [2, 1, 2];
-        let structure = structure_from_region(origin, size, |pos| world.get(&pos).copied());
+        // 整个区域已加载：缺失格 = 已加载的 air（Some((AIR, None))），不是未加载（None）。
+        let structure = structure_from_region(origin, size, |pos| {
+            Some((world.get(&pos).copied().unwrap_or(BlockState::AIR), None))
+        })
+        .expect("fully-loaded region must save without an unloaded-chunk error");
 
         // air 格被跳过：3 个非 air block。
         assert_eq!(
@@ -547,7 +616,7 @@ mod tests {
         assert!(unresolved.is_empty(), "saved palette 必须全可解析");
         let stairs = placements
             .iter()
-            .find(|(pos, _)| *pos == BlockPos::new(11, 64, 20))
+            .find(|(pos, _, _)| *pos == BlockPos::new(11, 64, 20))
             .expect("stairs 位置应在 placements 中");
         assert_eq!(
             stairs.1.get(PropName::Facing),
@@ -556,10 +625,80 @@ mod tests {
         );
     }
 
+    /// CR critical：未加载 chunk 绝不能被序列化成 air 覆盖原 .nbt。
+    /// region 内任一格的 read_block 返回 None（chunk 未加载）→ 整个 save 必须 Err，
+    /// 不产出残缺结构。
+    #[test]
+    fn unloaded_chunk_aborts_save_instead_of_writing_air() {
+        let origin = [0, 64, 0];
+        let size = [2, 1, 1];
+        // (0,64,0) 已加载 stone；(1,64,0) chunk 未加载 → None。
+        let result = structure_from_region(origin, size, |pos| {
+            if pos == BlockPos::new(0, 64, 0) {
+                Some((BlockState::STONE, None))
+            } else {
+                None
+            }
+        });
+        let err = result.expect_err(
+            "a region with an unloaded block must abort the save, not silently write air",
+        );
+        assert!(
+            err.contains("unloaded chunk"),
+            "abort message should explain the unloaded-chunk cause for the player; got: {err}"
+        );
+    }
+
+    /// CR major + 任务 #8：region save→write→read 闭环必须保住逐块 block entity nbt。
+    /// 世界里一个 oak_sign 带告示牌文本，save 出来的结构应携带该 nbt，写盘再读回仍在。
+    #[test]
+    fn region_save_round_trips_block_level_nbt() {
+        let origin = [0, 64, 0];
+        let size = [1, 1, 1];
+
+        let mut sign_text = Compound::new();
+        sign_text.insert(
+            "Text1",
+            valence::nbt::Value::String("{\"text\":\"丹宗残碑\"}".into()),
+        );
+        let sign_text_for_assert = sign_text.clone();
+
+        let structure = structure_from_region(origin, size, move |pos| {
+            assert_eq!(pos, BlockPos::new(0, 64, 0), "only the single slot is read");
+            Some((
+                BlockState::OAK_SIGN.set(PropName::Rotation, PropValue::_0),
+                Some(sign_text.clone()),
+            ))
+        })
+        .expect("loaded single-sign region must save");
+
+        assert_eq!(structure.blocks.len(), 1, "one sign block expected");
+        assert_eq!(
+            structure.blocks[0].block_nbt.as_ref(),
+            Some(&sign_text_for_assert),
+            "save must capture the sign's block entity nbt from the world"
+        );
+
+        // 写盘 → 读回：block_nbt 必须存活（不被清空）。
+        let bytes = nbt_io::write_structure_nbt_bytes(&structure).expect("write sign structure");
+        let reparsed = nbt_io::read_structure_nbt_bytes(&bytes).expect("read sign structure");
+        assert_eq!(
+            structure, reparsed,
+            "region save → write → read 必须保住 block-level nbt（告示牌文本不丢）"
+        );
+        assert_eq!(
+            reparsed.blocks[0].block_nbt.as_ref(),
+            Some(&sign_text_for_assert),
+            "round-tripped sign must still carry its Text1 block entity nbt"
+        );
+    }
+
     /// 空区域（全 air）save 出 0 block 结构，仍可 round-trip。
     #[test]
     fn empty_region_saves_zero_block_structure() {
-        let structure = structure_from_region([0, 64, 0], [3, 3, 3], |_| Some(BlockState::AIR));
+        let structure =
+            structure_from_region([0, 64, 0], [3, 3, 3], |_| Some((BlockState::AIR, None)))
+                .expect("all-air loaded region must save fine");
         assert!(
             structure.blocks.is_empty() && structure.palette.is_empty(),
             "全 air 区域应产出 0 block / 0 palette 结构"
@@ -587,7 +726,10 @@ mod tests {
         );
         // (2,64,0) air → skipped.
         let size = [3, 1, 1];
-        let structure = structure_from_region(origin, size, |pos| world.get(&pos).copied());
+        let structure = structure_from_region(origin, size, |pos| {
+            Some((world.get(&pos).copied().unwrap_or(BlockState::AIR), None))
+        })
+        .expect("fully-loaded region must save without an unloaded-chunk error");
 
         let dir = std::env::temp_dir();
         let path = dir.join(format!("bong_gallery_save_{}.nbt", std::process::id()));
