@@ -112,11 +112,24 @@ fn main() {
         std::process::exit(code);
     }
 
-    if std::env::var_os("BONG_FULL_APP_STARTUP_SMOKE").is_some() {
+    if full_app_startup_smoke_enabled() {
         run_full_app_startup_smoke();
     } else {
         run_server();
     }
+}
+
+fn full_app_startup_smoke_enabled() -> bool {
+    std::env::var("BONG_FULL_APP_STARTUP_SMOKE")
+        .ok()
+        .is_some_and(|value| is_truthy_env_value(&value))
+}
+
+fn is_truthy_env_value(value: &str) -> bool {
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "1" | "true" | "yes"
+    )
 }
 
 fn run_server() {
@@ -447,7 +460,9 @@ mod cli_tests {
     use std::ffi::OsString;
     use std::sync::{Mutex, MutexGuard};
 
-    use super::{cli_dev_mode_enabled, run_cli};
+    use super::{
+        cli_dev_mode_enabled, full_app_startup_smoke_enabled, is_truthy_env_value, run_cli,
+    };
 
     static CLI_ENV_MUTEX: Mutex<()> = Mutex::new(());
 
@@ -582,5 +597,34 @@ mod cli_tests {
     fn cli_dev_mode_enabled_accepts_common_truthy_values() {
         let _guard = ScopedEnvVar::set("BONG_DEV_MODE", Some("true"));
         assert!(cli_dev_mode_enabled());
+    }
+
+    #[test]
+    fn full_app_startup_smoke_enabled_accepts_explicit_truthy_values() {
+        for value in ["1", "true", "TRUE", " yes "] {
+            assert!(
+                is_truthy_env_value(value),
+                "BONG_FULL_APP_STARTUP_SMOKE={value:?} should enable startup smoke"
+            );
+        }
+    }
+
+    #[test]
+    fn full_app_startup_smoke_enabled_rejects_falsey_values() {
+        for value in ["", "0", "false", "no", "off"] {
+            assert!(
+                !is_truthy_env_value(value),
+                "BONG_FULL_APP_STARTUP_SMOKE={value:?} should not enable startup smoke"
+            );
+        }
+    }
+
+    #[test]
+    fn full_app_startup_smoke_env_requires_truthy_value() {
+        let _guard = ScopedEnvVar::set("BONG_FULL_APP_STARTUP_SMOKE", Some("0"));
+        assert!(
+            !full_app_startup_smoke_enabled(),
+            "BONG_FULL_APP_STARTUP_SMOKE=0 should not route production startup into smoke mode"
+        );
     }
 }
