@@ -166,6 +166,10 @@ pub enum ClientRequestV1 {
     BlockPickerGive {
         v: u8,
         block_id: String,
+        /// 1..=64（一组上限）。serde 不强制 TypeBox 的 minimum/maximum，恶意 client 可发
+        /// count=0 或 count>64 绕过 schema，故在反序列化处显式守门（第一道纵深防御；handler
+        /// 仍复查一道，因为内部 event 可绕过 wire 直接构造）。
+        #[serde(deserialize_with = "deserialize_block_picker_count")]
         count: u32,
     },
     /// plan-coffin-v1 — 右键凡物棺材任一半，进入卧棺状态。
@@ -689,6 +693,28 @@ where
         )));
     }
     Ok(quantity)
+}
+
+/// 单次 give-block 给予数量上限（Minecraft 一组堆叠上限）。与 TypeBox
+/// `BlockPickerActionV1.count` 的 `maximum: 64` 对齐。
+pub const MAX_BLOCK_PICKER_COUNT_V1: u32 = 64;
+
+/// `BlockPickerGive.count` 反序列化守门：拒绝 0（下界）与 >64（上界）。
+/// serde 不强制 TypeBox 的 minimum/maximum，所以这一道是 wire 输入的纵深防御第一关。
+fn deserialize_block_picker_count<'de, D>(deserializer: D) -> Result<u32, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let count = u32::deserialize(deserializer)?;
+    if count == 0 {
+        return Err(serde::de::Error::custom("block picker count must be >= 1"));
+    }
+    if count > MAX_BLOCK_PICKER_COUNT_V1 {
+        return Err(serde::de::Error::custom(format!(
+            "block picker count must be <= {MAX_BLOCK_PICKER_COUNT_V1}"
+        )));
+    }
+    Ok(count)
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -2896,9 +2922,9 @@ mod tests {
         }
     }
 
-    /// 反样本：count=0 在 TS 端被 Type.Integer({minimum:1}) 拒绝；Rust 端 u32 能解出 0，
-    /// 故 wire-level deny 由 TS schema 守门——这里 pin Rust 至少能解出值（不 panic），
-    /// 真正的 0/65 边界拒绝锁在 agent schema.test.ts。此测试确保 Rust 变体形状不漂移。
+    /// 反样本：含未知字段 surprise 在 TS 端被 additionalProperties:false 拒绝，
+    /// Rust 端 deny_unknown_fields 也必须拒，双端一致。count 边界（0/1/64/65）由
+    /// block_picker_give_count_bounds_enforced_by_serde 单独锁。
     #[test]
     fn block_picker_give_extra_field_rejected_by_deny_unknown_fields() {
         // ClientRequestV1 带 deny_unknown_fields：TS 反样本（含 surprise 多字段）
@@ -2936,6 +2962,49 @@ mod tests {
         assert!(
             encoded.contains("\"type\":\"block_picker_give\""),
             "wire tag 必须是 block_picker_give（snake_case），实为 {encoded}"
+        );
+    }
+
+    /// count 边界：serde 守门拒绝 0（下界）/ >64（上界），接受 1（最小合法）/ 64（最大合法）。
+    /// serde 不强制 TypeBox 的 minimum/maximum，所以这一道是 wire 输入的纵深防御第一关，
+    /// 与 TypeBox `Type.Integer({minimum:1, maximum:64})` 对齐。0/65 的 sample 对拍另在
+    /// agent schema.test.ts。block_id 空串的拒绝由 TS minLength 守门（serde String 不强制），
+    /// 故此处只锁 count 数值边界。
+    #[test]
+    fn block_picker_give_count_bounds_enforced_by_serde() {
+        // 合法边界：1（下界）与 64（上界）必须解析成功且值不漂移。
+        for ok_count in [1u32, 64u32] {
+            let json = format!(
+                r#"{{"type":"block_picker_give","v":1,"block_id":"stone","count":{ok_count}}}"#
+            );
+            let req: ClientRequestV1 = serde_json::from_str(&json).unwrap_or_else(|e| {
+                panic!("count={ok_count} 是合法边界（1..=64），serde 必须接受，实为错误 {e}")
+            });
+            assert!(
+                matches!(req, ClientRequestV1::BlockPickerGive { count, .. } if count == ok_count),
+                "count={ok_count} 解析后应保值，实为 {req:?}"
+            );
+        }
+
+        // 下界越界：count=0 必须被 serde 拒绝（与现有 invalid-count-zero TS sample 同语义）。
+        let zero_sample = include_str!(
+            "../../../agent/packages/schema/samples/\
+             client-request.block-picker-give.invalid-count-zero.sample.json"
+        );
+        let zero_result: Result<ClientRequestV1, _> = serde_json::from_str(zero_sample);
+        assert!(
+            zero_result.is_err(),
+            "count=0 必须被 serde 守门拒绝（下界 <1），与 TS minimum:1 对齐，实为 {zero_result:?}"
+        );
+
+        // 上界越界：count=65（一组 +1）必须被 serde 拒绝。
+        let over_json = r#"{"type":"block_picker_give","v":1,"block_id":"stone","count":65}"#;
+        let over_result: Result<ClientRequestV1, _> = serde_json::from_str(over_json);
+        let err = over_result
+            .expect_err("count=65 必须被 serde 守门拒绝（上界 >64），与 TS maximum:64 对齐");
+        assert!(
+            err.to_string().contains("block picker count must be <= 64"),
+            "count=65 的拒绝信息应说明上界 64，实为 {err}"
         );
     }
 }

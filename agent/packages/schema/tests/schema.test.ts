@@ -1681,12 +1681,40 @@ describe("sample files pass schema validation", () => {
     "client-request.forge-station-place.sample.json",
     "client-request.block-place.sample.json",
     "client-request.block-picker-give.sample.json",
+    "client-request.block-picker-give.count-1.sample.json",
+    "client-request.block-picker-give.count-64.sample.json",
     "client-request.spirit-niche-repair.sample.json",
   ]) {
     it(sample, () => {
       const data = loadSample(sample);
       const result = validate(ClientRequestV1, data);
       expect(result.ok, result.errors.join("; ")).toBe(true);
+    });
+  }
+
+  // plan-worldgen-v4 P5 §8.1#5 — BlockPickerGive count 边界 off-by-one 专属 pin。
+  // Type.Integer({minimum:1, maximum:64})：1/64 接受，0/65 拒绝。锁住一组堆叠上限契约，
+  // 任何把 minimum/maximum 改漂的回归立即撞红（对齐 Rust serde deserialize_block_picker_count）。
+  for (const [count, shouldAccept] of [
+    [0, false], // 下界 -1：一组堆叠的非法零
+    [1, true], //  下界：最小合法
+    [64, true], // 上界：一组堆叠上限
+    [65, false], // 上界 +1：越界
+  ] as const) {
+    it(`block_picker_give count=${count} ${shouldAccept ? "accepted" : "rejected"}`, () => {
+      const data = {
+        v: 1,
+        type: "block_picker_give",
+        block_id: "stone_bricks",
+        count,
+      };
+      const result = validate(ClientRequestV1, data);
+      expect(
+        result.ok,
+        shouldAccept
+          ? `count=${count} 应被接受（1..=64 合法），实际错误: ${result.errors.join("; ")}`
+          : `count=${count} 应被拒绝（越出 1..=64 一组堆叠上限），实际却通过`,
+      ).toBe(shouldAccept);
     });
   }
 
@@ -2211,6 +2239,7 @@ describe("negative sample files fail schema validation", () => {
     "client-request.block-place.invalid-target-face.sample.json",
     "client-request.block-picker-give.invalid-extra-field.sample.json",
     "client-request.block-picker-give.invalid-count-zero.sample.json",
+    "client-request.block-picker-give.invalid-count-65.sample.json",
     "client-request.block-picker-give.invalid-empty-block-id.sample.json",
     "client-request.spirit-niche-repair.invalid-extra-field.sample.json",
   ]) {

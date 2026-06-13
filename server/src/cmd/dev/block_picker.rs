@@ -32,7 +32,8 @@ pub struct BlockPickerGiveIntent {
     pub player: valence::prelude::Entity,
     /// 不含 namespace 的 vanilla 方块短名（如 `stone_bricks`）。
     pub block_id: String,
-    /// 给予数量（1..=64，已由 schema 守门，handler 仍防御 0）。
+    /// 给予数量（1..=64，已由 schema serde 守门；handler 仍完整复查 0 与 >64，因为本
+    /// 内部 event 可绕过 wire 直接构造）。
     pub count: u32,
 }
 
@@ -67,9 +68,17 @@ pub fn handle_block_picker_give(
             continue;
         }
 
-        // ② count 防御（schema 已锁 1..=64，handler 再防御一道 0）。
+        // ② count 防御（schema serde 已锁 1..=64，但 BlockPickerGiveIntent 是内部 event，
+        //    可绕过 wire 直接构造，故 handler 完整复查上下界——纵深防御）。
         if event.count == 0 {
             client.send_chat_message("§c[dev] block picker rejected: count must be >= 1");
+            continue;
+        }
+        if event.count > crate::schema::client_request::MAX_BLOCK_PICKER_COUNT_V1 {
+            client.send_chat_message(format!(
+                "§c[dev] block picker rejected: count must be <= {} (one stack)",
+                crate::schema::client_request::MAX_BLOCK_PICKER_COUNT_V1
+            ));
             continue;
         }
 
@@ -241,6 +250,44 @@ mod tests {
         assert!(
             inv.containers[0].items.is_empty(),
             "count=0 必须被拒绝，背包应为空"
+        );
+    }
+
+    /// 边界：count=64（上界，一组）被受理，真进背包 64 个。
+    #[test]
+    fn max_count_64_is_accepted() {
+        let mut app = setup_app();
+        let player = spawn_player(&mut app, GameMode::Creative, inventory(4, 9));
+
+        send(&mut app, player, "stone_bricks", 64);
+        run_update(&mut app);
+
+        assert_eq!(
+            stack_count_of(&app, player, "vanilla:stone_bricks"),
+            64,
+            "count=64 是合法上界（一组），应真进背包 64 个 stone_bricks"
+        );
+    }
+
+    /// 边界 + 错误分支：count=65（上界 +1）被 handler 防御性拒绝，背包无变动、revision 不变。
+    /// 锁住「内部 event 绕过 schema serde 直接构造越界 count」时 handler 仍守门。
+    #[test]
+    fn over_max_count_65_is_rejected_without_mutation() {
+        let mut app = setup_app();
+        let player = spawn_player(&mut app, GameMode::Creative, inventory(4, 9));
+
+        send(&mut app, player, "stone_bricks", 65);
+        run_update(&mut app);
+
+        let inv = app.world().get::<PlayerInventory>(player).unwrap();
+        assert!(
+            inv.containers[0].items.is_empty(),
+            "count=65 超一组上限，handler 必须拒绝，背包应为空"
+        );
+        assert_eq!(
+            inv.revision,
+            InventoryRevision(0),
+            "被拒绝的越界请求不得改动 inventory revision"
         );
     }
 
