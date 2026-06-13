@@ -292,7 +292,9 @@ mod tests {
     /// 防止未来代码意外地把 halfstep_rechallenge 通过旧路径发送（进而在 production 引起 proto panic）。
     fn assert_no_halfstep_on_server_data_channel(helper: &mut MockClientHelper) {
         use crate::network::agent_bridge::SERVER_DATA_CHANNEL;
-        use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
+        use crate::schema::proto_gen::bong;
+        use prost::Message;
+
         for frame in helper.collect_received().0 {
             let Ok(packet) = frame.decode::<CustomPayloadS2c>() else {
                 continue;
@@ -300,17 +302,20 @@ mod tests {
             if packet.channel.as_str() != SERVER_DATA_CHANNEL {
                 continue;
             }
-            if let Ok(envelope) = serde_json::from_slice::<ServerDataV1>(packet.data.0 .0) {
-                if matches!(
-                    envelope.payload,
-                    ServerDataPayloadV1::HalfStepRechallenge(_)
-                ) {
+            let envelope =
+                bong::ServerDataEnvelope::decode(packet.data.0 .0).unwrap_or_else(|err| {
                     panic!(
-                        "HalfStepRechallenge 不应经由 bong:server_data channel 发送（production 会触发 proto unreachable! panic）；\
-                         应使用专属 bong:halfstep_rechallenge channel"
-                    );
-                }
-            }
+                        "bong:server_data channel 必须是 production proto envelope，不能依赖 test-only JSON decode；\
+                         若这里出现 HalfStepRechallenge JSON，说明它被错误路由到旧 server_data channel。\
+                         decode error={err}; bytes={:?}",
+                        packet.data.0 .0
+                    )
+                });
+            assert!(
+                envelope.payload.is_some(),
+                "bong:server_data proto envelope 不应为空；HalfStepRechallenge 必须走专属 \
+                 bong:halfstep_rechallenge channel"
+            );
         }
     }
 
