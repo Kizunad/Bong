@@ -1,0 +1,12 @@
+{
+  "id": "dead_drop_ward_break",
+  "layers": [
+    { "sound": "minecraft:block.amethyst_block.break", "volume": 1.0, "pitch": 0.8, "delay_ticks": 0 },
+    { "sound": "minecraft:entity.generic.explode", "volume": 0.7, "pitch": 1.2, "delay_ticks": 4 },
+    { "sound": "minecraft:block.fire.ambient", "volume": 0.5, "pitch": 0.6, "delay_ticks": 6 }
+  ],
+  "priority": 70,
+  "attenuation": "world_3d",
+  "category": "BLOCKS",
+  "bus": "ENVIRONMENT"
+}

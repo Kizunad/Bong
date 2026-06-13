@@ -36,6 +36,7 @@ pub const SOCIAL_PACT_LINK: &str = "bong:social_pact_link";
 pub const SOCIAL_FEUD_MARK: &str = "bong:social_feud_mark";
 pub const POISON_MIST: &str = "bong:poison_mist";
 pub const MOVEMENT_DASH: &str = "bong:movement_dash";
+pub const DEAD_DROP_WARD_BREAK: &str = "bong:dead_drop_ward_break";
 
 pub fn block_center(pos: [i32; 3]) -> DVec3 {
     DVec3::new(
