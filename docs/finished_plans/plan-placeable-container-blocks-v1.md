@@ -163,6 +163,14 @@
 
 > 升 active 时同步更新 `reminder.md:17`：[[plan-container-filter-and-completion-v1]] 12 容器验收表「落地阶段」列标 `trade_crate`→本 plan-P0、`herb_crate_placed`→本 plan-P0、`dead_drop_box`→本 plan-P0/P3。
 
+## §8.1 决议（pre-P0，2026-06-10）
+
+- **#1 死信箱形态**：按 §8 #1 定案为世界可放置完整形态，不做随身版；实现证据为 `server/assets/items/workbench_materials.toml:226` 的 `dead_drop_box` + `:229` 的 `placeable = "dead_drop"`，并由 P0/P3 的 `ContainerBlockKind::DeadDrop` / `DeadDropWard` 路径消费。
+- **#2 草药箱双形态**：按 §8 #2 推荐默认新建 `herb_crate_placed` 放置版，保留 `herb_crate` 随身版给 nested-pack；实现证据为 `server/assets/items/workbench_materials.toml:294` 的 `herb_crate_placed` + `:297` 的 `placeable = "storage_crate"`，P0 归档证据记录 `StorageCrate { is_herb: true }`。
+- **#3 raw_id / 尺寸分配**：按 §P2 约束使用纯 entity + bbmodel，`TRADE_CRATE/HERB_CRATE_PLACED/DEAD_DROP_BOX` 顺延占 raw_id 166/167/168；实现证据为 `client/src/main/java/com/bong/client/entity/BongEntityModelKind.java:253` / `:264` / `:275` 与 `server/src/world/container_block.rs:552` / `:581` / `:610` 的 marker raw id 测试，容器 grid 由 `server/src/world/container_block.rs:156` 写入 `ExternalContainer`。
+- **#4 死信箱破阵 MVP**：按 §8 #4 收口为 owner 破坏走普通掉落、非 owner 破坏化灰 + 毒气，不做完整破解小游戏；实现证据为 `server/src/world/container_block.rs:287` 的 owner fallback 判定、`:300` 的 `trigger_dead_drop_ward` 与 `server/src/world/container_block.rs:56` / `:147` 的 `DeadDropWard` 激活态。
+- **#5 内容操作协议**：按 §8 #5 继续复用 `ExternalContainerMove` / `ExternalContainerClose`，新增通用 open 仅负责世界容器打开入口；实现证据为 `server/src/schema/client_request.rs:504` 的 `ContainerOpen`、`:516` 的 `ExternalContainerMove` 与 `server/src/world/container_open.rs:30` 的 `ContainerOpenRequest`。
+
 ## §10 实施工作流
 
 升 active 时按 docs/CLAUDE.md §6 执行。本 plan scope = 4 PR，多 PR 序列化（不拆多 plan，§6.3）。
