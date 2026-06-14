@@ -139,6 +139,30 @@ mod tests {
     }
 
     #[test]
+    fn p1_quota_fill_ratio_handles_zero_occupied_slots() {
+        let fill_ratio = quota_fill_ratio_for_limit(0, DEFAULT_VOID_QUOTA_TARGET_SLOTS_AT_FULL_QI)
+            .expect("quota_limit > 0 时应返回 Some(fill_ratio)，即使 occupied_slots=0");
+        assert_eq!(
+            fill_ratio, 0.0,
+            "occupied_slots=0 应产生 0% 填充率；got {fill_ratio}"
+        );
+    }
+
+    #[test]
+    fn p1_quota_fill_ratio_handles_over_quota_state() {
+        let fill_ratio = quota_fill_ratio_for_limit(3, 2)
+            .expect("quota_limit > 0 时应返回 Some(fill_ratio)，超额占用也应显式暴露");
+        assert!(
+            fill_ratio > 1.0,
+            "occupied_slots > quota_limit 应产生 >100% 填充率；got {fill_ratio}"
+        );
+        assert_eq!(
+            fill_ratio, 1.5,
+            "3 occupied / 2 limit 应等于 150%；got {fill_ratio}"
+        );
+    }
+
+    #[test]
     fn p1_quota_fill_target_band_rejects_underfilled_and_full_states() {
         assert!(
             !quota_fill_is_in_target_band(QUOTA_FILL_TARGET_MIN / 2.0),
@@ -151,6 +175,30 @@ mod tests {
         assert!(
             quota_fill_is_in_target_band((QUOTA_FILL_TARGET_MIN + QUOTA_FILL_TARGET_MAX) / 2.0),
             "目标区间中点应通过，避免边界判断写反"
+        );
+    }
+
+    #[test]
+    fn p1_quota_fill_target_band_includes_exact_boundaries() {
+        assert!(
+            quota_fill_is_in_target_band(QUOTA_FILL_TARGET_MIN),
+            "精确等于 QUOTA_FILL_TARGET_MIN={QUOTA_FILL_TARGET_MIN} 应被接受"
+        );
+        assert!(
+            quota_fill_is_in_target_band(QUOTA_FILL_TARGET_MAX),
+            "精确等于 QUOTA_FILL_TARGET_MAX={QUOTA_FILL_TARGET_MAX} 应被接受"
+        );
+    }
+
+    #[test]
+    fn p1_quota_fill_target_band_rejects_nan_and_infinity() {
+        assert!(
+            !quota_fill_is_in_target_band(f32::NAN),
+            "NaN 必须被 is_finite() 检查拒绝"
+        );
+        assert!(
+            !quota_fill_is_in_target_band(f32::INFINITY),
+            "Infinity 必须被 is_finite() 检查拒绝"
         );
     }
 
