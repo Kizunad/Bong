@@ -11,6 +11,7 @@
 | P0 | 拖拽绑定可放置方块（统一 quick_slot ↔ SkillBarStore 绑定路径） | ⬜ |
 | P1 | 用后同步：实例消耗/数量扣减 → SkillBar 图标清除或刷新 | ⬜ |
 | P2 | 上下文菜单左右键都可点（"绑定到 N" 等不再只认右键） | ⬜ |
+| P3 | vanilla:<block> 物品图标渲染真 vanilla 物品（不再落火焰占位图） | ⬜ |
 
 ## 接入面 checklist（防孤岛——升 active 前据 docs/CLAUDE.md §二 核实）
 
@@ -40,6 +41,14 @@
 - **现状 bug**：`InspectScreen.java:1740 if (button == 1)` —— "绑定到 N" / 丹药 / 武器等上下文菜单的**动作点击只认右键**（button==1），用户左键点无反应。菜单本身右键/长按打开（`:1818/:1832`），选动作还要右键，反直觉。
 - **目标**：菜单动作点击**左右键皆可**（`skillBarContextMenu` / `pillContextMenu` / `weaponContextMenu` 三处一致）。
 - **可核验交付物**：菜单 action 命中逻辑从 `if (button == 1)` 放宽为左右键都处理（保留右键/长按打开）；测试「button==0 点 action 命中 `triggerSkillBarMenuAction`」。
+
+## P3 — vanilla:<block> 物品图标渲染真 vanilla 物品
+
+- **现状 bug**：`vanilla:acacia_log` 等 BlockPicker 方块在 SkillBar / 背包槽里显示成**火焰熔岩"未知物品"占位图**，不是真的 acacia_log 木头材质。根因：`InspectScreen.java:3124 drawItemTextureRaw` 用 `GridSlotComponent.textureIdForItem(item)` 取一张**扁平 Bong 自定义贴图**（`ctx.drawTexture`）画图标；`vanilla:` 物品在 `ItemIconRegistry` 无对应 Bong 贴图 → 落 fallback 占位图。SkillBar 绑定也用 `:2509 ItemIconRegistry.itemTexturePath(item.itemId())` 同样落空。
+- **关键**：`BlockVanillaIconMap.createVanillaBlockStack(blockShortId)` **已能给真 vanilla `ItemStack`**（BlockPicker 面板就靠它显示真图标，§review-fixes #559 我已让 `createStackFor` 也认 vanilla:）—— 只是 SkillBar/背包槽的图标渲染没走这条。
+- **目标**：`vanilla:<short>` 物品的图标 = **用 MC 原生物品渲染**（`DrawContext.drawItem(createVanillaBlockStack(short), x, y)`）而非扁平贴图，与 BlockPicker 面板一致显示真方块图标。
+- **可核验交付物**：`textureIdForItem` / `drawItemTextureRaw` / SkillBar `iconTexture` 对 `vanilla:` 前缀分支走真 ItemStack 渲染；测试 / 目检「acacia_log 槽显示木头材质而非占位图」。
+- **待决**：是否所有 dev 画廊 vanilla 方块都走原生渲染（含无 BlockItem 的特殊块降级占位）；与 §review-fixes #559 的 `createStackFor`/`createVanillaBlockStack` 复用对齐。
 
 ## 审计来源
 
