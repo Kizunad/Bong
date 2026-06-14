@@ -5,6 +5,7 @@ import com.bong.client.botany.BotanySpiritQualityVisuals;
 import com.bong.client.inventory.ItemIconRegistry;
 import com.bong.client.inventory.RarityBorderRenderer;
 import com.bong.client.inventory.model.InventoryItem;
+import com.bong.client.loop.HomeSequence;
 import com.bong.client.inventory.AncientRelicGlowRenderer;
 import com.mojang.blaze3d.systems.RenderSystem;
 import io.wispforest.owo.ui.base.BaseComponent;
@@ -139,6 +140,11 @@ public class GridSlotComponent extends BaseComponent {
             int tx = dx + dw - tr.getWidth(txt) - 2;
             int ty = dy + dh - tr.fontHeight - 1;
             context.drawTextWithShadow(tr, Text.literal(txt), tx, ty, 0xFFFFFFFF);
+        }
+        if (HomeSequence.newBadgeActive(item, System.currentTimeMillis())) {
+            var tr = MinecraftClient.getInstance().textRenderer;
+            context.fill(dx + 1, dy + 1, dx + Math.min(dw - 1, 21), dy + 9, 0xD0704A18);
+            context.drawTextWithShadow(tr, Text.literal("NEW"), dx + 3, dy + 1, 0xFFFFE08A);
         }
 
         matrices.pop();

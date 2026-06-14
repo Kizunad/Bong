@@ -6,6 +6,7 @@ import com.bong.client.botany.HarvestSessionViewModel;
 import com.bong.client.identity.IdentityPanelEntry;
 import com.bong.client.identity.IdentityPanelState;
 import com.bong.client.identity.IdentityPanelStateStore;
+import com.bong.client.loop.HomeSequence;
 import com.bong.client.npc.NpcInteractionLogStore;
 import com.bong.client.npc.NpcMoodStore;
 import com.bong.client.inventory.model.InventoryModel;
@@ -45,6 +46,7 @@ public class BongHudOrchestratorTest {
         HudImmersionMode.resetForTests();
         ForgeProgressHudPlanner.resetForTests();
         ExtractDecisionStateStore.resetForTests();
+        HomeSequence.resetForTests();
     }
 
     @Test
@@ -340,6 +342,53 @@ public class BongHudOrchestratorTest {
         );
 
         assertEquals(7_000L, ExtractDecisionStateStore.snapshot().runStartedAtMs());
+    }
+
+    @Test
+    void homeSequenceSuppressesExtractDecisionAndClearsRunClockAtSpiritNiche() {
+        PlayerStateStore.replace(PlayerStateViewModel.create(
+            "Induce",
+            "offline:Azure",
+            25.0,
+            100.0,
+            0.0,
+            0.4,
+            PlayerStateViewModel.PowerBreakdown.empty(),
+            PlayerStateViewModel.SocialSnapshot.empty(),
+            "spawn",
+            "荒坡",
+            0.35
+        ));
+        ExtractDecisionStateStore.startRun(1_000L);
+        HudRuntimeContext runtime = new HudRuntimeContext(
+            0.0,
+            10.0,
+            64.0,
+            10.0,
+            false,
+            List.of(new HudRuntimeContext.CompassMarker(
+                HudRuntimeContext.CompassMarker.Kind.SPIRIT_NICHE,
+                12.0,
+                13.0,
+                1.0
+            ))
+        );
+
+        List<HudRenderCommand> commands = BongHudOrchestrator.buildCommands(
+            BongHudStateSnapshot.empty(),
+            CombatHudSnapshot.empty(),
+            2_000L,
+            FIXED_WIDTH,
+            220,
+            320,
+            180,
+            null,
+            runtime
+        );
+
+        assertTrue(commands.stream().anyMatch(command -> command.layer() == HudRenderLayer.HOME_SEQUENCE));
+        assertTrue(commands.stream().noneMatch(command -> command.layer() == HudRenderLayer.EXTRACT_DECISION));
+        assertEquals(0L, ExtractDecisionStateStore.snapshot().runStartedAtMs());
     }
 
     @Test

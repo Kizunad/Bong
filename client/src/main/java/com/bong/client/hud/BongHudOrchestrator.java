@@ -5,6 +5,7 @@ import com.bong.client.combat.store.FalseSkinHudStateStore;
 import com.bong.client.combat.store.TribulationStateStore;
 import com.bong.client.combat.store.VortexStateStore;
 import com.bong.client.identity.IdentityHudCornerLabel;
+import com.bong.client.loop.HomeSequence;
 import com.bong.client.npc.NpcInteractionLogHudPlanner;
 import com.bong.client.npc.NpcInteractionLogStore;
 import com.bong.client.state.PlayerStateStore;
@@ -249,25 +250,31 @@ public final class BongHudOrchestrator {
             screenWidth,
             screenHeight
         ));
-        if (!playerState.isEmpty()) {
+        com.bong.client.inventory.model.InventoryModel inventory =
+            com.bong.client.inventory.state.InventoryStateStore.snapshot();
+        HomeSequence.State homeState = HomeSequence.update(runtime, inventory, nowMillis);
+        if (homeState.insideHome()) {
+            ExtractDecisionStateStore.endRun();
+        } else if (!playerState.isEmpty()) {
             ExtractDecisionStateStore.markPlayerInWorld(nowMillis);
+            commands.addAll(ExtractDecisionHudPlanner.buildCommands(
+                playerState,
+                inventory,
+                com.bong.client.state.SeasonStateStore.snapshot(),
+                ExtractDecisionStateStore.snapshot(),
+                widthMeasurer,
+                screenWidth,
+                screenHeight,
+                nowMillis
+            ));
         }
-        commands.addAll(ExtractDecisionHudPlanner.buildCommands(
-            playerState,
-            com.bong.client.inventory.state.InventoryStateStore.snapshot(),
-            com.bong.client.state.SeasonStateStore.snapshot(),
-            ExtractDecisionStateStore.snapshot(),
-            widthMeasurer,
-            screenWidth,
-            screenHeight,
-            nowMillis
-        ));
+        commands.addAll(HomeSequence.buildCommands(homeState, screenWidth, screenHeight, nowMillis));
 
         if (BongClientFeatures.ENABLE_COMBAT_HUD) {
             commands.addAll(MiniBodyHudPlanner.buildCommands(
                 combatSnapshot.combatHudState(),
                 combatSnapshot.physicalBody(),
-                com.bong.client.inventory.state.InventoryStateStore.snapshot().equipped(),
+                inventory.equipped(),
                 nowMillis,
                 screenWidth,
                 screenHeight,
