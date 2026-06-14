@@ -42,17 +42,36 @@ public final class BlockVanillaIconMap {
     );
     private static final ConcurrentHashMap<String, ItemStack> STACK_CACHE = new ConcurrentHashMap<>();
 
+    /** Mirrors server {@code inventory::VANILLA_TEMPLATE_PREFIX}. */
+    public static final String VANILLA_TEMPLATE_PREFIX = "vanilla:";
+
     private BlockVanillaIconMap() {
     }
 
     public static Optional<ItemStack> createStackFor(String templateId) {
+        if (templateId == null) return Optional.empty();
         Entry entry = HOST_ITEMS.get(templateId);
-        if (entry == null) return Optional.empty();
-        return Optional.of(STACK_CACHE.computeIfAbsent(templateId, ignored -> new ItemStack(entry.itemSupplier().get())));
+        if (entry != null) {
+            return Optional.of(STACK_CACHE.computeIfAbsent(templateId, ignored -> new ItemStack(entry.itemSupplier().get())));
+        }
+        // BlockPicker `vanilla:<short>` templates render with the matching vanilla item.
+        if (templateId.startsWith(VANILLA_TEMPLATE_PREFIX)) {
+            return createVanillaBlockStack(templateId.substring(VANILLA_TEMPLATE_PREFIX.length()));
+        }
+        return Optional.empty();
     }
 
     public static boolean isKnownBlockItem(String templateId) {
-        return HOST_ITEMS.containsKey(templateId);
+        if (templateId == null) return false;
+        if (HOST_ITEMS.containsKey(templateId)) return true;
+        // BlockPicker `vanilla:<short>` templates are placeable too: the server
+        // resolves them via BlockKind::from_str in block_item_to_state(). The
+        // client gate must mirror that, else the place intent is never sent and
+        // right-clicking a picked vanilla block silently does nothing.
+        if (templateId.startsWith(VANILLA_TEMPLATE_PREFIX)) {
+            return createVanillaBlockStack(templateId.substring(VANILLA_TEMPLATE_PREFIX.length())).isPresent();
+        }
+        return false;
     }
 
     /**
