@@ -49,7 +49,22 @@ public final class CombatHudBootstrap {
         com.bong.client.network.ClientRequestSender.sendUseQuickSlot(slot);
     }
 
-    private static void onJiemaiPressed() {
+    /**
+     * interaction-intent-cleanup-v1 P3 — 截脉窗口守卫。
+     *
+     * <p>截脉是「反应技」：只在 server 推送的防御窗口（{@link DefenseWindowStore} active）
+     * 内有效。此前无守卫——任意时刻按 V 都会 {@code open(...)} 本地伪造一个截脉环 + 发出
+     * 无用的 {@code jiemai} C2S（server 醒灵境门控只回 debug 日志，玩家只看到 HUD 幻像）。
+     * 加守卫后：窗口未开 → 直接返回，既不发包也不开环；窗口开启 → 维持原行为（刷新本地窗口
+     * 计时供 HUD 渲染 + 发包）。
+     *
+     * <p>包级可见以便单测直接驱动（同 {@link #resetOnDisconnect()}）。
+     */
+    static void onJiemaiPressed() {
+        if (!DefenseWindowStore.snapshot().active()) {
+            // 窗口未开：无截脉机会，吞掉按键——不发无用 C2S、不点亮假截脉环。
+            return;
+        }
         long now = System.currentTimeMillis();
         DefenseWindowStore.open(ZHENMAI_PREP_WINDOW_MS, now);
         com.bong.client.network.ClientRequestSender.sendJiemai();
