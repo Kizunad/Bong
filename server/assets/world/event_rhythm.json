@@ -1,0 +1,194 @@
+{
+  "version": 1,
+  "rules": [
+    {
+      "event": "pseudo_vein",
+      "display_name": "伪灵脉",
+      "trigger_conditions": [
+        "player_density_peak_above_threshold",
+        "zone_qi_consumed_too_fast"
+      ],
+      "preferred_phase": "return_trip",
+      "insertion_point": "玩家刚完成一趟 run 正在回家路上，前方升起伪灵脉，形成绕路诱惑。",
+      "emotional_effects": [
+        "temptation",
+        "suspicion"
+      ],
+      "default_timing": {
+        "lead_ticks": 2400,
+        "min_duration_ticks": 36000,
+        "max_duration_ticks": 72000,
+        "frequency_multiplier": 1.0
+      },
+      "phase_timing": {
+        "return_trip": {
+          "lead_ticks": 1200,
+          "min_duration_ticks": 36000,
+          "max_duration_ticks": 72000,
+          "frequency_multiplier": 1.25
+        },
+        "deep_gathering": {
+          "lead_ticks": 3600,
+          "min_duration_ticks": 36000,
+          "max_duration_ticks": 72000,
+          "frequency_multiplier": 0.75
+        }
+      },
+      "narration_samples": [
+        "前方地气忽然亮了一线，像有人把饵扔在回家的路上。",
+        "伪灵脉升起得太巧，巧得像天道也会钓鱼。"
+      ]
+    },
+    {
+      "event": "beast_tide",
+      "display_name": "兽潮",
+      "trigger_conditions": [
+        "large_zone_qi_nearly_zero",
+        "tide_turning_season"
+      ],
+      "preferred_phase": "deep_gathering",
+      "insertion_point": "玩家在馈赠区深处采集时，地面微震，鼠群尖叫并反向狂奔。",
+      "emotional_effects": [
+        "panic",
+        "opportunity"
+      ],
+      "default_timing": {
+        "lead_ticks": 3000,
+        "min_duration_ticks": 12000,
+        "max_duration_ticks": 24000,
+        "frequency_multiplier": 1.0
+      },
+      "phase_timing": {
+        "deep_gathering": {
+          "lead_ticks": 900,
+          "min_duration_ticks": 12000,
+          "max_duration_ticks": 24000,
+          "frequency_multiplier": 1.35
+        },
+        "home_organizing": {
+          "lead_ticks": 4200,
+          "min_duration_ticks": 12000,
+          "max_duration_ticks": 24000,
+          "frequency_multiplier": 0.65
+        }
+      },
+      "narration_samples": [
+        "脚下灰土先抖了一下，随后鼠群贴地往你来路逃。",
+        "兽潮还没到，便宜也还没被踩碎。"
+      ]
+    },
+    {
+      "event": "tide_sky_omen",
+      "display_name": "汐转期天象",
+      "trigger_conditions": [
+        "season_boundary_entered"
+      ],
+      "preferred_phase": "home_organizing",
+      "insertion_point": "玩家在灵龛整理时，天空颜色渐变，NPC 气泡提醒天地又要变了。",
+      "emotional_effects": [
+        "unease",
+        "caution"
+      ],
+      "default_timing": {
+        "lead_ticks": 600,
+        "min_duration_ticks": 6000,
+        "max_duration_ticks": 12000,
+        "frequency_multiplier": 1.0
+      },
+      "phase_timing": {
+        "home_organizing": {
+          "lead_ticks": 200,
+          "min_duration_ticks": 6000,
+          "max_duration_ticks": 12000,
+          "frequency_multiplier": 1.5
+        },
+        "safe_shelter": {
+          "lead_ticks": 400,
+          "min_duration_ticks": 6000,
+          "max_duration_ticks": 12000,
+          "frequency_multiplier": 1.25
+        }
+      },
+      "narration_samples": [
+        "龛石上的影子往反方向爬，天色像旧铜水一样慢慢翻面。",
+        "散修压低声音：天地又要变了，今天先别抢远路。"
+      ]
+    },
+    {
+      "event": "realm_collapse",
+      "display_name": "域崩",
+      "trigger_conditions": [
+        "zone_qi_zero",
+        "no_cultivator_staying"
+      ],
+      "preferred_phase": "safe_shelter",
+      "insertion_point": "玩家在安全区时，远处轰鸣、天空变暗，全服 narration 宣告某地化为死域。",
+      "emotional_effects": [
+        "shock",
+        "loss"
+      ],
+      "default_timing": {
+        "lead_ticks": 6000,
+        "min_duration_ticks": 600,
+        "max_duration_ticks": 1200,
+        "frequency_multiplier": 1.0
+      },
+      "phase_timing": {
+        "safe_shelter": {
+          "lead_ticks": 3000,
+          "min_duration_ticks": 600,
+          "max_duration_ticks": 1200,
+          "frequency_multiplier": 1.2
+        },
+        "deep_gathering": {
+          "lead_ticks": 7200,
+          "min_duration_ticks": 600,
+          "max_duration_ticks": 1200,
+          "frequency_multiplier": 0.6
+        }
+      },
+      "narration_samples": [
+        "远处响了一声，像山脊在睡梦里断开。",
+        "有人低声说：那边以前也有人立过龛。"
+      ]
+    },
+    {
+      "event": "tribulation_broadcast",
+      "display_name": "天劫广播",
+      "trigger_conditions": [
+        "breakthrough_tribulation_entered",
+        "scorch_record_visible"
+      ],
+      "preferred_phase": "outbound_search",
+      "insertion_point": "玩家规划下一趟路线时收到远处渡劫消息，形成围观或绕开的选择。",
+      "emotional_effects": [
+        "curiosity",
+        "spectator_impulse"
+      ],
+      "default_timing": {
+        "lead_ticks": 400,
+        "min_duration_ticks": 1200,
+        "max_duration_ticks": 2400,
+        "frequency_multiplier": 1.0
+      },
+      "phase_timing": {
+        "outbound_search": {
+          "lead_ticks": 200,
+          "min_duration_ticks": 1200,
+          "max_duration_ticks": 2400,
+          "frequency_multiplier": 1.4
+        },
+        "home_organizing": {
+          "lead_ticks": 600,
+          "min_duration_ticks": 1200,
+          "max_duration_ticks": 2400,
+          "frequency_multiplier": 1.1
+        }
+      },
+      "narration_samples": [
+        "青云残峰西侧有雷落下去，焦味被风吹到很远。",
+        "有人在渡劫。去看热闹的人，未必都能回来。"
+      ]
+    }
+  ]
+}

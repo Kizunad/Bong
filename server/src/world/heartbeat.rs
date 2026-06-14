@@ -18,13 +18,18 @@ use crate::schema::common::{CommandType, GameEventType};
 use crate::schema::vfx_event::VfxEventPayloadV1;
 use crate::schema::world_state::GameEvent;
 use crate::world::dimension::CurrentDimension;
+use crate::world::event_rhythm::{
+    default_event_rhythm, event_trigger_timing_by_player_loop_phase, infer_player_loop_phase,
+    PlayerLoopPhase, PlayerLoopPhaseEvidence, RhythmEventKind,
+};
 use crate::world::events::{
     ActiveEventsResource, ZoneCollapsedEvent, EVENT_BEAST_TIDE, EVENT_KARMA_BACKLASH,
     EVENT_REALM_COLLAPSE,
 };
 use crate::world::karma::{KarmaWeightStore, QiDensityHeatmap};
+use crate::world::risk_heatmap::QI_HIGH_DANGER_THRESHOLD;
 use crate::world::season::{query_season, Season, WorldSeasonState};
-use crate::world::zone::{Zone, ZoneRegistry};
+use crate::world::zone::{Zone, ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 use crate::worldgen::pseudo_vein::{
     PseudoVeinRuntimeState, TICKS_PER_HOUR, TICKS_PER_MINUTE, TICKS_PER_SECOND,
 };
@@ -37,11 +42,13 @@ pub const HEARTBEAT_EVAL_INTERVAL_TICKS: u64 = 10 * TICKS_PER_SECOND;
 pub const EVENT_PSEUDO_VEIN: &str = "pseudo_vein";
 pub const VFX_WORLD_OMEN_PSEUDO_VEIN: &str = "bong:world_omen_pseudo_vein";
 pub const VFX_WORLD_OMEN_BEAST_TIDE: &str = "bong:world_omen_beast_tide";
+pub const VFX_WORLD_OMEN_TIDE_SKY: &str = "bong:world_omen_tide_sky";
 pub const VFX_WORLD_OMEN_REALM_COLLAPSE: &str = "bong:world_omen_realm_collapse";
 pub const VFX_WORLD_OMEN_KARMA_BACKLASH: &str = "bong:world_omen_karma_backlash";
 
 const PSEUDO_VEIN_OMEN_LEAD_TICKS: u64 = 60 * TICKS_PER_SECOND;
 const BEAST_TIDE_OMEN_LEAD_TICKS: u64 = 120 * TICKS_PER_SECOND;
+const TIDE_SKY_OMEN_LEAD_TICKS: u64 = 30 * TICKS_PER_SECOND;
 const REALM_COLLAPSE_OMEN_LEAD_TICKS: u64 = 300 * TICKS_PER_SECOND;
 const KARMA_BACKLASH_OMEN_LEAD_TICKS: u64 = 10 * TICKS_PER_SECOND;
 const OMEN_VISUAL_DURATION_TICKS: u16 = 200;
@@ -49,6 +56,8 @@ const BEAST_TIDE_LOW_QI_THRESHOLD: f64 = 0.15;
 const BEAST_TIDE_LOW_QI_REQUIRED_TICKS: u64 = 5 * TICKS_PER_MINUTE;
 const REALM_COLLAPSE_DEAD_QI_REQUIRED_TICKS: u64 = 10 * TICKS_PER_MINUTE;
 const REALM_COLLAPSE_EVACUATION_TICKS: u64 = 30 * TICKS_PER_SECOND;
+const DEEP_GATHERING_DANGER_LEVEL: u8 = 3;
+const RETURN_ROUTE_DANGER_LEVEL_MAX: u8 = 1;
 const PSEUDO_VEIN_ACTIVE_CAP: usize = 3;
 const PSEUDO_VEIN_MIN_DISTANCE_BLOCKS: f64 = 500.0;
 const KARMA_BASE_ROLL_PROBABILITY: f64 = 0.003;
@@ -58,6 +67,7 @@ const RECENT_BREAKTHROUGH_WINDOW_TICKS: u64 = 10 * TICKS_PER_MINUTE;
 pub enum HeartbeatEventKind {
     PseudoVein,
     BeastTide,
+    TideSkyOmen,
     RealmCollapse,
     KarmaBacklash,
 }
@@ -67,6 +77,7 @@ impl HeartbeatEventKind {
         match value {
             "pseudo_vein" => Some(Self::PseudoVein),
             "beast_tide" => Some(Self::BeastTide),
+            "tide_sky_omen" => Some(Self::TideSkyOmen),
             "realm_collapse" => Some(Self::RealmCollapse),
             "karma_backlash" => Some(Self::KarmaBacklash),
             _ => None,
@@ -78,6 +89,7 @@ impl HeartbeatEventKind {
 pub enum OmenKind {
     PseudoVeinForming,
     BeastTideApproaching,
+    TideSkyTurning,
     RealmCollapseImminent,
     KarmaBacklashTarget,
 }
@@ -87,6 +99,7 @@ impl OmenKind {
         match self {
             Self::PseudoVeinForming => VFX_WORLD_OMEN_PSEUDO_VEIN,
             Self::BeastTideApproaching => VFX_WORLD_OMEN_BEAST_TIDE,
+            Self::TideSkyTurning => VFX_WORLD_OMEN_TIDE_SKY,
             Self::RealmCollapseImminent => VFX_WORLD_OMEN_REALM_COLLAPSE,
             Self::KarmaBacklashTarget => VFX_WORLD_OMEN_KARMA_BACKLASH,
         }
@@ -96,6 +109,7 @@ impl OmenKind {
         match self {
             Self::PseudoVeinForming => "#66D8C8",
             Self::BeastTideApproaching => "#B8864A",
+            Self::TideSkyTurning => "#9E8C6A",
             Self::RealmCollapseImminent => "#7A1E24",
             Self::KarmaBacklashTarget => "#A01830",
         }
@@ -152,7 +166,7 @@ impl EventCadence {
 
     pub fn effective_interval_ticks(&self, override_multiplier: f64) -> u64 {
         let multiplier =
-            (self.seasonal_multiplier * self.pressure_multiplier * override_multiplier.max(1.0))
+            (self.seasonal_multiplier * self.pressure_multiplier * override_multiplier.max(0.0))
                 .max(0.01);
         ((self.base_interval_ticks as f64) / multiplier)
             .round()
@@ -275,13 +289,16 @@ pub struct WorldHeartbeat {
     pub eval_interval_ticks: u64,
     pub pseudo_vein_cadence: EventCadence,
     pub beast_tide_cadence: EventCadence,
+    pub tide_sky_omen_cadence: EventCadence,
     pub realm_collapse_cadence: EventCadence,
     pub karma_backlash_cadence: EventCadence,
+    pub loop_phase: PlayerLoopPhase,
     pub world_pressure: WorldPressure,
     active_pseudo_veins: HashMap<String, PseudoVeinRuntimeState>,
     pending_omens: Vec<WorldEventOmen>,
     low_qi_ticks_by_zone: HashMap<String, u64>,
     dead_qi_ticks_by_zone: HashMap<String, u64>,
+    last_tide_sky_omen_boundary_tick: Option<u64>,
     recent_breakthrough_ticks: Vec<u64>,
     overrides: Vec<HeartbeatOverride>,
     forced_events: Vec<ForcedHeartbeatEvent>,
@@ -300,13 +317,16 @@ impl Default for WorldHeartbeat {
             eval_interval_ticks: HEARTBEAT_EVAL_INTERVAL_TICKS,
             pseudo_vein_cadence: EventCadence::new(15 * TICKS_PER_MINUTE),
             beast_tide_cadence: EventCadence::new(30 * TICKS_PER_MINUTE),
+            tide_sky_omen_cadence: EventCadence::new(TICKS_PER_HOUR),
             realm_collapse_cadence: EventCadence::new(TICKS_PER_HOUR),
             karma_backlash_cadence: EventCadence::new(20 * TICKS_PER_MINUTE),
+            loop_phase: PlayerLoopPhase::SafeShelter,
             world_pressure: WorldPressure::default(),
             active_pseudo_veins: HashMap::new(),
             pending_omens: Vec::new(),
             low_qi_ticks_by_zone: HashMap::new(),
             dead_qi_ticks_by_zone: HashMap::new(),
+            last_tide_sky_omen_boundary_tick: None,
             recent_breakthrough_ticks: Vec::new(),
             overrides: Vec::new(),
             forced_events: Vec::new(),
@@ -578,6 +598,9 @@ pub fn heartbeat_tick(
         .as_deref()
         .map(|state| state.current.season)
         .unwrap_or_else(|| query_season("", current_tick).season);
+    let season_boundary_tick = season_state
+        .as_deref()
+        .map(|state| state.last_phase_change_tick);
     let modifiers = season_event_modifiers(season);
     apply_season_modifiers(&mut heartbeat, modifiers);
 
@@ -613,12 +636,26 @@ pub fn heartbeat_tick(
 
     heartbeat.world_pressure =
         compute_world_pressure(&mut heartbeat, zone_registry, &player_samples, current_tick);
+    let loop_phase = heartbeat_loop_phase(zone_registry, &player_samples);
+    heartbeat.loop_phase = loop_phase;
+    let rhythm_context = HeartbeatRhythmContext {
+        modifiers,
+        loop_phase,
+        current_tick,
+    };
 
+    maybe_queue_tide_sky_omen(
+        &mut heartbeat,
+        zone_registry,
+        season,
+        season_boundary_tick,
+        rhythm_context,
+        vfx_events.as_deref_mut(),
+    );
     maybe_queue_pseudo_vein(
         &mut heartbeat,
         zone_registry,
-        modifiers,
-        current_tick,
+        rhythm_context,
         vfx_events.as_deref_mut(),
     );
     maybe_queue_beast_tide(
@@ -626,8 +663,7 @@ pub fn heartbeat_tick(
         zone_registry,
         npc_registry.as_deref(),
         &active_events,
-        modifiers,
-        current_tick,
+        rhythm_context,
         vfx_events.as_deref_mut(),
     );
     maybe_queue_realm_collapse(
@@ -635,16 +671,14 @@ pub fn heartbeat_tick(
         zone_registry,
         &player_samples,
         &active_events,
-        modifiers,
-        current_tick,
+        rhythm_context,
         vfx_events.as_deref_mut(),
     );
     maybe_queue_karma_backlash(
         &mut heartbeat,
         zone_registry,
         &player_samples,
-        modifiers,
-        current_tick,
+        rhythm_context,
         vfx_events.as_deref_mut(),
     );
 }
@@ -798,6 +832,13 @@ struct PlayerSample {
     high_realm: bool,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct HeartbeatRhythmContext {
+    modifiers: SeasonEventModifiers,
+    loop_phase: PlayerLoopPhase,
+    current_tick: u64,
+}
+
 fn player_samples(
     zone_registry: &ZoneRegistry,
     players: &Query<PlayerSampleQueryItem, With<Client>>,
@@ -872,6 +913,73 @@ fn compute_world_pressure(
             .filter(|sample| sample.high_realm)
             .count() as u32,
         recent_breakthrough_count: heartbeat.recent_breakthrough_ticks.len() as u32,
+    }
+}
+
+fn heartbeat_loop_phase(
+    zone_registry: &ZoneRegistry,
+    player_samples: &[PlayerSample],
+) -> PlayerLoopPhase {
+    let mut evidence = PlayerLoopPhaseEvidence {
+        player_count: player_samples.len(),
+        ..Default::default()
+    };
+
+    for sample in player_samples {
+        let Some(zone_name) = sample.zone_name.as_deref() else {
+            continue;
+        };
+        let Some(zone) = zone_registry.find_zone_by_name(zone_name) else {
+            continue;
+        };
+        if zone.name == DEFAULT_SPAWN_ZONE_NAME {
+            evidence.safe_zone_players = evidence.safe_zone_players.saturating_add(1);
+        }
+        if zone.danger_level >= DEEP_GATHERING_DANGER_LEVEL
+            || zone.spirit_qi >= QI_HIGH_DANGER_THRESHOLD
+        {
+            evidence.deep_zone_players = evidence.deep_zone_players.saturating_add(1);
+        }
+        if zone.name != DEFAULT_SPAWN_ZONE_NAME
+            && zone.danger_level <= RETURN_ROUTE_DANGER_LEVEL_MAX
+            && zone.spirit_qi <= BEAST_TIDE_LOW_QI_THRESHOLD
+        {
+            evidence.return_route_players = evidence.return_route_players.saturating_add(1);
+        }
+    }
+
+    infer_player_loop_phase(evidence)
+}
+
+fn rhythm_omen_lead_ticks(
+    kind: HeartbeatEventKind,
+    loop_phase: PlayerLoopPhase,
+    fallback: u64,
+) -> u64 {
+    rhythm_event_kind_for_heartbeat(kind)
+        .and_then(|event| {
+            event_trigger_timing_by_player_loop_phase(default_event_rhythm(), event, loop_phase)
+        })
+        .map(|decision| decision.timing.lead_ticks)
+        .unwrap_or(fallback)
+}
+
+fn rhythm_cadence_multiplier(kind: HeartbeatEventKind, loop_phase: PlayerLoopPhase) -> f64 {
+    rhythm_event_kind_for_heartbeat(kind)
+        .and_then(|event| {
+            event_trigger_timing_by_player_loop_phase(default_event_rhythm(), event, loop_phase)
+        })
+        .map(|decision| decision.timing.frequency_multiplier)
+        .unwrap_or(1.0)
+}
+
+fn rhythm_event_kind_for_heartbeat(kind: HeartbeatEventKind) -> Option<RhythmEventKind> {
+    match kind {
+        HeartbeatEventKind::PseudoVein => Some(RhythmEventKind::PseudoVein),
+        HeartbeatEventKind::BeastTide => Some(RhythmEventKind::BeastTide),
+        HeartbeatEventKind::TideSkyOmen => Some(RhythmEventKind::TideSkyOmen),
+        HeartbeatEventKind::RealmCollapse => Some(RhythmEventKind::RealmCollapse),
+        HeartbeatEventKind::KarmaBacklash => None,
     }
 }
 
@@ -1028,6 +1136,21 @@ fn fire_due_omens(
                     });
                 }
             }
+            OmenKind::TideSkyTurning => {
+                active_events.record_recent_event(GameEvent {
+                    event_type: GameEventType::EventTriggered,
+                    tick: current_tick,
+                    player: None,
+                    target: Some("tide_sky_omen".to_string()),
+                    zone: Some(omen.zone_name.clone()),
+                    details: Some(HashMap::from([
+                        ("season".to_string(), json!(season.as_wire_str())),
+                        ("intensity".to_string(), json!(omen.intensity)),
+                    ])),
+                });
+                heartbeat.tide_sky_omen_cadence.mark_fired(current_tick);
+                heartbeat.note_event(HeartbeatEventKind::TideSkyOmen);
+            }
             OmenKind::RealmCollapseImminent => {
                 let command = spawn_event_command(
                     omen.zone_name.as_str(),
@@ -1078,35 +1201,115 @@ fn fire_due_omens(
     heartbeat.pending_omens = pending;
 }
 
+fn maybe_queue_tide_sky_omen(
+    heartbeat: &mut WorldHeartbeat,
+    zone_registry: &ZoneRegistry,
+    season: Season,
+    season_boundary_tick: Option<u64>,
+    context: HeartbeatRhythmContext,
+    vfx_events: Option<&mut Events<VfxEventRequest>>,
+) {
+    if !season.is_xizhuan() {
+        return;
+    }
+    let Some(boundary_tick) = season_boundary_tick else {
+        return;
+    };
+    if context.current_tick < boundary_tick
+        || heartbeat.last_tide_sky_omen_boundary_tick == Some(boundary_tick)
+    {
+        return;
+    }
+    let Some(anchor) = tide_sky_omen_anchor(zone_registry) else {
+        return;
+    };
+    if heartbeat.is_suppressed(
+        HeartbeatEventKind::TideSkyOmen,
+        anchor.name.as_str(),
+        context.current_tick,
+    ) {
+        return;
+    }
+    let override_multiplier = heartbeat.override_multiplier(
+        HeartbeatEventKind::TideSkyOmen,
+        anchor.name.as_str(),
+        context.current_tick,
+    );
+    if override_multiplier <= 0.0
+        || !heartbeat.tide_sky_omen_cadence.ready(
+            context.current_tick,
+            override_multiplier
+                * rhythm_cadence_multiplier(HeartbeatEventKind::TideSkyOmen, context.loop_phase),
+        )
+    {
+        return;
+    }
+    let intensity = heartbeat
+        .override_intensity(
+            HeartbeatEventKind::TideSkyOmen,
+            anchor.name.as_str(),
+            context.current_tick,
+        )
+        .unwrap_or_else(|| {
+            if context.loop_phase == PlayerLoopPhase::HomeOrganizing {
+                0.8
+            } else {
+                0.55
+            }
+        });
+    if queue_omen(
+        heartbeat,
+        OmenKind::TideSkyTurning,
+        anchor.name,
+        None,
+        anchor.center,
+        intensity,
+        rhythm_omen_lead_ticks(
+            HeartbeatEventKind::TideSkyOmen,
+            context.loop_phase,
+            TIDE_SKY_OMEN_LEAD_TICKS,
+        ),
+        context.current_tick,
+        vfx_events,
+    ) {
+        heartbeat
+            .tide_sky_omen_cadence
+            .mark_fired(context.current_tick);
+        heartbeat.last_tide_sky_omen_boundary_tick = Some(boundary_tick);
+    }
+}
+
 fn maybe_queue_pseudo_vein(
     heartbeat: &mut WorldHeartbeat,
     zone_registry: &ZoneRegistry,
-    modifiers: SeasonEventModifiers,
-    current_tick: u64,
+    context: HeartbeatRhythmContext,
     vfx_events: Option<&mut Events<VfxEventRequest>>,
 ) {
     if heartbeat.active_pseudo_veins.len() >= PSEUDO_VEIN_ACTIVE_CAP {
         return;
     }
-    let Some(anchor) = select_pseudo_vein_anchor(zone_registry, heartbeat, current_tick) else {
+    let Some(anchor) = select_pseudo_vein_anchor(zone_registry, heartbeat, context.current_tick)
+    else {
         return;
     };
     if heartbeat.is_suppressed(
         HeartbeatEventKind::PseudoVein,
         anchor.name.as_str(),
-        current_tick,
+        context.current_tick,
     ) {
         return;
     }
     let override_multiplier = heartbeat.override_multiplier(
         HeartbeatEventKind::PseudoVein,
         anchor.name.as_str(),
-        current_tick,
+        context.current_tick,
     );
     if override_multiplier <= 0.0
-        || !heartbeat
-            .pseudo_vein_cadence
-            .ready(current_tick, override_multiplier)
+        || !heartbeat.pseudo_vein_cadence.ready(
+            context.current_tick,
+            override_multiplier
+                * rhythm_cadence_multiplier(HeartbeatEventKind::PseudoVein, context.loop_phase),
+        )
     {
         return;
     }
@@ -1114,9 +1317,15 @@ fn maybe_queue_pseudo_vein(
         .override_intensity(
             HeartbeatEventKind::PseudoVein,
             anchor.name.as_str(),
-            current_tick,
+            context.current_tick,
         )
-        .unwrap_or_else(|| pseudo_vein_strength(modifiers, current_tick, anchor.name.as_str()));
+        .unwrap_or_else(|| {
+            pseudo_vein_strength(
+                context.modifiers,
+                context.current_tick,
+                anchor.name.as_str(),
+            )
+        });
     if queue_omen(
         heartbeat,
         OmenKind::PseudoVeinForming,
@@ -1124,11 +1333,17 @@ fn maybe_queue_pseudo_vein(
         None,
         anchor.center,
         strength,
-        PSEUDO_VEIN_OMEN_LEAD_TICKS,
-        current_tick,
+        rhythm_omen_lead_ticks(
+            HeartbeatEventKind::PseudoVein,
+            context.loop_phase,
+            PSEUDO_VEIN_OMEN_LEAD_TICKS,
+        ),
+        context.current_tick,
         vfx_events,
     ) {
-        heartbeat.pseudo_vein_cadence.mark_fired(current_tick);
+        heartbeat
+            .pseudo_vein_cadence
+            .mark_fired(context.current_tick);
     }
 }
 
@@ -1137,8 +1352,7 @@ fn maybe_queue_beast_tide(
     zone_registry: &ZoneRegistry,
     npc_registry: Option<&NpcRegistry>,
     active_events: &ActiveEventsResource,
-    modifiers: SeasonEventModifiers,
-    current_tick: u64,
+    context: HeartbeatRhythmContext,
     mut vfx_events: Option<&mut Events<VfxEventRequest>>,
 ) {
     let mut tracked_zones = Vec::new();
@@ -1175,7 +1389,7 @@ fn maybe_queue_beast_tide(
             || heartbeat.is_suppressed(
                 HeartbeatEventKind::BeastTide,
                 zone.name.as_str(),
-                current_tick,
+                context.current_tick,
             )
         {
             continue;
@@ -1183,12 +1397,14 @@ fn maybe_queue_beast_tide(
         let override_multiplier = heartbeat.override_multiplier(
             HeartbeatEventKind::BeastTide,
             zone.name.as_str(),
-            current_tick,
+            context.current_tick,
         );
         if override_multiplier <= 0.0
-            || !heartbeat
-                .beast_tide_cadence
-                .ready(current_tick, override_multiplier)
+            || !heartbeat.beast_tide_cadence.ready(
+                context.current_tick,
+                override_multiplier
+                    * rhythm_cadence_multiplier(HeartbeatEventKind::BeastTide, context.loop_phase),
+            )
         {
             continue;
         }
@@ -1196,10 +1412,10 @@ fn maybe_queue_beast_tide(
             .override_intensity(
                 HeartbeatEventKind::BeastTide,
                 zone.name.as_str(),
-                current_tick,
+                context.current_tick,
             )
             .unwrap_or_else(|| {
-                (0.25 + npc_count as f64 * 0.04).min(1.0) * modifiers.beast_tide_scale
+                (0.25 + npc_count as f64 * 0.04).min(1.0) * context.modifiers.beast_tide_scale
             });
         if queue_omen(
             heartbeat,
@@ -1208,11 +1424,17 @@ fn maybe_queue_beast_tide(
             None,
             zone.center(),
             intensity.clamp(0.0, 1.0),
-            BEAST_TIDE_OMEN_LEAD_TICKS,
-            current_tick,
+            rhythm_omen_lead_ticks(
+                HeartbeatEventKind::BeastTide,
+                context.loop_phase,
+                BEAST_TIDE_OMEN_LEAD_TICKS,
+            ),
+            context.current_tick,
             vfx_events.as_deref_mut(),
         ) {
-            heartbeat.beast_tide_cadence.mark_fired(current_tick);
+            heartbeat
+                .beast_tide_cadence
+                .mark_fired(context.current_tick);
         }
     }
 }
@@ -1222,8 +1444,7 @@ fn maybe_queue_realm_collapse(
     zone_registry: &ZoneRegistry,
     player_samples: &[PlayerSample],
     active_events: &ActiveEventsResource,
-    _modifiers: SeasonEventModifiers,
-    current_tick: u64,
+    context: HeartbeatRhythmContext,
     mut vfx_events: Option<&mut Events<VfxEventRequest>>,
 ) {
     let mut tracked_zones = Vec::new();
@@ -1255,12 +1476,12 @@ fn maybe_queue_realm_collapse(
         let has_player = player_samples
             .iter()
             .any(|sample| sample.zone_name.as_deref() == Some(zone.name.as_str()));
-        if !has_player
+        if has_player
             || active_events.contains(zone.name.as_str(), EVENT_REALM_COLLAPSE)
             || heartbeat.is_suppressed(
                 HeartbeatEventKind::RealmCollapse,
                 zone.name.as_str(),
-                current_tick,
+                context.current_tick,
             )
         {
             continue;
@@ -1268,12 +1489,17 @@ fn maybe_queue_realm_collapse(
         let override_multiplier = heartbeat.override_multiplier(
             HeartbeatEventKind::RealmCollapse,
             zone.name.as_str(),
-            current_tick,
+            context.current_tick,
         );
         if override_multiplier <= 0.0
-            || !heartbeat
-                .realm_collapse_cadence
-                .ready(current_tick, override_multiplier)
+            || !heartbeat.realm_collapse_cadence.ready(
+                context.current_tick,
+                override_multiplier
+                    * rhythm_cadence_multiplier(
+                        HeartbeatEventKind::RealmCollapse,
+                        context.loop_phase,
+                    ),
+            )
         {
             continue;
         }
@@ -1281,7 +1507,7 @@ fn maybe_queue_realm_collapse(
             .override_intensity(
                 HeartbeatEventKind::RealmCollapse,
                 zone.name.as_str(),
-                current_tick,
+                context.current_tick,
             )
             .unwrap_or(1.0);
         if queue_omen(
@@ -1291,11 +1517,17 @@ fn maybe_queue_realm_collapse(
             None,
             zone.center(),
             intensity,
-            REALM_COLLAPSE_OMEN_LEAD_TICKS,
-            current_tick,
+            rhythm_omen_lead_ticks(
+                HeartbeatEventKind::RealmCollapse,
+                context.loop_phase,
+                REALM_COLLAPSE_OMEN_LEAD_TICKS,
+            ),
+            context.current_tick,
             vfx_events.as_deref_mut(),
         ) {
-            heartbeat.realm_collapse_cadence.mark_fired(current_tick);
+            heartbeat
+                .realm_collapse_cadence
+                .mark_fired(context.current_tick);
         }
     }
 }
@@ -1304,37 +1536,44 @@ fn maybe_queue_karma_backlash(
     heartbeat: &mut WorldHeartbeat,
     zone_registry: &ZoneRegistry,
     player_samples: &[PlayerSample],
-    modifiers: SeasonEventModifiers,
-    current_tick: u64,
+    context: HeartbeatRhythmContext,
     mut vfx_events: Option<&mut Events<VfxEventRequest>>,
 ) {
     for sample in player_samples {
         let Some(zone_name) = sample.zone_name.as_deref() else {
             continue;
         };
-        if heartbeat.is_suppressed(HeartbeatEventKind::KarmaBacklash, zone_name, current_tick) {
+        if heartbeat.is_suppressed(
+            HeartbeatEventKind::KarmaBacklash,
+            zone_name,
+            context.current_tick,
+        ) {
             continue;
         }
         let override_multiplier = heartbeat.override_multiplier(
             HeartbeatEventKind::KarmaBacklash,
             zone_name,
-            current_tick,
+            context.current_tick,
         );
         if override_multiplier <= 0.0
             || !heartbeat
                 .karma_backlash_cadence
-                .ready(current_tick, override_multiplier)
+                .ready(context.current_tick, override_multiplier)
         {
             continue;
         }
         let recent_factor = 1.0 + heartbeat.world_pressure.recent_breakthrough_count as f64 * 0.1;
         let high_realm_factor = if sample.high_realm { 1.5 } else { 1.0 };
         let probability = KARMA_BASE_ROLL_PROBABILITY
-            * modifiers.karma_backlash_frequency
+            * context.modifiers.karma_backlash_frequency
             * recent_factor
             * high_realm_factor;
         if !deterministic_probability_hit(
-            ("karma_backlash", sample.player_id.as_str(), current_tick),
+            (
+                "karma_backlash",
+                sample.player_id.as_str(),
+                context.current_tick,
+            ),
             probability,
         ) {
             continue;
@@ -1343,7 +1582,11 @@ fn maybe_queue_karma_backlash(
             continue;
         };
         let intensity = heartbeat
-            .override_intensity(HeartbeatEventKind::KarmaBacklash, zone_name, current_tick)
+            .override_intensity(
+                HeartbeatEventKind::KarmaBacklash,
+                zone_name,
+                context.current_tick,
+            )
             .unwrap_or(0.7);
         if queue_omen(
             heartbeat,
@@ -1353,10 +1596,12 @@ fn maybe_queue_karma_backlash(
             sample.position,
             intensity,
             KARMA_BACKLASH_OMEN_LEAD_TICKS,
-            current_tick,
+            context.current_tick,
             vfx_events.as_deref_mut(),
         ) {
-            heartbeat.karma_backlash_cadence.mark_fired(current_tick);
+            heartbeat
+                .karma_backlash_cadence
+                .mark_fired(context.current_tick);
         }
     }
 }
@@ -1550,6 +1795,21 @@ fn select_pseudo_vein_anchor(
         })
 }
 
+fn tide_sky_omen_anchor(zone_registry: &ZoneRegistry) -> Option<PseudoVeinAnchor> {
+    zone_registry
+        .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+        .or_else(|| {
+            zone_registry
+                .zones
+                .iter()
+                .min_by_key(|zone| (zone.danger_level, zone.name.as_str()))
+        })
+        .map(|zone| PseudoVeinAnchor {
+            name: zone.name.clone(),
+            center: zone.center(),
+        })
+}
+
 fn pseudo_vein_offset(center: DVec3, zone_name: &str, current_tick: u64) -> DVec3 {
     let seed = hash_seed(&(zone_name, current_tick));
     let x = ((seed & 0xFF) as f64 / 255.0) * 400.0 - 200.0;
@@ -1586,6 +1846,7 @@ fn omen_kind_for_event(kind: HeartbeatEventKind) -> OmenKind {
     match kind {
         HeartbeatEventKind::PseudoVein => OmenKind::PseudoVeinForming,
         HeartbeatEventKind::BeastTide => OmenKind::BeastTideApproaching,
+        HeartbeatEventKind::TideSkyOmen => OmenKind::TideSkyTurning,
         HeartbeatEventKind::RealmCollapse => OmenKind::RealmCollapseImminent,
         HeartbeatEventKind::KarmaBacklash => OmenKind::KarmaBacklashTarget,
     }
@@ -1595,6 +1856,7 @@ fn event_kind_for_omen(kind: OmenKind) -> HeartbeatEventKind {
     match kind {
         OmenKind::PseudoVeinForming => HeartbeatEventKind::PseudoVein,
         OmenKind::BeastTideApproaching => HeartbeatEventKind::BeastTide,
+        OmenKind::TideSkyTurning => HeartbeatEventKind::TideSkyOmen,
         OmenKind::RealmCollapseImminent => HeartbeatEventKind::RealmCollapse,
         OmenKind::KarmaBacklashTarget => HeartbeatEventKind::KarmaBacklash,
     }
@@ -1820,6 +2082,14 @@ mod tests {
             active_events: Vec::new(),
             patrol_anchors: vec![DVec3::new(x, 65.0, z)],
             blocked_tiles: Vec::new(),
+        }
+    }
+
+    fn rhythm_context(loop_phase: PlayerLoopPhase, current_tick: u64) -> HeartbeatRhythmContext {
+        HeartbeatRhythmContext {
+            modifiers: season_event_modifiers(Season::Summer),
+            loop_phase,
+            current_tick,
         }
     }
 
@@ -2079,8 +2349,7 @@ mod tests {
             &zones,
             Some(&npc_registry),
             &ActiveEventsResource::default(),
-            season_event_modifiers(Season::Summer),
-            20_000,
+            rhythm_context(PlayerLoopPhase::DeepGathering, 20_000),
             None,
         );
 
@@ -2088,6 +2357,251 @@ mod tests {
         assert_eq!(
             heartbeat.pending_omens[0].intensity, 0.42,
             "accelerate intensity_override should drive queued beast tide strength"
+        );
+    }
+
+    #[test]
+    fn heartbeat_loop_phase_uses_zone_risk_without_new_player_state() {
+        let zones = ZoneRegistry {
+            zones: vec![
+                zone(DEFAULT_SPAWN_ZONE_NAME, 0.0, 0.0, 0.9),
+                zone("route_ash", 200.0, 0.0, 0.05),
+                zone("deep_gift", 500.0, 0.0, 0.7),
+            ],
+        };
+
+        assert_eq!(
+            heartbeat_loop_phase(&zones, &[]),
+            PlayerLoopPhase::SafeShelter
+        );
+        assert_eq!(
+            heartbeat_loop_phase(
+                &zones,
+                &[PlayerSample {
+                    player_id: "home".to_string(),
+                    zone_name: Some(DEFAULT_SPAWN_ZONE_NAME.to_string()),
+                    position: DVec3::ZERO,
+                    high_realm: false,
+                }]
+            ),
+            PlayerLoopPhase::HomeOrganizing
+        );
+        assert_eq!(
+            heartbeat_loop_phase(
+                &zones,
+                &[PlayerSample {
+                    player_id: "deep".to_string(),
+                    zone_name: Some("deep_gift".to_string()),
+                    position: DVec3::ZERO,
+                    high_realm: false,
+                }]
+            ),
+            PlayerLoopPhase::DeepGathering
+        );
+        assert_eq!(
+            heartbeat_loop_phase(
+                &zones,
+                &[PlayerSample {
+                    player_id: "return".to_string(),
+                    zone_name: Some("route_ash".to_string()),
+                    position: DVec3::ZERO,
+                    high_realm: false,
+                }]
+            ),
+            PlayerLoopPhase::ReturnTrip
+        );
+    }
+
+    #[test]
+    fn rhythm_table_changes_heartbeat_omen_lead_by_loop_phase() {
+        let pseudo_return = rhythm_omen_lead_ticks(
+            HeartbeatEventKind::PseudoVein,
+            PlayerLoopPhase::ReturnTrip,
+            PSEUDO_VEIN_OMEN_LEAD_TICKS,
+        );
+        let pseudo_deep = rhythm_omen_lead_ticks(
+            HeartbeatEventKind::PseudoVein,
+            PlayerLoopPhase::DeepGathering,
+            PSEUDO_VEIN_OMEN_LEAD_TICKS,
+        );
+        let beast_deep = rhythm_omen_lead_ticks(
+            HeartbeatEventKind::BeastTide,
+            PlayerLoopPhase::DeepGathering,
+            BEAST_TIDE_OMEN_LEAD_TICKS,
+        );
+        let pseudo_deep_cadence = rhythm_cadence_multiplier(
+            HeartbeatEventKind::PseudoVein,
+            PlayerLoopPhase::DeepGathering,
+        );
+        let baseline_interval =
+            EventCadence::new(PSEUDO_VEIN_OMEN_LEAD_TICKS).effective_interval_ticks(1.0);
+        let downfrequency_interval = EventCadence::new(PSEUDO_VEIN_OMEN_LEAD_TICKS)
+            .effective_interval_ticks(pseudo_deep_cadence);
+
+        assert!(
+            pseudo_return < pseudo_deep,
+            "伪灵脉应在回程阶段更快显形：return={pseudo_return} deep={pseudo_deep}"
+        );
+        assert!(
+            beast_deep < BEAST_TIDE_OMEN_LEAD_TICKS,
+            "兽潮在深处采集阶段应缩短预警窗口，形成当趟撤离压力"
+        );
+        assert!(
+            pseudo_deep_cadence < 1.0 && downfrequency_interval > baseline_interval,
+            "频率倍率小于 1 时应拉长事件间隔：multiplier={pseudo_deep_cadence} baseline={baseline_interval} downfrequency={downfrequency_interval}"
+        );
+    }
+
+    #[test]
+    fn tide_sky_omen_consumes_xizhuan_boundary_and_rhythm_timing() {
+        let mut heartbeat = WorldHeartbeat::default();
+        let zones = ZoneRegistry::fallback();
+        let boundary_tick = TICKS_PER_HOUR;
+        let current_tick = boundary_tick + HEARTBEAT_EVAL_INTERVAL_TICKS;
+
+        maybe_queue_tide_sky_omen(
+            &mut heartbeat,
+            &zones,
+            Season::SummerToWinter,
+            Some(boundary_tick),
+            rhythm_context(PlayerLoopPhase::HomeOrganizing, current_tick),
+            None,
+        );
+
+        assert_eq!(heartbeat.pending_omens.len(), 1);
+        assert_eq!(heartbeat.pending_omens[0].kind, OmenKind::TideSkyTurning);
+        assert_eq!(
+            heartbeat.pending_omens[0].zone_name,
+            DEFAULT_SPAWN_ZONE_NAME
+        );
+        assert_eq!(
+            heartbeat.pending_omens[0].fires_at_tick,
+            current_tick
+                + rhythm_omen_lead_ticks(
+                    HeartbeatEventKind::TideSkyOmen,
+                    PlayerLoopPhase::HomeOrganizing,
+                    TIDE_SKY_OMEN_LEAD_TICKS,
+                ),
+            "汐转天象应使用 event_rhythm.json 的 home_organizing lead_ticks"
+        );
+
+        maybe_queue_tide_sky_omen(
+            &mut heartbeat,
+            &zones,
+            Season::SummerToWinter,
+            Some(boundary_tick),
+            rhythm_context(PlayerLoopPhase::HomeOrganizing, current_tick + 1),
+            None,
+        );
+        assert_eq!(
+            heartbeat.pending_omens.len(),
+            1,
+            "同一个汐转边界只能刷新一次天象预兆，不能每个 heartbeat 重复刷"
+        );
+    }
+
+    #[test]
+    fn heartbeat_tick_fires_tide_sky_omen_into_recent_events() {
+        let mut app = App::new();
+        let mut season_state = WorldSeasonState::default();
+        let boundary_tick = TICKS_PER_HOUR;
+        season_state.set_phase(Season::SummerToWinter, boundary_tick);
+
+        app.insert_resource(WorldHeartbeat::default());
+        app.insert_resource(CultivationClock {
+            tick: boundary_tick + HEARTBEAT_EVAL_INTERVAL_TICKS,
+        });
+        app.insert_resource(season_state);
+        app.insert_resource(ActiveEventsResource::default());
+        app.insert_resource(ZoneRegistry::fallback());
+        app.add_event::<EventChainTrigger>();
+        app.add_systems(Update, heartbeat_tick);
+        app.update();
+
+        let heartbeat = app.world().resource::<WorldHeartbeat>();
+        assert!(
+            !heartbeat.pending_omens.is_empty(),
+            "expected at least one pending omen because xizhuan boundary should queue tide sky omen, actual pending_omens.len()={}",
+            heartbeat.pending_omens.len()
+        );
+        let fires_at_tick = heartbeat.pending_omens[0].fires_at_tick;
+        app.world_mut().resource_mut::<CultivationClock>().tick = fires_at_tick;
+        app.update();
+
+        let recent = app
+            .world()
+            .resource::<ActiveEventsResource>()
+            .recent_events_snapshot();
+        assert!(
+            recent.iter().any(|event| {
+                event.target.as_deref() == Some("tide_sky_omen")
+                    && event.zone.as_deref() == Some(DEFAULT_SPAWN_ZONE_NAME)
+            }),
+            "汐转期天象不应只停留在 JSON 声明，应由 heartbeat 触发为运行时 recent event"
+        );
+        assert_eq!(
+            app.world()
+                .resource::<WorldHeartbeat>()
+                .event_counts
+                .get(&HeartbeatEventKind::TideSkyOmen)
+                .copied(),
+            Some(1),
+            "汐转期天象触发后应记录 heartbeat 事件计数，证明运行时消费成功"
+        );
+    }
+
+    #[test]
+    fn realm_collapse_queues_only_when_collapsing_zone_is_empty() {
+        let zones = ZoneRegistry {
+            zones: vec![zone("dead_zone", 0.0, 0.0, 0.0)],
+        };
+        let mut heartbeat = WorldHeartbeat::default();
+        heartbeat.dead_qi_ticks_by_zone.insert(
+            "dead_zone".to_string(),
+            REALM_COLLAPSE_DEAD_QI_REQUIRED_TICKS,
+        );
+
+        maybe_queue_realm_collapse(
+            &mut heartbeat,
+            &zones,
+            &[],
+            &ActiveEventsResource::default(),
+            rhythm_context(PlayerLoopPhase::SafeShelter, TICKS_PER_HOUR),
+            None,
+        );
+
+        assert_eq!(
+            heartbeat.pending_omens.len(),
+            1,
+            "无人停留的死域应排队域崩预兆，让安全区玩家从远处感知"
+        );
+        assert_eq!(
+            heartbeat.pending_omens[0].kind,
+            OmenKind::RealmCollapseImminent
+        );
+
+        let mut occupied = WorldHeartbeat::default();
+        occupied.dead_qi_ticks_by_zone.insert(
+            "dead_zone".to_string(),
+            REALM_COLLAPSE_DEAD_QI_REQUIRED_TICKS,
+        );
+        maybe_queue_realm_collapse(
+            &mut occupied,
+            &zones,
+            &[PlayerSample {
+                player_id: "stranded".to_string(),
+                zone_name: Some("dead_zone".to_string()),
+                position: DVec3::ZERO,
+                high_realm: false,
+            }],
+            &ActiveEventsResource::default(),
+            rhythm_context(PlayerLoopPhase::DeepGathering, TICKS_PER_HOUR),
+            None,
+        );
+
+        assert!(
+            occupied.pending_omens.is_empty(),
+            "有修士停留时不应按 P4 的无人停留域崩时机排队"
         );
     }
 

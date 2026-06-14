@@ -150,7 +150,8 @@ pub fn resolve_beng_quan(
         started_at_tick: now_tick,
         duration_ticks: u64::from(BENG_QUAN_ANIM_DURATION_TICKS),
         started_at_ms,
-        duration_ms: BENG_QUAN_ANIM_DURATION_TICKS.saturating_mul(50),
+        duration_ms: BENG_QUAN_ANIM_DURATION_TICKS
+            .saturating_mul(crate::time::MILLIS_PER_TICK as u32),
         bound_instance_id: None,
         start_position: caster_position,
         complete_cooldown_ticks: BENG_QUAN_COOLDOWN_TICKS,

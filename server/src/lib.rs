@@ -103,6 +103,9 @@ pub mod shelflife;
 pub mod skill;
 #[allow(dead_code)]
 pub mod sword_path;
+// time: 节拍常量（MILLIS_PER_TICK 等），plan-sou-da-che-v1 #556 引入，被 network/combat
+// 多模块 crate::time:: 引用 —— P7 lib 化时纳入 lib crate 模块树（合 main #556 解冲突）。
+pub mod time;
 #[allow(dead_code)]
 pub mod tools;
 #[allow(dead_code)]

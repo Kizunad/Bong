@@ -10,6 +10,7 @@ pub mod dimension_transfer;
 pub mod entity_model;
 pub mod environment;
 pub mod era;
+pub mod event_rhythm;
 pub mod events;
 pub mod extract_system;
 pub mod furniture;
@@ -638,6 +639,10 @@ mod tests {
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    use super::event_rhythm::{
+        default_event_rhythm, event_trigger_timing_by_player_loop_phase as rhythm_timing_by_phase,
+        PlayerLoopPhase, RhythmEventKind,
+    };
     use super::zone::{default_spawn_bounds, ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
     use super::{
         select_world_bootstrap, select_world_bootstrap_from_configured_paths,
@@ -662,6 +667,80 @@ mod tests {
         assert_eq!(spawn_zone.bounds, default_spawn_bounds());
         assert_eq!(spawn_zone.spirit_qi, 0.9);
         assert_eq!(spawn_zone.danger_level, 0);
+    }
+
+    #[test]
+    fn event_trigger_timing_by_player_loop_phase() {
+        let config = default_event_rhythm();
+
+        let pseudo = rhythm_timing_by_phase(
+            config,
+            RhythmEventKind::PseudoVein,
+            PlayerLoopPhase::ReturnTrip,
+        )
+        .expect("pseudo_vein timing rule should exist");
+        assert!(
+            pseudo.is_preferred_phase,
+            "伪灵脉应优先插在回程路上，而不是随机打断所有阶段"
+        );
+        assert!(
+            pseudo
+                .emotional_effects
+                .iter()
+                .any(|effect| effect == "temptation"),
+            "伪灵脉节奏表必须声明诱惑情绪作用"
+        );
+
+        let beast = rhythm_timing_by_phase(
+            config,
+            RhythmEventKind::BeastTide,
+            PlayerLoopPhase::DeepGathering,
+        )
+        .expect("beast_tide timing rule should exist");
+        assert!(
+            beast.is_preferred_phase,
+            "兽潮应优先插在深处采集阶段，提供恐慌和逆流机会"
+        );
+        assert!(
+            beast.timing.lead_ticks < pseudo.timing.lead_ticks,
+            "深处采集的兽潮预警应比回程伪灵脉更短，形成当趟决策压力"
+        );
+
+        let tide = rhythm_timing_by_phase(
+            config,
+            RhythmEventKind::TideSkyOmen,
+            PlayerLoopPhase::HomeOrganizing,
+        )
+        .expect("tide_sky_omen timing rule should exist");
+        assert!(
+            tide.is_preferred_phase,
+            "汐转期天象应优先在灵龛整理阶段影响下一趟路线"
+        );
+
+        let collapse = rhythm_timing_by_phase(
+            config,
+            RhythmEventKind::RealmCollapse,
+            PlayerLoopPhase::SafeShelter,
+        )
+        .expect("realm_collapse timing rule should exist");
+        assert!(
+            collapse.is_preferred_phase,
+            "域崩应优先从安全区被感知，避免变成贴脸秒杀"
+        );
+
+        let tribulation = rhythm_timing_by_phase(
+            config,
+            RhythmEventKind::TribulationBroadcast,
+            PlayerLoopPhase::OutboundSearch,
+        )
+        .expect("tribulation_broadcast timing rule should exist");
+        assert!(
+            tribulation
+                .emotional_effects
+                .iter()
+                .any(|effect| effect == "spectator_impulse"),
+            "天劫广播必须声明围观冲动，供下一趟目标选择消费"
+        );
     }
 
     #[test]

@@ -12,8 +12,6 @@ use crate::schema::server_data::{
     HeartDemonOfferChoiceV1, HeartDemonOfferV1, ServerDataPayloadV1, ServerDataV1,
 };
 
-const MILLIS_PER_TICK: u64 = 50;
-
 pub fn emit_heart_demon_offer_payloads(
     mut clients: Query<(Entity, &mut Client), With<Client>>,
     tribulations: Query<(&TribulationState, Option<&PendingHeartDemonOffer>)>,
@@ -87,8 +85,9 @@ fn default_heart_demon_offer(entity: Entity, state: &TribulationState) -> HeartD
         composure: 0.5,
         quota_remaining: 1,
         quota_total: 1,
-        expires_at_ms: now_ms()
-            .saturating_add(DUXU_HEART_DEMON_TIMEOUT_TICKS.saturating_mul(MILLIS_PER_TICK)),
+        expires_at_ms: now_ms().saturating_add(
+            DUXU_HEART_DEMON_TIMEOUT_TICKS.saturating_mul(crate::time::MILLIS_PER_TICK),
+        ),
         choices: vec![
             HeartDemonOfferChoiceV1 {
                 choice_id: "heart_demon_choice_0".to_string(),

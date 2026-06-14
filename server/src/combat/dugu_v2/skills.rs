@@ -720,7 +720,7 @@ fn insert_cast(
         started_at_tick: now_tick,
         duration_ticks: u64::from(cast_ticks),
         started_at_ms: current_unix_millis(),
-        duration_ms: cast_ticks.saturating_mul(50),
+        duration_ms: cast_ticks.saturating_mul(crate::time::MILLIS_PER_TICK as u32),
         bound_instance_id: None,
         start_position,
         complete_cooldown_ticks: cooldown_ticks,
