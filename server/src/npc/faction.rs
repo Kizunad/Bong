@@ -3134,41 +3134,64 @@ mod tests {
 
     #[test]
     fn leader_patrol_action_does_not_toll_legacy_same_faction_npc() {
-        let mut app = build_leader_patrol_app();
-        let leader = app
-            .world_mut()
-            .spawn((
+        let cases = [
+            (
+                NamedFactionId::QingyunHunters,
+                FactionId::Attack,
+                "qingyun_peaks",
+                [52.0, 66.0, 52.0],
+            ),
+            (
+                NamedFactionId::CangyuanMerchants,
+                FactionId::Defend,
+                "blood_valley",
+                [220.0, 66.0, 52.0],
+            ),
+            (
+                NamedFactionId::NorthWasteDrifters,
+                FactionId::Neutral,
+                "north_wastes",
+                [430.0, 66.0, 52.0],
+            ),
+        ];
+
+        for (named_faction, legacy_faction, claim_zone, npc_position) in cases {
+            let mut app = build_leader_patrol_app();
+            let leader = app
+                .world_mut()
+                .spawn((
+                    NpcMarker,
+                    NamedFactionLeader {
+                        faction: named_faction,
+                    },
+                    FactionZoneClaim {
+                        faction: named_faction,
+                        zone: claim_zone.to_string(),
+                    },
+                    Navigator::new(),
+                    FactionLeaderPatrolState::default(),
+                ))
+                .id();
+            app.world_mut().spawn((
                 NpcMarker,
-                NamedFactionLeader {
-                    faction: NamedFactionId::QingyunHunters,
-                },
-                FactionZoneClaim {
-                    faction: NamedFactionId::QingyunHunters,
-                    zone: "qingyun_peaks".to_string(),
-                },
-                Navigator::new(),
-                FactionLeaderPatrolState::default(),
-            ))
-            .id();
-        app.world_mut().spawn((
-            NpcMarker,
-            Position::new([52.0, 66.0, 52.0]),
-            base_membership(FactionId::Attack, 0.0, 0),
-        ));
-        app.world_mut().spawn((
-            Actor(leader),
-            FactionLeaderPatrolAction,
-            ActionState::Requested,
-        ));
+                Position::new(npc_position),
+                base_membership(legacy_faction, 0.0, 0),
+            ));
+            app.world_mut().spawn((
+                Actor(leader),
+                FactionLeaderPatrolAction,
+                ActionState::Requested,
+            ));
 
-        app.update();
+            app.update();
 
-        let events = app.world().resource::<Events<FactionLeaderTollNotice>>();
-        assert_eq!(
-            events.get_reader().read(events).count(),
-            0,
-            "只带旧 FactionMembership::Attack 的同派普通弟子不应被青云领袖误收过路费"
-        );
+            let events = app.world().resource::<Events<FactionLeaderTollNotice>>();
+            assert_eq!(
+                events.get_reader().read(events).count(),
+                0,
+                "只带旧 {legacy_faction:?} 的同派普通弟子不应被 {named_faction:?} 领袖误收过路费"
+            );
+        }
     }
 
     #[test]
