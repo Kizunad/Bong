@@ -27,7 +27,7 @@ RUINS_PILLAR = "ruins_pillar"
 
 
 def _ruin_pillar(seed: int, column_h: int, footprint_r: int, crown_overhang: int,
-                 *, broken_top: bool) -> StructureBuilder:
+                 *, broken_top: bool, column_r: int = 1) -> StructureBuilder:
     random.seed(seed)
     extent = footprint_r + crown_overhang + 1
     span = 2 * extent + 1
@@ -41,22 +41,28 @@ def _ruin_pillar(seed: int, column_h: int, footprint_r: int, crown_overhang: int
             block = "mossy_stone_bricks" if ring == footprint_r else "stone_bricks"
             sb.set_block(cx + dx, fy, cz + dz, block)
 
-    # Column: square 1x1 (sometimes 2x2 at the base), brick mix, growing up.
+    # Column: solid (2*column_r+1)² brick cross-section, brick mix, growing up.
+    # A 3×3 (column_r=1) shaft reads as a real ruined pillar instead of a 1-wide
+    # stick on a wide plinth.
     for cy in range(2, 2 + column_h):
-        # Taper: occasional missing/cracked block for a ruined look.
-        if broken_top and cy >= 2 + column_h - 2 and random.random() < 0.5:
-            continue
-        roll = random.random()
-        block = ("cracked_stone_bricks" if roll < 0.35
-                 else "mossy_stone_bricks" if roll < 0.6
-                 else "chiseled_stone_bricks")
-        sb.set_block(cx, cy, cz, block)
+        for dx in range(-column_r, column_r + 1):
+            for dz in range(-column_r, column_r + 1):
+                # Taper: near the top of a broken pillar, drop blocks per-cell
+                # (not whole layers) for a crumbled silhouette.
+                if broken_top and cy >= 2 + column_h - 2 and random.random() < 0.4:
+                    continue
+                roll = random.random()
+                block = ("cracked_stone_bricks" if roll < 0.35
+                         else "mossy_stone_bricks" if roll < 0.6
+                         else "chiseled_stone_bricks")
+                sb.set_block(cx + dx, cy, cz + dz, block)
 
-    # Crown: overhanging cap if not broken off.
+    # Crown: overhanging cap, wider than the shaft, if not broken off.
     if not broken_top:
         crown_y = 2 + column_h
-        for dx in range(-crown_overhang, crown_overhang + 1):
-            for dz in range(-crown_overhang, crown_overhang + 1):
+        crown_r = column_r + crown_overhang
+        for dx in range(-crown_r, crown_r + 1):
+            for dz in range(-crown_r, crown_r + 1):
                 sb.set_block(cx + dx, crown_y, cz + dz, "polished_blackstone")
     return sb
 
