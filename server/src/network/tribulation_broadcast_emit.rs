@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use valence::prelude::{Client, Entity, EventReader, Local, Position, Query, With};
+use valence::prelude::{Client, Entity, EventReader, Local, Position, Query, Res, With};
 
 use crate::cultivation::tribulation::{
     JueBiTriggeredEvent, TribulationAnnounce, TribulationLocked, TribulationSettled,
@@ -9,8 +9,14 @@ use crate::cultivation::tribulation::{
 use crate::network::agent_bridge::{payload_type_label, serialize_server_data_payload};
 use crate::network::{log_payload_build_error, send_server_data_payload};
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1, TribulationBroadcastV1};
+use crate::world::event_rhythm::{
+    default_event_rhythm, event_trigger_timing_by_player_loop_phase, PlayerLoopPhase,
+    RhythmEventKind,
+};
+use crate::world::heartbeat::WorldHeartbeat;
 
 const BROADCAST_LIFETIME_MS: u64 = 60_000;
+const MILLIS_PER_TICK: u64 = 50;
 const SPECTATE_INVITE_RADIUS: f64 = 50.0;
 const PUBLIC_COORDINATE_GRID_BLOCKS: f64 = 200.0;
 
@@ -27,6 +33,7 @@ impl ActiveTribulationBroadcast {
         stage: impl Into<String>,
         exact_x: f64,
         exact_z: f64,
+        ttl_ms: u64,
     ) -> Self {
         Self {
             data: TribulationBroadcastV1::active(
@@ -34,20 +41,22 @@ impl ActiveTribulationBroadcast {
                 stage,
                 public_tribulation_coordinate(exact_x),
                 public_tribulation_coordinate(exact_z),
-                BROADCAST_LIFETIME_MS,
+                ttl_ms,
             ),
             exact_x,
             exact_z,
         }
     }
 
-    fn refresh(&mut self) {
-        self.data.refresh(BROADCAST_LIFETIME_MS);
+    fn refresh(&mut self, ttl_ms: u64) {
+        self.data.refresh(ttl_ms);
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn emit_tribulation_broadcast_payloads(
     mut clients: Query<(&mut Client, Option<&Position>), With<Client>>,
+    heartbeat: Option<Res<WorldHeartbeat>>,
     mut active_broadcasts: Local<HashMap<Entity, ActiveTribulationBroadcast>>,
     mut announce: EventReader<TribulationAnnounce>,
     mut juebi_triggered: EventReader<JueBiTriggeredEvent>,
@@ -55,12 +64,19 @@ pub fn emit_tribulation_broadcast_payloads(
     mut cleared: EventReader<TribulationWaveCleared>,
     mut settled: EventReader<TribulationSettled>,
 ) {
+    let loop_phase = heartbeat
+        .as_deref()
+        .map(|heartbeat| heartbeat.loop_phase)
+        .unwrap_or(PlayerLoopPhase::OutboundSearch);
+    let ttl_ms = tribulation_broadcast_ttl_ms(loop_phase);
+
     for ev in announce.read() {
         let data = ActiveTribulationBroadcast::active(
             ev.actor_name.clone(),
             "warn",
             ev.epicenter[0],
             ev.epicenter[2],
+            ttl_ms,
         );
         active_broadcasts.insert(ev.entity, data.clone());
         broadcast(&mut clients, data);
@@ -71,6 +87,7 @@ pub fn emit_tribulation_broadcast_payloads(
             "jue_bi",
             ev.epicenter[0],
             ev.epicenter[2],
+            ttl_ms,
         );
         active_broadcasts.insert(ev.entity, data.clone());
         broadcast(&mut clients, data);
@@ -82,25 +99,41 @@ pub fn emit_tribulation_broadcast_payloads(
                 "locked",
                 ev.epicenter[0],
                 ev.epicenter[2],
+                ttl_ms,
             )
         });
         data.data.stage = "locked".to_string();
-        data.refresh();
+        data.refresh(ttl_ms);
         broadcast(&mut clients, data.clone());
     }
     for ev in cleared.read() {
         let stage = if ev.wave == 0 { "warn" } else { "striking" };
         let data = active_broadcasts
             .entry(ev.entity)
-            .or_insert_with(|| ActiveTribulationBroadcast::active("", stage, 0.0, 0.0));
+            .or_insert_with(|| ActiveTribulationBroadcast::active("", stage, 0.0, 0.0, ttl_ms));
         data.data.stage = stage.to_string();
-        data.refresh();
+        data.refresh(ttl_ms);
         broadcast(&mut clients, data.clone());
     }
     for ev in settled.read() {
         active_broadcasts.remove(&ev.entity);
         broadcast(&mut clients, TribulationBroadcastV1::clear());
     }
+}
+
+fn tribulation_broadcast_ttl_ms(loop_phase: PlayerLoopPhase) -> u64 {
+    event_trigger_timing_by_player_loop_phase(
+        default_event_rhythm(),
+        RhythmEventKind::TribulationBroadcast,
+        loop_phase,
+    )
+    .map(|decision| {
+        decision
+            .timing
+            .max_duration_ticks
+            .saturating_mul(MILLIS_PER_TICK)
+    })
+    .unwrap_or(BROADCAST_LIFETIME_MS)
 }
 
 fn broadcast(
@@ -164,6 +197,7 @@ mod tests {
 
     use crate::cultivation::tribulation::TribulationAnnounce;
     use crate::network::agent_bridge::SERVER_DATA_CHANNEL;
+    use std::time::{SystemTime, UNIX_EPOCH};
     use valence::prelude::{App, Update};
     use valence::protocol::packets::play::CustomPayloadS2c;
     use valence::testing::{create_mock_client, MockClientHelper};
@@ -203,6 +237,13 @@ mod tests {
             }
         }
         payloads
+    }
+
+    fn now_ms() -> u64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_millis() as u64)
+            .unwrap_or(0)
     }
 
     #[test]
@@ -269,5 +310,48 @@ mod tests {
         assert_eq!(payloads.len(), 1);
         assert_eq!(payloads[0].world_x, 400.0);
         assert_eq!(payloads[0].world_z, -400.0);
+    }
+
+    #[test]
+    fn broadcast_lifetime_uses_event_rhythm_current_loop_phase() {
+        let mut app = App::new();
+        app.add_event::<TribulationAnnounce>();
+        app.add_event::<TribulationLocked>();
+        app.add_event::<TribulationWaveCleared>();
+        app.add_event::<TribulationSettled>();
+        app.add_event::<JueBiTriggeredEvent>();
+        let mut heartbeat = WorldHeartbeat::default();
+        heartbeat.loop_phase = PlayerLoopPhase::OutboundSearch;
+        app.insert_resource(heartbeat);
+        app.add_systems(Update, emit_tribulation_broadcast_payloads);
+
+        let mut helper = spawn_mock_client_at(&mut app, "RoutePicker", [0.0, 66.0, 0.0]);
+        app.world_mut().send_event(TribulationAnnounce {
+            entity: Entity::PLACEHOLDER,
+            char_id: "offline:Azure".to_string(),
+            actor_name: "Azure".to_string(),
+            epicenter: [0.0, 66.0, 0.0],
+            waves_total: 3,
+            started_tick: 0,
+        });
+
+        let before_update_ms = now_ms();
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let payloads = collect_tribulation_broadcasts(&mut helper);
+        assert_eq!(payloads.len(), 1);
+
+        let expected_ttl = tribulation_broadcast_ttl_ms(PlayerLoopPhase::OutboundSearch);
+        let observed_ttl = payloads[0].expires_at_ms.saturating_sub(before_update_ms);
+        assert!(
+            observed_ttl >= expected_ttl.saturating_sub(1_000)
+                && observed_ttl <= expected_ttl.saturating_add(1_000),
+            "天劫广播 TTL 应消费 event_rhythm.json 的 outbound_search max_duration_ticks：expected≈{expected_ttl}ms observed={observed_ttl}ms"
+        );
+        assert!(
+            expected_ttl > BROADCAST_LIFETIME_MS,
+            "测试应证明 rhythm 配置覆盖了旧固定 60s TTL，而不是继续使用死常量"
+        );
     }
 }
