@@ -20,5 +20,9 @@
   "key.bong-client.botany_auto_harvest": "Botany Auto Harvest",
   "key.bong-client.tsy_extract": "Start TSY Extract",
   "key.bong-client.tsy_extract_cancel": "Cancel TSY Extract",
-  "key.bong-client.shield_hold": "Hold Shield"
+  "key.bong-client.shield_hold": "Hold Shield",
+  "category.bong-client.mineral": "Bong Mineral",
+  "key.bong-client.mineral_sense": "Sense Mineral Vein",
+  "category.bong-client.social": "Bong Social",
+  "key.bong-client.spirit_niche_mark_coordinate": "Sense Spirit Niche (Gaze + Mark)"
 }

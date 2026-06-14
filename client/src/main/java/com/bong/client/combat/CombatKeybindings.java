@@ -13,7 +13,9 @@ import java.util.function.IntConsumer;
 
 /**
  * Combat-HUD key bindings (§7). Registers F1-F9 quick-use keys, the Jiemai
- * reaction key (V, DefenseWindow only), and the R spell-volume hold.
+ * reaction key (default unbound — DefenseWindow only; interaction-intent-cleanup-v1
+ * P3 dropped the old V default to avoid clashing with the movement dash key), and
+ * the R spell-volume hold.
  *
  * <p>Dispatch is wired through simple {@link IntConsumer} hooks so the
  * networking layer can plug in without pulling MC types into the combat
@@ -52,10 +54,15 @@ public final class CombatKeybindings {
                 CATEGORY
             ));
         }
+        // interaction-intent-cleanup-v1 P3 — 截脉反应键默认未绑定（UNKNOWN）。
+        // 此前默认 V 与 MovementKeybindings 冲刺键（也默认 V）冲突：单次按 V 两个
+        // KeyBinding.wasPressed() 都触发 → 冲刺的同时企图发截脉。截脉是有严格 server
+        // 窗口期的反应技，不适合占用常用键、更不应「不小心按到就可能发 C2S」。改为默认
+        // 未绑定，由玩家在控制设置里显式分配一个不冲突的键。
         jiemaiKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
             "key.bong-client.jiemai_react",
             InputUtil.Type.KEYSYM,
-            GLFW.GLFW_KEY_V,
+            GLFW.GLFW_KEY_UNKNOWN,
             CATEGORY
         ));
         spellVolumeKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
@@ -79,7 +86,7 @@ public final class CombatKeybindings {
         ));
 
         ClientTickEvents.END_CLIENT_TICK.register(CombatKeybindings::onTick);
-        BongClient.LOGGER.info("Registered combat HUD keybindings (F1-F9, V, R, event stream toggle, shield hold).");
+        BongClient.LOGGER.info("Registered combat HUD keybindings (F1-F9, jiemai [unbound], R, event stream toggle, shield hold).");
     }
 
     public static void setQuickSlotHandler(IntConsumer handler) {
