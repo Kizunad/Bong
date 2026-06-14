@@ -861,6 +861,25 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             index, item == null ? null : item.itemId());
     }
 
+    /**
+     * 拖放落到快捷使用栏（F1-F9）槽位时的绑定收口。
+     *
+     * <p>按 plan-block-placement-ux-v1 §N.1 决议：quick_slot 栏（F 键 cast/use）与 SkillBarStore
+     * 栏（1-9 选中放置）是两套独立的 server 语义（{@code QuickSlotBindings} vs {@code SkillBarBindings}），
+     * 不合并成单条 C2S。对所有物品照常发 {@code quick_slot_bind}（{@link #publishQuickUseSlot}）；
+     * 仅当落进的是可放置方块（{@link #isBlockQuickBarBindable}）时，<b>额外</b>同时写 SkillBarStore +
+     * 发 {@code skill_bar_bind}（{@link #bindBlockItemToSkillBar}），使「拖放方块到快捷栏」与右键菜单
+     * 「绑定到 N」同效，让选中该槽（1-9）后右键放置可读到该方块实例。
+     *
+     * <p>非方块物品只走 quick_slot 一条路径，行为不变。
+     */
+    void commitQuickUseDrop(int index, InventoryItem item) {
+        publishQuickUseSlot(index, item);
+        if (isBlockQuickBarBindable(item)) {
+            bindBlockItemToSkillBar(index, item);
+        }
+    }
+
     private static final int QUICK_USE_DEFAULT_CAST_MS = 1500;
     private static final int QUICK_USE_DEFAULT_COOLDOWN_MS = 500;
 
@@ -1727,10 +1746,78 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         }
     }
 
+    /**
+     * 处理已打开的 context menu（pill / skillBar / weapon）上的点击。
+     *
+     * <p>plan-block-placement-ux-v1 P2：菜单 action 行的命中-触发对左键(0)与右键(1)都生效；
+     * 命中行外侧时只有右键关闭菜单，左键点空白不关（避免误操作）。返回 {@code true} 表示本次点击
+     * 已被菜单消费，{@code mouseClicked} 应短路返回。
+     *
+     * <p>同一时刻至多一个菜单处于打开态（open* 方法互斥清空其它菜单），故按 pill→skillBar→weapon
+     * 顺序检查并在第一个命中处返回。
+     */
+    boolean handleContextMenuClick(double mouseX, double mouseY, int button) {
+        if (pillContextMenu != null) {
+            int actionIdx = pillMenuActionIndexAt(mouseX, mouseY);
+            if (actionIdx >= 0) {
+                triggerPillMenuAction(pillContextMenu.actions().get(actionIdx).kind());
+                itemInspectLongPress.cancel();
+                return true;
+            }
+            if (button == 1) {
+                pillContextMenu = null;
+                pendingMeridianUse = null;
+                itemInspectLongPress.cancel();
+                return true;
+            }
+            return false;
+        }
+
+        if (skillBarContextMenu != null) {
+            int actionIdx = skillBarMenuActionIndexAt(mouseX, mouseY);
+            if (actionIdx >= 0) {
+                triggerSkillBarMenuAction(skillBarContextMenu.actions().get(actionIdx).slot());
+                itemInspectLongPress.cancel();
+                return true;
+            }
+            if (button == 1) {
+                skillBarContextMenu = null;
+                itemInspectLongPress.cancel();
+                return true;
+            }
+            return false;
+        }
+
+        if (weaponContextMenu != null) {
+            int actionIdx = weaponMenuActionIndexAt(mouseX, mouseY);
+            if (actionIdx >= 0) {
+                triggerWeaponMenuAction(weaponContextMenu.actions().get(actionIdx).kind());
+                itemInspectLongPress.cancel();
+                return true;
+            }
+            if (button == 1) {
+                weaponContextMenu = null;
+                itemInspectLongPress.cancel();
+                return true;
+            }
+            return false;
+        }
+
+        return false;
+    }
+
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
         if (button != 1) {
             itemInspectLongPress.cancel();
+        }
+
+        // plan-block-placement-ux-v1 P2 — context menu（pill/skillBar/weapon）的「命中-触发」对
+        // 左键(0)和右键(1)都响应：一个菜单已经打开后，玩家用左键点 action 行也应触发，符合
+        // 直觉。菜单的「打开」仍只在右键/长按（见下方 button==1 块的 open* 调用）。菜单的「关闭」
+        // （点 action 行之外）只在右键触发，左键点空白不关菜单，避免误关。
+        if (handleContextMenuClick(mouseX, mouseY, button)) {
+            return true;
         }
 
         if (button == 0 && pendingMeridianUse != null && confirmPendingMeridianUse()) {
@@ -1738,40 +1825,6 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         }
 
         if (button == 1) {
-            if (pillContextMenu != null) {
-                int actionIdx = pillMenuActionIndexAt(mouseX, mouseY);
-                if (actionIdx >= 0) {
-                    triggerPillMenuAction(pillContextMenu.actions().get(actionIdx).kind());
-                } else {
-                    pillContextMenu = null;
-                    pendingMeridianUse = null;
-                }
-                itemInspectLongPress.cancel();
-                return true;
-            }
-
-            if (skillBarContextMenu != null) {
-                int actionIdx = skillBarMenuActionIndexAt(mouseX, mouseY);
-                if (actionIdx >= 0) {
-                    triggerSkillBarMenuAction(skillBarContextMenu.actions().get(actionIdx).slot());
-                } else {
-                    skillBarContextMenu = null;
-                }
-                itemInspectLongPress.cancel();
-                return true;
-            }
-
-            if (weaponContextMenu != null) {
-                int actionIdx = weaponMenuActionIndexAt(mouseX, mouseY);
-                if (actionIdx >= 0) {
-                    triggerWeaponMenuAction(weaponContextMenu.actions().get(actionIdx).kind());
-                } else {
-                    weaponContextMenu = null;
-                }
-                itemInspectLongPress.cancel();
-                return true;
-            }
-
             if (activeTab == TAB_EQUIP) {
                 var eq = equipPanel.slotAtScreen(mouseX, mouseY);
                 if (eq != null && eq.item() != null && openWeaponContextMenu(eq.slotType(), eq.item(), (int) mouseX, (int) mouseY)) {
@@ -2199,7 +2252,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             InventoryItem old = quickUseItems[qIdx];
             quickUseItems[qIdx] = dragged;
             setQuickUseSlotVisual(qIdx, dragged);
-            publishQuickUseSlot(qIdx, dragged);
+            commitQuickUseDrop(qIdx, dragged);
             dragState.drop();
             if (old != null) placeItemAnywhere(old);
             clearAllHighlights();
