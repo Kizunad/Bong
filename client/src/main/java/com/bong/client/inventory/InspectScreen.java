@@ -814,7 +814,27 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             }
             if (entry.kind() == SkillBarEntry.Kind.ITEM) {
                 InventoryItem matched = findItemInModel(entry.id());
+                if (matched == null && !model.isEmpty()) {
+                    // P1 — 槽绑定的物品在 authoritative 库存里已不存在（放置耗尽最后一个实例 →
+                    // server 删实例 → inventory_snapshot 回写后 model 里再也找不到该 template_id）。
+                    // 服务端 skillbar_config emit 用 Changed<SkillBarBindings> 触发，而放置消耗不
+                    // 改 SkillBarBindings 组件（仍持悬空 instance_id）→ 服务端不会主动重推清空，
+                    // 故由客户端依据 inventory_snapshot 自洽清槽。SkillBarStore.updateSlot(null) 同步
+                    // 触发 selectedSlot 失效复位（clearInvalidSelectedSlot），避免热键仍指向空槽。
+                    //
+                    // 仅在 model 非空（已落地 authoritative snapshot）时清，防开屏首帧空 model
+                    // 误清掉服务端刚下发的有效绑定。
+                    SkillBarStore.updateSlot(i, null);
+                    if (hotbarSlots[i] != null) {
+                        if (hotbarItems[i] != null) hotbarSlots[i].setItem(hotbarItems[i], true);
+                        else hotbarSlots[i].clearItem();
+                    }
+                    continue;
+                }
                 if (hotbarSlots[i] != null) {
+                    // count>1 时由 GridSlotComponent.drawItemOverlays 在右下角绘数量；
+                    // count 扣减/=0 全程由 inventory_snapshot → matched 自然刷新，无需本地扣减。
+                    // model 为空（未加载）且暂时 matched==null 时，沿用占位名硬撑，待 snapshot 到达再校准。
                     hotbarSlots[i].setItem(
                         matched == null ? InventoryItem.simple(entry.id(), entry.displayName()) : matched,
                         true
@@ -859,6 +879,25 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         setQuickUseSlotVisual(index, item);
         com.bong.client.network.ClientRequestSender.sendQuickSlotBind(
             index, item == null ? null : item.itemId());
+    }
+
+    /**
+     * 拖放落到快捷使用栏（F1-F9）槽位时的绑定收口。
+     *
+     * <p>按 plan-block-placement-ux-v1 §N.1 决议：quick_slot 栏（F 键 cast/use）与 SkillBarStore
+     * 栏（1-9 选中放置）是两套独立的 server 语义（{@code QuickSlotBindings} vs {@code SkillBarBindings}），
+     * 不合并成单条 C2S。对所有物品照常发 {@code quick_slot_bind}（{@link #publishQuickUseSlot}）；
+     * 仅当落进的是可放置方块（{@link #isBlockQuickBarBindable}）时，<b>额外</b>同时写 SkillBarStore +
+     * 发 {@code skill_bar_bind}（{@link #bindBlockItemToSkillBar}），使「拖放方块到快捷栏」与右键菜单
+     * 「绑定到 N」同效，让选中该槽（1-9）后右键放置可读到该方块实例。
+     *
+     * <p>非方块物品只走 quick_slot 一条路径，行为不变。
+     */
+    void commitQuickUseDrop(int index, InventoryItem item) {
+        publishQuickUseSlot(index, item);
+        if (isBlockQuickBarBindable(item)) {
+            bindBlockItemToSkillBar(index, item);
+        }
     }
 
     private static final int QUICK_USE_DEFAULT_CAST_MS = 1500;
@@ -1541,6 +1580,23 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
 
     // ==================== Populate ====================
 
+    /**
+     * 测试专用：以 authoritative inventory snapshot 设置 model 后，仅驱动 P1 的 SkillBar 自洽收口
+     * （{@link #hydrateSkillBarFromStore}）。
+     *
+     * <p>生产路径是 {@code listener → MinecraftClient.execute(this.model = next; populateFromModel())}，
+     * 而 {@code populateFromModel} 还会刷 owo UI 面板（equipPanel/statusBars/...），这些面板只在
+     * owo {@code build()} 生命周期里实例化、headless 测试不可用。本 seam 只设 model + 调
+     * {@code hydrateSkillBarFromStore}，精确锁住「实例消耗后清槽 / 仍在则保留 / count 刷新 /
+     * selectedSlot 失效复位 / 空 model 不误清」这些<b>客户端状态机</b>契约（其余 UI 刷新与槽位视觉
+     * 由 e2e 覆盖）。</p>
+     */
+    void reconcileSkillBarForTests(InventoryModel next) {
+        if (next == null) return;
+        this.model = next;
+        hydrateSkillBarFromStore();
+    }
+
     private void populateFromModel() {
         populateContainerGrids(model, containerGrids);
 
@@ -1727,10 +1783,78 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         }
     }
 
+    /**
+     * 处理已打开的 context menu（pill / skillBar / weapon）上的点击。
+     *
+     * <p>plan-block-placement-ux-v1 P2：菜单 action 行的命中-触发对左键(0)与右键(1)都生效；
+     * 命中行外侧时只有右键关闭菜单，左键点空白不关（避免误操作）。返回 {@code true} 表示本次点击
+     * 已被菜单消费，{@code mouseClicked} 应短路返回。
+     *
+     * <p>同一时刻至多一个菜单处于打开态（open* 方法互斥清空其它菜单），故按 pill→skillBar→weapon
+     * 顺序检查并在第一个命中处返回。
+     */
+    boolean handleContextMenuClick(double mouseX, double mouseY, int button) {
+        if (pillContextMenu != null) {
+            int actionIdx = pillMenuActionIndexAt(mouseX, mouseY);
+            if (actionIdx >= 0) {
+                triggerPillMenuAction(pillContextMenu.actions().get(actionIdx).kind());
+                itemInspectLongPress.cancel();
+                return true;
+            }
+            if (button == 1) {
+                pillContextMenu = null;
+                pendingMeridianUse = null;
+                itemInspectLongPress.cancel();
+                return true;
+            }
+            return false;
+        }
+
+        if (skillBarContextMenu != null) {
+            int actionIdx = skillBarMenuActionIndexAt(mouseX, mouseY);
+            if (actionIdx >= 0) {
+                triggerSkillBarMenuAction(skillBarContextMenu.actions().get(actionIdx).slot());
+                itemInspectLongPress.cancel();
+                return true;
+            }
+            if (button == 1) {
+                skillBarContextMenu = null;
+                itemInspectLongPress.cancel();
+                return true;
+            }
+            return false;
+        }
+
+        if (weaponContextMenu != null) {
+            int actionIdx = weaponMenuActionIndexAt(mouseX, mouseY);
+            if (actionIdx >= 0) {
+                triggerWeaponMenuAction(weaponContextMenu.actions().get(actionIdx).kind());
+                itemInspectLongPress.cancel();
+                return true;
+            }
+            if (button == 1) {
+                weaponContextMenu = null;
+                itemInspectLongPress.cancel();
+                return true;
+            }
+            return false;
+        }
+
+        return false;
+    }
+
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
         if (button != 1) {
             itemInspectLongPress.cancel();
+        }
+
+        // plan-block-placement-ux-v1 P2 — context menu（pill/skillBar/weapon）的「命中-触发」对
+        // 左键(0)和右键(1)都响应：一个菜单已经打开后，玩家用左键点 action 行也应触发，符合
+        // 直觉。菜单的「打开」仍只在右键/长按（见下方 button==1 块的 open* 调用）。菜单的「关闭」
+        // （点 action 行之外）只在右键触发，左键点空白不关菜单，避免误关。
+        if (handleContextMenuClick(mouseX, mouseY, button)) {
+            return true;
         }
 
         if (button == 0 && pendingMeridianUse != null && confirmPendingMeridianUse()) {
@@ -1738,40 +1862,6 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         }
 
         if (button == 1) {
-            if (pillContextMenu != null) {
-                int actionIdx = pillMenuActionIndexAt(mouseX, mouseY);
-                if (actionIdx >= 0) {
-                    triggerPillMenuAction(pillContextMenu.actions().get(actionIdx).kind());
-                } else {
-                    pillContextMenu = null;
-                    pendingMeridianUse = null;
-                }
-                itemInspectLongPress.cancel();
-                return true;
-            }
-
-            if (skillBarContextMenu != null) {
-                int actionIdx = skillBarMenuActionIndexAt(mouseX, mouseY);
-                if (actionIdx >= 0) {
-                    triggerSkillBarMenuAction(skillBarContextMenu.actions().get(actionIdx).slot());
-                } else {
-                    skillBarContextMenu = null;
-                }
-                itemInspectLongPress.cancel();
-                return true;
-            }
-
-            if (weaponContextMenu != null) {
-                int actionIdx = weaponMenuActionIndexAt(mouseX, mouseY);
-                if (actionIdx >= 0) {
-                    triggerWeaponMenuAction(weaponContextMenu.actions().get(actionIdx).kind());
-                } else {
-                    weaponContextMenu = null;
-                }
-                itemInspectLongPress.cancel();
-                return true;
-            }
-
             if (activeTab == TAB_EQUIP) {
                 var eq = equipPanel.slotAtScreen(mouseX, mouseY);
                 if (eq != null && eq.item() != null && openWeaponContextMenu(eq.slotType(), eq.item(), (int) mouseX, (int) mouseY)) {
@@ -2199,7 +2289,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             InventoryItem old = quickUseItems[qIdx];
             quickUseItems[qIdx] = dragged;
             setQuickUseSlotVisual(qIdx, dragged);
-            publishQuickUseSlot(qIdx, dragged);
+            commitQuickUseDrop(qIdx, dragged);
             dragState.drop();
             if (old != null) placeItemAnywhere(old);
             clearAllHighlights();
@@ -2506,7 +2596,13 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         if (slot < 0 || slot >= HOTBAR_SLOTS || !isBlockQuickBarBindable(item)) {
             return false;
         }
-        String iconTexture = ItemIconRegistry.itemTexturePath(item.itemId());
+        // P3 — vanilla 方块物品（HOST_ITEMS 映射 / vanilla:<short>）的 iconTexture 留空，
+        // 让 HUD 走 itemTexture 命令 → BongHud.drawItemTexture 内的 vanilla 原生方块图标分支，
+        // 而非扁平 bong-client:textures/gui/items/<id>.png（对 vanilla:<short> 是非法路径 → 占位图）。
+        // 非 vanilla 的 Bong 方块（若有）仍用扁平贴图路径。
+        String iconTexture = BlockVanillaIconMap.usesVanillaItemIcon(item.itemId())
+            ? null
+            : ItemIconRegistry.itemTexturePath(item.itemId());
         com.bong.client.network.ClientRequestSender.sendSkillBarBindItem(slot, item.itemId());
         SkillBarStore.updateSlot(slot, SkillBarEntry.item(
             item.itemId(),
@@ -3074,7 +3170,6 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             int cs = GridSlotComponent.CELL_SIZE;
             int gw = item.gridWidth() * cs, gh = item.gridHeight() * cs;
 
-            Identifier tex = GridSlotComponent.textureIdForItem(item);
             var matrices = context.getMatrices();
             matrices.push();
             matrices.translate(0, 0, 200);
@@ -3082,17 +3177,21 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             int fitSize = Math.min(gw, gh);
             int fitX = mouseX - fitSize / 2, fitY = mouseY - fitSize / 2;
 
-            RenderSystem.enableBlend();
-            RenderSystem.defaultBlendFunc();
-            RenderSystem.setShaderColor(1f, 1f, 1f, 0.75f);
-            matrices.push();
-            matrices.translate(fitX, fitY, 0);
-            matrices.scale((float) fitSize / ICON_SIZE, (float) fitSize / ICON_SIZE, 1f);
-            context.drawTexture(tex, 0, 0, ICON_SIZE, ICON_SIZE, 0, 0, ICON_SIZE, ICON_SIZE, ICON_SIZE, ICON_SIZE);
-            matrices.pop();
-
-            RenderSystem.setShaderColor(1f, 1f, 1f, 1f);
-            RenderSystem.disableBlend();
+            // P3 — 拖拽中的 vanilla 方块物品用原生方块图标跟随光标（与落点槽位图标一致）；
+            // 非 vanilla 物品走原扁平贴图 + 0.75 幽灵透明。
+            if (!BlockVanillaIconMap.drawVanillaIcon(context, item.itemId(), fitX, fitY, fitSize)) {
+                Identifier tex = GridSlotComponent.textureIdForItem(item);
+                RenderSystem.enableBlend();
+                RenderSystem.defaultBlendFunc();
+                RenderSystem.setShaderColor(1f, 1f, 1f, 0.75f);
+                matrices.push();
+                matrices.translate(fitX, fitY, 0);
+                matrices.scale((float) fitSize / ICON_SIZE, (float) fitSize / ICON_SIZE, 1f);
+                context.drawTexture(tex, 0, 0, ICON_SIZE, ICON_SIZE, 0, 0, ICON_SIZE, ICON_SIZE, ICON_SIZE, ICON_SIZE);
+                matrices.pop();
+                RenderSystem.setShaderColor(1f, 1f, 1f, 1f);
+                RenderSystem.disableBlend();
+            }
             matrices.pop();
         }
     }
@@ -3123,9 +3222,15 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
 
     private static void drawItemTextureRaw(DrawContext ctx, InventoryItem item, int dx, int dy, int dw, int dh) {
         if (item == null || item.isEmpty()) return;
-        Identifier tex = GridSlotComponent.textureIdForItem(item);
         int fitSize = Math.min(dw, dh);
         int ox = (dw - fitSize) / 2, oy = (dh - fitSize) / 2;
+
+        // P3 — vanilla 方块物品走原生方块图标，与单格槽/HUD 一致；非 vanilla 回退扁平贴图。
+        if (BlockVanillaIconMap.drawVanillaIcon(ctx, item.itemId(), dx + ox, dy + oy, fitSize)) {
+            return;
+        }
+
+        Identifier tex = GridSlotComponent.textureIdForItem(item);
 
         RenderSystem.enableBlend();
         RenderSystem.defaultBlendFunc();

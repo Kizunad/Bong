@@ -87,4 +87,102 @@ class BlockVanillaIconMapTest {
             );
         }
     }
+
+    // ─── plan-block-placement-ux-v1 P3 — usesVanillaItemIcon：哪些 itemId 应走原生方块图标 ───
+    //
+    // 该谓词不查 registry（HOST_ITEMS 命中即 true / vanilla: 前缀即 true），是渲染路径分流的
+    // 唯一判据：true → 调用方走 DrawContext.drawItem(真方块 stack)；false → 走扁平占位贴图。
+    // 真正的 ItemStack 解析（registry / drawItem）延后到 drawVanillaIcon，需 MC Bootstrap，由
+    // e2e / 真游戏覆盖；这里完整锁住分流谓词的全部分支，让任何回归（漏判 vanilla / 误判普通物品）
+    // 立刻撞红。
+
+    @Test
+    void usesVanillaItemIconTrueForMappedBongBlocks() {
+        // HOST_ITEMS 里映射到 vanilla BlockItem 的 Bong 方块都应走原生图标。
+        for (String id : new String[] {
+            "earth_crumb", "hardened_soil", "barren_sand", "weathered_stone",
+            "raw_clay_lump", "obsidian_shard", "workbench_item", "torch_item",
+            "lantern_item", "door_bolt", "window_grate", "simple_bed",
+            "meditation_mat", "moisture_base", "spirit_stone_rack"
+        }) {
+            assertTrue(
+                BlockVanillaIconMap.usesVanillaItemIcon(id),
+                "HOST_ITEMS 映射方块 `" + id + "` 应走 vanilla 原生图标（usesVanillaItemIcon=true）"
+            );
+        }
+    }
+
+    @Test
+    void usesVanillaItemIconTrueForVanillaPrefixTemplates() {
+        // BlockPicker 给予的 vanilla:<short> 模板：无论短名是否真存在，前缀即判 true；
+        // 真伪由 drawVanillaIcon 内 createStackFor 解析时优雅降级处理。
+        assertTrue(BlockVanillaIconMap.usesVanillaItemIcon("vanilla:stone_bricks"),
+            "vanilla:stone_bricks 前缀应判走原生图标");
+        assertTrue(BlockVanillaIconMap.usesVanillaItemIcon("vanilla:oak_planks"),
+            "vanilla:oak_planks 前缀应判走原生图标");
+        assertTrue(BlockVanillaIconMap.usesVanillaItemIcon("vanilla:"),
+            "退化的 vanilla: 空短名仍命中前缀分支（drawVanillaIcon 内再降级）");
+    }
+
+    @Test
+    void usesVanillaItemIconFalseForNonBlockAndNullEmpty() {
+        // 功法卷轴 / 丹药 / 装备等普通物品：仍走扁平贴图，绝不误判成方块图标。
+        assertFalse(BlockVanillaIconMap.usesVanillaItemIcon("guyuan_pill"),
+            "丹药 guyuan_pill 不是方块，应走扁平贴图（usesVanillaItemIcon=false）");
+        assertFalse(BlockVanillaIconMap.usesVanillaItemIcon("skill_scroll_fireball"),
+            "功法卷轴不是方块，应走扁平贴图");
+        assertFalse(BlockVanillaIconMap.usesVanillaItemIcon("missing_block"),
+            "未在 HOST_ITEMS 且无 vanilla: 前缀的 id 应走扁平贴图");
+        assertFalse(BlockVanillaIconMap.usesVanillaItemIcon(null),
+            "null itemId 不得 NPE，应返回 false");
+        assertFalse(BlockVanillaIconMap.usesVanillaItemIcon(""),
+            "空 itemId 应返回 false");
+    }
+
+    // ─── plan-block-placement-ux-v1 P3 — drawVanillaIcon 早退分支（不触 registry / DrawContext）───
+    //
+    // 当 ctx==null / size<=0 / 非 vanilla itemId 时，drawVanillaIcon 必须在调用 createStackFor 与
+    // ctx.drawItem 之前安全返回 false（调用方据此回退占位贴图）。这些路径不需要 MC Bootstrap，
+    // 锁住「渲染分流稳定、绝不 NPE、非 vanilla 一律交还占位路径」契约。真正的 vanilla 绘制
+    // （createStackFor 命中 + ctx.drawItem）由 e2e / 真游戏覆盖。
+
+    @Test
+    void drawVanillaIconReturnsFalseForNullContext() {
+        // ctx==null（理论不应发生，但渲染入口必须健壮）→ 返回 false，不 NPE。
+        assertFalse(
+            BlockVanillaIconMap.drawVanillaIcon(null, "vanilla:stone_bricks", 0, 0, 16),
+            "ctx==null 必须返回 false 且不 NPE"
+        );
+    }
+
+    @Test
+    void drawVanillaIconReturnsFalseForNonPositiveSize() {
+        // size<=0 → 无可绘区域，返回 false（在触 createStackFor 之前短路，不触 registry）。
+        assertFalse(
+            BlockVanillaIconMap.drawVanillaIcon(null, "vanilla:stone_bricks", 0, 0, 0),
+            "size==0 应返回 false"
+        );
+        assertFalse(
+            BlockVanillaIconMap.drawVanillaIcon(null, "vanilla:stone_bricks", 0, 0, -4),
+            "size<0 应返回 false"
+        );
+    }
+
+    @Test
+    void drawVanillaIconReturnsFalseForNonVanillaItem() {
+        // 非 vanilla 物品在 usesVanillaItemIcon 处即判 false → 不触 createStackFor / drawItem，
+        // 返回 false 交还占位贴图路径。ctx 传 null 也安全（usesVanillaItemIcon 先短路）。
+        assertFalse(
+            BlockVanillaIconMap.drawVanillaIcon(null, "guyuan_pill", 0, 0, 16),
+            "非方块物品必须返回 false 走占位贴图，且不因 ctx==null NPE"
+        );
+        assertFalse(
+            BlockVanillaIconMap.drawVanillaIcon(null, "missing_block", 0, 0, 16),
+            "未知 id 必须返回 false 走占位贴图"
+        );
+        assertFalse(
+            BlockVanillaIconMap.drawVanillaIcon(null, null, 0, 0, 16),
+            "null id 必须返回 false 且不 NPE"
+        );
+    }
 }
