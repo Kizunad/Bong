@@ -1,6 +1,6 @@
-# plan-remove-extract-decision-hud-v1（active）
+# plan-remove-extract-decision-hud-v1（finished）
 
-> **Active（实施中 → 已完成）**。一句话主题：移除「搜打撤五维撤退决策 HUD」(`ExtractDecisionHud` / 出行脉象 / "该看看这些了")——用户决定不要这个常驻决策面板。
+> **Finished（已归档，2026-06-15）**。一句话主题：移除「搜打撤五维撤退决策 HUD」(`ExtractDecisionHud` / 出行脉象 / "该看看这些了")——用户决定不要这个常驻决策面板。
 
 > 立项动机：worldgen-v4 P6 真机审阅时，屏幕左上常驻一个「真元/背包/时辰/汐转/威胁」五维 checklist HUD（`ExtractDecisionHudPlanner`，`plan-sou-da-che-v1` P2 产物），真元低/出行计时到点就弹「该看看这些了」+ 紧急态「快撤」红边。用户判定此 UI 不要。**这是对 `plan-sou-da-che-v1` P2 的功能撤回**，需跨 plan 协调。
 
