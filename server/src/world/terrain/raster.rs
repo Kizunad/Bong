@@ -1263,7 +1263,18 @@ fn block_state_from_name(name: &str) -> Result<BlockState, String> {
         "weathered_copper" => Ok(BlockState::WEATHERED_COPPER),
         "warped_planks" => Ok(BlockState::WARPED_PLANKS),
         "dead_bush" => Ok(BlockState::DEAD_BUSH),
-        other => Err(format!("unsupported surface palette block '{other}'")),
+        // Fall back to the broader decoration block resolver — it mirrors this
+        // fast-path list and additionally knows glass / stained-glass / many
+        // more surface materials authored by newer profiles (e.g. the
+        // tribulation_scorch fused-glass ground). A genuinely unknown surface
+        // block degrades to stone + warns rather than panicking the *entire*
+        // world bootstrap over one drifted palette entry.
+        other => Ok(super::blocks::block_from_name(other).unwrap_or_else(|| {
+            tracing::warn!(
+                "[bong][terrain] surface palette block '{other}' unknown; using stone"
+            );
+            BlockState::STONE
+        })),
     }
 }
 
