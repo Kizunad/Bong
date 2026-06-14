@@ -37,7 +37,8 @@ public final class HomeSequence {
     private static final AtomicLong AUDIO_INSTANCE_ID = new AtomicLong(20_000L);
 
     private static State state = State.away();
-    private static Set<String> knownInventoryKeys = new HashSet<>();
+    private static Set<String> runBaselineInventoryKeys = new HashSet<>();
+    private static boolean runBaselineCaptured;
     private static final Map<String, Long> newItemUntilMs = new HashMap<>();
     private static AudioPlaybackBridge audioBridge = SoundRecipePlayer.instance();
 
@@ -49,9 +50,11 @@ public final class HomeSequence {
         long now = Math.max(0L, nowMillis);
         HomeMarker nearest = nearestHomeMarker(runtime);
         boolean insideHome = nearest != null && nearest.distanceBlocks() <= HOME_RADIUS_BLOCKS;
-        boolean enteredThisTick = insideHome && !state.insideHome();
+        boolean wasInsideHome = state.insideHome();
+        boolean enteredThisTick = insideHome && !wasInsideHome;
+        boolean leftThisTick = !insideHome && wasInsideHome;
 
-        observeInventory(inventory, enteredThisTick, now);
+        observeInventory(inventory, insideHome, enteredThisTick, leftThisTick, now);
         if (enteredThisTick) {
             playHomeAudio();
         }
@@ -110,7 +113,8 @@ public final class HomeSequence {
 
     public static void resetForTests() {
         state = State.away();
-        knownInventoryKeys = new HashSet<>();
+        runBaselineInventoryKeys = new HashSet<>();
+        runBaselineCaptured = false;
         newItemUntilMs.clear();
         resetAudioBridgeForTests();
     }
@@ -146,18 +150,33 @@ public final class HomeSequence {
         return best;
     }
 
-    private static void observeInventory(InventoryModel inventory, boolean enteringHome, long nowMillis) {
+    private static void observeInventory(
+        InventoryModel inventory,
+        boolean insideHome,
+        boolean enteringHome,
+        boolean leavingHome,
+        long nowMillis
+    ) {
         InventoryModel safeInventory = inventory == null ? InventoryModel.empty() : inventory;
         Set<String> current = inventoryKeys(safeInventory);
         if (enteringHome) {
-            for (String key : current) {
-                if (!knownInventoryKeys.contains(key)) {
-                    newItemUntilMs.put(key, nowMillis + NEW_BADGE_MS);
+            if (runBaselineCaptured) {
+                for (String key : current) {
+                    if (!runBaselineInventoryKeys.contains(key)) {
+                        newItemUntilMs.put(key, nowMillis + NEW_BADGE_MS);
+                    }
                 }
             }
+            captureRunBaseline(current);
+        } else if (insideHome || leavingHome || !runBaselineCaptured) {
+            captureRunBaseline(current);
         }
-        knownInventoryKeys = current;
         newItemUntilMs.keySet().removeIf(key -> !current.contains(key));
+    }
+
+    private static void captureRunBaseline(Set<String> inventoryKeys) {
+        runBaselineInventoryKeys = inventoryKeys;
+        runBaselineCaptured = true;
     }
 
     private static Set<String> inventoryKeys(InventoryModel inventory) {
@@ -182,7 +201,7 @@ public final class HomeSequence {
         if (instanceId > 0L) {
             return "i:" + instanceId;
         }
-        return "fallback:" + item.itemId() + ":" + item.displayName() + ":" + item.stackCount();
+        return "fallback:" + item.itemId() + ":" + item.displayName();
     }
 
     private static void playHomeAudio() {
