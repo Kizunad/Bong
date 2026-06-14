@@ -12,8 +12,9 @@ use crate::npc::brain::{
     TribulationReadyScorer, WanderAction, WanderScorer, WanderState,
 };
 use crate::npc::faction::{
-    FactionId, FactionMembership, FactionRank, Lineage, MissionExecuteAction, MissionExecuteState,
-    MissionQueue, MissionQueueScorer, Reputation,
+    FactionId, FactionLeaderPatrolAction, FactionLeaderTerritoryScorer, FactionMembership,
+    FactionRank, Lineage, MissionExecuteAction, MissionExecuteState, MissionQueue,
+    MissionQueueScorer, Reputation,
 };
 use crate::npc::lifecycle::{npc_runtime_bundle, npc_runtime_bundle_with_age, NpcArchetype};
 use crate::npc::lod::NpcLodTier;
@@ -50,6 +51,7 @@ pub(crate) fn disciple_npc_thinker() -> ThinkerBuilder {
         .when(NpcTechniqueScorer, NpcTechniqueAction)
         .when(MeleeRangeScorer, MeleeAttackAction)
         .when(FactionDuelScorer, ChaseAction)
+        .when(FactionLeaderTerritoryScorer, FactionLeaderPatrolAction)
         .when(PlayerProximityScorer, FleeAction)
         .when(MissionQueueScorer, MissionExecuteAction)
         .when(ReturnHomeScorer, ReturnHomeAction)

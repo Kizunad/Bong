@@ -6,15 +6,19 @@ use std::time::Instant;
 use big_brain::prelude::{ActionBuilder, ActionState, Actor, BigBrainSet, Score, ScorerBuilder};
 use serde::{Deserialize, Serialize};
 use valence::prelude::{
-    bevy_ecs, App, Commands, Component, DVec3, Entity, Event, IntoSystemConfigs, Position,
-    PreUpdate, Query, Res, ResMut, Resource, Update, With,
+    bevy_ecs, App, Client, Commands, Component, DVec3, Entity, Event, EventReader, EventWriter,
+    IntoSystemConfigs, Position, PreUpdate, Query, Res, ResMut, Resource, Update, With,
 };
 
+use crate::cultivation::components::Realm;
 use crate::npc::lod::{lod_gated_score, NpcLodConfig, NpcLodTick, NpcLodTier};
 use crate::npc::navigator::Navigator;
 use crate::npc::perf::NpcPerfProbe;
 use crate::npc::spatial::NpcSpatialIndex;
-use crate::npc::spawn::{DuelTarget, NpcMarker};
+use crate::npc::spawn::{spawn_disciple_npc_at, DuelTarget, NpcMarker, NpcSkinSpawnContext};
+use crate::skin::NpcSkinFallbackPolicy;
+use crate::world::dimension::OverworldLayer;
+use crate::world::zone::ZoneRegistry;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -466,10 +470,71 @@ pub struct MissionQueueScorer;
 #[derive(Clone, Copy, Debug, Component)]
 pub struct MissionExecuteAction;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Component)]
+pub struct NamedFactionLeader {
+    pub faction: NamedFactionId,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Component)]
+pub struct FactionZoneClaim {
+    pub faction: NamedFactionId,
+    pub zone: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Resource)]
+pub struct FactionZoneClaims {
+    pub claims: Vec<FactionZoneClaim>,
+}
+
+#[derive(Clone, Copy, Debug, Component)]
+pub struct FactionLeaderTerritoryScorer;
+
+#[derive(Clone, Copy, Debug, Component)]
+pub struct FactionLeaderPatrolAction;
+
+#[derive(Clone, Copy, Debug, Default, Component)]
+pub struct FactionLeaderPatrolState {
+    pub elapsed_ticks: u32,
+    pub toll_notices_emitted: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FactionLeaderTollTargetKind {
+    Npc,
+    Player,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Event)]
+pub struct FactionLeaderTollNotice {
+    pub faction: NamedFactionId,
+    pub zone: String,
+    pub target: Entity,
+    pub target_kind: FactionLeaderTollTargetKind,
+}
+
 /// MissionQueueScorer 饱和阈值：pending ≥ 此值时分数封顶 1.0。
 pub const MISSION_QUEUE_SCORER_CAP: u32 = 3;
 /// Disciple 执行单个任务的最大 tick 数（超时 Success，避免卡死）。
 pub const MISSION_EXECUTE_MAX_TICKS: u32 = 600;
+pub const FACTION_LEADER_PATROL_SCORE: f32 = 0.72;
+pub const FACTION_LEADER_PATROL_MAX_TICKS: u32 = 100;
+
+impl FactionZoneClaims {
+    pub fn from_registry(registry: &NamedFactionRegistry) -> Self {
+        let claims = registry
+            .iter()
+            .map(|faction| FactionZoneClaim {
+                faction: faction.id,
+                zone: faction.zone_anchor.clone(),
+            })
+            .collect();
+        Self { claims }
+    }
+
+    pub fn get(&self, faction: NamedFactionId) -> Option<&FactionZoneClaim> {
+        self.claims.iter().find(|claim| claim.faction == faction)
+    }
+}
 
 impl ScorerBuilder for LoyaltyScorer {
     fn build(&self, cmd: &mut Commands, scorer: Entity, _actor: Entity) {
@@ -489,12 +554,30 @@ impl ScorerBuilder for MissionQueueScorer {
     }
 }
 
+impl ScorerBuilder for FactionLeaderTerritoryScorer {
+    fn build(&self, cmd: &mut Commands, scorer: Entity, _actor: Entity) {
+        cmd.entity(scorer).insert(*self);
+    }
+    fn label(&self) -> Option<&str> {
+        Some("FactionLeaderTerritoryScorer")
+    }
+}
+
 impl ActionBuilder for MissionExecuteAction {
     fn build(&self, cmd: &mut Commands, action: Entity, _actor: Entity) {
         cmd.entity(action).insert(*self);
     }
     fn label(&self) -> Option<&str> {
         Some("MissionExecuteAction")
+    }
+}
+
+impl ActionBuilder for FactionLeaderPatrolAction {
+    fn build(&self, cmd: &mut Commands, action: Entity, _actor: Entity) {
+        cmd.entity(action).insert(*self);
+    }
+    fn label(&self) -> Option<&str> {
+        Some("FactionLeaderPatrolAction")
     }
 }
 
@@ -841,21 +924,156 @@ pub struct NamedFactionMembership {
 }
 
 pub fn register(app: &mut App) {
+    let named_registry = NamedFactionRegistry::startup_default();
+    let claims = FactionZoneClaims::from_registry(&named_registry);
     app.insert_resource(FactionStore::default())
         // plan-faction-expansion-v1 P0：具名势力注册表，启动即 3 条可查（防孤岛 #1）。
-        .insert_resource(NamedFactionRegistry::startup_default())
+        .insert_resource(named_registry)
+        // plan-faction-expansion-v1 P2：具名势力地盘 claim，按 registry.zone_anchor 派生。
+        .insert_resource(claims)
         // plan-faction-expansion-v1 P1：三势力关系矩阵，startup_default 写入三对关系。
         .insert_resource(FactionRelationMatrix::startup_default())
-        .add_event::<FactionEventNotice>();
+        .add_event::<FactionEventNotice>()
+        .add_event::<FactionLeaderTollNotice>();
     app.add_systems(Update, assign_hostile_encounters)
         .add_systems(
-            PreUpdate,
-            (loyalty_scorer_system, mission_queue_scorer_system).in_set(BigBrainSet::Scorers),
+            Update,
+            (
+                spawn_named_faction_leaders_on_startup,
+                sync_named_faction_census_system,
+                handle_faction_leader_toll_notices_system,
+            )
+                .chain(),
         )
         .add_systems(
             PreUpdate,
-            mission_execute_action_system.in_set(BigBrainSet::Actions),
+            (
+                loyalty_scorer_system,
+                mission_queue_scorer_system,
+                faction_leader_territory_scorer_system,
+            )
+                .in_set(BigBrainSet::Scorers),
+        )
+        .add_systems(
+            PreUpdate,
+            (
+                mission_execute_action_system,
+                faction_leader_patrol_action_system,
+            )
+                .in_set(BigBrainSet::Actions),
         );
+}
+
+fn spawn_named_faction_leaders_on_startup(
+    mut commands: Commands,
+    registry: Option<Res<NamedFactionRegistry>>,
+    claims: Option<Res<FactionZoneClaims>>,
+    zones: Option<Res<ZoneRegistry>>,
+    layers: Query<Entity, With<OverworldLayer>>,
+    leaders: Query<&NamedFactionLeader>,
+    mut done: valence::prelude::Local<bool>,
+) {
+    if *done {
+        return;
+    }
+    let Some(registry) = registry.as_deref() else {
+        return;
+    };
+    let Some(claims) = claims.as_deref() else {
+        return;
+    };
+    let Some(zones) = zones.as_deref() else {
+        return;
+    };
+    let Some(layer) = layers.iter().next() else {
+        return;
+    };
+
+    let existing = leaders
+        .iter()
+        .map(|leader| leader.faction)
+        .collect::<Vec<_>>();
+    let skin_policy = NpcSkinFallbackPolicy::AllowFallback;
+    for faction in registry
+        .iter()
+        .filter(|faction| faction.status == FactionStatus::Active)
+    {
+        if existing.contains(&faction.id) {
+            continue;
+        }
+        let Some(claim) = claims.get(faction.id) else {
+            tracing::warn!(
+                "[bong][faction] leader spawn skipped for {:?}: missing FactionZoneClaim",
+                faction.id
+            );
+            continue;
+        };
+        let Some(zone) = zones.find_zone_by_name(claim.zone.as_str()) else {
+            tracing::warn!(
+                "[bong][faction] leader spawn skipped for {:?}: zone `{}` missing",
+                faction.id,
+                claim.zone
+            );
+            continue;
+        };
+        let spawn_position = zone.patrol_target(0);
+        let entity = spawn_disciple_npc_at(
+            &mut commands,
+            NpcSkinSpawnContext::new(None, skin_policy),
+            layer,
+            zone.name.as_str(),
+            spawn_position,
+            zone.center(),
+            legacy_faction_id_for_named_faction(faction.id),
+            FactionRank::Leader,
+            leader_realm_for(faction.id),
+            None,
+            0.0,
+        );
+        commands.entity(entity).insert((
+            NamedFactionLeader {
+                faction: faction.id,
+            },
+            NamedFactionMembership {
+                faction_id: faction.id,
+            },
+            claim.clone(),
+            FactionLeaderPatrolState::default(),
+        ));
+    }
+    *done = true;
+}
+
+fn sync_named_faction_census_system(
+    mut registry: Option<ResMut<NamedFactionRegistry>>,
+    members: Query<&NamedFactionMembership, With<NpcMarker>>,
+) {
+    let Some(registry) = registry.as_deref_mut() else {
+        return;
+    };
+    let mut counts: HashMap<NamedFactionId, u32> = HashMap::new();
+    for membership in &members {
+        *counts.entry(membership.faction_id).or_insert(0) += 1;
+    }
+    for faction in registry.factions.iter_mut() {
+        faction.current_npc_count = counts.get(&faction.id).copied().unwrap_or(0);
+    }
+}
+
+fn leader_realm_for(faction: NamedFactionId) -> Realm {
+    match faction {
+        NamedFactionId::QingyunHunters => Realm::Solidify,
+        NamedFactionId::CangyuanMerchants => Realm::Spirit,
+        NamedFactionId::NorthWasteDrifters => Realm::Awaken,
+    }
+}
+
+fn legacy_faction_id_for_named_faction(faction: NamedFactionId) -> FactionId {
+    match faction {
+        NamedFactionId::QingyunHunters => FactionId::Attack,
+        NamedFactionId::CangyuanMerchants => FactionId::Defend,
+        NamedFactionId::NorthWasteDrifters => FactionId::Neutral,
+    }
 }
 
 fn loyalty_scorer_system(
@@ -954,6 +1172,130 @@ fn mission_execute_action_system(
             }
             ActionState::Init | ActionState::Success | ActionState::Failure => {}
         }
+    }
+}
+
+fn faction_leader_territory_scorer_system(
+    zones: Option<Res<ZoneRegistry>>,
+    leaders: Query<(&NamedFactionLeader, &FactionZoneClaim, &Position), With<NpcMarker>>,
+    mut scorers: Query<(&Actor, &mut Score), With<FactionLeaderTerritoryScorer>>,
+) {
+    let Some(zones) = zones.as_deref() else {
+        for (_, mut score) in &mut scorers {
+            score.set(0.0);
+        }
+        return;
+    };
+
+    for (Actor(actor), mut score) in &mut scorers {
+        let Ok((leader, claim, position)) = leaders.get(*actor) else {
+            score.set(0.0);
+            continue;
+        };
+        if leader.faction != claim.faction {
+            score.set(0.0);
+            continue;
+        }
+        let active = zones
+            .find_zone_by_name(claim.zone.as_str())
+            .is_some_and(|zone| zone.contains(position.get()));
+        score.set(if active {
+            FACTION_LEADER_PATROL_SCORE
+        } else {
+            0.0
+        });
+    }
+}
+
+fn faction_leader_patrol_action_system(
+    zones: Option<Res<ZoneRegistry>>,
+    mut leaders: Query<
+        (
+            &NamedFactionLeader,
+            &FactionZoneClaim,
+            &mut Navigator,
+            &mut FactionLeaderPatrolState,
+        ),
+        With<NamedFactionLeader>,
+    >,
+    npc_intruders: Query<(Entity, &Position, Option<&NamedFactionMembership>), With<NpcMarker>>,
+    player_intruders: Query<(Entity, &Position), With<Client>>,
+    mut actions: Query<(&Actor, &mut ActionState), With<FactionLeaderPatrolAction>>,
+    mut toll_notices: EventWriter<FactionLeaderTollNotice>,
+) {
+    let Some(zones) = zones.as_deref() else {
+        for (_, mut state) in &mut actions {
+            *state = ActionState::Failure;
+        }
+        return;
+    };
+
+    for (Actor(actor), mut action_state) in &mut actions {
+        let Ok((leader, claim, mut navigator, mut patrol_state)) = leaders.get_mut(*actor) else {
+            *action_state = ActionState::Failure;
+            continue;
+        };
+        let Some(zone) = zones.find_zone_by_name(claim.zone.as_str()) else {
+            *action_state = ActionState::Failure;
+            continue;
+        };
+        match *action_state {
+            ActionState::Requested => {
+                patrol_state.elapsed_ticks = 0;
+                navigator.set_goal(zone.patrol_target(0), 1.0);
+                let npc_target = npc_intruders
+                    .iter()
+                    .find_map(|(target, position, membership)| {
+                        if target == *actor || !zone.contains(position.get()) {
+                            return None;
+                        }
+                        let same_faction = membership
+                            .is_some_and(|membership| membership.faction_id == leader.faction);
+                        (!same_faction).then_some((target, FactionLeaderTollTargetKind::Npc))
+                    });
+                let target = npc_target.or_else(|| {
+                    player_intruders
+                        .iter()
+                        .find(|(target, position)| target != actor && zone.contains(position.get()))
+                        .map(|(target, _)| (target, FactionLeaderTollTargetKind::Player))
+                });
+                if let Some((target, target_kind)) = target {
+                    patrol_state.toll_notices_emitted =
+                        patrol_state.toll_notices_emitted.saturating_add(1);
+                    toll_notices.send(FactionLeaderTollNotice {
+                        faction: leader.faction,
+                        zone: claim.zone.clone(),
+                        target,
+                        target_kind,
+                    });
+                }
+                *action_state = ActionState::Executing;
+            }
+            ActionState::Executing => {
+                patrol_state.elapsed_ticks = patrol_state.elapsed_ticks.saturating_add(1);
+                if patrol_state.elapsed_ticks >= FACTION_LEADER_PATROL_MAX_TICKS {
+                    navigator.set_goal(zone.patrol_target(1), 1.0);
+                    *action_state = ActionState::Success;
+                }
+            }
+            ActionState::Cancelled => {
+                navigator.stop();
+                *action_state = ActionState::Failure;
+            }
+            ActionState::Init | ActionState::Success | ActionState::Failure => {}
+        }
+    }
+}
+
+fn handle_faction_leader_toll_notices_system(mut notices: EventReader<FactionLeaderTollNotice>) {
+    for notice in notices.read() {
+        tracing::info!(
+            "[bong][faction] leader toll notice faction={:?} zone={} target={:?} kind={:?}",
+            notice.faction,
+            notice.zone,
+            notice.target,
+            notice.target_kind
+        );
     }
 }
 
@@ -1478,7 +1820,7 @@ mod tests {
     // Phase 5 Disciple Scorer / Action 饱和测试
     // ---------------------------------------------------------------------
 
-    use valence::prelude::{App, PreUpdate};
+    use valence::prelude::{App, Events, PreUpdate};
 
     fn base_membership(faction: FactionId, loyalty: f64, pending: u32) -> FactionMembership {
         let pending_ids: Vec<MissionId> = (0..pending)
@@ -2293,6 +2635,560 @@ mod tests {
             Some(defend),
             "旧 FactionId::Attack NPC 应在 fallback 路径（无 NamedFactionMembership）把 \
              Defend NPC 设为 DuelTarget（is_hostile_pair 仍生效）"
+        );
+    }
+
+    fn test_zone(
+        name: &str,
+        min_x: f64,
+        min_z: f64,
+        max_x: f64,
+        max_z: f64,
+    ) -> crate::world::zone::Zone {
+        crate::world::zone::Zone {
+            name: name.to_string(),
+            dimension: crate::world::dimension::DimensionKind::Overworld,
+            bounds: (
+                DVec3::new(min_x, 60.0, min_z),
+                DVec3::new(max_x, 90.0, max_z),
+            ),
+            spirit_qi: 0.5,
+            danger_level: 1,
+            active_events: Vec::new(),
+            patrol_anchors: vec![
+                DVec3::new((min_x + max_x) * 0.5, 66.0, (min_z + max_z) * 0.5),
+                DVec3::new(max_x - 4.0, 66.0, max_z - 4.0),
+            ],
+            blocked_tiles: Vec::new(),
+        }
+    }
+
+    fn p2_zone_registry() -> ZoneRegistry {
+        ZoneRegistry {
+            zones: vec![
+                test_zone("qingyun_peaks", 0.0, 0.0, 100.0, 100.0),
+                test_zone("blood_valley", 200.0, 0.0, 320.0, 120.0),
+                test_zone("north_wastes", 400.0, 0.0, 560.0, 160.0),
+            ],
+        }
+    }
+
+    fn build_leader_patrol_app() -> App {
+        let mut app = App::new();
+        app.insert_resource(p2_zone_registry());
+        app.add_event::<FactionLeaderTollNotice>();
+        app.add_systems(PreUpdate, faction_leader_patrol_action_system);
+        app
+    }
+
+    #[test]
+    fn faction_zone_claims_match_registry_zone_anchors() {
+        let registry = NamedFactionRegistry::startup_default();
+        let claims = FactionZoneClaims::from_registry(&registry);
+        for faction in registry.iter() {
+            let claim = claims
+                .get(faction.id)
+                .unwrap_or_else(|| panic!("{:?} 必须有 FactionZoneClaim", faction.id));
+            assert_eq!(
+                claim.zone, faction.zone_anchor,
+                "{:?} 的 FactionZoneClaim 必须与 NamedFactionRegistry.zone_anchor 一致",
+                faction.id
+            );
+        }
+    }
+
+    #[test]
+    fn leader_spawn_creates_active_faction_leaders_and_skips_headless() {
+        let mut app = App::new();
+        app.insert_resource(NamedFactionRegistry::startup_default());
+        let claims =
+            FactionZoneClaims::from_registry(app.world().resource::<NamedFactionRegistry>());
+        app.insert_resource(claims);
+        app.insert_resource(p2_zone_registry());
+        app.world_mut().spawn(OverworldLayer);
+        app.add_systems(Update, spawn_named_faction_leaders_on_startup);
+        app.update();
+
+        let mut leaders = app.world_mut().query::<(
+            &NamedFactionLeader,
+            &NamedFactionMembership,
+            &FactionMembership,
+            &FactionZoneClaim,
+            &Position,
+        )>();
+        let rows = leaders
+            .iter(app.world())
+            .map(|(leader, membership, legacy_membership, claim, position)| {
+                (
+                    leader.faction,
+                    membership.faction_id,
+                    legacy_membership.faction_id,
+                    claim.zone.clone(),
+                    position.get(),
+                )
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            rows.len(),
+            2,
+            "P2 只应为 Active 势力刷新 2 名领袖；Headless 北荒漂流者不刷新，实际 {:?}",
+            rows
+        );
+        assert!(
+            rows.iter().any(|(leader, membership, legacy, zone, pos)| {
+                *leader == NamedFactionId::QingyunHunters
+                    && *membership == NamedFactionId::QingyunHunters
+                    && *legacy == FactionId::Attack
+                    && zone == "qingyun_peaks"
+                    && p2_zone_registry()
+                        .find_zone_by_name("qingyun_peaks")
+                        .unwrap()
+                        .contains(*pos)
+            }),
+            "青云猎盟领袖必须带 NamedFactionLeader + NamedFactionMembership 并刷新在 qingyun_peaks 内"
+        );
+        assert!(
+            rows.iter().any(|(leader, membership, legacy, zone, pos)| {
+                *leader == NamedFactionId::CangyuanMerchants
+                    && *membership == NamedFactionId::CangyuanMerchants
+                    && *legacy == FactionId::Defend
+                    && zone == "blood_valley"
+                    && p2_zone_registry()
+                        .find_zone_by_name("blood_valley")
+                        .unwrap()
+                        .contains(*pos)
+            }),
+            "沧渊商会领袖必须带 NamedFactionLeader + NamedFactionMembership 并刷新在 blood_valley 内"
+        );
+        assert!(
+            rows.iter()
+                .all(|(leader, _, _, _, _)| *leader != NamedFactionId::NorthWasteDrifters),
+            "NorthWasteDrifters 初始 Headless，P2 不应刷新领袖"
+        );
+    }
+
+    #[test]
+    fn leader_spawn_is_idempotent_after_startup_runs_twice() {
+        let mut app = App::new();
+        app.insert_resource(NamedFactionRegistry::startup_default());
+        let claims =
+            FactionZoneClaims::from_registry(app.world().resource::<NamedFactionRegistry>());
+        app.insert_resource(claims);
+        app.insert_resource(p2_zone_registry());
+        app.world_mut().spawn(OverworldLayer);
+        app.add_systems(Update, spawn_named_faction_leaders_on_startup);
+
+        app.update();
+        app.update();
+
+        let mut leaders = app.world_mut().query::<&NamedFactionLeader>();
+        assert_eq!(
+            leaders.iter(app.world()).count(),
+            2,
+            "startup system 重跑不应为 Active 势力重复刷新领袖"
+        );
+    }
+
+    #[test]
+    fn leader_spawn_waits_for_zone_registry_before_marking_done() {
+        let mut app = App::new();
+        app.insert_resource(NamedFactionRegistry::startup_default());
+        let claims =
+            FactionZoneClaims::from_registry(app.world().resource::<NamedFactionRegistry>());
+        app.insert_resource(claims);
+        app.world_mut().spawn(OverworldLayer);
+        app.add_systems(Update, spawn_named_faction_leaders_on_startup);
+
+        app.update();
+        let mut leaders = app.world_mut().query::<&NamedFactionLeader>();
+        assert_eq!(
+            leaders.iter(app.world()).count(),
+            0,
+            "缺 ZoneRegistry 时不应刷新领袖，也不应把 startup Local done 置真"
+        );
+
+        app.insert_resource(p2_zone_registry());
+        app.update();
+        let mut leaders = app.world_mut().query::<&NamedFactionLeader>();
+        assert_eq!(
+            leaders.iter(app.world()).count(),
+            2,
+            "ZoneRegistry 后置注入后，startup system 仍必须刷新两个 Active 领袖"
+        );
+    }
+
+    #[test]
+    fn leader_realm_matches_plan_table() {
+        assert_eq!(
+            leader_realm_for(NamedFactionId::QingyunHunters),
+            Realm::Solidify,
+            "青云猎盟盟主按 P2 表应为固元"
+        );
+        assert_eq!(
+            leader_realm_for(NamedFactionId::CangyuanMerchants),
+            Realm::Spirit,
+            "沧渊商会会首按 P2 表应为通灵"
+        );
+    }
+
+    #[test]
+    fn leader_territory_scorer_only_activates_inside_claimed_zone() {
+        let mut app = App::new();
+        app.insert_resource(p2_zone_registry());
+        app.add_systems(PreUpdate, faction_leader_territory_scorer_system);
+        let leader = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position::new([50.0, 66.0, 50.0]),
+                NamedFactionLeader {
+                    faction: NamedFactionId::QingyunHunters,
+                },
+                FactionZoneClaim {
+                    faction: NamedFactionId::QingyunHunters,
+                    zone: "qingyun_peaks".to_string(),
+                },
+            ))
+            .id();
+        let scorer = app
+            .world_mut()
+            .spawn((
+                Actor(leader),
+                Score::default(),
+                FactionLeaderTerritoryScorer,
+            ))
+            .id();
+        app.update();
+        let active_score = app.world().get::<Score>(scorer).unwrap().get();
+        assert!(
+            (active_score - FACTION_LEADER_PATROL_SCORE).abs() < f32::EPSILON,
+            "领袖在自己 FactionZoneClaim 内时 scorer 必须激活，实际 {active_score}"
+        );
+
+        app.world_mut()
+            .get_mut::<Position>(leader)
+            .unwrap()
+            .set([500.0, 66.0, 50.0]);
+        app.update();
+        let outside_score = app.world().get::<Score>(scorer).unwrap().get();
+        assert_eq!(
+            outside_score, 0.0,
+            "领袖离开自己 claim zone 后 scorer 必须失活，实际 {outside_score}"
+        );
+    }
+
+    #[test]
+    fn leader_territory_scorer_zero_when_claim_zone_missing() {
+        let mut app = App::new();
+        app.insert_resource(p2_zone_registry());
+        app.add_systems(PreUpdate, faction_leader_territory_scorer_system);
+        let leader = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position::new([50.0, 66.0, 50.0]),
+                NamedFactionLeader {
+                    faction: NamedFactionId::QingyunHunters,
+                },
+                FactionZoneClaim {
+                    faction: NamedFactionId::QingyunHunters,
+                    zone: "missing_zone".to_string(),
+                },
+            ))
+            .id();
+        let scorer = app
+            .world_mut()
+            .spawn((
+                Actor(leader),
+                Score::default(),
+                FactionLeaderTerritoryScorer,
+            ))
+            .id();
+        app.update();
+        assert_eq!(
+            app.world().get::<Score>(scorer).unwrap().get(),
+            0.0,
+            "claim zone 缺失时 scorer 必须失活，避免领袖在未知区域触发地盘行为"
+        );
+    }
+
+    #[test]
+    fn leader_territory_scorer_zero_when_claim_faction_mismatch() {
+        let mut app = App::new();
+        app.insert_resource(p2_zone_registry());
+        app.add_systems(PreUpdate, faction_leader_territory_scorer_system);
+        let leader = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position::new([50.0, 66.0, 50.0]),
+                NamedFactionLeader {
+                    faction: NamedFactionId::QingyunHunters,
+                },
+                FactionZoneClaim {
+                    faction: NamedFactionId::CangyuanMerchants,
+                    zone: "qingyun_peaks".to_string(),
+                },
+            ))
+            .id();
+        let scorer = app
+            .world_mut()
+            .spawn((
+                Actor(leader),
+                Score::default(),
+                FactionLeaderTerritoryScorer,
+            ))
+            .id();
+        app.update();
+        assert_eq!(
+            app.world().get::<Score>(scorer).unwrap().get(),
+            0.0,
+            "NamedFactionLeader 与 FactionZoneClaim faction 不一致时 scorer 必须失活"
+        );
+    }
+
+    #[test]
+    fn leader_patrol_action_sets_zone_patrol_goal_and_finishes() {
+        let mut app = build_leader_patrol_app();
+        let leader = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                NamedFactionLeader {
+                    faction: NamedFactionId::QingyunHunters,
+                },
+                FactionZoneClaim {
+                    faction: NamedFactionId::QingyunHunters,
+                    zone: "qingyun_peaks".to_string(),
+                },
+                Navigator::new(),
+                FactionLeaderPatrolState::default(),
+            ))
+            .id();
+        let action = app
+            .world_mut()
+            .spawn((
+                Actor(leader),
+                FactionLeaderPatrolAction,
+                ActionState::Requested,
+            ))
+            .id();
+        app.update();
+        assert_eq!(
+            *app.world().get::<ActionState>(action).unwrap(),
+            ActionState::Executing,
+            "Requested 后领袖巡逻 action 应进入 Executing"
+        );
+        assert!(
+            !app.world().get::<Navigator>(leader).unwrap().is_idle(),
+            "Requested 后 Navigator 必须收到 claim zone 的 patrol goal"
+        );
+
+        app.world_mut()
+            .get_mut::<FactionLeaderPatrolState>(leader)
+            .unwrap()
+            .elapsed_ticks = FACTION_LEADER_PATROL_MAX_TICKS - 1;
+        app.update();
+        assert_eq!(
+            *app.world().get::<ActionState>(action).unwrap(),
+            ActionState::Success,
+            "达到 FACTION_LEADER_PATROL_MAX_TICKS 后 action 必须 Success，避免领袖卡死"
+        );
+    }
+
+    #[test]
+    fn leader_patrol_action_emits_toll_notice_for_foreign_npc_in_claim() {
+        let mut app = build_leader_patrol_app();
+        let leader = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                NamedFactionLeader {
+                    faction: NamedFactionId::QingyunHunters,
+                },
+                FactionZoneClaim {
+                    faction: NamedFactionId::QingyunHunters,
+                    zone: "qingyun_peaks".to_string(),
+                },
+                Navigator::new(),
+                FactionLeaderPatrolState::default(),
+            ))
+            .id();
+        let intruder = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position::new([52.0, 66.0, 52.0]),
+                NamedFactionMembership {
+                    faction_id: NamedFactionId::CangyuanMerchants,
+                },
+            ))
+            .id();
+        app.world_mut().spawn((
+            Actor(leader),
+            FactionLeaderPatrolAction,
+            ActionState::Requested,
+        ));
+
+        app.update();
+
+        let events = app.world().resource::<Events<FactionLeaderTollNotice>>();
+        let notices = events
+            .get_reader()
+            .read(events)
+            .cloned()
+            .collect::<Vec<_>>();
+        assert_eq!(
+            notices.len(),
+            1,
+            "外派 NPC 进入领袖地盘时必须产生收费 notice"
+        );
+        assert_eq!(notices[0].faction, NamedFactionId::QingyunHunters);
+        assert_eq!(notices[0].zone, "qingyun_peaks");
+        assert_eq!(notices[0].target, intruder);
+        assert_eq!(notices[0].target_kind, FactionLeaderTollTargetKind::Npc);
+        assert_eq!(
+            app.world()
+                .get::<FactionLeaderPatrolState>(leader)
+                .unwrap()
+                .toll_notices_emitted,
+            1,
+            "收费 notice 计数用于防止行为树收费分支变成不可观测副作用"
+        );
+    }
+
+    #[test]
+    fn leader_patrol_action_does_not_toll_same_faction_npc() {
+        let mut app = build_leader_patrol_app();
+        let leader = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                NamedFactionLeader {
+                    faction: NamedFactionId::QingyunHunters,
+                },
+                FactionZoneClaim {
+                    faction: NamedFactionId::QingyunHunters,
+                    zone: "qingyun_peaks".to_string(),
+                },
+                Navigator::new(),
+                FactionLeaderPatrolState::default(),
+            ))
+            .id();
+        app.world_mut().spawn((
+            NpcMarker,
+            Position::new([52.0, 66.0, 52.0]),
+            NamedFactionMembership {
+                faction_id: NamedFactionId::QingyunHunters,
+            },
+        ));
+        app.world_mut().spawn((
+            Actor(leader),
+            FactionLeaderPatrolAction,
+            ActionState::Requested,
+        ));
+
+        app.update();
+
+        let events = app.world().resource::<Events<FactionLeaderTollNotice>>();
+        assert_eq!(
+            events.get_reader().read(events).count(),
+            0,
+            "同派 NPC 在自家 claim 内不应触发收费 notice"
+        );
+    }
+
+    #[test]
+    fn leader_patrol_action_cancelled_stops_navigator_and_fails() {
+        let mut app = build_leader_patrol_app();
+        let mut navigator = Navigator::new();
+        navigator.set_goal(DVec3::new(80.0, 66.0, 80.0), 1.0);
+        let leader = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                NamedFactionLeader {
+                    faction: NamedFactionId::QingyunHunters,
+                },
+                FactionZoneClaim {
+                    faction: NamedFactionId::QingyunHunters,
+                    zone: "qingyun_peaks".to_string(),
+                },
+                navigator,
+                FactionLeaderPatrolState::default(),
+            ))
+            .id();
+        let action = app
+            .world_mut()
+            .spawn((
+                Actor(leader),
+                FactionLeaderPatrolAction,
+                ActionState::Cancelled,
+            ))
+            .id();
+
+        app.update();
+
+        assert_eq!(
+            *app.world().get::<ActionState>(action).unwrap(),
+            ActionState::Failure,
+            "Cancelled 后巡逻 action 必须 Failure"
+        );
+        assert!(
+            app.world().get::<Navigator>(leader).unwrap().is_idle(),
+            "Cancelled 后 Navigator 必须 stop，避免残留巡逻 goal"
+        );
+    }
+
+    #[test]
+    fn named_faction_census_counts_named_memberships() {
+        let mut app = App::new();
+        app.insert_resource(NamedFactionRegistry::startup_default());
+        app.add_systems(Update, sync_named_faction_census_system);
+        app.world_mut().spawn((
+            NpcMarker,
+            NamedFactionMembership {
+                faction_id: NamedFactionId::QingyunHunters,
+            },
+        ));
+        app.world_mut().spawn((
+            NpcMarker,
+            NamedFactionMembership {
+                faction_id: NamedFactionId::QingyunHunters,
+            },
+        ));
+        app.world_mut().spawn((
+            NpcMarker,
+            NamedFactionMembership {
+                faction_id: NamedFactionId::CangyuanMerchants,
+            },
+        ));
+        app.update();
+        let registry = app.world().resource::<NamedFactionRegistry>();
+        assert_eq!(
+            registry
+                .get(NamedFactionId::QingyunHunters)
+                .unwrap()
+                .current_npc_count,
+            2,
+            "census 必须把青云猎盟两名 NamedFactionMembership 计入 current_npc_count"
+        );
+        assert_eq!(
+            registry
+                .get(NamedFactionId::CangyuanMerchants)
+                .unwrap()
+                .current_npc_count,
+            1,
+            "census 必须把沧渊商会一名 NamedFactionMembership 计入 current_npc_count"
+        );
+        assert_eq!(
+            registry
+                .get(NamedFactionId::NorthWasteDrifters)
+                .unwrap()
+                .current_npc_count,
+            0,
+            "没有实体归属北荒漂流者时 census 应保持 0"
         );
     }
 }
