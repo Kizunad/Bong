@@ -112,7 +112,15 @@ const JUEBI_UPHEAVAL_INNER_RADIUS: i32 = 50;
 const JUEBI_UPHEAVAL_OUTER_RADIUS: i32 = 120;
 const JUEBI_UPHEAVAL_DENSITY_PER_MILLE: u32 = 350;
 
-pub const DEFAULT_VOID_QUOTA_K: f64 = DEFAULT_SPIRIT_QI_TOTAL / 2.0;
+/// plan-tribulation-balance-v1 P1：默认满灵气预算下保留 2 个化虚名额。
+///
+/// 真实名额公式不是 plan 草稿里的 player_count/hard_cap，而是
+/// `floor(WorldQiBudget.current_total / quota_k)`。当前运营校准目标是：
+/// `DEFAULT_SPIRIT_QI_TOTAL` 满额时 quota_limit=2；若 1 人占用，满载率为 50%，
+/// 落在 P1 目标区间 30%-70%。
+pub const DEFAULT_VOID_QUOTA_TARGET_SLOTS_AT_FULL_QI: u32 = 2;
+pub const DEFAULT_VOID_QUOTA_K: f64 =
+    DEFAULT_SPIRIT_QI_TOTAL / DEFAULT_VOID_QUOTA_TARGET_SLOTS_AT_FULL_QI as f64;
 pub const VOID_QUOTA_BASIS: &str = "world_qi_budget.current_total";
 pub const VOID_QUOTA_EXCEEDED_REASON: &str = "void_quota_exceeded";
 
