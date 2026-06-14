@@ -1,6 +1,6 @@
-# plan-block-placement-ux-v1（骨架）
+# plan-block-placement-ux-v1
 
-> **骨架（skeleton / 草案）**。一句话主题：修 P5 方块放置 / 快捷栏绑定的 UX 与 wiring 缺口——**拖拽绑定可放置方块**、**用后图标·数量同步**、**上下文菜单左右键都可点**——让"BlockPicker 取方块 → 绑栏 → 右键放置"这条审阅/建造闭环顺滑可用。
+> 一句话主题：修 P5 方块放置 / 快捷栏绑定的 UX 与 wiring 缺口——**拖拽绑定可放置方块**、**用后图标·数量同步**、**上下文菜单左右键都可点**——让"BlockPicker 取方块 → 绑栏 → 右键放置"这条审阅/建造闭环顺滑可用。
 
 > 立项动机：worldgen-v4 P6 真机审阅时，用户取了 BlockPicker 的 `vanilla:<block>` 方块却右键放不下。逐层排查发现 P5 放置功能在双快捷栏 UI 下存在多处 wiring 断点（见各阶段）。**底层 server 放置链路（`block_item_to_state` vanilla: 直通 + `handle_block_place_requests`）正常**，缺口全在客户端绑定/选中/同步层。
 
@@ -8,10 +8,10 @@
 
 | 阶段 | 主题 | 状态 |
 |------|------|------|
-| P0 | 拖拽绑定可放置方块（统一 quick_slot ↔ SkillBarStore 绑定路径） | ⬜ |
-| P1 | 用后同步：实例消耗/数量扣减 → SkillBar 图标清除或刷新 | ⬜ |
-| P2 | 上下文菜单左右键都可点（"绑定到 N" 等不再只认右键） | ⬜ |
-| P3 | vanilla:<block> 物品图标渲染真 vanilla 物品（不再落火焰占位图） | ⬜ |
+| P0 | 拖拽绑定可放置方块（统一 quick_slot ↔ SkillBarStore 绑定路径） | ✅ 2026-06-15 |
+| P1 | 用后同步：实例消耗/数量扣减 → SkillBar 图标清除或刷新 | ✅ 2026-06-15 |
+| P2 | 上下文菜单左右键都可点（"绑定到 N" 等不再只认右键） | ✅ 2026-06-15 |
+| P3 | vanilla:<block> 物品图标渲染真 vanilla 物品（不再落火焰占位图） | ✅ 2026-06-15 |
 
 ## 接入面 checklist（防孤岛——升 active 前据 docs/CLAUDE.md §二 核实）
 
@@ -59,3 +59,50 @@ worldgen-v4 P6 真机审阅期间用户实操放置 surfaced。底层 server 放
 1. **quick_slot 栏 与 SkillBarStore 栏 是一个还是两个**：现有 `quick_slot_bind`（cast/use）与 `skill_bar_bind_item`（放置读）两条 C2S + 两套 UI 状态。需查 server 侧 quick_slot 与 skill_bar 的存储/语义，定"统一为一栏"还是"两栏各司其职、方块只走 SkillBar"。这是 P0 实现路线的前置。
 2. **count 语义**：dev BlockPicker 方块给的是单实例还是带 count 堆叠；放置扣减按实例还是按数量。
 3. 是否一并把"拖放/选中/放置"的反馈做轻量提示（如选中槽高亮、放置成功音效），提升可用性——还是只修功能 wiring。
+
+> 收口结论：#1 定为「两栏各司其职、方块拖放额外旁路写 SkillBarStore」——P0 在 quick_slot 拖放落点对可放置方块**额外**调 `bindBlockItemToSkillBar`（同时发 `skill_bar_bind` + `SkillBarStore.updateSlot`），不合并两条 C2S，避免动既有 cast/use 栏语义。#2 定为「按 inventory_snapshot 自洽」——P1 不新增"清槽"协议，客户端用既有 `inventory_snapshot` 校验实例存活，count 走数量显示、消耗到 0 清槽。#3 只修功能 wiring，不做新增反馈提示（留待后续 plan）。
+
+---
+
+## Finish Evidence
+
+### 落地清单（各阶段真实 client 文件/类）
+
+- **P0 拖拽绑定可放置方块**：`client/src/main/java/com/bong/client/inventory/InspectScreen.java`
+  - `isBlockQuickBarBindable(InventoryItem)`（:2565）—— 谓词，复用 `BlockVanillaIconMap.isKnownBlockItem`
+  - quick_slot 拖放落点（:898）对可放置方块**额外**走 `bindBlockItemToSkillBar(index, item)`（:899），使拖放与右键菜单"绑定到 N"同效（同时 `sendSkillBarBindItem` + `SkillBarStore.updateSlot`）
+  - 测试 `InspectScreenSkillBarBindItemTest`（7 cases）：拖放方块后 `SkillBarStore.snapshot().slot(slot)` 为 ITEM 且 `selectedBlockPlaceIntent` 非空
+- **P1 用后同步（实例消耗 → 槽自洽刷新）**：`InspectScreen.java`
+  - inventory_snapshot 到达后按 instance 存活 reconcile SkillBar 槽（:822-835，`SkillBarStore.updateSlot(i, null)` 清失效槽；count>1 由 `GridSlotComponent.drawItemOverlays` 绘数量；`!model.isEmpty()` 守卫防开屏首帧误清）
+  - 测试 `InspectScreenSkillBarHydrateTest`（8 cases）：消耗清槽 / 仍存活保留 / count 显示 / 空 model 守卫 / SKILL 类不动 / 多槽独立 reconcile
+- **P2 上下文菜单左右键都可点**：`InspectScreen.java`
+  - `handleContextMenuClick(mouseX, mouseY, button)`（:1797）—— action 行命中对 button==0 与 button==1 都触发（`triggerPillMenuAction` / `triggerSkillBarMenuAction` / `triggerWeaponMenuAction` 三处一致）；行外侧仅右键关菜单，左键点空白不关
+  - 测试 `InspectScreenContextMenuClickTest`（8 cases）：button==0 命中 action 触发、三菜单一致、左键空白不关、右键空白关
+- **P3 vanilla:<block> 真物品图标渲染**：`client/src/main/java/com/bong/client/block/BlockVanillaIconMap.java` + `InspectScreen.java` + `client/src/main/java/com/bong/client/inventory/component/GridSlotComponent.java` + `client/src/main/java/com/bong/client/BongHud.java`
+  - `BlockVanillaIconMap`：新增 `isKnownBlockItem(String)`（:65）、`usesVanillaItemIcon(String)`（:127）分流谓词 + `drawVanillaIcon(DrawContext, itemId, dx, dy, size)`（:150）统一原生渲染（`createStackFor`/`createVanillaBlockStack` → `DrawContext.drawItem`），无 BlockItem 的特殊块优雅降级回扁平占位贴图
+  - 四处渲染路径接入：`GridSlotComponent` 单格槽、`InspectScreen.drawItemTextureRaw`（:3223）多格 overlay + 拖拽跟随、`BongHud.drawItemTexture` HUD 快捷栏
+  - `bindBlockItemToSkillBar` 对 vanilla 物品留空 iconTexture（blank），让 HUD 走 itemTexture 命令分流到原生方块图标分支（:2599-2601）
+  - 测试 `BlockVanillaIconMapTest`（11 cases）：`usesVanillaItemIcon` 全分支 + `drawVanillaIcon` 早退分支 + `createStackFor`/`createVanillaBlockStack` vanilla: 解析
+
+### 关键 commit
+
+- `8db5df8d5`（2026-06-15）chore(plan)：骨架→active（消费实现）
+- `c1b6ebfc7`（2026-06-15）P0+P2：拖放方块入快捷栏绑定 SkillBar + 菜单左右键命中
+- `7356fd3ad`（2026-06-15）P3+P1：vanilla 方块原生图标 + 放置后槽位自洽
+
+### 测试结果
+
+- `cd client && JAVA_HOME=.../java-17-openjdk-amd64 ./gradlew test build` → **BUILD SUCCESSFUL**，全仓 **2789 tests，0 failures / 0 errors**
+- 本 plan 新增/扩充测试：`InspectScreenSkillBarBindItemTest`（7）、`InspectScreenSkillBarHydrateTest`（8，新建）、`InspectScreenContextMenuClickTest`（8，新建）、`BlockVanillaIconMapTest`（11）
+
+### 跨仓库核验
+
+- **client**（本 plan 主战场）：`InspectScreen.isBlockQuickBarBindable` / `InspectScreen.bindBlockItemToSkillBar` / `InspectScreen.handleContextMenuClick` / `BlockVanillaIconMap.isKnownBlockItem` / `BlockVanillaIconMap.usesVanillaItemIcon` / `BlockVanillaIconMap.drawVanillaIcon` / `GridSlotComponent`(vanilla 分流) / `BongHud.drawItemTexture`(vanilla 分流) 均命中
+- **server**：**不变**——底层放置链路（`server/src/world/block_place.rs::block_item_to_state` vanilla: 直通、`handle_block_place_requests` 落 `Vanilla{state}`）本已正常，本 plan 不改放置协议与落块逻辑
+- **agent**：不涉及
+- **schema**：不变——P0 复用既有 `skill_bar_bind` C2S，P1 复用既有 `inventory_snapshot`，无新增协议/无 sample 改动
+
+### 遗留 / 后续
+
+- §N #3 的"拖放/选中/放置"轻量反馈（选中槽高亮、放置成功音效）未做，按收口结论留待后续 plan。
+- BlockPicker / 方块放置整链是 dev-only 画廊审阅工具链，无 worldview gameplay 锚点；若未来要转生产建造体验，需另立 plan 接 worldview 经济/采集语义。
