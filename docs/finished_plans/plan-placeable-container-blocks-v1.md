@@ -45,7 +45,7 @@
   - `dead_drop_box` 解锁需走私者师承（`craft/workbench_recipes.rs:519-523` 已声明 `Mentor { smuggler }`，与本 plan 吻合）。
 - **qi_physics 锚点**：**无**——容器方块本身不碰真元/灵气/衰减（内含高灵物的保鲜/逸散归 [[plan-container-filter-and-completion-v1]]，走 shelflife，不在本 plan）。**红旗自查**：本 plan 不引入任何 `*_DECAY*` / `*_DRAIN*` / 衰减常数，不写 `qi_current +=` / `zone.spirit_qi -=`，无 ledger `QiTransfer` 涉及。死信箱「物品化灰」是物品 despawn（`ItemInstance` 移除），不涉及真元守恒（化灰物品若携带 `spirit_quality > 0` 不回流 zone——这是物品销毁不是真元蒸发，与 qi 守恒律无关，见 P3 §决议）。
 
-## P0 — ExternalContainerKind 扩展 + 放置/破坏链路 ⬜
+## P0 — ExternalContainerKind 扩展 + 放置/破坏链路 ✅ 2026-06-14
 
 **纯 server 逻辑，无视听。**
 
@@ -66,7 +66,7 @@
   - **open 中破坏 → 强制关闭**：`opened_by = Some(player)` 时破坏容器 → 断言该玩家收到 `LootContainerCloseV1 { reason: ContainerDestroyed }`（对照 `opened_by = None` 时破坏不 emit close）；close reason 枚举 roundtrip pin 含 `ContainerDestroyed`。
   - 错误分支：未知 `placeable` 值拒绝 spawn；非 placeable 物品走原 `Block` gate 不误入容器派发；`category != Block` 且无 `placeable` 字段 → 原 `:212` reject 行为不变（回归 pin）。
 
-## P1 — schema 扩展 + 打开搜索链路 + IntentHandler ⬜
+## P1 — schema 扩展 + 打开搜索链路 + IntentHandler ✅ 2026-06-14
 
 **视听见 §视听·P1。**
 
@@ -88,7 +88,7 @@
   - 错误分支：open 已被他人打开的容器（`opened_by` 非 None）→ 拒绝；session 不存在 → reject。
   - schema pin：`LootContainerSourceKindV1::StorageCrate { is_herb }` 正反 sample 序列化对拍；`DeadDrop` 同。
 
-## P2 — bbmodel 资产 + 渲染接入 + 视听 + e2e ⬜
+## P2 — bbmodel 资产 + 渲染接入 + 视听 + e2e ✅ 2026-06-14
 
 **视觉资产 → 强制走 docs/CLAUDE.md §6.1 三轮自我打磨 + 终轮 commit `<PROMISE>` 担保块。**
 
@@ -105,7 +105,7 @@
 - **测试声明**：bbmodel 文件存在性（CI 检查 `local_models/*.bbmodel` 或导出 geo）；`BongEntityModelKind` raw_id 唯一性 pin（166/167/168 不与现有冲突，165 已归 [[plan-workbench-place-runtime-v1]] `WORKBENCH`）；renderer 注册 pin（三 renderer 在 bootstrap 注册）；audio_recipe JSON schema 校验（4 条 recipe 解析无误）。
 - **e2e**：合成（走私者师承解锁 dead_drop_box）→ 放置 → 渲染出 bbmodel → 右键搜索打开 → 拖入/拖出内容（走 `ExternalContainerMove`）→ 破坏 → 内容物 + 容器掉回地面。client e2e 截图验证三模型渲染正确。
 
-## P3 — 死信箱阵法防砸 + 破阵 VFX + 验收 ⬜
+## P3 — 死信箱阵法防砸 + 破阵 VFX + 验收 ✅ 2026-06-14
 
 **worldview §九:850 正典实装；视听见 §视听·P3。**
 
