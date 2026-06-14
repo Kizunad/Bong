@@ -385,6 +385,13 @@ public class BongHud {
      */
     private static void drawItemTexture(DrawContext context, String itemId, int dx, int dy, int size) {
         if (itemId == null || itemId.isEmpty() || size <= 0) return;
+
+        // P3 — HUD 快捷栏的 vanilla 方块条目用原生方块图标渲染（与 inspect 屏一致）；
+        // 非 vanilla 走扁平贴图。无 BlockItem 的特殊块降级回扁平贴图路径。
+        if (com.bong.client.block.BlockVanillaIconMap.drawVanillaIcon(context, itemId, dx, dy, size)) {
+            return;
+        }
+
         Identifier tex = GridSlotComponent.textureIdForItemId(itemId);
 
         RenderSystem.enableBlend();

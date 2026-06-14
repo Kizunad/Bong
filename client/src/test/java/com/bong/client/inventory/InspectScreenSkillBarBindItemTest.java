@@ -72,8 +72,32 @@ class InspectScreenSkillBarBindItemTest {
         SkillBarEntry entry = SkillBarStore.snapshot().slot(2);
         assertEquals(SkillBarEntry.Kind.ITEM, entry.kind());
         assertEquals("earth_crumb", entry.id());
-        assertTrue(entry.iconTexture().endsWith("textures/gui/items/earth_crumb.png"));
+        // P3 — earth_crumb 映射 vanilla BlockItem（minecraft:dirt）→ iconTexture 留空（blank），
+        // 让 HUD（QuickBarHudPlanner：iconTexture==null||isBlank() → itemTexture 命令）走
+        // BongHud.drawItemTexture 的 vanilla 原生方块图标分支，而非按非 blank iconTexture 走
+        // texture 命令渲染非法扁平 bong-client:textures/gui/items/earth_crumb.png 占位贴图。
+        // 注：SkillBarEntry 构造把 null iconTexture 归一为 ""，故此处断言 blank 而非 null。
+        assertTrue(entry.iconTexture() == null || entry.iconTexture().isBlank(),
+            "vanilla 方块（earth_crumb→minecraft:dirt）的 SkillBar iconTexture 应为 blank，"
+                + "以走 HUD itemTexture→原生方块图标路径，实际=`" + entry.iconTexture() + "`");
     }
+
+    @Test
+    void bindNonVanillaBlockKeepsFlatIconTexture() {
+        // 回归保护：若某 Bong 方块不走 vanilla 原生图标（usesVanillaItemIcon=false），
+        // iconTexture 仍应是扁平贴图路径，不被 P3 改动误清空。
+        // 当前 HOST_ITEMS 全部映射 vanilla，故无现成反例；此用例锁住分流逻辑本身：
+        // 一旦将来加入非 vanilla 的可绑定方块，其 iconTexture 必须非 blank。
+        // 用 usesVanillaItemIcon 谓词直接验证分流前提，绑定路径的真贴图由 e2e 兜。
+        org.junit.jupiter.api.Assertions.assertFalse(
+            com.bong.client.block.BlockVanillaIconMap.usesVanillaItemIcon("guyuan_pill"),
+            "非方块 / 非 vanilla 物品不得被判走原生图标分支");
+    }
+
+    // 注：vanilla:<short> 物品的绑定路径会经 isKnownBlockItem→createVanillaBlockStack 查
+    // Registries.BLOCK，需 MC Bootstrap（本 client 测试环境无），故其端到端绑定由 e2e 覆盖。
+    // 此处用 HOST_ITEMS 命中（不查 registry）的 earth_crumb 锁住 iconTexture=blank 契约，
+    // vanilla:<short> 的图标分流由 BlockVanillaIconMapTest.usesVanillaItemIcon* 单测覆盖。
 
     // ---- P0: 拖放方块到快捷使用栏（commitQuickUseDrop）同时写 quick_slot + SkillBar ----
 

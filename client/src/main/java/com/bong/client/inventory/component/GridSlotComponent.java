@@ -1,6 +1,7 @@
 package com.bong.client.inventory.component;
 
 import com.bong.client.armor.ArmorTintRegistry;
+import com.bong.client.block.BlockVanillaIconMap;
 import com.bong.client.botany.BotanySpiritQualityVisuals;
 import com.bong.client.inventory.ItemIconRegistry;
 import com.bong.client.inventory.RarityBorderRenderer;
@@ -153,11 +154,17 @@ public class GridSlotComponent extends BaseComponent {
     public static void drawItemTexture(OwoUIDrawContext context, InventoryItem item, int dx, int dy, int dw, int dh) {
         if (item == null || item.isEmpty()) return;
 
-        Identifier textureId = textureIdForItem(item);
-
         int fitSize = Math.min(dw, dh);
         int offsetX = (dw - fitSize) / 2;
         int offsetY = (dh - fitSize) / 2;
+
+        // P3 — vanilla 方块物品（如拖入快捷栏的 vanilla:<short>）用 MC 原生方块图标渲染，
+        // 与 BlockPicker 面板一致；无 BlockItem 的特殊块降级回扁平贴图路径。
+        if (BlockVanillaIconMap.drawVanillaIcon(context, item.itemId(), dx + offsetX, dy + offsetY, fitSize)) {
+            return;
+        }
+
+        Identifier textureId = textureIdForItem(item);
 
         RenderSystem.enableBlend();
         RenderSystem.defaultBlendFunc();

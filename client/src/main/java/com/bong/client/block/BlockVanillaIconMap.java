@@ -1,6 +1,7 @@
 package com.bong.client.block;
 
 import net.minecraft.block.Block;
+import net.minecraft.client.gui.DrawContext;
 import net.minecraft.item.BlockItem;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
@@ -103,6 +104,67 @@ public final class BlockVanillaIconMap {
             return Optional.empty();
         }
         return Optional.of(new ItemStack(item));
+    }
+
+    /**
+     * Vanilla 模型在 {@link DrawContext#drawItem(ItemStack, int, int)} 下的固定渲染边长（像素）。
+     * 缩放到任意槽位大小时以此为基准。
+     */
+    private static final int VANILLA_ICON_SIZE = 16;
+
+    /**
+     * plan-block-placement-ux-v1 P3 — 该 itemId 是否应以 vanilla 原生方块图标渲染
+     * （而非扁平 {@code bong-client:textures/gui/items/<id>.png} 占位贴图）。
+     *
+     * <p>覆盖两类：① HOST_ITEMS 里映射到 vanilla BlockItem 的 Bong 方块（如 {@code earth_crumb}）；
+     * ② BlockPicker 给予的 {@code vanilla:<short>} 模板。两者经 {@link #createStackFor} 都能拿到一个
+     * 非空的 vanilla {@link ItemStack}。其余物品（功法卷轴、丹药、装备等）仍走扁平贴图，返回 {@code false}。</p>
+     *
+     * <p>注意：该判断不查 registry——HOST_ITEMS 命中即 true；{@code vanilla:} 前缀也直接 true，
+     * 真正的 registry 解析延后到 {@link #drawVanillaIcon} 内 {@link #createStackFor} 时执行，
+     * 无 BlockItem 的特殊块在那一步优雅降级（不绘制，调用方按 false 处理回退占位贴图）。</p>
+     */
+    public static boolean usesVanillaItemIcon(String itemId) {
+        if (itemId == null || itemId.isEmpty()) {
+            return false;
+        }
+        return HOST_ITEMS.containsKey(itemId) || itemId.startsWith(VANILLA_TEMPLATE_PREFIX);
+    }
+
+    /**
+     * plan-block-placement-ux-v1 P3 — 若 {@code itemId} 对应一个 vanilla 方块/物品，则用 MC 原生
+     * {@link DrawContext#drawItem(ItemStack, int, int)} 在 {@code (dx, dy)} 处渲染一个 {@code size×size}
+     * 的真方块图标（与 BlockPicker 面板 {@code Components.item(stack)} 视觉一致），返回 {@code true}。
+     *
+     * <p>否则（非 vanilla 物品、未知短名、air/流体/无 BlockItem 的特殊块）<b>不绘制</b>并返回
+     * {@code false}，调用方据此回退到扁平贴图路径。这样「无 BlockItem 的特殊块优雅降级」与
+     * 「普通物品走扁平贴图」共用同一个 false 分支，不会画出错误的占位图。</p>
+     *
+     * @param ctx    渲染上下文（{@code OwoUIDrawContext} 是其子类，单格槽位与多格 overlay/HUD 共用）
+     * @param itemId Bong template_id 或 {@code vanilla:<short>}
+     * @param dx     目标左上角 x
+     * @param dy     目标左上角 y
+     * @param size   目标边长（像素）；{@code <= 0} 直接返回 false 不绘制
+     * @return 是否已用 vanilla 图标渲染（true=已画，调用方勿再画占位贴图）
+     */
+    public static boolean drawVanillaIcon(DrawContext ctx, String itemId, int dx, int dy, int size) {
+        if (ctx == null || size <= 0 || !usesVanillaItemIcon(itemId)) {
+            return false;
+        }
+        Optional<ItemStack> stack = createStackFor(itemId);
+        if (stack.isEmpty()) {
+            // 无 BlockItem 的特殊块 / 非法短名 → 优雅降级，交给调用方回退占位贴图。
+            return false;
+        }
+        var matrices = ctx.getMatrices();
+        matrices.push();
+        // drawItem 固定按 16px 渲染；平移到目标点后整体缩放到 size。
+        matrices.translate(dx, dy, 0);
+        float scale = (float) size / VANILLA_ICON_SIZE;
+        matrices.scale(scale, scale, 1.0f);
+        ctx.drawItem(stack.get(), 0, 0);
+        matrices.pop();
+        return true;
     }
 
     static String vanillaItemIdForTests(String templateId) {
