@@ -62,13 +62,15 @@ jobs:
 
       - name: Unit tests — anvil_export + anvil_region_writer + spans
         # plan-worldgen-anvil-export-v1 §1.4 + §2.4: 饱和单测
-        # plan-worldgen-v4 P0 §8.1 #8: anvil spans 路径（按段 loop fill）
-        # 在 pipeline 跑前早跑，编码 / region / span 文件格式 bug 立即撞红
+        # plan-worldgen-v4 P0 §8.1 #8: anvil spans 编码路径（按段 loop fill）
+        # plan-worldgen-v4 P7 §8.1 #8: anvil 驱动读真 raster spans（reader + driver）
+        # 在 pipeline 跑前早跑，编码 / region / span 文件格式 / reader 映射 bug 立即撞红
         working-directory: worldgen/scripts/terrain_gen
         run: |
           python3 -m unittest test_anvil_export -v
           python3 -m unittest test_anvil_region_writer -v
           python3 -m unittest test_anvil_spans -v
+          python3 -m unittest test_anvil_world_spans -v
 
       - name: Unit tests — worldgen-v4 spans (codec / fold / blend / export / check)
         # plan-worldgen-v4 P0: span 表示地基的 Python 侧饱和单测。worldgen/tests/
@@ -93,8 +95,11 @@ jobs:
         # snapshot artifact 仍消费 PNG previews) 再跑 anvil_world_export 写
         # generated/snapshot/world/region/r.*.mca。server 启动设
         # BONG_WORLD_PATH=...generated/snapshot/world 走 AnvilIfPresent path,
-        # iso ±400 视角拍到真实 (synthetic rolling hills) 起伏地形而不是 fallback
-        # flat world 的 16×16 chunk 边界外纯虚空。
+        # iso ±400 视角拍到真实地形而不是 fallback flat world 的 16×16 chunk
+        # 边界外纯虚空。
+        # worldgen-v4 P7 §8.1 #8：anvil 现按段读上一步 raster 的真 spans
+        # （anvil_spans_reader → export_anvil_world(spans_grid_fn=...)），拍到
+        # 峡谷/浮岛/洞穴真几何而非历史 synthetic rolling hills 单层 heightmap。
         #
         # snapshot 只需要 spawn 周围 ±400 client 真画面 + raster 拼图总览；
         # 全图 128 tile raster 在 worldgen-v4 P3 后超过 30min workflow 预算。
