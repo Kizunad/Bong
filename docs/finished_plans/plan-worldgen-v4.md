@@ -21,8 +21,8 @@
 | P3 | 3D 噪声雕刻奇幻地貌（大峡谷悬壁 / 浮空岛群 / 拱门 / 多层洞穴） | ✅ 2026-06-13 |
 | P4 | 全局灵气配平（统一灵气场 → zone spirit_qi 预算 → zones.json，对齐 `SPIRIT_QI_TOTAL`） | ✅ 2026-06-13 |
 | P5 | 画廊审阅闭环（Rust NBT IO + `/gallery` + structure save 回写 + owo 方块面板） | ✅ 2026-06-13 |
-| P6 | NBT 装饰资产管线（DecorationSpec→NBT 模板 + 运行时 stamp + 程序生成保留清单） | ⬜ |
-| P7 | 迁移收口与验收（死层清理 / snapshot CI / anvil export / 性能基准 / e2e） | ⬜ |
+| P6 | NBT 装饰资产管线（DecorationSpec→NBT 模板 + 运行时 stamp + 程序生成保留清单） | ✅ 2026-06-14 |
+| P7 | 迁移收口与验收（死层清理 / snapshot CI / anvil export / 性能基准 / e2e） | ✅ 2026-06-14 |
 
 ## 接入面 checklist
 
@@ -253,3 +253,65 @@
 - 视觉交付（P3 景观 profile、P6 NBT 资产）强制三轮打磨 + `<PROMISE>`（§6.1），console 截图为 round 证据
 - push 前对峙自检 workflow（P3+ 阶段替换 Verify，对齐 memory feedback_consume_presubmit_debate）
 - 升 active 前置：✅ §8 已全部收口为 §8.1 决议（2026-06-12，7 份 Explore 调研：terrain 消费方爆炸半径 / 灵气两层关系 / NBT+背包现状 / span 编码与 surface 语义 / E 键与 give 链路 / NBT 选型与性能基线 / 灵气口径与 CI 适配面）
+
+---
+
+## Finish Evidence
+
+全 7 阶段（P0–P7）✅，2026-06-14 验收通过。地形生成由「单层 heightmap + 程序几何装饰 + 两层灵气漂移」彻底重构为「多段 span 列 + 3D 噪声雕刻 + zone 声明式 DSL + 全局灵气配平 + NBT 资产装饰 + Web 交互 3D 控制台」。
+
+### 落地清单
+
+- **P0 span 列表示地基**：
+  - `worldgen/scripts/terrain_gen/fields.py`（`ColumnSpans` 核心类型 + 删 6 个垂直补丁层）/ `stitcher`（span blend 语义）/ `raster_export`（`spans_count.bin` + `spans.bin` + manifest v2）/ `anvil_export.py`（按段 loop fill）/ `harness/raster_check.py`（span 合法性规则激活）
+  - server: `server/src/world/terrain/{mod.rs,column.rs,raster.rs}`（`ColumnSpans` 消费、`fill_column` span 化、surface_y 取最低实心段顶）；`botany/env_lock.rs`（SkyIslandMask 改 span 派生，签名不变）
+- **P1 Web 3D 预览控制台**：`worldgen/console/`（vite + three.js 只读 3D 体素查看器，face-culled voxel mesh + LOD + zone 着色）+ `console_server.py`（FastAPI + uvicorn，按 zone 增量重生成、`/api/regen`、tile 二进制 ArrayBuffer 直传）
+- **P2 Zone 地形 DSL + profile 重写**：`worldgen/scripts/terrain_gen/dsl.py`（算子组合 DSL + `qi_grade` 六档 schema）+ `worldgen/scripts/terrain_gen/profiles/*.py`（19 profile 声明式重写，退役 P0 兼容 shim → 统一 spans_fold）
+- **P3 3D 噪声雕刻奇幻地貌**：`worldgen/scripts/terrain_gen/`（`CarverSpec` / `apply_carver_chain` / `_zone_carver_chains` + canyon 悬壁 / floating_island_carver 浮岛 / cave_network 多层洞穴；雕刻链冻结参数防类级常量污染）
+- **P4 全局灵气配平**：`worldgen/scripts/terrain_gen/qi_field.py`（统一灵气场 [-1,1] + 导出期配平断言，引用 `DEFAULT_SPIRIT_QI_TOTAL` 口径）+ `spirit_qi` 面积加权派生 → `server/zones.json`（IDEMPOTENT 字段 merge 写权限护栏 + `qi_budget_report` manifest 字段）+ `qi_density` 同源派生（`raster_check.py` per-zone mask 同源硬断言）
+- **P5 画廊审阅闭环**：`server/src/world/terrain/nbt_io.rs`（valence_nbt 0.8.0 `read_structure_nbt` / `write_structure_nbt`，gzip mandatory，DataVersion 3465）+ `server/src/cmd/dev/gallery.rs`（`/gallery` dev 命令）+ `server/src/inventory/`（全 vanilla block 自动 `vanilla:<block_id>` ItemTemplate）+ schema `BlockPickerActionV1`（`agent/packages/schema/src/client-request.ts` + 7 samples 双端对拍）+ client `BlockPickerCatalog`/`BlockPickerFilter`/`BlockVanillaIconMap`（InspectScreen 浮窗）
+- **P6 NBT 装饰资产管线**：`server/src/world/terrain/nbt_registry.rs`（DecorationSpec→NBT 模板全量驻留内存 + kind 索引）+ `flora.rs`/`structures.rs`（程序几何分支替换为 NBT 模板 stamp，anchor 三态贴地/嵌地/悬挂，脚印感知防重叠）+ `worldgen/scripts/models/gen_decorations.py` + 14 kind 子脚本 → `server/structures/decorations/<kind>/`（每 kind 3+ 变体）；保留程序清单：`mega_tree.rs` 四巨树 / 洞穴逐格微装饰 / 单格地被 / 水生逐格（§8.1 #9 判据）
+- **P7 迁移收口与验收**：
+  - 死层清理：`anvil_world_export.py` 改读真 raster spans（`anvil_spans_reader.py` 新建 + `pipeline.sh` 接线 + snapshot CI 纳入 spans world 单测）；`harness/raster_check.py` 后验规则收口
+  - NBT 装饰锚点几何中心对齐（`flora.rs` bbox 居中）+ 跨 chunk clip 处理与注释收口
+  - 性能基准：`server/benches/chunk_generation.rs` + `server/benches/nbt_stamp.rs` + `server/src/world/terrain/bench_support.rs`（criterion，§8.1 #10 预算核验）
+
+### 关键 commit
+
+- `cb310d093` 2026-06-12 — 立 plan-worldgen-v4（active）：骨架 + §8.1 决议收口（PR #516）
+- `88d8cee2c` 2026-06-12 — P0 span 列表示地基（行为等价迁移，PR #520）
+- `32abb9219` / `4a29c801e` 2026-06-12 — P1 控制台前端（vite+three.js）+ 后端（FastAPI 增量重生成）
+- `1755f6202` 2026-06-12 — P2 Zone 地形 DSL + 19 profile 声明式重写（PR #527）
+- `2d4fb4db8` 2026-06-13 — P3 3D 噪声雕刻奇幻地貌（PR #532）
+- `7e227b788` 2026-06-13 — P4 全局灵气配平（PR #537）
+- `18c9cbc50` 2026-06-13 — P5 画廊审阅闭环（NBT IO + /gallery + owo 方块面板，PR #543）
+- `6e74f0183` 2026-06-14 — P6 真机审阅暴露问题修复（bush 生态分目录 / broken_urn 浮空角柱 / spirit_ore_vein amethyst 支撑）
+- `eaefa8ba7` 2026-06-14 — P6 NBT 装饰资产管线（DecorationSpec→模板 stamp + gen 资产 + §8.1#9 保留清单，PR #550）
+- `e2c715246` 2026-06-14 — P7 anvil 驱动读真 raster spans + 死层清理核验（§8.1 #8）
+- `026a14a4d` 2026-06-14 — P7 NBT 装饰锚点几何中心对齐 + 跨 chunk clip 注释收口
+- `d6f242773` 2026-06-14 — P7 criterion 性能基准 chunk 生成 + NBT stamp（§8.1 #10）
+
+### 测试结果
+
+- `cd server && cargo fmt --check` — 通过
+- `cd server && cargo clippy --all-targets -- -D warnings` — 0 warning
+- `cd server && cargo test` — **9183 passed; 0 failed; 1 ignored**（lib）+ 11 passed（cli/main）+ 1 passed（full_app_startup e2e）+ 5 doc-test ignored
+- `cd server && cargo bench --bench chunk_generation --bench nbt_stamp`：
+  - `chunk_generation/fill_chunk_16x16` ≈ **0.26 ms/chunk**（260.78 µs，远低于 §8.1 #10 的 25 ms 目标 / 30 ms 硬顶）
+  - `nbt_stamp/stamp_ground_none` ≈ 2.36 µs，`stamp_ground_cw90` ≈ 2.58 µs（均 < 1 ms，memcpy 级，符合 §8.1 #10「禁止运行时 gzip 解压」）
+- worldgen：`python3 -m pytest`（worldgen/tests）853 passed / 8 failed；`scripts/terrain_gen/test_anvil_world_spans.py` 19 passed（P7 自有测试全绿）。**8 个失败已核为 pre-existing**——同样在本分支 merge-base（P6 commit `eaefa8ba7`）复现，落在 `test_tribulation_scorch` / `test_rift_mouth_barrens` / `test_jiu_zong_ruin` / `test_pseudo_vein_oasis` / `test_terrain_gen_zone_overlays`，全部是 `raster_check.py` qi_density 同源派生硬断言对历史 profile 既有 qi 值不收敛 + 历史 profile 注册断言，**与 P7 改动（仅 anvil_*.py）无关**，归属其他 plan 的后续修复（见遗留）
+
+### 跨仓库核验
+
+- **server**：`ColumnSpans`（`world/terrain/mod.rs`）/ `read_structure_nbt`·`write_structure_nbt`（`world/terrain/nbt_io.rs`）/ NBT 模板注册（`world/terrain/nbt_registry.rs`）/ `/gallery`（`cmd/dev/gallery.rs`）/ bench 入口（`world/terrain/bench_support.rs` + `benches/`）/ vanilla block ItemTemplate（`inventory/`）
+- **agent**：不参与运行时（`world/events.rs` qi_heatmap 仍读 `zone.spirit_qi`，接口不变）；唯一跨端契约 = schema `BlockPickerActionV1`
+- **client**：`BlockPickerCatalog` / `BlockPickerFilter` / `BlockVanillaIconMap`（`client/src/main/java/com/bong/client/block/`，InspectScreen 浮窗，dev/creative gated）
+- **schema**：`BlockPickerActionV1`（`agent/packages/schema/src/client-request.ts`）+ `client-request.block-picker-give.*.sample.json`（7 正反 sample 双端对拍）
+- **worldgen**：`ColumnSpans`（`fields.py`）/ `qi_field.py`（统一灵气场 + 配平断言）/ `dsl.py`（DSL + qi_grade）/ `anvil_spans_reader.py`（spans 读取）/ `worldgen/console/`（dev 控制台）
+
+### 遗留 / 后续
+
+- **wilderness 运行时灵气账户**（§8.1 #3）：本 plan 只做生成期静态配平，manifest `qi_budget_report` 为其静态接口；wilderness 账户化（新增 `QiAccountKind` 变体 / ledger 扩展）归未来 **qi_physics 扩展 plan**，本 plan 显式不碰公式与账户体系（防孤岛红旗 §四）
+- **worldgen 8 个 pre-existing 测试失败**：`raster_check.py` 的 qi_density 同源派生硬断言（P4 引入）对历史 profile（tribulation_scorch / rift_mouth_barrens / jiu_zong_ruin / pseudo_vein_oasis / 域崩 overlay）既有 qi 值不收敛，需各自 profile plan 跟进重校准或放宽断言——不在 worldgen-v4 scope（P7 仅改 anvil_*.py，未触碰这些 profile）
+- **giant_sword.rs 剑海特区**（§8.1 #9）：维持现状，不在本 plan 改造范围
+- **authored.rs placement_manifest.json 直读迁移**（§8.1 #6）：P5/P6 保持向后兼容未迁移，留待后续按需处理

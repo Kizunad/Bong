@@ -3,6 +3,17 @@ name = "bong-server"
 version = "0.1.0"
 edition = "2021"
 
+# The module tree lives in the lib target so out-of-crate benches (criterion,
+# worldgen-v4 §8.1 #10) can call real production code paths. The binary is a thin
+# consumer of this lib.
+[lib]
+name = "bong_server"
+path = "src/lib.rs"
+
+[[bin]]
+name = "bong-server"
+path = "src/main.rs"
+
 [features]
 dev-techniques = []
 
@@ -50,6 +61,18 @@ prost-build = "0.13"
 
 [dev-dependencies]
 wiremock = "0.6"
+criterion = { version = "0.5", features = ["html_reports"] }
+
+# worldgen-v4 §8.1 #10 — per-chunk generation budget (<25 ms target, 30 ms hard
+# cap) + NBT decoration stamp memcpy micro-bench (<1 ms). Both drive the real lib
+# code paths (column::fill_column / DecorationNbtRegistry::stamp).
+[[bench]]
+name = "chunk_generation"
+harness = false
+
+[[bench]]
+name = "nbt_stamp"
+harness = false
 
 [patch."https://github.com/valence-rs/valence"]
 valence_generated = { path = "crates/valence_generated_bong" }

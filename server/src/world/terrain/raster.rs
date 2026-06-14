@@ -1301,9 +1301,7 @@ fn block_state_from_name(name: &str) -> Result<BlockState, String> {
         // block degrades to stone + warns rather than panicking the *entire*
         // world bootstrap over one drifted palette entry.
         other => Ok(super::blocks::block_from_name(other).unwrap_or_else(|| {
-            tracing::warn!(
-                "[bong][terrain] surface palette block '{other}' unknown; using stone"
-            );
+            tracing::warn!("[bong][terrain] surface palette block '{other}' unknown; using stone");
             BlockState::STONE
         })),
     }

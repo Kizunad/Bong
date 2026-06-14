@@ -70,28 +70,32 @@ python3 -m scripts.terrain_gen \
 
 if [ "$BACKEND" = "anvil" ]; then
   echo ""
-  echo "=== Anvil world export (plan-worldgen-anvil-export-v1 §2) ==="
+  echo "=== Anvil world export (worldgen-v4 P7 §8.1 #8 — real spans) ==="
   WORLD_OUT="$OUTPUT_REL/world"
+  RASTER_DIR="$OUTPUT_REL/rasters"
   # 默认 chunk 范围 ±25 = ±400 blocks，覆盖 plan-worldgen-snapshot-v1 iso ±400 tp
-  # 使用 rolling_hills synthetic height_fn（P2 / 后续 plan 接入真 raster reader 时
-  # 只换 fn body 不改 export_anvil_world 签名）
+  # worldgen-v4 P7：读上面 raster backend 刚产出的真 spans（峡谷悬壁/浮岛/洞穴），
+  # 按段 loop fill 写 anvil chunk —— 替代历史 synthetic rolling_hills heightmap。
+  # raster_spans_grid_fn 缺 tile 列回退野外平台段，spawn ±400 内 tile 全覆盖。
   python3 - <<PYEOF
 from pathlib import Path
 import sys, time
 
 sys.path.insert(0, str(Path("scripts/terrain_gen")))
-from anvil_world_export import export_anvil_world, rolling_hills_height_fn
+from anvil_world_export import export_anvil_world
+from anvil_spans_reader import raster_spans_grid_fn
 
 t0 = time.perf_counter()
-height_fn = rolling_hills_height_fn(base=64, amplitude=12, period_blocks=128)
+spans_grid_fn = raster_spans_grid_fn(Path("$RASTER_DIR"))
 result = export_anvil_world(
     Path("$WORLD_OUT"),
     chunk_x_min=-25, chunk_x_max=25,
     chunk_z_min=-25, chunk_z_max=25,
-    height_fn=height_fn,
+    spans_grid_fn=spans_grid_fn,
 )
 dt = time.perf_counter() - t0
-print(f"chunks_written={result['chunks_written']} regions_written={result['regions_written']} took={dt:.1f}s")
+print(f"backend={result['backend']} chunks_written={result['chunks_written']} "
+      f"regions_written={result['regions_written']} took={dt:.1f}s")
 print(f"region_dir={result['region_dir']}")
 PYEOF
 fi
