@@ -1207,6 +1207,16 @@ fn faction_leader_territory_scorer_system(
     }
 }
 
+type FactionLeaderNpcIntruderQueryItem<'a> = (
+    Entity,
+    &'a Position,
+    Option<&'a NamedFactionMembership>,
+    Option<&'a FactionMembership>,
+);
+
+type FactionLeaderNpcIntruderQuery<'w, 's> =
+    Query<'w, 's, FactionLeaderNpcIntruderQueryItem<'static>, With<NpcMarker>>;
+
 fn faction_leader_patrol_action_system(
     zones: Option<Res<ZoneRegistry>>,
     mut leaders: Query<
@@ -1218,7 +1228,7 @@ fn faction_leader_patrol_action_system(
         ),
         With<NamedFactionLeader>,
     >,
-    npc_intruders: Query<(Entity, &Position, Option<&NamedFactionMembership>), With<NpcMarker>>,
+    npc_intruders: FactionLeaderNpcIntruderQuery<'_, '_>,
     player_intruders: Query<(Entity, &Position), With<Client>>,
     mut actions: Query<(&Actor, &mut ActionState), With<FactionLeaderPatrolAction>>,
     mut toll_notices: EventWriter<FactionLeaderTollNotice>,
@@ -1243,16 +1253,21 @@ fn faction_leader_patrol_action_system(
             ActionState::Requested => {
                 patrol_state.elapsed_ticks = 0;
                 navigator.set_goal(zone.patrol_target(0), 1.0);
-                let npc_target = npc_intruders
-                    .iter()
-                    .find_map(|(target, position, membership)| {
+                let npc_target = npc_intruders.iter().find_map(
+                    |(target, position, named_membership, legacy_membership)| {
                         if target == *actor || !zone.contains(position.get()) {
                             return None;
                         }
-                        let same_faction = membership
+                        let same_named_faction = named_membership
                             .is_some_and(|membership| membership.faction_id == leader.faction);
+                        let same_legacy_faction = legacy_membership.is_some_and(|membership| {
+                            membership.faction_id
+                                == legacy_faction_id_for_named_faction(leader.faction)
+                        });
+                        let same_faction = same_named_faction || same_legacy_faction;
                         (!same_faction).then_some((target, FactionLeaderTollTargetKind::Npc))
-                    });
+                    },
+                );
                 let target = npc_target.or_else(|| {
                     player_intruders
                         .iter()
@@ -3044,10 +3059,28 @@ mod tests {
             1,
             "外派 NPC 进入领袖地盘时必须产生收费 notice"
         );
-        assert_eq!(notices[0].faction, NamedFactionId::QingyunHunters);
-        assert_eq!(notices[0].zone, "qingyun_peaks");
-        assert_eq!(notices[0].target, intruder);
-        assert_eq!(notices[0].target_kind, FactionLeaderTollTargetKind::Npc);
+        assert_eq!(
+            notices[0].faction,
+            NamedFactionId::QingyunHunters,
+            "expected QingyunHunters because the patrol leader owns qingyun_peaks, actual {:?}",
+            notices[0].faction
+        );
+        assert_eq!(
+            notices[0].zone, "qingyun_peaks",
+            "expected qingyun_peaks because the leader claim is qingyun_peaks, actual {}",
+            notices[0].zone
+        );
+        assert_eq!(
+            notices[0].target, intruder,
+            "expected intruder entity because it is the first foreign NPC in the claim, actual {:?}",
+            notices[0].target
+        );
+        assert_eq!(
+            notices[0].target_kind,
+            FactionLeaderTollTargetKind::Npc,
+            "expected Npc because the toll target is a foreign NPC, actual {:?}",
+            notices[0].target_kind
+        );
         assert_eq!(
             app.world()
                 .get::<FactionLeaderPatrolState>(leader)
@@ -3096,6 +3129,45 @@ mod tests {
             events.get_reader().read(events).count(),
             0,
             "同派 NPC 在自家 claim 内不应触发收费 notice"
+        );
+    }
+
+    #[test]
+    fn leader_patrol_action_does_not_toll_legacy_same_faction_npc() {
+        let mut app = build_leader_patrol_app();
+        let leader = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                NamedFactionLeader {
+                    faction: NamedFactionId::QingyunHunters,
+                },
+                FactionZoneClaim {
+                    faction: NamedFactionId::QingyunHunters,
+                    zone: "qingyun_peaks".to_string(),
+                },
+                Navigator::new(),
+                FactionLeaderPatrolState::default(),
+            ))
+            .id();
+        app.world_mut().spawn((
+            NpcMarker,
+            Position::new([52.0, 66.0, 52.0]),
+            base_membership(FactionId::Attack, 0.0, 0),
+        ));
+        app.world_mut().spawn((
+            Actor(leader),
+            FactionLeaderPatrolAction,
+            ActionState::Requested,
+        ));
+
+        app.update();
+
+        let events = app.world().resource::<Events<FactionLeaderTollNotice>>();
+        assert_eq!(
+            events.get_reader().read(events).count(),
+            0,
+            "只带旧 FactionMembership::Attack 的同派普通弟子不应被青云领袖误收过路费"
         );
     }
 
