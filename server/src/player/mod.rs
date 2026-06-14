@@ -1,4 +1,5 @@
 pub mod gameplay;
+pub mod home_return;
 pub mod spawn_selector;
 pub mod state;
 
@@ -92,6 +93,7 @@ pub fn register(app: &mut App) {
     app.insert_resource(PlayerStatePersistence::default());
     app.insert_resource(PlayerStateAutosaveTimer::default());
     gameplay::register(app);
+    home_return::register(app);
     app.add_systems(
         Update,
         (

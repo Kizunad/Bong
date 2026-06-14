@@ -37,6 +37,8 @@ public enum HudRenderLayer {
     TSY_EXTRACT,
     /** plan-sou-da-che-v1 P2：搜打撤五维撤退决策 checklist。 */
     EXTRACT_DECISION,
+    /** plan-sou-da-che-v1 P3：回到灵龛后的整理呼吸层。 */
+    HOME_SEQUENCE,
     REALM_COLLAPSE,
     MERIDIAN_OPEN,
     CONNECTION_STATUS,
