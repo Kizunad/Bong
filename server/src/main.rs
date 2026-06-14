@@ -58,6 +58,7 @@ mod shader;
 mod skin;
 mod social;
 mod spiritwood;
+mod time;
 // supply_coffin：plan-supply-coffin-v1 — 巨剑沧海物资棺。
 // register() 注入 SupplyCoffinRegistry resource + interact/refresh systems +
 // SupplyCoffinOpened event。

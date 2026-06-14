@@ -1823,7 +1823,8 @@ fn current_unix_millis() -> u64 {
 
 fn decision_deadline_ms(decision_deadline_tick: u64, now_tick: u64) -> u64 {
     let remaining_ticks = decision_deadline_tick.saturating_sub(now_tick);
-    current_unix_millis().saturating_add(remaining_ticks.saturating_mul(50))
+    current_unix_millis()
+        .saturating_add(remaining_ticks.saturating_mul(crate::time::MILLIS_PER_TICK))
 }
 
 fn emit_death_screen(

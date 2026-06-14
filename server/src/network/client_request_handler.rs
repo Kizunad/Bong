@@ -7152,9 +7152,13 @@ fn handle_use_quick_slot(
         .and_then(|template_id| combat_params.item_registry.get(&template_id).cloned())
         .map(|t| (t.cast_duration_ms, t.cooldown_ms))
         .unwrap_or((TEMPLATE_DEFAULT_CAST_MS, TEMPLATE_DEFAULT_COOLDOWN_MS));
-    // 50ms / tick；进 1 至少跑 1 tick，避免 0 时长 cast。
-    let duration_ticks = u64::from(duration_ms).div_ceil(50).max(1);
-    let complete_cooldown_ticks = u64::from(cooldown_ms).div_ceil(50).max(1);
+    // 按共享 tick 毫秒值换算；进 1 至少跑 1 tick，避免 0 时长 cast。
+    let duration_ticks = u64::from(duration_ms)
+        .div_ceil(crate::time::MILLIS_PER_TICK)
+        .max(1);
+    let complete_cooldown_ticks = u64::from(cooldown_ms)
+        .div_ceil(crate::time::MILLIS_PER_TICK)
+        .max(1);
     let started_at_ms = current_unix_millis();
     let start_position = combat_params
         .positions
@@ -7435,7 +7439,9 @@ fn start_generic_skillbar_cast(
 ) {
     let duration_ticks = u64::from(definition.cast_ticks).max(1);
     let complete_cooldown_ticks = u64::from(definition.cooldown_ticks).max(1);
-    let duration_ms = definition.cast_ticks.saturating_mul(50);
+    let duration_ms = definition
+        .cast_ticks
+        .saturating_mul(crate::time::MILLIS_PER_TICK as u32);
     let started_at_ms = current_unix_millis();
     let start_position = combat_params
         .positions

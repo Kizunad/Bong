@@ -27,7 +27,7 @@ pub fn emit_status_snapshot_payloads(
                     "name": status_effect_name(&effect.kind),
                     "kind": status_effect_category(&effect.kind),
                     "stacks": 1,
-                    "remaining_ms": effect.remaining_ticks.saturating_mul(50),
+                    "remaining_ms": effect.remaining_ticks.saturating_mul(crate::time::MILLIS_PER_TICK),
                     "source_color": status_effect_color(&effect.kind),
                     "source_label": status_effect_source_label(&effect.kind),
                     "dispel": status_effect_dispel(&effect.kind)
@@ -367,7 +367,7 @@ mod tests {
                     "name": status_effect_name(&e.kind),
                     "kind": status_effect_category(&e.kind),
                     "stacks": 1,
-                    "remaining_ms": e.remaining_ticks.saturating_mul(50),
+                    "remaining_ms": e.remaining_ticks.saturating_mul(crate::time::MILLIS_PER_TICK),
                     "source_color": status_effect_color(&e.kind),
                     "source_label": status_effect_source_label(&e.kind),
                     "dispel": status_effect_dispel(&e.kind),

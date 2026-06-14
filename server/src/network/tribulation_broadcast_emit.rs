@@ -9,14 +9,14 @@ use crate::cultivation::tribulation::{
 use crate::network::agent_bridge::{payload_type_label, serialize_server_data_payload};
 use crate::network::{log_payload_build_error, send_server_data_payload};
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1, TribulationBroadcastV1};
+use crate::time::MILLIS_PER_TICK;
 use crate::world::event_rhythm::{
-    default_event_rhythm, event_trigger_timing_by_player_loop_phase, PlayerLoopPhase,
-    RhythmEventKind,
+    default_event_rhythm, event_trigger_timing_by_player_loop_phase, EventRhythmConfig,
+    PlayerLoopPhase, RhythmEventKind,
 };
 use crate::world::heartbeat::WorldHeartbeat;
 
 const BROADCAST_LIFETIME_MS: u64 = 60_000;
-const MILLIS_PER_TICK: u64 = 50;
 const SPECTATE_INVITE_RADIUS: f64 = 50.0;
 const PUBLIC_COORDINATE_GRID_BLOCKS: f64 = 200.0;
 
@@ -67,7 +67,7 @@ pub fn emit_tribulation_broadcast_payloads(
     let loop_phase = heartbeat
         .as_deref()
         .map(|heartbeat| heartbeat.loop_phase)
-        .unwrap_or(PlayerLoopPhase::OutboundSearch);
+        .unwrap_or(PlayerLoopPhase::SafeShelter);
     let ttl_ms = tribulation_broadcast_ttl_ms(loop_phase);
 
     for ev in announce.read() {
@@ -122,15 +122,23 @@ pub fn emit_tribulation_broadcast_payloads(
 }
 
 fn tribulation_broadcast_ttl_ms(loop_phase: PlayerLoopPhase) -> u64 {
+    tribulation_broadcast_ttl_ms_from_config(default_event_rhythm(), loop_phase)
+}
+
+fn tribulation_broadcast_ttl_ms_from_config(
+    config: &EventRhythmConfig,
+    loop_phase: PlayerLoopPhase,
+) -> u64 {
     event_trigger_timing_by_player_loop_phase(
-        default_event_rhythm(),
+        config,
         RhythmEventKind::TribulationBroadcast,
         loop_phase,
     )
     .map(|decision| {
         decision
             .timing
-            .max_duration_ticks
+            .lead_ticks
+            .saturating_add(decision.timing.max_duration_ticks)
             .saturating_mul(MILLIS_PER_TICK)
     })
     .unwrap_or(BROADCAST_LIFETIME_MS)
@@ -246,6 +254,20 @@ mod tests {
             .unwrap_or(0)
     }
 
+    fn expected_ttl_from_default_config(loop_phase: PlayerLoopPhase) -> u64 {
+        let decision = event_trigger_timing_by_player_loop_phase(
+            default_event_rhythm(),
+            RhythmEventKind::TribulationBroadcast,
+            loop_phase,
+        )
+        .expect("default event rhythm should define tribulation_broadcast timing");
+        decision
+            .timing
+            .lead_ticks
+            .saturating_add(decision.timing.max_duration_ticks)
+            .saturating_mul(MILLIS_PER_TICK)
+    }
+
     #[test]
     fn broadcast_fills_distance_per_client() {
         let mut app = App::new();
@@ -342,16 +364,56 @@ mod tests {
         let payloads = collect_tribulation_broadcasts(&mut helper);
         assert_eq!(payloads.len(), 1);
 
-        let expected_ttl = tribulation_broadcast_ttl_ms(PlayerLoopPhase::OutboundSearch);
+        let expected_ttl = expected_ttl_from_default_config(PlayerLoopPhase::OutboundSearch);
         let observed_ttl = payloads[0].expires_at_ms.saturating_sub(before_update_ms);
         assert!(
             observed_ttl >= expected_ttl.saturating_sub(1_000)
                 && observed_ttl <= expected_ttl.saturating_add(1_000),
-            "天劫广播 TTL 应消费 event_rhythm.json 的 outbound_search max_duration_ticks：expected≈{expected_ttl}ms observed={observed_ttl}ms"
+            "天劫广播 TTL 应消费 event_rhythm.json 的 outbound_search timing：expected≈{expected_ttl}ms observed={observed_ttl}ms"
+        );
+        assert_eq!(
+            tribulation_broadcast_ttl_ms(PlayerLoopPhase::OutboundSearch),
+            expected_ttl,
+            "helper 返回值应来自默认 rhythm 配置，而不是私有硬编码常量"
         );
         assert!(
             expected_ttl > BROADCAST_LIFETIME_MS,
             "测试应证明 rhythm 配置覆盖了旧固定 60s TTL，而不是继续使用死常量"
+        );
+    }
+
+    #[test]
+    fn broadcast_lifetime_differs_between_loop_phases() {
+        let outbound = tribulation_broadcast_ttl_ms(PlayerLoopPhase::OutboundSearch);
+        let safe = tribulation_broadcast_ttl_ms(PlayerLoopPhase::SafeShelter);
+
+        assert_eq!(
+            outbound,
+            expected_ttl_from_default_config(PlayerLoopPhase::OutboundSearch),
+            "outbound_search TTL 应由配置中的天劫 timing 推导"
+        );
+        assert_eq!(
+            safe,
+            expected_ttl_from_default_config(PlayerLoopPhase::SafeShelter),
+            "safe_shelter TTL 应由配置 fallback timing 推导"
+        );
+        assert_ne!(
+            outbound, safe,
+            "不同循环阶段的天劫广播 TTL 应体现 event_rhythm timing 差异"
+        );
+    }
+
+    #[test]
+    fn broadcast_lifetime_falls_back_when_rhythm_rule_missing() {
+        let mut config = default_event_rhythm().clone();
+        config
+            .rules
+            .retain(|rule| rule.event != RhythmEventKind::TribulationBroadcast);
+
+        assert_eq!(
+            tribulation_broadcast_ttl_ms_from_config(&config, PlayerLoopPhase::OutboundSearch),
+            BROADCAST_LIFETIME_MS,
+            "缺少 tribulation_broadcast 规则时应回退旧固定 TTL，而不是 panic 或返回 0"
         );
     }
 }

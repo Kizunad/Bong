@@ -2518,7 +2518,13 @@ mod tests {
         app.add_systems(Update, heartbeat_tick);
         app.update();
 
-        let fires_at_tick = app.world().resource::<WorldHeartbeat>().pending_omens[0].fires_at_tick;
+        let heartbeat = app.world().resource::<WorldHeartbeat>();
+        assert!(
+            !heartbeat.pending_omens.is_empty(),
+            "expected at least one pending omen because xizhuan boundary should queue tide sky omen, actual pending_omens.len()={}",
+            heartbeat.pending_omens.len()
+        );
+        let fires_at_tick = heartbeat.pending_omens[0].fires_at_tick;
         app.world_mut().resource_mut::<CultivationClock>().tick = fires_at_tick;
         app.update();
 
