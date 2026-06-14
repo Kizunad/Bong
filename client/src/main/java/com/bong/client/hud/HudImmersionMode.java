@@ -60,7 +60,6 @@ public final class HudImmersionMode {
         HudRenderLayer.QUICK_BAR,
         HudRenderLayer.BOTANY,
         HudRenderLayer.PROCESSING_HUD,
-        HudRenderLayer.EXTRACT_DECISION,
         HudRenderLayer.HOME_SEQUENCE,
         HudRenderLayer.GATHERING,
         HudRenderLayer.MOVEMENT_HUD,
