@@ -152,6 +152,36 @@ pub fn decorate_chunk(
                             * placement_density_scale(deco)
                             * DENSITY_PRECISION as f32) as u32;
                         if roll < target {
+                            // worldgen-v4 P6 §8.1 — footprint-aware anti-overlap.
+                            // Authored NBT variants have multi-cell footprints (the
+                            // rift_bridge spans up to 13–15 cells); two scatter points
+                            // landing close used to interpenetrate because each feature
+                            // marked only its anchor cell. Compute the cells this
+                            // decoration will actually occupy and skip the whole column
+                            // if any of them is already claimed by an earlier feature.
+                            // Greedy / row-major so the result stays deterministic
+                            // (same seed → same chunk).
+                            //
+                            // KNOWN RESIDUAL (P7): cells of a large footprint that fall
+                            // in a NEIGHBOURING chunk are clipped here and not tracked,
+                            // so cross-chunk feature overlap can still occur. This pass
+                            // only resolves within-chunk feature-vs-feature overlap.
+                            let footprint = decoration_footprint(
+                                local_x as i32,
+                                local_z as i32,
+                                base_y,
+                                deco,
+                                world_x,
+                                world_z,
+                                registry,
+                            );
+                            // Greedy first-come reservation: place only if every
+                            // footprint cell is free, then claim them all. Skipped
+                            // features are NOT re-tried via procedural — the column
+                            // simply yields to the earlier feature.
+                            if !reserve_footprint(&mut feature_occupied, &footprint) {
+                                continue;
+                            }
                             place_decoration(
                                 chunk,
                                 local_x as i32,
@@ -163,7 +193,6 @@ pub fn decorate_chunk(
                                 world_z,
                                 registry,
                             );
-                            feature_occupied[local_z][local_x] = true;
                         }
                     }
                 }
@@ -300,6 +329,136 @@ fn has_plant_support_below(
     )
 }
 
+/// The set of in-chunk ground cells `(local_x, local_z)` this decoration will
+/// occupy if placed at `(local_x, local_z, base_y)`. Used by the feature loop to
+/// detect / reserve overlap so two authored NBT footprints never interpenetrate.
+///
+/// The prediction **mirrors the place path** so the check and the write agree:
+/// * If [`place_decoration`] would take the NBT stamp path AND a variant
+///   resolves, project the stamp's resolved cells (`registry.stamp` is pure, so
+///   the writer re-resolving them yields the identical set).
+/// * Otherwise (template-less / flower / unresolved → procedural geometry) fall
+///   back to a conservative horizontal disc sized from the kind + size_range, so
+///   the procedural path also participates in avoidance.
+///
+/// Cells outside the chunk (`local_x`/`local_z` not in `0..16`) are dropped:
+/// those are clipped by the writer and are the P7 cross-chunk residual, not part
+/// of this within-chunk pass. The anchor cell `(local_x, local_z)` is always
+/// included so even a fully out-of-chunk-clipped stamp still reserves its column.
+fn decoration_footprint(
+    local_x: i32,
+    local_z: i32,
+    base_y: i32,
+    deco: &Decoration,
+    world_x: i32,
+    world_z: i32,
+    registry: &DecorationNbtRegistry,
+) -> Vec<(i32, i32)> {
+    let mut cells: Vec<(i32, i32)> = Vec::new();
+    let push = |fx: i32, fz: i32, cells: &mut Vec<(i32, i32)>| {
+        if (0..CHUNK_SIZE).contains(&fx)
+            && (0..CHUNK_SIZE).contains(&fz)
+            && !cells.contains(&(fx, fz))
+        {
+            cells.push((fx, fz));
+        }
+    };
+    // The anchor column is always reserved even if every stamped cell is clipped
+    // out of this chunk — otherwise the ground-cover loop would grow grass under
+    // the (clipped) feature's column.
+    push(local_x, local_z, &mut cells);
+
+    let takes_nbt_path = deco.is_nbt_driven() && deco.kind != "flower";
+    if takes_nbt_path {
+        if let Some(stamp) =
+            nbt_stamp_placements(local_x, base_y, local_z, deco, world_x, world_z, registry)
+        {
+            for (lx, lz, _world_y, _state) in stamp.placements {
+                push(lx, lz, &mut cells);
+            }
+            return cells;
+        }
+        // NBT path was eligible but no variant resolved → falls through to
+        // procedural in place_decoration; use the procedural disc below.
+    }
+
+    // Procedural fallback footprint: a conservative horizontal disc whose radius
+    // bounds the kind's geometry spread. These match the radii the procedural
+    // geometry primitives below can reach (canopy radius, boulder r, mushroom
+    // cap, shrub/crystal accents, fallen-log length). Flowers are single-cell.
+    let radius = procedural_footprint_radius(deco, world_x, world_z);
+    for dz in -radius..=radius {
+        for dx in -radius..=radius {
+            if dx * dx + dz * dz > radius * radius {
+                continue;
+            }
+            push(local_x + dx, local_z + dz, &mut cells);
+        }
+    }
+    // Fallen logs extend linearly well past the disc; reserve the run too so a
+    // log never lies across a neighbouring feature's footprint.
+    if deco.kind == "fallen_log" {
+        let direction = decoration_hash(world_x, world_z, 591) % 4;
+        let (dx, dz) = match direction {
+            0 => (1_i32, 0_i32),
+            1 => (-1, 0),
+            2 => (0, 1),
+            _ => (0, -1),
+        };
+        let length = sample_size(deco, world_x, world_z).clamp(3, 6);
+        for i in 0..length {
+            push(local_x + dx * i, local_z + dz * i, &mut cells);
+        }
+    }
+    cells
+}
+
+/// Conservative horizontal radius bounding the procedural geometry for `deco`'s
+/// kind. Mirrors the spreads the geometry primitives below can reach so the
+/// footprint never under-reserves (greedy avoidance prefers over-reserving).
+fn procedural_footprint_radius(deco: &Decoration, world_x: i32, world_z: i32) -> i32 {
+    let size = sample_size(deco, world_x, world_z);
+    match deco.kind.as_str() {
+        // place_tree: canopy radius = (trunk_h/4).clamp(2,4); vines reach +1.
+        "tree" => (size.max(3) / 4).clamp(2, 4) + 1,
+        // place_boulder: r = size.clamp(2,5).
+        "boulder" => size.clamp(2, 5),
+        // place_mushroom: cap disc radius 2.
+        "mushroom" => 2,
+        // place_shrub: accents at the 4 orthogonal neighbours (radius 1).
+        "shrub" => 1,
+        // place_crystal / hanging: base accents at the 4 neighbours (radius 1).
+        "crystal" => 1,
+        // place_grave_mound: dome radius = size.clamp(2,5).
+        "grave_mound" => size.clamp(2, 5),
+        // flowers occupy a single cell; fallen_log handled separately (linear).
+        "flower" | "fallen_log" => 0,
+        // Unknown kind → single stump block.
+        _ => 0,
+    }
+}
+
+/// Greedy footprint reservation against the per-chunk feature occupancy grid:
+/// if **any** cell in `footprint` is already occupied, returns `false` and leaves
+/// the grid untouched (the caller skips placement); otherwise marks every cell
+/// occupied and returns `true`. First-come / row-major so the outcome is
+/// deterministic for a given seed (same chunk → same reservations).
+fn reserve_footprint(
+    occupied: &mut [[bool; CHUNK_SIZE as usize]; CHUNK_SIZE as usize],
+    footprint: &[(i32, i32)],
+) -> bool {
+    if footprint
+        .iter()
+        .any(|&(fx, fz)| occupied[fz as usize][fx as usize])
+    {
+        return false;
+    }
+    for &(fx, fz) in footprint {
+        occupied[fz as usize][fx as usize] = true;
+    }
+    true
+}
+
 #[allow(clippy::too_many_arguments)]
 fn place_decoration(
     chunk: &mut UnloadedChunk,
@@ -416,13 +575,57 @@ fn stamp_nbt_decoration(
     world_z: i32,
     registry: &DecorationNbtRegistry,
 ) -> bool {
+    let Some(stamp) =
+        nbt_stamp_placements(local_x, base_y, local_z, deco, world_x, world_z, registry)
+    else {
+        return false;
+    };
+
+    let mut wrote_any = false;
+    let overwrite = stamp.anchor == DecorationAnchor::Embedded;
+    for (lx, lz, world_y, state) in stamp.placements {
+        let wrote = if overwrite {
+            set_block_at_world(chunk, lx, world_y, lz, min_y, state)
+        } else {
+            set_block_if_air(chunk, lx, world_y, lz, min_y, state)
+        };
+        wrote_any |= wrote;
+    }
+    wrote_any
+}
+
+/// The chunk-local placements an NBT stamp resolves to, shared by the writer
+/// ([`stamp_nbt_decoration`]) and the footprint predictor
+/// ([`decoration_footprint`]) so the anti-overlap check and the actual write
+/// agree on exactly which cells a stamp touches. `registry.stamp` is a pure
+/// deterministic function of (template, surface_pos, anchor, rotation), so
+/// computing it twice (once to check, once to write) yields identical cells.
+struct NbtStamp {
+    anchor: DecorationAnchor,
+    /// `(local_x, local_z, world_y, block_state)` — chunk-local horizontal,
+    /// world-absolute vertical. Cells outside the chunk (`local_x`/`local_z`
+    /// not in `0..16`) are retained here; the writer clips them via
+    /// `set_block_*` and the footprint predictor filters them out.
+    placements: Vec<(i32, i32, i32, BlockState)>,
+}
+
+/// Resolve the chunk-local placements for `deco`'s NBT stamp, or `None` when no
+/// variant is resident / the template is missing (caller falls back to
+/// procedural). Mirrors exactly the anchor + surface_y + rotation math the
+/// writer used inline before this was extracted.
+fn nbt_stamp_placements(
+    local_x: i32,
+    base_y: i32,
+    local_z: i32,
+    deco: &Decoration,
+    world_x: i32,
+    world_z: i32,
+    registry: &DecorationNbtRegistry,
+) -> Option<NbtStamp> {
     // Choose the variant + rotation deterministically from the placement seed so
     // re-generating the same chunk stamps the identical bytes.
     let variant_idx = decoration_hash(world_x, world_z, NBT_VARIANT_SALT);
-    let template_id = pick_nbt_template(deco, variant_idx);
-    let Some(template_id) = template_id else {
-        return false;
-    };
+    let template_id = pick_nbt_template(deco, variant_idx)?;
     let anchor = stamp_anchor_for(deco);
 
     // Map the procedural anchor `base_y` to the registry's `surface_pos` so the
@@ -450,25 +653,15 @@ fn stamp_nbt_decoration(
     // rotate correctly with positions alone.
     let rotation = Rotation::from_index(decoration_hash(world_x, world_z, NBT_ROTATION_SALT));
 
-    let Some((placements, _unresolved)) =
-        registry.stamp(&template_id, surface_pos, anchor, rotation)
-    else {
-        return false;
-    };
+    let (placements, _unresolved) = registry.stamp(&template_id, surface_pos, anchor, rotation)?;
 
-    let mut wrote_any = false;
-    let overwrite = anchor == DecorationAnchor::Embedded;
-    for (pos, state, _block_nbt) in placements {
-        let lx = pos.x - chunk_origin_x;
-        let lz = pos.z - chunk_origin_z;
-        let wrote = if overwrite {
-            set_block_at_world(chunk, lx, pos.y, lz, min_y, state)
-        } else {
-            set_block_if_air(chunk, lx, pos.y, lz, min_y, state)
-        };
-        wrote_any |= wrote;
-    }
-    wrote_any
+    let placements = placements
+        .into_iter()
+        .map(|(pos, state, _block_nbt)| {
+            (pos.x - chunk_origin_x, pos.z - chunk_origin_z, pos.y, state)
+        })
+        .collect();
+    Some(NbtStamp { anchor, placements })
 }
 
 /// Pick the NBT template id this placement stamps from `deco.nbt_templates`,
@@ -1727,6 +1920,456 @@ mod nbt_stamp_tests {
         );
         // Pre-existing block is untouched (air-only stamp).
         assert_eq!(block_at(&chunk, 3, base_y, 3), BlockState::STONE);
+        let _ = fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod anti_overlap_tests {
+    //! worldgen-v4 P6 §8.1 — footprint-aware anti-overlap.
+    //!
+    //! When NBT decorations replaced the old 1–3 cell procedural geometry their
+    //! footprints grew to 5–15 cells (the rift_bridge spans ~13–15), so two
+    //! scatter points landing close interpenetrated — each feature used to mark
+    //! only its anchor cell. These lock the fix: a decoration reserves its WHOLE
+    //! footprint; a second feature whose footprint touches it is skipped (not
+    //! written, not fallen back to procedural); the reservation is deterministic;
+    //! and the ground-cover loop reads the full footprint, not just the anchor.
+    use super::*;
+    use crate::world::terrain::nbt_io::{
+        write_structure_nbt, PaletteEntry, StructureBlockEntry, StructureNbt, DATA_VERSION,
+    };
+    use std::collections::HashSet;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+
+    /// `(local_x, local_z)` chunk-ground cells. Aliased so `greedy_place`'s
+    /// signature stays readable (and dodges clippy::type_complexity).
+    type Cells = Vec<(i32, i32)>;
+
+    fn temp_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "bong_flora_overlap_{}_{}_{:p}",
+            tag,
+            std::process::id(),
+            &tag as *const _
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn write_template(dir: &Path, rel: &str, s: &StructureNbt) {
+        let path = dir.join(rel);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        write_structure_nbt(s, &path).unwrap();
+    }
+
+    /// A solid `w × 1 × w` plate at template y=0 — a known multi-cell footprint
+    /// that stands in for a large authored NBT (e.g. a bridge deck).
+    fn plate_template(w: i32, block_name: &str) -> StructureNbt {
+        let mut blocks = Vec::new();
+        for z in 0..w {
+            for x in 0..w {
+                blocks.push(StructureBlockEntry {
+                    pos: [x, 0, z],
+                    state: 0,
+                    block_nbt: None,
+                });
+            }
+        }
+        StructureNbt {
+            data_version: DATA_VERSION,
+            size: [w, 1, w],
+            palette: vec![PaletteEntry {
+                name: format!("minecraft:{block_name}"),
+                properties: vec![],
+            }],
+            blocks,
+            entities: vec![],
+        }
+    }
+
+    fn deco(name: &str, kind: &str, templates: &[&str], anchor: DecorationAnchor) -> Decoration {
+        Decoration {
+            global_id: 1,
+            profile: "spawn".into(),
+            local_id: 1,
+            name: name.into(),
+            kind: kind.into(),
+            blocks: vec!["oak_log".into(), "oak_leaves".into(), "moss_block".into()],
+            size_range: [3, 6],
+            rarity: 0.5,
+            notes: String::new(),
+            nbt_templates: templates.iter().map(|t| t.to_string()).collect(),
+            anchor,
+        }
+    }
+
+    /// Build a registry holding a single `w×1×w` plate variant for `kind`.
+    fn plate_registry(dir: &Path, kind: &str, w: i32) -> DecorationNbtRegistry {
+        write_template(
+            dir,
+            &format!("decorations/{kind}/plate_v1.nbt"),
+            &plate_template(w, "stone"),
+        );
+        DecorationNbtRegistry::load(dir).unwrap()
+    }
+
+    // ── footprint cell-set correctness ───────────────────────────────────────
+
+    #[test]
+    fn nbt_footprint_covers_whole_plate_not_just_anchor() {
+        // A 4×4 plate stamped at the chunk-interior anchor must reserve 16 cells
+        // (the corner-anchored stamp grows +x/+z from the anchor). Rotation only
+        // re-orients the same 16 cells, so the count is rotation-invariant.
+        let dir = temp_dir("plate4");
+        let reg = plate_registry(&dir, "boulder", 4);
+        let d = deco(
+            "wide_rock",
+            "boulder",
+            &["decorations/boulder/plate_v1.nbt"],
+            DecorationAnchor::Ground,
+        );
+        // Anchor at (2,2) so the +x/+z plate stays inside the chunk for every
+        // rotation? Rotations can push −x/−z; cells outside the chunk are clipped.
+        // Put it near the centre and just assert it is a multi-cell footprint that
+        // never includes an out-of-bounds cell and always contains the anchor.
+        let fp = decoration_footprint(6, 6, 70, &d, 1006, 2006, &reg);
+        assert!(
+            fp.contains(&(6, 6)),
+            "footprint must always include the anchor column (6,6); got {fp:?}"
+        );
+        assert!(
+            fp.len() > 1,
+            "a 4×4 NBT plate must reserve more than the single anchor cell \
+             (the whole footprint) — got {} cell(s): {fp:?}",
+            fp.len()
+        );
+        for &(fx, fz) in &fp {
+            assert!(
+                (0..CHUNK_SIZE).contains(&fx) && (0..CHUNK_SIZE).contains(&fz),
+                "footprint must only contain in-chunk cells (cross-chunk clip is \
+                 the P7 residual); got out-of-bounds ({fx},{fz})"
+            );
+        }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn footprint_clipped_out_of_chunk_still_reserves_anchor() {
+        // A plate whose body extends off the +x edge: cells past x=15 are clipped,
+        // but the anchor column must still be reserved so ground cover yields.
+        let dir = temp_dir("clip_edge");
+        let reg = plate_registry(&dir, "boulder", 5);
+        let d = deco(
+            "edge_rock",
+            "boulder",
+            &["decorations/boulder/plate_v1.nbt"],
+            DecorationAnchor::Ground,
+        );
+        let fp = decoration_footprint(14, 8, 70, &d, 1014, 2008, &reg);
+        assert!(
+            fp.contains(&(14, 8)),
+            "anchor (14,8) must be reserved even when most plate cells are clipped \
+             off the chunk edge; got {fp:?}"
+        );
+        for &(fx, fz) in &fp {
+            assert!((0..CHUNK_SIZE).contains(&fx) && (0..CHUNK_SIZE).contains(&fz));
+        }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn procedural_footprint_is_a_disc_for_template_less_boulder() {
+        // Template-less → procedural path → conservative disc. A boulder reserves
+        // a radius≥2 disc, not just the anchor, so neighbouring procedural
+        // features also avoid interpenetration.
+        let reg = DecorationNbtRegistry::empty();
+        let d = deco("rock", "boulder", &[], DecorationAnchor::Ground);
+        let fp = decoration_footprint(8, 8, 70, &d, 108, 208, &reg);
+        assert!(
+            fp.contains(&(8, 8)) && fp.contains(&(8 + 2, 8)) && fp.contains(&(8, 8 + 2)),
+            "a procedural boulder must reserve at least a radius-2 disc around the \
+             anchor; got {fp:?}"
+        );
+    }
+
+    #[test]
+    fn flower_footprint_is_single_cell() {
+        // Flowers never stamp and have no spread — exactly one reserved cell.
+        let reg = DecorationNbtRegistry::empty();
+        let mut d = deco("poppy", "flower", &[], DecorationAnchor::Ground);
+        d.blocks = vec!["poppy".into()];
+        let fp = decoration_footprint(5, 5, 65, &d, 105, 205, &reg);
+        assert_eq!(
+            fp,
+            vec![(5, 5)],
+            "a flower occupies exactly its own cell (single-cell footprint)"
+        );
+    }
+
+    // ── greedy reservation contract (reserve_footprint) ──────────────────────
+
+    #[test]
+    fn reserve_succeeds_on_disjoint_and_marks_all_cells() {
+        let mut grid = [[false; CHUNK_SIZE as usize]; CHUNK_SIZE as usize];
+        let fp = vec![(1, 1), (2, 1), (1, 2)];
+        assert!(
+            reserve_footprint(&mut grid, &fp),
+            "reservation must succeed when every cell is free"
+        );
+        for &(x, z) in &fp {
+            assert!(
+                grid[z as usize][x as usize],
+                "cell ({x},{z}) must be marked occupied after a successful reservation"
+            );
+        }
+        // A cell NOT in the footprint stays free.
+        assert!(!grid[5][5], "untouched cells must remain free");
+    }
+
+    #[test]
+    fn reserve_fails_and_leaves_grid_untouched_on_any_collision() {
+        let mut grid = [[false; CHUNK_SIZE as usize]; CHUNK_SIZE as usize];
+        grid[3][3] = true; // pre-occupied by an earlier feature
+        let fp = vec![(2, 3), (3, 3), (4, 3)]; // middle cell collides
+        assert!(
+            !reserve_footprint(&mut grid, &fp),
+            "reservation must fail when ANY footprint cell is already occupied"
+        );
+        // The free cells of the rejected footprint must NOT have been marked
+        // (all-or-nothing) — only the pre-existing (3,3) stays set.
+        assert!(
+            !grid[3][2],
+            "(2,3) must stay free after a rejected reservation"
+        );
+        assert!(
+            !grid[3][4],
+            "(4,3) must stay free after a rejected reservation"
+        );
+        assert!(grid[3][3], "the pre-existing occupant must remain");
+    }
+
+    // ── end-to-end: two adjacent large stamps cannot share a cell ────────────
+
+    /// Simulate the feature loop's greedy reservation over a row-major sweep of
+    /// columns, returning the placed anchors and the final occupancy grid. This
+    /// mirrors `decorate_chunk`'s reserve/skip without needing a full
+    /// `TerrainProvider` (the gate that decides candidate columns is unchanged;
+    /// what we lock here is that reserved footprints never overlap).
+    fn greedy_place(
+        candidates: &[(i32, i32)],
+        base_y: i32,
+        d: &Decoration,
+        reg: &DecorationNbtRegistry,
+    ) -> (Cells, Cells) {
+        let mut occupied = [[false; CHUNK_SIZE as usize]; CHUNK_SIZE as usize];
+        let mut placed = Vec::new();
+        for &(lx, lz) in candidates {
+            let fp = decoration_footprint(lx, lz, base_y, d, 1000 + lx, 2000 + lz, reg);
+            if reserve_footprint(&mut occupied, &fp) {
+                placed.push((lx, lz));
+            }
+        }
+        let mut occ_cells = Vec::new();
+        for (z, row) in occupied.iter().enumerate() {
+            for (x, &set) in row.iter().enumerate() {
+                if set {
+                    occ_cells.push((x as i32, z as i32));
+                }
+            }
+        }
+        (placed, occ_cells)
+    }
+
+    #[test]
+    fn adjacent_large_footprints_never_share_a_cell() {
+        // Three candidate anchors one cell apart along x — their 4×4 plates would
+        // heavily overlap. After greedy reservation, the union of occupied cells
+        // must equal the sum of each placed footprint's size (no shared cell).
+        let dir = temp_dir("adjacent_big");
+        let reg = plate_registry(&dir, "boulder", 4);
+        let d = deco(
+            "wide_rock",
+            "boulder",
+            &["decorations/boulder/plate_v1.nbt"],
+            DecorationAnchor::Ground,
+        );
+        let candidates = [(2, 2), (3, 2), (4, 2)];
+        let (placed, occ) = greedy_place(&candidates, 70, &d, &reg);
+
+        // At least the first one places; overlapping neighbours are skipped.
+        assert!(
+            !placed.is_empty(),
+            "at least the first candidate must place"
+        );
+        // The occupied set must have NO duplicates and each placed footprint's
+        // cells must be pairwise disjoint — sum of footprint sizes == |union|.
+        let mut expected_total = 0usize;
+        for &(lx, lz) in &placed {
+            expected_total +=
+                decoration_footprint(lx, lz, 70, &d, 1000 + lx, 2000 + lz, &reg).len();
+        }
+        let unique: HashSet<(i32, i32)> = occ.iter().copied().collect();
+        assert_eq!(
+            unique.len(),
+            occ.len(),
+            "occupancy grid must contain no duplicate cells"
+        );
+        assert_eq!(
+            occ.len(),
+            expected_total,
+            "placed footprints must be pairwise disjoint: |union of occupied| ({}) \
+             must equal Σ|footprint| ({}). A smaller union means two stamps shared \
+             a cell (interpenetration).",
+            occ.len(),
+            expected_total
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn second_stamp_whose_footprint_overlaps_the_first_is_skipped() {
+        // The user's reported case: a large authored footprint (rift_bridge scale)
+        // and a second feature whose footprint lands ON it. The second must be
+        // skipped — not squeezed into the gaps (the old interpenetration bug).
+        //
+        // Rotation is seeded per world pos, so a fixed 1-cell offset does NOT
+        // always collide (it may rotate clear — that's a legit disjoint case). So
+        // we SCAN neighbour offsets for a pair whose footprints provably intersect,
+        // assert the premise, then assert the second is skipped. This locks the
+        // real invariant "overlap ⇒ skip" without baking in a rotation assumption.
+        let dir = temp_dir("overlap_skip");
+        let reg = plate_registry(&dir, "ruins_pillar", 4);
+        let d = deco(
+            "bridge_like",
+            "ruins_pillar",
+            &["decorations/ruins_pillar/plate_v1.nbt"],
+            DecorationAnchor::Ground,
+        );
+        let first = (5, 5);
+        let fp_first: HashSet<(i32, i32)> = decoration_footprint(
+            first.0,
+            first.1,
+            70,
+            &d,
+            1000 + first.0,
+            2000 + first.1,
+            &reg,
+        )
+        .into_iter()
+        .collect();
+
+        // Find a neighbour anchor whose footprint shares a cell with the first.
+        let mut overlapping_neighbour = None;
+        'scan: for dz in -2..=2 {
+            for dx in -2..=2 {
+                if dx == 0 && dz == 0 {
+                    continue;
+                }
+                let n = (first.0 + dx, first.1 + dz);
+                let fp_n: HashSet<(i32, i32)> =
+                    decoration_footprint(n.0, n.1, 70, &d, 1000 + n.0, 2000 + n.1, &reg)
+                        .into_iter()
+                        .collect();
+                if fp_n.intersection(&fp_first).next().is_some() {
+                    overlapping_neighbour = Some(n);
+                    break 'scan;
+                }
+            }
+        }
+        let neighbour = overlapping_neighbour.expect(
+            "test premise: a 4×4 plate must have at least one nearby anchor whose \
+             footprint overlaps it (if none, the scenario can't reproduce overlap)",
+        );
+
+        // Greedy in first-then-neighbour order: only the first must place.
+        let (placed, _occ) = greedy_place(&[first, neighbour], 70, &d, &reg);
+        assert_eq!(
+            placed,
+            vec![first],
+            "the first stamp claims its footprint; the neighbour {neighbour:?} whose \
+             footprint overlaps it must be skipped (no interpenetration). placed={placed:?}"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn far_apart_large_stamps_both_place() {
+        // Sanity / no over-rejection: two 4×4 plates far enough apart that their
+        // footprints are disjoint must BOTH place — the fix must not starve density.
+        let dir = temp_dir("far_apart");
+        let reg = plate_registry(&dir, "boulder", 4);
+        let d = deco(
+            "wide_rock",
+            "boulder",
+            &["decorations/boulder/plate_v1.nbt"],
+            DecorationAnchor::Ground,
+        );
+        let (placed, _occ) = greedy_place(&[(1, 1), (10, 10)], 70, &d, &reg);
+        assert_eq!(
+            placed.len(),
+            2,
+            "two well-separated large stamps must both place (anti-overlap must not \
+             reject non-colliding features); got placed={placed:?}"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // ── determinism ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn footprint_is_deterministic_for_same_seed() {
+        let dir = temp_dir("det");
+        let reg = plate_registry(&dir, "boulder", 3);
+        let d = deco(
+            "rock",
+            "boulder",
+            &["decorations/boulder/plate_v1.nbt"],
+            DecorationAnchor::Ground,
+        );
+        let a = decoration_footprint(7, 7, 70, &d, 1234, -5678, &reg);
+        let b = decoration_footprint(7, 7, 70, &d, 1234, -5678, &reg);
+        assert_eq!(
+            a, b,
+            "the same (deco, world pos) must yield the identical footprint cell \
+             list both times (deterministic reservation)"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // ── ground-cover avoidance reads the FULL footprint ──────────────────────
+
+    #[test]
+    fn ground_cover_loop_sees_full_footprint_marked() {
+        // After a feature reserves a multi-cell footprint, every cell — not just
+        // the anchor — is occupied, so the ground-cover loop (which skips occupied
+        // cells) will not grow grass under any part of the feature.
+        let dir = temp_dir("gc_avoid");
+        let reg = plate_registry(&dir, "boulder", 3);
+        let d = deco(
+            "rock",
+            "boulder",
+            &["decorations/boulder/plate_v1.nbt"],
+            DecorationAnchor::Ground,
+        );
+        let mut occupied = [[false; CHUNK_SIZE as usize]; CHUNK_SIZE as usize];
+        let fp = decoration_footprint(4, 4, 70, &d, 1004, 2004, &reg);
+        assert!(reserve_footprint(&mut occupied, &fp));
+        // Every reserved cell reads as occupied (what the ground-cover loop tests).
+        let non_anchor: Vec<_> = fp.iter().copied().filter(|&c| c != (4, 4)).collect();
+        assert!(
+            !non_anchor.is_empty(),
+            "a 3×3 plate must reserve cells beyond the anchor"
+        );
+        for (x, z) in non_anchor {
+            assert!(
+                occupied[z as usize][x as usize],
+                "ground cover must see the non-anchor footprint cell ({x},{z}) as \
+                 occupied (so no grass grows under the feature body, not just its anchor)"
+            );
+        }
         let _ = fs::remove_dir_all(&dir);
     }
 }

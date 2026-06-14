@@ -10,6 +10,18 @@ use super::{column, raster::TerrainProvider, spatial::ChunkBounds};
 /// scatter features (broken pillars / urns / bone heaps / ore veins / bridge
 /// remnants / spawn portal), so per-instance NBT stamping is appropriate (vs.
 /// a fixed deterministic compound layout, which would live in `authored.rs`).
+///
+/// **Anti-overlap (worldgen-v4 P6 §8.1):** unlike flora's per-column density
+/// scatter, these six structures are placed on a **deterministic seed-spacing
+/// grid** — at most one instance per `seed_spacing × seed_spacing` cell, jittered
+/// only within `[offset_margin, seed_spacing - offset_margin]`. Every spacing
+/// (48 for bone piles up to 2000 for the spawn portal) is far larger than any
+/// structure footprint (`max_extent` ≤ 20), so two instances of the same kind
+/// can never collide, and different kinds resolve any shared cell through the
+/// per-block [`upsert_block`] priority merge + [`can_replace`] tier. They
+/// therefore need no extra footprint-occupancy pass — the grid IS the spacing
+/// guarantee. (The flora footprint-occupancy fix lives in `flora.rs`, which has
+/// no such grid.)
 const RUIN_PILLAR_KIND: &str = "ruins_pillar";
 const BROKEN_ALTAR_KIND: &str = "broken_urn";
 const SPIRIT_ORE_KIND: &str = "spirit_ore_vein";
