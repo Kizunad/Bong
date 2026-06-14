@@ -2,7 +2,7 @@
 
 > **来源**：手搓 104 产出物僵尸审计「容器全死（12）」一类里适合作世界方块的 3 个（`trade_crate` / `herb_crate` / `dead_drop_box`）。
 > **依赖**：[[plan-workbench-place-runtime-v1]]（放置/破坏/交互底盘 + `PlaceableBlockKind` enum）+ [[plan-nested-pack-base-v1]]（容器打开协议 + `ContainerState` 子容器机制）。**两个 plan 都 merge 到 main 后才开本 plan。** 升 active 判断门：① workbench-place-runtime **P1（`PlaceableBlockKind` 抽象）** 已合入；② workbench-place-runtime **§8 #3 entity 表示确实落地为「纯 entity + bbmodel」**（非 `bong_blocks`）——本 plan 整条交互/渲染层按此假设写满 P0-P3，上游若改走 bong_blocks 则本 plan 需重写，升 active 前必须核实上游实际落地路线。
-> **状态**：骨架（草案）。实地锚点已核实（research 2026-06-10）；§8 开放问题大半已凭证据定案，仅 3 条悬留待 §8.1 收口。
+> **状态**：✅ 已完成并归档（2026-06-14）。P0/P1/P2/P3 分别由 PR #549/#551/#552/#553 合入 main，§8 开放问题按实现决议收口。
 
 把适合作世界方块的容器（`trade_crate` 货箱 / `herb_crate` 灵草箱放置版 / `dead_drop_box` 死信箱）实装为可右键放置、破坏、打开搜索的世界 entity 容器，配 bbmodel 资产。**进料**：放置走 [[plan-workbench-place-runtime-v1]] 的 `PlaceableBlockKind` 派发底盘，容器 state 复用 `external_container.rs` 的 `ExternalContainer` + `ContainerState`。**出料**：放下 → 世界 entity 带 `ExternalContainer { kind, container }`；右键 → `LootContainerOpenV1` S2C；内容操作复用 coffin 同款 `ExternalContainerMove`/`Close` 协议（[[plan-nested-pack-base-v1]] 的 `PackContainer*` 协议为可选升级路径，见 §8.1 #5）。**对应 worldview §九:850（盲盒死信箱）+ §九 搬运/集市经济。**
 
@@ -10,10 +10,10 @@
 
 | 阶段 | 内容 | 状态 | 验收日期 |
 |------|------|------|----------|
-| P0 | `ExternalContainerKind` 扩 `StorageCrate`/`DeadDrop` + 三 TOML placeable 标记 + 放置/破坏链路（接 `PlaceableBlockKind` 底盘） | ⬜ | |
-| P1 | schema `LootContainerSourceKindV1` 扩两变体 + **新增通用容器 open 路径**（泛化 C2S/独立 open system，**非复用 coffin open**）+ `ExternalContainerKind→LootContainerSourceKindV1` 映射 + client IntentHandler | ⬜ | |
-| P2 | bbmodel 资产（货箱/灵草箱/死信箱）+ `BongEntityModelKind` 三 variant + 渲染接入 + 视听 + e2e | ⬜ | |
-| P3 | 死信箱阵法防砸（worldview §九:850 物品化灰 + 破阵机制）+ 破阵 VFX + 端到端验收 | ⬜ | |
+| P0 | `ExternalContainerKind` 扩 `StorageCrate`/`DeadDrop` + 三 TOML placeable 标记 + 放置/破坏链路（接 `PlaceableBlockKind` 底盘） | ✅ | 2026-06-14 |
+| P1 | schema `LootContainerSourceKindV1` 扩两变体 + **新增通用容器 open 路径**（泛化 C2S/独立 open system，**非复用 coffin open**）+ `ExternalContainerKind→LootContainerSourceKindV1` 映射 + client IntentHandler | ✅ | 2026-06-14 |
+| P2 | bbmodel 资产（货箱/灵草箱/死信箱）+ `BongEntityModelKind` 三 variant + 渲染接入 + 视听 + e2e | ✅ | 2026-06-14 |
+| P3 | 死信箱阵法防砸（worldview §九:850 物品化灰 + 破阵机制）+ 破阵 VFX + 端到端验收 | ✅ | 2026-06-14 |
 
 ## 接入面（防孤岛）
 
@@ -45,7 +45,7 @@
   - `dead_drop_box` 解锁需走私者师承（`craft/workbench_recipes.rs:519-523` 已声明 `Mentor { smuggler }`，与本 plan 吻合）。
 - **qi_physics 锚点**：**无**——容器方块本身不碰真元/灵气/衰减（内含高灵物的保鲜/逸散归 [[plan-container-filter-and-completion-v1]]，走 shelflife，不在本 plan）。**红旗自查**：本 plan 不引入任何 `*_DECAY*` / `*_DRAIN*` / 衰减常数，不写 `qi_current +=` / `zone.spirit_qi -=`，无 ledger `QiTransfer` 涉及。死信箱「物品化灰」是物品 despawn（`ItemInstance` 移除），不涉及真元守恒（化灰物品若携带 `spirit_quality > 0` 不回流 zone——这是物品销毁不是真元蒸发，与 qi 守恒律无关，见 P3 §决议）。
 
-## P0 — ExternalContainerKind 扩展 + 放置/破坏链路 ⬜
+## P0 — ExternalContainerKind 扩展 + 放置/破坏链路 ✅ 2026-06-14
 
 **纯 server 逻辑，无视听。**
 
@@ -66,7 +66,7 @@
   - **open 中破坏 → 强制关闭**：`opened_by = Some(player)` 时破坏容器 → 断言该玩家收到 `LootContainerCloseV1 { reason: ContainerDestroyed }`（对照 `opened_by = None` 时破坏不 emit close）；close reason 枚举 roundtrip pin 含 `ContainerDestroyed`。
   - 错误分支：未知 `placeable` 值拒绝 spawn；非 placeable 物品走原 `Block` gate 不误入容器派发；`category != Block` 且无 `placeable` 字段 → 原 `:212` reject 行为不变（回归 pin）。
 
-## P1 — schema 扩展 + 打开搜索链路 + IntentHandler ⬜
+## P1 — schema 扩展 + 打开搜索链路 + IntentHandler ✅ 2026-06-14
 
 **视听见 §视听·P1。**
 
@@ -88,7 +88,7 @@
   - 错误分支：open 已被他人打开的容器（`opened_by` 非 None）→ 拒绝；session 不存在 → reject。
   - schema pin：`LootContainerSourceKindV1::StorageCrate { is_herb }` 正反 sample 序列化对拍；`DeadDrop` 同。
 
-## P2 — bbmodel 资产 + 渲染接入 + 视听 + e2e ⬜
+## P2 — bbmodel 资产 + 渲染接入 + 视听 + e2e ✅ 2026-06-14
 
 **视觉资产 → 强制走 docs/CLAUDE.md §6.1 三轮自我打磨 + 终轮 commit `<PROMISE>` 担保块。**
 
@@ -105,7 +105,7 @@
 - **测试声明**：bbmodel 文件存在性（CI 检查 `local_models/*.bbmodel` 或导出 geo）；`BongEntityModelKind` raw_id 唯一性 pin（166/167/168 不与现有冲突，165 已归 [[plan-workbench-place-runtime-v1]] `WORKBENCH`）；renderer 注册 pin（三 renderer 在 bootstrap 注册）；audio_recipe JSON schema 校验（4 条 recipe 解析无误）。
 - **e2e**：合成（走私者师承解锁 dead_drop_box）→ 放置 → 渲染出 bbmodel → 右键搜索打开 → 拖入/拖出内容（走 `ExternalContainerMove`）→ 破坏 → 内容物 + 容器掉回地面。client e2e 截图验证三模型渲染正确。
 
-## P3 — 死信箱阵法防砸 + 破阵 VFX + 验收 ⬜
+## P3 — 死信箱阵法防砸 + 破阵 VFX + 验收 ✅ 2026-06-14
 
 **worldview §九:850 正典实装；视听见 §视听·P3。**
 
@@ -163,6 +163,14 @@
 
 > 升 active 时同步更新 `reminder.md:17`：[[plan-container-filter-and-completion-v1]] 12 容器验收表「落地阶段」列标 `trade_crate`→本 plan-P0、`herb_crate_placed`→本 plan-P0、`dead_drop_box`→本 plan-P0/P3。
 
+## §8.1 决议（pre-P0，2026-06-10）
+
+- **#1 死信箱形态**：按 §8 #1 定案为世界可放置完整形态，不做随身版；实现证据为 `server/assets/items/workbench_materials.toml:226` 的 `dead_drop_box` + `:229` 的 `placeable = "dead_drop"`，并由 P0/P3 的 `ContainerBlockKind::DeadDrop` / `DeadDropWard` 路径消费。
+- **#2 草药箱双形态**：按 §8 #2 推荐默认新建 `herb_crate_placed` 放置版，保留 `herb_crate` 随身版给 nested-pack；实现证据为 `server/assets/items/workbench_materials.toml:294` 的 `herb_crate_placed` + `:297` 的 `placeable = "storage_crate"`，P0 归档证据记录 `StorageCrate { is_herb: true }`。
+- **#3 raw_id / 尺寸分配**：按 §P2 约束使用纯 entity + bbmodel，`TRADE_CRATE/HERB_CRATE_PLACED/DEAD_DROP_BOX` 顺延占 raw_id 166/167/168；实现证据为 `client/src/main/java/com/bong/client/entity/BongEntityModelKind.java:253` / `:264` / `:275` 与 `server/src/world/container_block.rs:552` / `:581` / `:610` 的 marker raw id 测试，容器 grid 由 `server/src/world/container_block.rs:156` 写入 `ExternalContainer`。
+- **#4 死信箱破阵 MVP**：按 §8 #4 收口为 owner 破坏走普通掉落、非 owner 破坏化灰 + 毒气，不做完整破解小游戏；实现证据为 `server/src/world/container_block.rs:287` 的 owner fallback 判定、`:300` 的 `trigger_dead_drop_ward` 与 `server/src/world/container_block.rs:56` / `:147` 的 `DeadDropWard` 激活态。
+- **#5 内容操作协议**：按 §8 #5 继续复用 `ExternalContainerMove` / `ExternalContainerClose`，新增通用 open 仅负责世界容器打开入口；实现证据为 `server/src/schema/client_request.rs:504` 的 `ContainerOpen`、`:516` 的 `ExternalContainerMove` 与 `server/src/world/container_open.rs:30` 的 `ContainerOpenRequest`。
+
 ## §10 实施工作流
 
 升 active 时按 docs/CLAUDE.md §6 执行。本 plan scope = 4 PR，多 PR 序列化（不拆多 plan，§6.3）。
@@ -192,4 +200,36 @@ P2 含 bbmodel 视觉资产 → **强制走 §6.1 三轮自我打磨**：Round 1
 
 ## Finish Evidence
 
-（迁入 `docs/finished_plans/` 前必填：落地清单 / 关键 commit hash+日期 / 测试结果命令+数量 / 跨仓库核验 server·client·agent 命中 symbol / 遗留依赖其他 plan 的待办）
+### 落地清单
+
+- **P0 · 放置/破坏底盘**：`server/src/inventory/external_container.rs` 增加 `ExternalContainerKind::StorageCrate` / `DeadDrop` 与 `external_kind_to_source_kind` 基础；`server/src/world/container_block.rs` / `server/src/world/block_place.rs` 接通 `trade_crate`、`herb_crate_placed`、`dead_drop_box` 的实体容器放置、破坏、强制关闭与掉落；`server/assets/items/workbench_materials.toml` 写入 `placeable = "storage_crate"` / `"dead_drop"`；`LootContainerCloseReasonV1::ContainerDestroyed` 与 client close reason 处理已补齐。
+- **P1 · 通用打开链路**：`server/src/world/container_open.rs` 新增 `ContainerOpenRequest` 通用 open system；`server/src/schema/client_request.rs` / `proto/bong/envelope.proto` / `server/src/network/client_request_handler.rs` 接入 `ContainerOpen` C2S；`LootContainerSourceKindV1::StorageCrate` / `DeadDrop` 与 serde/proto roundtrip pin 已落地；client 新增 `StorageCrateInteractIntentHandler`、`DeadDropInteractIntentHandler`、`ClientRequestSender.sendContainerOpen` 并注册到 `DefaultInteractionHandlers`。
+- **P2 · 模型/渲染/视听**：`local_models/TradeCrate.bbmodel`、`HerbCrate.bbmodel`、`DeadDropBox.bbmodel` 及 `client/src/main/resources/assets/bong/geo/*.geo.json` / `textures/entity/*_intact.png` / `animations/*.animation.json` 已导出；`BongEntityModelKind.TRADE_CRATE/HERB_CRATE_PLACED/DEAD_DROP_BOX` raw_id 166/167/168、`TradeCrateRenderer` / `HerbCratePlacedRenderer` / `DeadDropBoxRenderer` 与 `BongEntityRenderBootstrap` 注册已落地；`container_place*`、`container_open*`、`container_break` audio recipe 和放置尘土粒子已接入。
+- **P3 · 死信箱阵法防砸**：`DeadDropWard { owner, ward_active }` 放置默认激活；非 owner 破坏触发化灰、session 移除、打开者 `ContainerDestroyed` close、3.0 格水平 AoE `CombatEvent` + `ApplyStatusEffectIntent(Slowed)`；`server/src/network/gameplay_vfx.rs` 暴露 `bong:dead_drop_ward_break`，`server/assets/audio/recipes/dead_drop_ward_break.json` 与 `client/src/main/java/com/bong/client/visual/particle/DeadDropBreakPlayer.java` 已完成破阵 VFX/SFX。
+
+### 关键 commit / PR
+
+- **P0**：`95333d313af4462276e12b4765228ef0b9aa9dec`（2026-06-14）`plan-placeable-container-blocks-v1 P0：接通可放置容器底盘`，PR #549。
+- **P1**：`9b4c69d0f06bd57bb73dce066802a3a0e4f34bdc`（2026-06-14）`plan-placeable-container-blocks-v1 P1：通用容器打开链路`，PR #551。
+- **P2**：`448bd60e2597ff04fede695155d68bf70c4245f9`（2026-06-14）`plan-placeable-container-blocks-v1 P2：接入容器模型与视听`，PR #552。
+- **P3**：`a33a308bb84eb6c9662eeea9f54b91e2a2c93207`（2026-06-14）`plan-placeable-container-blocks-v1 P3：死信箱阵法防砸`，PR #553。
+
+### 测试结果
+
+- **P0 本地**：`cargo test container_block`、`cargo test block_place`、`cargo test placeable_container_templates_load_from_workbench_materials_toml`、`cargo test loot_container_close`、`./gradlew --max-workers=2 test --tests "com.bong.client.network.LootContainerHandlerTest"`、`cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`、`./gradlew --max-workers=2 test build` 全绿；PR #549 `e2e` check SUCCESS。
+- **P1 本地**：`cargo test container_open`、`cargo test external_kind_to_source_kind`、`cargo test lifecycle_manages_only_supply_coffins`、`cargo test loot_container_source_kind`、`cargo test c2s_container_open`、`cargo test client_request`、server full `cargo test`（9064 passed, 1 ignored，`full_app_startup` 1 passed）、client protocol / sender / intent handler / default handler / loot handler 测试与 `./gradlew --max-workers=2 test build` 全绿；PR #551 `e2e` check SUCCESS。
+- **P2 本地**：`./gradlew --max-workers=2 test build`、`cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、`cargo test container_block`、`cargo test entity_model`、`cargo test audio`、`cargo test world::block_place::tests::breaking_`、server full `cargo test`、`git diff --check origin/main...HEAD` 全绿；PR #552 `e2e` 与 `Build resource pack` check SUCCESS。
+- **P3 本地**：`cargo fmt --check && CARGO_BUILD_JOBS=2 cargo clippy --all-targets -- -D warnings`、server full `cargo test`（9074 passed, 0 failed, 1 ignored，`full_app_startup` 1 passed）、`./gradlew --max-workers=2 test build`、`git diff --check origin/main..HEAD` 全绿；review fix 后 `cargo test dead_drop -- --nocapture`、`DeadDropBreakPlayerTest`、`VfxRegistryTest` 全绿；PR #553 `e2e` check SUCCESS。
+
+### 跨仓库核验
+
+- **server**：`ExternalContainerKind::StorageCrate` / `DeadDrop`、`external_kind_to_source_kind`、`ContainerOpenRequest`、`LootContainerSourceKindV1::StorageCrate` / `DeadDrop`、`ContainerBlockKind::DeadDrop`、`DeadDropWard`、`DEAD_DROP_WARD_BREAK`、`dead_drop_ward_break` audio recipe 均在运行路径有消费者。
+- **client**：`BongEntityModelKind.TRADE_CRATE` / `HERB_CRATE_PLACED` / `DEAD_DROP_BOX`、三 renderer、`StorageCrateInteractIntentHandler`、`DeadDropInteractIntentHandler`、`DeadDropBreakPlayer.EVENT_ID`、`VfxBootstrap` 注册与对应测试均已落地。
+- **proto/schema**：`ContainerOpen` C2S、`LootContainerSourceKindV1`、`LootContainerCloseReasonV1::ContainerDestroyed` 的 wire-format / roundtrip pin 已覆盖；agent TypeScript schema 无 loot container 对端，按 plan 判定无 agent 改动。
+- **资产**：三 `.bbmodel`、三 geo、三 texture、三 animation、四类容器音频 recipe、P2 render preview 均已提交；P2 终轮 commit 含 `<PROMISE>` 三轮打磨担保。
+
+### 遗留 / 后续
+
+- `PackContainer*` 统一内容操作协议仍归 [[plan-nested-pack-base-v1]] 后续升级；本 plan MVP 按决议继续复用 `ExternalContainerMove` / `ExternalContainerClose`。
+- 死信箱完整「破解阵法后无害破坏」小游戏未纳入 P3，后续若做应新立 plan；当前 MVP 是 owner 正常破坏、非 owner 化灰 + 毒气。
+- 草药箱筛选、保鲜、shelflife 与高灵物逸散归 [[plan-container-filter-and-completion-v1]]，本 plan 仅落地可放置世界容器与视听闭环。
