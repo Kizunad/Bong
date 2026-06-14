@@ -53,7 +53,7 @@
 |----|------|----|
 | P0 | 风险梯度地图：按灵气浓度/野兽密度/NPC 活跃度/玩家密度 四轴标注风险 | ⬜ |
 | P1 | 环境风险信号：植被/音效/粒子/天气 四通道传递风险信息 | ⬜ |
-| P2 | 撤退决策辅助：五维决策信号 + 关键撤退窗口提示 | ⬜（五维 Checklist HUD 已移除，见 P2 段注记 / `plan-remove-extract-decision-hud-v1`） |
+| P2 | 撤退决策辅助：五维决策信号 + 关键撤退窗口提示 | ⬜ |
 | P3 | Run 间节奏：回家整理循环 + 世界状态变化感知 + 下一次目标选择 | ⬜ |
 | P4 | 世界事件节奏注入：伪灵脉/兽潮/汐转/天劫在搜打撤循环中的最佳触发时机 | ⬜ |
 | P5 | 全流程压测：连续 5 趟 run 的情感曲线实测 | ⬜ |
@@ -129,11 +129,9 @@
 
 ## P2 — 撤退决策辅助 ⬜
 
-> **⚠️ HUD 已移除（2026-06-15，`plan-remove-extract-decision-hud-v1`）**：本段「五维撤退 Checklist 可视化」原由 PR #540（commit `63b2fdbeb`）以 `ExtractDecisionHudPlanner` + `ExtractDecisionStateStore` 落地，worldgen-v4 P6 真机审阅时用户判定此常驻决策面板不要，已彻底移除（client 端 3 文件删除 + 6 处手术编辑，commit `dc4be1ef0`）。**下方交付物 #1（五维 Checklist HUD）为已撤回内容，不再实装**；交付物 #2「该回了」自然触发（环境暗示）、#3 紧急撤退窗口（鸟群飞走/微震/NPC 狂奔）属环境信号载体，未被本次移除波及。撤退张力改由环境信号 + 叙事承载，不再有显式 checklist 面板。
-
 ### 交付物
 
-1. ~~**五维撤退 Checklist 可视化**（`client/src/main/java/com/bong/client/hud/ExtractDecisionHud.java`）~~ — **已移除**（见上方注记）
+1. **五维撤退 Checklist 可视化**（`client/src/main/java/com/bong/client/hud/ExtractDecisionHud.java`）
 
 | 维度 | 信号 | 阈值提示 | 视觉 |
 |------|------|---------|------|
