@@ -3,7 +3,10 @@
 //! 消费 `FreshnessProbeResponse` 事件：
 //! - `ProbeResult::Precise` → 构建 `FreshnessUpdateV1`（复用既有 `freshness_update` 类型串）
 //!   并用 inventory query 反查 `freshness.profile`；
-//! - `ProbeResult::Denied` → 不发 freshness_update（避免污染 FreshnessStore），
+//! - `ProbeResult::Denied { NoFreshness }` → 完全静默（plan-interaction-intent-cleanup-v1
+//!   P1）：普通物品「无时气流转」是常态而非感知失败，客户端已收窄为仅对已知有保鲜数据的
+//!   物品发探针，server 再兜一层不发任何 S2C，避免误触/竞态灰字刷屏；
+//! - `ProbeResult::Denied`（其余 reason）→ 不发 freshness_update（避免污染 FreshnessStore），
 //!   改发 `EventAlert` 灰字提示（info 级别，3.5 s toast）。
 //!
 //! 模板：`mineral_probe_emit.rs` / `tribulation_heart_demon_offer_emit.rs`（已验证范本）。
@@ -58,6 +61,12 @@ pub fn emit_freshness_probe_results(
                     profile_name,
                 }))
             }
+            // plan-interaction-intent-cleanup-v1 P1 — 「此物无时气流转」对普通物品是常态，
+            // 不是一次有意义的感知失败。客户端已收窄为仅对「已知有保鲜数据」的物品发探针，
+            // 这里再兜一层：NoFreshness 一律静默丢弃（不发任何 S2C），避免误触/竞态时的灰字刷屏。
+            ProbeResult::Denied {
+                reason: ProbeDenialReason::NoFreshness,
+            } => continue,
             ProbeResult::Denied { reason } => {
                 let message = freshness_denied_message(reason);
                 ServerDataV1::new(ServerDataPayloadV1::EventAlert {
@@ -409,9 +418,12 @@ mod tests {
         assert_eq!(alerts.len(), 1);
     }
 
-    /// Denied / no_freshness → event_alert。
+    /// plan-interaction-intent-cleanup-v1 P1 — Denied / no_freshness → 完全静默：
+    /// 既不发 freshness_update，也不发 event_alert（普通物品「无时气流转」是常态，
+    /// 不应灰字刷屏）。区别于其他 Denied 分支（realm_too_low / item_not_found /
+    /// profile_not_registered 仍发一条 event_alert）。
     #[test]
-    fn denied_no_freshness_sends_event_alert() {
+    fn denied_no_freshness_is_fully_silent_no_packet() {
         let mut app = setup_app();
         let (player, mut helper) = spawn_mock_client(&mut app, "NoFresh");
 
@@ -427,8 +439,16 @@ mod tests {
         flush_all_client_packets(&mut app);
 
         let (updates, alerts) = collect_payloads(&mut helper);
-        assert!(updates.is_empty());
-        assert_eq!(alerts.len(), 1);
+        assert!(
+            updates.is_empty(),
+            "NoFreshness 不应发 freshness_update，实际 {} 条",
+            updates.len()
+        );
+        assert!(
+            alerts.is_empty(),
+            "NoFreshness 应完全静默（不发 event_alert），实际收到 {:?}",
+            alerts
+        );
     }
 
     /// Denied / profile_not_registered → event_alert。

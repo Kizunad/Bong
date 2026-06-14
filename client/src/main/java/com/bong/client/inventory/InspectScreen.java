@@ -24,6 +24,7 @@ import com.bong.client.inventory.state.InventoryStateStore;
 import com.bong.client.inventory.state.MeridianStateStore;
 import com.bong.client.util.RealmLabel;
 import com.bong.client.inventory.state.PhysicalBodyStore;
+import com.bong.client.processing.state.FreshnessStore;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.sound.SoundCategory;
 import net.minecraft.sound.SoundEvents;
@@ -1883,24 +1884,9 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 var pos = grid.screenToGrid(mouseX, mouseY);
                 if (pos != null) {
                     InventoryItem item = grid.itemAt(pos.row(), pos.col());
-                    // plan-exploration-probe-return-v1 P1 — Shift+右键（button==1）槽位触发神识感知保鲜。
-                    // button==1 已由外层 if(button==1) 块保证，此处仅补 Shift 判定。
-                    // 直接发 instance_id 而非 flatSlot，消除多容器 tab 歧义。
-                    if (item != null && hasShiftDown()) {
-                        com.bong.client.network.ClientRequestSender.sendFreshnessProbe(item.instanceId());
-                        // S2: plan §P1 触发音效 block.amethyst_block.chime pitch=1.2 / vol=0.25
-                        MinecraftClient mc = MinecraftClient.getInstance();
-                        if (mc != null && mc.player != null) {
-                            mc.player.playSound(
-                                SoundEvents.BLOCK_AMETHYST_BLOCK_CHIME,
-                                SoundCategory.PLAYERS,
-                                0.25f,
-                                1.2f
-                            );
-                        }
-                        itemInspectLongPress.cancel();
-                        return true;
-                    }
+                    // plan-interaction-intent-cleanup-v1 P1 — 感保鲜触发已从「任意物品 Shift+右键」
+                    // 收窄并迁出鼠标路径：改为焦点槽位 Shift+F（见 keyPressed），且仅对「已知有
+                    // 保鲜数据」的物品发探针，杜绝通配误触与对普通物品的无效探针。
                     if (item != null && openPillContextMenu(item, (int) mouseX, (int) mouseY)) {
                         itemInspectLongPress.cancel();
                         return true;
@@ -2120,7 +2106,66 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 }
             }
         }
+        // plan-interaction-intent-cleanup-v1 P1 — 焦点槽位 Shift+F 触发神识感知保鲜，
+        // 仅对「已知有保鲜数据」的物品发探针（见 maybeProbeFreshness）。
+        if (keyCode == GLFW.GLFW_KEY_F && hasShiftDown() && !dragState.isDragging()) {
+            InventoryItem focused = focusedGridItem();
+            if (focused != null && maybeProbeFreshness(focused)) {
+                itemInspectLongPress.cancel();
+                return true;
+            }
+        }
         return super.keyPressed(keyCode, scanCode, modifiers);
+    }
+
+    /** 当前鼠标焦点所在 backpack 网格槽位的物品；无则返回 null。 */
+    private InventoryItem focusedGridItem() {
+        BackpackGridPanel grid = activeGrid();
+        if (grid == null) {
+            return null;
+        }
+        double mx = mouseX();
+        double my = mouseY();
+        if (!grid.containsPoint(mx, my)) {
+            return null;
+        }
+        var pos = grid.screenToGrid(mx, my);
+        if (pos == null) {
+            return null;
+        }
+        return grid.itemAt(pos.row(), pos.col());
+    }
+
+    /**
+     * plan-interaction-intent-cleanup-v1 P1 — 仅对「已知有保鲜数据」的物品发感保鲜探针。
+     *
+     * <p>「已知有保鲜数据」= {@link FreshnessStore} 里有该 instance_id 的记录（server 曾
+     * 主动推过 freshness_update）。普通物品没有保鲜数据，直接返回 false 不发包，杜绝对
+     * 凡物的无效探针 + server 端「无时气流转」灰字刷屏。
+     *
+     * <p>package-private 以便测试断言「有记录→发包+音效」「无记录→不发包」。
+     *
+     * @return true 表示已发出探针（调用方据此 consume 按键）
+     */
+    boolean maybeProbeFreshness(InventoryItem item) {
+        if (item == null) {
+            return false;
+        }
+        if (FreshnessStore.get(Long.toString(item.instanceId())) == null) {
+            return false;
+        }
+        com.bong.client.network.ClientRequestSender.sendFreshnessProbe(item.instanceId());
+        // S2: plan §P1 触发音效 block.amethyst_block.chime pitch=1.2 / vol=0.25
+        MinecraftClient mc = MinecraftClient.getInstance();
+        if (mc != null && mc.player != null) {
+            mc.player.playSound(
+                SoundEvents.BLOCK_AMETHYST_BLOCK_CHIME,
+                SoundCategory.PLAYERS,
+                0.25f,
+                1.2f
+            );
+        }
+        return true;
     }
 
     // ==================== Drag ====================

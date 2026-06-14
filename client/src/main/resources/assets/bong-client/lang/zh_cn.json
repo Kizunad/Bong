@@ -3,5 +3,9 @@
   "key.bong-client.interact": "环境交互",
   "key.bong-client.open_craft_screen": "打开手搓台",
   "key.bong-client.movement_dash": "冲刺",
-  "key.bong-client.shield_hold": "举盾"
+  "key.bong-client.shield_hold": "举盾",
+  "category.bong-client.mineral": "Bong 矿物",
+  "key.bong-client.mineral_sense": "神识感矿脉",
+  "category.bong-client.social": "Bong 社交",
+  "key.bong-client.spirit_niche_mark_coordinate": "神识感灵龛（凝视+标记）"
 }
