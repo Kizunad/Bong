@@ -1046,7 +1046,7 @@ fn insert_casting_snapshot(
         started_at_tick: now_tick,
         duration_ticks: u64::from(duration_ticks),
         started_at_ms,
-        duration_ms: duration_ticks.saturating_mul(50),
+        duration_ms: duration_ticks.saturating_mul(crate::time::MILLIS_PER_TICK as u32),
         bound_instance_id: None,
         start_position,
         complete_cooldown_ticks: cooldown_ticks,
