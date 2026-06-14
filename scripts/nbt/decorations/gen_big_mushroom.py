@@ -25,23 +25,44 @@ def _mushroom(seed: int, stem_h: int, cap: str, stem: str, accent: str,
               *, cap_radius: int = 2, cap_props=None) -> StructureBuilder:
     random.seed(seed)
     span = 2 * cap_radius + 1
-    sb = StructureBuilder(span, stem_h + 3, span)
+    sb = StructureBuilder(span, stem_h + 4, span)
     cx = cz = cap_radius
+
+    # Stem — single column up to the cap.
     for y in range(stem_h):
         sb.set_block(cx, y, cz, stem)
+
     cap_y = stem_h
     # Cardinal rim cells are always kept so the cap never loses a whole side and
-    # collapse into a lopsided sliver; only the *corner* rim cells get the
+    # collapses into a lopsided sliver; only the *corner* rim cells get the
     # organic jagged cull.
     cardinals = {(cap_radius, 0), (-cap_radius, 0), (0, cap_radius), (0, -cap_radius)}
+
+    def _fill_disc(y: int, r: int, *, ragged: bool = False) -> None:
+        for dx, dz in disc_offsets(r):
+            on_rim = dx * dx + dz * dz > (r - 1) * (r - 1)
+            if ragged and on_rim and (dx, dz) not in cardinals and random.random() < 1 / 3:
+                continue  # organic ragged corner
+            sb.set_block(cx + dx, y, cz + dz, cap, cap_props)
+
+    # Drooping rim skirt one block below the main cap: the outer ring only, so
+    # the cap overhangs the stem and reads as a domed mushroom — not a flat
+    # pancake on a stick. The *shape* (not the block texture) is what sells
+    # "mushroom", which is why the solid-block shroomlight variant needs it.
     for dx, dz in disc_offsets(cap_radius):
-        x, z = cx + dx, cz + dz
-        on_rim = dx * dx + dz * dz == cap_radius * cap_radius
-        if on_rim and (dx, dz) not in cardinals and random.random() < 1 / 3:
-            continue  # ragged corner
-        sb.set_block(x, cap_y, z, cap, cap_props)
-    # Center accent above the cap.
-    sb.set_block(cx, cap_y + 1, cz, accent, {"facing": "up"} if "amethyst" in accent else None)
+        if dx * dx + dz * dz > (cap_radius - 1) * (cap_radius - 1):
+            sb.set_block(cx + dx, cap_y - 1, cz + dz, cap, cap_props)
+
+    # Cap dome: widest layer at the base, narrowing as it rises into a crown.
+    _fill_disc(cap_y, cap_radius, ragged=True)
+    top_y, r, layer_y = cap_y, cap_radius - 1, cap_y + 1
+    while r >= 1:
+        _fill_disc(layer_y, r)
+        top_y, layer_y, r = layer_y, layer_y + 1, r - 1
+
+    # Center accent / glow crowning the dome.
+    sb.set_block(cx, top_y + 1, cz, accent,
+                 {"facing": "up"} if "amethyst" in accent else None)
     return sb
 
 
