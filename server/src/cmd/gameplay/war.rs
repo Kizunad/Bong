@@ -18,7 +18,8 @@ use valence::prelude::{
 };
 
 use crate::npc::faction::{
-    EmergentGroupId, FactionRelationMatrix, NamedFactionId, NamedFactionRegistry,
+    EmergentGroupId, FactionRelationMatrix, NamedFactionId, NamedFactionLeader,
+    NamedFactionRegistry,
 };
 use crate::npc::movement::GameTick;
 use crate::npc::war::{WarParticipateIntent, WarRole};
@@ -173,6 +174,7 @@ pub fn handle_faction_list_cmd(
     mut events: EventReader<CommandResultEvent<FactionCmd>>,
     registry: Option<Res<NamedFactionRegistry>>,
     relation_matrix: Option<Res<FactionRelationMatrix>>,
+    leaders: Query<&NamedFactionLeader>,
     mut client_q: Query<&mut Client>,
 ) {
     for event in events.read() {
@@ -193,6 +195,24 @@ pub fn handle_faction_list_cmd(
         };
 
         client.send_chat_message("[势力] 三势力关系矩阵：");
+        for faction in registry.iter() {
+            let leader_alive = leaders.iter().any(|leader| leader.faction == faction.id);
+            let leader_status = if leader_alive {
+                "领袖存活"
+            } else if faction.status == crate::npc::faction::FactionStatus::Headless {
+                "无头"
+            } else {
+                "未刷新"
+            };
+            client.send_chat_message(format!(
+                "  {} [{}] zone={} npc={} {}",
+                faction.display_name,
+                faction.status.as_str(),
+                faction.zone_anchor,
+                faction.current_npc_count,
+                leader_status
+            ));
+        }
 
         // 三对关系（按 NamedFactionId::all() 顺序遍历所有唯一对）。
         let all = NamedFactionId::all();
