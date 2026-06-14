@@ -159,7 +159,7 @@ impl EventCadence {
 
     pub fn effective_interval_ticks(&self, override_multiplier: f64) -> u64 {
         let multiplier =
-            (self.seasonal_multiplier * self.pressure_multiplier * override_multiplier.max(1.0))
+            (self.seasonal_multiplier * self.pressure_multiplier * override_multiplier.max(0.0))
                 .max(0.01);
         ((self.base_interval_ticks as f64) / multiplier)
             .round()
@@ -2293,6 +2293,14 @@ mod tests {
             PlayerLoopPhase::DeepGathering,
             BEAST_TIDE_OMEN_LEAD_TICKS,
         );
+        let pseudo_deep_cadence = rhythm_cadence_multiplier(
+            HeartbeatEventKind::PseudoVein,
+            PlayerLoopPhase::DeepGathering,
+        );
+        let baseline_interval =
+            EventCadence::new(PSEUDO_VEIN_OMEN_LEAD_TICKS).effective_interval_ticks(1.0);
+        let downfrequency_interval = EventCadence::new(PSEUDO_VEIN_OMEN_LEAD_TICKS)
+            .effective_interval_ticks(pseudo_deep_cadence);
 
         assert!(
             pseudo_return < pseudo_deep,
@@ -2301,6 +2309,10 @@ mod tests {
         assert!(
             beast_deep < BEAST_TIDE_OMEN_LEAD_TICKS,
             "兽潮在深处采集阶段应缩短预警窗口，形成当趟撤离压力"
+        );
+        assert!(
+            pseudo_deep_cadence < 1.0 && downfrequency_interval > baseline_interval,
+            "频率倍率小于 1 时应拉长事件间隔：multiplier={pseudo_deep_cadence} baseline={baseline_interval} downfrequency={downfrequency_interval}"
         );
     }
 
