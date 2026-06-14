@@ -2,18 +2,30 @@ mod authored;
 mod biome;
 pub(crate) mod blocks;
 pub mod broken_peaks;
-mod column;
+pub mod column;
 mod decoration;
 mod flora;
 mod giant_sword;
 pub(crate) mod mega_tree;
-pub(crate) mod nbt_io;
-pub(crate) mod nbt_registry;
+// worldgen-v4 §8.1 #10 — `pub` so the out-of-crate criterion bench
+// (`benches/nbt_stamp.rs`) can name `StructureNbt` (returned by the registry) and
+// read its `blocks` len. No runtime behaviour change.
+pub mod nbt_io;
+// worldgen-v4 §8.1 #10 — `pub` (not `pub(crate)`) so the out-of-crate criterion
+// bench (`benches/nbt_stamp.rs`) can drive the real `DecorationNbtRegistry::stamp`
+// memcpy hot path. No runtime behaviour change.
+pub mod nbt_registry;
 mod noise;
 mod raster;
 mod spatial;
 pub(super) mod structures;
 mod wilderness;
+
+// worldgen-v4 §8.1 #10 — bench/test-only fixture builder, kept in the lib so the
+// out-of-crate criterion benches (`benches/chunk_generation.rs`) reach the real
+// `TerrainProvider::load` → `sample` → `column::fill_column` path without
+// duplicating the on-disk raster layout. Not referenced by any runtime system.
+pub mod bench_support;
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;

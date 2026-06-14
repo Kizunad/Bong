@@ -164,7 +164,7 @@ pub fn handle_faction_war_cmd(
 ///
 /// 读 `NamedFactionRegistry` + `FactionRelationMatrix`，格式化输出三势力名称 +
 /// 当前关系矩阵到聊天栏。输出格式（中文，对齐正典势力名称）：
-/// ```
+/// ```text
 /// [势力] 三势力关系矩阵：
 ///   青云猎盟 ↔ 沧渊商会: 中立
 ///   青云猎盟 ↔ 北荒漂流者: 敌对

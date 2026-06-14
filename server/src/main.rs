@@ -1,86 +1,16 @@
-#[allow(dead_code)]
-mod alchemy;
-mod armor;
-mod audio;
-mod botany;
-mod cmd;
-mod coffin;
-mod combat;
-// craft：plan-craft-v1 P0+P1 通用手搓底盘。register() 注入 5 示例配方 + resources +
-// events；P2/P3（client UI + agent narration + 三渠道 hook）由 plan vN+1 接入。
-// 当前未在 Update systems 内消费 CraftStartedEvent / CraftCompletedEvent，
-// 等 P2/P3 接入前保留 #[allow(dead_code)]。
-#[allow(dead_code)]
-mod craft;
-#[allow(dead_code)]
-mod cultivation;
-// dandao: register() 接入 run_server（plan-dandao-runtime-wiring-v1 P0）；
-// boss/boss_ai/catalyst_furnace 等子模块 P4 前仍有 dead items，保留 allow。
-#[allow(dead_code)]
-mod dandao;
-#[allow(dead_code)]
-mod death_lifecycle;
-#[allow(dead_code)]
-mod economy;
-#[allow(dead_code)]
-mod fauna;
-#[allow(dead_code)]
-mod forge;
-#[allow(dead_code)]
-mod gathering;
-// identity：P0 锁定数据模型 + persistence；P1 起 /identity slash / consumer / scorer
-// 等会逐步消费这些 API，初期保留 #[allow(dead_code)]，每个 P 接入后再收口。
-#[allow(dead_code)]
-mod identity;
-mod inventory;
-#[allow(dead_code)]
-mod lingtian;
-// mineral：M3 注册 MineralRegistry + MineralOreIndex + DiggingEvent listener；
-// M2 worldgen 接入前 OreIndex 始终空，listener 对所有 block 静默 no-op。
-#[allow(dead_code)]
-mod mineral;
-#[allow(dead_code)]
-mod mob;
-mod movement;
-mod network;
-mod npc;
-mod persistence;
-mod player;
-#[allow(dead_code)]
-mod qi_physics;
-// preview：worldgen-snapshot harness 用的 server-side teleport hook。仅在
-// BONG_PREVIEW_MODE=1 env 下激活实际 system；register() 一定会注册 event 类型
-// 让 chat_collector 编译通过。
-mod preview;
-#[allow(dead_code)]
-mod schema;
-mod shader;
-mod skin;
-mod social;
-mod spiritwood;
-// supply_coffin：plan-supply-coffin-v1 — 巨剑沧海物资棺。
-// register() 注入 SupplyCoffinRegistry resource + interact/refresh systems +
-// SupplyCoffinOpened event。
-mod supply_coffin;
-#[cfg(test)]
-mod test_coverage_guards;
-// shelflife：M3a 注册 DecayProfileRegistry resource；compute_* / container_* 等
-// 辅助仍未被 system 调用（M5 消费侧接入前）— 故保留 #[allow(dead_code)]。
-#[allow(dead_code)]
-mod shelflife;
-mod skill;
-#[allow(dead_code)]
-mod sword_path;
-#[allow(dead_code)]
-mod tools;
-#[allow(dead_code)]
-mod tribulation;
-mod world;
-#[allow(dead_code)]
-mod worldgen;
-mod zhenfa;
-#[allow(dead_code)]
-mod zhenfa_hooks;
+//! `bong-server` binary entrypoint.
+//!
+//! The module tree lives in the `bong_server` lib crate (`src/lib.rs`) so
+//! out-of-crate benches can reach real code paths (worldgen-v4 §8.1 #10). This
+//! binary is the thin consumer: it wires every module's `register(&mut App)` and
+//! owns the CLI / startup-smoke entry points exactly as before.
+
+use bong_server::{
+    alchemy, audio, botany, cmd, coffin, combat, craft, cultivation, dandao, death_lifecycle,
+    economy, fauna, forge, gathering, identity, inventory, lingtian, mineral, movement, network,
+    npc, persistence, player, preview, qi_physics, shader, shelflife, skill, skin, social,
+    spiritwood, supply_coffin, sword_path, tools, world, zhenfa,
+};
 
 use crossbeam_channel::unbounded;
 use network::agent_bridge::{
