@@ -97,7 +97,7 @@ impl DecorationAnchor {
 /// each decoration's directional semantics; templates whose look does not depend
 /// on a facing property (logs, boulders, mounds) rotate correctly with positions
 /// alone.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum Rotation {
     /// No rotation — positions stamped verbatim.
     #[default]

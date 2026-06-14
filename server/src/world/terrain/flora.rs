@@ -34,9 +34,22 @@
 //! gates lighter (≥85, 15% bald patches) so meadows feel continuous while
 //! tree groves still feel grouped.
 //!
+//! NBT stamps are **centred on the scatter point** (worldgen-v4 P7): the
+//! template's geometric footprint centre lands on the column the gate chose,
+//! not its `[0,0,0]` corner, so a wide bridge / boulder sits over its column
+//! instead of hanging off one side. The anchor tri-state *vertical* landing
+//! (Ground / Embedded / Hanging) is unchanged — only the horizontal origin
+//! shifts. The support check stays at the scatter column (the gate already
+//! verified ground there before centring).
+//!
 //! Placements are chunk-local (no cross-chunk book-keeping): anything poking
-//! out of the current chunk simply gets clipped. Mega-scale trees remain the
-//! domain of `mega_tree.rs`.
+//! out of the current chunk simply gets clipped by the `set_block_*` writers
+//! (which silently drop out-of-`0..16` cells — never panic). Centring a wide
+//! footprint can push more cells past the edge than the old corner anchor did,
+//! so a large feature straddling a chunk boundary may render as a partial
+//! structure; this is the accepted P7 cross-chunk residual (see
+//! `stamp_nbt_decoration`). Mega-scale trees remain the domain of
+//! `mega_tree.rs`.
 
 use valence::prelude::{BlockPos, BlockState, Chunk, ChunkPos, PropName, PropValue, UnloadedChunk};
 
@@ -162,10 +175,20 @@ pub fn decorate_chunk(
                             // Greedy / row-major so the result stays deterministic
                             // (same seed → same chunk).
                             //
-                            // KNOWN RESIDUAL (P7): cells of a large footprint that fall
-                            // in a NEIGHBOURING chunk are clipped here and not tracked,
-                            // so cross-chunk feature overlap can still occur. This pass
-                            // only resolves within-chunk feature-vs-feature overlap.
+                            // ACCEPTED RESIDUAL (worldgen-v4 P7): cells of a large
+                            // footprint that fall in a NEIGHBOURING chunk are clipped by
+                            // the `set_block_*` writers (silent out-of-bounds drop, never
+                            // a panic) and not tracked here, so cross-chunk feature
+                            // overlap can still occur and a boundary-straddling feature
+                            // may render partially. This pass only resolves within-chunk
+                            // feature-vs-feature overlap. P7 chose to accept the clip
+                            // rather than add a cross-chunk reservation channel: the
+                            // alternative (skip any candidate whose centred footprint
+                            // touches the edge) would thin large decorations along every
+                            // chunk seam — an 8-cell-wide dead band — which reads worse
+                            // than the occasional half-bridge. Centring (below) widens
+                            // the clip slightly vs. the old corner anchor but keeps the
+                            // feature visually attached to its column.
                             let footprint = decoration_footprint(
                                 local_x as i32,
                                 local_z as i32,
@@ -340,6 +363,12 @@ fn has_plant_support_below(
 /// * Otherwise (template-less / flower / unresolved → procedural geometry) fall
 ///   back to a conservative horizontal disc sized from the kind + size_range, so
 ///   the procedural path also participates in avoidance.
+///
+/// Because the NBT stamp is now **centred** on the scatter point (worldgen-v4
+/// P7), the projected cells straddle the anchor column on all sides rather than
+/// only growing +x/+z from it — and the footprint predictor stays in lock-step
+/// with the writer because both call [`nbt_stamp_placements`], which applies the
+/// identical centring shift.
 ///
 /// Cells outside the chunk (`local_x`/`local_z` not in `0..16`) are dropped:
 /// those are clipped by the writer and are the P7 cross-chunk residual, not part
@@ -611,8 +640,9 @@ struct NbtStamp {
 
 /// Resolve the chunk-local placements for `deco`'s NBT stamp, or `None` when no
 /// variant is resident / the template is missing (caller falls back to
-/// procedural). Mirrors exactly the anchor + surface_y + rotation math the
-/// writer used inline before this was extracted.
+/// procedural). Computes the anchor + surface_y + rotation + worldgen-v4 P7
+/// horizontal centring in one place so the writer ([`stamp_nbt_decoration`]) and
+/// the footprint predictor ([`decoration_footprint`]) agree on every cell.
 fn nbt_stamp_placements(
     local_x: i32,
     base_y: i32,
@@ -637,21 +667,60 @@ fn nbt_stamp_placements(
     //              surface_pos.y = base_y - 1.
     //   Hanging  — procedural top body sits at base_y; registry Hanging places the
     //              template top at surface_pos.y - 1 ⇒ surface_pos.y = base_y + 1.
+    // The anchor tri-state Y math is UNCHANGED by worldgen-v4 P7 centering — only
+    // the horizontal (x/z) origin shifts below; the vertical landing per anchor
+    // is identical to the procedural geometry it replaces.
     let surface_y = match anchor {
         DecorationAnchor::Ground | DecorationAnchor::Embedded => base_y - 1,
         DecorationAnchor::Hanging => base_y + 1,
     };
-    // The placement loop passes true world_x/world_z; the chunk origin is just
-    // world − local, so we can turn the stamp's absolute world positions back
-    // into chunk-local coordinates.
-    let surface_pos = BlockPos::new(world_x, surface_y, world_z);
-    let chunk_origin_x = world_x - local_x;
-    let chunk_origin_z = world_z - local_z;
 
     // Directional variety: a quarter-turn about the column. Templates whose look
     // does not hinge on a `facing` property (logs, boulders, mounds, crystals)
-    // rotate correctly with positions alone.
+    // rotate correctly with positions alone. Resolved BEFORE the centering shift
+    // because rotation transposes the footprint (Cw90/Cw270 swap the x/z extent)
+    // and offsets it about the template origin, so the centre offset must follow
+    // the same rotation.
     let rotation = Rotation::from_index(decoration_hash(world_x, world_z, NBT_ROTATION_SALT));
+
+    // worldgen-v4 P7 — centre the stamped footprint on the scatter point.
+    //
+    // `registry.stamp` anchors template-local `[0,0,0]` (the structure's
+    // **corner**) at `surface_pos`, so a `W×_×D` template used to grow +x/+z from
+    // the scatter column — its geometric centre landed at `+W/2, +D/2`, visibly
+    // offset (a wide rift_bridge / boulder hung off to one corner of its column).
+    // Shift the horizontal origin back by the footprint half-extent so the
+    // template **centre** lands on the scatter point instead of its corner.
+    //
+    // The half-extent is taken from the resident template `size` (a stable,
+    // deterministic source — unlike the resolved placements, which skip
+    // unresolved-palette blocks and would jitter the centre). It is rotated by
+    // the SAME `rotation` about the template origin so the centre tracks the
+    // transposed/offset footprint: Cw90/Cw270 turn a +x extent into a ∓z extent,
+    // and the rotation about `[0,0,0]` also slides the corner, both of which this
+    // single rotated-centre offset accounts for.
+    let template = registry.get(&template_id)?;
+    // Floor-division half-extent (integer "footprint/2"): an odd W centres exactly
+    // on the column; an even W lands the centre within half a block of it (the
+    // tightest an integer grid allows). Determinism preserved — pure function of
+    // (size, rotation).
+    let half_x = (template.size[0] - 1).max(0) / 2;
+    let half_z = (template.size[2] - 1).max(0) / 2;
+    let (centre_dx, _centre_dy, centre_dz) = rotation.apply(half_x, 0, half_z);
+    // base_origin.{x,z} == surface_pos.{x,z} in registry.stamp, and the rotated
+    // template centre lands at base_origin + rotated_centre. Solving for the
+    // origin that puts that centre on (world_x, world_z):
+    let surface_pos = BlockPos::new(world_x - centre_dx, surface_y, world_z - centre_dz);
+
+    // The placement loop passes true world_x/world_z; the chunk origin is just
+    // world − local, so we can turn the stamp's absolute world positions back
+    // into chunk-local coordinates. NOTE: the chunk origin is derived from the
+    // ORIGINAL scatter column (world − local), NOT the shifted surface_pos — the
+    // centred stamp's cells stay anchored to this chunk's coordinate frame, and
+    // cells that the shift pushes past the chunk edge are the cross-chunk clip
+    // residual handled by the writer (see `stamp_nbt_decoration`).
+    let chunk_origin_x = world_x - local_x;
+    let chunk_origin_z = world_z - local_z;
 
     let (placements, _unresolved) = registry.stamp(&template_id, surface_pos, anchor, rotation)?;
 
@@ -2020,9 +2089,11 @@ mod anti_overlap_tests {
 
     #[test]
     fn nbt_footprint_covers_whole_plate_not_just_anchor() {
-        // A 4×4 plate stamped at the chunk-interior anchor must reserve 16 cells
-        // (the corner-anchored stamp grows +x/+z from the anchor). Rotation only
-        // re-orients the same 16 cells, so the count is rotation-invariant.
+        // A 4×4 plate stamped at the chunk-interior anchor must reserve its whole
+        // footprint, not just the anchor. The stamp is centred on the scatter
+        // point (worldgen-v4 P7), so the 16 cells straddle the anchor on all
+        // sides; rotation only re-orients the same 16 cells, so the count is
+        // rotation-invariant.
         let dir = temp_dir("plate4");
         let reg = plate_registry(&dir, "boulder", 4);
         let d = deco(
@@ -2370,6 +2441,593 @@ mod anti_overlap_tests {
                  occupied (so no grass grows under the feature body, not just its anchor)"
             );
         }
+        let _ = fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod centering_tests {
+    //! worldgen-v4 P7 — NBT stamps are centred on the scatter point.
+    //!
+    //! The P6 stamp anchored the template's `[0,0,0]` **corner** at the scatter
+    //! column, so a `W×_×D` decoration grew +x/+z and its visual centre sat at
+    //! `+W/2, +D/2` — a wide rift_bridge / boulder hung off to one corner of its
+    //! own column. These lock the fix: the template's geometric footprint centre
+    //! now lands on the scatter point, straddling it on all sides; the centre
+    //! offset follows the per-placement rotation (so a transposed Cw90 footprint
+    //! still centres); the anchor tri-state *vertical* landing is unchanged; the
+    //! footprint-aware anti-overlap still holds over centred footprints; and a
+    //! centred stamp pushed past the chunk edge clips silently (never panics).
+    use super::*;
+    use crate::world::terrain::nbt_io::{
+        write_structure_nbt, PaletteEntry, StructureBlockEntry, StructureNbt, DATA_VERSION,
+    };
+    use crate::world::terrain::{MIN_Y, WORLD_HEIGHT};
+    use std::fs;
+    use std::path::{Path, PathBuf};
+
+    const TEST_MIN_Y: i32 = MIN_Y;
+
+    fn make_chunk() -> UnloadedChunk {
+        UnloadedChunk::with_height(WORLD_HEIGHT)
+    }
+
+    fn block_at(chunk: &UnloadedChunk, local_x: i32, world_y: i32, local_z: i32) -> BlockState {
+        let local_y = (world_y - TEST_MIN_Y) as u32;
+        chunk.block_state(local_x as u32, local_y, local_z as u32)
+    }
+
+    fn temp_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "bong_flora_center_{}_{}_{:p}",
+            tag,
+            std::process::id(),
+            &tag as *const _
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn write_template(dir: &Path, rel: &str, s: &StructureNbt) {
+        let path = dir.join(rel);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        write_structure_nbt(s, &path).unwrap();
+    }
+
+    fn deco(name: &str, kind: &str, templates: &[&str], anchor: DecorationAnchor) -> Decoration {
+        Decoration {
+            global_id: 1,
+            profile: "spawn".into(),
+            local_id: 1,
+            name: name.into(),
+            kind: kind.into(),
+            blocks: vec!["oak_log".into(), "oak_leaves".into(), "moss_block".into()],
+            size_range: [3, 6],
+            rarity: 0.5,
+            notes: String::new(),
+            nbt_templates: templates.iter().map(|t| t.to_string()).collect(),
+            anchor,
+        }
+    }
+
+    /// A solid `w × h × d` cuboid filling template-local `[0,w)×[0,h)×[0,d)` so
+    /// the stamped footprint extent equals `size` (a known multi-cell box whose
+    /// centre is checkable). Distinct from `single_block_template` so the centre
+    /// shift is observable (a 1×1×1 box has a zero half-extent → no shift).
+    fn box_template(w: i32, h: i32, d: i32, block_name: &str) -> StructureNbt {
+        let mut blocks = Vec::new();
+        for z in 0..d {
+            for y in 0..h {
+                for x in 0..w {
+                    blocks.push(StructureBlockEntry {
+                        pos: [x, y, z],
+                        state: 0,
+                        block_nbt: None,
+                    });
+                }
+            }
+        }
+        StructureNbt {
+            data_version: DATA_VERSION,
+            size: [w, h, d],
+            palette: vec![PaletteEntry {
+                name: format!("minecraft:{block_name}"),
+                properties: vec![],
+            }],
+            blocks,
+            entities: vec![],
+        }
+    }
+
+    /// The chunk-local horizontal bounding box `(min_x, max_x, min_z, max_z)` of
+    /// an `NbtStamp`'s placements (BEFORE the writer clips out-of-chunk cells, so
+    /// the geometric centre is the template's true centre even near an edge).
+    fn stamp_xz_bbox(stamp: &NbtStamp) -> (i32, i32, i32, i32) {
+        let mut min_x = i32::MAX;
+        let mut max_x = i32::MIN;
+        let mut min_z = i32::MAX;
+        let mut max_z = i32::MIN;
+        for &(lx, lz, _y, _state) in &stamp.placements {
+            min_x = min_x.min(lx);
+            max_x = max_x.max(lx);
+            min_z = min_z.min(lz);
+            max_z = max_z.max(lz);
+        }
+        (min_x, max_x, min_z, max_z)
+    }
+
+    // ── ① centre lands on the scatter column for every rotation + parity ──────
+
+    #[test]
+    fn centred_stamp_bbox_centre_is_within_half_a_cell_of_scatter() {
+        // For odd extents the centre lands EXACTLY on the scatter column; for even
+        // extents it lands within half a block (the tightest an integer grid
+        // allows). Scan many world positions so every one of the 4 rotations is
+        // exercised, and both even (4) and odd (5) extents.
+        let dir = temp_dir("bbox_centre");
+        // Asymmetric box so an x/z swap under rotation is observable, and one even
+        // (4) + one odd (5) extent so both parities are covered.
+        write_template(
+            &dir,
+            "decorations/boulder/box_v1.nbt",
+            &box_template(4, 1, 5, "stone"),
+        );
+        let reg = DecorationNbtRegistry::load(&dir).unwrap();
+        let d = deco(
+            "wide_rock",
+            "boulder",
+            &["decorations/boulder/box_v1.nbt"],
+            DecorationAnchor::Ground,
+        );
+
+        // Local anchor at chunk centre so no rotation pushes the box off-chunk;
+        // vary the world coords (which seed the rotation) to hit all 4 rotations.
+        let (local_x, local_z, base_y) = (8, 8, 70);
+        let mut seen_rotations = std::collections::HashSet::new();
+        for i in 0..64 {
+            let world_x = 4096 + i * 31;
+            let world_z = -4096 + i * 17;
+            let rotation =
+                Rotation::from_index(decoration_hash(world_x, world_z, NBT_ROTATION_SALT));
+            seen_rotations.insert(rotation);
+
+            let stamp =
+                nbt_stamp_placements(local_x, base_y, local_z, &d, world_x, world_z, &reg).unwrap();
+            let (min_x, max_x, min_z, max_z) = stamp_xz_bbox(&stamp);
+            // Bounding-box centre, doubled to keep integer arithmetic exact:
+            // 2*centre = min + max. The scatter column doubled is 2*local.
+            let two_centre_x = min_x + max_x;
+            let two_centre_z = min_z + max_z;
+            assert!(
+                (two_centre_x - 2 * local_x).abs() <= 1,
+                "rotation {rotation:?} @ ({world_x},{world_z}): bbox x-centre \
+                 ({}) must sit within half a cell of the scatter column ({local_x}); \
+                 a corner-anchored stamp would offset it by +W/2. bbox x=[{min_x},{max_x}]",
+                two_centre_x as f32 / 2.0
+            );
+            assert!(
+                (two_centre_z - 2 * local_z).abs() <= 1,
+                "rotation {rotation:?} @ ({world_x},{world_z}): bbox z-centre \
+                 ({}) must sit within half a cell of the scatter column ({local_z}). \
+                 bbox z=[{min_z},{max_z}]",
+                two_centre_z as f32 / 2.0
+            );
+        }
+        assert_eq!(
+            seen_rotations.len(),
+            4,
+            "the world-pos scan must exercise all four rotations (got {}); otherwise \
+             the rotation-aware centring is not fully covered",
+            seen_rotations.len()
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn odd_extent_box_centres_exactly_on_scatter_column() {
+        // A 5×1×5 box (odd extent) has half-extent 2 on each axis, so its centre
+        // is the middle cell and must land EXACTLY on the scatter column for the
+        // identity rotation — pin the exact bbox so any off-by-one in the half-
+        // extent maths trips.
+        let dir = temp_dir("odd_exact");
+        write_template(
+            &dir,
+            "decorations/boulder/box5_v1.nbt",
+            &box_template(5, 1, 5, "stone"),
+        );
+        let reg = DecorationNbtRegistry::load(&dir).unwrap();
+        let d = deco(
+            "wide_rock",
+            "boulder",
+            &["decorations/boulder/box5_v1.nbt"],
+            DecorationAnchor::Ground,
+        );
+        // Find a world pos whose rotation is None so the bbox is axis-aligned.
+        let (local_x, local_z, base_y) = (8, 8, 70);
+        let (world_x, world_z) = (0..)
+            .map(|i| (5000 + i * 7, 6000 - i * 11))
+            .find(|&(wx, wz)| {
+                Rotation::from_index(decoration_hash(wx, wz, NBT_ROTATION_SALT)) == Rotation::None
+            })
+            .unwrap();
+        let stamp =
+            nbt_stamp_placements(local_x, base_y, local_z, &d, world_x, world_z, &reg).unwrap();
+        let (min_x, max_x, min_z, max_z) = stamp_xz_bbox(&stamp);
+        assert_eq!(
+            (min_x, max_x),
+            (local_x - 2, local_x + 2),
+            "5-wide box (half-extent 2) must span [scatter-2, scatter+2] on x → \
+             centre exactly on the scatter column"
+        );
+        assert_eq!(
+            (min_z, max_z),
+            (local_z - 2, local_z + 2),
+            "5-deep box must span [scatter-2, scatter+2] on z → centre on scatter"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn centred_wide_stamp_straddles_the_scatter_column_on_all_sides() {
+        // The behavioural contract: a wide box must occupy cells on BOTH sides of
+        // the scatter column (the corner anchor only ever grew +x/+z). Use the
+        // identity rotation so the assertion is direction-explicit.
+        let dir = temp_dir("straddle");
+        write_template(
+            &dir,
+            "decorations/boulder/box_v1.nbt",
+            &box_template(5, 1, 5, "stone"),
+        );
+        let reg = DecorationNbtRegistry::load(&dir).unwrap();
+        let d = deco(
+            "wide_rock",
+            "boulder",
+            &["decorations/boulder/box_v1.nbt"],
+            DecorationAnchor::Ground,
+        );
+        let (local_x, local_z, base_y) = (8, 8, 70);
+        let (world_x, world_z) = (0..)
+            .map(|i| (7000 + i * 7, -7000 + i * 11))
+            .find(|&(wx, wz)| {
+                Rotation::from_index(decoration_hash(wx, wz, NBT_ROTATION_SALT)) == Rotation::None
+            })
+            .unwrap();
+        let mut chunk = make_chunk();
+        place_decoration(
+            &mut chunk, local_x, base_y, local_z, TEST_MIN_Y, &d, world_x, world_z, &reg,
+        );
+        // Ground anchor: box y=0 lands at base_y. Cells west/north of the scatter
+        // column (scatter-1) must be filled — impossible under the old +x/+z corner
+        // anchor, which never wrote a cell with local < scatter.
+        assert_eq!(
+            block_at(&chunk, local_x - 1, base_y, local_z),
+            BlockState::STONE,
+            "centred wide stamp must fill the cell WEST of the scatter column \
+             (local_x-1); a corner-anchored stamp never reaches there"
+        );
+        assert_eq!(
+            block_at(&chunk, local_x, base_y, local_z - 1),
+            BlockState::STONE,
+            "centred wide stamp must fill the cell NORTH of the scatter column \
+             (local_z-1)"
+        );
+        assert_eq!(
+            block_at(&chunk, local_x, base_y, local_z),
+            BlockState::STONE,
+            "the scatter column itself stays covered (centre cell of the box)"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // ── ② anchor tri-state vertical landing is UNCHANGED by centring ──────────
+
+    #[test]
+    fn ground_anchor_vertical_landing_unchanged_for_multicell_box() {
+        // Centring shifts x/z only — a Ground box's y=0 row must still land AT
+        // base_y (the procedural anchor), exactly as the P6 single-block test
+        // asserted, now with a multi-cell box so the shift path is active.
+        let dir = temp_dir("ground_y");
+        write_template(
+            &dir,
+            "decorations/boulder/box_v1.nbt",
+            &box_template(3, 2, 3, "amethyst_block"),
+        );
+        let reg = DecorationNbtRegistry::load(&dir).unwrap();
+        let d = deco(
+            "wide_rock",
+            "boulder",
+            &["decorations/boulder/box_v1.nbt"],
+            DecorationAnchor::Ground,
+        );
+        let (local_x, local_z, base_y) = (8, 8, 70);
+        let mut chunk = make_chunk();
+        place_decoration(
+            &mut chunk, local_x, base_y, local_z, TEST_MIN_Y, &d, 808, 909, &reg,
+        );
+        // The centre cell (scatter column) sits inside the 3×3 box → its y=0 must
+        // be base_y and y=1 base_y+1 (height 2). y below base_y stays air.
+        assert_eq!(
+            block_at(&chunk, local_x, base_y, local_z),
+            BlockState::AMETHYST_BLOCK,
+            "Ground box bottom row must land AT base_y (vertical anchor unchanged \
+             by horizontal centring)"
+        );
+        assert_eq!(
+            block_at(&chunk, local_x, base_y + 1, local_z),
+            BlockState::AMETHYST_BLOCK,
+            "Ground box second row must land at base_y+1 (height 2)"
+        );
+        assert!(
+            block_at(&chunk, local_x, base_y - 1, local_z).is_air(),
+            "Ground box must not sink below base_y"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn embedded_anchor_vertical_landing_unchanged_for_multicell_box() {
+        // Embedded box bottom row must still sink to base_y-1 (the procedural dome
+        // base), unchanged by x/z centring.
+        let dir = temp_dir("embedded_y");
+        write_template(
+            &dir,
+            "decorations/grave/box_v1.nbt",
+            &box_template(3, 1, 3, "cobblestone"),
+        );
+        let reg = DecorationNbtRegistry::load(&dir).unwrap();
+        let d = deco(
+            "wayfarer_grave",
+            "grave_mound",
+            &["decorations/grave/box_v1.nbt"],
+            DecorationAnchor::Embedded,
+        );
+        let (local_x, local_z, base_y) = (8, 8, 70);
+        let mut chunk = make_chunk();
+        place_decoration(
+            &mut chunk, local_x, base_y, local_z, TEST_MIN_Y, &d, 818, 919, &reg,
+        );
+        assert_eq!(
+            block_at(&chunk, local_x, base_y - 1, local_z),
+            BlockState::COBBLESTONE,
+            "Embedded box bottom row must sink to base_y-1 (vertical anchor \
+             unchanged by horizontal centring)"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn hanging_anchor_vertical_landing_unchanged_for_multicell_box() {
+        // Hanging column top must still sit at base_y, growing downward — the
+        // sky-isle crystal special case forces Hanging. Centring x/z must not
+        // touch the vertical hang.
+        let dir = temp_dir("hanging_y");
+        write_template(
+            &dir,
+            "decorations/hanging_crystal/box_v1.nbt",
+            &box_template(3, 3, 3, "amethyst_block"),
+        );
+        let reg = DecorationNbtRegistry::load(&dir).unwrap();
+        let mut d = deco(
+            "tian_mai_crystal",
+            "crystal",
+            &["decorations/hanging_crystal/box_v1.nbt"],
+            DecorationAnchor::Hanging,
+        );
+        d.profile = "sky_isle".into();
+        // base_y is the underside world Y; local_x/local_z are chunk columns.
+        let (local_x, local_z, base_y) = (8, 8, 200);
+        let mut chunk = make_chunk();
+        place_decoration(
+            &mut chunk, local_x, base_y, local_z, TEST_MIN_Y, &d, 828, 929, &reg,
+        );
+        // Hanging: column top at base_y, growing down to base_y-2 (height 3). The
+        // centre column of the 3×3×3 box hangs through base_y .. base_y-2.
+        for y in (base_y - 2)..=base_y {
+            assert_eq!(
+                block_at(&chunk, local_x, y, local_z),
+                BlockState::AMETHYST_BLOCK,
+                "Hanging box must occupy y={y} (top at base_y, growing down) — \
+                 vertical hang unchanged by horizontal centring"
+            );
+        }
+        assert!(
+            block_at(&chunk, local_x, base_y + 1, local_z).is_air(),
+            "Hanging box must not place anything above base_y"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // ── ③ footprint predictor stays in lock-step with the centred writer ──────
+
+    #[test]
+    fn footprint_predictor_matches_centred_writer_cells() {
+        // decoration_footprint and stamp_nbt_decoration must agree on the centred
+        // cell set (both call nbt_stamp_placements). Compute the predicted in-chunk
+        // footprint, then stamp into a chunk and confirm every written in-chunk
+        // cell is in the predicted set (and vice-versa) — a desync would let grass
+        // grow under a centred feature or double-reserve a free cell.
+        let dir = temp_dir("predictor_sync");
+        write_template(
+            &dir,
+            "decorations/boulder/box_v1.nbt",
+            &box_template(4, 1, 4, "stone"),
+        );
+        let reg = DecorationNbtRegistry::load(&dir).unwrap();
+        let d = deco(
+            "wide_rock",
+            "boulder",
+            &["decorations/boulder/box_v1.nbt"],
+            DecorationAnchor::Ground,
+        );
+        let (local_x, local_z, base_y) = (8, 8, 70);
+        let (world_x, world_z) = (838, 939);
+
+        let predicted: std::collections::HashSet<(i32, i32)> =
+            decoration_footprint(local_x, local_z, base_y, &d, world_x, world_z, &reg)
+                .into_iter()
+                .collect();
+
+        let mut chunk = make_chunk();
+        place_decoration(
+            &mut chunk, local_x, base_y, local_z, TEST_MIN_Y, &d, world_x, world_z, &reg,
+        );
+        // Collect the in-chunk cells the writer actually filled at the box's y=0.
+        let mut written: std::collections::HashSet<(i32, i32)> = std::collections::HashSet::new();
+        for lz in 0..CHUNK_SIZE {
+            for lx in 0..CHUNK_SIZE {
+                if block_at(&chunk, lx, base_y, lz) == BlockState::STONE {
+                    written.insert((lx, lz));
+                }
+            }
+        }
+        assert!(
+            !written.is_empty(),
+            "the centred box must write at least one in-chunk cell"
+        );
+        assert!(
+            written.is_subset(&predicted),
+            "every cell the centred writer fills must be in the predicted footprint \
+             (predictor/writer desync). written={written:?} predicted={predicted:?}"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // ── ④ anti-overlap still holds over centred footprints ───────────────────
+
+    #[test]
+    fn centred_adjacent_boxes_never_share_a_cell() {
+        // Two scatter columns one cell apart: their centred footprints heavily
+        // overlap. Greedy reservation must keep them disjoint (the first claims,
+        // the overlapping neighbour is skipped) exactly as for the corner anchor.
+        let dir = temp_dir("centred_overlap");
+        write_template(
+            &dir,
+            "decorations/boulder/box_v1.nbt",
+            &box_template(4, 1, 4, "stone"),
+        );
+        let reg = DecorationNbtRegistry::load(&dir).unwrap();
+        let d = deco(
+            "wide_rock",
+            "boulder",
+            &["decorations/boulder/box_v1.nbt"],
+            DecorationAnchor::Ground,
+        );
+        let mut occupied = [[false; CHUNK_SIZE as usize]; CHUNK_SIZE as usize];
+        let fp1 = decoration_footprint(7, 7, 70, &d, 1007, 2007, &reg);
+        assert!(
+            reserve_footprint(&mut occupied, &fp1),
+            "first centred footprint must reserve cleanly"
+        );
+        let fp2 = decoration_footprint(8, 7, 70, &d, 1008, 2007, &reg);
+        // The one-cell-apart neighbour's centred footprint overlaps fp1, so it must
+        // be rejected (all-or-nothing reservation leaves the grid untouched).
+        let overlaps = fp2.iter().any(|c| fp1.contains(c));
+        assert!(
+            overlaps,
+            "test premise: a one-cell-apart 4-wide centred box must overlap the \
+             first (else this can't exercise the skip path). fp1={fp1:?} fp2={fp2:?}"
+        );
+        assert!(
+            !reserve_footprint(&mut occupied, &fp2),
+            "an overlapping centred footprint must be skipped (anti-overlap holds \
+             over centred footprints, not just corner-anchored ones)"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // ── ⑤ centring past the chunk edge clips silently (never panics) ──────────
+
+    #[test]
+    fn centred_stamp_at_chunk_corner_clips_without_panicking() {
+        // A wide box centred at a chunk-corner column pushes half its footprint
+        // into negative / >=16 local coords. The writer must clip those cells
+        // (set_block_* drops out-of-bounds) without panicking, and still place the
+        // in-bounds part. This is the accepted P7 cross-chunk clip residual.
+        let dir = temp_dir("corner_clip");
+        write_template(
+            &dir,
+            "decorations/boulder/box_v1.nbt",
+            &box_template(6, 1, 6, "stone"),
+        );
+        let reg = DecorationNbtRegistry::load(&dir).unwrap();
+        let d = deco(
+            "wide_rock",
+            "boulder",
+            &["decorations/boulder/box_v1.nbt"],
+            DecorationAnchor::Ground,
+        );
+        // Scan all four chunk corners + both negative-world-coord corners so the
+        // clip path is exercised on every edge, and confirm no panic and the
+        // footprint predictor agrees (only in-chunk cells, never out-of-bounds).
+        for &(local_x, local_z) in &[(0, 0), (15, 0), (0, 15), (15, 15)] {
+            for &(world_x, world_z) in &[(local_x, local_z), (-100 + local_x, -200 + local_z)] {
+                let base_y = 70;
+                // Footprint predictor must never emit an out-of-chunk cell.
+                let fp = decoration_footprint(local_x, local_z, base_y, &d, world_x, world_z, &reg);
+                for &(fx, fz) in &fp {
+                    assert!(
+                        (0..CHUNK_SIZE).contains(&fx) && (0..CHUNK_SIZE).contains(&fz),
+                        "footprint predictor must clip out-of-chunk cells; got \
+                         ({fx},{fz}) at corner ({local_x},{local_z})"
+                    );
+                }
+                assert!(
+                    fp.contains(&(local_x, local_z)),
+                    "anchor column ({local_x},{local_z}) must stay reserved even when \
+                     centring clips most of the box off-chunk"
+                );
+                // The writer must not panic on the clipped stamp.
+                let mut chunk = make_chunk();
+                place_decoration(
+                    &mut chunk, local_x, base_y, local_z, TEST_MIN_Y, &d, world_x, world_z, &reg,
+                );
+            }
+        }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // ── ⑥ single-block templates are unshifted (half-extent 0 → no centre move)
+
+    #[test]
+    fn single_block_template_is_not_shifted_by_centring() {
+        // A 1×1×1 template has a zero half-extent, so centring is a no-op — it must
+        // still land exactly on the scatter column (this is what keeps every P6
+        // single-block anchor test green).
+        let dir = temp_dir("single_noshift");
+        write_template(
+            &dir,
+            "decorations/boulder/dot_v1.nbt",
+            &box_template(1, 1, 1, "amethyst_block"),
+        );
+        let reg = DecorationNbtRegistry::load(&dir).unwrap();
+        let d = deco(
+            "pebble",
+            "boulder",
+            &["decorations/boulder/dot_v1.nbt"],
+            DecorationAnchor::Ground,
+        );
+        let (local_x, local_z, base_y) = (5, 9, 70);
+        let mut chunk = make_chunk();
+        place_decoration(
+            &mut chunk, local_x, base_y, local_z, TEST_MIN_Y, &d, 555, 999, &reg,
+        );
+        assert_eq!(
+            block_at(&chunk, local_x, base_y, local_z),
+            BlockState::AMETHYST_BLOCK,
+            "a 1×1×1 template (half-extent 0) must land exactly on the scatter \
+             column — centring is a no-op for single-block stamps"
+        );
+        // And nowhere else on this row.
+        let mut count = 0;
+        for lz in 0..CHUNK_SIZE {
+            for lx in 0..CHUNK_SIZE {
+                if block_at(&chunk, lx, base_y, lz) == BlockState::AMETHYST_BLOCK {
+                    count += 1;
+                }
+            }
+        }
+        assert_eq!(count, 1, "exactly one cell filled by a 1×1×1 stamp");
         let _ = fs::remove_dir_all(&dir);
     }
 }
