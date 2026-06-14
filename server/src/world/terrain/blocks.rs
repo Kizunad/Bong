@@ -47,6 +47,7 @@ pub fn block_from_name(name: &str) -> Option<BlockState> {
         "mud" => BlockState::MUD,
         "clay" => BlockState::CLAY,
         "moss_block" => BlockState::MOSS_BLOCK,
+        "moss_carpet" => BlockState::MOSS_CARPET,
         "andesite" => BlockState::ANDESITE,
         "polished_andesite" => BlockState::POLISHED_ANDESITE,
         "polished_diorite" => BlockState::POLISHED_DIORITE,
@@ -93,6 +94,8 @@ pub fn block_from_name(name: &str) -> Option<BlockState> {
         "nether_wart_block" => BlockState::NETHER_WART_BLOCK,
         "weeping_vines" => BlockState::WEEPING_VINES,
         "red_mushroom_block" => BlockState::RED_MUSHROOM_BLOCK,
+        "brown_mushroom_block" => BlockState::BROWN_MUSHROOM_BLOCK,
+        "mushroom_stem" => BlockState::MUSHROOM_STEM,
         "shroomlight" => BlockState::SHROOMLIGHT,
 
         // --- metals / crystals / quartz ---
@@ -107,6 +110,8 @@ pub fn block_from_name(name: &str) -> Option<BlockState> {
         "amethyst_block" => BlockState::AMETHYST_BLOCK,
         "amethyst_cluster" => BlockState::AMETHYST_CLUSTER,
         "budding_amethyst" => BlockState::BUDDING_AMETHYST,
+        "emerald_ore" => BlockState::EMERALD_ORE,
+        "deepslate_emerald_ore" => BlockState::DEEPSLATE_EMERALD_ORE,
         "obsidian" => BlockState::OBSIDIAN,
         "crying_obsidian" => BlockState::CRYING_OBSIDIAN,
         "lodestone" => BlockState::LODESTONE,
@@ -240,6 +245,7 @@ pub fn block_from_name(name: &str) -> Option<BlockState> {
         "birch_pressure_plate" => BlockState::BIRCH_PRESSURE_PLATE,
         "oak_fence" => BlockState::OAK_FENCE,
         "red_mushroom" => BlockState::RED_MUSHROOM,
+        "brown_mushroom" => BlockState::BROWN_MUSHROOM,
         "warped_roots" => BlockState::WARPED_ROOTS,
         "twisting_vines" => BlockState::TWISTING_VINES,
         "bamboo" => BlockState::BAMBOO,

@@ -71,6 +71,8 @@ pub const COMMAND_TREE_PATHS: &[&str] = &[
     "faction mercenary <group:integer>",
     // plan-worldgen-v4 P5：画廊审阅闭环 stamp 命令（无参数）
     "gallery",
+    // plan-worldgen-v4 P6：装饰虚空审阅台（出生点上空铺全部 54 个 NBT 装饰变体）
+    "gallery decorations",
     "give <id:string>",
     "give <id:string> <count:integer>",
     "gm <mode:string>",

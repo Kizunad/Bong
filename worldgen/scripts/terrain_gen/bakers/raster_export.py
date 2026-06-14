@@ -26,7 +26,7 @@ from ..profiles import (
     get_profile_generator,
     list_profile_generators,
 )
-from ..profiles.base import DecorationSpec, EcologySpec
+from ..profiles.base import DecorationSpec, EcologySpec, decoration_payload
 from ..profiles.spawn_plain import spawn_tutorial_pois_for_zone
 from ..structures.ascension_pit import ascension_pits_for_zone
 from ..structures.corpse_mound import corpse_mounds_for_zone
@@ -682,12 +682,7 @@ def _decoration_dict(
     return {
         "local_id": local_id,
         "global_id": global_id,
-        "name": deco.name,
-        "kind": deco.kind,
-        "blocks": list(deco.blocks),
-        "size_range": list(deco.size_range),
-        "rarity": deco.rarity,
-        "notes": deco.notes,
+        **decoration_payload(deco),
     }
 
 

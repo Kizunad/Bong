@@ -8,6 +8,7 @@ use valence::prelude::{
     BiomeId, BiomeRegistry, BlockPos, BlockState, ChunkPos, Ident, PropName, PropValue, Resource,
 };
 
+use super::nbt_registry::DecorationAnchor;
 use super::wilderness;
 
 // ---------------------------------------------------------------------------
@@ -580,6 +581,13 @@ struct ManifestDecoration {
     rarity: f32,
     #[serde(default)]
     notes: String,
+    // worldgen-v4 P6 §8.1 — NBT-driven placement. `#[serde(default)]` keeps old
+    // manifests (no nbt_templates / no anchor) deserializing into the procedural
+    // path: empty templates ⇒ procedural, anchor "" ⇒ Ground (see Decoration).
+    #[serde(default)]
+    nbt_templates: Vec<String>,
+    #[serde(default)]
+    anchor: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -623,6 +631,27 @@ pub struct Decoration {
     pub size_range: [i32; 2],
     pub rarity: f32,
     pub notes: String,
+    /// worldgen-v4 P6 §8.1 — relative paths (under `server/structures/`) of the
+    /// authored NBT variants for this decoration. Empty ⇒ this decoration stays
+    /// on the §8.1 #9 procedural path (mega_tree / decoration.rs / ground cover /
+    /// aquatic / single-block flower); non-empty ⇒ the server stamps one variant
+    /// chosen deterministically per placement from
+    /// [`crate::world::terrain::nbt_registry::DecorationNbtRegistry`].
+    pub nbt_templates: Vec<String>,
+    /// How a stamped NBT template is positioned relative to the column surface.
+    /// Parsed from the manifest `anchor` string at load (unknown / empty →
+    /// [`DecorationAnchor::Ground`]).
+    pub anchor: DecorationAnchor,
+}
+
+impl Decoration {
+    /// True when this decoration is placed by stamping an authored NBT variant
+    /// (vs. the procedural geometry path). A decoration with at least one
+    /// template is NBT-driven; an empty list keeps it procedural.
+    #[allow(dead_code)]
+    pub fn is_nbt_driven(&self) -> bool {
+        !self.nbt_templates.is_empty()
+    }
 }
 
 #[allow(dead_code)]
@@ -784,6 +813,8 @@ impl TerrainProvider {
                 size_range: raw.size_range,
                 rarity: raw.rarity,
                 notes: raw.notes,
+                nbt_templates: raw.nbt_templates,
+                anchor: DecorationAnchor::from_manifest(&raw.anchor),
             });
         }
 
@@ -1835,6 +1866,172 @@ mod tests {
             serde_json::from_str(json).expect("a v2 manifest with all required fields must parse");
         assert_eq!(manifest.version, 2);
         assert_eq!(manifest.tile_size, 1);
+    }
+
+    // -----------------------------------------------------------------------
+    // worldgen-v4 P6 §8.1 — ManifestDecoration nbt_templates / anchor contract.
+    // Dual-pinned against the Python exporter (profiles/base.py decoration_payload
+    // emits "nbt_templates" + "anchor"). Changing either side must break a test.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn manifest_decoration_with_nbt_fields_deserializes() {
+        // The exact shape the Python `decoration_payload` emits for an NBT-driven
+        // decoration: a list of template paths plus an anchor string.
+        let json = r#"{
+            "global_id": 5,
+            "profile": "qingyun_peaks",
+            "local_id": 2,
+            "name": "ling_yu_tree",
+            "kind": "tree",
+            "blocks": ["minecraft:oak_log", "minecraft:oak_leaves"],
+            "size_range": [4, 8],
+            "rarity": 0.5,
+            "notes": "灵峰玉树",
+            "nbt_templates": ["decorations/tree/ling_yu_tree_v1.nbt", "decorations/tree/ling_yu_tree_v2.nbt"],
+            "anchor": "hanging"
+        }"#;
+        let deco: ManifestDecoration =
+            serde_json::from_str(json).expect("NBT-driven decoration must deserialize");
+        assert_eq!(
+            deco.nbt_templates,
+            vec![
+                "decorations/tree/ling_yu_tree_v1.nbt".to_string(),
+                "decorations/tree/ling_yu_tree_v2.nbt".to_string(),
+            ],
+            "nbt_templates must round-trip the authored variant path list in order"
+        );
+        assert_eq!(
+            deco.anchor, "hanging",
+            "anchor string must round-trip verbatim before it is lowered to the enum"
+        );
+        // The string lowers to the typed enum the runtime stamp uses.
+        assert_eq!(
+            DecorationAnchor::from_manifest(&deco.anchor),
+            DecorationAnchor::Hanging,
+            "manifest anchor 'hanging' must lower to DecorationAnchor::Hanging"
+        );
+    }
+
+    #[test]
+    fn manifest_decoration_without_nbt_fields_defaults_to_procedural_ground() {
+        // Backward compat: a pre-P6 manifest decoration carries no nbt_templates
+        // and no anchor. It must deserialize into the procedural path (empty
+        // templates) anchored at Ground — never a parse error, never a panic.
+        let json = r#"{
+            "global_id": 1,
+            "profile": "wilderness",
+            "local_id": 1,
+            "name": "wild_grass",
+            "kind": "flower",
+            "blocks": ["minecraft:grass"],
+            "size_range": [1, 1],
+            "rarity": 0.65,
+            "notes": "野草"
+        }"#;
+        let deco: ManifestDecoration =
+            serde_json::from_str(json).expect("legacy decoration without NBT fields must parse");
+        assert!(
+            deco.nbt_templates.is_empty(),
+            "absent nbt_templates must default to empty (stays on the procedural path), got {:?}",
+            deco.nbt_templates
+        );
+        assert_eq!(
+            deco.anchor, "",
+            "absent anchor defaults to empty string at the manifest layer"
+        );
+        assert_eq!(
+            DecorationAnchor::from_manifest(&deco.anchor),
+            DecorationAnchor::Ground,
+            "an empty anchor must lower to the Ground default so legacy specs still place"
+        );
+    }
+
+    #[test]
+    fn decoration_palette_lowers_nbt_fields_through_terrain_provider_load() {
+        // End-to-end-ish: a manifest whose global_decoration_palette carries an
+        // NBT-driven entry must surface on the public Decoration with the same
+        // templates + lowered anchor, and `is_nbt_driven()` must agree.
+        let json = r#"{
+            "version": 2,
+            "tile_size": 1,
+            "world_bounds": {"min_x":0,"max_x":0,"min_z":0,"max_z":0},
+            "surface_palette": ["minecraft:stone"],
+            "biome_palette": ["minecraft:plains"],
+            "tiles": [],
+            "global_decoration_palette": [
+                {
+                    "global_id": 1,
+                    "profile": "rift_valley",
+                    "local_id": 1,
+                    "name": "grave_mound",
+                    "kind": "grave_mound",
+                    "blocks": ["minecraft:dirt", "minecraft:mossy_cobblestone", "minecraft:oak_sign"],
+                    "size_range": [2, 4],
+                    "rarity": 0.4,
+                    "notes": "荒冢",
+                    "nbt_templates": ["decorations/grave_mound/grave_mound_v1.nbt"],
+                    "anchor": "embedded"
+                }
+            ]
+        }"#;
+        let manifest: RasterManifest =
+            serde_json::from_str(json).expect("manifest with NBT-driven decoration must parse");
+        // Mirror the lowering the load() constructor does for the decoration
+        // palette (without needing on-disk raster tiles).
+        let raw = manifest
+            .global_decoration_palette
+            .into_iter()
+            .next()
+            .expect("one decoration in the palette");
+        let deco = Decoration {
+            global_id: raw.global_id,
+            profile: raw.profile,
+            local_id: raw.local_id,
+            name: raw.name,
+            kind: raw.kind,
+            blocks: raw.blocks,
+            size_range: raw.size_range,
+            rarity: raw.rarity,
+            notes: raw.notes,
+            nbt_templates: raw.nbt_templates,
+            anchor: DecorationAnchor::from_manifest(&raw.anchor),
+        };
+        assert!(
+            deco.is_nbt_driven(),
+            "a decoration with a template path must report is_nbt_driven()"
+        );
+        assert_eq!(
+            deco.nbt_templates,
+            vec!["decorations/grave_mound/grave_mound_v1.nbt".to_string()],
+            "the public Decoration must carry the manifest's template path list"
+        );
+        assert_eq!(
+            deco.anchor,
+            DecorationAnchor::Embedded,
+            "manifest anchor 'embedded' must lower to DecorationAnchor::Embedded on the public Decoration"
+        );
+    }
+
+    #[test]
+    fn decoration_without_templates_is_not_nbt_driven() {
+        let deco = Decoration {
+            global_id: 1,
+            profile: "wilderness".into(),
+            local_id: 1,
+            name: "wild_grass".into(),
+            kind: "flower".into(),
+            blocks: vec!["minecraft:grass".into()],
+            size_range: [1, 1],
+            rarity: 0.65,
+            notes: String::new(),
+            nbt_templates: vec![],
+            anchor: DecorationAnchor::Ground,
+        };
+        assert!(
+            !deco.is_nbt_driven(),
+            "a decoration with no templates must stay procedural (is_nbt_driven() == false)"
+        );
     }
 
     // -----------------------------------------------------------------------

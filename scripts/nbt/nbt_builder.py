@@ -373,12 +373,19 @@ class StructureBuilder:
         return root
 
     def save(self, path: str) -> None:
-        """Write gzip-compressed NBT to file."""
+        """Write gzip-compressed NBT to file.
+
+        Uses a fixed gzip header `mtime=0` so re-running a deterministic
+        generator produces byte-identical output (no spurious git diff from the
+        embedded wall-clock timestamp). The decompressed NBT payload is
+        unaffected; readers (`load_structure`, Rust `nbt_io`) ignore the field.
+        """
         writer = _NBTWriter()
         root = self._build_nbt_compound()
         raw = writer.write_root("", root)
-        with gzip.open(path, "wb") as f:
-            f.write(raw)
+        with open(path, "wb") as fh:
+            with gzip.GzipFile(filename="", fileobj=fh, mode="wb", mtime=0) as gz:
+                gz.write(raw)
 
     def get_stats(self) -> dict[str, Any]:
         """Return block count stats for review."""
