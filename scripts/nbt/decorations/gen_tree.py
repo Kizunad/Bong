@@ -126,20 +126,50 @@ def build_pine() -> StructureBuilder:
 
 
 def build_petrified_stump() -> StructureBuilder:
-    """Short dead stump — diorite-petrified, ~3 tall, no canopy. Ash zone."""
+    """Petrified ancient-tree stump — a thick, snapped-off fossil trunk with
+    flared roots, weathered stone 'bark', and a hollow rotted heartwood core.
+    Ash dead zone; long dead, so no canopy."""
     random.seed(60_004)
-    w = d = 5
+    w = d = 7
     cx = cz = w // 2
-    sb = StructureBuilder(w, 5, d)
-    # Stone-petrified trunk core.
-    for y in range(3):
-        sb.set_block(cx, y, cz, "polished_diorite")
-    sb.set_block(cx, 3, cz, "stripped_oak_log", {"axis": "y"})
-    # Broken-off branches: stubby stripped logs poking sideways.
-    sb.set_block(cx + 1, 2, cz, "stripped_oak_log", {"axis": "x"})
-    sb.set_block(cx, 1, cz - 1, "stripped_oak_log", {"axis": "z"})
-    # Dead bush clinging to the base.
-    sb.set_block(cx - 1, 1, cz, "dead_bush")
+    sb = StructureBuilder(w, 6, d)
+
+    palette = ["polished_diorite", "andesite", "stone", "cobblestone"]
+
+    def petrified() -> str:
+        r = random.random()
+        if r < 0.12:
+            return "cracked_stone_bricks"
+        if r < 0.24:
+            return "mossy_cobblestone"
+        return random.choice(palette)
+
+    # Flared roots gripping the ground (y=0): a 3×3 pad + cardinal root tips
+    # radiating out, plus a few longer diagonal roots, so the stump reads as
+    # anchored into the earth rather than a block sitting on top of it.
+    root_cells = {(dx, dz) for dx in (-1, 0, 1) for dz in (-1, 0, 1)}
+    root_cells |= {(2, 0), (-2, 0), (0, 2), (0, -2)}
+    for cell in [(2, 1), (-2, -1), (1, 2), (-1, -2)]:
+        if random.random() < 0.6:
+            root_cells.add(cell)
+    for dx, dz in root_cells:
+        sb.set_block(cx + dx, 0, cz + dz, petrified())
+
+    # Thick 3×3 trunk: the weathered 'bark' shell snaps off at jagged heights
+    # while the heartwood core rotted out hollow (only the root pad beneath it).
+    for dx in (-1, 0, 1):
+        for dz in (-1, 0, 1):
+            if dx == 0 and dz == 0:
+                continue  # hollow rotted core
+            top = random.randint(3, 5)
+            for y in range(1, top):
+                sb.set_block(cx + dx, y, cz + dz, petrified())
+
+    # A snapped-off branch stub jutting from one side, mid-height.
+    sb.set_block(cx + 2, 2, cz, petrified())
+    # Dead brush clinging to the exposed roots.
+    for dx, dz in [(-2, 0), (0, 2)]:
+        sb.set_block(cx + dx, 1, cz + dz, "dead_bush")
     return sb
 
 
