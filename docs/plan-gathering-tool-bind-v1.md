@@ -17,9 +17,9 @@
 
 - **进料**:
   - shelflife:`shelflife/registry.rs:208-216` `fresh_herb_v1` profile **已存在**,herb_bundle 只差模板字段挂载
-  - 配方:`workbench_recipes.rs:346-351` 已注册 `workbench.process.herb_bundle`(`time=10s`)；`workbench_recipes.rs:1929-1935` 是 spot-check 测试用例,不是第二个注册点。`CraftRegistry::register()` 对重复 id 返回 `RegistryError::DuplicateId`(`registry.rs:45-49`),现状无重复注册,只需 P0 加唯一性/回归 pin 防止旧红旗复发。
+  - 配方:`workbench_recipes.rs:346-351` 已注册 `workbench.process.herb_bundle`(`time_sec=10`,helper 会转成 `10 * 20` ticks)；`workbench_recipes.rs:1929-1935` 是 spot-check 测试用例,不是第二个注册点。`CraftRegistry::register()` 对重复 id 返回 `RegistryError::DuplicateId`(`registry.rs:45-49`),现状无重复注册,只需 P0 加唯一性/回归 pin 防止旧红旗复发。
   - 工具:`tools/kinds.rs:7,19,44` `ToolKind::CaoLian` 已注册(战斗兜底 1.10x),forge/workbench 双路可造
-  - required_tool 机制:`botany/registry.rs:238-241` `HarvestHazard::WoundOnBareHand { wound, required_tool }`(5 株已用:DunQiJia×2/GuaDao×2/BingJiaShouTao×1)+ `botany/harvest.rs:533-544` `required_tool_for()`(耐久消耗+受伤判定)
+  - required_tool 机制:`botany/registry.rs:238-241` 是 `HarvestHazard::WoundOnBareHand { wound, required_tool }` 使用例(5 株已用:DunQiJia×2/GuaDao×2/BingJiaShouTao×1)+ `botany/harvest.rs:533-544` `required_tool_for()`(耐久消耗+受伤判定)
 - **出料**:草药捆进保鲜循环(批量存放减损耗);草镰成为割手草本的安全采集工具(徒手采=Laceration 受伤,持镰=免伤+耐久消耗)
 - **共享类型 / event**:全部复用 shelflife profile / HarvestHazard / ToolKind,零新枚举零新系统
 - **跨仓库契约**:纯 server(TOML + registry 常量);client 无改动(受伤/耐久 HUD 已有通道)
@@ -58,8 +58,8 @@
 ### #1 herb_bundle 配方真实意图
 
 **决议**：
-1. 保留 `workbench.process.herb_bundle` 的 `time=10s` 语义，不引入 `time=200s`。
-2. 当前代码没有第二个真实注册点：`server/src/craft/workbench_recipes.rs:346-351` 是定义，`server/src/craft/workbench_recipes.rs:1929-1935` 是 spot-check 测试；P0 做唯一性 pin 与 spot-check 强化，不做不存在的删除。
+1. 保留 `workbench.process.herb_bundle` 的 `time=10s` 语义；真实注册行写的是 `time_sec=10`，由 `RecipeRow` helper 转换为 `10 * 20` ticks，不引入 `time=200s`。
+2. 当前代码没有第二个真实注册点：`server/src/craft/workbench_recipes.rs:346-351` 是定义，`server/src/craft/workbench_recipes.rs:1929-1935` 是 spot-check 测试；当前无需删除操作，P0 做唯一性 pin 与 spot-check 强化即可。
 3. `CraftRegistry::register()` 已在 `server/src/craft/registry.rs:45-49` 对重复 id 返回 `RegistryError::DuplicateId`，并由 `server/src/craft/registry.rs:131-138` 测试锁住；P0 不改注册语义。
 
 **落点**：`server/src/craft/workbench_recipes.rs:346` / `server/src/craft/workbench_recipes.rs:1929` / `server/src/craft/registry.rs:45` / plan P0。
@@ -86,7 +86,7 @@
 
 **决议**：
 1. P1 选择 `DuanJiCi` 与 `XueSeMaiCao` 两株 v2 草本加草镰 required_tool。
-2. 选择依据：`DuanJiCi` 当前 `base_mesh_ref = "sweet_berry_bush"` 且战场刺丛语义强；`XueSeMaiCao` 当前 `base_mesh_ref = "tall_grass"`、BloodValley 高密度丛生,更符合"锐叶割手/收割"。二者现有 hazard 分别位于 `server/src/botany/registry.rs:173-180`、`server/src/botany/registry.rs:1032-1048`，可在不影响 SpiritGrass v1 基础草药的前提下叠加 Laceration。
+2. 选择依据：`DuanJiCi` 当前 `base_mesh_ref = "sweet_berry_bush"` 且战场刺丛语义强；`XueSeMaiCao` 当前 `base_mesh_ref = "tall_grass"`、BloodValley 高密度丛生,更符合"锐叶割手/收割"。现有 hazard 分别位于 `server/src/botany/registry.rs:173-176` 与 `server/src/botany/registry.rs:177-180`，`XueSeMaiCao` v2 spec 位于 `server/src/botany/registry.rs:1032-1048`，可在不影响 SpiritGrass v1 基础草药的前提下叠加 Laceration。
 3. 不选择 `spirit_grass`；其 v1 基础灵草定位已有 `server/src/botany/registry.rs:1635` 测试锁定。
 
 **落点**：`server/src/botany/registry.rs:173` / `server/src/botany/registry.rs:1032` / `server/src/botany/registry.rs:1635` / plan P1。
