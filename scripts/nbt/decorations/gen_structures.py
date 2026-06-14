@@ -291,9 +291,11 @@ def _rift_bridge(seed: int, span_half: int, deck_half_w: int, pylon_h: int,
                 block = pylon_cap if py == pylon_h - 1 else pylon_stone
                 place(end, cross, py, block)
 
-    # Railing prop: bars connect along the span axis so they read as a rail.
-    rail_props = ({"north": "true", "south": "true"} if axis == "x"
-                  else {"east": "true", "west": "true"})
+    # Railing prop: bars connect along the span axis so they read as a continuous
+    # rail. The span runs along `along`, which maps to world-x for axis="x"
+    # (→ east/west connections) and world-z for axis="z" (→ north/south).
+    rail_props = ({"east": "true", "west": "true"} if axis == "x"
+                  else {"north": "true", "south": "true"})
 
     # Catenary deck: dips toward the middle (sag).
     max_sag = max(1, span_half // 3)
