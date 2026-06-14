@@ -1,5 +1,6 @@
 package com.bong.client.mixin;
 
+import com.bong.client.interaction.ClientInteractionItemResolver;
 import com.bong.client.inventory.model.InventoryItem;
 import com.bong.client.network.ClientRequestProtocol;
 import org.junit.jupiter.api.Test;
