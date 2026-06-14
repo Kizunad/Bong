@@ -253,21 +253,6 @@ public final class BongHudOrchestrator {
         com.bong.client.inventory.model.InventoryModel inventory =
             com.bong.client.inventory.state.InventoryStateStore.snapshot();
         HomeSequence.State homeState = HomeSequence.update(runtime, inventory, nowMillis);
-        if (homeState.insideHome()) {
-            ExtractDecisionStateStore.endRun();
-        } else if (!playerState.isEmpty()) {
-            ExtractDecisionStateStore.markPlayerInWorld(nowMillis);
-            commands.addAll(ExtractDecisionHudPlanner.buildCommands(
-                playerState,
-                inventory,
-                com.bong.client.state.SeasonStateStore.snapshot(),
-                ExtractDecisionStateStore.snapshot(),
-                widthMeasurer,
-                screenWidth,
-                screenHeight,
-                nowMillis
-            ));
-        }
         commands.addAll(HomeSequence.buildCommands(homeState, screenWidth, screenHeight, nowMillis));
 
         if (BongClientFeatures.ENABLE_COMBAT_HUD) {

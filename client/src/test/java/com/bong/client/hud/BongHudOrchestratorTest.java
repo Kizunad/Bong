@@ -45,7 +45,6 @@ public class BongHudOrchestratorTest {
         com.bong.client.tsy.TsyDeathVfxStore.resetForTests();
         HudImmersionMode.resetForTests();
         ForgeProgressHudPlanner.resetForTests();
-        ExtractDecisionStateStore.resetForTests();
         HomeSequence.resetForTests();
     }
 
@@ -281,114 +280,6 @@ public class BongHudOrchestratorTest {
         );
 
         assertTrue(commands.stream().anyMatch(cmd -> cmd.layer() == HudRenderLayer.BOTANY));
-    }
-
-    @Test
-    void extractDecisionChecklistJoinsHudWhenPlayerStateExists() {
-        PlayerStateStore.replace(PlayerStateViewModel.create(
-            "Induce",
-            "offline:Azure",
-            25.0,
-            100.0,
-            0.0,
-            0.4,
-            PlayerStateViewModel.PowerBreakdown.empty(),
-            PlayerStateViewModel.SocialSnapshot.empty(),
-            "spawn",
-            "荒坡",
-            0.35
-        ));
-        ExtractDecisionStateStore.replaceRiskScore(70, true, 1_000L);
-
-        List<HudRenderCommand> commands = BongHudOrchestrator.buildCommands(
-            BongHudStateSnapshot.empty(),
-            1_000L,
-            FIXED_WIDTH,
-            220,
-            320,
-            180
-        );
-
-        assertTrue(
-            commands.stream().anyMatch(command -> command.layer() == HudRenderLayer.EXTRACT_DECISION),
-            "expected EXTRACT_DECISION layer because player state and risk state should invoke P2 HUD, actual commands: "
-                + commands
-        );
-    }
-
-    @Test
-    void extractDecisionRunClockStartsFromPlayerHudSnapshot() {
-        PlayerStateStore.replace(PlayerStateViewModel.create(
-            "Induce",
-            "offline:Azure",
-            80.0,
-            100.0,
-            0.0,
-            0.4,
-            PlayerStateViewModel.PowerBreakdown.empty(),
-            PlayerStateViewModel.SocialSnapshot.empty(),
-            "spawn",
-            "荒坡",
-            0.35
-        ));
-
-        BongHudOrchestrator.buildCommands(
-            BongHudStateSnapshot.empty(),
-            7_000L,
-            FIXED_WIDTH,
-            220,
-            320,
-            180
-        );
-
-        assertEquals(7_000L, ExtractDecisionStateStore.snapshot().runStartedAtMs());
-    }
-
-    @Test
-    void homeSequenceSuppressesExtractDecisionAndClearsRunClockAtSpiritNiche() {
-        PlayerStateStore.replace(PlayerStateViewModel.create(
-            "Induce",
-            "offline:Azure",
-            25.0,
-            100.0,
-            0.0,
-            0.4,
-            PlayerStateViewModel.PowerBreakdown.empty(),
-            PlayerStateViewModel.SocialSnapshot.empty(),
-            "spawn",
-            "荒坡",
-            0.35
-        ));
-        ExtractDecisionStateStore.startRun(1_000L);
-        HudRuntimeContext runtime = new HudRuntimeContext(
-            0.0,
-            10.0,
-            64.0,
-            10.0,
-            false,
-            List.of(new HudRuntimeContext.CompassMarker(
-                HudRuntimeContext.CompassMarker.Kind.SPIRIT_NICHE,
-                12.0,
-                13.0,
-                1.0
-            ))
-        );
-
-        List<HudRenderCommand> commands = BongHudOrchestrator.buildCommands(
-            BongHudStateSnapshot.empty(),
-            CombatHudSnapshot.empty(),
-            2_000L,
-            FIXED_WIDTH,
-            220,
-            320,
-            180,
-            null,
-            runtime
-        );
-
-        assertTrue(commands.stream().anyMatch(command -> command.layer() == HudRenderLayer.HOME_SEQUENCE));
-        assertTrue(commands.stream().noneMatch(command -> command.layer() == HudRenderLayer.EXTRACT_DECISION));
-        assertEquals(0L, ExtractDecisionStateStore.snapshot().runStartedAtMs());
     }
 
     @Test
