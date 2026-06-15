@@ -246,6 +246,7 @@ export const NamedFactionEntryV1 = Type.Object(
     zone_anchor: Type.String({ minLength: 1 }),
     current_npc_count: Type.Integer({ minimum: 0 }),
     status: FactionStatusV1,
+    is_active: Type.Boolean(),
   },
   { additionalProperties: false },
 );

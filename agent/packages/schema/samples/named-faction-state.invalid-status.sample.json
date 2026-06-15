@@ -7,7 +7,8 @@
       "display_name": "青云猎盟",
       "zone_anchor": "qingyun_peaks",
       "current_npc_count": 0,
-      "status": "alive"
+      "status": "alive",
+      "is_active": true
     }
   ],
   "relation_matrix": [],
