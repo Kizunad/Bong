@@ -7,7 +7,8 @@ use crate::npc::dormant::{
     effective_group, DormantCombatOutcome, NpcDormantStore, PendingDormantRelicCreated,
 };
 use crate::npc::faction::{
-    FactionEventNotice, FactionRelationMatrix, FactionStore, NamedFactionId, NamedFactionRegistry,
+    FactionEventNotice, FactionRelationMatrix, FactionStore, NamedFactionDecayEvent,
+    NamedFactionId, NamedFactionLeaderDownEvent, NamedFactionRegistry,
 };
 use crate::npc::lifecycle::{NpcDeathNotice, NpcSpawnNotice};
 use crate::npc::movement::GameTick;
@@ -219,6 +220,38 @@ pub fn publish_named_faction_state(
         return;
     };
     let at_tick = current_game_tick(game_tick.as_deref());
+    publish_named_faction_snapshot(&redis, at_tick, registry, relation_matrix);
+}
+
+/// plan-faction-expansion-v1 P3：领袖陨落/势力消亡事件触发一次显式快照刷新。
+pub fn publish_named_faction_state_on_lifecycle_events(
+    redis: Res<RedisBridgeResource>,
+    game_tick: Option<Res<GameTick>>,
+    registry: Option<Res<NamedFactionRegistry>>,
+    relation_matrix: Option<Res<FactionRelationMatrix>>,
+    mut leader_down_events: EventReader<NamedFactionLeaderDownEvent>,
+    mut decay_events: EventReader<NamedFactionDecayEvent>,
+) {
+    let transition_count = leader_down_events.read().count() + decay_events.read().count();
+    if transition_count == 0 {
+        return;
+    }
+    let Some(registry) = registry.as_deref() else {
+        return;
+    };
+    let Some(relation_matrix) = relation_matrix.as_deref() else {
+        return;
+    };
+    let at_tick = current_game_tick(game_tick.as_deref());
+    publish_named_faction_snapshot(&redis, at_tick, registry, relation_matrix);
+}
+
+fn publish_named_faction_snapshot(
+    redis: &RedisBridgeResource,
+    at_tick: u64,
+    registry: &NamedFactionRegistry,
+    relation_matrix: &FactionRelationMatrix,
+) {
     let named_factions = registry
         .iter()
         .map(|faction| NamedFactionEntryV1 {
