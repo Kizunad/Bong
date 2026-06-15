@@ -1938,9 +1938,10 @@ fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<()> {
             );
             CREATE INDEX IF NOT EXISTS idx_social_faction_reputations_char_id
             ON social_faction_reputations (char_id);
-            PRAGMA user_version = 32;
             ",
         )?;
+        assert_social_faction_reputations_schema_ready(&transaction)?;
+        transaction.execute_batch("PRAGMA user_version = 32;")?;
         transaction.commit()?;
     }
 
@@ -2191,6 +2192,82 @@ fn assert_pending_dormant_relics_schema_ready(
             )),
         )));
     }
+    Ok(())
+}
+
+fn assert_social_faction_reputations_schema_ready(
+    transaction: &rusqlite::Transaction<'_>,
+) -> rusqlite::Result<()> {
+    let columns = table_columns(transaction, "social_faction_reputations")?;
+    let required = [
+        "char_id",
+        "named_faction",
+        "score",
+        "schema_version",
+        "last_updated_wall",
+    ];
+    if let Some(missing) = required
+        .iter()
+        .find(|column| !columns.iter().any(|name| name == **column))
+    {
+        return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+            io::Error::other(format!(
+                "v32 migration completed but social_faction_reputations column {missing} missing"
+            )),
+        )));
+    }
+
+    let mut statement = transaction.prepare("PRAGMA table_info(social_faction_reputations)")?;
+    let primary_key = statement
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(1)?, row.get::<_, i32>(5)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .filter(|(_, pk_ordinal)| *pk_ordinal > 0)
+        .collect::<Vec<_>>();
+    let expected_primary_key = [("char_id".to_owned(), 1), ("named_faction".to_owned(), 2)];
+    if primary_key.as_slice() != expected_primary_key.as_slice() {
+        return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+            io::Error::other(format!(
+                "v32 migration completed but social_faction_reputations primary key mismatch: expected (char_id, named_faction) got {primary_key:?}"
+            )),
+        )));
+    }
+
+    let create_sql: Option<String> = transaction
+        .query_row(
+            "
+            SELECT sql
+            FROM sqlite_master
+            WHERE type = 'table' AND name = 'social_faction_reputations'
+            ",
+            [],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let Some(create_sql) = create_sql else {
+        return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+            io::Error::other(
+                "v32 migration completed but social_faction_reputations table missing",
+            ),
+        )));
+    };
+    for required_check in [
+        "score >= -100",
+        "score <= 100",
+        "schema_version >= 1",
+        "last_updated_wall >= 0",
+    ] {
+        if !create_sql.contains(required_check) {
+            return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                io::Error::other(format!(
+                    "v32 migration completed but social_faction_reputations CHECK `{required_check}` missing"
+                )),
+            )));
+        }
+    }
+
     Ok(())
 }
 
@@ -13220,6 +13297,16 @@ mod persistence_tests {
                 params!["char:azure", "qingyun_hunters", 100],
             )
             .expect("valid faction reputation row should insert");
+        connection
+            .execute(
+                "
+                INSERT INTO social_faction_reputations
+                    (char_id, named_faction, score, schema_version, last_updated_wall)
+                VALUES (?1, ?2, ?3, 1, 0)
+                ",
+                params!["char:azure-low", "qingyun_hunters", -100],
+            )
+            .expect("score=-100 是合法下界，必须可写入");
         let duplicate = connection.execute(
             "
             INSERT INTO social_faction_reputations
@@ -13244,6 +13331,27 @@ mod persistence_tests {
             out_of_range.is_err(),
             "score > 100 必须被 v32 CHECK 约束拒绝"
         );
+        for (char_id, score, schema_version, last_updated_wall, hint) in [
+            ("char:below-min", -101, 1, 0, "score < -100"),
+            ("char:bad-schema", 0, 0, 0, "schema_version < 1"),
+            ("char:bad-wall", 0, 1, -1, "last_updated_wall < 0"),
+        ] {
+            let rejected = connection.execute(
+                "
+                INSERT INTO social_faction_reputations
+                    (char_id, named_faction, score, schema_version, last_updated_wall)
+                VALUES (?1, ?2, ?3, ?4, ?5)
+                ",
+                params![
+                    char_id,
+                    "cangyuan_merchants",
+                    score,
+                    schema_version,
+                    last_updated_wall
+                ],
+            );
+            assert!(rejected.is_err(), "{hint} 必须被 v32 CHECK 约束拒绝");
+        }
 
         apply_migrations(&mut connection).expect("second v32 apply_migrations must be idempotent");
         let user_version: i32 = connection
@@ -13252,6 +13360,44 @@ mod persistence_tests {
         assert_eq!(
             user_version, CURRENT_USER_VERSION,
             "v32 迁移完成后 user_version 必须是 CURRENT_USER_VERSION={CURRENT_USER_VERSION}，实际 {user_version}"
+        );
+    }
+
+    #[test]
+    fn v32_migration_rejects_existing_social_faction_reputations_bad_schema() {
+        let db_path = database_path("v32-social-faction-reputations-bad-schema");
+        fs::create_dir_all(db_path.parent().expect("db path parent"))
+            .expect("temp db dir should create");
+        let mut connection = Connection::open(&db_path).expect("db should open");
+        connection
+            .execute_batch(
+                "
+                PRAGMA user_version = 31;
+                CREATE TABLE social_faction_reputations (
+                    char_id             TEXT    NOT NULL PRIMARY KEY,
+                    named_faction       TEXT    NOT NULL,
+                    score               INTEGER NOT NULL,
+                    schema_version      INTEGER NOT NULL,
+                    last_updated_wall   INTEGER NOT NULL
+                );
+                ",
+            )
+            .expect("bad preexisting v31 table fixture should create");
+
+        let error = apply_migrations(&mut connection)
+            .expect_err("v32 migration must reject bad preexisting reputation schema");
+        let error_text = format!("{error:?}");
+        assert!(
+            error_text.contains("social_faction_reputations primary key mismatch")
+                || error_text.contains("social_faction_reputations CHECK"),
+            "v32 guard must explain bad social_faction_reputations schema, actual {error_text}"
+        );
+        let user_version: i32 = connection
+            .query_row("PRAGMA user_version;", [], |row| row.get(0))
+            .expect("user_version should remain readable");
+        assert_eq!(
+            user_version, 31,
+            "bad v32 schema must not advance user_version, actual {user_version}"
         );
     }
 }

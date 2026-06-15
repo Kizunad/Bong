@@ -523,9 +523,18 @@ mod tests {
 
     #[test]
     fn named_faction_join_accepts_headless_faction() {
+        let mut registry = NamedFactionRegistry::startup_default();
+        registry
+            .get_mut(NamedFactionId::NorthWasteDrifters)
+            .unwrap()
+            .set_status(FactionStatus::Headless);
+
         let mut app = setup_app();
-        app.insert_resource(NamedFactionRegistry::startup_default());
+        app.insert_resource(registry);
         let player = spawn_test_client(&mut app, "Alice", [0.0, 64.0, 0.0]);
+        app.world_mut()
+            .entity_mut(player)
+            .insert(FactionReputation::default());
 
         send(
             &mut app,

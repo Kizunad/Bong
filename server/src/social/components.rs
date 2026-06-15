@@ -501,5 +501,32 @@ mod tests {
             json.get("named_faction").is_none(),
             "expected named_faction omitted because None preserves old save shape, actual {json}"
         );
+
+        let with_named = FactionMembership {
+            faction: crate::npc::faction::FactionId::Attack,
+            named_faction: Some(NamedFactionId::QingyunHunters),
+            rank: 1,
+            loyalty: 12,
+            betrayal_count: 0,
+            invite_block_until_tick: None,
+            permanently_refused: false,
+        };
+        let with_named_json = serde_json::to_value(&with_named)
+            .expect("membership with named_faction should serialize");
+        assert_eq!(
+            with_named_json
+                .get("named_faction")
+                .and_then(|value| value.as_str()),
+            Some("qingyun_hunters"),
+            "expected named_faction wire value because Some(...) must be persisted, actual {with_named_json}"
+        );
+        let roundtrip: FactionMembership = serde_json::from_value(with_named_json)
+            .expect("membership with named_faction should deserialize");
+        assert_eq!(
+            roundtrip.named_faction,
+            Some(NamedFactionId::QingyunHunters),
+            "expected roundtrip named_faction because serde contract must preserve non-empty affiliation, actual {:?}",
+            roundtrip.named_faction
+        );
     }
 }

@@ -98,11 +98,13 @@ describe("NamedFactionNarrationRuntime", () => {
   let sub: ReturnType<typeof makeMockClient>;
   let pub: ReturnType<typeof makeMockClient>;
   let runtime: NamedFactionNarrationRuntime;
+  let logger: { info: ReturnType<typeof vi.fn>; warn: ReturnType<typeof vi.fn> };
 
   beforeEach(async () => {
     sub = makeMockClient();
     pub = makeMockClient();
-    runtime = new NamedFactionNarrationRuntime({ sub, pub });
+    logger = { info: vi.fn(), warn: vi.fn() };
+    runtime = new NamedFactionNarrationRuntime({ sub, pub, logger });
     await runtime.connect();
   });
 
@@ -191,5 +193,20 @@ describe("NamedFactionNarrationRuntime", () => {
 
     expect(pub.publish).not.toHaveBeenCalled();
     expect(runtime.stats.received).toBe(1);
+  });
+
+  it("publish 失败时 onMessage 捕获异常并记录告警", async () => {
+    await runtime.handlePayload(payload({ qingyun: "active" }));
+    pub.publish.mockRejectedValueOnce(new Error("redis down"));
+
+    sub.emit(NAMED_FACTION_STATE, payload({ qingyun: "headless" }));
+    await flushMicrotasks();
+
+    expect(logger.warn).toHaveBeenCalledWith(
+      "[named-faction-runtime] failed to handle payload:",
+      expect.any(Error),
+    );
+    expect(runtime.stats.received).toBe(2);
+    expect(runtime.stats.published).toBe(0);
   });
 });

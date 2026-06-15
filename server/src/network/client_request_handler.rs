@@ -3869,7 +3869,19 @@ mod tests {
         let qingyun_pos = DVec3::new(-3000.0, 120.0, -2000.0);
         let (client_bundle, mut helper) = create_mock_client("Azure");
         let mut faction_reputation = FactionReputation::default();
-        faction_reputation.apply_delta(NamedFactionId::QingyunHunters, -100);
+        faction_reputation.apply_delta(NamedFactionId::QingyunHunters, -51);
+        let mut npc_membership = neutral_faction_membership();
+        npc_membership.reputation = Reputation { loyalty: 0.8 };
+        let score_gate_value = reputation_to_player_score_for_npc_zone(
+            Some(&npc_membership),
+            None,
+            Some(&faction_reputation),
+            Some("qingyun_peaks"),
+        );
+        assert!(
+            score_gate_value >= -30,
+            "test precondition: legacy score gate must allow trade so Wanted tier is the rejection source, actual {score_gate_value}"
+        );
         let player = app
             .world_mut()
             .spawn((
@@ -3890,7 +3902,7 @@ mod tests {
                 Position::new(qingyun_pos + DVec3::new(1.0, 0.0, 0.0)),
                 OldPosition::new(qingyun_pos + DVec3::new(1.0, 0.0, 0.0)),
                 NpcArchetype::Commoner,
-                neutral_faction_membership(),
+                npc_membership,
             ))
             .id();
 

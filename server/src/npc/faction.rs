@@ -3484,6 +3484,11 @@ mod tests {
             "Headless 势力 NPC 归零必须进入 Decayed，实际 {:?}",
             cangyuan.status
         );
+        assert!(
+            !cangyuan.is_active,
+            "Decayed 势力 is_active 必须为 false，实际 {}",
+            cangyuan.is_active
+        );
         let events = app.world().resource::<Events<NamedFactionDecayEvent>>();
         let emitted = events
             .iter_current_update_events()
@@ -3500,6 +3505,16 @@ mod tests {
             NamedFactionId::CangyuanMerchants,
             "消亡事件必须指向沧渊商会，实际 {:?}",
             emitted[0].faction
+        );
+        assert_eq!(
+            emitted[0].final_zone, "blood_valley",
+            "消亡事件 final_zone 必须等于沧渊商会 zone_anchor，实际 {}",
+            emitted[0].final_zone
+        );
+        assert_eq!(
+            emitted[0].last_npc_count, 2,
+            "消亡事件 last_npc_count 必须等于上一帧 NPC 数 2，实际 {}",
+            emitted[0].last_npc_count
         );
     }
 }

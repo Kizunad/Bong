@@ -232,16 +232,16 @@ pub fn publish_named_faction_state_on_lifecycle_events(
     mut leader_down_events: EventReader<NamedFactionLeaderDownEvent>,
     mut decay_events: EventReader<NamedFactionDecayEvent>,
 ) {
-    let transition_count = leader_down_events.read().count() + decay_events.read().count();
-    if transition_count == 0 {
-        return;
-    }
     let Some(registry) = registry.as_deref() else {
         return;
     };
     let Some(relation_matrix) = relation_matrix.as_deref() else {
         return;
     };
+    let transition_count = leader_down_events.read().count() + decay_events.read().count();
+    if transition_count == 0 {
+        return;
+    }
     let at_tick = current_game_tick(game_tick.as_deref());
     publish_named_faction_snapshot(&redis, at_tick, registry, relation_matrix);
 }
@@ -772,6 +772,163 @@ mod tests {
         assert!(
             drain_named_faction_states(&missing_matrix_rx).is_empty(),
             "missing FactionRelationMatrix must skip publishing instead of emitting partial state"
+        );
+    }
+
+    #[test]
+    fn publish_named_faction_state_on_lifecycle_events_skips_when_no_events() {
+        let (mut app, rx) = setup_app();
+        app.add_event::<NamedFactionLeaderDownEvent>();
+        app.add_event::<NamedFactionDecayEvent>();
+        app.insert_resource(NamedFactionRegistry::startup_default());
+        app.insert_resource(FactionRelationMatrix::startup_default());
+        app.add_systems(Update, publish_named_faction_state_on_lifecycle_events);
+
+        app.update();
+
+        assert!(
+            drain_named_faction_states(&rx).is_empty(),
+            "zero lifecycle events must not publish a named faction snapshot"
+        );
+    }
+
+    #[test]
+    fn publish_named_faction_state_on_lifecycle_events_skips_without_required_resources() {
+        let (mut missing_registry_app, missing_registry_rx) = setup_app();
+        missing_registry_app.add_event::<NamedFactionLeaderDownEvent>();
+        missing_registry_app.add_event::<NamedFactionDecayEvent>();
+        missing_registry_app.insert_resource(FactionRelationMatrix::startup_default());
+        missing_registry_app.add_systems(Update, publish_named_faction_state_on_lifecycle_events);
+        missing_registry_app
+            .world_mut()
+            .send_event(NamedFactionLeaderDownEvent {
+                faction: NamedFactionId::QingyunHunters,
+                zone: "qingyun_peaks".to_string(),
+            });
+        missing_registry_app.update();
+        assert!(
+            drain_named_faction_states(&missing_registry_rx).is_empty(),
+            "missing NamedFactionRegistry must skip lifecycle-triggered snapshot without consuming a partial state"
+        );
+
+        let (mut missing_matrix_app, missing_matrix_rx) = setup_app();
+        missing_matrix_app.add_event::<NamedFactionLeaderDownEvent>();
+        missing_matrix_app.add_event::<NamedFactionDecayEvent>();
+        missing_matrix_app.insert_resource(NamedFactionRegistry::startup_default());
+        missing_matrix_app.add_systems(Update, publish_named_faction_state_on_lifecycle_events);
+        missing_matrix_app
+            .world_mut()
+            .send_event(NamedFactionDecayEvent {
+                faction: NamedFactionId::CangyuanMerchants,
+                final_zone: "blood_valley".to_string(),
+                last_npc_count: 2,
+            });
+        missing_matrix_app.update();
+        assert!(
+            drain_named_faction_states(&missing_matrix_rx).is_empty(),
+            "missing FactionRelationMatrix must skip lifecycle-triggered snapshot without emitting partial state"
+        );
+    }
+
+    #[test]
+    fn publish_named_faction_state_on_lifecycle_events_publishes_for_leader_down_only() {
+        let (mut app, rx) = setup_app();
+        app.add_event::<NamedFactionLeaderDownEvent>();
+        app.add_event::<NamedFactionDecayEvent>();
+        app.insert_resource(NamedFactionRegistry::startup_default());
+        app.insert_resource(FactionRelationMatrix::startup_default());
+        app.insert_resource(GameTick(42));
+        app.add_systems(Update, publish_named_faction_state_on_lifecycle_events);
+
+        app.world_mut().send_event(NamedFactionLeaderDownEvent {
+            faction: NamedFactionId::QingyunHunters,
+            zone: "qingyun_peaks".to_string(),
+        });
+        app.update();
+
+        let states = drain_named_faction_states(&rx);
+        assert_eq!(
+            states.len(),
+            1,
+            "leader_down event must trigger exactly one named faction snapshot, actual {}",
+            states.len()
+        );
+        assert_eq!(
+            states[0].at_tick, 42,
+            "lifecycle-triggered snapshot must use current GameTick, actual {}",
+            states[0].at_tick
+        );
+    }
+
+    #[test]
+    fn publish_named_faction_state_on_lifecycle_events_publishes_for_decay_only() {
+        let (mut app, rx) = setup_app();
+        app.add_event::<NamedFactionLeaderDownEvent>();
+        app.add_event::<NamedFactionDecayEvent>();
+        app.insert_resource(NamedFactionRegistry::startup_default());
+        app.insert_resource(FactionRelationMatrix::startup_default());
+        app.insert_resource(GameTick(43));
+        app.add_systems(Update, publish_named_faction_state_on_lifecycle_events);
+
+        app.world_mut().send_event(NamedFactionDecayEvent {
+            faction: NamedFactionId::CangyuanMerchants,
+            final_zone: "blood_valley".to_string(),
+            last_npc_count: 2,
+        });
+        app.update();
+
+        let states = drain_named_faction_states(&rx);
+        assert_eq!(
+            states.len(),
+            1,
+            "decay event must trigger exactly one named faction snapshot, actual {}",
+            states.len()
+        );
+        assert_eq!(
+            states[0].at_tick, 43,
+            "decay-triggered snapshot must use current GameTick, actual {}",
+            states[0].at_tick
+        );
+    }
+
+    #[test]
+    fn publish_named_faction_state_on_lifecycle_events_coalesces_both_event_types() {
+        let (mut app, rx) = setup_app();
+        app.add_event::<NamedFactionLeaderDownEvent>();
+        app.add_event::<NamedFactionDecayEvent>();
+        app.insert_resource(NamedFactionRegistry::startup_default());
+        app.insert_resource(FactionRelationMatrix::startup_default());
+        app.insert_resource(GameTick(99));
+        app.add_systems(Update, publish_named_faction_state_on_lifecycle_events);
+
+        app.world_mut().send_event(NamedFactionLeaderDownEvent {
+            faction: NamedFactionId::QingyunHunters,
+            zone: "qingyun_peaks".to_string(),
+        });
+        app.world_mut().send_event(NamedFactionDecayEvent {
+            faction: NamedFactionId::CangyuanMerchants,
+            final_zone: "blood_valley".to_string(),
+            last_npc_count: 2,
+        });
+        app.update();
+
+        let states = drain_named_faction_states(&rx);
+        assert_eq!(
+            states.len(),
+            1,
+            "leader_down + decay in one update must coalesce into one snapshot, actual {}",
+            states.len()
+        );
+        assert_eq!(
+            states[0].at_tick, 99,
+            "coalesced snapshot must keep current tick, actual {}",
+            states[0].at_tick
+        );
+
+        app.update();
+        assert!(
+            drain_named_faction_states(&rx).is_empty(),
+            "consumed lifecycle events must not publish again on the next update"
         );
     }
 
