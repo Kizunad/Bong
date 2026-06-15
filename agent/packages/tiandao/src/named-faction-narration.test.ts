@@ -7,6 +7,7 @@ import { NamedFactionNarrationRuntime } from "./named-faction-narration.js";
 const { AGENT_NARRATE, NAMED_FACTION_STATE } = CHANNELS;
 
 type Status = NamedFactionStateV1["named_factions"][number]["status"];
+type NamedFactionEntry = NamedFactionStateV1["named_factions"][number];
 
 function makeMockClient() {
   const listeners: Map<string, ((channel: string, message: string) => void)[]> = new Map();
@@ -33,6 +34,49 @@ function makeMockClient() {
   };
 }
 
+async function flushMicrotasks(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
+function namedFactionEntry(
+  id: string,
+  displayName: string,
+  zoneAnchor: string,
+  status: Status,
+  activeCount: number,
+): NamedFactionEntry {
+  switch (status) {
+    case "active":
+      return {
+        id,
+        display_name: displayName,
+        zone_anchor: zoneAnchor,
+        current_npc_count: activeCount,
+        status,
+        is_active: true,
+      };
+    case "headless":
+      return {
+        id,
+        display_name: displayName,
+        zone_anchor: zoneAnchor,
+        current_npc_count: activeCount,
+        status,
+        is_active: true,
+      };
+    case "decayed":
+      return {
+        id,
+        display_name: displayName,
+        zone_anchor: zoneAnchor,
+        current_npc_count: 0,
+        status,
+        is_active: false,
+      };
+  }
+}
+
 function payload(overrides: Partial<Record<"qingyun" | "cangyuan" | "north", Status>> = {}): string {
   const qingyun = overrides.qingyun ?? "active";
   const cangyuan = overrides.cangyuan ?? "active";
@@ -41,30 +85,9 @@ function payload(overrides: Partial<Record<"qingyun" | "cangyuan" | "north", Sta
     v: 1,
     kind: "named_faction_state",
     named_factions: [
-      {
-        id: "qingyun_hunters",
-        display_name: "青云猎盟",
-        zone_anchor: "qingyun_peaks",
-        current_npc_count: qingyun === "decayed" ? 0 : 2,
-        status: qingyun,
-        is_active: qingyun !== "decayed",
-      },
-      {
-        id: "cangyuan_merchants",
-        display_name: "沧渊商会",
-        zone_anchor: "blood_valley",
-        current_npc_count: cangyuan === "decayed" ? 0 : 1,
-        status: cangyuan,
-        is_active: cangyuan !== "decayed",
-      },
-      {
-        id: "north_waste_drifters",
-        display_name: "北荒漂流者",
-        zone_anchor: "north_wastes",
-        current_npc_count: north === "decayed" ? 0 : 1,
-        status: north,
-        is_active: north !== "decayed",
-      },
+      namedFactionEntry("qingyun_hunters", "青云猎盟", "qingyun_peaks", qingyun, 2),
+      namedFactionEntry("cangyuan_merchants", "沧渊商会", "blood_valley", cangyuan, 1),
+      namedFactionEntry("north_waste_drifters", "北荒漂流者", "north_wastes", north, 1),
     ],
     relation_matrix: [],
     at_tick: 1,
@@ -127,5 +150,46 @@ describe("NamedFactionNarrationRuntime", () => {
     await runtime.handlePayload(JSON.stringify({ v: 1, kind: "named_faction_state" }));
     expect(pub.publish).not.toHaveBeenCalled();
     expect(runtime.stats.rejectedContract).toBe(1);
+  });
+
+  it("非 JSON 载荷 rejectedContract++ 且不发布", async () => {
+    await runtime.handlePayload("{not-json");
+    expect(pub.publish).not.toHaveBeenCalled();
+    expect(runtime.stats.rejectedContract).toBe(1);
+  });
+
+  it("headless → decayed 发布势力消亡广播", async () => {
+    await runtime.handlePayload(payload({ north: "headless" }));
+    await runtime.handlePayload(payload({ north: "decayed" }));
+
+    expect(pub.publish).toHaveBeenCalledOnce();
+    const [, message] = pub.publish.mock.calls[0] as [string, string];
+    const envelope = JSON.parse(message) as { narrations: Array<{ scope: string; text: string }> };
+    expect(envelope.narrations[0]?.scope).toBe("broadcast");
+    expect(envelope.narrations[0]?.text).toContain("北荒漂流者");
+    expect(envelope.narrations[0]?.text).toContain("最后一支队伍");
+  });
+
+  it("同一快照内多势力转换聚合成一次广播", async () => {
+    await runtime.handlePayload(payload({ qingyun: "active", cangyuan: "active" }));
+    await runtime.handlePayload(payload({ qingyun: "headless", cangyuan: "decayed" }));
+
+    expect(pub.publish).toHaveBeenCalledOnce();
+    const [, message] = pub.publish.mock.calls[0] as [string, string];
+    const envelope = JSON.parse(message) as { narrations: Array<{ text: string }> };
+    expect(envelope.narrations).toHaveLength(2);
+    expect(envelope.narrations.map((entry) => entry.text).join("\n")).toContain("盟主死在血谷口");
+    expect(envelope.narrations.map((entry) => entry.text).join("\n")).toContain("沧渊商会");
+  });
+
+  it("disconnect 后移除订阅回调，不再消费 Redis message", async () => {
+    await runtime.handlePayload(payload({ qingyun: "active" }));
+    await runtime.disconnect();
+
+    sub.emit(NAMED_FACTION_STATE, payload({ qingyun: "headless" }));
+    await flushMicrotasks();
+
+    expect(pub.publish).not.toHaveBeenCalled();
+    expect(runtime.stats.received).toBe(1);
   });
 });

@@ -54,7 +54,10 @@ export class NamedFactionNarrationRuntime {
 
   private readonly onMessage = (channel: string, message: string): void => {
     if (channel !== NAMED_FACTION_STATE) return;
-    void this.handlePayload(message);
+    if (!this.connected) return;
+    void this.handlePayload(message).catch((error: unknown) => {
+      this.logger.warn("[named-faction-runtime] failed to handle payload:", error);
+    });
   };
 
   constructor(config: NamedFactionNarrationRuntimeConfig) {

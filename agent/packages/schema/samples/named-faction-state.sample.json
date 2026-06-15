@@ -6,7 +6,7 @@
       "id": "qingyun_hunters",
       "display_name": "青云猎盟",
       "zone_anchor": "qingyun_peaks",
-      "current_npc_count": 0,
+      "current_npc_count": 3,
       "status": "active",
       "is_active": true
     },
@@ -14,7 +14,7 @@
       "id": "cangyuan_merchants",
       "display_name": "沧渊商会",
       "zone_anchor": "blood_valley",
-      "current_npc_count": 0,
+      "current_npc_count": 2,
       "status": "active",
       "is_active": true
     },
@@ -22,7 +22,7 @@
       "id": "north_waste_drifters",
       "display_name": "北荒漂流者",
       "zone_anchor": "north_wastes",
-      "current_npc_count": 0,
+      "current_npc_count": 1,
       "status": "headless",
       "is_active": true
     }
