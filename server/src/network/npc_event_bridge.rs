@@ -6,14 +6,17 @@ use crate::npc::dormant::census::{assign_status, compute_faction_census, LastFac
 use crate::npc::dormant::{
     effective_group, DormantCombatOutcome, NpcDormantStore, PendingDormantRelicCreated,
 };
-use crate::npc::faction::{FactionEventNotice, FactionStore};
+use crate::npc::faction::{
+    FactionEventNotice, FactionRelationMatrix, FactionStore, NamedFactionId, NamedFactionRegistry,
+};
 use crate::npc::lifecycle::{NpcDeathNotice, NpcSpawnNotice};
 use crate::npc::movement::GameTick;
 use crate::npc::war::{WarConflictStore, WarPhaseChanged, ZoneConflictPressure};
 use crate::schema::cultivation::realm_to_string;
 use crate::schema::npc::{
-    DormantCombatOutcomeV1, FactionEventV1, FactionStateV1, FactionWarEventV1, NpcDeathV1,
-    NpcSpawnedV1, PendingDormantRelicV1,
+    DormantCombatOutcomeV1, FactionEventV1, FactionRelationEntryV1, FactionStateV1,
+    FactionWarEventV1, NamedFactionEntryV1, NamedFactionStateV1, NpcDeathV1, NpcSpawnedV1,
+    PendingDormantRelicV1,
 };
 
 const NPC_EVENT_VERSION: u8 = 1;
@@ -201,6 +204,60 @@ pub fn publish_faction_state(
     last_census.0 = next_history;
 }
 
+/// plan-faction-expansion-v1 P3：发布具名势力注册表/关系矩阵快照到
+/// `bong:named_faction_state`。这是纯观测 telemetry，不触真元账户。
+pub fn publish_named_faction_state(
+    redis: Res<RedisBridgeResource>,
+    game_tick: Option<Res<GameTick>>,
+    registry: Option<Res<NamedFactionRegistry>>,
+    relation_matrix: Option<Res<FactionRelationMatrix>>,
+) {
+    let Some(registry) = registry.as_deref() else {
+        return;
+    };
+    let Some(relation_matrix) = relation_matrix.as_deref() else {
+        return;
+    };
+    let at_tick = current_game_tick(game_tick.as_deref());
+    let named_factions = registry
+        .iter()
+        .map(|faction| NamedFactionEntryV1 {
+            id: faction.id.as_str().to_string(),
+            display_name: faction.display_name.clone(),
+            zone_anchor: faction.zone_anchor.clone(),
+            current_npc_count: faction.current_npc_count,
+            status: faction.status,
+            is_active: faction.is_active,
+        })
+        .collect();
+
+    let all = NamedFactionId::all();
+    let mut relation_entries = Vec::new();
+    for i in 0..all.len() {
+        for j in (i + 1)..all.len() {
+            relation_entries.push(FactionRelationEntryV1 {
+                a: all[i].as_str().to_string(),
+                b: all[j].as_str().to_string(),
+                hostile: relation_matrix.are_hostile(all[i], all[j]),
+            });
+        }
+    }
+
+    let wire = NamedFactionStateV1 {
+        v: NPC_EVENT_VERSION,
+        kind: "named_faction_state".to_string(),
+        named_factions,
+        relation_matrix: relation_entries,
+        at_tick,
+    };
+    if let Err(error) = redis
+        .tx_outbound
+        .send(RedisOutbound::NamedFactionState(wire))
+    {
+        tracing::warn!("[bong][npc_event_bridge] dropped NamedFactionState: {error}");
+    }
+}
+
 /// plan-offscreen-war-v1 P6：把离屏战果压力累积到 `ZoneConflictPressure`，并在越阈时创建/升级
 /// `WarConflictStore` 里的涌现冲突。**纯计数**（`pressure += 1.0`/条），切断真元语义关联；
 /// 真元流动仍唯一走 P2 `release_dormant_qi_to_zone`。
@@ -352,7 +409,8 @@ mod tests {
     use crate::network::redis_bridge::RedisOutbound;
     use crate::npc::dormant::{DormantBehaviorIntent, NpcDormantSnapshot};
     use crate::npc::faction::{
-        EmergentGroupId, FactionEventApplied, FactionEventKind, FactionId, GroupStatus,
+        EmergentGroupId, FactionEventApplied, FactionEventKind, FactionId, FactionRelationMatrix,
+        FactionStatus, GroupStatus, NamedFactionId, NamedFactionRegistry,
     };
     use crate::npc::lifecycle::{NpcArchetype, NpcDeathReason};
     use crossbeam_channel::{unbounded, Receiver};
@@ -620,6 +678,47 @@ mod tests {
         }
         out.sort_by_key(|p| p.group_id);
         out
+    }
+
+    fn drain_named_faction_states(rx: &Receiver<RedisOutbound>) -> Vec<NamedFactionStateV1> {
+        let mut out = Vec::new();
+        while let Ok(outbound) = rx.try_recv() {
+            if let RedisOutbound::NamedFactionState(payload) = outbound {
+                out.push(payload);
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn publish_named_faction_state_includes_decayed_is_active_false() {
+        let (mut app, rx) = setup_app();
+        let mut registry = NamedFactionRegistry::startup_default();
+        registry
+            .get_mut(NamedFactionId::CangyuanMerchants)
+            .unwrap()
+            .set_status(FactionStatus::Decayed);
+        app.insert_resource(registry);
+        app.insert_resource(FactionRelationMatrix::startup_default());
+        app.insert_resource(GameTick(77));
+        app.add_systems(Update, publish_named_faction_state);
+
+        app.update();
+
+        let states = drain_named_faction_states(&rx);
+        assert_eq!(states.len(), 1);
+        let cangyuan = states[0]
+            .named_factions
+            .iter()
+            .find(|entry| entry.id == "cangyuan_merchants")
+            .expect("cangyuan entry must be present");
+        assert_eq!(cangyuan.status, FactionStatus::Decayed);
+        assert!(
+            !cangyuan.is_active,
+            "Decayed 势力的 Redis 快照必须显式 is_active=false"
+        );
+        assert_eq!(states[0].relation_matrix.len(), 3);
+        assert_eq!(states[0].at_tick, 77);
     }
 
     #[test]

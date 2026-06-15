@@ -431,6 +431,9 @@ pub fn register(app: &mut App) {
             // 与 combat/relic/faction telemetry 同节奏 Update 旁路（不另起 timer，§10.1 #3）；
             // 纯只读 census，零真元——排在 faction telemetry 之后，盘面 publish 时序居于事件流末尾。
             npc_event_bridge::publish_faction_state.after(npc_event_bridge::publish_faction_events),
+            // plan-faction-expansion-v1 P3：具名势力注册表快照 → bong:named_faction_state。
+            npc_event_bridge::publish_named_faction_state
+                .after(npc_event_bridge::publish_faction_state),
             // plan-offscreen-war-v1 P6：涌现冲突生命周期（reframe b，纯观测、零真元）。
             // 调度链：combat_events → accumulate → advance_idle → handle_participate → publish_war。
             npc_event_bridge::accumulate_zone_conflict_pressure
@@ -457,7 +460,7 @@ pub fn register(app: &mut App) {
                 .after(crate::npc::war::settle::apply_war_zone_spirit_bonus)
                 .after(crate::npc::war::settle::award_war_winner_renown)
                 .after(crate::npc::war::settle::broadcast_faction_war_hud)
-                .after(npc_event_bridge::publish_faction_state),
+                .after(npc_event_bridge::publish_named_faction_state),
             rat_phase_bridge::publish_rat_phase_events
                 .after(crate::fauna::rat_phase::pressure_sensor_tick_system),
             zone_pressure_bridge::publish_zone_pressure_crossed_events
@@ -5150,6 +5153,7 @@ mod tests {
                 },
                 PlayerFactionMembership {
                     faction: crate::npc::faction::FactionId::Defend,
+                    named_faction: None,
                     rank: 0,
                     loyalty: 10,
                     betrayal_count: 1,

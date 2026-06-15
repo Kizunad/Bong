@@ -40,13 +40,14 @@ use crate::schema::channels::{
     CH_ELDER_ENCOUNTER, CH_FACTION_EVENT, CH_FACTION_STATE, CH_FACTION_WAR, CH_FORGE_EVENT,
     CH_FORGE_OUTCOME, CH_FORGE_START, CH_HALFSTEP_RECHALLENGE, CH_HEART_DEMON_OFFER,
     CH_HEART_DEMON_REQUEST, CH_HIGH_RENOWN_MILESTONE, CH_INSIGHT_OFFER, CH_INSIGHT_REQUEST,
-    CH_LIFESPAN_EVENT, CH_MERIDIAN_SEVERED, CH_MUTATION_EVENT, CH_NPC_COMBAT, CH_NPC_DEATH,
-    CH_NPC_RELIC, CH_NPC_SPAWN, CH_PLAYER_CHAT, CH_POISON_DOSE_EVENT, CH_POISON_OVERDOSE_EVENT,
-    CH_POI_NOVICE_EVENT, CH_PRICE_INDEX, CH_PSEUDO_VEIN_ACTIVE, CH_PSEUDO_VEIN_DISSIPATE,
-    CH_RAT_PHASE_EVENT, CH_REBIRTH, CH_SEASON_CHANGED, CH_SKILL_CAP_CHANGED, CH_SKILL_LV_UP,
-    CH_SKILL_SCROLL_USED, CH_SKILL_XP_GAIN, CH_SOCIAL_EXPOSURE, CH_SOCIAL_FEUD,
-    CH_SOCIAL_NICHE_INTRUSION, CH_SOCIAL_PACT, CH_SOCIAL_RENOWN_DELTA, CH_SPIRIT_EYE_DISCOVERED,
-    CH_SPIRIT_EYE_MIGRATE, CH_SPIRIT_EYE_USED_FOR_BREAKTHROUGH, CH_SPIRIT_TREASURE_DIALOGUE,
+    CH_LIFESPAN_EVENT, CH_MERIDIAN_SEVERED, CH_MUTATION_EVENT, CH_NAMED_FACTION_STATE,
+    CH_NPC_COMBAT, CH_NPC_DEATH, CH_NPC_RELIC, CH_NPC_SPAWN, CH_PLAYER_CHAT, CH_POISON_DOSE_EVENT,
+    CH_POISON_OVERDOSE_EVENT, CH_POI_NOVICE_EVENT, CH_PRICE_INDEX, CH_PSEUDO_VEIN_ACTIVE,
+    CH_PSEUDO_VEIN_DISSIPATE, CH_RAT_PHASE_EVENT, CH_REBIRTH, CH_SEASON_CHANGED,
+    CH_SKILL_CAP_CHANGED, CH_SKILL_LV_UP, CH_SKILL_SCROLL_USED, CH_SKILL_XP_GAIN,
+    CH_SOCIAL_EXPOSURE, CH_SOCIAL_FEUD, CH_SOCIAL_NICHE_INTRUSION, CH_SOCIAL_PACT,
+    CH_SOCIAL_RENOWN_DELTA, CH_SPIRIT_EYE_DISCOVERED, CH_SPIRIT_EYE_MIGRATE,
+    CH_SPIRIT_EYE_USED_FOR_BREAKTHROUGH, CH_SPIRIT_TREASURE_DIALOGUE,
     CH_SPIRIT_TREASURE_DIALOGUE_REQUEST, CH_STYLE_BALANCE_TELEMETRY,
     CH_TERRITORY_NARRATION_REQUEST, CH_TIANDAO_HUNT_NARRATION_REQUEST, CH_TRIBULATION,
     CH_TRIBULATION_COLLAPSE, CH_TRIBULATION_LOCK, CH_TRIBULATION_OMEN, CH_TRIBULATION_SETTLE,
@@ -85,8 +86,8 @@ use crate::schema::lingtian_weather::WeatherEventUpdateV1;
 use crate::schema::meridian_severed::MeridianSeveredEventV1;
 use crate::schema::narration::NarrationV1;
 use crate::schema::npc::{
-    DormantCombatOutcomeV1, FactionEventV1, FactionStateV1, FactionWarEventV1, NpcDeathV1,
-    NpcSpawnedV1, PendingDormantRelicV1,
+    DormantCombatOutcomeV1, FactionEventV1, FactionStateV1, FactionWarEventV1, NamedFactionStateV1,
+    NpcDeathV1, NpcSpawnedV1, PendingDormantRelicV1,
 };
 use crate::schema::poi_novice::{PoiSpawnedEventV1, TrespassEventV1};
 use crate::schema::poison_trait::{PoisonDoseEventV1, PoisonOverdoseEventV1};
@@ -202,6 +203,8 @@ pub enum RedisOutbound {
     FactionEvent(FactionEventV1),
     /// plan-offscreen-war-v1 P5：散修群体消长盘面 telemetry（`bong:faction_state`，纯观测、零真元）。
     FactionState(FactionStateV1),
+    /// plan-faction-expansion-v1 P3：具名势力状态快照（`bong:named_faction_state`）。
+    NamedFactionState(NamedFactionStateV1),
     /// plan-offscreen-war-v1 P6：涌现冲突生命周期 telemetry（`bong:faction/war`，纯观测、零真元）。
     FactionWar(FactionWarEventV1),
     ZonePressureCrossed(ZonePressureCrossedV1),
@@ -1016,6 +1019,15 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
             })?;
             Ok(RedisIoCommand::Publish {
                 channel: CH_FACTION_STATE,
+                payload,
+            })
+        }
+        RedisOutbound::NamedFactionState(evt) => {
+            let payload = serde_json::to_string(&evt).map_err(|error| {
+                ValidationError::new(format!("failed to serialize NamedFactionStateV1: {error}"))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_NAMED_FACTION_STATE,
                 payload,
             })
         }
