@@ -181,7 +181,6 @@ public final class ServerDataRouter {
         handlers.put("extract_aborted", extractServerDataHandler);
         handlers.put("extract_failed", extractServerDataHandler);
         handlers.put("tsy_collapse_started_ipc", extractServerDataHandler);
-        handlers.put("tsy_collapse_started_ipc", extractServerDataHandler);
         handlers.put("container_state", containerInteractionHandler);
         handlers.put("search_started", containerInteractionHandler);
         handlers.put("search_progress", containerInteractionHandler);
