@@ -1,6 +1,6 @@
-# plan-dead-armor-contamination-wiring-v1（骨架）
+# plan-dead-armor-contamination-wiring-v1（active）
 
-> **骨架（草案）**。一句话主题：接通「死脉甲污染豁免」——`should_block_contamination` 从未接入 `resolve.rs` 污染写入点，死脉甲防御机制对生产玩法完全失效（plan-baomai-v4 自报已实装但代码缺失，⚠️ 文档↔代码背离）。
+> **Active（已从 skeleton 升级，待逐项消费）**。一句话主题：接通「死脉甲污染豁免」——`should_block_contamination` 从未接入 `resolve.rs` 污染写入点，死脉甲防御机制对生产玩法完全失效（plan-baomai-v4 自报已实装但代码缺失，⚠️ 文档↔代码背离）。
 
 > 立项动机：bug-hunt round1 确认（major，孤岛+doc-vs-code）：`combat/baomai_v4/dead_armor.rs:307` `should_block_contamination` **零生产调用**（grep 仅定义 + p3 测试 4 处）；`voluntary_sever_apply_system` 正确写 `armor.immune_regions`（dead_armor.rs:290），但 `resolve.rs:1324` 污染写入点对其**零过滤**（grep resolve.rs 无 is_immune/DeadMeridianArmor）；唯一非测试消费者 `crack_reading.rs` 只读显示标志不拦截。`plan-baomai-v4.md:510` 明确要求 `dead_armor_contam_filter_system` 在 resolve.rs 污染写入前拦截 + 被拦 delta 走 `qi_release_to_zone`（守恒），且该 plan **已归 finished_plans**、P3 标 ✅、Finish Evidence 行 1216 自报「resolve.rs 污染拦截」已落地——属 ⚠️ 文档自报完成但代码缺失。
 

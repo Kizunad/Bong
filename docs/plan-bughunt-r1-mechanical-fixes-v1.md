@@ -1,6 +1,6 @@
-# plan-bughunt-r1-mechanical-fixes-v1（骨架）
+# plan-bughunt-r1-mechanical-fixes-v1（active）
 
-> **骨架（草案）**。一句话主题：代码库自检 bug-hunt round1 确认的一批**机械确定型小 bug**（内存泄漏 / 缺兜底 / 死码 / 并发事务 / 漏分支）逐个修复，每个独立小 PR。
+> **Active（已从 skeleton 升级，待逐项消费）**。一句话主题：代码库自检 bug-hunt round1 确认的一批**机械确定型小 bug**（内存泄漏 / 缺兜底 / 死码 / 并发事务 / 漏分支）逐个修复，每个独立小 PR。
 
 > 立项动机：bug-hunt round1（report-only）裁决出若干 `fix_pr` 类——非设计抉择、修复方向清晰、范围受限，但仍各有小取舍（清理时机/并发隔离级），归集本 plan 逐个落地。
 

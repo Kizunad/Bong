@@ -1,6 +1,6 @@
-# plan-bughunt-r2-findings-v1（骨架）
+# plan-bughunt-r2-findings-v1（active）
 
-> **骨架（草案）**。一句话主题：代码库自检 bug-hunt **round2**（换角度:emit 孤岛/client+agent/境界门控/schema 双端）确认的一批真 bug——含 **1 critical（dying-elder 给丹永久失效）** + 多处 emit 孤岛/schema 双端不齐/守恒/状态机缺陷。**已对 origin/main(63996fbf1) 复核**，剔除 stale/dup。
+> **Active（已从 skeleton 升级，待逐项消费）**。一句话主题：代码库自检 bug-hunt **round2**（换角度:emit 孤岛/client+agent/境界门控/schema 双端）确认的一批真 bug——含 **1 critical（dying-elder 给丹永久失效）** + 多处 emit 孤岛/schema 双端不齐/守恒/状态机缺陷。**已对 origin/main(63996fbf1) 复核**，剔除 stale/dup。
 
 > 立项动机：worldgen-v4 收官后 bug-hunt round2，24 候选→裁决。**复核说明**：finder 误扫了主仓 stale 工作目录(cb310d093)，已逐项对 origin/main 复核——`NarrationKind 双端不齐` 在 main 已被 29f0c4a62 修复(剔除)；`ServerDataRouter tsy_collapse_started_ipc 重复` 是 round1 已收(plan-bughunt-r1-mechanical-fixes-v1，不重复)。以下均 **real-on-main**。
 

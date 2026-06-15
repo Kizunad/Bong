@@ -1,6 +1,6 @@
-# plan-bughunt-r6-findings-v1（骨架）
+# plan-bughunt-r6-findings-v1（active）
 
-> **骨架（草案）**。一句话主题：代码库自检 bug-hunt **round6**（fresh origin/main worktree ROOT，换角度：alchemy 炼丹链 · botany/shelflife · 渡劫 wave 状态机 · 装备 equip · agent Arbiter/WorldModel）确认的 **4 个新真 bug**——含 **1 critical（register_mundane_armors 撞 JSON ID 早退 → 16 种凡甲永不入 registry 静默零防御）**。已对 r1-r5 去重，全部 real-on-main。
+> **Active（已从 skeleton 升级，待逐项消费）**。一句话主题：代码库自检 bug-hunt **round6**（fresh origin/main worktree ROOT，换角度：alchemy 炼丹链 · botany/shelflife · 渡劫 wave 状态机 · 装备 equip · agent Arbiter/WorldModel）确认的 **4 个新真 bug**——含 **1 critical（register_mundane_armors 撞 JSON ID 早退 → 16 种凡甲永不入 registry 静默零防御）**。已对 r1-r5 去重，全部 real-on-main。
 
 > 立项动机：round6 用 fresh origin/main worktree 为 ROOT，5 全新角度 finder → 怀疑者对抗 → opus 逐条 Read/Grep（含**模拟核实** armor 注册早退）复核，11 候选 → **4 REAL / 7 NOT_REAL**（严格裁决，NOT_REAL 比例升高 = 易发 bug 渐枯竭 + 去重生效的健康信号；dismiss 含 AlchemyBuff 兼容兜底/v2 env_lock 生态税设计/HeartDemon choice-gate 误读/JSON-wins 设计等）。本轮主线：**alchemy/shelflife status-effect 孤岛延续**（ContaminationBoost 无 consumer，同 r4 buff 簇）+ **registry 注册健壮性**（撞 ID 早退，与 r5 同类配置加载缺口）。
 
