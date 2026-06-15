@@ -892,6 +892,35 @@ mod tests {
     }
 
     #[test]
+    fn publish_named_faction_state_on_lifecycle_events_defaults_tick_when_game_tick_missing() {
+        let (mut app, rx) = setup_app();
+        app.add_event::<NamedFactionLeaderDownEvent>();
+        app.add_event::<NamedFactionDecayEvent>();
+        app.insert_resource(NamedFactionRegistry::startup_default());
+        app.insert_resource(FactionRelationMatrix::startup_default());
+        app.add_systems(Update, publish_named_faction_state_on_lifecycle_events);
+
+        app.world_mut().send_event(NamedFactionLeaderDownEvent {
+            faction: NamedFactionId::NorthWasteDrifters,
+            zone: "north_wastes".to_string(),
+        });
+        app.update();
+
+        let states = drain_named_faction_states(&rx);
+        assert_eq!(
+            states.len(),
+            1,
+            "lifecycle event without GameTick must still publish one snapshot, actual {}",
+            states.len()
+        );
+        assert_eq!(
+            states[0].at_tick, 0,
+            "missing GameTick must serialize lifecycle snapshot at_tick=0, actual {}",
+            states[0].at_tick
+        );
+    }
+
+    #[test]
     fn publish_named_faction_state_on_lifecycle_events_coalesces_both_event_types() {
         let (mut app, rx) = setup_app();
         app.add_event::<NamedFactionLeaderDownEvent>();

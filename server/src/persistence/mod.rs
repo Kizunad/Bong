@@ -2218,12 +2218,18 @@ fn assert_social_faction_reputations_schema_ready(
     }
 
     let mut statement = transaction.prepare("PRAGMA table_info(social_faction_reputations)")?;
-    let primary_key = statement
+    let table_info = statement
         .query_map([], |row| {
-            Ok((row.get::<_, String>(1)?, row.get::<_, i32>(5)?))
+            Ok((
+                row.get::<_, String>(1)?,
+                row.get::<_, i32>(3)?,
+                row.get::<_, i32>(5)?,
+            ))
         })?
-        .collect::<Result<Vec<_>, _>>()?
-        .into_iter()
+        .collect::<Result<Vec<_>, _>>()?;
+    let primary_key = table_info
+        .iter()
+        .map(|(name, _, pk_ordinal)| (name.clone(), *pk_ordinal))
         .filter(|(_, pk_ordinal)| *pk_ordinal > 0)
         .collect::<Vec<_>>();
     let expected_primary_key = [("char_id".to_owned(), 1), ("named_faction".to_owned(), 2)];
@@ -2233,6 +2239,20 @@ fn assert_social_faction_reputations_schema_ready(
                 "v32 migration completed but social_faction_reputations primary key mismatch: expected (char_id, named_faction) got {primary_key:?}"
             )),
         )));
+    }
+    for required_not_null in ["char_id", "named_faction"] {
+        let is_not_null = table_info
+            .iter()
+            .find(|(name, _, _)| name == required_not_null)
+            .map(|(_, not_null, _)| *not_null != 0)
+            .unwrap_or(false);
+        if !is_not_null {
+            return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                io::Error::other(format!(
+                    "v32 migration completed but social_faction_reputations column {required_not_null} must be NOT NULL"
+                )),
+            )));
+        }
     }
 
     let create_sql: Option<String> = transaction
@@ -13259,13 +13279,17 @@ mod persistence_tests {
             .expect("social_faction_reputations table_info should prepare");
         let columns = statement
             .query_map([], |row| {
-                Ok((row.get::<_, String>(1)?, row.get::<_, i64>(5)?))
+                Ok((
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, i64>(5)?,
+                ))
             })
             .expect("social_faction_reputations table_info should query")
             .collect::<Result<Vec<_>, _>>()
             .expect("social_faction_reputations columns should collect");
         drop(statement);
-        let column_names: Vec<_> = columns.iter().map(|(name, _)| name.as_str()).collect();
+        let column_names: Vec<_> = columns.iter().map(|(name, _, _)| name.as_str()).collect();
         assert_eq!(
             column_names,
             vec![
@@ -13279,12 +13303,20 @@ mod persistence_tests {
         );
         let primary_key: Vec<_> = columns
             .iter()
-            .filter_map(|(name, pk)| (*pk > 0).then_some((name.as_str(), *pk)))
+            .filter_map(|(name, _, pk)| (*pk > 0).then_some((name.as_str(), *pk)))
             .collect();
         assert_eq!(
             primary_key,
             vec![("char_id", 1), ("named_faction", 2)],
             "social_faction_reputations 主键必须是 (char_id, named_faction)，实际 {primary_key:?}"
+        );
+        let not_null_columns: Vec<_> = columns
+            .iter()
+            .filter_map(|(name, not_null, _)| (*not_null != 0).then_some(name.as_str()))
+            .collect();
+        assert!(
+            not_null_columns.contains(&"char_id") && not_null_columns.contains(&"named_faction"),
+            "social_faction_reputations 身份列必须显式 NOT NULL，实际 not_null={not_null_columns:?}"
         );
 
         connection
@@ -13398,6 +13430,45 @@ mod persistence_tests {
         assert_eq!(
             user_version, 31,
             "bad v32 schema must not advance user_version, actual {user_version}"
+        );
+    }
+
+    #[test]
+    fn v32_migration_rejects_nullable_social_faction_reputation_identity_columns() {
+        let db_path = database_path("v32-social-faction-reputations-nullable-identity");
+        fs::create_dir_all(db_path.parent().expect("db path parent"))
+            .expect("temp db dir should create");
+        let mut connection = Connection::open(&db_path).expect("db should open");
+        connection
+            .execute_batch(
+                "
+                PRAGMA user_version = 31;
+                CREATE TABLE social_faction_reputations (
+                    char_id             TEXT,
+                    named_faction       TEXT,
+                    score               INTEGER NOT NULL CHECK (score >= -100 AND score <= 100),
+                    schema_version      INTEGER NOT NULL CHECK (schema_version >= 1),
+                    last_updated_wall   INTEGER NOT NULL CHECK (last_updated_wall >= 0),
+                    PRIMARY KEY (char_id, named_faction)
+                );
+                ",
+            )
+            .expect("nullable identity column fixture should create");
+
+        let error = apply_migrations(&mut connection)
+            .expect_err("v32 migration must reject nullable identity columns");
+        let error_text = format!("{error:?}");
+        assert!(
+            error_text.contains("column char_id must be NOT NULL")
+                || error_text.contains("column named_faction must be NOT NULL"),
+            "v32 guard must reject nullable identity columns, actual {error_text}"
+        );
+        let user_version: i32 = connection
+            .query_row("PRAGMA user_version;", [], |row| row.get(0))
+            .expect("user_version should remain readable");
+        assert_eq!(
+            user_version, 31,
+            "nullable v32 schema must not advance user_version, actual {user_version}"
         );
     }
 }
