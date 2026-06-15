@@ -1,6 +1,6 @@
-# plan-bughunt-r3-findings-v1（骨架）
+# plan-bughunt-r3-findings-v1（active）
 
-> **骨架（草案）**。一句话主题：代码库自检 bug-hunt **round3**（fresh origin/main worktree @ `341fc4461` 为 ROOT，换角度：inventory/loot 守恒 · 离屏 hydrate 复活吞真元 · 视听完整性 · persistence 竞态 · 状态机生命周期）确认的 **6 个新真 bug**——含 **1 critical（hydrate 复活逻辑死亡 NPC + 真元双计，守恒红线）**。已对 r1+r2 去重，全部 real-on-main。
+> **Active（已从 skeleton 升级，待逐项消费）**。一句话主题：代码库自检 bug-hunt **round3**（fresh origin/main worktree @ `341fc4461` 为 ROOT，换角度：inventory/loot 守恒 · 离屏 hydrate 复活吞真元 · 视听完整性 · persistence 竞态 · 状态机生命周期）确认的 **6 个新真 bug**——含 **1 critical（hydrate 复活逻辑死亡 NPC + 真元双计，守恒红线）**。已对 r1+r2 去重，全部 real-on-main。
 
 > 立项动机：round3 用修正后的方法论（**fresh origin/main worktree 为 ROOT**，不再扫主仓 stale 工作目录），9 候选 → 怀疑者对抗 → opus 逐条 Read/Grep 复核裁决，6 REAL / 3 NOT_REAL（NOT_REAL：sword-path AV 已 plan defer / coffin_grade TOCTOU 同步链无并发 / tribulation_kind wildcard 无构造点，宁漏不误报已剔除）。
 

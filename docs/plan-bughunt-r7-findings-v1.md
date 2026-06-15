@@ -1,6 +1,6 @@
-# plan-bughunt-r7-findings-v1（骨架）
+# plan-bughunt-r7-findings-v1（active）
 
-> **骨架（草案）**。一句话主题：代码库自检 bug-hunt **round7**（fresh origin/main worktree ROOT，转深角度：registry 注册健壮性 · 跨子系统多跳集成链 · Bevy 系统调度 · Redis IPC 往返 · client 输入/屏幕生命周期）确认的 **10 个新真 bug**——含**重磅系统发现：InsightModifiers 五字段全断链（顿悟投资的通用天赋 modifier 写入却无任何系统读取 → insight 投资全失效）**。已对 r1-r6 去重，全部 real-on-main。
+> **Active（已从 skeleton 升级，待逐项消费）**。一句话主题：代码库自检 bug-hunt **round7**（fresh origin/main worktree ROOT，转深角度：registry 注册健壮性 · 跨子系统多跳集成链 · Bevy 系统调度 · Redis IPC 往返 · client 输入/屏幕生命周期）确认的 **10 个新真 bug**——含**重磅系统发现：InsightModifiers 五字段全断链（顿悟投资的通用天赋 modifier 写入却无任何系统读取 → insight 投资全失效）**。已对 r1-r6 去重，全部 real-on-main。
 
 > 立项动机：round7 转深角度，5 finder → 怀疑者对抗 → opus 逐条**实地 Read/Grep 全树**复核，15 候选 → **10 REAL / 5 NOT_REAL**。本轮最大收获是 **InsightModifiers integration-chain-break 簇**（5 字段写入端齐全、消费端从未接线，与 r4/r6 的 status-effect 孤岛同根因——"modifier 写入 → 消费系统读取"这一跳系统性缺失），外加 client UI 生命周期/输入残留 2 处 + registry/IPC/schema 文档漂移 3 处。
 

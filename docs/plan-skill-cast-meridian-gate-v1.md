@@ -1,6 +1,6 @@
-# plan-skill-cast-meridian-gate-v1（骨架）
+# plan-skill-cast-meridian-gate-v1（active）
 
-> **骨架（草案）**。一句话主题：玩家 skill-bar 施放路径**统一消费 `SkillMeridianDependencies`** 校验依赖经脉——修复「断经脉仍能施放对应招式」的物理可见性破坏（worldview §四:286 红线）。
+> **Active（已从 skeleton 升级，待逐项消费）**。一句话主题：玩家 skill-bar 施放路径**统一消费 `SkillMeridianDependencies`** 校验依赖经脉——修复「断经脉仍能施放对应招式」的物理可见性破坏（worldview §四:286 红线）。
 
 > 立项动机：bug-hunt round1 确认 `woliu.vortex` 漏校验 Lung 经脉（major）：`combat/known_techniques.rs:427` 声明 `required_meridians=[Lung]`，但仅在 `technique_scroll.rs:131-149` **学技能时**校验；`resolve_woliu_vortex_skill`/`resolve_vortex_toggle_in_world` 施放路径无任何 `check_meridian_*`；玩家 cast 路径 `client_request_handler.rs:7101-7104` 直调 skill_fn 从不查 `SkillMeridianDependencies`（该资源仅 NPC/sword_path/movement 消费，skill/network 零引用）。致命可达：`woliu.rs:771-772` pick_hand_meridian 恒返回 Lung，woliu 自身 EnvQiTooLow backfire `woliu.rs:306` sever_meridian(Lung) → 学会→低灵域施放反噬断肺经→**仍可继续施放本招**。这正是 docs/CLAUDE.md 红旗「断肺经飞剑手仍能 cast」。
 

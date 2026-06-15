@@ -1,6 +1,6 @@
-# plan-bughunt-r4-findings-v1（骨架）
+# plan-bughunt-r4-findings-v1（active）
 
-> **骨架（草案）**。一句话主题：代码库自检 bug-hunt **round4**（fresh origin/main worktree ROOT，换角度：time/cooldown 边界 · agent↔server 命令回路 · 货币守恒(骨币/灵石) · buff 生命周期 · zone 边界守恒）确认的 **8 个新真 bug**——含 **1 critical（qi_zero_decay 跨重启 u64 下溢 → 重连瞬时不可逆降境）**。已对 r1+r2+r3 去重（含已剔除项），全部 real-on-main。
+> **Active（已从 skeleton 升级，待逐项消费）**。一句话主题：代码库自检 bug-hunt **round4**（fresh origin/main worktree ROOT，换角度：time/cooldown 边界 · agent↔server 命令回路 · 货币守恒(骨币/灵石) · buff 生命周期 · zone 边界守恒）确认的 **8 个新真 bug**——含 **1 critical（qi_zero_decay 跨重启 u64 下溢 → 重连瞬时不可逆降境）**。已对 r1+r2+r3 去重（含已剔除项），全部 real-on-main。
 
 > 立项动机：round4 用 fresh origin/main worktree 为 ROOT，5 全新角度 finder → 怀疑者对抗 → opus 逐条 Read/Grep 复核，8 候选 **全部 REAL**（本轮无误报，去重清单覆盖 r1+r2+r3 已确认 25 项 + 已剔除 4 项）。本轮主线：**alchemy 副作用/buff 整簇接线断裂**（QiCapPermMinus/QiRegenBoost emit 无 consumer + DuJieDan 减伤永久泄漏）与**交易/货币双目录不一致**。
 

@@ -1,6 +1,6 @@
-# plan-worldgen-raster-check-qidensity-fix-v1（骨架）
+# plan-worldgen-raster-check-qidensity-fix-v1（active）
 
-> **骨架（草案）**。一句话主题：修复 `raster_check.py` 的 qi_density 同源派生硬断言与历史 profile 既有 qi 值不收敛，导致 8 个 worldgen pytest pre-existing 失败。
+> **Active（已从 skeleton 升级，待逐项消费）**。一句话主题：修复 `raster_check.py` 的 qi_density 同源派生硬断言与历史 profile 既有 qi 值不收敛，导致 8 个 worldgen pytest pre-existing 失败。
 
 > 立项动机：worldgen-v4 P7 收官时发现 worldgen 全量 pytest **853 passed / 8 failed**，核实为 pre-existing（merge-base P6 commit 同样失败，worldgen-v4 改动未触碰）。根因：`worldgen/scripts/terrain_gen/harness/raster_check.py` 的 qi_density 同源派生硬断言（plan-worldgen-v4 P4 引入）对历史 profile 既有 qi 值不收敛 + 历史 profile 注册断言。
 

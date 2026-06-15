@@ -1,6 +1,6 @@
-# plan-bughunt-r5-findings-v1（骨架）
+# plan-bughunt-r5-findings-v1（active）
 
-> **骨架（草案）**。一句话主题：代码库自检 bug-hunt **round5**（fresh origin/main worktree ROOT，换角度：worldgen runtime · death/respawn/棺链路 · 经脉 declare 系统审计 · client VFX/动画注册完整性 · faction/声望）确认的 **7 个新真 bug**——含 **1 critical（复活/新建角色后不清 CoffinComponent → 玩家被 `pin_coffin_players` 每 tick 永久传送回棺内）**。已对 r1-r4 去重，全部 real-on-main。
+> **Active（已从 skeleton 升级，待逐项消费）**。一句话主题：代码库自检 bug-hunt **round5**（fresh origin/main worktree ROOT，换角度：worldgen runtime · death/respawn/棺链路 · 经脉 declare 系统审计 · client VFX/动画注册完整性 · faction/声望）确认的 **7 个新真 bug**——含 **1 critical（复活/新建角色后不清 CoffinComponent → 玩家被 `pin_coffin_players` 每 tick 永久传送回棺内）**。已对 r1-r4 去重，全部 real-on-main。
 
 > 立项动机：round5 用 fresh origin/main worktree 为 ROOT，5 全新角度 finder → 怀疑者对抗 → opus 逐条 Read/Grep 复核，8 候选 → 7 REAL / 1 NOT_REAL（dismiss：raster decoration_palette 无上界——manifest 受信 worldgen 产物，仅理论 OOM）。本轮两条主线：**VFX emit-orphan 整簇**（skull_fiend/supply_coffin/hybrid_beast 共 8 个粒子 id client 零注册，延续 r3 VoidPath 主题）+ **棺/派系跨会话状态机漏分支**。
 

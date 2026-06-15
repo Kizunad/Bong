@@ -1,6 +1,6 @@
-# plan-ci-redis-pull-resilience-v1（骨架）
+# plan-ci-redis-pull-resilience-v1（active）
 
-> **骨架（草案）**。一句话主题：e2e CI 的 "Bring up Redis test service" 步频繁因 Docker Hub registry 超时失败（infra flake），加重试 / 预拉缓存 / GHCR mirror 提升 CI 韧性。
+> **Active（已从 skeleton 升级，待逐项消费）**。一句话主题：e2e CI 的 "Bring up Redis test service" 步频繁因 Docker Hub registry 超时失败（infra flake），加重试 / 预拉缓存 / GHCR mirror 提升 CI 韧性。
 
 > 立项动机：worldgen-v4 + 审阅 skeleton 连续多个 PR（#561/#562/#563）的 PR-event e2e run 在 "Bring up Redis test service"（`docker compose -f docker-compose.test.yml up -d redis --wait`）死于 `Error Get "https://registry-1.docker.io/v2/": net/http: request canceled ... Client.Timeout exceeded`。同 tip 的 workflow_dispatch e2e 常 success（Docker Hub 间歇性），但 PR check 红逼迫 --admin 合并，掩盖真实 gate。
 

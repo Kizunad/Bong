@@ -1,6 +1,6 @@
-# plan-qi-conservation-leaks-v1（骨架）
+# plan-qi-conservation-leaks-v1（active）
 
-> **骨架（skeleton / 草案）**。一句话主题：闭合代码库自检 bug-hunt 第 1 轮确认的一簇**真元守恒泄漏（吞真元红线）**——多处招式释放/法器开光/养护扣减真元却不归还 zone 或凭空注入，违反 worldview §二「全服灵气总量恒定」+ docs/CLAUDE.md 守恒律红旗。统一接 `qi_physics::ledger` / `qi_release_to_zone`。
+> **Active（已从 skeleton 升级，待逐项消费）**。一句话主题：闭合代码库自检 bug-hunt 第 1 轮确认的一簇**真元守恒泄漏（吞真元红线）**——多处招式释放/法器开光/养护扣减真元却不归还 zone 或凭空注入，违反 worldview §二「全服灵气总量恒定」+ docs/CLAUDE.md 守恒律红旗。统一接 `qi_physics::ledger` / `qi_release_to_zone`。
 
 > 立项动机：worldgen-v4 收官后代码库自检 bug-hunt round1（8 子系统 finder→对抗裁决）确认 6 条吞真元，含 **1 critical**（开光真元凭空注入=通胀）。`plan-qi-physics-patch-v1`（已 finished）P2-7 + 行 174 明确把「招式释放只扣不还」列为**遗留**——本 plan 承接闭合，并扩展到 forge 模块（开光/养护/进化整簇未接 qi_physics）。
 
