@@ -151,6 +151,7 @@ use crate::skill::config::{
     SkillConfigRejectReason, SkillConfigSchemas, SkillConfigSnapshot, SkillConfigStore,
 };
 use crate::skill::events::{SkillScrollUsed, SkillXpGain, XpGainSource};
+use crate::social::components::{faction_for_zone, FactionReputation, FactionReputationTier};
 use crate::social::events::{
     SparringInviteResponseEvent, SparringInviteResponseKind, SpiritNicheActivateGuardianRequest,
     SpiritNicheCoordinateRevealRequest, SpiritNichePlaceRequest, SpiritNicheRepairRequest,
@@ -382,6 +383,8 @@ pub struct NpcEngagementRequestParams<'w, 's> {
     pub positions: Query<'w, 's, &'static valence::prelude::Position>,
     pub dimensions: Query<'w, 's, &'static CurrentDimension>,
     pub identities: Query<'w, 's, &'static PlayerIdentities, With<Client>>,
+    pub faction_reputations: Query<'w, 's, &'static FactionReputation, With<Client>>,
+    pub zone_registry: Option<Res<'w, ZoneRegistry>>,
     pub audio_events: Option<ResMut<'w, Events<PlaySoundRecipeRequest>>>,
 }
 
@@ -7608,6 +7611,7 @@ struct NpcEngagementTarget {
     entity: Entity,
     archetype: NpcArchetype,
     reputation_to_player: i32,
+    faction_reputation_tier: FactionReputationTier,
     display_name: String,
     greeting_text: String,
     position: DVec3,
@@ -7619,6 +7623,7 @@ struct NpcEngagementTarget {
 impl NpcEngagementTarget {
     fn can_trade(&self) -> bool {
         matches!(self.archetype, NpcArchetype::Rogue | NpcArchetype::Commoner)
+            && self.faction_reputation_tier != FactionReputationTier::Wanted
             && self.reputation_to_player >= -30
     }
 }
@@ -7651,19 +7656,56 @@ fn resolve_npc_engagement_target(
         return None;
     }
     let player_identities = npc_params.identities.get(player).ok();
+    let player_faction_reputation = npc_params.faction_reputations.get(player).ok();
     let realm = cultivation
         .map(|cultivation| cultivation.realm)
         .unwrap_or(crate::cultivation::components::Realm::Awaken);
+    let npc_dimension = dimension_kind_for(&npc_params.dimensions, npc);
+    let npc_zone_name = npc_params
+        .zone_registry
+        .as_deref()
+        .and_then(|zones| zones.find_zone(npc_dimension, npc_position))
+        .map(|zone| zone.name.as_str());
+    let faction_reputation_tier = player_faction_reputation
+        .and_then(|reputation| npc_zone_name.map(|zone| reputation.tier_for_zone(zone)))
+        .unwrap_or(FactionReputationTier::Normal);
     Some(NpcEngagementTarget {
         entity: npc,
         archetype: *archetype,
-        reputation_to_player: reputation_to_player_score_for_client(membership, player_identities),
+        reputation_to_player: reputation_to_player_score_for_npc_zone(
+            membership,
+            player_identities,
+            player_faction_reputation,
+            npc_zone_name,
+        ),
+        faction_reputation_tier,
         display_name: npc_display_name(*archetype, realm, membership),
         greeting_text: greeting_text_for_archetype(*archetype).to_string(),
         position: npc_position,
         // plan-territory-v1 P1: clone 可选信誉组件，trade handler 中叠加霸主 rep 加成。
         npc_player_rep: npc_player_rep.cloned(),
     })
+}
+
+fn reputation_to_player_score_for_npc_zone(
+    membership: Option<&FactionMembership>,
+    player_identities: Option<&PlayerIdentities>,
+    faction_reputation: Option<&FactionReputation>,
+    zone_name: Option<&str>,
+) -> i32 {
+    let Some(faction_score) = faction_reputation.and_then(|reputation| {
+        zone_name
+            .and_then(faction_for_zone)
+            .map(|faction| reputation.score(faction))
+    }) else {
+        return reputation_to_player_score_for_client(membership, player_identities);
+    };
+    let faction_baseline = membership
+        .map(crate::network::npc_metadata::reputation_to_player_score)
+        .unwrap_or_default();
+    faction_baseline
+        .saturating_add(faction_score)
+        .clamp(-100, 100)
 }
 
 fn npc_trade_catalog_entry(
@@ -11373,6 +11415,52 @@ mod take_pill_tests {
         assert!(
             matches!(forced_spoil, SpoilCheckOutcome::Safe { .. }),
             "forced winter phase should slow spoil checks immediately"
+        );
+    }
+}
+
+#[cfg(test)]
+mod named_faction_reputation_tests {
+    use super::*;
+    use crate::npc::faction::NamedFactionId;
+
+    #[test]
+    fn npc_zone_faction_reputation_replaces_global_identity_renown() {
+        let mut identities = PlayerIdentities::with_default("Azure", 0);
+        identities.active_mut().unwrap().renown.notoriety = 80;
+        let mut faction_reputation = FactionReputation::default();
+        faction_reputation.apply_delta(NamedFactionId::QingyunHunters, 60);
+
+        let score = reputation_to_player_score_for_npc_zone(
+            None,
+            Some(&identities),
+            Some(&faction_reputation),
+            Some("qingyun_peaks"),
+        );
+
+        assert_eq!(
+            score, 60,
+            "青云 zone NPC 应读取 QingyunHunters per_faction 信誉，而不是全局 identity Renown"
+        );
+    }
+
+    #[test]
+    fn npc_zone_faction_reputation_falls_back_to_identity_for_unknown_zone() {
+        let mut identities = PlayerIdentities::with_default("Azure", 0);
+        identities.active_mut().unwrap().renown.notoriety = 80;
+        let mut faction_reputation = FactionReputation::default();
+        faction_reputation.apply_delta(NamedFactionId::QingyunHunters, 60);
+
+        let score = reputation_to_player_score_for_npc_zone(
+            None,
+            Some(&identities),
+            Some(&faction_reputation),
+            Some("spawn"),
+        );
+
+        assert_eq!(
+            score, -80,
+            "未映射到具名势力的 zone 应保持 legacy identity Renown fallback"
         );
     }
 }

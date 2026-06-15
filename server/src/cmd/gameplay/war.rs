@@ -13,23 +13,27 @@ use valence::command::handler::CommandResultEvent;
 use valence::command::parsers::CommandArg;
 use valence::command::{AddCommand, Command};
 use valence::message::SendMessage;
+use valence::prelude::bevy_ecs::system::SystemParam;
 use valence::prelude::{
-    App, Client, EventReader, EventWriter, Position, Query, Res, Update, Username, With,
+    bevy_ecs, App, Client, Commands, EventReader, EventWriter, Position, Query, Res, Update,
+    Username, With,
 };
 
 use crate::npc::faction::{
-    EmergentGroupId, FactionRelationMatrix, NamedFactionId, NamedFactionLeader,
-    NamedFactionRegistry,
+    EmergentGroupId, FactionId, FactionRelationMatrix, FactionStatus, NamedFactionId,
+    NamedFactionLeader, NamedFactionRegistry,
 };
 use crate::npc::movement::GameTick;
 use crate::npc::war::{WarParticipateIntent, WarRole};
 use crate::player::state::canonical_player_id;
+use crate::social::components::{FactionMembership, FactionReputation};
 use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::zone::ZoneRegistry;
 
 /// 玩家在线参与涌现冲突的 brigadier 命令。
 ///
-/// - `/faction join <group>`     → Enlist（投靠某匿名群体）
+/// - `/faction join <group>`     → Enlist（投靠某匿名群体，兼容旧数字路径）
+/// - `/faction join <named_id>`  → 挂靠具名散修势力（plan-faction-expansion-v1 P3）
 /// - `/faction mercenary <group>` → Mercenary（临时佣兵）
 /// - `/faction intercept`         → Intercept（截胡，双方都打）
 /// - `/faction list`              → 显示三势力关系矩阵（plan-faction-expansion-v1 P1）
@@ -39,7 +43,7 @@ use crate::world::zone::ZoneRegistry;
 #[derive(Debug, Clone, PartialEq)]
 pub enum FactionCmd {
     Join {
-        group: u32,
+        target: String,
     },
     Mercenary {
         group: u32,
@@ -56,10 +60,10 @@ impl Command for FactionCmd {
         graph
             .at(faction)
             .literal("join")
-            .argument("group")
-            .with_parser::<u32>()
+            .argument("target")
+            .with_parser::<String>()
             .with_executable(|input| FactionCmd::Join {
-                group: u32::parse_arg(input).unwrap(),
+                target: String::parse_arg(input).unwrap(),
             });
 
         graph
@@ -91,24 +95,44 @@ pub fn register(app: &mut App) {
         .add_systems(Update, handle_faction_list_cmd);
 }
 
+type FactionCommandClientItem<'a> = (
+    &'a Username,
+    &'a Position,
+    Option<&'a CurrentDimension>,
+    Option<&'a FactionReputation>,
+);
+
+type FactionCommandClientQuery<'w, 's> =
+    Query<'w, 's, FactionCommandClientItem<'static>, With<Client>>;
+
+#[derive(SystemParam)]
+pub struct FactionWarCommandState<'w, 's> {
+    clients: FactionCommandClientQuery<'w, 's>,
+    zone_registry: Option<Res<'w, ZoneRegistry>>,
+    registry: Option<Res<'w, NamedFactionRegistry>>,
+    game_tick: Option<Res<'w, GameTick>>,
+    client_q: Query<'w, 's, &'static mut Client>,
+}
+
 /// brigadier handler：按当前坐标查 zone，组装并发送 `WarParticipateIntent`。
 pub fn handle_faction_war_cmd(
     mut events: EventReader<CommandResultEvent<FactionCmd>>,
-    clients: Query<(&Username, &Position, Option<&CurrentDimension>), With<Client>>,
-    zone_registry: Option<Res<ZoneRegistry>>,
+    mut commands: Commands,
     mut intents: EventWriter<WarParticipateIntent>,
-    game_tick: Option<Res<GameTick>>,
-    mut client_q: Query<&mut Client>,
+    mut state: FactionWarCommandState,
 ) {
-    let at_tick = game_tick
+    let at_tick = state
+        .game_tick
         .as_deref()
         .map(|t| u64::from(t.0))
         .unwrap_or_default();
 
-    let zone_registry = zone_registry.as_deref();
+    let zone_registry = state.zone_registry.as_deref();
+    let registry = state.registry.as_deref();
 
     for event in events.read() {
-        let Ok((username, position, maybe_dim)) = clients.get(event.executor) else {
+        let Ok((username, position, maybe_dim, reputation)) = state.clients.get(event.executor)
+        else {
             continue;
         };
 
@@ -132,10 +156,24 @@ pub fn handle_faction_war_cmd(
         }
 
         let (role, allied_group) = match &event.result {
-            FactionCmd::Join { group } => (
-                WarRole::Enlist,
-                Some(EmergentGroupId(u16::try_from(*group).unwrap_or(u16::MAX))),
-            ),
+            FactionCmd::Join { target } => {
+                if let Ok(group) = target.parse::<u32>() {
+                    (
+                        WarRole::Enlist,
+                        Some(EmergentGroupId(u16::try_from(group).unwrap_or(u16::MAX))),
+                    )
+                } else {
+                    handle_named_faction_join(
+                        event.executor,
+                        target,
+                        registry,
+                        reputation,
+                        &mut commands,
+                        &mut state.client_q,
+                    );
+                    continue;
+                }
+            }
             FactionCmd::Mercenary { group } => (
                 WarRole::Mercenary,
                 Some(EmergentGroupId(u16::try_from(*group).unwrap_or(u16::MAX))),
@@ -154,9 +192,86 @@ pub fn handle_faction_war_cmd(
         });
 
         // 向玩家回一条提示（具体结果由 telemetry 反映；intent 可能在下一帧被拒绝）
-        if let Ok(mut client) = client_q.get_mut(event.executor) {
+        if let Ok(mut client) = state.client_q.get_mut(event.executor) {
             client.send_chat_message("[faction] 参与意图已发送，等待处理……");
         }
+    }
+}
+
+fn handle_named_faction_join(
+    player: valence::prelude::Entity,
+    target: &str,
+    registry: Option<&NamedFactionRegistry>,
+    reputation: Option<&FactionReputation>,
+    commands: &mut Commands,
+    client_q: &mut Query<&mut Client>,
+) {
+    let Some(named_faction) = parse_named_faction_target(target) else {
+        if let Ok(mut client) = client_q.get_mut(player) {
+            client.send_chat_message(format!(
+                "[faction] 未知具名势力 `{target}`；可用：qingyun_hunters / cangyuan_merchants / north_waste_drifters"
+            ));
+        }
+        return;
+    };
+
+    let Some(faction_entry) = registry.and_then(|registry| registry.get(named_faction)) else {
+        if let Ok(mut client) = client_q.get_mut(player) {
+            client.send_chat_message("[faction] 具名势力注册表尚未初始化。");
+        }
+        return;
+    };
+
+    if faction_entry.status == FactionStatus::Decayed {
+        if let Ok(mut client) = client_q.get_mut(player) {
+            client.send_chat_message(format!(
+                "[faction] {} 已经消亡，不能再挂靠。",
+                faction_entry.display_name
+            ));
+        }
+        return;
+    }
+
+    let score = reputation
+        .map(|reputation| reputation.score(named_faction))
+        .unwrap_or_default();
+    if score < 0 {
+        if let Ok(mut client) = client_q.get_mut(player) {
+            client.send_chat_message(format!(
+                "[faction] {} 对你的信誉为 {score}，低于中性，拒绝挂靠。",
+                faction_entry.display_name
+            ));
+        }
+        return;
+    }
+
+    commands.entity(player).insert(FactionMembership {
+        faction: legacy_faction_id_for_named_faction(named_faction),
+        named_faction: Some(named_faction),
+        rank: 0,
+        loyalty: score.max(10),
+        betrayal_count: 0,
+        invite_block_until_tick: None,
+        permanently_refused: false,
+    });
+    if let Ok(mut client) = client_q.get_mut(player) {
+        client.send_chat_message(format!("[faction] 已挂靠 {}。", faction_entry.display_name));
+    }
+}
+
+fn parse_named_faction_target(value: &str) -> Option<NamedFactionId> {
+    NamedFactionId::from_str_name(value).or_else(|| {
+        NamedFactionId::all()
+            .into_iter()
+            .find(|faction| faction.display_name() == value)
+    })
+}
+
+fn legacy_faction_id_for_named_faction(faction: NamedFactionId) -> FactionId {
+    match faction {
+        NamedFactionId::QingyunHunters => FactionId::Attack,
+        NamedFactionId::CangyuanMerchants => FactionId::Defend,
+        NamedFactionId::NorthWasteDrifters => FactionId::Neutral,
     }
 }
 
@@ -279,7 +394,13 @@ mod tests {
     fn faction_join_emits_enlist_intent() {
         let mut app = setup_app();
         let player = spawn_test_client(&mut app, "Alice", [0.0, 64.0, 0.0]);
-        send(&mut app, player, FactionCmd::Join { group: 1 });
+        send(
+            &mut app,
+            player,
+            FactionCmd::Join {
+                target: "1".to_string(),
+            },
+        );
         run_update(&mut app);
 
         let intents = drain_war_intents(&app);
@@ -303,6 +424,87 @@ mod tests {
             intent.allied_group
         );
         assert_eq!(intent.player_id, "offline:Alice");
+    }
+
+    #[test]
+    fn named_faction_join_inserts_membership_when_reputation_is_neutral() {
+        let mut app = setup_app();
+        app.insert_resource(NamedFactionRegistry::startup_default());
+        let player = spawn_test_client(&mut app, "Alice", [0.0, 64.0, 0.0]);
+        app.world_mut()
+            .entity_mut(player)
+            .insert(FactionReputation::default());
+        send(
+            &mut app,
+            player,
+            FactionCmd::Join {
+                target: "qingyun_hunters".to_string(),
+            },
+        );
+        run_update(&mut app);
+
+        assert!(
+            drain_war_intents(&app).is_empty(),
+            "具名势力 join 不应复用匿名 WarParticipateIntent 路径"
+        );
+        let membership = app.world().get::<FactionMembership>(player).unwrap();
+        assert_eq!(
+            membership.named_faction,
+            Some(NamedFactionId::QingyunHunters)
+        );
+        assert_eq!(membership.faction, FactionId::Attack);
+    }
+
+    #[test]
+    fn named_faction_join_rejects_negative_reputation() {
+        let mut app = setup_app();
+        app.insert_resource(NamedFactionRegistry::startup_default());
+        let player = spawn_test_client(&mut app, "Alice", [0.0, 64.0, 0.0]);
+        let mut reputation = FactionReputation::default();
+        reputation.apply_delta(NamedFactionId::QingyunHunters, -1);
+        app.world_mut().entity_mut(player).insert(reputation);
+        send(
+            &mut app,
+            player,
+            FactionCmd::Join {
+                target: "qingyun_hunters".to_string(),
+            },
+        );
+        run_update(&mut app);
+
+        assert!(
+            app.world().get::<FactionMembership>(player).is_none(),
+            "低于中性信誉时不能挂靠具名势力"
+        );
+    }
+
+    #[test]
+    fn named_faction_join_rejects_decayed_faction() {
+        let mut registry = NamedFactionRegistry::startup_default();
+        registry
+            .get_mut(NamedFactionId::QingyunHunters)
+            .unwrap()
+            .set_status(FactionStatus::Decayed);
+
+        let mut app = setup_app();
+        app.insert_resource(registry);
+        let player = spawn_test_client(&mut app, "Alice", [0.0, 64.0, 0.0]);
+        app.world_mut()
+            .entity_mut(player)
+            .insert(FactionReputation::default());
+        send(
+            &mut app,
+            player,
+            FactionCmd::Join {
+                target: "qingyun_hunters".to_string(),
+            },
+        );
+        run_update(&mut app);
+
+        assert!(
+            app.world().get::<FactionMembership>(player).is_none(),
+            "Decayed 势力不能再被玩家挂靠"
+        );
     }
 
     #[test]

@@ -1432,6 +1432,7 @@ fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<()> {
             CREATE TABLE IF NOT EXISTS social_faction_memberships (
                 char_id TEXT PRIMARY KEY,
                 faction TEXT,
+                named_faction TEXT,
                 rank INTEGER NOT NULL CHECK (rank >= 0),
                 loyalty INTEGER NOT NULL,
                 betrayal_count INTEGER NOT NULL CHECK (betrayal_count >= 0),

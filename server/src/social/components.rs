@@ -1,8 +1,9 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 use valence::prelude::{bevy_ecs, Component, Entity};
 
+use crate::npc::faction::NamedFactionId;
 use crate::schema::social::RenownTagV1;
 
 pub type CharId = String;
@@ -250,6 +251,8 @@ pub struct ExposureEvent {
 #[derive(Debug, Clone, Component, Serialize, Deserialize, PartialEq, Eq)]
 pub struct FactionMembership {
     pub faction: crate::npc::faction::FactionId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub named_faction: Option<NamedFactionId>,
     pub rank: u8,
     pub loyalty: i32,
     #[serde(default)]
@@ -258,6 +261,70 @@ pub struct FactionMembership {
     pub invite_block_until_tick: Option<Tick>,
     #[serde(default)]
     pub permanently_refused: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FactionReputationTier {
+    High,
+    Medium,
+    Normal,
+    Low,
+    Wanted,
+}
+
+#[derive(Debug, Clone, Default, Component, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FactionReputation {
+    #[serde(default)]
+    pub per_faction: HashMap<NamedFactionId, i32>,
+}
+
+impl FactionReputation {
+    pub const MIN_SCORE: i32 = -100;
+    pub const MAX_SCORE: i32 = 100;
+
+    pub fn score(&self, faction: NamedFactionId) -> i32 {
+        self.per_faction.get(&faction).copied().unwrap_or_default()
+    }
+
+    pub fn apply_delta(&mut self, faction: NamedFactionId, delta: i32) -> i32 {
+        let next = self
+            .score(faction)
+            .saturating_add(delta)
+            .clamp(Self::MIN_SCORE, Self::MAX_SCORE);
+        self.per_faction.insert(faction, next);
+        next
+    }
+
+    pub fn tier(&self, faction: NamedFactionId) -> FactionReputationTier {
+        tier_for_score(self.score(faction))
+    }
+
+    pub fn tier_for_zone(&self, zone: &str) -> FactionReputationTier {
+        faction_for_zone(zone)
+            .map(|faction| self.tier(faction))
+            .unwrap_or(FactionReputationTier::Normal)
+    }
+}
+
+pub fn faction_for_zone(zone: &str) -> Option<NamedFactionId> {
+    NamedFactionId::all()
+        .into_iter()
+        .find(|faction| faction.zone_anchor() == zone)
+}
+
+pub fn tier_for_score(score: i32) -> FactionReputationTier {
+    if score > 50 {
+        FactionReputationTier::High
+    } else if score >= 10 {
+        FactionReputationTier::Medium
+    } else if score < -50 {
+        FactionReputationTier::Wanted
+    } else if score < -10 {
+        FactionReputationTier::Low
+    } else {
+        FactionReputationTier::Normal
+    }
 }
 
 #[derive(Debug, Clone, Component, PartialEq, Eq)]
@@ -324,5 +391,67 @@ mod tests {
         }
         assert!(guardian.is_decayed(101));
         assert!(!guardian.consume_charge());
+    }
+
+    #[test]
+    fn faction_reputation_delta_clamps_to_plan_range() {
+        let mut reputation = FactionReputation::default();
+        assert_eq!(
+            reputation.apply_delta(NamedFactionId::QingyunHunters, 250),
+            FactionReputation::MAX_SCORE
+        );
+        assert_eq!(
+            reputation.apply_delta(NamedFactionId::QingyunHunters, -500),
+            FactionReputation::MIN_SCORE
+        );
+    }
+
+    #[test]
+    fn faction_reputation_tiers_follow_plan_thresholds() {
+        assert_eq!(tier_for_score(51), FactionReputationTier::High);
+        assert_eq!(tier_for_score(50), FactionReputationTier::Medium);
+        assert_eq!(tier_for_score(10), FactionReputationTier::Medium);
+        assert_eq!(tier_for_score(0), FactionReputationTier::Normal);
+        assert_eq!(tier_for_score(-10), FactionReputationTier::Normal);
+        assert_eq!(tier_for_score(-11), FactionReputationTier::Low);
+        assert_eq!(tier_for_score(-50), FactionReputationTier::Low);
+        assert_eq!(tier_for_score(-51), FactionReputationTier::Wanted);
+    }
+
+    #[test]
+    fn faction_for_zone_maps_named_anchors() {
+        assert_eq!(
+            faction_for_zone("qingyun_peaks"),
+            Some(NamedFactionId::QingyunHunters)
+        );
+        assert_eq!(
+            faction_for_zone("blood_valley"),
+            Some(NamedFactionId::CangyuanMerchants)
+        );
+        assert_eq!(
+            faction_for_zone("north_wastes"),
+            Some(NamedFactionId::NorthWasteDrifters)
+        );
+        assert_eq!(faction_for_zone("spawn"), None);
+    }
+
+    #[test]
+    fn faction_reputation_tier_for_zone_uses_zone_anchor() {
+        let mut reputation = FactionReputation::default();
+        reputation.apply_delta(NamedFactionId::QingyunHunters, 60);
+        reputation.apply_delta(NamedFactionId::CangyuanMerchants, -60);
+
+        assert_eq!(
+            reputation.tier_for_zone("qingyun_peaks"),
+            FactionReputationTier::High
+        );
+        assert_eq!(
+            reputation.tier_for_zone("blood_valley"),
+            FactionReputationTier::Wanted
+        );
+        assert_eq!(
+            reputation.tier_for_zone("spawn"),
+            FactionReputationTier::Normal
+        );
     }
 }

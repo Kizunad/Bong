@@ -18,10 +18,11 @@ use std::collections::HashMap;
 
 use valence::prelude::{bevy_ecs, Client, EventReader, EventWriter, Query, Res, ResMut, Resource};
 
+use crate::npc::faction::{EmergentGroupId, NamedFactionId};
 use crate::npc::movement::GameTick;
 use crate::npc::war::{FactionWarOutcome, WarPhase, WarPhaseChanged, WarRole};
 use crate::schema::server_data::{FactionWarStateV1, ServerDataPayloadV1, ServerDataV1};
-use crate::social::events::SocialRenownDeltaEvent;
+use crate::social::events::{FactionReputationDeltaEvent, SocialRenownDeltaEvent};
 
 // ──────────────────────────── ZoneSpiritBonusStore ───────────────────────────
 
@@ -108,6 +109,7 @@ pub fn apply_war_zone_spirit_bonus(
 pub fn award_war_winner_renown(
     mut phase_events: EventReader<WarPhaseChanged>,
     mut renown_deltas: EventWriter<SocialRenownDeltaEvent>,
+    mut faction_reputation_deltas: EventWriter<FactionReputationDeltaEvent>,
     game_tick: Option<Res<GameTick>>,
 ) {
     let now = current_game_tick(game_tick.as_deref());
@@ -139,7 +141,26 @@ pub fn award_war_winner_renown(
                     "war_winner_mercenary".to_string()
                 },
             });
+            faction_reputation_deltas.send(FactionReputationDeltaEvent {
+                char_id: role_rec.player_id.clone(),
+                faction: named_faction_for_war_group(*winner_group),
+                delta: fame_delta,
+                tick: now,
+                reason: if fame_delta == 5 {
+                    "war_winner_enlist".to_string()
+                } else {
+                    "war_winner_mercenary".to_string()
+                },
+            });
         }
+    }
+}
+
+fn named_faction_for_war_group(group: EmergentGroupId) -> NamedFactionId {
+    match group.0 {
+        0 => NamedFactionId::QingyunHunters,
+        1 => NamedFactionId::CangyuanMerchants,
+        _ => NamedFactionId::NorthWasteDrifters,
     }
 }
 
@@ -301,6 +322,7 @@ mod tests {
         let mut world = World::new();
         world.insert_resource(Events::<WarPhaseChanged>::default());
         world.insert_resource(Events::<SocialRenownDeltaEvent>::default());
+        world.insert_resource(Events::<FactionReputationDeltaEvent>::default());
 
         {
             let mut queue = world.resource_mut::<Events<WarPhaseChanged>>();
@@ -326,6 +348,52 @@ mod tests {
             .iter_current_update_events()
             .cloned()
             .collect()
+    }
+
+    fn run_renown_and_faction_reputation_system(
+        player_roles: Vec<PlayerFactionRole>,
+        outcome: Option<FactionWarOutcome>,
+        phase: WarPhase,
+        zone: &str,
+    ) -> (
+        Vec<SocialRenownDeltaEvent>,
+        Vec<FactionReputationDeltaEvent>,
+    ) {
+        let mut world = World::new();
+        world.insert_resource(Events::<WarPhaseChanged>::default());
+        world.insert_resource(Events::<SocialRenownDeltaEvent>::default());
+        world.insert_resource(Events::<FactionReputationDeltaEvent>::default());
+
+        {
+            let mut queue = world.resource_mut::<Events<WarPhaseChanged>>();
+            queue.send(WarPhaseChanged {
+                war_id: WarId(1),
+                zone: zone.to_string(),
+                region_descriptor: format!("{zone}一带散修"),
+                phase,
+                groups: vec![EmergentGroupId(0), EmergentGroupId(1)],
+                outcome,
+                player_role_counts: PlayerRoleCounts::default(),
+                war_snapshot_player_roles: player_roles,
+                at_tick: 100,
+            });
+        }
+
+        let mut schedule = Schedule::default();
+        schedule.add_systems(award_war_winner_renown);
+        schedule.run(&mut world);
+
+        let renown = world
+            .resource::<Events<SocialRenownDeltaEvent>>()
+            .iter_current_update_events()
+            .cloned()
+            .collect();
+        let faction = world
+            .resource::<Events<FactionReputationDeltaEvent>>()
+            .iter_current_update_events()
+            .cloned()
+            .collect();
+        (renown, faction)
     }
 
     // ─────────── A. ZoneSpiritBonusStore 基础接口 ─────────────────────────────
@@ -582,6 +650,24 @@ mod tests {
     }
 
     #[test]
+    fn settle_awards_matching_faction_reputation_delta() {
+        let roles = vec![make_player_role("P1", WarRole::Enlist, Some(1))];
+        let (renown_events, faction_events) = run_renown_and_faction_reputation_system(
+            roles,
+            Some(make_outcome(1, 0)),
+            WarPhase::Settling,
+            "血谷",
+        );
+        assert_eq!(renown_events.len(), 1);
+        assert_eq!(faction_events.len(), 1);
+        let event = &faction_events[0];
+        assert_eq!(event.char_id, "P1");
+        assert_eq!(event.faction, NamedFactionId::CangyuanMerchants);
+        assert_eq!(event.delta, 5);
+        assert_eq!(event.reason, "war_winner_enlist");
+    }
+
+    #[test]
     fn settle_awards_mercenary_winner_fame_3() {
         // role=Mercenary allied=winner → fame_delta=3
         let roles = vec![make_player_role("P2", WarRole::Mercenary, Some(0))];
@@ -736,7 +822,7 @@ mod e2e_tests {
         constants::{QI_ZONE_UNIT_CAPACITY, WAR_WINNER_ZONE_REGEN_MULTIPLIER},
         excretion::regen_from_zone,
     };
-    use crate::social::events::SocialRenownDeltaEvent;
+    use crate::social::events::{FactionReputationDeltaEvent, SocialRenownDeltaEvent};
 
     use super::*;
 
@@ -747,6 +833,7 @@ mod e2e_tests {
         world.insert_resource(ZoneSpiritBonusStore::default());
         world.insert_resource(Events::<WarPhaseChanged>::default());
         world.insert_resource(Events::<SocialRenownDeltaEvent>::default());
+        world.insert_resource(Events::<FactionReputationDeltaEvent>::default());
         world
     }
 
