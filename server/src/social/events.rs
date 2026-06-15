@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use valence::prelude::{bevy_ecs, Entity, Event};
 
-use crate::npc::faction::FactionId;
+use crate::npc::faction::{FactionId, NamedFactionId};
 use crate::schema::social::{ExposureKindV1, RelationshipKindV1, RenownTagV1};
 use crate::social::components::GuardianKind;
 
@@ -30,6 +30,15 @@ pub struct SocialRenownDeltaEvent {
     pub fame_delta: i32,
     pub notoriety_delta: i32,
     pub tags_added: Vec<RenownTagV1>,
+    pub tick: u64,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Event, Serialize, Deserialize)]
+pub struct FactionReputationDeltaEvent {
+    pub char_id: String,
+    pub faction: NamedFactionId,
+    pub delta: i32,
     pub tick: u64,
     pub reason: String,
 }

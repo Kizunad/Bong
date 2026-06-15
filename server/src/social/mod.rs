@@ -21,17 +21,17 @@ use valence::prelude::{
 };
 
 use self::components::{
-    Anonymity, ExposureEvent, ExposureLog, FactionMembership, HouseGuardian, Relationship,
-    Relationships, Renown, SparringState, SpiritNiche,
+    Anonymity, ExposureEvent, ExposureLog, FactionMembership, FactionReputation, HouseGuardian,
+    Relationship, Relationships, Renown, SparringState, SpiritNiche,
 };
 use self::events::{
-    FactionMembershipDecisionEvent, FactionMembershipDecisionKind, NicheGuardianBroken,
-    NicheGuardianFatigue, NicheIntrusionAttempt, NicheIntrusionEvent, PlayerChatCollected,
-    SocialExposureEvent, SocialMentorshipEvent, SocialPactEvent, SocialRelationshipEvent,
-    SocialRenownDeltaEvent, SparringInviteRequest, SparringInviteResponseEvent,
-    SparringInviteResponseKind, SpiritNicheCoordinateRevealRequest, SpiritNichePlaceRequest,
-    SpiritNicheRepairRequest, SpiritNicheRevealRequest, SpiritNicheRevealSource, TradeOfferRequest,
-    TradeOfferResponseEvent,
+    FactionMembershipDecisionEvent, FactionMembershipDecisionKind, FactionReputationDeltaEvent,
+    NicheGuardianBroken, NicheGuardianFatigue, NicheIntrusionAttempt, NicheIntrusionEvent,
+    PlayerChatCollected, SocialExposureEvent, SocialMentorshipEvent, SocialPactEvent,
+    SocialRelationshipEvent, SocialRenownDeltaEvent, SparringInviteRequest,
+    SparringInviteResponseEvent, SparringInviteResponseKind, SpiritNicheCoordinateRevealRequest,
+    SpiritNichePlaceRequest, SpiritNicheRepairRequest, SpiritNicheRevealRequest,
+    SpiritNicheRevealSource, TradeOfferRequest, TradeOfferResponseEvent,
 };
 use crate::combat::components::{Lifecycle, LifecycleState};
 use crate::combat::events::{ApplyStatusEffectIntent, DeathEvent, StatusEffectKind};
@@ -50,7 +50,7 @@ use crate::network::inventory_snapshot_emit::send_inventory_snapshot_to_client;
 use crate::network::redis_bridge::RedisOutbound;
 use crate::network::{gameplay_vfx, vfx_event_emit::VfxEventRequest};
 use crate::network::{send_server_data_payload, RedisBridgeResource};
-use crate::npc::faction::FactionId;
+use crate::npc::faction::{FactionId, FactionStatus, NamedFactionRegistry};
 use crate::persistence::PersistenceSettings;
 use crate::player::gameplay::PendingGameplayNarrations;
 use crate::player::state::{
@@ -93,7 +93,15 @@ const SPIRIT_NICHE_REPAIR_NARRATIONS: [&str; 2] = [
 ];
 
 type CompanionPairKey = (String, String);
-type FactionMembershipSqlRow = (Option<String>, i64, i64, i64, Option<i64>, i64);
+type FactionMembershipSqlRow = (
+    Option<String>,
+    Option<String>,
+    i64,
+    i64,
+    i64,
+    Option<i64>,
+    i64,
+);
 type SpiritNicheSqlRow = ([i32; 3], u64, bool, Option<String>, bool, String);
 
 #[derive(Debug, Default, Resource)]
@@ -167,6 +175,7 @@ pub fn register(app: &mut App) {
     app.add_event::<SocialMentorshipEvent>();
     app.add_event::<SocialPactEvent>();
     app.add_event::<SocialRenownDeltaEvent>();
+    app.add_event::<FactionReputationDeltaEvent>();
     app.add_event::<SocialRelationshipEvent>();
     app.add_event::<SparringInviteRequest>();
     app.add_event::<SparringInviteResponseEvent>();
@@ -227,8 +236,13 @@ pub fn register(app: &mut App) {
                 .after(apply_social_exposures)
                 .after(apply_social_relationships)
                 .after(apply_social_renown_deltas)
+                .after(apply_faction_reputation_deltas)
                 .after(emit_niche_defense_server_data),
         ),
+    );
+    app.add_systems(
+        Update,
+        apply_faction_reputation_deltas.after(apply_social_renown_deltas),
     );
     app.add_systems(
         Update,
@@ -276,13 +290,20 @@ fn attach_social_bundle_to_joined_clients(
         let SocialComponentsSnapshot {
             anonymity,
             renown,
+            faction_reputation,
             relationships,
             exposure_log,
             faction_membership,
             spirit_niche,
         } = social_state;
         let mut entity_commands = commands.entity(entity);
-        entity_commands.insert((anonymity, renown, relationships, exposure_log));
+        entity_commands.insert((
+            anonymity,
+            renown,
+            relationships,
+            exposure_log,
+            faction_reputation,
+        ));
         if let Some(faction_membership) = faction_membership {
             entity_commands.insert(faction_membership);
         }
@@ -1379,6 +1400,64 @@ fn apply_social_renown_deltas(
     }
 }
 
+fn apply_faction_reputation_deltas(
+    registry: Option<Res<NamedFactionRegistry>>,
+    persistence: Option<Res<PersistenceSettings>>,
+    mut events: EventReader<FactionReputationDeltaEvent>,
+    mut players: Query<(&Lifecycle, &mut FactionReputation), With<Client>>,
+) {
+    for event in events.read() {
+        if registry
+            .as_deref()
+            .and_then(|registry| registry.get(event.faction))
+            .is_some_and(|faction| faction.status == FactionStatus::Decayed)
+        {
+            continue;
+        }
+
+        let mut persisted_reputation = None;
+        if let Some(persistence) = persistence.as_deref() {
+            match load_social_faction_reputation_from_persistence(
+                persistence,
+                event.char_id.as_str(),
+            ) {
+                Ok(mut reputation) => {
+                    reputation.apply_delta(event.faction, event.delta);
+                    if let Err(error) = persist_social_faction_reputation(
+                        persistence,
+                        event.char_id.as_str(),
+                        &reputation,
+                    ) {
+                        tracing::warn!(
+                            "[bong][social] failed to persist faction reputation for `{}`: {error}",
+                            event.char_id
+                        );
+                    }
+                    persisted_reputation = Some(reputation);
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        "[bong][social] failed to load faction reputation for `{}` before delta: {error}",
+                        event.char_id
+                    );
+                }
+            }
+        }
+
+        let Some((_, mut reputation)) = players
+            .iter_mut()
+            .find(|(lifecycle, _)| lifecycle.character_id == event.char_id)
+        else {
+            continue;
+        };
+        if let Some(persisted_reputation) = persisted_reputation {
+            *reputation = persisted_reputation;
+        } else {
+            reputation.apply_delta(event.faction, event.delta);
+        }
+    }
+}
+
 fn apply_faction_membership_decisions(
     persistence: Option<Res<PersistenceSettings>>,
     mut events: EventReader<FactionMembershipDecisionEvent>,
@@ -1415,6 +1494,7 @@ fn apply_faction_membership_decisions(
             })
             .unwrap_or(FactionMembership {
                 faction: event.faction,
+                named_faction: None,
                 rank: 0,
                 loyalty: 0,
                 betrayal_count: 0,
@@ -2200,6 +2280,7 @@ fn expire_companion_relationships(
 struct SocialComponentsSnapshot {
     anonymity: Anonymity,
     renown: Renown,
+    faction_reputation: FactionReputation,
     relationships: Relationships,
     exposure_log: ExposureLog,
     faction_membership: Option<FactionMembership>,
@@ -2214,6 +2295,7 @@ fn load_social_components(
     Ok(SocialComponentsSnapshot {
         anonymity: load_social_anonymity(&connection, char_id)?,
         renown: load_social_renown(&connection, char_id)?,
+        faction_reputation: load_social_faction_reputation(&connection, char_id)?,
         relationships: load_social_relationships(&connection, char_id)?,
         exposure_log: load_social_exposure_log(&connection, char_id)?,
         faction_membership: load_social_faction_membership(&connection, char_id)?,
@@ -2297,6 +2379,53 @@ fn load_social_renown_from_persistence(
 ) -> io::Result<Renown> {
     let connection = open_social_connection(persistence)?;
     load_social_renown(&connection, char_id)
+}
+
+fn load_social_faction_reputation_from_persistence(
+    persistence: &PersistenceSettings,
+    char_id: &str,
+) -> io::Result<FactionReputation> {
+    let connection = open_social_connection(persistence)?;
+    load_social_faction_reputation(&connection, char_id)
+}
+
+fn load_social_faction_reputation(
+    connection: &Connection,
+    char_id: &str,
+) -> io::Result<FactionReputation> {
+    let mut statement = connection
+        .prepare(
+            "
+            SELECT named_faction, score
+            FROM social_faction_reputations
+            WHERE char_id = ?1
+            ORDER BY named_faction ASC
+            ",
+        )
+        .map_err(io::Error::other)?;
+    let rows = statement
+        .query_map(params![char_id], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i32>(1)?))
+        })
+        .map_err(io::Error::other)?;
+    let mut reputation = FactionReputation::default();
+    for row in rows {
+        let (faction_label, score) = row.map_err(io::Error::other)?;
+        let faction = crate::npc::faction::NamedFactionId::from_str_name(faction_label.as_str())
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "unknown named faction `{faction_label}` in social_faction_reputations"
+                    ),
+                )
+            })?;
+        reputation.per_faction.insert(
+            faction,
+            score.clamp(FactionReputation::MIN_SCORE, FactionReputation::MAX_SCORE),
+        );
+    }
+    Ok(reputation)
 }
 
 fn load_social_relationships(connection: &Connection, char_id: &str) -> io::Result<Relationships> {
@@ -2405,7 +2534,7 @@ fn load_social_faction_membership(
     let row: Option<FactionMembershipSqlRow> = connection
         .query_row(
             "
-            SELECT faction, rank, loyalty, betrayal_count, invite_block_until_tick, permanently_refused
+            SELECT faction, named_faction, rank, loyalty, betrayal_count, invite_block_until_tick, permanently_refused
             FROM social_faction_memberships
             WHERE char_id = ?1
             ",
@@ -2418,6 +2547,7 @@ fn load_social_faction_membership(
                     row.get(3)?,
                     row.get(4)?,
                     row.get(5)?,
+                    row.get(6)?,
                 ))
             },
         )
@@ -2425,6 +2555,7 @@ fn load_social_faction_membership(
         .map_err(io::Error::other)?;
     let Some((
         faction_label,
+        named_faction_label,
         rank,
         loyalty,
         betrayal_count,
@@ -2438,8 +2569,12 @@ fn load_social_faction_membership(
         .as_deref()
         .and_then(FactionId::from_str_name)
         .unwrap_or(FactionId::Neutral);
+    let named_faction = named_faction_label
+        .as_deref()
+        .and_then(crate::npc::faction::NamedFactionId::from_str_name);
     Ok(Some(FactionMembership {
         faction,
+        named_faction,
         rank: u8::try_from(rank).unwrap_or_default(),
         loyalty: i32::try_from(loyalty).unwrap_or_default(),
         betrayal_count: u8::try_from(betrayal_count).unwrap_or_default(),
@@ -2721,6 +2856,39 @@ fn persist_social_renown(
     Ok(())
 }
 
+fn persist_social_faction_reputation(
+    persistence: &PersistenceSettings,
+    char_id: &str,
+    reputation: &FactionReputation,
+) -> io::Result<()> {
+    let mut connection = open_social_connection(persistence)?;
+    let wall_clock = current_unix_seconds();
+    let transaction = connection.transaction().map_err(io::Error::other)?;
+    transaction
+        .execute(
+            "DELETE FROM social_faction_reputations WHERE char_id = ?1",
+            params![char_id],
+        )
+        .map_err(io::Error::other)?;
+    for (faction, score) in &reputation.per_faction {
+        if *score == 0 {
+            continue;
+        }
+        transaction
+            .execute(
+                "
+                INSERT INTO social_faction_reputations (
+                    char_id, named_faction, score, schema_version, last_updated_wall
+                ) VALUES (?1, ?2, ?3, 1, ?4)
+                ",
+                params![char_id, faction.as_str(), score, wall_clock],
+            )
+            .map_err(io::Error::other)?;
+    }
+    transaction.commit().map_err(io::Error::other)?;
+    Ok(())
+}
+
 fn persist_social_faction_membership(
     persistence: &PersistenceSettings,
     char_id: &str,
@@ -2732,11 +2900,12 @@ fn persist_social_faction_membership(
         .execute(
             "
             INSERT INTO social_faction_memberships (
-                char_id, faction, rank, loyalty, betrayal_count, invite_block_until_tick,
+                char_id, faction, named_faction, rank, loyalty, betrayal_count, invite_block_until_tick,
                 permanently_refused, schema_version, last_updated_wall
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1, ?8)
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 1, ?9)
             ON CONFLICT(char_id) DO UPDATE SET
                 faction = excluded.faction,
+                named_faction = excluded.named_faction,
                 rank = excluded.rank,
                 loyalty = excluded.loyalty,
                 betrayal_count = excluded.betrayal_count,
@@ -2748,6 +2917,7 @@ fn persist_social_faction_membership(
             params![
                 char_id,
                 membership.faction.as_str(),
+                membership.named_faction.map(|faction| faction.as_str()),
                 i64::from(membership.rank),
                 i64::from(membership.loyalty),
                 i64::from(membership.betrayal_count),
@@ -3302,8 +3472,42 @@ mod tests {
         let entity_ref = app.world().entity(entity);
         assert!(entity_ref.contains::<Anonymity>());
         assert!(entity_ref.contains::<Renown>());
+        assert!(entity_ref.contains::<FactionReputation>());
         assert!(entity_ref.contains::<Relationships>());
         assert!(entity_ref.contains::<ExposureLog>());
+    }
+
+    #[test]
+    fn joined_client_hydrates_persisted_faction_reputation() {
+        let (persistence, data_dir) = social_persistence("faction-reputation-hydrate");
+        let mut persisted = FactionReputation::default();
+        persisted.apply_delta(crate::npc::faction::NamedFactionId::QingyunHunters, 42);
+        persist_social_faction_reputation(&persistence, "char:azure", &persisted)
+            .expect("faction reputation should persist before join");
+
+        let mut app = App::new();
+        app.insert_resource(persistence);
+        app.add_systems(Update, attach_social_bundle_to_joined_clients);
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut().entity_mut(entity).insert(Lifecycle {
+            character_id: "char:azure".to_string(),
+            ..Default::default()
+        });
+
+        app.update();
+
+        let reputation = app
+            .world()
+            .get::<FactionReputation>(entity)
+            .expect("joined client should receive FactionReputation component");
+        let score = reputation.score(crate::npc::faction::NamedFactionId::QingyunHunters);
+        assert_eq!(
+            score, 42,
+            "expected persisted QingyunHunters reputation to hydrate on join, actual {score}"
+        );
+
+        let _ = std::fs::remove_dir_all(data_dir);
     }
 
     #[test]
@@ -3434,6 +3638,132 @@ mod tests {
         assert_eq!(loaded.renown.fame, 3);
         assert_eq!(loaded.renown.notoriety, 5);
         assert_eq!(loaded.renown.tags[0].tag, "戮道者");
+
+        let _ = std::fs::remove_dir_all(data_dir);
+    }
+
+    #[test]
+    fn faction_reputation_delta_updates_matching_client_only() {
+        let mut app = App::new();
+        app.add_event::<FactionReputationDeltaEvent>();
+        app.add_systems(Update, apply_faction_reputation_deltas);
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let azure = app.world_mut().spawn(client_bundle).id();
+        app.world_mut().entity_mut(azure).insert((
+            Lifecycle {
+                character_id: "char:azure".to_string(),
+                ..Default::default()
+            },
+            FactionReputation::default(),
+            Renown::default(),
+        ));
+        let (other_bundle, _other_helper) = create_mock_client("Other");
+        let other = app.world_mut().spawn(other_bundle).id();
+        app.world_mut().entity_mut(other).insert((
+            Lifecycle {
+                character_id: "char:other".to_string(),
+                ..Default::default()
+            },
+            FactionReputation::default(),
+            Renown::default(),
+        ));
+        app.world_mut().send_event(FactionReputationDeltaEvent {
+            char_id: "char:azure".to_string(),
+            faction: crate::npc::faction::NamedFactionId::QingyunHunters,
+            delta: 25,
+            tick: 7,
+            reason: "test".to_string(),
+        });
+
+        app.update();
+
+        let reputation = app.world().get::<FactionReputation>(azure).unwrap();
+        let azure_score = reputation.score(crate::npc::faction::NamedFactionId::QingyunHunters);
+        assert_eq!(
+            azure_score, 25,
+            "expected char:azure QingyunHunters reputation to increase by 25 because event char_id matched, actual {azure_score}"
+        );
+        let other_reputation = app.world().get::<FactionReputation>(other).unwrap();
+        let other_score =
+            other_reputation.score(crate::npc::faction::NamedFactionId::QingyunHunters);
+        assert_eq!(
+            other_score, 0,
+            "expected char:other QingyunHunters reputation to stay 0 because event targets char:azure, actual {other_score}"
+        );
+        let renown = app.world().get::<Renown>(azure).unwrap();
+        assert_eq!(
+            (renown.fame, renown.notoriety),
+            (0, 0),
+            "FactionReputation 与全局 Renown 必须并行，不能互相污染"
+        );
+    }
+
+    #[test]
+    fn faction_reputation_delta_is_frozen_for_decayed_faction() {
+        let mut registry = crate::npc::faction::NamedFactionRegistry::startup_default();
+        registry
+            .get_mut(crate::npc::faction::NamedFactionId::QingyunHunters)
+            .unwrap()
+            .set_status(crate::npc::faction::FactionStatus::Decayed);
+
+        let mut app = App::new();
+        app.insert_resource(registry);
+        app.add_event::<FactionReputationDeltaEvent>();
+        app.add_systems(Update, apply_faction_reputation_deltas);
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let azure = app.world_mut().spawn(client_bundle).id();
+        app.world_mut().entity_mut(azure).insert((
+            Lifecycle {
+                character_id: "char:azure".to_string(),
+                ..Default::default()
+            },
+            FactionReputation::default(),
+        ));
+        app.world_mut().send_event(FactionReputationDeltaEvent {
+            char_id: "char:azure".to_string(),
+            faction: crate::npc::faction::NamedFactionId::QingyunHunters,
+            delta: 50,
+            tick: 7,
+            reason: "decayed".to_string(),
+        });
+
+        app.update();
+
+        let reputation = app.world().get::<FactionReputation>(azure).unwrap();
+        assert_eq!(
+            reputation.score(crate::npc::faction::NamedFactionId::QingyunHunters),
+            0,
+            "Decayed 势力的 per_faction 信誉必须冻结"
+        );
+    }
+
+    #[test]
+    fn faction_reputation_delta_persists_for_offline_character() {
+        let (persistence, data_dir) = social_persistence("offline-faction-reputation-delta");
+        let mut app = App::new();
+        app.insert_resource(persistence.clone());
+        app.add_event::<FactionReputationDeltaEvent>();
+        app.add_systems(Update, apply_faction_reputation_deltas);
+
+        app.world_mut().send_event(FactionReputationDeltaEvent {
+            char_id: "char:offline".to_string(),
+            faction: crate::npc::faction::NamedFactionId::CangyuanMerchants,
+            delta: 33,
+            tick: 55,
+            reason: "test_offline".to_string(),
+        });
+
+        app.update();
+
+        let loaded = load_social_components(&persistence, "char:offline")
+            .expect("offline faction reputation should persist");
+        let score = loaded
+            .faction_reputation
+            .score(crate::npc::faction::NamedFactionId::CangyuanMerchants);
+        assert_eq!(
+            score, 33,
+            "expected offline CangyuanMerchants reputation delta to persist, actual {score}"
+        );
 
         let _ = std::fs::remove_dir_all(data_dir);
     }
@@ -4202,6 +4532,7 @@ mod tests {
             .entity_mut(player)
             .insert(FactionMembership {
                 faction: FactionId::Attack,
+                named_faction: None,
                 rank: 0,
                 loyalty: 10,
                 betrayal_count: 0,

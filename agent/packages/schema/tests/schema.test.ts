@@ -3206,6 +3206,57 @@ describe("MutationEventV1 schema pin tests (plan-dandao-runtime-wiring-v1 P2)", 
     expectContractRejects("NamedFactionStateV1 缺 at_tick", validateNamedFactionStateV1Contract, data);
   });
 
+  it("NamedFactionEntryV1 拒绝 status/is_active 矛盾组合", () => {
+    const data = {
+      v: 1,
+      kind: "named_faction_state",
+      named_factions: [{
+        id: "qingyun_hunters",
+        display_name: "青云猎盟",
+        zone_anchor: "qingyun_peaks",
+        current_npc_count: 0,
+        status: "decayed",
+        is_active: true,
+      }],
+      relation_matrix: [],
+      at_tick: 1,
+    };
+    expectContractRejects(
+      "NamedFactionEntryV1 decayed must carry is_active=false",
+      validateNamedFactionStateV1Contract,
+      data,
+    );
+  });
+
+  it("NamedFactionEntryV1 拒绝缺失或非布尔 is_active", () => {
+    const base = {
+      v: 1,
+      kind: "named_faction_state",
+      named_factions: [{
+        id: "qingyun_hunters",
+        display_name: "青云猎盟",
+        zone_anchor: "qingyun_peaks",
+        current_npc_count: 1,
+        status: "active",
+      }],
+      relation_matrix: [],
+      at_tick: 1,
+    };
+    expectContractRejects(
+      "NamedFactionEntryV1 missing is_active must be rejected",
+      validateNamedFactionStateV1Contract,
+      base,
+    );
+    expectContractRejects(
+      "NamedFactionEntryV1 non-boolean is_active must be rejected",
+      validateNamedFactionStateV1Contract,
+      {
+        ...base,
+        named_factions: [{ ...base.named_factions[0], is_active: "true" }],
+      },
+    );
+  });
+
   it("FactionStatusV1 三变体各自被接受（active/headless/decayed）", () => {
     // FactionStatusV1 union 三变体专属正向 pin——每个 wire string 都必须被接受。
     for (const status of ["active", "headless", "decayed"] as const) {
@@ -3216,8 +3267,9 @@ describe("MutationEventV1 schema pin tests (plan-dandao-runtime-wiring-v1 P2)", 
           id: "qingyun_hunters",
           display_name: "青云猎盟",
           zone_anchor: "qingyun_peaks",
-          current_npc_count: 0,
+          current_npc_count: status === "decayed" ? 0 : 1,
           status,
+          is_active: status !== "decayed",
         }],
         relation_matrix: [],
         at_tick: 1,

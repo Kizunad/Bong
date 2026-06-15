@@ -239,16 +239,39 @@ export type FactionStatusV1 = Static<typeof FactionStatusV1>;
  * zone_anchor 对齐 world/zone.rs 字符串体系（如 "qingyun_peaks"）。
  * additionalProperties:false 对齐 server serde（拒未知字段）。
  */
-export const NamedFactionEntryV1 = Type.Object(
-  {
-    id: Type.String({ minLength: 1 }),
-    display_name: Type.String({ minLength: 1 }),
-    zone_anchor: Type.String({ minLength: 1 }),
-    current_npc_count: Type.Integer({ minimum: 0 }),
-    status: FactionStatusV1,
-  },
-  { additionalProperties: false },
-);
+const NamedFactionEntryBaseV1 = {
+  id: Type.String({ minLength: 1 }),
+  display_name: Type.String({ minLength: 1 }),
+  zone_anchor: Type.String({ minLength: 1 }),
+  current_npc_count: Type.Integer({ minimum: 0 }),
+};
+
+export const NamedFactionEntryV1 = Type.Union([
+  Type.Object(
+    {
+      ...NamedFactionEntryBaseV1,
+      status: Type.Literal("active"),
+      is_active: Type.Literal(true),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      ...NamedFactionEntryBaseV1,
+      status: Type.Literal("headless"),
+      is_active: Type.Literal(true),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      ...NamedFactionEntryBaseV1,
+      status: Type.Literal("decayed"),
+      is_active: Type.Literal(false),
+    },
+    { additionalProperties: false },
+  ),
+]);
 export type NamedFactionEntryV1 = Static<typeof NamedFactionEntryV1>;
 
 /**

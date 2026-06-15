@@ -66,7 +66,7 @@ pub const COMMAND_TREE_PATHS: &[&str] = &[
     // plan-offscreen-war-v1 P6：/faction 玩家参与涌现冲突
     // plan-faction-expansion-v1 P1：/faction list 显示三势力关系矩阵
     "faction intercept",
-    "faction join <group:integer>",
+    "faction join <target:string>",
     "faction list",
     "faction mercenary <group:integer>",
     // plan-worldgen-v4 P5：画廊审阅闭环 stamp 命令（无参数）

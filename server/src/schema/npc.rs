@@ -193,6 +193,7 @@ pub struct NamedFactionEntryV1 {
     pub current_npc_count: u32,
     /// 领袖存活态（active / headless / decayed）。
     pub status: FactionStatus,
+    pub is_active: bool,
 }
 
 /// plan-faction-expansion-v1 P0：两具名势力关系矩阵条目（`bong:named_faction_state` relation_matrix）。
@@ -819,6 +820,7 @@ mod tests {
                     zone_anchor: "qingyun_peaks".to_string(),
                     current_npc_count: 0,
                     status: FactionStatus::Active,
+                    is_active: true,
                 },
                 NamedFactionEntryV1 {
                     id: "cangyuan_merchants".to_string(),
@@ -826,6 +828,7 @@ mod tests {
                     zone_anchor: "blood_valley".to_string(),
                     current_npc_count: 0,
                     status: FactionStatus::Active,
+                    is_active: true,
                 },
                 NamedFactionEntryV1 {
                     id: "north_waste_drifters".to_string(),
@@ -833,6 +836,7 @@ mod tests {
                     zone_anchor: "north_wastes".to_string(),
                     current_npc_count: 0,
                     status: FactionStatus::Headless,
+                    is_active: true,
                 },
             ],
             relation_matrix: vec![FactionRelationEntryV1 {
@@ -883,7 +887,8 @@ mod tests {
                 "display_name": "青云猎盟",
                 "zone_anchor": "qingyun_peaks",
                 "current_npc_count": 0,
-                "status": "alive"
+                "status": "alive",
+                "is_active": true
             }],
             "relation_matrix": [],
             "at_tick": 1
@@ -926,6 +931,7 @@ mod tests {
                 zone_anchor: "qingyun_peaks".to_string(),
                 current_npc_count: 0,
                 status,
+                is_active: status != FactionStatus::Decayed,
             };
             let value = serde_json::to_value(&entry).expect("NamedFactionEntryV1 序列化");
             assert_eq!(

@@ -1,8 +1,9 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 use valence::prelude::{bevy_ecs, Component, Entity};
 
+use crate::npc::faction::NamedFactionId;
 use crate::schema::social::RenownTagV1;
 
 pub type CharId = String;
@@ -250,6 +251,8 @@ pub struct ExposureEvent {
 #[derive(Debug, Clone, Component, Serialize, Deserialize, PartialEq, Eq)]
 pub struct FactionMembership {
     pub faction: crate::npc::faction::FactionId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub named_faction: Option<NamedFactionId>,
     pub rank: u8,
     pub loyalty: i32,
     #[serde(default)]
@@ -258,6 +261,70 @@ pub struct FactionMembership {
     pub invite_block_until_tick: Option<Tick>,
     #[serde(default)]
     pub permanently_refused: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FactionReputationTier {
+    High,
+    Medium,
+    Normal,
+    Low,
+    Wanted,
+}
+
+#[derive(Debug, Clone, Default, Component, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FactionReputation {
+    #[serde(default)]
+    pub per_faction: HashMap<NamedFactionId, i32>,
+}
+
+impl FactionReputation {
+    pub const MIN_SCORE: i32 = -100;
+    pub const MAX_SCORE: i32 = 100;
+
+    pub fn score(&self, faction: NamedFactionId) -> i32 {
+        self.per_faction.get(&faction).copied().unwrap_or_default()
+    }
+
+    pub fn apply_delta(&mut self, faction: NamedFactionId, delta: i32) -> i32 {
+        let next = self
+            .score(faction)
+            .saturating_add(delta)
+            .clamp(Self::MIN_SCORE, Self::MAX_SCORE);
+        self.per_faction.insert(faction, next);
+        next
+    }
+
+    pub fn tier(&self, faction: NamedFactionId) -> FactionReputationTier {
+        tier_for_score(self.score(faction))
+    }
+
+    pub fn tier_for_zone(&self, zone: &str) -> FactionReputationTier {
+        faction_for_zone(zone)
+            .map(|faction| self.tier(faction))
+            .unwrap_or(FactionReputationTier::Normal)
+    }
+}
+
+pub fn faction_for_zone(zone: &str) -> Option<NamedFactionId> {
+    NamedFactionId::all()
+        .into_iter()
+        .find(|faction| faction.zone_anchor() == zone)
+}
+
+pub fn tier_for_score(score: i32) -> FactionReputationTier {
+    if score > 50 {
+        FactionReputationTier::High
+    } else if score >= 10 {
+        FactionReputationTier::Medium
+    } else if score < -50 {
+        FactionReputationTier::Wanted
+    } else if score < -10 {
+        FactionReputationTier::Low
+    } else {
+        FactionReputationTier::Normal
+    }
 }
 
 #[derive(Debug, Clone, Component, PartialEq, Eq)]
@@ -324,5 +391,142 @@ mod tests {
         }
         assert!(guardian.is_decayed(101));
         assert!(!guardian.consume_charge());
+    }
+
+    #[test]
+    fn faction_reputation_delta_clamps_to_plan_range() {
+        let mut reputation = FactionReputation::default();
+        let high_score = reputation.apply_delta(NamedFactionId::QingyunHunters, 250);
+        assert_eq!(
+            high_score,
+            FactionReputation::MAX_SCORE,
+            "expected max score because positive deltas clamp to plan range, actual {high_score}"
+        );
+        let low_score = reputation.apply_delta(NamedFactionId::QingyunHunters, -500);
+        assert_eq!(
+            low_score,
+            FactionReputation::MIN_SCORE,
+            "expected min score because negative deltas clamp to plan range, actual {low_score}"
+        );
+    }
+
+    #[test]
+    fn faction_reputation_tiers_follow_plan_thresholds() {
+        for (score, expected) in [
+            (51, FactionReputationTier::High),
+            (50, FactionReputationTier::Medium),
+            (10, FactionReputationTier::Medium),
+            (0, FactionReputationTier::Normal),
+            (-10, FactionReputationTier::Normal),
+            (-11, FactionReputationTier::Low),
+            (-50, FactionReputationTier::Low),
+            (-51, FactionReputationTier::Wanted),
+        ] {
+            let actual = tier_for_score(score);
+            assert_eq!(
+                actual, expected,
+                "expected {expected:?} because score {score} maps to plan P3 threshold, actual {actual:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn faction_for_zone_maps_named_anchors() {
+        for (zone, expected) in [
+            ("qingyun_peaks", Some(NamedFactionId::QingyunHunters)),
+            ("blood_valley", Some(NamedFactionId::CangyuanMerchants)),
+            ("north_wastes", Some(NamedFactionId::NorthWasteDrifters)),
+            ("spawn", None),
+        ] {
+            let actual = faction_for_zone(zone);
+            assert_eq!(
+                actual, expected,
+                "expected {expected:?} because zone {zone} has fixed named faction anchor, actual {actual:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn faction_reputation_tier_for_zone_uses_zone_anchor() {
+        let mut reputation = FactionReputation::default();
+        reputation.apply_delta(NamedFactionId::QingyunHunters, 60);
+        reputation.apply_delta(NamedFactionId::CangyuanMerchants, -60);
+
+        let qingyun = reputation.tier_for_zone("qingyun_peaks");
+        assert_eq!(
+            qingyun,
+            FactionReputationTier::High,
+            "expected High because QingyunHunters score is 60, actual {qingyun:?}"
+        );
+        let cangyuan = reputation.tier_for_zone("blood_valley");
+        assert_eq!(
+            cangyuan,
+            FactionReputationTier::Wanted,
+            "expected Wanted because CangyuanMerchants score is -60, actual {cangyuan:?}"
+        );
+        let spawn = reputation.tier_for_zone("spawn");
+        assert_eq!(
+            spawn,
+            FactionReputationTier::Normal,
+            "expected Normal because spawn has no named faction anchor, actual {spawn:?}"
+        );
+    }
+
+    #[test]
+    fn faction_membership_serde_keeps_named_faction_backward_compatible() {
+        let legacy = serde_json::json!({
+            "faction": "attack",
+            "rank": 1,
+            "loyalty": 12
+        });
+        let membership: FactionMembership =
+            serde_json::from_value(legacy).expect("legacy membership should deserialize");
+        assert_eq!(
+            membership.named_faction, None,
+            "expected None because old saves omit named_faction, actual {:?}",
+            membership.named_faction
+        );
+
+        let json = serde_json::to_value(FactionMembership {
+            faction: crate::npc::faction::FactionId::Attack,
+            named_faction: None,
+            rank: 1,
+            loyalty: 12,
+            betrayal_count: 0,
+            invite_block_until_tick: None,
+            permanently_refused: false,
+        })
+        .expect("membership should serialize");
+        assert!(
+            json.get("named_faction").is_none(),
+            "expected named_faction omitted because None preserves old save shape, actual {json}"
+        );
+
+        let with_named = FactionMembership {
+            faction: crate::npc::faction::FactionId::Attack,
+            named_faction: Some(NamedFactionId::QingyunHunters),
+            rank: 1,
+            loyalty: 12,
+            betrayal_count: 0,
+            invite_block_until_tick: None,
+            permanently_refused: false,
+        };
+        let with_named_json = serde_json::to_value(&with_named)
+            .expect("membership with named_faction should serialize");
+        assert_eq!(
+            with_named_json
+                .get("named_faction")
+                .and_then(|value| value.as_str()),
+            Some("qingyun_hunters"),
+            "expected named_faction wire value because Some(...) must be persisted, actual {with_named_json}"
+        );
+        let roundtrip: FactionMembership = serde_json::from_value(with_named_json)
+            .expect("membership with named_faction should deserialize");
+        assert_eq!(
+            roundtrip.named_faction,
+            Some(NamedFactionId::QingyunHunters),
+            "expected roundtrip named_faction because serde contract must preserve non-empty affiliation, actual {:?}",
+            roundtrip.named_faction
+        );
     }
 }

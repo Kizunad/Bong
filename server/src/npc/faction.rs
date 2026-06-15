@@ -733,6 +733,7 @@ pub struct NamedFaction {
     /// P0 初始 0；P2 census 按 zone_anchor 计入 hydrated NPC 填充。
     pub current_npc_count: u32,
     pub status: FactionStatus,
+    pub is_active: bool,
 }
 
 impl NamedFaction {
@@ -744,7 +745,13 @@ impl NamedFaction {
             zone_anchor: id.zone_anchor().to_string(),
             current_npc_count: 0,
             status,
+            is_active: status != FactionStatus::Decayed,
         }
+    }
+
+    pub fn set_status(&mut self, status: FactionStatus) {
+        self.status = status;
+        self.is_active = status != FactionStatus::Decayed;
     }
 }
 
@@ -923,6 +930,19 @@ pub struct NamedFactionMembership {
     pub faction_id: NamedFactionId,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Event, Serialize, Deserialize)]
+pub struct NamedFactionLeaderDownEvent {
+    pub faction: NamedFactionId,
+    pub zone: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Event, Serialize, Deserialize)]
+pub struct NamedFactionDecayEvent {
+    pub faction: NamedFactionId,
+    pub final_zone: String,
+    pub last_npc_count: u32,
+}
+
 pub fn register(app: &mut App) {
     let named_registry = NamedFactionRegistry::startup_default();
     let claims = FactionZoneClaims::from_registry(&named_registry);
@@ -934,7 +954,9 @@ pub fn register(app: &mut App) {
         // plan-faction-expansion-v1 P1：三势力关系矩阵，startup_default 写入三对关系。
         .insert_resource(FactionRelationMatrix::startup_default())
         .add_event::<FactionEventNotice>()
-        .add_event::<FactionLeaderTollNotice>();
+        .add_event::<FactionLeaderTollNotice>()
+        .add_event::<NamedFactionLeaderDownEvent>()
+        .add_event::<NamedFactionDecayEvent>();
     app.add_systems(Update, assign_hostile_encounters)
         .add_systems(
             Update,
@@ -1047,6 +1069,10 @@ fn spawn_named_faction_leaders_on_startup(
 fn sync_named_faction_census_system(
     mut registry: Option<ResMut<NamedFactionRegistry>>,
     members: Query<&NamedFactionMembership, With<NpcMarker>>,
+    leaders: Query<&NamedFactionLeader, With<NpcMarker>>,
+    mut memberships: Query<&mut crate::social::components::FactionMembership, With<Client>>,
+    mut leader_down_events: EventWriter<NamedFactionLeaderDownEvent>,
+    mut decay_events: EventWriter<NamedFactionDecayEvent>,
 ) {
     let Some(registry) = registry.as_deref_mut() else {
         return;
@@ -1055,8 +1081,42 @@ fn sync_named_faction_census_system(
     for membership in &members {
         *counts.entry(membership.faction_id).or_insert(0) += 1;
     }
+    let live_leaders = leaders
+        .iter()
+        .map(|leader| leader.faction)
+        .collect::<Vec<_>>();
     for faction in registry.factions.iter_mut() {
-        faction.current_npc_count = counts.get(&faction.id).copied().unwrap_or(0);
+        let previous_count = faction.current_npc_count;
+        let next_count = counts.get(&faction.id).copied().unwrap_or(0);
+        faction.current_npc_count = next_count;
+
+        if faction.status == FactionStatus::Active
+            && next_count > 0
+            && !live_leaders.contains(&faction.id)
+        {
+            faction.set_status(FactionStatus::Headless);
+            leader_down_events.send(NamedFactionLeaderDownEvent {
+                faction: faction.id,
+                zone: faction.zone_anchor.clone(),
+            });
+        }
+
+        if faction.status != FactionStatus::Decayed && previous_count > 0 && next_count == 0 {
+            let last_npc_count = previous_count;
+            faction.set_status(FactionStatus::Decayed);
+            for mut membership in &mut memberships {
+                if membership.named_faction == Some(faction.id) {
+                    membership.named_faction = None;
+                }
+            }
+            decay_events.send(NamedFactionDecayEvent {
+                faction: faction.id,
+                final_zone: faction.zone_anchor.clone(),
+                last_npc_count,
+            });
+        } else {
+            faction.set_status(faction.status);
+        }
     }
 }
 
@@ -1068,7 +1128,7 @@ fn leader_realm_for(faction: NamedFactionId) -> Realm {
     }
 }
 
-fn legacy_faction_id_for_named_faction(faction: NamedFactionId) -> FactionId {
+pub fn legacy_faction_id_for_named_faction(faction: NamedFactionId) -> FactionId {
     match faction {
         NamedFactionId::QingyunHunters => FactionId::Attack,
         NamedFactionId::CangyuanMerchants => FactionId::Defend,
@@ -1481,6 +1541,8 @@ fn planar_distance_sq(left: DVec3, right: DVec3) -> f64 {
 mod tests {
     use super::*;
     use serde_json::json;
+    use valence::prelude::Events;
+    use valence::testing::create_mock_client;
 
     #[test]
     fn default_store_bootstraps_exactly_three_stable_factions() {
@@ -1835,7 +1897,7 @@ mod tests {
     // Phase 5 Disciple Scorer / Action 饱和测试
     // ---------------------------------------------------------------------
 
-    use valence::prelude::{App, Events, PreUpdate};
+    use valence::prelude::{App, PreUpdate};
 
     fn base_membership(faction: FactionId, loyalty: f64, pending: u32) -> FactionMembership {
         let pending_ids: Vec<MissionId> = (0..pending)
@@ -3240,6 +3302,8 @@ mod tests {
     fn named_faction_census_counts_named_memberships() {
         let mut app = App::new();
         app.insert_resource(NamedFactionRegistry::startup_default());
+        app.add_event::<NamedFactionLeaderDownEvent>();
+        app.add_event::<NamedFactionDecayEvent>();
         app.add_systems(Update, sync_named_faction_census_system);
         app.world_mut().spawn((
             NpcMarker,
@@ -3284,6 +3348,173 @@ mod tests {
                 .current_npc_count,
             0,
             "没有实体归属北荒漂流者时 census 应保持 0"
+        );
+    }
+
+    #[test]
+    fn named_faction_census_emits_leader_down_for_active_faction_without_leader() {
+        let mut app = App::new();
+        app.insert_resource(NamedFactionRegistry::startup_default());
+        app.add_event::<NamedFactionLeaderDownEvent>();
+        app.add_event::<NamedFactionDecayEvent>();
+        app.add_systems(Update, sync_named_faction_census_system);
+        app.world_mut().spawn((
+            NpcMarker,
+            NamedFactionMembership {
+                faction_id: NamedFactionId::QingyunHunters,
+            },
+        ));
+
+        app.update();
+
+        let registry = app.world().resource::<NamedFactionRegistry>();
+        assert_eq!(
+            registry.get(NamedFactionId::QingyunHunters).unwrap().status,
+            FactionStatus::Headless
+        );
+        let events = app
+            .world()
+            .resource::<Events<NamedFactionLeaderDownEvent>>();
+        let emitted = events
+            .iter_current_update_events()
+            .cloned()
+            .collect::<Vec<_>>();
+        assert_eq!(emitted.len(), 1);
+        assert_eq!(emitted[0].faction, NamedFactionId::QingyunHunters);
+        assert_eq!(emitted[0].zone, "qingyun_peaks");
+    }
+
+    #[test]
+    fn named_faction_census_decays_zero_count_and_clears_player_membership() {
+        let mut registry = NamedFactionRegistry::startup_default();
+        registry
+            .get_mut(NamedFactionId::QingyunHunters)
+            .unwrap()
+            .current_npc_count = 1;
+
+        let mut app = App::new();
+        app.insert_resource(registry);
+        app.add_event::<NamedFactionLeaderDownEvent>();
+        app.add_event::<NamedFactionDecayEvent>();
+        app.add_systems(Update, sync_named_faction_census_system);
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let player = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .entity_mut(player)
+            .insert(crate::social::components::FactionMembership {
+                faction: FactionId::Attack,
+                named_faction: Some(NamedFactionId::QingyunHunters),
+                rank: 0,
+                loyalty: 10,
+                betrayal_count: 0,
+                invite_block_until_tick: None,
+                permanently_refused: false,
+            });
+
+        app.update();
+
+        let registry = app.world().resource::<NamedFactionRegistry>();
+        let qingyun = registry.get(NamedFactionId::QingyunHunters).unwrap();
+        assert_eq!(qingyun.status, FactionStatus::Decayed);
+        assert!(!qingyun.is_active);
+        let membership = app
+            .world()
+            .get::<crate::social::components::FactionMembership>(player)
+            .unwrap();
+        assert_eq!(
+            membership.named_faction, None,
+            "势力消亡时在线玩家挂靠必须清空"
+        );
+        let events = app.world().resource::<Events<NamedFactionDecayEvent>>();
+        let emitted = events
+            .iter_current_update_events()
+            .cloned()
+            .collect::<Vec<_>>();
+        assert_eq!(emitted.len(), 1);
+        assert_eq!(emitted[0].faction, NamedFactionId::QingyunHunters);
+        assert_eq!(emitted[0].last_npc_count, 1);
+    }
+
+    #[test]
+    fn named_faction_census_does_not_emit_decay_again_for_decayed_faction() {
+        let mut registry = NamedFactionRegistry::startup_default();
+        let qingyun = registry.get_mut(NamedFactionId::QingyunHunters).unwrap();
+        qingyun.current_npc_count = 1;
+        qingyun.set_status(FactionStatus::Decayed);
+
+        let mut app = App::new();
+        app.insert_resource(registry);
+        app.add_event::<NamedFactionLeaderDownEvent>();
+        app.add_event::<NamedFactionDecayEvent>();
+        app.add_systems(Update, sync_named_faction_census_system);
+
+        app.update();
+
+        let events = app.world().resource::<Events<NamedFactionDecayEvent>>();
+        let emitted = events
+            .iter_current_update_events()
+            .cloned()
+            .collect::<Vec<_>>();
+        assert!(
+            emitted.is_empty(),
+            "Decayed 势力 NPC 归零不应重复触发 NamedFactionDecayEvent，实际 {emitted:?}"
+        );
+    }
+
+    #[test]
+    fn named_faction_census_decays_from_headless_state() {
+        let mut registry = NamedFactionRegistry::startup_default();
+        let cangyuan = registry.get_mut(NamedFactionId::CangyuanMerchants).unwrap();
+        cangyuan.current_npc_count = 2;
+        cangyuan.set_status(FactionStatus::Headless);
+
+        let mut app = App::new();
+        app.insert_resource(registry);
+        app.add_event::<NamedFactionLeaderDownEvent>();
+        app.add_event::<NamedFactionDecayEvent>();
+        app.add_systems(Update, sync_named_faction_census_system);
+
+        app.update();
+
+        let registry = app.world().resource::<NamedFactionRegistry>();
+        let cangyuan = registry.get(NamedFactionId::CangyuanMerchants).unwrap();
+        assert_eq!(
+            cangyuan.status,
+            FactionStatus::Decayed,
+            "Headless 势力 NPC 归零必须进入 Decayed，实际 {:?}",
+            cangyuan.status
+        );
+        assert!(
+            !cangyuan.is_active,
+            "Decayed 势力 is_active 必须为 false，实际 {}",
+            cangyuan.is_active
+        );
+        let events = app.world().resource::<Events<NamedFactionDecayEvent>>();
+        let emitted = events
+            .iter_current_update_events()
+            .cloned()
+            .collect::<Vec<_>>();
+        assert_eq!(
+            emitted.len(),
+            1,
+            "Headless→Decayed 必须触发一条 NamedFactionDecayEvent，实际 {}",
+            emitted.len()
+        );
+        assert_eq!(
+            emitted[0].faction,
+            NamedFactionId::CangyuanMerchants,
+            "消亡事件必须指向沧渊商会，实际 {:?}",
+            emitted[0].faction
+        );
+        assert_eq!(
+            emitted[0].final_zone, "blood_valley",
+            "消亡事件 final_zone 必须等于沧渊商会 zone_anchor，实际 {}",
+            emitted[0].final_zone
+        );
+        assert_eq!(
+            emitted[0].last_npc_count, 2,
+            "消亡事件 last_npc_count 必须等于上一帧 NPC 数 2，实际 {}",
+            emitted[0].last_npc_count
         );
     }
 }
