@@ -129,38 +129,43 @@ pub fn award_war_winner_renown(
                 WarRole::Mercenary if role_rec.allied_group == Some(*winner_group) => 3,
                 _ => continue,
             };
+            let reason = if fame_delta == 5 {
+                "war_winner_enlist"
+            } else {
+                "war_winner_mercenary"
+            };
             renown_deltas.send(SocialRenownDeltaEvent {
                 char_id: role_rec.player_id.clone(),
                 fame_delta,
                 notoriety_delta: 0,
                 tags_added: vec![],
                 tick: now,
-                reason: if fame_delta == 5 {
-                    "war_winner_enlist".to_string()
-                } else {
-                    "war_winner_mercenary".to_string()
-                },
+                reason: reason.to_string(),
             });
+            let Some(faction) = named_faction_for_war_group(*winner_group) else {
+                tracing::warn!(
+                    "[bong][war] skip faction reputation delta for unknown emergent group {}",
+                    winner_group.0
+                );
+                continue;
+            };
             faction_reputation_deltas.send(FactionReputationDeltaEvent {
                 char_id: role_rec.player_id.clone(),
-                faction: named_faction_for_war_group(*winner_group),
+                faction,
                 delta: fame_delta,
                 tick: now,
-                reason: if fame_delta == 5 {
-                    "war_winner_enlist".to_string()
-                } else {
-                    "war_winner_mercenary".to_string()
-                },
+                reason: reason.to_string(),
             });
         }
     }
 }
 
-fn named_faction_for_war_group(group: EmergentGroupId) -> NamedFactionId {
+fn named_faction_for_war_group(group: EmergentGroupId) -> Option<NamedFactionId> {
     match group.0 {
-        0 => NamedFactionId::QingyunHunters,
-        1 => NamedFactionId::CangyuanMerchants,
-        _ => NamedFactionId::NorthWasteDrifters,
+        0 => Some(NamedFactionId::QingyunHunters),
+        1 => Some(NamedFactionId::CangyuanMerchants),
+        2 => Some(NamedFactionId::NorthWasteDrifters),
+        _ => None,
     }
 }
 
@@ -658,13 +663,77 @@ mod tests {
             WarPhase::Settling,
             "血谷",
         );
-        assert_eq!(renown_events.len(), 1);
-        assert_eq!(faction_events.len(), 1);
+        assert_eq!(
+            renown_events.len(),
+            1,
+            "expected renown event because winner enlist still awards global fame, actual {}",
+            renown_events.len()
+        );
+        assert_eq!(
+            faction_events.len(),
+            1,
+            "expected faction reputation event because group 1 maps to CangyuanMerchants, actual {}",
+            faction_events.len()
+        );
         let event = &faction_events[0];
-        assert_eq!(event.char_id, "P1");
-        assert_eq!(event.faction, NamedFactionId::CangyuanMerchants);
-        assert_eq!(event.delta, 5);
-        assert_eq!(event.reason, "war_winner_enlist");
+        assert_eq!(
+            event.char_id, "P1",
+            "expected char_id=P1 because P1 enlisted for winning group, actual {}",
+            event.char_id
+        );
+        assert_eq!(
+            event.faction,
+            NamedFactionId::CangyuanMerchants,
+            "expected group 1 to map to CangyuanMerchants, actual {:?}",
+            event.faction
+        );
+        assert_eq!(
+            event.delta, 5,
+            "expected enlist winner delta=5, actual {}",
+            event.delta
+        );
+        assert_eq!(
+            event.reason, "war_winner_enlist",
+            "expected shared reason war_winner_enlist, actual {}",
+            event.reason
+        );
+    }
+
+    #[test]
+    fn named_faction_for_war_group_maps_all_known_groups_and_rejects_unknown() {
+        for (group, expected) in [
+            (0, Some(NamedFactionId::QingyunHunters)),
+            (1, Some(NamedFactionId::CangyuanMerchants)),
+            (2, Some(NamedFactionId::NorthWasteDrifters)),
+            (99, None),
+        ] {
+            let actual = named_faction_for_war_group(EmergentGroupId(group));
+            assert_eq!(
+                actual, expected,
+                "expected group {group} to map to {expected:?} because only known war groups may write faction reputation, actual {actual:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn settle_skips_faction_reputation_for_unknown_winner_group() {
+        let roles = vec![make_player_role("P1", WarRole::Enlist, Some(99))];
+        let (renown_events, faction_events) = run_renown_and_faction_reputation_system(
+            roles,
+            Some(make_outcome(99, 0)),
+            WarPhase::Settling,
+            "血谷",
+        );
+        assert_eq!(
+            renown_events.len(),
+            1,
+            "expected global renown to remain awarded for winning role, actual {}",
+            renown_events.len()
+        );
+        assert!(
+            faction_events.is_empty(),
+            "expected no faction reputation for unknown group to avoid ledger pollution, actual {faction_events:?}"
+        );
     }
 
     #[test]

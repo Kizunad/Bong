@@ -755,6 +755,112 @@ mod tests {
     }
 
     #[test]
+    fn publish_named_faction_state_skips_when_required_resources_missing() {
+        let (mut missing_registry_app, missing_registry_rx) = setup_app();
+        missing_registry_app.insert_resource(FactionRelationMatrix::startup_default());
+        missing_registry_app.add_systems(Update, publish_named_faction_state);
+        missing_registry_app.update();
+        assert!(
+            drain_named_faction_states(&missing_registry_rx).is_empty(),
+            "missing NamedFactionRegistry must skip publishing instead of emitting partial state"
+        );
+
+        let (mut missing_matrix_app, missing_matrix_rx) = setup_app();
+        missing_matrix_app.insert_resource(NamedFactionRegistry::startup_default());
+        missing_matrix_app.add_systems(Update, publish_named_faction_state);
+        missing_matrix_app.update();
+        assert!(
+            drain_named_faction_states(&missing_matrix_rx).is_empty(),
+            "missing FactionRelationMatrix must skip publishing instead of emitting partial state"
+        );
+    }
+
+    #[test]
+    fn publish_named_faction_state_defaults_tick_and_serializes_statuses_and_relations() {
+        let (mut app, rx) = setup_app();
+        let mut registry = NamedFactionRegistry::startup_default();
+        registry
+            .get_mut(NamedFactionId::QingyunHunters)
+            .unwrap()
+            .current_npc_count = 2;
+        registry
+            .get_mut(NamedFactionId::CangyuanMerchants)
+            .unwrap()
+            .set_status(FactionStatus::Decayed);
+        registry
+            .get_mut(NamedFactionId::NorthWasteDrifters)
+            .unwrap()
+            .set_status(FactionStatus::Headless);
+        let mut relation_matrix = FactionRelationMatrix::startup_default();
+        relation_matrix.set(
+            NamedFactionId::CangyuanMerchants,
+            NamedFactionId::NorthWasteDrifters,
+            crate::npc::faction::FactionRelation::Pact,
+        );
+        app.insert_resource(registry);
+        app.insert_resource(relation_matrix);
+        app.add_systems(Update, publish_named_faction_state);
+
+        app.update();
+
+        let states = drain_named_faction_states(&rx);
+        assert_eq!(
+            states.len(),
+            1,
+            "expected one NamedFactionStateV1 snapshot when resources are complete, actual {}",
+            states.len()
+        );
+        let state = &states[0];
+        assert_eq!(
+            state.at_tick, 0,
+            "missing GameTick must default named faction snapshot at_tick to 0, actual {}",
+            state.at_tick
+        );
+        let qingyun = state
+            .named_factions
+            .iter()
+            .find(|entry| entry.id == "qingyun_hunters")
+            .expect("qingyun entry must exist");
+        assert_eq!(
+            (qingyun.status, qingyun.is_active),
+            (FactionStatus::Active, true),
+            "Active faction must serialize is_active=true, actual {:?}/{}",
+            qingyun.status,
+            qingyun.is_active
+        );
+        let north = state
+            .named_factions
+            .iter()
+            .find(|entry| entry.id == "north_waste_drifters")
+            .expect("north entry must exist");
+        assert_eq!(
+            (north.status, north.is_active),
+            (FactionStatus::Headless, true),
+            "Headless faction must serialize is_active=true, actual {:?}/{}",
+            north.status,
+            north.is_active
+        );
+        assert!(
+            state
+                .relation_matrix
+                .iter()
+                .any(|entry| entry.a == "qingyun_hunters"
+                    && entry.b == "north_waste_drifters"
+                    && entry.hostile),
+            "QingyunHunters ↔ NorthWasteDrifters default hostile=true relation must publish"
+        );
+        assert!(
+            state
+                .relation_matrix
+                .iter()
+                .any(|entry| entry.a == "cangyuan_merchants"
+                    && entry.b == "north_waste_drifters"
+                    && !entry.hostile),
+            "Pact/Neutral relations must publish hostile=false"
+        );
+    }
+
+    #[test]
     fn publish_faction_state_defaults_at_tick_to_zero_without_game_tick() {
         // 边界（CodeRabbit）：缺 GameTick 资源时 at_tick 必须回退 0（current_game_tick 的
         // unwrap_or_default 分支），而非 panic / 脏值——与同文件其他 telemetry publisher 同契约。

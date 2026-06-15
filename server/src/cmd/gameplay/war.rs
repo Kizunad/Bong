@@ -20,8 +20,8 @@ use valence::prelude::{
 };
 
 use crate::npc::faction::{
-    EmergentGroupId, FactionId, FactionRelationMatrix, FactionStatus, NamedFactionId,
-    NamedFactionLeader, NamedFactionRegistry,
+    legacy_faction_id_for_named_faction, EmergentGroupId, FactionRelationMatrix, FactionStatus,
+    NamedFactionId, NamedFactionLeader, NamedFactionRegistry,
 };
 use crate::npc::movement::GameTick;
 use crate::npc::war::{WarParticipateIntent, WarRole};
@@ -267,14 +267,6 @@ fn parse_named_faction_target(value: &str) -> Option<NamedFactionId> {
     })
 }
 
-fn legacy_faction_id_for_named_faction(faction: NamedFactionId) -> FactionId {
-    match faction {
-        NamedFactionId::QingyunHunters => FactionId::Attack,
-        NamedFactionId::CangyuanMerchants => FactionId::Defend,
-        NamedFactionId::NorthWasteDrifters => FactionId::Neutral,
-    }
-}
-
 /// plan-faction-expansion-v1 P1：`/faction list` brigadier handler。
 ///
 /// 读 `NamedFactionRegistry` + `FactionRelationMatrix`，格式化输出三势力名称 +
@@ -359,6 +351,7 @@ pub fn handle_faction_list_cmd(
 mod tests {
     use super::*;
     use crate::cmd::dev::test_support::{run_update, spawn_test_client};
+    use crate::npc::faction::FactionId;
     use crate::npc::war::{WarConflictStore, WarParticipateIntent, WarRole, ZoneConflictPressure};
     use valence::prelude::{App, Events, Update};
 
@@ -504,6 +497,78 @@ mod tests {
         assert!(
             app.world().get::<FactionMembership>(player).is_none(),
             "Decayed 势力不能再被玩家挂靠"
+        );
+    }
+
+    #[test]
+    fn named_faction_join_rejects_unknown_target() {
+        let mut app = setup_app();
+        app.insert_resource(NamedFactionRegistry::startup_default());
+        let player = spawn_test_client(&mut app, "Alice", [0.0, 64.0, 0.0]);
+
+        send(
+            &mut app,
+            player,
+            FactionCmd::Join {
+                target: "missing_faction".to_string(),
+            },
+        );
+        run_update(&mut app);
+
+        assert!(
+            app.world().get::<FactionMembership>(player).is_none(),
+            "未知具名势力必须拒绝挂靠，避免写入错误 membership"
+        );
+    }
+
+    #[test]
+    fn named_faction_join_accepts_headless_faction() {
+        let mut app = setup_app();
+        app.insert_resource(NamedFactionRegistry::startup_default());
+        let player = spawn_test_client(&mut app, "Alice", [0.0, 64.0, 0.0]);
+
+        send(
+            &mut app,
+            player,
+            FactionCmd::Join {
+                target: "north_waste_drifters".to_string(),
+            },
+        );
+        run_update(&mut app);
+
+        let membership = app.world().get::<FactionMembership>(player).unwrap();
+        assert_eq!(
+            membership.named_faction,
+            Some(NamedFactionId::NorthWasteDrifters),
+            "Headless 不是 Decayed，应允许中性玩家挂靠"
+        );
+        assert_eq!(
+            membership.faction,
+            FactionId::Neutral,
+            "NorthWasteDrifters legacy faction must map to Neutral"
+        );
+    }
+
+    #[test]
+    fn named_faction_join_accepts_missing_reputation_component_as_neutral() {
+        let mut app = setup_app();
+        app.insert_resource(NamedFactionRegistry::startup_default());
+        let player = spawn_test_client(&mut app, "Alice", [0.0, 64.0, 0.0]);
+
+        send(
+            &mut app,
+            player,
+            FactionCmd::Join {
+                target: "qingyun_hunters".to_string(),
+            },
+        );
+        run_update(&mut app);
+
+        let membership = app.world().get::<FactionMembership>(player).unwrap();
+        assert_eq!(
+            membership.named_faction,
+            Some(NamedFactionId::QingyunHunters),
+            "缺 FactionReputation 组件时 score 应按 0 处理中性准入"
         );
     }
 

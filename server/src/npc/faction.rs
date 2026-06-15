@@ -1115,7 +1115,7 @@ fn sync_named_faction_census_system(
                 last_npc_count,
             });
         } else {
-            faction.is_active = faction.status != FactionStatus::Decayed;
+            faction.set_status(faction.status);
         }
     }
 }
@@ -1128,7 +1128,7 @@ fn leader_realm_for(faction: NamedFactionId) -> Realm {
     }
 }
 
-fn legacy_faction_id_for_named_faction(faction: NamedFactionId) -> FactionId {
+pub fn legacy_faction_id_for_named_faction(faction: NamedFactionId) -> FactionId {
     match faction {
         NamedFactionId::QingyunHunters => FactionId::Attack,
         NamedFactionId::CangyuanMerchants => FactionId::Defend,
@@ -3433,5 +3433,73 @@ mod tests {
         assert_eq!(emitted.len(), 1);
         assert_eq!(emitted[0].faction, NamedFactionId::QingyunHunters);
         assert_eq!(emitted[0].last_npc_count, 1);
+    }
+
+    #[test]
+    fn named_faction_census_does_not_emit_decay_again_for_decayed_faction() {
+        let mut registry = NamedFactionRegistry::startup_default();
+        let qingyun = registry.get_mut(NamedFactionId::QingyunHunters).unwrap();
+        qingyun.current_npc_count = 1;
+        qingyun.set_status(FactionStatus::Decayed);
+
+        let mut app = App::new();
+        app.insert_resource(registry);
+        app.add_event::<NamedFactionLeaderDownEvent>();
+        app.add_event::<NamedFactionDecayEvent>();
+        app.add_systems(Update, sync_named_faction_census_system);
+
+        app.update();
+
+        let events = app.world().resource::<Events<NamedFactionDecayEvent>>();
+        let emitted = events
+            .iter_current_update_events()
+            .cloned()
+            .collect::<Vec<_>>();
+        assert!(
+            emitted.is_empty(),
+            "Decayed 势力 NPC 归零不应重复触发 NamedFactionDecayEvent，实际 {emitted:?}"
+        );
+    }
+
+    #[test]
+    fn named_faction_census_decays_from_headless_state() {
+        let mut registry = NamedFactionRegistry::startup_default();
+        let cangyuan = registry.get_mut(NamedFactionId::CangyuanMerchants).unwrap();
+        cangyuan.current_npc_count = 2;
+        cangyuan.set_status(FactionStatus::Headless);
+
+        let mut app = App::new();
+        app.insert_resource(registry);
+        app.add_event::<NamedFactionLeaderDownEvent>();
+        app.add_event::<NamedFactionDecayEvent>();
+        app.add_systems(Update, sync_named_faction_census_system);
+
+        app.update();
+
+        let registry = app.world().resource::<NamedFactionRegistry>();
+        let cangyuan = registry.get(NamedFactionId::CangyuanMerchants).unwrap();
+        assert_eq!(
+            cangyuan.status,
+            FactionStatus::Decayed,
+            "Headless 势力 NPC 归零必须进入 Decayed，实际 {:?}",
+            cangyuan.status
+        );
+        let events = app.world().resource::<Events<NamedFactionDecayEvent>>();
+        let emitted = events
+            .iter_current_update_events()
+            .cloned()
+            .collect::<Vec<_>>();
+        assert_eq!(
+            emitted.len(),
+            1,
+            "Headless→Decayed 必须触发一条 NamedFactionDecayEvent，实际 {}",
+            emitted.len()
+        );
+        assert_eq!(
+            emitted[0].faction,
+            NamedFactionId::CangyuanMerchants,
+            "消亡事件必须指向沧渊商会，实际 {:?}",
+            emitted[0].faction
+        );
     }
 }
