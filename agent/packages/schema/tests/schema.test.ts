@@ -1935,6 +1935,24 @@ describe("sample files pass schema validation", () => {
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
 
+  it("CombatRealtimeEventV1 accepts back body_part", () => {
+    const data = {
+      v: 1,
+      kind: "combat_event",
+      tick: 84012,
+      target_id: "offline:Crimson",
+      attacker_id: "offline:Azure",
+      body_part: "back",
+      wound_kind: "cut",
+      damage: 12,
+    };
+    const result = validate(CombatRealtimeEventV1, data);
+    expect(
+      result.ok,
+      `server CombatBodyPartV1::Back serializes to body_part=back and must validate: ${result.errors.join("; ")}`,
+    ).toBe(true);
+  });
+
   it("combat-event.summary.sample.json", () => {
     const data = loadSample("combat-event.summary.sample.json");
     const result = validate(CombatSummaryV1, data);

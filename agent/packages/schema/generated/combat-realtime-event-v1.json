@@ -47,6 +47,10 @@
           "type": "string"
         },
         {
+          "const": "back",
+          "type": "string"
+        },
+        {
           "const": "abdomen",
           "type": "string"
         },

@@ -19,6 +19,7 @@ export type CombatDefenseKindV1 = Static<typeof CombatDefenseKindV1>;
 export const CombatBodyPartV1 = Type.Union([
   Type.Literal("head"),
   Type.Literal("chest"),
+  Type.Literal("back"),
   Type.Literal("abdomen"),
   Type.Literal("arm_l"),
   Type.Literal("arm_r"),
