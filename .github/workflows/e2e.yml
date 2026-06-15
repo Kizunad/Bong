@@ -101,6 +101,18 @@ jobs:
         working-directory: client
         run: ./gradlew test
 
+      - name: Pre-pull Redis image with retry
+        run: |
+          for attempt in 1 2 3; do
+            if docker compose -f docker-compose.test.yml pull redis; then
+              exit 0
+            fi
+            delay=$((attempt * 10))
+            echo "redis image pull failed on attempt ${attempt}; retrying in ${delay}s"
+            sleep "${delay}"
+          done
+          docker compose -f docker-compose.test.yml pull redis
+
       - name: Bring up Redis test service
         run: docker compose -f docker-compose.test.yml up -d redis --wait
 
