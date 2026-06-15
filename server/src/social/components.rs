@@ -396,43 +396,54 @@ mod tests {
     #[test]
     fn faction_reputation_delta_clamps_to_plan_range() {
         let mut reputation = FactionReputation::default();
+        let high_score = reputation.apply_delta(NamedFactionId::QingyunHunters, 250);
         assert_eq!(
-            reputation.apply_delta(NamedFactionId::QingyunHunters, 250),
-            FactionReputation::MAX_SCORE
+            high_score,
+            FactionReputation::MAX_SCORE,
+            "expected max score because positive deltas clamp to plan range, actual {high_score}"
         );
+        let low_score = reputation.apply_delta(NamedFactionId::QingyunHunters, -500);
         assert_eq!(
-            reputation.apply_delta(NamedFactionId::QingyunHunters, -500),
-            FactionReputation::MIN_SCORE
+            low_score,
+            FactionReputation::MIN_SCORE,
+            "expected min score because negative deltas clamp to plan range, actual {low_score}"
         );
     }
 
     #[test]
     fn faction_reputation_tiers_follow_plan_thresholds() {
-        assert_eq!(tier_for_score(51), FactionReputationTier::High);
-        assert_eq!(tier_for_score(50), FactionReputationTier::Medium);
-        assert_eq!(tier_for_score(10), FactionReputationTier::Medium);
-        assert_eq!(tier_for_score(0), FactionReputationTier::Normal);
-        assert_eq!(tier_for_score(-10), FactionReputationTier::Normal);
-        assert_eq!(tier_for_score(-11), FactionReputationTier::Low);
-        assert_eq!(tier_for_score(-50), FactionReputationTier::Low);
-        assert_eq!(tier_for_score(-51), FactionReputationTier::Wanted);
+        for (score, expected) in [
+            (51, FactionReputationTier::High),
+            (50, FactionReputationTier::Medium),
+            (10, FactionReputationTier::Medium),
+            (0, FactionReputationTier::Normal),
+            (-10, FactionReputationTier::Normal),
+            (-11, FactionReputationTier::Low),
+            (-50, FactionReputationTier::Low),
+            (-51, FactionReputationTier::Wanted),
+        ] {
+            let actual = tier_for_score(score);
+            assert_eq!(
+                actual, expected,
+                "expected {expected:?} because score {score} maps to plan P3 threshold, actual {actual:?}"
+            );
+        }
     }
 
     #[test]
     fn faction_for_zone_maps_named_anchors() {
-        assert_eq!(
-            faction_for_zone("qingyun_peaks"),
-            Some(NamedFactionId::QingyunHunters)
-        );
-        assert_eq!(
-            faction_for_zone("blood_valley"),
-            Some(NamedFactionId::CangyuanMerchants)
-        );
-        assert_eq!(
-            faction_for_zone("north_wastes"),
-            Some(NamedFactionId::NorthWasteDrifters)
-        );
-        assert_eq!(faction_for_zone("spawn"), None);
+        for (zone, expected) in [
+            ("qingyun_peaks", Some(NamedFactionId::QingyunHunters)),
+            ("blood_valley", Some(NamedFactionId::CangyuanMerchants)),
+            ("north_wastes", Some(NamedFactionId::NorthWasteDrifters)),
+            ("spawn", None),
+        ] {
+            let actual = faction_for_zone(zone);
+            assert_eq!(
+                actual, expected,
+                "expected {expected:?} because zone {zone} has fixed named faction anchor, actual {actual:?}"
+            );
+        }
     }
 
     #[test]
@@ -441,17 +452,54 @@ mod tests {
         reputation.apply_delta(NamedFactionId::QingyunHunters, 60);
         reputation.apply_delta(NamedFactionId::CangyuanMerchants, -60);
 
+        let qingyun = reputation.tier_for_zone("qingyun_peaks");
         assert_eq!(
-            reputation.tier_for_zone("qingyun_peaks"),
-            FactionReputationTier::High
+            qingyun,
+            FactionReputationTier::High,
+            "expected High because QingyunHunters score is 60, actual {qingyun:?}"
         );
+        let cangyuan = reputation.tier_for_zone("blood_valley");
         assert_eq!(
-            reputation.tier_for_zone("blood_valley"),
-            FactionReputationTier::Wanted
+            cangyuan,
+            FactionReputationTier::Wanted,
+            "expected Wanted because CangyuanMerchants score is -60, actual {cangyuan:?}"
         );
+        let spawn = reputation.tier_for_zone("spawn");
         assert_eq!(
-            reputation.tier_for_zone("spawn"),
-            FactionReputationTier::Normal
+            spawn,
+            FactionReputationTier::Normal,
+            "expected Normal because spawn has no named faction anchor, actual {spawn:?}"
+        );
+    }
+
+    #[test]
+    fn faction_membership_serde_keeps_named_faction_backward_compatible() {
+        let legacy = serde_json::json!({
+            "faction": "attack",
+            "rank": 1,
+            "loyalty": 12
+        });
+        let membership: FactionMembership =
+            serde_json::from_value(legacy).expect("legacy membership should deserialize");
+        assert_eq!(
+            membership.named_faction, None,
+            "expected None because old saves omit named_faction, actual {:?}",
+            membership.named_faction
+        );
+
+        let json = serde_json::to_value(FactionMembership {
+            faction: crate::npc::faction::FactionId::Attack,
+            named_faction: None,
+            rank: 1,
+            loyalty: 12,
+            betrayal_count: 0,
+            invite_block_until_tick: None,
+            permanently_refused: false,
+        })
+        .expect("membership should serialize");
+        assert!(
+            json.get("named_faction").is_none(),
+            "expected named_faction omitted because None preserves old save shape, actual {json}"
         );
     }
 }
