@@ -1,0 +1,12 @@
+{
+  "v": 1,
+  "kind": "combat_event",
+  "tick": 92150,
+  "target_id": "offline:Crimson",
+  "attacker_id": "offline:Azure",
+  "body_part": "back",
+  "wound_kind": "cut",
+  "damage": 35,
+  "contam_delta": 8,
+  "description": "debug_attack_intent offline:Azure -> offline:Crimson hit Back with Cut for 35.0 damage at 1.00 reach decay"
+}

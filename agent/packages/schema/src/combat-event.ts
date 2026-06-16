@@ -20,6 +20,7 @@ export const CombatBodyPartV1 = Type.Union([
   Type.Literal("head"),
   Type.Literal("chest"),
   Type.Literal("abdomen"),
+  Type.Literal("back"),
   Type.Literal("arm_l"),
   Type.Literal("arm_r"),
   Type.Literal("leg_l"),

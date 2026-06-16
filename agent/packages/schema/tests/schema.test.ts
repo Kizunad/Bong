@@ -11,7 +11,7 @@ import { AntiCheatReportV1 } from "../src/anticheat.js";
 import { AudioEventV1 } from "../src/audio-event.js";
 import { ChatMessageV1 } from "../src/chat-message.js";
 import { validateQiInjectionEventV1Contract } from "../src/combat-carrier.js";
-import { CombatDefenseKindV1, CombatRealtimeEventV1, CombatSummaryV1 } from "../src/combat-event.js";
+import { CombatBodyPartV1, CombatDefenseKindV1, CombatRealtimeEventV1, CombatSummaryV1 } from "../src/combat-event.js";
 import { DeathInsightRequestV1 } from "../src/death-insight.js";
 import {
   HeartDemonOfferDraftV1,
@@ -1939,6 +1939,49 @@ describe("sample files pass schema validation", () => {
     const data = loadSample("combat-event.summary.sample.json");
     const result = validate(CombatSummaryV1, data);
     expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  // bughunt r2-P2#11 — CombatBodyPartV1 schema pin tests (all 8 variants including "back")
+  it("CombatBodyPartV1 accepts all 8 body part variants including back", () => {
+    const ALL_BODY_PARTS = [
+      "head",
+      "chest",
+      "abdomen",
+      "back",
+      "arm_l",
+      "arm_r",
+      "leg_l",
+      "leg_r",
+    ] as const;
+    for (const part of ALL_BODY_PARTS) {
+      const result = validate(CombatBodyPartV1, part);
+      expect(
+        result.ok,
+        `CombatBodyPartV1 must accept "${part}" — server emits this value via IPC; missing variant causes TS parse failure: ${result.errors.join("; ")}`,
+      ).toBe(true);
+    }
+  });
+  it("CombatBodyPartV1 rejects unknown body part", () => {
+    const result = validate(CombatBodyPartV1, "shoulder");
+    expect(
+      result.ok,
+      `Expected CombatBodyPartV1 to reject "shoulder" (not a declared variant), but it was accepted`,
+    ).toBe(false);
+  });
+  it("CombatBodyPartV1 rejects empty string", () => {
+    const result = validate(CombatBodyPartV1, "");
+    expect(
+      result.ok,
+      `Expected CombatBodyPartV1 to reject empty string, but it was accepted`,
+    ).toBe(false);
+  });
+  it("combat-event.realtime.back.sample.json validates: back body_part is a parseable IPC value", () => {
+    const data = loadSample("combat-event.realtime.back.sample.json");
+    const result = validate(CombatRealtimeEventV1, data);
+    expect(
+      result.ok,
+      `combat-event with body_part="back" must validate against CombatRealtimeEventV1 — server sends "back" hits; missing variant caused parse failure (bughunt r2-P2#11): ${result.errors.join("; ")}`,
+    ).toBe(true);
   });
 
   // plan-shield-block-v1 P2 — CombatDefenseKindV1 schema pin tests
