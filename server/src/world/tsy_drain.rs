@@ -80,7 +80,6 @@ fn record_tsy_drain_transfer(
     player: Entity,
     zone_name: &str,
     amount: f64,
-    before_player_qi: f64,
 ) {
     let Some(account) = account else {
         return;
@@ -88,16 +87,26 @@ fn record_tsy_drain_transfer(
     if amount <= 0.0 {
         return;
     }
+    // 审计模式（同 BossDrain）：玩家真元已在 ECS Cultivation.qi_current 扣减，
+    // ledger 只记 rift 账户增量 + audit trail，不触碰玩家账户余额。
+    // 这样 summarize_world_qi 的 total_observed = player_qi(ECS) + ledger_qi(rift)，
+    // 守恒不双计。
     let from = QiAccountId::player(format!("entity:{player:?}"));
     let to = QiAccountId::rift(zone_name.to_string());
-    let source_balance = account.balance(&from).max(before_player_qi.max(amount));
-    if account.set_balance(from.clone(), source_balance).is_err() {
-        return;
+    // 确保 rift 账户存在
+    if !account.has_account(&to) {
+        let _ = account.set_balance(to.clone(), 0.0);
     }
-    let Ok(transfer) = QiTransfer::new(from, to, amount, QiTransferReason::RiftCollapse) else {
-        return;
-    };
-    let _ = account.transfer(transfer);
+    // rift 账户增 amount
+    let rift_balance = account.balance(&to);
+    let _ = account.set_balance(to.clone(), rift_balance + amount);
+    // 仅推审计轨迹，不调 transfer()（后者会检查 from 余额并拒绝）
+    account.push_transfer_audit(QiTransfer {
+        from,
+        to,
+        amount,
+        reason: QiTransferReason::RiftCollapse,
+    });
 }
 
 /// plan-tsy-zone-v1 §2.2 — 抽真元 tick system。
@@ -140,7 +149,6 @@ pub fn tsy_drain_tick(
             entity,
             zone.name.as_str(),
             actual_drain,
-            before_player_qi,
         );
         cultivation.qi_current = (cultivation.qi_current - drain).max(0.0);
         if was_alive && cultivation.qi_current <= 0.0 {
@@ -161,7 +169,7 @@ pub fn tsy_drain_tick(
 mod tests {
     use super::*;
     use crate::world::dimension::DimensionKind;
-    use valence::prelude::DVec3;
+    use valence::prelude::{App, DVec3};
 
     fn tsy_zone(name: &str, spirit_qi: f64) -> Zone {
         Zone {
@@ -293,25 +301,292 @@ mod tests {
     }
 
     #[test]
-    fn transfer_records_tsy_drain_without_losing_qi() {
+    fn transfer_records_tsy_drain_audit_only_no_player_balance() {
+        // 修复后：玩家账户不写入 ledger（ECS Cultivation 是真元的唯一来源）。
+        // ledger 只记 rift 账户增量 + audit trail。
         let mut account = WorldQiAccount::default();
         record_tsy_drain_transfer(
             Some(&mut account),
             Entity::from_raw(7),
             "tsy_lingxu_01_deep",
             3.0,
-            10.0,
         );
 
         let player_account = QiAccountId::player(format!("entity:{:?}", Entity::from_raw(7)));
         let rift_account = QiAccountId::rift("tsy_lingxu_01_deep");
-        assert_eq!(account.balance(&player_account), 7.0);
-        assert_eq!(account.balance(&rift_account), 3.0);
-        assert_eq!(account.total(), 10.0);
-        assert_eq!(account.transfers().len(), 1);
+
+        // 玩家账户余额不应存在于 ledger（balance 返回缺省 0.0，has_account 为 false）
+        assert!(
+            !account.has_account(&player_account),
+            "player 账户不应写入 ledger（ECS 是真元的唯一来源），has_account 应为 false"
+        );
+        assert_eq!(
+            account.balance(&player_account),
+            0.0,
+            "player 不在 ledger 时 balance() 应返回缺省 0.0"
+        );
+
+        // rift 账户增 amount
+        assert_eq!(
+            account.balance(&rift_account),
+            3.0,
+            "rift 账户应增加 drain 量（3.0），期望 3.0，实际 {}",
+            account.balance(&rift_account)
+        );
+
+        // ledger.total() == 仅 rift 侧（不含虚拟 player 余额）
+        assert_eq!(
+            account.total(),
+            3.0,
+            "ledger total 应等于 rift drain 量（3.0），不应虚增为 player 全池。期望 3.0，实际 {}",
+            account.total()
+        );
+
+        // audit trail 仍存在一条 RiftCollapse 记录
+        assert_eq!(
+            account.transfers().len(),
+            1,
+            "应有恰好 1 条审计记录，实际 {}",
+            account.transfers().len()
+        );
         assert_eq!(
             account.transfers()[0].reason,
-            QiTransferReason::RiftCollapse
+            QiTransferReason::RiftCollapse,
+            "审计记录 reason 应为 RiftCollapse"
         );
+    }
+
+    #[test]
+    fn transfer_no_player_ledger_entry_after_drain() {
+        // 补充：drain 后 ledger 中绝对没有 player 账户条目。
+        let mut account = WorldQiAccount::default();
+        record_tsy_drain_transfer(Some(&mut account), Entity::from_raw(42), "tsy_zone_a", 5.0);
+        let player_account = QiAccountId::player(format!("entity:{:?}", Entity::from_raw(42)));
+        assert!(
+            !account.has_account(&player_account),
+            "drain 后 ledger 不应存在 player 账户条目"
+        );
+    }
+
+    #[test]
+    fn transfer_rift_balance_accumulates_across_multiple_drains() {
+        // rift balance 应跨多次 drain 累积（不覆盖）。
+        let mut account = WorldQiAccount::default();
+        record_tsy_drain_transfer(Some(&mut account), Entity::from_raw(1), "tsy_zone_b", 2.0);
+        record_tsy_drain_transfer(Some(&mut account), Entity::from_raw(2), "tsy_zone_b", 3.5);
+        let rift_account = QiAccountId::rift("tsy_zone_b");
+        assert_eq!(
+            account.balance(&rift_account),
+            5.5,
+            "rift 余额应累积两次 drain，期望 5.5，实际 {}",
+            account.balance(&rift_account)
+        );
+        assert_eq!(
+            account.total(),
+            5.5,
+            "ledger total 应等于累计 drain 量（5.5），期望 5.5，实际 {}",
+            account.total()
+        );
+        assert_eq!(
+            account.transfers().len(),
+            2,
+            "应有 2 条审计记录，实际 {}",
+            account.transfers().len()
+        );
+    }
+
+    // ── 守恒系统级测试（system-level，驱动真实 tsy_drain_tick ECS tick） ─────────────
+
+    /// helper：构建最小 App，并 insert 一个 TSY zone（覆盖玩家坐标 [50,64,50]）。
+    fn make_drain_app_with_zone(zone_spirit_qi: f64) -> App {
+        use crate::combat::events::DeathEvent;
+        use valence::prelude::Update;
+
+        let mut app = App::new();
+
+        // 资源
+        app.insert_resource(crate::combat::CombatClock { tick: 1 });
+        app.insert_resource(WorldQiAccount::default());
+        app.insert_resource(ZoneRegistry {
+            zones: vec![Zone {
+                name: "tsy_zone_sys_test".to_string(),
+                dimension: DimensionKind::Tsy,
+                bounds: (DVec3::new(0.0, 0.0, 0.0), DVec3::new(100.0, 100.0, 100.0)),
+                spirit_qi: zone_spirit_qi,
+                danger_level: 5,
+                active_events: Vec::new(),
+                patrol_anchors: Vec::new(),
+                blocked_tiles: Vec::new(),
+            }],
+        });
+
+        // EventWriter<DeathEvent> 必须注册
+        app.add_event::<DeathEvent>();
+
+        // 被测 system
+        app.add_systems(Update, tsy_drain_tick);
+
+        app
+    }
+
+    /// 正常 drain < pool：ECS 扣减量 == rift ledger 增量（守恒）。
+    ///
+    /// 使用 spirit_qi=-0.3、qi_max=100 → drain ≈ 0.043/tick（远小于 pool），
+    /// 确认：delta_ecs == rift_balance（真实 system 路径）。
+    #[test]
+    fn system_conservation_normal_drain_ecs_delta_equals_rift_balance() {
+        use crate::world::dimension::{CurrentDimension, DimensionKind};
+        use crate::world::tsy::{DimensionAnchor, TsyPresence};
+        use valence::prelude::{DVec3, Position};
+
+        let mut app = make_drain_app_with_zone(-0.3);
+
+        let qi_start = 100.0_f64;
+        let player = app
+            .world_mut()
+            .spawn((
+                Cultivation {
+                    qi_current: qi_start,
+                    qi_max: qi_start,
+                    ..Default::default()
+                },
+                Position::new([50.0, 64.0, 50.0]),
+                TsyPresence {
+                    family_id: "tsy_zone_sys_test".to_string(),
+                    entered_at_tick: 0,
+                    entry_inventory_snapshot: Vec::new(),
+                    return_to: DimensionAnchor {
+                        dimension: DimensionKind::Overworld,
+                        pos: DVec3::ZERO,
+                    },
+                },
+                CurrentDimension(DimensionKind::Tsy),
+            ))
+            .id();
+
+        app.update();
+
+        let qi_after = app
+            .world()
+            .get::<Cultivation>(player)
+            .expect("Cultivation should exist")
+            .qi_current;
+
+        let delta_ecs = qi_start - qi_after;
+
+        let rift_account = QiAccountId::rift("tsy_zone_sys_test");
+        let rift_balance = app
+            .world()
+            .resource::<WorldQiAccount>()
+            .balance(&rift_account);
+
+        assert!(
+            delta_ecs > 0.0,
+            "ECS 应扣减真元（spirit_qi=-0.3, pool=100），实际 delta={}",
+            delta_ecs
+        );
+        assert!(
+            (delta_ecs - rift_balance).abs() < 1e-9,
+            "守恒失败：ECS 扣减量({delta_ecs}) != rift ledger 增量({rift_balance})。\
+             若 record_tsy_drain_transfer 传入的是未 clamp 的 drain 而 ECS 用的是 actual_drain，\
+             两者将不等（回归防御）"
+        );
+    }
+
+    /// overdraft 路径：drain > before_player_qi（小池 / 大灵压）。
+    ///
+    /// 构造 qi_current=2.0、spirit_qi=-1.1（大强度，drain >> 2.0）。
+    /// 断言：
+    ///   - ECS qi_current 扣到 0（不能为负）
+    ///   - rift_balance == before_player_qi（== ECS 实际损失量），而非 unclamped drain
+    ///   - 两者严格相等（守恒不变式）
+    #[test]
+    fn system_conservation_overdraft_ecs_clamps_to_zero_rift_equals_actual_loss() {
+        use crate::world::dimension::{CurrentDimension, DimensionKind};
+        use crate::world::tsy::{DimensionAnchor, TsyPresence};
+        use valence::prelude::{DVec3, Position};
+
+        // spirit_qi=-1.1, qi_max=500 → drain 约 9.2/tick >> qi_current=2.0
+        let mut app = make_drain_app_with_zone(-1.1);
+
+        // 使用大 qi_max 以让 drain 放大（非线性 pool 比），但 qi_current 只给 2.0
+        let qi_start = 2.0_f64;
+        let qi_max = 500.0_f64;
+        let player = app
+            .world_mut()
+            .spawn((
+                Cultivation {
+                    qi_current: qi_start,
+                    qi_max,
+                    ..Default::default()
+                },
+                Position::new([50.0, 64.0, 50.0]),
+                TsyPresence {
+                    family_id: "tsy_zone_sys_test".to_string(),
+                    entered_at_tick: 0,
+                    entry_inventory_snapshot: Vec::new(),
+                    return_to: DimensionAnchor {
+                        dimension: DimensionKind::Overworld,
+                        pos: DVec3::ZERO,
+                    },
+                },
+                CurrentDimension(DimensionKind::Tsy),
+            ))
+            .id();
+
+        app.update();
+
+        let qi_after = app
+            .world()
+            .get::<Cultivation>(player)
+            .expect("Cultivation should exist")
+            .qi_current;
+
+        let delta_ecs = qi_start - qi_after; // 应 == qi_start（扣到 0）
+
+        let rift_account = QiAccountId::rift("tsy_zone_sys_test");
+        let rift_balance = app
+            .world()
+            .resource::<WorldQiAccount>()
+            .balance(&rift_account);
+
+        assert_eq!(
+            qi_after, 0.0,
+            "overdraft：ECS qi_current 应扣到 0（实际 {}）。\
+             若此 assert 失败说明 .max(0.0) clamp 未生效",
+            qi_after
+        );
+        assert!(
+            rift_balance <= qi_start,
+            "rift_balance({rift_balance}) 不应超过 before_player_qi({qi_start})：\
+             ledger 记录的应是 actual_drain（min(drain, pool)），而非 unclamped drain"
+        );
+        assert!(
+            (delta_ecs - rift_balance).abs() < 1e-9,
+            "overdraft 守恒失败：ECS 扣减量({delta_ecs}) != rift ledger 增量({rift_balance})。\
+             若 record_tsy_drain_transfer 传入 unclamped drain 而 ECS 用 .max(0) clamp，\
+             rift_balance 将 > delta_ecs，等式不成立（此为原 bug 类回归的直接断言）"
+        );
+    }
+
+    #[test]
+    fn transfer_zero_amount_is_noop() {
+        // amount=0 时不应写 rift 账户、不应留审计记录。
+        let mut account = WorldQiAccount::default();
+        record_tsy_drain_transfer(Some(&mut account), Entity::from_raw(9), "tsy_zone_d", 0.0);
+        let rift_account = QiAccountId::rift("tsy_zone_d");
+        assert_eq!(
+            account.balance(&rift_account),
+            0.0,
+            "amount=0 不应写 rift 账户"
+        );
+        assert_eq!(account.transfers().len(), 0, "amount=0 不应留审计记录");
+    }
+
+    #[test]
+    fn transfer_none_account_is_noop() {
+        // account=None 时不应 panic，函数静默返回。
+        record_tsy_drain_transfer(None, Entity::from_raw(11), "tsy_zone_e", 1.5);
+        // 能走到这里不 panic 即通过
     }
 }
