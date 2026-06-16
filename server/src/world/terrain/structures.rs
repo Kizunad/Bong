@@ -2526,8 +2526,28 @@ fn stamp_structure(
 
     // Ground anchor: registry places template[0,0,0] at surface_pos.y + 1, so to
     // land the template's bottom row at the procedural `base_y`, the surface is
-    // base_y - 1. origin_x/z is the structure centre (template local [0,0,0]).
-    let surface_pos = BlockPos::new(origin_x, base_y - 1, origin_z);
+    // base_y - 1.
+    //
+    // Centering (worldgen-v4 P7 parity, mirrors flora.rs:707-713):
+    // registry.stamp anchors the template **corner** [0,0,0] at surface_pos, so a
+    // W×_×D template without correction grows +x/+z from origin_x/z — its geometric
+    // centre lands at (origin_x + W/2, origin_z + D/2), visibly offset from the
+    // scatter point (a rift_bridge or ruin_pillar hangs off one corner of the cell
+    // centre instead of being centred on it).
+    //
+    // Fix: shift the horizontal origin back by the rotated half-extent so the
+    // template **centre** lands on (origin_x, origin_z). Uses floor-division so an
+    // odd size centres exactly; an even size is off by half a block (tightest the
+    // integer grid allows). The half-extent is taken from the resident template size
+    // (stable deterministic source) and rotated by the same `rotation` so Cw90/Cw270
+    // transpositions of the footprint are accounted for — identical math to flora.rs.
+    let Some(template) = registry.get(&template_id) else {
+        return false;
+    };
+    let half_x = (template.size[0] - 1).max(0) / 2;
+    let half_z = (template.size[2] - 1).max(0) / 2;
+    let (centre_dx, _centre_dy, centre_dz) = rotation.apply(half_x, 0, half_z);
+    let surface_pos = BlockPos::new(origin_x - centre_dx, base_y - 1, origin_z - centre_dz);
     let Some((stamped, _unresolved)) = registry.stamp(
         &template_id,
         surface_pos,
@@ -2979,7 +2999,278 @@ mod nbt_stamp_tests {
         );
     }
 
-    // ── ⑥ real authored structure assets resolve for every scatter kind ──────
+    // ── ⑥ centering — template bbox centre lands on origin_x/z ──────────────
+
+    /// Build a flat W×1×D template filled with `block_name` at every (x, 0, z).
+    fn flat_template(block_name: &str, size_x: i32, size_z: i32) -> StructureNbt {
+        let mut blocks = Vec::new();
+        for x in 0..size_x {
+            for z in 0..size_z {
+                blocks.push(StructureBlockEntry {
+                    pos: [x, 0, z],
+                    state: 0,
+                    block_nbt: None,
+                });
+            }
+        }
+        StructureNbt {
+            data_version: DATA_VERSION,
+            size: [size_x, 1, size_z],
+            palette: vec![PaletteEntry {
+                name: format!("minecraft:{block_name}"),
+                properties: vec![],
+            }],
+            blocks,
+            entities: vec![],
+        }
+    }
+
+    #[test]
+    fn stamp_structure_centres_odd_footprint_on_origin() {
+        // A 5×1×3 template (half_x=2, half_z=1) with Rotation::None:
+        //   centre_dx=2, centre_dz=1 → surface_pos.x = origin_x - 2, surface_pos.z = origin_z - 1
+        //   template [2,0,1] lands at (origin_x, base_y, origin_z) — geometric centre.
+        // Expected: bbox_min_x = origin_x - 2, bbox_max_x = origin_x + 2 (±2 from centre).
+        //           bbox_min_z = origin_z - 1, bbox_max_z = origin_z + 1 (±1 from centre).
+        // The centre column must be symmetric about origin_x/origin_z.
+        let dir = temp_dir("centre_odd");
+        write_template(
+            &dir,
+            "decorations/ruins_pillar/main_v1.nbt",
+            &flat_template("stone_bricks", 5, 3),
+        );
+        let reg = DecorationNbtRegistry::load(&dir).unwrap();
+
+        let origin_x = 100;
+        let origin_z = 200;
+        let base_y = 64;
+        // Force Rotation::None by choosing seed so (seed >> 7) % 4 == 0
+        // Rotation::None = index 0; we need (seed >> 7) % 4 == 0
+        let seed: u64 = 0; // (0 >> 7) % 4 == 0 → Rotation::None
+
+        let mut placements = HashMap::new();
+        let bounds = bounds_at(origin_x / 16, origin_z / 16);
+        assert!(
+            stamp_structure(
+                &mut placements,
+                &bounds,
+                &reg,
+                RUIN_PILLAR_KIND,
+                seed,
+                origin_x,
+                base_y,
+                origin_z,
+            ),
+            "5×1×3 ruin_pillar template must stamp"
+        );
+
+        let xs: Vec<i32> = placements.keys().map(|(x, _, _)| *x).collect();
+        let zs: Vec<i32> = placements.keys().map(|(_, _, z)| *z).collect();
+        let min_x = xs.iter().copied().min().unwrap();
+        let max_x = xs.iter().copied().max().unwrap();
+        let min_z = zs.iter().copied().min().unwrap();
+        let max_z = zs.iter().copied().max().unwrap();
+
+        assert_eq!(
+            min_x,
+            origin_x - 2,
+            "expected bbox min_x = origin_x - 2 = {} because half_x=2 centres the 5-wide template; \
+             got min_x={}",
+            origin_x - 2,
+            min_x
+        );
+        assert_eq!(
+            max_x,
+            origin_x + 2,
+            "expected bbox max_x = origin_x + 2 = {} because half_x=2 centres the 5-wide template; \
+             got max_x={}",
+            origin_x + 2,
+            max_x
+        );
+        assert_eq!(
+            min_z,
+            origin_z - 1,
+            "expected bbox min_z = origin_z - 1 = {} because half_z=1 centres the 3-deep template; \
+             got min_z={}",
+            origin_z - 1,
+            min_z
+        );
+        assert_eq!(
+            max_z,
+            origin_z + 1,
+            "expected bbox max_z = origin_z + 1 = {} because half_z=1 centres the 3-deep template; \
+             got max_z={}",
+            origin_z + 1,
+            max_z
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn stamp_structure_centred_bbox_symmetric_about_origin() {
+        // Verifies the bbox is symmetric about (origin_x, origin_z) for all 4 rotations.
+        // Uses a 7×1×5 template (half_x=3, half_z=2, Rotation::None gives ±3 x, ±2 z).
+        // After centering: bbox extends equally in +/- from origin in both axes.
+        let dir = temp_dir("centre_sym");
+        write_template(
+            &dir,
+            "decorations/bone_pile/main_v1.nbt",
+            &flat_template("bone_block", 7, 5),
+        );
+        let reg = DecorationNbtRegistry::load(&dir).unwrap();
+
+        let origin_x = 50;
+        let origin_z = -30;
+        let base_y = 80;
+
+        for (rot_idx, rot) in Rotation::ALL.iter().enumerate() {
+            // Choose seed such that rotation resolves to `rot_idx`
+            let seed: u64 = (rot_idx as u64) << 7; // (seed >> 7) % 4 == rot_idx
+
+            let mut placements = HashMap::new();
+            // Use the chunk that contains the origin; the 18-block margin in
+            // `upsert_block` comfortably covers the ±3/±2 template extents.
+            let cx = (origin_x as f64 / 16.0).floor() as i32;
+            let cz = (origin_z as f64 / 16.0).floor() as i32;
+            let bounds = ChunkBounds::from_chunk_pos(ChunkPos::new(cx, cz));
+
+            assert!(
+                stamp_structure(
+                    &mut placements,
+                    &bounds,
+                    &reg,
+                    BONE_PILE_KIND,
+                    seed,
+                    origin_x,
+                    base_y,
+                    origin_z,
+                ),
+                "7×1×5 bone_pile template must stamp for rotation index {rot_idx}"
+            );
+
+            let xs: Vec<i32> = placements.keys().map(|(x, _, _)| *x).collect();
+            let zs: Vec<i32> = placements.keys().map(|(_, _, z)| *z).collect();
+            let min_x = xs.iter().copied().min().unwrap();
+            let max_x = xs.iter().copied().max().unwrap();
+            let min_z = zs.iter().copied().min().unwrap();
+            let max_z = zs.iter().copied().max().unwrap();
+
+            // For a centred bbox, the two deltas from origin must match
+            let dx_lo = (origin_x - min_x).abs();
+            let dx_hi = (max_x - origin_x).abs();
+            let dz_lo = (origin_z - min_z).abs();
+            let dz_hi = (max_z - origin_z).abs();
+
+            assert_eq!(
+                dx_lo, dx_hi,
+                "rotation {:?}: bbox must be symmetric in X about origin_x={origin_x}; \
+                 expected |origin-min|={dx_lo} == |max-origin|={dx_hi}",
+                rot
+            );
+            assert_eq!(
+                dz_lo, dz_hi,
+                "rotation {:?}: bbox must be symmetric in Z about origin_z={origin_z}; \
+                 expected |origin-min|={dz_lo} == |max-origin|={dz_hi}",
+                rot
+            );
+        }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn stamp_structure_centering_is_deterministic() {
+        // Same seed + origin must produce identical placements both with and between runs,
+        // confirming that centering (which reads template size) does not introduce
+        // any non-determinism.
+        let dir = temp_dir("centre_determ");
+        write_template(
+            &dir,
+            "decorations/spirit_ore_vein/main_v1.nbt",
+            // stone_bricks is registered in blocks::block_from_name (gold_ore is not).
+            &flat_template("stone_bricks", 5, 3),
+        );
+        let reg = DecorationNbtRegistry::load(&dir).unwrap();
+
+        let run = || {
+            let mut placements = HashMap::new();
+            let bounds = bounds_at(3, -2);
+            stamp_structure(
+                &mut placements,
+                &bounds,
+                &reg,
+                SPIRIT_ORE_KIND,
+                0xABCD_EF01_2345_6789,
+                50,
+                100,
+                -30,
+            );
+            let mut v: Vec<_> = placements
+                .into_iter()
+                .map(|((x, y, z), p)| (x, y, z, p.block))
+                .collect();
+            v.sort();
+            v
+        };
+
+        let r1 = run();
+        let r2 = run();
+        assert_eq!(
+            r1, r2,
+            "centred stamp must be deterministic — same seed+origin must produce identical \
+             placements on every call"
+        );
+        assert!(
+            !r1.is_empty(),
+            "centred stamp must actually produce blocks (seed/bounds not accidentally empty)"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn stamp_structure_unit_template_unaffected_by_centering() {
+        // A 1×1×1 template has half_x=0, half_z=0 → centering shift is zero.
+        // The block must still land exactly at (origin_x, base_y, origin_z) to ensure
+        // the centering change is backward-compatible for single-block templates.
+        let dir = temp_dir("centre_unit");
+        write_template(
+            &dir,
+            "decorations/bone_pile/single_v1.nbt",
+            &single_block_template("wither_skeleton_skull", [0, 0, 0]),
+        );
+        let reg = DecorationNbtRegistry::load(&dir).unwrap();
+
+        let origin_x = 7;
+        let origin_z = -9;
+        let base_y = 65;
+        let seed: u64 = 0; // Rotation::None
+
+        let mut placements = HashMap::new();
+        let bounds = bounds_at(0, -1);
+        assert!(
+            stamp_structure(
+                &mut placements,
+                &bounds,
+                &reg,
+                BONE_PILE_KIND,
+                seed,
+                origin_x,
+                base_y,
+                origin_z,
+            ),
+            "1×1×1 bone_pile must stamp"
+        );
+
+        let p = placements.get(&(origin_x, base_y, origin_z)).expect(
+            "1×1×1 template with half_x=0, half_z=0 must land at (origin_x, base_y, origin_z) \
+                 unchanged — centering shift is zero for a unit template",
+        );
+        assert_eq!(
+            p.block,
+            BlockState::WITHER_SKELETON_SKULL,
+            "block identity must be preserved through centering"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn real_structure_assets_stamp_for_every_scatter_kind() {
