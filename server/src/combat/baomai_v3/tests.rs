@@ -2,14 +2,15 @@ use valence::prelude::{App, DVec3, Events, Position};
 
 use super::events::{
     BaomaiSkillEvent, BaomaiSkillId, BloodBurnEvent, DispersedQiEvent, MountainShakeEvent,
-    BAOMAI_BENG_QUAN_SKILL_ID, BAOMAI_DISPERSE_SKILL_ID,
+    BAOMAI_BENG_QUAN_SKILL_ID, BAOMAI_DISPERSE_SKILL_ID, BAOMAI_FULL_POWER_CHARGE_SKILL_ID,
+    BAOMAI_FULL_POWER_RELEASE_SKILL_ID,
 };
 use super::physics::{
     beng_quan_cooldown_ticks, blood_burn_profile, disperse_profile, mountain_shake_profile,
 };
 use super::skills::{
-    cast_beng_quan, cast_blood_burn, cast_disperse, cast_full_power_charge, cast_mountain_shake,
-    declare_meridian_dependencies,
+    cast_beng_quan, cast_blood_burn, cast_disperse, cast_full_power_charge,
+    cast_full_power_release, cast_mountain_shake, declare_meridian_dependencies,
 };
 use super::state::{BaomaiMastery, BloodBurnActive, BodyTranscendence, MeridianRippleScar};
 use crate::combat::components::{Lifecycle, SkillBarBindings, Wounds};
@@ -673,5 +674,101 @@ fn beng_quan_heavy_multiplier_defaults_to_one_without_qi_color() {
     assert!(
         matches!(result, CastResult::Started { .. }),
         "期望无 QiColor 时 cast_beng_quan 正常完成，实际={result:?}"
+    );
+}
+
+// --- bao_mai ↔ baomai ID 门控 pin (regression: r2-P3 bughunt fix) ---
+
+#[test]
+fn full_power_charge_skill_id_constant_is_canonical_baomai() {
+    // 期望 "baomai.full_power_charge"（无下划线），
+    // 因为 SkillMeridianDependencies::declare 用此键注册门控；
+    // 若常数改回 "bao_mai.*" 则 check_static_deps 查不到门控条目，
+    // 经脉断裂时玩家仍可施放全力一击。
+    assert_eq!(
+        BAOMAI_FULL_POWER_CHARGE_SKILL_ID, "baomai.full_power_charge",
+        "BAOMAI_FULL_POWER_CHARGE_SKILL_ID 应为 'baomai.full_power_charge'（无下划线）"
+    );
+}
+
+#[test]
+fn full_power_release_skill_id_constant_is_canonical_baomai() {
+    assert_eq!(
+        BAOMAI_FULL_POWER_RELEASE_SKILL_ID, "baomai.full_power_release",
+        "BAOMAI_FULL_POWER_RELEASE_SKILL_ID 应为 'baomai.full_power_release'（无下划线）"
+    );
+}
+
+#[test]
+fn full_power_meridian_deps_declared_under_canonical_id() {
+    // 门控声明使用的是 BAOMAI_FULL_POWER_*_SKILL_ID（"baomai.*" 形式），
+    // 若 ID 改回 "bao_mai.*" 则 declare 写入的键与 lookup 的键不同，
+    // check_static_deps 永远找不到依赖项（静默通过）。
+    let mut deps = SkillMeridianDependencies::default();
+    declare_meridian_dependencies(&mut deps);
+    let charge_deps = deps.lookup(BAOMAI_FULL_POWER_CHARGE_SKILL_ID);
+    assert_eq!(
+        charge_deps.len(),
+        5,
+        "期望 full_power_charge 有 5 个经脉依赖 (Ren/Du/LargeIntestine/SmallIntestine/TripleEnergizer)，\
+         实际={len}——可能因 ID 失配导致 lookup 返回空",
+        len = charge_deps.len()
+    );
+    let release_deps = deps.lookup(BAOMAI_FULL_POWER_RELEASE_SKILL_ID);
+    assert_eq!(
+        release_deps.len(),
+        5,
+        "期望 full_power_release 有 5 个经脉依赖，实际={len}——可能因 ID 失配导致 lookup 返回空",
+        len = release_deps.len()
+    );
+}
+
+#[test]
+fn full_power_charge_rejected_when_ren_meridian_severed() {
+    // 端到端门控验证：Ren 经脉断裂后 full_power_charge 应被拒绝。
+    // 若 ID 失配（bao_mai. vs baomai.），check_static_deps 查不到门控，
+    // 导致断脉玩家仍能施放——此测试在失配情况下会变绿（误报）。
+    let mut app = app();
+    let caster = spawn_actor(&mut app, Realm::Induce, 400.0, 400.0, DVec3::ZERO);
+
+    // 先插入正确的 SkillMeridianDependencies
+    let mut meridian_deps = SkillMeridianDependencies::default();
+    declare_meridian_dependencies(&mut meridian_deps);
+    app.world_mut().insert_resource(meridian_deps);
+
+    // 断 Ren 经（全力一击依赖之一）
+    sever(&mut app, caster, MeridianId::Ren);
+
+    let result = cast_full_power_charge(app.world_mut(), caster, 0, None);
+    assert_eq!(
+        result,
+        CastResult::Rejected {
+            reason: CastRejectReason::MeridianSevered(Some(MeridianId::Ren))
+        },
+        "期望 Ren 断裂时 full_power_charge 返回 MeridianSevered(Ren)，\
+         实际={result:?}——若为 Started 则说明 ID 失配导致门控旁路"
+    );
+}
+
+#[test]
+fn full_power_release_rejected_when_du_meridian_severed() {
+    // 端到端门控验证：Du 经脉断裂后 full_power_release 应被拒绝。
+    let mut app = app();
+    let caster = spawn_actor(&mut app, Realm::Induce, 400.0, 400.0, DVec3::ZERO);
+
+    let mut meridian_deps = SkillMeridianDependencies::default();
+    declare_meridian_dependencies(&mut meridian_deps);
+    app.world_mut().insert_resource(meridian_deps);
+
+    sever(&mut app, caster, MeridianId::Du);
+
+    let result = cast_full_power_release(app.world_mut(), caster, 0, None);
+    assert_eq!(
+        result,
+        CastResult::Rejected {
+            reason: CastRejectReason::MeridianSevered(Some(MeridianId::Du))
+        },
+        "期望 Du 断裂时 full_power_release 返回 MeridianSevered(Du)，\
+         实际={result:?}——若为其他 Reject 原因则说明门控命中但 charge 状态前置拦截先于经脉检查"
     );
 }

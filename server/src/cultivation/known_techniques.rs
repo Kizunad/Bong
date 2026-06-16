@@ -47,8 +47,8 @@ const TECHNIQUE_IDS: [&str; 48] = [
     "burst_meridian.tie_shan_kao",
     "burst_meridian.xue_beng_bu",
     "burst_meridian.ni_mai_hu_ti",
-    "bao_mai.full_power_charge",
-    "bao_mai.full_power_release",
+    "baomai.full_power_charge",
+    "baomai.full_power_release",
     "zhenmai.parry",
     "zhenmai.neutralize",
     "zhenmai.multipoint",
@@ -305,7 +305,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
         category: SkillCategory::Defense,
     },
     TechniqueDefinition {
-        id: "bao_mai.full_power_charge",
+        id: "baomai.full_power_charge",
         display_name: "全力一击·蓄",
         grade: "profound",
         description: "把当前真元池逐 tick 灌入一击，蓄力期间被命中会损失部分真元。",
@@ -320,7 +320,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
         category: SkillCategory::Attack,
     },
     TechniqueDefinition {
-        id: "bao_mai.full_power_release",
+        id: "baomai.full_power_release",
         display_name: "全力一击·放",
         grade: "profound",
         description: "释放已蓄真元，按双方境界池子差距换算伤害，随后进入虚脱。",
@@ -1170,8 +1170,8 @@ mod tests {
             "burst_meridian.beng_quan",
             "burst_meridian.tie_shan_kao",
             "burst_meridian.xue_beng_bu",
-            "bao_mai.full_power_charge",
-            "bao_mai.full_power_release",
+            "baomai.full_power_charge",
+            "baomai.full_power_release",
             "woliu.burst",
             "woliu.mouth",
             "woliu.pull",
@@ -1329,5 +1329,58 @@ mod tests {
         assert_eq!(def.cast_ticks, 10);
         let channels: Vec<&str> = def.required_meridians.iter().map(|m| m.channel).collect();
         assert_eq!(channels, ["Lung", "Heart"]);
+    }
+
+    // --- bao_mai ↔ baomai ID 一致性 pin (regression: r2-P3 bughunt fix) ---
+
+    #[test]
+    fn full_power_charge_id_is_canonical_baomai_no_underscore() {
+        // 期望 "baomai.full_power_charge"（无 bao_mai 下划线形式），
+        // 因为 baomai_v3/events.rs 中 BAOMAI_FULL_POWER_CHARGE_SKILL_ID 和
+        // SkillMeridianDependencies 均以此为键；若 known_techniques 用
+        // "bao_mai.*" 则 technique lookup 与 skill dispatch 脱节。
+        let def = technique_definition("baomai.full_power_charge").expect(
+            "expected 'baomai.full_power_charge' — got None, likely bao_mai/baomai mismatch",
+        );
+        assert_eq!(
+            def.id, "baomai.full_power_charge",
+            "technique id must be 'baomai.full_power_charge', not 'bao_mai.full_power_charge'"
+        );
+        assert_eq!(def.category, SkillCategory::Attack);
+    }
+
+    #[test]
+    fn full_power_release_id_is_canonical_baomai_no_underscore() {
+        // 同上，对 release 做同样的 pin。
+        let def = technique_definition("baomai.full_power_release").expect(
+            "expected 'baomai.full_power_release' — got None, likely bao_mai/baomai mismatch",
+        );
+        assert_eq!(
+            def.id, "baomai.full_power_release",
+            "technique id must be 'baomai.full_power_release', not 'bao_mai.full_power_release'"
+        );
+        assert_eq!(def.category, SkillCategory::Attack);
+    }
+
+    #[test]
+    fn known_techniques_list_contains_canonical_baomai_ids() {
+        // TECHNIQUE_IDS 列表必须用 "baomai.*" 形式，确保玩家 granted technique
+        // 与 skill dispatch / meridian dep 门控键对齐。
+        assert!(
+            TECHNIQUE_IDS.contains(&"baomai.full_power_charge"),
+            "TECHNIQUE_IDS should contain 'baomai.full_power_charge', not 'bao_mai.full_power_charge'"
+        );
+        assert!(
+            TECHNIQUE_IDS.contains(&"baomai.full_power_release"),
+            "TECHNIQUE_IDS should contain 'baomai.full_power_release', not 'bao_mai.full_power_release'"
+        );
+        assert!(
+            !TECHNIQUE_IDS.contains(&"bao_mai.full_power_charge"),
+            "stale 'bao_mai.full_power_charge' must not appear in TECHNIQUE_IDS"
+        );
+        assert!(
+            !TECHNIQUE_IDS.contains(&"bao_mai.full_power_release"),
+            "stale 'bao_mai.full_power_release' must not appear in TECHNIQUE_IDS"
+        );
     }
 }
