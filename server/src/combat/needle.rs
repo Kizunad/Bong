@@ -1,13 +1,18 @@
 use serde::{Deserialize, Serialize};
 use valence::prelude::{
     bevy_ecs, Commands, Component, DVec3, Entity, Event, EventReader, EventWriter, Position, Query,
-    Res,
+    Res, ResMut,
 };
 
+use crate::combat::carrier::release_residual_to_zone;
 use crate::combat::components::{Lifecycle, LifecycleState, Stamina, WoundKind};
 use crate::combat::events::{AttackIntent, AttackReach, AttackSource};
+use crate::combat::projectile::residual_qi_after_miss;
 use crate::combat::CombatClock;
 use crate::cultivation::components::{Cultivation, QiColor, Realm};
+use crate::qi_physics::ledger::QiTransfer;
+use crate::world::dimension::DimensionKind;
+use crate::world::zone::ZoneRegistry;
 
 type NeedleActorQueryItem<'a> = (
     &'a mut Cultivation,
@@ -127,15 +132,46 @@ pub fn resolve_shoot_needle_intents(
     }
 }
 
+/// qc-P0：过期针归还真元路径。维度固定为 Overworld（针不跨维度飞行）。
 pub fn despawn_expired_qi_needles(
     mut commands: Commands,
     clock: Res<CombatClock>,
-    needles: Query<(Entity, &QiNeedle)>,
+    needles: Query<(Entity, &QiNeedle, Option<&Position>)>,
+    mut zones: ResMut<ZoneRegistry>,
+    mut qi_transfers: EventWriter<QiTransfer>,
 ) {
     let max_age_ticks =
         ((QI_NEEDLE_MAX_DISTANCE_BLOCKS / QI_NEEDLE_SPEED_BLOCKS_PER_SEC) * 20.0).ceil() as u64 + 1;
-    for (entity, needle) in &needles {
+
+    for (entity, needle, position) in &needles {
         if clock.tick.saturating_sub(needle.spawned_at_tick) > max_age_ticks {
+            // qc-P0：针过期时把 residual_qi 归还落点 zone（守恒）。
+            // 玩家射针时已从 qi_current 扣除 qi_payload（needle.rs:87-88），
+            // 未命中时真元须归还环境，否则从系统蒸发。
+            let qi_payload = needle.qi_payload as f32;
+            let (_evaporated, residual) = residual_qi_after_miss(qi_payload);
+            let residual_f64 = f64::from(residual);
+            if residual_f64 > f64::EPSILON {
+                // 落点：优先用 Position 组件（若有），否则按 velocity 外推真实消亡点。
+                // 针无 Position 组件时 spawn_pos 仅出发点；针以 velocity 飞行、最远
+                // max_distance，跨 zone 飞行时残真元须归还实际落点 zone（而非出发 zone）。
+                let pos = position.map(|p| p.get()).unwrap_or_else(|| {
+                    let elapsed_secs =
+                        clock.tick.saturating_sub(needle.spawned_at_tick) as f64 / 20.0;
+                    let traveled = (DVec3::from(needle.velocity) * elapsed_secs)
+                        .clamp_length_max(f64::from(needle.max_distance));
+                    DVec3::from(needle.spawn_pos) + traveled
+                });
+                release_residual_to_zone(
+                    &mut zones,
+                    &mut qi_transfers,
+                    DimensionKind::Overworld,
+                    pos,
+                    residual_f64,
+                    "qi_needle_expire",
+                    entity.to_bits(),
+                );
+            }
             commands.entity(entity).despawn();
         }
     }
@@ -250,5 +286,214 @@ mod tests {
             query.iter(world).count()
         };
         assert_eq!(needle_count, 1);
+    }
+
+    // ── qc-P0 守恒测试：despawn_expired_qi_needles ───────────────────────────────
+
+    /// 辅助：构建带 ZoneRegistry + QiTransfer 事件的 App 并注册 expire-despawn 系统。
+    fn expire_app() -> App {
+        use crate::qi_physics::ledger::QiTransfer;
+        use crate::world::zone::ZoneRegistry;
+
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 0 });
+        app.add_event::<QiTransfer>();
+        app.insert_resource(ZoneRegistry::default()); // spawn zone 在 [-128..128]
+        app.add_systems(Update, despawn_expired_qi_needles);
+        app
+    }
+
+    fn spawn_needle(app: &mut App, spawned_at_tick: u64, qi_payload: f64) -> Entity {
+        // spawn_pos [0, 66, 0] 在 default spawn zone 内。
+        // 先 spawn shooter，再 spawn needle，避免 borrow 冲突。
+        let shooter = app.world_mut().spawn_empty().id();
+        app.world_mut()
+            .spawn(QiNeedle {
+                shooter,
+                qi_payload,
+                qi_color: "Mellow".to_string(),
+                infused_dugu: false,
+                spawn_pos: [0.0, 66.0, 0.0],
+                velocity: [0.0, 0.0, f64::from(QI_NEEDLE_SPEED_BLOCKS_PER_SEC)],
+                max_distance: QI_NEEDLE_MAX_DISTANCE_BLOCKS,
+                hitbox_inflation: QI_NEEDLE_HITBOX_INFLATION,
+                spawned_at_tick,
+            })
+            .id()
+    }
+
+    #[test]
+    fn expired_needle_releases_residual_to_zone() {
+        // 期望：过期针被 despawn，残真元归还 spawn zone（spirit_qi 上升）。
+        use crate::world::zone::ZoneRegistry;
+
+        let mut app = expire_app();
+
+        let max_age_ticks =
+            ((QI_NEEDLE_MAX_DISTANCE_BLOCKS / QI_NEEDLE_SPEED_BLOCKS_PER_SEC) * 20.0).ceil() as u64
+                + 1;
+        // 子弹在 tick=0 产生，advance clock 超过 max_age_ticks
+        let _ = spawn_needle(&mut app, 0, QI_NEEDLE_QI_COST);
+
+        // 把 clock 推到过期
+        app.world_mut().resource_mut::<CombatClock>().tick = max_age_ticks + 2;
+
+        let zone_before = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name("spawn")
+            .unwrap()
+            .spirit_qi;
+
+        app.update();
+
+        let zone_after = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name("spawn")
+            .unwrap()
+            .spirit_qi;
+
+        assert!(
+            zone_after > zone_before,
+            "期望针过期后 spawn zone.spirit_qi 上升（残真元归还），\
+             实际 before={zone_before:.6} after={zone_after:.6}"
+        );
+
+        // 针实体应已被 despawn
+        let needle_count = {
+            let world = app.world_mut();
+            let mut q = world.query::<&QiNeedle>();
+            q.iter(world).count()
+        };
+        assert_eq!(
+            needle_count, 0,
+            "期望过期针被 despawn，实际还剩 {needle_count} 个"
+        );
+    }
+
+    #[test]
+    fn expired_needle_releases_to_despawn_point_not_spawn_zone() {
+        // 期望：针从 spawn zone 边缘(z=120)朝外飞，过期消亡点 z≈170 在 spawn zone
+        // [-128..128] 之外 → 残真元**不**归 spawn zone（证明用 velocity 外推的消亡点
+        // 定 zone，而非出发点 spawn_pos）。锁死 must_fix：跨 zone 飞行归还正确 zone。
+        use crate::world::zone::ZoneRegistry;
+
+        let mut app = expire_app();
+        let max_age_ticks =
+            ((QI_NEEDLE_MAX_DISTANCE_BLOCKS / QI_NEEDLE_SPEED_BLOCKS_PER_SEC) * 20.0).ceil() as u64
+                + 1;
+        let shooter = app.world_mut().spawn_empty().id();
+        app.world_mut().spawn(QiNeedle {
+            shooter,
+            qi_payload: QI_NEEDLE_QI_COST,
+            qi_color: "Mellow".to_string(),
+            infused_dugu: false,
+            // spawn_pos z=120 在 spawn zone 内；velocity +z 90 blocks/s 飞满 50 格
+            // (max_distance) 后消亡点 z=170，已出 spawn zone。
+            spawn_pos: [0.0, 66.0, 120.0],
+            velocity: [0.0, 0.0, f64::from(QI_NEEDLE_SPEED_BLOCKS_PER_SEC)],
+            max_distance: QI_NEEDLE_MAX_DISTANCE_BLOCKS,
+            hitbox_inflation: QI_NEEDLE_HITBOX_INFLATION,
+            spawned_at_tick: 0,
+        });
+        app.world_mut().resource_mut::<CombatClock>().tick = max_age_ticks + 2;
+
+        let spawn_before = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name("spawn")
+            .unwrap()
+            .spirit_qi;
+        app.update();
+        let spawn_after = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name("spawn")
+            .unwrap()
+            .spirit_qi;
+
+        assert!(
+            (spawn_after - spawn_before).abs() < 1e-9,
+            "期望残真元归还消亡点(z≈170，spawn zone 外)而非出发 zone，\
+             故 spawn zone.spirit_qi 应不变；实际 before={spawn_before:.6} after={spawn_after:.6}\
+             （若变化说明仍用 spawn_pos 定 zone，must_fix 未修）"
+        );
+    }
+
+    #[test]
+    fn young_needle_is_not_despawned() {
+        // 期望：未过期的针不被 despawn，也不 emit QiTransfer。
+        use crate::qi_physics::ledger::QiTransfer;
+
+        let mut app = expire_app();
+        // 针在 tick=0 产生，clock 停在 tick=5（远小于 max_age_ticks）
+        let _ = spawn_needle(&mut app, 0, QI_NEEDLE_QI_COST);
+        app.world_mut().resource_mut::<CombatClock>().tick = 5;
+        app.update();
+
+        let needle_count = {
+            let world = app.world_mut();
+            let mut q = world.query::<&QiNeedle>();
+            q.iter(world).count()
+        };
+        assert_eq!(needle_count, 1, "未过期的针不应被 despawn");
+
+        let transfers = app.world().resource::<Events<QiTransfer>>();
+        assert!(
+            transfers.is_empty(),
+            "未过期针不应 emit QiTransfer，实际 emit 了 {} 条",
+            transfers.len()
+        );
+    }
+
+    #[test]
+    fn needle_expire_conservation_invariant() {
+        // 期望：过期针 Σ QiTransfer.amount == residual_qi（守恒等式）。
+        // residual = 30% × qi_payload（residual_qi_after_miss 固定比例）。
+        use crate::qi_physics::ledger::QiTransfer;
+
+        let mut app = expire_app();
+
+        let max_age_ticks =
+            ((QI_NEEDLE_MAX_DISTANCE_BLOCKS / QI_NEEDLE_SPEED_BLOCKS_PER_SEC) * 20.0).ceil() as u64
+                + 1;
+        let _ = spawn_needle(&mut app, 0, QI_NEEDLE_QI_COST);
+        app.world_mut().resource_mut::<CombatClock>().tick = max_age_ticks + 2;
+        app.update();
+
+        let events = app.world().resource::<Events<QiTransfer>>();
+        let mut reader = events.get_reader();
+        let total: f64 = reader.read(events).map(|t| t.amount).sum();
+
+        // residual_qi_after_miss 固定 30%
+        let expected_residual = f64::from(QI_NEEDLE_QI_COST as f32 * 0.3);
+        assert!(
+            (total - expected_residual).abs() < 1e-5,
+            "守恒不变式：QiTransfer 总量应等于 residual（30% × payload={})，实际 {total}",
+            QI_NEEDLE_QI_COST
+        );
+    }
+
+    #[test]
+    fn needle_expire_zero_qi_payload_is_noop() {
+        // 期望：qi_payload=0 的针过期时不 emit QiTransfer（residual=0 → noop）。
+        use crate::qi_physics::ledger::QiTransfer;
+
+        let mut app = expire_app();
+
+        let max_age_ticks =
+            ((QI_NEEDLE_MAX_DISTANCE_BLOCKS / QI_NEEDLE_SPEED_BLOCKS_PER_SEC) * 20.0).ceil() as u64
+                + 1;
+        let _ = spawn_needle(&mut app, 0, 0.0); // qi_payload = 0
+        app.world_mut().resource_mut::<CombatClock>().tick = max_age_ticks + 2;
+        app.update();
+
+        let transfers = app.world().resource::<Events<QiTransfer>>();
+        assert!(
+            transfers.is_empty(),
+            "qi_payload=0 针过期不应 emit QiTransfer（期望 noop），实际 emit {}",
+            transfers.len()
+        );
     }
 }

@@ -8,7 +8,7 @@
 
 | 阶段 | 主题 | 状态 |
 |------|------|------|
-| P0 | 投射物招式 miss/despawn 残余真元归还 zone（anqi / needle） | ⬜ |
+| P0 | 投射物招式 miss/despawn 残余真元归还 zone（anqi / needle）→ 落点 zone，qi_release_to_zone | ✅ 2026-06-16 |
 | P1 | forge 开光真元注入接守恒 + client-trust 校验（critical 通胀修复） | ⬜ |
 | P2 | forge 法器养护/品阶进化扣减接 ledger | ⬜ |
 | P3 | tsy_drain ledger 双重计入修正（玩家余额虚化进 WorldQiAccount） | ⬜ |
@@ -50,9 +50,10 @@
 
 ## §N 开放问题
 
-1. 各 residual/消耗真元的去向账户统一规约（落点 zone / 发射 zone / overflow）。
+1. 各 residual/消耗真元的去向账户统一规约（落点 zone / 发射 zone / overflow）。**qc-P0 决议**：投射物 miss/expire 残余归**落点 zone**（despawn 消亡点，针无 Position 故按 velocity 外推；无 zone 进 overflow），走 qi_release_to_zone。
 2. forge 整簇（开光/养护/进化）是否一并接一个 forge-qi-ledger 子系统，还是逐点。
 3. client-trust 校验在 handler 层统一（≤玩家余额）。
+4. **qc-P0 调研遗留**：anqi 注入型技能（SingleSnipe/MultiShot/SoulInject/ArmorPierce/EchoFractal）cast 扣 qi 但瞬时命中、无飞行实体 → miss 无归还路径、残真元蒸发（不在 P0 投射物 despawn 范围，待单独跟进）。
 
 ## 审计来源
 
