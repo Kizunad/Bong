@@ -41,6 +41,11 @@ pub const MIN_ZONE_QI_TO_BREAKTHROUGH: f64 = MIN_ZONE_QI_TO_OPEN;
 pub const MIN_ZONE_QI_TO_GUYUAN: f64 = 0.80;
 pub const SPIRIT_EYE_BREAKTHROUGH_SUCCESS_BONUS: f64 = 0.30;
 pub const BLOOD_VALLEY_BREAKTHROUGH_SUCCESS_BONUS: f64 = 0.50;
+/// 突破失败时 `qi_max_frozen` 累计上限（占 qi_max 的比例）。
+///
+/// 与 `overload.rs` 的 0.5 上限对齐：多次连续失败不会把有效真元上限打到 0，
+/// 玩家始终保留至少 50% 的 qi_max 可用额度，避免永久废人。
+pub const BREAKTHROUGH_FAIL_FROZEN_CAP_RATIO: f64 = 0.5;
 
 /// 每境界的基础成功率（未叠心境/完整度/材料）。
 pub fn base_success_rate(next: Realm) -> f64 {
@@ -507,8 +512,12 @@ pub fn try_breakthrough_with_env_season_bonus<R: RollSource>(
             });
             m.integrity = (m.integrity - severity * 0.2).max(0.0);
         }
-        cultivation.qi_max_frozen =
-            Some(cultivation.qi_max_frozen.unwrap_or(0.0) + severity * 10.0);
+        // 突破失败：真元上限冻结。severity ∈ [0.1, 0.9]，每次加 severity * 10.0（即 1.0..9.0）。
+        // 无 cap 时多次失败可致 qi_max_frozen ≥ qi_max → 有效上限归零 → 玩家永久废人。
+        // 与 overload.rs 对齐：冻结量不超过 qi_max * BREAKTHROUGH_FAIL_FROZEN_CAP_RATIO (0.5)。
+        let new_frozen = (cultivation.qi_max_frozen.unwrap_or(0.0) + severity * 10.0)
+            .min(cultivation.qi_max * BREAKTHROUGH_FAIL_FROZEN_CAP_RATIO);
+        cultivation.qi_max_frozen = Some(new_frozen);
         cultivation.composure = (cultivation.composure - 0.3).max(0.0);
         Err(BreakthroughError::RolledFailure { severity })
     }
@@ -1571,5 +1580,123 @@ mod tests {
 
         let weights = app.world().resource::<KarmaWeightStore>();
         assert!(weights.entry_for_player("Azure").is_none());
+    }
+
+    // ───────────────────────────────────────────────────────────────────────
+    // qi_max_frozen cap: 突破失败不能永久废人
+    // ───────────────────────────────────────────────────────────────────────
+
+    /// 单次失败：qi_max_frozen 精确加上 severity * 10.0，且不超过 qi_max * 0.5。
+    #[test]
+    fn single_breakthrough_failure_freezes_qi_within_cap() {
+        let (mut c, mut m) = setup_for_induce();
+        // 强制失败：roll > base_success_rate(Induce)=0.90
+        let _ = try_breakthrough(&mut c, &mut m, 0.0, &mut FixedRoll(1.0));
+
+        // severity = (1.0 - success_rate).clamp(0.1, 0.9)
+        // success_rate = base × composure × integrity × completeness = 0.90 × 1.0 × 1.0 × 1.0 = 0.90
+        // severity = 0.10, freeze_add = 0.10 * 10.0 = 1.0
+        // cap = qi_max(100.0) * 0.5 = 50.0 → 1.0 < 50.0, no clamping
+        let frozen = c
+            .qi_max_frozen
+            .expect("qi_max_frozen should be Some after failure");
+        assert!(
+            (frozen - 1.0).abs() < 1e-9,
+            "期望 qi_max_frozen = 1.0（severity=0.10 × 10.0），实际 = {frozen}"
+        );
+        let effective = c.qi_max - frozen;
+        assert!(
+            effective > 0.0,
+            "期望有效 qi_max > 0 以防玩家废人，实际 effective_qi_max = {effective}"
+        );
+    }
+
+    /// 连续多次失败，qi_max_frozen 不超过 qi_max * 0.5 的硬上限。
+    #[test]
+    fn repeated_breakthrough_failures_frozen_capped_at_half_qi_max() {
+        let qi_max = 100.0;
+        let mut c = Cultivation {
+            realm: Realm::Awaken,
+            qi_current: qi_max,
+            qi_max,
+            composure: 0.0, // composure=0 → success_rate 极低 → severity 接近 0.9
+            ..Default::default()
+        };
+        let mut m = MeridianSystem::default();
+        open_regular(&mut m, 3);
+
+        // 失败 20 次：无 cap 时 severity≈0.9, freeze_add≈9.0, 2 次即超 qi_max=100 × 0.5=50
+        for _ in 0..20 {
+            // qi_current 须 ≥ breakthrough_qi_cost(Induce)=8.0，补满避免 NotEnoughQi 前置错误
+            c.qi_current = qi_max;
+            let _ = try_breakthrough(&mut c, &mut m, 0.0, &mut FixedRoll(1.0));
+        }
+
+        let frozen = c
+            .qi_max_frozen
+            .expect("qi_max_frozen should be Some after repeated failures");
+        let cap = qi_max * BREAKTHROUGH_FAIL_FROZEN_CAP_RATIO;
+
+        assert!(
+            frozen <= cap,
+            "期望 qi_max_frozen ≤ {cap}（qi_max×0.5，防废人），实际 qi_max_frozen = {frozen}"
+        );
+
+        let effective_qi_max = c.qi_max - frozen;
+        assert!(
+            effective_qi_max > 0.0,
+            "期望有效真元上限 > 0（玩家不应被永久废），实际 effective_qi_max = {effective_qi_max}"
+        );
+    }
+
+    /// 验证 cap 边界：pre-existing frozen 接近 cap 时，再叠一次不会超过 cap。
+    #[test]
+    fn breakthrough_failure_does_not_exceed_cap_when_already_near_cap() {
+        let qi_max = 100.0;
+        // 预填到接近 cap（40/100 = 0.4 × qi_max，距 0.5×qi_max=50 还差 10）
+        let mut c = Cultivation {
+            realm: Realm::Awaken,
+            qi_current: qi_max,
+            qi_max,
+            composure: 0.0, // severity 接近 0.9 → freeze_add 接近 9.0，足够触碰 cap
+            qi_max_frozen: Some(40.0),
+            ..Default::default()
+        };
+        let mut m = MeridianSystem::default();
+        open_regular(&mut m, 3);
+
+        let _ = try_breakthrough(&mut c, &mut m, 0.0, &mut FixedRoll(1.0));
+
+        let frozen = c
+            .qi_max_frozen
+            .expect("qi_max_frozen should be Some after failure");
+        let cap = qi_max * BREAKTHROUGH_FAIL_FROZEN_CAP_RATIO;
+
+        assert!(
+            frozen <= cap + 1e-9,
+            "期望 qi_max_frozen ≤ {cap}（cap = qi_max×0.5），实际 qi_max_frozen = {frozen}（超 cap）"
+        );
+        // 有效上限仍须 > 0
+        let effective = c.qi_max - frozen;
+        assert!(
+            effective >= qi_max * (1.0 - BREAKTHROUGH_FAIL_FROZEN_CAP_RATIO) - 1e-9,
+            "期望有效 qi_max ≥ qi_max×0.5={cap}，实际 = {effective}"
+        );
+    }
+
+    /// 成功突破不应修改 qi_max_frozen。
+    #[test]
+    fn successful_breakthrough_does_not_change_qi_max_frozen() {
+        let (mut c, mut m) = setup_for_induce();
+        c.qi_max_frozen = Some(5.0); // 预存冻结，验证成功路径不碰它
+
+        let _ = try_breakthrough(&mut c, &mut m, 0.0, &mut FixedRoll(0.0)).unwrap();
+
+        assert_eq!(
+            c.qi_max_frozen,
+            Some(5.0),
+            "期望成功突破不修改 qi_max_frozen（仍为 5.0），实际 = {:?}",
+            c.qi_max_frozen
+        );
     }
 }
