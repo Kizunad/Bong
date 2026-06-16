@@ -10,7 +10,7 @@
 |------|------|------|
 | P0 | 投射物招式 miss/despawn 残余真元归还 zone（anqi / needle）→ 落点 zone，qi_release_to_zone | ✅ 2026-06-16 |
 | P1 | forge 开光真元注入接守恒 + client-trust 校验（critical 通胀修复） | ✅ 2026-06-16 |
-| P2 | forge 法器养护/品阶进化扣减接 ledger | ⬜ |
+| P2 | forge 法器养护/品阶进化扣减接 ledger（ArtifactMaintenance/Evolution：扣 qi_current==进玩家 zone） | ✅ 2026-06-16 |
 | P3 | tsy_drain ledger 双重计入修正（set_balance(player) 虚化→改 push_transfer_audit 审计模式） | ✅ 2026-06-16 |
 
 ## 接入面 checklist
