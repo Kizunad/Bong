@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use valence::prelude::{
     bevy_ecs, App, Commands, DVec3, Entity, Event, EventReader, EventWriter, GameMode,
-    IntoSystemConfigs, Position, Query, Res, UniqueId, Update, With, Without,
+    IntoSystemConfigs, Position, Query, Res, ResMut, UniqueId, Update, With, Without,
 };
 
 use crate::combat::components::{
@@ -27,6 +27,11 @@ use crate::inventory::{
     bump_revision, ItemInstance, ItemRegistry, PlayerInventory, EQUIP_SLOT_MAIN_HAND,
     EQUIP_SLOT_OFF_HAND,
 };
+use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
+use crate::qi_physics::ledger::{QiAccountId, QiTransfer};
+use crate::qi_physics::release::qi_release_to_zone;
+use crate::world::dimension::DimensionKind;
+use crate::world::zone::ZoneRegistry;
 
 pub const ANQI_CHARGE_SKILL_ID: &str = "anqi.charge_carrier";
 pub const ANQI_MATERIAL_TEMPLATE_ID: &str = "anqi_yibian_shougu";
@@ -241,6 +246,12 @@ pub fn register(app: &mut App) {
             carry_decay_tick.in_set(CombatSystemSet::Physics),
             throw_carrier_intents.in_set(CombatSystemSet::Intent),
             projectile_tick_system.in_set(CombatSystemSet::Resolve),
+            // qc-P0：投射物 miss/expire despawn 残真元守恒 → 落点 zone。
+            // 与 Redis 桥接系统（publish_projectile_despawned_events）并行；
+            // 须在 Resolve 之后运行（ProjectileDespawnedEvent 由 projectile_tick_system 发出）。
+            projectile_miss_qi_release_system
+                .in_set(CombatSystemSet::Emit)
+                .after(projectile_tick_system),
         ),
     );
 }
@@ -943,6 +954,132 @@ fn entity_wire_id(unique_id: Option<&UniqueId>, entity: Entity) -> String {
     crate::combat::woliu::entity_wire_id(unique_id, entity)
 }
 
+/// qc-P0：anqi 投射物 miss / OutOfRange / HitBlock / NaturalDecay despawn 时，
+/// 把 residual_qi 经 qi_release_to_zone 归还落点 zone。
+///
+/// HitTarget 分支在 `emit_projectile_despawn` 内已将 `residual_qi` 置为 0.0，
+/// 因此此处只需判断 `residual_qi > ε` 即可安全门控，不会重复释放。
+///
+/// 维度：anqi 投射物目前只存在于主世界（Overworld），无跨维度飞行路径。
+pub fn projectile_miss_qi_release_system(
+    mut events: EventReader<ProjectileDespawnedEvent>,
+    mut zones: ResMut<ZoneRegistry>,
+    mut qi_transfers: EventWriter<QiTransfer>,
+) {
+    for event in events.read() {
+        let residual = f64::from(event.residual_qi);
+        if residual <= f64::EPSILON {
+            continue;
+        }
+        let pos = DVec3::new(event.pos[0], event.pos[1], event.pos[2]);
+        release_residual_to_zone(
+            &mut zones,
+            &mut qi_transfers,
+            DimensionKind::Overworld,
+            pos,
+            residual,
+            "anqi_projectile_miss",
+            event.projectile.to_bits(),
+        );
+    }
+}
+
+/// Shared helper: locate the zone at `pos`, apply `qi_release_to_zone`, and emit `QiTransfer`.
+/// On zone-not-found or overflow, routes to an overflow account (qi never disappears).
+/// This is `pub` so `needle.rs` can reuse the same conservation path without duplicating logic.
+pub fn release_residual_to_zone(
+    zones: &mut ZoneRegistry,
+    qi_transfers: &mut EventWriter<QiTransfer>,
+    dim: DimensionKind,
+    pos: DVec3,
+    residual: f64,
+    context: &str,
+    entity_bits: u64,
+) {
+    let from = QiAccountId::player(format!("{context}:entity:{entity_bits}"));
+
+    // Look up zone name first (immutable borrow), then mutably update.
+    let zone_name = zones.find_zone(dim, pos).map(|z| z.name.clone());
+
+    if let Some(zone_name) = zone_name {
+        let to = QiAccountId::zone(zone_name.clone());
+        // Safe: we just found the zone by name, find_zone_mut should succeed.
+        if let Some(zone) = zones.find_zone_mut(&zone_name) {
+            let zone_current = zone.spirit_qi.max(0.0) * QI_ZONE_UNIT_CAPACITY;
+            match qi_release_to_zone(
+                residual,
+                from.clone(),
+                to,
+                zone_current,
+                QI_ZONE_UNIT_CAPACITY,
+            ) {
+                Ok(outcome) => {
+                    zone.spirit_qi = (outcome.zone_after / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
+                    if let Some(t) = outcome.transfer {
+                        qi_transfers.send(t);
+                    }
+                    if outcome.overflow > f64::EPSILON {
+                        let overflow_to = QiAccountId::overflow(format!(
+                            "{context}_overflow:entity:{entity_bits}"
+                        ));
+                        if let Ok(t) = QiTransfer::new(
+                            from,
+                            overflow_to,
+                            outcome.overflow,
+                            crate::qi_physics::ledger::QiTransferReason::ReleaseToZone,
+                        ) {
+                            qi_transfers.send(t);
+                        }
+                    }
+                }
+                Err(err) => {
+                    tracing::warn!(
+                        ?err,
+                        context,
+                        entity_bits,
+                        residual,
+                        "[bong][qc_p0] qi release error; routing to overflow"
+                    );
+                    let overflow_to = QiAccountId::overflow(format!(
+                        "{context}_err_overflow:entity:{entity_bits}"
+                    ));
+                    if let Ok(t) = QiTransfer::new(
+                        from,
+                        overflow_to,
+                        residual,
+                        crate::qi_physics::ledger::QiTransferReason::ReleaseToZone,
+                    ) {
+                        qi_transfers.send(t);
+                    }
+                }
+            }
+        } else {
+            // find_zone returned Some but find_zone_mut returned None — very unlikely but safe.
+            let overflow_to =
+                QiAccountId::overflow(format!("{context}_no_mut_zone:entity:{entity_bits}"));
+            if let Ok(t) = QiTransfer::new(
+                from,
+                overflow_to,
+                residual,
+                crate::qi_physics::ledger::QiTransferReason::ReleaseToZone,
+            ) {
+                qi_transfers.send(t);
+            }
+        }
+    } else {
+        // No zone at despawn position — overflow fallback.
+        let overflow_to = QiAccountId::overflow(format!("{context}_no_zone:entity:{entity_bits}"));
+        if let Ok(t) = QiTransfer::new(
+            from,
+            overflow_to,
+            residual,
+            crate::qi_physics::ledger::QiTransferReason::ReleaseToZone,
+        ) {
+            qi_transfers.send(t);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1156,5 +1293,216 @@ mod tests {
         assert_eq!(carrier_sealed_qi_amount(50.0, None), 50.0);
         assert!((carrier_sealed_qi_amount(50.0, Some(0.0)) - 40.0).abs() <= 0.001);
         assert!((carrier_sealed_qi_amount(50.0, Some(1.0)) - 60.0).abs() <= 0.001);
+    }
+
+    // ── qc-P0 守恒测试：projectile_miss_qi_release_system ──────────────────────────
+
+    /// 辅助：构建带 ZoneRegistry + QiTransfer 事件的 App 并注册 miss-release 系统。
+    fn miss_release_app() -> App {
+        use crate::qi_physics::ledger::QiTransfer;
+        use crate::world::zone::ZoneRegistry;
+
+        let mut app = App::new();
+        app.add_event::<ProjectileDespawnedEvent>();
+        app.add_event::<QiTransfer>();
+        app.insert_resource(ZoneRegistry::default()); // 含默认 spawn zone
+        app.add_systems(Update, projectile_miss_qi_release_system);
+        app
+    }
+
+    fn spawn_entity(app: &mut App) -> Entity {
+        app.world_mut().spawn_empty().id()
+    }
+
+    fn make_despawn_event(
+        projectile: Entity,
+        owner: Option<Entity>,
+        residual_qi: f32,
+        reason: ProjectileDespawnReason,
+    ) -> ProjectileDespawnedEvent {
+        // spawn zone 在 DEFAULT_SPAWN_BOUNDS_MIN = [-128, 64, -128] 到 [128, 80, 128]
+        // 落点 [0, 66, 0] 在 spawn zone 内。
+        ProjectileDespawnedEvent {
+            owner,
+            projectile,
+            reason,
+            distance: 5.0,
+            qi_evaporated: 0.7 * residual_qi / 0.3,
+            residual_qi,
+            pos: [0.0, 66.0, 0.0],
+            tick: 10,
+        }
+    }
+
+    #[test]
+    fn miss_despawn_residual_goes_to_zone_qi_increases() {
+        // 期望：OutOfRange despawn，residual_qi=3.0 → spawn zone.spirit_qi 上升，
+        // 因为真元从投射物归还到 zone（player cast 时已扣，此处归还 zone）。
+        let mut app = miss_release_app();
+        let projectile = spawn_entity(&mut app);
+
+        let zone_before = app
+            .world()
+            .resource::<crate::world::zone::ZoneRegistry>()
+            .find_zone_by_name("spawn")
+            .unwrap()
+            .spirit_qi;
+
+        app.world_mut().send_event(make_despawn_event(
+            projectile,
+            None,
+            3.0, // residual_qi
+            ProjectileDespawnReason::OutOfRange,
+        ));
+        app.update();
+
+        let zone_after = app
+            .world()
+            .resource::<crate::world::zone::ZoneRegistry>()
+            .find_zone_by_name("spawn")
+            .unwrap()
+            .spirit_qi;
+
+        assert!(
+            zone_after > zone_before,
+            "期望 miss despawn 后 spawn zone.spirit_qi 上升（真元归还 zone），\
+             实际 before={zone_before:.6} after={zone_after:.6}"
+        );
+    }
+
+    #[test]
+    fn hit_target_despawn_does_not_release_to_zone() {
+        // 期望：HitTarget despawn residual_qi=0.0（由 carrier.rs:924 保证）→
+        // miss-release 系统门控 ε 后不触发 zone 更新。
+        let mut app = miss_release_app();
+        let projectile = spawn_entity(&mut app);
+
+        let zone_before = app
+            .world()
+            .resource::<crate::world::zone::ZoneRegistry>()
+            .find_zone_by_name("spawn")
+            .unwrap()
+            .spirit_qi;
+
+        app.world_mut().send_event(make_despawn_event(
+            projectile,
+            None,
+            0.0, // HitTarget 已置 residual_qi=0.0
+            ProjectileDespawnReason::HitTarget,
+        ));
+        app.update();
+
+        let zone_after = app
+            .world()
+            .resource::<crate::world::zone::ZoneRegistry>()
+            .find_zone_by_name("spawn")
+            .unwrap()
+            .spirit_qi;
+
+        assert_eq!(
+            zone_before, zone_after,
+            "期望 HitTarget despawn 不改变 zone.spirit_qi（residual=0，无双重释放），\
+             实际 before={zone_before:.6} after={zone_after:.6}"
+        );
+    }
+
+    #[test]
+    fn zero_residual_is_noop() {
+        // 期望：residual_qi=0 → 不更新 zone，不 emit QiTransfer。
+        use crate::qi_physics::ledger::QiTransfer;
+
+        let mut app = miss_release_app();
+        let projectile = spawn_entity(&mut app);
+
+        let zone_before = app
+            .world()
+            .resource::<crate::world::zone::ZoneRegistry>()
+            .find_zone_by_name("spawn")
+            .unwrap()
+            .spirit_qi;
+
+        app.world_mut().send_event(make_despawn_event(
+            projectile,
+            None,
+            0.0,
+            ProjectileDespawnReason::NaturalDecay,
+        ));
+        app.update();
+
+        let zone_after = app
+            .world()
+            .resource::<crate::world::zone::ZoneRegistry>()
+            .find_zone_by_name("spawn")
+            .unwrap()
+            .spirit_qi;
+
+        assert_eq!(
+            zone_before, zone_after,
+            "residual=0 时 zone.spirit_qi 应不变（期望 noop），实际改变了"
+        );
+
+        let transfers = app.world().resource::<Events<QiTransfer>>();
+        assert!(
+            transfers.is_empty(),
+            "residual=0 时不应 emit QiTransfer，实际 emit 了 {} 条",
+            transfers.len()
+        );
+    }
+
+    #[test]
+    fn no_zone_at_position_routes_to_overflow_transfer() {
+        // 期望：落点在 spawn zone 范围外（无 zone 覆盖）→
+        // 仍 emit QiTransfer（overflow 路径），真元不蒸发。
+        use crate::qi_physics::ledger::QiTransfer;
+
+        let mut app = miss_release_app();
+        let projectile = spawn_entity(&mut app);
+
+        // 落点 [9999, 66, 9999] 不在任何注册 zone 内
+        app.world_mut().send_event(ProjectileDespawnedEvent {
+            owner: None,
+            projectile,
+            reason: ProjectileDespawnReason::OutOfRange,
+            distance: 80.0,
+            qi_evaporated: 7.0,
+            residual_qi: 3.0,
+            pos: [9999.0, 66.0, 9999.0],
+            tick: 10,
+        });
+        app.update();
+
+        let transfers = app.world().resource::<Events<QiTransfer>>();
+        assert!(
+            !transfers.is_empty(),
+            "落点无 zone 时仍须 emit overflow QiTransfer（真元不蒸发），实际无 transfer"
+        );
+    }
+
+    #[test]
+    fn conservation_invariant_residual_equals_transfer_total() {
+        // 期望：residual_qi = Σ transfer.amount（守恒等式）。
+        // zone 有足够容量吸收全部 residual。
+        use crate::qi_physics::ledger::QiTransfer;
+
+        let mut app = miss_release_app();
+        let projectile = spawn_entity(&mut app);
+        let residual: f32 = 5.0;
+
+        app.world_mut().send_event(make_despawn_event(
+            projectile,
+            None,
+            residual,
+            ProjectileDespawnReason::HitBlock,
+        ));
+        app.update();
+
+        let events = app.world().resource::<Events<QiTransfer>>();
+        let mut reader = events.get_reader();
+        let total: f64 = reader.read(events).map(|t| t.amount).sum();
+
+        assert!(
+            (total - f64::from(residual)).abs() < 1e-9,
+            "守恒不变式：transfer 总量应等于 residual_qi（期望 {residual}），实际 {total}"
+        );
     }
 }
