@@ -224,6 +224,19 @@ pub enum QiTransferReason {
     AttritionTax {
         op_kind: AttritionOpKind,
     },
+    /// plan-qixiu-depth-v1 P2 — 法器铭纹每日养护消耗玩家真元。
+    ///
+    /// 守恒约束：`cultivation.qi_current -= cost`；逸散回玩家所在 zone ledger；
+    /// `QiTransfer(from=player:<entity_bits>, to=zone:<name>, reason=ArtifactMaintenance)`。
+    /// zone 不可解析时 fallback overflow，真元绝不凭空消失。
+    ArtifactMaintenance,
+    /// plan-qixiu-depth-v1 P2 — 法器品阶跃升时玩家真元消耗（30%）。
+    ///
+    /// 守恒约束：`cultivation.qi_current -= cost（= qi_current × 0.3）`；
+    /// 逸散回玩家所在 zone ledger；
+    /// `QiTransfer(from=player:<entity_bits>, to=zone:<name>, reason=ArtifactEvolution)`。
+    /// zone 不可解析时 fallback overflow，真元绝不凭空消失。
+    ArtifactEvolution,
 }
 
 /// plan-qi-handling-attrition-v1 P0 — 搬运磨损操作类型，对应不同基础磨损率。
@@ -1001,6 +1014,72 @@ mod tests {
             result.is_ok(),
             "AttritionTax QiTransfer::new 不应失败，实际 {:?}",
             result.err()
+        );
+    }
+
+    // ── plan-qi-conservation-leaks-v1 P2 — ArtifactMaintenance/ArtifactEvolution pin 测试 ──
+
+    #[test]
+    fn artifact_maintenance_reason_is_distinct_from_other_variants() {
+        // pin 测试：ArtifactMaintenance 与其他变体互不相等，审计轨迹不混淆。
+        let m = QiTransferReason::ArtifactMaintenance;
+        let e = QiTransferReason::ArtifactEvolution;
+        let c = QiTransferReason::Crafting;
+        let b = QiTransferReason::BossDrain;
+        let r = QiTransferReason::ReleaseToZone;
+
+        assert_ne!(
+            m, e,
+            "ArtifactMaintenance 与 ArtifactEvolution 应为不同变体"
+        );
+        assert_ne!(m, c, "ArtifactMaintenance 与 Crafting 应为不同变体");
+        assert_ne!(m, b, "ArtifactMaintenance 与 BossDrain 应为不同变体");
+        assert_ne!(m, r, "ArtifactMaintenance 与 ReleaseToZone 应为不同变体");
+        assert_eq!(m, m, "ArtifactMaintenance 与自身应相等");
+    }
+
+    #[test]
+    fn artifact_evolution_reason_is_distinct_from_other_variants() {
+        // pin 测试：ArtifactEvolution 与其他变体互不相等，审计轨迹不混淆。
+        let e = QiTransferReason::ArtifactEvolution;
+        let m = QiTransferReason::ArtifactMaintenance;
+        let c = QiTransferReason::Crafting;
+        let b = QiTransferReason::BossDrain;
+        let r = QiTransferReason::ReleaseToZone;
+
+        assert_ne!(
+            e, m,
+            "ArtifactEvolution 与 ArtifactMaintenance 应为不同变体"
+        );
+        assert_ne!(e, c, "ArtifactEvolution 与 Crafting 应为不同变体");
+        assert_ne!(e, b, "ArtifactEvolution 与 BossDrain 应为不同变体");
+        assert_ne!(e, r, "ArtifactEvolution 与 ReleaseToZone 应为不同变体");
+        assert_eq!(e, e, "ArtifactEvolution 与自身应相等");
+    }
+
+    #[test]
+    fn artifact_maintenance_and_evolution_not_audit_only() {
+        // 两个新变体均可通过 QiTransfer::new 构建（非 audit-only）。
+        let from = QiAccountId::player("entity:1");
+        let to = QiAccountId::zone("spawn");
+
+        let maint = QiTransfer::new(
+            from.clone(),
+            to.clone(),
+            2.0,
+            QiTransferReason::ArtifactMaintenance,
+        );
+        assert!(
+            maint.is_ok(),
+            "ArtifactMaintenance QiTransfer::new 不应失败，实际 {:?}",
+            maint.err()
+        );
+
+        let evo = QiTransfer::new(from, to, 30.0, QiTransferReason::ArtifactEvolution);
+        assert!(
+            evo.is_ok(),
+            "ArtifactEvolution QiTransfer::new 不应失败，实际 {:?}",
+            evo.err()
         );
     }
 }
