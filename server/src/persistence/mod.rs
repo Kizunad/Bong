@@ -2904,7 +2904,16 @@ pub fn release_ascension_quota_slot(
 ) -> io::Result<AscensionQuotaRelease> {
     let wall_clock = current_unix_seconds();
     let mut connection = open_persistence_connection(settings)?;
-    let transaction = connection.transaction().map_err(io::Error::other)?;
+    // r3-P2 fix：改用 IMMEDIATE 事务，起手即取写锁。
+    //
+    // 原来的 DEFERRED 事务在 WAL 模式下先读后写：两个并发 release 各自在
+    // SHARED 锁下读到相同的 occupied_slots（如 2），然后都写 1，丢失一次减量
+    // （lost update）。IMMEDIATE 在 BEGIN 时就拿 RESERVED 写锁，保证
+    // read-check-write 相对于其他 IMMEDIATE/EXCLUSIVE writer 是原子串行的。
+    // 与 complete_tribulation_ascension（:2736）保持一致。
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(io::Error::other)?;
     let mut quota = load_ascension_quota_from_transaction(&transaction)?;
     let opened_slot = quota.occupied_slots > 0;
     quota.occupied_slots = quota.occupied_slots.saturating_sub(1);
@@ -9242,6 +9251,93 @@ mod persistence_tests {
         assert_eq!(release.quota.occupied_slots, 0);
         assert!(!release.opened_slot);
 
+        let _ = fs::remove_dir_all(root);
+    }
+
+    // r3-P2 事务行为钉：release_ascension_quota_slot 在已有竞争 IMMEDIATE 写锁时
+    // 不应返回 SQLITE_BUSY 错误 —— 它必须等锁而非立刻失败。
+    // 策略：用第二个 Connection 手动开启 BEGIN IMMEDIATE，持锁期间写 occupied_slots=10
+    // 并 commit 后，被测函数（IMMEDIATE 等锁）必须读到 10 并写 9（减 1），
+    // 而非读到旧值（如 0）再写 0——后者说明退化为 DEFERRED 读、丢失竞争写。
+    #[test]
+    fn release_ascension_quota_slot_uses_immediate_transaction_behavior() {
+        use rusqlite::Connection;
+        use std::sync::{Arc, Barrier};
+        use std::thread;
+
+        let (settings, root) = persistence_settings("release-quota-immediate-txn-behavior");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+
+        // 初始 occupied_slots 为 0（bootstrap 默认）
+        let db_path = settings.db_path().to_path_buf();
+        let barrier_before = Arc::new(Barrier::new(2));
+        let barrier_after = Arc::new(Barrier::new(2));
+        let b_before_clone = Arc::clone(&barrier_before);
+        let b_after_clone = Arc::clone(&barrier_after);
+
+        let lock_thread = thread::spawn(move || {
+            let mut conn = Connection::open(&db_path).expect("competitor conn should open");
+            // 设置 busy_timeout 防止竞争连接本身立即 SQLITE_BUSY
+            conn.busy_timeout(std::time::Duration::from_secs(5))
+                .expect("busy timeout should set");
+            let tx = conn
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .expect("competitor IMMEDIATE txn should start");
+            // 持锁期间将 occupied_slots 写为 10 —— commit 后被测函数（IMMEDIATE 等锁）
+            // 必须读到 10 并写 9。若函数退化为 DEFERRED，会在 commit 前读到旧值 0、
+            // 写 0（saturating_sub 0 → 0），下方断言 9 立即撞红（pin read-after-write）。
+            upsert_ascension_quota(
+                &tx,
+                &AscensionQuotaRecord { occupied_slots: 10 },
+                current_unix_seconds(),
+            )
+            .expect("competitor should stage occupied_slots=10 before releasing write lock");
+            // 写锁已持有 + 已暂存写入，通知主线程可以发起 release_ascension_quota_slot
+            b_before_clone.wait();
+            // 等主线程通知可以释放
+            b_after_clone.wait();
+            tx.commit().expect("competitor commit should succeed");
+        });
+
+        // 等竞争线程拿到写锁
+        barrier_before.wait();
+
+        // release_ascension_quota_slot 内部应 BEGIN IMMEDIATE 并等待锁；
+        // 在竞争 tx commit 前它会 busy-wait（open_persistence_connection 设了 busy_timeout），
+        // 不应提前失败。在另一线程发起，避免主线程阻塞影响 barrier 释放。
+        let settings_clone = settings.clone();
+        let call_thread = thread::spawn(move || {
+            // 给竞争线程 25 ms 确保已确实拿锁，避免 race
+            thread::sleep(std::time::Duration::from_millis(25));
+            release_ascension_quota_slot(&settings_clone)
+        });
+
+        // 短暂后释放竞争锁
+        thread::sleep(std::time::Duration::from_millis(50));
+        barrier_after.wait();
+
+        let result = call_thread.join().expect("call thread should not panic");
+        assert!(
+            result.is_ok(),
+            "release_ascension_quota_slot 在竞争 IMMEDIATE 锁释放后应成功，实际错误：{:?} \
+             — 若函数使用 DEFERRED 且 busy_timeout 未设，可能提前 SQLITE_BUSY",
+            result.err()
+        );
+        let release = result.unwrap();
+        assert_eq!(
+            release.quota.occupied_slots, 9,
+            "竞争事务先提交 occupied_slots=10，本调用须在 BEGIN IMMEDIATE 等锁后读到 10 并写 9；\
+             实际为 {} — 若读到 0（旧值）说明退化为 DEFERRED 读后写、丢更新（saturating_sub 0→0）",
+            release.quota.occupied_slots
+        );
+        assert!(
+            release.opened_slot,
+            "occupied_slots 从 10 减到 9，opened_slot 应为 true；实际为 false — \
+             说明函数读到了错误的旧值 0（没有打开名额）"
+        );
+
+        lock_thread.join().expect("lock thread should not panic");
         let _ = fs::remove_dir_all(root);
     }
 
