@@ -8154,6 +8154,7 @@ mod tests {
         app.add_event::<ShieldBroken>();
         app.add_event::<ShieldBlockHit>();
         app.add_event::<InventoryDurabilityChangedEvent>();
+        app.add_event::<QiTransfer>();
         app.add_systems(Update, resolve_attack_intents);
         app
     }
@@ -8382,6 +8383,18 @@ mod tests {
                  实际={:.4}，若非 0 则说明拦截后仍向 zone 注入通胀",
                 events[0].contam_delta
             );
+            // 守恒补强：DROP 路径不应 emit 任何 QiTransfer（release_to_zone 会产生 QiTransfer）。
+            let qi_transfers: Vec<_> = app
+                .world()
+                .resource::<Events<QiTransfer>>()
+                .iter_current_update_events()
+                .collect();
+            assert!(
+                qi_transfers.is_empty(),
+                "期望死脉甲免疫只 DROP contamination，不 emit QiTransfer/release_to_zone；\
+                 实际 qi_transfers.len()={} — 若非空说明实现错误地走了 release_to_zone 导致通胀",
+                qi_transfers.len()
+            );
         }
 
         // ── sub-case B：无免疫区，contam_delta 应 > 0（正常路径验证过滤器不误杀）──
@@ -8427,15 +8440,14 @@ mod tests {
         }
     }
 
-    /// 多免疫区：同一 target 有多个免疫部位，对应部位都不产生污染。
-    /// 非免疫部位的攻击（需要另一轮）仍产生污染。
+    /// 多免疫区集合包含 Chest 的拦截验证（端到端集成）。
     ///
-    /// 注意：`BodyPart::Back` 在当前 `classify_body_part` 下不可命中（dead-letter immunity）。
-    /// `meridian_to_body_part` 修正后已无任何经脉映射到 Back。
-    /// 此处 immune_regions 包含 Back 仅作为"额外项"验证集合逻辑，
-    /// 实际验证路径是 Chest 命中→Chest 在集合中→DROP。
+    /// 注意：`raycast_humanoid` 始终瞄准 target 中心（CHEST_AIM_HEIGHT），lateral 恒为 0
+    /// → 正面攻击只能产出 Chest/Head/Abdomen/Leg，**无法可靠命中 ArmL/ArmR**。
+    /// 因此本测试端到端验证"Chest 在多免疫区集合中 → DROP"，
+    /// ArmL 的集合成员有效性通过 `dead_armor_arml_immune_in_multi_region_set` 单元测试覆盖。
     #[test]
-    fn dead_armor_multiple_immune_regions_all_block() {
+    fn dead_armor_multi_region_set_chest_is_blocked() {
         use crate::combat::baomai_v4::dead_armor::DeadMeridianArmor;
         let mut app = setup_dead_armor_app(2040);
 
@@ -8455,7 +8467,6 @@ mod tests {
         );
 
         // 给 target 插入多免疫区（Chest + ArmL）。
-        // Back 已从集合移除（classify_body_part 永不产出 Back，加入无意义）。
         {
             let mut armor = DeadMeridianArmor::default();
             armor.immune_regions.insert(BodyPart::Chest);
@@ -8469,12 +8480,65 @@ mod tests {
         send_qi_attack(&mut app, attacker, target, 2039);
         app.update();
 
+        // 先锁定命中部位为 Chest，防止几何变更导致假通过。
+        let events: Vec<_> = app
+            .world()
+            .resource::<Events<CombatEvent>>()
+            .iter_current_update_events()
+            .collect();
+        assert_eq!(
+            events.len(),
+            1,
+            "期望 Chest 攻击产生 1 个 CombatEvent；实际 {}",
+            events.len()
+        );
+        assert_eq!(
+            events[0].body_part,
+            BodyPart::Chest,
+            "期望正面近距离攻击命中 Chest，因为 raycast 默认瞄准 target 中心；实际命中 {:?}",
+            events[0].body_part
+        );
+
         let contam = app.world().entity(target).get::<Contamination>().unwrap();
         assert!(
             contam.entries.is_empty(),
-            "期望 contamination.entries 为空：Chest 在多免疫区集合内，应被 DROP；\
+            "期望 contamination.entries 为空：Chest 在多免疫区集合内（Chest+ArmL），应被 DROP；\
              实际 entries={:?}",
             contam.entries
+        );
+    }
+
+    /// ArmL 在多免疫区集合中的成员有效性（单元级验证）。
+    ///
+    /// `should_block_contamination` 直接验证 ArmL 集合查询逻辑——
+    /// 无需经过 raycast（因端到端几何无法可靠命中 ArmL）。
+    #[test]
+    fn dead_armor_arml_immune_in_multi_region_set() {
+        use crate::combat::baomai_v4::dead_armor::{
+            should_block_contamination, DeadMeridianArmor,
+        };
+
+        let mut armor = DeadMeridianArmor::default();
+        armor.immune_regions.insert(BodyPart::Chest);
+        armor.immune_regions.insert(BodyPart::ArmL);
+
+        // ArmL 在集合中：should_block_contamination 返回 true（不允许污染写入）。
+        assert!(
+            should_block_contamination(&armor, BodyPart::ArmL),
+            "期望 ArmL 在多免疫区集合（Chest+ArmL）中 should_block_contamination=true；\
+             实际 false — 说明 immune_regions.contains(ArmL) 返回 false，集合插入失败"
+        );
+
+        // Chest 在集合中：同样被拦截。
+        assert!(
+            should_block_contamination(&armor, BodyPart::Chest),
+            "期望 Chest 在集合中 should_block_contamination=true；实际 false"
+        );
+
+        // Abdomen 不在集合中：不拦截（弱点区）。
+        assert!(
+            !should_block_contamination(&armor, BodyPart::Abdomen),
+            "期望 Abdomen 不在集合中 should_block_contamination=false；实际 true（误判为免疫）"
         );
     }
 
@@ -8572,6 +8636,26 @@ mod tests {
             send_qi_attack(&mut app, attacker, target, 2059);
             app.update();
 
+            // 先锁定命中部位为 Head，防止几何变更后命中其他部位导致假通过。
+            let head_events: Vec<_> = app
+                .world()
+                .resource::<Events<CombatEvent>>()
+                .iter_current_update_events()
+                .collect();
+            assert_eq!(
+                head_events.len(),
+                1,
+                "期望 Head 弱点子用例恰好产生 1 个 CombatEvent；实际 {} 个",
+                head_events.len()
+            );
+            assert_eq!(
+                head_events[0].body_part,
+                BodyPart::Head,
+                "期望 Head 弱点子用例实际命中 Head（攻方 y=65.0 高于目标 y=64.0，向下命中顶面）；\
+                 实际命中 {:?} — 若此断言失败说明 classify_body_part 阈值变更，需同步调整攻方位置",
+                head_events[0].body_part
+            );
+
             let contam = app.world().entity(target).get::<Contamination>().unwrap();
             assert!(
                 !contam.entries.is_empty(),
@@ -8615,6 +8699,26 @@ mod tests {
             app.update();
             send_qi_attack(&mut app, attacker, target, 2069);
             app.update();
+
+            // 先锁定命中部位为 Abdomen，防止几何变更后命中其他部位导致假通过。
+            let abd_events: Vec<_> = app
+                .world()
+                .resource::<Events<CombatEvent>>()
+                .iter_current_update_events()
+                .collect();
+            assert_eq!(
+                abd_events.len(),
+                1,
+                "期望 Abdomen 弱点子用例恰好产生 1 个 CombatEvent；实际 {} 个",
+                abd_events.len()
+            );
+            assert_eq!(
+                abd_events[0].body_part,
+                BodyPart::Abdomen,
+                "期望 Abdomen 弱点子用例实际命中 Abdomen（攻方 y=62.0 低于目标 y=64.0，向上命中中低部）；\
+                 实际命中 {:?} — 若此断言失败说明 classify_body_part 阈值变更，需同步调整攻方位置",
+                abd_events[0].body_part
+            );
 
             let contam = app.world().entity(target).get::<Contamination>().unwrap();
             assert!(

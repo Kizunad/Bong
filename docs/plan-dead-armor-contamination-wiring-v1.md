@@ -15,7 +15,7 @@
 
 - **进料**：`dead_armor.rs::should_block_contamination(armor, region)` + `armor.immune_regions`。
 - **接入点**：`combat/resolve.rs:1324` 污染写入。
-- **qi_physics 锚点**：被拦截 delta 走 `qi_release_to_zone`（守恒，plan-baomai-v4:510 要求）。
+- **qi_physics 锚点**：被拦截 delta 直接丢弃（drop_no_release，见 §N.1 #1）——污染量为派生量非守恒转移，release_to_zone 会通胀；plan-baomai-v4:510 的 release_to_zone 要求已被 §N.1 #1 决议推翻。
 - **跨 plan**：`plan-baomai-v4`（finished，P3）——本 plan 补其缺失实装；plan-baomai-v4 P3 状态需人工修正（不自动改其他 plan）。
 
 ## P0 — 污染拦截接线
