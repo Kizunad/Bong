@@ -20,8 +20,8 @@ use crate::cultivation::skill_registry::{CastRejectReason, CastResult, SkillRegi
 use crate::schema::social::RenownTagV1;
 use crate::social::events::SocialRenownDeltaEvent;
 
-pub const FULL_POWER_CHARGE_SKILL_ID: &str = "bao_mai.full_power_charge";
-pub const FULL_POWER_RELEASE_SKILL_ID: &str = "bao_mai.full_power_release";
+pub const FULL_POWER_CHARGE_SKILL_ID: &str = "baomai.full_power_charge";
+pub const FULL_POWER_RELEASE_SKILL_ID: &str = "baomai.full_power_release";
 pub const FULL_POWER_CHARGE_RATE_PER_TICK: f64 = 50.0;
 pub const FULL_POWER_MIN_QI_TO_START: f64 = 100.0;
 pub const EXHAUST_TICKS_PER_QI_COMMITTED: u64 = 2;
@@ -887,5 +887,42 @@ mod tests {
             .iter_current_update_events()
             .next()
             .is_none());
+    }
+
+    // --- bao_mai ↔ baomai ID 常数 pin (regression: r2-P3 bughunt fix) ---
+
+    #[test]
+    fn skill_id_constants_use_canonical_baomai_prefix() {
+        // 期望 "baomai.full_power_charge" / "baomai.full_power_release"（无下划线），
+        // 与 combat::baomai_v3::events 中 BAOMAI_FULL_POWER_*_SKILL_ID 以及
+        // SkillMeridianDependencies 的 declare 键一致；若用 "bao_mai.*" 则
+        // skill registry 注册键与 meridian dep 门控键分叉，实际游戏中经脉门控失效。
+        assert_eq!(
+            FULL_POWER_CHARGE_SKILL_ID,
+            "baomai.full_power_charge",
+            "FULL_POWER_CHARGE_SKILL_ID must be 'baomai.full_power_charge' (no underscore in prefix)"
+        );
+        assert_eq!(
+            FULL_POWER_RELEASE_SKILL_ID,
+            "baomai.full_power_release",
+            "FULL_POWER_RELEASE_SKILL_ID must be 'baomai.full_power_release' (no underscore in prefix)"
+        );
+    }
+
+    #[test]
+    fn skill_ids_match_baomai_v3_events_constants() {
+        // 交叉校验：full_power_strike 的常数必须与 baomai_v3::events 中对应常数完全一致，
+        // 否则 register_skills 注册的 SkillRegistry 入口与 check_static_deps
+        // 使用的 meridian dep 键脱节。
+        assert_eq!(
+            FULL_POWER_CHARGE_SKILL_ID,
+            crate::combat::baomai_v3::events::BAOMAI_FULL_POWER_CHARGE_SKILL_ID,
+            "full_power_strike::FULL_POWER_CHARGE_SKILL_ID should equal baomai_v3::BAOMAI_FULL_POWER_CHARGE_SKILL_ID"
+        );
+        assert_eq!(
+            FULL_POWER_RELEASE_SKILL_ID,
+            crate::combat::baomai_v3::events::BAOMAI_FULL_POWER_RELEASE_SKILL_ID,
+            "full_power_strike::FULL_POWER_RELEASE_SKILL_ID should equal baomai_v3::BAOMAI_FULL_POWER_RELEASE_SKILL_ID"
+        );
     }
 }
