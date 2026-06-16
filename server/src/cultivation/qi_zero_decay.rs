@@ -83,7 +83,10 @@ pub fn qi_zero_decay_tick(
                 cultivation.last_qi_zero_at = Some(now);
                 continue;
             }
-            let since = now - cultivation.last_qi_zero_at.unwrap();
+            // saturating_sub：跨重启时持久化的 last_qi_zero_at 可能 > now（CultivationClock
+            // 重启后回退到较小值），u64 减法会下溢成巨值 → since 巨大 → 瞬时降境（r4-P0）。
+            // saturating_sub 返回 0（视为"刚归零"），不触发 spurious 降境。
+            let since = now.saturating_sub(cultivation.last_qi_zero_at.unwrap());
             if since < DECAY_TRIGGER_TICKS {
                 continue;
             }
@@ -229,5 +232,54 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].from, Realm::Condense);
         assert_eq!(events[0].to, Realm::Induce);
+    }
+
+    /// r4-P0 回归：跨重启后 CultivationClock.tick 回退到小值，但持久化的
+    /// last_qi_zero_at 仍是重启前的大值（> now）。旧代码 `now - last` 下溢成巨值
+    /// → since 巨大 → 立即降境（bug）。saturating_sub 下 since=0 → 不降境。
+    #[test]
+    fn qi_zero_decay_tick_no_underflow_when_timestamp_is_stale_after_restart() {
+        use valence::prelude::{App, Update};
+
+        let mut app = App::new();
+        // 重启后时钟回退到 5（远小于持久化的 last_qi_zero_at）
+        app.insert_resource(CultivationClock { tick: 5 });
+        app.add_event::<RealmRegressed>();
+        app.add_systems(Update, qi_zero_decay_tick);
+
+        let mut meridians = MeridianSystem::default();
+        meridians.get_mut(MeridianId::Lung).opened = true;
+        meridians.get_mut(MeridianId::LargeIntestine).opened = true;
+        let cultivation = Cultivation {
+            realm: Realm::Condense,
+            qi_current: 0.0,
+            qi_max: 100.0,
+            // 重启前的陈旧时间戳，远大于当前 tick=5
+            last_qi_zero_at: Some(1_000_000),
+            ..Cultivation::default()
+        };
+        let npc = app.world_mut().spawn((cultivation, meridians)).id();
+
+        app.update();
+
+        let cult = app.world().get::<Cultivation>(npc).unwrap();
+        assert_eq!(
+            cult.realm,
+            Realm::Condense,
+            "陈旧 last_qi_zero_at(>now) 不应触发降境（saturating_sub 防下溢），\
+             实际降到 {:?} — 若降境说明 now-last 仍下溢成巨值",
+            cult.realm
+        );
+        let events: Vec<_> = app
+            .world()
+            .resource::<bevy_ecs::event::Events<RealmRegressed>>()
+            .iter_current_update_events()
+            .cloned()
+            .collect();
+        assert!(
+            events.is_empty(),
+            "陈旧时间戳不应 emit RealmRegressed，实际 {} 条",
+            events.len()
+        );
     }
 }
