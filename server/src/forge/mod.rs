@@ -441,13 +441,25 @@ fn handle_consecration_injects(
                 continue;
             };
 
-            // 钳制：绝不信任 client 上报的 qi_amount，以 ECS qi_current 为准
-            let clamped = inject
-                .qi_amount
-                .min(cultivation.qi_current.max(0.0))
-                .max(0.0);
+            // 钳制：绝不信任 client 上报的 qi_amount，以 ECS qi_current 为准。
+            // 显式拒绝非有限值（NaN/Inf）——NaN.min(x) 在 Rust 返回 x，会绕过钳制
+            // 变成全额注入。上游 handler 已校验 finite，此处守恒结算点再守一道
+            // （防御纵深，防未来其它 ConsecrationInject 生产者绕过校验）。
+            let available = if cultivation.qi_current.is_finite() {
+                cultivation.qi_current.max(0.0)
+            } else {
+                0.0
+            };
+            let requested = if inject.qi_amount.is_finite() {
+                inject.qi_amount.max(0.0)
+            } else {
+                0.0
+            };
+            let clamped = requested.min(available);
 
-            // 守恒：先确定 ledger 目标账户，再原子扣减 qi_current + 记账
+            // 守恒：先写 ledger（带错误检查），账本写成功后才扣玩家真元。
+            // 块求值为**实际注入量**：ledger 写失败或 clamped<=0 时为 0.0，
+            // 使 inject_qi/consecration_qi_injected 只反映真实搬运的真元。
             if clamped > 0.0 {
                 // 解析 station 所属 zone 名
                 let zone_id = stations
@@ -471,29 +483,38 @@ fn handle_consecration_injects(
                         ))
                     });
 
-                // 原子操作：同一 if 块内扣减 qi_current 并写入 ledger
-                cultivation.qi_current = (cultivation.qi_current - clamped).max(0.0);
-
                 // 确保目标账户存在
                 if !account.has_account(&zone_id) {
                     let _ = account.set_balance(zone_id.clone(), 0.0);
                 }
 
-                // 更新目标账户余额
+                // 守恒原子性：先写 ledger（带错误检查），成功后才扣玩家真元。
+                // 若 set_balance 失败（理论上不会——clamped/zone_balance 均有限非负），
+                // 不扣 qi_current、不记审计，守恒不破（什么都没发生），注入量计 0。
                 let zone_balance = account.balance(&zone_id);
-                let _ = account.set_balance(zone_id.clone(), zone_balance + clamped);
-
-                // 审计轨迹：push_transfer_audit 仅追加记录，不改 from 账户 balance
-                let player_id = QiAccountId::player(format!("entity:{}", caster.to_bits()));
-                account.push_transfer_audit(QiTransfer {
-                    from: player_id,
-                    to: zone_id,
-                    amount: clamped,
-                    reason: QiTransferReason::Crafting,
-                });
+                match account.set_balance(zone_id.clone(), zone_balance + clamped) {
+                    Ok(()) => {
+                        cultivation.qi_current = (cultivation.qi_current - clamped).max(0.0);
+                        let player_id = QiAccountId::player(format!("entity:{}", caster.to_bits()));
+                        account.push_transfer_audit(QiTransfer {
+                            from: player_id,
+                            to: zone_id,
+                            amount: clamped,
+                            reason: QiTransferReason::Crafting,
+                        });
+                        clamped
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "[bong][forge] consecration inject skipped: ledger credit failed ({e}), player qi preserved (caster={:?})",
+                            caster
+                        );
+                        0.0
+                    }
+                }
+            } else {
+                0.0
             }
-
-            clamped
         } else {
             // caster 无 Cultivation 组件（理论上不应发生）→ 跳过注入
             tracing::debug!(
@@ -1047,6 +1068,83 @@ mod tests {
     }
 
     // ── plan-qi-conservation-leaks-v1 P1 — 守恒测试 ──────────────────────────────
+
+    #[test]
+    fn consecration_inject_no_zone_falls_back_to_overflow() {
+        // 期望：station 在所有 zone 之外 → find_zone None → 记入 Overflow 账户
+        // （真元绝不凭空消失）。守恒：玩家减少量 == overflow 账户增加量。
+        let mut app = App::new();
+        app.add_event::<ConsecrationInject>();
+        app.insert_resource(WorldQiAccount::default());
+        app.insert_resource(ZoneRegistry::fallback());
+        app.add_systems(Update, handle_consecration_injects);
+        // fallback 所有 zone 都在 ~[-128,128] 内；放到远处确保 find_zone 返回 None
+        let station = app
+            .world_mut()
+            .spawn(WeaponForgeStation::placed(
+                BlockPos::new(1_000_000, 66, 1_000_000),
+                1,
+                valence::prelude::Entity::PLACEHOLDER,
+            ))
+            .id();
+        let session_id = ForgeSessionId(7);
+        let caster = app
+            .world_mut()
+            .spawn(Cultivation {
+                qi_current: 40.0,
+                qi_max: 100.0,
+                ..Default::default()
+            })
+            .id();
+        insert_session_with_caster(&mut app, session_id, station, caster);
+
+        let inject_amount = 12.0_f64;
+        app.world_mut().send_event(ConsecrationInject {
+            session: session_id,
+            qi_amount: inject_amount,
+        });
+        app.update();
+
+        // 玩家真元应减少 inject_amount（即使落 overflow，扣减照常）
+        let qi_after = app
+            .world()
+            .entity(caster)
+            .get::<Cultivation>()
+            .unwrap()
+            .qi_current;
+        assert!(
+            (qi_after - (40.0 - inject_amount)).abs() < 1e-9,
+            "期望 caster qi_current={}（40-12），实际={qi_after}",
+            40.0 - inject_amount
+        );
+
+        let account = app.world().resource::<WorldQiAccount>();
+        let transfers = account.transfers();
+        assert_eq!(
+            transfers.len(),
+            1,
+            "期望恰好一条审计记录，实际={}",
+            transfers.len()
+        );
+        let t = &transfers[0];
+        assert_eq!(
+            t.to.kind,
+            crate::qi_physics::ledger::QiAccountKind::Overflow,
+            "期望 zone 不可解析时 to.kind=Overflow（真元不消失），实际={:?}",
+            t.to.kind
+        );
+        assert!(
+            (t.amount - inject_amount).abs() < 1e-9,
+            "期望 overflow transfer.amount={inject_amount}，实际={}",
+            t.amount
+        );
+        // 守恒：overflow 账户余额 == 玩家减少量
+        let overflow_balance = account.balance(&t.to);
+        assert!(
+            (overflow_balance - inject_amount).abs() < 1e-9,
+            "期望 overflow 账户余额={inject_amount}（== 玩家减少量，守恒），实际={overflow_balance}"
+        );
+    }
 
     #[test]
     fn consecration_inject_conserves_world_qi() {
