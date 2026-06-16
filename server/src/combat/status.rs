@@ -105,6 +105,20 @@ pub fn clear_breakthrough_boost(status_effects: &mut StatusEffects) {
         .retain(|e| e.kind != StatusEffectKind::BreakthroughBoost);
 }
 
+/// plan-worldgen-v4-activate bughunt r4-P2#7：渡劫结束时移除渡劫丹来源的 DamageReduction。
+///
+/// 渡劫丹（`du_jie_dan`）以 `source_pill = Some("du_jie_dan")` + `duration_ticks = u64::MAX`
+/// 施加 `DamageReduction(0.30)`，不依赖 tick 自然到期——必须在渡劫 settle 收口主动清除。
+///
+/// 只清 `source_pill == "du_jie_dan"` 的 DamageReduction，精准识别来源，
+/// **不触碰**装备/技能等其它来源的 DamageReduction。
+pub fn clear_du_jie_dan_damage_reduction(status_effects: &mut StatusEffects) {
+    status_effects.active.retain(|e| {
+        !(e.kind == StatusEffectKind::DamageReduction
+            && e.source_pill.as_deref() == Some("du_jie_dan"))
+    });
+}
+
 pub fn status_effect_tick(clock: Res<CombatClock>, mut statuses: Query<&mut StatusEffects>) {
     if !clock.tick.is_multiple_of(STATUS_EFFECT_TICK_INTERVAL_TICKS) {
         return;
@@ -1358,6 +1372,204 @@ mod tests {
             (attrs.defense_power - 1.0).abs() < 1e-6,
             "无 DamageVulnerability 时 defense_power 应为 1.0；实际 {:.6}",
             attrs.defense_power
+        );
+    }
+
+    // ── bughunt r4-P2#7：clear_du_jie_dan_damage_reduction 测试 ──
+
+    /// 渡劫结束后，source_pill="du_jie_dan" 的 DamageReduction 必须被清除。
+    #[test]
+    fn clear_du_jie_dan_damage_reduction_removes_du_jie_dan_source() {
+        let mut se = StatusEffects {
+            active: vec![
+                ActiveStatusEffect {
+                    kind: StatusEffectKind::BreakthroughBoost,
+                    magnitude: 0.25,
+                    remaining_ticks: u64::MAX,
+                    source_pill: Some("du_jie_dan".to_string()),
+                },
+                ActiveStatusEffect {
+                    kind: StatusEffectKind::DamageReduction,
+                    magnitude: 0.30,
+                    remaining_ticks: u64::MAX,
+                    source_pill: Some("du_jie_dan".to_string()),
+                },
+            ],
+        };
+        super::clear_du_jie_dan_damage_reduction(&mut se);
+        assert_eq!(
+            se.active.len(),
+            1,
+            "期望 DamageReduction(du_jie_dan) 被清除后只剩 1 条；实际 {}",
+            se.active.len()
+        );
+        assert_eq!(
+            se.active[0].kind,
+            StatusEffectKind::BreakthroughBoost,
+            "期望保留 BreakthroughBoost，实际 {:?}",
+            se.active[0].kind
+        );
+    }
+
+    /// 其它来源的 DamageReduction（装备/技能）不应被渡劫丹清除函数误清。
+    #[test]
+    fn clear_du_jie_dan_damage_reduction_preserves_other_source_damage_reduction() {
+        let mut se = StatusEffects {
+            active: vec![
+                // 渡劫丹 DamageReduction（应被清）
+                ActiveStatusEffect {
+                    kind: StatusEffectKind::DamageReduction,
+                    magnitude: 0.30,
+                    remaining_ticks: u64::MAX,
+                    source_pill: Some("du_jie_dan".to_string()),
+                },
+                // 其他丹药来源的 DamageReduction（应保留）
+                ActiveStatusEffect {
+                    kind: StatusEffectKind::DamageReduction,
+                    magnitude: 0.15,
+                    remaining_ticks: 200,
+                    source_pill: Some("some_other_pill".to_string()),
+                },
+                // 无 source_pill 的 DamageReduction（如技能 buff，应保留）
+                ActiveStatusEffect {
+                    kind: StatusEffectKind::DamageReduction,
+                    magnitude: 0.10,
+                    remaining_ticks: 100,
+                    source_pill: None,
+                },
+            ],
+        };
+        super::clear_du_jie_dan_damage_reduction(&mut se);
+        assert_eq!(
+            se.active.len(),
+            2,
+            "期望只清除 du_jie_dan 来源的 DamageReduction，保留另外 2 条；实际 {} 条",
+            se.active.len()
+        );
+        for effect in &se.active {
+            assert_ne!(
+                effect.source_pill.as_deref(),
+                Some("du_jie_dan"),
+                "不应保留 source_pill=du_jie_dan 的条目，实际保留了 {:?}",
+                effect
+            );
+        }
+        // 验证保留了正确数量的 DamageReduction
+        let remaining_dr: Vec<_> = se
+            .active
+            .iter()
+            .filter(|e| e.kind == StatusEffectKind::DamageReduction)
+            .collect();
+        assert_eq!(
+            remaining_dr.len(),
+            2,
+            "期望保留 2 条非渡劫丹来源的 DamageReduction；实际 {}",
+            remaining_dr.len()
+        );
+    }
+
+    /// 渡劫前（buff 还在时），DamageReduction 正常生效产生减伤。
+    #[test]
+    fn du_jie_dan_damage_reduction_active_before_clear_reduces_defense_power() {
+        let mut app = App::new();
+        app.add_systems(Update, attribute_aggregate_tick);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                StatusEffects {
+                    active: vec![ActiveStatusEffect {
+                        kind: StatusEffectKind::DamageReduction,
+                        magnitude: 0.30,
+                        remaining_ticks: u64::MAX,
+                        source_pill: Some("du_jie_dan".to_string()),
+                    }],
+                },
+                DerivedAttrs::default(),
+            ))
+            .id();
+
+        app.update();
+
+        let attrs = app.world().entity(entity).get::<DerivedAttrs>().unwrap();
+        assert!(
+            (attrs.defense_power - 0.70).abs() < 1e-6,
+            "渡劫中 DamageReduction(0.30) 应使 defense_power=0.70；实际 {:.6}",
+            attrs.defense_power
+        );
+    }
+
+    /// 渡劫结束清除后，defense_power 恢复到基线 1.0，确认无永久减伤泄漏。
+    #[test]
+    fn du_jie_dan_damage_reduction_cleared_after_breakthrough_restores_defense_power() {
+        let mut app = App::new();
+        app.add_systems(Update, attribute_aggregate_tick);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                StatusEffects {
+                    active: vec![ActiveStatusEffect {
+                        kind: StatusEffectKind::DamageReduction,
+                        magnitude: 0.30,
+                        remaining_ticks: u64::MAX,
+                        source_pill: Some("du_jie_dan".to_string()),
+                    }],
+                },
+                DerivedAttrs::default(),
+            ))
+            .id();
+
+        // 模拟 breakthrough settle：调用 clear_du_jie_dan_damage_reduction
+        {
+            let world = app.world_mut();
+            let mut entity_mut = world.entity_mut(entity);
+            let mut se = entity_mut.get_mut::<StatusEffects>().unwrap();
+            super::clear_du_jie_dan_damage_reduction(&mut se);
+        }
+
+        app.update();
+
+        let attrs = app.world().entity(entity).get::<DerivedAttrs>().unwrap();
+        assert!(
+            (attrs.defense_power - 1.0).abs() < 1e-6,
+            "渡劫结束后 clear_du_jie_dan_damage_reduction 应使 defense_power 回到 1.0（无永久减伤泄漏）；\
+             实际 {:.6}",
+            attrs.defense_power
+        );
+    }
+
+    /// clear_du_jie_dan_damage_reduction 在空列表上不 panic，且不影响其他 kind。
+    #[test]
+    fn clear_du_jie_dan_damage_reduction_empty_and_no_du_jie_dan_entry_is_noop() {
+        // 空列表
+        let mut se_empty = StatusEffects::default();
+        super::clear_du_jie_dan_damage_reduction(&mut se_empty);
+        assert!(se_empty.active.is_empty(), "空列表清除后应仍为空");
+
+        // 无渡劫丹条目，但有其他 kind
+        let mut se_other = StatusEffects {
+            active: vec![
+                ActiveStatusEffect {
+                    kind: StatusEffectKind::Bleeding,
+                    magnitude: 0.5,
+                    remaining_ticks: 50,
+                    source_pill: None,
+                },
+                ActiveStatusEffect {
+                    kind: StatusEffectKind::BreakthroughBoost,
+                    magnitude: 0.20,
+                    remaining_ticks: u64::MAX,
+                    source_pill: Some("po_jing_dan".to_string()),
+                },
+            ],
+        };
+        super::clear_du_jie_dan_damage_reduction(&mut se_other);
+        assert_eq!(
+            se_other.active.len(),
+            2,
+            "无渡劫丹 DamageReduction 时 clear 应为 noop，保留 2 条；实际 {}",
+            se_other.active.len()
         );
     }
 }

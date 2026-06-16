@@ -14,7 +14,9 @@ use valence::prelude::{
 };
 
 use crate::combat::components::StatusEffects;
-use crate::combat::status::{clear_breakthrough_boost, sum_breakthrough_boost};
+use crate::combat::status::{
+    clear_breakthrough_boost, clear_du_jie_dan_damage_reduction, sum_breakthrough_boost,
+};
 use crate::network::gameplay_vfx;
 use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::player::gameplay::PendingGameplayNarrations;
@@ -755,9 +757,11 @@ pub fn breakthrough_system(
             }
         }
 
-        // 不论成败，一次性消费 BreakthroughBoost buff（plan §3.1：辅助丹药为突破"仪式"消耗）
+        // 不论成败，一次性消费 BreakthroughBoost buff（plan §3.1：辅助丹药为突破"仪式"消耗）。
+        // bughunt r4-P2#7：同步清除渡劫丹来源的 DamageReduction(u64::MAX)，防止永久减伤泄漏。
         if let Ok(mut se) = status_effects_q.get_mut(req.entity) {
             clear_breakthrough_boost(&mut se);
+            clear_du_jie_dan_damage_reduction(&mut se);
         }
 
         outcomes.send(BreakthroughOutcome {
