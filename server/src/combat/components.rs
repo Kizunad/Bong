@@ -305,6 +305,11 @@ pub struct DerivedAttrs {
     #[serde(default)]
     pub vortex_active: bool,
 
+    /// bughunt r4-P2#5：QiCapPermMinus debuff 导致的真元上限削减系数 [0.01, 1.0]。
+    /// 1.0 = 无削减（无效果）；< 1.0 = 上限折损。由 attribute_aggregate_tick 每帧重算。
+    #[serde(default = "default_one_f64")]
+    pub qi_max_multiplier: f64,
+
     // ── plan-baomai-v4 §2.4 疤纹回路被动效果 ──
     /// 三阳合流：近战 reach 加成（blocks）。0.0 = 无加成。
     #[serde(default)]
@@ -352,6 +357,8 @@ impl Default for DerivedAttrs {
             defense_profile: HashMap::new(),
             tuike_layers: 0,
             vortex_active: false,
+            // bughunt r4-P2#5 QiCapPermMinus derived reducer (neutral default)
+            qi_max_multiplier: 1.0,
             // plan-baomai-v4 scar circuit passives (neutral defaults)
             reach_bonus: 0.0,
             qi_regen_multiplier: 1.0,

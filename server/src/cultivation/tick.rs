@@ -13,7 +13,7 @@ use valence::prelude::{
     bevy_ecs, Despawned, Entity, Events, Position, Query, Res, ResMut, Resource, With, Without,
 };
 
-use crate::combat::components::StatusEffects;
+use crate::combat::components::{DerivedAttrs, StatusEffects};
 use crate::combat::events::StatusEffectKind;
 use crate::combat::woliu_v2::state::TurbulenceExposure;
 use crate::cultivation::full_power_strike::Exhausted;
@@ -108,6 +108,7 @@ pub fn qi_regen_and_zone_drain_tick(
         Option<&Exhausted>,
         Option<&TurbulenceExposure>,
         Option<&JueBiAftershockDebuff>,
+        Option<&DerivedAttrs>,
     )>,
 ) {
     clock.tick = clock.tick.wrapping_add(1);
@@ -128,6 +129,7 @@ pub fn qi_regen_and_zone_drain_tick(
         exhausted,
         turbulence,
         juebi_aftershock,
+        derived_attrs,
     ) in players.iter_mut()
     {
         // 通过 pos 找到 zone 的 name（不持可变借用）；entity 缺 CurrentDimension
@@ -169,7 +171,14 @@ pub fn qi_regen_and_zone_drain_tick(
                 1.0
             }
         };
-        let effective_max = cultivation.qi_max - cultivation.qi_max_frozen.unwrap_or(0.0);
+        // bughunt r4-P2#5：QiCapPermMinus 永久真元上限折损 debuff 消费侧。
+        // attribute_aggregate_tick 已把折损系数写入 DerivedAttrs.qi_max_multiplier；
+        // 此处读取后乘入 effective_max，使 qi_room 正确反映折损后的可用容量。
+        let qi_max_multiplier = derived_attrs
+            .map(|a| a.qi_max_multiplier.clamp(0.01, 1.0))
+            .unwrap_or(1.0);
+        let effective_max =
+            (cultivation.qi_max - cultivation.qi_max_frozen.unwrap_or(0.0)) * qi_max_multiplier;
         let qi_room = (effective_max - cultivation.qi_current).max(0.0);
 
         let wind_candle_multiplier = if lifespan.is_some_and(LifespanComponent::is_wind_candle)
@@ -184,6 +193,9 @@ pub fn qi_regen_and_zone_drain_tick(
         let cultivation_accel = statuses
             .map(cultivation_acceleration_multiplier)
             .unwrap_or(1.0);
+        // bughunt r4-P2#6：QiRegenBoost 回气提升 buff 消费侧。
+        // 叠加所有 remaining_ticks > 0 的 magnitude，上限 3×，接入 rate 乘区。
+        let qi_regen_boost = statuses.map(qi_regen_boost_multiplier).unwrap_or(1.0);
         let qi_regen_slowed = statuses.map(qi_regen_slowed_multiplier).unwrap_or(1.0);
         let exhausted_multiplier = exhausted
             .map(|state| state.qi_recovery_modifier)
@@ -211,6 +223,7 @@ pub fn qi_regen_and_zone_drain_tick(
                 * humility_multiplier
                 * qi_regen_pause_multiplier
                 * cultivation_accel
+                * qi_regen_boost
                 * qi_regen_slowed
                 * exhausted_multiplier
                 * turbulence_multiplier
@@ -342,6 +355,19 @@ pub(crate) fn cultivation_acceleration_multiplier(se: &StatusEffects) -> f64 {
         .map(|e| e.magnitude.max(0.0))
         .sum();
     (1.0 + sum as f64).min(5.0)
+}
+
+/// bughunt r4-P2#6：QiRegenBoost 回气加速乘数（consumer 端）。
+/// 叠加所有 remaining_ticks > 0 的 QiRegenBoost magnitude，上限 3×（约束：
+/// QiCapPermMinus 已在 attribute_aggregate_tick 消费，此处只管回气速率）。
+pub(crate) fn qi_regen_boost_multiplier(se: &StatusEffects) -> f64 {
+    let sum: f32 = se
+        .active
+        .iter()
+        .filter(|e| e.kind == StatusEffectKind::QiRegenBoost && e.remaining_ticks > 0)
+        .map(|e| e.magnitude.max(0.0))
+        .sum();
+    (1.0 + sum as f64).min(3.0)
 }
 
 /// plan-cultivation-pacing-v1 P1.2：qi 回复减速乘数。
@@ -1262,6 +1288,250 @@ mod tests {
             (qi_no_store - qi_empty_store).abs() < 1e-9,
             "无 dominant zone 时 qi 回复应与无 store 时一致；\
              no_store={qi_no_store:.9}, empty_store={qi_empty_store:.9}"
+        );
+    }
+
+    // ── bughunt r4-P2#6：QiRegenBoost 消费侧 pin 测试 ──
+
+    fn boost_effect(magnitude: f32, remaining_ticks: u64) -> ActiveStatusEffect {
+        ActiveStatusEffect {
+            kind: StatusEffectKind::QiRegenBoost,
+            magnitude,
+            remaining_ticks,
+            source_pill: None,
+        }
+    }
+
+    #[test]
+    fn qi_regen_boost_mag_zero_returns_one() {
+        let se = make_status_effects(vec![boost_effect(0.0, 100)]);
+        let result = qi_regen_boost_multiplier(&se);
+        assert!(
+            (result - 1.0).abs() < 1e-9,
+            "QiRegenBoost mag=0 应返回 1.0×；实际 {result}"
+        );
+    }
+
+    #[test]
+    fn qi_regen_boost_mag_quarter_returns_one_point_25() {
+        let se = make_status_effects(vec![boost_effect(0.25, 100)]);
+        let result = qi_regen_boost_multiplier(&se);
+        assert!(
+            (result - 1.25).abs() < 1e-6,
+            "QiRegenBoost mag=0.25 应返回 1.25×；实际 {result}"
+        );
+    }
+
+    #[test]
+    fn qi_regen_boost_mag_one_returns_two() {
+        let se = make_status_effects(vec![boost_effect(1.0, 100)]);
+        let result = qi_regen_boost_multiplier(&se);
+        assert!(
+            (result - 2.0).abs() < 1e-9,
+            "QiRegenBoost mag=1.0 应返回 2.0×；实际 {result}"
+        );
+    }
+
+    #[test]
+    fn qi_regen_boost_mag_two_caps_at_three() {
+        let se = make_status_effects(vec![boost_effect(2.0, 100)]);
+        let result = qi_regen_boost_multiplier(&se);
+        assert!(
+            (result - 3.0).abs() < 1e-9,
+            "QiRegenBoost mag=2.0 应命中 cap 返回 3.0×；实际 {result}"
+        );
+    }
+
+    #[test]
+    fn qi_regen_boost_mag_ten_caps_at_three() {
+        let se = make_status_effects(vec![boost_effect(10.0, 100)]);
+        let result = qi_regen_boost_multiplier(&se);
+        assert!(
+            (result - 3.0).abs() < 1e-9,
+            "QiRegenBoost mag=10 超过 cap 应返回 3.0×；实际 {result}"
+        );
+    }
+
+    #[test]
+    fn qi_regen_boost_stacks_multiple_buffs() {
+        let se = make_status_effects(vec![boost_effect(0.10, 100), boost_effect(0.25, 100)]);
+        let result = qi_regen_boost_multiplier(&se);
+        // 1 + 0.10 + 0.25 = 1.35
+        assert!(
+            (result - 1.35).abs() < 1e-6,
+            "QiRegenBoost 0.10 + 0.25 叠加应返回 1.35×；实际 {result}"
+        );
+    }
+
+    #[test]
+    fn qi_regen_boost_expired_not_counted() {
+        let se = make_status_effects(vec![boost_effect(0.25, 0)]);
+        let result = qi_regen_boost_multiplier(&se);
+        assert!(
+            (result - 1.0).abs() < 1e-9,
+            "remaining_ticks=0 的 QiRegenBoost 不应计入；期望 1.0×，实际 {result}"
+        );
+    }
+
+    #[test]
+    fn qi_regen_boost_empty_effects_returns_one() {
+        let se = make_status_effects(vec![]);
+        let result = qi_regen_boost_multiplier(&se);
+        assert!(
+            (result - 1.0).abs() < 1e-9,
+            "空列表应返回 1.0×；实际 {result}"
+        );
+    }
+
+    #[test]
+    fn qi_regen_boost_ignores_other_kinds() {
+        let se = make_status_effects(vec![ActiveStatusEffect {
+            kind: StatusEffectKind::CultivationAcceleration,
+            magnitude: 3.0,
+            remaining_ticks: 100,
+            source_pill: None,
+        }]);
+        let result = qi_regen_boost_multiplier(&se);
+        assert!(
+            (result - 1.0).abs() < 1e-9,
+            "不同 kind 不应计入 QiRegenBoost；实际 {result}"
+        );
+    }
+
+    /// QiRegenBoost(mag=0.25) 应使真实 qi 回复速率 ≈ 1.25×。
+    #[test]
+    fn qi_regen_boosted_by_25_percent_under_qi_regen_boost_mag_quarter() {
+        fn run_once(effects: Option<StatusEffects>) -> f64 {
+            let mut app = App::new();
+            app.insert_resource(CultivationClock::default());
+            app.insert_resource(ZoneRegistry::fallback());
+            app.add_systems(Update, qi_regen_and_zone_drain_tick);
+
+            let mut meridians = MeridianSystem::default();
+            meridians.get_mut(MeridianId::Lung).opened = true;
+            let mut entity = app.world_mut().spawn((
+                Position::new([8.0, 66.0, 8.0]),
+                meridians,
+                Cultivation::default(),
+            ));
+            if let Some(se) = effects {
+                entity.insert(se);
+            }
+            let entity = entity.id();
+
+            app.update();
+
+            app.world()
+                .entity(entity)
+                .get::<Cultivation>()
+                .unwrap()
+                .qi_current
+        }
+
+        let normal_qi = run_once(None);
+        let boosted_qi = run_once(Some(make_status_effects(vec![boost_effect(0.25, 100)])));
+
+        assert!(normal_qi > 0.0, "基线 qi 回复应为正；实际 {normal_qi}");
+        assert!(
+            (boosted_qi - normal_qi * 1.25).abs() < 1e-6,
+            "QiRegenBoost(mag=0.25) 应使 qi 回复 1.25×；\
+             期望 {:.6}，实际 {:.6}",
+            normal_qi * 1.25,
+            boosted_qi
+        );
+    }
+
+    // ── bughunt r4-P2#5：QiCapPermMinus 消费侧集成测试（via DerivedAttrs.qi_max_multiplier）──
+
+    /// qi_max_multiplier < 1.0 时，qi_room 被正确截断，qi_current 不超过折损后上限。
+    #[test]
+    fn qi_cap_perm_minus_reduces_effective_max_via_derived_attrs() {
+        use crate::combat::components::DerivedAttrs;
+
+        let mut app = App::new();
+        app.insert_resource(CultivationClock::default());
+        app.insert_resource(ZoneRegistry::fallback());
+        app.add_systems(Update, qi_regen_and_zone_drain_tick);
+
+        let mut meridians = MeridianSystem::default();
+        meridians.get_mut(MeridianId::Lung).opened = true;
+
+        // qi_max=10.0（默认），qi_max_multiplier=0.5 → effective_max=5.0。
+        // 设 qi_current=4.9（逼近折损后上限），验证下一 tick qi_current ≤ 5.0。
+        let cultivation = Cultivation {
+            qi_current: 4.9,
+            qi_max: 10.0,
+            ..Default::default()
+        };
+        let mut derived = DerivedAttrs::default();
+        derived.qi_max_multiplier = 0.5;
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                Position::new([8.0, 66.0, 8.0]),
+                meridians,
+                cultivation,
+                derived,
+            ))
+            .id();
+
+        app.update();
+
+        let cult = app.world().entity(entity).get::<Cultivation>().unwrap();
+        assert!(
+            cult.qi_current <= 5.0 + 1e-9,
+            "qi_max_multiplier=0.5 时 qi_current 不应超过 5.0（折损后上限）；\
+             期望 ≤ 5.0，实际 {:.6}",
+            cult.qi_current
+        );
+        assert!(
+            cult.qi_current >= 4.9 - 1e-9,
+            "qi_current 应从 4.9 增加或保持（zone 有灵气）；实际 {:.6}",
+            cult.qi_current
+        );
+    }
+
+    /// qi_max_multiplier=1.0（默认中性）时行为与无 DerivedAttrs 一致。
+    #[test]
+    fn qi_cap_perm_minus_multiplier_one_is_neutral() {
+        use crate::combat::components::DerivedAttrs;
+
+        fn run_once(with_derived: bool) -> f64 {
+            let mut app = App::new();
+            app.insert_resource(CultivationClock::default());
+            app.insert_resource(ZoneRegistry::fallback());
+            app.add_systems(Update, qi_regen_and_zone_drain_tick);
+
+            let mut meridians = MeridianSystem::default();
+            meridians.get_mut(MeridianId::Lung).opened = true;
+            let mut entity = app.world_mut().spawn((
+                Position::new([8.0, 66.0, 8.0]),
+                meridians,
+                Cultivation::default(),
+            ));
+            if with_derived {
+                // 中性 multiplier=1.0
+                entity.insert(DerivedAttrs::default());
+            }
+            let entity = entity.id();
+
+            app.update();
+
+            app.world()
+                .entity(entity)
+                .get::<Cultivation>()
+                .unwrap()
+                .qi_current
+        }
+
+        let without_derived = run_once(false);
+        let with_neutral_derived = run_once(true);
+
+        assert!(
+            (without_derived - with_neutral_derived).abs() < 1e-9,
+            "qi_max_multiplier=1.0 应与无 DerivedAttrs 时 qi 回复一致；\
+             without={without_derived:.9}, with_neutral={with_neutral_derived:.9}"
         );
     }
 }
