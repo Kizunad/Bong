@@ -171,6 +171,7 @@ pub fn attribute_aggregate_tick(
         attrs.defense_power = 1.0;
         attrs.move_speed_multiplier = 1.0;
         attrs.jump_height_multiplier = 1.0;
+        attrs.qi_max_multiplier = 1.0;
 
         let slow_multiplier = status_effects
             .active
@@ -262,6 +263,17 @@ pub fn attribute_aggregate_tick(
         if vulnerability_multiplier > f32::EPSILON {
             attrs.defense_power *= 1.0 + vulnerability_multiplier;
         }
+
+        // bughunt r4-P2#5：QiCapPermMinus —— 永久真元上限折损 debuff。
+        // 累加所有 remaining_ticks > 0 的 magnitude（fraction 单位），clamp [0, 0.99]
+        // 使 qi_max_multiplier ∈ [0.01, 1.0]，由 qi_regen_and_zone_drain_tick 读取。
+        let qi_cap_minus: f32 = status_effects
+            .active
+            .iter()
+            .filter(|e| e.kind == StatusEffectKind::QiCapPermMinus && e.remaining_ticks > 0)
+            .map(|e| e.magnitude.max(0.0))
+            .sum();
+        attrs.qi_max_multiplier = (1.0 - f64::from(qi_cap_minus.clamp(0.0, 0.99))).clamp(0.01, 1.0);
     }
 }
 
@@ -1570,6 +1582,163 @@ mod tests {
             2,
             "无渡劫丹 DamageReduction 时 clear 应为 noop，保留 2 条；实际 {}",
             se_other.active.len()
+        );
+    }
+
+    // ── bughunt r4-P2#5：QiCapPermMinus 消费侧 pin 测试 ──
+
+    fn qi_cap_minus_effect(magnitude: f32, remaining_ticks: u64) -> ActiveStatusEffect {
+        ActiveStatusEffect {
+            kind: StatusEffectKind::QiCapPermMinus,
+            magnitude,
+            remaining_ticks,
+            source_pill: None,
+        }
+    }
+
+    /// QiCapPermMinus(mag=0.01) 应使 qi_max_multiplier = 0.99（折损 1%）。
+    #[test]
+    fn qi_cap_perm_minus_mag_one_percent_sets_multiplier_to_0_99() {
+        let mut app = App::new();
+        app.add_systems(Update, attribute_aggregate_tick);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                StatusEffects {
+                    active: vec![qi_cap_minus_effect(0.01, u64::MAX)],
+                },
+                DerivedAttrs::default(),
+            ))
+            .id();
+
+        app.update();
+
+        let attrs = app.world().entity(entity).get::<DerivedAttrs>().unwrap();
+        assert!(
+            (attrs.qi_max_multiplier - 0.99).abs() < 1e-6,
+            "QiCapPermMinus(mag=0.01) 应使 qi_max_multiplier=0.99（折损 1%）；\
+             期望 0.99，实际 {:.6}",
+            attrs.qi_max_multiplier
+        );
+    }
+
+    /// QiCapPermMinus 两层叠加（各 0.01）→ 总折损 0.02 → multiplier=0.98。
+    #[test]
+    fn qi_cap_perm_minus_stacks_two_entries() {
+        let mut app = App::new();
+        app.add_systems(Update, attribute_aggregate_tick);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                StatusEffects {
+                    active: vec![
+                        qi_cap_minus_effect(0.01, u64::MAX),
+                        qi_cap_minus_effect(0.01, u64::MAX),
+                    ],
+                },
+                DerivedAttrs::default(),
+            ))
+            .id();
+
+        app.update();
+
+        let attrs = app.world().entity(entity).get::<DerivedAttrs>().unwrap();
+        assert!(
+            (attrs.qi_max_multiplier - 0.98).abs() < 1e-6,
+            "QiCapPermMinus×2(mag=0.01 each) 应使 qi_max_multiplier=0.98（折损 2%）；\
+             期望 0.98，实际 {:.6}",
+            attrs.qi_max_multiplier
+        );
+    }
+
+    /// remaining_ticks=0（过期）的 QiCapPermMinus 不应纳入计算 → multiplier 保持 1.0。
+    #[test]
+    fn qi_cap_perm_minus_expired_not_applied() {
+        let mut app = App::new();
+        app.add_systems(Update, attribute_aggregate_tick);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                StatusEffects {
+                    active: vec![qi_cap_minus_effect(0.01, 0)],
+                },
+                DerivedAttrs::default(),
+            ))
+            .id();
+
+        app.update();
+
+        let attrs = app.world().entity(entity).get::<DerivedAttrs>().unwrap();
+        assert!(
+            (attrs.qi_max_multiplier - 1.0).abs() < 1e-6,
+            "remaining_ticks=0 的 QiCapPermMinus 不应计入；期望 multiplier=1.0，实际 {:.6}",
+            attrs.qi_max_multiplier
+        );
+    }
+
+    /// 无 QiCapPermMinus 时 qi_max_multiplier 应为中性值 1.0。
+    #[test]
+    fn qi_cap_perm_minus_absent_multiplier_is_one() {
+        let mut app = App::new();
+        app.add_systems(Update, attribute_aggregate_tick);
+
+        let entity = app
+            .world_mut()
+            .spawn((StatusEffects::default(), DerivedAttrs::default()))
+            .id();
+
+        app.update();
+
+        let attrs = app.world().entity(entity).get::<DerivedAttrs>().unwrap();
+        assert!(
+            (attrs.qi_max_multiplier - 1.0).abs() < 1e-6,
+            "无 QiCapPermMinus 时 qi_max_multiplier 应为 1.0；实际 {:.6}",
+            attrs.qi_max_multiplier
+        );
+    }
+
+    /// 极端叠加（sum ≥ 0.99）时 qi_max_multiplier clamp 到最低 0.01（不能清零）。
+    #[test]
+    fn qi_cap_perm_minus_clamps_to_min_0_01() {
+        let mut app = App::new();
+        app.add_systems(Update, attribute_aggregate_tick);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                StatusEffects {
+                    active: vec![qi_cap_minus_effect(0.99, u64::MAX)],
+                },
+                DerivedAttrs::default(),
+            ))
+            .id();
+
+        app.update();
+
+        let attrs = app.world().entity(entity).get::<DerivedAttrs>().unwrap();
+        assert!(
+            attrs.qi_max_multiplier >= 0.01 - 1e-9,
+            "QiCapPermMinus 极端叠加时 qi_max_multiplier 不得低于 0.01；实际 {:.6}",
+            attrs.qi_max_multiplier
+        );
+        assert!(
+            attrs.qi_max_multiplier <= 0.01 + 1e-6,
+            "mag=0.99 应使 qi_max_multiplier ≈ 0.01；实际 {:.6}",
+            attrs.qi_max_multiplier
+        );
+    }
+
+    /// DerivedAttrs 初始 qi_max_multiplier 是中性 1.0（Default 约束）。
+    #[test]
+    fn derived_attrs_default_qi_max_multiplier_is_one() {
+        let attrs = DerivedAttrs::default();
+        assert!(
+            (attrs.qi_max_multiplier - 1.0).abs() < 1e-9,
+            "DerivedAttrs::default() qi_max_multiplier 应为 1.0（无效果）；实际 {:.9}",
+            attrs.qi_max_multiplier
         );
     }
 }
