@@ -106,6 +106,11 @@ pub struct ForgeSession {
     /// 开光阶段累计注入真元。ForgeOutcomeEvent 需要它初始化法器铭纹深度。
     #[serde(default)]
     pub consecration_qi_injected: f64,
+    /// Done 状态下已累积的 tick 数。
+    /// cleanup_completed_sessions 系统每 tick 对 Done session 累加此值，
+    /// 超过 DONE_SESSION_RETENTION_TICKS 后才从 ForgeSessions 移除。
+    #[serde(default)]
+    pub done_retention_ticks: u32,
 }
 
 impl ForgeSession {
@@ -133,6 +138,7 @@ impl ForgeSession {
             inscription_result: None,
             consecration_result: None,
             consecration_qi_injected: 0.0,
+            done_retention_ticks: 0,
         }
     }
 
@@ -140,6 +146,11 @@ impl ForgeSession {
         self.current_step == ForgeStep::Done
     }
 }
+
+/// Done session 在被移除前保留的 tick 数。
+/// client_request_handler 仍可在这段窗口内读 Done session 来拒绝后续操作，
+/// 超过此阈值后 cleanup_completed_sessions 系统每 tick 批量移除。
+pub const DONE_SESSION_RETENTION_TICKS: u32 = 3;
 
 /// 所有在炉 session 的总表。ForgeSessionId → ForgeSession。
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -186,5 +197,27 @@ impl ForgeSessions {
 
     pub fn is_empty(&self) -> bool {
         self.sessions.is_empty()
+    }
+
+    /// 每 tick 对 Done session 累加 retention 计数，超过阈值后移除。
+    /// 返回本次移除的 session id 列表（供日志/测试断言）。
+    ///
+    /// # 约束
+    /// 不在 finalize 时即时 remove——client_request_handler 仍需在短暂窗口内
+    /// 读 Done session 来拒绝后续操作；延迟 DONE_SESSION_RETENTION_TICKS 后清理。
+    pub fn cleanup_completed(&mut self) -> Vec<ForgeSessionId> {
+        let mut to_remove: Vec<ForgeSessionId> = Vec::new();
+        for (id, session) in self.sessions.iter_mut() {
+            if session.current_step == ForgeStep::Done {
+                session.done_retention_ticks += 1;
+                if session.done_retention_ticks >= DONE_SESSION_RETENTION_TICKS {
+                    to_remove.push(*id);
+                }
+            }
+        }
+        for id in &to_remove {
+            self.sessions.remove(id);
+        }
+        to_remove
     }
 }

@@ -42,7 +42,9 @@ use self::events::{
 };
 use self::history::{ForgeAttempt, ForgeHistory};
 use self::learned::LearnedBlueprints;
-use self::session::{ForgeSession, ForgeSessions, ForgeStep, StepState};
+use self::session::{
+    ForgeSession, ForgeSessions, ForgeStep, StepState, DONE_SESSION_RETENTION_TICKS,
+};
 use self::station::WeaponForgeStation;
 use self::steps::{
     advance_step, apply_scroll, apply_tempering_hit, compute_achieved_tier, inject_qi,
@@ -110,6 +112,9 @@ pub fn register(app: &mut App) {
             inventory_bridge::forge_outcome_to_inventory.after(handle_step_advance),
             crate::network::forge_bridge::publish_forge_outcome.after(handle_step_advance),
             processing_mode::forge_processing_mode_handler,
+            // 延迟清理：Done session 保留 DONE_SESSION_RETENTION_TICKS tick 后移除，
+            // 避免 client_request_handler 在 finalize 瞬间后仍读 session 时出竞态。
+            cleanup_completed_sessions.after(handle_step_advance),
         ),
     );
 
@@ -908,6 +913,20 @@ fn forging_effective_lv(cultivation: &Cultivation, skill_set: &SkillSet) -> u8 {
     effective_lv(real_lv, skill_cap_for_realm(cultivation.realm))
 }
 
+/// 延迟清理系统：Done session 在保留 DONE_SESSION_RETENTION_TICKS tick 后才从
+/// ForgeSessions 移除，避免 client_request_handler 在 finalize 发生的同 tick 内
+/// 读 Done session 时出现竞态（即时 remove 会导致 get 返回 None，无法拒绝后续请求）。
+fn cleanup_completed_sessions(mut sessions: ResMut<ForgeSessions>) {
+    let removed = sessions.cleanup_completed();
+    for id in &removed {
+        tracing::debug!(
+            "[bong][forge] cleanup_completed_sessions: removed Done session {:?} after {} ticks",
+            id,
+            DONE_SESSION_RETENTION_TICKS,
+        );
+    }
+}
+
 fn deterministic_step_roll(session_seed: u64, step_index: usize, salt: u64) -> f32 {
     let mut x = session_seed ^ ((step_index as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15)) ^ salt;
     x ^= x << 13;
@@ -1510,5 +1529,186 @@ mod tests {
         assert_eq!(forge_station_tier_name(2), "灵铁炉");
         assert_eq!(forge_station_tier_name(3), "稀铁炉");
         assert_eq!(forge_station_tier_name(4), "道炉");
+    }
+
+    // ── cleanup_completed_sessions 延迟清理 ───────────────────────────────────────
+
+    /// 辅助：构造一个带 cleanup_completed_sessions system 的最小 App。
+    fn cleanup_app() -> App {
+        let mut app = App::new();
+        app.insert_resource(ForgeSessions::new());
+        app.add_systems(Update, cleanup_completed_sessions);
+        app
+    }
+
+    /// 辅助：插入指定步骤的 session，返回 session id。
+    fn insert_session_at_step(app: &mut App, id: u64, step: ForgeStep) -> ForgeSessionId {
+        let session_id = ForgeSessionId(id);
+        let placeholder = valence::prelude::Entity::PLACEHOLDER;
+        let mut sessions = app.world_mut().resource_mut::<ForgeSessions>();
+        let mut session = ForgeSession::new(
+            session_id,
+            "qing_feng_v0".to_string(),
+            placeholder,
+            placeholder,
+        );
+        session.current_step = step;
+        sessions.insert(session);
+        session_id
+    }
+
+    #[test]
+    fn done_session_retained_within_threshold() {
+        // 期望：Done session 在 tick 次数 < DONE_SESSION_RETENTION_TICKS 时仍保留在 ForgeSessions，
+        // 因为 client_request_handler 需要在这段窗口内读 Done session 来拒绝后续请求。
+        let mut app = cleanup_app();
+        let session_id = insert_session_at_step(&mut app, 1, ForgeStep::Done);
+
+        // 跑 (DONE_SESSION_RETENTION_TICKS - 1) 次 update，应仍在 map 里
+        let threshold = DONE_SESSION_RETENTION_TICKS as usize;
+        for tick in 0..(threshold - 1) {
+            app.update();
+            let sessions = app.world().resource::<ForgeSessions>();
+            assert!(
+                sessions.get(session_id).is_some(),
+                "期望 Done session 在 tick={} 时仍保留（retention={threshold}），实际已被提前删除（竞态窗口被破坏）",
+                tick + 1,
+            );
+        }
+    }
+
+    #[test]
+    fn done_session_removed_after_threshold() {
+        // 期望：Done session 在恰好经过 DONE_SESSION_RETENTION_TICKS 次 tick 后从 ForgeSessions 移除，
+        // 确保不无限累积（内存泄漏修复）。
+        let mut app = cleanup_app();
+        let session_id = insert_session_at_step(&mut app, 2, ForgeStep::Done);
+
+        let threshold = DONE_SESSION_RETENTION_TICKS as usize;
+        for _ in 0..threshold {
+            app.update();
+        }
+
+        let sessions = app.world().resource::<ForgeSessions>();
+        assert!(
+            sessions.get(session_id).is_none(),
+            "期望 Done session 在经过 {threshold} tick 后已被移除（修复内存泄漏），实际仍在 map 中"
+        );
+    }
+
+    #[test]
+    fn non_done_session_never_removed_by_cleanup() {
+        // 期望：非 Done 状态的 session（Billet / Tempering / Inscription / Consecration）
+        // 无论跑多少 tick，cleanup 系统都不应移除它们。
+        let mut app = cleanup_app();
+        let billet_id = insert_session_at_step(&mut app, 10, ForgeStep::Billet);
+        let tempering_id = insert_session_at_step(&mut app, 11, ForgeStep::Tempering);
+        let inscription_id = insert_session_at_step(&mut app, 12, ForgeStep::Inscription);
+        let consecration_id = insert_session_at_step(&mut app, 13, ForgeStep::Consecration);
+
+        // 跑远超 threshold 次
+        let many_ticks = (DONE_SESSION_RETENTION_TICKS as usize) * 10;
+        for _ in 0..many_ticks {
+            app.update();
+        }
+
+        let sessions = app.world().resource::<ForgeSessions>();
+        assert!(
+            sessions.get(billet_id).is_some(),
+            "期望 Billet session 不被 cleanup 移除（非 Done），实际已消失（cleanup 过度删除）"
+        );
+        assert!(
+            sessions.get(tempering_id).is_some(),
+            "期望 Tempering session 不被 cleanup 移除（非 Done），实际已消失"
+        );
+        assert!(
+            sessions.get(inscription_id).is_some(),
+            "期望 Inscription session 不被 cleanup 移除（非 Done），实际已消失"
+        );
+        assert!(
+            sessions.get(consecration_id).is_some(),
+            "期望 Consecration session 不被 cleanup 移除（非 Done），实际已消失"
+        );
+    }
+
+    #[test]
+    fn multiple_done_sessions_all_cleaned_up() {
+        // 期望：多个 Done session 并存时，cleanup 系统在 DONE_SESSION_RETENTION_TICKS 后
+        // 全部移除，不留孤儿（内存无界增长场景覆盖）。
+        let mut app = cleanup_app();
+        let ids: Vec<ForgeSessionId> = (100..110)
+            .map(|i| insert_session_at_step(&mut app, i, ForgeStep::Done))
+            .collect();
+
+        let threshold = DONE_SESSION_RETENTION_TICKS as usize;
+        for _ in 0..threshold {
+            app.update();
+        }
+
+        let sessions = app.world().resource::<ForgeSessions>();
+        for id in &ids {
+            assert!(
+                sessions.get(*id).is_none(),
+                "期望 Done session {:?} 在 {threshold} tick 后已被移除，实际仍在 map 中（内存泄漏未修复）",
+                id
+            );
+        }
+        assert!(
+            sessions.is_empty(),
+            "期望 ForgeSessions 在所有 Done session 清理后为空，实际 len={}",
+            sessions.len()
+        );
+    }
+
+    #[test]
+    fn mixed_sessions_cleanup_only_targets_done() {
+        // 期望：同时存在 Done + 非 Done session 时，cleanup 系统只移除达到阈值的 Done session，
+        // 不影响仍在进行的 session（精准移除验证）。
+        let mut app = cleanup_app();
+        let done_id = insert_session_at_step(&mut app, 20, ForgeStep::Done);
+        let active_id = insert_session_at_step(&mut app, 21, ForgeStep::Tempering);
+
+        let threshold = DONE_SESSION_RETENTION_TICKS as usize;
+        for _ in 0..threshold {
+            app.update();
+        }
+
+        let sessions = app.world().resource::<ForgeSessions>();
+        assert!(
+            sessions.get(done_id).is_none(),
+            "期望 Done session {:?} 在 {threshold} tick 后已被移除，实际仍在（泄漏）",
+            done_id
+        );
+        assert!(
+            sessions.get(active_id).is_some(),
+            "期望 Tempering session {:?} 在 cleanup 后仍保留，实际被误删（cleanup 过度）",
+            active_id
+        );
+    }
+
+    #[test]
+    fn done_retention_ticks_increments_each_tick() {
+        // 期望：每次 update，Done session 的 done_retention_ticks 精确累加 1，
+        // 确保计数器行为与阈值比较的逻辑匹配。
+        let mut app = cleanup_app();
+        let session_id = insert_session_at_step(&mut app, 30, ForgeStep::Done);
+
+        // 只跑 1 tick（threshold-1 以内不会被删）
+        let threshold = DONE_SESSION_RETENTION_TICKS;
+        assert!(
+            threshold >= 2,
+            "DONE_SESSION_RETENTION_TICKS 必须 >= 2 否则此测试无法区分保留/删除"
+        );
+
+        app.update(); // tick 1
+        let sessions = app.world().resource::<ForgeSessions>();
+        let ticks = sessions
+            .get(session_id)
+            .expect("Done session 在第 1 tick 后应仍存在（threshold={threshold}），实际被提前删除")
+            .done_retention_ticks;
+        assert_eq!(
+            ticks, 1,
+            "期望 done_retention_ticks=1（经过 1 tick），实际={ticks}（计数器逻辑异常）"
+        );
     }
 }
