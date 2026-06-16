@@ -2725,7 +2725,17 @@ pub fn complete_tribulation_ascension(
 ) -> io::Result<AscensionQuotaRecord> {
     let wall_clock = current_unix_seconds();
     let mut connection = open_persistence_connection(settings)?;
-    let transaction = connection.transaction().map_err(io::Error::other)?;
+    // r1-P5 fix：改用 IMMEDIATE 事务，起手即取写锁。
+    //
+    // 原来的 DEFERRED 事务在 WAL 模式下先读后写：两个并发 DuXu 完成各自在
+    // SHARED 锁下读到相同的 occupied_slots（如 1），然后都写 2，丢失一次增量
+    // （lost update）。IMMEDIATE 在 BEGIN 时就拿 RESERVED 写锁，保证
+    // read-check-write 相对于其他 IMMEDIATE/EXCLUSIVE writer 是原子串行的。
+    // 这是 worldview §三:78 化虚稀缺不变量在 SQLite 层面的硬保证。
+    // 与 try_complete_tribulation_ascension（:2831）保持一致。
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(io::Error::other)?;
     let mut quota = load_ascension_quota_from_transaction(&transaction)?;
     let active_kind_source: Option<(String, String)> = transaction
         .query_row(
@@ -2787,7 +2797,7 @@ pub enum AscensionGrant {
 /// 全部 4 分支（典型用法：仅 `Granted` 升 Realm；其余 3 态均回退 HalfStep / 不升 Realm）；
 /// `limit_used` / `occupied_before` 便于追踪并发情况和测试断言。
 ///
-/// **事务行为**：与 [`complete_tribulation_ascension`] 一致——无论 `grant` 何种状态，
+/// **事务行为**：两者均使用 IMMEDIATE 事务（起手即取写锁），无论 `grant` 何种状态，
 /// 事务都会删除 `tribulations_active` 行 + commit quota 行（保 idempotency）；
 /// 区别在只有 `Granted` 路径会 `occupied_slots += 1`，其他 3 态保持 quota 不变。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -9038,6 +9048,159 @@ mod persistence_tests {
             .expect("active tribulation query should succeed");
         assert!(active.is_none());
 
+        let _ = fs::remove_dir_all(root);
+    }
+
+    // r1-P5 并发增量单调性回归钉：两次串行调用不得互相覆盖，最终 occupied_slots 必须 == 2。
+    // 若将来有人把 IMMEDIATE 改回 DEFERRED，在非 WAL 连接池场景下两次各读 0→写 1，
+    // 第二次覆盖第一次，occupied_slots 会是 1 而非 2，本测试立刻撞红。
+    #[test]
+    fn complete_tribulation_ascension_concurrent_increments_are_not_lost() {
+        let (settings, root) =
+            persistence_settings("ascension-quota-concurrent-increments-not-lost");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+
+        // 两位不同修士各自有活跃渡劫行
+        for char_id in ["offline:QingLong", "offline:BaiHu"] {
+            let record = ActiveTribulationRecord {
+                char_id: char_id.to_string(),
+                kind: "du_xu".to_string(),
+                source: String::new(),
+                origin_dimension: Some("minecraft:overworld".to_string()),
+                wave_current: 9,
+                waves_total: 9,
+                started_tick: 10_000,
+                epicenter: [0.0, 64.0, 0.0],
+                intensity: 0.0,
+            };
+            persist_active_tribulation(&settings, &record)
+                .expect("active du_xu row should persist");
+        }
+
+        // 串行化调用，模拟两次 DuXu 成功：第一次
+        let q1 = complete_tribulation_ascension(&settings, "offline:QingLong")
+            .expect("first completion should succeed");
+        assert_eq!(
+            q1.occupied_slots, 1,
+            "after first completion occupied_slots 应为 1，实际为 {} — IMMEDIATE 事务保证增量不被覆盖",
+            q1.occupied_slots
+        );
+
+        // 第二次——在不使用 IMMEDIATE 的 lost-update 场景下，第二次会读到「已提交的 1」
+        // 并正确写 2；若 DEFERRED + 连接池序列化失效，则会写错的 1（读到过期值 0）。
+        // IMMEDIATE 保证第二次必然读到最新 committed 值。
+        let q2 = complete_tribulation_ascension(&settings, "offline:BaiHu")
+            .expect("second completion should succeed");
+        assert_eq!(
+            q2.occupied_slots, 2,
+            "after second completion occupied_slots 应为 2，实际为 {} — 第二次 IMMEDIATE 事务应读到第一次已提交的 1",
+            q2.occupied_slots
+        );
+
+        // 从 DB 重新加载确认持久化
+        let loaded = load_ascension_quota(&settings).expect("quota reload should succeed");
+        assert_eq!(
+            loaded.occupied_slots, 2,
+            "reload 后 occupied_slots 应为 2，实际为 {} — 两次增量必须都落盘",
+            loaded.occupied_slots
+        );
+
+        // 两个 active 行均已清除
+        for char_id in ["offline:QingLong", "offline:BaiHu"] {
+            let active =
+                load_active_tribulation(&settings, char_id).expect("active query should not error");
+            assert!(active.is_none(), "{char_id} 的 active 行应已删除，但仍存在");
+        }
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    // r1-P5 事务行为钉：complete_tribulation_ascension 在已有竞争 IMMEDIATE 写锁时
+    // 不应返回 SQLITE_BUSY 错误 —— 它必须等锁而非立刻失败。
+    // 策略：用第二个 Connection 手动开启 BEGIN IMMEDIATE，持锁期间调用函数，
+    // 然后在另一线程释放锁，验证函数最终成功而非返回 Err。
+    #[test]
+    fn complete_tribulation_ascension_uses_immediate_transaction_behavior() {
+        use rusqlite::Connection;
+        use std::sync::{Arc, Barrier};
+        use std::thread;
+
+        let (settings, root) = persistence_settings("ascension-quota-immediate-txn-behavior");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+
+        // 预先插入 active 行供函数消费
+        let record = ActiveTribulationRecord {
+            char_id: "offline:XuanWu".to_string(),
+            kind: "du_xu".to_string(),
+            source: String::new(),
+            origin_dimension: Some("minecraft:overworld".to_string()),
+            wave_current: 7,
+            waves_total: 7,
+            started_tick: 5_000,
+            epicenter: [0.0, 64.0, 0.0],
+            intensity: 0.0,
+        };
+        persist_active_tribulation(&settings, &record)
+            .expect("active row should persist before lock test");
+
+        // 开竞争写连接：BEGIN IMMEDIATE 拿写锁，然后用 Barrier 协调释放时机
+        let db_path = settings.db_path().to_path_buf();
+        let barrier_before = Arc::new(Barrier::new(2));
+        let barrier_after = Arc::new(Barrier::new(2));
+        let b_before_clone = Arc::clone(&barrier_before);
+        let b_after_clone = Arc::clone(&barrier_after);
+
+        let lock_thread = thread::spawn(move || {
+            let mut conn = Connection::open(&db_path).expect("competitor conn should open");
+            // 必须设置 busy_timeout，否则 IMMEDIATE 立即失败
+            conn.busy_timeout(std::time::Duration::from_secs(5))
+                .expect("busy timeout should set");
+            let tx = conn
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .expect("competitor IMMEDIATE txn should start");
+            // 写锁已持有，通知主线程可以发起 complete_tribulation_ascension
+            b_before_clone.wait();
+            // 等主线程通知可以释放
+            b_after_clone.wait();
+            // commit（或 drop 回滚）释放写锁
+            tx.commit().expect("competitor commit should succeed");
+        });
+
+        // 等竞争线程拿到写锁
+        barrier_before.wait();
+
+        // complete_tribulation_ascension 内部应 BEGIN IMMEDIATE 并等待锁；
+        // 在竞争 tx commit 前它会 busy-wait（因为 open_persistence_connection 设了
+        // busy_timeout），不应提前失败。
+        // 我们在另一个线程发起，以免主线程阻塞影响 barrier 释放
+        let settings_clone = settings.clone();
+        let call_thread = thread::spawn(move || {
+            // 给竞争线程 25 ms 确保确实已经拿锁，避免 race
+            thread::sleep(std::time::Duration::from_millis(25));
+            complete_tribulation_ascension(&settings_clone, "offline:XuanWu")
+        });
+
+        // 短暂后释放竞争锁
+        thread::sleep(std::time::Duration::from_millis(50));
+        barrier_after.wait();
+
+        let result = call_thread.join().expect("call thread should not panic");
+        assert!(
+            result.is_ok(),
+            "complete_tribulation_ascension 在竞争 IMMEDIATE 锁释放后应成功，实际错误：{:?} \
+             — 若函数使用 DEFERRED 且 busy_timeout 未设，可能提前 SQLITE_BUSY",
+            result.err()
+        );
+        let quota = result.unwrap();
+        assert_eq!(
+            quota.occupied_slots, 1,
+            "竞争写锁场景下增量应为 1，实际为 {} — IMMEDIATE 等锁后读到正确基值 0",
+            quota.occupied_slots
+        );
+
+        lock_thread.join().expect("lock thread should not panic");
         let _ = fs::remove_dir_all(root);
     }
 
