@@ -351,6 +351,12 @@ pub fn declare_meridian_dependencies(dependencies: &mut SkillMeridianDependencie
     dependencies.declare(ANQI_SOUL_INJECT_SKILL_ID, vec![MeridianId::Spleen]);
     dependencies.declare(ANQI_ARMOR_PIERCE_SKILL_ID, vec![MeridianId::LargeIntestine]);
     dependencies.declare(ANQI_ECHO_FRACTAL_SKILL_ID, vec![MeridianId::Du]);
+    // anqi.charge_carrier 充能技能依赖肺经（手三阴真元导引，worldview §四:286 §六:583）。
+    // 断肺经 → 无法将真元灌注进暗器，充能 cast 废。（plan-meridian-severed-v1 §3 强约束）
+    dependencies.declare(
+        crate::combat::carrier::ANQI_CHARGE_SKILL_ID,
+        vec![MeridianId::Lung],
+    );
 }
 
 fn resolve_single_snipe(
