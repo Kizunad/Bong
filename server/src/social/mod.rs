@@ -1519,12 +1519,17 @@ fn apply_faction_membership_decisions(
                     .insert(next_membership.clone());
             }
             FactionMembershipDecisionKind::Resign => {
-                next_membership.faction = event.faction;
+                // Set faction to Neutral so that persisted record does not re-admit the player
+                // on reconnect. The betrayal_count/invite_block/permanently_refused fields are
+                // preserved so they can still gate future invite acceptance.
+                next_membership.faction = FactionId::Neutral;
                 next_membership.loyalty = next_membership.loyalty.saturating_sub(20);
                 commands.entity(event.player).remove::<FactionMembership>();
             }
             FactionMembershipDecisionKind::Expel | FactionMembershipDecisionKind::Betray => {
-                next_membership.faction = event.faction;
+                // Same: clear faction affiliation to Neutral rather than keeping the old faction,
+                // so the persisted row cannot restore membership on reconnect.
+                next_membership.faction = FactionId::Neutral;
                 next_membership.loyalty = 0;
                 next_membership.betrayal_count = next_membership.betrayal_count.saturating_add(1);
                 next_membership.invite_block_until_tick =
@@ -4579,6 +4584,226 @@ mod tests {
         app.update();
 
         assert!(app.world().get::<FactionMembership>(player).is_none());
+
+        let _ = std::fs::remove_dir_all(data_dir);
+    }
+
+    /// Resign must persist faction=Neutral so reconnect does not restore original faction.
+    #[test]
+    fn resign_persists_neutral_faction_prevents_reconnect_readmission() {
+        let (persistence, data_dir) = social_persistence("resign-neutral");
+        let mut app = App::new();
+        app.insert_resource(persistence.clone());
+        app.add_event::<FactionMembershipDecisionEvent>();
+        app.add_event::<SocialRenownDeltaEvent>();
+        app.add_systems(Update, apply_faction_membership_decisions);
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let player = app.world_mut().spawn(client_bundle).id();
+        app.world_mut().entity_mut(player).insert(Lifecycle {
+            character_id: "char:resign-neutral".to_string(),
+            ..Default::default()
+        });
+
+        // Join Attack faction first.
+        app.world_mut().send_event(FactionMembershipDecisionEvent {
+            player,
+            faction: FactionId::Attack,
+            kind: FactionMembershipDecisionKind::AcceptInvite,
+            tick: 10,
+        });
+        app.update();
+        assert_eq!(
+            app.world()
+                .get::<FactionMembership>(player)
+                .unwrap()
+                .faction,
+            FactionId::Attack,
+            "expected Attack membership after AcceptInvite"
+        );
+
+        // Resign — should write Neutral to DB, not Attack.
+        app.world_mut().send_event(FactionMembershipDecisionEvent {
+            player,
+            faction: FactionId::Attack,
+            kind: FactionMembershipDecisionKind::Resign,
+            tick: 20,
+        });
+        app.update();
+
+        assert!(
+            app.world().get::<FactionMembership>(player).is_none(),
+            "expected FactionMembership component to be removed after Resign"
+        );
+
+        // Simulated reconnect: load persisted membership from DB.
+        let loaded = load_social_components(&persistence, "char:resign-neutral")
+            .expect("load after resign should succeed");
+        let persisted_membership = loaded.faction_membership.expect(
+            "persisted membership record must exist to hold betrayal state for invite gating",
+        );
+        assert_eq!(
+            persisted_membership.faction,
+            FactionId::Neutral,
+            "expected persisted faction=Neutral after Resign — \
+             was {:?}, which would have caused auto-readmission on reconnect",
+            persisted_membership.faction
+        );
+
+        let _ = std::fs::remove_dir_all(data_dir);
+    }
+
+    /// Expel must persist faction=Neutral so reconnect does not restore original faction.
+    #[test]
+    fn expel_persists_neutral_faction_prevents_reconnect_readmission() {
+        let (persistence, data_dir) = social_persistence("expel-neutral");
+        let mut app = App::new();
+        app.insert_resource(persistence.clone());
+        app.add_event::<FactionMembershipDecisionEvent>();
+        app.add_event::<SocialRenownDeltaEvent>();
+        app.add_systems(Update, apply_faction_membership_decisions);
+
+        let (client_bundle, _helper) = create_mock_client("Defender");
+        let player = app.world_mut().spawn(client_bundle).id();
+        app.world_mut().entity_mut(player).insert((
+            Lifecycle {
+                character_id: "char:expel-neutral".to_string(),
+                ..Default::default()
+            },
+            Karma::default(),
+        ));
+
+        // Join Defend faction first.
+        app.world_mut().send_event(FactionMembershipDecisionEvent {
+            player,
+            faction: FactionId::Defend,
+            kind: FactionMembershipDecisionKind::AcceptInvite,
+            tick: 5,
+        });
+        app.update();
+        assert_eq!(
+            app.world()
+                .get::<FactionMembership>(player)
+                .unwrap()
+                .faction,
+            FactionId::Defend,
+            "expected Defend membership after AcceptInvite"
+        );
+
+        // Expel — should write Neutral to DB.
+        app.world_mut().send_event(FactionMembershipDecisionEvent {
+            player,
+            faction: FactionId::Defend,
+            kind: FactionMembershipDecisionKind::Expel,
+            tick: 15,
+        });
+        app.update();
+
+        assert!(
+            app.world().get::<FactionMembership>(player).is_none(),
+            "expected FactionMembership component to be removed after Expel"
+        );
+
+        let loaded = load_social_components(&persistence, "char:expel-neutral")
+            .expect("load after expel should succeed");
+        let persisted_membership = loaded
+            .faction_membership
+            .expect("persisted membership record must exist to hold betrayal/block state");
+        assert_eq!(
+            persisted_membership.faction,
+            FactionId::Neutral,
+            "expected persisted faction=Neutral after Expel — \
+             was {:?}, which would have caused auto-readmission on reconnect",
+            persisted_membership.faction
+        );
+        // Betrayal count and block tick must still be recorded (used by invite gating).
+        assert_eq!(
+            persisted_membership.betrayal_count, 1,
+            "expected betrayal_count=1 after first Expel"
+        );
+        assert!(
+            persisted_membership.invite_block_until_tick.is_some(),
+            "expected invite_block_until_tick to be set after Expel"
+        );
+
+        let _ = std::fs::remove_dir_all(data_dir);
+    }
+
+    /// Betray must persist faction=Neutral so reconnect does not restore original faction.
+    /// Also verifies that betrayal_count and permanently_refused are preserved alongside Neutral.
+    #[test]
+    fn betray_persists_neutral_faction_and_preserves_refusal_state() {
+        let (persistence, data_dir) = social_persistence("betray-neutral");
+        let mut app = App::new();
+        app.insert_resource(persistence.clone());
+        app.add_event::<FactionMembershipDecisionEvent>();
+        app.add_event::<SocialRenownDeltaEvent>();
+        app.add_systems(
+            Update,
+            (
+                apply_faction_membership_decisions,
+                apply_social_renown_deltas.after(apply_faction_membership_decisions),
+            ),
+        );
+
+        let (client_bundle, _helper) = create_mock_client("Traitor");
+        let player = app.world_mut().spawn(client_bundle).id();
+        app.world_mut().entity_mut(player).insert((
+            Lifecycle {
+                character_id: "char:betray-neutral".to_string(),
+                ..Default::default()
+            },
+            Karma::default(),
+        ));
+
+        // Join Attack, then immediately betray.
+        app.world_mut().send_event(FactionMembershipDecisionEvent {
+            player,
+            faction: FactionId::Attack,
+            kind: FactionMembershipDecisionKind::AcceptInvite,
+            tick: 1,
+        });
+        app.update();
+
+        app.world_mut().send_event(FactionMembershipDecisionEvent {
+            player,
+            faction: FactionId::Attack,
+            kind: FactionMembershipDecisionKind::Betray,
+            tick: 10,
+        });
+        app.update();
+
+        assert!(
+            app.world().get::<FactionMembership>(player).is_none(),
+            "expected FactionMembership component to be removed after Betray"
+        );
+
+        let loaded = load_social_components(&persistence, "char:betray-neutral")
+            .expect("load after betray should succeed");
+        let persisted_membership = loaded
+            .faction_membership
+            .expect("persisted membership must exist to hold betrayal/block state");
+
+        assert_eq!(
+            persisted_membership.faction,
+            FactionId::Neutral,
+            "expected persisted faction=Neutral after Betray — \
+             was {:?}, which would have caused auto-readmission on reconnect (the bug)",
+            persisted_membership.faction
+        );
+        // Side-effect fields must survive so invite gating works on reconnect.
+        assert_eq!(
+            persisted_membership.betrayal_count, 1,
+            "expected betrayal_count=1 to survive in persisted row"
+        );
+        assert!(
+            persisted_membership.invite_block_until_tick.is_some(),
+            "expected invite block to be persisted alongside Neutral faction"
+        );
+        assert_eq!(
+            persisted_membership.loyalty, 0,
+            "expected loyalty=0 after Betray"
+        );
 
         let _ = std::fs::remove_dir_all(data_dir);
     }
