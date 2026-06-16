@@ -58,3 +58,35 @@
 ## 审计来源
 
 代码库自检 bug-hunt round1（workflow，8 子系统 finder + 对抗裁决），confirmed 6 条吞真元。承接 `plan-qi-physics-patch-v1` P2-7 遗留。**report-only**：守恒律红线 + 跨模块 + 账户去向设计抉择，不擅自大改，待人工/consume 决议。
+
+
+## Finish Evidence
+
+全部 P0-P3 已实现、测试、merge（2026-06-16/17）。每个 P 经 **Scope 核实「真元是否守恒来源」→ 实现 → 博弈对峙裁决 → /review → merge**——三种不同处置由「守恒来源性」定夺。
+
+### 落地清单
+- **P0 投射物残余真元归还**：`server/src/combat/carrier.rs`（`projectile_miss_qi_release_system` + 共享 `release_residual_to_zone`；HitTarget 已硬置 residual=0 不双释）、`server/src/combat/needle.rs`（`despawn_expired_qi_needles` 过期针残余归落点 zone，velocity 外推消亡点）。**release**——residual 是守恒来源（cast 已扣玩家 qi），`qi_release_to_zone`→zone.spirit_qi，无 zone 进 overflow。
+- **P1 forge 开光真元守恒 + client-trust（critical 通胀）**：`server/src/forge/mod.rs::handle_consecration_injects`（扣 `Cultivation.qi_current` + station zone `WorldQiAccount` 记账 + `push_transfer_audit`，BossDrain；client 值钳制 ≤ qi_current 且拒非有限；ledger 写成功才扣，原子）。
+- **P2 forge 养护/进化扣减接 ledger**：`server/src/forge/artifact_meridian.rs`（`artifact_meridian_maintenance_tick` + `deepen_on_use`/`apply_evolution_qi_cost` 扣 qi_current 同步玩家 zone ledger 记账）、`server/src/qi_physics/ledger.rs`（新增 `QiTransferReason::ArtifactMaintenance` / `ArtifactEvolution`）。
+- **P3 tsy_drain 双计修正**：`server/src/world/tsy_drain.rs::record_tsy_drain_transfer`（移除 `set_balance(player)`+`transfer()`，改 rift 账户增 + `push_transfer_audit` 审计模式；玩家 qi 只在 ECS Cultivation 不进 ledger balances，消除 `summarize_world_qi` 双计）。
+
+### 关键 commit
+- P1 qc-P1 → `a90ada969`（#580, 2026-06-16）开光真元注入接守恒 + client-trust。
+- P0 qc-P0 → `a6e040d00`（#582, 2026-06-16）投射物 miss/expire 残余真元守恒归还落点 zone。
+- P2 qc-P2 → `e795c9467`（#583, 2026-06-16）forge 养护/进化扣减接守恒 zone ledger。
+- P3 qc-P3 → `1201bad60`（#584, 2026-06-16）tsy_drain 改审计模式消除玩家余额双计。
+
+### 测试结果
+- `cargo test forge::` 153 passed（P1 开光守恒/钳制/overflow/审计 + P2 养护/进化守恒不变式/审计 reason/overflow/无 ledger 不扣）。
+- `cargo test qi_physics::` 178 passed（ArtifactMaintenance/Evolution pin + summarize 守恒）。
+- `cargo test combat::carrier` 11 + `combat::needle` 7 passed（P0 miss 归还/命中不双释/zero noop/overflow/跨 zone 落点）。
+- `cargo test tsy_drain` 19 passed（P3 audit-only 正确不变量 + 2 系统级守恒测试驱动真实 `tsy_drain_tick` + overdraft）。
+- 各 PR `fmt` + `clippy --all-targets -D warnings` clean；e2e 全绿。
+
+### 跨仓库核验
+- **server**：`qi_physics::ledger::{QiTransferReason::{ArtifactMaintenance,ArtifactEvolution}, push_transfer_audit, qi_release_to_zone}`、`forge::handle_consecration_injects`、`forge::artifact_meridian::{artifact_meridian_maintenance_tick,apply_evolution_qi_cost}`、`combat::carrier::release_residual_to_zone`、`world::tsy_drain::record_tsy_drain_transfer`。
+- **agent / client**：无（纯 server qi_physics 守恒修复，不涉 IPC schema / 客户端）。telemetry `bong:qi/ledger`（network/mod.rs）值修正（P3 去虚化玩家余额，total_observed 降为正确值），无 schema 结构变更。
+
+### 遗留 / 后续（不在本 plan 范围）
+- **anqi 注入型 5 技能**（SingleSnipe/MultiShot/SoulInject/ArmorPierce/EchoFractal）cast 扣 qi 但瞬时命中、无飞行实体 → miss 无归还路径、残真元蒸发（§N #4，独立守恒缺口，待单独跟进）。
+- §N #2（forge 是否抽统一 forge-qi-ledger 子系统）：逐点已接，未抽公共子系统——非必需。
