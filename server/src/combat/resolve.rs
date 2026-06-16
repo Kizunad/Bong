@@ -8,6 +8,7 @@ use valence::prelude::{
 
 use crate::combat::anticheat::AntiCheatCounter;
 use crate::combat::armor::{ArmorProfileRegistry, ARMOR_MITIGATION_CAP};
+use crate::combat::baomai_v4::dead_armor::{should_block_contamination, DeadMeridianArmor};
 use crate::combat::body_mass::{BodyMass, Stance};
 use crate::combat::jiemai::{
     jiemai_apply_effects, jiemai_effectiveness, jiemai_fov_check, jiemai_prep_window,
@@ -248,6 +249,7 @@ pub fn resolve_attack_intents(
     // plan-weapon-v1 §6：武器加成 + 耐久扣减
     // plan-shield-block-v1 P3：shield_broken 事件写出 + ItemRegistry（读 ShieldSpec）
     // plan-shield-block-v1 P4：defender KnownTechniques（shield_block_profile 缩放）+ shield_block_hit emit
+    // plan-baomai-v4 P0：dead_armor 免疫区拦截污染（第 13 位，≤16 上限安全）
     weapon_break: (
         Query<&mut Weapon>,
         EventWriter<WeaponBroken>,
@@ -261,6 +263,7 @@ pub fn resolve_attack_intents(
         Option<ResMut<Events<ShedEvent>>>,
         Option<Res<ItemRegistry>>,
         Query<Option<&KnownTechniques>>,
+        Query<Option<&DeadMeridianArmor>>,
     ),
 ) {
     let (
@@ -276,6 +279,7 @@ pub fn resolve_attack_intents(
         mut shed_events,
         item_registry,
         defender_known_q,
+        dead_armor_q,
     ) = weapon_break;
 
     for intent in intents.read() {
@@ -1320,6 +1324,17 @@ pub fn resolve_attack_intents(
             }
         }
         emitted_contam_delta = filter_result.passes_through;
+        // plan-baomai-v4 P0 — 死脉甲免疫区拦截污染。
+        // 守恒决议：drop_no_release。污染量由伤害公式凭空派生（非攻方真元转移），
+        // 拦截后直接丢弃，不调用 qi_release_to_zone（否则通胀）。
+        let dead_armor_blocks = dead_armor_q
+            .get(target_entity)
+            .ok()
+            .flatten()
+            .is_some_and(|armor| should_block_contamination(armor, hit_probe.body_part));
+        if dead_armor_blocks {
+            emitted_contam_delta = 0.0;
+        }
         if emitted_contam_delta > 0.0 {
             contamination.entries.push(ContamSource {
                 amount: emitted_contam_delta,
@@ -8123,5 +8138,491 @@ mod tests {
             inv.equipped.contains_key(EQUIP_SLOT_OFF_HAND),
             "满耐久木盾一次格挡后 off_hand 盾应保留（未破盾）；实际 off_hand 为空"
         );
+    }
+
+    // ── 死脉甲污染豁免接线（plan-baomai-v4 P0）集成测试 ──
+
+    /// 构建最小 app：注册 resolve_attack_intents 所需的全部事件，不引入额外系统。
+    fn setup_dead_armor_app(tick: u64) -> App {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick });
+        app.add_event::<AttackIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<CombatEvent>();
+        app.add_event::<DeathEvent>();
+        app.add_event::<WeaponBroken>();
+        app.add_event::<ShieldBroken>();
+        app.add_event::<ShieldBlockHit>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
+        app.add_systems(Update, resolve_attack_intents);
+        app
+    }
+
+    /// 给目标实体插入 DeadMeridianArmor，免疫 immune_part。
+    fn attach_dead_armor(app: &mut App, entity: Entity, immune_part: BodyPart) {
+        use crate::combat::baomai_v4::dead_armor::DeadMeridianArmor;
+        let mut armor = DeadMeridianArmor::default();
+        armor.immune_regions.insert(immune_part);
+        app.world_mut().entity_mut(entity).insert(armor);
+    }
+
+    /// 发出一次 qi 攻击（非物理），命中特定 body_part。
+    /// 注意：raycast_humanoid 按距离决定 body_part——
+    /// Chest/Back 在 [0.3, 0.9]y 偏移、Head 在 [1.4, 1.8]y、
+    /// ArmL/ArmR 在侧面。此处用正面 (z+1) 近距离攻击，
+    /// raycast 结果为 Chest，便于测试。
+    fn send_qi_attack(app: &mut App, attacker: Entity, target: Entity, tick: u64) {
+        app.world_mut().send_event(AttackIntent {
+            attacker,
+            target: Some(target),
+            issued_at_tick: tick,
+            reach: FIST_REACH,
+            qi_invest: 10.0,
+            wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
+            debug_command: None,
+        });
+    }
+
+    /// 死脉甲免疫区命中：contamination.entries 不应包含任何源。
+    ///
+    /// 设置：Ren 经脉 VoluntarySever → Chest 免疫 → 攻击命中 Chest（正面近距离）。
+    /// 期望：攻击后 contamination.entries 为空（免疫区被拦截，delta 直接 DROP，
+    ///        无 zone release——守恒决议 drop_no_release）。
+    #[test]
+    fn dead_armor_immune_region_blocks_contamination() {
+        let mut app = setup_dead_armor_app(2000);
+
+        let attacker = spawn_player(
+            &mut app,
+            "AttackerImm",
+            [0.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        let target = spawn_player(
+            &mut app,
+            "TargetImm",
+            [1.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+
+        // 给 target 插入 DeadMeridianArmor，Chest 免疫（Ren 经脉绝脉后的映射）。
+        attach_dead_armor(&mut app, target, BodyPart::Chest);
+
+        // 首次 update（初始化系统）。
+        app.update();
+
+        // 发出 qi 攻击（qi_invest=10 > 0，产生污染路径）。
+        send_qi_attack(&mut app, attacker, target, 1999);
+        app.update();
+
+        // 验证：CombatEvent 应已发出（攻击落地）。
+        let events: Vec<_> = app
+            .world()
+            .resource::<Events<CombatEvent>>()
+            .iter_current_update_events()
+            .collect();
+        assert_eq!(
+            events.len(),
+            1,
+            "期望 1 个 CombatEvent，因为攻击落地了；实际 {} 个",
+            events.len()
+        );
+
+        // 主断言：contamination.entries 为空——免疫区拦截后 DROP，无注入。
+        let contam = app.world().entity(target).get::<Contamination>().unwrap();
+        assert!(
+            contam.entries.is_empty(),
+            "期望 contamination.entries 为空，因为命中部位（Chest）是 dead_armor 免疫区，\
+             被拦截的 delta 直接 DROP（drop_no_release），不应写入任何 ContamSource；\
+             实际 entries={:?}",
+            contam.entries
+        );
+
+        // 守恒断言：事件 contam_delta 也应为 0（反映 DROP 后的值）。
+        assert_eq!(
+            events[0].contam_delta, 0.0,
+            "期望 CombatEvent.contam_delta=0.0，因为死脉甲免疫区拦截后直接 DROP；\
+             实际 contam_delta={:.4}",
+            events[0].contam_delta
+        );
+    }
+
+    /// 非免疫部位照常写入污染：dead_armor 仅拦截免疫区，不影响其他部位。
+    ///
+    /// 设置：Chest 免疫，攻击命中 Chest（先验证免疫生效），
+    /// 然后换一个无免疫的 target（无 DeadMeridianArmor），攻击命中相同 body_part，
+    /// 验证 entries 非空。
+    #[test]
+    fn non_immune_region_still_contaminated() {
+        let mut app = setup_dead_armor_app(2010);
+
+        let attacker = spawn_player(
+            &mut app,
+            "AttackerNonImm",
+            [0.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        // target_no_armor：没有 DeadMeridianArmor，任何部位都不免疫。
+        let target_no_armor = spawn_player(
+            &mut app,
+            "TargetNoArmor",
+            [1.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+
+        app.update();
+
+        send_qi_attack(&mut app, attacker, target_no_armor, 2009);
+        app.update();
+
+        let contam = app
+            .world()
+            .entity(target_no_armor)
+            .get::<Contamination>()
+            .unwrap();
+        assert!(
+            !contam.entries.is_empty(),
+            "期望 contamination.entries 非空，因为 target_no_armor 没有 DeadMeridianArmor，\
+             qi 攻击应正常写入污染；实际 entries 为空（说明过滤逻辑误判为免疫）"
+        );
+        // 进一步：entries[0].amount > 0
+        assert!(
+            contam.entries[0].amount > 0.0,
+            "期望 entries[0].amount > 0，因为 qi 攻击 qi_invest=10.0 会产生非零污染；\
+             实际 amount={:.4}",
+            contam.entries[0].amount
+        );
+    }
+
+    /// 无 DeadMeridianArmor 组件时照常污染（组件缺失不 panic，不误判免疫）。
+    #[test]
+    fn no_dead_armor_component_contaminates_normally() {
+        let mut app = setup_dead_armor_app(2020);
+
+        let attacker = spawn_player(
+            &mut app,
+            "AttackerNoDMA",
+            [0.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        let target = spawn_player(
+            &mut app,
+            "TargetNoDMA",
+            [1.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        // target 故意不 insert DeadMeridianArmor。
+
+        app.update();
+
+        send_qi_attack(&mut app, attacker, target, 2019);
+        app.update();
+
+        let contam = app.world().entity(target).get::<Contamination>().unwrap();
+        assert!(
+            !contam.entries.is_empty(),
+            "期望 contamination.entries 非空：target 无 DeadMeridianArmor，\
+             Option<&DeadMeridianArmor>=None 时不应触发免疫逻辑；\
+             实际 entries 为空（说明 flatten/is_some_and 错误地挡住了 None 分支）"
+        );
+    }
+
+    /// 守恒断言（drop_no_release）：免疫区命中后 CombatEvent.contam_delta=0。
+    ///
+    /// 两个独立 app 分别验证：
+    ///   sub-case A：有免疫 → contam_delta=0（DROP）。
+    ///   sub-case B：无免疫 → contam_delta>0（正常路径）。
+    /// 对比确认"拦截=丢弃，非 release_to_zone"。
+    #[test]
+    fn dead_armor_block_is_drop_not_release() {
+        // ── sub-case A：有免疫区，contam_delta 应为 0 ──
+        {
+            let mut app = setup_dead_armor_app(2030);
+            let attacker = spawn_player(
+                &mut app,
+                "AttackerDropA",
+                [0.0, 64.0, 0.0],
+                Wounds::default(),
+                Stamina::default(),
+            );
+            let target_immune = spawn_player(
+                &mut app,
+                "TargetImmuneA",
+                [1.0, 64.0, 0.0],
+                Wounds::default(),
+                Stamina::default(),
+            );
+            attach_dead_armor(&mut app, target_immune, BodyPart::Chest);
+            app.update();
+
+            send_qi_attack(&mut app, attacker, target_immune, 2029);
+            app.update();
+
+            let events: Vec<_> = app
+                .world()
+                .resource::<Events<CombatEvent>>()
+                .iter_current_update_events()
+                .collect();
+            assert_eq!(
+                events.len(),
+                1,
+                "期望免疫攻击产生 1 个 CombatEvent；实际 {}",
+                events.len()
+            );
+            assert_eq!(
+                events[0].contam_delta, 0.0,
+                "期望免疫区命中后 CombatEvent.contam_delta=0.0（DROP，非 release_to_zone）；\
+                 实际={:.4}，若非 0 则说明拦截后仍向 zone 注入通胀",
+                events[0].contam_delta
+            );
+        }
+
+        // ── sub-case B：无免疫区，contam_delta 应 > 0（正常路径验证过滤器不误杀）──
+        {
+            let mut app = setup_dead_armor_app(2031);
+            let attacker = spawn_player(
+                &mut app,
+                "AttackerDropB",
+                [0.0, 64.0, 0.0],
+                Wounds::default(),
+                Stamina::default(),
+            );
+            let target_normal = spawn_player(
+                &mut app,
+                "TargetNormalB",
+                [1.0, 64.0, 0.0],
+                Wounds::default(),
+                Stamina::default(),
+            );
+            // target_normal 无 DeadMeridianArmor。
+            app.update();
+
+            send_qi_attack(&mut app, attacker, target_normal, 2030);
+            app.update();
+
+            let events: Vec<_> = app
+                .world()
+                .resource::<Events<CombatEvent>>()
+                .iter_current_update_events()
+                .collect();
+            assert_eq!(
+                events.len(),
+                1,
+                "期望无免疫攻击产生 1 个 CombatEvent；实际 {}",
+                events.len()
+            );
+            assert!(
+                events[0].contam_delta > 0.0,
+                "期望无免疫 target 的 contam_delta > 0（正常污染路径）；\
+                 实际={:.4}，若为 0 则过滤误杀了正常路径",
+                events[0].contam_delta
+            );
+        }
+    }
+
+    /// 多免疫区：同一 target 有多个免疫部位，对应部位都不产生污染。
+    /// 非免疫部位的攻击（需要另一轮）仍产生污染。
+    ///
+    /// 注意：`BodyPart::Back` 在当前 `classify_body_part` 下不可命中（dead-letter immunity）。
+    /// `meridian_to_body_part` 修正后已无任何经脉映射到 Back。
+    /// 此处 immune_regions 包含 Back 仅作为"额外项"验证集合逻辑，
+    /// 实际验证路径是 Chest 命中→Chest 在集合中→DROP。
+    #[test]
+    fn dead_armor_multiple_immune_regions_all_block() {
+        use crate::combat::baomai_v4::dead_armor::DeadMeridianArmor;
+        let mut app = setup_dead_armor_app(2040);
+
+        let attacker = spawn_player(
+            &mut app,
+            "AttackerMulti",
+            [0.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        let target = spawn_player(
+            &mut app,
+            "TargetMulti",
+            [1.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+
+        // 给 target 插入多免疫区（Chest + ArmL）。
+        // Back 已从集合移除（classify_body_part 永不产出 Back，加入无意义）。
+        {
+            let mut armor = DeadMeridianArmor::default();
+            armor.immune_regions.insert(BodyPart::Chest);
+            armor.immune_regions.insert(BodyPart::ArmL);
+            app.world_mut().entity_mut(target).insert(armor);
+        }
+
+        app.update();
+
+        // 攻击命中 Chest（默认正面近距离命中）。
+        send_qi_attack(&mut app, attacker, target, 2039);
+        app.update();
+
+        let contam = app.world().entity(target).get::<Contamination>().unwrap();
+        assert!(
+            contam.entries.is_empty(),
+            "期望 contamination.entries 为空：Chest 在多免疫区集合内，应被 DROP；\
+             实际 entries={:?}",
+            contam.entries
+        );
+    }
+
+    /// 边界：target 有 DeadMeridianArmor 但命中部位（Chest）不在免疫区内，照常污染。
+    ///
+    /// immune_regions 只包含 ArmL，不含 Chest——正面攻击命中 Chest 应穿透免疫。
+    #[test]
+    fn dead_armor_non_immune_part_still_contaminates() {
+        use crate::combat::baomai_v4::dead_armor::DeadMeridianArmor;
+        let mut app = setup_dead_armor_app(2050);
+
+        let attacker = spawn_player(
+            &mut app,
+            "AttackerPartial",
+            [0.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        let target = spawn_player(
+            &mut app,
+            "TargetPartial",
+            [1.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+
+        // 只免疫 ArmL（非攻击命中部位），Chest 未免疫。
+        // 注意：BodyPart::Back 是死路免疫（classify_body_part 永不产出）；
+        // 此测试改用 ArmL，确保非命中部位免疫不误拦截 Chest 攻击。
+        {
+            let mut armor = DeadMeridianArmor::default();
+            armor.immune_regions.insert(BodyPart::ArmL);
+            app.world_mut().entity_mut(target).insert(armor);
+        }
+
+        app.update();
+
+        // 正面攻击命中 Chest（非免疫区）。
+        send_qi_attack(&mut app, attacker, target, 2049);
+        app.update();
+
+        let contam = app.world().entity(target).get::<Contamination>().unwrap();
+        assert!(
+            !contam.entries.is_empty(),
+            "期望 contamination.entries 非空：Chest 不在免疫区（仅 ArmL 免疫），\
+             应正常写入污染；实际 entries 为空（partial 豁免误拦截了非免疫部位）"
+        );
+    }
+
+    /// Head 和 Abdomen 是刻意设计的弱点区——死脉甲对其无保护。
+    ///
+    /// `meridian_to_body_part` 无任何经脉映射到 Head 或 Abdomen，
+    /// 因此即使 target 拥有全经脉死脉甲免疫，Head/Abdomen 命中仍产生污染。
+    ///
+    /// 攻击几何（依据 classify_body_part 阈值，STANDING_HEIGHT=1.8）：
+    /// - Head（rel_y > 0.88）：攻方 y=65.0，高于目标 → 击中顶面（rel_y=1.0→Head）
+    /// - Abdomen（0.35 < rel_y ≤ 0.55）：攻方 y=62.0，低于目标 → 击中中低部（rel_y≈0.40→Abdomen）
+    #[test]
+    fn dead_armor_head_and_abdomen_are_always_vulnerable() {
+        use crate::combat::baomai_v4::dead_armor::DeadMeridianArmor;
+
+        // ── Head 命中：target 满免疫区仍被污染 ──
+        {
+            let mut app = setup_dead_armor_app(2060);
+
+            // 攻方高于目标（y=65.0），raycast 向下命中 Head（顶面 rel_y=1.0→Head）。
+            let attacker = spawn_player(
+                &mut app,
+                "AttackerHead",
+                [0.0, 65.0, 0.0],
+                Wounds::default(),
+                Stamina::default(),
+            );
+            let target = spawn_player(
+                &mut app,
+                "TargetHead",
+                [1.0, 64.0, 0.0],
+                Wounds::default(),
+                Stamina::default(),
+            );
+
+            // 给 target 插入所有可命中区域的免疫（Chest/ArmL/ArmR/LegL/LegR），
+            // 但无 Head 映射——Head 是永久弱点区。
+            {
+                let mut armor = DeadMeridianArmor::default();
+                armor.immune_regions.insert(BodyPart::Chest);
+                armor.immune_regions.insert(BodyPart::ArmL);
+                armor.immune_regions.insert(BodyPart::ArmR);
+                armor.immune_regions.insert(BodyPart::LegL);
+                armor.immune_regions.insert(BodyPart::LegR);
+                app.world_mut().entity_mut(target).insert(armor);
+            }
+
+            app.update();
+            send_qi_attack(&mut app, attacker, target, 2059);
+            app.update();
+
+            let contam = app.world().entity(target).get::<Contamination>().unwrap();
+            assert!(
+                !contam.entries.is_empty(),
+                "期望 contamination.entries 非空：Head 无死脉甲映射（刻意弱点区），\
+                 即使 target 持有所有其他区域免疫，Head 命中仍应写入污染；\
+                 实际 entries 为空（说明 Head 命中被误判为免疫）"
+            );
+        }
+
+        // ── Abdomen 命中：target 满免疫区仍被污染 ──
+        {
+            let mut app = setup_dead_armor_app(2070);
+
+            // 攻方低于目标（y=62.0），raycast 向上命中 Abdomen（rel_y≈0.40）。
+            let attacker = spawn_player(
+                &mut app,
+                "AttackerAbd",
+                [0.0, 62.0, 0.0],
+                Wounds::default(),
+                Stamina::default(),
+            );
+            let target = spawn_player(
+                &mut app,
+                "TargetAbd",
+                [1.0, 64.0, 0.0],
+                Wounds::default(),
+                Stamina::default(),
+            );
+
+            // 给 target 插入所有可命中区域的免疫，但无 Abdomen 映射。
+            {
+                let mut armor = DeadMeridianArmor::default();
+                armor.immune_regions.insert(BodyPart::Chest);
+                armor.immune_regions.insert(BodyPart::ArmL);
+                armor.immune_regions.insert(BodyPart::ArmR);
+                armor.immune_regions.insert(BodyPart::LegL);
+                armor.immune_regions.insert(BodyPart::LegR);
+                app.world_mut().entity_mut(target).insert(armor);
+            }
+
+            app.update();
+            send_qi_attack(&mut app, attacker, target, 2069);
+            app.update();
+
+            let contam = app.world().entity(target).get::<Contamination>().unwrap();
+            assert!(
+                !contam.entries.is_empty(),
+                "期望 contamination.entries 非空：Abdomen 无死脉甲映射（刻意弱点区），\
+                 即使 target 持有所有其他区域免疫，Abdomen 命中仍应写入污染；\
+                 实际 entries 为空（说明 Abdomen 命中被误判为免疫）"
+            );
+        }
     }
 }
