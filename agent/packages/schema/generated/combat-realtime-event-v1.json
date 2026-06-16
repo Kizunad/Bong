@@ -51,6 +51,10 @@
           "type": "string"
         },
         {
+          "const": "back",
+          "type": "string"
+        },
+        {
           "const": "arm_l",
           "type": "string"
         },
