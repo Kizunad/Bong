@@ -9160,7 +9160,16 @@ mod persistence_tests {
             let tx = conn
                 .transaction_with_behavior(TransactionBehavior::Immediate)
                 .expect("competitor IMMEDIATE txn should start");
-            // 写锁已持有，通知主线程可以发起 complete_tribulation_ascension
+            // 持锁期间写入 occupied_slots=10——commit 后被测函数（IMMEDIATE 等锁）
+            // 必须读到这个新值。若函数退化为 DEFERRED，会在 commit 前读到旧值 0、
+            // 写 1，丢掉本次更新，下方断言 11 立即撞红（pin read-after-write）。
+            upsert_ascension_quota(
+                &tx,
+                &AscensionQuotaRecord { occupied_slots: 10 },
+                current_unix_seconds(),
+            )
+            .expect("competitor should stage occupied_slots=10 before releasing the write lock");
+            // 写锁已持有 + 已暂存写入，通知主线程可以发起 complete_tribulation_ascension
             b_before_clone.wait();
             // 等主线程通知可以释放
             b_after_clone.wait();
@@ -9195,8 +9204,9 @@ mod persistence_tests {
         );
         let quota = result.unwrap();
         assert_eq!(
-            quota.occupied_slots, 1,
-            "竞争写锁场景下增量应为 1，实际为 {} — IMMEDIATE 等锁后读到正确基值 0",
+            quota.occupied_slots, 11,
+            "竞争事务先提交 occupied_slots=10，本调用须在 BEGIN IMMEDIATE 等锁后读到 10 并写 11；\
+             实际为 {} — 若读到 0（旧值）说明退化为 DEFERRED 读后写、丢更新",
             quota.occupied_slots
         );
 
