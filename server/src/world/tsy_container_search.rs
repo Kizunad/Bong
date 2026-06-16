@@ -34,8 +34,8 @@ use crate::inventory::spirit_treasure::{
 };
 use crate::inventory::InventoryInstanceIdAllocator;
 use crate::inventory::{
-    bump_revision, consume_item_instance_once, inventory_item_by_instance_mut, ItemInstance,
-    ItemRegistry, PlacedItemState, PlayerInventory, MAIN_PACK_CONTAINER_ID,
+    bump_revision, consume_item_instance_once, find_free_slot, inventory_item_by_instance_mut,
+    ItemInstance, ItemRegistry, PlacedItemState, PlayerInventory, MAIN_PACK_CONTAINER_ID,
 };
 use crate::network::audio_event_emit::{AudioRecipient, PlaySoundRecipeRequest};
 use crate::network::qi_attrition_emit::{
@@ -704,11 +704,16 @@ fn place_item_in_main_pack(inv: &mut PlayerInventory, instance: ItemInstance) {
         );
         return;
     };
-    main_pack.items.push(PlacedItemState {
-        row: 0,
-        col: 0,
-        instance,
-    });
+    let Some((row, col)) = find_free_slot(main_pack, instance.grid_w, instance.grid_h) else {
+        tracing::warn!(
+            "[bong][tsy-container] 背包无空位放置 `{}`（{}x{}），loot 丢失",
+            instance.template_id,
+            instance.grid_w,
+            instance.grid_h,
+        );
+        return;
+    };
+    main_pack.items.push(PlacedItemState { row, col, instance });
     bump_revision(inv);
 }
 
@@ -894,6 +899,163 @@ mod tests {
         // 不应 panic，仅警告
         place_item_in_main_pack(&mut inv, key_item("x", 1));
         assert!(inv.containers.is_empty());
+    }
+
+    // ——— loot 多件放不同槽位（bug fix: 不再全堆 (0,0)） ———
+
+    #[test]
+    fn place_item_in_main_pack_multiple_items_land_in_distinct_slots() {
+        // 期望：3 件 1x1 loot 各自落在不同 (row,col) 槽位，而非全压到 (0,0)。
+        // 修复前：全部 push row=0,col=0（叠在同一格）。
+        let mut inv = make_inv(); // 4x5 背包，初始空
+        let item_a = key_item("herb_a", 1);
+        let item_b = key_item("herb_b", 2);
+        let item_c = key_item("herb_c", 3);
+
+        place_item_in_main_pack(&mut inv, item_a);
+        place_item_in_main_pack(&mut inv, item_b);
+        place_item_in_main_pack(&mut inv, item_c);
+
+        let items = &inv.containers[0].items;
+        assert_eq!(
+            items.len(),
+            3,
+            "期望背包中有 3 件 loot，实际 {}",
+            items.len()
+        );
+
+        // 检查每件物品的 (row,col) 都不相同——修复前全为 (0,0)
+        let slots: Vec<(u8, u8)> = items.iter().map(|p| (p.row, p.col)).collect();
+        let unique: std::collections::HashSet<(u8, u8)> = slots.iter().cloned().collect();
+        assert_eq!(
+            unique.len(),
+            3,
+            "期望 3 件 loot 落在 3 个不同槽位（find_free_slot 分散放置），\
+             实际只有 {} 个不同槽位（值为 {:?}）——\
+             修复前所有物品都压到 (0,0)",
+            unique.len(),
+            slots
+        );
+    }
+
+    #[test]
+    fn place_item_in_main_pack_first_item_goes_to_top_left() {
+        // 期望：空背包首件 loot 落在 (0,0)——find_free_slot 行主序扫描，空容器返回 (0,0)。
+        let mut inv = make_inv();
+        place_item_in_main_pack(&mut inv, key_item("herb_a", 1));
+
+        let placed = &inv.containers[0].items[0];
+        assert_eq!(
+            (placed.row, placed.col),
+            (0, 0),
+            "期望空背包首件 loot 落在 (0,0)（行主序首个空位），实际 ({},{})",
+            placed.row,
+            placed.col
+        );
+    }
+
+    #[test]
+    fn place_item_in_main_pack_second_item_not_at_origin() {
+        // 期望：第二件 1x1 loot 不落在 (0,0)（(0,0) 已被第一件占用）。
+        let mut inv = make_inv();
+        place_item_in_main_pack(&mut inv, key_item("item_a", 1));
+        place_item_in_main_pack(&mut inv, key_item("item_b", 2));
+
+        let items = &inv.containers[0].items;
+        let second = &items[1];
+        assert_ne!(
+            (second.row, second.col),
+            (0, 0),
+            "期望第二件 loot 不在 (0,0)（已被第一件占据），\
+             实际第二件仍在 (0,0)——这正是被修复的 bug"
+        );
+    }
+
+    #[test]
+    fn place_item_in_main_pack_full_pack_does_not_panic() {
+        // 期望：背包已满（1x1 背包放了 1 件）时，再放第二件不 panic、不插入，revision 不再增加。
+        use crate::inventory::ContainerState;
+        let mut inv = PlayerInventory {
+            revision: crate::inventory::InventoryRevision(0),
+            containers: vec![ContainerState {
+                id: MAIN_PACK_CONTAINER_ID.to_string(),
+                name: "tiny".to_string(),
+                rows: 1,
+                cols: 1,
+                items: Vec::new(),
+            }],
+            equipped: Default::default(),
+            hotbar: Default::default(),
+            bone_coins: 0,
+            max_weight: 100.0,
+        };
+        place_item_in_main_pack(&mut inv, key_item("item_a", 1)); // 占满唯一格
+        let rev_after_first = inv.revision.0;
+        place_item_in_main_pack(&mut inv, key_item("item_b", 2)); // 背包已满，应跳过
+
+        assert_eq!(
+            inv.containers[0].items.len(),
+            1,
+            "期望背包满时第二件 loot 被丢弃（warn），实际插入了——背包只有 1 格"
+        );
+        assert_eq!(
+            inv.revision.0, rev_after_first,
+            "期望背包满时 revision 不再递增（无 bump），实际 revision 从 {} 变为 {}",
+            rev_after_first, inv.revision.0
+        );
+    }
+
+    #[test]
+    fn place_item_in_main_pack_revision_incremented_per_item() {
+        // 期望：每次成功放置 bump_revision，3 件物品后 revision=3。
+        let mut inv = make_inv();
+        assert_eq!(inv.revision.0, 0, "初始 revision 应为 0");
+        place_item_in_main_pack(&mut inv, key_item("a", 1));
+        assert_eq!(inv.revision.0, 1, "放第 1 件后 revision 应为 1");
+        place_item_in_main_pack(&mut inv, key_item("b", 2));
+        assert_eq!(inv.revision.0, 2, "放第 2 件后 revision 应为 2");
+        place_item_in_main_pack(&mut inv, key_item("c", 3));
+        assert_eq!(inv.revision.0, 3, "放第 3 件后 revision 应为 3");
+    }
+
+    #[test]
+    fn place_item_in_main_pack_2x1_item_finds_free_slot() {
+        // 期望：2x1 (grid_w=2, grid_h=1) 物品能正确调用 find_free_slot，
+        // 不会因 grid_w>1 而塞到 col=0..0 导致溢出。
+        use crate::inventory::ContainerState;
+        let mut inv = PlayerInventory {
+            revision: crate::inventory::InventoryRevision(0),
+            containers: vec![ContainerState {
+                id: MAIN_PACK_CONTAINER_ID.to_string(),
+                name: "wide".to_string(),
+                rows: 2,
+                cols: 4,
+                items: Vec::new(),
+            }],
+            equipped: Default::default(),
+            hotbar: Default::default(),
+            bone_coins: 0,
+            max_weight: 100.0,
+        };
+        let wide_item = ItemInstance {
+            grid_w: 2,
+            grid_h: 1,
+            ..key_item("wide_relic", 10)
+        };
+        place_item_in_main_pack(&mut inv, wide_item);
+        assert_eq!(
+            inv.containers[0].items.len(),
+            1,
+            "期望 2x1 物品被成功放置（背包有足够空间），实际未放入"
+        );
+        let placed = &inv.containers[0].items[0];
+        assert_eq!(
+            (placed.row, placed.col),
+            (0, 0),
+            "期望 2x1 物品首先落在 (0,0)（行主序首个合法空位），实际 ({},{})",
+            placed.row,
+            placed.col
+        );
     }
 
     #[test]
