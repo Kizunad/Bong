@@ -17,9 +17,12 @@ use crate::combat::projectile::{
 };
 use crate::combat::{CombatClock, CombatSystemSet};
 use crate::cultivation::components::{
-    ColorKind, ContamSource, Contamination, Cultivation, QiColor, Realm,
+    ColorKind, ContamSource, Contamination, Cultivation, MeridianId, QiColor, Realm,
 };
 use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
+use crate::cultivation::meridian::severed::{
+    check_meridian_dependencies, MeridianSeveredPermanent,
+};
 use crate::cultivation::skill_registry::{CastRejectReason, CastResult, SkillRegistry};
 use crate::forge::artifact_meridian::artifact_resonance_for_inventory;
 use crate::forge::resonance::carrier_seal_efficiency_multiplier;
@@ -276,6 +279,18 @@ pub fn resolve_anqi_charge_skill(
     {
         return CastResult::Rejected {
             reason: CastRejectReason::OnCooldown,
+        };
+    }
+
+    // plan-meridian-severed-v1 §3 强约束：充能需要肺经（手太阴）导引真元灌注暗器。
+    // 断肺经 → 真元无法通过肺经注入充能通道 → 拒绝充能（worldview §四:286）。
+    const CHARGE_MERIDIAN_DEPS: &[MeridianId] = &[MeridianId::Lung];
+    if let Err(blocked) = check_meridian_dependencies(
+        CHARGE_MERIDIAN_DEPS,
+        world.get::<MeridianSeveredPermanent>(caster),
+    ) {
+        return CastResult::Rejected {
+            reason: CastRejectReason::MeridianSevered(Some(blocked)),
         };
     }
 
@@ -1503,6 +1518,103 @@ mod tests {
         assert!(
             (total - f64::from(residual)).abs() < 1e-9,
             "守恒不变式：transfer 总量应等于 residual_qi（期望 {residual}），实际 {total}"
+        );
+    }
+
+    // ── 经脉门测试：charge_carrier meridian gate ─────────────────────────────────────
+
+    /// 验证 anqi.charge_carrier 在 SkillMeridianDependencies 中已声明肺经依赖。
+    /// 断肺经 → charge 被通用 check_meridian_dependencies 拦截（worldview §四:286）。
+    #[test]
+    fn charge_carrier_declared_in_skill_meridian_dependencies_with_lung() {
+        use crate::cultivation::meridian::severed::SkillMeridianDependencies;
+
+        let mut deps = SkillMeridianDependencies::default();
+        crate::combat::anqi_v2::declare_meridian_dependencies(&mut deps);
+
+        assert!(
+            deps.is_declared(ANQI_CHARGE_SKILL_ID),
+            "期望 anqi.charge_carrier 已在 SkillMeridianDependencies 声明（plan-meridian-severed-v1 §3 强约束），\
+             实际未声明 → 断肺经的玩家仍可充能"
+        );
+        let declared = deps.lookup(ANQI_CHARGE_SKILL_ID);
+        assert!(
+            declared.contains(&MeridianId::Lung),
+            "期望 charge_carrier 依赖 MeridianId::Lung（肺经，真元注入暗器的主导引脉），\
+             实际声明的依赖为 {declared:?}"
+        );
+    }
+
+    /// 验证 resolve_anqi_charge_skill 在施法前检查经脉门：肺经 SEVERED → 返回 MeridianSevered。
+    #[test]
+    fn charge_carrier_cast_rejected_when_lung_severed() {
+        use crate::combat::components::SkillBarBindings;
+        use crate::cultivation::components::Cultivation;
+        use crate::cultivation::meridian::severed::{MeridianSeveredPermanent, SeveredSource};
+
+        let mut world = bevy_ecs::world::World::new();
+        world.insert_resource(CombatClock { tick: 1 });
+        world.insert_resource(bevy_ecs::event::Events::<ChargeCarrierIntent>::default());
+
+        let mut severed = MeridianSeveredPermanent::default();
+        severed.insert(MeridianId::Lung, SeveredSource::CombatWound, 1);
+
+        let caster = world
+            .spawn((
+                Cultivation {
+                    qi_current: 100.0,
+                    qi_max: 200.0,
+                    ..Default::default()
+                },
+                SkillBarBindings::default(),
+                severed,
+            ))
+            .id();
+
+        let result = resolve_anqi_charge_skill(&mut world, caster, 0, None);
+
+        assert!(
+            matches!(
+                result,
+                CastResult::Rejected {
+                    reason: CastRejectReason::MeridianSevered(Some(MeridianId::Lung))
+                }
+            ),
+            "期望肺经 SEVERED 时 resolve_anqi_charge_skill 返回 \
+             CastRejectReason::MeridianSevered(Some(Lung))（真元无法经肺经注入暗器），\
+             实际返回 {result:?}"
+        );
+    }
+
+    /// 验证 resolve_anqi_charge_skill 在肺经完好（无 SEVERED component）时正常施法。
+    #[test]
+    fn charge_carrier_cast_allowed_when_lung_intact() {
+        use crate::combat::components::SkillBarBindings;
+        use crate::cultivation::components::Cultivation;
+
+        let mut world = bevy_ecs::world::World::new();
+        world.insert_resource(CombatClock { tick: 1 });
+        world.insert_resource(bevy_ecs::event::Events::<ChargeCarrierIntent>::default());
+
+        // 无 MeridianSeveredPermanent component → 肺经视为 INTACT，充能应通过经脉门
+        let caster = world
+            .spawn((
+                Cultivation {
+                    qi_current: 100.0,
+                    qi_max: 200.0,
+                    ..Default::default()
+                },
+                SkillBarBindings::default(),
+            ))
+            .id();
+
+        let result = resolve_anqi_charge_skill(&mut world, caster, 0, None);
+
+        // qi_target > 0 且无经脉阻断 → 应进入 Started（充能 intent 已 emit）
+        assert!(
+            matches!(result, CastResult::Started { .. }),
+            "期望肺经完好时 resolve_anqi_charge_skill 返回 CastResult::Started（经脉门放行），\
+             实际返回 {result:?}"
         );
     }
 }
