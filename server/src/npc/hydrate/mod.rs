@@ -117,6 +117,13 @@ pub fn hydrate_dormant_near_players_system(
 
     let mut to_hydrate = BTreeMap::<String, bool>::new();
     for (char_id, snapshot) in &store.snapshots {
+        // 守卫：已标记逻辑战死（combat_dead_pending_release=true）的快照不得被水化。
+        // run_pending_combat_release_retry 持有这些快照的收口权——重试 release qi 到 zone、
+        // 完成后由 finalize_released_combat_death 从 store 移除。若在此水化，会把已向
+        // zone ledger 转账过的 qi 再度作为活 NPC 真元注入世界，造成双计（守恒红线）。
+        if snapshot.combat_dead_pending_release {
+            continue;
+        }
         let tribulation_ready = dormant_tribulation_ready(snapshot, tribulation_threshold_mul);
         let near_player = nearest_same_dimension_player_distance(
             snapshot.position_vec(),
@@ -208,6 +215,23 @@ pub fn hydrate_dormant_on_rechallenge_trigger(
     for event in events.read() {
         if !event.is_dormant {
             // hydrated entity（玩家或已在世界中的 NPC），不需 hydrate，跳过
+            continue;
+        }
+
+        // 守卫：combat_dead_pending_release=true 的快照不得被 rechallenge 触发水化。
+        // 先 get 检查，通过后再 remove——确保快照留在 store 供 run_pending_combat_release_retry
+        // 正常收口，不破坏独立 retry 系统的处理链。
+        if store
+            .snapshots
+            .get(&event.char_id)
+            .map(|s| s.combat_dead_pending_release)
+            .unwrap_or(false)
+        {
+            tracing::debug!(
+                "[bong][npc] hydrate_dormant_on_rechallenge_trigger: char_id={} is combat_dead_pending_release, \
+                 skipping hydrate — retry system will handle release and cleanup",
+                event.char_id
+            );
             continue;
         }
 
@@ -2058,6 +2082,271 @@ mod tests {
             store_len_after, store_len_before,
             "is_dormant=false trigger for char_id with dormant snapshot must NOT remove it; \
              store had {store_len_before} before, has {store_len_after} after"
+        );
+    }
+
+    // ─── combat_dead_pending_release 守卫 pin 测试 ─────────────────────────────
+    //
+    // 验收目标（Scope 结论）：
+    //   1. combat_dead_pending_release=true 的快照不被 hydrate_dormant_near_players_system 水化
+    //   2. 同样快照不被 hydrate_dormant_on_rechallenge_trigger 水化
+    //   3. 正常（false）快照照常水化
+    //   4. 混合批次：部分 combat_dead、部分正常——正常者水化，combat_dead 留 store
+    //   5. 守恒：combat_dead 快照带 qi_current>0 时，世界中不出现该 entity（qi 不双计）
+
+    /// 构造一个 combat_dead_pending_release=true 的快照（qi_current=300 残余未释放）。
+    fn combat_dead_snapshot(char_id: &str) -> NpcDormantSnapshot {
+        let mut s = snapshot(char_id, DVec3::new(10.0, 64.0, 10.0));
+        // 模拟 zone 满、qi 未完全释放的典型状态（qi_current=300 > QI_EPSILON）。
+        s.cultivation.qi_current = 300.0;
+        s.combat_dead_pending_release = true;
+        s
+    }
+
+    /// 构造一个完全释放（qi_current=0）的 combat_dead 快照（zone 已全额回灌），
+    /// 但 pending_release 仍为 true（等 retry 系统做最终清理）。
+    fn combat_dead_zero_qi_snapshot(char_id: &str) -> NpcDormantSnapshot {
+        let mut s = snapshot(char_id, DVec3::new(10.0, 64.0, 10.0));
+        s.cultivation.qi_current = 0.0;
+        s.combat_dead_pending_release = true;
+        s
+    }
+
+    /// 构造最小 App 供 hydrate_dormant_near_players_system 测试使用。
+    /// 在玩家位置放置一个 ClientMarker entity，确保邻近触发条件满足。
+    fn near_player_hydrate_app(store: NpcDormantStore) -> App {
+        let mut app = App::new();
+        app.add_event::<InitiateXuhuaTribulation>();
+        let overworld = app.world_mut().spawn_empty().id();
+        let tsy = app.world_mut().spawn_empty().id();
+        app.insert_resource(DimensionLayers { overworld, tsy });
+        app.insert_resource(NpcVirtualizationConfig {
+            transition_interval_ticks: 1,
+            ..Default::default()
+        });
+        app.insert_resource(store);
+        // 放置玩家在 NPC 旁边（确保 near_player 条件成立）
+        app.world_mut().spawn((
+            valence::client::ClientMarker,
+            Position(DVec3::new(10.0, 64.0, 10.0)),
+        ));
+        app.add_systems(Update, hydrate_dormant_near_players_system);
+        app
+    }
+
+    /// 守卫 P1：combat_dead_pending_release=true 的快照在玩家靠近时不被水化。
+    /// 期望：store 保留该 snapshot；世界中无新 NpcMarker entity；qi 不双计。
+    #[test]
+    fn combat_dead_near_player_skipped_by_hydrate_system() {
+        let mut store = NpcDormantStore::default();
+        store.insert(combat_dead_snapshot("npc_combat_dead"));
+        let mut app = near_player_hydrate_app(store);
+        app.update();
+
+        // snapshot 必须留在 store——retry 系统负责收口
+        assert!(
+            !app.world().resource::<NpcDormantStore>().is_empty(),
+            "期望 combat_dead_pending_release=true 快照留在 NpcDormantStore（不被水化）；\
+             store 为空说明守卫失效，qi 已被双计"
+        );
+        assert!(
+            app.world()
+                .resource::<NpcDormantStore>()
+                .snapshots
+                .contains_key("npc_combat_dead"),
+            "期望 NpcDormantStore 仍包含 npc_combat_dead；\
+             该快照被水化 = qi 双计（战死时已 release 到 zone，复活又带真元进世界）"
+        );
+
+        // 世界中不应有 NpcMarker entity（没有 spawn）
+        let npc_count = {
+            let world = app.world_mut();
+            let mut q = world.query_filtered::<Entity, With<NpcMarker>>();
+            q.iter(world).count()
+        };
+        assert_eq!(
+            npc_count, 0,
+            "期望 world 中无 NpcMarker entity（combat_dead 快照不应被 spawn）；\
+             实际 {npc_count} 个——说明守卫未阻止 spawn，qi 已双计"
+        );
+    }
+
+    /// 守卫 P2：qi_current=0 的 combat_dead 快照同样不被水化（qi=0 的逻辑死亡者不该复活）。
+    #[test]
+    fn combat_dead_zero_qi_near_player_still_skipped() {
+        let mut store = NpcDormantStore::default();
+        store.insert(combat_dead_zero_qi_snapshot("npc_dead_zero"));
+        let mut app = near_player_hydrate_app(store);
+        app.update();
+
+        assert!(
+            app.world()
+                .resource::<NpcDormantStore>()
+                .snapshots
+                .contains_key("npc_dead_zero"),
+            "期望 qi_current=0 的 combat_dead 快照仍留 store；\
+             即使 qi=0 也不应水化（逻辑上已死，等 retry finalize 清理）"
+        );
+        let npc_count = {
+            let world = app.world_mut();
+            let mut q = world.query_filtered::<Entity, With<NpcMarker>>();
+            q.iter(world).count()
+        };
+        assert_eq!(
+            npc_count, 0,
+            "qi=0 的 combat_dead 快照不应 spawn NpcMarker；实际 {npc_count} 个"
+        );
+    }
+
+    /// 守卫 P3：combat_dead_pending_release=false（正常）快照照常水化（守卫不破坏正常路径）。
+    #[test]
+    fn normal_snapshot_still_hydrates_when_near_player() {
+        let mut store = NpcDormantStore::default();
+        let normal = snapshot("npc_normal", DVec3::new(10.0, 64.0, 10.0));
+        assert!(
+            !normal.combat_dead_pending_release,
+            "test setup: normal snapshot must have combat_dead_pending_release=false"
+        );
+        store.insert(normal);
+        let mut app = near_player_hydrate_app(store);
+        app.update();
+
+        assert!(
+            app.world().resource::<NpcDormantStore>().is_empty(),
+            "期望正常（combat_dead=false）快照在玩家靠近时被水化（从 store 移除）；\
+             store 仍有内容说明守卫误拦截了正常路径"
+        );
+        let npc_count = {
+            let world = app.world_mut();
+            let mut q = world.query_filtered::<Entity, With<NpcMarker>>();
+            q.iter(world).count()
+        };
+        assert!(
+            npc_count >= 1,
+            "期望正常快照水化后有 NpcMarker entity；实际 {npc_count} 个"
+        );
+    }
+
+    /// 守卫 P4：混合批次——combat_dead 快照留 store，正常快照被水化。
+    #[test]
+    fn mixed_batch_combat_dead_stays_normal_hydrates() {
+        let mut store = NpcDormantStore::default();
+        store.insert(combat_dead_snapshot("npc_dead_mix"));
+        store.insert(snapshot("npc_alive_mix", DVec3::new(10.0, 64.0, 10.0)));
+        let mut app = near_player_hydrate_app(store);
+        app.update();
+
+        let store_after = app.world().resource::<NpcDormantStore>();
+        assert!(
+            store_after.snapshots.contains_key("npc_dead_mix"),
+            "混合批次：npc_dead_mix（combat_dead=true）必须留在 store；\
+             若被水化则 qi 双计"
+        );
+        assert!(
+            !store_after.snapshots.contains_key("npc_alive_mix"),
+            "混合批次：npc_alive_mix（正常）必须已从 store 移除（已水化）；\
+             若仍在 store 则守卫误拦截"
+        );
+
+        let npc_count = {
+            let world = app.world_mut();
+            let mut q = world.query_filtered::<Entity, With<NpcMarker>>();
+            q.iter(world).count()
+        };
+        assert_eq!(
+            npc_count, 1,
+            "混合批次：world 中应有且仅有 1 个 NpcMarker（来自正常快照）；\
+             实际 {npc_count} 个（期望非 0 且非 2，因 combat_dead 不应 spawn）"
+        );
+    }
+
+    /// 守卫 P5（rechallenge 路径）：combat_dead_pending_release=true 的快照收到
+    /// rechallenge trigger(is_dormant=true) 时不被水化，store 保持不变。
+    #[test]
+    fn rechallenge_trigger_skips_combat_dead_snapshot() {
+        let mut store = NpcDormantStore::default();
+        store.insert(combat_dead_snapshot("npc_dead_rechallenge"));
+        let mut app = rechallenge_trigger_app(store);
+
+        send_rechallenge_event(&mut app, "npc_dead_rechallenge", true);
+        app.update();
+
+        // snapshot 必须留在 store——retry 系统负责收口，rechallenge 路径不应绕过守卫
+        assert!(
+            app.world()
+                .resource::<NpcDormantStore>()
+                .snapshots
+                .contains_key("npc_dead_rechallenge"),
+            "期望 combat_dead_pending_release=true 快照在 rechallenge trigger 后仍留 store；\
+             被移除 = retry 系统的收口被绕过，qi 可能双计"
+        );
+
+        // 不应 emit InitiateXuhuaTribulation
+        let trib_events = app.world().resource::<Events<InitiateXuhuaTribulation>>();
+        let all: Vec<_> = trib_events.iter_current_update_events().collect();
+        assert_eq!(
+            all.len(),
+            0,
+            "combat_dead 快照被 rechallenge trigger 时不应发 InitiateXuhuaTribulation；\
+             逻辑死亡的 NPC 不该再度进入渡劫（got {0} events）",
+            all.len()
+        );
+
+        // 世界中不应有 NpcMarker
+        let npc_count = {
+            let world = app.world_mut();
+            let mut q = world.query_filtered::<Entity, With<NpcMarker>>();
+            q.iter(world).count()
+        };
+        assert_eq!(
+            npc_count, 0,
+            "combat_dead rechallenge 路径不应 spawn NpcMarker；实际 {npc_count} 个"
+        );
+    }
+
+    /// 守卫 P6（守恒断言）：混合 rechallenge——combat_dead 快照不被水化，正常 halfstep 快照正常水化。
+    #[test]
+    fn rechallenge_trigger_mixed_combat_dead_stays_normal_hydrates() {
+        let mut store = NpcDormantStore::default();
+        store.insert(combat_dead_snapshot("npc_dead_rch"));
+        store.insert(dormant_halfstep_snapshot("npc_live_rch"));
+        let mut app = rechallenge_trigger_app(store);
+
+        send_rechallenge_event(&mut app, "npc_dead_rch", true);
+        send_rechallenge_event(&mut app, "npc_live_rch", true);
+        app.update();
+
+        let store_after = app.world().resource::<NpcDormantStore>();
+        assert!(
+            store_after.snapshots.contains_key("npc_dead_rch"),
+            "rechallenge 混合批次：npc_dead_rch（combat_dead=true）必须留 store；\
+             retry 系统持有其 qi 收口权"
+        );
+        assert!(
+            !store_after.snapshots.contains_key("npc_live_rch"),
+            "rechallenge 混合批次：npc_live_rch（正常 halfstep）必须被移除（已水化）"
+        );
+
+        // 只有正常快照 spawn entity，combat_dead 不 spawn
+        let npc_count = {
+            let world = app.world_mut();
+            let mut q = world.query_filtered::<Entity, With<NpcMarker>>();
+            q.iter(world).count()
+        };
+        assert_eq!(
+            npc_count, 1,
+            "rechallenge 混合批次：应仅 1 个 NpcMarker（来自正常快照）；\
+             实际 {npc_count}（0=正常快照未水化；2=combat_dead 被错误 spawn）"
+        );
+
+        let trib_events = app.world().resource::<Events<InitiateXuhuaTribulation>>();
+        let all: Vec<_> = trib_events.iter_current_update_events().collect();
+        assert_eq!(
+            all.len(),
+            1,
+            "rechallenge 混合批次：应仅 1 个 InitiateXuhuaTribulation（来自正常快照）；\
+             实际 {0}（0=正常快照未触发；2=combat_dead 被错误触发渡劫）",
+            all.len()
         );
     }
 }
