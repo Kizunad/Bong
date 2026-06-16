@@ -9,7 +9,7 @@
 | 阶段 | 主题 | 状态 |
 |------|------|------|
 | P0 | 投射物招式 miss/despawn 残余真元归还 zone（anqi / needle）→ 落点 zone，qi_release_to_zone | ✅ 2026-06-16 |
-| P1 | forge 开光真元注入接守恒 + client-trust 校验（critical 通胀修复） | ⬜ |
+| P1 | forge 开光真元注入接守恒 + client-trust 校验（critical 通胀修复） | ✅ 2026-06-16 |
 | P2 | forge 法器养护/品阶进化扣减接 ledger | ⬜ |
 | P3 | tsy_drain ledger 双重计入修正（玩家余额虚化进 WorldQiAccount） | ⬜ |
 
@@ -33,7 +33,7 @@
 - **bug（吞真元 critical）**：`server/src/forge/steps.rs:226` + `client_request_handler.rs:2991-3021` `handle_forge_consecration_inject` 只校验 qi_amount 有限非负，emit `ConsecrationInject{qi_amount}`（**client 上报值**）；消费者 `forge/mod.rs:395-441` 只 `inject_qi(state,amount)` 累加，**全程不扣 Cultivation.qi_current、无 QiTransfer** → 真元凭空注入法器=**通胀**（比单向扣减更严重），且 client 可送任意值。对比正确模式 `craft/session.rs:374-389`（QiTransfer(Crafting)+ledger.transfer 后才扣 cultivation）。
 - **目标**：开光注入走 qi_physics（玩家真元→法器，account 守恒）；**client-trust 校验** qi_amount ≤ 玩家余额（不信 client 值）。
 - **正典**：`plan-qixiu-depth-v1`（finished）:49「不自定物理公式」+:129 开光须灌注玩家真元——自报完成却未接 qi_physics。
-- **§N 待决**：开光真元守恒账目走向（player→artifact 内蕴? artifact 销毁时还 zone?）。
+- **§N.1 决议（2026-06-16）**：开光真元 = player `Cultivation.qi_current` → station 所属 zone `WorldQiAccount`（BossDrain 记账 + `push_transfer_audit`；zone 不可解析进 `overflow`，真元绝不消失）；**非** player→artifact（法器不持 qi，开光真元在仪式中逸散入环境 zone，worldview §二「真元极易挥发」）。client-trust：注入量钳制 ≤ `qi_current`，显式拒非有限值，server 唯一权威。ledger 写成功才扣玩家真元（原子，写失败不毁真元）。落点 `server/src/forge/mod.rs::handle_consecration_injects`。
 
 ## P2 — forge 养护/进化扣减接 ledger
 

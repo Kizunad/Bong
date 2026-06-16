@@ -54,6 +54,7 @@ use crate::cultivation::components::{Cultivation, QiColor};
 use crate::mineral::MineralFeedbackEvent;
 use crate::mineral::{build_default_registry as build_default_mineral_registry, MineralRegistry};
 use crate::network::{gameplay_vfx, vfx_event_emit::VfxEventRequest};
+use crate::qi_physics::ledger::{QiAccountId, QiTransfer, QiTransferReason, WorldQiAccount};
 use crate::skill::components::{SkillId, SkillSet};
 use crate::skill::curve::effective_lv;
 use crate::skill::events::{SkillXpGain, XpGainSource};
@@ -398,6 +399,8 @@ fn handle_consecration_injects(
     stations: Query<&WeaponForgeStation>,
     zone_registry: Option<Res<ZoneRegistry>>,
     mut vfx_events: Option<ResMut<Events<VfxEventRequest>>>,
+    mut qi_account: Option<ResMut<WorldQiAccount>>,
+    mut cultivations: Query<&mut Cultivation>,
 ) {
     for inject in ev.read() {
         let Some(session) = sessions.get_mut(inject.session) else {
@@ -417,8 +420,113 @@ fn handle_consecration_injects(
             );
             continue;
         }
+
+        // 守恒：从玩家真元扣减，转入 zone ledger。
+        // 玩家真元在 Cultivation.qi_current（ECS），不在 WorldQiAccount balances，
+        // 所以不走 WorldQiAccount::transfer（会检查不存在的 player ledger 余额）。
+        // 照搬 dandao/boss_spawn.rs:386-410 BossDrain 模式。
+        let caster = session.caster;
+        let station_entity = session.station;
+
+        let injected = if let Ok(mut cultivation) = cultivations.get_mut(caster) {
+            // 守恒原则：「扣玩家真元」与「ledger 记账」必须原子绑定。
+            // 若 WorldQiAccount 资源缺失，跳过整段注入（返回 0.0）——绝不出现
+            // 「qi_current 已扣但 ledger 未记账」的孤立路径。
+            // 参照 dandao/boss_spawn.rs BossDrain 早返回模式。
+            let Some(ref mut account) = qi_account else {
+                tracing::warn!(
+                    "[bong][forge] consecration inject skipped: WorldQiAccount resource missing (caster={:?})",
+                    caster
+                );
+                continue;
+            };
+
+            // 钳制：绝不信任 client 上报的 qi_amount，以 ECS qi_current 为准。
+            // 显式拒绝非有限值（NaN/Inf）——NaN.min(x) 在 Rust 返回 x，会绕过钳制
+            // 变成全额注入。上游 handler 已校验 finite，此处守恒结算点再守一道
+            // （防御纵深，防未来其它 ConsecrationInject 生产者绕过校验）。
+            let available = if cultivation.qi_current.is_finite() {
+                cultivation.qi_current.max(0.0)
+            } else {
+                0.0
+            };
+            let requested = if inject.qi_amount.is_finite() {
+                inject.qi_amount.max(0.0)
+            } else {
+                0.0
+            };
+            let clamped = requested.min(available);
+
+            // 守恒：先写 ledger（带错误检查），账本写成功后才扣玩家真元。
+            // 块求值为**实际注入量**：ledger 写失败或 clamped<=0 时为 0.0，
+            // 使 inject_qi/consecration_qi_injected 只反映真实搬运的真元。
+            if clamped > 0.0 {
+                // 解析 station 所属 zone 名
+                let zone_id = stations
+                    .get(station_entity)
+                    .ok()
+                    .and_then(|station| station.pos)
+                    .and_then(|(x, y, z)| {
+                        zone_registry.as_deref().and_then(|zr| {
+                            zr.find_zone(
+                                DimensionKind::Overworld,
+                                DVec3::new(f64::from(x) + 0.5, f64::from(y), f64::from(z) + 0.5),
+                            )
+                            .map(|zone| QiAccountId::zone(zone.name.clone()))
+                        })
+                    })
+                    .unwrap_or_else(|| {
+                        // zone 不可解析：fallback 到 overflow，真元绝不凭空消失
+                        QiAccountId::overflow(format!(
+                            "forge_consecration_no_zone:{}",
+                            station_entity.to_bits()
+                        ))
+                    });
+
+                // 确保目标账户存在
+                if !account.has_account(&zone_id) {
+                    let _ = account.set_balance(zone_id.clone(), 0.0);
+                }
+
+                // 守恒原子性：先写 ledger（带错误检查），成功后才扣玩家真元。
+                // 若 set_balance 失败（理论上不会——clamped/zone_balance 均有限非负），
+                // 不扣 qi_current、不记审计，守恒不破（什么都没发生），注入量计 0。
+                let zone_balance = account.balance(&zone_id);
+                match account.set_balance(zone_id.clone(), zone_balance + clamped) {
+                    Ok(()) => {
+                        cultivation.qi_current = (cultivation.qi_current - clamped).max(0.0);
+                        let player_id = QiAccountId::player(format!("entity:{}", caster.to_bits()));
+                        account.push_transfer_audit(QiTransfer {
+                            from: player_id,
+                            to: zone_id,
+                            amount: clamped,
+                            reason: QiTransferReason::Crafting,
+                        });
+                        clamped
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "[bong][forge] consecration inject skipped: ledger credit failed ({e}), player qi preserved (caster={:?})",
+                            caster
+                        );
+                        0.0
+                    }
+                }
+            } else {
+                0.0
+            }
+        } else {
+            // caster 无 Cultivation 组件（理论上不应发生）→ 跳过注入
+            tracing::debug!(
+                "[bong][forge] consecration inject skipped: caster={:?} has no Cultivation component",
+                caster
+            );
+            continue;
+        };
+
         if let StepState::Consecration(state) = &mut session.step_state {
-            inject_qi(state, inject.qi_amount);
+            // 使用钳制后的量，保证 consecration_qi_injected 反映真实注入真元
+            inject_qi(state, injected);
             if let (Some(events), Ok(station)) =
                 (vfx_events.as_deref_mut(), stations.get(session.station))
             {
@@ -923,6 +1031,408 @@ mod tests {
             other => panic!("expected consecration state, got {other:?}"),
         }
         assert!(app.world().entity(station).contains::<WeaponForgeStation>());
+    }
+
+    // ── helper: build a minimal App for consecration inject tests ──────────────────
+    fn consecration_app_with_zone() -> (App, valence::prelude::Entity, ForgeSessionId) {
+        let mut app = App::new();
+        app.add_event::<ConsecrationInject>();
+        app.insert_resource(WorldQiAccount::default());
+        app.insert_resource(ZoneRegistry::fallback());
+        app.add_systems(Update, handle_consecration_injects);
+
+        let station = app
+            .world_mut()
+            .spawn(WeaponForgeStation::placed(
+                BlockPos::new(8, 66, 8),
+                1,
+                valence::prelude::Entity::PLACEHOLDER,
+            ))
+            .id();
+        (app, station, ForgeSessionId(42))
+    }
+
+    fn insert_session_with_caster(
+        app: &mut App,
+        session_id: ForgeSessionId,
+        station: valence::prelude::Entity,
+        caster: valence::prelude::Entity,
+    ) {
+        let mut sessions = ForgeSessions::new();
+        let mut session =
+            ForgeSession::new(session_id, "qing_feng_v0".to_string(), station, caster);
+        session.current_step = ForgeStep::Consecration;
+        session.step_state = StepState::Consecration(Default::default());
+        sessions.insert(session);
+        app.insert_resource(sessions);
+    }
+
+    // ── plan-qi-conservation-leaks-v1 P1 — 守恒测试 ──────────────────────────────
+
+    #[test]
+    fn consecration_inject_no_zone_falls_back_to_overflow() {
+        // 期望：station 在所有 zone 之外 → find_zone None → 记入 Overflow 账户
+        // （真元绝不凭空消失）。守恒：玩家减少量 == overflow 账户增加量。
+        let mut app = App::new();
+        app.add_event::<ConsecrationInject>();
+        app.insert_resource(WorldQiAccount::default());
+        app.insert_resource(ZoneRegistry::fallback());
+        app.add_systems(Update, handle_consecration_injects);
+        // fallback 所有 zone 都在 ~[-128,128] 内；放到远处确保 find_zone 返回 None
+        let station = app
+            .world_mut()
+            .spawn(WeaponForgeStation::placed(
+                BlockPos::new(1_000_000, 66, 1_000_000),
+                1,
+                valence::prelude::Entity::PLACEHOLDER,
+            ))
+            .id();
+        let session_id = ForgeSessionId(7);
+        let caster = app
+            .world_mut()
+            .spawn(Cultivation {
+                qi_current: 40.0,
+                qi_max: 100.0,
+                ..Default::default()
+            })
+            .id();
+        insert_session_with_caster(&mut app, session_id, station, caster);
+
+        let inject_amount = 12.0_f64;
+        app.world_mut().send_event(ConsecrationInject {
+            session: session_id,
+            qi_amount: inject_amount,
+        });
+        app.update();
+
+        // 玩家真元应减少 inject_amount（即使落 overflow，扣减照常）
+        let qi_after = app
+            .world()
+            .entity(caster)
+            .get::<Cultivation>()
+            .unwrap()
+            .qi_current;
+        assert!(
+            (qi_after - (40.0 - inject_amount)).abs() < 1e-9,
+            "期望 caster qi_current={}（40-12），实际={qi_after}",
+            40.0 - inject_amount
+        );
+
+        let account = app.world().resource::<WorldQiAccount>();
+        let transfers = account.transfers();
+        assert_eq!(
+            transfers.len(),
+            1,
+            "期望恰好一条审计记录，实际={}",
+            transfers.len()
+        );
+        let t = &transfers[0];
+        assert_eq!(
+            t.to.kind,
+            crate::qi_physics::ledger::QiAccountKind::Overflow,
+            "期望 zone 不可解析时 to.kind=Overflow（真元不消失），实际={:?}",
+            t.to.kind
+        );
+        assert!(
+            (t.amount - inject_amount).abs() < 1e-9,
+            "期望 overflow transfer.amount={inject_amount}，实际={}",
+            t.amount
+        );
+        // 守恒：overflow 账户余额 == 玩家减少量
+        let overflow_balance = account.balance(&t.to);
+        assert!(
+            (overflow_balance - inject_amount).abs() < 1e-9,
+            "期望 overflow 账户余额={inject_amount}（== 玩家减少量，守恒），实际={overflow_balance}"
+        );
+    }
+
+    #[test]
+    fn consecration_inject_conserves_world_qi() {
+        // 期望：注入前后 (player_qi + zone_ledger_qi) 总量不变；player 减少量 == zone 增加量。
+        let (mut app, station, session_id) = consecration_app_with_zone();
+        let caster = app
+            .world_mut()
+            .spawn(Cultivation {
+                qi_current: 30.0,
+                qi_max: 100.0,
+                ..Default::default()
+            })
+            .id();
+        insert_session_with_caster(&mut app, session_id, station, caster);
+
+        let player_qi_before = 30.0_f64;
+        let inject_request = 10.0_f64;
+
+        app.world_mut().send_event(ConsecrationInject {
+            session: session_id,
+            qi_amount: inject_request,
+        });
+        app.update();
+
+        let player_qi_after = app
+            .world()
+            .get::<Cultivation>(caster)
+            .expect("caster should still have Cultivation")
+            .qi_current;
+
+        let account = app.world().resource::<WorldQiAccount>();
+        let zone_id = QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME.to_string());
+        let zone_balance = account.balance(&zone_id);
+
+        let player_delta = player_qi_before - player_qi_after;
+        assert!(
+            (player_delta - zone_balance).abs() < 1e-9,
+            "守恒失败：player 减少 {player_delta}，zone 增加 {zone_balance}（二者应相等）"
+        );
+        assert!(
+            player_delta > 0.0,
+            "期望 player qi 减少 {inject_request}，实际 player_delta={player_delta}"
+        );
+
+        let sessions = app.world().resource::<ForgeSessions>();
+        let state = sessions.get(session_id).unwrap();
+        let qi_injected = match &state.step_state {
+            StepState::Consecration(s) => s.qi_injected,
+            _ => panic!("session should be in Consecration step state"),
+        };
+        assert!(
+            (qi_injected - player_delta).abs() < 1e-9,
+            "consecration_qi_injected={qi_injected} 应等于 player 实际减少量 {player_delta}"
+        );
+    }
+
+    #[test]
+    fn consecration_inject_clamps_to_player_balance() {
+        // 期望：请求量 > qi_current → 只注入 qi_current；qi_current 落 0；无通胀。
+        let (mut app, station, session_id) = consecration_app_with_zone();
+        let initial_qi = 5.0_f64;
+        let caster = app
+            .world_mut()
+            .spawn(Cultivation {
+                qi_current: initial_qi,
+                qi_max: 100.0,
+                ..Default::default()
+            })
+            .id();
+        insert_session_with_caster(&mut app, session_id, station, caster);
+
+        app.world_mut().send_event(ConsecrationInject {
+            session: session_id,
+            qi_amount: 999.0, // client 上报的虚假大值
+        });
+        app.update();
+
+        let qi_after = app.world().get::<Cultivation>(caster).unwrap().qi_current;
+        assert!(
+            qi_after.abs() < 1e-9,
+            "期望 qi_current==0（钳制后全扣），实际={qi_after}（仍有通胀）"
+        );
+
+        let account = app.world().resource::<WorldQiAccount>();
+        let zone_id = QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME.to_string());
+        let zone_balance = account.balance(&zone_id);
+        assert!(
+            (zone_balance - initial_qi).abs() < 1e-9,
+            "zone 应增加 {initial_qi}（钳制后），实际 zone_balance={zone_balance}"
+        );
+
+        let sessions = app.world().resource::<ForgeSessions>();
+        let qi_injected = match &sessions.get(session_id).unwrap().step_state {
+            StepState::Consecration(s) => s.qi_injected,
+            _ => panic!("session should be in Consecration step"),
+        };
+        assert!(
+            (qi_injected - initial_qi).abs() < 1e-9,
+            "consecration_qi_injected={qi_injected} 应等于初始 qi_current={initial_qi}，不是请求的 999"
+        );
+    }
+
+    #[test]
+    fn consecration_inject_exact_balance() {
+        // 期望：请求量 == qi_current → 全注入，qi_current=0，zone 增加 full amount。
+        let (mut app, station, session_id) = consecration_app_with_zone();
+        let qi = 20.0_f64;
+        let caster = app
+            .world_mut()
+            .spawn(Cultivation {
+                qi_current: qi,
+                qi_max: 100.0,
+                ..Default::default()
+            })
+            .id();
+        insert_session_with_caster(&mut app, session_id, station, caster);
+
+        app.world_mut().send_event(ConsecrationInject {
+            session: session_id,
+            qi_amount: qi,
+        });
+        app.update();
+
+        let qi_after = app.world().get::<Cultivation>(caster).unwrap().qi_current;
+        assert!(
+            qi_after.abs() < 1e-9,
+            "期望 qi_current=0（精确全注入），实际={qi_after}"
+        );
+
+        let account = app.world().resource::<WorldQiAccount>();
+        let zone_id = QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME.to_string());
+        let zone_balance = account.balance(&zone_id);
+        assert!(
+            (zone_balance - qi).abs() < 1e-9,
+            "zone 应增加 {qi}，实际={zone_balance}"
+        );
+    }
+
+    #[test]
+    fn consecration_inject_no_cultivation_is_noop() {
+        // 期望：caster 无 Cultivation 组件 → 跳过注入，qi_injected 仍为 0，zone balance 不变。
+        let (mut app, station, session_id) = consecration_app_with_zone();
+        // spawn caster WITHOUT Cultivation component
+        let caster = app.world_mut().spawn(()).id();
+        insert_session_with_caster(&mut app, session_id, station, caster);
+
+        app.world_mut().send_event(ConsecrationInject {
+            session: session_id,
+            qi_amount: 10.0,
+        });
+        app.update();
+
+        let sessions = app.world().resource::<ForgeSessions>();
+        let qi_injected = match &sessions.get(session_id).unwrap().step_state {
+            StepState::Consecration(s) => s.qi_injected,
+            _ => panic!("session should still be in Consecration step"),
+        };
+        assert!(
+            qi_injected.abs() < 1e-9,
+            "期望 qi_injected=0（无 Cultivation），实际={qi_injected}"
+        );
+
+        let account = app.world().resource::<WorldQiAccount>();
+        let zone_id = QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME.to_string());
+        let zone_balance = account.balance(&zone_id);
+        assert!(
+            zone_balance.abs() < 1e-9,
+            "期望 zone_balance=0（noop），实际={zone_balance}"
+        );
+    }
+
+    #[test]
+    fn consecration_inject_audit_trail_records_transfer() {
+        // 期望：transfers() 中包含对应的 QiTransfer(player→zone, amount, Crafting)。
+        let (mut app, station, session_id) = consecration_app_with_zone();
+        let caster = app
+            .world_mut()
+            .spawn(Cultivation {
+                qi_current: 50.0,
+                qi_max: 100.0,
+                ..Default::default()
+            })
+            .id();
+        insert_session_with_caster(&mut app, session_id, station, caster);
+
+        let inject_amount = 15.0_f64;
+        app.world_mut().send_event(ConsecrationInject {
+            session: session_id,
+            qi_amount: inject_amount,
+        });
+        app.update();
+
+        let account = app.world().resource::<WorldQiAccount>();
+        let transfers = account.transfers();
+        assert!(
+            !transfers.is_empty(),
+            "期望 transfers 非空（应有一条 Crafting 审计记录），实际为空"
+        );
+        let t = &transfers[0];
+        assert_eq!(
+            t.reason,
+            QiTransferReason::Crafting,
+            "期望 reason=Crafting，实际={:?}",
+            t.reason
+        );
+        assert!(
+            (t.amount - inject_amount).abs() < 1e-9,
+            "期望 transfer.amount={inject_amount}，实际={}",
+            t.amount
+        );
+        assert_eq!(
+            t.from.kind,
+            crate::qi_physics::ledger::QiAccountKind::Player,
+            "期望 from.kind=Player，实际={:?}",
+            t.from.kind
+        );
+        assert_eq!(
+            t.to.kind,
+            crate::qi_physics::ledger::QiAccountKind::Zone,
+            "期望 to.kind=Zone（station 所属 zone），实际={:?}",
+            t.to.kind
+        );
+        assert_eq!(
+            t.to.id, DEFAULT_SPAWN_ZONE_NAME,
+            "期望 to.id=\"{}\"（spawn zone），实际=\"{}\"",
+            DEFAULT_SPAWN_ZONE_NAME, t.to.id
+        );
+    }
+
+    #[test]
+    fn consecration_inject_no_qi_account_is_noop() {
+        // 守恒守卫：当 WorldQiAccount 资源不存在时，玩家真元绝不被静默扣除。
+        // 这是「qi_current 扣减」与「ledger 记账」原子绑定的守门测试——
+        // 若代码在无 ledger 情况下仍扣 qi，此测试必须撞红。
+        let mut app = App::new();
+        app.add_event::<ConsecrationInject>();
+        // 故意不 insert WorldQiAccount 资源
+        app.insert_resource(ZoneRegistry::fallback());
+        app.add_systems(Update, handle_consecration_injects);
+
+        let station = app
+            .world_mut()
+            .spawn(WeaponForgeStation::placed(
+                BlockPos::new(8, 66, 8),
+                1,
+                valence::prelude::Entity::PLACEHOLDER,
+            ))
+            .id();
+
+        let initial_qi = 25.0_f64;
+        let caster = app
+            .world_mut()
+            .spawn(Cultivation {
+                qi_current: initial_qi,
+                qi_max: 100.0,
+                ..Default::default()
+            })
+            .id();
+
+        let session_id = ForgeSessionId(99);
+        insert_session_with_caster(&mut app, session_id, station, caster);
+
+        app.world_mut().send_event(ConsecrationInject {
+            session: session_id,
+            qi_amount: 10.0,
+        });
+        app.update();
+
+        let qi_after = app
+            .world()
+            .get::<Cultivation>(caster)
+            .expect("caster Cultivation 组件应仍存在")
+            .qi_current;
+        assert!(
+            (qi_after - initial_qi).abs() < 1e-9,
+            "期望 qi_current 不变（无 WorldQiAccount 时跳过注入），\
+             实际 before={initial_qi} after={qi_after}（真元被静默扣除！守恒漏洞）"
+        );
+
+        let sessions = app.world().resource::<ForgeSessions>();
+        let qi_injected = match &sessions.get(session_id).unwrap().step_state {
+            StepState::Consecration(s) => s.qi_injected,
+            _ => panic!("session 应仍处于 Consecration 步骤"),
+        };
+        assert!(
+            qi_injected.abs() < 1e-9,
+            "期望 qi_injected=0（注入已跳过），实际={qi_injected}"
+        );
     }
 
     #[test]

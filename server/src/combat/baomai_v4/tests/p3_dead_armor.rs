@@ -674,7 +674,10 @@ fn meridian_to_body_part_mapping_complete() {
         meridian_to_body_part(MeridianId::Ren),
         Some(BodyPart::Chest)
     );
-    assert_eq!(meridian_to_body_part(MeridianId::Du), Some(BodyPart::Back));
+    // Du（督脉走背脊）映射到 Chest，而非 Back。
+    // Back 是 classify_body_part 永不产出的死路区，映射到 Back 的免疫永不触发。
+    // 修正（must_fix #1）：Du → Chest，让玩家断 Du 真能换到有效保护。
+    assert_eq!(meridian_to_body_part(MeridianId::Du), Some(BodyPart::Chest));
 
     // Excluded extraordinary meridians -> None.
     assert_eq!(meridian_to_body_part(MeridianId::Chong), None);

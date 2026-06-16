@@ -191,7 +191,18 @@ impl DeadMeridianArmor {
 
 /// 经脉→肢体映射（plan §4.3，worldview §四:293 正经按肢分布）。
 ///
-/// 返回 `None` 表示该经脉无体部映射（6 条排除的奇经）。
+/// 返回 `None` 表示该经脉无可命中体表映射（6 条排除的奇经）。
+///
+/// ## Head / Abdomen 设计决议（刻意弱点区）
+///
+/// `classify_body_part`（raycast.rs）穷举只产出
+/// `Head / Chest / ArmL / ArmR / Abdomen / LegL / LegR`，**永不产出 Back**。
+/// 因此：
+/// - `BodyPart::Back` 不是可命中区域，映射到 Back 的免疫永不触发。
+/// - Du 脉（督脉）走背脊，映射到实际可命中的 **Chest**（与 Ren 共享躯干防护），
+///   让玩家断 Du 真能换到保护。
+/// - `Head` 与 `Abdomen` 无任何经脉映射，是刻意设计的永久弱点区，
+///   死脉甲对头/腹命中无保护（攻方可绕过全部免疫）。
 pub fn meridian_to_body_part(id: MeridianId) -> Option<BodyPart> {
     match id {
         // 左臂·手三阴
@@ -204,9 +215,9 @@ pub fn meridian_to_body_part(id: MeridianId) -> Option<BodyPart> {
         MeridianId::Spleen | MeridianId::Kidney | MeridianId::Liver => Some(BodyPart::LegL),
         // 右腿·足三阳
         MeridianId::Stomach | MeridianId::Bladder | MeridianId::Gallbladder => Some(BodyPart::LegR),
-        // 躯干
+        // 躯干（任督两脉共享 Chest——Back 不可命中，见上方决议注释）
         MeridianId::Ren => Some(BodyPart::Chest),
-        MeridianId::Du => Some(BodyPart::Back),
+        MeridianId::Du => Some(BodyPart::Chest),
         // 其余 6 条奇经无体部映射
         MeridianId::Chong
         | MeridianId::Dai
@@ -303,7 +314,9 @@ pub fn voluntary_sever_apply_system(
 /// 返回 `true` 表示该 body_part 有 VoluntarySever 来源的免疫，应拦截 contamination。
 /// 仅检查免疫映射表，不过滤物理伤害。
 ///
-/// 被拦截的 contamination 应调用 `qi_release_to_zone` 归还环境（守恒律）。
+/// **守恒决议（drop_no_release）**：被拦截的 contamination 直接丢弃，不调用
+/// `qi_release_to_zone`。理由：pollution 量由伤害公式凭空派生（非攻方真元账户的直接转移），
+/// 拦截后 release_to_zone 反而向 zone 注入从未扣走的真元，造成通胀。
 pub fn should_block_contamination(armor: &DeadMeridianArmor, body_part: BodyPart) -> bool {
     armor.is_immune(body_part)
 }
