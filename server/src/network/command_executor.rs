@@ -22,6 +22,9 @@ use crate::npc::spawn::{
     NpcSkinSpawnContext,
 };
 use crate::npc::territory::Territory;
+use crate::npc::tsy_hostile::{
+    spawn_tsy_daoxiang_at, spawn_tsy_fuya_at, spawn_tsy_skull_fiend_at, spawn_tsy_zhinian_at,
+};
 use crate::npc::war::{WarParticipateIntent, WarRole};
 use crate::qi_physics::ledger::QiTransfer;
 use crate::schema::agent_command::{AgentCommandV1, Command};
@@ -552,6 +555,10 @@ fn execute_spawn_npc(
         "beast" => NpcArchetype::Beast,
         "disciple" => NpcArchetype::Disciple,
         "guardian_relic" => NpcArchetype::GuardianRelic,
+        "daoxiang" => NpcArchetype::Daoxiang,
+        "zhinian" => NpcArchetype::Zhinian,
+        "fuya" => NpcArchetype::Fuya,
+        "skull_fiend" => NpcArchetype::SkullFiend,
         _ => {
             tracing::warn!(
                 "[bong][network] spawn_npc target `{}` uses unsupported archetype `{}`",
@@ -798,6 +805,98 @@ fn execute_spawn_npc(
                     zone.name.as_str(),
                     spawn_position,
                     0.0,
+                ));
+            }
+            NpcArchetype::Daoxiang => {
+                let family_id = command
+                    .params
+                    .get("tsy_family_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or(zone.name.as_str());
+                let entity = spawn_tsy_daoxiang_at(
+                    commands,
+                    layer,
+                    family_id,
+                    zone.name.as_str(),
+                    spawn_position,
+                    patrol_target,
+                );
+                npc_spawn_notices.send(spawn_notice(
+                    entity,
+                    archetype,
+                    NpcSpawnSource::AgentCommand,
+                    zone.name.as_str(),
+                    spawn_position,
+                    initial_age_ticks,
+                ));
+            }
+            NpcArchetype::Zhinian => {
+                let family_id = command
+                    .params
+                    .get("tsy_family_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or(zone.name.as_str());
+                let entity = spawn_tsy_zhinian_at(
+                    commands,
+                    layer,
+                    family_id,
+                    zone.name.as_str(),
+                    spawn_position,
+                    patrol_target,
+                );
+                npc_spawn_notices.send(spawn_notice(
+                    entity,
+                    archetype,
+                    NpcSpawnSource::AgentCommand,
+                    zone.name.as_str(),
+                    spawn_position,
+                    initial_age_ticks,
+                ));
+            }
+            NpcArchetype::Fuya => {
+                let family_id = command
+                    .params
+                    .get("tsy_family_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or(zone.name.as_str());
+                let entity = spawn_tsy_fuya_at(
+                    commands,
+                    layer,
+                    family_id,
+                    zone.name.as_str(),
+                    spawn_position,
+                    patrol_target,
+                );
+                npc_spawn_notices.send(spawn_notice(
+                    entity,
+                    archetype,
+                    NpcSpawnSource::AgentCommand,
+                    zone.name.as_str(),
+                    spawn_position,
+                    initial_age_ticks,
+                ));
+            }
+            NpcArchetype::SkullFiend => {
+                let family_id = command
+                    .params
+                    .get("tsy_family_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or(zone.name.as_str());
+                let entity = spawn_tsy_skull_fiend_at(
+                    commands,
+                    layer,
+                    family_id,
+                    zone.name.as_str(),
+                    spawn_position,
+                    patrol_target,
+                );
+                npc_spawn_notices.send(spawn_notice(
+                    entity,
+                    archetype,
+                    NpcSpawnSource::AgentCommand,
+                    zone.name.as_str(),
+                    spawn_position,
+                    initial_age_ticks,
                 ));
             }
             _ => unreachable!("archetype match above rejects unsupported variants"),
@@ -2022,7 +2121,7 @@ mod command_executor_tests {
         commands.push(command(CommandType::SpawnNpc, "missing_zone", bad_zone));
 
         let mut bad_archetype = HashMap::new();
-        bad_archetype.insert("archetype".to_string(), json!("daoxiang"));
+        bad_archetype.insert("archetype".to_string(), json!("immortal"));
         commands.push(command(CommandType::SpawnNpc, "spawn", bad_archetype));
 
         {
@@ -2074,6 +2173,256 @@ mod command_executor_tests {
             query.iter(world).collect::<Vec<_>>()
         };
         assert!(npcs.is_empty());
+    }
+
+    // ——— TSY archetype spawn tests (r4-P3#2 fix) ———
+
+    /// Verifies that `spawn_npc` with archetype=daoxiang creates a Daoxiang NPC
+    /// (previously rejected as unsupported, silently discarding the agent command).
+    #[test]
+    fn spawn_npc_creates_daoxiang_when_archetype_param_is_daoxiang() {
+        let mut app = setup_executor_app();
+
+        let mut params = HashMap::new();
+        params.insert("archetype".to_string(), json!("daoxiang"));
+
+        {
+            let mut executor = app.world_mut().resource_mut::<CommandExecutorResource>();
+            let outcome = executor.enqueue_batch(batch(
+                "cmd_spawn_npc_daoxiang",
+                vec![command(CommandType::SpawnNpc, "spawn", params)],
+            ));
+            assert!(
+                outcome.accepted,
+                "spawn_npc daoxiang command should be accepted (was enqueued)"
+            );
+        }
+
+        app.update();
+
+        let npcs = {
+            let world = app.world_mut();
+            let mut query = world.query_filtered::<(Entity, &NpcArchetype), With<NpcMarker>>();
+            query.iter(world).map(|(e, a)| (e, *a)).collect::<Vec<_>>()
+        };
+        assert_eq!(
+            npcs.len(),
+            1,
+            "expected 1 NPC spawned for daoxiang archetype; got {} — \
+             spawn_npc was silently dropping TSY archetypes before this fix",
+            npcs.len()
+        );
+        assert_eq!(
+            npcs[0].1,
+            NpcArchetype::Daoxiang,
+            "expected NpcArchetype::Daoxiang, got {:?} — archetype tag mismatch",
+            npcs[0].1
+        );
+
+        let registry = app.world().resource::<NpcRegistry>();
+        assert_eq!(
+            registry.live_npc_count, 1,
+            "NpcRegistry should reflect 1 live NPC after daoxiang spawn"
+        );
+    }
+
+    /// Verifies that `spawn_npc` with archetype=zhinian creates a Zhinian NPC.
+    #[test]
+    fn spawn_npc_creates_zhinian_when_archetype_param_is_zhinian() {
+        let mut app = setup_executor_app();
+
+        let mut params = HashMap::new();
+        params.insert("archetype".to_string(), json!("zhinian"));
+
+        {
+            let mut executor = app.world_mut().resource_mut::<CommandExecutorResource>();
+            let outcome = executor.enqueue_batch(batch(
+                "cmd_spawn_npc_zhinian",
+                vec![command(CommandType::SpawnNpc, "spawn", params)],
+            ));
+            assert!(
+                outcome.accepted,
+                "spawn_npc zhinian command should be accepted"
+            );
+        }
+
+        app.update();
+
+        let npcs = {
+            let world = app.world_mut();
+            let mut query = world.query_filtered::<(Entity, &NpcArchetype), With<NpcMarker>>();
+            query.iter(world).map(|(e, a)| (e, *a)).collect::<Vec<_>>()
+        };
+        assert_eq!(
+            npcs.len(),
+            1,
+            "expected 1 NPC spawned for zhinian archetype; got {}",
+            npcs.len()
+        );
+        assert_eq!(
+            npcs[0].1,
+            NpcArchetype::Zhinian,
+            "expected NpcArchetype::Zhinian, got {:?}",
+            npcs[0].1
+        );
+
+        let registry = app.world().resource::<NpcRegistry>();
+        assert_eq!(
+            registry.live_npc_count, 1,
+            "NpcRegistry should reflect 1 live NPC after zhinian spawn"
+        );
+    }
+
+    /// Verifies that `spawn_npc` with archetype=fuya creates a Fuya NPC.
+    #[test]
+    fn spawn_npc_creates_fuya_when_archetype_param_is_fuya() {
+        let mut app = setup_executor_app();
+
+        let mut params = HashMap::new();
+        params.insert("archetype".to_string(), json!("fuya"));
+
+        {
+            let mut executor = app.world_mut().resource_mut::<CommandExecutorResource>();
+            let outcome = executor.enqueue_batch(batch(
+                "cmd_spawn_npc_fuya",
+                vec![command(CommandType::SpawnNpc, "spawn", params)],
+            ));
+            assert!(
+                outcome.accepted,
+                "spawn_npc fuya command should be accepted"
+            );
+        }
+
+        app.update();
+
+        let npcs = {
+            let world = app.world_mut();
+            let mut query = world.query_filtered::<(Entity, &NpcArchetype), With<NpcMarker>>();
+            query.iter(world).map(|(e, a)| (e, *a)).collect::<Vec<_>>()
+        };
+        assert_eq!(
+            npcs.len(),
+            1,
+            "expected 1 NPC spawned for fuya archetype; got {}",
+            npcs.len()
+        );
+        assert_eq!(
+            npcs[0].1,
+            NpcArchetype::Fuya,
+            "expected NpcArchetype::Fuya, got {:?}",
+            npcs[0].1
+        );
+
+        let registry = app.world().resource::<NpcRegistry>();
+        assert_eq!(
+            registry.live_npc_count, 1,
+            "NpcRegistry should reflect 1 live NPC after fuya spawn"
+        );
+    }
+
+    /// Verifies that `spawn_npc` with archetype=skull_fiend creates a SkullFiend NPC.
+    #[test]
+    fn spawn_npc_creates_skull_fiend_when_archetype_param_is_skull_fiend() {
+        let mut app = setup_executor_app();
+
+        let mut params = HashMap::new();
+        params.insert("archetype".to_string(), json!("skull_fiend"));
+
+        {
+            let mut executor = app.world_mut().resource_mut::<CommandExecutorResource>();
+            let outcome = executor.enqueue_batch(batch(
+                "cmd_spawn_npc_skull_fiend",
+                vec![command(CommandType::SpawnNpc, "spawn", params)],
+            ));
+            assert!(
+                outcome.accepted,
+                "spawn_npc skull_fiend command should be accepted"
+            );
+        }
+
+        app.update();
+
+        let npcs = {
+            let world = app.world_mut();
+            let mut query = world.query_filtered::<(Entity, &NpcArchetype), With<NpcMarker>>();
+            query.iter(world).map(|(e, a)| (e, *a)).collect::<Vec<_>>()
+        };
+        assert_eq!(
+            npcs.len(),
+            1,
+            "expected 1 NPC spawned for skull_fiend archetype; got {}",
+            npcs.len()
+        );
+        assert_eq!(
+            npcs[0].1,
+            NpcArchetype::SkullFiend,
+            "expected NpcArchetype::SkullFiend, got {:?}",
+            npcs[0].1
+        );
+
+        let registry = app.world().resource::<NpcRegistry>();
+        assert_eq!(
+            registry.live_npc_count, 1,
+            "NpcRegistry should reflect 1 live NPC after skull_fiend spawn"
+        );
+    }
+
+    /// Verifies that a truly unknown archetype string is still rejected,
+    /// and that TSY archetypes (daoxiang/zhinian/fuya/skull_fiend) are all accepted.
+    #[test]
+    fn spawn_npc_tsy_all_four_accepted_unknown_still_rejected() {
+        let mut app = setup_executor_app();
+
+        let tsy_archetypes = ["daoxiang", "zhinian", "fuya", "skull_fiend"];
+        for (i, archetype_str) in tsy_archetypes.iter().enumerate() {
+            let mut params = HashMap::new();
+            params.insert("archetype".to_string(), json!(*archetype_str));
+            {
+                let mut executor = app.world_mut().resource_mut::<CommandExecutorResource>();
+                executor.enqueue_batch(batch(
+                    format!("cmd_spawn_tsy_{i}").as_str(),
+                    vec![command(CommandType::SpawnNpc, "spawn", params)],
+                ));
+            }
+            app.update();
+        }
+
+        let spawned_count = {
+            let world = app.world_mut();
+            let mut query = world.query_filtered::<Entity, With<NpcMarker>>();
+            query.iter(world).count()
+        };
+        assert_eq!(
+            spawned_count, 4,
+            "expected 4 TSY NPCs spawned (one per archetype); got {} — \
+             one or more TSY archetypes are still being silently dropped",
+            spawned_count
+        );
+
+        // Now verify a truly unsupported archetype is still rejected.
+        // Reset the world for a clean check.
+        let mut unknown_params = HashMap::new();
+        unknown_params.insert("archetype".to_string(), json!("immortal"));
+        {
+            let mut executor = app.world_mut().resource_mut::<CommandExecutorResource>();
+            executor.enqueue_batch(batch(
+                "cmd_spawn_unknown",
+                vec![command(CommandType::SpawnNpc, "spawn", unknown_params)],
+            ));
+        }
+        app.update();
+
+        let spawned_after_unknown = {
+            let world = app.world_mut();
+            let mut query = world.query_filtered::<Entity, With<NpcMarker>>();
+            query.iter(world).count()
+        };
+        assert_eq!(
+            spawned_after_unknown, 4,
+            "unknown archetype 'immortal' should be rejected and spawn no NPC; \
+             total NPC count should remain 4, got {}",
+            spawned_after_unknown
+        );
     }
 
     #[test]
