@@ -6,6 +6,7 @@
 //! earth after an apocalyptic clash in the Age of Gods.
 
 use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
 
 use valence::prelude::{BlockState, Chunk, ChunkPos, PropName, PropValue, UnloadedChunk};
 
@@ -931,8 +932,47 @@ const CRATER_RIM_HEIGHT: i32 = 6;
 const CRATER_SWORD_HEIGHT: i32 = 80;
 const CRATER_SWORD_WIDTH: i32 = 10;
 
+/// Cache key = (min_y, world_height); value = (crater_x, crater_z, ground_y).
+type CraterCenterCache = Mutex<HashMap<(i32, i32), (i32, i32, i32)>>;
+
+/// Compute the crater center by scanning the sword-sea zone for the lowest
+/// surface point. This is called once per chunk that overlaps the zone, so the
+/// full grid scan would otherwise repeat for every chunk. Since the terrain
+/// data is world-constant (raster is fixed at startup) and `min_y` /
+/// `world_height` come from the dimension config (same for all overworld
+/// chunks), we cache the result in a process-global `OnceLock`-backed map.
+///
+/// The cache key is `(min_y, world_height)` — in practice always the same
+/// pair, but we parameterise correctly for correctness under multi-dimension
+/// use.
 fn find_crater_center(terrain: &TerrainProvider, min_y: i32, world_height: i32) -> (i32, i32, i32) {
-    // Sample a grid across the zone, pick the lowest surface point
+    // Process-global cache: (min_y, world_height) → (crater_x, crater_z, ground_y)
+    static CACHE: OnceLock<CraterCenterCache> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+
+    if let Ok(guard) = cache.lock() {
+        if let Some(&cached) = guard.get(&(min_y, world_height)) {
+            return cached;
+        }
+    }
+
+    // Cache miss: run the full grid scan once.
+    let result = find_crater_center_uncached(terrain, min_y, world_height);
+
+    if let Ok(mut guard) = cache.lock() {
+        guard.entry((min_y, world_height)).or_insert(result);
+    }
+
+    result
+}
+
+/// Inner uncached implementation — performs the full grid scan across the
+/// sword-sea zone to find the lowest surface point.
+fn find_crater_center_uncached(
+    terrain: &TerrainProvider,
+    min_y: i32,
+    world_height: i32,
+) -> (i32, i32, i32) {
     let mut best_x = (SWORD_SEA_MIN_X + SWORD_SEA_MAX_X) / 2;
     let mut best_z = (SWORD_SEA_MIN_Z + SWORD_SEA_MAX_Z) / 2;
     let mut best_y = i32::MAX;
@@ -1299,5 +1339,111 @@ mod tests {
                 "Unexpected pommel block: {b:?}"
             );
         }
+    }
+
+    // ── find_crater_center caching tests ──────────────────────────────────────
+
+    /// `find_crater_center_uncached` must return the identical (x, z, y) triple
+    /// on two successive calls with the same terrain and dimension parameters.
+    /// This guards the pre-condition for the OnceLock cache: the computation is
+    /// purely deterministic given world-constant raster data.
+    #[test]
+    fn find_crater_center_uncached_is_deterministic() {
+        let terrain = super::super::raster::TerrainProvider::empty_for_tests();
+        let min_y = -64;
+        let world_height = 384;
+
+        let first = find_crater_center_uncached(&terrain, min_y, world_height);
+        let second = find_crater_center_uncached(&terrain, min_y, world_height);
+
+        assert_eq!(
+            first, second,
+            "Expected find_crater_center_uncached to be deterministic: \
+             first call returned {first:?} but second call returned {second:?}. \
+             This indicates the scan is not purely a function of the raster data."
+        );
+    }
+
+    /// The cached `find_crater_center` must return the same triple on every
+    /// call regardless of how many chunks triggered it.  This is the core
+    /// correctness requirement for the OnceLock optimisation: once computed,
+    /// the cache must replay the same answer.
+    #[test]
+    fn find_crater_center_cached_is_idempotent() {
+        // Use a unique (min_y, world_height) pair that other tests in this
+        // binary are unlikely to have primed so we exercise the both-miss and
+        // cache-hit paths within this test.
+        let terrain = super::super::raster::TerrainProvider::empty_for_tests();
+        let min_y = -63; // deliberately off-standard to get a fresh cache slot
+        let world_height = 383;
+
+        let a = find_crater_center(&terrain, min_y, world_height);
+        let b = find_crater_center(&terrain, min_y, world_height);
+        let c = find_crater_center(&terrain, min_y, world_height);
+
+        assert_eq!(
+            a, b,
+            "Expected cached find_crater_center to return the same result: \
+             1st={a:?} but 2nd={b:?}. Cache may be returning a mutated value."
+        );
+        assert_eq!(
+            b, c,
+            "Expected cached find_crater_center to return the same result on 3rd call: \
+             2nd={b:?} but 3rd={c:?}."
+        );
+    }
+
+    /// The cached wrapper must agree with the uncached scan for the same
+    /// inputs.  If they disagree the cache is returning a stale or wrong value.
+    #[test]
+    fn find_crater_center_cached_matches_uncached() {
+        let terrain = super::super::raster::TerrainProvider::empty_for_tests();
+        let min_y = -64;
+        let world_height = 384;
+
+        let cached = find_crater_center(&terrain, min_y, world_height);
+        let uncached = find_crater_center_uncached(&terrain, min_y, world_height);
+
+        assert_eq!(
+            cached, uncached,
+            "Expected cached find_crater_center to agree with the uncached scan: \
+             cached={cached:?}, uncached={uncached:?}. \
+             Possible cache key collision or premature init."
+        );
+    }
+
+    /// The result of `find_crater_center` must fall inside the sword-sea zone
+    /// bounding box (minus the margin used during the scan), since the lowest
+    /// surface point is picked from within the zone interior.
+    #[test]
+    fn find_crater_center_result_within_sword_sea_interior() {
+        let terrain = super::super::raster::TerrainProvider::empty_for_tests();
+        let min_y = -64;
+        let world_height = 384;
+
+        // Use the same unique pair from the idempotency test to avoid yet
+        // another cache slot; but we need the standard pair here to match the
+        // cached+uncached test above, so use a fresh unique pair.
+        let min_y2 = -62;
+        let world_height2 = 380;
+        let (cx, cz, _cy) = find_crater_center(&terrain, min_y2, world_height2);
+        let _ = (min_y, world_height); // suppress unused warning
+
+        let margin = CRATER_RADIUS + 20;
+        let interior_min_x = SWORD_SEA_MIN_X + margin;
+        let interior_max_x = SWORD_SEA_MAX_X - margin;
+        let interior_min_z = SWORD_SEA_MIN_Z + margin;
+        let interior_max_z = SWORD_SEA_MAX_Z - margin;
+
+        assert!(
+            cx >= interior_min_x && cx <= interior_max_x,
+            "Expected crater X {cx} to be within sword-sea interior [{interior_min_x}..={interior_max_x}]. \
+             The scan margin or zone constants may have changed."
+        );
+        assert!(
+            cz >= interior_min_z && cz <= interior_max_z,
+            "Expected crater Z {cz} to be within sword-sea interior [{interior_min_z}..={interior_max_z}]. \
+             The scan margin or zone constants may have changed."
+        );
     }
 }
