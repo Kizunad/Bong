@@ -13,7 +13,7 @@
 | P2 | find_crater_center 每 chunk 全量扫剑海无缓存（~5.4M 冗余 terrain.sample） | `server/src/world/terrain/giant_sword.rs:967` 无条件先调全扫（934-957 step=64 扫 ~1600×1600），AABB 剔除在 975 之后 | OnceLock 缓存（输入皆世界常量，确定性安全；`mega_tree.rs:994 cached_skeleton` 是现成先例）或 AABB 剔除前移 | ⬜ |
 | P3 | ServerDataRouter tsy_collapse_started_ipc 重复注册死码 | `client/.../network/ServerDataRouter.java:183` copy-paste 重复 | 删重复注册 | ⬜ |
 | P4 | release_ascension_quota_slot DEFERRED 事务 read-modify-write，并发名额减少丢失 | `server/src/persistence/mod.rs:2746` | 提升事务隔离（IMMEDIATE/独占）或原子 UPDATE，防并发丢更新 | ⬜ |
-| P5 | complete_tribulation_ascension（DuXu）DEFERRED 事务，并发渡劫名额增量丢失 | `server/src/persistence/mod.rs:2577` | 同 P4，原子化名额更新 | ⬜ |
+| P5 | complete_tribulation_ascension（DuXu）DEFERRED 事务，并发渡劫名额增量丢失 | `server/src/persistence/mod.rs:2722` | transaction_with_behavior(IMMEDIATE)，同 try_/P4 | ✅ 2026-06-16 |
 | P6 | persist_npc_deceased_archive write_zstd_bundle 成功后 open_connection 失败漏处理 | `server/src/persistence/mod.rs:3630` | 补错误分支（bundle 已写但 DB 记录失败的一致性处理） | ⬜ |
 
 ## 接入面 / 注意
