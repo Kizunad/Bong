@@ -1407,6 +1407,8 @@ enum CastOutcome {
   CAST_OUTCOME_INTERRUPT_CONTROL    = 5;
   CAST_OUTCOME_USER_CANCEL          = 6;
   CAST_OUTCOME_DEATH                = 7;
+  // plan-bug-qc-p1 §skill-cast P0：经脉门控拒绝（未打通/已断/integrity 不足）。
+  CAST_OUTCOME_MERIDIAN_GATED       = 8;
 }
 
 // 与 Rust CastSyncV1 精确对应。

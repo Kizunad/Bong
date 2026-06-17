@@ -1807,6 +1807,8 @@ fn cast_outcome_to_proto(o: &super::combat_hud::CastOutcomeV1) -> i32 {
         CastOutcomeV1::InterruptControl => bong::CastOutcome::InterruptControl as i32,
         CastOutcomeV1::UserCancel => bong::CastOutcome::UserCancel as i32,
         CastOutcomeV1::Death => bong::CastOutcome::Death as i32,
+        // plan-bug-qc-p1 §skill-cast P0：经脉门控拒绝 → MeridianGated proto 变体。
+        CastOutcomeV1::MeridianGated => bong::CastOutcome::MeridianGated as i32,
     }
 }
 

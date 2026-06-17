@@ -67,6 +67,8 @@ pub enum CastOutcomeV1 {
     InterruptControl,
     UserCancel,
     Death,
+    /// 经脉门控拒绝：施放前经脉未打通 / 已断 / integrity 不足，cast 被拒绝不扣 qi 不触发效果。
+    MeridianGated,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]

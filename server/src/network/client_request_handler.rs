@@ -46,7 +46,9 @@ use crate::cultivation::known_techniques::{
     technique_definition, KnownTechniques, TechniqueDefinition,
 };
 use crate::cultivation::lifespan::LifespanExtensionIntent;
-use crate::cultivation::meridian::severed::MeridianSeveredPermanent;
+use crate::cultivation::meridian::severed::{
+    check_player_skill_meridian_gate, MeridianSeveredPermanent, SkillMeridianDependencies,
+};
 use crate::cultivation::meridian_open::MeridianTarget;
 use crate::cultivation::poison_trait::{ConsumePoisonPillIntent, PoisonPillKind};
 use crate::cultivation::possession::{DuoSheRequestEvent, UseLifeCoreEvent};
@@ -235,6 +237,11 @@ pub struct CombatRequestParams<'w, 's> {
     pub pill_intake_tx: Option<ResMut<'w, Events<crate::dandao::toxin_tracker::PillIntakeTracked>>>,
     pub ext_containers:
         Query<'w, 's, &'static mut crate::inventory::external_container::ExternalContainer>,
+    /// plan-bug-qc-p1 §skill-cast P0：玩家 skill-bar cast 前的经脉门控。
+    /// SkillMeridianDependencies Resource 按 skill_id → deps 表声明；Optional 兼容无 Resource 的测试场景。
+    pub skill_meridian_deps: Option<Res<'w, SkillMeridianDependencies>>,
+    /// plan-bug-qc-p1 §skill-cast P0：玩家永久断脉状态，供 cast 前 SEVERED 门控。
+    pub player_severed: Query<'w, 's, Option<&'static MeridianSeveredPermanent>>,
 }
 
 #[derive(SystemParam)]
@@ -3776,6 +3783,8 @@ mod tests {
     fn register_request_app(app: &mut App) {
         app.insert_resource(CombatClock::default());
         app.insert_resource(crate::cultivation::skill_registry::init_registry());
+        // plan-bug-qc-p1 §skill-cast P0：经脉依赖表（测试场景 default 空，各测可再声明）
+        app.insert_resource(SkillMeridianDependencies::default());
         app.insert_resource(GameplayActionQueue::default());
         app.insert_resource(AlchemyMockState::default());
         app.insert_resource(DroppedLootRegistry::default());
@@ -6658,6 +6667,17 @@ mod tests {
         let (client_bundle, _helper) = create_mock_client("Azure");
         let target = app.world_mut().spawn(Position::new([1.0, 0.0, 0.0])).id();
         let entity = app.world_mut().spawn(client_bundle).id();
+        // beng_quan 需要 LargeIntestine/SmallIntestine/TripleEnergizer opened=true + integrity ≥ 0.01
+        let mut ms = crate::cultivation::components::MeridianSystem::default();
+        for id in [
+            crate::cultivation::components::MeridianId::LargeIntestine,
+            crate::cultivation::components::MeridianId::SmallIntestine,
+            crate::cultivation::components::MeridianId::TripleEnergizer,
+        ] {
+            let m = ms.get_mut(id);
+            m.opened = true;
+            m.integrity = 1.0;
+        }
         app.world_mut().entity_mut(entity).insert((
             Position::new([0.0, 0.0, 0.0]),
             crate::cultivation::components::Cultivation {
@@ -6666,7 +6686,7 @@ mod tests {
                 qi_max: 100.0,
                 ..Default::default()
             },
-            crate::cultivation::components::MeridianSystem::default(),
+            ms,
             SkillBarBindings::default(),
             QuickSlotBindings::default(),
             empty_inventory(),
@@ -6979,6 +6999,864 @@ mod tests {
         app.update();
 
         assert!(app.world().get::<Casting>(entity).is_none());
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // plan-bug-qc-p1 §skill-cast P0：经脉门控单元 + 集成测试 (11 tests)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// 测试辅助：从 MockClientHelper 中提取第一个 CastSync payload。
+    fn collect_cast_syncs(helper: &mut MockClientHelper) -> Vec<CastSyncV1> {
+        helper
+            .collect_received()
+            .0
+            .into_iter()
+            .filter_map(|frame| {
+                let packet = frame.decode::<CustomPayloadS2c>().ok()?;
+                if packet.channel.as_str() != SERVER_DATA_CHANNEL {
+                    return None;
+                }
+                let payload = serde_json::from_slice::<ServerDataV1>(packet.data.0 .0).ok()?;
+                match payload.payload {
+                    ServerDataPayloadV1::CastSync(s) => Some(s),
+                    _ => None,
+                }
+            })
+            .collect()
+    }
+
+    /// 发送一个 skill_bar_cast 消息（slot 0）给 entity，并驱动一次 app.update()。
+    fn send_skill_bar_cast(app: &mut App, entity: Entity) {
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: serde_json::to_vec(&ClientRequestV1::SkillBarCast {
+                    v: 1,
+                    slot: 0,
+                    target: None,
+                })
+                .unwrap()
+                .into_boxed_slice(),
+            });
+        app.update();
+    }
+
+    // ── 1. happy path：经脉满足 → cast 成功（generic 路径）─────────────────
+
+    #[test]
+    fn skill_bar_cast_meridian_gate_passes_when_all_deps_satisfied_generic_path() {
+        // burst_meridian.tie_shan_kao 需要 Stomach integrity >= 0.5，无 resolver（generic 路径）。
+        // 设置 Stomach integrity=1.0 + 必要 SkillConfig（stance=short）→ cast 应成功
+        let mut app = App::new();
+        register_request_app(&mut app);
+        // tie_shan_kao 有 SkillConfigSchema，需要 stance 字段
+        app.world_mut()
+            .resource_mut::<SkillConfigStore>()
+            .set_config(
+                "offline:Azure",
+                "burst_meridian.tie_shan_kao",
+                crate::skill::config::SkillConfig::new(std::collections::BTreeMap::from([(
+                    "stance".to_string(),
+                    serde_json::json!("short"),
+                )])),
+            );
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let mut skill_bar = SkillBarBindings::default();
+        skill_bar.set(
+            0,
+            SkillSlot::Skill {
+                skill_id: "burst_meridian.tie_shan_kao".to_string(),
+            },
+        );
+        let entity = app.world_mut().spawn(client_bundle).id();
+        let mut ms = crate::cultivation::components::MeridianSystem::default();
+        // Stomach opened=true + integrity=1.0 ≥ min_health(0.5)：应放行
+        {
+            let stomach = ms.get_mut(crate::cultivation::components::MeridianId::Stomach);
+            stomach.opened = true;
+            stomach.integrity = 1.0;
+        }
+        app.world_mut().entity_mut(entity).insert((
+            Position::new([0.0, 0.0, 0.0]),
+            skill_bar,
+            QuickSlotBindings::default(),
+            empty_inventory(),
+            ms,
+            crate::cultivation::meridian::severed::MeridianSeveredPermanent::default(),
+        ));
+
+        send_skill_bar_cast(&mut app, entity);
+
+        assert!(
+            app.world().get::<Casting>(entity).is_some(),
+            "Stomach opened=true + integrity=1.0 ≥ min_health=0.5 时 cast 应成功（gate 放行 → generic cast 开始）；\
+             期望 Casting 存在；实际 Casting=None，说明 gate 错误拦截了经脉满足的 cast"
+        );
+    }
+
+    // ── 2. 门控：required_meridians integrity 不足 → 拒绝（generic 路径）────
+
+    #[test]
+    fn skill_bar_cast_meridian_gate_rejects_when_required_meridian_integrity_too_low() {
+        // burst_meridian.beng_quan 需要 LargeIntestine/SmallIntestine/TripleEnergizer integrity >= 0.01
+        // 把 LargeIntestine 降到 0.0 → gate 应拒绝
+        let mut app = App::new();
+        register_request_app(&mut app);
+
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let mut skill_bar = SkillBarBindings::default();
+        skill_bar.set(
+            0,
+            SkillSlot::Skill {
+                skill_id: "burst_meridian.beng_quan".to_string(),
+            },
+        );
+        let entity = app.world_mut().spawn(client_bundle).id();
+        let mut ms = crate::cultivation::components::MeridianSystem::default();
+        // LargeIntestine integrity = 0.0 < min_health(0.01) → 应触发 gate
+        ms.get_mut(crate::cultivation::components::MeridianId::LargeIntestine)
+            .integrity = 0.0;
+        ms.get_mut(crate::cultivation::components::MeridianId::SmallIntestine)
+            .integrity = 0.5;
+        ms.get_mut(crate::cultivation::components::MeridianId::TripleEnergizer)
+            .integrity = 0.5;
+        app.world_mut().entity_mut(entity).insert((
+            Position::new([0.0, 0.0, 0.0]),
+            skill_bar,
+            QuickSlotBindings::default(),
+            empty_inventory(),
+            ms,
+            crate::cultivation::meridian::severed::MeridianSeveredPermanent::default(),
+        ));
+
+        send_skill_bar_cast(&mut app, entity);
+        flush_all_client_packets(&mut app);
+        let syncs = collect_cast_syncs(&mut helper);
+
+        assert!(
+            app.world().get::<Casting>(entity).is_none(),
+            "LargeIntestine integrity=0.0 < min_health=0.01 时 cast 应被拒绝（无 Casting component）；\
+             期望无 Casting 因为经脉 integrity 不足；实际 Casting 存在，说明 gate 未生效"
+        );
+        assert!(
+            syncs
+                .iter()
+                .any(|s| s.outcome == CastOutcomeV1::MeridianGated),
+            "gate 拒绝时应推送 CastSyncV1{{outcome=MeridianGated}} 反馈；\
+             期望至少一条 MeridianGated sync 因为经脉 integrity 不足；\
+             实际 syncs={syncs:?}"
+        );
+    }
+
+    // ── 3. 门控：SEVERED 经脉 → 拒绝（generic 路径）──────────────────────────
+
+    #[test]
+    fn skill_bar_cast_meridian_gate_rejects_when_required_meridian_severed() {
+        // burst_meridian.beng_quan 需要 LargeIntestine；SEVERED → gate 拒绝
+        let mut app = App::new();
+        register_request_app(&mut app);
+
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let mut skill_bar = SkillBarBindings::default();
+        skill_bar.set(
+            0,
+            SkillSlot::Skill {
+                skill_id: "burst_meridian.beng_quan".to_string(),
+            },
+        );
+        let entity = app.world_mut().spawn(client_bundle).id();
+        let mut ms = crate::cultivation::components::MeridianSystem::default();
+        ms.get_mut(crate::cultivation::components::MeridianId::LargeIntestine)
+            .integrity = 0.5;
+        ms.get_mut(crate::cultivation::components::MeridianId::SmallIntestine)
+            .integrity = 0.5;
+        ms.get_mut(crate::cultivation::components::MeridianId::TripleEnergizer)
+            .integrity = 0.5;
+        let mut severed =
+            crate::cultivation::meridian::severed::MeridianSeveredPermanent::default();
+        severed.insert(
+            crate::cultivation::components::MeridianId::LargeIntestine,
+            crate::cultivation::meridian::severed::SeveredSource::CombatWound,
+            1,
+        );
+        app.world_mut().entity_mut(entity).insert((
+            Position::new([0.0, 0.0, 0.0]),
+            skill_bar,
+            QuickSlotBindings::default(),
+            empty_inventory(),
+            ms,
+            severed,
+        ));
+
+        send_skill_bar_cast(&mut app, entity);
+        flush_all_client_packets(&mut app);
+        let syncs = collect_cast_syncs(&mut helper);
+
+        assert!(
+            app.world().get::<Casting>(entity).is_none(),
+            "LargeIntestine SEVERED 时 burst_meridian.beng_quan cast 应被拒绝；\
+             期望无 Casting 因为 SEVERED 经脉在 required_meridians 中；实际 Casting 存在"
+        );
+        assert!(
+            syncs
+                .iter()
+                .any(|s| s.outcome == CastOutcomeV1::MeridianGated),
+            "SEVERED 拒绝时应推送 MeridianGated sync；期望 MeridianGated；实际 syncs={syncs:?}"
+        );
+    }
+
+    // ── 4. SkillMeridianDependencies 表控：声明依赖但未打通 → 拒绝（generic 路径）
+
+    #[test]
+    fn skill_bar_cast_meridian_gate_rejects_via_deps_table_when_severed() {
+        // 在 SkillMeridianDependencies 表中声明 "sword.cleave"（无内置 required_meridians）
+        // 依赖 LargeIntestine，把它 SEVERED → gate 应拒绝
+        let mut app = App::new();
+        register_request_app(&mut app);
+        // 声明依赖
+        app.world_mut()
+            .resource_mut::<SkillMeridianDependencies>()
+            .declare(
+                "sword.cleave",
+                vec![crate::cultivation::components::MeridianId::LargeIntestine],
+            );
+
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let mut skill_bar = SkillBarBindings::default();
+        skill_bar.set(
+            0,
+            SkillSlot::Skill {
+                skill_id: "sword.cleave".to_string(),
+            },
+        );
+        let entity = app.world_mut().spawn(client_bundle).id();
+        let ms = crate::cultivation::components::MeridianSystem::default(); // LargeIntestine integrity 默认 1.0
+        let mut severed =
+            crate::cultivation::meridian::severed::MeridianSeveredPermanent::default();
+        severed.insert(
+            crate::cultivation::components::MeridianId::LargeIntestine,
+            crate::cultivation::meridian::severed::SeveredSource::TribulationFail,
+            100,
+        );
+        app.world_mut().entity_mut(entity).insert((
+            Position::new([0.0, 0.0, 0.0]),
+            skill_bar,
+            QuickSlotBindings::default(),
+            empty_inventory(),
+            ms,
+            severed,
+        ));
+
+        send_skill_bar_cast(&mut app, entity);
+        flush_all_client_packets(&mut app);
+        let syncs = collect_cast_syncs(&mut helper);
+
+        assert!(
+            app.world().get::<Casting>(entity).is_none(),
+            "SkillMeridianDependencies 中声明 LargeIntestine 依赖且该经脉 SEVERED 时应拒绝 cast；\
+             期望无 Casting；实际 Casting 存在，说明 deps_table 路径未被 gate 覆盖"
+        );
+        assert!(
+            syncs
+                .iter()
+                .any(|s| s.outcome == CastOutcomeV1::MeridianGated),
+            "deps_table 拒绝应推送 MeridianGated；实际 syncs={syncs:?}"
+        );
+    }
+
+    // ── 5. 无 deps 的招 → 放行──────────────────────────────────────────────────
+
+    #[test]
+    fn skill_bar_cast_meridian_gate_passes_for_skill_with_no_deps() {
+        // sword.cleave 无内置 required_meridians，且 deps_table 未声明依赖 → gate 不拦
+        // 有非依赖经脉 SEVERED（Gallbladder）—— 验证 gate 不误伤无关经脉
+        let mut app = App::new();
+        register_request_app(&mut app);
+        // 不声明任何 SkillMeridianDependencies
+
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let mut skill_bar = SkillBarBindings::default();
+        skill_bar.set(
+            0,
+            SkillSlot::Skill {
+                skill_id: "sword.cleave".to_string(),
+            },
+        );
+        let entity = app.world_mut().spawn(client_bundle).id();
+        let ms = crate::cultivation::components::MeridianSystem::default();
+        // 设置一条无关经脉 SEVERED，验证不会误伤
+        let mut severed =
+            crate::cultivation::meridian::severed::MeridianSeveredPermanent::default();
+        severed.insert(
+            crate::cultivation::components::MeridianId::Gallbladder, // 非依赖
+            crate::cultivation::meridian::severed::SeveredSource::CombatWound,
+            1,
+        );
+        app.world_mut().entity_mut(entity).insert((
+            Position::new([0.0, 0.0, 0.0]),
+            skill_bar,
+            QuickSlotBindings::default(),
+            empty_inventory(),
+            ms,
+            severed,
+        ));
+
+        send_skill_bar_cast(&mut app, entity);
+        flush_all_client_packets(&mut app);
+        let syncs = collect_cast_syncs(&mut helper);
+
+        // 核心不变量：无 deps 招式 gate 不误拦，不发 MeridianGated
+        // sword.cleave 走 resolver 路径，resolver 可能因 Weapon/Qi 不足拒绝（非 gate 原因）
+        // 我们只锁住"gate 未因无关 SEVERED 经脉误触 MeridianGated"
+        assert!(
+            !syncs
+                .iter()
+                .any(|s| s.outcome == CastOutcomeV1::MeridianGated),
+            "无 deps 招式（sword.cleave）不应被经脉门拦截，不应出现 MeridianGated sync；\
+             期望 syncs 中无 MeridianGated（因为该招无经脉依赖，Gallbladder SEVERED 是无关经脉）；\
+             实际 syncs={syncs:?}"
+        );
+    }
+
+    // ── 6. resolver 路径也受门控（以 SkillMeridianDependencies 为例）────────────
+
+    #[test]
+    fn skill_bar_cast_meridian_gate_covers_resolver_path_via_deps_table() {
+        // sword.cleave 有 resolver；在 deps_table 里声明 LargeIntestine 依赖，SEVERED → gate 拒绝
+        // 验证 gate 在 resolver 路径也生效（gate 在 resolver 分支之前检查）
+        let mut app = App::new();
+        register_request_app(&mut app);
+        app.world_mut()
+            .resource_mut::<SkillMeridianDependencies>()
+            .declare(
+                "sword.cleave",
+                vec![crate::cultivation::components::MeridianId::LargeIntestine],
+            );
+
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let mut skill_bar = SkillBarBindings::default();
+        skill_bar.set(
+            0,
+            SkillSlot::Skill {
+                skill_id: "sword.cleave".to_string(),
+            },
+        );
+        let entity = app.world_mut().spawn(client_bundle).id();
+        let ms = crate::cultivation::components::MeridianSystem::default();
+        let mut severed =
+            crate::cultivation::meridian::severed::MeridianSeveredPermanent::default();
+        severed.insert(
+            crate::cultivation::components::MeridianId::LargeIntestine,
+            crate::cultivation::meridian::severed::SeveredSource::BackfireOverload,
+            200,
+        );
+        app.world_mut().entity_mut(entity).insert((
+            Position::new([0.0, 0.0, 0.0]),
+            skill_bar,
+            QuickSlotBindings::default(),
+            empty_inventory(),
+            ms,
+            severed,
+        ));
+
+        send_skill_bar_cast(&mut app, entity);
+        flush_all_client_packets(&mut app);
+        let syncs = collect_cast_syncs(&mut helper);
+
+        // resolver 路径被 gate 拦截时：gate 在 commands.add() 之前 return
+        // → resolver 的 World closure 根本不会运行（没有 commands.add 被提交）
+        // → entity 无 Casting component（resolver 未运行）
+        assert!(
+            app.world().get::<Casting>(entity).is_none(),
+            "gate 在 commands.add() 之前 return，resolver 闭包不运行 → 不应插入 Casting；\
+             期望 Casting=None；实际 Casting 存在，说明 resolver 路径未被门控（gate return 没阻止 commands.add）"
+        );
+        assert!(
+            syncs
+                .iter()
+                .any(|s| s.outcome == CastOutcomeV1::MeridianGated),
+            "resolver 路径下 SEVERED deps_table 依赖应触发 MeridianGated；\
+             期望 MeridianGated sync；实际 syncs={syncs:?}"
+        );
+    }
+
+    // ── 7. 边界：integrity 刚好等于阈值（off-by-one）────────────────────────────
+
+    #[test]
+    fn skill_bar_cast_meridian_gate_passes_when_integrity_exactly_at_min_health() {
+        // burst_meridian.tie_shan_kao 需要 Stomach integrity >= 0.5
+        // 设置 integrity = 0.5（恰好等于）→ 应放行（>= 0.5 成立）
+        let mut app = App::new();
+        register_request_app(&mut app);
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let mut skill_bar = SkillBarBindings::default();
+        skill_bar.set(
+            0,
+            SkillSlot::Skill {
+                skill_id: "burst_meridian.tie_shan_kao".to_string(),
+            },
+        );
+        let entity = app.world_mut().spawn(client_bundle).id();
+        let mut ms = crate::cultivation::components::MeridianSystem::default();
+        // Stomach opened=true + integrity=0.5 恰好等于 min_health：应放行
+        {
+            let stomach = ms.get_mut(crate::cultivation::components::MeridianId::Stomach);
+            stomach.opened = true;
+            stomach.integrity = 0.5;
+        }
+        app.world_mut().entity_mut(entity).insert((
+            Position::new([0.0, 0.0, 0.0]),
+            skill_bar,
+            QuickSlotBindings::default(),
+            empty_inventory(),
+            ms,
+            crate::cultivation::meridian::severed::MeridianSeveredPermanent::default(),
+        ));
+
+        send_skill_bar_cast(&mut app, entity);
+
+        assert!(
+            app.world().get::<Casting>(entity).is_some(),
+            "Stomach opened=true + integrity=0.5 恰好等于 min_health=0.5 时应放行 cast（>= 成立）；\
+             期望 Casting 存在；实际无 Casting，说明边界判断为 < 而非 >=（off-by-one）"
+        );
+    }
+
+    #[test]
+    fn skill_bar_cast_meridian_gate_rejects_when_integrity_just_below_min_health() {
+        // burst_meridian.tie_shan_kao 需要 Stomach integrity >= 0.5
+        // 设置 integrity = 0.499（低于 min_health）→ 应拒绝
+        let mut app = App::new();
+        register_request_app(&mut app);
+
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let mut skill_bar = SkillBarBindings::default();
+        skill_bar.set(
+            0,
+            SkillSlot::Skill {
+                skill_id: "burst_meridian.tie_shan_kao".to_string(),
+            },
+        );
+        let entity = app.world_mut().spawn(client_bundle).id();
+        let mut ms = crate::cultivation::components::MeridianSystem::default();
+        ms.get_mut(crate::cultivation::components::MeridianId::Stomach)
+            .integrity = 0.499; // 低于阈值
+        app.world_mut().entity_mut(entity).insert((
+            Position::new([0.0, 0.0, 0.0]),
+            skill_bar,
+            QuickSlotBindings::default(),
+            empty_inventory(),
+            ms,
+            crate::cultivation::meridian::severed::MeridianSeveredPermanent::default(),
+        ));
+
+        send_skill_bar_cast(&mut app, entity);
+        flush_all_client_packets(&mut app);
+        let syncs = collect_cast_syncs(&mut helper);
+
+        assert!(
+            app.world().get::<Casting>(entity).is_none(),
+            "Stomach integrity=0.499 低于 min_health=0.5 时应拒绝 cast；\
+             期望无 Casting；实际 Casting 存在，说明 integrity 检查 off-by-one（应为 < 而非 <=）"
+        );
+        assert!(
+            syncs
+                .iter()
+                .any(|s| s.outcome == CastOutcomeV1::MeridianGated),
+            "integrity 不足应推送 MeridianGated；实际 syncs={syncs:?}"
+        );
+    }
+
+    // ── 7b. 未打通经脉（integrity 满足但 opened=false）→ 拒绝，锁住核心不变量 ────
+
+    #[test]
+    fn skill_bar_cast_meridian_gate_rejects_when_required_meridian_not_opened() {
+        // burst_meridian.tie_shan_kao 需要 Stomach integrity >= 0.5
+        // 设置 Stomach integrity=1.0（满足阈值）但 opened=false（未打通）→ gate 应拒绝
+        // 这是核心正典约束：「经脉没通就放不出招」，opened 先于 integrity 决定能否施放
+        let mut app = App::new();
+        register_request_app(&mut app);
+        app.world_mut()
+            .resource_mut::<SkillConfigStore>()
+            .set_config(
+                "offline:Azure",
+                "burst_meridian.tie_shan_kao",
+                crate::skill::config::SkillConfig::new(std::collections::BTreeMap::from([(
+                    "stance".to_string(),
+                    serde_json::json!("short"),
+                )])),
+            );
+
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let mut skill_bar = SkillBarBindings::default();
+        skill_bar.set(
+            0,
+            SkillSlot::Skill {
+                skill_id: "burst_meridian.tie_shan_kao".to_string(),
+            },
+        );
+        let entity = app.world_mut().spawn(client_bundle).id();
+        let mut ms = crate::cultivation::components::MeridianSystem::default();
+        // integrity 满足但经脉未打通：应拒绝（opened=false 默认）
+        ms.get_mut(crate::cultivation::components::MeridianId::Stomach)
+            .integrity = 1.0; // ≥ min_health=0.5，但 opened 仍为 false（默认）
+        app.world_mut().entity_mut(entity).insert((
+            Position::new([0.0, 0.0, 0.0]),
+            skill_bar,
+            QuickSlotBindings::default(),
+            empty_inventory(),
+            ms,
+            crate::cultivation::meridian::severed::MeridianSeveredPermanent::default(),
+        ));
+
+        send_skill_bar_cast(&mut app, entity);
+        flush_all_client_packets(&mut app);
+        let syncs = collect_cast_syncs(&mut helper);
+
+        assert!(
+            app.world().get::<Casting>(entity).is_none(),
+            "Stomach opened=false 时 cast 应被拒绝，即使 integrity=1.0 满足阈值；\
+             期望无 Casting 因为经脉未打通（正典：经脉没通就放不出招）；\
+             实际 Casting 存在，说明 opened 检查未生效"
+        );
+        assert!(
+            syncs
+                .iter()
+                .any(|s| s.outcome == CastOutcomeV1::MeridianGated),
+            "未打通经脉拒绝时应推送 MeridianGated sync；\
+             期望 MeridianGated 因为 opened=false；实际 syncs={syncs:?}"
+        );
+    }
+
+    // ── 8. 多经脉部分满足 → 拒绝（generic 路径）───────────────────────────────
+
+    #[test]
+    fn skill_bar_cast_meridian_gate_rejects_when_only_partial_deps_satisfied() {
+        // burst_meridian.beng_quan 需要 LargeIntestine + SmallIntestine + TripleEnergizer
+        // 满足前两个，第三个 integrity=0.0 → 应拒绝
+        let mut app = App::new();
+        register_request_app(&mut app);
+
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let mut skill_bar = SkillBarBindings::default();
+        skill_bar.set(
+            0,
+            SkillSlot::Skill {
+                skill_id: "burst_meridian.beng_quan".to_string(),
+            },
+        );
+        let entity = app.world_mut().spawn(client_bundle).id();
+        let mut ms = crate::cultivation::components::MeridianSystem::default();
+        ms.get_mut(crate::cultivation::components::MeridianId::LargeIntestine)
+            .integrity = 0.5; // 满足
+        ms.get_mut(crate::cultivation::components::MeridianId::SmallIntestine)
+            .integrity = 0.5; // 满足
+        ms.get_mut(crate::cultivation::components::MeridianId::TripleEnergizer)
+            .integrity = 0.0; // 不满足
+        app.world_mut().entity_mut(entity).insert((
+            Position::new([0.0, 0.0, 0.0]),
+            skill_bar,
+            QuickSlotBindings::default(),
+            empty_inventory(),
+            ms,
+            crate::cultivation::meridian::severed::MeridianSeveredPermanent::default(),
+        ));
+
+        send_skill_bar_cast(&mut app, entity);
+        flush_all_client_packets(&mut app);
+        let syncs = collect_cast_syncs(&mut helper);
+
+        assert!(
+            app.world().get::<Casting>(entity).is_none(),
+            "多经脉依赖中 TripleEnergizer integrity=0.0 < min_health=0.01 时应拒绝；\
+             期望无 Casting；实际 Casting 存在，说明 gate 未检查全部依赖"
+        );
+        assert!(
+            syncs
+                .iter()
+                .any(|s| s.outcome == CastOutcomeV1::MeridianGated),
+            "部分满足多依赖时应推送 MeridianGated；实际 syncs={syncs:?}"
+        );
+    }
+
+    // ── 9. entity 无 MeridianSystem → 放行（pre-init 玩家兼容）───────────────
+
+    #[test]
+    fn skill_bar_cast_meridian_gate_passes_when_no_meridian_system_component() {
+        // entity 无 MeridianSystem component（pre-init 玩家），gate 应 skip 放行
+        // burst_meridian.tie_shan_kao 无 SkillBarBindings 中的 resolver（有 resolver），
+        // 用 burst_meridian.tie_shan_kao → generic path 且无 MeridianSystem → 放行
+        let mut app = App::new();
+        register_request_app(&mut app);
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let mut skill_bar = SkillBarBindings::default();
+        skill_bar.set(
+            0,
+            SkillSlot::Skill {
+                skill_id: "burst_meridian.tie_shan_kao".to_string(),
+            },
+        );
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut().entity_mut(entity).insert((
+            Position::new([0.0, 0.0, 0.0]),
+            skill_bar,
+            QuickSlotBindings::default(),
+            empty_inventory(),
+            // 故意不插入 MeridianSystem
+        ));
+
+        send_skill_bar_cast(&mut app, entity);
+
+        // 无 MeridianSystem → gate skip → cast 放行（generic 路径）→ Casting 存在
+        assert!(
+            app.world().get::<Casting>(entity).is_some(),
+            "entity 无 MeridianSystem 时 gate 应 skip 放行（pre-init 兼容）；\
+             期望 Casting 存在；实际无 Casting，说明 gate 在无 MeridianSystem 时错误拒绝了"
+        );
+    }
+
+    // ── 10. 回归：既有 skill_bar_cast_defined_skill_without_resolver 不破 ────────
+
+    #[test]
+    fn skill_bar_cast_meridian_gate_regression_no_deps_generic_path_still_works() {
+        // burst_meridian.tie_shan_kao 无 deps（SkillMeridianDependencies 默认空），
+        // entity 有 MeridianSystem（Stomach integrity=1.0）→ gate 放行 → generic cast 成功
+        // 这是对 test "skill_bar_cast_defined_skill_without_resolver_uses_generic_cast_path" 的回归验证
+        let mut app = App::new();
+        register_request_app(&mut app);
+        app.world_mut()
+            .resource_mut::<SkillConfigStore>()
+            .set_config(
+                "offline:Azure",
+                "burst_meridian.tie_shan_kao",
+                crate::skill::config::SkillConfig::new(std::collections::BTreeMap::from([(
+                    "stance".to_string(),
+                    serde_json::json!("short"),
+                )])),
+            );
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let mut skill_bar = SkillBarBindings::default();
+        skill_bar.set(
+            0,
+            SkillSlot::Skill {
+                skill_id: "burst_meridian.tie_shan_kao".to_string(),
+            },
+        );
+        let entity = app.world_mut().spawn(client_bundle).id();
+        let mut ms = crate::cultivation::components::MeridianSystem::default();
+        // Stomach opened=true + integrity=1.0 ≥ min_health(0.5)：应放行
+        {
+            let stomach = ms.get_mut(crate::cultivation::components::MeridianId::Stomach);
+            stomach.opened = true;
+            stomach.integrity = 1.0;
+        }
+        app.world_mut().entity_mut(entity).insert((
+            Position::new([0.0, 0.0, 0.0]),
+            skill_bar,
+            QuickSlotBindings::default(),
+            empty_inventory(),
+            ms,
+            crate::cultivation::meridian::severed::MeridianSeveredPermanent::default(),
+        ));
+
+        send_skill_bar_cast(&mut app, entity);
+
+        let casting = app.world().get::<Casting>(entity).expect(
+            "回归：burst_meridian.tie_shan_kao Stomach opened=true + integrity=1.0 时应成功施放（与引入 gate 前行为一致）",
+        );
+        assert_eq!(casting.source, CastSource::SkillBar);
+        assert_eq!(
+            casting.skill_id.as_deref(),
+            Some("burst_meridian.tie_shan_kao"),
+            "skill_id 应与绑定技能一致"
+        );
+    }
+
+    // ── 11. helper 单元：check_player_skill_meridian_gate 直接单元测试 ───────────
+
+    #[test]
+    fn check_player_skill_meridian_gate_helper_unit_no_deps_passes() {
+        use crate::cultivation::meridian::severed::check_player_skill_meridian_gate;
+        let ms = crate::cultivation::components::MeridianSystem::default();
+        let result = check_player_skill_meridian_gate("unknown.skill", &[], &ms, None, None);
+        assert!(
+            result.is_ok(),
+            "无 deps（required_meridians=[] + deps_table=None）时应放行；\
+             期望 Ok；实际 {result:?}"
+        );
+    }
+
+    #[test]
+    fn check_player_skill_meridian_gate_helper_unit_rejects_severed_via_required() {
+        use crate::cultivation::known_techniques::TechniqueRequiredMeridian;
+        use crate::cultivation::meridian::severed::check_player_skill_meridian_gate;
+        let ms = crate::cultivation::components::MeridianSystem::default();
+        let mut severed =
+            crate::cultivation::meridian::severed::MeridianSeveredPermanent::default();
+        severed.insert(
+            crate::cultivation::components::MeridianId::Lung,
+            crate::cultivation::meridian::severed::SeveredSource::CombatWound,
+            1,
+        );
+        let req = [TechniqueRequiredMeridian {
+            channel: "Lung",
+            min_health: 0.5,
+        }];
+        let result =
+            check_player_skill_meridian_gate("test.skill", &req, &ms, Some(&severed), None);
+        assert_eq!(
+            result,
+            Err(crate::cultivation::components::MeridianId::Lung),
+            "Lung SEVERED 时应返回 Err(Lung)；期望 Err(Lung) 因为 required_meridians 包含 Lung 且已 SEVERED；实际 {result:?}"
+        );
+    }
+
+    #[test]
+    fn check_player_skill_meridian_gate_helper_unit_rejects_low_integrity_via_required() {
+        use crate::cultivation::known_techniques::TechniqueRequiredMeridian;
+        use crate::cultivation::meridian::severed::check_player_skill_meridian_gate;
+        let mut ms = crate::cultivation::components::MeridianSystem::default();
+        // Lung opened=true 但 integrity=0.3 < min_health=0.5：应因 integrity 不足拒绝
+        {
+            let lung = ms.get_mut(crate::cultivation::components::MeridianId::Lung);
+            lung.opened = true;
+            lung.integrity = 0.3;
+        }
+        let req = [TechniqueRequiredMeridian {
+            channel: "Lung",
+            min_health: 0.5,
+        }];
+        let result = check_player_skill_meridian_gate("test.skill", &req, &ms, None, None);
+        assert_eq!(
+            result,
+            Err(crate::cultivation::components::MeridianId::Lung),
+            "Lung opened=true 但 integrity=0.3 < min_health=0.5 时应返回 Err(Lung)；\
+             期望 Err(Lung) 因为 integrity 不足（opened 已满足，integrity 是拒绝原因）；实际 {result:?}"
+        );
+    }
+
+    #[test]
+    fn check_player_skill_meridian_gate_helper_unit_rejects_via_deps_table_severed() {
+        use crate::cultivation::meridian::severed::{
+            check_player_skill_meridian_gate, SkillMeridianDependencies,
+        };
+        let ms = crate::cultivation::components::MeridianSystem::default();
+        let mut severed =
+            crate::cultivation::meridian::severed::MeridianSeveredPermanent::default();
+        severed.insert(
+            crate::cultivation::components::MeridianId::Heart,
+            crate::cultivation::meridian::severed::SeveredSource::BackfireOverload,
+            5,
+        );
+        let mut deps = SkillMeridianDependencies::default();
+        deps.declare(
+            "test.skill",
+            vec![crate::cultivation::components::MeridianId::Heart],
+        );
+        let result =
+            check_player_skill_meridian_gate("test.skill", &[], &ms, Some(&severed), Some(&deps));
+        assert_eq!(
+            result,
+            Err(crate::cultivation::components::MeridianId::Heart),
+            "deps_table 中声明 Heart 依赖且 Heart SEVERED 时应返回 Err(Heart)；\
+             期望 Err(Heart)；实际 {result:?}"
+        );
+    }
+
+    // ── 11b. unit：required_meridians 路径 opened=false → Err（核心不变量单元测试）──
+
+    #[test]
+    fn check_player_skill_meridian_gate_helper_unit_rejects_not_opened_via_required() {
+        // 经脉 integrity 满足阈值但 opened=false → 应返回 Err（未打通不能施放）
+        use crate::cultivation::known_techniques::TechniqueRequiredMeridian;
+        use crate::cultivation::meridian::severed::check_player_skill_meridian_gate;
+        let mut ms = crate::cultivation::components::MeridianSystem::default();
+        // Lung opened=false（默认），integrity=1.0（超过任何 min_health）
+        ms.get_mut(crate::cultivation::components::MeridianId::Lung)
+            .integrity = 1.0;
+        let req = [TechniqueRequiredMeridian {
+            channel: "Lung",
+            min_health: 0.5,
+        }];
+        let result = check_player_skill_meridian_gate("test.skill", &req, &ms, None, None);
+        assert_eq!(
+            result,
+            Err(crate::cultivation::components::MeridianId::Lung),
+            "Lung opened=false 时应返回 Err(Lung) 即使 integrity=1.0 满足阈值；\
+             期望 Err(Lung) 因为经脉未打通（正典约束）；实际 {result:?}"
+        );
+    }
+
+    #[test]
+    fn check_player_skill_meridian_gate_helper_unit_rejects_not_opened_via_deps_table() {
+        // deps_table 路径：经脉已注册依赖但 opened=false → 应返回 Err（未打通不能施放）
+        use crate::cultivation::meridian::severed::{
+            check_player_skill_meridian_gate, SkillMeridianDependencies,
+        };
+        let ms = crate::cultivation::components::MeridianSystem::default(); // Stomach opened=false 默认
+        let mut deps = SkillMeridianDependencies::default();
+        deps.declare(
+            "test.skill",
+            vec![crate::cultivation::components::MeridianId::Stomach],
+        );
+        let result = check_player_skill_meridian_gate("test.skill", &[], &ms, None, Some(&deps));
+        assert_eq!(
+            result,
+            Err(crate::cultivation::components::MeridianId::Stomach),
+            "deps_table 中声明 Stomach 依赖且 Stomach opened=false 时应返回 Err(Stomach)；\
+             期望 Err(Stomach) 因为经脉未打通；实际 {result:?}"
+        );
+    }
+
+    #[test]
+    fn check_player_skill_meridian_gate_helper_unit_passes_when_opened_and_integrity_satisfied() {
+        // happy path unit test：opened=true + integrity 满足 → Ok(())
+        use crate::cultivation::known_techniques::TechniqueRequiredMeridian;
+        use crate::cultivation::meridian::severed::check_player_skill_meridian_gate;
+        let mut ms = crate::cultivation::components::MeridianSystem::default();
+        {
+            let lung = ms.get_mut(crate::cultivation::components::MeridianId::Lung);
+            lung.opened = true;
+            lung.integrity = 0.8; // ≥ min_health=0.5
+        }
+        let req = [TechniqueRequiredMeridian {
+            channel: "Lung",
+            min_health: 0.5,
+        }];
+        let result = check_player_skill_meridian_gate("test.skill", &req, &ms, None, None);
+        assert!(
+            result.is_ok(),
+            "Lung opened=true + integrity=0.8 ≥ min_health=0.5 时应放行 Ok(())；\
+             期望 Ok；实际 {result:?}"
+        );
+    }
+
+    #[test]
+    fn check_player_skill_meridian_gate_helper_unit_deps_table_passes_when_opened() {
+        // deps_table happy path：经脉 opened=true → Ok(())
+        use crate::cultivation::meridian::severed::{
+            check_player_skill_meridian_gate, SkillMeridianDependencies,
+        };
+        let mut ms = crate::cultivation::components::MeridianSystem::default();
+        ms.get_mut(crate::cultivation::components::MeridianId::Kidney)
+            .opened = true;
+        let mut deps = SkillMeridianDependencies::default();
+        deps.declare(
+            "test.skill",
+            vec![crate::cultivation::components::MeridianId::Kidney],
+        );
+        let result = check_player_skill_meridian_gate("test.skill", &[], &ms, None, Some(&deps));
+        assert!(
+            result.is_ok(),
+            "deps_table 中声明 Kidney 依赖且 Kidney opened=true 时应放行 Ok(())；\
+             期望 Ok；实际 {result:?}"
+        );
     }
 
     #[test]
@@ -7485,6 +8363,46 @@ fn handle_skill_bar_cast(
             "[bong][network] skill_bar_cast entity={entity:?} slot={slot} skill={skill_id} rejected: missing or invalid SkillConfig ({reason:?})"
         );
         return;
+    }
+
+    // ─── 经脉门控：覆盖 resolver + generic 两条 cast 路径 ────────────────────────
+    // 在 cancel-previous-cast 之前检查，拒绝时不打断已在施放的其他招式。
+    {
+        let meridians_ok = combat_params.meridians.get(entity).ok();
+        let severed = combat_params.player_severed.get(entity).ok().flatten();
+        let deps_table = combat_params.skill_meridian_deps.as_deref();
+        if let Some(meridians) = meridians_ok {
+            if let Err(blocked) = check_player_skill_meridian_gate(
+                &skill_id,
+                definition.required_meridians,
+                meridians,
+                severed,
+                deps_table,
+            ) {
+                tracing::warn!(
+                    "[bong][network] skill_bar_cast entity={entity:?} slot={slot} skill={skill_id} \
+                     rejected: meridian gate blocked by {blocked:?}"
+                );
+                if let Ok((username, mut client)) = clients.get_mut(entity) {
+                    push_cast_sync(
+                        &mut client,
+                        CastSyncV1 {
+                            // 施放前被拒：没有进行中的 cast，Idle 语义正确。
+                            // Interrupt 语义表示"打断进行中 cast"，此处不适用。
+                            phase: CastPhaseV1::Idle,
+                            slot,
+                            duration_ms: 0,
+                            started_at_ms: current_unix_millis(),
+                            outcome: CastOutcomeV1::MeridianGated,
+                        },
+                        username.0.as_str(),
+                        entity,
+                    );
+                }
+                return;
+            }
+        }
+        // MeridianSystem component 缺失（pre-init 玩家 / entity 无经脉）→ 放行
     }
 
     if let Ok(prev) = combat_params.casting_q.get(entity) {

@@ -109,6 +109,60 @@ impl MeridianSeveredPermanent {
     }
 }
 
+/// 玩家 skill-bar cast 前的经脉门控检查（plan-bug-qc-p1 §skill-cast P0）。
+///
+/// 覆盖两条来源：
+/// 1. `SkillMeridianDependencies` 表（按 skill_id 声明）——检查 `opened` + SEVERED（永久断脉）。
+/// 2. `TechniqueDefinition.required_meridians` ——检查 `opened` + SEVERED + `integrity ≥ min_health`。
+///
+/// **「未打通」（`opened = false`）属拒绝范围**（对齐 NPC 侧 `npc/technique.rs:meridian_deps_satisfied`
+/// 与 worldview 正典"经脉没通就放不出招"）。`Meridian::new()` 默认 `opened = false`，纯 integrity
+/// 阈值（1.0）永远放行未打通经脉，因此两条路径都必须先判 `opened`。
+///
+/// 任一条件不满足 → 返回 `Err(blocked_meridian_id)`，调用方应拒绝 cast。
+/// 无依赖（两条来源均空）→ 返回 `Ok(())` 放行。
+/// `meridians` 未能获取（pre-init 玩家、entity 无 MeridianSystem）→ 调用方应直接放行
+/// （在 `handle_skill_bar_cast` 的 `if let Some(meridians) = ...` 分支控制）。
+pub(crate) fn check_player_skill_meridian_gate(
+    skill_id: &str,
+    required_meridians: &[crate::cultivation::known_techniques::TechniqueRequiredMeridian],
+    meridians: &MeridianSystem,
+    severed: Option<&MeridianSeveredPermanent>,
+    deps_table: Option<&SkillMeridianDependencies>,
+) -> Result<(), MeridianId> {
+    // 1. SkillMeridianDependencies 表：opened + SEVERED 检查
+    if let Some(table) = deps_table {
+        for &dep in table.lookup(skill_id) {
+            // SEVERED 先检（永久断绝优先于 opened 报告）
+            check_meridian_dependencies(&[dep], severed)?;
+            // opened 检：未打通即拒绝（对齐 NPC meridian_deps_satisfied）
+            if !meridians.get(dep).opened {
+                return Err(dep);
+            }
+        }
+    }
+    // 2. TechniqueDefinition.required_meridians：opened + SEVERED + integrity 检查
+    for req in required_meridians {
+        let Some(id) = crate::cultivation::technique_scroll::parse_meridian_id(req.channel) else {
+            // 未知 channel 名 → 保守拒绝，防止依赖声明漏洞
+            tracing::warn!(
+                "[bong][cultivation][severed] check_player_skill_meridian_gate: \
+                 unknown required_meridian channel '{}' for skill '{}'; rejecting",
+                req.channel,
+                skill_id,
+            );
+            return Err(MeridianId::Lung); // 哨兵值，channel 已在 warn 里标出
+        };
+        // SEVERED 先检（永久断绝优先于 opened/integrity 报告）
+        check_meridian_dependencies(&[id], severed)?;
+        // opened + integrity 联检：未打通或 integrity 不足均拒绝
+        if !meridians.get(id).opened || meridians.get(id).integrity < f64::from(req.min_health) {
+            return Err(id);
+        }
+    }
+    Ok(())
+}
+
 /// SEVERED 时同步把 `Meridian.integrity` 钳到 0、`opened` 标 false（避免下游
 /// 仍把这条经脉算作可用）。返回经脉是否被该次调用真的下推。
 ///

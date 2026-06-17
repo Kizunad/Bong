@@ -31,15 +31,22 @@ public final class CastSyncHandler implements ServerDataHandler {
         }
 
         CastState.Source source = sourceFor(slot.intValue());
+        CastOutcome outcome = parseOutcome(outcomeStr);
         CastState next = switch (phaseStr) {
-            case "idle" -> CastState.idle();
+            // idle + non-NONE outcome = 施放前被拒绝（如 MeridianGated）：
+            // 服务端用 Idle 表达"没有进行中 cast 被打断，是施放前拒绝"。
+            // 客户端需要显示拒绝反馈，通过合成一个 0ms casting 再 transitionToInterrupt 实现。
+            case "idle" -> outcome == CastOutcome.NONE
+                ? CastState.idle()
+                : CastState.casting(source, slot.intValue(), 0, startedAtMs)
+                    .transitionToInterrupt(outcome, System.currentTimeMillis());
             case "casting" -> CastState.casting(source, slot.intValue(), durationMs.intValue(), startedAtMs);
             case "complete" -> CastState
                 .casting(source, slot.intValue(), durationMs.intValue(), startedAtMs)
                 .transitionToComplete(System.currentTimeMillis());
             case "interrupt" -> CastState
                 .casting(source, slot.intValue(), durationMs.intValue(), startedAtMs)
-                .transitionToInterrupt(parseOutcome(outcomeStr), System.currentTimeMillis());
+                .transitionToInterrupt(outcome, System.currentTimeMillis());
             default -> null;
         };
         if (next == null) {
@@ -72,6 +79,8 @@ public final class CastSyncHandler implements ServerDataHandler {
             case "interrupt_control" -> CastOutcome.INTERRUPT_CONTROL;
             case "user_cancel" -> CastOutcome.USER_CANCEL;
             case "death" -> CastOutcome.DEATH;
+            // 服务端 CastOutcomeV1::MeridianGated serde(rename_all="snake_case") → "meridian_gated"
+            case "meridian_gated" -> CastOutcome.MERIDIAN_GATED;
             default -> CastOutcome.NONE;
         };
     }

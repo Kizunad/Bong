@@ -4123,6 +4123,8 @@ mod tests {
             (CastPhase::Interrupt, CastOutcome::InterruptControl),
             (CastPhase::Interrupt, CastOutcome::UserCancel),
             (CastPhase::Interrupt, CastOutcome::Death),
+            // plan-bug-qc-p1 §skill-cast P0：经脉门控拒绝变体
+            (CastPhase::Interrupt, CastOutcome::MeridianGated),
         ];
         for (phase, outcome) in phases {
             let msg = CastSync {
