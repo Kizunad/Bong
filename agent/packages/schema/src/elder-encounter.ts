@@ -39,8 +39,8 @@ export const ElderEncounterEventV1 = Type.Object(
   {
     /** 大能所在 TSY zone 名称（agent zone-scoped narration 用）。 */
     zone_name: Type.String({ minLength: 1 }),
-    /** 大能 ECS entity index（u32，区分多次遭遇）。 */
-    elder_entity_idx: Type.Integer({ minimum: 0 }),
+    /** 大能 MC protocol entity_id（i32，Valence EntityId::get()，从 1 起分配；0=sentinel（无遭遇），合法 MC protocol id ≥ 1）。 */
+    elder_entity_id: Type.Integer({ minimum: 0 }),
     /** 事件种类（感知 vs. 死亡广播）。 */
     event_kind: ElderEncounterEventKindV1,
     /**
