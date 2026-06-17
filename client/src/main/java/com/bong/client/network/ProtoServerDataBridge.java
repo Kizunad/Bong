@@ -90,6 +90,8 @@ public final class ProtoServerDataBridge {
         m.put(Envelope.ServerDataEnvelope.PayloadCase.EVENT_STREAM_PUSH, "event_stream_push");
         m.put(Envelope.ServerDataEnvelope.PayloadCase.WEAPON_EQUIPPED, "weapon_equipped");
         m.put(Envelope.ServerDataEnvelope.PayloadCase.WEAPON_BROKEN, "weapon_broken");
+        m.put(Envelope.ServerDataEnvelope.PayloadCase.SHIELD_BROKEN, "shield_broken");
+        m.put(Envelope.ServerDataEnvelope.PayloadCase.SHIELD_BLOCK_HIT, "shield_block_hit");
         m.put(Envelope.ServerDataEnvelope.PayloadCase.TREASURE_EQUIPPED, "treasure_equipped");
         m.put(Envelope.ServerDataEnvelope.PayloadCase.VORTEX_STATE, "vortex_state");
         m.put(Envelope.ServerDataEnvelope.PayloadCase.DUGU_POISON_STATE, "dugu_poison_state");
@@ -157,6 +159,7 @@ public final class ProtoServerDataBridge {
         m.put(Envelope.ServerDataEnvelope.PayloadCase.LOOT_CONTAINER_OPEN, "loot_container_open");
         m.put(Envelope.ServerDataEnvelope.PayloadCase.LOOT_CONTAINER_UPDATE, "loot_container_update");
         m.put(Envelope.ServerDataEnvelope.PayloadCase.LOOT_CONTAINER_CLOSE, "loot_container_close");
+        m.put(Envelope.ServerDataEnvelope.PayloadCase.FACTION_WAR_STATE, "faction_war_state");
         // plan-combat-skill-feedback-bridges-v1 P4：暗器 HUD
         m.put(Envelope.ServerDataEnvelope.PayloadCase.ANQI_HUD, "anqi_hud");
         // plan-combat-skill-feedback-bridges-v1 P5：毒蛊 v2 HUD S2C
@@ -358,6 +361,8 @@ public final class ProtoServerDataBridge {
             case EVENT_STREAM_PUSH: return envelope.getEventStreamPush();
             case WEAPON_EQUIPPED: return envelope.getWeaponEquipped();
             case WEAPON_BROKEN: return envelope.getWeaponBroken();
+            case SHIELD_BROKEN: return envelope.getShieldBroken();
+            case SHIELD_BLOCK_HIT: return envelope.getShieldBlockHit();
             case TREASURE_EQUIPPED: return envelope.getTreasureEquipped();
             case VORTEX_STATE: return envelope.getVortexState();
             case DUGU_POISON_STATE: return envelope.getDuguPoisonState();
@@ -425,6 +430,7 @@ public final class ProtoServerDataBridge {
             case LOOT_CONTAINER_OPEN: return envelope.getLootContainerOpen();
             case LOOT_CONTAINER_UPDATE: return envelope.getLootContainerUpdate();
             case LOOT_CONTAINER_CLOSE: return envelope.getLootContainerClose();
+            case FACTION_WAR_STATE: return envelope.getFactionWarState();
             // plan-combat-skill-feedback-bridges-v1 P4：暗器 HUD
             case ANQI_HUD: return envelope.getAnqiHud();
             // plan-combat-skill-feedback-bridges-v1 P5：毒蛊 v2 HUD S2C

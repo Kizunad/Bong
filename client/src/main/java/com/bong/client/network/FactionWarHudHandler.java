@@ -30,7 +30,7 @@ public final class FactionWarHudHandler implements ServerDataHandler {
             return ServerDataDispatch.handled(envelope.type(), "faction_war_state cleared");
         }
 
-        String warId = readString(payload, "war_id");
+        String warId = readStringOrNumber(payload, "war_id");
         String zone = readString(payload, "zone");
         String regionDescriptor = readString(payload, "region_descriptor");
         List<Integer> groups = readIntArray(payload, "groups");
@@ -56,6 +56,15 @@ public final class FactionWarHudHandler implements ServerDataHandler {
         if (el == null || el.isJsonNull() || !el.isJsonPrimitive()) return "";
         JsonPrimitive p = el.getAsJsonPrimitive();
         return p.isString() ? p.getAsString() : "";
+    }
+
+    private static String readStringOrNumber(JsonObject obj, String field) {
+        JsonElement el = obj.get(field);
+        if (el == null || el.isJsonNull() || !el.isJsonPrimitive()) return "";
+        JsonPrimitive p = el.getAsJsonPrimitive();
+        if (p.isString()) return p.getAsString();
+        if (!p.isNumber()) return "";
+        return p.getAsNumber().toString();
     }
 
     private static double readDouble(JsonObject obj, String field, double fallback) {
