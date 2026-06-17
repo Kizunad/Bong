@@ -1,0 +1,13 @@
+{
+  "id": "tribulation_ascend_success",
+  "layers": [
+    { "sound": "minecraft:ui.toast.challenge_complete", "volume": 0.85, "pitch": 0.7, "delay_ticks": 0 },
+    { "sound": "minecraft:block.beacon.activate",       "volume": 0.55, "pitch": 0.65, "delay_ticks": 4 },
+    { "sound": "minecraft:entity.ender_dragon.flap",   "volume": 0.25, "pitch": 0.55, "delay_ticks": 16 },
+    { "sound": "minecraft:block.amethyst_block.resonate", "volume": 0.35, "pitch": 0.45, "delay_ticks": 30 }
+  ],
+  "priority": 95,
+  "attenuation": "zone_broadcast",
+  "category": "VOICE",
+  "bus": "UI"
+}
