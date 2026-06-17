@@ -708,14 +708,19 @@ fn eclipse_zone_credit_happy_path_zone_increases_by_returned_zone_qi() {
         .expect("spawn zone should exist")
         .spirit_qi;
 
-    let expected = (zone_qi_before + f64::from(returned)).clamp(-1.0, 1.0);
+    // MF3 fix: zone_qi 增量 = returned/QI_ZONE_UNIT_CAPACITY（绝对量→归一化），而非裸加 returned
+    use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
+    let returned_abs = f64::from(returned);
+    let zone_current_abs = zone_qi_before.max(0.0) * QI_ZONE_UNIT_CAPACITY;
+    let room = (QI_ZONE_UNIT_CAPACITY - zone_current_abs).max(0.0);
+    let accepted = returned_abs.min(room);
+    let expected = (zone_qi_before + accepted / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
     assert!(
         (zone_qi_after - expected).abs() < 1e-9,
-        "Eclipse 后 zone.spirit_qi 应为 zone_before({zone_qi_before})+returned_zone_qi({returned}) \
-         = {expected}，实际={zone_qi_after}（期望 zone 精确入账 returned_zone_qi，不多不少）"
+        "Eclipse 后 zone.spirit_qi 应为 {expected:.9}（增量=accepted({accepted:.6})/CAP），         实际={zone_qi_after:.9}（MF3 fix: absolute→normalized 转换后入账 returned={returned_abs:.6}）"
     );
 
-    // audit trail：应有一条 DuguReturnToZone 记录
+    // audit trail：应有 ≥1 条 DuguReturnToZone 记录（accepted 1 条，overflow 可选 1 条）
     use crate::qi_physics::ledger::QiTransferReason;
     let account = app.world().resource::<WorldQiAccount>();
     let dugu_transfers: Vec<_> = account
@@ -723,16 +728,15 @@ fn eclipse_zone_credit_happy_path_zone_increases_by_returned_zone_qi() {
         .iter()
         .filter(|t| t.reason == QiTransferReason::DuguReturnToZone)
         .collect();
-    assert_eq!(
-        dugu_transfers.len(),
-        1,
-        "Eclipse 后应恰好有 1 条 DuguReturnToZone 审计记录（不多不少），实际={:?}",
-        dugu_transfers.len()
-    );
     assert!(
-        (dugu_transfers[0].amount - f64::from(returned)).abs() < 1e-9,
-        "审计记录 amount 应等于 returned_zone_qi({returned})，实际={}",
-        dugu_transfers[0].amount
+        !dugu_transfers.is_empty(),
+        "Eclipse 后应至少有 1 条 DuguReturnToZone 审计记录，实际=0"
+    );
+    // 所有 DuguReturnToZone 审计记录的 amount 之和 == returned_abs（守恒：accepted + overflow）
+    let total_audit: f64 = dugu_transfers.iter().map(|t| t.amount).sum();
+    assert!(
+        (total_audit - returned_abs).abs() < 1e-9,
+        "DuguReturnToZone 审计记录 amount 之和({total_audit:.9}) 应等于 returned({returned_abs:.9})，         确保 qi 不蒸发（accepted + overflow = returned）"
     );
 }
 
@@ -791,11 +795,16 @@ fn reverse_zone_credit_happy_path_zone_increases_by_returned_zone_qi() {
         .expect("spawn zone should exist")
         .spirit_qi;
 
-    let expected = (zone_qi_before + f64::from(returned)).clamp(-1.0, 1.0);
+    // MF3 fix: zone_qi 增量 = returned/QI_ZONE_UNIT_CAPACITY（绝对量→归一化），而非裸加 returned
+    use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
+    let returned_abs = f64::from(returned);
+    let zone_current_abs = zone_qi_before.max(0.0) * QI_ZONE_UNIT_CAPACITY;
+    let room = (QI_ZONE_UNIT_CAPACITY - zone_current_abs).max(0.0);
+    let accepted = returned_abs.min(room);
+    let expected = (zone_qi_before + accepted / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
     assert!(
         (zone_qi_after - expected).abs() < 1e-9,
-        "Reverse 后 zone.spirit_qi 应为 zone_before({zone_qi_before})+returned({returned}) \
-         = {expected}，实际={zone_qi_after}"
+        "Reverse 后 zone.spirit_qi 应为 {expected:.9}（增量=accepted({accepted:.6})/CAP），         实际={zone_qi_after:.9}（MF3 fix: absolute→normalized 转换后入账 returned={returned_abs:.6}）"
     );
 
     use crate::qi_physics::ledger::QiTransferReason;
@@ -805,11 +814,15 @@ fn reverse_zone_credit_happy_path_zone_increases_by_returned_zone_qi() {
         .iter()
         .filter(|t| t.reason == QiTransferReason::DuguReturnToZone)
         .collect();
-    assert_eq!(
-        dugu_transfers.len(),
-        1,
-        "Reverse 后应恰好有 1 条 DuguReturnToZone 审计记录，实际={}",
-        dugu_transfers.len()
+    assert!(
+        !dugu_transfers.is_empty(),
+        "Reverse 后应至少有 1 条 DuguReturnToZone 审计记录，实际=0"
+    );
+    // 守恒：所有 DuguReturnToZone 审计记录 amount 之和 == returned_abs
+    let total_audit: f64 = dugu_transfers.iter().map(|t| t.amount).sum();
+    assert!(
+        (total_audit - returned_abs).abs() < 1e-9,
+        "DuguReturnToZone 审计记录 amount 之和({total_audit:.9}) 应等于 returned({returned_abs:.9})"
     );
 }
 
@@ -863,13 +876,25 @@ fn eclipse_conservation_total_observed_invariant() {
 
     let snap_after = summarize_world_qi(app.world_mut());
 
-    // 精确守恒：zone_qi 增量 == returned_zone_qi（zone 有足够容量，不应 clamp 截断）
-    let zone_qi_delta = snap_after.zone_qi - snap_before.zone_qi;
+    // MF3 fix: qi_release_to_zone 处理 absolute→normalized 换算。
+    // zone_qi_before = -0.8 → zone_current_abs = max(0,-0.8)*50 = 0.0（耗尽视为空）
+    // room = 50.0 - 0.0 = 50.0 >> returned(~1.76) → accepted = returned, no overflow
+    // zone_after = (zone_current_abs + accepted) / CAP = (0.0+1.76)/50 = 0.0352
+    // zone_qi_delta = snap_after.zone_qi - snap_before.zone_qi = 0.0352 - (-0.8) = 0.8352
+    use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
+    let returned_abs = f64::from(returned);
+    let zone_current_abs = zone_qi_before.max(0.0) * QI_ZONE_UNIT_CAPACITY; // = 0.0
+    let room = (QI_ZONE_UNIT_CAPACITY - zone_current_abs).max(0.0); // = 50.0
+    let accepted = returned_abs.min(room); // = returned_abs (no overflow)
+                                           // Expected zone_after (normalized) = (zone_current_abs + accepted) / CAP
+    let expected_zone_after = (zone_current_abs + accepted) / QI_ZONE_UNIT_CAPACITY;
     assert!(
-        (zone_qi_delta - f64::from(returned)).abs() < 1e-9,
-        "守恒失败：zone_qi 增量({zone_qi_delta:.9}) 应精确等于 returned_zone_qi={returned:.9}。\
-         若 zone_qi_delta < returned 说明 clamp 截断造成真元泄漏（需 overflow sink）；\
-         若 zone_qi_delta > returned 说明双重入账通胀"
+        (snap_after.zone_qi - expected_zone_after).abs() < 1e-9,
+        "守恒失败：zone.spirit_qi after({:.9}) 应精确等于 (zone_current({zone_current_abs})+accepted({accepted}))/CAP={expected_zone_after:.9}。\
+         zone_before={zone_qi_before}, returned={returned_abs:.6}, room={room:.1}。\
+         若 snap_after.zone_qi > expected_zone_after 说明仍在裸加 returned（MF3 bug 未修复）；\
+         若 snap_after.zone_qi << expected_zone_after 说明 CAP 换算出错",
+        snap_after.zone_qi
     );
 
     // ledger_qi 不应因 DuguReturnToZone 改变（audit-only 路径，不动 ledger balance）
@@ -936,6 +961,112 @@ fn eclipse_zero_returned_zone_qi_no_audit_and_zone_unchanged() {
     );
 }
 
+/// MF3 锁定：zone 接近饱和时，overflow qi 入账 overflow account，不蒸发。
+///
+/// 这是直接锁定 MF3 bug 的核心测试：
+///   旧代码: zone.spirit_qi = (zone.spirit_qi + returned).clamp(-1.0, 1.0)
+///     → 大 returned 被 clamp 截断 → qi 蒸发
+///   新代码: qi_release_to_zone → accepted 入 zone，overflow → overflow account
+///     → zone_credit_absolute + overflow == returned（守恒）
+#[test]
+fn eclipse_zone_credit_overflow_no_evaporation_mf3_lock() {
+    use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
+    use crate::qi_physics::ledger::{QiTransferReason, WorldQiAccount};
+    use crate::world::zone::ZoneRegistry;
+
+    // zone 接近饱和：spirit_qi=0.98 → zone_current_abs=49.0, room=1.0
+    let zone_qi_before = 0.98_f64;
+    let mut app = setup_zone_credit_app(zone_qi_before);
+
+    // 直接注入一个 returned=10.0 的 EclipseNeedleEvent（远超 room=1.0，必然有 overflow=9.0）
+    let caster = app.world_mut().spawn_empty().id();
+    let target_entity = app
+        .world_mut()
+        .spawn((valence::prelude::Position::new([0.0, 64.0, 0.0]),))
+        .id();
+    app.world_mut().send_event(EclipseNeedleEvent {
+        caster,
+        target: target_entity,
+        target_realm: Realm::Spirit,
+        tier: crate::combat::dugu_v2::events::TaintTier::Permanent,
+        injected_qi: 40.0,
+        hp_loss: 20.0,
+        qi_loss: 10.0,
+        qi_max_loss: 0.0,
+        permanent_decay_rate_per_min: 0.0005,
+        returned_zone_qi: 10.0, // >> room(1.0)，必然溢出
+        reveal_probability: 0.0,
+        tick: 1,
+        visual: crate::combat::dugu_v2::skills::visual_for(DuguSkillId::Eclipse),
+    });
+
+    app.update();
+
+    let zone_qi_after = app
+        .world()
+        .resource::<ZoneRegistry>()
+        .find_zone_by_name("spawn")
+        .expect("spawn zone should exist")
+        .spirit_qi;
+
+    // zone.spirit_qi 不应超过 1.0（overflow 被路由到 overflow account，而非被 clamp 截断）
+    assert!(
+        zone_qi_after <= 1.0 + 1e-9,
+        "zone.spirit_qi 不应超过 1.0，实际={zone_qi_after:.9}（overflow 必须路由出去）"
+    );
+
+    // zone 增量 = accepted/QI_ZONE_UNIT_CAPACITY = room/QI_ZONE_UNIT_CAPACITY ≈ 0.02
+    let zone_current_abs = zone_qi_before.max(0.0) * QI_ZONE_UNIT_CAPACITY; // 49.0
+    let room = (QI_ZONE_UNIT_CAPACITY - zone_current_abs).max(0.0); // 1.0
+    let returned_abs = 10.0_f64;
+    let accepted = returned_abs.min(room); // 1.0
+    let overflow = returned_abs - accepted; // 9.0
+    let expected_zone_after = (zone_qi_before + accepted / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
+    assert!(
+        (zone_qi_after - expected_zone_after).abs() < 1e-9,
+        "zone 应精确增加 accepted({accepted})/CAP({QI_ZONE_UNIT_CAPACITY})={:.4}，         期望 zone_after={expected_zone_after:.9}，实际={zone_qi_after:.9}",
+        accepted / QI_ZONE_UNIT_CAPACITY
+    );
+
+    // 核心守恒断言：DuguReturnToZone 审计记录 amount 之和 == returned（accepted + overflow）
+    let account = app.world().resource::<WorldQiAccount>();
+    let dugu_transfers: Vec<_> = account
+        .transfers()
+        .iter()
+        .filter(|t| t.reason == QiTransferReason::DuguReturnToZone)
+        .collect();
+    assert!(
+        !dugu_transfers.is_empty(),
+        "应有 DuguReturnToZone 审计记录（至少 1 条：accepted），实际=0"
+    );
+    let total_audit: f64 = dugu_transfers.iter().map(|t| t.amount).sum();
+    assert!(
+        (total_audit - returned_abs).abs() < 1e-9,
+        "MF3 守恒断言：所有 DuguReturnToZone 审计记录 amount 之和({total_audit:.9})          应 == returned_abs({returned_abs:.9})（accepted({accepted}) + overflow({overflow}) = returned）。         若 total < returned 说明 MF3 bug 仍存在（qi 蒸发）"
+    );
+
+    // overflow 应有专属记录（amount = 9.0）
+    let overflow_records: Vec<_> = dugu_transfers
+        .iter()
+        .filter(|t| {
+            // overflow account ID 含 "overflow"
+            matches!(&t.to, crate::qi_physics::ledger::QiAccountId { .. } if {
+                let id_str = format!("{:?}", t.to);
+                id_str.contains("overflow")
+            })
+        })
+        .collect();
+    assert!(
+        !overflow_records.is_empty(),
+        "overflow({overflow}) 应路由到 overflow account（DuguReturnToZone 记录 to 含 overflow），         实际无 overflow 记录（旧 clamp 截断未修复）"
+    );
+    let total_overflow: f64 = overflow_records.iter().map(|t| t.amount).sum();
+    assert!(
+        (total_overflow - overflow).abs() < 1e-9,
+        "overflow account 记录 amount 之和({total_overflow:.9}) 应 == overflow({overflow:.9})"
+    );
+}
+
 /// 不双计：同一 EclipseNeedleEvent 只入账一次（不重复消费）。
 #[test]
 fn eclipse_zone_credit_no_double_accounting_single_event_single_credit() {
@@ -974,11 +1105,16 @@ fn eclipse_zone_credit_no_double_accounting_single_event_single_credit() {
         .unwrap()
         .spirit_qi;
 
-    let expected = (zone_qi_before + f64::from(returned)).clamp(-1.0, 1.0);
+    // MF3 fix: expected uses normalized formula
+    use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
+    let returned_abs = f64::from(returned);
+    let zone_current_abs = zone_qi_before.max(0.0) * QI_ZONE_UNIT_CAPACITY;
+    let room = (QI_ZONE_UNIT_CAPACITY - zone_current_abs).max(0.0);
+    let accepted = returned_abs.min(room);
+    let expected = (zone_qi_before + accepted / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
     assert!(
         (zone_qi_after - expected).abs() < 1e-9,
-        "两次 update 后 zone.spirit_qi 应与单次 update 相同（不双计），\
-         期望 {expected}，实际 {zone_qi_after}"
+        "两次 update 后 zone.spirit_qi 应与单次 update 相同（不双计），         期望 {expected:.9}（增量=accepted({accepted:.6})/CAP），实际 {zone_qi_after:.9}"
     );
 
     // 审计记录恰好 1 条（只入账一次）

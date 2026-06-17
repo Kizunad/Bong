@@ -3,7 +3,9 @@ use valence::prelude::{Commands, Entity, EventReader, EventWriter, Position, Que
 use crate::combat::components::TICKS_PER_SECOND;
 use crate::combat::CombatClock;
 use crate::cultivation::components::Cultivation;
+use crate::qi_physics::constants::{QI_EPSILON, QI_ZONE_UNIT_CAPACITY};
 use crate::qi_physics::ledger::{QiAccountId, QiTransfer, QiTransferReason, WorldQiAccount};
+use crate::qi_physics::release::qi_release_to_zone;
 use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::zone::ZoneRegistry;
 
@@ -93,7 +95,7 @@ pub fn reverse_aftermath_decay_tick(
 /// 落到**受害者**所在 zone（而非施法者所在 zone）。
 ///
 /// **守恒约束**：
-///   - 受害者所在 zone.spirit_qi += returned_zone_qi（直接改 ECS ZoneRegistry）；
+///   - 通过 `qi_release_to_zone` 做 absolute→normalized 换算，overflow 入账到 overflow account；
 ///   - push audit-only QiTransfer(from=player:<caster>, to=zone:<name>, DuguReturnToZone)；
 ///   - 不调 WorldQiAccount::transfer（player qi 活在 ECS，不在 ledger balances）；
 ///   - returned_zone_qi == 0 时静默跳过，不产生噪音审计记录。
@@ -127,18 +129,64 @@ pub fn eclipse_zone_credit_tick(
             continue;
         };
         let zone_name = zone.name.clone();
-        // credit zone（直接写 ECS，与 summarize_world_qi 的 zone_qi 口径一致）
-        zone.spirit_qi = (zone.spirit_qi + returned).clamp(-1.0, 1.0);
-        // audit trail（审计模式，不动 player ledger balance）
-        if let Some(ref mut account) = qi_account {
-            let from = QiAccountId::player(format!("entity:{:?}", event.caster));
-            let to = QiAccountId::zone(zone_name.clone());
-            account.push_transfer_audit(QiTransfer {
-                from,
-                to,
-                amount: returned,
-                reason: QiTransferReason::DuguReturnToZone,
-            });
+        let from = QiAccountId::player(format!("entity:{:?}", event.caster));
+        let to = QiAccountId::zone(zone_name.clone());
+        // MF3 fix: convert absolute→normalized via qi_release_to_zone (overflow never dropped)
+        let zone_current = zone.spirit_qi.max(0.0) * QI_ZONE_UNIT_CAPACITY;
+        match qi_release_to_zone(
+            returned,
+            from.clone(),
+            to,
+            zone_current,
+            QI_ZONE_UNIT_CAPACITY,
+        ) {
+            Ok(outcome) => {
+                zone.spirit_qi = (outcome.zone_after / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
+                // audit trail: DuguReturnToZone（区别于 qi_release_to_zone 产出的 ReleaseToZone）
+                if let Some(ref mut account) = qi_account {
+                    account.push_transfer_audit(QiTransfer {
+                        from: from.clone(),
+                        to: QiAccountId::zone(zone_name.clone()),
+                        amount: outcome.accepted,
+                        reason: QiTransferReason::DuguReturnToZone,
+                    });
+                    // overflow sink: qi 绝不蒸发
+                    if outcome.overflow > QI_EPSILON {
+                        let overflow_to = QiAccountId::overflow(format!(
+                            "dugu_eclipse_overflow:entity:{:?}",
+                            event.caster
+                        ));
+                        if let Ok(t) = QiTransfer::new(
+                            from,
+                            overflow_to,
+                            outcome.overflow,
+                            QiTransferReason::DuguReturnToZone,
+                        ) {
+                            account.push_transfer_audit(t);
+                        }
+                    }
+                }
+            }
+            Err(err) => {
+                tracing::warn!(
+                    ?err,
+                    "[bong][dugu_v2] eclipse_zone_credit invalid qi release; routing to overflow"
+                );
+                if let Some(ref mut account) = qi_account {
+                    let overflow_to = QiAccountId::overflow(format!(
+                        "dugu_eclipse_err_overflow:entity:{:?}",
+                        event.caster
+                    ));
+                    if let Ok(t) = QiTransfer::new(
+                        from,
+                        overflow_to,
+                        returned,
+                        QiTransferReason::DuguReturnToZone,
+                    ) {
+                        account.push_transfer_audit(t);
+                    }
+                }
+            }
         }
     }
 }
@@ -178,16 +226,64 @@ pub fn reverse_zone_credit_tick(
             continue;
         };
         let zone_name = zone.name.clone();
-        zone.spirit_qi = (zone.spirit_qi + returned).clamp(-1.0, 1.0);
-        if let Some(ref mut account) = qi_account {
-            let from = QiAccountId::player(format!("entity:{:?}", event.caster));
-            let to = QiAccountId::zone(zone_name.clone());
-            account.push_transfer_audit(QiTransfer {
-                from,
-                to,
-                amount: returned,
-                reason: QiTransferReason::DuguReturnToZone,
-            });
+        let from = QiAccountId::player(format!("entity:{:?}", event.caster));
+        let to = QiAccountId::zone(zone_name.clone());
+        // MF3 fix: convert absolute→normalized via qi_release_to_zone (overflow never dropped)
+        let zone_current = zone.spirit_qi.max(0.0) * QI_ZONE_UNIT_CAPACITY;
+        match qi_release_to_zone(
+            returned,
+            from.clone(),
+            to,
+            zone_current,
+            QI_ZONE_UNIT_CAPACITY,
+        ) {
+            Ok(outcome) => {
+                zone.spirit_qi = (outcome.zone_after / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
+                // audit trail: DuguReturnToZone（区别于 qi_release_to_zone 产出的 ReleaseToZone）
+                if let Some(ref mut account) = qi_account {
+                    account.push_transfer_audit(QiTransfer {
+                        from: from.clone(),
+                        to: QiAccountId::zone(zone_name.clone()),
+                        amount: outcome.accepted,
+                        reason: QiTransferReason::DuguReturnToZone,
+                    });
+                    // overflow sink: qi 绝不蒸发
+                    if outcome.overflow > QI_EPSILON {
+                        let overflow_to = QiAccountId::overflow(format!(
+                            "dugu_reverse_overflow:entity:{:?}",
+                            event.caster
+                        ));
+                        if let Ok(t) = QiTransfer::new(
+                            from,
+                            overflow_to,
+                            outcome.overflow,
+                            QiTransferReason::DuguReturnToZone,
+                        ) {
+                            account.push_transfer_audit(t);
+                        }
+                    }
+                }
+            }
+            Err(err) => {
+                tracing::warn!(
+                    ?err,
+                    "[bong][dugu_v2] reverse_zone_credit invalid qi release; routing to overflow"
+                );
+                if let Some(ref mut account) = qi_account {
+                    let overflow_to = QiAccountId::overflow(format!(
+                        "dugu_reverse_err_overflow:entity:{:?}",
+                        event.caster
+                    ));
+                    if let Ok(t) = QiTransfer::new(
+                        from,
+                        overflow_to,
+                        returned,
+                        QiTransferReason::DuguReturnToZone,
+                    ) {
+                        account.push_transfer_audit(t);
+                    }
+                }
+            }
         }
     }
 }
