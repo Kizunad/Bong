@@ -13,7 +13,7 @@
 //! ```json
 //! {
 //!   "zone_name":          string,
-//!   "elder_entity_idx":   u32,
+//!   "elder_entity_id":    i32,      // MC protocol entity_id（Valence EntityId::get()，从 1 起分配）
 //!   "event_kind":         string,   // snake_case
 //!   "betray_probability": f64,
 //!   "dan_count":          u32,
@@ -27,6 +27,7 @@
 //! 本模块 **只** 推送显示层数据，不修改任何 gameplay 数值（qi、血量、状态）。
 
 use valence::client::ClientMarker;
+use valence::entity::EntityId;
 use valence::ident;
 use valence::prelude::{
     App, Client, Entity, EventReader, IntoSystemConfigs, Position, Query, Res, Update, With,
@@ -102,6 +103,7 @@ type DyingElderQuery<'w, 's> = Query<
     's,
     (
         Entity,
+        &'static EntityId,
         &'static DyingElderBlackboard,
         &'static DyingElderState,
     ),
@@ -113,20 +115,29 @@ type DyingElderQuery<'w, 's> = Query<
 /// plan-dying-elder-v1 B1 Bug2 修复 — 大能出现时向同 zone 玩家推送 `bong:elder_encounter` appeared 事件。
 ///
 /// 改为监听 `DyingElderAppearedEvent`（由 `dying_elder_apply_spawn_system` 在 entity 创建后 emit），
-/// 使 `elder_entity_idx` 填入真实 entity index（而非原来的 0 占位）。
+/// 通过 `elder_id_query` 取 Valence `EntityId::get()`（MC protocol entity_id，i32，从 1 起分配）。
 /// qi_fraction = 1.0（spawn 时真元满值）。
 #[allow(clippy::type_complexity)]
 pub(crate) fn elder_encounter_s2c_appear_system(
     mut appeared_events: EventReader<DyingElderAppearedEvent>,
+    elder_id_query: Query<&EntityId, (With<NpcMarker>, Without<ClientMarker>)>,
     mut players: PlayerQuery<'_, '_>,
     zones: Option<Res<ZoneRegistry>>,
 ) {
     let Some(zones) = zones else { return };
 
     for ev in appeared_events.read() {
+        let Ok(entity_id) = elder_id_query.get(ev.elder) else {
+            tracing::warn!(
+                "[bong][elder_encounter_emit] S2C appeared: no EntityId for elder {:?}, skipping",
+                ev.elder
+            );
+            continue;
+        };
+        let protocol_id = entity_id.get();
         let event = ElderEncounterEventV1 {
             zone_name: ev.zone_name.clone(),
-            elder_entity_idx: ev.elder.index(), // Bug2 修复：真实 entity idx
+            elder_entity_id: protocol_id, // MC protocol entity_id（非 ECS index）
             event_kind: ElderEncounterEventKindV1::Appeared,
             betray_probability: ev.blackboard.betray_probability,
             dan_count: 0,
@@ -139,8 +150,8 @@ pub(crate) fn elder_encounter_s2c_appear_system(
         };
         send_to_players_in_zone(&mut players, &ev.zone_name, &zones, &bytes);
         tracing::info!(
-            "[bong][elder_encounter_emit] S2C appeared → entity_idx={} zone='{}' betray_prob={:.3} tick={}",
-            ev.elder.index(),
+            "[bong][elder_encounter_emit] S2C appeared → protocol_id={} zone='{}' betray_prob={:.3} tick={}",
+            protocol_id,
             ev.zone_name,
             ev.blackboard.betray_probability,
             ev.tick,
@@ -165,7 +176,7 @@ pub(crate) fn elder_encounter_s2c_dan_received_system(
     let tick = game_tick.as_deref().map(|t| t.0 as u64).unwrap_or(0);
 
     for intent in intents.read() {
-        let Ok((entity, bb, state)) = elders.get(intent.elder) else {
+        let Ok((_entity, entity_id, bb, state)) = elders.get(intent.elder) else {
             continue;
         };
 
@@ -185,7 +196,7 @@ pub(crate) fn elder_encounter_s2c_dan_received_system(
 
         let event = ElderEncounterEventV1 {
             zone_name: bb.home_zone.clone(),
-            elder_entity_idx: entity.index(),
+            elder_entity_id: entity_id.get(), // MC protocol entity_id（非 ECS index）
             event_kind: ElderEncounterEventKindV1::DanReceived,
             betray_probability: 0.0,
             dan_count,
@@ -209,7 +220,7 @@ pub(crate) fn elder_encounter_s2c_dan_received_system(
 #[allow(clippy::type_complexity)]
 pub(crate) fn elder_encounter_s2c_death_system(
     elders: Query<
-        (Entity, &DyingElderBlackboard, &DyingElderState),
+        (Entity, &EntityId, &DyingElderBlackboard, &DyingElderState),
         (
             With<NpcMarker>,
             Without<ClientMarker>,
@@ -223,7 +234,7 @@ pub(crate) fn elder_encounter_s2c_death_system(
     let Some(zones) = zones else { return };
     let tick = game_tick.as_deref().map(|t| t.0 as u64).unwrap_or(0);
 
-    for (entity, bb, state) in elders.iter() {
+    for (entity, entity_id, bb, state) in elders.iter() {
         let dead_by_betrayal = match *state {
             DyingElderState::Dead { dead_by_betrayal } => dead_by_betrayal,
             _ => continue,
@@ -237,7 +248,7 @@ pub(crate) fn elder_encounter_s2c_death_system(
 
         let event = ElderEncounterEventV1 {
             zone_name: bb.home_zone.clone(),
-            elder_entity_idx: entity.index(),
+            elder_entity_id: entity_id.get(), // MC protocol entity_id（非 ECS index）
             event_kind,
             betray_probability: 0.0,
             dan_count: 0,
@@ -250,8 +261,9 @@ pub(crate) fn elder_encounter_s2c_death_system(
         };
         send_to_players_in_zone(&mut players, &bb.home_zone, &zones, &bytes);
         tracing::info!(
-            "[bong][elder_encounter_emit] S2C death → entity={:?} zone='{}' kind={:?} tick={tick}",
+            "[bong][elder_encounter_emit] S2C death → entity={:?} protocol_id={} zone='{}' kind={:?} tick={tick}",
             entity,
+            entity_id.get(),
             bb.home_zone,
             event_kind,
         );
@@ -290,7 +302,7 @@ mod tests {
         // 期望：appeared 事件序列化包含所有 client handler 需要的字段
         let event = ElderEncounterEventV1 {
             zone_name: "tsy_deep".to_string(),
-            elder_entity_idx: 0,
+            elder_entity_id: 1, // MC protocol entity_id（最小合法值=1；Valence 从 1 起分配）
             event_kind: ElderEncounterEventKindV1::Appeared,
             betray_probability: 0.65,
             dan_count: 0,
@@ -350,7 +362,7 @@ mod tests {
         // 期望：死亡事件 qi_fraction = 0.0（真元耗尽）
         let event = ElderEncounterEventV1 {
             zone_name: "tsy_deep".to_string(),
-            elder_entity_idx: 5,
+            elder_entity_id: 5,
             event_kind: ElderEncounterEventKindV1::DeadNatural,
             betray_probability: 0.0,
             dan_count: 0,
@@ -410,7 +422,7 @@ mod tests {
         // 期望：dan_received 事件包含正确 qi_fraction 和 dan_count
         let event = ElderEncounterEventV1 {
             zone_name: "tsy_abyss".to_string(),
-            elder_entity_idx: 42,
+            elder_entity_id: 42,
             event_kind: ElderEncounterEventKindV1::DanReceived,
             betray_probability: 0.0,
             dan_count: 3,

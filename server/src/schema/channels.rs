@@ -175,7 +175,7 @@ pub const CH_TUIKE_V2_SKILL_EVENT: &str = "bong:tuike_v2/skill_event";
 pub const CH_TUIKE_ASH_DECAY: &str = "bong:tuike_v2/ash_decay";
 
 // 垂死大能遭遇（plan-dying-elder-v1 §P0）—— server → agent 叙事频道。
-// payload JSON：`ElderEncounterEventV1`（zone_name / elder_entity_idx / event_kind / betray_probability）。
+// payload JSON：`ElderEncounterEventV1`（zone_name / elder_entity_id / event_kind / betray_probability）。
 // event_kind: "appeared" | "dan_received" | "betrayal" | "dead_natural" | "dead_player_kill"。
 // agent 订阅后 LLM 生成 zone perception / death broadcast 两类 narration（各 2 条文案）。
 pub const CH_ELDER_ENCOUNTER: &str = "bong:elder_encounter";

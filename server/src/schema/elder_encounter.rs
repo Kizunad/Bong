@@ -32,7 +32,8 @@ pub enum ElderEncounterEventKindV1 {
 ///
 /// ## 字段说明
 /// - `zone_name`：大能所在 TSY zone 名称（agent 用于 zone-scoped narration）
-/// - `elder_entity_idx`：大能 ECS entity index（纯 u32，agent 用于区分不同大能）
+/// - `elder_entity_id`：大能 MC protocol entity_id（i32，Valence `EntityId::get()`，从 1 起分配）；
+///   client 回传此值作为 `GiveDanToElder.elder_entity_id`，server 以 `EntityManager::get_by_id` 解析
 /// - `event_kind`：事件种类（感知 vs. 死亡广播）
 /// - `betray_probability`：翻脸概率（0.0-1.0；`appeared` 时填实际值，其他事件填 0.0）
 ///   - SpiritEye 激活时 client HUD 显示具体 %；未激活时显示「气息有异」
@@ -47,8 +48,9 @@ pub enum ElderEncounterEventKindV1 {
 pub struct ElderEncounterEventV1 {
     /// 大能所在 TSY zone 名称（对应 ZoneRegistry zone.name）。
     pub zone_name: String,
-    /// 大能 ECS entity index（u32，用于区分多次遭遇）。
-    pub elder_entity_idx: u32,
+    /// 大能 MC protocol entity_id（i32，Valence EntityId::get()，从 1 起分配；
+    /// 0 = 未分配/sentinel，client 以此值回传 GiveDanToElder.elder_entity_id）。
+    pub elder_entity_id: i32,
     /// 事件种类（感知 vs. 死亡广播）。
     pub event_kind: ElderEncounterEventKindV1,
     /// 翻脸概率（0.0-1.0；`appeared` 时填实际值，其他事件填 0.0）。
@@ -139,7 +141,7 @@ mod elder_encounter_schema_tests {
         // 期望：appeared 事件（含 betray_probability + qi_fraction）完整往返
         let ev = ElderEncounterEventV1 {
             zone_name: "tsy_deep".to_string(),
-            elder_entity_idx: 42,
+            elder_entity_id: 42,
             event_kind: ElderEncounterEventKindV1::Appeared,
             betray_probability: 0.65,
             dan_count: 0,
@@ -160,7 +162,7 @@ mod elder_encounter_schema_tests {
         // 期望：dan_received 事件（dan_count=3）往返（qi_fraction 反映恢复进度）
         let ev = ElderEncounterEventV1 {
             zone_name: "tsy_shallow".to_string(),
-            elder_entity_idx: 99,
+            elder_entity_id: 99,
             event_kind: ElderEncounterEventKindV1::DanReceived,
             betray_probability: 0.0,
             dan_count: 3,
@@ -178,7 +180,7 @@ mod elder_encounter_schema_tests {
         // 期望：betrayal 事件往返（betray_probability=0.0，offered_skill_id 可为空，qi_fraction=0.0）
         let ev = ElderEncounterEventV1 {
             zone_name: "tsy_deep".to_string(),
-            elder_entity_idx: 7,
+            elder_entity_id: 7,
             event_kind: ElderEncounterEventKindV1::Betrayal,
             betray_probability: 0.0,
             dan_count: 5,
@@ -196,7 +198,7 @@ mod elder_encounter_schema_tests {
         // 期望：dead_natural 事件往返（qi_fraction=0.0 死亡后真元耗尽）
         let ev = ElderEncounterEventV1 {
             zone_name: "tsy_abyss".to_string(),
-            elder_entity_idx: 11,
+            elder_entity_id: 11,
             event_kind: ElderEncounterEventKindV1::DeadNatural,
             betray_probability: 0.0,
             dan_count: 0,
@@ -214,7 +216,7 @@ mod elder_encounter_schema_tests {
         // 期望：dead_player_kill 事件往返（qi_fraction=0.0 被击杀后无真元）
         let ev = ElderEncounterEventV1 {
             zone_name: "tsy_deep".to_string(),
-            elder_entity_idx: 3,
+            elder_entity_id: 3,
             event_kind: ElderEncounterEventKindV1::DeadPlayerKill,
             betray_probability: 0.0,
             dan_count: 2,
@@ -232,11 +234,12 @@ mod elder_encounter_schema_tests {
         // 期望：额外字段导致反序列化失败（deny_unknown_fields）
         let json = r#"{
             "zone_name":"tsy_deep",
-            "elder_entity_idx":1,
+            "elder_entity_id":1,
             "event_kind":"appeared",
             "betray_probability":0.5,
             "dan_count":0,
             "offered_skill_id":"woliu.heart",
+            "qi_fraction":0.8,
             "server_tick":100,
             "surprise_field":42
         }"#;
@@ -253,7 +256,7 @@ mod elder_encounter_schema_tests {
         for prob in [0.0_f64, 0.3, 0.65, 0.95, 1.0] {
             let ev = ElderEncounterEventV1 {
                 zone_name: "tsy".to_string(),
-                elder_entity_idx: 1,
+                elder_entity_id: 1,
                 event_kind: ElderEncounterEventKindV1::Appeared,
                 betray_probability: prob,
                 dan_count: 0,
@@ -272,11 +275,12 @@ mod elder_encounter_schema_tests {
     }
 
     #[test]
-    fn event_v1_entity_idx_zero_is_valid() {
-        // 期望：elder_entity_idx=0 是合法值（ECS entity index 从 0 开始）
+    fn event_v1_entity_id_one_is_smallest_valid_protocol_id() {
+        // 期望：elder_entity_id=1 是最小合法 MC protocol entity_id（Valence 从 1 开始分配，跳过 0）。
+        // elder_entity_id=0 是 sentinel（未分配/无大能），client 以 <= 0 判断无效。
         let ev = ElderEncounterEventV1 {
             zone_name: "tsy_deep".to_string(),
-            elder_entity_idx: 0,
+            elder_entity_id: 1,
             event_kind: ElderEncounterEventKindV1::Appeared,
             betray_probability: 0.5,
             dan_count: 0,
@@ -287,8 +291,51 @@ mod elder_encounter_schema_tests {
         let json = serde_json::to_string(&ev).expect("serialize");
         let back: ElderEncounterEventV1 = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(
-            back.elder_entity_idx, 0,
-            "elder_entity_idx=0 must survive serde (valid ECS entity)"
+            back.elder_entity_id, 1,
+            "elder_entity_id=1 must survive serde (smallest valid MC protocol entity_id; Valence skips 0)"
+        );
+    }
+
+    #[test]
+    fn event_v1_entity_id_large_protocol_id_roundtrip() {
+        // 期望：较大的 MC protocol entity_id（i32 正数范围）往返无截断
+        let ev = ElderEncounterEventV1 {
+            zone_name: "tsy_abyss".to_string(),
+            elder_entity_id: 65535,
+            event_kind: ElderEncounterEventKindV1::DanReceived,
+            betray_probability: 0.0,
+            dan_count: 2,
+            offered_skill_id: "anqi.echo_fractal".to_string(),
+            qi_fraction: 0.6,
+            server_tick: 99999,
+        };
+        let json = serde_json::to_string(&ev).expect("serialize");
+        let back: ElderEncounterEventV1 = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(
+            back.elder_entity_id, 65535,
+            "elder_entity_id=65535 must survive serde (MC protocol id within i32 range)"
+        );
+    }
+
+    #[test]
+    fn event_v1_entity_id_zero_sentinel_roundtrip() {
+        // 期望：elder_entity_id=0 在 schema 层可序列化往返（runtime guard 在 client/server 逻辑层，非 serde 层）。
+        // 0 = sentinel"无大能/未分配"；Valence EntityManager 从 1 起分配，不会下发此值。
+        let ev = ElderEncounterEventV1 {
+            zone_name: "tsy_deep".to_string(),
+            elder_entity_id: 0,
+            event_kind: ElderEncounterEventKindV1::Appeared,
+            betray_probability: 0.5,
+            dan_count: 0,
+            offered_skill_id: "woliu.heart".to_string(),
+            qi_fraction: 1.0,
+            server_tick: 0,
+        };
+        let json = serde_json::to_string(&ev).expect("serialize");
+        let back: ElderEncounterEventV1 = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(
+            back.elder_entity_id, 0,
+            "elder_entity_id=0 (sentinel) must survive serde at schema layer; guard logic lives in runtime code"
         );
     }
 }

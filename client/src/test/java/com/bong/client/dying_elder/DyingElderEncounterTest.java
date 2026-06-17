@@ -145,13 +145,13 @@ public class DyingElderEncounterTest {
     }
 
     @Test
-    void activateSetsElderEntityIdx() {
+    void activateSetsElderEntityId() {
         DyingElderEncounterStore.activate("坍缩渊", 42, 100L);
 
         assertEquals(
             42,
-            DyingElderEncounterStore.getElderEntityIdx(),
-            "expected elderEntityIdx=42 after activate, actual: " + DyingElderEncounterStore.getElderEntityIdx()
+            DyingElderEncounterStore.getElderEntityId(),
+            "expected elderEntityId=42 after activate, actual: " + DyingElderEncounterStore.getElderEntityId()
         );
     }
 
@@ -365,7 +365,7 @@ public class DyingElderEncounterTest {
 
     @Test
     void handlerAppearedActivatesStore() {
-        String payload = "{\"zone_name\":\"坍缩渊\",\"elder_entity_idx\":3,\"event_kind\":\"appeared\","
+        String payload = "{\"zone_name\":\"坍缩渊\",\"elder_entity_id\":3,\"event_kind\":\"appeared\","
             + "\"betray_probability\":0.45,\"dan_count\":0,\"offered_skill_id\":\"skill_void_step\",\"server_tick\":500}";
 
         boolean result = DyingElderEncounterHandler.handle(payload);
@@ -391,16 +391,16 @@ public class DyingElderEncounterTest {
     }
 
     @Test
-    void handlerAppearedSetsElderEntityIdx() {
-        String payload = "{\"zone_name\":\"青云峰\",\"elder_entity_idx\":17,\"event_kind\":\"appeared\","
+    void handlerAppearedSetsElderEntityId() {
+        String payload = "{\"zone_name\":\"青云峰\",\"elder_entity_id\":17,\"event_kind\":\"appeared\","
             + "\"betray_probability\":0.3,\"dan_count\":0,\"offered_skill_id\":\"s\",\"server_tick\":1}";
         DyingElderEncounterHandler.handle(payload);
 
         assertEquals(
             17,
-            DyingElderEncounterStore.getElderEntityIdx(),
-            "expected elderEntityIdx=17 from appeared payload, actual: "
-                + DyingElderEncounterStore.getElderEntityIdx()
+            DyingElderEncounterStore.getElderEntityId(),
+            "expected elderEntityId=17 from appeared payload, actual: "
+                + DyingElderEncounterStore.getElderEntityId()
         );
     }
 
@@ -411,10 +411,10 @@ public class DyingElderEncounterTest {
     @Test
     void handlerDanReceivedUpdatesEventKind() {
         // First activate
-        DyingElderEncounterHandler.handle("{\"zone_name\":\"z\",\"elder_entity_idx\":1,\"event_kind\":\"appeared\","
+        DyingElderEncounterHandler.handle("{\"zone_name\":\"z\",\"elder_entity_id\":1,\"event_kind\":\"appeared\","
             + "\"betray_probability\":0.3,\"dan_count\":0,\"offered_skill_id\":\"s\",\"server_tick\":1}");
         // Then update
-        boolean result = DyingElderEncounterHandler.handle("{\"zone_name\":\"z\",\"elder_entity_idx\":1,\"event_kind\":\"dan_received\","
+        boolean result = DyingElderEncounterHandler.handle("{\"zone_name\":\"z\",\"elder_entity_id\":1,\"event_kind\":\"dan_received\","
             + "\"betray_probability\":0.35,\"dan_count\":2,\"offered_skill_id\":\"s\",\"server_tick\":200}");
 
         assertTrue(result, "expected handle to return true on valid dan_received payload");
@@ -436,9 +436,9 @@ public class DyingElderEncounterTest {
 
     @Test
     void handlerBetrayalClearsActive() {
-        DyingElderEncounterHandler.handle("{\"zone_name\":\"z\",\"elder_entity_idx\":1,\"event_kind\":\"appeared\","
+        DyingElderEncounterHandler.handle("{\"zone_name\":\"z\",\"elder_entity_id\":1,\"event_kind\":\"appeared\","
             + "\"betray_probability\":0.9,\"dan_count\":0,\"offered_skill_id\":\"s\",\"server_tick\":1}");
-        boolean result = DyingElderEncounterHandler.handle("{\"zone_name\":\"z\",\"elder_entity_idx\":1,\"event_kind\":\"betrayal\","
+        boolean result = DyingElderEncounterHandler.handle("{\"zone_name\":\"z\",\"elder_entity_id\":1,\"event_kind\":\"betrayal\","
             + "\"betray_probability\":0.9,\"dan_count\":3,\"offered_skill_id\":\"s\",\"server_tick\":300}");
 
         assertTrue(result, "expected handle to return true on valid betrayal payload");
@@ -456,9 +456,9 @@ public class DyingElderEncounterTest {
 
     @Test
     void handlerDeadNaturalClearsActive() {
-        DyingElderEncounterHandler.handle("{\"zone_name\":\"z\",\"elder_entity_idx\":1,\"event_kind\":\"appeared\","
+        DyingElderEncounterHandler.handle("{\"zone_name\":\"z\",\"elder_entity_id\":1,\"event_kind\":\"appeared\","
             + "\"betray_probability\":0.4,\"dan_count\":0,\"offered_skill_id\":\"s\",\"server_tick\":1}");
-        DyingElderEncounterHandler.handle("{\"zone_name\":\"z\",\"elder_entity_idx\":1,\"event_kind\":\"dead_natural\","
+        DyingElderEncounterHandler.handle("{\"zone_name\":\"z\",\"elder_entity_id\":1,\"event_kind\":\"dead_natural\","
             + "\"betray_probability\":0.4,\"dan_count\":5,\"offered_skill_id\":\"s\",\"server_tick\":400}");
 
         assertFalse(
@@ -469,9 +469,9 @@ public class DyingElderEncounterTest {
 
     @Test
     void handlerDeadPlayerKillClearsActive() {
-        DyingElderEncounterHandler.handle("{\"zone_name\":\"z\",\"elder_entity_idx\":1,\"event_kind\":\"appeared\","
+        DyingElderEncounterHandler.handle("{\"zone_name\":\"z\",\"elder_entity_id\":1,\"event_kind\":\"appeared\","
             + "\"betray_probability\":0.4,\"dan_count\":0,\"offered_skill_id\":\"s\",\"server_tick\":1}");
-        DyingElderEncounterHandler.handle("{\"zone_name\":\"z\",\"elder_entity_idx\":1,\"event_kind\":\"dead_player_kill\","
+        DyingElderEncounterHandler.handle("{\"zone_name\":\"z\",\"elder_entity_id\":1,\"event_kind\":\"dead_player_kill\","
             + "\"betray_probability\":0.4,\"dan_count\":5,\"offered_skill_id\":\"s\",\"server_tick\":400}");
 
         assertFalse(
@@ -826,8 +826,8 @@ public class DyingElderEncounterTest {
         );
         assertEquals(
             2,
-            DyingElderEncounterStore.getElderEntityIdx(),
-            "expected second activate to override entity idx, actual: " + DyingElderEncounterStore.getElderEntityIdx()
+            DyingElderEncounterStore.getElderEntityId(),
+            "expected second activate to override entity id, actual: " + DyingElderEncounterStore.getElderEntityId()
         );
     }
 
@@ -1188,7 +1188,7 @@ public class DyingElderEncounterTest {
         assertEquals(
             42,
             sent.get("elder_entity_id").getAsInt(),
-            "expected sent payload elder_entity_id=42 from DyingElderEncounterStore.getElderEntityIdx(), actual: "
+            "expected sent payload elder_entity_id=42 from DyingElderEncounterStore.getElderEntityId(), actual: "
                 + sent.get("elder_entity_id")
         );
     }
@@ -1213,8 +1213,9 @@ public class DyingElderEncounterTest {
     }
 
     @Test
-    void handleGiveDanDoesNotSendWhenElderEntityIdxZero() {
-        // elderEntityIdx=0 means elder not yet synced
+    void handleGiveDanDoesNotSendWhenElderEntityIdZero() {
+        // elderEntityId=0 is sentinel: MC protocol entity_id not yet received from server
+        // (Valence assigns ids starting from 1, so 0 means "no elder synced")
         DyingElderEncounterStore.activate("坍缩渊", 0, 1000L);
 
         InventoryItem pill = InventoryItem.simple("huiyuan_pill", "回元丹");
@@ -1232,7 +1233,7 @@ public class DyingElderEncounterTest {
 
         assertNull(
             capturedJson.get(),
-            "expected no C2S payload when elderEntityIdx=0 because elder entity ID has not been synced from server, actual: "
+            "expected no C2S payload when elderEntityId=0 because elder entity id has not been synced from server, actual: "
                 + capturedJson.get()
         );
     }
@@ -1252,12 +1253,12 @@ public class DyingElderEncounterTest {
         });
 
         // Simulate tick with encounter not active — onEndClientTick drains keys and returns early.
-        // handleGiveDan itself also checks elderEntityIdx (defaults to 0), so no send.
+        // handleGiveDan itself also checks elderEntityId (defaults to 0), so no send.
         DyingElderInteractionKeybindings.handleGiveDan();
 
         assertNull(
             capturedJson.get(),
-            "expected no C2S payload when encounter is not active (elderEntityIdx=0 on fresh store), actual: "
+            "expected no C2S payload when encounter is not active (elderEntityId=0 on fresh store), actual: "
                 + capturedJson.get()
         );
     }
@@ -1325,7 +1326,7 @@ public class DyingElderEncounterTest {
     @Test
     void handlerAppearedSetsQiFraction() {
         // M2: appeared payload 中的 qi_fraction 必须写入 Store
-        String payload = "{\"zone_name\":\"坍缩渊\",\"elder_entity_idx\":3,\"event_kind\":\"appeared\","
+        String payload = "{\"zone_name\":\"坍缩渊\",\"elder_entity_id\":3,\"event_kind\":\"appeared\","
             + "\"betray_probability\":0.45,\"qi_fraction\":0.88,\"dan_count\":0,\"offered_skill_id\":\"s\",\"server_tick\":500}";
 
         DyingElderEncounterHandler.handle(payload);
@@ -1342,9 +1343,9 @@ public class DyingElderEncounterTest {
     @Test
     void handlerDanReceivedUpdatesQiFraction() {
         // M2: dan_received payload 中的 qi_fraction 也必须写入 Store
-        DyingElderEncounterHandler.handle("{\"zone_name\":\"z\",\"elder_entity_idx\":1,\"event_kind\":\"appeared\","
+        DyingElderEncounterHandler.handle("{\"zone_name\":\"z\",\"elder_entity_id\":1,\"event_kind\":\"appeared\","
             + "\"betray_probability\":0.3,\"qi_fraction\":1.0,\"dan_count\":0,\"offered_skill_id\":\"s\",\"server_tick\":1}");
-        DyingElderEncounterHandler.handle("{\"zone_name\":\"z\",\"elder_entity_idx\":1,\"event_kind\":\"dan_received\","
+        DyingElderEncounterHandler.handle("{\"zone_name\":\"z\",\"elder_entity_id\":1,\"event_kind\":\"dan_received\","
             + "\"betray_probability\":0.35,\"qi_fraction\":0.55,\"dan_count\":1,\"offered_skill_id\":\"s\",\"server_tick\":200}");
 
         assertEquals(

@@ -24,8 +24,8 @@ public final class DyingElderEncounterStore {
     /** 区域显示名称（用于 HUD 显示，例如 "坍缩渊"）。 */
     private static volatile String zoneDisplayName = "";
 
-    /** 大能实体 idx（server entity index）。 */
-    private static volatile int elderEntityIdx = 0;
+    /** 大能 MC protocol entity_id（Valence 从 1 起分配；0 = sentinel/未同步）。 */
+    private static volatile int elderEntityId = 0;
 
     /** 最新的事件种类（"appeared" / "dan_received" / "betrayal" / "dead_natural" / "dead_player_kill"）。 */
     private static volatile String eventKind = "appeared";
@@ -73,9 +73,9 @@ public final class DyingElderEncounterStore {
         return zoneDisplayName;
     }
 
-    /** 大能实体 idx。 */
-    public static int getElderEntityIdx() {
-        return elderEntityIdx;
+    /** 大能 MC protocol entity_id（Valence 从 1 起分配；0 = sentinel/未同步）。 */
+    public static int getElderEntityId() {
+        return elderEntityId;
     }
 
     /** 最新事件种类字符串。 */
@@ -111,13 +111,13 @@ public final class DyingElderEncounterStore {
     /**
      * 激活遭遇状态（收到 appeared 事件时调用）。
      *
-     * @param zone       区域名称
-     * @param entityIdx  大能实体 idx
-     * @param tick       server_tick
+     * @param zone             区域名称
+     * @param protocolEntityId 大能 MC protocol entity_id（Valence 从 1 起分配；0 = sentinel）
+     * @param tick             server_tick
      */
-    public static void activate(String zone, int entityIdx, long tick) {
+    public static void activate(String zone, int protocolEntityId, long tick) {
         zoneDisplayName = zone != null ? zone : "";
-        elderEntityIdx = entityIdx;
+        elderEntityId = protocolEntityId;
         eventKind = "appeared";
         receivedTick = tick;
         active = true;
@@ -176,7 +176,7 @@ public final class DyingElderEncounterStore {
     public static void clear() {
         active = false;
         zoneDisplayName = "";
-        elderEntityIdx = 0;
+        elderEntityId = 0; // 0 = sentinel（Valence 从 1 起分配，0 表"无大能"）
         eventKind = "appeared";
         betrayProbability = null;
         qiFraction = 0.0f;

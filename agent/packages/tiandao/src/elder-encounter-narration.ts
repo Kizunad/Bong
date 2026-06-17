@@ -187,7 +187,7 @@ function appearedText(payload: ElderEncounterEventV1): string {
 
 /**
  * DanReceived 叙事：玩家给丹，计数更新。
- * 2 种模板按 elder_entity_idx 哈希选择。
+ * 2 种模板按 elder_entity_id 哈希选择。
  */
 export function renderDanReceivedNarration(payload: ElderEncounterEventV1): Narration {
   const text = danReceivedText(payload);
@@ -201,7 +201,7 @@ export function renderDanReceivedNarration(payload: ElderEncounterEventV1): Narr
 }
 
 function danReceivedText(payload: ElderEncounterEventV1): string {
-  const variant = payload.elder_entity_idx % 2;
+  const variant = payload.elder_entity_id % 2;
   const progress = `${payload.dan_count}/5`;
 
   if (variant === 0) {
@@ -215,7 +215,7 @@ function danReceivedText(payload: ElderEncounterEventV1): string {
 
 /**
  * 死亡广播叙事（betrayal / dead_natural / dead_player_kill）。
- * 2 种模板按 elder_entity_idx 哈希选择。
+ * 2 种模板按 elder_entity_id 哈希选择。
  */
 export function renderDeathBroadcast(
   payload: ElderEncounterEventV1,
@@ -231,7 +231,7 @@ export function renderDeathBroadcast(
 
   return {
     scope: "broadcast",
-    target: `zone:${payload.zone_name}|elder:${payload.elder_entity_idx}`,
+    target: `zone:${payload.zone_name}|elder:${payload.elder_entity_id}`,
     text,
     style: "narration",
     kind: narrationKind,
@@ -242,7 +242,7 @@ function deathBroadcastText(
   payload: ElderEncounterEventV1,
   kind: "betrayal" | "dead_natural" | "dead_player_kill",
 ): string {
-  const variant = payload.elder_entity_idx % 2;
+  const variant = payload.elder_entity_id % 2;
 
   if (kind === "betrayal") {
     if (variant === 0) {
