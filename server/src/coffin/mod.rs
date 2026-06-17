@@ -1132,7 +1132,7 @@ fn play_coffin_audio(
     });
 }
 
-fn persist_in_coffin(
+pub(crate) fn persist_in_coffin(
     player_persistence: Option<&crate::player::state::PlayerStatePersistence>,
     username: Option<&Username>,
     lifespan: Option<&LifespanComponent>,
@@ -1141,6 +1141,19 @@ fn persist_in_coffin(
     let (Some(player_persistence), Some(username), Some(lifespan)) =
         (player_persistence, username, lifespan)
     else {
+        // grade=None means we're clearing coffin state (exit path: revive / terminate / new_char).
+        // If we can't persist because components are missing, SQLite keeps the stale in_coffin=true,
+        // and the player will be re-pinned to a potentially nonexistent coffin on reconnect.
+        // This is the same risk path as the "重启复钉" bug — warn so it doesn't go unnoticed.
+        if grade.is_none() {
+            tracing::warn!(
+                "[bong][coffin] cannot clear SQLite in_coffin (grade=None): \
+                 persistence={} username={} lifespan={} — player may re-pin to coffin on reconnect",
+                player_persistence.is_some(),
+                username.is_some(),
+                lifespan.is_some(),
+            );
+        }
         return;
     };
     if let Err(error) = crate::player::state::save_player_lifespan_slice_with_coffin(
