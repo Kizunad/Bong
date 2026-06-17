@@ -1,0 +1,11 @@
+{
+  "id": "woliu_void_vortex",
+  "layers": [
+    { "sound": "minecraft:entity.enderman.ambient", "volume": 0.15, "pitch": 0.4, "delay_ticks": 0 },
+    { "sound": "minecraft:block.portal.ambient", "volume": 0.1, "pitch": 0.55, "delay_ticks": 3 }
+  ],
+  "priority": 68,
+  "attenuation": "world_3d",
+  "category": "AMBIENT",
+  "bus": "ENVIRONMENT"
+}

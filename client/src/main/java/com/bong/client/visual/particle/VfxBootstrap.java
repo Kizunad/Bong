@@ -163,6 +163,12 @@ public final class VfxBootstrap {
         registry.register(VortexSpiralPlayer.VACUUM_LOCK,        woliuVortex);
         registry.register(VortexSpiralPlayer.VORTEX_RESONANCE,   woliuVortex);
         registry.register(VortexSpiralPlayer.TURBULENCE_BURST,   woliuVortex);
+        // plan-woliu-path-v1：虚蚀路径 5 招式 particle IDs 注册（必须与 visual_for() 中 particle_id 精确一致）
+        registry.register(VortexSpiralPlayer.VORTEX_AMBIENT,     woliuVortex);
+        registry.register(VortexSpiralPlayer.VOID_SPHERE,        woliuVortex);
+        registry.register(VortexSpiralPlayer.SWALLOWING_SPIRAL,  woliuVortex);
+        registry.register(VortexSpiralPlayer.ECHO_RIPPLE,        woliuVortex);
+        registry.register(VortexSpiralPlayer.VOID_CORE_COLLAPSE, woliuVortex);
         registry.register(CultivationAbsorbPlayer.EVENT_ID,      new CultivationAbsorbPlayer());
         registry.register(MeridianOpenFlashPlayer.EVENT_ID,      new MeridianOpenFlashPlayer());
         registry.register(BreakthroughFailPlayer.EVENT_ID,       new BreakthroughFailPlayer());

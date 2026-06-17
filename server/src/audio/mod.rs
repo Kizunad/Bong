@@ -176,7 +176,7 @@ mod tests {
             SoundRecipeRegistry::load_default().expect("default audio recipes should load");
         assert_eq!(
             registry.len(),
-            235,
+            240,
             "audio registry should exclude removed slide and double-jump movement recipes \
              plus include 7 supply_coffin recipes (break + open common/rare/precious + emerge) \
              plus 1 ambient_dan_zong recipe \
@@ -193,6 +193,7 @@ mod tests {
              plus 2 halfstep P1 recipes (halfstep_quota_release_broadcast + halfstep_rechallenge_trigger_zone_echo) \
              plus 5 placeable container runtime recipes \
              plus 1 dead_drop_ward_break recipe \
+             plus 5 woliu erosion-path recipes (woliu_ambient_vortex / woliu_void_vortex / woliu_swallowing_vortex / woliu_vortex_echo / woliu_void_core) \
              plus 1 tribulation_ascend_success recipe (AV r3-P3#3 渡劫成功 AV)"
         );
         assert!(
@@ -323,6 +324,27 @@ mod tests {
         assert!(registry.get("woliu_vacuum_lock").is_some());
         assert!(registry.get("woliu_vortex_resonance").is_some());
         assert!(registry.get("woliu_turbulence_burst").is_some());
+        // plan-woliu-path-v1 虚蚀路径 5 招式音效 recipes
+        assert!(
+            registry.get("woliu_ambient_vortex").is_some(),
+            "AmbientVortex erosion skill sound recipe must load"
+        );
+        assert!(
+            registry.get("woliu_void_vortex").is_some(),
+            "VoidVortex erosion skill sound recipe must load"
+        );
+        assert!(
+            registry.get("woliu_swallowing_vortex").is_some(),
+            "SwallowingVortex erosion skill sound recipe must load"
+        );
+        assert!(
+            registry.get("woliu_vortex_echo").is_some(),
+            "VortexEcho erosion skill sound recipe must load"
+        );
+        assert!(
+            registry.get("woliu_void_core").is_some(),
+            "VoidCore erosion skill sound recipe must load"
+        );
         assert!(registry.get("npc_refuse").is_some());
         assert!(registry.get("npc_greeting_cultivator").is_some());
         assert!(registry.get("npc_greeting_commoner").is_some());

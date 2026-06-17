@@ -456,25 +456,6 @@ pub fn resolve_woliu_v2_skill(
         },
     );
 
-    {
-        let origin = center;
-        let (vfx_id, audio_id, anim_id) = woliu_av_mapping(skill);
-        let vfx_strength = (spec.field_strength / 1.5).clamp(0.0, 1.0);
-        let vfx_count = ((spec.influence_radius * 6.0) as u16).clamp(8, 64);
-        let vfx_duration = (spec.duration_ticks.min(200) as u16).max(20);
-        emit_vfx(
-            world,
-            origin,
-            vfx_id,
-            "#201832",
-            vfx_strength,
-            vfx_count,
-            vfx_duration,
-        );
-        emit_audio(world, audio_id, origin);
-        emit_anim(world, caster, anim_id);
-    }
-
     // plan-combat-skill-feedback-bridges-v1 P3 — 虚蚀累积（守恒纠偏：仅写 cumulative_erosion+stage，
     // 零 qi 字段操作；真元流动已在 build_cast_qi_transfers 走 QiTransfer{Channeling}，两路径正交）。
     apply_skill_erosion(world, caster, skill, cultivation.realm);
@@ -1210,6 +1191,7 @@ fn current_zone_context(
     }
 }
 
+#[allow(dead_code)] // Used only in tests; production path uses VortexCastEvent → emit_woliu_v2_visual_triggers
 pub(super) fn emit_vfx(
     world: &mut bevy_ecs::world::World,
     origin: DVec3,
@@ -1235,6 +1217,7 @@ pub(super) fn emit_vfx(
     }
 }
 
+#[allow(dead_code)] // Used only in tests
 pub(super) fn emit_audio(world: &mut bevy_ecs::world::World, recipe: &str, origin: DVec3) {
     if let Some(mut events) = world.get_resource_mut::<Events<PlaySoundRecipeRequest>>() {
         events.send(PlaySoundRecipeRequest {
@@ -1252,6 +1235,7 @@ pub(super) fn emit_audio(world: &mut bevy_ecs::world::World, recipe: &str, origi
     }
 }
 
+#[allow(dead_code)] // Used only in tests
 pub(super) fn emit_anim(world: &mut bevy_ecs::world::World, entity: Entity, anim_id: &str) {
     let origin = world
         .get::<Position>(entity)
@@ -1274,6 +1258,7 @@ pub(super) fn emit_anim(world: &mut bevy_ecs::world::World, entity: Entity, anim
     }
 }
 
+#[allow(dead_code)] // Used only in tests (woliu_av_mapping_covers_all_v3_skills etc.)
 pub(super) fn woliu_av_mapping(skill: WoliuSkillId) -> (&'static str, &'static str, &'static str) {
     match skill {
         WoliuSkillId::VacuumPalm => (
