@@ -106,6 +106,31 @@ public class FactionWarHudHandlerTest {
         assertTrue(state.active(), "期望 skirmish active()==true");
     }
 
+    @Test
+    void numericWarIdIsPreservedAsStoreString() {
+        String json = """
+            {
+              "v": 1,
+              "type": "faction_war_state",
+              "war_id": 42,
+              "zone": "残灰谷",
+              "region_descriptor": "残灰谷一带散修",
+              "phase": "skirmish",
+              "groups": [0, 1],
+              "enlist_count": 1,
+              "mercenary_count": 1,
+              "intercept_count": 0,
+              "spectate_count": 2,
+              "at_tick": 5000
+            }
+            """;
+        ServerDataRouter.RouteResult result = ROUTER.route(json, 0);
+        assertTrue(result.isHandled(), result.logMessage());
+
+        assertEquals("42", FactionWarHudStore.snapshot().warId(),
+            "proto bridge 会把 uint64 war_id 归一成 JSON number，handler 仍应保留 ID 文本");
+    }
+
     // ─────────── C. aftermath → clear ────────────────────────────────────────
 
     @Test

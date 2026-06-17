@@ -2,14 +2,21 @@ package com.bong.client.network;
 
 import bong.Common;
 import bong.Envelope;
+import com.bong.client.hud.war.FactionWarHudStore;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 class ProtoServerDataBridgeTest {
+
+    @AfterEach
+    void tearDown() {
+        FactionWarHudStore.resetForTests();
+    }
 
     // ─── Happy path: Welcome ─────────────────────────────────────────
     @Test
@@ -336,6 +343,81 @@ class ProtoServerDataBridgeTest {
         assertEquals("player_state", json.get("type").getAsString());
         assertEquals("offline:Steve", json.get("player").getAsString());
         assertEquals("blood_valley", json.get("zone").getAsString());
+    }
+
+    @Test
+    void bridgeShieldBrokenProducesLegacyJsonAndRoutes() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setShieldBroken(Envelope.ShieldBroken.newBuilder()
+                        .setInstanceId(7)
+                        .setTemplateId("wooden_shield"))
+                .build();
+
+        ProtoServerDataBridge.BridgeResult result = ProtoServerDataBridge.bridge(envelope.toByteArray());
+        assertTrue(result.isSuccess(), "bridge should succeed for shield_broken: " + result.errorMessage());
+
+        JsonObject json = JsonParser.parseString(result.legacyJson()).getAsJsonObject();
+        assertEquals("shield_broken", json.get("type").getAsString());
+        assertEquals(7, json.get("instance_id").getAsLong());
+        assertEquals("wooden_shield", json.get("template_id").getAsString());
+
+        ServerDataRouter.RouteResult route = ServerDataRouter.createDefault().route(result.legacyJson(), 0);
+        assertTrue(route.isHandled(), "shield_broken proto bridge output should route: " + route.logMessage());
+        assertFalse(route.isNoOp(), "shield_broken proto bridge output must not become no-op");
+    }
+
+    @Test
+    void bridgeShieldBlockHitProducesLegacyJsonAndRoutes() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setShieldBlockHit(Envelope.ShieldBlockHit.newBuilder()
+                        .setTemplateId("bone_shield"))
+                .build();
+
+        ProtoServerDataBridge.BridgeResult result = ProtoServerDataBridge.bridge(envelope.toByteArray());
+        assertTrue(result.isSuccess(), "bridge should succeed for shield_block_hit: " + result.errorMessage());
+
+        JsonObject json = JsonParser.parseString(result.legacyJson()).getAsJsonObject();
+        assertEquals("shield_block_hit", json.get("type").getAsString());
+        assertEquals("bone_shield", json.get("template_id").getAsString());
+
+        ServerDataRouter.RouteResult route = ServerDataRouter.createDefault().route(result.legacyJson(), 0);
+        assertTrue(route.isHandled(), "shield_block_hit proto bridge output should route: " + route.logMessage());
+        assertFalse(route.isNoOp(), "shield_block_hit proto bridge output must not become no-op");
+    }
+
+    @Test
+    void bridgeFactionWarStateProducesLegacyJsonAndRoutes() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setFactionWarState(Envelope.FactionWarState.newBuilder()
+                        .setWarId(42)
+                        .setZone("残灰谷")
+                        .setRegionDescriptor("残灰谷一带散修")
+                        .setPhase("skirmish")
+                        .addGroups(0)
+                        .addGroups(1)
+                        .setEnlistCount(2)
+                        .setMercenaryCount(1)
+                        .setInterceptCount(0)
+                        .setSpectateCount(3)
+                        .setWinnerGroup(-1)
+                        .setLoserGroup(-1))
+                .build();
+
+        ProtoServerDataBridge.BridgeResult result = ProtoServerDataBridge.bridge(envelope.toByteArray());
+        assertTrue(result.isSuccess(), "bridge should succeed for faction_war_state: " + result.errorMessage());
+
+        JsonObject json = JsonParser.parseString(result.legacyJson()).getAsJsonObject();
+        assertEquals("faction_war_state", json.get("type").getAsString());
+        assertEquals(42, json.get("war_id").getAsLong());
+        assertEquals("残灰谷", json.get("zone").getAsString());
+        assertEquals(2, json.getAsJsonArray("groups").size());
+        assertEquals(2, json.get("enlist_count").getAsInt());
+        assertEquals(3, json.get("spectate_count").getAsInt());
+
+        ServerDataRouter.RouteResult route = ServerDataRouter.createDefault().route(result.legacyJson(), 0);
+        assertTrue(route.isHandled(), "faction_war_state proto bridge output should route: " + route.logMessage());
+        assertEquals("42", FactionWarHudStore.snapshot().warId(),
+                "uint64 war_id normalized to JSON number must still be preserved as store string");
     }
 
     // ═══════════════════════════════════════════════════════════════════
