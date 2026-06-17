@@ -38,8 +38,10 @@ use crate::persistence::{
     ZONE_OVERLAY_PAYLOAD_VERSION,
 };
 use crate::player::state::canonical_player_id;
+use crate::qi_physics::constants::QI_EPSILON;
 use crate::qi_physics::{
-    collapse_redistribute_qi, tribulation_trigger, EnvField, TribulationCause,
+    collapse_redistribute_qi, tribulation_trigger, EnvField, QiAccountId, QiTransfer,
+    QiTransferReason, TribulationCause,
 };
 use crate::schema::agent_command::Command;
 use crate::schema::common::{CommandType, GameEventType};
@@ -351,6 +353,8 @@ pub struct ActiveEventsResource {
     recent_game_events: Vec<GameEvent>,
     locust_cooldown: LocustSwarmCooldownStore,
     calamity_target_log: VecDeque<CalamityTargetRecord>,
+    /// 坍缩 zone 灵气重分配时产生的 overflow QiTransfer 审计事件，由 drain_qi_transfers 消费。
+    pending_qi_transfers: Vec<QiTransfer>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -731,6 +735,7 @@ impl ActiveEventsResource {
                     zone_registry,
                     event.zone_name.as_str(),
                     roll.qi_density_heat,
+                    &mut self.pending_qi_transfers,
                 );
                 let daoxiang_spawn = zone_registry
                     .find_zone_by_name(event.zone_name.as_str())
@@ -936,6 +941,11 @@ impl ActiveEventsResource {
 
     pub fn drain_audio_events(&mut self) -> Vec<PlaySoundRecipeRequest> {
         std::mem::take(&mut self.pending_audio_events)
+    }
+
+    /// 坍缩重分配 overflow 审计 QiTransfer，由 tick_active_events Bevy system 消费后 emit。
+    pub fn drain_qi_transfers(&mut self) -> Vec<QiTransfer> {
+        std::mem::take(&mut self.pending_qi_transfers)
     }
 
     pub fn record_recent_event(&mut self, event: GameEvent) {
@@ -1287,6 +1297,7 @@ impl ActiveEventsResource {
                         let redistributed = redistribute_zone_qi_before_collapse(
                             zone_registry,
                             event.zone_name.as_str(),
+                            &mut self.pending_qi_transfers,
                         );
                         if let Some(active_zone) =
                             zone_registry.find_zone_mut(event.zone_name.as_str())
@@ -1418,6 +1429,7 @@ impl ActiveEventsResource {
                             next_elapsed,
                             collapse_targets.unwrap_or(&[]),
                             death_events,
+                            &mut self.pending_qi_transfers,
                         );
                         if let Some(collapsed_events) = collapsed_events.as_deref_mut() {
                             collapsed_events.send(ZoneCollapsedEvent {
@@ -1615,6 +1627,7 @@ pub fn register(app: &mut App) {
         (
             tick_realm_collapse_low_qi_monitor.before(tick_active_events),
             tick_active_events,
+            flush_collapse_qi_transfers.after(tick_active_events),
             persist_zone_collapsed_overlays.after(tick_active_events),
         ),
     );
@@ -1796,6 +1809,19 @@ fn tick_active_events(
     }
 }
 
+/// 坍缩 overflow 守恒审计刷出器：把 `redistribute_zone_qi_before_collapse` 推入
+/// `pending_qi_transfers` 的 overflow QiTransfer 批量 emit 给 Bevy ECS 事件总线。
+///
+/// 独立 system 以规避 Bevy 0.14 系统参数 ≤16 个的限制（`tick_active_events` 已用满 16 个）。
+fn flush_collapse_qi_transfers(
+    mut active_events: ResMut<ActiveEventsResource>,
+    mut qi_transfer_events: EventWriter<QiTransfer>,
+) {
+    for transfer in active_events.drain_qi_transfers() {
+        qi_transfer_events.send(transfer);
+    }
+}
+
 fn value_to_u64(value: Option<&Value>) -> Option<u64> {
     let value = value?;
 
@@ -1938,6 +1964,7 @@ fn maybe_nullify_targeted_zone_qi(
     zone_registry: &mut ZoneRegistry,
     zone_name: &str,
     qi_density_heat: f32,
+    qi_transfers: &mut Vec<QiTransfer>,
 ) -> Option<TargetedQiNullification> {
     let previous_spirit_qi = zone_registry.find_zone_by_name(zone_name)?.spirit_qi;
     if qi_density_heat < TARGETED_QI_NULLIFICATION_HEAT_THRESHOLD || previous_spirit_qi <= 0.0 {
@@ -1945,10 +1972,11 @@ fn maybe_nullify_targeted_zone_qi(
     }
 
     let cause = tribulation_trigger(&EnvField::new(previous_spirit_qi));
-    let redistributed_spirit_qi = redistribute_zone_qi_before_collapse(zone_registry, zone_name);
-    if redistributed_spirit_qi <= 0.0 {
-        return None;
-    }
+    // redistribute 返回的是邻接 accepted 量（不含 overflow）。
+    // 当无邻接或邻接全满时 redistributed_spirit_qi=0，但 overflow QiTransfer 已入账守恒；
+    // source zone 必须无条件归零——qi 要么进邻接要么进 overflow，两路都已守恒入账。
+    let redistributed_spirit_qi =
+        redistribute_zone_qi_before_collapse(zone_registry, zone_name, qi_transfers);
 
     let zone = zone_registry.find_zone_mut(zone_name)?;
     zone.spirit_qi = 0.0;
@@ -1962,6 +1990,7 @@ fn maybe_nullify_targeted_zone_qi(
 fn redistribute_zone_qi_before_collapse(
     zone_registry: &mut ZoneRegistry,
     source_zone_name: &str,
+    qi_transfers: &mut Vec<QiTransfer>,
 ) -> f64 {
     let Some(source) = zone_registry.find_zone_by_name(source_zone_name) else {
         return 0.0;
@@ -1982,6 +2011,30 @@ fn redistribute_zone_qi_before_collapse(
         return 0.0;
     };
 
+    // 无邻接 zone：全部灵气进 overflow 账户，守恒不蒸发。
+    if surrounding_zones.is_empty() {
+        if stored_qi > QI_EPSILON {
+            let overflow_id = QiAccountId::overflow(format!(
+                "collapse_overflow:no_neighbors:{}",
+                source_zone_name
+            ));
+            if let Ok(t) = QiTransfer::new(
+                QiAccountId::zone(source_zone_name),
+                overflow_id,
+                stored_qi,
+                QiTransferReason::RiftCollapse,
+            ) {
+                qi_transfers.push(t);
+            } else {
+                tracing::warn!(
+                    "[bong][collapse] overflow QiTransfer::new failed zone={source_zone_name} amount={stored_qi}: no_neighbors path"
+                );
+            }
+        }
+        return 0.0;
+    }
+
+    let source_account = QiAccountId::zone(source_zone_name);
     let mut total_redistributed = 0.0;
     for (zone_name, amount) in redistributed {
         if amount <= 0.0 {
@@ -1990,7 +2043,26 @@ fn redistribute_zone_qi_before_collapse(
         if let Some(zone) = zone_registry.find_zone_mut(zone_name.as_str()) {
             let before = zone.spirit_qi;
             zone.spirit_qi = (before + amount).clamp(-1.0, 1.0);
-            total_redistributed += (zone.spirit_qi - before).max(0.0);
+            let accepted = (zone.spirit_qi - before).max(0.0);
+            total_redistributed += accepted;
+
+            // overflow 兜底：邻接满容时剩余灵气进 overflow 账户，守恒不蒸发。
+            let overflow = amount - accepted;
+            if overflow > QI_EPSILON {
+                let overflow_id = QiAccountId::overflow(format!("collapse_overflow:{}", zone_name));
+                if let Ok(t) = QiTransfer::new(
+                    source_account.clone(),
+                    overflow_id,
+                    overflow,
+                    QiTransferReason::RiftCollapse,
+                ) {
+                    qi_transfers.push(t);
+                } else {
+                    tracing::warn!(
+                        "[bong][collapse] overflow QiTransfer::new failed zone={source_zone_name} neighbor={zone_name} amount={overflow}: neighbors_overflow path"
+                    );
+                }
+            }
         }
     }
     total_redistributed
@@ -2727,8 +2799,9 @@ fn collapse_zone(
     collapse_tick: u64,
     collapse_targets: &[(Entity, DimensionKind, DVec3)],
     death_events: &mut EventWriter<DeathEvent>,
+    qi_transfers: &mut Vec<QiTransfer>,
 ) -> usize {
-    redistribute_zone_qi_before_collapse(zone_registry, zone.name.as_str());
+    redistribute_zone_qi_before_collapse(zone_registry, zone.name.as_str(), qi_transfers);
     let Some(active_zone) = zone_registry.find_zone_mut(zone.name.as_str()) else {
         return 0;
     };
@@ -2786,11 +2859,11 @@ mod events_tests {
     use valence::testing::{create_mock_client, ScenarioSingleClient};
 
     use super::{
-        beast_kind_from_command, daoxiang_count_for_intensity, persist_zone_collapsed_overlays,
-        redistribute_zone_qi_before_collapse, tick_active_events, ActiveEventsResource,
-        CalamityTargetRecord, RealmCollapseLowQiMonitor, ZoneCollapsedEvent, ZoneOccupantPosition,
-        COLLAPSED_ZONE_DANGER_LEVEL, EVENT_BEAST_TIDE, EVENT_DAOXIANG_WAVE, EVENT_KARMA_BACKLASH,
-        EVENT_POISON_MIASMA, EVENT_REALM_COLLAPSE, EVENT_THUNDER_TRIBULATION,
+        beast_kind_from_command, daoxiang_count_for_intensity, maybe_nullify_targeted_zone_qi,
+        persist_zone_collapsed_overlays, redistribute_zone_qi_before_collapse, tick_active_events,
+        ActiveEventsResource, CalamityTargetRecord, RealmCollapseLowQiMonitor, ZoneCollapsedEvent,
+        ZoneOccupantPosition, COLLAPSED_ZONE_DANGER_LEVEL, EVENT_BEAST_TIDE, EVENT_DAOXIANG_WAVE,
+        EVENT_KARMA_BACKLASH, EVENT_POISON_MIASMA, EVENT_REALM_COLLAPSE, EVENT_THUNDER_TRIBULATION,
         LOCUST_SWARM_DISBAND_THRESHOLD, REALM_COLLAPSE_BOUNDARY_VFX_EVENT_ID,
         REALM_COLLAPSE_EVACUATION_REMINDER_INTERVAL_TICKS, REALM_COLLAPSE_EVACUATION_WINDOW_TICKS,
         REALM_COLLAPSE_LOW_QI_REQUIRED_TICKS, REALM_COLLAPSE_LOW_QI_THRESHOLD,
@@ -2808,6 +2881,7 @@ mod events_tests {
     use crate::persistence::{
         bootstrap_sqlite, load_zone_overlays, PersistenceSettings, ZONE_OVERLAY_PAYLOAD_VERSION,
     };
+    use crate::qi_physics::QiTransfer;
     use crate::schema::agent_command::Command;
     use crate::schema::common::CommandType;
     use crate::schema::tribulation::{TribulationKindV1, TribulationPhaseV1};
@@ -3958,15 +4032,298 @@ mod events_tests {
         };
 
         let before_total: f64 = zones.zones.iter().map(|zone| zone.spirit_qi).sum();
-        let redistributed = redistribute_zone_qi_before_collapse(&mut zones, "source");
+        let mut transfers = Vec::new();
+        let redistributed =
+            redistribute_zone_qi_before_collapse(&mut zones, "source", &mut transfers);
         zones.find_zone_mut("source").unwrap().spirit_qi = 0.0;
         let after_total: f64 = zones.zones.iter().map(|zone| zone.spirit_qi).sum();
 
-        assert!((redistributed - 0.6).abs() < 1e-9);
-        assert!((after_total - before_total).abs() < 1e-9);
+        assert!(
+            (redistributed - 0.6).abs() < 1e-9,
+            "期望 redistributed=0.6（source 全部灵气），实际={redistributed}"
+        );
+        // 邻接未满，无 overflow，守恒全靠 zone 实际吸收
+        assert!(
+            transfers.is_empty(),
+            "期望无 overflow transfer（邻接均有余量），实际有 {} 个",
+            transfers.len()
+        );
+        assert!(
+            (after_total - before_total).abs() < 1e-9,
+            "期望坍缩前后 zone 总 spirit_qi 守恒，before={before_total} after={after_total}"
+        );
         let low_delta = zones.find_zone_by_name("low").unwrap().spirit_qi - 0.1;
         let high_delta = zones.find_zone_by_name("high").unwrap().spirit_qi - 0.8;
-        assert!(low_delta > high_delta);
+        assert!(
+            low_delta > high_delta,
+            "期望低灵气 zone 吸收更多（反压力权重），low_delta={low_delta} high_delta={high_delta}"
+        );
+    }
+
+    #[test]
+    fn collapse_redistribute_overflow_when_neighbor_near_full() {
+        // 核心场景：邻接近满（spirit_qi=0.99）+ 大坍缩 qi（source=0.5）→
+        // 邻接 spirit_qi 顶到 1.0（接收 0.01），剩余 ~0.49 进 overflow，无蒸发。
+        use crate::qi_physics::ledger::{QiAccountKind, QiTransferReason};
+
+        let mut zones = ZoneRegistry {
+            zones: vec![
+                Zone {
+                    name: "source".to_string(),
+                    dimension: DimensionKind::Overworld,
+                    bounds: (DVec3::ZERO, DVec3::new(10.0, 10.0, 10.0)),
+                    spirit_qi: 0.5,
+                    danger_level: 1,
+                    active_events: Vec::new(),
+                    patrol_anchors: Vec::new(),
+                    blocked_tiles: Vec::new(),
+                },
+                Zone {
+                    name: "near_full".to_string(),
+                    dimension: DimensionKind::Overworld,
+                    bounds: (DVec3::new(20.0, 0.0, 0.0), DVec3::new(30.0, 10.0, 10.0)),
+                    spirit_qi: 0.99,
+                    danger_level: 1,
+                    active_events: Vec::new(),
+                    patrol_anchors: Vec::new(),
+                    blocked_tiles: Vec::new(),
+                },
+            ],
+        };
+
+        let stored_qi = 0.5_f64;
+        let mut transfers = Vec::new();
+        let accepted = redistribute_zone_qi_before_collapse(&mut zones, "source", &mut transfers);
+
+        let neighbor_after = zones.find_zone_by_name("near_full").unwrap().spirit_qi;
+        let accepted_by_neighbor = neighbor_after - 0.99;
+
+        // 邻接 spirit_qi 不超过 1.0（clamp 保证）
+        assert!(
+            neighbor_after <= 1.0 + 1e-9,
+            "期望邻接 spirit_qi <= 1.0（clamp 上限），实际={neighbor_after}"
+        );
+        // 邻接确实吸收了一些（0.99 → 1.0）
+        assert!(
+            accepted_by_neighbor > 0.0,
+            "期望邻接 spirit_qi 增加（从 0.99 到 1.0），实际 delta={accepted_by_neighbor}"
+        );
+        // 返回值等于邻接实际吸收量
+        assert!(
+            (accepted - accepted_by_neighbor).abs() < 1e-9,
+            "期望 accepted={accepted_by_neighbor}（邻接实际增量），实际 fn 返回={accepted}"
+        );
+        // overflow transfer 存在
+        assert!(
+            !transfers.is_empty(),
+            "期望有 overflow QiTransfer（邻接满容后余量进 overflow），实际无 transfer"
+        );
+        // overflow transfer 来源是 source zone
+        let t = &transfers[0];
+        assert_eq!(
+            t.from.kind,
+            QiAccountKind::Zone,
+            "期望 overflow transfer from 是 Zone 账户（坍缩源 zone），实际 kind={:?}",
+            t.from.kind
+        );
+        assert_eq!(
+            t.from.id, "source",
+            "期望 overflow transfer from.id='source'，实际='{}'",
+            t.from.id
+        );
+        assert_eq!(
+            t.to.kind,
+            QiAccountKind::Overflow,
+            "期望 overflow transfer to 是 Overflow 账户，实际 kind={:?}",
+            t.to.kind
+        );
+        assert_eq!(
+            t.reason,
+            QiTransferReason::RiftCollapse,
+            "期望 overflow reason=RiftCollapse，实际={:?}",
+            t.reason
+        );
+        // 守恒：accepted + overflow_total == stored_qi
+        let overflow_total: f64 = transfers.iter().map(|tr| tr.amount).sum();
+        assert!(
+            (accepted + overflow_total - stored_qi).abs() < 1e-9,
+            "守恒违反：accepted({accepted}) + overflow({overflow_total}) != stored_qi({stored_qi})"
+        );
+    }
+
+    #[test]
+    fn collapse_redistribute_overflow_multi_neighbor_some_full() {
+        // 多邻接：一个半满（spirit_qi=0.5）+ 一个近满（spirit_qi=0.99），
+        // 大坍缩 qi（source=0.8）→ 半满 zone 正常吸收，近满 zone overflow，总量守恒。
+        use crate::qi_physics::ledger::QiAccountKind;
+
+        let mut zones = ZoneRegistry {
+            zones: vec![
+                Zone {
+                    name: "source".to_string(),
+                    dimension: DimensionKind::Overworld,
+                    bounds: (DVec3::ZERO, DVec3::new(10.0, 10.0, 10.0)),
+                    spirit_qi: 0.8,
+                    danger_level: 1,
+                    active_events: Vec::new(),
+                    patrol_anchors: Vec::new(),
+                    blocked_tiles: Vec::new(),
+                },
+                Zone {
+                    name: "half".to_string(),
+                    dimension: DimensionKind::Overworld,
+                    bounds: (DVec3::new(20.0, 0.0, 0.0), DVec3::new(30.0, 10.0, 10.0)),
+                    spirit_qi: 0.5,
+                    danger_level: 1,
+                    active_events: Vec::new(),
+                    patrol_anchors: Vec::new(),
+                    blocked_tiles: Vec::new(),
+                },
+                Zone {
+                    name: "near_full".to_string(),
+                    dimension: DimensionKind::Overworld,
+                    bounds: (DVec3::new(40.0, 0.0, 0.0), DVec3::new(50.0, 10.0, 10.0)),
+                    spirit_qi: 0.99,
+                    danger_level: 1,
+                    active_events: Vec::new(),
+                    patrol_anchors: Vec::new(),
+                    blocked_tiles: Vec::new(),
+                },
+            ],
+        };
+
+        let stored_qi = 0.8_f64;
+        let mut transfers = Vec::new();
+        let accepted = redistribute_zone_qi_before_collapse(&mut zones, "source", &mut transfers);
+
+        let half_after = zones.find_zone_by_name("half").unwrap().spirit_qi;
+        let full_after = zones.find_zone_by_name("near_full").unwrap().spirit_qi;
+
+        // 两个邻接均不超 1.0
+        assert!(
+            half_after <= 1.0 + 1e-9,
+            "half zone spirit_qi 不得超 1.0，实际={half_after}"
+        );
+        assert!(
+            full_after <= 1.0 + 1e-9,
+            "near_full zone spirit_qi 不得超 1.0，实际={full_after}"
+        );
+
+        // 有 overflow transfer（near_full 溢出）
+        let overflow_ids: Vec<_> = transfers
+            .iter()
+            .filter(|t| t.to.kind == QiAccountKind::Overflow)
+            .collect();
+        assert!(
+            !overflow_ids.is_empty(),
+            "期望 near_full 溢出产生 overflow transfer，实际无"
+        );
+
+        // 守恒：accepted + Σoverflow == stored_qi
+        let overflow_total: f64 = transfers.iter().map(|t| t.amount).sum();
+        assert!(
+            (accepted + overflow_total - stored_qi).abs() < 1e-9,
+            "守恒违反：accepted({accepted}) + overflow({overflow_total}) != stored_qi({stored_qi})"
+        );
+    }
+
+    #[test]
+    fn collapse_redistribute_zero_qi_no_transfers() {
+        // 边界：坍缩 zone qi=0，不产生任何 overflow 也不崩溃。
+        let mut zones = ZoneRegistry {
+            zones: vec![
+                Zone {
+                    name: "source".to_string(),
+                    dimension: DimensionKind::Overworld,
+                    bounds: (DVec3::ZERO, DVec3::new(10.0, 10.0, 10.0)),
+                    spirit_qi: 0.0,
+                    danger_level: 1,
+                    active_events: Vec::new(),
+                    patrol_anchors: Vec::new(),
+                    blocked_tiles: Vec::new(),
+                },
+                Zone {
+                    name: "neighbor".to_string(),
+                    dimension: DimensionKind::Overworld,
+                    bounds: (DVec3::new(20.0, 0.0, 0.0), DVec3::new(30.0, 10.0, 10.0)),
+                    spirit_qi: 0.5,
+                    danger_level: 1,
+                    active_events: Vec::new(),
+                    patrol_anchors: Vec::new(),
+                    blocked_tiles: Vec::new(),
+                },
+            ],
+        };
+
+        let mut transfers = Vec::new();
+        let accepted = redistribute_zone_qi_before_collapse(&mut zones, "source", &mut transfers);
+
+        assert!(
+            accepted.abs() < 1e-9,
+            "期望 qi=0 坍缩返回 accepted=0，实际={accepted}"
+        );
+        assert!(
+            transfers.is_empty(),
+            "期望 qi=0 坍缩无 overflow transfer，实际有 {} 个",
+            transfers.len()
+        );
+        let neighbor_after = zones.find_zone_by_name("neighbor").unwrap().spirit_qi;
+        assert!(
+            (neighbor_after - 0.5).abs() < 1e-9,
+            "期望邻接 spirit_qi 不变（0.5），实际={neighbor_after}"
+        );
+    }
+
+    #[test]
+    fn collapse_redistribute_no_neighbors_all_to_overflow() {
+        // 边界：无邻接 zone，source qi 全部进 overflow，守恒不蒸发。
+        use crate::qi_physics::ledger::{QiAccountKind, QiTransferReason};
+
+        let stored_qi = 0.6_f64;
+        let mut zones = ZoneRegistry {
+            zones: vec![Zone {
+                name: "lone".to_string(),
+                dimension: DimensionKind::Overworld,
+                bounds: (DVec3::ZERO, DVec3::new(10.0, 10.0, 10.0)),
+                spirit_qi: stored_qi,
+                danger_level: 1,
+                active_events: Vec::new(),
+                patrol_anchors: Vec::new(),
+                blocked_tiles: Vec::new(),
+            }],
+        };
+
+        let mut transfers = Vec::new();
+        let accepted = redistribute_zone_qi_before_collapse(&mut zones, "lone", &mut transfers);
+
+        assert!(
+            accepted.abs() < 1e-9,
+            "期望无邻接时 accepted=0，实际={accepted}"
+        );
+        assert_eq!(
+            transfers.len(),
+            1,
+            "期望无邻接时产生 1 个 overflow transfer，实际有 {} 个",
+            transfers.len()
+        );
+        let t = &transfers[0];
+        assert_eq!(
+            t.to.kind,
+            QiAccountKind::Overflow,
+            "期望 transfer to 是 Overflow 账户，实际={:?}",
+            t.to.kind
+        );
+        assert_eq!(
+            t.reason,
+            QiTransferReason::RiftCollapse,
+            "期望 reason=RiftCollapse，实际={:?}",
+            t.reason
+        );
+        assert!(
+            (t.amount - stored_qi).abs() < 1e-9,
+            "期望 overflow amount={stored_qi}（全量），实际={}",
+            t.amount
+        );
     }
 
     #[test]
@@ -4838,6 +5195,197 @@ mod events_tests {
                 );
             });
         }
+    }
+
+    /// 回归测试：no-neighbors / all-neighbors-full 时 maybe_nullify 必须归零 source zone。
+    ///
+    /// 复现场景：无邻接 zone 时 redistribute 返回 accepted=0（overflow 入账守恒），
+    /// 旧代码 `if redistributed <= 0 { return None }` 导致 source.spirit_qi 永不归零。
+    /// 修复后：accepted=0 不再阻止归零，overflow transfer 已入账，source 必须为 0。
+    #[test]
+    fn maybe_nullify_zeros_source_zone_when_no_neighbors_exist() {
+        let (mut app, _layer) = setup_events_app();
+        let initial_qi = 0.7_f64;
+
+        // 移除所有 zone 后仅插入一个孤立 zone（无邻接），确保触发 no-neighbors 路径。
+        {
+            let world = app.world_mut();
+            let mut zones = world.resource_mut::<ZoneRegistry>();
+            zones.zones.clear();
+            zones.zones.push(Zone {
+                name: "lone_nullify".to_string(),
+                dimension: DimensionKind::Overworld,
+                bounds: (DVec3::ZERO, DVec3::new(16.0, 80.0, 16.0)),
+                spirit_qi: initial_qi,
+                danger_level: 1,
+                active_events: Vec::new(),
+                patrol_anchors: Vec::new(),
+                blocked_tiles: Vec::new(),
+            });
+        }
+
+        // qi_density_heat = 1.0 > TARGETED_QI_NULLIFICATION_HEAT_THRESHOLD → 触发 nullify。
+        let mut qi_transfers: Vec<QiTransfer> = Vec::new();
+        {
+            let world = app.world_mut();
+            world.resource_scope(|_world, mut zones: valence::prelude::Mut<ZoneRegistry>| {
+                let result = maybe_nullify_targeted_zone_qi(
+                    &mut zones,
+                    "lone_nullify",
+                    1.0_f32,
+                    &mut qi_transfers,
+                );
+
+                // 核心契约：source zone 必须被归零（即使无邻接 / 无 accepted 量）。
+                assert!(
+                    result.is_some(),
+                    "期望 maybe_nullify 在 heat>=阈值、qi>0 时返回 Some，实际 None（source 未归零）"
+                );
+                let zone = zones
+                    .find_zone_by_name("lone_nullify")
+                    .expect("lone_nullify zone should exist");
+                assert_eq!(
+                    zone.spirit_qi,
+                    0.0,
+                    "期望无邻接时 source zone.spirit_qi 归零，实际={}（守恒背离：overflow 已入账而 source 仍保有全量）",
+                    zone.spirit_qi
+                );
+            });
+        }
+
+        // overflow 守恒：qi_transfers 必须含 1 个 overflow transfer，amount = initial_qi。
+        assert_eq!(
+            qi_transfers.len(),
+            1,
+            "期望无邻接时有 1 个 overflow QiTransfer（守恒入账），实际 {} 个",
+            qi_transfers.len()
+        );
+        use crate::qi_physics::ledger::QiAccountKind;
+        assert_eq!(
+            qi_transfers[0].to.kind,
+            QiAccountKind::Overflow,
+            "期望 transfer.to 是 Overflow 账户，实际={:?}",
+            qi_transfers[0].to.kind
+        );
+        assert!(
+            (qi_transfers[0].amount - initial_qi).abs() < 1e-9,
+            "期望 overflow amount={initial_qi}（全量），实际={}",
+            qi_transfers[0].amount
+        );
+
+        // redistributed_spirit_qi = 0 时仍应产生 TargetedQiNullification 返回值。
+        let result_data = {
+            let world = app.world_mut();
+            let mut dummy_transfers: Vec<QiTransfer> = Vec::new();
+            // 重置 zone 再测 TargetedQiNullification 字段内容。
+            {
+                let mut zones = world.resource_mut::<ZoneRegistry>();
+                if let Some(z) = zones.find_zone_mut("lone_nullify") {
+                    z.spirit_qi = initial_qi;
+                }
+            }
+            world.resource_scope(|_world, mut zones: valence::prelude::Mut<ZoneRegistry>| {
+                maybe_nullify_targeted_zone_qi(
+                    &mut zones,
+                    "lone_nullify",
+                    1.0_f32,
+                    &mut dummy_transfers,
+                )
+            })
+        };
+        let nullification = result_data.expect("TargetedQiNullification should be Some");
+        assert!(
+            (nullification.previous_spirit_qi - initial_qi).abs() < 1e-9,
+            "期望 previous_spirit_qi={initial_qi}，实际={}",
+            nullification.previous_spirit_qi
+        );
+        // redistributed_spirit_qi=0 合法（无邻接 accepted=0，overflow 守恒），字段如实上报。
+        assert!(
+            (nullification.redistributed_spirit_qi - 0.0).abs() < 1e-9,
+            "期望无邻接时 redistributed_spirit_qi=0（全量进 overflow），实际={}",
+            nullification.redistributed_spirit_qi
+        );
+    }
+
+    /// 回归测试：all-neighbors-full 时 maybe_nullify 必须归零 source zone。
+    ///
+    /// 邻接 spirit_qi=1.0（满容），redistribute accepted=0（全部 overflow），
+    /// source zone 仍必须归零。
+    #[test]
+    fn maybe_nullify_zeros_source_zone_when_all_neighbors_full() {
+        let initial_qi = 0.5_f64;
+        let mut zones = ZoneRegistry {
+            zones: vec![
+                Zone {
+                    name: "source_full_neighbors".to_string(),
+                    dimension: DimensionKind::Overworld,
+                    bounds: (DVec3::ZERO, DVec3::new(16.0, 80.0, 16.0)),
+                    spirit_qi: initial_qi,
+                    danger_level: 1,
+                    active_events: Vec::new(),
+                    patrol_anchors: Vec::new(),
+                    blocked_tiles: Vec::new(),
+                },
+                Zone {
+                    name: "full_neighbor".to_string(),
+                    dimension: DimensionKind::Overworld,
+                    bounds: (DVec3::new(20.0, 0.0, 0.0), DVec3::new(36.0, 80.0, 16.0)),
+                    spirit_qi: 1.0, // 满容，accepted=0
+                    danger_level: 1,
+                    active_events: Vec::new(),
+                    patrol_anchors: Vec::new(),
+                    blocked_tiles: Vec::new(),
+                },
+            ],
+        };
+
+        let mut qi_transfers: Vec<QiTransfer> = Vec::new();
+        let result = maybe_nullify_targeted_zone_qi(
+            &mut zones,
+            "source_full_neighbors",
+            1.0_f32,
+            &mut qi_transfers,
+        );
+
+        // 核心契约：邻接全满时，source zone 必须被归零。
+        assert!(
+            result.is_some(),
+            "期望 maybe_nullify 在邻接全满时返回 Some，实际 None（source 未归零）"
+        );
+        let source = zones
+            .find_zone_by_name("source_full_neighbors")
+            .expect("source zone should exist");
+        assert_eq!(
+            source.spirit_qi, 0.0,
+            "期望邻接全满时 source.spirit_qi=0，实际={}（overflow 已入账而 source 仍保有全量）",
+            source.spirit_qi
+        );
+
+        // 邻接满容后全量进 overflow，邻接本身不变。
+        let neighbor = zones
+            .find_zone_by_name("full_neighbor")
+            .expect("full_neighbor zone should exist");
+        assert_eq!(
+            neighbor.spirit_qi, 1.0,
+            "期望满容邻接 spirit_qi 不变=1.0，实际={}",
+            neighbor.spirit_qi
+        );
+
+        // overflow transfer 必须存在，amount >= initial_qi（允许微浮点差）。
+        use crate::qi_physics::ledger::QiAccountKind;
+        let overflow_transfers: Vec<_> = qi_transfers
+            .iter()
+            .filter(|t| t.to.kind == QiAccountKind::Overflow)
+            .collect();
+        assert!(
+            !overflow_transfers.is_empty(),
+            "期望邻接全满时存在 overflow QiTransfer，实际无（守恒断裂）"
+        );
+        let total_overflow: f64 = overflow_transfers.iter().map(|t| t.amount).sum();
+        assert!(
+            (total_overflow - initial_qi).abs() < 1e-9,
+            "期望 overflow 总量={initial_qi}，实际={total_overflow}（守恒不满足）"
+        );
     }
 
     #[test]
