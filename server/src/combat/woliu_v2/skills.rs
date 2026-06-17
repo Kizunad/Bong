@@ -121,7 +121,13 @@ pub fn register_skills(registry: &mut SkillRegistry) {
     registry.register(WOLIU_VOID_CORE_SKILL_ID, cast_void_core);
 }
 
+/// Bevy Startup system 版本 —— 被 `woliu_v2::register()` 挂载。
 pub fn declare_woliu_v2_meridian_dependencies(mut deps: ResMut<SkillMeridianDependencies>) {
+    declare_woliu_v2_deps_direct(&mut deps);
+}
+
+/// 直接接受 `&mut SkillMeridianDependencies` 的无-ECS 变体，方便测试调用。
+pub fn declare_woliu_v2_deps_direct(deps: &mut SkillMeridianDependencies) {
     for skill_id in [
         WOLIU_HOLD_SKILL_ID,
         WOLIU_BURST_SKILL_ID,

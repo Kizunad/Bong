@@ -62,3 +62,20 @@ pub fn register_skills(registry: &mut SkillRegistry) {
     registry.register(DANDAO_PILL_BOMB_SKILL_ID, skills::resolve_pill_bomb);
     registry.register(DANDAO_PILL_MIST_SKILL_ID, skills::resolve_pill_mist);
 }
+
+pub fn declare_meridian_dependencies(
+    dependencies: &mut crate::cultivation::meridian::severed::SkillMeridianDependencies,
+) {
+    dependencies.declare(
+        DANDAO_PILL_RUSH_SKILL_ID,
+        skills::PILL_RUSH_MERIDIANS.to_vec(),
+    );
+    dependencies.declare(
+        DANDAO_PILL_BOMB_SKILL_ID,
+        skills::PILL_BOMB_MERIDIANS.to_vec(),
+    );
+    dependencies.declare(
+        DANDAO_PILL_MIST_SKILL_ID,
+        skills::PILL_MIST_MERIDIANS.to_vec(),
+    );
+}

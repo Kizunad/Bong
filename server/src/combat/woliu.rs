@@ -163,6 +163,12 @@ pub fn register_skills(registry: &mut SkillRegistry) {
     registry.register(WOLIU_VORTEX_SKILL_ID, resolve_woliu_vortex_skill);
 }
 
+pub fn declare_meridian_dependencies(
+    dependencies: &mut crate::cultivation::meridian::severed::SkillMeridianDependencies,
+) {
+    dependencies.declare(WOLIU_VORTEX_SKILL_ID, vec![MeridianId::Lung]);
+}
+
 pub fn resolve_woliu_vortex_skill(
     world: &mut bevy_ecs::world::World,
     caster: Entity,
@@ -178,6 +184,16 @@ pub fn resolve_woliu_vortex_skill(
         .is_some_and(|bindings| bindings.is_on_cooldown(slot, now_tick))
     {
         return rejected(CastRejectReason::OnCooldown);
+    }
+
+    // GAP-1 修复：check Lung 永久断脉 gate（woliu.vortex 依赖肺经调动涡流真元）。
+    let severed =
+        world.get::<crate::cultivation::meridian::severed::MeridianSeveredPermanent>(caster);
+    if let Err(blocked) = crate::cultivation::meridian::severed::check_meridian_dependencies(
+        &[MeridianId::Lung],
+        severed,
+    ) {
+        return rejected(CastRejectReason::MeridianSevered(Some(blocked)));
     }
 
     let toggle = if world.get::<VortexField>(caster).is_some() {
@@ -1460,6 +1476,47 @@ mod tests {
                 .iter_current_update_events()
                 .count(),
             1
+        );
+    }
+
+    #[test]
+    fn vortex_rejected_when_lung_permanently_severed() {
+        // GAP-1 修復テスト：MeridianSeveredPermanent に Lung が記録されているとき
+        // resolve_woliu_vortex_skill が MeridianSevered(Lung) を返すことを確認する。
+        use crate::cultivation::meridian::severed::{MeridianSeveredPermanent, SeveredSource};
+        let mut app = app(10);
+        let actor = spawn_actor(&mut app, Realm::Condense, 100.0);
+        // Lung を永久断脈としてマークする。
+        let mut severed = MeridianSeveredPermanent::default();
+        severed.insert(MeridianId::Lung, SeveredSource::CombatWound, 5);
+        app.world_mut().entity_mut(actor).insert(severed);
+
+        let result = resolve_woliu_vortex_skill(app.world_mut(), actor, 0, None);
+
+        assert_eq!(
+            result,
+            rejected(CastRejectReason::MeridianSevered(Some(MeridianId::Lung))),
+            "woliu.vortex は Lung 永久断脈時に MeridianSevered(Lung) で拒絶されなければならない"
+        );
+        // エンティティが変更されていないこと。
+        assert!(app.world().get::<VortexField>(actor).is_none());
+    }
+
+    #[test]
+    fn vortex_allowed_when_lung_intact_despite_severed_component_present() {
+        // Lung が SEVERED に含まれていなければ別経脈が SEVERED でも涡流は cast できる。
+        use crate::cultivation::meridian::severed::{MeridianSeveredPermanent, SeveredSource};
+        let mut app = app(10);
+        let actor = spawn_actor(&mut app, Realm::Condense, 100.0);
+        let mut severed = MeridianSeveredPermanent::default();
+        severed.insert(MeridianId::Heart, SeveredSource::CombatWound, 5); // Lung 以外
+        app.world_mut().entity_mut(actor).insert(severed);
+
+        let result = resolve_woliu_vortex_skill(app.world_mut(), actor, 0, None);
+
+        assert!(
+            matches!(result, CastResult::Started { .. }),
+            "Lung が intact なら woliu.vortex は cast できる: got {result:?}"
         );
     }
 
