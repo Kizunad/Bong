@@ -8514,9 +8514,7 @@ mod tests {
     /// 无需经过 raycast（因端到端几何无法可靠命中 ArmL）。
     #[test]
     fn dead_armor_arml_immune_in_multi_region_set() {
-        use crate::combat::baomai_v4::dead_armor::{
-            should_block_contamination, DeadMeridianArmor,
-        };
+        use crate::combat::baomai_v4::dead_armor::{should_block_contamination, DeadMeridianArmor};
 
         let mut armor = DeadMeridianArmor::default();
         armor.immune_regions.insert(BodyPart::Chest);

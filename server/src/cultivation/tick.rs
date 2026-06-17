@@ -1463,8 +1463,10 @@ mod tests {
             qi_max: 10.0,
             ..Default::default()
         };
-        let mut derived = DerivedAttrs::default();
-        derived.qi_max_multiplier = 0.5;
+        let derived = DerivedAttrs {
+            qi_max_multiplier: 0.5,
+            ..Default::default()
+        };
 
         let entity = app
             .world_mut()

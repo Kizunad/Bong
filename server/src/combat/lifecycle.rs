@@ -889,6 +889,9 @@ pub fn handle_revival_action_intents(
     mut lifecycle_q: Query<NearDeathPersistenceQueryItem<'_>>,
     mut clients: Query<&mut valence::prelude::Client>,
     mut vfx_events: EventWriter<VfxEventRequest>,
+    // P0 fix: coffin 清除参数（复活/新建时彻底清除 coffin 状态）
+    mut coffin_registry: Option<ResMut<crate::coffin::CoffinRegistry>>,
+    mut coffin_state_events: EventWriter<crate::coffin::CoffinStateChanged>,
 ) {
     for intent in intents.read() {
         let Ok((
@@ -941,6 +944,12 @@ pub fn handle_revival_action_intents(
                         position,
                         &mut revived,
                         &mut quota_opened,
+                        &mut commands,
+                        coffin_registry.as_deref_mut(),
+                        &mut coffin_state_events,
+                        username,
+                        lifespan.as_deref(),
+                        player_persistence.as_deref(),
                     ) {
                         commands
                             .entity(entity)
@@ -961,6 +970,16 @@ pub fn handle_revival_action_intents(
                     &mut vfx_events,
                     "tribulation_failed",
                 ) {
+                    // 劫数不过 → 形神俱散：清 coffin 状态（四件套），防止 Registry/ECS/SQLite 残留导致重启复钉。
+                    clear_coffin_on_exit(
+                        entity,
+                        &mut commands,
+                        coffin_registry.as_deref_mut(),
+                        &mut coffin_state_events,
+                        player_persistence.as_deref(),
+                        username,
+                        lifespan.as_deref(),
+                    );
                     commands
                         .entity(entity)
                         .remove::<crate::death_lifecycle::cinematic::DeathCinematic>();
@@ -998,6 +1017,16 @@ pub fn handle_revival_action_intents(
                     &mut vfx_events,
                     "voluntary_retire",
                 ) {
+                    // 主动归隐终结：清 coffin 状态（四件套），防止 Registry/ECS/SQLite 残留导致重启复钉。
+                    clear_coffin_on_exit(
+                        entity,
+                        &mut commands,
+                        coffin_registry.as_deref_mut(),
+                        &mut coffin_state_events,
+                        player_persistence.as_deref(),
+                        username,
+                        lifespan.as_deref(),
+                    );
                     commands
                         .entity(entity)
                         .remove::<crate::death_lifecycle::cinematic::DeathCinematic>();
@@ -1034,6 +1063,8 @@ pub fn handle_revival_action_intents(
                     player_persistence.as_deref(),
                     default_loadout.as_deref(),
                     inventory_allocator.as_deref_mut(),
+                    coffin_registry.as_deref_mut(),
+                    &mut coffin_state_events,
                 );
                 commands
                     .entity(entity)
@@ -1363,6 +1394,13 @@ fn revive_lifecycle(
     position: Option<valence::prelude::Mut<'_, Position>>,
     revived: &mut EventWriter<PlayerRevived>,
     quota_opened: &mut EventWriter<AscensionQuotaOpened>,
+    // P0 fix: coffin 清除参数（复活后不应继续锁棺）
+    commands: &mut valence::prelude::Commands,
+    coffin_registry: Option<&mut crate::coffin::CoffinRegistry>,
+    coffin_state_events: &mut EventWriter<crate::coffin::CoffinStateChanged>,
+    coffin_username: Option<&Username>,
+    coffin_lifespan: Option<&crate::cultivation::lifespan::LifespanComponent>,
+    coffin_player_persistence: Option<&PlayerStatePersistence>,
 ) -> bool {
     let mut staged_lifecycle = lifecycle.clone();
     if matches!(
@@ -1460,8 +1498,49 @@ fn revive_lifecycle(
         );
     }
 
+    // P0 fix: 清 coffin 状态（复活后不应继续锁棺）。统一走 clear_coffin_on_exit 四件套。
+    clear_coffin_on_exit(
+        entity,
+        commands,
+        coffin_registry,
+        coffin_state_events,
+        coffin_player_persistence,
+        coffin_username,
+        coffin_lifespan,
+    );
+
     revived.send(PlayerRevived { entity });
     true
+}
+
+/// 棺材状态四件套清除：CoffinRegistry + CoffinComponent(ECS) + SQLite(persist_in_coffin) + CoffinStateChanged。
+///
+/// 用于 revive / terminate / new_char 三条退出路径，确保任何离棺场景都不遗漏。
+/// 仅当玩家确实在棺内（registry.clear_player 返回 Some）时才落持久化和事件，避免噪音。
+fn clear_coffin_on_exit(
+    entity: Entity,
+    commands: &mut valence::prelude::Commands,
+    coffin_registry: Option<&mut crate::coffin::CoffinRegistry>,
+    coffin_state_events: &mut EventWriter<crate::coffin::CoffinStateChanged>,
+    player_persistence: Option<&PlayerStatePersistence>,
+    username: Option<&Username>,
+    lifespan: Option<&crate::cultivation::lifespan::LifespanComponent>,
+) {
+    let was_in_coffin = if let Some(registry) = coffin_registry {
+        registry.clear_player(entity).is_some()
+    } else {
+        false
+    };
+    commands
+        .entity(entity)
+        .remove::<crate::coffin::CoffinComponent>();
+    if was_in_coffin {
+        crate::coffin::persist_in_coffin(player_persistence, username, lifespan, None);
+        coffin_state_events.send(crate::coffin::CoffinStateChanged {
+            player: entity,
+            grade: None,
+        });
+    }
 }
 
 fn damaged_spawn_anchor_weakened_multiplier(lifecycle: &Lifecycle) -> u64 {
@@ -1617,6 +1696,9 @@ fn reset_for_new_character(
     player_persistence: Option<&PlayerStatePersistence>,
     default_loadout: Option<&DefaultLoadout>,
     inventory_allocator: Option<&mut InventoryInstanceIdAllocator>,
+    // P0 fix: coffin 清除参数（新建角色不应继承死亡前的棺状态）
+    coffin_registry: Option<&mut crate::coffin::CoffinRegistry>,
+    coffin_state_events: &mut EventWriter<crate::coffin::CoffinStateChanged>,
 ) {
     let mut next_character_id = None;
     if let (Some(username), Some(player_persistence)) = (username, player_persistence) {
@@ -1763,6 +1845,25 @@ fn reset_for_new_character(
                 username.0
             );
         }
+    }
+
+    // P0 fix: 清 coffin 状态（新建角色不应继承死亡前的棺状态）。
+    // 仅当玩家确实在棺内（clear_player 返回 Some）时才发 CoffinStateChanged，避免噪音推送。
+    let was_in_coffin = if let Some(coffin_registry) = coffin_registry {
+        coffin_registry.clear_player(entity).is_some()
+    } else {
+        false
+    };
+    commands
+        .entity(entity)
+        .remove::<crate::coffin::CoffinComponent>();
+    if was_in_coffin {
+        // fresh_lifespan 已覆写 ECS 值（新角色寿元），以 None grade 落盘清棺+新角色寿元同帧落盘
+        crate::coffin::persist_in_coffin(player_persistence, username, Some(&fresh_lifespan), None);
+        coffin_state_events.send(crate::coffin::CoffinStateChanged {
+            player: entity,
+            grade: None,
+        });
     }
 }
 
@@ -2695,6 +2796,7 @@ mod tests {
         app.add_event::<RevivalActionIntent>();
         app.add_event::<AscensionQuotaOpened>();
         app.add_event::<VfxEventRequest>();
+        app.add_event::<crate::coffin::CoffinStateChanged>();
         app.add_systems(
             Update,
             (
@@ -3665,6 +3767,7 @@ mod tests {
         app.add_event::<AscensionQuotaOpened>();
         app.add_event::<crate::skill::events::SkillCapChanged>();
         app.add_event::<VfxEventRequest>();
+        app.add_event::<crate::coffin::CoffinStateChanged>();
         app.add_systems(
             Update,
             (
@@ -3822,6 +3925,7 @@ mod tests {
         app.add_event::<PlayerTerminated>();
         app.add_event::<AscensionQuotaOpened>();
         app.add_event::<VfxEventRequest>();
+        app.add_event::<crate::coffin::CoffinStateChanged>();
         app.add_systems(Update, handle_revival_action_intents);
 
         let entity = app
@@ -3894,6 +3998,7 @@ mod tests {
         app.add_event::<RevivalActionIntent>();
         app.add_event::<AscensionQuotaOpened>();
         app.add_event::<VfxEventRequest>();
+        app.add_event::<crate::coffin::CoffinStateChanged>();
         app.add_systems(
             Update,
             (
@@ -3972,6 +4077,7 @@ mod tests {
         app.add_event::<PlayerTerminated>();
         app.add_event::<AscensionQuotaOpened>();
         app.add_event::<VfxEventRequest>();
+        app.add_event::<crate::coffin::CoffinStateChanged>();
         app.add_systems(Update, handle_revival_action_intents);
 
         let alive = app
@@ -4043,6 +4149,7 @@ mod tests {
         app.add_event::<RevivalActionIntent>();
         app.add_event::<AscensionQuotaOpened>();
         app.add_event::<VfxEventRequest>();
+        app.add_event::<crate::coffin::CoffinStateChanged>();
         app.add_systems(
             Update,
             (
@@ -4118,6 +4225,7 @@ mod tests {
         app.add_event::<PlayerTerminated>();
         app.add_event::<AscensionQuotaOpened>();
         app.add_event::<VfxEventRequest>();
+        app.add_event::<crate::coffin::CoffinStateChanged>();
         app.add_systems(Update, handle_revival_action_intents);
 
         let username = Username("Azure".to_string());
@@ -4320,6 +4428,7 @@ mod tests {
         app.add_event::<PlayerTerminated>();
         app.add_event::<AscensionQuotaOpened>();
         app.add_event::<VfxEventRequest>();
+        app.add_event::<crate::coffin::CoffinStateChanged>();
         app.add_systems(Update, handle_revival_action_intents);
 
         let username = Username("Azure".to_string());
@@ -4575,6 +4684,7 @@ mod tests {
         app.add_event::<PlayerTerminated>();
         app.add_event::<AscensionQuotaOpened>();
         app.add_event::<VfxEventRequest>();
+        app.add_event::<crate::coffin::CoffinStateChanged>();
         app.add_systems(Update, handle_revival_action_intents);
 
         let shrine_anchor = [123.0, 45.0, -67.0];
@@ -4652,6 +4762,7 @@ mod tests {
         app.add_event::<PlayerTerminated>();
         app.add_event::<AscensionQuotaOpened>();
         app.add_event::<VfxEventRequest>();
+        app.add_event::<crate::coffin::CoffinStateChanged>();
         app.add_systems(Update, handle_revival_action_intents);
 
         let damaged = app
@@ -4776,5 +4887,869 @@ mod tests {
              actual: {:?}",
             target_stamina.state
         );
+    }
+
+    // ─────────────── P0 fix: revive/new_char 清 coffin 状态 ───────────────
+    //
+    // 覆盖 r5-P0 修复：入棺玩家复活/新建角色后 coffin 状态必须彻底清除。
+    // 三件套：CoffinComponent（ECS）+ CoffinRegistry + CoffinStateChanged 事件。
+    // 持久化层（SQLite persist_in_coffin）在无 PlayerStatePersistence 时静默跳过，
+    // 单测靠 CoffinRegistry + ECS 断言可观察行为。
+
+    fn make_coffin_registry_with_player(player: Entity) -> crate::coffin::CoffinRegistry {
+        let lower = valence::prelude::BlockPos::new(10, 64, 10);
+        let mut registry = crate::coffin::CoffinRegistry::default();
+        registry.insert(lower, 0, crate::coffin::CoffinGrade::Mundane);
+        registry.set_occupied(lower, player);
+        registry
+    }
+
+    fn coffin_setup_base(app: &mut App, tick: u64) {
+        let (settings, _root) = persistence_settings("coffin-clear-revive");
+        app.insert_resource(settings);
+        app.insert_resource(CombatClock { tick });
+        app.add_event::<RevivalActionIntent>();
+        app.add_event::<PlayerRevived>();
+        app.add_event::<PlayerTerminated>();
+        app.add_event::<AscensionQuotaOpened>();
+        app.add_event::<VfxEventRequest>();
+        app.add_event::<crate::coffin::CoffinStateChanged>();
+        app.add_systems(Update, handle_revival_action_intents);
+    }
+
+    /// 入棺玩家复活后：
+    ///   - CoffinComponent 从 entity 移除（期望：None，因为复活后不应继续锁棺）
+    ///   - CoffinRegistry.player_in_coffin 不含该 entity（期望：None，因为 clear_player 清双索引）
+    ///   - CoffinStateChanged 事件被发出 grade=None（期望：收到 1 条，因为玩家确实在棺内）
+    #[test]
+    fn revive_clears_coffin_component_and_registry_and_emits_state_changed() {
+        let mut app = App::new();
+        coffin_setup_base(&mut app, 500);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                Wounds {
+                    health_current: 1.0,
+                    health_max: 30.0,
+                    entries: Vec::new(),
+                },
+                Stamina::default(),
+                CombatState::default(),
+                Lifecycle {
+                    character_id: "offline:CoffinRevive".to_string(),
+                    state: LifecycleState::AwaitingRevival,
+                    awaiting_decision: Some(RevivalDecision::Fortune { chance: 1.0 }),
+                    revival_decision_deadline_tick: Some(600),
+                    fortune_remaining: 1,
+                    ..Default::default()
+                },
+                Cultivation {
+                    realm: Realm::Awaken,
+                    qi_current: 10.0,
+                    qi_max: 100.0,
+                    ..Default::default()
+                },
+                MeridianSystem::default(),
+                Contamination::default(),
+                LifeRecord::new("offline:CoffinRevive"),
+                crate::coffin::CoffinComponent {
+                    entered_at_tick: 400,
+                    coffin_lower: valence::prelude::BlockPos::new(10, 64, 10),
+                    grade: crate::coffin::CoffinGrade::Mundane,
+                },
+            ))
+            .id();
+
+        let registry = make_coffin_registry_with_player(entity);
+        app.insert_resource(registry);
+
+        app.world_mut().send_event(RevivalActionIntent {
+            entity,
+            action: RevivalActionKind::Reincarnate,
+            issued_at_tick: 500,
+        });
+        app.update();
+
+        // CoffinComponent 应已从 entity 移除（复活后不继续锁棺）
+        assert!(
+            app.world()
+                .entity(entity)
+                .get::<crate::coffin::CoffinComponent>()
+                .is_none(),
+            "期望 CoffinComponent=None（复活后不锁棺），实际仍有 CoffinComponent"
+        );
+
+        // CoffinRegistry.player_in_coffin 应清空
+        let reg = app.world().resource::<crate::coffin::CoffinRegistry>();
+        assert!(
+            !reg.player_in_coffin.contains_key(&entity),
+            "期望 player_in_coffin 不含 entity（clear_player 应清双索引），实际仍含该 entity"
+        );
+
+        // CoffinStateChanged(grade=None) 应被发送
+        let state_events = app
+            .world_mut()
+            .resource_mut::<Events<crate::coffin::CoffinStateChanged>>()
+            .drain()
+            .collect::<Vec<_>>();
+        assert_eq!(
+            state_events.len(),
+            1,
+            "期望发出 1 条 CoffinStateChanged（玩家在棺内复活），实际发出 {} 条",
+            state_events.len()
+        );
+        assert!(
+            state_events[0].grade.is_none(),
+            "期望 CoffinStateChanged.grade=None（离棺），实际 {:?}",
+            state_events[0].grade
+        );
+    }
+
+    /// 非入棺玩家复活：不误清、不误发 CoffinStateChanged。
+    ///   - CoffinComponent 不存在（期望：无副作用，remove 幂等）
+    ///   - CoffinStateChanged 事件不发（期望：0 条，因为玩家本来不在棺内）
+    #[test]
+    fn revive_without_coffin_does_not_emit_coffin_state_changed() {
+        let mut app = App::new();
+        coffin_setup_base(&mut app, 500);
+        // 空 registry：无任何棺
+        app.insert_resource(crate::coffin::CoffinRegistry::default());
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                Wounds {
+                    health_current: 1.0,
+                    health_max: 30.0,
+                    entries: Vec::new(),
+                },
+                Stamina::default(),
+                CombatState::default(),
+                Lifecycle {
+                    character_id: "offline:NoCoffin".to_string(),
+                    state: LifecycleState::AwaitingRevival,
+                    awaiting_decision: Some(RevivalDecision::Fortune { chance: 1.0 }),
+                    revival_decision_deadline_tick: Some(600),
+                    fortune_remaining: 1,
+                    ..Default::default()
+                },
+                Cultivation {
+                    realm: Realm::Awaken,
+                    qi_current: 10.0,
+                    qi_max: 100.0,
+                    ..Default::default()
+                },
+                MeridianSystem::default(),
+                Contamination::default(),
+                LifeRecord::new("offline:NoCoffin"),
+                // 无 CoffinComponent
+            ))
+            .id();
+
+        app.world_mut().send_event(RevivalActionIntent {
+            entity,
+            action: RevivalActionKind::Reincarnate,
+            issued_at_tick: 500,
+        });
+        app.update();
+
+        // CoffinComponent 本来就没有，remove 幂等，entity 无异常
+        assert!(
+            app.world()
+                .entity(entity)
+                .get::<crate::coffin::CoffinComponent>()
+                .is_none(),
+            "非棺内玩家复活后 CoffinComponent 应为 None（remove 幂等）"
+        );
+
+        // 不应发出 CoffinStateChanged（clear_player 返回 None → 条件不满足 → 不发事件）
+        let state_events = app
+            .world_mut()
+            .resource_mut::<Events<crate::coffin::CoffinStateChanged>>()
+            .drain()
+            .collect::<Vec<_>>();
+        assert_eq!(
+            state_events.len(),
+            0,
+            "期望非棺内玩家复活不发 CoffinStateChanged（避免噪音推送），实际发出 {} 条",
+            state_events.len()
+        );
+    }
+
+    /// 新建角色：coffin 状态同样清除（即便理论上新角色无 coffin，防止旧 entity 残留）。
+    ///   - CoffinComponent 从 entity 移除（期望：None，因为新角色不继承死亡前棺状态）
+    ///   - CoffinRegistry.player_in_coffin 不含该 entity（期望：None）
+    ///   - CoffinStateChanged 事件被发出 grade=None（期望：1 条，因为玩家在棺内）
+    #[test]
+    fn create_new_character_clears_coffin_state_and_emits_state_changed() {
+        let mut app = App::new();
+        let (settings, root) = persistence_settings("coffin-clear-new-char");
+        let data_dir = root.join("data");
+        app.insert_resource(settings.clone());
+        app.insert_resource(PlayerStatePersistence::with_db_path(
+            &data_dir,
+            settings.db_path(),
+        ));
+        app.insert_resource(CombatClock { tick: 800 });
+        let item_registry =
+            crate::inventory::load_item_registry().expect("item registry should load");
+        let default_loadout = crate::inventory::load_default_loadout(&item_registry)
+            .expect("default loadout should load");
+        app.insert_resource(DefaultLoadout(default_loadout));
+        app.insert_resource(InventoryInstanceIdAllocator::default());
+        app.add_event::<RevivalActionIntent>();
+        app.add_event::<PlayerRevived>();
+        app.add_event::<PlayerTerminated>();
+        app.add_event::<AscensionQuotaOpened>();
+        app.add_event::<VfxEventRequest>();
+        app.add_event::<crate::coffin::CoffinStateChanged>();
+        app.add_systems(Update, handle_revival_action_intents);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                Wounds::default(),
+                Stamina::default(),
+                CombatState::default(),
+                Lifecycle {
+                    character_id: "offline:CoffinNewChar".to_string(),
+                    state: LifecycleState::Terminated,
+                    ..Default::default()
+                },
+                LifeRecord::new("offline:CoffinNewChar"),
+                DeathRegistry::new("offline:CoffinNewChar"),
+                LifespanComponent {
+                    born_at_tick: 0,
+                    years_lived: 50.0,
+                    cap_by_realm: crate::cultivation::lifespan::LifespanCapTable::AWAKEN,
+                    offline_pause_tick: None,
+                },
+                Cultivation::default(),
+                MeridianSystem::default(),
+                crate::coffin::CoffinComponent {
+                    entered_at_tick: 700,
+                    coffin_lower: valence::prelude::BlockPos::new(20, 64, 20),
+                    grade: crate::coffin::CoffinGrade::Jade,
+                },
+            ))
+            .id();
+
+        let registry = make_coffin_registry_with_player(entity);
+        app.insert_resource(registry);
+
+        app.world_mut().send_event(RevivalActionIntent {
+            entity,
+            action: RevivalActionKind::CreateNewCharacter,
+            issued_at_tick: 800,
+        });
+        app.update();
+
+        // CoffinComponent 应已从 entity 移除（新建角色不继承旧棺状态）
+        assert!(
+            app.world()
+                .entity(entity)
+                .get::<crate::coffin::CoffinComponent>()
+                .is_none(),
+            "期望 CoffinComponent=None（新建角色后不锁棺），实际仍有 CoffinComponent"
+        );
+
+        // CoffinRegistry.player_in_coffin 应清空
+        let reg = app.world().resource::<crate::coffin::CoffinRegistry>();
+        assert!(
+            !reg.player_in_coffin.contains_key(&entity),
+            "期望新建角色后 player_in_coffin 不含 entity，实际仍含"
+        );
+
+        // CoffinStateChanged(grade=None) 应被发送（玩家确实在棺内 → clear_player 返回 Some）
+        let state_events = app
+            .world_mut()
+            .resource_mut::<Events<crate::coffin::CoffinStateChanged>>()
+            .drain()
+            .collect::<Vec<_>>();
+        assert_eq!(
+            state_events.len(),
+            1,
+            "期望新建角色发出 1 条 CoffinStateChanged（玩家在棺内），实际 {} 条",
+            state_events.len()
+        );
+        assert!(
+            state_events[0].grade.is_none(),
+            "期望 CoffinStateChanged.grade=None（离棺），实际 {:?}",
+            state_events[0].grade
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// 边界：入棺 → 复活 → 再入棺 → 再复活，两次循环均正常清除 coffin 状态。
+    #[test]
+    fn revive_enter_coffin_revive_cycle_clears_correctly() {
+        let mut app = App::new();
+        coffin_setup_base(&mut app, 100);
+        app.insert_resource(crate::coffin::CoffinRegistry::default());
+
+        // 第一轮：带 CoffinComponent 的玩家复活
+        let lower = valence::prelude::BlockPos::new(5, 64, 5);
+        let entity = app
+            .world_mut()
+            .spawn((
+                Wounds {
+                    health_current: 1.0,
+                    health_max: 30.0,
+                    entries: Vec::new(),
+                },
+                Stamina::default(),
+                CombatState::default(),
+                Lifecycle {
+                    character_id: "offline:CycleTest".to_string(),
+                    state: LifecycleState::AwaitingRevival,
+                    awaiting_decision: Some(RevivalDecision::Fortune { chance: 1.0 }),
+                    revival_decision_deadline_tick: Some(200),
+                    fortune_remaining: 3,
+                    ..Default::default()
+                },
+                Cultivation {
+                    realm: Realm::Awaken,
+                    qi_current: 10.0,
+                    qi_max: 100.0,
+                    ..Default::default()
+                },
+                MeridianSystem::default(),
+                Contamination::default(),
+                LifeRecord::new("offline:CycleTest"),
+                crate::coffin::CoffinComponent {
+                    entered_at_tick: 50,
+                    coffin_lower: lower,
+                    grade: crate::coffin::CoffinGrade::Mundane,
+                },
+            ))
+            .id();
+
+        {
+            let mut reg = app
+                .world_mut()
+                .resource_mut::<crate::coffin::CoffinRegistry>();
+            reg.insert(lower, 0, crate::coffin::CoffinGrade::Mundane);
+            reg.set_occupied(lower, entity);
+        }
+
+        // 第一次复活
+        app.world_mut().send_event(RevivalActionIntent {
+            entity,
+            action: RevivalActionKind::Reincarnate,
+            issued_at_tick: 100,
+        });
+        app.update();
+
+        // 第一次复活后：棺状态已清除
+        assert!(
+            app.world()
+                .entity(entity)
+                .get::<crate::coffin::CoffinComponent>()
+                .is_none(),
+            "第一次复活后 CoffinComponent 应为 None"
+        );
+        {
+            let reg = app.world().resource::<crate::coffin::CoffinRegistry>();
+            assert!(
+                !reg.player_in_coffin.contains_key(&entity),
+                "第一次复活后 player_in_coffin 应为空"
+            );
+        }
+
+        // 模拟第二次入棺（ECS 加回 CoffinComponent，registry 重新 set_occupied）
+        let lower2 = valence::prelude::BlockPos::new(30, 64, 30);
+        app.world_mut()
+            .entity_mut(entity)
+            .insert(crate::coffin::CoffinComponent {
+                entered_at_tick: 150,
+                coffin_lower: lower2,
+                grade: crate::coffin::CoffinGrade::Mundane,
+            });
+        {
+            let world = app.world_mut();
+            let mut entity_ref = world.entity_mut(entity);
+            let mut lifecycle = entity_ref.get_mut::<Lifecycle>().unwrap();
+            lifecycle.state = LifecycleState::AwaitingRevival;
+            lifecycle.awaiting_decision = Some(RevivalDecision::Fortune { chance: 1.0 });
+            lifecycle.revival_decision_deadline_tick = Some(300);
+        }
+        {
+            let mut reg = app
+                .world_mut()
+                .resource_mut::<crate::coffin::CoffinRegistry>();
+            reg.insert(lower2, 100, crate::coffin::CoffinGrade::Mundane);
+            reg.set_occupied(lower2, entity);
+        }
+
+        // 第二次复活
+        app.world_mut().send_event(RevivalActionIntent {
+            entity,
+            action: RevivalActionKind::Reincarnate,
+            issued_at_tick: 200,
+        });
+        app.update();
+
+        // 第二次复活后：棺状态同样清除
+        assert!(
+            app.world()
+                .entity(entity)
+                .get::<crate::coffin::CoffinComponent>()
+                .is_none(),
+            "第二次复活后 CoffinComponent 应为 None（循环应正常清除）"
+        );
+        {
+            let reg = app.world().resource::<crate::coffin::CoffinRegistry>();
+            assert!(
+                !reg.player_in_coffin.contains_key(&entity),
+                "第二次复活后 player_in_coffin 应为空（循环应正常清除）"
+            );
+        }
+    }
+
+    // ─────────── must_fix #1&#2: terminate 路径清 coffin（ECS + Registry + CoffinStateChanged）───────────
+
+    /// 劫数不过（tribulation_failed）→ terminate_lifecycle 后 coffin 状态必须全部清除：
+    ///   - CoffinComponent 从 entity 移除（期望：None）
+    ///   - CoffinRegistry.player_in_coffin 不含该 entity（期望：None）
+    ///   - CoffinStateChanged(grade=None) 被发出（期望：1 条）
+    #[test]
+    fn tribulation_failed_terminate_clears_coffin_state() {
+        let mut app = App::new();
+        coffin_setup_base(&mut app, 600);
+        // 注：coffin_setup_base 不预插 CoffinRegistry，需手动 insert 后再 set_occupied
+        app.insert_resource(crate::coffin::CoffinRegistry::default());
+
+        let lower = valence::prelude::BlockPos::new(15, 64, 15);
+        let entity = app
+            .world_mut()
+            .spawn((
+                Wounds {
+                    health_current: 1.0,
+                    health_max: 30.0,
+                    entries: Vec::new(),
+                },
+                Stamina::default(),
+                CombatState::default(),
+                Lifecycle {
+                    character_id: "offline:TribFail".to_string(),
+                    state: LifecycleState::AwaitingRevival,
+                    // 劫数决策，chance=0 → roll_rebirth 必然返回 false → 走 terminate 分支
+                    awaiting_decision: Some(RevivalDecision::Tribulation { chance: 0.0 }),
+                    revival_decision_deadline_tick: Some(700),
+                    fortune_remaining: 0,
+                    ..Default::default()
+                },
+                Cultivation {
+                    realm: Realm::Awaken,
+                    qi_current: 10.0,
+                    qi_max: 100.0,
+                    ..Default::default()
+                },
+                MeridianSystem::default(),
+                Contamination::default(),
+                LifeRecord::new("offline:TribFail"),
+                crate::coffin::CoffinComponent {
+                    entered_at_tick: 550,
+                    coffin_lower: lower,
+                    grade: crate::coffin::CoffinGrade::Mundane,
+                },
+            ))
+            .id();
+
+        {
+            let mut reg = app
+                .world_mut()
+                .resource_mut::<crate::coffin::CoffinRegistry>();
+            reg.insert(lower, 0, crate::coffin::CoffinGrade::Mundane);
+            reg.set_occupied(lower, entity);
+        }
+
+        // 发 Reincarnate；因 chance=0 roll 必失 → 走 terminate 分支
+        app.world_mut().send_event(RevivalActionIntent {
+            entity,
+            action: RevivalActionKind::Reincarnate,
+            issued_at_tick: 600,
+        });
+        app.update();
+
+        // 验证：CoffinComponent 已移除
+        assert!(
+            app.world()
+                .entity(entity)
+                .get::<crate::coffin::CoffinComponent>()
+                .is_none(),
+            "期望 tribulation_failed 后 CoffinComponent=None，实际仍存在"
+        );
+
+        // 验证：Registry 已清空
+        let reg = app.world().resource::<crate::coffin::CoffinRegistry>();
+        assert!(
+            !reg.player_in_coffin.contains_key(&entity),
+            "期望 tribulation_failed 后 player_in_coffin 不含 entity，实际仍含"
+        );
+
+        // 验证：CoffinStateChanged(grade=None) 被发出
+        let state_events = app
+            .world_mut()
+            .resource_mut::<Events<crate::coffin::CoffinStateChanged>>()
+            .drain()
+            .collect::<Vec<_>>();
+        assert_eq!(
+            state_events.len(),
+            1,
+            "期望 tribulation_failed 发出 1 条 CoffinStateChanged，实际 {} 条",
+            state_events.len()
+        );
+        assert!(
+            state_events[0].grade.is_none(),
+            "期望 CoffinStateChanged.grade=None（离棺），实际 {:?}",
+            state_events[0].grade
+        );
+    }
+
+    /// 主动归隐（voluntary_retire / Terminate 决策）后 coffin 状态必须全部清除：
+    ///   - CoffinComponent 从 entity 移除（期望：None）
+    ///   - CoffinRegistry.player_in_coffin 不含该 entity（期望：None）
+    ///   - CoffinStateChanged(grade=None) 被发出（期望：1 条）
+    #[test]
+    fn voluntary_retire_terminate_clears_coffin_state() {
+        let mut app = App::new();
+        coffin_setup_base(&mut app, 700);
+        app.insert_resource(crate::coffin::CoffinRegistry::default());
+
+        let lower = valence::prelude::BlockPos::new(25, 64, 25);
+        let entity = app
+            .world_mut()
+            .spawn((
+                Wounds {
+                    health_current: 1.0,
+                    health_max: 30.0,
+                    entries: Vec::new(),
+                },
+                Stamina::default(),
+                CombatState::default(),
+                Lifecycle {
+                    character_id: "offline:VolRetire".to_string(),
+                    state: LifecycleState::AwaitingRevival,
+                    // Tribulation 决策 + fortune_remaining=0 → can_terminate()=true
+                    awaiting_decision: Some(RevivalDecision::Tribulation { chance: 0.5 }),
+                    revival_decision_deadline_tick: Some(800),
+                    fortune_remaining: 0,
+                    ..Default::default()
+                },
+                Cultivation {
+                    realm: Realm::Awaken,
+                    qi_current: 10.0,
+                    qi_max: 100.0,
+                    ..Default::default()
+                },
+                MeridianSystem::default(),
+                Contamination::default(),
+                LifeRecord::new("offline:VolRetire"),
+                crate::coffin::CoffinComponent {
+                    entered_at_tick: 650,
+                    coffin_lower: lower,
+                    grade: crate::coffin::CoffinGrade::Mundane,
+                },
+            ))
+            .id();
+
+        {
+            let mut reg = app
+                .world_mut()
+                .resource_mut::<crate::coffin::CoffinRegistry>();
+            reg.insert(lower, 0, crate::coffin::CoffinGrade::Mundane);
+            reg.set_occupied(lower, entity);
+        }
+
+        // 发 Terminate（主动归隐）
+        app.world_mut().send_event(RevivalActionIntent {
+            entity,
+            action: RevivalActionKind::Terminate,
+            issued_at_tick: 700,
+        });
+        app.update();
+
+        // 验证：CoffinComponent 已移除
+        assert!(
+            app.world()
+                .entity(entity)
+                .get::<crate::coffin::CoffinComponent>()
+                .is_none(),
+            "期望 voluntary_retire 后 CoffinComponent=None，实际仍存在"
+        );
+
+        // 验证：Registry 已清空
+        let reg = app.world().resource::<crate::coffin::CoffinRegistry>();
+        assert!(
+            !reg.player_in_coffin.contains_key(&entity),
+            "期望 voluntary_retire 后 player_in_coffin 不含 entity，实际仍含"
+        );
+
+        // 验证：CoffinStateChanged(grade=None) 被发出
+        let state_events = app
+            .world_mut()
+            .resource_mut::<Events<crate::coffin::CoffinStateChanged>>()
+            .drain()
+            .collect::<Vec<_>>();
+        assert_eq!(
+            state_events.len(),
+            1,
+            "期望 voluntary_retire 发出 1 条 CoffinStateChanged，实际 {} 条",
+            state_events.len()
+        );
+        assert!(
+            state_events[0].grade.is_none(),
+            "期望 CoffinStateChanged.grade=None（离棺），实际 {:?}",
+            state_events[0].grade
+        );
+    }
+
+    // ─────────── must_fix #3a: SQLite in_coffin 持久化契约锁住（带 Username + PlayerStatePersistence）─────────
+
+    /// 棺内玩家复活后，SQLite in_coffin 列必须被写为 false（0）。
+    /// 这是重启后唯一的权威来源（player/mod.rs:258 读 in_coffin=true 即重新复钉）。
+    ///
+    /// 断言：load_player_slices(...).in_coffin == false（回读 SQLite，不依赖内存状态）
+    #[test]
+    fn revive_with_username_clears_sqlite_in_coffin() {
+        let mut app = App::new();
+        let (settings, root) = persistence_settings("sqlite-coffin-revive");
+        let data_dir = root.join("data");
+
+        app.insert_resource(settings.clone());
+        app.insert_resource(PlayerStatePersistence::with_db_path(
+            &data_dir,
+            settings.db_path(),
+        ));
+        app.insert_resource(CombatClock { tick: 500 });
+        app.add_event::<RevivalActionIntent>();
+        app.add_event::<PlayerRevived>();
+        app.add_event::<PlayerTerminated>();
+        app.add_event::<AscensionQuotaOpened>();
+        app.add_event::<VfxEventRequest>();
+        app.add_event::<crate::coffin::CoffinStateChanged>();
+        app.add_systems(Update, handle_revival_action_intents);
+
+        let username = Username("SQLiteCoffinRevive".to_string());
+        let lifespan = crate::cultivation::lifespan::LifespanComponent {
+            born_at_tick: 0,
+            years_lived: 20.0,
+            cap_by_realm: crate::cultivation::lifespan::LifespanCapTable::AWAKEN,
+            offline_pause_tick: None,
+        };
+        let lower = valence::prelude::BlockPos::new(40, 64, 40);
+
+        // 先写入 in_coffin=true 到 SQLite（模拟玩家断线前已入棺状态）
+        crate::player::state::save_player_lifespan_slice_with_coffin(
+            &PlayerStatePersistence::with_db_path(&data_dir, settings.db_path()),
+            username.0.as_str(),
+            &lifespan,
+            Some(crate::coffin::CoffinGrade::Mundane),
+        )
+        .expect("pre-populate in_coffin=true 应成功");
+
+        // 验证前置条件：SQLite 已有 in_coffin=true
+        let before = crate::player::state::load_player_slices(
+            &PlayerStatePersistence::with_db_path(&data_dir, settings.db_path()),
+            username.0.as_str(),
+        );
+        assert!(
+            before.in_coffin,
+            "前置条件：SQLite in_coffin 应为 true（已写入），实际 false"
+        );
+
+        // 构造带 Username + LifespanComponent 的玩家 entity
+        let entity = app
+            .world_mut()
+            .spawn((
+                Wounds {
+                    health_current: 1.0,
+                    health_max: 30.0,
+                    entries: Vec::new(),
+                },
+                Stamina::default(),
+                CombatState::default(),
+                Lifecycle {
+                    character_id: "offline:SQLiteCoffinRevive".to_string(),
+                    state: LifecycleState::AwaitingRevival,
+                    awaiting_decision: Some(RevivalDecision::Fortune { chance: 1.0 }),
+                    revival_decision_deadline_tick: Some(600),
+                    fortune_remaining: 1,
+                    ..Default::default()
+                },
+                Cultivation {
+                    realm: Realm::Awaken,
+                    qi_current: 10.0,
+                    qi_max: 100.0,
+                    ..Default::default()
+                },
+                MeridianSystem::default(),
+                Contamination::default(),
+                LifeRecord::new("offline:SQLiteCoffinRevive"),
+                lifespan.clone(),
+                username.clone(),
+                crate::coffin::CoffinComponent {
+                    entered_at_tick: 400,
+                    coffin_lower: lower,
+                    grade: crate::coffin::CoffinGrade::Mundane,
+                },
+            ))
+            .id();
+
+        {
+            let mut reg = crate::coffin::CoffinRegistry::default();
+            reg.insert(lower, 0, crate::coffin::CoffinGrade::Mundane);
+            reg.set_occupied(lower, entity);
+            app.insert_resource(reg);
+        }
+
+        // 触发复活
+        app.world_mut().send_event(RevivalActionIntent {
+            entity,
+            action: RevivalActionKind::Reincarnate,
+            issued_at_tick: 500,
+        });
+        app.update();
+
+        // 核心断言：SQLite in_coffin 必须为 false（回读验证，不依赖 ECS 内存）
+        let after = crate::player::state::load_player_slices(
+            &PlayerStatePersistence::with_db_path(&data_dir, settings.db_path()),
+            username.0.as_str(),
+        );
+        assert!(
+            !after.in_coffin,
+            "期望复活后 SQLite in_coffin=false（重启不应再复钉），实际 in_coffin=true"
+        );
+        assert!(
+            after.coffin_grade.is_none(),
+            "期望复活后 SQLite coffin_grade=None（清棺），实际 {:?}",
+            after.coffin_grade
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// 劫数不过 terminate 后，SQLite in_coffin 列必须被写为 false（0）。
+    /// 同 revive_with_username_clears_sqlite_in_coffin，但走 terminate 路径。
+    #[test]
+    fn terminate_tribulation_failed_with_username_clears_sqlite_in_coffin() {
+        let mut app = App::new();
+        let (settings, root) = persistence_settings("sqlite-coffin-term");
+        let data_dir = root.join("data");
+
+        app.insert_resource(settings.clone());
+        app.insert_resource(PlayerStatePersistence::with_db_path(
+            &data_dir,
+            settings.db_path(),
+        ));
+        app.insert_resource(CombatClock { tick: 600 });
+        app.add_event::<RevivalActionIntent>();
+        app.add_event::<PlayerRevived>();
+        app.add_event::<PlayerTerminated>();
+        app.add_event::<AscensionQuotaOpened>();
+        app.add_event::<VfxEventRequest>();
+        app.add_event::<crate::coffin::CoffinStateChanged>();
+        app.add_systems(Update, handle_revival_action_intents);
+
+        let username = Username("SQLiteCoffinTerm".to_string());
+        let lifespan = crate::cultivation::lifespan::LifespanComponent {
+            born_at_tick: 0,
+            years_lived: 80.0,
+            cap_by_realm: crate::cultivation::lifespan::LifespanCapTable::AWAKEN,
+            offline_pause_tick: None,
+        };
+        let lower = valence::prelude::BlockPos::new(50, 64, 50);
+
+        // 先写入 in_coffin=true 到 SQLite
+        crate::player::state::save_player_lifespan_slice_with_coffin(
+            &PlayerStatePersistence::with_db_path(&data_dir, settings.db_path()),
+            username.0.as_str(),
+            &lifespan,
+            Some(crate::coffin::CoffinGrade::Jade),
+        )
+        .expect("pre-populate in_coffin=true 应成功");
+
+        // 前置验证
+        let before = crate::player::state::load_player_slices(
+            &PlayerStatePersistence::with_db_path(&data_dir, settings.db_path()),
+            username.0.as_str(),
+        );
+        assert!(
+            before.in_coffin,
+            "前置条件：SQLite in_coffin 应为 true，实际 false"
+        );
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                Wounds {
+                    health_current: 1.0,
+                    health_max: 30.0,
+                    entries: Vec::new(),
+                },
+                Stamina::default(),
+                CombatState::default(),
+                Lifecycle {
+                    character_id: "offline:SQLiteCoffinTerm".to_string(),
+                    state: LifecycleState::AwaitingRevival,
+                    // chance=0 → roll 必失 → terminate 分支
+                    awaiting_decision: Some(RevivalDecision::Tribulation { chance: 0.0 }),
+                    revival_decision_deadline_tick: Some(700),
+                    fortune_remaining: 0,
+                    ..Default::default()
+                },
+                Cultivation {
+                    realm: Realm::Awaken,
+                    qi_current: 10.0,
+                    qi_max: 100.0,
+                    ..Default::default()
+                },
+                MeridianSystem::default(),
+                Contamination::default(),
+                LifeRecord::new("offline:SQLiteCoffinTerm"),
+                lifespan.clone(),
+                username.clone(),
+                crate::coffin::CoffinComponent {
+                    entered_at_tick: 550,
+                    coffin_lower: lower,
+                    grade: crate::coffin::CoffinGrade::Jade,
+                },
+            ))
+            .id();
+
+        {
+            let mut reg = crate::coffin::CoffinRegistry::default();
+            reg.insert(lower, 0, crate::coffin::CoffinGrade::Jade);
+            reg.set_occupied(lower, entity);
+            app.insert_resource(reg);
+        }
+
+        // 触发 Reincarnate（chance=0 → 必走 terminate 分支）
+        app.world_mut().send_event(RevivalActionIntent {
+            entity,
+            action: RevivalActionKind::Reincarnate,
+            issued_at_tick: 600,
+        });
+        app.update();
+
+        // 核心断言：SQLite in_coffin 必须为 false
+        let after = crate::player::state::load_player_slices(
+            &PlayerStatePersistence::with_db_path(&data_dir, settings.db_path()),
+            username.0.as_str(),
+        );
+        assert!(
+            !after.in_coffin,
+            "期望 tribulation_failed terminate 后 SQLite in_coffin=false（重启不应复钉），实际 true"
+        );
+        assert!(
+            after.coffin_grade.is_none(),
+            "期望 terminate 后 SQLite coffin_grade=None，实际 {:?}",
+            after.coffin_grade
+        );
+
+        let _ = fs::remove_dir_all(root);
     }
 }
