@@ -1,0 +1,11 @@
+{
+  "id": "woliu_vortex_echo",
+  "layers": [
+    { "sound": "minecraft:entity.warden.sonic_boom", "volume": 0.07, "pitch": 0.45, "delay_ticks": 0 },
+    { "sound": "minecraft:block.beacon.ambient", "volume": 0.09, "pitch": 1.8, "delay_ticks": 6 }
+  ],
+  "priority": 64,
+  "attenuation": "world_3d",
+  "category": "AMBIENT",
+  "bus": "ENVIRONMENT"
+}

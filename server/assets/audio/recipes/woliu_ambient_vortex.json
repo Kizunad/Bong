@@ -1,0 +1,11 @@
+{
+  "id": "woliu_ambient_vortex",
+  "layers": [
+    { "sound": "minecraft:block.beacon.ambient", "volume": 0.06, "pitch": 0.45, "delay_ticks": 0 },
+    { "sound": "minecraft:entity.wither.ambient", "volume": 0.08, "pitch": 0.5, "delay_ticks": 5 }
+  ],
+  "priority": 61,
+  "attenuation": "world_3d",
+  "category": "AMBIENT",
+  "bus": "ENVIRONMENT"
+}

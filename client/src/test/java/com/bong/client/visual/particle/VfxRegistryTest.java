@@ -273,6 +273,22 @@ public class VfxRegistryTest {
             "bootstrap should register woliu-v3 vortex resonance particle");
         assertTrue(VfxRegistry.instance().contains(VortexSpiralPlayer.TURBULENCE_BURST),
             "bootstrap should register woliu-v3 turbulence burst particle");
+        // plan-woliu-path-v1：虚蚀路径 5 招式 particle IDs（必须与 VfxBootstrap.registerDefaults() 实际调用一致）
+        assertTrue(VfxRegistry.instance().contains(VortexSpiralPlayer.VORTEX_AMBIENT),
+            "bootstrap should register woliu erosion vortex_ambient (bong:vortex_ambient); "
+                + "missing registration causes BongVfxParticleBridge to silently drop VFX on AmbientVortex cast");
+        assertTrue(VfxRegistry.instance().contains(VortexSpiralPlayer.VOID_SPHERE),
+            "bootstrap should register woliu erosion void_sphere (bong:woliu_void_sphere); "
+                + "missing registration silently drops VFX on VoidVortex cast");
+        assertTrue(VfxRegistry.instance().contains(VortexSpiralPlayer.SWALLOWING_SPIRAL),
+            "bootstrap should register woliu erosion swallowing_spiral (bong:woliu_swallowing_spiral); "
+                + "missing registration silently drops VFX on SwallowingVortex cast");
+        assertTrue(VfxRegistry.instance().contains(VortexSpiralPlayer.ECHO_RIPPLE),
+            "bootstrap should register woliu erosion echo_ripple (bong:woliu_echo_ripple); "
+                + "missing registration silently drops VFX on VortexEcho cast");
+        assertTrue(VfxRegistry.instance().contains(VortexSpiralPlayer.VOID_CORE_COLLAPSE),
+            "bootstrap should register woliu erosion void_core_collapse (bong:woliu_void_core_collapse); "
+                + "missing registration silently drops VFX on VoidCore cast");
         assertTrue(VfxRegistry.instance().contains(TsyPortalVortexPlayer.MAIN_RIFT),
             "bootstrap should register TSY main rift portal VFX");
         assertTrue(VfxRegistry.instance().contains(TsyPortalVortexPlayer.DEEP_RIFT),
