@@ -27,6 +27,8 @@ pub fn register(app: &mut App) {
             tick::permanent_qi_max_decay_tick.after(tick::taint_decay_tick),
             tick::shroud_maintain_tick.after(tick::permanent_qi_max_decay_tick),
             tick::reverse_aftermath_decay_tick.after(tick::shroud_maintain_tick),
+            tick::eclipse_zone_credit_tick,
+            tick::reverse_zone_credit_tick,
         ),
     );
 }

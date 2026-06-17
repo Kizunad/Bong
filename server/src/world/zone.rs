@@ -280,6 +280,30 @@ impl ZoneRegistry {
         self.zones.iter_mut().find(|zone| zone.name == name)
     }
 
+    /// 按位置查找可变 zone（overworld），返回最小（最具体）AABB 命中的 zone 的可变引用。
+    ///
+    /// 用于 qi 入账需要直接修改 zone.spirit_qi 的场景（如毒蛊脏真元散回、BossDrain 后续等）。
+    /// `dim` 参数指定目标维度；调用方应从 `CurrentDimension` 组件读取实体所在维度后传入，
+    /// 而非硬编码 `DimensionKind::Overworld`（否则 Tsy 维度下 zone 查找永远返回 None）。
+    pub fn find_zone_mut_by_pos(
+        &mut self,
+        dim: crate::world::dimension::DimensionKind,
+        pos: valence::prelude::DVec3,
+    ) -> Option<&mut Zone> {
+        // 先找最小命中 zone 的名字（只读阶段），再通过名字拿 &mut（避免借用冲突）
+        let name = self
+            .zones
+            .iter()
+            .filter(|zone| zone.dimension == dim && zone.contains(pos))
+            .min_by(|a, b| {
+                a.aabb_volume()
+                    .partial_cmp(&b.aabb_volume())
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .map(|zone| zone.name.clone())?;
+        self.zones.iter_mut().find(|zone| zone.name == name)
+    }
+
     /// plan-territory-v1 P3 — 判断两个 zone 是否相邻。
     ///
     /// 将两个 zone 的 AABB 各在 XZ 平面扩展 `margin` 格后检查 XZ 投影重叠。

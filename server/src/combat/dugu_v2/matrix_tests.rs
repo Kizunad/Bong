@@ -510,8 +510,18 @@ fn dirty_qi_collision_keeps_injected_budget() {
     assert_eq!(dirty_qi_collision(12.0, 0.0, 1.0).injected_qi, 12.0);
 }
 #[test]
-fn dirty_qi_collision_returns_ninety_nine_percent() {
-    assert!((dirty_qi_collision(12.0, 0.0, 1.0).returned_zone_qi - 11.88).abs() < 1e-5);
+fn dirty_qi_collision_returns_ninety_nine_percent_of_rejected_qi() {
+    // 修法 ②：returned_zone_qi = rejected_qi × 0.99（Eclipse 只入账被排斥立即散逸部分）
+    // 旧测试断言 returned ≈ 11.88（injected×0.99），会导致 Eclipse+Reverse 双重入账通胀。
+    // 新语义：returned = rejected_qi × 0.99，与 Reverse 入账 effective_hit × 0.99 互补，
+    // 合计 = attenuated_qi × 0.99（守恒）。
+    let outcome = dirty_qi_collision(12.0, 0.0, 1.0);
+    let expected = outcome.rejected_qi * 0.99;
+    assert!(
+        (outcome.returned_zone_qi - expected).abs() < 1e-5,
+        "returned_zone_qi 应等于 rejected_qi×0.99={expected:.6}，实际={:.6}",
+        outcome.returned_zone_qi
+    );
 }
 #[test]
 fn dirty_qi_collision_clamps_negative_injected_qi() {

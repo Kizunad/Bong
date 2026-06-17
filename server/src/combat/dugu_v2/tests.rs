@@ -159,10 +159,19 @@ fn self_cure_curve_caps_daily_hours_and_locks_color() {
 
 #[test]
 fn dirty_qi_collision_uses_low_rejection_and_returns_zone_budget() {
+    // 修法 ②：Eclipse.returned_zone_qi = rejected_qi × 0.99（仅排斥立即散逸部分）
+    // 零距离零抵抗时：effective_hit 接近 injected，rejected_qi 极小，returned_zone_qi 也极小
     let outcome = dirty_qi_collision(100.0, 0.0, 0.0);
     assert!(outcome.effective_hit > 98.0);
     assert!(outcome.rejected_qi < 2.0);
-    assert!((outcome.returned_zone_qi - 99.0).abs() < 1e-6);
+    // returned_zone_qi = rejected_qi × 0.99（不再是 injected×ratio，避免双重入账）
+    let expected_returned = outcome.rejected_qi * 0.99;
+    assert!(
+        (outcome.returned_zone_qi - expected_returned).abs() < 1e-5,
+        "returned_zone_qi 应等于 rejected_qi×0.99={expected_returned:.6}，\
+         实际={:.6}（Eclipse 只入账排斥部分，Reverse 入账剩余 effective_hit 部分）",
+        outcome.returned_zone_qi
+    );
 }
 
 #[test]
@@ -618,5 +627,692 @@ fn dugu_chaotic_caster_cast_not_rejected_for_non_eclipse_skills() {
     assert!(
         matches!(result_shroud, CastResult::Started { .. }),
         "杂色时 Shroud 不应被拒绝：实际 result={result_shroud:?}"
+    );
+}
+
+// ── plan-qi-conservation-leaks-v1 P4 — dugu v2 returned_zone_qi 守恒测试 ────────
+
+/// 辅助：构建带 ZoneRegistry + WorldQiAccount 的最小 App（含所有 dugu v2 系统）。
+fn setup_zone_credit_app(zone_spirit_qi_before: f64) -> App {
+    use crate::qi_physics::ledger::WorldQiAccount;
+    use crate::world::dimension::DimensionKind;
+    use crate::world::zone::{Zone, ZoneRegistry};
+    use valence::prelude::DVec3;
+
+    let mut app = setup_app();
+    crate::combat::dugu_v2::register(&mut app);
+
+    // 注册一个覆盖玩家坐标 [0,64,0] 的 overworld spawn zone
+    let zone = Zone {
+        name: "spawn".to_string(),
+        dimension: DimensionKind::Overworld,
+        bounds: (
+            DVec3::new(-100.0, 0.0, -100.0),
+            DVec3::new(100.0, 200.0, 100.0),
+        ),
+        spirit_qi: zone_spirit_qi_before,
+        danger_level: 0,
+        active_events: Vec::new(),
+        patrol_anchors: Vec::new(),
+        blocked_tiles: Vec::new(),
+    };
+    app.insert_resource(ZoneRegistry { zones: vec![zone] });
+    app.insert_resource(WorldQiAccount::default());
+    app
+}
+
+/// happy path: Eclipse 施放后，zone.spirit_qi 精确增加 returned_zone_qi。
+#[test]
+fn eclipse_zone_credit_happy_path_zone_increases_by_returned_zone_qi() {
+    use crate::qi_physics::ledger::WorldQiAccount;
+    use crate::world::zone::ZoneRegistry;
+
+    let zone_qi_before = 0.1_f64;
+    let mut app = setup_zone_credit_app(zone_qi_before);
+    let caster = actor(&mut app, Realm::Spirit, 100.0, 100.0, 0.0);
+    let target = actor(&mut app, Realm::Spirit, 200.0, 200.0, 1.0);
+
+    // 记录 Eclipse 的 returned_zone_qi（与 dirty_qi_collision 一致，约 qi_loss×0.99）
+    let result = resolve_dugu_v2_skill(
+        app.world_mut(),
+        caster,
+        0,
+        Some(target),
+        DuguSkillId::Eclipse,
+    );
+    assert!(
+        matches!(result, CastResult::Started { .. }),
+        "Eclipse cast 应成功，实际={result:?}"
+    );
+    // 从 event 中拿出 returned_zone_qi（避免手算 physics）
+    let returned = {
+        let events = app.world().resource::<Events<EclipseNeedleEvent>>();
+        events
+            .iter_current_update_events()
+            .next()
+            .expect("Eclipse 应发 EclipseNeedleEvent")
+            .returned_zone_qi
+    };
+    assert!(
+        returned > 0.0,
+        "Spirit 境目标 Eclipse 应产生 returned_zone_qi > 0，实际={returned}"
+    );
+
+    // app.update() 触发 eclipse_zone_credit_tick 消费事件
+    app.update();
+
+    let zone_qi_after = app
+        .world()
+        .resource::<ZoneRegistry>()
+        .find_zone_by_name("spawn")
+        .expect("spawn zone should exist")
+        .spirit_qi;
+
+    // MF3 fix: zone_qi 增量 = returned/QI_ZONE_UNIT_CAPACITY（绝对量→归一化），而非裸加 returned
+    use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
+    let returned_abs = f64::from(returned);
+    let zone_current_abs = zone_qi_before.max(0.0) * QI_ZONE_UNIT_CAPACITY;
+    let room = (QI_ZONE_UNIT_CAPACITY - zone_current_abs).max(0.0);
+    let accepted = returned_abs.min(room);
+    let expected = (zone_qi_before + accepted / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
+    assert!(
+        (zone_qi_after - expected).abs() < 1e-9,
+        "Eclipse 后 zone.spirit_qi 应为 {expected:.9}（增量=accepted({accepted:.6})/CAP），         实际={zone_qi_after:.9}（MF3 fix: absolute→normalized 转换后入账 returned={returned_abs:.6}）"
+    );
+
+    // audit trail：应有 ≥1 条 DuguReturnToZone 记录（accepted 1 条，overflow 可选 1 条）
+    use crate::qi_physics::ledger::QiTransferReason;
+    let account = app.world().resource::<WorldQiAccount>();
+    let dugu_transfers: Vec<_> = account
+        .transfers()
+        .iter()
+        .filter(|t| t.reason == QiTransferReason::DuguReturnToZone)
+        .collect();
+    assert!(
+        !dugu_transfers.is_empty(),
+        "Eclipse 后应至少有 1 条 DuguReturnToZone 审计记录，实际=0"
+    );
+    // 所有 DuguReturnToZone 审计记录的 amount 之和 == returned_abs（守恒：accepted + overflow）
+    let total_audit: f64 = dugu_transfers.iter().map(|t| t.amount).sum();
+    assert!(
+        (total_audit - returned_abs).abs() < 1e-9,
+        "DuguReturnToZone 审计记录 amount 之和({total_audit:.9}) 应等于 returned({returned_abs:.9})，         确保 qi 不蒸发（accepted + overflow = returned）"
+    );
+}
+
+/// happy path: Reverse（倒蚀）施放后，zone.spirit_qi 精确增加 returned_zone_qi。
+#[test]
+fn reverse_zone_credit_happy_path_zone_increases_by_returned_zone_qi() {
+    use crate::qi_physics::ledger::WorldQiAccount;
+    use crate::world::zone::ZoneRegistry;
+
+    let zone_qi_before = 0.2_f64;
+    let mut app = setup_zone_credit_app(zone_qi_before);
+    let void_caster = actor(&mut app, Realm::Void, 500.0, 500.0, 0.0);
+    let victim = actor(&mut app, Realm::Spirit, 200.0, 200.0, 1.0);
+    app.world_mut().entity_mut(victim).insert(TaintMark {
+        caster: void_caster,
+        intensity: 5.0,
+        since_tick: 1,
+        expires_at_tick: None,
+        tier: TaintTier::Permanent,
+        temporary_qi_max_loss: 0.0,
+        permanent_decay_rate_per_min: 0.001,
+        returned_zone_qi: 4.95,
+    });
+
+    let result = resolve_dugu_v2_skill(
+        app.world_mut(),
+        void_caster,
+        0,
+        Some(victim),
+        DuguSkillId::Reverse,
+    );
+    assert!(
+        matches!(result, CastResult::Started { .. }),
+        "Reverse cast 应成功，实际={result:?}"
+    );
+
+    let returned = {
+        let events = app.world().resource::<Events<ReverseTriggeredEvent>>();
+        events
+            .iter_current_update_events()
+            .next()
+            .expect("Reverse 应发 ReverseTriggeredEvent")
+            .returned_zone_qi
+    };
+    assert!(
+        returned > 0.0,
+        "Reverse 应产生 returned_zone_qi > 0，实际={returned}"
+    );
+
+    app.update();
+
+    let zone_qi_after = app
+        .world()
+        .resource::<ZoneRegistry>()
+        .find_zone_by_name("spawn")
+        .expect("spawn zone should exist")
+        .spirit_qi;
+
+    // MF3 fix: zone_qi 增量 = returned/QI_ZONE_UNIT_CAPACITY（绝对量→归一化），而非裸加 returned
+    use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
+    let returned_abs = f64::from(returned);
+    let zone_current_abs = zone_qi_before.max(0.0) * QI_ZONE_UNIT_CAPACITY;
+    let room = (QI_ZONE_UNIT_CAPACITY - zone_current_abs).max(0.0);
+    let accepted = returned_abs.min(room);
+    let expected = (zone_qi_before + accepted / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
+    assert!(
+        (zone_qi_after - expected).abs() < 1e-9,
+        "Reverse 后 zone.spirit_qi 应为 {expected:.9}（增量=accepted({accepted:.6})/CAP），         实际={zone_qi_after:.9}（MF3 fix: absolute→normalized 转换后入账 returned={returned_abs:.6}）"
+    );
+
+    use crate::qi_physics::ledger::QiTransferReason;
+    let account = app.world().resource::<WorldQiAccount>();
+    let dugu_transfers: Vec<_> = account
+        .transfers()
+        .iter()
+        .filter(|t| t.reason == QiTransferReason::DuguReturnToZone)
+        .collect();
+    assert!(
+        !dugu_transfers.is_empty(),
+        "Reverse 后应至少有 1 条 DuguReturnToZone 审计记录，实际=0"
+    );
+    // 守恒：所有 DuguReturnToZone 审计记录 amount 之和 == returned_abs
+    let total_audit: f64 = dugu_transfers.iter().map(|t| t.amount).sum();
+    assert!(
+        (total_audit - returned_abs).abs() < 1e-9,
+        "DuguReturnToZone 审计记录 amount 之和({total_audit:.9}) 应等于 returned({returned_abs:.9})"
+    );
+}
+
+/// 守恒不变式：Eclipse 前后，zone_qi 增量 == returned_zone_qi（容差内）。
+///
+/// 修法 ② 后 Eclipse.returned_zone_qi = rejected_qi × 0.99，仅覆盖被排斥立即散逸部分。
+/// 使用低初值（-0.8）确保 zone 有足够容量容纳 rejected_qi×0.99（约 1.8 单位），
+/// 消除 min(returned, room) 截断掩盖泄漏的问题。
+///
+/// 若改动导致 returned_zone_qi 再次膨胀（如误改回 injected_qi×ratio ~39.6），
+/// zone_qi_delta < returned 差值 ~37.8 会立即暴露——不再被 min() 掩盖。
+#[test]
+fn eclipse_conservation_total_observed_invariant() {
+    use crate::qi_physics::ledger::{summarize_world_qi, WorldQiBudget};
+
+    // 使用低初值确保 zone 有充足容量（rejected_qi×0.99 约 1.8，需要 room > 1.8）
+    // -0.8 → room = 1.8，刚好容纳；若 returned 误膨胀到 ~39.6 则 room 不足，断言暴露截断
+    let zone_qi_before = -0.8_f64;
+    let mut app = setup_zone_credit_app(zone_qi_before);
+    app.insert_resource(WorldQiBudget::from_total(100.0));
+
+    let caster = actor(&mut app, Realm::Spirit, 100.0, 100.0, 0.0);
+    let target = actor(&mut app, Realm::Spirit, 200.0, 200.0, 1.0);
+
+    let snap_before = summarize_world_qi(app.world_mut());
+
+    let _ = resolve_dugu_v2_skill(
+        app.world_mut(),
+        caster,
+        0,
+        Some(target),
+        DuguSkillId::Eclipse,
+    );
+    let returned = {
+        let events = app.world().resource::<Events<EclipseNeedleEvent>>();
+        events
+            .iter_current_update_events()
+            .next()
+            .expect("Eclipse 应发 EclipseNeedleEvent")
+            .returned_zone_qi
+    };
+
+    // 验证 returned 在合理范围（修法 ② 后 < 2.0；若误改回 injected×ratio 则 ~39.6）
+    assert!(
+        f64::from(returned) < 2.0,
+        "Eclipse.returned_zone_qi({returned:.4}) 异常偏大（应 < 2.0）；\
+         若此断言失败说明 returned_zone_qi 被误改回 injected_qi×ratio（双重入账通胀 bug）"
+    );
+
+    app.update();
+
+    let snap_after = summarize_world_qi(app.world_mut());
+
+    // MF3 fix: qi_release_to_zone 处理 absolute→normalized 换算。
+    // zone_qi_before = -0.8 → zone_current_abs = max(0,-0.8)*50 = 0.0（耗尽视为空）
+    // room = 50.0 - 0.0 = 50.0 >> returned(~1.76) → accepted = returned, no overflow
+    // zone_after = (zone_current_abs + accepted) / CAP = (0.0+1.76)/50 = 0.0352
+    // zone_qi_delta = snap_after.zone_qi - snap_before.zone_qi = 0.0352 - (-0.8) = 0.8352
+    use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
+    let returned_abs = f64::from(returned);
+    let zone_current_abs = zone_qi_before.max(0.0) * QI_ZONE_UNIT_CAPACITY; // = 0.0
+    let room = (QI_ZONE_UNIT_CAPACITY - zone_current_abs).max(0.0); // = 50.0
+    let accepted = returned_abs.min(room); // = returned_abs (no overflow)
+                                           // Expected zone_after (normalized) = (zone_current_abs + accepted) / CAP
+    let expected_zone_after = (zone_current_abs + accepted) / QI_ZONE_UNIT_CAPACITY;
+    assert!(
+        (snap_after.zone_qi - expected_zone_after).abs() < 1e-9,
+        "守恒失败：zone.spirit_qi after({:.9}) 应精确等于 (zone_current({zone_current_abs})+accepted({accepted}))/CAP={expected_zone_after:.9}。\
+         zone_before={zone_qi_before}, returned={returned_abs:.6}, room={room:.1}。\
+         若 snap_after.zone_qi > expected_zone_after 说明仍在裸加 returned（MF3 bug 未修复）；\
+         若 snap_after.zone_qi << expected_zone_after 说明 CAP 换算出错",
+        snap_after.zone_qi
+    );
+
+    // ledger_qi 不应因 DuguReturnToZone 改变（audit-only 路径，不动 ledger balance）
+    let ledger_qi_delta = snap_after.ledger_qi - snap_before.ledger_qi;
+    assert!(
+        ledger_qi_delta.abs() < 1e-9,
+        "ledger_qi 不应因 DuguReturnToZone 改变（audit-only 路径），\
+         实际 delta={ledger_qi_delta}"
+    );
+}
+
+/// 边界：returned_zone_qi = 0 时不产生审计记录、zone 不变。
+#[test]
+fn eclipse_zero_returned_zone_qi_no_audit_and_zone_unchanged() {
+    use crate::qi_physics::ledger::{QiTransferReason, WorldQiAccount};
+    use crate::world::zone::ZoneRegistry;
+
+    let zone_qi_before = 0.5_f64;
+    let mut app = setup_zone_credit_app(zone_qi_before);
+
+    // 直接向 app 发送一个 returned_zone_qi=0 的 EclipseNeedleEvent（绕过 physics 直接构造）
+    let caster = app.world_mut().spawn_empty().id();
+    let target = app.world_mut().spawn_empty().id();
+    app.world_mut().send_event(EclipseNeedleEvent {
+        caster,
+        target,
+        target_realm: Realm::Awaken,
+        tier: TaintTier::Immediate,
+        injected_qi: 0.0,
+        hp_loss: 0.0,
+        qi_loss: 0.0,
+        qi_max_loss: 0.0,
+        permanent_decay_rate_per_min: 0.0,
+        returned_zone_qi: 0.0, // 边界：零返还
+        reveal_probability: 0.0,
+        tick: 1,
+        visual: crate::combat::dugu_v2::skills::visual_for(DuguSkillId::Eclipse),
+    });
+
+    app.update();
+
+    let zone_qi_after = app
+        .world()
+        .resource::<ZoneRegistry>()
+        .find_zone_by_name("spawn")
+        .expect("spawn zone should exist")
+        .spirit_qi;
+
+    assert!(
+        (zone_qi_after - zone_qi_before).abs() < 1e-12,
+        "returned_zone_qi=0 时 zone.spirit_qi 不应改变，实际 before={zone_qi_before} after={zone_qi_after}"
+    );
+
+    let account = app.world().resource::<WorldQiAccount>();
+    let dugu_transfers: Vec<_> = account
+        .transfers()
+        .iter()
+        .filter(|t| t.reason == QiTransferReason::DuguReturnToZone)
+        .collect();
+    assert!(
+        dugu_transfers.is_empty(),
+        "returned_zone_qi=0 时不应产生 DuguReturnToZone 审计记录，实际 len={}",
+        dugu_transfers.len()
+    );
+}
+
+/// MF3 锁定：zone 接近饱和时，overflow qi 入账 overflow account，不蒸发。
+///
+/// 这是直接锁定 MF3 bug 的核心测试：
+///   旧代码: zone.spirit_qi = (zone.spirit_qi + returned).clamp(-1.0, 1.0)
+///     → 大 returned 被 clamp 截断 → qi 蒸发
+///   新代码: qi_release_to_zone → accepted 入 zone，overflow → overflow account
+///     → zone_credit_absolute + overflow == returned（守恒）
+#[test]
+fn eclipse_zone_credit_overflow_no_evaporation_mf3_lock() {
+    use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
+    use crate::qi_physics::ledger::{QiTransferReason, WorldQiAccount};
+    use crate::world::zone::ZoneRegistry;
+
+    // zone 接近饱和：spirit_qi=0.98 → zone_current_abs=49.0, room=1.0
+    let zone_qi_before = 0.98_f64;
+    let mut app = setup_zone_credit_app(zone_qi_before);
+
+    // 直接注入一个 returned=10.0 的 EclipseNeedleEvent（远超 room=1.0，必然有 overflow=9.0）
+    let caster = app.world_mut().spawn_empty().id();
+    let target_entity = app
+        .world_mut()
+        .spawn((valence::prelude::Position::new([0.0, 64.0, 0.0]),))
+        .id();
+    app.world_mut().send_event(EclipseNeedleEvent {
+        caster,
+        target: target_entity,
+        target_realm: Realm::Spirit,
+        tier: crate::combat::dugu_v2::events::TaintTier::Permanent,
+        injected_qi: 40.0,
+        hp_loss: 20.0,
+        qi_loss: 10.0,
+        qi_max_loss: 0.0,
+        permanent_decay_rate_per_min: 0.0005,
+        returned_zone_qi: 10.0, // >> room(1.0)，必然溢出
+        reveal_probability: 0.0,
+        tick: 1,
+        visual: crate::combat::dugu_v2::skills::visual_for(DuguSkillId::Eclipse),
+    });
+
+    app.update();
+
+    let zone_qi_after = app
+        .world()
+        .resource::<ZoneRegistry>()
+        .find_zone_by_name("spawn")
+        .expect("spawn zone should exist")
+        .spirit_qi;
+
+    // zone.spirit_qi 不应超过 1.0（overflow 被路由到 overflow account，而非被 clamp 截断）
+    assert!(
+        zone_qi_after <= 1.0 + 1e-9,
+        "zone.spirit_qi 不应超过 1.0，实际={zone_qi_after:.9}（overflow 必须路由出去）"
+    );
+
+    // zone 增量 = accepted/QI_ZONE_UNIT_CAPACITY = room/QI_ZONE_UNIT_CAPACITY ≈ 0.02
+    let zone_current_abs = zone_qi_before.max(0.0) * QI_ZONE_UNIT_CAPACITY; // 49.0
+    let room = (QI_ZONE_UNIT_CAPACITY - zone_current_abs).max(0.0); // 1.0
+    let returned_abs = 10.0_f64;
+    let accepted = returned_abs.min(room); // 1.0
+    let overflow = returned_abs - accepted; // 9.0
+    let expected_zone_after = (zone_qi_before + accepted / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
+    assert!(
+        (zone_qi_after - expected_zone_after).abs() < 1e-9,
+        "zone 应精确增加 accepted({accepted})/CAP({QI_ZONE_UNIT_CAPACITY})={:.4}，         期望 zone_after={expected_zone_after:.9}，实际={zone_qi_after:.9}",
+        accepted / QI_ZONE_UNIT_CAPACITY
+    );
+
+    // 核心守恒断言：DuguReturnToZone 审计记录 amount 之和 == returned（accepted + overflow）
+    let account = app.world().resource::<WorldQiAccount>();
+    let dugu_transfers: Vec<_> = account
+        .transfers()
+        .iter()
+        .filter(|t| t.reason == QiTransferReason::DuguReturnToZone)
+        .collect();
+    assert!(
+        !dugu_transfers.is_empty(),
+        "应有 DuguReturnToZone 审计记录（至少 1 条：accepted），实际=0"
+    );
+    let total_audit: f64 = dugu_transfers.iter().map(|t| t.amount).sum();
+    assert!(
+        (total_audit - returned_abs).abs() < 1e-9,
+        "MF3 守恒断言：所有 DuguReturnToZone 审计记录 amount 之和({total_audit:.9})          应 == returned_abs({returned_abs:.9})（accepted({accepted}) + overflow({overflow}) = returned）。         若 total < returned 说明 MF3 bug 仍存在（qi 蒸发）"
+    );
+
+    // overflow 应有专属记录（amount = 9.0）
+    let overflow_records: Vec<_> = dugu_transfers
+        .iter()
+        .filter(|t| {
+            // overflow account ID 含 "overflow"
+            matches!(&t.to, crate::qi_physics::ledger::QiAccountId { .. } if {
+                let id_str = format!("{:?}", t.to);
+                id_str.contains("overflow")
+            })
+        })
+        .collect();
+    assert!(
+        !overflow_records.is_empty(),
+        "overflow({overflow}) 应路由到 overflow account（DuguReturnToZone 记录 to 含 overflow），         实际无 overflow 记录（旧 clamp 截断未修复）"
+    );
+    let total_overflow: f64 = overflow_records.iter().map(|t| t.amount).sum();
+    assert!(
+        (total_overflow - overflow).abs() < 1e-9,
+        "overflow account 记录 amount 之和({total_overflow:.9}) 应 == overflow({overflow:.9})"
+    );
+}
+
+/// 不双计：同一 EclipseNeedleEvent 只入账一次（不重复消费）。
+#[test]
+fn eclipse_zone_credit_no_double_accounting_single_event_single_credit() {
+    use crate::qi_physics::ledger::{QiTransferReason, WorldQiAccount};
+    use crate::world::zone::ZoneRegistry;
+
+    let zone_qi_before = 0.1_f64;
+    let mut app = setup_zone_credit_app(zone_qi_before);
+    let caster = actor(&mut app, Realm::Spirit, 100.0, 100.0, 0.0);
+    let target = actor(&mut app, Realm::Spirit, 200.0, 200.0, 1.0);
+
+    let _ = resolve_dugu_v2_skill(
+        app.world_mut(),
+        caster,
+        0,
+        Some(target),
+        DuguSkillId::Eclipse,
+    );
+    let returned = {
+        let events = app.world().resource::<Events<EclipseNeedleEvent>>();
+        events
+            .iter_current_update_events()
+            .next()
+            .expect("Eclipse 应发 EclipseNeedleEvent")
+            .returned_zone_qi
+    };
+
+    // 运行两个 update tick；事件在第一个 tick 被消费，第二个 tick 不应重复入账
+    app.update();
+    app.update();
+
+    let zone_qi_after = app
+        .world()
+        .resource::<ZoneRegistry>()
+        .find_zone_by_name("spawn")
+        .unwrap()
+        .spirit_qi;
+
+    // MF3 fix: expected uses normalized formula
+    use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
+    let returned_abs = f64::from(returned);
+    let zone_current_abs = zone_qi_before.max(0.0) * QI_ZONE_UNIT_CAPACITY;
+    let room = (QI_ZONE_UNIT_CAPACITY - zone_current_abs).max(0.0);
+    let accepted = returned_abs.min(room);
+    let expected = (zone_qi_before + accepted / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
+    assert!(
+        (zone_qi_after - expected).abs() < 1e-9,
+        "两次 update 后 zone.spirit_qi 应与单次 update 相同（不双计），         期望 {expected:.9}（增量=accepted({accepted:.6})/CAP），实际 {zone_qi_after:.9}"
+    );
+
+    // 审计记录恰好 1 条（只入账一次）
+    let account = app.world().resource::<WorldQiAccount>();
+    let count = account
+        .transfers()
+        .iter()
+        .filter(|t| t.reason == QiTransferReason::DuguReturnToZone)
+        .count();
+    assert_eq!(
+        count, 1,
+        "两次 update 后应恰好有 1 条 DuguReturnToZone 记录（不双计），实际={count}"
+    );
+}
+
+/// DuguReturnToZone 变体 pin 测试：存在且区别于其他变体。
+#[test]
+fn dugu_return_to_zone_reason_pin_test() {
+    use crate::qi_physics::ledger::QiTransferReason;
+    let reason = QiTransferReason::DuguReturnToZone;
+    assert_ne!(
+        reason,
+        QiTransferReason::ReleaseToZone,
+        "DuguReturnToZone 应为独立变体，区别于 ReleaseToZone（毒蛊散逸 vs 招式释放）"
+    );
+    assert_ne!(
+        reason,
+        QiTransferReason::BossDrain,
+        "DuguReturnToZone 应区别于 BossDrain"
+    );
+    assert_ne!(
+        reason,
+        QiTransferReason::HalfStepBuff,
+        "DuguReturnToZone 应区别于 HalfStepBuff（非 audit-only 容量标记）"
+    );
+    assert_eq!(reason, reason, "DuguReturnToZone 与自身应相等");
+}
+
+/// 连招守恒：Eclipse 种下标记 → Reverse 爆发，两路合计 returned_zone_qi == injected_qi × ratio，
+/// 不产生双重入账通胀。
+///
+/// 旧代码 bug（已修复）：
+///   - Eclipse.returned_zone_qi = injected_qi × 0.99（入账 ~39.6）
+///   - Reverse.returned_zone_qi = mark.intensity × 0.99 ≈ effective_hit × 0.99（再入账 ~37.8）
+///   - 两次入账同一团脏真元 → 合计 ~77.4（远超 injected_qi × 0.99 ≈ 39.6）
+///
+/// 修法 ② 后：
+///   - Eclipse.returned_zone_qi = rejected_qi × 0.99（排斥立即散逸，小值 ~1.8）
+///   - Reverse.returned_zone_qi = mark.intensity × 0.99 ≈ effective_hit × 0.99（延迟散逸 ~37.8）
+///   - 两路之和 ≈ (rejected + effective_hit) × 0.99 = attenuated_qi × 0.99 ≈ injected × 0.99
+///
+/// 守恒验证在事件层面进行（两路合计 ~39.6 超出 zone 容量 2.0，不能用 zone.spirit_qi delta）。
+/// 当前（旧）实现下合计 ~77.4 >> 39.6，此断言会撞红；修复后转绿。
+#[test]
+fn eclipse_then_reverse_chain_conservation_no_double_entry() {
+    use crate::qi_physics::constants::DUGU_DIRTY_QI_ZONE_RETURN_RATIO;
+    use crate::qi_physics::ledger::{QiTransferReason, WorldQiAccount};
+
+    let zone_qi_before = 0.05_f64;
+    let mut app = setup_zone_credit_app(zone_qi_before);
+
+    // Void 境施法者（Reverse 需要 Void），Spirit 境目标（qi_loss=40，返还值有代表性）
+    let caster = actor(&mut app, Realm::Void, 500.0, 500.0, 0.0);
+    let target = actor(&mut app, Realm::Spirit, 200.0, 200.0, 1.0);
+
+    // ── step 1: Eclipse ──
+    let result = resolve_dugu_v2_skill(
+        app.world_mut(),
+        caster,
+        0,
+        Some(target),
+        DuguSkillId::Eclipse,
+    );
+    assert!(
+        matches!(result, CastResult::Started { .. }),
+        "Eclipse cast 应成功，实际={result:?}"
+    );
+    let eclipse_event = {
+        let events = app.world().resource::<Events<EclipseNeedleEvent>>();
+        events
+            .iter_current_update_events()
+            .next()
+            .expect("Eclipse 应发 EclipseNeedleEvent")
+            .clone()
+    };
+    let eclipse_returned = f64::from(eclipse_event.returned_zone_qi);
+    let eclipse_injected = f64::from(eclipse_event.injected_qi);
+
+    // 修法 ② 后：Eclipse.returned 仅为 rejected_qi × ratio（小值 < 5.0）
+    assert!(
+        eclipse_returned < 5.0,
+        "Eclipse.returned_zone_qi({eclipse_returned:.4}) 异常偏大（应 < 5.0）；\
+         若此断言失败说明 returned_zone_qi 被误改回 injected×ratio（旧 bug 复发）"
+    );
+
+    app.update(); // eclipse_zone_credit_tick 消费 EclipseNeedleEvent
+
+    // ── step 2: Reverse ──
+    // 使用 slot 1（Eclipse 用的是 slot 0，两个 slot 互相独立，slot 1 无 cooldown）
+    let result = resolve_dugu_v2_skill(
+        app.world_mut(),
+        caster,
+        1,
+        Some(target),
+        DuguSkillId::Reverse,
+    );
+    assert!(
+        matches!(result, CastResult::Started { .. }),
+        "Reverse cast 应成功（需要 target 有 TaintMark），实际={result:?}"
+    );
+    let reverse_event = {
+        let events = app.world().resource::<Events<ReverseTriggeredEvent>>();
+        events
+            .iter_current_update_events()
+            .next()
+            .expect("Reverse 应发 ReverseTriggeredEvent")
+            .clone()
+    };
+    let reverse_returned = f64::from(reverse_event.returned_zone_qi);
+    assert!(
+        reverse_returned > 0.0,
+        "Reverse 应产生 returned_zone_qi > 0（mark 被爆发），实际={reverse_returned}"
+    );
+
+    app.update(); // reverse_zone_credit_tick 消费 ReverseTriggeredEvent
+
+    // ── 守恒验证（事件层面，不依赖 zone delta 避免 clamp 截断掩盖）──
+    let total_returned = eclipse_returned + reverse_returned;
+    let injected_ratio = eclipse_injected * DUGU_DIRTY_QI_ZONE_RETURN_RATIO;
+
+    // 守恒上界：total ≤ injected×ratio（距离衰减只会让 total 更小，不会更大）
+    // 旧 bug：double-entry 使 total ≈ 2×injected×ratio = 2×39.6 = 79.2
+    // 修法 ②：total ≈ attenuated×ratio（<= injected×ratio，差距 = attenuation，约 4-5%）
+    assert!(
+        total_returned <= injected_ratio + 1e-9,
+        "Eclipse→Reverse 连招通胀：\n\
+         total_returned={total_returned:.6} > injected×ratio={injected_ratio:.6}\n\
+         说明双重入账（旧 bug 复发；应 total ≤ injected×ratio）"
+    );
+
+    // 守恒下界：total 不应低于 injected×ratio×0.90（attenuation 不应超过 10% at dist=1）
+    assert!(
+        total_returned >= injected_ratio * 0.90,
+        "Eclipse→Reverse 连招通缩异常：\n\
+         total_returned={total_returned:.6} 低于 injected×ratio×0.90={:.6}\n\
+         说明有大量 qi 在 chain 中消失（物理衰减过大或有通缩漏洞）",
+        injected_ratio * 0.90
+    );
+
+    // 额外验证：Reverse.returned > Eclipse.returned（大部分散逸在 Reverse 延迟发生）
+    assert!(
+        reverse_returned > eclipse_returned,
+        "Reverse.returned({reverse_returned:.4}) 应 > Eclipse.returned({eclipse_returned:.4})；\
+         effective_hit >> rejected_qi（大部分脏真元入体延迟散逸）"
+    );
+
+    // 审计记录数：Eclipse 1 条 + Reverse 1 条 = 2 条
+    let account = app.world().resource::<WorldQiAccount>();
+    let dugu_count = account
+        .transfers()
+        .iter()
+        .filter(|t| t.reason == QiTransferReason::DuguReturnToZone)
+        .count();
+    assert_eq!(
+        dugu_count, 2,
+        "Eclipse+Reverse 连招应产生恰好 2 条 DuguReturnToZone 审计记录，实际={dugu_count}"
+    );
+}
+
+/// 边界：Reverse returned_zone_qi=0 时不产生审计记录。
+#[test]
+fn reverse_zero_returned_zone_qi_no_audit() {
+    use crate::qi_physics::ledger::{QiTransferReason, WorldQiAccount};
+
+    let mut app = setup_zone_credit_app(0.5);
+    let caster = app.world_mut().spawn_empty().id();
+
+    app.world_mut().send_event(ReverseTriggeredEvent {
+        caster,
+        affected_targets: 1,
+        burst_damage: 10.0,
+        returned_zone_qi: 0.0, // 边界：零返还
+        juebi_delay_ticks: None,
+        tick: 1,
+        center: valence::math::DVec3::ZERO,
+        visual: crate::combat::dugu_v2::skills::visual_for(DuguSkillId::Reverse),
+    });
+
+    app.update();
+
+    let account = app.world().resource::<WorldQiAccount>();
+    let count = account
+        .transfers()
+        .iter()
+        .filter(|t| t.reason == QiTransferReason::DuguReturnToZone)
+        .count();
+    assert_eq!(
+        count, 0,
+        "returned_zone_qi=0 时 Reverse 不应产生 DuguReturnToZone 审计记录，实际={count}"
     );
 }

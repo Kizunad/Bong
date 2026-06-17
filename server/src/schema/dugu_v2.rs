@@ -76,7 +76,7 @@ mod tests {
             qi_loss: 40.0,
             qi_max_loss: 0.0,
             permanent_decay_rate_per_min: 0.001,
-            returned_zone_qi: 39.6,
+            returned_zone_qi: 1.84, // 修法 ②：rejected_qi×0.99（Eclipse 仅入账排斥散逸部分）
             reveal_probability: 0.03,
             animation_id: "bong:dugu_needle_throw".to_string(),
             particle_id: "bong:dugu_taint_pulse".to_string(),

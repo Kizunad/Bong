@@ -237,6 +237,19 @@ pub enum QiTransferReason {
     /// `QiTransfer(from=player:<entity_bits>, to=zone:<name>, reason=ArtifactEvolution)`。
     /// zone 不可解析时 fallback overflow，真元绝不凭空消失。
     ArtifactEvolution,
+    /// plan-qi-conservation-leaks-v1 P4 — 毒蛊脏真元过渡态散回施法者所在 zone。
+    ///
+    /// worldview §六.2 正典依据：脏真元注入目标体内后，99% 经异体排斥最终散回受害者所在 zone
+    /// （`DUGU_DIRTY_QI_ZONE_RETURN_RATIO`），守恒必须落账。
+    ///
+    /// 守恒约束：
+    ///   - zone.spirit_qi += returned_zone_qi；
+    ///   - `push_transfer_audit(QiTransfer(from=player:<caster>, to=zone:<name>, reason=DuguReturnToZone))`；
+    ///   - ECS `Cultivation.qi_current` 已在 apply_eclipse / apply_reverse 中扣减，
+    ///     **不得再动 player ledger 账户**（player qi 活在 ECS，不在 WorldQiAccount balance）；
+    ///   - 此路径是 audit-only + zone balance 更新，**禁止**调 `WorldQiAccount::transfer`
+    ///     （后者会检查 player ledger 余额并拒绝）。
+    DuguReturnToZone,
 }
 
 /// plan-qi-handling-attrition-v1 P0 — 搬运磨损操作类型，对应不同基础磨损率。
