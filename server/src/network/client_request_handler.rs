@@ -176,6 +176,24 @@ use crate::zhenfa::{
     ScatterBeadUseRequest, ZhenfaDisarmRequest, ZhenfaPlaceRequest, ZhenfaTriggerRequest,
 };
 
+/// RefuseRare arm 中对 rarity 的门控判断。
+///
+/// 返回 `true` 表示该 rarity 属于 Rare+（Rare/Epic/Legendary/Ancient），
+/// 低信誉玩家购买此类物品时将被拒绝。
+/// Common/Uncommon 返回 `false`，允许以 1.3x 加价购买。
+///
+/// NOTE: `ItemRarity` 未实现 `PartialOrd`，使用 `matches!` 枚举变体。
+/// 如需新增更高 rarity 变体，必须同步更新此处。
+pub(crate) fn is_rarity_refused_at_low_rep(r: crate::inventory::ItemRarity) -> bool {
+    matches!(
+        r,
+        crate::inventory::ItemRarity::Rare
+            | crate::inventory::ItemRarity::Epic
+            | crate::inventory::ItemRarity::Legendary
+            | crate::inventory::ItemRarity::Ancient
+    )
+}
+
 /// per-client alchemy mock 状态，让 client→server 操作（翻页/学方）有可观察的回响。
 /// 真实数据流（ECS 接入后）会替换掉本 resource。
 #[derive(Default, Resource, Debug)]
@@ -1357,6 +1375,31 @@ pub fn handle_client_request_payloads(
                         continue;
                     }
                     crate::npc::trade::TradeEligibility::RefuseRare => {
+                        // Low 信誉：Rare+（含 Rare/Epic/Legendary/Ancient）直接拒绝；
+                        // Common/Uncommon 允许，但加 1.3x markup。
+                        // 阈值注释见 trade.rs RepTier::Low（"加价 + 拒绝稀有品"）。
+                        //
+                        // NOTE: ItemRarity 未实现 PartialOrd，用 matches! 枚举 Rare+ 变体。
+                        // 如需新增更高 rarity 变体，记得同步更新此处。
+                        let item_rarity = alchemy_params
+                            .item_registry
+                            .get(template_id)
+                            .map(|t| t.rarity)
+                            .unwrap_or(crate::inventory::ItemRarity::Common);
+                        if is_rarity_refused_at_low_rep(item_rarity) {
+                            emit_npc_refuse_audio(
+                                &mut npc_engagement_params.audio_events,
+                                ev.client,
+                                target.position,
+                            );
+                            send_npc_interaction_feedback(
+                                ev.client,
+                                &mut clients,
+                                format!("§c[NPC] {} 不愿将此物卖给你。", target.display_name),
+                            );
+                            continue;
+                        }
+                        // Common/Uncommon：允许，1.3x 加价
                         let config = crate::npc::trade::TradePricingConfig::default();
                         (base_price as f64 * config.rep_low_markup as f64)
                             .ceil()
@@ -7806,7 +7849,7 @@ fn reputation_to_player_score_for_npc_zone(
         .clamp(-100, 100)
 }
 
-fn npc_trade_catalog_entry(
+pub(crate) fn npc_trade_catalog_entry(
     archetype: NpcArchetype,
     requested_item_id: &str,
 ) -> Option<(&'static str, u64)> {
@@ -11770,6 +11813,198 @@ mod npc_flawed_pill_trade_tests {
         assert!(
             npc_trade_catalog_entry(NpcArchetype::Rogue, "xi_sui_ye_flawed").is_none(),
             "洗髓液以上 NPC 不售卖"
+        );
+    }
+
+    /// 买路 spirit_grass 条目价格应为 10 骨币（与 TRADE_CATALOGUE 对齐）。
+    #[test]
+    fn buy_path_spirit_grass_price_10() {
+        let result = npc_trade_catalog_entry(NpcArchetype::Commoner, "spirit_grass");
+        assert_eq!(
+            result,
+            Some(("spirit_grass", 10)),
+            "买路 spirit_grass 应以 10 骨币售卖（与 TRADE_CATALOGUE 对齐），\
+             期望: Some((\"spirit_grass\", 10))，实际: {:?}",
+            result
+        );
+    }
+
+    /// 买路 broken_artifact_scroll 条目价格应为 40 骨币（与 TRADE_CATALOGUE 对齐）。
+    #[test]
+    fn buy_path_broken_artifact_scroll_price_40() {
+        let result = npc_trade_catalog_entry(NpcArchetype::Rogue, "broken_artifact_scroll");
+        assert_eq!(
+            result,
+            Some(("broken_artifact_scroll", 40)),
+            "买路 broken_artifact_scroll 应以 40 骨币售卖（与 TRADE_CATALOGUE 对齐），\
+             期望: Some((\"broken_artifact_scroll\", 40))，实际: {:?}",
+            result
+        );
+    }
+}
+
+// ── RefuseRare rarity 门控逻辑单元测试 ─────────────────────────────────────
+// 验证 TradeEligibility::RefuseRare arm 对不同 ItemRarity 的判断逻辑是正确的：
+// - Rare+ (Rare/Epic/Legendary/Ancient) → 拒绝
+// - Common/Uncommon → 通过（1.3x markup）
+//
+// NOTE：这组测试直接调用生产函数 is_rarity_refused_at_low_rep，
+// 确保任何变体增删/修改都会立刻让测试撞红。
+#[cfg(test)]
+mod refuse_rare_rarity_gate_tests {
+    use crate::inventory::ItemRarity;
+    use crate::network::client_request_handler::is_rarity_refused_at_low_rep;
+
+    /// Low 信誉买 Rare 物品（broken_artifact_scroll，rarity=Rare）→ 应被拒绝。
+    /// 期望：is_rarity_refused_at_low_rep(Rare) = true（触发 continue，不走到 add_item）。
+    #[test]
+    fn rare_rarity_is_refused_for_low_rep() {
+        assert!(
+            is_rarity_refused_at_low_rep(ItemRarity::Rare),
+            "ItemRarity::Rare 应触发 RefuseRare 拒绝门控，\
+             期望: is_rarity_refused_at_low_rep(Rare) = true，实际: false"
+        );
+    }
+
+    /// Low 信誉买 Common 物品（spirit_grass，rarity=Common）→ 应通过。
+    /// 期望：is_rarity_refused_at_low_rep(Common) = false（走到 1.3x 加价路径）。
+    #[test]
+    fn common_rarity_allowed_for_low_rep_with_markup() {
+        assert!(
+            !is_rarity_refused_at_low_rep(ItemRarity::Common),
+            "ItemRarity::Common 不应触发 RefuseRare 门控，\
+             期望: is_rarity_refused_at_low_rep(Common) = false，实际: true"
+        );
+    }
+
+    /// Low 信誉买 Uncommon 物品（skill_scroll_herbalism_baicao_can，rarity=Uncommon）→ 应通过。
+    /// 这是 Rare 阈值 off-by-one 边界：Uncommon 在 Rare 之下，应允许（1.3x）。
+    #[test]
+    fn uncommon_rarity_is_allowed_off_by_one_boundary() {
+        assert!(
+            !is_rarity_refused_at_low_rep(ItemRarity::Uncommon),
+            "ItemRarity::Uncommon 是 Rare 阈值 off-by-one 边界（低于 Rare），\
+             期望: is_rarity_refused_at_low_rep(Uncommon) = false（允许 1.3x markup），实际: true"
+        );
+    }
+
+    /// Epic/Legendary/Ancient 全部应被拒绝（Rare+ 全覆盖）。
+    #[test]
+    fn epic_legendary_ancient_all_refused() {
+        assert!(
+            is_rarity_refused_at_low_rep(ItemRarity::Epic),
+            "ItemRarity::Epic 应触发 RefuseRare 门控，\
+             期望: true，实际: false"
+        );
+        assert!(
+            is_rarity_refused_at_low_rep(ItemRarity::Legendary),
+            "ItemRarity::Legendary 应触发 RefuseRare 门控，\
+             期望: true，实际: false"
+        );
+        assert!(
+            is_rarity_refused_at_low_rep(ItemRarity::Ancient),
+            "ItemRarity::Ancient 应触发 RefuseRare 门控，\
+             期望: true，实际: false"
+        );
+    }
+
+    /// High/Mid 信誉不触发 RefuseRare——check_trade_eligibility 返回 Allowed，
+    /// 不走 RefuseRare arm，所以 rarity 门控根本不会执行。
+    /// 此测试通过验证 TradeEligibility 确认逻辑路径分叉正确。
+    #[test]
+    fn high_mid_rep_not_refused_by_eligibility() {
+        use crate::npc::trade::{check_trade_eligibility, RepTier, TradeEligibility};
+        // High tier → Allowed（不走 RefuseRare arm）
+        assert!(
+            matches!(
+                check_trade_eligibility(RepTier::High),
+                TradeEligibility::Allowed { .. }
+            ),
+            "High 信誉不应走 RefuseRare arm，期望: Allowed，实际: 非 Allowed"
+        );
+        // Mid tier → Allowed（不走 RefuseRare arm）
+        assert!(
+            matches!(
+                check_trade_eligibility(RepTier::Mid),
+                TradeEligibility::Allowed { .. }
+            ),
+            "Mid 信誉不应走 RefuseRare arm，期望: Allowed，实际: 非 Allowed"
+        );
+    }
+
+    /// Hostile 信誉触发 Refused（全拒），与 RefuseRare 是不同分支。
+    #[test]
+    fn hostile_rep_is_fully_refused_not_rare_gated() {
+        use crate::npc::trade::{check_trade_eligibility, RepTier, TradeEligibility};
+        assert_eq!(
+            check_trade_eligibility(RepTier::Hostile),
+            TradeEligibility::Refused,
+            "Hostile 信誉应触发 Refused（全拒），期望: Refused，实际: 非 Refused"
+        );
+    }
+
+    /// Low 信誉对应 RefuseRare 资格——买路 broken_artifact_scroll(Rare) 在此分支下应被拒绝。
+    #[test]
+    fn low_rep_eligibility_is_refuse_rare() {
+        use crate::npc::trade::{check_trade_eligibility, RepTier, TradeEligibility};
+        assert_eq!(
+            check_trade_eligibility(RepTier::Low),
+            TradeEligibility::RefuseRare,
+            "Low 信誉应触发 RefuseRare，期望: RefuseRare，实际: 非 RefuseRare"
+        );
+    }
+
+    /// 完整 RefuseRare 链路验证：Low rep + Rare 物品 → 被拒绝。
+    /// 模拟 broken_artifact_scroll(Rare) 在 Low 声望下的完整判断链。
+    #[test]
+    fn full_refuse_rare_chain_rare_item_low_rep_refused() {
+        use crate::npc::trade::{check_trade_eligibility, RepTier, TradeEligibility};
+        let rep_tier = RepTier::Low; // score ∈ (0.1, 0.3]
+        let eligibility = check_trade_eligibility(rep_tier);
+        assert_eq!(
+            eligibility,
+            TradeEligibility::RefuseRare,
+            "Low rep 应得到 RefuseRare 资格"
+        );
+        // Rare 物品：应触发拒绝
+        let is_rare = is_rarity_refused_at_low_rep(ItemRarity::Rare);
+        assert!(
+            is_rare,
+            "broken_artifact_scroll(Rare) 应触发 RefuseRare 拒绝门控，\
+             期望: is_rare = true，实际: false"
+        );
+    }
+
+    /// 完整 RefuseRare 链路验证：Low rep + Common 物品 → 通过（1.3x markup）。
+    /// 模拟 spirit_grass(Common) 在 Low 声望下的完整判断链。
+    #[test]
+    fn full_refuse_rare_chain_common_item_low_rep_allowed() {
+        use crate::npc::trade::{check_trade_eligibility, RepTier, TradeEligibility};
+        let rep_tier = RepTier::Low;
+        let eligibility = check_trade_eligibility(rep_tier);
+        assert_eq!(
+            eligibility,
+            TradeEligibility::RefuseRare,
+            "Low rep 应得到 RefuseRare 资格"
+        );
+        let is_rare = is_rarity_refused_at_low_rep(ItemRarity::Common);
+        assert!(
+            !is_rare,
+            "spirit_grass(Common) 不应触发 RefuseRare 拒绝，\
+             期望: is_rare = false（走 1.3x markup 路径），实际: true"
+        );
+        // 验证 1.3x 价格计算
+        use crate::npc::trade::TradePricingConfig;
+        let config = TradePricingConfig::default();
+        let base_price = 10u64; // spirit_grass base price
+        let final_price = (base_price as f64 * config.rep_low_markup as f64)
+            .ceil()
+            .max(1.0) as u64;
+        assert_eq!(
+            final_price, 13,
+            "spirit_grass(10 骨币) 在 Low rep 1.3x markup 下应为 13 骨币，\
+             期望: 13，实际: {}",
+            final_price
         );
     }
 }

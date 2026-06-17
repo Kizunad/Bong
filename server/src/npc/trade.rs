@@ -499,85 +499,56 @@ struct CatalogueEntry {
     count_max: u32,
 }
 
-/// 交易物品候选库——覆盖灵草/丹药/残卷/工具/材料等类目。
-/// 各 realm tier 逐步解锁高阶物品。
+/// 交易物品候选库——单一真相来源，与 `npc_trade_catalog_entry`（买路）完全对齐。
+///
+/// 规则：
+/// - template_id / price_bone_coins 必须与 `npc_trade_catalog_entry` 保持一致，两处同步修改。
+/// - 仅列入 `server/assets/items/*.toml` 中存在对应条目的物品，避免 GUI 展示但买路失败的孤岛。
+/// - 旧版条目（lingcao/bone_meal/rough_bandage/fragment_scroll/qi_condensing_powder/
+///   spirit_stone_shard/bone_reinforcing_pill/spirit_jade）已移除——无 asset 支撑
+///   或与买路 template_id / 价格不对齐，留在展示层会导致"能看不能买"或价格不一致。
 const TRADE_CATALOGUE: &[CatalogueEntry] = &[
-    // Awaken tier
+    // Awaken tier — Commoner + Rogue
     CatalogueEntry {
-        template_id: "lingcao",
+        template_id: "spirit_grass",
         display_name: "灵草",
         realm_min: 0,
-        price_bone_coins: 12,
+        price_bone_coins: 10,
         count_min: 1,
         count_max: 5,
     },
     CatalogueEntry {
-        template_id: "bone_meal",
-        display_name: "骨粉",
-        realm_min: 0,
-        price_bone_coins: 5,
-        count_min: 2,
-        count_max: 8,
-    },
-    CatalogueEntry {
-        template_id: "rough_bandage",
-        display_name: "粗布绷带",
+        template_id: "ling_xi_wan_flawed",
+        display_name: "灵息丸（次品）",
         realm_min: 0,
         price_bone_coins: 8,
         count_min: 1,
         count_max: 3,
     },
-    // Induce tier
     CatalogueEntry {
-        template_id: "fragment_scroll",
-        display_name: "残卷",
-        realm_min: 1,
-        price_bone_coins: 45,
+        template_id: "ju_ling_dan_flawed",
+        display_name: "聚灵丹（次品）",
+        realm_min: 0,
+        price_bone_coins: 15,
         count_min: 1,
-        count_max: 2,
+        count_max: 3,
     },
+    // Induce tier — Rogue only
     CatalogueEntry {
-        template_id: "qi_condensing_powder",
-        display_name: "凝气散",
+        template_id: "skill_scroll_herbalism_baicao_can",
+        display_name: "《百草图考·残》",
         realm_min: 1,
         price_bone_coins: 30,
         count_min: 1,
-        count_max: 3,
-    },
-    // Condense tier
-    CatalogueEntry {
-        template_id: "meridian_salve",
-        display_name: "通脉膏",
-        realm_min: 2,
-        price_bone_coins: 60,
-        count_min: 1,
         count_max: 2,
     },
     CatalogueEntry {
-        template_id: "spirit_stone_shard",
-        display_name: "灵石碎片",
-        realm_min: 2,
-        price_bone_coins: 80,
-        count_min: 1,
-        count_max: 3,
-    },
-    // Solidify tier
-    CatalogueEntry {
-        template_id: "bone_reinforcing_pill",
-        display_name: "固骨丹",
-        realm_min: 3,
-        price_bone_coins: 120,
+        template_id: "broken_artifact_scroll",
+        display_name: "残卷",
+        realm_min: 1,
+        price_bone_coins: 40,
         count_min: 1,
         count_max: 2,
-    },
-    // Spirit tier
-    CatalogueEntry {
-        template_id: "spirit_jade",
-        display_name: "灵玉",
-        realm_min: 4,
-        price_bone_coins: 200,
-        count_min: 1,
-        count_max: 1,
     },
 ];
 
@@ -1719,5 +1690,110 @@ mod tests {
         let price_low =
             DynamicPricing::compute_price(100, 0.5, 0.5, rep.get("player:b"), 0.0, &config);
         assert_eq!(price_low, 130, "low reputation should give 30% markup");
+    }
+
+    // =========================================================================
+    // Catalog alignment — TRADE_CATALOGUE (展示路) 与 npc_trade_catalog_entry (买路) 一致性
+    // =========================================================================
+
+    /// TRADE_CATALOGUE 中每个 template_id 必须能在展示后被购买（买路有对应条目）。
+    /// 这是"展示的 offer == 可购清单"的核心约束，防止"能看不能买"孤岛。
+    #[test]
+    fn catalogue_all_entries_purchasable_via_buy_path() {
+        // 用遍历 archetype 检查：TRADE_CATALOGUE 里的每个 template_id
+        // 必须至少被 Commoner 或 Rogue 的买路认可。
+        // 注：Disciple NPC 展示 offer 但生产买路暂无 Disciple arm——已知孤岛，后续 plan 补齐；
+        // 此处故意仅覆盖 Commoner/Rogue，避免误报为"已覆盖"。
+        // 非交易 archetype（GuardianRelic/Daoxiang/…）不参与校验。
+        use crate::network::client_request_handler::npc_trade_catalog_entry;
+        let trading_archetypes = [NpcArchetype::Commoner, NpcArchetype::Rogue];
+        for entry in TRADE_CATALOGUE {
+            let found = trading_archetypes
+                .iter()
+                .any(|arch| npc_trade_catalog_entry(*arch, entry.template_id).is_some());
+            assert!(
+                found,
+                "TRADE_CATALOGUE 条目 '{}' 在买路（npc_trade_catalog_entry）中不存在 \
+                 ——展示了却买不到（孤岛），期望: Commoner 或 Rogue 买路有此 template_id，\
+                 实际: None",
+                entry.template_id
+            );
+        }
+    }
+
+    /// TRADE_CATALOGUE 中 spirit_grass 条目的价格必须与买路对齐（均为 10 骨币）。
+    /// 展示价格与实际结算价格不一致会欺骗玩家。
+    #[test]
+    fn catalogue_spirit_grass_price_matches_buy_path() {
+        let cat = TRADE_CATALOGUE
+            .iter()
+            .find(|e| e.template_id == "spirit_grass")
+            .expect("spirit_grass 应在 TRADE_CATALOGUE 中");
+        assert_eq!(
+            cat.price_bone_coins, 10,
+            "TRADE_CATALOGUE spirit_grass 价格应为 10 骨币（与买路一致），\
+             实际为 {}",
+            cat.price_bone_coins
+        );
+    }
+
+    /// TRADE_CATALOGUE 中 broken_artifact_scroll 条目的价格必须与买路对齐（均为 40 骨币）。
+    #[test]
+    fn catalogue_broken_artifact_scroll_price_matches_buy_path() {
+        let cat = TRADE_CATALOGUE
+            .iter()
+            .find(|e| e.template_id == "broken_artifact_scroll")
+            .expect("broken_artifact_scroll 应在 TRADE_CATALOGUE 中");
+        assert_eq!(
+            cat.price_bone_coins, 40,
+            "TRADE_CATALOGUE broken_artifact_scroll 价格应为 40 骨币（与买路一致），\
+             实际为 {}",
+            cat.price_bone_coins
+        );
+    }
+
+    /// 旧废弃 template_id（lingcao/fragment_scroll/bone_meal/rough_bandage 等）
+    /// 不应再出现在 TRADE_CATALOGUE——它们无 asset 支撑或与买路不对齐。
+    #[test]
+    fn catalogue_no_legacy_misaligned_ids() {
+        let legacy_ids = [
+            "lingcao",
+            "fragment_scroll",
+            "bone_meal",
+            "rough_bandage",
+            "qi_condensing_powder",
+            "spirit_stone_shard",
+            "bone_reinforcing_pill",
+            "spirit_jade",
+        ];
+        for legacy in &legacy_ids {
+            assert!(
+                !TRADE_CATALOGUE.iter().any(|e| e.template_id == *legacy),
+                "废弃/不对齐 template_id '{}' 不应出现在 TRADE_CATALOGUE，\
+                 期望: 已移除，实际: 仍存在",
+                legacy
+            );
+        }
+    }
+
+    /// 所有在 TRADE_CATALOGUE 中的条目，通过 assign_npc_trade_inventory 生成的
+    /// TradeOffer.price_bone_coins 必须与 TRADE_CATALOGUE 条目一致。
+    #[test]
+    fn catalogue_prices_propagate_to_trade_offers() {
+        for seed in 0..100u64 {
+            let inv = assign_npc_trade_inventory(NpcArchetype::Rogue, Realm::Condense, seed);
+            for offer in &inv.offers {
+                let entry = TRADE_CATALOGUE
+                    .iter()
+                    .find(|e| e.template_id == offer.template_id)
+                    .expect("offer 中的 template_id 必须在 TRADE_CATALOGUE 中有对应条目");
+                assert_eq!(
+                    offer.price_bone_coins, entry.price_bone_coins,
+                    "TradeOffer 价格应与 TRADE_CATALOGUE 一致：template_id={}, \
+                     期望: {}, 实际: {}",
+                    offer.template_id, entry.price_bone_coins, offer.price_bone_coins
+                );
+            }
+        }
     }
 }
