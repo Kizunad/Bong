@@ -205,6 +205,9 @@ export const CHANNELS = {
   /** Server → Agent: 毒蛊经脉侵蚀进度（plan-dugu-v1 P1 agent narration） */
   DUGU_POISON_PROGRESS: "bong:dugu/poison_progress",
 
+  /** Server → Agent: 解毒结果（plan-dugu-v1 P1 agent narration） */
+  DUGU_ANTIDOTE_RESULT: "bong:dugu/antidote_result",
+
   /** Server → Agent: 毒性真元服丹剂量事件（plan-poison-trait-v1） */
   POISON_DOSE_EVENT: "bong:poison/dose",
 
