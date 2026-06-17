@@ -3300,7 +3300,10 @@ pub fn abort_du_xu_on_client_removed(
         else {
             continue;
         };
-        if state.kind != TribulationKind::DuXu {
+        // abort_as_fled 语义：断线 = 逃劫（DuXu 已有此路径；JueBi 同样适用，
+        // 防止玩家在绝壁劫压力下主动断线 exploit + 保持两种劫型一致性）。
+        // ZoneCollapse / Targeted 不绑定玩家身份，不处理。
+        if !matches!(state.kind, TribulationKind::DuXu | TribulationKind::JueBi) {
             continue;
         }
         settle_fled_tribulation(
@@ -3477,7 +3480,9 @@ fn settle_fled_tribulation(
     }
     settled.send(TribulationSettled {
         entity,
-        kind: TribulationKind::DuXu,
+        // 使用 state.kind 而非硬编码 DuXu，避免 JueBi 断线时下游（halfstep metrics 等）
+        // 收到错误 kind 的 TribulationSettled 事件。
+        kind: state.kind,
         source: None,
         result: DuXuResultV1 {
             char_id: lifecycle.character_id.clone(),
@@ -7857,6 +7862,499 @@ mod tests {
                 .expect("active tribulation query should succeed")
                 .is_none(),
             "fled tribulation should clear active row"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    // ── JueBi 断线结算测试组 ────────────────────────────────────────────
+
+    /// 持有 JueBi TribulationState 的玩家断线 → settle 为 fled（quit 后果落到玩家态）
+    /// + active row 被删（无 orphan）+ TribulationState 组件被移除
+    /// + TribulationSettled.kind == JueBi（不误报 DuXu）
+    #[test]
+    fn juebi_disconnect_is_settled_as_fled() {
+        let mut app = App::new();
+        let (settings, root) = persistence_settings("juebi-disconnect-fled");
+        let char_id = "offline:JueBiPlayer";
+        persist_active_tribulation(
+            &settings,
+            &ActiveTribulationRecord {
+                char_id: char_id.to_string(),
+                kind: "jue_bi".to_string(),
+                source: "void_quota_exceeded".to_string(),
+                origin_dimension: Some("minecraft:overworld".to_string()),
+                wave_current: 2,
+                waves_total: 5,
+                started_tick: 100,
+                epicenter: [0.0, 64.0, 0.0],
+                intensity: 1.0,
+            },
+        )
+        .expect("active jue_bi tribulation should persist before disconnect");
+
+        app.insert_resource(settings.clone());
+        app.insert_resource(CombatClock { tick: 500 });
+        app.add_event::<TribulationSettled>();
+        app.add_event::<TribulationFled>();
+        app.add_systems(Update, abort_du_xu_on_client_removed);
+
+        let (mut client_bundle, _helper) = create_mock_client("JueBiPlayer");
+        client_bundle.player.position = Position::new([8.0, 66.0, 8.0]);
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                Cultivation {
+                    realm: Realm::Spirit,
+                    qi_current: 100.0,
+                    qi_max: 210.0,
+                    ..Default::default()
+                },
+                all_meridians_open(),
+                Wounds {
+                    health_current: 80.0,
+                    health_max: 100.0,
+                    entries: Vec::new(),
+                },
+                Lifecycle {
+                    character_id: char_id.to_string(),
+                    state: LifecycleState::Alive,
+                    ..Default::default()
+                },
+                LifeRecord::new(char_id),
+                TribulationState {
+                    kind: TribulationKind::JueBi,
+                    phase: TribulationPhase::Wave(2),
+                    epicenter: [0.0, 66.0, 0.0],
+                    wave_current: 2,
+                    waves_total: 5,
+                    started_tick: 100,
+                    phase_started_tick: 400,
+                    next_wave_tick: 600,
+                    participants: vec![char_id.to_string()],
+                    failed: false,
+                },
+            ))
+            .id();
+
+        // 触发断线：移除 Client 组件
+        app.world_mut().entity_mut(entity).remove::<Client>();
+        app.update();
+
+        // ① TribulationState 组件已被移除（entity 不再处于劫中）
+        assert!(
+            app.world().get::<TribulationState>(entity).is_none(),
+            "期望 TribulationState 被移除（fled 结算完成），实际仍附着在 entity 上"
+        );
+
+        // ② TribulationFled 事件已发送（fled 后果）
+        let fled: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<TribulationFled>>()
+            .drain()
+            .collect();
+        assert_eq!(
+            fled.len(),
+            1,
+            "期望 1 个 TribulationFled 事件（JueBi 断线 = fled），实际 {}",
+            fled.len()
+        );
+        assert_eq!(
+            fled[0].entity, entity,
+            "期望 fled 事件绑定断线玩家 entity，实际 {:?}",
+            fled[0].entity
+        );
+        assert_eq!(
+            fled[0].tick, 500,
+            "期望 fled_tick = CombatClock.tick = 500，实际 {}",
+            fled[0].tick
+        );
+
+        // ③ TribulationSettled.kind == JueBi（不误报 DuXu）
+        let settled: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<TribulationSettled>>()
+            .drain()
+            .collect();
+        assert_eq!(
+            settled.len(),
+            1,
+            "期望 1 个 TribulationSettled 事件，实际 {}",
+            settled.len()
+        );
+        assert_eq!(
+            settled[0].kind,
+            TribulationKind::JueBi,
+            "期望 TribulationSettled.kind == JueBi（不误报 DuXu），实际 {:?}",
+            settled[0].kind
+        );
+        assert_eq!(
+            settled[0].result.outcome,
+            DuXuOutcomeV1::Fled,
+            "期望结算结果 = Fled，实际 {:?}",
+            settled[0].result.outcome
+        );
+        assert_eq!(
+            settled[0].result.waves_survived, 2,
+            "期望 waves_survived = wave_current(2)，实际 {}",
+            settled[0].result.waves_survived
+        );
+
+        // ④ LifeRecord 记录了 TribulationFled 传记条目（fled 后果落到玩家持久化态）
+        let life = app
+            .world()
+            .get::<LifeRecord>(entity)
+            .expect("LifeRecord 应仍附着在 entity 上");
+        assert!(
+            matches!(
+                life.biography.last(),
+                Some(BiographyEntry::TribulationFled { wave: 3, tick: 500 })
+            ),
+            "期望最后一条传记条目为 TribulationFled {{ wave: 3, tick: 500 }}（wave_current.saturating_add(1)），实际 {:?}",
+            life.biography.last()
+        );
+
+        // ⑤ active_tribulations 表行已被删除（无 orphan）
+        assert!(
+            load_active_tribulation(&settings, char_id)
+                .expect("active tribulation 查询应成功")
+                .is_none(),
+            "期望 JueBi 断线后 tribulations_active 行被删除（无孤儿），实际行仍存在"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// 无 TribulationState 的普通玩家断线 → 不误结算（正常 despawn，无 Fled/Settled 事件）
+    #[test]
+    fn non_tribulation_disconnect_emits_no_fled_events() {
+        let mut app = App::new();
+        let (settings, root) = persistence_settings("no-trib-disconnect");
+        let char_id = "offline:NormalPlayer";
+
+        app.insert_resource(settings.clone());
+        app.insert_resource(CombatClock { tick: 200 });
+        app.add_event::<TribulationSettled>();
+        app.add_event::<TribulationFled>();
+        app.add_systems(Update, abort_du_xu_on_client_removed);
+
+        let (client_bundle, _helper) = create_mock_client("NormalPlayer");
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                Cultivation {
+                    realm: Realm::Spirit,
+                    qi_current: 80.0,
+                    qi_max: 100.0,
+                    ..Default::default()
+                },
+                Lifecycle {
+                    character_id: char_id.to_string(),
+                    state: LifecycleState::Alive,
+                    ..Default::default()
+                },
+                // 刻意不挂 TribulationState
+            ))
+            .id();
+
+        app.world_mut().entity_mut(entity).remove::<Client>();
+        app.update();
+
+        let fled: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<TribulationFled>>()
+            .drain()
+            .collect();
+        let settled: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<TribulationSettled>>()
+            .drain()
+            .collect();
+        assert_eq!(
+            fled.len(),
+            0,
+            "期望无 TribulationFled 事件（非渡劫玩家不应被误结算），实际 {} 个",
+            fled.len()
+        );
+        assert_eq!(
+            settled.len(),
+            0,
+            "期望无 TribulationSettled 事件（非渡劫玩家不应被误结算），实际 {} 个",
+            settled.len()
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// JueBi 断线发出的 TribulationSettled.kind 为 JueBi 而非 DuXu
+    /// —— 锁住 settle_fled_tribulation 使用 state.kind 而非硬编码 DuXu 的行为
+    #[test]
+    fn settle_fled_emits_correct_kind_for_juebi() {
+        let mut app = App::new();
+        let (settings, root) = persistence_settings("juebi-settled-kind");
+        let char_id = "offline:KindCheck";
+        persist_active_tribulation(
+            &settings,
+            &ActiveTribulationRecord {
+                char_id: char_id.to_string(),
+                kind: "jue_bi".to_string(),
+                source: String::new(),
+                origin_dimension: None,
+                wave_current: 0,
+                waves_total: 3,
+                started_tick: 10,
+                epicenter: [0.0, 64.0, 0.0],
+                intensity: 0.0,
+            },
+        )
+        .expect("active jue_bi row 应能写入");
+
+        app.insert_resource(settings.clone());
+        app.insert_resource(CombatClock { tick: 50 });
+        app.add_event::<TribulationSettled>();
+        app.add_event::<TribulationFled>();
+        app.add_systems(Update, abort_du_xu_on_client_removed);
+
+        let (mut client_bundle, _helper) = create_mock_client("KindCheck");
+        client_bundle.player.position = Position::new([0.0, 64.0, 0.0]);
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                Cultivation {
+                    realm: Realm::Spirit,
+                    qi_current: 50.0,
+                    qi_max: 100.0,
+                    ..Default::default()
+                },
+                all_meridians_open(),
+                Wounds::default(),
+                Lifecycle {
+                    character_id: char_id.to_string(),
+                    state: LifecycleState::Alive,
+                    ..Default::default()
+                },
+                LifeRecord::new(char_id),
+                TribulationState {
+                    kind: TribulationKind::JueBi,
+                    phase: TribulationPhase::Wave(0),
+                    epicenter: [0.0, 64.0, 0.0],
+                    wave_current: 0,
+                    waves_total: 3,
+                    started_tick: 10,
+                    phase_started_tick: 10,
+                    next_wave_tick: 100,
+                    participants: vec![char_id.to_string()],
+                    failed: false,
+                },
+            ))
+            .id();
+
+        app.world_mut().entity_mut(entity).remove::<Client>();
+        app.update();
+
+        let settled: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<TribulationSettled>>()
+            .drain()
+            .collect();
+        assert_eq!(settled.len(), 1);
+        assert_eq!(
+            settled[0].kind,
+            TribulationKind::JueBi,
+            "期望 TribulationSettled.kind == JueBi（settle_fled_tribulation 应用 state.kind 而非硬编码 DuXu），实际 {:?}",
+            settled[0].kind
+        );
+        assert_ne!(
+            settled[0].kind,
+            TribulationKind::DuXu,
+            "不期望 kind == DuXu（这是回归：hardcoded kind bug 复现）"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// JueBi 劫刚开始（wave_current=0）断线 → 仍被结算为 fled（边界：劫刚触发）
+    #[test]
+    fn juebi_disconnect_at_wave_zero_is_fled() {
+        let mut app = App::new();
+        let (settings, root) = persistence_settings("juebi-wave0-fled");
+        let char_id = "offline:EarlyEscape";
+        persist_active_tribulation(
+            &settings,
+            &ActiveTribulationRecord {
+                char_id: char_id.to_string(),
+                kind: "jue_bi".to_string(),
+                source: String::new(),
+                origin_dimension: None,
+                wave_current: 0,
+                waves_total: 5,
+                started_tick: 1000,
+                epicenter: [0.0, 64.0, 0.0],
+                intensity: 0.0,
+            },
+        )
+        .expect("active jue_bi 应能写入");
+
+        app.insert_resource(settings.clone());
+        app.insert_resource(CombatClock { tick: 1001 });
+        app.add_event::<TribulationSettled>();
+        app.add_event::<TribulationFled>();
+        app.add_systems(Update, abort_du_xu_on_client_removed);
+
+        let (mut client_bundle, _helper) = create_mock_client("EarlyEscape");
+        client_bundle.player.position = Position::new([0.0, 64.0, 0.0]);
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                Cultivation {
+                    realm: Realm::Spirit,
+                    qi_current: 200.0,
+                    qi_max: 210.0,
+                    ..Default::default()
+                },
+                all_meridians_open(),
+                Wounds::default(),
+                Lifecycle {
+                    character_id: char_id.to_string(),
+                    state: LifecycleState::Alive,
+                    ..Default::default()
+                },
+                LifeRecord::new(char_id),
+                TribulationState {
+                    kind: TribulationKind::JueBi,
+                    phase: TribulationPhase::Wave(0),
+                    epicenter: [0.0, 64.0, 0.0],
+                    wave_current: 0,
+                    waves_total: 5,
+                    started_tick: 1000,
+                    phase_started_tick: 1000,
+                    next_wave_tick: 1100,
+                    participants: vec![char_id.to_string()],
+                    failed: false,
+                },
+            ))
+            .id();
+
+        app.world_mut().entity_mut(entity).remove::<Client>();
+        app.update();
+
+        assert!(
+            app.world().get::<TribulationState>(entity).is_none(),
+            "期望 wave_current=0（劫刚触发）的 JueBi 断线也被结算，TribulationState 应被移除"
+        );
+        let fled: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<TribulationFled>>()
+            .drain()
+            .collect();
+        assert_eq!(
+            fled.len(),
+            1,
+            "期望劫初断线产生 1 个 TribulationFled，实际 {}",
+            fled.len()
+        );
+        assert!(
+            load_active_tribulation(&settings, char_id)
+                .expect("查询应成功")
+                .is_none(),
+            "期望劫初断线后 active row 被删（无孤儿），实际行仍存在"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// JueBi 接近完成（wave_current = waves_total - 1）断线 → 仍被结算为 fled（边界：接近通关）
+    #[test]
+    fn juebi_disconnect_near_completion_is_fled() {
+        let mut app = App::new();
+        let (settings, root) = persistence_settings("juebi-near-complete-fled");
+        let char_id = "offline:NearWinner";
+        let waves_total = 5_u32;
+        let wave_current = waves_total - 1;
+        persist_active_tribulation(
+            &settings,
+            &ActiveTribulationRecord {
+                char_id: char_id.to_string(),
+                kind: "jue_bi".to_string(),
+                source: String::new(),
+                origin_dimension: None,
+                wave_current,
+                waves_total,
+                started_tick: 0,
+                epicenter: [0.0, 64.0, 0.0],
+                intensity: 0.0,
+            },
+        )
+        .expect("active jue_bi 应能写入");
+
+        app.insert_resource(settings.clone());
+        app.insert_resource(CombatClock { tick: 9000 });
+        app.add_event::<TribulationSettled>();
+        app.add_event::<TribulationFled>();
+        app.add_systems(Update, abort_du_xu_on_client_removed);
+
+        let (mut client_bundle, _helper) = create_mock_client("NearWinner");
+        client_bundle.player.position = Position::new([0.0, 64.0, 0.0]);
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                Cultivation {
+                    realm: Realm::Spirit,
+                    qi_current: 50.0,
+                    qi_max: 210.0,
+                    ..Default::default()
+                },
+                all_meridians_open(),
+                Wounds::default(),
+                Lifecycle {
+                    character_id: char_id.to_string(),
+                    state: LifecycleState::Alive,
+                    ..Default::default()
+                },
+                LifeRecord::new(char_id),
+                TribulationState {
+                    kind: TribulationKind::JueBi,
+                    phase: TribulationPhase::Wave(wave_current),
+                    epicenter: [0.0, 64.0, 0.0],
+                    wave_current,
+                    waves_total,
+                    started_tick: 0,
+                    phase_started_tick: 8900,
+                    next_wave_tick: 9200,
+                    participants: vec![char_id.to_string()],
+                    failed: false,
+                },
+            ))
+            .id();
+
+        app.world_mut().entity_mut(entity).remove::<Client>();
+        app.update();
+
+        assert!(
+            app.world().get::<TribulationState>(entity).is_none(),
+            "期望接近完成的 JueBi 断线被结算为 fled，TribulationState 应被移除"
+        );
+        let settled: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<TribulationSettled>>()
+            .drain()
+            .collect();
+        assert_eq!(settled.len(), 1);
+        assert_eq!(
+            settled[0].result.waves_survived, wave_current,
+            "期望 waves_survived = wave_current({wave_current})，实际 {}",
+            settled[0].result.waves_survived
+        );
+        assert!(
+            load_active_tribulation(&settings, char_id)
+                .expect("查询应成功")
+                .is_none(),
+            "期望接近完成的 JueBi 断线后 active row 被删（无孤儿），实际行仍存在"
         );
 
         let _ = fs::remove_dir_all(root);
