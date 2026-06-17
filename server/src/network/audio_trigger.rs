@@ -28,8 +28,8 @@ use crate::cultivation::overload::MeridianOverloadEvent;
 use crate::cultivation::possession::DuoSheWarningEvent;
 use crate::cultivation::qi_zero_decay::RealmRegressed;
 use crate::cultivation::tribulation::{
-    JueBiTriggeredEvent, TribulationAnnounce, TribulationFailed, TribulationKind, TribulationState,
-    TribulationWaveCleared,
+    JueBiTriggeredEvent, TribulationAnnounce, TribulationFailed, TribulationKind,
+    TribulationSettled, TribulationState, TribulationWaveCleared,
 };
 use crate::forge::blueprint::TemperBeat;
 use crate::forge::events::{ForgeBucket, ForgeOutcomeEvent, ForgeStartAccepted, TemperingHit};
@@ -43,6 +43,7 @@ use crate::network::audio_event_emit::{
 };
 use crate::npc::brain::canonical_npc_id;
 use crate::npc::spawn::NpcMarker;
+use crate::schema::tribulation::DuXuOutcomeV1;
 use crate::skill::events::{SkillLvUp, SkillScrollUsed, SkillXpGain, XpGainSource};
 use crate::social::events::{SocialPactEvent, SocialRenownDeltaEvent};
 
@@ -268,11 +269,13 @@ pub fn emit_cultivation_audio_triggers(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn emit_tribulation_audio_triggers(
     mut announces: EventReader<TribulationAnnounce>,
     mut juebi_triggered: EventReader<JueBiTriggeredEvent>,
     mut waves: EventReader<TribulationWaveCleared>,
     mut failures: EventReader<TribulationFailed>,
+    mut settled: EventReader<TribulationSettled>,
     positions: Query<&Position>,
     states: Query<&TribulationState>,
     mut audio: AudioEmitWriter,
@@ -342,6 +345,25 @@ pub fn emit_tribulation_audio_triggers(
         emit_play(
             &mut audio,
             "realm_regression",
+            event.entity,
+            position.get(),
+            None,
+            1.0,
+            0.0,
+        );
+    }
+
+    for event in settled.read() {
+        let recipe = match event.result.outcome {
+            DuXuOutcomeV1::Ascended | DuXuOutcomeV1::HalfStep => "tribulation_ascend_success",
+            _ => continue,
+        };
+        let Ok(position) = positions.get(event.entity) else {
+            continue;
+        };
+        emit_play(
+            &mut audio,
+            recipe,
             event.entity,
             position.get(),
             None,
@@ -1100,6 +1122,218 @@ mod tests {
                 .expect("blood burn recipe exists")
                 .attenuation,
             AudioAttenuation::PlayerLocal,
+        );
+    }
+
+    fn make_settled(
+        entity: valence::prelude::Entity,
+        outcome: crate::schema::tribulation::DuXuOutcomeV1,
+    ) -> TribulationSettled {
+        use crate::cultivation::tribulation::TribulationKind;
+        use crate::schema::tribulation::DuXuResultV1;
+        TribulationSettled {
+            entity,
+            kind: TribulationKind::DuXu,
+            source: None,
+            result: DuXuResultV1 {
+                char_id: "test_char".to_string(),
+                outcome,
+                killer: None,
+                waves_survived: 3,
+                reason: None,
+            },
+        }
+    }
+
+    #[test]
+    fn tribulation_ascended_settled_emits_success_recipe() {
+        // Expect: outcome=Ascended → emit_tribulation_audio_triggers emits "tribulation_ascend_success".
+        let mut app = App::new();
+        app.add_event::<TribulationAnnounce>();
+        app.add_event::<JueBiTriggeredEvent>();
+        app.add_event::<TribulationWaveCleared>();
+        app.add_event::<TribulationFailed>();
+        app.add_event::<TribulationSettled>();
+        app.add_event::<PlaySoundRecipeRequest>();
+        app.add_systems(Update, emit_tribulation_audio_triggers);
+        let entity = app
+            .world_mut()
+            .spawn(Position::new([10.0, 64.0, 10.0]))
+            .id();
+
+        app.world_mut().send_event(make_settled(
+            entity,
+            crate::schema::tribulation::DuXuOutcomeV1::Ascended,
+        ));
+        app.update();
+
+        let emitted: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<PlaySoundRecipeRequest>>()
+            .drain()
+            .collect();
+        assert_eq!(
+            emitted.len(),
+            1,
+            "expected exactly one PlaySoundRecipeRequest for Ascended outcome, got {}",
+            emitted.len()
+        );
+        assert_eq!(
+            emitted[0].recipe_id, "tribulation_ascend_success",
+            "Ascended outcome must emit tribulation_ascend_success recipe, got {:?}",
+            emitted[0].recipe_id
+        );
+    }
+
+    #[test]
+    fn tribulation_halfstep_settled_emits_success_recipe() {
+        // Expect: outcome=HalfStep → same recipe as Ascended (存活通过亦应有成功 AV).
+        let mut app = App::new();
+        app.add_event::<TribulationAnnounce>();
+        app.add_event::<JueBiTriggeredEvent>();
+        app.add_event::<TribulationWaveCleared>();
+        app.add_event::<TribulationFailed>();
+        app.add_event::<TribulationSettled>();
+        app.add_event::<PlaySoundRecipeRequest>();
+        app.add_systems(Update, emit_tribulation_audio_triggers);
+        let entity = app
+            .world_mut()
+            .spawn(Position::new([10.0, 64.0, 10.0]))
+            .id();
+
+        app.world_mut().send_event(make_settled(
+            entity,
+            crate::schema::tribulation::DuXuOutcomeV1::HalfStep,
+        ));
+        app.update();
+
+        let emitted: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<PlaySoundRecipeRequest>>()
+            .drain()
+            .collect();
+        assert_eq!(
+            emitted.len(),
+            1,
+            "expected exactly one PlaySoundRecipeRequest for HalfStep outcome, got {}",
+            emitted.len()
+        );
+        assert_eq!(
+            emitted[0].recipe_id, "tribulation_ascend_success",
+            "HalfStep outcome must emit tribulation_ascend_success recipe, got {:?}",
+            emitted[0].recipe_id
+        );
+    }
+
+    #[test]
+    fn tribulation_failed_settled_does_not_emit_success_recipe() {
+        // Expect: outcome=Failed → no success AV (failed path handled by TribulationFailed reader).
+        let mut app = App::new();
+        app.add_event::<TribulationAnnounce>();
+        app.add_event::<JueBiTriggeredEvent>();
+        app.add_event::<TribulationWaveCleared>();
+        app.add_event::<TribulationFailed>();
+        app.add_event::<TribulationSettled>();
+        app.add_event::<PlaySoundRecipeRequest>();
+        app.add_systems(Update, emit_tribulation_audio_triggers);
+        let entity = app
+            .world_mut()
+            .spawn(Position::new([10.0, 64.0, 10.0]))
+            .id();
+
+        app.world_mut().send_event(make_settled(
+            entity,
+            crate::schema::tribulation::DuXuOutcomeV1::Failed,
+        ));
+        app.update();
+
+        let emitted: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<PlaySoundRecipeRequest>>()
+            .drain()
+            .collect();
+        assert!(
+            emitted.is_empty(),
+            "Failed outcome must not emit success recipe (handled by TribulationFailed reader), got {:?}",
+            emitted.iter().map(|e| &e.recipe_id).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn tribulation_killed_and_fled_settled_do_not_emit_success_recipe() {
+        // Expect: outcome=Killed/Fled → no success AV (skipped, not gameplay-meaningful success).
+        let mut app = App::new();
+        app.add_event::<TribulationAnnounce>();
+        app.add_event::<JueBiTriggeredEvent>();
+        app.add_event::<TribulationWaveCleared>();
+        app.add_event::<TribulationFailed>();
+        app.add_event::<TribulationSettled>();
+        app.add_event::<PlaySoundRecipeRequest>();
+        app.add_systems(Update, emit_tribulation_audio_triggers);
+        let entity = app
+            .world_mut()
+            .spawn(Position::new([10.0, 64.0, 10.0]))
+            .id();
+
+        app.world_mut().send_event(make_settled(
+            entity,
+            crate::schema::tribulation::DuXuOutcomeV1::Killed,
+        ));
+        app.world_mut().send_event(make_settled(
+            entity,
+            crate::schema::tribulation::DuXuOutcomeV1::Fled,
+        ));
+        app.update();
+
+        let emitted: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<PlaySoundRecipeRequest>>()
+            .drain()
+            .collect();
+        assert!(
+            emitted.is_empty(),
+            "Killed/Fled outcomes must not emit success recipe, got {:?}",
+            emitted.iter().map(|e| &e.recipe_id).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn existing_tribulation_failure_recipe_unaffected_by_settled_reader() {
+        // Regression: TribulationFailed still emits realm_regression, adding settled reader
+        // must not break the failure audio path.
+        let mut app = App::new();
+        app.add_event::<TribulationAnnounce>();
+        app.add_event::<JueBiTriggeredEvent>();
+        app.add_event::<TribulationWaveCleared>();
+        app.add_event::<TribulationFailed>();
+        app.add_event::<TribulationSettled>();
+        app.add_event::<PlaySoundRecipeRequest>();
+        app.add_systems(Update, emit_tribulation_audio_triggers);
+        let entity = app
+            .world_mut()
+            .spawn(Position::new([10.0, 64.0, 10.0]))
+            .id();
+
+        use crate::cultivation::tribulation::TribulationFailed;
+        app.world_mut()
+            .send_event(TribulationFailed { entity, wave: 1 });
+        app.update();
+
+        let emitted: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<PlaySoundRecipeRequest>>()
+            .drain()
+            .collect();
+        assert_eq!(
+            emitted.len(),
+            1,
+            "TribulationFailed should still emit exactly one recipe after adding settled reader, got {}",
+            emitted.len()
+        );
+        assert_eq!(
+            emitted[0].recipe_id, "realm_regression",
+            "TribulationFailed must emit realm_regression (regression guard), got {:?}",
+            emitted[0].recipe_id
         );
     }
 
