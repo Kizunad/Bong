@@ -539,6 +539,7 @@ pub fn register(app: &mut App) {
                 .after(crate::combat::resolve::resolve_attack_intents),
         ),
     );
+    app.add_systems(Update, dugu_event_bridge::publish_antidote_result_events);
     app.add_systems(
         Update,
         cultivation_bridge::publish_breakthrough_cinematic_events,
