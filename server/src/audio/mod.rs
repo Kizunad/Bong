@@ -176,7 +176,7 @@ mod tests {
             SoundRecipeRegistry::load_default().expect("default audio recipes should load");
         assert_eq!(
             registry.len(),
-            234,
+            235,
             "audio registry should exclude removed slide and double-jump movement recipes \
              plus include 7 supply_coffin recipes (break + open common/rare/precious + emerge) \
              plus 1 ambient_dan_zong recipe \
@@ -192,7 +192,8 @@ mod tests {
              plus 1 halfstep_rechallenge_trigger_player recipe (plan-halfstep-rechallenge-integration-v1 P0) \
              plus 2 halfstep P1 recipes (halfstep_quota_release_broadcast + halfstep_rechallenge_trigger_zone_echo) \
              plus 5 placeable container runtime recipes \
-             plus 1 dead_drop_ward_break recipe"
+             plus 1 dead_drop_ward_break recipe \
+             plus 1 tribulation_ascend_success recipe (AV r3-P3#3 渡劫成功 AV)"
         );
         assert!(
             registry.get("beast_trap_snap").is_some(),
@@ -313,6 +314,10 @@ mod tests {
         assert!(registry.get("mountain_shake_rumble").is_some());
         assert!(registry.get("blood_burn_sizzle").is_some());
         assert!(registry.get("transcendence_thunder").is_some());
+        assert!(
+            registry.get("tribulation_ascend_success").is_some(),
+            "AV r3-P3#3: 渡劫成功专属音效 recipe 必须加载（Ascended/HalfStep 结算时播放）"
+        );
         assert!(registry.get("woliu_vacuum_palm").is_some());
         assert!(registry.get("woliu_vortex_shield").is_some());
         assert!(registry.get("woliu_vacuum_lock").is_some());

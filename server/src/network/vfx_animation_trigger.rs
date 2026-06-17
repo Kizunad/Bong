@@ -18,11 +18,12 @@ use crate::combat::woliu_v2::state::VortexV2State;
 use crate::combat::woliu_v2::{VortexCastEvent, WoliuSkillId};
 use crate::combat::CombatClock;
 use crate::cultivation::breakthrough::BreakthroughOutcome;
-use crate::cultivation::tribulation::{TribulationAnnounce, TribulationFailed};
+use crate::cultivation::tribulation::{TribulationAnnounce, TribulationFailed, TribulationSettled};
 use crate::lingtian::events::{
     DrainQiCompleted, HarvestCompleted, PlantingCompleted, ReplenishCompleted, TillCompleted,
 };
 use crate::network::vfx_event_emit::VfxEventRequest;
+use crate::schema::tribulation::DuXuOutcomeV1;
 use crate::schema::vfx_event::VfxEventPayloadV1;
 
 const ANIM_SWORD_SLASH_DOWN: &str = "bong:sword_slash_down";
@@ -174,6 +175,51 @@ pub fn emit_tribulation_animation_triggers(
             &players,
             &mut vfx_events,
         );
+    }
+}
+
+/// Tribulation settlement success (Ascended / HalfStep) -> breakthrough pillar particle + animation.
+///
+/// Independent system so it does not disturb `emit_tribulation_animation_triggers`'s
+/// Bevy EventReader cursor.  Particle event_id `bong:breakthrough_pillar` is confirmed
+/// registered in `VfxBootstrap.java` (BreakthroughPillarPlayer).
+pub fn emit_tribulation_settled_vfx_triggers(
+    mut settled: EventReader<TribulationSettled>,
+    players: Query<PlayerAnimTargetItem<'_>, PlayerAnimTargetFilter>,
+    mut vfx_events: EventWriter<VfxEventRequest>,
+) {
+    for event in settled.read() {
+        let (anim_id, particle_count) = match event.result.outcome {
+            DuXuOutcomeV1::Ascended => (ANIM_BREAKTHROUGH_TONGLING, 16u16),
+            DuXuOutcomeV1::HalfStep => (ANIM_BREAKTHROUGH_GUYUAN, 10u16),
+            _ => continue,
+        };
+        // 1. Play breakthrough animation.
+        emit_play_for_entity(
+            event.entity,
+            anim_id,
+            STORY_PRIORITY,
+            Some(4),
+            &players,
+            &mut vfx_events,
+        );
+        // 2. Spawn pillar particle at the entity's position.
+        let Ok((position, _unique_id)) = players.get(event.entity) else {
+            continue;
+        };
+        let origin = position.get();
+        vfx_events.send(VfxEventRequest::new(
+            origin,
+            VfxEventPayloadV1::SpawnParticle {
+                event_id: "bong:breakthrough_pillar".to_string(),
+                origin: [origin.x, origin.y, origin.z],
+                direction: None,
+                color: None,
+                strength: Some(1.2),
+                count: Some(particle_count),
+                duration_ticks: Some(60),
+            },
+        ));
     }
 }
 
@@ -1492,5 +1538,149 @@ mod tests {
             "ANIM_SHIELD_RAISE and ANIM_GUARD_RAISE must be different animation ids; \
              shield_raise is a persistent looping block anim, guard_raise is FullPowerCharge"
         );
+    }
+
+    // ─── AV r3-P3#3：渡劫成功 VFX ───
+
+    fn make_tribulation_settled(
+        entity: valence::prelude::Entity,
+        outcome: DuXuOutcomeV1,
+    ) -> TribulationSettled {
+        use crate::cultivation::tribulation::TribulationKind;
+        use crate::schema::tribulation::DuXuResultV1;
+        TribulationSettled {
+            entity,
+            kind: TribulationKind::DuXu,
+            source: None,
+            result: DuXuResultV1 {
+                char_id: "test_char".to_string(),
+                outcome,
+                killer: None,
+                waves_survived: 3,
+                reason: None,
+            },
+        }
+    }
+
+    #[test]
+    fn tribulation_ascended_settled_emits_breakthrough_pillar_and_tongling_animation() {
+        // Expect: outcome=Ascended → PlayAnim(breakthrough_tongling, STORY_PRIORITY) +
+        //         SpawnParticle(bong:breakthrough_pillar, count=16).
+        let mut app = App::new();
+        app.add_event::<TribulationSettled>();
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(Update, emit_tribulation_settled_vfx_triggers);
+        let player = spawn_player(&mut app, "Alice", [5.0, 64.0, 5.0]);
+
+        app.world_mut()
+            .send_event(make_tribulation_settled(player, DuXuOutcomeV1::Ascended));
+        app.update();
+
+        let emitted = drain_vfx(&mut app);
+        assert_eq!(
+            emitted.len(),
+            2,
+            "Ascended outcome must emit exactly 2 VFX events (PlayAnim + SpawnParticle), got {}",
+            emitted.len()
+        );
+        assert_play_anim(&emitted[0], ANIM_BREAKTHROUGH_TONGLING, STORY_PRIORITY);
+        assert_spawn_particle(&emitted[1], "bong:breakthrough_pillar", Some(16));
+    }
+
+    #[test]
+    fn tribulation_halfstep_settled_emits_breakthrough_pillar_and_guyuan_animation() {
+        // Expect: outcome=HalfStep → PlayAnim(breakthrough_guyuan, STORY_PRIORITY) +
+        //         SpawnParticle(bong:breakthrough_pillar, count=10, 略低于 Ascended).
+        let mut app = App::new();
+        app.add_event::<TribulationSettled>();
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(Update, emit_tribulation_settled_vfx_triggers);
+        let player = spawn_player(&mut app, "Bob", [5.0, 64.0, 5.0]);
+
+        app.world_mut()
+            .send_event(make_tribulation_settled(player, DuXuOutcomeV1::HalfStep));
+        app.update();
+
+        let emitted = drain_vfx(&mut app);
+        assert_eq!(
+            emitted.len(),
+            2,
+            "HalfStep outcome must emit exactly 2 VFX events (PlayAnim + SpawnParticle), got {}",
+            emitted.len()
+        );
+        assert_play_anim(&emitted[0], ANIM_BREAKTHROUGH_GUYUAN, STORY_PRIORITY);
+        assert_spawn_particle(&emitted[1], "bong:breakthrough_pillar", Some(10));
+    }
+
+    #[test]
+    fn tribulation_failed_settled_does_not_emit_success_vfx() {
+        // Expect: outcome=Failed → no VFX (failure handled by TribulationFailed, not TribulationSettled).
+        let mut app = App::new();
+        app.add_event::<TribulationSettled>();
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(Update, emit_tribulation_settled_vfx_triggers);
+        let player = spawn_player(&mut app, "Charlie", [5.0, 64.0, 5.0]);
+
+        app.world_mut()
+            .send_event(make_tribulation_settled(player, DuXuOutcomeV1::Failed));
+        app.update();
+
+        let emitted = drain_vfx(&mut app);
+        assert!(
+            emitted.is_empty(),
+            "Failed outcome must not emit success VFX (handled by TribulationFailed reader), got {:?}",
+            emitted.len()
+        );
+    }
+
+    #[test]
+    fn tribulation_killed_fled_settled_does_not_emit_success_vfx() {
+        // Expect: outcome=Killed/Fled → no VFX (not a success).
+        let mut app = App::new();
+        app.add_event::<TribulationSettled>();
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(Update, emit_tribulation_settled_vfx_triggers);
+        let player = spawn_player(&mut app, "Dave", [5.0, 64.0, 5.0]);
+
+        app.world_mut()
+            .send_event(make_tribulation_settled(player, DuXuOutcomeV1::Killed));
+        app.world_mut()
+            .send_event(make_tribulation_settled(player, DuXuOutcomeV1::Fled));
+        app.update();
+
+        let emitted = drain_vfx(&mut app);
+        assert!(
+            emitted.is_empty(),
+            "Killed/Fled outcomes must not emit success VFX, got {}",
+            emitted.len()
+        );
+    }
+
+    #[test]
+    fn existing_tribulation_failure_animation_unaffected_by_settled_system() {
+        // Regression guard: emit_tribulation_animation_triggers still fires hurt_stagger for
+        // TribulationFailed events after adding the separate settled system.
+        let mut app = App::new();
+        app.add_event::<TribulationAnnounce>();
+        app.add_event::<TribulationFailed>();
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(Update, emit_tribulation_animation_triggers);
+        let player = spawn_player(&mut app, "Eve", [5.0, 64.0, 5.0]);
+
+        use crate::cultivation::tribulation::TribulationFailed;
+        app.world_mut().send_event(TribulationFailed {
+            entity: player,
+            wave: 2,
+        });
+        app.update();
+
+        let emitted = drain_vfx(&mut app);
+        assert_eq!(
+            emitted.len(),
+            1,
+            "TribulationFailed must still emit exactly one VFX (hurt_stagger), got {}",
+            emitted.len()
+        );
+        assert_play_anim(&emitted[0], ANIM_HURT_STAGGER, HIT_RECOIL_PRIORITY);
     }
 }
