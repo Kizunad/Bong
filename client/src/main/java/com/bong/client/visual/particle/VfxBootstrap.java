@@ -113,6 +113,22 @@ public final class VfxBootstrap {
         registry.register(SpiderShimmerPlayer.EVENT_ID,          new SpiderShimmerPlayer());
         // plan-fauna-mimic-spider-v1 P1 — 拟态蛛暴起径向粒子 burst
         registry.register(SpiderAmbushVfxPlayer.EVENT_ID,        new SpiderAmbushVfxPlayer());
+        registry.register(NpcParticleVfxPlayer.SKULL_FIEND_LOCKING,
+            new NpcParticleVfxPlayer(NpcParticleVfxPlayer.Kind.SKULL_FIEND_LOCKING));
+        registry.register(NpcParticleVfxPlayer.SKULL_FIEND_TRAIL,
+            new NpcParticleVfxPlayer(NpcParticleVfxPlayer.Kind.SKULL_FIEND_TRAIL));
+        registry.register(NpcParticleVfxPlayer.SKULL_FIEND_IMPACT,
+            new NpcParticleVfxPlayer(NpcParticleVfxPlayer.Kind.SKULL_FIEND_IMPACT));
+        registry.register(NpcParticleVfxPlayer.SKULL_FIEND_STUNNED,
+            new NpcParticleVfxPlayer(NpcParticleVfxPlayer.Kind.SKULL_FIEND_STUNNED));
+        registry.register(NpcParticleVfxPlayer.HYBRID_FORMATION,
+            new NpcParticleVfxPlayer(NpcParticleVfxPlayer.Kind.HYBRID_FORMATION));
+        registry.register(NpcParticleVfxPlayer.HYBRID_RAGE,
+            new NpcParticleVfxPlayer(NpcParticleVfxPlayer.Kind.HYBRID_RAGE));
+        registry.register(NpcParticleVfxPlayer.SUPPLY_COFFIN_EMERGE,
+            new NpcParticleVfxPlayer(NpcParticleVfxPlayer.Kind.SUPPLY_COFFIN_EMERGE));
+        registry.register(NpcParticleVfxPlayer.SUPPLY_COFFIN_BREAK,
+            new NpcParticleVfxPlayer(NpcParticleVfxPlayer.Kind.SUPPLY_COFFIN_BREAK));
         registry.register(TuikeFalseSkinParticlePlayer.DON_DUST,
             new TuikeFalseSkinParticlePlayer(TuikeFalseSkinParticlePlayer.DON_DUST));
         registry.register(TuikeFalseSkinParticlePlayer.SHED_BURST,
