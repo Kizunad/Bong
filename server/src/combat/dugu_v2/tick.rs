@@ -1,10 +1,13 @@
-use valence::prelude::{Commands, Entity, EventWriter, Query, Res};
+use valence::prelude::{Commands, Entity, EventReader, EventWriter, Position, Query, Res, ResMut};
 
 use crate::combat::components::TICKS_PER_SECOND;
 use crate::combat::CombatClock;
 use crate::cultivation::components::Cultivation;
+use crate::qi_physics::ledger::{QiAccountId, QiTransfer, QiTransferReason, WorldQiAccount};
+use crate::world::dimension::{CurrentDimension, DimensionKind};
+use crate::world::zone::ZoneRegistry;
 
-use super::events::PermanentQiMaxDecayApplied;
+use super::events::{EclipseNeedleEvent, PermanentQiMaxDecayApplied, ReverseTriggeredEvent};
 use super::state::{ReverseAftermathCloud, ShroudActive, TaintMark};
 
 pub fn taint_decay_tick(
@@ -79,6 +82,112 @@ pub fn reverse_aftermath_decay_tick(
     for (entity, cloud) in &clouds {
         if clock.tick >= cloud.expires_at_tick {
             commands.entity(entity).remove::<ReverseAftermathCloud>();
+        }
+    }
+}
+
+/// plan-qi-conservation-leaks-v1 P4 — EclipseNeedleEvent `returned_zone_qi` 入账到受害者所在 zone。
+///
+/// 脏真元过渡态（排斥部分）立即散回受害者脚下的 zone。
+/// worldview §424-426 正典：脏真元注入『敌人体内』，被排斥后从受害者体内飞出，
+/// 落到**受害者**所在 zone（而非施法者所在 zone）。
+///
+/// **守恒约束**：
+///   - 受害者所在 zone.spirit_qi += returned_zone_qi（直接改 ECS ZoneRegistry）；
+///   - push audit-only QiTransfer(from=player:<caster>, to=zone:<name>, DuguReturnToZone)；
+///   - 不调 WorldQiAccount::transfer（player qi 活在 ECS，不在 ledger balances）；
+///   - returned_zone_qi == 0 时静默跳过，不产生噪音审计记录。
+///   - ZoneRegistry 缺失（单测场景）时静默跳过。
+pub fn eclipse_zone_credit_tick(
+    mut events: EventReader<EclipseNeedleEvent>,
+    entity_positions: Query<(Entity, &Position, Option<&CurrentDimension>)>,
+    mut zones: Option<ResMut<ZoneRegistry>>,
+    mut qi_account: Option<ResMut<WorldQiAccount>>,
+) {
+    let Some(ref mut zones) = zones else {
+        // 测试环境未 insert ZoneRegistry 时静默消费事件，不 panic
+        for _ in events.read() {}
+        return;
+    };
+    for event in events.read() {
+        let returned = f64::from(event.returned_zone_qi);
+        if returned <= 0.0 {
+            continue;
+        }
+        // 脏真元从受害者体内散逸 → 入账受害者所在 zone（对齐 worldview §424-426）
+        let Some((pos, dim)) = entity_positions.get(event.target).ok().map(|(_, p, d)| {
+            (
+                p.get(),
+                d.map(|cd| cd.0).unwrap_or(DimensionKind::Overworld),
+            )
+        }) else {
+            continue;
+        };
+        let Some(zone) = zones.find_zone_mut_by_pos(dim, pos) else {
+            continue;
+        };
+        let zone_name = zone.name.clone();
+        // credit zone（直接写 ECS，与 summarize_world_qi 的 zone_qi 口径一致）
+        zone.spirit_qi = (zone.spirit_qi + returned).clamp(-1.0, 1.0);
+        // audit trail（审计模式，不动 player ledger balance）
+        if let Some(ref mut account) = qi_account {
+            let from = QiAccountId::player(format!("entity:{:?}", event.caster));
+            let to = QiAccountId::zone(zone_name.clone());
+            account.push_transfer_audit(QiTransfer {
+                from,
+                to,
+                amount: returned,
+                reason: QiTransferReason::DuguReturnToZone,
+            });
+        }
+    }
+}
+
+/// plan-qi-conservation-leaks-v1 P4 — ReverseTriggeredEvent `returned_zone_qi` 入账到受害者所在 zone。
+///
+/// Reverse（倒蚀）爆发后寄生残留从受害者体内散逸，落到**受害者（event.center）**所在 zone。
+/// worldview §424-426 正典：脏真元从受害者体内飞出，应记到受害者脚下 zone。
+/// event.center 已是 target 坐标（skills.rs apply_reverse），可直接用于 zone 查找。
+/// 维度取施法者 CurrentDimension（双方应在同一维度才能施法，center 坐标与施法者维度一致）。
+/// ZoneRegistry 缺失（单测场景）时静默跳过。
+pub fn reverse_zone_credit_tick(
+    mut events: EventReader<ReverseTriggeredEvent>,
+    caster_dims: Query<(Entity, Option<&CurrentDimension>)>,
+    mut zones: Option<ResMut<ZoneRegistry>>,
+    mut qi_account: Option<ResMut<WorldQiAccount>>,
+) {
+    let Some(ref mut zones) = zones else {
+        for _ in events.read() {}
+        return;
+    };
+    for event in events.read() {
+        let returned = f64::from(event.returned_zone_qi);
+        if returned <= 0.0 {
+            continue;
+        }
+        // event.center 是受害者位置（apply_reverse 设为 target 坐标）
+        let pos = event.center;
+        // 取施法者维度（施法者与受害者必须在同一维度才能施法）
+        let dim = caster_dims
+            .get(event.caster)
+            .ok()
+            .and_then(|(_, d)| d)
+            .map(|cd| cd.0)
+            .unwrap_or(DimensionKind::Overworld);
+        let Some(zone) = zones.find_zone_mut_by_pos(dim, pos) else {
+            continue;
+        };
+        let zone_name = zone.name.clone();
+        zone.spirit_qi = (zone.spirit_qi + returned).clamp(-1.0, 1.0);
+        if let Some(ref mut account) = qi_account {
+            let from = QiAccountId::player(format!("entity:{:?}", event.caster));
+            let to = QiAccountId::zone(zone_name.clone());
+            account.push_transfer_audit(QiTransfer {
+                from,
+                to,
+                amount: returned,
+                reason: QiTransferReason::DuguReturnToZone,
+            });
         }
     }
 }

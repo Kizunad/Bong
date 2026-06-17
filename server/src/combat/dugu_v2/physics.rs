@@ -242,11 +242,19 @@ pub fn dirty_qi_collision(
         distance_blocks,
         &EnvField::default().with_dugu_taint_residue(1.0),
     );
+    // 修法 ②：Eclipse 只入账被排斥（立即散逸）部分；Reverse 入账寄生残留（延迟散逸）部分。
+    // rejected_qi + effective_hit ≈ injected_qi，两路合计 = injected_qi × ratio，零重叠。
+    // ──────────────────────────────────────────────────────────────────────────────────────
+    // 旧逻辑：returned_zone_qi = injected_qi × ratio（Eclipse 全额入账，Reverse 再次以
+    //   mark.intensity ≈ effective_hit × ratio 入账 → 同一团脏真元被计入 zone 两次，通胀）。
+    // 新逻辑：Eclipse.returned_zone_qi = rejected_qi × ratio（排斥部分立即散逸回 zone）；
+    //         Reverse.returned_zone_qi = total_taint_intensity × ratio（入体残留延迟散逸）。
+    let rejected_qi = (out.attenuated_qi - out.effective_hit).max(0.0);
     DirtyQiOutcome {
         injected_qi: injected_qi.max(0.0) as f32,
         effective_hit: out.effective_hit as f32,
-        rejected_qi: (out.attenuated_qi - out.effective_hit).max(0.0) as f32,
-        returned_zone_qi: (injected_qi.max(0.0) * DUGU_DIRTY_QI_ZONE_RETURN_RATIO) as f32,
+        rejected_qi: rejected_qi as f32,
+        returned_zone_qi: (rejected_qi * DUGU_DIRTY_QI_ZONE_RETURN_RATIO) as f32,
     }
 }
 
