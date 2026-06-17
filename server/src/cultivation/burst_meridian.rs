@@ -89,6 +89,12 @@ pub fn register_skills(registry: &mut SkillRegistry) {
     registry.register(BENG_QUAN_SKILL_ID, resolve_beng_quan);
 }
 
+pub fn declare_meridian_dependencies(
+    dependencies: &mut crate::cultivation::meridian::severed::SkillMeridianDependencies,
+) {
+    dependencies.declare(BENG_QUAN_SKILL_ID, RIGHT_ARM_MERIDIANS.to_vec());
+}
+
 pub fn resolve_beng_quan(
     world: &mut bevy_ecs::world::World,
     caster: Entity,

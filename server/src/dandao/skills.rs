@@ -34,9 +34,9 @@ const PILL_MIST_COOLDOWN_TICKS: u64 = 600;
 const PILL_RUSH_COOLDOWN_TICKS: u64 = 300;
 
 // 经脉依赖（plan §1.4）
-const PILL_RUSH_MERIDIANS: &[MeridianId] = &[MeridianId::Spleen, MeridianId::Kidney];
-const PILL_BOMB_MERIDIANS: &[MeridianId] = &[MeridianId::Lung, MeridianId::Spleen];
-const PILL_MIST_MERIDIANS: &[MeridianId] = &[MeridianId::Spleen, MeridianId::Liver];
+pub const PILL_RUSH_MERIDIANS: &[MeridianId] = &[MeridianId::Spleen, MeridianId::Kidney];
+pub const PILL_BOMB_MERIDIANS: &[MeridianId] = &[MeridianId::Lung, MeridianId::Spleen];
+pub const PILL_MIST_MERIDIANS: &[MeridianId] = &[MeridianId::Spleen, MeridianId::Liver];
 
 /// §8.1 #4: 用 capacity_for_tier(realm) 算 qi 消耗基数，不用 qi_max。
 /// realm 对应 tier 映射（醒灵=0, 引气=1, ... 化虚=5）。

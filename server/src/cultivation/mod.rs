@@ -220,6 +220,18 @@ pub fn register(app: &mut App) {
         &mut skill_meridian_dependencies,
     );
     crate::npc::npc_skill::declare_npc_skill_meridian_deps(&mut skill_meridian_dependencies);
+    // GAP-1 fix: woliu.vortex 依赖 Lung（手太阴肺经），resolver 同步加 check gate。
+    crate::combat::woliu::declare_meridian_dependencies(&mut skill_meridian_dependencies);
+    // GAP-2 fix: burst_meridian.beng_quan 依赖手三阳（LargeIntestine/SmallIntestine/TripleEnergizer）。
+    crate::cultivation::burst_meridian::declare_meridian_dependencies(
+        &mut skill_meridian_dependencies,
+    );
+    // GAP-3 fix: yidao 五招补入审计表（功能门已在 resolver 内部实现，此处补完整性声明）。
+    crate::combat::yidao::declare_meridian_dependencies(&mut skill_meridian_dependencies);
+    // GAP-4 fix: dandao 三招补入审计表（功能门已在 resolver 内部实现，此处补完整性声明）。
+    crate::dandao::declare_meridian_dependencies(&mut skill_meridian_dependencies);
+    // dugu 两招无经脉前置，显式声明空 deps 以满足审计完整性不变量。
+    crate::cultivation::dugu::declare_meridian_dependencies(&mut skill_meridian_dependencies);
 
     app.insert_resource(MeridianTopology::standard());
     app.insert_resource(CultivationClock::default());

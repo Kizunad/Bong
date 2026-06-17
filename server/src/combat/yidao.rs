@@ -322,6 +322,16 @@ pub fn register_skills(registry: &mut SkillRegistry) {
     );
 }
 
+pub fn declare_meridian_dependencies(
+    dependencies: &mut crate::cultivation::meridian::severed::SkillMeridianDependencies,
+) {
+    dependencies.declare(MERIDIAN_REPAIR_SKILL_ID, MERIDIAN_REPAIR_DEPS.to_vec());
+    dependencies.declare(CONTAM_PURGE_SKILL_ID, CONTAM_PURGE_DEPS.to_vec());
+    dependencies.declare(EMERGENCY_RESUSCITATE_SKILL_ID, EMERGENCY_DEPS.to_vec());
+    dependencies.declare(LIFE_EXTENSION_SKILL_ID, LIFE_EXTENSION_DEPS.to_vec());
+    dependencies.declare(MASS_MERIDIAN_REPAIR_SKILL_ID, MASS_REPAIR_DEPS.to_vec());
+}
+
 pub fn resolve_meridian_repair_skill(
     world: &mut bevy_ecs::world::World,
     caster: Entity,
