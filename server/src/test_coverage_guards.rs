@@ -19,12 +19,6 @@ struct UnconsumedEventTriage {
 
 const INTENTIONAL_UNCONSUMED_EVENTS: &[UnconsumedEventTriage] = &[
     UnconsumedEventTriage {
-        event: "AntidoteResultEvent",
-        status: UnconsumedEventStatus::DeferredFollowUp,
-        reason: "毒抗解毒结果目前只被单元测试 drain；运行时 narration/HUD 消费留给后续毒蛊反馈桥。",
-        follow_up: "plan-combat-skill-feedback-bridges 后续毒抗 UI/narration slice",
-    },
-    UnconsumedEventTriage {
         event: "ArtifactMeridianCracked",
         status: UnconsumedEventStatus::DeferredFollowUp,
         reason: "炼器经脉裂痕是领域事件，当前 P 只锁 forge 状态；玩家反馈消费尚未接线。",
@@ -119,12 +113,6 @@ const INTENTIONAL_UNCONSUMED_EVENTS: &[UnconsumedEventTriage] = &[
         status: UnconsumedEventStatus::DirectResourceConsumer,
         reason: "QiTransfer 是守恒审计事件；真实余额由 WorldQiAccount/调用点直接 apply，不能要求 EventReader 消费。",
         follow_up: "无；守恒口径看 WorldQiAccount 与 qi_physics ledger 测试",
-    },
-    UnconsumedEventTriage {
-        event: "RenewCompleted",
-        status: UnconsumedEventStatus::DeferredFollowUp,
-        reason: "灵田 renew 完成事件当前只作为 completion 事件暴露；后续接农事反馈/agent 记录。",
-        follow_up: "lingtian feedback follow-up",
     },
     UnconsumedEventTriage {
         event: "SupplyCoffinOpened",
@@ -312,7 +300,7 @@ fn orphan_triage_entry_is_reported_when_writer_disappears() {
 
     let err = find_orphan_triage_entries(&index).expect_err("triage without writer should fail");
     assert!(
-        err.contains("AntidoteResultEvent"),
+        err.contains("ArtifactMeridianCracked"),
         "orphan triage error should name deleted or renamed event, got: {err}"
     );
 }

@@ -35,7 +35,8 @@ use crate::forge::blueprint::TemperBeat;
 use crate::forge::events::{ForgeBucket, ForgeOutcomeEvent, ForgeStartAccepted, TemperingHit};
 use crate::forge::session::{ForgeSessions, ForgeStep};
 use crate::lingtian::events::{
-    DrainQiCompleted, HarvestCompleted, PlantingCompleted, ReplenishCompleted, TillCompleted,
+    DrainQiCompleted, HarvestCompleted, PlantingCompleted, RenewCompleted, ReplenishCompleted,
+    TillCompleted,
 };
 use crate::network::audio_event_emit::{
     recipient_for_attenuation, AudioRecipient, PlaySoundRecipeRequest, AUDIO_BROADCAST_RADIUS,
@@ -499,6 +500,7 @@ pub fn emit_lingtian_audio_triggers(
     mut harvests: EventReader<HarvestCompleted>,
     mut replenishes: EventReader<ReplenishCompleted>,
     mut drains: EventReader<DrainQiCompleted>,
+    mut renews: EventReader<RenewCompleted>,
     mut audio: AudioEmitWriter,
 ) {
     let mut audio = audio.context();
@@ -528,6 +530,15 @@ pub fn emit_lingtian_audio_triggers(
     }
     for event in drains.read() {
         emit_play_at_block(&mut audio, "lingtian_drain", event.player, event.pos, 0.85);
+    }
+    for event in renews.read() {
+        emit_play_at_block(
+            &mut audio,
+            "lingtian_replenish",
+            event.player,
+            event.pos,
+            1.0,
+        );
     }
 }
 
@@ -1101,6 +1112,7 @@ mod tests {
         app.add_event::<HarvestCompleted>();
         app.add_event::<ReplenishCompleted>();
         app.add_event::<DrainQiCompleted>();
+        app.add_event::<RenewCompleted>();
         app.add_event::<PlaySoundRecipeRequest>();
         app.add_systems(Update, emit_lingtian_audio_triggers);
         let player = app.world_mut().spawn_empty().id();
@@ -1160,7 +1172,103 @@ mod tests {
                 "lingtian_harvest",
                 "lingtian_replenish",
                 "lingtian_drain"
-            ]
+            ],
+            "regression: existing 5 lingtian sound recipes must not be broken by RenewCompleted addition"
+        );
+    }
+
+    /// RenewCompleted emits lingtian_replenish audio cue (recipe reuse per scope decision).
+    ///
+    /// Expectation: emit RenewCompleted → emit_lingtian_audio_triggers →
+    /// PlaySoundRecipeRequest with recipe_id="lingtian_replenish" at the correct pos.
+    #[test]
+    fn renew_completed_emits_lingtian_replenish_audio() {
+        let mut app = App::new();
+        app.init_resource::<AudioImplementationDedup>();
+        app.add_event::<TillCompleted>();
+        app.add_event::<PlantingCompleted>();
+        app.add_event::<HarvestCompleted>();
+        app.add_event::<ReplenishCompleted>();
+        app.add_event::<DrainQiCompleted>();
+        app.add_event::<RenewCompleted>();
+        app.add_event::<PlaySoundRecipeRequest>();
+        app.add_systems(Update, emit_lingtian_audio_triggers);
+
+        let player = app.world_mut().spawn_empty().id();
+        let pos = valence::prelude::BlockPos::new(10, 65, -3);
+
+        app.world_mut().send_event(RenewCompleted {
+            player,
+            pos,
+            hoe: crate::lingtian::hoe::HoeKind::Iron,
+            hoe_instance_id: 77,
+        });
+
+        app.update();
+
+        let recipes: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<PlaySoundRecipeRequest>>()
+            .drain()
+            .map(|request| request.recipe_id)
+            .collect();
+
+        assert_eq!(
+            recipes,
+            vec!["lingtian_replenish"],
+            "expected exactly one lingtian_replenish cue for RenewCompleted \
+             (reuses replenish recipe per r2-P1 scope decision), got {recipes:?}"
+        );
+    }
+
+    /// RenewCompleted: two distinct player entities each emit one lingtian_replenish cue.
+    ///
+    /// AudioImplementationDedup deduplicates on (entity, recipe_id) per tick window.
+    /// Using distinct players confirms both events propagate independently.
+    /// (Same-player same-recipe same-tick dedup is tested implicitly by the dedup unit tests.)
+    #[test]
+    fn multiple_renew_completed_different_players_each_emit_cue() {
+        let mut app = App::new();
+        app.init_resource::<AudioImplementationDedup>();
+        app.add_event::<TillCompleted>();
+        app.add_event::<PlantingCompleted>();
+        app.add_event::<HarvestCompleted>();
+        app.add_event::<ReplenishCompleted>();
+        app.add_event::<DrainQiCompleted>();
+        app.add_event::<RenewCompleted>();
+        app.add_event::<PlaySoundRecipeRequest>();
+        app.add_systems(Update, emit_lingtian_audio_triggers);
+
+        let player_a = app.world_mut().spawn_empty().id();
+        let player_b = app.world_mut().spawn_empty().id();
+        let pos = valence::prelude::BlockPos::new(0, 64, 0);
+
+        app.world_mut().send_event(RenewCompleted {
+            player: player_a,
+            pos,
+            hoe: crate::lingtian::hoe::HoeKind::Iron,
+            hoe_instance_id: 1,
+        });
+        app.world_mut().send_event(RenewCompleted {
+            player: player_b,
+            pos,
+            hoe: crate::lingtian::hoe::HoeKind::Iron,
+            hoe_instance_id: 2,
+        });
+
+        app.update();
+
+        let recipes: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<PlaySoundRecipeRequest>>()
+            .drain()
+            .map(|request| request.recipe_id)
+            .collect();
+
+        assert_eq!(
+            recipes,
+            vec!["lingtian_replenish", "lingtian_replenish"],
+            "expected one lingtian_replenish cue per distinct player entity, got {recipes:?}"
         );
     }
 

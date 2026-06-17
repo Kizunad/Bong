@@ -155,6 +155,7 @@ pub const CH_BAOMAI_V3_TRANSCENDENCE_EXPIRED: &str = "bong:baomai_v3/transcenden
 pub const CH_BAOMAI_V3_OVERLOAD_RIPPLE: &str = "bong:baomai_v3/overload_ripple";
 pub const CH_ZHENFA_V2_EVENT: &str = "bong:zhenfa/v2_event";
 pub const CH_DUGU_POISON_PROGRESS: &str = "bong:dugu/poison_progress";
+pub const CH_DUGU_ANTIDOTE_RESULT: &str = "bong:dugu/antidote_result";
 pub const CH_POISON_DOSE_EVENT: &str = "bong:poison/dose";
 pub const CH_POISON_OVERDOSE_EVENT: &str = "bong:poison/overdose";
 pub const CH_DUGU_V2_CAST: &str = "bong:dugu_v2/cast";
@@ -391,6 +392,7 @@ mod tests {
         assert_eq!(CH_BAOMAI_V3_SKILL_EVENT, "bong:baomai_v3/skill_event");
         assert_eq!(CH_ZHENFA_V2_EVENT, "bong:zhenfa/v2_event");
         assert_eq!(CH_DUGU_POISON_PROGRESS, "bong:dugu/poison_progress");
+        assert_eq!(CH_DUGU_ANTIDOTE_RESULT, "bong:dugu/antidote_result");
         assert_eq!(CH_POISON_DOSE_EVENT, "bong:poison/dose");
         assert_eq!(CH_POISON_OVERDOSE_EVENT, "bong:poison/overdose");
         assert_eq!(CH_DUGU_V2_CAST, "bong:dugu_v2/cast");
