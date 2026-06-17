@@ -227,6 +227,36 @@ class ProtoServerDataBridgeTest {
                 " — did you forget to add a new PayloadCase→type mapping?");
     }
 
+    // ─── Faction war HUD proto bridge ────────────────────────────────
+    @Test
+    void bridgeFactionWarStateProducesLegacyJson() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setFactionWarState(Envelope.FactionWarState.newBuilder()
+                        .setWarId(42)
+                        .setZone("blood_valley")
+                        .setRegionDescriptor("残灰谷")
+                        .setPhase("skirmish")
+                        .addGroups(1)
+                        .addGroups(2)
+                        .setEnlistCount(3)
+                        .setMercenaryCount(4)
+                        .setInterceptCount(5)
+                        .setSpectateCount(6)
+                        .setWinnerGroup(-1)
+                        .setLoserGroup(-1))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+
+        assertEquals(1, json.get("v").getAsInt());
+        assertEquals("faction_war_state", json.get("type").getAsString());
+        assertEquals(42, json.get("war_id").getAsLong());
+        assertEquals("blood_valley", json.get("zone").getAsString());
+        assertEquals("残灰谷", json.get("region_descriptor").getAsString());
+        assertEquals("skirmish", json.get("phase").getAsString());
+        assertEquals(2, json.getAsJsonArray("groups").size());
+    }
+
     // ─── FullPower variants map to correct type strings ──────────────
     @Test
     void fullPowerChargingMapsToChargingState() {

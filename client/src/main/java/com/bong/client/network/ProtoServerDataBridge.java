@@ -157,6 +157,7 @@ public final class ProtoServerDataBridge {
         m.put(Envelope.ServerDataEnvelope.PayloadCase.LOOT_CONTAINER_OPEN, "loot_container_open");
         m.put(Envelope.ServerDataEnvelope.PayloadCase.LOOT_CONTAINER_UPDATE, "loot_container_update");
         m.put(Envelope.ServerDataEnvelope.PayloadCase.LOOT_CONTAINER_CLOSE, "loot_container_close");
+        m.put(Envelope.ServerDataEnvelope.PayloadCase.FACTION_WAR_STATE, "faction_war_state");
         // plan-combat-skill-feedback-bridges-v1 P4：暗器 HUD
         m.put(Envelope.ServerDataEnvelope.PayloadCase.ANQI_HUD, "anqi_hud");
         // plan-combat-skill-feedback-bridges-v1 P5：毒蛊 v2 HUD S2C
@@ -425,6 +426,7 @@ public final class ProtoServerDataBridge {
             case LOOT_CONTAINER_OPEN: return envelope.getLootContainerOpen();
             case LOOT_CONTAINER_UPDATE: return envelope.getLootContainerUpdate();
             case LOOT_CONTAINER_CLOSE: return envelope.getLootContainerClose();
+            case FACTION_WAR_STATE: return envelope.getFactionWarState();
             // plan-combat-skill-feedback-bridges-v1 P4：暗器 HUD
             case ANQI_HUD: return envelope.getAnqiHud();
             // plan-combat-skill-feedback-bridges-v1 P5：毒蛊 v2 HUD S2C
