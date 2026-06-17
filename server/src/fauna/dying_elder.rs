@@ -26,6 +26,7 @@ use bevy_transform::components::{GlobalTransform, Transform};
 use serde::{Deserialize, Serialize};
 use valence::client::ClientMarker;
 use valence::entity::marker::MarkerEntityBundle;
+use valence::entity::EntityId;
 use valence::prelude::{
     bevy_ecs, App, Commands, Component, DVec3, Entity, EntityKind, EntityLayerId, EventReader,
     EventWriter, IntoSystemConfigs, Position, Query, Res, ResMut, Resource, Update, With, Without,
@@ -327,11 +328,11 @@ pub struct DyingElderSpawnRequest {
 /// plan-dying-elder-v1 Bug2 修复 — 大能 entity 真正创建后 emit 的事件。
 ///
 /// `DyingElderSpawnRequest` 在 P0 emit，但 entity 由 P1 的 `dying_elder_apply_spawn_system`
-/// 创建；二者之间 entity id 未知。本事件在 entity 创建后立即 emit，携带真实 entity idx，
-/// 供 P3 appear event 系统和 S2C appear 系统填充正确的 `elder_entity_idx`。
+/// 创建；二者之间 entity id 未知。本事件在 entity 创建后立即 emit，携带 ECS Entity，
+/// 供 P3/S2C appear event 系统通过查询 `EntityId` 组件取得 MC protocol entity_id。
 #[derive(Debug, Clone, valence::prelude::Event)]
 pub struct DyingElderAppearedEvent {
-    /// 真实 elder ECS entity（`entity.index()` 即 `elder_entity_idx` wire 字段）。
+    /// 真实 elder ECS entity（P3/S2C 系统通过此值查询 &EntityId 取得 MC protocol entity_id）。
     pub elder: Entity,
     /// TSY zone 名称（来自 spawn request）。
     pub zone_name: String,
@@ -367,9 +368,9 @@ pub fn register_p0(app: &mut App) {
 /// - [`NpcArchetype::DyingElder`]（通过 `npc_runtime_bundle` 包含）
 /// - [`Cultivation`]：化虚境界初始真元（qi_current = qi_max = DYING_ELDER_INITIAL_QI）
 ///
-/// ## Bug2 修复：emit DyingElderAppearedEvent 携带真实 entity idx
-/// entity 创建后立即 emit `DyingElderAppearedEvent`，供 P3 appear event 系统和 S2C appear
-/// 系统填充正确的 `elder_entity_idx`（替代原来的 0 占位）。
+/// ## Bug2 修复：emit DyingElderAppearedEvent 携带真实 ECS Entity
+/// entity 创建后立即 emit `DyingElderAppearedEvent`，供 P3/S2C appear 系统
+/// 查询 `&EntityId` 取 MC protocol entity_id（替代原来的 0 占位）。
 pub(crate) fn dying_elder_apply_spawn_system(
     mut commands: Commands,
     mut spawn_requests: EventReader<DyingElderSpawnRequest>,
@@ -1209,21 +1210,30 @@ pub fn register_p2(app: &mut App) {
 /// plan-dying-elder-v1 P3 Bug2 修复 — 消费 `DyingElderAppearedEvent`，向 agent 广播「大能出现」叙事事件。
 ///
 /// 改为监听 `DyingElderAppearedEvent`（由 `dying_elder_apply_spawn_system` 在 entity 创建后 emit），
-/// 而不是原来的 `DyingElderSpawnRequest`，从而获得真实 `elder_entity_idx`（非 0 占位）。
+/// 通过 `elder_id_query` 取 Valence `EntityId::get()`（MC protocol entity_id）填入 payload。
 ///
 /// `betray_probability` 字段使用 blackboard 初始值（renown 调整在首次给丹时执行）。
 pub(crate) fn dying_elder_p3_emit_appear_event_system(
     mut appeared_events: EventReader<DyingElderAppearedEvent>,
+    elder_id_query: Query<&EntityId, (With<NpcMarker>, Without<ClientMarker>)>,
     redis: Option<Res<RedisBridgeResource>>,
 ) {
     let Some(redis) = redis else { return };
 
     for ev in appeared_events.read() {
+        let Ok(entity_id) = elder_id_query.get(ev.elder) else {
+            tracing::warn!(
+                "[bong][dying_elder] P3 emit appear: no EntityId for elder {:?}, skipping Redis event",
+                ev.elder
+            );
+            continue;
+        };
+        let protocol_id = entity_id.get();
         // qi_fraction = 1.0：大能刚出现时真元满值（DYING_ELDER_INITIAL_QI / DYING_ELDER_INITIAL_QI）
         let qi_fraction = 1.0_f32;
         let event = ElderEncounterEventV1 {
             zone_name: ev.zone_name.clone(),
-            elder_entity_idx: ev.elder.index(), // Bug2 修复：真实 entity idx
+            elder_entity_id: protocol_id, // MC protocol entity_id（非 ECS index）
             event_kind: ElderEncounterEventKindV1::Appeared,
             betray_probability: ev.blackboard.betray_probability,
             dan_count: 0,
@@ -1235,9 +1245,9 @@ pub(crate) fn dying_elder_p3_emit_appear_event_system(
             .tx_outbound
             .send(RedisOutbound::ElderEncounterEvent(event));
         tracing::info!(
-            "[bong][dying_elder] P3 emit appear event: entity={:?} (idx={}) zone='{}' betray_prob={:.3} tick={}",
+            "[bong][dying_elder] P3 emit appear event: entity={:?} protocol_id={} zone='{}' betray_prob={:.3} tick={}",
             ev.elder,
-            ev.elder.index(),
+            protocol_id,
             ev.zone_name,
             ev.blackboard.betray_probability,
             ev.tick,
@@ -1259,7 +1269,7 @@ pub(crate) fn dying_elder_p3_emit_appear_event_system(
 #[allow(clippy::type_complexity)]
 pub(crate) fn dying_elder_p3_emit_death_event_system(
     elders: Query<
-        (Entity, &DyingElderBlackboard, &DyingElderState),
+        (Entity, &EntityId, &DyingElderBlackboard, &DyingElderState),
         (
             With<NpcMarker>,
             Without<ClientMarker>,
@@ -1272,7 +1282,7 @@ pub(crate) fn dying_elder_p3_emit_death_event_system(
     let tick = game_tick.as_deref().map(|t| t.0 as u64).unwrap_or(0);
     let Some(redis) = redis else { return };
 
-    for (entity, bb, state) in elders.iter() {
+    for (entity, entity_id, bb, state) in elders.iter() {
         let dead_by_betrayal = match *state {
             DyingElderState::Dead { dead_by_betrayal } => dead_by_betrayal,
             _ => continue,
@@ -1286,7 +1296,7 @@ pub(crate) fn dying_elder_p3_emit_death_event_system(
 
         let event = ElderEncounterEventV1 {
             zone_name: bb.home_zone.clone(),
-            elder_entity_idx: entity.index(),
+            elder_entity_id: entity_id.get(), // MC protocol entity_id（非 ECS index）
             event_kind,
             betray_probability: 0.0,
             dan_count: 0,
@@ -1317,7 +1327,7 @@ pub(crate) fn dying_elder_p3_emit_death_event_system(
 pub(crate) fn dying_elder_p3_emit_dan_received_event_system(
     mut intents: EventReader<GiveDanToElderIntent>,
     elders: Query<
-        (Entity, &DyingElderBlackboard, &DyingElderState),
+        (Entity, &EntityId, &DyingElderBlackboard, &DyingElderState),
         (With<NpcMarker>, Without<ClientMarker>),
     >,
     redis: Option<Res<RedisBridgeResource>>,
@@ -1327,7 +1337,7 @@ pub(crate) fn dying_elder_p3_emit_dan_received_event_system(
     let Some(redis) = redis else { return };
 
     for intent in intents.read() {
-        let Ok((entity, bb, state)) = elders.get(intent.elder) else {
+        let Ok((entity, entity_id, bb, state)) = elders.get(intent.elder) else {
             continue;
         };
 
@@ -1347,7 +1357,7 @@ pub(crate) fn dying_elder_p3_emit_dan_received_event_system(
         };
         let event = ElderEncounterEventV1 {
             zone_name: bb.home_zone.clone(),
-            elder_entity_idx: entity.index(),
+            elder_entity_id: entity_id.get(), // MC protocol entity_id（非 ECS index）
             event_kind: ElderEncounterEventKindV1::DanReceived,
             betray_probability: 0.0,
             dan_count,
@@ -2434,10 +2444,10 @@ mod tests {
         let bb = DyingElderBlackboard::new("tsy_deep", DVec3::ZERO, 1234, 0);
         let betray_prob = bb.betray_probability;
 
-        // 模拟构建 appeared 事件（qi_fraction=1.0：刚出现时真元满值）
+        // 模拟构建 appeared 事件（qi_fraction=1.0：刚出现时真元满值；elder_entity_id 为 placeholder）
         let event = ElderEncounterEventV1 {
             zone_name: bb.home_zone.clone(),
-            elder_entity_idx: 0,
+            elder_entity_id: 1, // 最小合法 MC protocol entity_id
             event_kind: ElderEncounterEventKindV1::Appeared,
             betray_probability: betray_prob,
             dan_count: 0,
@@ -2478,7 +2488,7 @@ mod tests {
         for kind in kinds {
             let event = ElderEncounterEventV1 {
                 zone_name: "tsy_deep".to_string(),
-                elder_entity_idx: 1,
+                elder_entity_id: 1, // MC protocol entity_id（最小合法值=1）
                 event_kind: kind,
                 betray_probability: 0.5,
                 dan_count: 0,

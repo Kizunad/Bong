@@ -90,16 +90,18 @@ public final class DyingElderInteractionKeybindings {
 
     /**
      * 给丹核心逻辑：
-     * 1. 从 {@link DyingElderEncounterStore} 取大能 entity idx；
+     * 1. 从 {@link DyingElderEncounterStore} 取大能 entity id；
      * 2. 从 {@link InventoryStateStore} 扫描背包找第一颗 {@code hui_yuan_pill}；
      * 3. 构造并发送 {@code give_dan_to_elder} C2S。
      *
      * <p>背包无丹或遭遇已关闭时静默放弃（server 无论如何会校验，防重复只需 client 端提示）。
      */
     static void handleGiveDan() {
-        int elderEntityIdx = DyingElderEncounterStore.getElderEntityIdx();
-        if (elderEntityIdx <= 0) {
-            BongClient.LOGGER.warn("[DyingElder] 给丹失败：elderEntityIdx={} 无效（大能未出现或 id 未同步）", elderEntityIdx);
+        // getElderEntityId() 返回 MC protocol entity_id（Valence 从 1 起分配）。
+        // <= 0 表示未收到 appeared 事件 / elder 尚未同步（0 是 sentinel，Valence 不分配此值）。
+        int elderEntityId = DyingElderEncounterStore.getElderEntityId();
+        if (elderEntityId <= 0) {
+            BongClient.LOGGER.warn("[DyingElder] 给丹失败：elderEntityId={} 无效（大能未出现或 MC protocol id 未同步）", elderEntityId);
             return;
         }
 
@@ -111,9 +113,9 @@ public final class DyingElderInteractionKeybindings {
 
         BongClient.LOGGER.info(
             "[DyingElder] 发送 give_dan_to_elder: pill_instance_id={} elder_entity_id={}",
-            pillInstanceId, elderEntityIdx
+            pillInstanceId, elderEntityId
         );
-        ClientRequestSender.sendGiveDanToElder(pillInstanceId, elderEntityIdx);
+        ClientRequestSender.sendGiveDanToElder(pillInstanceId, elderEntityId);
     }
 
     /**

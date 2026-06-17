@@ -63,7 +63,7 @@ type EventKind =
 function makePayload(eventKind: EventKind, overrides: Record<string, unknown> = {}): string {
   return JSON.stringify({
     zone_name: "tsy_deep",
-    elder_entity_idx: 42,
+    elder_entity_id: 42,
     event_kind: eventKind,
     betray_probability: eventKind === "appeared" ? 0.65 : 0.0,
     dan_count: eventKind === "dan_received" ? 3 : 0,
@@ -200,7 +200,7 @@ describe("ElderEncounterNarrationRuntime", () => {
 
   it("schema 不符（缺 zone_name）→ rejectedContract++，不 publish", async () => {
     const bad = JSON.stringify({
-      elder_entity_idx: 1,
+      elder_entity_id: 1,
       event_kind: "appeared",
       betray_probability: 0.5,
       dan_count: 0,
@@ -216,7 +216,7 @@ describe("ElderEncounterNarrationRuntime", () => {
   it("schema 不符（event_kind 非法值）→ rejectedContract++，不 publish", async () => {
     const bad = JSON.stringify({
       zone_name: "tsy_deep",
-      elder_entity_idx: 1,
+      elder_entity_id: 1,
       event_kind: "unknown_kind",
       betray_probability: 0.5,
       dan_count: 0,
@@ -271,7 +271,7 @@ describe("renderAppearedNarration", () => {
   it("scope 为 zone，target 为 zone_name", () => {
     const result = renderAppearedNarration({
       zone_name: "tsy_abyss",
-      elder_entity_idx: 5,
+      elder_entity_id: 5,
       event_kind: "appeared",
       betray_probability: 0.65,
       dan_count: 0,
@@ -289,7 +289,7 @@ describe("renderAppearedNarration", () => {
   it("高 betray_probability 叙事包含危险暗示", () => {
     const result = renderAppearedNarration({
       zone_name: "tsy_deep",
-      elder_entity_idx: 1,
+      elder_entity_id: 1,
       event_kind: "appeared",
       betray_probability: 0.9,
       dan_count: 0,
@@ -303,7 +303,7 @@ describe("renderAppearedNarration", () => {
   it("低 betray_probability 叙事不含'险机'", () => {
     const result = renderAppearedNarration({
       zone_name: "tsy_shallow",
-      elder_entity_idx: 2,
+      elder_entity_id: 2,
       event_kind: "appeared",
       betray_probability: 0.35,
       dan_count: 0,
@@ -319,7 +319,7 @@ describe("renderDanReceivedNarration", () => {
   it("scope 为 zone，text 包含 dan_count", () => {
     const result = renderDanReceivedNarration({
       zone_name: "tsy_deep",
-      elder_entity_idx: 10,
+      elder_entity_id: 10,
       event_kind: "dan_received",
       betray_probability: 0.0,
       dan_count: 4,
@@ -338,7 +338,7 @@ describe("renderDeathBroadcast", () => {
     const result = renderDeathBroadcast(
       {
         zone_name: "tsy_deep",
-        elder_entity_idx: 7,
+        elder_entity_id: 7,
         event_kind: "betrayal",
         betray_probability: 0.0,
         dan_count: 5,
@@ -357,7 +357,7 @@ describe("renderDeathBroadcast", () => {
     const result = renderDeathBroadcast(
       {
         zone_name: "tsy_abyss",
-        elder_entity_idx: 3,
+        elder_entity_id: 3,
         event_kind: "dead_natural",
         betray_probability: 0.0,
         dan_count: 0,
@@ -375,7 +375,7 @@ describe("renderDeathBroadcast", () => {
     const result = renderDeathBroadcast(
       {
         zone_name: "tsy_deep",
-        elder_entity_idx: 1,
+        elder_entity_id: 1,
         event_kind: "dead_player_kill",
         betray_probability: 0.0,
         dan_count: 0,
@@ -394,7 +394,7 @@ describe("renderDeathBroadcast", () => {
     const result = renderDeathBroadcast(
       {
         zone_name: "tsy_test",
-        elder_entity_idx: 99,
+        elder_entity_id: 99,
         event_kind: "dead_natural",
         betray_probability: 0.0,
         dan_count: 0,

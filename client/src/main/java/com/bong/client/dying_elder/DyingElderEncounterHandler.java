@@ -14,7 +14,7 @@ import com.google.gson.JsonParser;
  * <pre>
  * {
  *   "zone_name":          string,   // 区域名称
- *   "elder_entity_idx":   int,      // 大能实体 idx
+ *   "elder_entity_id":    int,      // 大能 MC protocol entity_id（i32，Valence 从 1 起分配；0=sentinel）
  *   "event_kind":         string,   // "appeared" | "dan_received" | "betrayal" | "dead_natural" | "dead_player_kill"
  *   "betray_probability": float,    // 0.0 ~ 1.0
  *   "dan_count":          int,      // 已收丹数
@@ -50,8 +50,8 @@ public final class DyingElderEncounterHandler {
             String zoneName = root.has("zone_name")
                 ? root.get("zone_name").getAsString()
                 : "";
-            int elderEntityIdx = root.has("elder_entity_idx")
-                ? root.get("elder_entity_idx").getAsInt()
+            int elderEntityId = root.has("elder_entity_id")
+                ? root.get("elder_entity_id").getAsInt()
                 : 0;
             String eventKind = root.has("event_kind")
                 ? root.get("event_kind").getAsString()
@@ -75,7 +75,7 @@ public final class DyingElderEncounterHandler {
             DyingElderEncounterStore.setQiFraction(qiFraction);
 
             if ("appeared".equals(eventKind)) {
-                DyingElderEncounterStore.activate(zoneName, elderEntityIdx, serverTick);
+                DyingElderEncounterStore.activate(zoneName, elderEntityId, serverTick);
                 DyingElderEncounterStore.setBetrayProbability(betrayProbability);
             } else if (!isDeath) {
                 // dan_received and any future non-death events
