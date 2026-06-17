@@ -56,6 +56,11 @@ impl SkillRegistry {
     pub fn lookup(&self, skill_id: &str) -> Option<SkillFn> {
         self.entries.get(skill_id).copied()
     }
+
+    /// 遍历所有已注册 skill_id 与 resolver fn-pointer 对。用于审计测试。
+    pub fn iter(&self) -> impl Iterator<Item = (&&'static str, &SkillFn)> {
+        self.entries.iter()
+    }
 }
 
 pub fn init_registry() -> SkillRegistry {
@@ -78,4 +83,146 @@ pub fn init_registry() -> SkillRegistry {
     crate::sword_path::skill_register::register_skills(&mut registry);
     crate::npc::npc_skill::register_npc_skills(&mut registry);
     registry
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cultivation::meridian::severed::SkillMeridianDependencies;
+
+    /// 构造与生产路径完全一致的 SkillMeridianDependencies（不走 Bevy App）。
+    fn build_production_deps() -> SkillMeridianDependencies {
+        let mut deps = SkillMeridianDependencies::default();
+        crate::combat::zhenmai_v2::declare_meridian_dependencies(&mut deps);
+        crate::combat::anqi_v2::declare_meridian_dependencies(&mut deps);
+        crate::combat::dugu_v2::declare_meridian_dependencies(&mut deps);
+        crate::combat::tuike_v2::declare_meridian_dependencies(&mut deps);
+        crate::combat::sword_basics::declare_meridian_dependencies(&mut deps);
+        crate::combat::shield_block::declare_meridian_dependencies(&mut deps);
+        crate::sword_path::skill_register::declare_meridian_dependencies(&mut deps);
+        crate::movement::dash_proficiency::declare_dash_meridian_dependencies(&mut deps);
+        crate::npc::npc_skill::declare_npc_skill_meridian_deps(&mut deps);
+        crate::combat::woliu::declare_meridian_dependencies(&mut deps);
+        crate::cultivation::burst_meridian::declare_meridian_dependencies(&mut deps);
+        crate::combat::yidao::declare_meridian_dependencies(&mut deps);
+        crate::dandao::declare_meridian_dependencies(&mut deps);
+        // dugu 两招无经脉前置，显式声明空 deps 以满足审计完整性不变量。
+        crate::cultivation::dugu::declare_meridian_dependencies(&mut deps);
+        // woliu_v2 は Bevy Startup system 経由 — 無 ECS バリアントで代替。
+        crate::combat::woliu_v2::skills::declare_woliu_v2_deps_direct(&mut deps);
+        // baomai_v3 は App Resource 経由 — production declare fn を直接呼ぶ。
+        crate::combat::baomai_v3::skills::declare_meridian_dependencies(&mut deps);
+        deps
+    }
+
+    /// 審計不変量（宣言完整性）：SkillRegistry に登録された招式のうち
+    /// TECHNIQUE_DEFINITIONS に存在するもの（プレイヤー技能バー使用可能かつ resolver が存在する）は
+    /// すべて SkillMeridianDependencies に declare が存在しなければならない。
+    ///
+    /// **重要な担保範囲の制限**：
+    /// - 本不変量は「宣言が存在すること」を保証するのみであり、resolver が実行時に
+    ///   check_meridian_dependencies を呼び出すことは保証しない。
+    ///   経脈ゲートが運行時に強制されるかどうかは P0 cast-entry 統一拦截の範疇。
+    /// - 本不変量の対象は SkillRegistry ∩ TECHNIQUE_DEFINITIONS の積集合のみ。
+    ///   TECHNIQUE_DEFINITIONS に存在するが SkillRegistry に未登録（skeleton）の招式は
+    ///   本不変量の外であり防御できない。現在の skeleton 招式：
+    ///     - burst_meridian.tie_shan_kao（Stomach 経脈前置）
+    ///     - burst_meridian.xue_beng_bu（GallBladder 経脈前置）
+    ///     - burst_meridian.ni_mai_hu_ti（Pericardium 経脈前置）
+    ///
+    ///   これらが SkillRegistry に resolver 登録された時点で、同時に declare を追加しなければ
+    ///   本不変量が即赤になる構造を維持すること。
+    ///
+    /// 故意に declare を削除すると本テストが赤くなり、将来の register-without-declare 漏れを防ぐ。
+    #[test]
+    fn every_player_castable_skill_has_meridian_dependency_declaration() {
+        use crate::cultivation::known_techniques::TECHNIQUE_DEFINITIONS;
+        use std::collections::HashSet;
+
+        let deps = build_production_deps();
+        let registry = init_registry();
+
+        // 対象は SkillRegistry ∩ TECHNIQUE_DEFINITIONS の積集合。
+        // TECHNIQUE_DEFINITIONS に存在するが SkillRegistry 未登録の skeleton 招式
+        // （burst_meridian.tie_shan_kao / xue_beng_bu / ni_mai_hu_ti）は
+        // ここでは検出されないが、resolver 登録時に declare も必須（上のコメント参照）。
+        let player_castable: HashSet<&str> =
+            TECHNIQUE_DEFINITIONS.iter().map(|def| def.id).collect();
+
+        let mut missing: Vec<&str> = Vec::new();
+        for (skill_id, _fn_ptr) in registry.iter() {
+            if player_castable.contains(*skill_id) && !deps.is_declared(skill_id) {
+                missing.push(skill_id);
+            }
+        }
+        missing.sort_unstable();
+        assert!(
+            missing.is_empty(),
+            "SkillRegistry に登録された player-castable 招式が SkillMeridianDependencies \
+             に未宣言です。declare_meridian_dependencies に追加してください。\
+             注意：本不変量は宣言の存在のみを保証し、resolver が実行時に \
+             check_meridian_dependencies を呼び出すかどうかは検証しません \
+             （経脈ゲートの運行時強制は P0 cast-entry 統一拦截の範疇）。\
+             未宣言の招式: {:?}",
+            missing
+        );
+    }
+
+    /// 証明テスト：woliu.vortex の declare を削除すると上のテストが赤くなる構造を確認する。
+    /// woliu.vortex は TECHNIQUE_DEFINITIONS にあり、deps に宣言が存在する。
+    #[test]
+    fn woliu_vortex_is_declared_in_production_deps() {
+        let deps = build_production_deps();
+        assert!(
+            deps.is_declared("woliu.vortex"),
+            "woliu.vortex must be declared in SkillMeridianDependencies; \
+             it is player-castable and gates on Lung meridian"
+        );
+        assert_eq!(
+            deps.lookup("woliu.vortex"),
+            &[crate::cultivation::components::MeridianId::Lung],
+            "woliu.vortex should declare exactly [Lung] as its meridian dependency"
+        );
+    }
+
+    /// 証明テスト：burst_meridian.beng_quan の declare が正しい経脈集合を持つ。
+    #[test]
+    fn burst_meridian_beng_quan_is_declared_in_production_deps() {
+        use crate::cultivation::components::MeridianId;
+        let deps = build_production_deps();
+        assert!(
+            deps.is_declared("burst_meridian.beng_quan"),
+            "burst_meridian.beng_quan must be declared; it is player-castable"
+        );
+        let declared = deps.lookup("burst_meridian.beng_quan");
+        assert!(
+            declared.contains(&MeridianId::LargeIntestine),
+            "beng_quan must declare LargeIntestine"
+        );
+        assert!(
+            declared.contains(&MeridianId::SmallIntestine),
+            "beng_quan must declare SmallIntestine"
+        );
+        assert!(
+            declared.contains(&MeridianId::TripleEnergizer),
+            "beng_quan must declare TripleEnergizer"
+        );
+    }
+
+    /// 証明テスト：全登録スキルのうち declare が存在するものが実際に宣言されている。
+    /// 将来 declare を 1 つ削除すると audit テストが赤くなる構造を担保する。
+    #[test]
+    fn declared_count_matches_expected_minimum() {
+        let deps = build_production_deps();
+        // woliu + burst_meridian + yidao(5) + dandao(3) + dugu(2) が今回追加された 12 件。
+        // 既存宣言は zhenmai_v2(5) + anqi_v2(6) + dugu_v2(5) + tuike_v2(3) + sword_basics(4)
+        //   + shield_block(1) + sword_path(5) + dash(1) + npc(3) + baomai_v3(6) + woliu_v2(15)
+        //   = 既存 54 件。合計 ≥ 66。
+        let count: usize = deps.declared_skills().count();
+        assert!(
+            count >= 66,
+            "expected at least 66 declared skills (54 existing + 12 new gaps), got {}",
+            count
+        );
+    }
 }

@@ -164,6 +164,15 @@ pub fn register_skills(registry: &mut SkillRegistry) {
     registry.register(DUGU_INFUSE_SKILL_ID, resolve_infuse_dugu_poison_skill);
 }
 
+/// 蛊道两招均无经脉前置（凝针/灌毒蛊以失谐真元运作，无正经运行依赖）。
+/// 显式声明空 deps 以满足审计完整性不变量。
+pub fn declare_meridian_dependencies(
+    dependencies: &mut crate::cultivation::meridian::severed::SkillMeridianDependencies,
+) {
+    dependencies.declare(QI_NEEDLE_SKILL_ID, vec![]);
+    dependencies.declare(DUGU_INFUSE_SKILL_ID, vec![]);
+}
+
 pub fn resolve_infuse_dugu_poison_intents(
     mut commands: Commands,
     clock: Res<CombatClock>,
