@@ -10,6 +10,7 @@ use crate::network::agent_bridge::{
 };
 use crate::network::{log_payload_build_error, send_server_data_payload};
 use crate::npc::spawn_rat::RatBlackboard;
+use crate::qi_physics::ledger::{QiAccountId, QiTransfer, QiTransferReason};
 use crate::schema::server_data::{
     CombatEventFloaterEntryV1, CombatEventFloaterV1, ServerDataPayloadV1, ServerDataV1,
 };
@@ -26,6 +27,7 @@ pub fn apply_rat_bite_qi_drain(
     mut cultivators: Query<&mut Cultivation>,
     mut rats: Query<&mut RatBlackboard>,
     mut deaths: EventWriter<CultivationDeathTrigger>,
+    mut qi_transfers: EventWriter<QiTransfer>,
     mut clients: Query<&mut Client>,
 ) {
     for bite in bites.read() {
@@ -38,14 +40,21 @@ pub fn apply_rat_bite_qi_drain(
         if cultivation.qi_current <= 0.0 {
             continue;
         }
+        let Ok(mut rat) = rats.get_mut(bite.rat) else {
+            continue;
+        };
 
         let before = cultivation.qi_current;
         cultivation.qi_current =
             (cultivation.qi_current - f64::from(bite.qi_steal)).clamp(0.0, cultivation.qi_max);
         let drained = (before - cultivation.qi_current).max(0.0);
         if drained > 0.0 {
-            if let Ok(mut rat) = rats.get_mut(bite.rat) {
-                rat.drained_qi += drained;
+            rat.drained_qi += drained;
+            let from = QiAccountId::player(bite.target.index().to_string());
+            let to = QiAccountId::npc(format!("rat:{}", bite.rat.index()));
+            if let Ok(transfer) = QiTransfer::new(from, to, drained, QiTransferReason::RatBiteDrain)
+            {
+                qi_transfers.send(transfer);
             }
             send_bite_feedback(&mut clients, bite.target, drained as f32);
         }
@@ -105,7 +114,7 @@ fn send_bite_feedback(clients: &mut Query<&mut Client>, target: Entity, drained:
 #[cfg(test)]
 mod tests {
     use super::*;
-    use valence::prelude::{App, Events, Update};
+    use valence::prelude::{App, ChunkPos, Events, Update};
 
     use crate::cultivation::components::{Cultivation, Realm};
 
@@ -118,13 +127,23 @@ mod tests {
         }
     }
 
-    #[test]
-    fn rat_bite_drains_only_qi_no_hp_damage() {
+    fn rat_blackboard() -> RatBlackboard {
+        RatBlackboard::new("spawn", ChunkPos::new(0, 0))
+    }
+
+    fn rat_bite_app() -> App {
         let mut app = App::new();
         app.add_event::<RatBiteEvent>();
         app.add_event::<CultivationDeathTrigger>();
+        app.add_event::<QiTransfer>();
         app.add_systems(Update, apply_rat_bite_qi_drain);
-        let rat = app.world_mut().spawn_empty().id();
+        app
+    }
+
+    #[test]
+    fn rat_bite_drains_only_qi_no_hp_damage() {
+        let mut app = rat_bite_app();
+        let rat = app.world_mut().spawn(rat_blackboard()).id();
         let target = app.world_mut().spawn(cultivation(5.0)).id();
 
         app.world_mut().send_event(RatBiteEvent {
@@ -148,12 +167,67 @@ mod tests {
     }
 
     #[test]
-    fn qi_drain_to_zero_emits_swarm_death_trigger() {
-        let mut app = App::new();
-        app.add_event::<RatBiteEvent>();
-        app.add_event::<CultivationDeathTrigger>();
-        app.add_systems(Update, apply_rat_bite_qi_drain);
+    fn rat_bite_records_qi_transfer_to_rat_account() {
+        let mut app = rat_bite_app();
+        let rat = app.world_mut().spawn(rat_blackboard()).id();
+        let target = app.world_mut().spawn(cultivation(5.0)).id();
+
+        app.world_mut().send_event(RatBiteEvent {
+            rat,
+            target,
+            qi_steal: 2,
+        });
+        app.update();
+
+        let rat_bb = app.world().get::<RatBlackboard>(rat).unwrap();
+        assert_eq!(rat_bb.drained_qi, 2.0, "鼠储量应同步累计实际吸取量");
+
+        let transfers = app.world().resource::<Events<QiTransfer>>();
+        let mut reader = transfers.get_reader();
+        let transfer = reader
+            .read(transfers)
+            .next()
+            .expect("鼠咬吸取真元必须 emit QiTransfer 审计轨迹");
+        assert_eq!(transfer.reason, QiTransferReason::RatBiteDrain);
+        assert_eq!(
+            transfer.from,
+            QiAccountId::player(target.index().to_string())
+        );
+        assert_eq!(
+            transfer.to,
+            QiAccountId::npc(format!("rat:{}", rat.index()))
+        );
+        assert_eq!(transfer.amount, 2.0);
+    }
+
+    #[test]
+    fn rat_bite_without_rat_blackboard_does_not_drain_qi() {
+        let mut app = rat_bite_app();
         let rat = app.world_mut().spawn_empty().id();
+        let target = app.world_mut().spawn(cultivation(5.0)).id();
+
+        app.world_mut().send_event(RatBiteEvent {
+            rat,
+            target,
+            qi_steal: 2,
+        });
+        app.update();
+
+        assert_eq!(
+            app.world().get::<Cultivation>(target).unwrap().qi_current,
+            5.0,
+            "缺 RatBlackboard 时不能扣玩家真元，否则吸取量无处入账"
+        );
+        assert!(
+            app.world().resource::<Events<QiTransfer>>().is_empty(),
+            "缺 RatBlackboard 时不应 emit QiTransfer"
+        );
+    }
+
+    #[test]
+    fn qi_drain_to_zero_emits_swarm_death_trigger() {
+        let mut app = rat_bite_app();
+        let rat = app.world_mut().spawn(rat_blackboard()).id();
         let target = app.world_mut().spawn(cultivation(1.0)).id();
 
         app.world_mut().send_event(RatBiteEvent {
