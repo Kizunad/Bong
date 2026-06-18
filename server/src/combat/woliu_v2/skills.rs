@@ -22,7 +22,10 @@ use crate::network::audio_event_emit::{
     AudioRecipient, PlaySoundRecipeRequest, AUDIO_BROADCAST_RADIUS,
 };
 use crate::network::vfx_event_emit::VfxEventRequest;
-use crate::qi_physics::{QiAccountId, QiTransfer, QiTransferReason};
+use crate::qi_physics::constants::{QI_EPSILON, QI_ZONE_UNIT_CAPACITY};
+use crate::qi_physics::{
+    qi_release_to_zone, QiAccountId, QiAccountKind, QiTransfer, QiTransferReason, WorldQiAccount,
+};
 use crate::schema::vfx_event::VfxEventPayloadV1;
 use crate::skill::components::SkillId;
 use crate::skill::events::{SkillXpGain, XpGainSource};
@@ -43,7 +46,9 @@ use super::events::{
 use super::physics::{
     contamination_ratio, pull_displacement_blocks, stir_99_1, StirInput, StirOutcome,
 };
-use super::state::{PassiveVortex, TurbulenceExposure, TurbulenceField, VortexV2State};
+use super::state::{
+    PassiveVortex, TurbulenceExposure, TurbulenceField, TurbulenceFieldOrigin, VortexV2State,
+};
 
 pub const WOLIU_HOLD_SKILL_ID: &str = "woliu.hold";
 pub const WOLIU_BURST_SKILL_ID: &str = "woliu.burst";
@@ -361,15 +366,19 @@ pub fn resolve_woliu_v2_skill(
         .map(|exposure| exposure.cast_precision_multiplier())
         .unwrap_or(1.0);
 
-    let stir = stir_99_1(StirInput {
-        total_drained: spec.total_drained()
-            * zone_context.env_qi.max(0.0)
-            * turbulence_cast_precision,
-        realm: cultivation.realm,
-        contamination_ratio: contamination,
-        meridian_flow_capacity: meridian_capacity,
-        dt_seconds: spec.duration_seconds().max(0.05),
-    });
+    let stir = clamp_stir_to_available_source_qi(
+        stir_99_1(StirInput {
+            total_drained: spec.total_drained()
+                * zone_context.env_qi.max(0.0)
+                * turbulence_cast_precision,
+            realm: cultivation.realm,
+            contamination_ratio: contamination,
+            meridian_flow_capacity: meridian_capacity,
+            dt_seconds: spec.duration_seconds().max(0.05),
+        }),
+        world.get_resource::<ZoneRegistry>(),
+        &zone_context,
+    );
     let forced = forced_backfire(skill, dimension, 0.0);
     let overflow_level = backfire_level_for_overflow(
         stir.overflow * woliu_scalars_for_proficiency(proficiency).backfire_multiplier,
@@ -378,6 +387,7 @@ pub fn resolve_woliu_v2_skill(
     .map(|level| (level, BackfireCauseV2::MeridianOverflow));
     let backfire = forced.or(overflow_level);
 
+    debit_woliu_source_zone(world, &zone_context, stir_environment_output(stir));
     {
         let mut cultivation = world
             .get_mut::<Cultivation>(caster)
@@ -385,6 +395,8 @@ pub fn resolve_woliu_v2_skill(
         cultivation.qi_current =
             (cultivation.qi_current - cost + stir.actual_absorbed).clamp(0.0, cultivation.qi_max);
     }
+    let cost_release_transfers =
+        release_woliu_cast_cost_to_source_zone(world, caster, &zone_context, cost);
 
     if let Some((level, _)) = backfire {
         if let Some(mut meridians) = world.get_mut::<MeridianSystem>(caster) {
@@ -420,6 +432,7 @@ pub fn resolve_woliu_v2_skill(
         world.entity_mut(caster).insert(TurbulenceField::new(
             caster,
             center,
+            TurbulenceFieldOrigin::new(dimension, zone_context.source_zone.clone()),
             spec.turbulence_radius,
             turbulence_intensity(&spec, stir),
             stir.rotational_swirl as f32,
@@ -437,6 +450,7 @@ pub fn resolve_woliu_v2_skill(
         skill,
         spec,
         stir,
+        &cost_release_transfers,
         target_siphoned_qi,
         backfire,
         &zone_context,
@@ -457,7 +471,7 @@ pub fn resolve_woliu_v2_skill(
     );
 
     // plan-combat-skill-feedback-bridges-v1 P3 — 虚蚀累积（守恒纠偏：仅写 cumulative_erosion+stage，
-    // 零 qi 字段操作；真元流动已在 build_cast_qi_transfers 走 QiTransfer{Channeling}，两路径正交）。
+    // 零 qi 字段操作；真元流动已在 ZoneRegistry 落账 + QiTransfer 审计路径完成，两路径正交）。
     apply_skill_erosion(world, caster, skill, cultivation.realm);
 
     CastResult::Started {
@@ -722,6 +736,7 @@ fn emit_cast_events(
     skill: WoliuSkillId,
     spec: WoliuSkillSpec,
     stir: StirOutcome,
+    cost_release_transfers: &[QiTransfer],
     target_siphoned_qi: f64,
     backfire: Option<(BackfireLevel, BackfireCauseV2)>,
     zone_context: &ZoneContext,
@@ -802,10 +817,13 @@ fn emit_cast_events(
         }
     }
     for transfer in build_stir_transfers(caster, zone_context, stir) {
-        send_event_if_present(world, transfer);
+        send_qi_transfer(world, transfer);
+    }
+    for transfer in cost_release_transfers.iter().cloned() {
+        send_qi_transfer(world, transfer);
     }
     if let Some(target_siphon) = build_target_siphon_transfer(caster, target, target_siphoned_qi) {
-        send_event_if_present(world, target_siphon);
+        send_qi_transfer(world, target_siphon);
     }
     send_event_if_present(
         world,
@@ -1059,6 +1077,28 @@ fn send_event_if_present<T: valence::prelude::Event>(world: &mut bevy_ecs::world
     }
 }
 
+fn send_qi_transfer(world: &mut bevy_ecs::world::World, transfer: QiTransfer) {
+    credit_overflow_transfer(world, &transfer);
+    send_event_if_present(world, transfer);
+}
+
+fn credit_overflow_transfer(world: &mut bevy_ecs::world::World, transfer: &QiTransfer) {
+    if transfer.to.kind != QiAccountKind::Overflow || transfer.amount <= QI_EPSILON {
+        return;
+    }
+    let Some(mut accounts) = world.get_resource_mut::<WorldQiAccount>() else {
+        return;
+    };
+    let next_balance = accounts.balance(&transfer.to) + transfer.amount;
+    match accounts.set_balance(transfer.to.clone(), next_balance) {
+        Ok(()) => accounts.push_transfer_audit(transfer.clone()),
+        Err(error) => tracing::warn!(
+            ?error,
+            "[bong][woliu_v2] failed to credit overflow qi account"
+        ),
+    }
+}
+
 fn record_stir_contamination(
     world: &mut bevy_ecs::world::World,
     caster: Entity,
@@ -1091,14 +1131,159 @@ struct ZoneContext {
     swirl_zones: Vec<String>,
 }
 
+fn stir_environment_output(stir: StirOutcome) -> f64 {
+    stir.actual_absorbed + stir.rotational_swirl + stir.overflow
+}
+
+fn clamp_stir_to_available_source_qi(
+    stir: StirOutcome,
+    zones: Option<&ZoneRegistry>,
+    zone_context: &ZoneContext,
+) -> StirOutcome {
+    let requested = stir_environment_output(stir);
+    if requested <= QI_EPSILON {
+        return stir;
+    }
+    let Some(zones) = zones else {
+        return stir;
+    };
+    let available = zones
+        .find_zone_by_name(zone_context.source_zone.as_str())
+        .map(|zone| zone.spirit_qi.max(0.0) * QI_ZONE_UNIT_CAPACITY)
+        .unwrap_or(0.0);
+    if available + QI_EPSILON >= requested {
+        return stir;
+    }
+
+    let scale = (available / requested).clamp(0.0, 1.0);
+    let actual_absorbed = stir.actual_absorbed * scale;
+    let rotational_swirl = stir.rotational_swirl * scale;
+    let overflow = stir.overflow * scale;
+    StirOutcome {
+        total_drained: stir.total_drained * scale,
+        absorbed_raw: stir.absorbed_raw * scale,
+        actual_absorbed,
+        rotational_swirl,
+        overflow,
+        contamination_gain: if overflow > QI_EPSILON {
+            overflow * 0.1
+        } else {
+            actual_absorbed * 0.01
+        },
+    }
+}
+
+fn debit_woliu_source_zone(
+    world: &mut bevy_ecs::world::World,
+    zone_context: &ZoneContext,
+    amount: f64,
+) {
+    if amount <= QI_EPSILON {
+        return;
+    }
+    let Some(mut zones) = world.get_resource_mut::<ZoneRegistry>() else {
+        return;
+    };
+    let Some(zone) = zones.find_zone_mut(zone_context.source_zone.as_str()) else {
+        return;
+    };
+    let debited = amount.min(zone.spirit_qi.max(0.0) * QI_ZONE_UNIT_CAPACITY);
+    if debited <= QI_EPSILON {
+        return;
+    }
+    zone.spirit_qi = (zone.spirit_qi - debited / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
+}
+
+fn release_woliu_cast_cost_to_source_zone(
+    world: &mut bevy_ecs::world::World,
+    caster: Entity,
+    zone_context: &ZoneContext,
+    amount: f64,
+) -> Vec<QiTransfer> {
+    if amount <= QI_EPSILON {
+        return Vec::new();
+    }
+
+    let from = woliu_player_account(caster);
+    let mut transfers = Vec::new();
+    let Some(mut zones) = world.get_resource_mut::<ZoneRegistry>() else {
+        push_woliu_overflow_transfer(
+            &mut transfers,
+            from,
+            amount,
+            format!("woliu_cost_missing_zone:entity:{}", caster.to_bits()),
+            QiTransferReason::ReleaseToZone,
+        );
+        return transfers;
+    };
+    let Some(zone) = zones.find_zone_mut(zone_context.source_zone.as_str()) else {
+        push_woliu_overflow_transfer(
+            &mut transfers,
+            from,
+            amount,
+            format!(
+                "woliu_cost_missing_zone:{}:entity:{}",
+                zone_context.source_zone,
+                caster.to_bits()
+            ),
+            QiTransferReason::ReleaseToZone,
+        );
+        return transfers;
+    };
+
+    let to = QiAccountId::zone(zone.name.clone());
+    let zone_current = zone.spirit_qi * QI_ZONE_UNIT_CAPACITY;
+    match qi_release_to_zone(
+        amount,
+        from.clone(),
+        to,
+        zone_current,
+        QI_ZONE_UNIT_CAPACITY,
+    ) {
+        Ok(outcome) => {
+            zone.spirit_qi = (outcome.zone_after / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
+            if let Some(transfer) = outcome.transfer {
+                transfers.push(transfer);
+            }
+            if outcome.overflow > QI_EPSILON {
+                push_woliu_overflow_transfer(
+                    &mut transfers,
+                    from,
+                    outcome.overflow,
+                    format!(
+                        "woliu_cost_overflow:{}:entity:{}",
+                        zone_context.source_zone,
+                        caster.to_bits()
+                    ),
+                    QiTransferReason::ReleaseToZone,
+                );
+            }
+        }
+        Err(error) => {
+            tracing::warn!(
+                ?error,
+                "[bong][woliu_v2] invalid cast cost release; routing to overflow"
+            );
+            push_woliu_overflow_transfer(
+                &mut transfers,
+                from,
+                amount,
+                format!("woliu_cost_error:entity:{}", caster.to_bits()),
+                QiTransferReason::ReleaseToZone,
+            );
+        }
+    }
+    transfers
+}
+
 fn build_stir_transfers(
     caster: Entity,
     zone_context: &ZoneContext,
     stir: StirOutcome,
 ) -> Vec<QiTransfer> {
     let zone = QiAccountId::zone(zone_context.source_zone.clone());
-    let player = QiAccountId::player(format!("entity:{}", caster.to_bits()));
-    let mut transfers = Vec::with_capacity(1 + zone_context.swirl_zones.len());
+    let player = woliu_player_account(caster);
+    let mut transfers = Vec::with_capacity(2 + zone_context.swirl_zones.len());
     if let Ok(absorbed) = QiTransfer::new(
         zone.clone(),
         player,
@@ -1127,6 +1312,13 @@ fn build_stir_transfers(
             }
         }
     }
+    push_woliu_overflow_transfer(
+        &mut transfers,
+        zone,
+        stir.overflow,
+        format!("woliu_stir_overflow:entity:{}", caster.to_bits()),
+        QiTransferReason::Channeling,
+    );
     transfers
 }
 
@@ -1141,11 +1333,31 @@ fn build_target_siphon_transfer(
     let target = target?;
     QiTransfer::new(
         QiAccountId::player(format!("entity:{}", target.to_bits())),
-        QiAccountId::player(format!("entity:{}", caster.to_bits())),
+        woliu_player_account(caster),
         amount,
         QiTransferReason::Channeling,
     )
     .ok()
+}
+
+fn woliu_player_account(entity: Entity) -> QiAccountId {
+    QiAccountId::player(format!("entity:{}", entity.to_bits()))
+}
+
+fn push_woliu_overflow_transfer(
+    transfers: &mut Vec<QiTransfer>,
+    from: QiAccountId,
+    amount: f64,
+    overflow_id: String,
+    reason: QiTransferReason,
+) {
+    if amount <= QI_EPSILON {
+        return;
+    }
+    if let Ok(transfer) = QiTransfer::new(from, QiAccountId::overflow(overflow_id), amount, reason)
+    {
+        transfers.push(transfer);
+    }
 }
 
 fn turbulence_intensity(spec: &WoliuSkillSpec, stir: StirOutcome) -> f32 {

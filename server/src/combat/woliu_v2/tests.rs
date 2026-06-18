@@ -12,7 +12,8 @@ use crate::cultivation::meridian::severed::{
 };
 use crate::cultivation::skill_registry::{CastRejectReason, CastResult};
 use crate::cultivation::tribulation::{JueBiTriggerEvent, JueBiTriggerSource};
-use crate::qi_physics::{QiAccountId, QiAccountKind, QiTransfer, QiTransferReason};
+use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
+use crate::qi_physics::{QiAccountId, QiAccountKind, QiTransfer, QiTransferReason, WorldQiAccount};
 use crate::skill::events::SkillXpGain;
 use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::zone::{default_spawn_bounds, Zone, ZoneRegistry};
@@ -32,7 +33,9 @@ use super::skills::{
     apply_target_siphon, declare_woliu_v2_meridian_dependencies, resolve_woliu_v2_skill,
     skill_spec, visual_for,
 };
-use super::state::{PassiveVortex, TurbulenceExposure, TurbulenceField, VortexV2State};
+use super::state::{
+    PassiveVortex, TurbulenceExposure, TurbulenceField, TurbulenceFieldOrigin, VortexV2State,
+};
 
 fn realm_case(index: usize) -> Realm {
     match index % 6 {
@@ -162,6 +165,42 @@ fn two_zone_registry() -> ZoneRegistry {
             },
         ],
     }
+}
+
+fn observed_woliu_qi(app: &mut App) -> f64 {
+    let player_qi = {
+        let world = app.world_mut();
+        let mut query = world.query::<&Cultivation>();
+        query
+            .iter(world)
+            .map(|cult| cult.qi_current.max(0.0))
+            .sum::<f64>()
+    };
+    let zone_qi = app
+        .world()
+        .get_resource::<ZoneRegistry>()
+        .map(|zones| {
+            zones
+                .zones
+                .iter()
+                .map(|zone| zone.spirit_qi * QI_ZONE_UNIT_CAPACITY)
+                .sum::<f64>()
+        })
+        .unwrap_or(0.0);
+    let turbulence_qi = {
+        let world = app.world_mut();
+        let mut query = world.query::<&TurbulenceField>();
+        query
+            .iter(world)
+            .map(|field| f64::from(field.remaining_swirl_qi.max(0.0)))
+            .sum::<f64>()
+    };
+    let ledger_qi = app
+        .world()
+        .get_resource::<WorldQiAccount>()
+        .map(WorldQiAccount::total)
+        .unwrap_or(0.0);
+    player_qi + zone_qi + turbulence_qi + ledger_qi
 }
 
 #[test]
@@ -458,6 +497,7 @@ fn turbulence_field_projects_runtime_exposure_to_overlapping_targets() {
         .insert(TurbulenceField::new(
             source,
             DVec3::new(8.0, 66.0, 8.0),
+            TurbulenceFieldOrigin::new(DimensionKind::Overworld, "spawn"),
             3.0,
             1.0,
             100.0,
@@ -498,6 +538,7 @@ fn depleted_turbulence_field_does_not_project_runtime_exposure() {
         .insert(TurbulenceField::new(
             source,
             DVec3::new(8.0, 66.0, 8.0),
+            TurbulenceFieldOrigin::new(DimensionKind::Overworld, "spawn"),
             3.0,
             1.0,
             0.0,
@@ -569,6 +610,115 @@ fn stir_transfers_use_registered_zone_accounts_instead_of_synthetic_turbulence_s
     assert!(!transfers.iter().any(|transfer| {
         transfer.to.kind == QiAccountKind::Zone && transfer.to.id.starts_with("woliu_v2_turbulence")
     }));
+}
+
+#[test]
+fn resolve_hold_conserves_player_zone_and_turbulence_qi() {
+    let mut app = app(10);
+    let mut zones = two_zone_registry();
+    zones.find_zone_mut("spawn").unwrap().spirit_qi = 0.2;
+    app.insert_resource(zones);
+    app.insert_resource(WorldQiAccount::default());
+    let actor = spawn_actor(&mut app, Realm::Condense, 100.0);
+    open_all_meridians(&mut app, actor, 10_000.0);
+
+    let source_before = app
+        .world()
+        .resource::<ZoneRegistry>()
+        .find_zone_by_name("spawn")
+        .unwrap()
+        .spirit_qi;
+    let total_before = observed_woliu_qi(&mut app);
+
+    let result = resolve_woliu_v2_skill(app.world_mut(), actor, 0, None, WoliuSkillId::Hold);
+
+    assert!(matches!(result, CastResult::Started { .. }));
+    let total_after = observed_woliu_qi(&mut app);
+    assert!(
+        (total_after - total_before).abs() < 1e-5,
+        "woliu cast must conserve observed qi: before={total_before:.9}, after={total_after:.9}"
+    );
+    let source_after = app
+        .world()
+        .resource::<ZoneRegistry>()
+        .find_zone_by_name("spawn")
+        .unwrap()
+        .spirit_qi;
+    assert!(
+        source_after > source_before,
+        "cast cost should be released back into the real source zone"
+    );
+    assert!(
+        app.world()
+            .get::<TurbulenceField>(actor)
+            .is_some_and(|field| field.remaining_swirl_qi > 0.0),
+        "rotational swirl should remain as tracked turbulence qi"
+    );
+}
+
+#[test]
+fn turbulence_decay_tick_returns_decayed_qi_to_zone_registry() {
+    let mut app = app(TICKS_PER_SECOND);
+    let mut zones = two_zone_registry();
+    zones.find_zone_mut("spawn").unwrap().spirit_qi = 0.1;
+    app.insert_resource(zones);
+    app.insert_resource(WorldQiAccount::default());
+    app.add_systems(Update, super::tick::turbulence_decay_tick);
+    let source = app
+        .world_mut()
+        .spawn((CurrentDimension(DimensionKind::Overworld),))
+        .id();
+    app.world_mut()
+        .entity_mut(source)
+        .insert(TurbulenceField::new(
+            source,
+            DVec3::new(8.0, 66.0, 8.0),
+            TurbulenceFieldOrigin::new(DimensionKind::Overworld, "spawn"),
+            3.0,
+            1.0,
+            100.0,
+            0,
+        ));
+
+    let zone_before = app
+        .world()
+        .resource::<ZoneRegistry>()
+        .find_zone_by_name("spawn")
+        .unwrap()
+        .spirit_qi;
+    let total_before = observed_woliu_qi(&mut app);
+
+    app.update();
+
+    let zone_after = app
+        .world()
+        .resource::<ZoneRegistry>()
+        .find_zone_by_name("spawn")
+        .unwrap()
+        .spirit_qi;
+    let total_after = observed_woliu_qi(&mut app);
+    assert!(
+        zone_after > zone_before,
+        "decayed turbulence qi should be written back to the source zone"
+    );
+    assert!(
+        (total_after - total_before).abs() < 1e-5,
+        "turbulence decay must conserve observed qi: before={total_before:.9}, after={total_after:.9}"
+    );
+    assert!(app
+        .world()
+        .resource::<Events<TurbulenceFieldDecayed>>()
+        .iter_current_update_events()
+        .any(|event| event.decayed_qi > 0.0));
+    assert!(app
+        .world()
+        .resource::<Events<QiTransfer>>()
+        .iter_current_update_events()
+        .any(|event| {
+            event.reason == QiTransferReason::ReleaseToZone
+                && event.to.kind == QiAccountKind::Zone
+                && event.to.id == "spawn"
+        }));
 }
 
 #[test]
