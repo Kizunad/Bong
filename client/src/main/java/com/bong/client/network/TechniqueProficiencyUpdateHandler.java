@@ -21,6 +21,10 @@ public final class TechniqueProficiencyUpdateHandler implements ServerDataHandle
             return ServerDataDispatch.noOp(envelope.type(),
                 "Ignoring technique_proficiency_update: invalid or missing technique_id/proficiency/gain");
         }
+        if (proficiency < 0.0f || proficiency > 1.0f || gain < 0.0f) {
+            return ServerDataDispatch.noOp(envelope.type(),
+                "Ignoring technique_proficiency_update: proficiency/gain out of range");
+        }
 
         List<TechniquesListPanel.Technique> current = TechniquesListPanel.snapshot();
         if (current.isEmpty()) {

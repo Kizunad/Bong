@@ -21,6 +21,10 @@ public final class PillBuffStatusHandler implements ServerDataHandler {
             return ServerDataDispatch.noOp(envelope.type(),
                 "Ignoring pill_buff_status: invalid or missing buff_id/remaining_ticks/effect_multiplier");
         }
+        if (remainingTicks < 0 || effectMultiplier <= 0.0) {
+            return ServerDataDispatch.noOp(envelope.type(),
+                "Ignoring pill_buff_status: invalid remaining_ticks/effect_multiplier");
+        }
         PillBuffHudPlanner.updateBuff(buffId, remainingTicks, effectMultiplier);
         return ServerDataDispatch.handled(envelope.type(),
             "Applied pill_buff_status " + buffId + " ticks=" + remainingTicks);

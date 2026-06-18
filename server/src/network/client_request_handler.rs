@@ -3320,10 +3320,22 @@ mod tests {
         let value: serde_json::Value =
             serde_json::from_slice(&bytes).expect("test build emits JSON server_data");
 
-        assert_eq!(value["type"], "pill_buff_status");
-        assert_eq!(value["buff_id"], "tie_bi_san");
-        assert_eq!(value["remaining_ticks"], 3600);
-        assert_eq!(value["effect_multiplier"], 1.25);
+        assert_eq!(
+            value["type"], "pill_buff_status",
+            "expected pill_buff_status because the client router dispatches by type"
+        );
+        assert_eq!(
+            value["buff_id"], "tie_bi_san",
+            "expected buff_id because the HUD replaces buffs by id"
+        );
+        assert_eq!(
+            value["remaining_ticks"], 3600,
+            "expected base ticks multiplied by duration_multiplier"
+        );
+        assert_eq!(
+            value["effect_multiplier"], 1.25,
+            "expected positive effect multiplier to be preserved for HUD display"
+        );
     }
 
     #[test]
@@ -3335,6 +3347,41 @@ mod tests {
         assert!(
             build_pill_buff_status_payload("tie_bi_san", 1800, 0.0, 1).is_none(),
             "zero multiplier must not produce a client HUD payload"
+        );
+    }
+
+    #[test]
+    fn combat_pill_buff_status_rejects_empty_buff_id() {
+        assert!(
+            build_pill_buff_status_payload("  ", 1800, 1.25, 1).is_none(),
+            "blank buff_id must not produce a client HUD payload"
+        );
+    }
+
+    #[test]
+    fn combat_pill_buff_status_duration_zero_uses_base_ticks() {
+        let bytes = build_pill_buff_status_payload("tie_bi_san", 1800, 1.25, 0)
+            .expect("duration_multiplier=0 should fall back to one duration");
+        let value: serde_json::Value =
+            serde_json::from_slice(&bytes).expect("test build emits JSON server_data");
+
+        assert_eq!(
+            value["remaining_ticks"], 1800,
+            "expected duration_multiplier=0 to use max(1) fallback"
+        );
+    }
+
+    #[test]
+    fn combat_pill_buff_status_remaining_ticks_clamps_to_u32_max() {
+        let bytes = build_pill_buff_status_payload("tie_bi_san", u64::from(u32::MAX), 1.25, 2)
+            .expect("oversized duration should serialize after clamping");
+        let value: serde_json::Value =
+            serde_json::from_slice(&bytes).expect("test build emits JSON server_data");
+
+        assert_eq!(
+            value["remaining_ticks"],
+            u64::from(u32::MAX),
+            "expected remaining_ticks to clamp at u32::MAX for proto/client compatibility"
         );
     }
 
