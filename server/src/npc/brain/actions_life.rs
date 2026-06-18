@@ -10,6 +10,7 @@ use crate::cultivation::breakthrough::{
     try_breakthrough, BreakthroughError, BreakthroughSuccess, RollSource, XorshiftRoll,
 };
 use crate::cultivation::components::{recover_current_qi, Cultivation, MeridianSystem, Realm};
+use crate::cultivation::life_record::LifeRecord;
 use crate::cultivation::meridian_open::MeridianTarget;
 use crate::cultivation::topology::MeridianTopology;
 use crate::cultivation::tribulation::InitiateXuhuaTribulation;
@@ -766,6 +767,7 @@ type CultivateNpcQueryItem<'a> = (
     &'a NpcPatrol,
     &'a mut CultivateState,
     Option<&'a MeridianTarget>,
+    Option<&'a LifeRecord>,
 );
 
 /// Persistent RNG state for CultivateAction's breakthrough rolls.
@@ -801,6 +803,7 @@ pub(crate) fn cultivate_action_system(
             patrol,
             mut cultivate,
             existing_target,
+            life_record,
         )) = npcs.get_mut(*actor)
         else {
             *state = ActionState::Failure;
@@ -861,6 +864,18 @@ pub(crate) fn cultivate_action_system(
                             *state = ActionState::Failure;
                             continue;
                         };
+                        let Ok(actor_account) = breakthrough_actor_account_id(life_record, true)
+                        else {
+                            tracing::warn!(
+                                "[bong][npc] rogue breakthrough missing stable ledger id actor={:?}",
+                                actor
+                            );
+                            navigator.stop();
+                            *state = ActionState::Failure;
+                            continue;
+                        };
+                        let cultivation_before = cultivation.clone();
+                        let meridians_before = meridians.clone();
                         let before_qi = cultivation.qi_current.max(0.0);
                         let result = try_breakthrough(
                             &mut cultivation,
@@ -869,12 +884,25 @@ pub(crate) fn cultivate_action_system(
                             &mut roll,
                         );
                         let used_qi = (before_qi - cultivation.qi_current.max(0.0)).max(0.0);
-                        credit_active_breakthrough_cost(
+                        if let Err(error) = credit_active_breakthrough_cost(
                             account,
                             patrol.home_zone.as_str(),
-                            breakthrough_actor_account_id(*actor, None, true),
+                            actor_account,
                             used_qi,
-                        );
+                        ) {
+                            tracing::warn!(
+                                "[bong][npc] rogue breakthrough ledger credit failed actor={:?} zone={} amount={} error={:?}",
+                                actor,
+                                patrol.home_zone,
+                                used_qi,
+                                error
+                            );
+                            *cultivation = cultivation_before;
+                            *meridians = meridians_before;
+                            navigator.stop();
+                            *state = ActionState::Failure;
+                            continue;
+                        }
                         match result {
                             Ok(BreakthroughSuccess { to, .. }) => {
                                 tracing::info!(

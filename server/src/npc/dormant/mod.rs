@@ -2421,6 +2421,11 @@ mod tests {
             .expect("dormant breakthrough should leave a QiTransfer");
         assert_eq!(transfer.reason, QiTransferReason::Breakthrough);
         assert_eq!(transfer.amount, 8.0);
+        assert!(
+            (snapshot.qi_ledger_net - (-8.0)).abs() < f64::EPSILON,
+            "dormant breakthrough must debit qi_ledger_net by the spent qi; expected -8.0, got {}",
+            snapshot.qi_ledger_net
+        );
         assert_eq!(
             snapshot.shared_lifespan.cap_by_realm,
             LifespanCapTable::INDUCE

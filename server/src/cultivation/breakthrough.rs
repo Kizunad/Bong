@@ -21,7 +21,9 @@ use crate::network::gameplay_vfx;
 use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::npc::spawn::NpcMarker;
 use crate::player::gameplay::PendingGameplayNarrations;
-use crate::qi_physics::{QiAccountId, QiTransfer, QiTransferReason, WorldQiAccount};
+use crate::qi_physics::{
+    QiAccountId, QiPhysicsError, QiTransfer, QiTransferReason, WorldQiAccount,
+};
 use crate::schema::common::NarrationStyle;
 use crate::skill::components::SkillId;
 use crate::skill::events::{SkillCapChanged, SkillXpGain, XpGainSource};
@@ -166,6 +168,18 @@ pub enum BreakthroughError {
     RolledFailure {
         severity: f64,
     }, // 骰子输了
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum BreakthroughLedgerError {
+    MissingStableActorId { is_npc: bool },
+    QiPhysics(QiPhysicsError),
+}
+
+impl From<QiPhysicsError> for BreakthroughLedgerError {
+    fn from(error: QiPhysicsError) -> Self {
+        Self::QiPhysics(error)
+    }
 }
 
 fn breakthrough_error_message(error: &BreakthroughError) -> String {
@@ -557,20 +571,19 @@ fn spirit_eye_env_bonus_for(from: Realm, blood_valley: Option<bool>) -> f64 {
 }
 
 pub(crate) fn breakthrough_actor_account_id(
-    entity: Entity,
     life_record: Option<&LifeRecord>,
     is_npc: bool,
-) -> QiAccountId {
+) -> Result<QiAccountId, BreakthroughLedgerError> {
     let id = life_record
         .and_then(|life_record| {
             let id = life_record.character_id.trim();
             (!id.is_empty()).then(|| life_record.character_id.clone())
         })
-        .unwrap_or_else(|| format!("entity:{entity:?}"));
+        .ok_or(BreakthroughLedgerError::MissingStableActorId { is_npc })?;
     if is_npc {
-        QiAccountId::npc(id)
+        Ok(QiAccountId::npc(id))
     } else {
-        QiAccountId::player(id)
+        Ok(QiAccountId::player(id))
     }
 }
 
@@ -579,22 +592,19 @@ pub(crate) fn credit_active_breakthrough_cost(
     zone_name: &str,
     from: QiAccountId,
     amount: f64,
-) {
-    if amount <= 0.0 {
-        return;
+) -> Result<(), BreakthroughLedgerError> {
+    if amount == 0.0 {
+        return Ok(());
     }
     let to = QiAccountId::zone(zone_name.to_string());
-    let Ok(transfer) = QiTransfer::new(from, to.clone(), amount, QiTransferReason::Breakthrough)
-    else {
-        return;
-    };
-    if !account.has_account(&to) && account.set_balance(to.clone(), 0.0).is_err() {
-        return;
+    let transfer = QiTransfer::new(from, to.clone(), amount, QiTransferReason::Breakthrough)?;
+    if !account.has_account(&to) {
+        account.set_balance(to.clone(), 0.0)?;
     }
     let zone_balance = account.balance(&to);
-    if account.set_balance(to, zone_balance + amount).is_ok() {
-        account.push_transfer_audit(transfer);
-    }
+    account.set_balance(to, zone_balance + amount)?;
+    account.push_transfer_audit(transfer);
+    Ok(())
 }
 
 #[derive(SystemParam)]
@@ -708,6 +718,23 @@ pub fn breakthrough_system(
             .or(ledger_error)
             .map_or_else(
                 || {
+                    let actor_account = breakthrough_actor_account_id(
+                        Some(&life),
+                        npc_marker.is_some(),
+                    )
+                    .map_err(|error| {
+                        tracing::warn!(
+                            "[bong][cultivation] breakthrough ledger actor id unavailable entity={:?} error={:?}",
+                            req.entity,
+                            error
+                        );
+                        BreakthroughError::LedgerUnavailable
+                    });
+                    let Ok(actor_account) = actor_account else {
+                        return Err(BreakthroughError::LedgerUnavailable);
+                    };
+                    let cultivation_before = cultivation.clone();
+                    let meridians_before = meridians.clone();
                     let before_qi = cultivation.qi_current.max(0.0);
                     let result = try_breakthrough_with_env_season_bonus(
                         &mut cultivation,
@@ -721,17 +748,23 @@ pub fn breakthrough_system(
                     if let (Some(account), Some((zone_name, _zone_qi))) =
                         (resources.qi_account.as_deref_mut(), zone_snapshot.as_ref())
                     {
-                        let actor_account = breakthrough_actor_account_id(
-                            req.entity,
-                            Some(&life),
-                            npc_marker.is_some(),
-                        );
-                        credit_active_breakthrough_cost(
+                        if let Err(error) = credit_active_breakthrough_cost(
                             account,
                             zone_name.as_str(),
                             actor_account,
                             used_qi,
-                        );
+                        ) {
+                            tracing::warn!(
+                                "[bong][cultivation] breakthrough ledger credit failed entity={:?} zone={} amount={} error={:?}",
+                                req.entity,
+                                zone_name,
+                                used_qi,
+                                error
+                            );
+                            *cultivation = cultivation_before;
+                            *meridians = meridians_before;
+                            return Err(BreakthroughError::LedgerUnavailable);
+                        }
                     }
                     result
                 },
@@ -997,6 +1030,106 @@ mod tests {
         for id in MeridianId::EXTRAORDINARY.iter().take(count) {
             meridians.get_mut(*id).opened = true;
         }
+    }
+
+    #[test]
+    fn breakthrough_actor_account_id_uses_stable_life_record_id() {
+        let player_life = LifeRecord::new("player_a");
+        let npc_life = LifeRecord::new("npc_a");
+
+        assert_eq!(
+            breakthrough_actor_account_id(Some(&player_life), false)
+                .expect("player life record with character_id should produce an account id"),
+            QiAccountId::player("player_a"),
+            "player breakthrough ledger id must come from stable LifeRecord.character_id"
+        );
+        assert_eq!(
+            breakthrough_actor_account_id(Some(&npc_life), true)
+                .expect("npc life record with character_id should produce an account id"),
+            QiAccountId::npc("npc_a"),
+            "npc breakthrough ledger id must come from stable LifeRecord.character_id"
+        );
+    }
+
+    #[test]
+    fn breakthrough_actor_account_id_rejects_missing_or_blank_id() {
+        let blank_life = LifeRecord::new("   ");
+
+        assert!(
+            matches!(
+                breakthrough_actor_account_id(None, true),
+                Err(BreakthroughLedgerError::MissingStableActorId { is_npc: true })
+            ),
+            "npc breakthrough ledger id must reject missing LifeRecord instead of falling back to unstable Entity ids"
+        );
+        assert!(
+            matches!(
+                breakthrough_actor_account_id(Some(&blank_life), false),
+                Err(BreakthroughLedgerError::MissingStableActorId { is_npc: false })
+            ),
+            "player breakthrough ledger id must reject blank LifeRecord.character_id"
+        );
+    }
+
+    #[test]
+    fn credit_active_breakthrough_cost_handles_boundaries() {
+        let mut ledger = WorldQiAccount::default();
+        let from = QiAccountId::player("player_a");
+
+        credit_active_breakthrough_cost(&mut ledger, "spawn", from.clone(), 0.0)
+            .expect("zero breakthrough cost should be a no-op");
+        assert_eq!(
+            ledger.balance(&QiAccountId::zone("spawn")),
+            0.0,
+            "zero breakthrough cost should not create zone balance"
+        );
+        assert!(
+            ledger.transfers().is_empty(),
+            "zero breakthrough cost should not append a transfer audit"
+        );
+
+        let err = credit_active_breakthrough_cost(&mut ledger, "spawn", from.clone(), -1.0)
+            .expect_err("negative breakthrough cost must be rejected");
+        assert!(
+            matches!(
+                err,
+                BreakthroughLedgerError::QiPhysics(QiPhysicsError::InvalidAmount {
+                    field: "transfer.amount",
+                    ..
+                })
+            ),
+            "negative breakthrough cost should surface the QiPhysics invalid amount error; got {err:?}"
+        );
+
+        credit_active_breakthrough_cost(&mut ledger, "spawn", from.clone(), 8.0)
+            .expect("positive breakthrough cost should credit the zone ledger");
+        assert_eq!(
+            ledger.balance(&QiAccountId::zone("spawn")),
+            8.0,
+            "first positive breakthrough cost should create the zone account and credit the spent qi"
+        );
+        let transfer = ledger
+            .transfers()
+            .last()
+            .expect("positive breakthrough cost should append one transfer audit");
+        assert_eq!(
+            transfer.from, from,
+            "breakthrough audit transfer must preserve the stable actor account as source"
+        );
+        assert_eq!(
+            transfer.to,
+            QiAccountId::zone("spawn"),
+            "breakthrough audit transfer must target the resolved zone account"
+        );
+        assert_eq!(
+            transfer.reason,
+            QiTransferReason::Breakthrough,
+            "breakthrough audit transfer must use the dedicated reason"
+        );
+        assert_eq!(
+            transfer.amount, 8.0,
+            "breakthrough audit transfer amount must equal the spent qi"
+        );
     }
 
     #[test]
@@ -1479,18 +1612,44 @@ mod tests {
         app.update();
 
         let cultivation = app.world().get::<Cultivation>(player).unwrap();
-        assert_eq!(cultivation.realm, Realm::Induce);
-        assert_eq!(cultivation.qi_current, 92.0);
+        assert_eq!(
+            cultivation.realm,
+            Realm::Induce,
+            "successful breakthrough should advance the player realm"
+        );
+        assert_eq!(
+            cultivation.qi_current, 92.0,
+            "successful breakthrough should spend exactly 8 qi from the player"
+        );
         let ledger = app.world().resource::<WorldQiAccount>();
-        assert_eq!(ledger.balance(&QiAccountId::zone("spawn")), 8.0);
+        assert_eq!(
+            ledger.balance(&QiAccountId::zone("spawn")),
+            8.0,
+            "successful breakthrough should credit the spent 8 qi to the zone ledger"
+        );
         let transfer = ledger
             .transfers()
             .last()
             .expect("breakthrough should leave a QiTransfer audit");
-        assert_eq!(transfer.reason, QiTransferReason::Breakthrough);
-        assert_eq!(transfer.from, QiAccountId::player("player_a"));
-        assert_eq!(transfer.to, QiAccountId::zone("spawn"));
-        assert_eq!(transfer.amount, 8.0);
+        assert_eq!(
+            transfer.reason,
+            QiTransferReason::Breakthrough,
+            "successful breakthrough audit should use the dedicated reason"
+        );
+        assert_eq!(
+            transfer.from,
+            QiAccountId::player("player_a"),
+            "successful breakthrough audit should use stable player id as source"
+        );
+        assert_eq!(
+            transfer.to,
+            QiAccountId::zone("spawn"),
+            "successful breakthrough audit should target the resolved zone"
+        );
+        assert_eq!(
+            transfer.amount, 8.0,
+            "successful breakthrough audit amount should match spent qi"
+        );
     }
 
     #[test]
@@ -1529,16 +1688,34 @@ mod tests {
         app.update();
 
         let cultivation = app.world().get::<Cultivation>(player).unwrap();
-        assert_eq!(cultivation.realm, Realm::Awaken);
-        assert_eq!(cultivation.qi_current, 92.0);
+        assert_eq!(
+            cultivation.realm,
+            Realm::Awaken,
+            "failed breakthrough should keep the player in the original realm"
+        );
+        assert_eq!(
+            cultivation.qi_current, 92.0,
+            "failed breakthrough should still spend exactly 8 qi"
+        );
         let ledger = app.world().resource::<WorldQiAccount>();
-        assert_eq!(ledger.balance(&QiAccountId::zone("spawn")), 8.0);
+        assert_eq!(
+            ledger.balance(&QiAccountId::zone("spawn")),
+            8.0,
+            "failed breakthrough should still credit spent qi to the zone ledger"
+        );
         let transfer = ledger
             .transfers()
             .last()
             .expect("failed breakthrough should leave a QiTransfer audit");
-        assert_eq!(transfer.reason, QiTransferReason::Breakthrough);
-        assert_eq!(transfer.amount, 8.0);
+        assert_eq!(
+            transfer.reason,
+            QiTransferReason::Breakthrough,
+            "failed breakthrough audit should use the dedicated reason"
+        );
+        assert_eq!(
+            transfer.amount, 8.0,
+            "failed breakthrough audit amount should match spent qi"
+        );
     }
 
     #[test]
