@@ -13,7 +13,7 @@ use crate::inventory::{PlayerInventory, EQUIP_SLOT_MAIN_HAND, EQUIP_SLOT_OFF_HAN
 use crate::qi_physics::{
     abrasion_loss, armor_penetrate, cone_dispersion, density_echo, high_density_inject,
     AbrasionDirection, AnqiContainerKind, ArmorPenetrationOutcome, ConeDispersionShot,
-    EchoFractalOutcome, HighDensityInjectionOutcome,
+    EchoFractalOutcome, HighDensityInjectionOutcome, QiAccountId, QiTransfer, QiTransferReason,
 };
 
 pub const ANQI_SINGLE_SNIPE_SKILL_ID: &str = "anqi.single_snipe";
@@ -268,6 +268,7 @@ pub fn register(app: &mut App) {
     app.add_event::<CarrierAbrasionEvent>();
     app.add_event::<ContainerSwapEvent>();
     app.add_event::<DecoyDeployEvent>();
+    app.add_event::<QiTransfer>();
 }
 
 pub fn switch_container_slot(
@@ -478,6 +479,7 @@ fn resolve_anqi_skill(
     if let Some(mut cultivation) = world.get_mut::<Cultivation>(caster) {
         cultivation.qi_current = (cultivation.qi_current - qi_cost).clamp(0.0, cultivation.qi_max);
     }
+    emit_anqi_channeling_transfer(world, caster, skill, qi_cost);
     if world.get::<AnqiMastery>(caster).is_none() {
         world.entity_mut(caster).insert(AnqiMastery::default());
     }
@@ -656,6 +658,32 @@ fn emit_skill_event(
                 }
             }
         }
+    }
+}
+
+fn emit_anqi_channeling_transfer(
+    world: &mut bevy_ecs::world::World,
+    caster: Entity,
+    skill: AnqiSkillId,
+    amount: f64,
+) {
+    if amount <= f64::EPSILON {
+        return;
+    }
+    let Some(mut events) = world.get_resource_mut::<bevy_ecs::event::Events<QiTransfer>>() else {
+        return;
+    };
+    if let Ok(transfer) = QiTransfer::new(
+        QiAccountId::player(format!("entity:{}", caster.to_bits())),
+        QiAccountId::container(format!(
+            "anqi_v2:{}:entity:{}",
+            skill.as_str(),
+            caster.to_bits()
+        )),
+        amount,
+        QiTransferReason::Channeling,
+    ) {
+        events.send(transfer);
     }
 }
 
@@ -987,6 +1015,7 @@ mod tests {
         world.insert_resource(CombatClock { tick: 200 });
         world.insert_resource(bevy_ecs::event::Events::<QiInjectionEvent>::default());
         world.insert_resource(bevy_ecs::event::Events::<CarrierAbrasionEvent>::default());
+        world.insert_resource(bevy_ecs::event::Events::<QiTransfer>::default());
         let (inventory, store) =
             charged_inventory_and_store(7, AnqiSkillId::SingleSnipe.carrier_kind());
         let caster = world
@@ -1010,6 +1039,51 @@ mod tests {
         let result = resolve_anqi_skill(&mut world, caster, 0, None, AnqiSkillId::SingleSnipe);
 
         assert!(matches!(result, CastResult::Started { .. }));
+        let cultivation = world
+            .get::<Cultivation>(caster)
+            .expect("施放者应保留 Cultivation");
+        assert!(
+            (cultivation.qi_current - 75.0).abs() <= f64::EPSILON,
+            "期望 SingleSnipe 扣除 qi_cost=25 后 qi_current=75，实际 {}",
+            cultivation.qi_current
+        );
+        let qi_transfers = world.resource::<bevy_ecs::event::Events<QiTransfer>>();
+        let transfer_events: Vec<_> = qi_transfers
+            .get_reader()
+            .read(qi_transfers)
+            .cloned()
+            .collect();
+        assert_eq!(
+            transfer_events.len(),
+            1,
+            "暗器技能成功扣 qi_current 时必须 emit 1 条 QiTransfer，实际 {} 条",
+            transfer_events.len()
+        );
+        assert_eq!(
+            transfer_events[0].from,
+            QiAccountId::player(format!("entity:{}", caster.to_bits())),
+            "QiTransfer.from 必须指向施放者玩家账户"
+        );
+        assert_eq!(
+            transfer_events[0].to,
+            QiAccountId::container(format!(
+                "anqi_v2:{}:entity:{}",
+                AnqiSkillId::SingleSnipe.as_str(),
+                caster.to_bits()
+            )),
+            "QiTransfer.to 必须指向本次暗器技能的容器账户"
+        );
+        assert!(
+            (transfer_events[0].amount - 25.0).abs() <= f64::EPSILON,
+            "QiTransfer.amount 应等于 qi_cost=25，实际 {}",
+            transfer_events[0].amount
+        );
+        assert_eq!(
+            transfer_events[0].reason,
+            QiTransferReason::Channeling,
+            "暗器施放扣款属于 Channeling 守恒轨迹"
+        );
+
         let abrasions = world.resource::<bevy_ecs::event::Events<CarrierAbrasionEvent>>();
         let abrasion_events: Vec<_> = abrasions.get_reader().read(abrasions).cloned().collect();
         assert_eq!(abrasion_events.len(), 1);
