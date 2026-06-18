@@ -2,6 +2,7 @@ use valence::prelude::{bevy_ecs, DVec3, Entity};
 
 use crate::qi_physics::constants::VORTEX_TURBULENCE_DECAY_PER_SEC;
 use crate::qi_physics::EnvField;
+use crate::world::dimension::DimensionKind;
 
 use super::events::{BackfireLevel, WoliuSkillId};
 
@@ -19,10 +20,12 @@ pub struct VortexV2State {
     pub cooldown_until_tick: u64,
 }
 
-#[derive(bevy_ecs::component::Component, Debug, Clone, Copy, PartialEq)]
+#[derive(bevy_ecs::component::Component, Debug, Clone, PartialEq)]
 pub struct TurbulenceField {
     pub caster: Entity,
     pub center: DVec3,
+    pub dimension: DimensionKind,
+    pub source_zone: String,
     pub radius: f32,
     pub intensity: f32,
     pub decay_rate_per_second: f32,
@@ -31,10 +34,26 @@ pub struct TurbulenceField {
     pub remaining_swirl_qi: f32,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TurbulenceFieldOrigin {
+    pub dimension: DimensionKind,
+    pub source_zone: String,
+}
+
+impl TurbulenceFieldOrigin {
+    pub fn new(dimension: DimensionKind, source_zone: impl Into<String>) -> Self {
+        Self {
+            dimension,
+            source_zone: source_zone.into(),
+        }
+    }
+}
+
 impl TurbulenceField {
     pub fn new(
         caster: Entity,
         center: DVec3,
+        origin: TurbulenceFieldOrigin,
         radius: f32,
         intensity: f32,
         swirl_qi: f32,
@@ -43,6 +62,8 @@ impl TurbulenceField {
         Self {
             caster,
             center,
+            dimension: origin.dimension,
+            source_zone: origin.source_zone,
             radius: radius.max(0.0),
             intensity: intensity.clamp(0.0, 1.0),
             decay_rate_per_second: VORTEX_TURBULENCE_DECAY_PER_SEC as f32,

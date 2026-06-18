@@ -164,7 +164,7 @@ mod tests {
     use valence::prelude::{DVec3, Entity};
 
     use crate::combat::woliu::vortex_field_state_payload;
-    use crate::combat::woliu_v2::state::{TurbulenceField, VortexV2State};
+    use crate::combat::woliu_v2::state::{TurbulenceField, TurbulenceFieldOrigin, VortexV2State};
     use crate::combat::woliu_v2::{BackfireLevel, WoliuSkillId};
 
     use super::{apply_woliu_v2_state_overlay, cast_progress};
@@ -187,6 +187,7 @@ mod tests {
         let turbulence = TurbulenceField::new(
             Entity::from_raw(1),
             DVec3::new(3.0, 64.0, 4.0),
+            TurbulenceFieldOrigin::new(crate::world::dimension::DimensionKind::Overworld, "spawn"),
             12.0,
             0.75,
             100.0,
@@ -251,6 +252,7 @@ mod tests {
         let turbulence = TurbulenceField::new(
             Entity::from_raw(1),
             DVec3::new(3.0, 64.0, 4.0),
+            TurbulenceFieldOrigin::new(crate::world::dimension::DimensionKind::Overworld, "spawn"),
             12.0,
             0.75,
             100.0,

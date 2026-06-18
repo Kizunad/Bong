@@ -12,7 +12,11 @@ use crate::cultivation::meridian::severed::{
 };
 use crate::cultivation::skill_registry::{CastRejectReason, CastResult};
 use crate::cultivation::tribulation::{JueBiTriggerEvent, JueBiTriggerSource};
-use crate::qi_physics::{QiAccountId, QiAccountKind, QiTransfer, QiTransferReason};
+use crate::qi_physics::constants::{QI_EPSILON, QI_ZONE_UNIT_CAPACITY};
+use crate::qi_physics::{
+    assert_conservation, QiAccountId, QiAccountKind, QiTransfer, QiTransferReason, WorldQiAccount,
+    WorldQiSnapshot,
+};
 use crate::skill::events::SkillXpGain;
 use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::zone::{default_spawn_bounds, Zone, ZoneRegistry};
@@ -32,7 +36,9 @@ use super::skills::{
     apply_target_siphon, declare_woliu_v2_meridian_dependencies, resolve_woliu_v2_skill,
     skill_spec, visual_for,
 };
-use super::state::{PassiveVortex, TurbulenceExposure, TurbulenceField, VortexV2State};
+use super::state::{
+    PassiveVortex, TurbulenceExposure, TurbulenceField, TurbulenceFieldOrigin, VortexV2State,
+};
 
 fn realm_case(index: usize) -> Realm {
     match index % 6 {
@@ -107,6 +113,7 @@ fn app(tick: u64) -> App {
     app.add_event::<ApplyStatusEffectIntent>();
     app.add_event::<CombatEvent>();
     app.add_event::<DeathEvent>();
+    app.insert_resource(two_zone_registry());
     app
 }
 
@@ -162,6 +169,83 @@ fn two_zone_registry() -> ZoneRegistry {
             },
         ],
     }
+}
+
+fn woliu_qi_snapshot(app: &mut App) -> WorldQiSnapshot {
+    let player_qi = {
+        let world = app.world_mut();
+        let mut query = world.query::<&Cultivation>();
+        query
+            .iter(world)
+            .map(|cult| cult.qi_current.max(0.0))
+            .sum::<f64>()
+    };
+    let zone_qi = app
+        .world()
+        .get_resource::<ZoneRegistry>()
+        .map(|zones| {
+            zones
+                .zones
+                .iter()
+                .map(|zone| zone.spirit_qi * QI_ZONE_UNIT_CAPACITY)
+                .sum::<f64>()
+        })
+        .unwrap_or(0.0);
+    let turbulence_qi = {
+        let world = app.world_mut();
+        let mut query = world.query::<&TurbulenceField>();
+        query
+            .iter(world)
+            .map(|field| f64::from(field.remaining_swirl_qi.max(0.0)))
+            .sum::<f64>()
+    };
+    let ledger_qi = app
+        .world()
+        .get_resource::<WorldQiAccount>()
+        .map(WorldQiAccount::total)
+        .unwrap_or(0.0);
+    WorldQiSnapshot {
+        player_qi,
+        zone_qi,
+        container_qi: turbulence_qi,
+        ledger_qi,
+        era_decay_accum: 0.0,
+        budget_initial_total: player_qi + zone_qi + turbulence_qi + ledger_qi,
+        budget_current_total: player_qi + zone_qi + turbulence_qi + ledger_qi,
+    }
+}
+
+fn assert_woliu_qi_conserved(before: WorldQiSnapshot, after: WorldQiSnapshot, context: &str) {
+    assert_conservation(&before, &after, 0.0).unwrap_or_else(|err| {
+        panic!(
+            "{context}: {err}; before={:.9}, after={:.9}",
+            before.total_observed(),
+            after.total_observed()
+        )
+    });
+}
+
+fn spawn_decay_field(
+    app: &mut App,
+    origin: TurbulenceFieldOrigin,
+    remaining_swirl_qi: f32,
+) -> Entity {
+    let source = app
+        .world_mut()
+        .spawn((CurrentDimension(DimensionKind::Overworld),))
+        .id();
+    app.world_mut()
+        .entity_mut(source)
+        .insert(TurbulenceField::new(
+            source,
+            DVec3::new(8.0, 66.0, 8.0),
+            origin,
+            3.0,
+            1.0,
+            remaining_swirl_qi,
+            0,
+        ));
+    source
 }
 
 #[test]
@@ -458,6 +542,7 @@ fn turbulence_field_projects_runtime_exposure_to_overlapping_targets() {
         .insert(TurbulenceField::new(
             source,
             DVec3::new(8.0, 66.0, 8.0),
+            TurbulenceFieldOrigin::new(DimensionKind::Overworld, "spawn"),
             3.0,
             1.0,
             100.0,
@@ -498,6 +583,7 @@ fn depleted_turbulence_field_does_not_project_runtime_exposure() {
         .insert(TurbulenceField::new(
             source,
             DVec3::new(8.0, 66.0, 8.0),
+            TurbulenceFieldOrigin::new(DimensionKind::Overworld, "spawn"),
             3.0,
             1.0,
             0.0,
@@ -569,6 +655,303 @@ fn stir_transfers_use_registered_zone_accounts_instead_of_synthetic_turbulence_s
     assert!(!transfers.iter().any(|transfer| {
         transfer.to.kind == QiAccountKind::Zone && transfer.to.id.starts_with("woliu_v2_turbulence")
     }));
+}
+
+#[test]
+fn resolve_hold_conserves_player_zone_and_turbulence_qi() {
+    let mut app = app(10);
+    let mut zones = two_zone_registry();
+    zones.find_zone_mut("spawn").unwrap().spirit_qi = 0.2;
+    app.insert_resource(zones);
+    app.insert_resource(WorldQiAccount::default());
+    let actor = spawn_actor(&mut app, Realm::Condense, 100.0);
+    open_all_meridians(&mut app, actor, 10_000.0);
+
+    let source_before = app
+        .world()
+        .resource::<ZoneRegistry>()
+        .find_zone_by_name("spawn")
+        .unwrap()
+        .spirit_qi;
+    let before = woliu_qi_snapshot(&mut app);
+
+    let result = resolve_woliu_v2_skill(app.world_mut(), actor, 0, None, WoliuSkillId::Hold);
+
+    assert!(matches!(result, CastResult::Started { .. }));
+    let after = woliu_qi_snapshot(&mut app);
+    assert_woliu_qi_conserved(before, after, "woliu cast must conserve observed qi");
+    let source_after = app
+        .world()
+        .resource::<ZoneRegistry>()
+        .find_zone_by_name("spawn")
+        .unwrap()
+        .spirit_qi;
+    assert!(
+        source_after > source_before,
+        "cast cost should be released back into the real source zone"
+    );
+    assert!(
+        app.world()
+            .get::<TurbulenceField>(actor)
+            .is_some_and(|field| field.remaining_swirl_qi > 0.0),
+        "rotational swirl should remain as tracked turbulence qi"
+    );
+}
+
+#[test]
+fn resolve_hold_without_zone_registry_does_not_absorb_sourceless_qi() {
+    let mut app = app(10);
+    app.world_mut().remove_resource::<ZoneRegistry>();
+    app.insert_resource(WorldQiAccount::default());
+    let actor = spawn_actor(&mut app, Realm::Condense, 100.0);
+    open_all_meridians(&mut app, actor, 10_000.0);
+    let before = woliu_qi_snapshot(&mut app);
+
+    let result = resolve_woliu_v2_skill(app.world_mut(), actor, 0, None, WoliuSkillId::Hold);
+
+    assert!(matches!(result, CastResult::Started { .. }));
+    let after = woliu_qi_snapshot(&mut app);
+    assert_woliu_qi_conserved(
+        before,
+        after,
+        "missing ZoneRegistry must not create sourceless woliu qi",
+    );
+    let qi_after = app.world().get::<Cultivation>(actor).unwrap().qi_current;
+    assert!(
+        qi_after < 100.0,
+        "missing ZoneRegistry should only spend cast cost without environmental absorption, got caster qi {qi_after}"
+    );
+    assert!(
+        app.world()
+            .get::<TurbulenceField>(actor)
+            .is_none_or(|field| field.remaining_swirl_qi <= f32::EPSILON),
+        "missing ZoneRegistry should not leave unbacked turbulence qi"
+    );
+}
+
+#[test]
+fn resolve_hold_with_missing_source_zone_does_not_absorb_sourceless_qi() {
+    let mut app = app(10);
+    let mut zones = two_zone_registry();
+    zones.zones.retain(|zone| zone.name != "spawn");
+    app.insert_resource(zones);
+    app.insert_resource(WorldQiAccount::default());
+    let actor = spawn_actor(&mut app, Realm::Condense, 100.0);
+    open_all_meridians(&mut app, actor, 10_000.0);
+    let before = woliu_qi_snapshot(&mut app);
+
+    let result = resolve_woliu_v2_skill(app.world_mut(), actor, 0, None, WoliuSkillId::Hold);
+
+    assert!(matches!(result, CastResult::Started { .. }));
+    let after = woliu_qi_snapshot(&mut app);
+    assert_woliu_qi_conserved(
+        before,
+        after,
+        "missing source zone must not create sourceless woliu qi",
+    );
+    let qi_after = app.world().get::<Cultivation>(actor).unwrap().qi_current;
+    assert!(
+        qi_after < 100.0,
+        "missing source zone should only spend cast cost without environmental absorption, got caster qi {qi_after}"
+    );
+}
+
+#[test]
+fn turbulence_decay_tick_returns_decayed_qi_to_zone_registry() {
+    let mut app = app(TICKS_PER_SECOND);
+    let mut zones = two_zone_registry();
+    zones.find_zone_mut("spawn").unwrap().spirit_qi = 0.1;
+    app.insert_resource(zones);
+    app.insert_resource(WorldQiAccount::default());
+    app.add_systems(Update, super::tick::turbulence_decay_tick);
+    spawn_decay_field(
+        &mut app,
+        TurbulenceFieldOrigin::new(DimensionKind::Overworld, "spawn"),
+        100.0,
+    );
+
+    let zone_before = app
+        .world()
+        .resource::<ZoneRegistry>()
+        .find_zone_by_name("spawn")
+        .unwrap()
+        .spirit_qi;
+    let before = woliu_qi_snapshot(&mut app);
+
+    app.update();
+
+    let zone_after = app
+        .world()
+        .resource::<ZoneRegistry>()
+        .find_zone_by_name("spawn")
+        .unwrap()
+        .spirit_qi;
+    let after = woliu_qi_snapshot(&mut app);
+    assert!(
+        zone_after > zone_before,
+        "decayed turbulence qi should be written back to the source zone"
+    );
+    assert_woliu_qi_conserved(before, after, "turbulence decay must conserve observed qi");
+    assert!(app
+        .world()
+        .resource::<Events<TurbulenceFieldDecayed>>()
+        .iter_current_update_events()
+        .any(|event| event.decayed_qi > 0.0));
+    assert!(app
+        .world()
+        .resource::<Events<QiTransfer>>()
+        .iter_current_update_events()
+        .any(|event| {
+            event.reason == QiTransferReason::ReleaseToZone
+                && event.to.kind == QiAccountKind::Zone
+                && event.to.id == "spawn"
+        }));
+}
+
+#[test]
+fn turbulence_decay_tick_routes_missing_registry_qi_to_overflow_account() {
+    let mut app = app(TICKS_PER_SECOND);
+    app.world_mut().remove_resource::<ZoneRegistry>();
+    app.insert_resource(WorldQiAccount::default());
+    app.add_systems(Update, super::tick::turbulence_decay_tick);
+    spawn_decay_field(
+        &mut app,
+        TurbulenceFieldOrigin::new(DimensionKind::Overworld, "spawn"),
+        100.0,
+    );
+    let before = woliu_qi_snapshot(&mut app);
+
+    app.update();
+
+    let after = woliu_qi_snapshot(&mut app);
+    assert_woliu_qi_conserved(
+        before,
+        after,
+        "missing ZoneRegistry turbulence release must stay in tracked overflow",
+    );
+    assert!(
+        app.world().resource::<WorldQiAccount>().total() > QI_EPSILON,
+        "missing registry should credit decayed turbulence to WorldQiAccount overflow"
+    );
+    assert!(app
+        .world()
+        .resource::<Events<QiTransfer>>()
+        .iter_current_update_events()
+        .any(|event| event.to.kind == QiAccountKind::Overflow
+            && event.to.id.contains("woliu_turbulence_missing_zone")));
+}
+
+#[test]
+fn turbulence_decay_tick_routes_missing_source_zone_qi_to_overflow_account() {
+    let mut app = app(TICKS_PER_SECOND);
+    let mut zones = two_zone_registry();
+    zones.zones.retain(|zone| zone.name != "spawn");
+    app.insert_resource(zones);
+    app.insert_resource(WorldQiAccount::default());
+    app.add_systems(Update, super::tick::turbulence_decay_tick);
+    spawn_decay_field(
+        &mut app,
+        TurbulenceFieldOrigin::new(DimensionKind::Overworld, "spawn"),
+        100.0,
+    );
+    let before = woliu_qi_snapshot(&mut app);
+
+    app.update();
+
+    let after = woliu_qi_snapshot(&mut app);
+    assert_woliu_qi_conserved(
+        before,
+        after,
+        "missing source zone turbulence release must stay in tracked overflow",
+    );
+    assert!(
+        app.world().resource::<WorldQiAccount>().total() > QI_EPSILON,
+        "missing source zone should credit decayed turbulence to WorldQiAccount overflow"
+    );
+    assert!(app
+        .world()
+        .resource::<Events<QiTransfer>>()
+        .iter_current_update_events()
+        .any(|event| event.to.kind == QiAccountKind::Overflow
+            && event.to.id.contains("woliu_turbulence_missing_zone")));
+}
+
+#[test]
+fn turbulence_decay_tick_routes_dimension_mismatch_qi_to_overflow_account() {
+    let mut app = app(TICKS_PER_SECOND);
+    app.insert_resource(two_zone_registry());
+    app.insert_resource(WorldQiAccount::default());
+    app.add_systems(Update, super::tick::turbulence_decay_tick);
+    spawn_decay_field(
+        &mut app,
+        TurbulenceFieldOrigin::new(DimensionKind::Tsy, "spawn"),
+        100.0,
+    );
+    let before = woliu_qi_snapshot(&mut app);
+
+    app.update();
+
+    let after = woliu_qi_snapshot(&mut app);
+    assert_woliu_qi_conserved(
+        before,
+        after,
+        "dimension mismatch turbulence release must stay in tracked overflow",
+    );
+    assert!(
+        app.world().resource::<WorldQiAccount>().total() > QI_EPSILON,
+        "dimension mismatch should credit decayed turbulence to WorldQiAccount overflow"
+    );
+    assert!(app
+        .world()
+        .resource::<Events<QiTransfer>>()
+        .iter_current_update_events()
+        .any(|event| event.to.kind == QiAccountKind::Overflow
+            && event.to.id.contains("woliu_turbulence_dimension_mismatch")));
+}
+
+#[test]
+fn turbulence_decay_tick_routes_zone_capacity_overflow_to_account() {
+    let mut app = app(TICKS_PER_SECOND);
+    let mut zones = two_zone_registry();
+    zones.find_zone_mut("spawn").unwrap().spirit_qi = 1.0;
+    app.insert_resource(zones);
+    app.insert_resource(WorldQiAccount::default());
+    app.add_systems(Update, super::tick::turbulence_decay_tick);
+    spawn_decay_field(
+        &mut app,
+        TurbulenceFieldOrigin::new(DimensionKind::Overworld, "spawn"),
+        100.0,
+    );
+    let before = woliu_qi_snapshot(&mut app);
+
+    app.update();
+
+    let after = woliu_qi_snapshot(&mut app);
+    assert_woliu_qi_conserved(
+        before,
+        after,
+        "full source zone turbulence release overflow must stay tracked",
+    );
+    let zone_after = app
+        .world()
+        .resource::<ZoneRegistry>()
+        .find_zone_by_name("spawn")
+        .unwrap()
+        .spirit_qi;
+    assert!(
+        (zone_after - 1.0).abs() <= QI_EPSILON,
+        "full source zone should stay capped, got {zone_after}"
+    );
+    assert!(
+        app.world().resource::<WorldQiAccount>().total() > QI_EPSILON,
+        "full source zone should route decayed turbulence overflow to WorldQiAccount"
+    );
+    assert!(app
+        .world()
+        .resource::<Events<QiTransfer>>()
+        .iter_current_update_events()
+        .any(|event| event.to.kind == QiAccountKind::Overflow
+            && event.to.id.contains("woliu_turbulence_overflow")));
 }
 
 #[test]
