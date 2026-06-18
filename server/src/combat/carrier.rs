@@ -31,7 +31,7 @@ use crate::inventory::{
     EQUIP_SLOT_OFF_HAND,
 };
 use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
-use crate::qi_physics::ledger::{QiAccountId, QiTransfer};
+use crate::qi_physics::ledger::{QiAccountId, QiTransfer, QiTransferReason};
 use crate::qi_physics::release::qi_release_to_zone;
 use crate::world::dimension::DimensionKind;
 use crate::world::zone::ZoneRegistry;
@@ -383,6 +383,7 @@ fn begin_charge_carrier(
     mut intents: EventReader<ChargeCarrierIntent>,
     mut commands: Commands,
     mut actors: Query<BeginChargeActor<'_>>,
+    mut qi_transfers: EventWriter<QiTransfer>,
 ) {
     for intent in intents.read() {
         let Ok((entity, mut cultivation, _qi_color, lifecycle, position, inventory, charging)) =
@@ -408,6 +409,12 @@ fn begin_charge_carrier(
         let prepaid = qi_target * 0.5;
         cultivation.qi_current =
             (cultivation.qi_current - f64::from(prepaid)).clamp(0.0, cultivation.qi_max);
+        emit_carrier_channeling_transfer(
+            &mut qi_transfers,
+            entity,
+            item.instance_id,
+            f64::from(prepaid),
+        );
         commands.entity(entity).insert(CarrierCharging {
             slot,
             instance_id: item.instance_id,
@@ -447,9 +454,11 @@ fn find_chargeable_hand(
 fn charge_carrier_tick(
     clock: Res<CombatClock>,
     registry: Res<ItemRegistry>,
+    mut zones: Option<ResMut<ZoneRegistry>>,
     mut commands: Commands,
     mut actors: Query<ChargingActor<'_>>,
     mut events: EventWriter<CarrierChargedEvent>,
+    mut qi_transfers: EventWriter<QiTransfer>,
 ) {
     for (entity, mut cultivation, qi_color, position, mut inventory, mut store, charging) in
         &mut actors
@@ -466,6 +475,9 @@ fn charge_carrier_tick(
                 charging,
                 qi_color,
                 &cultivation,
+                position.get(),
+                zones.as_deref_mut(),
+                &mut qi_transfers,
                 clock.tick,
                 false,
                 (elapsed as f32 / CHARGE_DURATION_TICKS as f32).clamp(0.0, 1.0),
@@ -482,6 +494,12 @@ fn charge_carrier_tick(
         }
         cultivation.qi_current =
             (cultivation.qi_current - f64::from(remaining)).clamp(0.0, cultivation.qi_max);
+        emit_carrier_channeling_transfer(
+            &mut qi_transfers,
+            entity,
+            charging.instance_id,
+            f64::from(remaining),
+        );
         finish_charge(
             &registry,
             &mut commands,
@@ -491,6 +509,9 @@ fn charge_carrier_tick(
             charging,
             qi_color,
             &cultivation,
+            position.get(),
+            zones.as_deref_mut(),
+            &mut qi_transfers,
             clock.tick,
             true,
             1.0,
@@ -509,11 +530,19 @@ fn finish_charge(
     charging: &CarrierCharging,
     qi_color: Option<&QiColor>,
     cultivation: &Cultivation,
+    position: DVec3,
+    zones: Option<&mut ZoneRegistry>,
+    qi_transfers: &mut EventWriter<QiTransfer>,
     tick: u64,
     full_charge: bool,
     progress_ratio: f32,
     events: &mut EventWriter<CarrierChargedEvent>,
 ) {
+    let total_deducted = if full_charge {
+        charging.qi_target
+    } else {
+        charging.prepaid_qi
+    };
     let base_qi_amount = if full_charge {
         charging.qi_target
     } else {
@@ -522,6 +551,14 @@ fn finish_charge(
     let resonance = artifact_resonance_for_inventory(inventory, charging.instance_id, qi_color);
     let qi_amount = carrier_sealed_qi_amount(base_qi_amount, resonance);
     if qi_amount <= f32::EPSILON {
+        release_unsealed_carrier_qi(
+            zones,
+            qi_transfers,
+            entity,
+            charging.instance_id,
+            position,
+            f64::from(total_deducted),
+        );
         commands.entity(entity).remove::<CarrierCharging>();
         return;
     }
@@ -533,12 +570,14 @@ fn finish_charge(
             .unwrap_or_default(),
     )
     .unwrap_or(CarrierKind::YibianShougu);
+    let mut sealed_base_qi = 0.0_f32;
     if transform_equipped_item(
         inventory,
         registry,
         charging.slot,
         carrier_kind.charged_template_id(),
     ) {
+        sealed_base_qi = base_qi_amount;
         store.imprints_by_instance.insert(
             charging.instance_id,
             CarrierImprint {
@@ -566,7 +605,61 @@ fn finish_charge(
             tick,
         });
     }
+    release_unsealed_carrier_qi(
+        zones,
+        qi_transfers,
+        entity,
+        charging.instance_id,
+        position,
+        f64::from((total_deducted - sealed_base_qi).max(0.0)),
+    );
     commands.entity(entity).remove::<CarrierCharging>();
+}
+
+fn carrier_qi_account(owner: Entity, instance_id: u64) -> QiAccountId {
+    QiAccountId::container(format!("anqi_carrier:{owner:?}:{instance_id}"))
+}
+
+fn emit_carrier_channeling_transfer(
+    qi_transfers: &mut EventWriter<QiTransfer>,
+    owner: Entity,
+    instance_id: u64,
+    amount: f64,
+) {
+    if amount <= f64::EPSILON {
+        return;
+    }
+    if let Ok(transfer) = QiTransfer::new(
+        QiAccountId::player(format!("entity:{owner:?}")),
+        carrier_qi_account(owner, instance_id),
+        amount,
+        QiTransferReason::Channeling,
+    ) {
+        qi_transfers.send(transfer);
+    }
+}
+
+fn release_unsealed_carrier_qi(
+    zones: Option<&mut ZoneRegistry>,
+    qi_transfers: &mut EventWriter<QiTransfer>,
+    owner: Entity,
+    instance_id: u64,
+    pos: DVec3,
+    amount: f64,
+) {
+    if amount <= f64::EPSILON {
+        return;
+    }
+    release_account_to_zone(
+        zones,
+        qi_transfers,
+        carrier_qi_account(owner, instance_id),
+        DimensionKind::Overworld,
+        pos,
+        amount,
+        "anqi_carrier_charge_unsealed",
+        instance_id,
+    );
 }
 
 fn carrier_sealed_qi_amount(base_qi_amount: f32, resonance: Option<f64>) -> f32 {
@@ -1012,8 +1105,44 @@ pub fn release_residual_to_zone(
     entity_bits: u64,
 ) {
     let from = QiAccountId::player(format!("{context}:entity:{entity_bits}"));
+    release_account_to_zone(
+        Some(zones),
+        qi_transfers,
+        from,
+        dim,
+        pos,
+        residual,
+        context,
+        entity_bits,
+    );
+}
+
+/// Shared helper for returning qi from an explicit source account to a zone or overflow.
+fn release_account_to_zone(
+    zones: Option<&mut ZoneRegistry>,
+    qi_transfers: &mut EventWriter<QiTransfer>,
+    from: QiAccountId,
+    dim: DimensionKind,
+    pos: DVec3,
+    residual: f64,
+    context: &str,
+    entity_bits: u64,
+) {
+    if residual <= f64::EPSILON {
+        return;
+    }
 
     // Look up zone name first (immutable borrow), then mutably update.
+    let Some(zones) = zones else {
+        let overflow_to =
+            QiAccountId::overflow(format!("{context}_no_zone_registry:{entity_bits}"));
+        if let Ok(t) = QiTransfer::new(from, overflow_to, residual, QiTransferReason::ReleaseToZone)
+        {
+            qi_transfers.send(t);
+        }
+        return;
+    };
+
     let zone_name = zones.find_zone(dim, pos).map(|z| z.name.clone());
 
     if let Some(zone_name) = zone_name {
@@ -1041,7 +1170,7 @@ pub fn release_residual_to_zone(
                             from,
                             overflow_to,
                             outcome.overflow,
-                            crate::qi_physics::ledger::QiTransferReason::ReleaseToZone,
+                            QiTransferReason::ReleaseToZone,
                         ) {
                             qi_transfers.send(t);
                         }
@@ -1062,7 +1191,7 @@ pub fn release_residual_to_zone(
                         from,
                         overflow_to,
                         residual,
-                        crate::qi_physics::ledger::QiTransferReason::ReleaseToZone,
+                        QiTransferReason::ReleaseToZone,
                     ) {
                         qi_transfers.send(t);
                     }
@@ -1072,24 +1201,17 @@ pub fn release_residual_to_zone(
             // find_zone returned Some but find_zone_mut returned None — very unlikely but safe.
             let overflow_to =
                 QiAccountId::overflow(format!("{context}_no_mut_zone:entity:{entity_bits}"));
-            if let Ok(t) = QiTransfer::new(
-                from,
-                overflow_to,
-                residual,
-                crate::qi_physics::ledger::QiTransferReason::ReleaseToZone,
-            ) {
+            if let Ok(t) =
+                QiTransfer::new(from, overflow_to, residual, QiTransferReason::ReleaseToZone)
+            {
                 qi_transfers.send(t);
             }
         }
     } else {
         // No zone at despawn position — overflow fallback.
         let overflow_to = QiAccountId::overflow(format!("{context}_no_zone:entity:{entity_bits}"));
-        if let Ok(t) = QiTransfer::new(
-            from,
-            overflow_to,
-            residual,
-            crate::qi_physics::ledger::QiTransferReason::ReleaseToZone,
-        ) {
+        if let Ok(t) = QiTransfer::new(from, overflow_to, residual, QiTransferReason::ReleaseToZone)
+        {
             qi_transfers.send(t);
         }
     }
@@ -1181,6 +1303,35 @@ mod tests {
         }
     }
 
+    fn charge_app() -> App {
+        use crate::world::zone::ZoneRegistry;
+
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 0 });
+        app.insert_resource(registry());
+        app.insert_resource(ZoneRegistry::default());
+        app.add_event::<ChargeCarrierIntent>();
+        app.add_event::<CarrierChargedEvent>();
+        app.add_event::<QiTransfer>();
+        app.add_systems(Update, (begin_charge_carrier, charge_carrier_tick));
+        app
+    }
+
+    fn spawn_charge_actor(app: &mut App) -> Entity {
+        app.world_mut()
+            .spawn((
+                Cultivation {
+                    qi_current: 100.0,
+                    qi_max: 200.0,
+                    ..Default::default()
+                },
+                Position::new([0.0, 66.0, 0.0]),
+                inventory_with_main_hand(ANQI_MATERIAL_TEMPLATE_ID),
+                CarrierStore::default(),
+            ))
+            .id()
+    }
+
     #[test]
     fn default_qi_target_caps_at_thirty_percent_or_eighty() {
         assert_eq!(
@@ -1215,6 +1366,84 @@ mod tests {
         assert_eq!(item.template_id, ANQI_CHARGED_TEMPLATE_ID);
         assert_eq!(item.stack_count, 1);
         assert_eq!(inventory.revision.0, 2);
+    }
+
+    #[test]
+    fn begin_charge_channels_prepaid_qi_into_carrier_account() {
+        let mut app = charge_app();
+        let actor = spawn_charge_actor(&mut app);
+
+        app.world_mut().send_event(ChargeCarrierIntent {
+            carrier: actor,
+            slot: Some(CarrierSlot::MainHand),
+            qi_target: Some(60.0),
+            issued_at_tick: 0,
+        });
+        app.update();
+
+        let cultivation = app.world().get::<Cultivation>(actor).unwrap();
+        assert!((cultivation.qi_current - 70.0).abs() < f64::EPSILON);
+
+        let transfers = app.world().resource::<Events<QiTransfer>>();
+        let transfer = transfers
+            .iter_current_update_events()
+            .find(|transfer| {
+                transfer.reason == QiTransferReason::Channeling
+                    && transfer.to == carrier_qi_account(actor, 7)
+            })
+            .expect("暗器开始充能扣 prepaid_qi 后必须把真元封入 carrier container");
+        assert_eq!(
+            transfer.from,
+            QiAccountId::player(format!("entity:{actor:?}"))
+        );
+        assert!((transfer.amount - 30.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn interrupted_charge_releases_unsealed_prepaid_qi_to_zone() {
+        let mut app = charge_app();
+        let actor = spawn_charge_actor(&mut app);
+        app.world_mut()
+            .resource_mut::<crate::world::zone::ZoneRegistry>()
+            .find_zone_mut("spawn")
+            .unwrap()
+            .spirit_qi = 0.0;
+
+        app.world_mut().send_event(ChargeCarrierIntent {
+            carrier: actor,
+            slot: Some(CarrierSlot::MainHand),
+            qi_target: Some(60.0),
+            issued_at_tick: 0,
+        });
+        app.update();
+
+        app.world_mut()
+            .entity_mut(actor)
+            .insert(Position::new([2.0, 66.0, 0.0]));
+        app.world_mut().resource_mut::<CombatClock>().tick = CHARGE_DURATION_TICKS / 2;
+        app.update();
+
+        assert!(
+            app.world().get::<CarrierCharging>(actor).is_none(),
+            "移动中断后 CarrierCharging 必须结束"
+        );
+        let store = app.world().get::<CarrierStore>(actor).unwrap();
+        let imprint = store
+            .imprints_by_instance
+            .get(&7)
+            .expect("半程中断应保留已封入暗器的部分真元");
+        assert!((imprint.qi_amount - 15.0).abs() < f32::EPSILON);
+
+        let transfers = app.world().resource::<Events<QiTransfer>>();
+        let transfer = transfers
+            .iter_current_update_events()
+            .find(|transfer| {
+                transfer.reason == QiTransferReason::ReleaseToZone
+                    && transfer.from == carrier_qi_account(actor, 7)
+            })
+            .expect("移动中断时未封存的 prepaid_qi 必须释放回 zone，不能吞真元");
+        assert_eq!(transfer.to, QiAccountId::zone("spawn".to_string()));
+        assert!((transfer.amount - 15.0).abs() < f64::EPSILON);
     }
 
     #[test]
