@@ -160,6 +160,12 @@ pub enum QiTransferReason {
     ///   - dormant NPC：真元已镜像在 `WorldQiAccount` 的 npc 账户，必须走真实
     ///     `WorldQiAccount::transfer(npc -> zone)`，否则快照与账本余额会分叉。
     Breakthrough,
+    /// bughunt r7 — 经脉锻造 tier 消耗 `qi_current` 后，真元逸散回所在 zone ledger。
+    ///
+    /// 守恒约束：`cultivation.qi_current -= cost`；同 tick 内把 cost 记入 zone 账户，并追加
+    /// `QiTransfer(from=player/npc:<id>, to=zone:<name>, reason=MeridianForge)` audit。
+    /// 活体真元仍在 ECS，不镜像到 player/npc ledger balance。
+    MeridianForge,
     RiftCollapse,
     EraDecay,
     /// plan-craft-v1 §0/§3 — 手搓 qi_cost 一次性投入 zone，区别于 ReleaseToZone（招式释放）
