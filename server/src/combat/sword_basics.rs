@@ -392,14 +392,25 @@ pub fn sword_infuse_completion_tick(
 }
 
 pub fn drain_sword_qi_for_hit(world: &mut bevy_ecs::world::World, caster: Entity) -> f32 {
-    let Some(mut store) = world.get_mut::<SwordQiStore>(caster) else {
-        return 0.0;
+    let (spent, container_account) = {
+        let Some(mut store) = world.get_mut::<SwordQiStore>(caster) else {
+            return 0.0;
+        };
+        if store.stored_qi <= f64::EPSILON || store.remaining_ticks == 0 {
+            return 0.0;
+        }
+        let spent = store.qi_per_hit.min(store.stored_qi).max(0.0);
+        store.stored_qi = (store.stored_qi - spent).max(0.0);
+        (spent, store.container_account.clone())
     };
-    if store.stored_qi <= f64::EPSILON || store.remaining_ticks == 0 {
-        return 0.0;
-    }
-    let spent = store.qi_per_hit.min(store.stored_qi).max(0.0);
-    store.stored_qi = (store.stored_qi - spent).max(0.0);
+    let mut qi_transfers = world.get_resource_mut::<Events<QiTransfer>>();
+    emit_qi_transfer(
+        qi_transfers.as_deref_mut(),
+        container_account,
+        QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME),
+        spent,
+        QiTransferReason::ReleaseToZone,
+    );
     spent as f32
 }
 
@@ -923,6 +934,40 @@ mod tests {
         assert!(app.world().get::<SwordQiStore>(entity).is_none());
         let transfers = app.world().resource::<Events<QiTransfer>>();
         assert!(!transfers.is_empty());
+    }
+
+    #[test]
+    fn sword_hit_releases_spent_stored_qi_to_zone() {
+        let mut app = App::new();
+        app.add_event::<QiTransfer>();
+        let container_account = QiAccountId::container("test_sword_hit");
+        let entity = app
+            .world_mut()
+            .spawn(SwordQiStore {
+                stored_qi: 10.0,
+                qi_per_hit: 2.0,
+                remaining_ticks: SWORD_QI_STORE_TICK_INTERVAL,
+                infuser_color: ColorKind::Mellow,
+                weapon_instance_id: 1,
+                container_account: container_account.clone(),
+                carrier: ContainerKind::WieldedInWeapon,
+            })
+            .id();
+
+        let spent = drain_sword_qi_for_hit(app.world_mut(), entity);
+
+        assert!((spent - 2.0).abs() < f32::EPSILON);
+        let store = app.world().get::<SwordQiStore>(entity).unwrap();
+        assert!((store.stored_qi - 8.0).abs() < f64::EPSILON);
+        let events = app.world().resource::<Events<QiTransfer>>();
+        let mut reader = events.get_reader();
+        let transfers: Vec<_> = reader.read(events).collect();
+        assert_eq!(transfers.len(), 1);
+        let transfer = transfers[0];
+        assert_eq!(transfer.from, container_account);
+        assert_eq!(transfer.to, QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME));
+        assert_eq!(transfer.reason, QiTransferReason::ReleaseToZone);
+        assert!((transfer.amount - 2.0).abs() < f64::EPSILON);
     }
 
     #[test]
