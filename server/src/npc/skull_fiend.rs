@@ -8,7 +8,7 @@ use big_brain::prelude::{
 use valence::prelude::{
     bevy_ecs, App, BlockState, Chunk, ChunkLayer, ChunkPos, Commands, Component, DVec3, Entity,
     EntityLayerId, EventWriter, HeadYaw, IntoSystemConfigs, Look, Position, PreUpdate, Query, Res,
-    With, Without,
+    ResMut, With, Without,
 };
 
 use crate::combat::body_mass::BodyMass;
@@ -16,6 +16,7 @@ use crate::combat::components::{WoundKind, Wounds};
 use crate::combat::events::{AttackIntent, AttackReach, AttackSource};
 use crate::combat::knockback::DEFAULT_CHAIN_DEPTH;
 use crate::cultivation::components::Cultivation;
+use crate::cultivation::life_record::LifeRecord;
 use crate::fauna::experience::play_audio;
 use crate::network::audio_event_emit::PlaySoundRecipeRequest;
 use crate::network::vfx_event_emit::VfxEventRequest;
@@ -23,7 +24,10 @@ use crate::npc::brain::{AgeingScorer, RetireAction};
 use crate::npc::movement::{GameTick, PendingKnockback};
 use crate::npc::navigator::Navigator;
 use crate::npc::spawn::{NpcBlackboard, NpcMarker};
+use crate::qi_physics::{QiAccountId, QiTransfer, QiTransferReason, WorldQiAccount};
 use crate::schema::vfx_event::VfxEventPayloadV1;
+use crate::world::dimension::{CurrentDimension, DimensionKind};
+use crate::world::zone::ZoneRegistry;
 
 const DEFAULT_DETECTION_RANGE_BLOCKS: f32 = 24.0;
 const DEFAULT_LOCK_TICKS: u32 = 30;
@@ -251,9 +255,19 @@ fn skull_fiend_charge_action_system(
         (With<NpcMarker>, With<SkullFiendMarker>),
     >,
     target_positions: Query<&Position, Without<SkullFiendMarker>>,
+    target_qi_contexts: Query<
+        (
+            Option<&CurrentDimension>,
+            Option<&LifeRecord>,
+            Option<&NpcMarker>,
+        ),
+        Without<SkullFiendMarker>,
+    >,
     target_body_masses: Query<&BodyMass>,
     mut cultivations: Query<&mut Cultivation>,
     layers: Query<&ChunkLayer>,
+    zones: Option<Res<ZoneRegistry>>,
+    mut qi_account: Option<ResMut<WorldQiAccount>>,
     mut attack_intents: EventWriter<AttackIntent>,
     mut vfx_events: EventWriter<VfxEventRequest>,
     mut audio_events: EventWriter<PlaySoundRecipeRequest>,
@@ -312,9 +326,12 @@ fn skull_fiend_charge_action_system(
                     &mut skull_view,
                     tick,
                     &target_positions,
+                    &target_qi_contexts,
                     &target_body_masses,
                     &mut cultivations,
                     &layers,
+                    zones.as_deref(),
+                    qi_account.as_deref_mut(),
                     &mut attack_intents,
                     &mut vfx_events,
                     &mut audio_events,
@@ -399,15 +416,25 @@ fn begin_skull_fiend_charge(
     true
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn tick_skull_fiend_charge(
     commands: &mut Commands,
     skull: &mut SkullFiendView<'_>,
     tick: u32,
     target_positions: &Query<&Position, Without<SkullFiendMarker>>,
+    target_qi_contexts: &Query<
+        (
+            Option<&CurrentDimension>,
+            Option<&LifeRecord>,
+            Option<&NpcMarker>,
+        ),
+        Without<SkullFiendMarker>,
+    >,
     target_body_masses: &Query<&BodyMass>,
     cultivations: &mut Query<&mut Cultivation>,
     layers: &Query<&ChunkLayer>,
+    zones: Option<&ZoneRegistry>,
+    qi_account: Option<&mut WorldQiAccount>,
     attack_intents: &mut EventWriter<AttackIntent>,
     vfx_events: &mut EventWriter<VfxEventRequest>,
     audio_events: &mut EventWriter<PlaySoundRecipeRequest>,
@@ -506,7 +533,19 @@ fn tick_skull_fiend_charge(
             if let Ok(target_pos) = target_positions.get(target) {
                 if charge_hit_target(next, target_pos.get(), &skull.config) {
                     if let Ok(mut cultivation) = cultivations.get_mut(target) {
-                        drain_target_qi(&mut cultivation, skull.config.qi_drain);
+                        let (current_dimension, life_record, npc_marker) =
+                            target_qi_contexts.get(target).unwrap_or((None, None, None));
+                        drain_target_qi_to_zone_ledger(
+                            target,
+                            &mut cultivation,
+                            target_pos,
+                            current_dimension,
+                            life_record,
+                            npc_marker.is_some(),
+                            zones,
+                            qi_account,
+                            skull.config.qi_drain,
+                        );
                     }
                     attack_intents.send(AttackIntent {
                         attacker: skull.entity,
@@ -620,10 +659,112 @@ pub fn charge_exceeds_max_distance(origin: DVec3, current: DVec3, max_distance: 
     DVec3::new(current.x - origin.x, 0.0, current.z - origin.z).length() >= max_distance
 }
 
-pub fn drain_target_qi(cultivation: &mut Cultivation, amount: f64) -> f64 {
-    let drain = cultivation.qi_current.max(0.0).min(amount.max(0.0));
+pub fn target_qi_drain_amount(cultivation: &Cultivation, amount: f64) -> f64 {
+    cultivation.qi_current.max(0.0).min(amount.max(0.0))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn drain_target_qi_to_zone_ledger(
+    target: Entity,
+    cultivation: &mut Cultivation,
+    target_position: &Position,
+    current_dimension: Option<&CurrentDimension>,
+    life_record: Option<&LifeRecord>,
+    is_npc: bool,
+    zones: Option<&ZoneRegistry>,
+    qi_account: Option<&mut WorldQiAccount>,
+    amount: f64,
+) -> f64 {
+    let drain = target_qi_drain_amount(cultivation, amount);
+    if drain <= 0.0 {
+        return 0.0;
+    }
+    let Some(zone_name) =
+        resolve_skull_fiend_drain_zone_name(zones, target_position, current_dimension)
+    else {
+        tracing::debug!(
+            "[bong][npc] skull fiend hit {:?} but qi drain has no resolvable zone",
+            target
+        );
+        return 0.0;
+    };
+    let Some(from) = skull_fiend_drain_account_id(life_record, is_npc) else {
+        tracing::debug!(
+            "[bong][npc] skull fiend hit {:?} but qi drain has no stable actor id",
+            target
+        );
+        return 0.0;
+    };
+    let Some(account) = qi_account else {
+        tracing::debug!(
+            "[bong][npc] skull fiend hit {:?} but qi ledger is unavailable",
+            target
+        );
+        return 0.0;
+    };
+    if credit_skull_fiend_drain(account, zone_name.as_str(), from, drain).is_err() {
+        tracing::debug!(
+            "[bong][npc] skull fiend hit {:?} but qi ledger credit failed",
+            target
+        );
+        return 0.0;
+    }
+
     cultivation.qi_current -= drain;
     drain
+}
+
+fn resolve_skull_fiend_drain_zone_name(
+    zones: Option<&ZoneRegistry>,
+    position: &Position,
+    current_dimension: Option<&CurrentDimension>,
+) -> Option<String> {
+    let dimension = current_dimension
+        .map(|current| current.0)
+        .unwrap_or(DimensionKind::Overworld);
+    zones.and_then(|zones| {
+        zones
+            .find_zone(dimension, position.get())
+            .map(|zone| zone.name.clone())
+    })
+}
+
+fn skull_fiend_drain_account_id(
+    life_record: Option<&LifeRecord>,
+    is_npc: bool,
+) -> Option<QiAccountId> {
+    let id = life_record.and_then(|life_record| {
+        let id = life_record.character_id.trim();
+        (!id.is_empty()).then(|| life_record.character_id.clone())
+    })?;
+    if is_npc {
+        Some(QiAccountId::npc(id))
+    } else {
+        Some(QiAccountId::player(id))
+    }
+}
+
+fn credit_skull_fiend_drain(
+    account: &mut WorldQiAccount,
+    zone_name: &str,
+    from: QiAccountId,
+    amount: f64,
+) -> Result<(), ()> {
+    if amount <= 0.0 {
+        return Ok(());
+    }
+    let to = QiAccountId::zone(zone_name.to_string());
+    let transfer = QiTransfer::new(from, to.clone(), amount, QiTransferReason::SkullFiendDrain)
+        .map_err(|_| ())?;
+    if !account.has_account(&to) {
+        account.set_balance(to.clone(), 0.0).map_err(|_| ())?;
+    }
+    let zone_balance = account.balance(&to);
+    account
+        .set_balance(to, zone_balance + amount)
+        .map_err(|_| ())?;
+    account.push_transfer_audit(transfer);
+    Ok(())
 }
 
 pub fn is_skull_fiend_enraged(wounds: &Wounds) -> bool {
@@ -765,6 +906,75 @@ fn is_solid_skull_fiend_collision(block: BlockState) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::qi_physics::QiAccountKind;
+    use valence::prelude::{Events, Update};
+
+    fn add_skull_fiend_action_system(app: &mut App, with_ledger: bool) {
+        app.insert_resource(ZoneRegistry::fallback());
+        if with_ledger {
+            app.insert_resource(WorldQiAccount::default());
+        }
+        app.add_event::<AttackIntent>();
+        app.add_event::<VfxEventRequest>();
+        app.add_event::<PlaySoundRecipeRequest>();
+        app.add_systems(Update, skull_fiend_charge_action_system);
+    }
+
+    fn spawn_charge_hit_fixture(app: &mut App, target_qi: f64) -> Entity {
+        let layer = app.world_mut().spawn_empty().id();
+        let target = app
+            .world_mut()
+            .spawn((
+                Position::new([1.0, 64.0, 0.0]),
+                CurrentDimension(DimensionKind::Overworld),
+                Cultivation {
+                    qi_current: target_qi,
+                    qi_max: 10.0,
+                    ..Default::default()
+                },
+                LifeRecord::new("target_player"),
+            ))
+            .id();
+        let direction = DVec3::new(1.0, 0.0, 0.0);
+        let skull = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                SkullFiendMarker {
+                    family_id: "test_family".to_string(),
+                },
+                Position::new([0.0, 64.0, 0.0]),
+                Transform::default(),
+                EntityLayerId(layer),
+                SkullFiendState::Charging {
+                    target,
+                    direction,
+                    velocity: direction,
+                    origin: DVec3::new(0.0, 64.0, 0.0),
+                    distance_covered: 0.0,
+                },
+                SkullFiendConfig {
+                    qi_drain: 5.0,
+                    ..Default::default()
+                },
+                NpcBlackboard {
+                    nearest_player: Some(target),
+                    player_distance: 1.0,
+                    target_position: Some(DVec3::new(1.0, 64.0, 0.0)),
+                    ..Default::default()
+                },
+            ))
+            .id();
+        app.world_mut()
+            .spawn((Actor(skull), ActionState::Executing, SkullFiendChargeAction));
+        target
+    }
+
+    fn collect_attack_intents(app: &App) -> Vec<AttackIntent> {
+        let events = app.world().resource::<Events<AttackIntent>>();
+        let mut reader = events.get_reader();
+        reader.read(events).cloned().collect()
+    }
 
     #[test]
     fn skull_fiend_config_defaults_match_plan_numbers() {
@@ -865,14 +1075,56 @@ mod tests {
 
     #[test]
     fn skull_fiend_qi_drain_clamps_at_available_pool() {
-        let mut cultivation = Cultivation {
+        let cultivation = Cultivation {
             qi_current: 3.0,
             qi_max: 10.0,
             ..Default::default()
         };
-        let drained = drain_target_qi(&mut cultivation, 5.0);
+        let drained = target_qi_drain_amount(&cultivation, 5.0);
         assert_eq!(drained, 3.0);
+        assert_eq!(cultivation.qi_current, 3.0);
+    }
+
+    #[test]
+    fn skull_fiend_charge_requires_ledger_before_draining_qi() {
+        let mut app = App::new();
+        add_skull_fiend_action_system(&mut app, false);
+        let target = spawn_charge_hit_fixture(&mut app, 3.0);
+
+        app.update();
+
+        assert_eq!(collect_attack_intents(&app).len(), 1);
+        let cultivation = app.world().entity(target).get::<Cultivation>().unwrap();
+        assert_eq!(
+            cultivation.qi_current, 3.0,
+            "命中路径已执行，但无 WorldQiAccount 时不得直接扣真元"
+        );
+    }
+
+    #[test]
+    fn skull_fiend_charge_credits_drained_qi_to_zone_ledger() {
+        let mut app = App::new();
+        add_skull_fiend_action_system(&mut app, true);
+        let target = spawn_charge_hit_fixture(&mut app, 3.0);
+
+        app.update();
+
+        assert_eq!(collect_attack_intents(&app).len(), 1);
+        let cultivation = app.world().entity(target).get::<Cultivation>().unwrap();
         assert_eq!(cultivation.qi_current, 0.0);
+
+        let account = app.world().resource::<WorldQiAccount>();
+        let zone_account = QiAccountId::zone("spawn");
+        assert_eq!(account.balance(&zone_account), 3.0);
+        let transfer = account
+            .transfers()
+            .iter()
+            .find(|transfer| transfer.reason == QiTransferReason::SkullFiendDrain)
+            .expect("skull fiend hit should append a SkullFiendDrain audit record");
+        assert_eq!(transfer.from.kind, QiAccountKind::Player);
+        assert_eq!(transfer.from.id, "target_player");
+        assert_eq!(transfer.to, zone_account);
+        assert_eq!(transfer.amount, 3.0);
     }
 
     #[test]
