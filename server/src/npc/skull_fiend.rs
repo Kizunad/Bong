@@ -682,7 +682,9 @@ fn drain_target_qi_to_zone_ledger(
     let Some(zone_name) =
         resolve_skull_fiend_drain_zone_name(zones, target_position, current_dimension)
     else {
+        let pos = target_position.get();
         tracing::debug!(
+            ?pos,
             "[bong][npc] skull fiend hit {:?} but qi drain has no resolvable zone",
             target
         );
@@ -921,11 +923,15 @@ mod tests {
     }
 
     fn spawn_charge_hit_fixture(app: &mut App, target_qi: f64) -> Entity {
+        spawn_charge_hit_fixture_at(app, target_qi, DVec3::new(1.0, 64.0, 0.0))
+    }
+
+    fn spawn_charge_hit_fixture_at(app: &mut App, target_qi: f64, target_pos: DVec3) -> Entity {
         let layer = app.world_mut().spawn_empty().id();
         let target = app
             .world_mut()
             .spawn((
-                Position::new([1.0, 64.0, 0.0]),
+                Position::new([target_pos.x, target_pos.y, target_pos.z]),
                 CurrentDimension(DimensionKind::Overworld),
                 Cultivation {
                     qi_current: target_qi,
@@ -936,6 +942,7 @@ mod tests {
             ))
             .id();
         let direction = DVec3::new(1.0, 0.0, 0.0);
+        let skull_pos = target_pos - direction;
         let skull = app
             .world_mut()
             .spawn((
@@ -943,14 +950,14 @@ mod tests {
                 SkullFiendMarker {
                     family_id: "test_family".to_string(),
                 },
-                Position::new([0.0, 64.0, 0.0]),
+                Position::new([skull_pos.x, skull_pos.y, skull_pos.z]),
                 Transform::default(),
                 EntityLayerId(layer),
                 SkullFiendState::Charging {
                     target,
                     direction,
                     velocity: direction,
-                    origin: DVec3::new(0.0, 64.0, 0.0),
+                    origin: skull_pos,
                     distance_covered: 0.0,
                 },
                 SkullFiendConfig {
@@ -960,7 +967,7 @@ mod tests {
                 NpcBlackboard {
                     nearest_player: Some(target),
                     player_distance: 1.0,
-                    target_position: Some(DVec3::new(1.0, 64.0, 0.0)),
+                    target_position: Some(target_pos),
                     ..Default::default()
                 },
             ))
@@ -974,6 +981,18 @@ mod tests {
         let events = app.world().resource::<Events<AttackIntent>>();
         let mut reader = events.get_reader();
         reader.read(events).cloned().collect()
+    }
+
+    fn assert_no_skull_fiend_drain_record(app: &App) {
+        let account = app.world().resource::<WorldQiAccount>();
+        assert_eq!(account.balance(&QiAccountId::zone("spawn")), 0.0);
+        assert!(
+            account
+                .transfers()
+                .iter()
+                .all(|transfer| transfer.reason != QiTransferReason::SkullFiendDrain),
+            "SkullFiendDrain audit record should not be written when the drain is skipped"
+        );
     }
 
     #[test]
@@ -1125,6 +1144,84 @@ mod tests {
         assert_eq!(transfer.from.id, "target_player");
         assert_eq!(transfer.to, zone_account);
         assert_eq!(transfer.amount, 3.0);
+    }
+
+    #[test]
+    fn skull_fiend_charge_uses_npc_account_for_npc_target() {
+        let mut app = App::new();
+        add_skull_fiend_action_system(&mut app, true);
+        let target = spawn_charge_hit_fixture(&mut app, 3.0);
+        app.world_mut().entity_mut(target).insert(NpcMarker);
+
+        app.update();
+
+        assert_eq!(collect_attack_intents(&app).len(), 1);
+        let cultivation = app.world().entity(target).get::<Cultivation>().unwrap();
+        assert_eq!(cultivation.qi_current, 0.0);
+        let account = app.world().resource::<WorldQiAccount>();
+        let transfer = account
+            .transfers()
+            .iter()
+            .find(|transfer| transfer.reason == QiTransferReason::SkullFiendDrain)
+            .expect("npc target hit should append a SkullFiendDrain audit record");
+        assert_eq!(transfer.from.kind, QiAccountKind::Npc);
+        assert_eq!(transfer.from.id, "target_player");
+    }
+
+    #[test]
+    fn skull_fiend_charge_skips_drain_without_life_record() {
+        let mut app = App::new();
+        add_skull_fiend_action_system(&mut app, true);
+        let target = spawn_charge_hit_fixture(&mut app, 3.0);
+        app.world_mut().entity_mut(target).remove::<LifeRecord>();
+
+        app.update();
+
+        assert_eq!(collect_attack_intents(&app).len(), 1);
+        let cultivation = app.world().entity(target).get::<Cultivation>().unwrap();
+        assert_eq!(
+            cultivation.qi_current, 3.0,
+            "缺 LifeRecord 时不得用不稳定 Entity id 扣真元"
+        );
+        assert_no_skull_fiend_drain_record(&app);
+    }
+
+    #[test]
+    fn skull_fiend_charge_skips_drain_with_blank_life_record_id() {
+        let mut app = App::new();
+        add_skull_fiend_action_system(&mut app, true);
+        let target = spawn_charge_hit_fixture(&mut app, 3.0);
+        app.world_mut()
+            .entity_mut(target)
+            .insert(LifeRecord::new("   "));
+
+        app.update();
+
+        assert_eq!(collect_attack_intents(&app).len(), 1);
+        let cultivation = app.world().entity(target).get::<Cultivation>().unwrap();
+        assert_eq!(
+            cultivation.qi_current, 3.0,
+            "空 LifeRecord.character_id 时不得扣真元"
+        );
+        assert_no_skull_fiend_drain_record(&app);
+    }
+
+    #[test]
+    fn skull_fiend_charge_skips_drain_outside_known_zone() {
+        let mut app = App::new();
+        add_skull_fiend_action_system(&mut app, true);
+        let target =
+            spawn_charge_hit_fixture_at(&mut app, 3.0, DVec3::new(1_000_000.0, 64.0, 1_000_000.0));
+
+        app.update();
+
+        assert_eq!(collect_attack_intents(&app).len(), 1);
+        let cultivation = app.world().entity(target).get::<Cultivation>().unwrap();
+        assert_eq!(
+            cultivation.qi_current, 3.0,
+            "目标不在任何 zone 内时不得凭空扣真元"
+        );
+        assert_no_skull_fiend_drain_record(&app);
     }
 
     #[test]
