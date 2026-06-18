@@ -1,4 +1,4 @@
-use valence::prelude::{EventReader, Query, Res};
+use valence::prelude::{EventReader, Position, Query, Res};
 
 use crate::combat::components::{
     ActiveStatusEffect, BodyPart, BodyRefiningMarker, DerivedAttrs, Stamina, StaminaState,
@@ -7,10 +7,13 @@ use crate::combat::components::{
 use crate::combat::events::{ApplyStatusEffectIntent, StatusEffectKind};
 use crate::combat::CombatClock;
 use crate::cultivation::components::Cultivation;
+use crate::cultivation::death_hooks::release_qi_amount_to_zone;
 use crate::cultivation::full_power_strike::Exhausted;
+use crate::cultivation::life_record::LifeRecord;
 use crate::qi_physics::constants::{QI_EPSILON, QI_ZHENMAI_PARRY_RECOVERY_MOVE_SPEED_MULTIPLIER};
-use crate::qi_physics::{QiAccountId, QiTransfer, QiTransferReason};
-use crate::world::zone::DEFAULT_SPAWN_ZONE_NAME;
+use crate::qi_physics::QiTransfer;
+use crate::world::dimension::CurrentDimension;
+use crate::world::zone::ZoneRegistry;
 
 pub fn status_effect_apply_tick(
     mut intents: EventReader<ApplyStatusEffectIntent>,
@@ -299,14 +302,20 @@ pub fn body_part_damage_multiplier(status_effects: Option<&StatusEffects>, part:
         })
 }
 
+type StaminaStatusActorItem<'a> = (
+    valence::prelude::Entity,
+    &'a StatusEffects,
+    &'a mut Stamina,
+    Option<&'a Position>,
+    Option<&'a CurrentDimension>,
+    Option<&'a LifeRecord>,
+    Option<&'a mut Cultivation>,
+);
+
 pub fn combat_pill_stamina_status_tick(
     clock: Res<CombatClock>,
-    mut actors: Query<(
-        valence::prelude::Entity,
-        &StatusEffects,
-        &mut Stamina,
-        Option<&mut Cultivation>,
-    )>,
+    mut actors: Query<StaminaStatusActorItem<'_>>,
+    mut zones: Option<valence::prelude::ResMut<ZoneRegistry>>,
     mut qi_transfers: Option<valence::prelude::ResMut<valence::prelude::Events<QiTransfer>>>,
 ) {
     if !clock.tick.is_multiple_of(STATUS_EFFECT_TICK_INTERVAL_TICKS) {
@@ -315,7 +324,16 @@ pub fn combat_pill_stamina_status_tick(
 
     let dt = STATUS_EFFECT_TICK_INTERVAL_TICKS as f32
         / crate::combat::components::TICKS_PER_SECOND as f32;
-    for (entity, status_effects, mut stamina, cultivation) in &mut actors {
+    for (
+        entity,
+        status_effects,
+        mut stamina,
+        position,
+        current_dimension,
+        life_record,
+        cultivation,
+    ) in &mut actors
+    {
         let has_relevant_status = status_effects.active.iter().any(|effect| {
             matches!(
                 effect.kind,
@@ -408,16 +426,16 @@ pub fn combat_pill_stamina_status_tick(
             continue;
         }
         cultivation.qi_current = (cultivation.qi_current - drained).max(0.0);
-        if let Some(qi_transfers) = qi_transfers.as_deref_mut() {
-            if let Ok(transfer) = QiTransfer::new(
-                QiAccountId::player(format!("entity:{}", entity.to_bits())),
-                QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME),
-                drained,
-                QiTransferReason::ReleaseToZone,
-            ) {
-                qi_transfers.send(transfer);
-            }
-        }
+        release_qi_amount_to_zone(
+            entity,
+            drained,
+            position,
+            current_dimension,
+            life_record,
+            zones.as_deref_mut(),
+            qi_transfers.as_deref_mut(),
+            "combat_pill_stamina_status",
+        );
     }
 }
 
@@ -430,7 +448,10 @@ mod tests {
     };
     use crate::combat::events::{ApplyStatusEffectIntent, StatusEffectKind};
     use crate::combat::CombatClock;
-    use valence::prelude::{App, Entity, Update};
+    use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
+    use crate::world::dimension::{CurrentDimension, DimensionKind};
+    use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
+    use valence::prelude::{App, Entity, Position, Update};
 
     fn spawn_status_actor(app: &mut App) -> Entity {
         app.world_mut()
@@ -1075,8 +1096,15 @@ mod tests {
         app.insert_resource(CombatClock {
             tick: STATUS_EFFECT_TICK_INTERVAL_TICKS,
         });
+        app.insert_resource(ZoneRegistry::fallback());
         app.add_event::<crate::qi_physics::QiTransfer>();
         app.add_systems(Update, combat_pill_stamina_status_tick);
+        let zone_before = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .expect("spawn zone should exist")
+            .spirit_qi;
 
         let entity = app
             .world_mut()
@@ -1109,6 +1137,8 @@ mod tests {
                     qi_max: 100.0,
                     ..Default::default()
                 },
+                Position::new([0.0, 64.0, 0.0]),
+                CurrentDimension(DimensionKind::Overworld),
             ))
             .id();
 
@@ -1127,6 +1157,17 @@ mod tests {
             .collect();
         assert_eq!(transfers.len(), 1);
         assert!((transfers[0].amount - 0.4).abs() < 1e-6);
+        let zone_after = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .expect("spawn zone should exist")
+            .spirit_qi;
+        let zone_delta = (zone_after - zone_before) * QI_ZONE_UNIT_CAPACITY;
+        assert!(
+            (zone_delta - 0.4).abs() < 1e-6,
+            "QiDrainForStamina must credit drained qi into the current zone; delta={zone_delta}"
+        );
     }
 
     #[test]
