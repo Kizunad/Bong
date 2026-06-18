@@ -18,7 +18,10 @@ use crate::combat::events::StatusEffectKind;
 use crate::combat::woliu_v2::state::TurbulenceExposure;
 use crate::cultivation::full_power_strike::Exhausted;
 use crate::network::{gameplay_vfx, vfx_event_emit::VfxEventRequest};
-use crate::qi_physics::regen_from_zone;
+use crate::npc::spawn::NpcMarker;
+use crate::qi_physics::{
+    regen_from_zone, QiAccountId, QiTransfer, QiTransferReason, WorldQiAccount,
+};
 use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::events::EVENT_REALM_COLLAPSE;
 use crate::world::zone::ZoneRegistry;
@@ -27,6 +30,7 @@ use super::color::{
     CultivationSessionPracticeEvent, CULTIVATION_SESSION_PRACTICE_TICKS_PER_MINUTE,
 };
 use super::components::{ColorKind, Cultivation, MeridianSystem, QiColor, Realm};
+use super::life_record::LifeRecord;
 use super::lifespan::LifespanComponent;
 use super::tribulation::JueBiAftershockDebuff;
 
@@ -93,6 +97,7 @@ pub fn qi_regen_and_zone_drain_tick(
     // plan-territory-v1 P1: 霸主 zone qi regen 速率倍率（ZoneDominanceRegenStore）。
     // Option<Res> 防资源缺失 panic（克隆 war_bonus 写法）。守恒安全：只乘 rate。
     dominance_regen: Option<Res<crate::world::territory_perks::ZoneDominanceRegenStore>>,
+    mut qi_ledger: Option<ResMut<WorldQiAccount>>,
     mut practice_events: Option<ResMut<Events<CultivationSessionPracticeEvent>>>,
     mut practice_accumulator: Option<ResMut<CultivationSessionPracticeAccumulator>>,
     mut vfx_events: Option<ResMut<Events<VfxEventRequest>>>,
@@ -109,6 +114,8 @@ pub fn qi_regen_and_zone_drain_tick(
         Option<&TurbulenceExposure>,
         Option<&JueBiAftershockDebuff>,
         Option<&DerivedAttrs>,
+        Option<&LifeRecord>,
+        Option<&NpcMarker>,
     )>,
 ) {
     clock.tick = clock.tick.wrapping_add(1);
@@ -130,6 +137,8 @@ pub fn qi_regen_and_zone_drain_tick(
         turbulence,
         juebi_aftershock,
         derived_attrs,
+        life_record,
+        npc_marker,
     ) in players.iter_mut()
     {
         // 通过 pos 找到 zone 的 name（不持可变借用）；entity 缺 CurrentDimension
@@ -237,6 +246,20 @@ pub fn qi_regen_and_zone_drain_tick(
             continue;
         }
 
+        let Some(qi_ledger) = qi_ledger.as_deref_mut() else {
+            continue;
+        };
+        let to_account = cultivation_regen_account_id(entity, life_record, npc_marker.is_some());
+        let Ok(transfer) = QiTransfer::new(
+            QiAccountId::zone(zone.name.clone()),
+            to_account,
+            gain,
+            QiTransferReason::CultivationRegen,
+        ) else {
+            continue;
+        };
+        qi_ledger.push_transfer_audit(transfer);
+
         cultivation.qi_current += gain;
         zone.spirit_qi = (zone.spirit_qi - drain).max(0.0);
         if clock.tick.is_multiple_of(40) {
@@ -277,6 +300,24 @@ pub fn qi_regen_and_zone_drain_tick(
                     .unwrap_or(ColorKind::Mellow),
             );
         }
+    }
+}
+
+fn cultivation_regen_account_id(
+    entity: Entity,
+    life_record: Option<&LifeRecord>,
+    is_npc: bool,
+) -> QiAccountId {
+    let id = life_record
+        .and_then(|life_record| {
+            let id = life_record.character_id.trim();
+            (!id.is_empty()).then(|| life_record.character_id.clone())
+        })
+        .unwrap_or_else(|| format!("entity:{entity:?}"));
+    if is_npc {
+        QiAccountId::npc(id)
+    } else {
+        QiAccountId::player(id)
     }
 }
 
@@ -399,8 +440,14 @@ mod tests {
     };
     use crate::cultivation::components::MeridianId;
     use crate::cultivation::lifespan::{LifespanCapTable, LifespanComponent};
+    use crate::player::state::canonical_player_id;
     use crate::world::zone::ZoneRegistry;
     use valence::prelude::{App, IntoSystemConfigs, Update};
+
+    fn add_qi_regen_system(app: &mut App) {
+        app.insert_resource(WorldQiAccount::default());
+        app.add_systems(Update, qi_regen_and_zone_drain_tick);
+    }
 
     #[test]
     fn no_gain_in_dead_zone() {
@@ -468,6 +515,127 @@ mod tests {
         assert!((before_total - after_total).abs() < 1e-6);
     }
 
+    #[test]
+    fn qi_regen_records_transfer_audit_without_mirroring_ledger_balance() {
+        let mut app = App::new();
+        app.insert_resource(CultivationClock::default());
+        app.insert_resource(ZoneRegistry::fallback());
+        add_qi_regen_system(&mut app);
+
+        let mut meridians = MeridianSystem::default();
+        meridians.get_mut(MeridianId::Lung).opened = true;
+        let character_id = canonical_player_id("Audit");
+        let entity = app
+            .world_mut()
+            .spawn((
+                Position::new([8.0, 66.0, 8.0]),
+                meridians,
+                Cultivation::default(),
+                LifeRecord::new(character_id.clone()),
+            ))
+            .id();
+
+        let zone_before = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name("spawn")
+            .unwrap()
+            .spirit_qi;
+
+        app.update();
+
+        let cultivation = app.world().entity(entity).get::<Cultivation>().unwrap();
+        assert!(cultivation.qi_current > 0.0);
+        let zone_after = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name("spawn")
+            .unwrap()
+            .spirit_qi;
+        let ledger = app.world().resource::<WorldQiAccount>();
+        let transfer = ledger
+            .transfers()
+            .last()
+            .expect("qi regen must leave a QiTransfer audit trail");
+
+        assert_eq!(transfer.from, QiAccountId::zone("spawn"));
+        assert_eq!(transfer.to, QiAccountId::player(character_id));
+        assert_eq!(transfer.reason, QiTransferReason::CultivationRegen);
+        assert!((transfer.amount - cultivation.qi_current).abs() < 1e-9);
+        assert!((zone_before - zone_after - transfer.amount / zone_unit_qi()).abs() < 1e-9);
+        assert_eq!(
+            ledger.total(),
+            0.0,
+            "玩家与 zone 活余额已经在 ECS/ZoneRegistry 中，ledger 只能 audit-only，不能镜像双计"
+        );
+    }
+
+    #[test]
+    fn qi_regen_skips_state_mutation_when_world_qi_account_missing() {
+        let mut app = App::new();
+        app.insert_resource(CultivationClock::default());
+        app.insert_resource(ZoneRegistry::fallback());
+        app.add_systems(Update, qi_regen_and_zone_drain_tick);
+
+        let mut meridians = MeridianSystem::default();
+        meridians.get_mut(MeridianId::Lung).opened = true;
+        let entity = app
+            .world_mut()
+            .spawn((
+                Position::new([8.0, 66.0, 8.0]),
+                meridians,
+                Cultivation::default(),
+            ))
+            .id();
+
+        let zone_before = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name("spawn")
+            .unwrap()
+            .spirit_qi;
+
+        app.update();
+
+        let cultivation = app.world().entity(entity).get::<Cultivation>().unwrap();
+        let zone_after = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name("spawn")
+            .unwrap()
+            .spirit_qi;
+        assert_eq!(cultivation.qi_current, 0.0);
+        assert_eq!(zone_after, zone_before);
+    }
+
+    #[test]
+    fn qi_regen_audits_npc_cultivators_as_npc_accounts() {
+        let mut app = App::new();
+        app.insert_resource(CultivationClock::default());
+        app.insert_resource(ZoneRegistry::fallback());
+        add_qi_regen_system(&mut app);
+
+        let mut meridians = MeridianSystem::default();
+        meridians.get_mut(MeridianId::Lung).opened = true;
+        let npc_id = "npc_7v0".to_string();
+        app.world_mut().spawn((
+            Position::new([8.0, 66.0, 8.0]),
+            meridians,
+            Cultivation::default(),
+            LifeRecord::new(npc_id.clone()),
+            NpcMarker,
+        ));
+
+        app.update();
+
+        let ledger = app.world().resource::<WorldQiAccount>();
+        let transfer = ledger
+            .transfers()
+            .last()
+            .expect("npc qi regen must leave a QiTransfer audit trail");
+        assert_eq!(transfer.to, QiAccountId::npc(npc_id));
+    }
+
     fn zone_unit_qi() -> f64 {
         crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY
     }
@@ -485,7 +653,7 @@ mod tests {
             let mut app = App::new();
             app.insert_resource(CultivationClock::default());
             app.insert_resource(ZoneRegistry::fallback());
-            app.add_systems(Update, qi_regen_and_zone_drain_tick);
+            add_qi_regen_system(&mut app);
 
             let mut meridians = MeridianSystem::default();
             meridians.get_mut(MeridianId::Lung).opened = true;
@@ -523,7 +691,7 @@ mod tests {
             let mut app = App::new();
             app.insert_resource(CultivationClock::default());
             app.insert_resource(ZoneRegistry::fallback());
-            app.add_systems(Update, qi_regen_and_zone_drain_tick);
+            add_qi_regen_system(&mut app);
 
             let mut meridians = MeridianSystem::default();
             meridians.get_mut(MeridianId::Lung).opened = true;
@@ -559,7 +727,7 @@ mod tests {
             let mut app = App::new();
             app.insert_resource(CultivationClock::default());
             app.insert_resource(ZoneRegistry::fallback());
-            app.add_systems(Update, qi_regen_and_zone_drain_tick);
+            add_qi_regen_system(&mut app);
 
             let mut meridians = MeridianSystem::default();
             meridians.get_mut(MeridianId::Lung).opened = true;
@@ -603,7 +771,7 @@ mod tests {
             let mut app = App::new();
             app.insert_resource(CultivationClock::default());
             app.insert_resource(ZoneRegistry::fallback());
-            app.add_systems(Update, qi_regen_and_zone_drain_tick);
+            add_qi_regen_system(&mut app);
 
             let mut meridians = MeridianSystem::default();
             meridians.get_mut(MeridianId::Lung).opened = true;
@@ -641,7 +809,7 @@ mod tests {
             let mut app = App::new();
             app.insert_resource(CultivationClock::default());
             app.insert_resource(ZoneRegistry::fallback());
-            app.add_systems(Update, qi_regen_and_zone_drain_tick);
+            add_qi_regen_system(&mut app);
 
             let mut meridians = MeridianSystem::default();
             meridians.get_mut(MeridianId::Lung).opened = true;
@@ -695,7 +863,7 @@ mod tests {
         app.insert_resource(CultivationClock { tick: 39 });
         app.insert_resource(ZoneRegistry::fallback());
         app.add_event::<VfxEventRequest>();
-        app.add_systems(Update, qi_regen_and_zone_drain_tick);
+        add_qi_regen_system(&mut app);
 
         let mut meridians = MeridianSystem::default();
         meridians.get_mut(MeridianId::Lung).opened = true;
@@ -729,7 +897,7 @@ mod tests {
         app.insert_resource(CultivationSessionPracticeAccumulator::default());
         app.insert_resource(ZoneRegistry::fallback());
         app.add_event::<CultivationSessionPracticeEvent>();
-        app.add_systems(Update, qi_regen_and_zone_drain_tick);
+        add_qi_regen_system(&mut app);
         app.add_systems(
             Update,
             record_cultivation_session_practice_events.after(qi_regen_and_zone_drain_tick),
@@ -856,7 +1024,7 @@ mod tests {
         zone.spirit_qi = 0.9;
         zone.active_events.push(EVENT_REALM_COLLAPSE.to_string());
         app.insert_resource(zones);
-        app.add_systems(Update, qi_regen_and_zone_drain_tick);
+        add_qi_regen_system(&mut app);
 
         let mut meridians = MeridianSystem::default();
         meridians.get_mut(MeridianId::Lung).opened = true;
@@ -1073,7 +1241,7 @@ mod tests {
             let mut app = App::new();
             app.insert_resource(CultivationClock::default());
             app.insert_resource(ZoneRegistry::fallback());
-            app.add_systems(Update, qi_regen_and_zone_drain_tick);
+            add_qi_regen_system(&mut app);
 
             let mut meridians = MeridianSystem::default();
             meridians.get_mut(MeridianId::Lung).opened = true;
@@ -1127,7 +1295,7 @@ mod tests {
             let mut app = App::new();
             app.insert_resource(CultivationClock::default());
             app.insert_resource(ZoneRegistry::fallback());
-            app.add_systems(Update, qi_regen_and_zone_drain_tick);
+            add_qi_regen_system(&mut app);
 
             let mut meridians = MeridianSystem::default();
             meridians.get_mut(MeridianId::Lung).opened = true;
@@ -1190,7 +1358,7 @@ mod tests {
                 app.insert_resource(store);
             }
 
-            app.add_systems(Update, qi_regen_and_zone_drain_tick);
+            add_qi_regen_system(&mut app);
 
             let mut meridians = MeridianSystem::default();
             meridians.get_mut(MeridianId::Lung).opened = true;
@@ -1239,7 +1407,7 @@ mod tests {
         let mut app_no_store = App::new();
         app_no_store.insert_resource(CultivationClock::default());
         app_no_store.insert_resource(ZoneRegistry::fallback());
-        app_no_store.add_systems(Update, qi_regen_and_zone_drain_tick);
+        add_qi_regen_system(&mut app_no_store);
 
         let mut meridians = MeridianSystem::default();
         meridians.get_mut(MeridianId::Lung).opened = true;
@@ -1257,7 +1425,7 @@ mod tests {
         app_empty_store.insert_resource(ZoneRegistry::fallback());
         use crate::world::territory_perks::ZoneDominanceRegenStore;
         app_empty_store.insert_resource(ZoneDominanceRegenStore::default()); // 空 store，无 dominant
-        app_empty_store.add_systems(Update, qi_regen_and_zone_drain_tick);
+        add_qi_regen_system(&mut app_empty_store);
 
         let entity_empty_store = app_empty_store
             .world_mut()
@@ -1405,7 +1573,7 @@ mod tests {
             let mut app = App::new();
             app.insert_resource(CultivationClock::default());
             app.insert_resource(ZoneRegistry::fallback());
-            app.add_systems(Update, qi_regen_and_zone_drain_tick);
+            add_qi_regen_system(&mut app);
 
             let mut meridians = MeridianSystem::default();
             meridians.get_mut(MeridianId::Lung).opened = true;
@@ -1451,7 +1619,7 @@ mod tests {
         let mut app = App::new();
         app.insert_resource(CultivationClock::default());
         app.insert_resource(ZoneRegistry::fallback());
-        app.add_systems(Update, qi_regen_and_zone_drain_tick);
+        add_qi_regen_system(&mut app);
 
         let mut meridians = MeridianSystem::default();
         meridians.get_mut(MeridianId::Lung).opened = true;
@@ -1503,7 +1671,7 @@ mod tests {
             let mut app = App::new();
             app.insert_resource(CultivationClock::default());
             app.insert_resource(ZoneRegistry::fallback());
-            app.add_systems(Update, qi_regen_and_zone_drain_tick);
+            add_qi_regen_system(&mut app);
 
             let mut meridians = MeridianSystem::default();
             meridians.get_mut(MeridianId::Lung).opened = true;
