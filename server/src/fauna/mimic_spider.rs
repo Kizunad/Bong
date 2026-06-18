@@ -25,7 +25,7 @@ use valence::prelude::{
 use crate::combat::events::DeathEvent;
 use crate::cultivation::tick::CultivationClock;
 use crate::npc::spawn::NpcMarker;
-use crate::qi_physics::constants::SPIDER_DISGUISE_REGEN_RATE;
+use crate::qi_physics::constants::{QI_ZONE_UNIT_CAPACITY, SPIDER_DISGUISE_REGEN_RATE};
 use crate::qi_physics::excretion::regen_from_zone;
 use crate::qi_physics::ledger::{QiAccountId, QiTransfer, QiTransferReason, WorldQiAccount};
 use crate::world::dimension::CurrentDimension;
@@ -42,6 +42,8 @@ pub const SPIDER_SENSE_RADIUS: f64 = 8.0;
 
 /// 撤退判定半径（方块数）：退出此距离视为完成撤退。
 pub const SPIDER_RETREAT_RADIUS: f64 = 32.0;
+
+const SPIDER_DRAINED_QI_DEATH_RETURN_RATIO: f64 = 0.01;
 
 // ── P3 陷阱常数 ───────────────────────────────────────────────────────────────
 
@@ -297,8 +299,9 @@ pub fn spider_release_qi_on_death_system(
             continue;
         };
         if let Some(zone) = zones.find_zone_mut(zone_name.as_str()) {
-            // 1% 即时散逸，与 rat_phase 相同策略，守恒（剩余 99% 随时间蒸发进 excretion）
-            zone.spirit_qi = (zone.spirit_qi + blackboard.drained_qi * 0.01).clamp(-1.0, 1.0);
+            let returned_qi = blackboard.drained_qi * SPIDER_DRAINED_QI_DEATH_RETURN_RATIO;
+            zone.spirit_qi =
+                (zone.spirit_qi + returned_qi / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
         }
     }
 }
@@ -680,11 +683,13 @@ mod tests {
             new_spirit_qi > initial_spirit_qi,
             "蛛死亡后 zone spirit_qi 应回升（期望 > {initial_spirit_qi}，实际 {new_spirit_qi}）"
         );
-        // 验证 1% 策略：回升量 = 100 * 0.01 = 1.0，但 zone 上限 1.0，实际取 clamp
-        let expected = (initial_spirit_qi + 100.0 * 0.01).clamp(-1.0, 1.0);
+        // drained_qi 是绝对真元，zone.spirit_qi 是归一化浓度。
+        let expected = (initial_spirit_qi
+            + (100.0 * SPIDER_DRAINED_QI_DEATH_RETURN_RATIO) / QI_ZONE_UNIT_CAPACITY)
+            .clamp(-1.0, 1.0);
         assert!(
             (new_spirit_qi - expected).abs() < 1e-9,
-            "死亡归还应 = drained_qi × 0.01 clamp(-1,1)，期望 {expected}，实际 {new_spirit_qi}"
+            "死亡归还应 = drained_qi × ratio / QI_ZONE_UNIT_CAPACITY clamp(-1,1)，期望 {expected}，实际 {new_spirit_qi}"
         );
     }
 

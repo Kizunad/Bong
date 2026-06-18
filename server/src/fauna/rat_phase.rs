@@ -12,6 +12,7 @@ use crate::combat::CombatClock;
 use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::npc::spawn::NpcMarker;
 use crate::npc::spawn_rat::RatBlackboard;
+use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
 use crate::schema::vfx_event::VfxEventPayloadV1;
 use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::karma::{QiDensityHeatmap, QI_DENSITY_CELL_SIZE};
@@ -22,6 +23,7 @@ pub const RAT_PHASE_QI_GRADIENT_THRESHOLD: f32 = 0.20;
 pub const SURGE_TRIGGER_THRESHOLD: f32 = 1.0;
 pub const TRANSITION_DURATION_TICKS: u16 = 600;
 pub const RAT_DRAINED_CHUNK_WINDOW: usize = 8;
+const RAT_DRAINED_QI_DEATH_RETURN_RATIO: f64 = 0.01;
 
 type RatPhaseReadQuery<'w, 's> = Query<
     'w,
@@ -368,7 +370,9 @@ pub fn release_drained_qi_on_death_system(
             continue;
         };
         if let Some(zone) = zones.find_zone_mut(zone_name.as_str()) {
-            zone.spirit_qi = (zone.spirit_qi + rat.drained_qi * 0.01).clamp(-1.0, 1.0);
+            let returned_qi = rat.drained_qi * RAT_DRAINED_QI_DEATH_RETURN_RATIO;
+            zone.spirit_qi =
+                (zone.spirit_qi + returned_qi / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
         }
     }
 }
@@ -435,6 +439,7 @@ mod tests {
     use valence::prelude::{App, Events, Update};
 
     use crate::world::karma::QiDensityHeatmap;
+    use crate::world::zone::ZoneRegistry;
 
     fn rat_blackboard(zone: &str, chunk: ChunkPos) -> RatBlackboard {
         RatBlackboard {
@@ -746,6 +751,56 @@ mod tests {
             app.world().get::<RatPhase>(gregarious),
             Some(&RatPhase::Gregarious),
             "later phases must not regress when another solitary rat emits a transition event"
+        );
+    }
+
+    #[test]
+    fn rat_death_returns_one_percent_drained_qi_as_zone_units() {
+        let mut app = App::new();
+        app.add_event::<DeathEvent>();
+        app.add_systems(Update, release_drained_qi_on_death_system);
+
+        let initial_spirit_qi = 0.5_f64;
+        let mut zones = ZoneRegistry::fallback();
+        zones
+            .find_zone_mut("spawn")
+            .expect("fallback ZoneRegistry must have spawn zone")
+            .spirit_qi = initial_spirit_qi;
+        app.insert_resource(zones);
+
+        let mut blackboard = rat_blackboard("spawn", ChunkPos::new(0, 0));
+        blackboard.drained_qi = 100.0;
+        let rat = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position::new([0.0, 64.0, 0.0]),
+                RatPhase::Gregarious,
+                blackboard,
+            ))
+            .id();
+
+        app.world_mut().send_event(DeathEvent {
+            target: rat,
+            cause: "test".to_string(),
+            attacker: None,
+            attacker_player_id: None,
+            at_tick: 0,
+        });
+        app.update();
+
+        let zone_after = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name("spawn")
+            .expect("spawn zone must still exist")
+            .spirit_qi;
+        let expected = (initial_spirit_qi
+            + (100.0 * RAT_DRAINED_QI_DEATH_RETURN_RATIO) / QI_ZONE_UNIT_CAPACITY)
+            .clamp(-1.0, 1.0);
+        assert!(
+            (zone_after - expected).abs() < 1e-9,
+            "鼠死亡回灌应按绝对真元换算：drained_qi × ratio / QI_ZONE_UNIT_CAPACITY，期望 {expected}，实际 {zone_after}"
         );
     }
 
