@@ -4,18 +4,22 @@
 
 use serde::{Deserialize, Serialize};
 use valence::prelude::{
-    bevy_ecs, Changed, Commands, Component, Entity, Event, EventReader, Query, Res, ResMut,
+    bevy_ecs, Changed, Commands, Component, Entity, Event, EventReader, Events, Position, Query,
+    Res, ResMut,
 };
 
 use crate::combat::components::DerivedAttrs;
 use crate::cultivation::components::{ColorKind, Cultivation, Realm};
+use crate::cultivation::death_hooks::release_qi_amount_to_zone;
 use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
 use crate::inventory::{
     add_item_to_player_inventory, consume_item_instance_once, InventoryInstanceIdAllocator,
     ItemRegistry, PlayerInventory, EQUIP_SLOT_FALSE_SKIN,
 };
-use crate::qi_physics::StyleDefense;
+use crate::qi_physics::{QiTransfer, StyleDefense};
 use crate::schema::tuike::{FalseSkinKindV1, FalseSkinStateV1, ShedEventV1};
+use crate::world::dimension::CurrentDimension;
+use crate::world::zone::ZoneRegistry;
 
 pub const SPIDER_SILK_MATERIAL_ID: &str = "ash_spider_silk";
 pub const ROTTEN_WOOD_MATERIAL_ID: &str = "tuike_rotten_wood";
@@ -440,8 +444,15 @@ pub fn handle_false_skin_forge_requests(
     mut requests: EventReader<FalseSkinForgeRequest>,
     mut inventories: Query<&mut PlayerInventory>,
     mut cultivations: Query<&mut Cultivation>,
+    locations: Query<(
+        Option<&Position>,
+        Option<&CurrentDimension>,
+        Option<&LifeRecord>,
+    )>,
     registry: Res<ItemRegistry>,
     mut allocator: Option<ResMut<InventoryInstanceIdAllocator>>,
+    mut zones: Option<ResMut<ZoneRegistry>>,
+    mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
 ) {
     for request in requests.read() {
         let Ok(mut inventory) = inventories.get_mut(request.crafter) else {
@@ -459,6 +470,7 @@ pub fn handle_false_skin_forge_requests(
             continue;
         };
 
+        let qi_cost = request.kind.qi_cost();
         let result = forge_false_skin(
             recipe_for_kind(request.kind),
             &mut cultivation,
@@ -467,12 +479,27 @@ pub fn handle_false_skin_forge_requests(
             allocator.as_deref_mut(),
         );
         match result {
-            Ok(instance_id) => tracing::info!(
-                "[bong][tuike] forged {:?} for {:?} as item instance {}",
-                request.kind,
-                request.crafter,
-                instance_id
-            ),
+            Ok(instance_id) => {
+                let location = locations.get(request.crafter).ok();
+                let (position, current_dimension, life_record) =
+                    location.unwrap_or((None, None, None));
+                release_qi_amount_to_zone(
+                    request.crafter,
+                    qi_cost,
+                    position,
+                    current_dimension,
+                    life_record,
+                    zones.as_deref_mut(),
+                    qi_transfers.as_deref_mut(),
+                    "tuike_false_skin_forge",
+                );
+                tracing::info!(
+                    "[bong][tuike] forged {:?} for {:?} as item instance {}",
+                    request.kind,
+                    request.crafter,
+                    instance_id
+                );
+            }
             Err(error) => tracing::warn!(
                 "[bong][tuike] false skin forge rejected for {:?}: {}",
                 request.crafter,
@@ -548,8 +575,12 @@ mod tests {
         ContainerState, InventoryRevision, ItemCategory, ItemInstance, ItemRarity, ItemTemplate,
         PlayerInventory,
     };
+    use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
+    use crate::qi_physics::{QiAccountId, QiTransfer, QiTransferReason};
+    use crate::world::dimension::{CurrentDimension, DimensionKind};
+    use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
     use std::collections::HashMap;
-    use valence::prelude::{App, Update};
+    use valence::prelude::{App, Position, Update};
 
     fn skin(kind: FalseSkinKind) -> FalseSkin {
         FalseSkin::fresh(7, kind, 11)
@@ -866,6 +897,8 @@ mod tests {
     fn forge_request_system_adds_output_and_spends_inputs() {
         let mut app = App::new();
         app.add_event::<FalseSkinForgeRequest>();
+        app.add_event::<QiTransfer>();
+        app.insert_resource(ZoneRegistry::fallback());
         app.insert_resource(ItemRegistry::from_map(HashMap::from([
             (
                 SPIDER_SILK_MATERIAL_ID.to_string(),
@@ -878,6 +911,12 @@ mod tests {
         ])));
         app.insert_resource(InventoryInstanceIdAllocator::new(200));
         app.add_systems(Update, handle_false_skin_forge_requests);
+        let zone_before = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .expect("spawn zone should exist before forge")
+            .spirit_qi;
         let entity = app
             .world_mut()
             .spawn((
@@ -888,6 +927,8 @@ mod tests {
                     qi_max: 20.0,
                     ..Cultivation::default()
                 },
+                Position::new([0.0, 64.0, 0.0]),
+                CurrentDimension(DimensionKind::Overworld),
             ))
             .id();
 
@@ -904,6 +945,53 @@ mod tests {
         assert_eq!(count_template(inventory, SPIDER_SILK_FALSE_SKIN_ITEM_ID), 1);
         let cultivation = app.world().entity(entity).get::<Cultivation>().unwrap();
         assert_eq!(cultivation.qi_current, 15.0);
+        let transfers: Vec<_> = app
+            .world()
+            .resource::<valence::prelude::Events<QiTransfer>>()
+            .iter_current_update_events()
+            .cloned()
+            .collect();
+        assert_eq!(
+            transfers.len(),
+            1,
+            "假皮锻造扣 5 点真元时必须 emit 1 条 QiTransfer，实际 {} 条",
+            transfers.len()
+        );
+        let transfer = &transfers[0];
+        assert_eq!(
+            transfer.from,
+            QiAccountId::player(format!("entity:{entity:?}")),
+            "QiTransfer.from 应对应锻造者账户，实际 {:?}",
+            transfer.from
+        );
+        assert_eq!(
+            transfer.to,
+            QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME),
+            "QiTransfer.to 应回灌当前 spawn zone，实际 {:?}",
+            transfer.to
+        );
+        assert!(
+            (transfer.amount - 5.0).abs() < f64::EPSILON,
+            "QiTransfer.amount 应等于 SpiderSilk qi_cost=5，实际 {}",
+            transfer.amount
+        );
+        assert_eq!(
+            transfer.reason,
+            QiTransferReason::ReleaseToZone,
+            "假皮锻造释放真元应使用 ReleaseToZone，实际 {:?}",
+            transfer.reason
+        );
+        let zone_after = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .expect("spawn zone should exist after forge")
+            .spirit_qi;
+        let zone_delta = (zone_after - zone_before) * QI_ZONE_UNIT_CAPACITY;
+        assert!(
+            (zone_delta - 5.0).abs() < 1e-6,
+            "假皮锻造扣除的 qi_cost 必须进入当前 zone；期望 delta=5，实际 {zone_delta}"
+        );
     }
 
     #[test]
