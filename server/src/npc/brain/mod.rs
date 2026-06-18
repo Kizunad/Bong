@@ -754,6 +754,7 @@ mod tests {
         use crate::cultivation::meridian_open::meridian_open_tick;
         use crate::cultivation::tick::{qi_regen_and_zone_drain_tick, CultivationClock};
         use crate::npc::lifecycle::{npc_runtime_bundle, NpcArchetype};
+        use crate::qi_physics::WorldQiAccount;
         use crate::world::zone::ZoneRegistry;
 
         let mut app = App::new();
@@ -763,6 +764,7 @@ mod tests {
         app.insert_resource(zones);
         app.insert_resource(MeridianTopology::standard());
         app.insert_resource(CultivationClock::default());
+        app.insert_resource(WorldQiAccount::default());
         app.add_systems(
             Update,
             (

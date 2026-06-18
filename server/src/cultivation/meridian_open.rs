@@ -21,6 +21,8 @@ use super::life_record::{BiographyEntry, LifeRecord};
 use super::tick::CultivationClock;
 use super::topology::MeridianTopology;
 use crate::network::{gameplay_vfx, vfx_event_emit::VfxEventRequest};
+use crate::npc::spawn::NpcMarker;
+use crate::qi_physics::{QiAccountId, QiTransfer, QiTransferReason, WorldQiAccount};
 use crate::skill::components::SkillId;
 use crate::skill::events::{SkillXpGain, XpGainSource};
 
@@ -61,6 +63,7 @@ type MeridianOpenItem<'a> = (
     // LifeRecord 可选：玩家有完整生平卷，NPC 无（plan §8 已决定）。
     // 推进经脉逻辑对 NPC / 玩家一视同仁，仅生平记录步骤按存在与否跳过。
     Option<&'a mut LifeRecord>,
+    Option<&'a NpcMarker>,
     // plan-cultivation-pacing-v1 P1.3：StatusEffects 用于 CultivationAcceleration
     // / ExtraordinaryMeridianAcceleration 聚合。
     Option<&'a StatusEffects>,
@@ -157,10 +160,12 @@ pub fn is_target_adjacent(
 }
 
 #[allow(clippy::type_complexity)]
+#[allow(clippy::too_many_arguments)]
 pub fn meridian_open_tick(
     topo: Res<MeridianTopology>,
     clock: Res<CultivationClock>,
     zones: Option<Res<ZoneRegistry>>,
+    mut qi_account: Option<ResMut<WorldQiAccount>>,
     mut entities: Query<MeridianOpenItem<'_>>,
     mut skill_xp_events: Option<ResMut<Events<SkillXpGain>>>,
     mut vfx_events: Option<ResMut<Events<VfxEventRequest>>>,
@@ -170,13 +175,22 @@ pub fn meridian_open_tick(
         return;
     };
     let now = clock.tick;
-    for (entity, pos, current_dimension, target, mut cultivation, mut meridians, life, statuses) in
-        entities.iter_mut()
+    for (
+        entity,
+        pos,
+        current_dimension,
+        target,
+        mut cultivation,
+        mut meridians,
+        life,
+        npc_marker,
+        statuses,
+    ) in entities.iter_mut()
     {
         let dimension = current_dimension
             .map(|current| current.0)
             .unwrap_or(DimensionKind::Overworld);
-        let zone_qi = zones
+        let Some((zone_name, zone_qi)) = zones
             .find_zone(dimension, pos.0)
             .filter(|zone| {
                 !zone
@@ -184,8 +198,13 @@ pub fn meridian_open_tick(
                     .iter()
                     .any(|event| event == EVENT_REALM_COLLAPSE)
             })
-            .map(|z| z.spirit_qi)
-            .unwrap_or(0.0);
+            .map(|z| (z.name.clone(), z.spirit_qi))
+        else {
+            continue;
+        };
+        let Some(account) = qi_account.as_deref_mut() else {
+            continue;
+        };
         let adj = is_target_adjacent(&topo, &meridians, target.0);
         let cultivation_boost = {
             let accel = statuses
@@ -200,7 +219,9 @@ pub fn meridian_open_tick(
             };
             (accel * extra).min(5.0)
         };
-        if let Ok((_delta, just_opened)) = advance_open_progress_at(
+        let actor_account =
+            meridian_open_actor_account_id(entity, life.as_deref(), npc_marker.is_some());
+        if let Ok((delta, just_opened)) = advance_open_progress_at(
             &mut cultivation,
             &mut meridians,
             target.0,
@@ -209,6 +230,7 @@ pub fn meridian_open_tick(
             now,
             cultivation_boost,
         ) {
+            credit_meridian_open_cost(account, &zone_name, actor_account, delta * OPEN_COST_FACTOR);
             if just_opened {
                 if let Some(meridian_opened_events) = meridian_opened_events.as_deref_mut() {
                     meridian_opened_events.send(MeridianOpenedEvent {
@@ -256,6 +278,47 @@ pub fn meridian_open_tick(
     }
 }
 
+fn meridian_open_actor_account_id(
+    entity: Entity,
+    life_record: Option<&LifeRecord>,
+    is_npc: bool,
+) -> QiAccountId {
+    let id = life_record
+        .and_then(|life_record| {
+            let id = life_record.character_id.trim();
+            (!id.is_empty()).then(|| life_record.character_id.clone())
+        })
+        .unwrap_or_else(|| format!("entity:{entity:?}"));
+    if is_npc {
+        QiAccountId::npc(id)
+    } else {
+        QiAccountId::player(id)
+    }
+}
+
+fn credit_meridian_open_cost(
+    account: &mut WorldQiAccount,
+    zone_name: &str,
+    from: QiAccountId,
+    amount: f64,
+) {
+    if amount <= 0.0 {
+        return;
+    }
+    let to = QiAccountId::zone(zone_name.to_string());
+    let Ok(transfer) = QiTransfer::new(from, to.clone(), amount, QiTransferReason::MeridianOpen)
+    else {
+        return;
+    };
+    if !account.has_account(&to) && account.set_balance(to.clone(), 0.0).is_err() {
+        return;
+    }
+    let zone_balance = account.balance(&to);
+    if account.set_balance(to, zone_balance + amount).is_ok() {
+        account.push_transfer_audit(transfer);
+    }
+}
+
 /// plan-cultivation-pacing-v1 P1.5：仅加速奇经打通，magnitude N → (1+N)× 奇经开脉速度。
 /// 无上限——丹药系统控制投入量。
 fn extraordinary_meridian_acceleration_multiplier(se: &StatusEffects) -> f64 {
@@ -296,6 +359,11 @@ mod tests {
     use crate::world::dimension::{CurrentDimension, DimensionKind};
     use crate::world::zone::ZoneRegistry;
     use valence::prelude::{App, Update};
+
+    fn add_meridian_open_system(app: &mut App) {
+        app.insert_resource(WorldQiAccount::default());
+        app.add_systems(Update, meridian_open_tick);
+    }
 
     fn player_with_qi(qi: f64) -> Cultivation {
         Cultivation {
@@ -367,6 +435,78 @@ mod tests {
     }
 
     #[test]
+    fn meridian_open_requires_qi_account_before_consuming_qi() {
+        let mut app = App::new();
+        app.insert_resource(CultivationClock { tick: 42 });
+        app.insert_resource(MeridianTopology::standard());
+        let mut zones = ZoneRegistry::fallback();
+        zones.find_zone_mut("spawn").unwrap().spirit_qi = 1.0;
+        app.insert_resource(zones);
+        app.add_systems(Update, meridian_open_tick);
+
+        let mut cultivation = player_with_qi(1000.0);
+        cultivation.qi_max = 1000.0;
+        let player = app
+            .world_mut()
+            .spawn((
+                Position::new([8.0, 66.0, 8.0]),
+                MeridianTarget(MeridianId::Lung),
+                cultivation,
+                MeridianSystem::default(),
+            ))
+            .id();
+
+        app.update();
+
+        let cultivation = app.world().entity(player).get::<Cultivation>().unwrap();
+        let meridians = app.world().entity(player).get::<MeridianSystem>().unwrap();
+        assert_eq!(cultivation.qi_current, 1000.0);
+        assert_eq!(meridians.get(MeridianId::Lung).open_progress, 0.0);
+    }
+
+    #[test]
+    fn meridian_open_cost_is_credited_to_zone_ledger() {
+        let mut app = App::new();
+        app.insert_resource(CultivationClock { tick: 42 });
+        app.insert_resource(MeridianTopology::standard());
+        let mut zones = ZoneRegistry::fallback();
+        zones.find_zone_mut("spawn").unwrap().spirit_qi = 1.0;
+        app.insert_resource(zones);
+        add_meridian_open_system(&mut app);
+
+        let mut cultivation = player_with_qi(1000.0);
+        cultivation.qi_max = 1000.0;
+        let player = app
+            .world_mut()
+            .spawn((
+                Position::new([8.0, 66.0, 8.0]),
+                MeridianTarget(MeridianId::Lung),
+                cultivation,
+                MeridianSystem::default(),
+            ))
+            .id();
+
+        app.update();
+
+        let expected_delta = BASE_OPEN_RATE;
+        let expected_cost = expected_delta * OPEN_COST_FACTOR;
+        let cultivation = app.world().entity(player).get::<Cultivation>().unwrap();
+        assert!((cultivation.qi_current - (1000.0 - expected_cost)).abs() < 1e-12);
+
+        let account = app.world().resource::<WorldQiAccount>();
+        let zone_account = QiAccountId::zone("spawn");
+        assert!((account.balance(&zone_account) - expected_cost).abs() < 1e-12);
+        let transfer = account
+            .transfers()
+            .iter()
+            .find(|transfer| transfer.reason == QiTransferReason::MeridianOpen)
+            .expect("meridian open should append a MeridianOpen audit record");
+        assert_eq!(transfer.from.kind, crate::qi_physics::QiAccountKind::Player);
+        assert_eq!(transfer.to, zone_account);
+        assert!((transfer.amount - expected_cost).abs() < 1e-12);
+    }
+
+    #[test]
     fn collapsed_zone_blocks_meridian_open_progress_even_with_stale_qi() {
         let mut app = App::new();
         app.insert_resource(CultivationClock { tick: 42 });
@@ -376,7 +516,7 @@ mod tests {
         zone.spirit_qi = 0.9;
         zone.active_events.push(EVENT_REALM_COLLAPSE.to_string());
         app.insert_resource(zones);
-        app.add_systems(Update, meridian_open_tick);
+        add_meridian_open_system(&mut app);
 
         let player = app
             .world_mut()
@@ -405,7 +545,7 @@ mod tests {
         let mut zones = ZoneRegistry::fallback();
         zones.find_zone_mut("spawn").unwrap().spirit_qi = 0.9;
         app.insert_resource(zones);
-        app.add_systems(Update, meridian_open_tick);
+        add_meridian_open_system(&mut app);
 
         let player = app
             .world_mut()
@@ -435,7 +575,7 @@ mod tests {
         zones.find_zone_mut("spawn").unwrap().spirit_qi = 1.0;
         app.insert_resource(zones);
         app.add_event::<VfxEventRequest>();
-        app.add_systems(Update, meridian_open_tick);
+        add_meridian_open_system(&mut app);
 
         let mut cultivation = player_with_qi(1000.0);
         cultivation.qi_max = 1000.0;
@@ -474,7 +614,7 @@ mod tests {
         zones.find_zone_mut("spawn").unwrap().spirit_qi = 1.0;
         app.insert_resource(zones);
         app.add_event::<MeridianOpenedEvent>();
-        app.add_systems(Update, meridian_open_tick);
+        add_meridian_open_system(&mut app);
 
         let mut cultivation = player_with_qi(1000.0);
         cultivation.qi_max = 1000.0;
