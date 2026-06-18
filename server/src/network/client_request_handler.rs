@@ -140,7 +140,7 @@ use crate::schema::alchemy::{AlchemyInterventionResultV1, AlchemySessionStartV1}
 use crate::schema::client_request::{ClientRequestV1, SkillBarBindingV1};
 use crate::schema::combat_hud::{CastOutcomeV1, CastPhaseV1, CastSyncV1};
 use crate::schema::inventory::{ContainerIdV1, EquipSlotV1, InventoryEventV1, InventoryLocationV1};
-use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
+use crate::schema::server_data::{PillBuffStatusV1, ServerDataPayloadV1, ServerDataV1};
 use crate::schema::social::GuardianKindV1;
 use crate::shelflife::{
     age_peak_check_with_season, container_storage_multiplier, spoil_check_with_season,
@@ -3312,6 +3312,31 @@ mod tests {
     struct CapturedMineralProbes(Vec<MineralProbeIntent>);
 
     impl valence::prelude::Resource for CapturedMineralProbes {}
+
+    #[test]
+    fn combat_pill_buff_status_payload_preserves_hud_fields() {
+        let bytes = build_pill_buff_status_payload("tie_bi_san", 1800, 1.25, 2)
+            .expect("valid pill buff status payload should serialize");
+        let value: serde_json::Value =
+            serde_json::from_slice(&bytes).expect("test build emits JSON server_data");
+
+        assert_eq!(value["type"], "pill_buff_status");
+        assert_eq!(value["buff_id"], "tie_bi_san");
+        assert_eq!(value["remaining_ticks"], 3600);
+        assert_eq!(value["effect_multiplier"], 1.25);
+    }
+
+    #[test]
+    fn combat_pill_buff_status_rejects_invalid_multiplier() {
+        assert!(
+            build_pill_buff_status_payload("tie_bi_san", 1800, f32::NAN, 1).is_none(),
+            "NaN multiplier must not produce a client HUD payload"
+        );
+        assert!(
+            build_pill_buff_status_payload("tie_bi_san", 1800, 0.0, 1).is_none(),
+            "zero multiplier must not produce a client HUD payload"
+        );
+    }
 
     #[derive(Default)]
     struct CapturedSpiritNichePlaces(Vec<SpiritNichePlaceRequest>);
@@ -11241,6 +11266,7 @@ fn apply_combat_pill_runtime(
             .saturating_mul(duration_multiplier.max(1));
         combat_params.buff_tx.send(intent);
     }
+    push_combat_pill_buff_status(clients, entity, spec, pos_scale, duration_multiplier);
 
     if touched_cultivation {
         commands.entity(entity).insert(next_cultivation.clone());
@@ -11314,6 +11340,55 @@ fn emit_combat_pill_feedback(
                 radius: crate::network::audio_event_emit::AUDIO_BROADCAST_RADIUS,
             },
         });
+    }
+}
+
+fn push_combat_pill_buff_status(
+    clients: &mut Query<(&Username, &mut Client)>,
+    entity: Entity,
+    spec: crate::alchemy::pill::CombatPillSpec,
+    effect_multiplier: f32,
+    duration_multiplier: u64,
+) {
+    let Some(payload_bytes) = build_pill_buff_status_payload(
+        spec.id,
+        spec.positive_duration_ticks,
+        effect_multiplier,
+        duration_multiplier,
+    ) else {
+        return;
+    };
+    let Ok((_username, mut client)) = clients.get_mut(entity) else {
+        return;
+    };
+    send_server_data_payload(&mut client, payload_bytes.as_slice());
+}
+
+fn build_pill_buff_status_payload(
+    buff_id: &str,
+    base_remaining_ticks: u64,
+    effect_multiplier: f32,
+    duration_multiplier: u64,
+) -> Option<Vec<u8>> {
+    if buff_id.trim().is_empty() || !effect_multiplier.is_finite() || effect_multiplier <= 0.0 {
+        return None;
+    }
+    let remaining_ticks = base_remaining_ticks
+        .saturating_mul(duration_multiplier.max(1))
+        .min(u64::from(u32::MAX)) as u32;
+    let payload = ServerDataV1::new(ServerDataPayloadV1::PillBuffStatus(PillBuffStatusV1 {
+        buff_id: buff_id.to_string(),
+        remaining_ticks,
+        effect_multiplier: f64::from(effect_multiplier),
+    }));
+    match serialize_server_data_payload(&payload) {
+        Ok(bytes) => Some(bytes),
+        Err(error) => {
+            tracing::warn!(
+                "[bong][network][alchemy] failed to serialize pill_buff_status for {buff_id}: {error:?}"
+            );
+            None
+        }
     }
 }
 

@@ -2,12 +2,17 @@ package com.bong.client.network;
 
 import bong.Common;
 import bong.Envelope;
+import com.bong.client.combat.inspect.TechniquesListPanel;
+import com.bong.client.hud.PillBuffHudPlanner;
+import com.bong.client.hud.BongToast;
 import com.bong.client.hud.war.FactionWarHudStore;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+
+import java.nio.charset.StandardCharsets;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -16,6 +21,9 @@ class ProtoServerDataBridgeTest {
     @AfterEach
     void tearDown() {
         FactionWarHudStore.resetForTests();
+        PillBuffHudPlanner.clear();
+        TechniquesListPanel.resetForTests();
+        BongToast.resetForTests();
     }
 
     // ─── Happy path: Welcome ─────────────────────────────────────────
@@ -413,6 +421,80 @@ class ProtoServerDataBridgeTest {
         ServerDataRouter.RouteResult route = ServerDataRouter.createDefault().route(result.legacyJson(), 0);
         assertTrue(route.isHandled(), "shield_block_hit proto bridge output should route: " + route.logMessage());
         assertFalse(route.isNoOp(), "shield_block_hit proto bridge output must not become no-op");
+    }
+
+    @Test
+    void bridgePillBuffStatusProducesLegacyJsonAndRoutesIntoHudPlanner() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setPillBuffStatus(Envelope.PillBuffStatus.newBuilder()
+                        .setBuffId("tie_bi_san")
+                        .setRemainingTicks(1800)
+                        .setEffectMultiplier(1.25))
+                .build();
+
+        ProtoServerDataBridge.BridgeResult result = ProtoServerDataBridge.bridge(envelope.toByteArray());
+        assertTrue(result.isSuccess(), "bridge should succeed for pill_buff_status: " + result.errorMessage());
+
+        JsonObject json = JsonParser.parseString(result.legacyJson()).getAsJsonObject();
+        assertEquals("pill_buff_status", json.get("type").getAsString());
+        assertEquals("tie_bi_san", json.get("buff_id").getAsString());
+        assertEquals(1800, json.get("remaining_ticks").getAsInt());
+        assertEquals(1.25, json.get("effect_multiplier").getAsDouble(), 1e-9);
+
+        ServerDataRouter.RouteResult route = ServerDataRouter.createDefault()
+                .route(result.legacyJson(), result.legacyJson().getBytes(StandardCharsets.UTF_8).length);
+
+        assertTrue(route.isHandled(), "pill_buff_status proto bridge output should route: " + route.logMessage());
+        assertFalse(route.isNoOp(), "pill_buff_status proto bridge output must not become no-op");
+        var buffs = PillBuffHudPlanner.activeBuffs();
+        assertEquals(1, buffs.size());
+        assertEquals("tie_bi_san", buffs.get(0).buffId());
+        assertEquals(1800, buffs.get(0).remainingTicks());
+        assertEquals(1.25, buffs.get(0).effectMultiplier(), 1e-9);
+    }
+
+    @Test
+    void bridgeTechniqueProficiencyUpdateProducesLegacyJsonAndRoutesIntoStore() {
+        TechniquesListPanel.replace(java.util.List.of(new TechniquesListPanel.Technique(
+                "woliu.vortex",
+                "绝灵涡流",
+                java.util.List.of(),
+                TechniquesListPanel.Grade.YELLOW,
+                0.10f,
+                "",
+                true,
+                "",
+                "",
+                "凝脉一层",
+                java.util.List.of(),
+                0.4f,
+                8,
+                60,
+                4.0f)));
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setTechniqueProficiencyUpdate(Envelope.TechniqueProficiencyUpdate.newBuilder()
+                        .setTechniqueId("woliu.vortex")
+                        .setProficiency(0.42f)
+                        .setGain(0.02f))
+                .build();
+
+        ProtoServerDataBridge.BridgeResult result = ProtoServerDataBridge.bridge(envelope.toByteArray());
+        assertTrue(result.isSuccess(), "bridge should succeed for technique_proficiency_update: " + result.errorMessage());
+
+        JsonObject json = JsonParser.parseString(result.legacyJson()).getAsJsonObject();
+        assertEquals("technique_proficiency_update", json.get("type").getAsString());
+        assertEquals("woliu.vortex", json.get("technique_id").getAsString());
+        assertEquals(0.42f, json.get("proficiency").getAsFloat(), 1e-6f);
+        assertEquals(0.02f, json.get("gain").getAsFloat(), 1e-6f);
+
+        ServerDataRouter.RouteResult route = ServerDataRouter.createDefault()
+                .route(result.legacyJson(), result.legacyJson().getBytes(StandardCharsets.UTF_8).length);
+
+        assertTrue(route.isHandled(), "technique_proficiency_update proto bridge output should route: " + route.logMessage());
+        assertFalse(route.isNoOp(), "technique_proficiency_update proto bridge output must not become no-op");
+        var technique = TechniquesListPanel.snapshot().get(0);
+        assertEquals("woliu.vortex", technique.id());
+        assertEquals(0.42f, technique.proficiency(), 1e-6f);
     }
 
     @Test
