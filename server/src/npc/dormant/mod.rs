@@ -793,10 +793,9 @@ fn dormant_global_tick_system(
                 .unwrap_or(1.0);
             apply_dormant_regen_with_multiplier(snapshot, zones, ledger, war_multiplier);
         }
-        let zone_qi = zones
-            .as_deref()
-            .and_then(|zones| dormant_zone_qi(snapshot, zones));
-        let _ = advance_dormant_breakthrough(snapshot, zone_qi, tick);
+        if let (Some(zones), Some(ledger)) = (zones.as_deref_mut(), ledger.as_deref_mut()) {
+            let _ = advance_dormant_breakthrough(snapshot, zones, ledger, tick);
+        }
 
         if snapshot.lifespan.is_expired() {
             if let (Some(zones), Some(ledger)) = (zones.as_deref_mut(), ledger.as_deref_mut()) {
@@ -1498,12 +1497,6 @@ pub fn apply_dormant_regen_with_multiplier(
     Some(transfer)
 }
 
-fn dormant_zone_qi(snapshot: &NpcDormantSnapshot, zones: &ZoneRegistry) -> Option<f64> {
-    zones
-        .find_zone(snapshot.dimension, snapshot.position_vec())
-        .map(|zone| zone.spirit_qi)
-}
-
 fn refresh_snapshot_zone_name(snapshot: &mut NpcDormantSnapshot, zones: &ZoneRegistry) -> bool {
     let Some(zone) = zones.find_zone(snapshot.dimension, snapshot.position_vec()) else {
         return false;
@@ -1517,16 +1510,18 @@ fn refresh_snapshot_zone_name(snapshot: &mut NpcDormantSnapshot, zones: &ZoneReg
 
 pub fn advance_dormant_breakthrough(
     snapshot: &mut NpcDormantSnapshot,
-    zone_qi: Option<f64>,
+    zones: &mut ZoneRegistry,
+    ledger: &mut WorldQiAccount,
     tick: u64,
 ) -> Option<Result<BreakthroughSuccess, BreakthroughError>> {
     let mut roll = XorshiftRoll(deterministic_hash(&snapshot.char_id, tick));
-    advance_dormant_breakthrough_with_roll(snapshot, zone_qi, tick, &mut roll)
+    advance_dormant_breakthrough_with_roll(snapshot, zones, ledger, tick, &mut roll)
 }
 
 fn advance_dormant_breakthrough_with_roll<R: RollSource>(
     snapshot: &mut NpcDormantSnapshot,
-    zone_qi: Option<f64>,
+    zones: &mut ZoneRegistry,
+    ledger: &mut WorldQiAccount,
     tick: u64,
     roll: &mut R,
 ) -> Option<Result<BreakthroughSuccess, BreakthroughError>> {
@@ -1542,16 +1537,39 @@ fn advance_dormant_breakthrough_with_roll<R: RollSource>(
     } else {
         MIN_ZONE_QI_TO_BREAKTHROUGH
     };
-    if zone_qi? < required_zone_qi {
+    let pos = snapshot.position_vec();
+    let (zone_name, zone_qi) = zones
+        .find_zone(snapshot.dimension, pos)
+        .map(|zone| (zone.name.clone(), zone.spirit_qi))?;
+    if zone_qi < required_zone_qi {
         return None;
     }
 
+    let before_qi = snapshot.cultivation.qi_current.max(0.0);
+    let npc_account = QiAccountId::npc(snapshot.char_id.clone());
+    let zone_account = QiAccountId::zone(zone_name);
     let result = try_breakthrough(
         &mut snapshot.cultivation,
         &mut snapshot.meridian_system,
         0.0,
         roll,
     );
+    let used_qi = (before_qi - snapshot.cultivation.qi_current.max(0.0)).max(0.0);
+    if used_qi > 0.0 {
+        ledger.set_balance(npc_account.clone(), before_qi).ok()?;
+        if !ledger.has_account(&zone_account) {
+            ledger.set_balance(zone_account.clone(), 0.0).ok()?;
+        }
+        let transfer = QiTransfer::new(
+            npc_account,
+            zone_account,
+            used_qi,
+            QiTransferReason::Breakthrough,
+        )
+        .ok()?;
+        ledger.transfer(transfer).ok()?;
+        snapshot.qi_ledger_net -= used_qi;
+    }
     match result {
         Ok(success) => {
             let previous_cap = snapshot.shared_lifespan.cap_by_realm.max(1) as f64;
@@ -2369,10 +2387,15 @@ mod tests {
         snapshot.lifespan.age_ticks = 1_100.0;
         open_regular_meridians(&mut snapshot, 3);
         let mut roll = FixedRoll(0.0);
+        let mut zones = ZoneRegistry {
+            zones: vec![zone()],
+        };
+        let mut ledger = WorldQiAccount::default();
 
         let result = advance_dormant_breakthrough_with_roll(
             &mut snapshot,
-            Some(MIN_ZONE_QI_TO_BREAKTHROUGH),
+            &mut zones,
+            &mut ledger,
             1200,
             &mut roll,
         )
@@ -2382,6 +2405,22 @@ mod tests {
         assert_eq!(result.to, Realm::Induce);
         assert_eq!(snapshot.cultivation.realm, Realm::Induce);
         assert_eq!(snapshot.cultivation.qi_current, 12.0);
+        assert_eq!(
+            ledger.balance(&QiAccountId::npc("npc_a")),
+            12.0,
+            "dormant breakthrough must debit npc ledger balance with the snapshot"
+        );
+        assert_eq!(
+            ledger.balance(&QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME)),
+            8.0,
+            "dormant breakthrough cost must transfer into the zone ledger"
+        );
+        let transfer = ledger
+            .transfers()
+            .last()
+            .expect("dormant breakthrough should leave a QiTransfer");
+        assert_eq!(transfer.reason, QiTransferReason::Breakthrough);
+        assert_eq!(transfer.amount, 8.0);
         assert_eq!(
             snapshot.shared_lifespan.cap_by_realm,
             LifespanCapTable::INDUCE

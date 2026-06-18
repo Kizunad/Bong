@@ -6,8 +6,8 @@ use valence::prelude::{
 };
 
 use crate::cultivation::breakthrough::{
-    breakthrough_qi_cost, try_breakthrough, BreakthroughError, BreakthroughSuccess, RollSource,
-    XorshiftRoll,
+    breakthrough_actor_account_id, breakthrough_qi_cost, credit_active_breakthrough_cost,
+    try_breakthrough, BreakthroughError, BreakthroughSuccess, RollSource, XorshiftRoll,
 };
 use crate::cultivation::components::{recover_current_qi, Cultivation, MeridianSystem, Realm};
 use crate::cultivation::meridian_open::MeridianTarget;
@@ -23,6 +23,7 @@ use crate::npc::schedule::{
 };
 use crate::npc::spawn::{NpcBlackboard, NpcMarker};
 use crate::npc::tribulation::{AscensionQuotaStore, NpcTribulationPacing};
+use crate::qi_physics::WorldQiAccount;
 use crate::world::poi_novice::PoiNoviceRegistry;
 use crate::world::zone::ZoneRegistry;
 
@@ -778,6 +779,7 @@ pub(crate) fn cultivate_action_system(
     mut actions: Query<(&Actor, &mut ActionState), With<CultivateAction>>,
     zone_registry: Option<Res<ZoneRegistry>>,
     topology: Option<Res<MeridianTopology>>,
+    mut qi_account: Option<ResMut<WorldQiAccount>>,
     mut rng_state: valence::prelude::Local<CultivateRngState>,
 ) {
     let zone_qi_for = |zone_name: &str| -> f64 {
@@ -854,12 +856,26 @@ pub(crate) fn cultivate_action_system(
                     let need = next.required_meridians();
                     let qi_need = breakthrough_qi_cost(next);
                     if have >= need && cultivation.qi_current >= qi_need {
-                        match try_breakthrough(
+                        let Some(account) = qi_account.as_deref_mut() else {
+                            navigator.stop();
+                            *state = ActionState::Failure;
+                            continue;
+                        };
+                        let before_qi = cultivation.qi_current.max(0.0);
+                        let result = try_breakthrough(
                             &mut cultivation,
                             &mut meridians,
                             ROGUE_BREAKTHROUGH_MATERIAL_BONUS,
                             &mut roll,
-                        ) {
+                        );
+                        let used_qi = (before_qi - cultivation.qi_current.max(0.0)).max(0.0);
+                        credit_active_breakthrough_cost(
+                            account,
+                            patrol.home_zone.as_str(),
+                            breakthrough_actor_account_id(*actor, None, true),
+                            used_qi,
+                        );
+                        match result {
                             Ok(BreakthroughSuccess { to, .. }) => {
                                 tracing::info!(
                                     "[bong][npc] rogue breakthrough actor={:?} to={:?}",

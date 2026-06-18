@@ -151,6 +151,15 @@ pub enum QiTransferReason {
     /// `QiTransfer(from=player/npc:<id>, to=zone:<name>, reason=MeridianOpen)` 审计轨迹。
     /// 玩家/NPC 实际真元仍活在 ECS 组件中，不镜像到 player/npc ledger balance。
     MeridianOpen,
+    /// bughunt r6 — 境界突破仪式消耗 `qi_current` 后，真元逸散回所在 zone ledger。
+    ///
+    /// 守恒约束：
+    ///   - 玩家/在线 NPC：`cultivation.qi_current -= cost`；同 tick 内把 cost 记入
+    ///     zone 账户，并追加 `QiTransfer(from=player/npc:<id>, to=zone:<name>,
+    ///     reason=Breakthrough)` audit。活体真元仍在 ECS，不镜像到 ledger 余额。
+    ///   - dormant NPC：真元已镜像在 `WorldQiAccount` 的 npc 账户，必须走真实
+    ///     `WorldQiAccount::transfer(npc -> zone)`，否则快照与账本余额会分叉。
+    Breakthrough,
     RiftCollapse,
     EraDecay,
     /// plan-craft-v1 §0/§3 — 手搓 qi_cost 一次性投入 zone，区别于 ReleaseToZone（招式释放）

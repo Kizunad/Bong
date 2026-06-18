@@ -9,8 +9,8 @@
 //! `tribulation.rs::initiate_tribulation` 分发天劫事件。
 
 use valence::prelude::{
-    bevy_ecs, BlockPos, Entity, Event, EventReader, EventWriter, Events, Position, Query, Res,
-    ResMut, Username,
+    bevy_ecs, bevy_ecs::system::SystemParam, BlockPos, Entity, Event, EventReader, EventWriter,
+    Events, Position, Query, Res, ResMut, Username,
 };
 
 use crate::combat::components::StatusEffects;
@@ -19,7 +19,9 @@ use crate::combat::status::{
 };
 use crate::network::gameplay_vfx;
 use crate::network::vfx_event_emit::VfxEventRequest;
+use crate::npc::spawn::NpcMarker;
 use crate::player::gameplay::PendingGameplayNarrations;
+use crate::qi_physics::{QiAccountId, QiTransfer, QiTransferReason, WorldQiAccount};
 use crate::schema::common::NarrationStyle;
 use crate::skill::components::SkillId;
 use crate::skill::events::{SkillCapChanged, SkillXpGain, XpGainSource};
@@ -160,6 +162,7 @@ pub enum BreakthroughError {
         have: f64,
         in_spirit_eye: bool,
     },
+    LedgerUnavailable,
     RolledFailure {
         severity: f64,
     }, // 骰子输了
@@ -197,6 +200,7 @@ fn breakthrough_error_message(error: &BreakthroughError) -> String {
                 format!("突破未成：固元须在灵气浓处或灵眼内（需 {need:.2}，当前 {have:.2}）。")
             }
         }
+        BreakthroughError::LedgerUnavailable => "突破未成：真元账本未就绪，仪式暂缓。".to_string(),
         BreakthroughError::RolledFailure { severity } => {
             format!("突破失败：气机反噬，伤势强度 {severity:.2}。")
         }
@@ -552,29 +556,83 @@ fn spirit_eye_env_bonus_for(from: Realm, blood_valley: Option<bool>) -> f64 {
     }
 }
 
+pub(crate) fn breakthrough_actor_account_id(
+    entity: Entity,
+    life_record: Option<&LifeRecord>,
+    is_npc: bool,
+) -> QiAccountId {
+    let id = life_record
+        .and_then(|life_record| {
+            let id = life_record.character_id.trim();
+            (!id.is_empty()).then(|| life_record.character_id.clone())
+        })
+        .unwrap_or_else(|| format!("entity:{entity:?}"));
+    if is_npc {
+        QiAccountId::npc(id)
+    } else {
+        QiAccountId::player(id)
+    }
+}
+
+pub(crate) fn credit_active_breakthrough_cost(
+    account: &mut WorldQiAccount,
+    zone_name: &str,
+    from: QiAccountId,
+    amount: f64,
+) {
+    if amount <= 0.0 {
+        return;
+    }
+    let to = QiAccountId::zone(zone_name.to_string());
+    let Ok(transfer) = QiTransfer::new(from, to.clone(), amount, QiTransferReason::Breakthrough)
+    else {
+        return;
+    };
+    if !account.has_account(&to) && account.set_balance(to.clone(), 0.0).is_err() {
+        return;
+    }
+    let zone_balance = account.balance(&to);
+    if account.set_balance(to, zone_balance + amount).is_ok() {
+        account.push_transfer_audit(transfer);
+    }
+}
+
+#[derive(SystemParam)]
+pub(crate) struct BreakthroughResources<'w> {
+    zones: Option<Res<'w, ZoneRegistry>>,
+    spirit_eyes: Option<ResMut<'w, SpiritEyeRegistry>>,
+    pending_narrations: Option<ResMut<'w, PendingGameplayNarrations>>,
+    spirit_eye_used_events: Option<ResMut<'w, Events<SpiritEyeUsedForBreakthroughEvent>>>,
+    skill_xp_events: Option<ResMut<'w, Events<SkillXpGain>>>,
+    qi_account: Option<ResMut<'w, WorldQiAccount>>,
+}
+
 #[allow(clippy::too_many_arguments)] // Bevy system signature; one Query/EventWriter per concern.
 pub fn breakthrough_system(
     clock: Res<CultivationClock>,
     mut requests: EventReader<BreakthroughRequest>,
     mut outcomes: EventWriter<BreakthroughOutcome>,
     mut deaths: EventWriter<CultivationDeathTrigger>,
-    mut players: Query<(&mut Cultivation, &mut MeridianSystem, &mut LifeRecord)>,
+    mut players: Query<(
+        &mut Cultivation,
+        &mut MeridianSystem,
+        &mut LifeRecord,
+        Option<&NpcMarker>,
+    )>,
     mut status_effects_q: Query<&mut StatusEffects>,
     positions: Query<&Position>,
     usernames: Query<&Username>,
     current_dimensions: Query<&CurrentDimension>,
-    zones: Option<Res<ZoneRegistry>>,
-    mut spirit_eyes: Option<ResMut<SpiritEyeRegistry>>,
-    mut pending_narrations: Option<ResMut<PendingGameplayNarrations>>,
     mut vfx_events: EventWriter<VfxEventRequest>,
     mut skill_cap_events: EventWriter<SkillCapChanged>,
-    mut spirit_eye_used_events: Option<ResMut<Events<SpiritEyeUsedForBreakthroughEvent>>>,
-    mut skill_xp_events: Option<ResMut<Events<SkillXpGain>>>,
+    mut resources: BreakthroughResources,
 ) {
     let mut roll = XorshiftRoll(0x9e3779b97f4a7c15);
     let now = clock.tick;
     for req in requests.read() {
-        let Ok((mut cultivation, mut meridians, mut life)) = players.get_mut(req.entity) else {
+        let Ok((mut cultivation, mut meridians, mut life, npc_marker)) =
+            players.get_mut(req.entity)
+        else {
             continue;
         };
         let from = cultivation.realm;
@@ -603,9 +661,18 @@ pub fn breakthrough_system(
                 .unwrap_or_default();
             (position, dimension)
         });
+        let zone_snapshot: Option<(String, f64)> =
+            position_context.and_then(|(position, dimension)| {
+                resources.zones.as_deref().and_then(|registry| {
+                    registry
+                        .find_zone(dimension, position.get())
+                        .map(|zone| (zone.name.clone(), zone.spirit_qi))
+                })
+            });
         let spirit_eye_snapshot: Option<(SpiritEyeId, Option<String>, bool)> = position_context
             .and_then(|(position, dimension)| {
-                spirit_eyes
+                resources
+                    .spirit_eyes
                     .as_deref()
                     .and_then(|registry| registry.eye_at(dimension, position.get()))
                     .map(|eye| (eye.id.clone(), eye.zone_name.clone(), eye.blood_valley))
@@ -616,30 +683,57 @@ pub fn breakthrough_system(
                 .as_ref()
                 .map(|(_, _, blood_valley)| *blood_valley),
         );
-        let season = breakthrough_season(position_context, zones.as_deref(), now);
+        let season = breakthrough_season(position_context, resources.zones.as_deref(), now);
 
         let zone_error = position_context.and_then(|(position, dimension)| {
             breakthrough_environment_error(
                 position,
                 dimension,
-                zones.as_deref(),
-                spirit_eyes.as_deref(),
+                resources.zones.as_deref(),
+                resources.spirit_eyes.as_deref(),
                 from,
             )
         });
+        let ledger_error = if zone_error.is_none()
+            && (resources.qi_account.is_none() || zone_snapshot.is_none())
+            && breakthrough_precondition_error(&cultivation, &meridians).is_none()
+        {
+            Some(BreakthroughError::LedgerUnavailable)
+        } else {
+            None
+        };
 
         let res = zone_error
             .or_else(|| breakthrough_precondition_error(&cultivation, &meridians))
+            .or(ledger_error)
             .map_or_else(
                 || {
-                    try_breakthrough_with_env_season_bonus(
+                    let before_qi = cultivation.qi_current.max(0.0);
+                    let result = try_breakthrough_with_env_season_bonus(
                         &mut cultivation,
                         &mut meridians,
                         material_bonus,
                         env_bonus,
                         Some(season),
                         &mut roll,
-                    )
+                    );
+                    let used_qi = (before_qi - cultivation.qi_current.max(0.0)).max(0.0);
+                    if let (Some(account), Some((zone_name, _zone_qi))) =
+                        (resources.qi_account.as_deref_mut(), zone_snapshot.as_ref())
+                    {
+                        let actor_account = breakthrough_actor_account_id(
+                            req.entity,
+                            Some(&life),
+                            npc_marker.is_some(),
+                        );
+                        credit_active_breakthrough_cost(
+                            account,
+                            zone_name.as_str(),
+                            actor_account,
+                            used_qi,
+                        );
+                    }
+                    result
                 },
                 Err,
             );
@@ -660,7 +754,7 @@ pub fn breakthrough_system(
                         new_cap,
                     });
                 }
-                if let Some(skill_xp_events) = skill_xp_events.as_deref_mut() {
+                if let Some(skill_xp_events) = resources.skill_xp_events.as_deref_mut() {
                     skill_xp_events.send(SkillXpGain {
                         char_entity: req.entity,
                         skill: SkillId::Cultivation,
@@ -673,27 +767,29 @@ pub fn breakthrough_system(
                 }
                 if from == Realm::Condense && success.to == Realm::Solidify {
                     if let Some((eye_id, zone_name, _blood_valley)) = spirit_eye_snapshot.as_ref() {
-                        if let Some(payload) = spirit_eyes.as_deref_mut().and_then(|registry| {
-                            registry.record_breakthrough_use_by_id(
-                                eye_id,
-                                character_id.as_str(),
-                                from,
-                                success.to,
-                                now,
-                            )
-                        }) {
+                        if let Some(payload) =
+                            resources.spirit_eyes.as_deref_mut().and_then(|registry| {
+                                registry.record_breakthrough_use_by_id(
+                                    eye_id,
+                                    character_id.as_str(),
+                                    from,
+                                    success.to,
+                                    now,
+                                )
+                            })
+                        {
                             life.push(BiographyEntry::SpiritEyeBreakthrough {
                                 eye_id: payload.eye_id.clone(),
                                 zone: zone_name.clone(),
                                 tick: now,
                             });
                             if let Some(spirit_eye_used_events) =
-                                spirit_eye_used_events.as_deref_mut()
+                                resources.spirit_eye_used_events.as_deref_mut()
                             {
                                 spirit_eye_used_events
                                     .send(SpiritEyeUsedForBreakthroughEvent { payload });
                             }
-                            if let Some(narrations) = pending_narrations.as_deref_mut() {
+                            if let Some(narrations) = resources.pending_narrations.as_deref_mut() {
                                 narrations.push_broadcast(
                                     "某处灵机结作一线，旋又归于沉寂。",
                                     NarrationStyle::Narration,
@@ -741,9 +837,10 @@ pub fn breakthrough_system(
         }
 
         if let Err(error) = &res {
-            if let (Some(narrations), Some(username)) =
-                (pending_narrations.as_deref_mut(), username.as_deref())
-            {
+            if let (Some(narrations), Some(username)) = (
+                resources.pending_narrations.as_deref_mut(),
+                username.as_deref(),
+            ) {
                 narrations.push_player(
                     username,
                     breakthrough_error_message(error),
@@ -862,6 +959,7 @@ mod tests {
     use super::*;
     use crate::cultivation::components::MeridianId;
     use crate::npc::spawn::NpcMarker;
+    use crate::qi_physics::{QiAccountId, QiTransferReason, WorldQiAccount};
     use crate::schema::common::NarrationScope;
     use crate::schema::vfx_event::VfxEventPayloadV1;
     use crate::world::karma::KarmaWeightStore;
@@ -1024,6 +1122,10 @@ mod tests {
                     in_spirit_eye: false,
                 },
                 "突破未成：固元须在灵气浓处或灵眼内（需 0.70，当前 0.30）。",
+            ),
+            (
+                BreakthroughError::LedgerUnavailable,
+                "突破未成：真元账本未就绪，仪式暂缓。",
             ),
             (
                 BreakthroughError::RolledFailure { severity: 0.75 },
@@ -1299,10 +1401,152 @@ mod tests {
     }
 
     #[test]
+    fn breakthrough_system_without_ledger_does_not_consume_qi() {
+        let mut app = App::new();
+        let mut zones = ZoneRegistry::fallback();
+        zones.find_zone_mut("spawn").unwrap().spirit_qi = 0.9;
+        app.insert_resource(CultivationClock { tick: 10 });
+        app.insert_resource(zones);
+        app.add_event::<BreakthroughRequest>();
+        app.add_event::<BreakthroughOutcome>();
+        app.add_event::<CultivationDeathTrigger>();
+        app.add_event::<VfxEventRequest>();
+        app.add_event::<SkillCapChanged>();
+        app.add_event::<SkillXpGain>();
+        app.add_event::<SpiritEyeUsedForBreakthroughEvent>();
+        app.add_systems(Update, breakthrough_system);
+
+        let (cultivation, meridians) = setup_for_induce();
+        let player = app
+            .world_mut()
+            .spawn((
+                cultivation,
+                meridians,
+                LifeRecord::new("player_a"),
+                Position::new([8.0, 66.0, 8.0]),
+            ))
+            .id();
+
+        app.world_mut().send_event(BreakthroughRequest {
+            entity: player,
+            material_bonus: 0.0,
+        });
+        app.update();
+
+        let outcomes = app.world().resource::<Events<BreakthroughOutcome>>();
+        let outcome = outcomes.iter_current_update_events().next().unwrap();
+        assert!(matches!(
+            outcome.result,
+            Err(BreakthroughError::LedgerUnavailable)
+        ));
+        let cultivation = app.world().get::<Cultivation>(player).unwrap();
+        assert_eq!(cultivation.realm, Realm::Awaken);
+        assert_eq!(cultivation.qi_current, 100.0);
+    }
+
+    #[test]
+    fn breakthrough_success_credits_cost_to_zone_ledger() {
+        let mut app = App::new();
+        let mut zones = ZoneRegistry::fallback();
+        zones.find_zone_mut("spawn").unwrap().spirit_qi = 0.9;
+        app.insert_resource(CultivationClock { tick: 10 });
+        app.insert_resource(zones);
+        app.insert_resource(WorldQiAccount::default());
+        app.add_event::<BreakthroughRequest>();
+        app.add_event::<BreakthroughOutcome>();
+        app.add_event::<CultivationDeathTrigger>();
+        app.add_event::<VfxEventRequest>();
+        app.add_event::<SkillCapChanged>();
+        app.add_event::<SkillXpGain>();
+        app.add_event::<SpiritEyeUsedForBreakthroughEvent>();
+        app.add_systems(Update, breakthrough_system);
+
+        let (cultivation, meridians) = setup_for_induce();
+        let player = app
+            .world_mut()
+            .spawn((
+                cultivation,
+                meridians,
+                LifeRecord::new("player_a"),
+                Position::new([8.0, 66.0, 8.0]),
+            ))
+            .id();
+
+        app.world_mut().send_event(BreakthroughRequest {
+            entity: player,
+            material_bonus: 0.0,
+        });
+        app.update();
+
+        let cultivation = app.world().get::<Cultivation>(player).unwrap();
+        assert_eq!(cultivation.realm, Realm::Induce);
+        assert_eq!(cultivation.qi_current, 92.0);
+        let ledger = app.world().resource::<WorldQiAccount>();
+        assert_eq!(ledger.balance(&QiAccountId::zone("spawn")), 8.0);
+        let transfer = ledger
+            .transfers()
+            .last()
+            .expect("breakthrough should leave a QiTransfer audit");
+        assert_eq!(transfer.reason, QiTransferReason::Breakthrough);
+        assert_eq!(transfer.from, QiAccountId::player("player_a"));
+        assert_eq!(transfer.to, QiAccountId::zone("spawn"));
+        assert_eq!(transfer.amount, 8.0);
+    }
+
+    #[test]
+    fn breakthrough_failure_also_credits_cost_to_zone_ledger() {
+        let mut app = App::new();
+        let mut zones = ZoneRegistry::fallback();
+        zones.find_zone_mut("spawn").unwrap().spirit_qi = 0.9;
+        app.insert_resource(CultivationClock { tick: 10 });
+        app.insert_resource(zones);
+        app.insert_resource(WorldQiAccount::default());
+        app.add_event::<BreakthroughRequest>();
+        app.add_event::<BreakthroughOutcome>();
+        app.add_event::<CultivationDeathTrigger>();
+        app.add_event::<VfxEventRequest>();
+        app.add_event::<SkillCapChanged>();
+        app.add_event::<SkillXpGain>();
+        app.add_event::<SpiritEyeUsedForBreakthroughEvent>();
+        app.add_systems(Update, breakthrough_system);
+
+        let (mut cultivation, meridians) = setup_for_induce();
+        cultivation.composure = 0.0;
+        let player = app
+            .world_mut()
+            .spawn((
+                cultivation,
+                meridians,
+                LifeRecord::new("player_a"),
+                Position::new([8.0, 66.0, 8.0]),
+            ))
+            .id();
+
+        app.world_mut().send_event(BreakthroughRequest {
+            entity: player,
+            material_bonus: 0.0,
+        });
+        app.update();
+
+        let cultivation = app.world().get::<Cultivation>(player).unwrap();
+        assert_eq!(cultivation.realm, Realm::Awaken);
+        assert_eq!(cultivation.qi_current, 92.0);
+        let ledger = app.world().resource::<WorldQiAccount>();
+        assert_eq!(ledger.balance(&QiAccountId::zone("spawn")), 8.0);
+        let transfer = ledger
+            .transfers()
+            .last()
+            .expect("failed breakthrough should leave a QiTransfer audit");
+        assert_eq!(transfer.reason, QiTransferReason::Breakthrough);
+        assert_eq!(transfer.amount, 8.0);
+    }
+
+    #[test]
     fn npc_breakthrough_emits_vfx() {
         let mut app = App::new();
         app.insert_resource(CultivationClock { tick: 10 });
         app.insert_resource(ZoneRegistry::fallback());
+        app.insert_resource(WorldQiAccount::default());
         app.add_event::<BreakthroughRequest>();
         app.add_event::<BreakthroughOutcome>();
         app.add_event::<CultivationDeathTrigger>();
@@ -1349,6 +1593,7 @@ mod tests {
         zones.find_zone_mut("spawn").unwrap().spirit_qi = 0.9;
         app.insert_resource(CultivationClock { tick: 10 });
         app.insert_resource(zones);
+        app.insert_resource(WorldQiAccount::default());
         app.add_event::<BreakthroughRequest>();
         app.add_event::<BreakthroughOutcome>();
         app.add_event::<CultivationDeathTrigger>();
