@@ -5443,6 +5443,9 @@ mod tests {
             CombatAction, GameplayAction, GameplayActionQueue, GameplayTick, GatherAction,
             PendingGameplayNarrations,
         };
+        use crate::qi_physics::{
+            constants::QI_GATHER_REWARD, QiAccountId, QiTransferReason, WorldQiAccount,
+        };
         use crate::schema::agent_world_model::{
             AgentWorldModelEnvelopeV1, AgentWorldModelSnapshotV1, CurrentEraV1, ZoneHistoryEntryV1,
         };
@@ -5485,6 +5488,7 @@ mod tests {
             app.insert_resource(GameplayActionQueue::default());
             app.insert_resource(PendingGameplayNarrations::default());
             app.insert_resource(GameplayTick::default());
+            app.insert_resource(WorldQiAccount::default());
             app.insert_resource(CombatClock::default());
             app.insert_resource(CultivationClock::default());
             app.add_event::<AttackIntent>();
@@ -6302,6 +6306,24 @@ mod tests {
             assert_eq!(
                 world_state.recent_events[0].target.as_deref(),
                 Some("spirit_herb")
+            );
+
+            let qi_ledger = app.world().resource::<WorldQiAccount>();
+            let transfer = qi_ledger
+                .transfers()
+                .last()
+                .expect("gathering must record zone-to-player QiTransfer audit");
+            assert_eq!(
+                transfer.from,
+                QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME.to_string())
+            );
+            assert_eq!(transfer.to, QiAccountId::player("offline:Gatherer"));
+            assert_eq!(transfer.amount, QI_GATHER_REWARD);
+            assert_eq!(transfer.reason, QiTransferReason::CultivationRegen);
+            assert_eq!(
+                qi_ledger.total(),
+                0.0,
+                "gathering audit must not mirror live state balances into WorldQiAccount"
             );
 
             {
