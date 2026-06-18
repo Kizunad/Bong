@@ -38,12 +38,15 @@ pub fn turbulence_decay_tick(
         }
         field.last_decay_tick = clock.tick;
         let elapsed_seconds = elapsed_ticks as f64 / TICKS_PER_SECOND as f64;
-        let (decayed, remaining) = turbulence_decay_step(
+        let remaining_before = f64::from(field.remaining_swirl_qi);
+        let (_decayed, remaining) = turbulence_decay_step(
             f64::from(field.remaining_swirl_qi),
             f64::from(field.decay_rate_per_second),
             elapsed_seconds,
         );
         field.remaining_swirl_qi = remaining as f32;
+        let decayed =
+            (remaining_before - f64::from(field.remaining_swirl_qi)).clamp(0.0, remaining_before);
         if decayed > f64::EPSILON {
             release_decayed_turbulence_qi(
                 &field,

@@ -1135,6 +1135,17 @@ fn stir_environment_output(stir: StirOutcome) -> f64 {
     stir.actual_absorbed + stir.rotational_swirl + stir.overflow
 }
 
+fn zero_stir_output() -> StirOutcome {
+    StirOutcome {
+        total_drained: 0.0,
+        absorbed_raw: 0.0,
+        actual_absorbed: 0.0,
+        rotational_swirl: 0.0,
+        overflow: 0.0,
+        contamination_gain: 0.0,
+    }
+}
+
 fn clamp_stir_to_available_source_qi(
     stir: StirOutcome,
     zones: Option<&ZoneRegistry>,
@@ -1145,7 +1156,7 @@ fn clamp_stir_to_available_source_qi(
         return stir;
     }
     let Some(zones) = zones else {
-        return stir;
+        return zero_stir_output();
     };
     let available = zones
         .find_zone_by_name(zone_context.source_zone.as_str())
