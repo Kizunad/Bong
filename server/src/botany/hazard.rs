@@ -1,14 +1,20 @@
-use valence::prelude::{Commands, DVec3, Entity, EventReader, Position, Query, Res, With};
+use valence::prelude::{
+    Client, Commands, DVec3, Entity, EventReader, Events, Position, Query, Res, ResMut, With,
+};
 
 use super::components::{BotanyAttractsMobsEvent, HarvestSessionStore, Plant};
 use super::registry::{BotanyKindRegistry, FaunaKind, HarvestHazard, WoundLevel};
 use crate::combat::components::{BodyPart, Wound, WoundKind, Wounds};
 use crate::cultivation::components::{ColorKind, ContamSource, Contamination, Cultivation};
+use crate::cultivation::death_hooks::release_qi_amount_to_zone;
+use crate::cultivation::life_record::LifeRecord;
 use crate::fauna::components::{BeastKind, FaunaTag};
 use crate::npc::spawn::spawn_beast_npc_at;
 use crate::npc::territory::Territory;
+use crate::qi_physics::constants::QI_EPSILON;
+use crate::qi_physics::ledger::QiTransfer;
 use crate::tools::{has_required_tool, ToolKind};
-use crate::world::dimension::{DimensionKind, DimensionLayers, OverworldLayer};
+use crate::world::dimension::{CurrentDimension, DimensionKind, DimensionLayers, OverworldLayer};
 use crate::world::era::WorldEraState;
 use crate::world::mob_spawn::{era_beast_spawn_gate, spawn_natural_mob_at, NaturalMobKind};
 use crate::world::zone::ZoneRegistry;
@@ -57,12 +63,24 @@ pub fn hazard_hints_for_kind(
         .collect()
 }
 
+#[allow(clippy::type_complexity)]
 pub fn tick_harvest_hazards(
     gameplay_tick: Option<Res<crate::player::gameplay::GameplayTick>>,
     store: Res<HarvestSessionStore>,
     kind_registry: Res<BotanyKindRegistry>,
     plants: Query<&Plant, With<Plant>>,
-    positions: Query<(Entity, &Position, &mut Cultivation), With<valence::prelude::Client>>,
+    positions: Query<
+        (
+            Entity,
+            &Position,
+            Option<&CurrentDimension>,
+            Option<&LifeRecord>,
+            &mut Cultivation,
+        ),
+        With<Client>,
+    >,
+    mut zones: Option<ResMut<ZoneRegistry>>,
+    mut qi_transfer_events: Option<ResMut<Events<QiTransfer>>>,
 ) {
     let Some(_gameplay_tick) = gameplay_tick else {
         return;
@@ -95,7 +113,9 @@ pub fn tick_harvest_hazards(
         else {
             continue;
         };
-        let Ok((_, position, mut cultivation)) = positions.get_mut(session.client_entity) else {
+        let Ok((entity, position, current_dimension, life_record, mut cultivation)) =
+            positions.get_mut(session.client_entity)
+        else {
             continue;
         };
         let player_pos = position.get();
@@ -107,7 +127,22 @@ pub fn tick_harvest_hazards(
             continue;
         }
         let drain_per_tick = f64::from(drain_per_sec) / 20.0;
-        cultivation.qi_current = (cultivation.qi_current - drain_per_tick).max(0.0);
+        let actual_drain = drain_per_tick.min(cultivation.qi_current.max(0.0));
+        if actual_drain <= QI_EPSILON {
+            continue;
+        }
+
+        cultivation.qi_current = (cultivation.qi_current - actual_drain).max(0.0);
+        release_qi_amount_to_zone(
+            entity,
+            actual_drain,
+            Some(position),
+            current_dimension,
+            life_record,
+            zones.as_deref_mut(),
+            qi_transfer_events.as_deref_mut(),
+            "botany_harvest_hazard",
+        );
     }
 }
 
@@ -394,7 +429,135 @@ fn splitmix(seed: u64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::botany::registry::BotanyPlantId;
+    use crate::botany::components::{BotanyHarvestMode, BotanyPhase, HarvestSession};
+    use crate::botany::registry::{BotanyPlantId, PlantVariant};
+    use crate::cultivation::life_record::LifeRecord;
+    use crate::player::gameplay::GameplayTick;
+    use crate::player::state::canonical_player_id;
+    use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
+    use crate::qi_physics::ledger::QiTransferReason;
+    use crate::world::dimension::{CurrentDimension, DimensionKind};
+    use valence::prelude::{App, Update};
+    use valence::testing::create_mock_client;
+
+    fn make_hazard_plant(pos: [f64; 3]) -> Plant {
+        Plant {
+            id: BotanyPlantId::FuYuanJue,
+            zone_name: "spawn".to_string(),
+            position: pos,
+            planted_at_tick: 0,
+            wither_progress: 0,
+            source_point: None,
+            harvested: false,
+            trampled: false,
+            variant: PlantVariant::None,
+        }
+    }
+
+    fn make_cultivation(qi_current: f64) -> Cultivation {
+        Cultivation {
+            qi_current,
+            qi_max: 100.0,
+            ..Default::default()
+        }
+    }
+
+    fn make_hazard_app() -> App {
+        let mut app = App::new();
+        app.add_event::<QiTransfer>();
+        app.add_systems(Update, tick_harvest_hazards);
+        app.insert_resource(GameplayTick::default());
+        app.insert_resource(HarvestSessionStore::default());
+        app.insert_resource(BotanyKindRegistry::default());
+
+        let mut zones = ZoneRegistry::fallback();
+        zones.find_zone_mut("spawn").unwrap().spirit_qi = 0.0;
+        app.insert_resource(zones);
+        app
+    }
+
+    fn spawn_harvest_client(app: &mut App, name: &str, pos: [f64; 3], qi_current: f64) -> Entity {
+        let (client_bundle, _helper) = create_mock_client(name);
+        let client = app.world_mut().spawn(client_bundle).id();
+        app.world_mut().entity_mut(client).insert((
+            Position::new(pos),
+            CurrentDimension(DimensionKind::Overworld),
+            make_cultivation(qi_current),
+            LifeRecord::new(canonical_player_id(name)),
+        ));
+        client
+    }
+
+    fn start_hazard_session(app: &mut App, client: Entity, plant: Entity, player_name: &str) {
+        app.world_mut()
+            .resource_mut::<HarvestSessionStore>()
+            .upsert_session(HarvestSession {
+                player_id: canonical_player_id(player_name),
+                client_entity: client,
+                target_entity: Some(plant),
+                target_plant: BotanyPlantId::FuYuanJue,
+                mode: BotanyHarvestMode::Manual,
+                started_at_tick: 0,
+                duration_ticks: 20,
+                phase: BotanyPhase::InProgress,
+                last_progress: 0.0,
+                origin_position: [8.0, 64.0, 8.0],
+            });
+    }
+
+    fn setup_active_hazard(app: &mut App, player_name: &str, qi_current: f64) -> Entity {
+        let plant = app
+            .world_mut()
+            .spawn(make_hazard_plant([8.0, 64.0, 8.0]))
+            .id();
+        let player = spawn_harvest_client(app, player_name, [8.0, 64.0, 8.0], qi_current);
+        start_hazard_session(app, player, plant, player_name);
+        player
+    }
+
+    fn current_spawn_zone_qi(app: &App) -> f64 {
+        app.world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name("spawn")
+            .unwrap()
+            .spirit_qi
+            * QI_ZONE_UNIT_CAPACITY
+    }
+
+    fn drain_qi_transfer_events(app: &mut App) -> Vec<QiTransfer> {
+        app.world_mut()
+            .resource_mut::<Events<QiTransfer>>()
+            .drain()
+            .collect()
+    }
+
+    fn assert_negligible_drain_is_skipped(player_name: &str, initial_qi: f64) {
+        let mut app = make_hazard_app();
+        let player = setup_active_hazard(&mut app, player_name, initial_qi);
+
+        app.update();
+
+        let cultivation = app.world().entity(player).get::<Cultivation>().unwrap();
+        assert!(
+            (cultivation.qi_current - initial_qi).abs() < 1e-12,
+            "期望 qi_current 保持 {initial_qi}，因为 actual_drain <= QI_EPSILON 应跳过扣减，实际 {}",
+            cultivation.qi_current
+        );
+
+        let zone_qi = current_spawn_zone_qi(&app);
+        assert!(
+            zone_qi.abs() < 1e-12,
+            "期望 spawn zone 不增加真元，因为 negligible drain 不应回灌，实际 zone_qi {zone_qi}"
+        );
+
+        let transfers = drain_qi_transfer_events(&mut app);
+        assert_eq!(
+            transfers.len(),
+            0,
+            "期望没有 QiTransfer，因为 actual_drain <= QI_EPSILON 被视为可忽略，实际事件数 {}",
+            transfers.len()
+        );
+    }
 
     #[test]
     fn wound_stub_becomes_full_dispersal_chance() {
@@ -410,6 +573,86 @@ mod tests {
         let registry = BotanyKindRegistry::default();
         let hints = hazard_hints_for_kind(BotanyPlantId::FuYuanJue, &registry);
         assert!(hints.iter().any(|hint| hint.contains("-0.4 真元/s")));
+    }
+
+    #[test]
+    fn qi_drain_hazard_releases_actual_drain_to_zone() {
+        let mut app = make_hazard_app();
+        let player = setup_active_hazard(&mut app, "Azure", 10.0);
+
+        app.update();
+
+        let expected_drain = 0.4_f64 / 20.0;
+        let cultivation = app.world().entity(player).get::<Cultivation>().unwrap();
+        assert!(
+            (cultivation.qi_current - (10.0 - expected_drain)).abs() < 1e-9,
+            "采集靠近扣真元应只扣每 tick 实际值，期望 {}，实际 {}",
+            10.0 - expected_drain,
+            cultivation.qi_current
+        );
+
+        let zone_qi = current_spawn_zone_qi(&app);
+        assert!(
+            (zone_qi - expected_drain).abs() < 1e-9,
+            "被扣真元必须回灌 zone，期望 zone 增量 {expected_drain}，实际 {zone_qi}"
+        );
+
+        let transfers = drain_qi_transfer_events(&mut app);
+        assert_eq!(
+            transfers.len(),
+            1,
+            "期望 1 条 QiTransfer，因为一次靠近 hazard tick 只释放一次实际扣除量，实际事件数 {}",
+            transfers.len()
+        );
+        assert_eq!(
+            transfers[0].reason,
+            QiTransferReason::ReleaseToZone,
+            "期望 reason=ReleaseToZone，因为 hazard 扣除真元应走 release_qi_amount_to_zone 回灌，实际 {:?}",
+            transfers[0].reason
+        );
+        assert!(
+            (transfers[0].amount - expected_drain).abs() < 1e-9,
+            "QiTransfer amount 应等于实际扣除量 {expected_drain}，实际 {}",
+            transfers[0].amount
+        );
+    }
+
+    #[test]
+    fn qi_drain_hazard_clamps_release_to_remaining_qi() {
+        let mut app = make_hazard_app();
+        let player = setup_active_hazard(&mut app, "Bao", 0.01);
+
+        app.update();
+
+        let cultivation = app.world().entity(player).get::<Cultivation>().unwrap();
+        assert!(
+            cultivation.qi_current.abs() < 1e-9,
+            "真元不足时应扣到 0，不应变负或释放超过剩余量，实际 {}",
+            cultivation.qi_current
+        );
+
+        let transfers = drain_qi_transfer_events(&mut app);
+        assert_eq!(
+            transfers.len(),
+            1,
+            "期望 1 条 QiTransfer，因为剩余真元 0.01 仍大于 QI_EPSILON 且必须回灌，实际事件数 {}",
+            transfers.len()
+        );
+        assert!(
+            (transfers[0].amount - 0.01).abs() < 1e-9,
+            "QiTransfer amount 应 clamp 到剩余真元 0.01，实际 {}",
+            transfers[0].amount
+        );
+    }
+
+    #[test]
+    fn qi_drain_hazard_skips_exact_epsilon_remaining_qi() {
+        assert_negligible_drain_is_skipped("Epsilon", QI_EPSILON);
+    }
+
+    #[test]
+    fn qi_drain_hazard_skips_zero_remaining_qi() {
+        assert_negligible_drain_is_skipped("Empty", 0.0);
     }
 
     #[test]
