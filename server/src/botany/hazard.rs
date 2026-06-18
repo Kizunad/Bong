@@ -505,6 +505,60 @@ mod tests {
             });
     }
 
+    fn setup_active_hazard(app: &mut App, player_name: &str, qi_current: f64) -> Entity {
+        let plant = app
+            .world_mut()
+            .spawn(make_hazard_plant([8.0, 64.0, 8.0]))
+            .id();
+        let player = spawn_harvest_client(app, player_name, [8.0, 64.0, 8.0], qi_current);
+        start_hazard_session(app, player, plant, player_name);
+        player
+    }
+
+    fn current_spawn_zone_qi(app: &App) -> f64 {
+        app.world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name("spawn")
+            .unwrap()
+            .spirit_qi
+            * QI_ZONE_UNIT_CAPACITY
+    }
+
+    fn drain_qi_transfer_events(app: &mut App) -> Vec<QiTransfer> {
+        app.world_mut()
+            .resource_mut::<Events<QiTransfer>>()
+            .drain()
+            .collect()
+    }
+
+    fn assert_negligible_drain_is_skipped(player_name: &str, initial_qi: f64) {
+        let mut app = make_hazard_app();
+        let player = setup_active_hazard(&mut app, player_name, initial_qi);
+
+        app.update();
+
+        let cultivation = app.world().entity(player).get::<Cultivation>().unwrap();
+        assert!(
+            (cultivation.qi_current - initial_qi).abs() < 1e-12,
+            "期望 qi_current 保持 {initial_qi}，因为 actual_drain <= QI_EPSILON 应跳过扣减，实际 {}",
+            cultivation.qi_current
+        );
+
+        let zone_qi = current_spawn_zone_qi(&app);
+        assert!(
+            zone_qi.abs() < 1e-12,
+            "期望 spawn zone 不增加真元，因为 negligible drain 不应回灌，实际 zone_qi {zone_qi}"
+        );
+
+        let transfers = drain_qi_transfer_events(&mut app);
+        assert_eq!(
+            transfers.len(),
+            0,
+            "期望没有 QiTransfer，因为 actual_drain <= QI_EPSILON 被视为可忽略，实际事件数 {}",
+            transfers.len()
+        );
+    }
+
     #[test]
     fn wound_stub_becomes_full_dispersal_chance() {
         let registry = BotanyKindRegistry::default();
@@ -524,12 +578,7 @@ mod tests {
     #[test]
     fn qi_drain_hazard_releases_actual_drain_to_zone() {
         let mut app = make_hazard_app();
-        let plant = app
-            .world_mut()
-            .spawn(make_hazard_plant([8.0, 64.0, 8.0]))
-            .id();
-        let player = spawn_harvest_client(&mut app, "Azure", [8.0, 64.0, 8.0], 10.0);
-        start_hazard_session(&mut app, player, plant, "Azure");
+        let player = setup_active_hazard(&mut app, "Azure", 10.0);
 
         app.update();
 
@@ -542,25 +591,25 @@ mod tests {
             cultivation.qi_current
         );
 
-        let zone_qi = app
-            .world()
-            .resource::<ZoneRegistry>()
-            .find_zone_by_name("spawn")
-            .unwrap()
-            .spirit_qi
-            * QI_ZONE_UNIT_CAPACITY;
+        let zone_qi = current_spawn_zone_qi(&app);
         assert!(
             (zone_qi - expected_drain).abs() < 1e-9,
             "被扣真元必须回灌 zone，期望 zone 增量 {expected_drain}，实际 {zone_qi}"
         );
 
-        let transfers: Vec<_> = app
-            .world_mut()
-            .resource_mut::<Events<QiTransfer>>()
-            .drain()
-            .collect();
-        assert_eq!(transfers.len(), 1);
-        assert_eq!(transfers[0].reason, QiTransferReason::ReleaseToZone);
+        let transfers = drain_qi_transfer_events(&mut app);
+        assert_eq!(
+            transfers.len(),
+            1,
+            "期望 1 条 QiTransfer，因为一次靠近 hazard tick 只释放一次实际扣除量，实际事件数 {}",
+            transfers.len()
+        );
+        assert_eq!(
+            transfers[0].reason,
+            QiTransferReason::ReleaseToZone,
+            "期望 reason=ReleaseToZone，因为 hazard 扣除真元应走 release_qi_amount_to_zone 回灌，实际 {:?}",
+            transfers[0].reason
+        );
         assert!(
             (transfers[0].amount - expected_drain).abs() < 1e-9,
             "QiTransfer amount 应等于实际扣除量 {expected_drain}，实际 {}",
@@ -571,12 +620,7 @@ mod tests {
     #[test]
     fn qi_drain_hazard_clamps_release_to_remaining_qi() {
         let mut app = make_hazard_app();
-        let plant = app
-            .world_mut()
-            .spawn(make_hazard_plant([8.0, 64.0, 8.0]))
-            .id();
-        let player = spawn_harvest_client(&mut app, "Bao", [8.0, 64.0, 8.0], 0.01);
-        start_hazard_session(&mut app, player, plant, "Bao");
+        let player = setup_active_hazard(&mut app, "Bao", 0.01);
 
         app.update();
 
@@ -587,17 +631,28 @@ mod tests {
             cultivation.qi_current
         );
 
-        let transfers: Vec<_> = app
-            .world_mut()
-            .resource_mut::<Events<QiTransfer>>()
-            .drain()
-            .collect();
-        assert_eq!(transfers.len(), 1);
+        let transfers = drain_qi_transfer_events(&mut app);
+        assert_eq!(
+            transfers.len(),
+            1,
+            "期望 1 条 QiTransfer，因为剩余真元 0.01 仍大于 QI_EPSILON 且必须回灌，实际事件数 {}",
+            transfers.len()
+        );
         assert!(
             (transfers[0].amount - 0.01).abs() < 1e-9,
             "QiTransfer amount 应 clamp 到剩余真元 0.01，实际 {}",
             transfers[0].amount
         );
+    }
+
+    #[test]
+    fn qi_drain_hazard_skips_exact_epsilon_remaining_qi() {
+        assert_negligible_drain_is_skipped("Epsilon", QI_EPSILON);
+    }
+
+    #[test]
+    fn qi_drain_hazard_skips_zero_remaining_qi() {
+        assert_negligible_drain_is_skipped("Empty", 0.0);
     }
 
     #[test]
