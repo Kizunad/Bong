@@ -206,8 +206,7 @@ pub(crate) fn spider_ambush_action_system(
     mut ambush_events: EventWriter<SpiderAmbushTriggerEvent>,
 ) {
     for (Actor(actor), mut state) in &mut actions {
-        let Ok((position, mut disguise_state, mut blackboard, mut navigator)) =
-            spiders.get_mut(*actor)
+        let Ok((position, mut disguise_state, blackboard, mut navigator)) = spiders.get_mut(*actor)
         else {
             *state = ActionState::Failure;
             continue;
@@ -278,9 +277,6 @@ pub(crate) fn spider_ambush_action_system(
                     // 无目标 → Ambush 完成（转回 Disguised 由外部 scorer 决定）
                     navigator.stop();
                     *disguise_state = SpiderDisguiseState::Disguised;
-                    blackboard.drained_qi = blackboard
-                        .drained_qi
-                        .min(0.0_f64.max(blackboard.drained_qi - 1.0));
                     *state = ActionState::Success;
                     continue;
                 };
@@ -1107,6 +1103,44 @@ mod tests {
             *action_state,
             ActionState::Success,
             "无玩家时 action 应 Success（实际 {action_state:?}）"
+        );
+    }
+
+    #[test]
+    fn ambush_action_without_target_preserves_drained_qi() {
+        // drained_qi 是蛛从 zone 吸走的真元账户，状态切换不能私自扣减。
+        let mut app = spider_test_app();
+        let spider_pos = DVec3::new(0.0, 64.0, 0.0);
+        let mut blackboard = make_blackboard("spawn", spider_pos);
+        blackboard.drained_qi = 5.0;
+
+        let spider = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position::new([spider_pos.x, spider_pos.y, spider_pos.z]),
+                SpiderDisguiseState::Ambush,
+                blackboard,
+                Navigator::new(),
+            ))
+            .id();
+
+        use big_brain::prelude::ActionState;
+        app.world_mut()
+            .spawn((Actor(spider), ActionState::Executing, SpiderAmbushAction));
+
+        app.update();
+
+        let new_state = app.world().get::<SpiderDisguiseState>(spider).unwrap();
+        assert_eq!(
+            *new_state,
+            SpiderDisguiseState::Disguised,
+            "无目标时仍应回 Disguised（实际 {new_state:?}）"
+        );
+        let blackboard = app.world().get::<MimicSpiderBlackboard>(spider).unwrap();
+        assert_eq!(
+            blackboard.drained_qi, 5.0,
+            "Ambush 失去目标只是状态切换，不能让 drained_qi 凭空减少"
         );
     }
 
