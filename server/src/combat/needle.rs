@@ -4,13 +4,14 @@ use valence::prelude::{
     Res, ResMut,
 };
 
-use crate::combat::carrier::release_residual_to_zone;
 use crate::combat::components::{Lifecycle, LifecycleState, Stamina, WoundKind};
 use crate::combat::events::{AttackIntent, AttackReach, AttackSource};
 use crate::combat::projectile::residual_qi_after_miss;
 use crate::combat::CombatClock;
 use crate::cultivation::components::{Cultivation, QiColor, Realm};
-use crate::qi_physics::ledger::QiTransfer;
+use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
+use crate::qi_physics::ledger::{QiAccountId, QiTransfer, QiTransferReason};
+use crate::qi_physics::release::qi_release_to_zone;
 use crate::world::dimension::DimensionKind;
 use crate::world::zone::ZoneRegistry;
 
@@ -78,6 +79,7 @@ pub fn resolve_shoot_needle_intents(
     mut actors: Query<NeedleActorQueryItem<'_>>,
     mut attacks: EventWriter<AttackIntent>,
     mut charged_events: EventWriter<QiNeedleChargedEvent>,
+    mut qi_transfers: EventWriter<QiTransfer>,
 ) {
     for intent in intents.read() {
         let Ok((mut cultivation, mut stamina, lifecycle, position, qi_color)) =
@@ -97,21 +99,24 @@ pub fn resolve_shoot_needle_intents(
         let spawn_pos = position
             .map(|position| position.get() + dir * 0.3)
             .unwrap_or(DVec3::ZERO);
-        commands.spawn(QiNeedle {
-            shooter: intent.shooter,
-            qi_payload: QI_NEEDLE_QI_COST,
-            qi_color: qi_color_label(qi_color),
-            infused_dugu: false,
-            spawn_pos: [spawn_pos.x, spawn_pos.y, spawn_pos.z],
-            velocity: [
-                dir.x * f64::from(QI_NEEDLE_SPEED_BLOCKS_PER_SEC),
-                dir.y * f64::from(QI_NEEDLE_SPEED_BLOCKS_PER_SEC),
-                dir.z * f64::from(QI_NEEDLE_SPEED_BLOCKS_PER_SEC),
-            ],
-            max_distance: QI_NEEDLE_MAX_DISTANCE_BLOCKS,
-            hitbox_inflation: QI_NEEDLE_HITBOX_INFLATION,
-            spawned_at_tick: clock.tick,
-        });
+        let needle_entity = commands
+            .spawn(QiNeedle {
+                shooter: intent.shooter,
+                qi_payload: QI_NEEDLE_QI_COST,
+                qi_color: qi_color_label(qi_color),
+                infused_dugu: false,
+                spawn_pos: [spawn_pos.x, spawn_pos.y, spawn_pos.z],
+                velocity: [
+                    dir.x * f64::from(QI_NEEDLE_SPEED_BLOCKS_PER_SEC),
+                    dir.y * f64::from(QI_NEEDLE_SPEED_BLOCKS_PER_SEC),
+                    dir.z * f64::from(QI_NEEDLE_SPEED_BLOCKS_PER_SEC),
+                ],
+                max_distance: QI_NEEDLE_MAX_DISTANCE_BLOCKS,
+                hitbox_inflation: QI_NEEDLE_HITBOX_INFLATION,
+                spawned_at_tick: clock.tick,
+            })
+            .id();
+        emit_needle_channeling_transfer(&mut qi_transfers, intent.shooter, needle_entity);
         if let Some(target) = intent.target {
             attacks.send(AttackIntent {
                 attacker: intent.shooter,
@@ -145,13 +150,13 @@ pub fn despawn_expired_qi_needles(
 
     for (entity, needle, position) in &needles {
         if clock.tick.saturating_sub(needle.spawned_at_tick) > max_age_ticks {
-            // qc-P0：针过期时把 residual_qi 归还落点 zone（守恒）。
-            // 玩家射针时已从 qi_current 扣除 qi_payload（needle.rs:87-88），
-            // 未命中时真元须归还环境，否则从系统蒸发。
+            // qc-P0：针过期时把针容器里的完整 qi_payload 归还落点 zone（守恒）。
+            // residual_qi_after_miss 只描述投射物威力衰减；账本上发射阶段已经把
+            // 完整 payload 转入针容器，despawn 前必须全量转出。
             let qi_payload = needle.qi_payload as f32;
-            let (_evaporated, residual) = residual_qi_after_miss(qi_payload);
-            let residual_f64 = f64::from(residual);
-            if residual_f64 > f64::EPSILON {
+            let (evaporated, residual) = residual_qi_after_miss(qi_payload);
+            let release_f64 = f64::from(evaporated + residual);
+            if release_f64 > f64::EPSILON {
                 // 落点：优先用 Position 组件（若有），否则按 velocity 外推真实消亡点。
                 // 针无 Position 组件时 spawn_pos 仅出发点；针以 velocity 飞行、最远
                 // max_distance，跨 zone 飞行时残真元须归还实际落点 zone（而非出发 zone）。
@@ -162,15 +167,7 @@ pub fn despawn_expired_qi_needles(
                         .clamp_length_max(f64::from(needle.max_distance));
                     DVec3::from(needle.spawn_pos) + traveled
                 });
-                release_residual_to_zone(
-                    &mut zones,
-                    &mut qi_transfers,
-                    DimensionKind::Overworld,
-                    pos,
-                    residual_f64,
-                    "qi_needle_expire",
-                    entity.to_bits(),
-                );
+                release_needle_qi_to_zone(&mut zones, &mut qi_transfers, entity, pos, release_f64);
             }
             commands.entity(entity).despawn();
         }
@@ -201,6 +198,120 @@ fn qi_color_label(qi_color: Option<&QiColor>) -> String {
     qi_color
         .map(|qi_color| format!("{:?}", qi_color.main))
         .unwrap_or_else(|| "Mellow".to_string())
+}
+
+fn player_qi_account(player: Entity) -> QiAccountId {
+    QiAccountId::player(format!("entity:{}", player.to_bits()))
+}
+
+fn needle_qi_account(needle: Entity) -> QiAccountId {
+    QiAccountId::container(format!("qi_needle:entity:{}", needle.to_bits()))
+}
+
+fn emit_needle_channeling_transfer(
+    qi_transfers: &mut EventWriter<QiTransfer>,
+    shooter: Entity,
+    needle: Entity,
+) {
+    if let Ok(transfer) = QiTransfer::new(
+        player_qi_account(shooter),
+        needle_qi_account(needle),
+        QI_NEEDLE_QI_COST,
+        QiTransferReason::Channeling,
+    ) {
+        qi_transfers.send(transfer);
+    }
+}
+
+fn release_needle_qi_to_zone(
+    zones: &mut ZoneRegistry,
+    qi_transfers: &mut EventWriter<QiTransfer>,
+    needle: Entity,
+    pos: DVec3,
+    residual: f64,
+) {
+    if residual <= f64::EPSILON {
+        return;
+    }
+
+    let from = needle_qi_account(needle);
+    let entity_bits = needle.to_bits();
+    let Some(zone_name) = zones
+        .find_zone(DimensionKind::Overworld, pos)
+        .map(|zone| zone.name.clone())
+    else {
+        emit_needle_overflow_transfer(
+            qi_transfers,
+            from,
+            format!("qi_needle_expire_no_zone:entity:{entity_bits}"),
+            residual,
+        );
+        return;
+    };
+
+    let Some(zone) = zones.find_zone_mut(&zone_name) else {
+        emit_needle_overflow_transfer(
+            qi_transfers,
+            from,
+            format!("qi_needle_expire_no_mut_zone:entity:{entity_bits}"),
+            residual,
+        );
+        return;
+    };
+
+    let zone_current = zone.spirit_qi.max(0.0) * QI_ZONE_UNIT_CAPACITY;
+    match qi_release_to_zone(
+        residual,
+        from.clone(),
+        QiAccountId::zone(zone_name),
+        zone_current,
+        QI_ZONE_UNIT_CAPACITY,
+    ) {
+        Ok(outcome) => {
+            zone.spirit_qi = (outcome.zone_after / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
+            if let Some(transfer) = outcome.transfer {
+                qi_transfers.send(transfer);
+            }
+            if outcome.overflow > f64::EPSILON {
+                emit_needle_overflow_transfer(
+                    qi_transfers,
+                    from,
+                    format!("qi_needle_expire_overflow:entity:{entity_bits}"),
+                    outcome.overflow,
+                );
+            }
+        }
+        Err(err) => {
+            tracing::warn!(
+                ?err,
+                entity_bits,
+                residual,
+                "[bong][qi_needle] qi release error; routing to overflow"
+            );
+            emit_needle_overflow_transfer(
+                qi_transfers,
+                from,
+                format!("qi_needle_expire_err_overflow:entity:{entity_bits}"),
+                residual,
+            );
+        }
+    }
+}
+
+fn emit_needle_overflow_transfer(
+    qi_transfers: &mut EventWriter<QiTransfer>,
+    from: QiAccountId,
+    overflow_id: String,
+    amount: f64,
+) {
+    if let Ok(transfer) = QiTransfer::new(
+        from,
+        QiAccountId::overflow(overflow_id),
+        amount,
+        QiTransferReason::ReleaseToZone,
+    ) {
+        qi_transfers.send(transfer);
+    }
 }
 
 pub fn realm_rank(realm: Realm) -> u8 {
@@ -254,6 +365,7 @@ mod tests {
         app.add_event::<ShootNeedleIntent>();
         app.add_event::<AttackIntent>();
         app.add_event::<QiNeedleChargedEvent>();
+        app.add_event::<QiTransfer>();
         app.add_systems(Update, resolve_shoot_needle_intents);
 
         let (cultivation, stamina) = actor(Realm::Induce, 10.0, 10.0);
@@ -280,12 +392,32 @@ mod tests {
             .get_reader()
             .read(attack_events)
             .any(|event| event.source == AttackSource::QiNeedle && event.target == Some(target)));
-        let needle_count = {
+        let needle_entities = {
             let world = app.world_mut();
-            let mut query = world.query::<&QiNeedle>();
-            query.iter(world).count()
+            let mut query = world.query::<(Entity, &QiNeedle)>();
+            query
+                .iter(world)
+                .map(|(entity, _needle)| entity)
+                .collect::<Vec<_>>()
         };
-        assert_eq!(needle_count, 1);
+        assert_eq!(needle_entities.len(), 1);
+
+        let qi_transfers = app.world().resource::<Events<QiTransfer>>();
+        let transfer_events = qi_transfers
+            .get_reader()
+            .read(qi_transfers)
+            .cloned()
+            .collect::<Vec<_>>();
+        assert_eq!(
+            transfer_events.len(),
+            1,
+            "气针发射扣 qi_current 时必须 emit 1 条 QiTransfer，实际 {} 条",
+            transfer_events.len()
+        );
+        assert_eq!(transfer_events[0].from, player_qi_account(shooter));
+        assert_eq!(transfer_events[0].to, needle_qi_account(needle_entities[0]));
+        assert_eq!(transfer_events[0].amount, QI_NEEDLE_QI_COST);
+        assert_eq!(transfer_events[0].reason, QiTransferReason::Channeling);
     }
 
     // ── qc-P0 守恒测试：despawn_expired_qi_needles ───────────────────────────────
@@ -449,8 +581,7 @@ mod tests {
 
     #[test]
     fn needle_expire_conservation_invariant() {
-        // 期望：过期针 Σ QiTransfer.amount == residual_qi（守恒等式）。
-        // residual = 30% × qi_payload（residual_qi_after_miss 固定比例）。
+        // 期望：过期针 Σ QiTransfer.amount == qi_payload（容器全量释放）。
         use crate::qi_physics::ledger::QiTransfer;
 
         let mut app = expire_app();
@@ -458,19 +589,27 @@ mod tests {
         let max_age_ticks =
             ((QI_NEEDLE_MAX_DISTANCE_BLOCKS / QI_NEEDLE_SPEED_BLOCKS_PER_SEC) * 20.0).ceil() as u64
                 + 1;
-        let _ = spawn_needle(&mut app, 0, QI_NEEDLE_QI_COST);
+        let needle = spawn_needle(&mut app, 0, QI_NEEDLE_QI_COST);
         app.world_mut().resource_mut::<CombatClock>().tick = max_age_ticks + 2;
         app.update();
 
         let events = app.world().resource::<Events<QiTransfer>>();
         let mut reader = events.get_reader();
-        let total: f64 = reader.read(events).map(|t| t.amount).sum();
+        let transfers = reader.read(events).cloned().collect::<Vec<_>>();
+        let total: f64 = transfers.iter().map(|transfer| transfer.amount).sum();
 
-        // residual_qi_after_miss 固定 30%
-        let expected_residual = f64::from(QI_NEEDLE_QI_COST as f32 * 0.3);
+        let expected_release = QI_NEEDLE_QI_COST;
+        assert_eq!(
+            transfers.len(),
+            1,
+            "气针过期 payload 应 emit 1 条 ReleaseToZone，实际 {} 条",
+            transfers.len()
+        );
+        assert_eq!(transfers[0].from, needle_qi_account(needle));
+        assert_eq!(transfers[0].reason, QiTransferReason::ReleaseToZone);
         assert!(
-            (total - expected_residual).abs() < 1e-5,
-            "守恒不变式：QiTransfer 总量应等于 residual（30% × payload={})，实际 {total}",
+            (total - expected_release).abs() < 1e-5,
+            "守恒不变式：QiTransfer 总量应等于 payload={}，实际 {total}",
             QI_NEEDLE_QI_COST
         );
     }
