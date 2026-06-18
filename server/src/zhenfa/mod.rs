@@ -1600,6 +1600,7 @@ fn handle_zhenfa_place_requests(
     mut deceive_events: EventWriter<DeceiveHeavenEvent>,
     mut illusion_events: EventWriter<IllusionArrayDeployEvent>,
     mut network_events: EventWriter<NetworkArrayDeployEvent>,
+    mut qi_transfers: EventWriter<QiTransfer>,
     mut pending_narrations: Option<ResMut<PendingGameplayNarrations>>,
     mut vfx_events: Option<ResMut<Events<VfxEventRequest>>>,
 ) {
@@ -1875,6 +1876,14 @@ fn handle_zhenfa_place_requests(
                     }
                 }
                 cultivation.qi_current = (cultivation.qi_current - qi_cost).max(0.0);
+                if should_release_sealed_qi_to_zone(req.kind) {
+                    emit_zhenfa_seal_qi_transfer(
+                        &mut qi_transfers,
+                        owner_player_id.as_str(),
+                        id,
+                        qi_cost,
+                    );
+                }
                 if req.kind == ZhenfaKind::DecoyStake {
                     commands.entity(anchor_entity).insert((
                         ZhenfaAnchor { id },
@@ -4329,7 +4338,7 @@ fn release_zhenfa_qi_amount_to_zone(
     if amount <= f64::EPSILON {
         return;
     }
-    let from = QiAccountId::container(format!("zhenfa_trap:{owner_player_id}:{array_id}"));
+    let from = zhenfa_sealed_qi_account(owner_player_id, array_id);
     let Some(zones) = zones else {
         tracing::warn!(
             "[bong][zhenfa] zhenfa qi release routed to overflow: ZoneRegistry missing array_id={array_id}"
@@ -4389,6 +4398,29 @@ fn release_zhenfa_qi_amount_to_zone(
             );
             send_zhenfa_release_overflow(qi_transfers, from, owner_player_id, array_id, amount);
         }
+    }
+}
+
+fn zhenfa_sealed_qi_account(owner_player_id: &str, array_id: u64) -> QiAccountId {
+    QiAccountId::container(format!("zhenfa_trap:{owner_player_id}:{array_id}"))
+}
+
+fn emit_zhenfa_seal_qi_transfer(
+    qi_transfers: &mut EventWriter<QiTransfer>,
+    owner_player_id: &str,
+    array_id: u64,
+    amount: f64,
+) {
+    if amount <= f64::EPSILON {
+        return;
+    }
+    if let Ok(transfer) = QiTransfer::new(
+        QiAccountId::player(owner_player_id.to_string()),
+        zhenfa_sealed_qi_account(owner_player_id, array_id),
+        amount,
+        QiTransferReason::Channeling,
+    ) {
+        qi_transfers.send(transfer);
     }
 }
 
@@ -6315,6 +6347,20 @@ mod tests {
             .expect("warning trap should be placed");
         assert_eq!(instance.kind, ZhenfaKind::WarningTrap);
         assert_eq!(instance.qi_invest_amount, 2.0);
+        let transfers = app.world().resource::<Events<QiTransfer>>();
+        let seal_transfer = transfers
+            .iter_current_update_events()
+            .find(|transfer| {
+                transfer.reason == QiTransferReason::Channeling
+                    && transfer.to
+                        == zhenfa_sealed_qi_account(&instance.owner_player_id, instance.id)
+            })
+            .expect("warning trap placement must channel sealed qi into the zhenfa container");
+        assert_eq!(
+            seal_transfer.from,
+            QiAccountId::player(instance.owner_player_id.clone())
+        );
+        assert!((seal_transfer.amount - 2.0).abs() < f64::EPSILON);
         let inventory = app.world().get::<PlayerInventory>(owner).unwrap();
         assert!(inventory_item_by_instance_borrow(inventory, 9101).is_none());
     }
