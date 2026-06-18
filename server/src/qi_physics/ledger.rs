@@ -210,6 +210,12 @@ pub enum QiTransferReason {
     /// QiTransfer(from=player:<id>, to=npc:daozhan:<id>, reason=DaoZhangDrain)。
     /// 凝结/坍缩渊死亡 spawn 的道伥初始 qi 走死亡转移，不走此路径。
     DaoZhangDrain,
+    /// bughunt r12 — 鼠咬从玩家 qi_current 吸取真元，守恒转入 RatBlackboard.drained_qi。
+    ///
+    /// 守恒约束：player.qi_current -= amount；rat.drained_qi += amount；
+    /// QiTransfer(from=player:<id>, to=npc:rat:<id>, reason=RatBiteDrain)。
+    /// 鼠死亡时 release_drained_qi_on_death_system 按衰减比例归还 zone。
+    RatBiteDrain,
     /// plan-daozhan-v1 P0 — 天道凝结道伥时从高浓度 zone.spirit_qi 凝出初始真元。
     ///
     /// 守恒约束：zone.spirit_qi -= delta；daozhan.qi_init = condensed_amount；
