@@ -66,10 +66,12 @@ public class ServerDataRouterTest {
             "quickslot_config",
             "skillbar_config",
             "techniques_snapshot",
+            "technique_proficiency_update",
             "skill_config_snapshot",
             "unlocks_sync",
             "event_stream_push",
             "burst_meridian_event",
+            "pill_buff_status",
             // plan-baomai-v2 P2 — 爆脉全力一击蓄力 / 释放 / 虚脱 HUD 推送。
             "full_power_charging_state",
             "full_power_release",

@@ -157,10 +157,12 @@ public final class ServerDataRouter {
         handlers.put("quickslot_config", quickSlotConfigHandler);
         handlers.put("skillbar_config", skillBarConfigHandler);
         handlers.put("techniques_snapshot", techniquesSnapshotHandler);
+        handlers.put("technique_proficiency_update", new TechniqueProficiencyUpdateHandler());
         handlers.put("skill_config_snapshot", skillConfigSnapshotHandler);
         handlers.put("unlocks_sync", unlocksSyncHandler);
         handlers.put("event_stream_push", eventStreamPushHandler);
         handlers.put("burst_meridian_event", burstMeridianHandler);
+        handlers.put("pill_buff_status", new PillBuffStatusHandler());
         handlers.put("full_power_charging_state", fullPowerStateHandler);
         handlers.put("full_power_release", fullPowerStateHandler);
         handlers.put("full_power_exhausted_state", fullPowerStateHandler);
