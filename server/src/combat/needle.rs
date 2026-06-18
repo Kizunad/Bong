@@ -150,13 +150,13 @@ pub fn despawn_expired_qi_needles(
 
     for (entity, needle, position) in &needles {
         if clock.tick.saturating_sub(needle.spawned_at_tick) > max_age_ticks {
-            // qc-P0：针过期时把 residual_qi 归还落点 zone（守恒）。
-            // 玩家射针时已从 qi_current 扣除 qi_payload（needle.rs:87-88），
-            // 未命中时真元须归还环境，否则从系统蒸发。
+            // qc-P0：针过期时把针容器里的完整 qi_payload 归还落点 zone（守恒）。
+            // residual_qi_after_miss 只描述投射物威力衰减；账本上发射阶段已经把
+            // 完整 payload 转入针容器，despawn 前必须全量转出。
             let qi_payload = needle.qi_payload as f32;
-            let (_evaporated, residual) = residual_qi_after_miss(qi_payload);
-            let residual_f64 = f64::from(residual);
-            if residual_f64 > f64::EPSILON {
+            let (evaporated, residual) = residual_qi_after_miss(qi_payload);
+            let release_f64 = f64::from(evaporated + residual);
+            if release_f64 > f64::EPSILON {
                 // 落点：优先用 Position 组件（若有），否则按 velocity 外推真实消亡点。
                 // 针无 Position 组件时 spawn_pos 仅出发点；针以 velocity 飞行、最远
                 // max_distance，跨 zone 飞行时残真元须归还实际落点 zone（而非出发 zone）。
@@ -167,13 +167,7 @@ pub fn despawn_expired_qi_needles(
                         .clamp_length_max(f64::from(needle.max_distance));
                     DVec3::from(needle.spawn_pos) + traveled
                 });
-                release_needle_residual_to_zone(
-                    &mut zones,
-                    &mut qi_transfers,
-                    entity,
-                    pos,
-                    residual_f64,
-                );
+                release_needle_qi_to_zone(&mut zones, &mut qi_transfers, entity, pos, release_f64);
             }
             commands.entity(entity).despawn();
         }
@@ -229,7 +223,7 @@ fn emit_needle_channeling_transfer(
     }
 }
 
-fn release_needle_residual_to_zone(
+fn release_needle_qi_to_zone(
     zones: &mut ZoneRegistry,
     qi_transfers: &mut EventWriter<QiTransfer>,
     needle: Entity,
@@ -587,8 +581,7 @@ mod tests {
 
     #[test]
     fn needle_expire_conservation_invariant() {
-        // 期望：过期针 Σ QiTransfer.amount == residual_qi（守恒等式）。
-        // residual = 30% × qi_payload（residual_qi_after_miss 固定比例）。
+        // 期望：过期针 Σ QiTransfer.amount == qi_payload（容器全量释放）。
         use crate::qi_physics::ledger::QiTransfer;
 
         let mut app = expire_app();
@@ -605,19 +598,18 @@ mod tests {
         let transfers = reader.read(events).cloned().collect::<Vec<_>>();
         let total: f64 = transfers.iter().map(|transfer| transfer.amount).sum();
 
-        // residual_qi_after_miss 固定 30%
-        let expected_residual = f64::from(QI_NEEDLE_QI_COST as f32 * 0.3);
+        let expected_release = QI_NEEDLE_QI_COST;
         assert_eq!(
             transfers.len(),
             1,
-            "气针过期 residual 应 emit 1 条 ReleaseToZone，实际 {} 条",
+            "气针过期 payload 应 emit 1 条 ReleaseToZone，实际 {} 条",
             transfers.len()
         );
         assert_eq!(transfers[0].from, needle_qi_account(needle));
         assert_eq!(transfers[0].reason, QiTransferReason::ReleaseToZone);
         assert!(
-            (total - expected_residual).abs() < 1e-5,
-            "守恒不变式：QiTransfer 总量应等于 residual（30% × payload={})，实际 {total}",
+            (total - expected_release).abs() < 1e-5,
+            "守恒不变式：QiTransfer 总量应等于 payload={}，实际 {total}",
             QI_NEEDLE_QI_COST
         );
     }
