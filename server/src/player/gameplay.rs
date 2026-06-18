@@ -20,7 +20,10 @@ use crate::combat::{
 };
 use crate::cultivation::breakthrough::BreakthroughRequest;
 use crate::cultivation::components::Cultivation;
-use crate::qi_physics::constants::{QI_GATHER_REWARD, QI_ZONE_UNIT_CAPACITY};
+use crate::qi_physics::{
+    constants::{QI_GATHER_REWARD, QI_ZONE_UNIT_CAPACITY},
+    QiAccountId, QiTransfer, QiTransferReason, WorldQiAccount,
+};
 use crate::schema::common::{GameEventType, NarrationScope, NarrationStyle};
 use crate::schema::narration::Narration;
 use crate::schema::world_state::GameEvent;
@@ -168,6 +171,7 @@ pub(crate) fn apply_queued_gameplay_actions(
     mut queue: ResMut<GameplayActionQueue>,
     mut gameplay_tick: ResMut<GameplayTick>,
     mut zone_registry: Option<ResMut<ZoneRegistry>>,
+    mut qi_ledger: Option<ResMut<WorldQiAccount>>,
     mut active_events: Option<ResMut<ActiveEventsResource>>,
     mut pending_narrations: ResMut<PendingGameplayNarrations>,
     mut harvest_sessions: Option<ResMut<HarvestSessionStore>>,
@@ -231,6 +235,7 @@ pub(crate) fn apply_queued_gameplay_actions(
                     harvest_sessions.as_deref_mut(),
                     &plants,
                     zone_registry.as_deref_mut(),
+                    qi_ledger.as_deref_mut(),
                     active_events.as_deref_mut(),
                     &mut pending_narrations,
                 )
@@ -281,6 +286,7 @@ fn apply_gather_action(
     harvest_sessions: Option<&mut HarvestSessionStore>,
     plants: &Query<(Entity, &Plant)>,
     zone_registry: Option<&mut ZoneRegistry>,
+    qi_ledger: Option<&mut WorldQiAccount>,
     active_events: Option<&mut ActiveEventsResource>,
     pending_narrations: &mut PendingGameplayNarrations,
 ) {
@@ -304,7 +310,13 @@ fn apply_gather_action(
         }
     }
 
-    let qi_gain = gather_qi_from_zone(zone_registry, zone_name, cultivation);
+    let qi_gain = gather_qi_from_zone(
+        zone_registry,
+        zone_name,
+        canonical_player,
+        cultivation,
+        qi_ledger,
+    );
     player_state.inventory_score =
         (player_state.inventory_score + GATHER_INVENTORY_REWARD).clamp(0.0, 1.0);
     player_state.karma = (player_state.karma + GATHER_KARMA_REWARD).clamp(-1.0, 1.0);
@@ -335,9 +347,14 @@ fn apply_gather_action(
 fn gather_qi_from_zone(
     zone_registry: Option<&mut ZoneRegistry>,
     zone_name: &str,
+    canonical_player: &str,
     cultivation: &mut Cultivation,
+    qi_ledger: Option<&mut WorldQiAccount>,
 ) -> f64 {
     let Some(zone_registry) = zone_registry else {
+        return 0.0;
+    };
+    let Some(qi_ledger) = qi_ledger else {
         return 0.0;
     };
     let Some(zone) = zone_registry.find_zone_mut(zone_name) else {
@@ -350,6 +367,18 @@ fn gather_qi_from_zone(
         return 0.0;
     }
 
+    let zone_account = QiAccountId::zone(zone.name.clone());
+    let player_account = QiAccountId::player(canonical_player.to_string());
+    let Ok(transfer) = QiTransfer::new(
+        zone_account,
+        player_account,
+        gain,
+        QiTransferReason::CultivationRegen,
+    ) else {
+        return 0.0;
+    };
+
+    qi_ledger.push_transfer_audit(transfer);
     cultivation.qi_current += gain;
     zone.spirit_qi = (zone.spirit_qi - gain / QI_ZONE_UNIT_CAPACITY).max(0.0);
     gain
@@ -504,6 +533,7 @@ mod tests {
     #[test]
     fn gather_reward_drains_matching_zone_qi() {
         let mut zones = ZoneRegistry::fallback();
+        let mut qi_ledger = WorldQiAccount::default();
         let zone_before = zones
             .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
             .expect("fallback zone exists")
@@ -514,8 +544,13 @@ mod tests {
             ..Cultivation::default()
         };
 
-        let gained =
-            gather_qi_from_zone(Some(&mut zones), DEFAULT_SPAWN_ZONE_NAME, &mut cultivation);
+        let gained = gather_qi_from_zone(
+            Some(&mut zones),
+            DEFAULT_SPAWN_ZONE_NAME,
+            "offline:Azure",
+            &mut cultivation,
+            Some(&mut qi_ledger),
+        );
 
         let zone_after = zones
             .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
@@ -527,8 +562,46 @@ mod tests {
     }
 
     #[test]
+    fn gather_reward_records_cultivation_regen_transfer() {
+        let mut zones = ZoneRegistry::fallback();
+        let mut qi_ledger = WorldQiAccount::default();
+        let mut cultivation = Cultivation {
+            qi_current: 70.0,
+            qi_max: 100.0,
+            ..Cultivation::default()
+        };
+
+        let gained = gather_qi_from_zone(
+            Some(&mut zones),
+            DEFAULT_SPAWN_ZONE_NAME,
+            "offline:Azure",
+            &mut cultivation,
+            Some(&mut qi_ledger),
+        );
+
+        let transfer = qi_ledger
+            .transfers()
+            .last()
+            .expect("gather must record a QiTransfer in WorldQiAccount");
+        assert_eq!(gained, QI_GATHER_REWARD);
+        assert_eq!(
+            transfer.from,
+            QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME.to_string())
+        );
+        assert_eq!(transfer.to, QiAccountId::player("offline:Azure"));
+        assert_eq!(transfer.amount, QI_GATHER_REWARD);
+        assert_eq!(transfer.reason, QiTransferReason::CultivationRegen);
+        assert_eq!(
+            qi_ledger.total(),
+            0.0,
+            "gather audit must not mirror live player/zone balances into WorldQiAccount"
+        );
+    }
+
+    #[test]
     fn gather_reward_preserves_spirit_qi_total_budget() {
         let mut zones = ZoneRegistry::fallback();
+        let mut qi_ledger = WorldQiAccount::default();
         zones
             .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
             .expect("fallback zone exists")
@@ -544,8 +617,13 @@ mod tests {
             - zone_before * QI_ZONE_UNIT_CAPACITY;
         assert!(reserve_qi > 0.0);
 
-        let gained =
-            gather_qi_from_zone(Some(&mut zones), DEFAULT_SPAWN_ZONE_NAME, &mut cultivation);
+        let gained = gather_qi_from_zone(
+            Some(&mut zones),
+            DEFAULT_SPAWN_ZONE_NAME,
+            "offline:Azure",
+            &mut cultivation,
+            Some(&mut qi_ledger),
+        );
 
         let zone_after = zones
             .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
@@ -563,6 +641,7 @@ mod tests {
     #[test]
     fn gather_reward_caps_to_available_zone_qi() {
         let mut zones = ZoneRegistry::fallback();
+        let mut qi_ledger = WorldQiAccount::default();
         zones
             .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
             .expect("fallback zone exists")
@@ -573,8 +652,13 @@ mod tests {
             ..Cultivation::default()
         };
 
-        let gained =
-            gather_qi_from_zone(Some(&mut zones), DEFAULT_SPAWN_ZONE_NAME, &mut cultivation);
+        let gained = gather_qi_from_zone(
+            Some(&mut zones),
+            DEFAULT_SPAWN_ZONE_NAME,
+            "offline:Azure",
+            &mut cultivation,
+            Some(&mut qi_ledger),
+        );
 
         let zone_after = zones
             .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
@@ -583,6 +667,62 @@ mod tests {
         assert_eq!(gained, 0.1 * QI_ZONE_UNIT_CAPACITY);
         assert_eq!(cultivation.qi_current, 75.0);
         assert_eq!(zone_after, 0.0);
+    }
+
+    #[test]
+    fn gather_reward_without_qi_ledger_does_not_absorb_zone_qi() {
+        let mut zones = ZoneRegistry::fallback();
+        let zone_before = zones
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .expect("fallback zone exists")
+            .spirit_qi;
+        let mut cultivation = Cultivation {
+            qi_current: 70.0,
+            qi_max: 100.0,
+            ..Cultivation::default()
+        };
+
+        let gained = gather_qi_from_zone(
+            Some(&mut zones),
+            DEFAULT_SPAWN_ZONE_NAME,
+            "offline:Azure",
+            &mut cultivation,
+            None,
+        );
+
+        let zone_after = zones
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .expect("fallback zone exists")
+            .spirit_qi;
+        assert_eq!(gained, 0.0);
+        assert_eq!(cultivation.qi_current, 70.0);
+        assert_eq!(zone_after, zone_before);
+    }
+
+    #[test]
+    fn gather_reward_missing_zone_does_not_record_transfer() {
+        let mut zones = ZoneRegistry::fallback();
+        let mut qi_ledger = WorldQiAccount::default();
+        let mut cultivation = Cultivation {
+            qi_current: 70.0,
+            qi_max: 100.0,
+            ..Cultivation::default()
+        };
+
+        let gained = gather_qi_from_zone(
+            Some(&mut zones),
+            "missing_zone",
+            "offline:Azure",
+            &mut cultivation,
+            Some(&mut qi_ledger),
+        );
+
+        assert_eq!(gained, 0.0);
+        assert_eq!(cultivation.qi_current, 70.0);
+        assert!(
+            qi_ledger.transfers().is_empty(),
+            "missing source zone must not emit or record a QiTransfer"
+        );
     }
 
     // ── plan-offscreen-war-v1 P3（CodeRabbit）：push_zone 可观察行为 ──
