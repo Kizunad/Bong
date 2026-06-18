@@ -144,6 +144,13 @@ pub enum QiTransferReason {
     ReleaseToZone,
     Collision,
     Channeling,
+    /// bughunt r5 — 经脉打通进度消耗 `qi_current` 后，真元逸散回所在 zone ledger。
+    ///
+    /// 守恒约束：`cultivation.qi_current -= cost`；同 tick 内必须把 cost 记入
+    /// `WorldQiAccount` 的 zone 账户，并追加
+    /// `QiTransfer(from=player/npc:<id>, to=zone:<name>, reason=MeridianOpen)` 审计轨迹。
+    /// 玩家/NPC 实际真元仍活在 ECS 组件中，不镜像到 player/npc ledger balance。
+    MeridianOpen,
     RiftCollapse,
     EraDecay,
     /// plan-craft-v1 §0/§3 — 手搓 qi_cost 一次性投入 zone，区别于 ReleaseToZone（招式释放）
