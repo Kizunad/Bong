@@ -2842,7 +2842,7 @@ fn parse_skill_milestone_narration_target(target: &str) -> Option<(Entity, Skill
         }
     }
 
-    Some((Entity::from_bits(char_bits?), skill?, new_lv?))
+    Some((Entity::try_from_bits(char_bits?).ok()?, skill?, new_lv?))
 }
 
 fn narration_dedupe_key(narration: &crate::schema::narration::Narration) -> String {
