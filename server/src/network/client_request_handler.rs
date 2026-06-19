@@ -2109,9 +2109,15 @@ pub fn handle_client_request_payloads(
                     );
                     continue;
                 };
+                let Ok(portal) = Entity::try_from_bits(portal_entity_id) else {
+                    tracing::warn!(
+                        "[bong][network] dropped start_extract: invalid portal_entity_id bits={portal_entity_id}"
+                    );
+                    continue;
+                };
                 start_extract_tx.send(StartExtractRequestEvent {
                     player: ev.client,
-                    portal: Entity::from_bits(portal_entity_id),
+                    portal,
                 });
             }
             ClientRequestV1::CancelExtractRequest { .. } => {
@@ -2141,9 +2147,15 @@ pub fn handle_client_request_payloads(
                     );
                     continue;
                 };
+                let Ok(container) = Entity::try_from_bits(container_entity_id) else {
+                    tracing::warn!(
+                        "[bong][network] dropped start_search: invalid container_entity_id bits={container_entity_id}"
+                    );
+                    continue;
+                };
                 start_search_tx.send(StartSearchRequestEvent {
                     player: ev.client,
-                    container: Entity::from_bits(container_entity_id),
+                    container,
                 });
             }
             ClientRequestV1::CancelSearch { .. } => {
@@ -8636,7 +8648,9 @@ fn resolve_skill_cast_target(
             .and_then(|manager| manager.get_by_id(protocol_id));
     }
     let id = raw.strip_prefix("entity_bits:")?;
-    id.parse::<u64>().ok().map(Entity::from_bits)
+    id.parse::<u64>()
+        .ok()
+        .and_then(|bits| Entity::try_from_bits(bits).ok())
 }
 
 fn guardian_kind_from_schema(kind: GuardianKindV1) -> crate::social::components::GuardianKind {
@@ -9892,7 +9906,12 @@ fn handle_alchemy_turn_page(
     let player_id = canonical_player_id(username.0.as_str());
     if let Ok(mut learned) = learned_q.get_mut(entity) {
         if !learned.ids.is_empty() {
-            for _ in 0..delta.unsigned_abs() {
+            // Guard against malicious/huge deltas (e.g. i32::MIN.unsigned_abs() ==
+            // 2.1B would freeze the ECS tick). next()/prev() wrap modularly, so
+            // turning |delta| mod len pages lands at the identical index while
+            // bounding the loop to at most len-1 iterations.
+            let steps = delta.unsigned_abs() % (learned.ids.len() as u32);
+            for _ in 0..steps {
                 if delta >= 0 {
                     learned.next();
                 } else {
