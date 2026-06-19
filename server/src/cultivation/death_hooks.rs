@@ -94,6 +94,14 @@ pub fn apply_revive_penalty(
         }
     }
     cultivation.qi_max = 10.0 + meridians.sum_capacity();
+    // 同 qi_zero_decay / tribulation：缩小 qi_max 后收敛 qi_max_frozen，
+    // 避免 effective_max 变负锁死真元回复（Pi review 补漏的第三处 shrink 路径）。
+    if let Some(frozen) = cultivation.qi_max_frozen {
+        cultivation.qi_max_frozen = Some(
+            frozen
+                .min(cultivation.qi_max * super::breakthrough::BREAKTHROUGH_FAIL_FROZEN_CAP_RATIO),
+        );
+    }
     released_qi
 }
 
