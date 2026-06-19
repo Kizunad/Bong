@@ -124,6 +124,14 @@ pub fn qi_zero_decay_tick(
             }
             // 重算 qi_max = 10 (基础) + 剩余经脉 capacity 之和（对齐 MeridianOpenTick 打通时 +10）
             cultivation.qi_max = 10.0 + meridians.sum_capacity();
+            // 重算后若 qi_max_frozen 超过新（更小）的 qi_max，tick.rs 的
+            // effective_max = qi_max - qi_max_frozen 会变负 → qi_room 永久为 0，
+            // 真元永不回复。按 breakthrough.rs 同一不变量把 frozen 收敛到 qi_max*0.5。
+            if let Some(frozen) = cultivation.qi_max_frozen {
+                cultivation.qi_max_frozen = Some(frozen.min(
+                    cultivation.qi_max * super::breakthrough::BREAKTHROUGH_FAIL_FROZEN_CAP_RATIO,
+                ));
+            }
             cultivation.qi_current = cultivation.qi_current.min(cultivation.qi_max);
             cultivation.last_qi_zero_at = None;
 

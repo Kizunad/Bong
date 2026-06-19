@@ -186,8 +186,9 @@ pub fn qi_regen_and_zone_drain_tick(
         let qi_max_multiplier = derived_attrs
             .map(|a| a.qi_max_multiplier.clamp(0.01, 1.0))
             .unwrap_or(1.0);
-        let effective_max =
-            (cultivation.qi_max - cultivation.qi_max_frozen.unwrap_or(0.0)) * qi_max_multiplier;
+        let effective_max = (cultivation.qi_max - cultivation.qi_max_frozen.unwrap_or(0.0))
+            .max(0.0)
+            * qi_max_multiplier;
         let qi_room = (effective_max - cultivation.qi_current).max(0.0);
 
         let wind_candle_multiplier = if lifespan.is_some_and(LifespanComponent::is_wind_candle)
