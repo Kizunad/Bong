@@ -4859,6 +4859,432 @@ mod tests {
         let _ = std::fs::remove_dir_all(persistence_root);
     }
 
+    // -----------------------------------------------------------------------
+    // Lifecycle guard — scorer & action tests for non-Alive states
+    // -----------------------------------------------------------------------
+
+    /// Helper: creates a Lifecycle in the given state.
+    fn lifecycle_in_state(state: LifecycleState) -> Lifecycle {
+        let mut lc = Lifecycle::default();
+        match state {
+            LifecycleState::Alive => {}
+            LifecycleState::NearDeath => lc.enter_near_death(0),
+            LifecycleState::AwaitingRevival => {
+                lc.enter_near_death(0);
+                lc.await_revival_decision(
+                    crate::combat::components::RevivalDecision::Fortune { chance: 1.0 },
+                    100,
+                );
+            }
+            LifecycleState::Terminated => lc.terminate(0),
+        }
+        assert_eq!(
+            lc.state, state,
+            "lifecycle_in_state helper must produce the requested state"
+        );
+        lc
+    }
+
+    #[test]
+    fn chase_target_scorer_zero_when_near_death() {
+        assert_chase_target_scorer_zero_for_lifecycle(LifecycleState::NearDeath);
+    }
+
+    #[test]
+    fn chase_target_scorer_zero_when_awaiting_revival() {
+        assert_chase_target_scorer_zero_for_lifecycle(LifecycleState::AwaitingRevival);
+    }
+
+    #[test]
+    fn chase_target_scorer_zero_when_terminated() {
+        assert_chase_target_scorer_zero_for_lifecycle(LifecycleState::Terminated);
+    }
+
+    fn assert_chase_target_scorer_zero_for_lifecycle(state: LifecycleState) {
+        let mut app = App::new();
+        app.add_systems(
+            PreUpdate,
+            chase_target_scorer_system.in_set(BigBrainSet::Scorers),
+        );
+
+        let target = app
+            .world_mut()
+            .spawn((ClientMarker, Position::new([5.0, 66.0, 0.0])))
+            .id();
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                NpcBlackboard {
+                    nearest_player: Some(target),
+                    player_distance: 10.0,
+                    target_position: Some(DVec3::new(5.0, 66.0, 0.0)),
+                    ..Default::default()
+                },
+                NpcMeleeProfile::fist(),
+                lifecycle_in_state(state),
+            ))
+            .id();
+        let scorer = app
+            .world_mut()
+            .spawn((Actor(npc), Score::default(), ChaseTargetScorer))
+            .id();
+
+        app.update();
+
+        assert_eq!(
+            app.world().get::<Score>(scorer).unwrap().get(),
+            0.0,
+            "chase_target_scorer must return 0 when NPC is {state:?}, \
+             because non-Alive NPCs should not chase"
+        );
+    }
+
+    #[test]
+    fn chase_target_scorer_works_without_lifecycle_component() {
+        let mut app = App::new();
+        app.add_systems(
+            PreUpdate,
+            chase_target_scorer_system.in_set(BigBrainSet::Scorers),
+        );
+
+        // NPC without Lifecycle component (backward compat) — should score normally.
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                NpcBlackboard {
+                    player_distance: 10.0,
+                    ..Default::default()
+                },
+                NpcMeleeProfile::fist(),
+                // No Lifecycle component
+            ))
+            .id();
+        let scorer = app
+            .world_mut()
+            .spawn((Actor(npc), Score::default(), ChaseTargetScorer))
+            .id();
+
+        app.update();
+
+        let score = app.world().get::<Score>(scorer).unwrap().get();
+        assert!(
+            score > 0.0,
+            "chase_target_scorer without Lifecycle component should still produce \
+             a positive score (backward compat), got {score}"
+        );
+    }
+
+    #[test]
+    fn melee_range_scorer_zero_when_near_death() {
+        assert_melee_range_scorer_zero_for_lifecycle(LifecycleState::NearDeath);
+    }
+
+    #[test]
+    fn melee_range_scorer_zero_when_awaiting_revival() {
+        assert_melee_range_scorer_zero_for_lifecycle(LifecycleState::AwaitingRevival);
+    }
+
+    #[test]
+    fn melee_range_scorer_zero_when_terminated() {
+        assert_melee_range_scorer_zero_for_lifecycle(LifecycleState::Terminated);
+    }
+
+    fn assert_melee_range_scorer_zero_for_lifecycle(state: LifecycleState) {
+        let mut app = App::new();
+        app.add_systems(
+            PreUpdate,
+            melee_range_scorer_system.in_set(BigBrainSet::Scorers),
+        );
+
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                NpcBlackboard {
+                    player_distance: 2.0, // within fist reach
+                    ..Default::default()
+                },
+                NpcMeleeProfile::fist(),
+                lifecycle_in_state(state),
+            ))
+            .id();
+        let scorer = app
+            .world_mut()
+            .spawn((Actor(npc), Score::default(), MeleeRangeScorer))
+            .id();
+
+        app.update();
+
+        assert_eq!(
+            app.world().get::<Score>(scorer).unwrap().get(),
+            0.0,
+            "melee_range_scorer must return 0 when NPC is {state:?}, \
+             because non-Alive NPCs should not score melee"
+        );
+    }
+
+    #[test]
+    fn melee_range_scorer_works_without_lifecycle_component() {
+        let mut app = App::new();
+        app.add_systems(
+            PreUpdate,
+            melee_range_scorer_system.in_set(BigBrainSet::Scorers),
+        );
+
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                NpcBlackboard {
+                    player_distance: 2.0,
+                    ..Default::default()
+                },
+                NpcMeleeProfile::fist(),
+            ))
+            .id();
+        let scorer = app
+            .world_mut()
+            .spawn((Actor(npc), Score::default(), MeleeRangeScorer))
+            .id();
+
+        app.update();
+
+        assert_eq!(
+            app.world().get::<Score>(scorer).unwrap().get(),
+            1.0,
+            "melee_range_scorer without Lifecycle component should score normally \
+             (backward compat), expected 1.0 since player_distance 2.0 <= fist reach"
+        );
+    }
+
+    #[test]
+    fn dash_scorer_zero_when_near_death() {
+        assert_dash_scorer_zero_for_lifecycle(LifecycleState::NearDeath);
+    }
+
+    #[test]
+    fn dash_scorer_zero_when_awaiting_revival() {
+        assert_dash_scorer_zero_for_lifecycle(LifecycleState::AwaitingRevival);
+    }
+
+    #[test]
+    fn dash_scorer_zero_when_terminated() {
+        assert_dash_scorer_zero_for_lifecycle(LifecycleState::Terminated);
+    }
+
+    fn assert_dash_scorer_zero_for_lifecycle(state: LifecycleState) {
+        let mut app = App::new();
+        app.add_systems(PreUpdate, dash_scorer_system.in_set(BigBrainSet::Scorers));
+
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                NpcBlackboard {
+                    player_distance: 8.0, // within DASH_MIN..DASH_MAX
+                    ..Default::default()
+                },
+                MovementCapabilities {
+                    can_sprint: true,
+                    can_dash: true,
+                },
+                MovementCooldowns::default(),
+                MovementController::new(),
+                lifecycle_in_state(state),
+            ))
+            .id();
+        let scorer = app
+            .world_mut()
+            .spawn((Actor(npc), Score::default(), DashScorer))
+            .id();
+
+        app.update();
+
+        assert_eq!(
+            app.world().get::<Score>(scorer).unwrap().get(),
+            0.0,
+            "dash_scorer must return 0 when NPC is {state:?}, \
+             because non-Alive NPCs should not dash"
+        );
+    }
+
+    #[test]
+    fn dash_scorer_works_without_lifecycle_component() {
+        let mut app = App::new();
+        app.add_systems(PreUpdate, dash_scorer_system.in_set(BigBrainSet::Scorers));
+
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                NpcBlackboard {
+                    player_distance: 8.0,
+                    ..Default::default()
+                },
+                MovementCapabilities {
+                    can_sprint: true,
+                    can_dash: true,
+                },
+                MovementCooldowns::default(),
+                MovementController::new(),
+            ))
+            .id();
+        let scorer = app
+            .world_mut()
+            .spawn((Actor(npc), Score::default(), DashScorer))
+            .id();
+
+        app.update();
+
+        let score = app.world().get::<Score>(scorer).unwrap().get();
+        assert!(
+            score > 0.0,
+            "dash_scorer without Lifecycle component should still score positively \
+             (backward compat), got {score}"
+        );
+    }
+
+    #[test]
+    fn melee_attack_action_failure_when_near_death() {
+        assert_melee_attack_action_failure_for_lifecycle(LifecycleState::NearDeath);
+    }
+
+    #[test]
+    fn melee_attack_action_failure_when_awaiting_revival() {
+        assert_melee_attack_action_failure_for_lifecycle(LifecycleState::AwaitingRevival);
+    }
+
+    #[test]
+    fn melee_attack_action_failure_when_terminated() {
+        assert_melee_attack_action_failure_for_lifecycle(LifecycleState::Terminated);
+    }
+
+    fn assert_melee_attack_action_failure_for_lifecycle(state: LifecycleState) {
+        let mut app = App::new();
+        app.insert_resource(GameTick(240));
+        app.insert_resource(CapturedAttackIntents::default());
+        app.add_event::<AttackIntent>();
+        app.add_systems(
+            PreUpdate,
+            (
+                melee_attack_action_system,
+                capture_attack_intents.after(melee_attack_action_system),
+            ),
+        );
+
+        let target = app
+            .world_mut()
+            .spawn((ClientMarker, Position::new([12.0, 66.0, 10.0])))
+            .id();
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position::new([10.0, 66.0, 10.0]),
+                NpcBlackboard {
+                    nearest_player: Some(target),
+                    player_distance: 2.0,
+                    target_position: Some(DVec3::new(12.0, 66.0, 10.0)),
+                    ..Default::default()
+                },
+                NpcMeleeProfile::spear(),
+                Navigator::new(),
+                lifecycle_in_state(state),
+            ))
+            .id();
+        let action_entity = app
+            .world_mut()
+            .spawn((Actor(npc), MeleeAttackAction, ActionState::Requested))
+            .id();
+
+        // Tick 1: Requested → Executing.
+        app.update();
+        // Tick 2: Executing → lifecycle guard fires Failure, no AttackIntent emitted.
+        app.update();
+
+        let action_state = app
+            .world()
+            .get::<ActionState>(action_entity)
+            .expect("melee action entity should still exist");
+        assert_eq!(
+            *action_state,
+            ActionState::Failure,
+            "melee_attack_action must transition to Failure when NPC is {state:?}, \
+             because non-Alive NPCs should not attack"
+        );
+
+        let captured = &app.world().resource::<CapturedAttackIntents>().0;
+        assert!(
+            captured.is_empty(),
+            "melee_attack_action must not emit AttackIntent when NPC is {state:?}, \
+             but found {} intent(s)",
+            captured.len()
+        );
+    }
+
+    #[test]
+    fn melee_attack_action_works_without_lifecycle_component() {
+        let mut app = App::new();
+        app.insert_resource(GameTick(240));
+        app.insert_resource(CapturedAttackIntents::default());
+        app.add_event::<AttackIntent>();
+        app.add_systems(
+            PreUpdate,
+            (
+                melee_attack_action_system,
+                capture_attack_intents.after(melee_attack_action_system),
+            ),
+        );
+
+        let target = app
+            .world_mut()
+            .spawn((ClientMarker, Position::new([12.0, 66.0, 10.0])))
+            .id();
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position::new([10.0, 66.0, 10.0]),
+                NpcBlackboard {
+                    nearest_player: Some(target),
+                    player_distance: 2.0,
+                    target_position: Some(DVec3::new(12.0, 66.0, 10.0)),
+                    ..Default::default()
+                },
+                NpcMeleeProfile::spear(),
+                Navigator::new(),
+                // No Lifecycle component
+            ))
+            .id();
+        let action_entity = app
+            .world_mut()
+            .spawn((Actor(npc), MeleeAttackAction, ActionState::Requested))
+            .id();
+
+        app.update();
+        app.update();
+
+        let action_state = app
+            .world()
+            .get::<ActionState>(action_entity)
+            .expect("melee action entity should still exist");
+        assert_eq!(
+            *action_state,
+            ActionState::Executing,
+            "melee_attack_action without Lifecycle component should still execute \
+             (backward compat), expected Executing"
+        );
+
+        let captured = &app.world().resource::<CapturedAttackIntents>().0;
+        assert_eq!(
+            captured.len(),
+            1,
+            "melee_attack_action without Lifecycle component should emit AttackIntent normally"
+        );
+    }
+
     /// Test-only shim：CultivateAction 成功/失败后重置为 Requested，模拟
     /// thinker 持续选取。真实运行时由 big-brain picker 负责。
     fn rearm_action_on_success(

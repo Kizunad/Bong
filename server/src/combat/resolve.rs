@@ -2501,6 +2501,205 @@ mod tests {
             .expect("Contamination should serialize for side-effect snapshot")
     }
 
+    // -----------------------------------------------------------------------
+    // Attacker lifecycle guard — non-Alive attacker early return tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn attacker_near_death_skips_intent_without_damage_or_events() {
+        assert_attacker_lifecycle_skips_intent("NearDeath", LifecycleState::NearDeath, |lc| {
+            lc.enter_near_death(40)
+        });
+    }
+
+    #[test]
+    fn attacker_awaiting_revival_skips_intent_without_damage_or_events() {
+        assert_attacker_lifecycle_skips_intent(
+            "AwaitingRevival",
+            LifecycleState::AwaitingRevival,
+            |lc| {
+                lc.enter_near_death(40);
+                lc.await_revival_decision(RevivalDecision::Fortune { chance: 1.0 }, 120);
+            },
+        );
+    }
+
+    #[test]
+    fn attacker_terminated_skips_intent_without_damage_or_events() {
+        assert_attacker_lifecycle_skips_intent("Terminated", LifecycleState::Terminated, |lc| {
+            lc.terminate(40)
+        });
+    }
+
+    #[test]
+    fn attacker_alive_deals_damage_normally() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 44 });
+        app.add_event::<AttackIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<CombatEvent>();
+        app.add_event::<KnockbackEvent>();
+        app.add_event::<DeathEvent>();
+        app.add_event::<crate::combat::weapon::WeaponBroken>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
+        app.add_systems(Update, resolve_attack_intents);
+
+        let attacker = spawn_player(
+            &mut app,
+            "Azure",
+            [0.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        // Attacker stays Alive (the default).
+        assert_eq!(
+            app.world()
+                .entity(attacker)
+                .get::<Lifecycle>()
+                .unwrap()
+                .state,
+            LifecycleState::Alive,
+            "test setup: attacker must start as Alive"
+        );
+        let target = spawn_player(
+            &mut app,
+            "Crimson",
+            [1.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        let before_hp = app
+            .world()
+            .entity(target)
+            .get::<Wounds>()
+            .unwrap()
+            .health_current;
+
+        app.world_mut().send_event(AttackIntent {
+            attacker,
+            target: Some(target),
+            issued_at_tick: 44,
+            reach: FIST_REACH,
+            qi_invest: 10.0,
+            wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
+            debug_command: None,
+        });
+        app.update();
+
+        let after_hp = app
+            .world()
+            .entity(target)
+            .get::<Wounds>()
+            .unwrap()
+            .health_current;
+        assert!(
+            after_hp < before_hp,
+            "Alive attacker should deal damage: target HP before={before_hp}, after={after_hp}"
+        );
+        assert!(
+            app.world()
+                .resource::<Events<CombatEvent>>()
+                .iter_current_update_events()
+                .next()
+                .is_some(),
+            "Alive attacker should emit CombatEvent"
+        );
+    }
+
+    fn assert_attacker_lifecycle_skips_intent(
+        state_name: &str,
+        expected_state: LifecycleState,
+        enter_state: impl FnOnce(&mut Lifecycle),
+    ) {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 44 });
+        app.add_event::<AttackIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<CombatEvent>();
+        app.add_event::<KnockbackEvent>();
+        app.add_event::<DeathEvent>();
+        app.add_event::<crate::combat::weapon::WeaponBroken>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
+        app.add_systems(Update, resolve_attack_intents);
+
+        let attacker = spawn_player(
+            &mut app,
+            "Azure",
+            [0.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        // Put the attacker into the desired non-Alive state.
+        {
+            let mut attacker_entity = app.world_mut().entity_mut(attacker);
+            let mut lifecycle = attacker_entity.get_mut::<Lifecycle>().unwrap();
+            enter_state(&mut lifecycle);
+            assert_eq!(
+                lifecycle.state, expected_state,
+                "test setup expected attacker Lifecycle::{state_name} before resolver"
+            );
+        }
+
+        let target = spawn_player(
+            &mut app,
+            "Crimson",
+            [1.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        let before_hp = app
+            .world()
+            .entity(target)
+            .get::<Wounds>()
+            .unwrap()
+            .health_current;
+
+        app.world_mut().send_event(AttackIntent {
+            attacker,
+            target: Some(target),
+            issued_at_tick: 44,
+            reach: FIST_REACH,
+            qi_invest: 10.0,
+            wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
+            debug_command: None,
+        });
+        app.update();
+
+        let after_hp = app
+            .world()
+            .entity(target)
+            .get::<Wounds>()
+            .unwrap()
+            .health_current;
+        assert_eq!(
+            after_hp, before_hp,
+            "{state_name} attacker must not deal damage: target HP should remain \
+             {before_hp}, got {after_hp}"
+        );
+        assert!(
+            app.world()
+                .resource::<Events<CombatEvent>>()
+                .iter_current_update_events()
+                .next()
+                .is_none(),
+            "{state_name} attacker must not emit CombatEvent"
+        );
+        assert!(
+            app.world()
+                .resource::<Events<KnockbackEvent>>()
+                .iter_current_update_events()
+                .next()
+                .is_none(),
+            "{state_name} attacker must not emit KnockbackEvent"
+        );
+        assert!(
+            app.world().get::<PendingKnockback>(target).is_none(),
+            "{state_name} attacker must not install PendingKnockback on target"
+        );
+    }
+
     #[test]
     fn attack_intent_uses_latest_game_mode_component() {
         let mut app = App::new();
