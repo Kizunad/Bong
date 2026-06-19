@@ -3901,6 +3901,14 @@ fn apply_tribulation_failure_penalty(
             severed_meridians.push(id);
         }
         cultivation.qi_max = 10.0 + meridians.sum_capacity();
+        // 收敛 qi_max_frozen 到新 qi_max*0.5，避免 effective_max 变负锁死真元回复
+        // （与 qi_zero_decay / breakthrough 同一不变量）。
+        if let Some(frozen) = cultivation.qi_max_frozen {
+            cultivation.qi_max_frozen =
+                Some(frozen.min(
+                    cultivation.qi_max * super::breakthrough::BREAKTHROUGH_FAIL_FROZEN_CAP_RATIO,
+                ));
+        }
     }
 
     if let Some(mut wounds) = wounds {
