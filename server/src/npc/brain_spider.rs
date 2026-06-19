@@ -516,7 +516,9 @@ fn backtrack_target(pos: DVec3, home: DVec3) -> DVec3 {
 
 /// 拟态灰烬蛛 big-brain thinker（供 spawn_spider.rs 和 mob_spawn::spawn_natural_mob_at 使用）。
 ///
-/// 优先级：AmbushScorer(1.0) > RetreatScorer(0.4) > WanderScorer(0.08 baseline)
+/// 优先级（FirstToScore 按注册顺序，非分数大小）：Ambush > Melee > Chase > Retreat（兜底）。
+/// Retreat 必须排在 Melee/Chase 之后：进入 Ambush 态后 AmbushScorer 归 0，若 Retreat 在前，
+/// 其 0.4 会抢先触发使蛛立即撤退、永不攻击。
 pub fn spider_thinker() -> big_brain::prelude::ThinkerBuilder {
     use crate::npc::brain::{ChaseAction, ChaseTargetScorer, MeleeAttackAction, MeleeRangeScorer};
     use big_brain::prelude::{FirstToScore, Thinker};
@@ -524,9 +526,9 @@ pub fn spider_thinker() -> big_brain::prelude::ThinkerBuilder {
     Thinker::build()
         .picker(FirstToScore { threshold: 0.05 })
         .when(SpiderAmbushScorer, SpiderAmbushAction)
-        .when(SpiderRetreatScorer, SpiderRetreatAction)
         .when(MeleeRangeScorer, MeleeAttackAction)
         .when(ChaseTargetScorer, ChaseAction)
+        .when(SpiderRetreatScorer, SpiderRetreatAction)
 }
 
 // ── 注册 ──────────────────────────────────────────────────────────────────────
