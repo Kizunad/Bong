@@ -102,6 +102,37 @@ class MovementKeybindingsTest {
         );
     }
 
+    // ---- 死区阈值 1e-4 边界：两轴都 < 1e-4 才算无输入返 0；任一轴 >= 1e-4 即定向 ----
+
+    @Test
+    void bothAxesJustBelowDeadZoneReturnZero() {
+        // forward 与 sideways 同时 < 1e-4（如摇杆微抖/浮点残渣）→ 视作无输入，0 偏移。
+        assertEquals(0.0, MovementKeybindings.wasdYawOffsetDegrees(5e-5, 5e-5), EPS,
+            "两轴皆 < 1e-4 应判无输入返 0（死区），避免朝随机微抖方向 dash");
+        assertEquals(0.0, MovementKeybindings.wasdYawOffsetDegrees(-9e-5, 9e-5), EPS,
+            "两轴绝对值皆 < 1e-4（含负号）仍属死区返 0");
+    }
+
+    @Test
+    void sidewaysJustAboveDeadZoneEscapesToDirection() {
+        // sideways 恰好 >= 1e-4 而 forward 在死区内 → AND 不成立，应定向（不再返 0）。
+        // forward≈0、sideways>0 → atan2(-sideways, ~0) = -90°（左）。
+        assertEquals(-90.0, MovementKeybindings.wasdYawOffsetDegrees(0.0, 2e-4), EPS,
+            "sideways=2e-4(>=1e-4) 应脱离死区定向为左 -90°，而非被死区吞成 0");
+    }
+
+    @Test
+    void forwardJustAboveDeadZoneEscapesToForward() {
+        // forward 恰好 >= 1e-4 而 sideways=0 → 脱离死区，纯前 0°（与死区返回值同为 0，
+        // 但走的是定向分支：用一个带微小 sideways 的对照确认确实在算方向）。
+        assertEquals(0.0, MovementKeybindings.wasdYawOffsetDegrees(2e-4, 0.0), EPS,
+            "forward=2e-4(>=1e-4)、sideways=0 → 正前 0°");
+        // 同样 forward 上方、但带可分辨的 sideways：应明显偏向而非 0，证明已脱离死区分支。
+        double off = MovementKeybindings.wasdYawOffsetDegrees(2e-4, 2e-4);
+        assertEquals(-45.0, off, EPS,
+            "forward=sideways=2e-4(均>=1e-4) 应为 -45°，确认脱离死区走定向分支");
+    }
+
     // ---- 合成：玩家 yaw + WASD 偏移 一起作用 ----
 
     @Test

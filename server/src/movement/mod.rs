@@ -418,6 +418,29 @@ type MovementTickItem<'a> = (
     Option<&'a mut Velocity>,
 );
 
+/// 每 tick 对 dash 的处理决策。抽成纯函数以便锁状态机转换（系统体查询 `&mut Client`，
+/// 难直接集成测；决策逻辑独立可测）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DashTick {
+    /// 非 dash，或 dash 已清——本 tick 不动速度。
+    Idle,
+    /// dash 窗口内——继续匀速驱动。
+    Drive,
+    /// dash 到期（now >= active_until_tick）——本 tick 水平硬停并清状态。
+    End,
+}
+
+fn dash_tick_decision(action: MovementAction, active_until_tick: u64, now: u64) -> DashTick {
+    if action != MovementAction::Dashing {
+        return DashTick::Idle;
+    }
+    if now < active_until_tick {
+        DashTick::Drive
+    } else {
+        DashTick::End
+    }
+}
+
 fn tick_movement_actions(
     clock: Res<CombatClock>,
     mut players: Query<MovementTickItem<'_>, With<Client>>,
@@ -426,24 +449,25 @@ fn tick_movement_actions(
         let now = clock.tick;
         let grounded = on_ground.map(|on_ground| on_ground.0).unwrap_or(true);
         movement.last_grounded = grounded;
-        let dashing = movement.action == MovementAction::Dashing;
-        if movement.active_until_tick <= now {
-            if dashing {
-                // dash 结束：水平硬停（保留 y 不打断重力/跳跃），距离不再受摩擦尾巴影响。
+        match dash_tick_decision(movement.action, movement.active_until_tick, now) {
+            DashTick::Idle => {}
+            // dash 窗口内：每 tick 覆盖水平速度，匀速驱动（覆盖摩擦衰减）。
+            DashTick::Drive => {
+                apply_dash_drive(
+                    &mut client,
+                    velocity.as_deref_mut(),
+                    movement.dash_drive_x,
+                    movement.dash_drive_z,
+                );
+            }
+            // dash 结束：水平硬停（保留 y 不打断重力/跳跃），距离不受摩擦尾巴影响，清状态。
+            DashTick::End => {
                 apply_dash_drive(&mut client, velocity.as_deref_mut(), 0.0, 0.0);
                 movement.dash_drive_x = 0.0;
                 movement.dash_drive_z = 0.0;
+                movement.action = MovementAction::None;
+                movement.stamina_cost_active = false;
             }
-            movement.action = MovementAction::None;
-            movement.stamina_cost_active = false;
-        } else if dashing {
-            // dash 窗口内：每 tick 覆盖水平速度，匀速驱动（覆盖摩擦衰减）。
-            apply_dash_drive(
-                &mut client,
-                velocity.as_deref_mut(),
-                movement.dash_drive_x,
-                movement.dash_drive_z,
-            );
         }
     }
 }
@@ -1060,6 +1084,38 @@ mod tests {
     }
 
     #[test]
+    fn dash_tick_decision_covers_state_machine() {
+        // 非 dash：无论 tick 都 Idle。
+        assert_eq!(
+            dash_tick_decision(MovementAction::None, 0, 0),
+            DashTick::Idle
+        );
+        assert_eq!(
+            dash_tick_decision(MovementAction::None, 100, 5),
+            DashTick::Idle
+        );
+        // dash 窗口内（now < until）：Drive。
+        assert_eq!(
+            dash_tick_decision(MovementAction::Dashing, 10, 7),
+            DashTick::Drive
+        );
+        assert_eq!(
+            dash_tick_decision(MovementAction::Dashing, 10, 9),
+            DashTick::Drive
+        );
+        // 边界 now == until：End（硬停那一 tick，off-by-one 锁定）。
+        assert_eq!(
+            dash_tick_decision(MovementAction::Dashing, 10, 10),
+            DashTick::End
+        );
+        // 已过期 now > until：End。
+        assert_eq!(
+            dash_tick_decision(MovementAction::Dashing, 10, 11),
+            DashTick::End
+        );
+    }
+
+    #[test]
     fn dash_drive_speed_scales_down_with_leg_wound() {
         // 腿伤越重距离越短 → 驱动速度越低（reject 已挡 leg_factor≈0 的彻底断腿）。
         let mut wounded = MovementState::default();
@@ -1069,6 +1125,22 @@ mod tests {
             dash_drive_speed_mps(0.0, &wounded) < dash_drive_speed_mps(0.0, &healthy),
             "腿伤 0.3 的驱动速度应低于健康腿"
         );
+    }
+
+    #[test]
+    fn dash_distance_runtime_leg_wound_thresholds() {
+        // 锁腿伤分段边界（<=0.4 → 0.5×，<=0.7 → 0.8×，否则 1.0×）的 off-by-one。
+        let base = dash_proficiency::dash_distance(0.0); // 2.8
+        let dist = |leg: f32| {
+            let mut m = MovementState::default();
+            m.leg_wound_factor = leg;
+            dash_distance_for_runtime(0.0, &m)
+        };
+        assert_close(dist(0.4), base * 0.5); // 边界 ==0.4 落入重伤档
+        assert_close(dist(0.41), base * 0.8); // 刚过 0.4 → 中伤档
+        assert_close(dist(0.7), base * 0.8); // 边界 ==0.7 落入中伤档
+        assert_close(dist(0.71), base * 1.0); // 刚过 0.7 → 健康档
+        assert_close(dist(1.0), base * 1.0); // 满血
     }
 
     #[test]
