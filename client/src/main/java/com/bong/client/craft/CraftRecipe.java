@@ -82,6 +82,9 @@ public final class CraftRecipe {
     /** 是否为制作台配方。 */
     public boolean isWorkbenchRecipe() { return "workbench".equals(station); }
 
+    /** 是否为手搓配方（station=null，无站台要求）。手搓台只展示这一类。 */
+    public boolean isHandcraft() { return station == null; }
+
     /** 仅替换 unlock 字段，其他字段保持。用于 RecipeUnlocked 增量更新。 */
     public CraftRecipe withUnlocked(boolean newUnlocked) {
         if (newUnlocked == this.unlocked) return this;

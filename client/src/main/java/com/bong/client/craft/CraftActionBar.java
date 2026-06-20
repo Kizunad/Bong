@@ -58,10 +58,10 @@ public final class CraftActionBar {
         plusButton.sizing(Sizing.fixed(20), Sizing.fixed(20));
         root.child(plusButton);
 
-        statusLabel = label("", 0xFFA8A8B8);
-        statusLabel.horizontalSizing(Sizing.fill(100));
-        root.child(statusLabel);
-
+        // 开始按钮必须排在唯一的 fill 子节点（statusLabel）之前：owo 的
+        // Sizing.fill(100) = 占父容器整宽（非「剩余空间」，见 Sizing.inflate），
+        // 若 fill 节点后面还有兄弟节点会被整个顶出右边界看不见（实测「开始制作」消失）。
+        // 把 fill 的 statusLabel 放最后，它的溢出甩到屏外无害，交互控件全部可见。
         startButton = Components.button(Text.literal("开始制作"), b -> {
             if (recipe != null && onStart != null) {
                 onStart.accept(quantity);
@@ -69,6 +69,10 @@ public final class CraftActionBar {
         });
         startButton.sizing(Sizing.fixed(86), Sizing.fixed(20));
         root.child(startButton);
+
+        statusLabel = label("", 0xFFA8A8B8);
+        statusLabel.horizontalSizing(Sizing.fill(100));
+        root.child(statusLabel);
     }
 
     public FlowLayout root() {

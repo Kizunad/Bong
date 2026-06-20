@@ -9,6 +9,7 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -62,6 +63,42 @@ class WorkbenchScreenTest {
         CraftRecipe forge = sampleRecipe("forge.sword", CraftCategory.TOOL, true, "forge");
         assertFalse(forge.isWorkbenchRecipe(),
             "station=\"forge\" 应不是制作台配方(isWorkbenchRecipe=false)，实际 station=" + forge.station());
+    }
+
+    // ---- 手搓 vs 制作台 station 作用域互斥（防串台：手搓台只展示 isHandcraft，
+    //      制作台屏只展示 isWorkbenchRecipe）----
+
+    @Test
+    void handcraftAndWorkbenchScopesAreMutuallyExclusive() {
+        CraftRecipe handcraft = sampleRecipe("hand.wood_handle", CraftCategory.TOOL, true, null);
+        CraftRecipe workbench = sampleRecipe("wb.stone_knife", CraftCategory.TOOL, true, "workbench");
+
+        assertTrue(handcraft.isHandcraft(),
+            "station=null 应为手搓配方(isHandcraft=true)，手搓台只展示它");
+        assertFalse(handcraft.isWorkbenchRecipe(),
+            "手搓配方不应被制作台屏展示(isWorkbenchRecipe=false)");
+
+        assertTrue(workbench.isWorkbenchRecipe(),
+            "station=\"workbench\" 应只在制作台屏展示");
+        assertFalse(workbench.isHandcraft(),
+            "制作台配方不应串进手搓台(isHandcraft=false)——这正是 stone_knife 误现于手搓台的根因");
+    }
+
+    @Test
+    void recipeListWidgetRejectsNullStationScope() {
+        // requireNonNull 在 owo 构件创建前，故 null 分支可脱离 MC 环境直接验证。
+        assertThrows(NullPointerException.class,
+            () -> new CraftRecipeListWidget(id -> {}, null),
+            "stationScope=null 应在构造时即抛 NPE（fail-fast），而非延迟到 refresh() 的 filter 处");
+    }
+
+    @Test
+    void forgeStationRecipeShowsInNeitherCraftScreen() {
+        CraftRecipe forge = sampleRecipe("forge.sword", CraftCategory.TOOL, true, "forge");
+        assertFalse(forge.isHandcraft(),
+            "station=\"forge\" 非手搓，不应出现在手搓台，实际 station=" + forge.station());
+        assertFalse(forge.isWorkbenchRecipe(),
+            "station=\"forge\" 非制作台，不应出现在制作台屏，实际 station=" + forge.station());
     }
 
     @Test
