@@ -75,7 +75,7 @@ public final class CraftScreen extends BaseOwoScreen<FlowLayout> {
         recipeList = new CraftRecipeListWidget(id -> {
             selectedId = id;
             refreshRightPanel();
-        });
+        }, CraftRecipe::isHandcraft);
         materialGrid = new CraftMaterialGrid();
         outputPreview = new CraftOutputPreview();
         columns.child(recipeList.root());
@@ -140,10 +140,12 @@ public final class CraftScreen extends BaseOwoScreen<FlowLayout> {
     private FlowLayout buildHeader() {
         FlowLayout header = Containers.horizontalFlow(Sizing.fill(100), Sizing.fixed(CraftScreenLayout.HEADER_H));
         header.verticalAlignment(VerticalAlignment.CENTER);
+        header.gap(8);
         header.child(label("§f§l手搓台", 0xFFFFFFFF));
-        header.child(Containers.horizontalFlow(Sizing.fill(100), Sizing.content()));
         subtitle = label("C 关闭 · 双击快速制作", 0xFFA8A8B8);
         header.child(subtitle);
+        // fill spacer 必须排在最后：owo fill(100) 占整宽，放在中间会把副标题顶出右边界。
+        header.child(Containers.horizontalFlow(Sizing.fill(100), Sizing.content()));
         return header;
     }
 
@@ -169,7 +171,7 @@ public final class CraftScreen extends BaseOwoScreen<FlowLayout> {
         materialGrid.refresh(selected, inventory, session, actionBar.quantity());
         outputPreview.refresh(selected, flashTicks);
         if (subtitle != null) {
-            int known = CraftStore.recipes().size();
+            int known = (int) CraftStore.recipes().stream().filter(CraftRecipe::isHandcraft).count();
             int craftable = selected == null ? 0 : CraftInventoryCounter.maxCraftable(selected, inventory);
             subtitle.text(Text.literal("C 关闭 · 已知配方 " + known + " · 当前可做 x" + craftable));
         }
@@ -186,7 +188,7 @@ public final class CraftScreen extends BaseOwoScreen<FlowLayout> {
         materialGrid.refresh(selected, inventory, session, actionBar.quantity());
         outputPreview.refresh(selected, flashTicks);
         if (subtitle != null) {
-            int known = CraftStore.recipes().size();
+            int known = (int) CraftStore.recipes().stream().filter(CraftRecipe::isHandcraft).count();
             int craftable = selected == null ? 0 : CraftInventoryCounter.maxCraftable(selected, inventory);
             subtitle.text(Text.literal("C 关闭 · 已知配方 " + known + " · 当前可做 x" + craftable));
         }
@@ -199,13 +201,16 @@ public final class CraftScreen extends BaseOwoScreen<FlowLayout> {
     }
 
     private void ensureSelection() {
-        if (selectedId != null && CraftStore.recipe(selectedId).isPresent()) {
+        // 仅在手搓配方(station=null)内选择：制作台配方归 WorkbenchScreen，不在此屏出现。
+        if (selectedId != null
+            && CraftStore.recipe(selectedId).filter(CraftRecipe::isHandcraft).isPresent()) {
             return;
         }
         selectedId = CraftStore.recipes().stream()
+            .filter(CraftRecipe::isHandcraft)
             .filter(CraftRecipe::unlocked)
             .findFirst()
-            .or(() -> CraftStore.recipes().stream().findFirst())
+            .or(() -> CraftStore.recipes().stream().filter(CraftRecipe::isHandcraft).findFirst())
             .map(CraftRecipe::id)
             .orElse(null);
     }

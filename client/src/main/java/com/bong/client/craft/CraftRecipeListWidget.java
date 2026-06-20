@@ -20,6 +20,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Consumer;
+import java.util.function.Predicate;
+import java.util.stream.Collectors;
 
 /** 左栏配方列表：搜索、分类 tab、收藏置顶、锁定配方提示。 */
 public final class CraftRecipeListWidget {
@@ -29,6 +31,7 @@ public final class CraftRecipeListWidget {
     private final FlowLayout rows;
     private final TextBoxComponent searchBox;
     private final Consumer<String> onSelected;
+    private final Predicate<CraftRecipe> stationScope;
     private final Set<String> favorites = new LinkedHashSet<>();
     private final Map<String, FlowLayout> rowById = new HashMap<>();
 
@@ -37,8 +40,18 @@ public final class CraftRecipeListWidget {
     private String query = "";
     private InventoryModel lastInventory = InventoryModel.empty();
 
+    /** 旧签名：不限 station（向后兼容测试），实际屏幕应传 stationScope。 */
     public CraftRecipeListWidget(Consumer<String> onSelected) {
+        this(onSelected, r -> true);
+    }
+
+    /**
+     * @param stationScope 站台作用域过滤：手搓台传 {@code CraftRecipe::isHandcraft}，
+     *     制作台屏传 {@code CraftRecipe::isWorkbenchRecipe}。避免两类配方互相串台。
+     */
+    public CraftRecipeListWidget(Consumer<String> onSelected, Predicate<CraftRecipe> stationScope) {
         this.onSelected = onSelected;
+        this.stationScope = stationScope;
         root = Containers.verticalFlow(Sizing.fixed(CraftScreenLayout.LEFT_W), Sizing.fill(100));
         root.surface(Surface.flat(0xFF1A1814).and(Surface.outline(0xFF4A4030)));
         root.padding(Insets.of(4));
@@ -74,7 +87,10 @@ public final class CraftRecipeListWidget {
         lastInventory = inventory == null ? InventoryModel.empty() : inventory;
         rows.clearChildren();
         rowById.clear();
-        List<CraftRecipe> recipes = CraftRecipeFilter.filter(CraftStore.recipes(), category, query, favorites);
+        List<CraftRecipe> scoped = CraftStore.recipes().stream()
+            .filter(stationScope)
+            .collect(Collectors.toList());
+        List<CraftRecipe> recipes = CraftRecipeFilter.filter(scoped, category, query, favorites);
         if (recipes.isEmpty()) {
             rows.child(label("无匹配配方", 0xFF888888));
             return;

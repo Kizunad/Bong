@@ -87,7 +87,7 @@ public final class WorkbenchScreen extends BaseOwoScreen<FlowLayout> {
         recipeList = new CraftRecipeListWidget(id -> {
             selectedId = id;
             refreshRightPanel();
-        });
+        }, CraftRecipe::isWorkbenchRecipe);
         materialGrid = new CraftMaterialGrid();
         outputPreview = new CraftOutputPreview();
         columns.child(recipeList.root());
@@ -157,10 +157,12 @@ public final class WorkbenchScreen extends BaseOwoScreen<FlowLayout> {
         FlowLayout header = Containers.horizontalFlow(
             Sizing.fill(100), Sizing.fixed(CraftScreenLayout.HEADER_H));
         header.verticalAlignment(VerticalAlignment.CENTER);
+        header.gap(8);
         header.child(label("§f§l末法制作台", 0xFFFFFFFF));
-        header.child(Containers.horizontalFlow(Sizing.fill(100), Sizing.content()));
         subtitle = label("Esc 关闭 · 双击快速制作", 0xFFA8A8B8);
         header.child(subtitle);
+        // fill spacer 必须排在最后：owo fill(100) 占整宽，放中间会把副标题顶出右边界。
+        header.child(Containers.horizontalFlow(Sizing.fill(100), Sizing.content()));
         return header;
     }
 
