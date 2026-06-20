@@ -51,7 +51,8 @@ public final class CraftRecipeListWidget {
      */
     public CraftRecipeListWidget(Consumer<String> onSelected, Predicate<CraftRecipe> stationScope) {
         this.onSelected = onSelected;
-        this.stationScope = stationScope;
+        // fail-fast：null 会在 refresh() 的 filter(stationScope) 处晚到地 NPE，构造时即拒。
+        this.stationScope = java.util.Objects.requireNonNull(stationScope, "stationScope must not be null");
         root = Containers.verticalFlow(Sizing.fixed(CraftScreenLayout.LEFT_W), Sizing.fill(100));
         root.surface(Surface.flat(0xFF1A1814).and(Surface.outline(0xFF4A4030)));
         root.padding(Insets.of(4));

@@ -9,6 +9,7 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -81,6 +82,14 @@ class WorkbenchScreenTest {
             "station=\"workbench\" 应只在制作台屏展示");
         assertFalse(workbench.isHandcraft(),
             "制作台配方不应串进手搓台(isHandcraft=false)——这正是 stone_knife 误现于手搓台的根因");
+    }
+
+    @Test
+    void recipeListWidgetRejectsNullStationScope() {
+        // requireNonNull 在 owo 构件创建前，故 null 分支可脱离 MC 环境直接验证。
+        assertThrows(NullPointerException.class,
+            () -> new CraftRecipeListWidget(id -> {}, null),
+            "stationScope=null 应在构造时即抛 NPE（fail-fast），而非延迟到 refresh() 的 filter 处");
     }
 
     @Test
