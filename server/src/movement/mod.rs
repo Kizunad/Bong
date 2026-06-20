@@ -120,6 +120,10 @@ pub struct MovementState {
     pub zone_kind: MovementZoneKind,
     pub action: MovementAction,
     pub active_until_tick: u64,
+    /// dash 持续驱动期间每 tick 覆盖的水平速度（m/s，含方向×速度）。非 dash 时为 0。
+    /// 见 [`dash_drive_speed_mps`]：窗口内匀速驱动，距离不依赖摩擦、地面空中一致。
+    pub dash_drive_x: f32,
+    pub dash_drive_z: f32,
     pub dash_ready_at_tick: u64,
     pub dash_attack_bonus_until_tick: u64,
     pub hitbox_height_blocks: f32,
@@ -137,6 +141,8 @@ impl Default for MovementState {
             zone_kind: MovementZoneKind::Normal,
             action: MovementAction::None,
             active_until_tick: 0,
+            dash_drive_x: 0.0,
+            dash_drive_z: 0.0,
             dash_ready_at_tick: 0,
             dash_attack_bonus_until_tick: 0,
             hitbox_height_blocks: 1.8,
@@ -383,8 +389,12 @@ fn handle_movement_action_intents(
                         false,
                     );
                 }
-                let impulse = dash_distance_for_runtime(dash_proficiency, &movement);
-                apply_client_horizontal_impulse(&mut client, velocity.as_deref_mut(), dir, impulse);
+                // 持续驱动：算出窗口内每 tick 覆盖的水平速度并存好，本 tick 先驱动一次。
+                let speed = dash_drive_speed_mps(dash_proficiency, &movement);
+                let (vx, vz) = movement_horizontal_impulse(dir, speed);
+                movement.dash_drive_x = vx;
+                movement.dash_drive_z = vz;
+                apply_dash_drive(&mut client, velocity.as_deref_mut(), vx, vz);
                 movement.action = MovementAction::Dashing;
                 movement.active_until_tick = now.saturating_add(DASH_DURATION_TICKS);
                 movement.dash_ready_at_tick = now.saturating_add(dash_cooldown_for_runtime(
@@ -401,19 +411,39 @@ fn handle_movement_action_intents(
     }
 }
 
-type MovementTickItem<'a> = (&'a mut MovementState, Option<&'a OnGround>);
+type MovementTickItem<'a> = (
+    &'a mut MovementState,
+    Option<&'a OnGround>,
+    &'a mut Client,
+    Option<&'a mut Velocity>,
+);
 
 fn tick_movement_actions(
     clock: Res<CombatClock>,
     mut players: Query<MovementTickItem<'_>, With<Client>>,
 ) {
-    for (mut movement, on_ground) in &mut players {
+    for (mut movement, on_ground, mut client, mut velocity) in &mut players {
         let now = clock.tick;
         let grounded = on_ground.map(|on_ground| on_ground.0).unwrap_or(true);
         movement.last_grounded = grounded;
+        let dashing = movement.action == MovementAction::Dashing;
         if movement.active_until_tick <= now {
+            if dashing {
+                // dash 结束：水平硬停（保留 y 不打断重力/跳跃），距离不再受摩擦尾巴影响。
+                apply_dash_drive(&mut client, velocity.as_deref_mut(), 0.0, 0.0);
+                movement.dash_drive_x = 0.0;
+                movement.dash_drive_z = 0.0;
+            }
             movement.action = MovementAction::None;
             movement.stamina_cost_active = false;
+        } else if dashing {
+            // dash 窗口内：每 tick 覆盖水平速度，匀速驱动（覆盖摩擦衰减）。
+            apply_dash_drive(
+                &mut client,
+                velocity.as_deref_mut(),
+                movement.dash_drive_x,
+                movement.dash_drive_z,
+            );
         }
     }
 }
@@ -738,20 +768,34 @@ pub fn movement_horizontal_impulse(dir: DVec3, impulse: f32) -> (f32, f32) {
     )
 }
 
-fn apply_client_horizontal_impulse(
-    client: &mut Client,
-    velocity: Option<&mut Velocity>,
-    dir: DVec3,
-    impulse: f32,
-) {
-    let (x, z) = movement_horizontal_impulse(dir, impulse);
+/// 把 dash 驱动速度写给客户端：**覆盖**水平分量（不累加），保留竖直分量。
+///
+/// 服务端 `Velocity` 组件是权威输出、客户端经摩擦衰减后的真实速度**不会回写**进来。
+/// 若累加（`+=`），方向会叠到上次 dash 的残留速度上 → 朝之前几次方向冲。故覆盖
+/// （与 player_knockback 的 `velocity.0 = next` 一致），并保留 `y` 不打断重力/跳跃。
+fn apply_dash_drive(client: &mut Client, velocity: Option<&mut Velocity>, vx: f32, vz: f32) {
+    let next = dash_drive_velocity(velocity.as_deref().map(|velocity| velocity.0), vx, vz);
     if let Some(velocity) = velocity {
-        velocity.0.x += x;
-        velocity.0.z += z;
-        client.set_velocity(velocity.0);
-    } else {
-        client.set_velocity(Vec3::new(x, 0.0, z));
+        velocity.0 = next;
     }
+    client.set_velocity(next);
+}
+
+/// 由水平分量 `(vx, vz)` 和已有速度算出目标速度：覆盖水平、保留 `y`。纯函数，便于测试。
+fn dash_drive_velocity(existing: Option<Vec3>, vx: f32, vz: f32) -> Vec3 {
+    let y = existing.map(|existing| existing.y).unwrap_or(0.0);
+    Vec3::new(vx, y, vz)
+}
+
+/// dash 持续驱动速度（m/s）。窗口内每 tick 把水平速度覆盖为此值，匀速驱动
+/// [`DASH_DURATION_TICKS`] tick，结束硬停 → 总位移 ≈ `dash_distance_for_runtime` 格，
+/// 与摩擦无关、地面空中一致。
+///
+/// 推导：速度 V(m/s) ⇒ 每 tick 位移 V/20 格（MC 20 TPS）；N tick 总位移 = N·V/20。
+/// 令其等于目标距离 D ⇒ V = D·20/N。
+fn dash_drive_speed_mps(proficiency: f32, movement: &MovementState) -> f32 {
+    let distance = dash_distance_for_runtime(proficiency, movement);
+    distance * 20.0 / (DASH_DURATION_TICKS as f32)
 }
 
 pub fn dash_attack_multiplier(state: &MovementState, tick: u64) -> f32 {
@@ -958,6 +1002,73 @@ mod tests {
         let (x, z) = movement_horizontal_impulse(dir, impulse);
         assert_close(x, -impulse);
         assert_close(z, 0.0);
+    }
+
+    #[test]
+    fn dash_drive_velocity_overwrites_horizontal_ignoring_residual() {
+        // 回归锁：服务端 Velocity 组件残留着上次 dash 的整条速度（永不衰减回写），
+        // 本 tick 驱动速度必须**只由当前 (vx,vz) 决定**，不能叠加残留，否则会朝前几次方向偏。
+        let residual = Vec3::new(99.0, 1.5, -99.0); // 假装上次朝东南的大残留
+        let next = dash_drive_velocity(Some(residual), 14.0, 0.0);
+        assert_close(next.x, 14.0);
+        assert_close(next.z, 0.0);
+        assert!(
+            (next.x - 14.0).abs() < 1e-4 && next.z.abs() < 1e-4,
+            "水平速度应等于本次驱动 (14,0) 而非残留+驱动，实际 ({},{})",
+            next.x,
+            next.z
+        );
+    }
+
+    #[test]
+    fn dash_drive_velocity_preserves_vertical_component() {
+        // 保留 y：空中 dash / 结束硬停都不应清掉重力/跳跃带来的竖直速度。
+        let next = dash_drive_velocity(Some(Vec3::new(0.0, -0.78, 0.0)), 0.0, 19.0);
+        assert_close(next.y, -0.78);
+        assert_close(next.z, 19.0);
+    }
+
+    #[test]
+    fn dash_drive_velocity_without_component_zeroes_vertical() {
+        // 无 Velocity 组件时（兜底路径）y=0。
+        let next = dash_drive_velocity(None, 0.0, 14.0);
+        assert_close(next.y, 0.0);
+        assert_close(next.z, 14.0);
+    }
+
+    #[test]
+    fn dash_drive_speed_targets_distance_over_window() {
+        // 驱动速度 V = 目标距离 × 20 / 窗口 tick；新手 2.8 格 → 14 m/s，满熟练 3.8 → 19。
+        let healthy = MovementState::default(); // leg_wound_factor=1.0
+        let v0 = dash_drive_speed_mps(0.0, &healthy);
+        let v1 = dash_drive_speed_mps(1.0, &healthy);
+        let expected0 = dash_proficiency::dash_distance(0.0) * 20.0 / (DASH_DURATION_TICKS as f32);
+        let expected1 = dash_proficiency::dash_distance(1.0) * 20.0 / (DASH_DURATION_TICKS as f32);
+        assert_close(v0, expected0);
+        assert_close(v1, expected1);
+        assert_close(v0, 14.0); // 2.8 × 20 / 4
+        assert_close(v1, 19.0); // 3.8 × 20 / 4
+    }
+
+    #[test]
+    fn dash_drive_speed_round_trips_to_distance() {
+        // 匀速驱动 N tick（每 tick 位移 V/20 格）总位移应等于目标距离。
+        let healthy = MovementState::default();
+        let v = dash_drive_speed_mps(0.0, &healthy);
+        let drive_distance = (v / 20.0) * (DASH_DURATION_TICKS as f32);
+        assert_close(drive_distance, dash_distance_for_runtime(0.0, &healthy));
+    }
+
+    #[test]
+    fn dash_drive_speed_scales_down_with_leg_wound() {
+        // 腿伤越重距离越短 → 驱动速度越低（reject 已挡 leg_factor≈0 的彻底断腿）。
+        let mut wounded = MovementState::default();
+        wounded.leg_wound_factor = 0.3; // → dash_distance_for_runtime 乘 0.5
+        let healthy = MovementState::default();
+        assert!(
+            dash_drive_speed_mps(0.0, &wounded) < dash_drive_speed_mps(0.0, &healthy),
+            "腿伤 0.3 的驱动速度应低于健康腿"
+        );
     }
 
     #[test]
