@@ -1,0 +1,11 @@
+{
+  "id": "woliu_burst_pop",
+  "layers": [
+    { "sound": "minecraft:entity.enderman.teleport", "volume": 0.35, "pitch": 2.0, "delay_ticks": 0 },
+    { "sound": "minecraft:block.note_block.snare", "volume": 0.3, "pitch": 1.6, "delay_ticks": 0 }
+  ],
+  "priority": 66,
+  "attenuation": "world_3d",
+  "category": "AMBIENT",
+  "bus": "ENVIRONMENT"
+}

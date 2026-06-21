@@ -1881,38 +1881,47 @@ fn erosion_placeholder_spec(skill: WoliuSkillId) -> WoliuSkillSpec {
 
 pub fn visual_for(skill: WoliuSkillId) -> WoliuSkillVisual {
     match skill {
+        // AV 差异化（纯 cosmetic）：基础 5 招各自专属 particle event_id / 音效 recipe /
+        // 复用既有动作 JSON，体现语义——持涡=维持伞、瞬涡=弹反、涡口=远程点按、
+        // 涡引=拉拽、涡心=山谷级强制断经。所有 particle event_id 复用 VortexSpiralPlayer
+        // 既有 sprite（无新贴图），音效复用 vanilla 音色分层（无新音频文件）。
         WoliuSkillId::Hold => WoliuSkillVisual {
+            // 维持伞：持续低速旋涡 sustain 形态 + 沉稳 hum，开掌维持姿态。
             animation_id: "bong:vortex_palm_open",
-            particle_id: "bong:vortex_spiral",
-            sound_recipe_id: "vortex_low_hum",
+            particle_id: "bong:woliu_hold_sustain",
+            sound_recipe_id: "woliu_hold_sustain",
             hud_hint: "hold",
             icon_texture: "bong:textures/gui/skill/woliu_hold.png",
         },
         WoliuSkillId::Burst => WoliuSkillVisual {
-            animation_id: "bong:vortex_palm_open",
-            particle_id: "bong:vortex_spiral",
-            sound_recipe_id: "vortex_qi_siphon",
+            // 瞬涡：200ms 弹反——短促爆发 pop 形态 + 脆响，快速推掌动作。
+            animation_id: "bong:palm_strike",
+            particle_id: "bong:woliu_burst_pop",
+            sound_recipe_id: "woliu_burst_pop",
             hud_hint: "burst",
             icon_texture: "bong:textures/gui/skill/woliu_burst.png",
         },
         WoliuSkillId::Mouth => WoliuSkillVisual {
-            animation_id: "bong:vortex_palm_open",
-            particle_id: "bong:vortex_spiral",
-            sound_recipe_id: "vortex_qi_siphon",
+            // 涡口：远程点按——前推漏斗 funnel 形态 + 远端 siphon 声，瞄准推掌动作。
+            animation_id: "bong:palm_thrust",
+            particle_id: "bong:woliu_mouth_funnel",
+            sound_recipe_id: "woliu_mouth_funnel",
             hud_hint: "mouth",
             icon_texture: "bong:textures/gui/skill/woliu_mouth.png",
         },
         WoliuSkillId::Pull => WoliuSkillVisual {
-            animation_id: "bong:vortex_spiral_stance",
-            particle_id: "bong:vortex_spiral",
-            sound_recipe_id: "vortex_qi_siphon",
+            // 涡引：拉拽——向心拖尾 drag 形态 + 拉拽声，扣抓-收拢动作。
+            animation_id: "bong:woliu_vacuum_lock",
+            particle_id: "bong:woliu_pull_drag",
+            sound_recipe_id: "woliu_pull_drag",
             hud_hint: "pull",
             icon_texture: "bong:textures/gui/skill/woliu_pull.png",
         },
         WoliuSkillId::Heart => WoliuSkillVisual {
+            // 涡心：山谷级强制断经——大范围强压 field 形态 + 低沉轰鸣，深沉立姿。
             animation_id: "bong:vortex_spiral_stance",
-            particle_id: "bong:vortex_spiral",
-            sound_recipe_id: "vortex_low_hum",
+            particle_id: "bong:woliu_heart_field",
+            sound_recipe_id: "woliu_heart_field",
             hud_hint: "heart",
             icon_texture: "bong:textures/gui/skill/woliu_heart.png",
         },

@@ -176,7 +176,7 @@ mod tests {
             SoundRecipeRegistry::load_default().expect("default audio recipes should load");
         assert_eq!(
             registry.len(),
-            252,
+            257,
             "audio registry should exclude removed slide and double-jump movement recipes \
              plus include 7 supply_coffin recipes (break + open common/rare/precious + emerge) \
              plus 1 ambient_dan_zong recipe \
@@ -200,7 +200,10 @@ mod tests {
              plus 1 beng_quan recipe (崩拳专属施法音效，不再借用 baomai_hit_heavy 通用槽) \
              plus 6 anqi cast recipes (anqi_charge_seal / anqi_single_snipe / anqi_multi_shot / \
              anqi_soul_inject / anqi_armor_pierce / anqi_echo_fractal — 暗器六招 server AV emit 接线，\
-             全部复用 vanilla 音色分层，无新音频文件)"
+             全部复用 vanilla 音色分层，无新音频文件) \
+             plus 5 woliu 基础招式 AV 差异化 recipes (woliu_hold_sustain / woliu_burst_pop / \
+             woliu_mouth_funnel / woliu_pull_drag / woliu_heart_field — 持涡/瞬涡/涡口/涡引/涡心 \
+             各招专属施法音效，全部复用 vanilla 音色分层，无新音频文件)"
         );
         for anqi_recipe in [
             "anqi_charge_seal",
@@ -363,6 +366,27 @@ mod tests {
         assert!(
             registry.get("woliu_void_core").is_some(),
             "VoidCore erosion skill sound recipe must load"
+        );
+        // AV 差异化：woliu 基础 5 招专属施法音效 recipes（持涡/瞬涡/涡口/涡引/涡心）
+        assert!(
+            registry.get("woliu_hold_sustain").is_some(),
+            "Hold (持涡) cast sound recipe must load"
+        );
+        assert!(
+            registry.get("woliu_burst_pop").is_some(),
+            "Burst (瞬涡) cast sound recipe must load"
+        );
+        assert!(
+            registry.get("woliu_mouth_funnel").is_some(),
+            "Mouth (涡口) cast sound recipe must load"
+        );
+        assert!(
+            registry.get("woliu_pull_drag").is_some(),
+            "Pull (涡引) cast sound recipe must load"
+        );
+        assert!(
+            registry.get("woliu_heart_field").is_some(),
+            "Heart (涡心) cast sound recipe must load"
         );
         assert!(registry.get("npc_refuse").is_some());
         assert!(registry.get("npc_greeting_cultivator").is_some());

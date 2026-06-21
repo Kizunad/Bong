@@ -164,6 +164,12 @@ public final class VfxBootstrap {
         );
         VortexSpiralPlayer woliuVortex = new VortexSpiralPlayer();
         registry.register(VortexSpiralPlayer.EVENT_ID,           woliuVortex);
+        // AV 差异化：woliu 基础 5 招专属 particle IDs（必须与 server visual_for() particle_id 精确一致）
+        registry.register(VortexSpiralPlayer.HOLD_SUSTAIN,       woliuVortex);
+        registry.register(VortexSpiralPlayer.BURST_POP,          woliuVortex);
+        registry.register(VortexSpiralPlayer.MOUTH_FUNNEL,       woliuVortex);
+        registry.register(VortexSpiralPlayer.PULL_DRAG,          woliuVortex);
+        registry.register(VortexSpiralPlayer.HEART_FIELD,        woliuVortex);
         registry.register(VortexSpiralPlayer.VACUUM_PALM,        woliuVortex);
         registry.register(VortexSpiralPlayer.VORTEX_SHIELD,      woliuVortex);
         registry.register(VortexSpiralPlayer.VACUUM_LOCK,        woliuVortex);

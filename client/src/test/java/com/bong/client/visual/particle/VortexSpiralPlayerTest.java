@@ -295,6 +295,117 @@ class VortexSpiralPlayerTest {
             "VOID_CORE_COLLAPSE must match server visual_for(VoidCore).particle_id");
     }
 
+    // ─── AV 差异化：woliu 基础 5 招 effectSpec 测试 ───
+
+    @Test
+    void holdSustainRoutesToSustainProfileWithDefaults() {
+        VortexSpiralPlayer.EffectSpec spec = VortexSpiralPlayer.effectSpec(payload(
+            VortexSpiralPlayer.HOLD_SUSTAIN, Optional.empty(), OptionalInt.empty(), OptionalInt.empty()));
+        assertEquals(VortexSpiralPlayer.Route.HOLD_SUSTAIN, spec.route(),
+            "expected HOLD_SUSTAIN route because event_id is woliu_hold_sustain, actual=" + spec.route());
+        assertEquals(12, spec.count(), "default hold count, actual=" + spec.count());
+        assertEquals(70, spec.maxAge(), "default hold lifetime, actual=" + spec.maxAge());
+        assertEquals(0.5, spec.strength(), 0.0001);
+    }
+
+    @Test
+    void burstPopRoutesToShortPopProfileWithDefaults() {
+        VortexSpiralPlayer.EffectSpec spec = VortexSpiralPlayer.effectSpec(payload(
+            VortexSpiralPlayer.BURST_POP, Optional.empty(), OptionalInt.empty(), OptionalInt.empty()));
+        assertEquals(VortexSpiralPlayer.Route.BURST_POP, spec.route(),
+            "expected BURST_POP route because event_id is woliu_burst_pop, actual=" + spec.route());
+        assertEquals(28, spec.count(), "default burst count, actual=" + spec.count());
+        // 瞬涡 200ms 弹反——极短粒子寿命体现瞬发感
+        assertEquals(14, spec.maxAge(), "burst lifetime must be short (≈瞬发), actual=" + spec.maxAge());
+        assertEquals(0.8, spec.strength(), 0.0001);
+    }
+
+    @Test
+    void mouthFunnelRoutesToFunnelProfileWithDefaults() {
+        VortexSpiralPlayer.EffectSpec spec = VortexSpiralPlayer.effectSpec(payload(
+            VortexSpiralPlayer.MOUTH_FUNNEL, Optional.empty(), OptionalInt.empty(), OptionalInt.empty()));
+        assertEquals(VortexSpiralPlayer.Route.MOUTH_FUNNEL, spec.route(),
+            "expected MOUTH_FUNNEL route because event_id is woliu_mouth_funnel, actual=" + spec.route());
+        assertEquals(20, spec.count(), "default mouth count, actual=" + spec.count());
+        assertEquals(48, spec.maxAge(), "default mouth lifetime, actual=" + spec.maxAge());
+        assertEquals(0.65, spec.strength(), 0.0001);
+    }
+
+    @Test
+    void pullDragRoutesToDragProfileWithDefaults() {
+        VortexSpiralPlayer.EffectSpec spec = VortexSpiralPlayer.effectSpec(payload(
+            VortexSpiralPlayer.PULL_DRAG, Optional.empty(), OptionalInt.empty(), OptionalInt.empty()));
+        assertEquals(VortexSpiralPlayer.Route.PULL_DRAG, spec.route(),
+            "expected PULL_DRAG route because event_id is woliu_pull_drag, actual=" + spec.route());
+        assertEquals(24, spec.count(), "default pull count, actual=" + spec.count());
+        assertEquals(30, spec.maxAge(), "default pull lifetime, actual=" + spec.maxAge());
+        assertEquals(0.7, spec.strength(), 0.0001);
+    }
+
+    @Test
+    void heartFieldRoutesToFieldProfileWithDefaults() {
+        VortexSpiralPlayer.EffectSpec spec = VortexSpiralPlayer.effectSpec(payload(
+            VortexSpiralPlayer.HEART_FIELD, Optional.empty(), OptionalInt.empty(), OptionalInt.empty()));
+        assertEquals(VortexSpiralPlayer.Route.HEART_FIELD, spec.route(),
+            "expected HEART_FIELD route because event_id is woliu_heart_field, actual=" + spec.route());
+        assertEquals(40, spec.count(), "default heart count, actual=" + spec.count());
+        assertEquals(100, spec.maxAge(), "default heart lifetime (long 强压场), actual=" + spec.maxAge());
+        assertEquals(0.9, spec.strength(), 0.0001);
+        // radius: 2.8 + 0.9 * 3.2 = 5.68（山谷级大范围）
+        assertEquals(5.68, spec.radius(), 0.0001);
+    }
+
+    @Test
+    void heartFieldClampsHighInputs() {
+        VortexSpiralPlayer.EffectSpec spec = VortexSpiralPlayer.effectSpec(payload(
+            VortexSpiralPlayer.HEART_FIELD, Optional.of(9.0), OptionalInt.of(500), OptionalInt.of(500)));
+        assertEquals(72, spec.count(), "heart upper count bound, actual=" + spec.count());
+        assertEquals(120, spec.maxAge(), "heart upper lifetime bound, actual=" + spec.maxAge());
+        assertEquals(1.0, spec.strength(), 0.0001);
+    }
+
+    @Test
+    void burstPopClampsLowDurationToBurstFloor() {
+        VortexSpiralPlayer.EffectSpec spec = VortexSpiralPlayer.effectSpec(payload(
+            VortexSpiralPlayer.BURST_POP, Optional.of(0.5), OptionalInt.of(0), OptionalInt.of(0)));
+        assertEquals(12, spec.count(), "burst lower count bound, actual=" + spec.count());
+        assertEquals(6, spec.maxAge(), "burst lower lifetime bound, actual=" + spec.maxAge());
+    }
+
+    @Test
+    void allBaseSkillEventIdsHaveDistinctRoutes() {
+        // 基础 5 招各自独立 route，绝不回退到共用 SPIRAL（审计核心修复）
+        VortexSpiralPlayer.Route[] baseRoutes = {
+            VortexSpiralPlayer.effectSpec(payload(VortexSpiralPlayer.HOLD_SUSTAIN, Optional.empty(), OptionalInt.empty(), OptionalInt.empty())).route(),
+            VortexSpiralPlayer.effectSpec(payload(VortexSpiralPlayer.BURST_POP, Optional.empty(), OptionalInt.empty(), OptionalInt.empty())).route(),
+            VortexSpiralPlayer.effectSpec(payload(VortexSpiralPlayer.MOUTH_FUNNEL, Optional.empty(), OptionalInt.empty(), OptionalInt.empty())).route(),
+            VortexSpiralPlayer.effectSpec(payload(VortexSpiralPlayer.PULL_DRAG, Optional.empty(), OptionalInt.empty(), OptionalInt.empty())).route(),
+            VortexSpiralPlayer.effectSpec(payload(VortexSpiralPlayer.HEART_FIELD, Optional.empty(), OptionalInt.empty(), OptionalInt.empty())).route(),
+        };
+        for (VortexSpiralPlayer.Route route : baseRoutes) {
+            assertTrue(route != VortexSpiralPlayer.Route.SPIRAL,
+                "expected base skill to route to its own profile, not fall through to SPIRAL, actual=" + route);
+        }
+        java.util.Set<VortexSpiralPlayer.Route> uniqueRoutes = new java.util.HashSet<>(java.util.Arrays.asList(baseRoutes));
+        assertEquals(5, uniqueRoutes.size(),
+            "expected 5 distinct base routes but got " + uniqueRoutes.size() + ": " + uniqueRoutes);
+    }
+
+    @Test
+    void baseSkillIdentifierStringsMatchServerVisualForContract() {
+        // Pin test: 必须与 server visual_for() particle_id 精确一致（woliu_v2/skills.rs）
+        assertEquals("bong:woliu_hold_sustain",  VortexSpiralPlayer.HOLD_SUSTAIN.toString(),
+            "HOLD_SUSTAIN must match server visual_for(Hold).particle_id");
+        assertEquals("bong:woliu_burst_pop",     VortexSpiralPlayer.BURST_POP.toString(),
+            "BURST_POP must match server visual_for(Burst).particle_id");
+        assertEquals("bong:woliu_mouth_funnel",  VortexSpiralPlayer.MOUTH_FUNNEL.toString(),
+            "MOUTH_FUNNEL must match server visual_for(Mouth).particle_id");
+        assertEquals("bong:woliu_pull_drag",     VortexSpiralPlayer.PULL_DRAG.toString(),
+            "PULL_DRAG must match server visual_for(Pull).particle_id");
+        assertEquals("bong:woliu_heart_field",   VortexSpiralPlayer.HEART_FIELD.toString(),
+            "HEART_FIELD must match server visual_for(Heart).particle_id");
+    }
+
     private static VfxEventPayload.SpawnParticle payload(
         net.minecraft.util.Identifier eventId,
         Optional<Double> strength,

@@ -10,6 +10,13 @@ import java.util.OptionalInt;
 /** Spawns several inward ribbon trails around a woliu-v2 low-pressure point. */
 public final class VortexSpiralPlayer implements VfxPlayer {
     public static final Identifier EVENT_ID = new Identifier("bong", "vortex_spiral");
+    // AV 差异化：woliu 基础 5 招专属 particle event_id（复用本 player 的 vortexSpiralSprites，无新贴图）。
+    // 必须与 server visual_for() 中各招 particle_id 精确逐字符一致。
+    public static final Identifier HOLD_SUSTAIN = new Identifier("bong", "woliu_hold_sustain");
+    public static final Identifier BURST_POP = new Identifier("bong", "woliu_burst_pop");
+    public static final Identifier MOUTH_FUNNEL = new Identifier("bong", "woliu_mouth_funnel");
+    public static final Identifier PULL_DRAG = new Identifier("bong", "woliu_pull_drag");
+    public static final Identifier HEART_FIELD = new Identifier("bong", "woliu_heart_field");
     public static final Identifier VACUUM_PALM = new Identifier("bong", "woliu_vacuum_palm_spiral");
     public static final Identifier VORTEX_SHIELD = new Identifier("bong", "woliu_vortex_shield_sphere");
     public static final Identifier VACUUM_LOCK = new Identifier("bong", "woliu_vacuum_lock_cage");
@@ -58,6 +65,27 @@ public final class VortexSpiralPlayer implements VfxPlayer {
         }
         if (spec.route() == Route.VOID_CORE_COLLAPSE) {
             playVoidCoreCollapse(client, world, payload, spec);
+            return;
+        }
+        // AV 差异化：woliu 基础 5 招各自专属形态
+        if (spec.route() == Route.HOLD_SUSTAIN) {
+            playHoldSustain(client, world, payload, spec);
+            return;
+        }
+        if (spec.route() == Route.BURST_POP) {
+            playBurstPop(client, world, payload, spec);
+            return;
+        }
+        if (spec.route() == Route.MOUTH_FUNNEL) {
+            playMouthFunnel(client, world, payload, spec);
+            return;
+        }
+        if (spec.route() == Route.PULL_DRAG) {
+            playPullDrag(client, world, payload, spec);
+            return;
+        }
+        if (spec.route() == Route.HEART_FIELD) {
+            playHeartField(client, world, payload, spec);
             return;
         }
 
@@ -395,6 +423,195 @@ public final class VortexSpiralPlayer implements VfxPlayer {
         }
     }
 
+    /** 持涡 Hold：维持伞——稀疏粒子绕轴慢转，长驻不收缩，深蓝静态感。 */
+    private static void playHoldSustain(
+        MinecraftClient client,
+        ClientWorld world,
+        VfxEventPayload.SpawnParticle payload,
+        EffectSpec spec
+    ) {
+        double ox = payload.origin()[0];
+        double oy = payload.origin()[1] + 1.1;
+        double oz = payload.origin()[2];
+        float[] color = rgb(payload);
+        for (int i = 0; i < spec.count(); i++) {
+            double angle = (Math.PI * 2.0 * i / spec.count()) + world.random.nextDouble() * 0.3;
+            // 稳定的伞形半径环（维持感：半径波动小）
+            double radius = 0.75 + world.random.nextDouble() * 0.25;
+            double x = ox + Math.cos(angle) * radius;
+            double z = oz + Math.sin(angle) * radius;
+            double y = oy + (world.random.nextDouble() - 0.5) * 0.25;
+            VortexSpiralParticle particle = new VortexSpiralParticle(
+                world, x, y, z,
+                -Math.sin(angle) * 0.022,
+                (world.random.nextDouble() - 0.5) * 0.005,
+                Math.cos(angle) * 0.022,
+                ox, oy, oz
+            );
+            particle.setAngularVelocity(0.03 + spec.strength() * 0.025);
+            particle.setColor(color[0], color[1], color[2]);
+            particle.setAlphaPublic((float) spec.alpha());
+            particle.setMaxAgePublic(spec.maxAge() + world.random.nextInt(Math.max(1, spec.maxAge() / 4)));
+            if (BongParticles.vortexSpiralSprites != null) {
+                particle.setSpritePublic(BongParticles.vortexSpiralSprites.getSprite(world.random));
+            }
+            client.particleManager.addParticle(particle);
+        }
+    }
+
+    /** 瞬涡 Burst：200ms 弹反——短促向外爆开 pop，单帧密集高速，明亮蓝。 */
+    private static void playBurstPop(
+        MinecraftClient client,
+        ClientWorld world,
+        VfxEventPayload.SpawnParticle payload,
+        EffectSpec spec
+    ) {
+        double ox = payload.origin()[0];
+        double oy = payload.origin()[1] + 1.0;
+        double oz = payload.origin()[2];
+        float[] color = rgb(payload);
+        for (int i = 0; i < spec.count(); i++) {
+            double angle = Math.PI * 2.0 * i / spec.count() + world.random.nextDouble() * 0.14;
+            double radius = 0.25 + world.random.nextDouble() * 0.2;
+            double x = ox + Math.cos(angle) * radius;
+            double z = oz + Math.sin(angle) * radius;
+            double y = oy + (world.random.nextDouble() - 0.5) * 0.3;
+            // 强烈向外弹出速度，体现弹反瞬发
+            double speed = 0.16 + spec.strength() * 0.12 + world.random.nextDouble() * 0.05;
+            VortexSpiralParticle particle = new VortexSpiralParticle(
+                world, x, y, z,
+                Math.cos(angle) * speed,
+                (world.random.nextDouble() - 0.2) * 0.04,
+                Math.sin(angle) * speed,
+                ox, oy, oz
+            );
+            particle.setAngularVelocity(0.02 + spec.strength() * 0.02);
+            particle.setColor(color[0], color[1], color[2]);
+            particle.setAlphaPublic((float) spec.alpha());
+            // 极短寿命：弹反一瞬即灭
+            particle.setMaxAgePublic(Math.max(4, spec.maxAge() - world.random.nextInt(Math.max(1, spec.maxAge() / 2))));
+            if (BongParticles.vortexSpiralSprites != null) {
+                particle.setSpritePublic(BongParticles.vortexSpiralSprites.getSprite(world.random));
+            }
+            client.particleManager.addParticle(particle);
+        }
+    }
+
+    /** 涡口 Mouth：远程点按——锥形漏斗向心收口，粒子高处向下汇聚，暗冷蓝。 */
+    private static void playMouthFunnel(
+        MinecraftClient client,
+        ClientWorld world,
+        VfxEventPayload.SpawnParticle payload,
+        EffectSpec spec
+    ) {
+        double ox = payload.origin()[0];
+        double oy = payload.origin()[1] + 1.4;
+        double oz = payload.origin()[2];
+        float[] color = rgb(payload);
+        for (int i = 0; i < spec.count(); i++) {
+            double angle = Math.PI * 2.0 * i / spec.count() + world.random.nextDouble() * 0.22;
+            // 漏斗：粒子从高处大半径向下小半径收口
+            double t = world.random.nextDouble();
+            double radius = (0.3 + t * 0.9);
+            double x = ox + Math.cos(angle) * radius;
+            double z = oz + Math.sin(angle) * radius;
+            double y = oy + t * 0.6;
+            // 向心+下沉速度
+            double inward = -(0.05 + spec.strength() * 0.04);
+            VortexSpiralParticle particle = new VortexSpiralParticle(
+                world, x, y, z,
+                Math.cos(angle) * inward,
+                -0.03 - world.random.nextDouble() * 0.02,
+                Math.sin(angle) * inward,
+                ox, oy, oz
+            );
+            particle.setAngularVelocity(0.06 + spec.strength() * 0.04);
+            particle.setColor(color[0], color[1], color[2]);
+            particle.setAlphaPublic((float) spec.alpha());
+            particle.setMaxAgePublic(spec.maxAge() - world.random.nextInt(Math.max(1, spec.maxAge() / 4)));
+            if (BongParticles.vortexSpiralSprites != null) {
+                particle.setSpritePublic(BongParticles.vortexSpiralSprites.getSprite(world.random));
+            }
+            client.particleManager.addParticle(particle);
+        }
+    }
+
+    /** 涡引 Pull：拉拽——大半径粒子向中心强力拖尾收拢，紫调。 */
+    private static void playPullDrag(
+        MinecraftClient client,
+        ClientWorld world,
+        VfxEventPayload.SpawnParticle payload,
+        EffectSpec spec
+    ) {
+        double ox = payload.origin()[0];
+        double oy = payload.origin()[1] + 0.95;
+        double oz = payload.origin()[2];
+        float[] color = rgb(payload);
+        for (int i = 0; i < spec.count(); i++) {
+            double angle = Math.PI * 2.0 * i / spec.count() + world.random.nextDouble() * 0.28;
+            // 起始大半径，强向心速度——拉拽收拢感
+            double radius = 1.0 + world.random.nextDouble() * 0.7;
+            double x = ox + Math.cos(angle) * radius;
+            double z = oz + Math.sin(angle) * radius;
+            double y = oy + (world.random.nextDouble() - 0.5) * 0.4;
+            double inward = -(0.10 + spec.strength() * 0.08);
+            VortexSpiralParticle particle = new VortexSpiralParticle(
+                world, x, y, z,
+                Math.cos(angle) * inward,
+                (world.random.nextDouble() - 0.5) * 0.01,
+                Math.sin(angle) * inward,
+                ox, oy, oz
+            );
+            particle.setAngularVelocity(0.05 + spec.strength() * 0.05);
+            particle.setColor(color[0], color[1], color[2]);
+            particle.setAlphaPublic((float) spec.alpha());
+            particle.setMaxAgePublic(spec.maxAge() - world.random.nextInt(Math.max(1, spec.maxAge() / 3)));
+            if (BongParticles.vortexSpiralSprites != null) {
+                particle.setSpritePublic(BongParticles.vortexSpiralSprites.getSprite(world.random));
+            }
+            client.particleManager.addParticle(particle);
+        }
+    }
+
+    /** 涡心 Heart：山谷级强制断经——大范围多环强压场，缓慢翻涌，深黑紫。 */
+    private static void playHeartField(
+        MinecraftClient client,
+        ClientWorld world,
+        VfxEventPayload.SpawnParticle payload,
+        EffectSpec spec
+    ) {
+        double ox = payload.origin()[0];
+        double oy = payload.origin()[1] + 0.9;
+        double oz = payload.origin()[2];
+        float[] color = rgb(payload);
+        for (int i = 0; i < spec.count(); i++) {
+            int ring = i % 3;
+            double ringRatio = 0.4 + ring * 0.35;
+            double angle = Math.PI * 2.0 * i / spec.count() + world.random.nextDouble() * 0.2;
+            double radius = spec.radius() * ringRatio + (world.random.nextDouble() - 0.5) * 0.4;
+            double x = ox + Math.cos(angle) * radius;
+            double z = oz + Math.sin(angle) * radius;
+            double y = oy + Math.sin(angle * 1.5 + ring) * 0.4 + (world.random.nextDouble() - 0.5) * 0.25;
+            double tangent = 0.045 + spec.strength() * 0.05 + ring * 0.01;
+            VortexSpiralParticle particle = new VortexSpiralParticle(
+                world, x, y, z,
+                -Math.sin(angle) * tangent,
+                (world.random.nextDouble() - 0.5) * 0.014,
+                Math.cos(angle) * tangent,
+                ox, oy, oz
+            );
+            particle.setAngularVelocity(0.06 + spec.strength() * 0.07 + ring * 0.012);
+            particle.setRibbonWidth(spec.ribbonWidth(), spec.ribbonEndWidth());
+            particle.setColor(color[0], color[1], color[2]);
+            particle.setAlphaPublic((float) spec.alpha());
+            particle.setMaxAgePublic(spec.maxAge() - world.random.nextInt(Math.max(1, spec.maxAge() / 5)));
+            if (BongParticles.vortexSpiralSprites != null) {
+                particle.setSpritePublic(BongParticles.vortexSpiralSprites.getSprite(world.random));
+            }
+            client.particleManager.addParticle(particle);
+        }
+    }
+
     private static float[] rgb(VfxEventPayload.SpawnParticle payload) {
         int rgb = payload.colorRgb().orElse(FALLBACK_RGB);
         return new float[] {
@@ -502,6 +719,72 @@ public final class VortexSpiralPlayer implements VfxPlayer {
                 0.022
             );
         }
+        // AV 差异化：woliu 基础 5 招 effectSpec（形态/强度/半径各异）
+        if (HOLD_SUSTAIN.equals(payload.eventId())) {
+            double strength = clamp01(payload.strength().orElse(0.5));
+            return new EffectSpec(
+                Route.HOLD_SUSTAIN,
+                clamp(payload.count().orElse(12), 6, 32),
+                clamp(payload.durationTicks().orElse(70), 30, 120),
+                strength,
+                0.0,
+                Math.min(0.7, 0.40 + strength * 0.28),
+                0.0,
+                0.0
+            );
+        }
+        if (BURST_POP.equals(payload.eventId())) {
+            double strength = clamp01(payload.strength().orElse(0.8));
+            return new EffectSpec(
+                Route.BURST_POP,
+                clamp(payload.count().orElse(28), 12, 56),
+                clamp(payload.durationTicks().orElse(14), 6, 30),
+                strength,
+                0.0,
+                Math.min(0.95, 0.60 + strength * 0.30),
+                0.0,
+                0.0
+            );
+        }
+        if (MOUTH_FUNNEL.equals(payload.eventId())) {
+            double strength = clamp01(payload.strength().orElse(0.65));
+            return new EffectSpec(
+                Route.MOUTH_FUNNEL,
+                clamp(payload.count().orElse(20), 10, 48),
+                clamp(payload.durationTicks().orElse(48), 20, 90),
+                strength,
+                0.0,
+                Math.min(0.82, 0.46 + strength * 0.30),
+                0.0,
+                0.0
+            );
+        }
+        if (PULL_DRAG.equals(payload.eventId())) {
+            double strength = clamp01(payload.strength().orElse(0.7));
+            return new EffectSpec(
+                Route.PULL_DRAG,
+                clamp(payload.count().orElse(24), 12, 56),
+                clamp(payload.durationTicks().orElse(30), 15, 70),
+                strength,
+                0.0,
+                Math.min(0.86, 0.48 + strength * 0.32),
+                0.0,
+                0.0
+            );
+        }
+        if (HEART_FIELD.equals(payload.eventId())) {
+            double strength = clamp01(payload.strength().orElse(0.9));
+            return new EffectSpec(
+                Route.HEART_FIELD,
+                clamp(payload.count().orElse(40), 18, 72),
+                clamp(payload.durationTicks().orElse(100), 40, 120),
+                strength,
+                2.8 + strength * 3.2,
+                Math.min(0.92, 0.52 + strength * 0.34),
+                0.12 + strength * 0.05,
+                0.018
+            );
+        }
         double strength = clamp01(payload.strength().orElse(0.75));
         return new EffectSpec(
             Route.SPIRAL,
@@ -532,7 +815,13 @@ public final class VortexSpiralPlayer implements VfxPlayer {
         VOID_SPHERE,
         SWALLOWING_SPIRAL,
         ECHO_RIPPLE,
-        VOID_CORE_COLLAPSE
+        VOID_CORE_COLLAPSE,
+        // AV 差异化：woliu 基础 5 招路由
+        HOLD_SUSTAIN,
+        BURST_POP,
+        MOUTH_FUNNEL,
+        PULL_DRAG,
+        HEART_FIELD
     }
 
     record EffectSpec(

@@ -1,0 +1,11 @@
+{
+  "id": "woliu_pull_drag",
+  "layers": [
+    { "sound": "minecraft:entity.fishing_bobber.retrieve", "volume": 0.4, "pitch": 0.6, "delay_ticks": 0 },
+    { "sound": "minecraft:entity.enderman.teleport", "volume": 0.25, "pitch": 0.8, "delay_ticks": 2 }
+  ],
+  "priority": 65,
+  "attenuation": "world_3d",
+  "category": "AMBIENT",
+  "bus": "ENVIRONMENT"
+}

@@ -1516,6 +1516,88 @@ fn resolve_v3_area_skills_emit_distinct_visual_contracts() {
     }
 }
 
+/// AV 差异化锁定：基础 5 招（持涡/瞬涡/涡口/涡引/涡心）各自专属 particle event_id /
+/// 音效 recipe，且各招 particle/sound 跨招唯一——任何招式回退到共用 `vortex_spiral` /
+/// 共用 recipe 会立刻撞红。
+///
+/// 期望：每招 particle_id 与 sound_recipe_id 互不相同（5 个 distinct 值），
+/// 因为审计确认过去 5 招共用 `bong:vortex_spiral` + 仅 2 个 recipe，体验无法区分。
+#[test]
+fn base_skills_emit_distinct_particle_and_sound_contracts() {
+    let cases = [
+        (
+            WoliuSkillId::Hold,
+            "bong:vortex_palm_open",
+            "bong:woliu_hold_sustain",
+            "woliu_hold_sustain",
+        ),
+        (
+            WoliuSkillId::Burst,
+            "bong:palm_strike",
+            "bong:woliu_burst_pop",
+            "woliu_burst_pop",
+        ),
+        (
+            WoliuSkillId::Mouth,
+            "bong:palm_thrust",
+            "bong:woliu_mouth_funnel",
+            "woliu_mouth_funnel",
+        ),
+        (
+            WoliuSkillId::Pull,
+            "bong:woliu_vacuum_lock",
+            "bong:woliu_pull_drag",
+            "woliu_pull_drag",
+        ),
+        (
+            WoliuSkillId::Heart,
+            "bong:vortex_spiral_stance",
+            "bong:woliu_heart_field",
+            "woliu_heart_field",
+        ),
+    ];
+
+    let mut seen_particles = std::collections::HashSet::new();
+    let mut seen_sounds = std::collections::HashSet::new();
+
+    for (skill, animation, particle, sound) in cases {
+        let visual = visual_for(skill);
+        assert_eq!(
+            visual.animation_id, animation,
+            "{skill:?} animation_id 应为 {animation}（复用贴合语义的现有动作），实际 {}",
+            visual.animation_id
+        );
+        assert_eq!(
+            visual.particle_id, particle,
+            "{skill:?} particle_id 应为专属 {particle}（不再共用 bong:vortex_spiral），实际 {}",
+            visual.particle_id
+        );
+        assert_eq!(
+            visual.sound_recipe_id, sound,
+            "{skill:?} sound_recipe_id 应为专属 {sound}，实际 {}",
+            visual.sound_recipe_id
+        );
+        assert!(
+            seen_particles.insert(visual.particle_id),
+            "{skill:?} particle_id {} 与其他基础招重复——基础 5 招 particle 必须跨招唯一",
+            visual.particle_id
+        );
+        assert!(
+            seen_sounds.insert(visual.sound_recipe_id),
+            "{skill:?} sound_recipe_id {} 与其他基础招重复——基础 5 招音效必须跨招唯一",
+            visual.sound_recipe_id
+        );
+        // 回归护栏：基础招 particle 绝不再是旧共用 spiral
+        assert_ne!(
+            visual.particle_id, "bong:vortex_spiral",
+            "{skill:?} 不得回退到共用 bong:vortex_spiral particle"
+        );
+    }
+
+    assert_eq!(seen_particles.len(), 5, "5 招应有 5 个互异 particle_id");
+    assert_eq!(seen_sounds.len(), 5, "5 招应有 5 个互异 sound_recipe_id");
+}
+
 #[test]
 fn resolve_pull_emits_displacement_for_target() {
     let mut app = app(10);
@@ -2152,32 +2234,11 @@ fn woliu_av_mapping_covers_all_v3_skills() {
     }
 }
 
-#[test]
-fn woliu_av_mapping_v2_skills_use_fallback() {
-    use super::skills::woliu_av_mapping;
-
-    for skill in [
-        WoliuSkillId::Hold,
-        WoliuSkillId::Burst,
-        WoliuSkillId::Mouth,
-        WoliuSkillId::Pull,
-        WoliuSkillId::Heart,
-    ] {
-        let (vfx, audio, anim) = woliu_av_mapping(skill);
-        assert_eq!(
-            vfx, "bong:vortex_spiral",
-            "V2 skill {skill:?} should use fallback VFX"
-        );
-        assert_eq!(
-            audio, "woliu_cast",
-            "V2 skill {skill:?} should use fallback audio"
-        );
-        assert_eq!(
-            anim, "bong:vortex_spiral_stance",
-            "V2 skill {skill:?} should use fallback anim"
-        );
-    }
-}
+// 原 woliu_av_mapping_v2_skills_use_fallback 已删除：v2 基础 5 招（Hold/Burst/Mouth/
+// Pull/Heart）的 AV 现由 visual_for() 各招差异化（专属 particle event_id + recipe），
+// 不再走 woliu_av_mapping 的 vortex_spiral/woliu_cast fallback。真实差异化契约由
+// base_skills_emit_distinct_particle_and_sound_contracts 锁定。woliu_av_mapping 桩
+// 仅余 woliu_av_mapping_covers_all_v3_skills（v3 覆盖）使用。
 
 #[test]
 fn woliu_vfx_params_low_boundary_clamps_correctly() {

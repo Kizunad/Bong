@@ -1,0 +1,12 @@
+{
+  "id": "woliu_heart_field",
+  "layers": [
+    { "sound": "minecraft:block.beacon.activate", "volume": 0.5, "pitch": 0.4, "delay_ticks": 0 },
+    { "sound": "minecraft:entity.wither.spawn", "volume": 0.18, "pitch": 0.5, "delay_ticks": 6 },
+    { "sound": "minecraft:entity.warden.heartbeat", "volume": 0.3, "pitch": 0.8, "delay_ticks": 12 }
+  ],
+  "priority": 70,
+  "attenuation": "world_3d",
+  "category": "AMBIENT",
+  "bus": "ENVIRONMENT"
+}

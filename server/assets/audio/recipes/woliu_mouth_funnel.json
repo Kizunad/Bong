@@ -1,0 +1,11 @@
+{
+  "id": "woliu_mouth_funnel",
+  "layers": [
+    { "sound": "minecraft:entity.enderman.teleport", "volume": 0.28, "pitch": 1.2, "delay_ticks": 0 },
+    { "sound": "minecraft:block.conduit.attack.target", "volume": 0.3, "pitch": 0.9, "delay_ticks": 3 }
+  ],
+  "priority": 64,
+  "attenuation": "world_3d",
+  "category": "AMBIENT",
+  "bus": "ENVIRONMENT"
+}
