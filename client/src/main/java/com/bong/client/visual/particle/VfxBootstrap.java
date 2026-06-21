@@ -32,6 +32,12 @@ public final class VfxBootstrap {
         for (net.minecraft.util.Identifier eventId : AnqiVfxPlayer.EVENT_IDS) {
             registry.register(eventId, anqi);
         }
+        // 蛊道两招粒子（凝针弹道 / 灌毒蛊毒雾）—— server emit_dugu_needle_visual_triggers 引用。
+        // 复用既有 BongParticles sprite（swordQiTrail / duguDarkGreenMist），无新贴图。
+        DuguNeedleVfxPlayer duguNeedle = new DuguNeedleVfxPlayer();
+        for (net.minecraft.util.Identifier eventId : DuguNeedleVfxPlayer.EVENT_IDS) {
+            registry.register(eventId, duguNeedle);
+        }
         registry.register(BreakthroughPillarPlayer.EVENT_ID,     new BreakthroughPillarPlayer());
         registry.register(EnlightenmentAuraPlayer.EVENT_ID,      new EnlightenmentAuraPlayer());
         registry.register(BedRestAuraPlayer.EVENT_ID,            new BedRestAuraPlayer());

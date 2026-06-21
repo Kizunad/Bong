@@ -726,6 +726,8 @@ pub fn register(app: &mut App) {
                 .after(crate::sword_path::skill_register::heaven_gate_cast_system),
             // 暗器六招 cast → 动画 + 粒子（纯 cosmetic，复用现有 anim/sprite 资产）。
             vfx_animation_trigger::emit_anqi_visual_triggers,
+            // 蛊道两招（凝针 / 灌毒蛊）cast → 动画 + 粒子（纯 cosmetic，复用现有资产）。
+            vfx_animation_trigger::emit_dugu_needle_visual_triggers,
         )
             .before(vfx_event_emit::emit_vfx_event_payloads),
     );
@@ -749,6 +751,8 @@ pub fn register(app: &mut App) {
             audio_trigger::emit_sword_path_audio_triggers,
             // 暗器六招 cast → 专属音效（纯 cosmetic，复用 vanilla 音色 recipe）。
             audio_trigger::emit_anqi_audio_triggers,
+            // 蛊道两招（凝针 / 灌毒蛊）cast → 专属音效（纯 cosmetic，复用 vanilla 音色 recipe）。
+            audio_trigger::emit_dugu_needle_audio_triggers,
             audio_trigger::emit_skill_audio_triggers,
             audio_trigger::emit_social_audio_triggers
                 .after(crate::cultivation::possession::process_duo_she_requests),

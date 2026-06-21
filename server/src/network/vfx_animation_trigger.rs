@@ -17,11 +17,13 @@ use crate::combat::baomai_v3::{BaomaiSkillEvent, BaomaiSkillId};
 use crate::combat::carrier::CarrierChargedEvent;
 use crate::combat::components::WoundKind;
 use crate::combat::events::{AttackIntent, AttackSource, CombatEvent, DefenseIntent};
+use crate::combat::needle::QiNeedleChargedEvent;
 use crate::combat::tuike_v2::{ContamTransferredEvent, DonFalseSkinEvent, FalseSkinSheddedEvent};
 use crate::combat::woliu_v2::state::VortexV2State;
 use crate::combat::woliu_v2::{VortexCastEvent, WoliuSkillId};
 use crate::combat::CombatClock;
 use crate::cultivation::breakthrough::BreakthroughOutcome;
+use crate::cultivation::dugu::DuguObfuscationDisruptedEvent;
 use crate::cultivation::tribulation::{TribulationAnnounce, TribulationFailed, TribulationSettled};
 use crate::lingtian::events::{
     DrainQiCompleted, HarvestCompleted, PlantingCompleted, ReplenishCompleted, TillCompleted,
@@ -93,6 +95,15 @@ const VFX_ANQI_MULTI_VOLLEY: &str = "bong:anqi_multi_volley";
 const VFX_ANQI_SOUL_INJECT: &str = "bong:anqi_soul_inject";
 const VFX_ANQI_ARMOR_PIERCE: &str = "bong:anqi_armor_pierce";
 const VFX_ANQI_ECHO_DECOY: &str = "bong:anqi_echo_decoy";
+
+// 蛊道（独孤毒流）基础两招专属 AV 资产 id（client 侧 DuguNeedleVfxPlayer / BongAnimations 已注册）。
+// 动画复用现有 player_animation/dugu_needle_throw.json；粒子复用既有 BongParticles sprite
+// （swordQiTrail line / duguDarkGreenMist），无新贴图。
+const ANIM_DUGU_NEEDLE_THROW: &str = "bong:dugu_needle_throw";
+const VFX_DUGU_NEEDLE_BOLT: &str = "bong:dugu_needle_bolt";
+const VFX_DUGU_POISON_INFUSE: &str = "bong:dugu_poison_infuse";
+/// 蛊道两招动画优先级——与基础战斗动画同档（蛊道两招是醒灵 / 引气期入门远程招）。
+const DUGU_PRIORITY: u16 = 1100;
 
 const COMBAT_PRIORITY: u16 = 1000;
 const HIT_RECOIL_PRIORITY: u16 = 2000;
@@ -802,6 +813,76 @@ fn emit_anqi_particle(
             duration_ticks: Some(duration_ticks),
         },
     ));
+}
+
+/// 蛊道（独孤毒流）基础两招 cast → 动画 + 粒子（纯 cosmetic，复用现有 anim/sprite 资产）。
+///
+/// 与暗器 [`emit_anqi_visual_triggers`] 同模式：读各招已 emit 的领域事件，再翻译成
+/// 第一方动画 id + 粒子 event_id。**不读 / 改任何战斗 / 真元状态。**
+///
+/// - 凝针 `QiNeedleChargedEvent` → `dugu_needle_throw` 动画 + 朝向 `dugu_needle_bolt`
+///   弹道粒子（caster→target 方向；细针远距直刺，复用剑气 line trail，冷青白）。
+/// - 灌毒蛊 `DuguObfuscationDisruptedEvent` → `dugu_needle_throw` 动画 + `dugu_poison_infuse`
+///   失谐真元毒绿雾（覆于双手 / 飞针，复用 duguDarkGreenMist sprite）。
+pub fn emit_dugu_needle_visual_triggers(
+    mut needles: EventReader<QiNeedleChargedEvent>,
+    mut infusions: EventReader<DuguObfuscationDisruptedEvent>,
+    players: Query<PlayerAnimTargetItem<'_>, PlayerAnimTargetFilter>,
+    positions: Query<&Position>,
+    mut vfx_events: EventWriter<VfxEventRequest>,
+) {
+    // 凝针：throw 动画 + 朝向弹道粒子（细针直刺，冷青白）。
+    for event in needles.read() {
+        let origin = positions
+            .get(event.shooter)
+            .map(|p| p.get())
+            .unwrap_or_default();
+        let direction = caster_target_direction(&positions, event.shooter, event.target);
+        emit_play_for_entity(
+            event.shooter,
+            ANIM_DUGU_NEEDLE_THROW,
+            DUGU_PRIORITY,
+            Some(1),
+            &players,
+            &mut vfx_events,
+        );
+        emit_anqi_particle(
+            &mut vfx_events,
+            VFX_DUGU_NEEDLE_BOLT,
+            origin,
+            Some(direction),
+            "#BFE3D0",
+            0.9,
+            10,
+            16,
+        );
+    }
+
+    // 灌毒蛊：throw 动画 + 失谐真元毒绿雾（覆入飞针，无方向，绕身散布）。
+    for event in infusions.read() {
+        let origin = positions
+            .get(event.infuser)
+            .map(|p| p.get())
+            .unwrap_or_default();
+        emit_play_for_entity(
+            event.infuser,
+            ANIM_DUGU_NEEDLE_THROW,
+            DUGU_PRIORITY,
+            Some(2),
+            &players,
+            &mut vfx_events,
+        );
+        emit_anqi_particle(
+            &mut vfx_events,
+            VFX_DUGU_POISON_INFUSE,
+            origin,
+            None,
+            "#44AA44",
+            0.85,
+            14,
+            24,
+        );
+    }
 }
 
 fn sword_path_anim_for_skill(skill: SwordPathSkillId) -> &'static str {
@@ -2571,5 +2652,129 @@ mod tests {
             drain_vfx(&mut app).is_empty(),
             "caster 无 Position 时封骨 VFX 应静默 skip（纯 cosmetic 不强行渲染）"
         );
+    }
+
+    // ─── 蛊道两招（凝针 / 灌毒蛊）emit_dugu_needle_visual_triggers ───
+
+    fn setup_dugu_visual_app() -> App {
+        let mut app = App::new();
+        app.add_event::<QiNeedleChargedEvent>();
+        app.add_event::<DuguObfuscationDisruptedEvent>();
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(Update, emit_dugu_needle_visual_triggers);
+        app
+    }
+
+    /// 凝针：dugu_needle_throw 动画 + 朝向弹道粒子（caster→target 方向 +Z）。
+    #[test]
+    fn dugu_shoot_needle_emits_directional_bolt() {
+        let mut app = setup_dugu_visual_app();
+        let shooter = spawn_player(&mut app, "Needle", [0.0, 64.0, 0.0]);
+        let target = spawn_skinned_npc_target(&mut app, "Victim", [0.0, 64.0, 6.0]);
+        app.world_mut().send_event(QiNeedleChargedEvent {
+            shooter,
+            target: Some(target),
+            tick: 7,
+        });
+        app.update();
+
+        let emitted = drain_vfx(&mut app);
+        assert_eq!(emitted.len(), 2, "凝针应 emit 1 动画 + 1 弹道粒子");
+        assert_play_anim(&emitted[0], ANIM_DUGU_NEEDLE_THROW, DUGU_PRIORITY);
+        match &emitted[1].payload {
+            VfxEventPayloadV1::SpawnParticle {
+                event_id,
+                direction,
+                ..
+            } => {
+                assert_eq!(
+                    event_id, VFX_DUGU_NEEDLE_BOLT,
+                    "凝针弹道 event_id 必须与 client DuguNeedleVfxPlayer.DUGU_NEEDLE_BOLT 对齐"
+                );
+                let dir = direction.expect("凝针弹道必须带 caster→target 方向（细针直刺）");
+                assert!(
+                    (dir[2] - 1.0).abs() < 1e-6 && dir[0].abs() < 1e-6,
+                    "方向应为 +Z 单位向量（caster→target），实际 {dir:?}"
+                );
+            }
+            other => panic!("expected SpawnParticle, got {other:?}"),
+        }
+    }
+
+    /// 凝针无目标：方向退化到 +X fallback（仍 emit，避免远程招无反馈）。
+    #[test]
+    fn dugu_shoot_needle_without_target_falls_back_to_default_direction() {
+        let mut app = setup_dugu_visual_app();
+        let shooter = spawn_player(&mut app, "NeedleNoTgt", [0.0, 64.0, 0.0]);
+        app.world_mut().send_event(QiNeedleChargedEvent {
+            shooter,
+            target: None,
+            tick: 8,
+        });
+        app.update();
+
+        let emitted = drain_vfx(&mut app);
+        assert_eq!(emitted.len(), 2);
+        assert_play_anim(&emitted[0], ANIM_DUGU_NEEDLE_THROW, DUGU_PRIORITY);
+        match &emitted[1].payload {
+            VfxEventPayloadV1::SpawnParticle {
+                event_id,
+                direction,
+                ..
+            } => {
+                assert_eq!(event_id, VFX_DUGU_NEEDLE_BOLT);
+                let dir = direction.expect("无目标仍透传方向（fallback）");
+                assert!(
+                    (dir[0] - 1.0).abs() < 1e-6,
+                    "无目标方向应退化为 +X fallback，实际 {dir:?}"
+                );
+            }
+            other => panic!("expected SpawnParticle, got {other:?}"),
+        }
+    }
+
+    /// 灌毒蛊：dugu_needle_throw 动画 + 毒绿雾（无方向，绕身散布）。
+    #[test]
+    fn dugu_infuse_poison_emits_throw_anim_and_poison_mist() {
+        let mut app = setup_dugu_visual_app();
+        let infuser = spawn_player(&mut app, "Infuser", [0.0, 64.0, 0.0]);
+        app.world_mut().send_event(DuguObfuscationDisruptedEvent {
+            infuser,
+            until_tick: 200,
+        });
+        app.update();
+
+        let emitted = drain_vfx(&mut app);
+        assert_eq!(emitted.len(), 2, "灌毒蛊应 emit 1 动画 + 1 毒雾粒子");
+        assert_play_anim(&emitted[0], ANIM_DUGU_NEEDLE_THROW, DUGU_PRIORITY);
+        assert_spawn_particle(&emitted[1], VFX_DUGU_POISON_INFUSE, Some(14));
+        match &emitted[1].payload {
+            VfxEventPayloadV1::SpawnParticle { direction, .. } => {
+                assert!(direction.is_none(), "灌毒蛊毒雾绕身散布，不应带方向");
+            }
+            other => panic!("expected SpawnParticle, got {other:?}"),
+        }
+    }
+
+    /// shooter 无 player 组件（无 Position/UniqueId）→ 动画因 player 查询失败 skip，
+    /// 弹道粒子仍以默认 origin emit（与 anqi 弹道 unwrap_or_default 同口径，远程招不丢反馈）。
+    #[test]
+    fn dugu_shoot_needle_without_player_components_skips_anim_keeps_particle() {
+        let mut app = setup_dugu_visual_app();
+        let shooter = app.world_mut().spawn_empty().id();
+        app.world_mut().send_event(QiNeedleChargedEvent {
+            shooter,
+            target: None,
+            tick: 9,
+        });
+        app.update();
+        let emitted = drain_vfx(&mut app);
+        assert_eq!(
+            emitted.len(),
+            1,
+            "无 player 组件时动画 skip、仅保留 1 条弹道粒子，实际 {} 条",
+            emitted.len()
+        );
+        assert_spawn_particle(&emitted[0], VFX_DUGU_NEEDLE_BOLT, Some(10));
     }
 }
