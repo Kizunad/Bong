@@ -5,6 +5,7 @@ import com.bong.client.combat.QuickSlotEntry;
 import com.bong.client.combat.QuickUseSlotStore;
 import com.bong.client.combat.SkillBarEntry;
 import com.bong.client.combat.SkillBarStore;
+import com.bong.client.combat.inspect.TechniqueDragDecision;
 import com.bong.client.block.BlockVanillaIconMap;
 import com.bong.client.combat.inspect.StatusPanelExtension;
 import com.bong.client.craft.CraftScreen;
@@ -69,6 +70,14 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
 
     private InventoryModel model;
     private final DragState dragState = new DragState();
+    // 功法拖拽落槽 —— 与物品 dragState 平行的独立轻量态（功法非 InventoryItem，不复用 DragState）。
+    // 非 null 即「正在拖某条功法」；按下功法行起手、松手落 1-9 槽绑定，渲染期画跟手 ghost。
+    private com.bong.client.combat.inspect.TechniquesListPanel.Technique draggedTechnique;
+    private boolean draggedTechniqueLocked;
+    // 拖拽来源槽：>=0 表示从已绑定的 1-9 槽拖出（松手落槽外=解绑）；-1 表示从功法列表拖出。
+    private int draggedFromSlot = -1;
+    private double techniqueDragX;
+    private double techniqueDragY;
     private final ItemInspectLongPressTracker itemInspectLongPress = new ItemInspectLongPressTracker();
     /** Screen 存活期间持有的 InventoryStateStore 订阅，close 时解绑避免泄漏。 */
     private Consumer<InventoryModel> inventoryListener;
@@ -850,8 +859,8 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     }
 
     private static String safeSkillIconId(String skillId) {
-        if (skillId == null || skillId.isBlank()) return "unknown";
-        return skillId.replace('.', '_').replace(':', '_').replace('/', '_');
+        // 与 HUD 共用同一规约，避免两端解析到不同贴图路径。
+        return com.bong.client.combat.SkillIconIds.safeSkillIconId(skillId);
     }
 
     private InventoryItem findItemInModel(String itemId) {
@@ -1909,6 +1918,16 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 itemInspectLongPress.cancel();
                 return true;
             }
+            // 右键【已绑定功法】的 1-9 槽 → 清空解绑（绑定功法不写 hotbarItems[]，单独走 SkillBarStore）。
+            if (activeTab == TAB_TECHNIQUES && hIdx >= 0 && techniquesTabPanel != null) {
+                SkillBarEntry bound = SkillBarStore.snapshot().slot(hIdx);
+                if (bound != null && bound.kind() == SkillBarEntry.Kind.SKILL
+                        && techniquesTabPanel.clearSkillSlot(hIdx)) {
+                    hydrateSkillBarFromStore();
+                    itemInspectLongPress.cancel();
+                    return true;
+                }
+            }
             itemInspectLongPress.start(itemAtScreen(mouseX, mouseY), mouseX, mouseY, System.currentTimeMillis());
         }
 
@@ -1977,17 +1996,51 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 }
             }
 
-            // Hotbar
-            int hIdx = hotbarSlotAtScreen(mouseX, mouseY);
-            if (button == 0 && activeTab == TAB_TECHNIQUES && hIdx >= 0 && techniquesTabPanel != null
-                    && techniquesTabPanel.selectedTechnique() != null) {
-                if (techniquesTabPanel.bindSelectedTechniqueToSlot(hIdx)) {
-                    hydrateSkillBarFromStore();
+            // 功法拖拽起手：在功法列表行上按下 → 选中 + 进入拖拽态（释放时落槽绑定）。
+            // 两步点击（点行选中、点槽绑定）仍由下方 Hotbar 分支兜底。
+            if (activeTab == TAB_TECHNIQUES && techniquesTabPanel != null && !dragState.isDragging()) {
+                com.bong.client.combat.inspect.TechniquesListPanel.Technique tech =
+                    techniquesTabPanel.techniqueAtScreen(mouseX, mouseY);
+                if (tech != null) {
+                    techniquesTabPanel.selectTechnique(tech.id());
+                    draggedTechnique = tech;
+                    draggedTechniqueLocked = !techniquesTabPanel.lockReasonFor(tech).isBlank();
+                    techniqueDragX = mouseX;
+                    techniqueDragY = mouseY;
+                    updateTechniqueHotbarHighlight(mouseX, mouseY);
                     return true;
                 }
             }
-            if (button == 1 && activeTab == TAB_TECHNIQUES && hIdx >= 0 && SkillBarStore.snapshot().slot(hIdx) != null) {
-                if (techniquesTabPanel != null && techniquesTabPanel.clearSkillSlot(hIdx)) {
+
+            // Hotbar
+            int hIdx = hotbarSlotAtScreen(mouseX, mouseY);
+            // 功法拖出起手：按下一个【已绑定功法】的 1-9 槽 → 拾起拖拽。
+            // 松手落到某槽=移动/换绑、落到槽外(背包/空白)=解绑消失（见 mouseReleased + TechniqueDragDecision）。
+            if (button == 0 && activeTab == TAB_TECHNIQUES && hIdx >= 0 && techniquesTabPanel != null
+                    && draggedTechnique == null && !dragState.isDragging()) {
+                SkillBarEntry bound = SkillBarStore.snapshot().slot(hIdx);
+                if (bound != null && bound.kind() == SkillBarEntry.Kind.SKILL) {
+                    com.bong.client.combat.inspect.TechniquesListPanel.Technique tech =
+                        techniquesTabPanel.techniqueById(bound.id());
+                    if (tech != null) {
+                        techniquesTabPanel.selectTechnique(tech.id());
+                        draggedTechnique = tech;
+                        draggedFromSlot = hIdx;
+                        draggedTechniqueLocked = !techniquesTabPanel.lockReasonFor(tech).isBlank();
+                        techniqueDragX = mouseX;
+                        techniqueDragY = mouseY;
+                        if (hotbarSlots[hIdx] != null) {
+                            // 拾起：仅清源槽视觉，store 暂不动；任何取消/失败由 hydrate 还原。
+                            hotbarSlots[hIdx].clearItem();
+                        }
+                        updateTechniqueHotbarHighlight(mouseX, mouseY);
+                        return true;
+                    }
+                }
+            }
+            if (button == 0 && activeTab == TAB_TECHNIQUES && hIdx >= 0 && techniquesTabPanel != null
+                    && techniquesTabPanel.selectedTechnique() != null) {
+                if (techniquesTabPanel.bindSelectedTechniqueToSlot(hIdx)) {
                     hydrateSkillBarFromStore();
                     return true;
                 }
@@ -2044,6 +2097,14 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     @Override
     public boolean mouseDragged(double mouseX, double mouseY, int button, double deltaX, double deltaY) {
         itemInspectLongPress.move(mouseX, mouseY);
+        // 功法拖拽中：吞掉 drag 事件（不下传给 ScrollContainer，否则列表会跟着滚动），
+        // 更新 ghost 位置与落点槽位高亮。
+        if (draggedTechnique != null) {
+            techniqueDragX = mouseX;
+            techniqueDragY = mouseY;
+            updateTechniqueHotbarHighlight(mouseX, mouseY);
+            return true;
+        }
         if (dragState.isDragging()) {
             dragState.updateMouse(mouseX, mouseY);
             updateHighlights(mouseX, mouseY);
@@ -2057,11 +2118,65 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         if (button == 1) {
             itemInspectLongPress.cancel();
         }
+        // 功法拖拽落槽：松手时若落在某个 1-9 槽上则绑定（锁定功法由 bindTechniqueToSlot 拒绝并给原因）；
+        // 落在槽位外则仅取消拖拽，选中态保留（兼容两步点击）。
+        if (button == 0 && draggedTechnique != null) {
+            int hIdx = hotbarSlotAtScreen(mouseX, mouseY);
+            if (techniquesTabPanel != null) {
+                switch (TechniqueDragDecision.decide(hIdx, draggedFromSlot)) {
+                    case BIND ->
+                        // 从功法列表拖入、或拖回同一槽：绑定（锁定则失败并在状态栏给原因）。
+                        techniquesTabPanel.bindTechniqueToSlot(draggedTechnique.id(), hIdx);
+                    case MOVE -> {
+                        // 从已绑槽移到不同槽：绑新槽成功后清空源槽（失败则不动源槽，hydrate 还原）。
+                        if (techniquesTabPanel.bindTechniqueToSlot(draggedTechnique.id(), hIdx)) {
+                            techniquesTabPanel.clearSkillSlot(draggedFromSlot);
+                        }
+                    }
+                    case UNBIND ->
+                        // 从已绑槽拖出、落在 1-9 之外（背包/空白）：解绑消失。
+                        techniquesTabPanel.clearSkillSlot(draggedFromSlot);
+                    case CANCEL -> {
+                        // 从功法列表拖出、落空：不改绑定，保留选中（两步点击兜底）。
+                    }
+                }
+            }
+            hydrateSkillBarFromStore();
+            endTechniqueDrag();
+            return true;
+        }
         if (button == 0 && dragState.isDragging()) {
             attemptDrop(mouseX, mouseY);
             return true;
         }
         return super.mouseReleased(mouseX, mouseY, button);
+    }
+
+    /** 拖拽中：清掉所有 hotbar 槽高亮，再把光标下的槽标成绿(可绑)/红(锁定)。 */
+    private void updateTechniqueHotbarHighlight(double mouseX, double mouseY) {
+        for (int i = 0; i < HOTBAR_SLOTS; i++) {
+            if (hotbarSlots[i] != null) {
+                hotbarSlots[i].setHighlightState(GridSlotComponent.HighlightState.NONE);
+            }
+        }
+        int hIdx = hotbarSlotAtScreen(mouseX, mouseY);
+        if (hIdx >= 0 && hotbarSlots[hIdx] != null) {
+            hotbarSlots[hIdx].setHighlightState(draggedTechniqueLocked
+                ? GridSlotComponent.HighlightState.INVALID
+                : GridSlotComponent.HighlightState.VALID);
+        }
+    }
+
+    /** 结束功法拖拽：清状态 + 清槽位高亮。 */
+    private void endTechniqueDrag() {
+        draggedTechnique = null;
+        draggedTechniqueLocked = false;
+        draggedFromSlot = -1;
+        for (int i = 0; i < HOTBAR_SLOTS; i++) {
+            if (hotbarSlots[i] != null) {
+                hotbarSlots[i].setHighlightState(GridSlotComponent.HighlightState.NONE);
+            }
+        }
     }
 
     private InventoryItem itemAtScreen(double mouseX, double mouseY) {
@@ -3239,6 +3354,72 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             }
             matrices.pop();
         }
+
+        if (draggedTechnique != null) {
+            drawTechniqueDragGhost(context, (int) techniqueDragX, (int) techniqueDragY);
+        }
+
+        // 左下角功法名：绑定功法图标都一样（缺专属贴图，全 fallback 同一张残卷），
+        // 拖拽中 / hover 已绑槽时在左下角标出名字以便分辨。
+        String cornerName = cornerTechniqueName(mouseX, mouseY);
+        if (cornerName != null) {
+            drawCornerTechniqueName(context, cornerName);
+        }
+    }
+
+    /** 左下角要显示的功法名：优先拖拽中的功法，其次 hover 到的已绑定 1-9 槽；都没有则 null。 */
+    private String cornerTechniqueName(int mouseX, int mouseY) {
+        if (draggedTechnique != null) {
+            return draggedTechnique.displayName();
+        }
+        if (activeTab != TAB_TECHNIQUES) {
+            return null;
+        }
+        int hIdx = hotbarSlotAtScreen(mouseX, mouseY);
+        if (hIdx >= 0) {
+            SkillBarEntry entry = SkillBarStore.snapshot().slot(hIdx);
+            if (entry != null && entry.kind() == SkillBarEntry.Kind.SKILL && !entry.displayName().isBlank()) {
+                return entry.displayName();
+            }
+        }
+        return null;
+    }
+
+    /** 在屏幕左下角画一条带半透明底的功法名。 */
+    private void drawCornerTechniqueName(DrawContext context, String name) {
+        int x = 6;
+        int y = this.height - 14;
+        int boxW = textRenderer.getWidth(name) + 8;
+        var matrices = context.getMatrices();
+        matrices.push();
+        matrices.translate(0, 0, 400);
+        context.fill(x - 3, y - 3, x - 3 + boxW, y + textRenderer.fontHeight + 1, 0xC8101010);
+        context.drawText(textRenderer, Text.literal(name), x, y, 0xFFE0B060, true);
+        matrices.pop();
+    }
+
+    /** 功法拖拽跟手 ghost：跟随光标的功法名小标签；锁定态用红框 + ✕ 提示不可绑定。 */
+    private void drawTechniqueDragGhost(DrawContext context, int mouseX, int mouseY) {
+        String label = draggedTechnique.displayName();
+        int padX = 4;
+        int padY = 3;
+        int boxW = textRenderer.getWidth(label) + padX * 2;
+        int boxH = textRenderer.fontHeight + padY * 2;
+        int x = mouseX + 10;
+        int y = mouseY - boxH / 2;
+        int border = draggedTechniqueLocked ? 0xFFCC5555 : 0xFFE0B060;
+        int textColor = draggedTechniqueLocked ? 0xFFCC8888 : 0xFFE8E0D0;
+
+        var matrices = context.getMatrices();
+        matrices.push();
+        matrices.translate(0, 0, 400);
+        context.fill(x - 1, y - 1, x + boxW + 1, y + boxH + 1, border);
+        context.fill(x, y, x + boxW, y + boxH, 0xE8181410);
+        context.drawText(textRenderer, Text.literal(label), x + padX, y + padY, textColor, false);
+        if (draggedTechniqueLocked) {
+            context.drawText(textRenderer, Text.literal("✕"), x + boxW + 3, y + padY, 0xFFFF5555, false);
+        }
+        matrices.pop();
     }
 
     private void drawMultiCellItems(DrawContext context) {
