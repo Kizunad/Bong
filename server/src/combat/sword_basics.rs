@@ -482,9 +482,71 @@ fn cast_sword_attack(
         },
         debug_command: None,
     });
+    // 纯 cosmetic：劈 / 刺命中挥出时各发自己的专属粒子（client `SwordBasicsVfxPlayer`
+    // 早已注册 `bong:sword_cleave_trail` / `bong:sword_thrust_hit`，此前 server 从不
+    // emit）。动画仍走 AttackIntent → `emit_attack_animation_triggers`，故此处只发粒子，
+    // 避免与基础剑斩动画双重触发。
+    emit_attack_particle(world, caster, technique);
     CastResult::Started {
         cooldown_ticks: profile.cooldown_ticks,
         anim_duration_ticks: profile.cast_ticks,
+    }
+}
+
+/// 劈 / 刺各自的客户端已注册粒子 event_id —— 与 `SwordBasicsVfxPlayer` 逐字符对齐。
+fn cleave_thrust_particle_id(technique: SwordTechnique) -> Option<&'static str> {
+    match technique {
+        SwordTechnique::Cleave => Some("bong:sword_cleave_trail"),
+        SwordTechnique::Thrust => Some("bong:sword_thrust_hit"),
+        // 格挡 / 灌注走各自 cast 路径的 emit_self_visuals，不经此函数。
+        SwordTechnique::Parry | SwordTechnique::Infuse => None,
+    }
+}
+
+/// 劈 / 刺粒子的色彩，对齐 client `SwordBasicsVfxPlayer.fallbackRgb`
+/// （CLEAVE=0xC0C0C8 银白、THRUST=0xC03030 暗红）。
+fn cleave_thrust_particle_color(technique: SwordTechnique) -> Option<&'static str> {
+    match technique {
+        SwordTechnique::Cleave => Some("#C0C0C8"),
+        SwordTechnique::Thrust => Some("#C03030"),
+        // 格挡 / 灌注不经此函数（与 cleave_thrust_particle_id 同契约）。
+        SwordTechnique::Parry | SwordTechnique::Infuse => None,
+    }
+}
+
+/// 在 caster 位置 emit 劈 / 刺的专属粒子。caster 无 `Position` 或无 VfxEventRequest
+/// 资源（无头测试）时静默跳过。
+fn emit_attack_particle(
+    world: &mut bevy_ecs::world::World,
+    caster: Entity,
+    technique: SwordTechnique,
+) {
+    let Some(event_id) = cleave_thrust_particle_id(technique) else {
+        return;
+    };
+    let Some(color) = cleave_thrust_particle_color(technique) else {
+        return;
+    };
+    let Some(origin) = world.get::<Position>(caster).map(|position| position.get()) else {
+        return;
+    };
+    // 劈是横向剑势 → 略宽弧线、稍长尾迹；刺是点状穿刺 → 集中、短促。
+    let (count, duration) = match technique {
+        SwordTechnique::Cleave => (10u16, 18u16),
+        SwordTechnique::Thrust => (8u16, 14u16),
+        // id/color guard 已排除，此处不可达；用 return 而非假值。
+        SwordTechnique::Parry | SwordTechnique::Infuse => return,
+    };
+    if let Some(mut events) = world.get_resource_mut::<Events<VfxEventRequest>>() {
+        emit_particle(
+            &mut events,
+            origin + DVec3::new(0.0, 1.0, 0.0),
+            event_id,
+            color,
+            0.85,
+            count,
+            duration,
+        );
     }
 }
 
@@ -1022,5 +1084,163 @@ mod tests {
 
         let known = app.world().get::<KnownTechniques>(attacker).unwrap();
         assert!(known.entries[0].proficiency > 0.0);
+    }
+
+    // ── 劈 / 刺专属粒子（client SwordBasicsVfxPlayer 早注册，此前 server 不 emit）──
+
+    #[test]
+    fn cleave_thrust_particle_ids_match_client_registry() {
+        // 期望：劈 / 刺各映射到 client `SwordBasicsVfxPlayer` 已注册的 event_id，
+        // 逐字符对齐，否则 client 收到 payload 找不到 player → 静默吞掉粒子。
+        assert_eq!(
+            cleave_thrust_particle_id(SwordTechnique::Cleave),
+            Some("bong:sword_cleave_trail"),
+            "劈应发 client CLEAVE_TRAIL（SwordBasicsVfxPlayer.CLEAVE_TRAIL = bong:sword_cleave_trail）"
+        );
+        assert_eq!(
+            cleave_thrust_particle_id(SwordTechnique::Thrust),
+            Some("bong:sword_thrust_hit"),
+            "刺应发 client THRUST_HIT（SwordBasicsVfxPlayer.THRUST_HIT = bong:sword_thrust_hit）"
+        );
+        // 格挡 / 灌注走各自 cast 的 emit_self_visuals，不经此函数 → None，避免重复发粒子。
+        assert_eq!(
+            cleave_thrust_particle_id(SwordTechnique::Parry),
+            None,
+            "格挡不经 emit_attack_particle（它在 cast_sword_parry 里发 sword_parry_spark）"
+        );
+        assert_eq!(
+            cleave_thrust_particle_id(SwordTechnique::Infuse),
+            None,
+            "灌注不经 emit_attack_particle（它在 cast_sword_infuse 里发 sword_infuse_glow）"
+        );
+    }
+
+    #[test]
+    fn cleave_thrust_particle_colors_match_client_fallback_rgb() {
+        // 期望：与 client `SwordBasicsVfxPlayer.fallbackRgb` 同色，避免 server / client
+        // 调色不一致（CLEAVE=0xC0C0C8 银白、THRUST=0xC03030 暗红）。
+        assert_eq!(
+            cleave_thrust_particle_color(SwordTechnique::Cleave),
+            Some("#C0C0C8")
+        );
+        assert_eq!(
+            cleave_thrust_particle_color(SwordTechnique::Thrust),
+            Some("#C03030")
+        );
+        // 格挡 / 灌注不经此函数 → None（与 id 契约一致）。
+        assert_eq!(cleave_thrust_particle_color(SwordTechnique::Parry), None);
+        assert_eq!(cleave_thrust_particle_color(SwordTechnique::Infuse), None);
+    }
+
+    fn emitted_particles(app: &App) -> Vec<VfxEventPayloadV1> {
+        let events = app.world().resource::<Events<VfxEventRequest>>();
+        let mut reader = events.get_reader();
+        reader
+            .read(events)
+            .map(|request| request.payload.clone())
+            .collect()
+    }
+
+    #[test]
+    fn emit_attack_particle_sends_cleave_trail_at_caster() {
+        let mut app = App::new();
+        app.add_event::<VfxEventRequest>();
+        let caster = app
+            .world_mut()
+            .spawn(Position::new(DVec3::new(10.0, 64.0, -3.0)))
+            .id();
+
+        emit_attack_particle(app.world_mut(), caster, SwordTechnique::Cleave);
+
+        let particles = emitted_particles(&app);
+        assert_eq!(
+            particles.len(),
+            1,
+            "劈应只发 1 条粒子（动画走 AttackIntent 路径，此处不重复发）"
+        );
+        match &particles[0] {
+            VfxEventPayloadV1::SpawnParticle {
+                event_id,
+                origin,
+                color,
+                count,
+                ..
+            } => {
+                assert_eq!(
+                    event_id, "bong:sword_cleave_trail",
+                    "劈的粒子 event_id 必须是 client 注册的 CLEAVE_TRAIL"
+                );
+                assert_eq!(
+                    *origin,
+                    [10.0, 65.0, -3.0],
+                    "粒子原点应抬到 caster 头胸高（y+1），而非脚底"
+                );
+                assert_eq!(color.as_deref(), Some("#C0C0C8"));
+                assert_eq!(*count, Some(10));
+            }
+            other => panic!("期望 SpawnParticle，实际 {other:?}"),
+        }
+    }
+
+    #[test]
+    fn emit_attack_particle_sends_thrust_hit_at_caster() {
+        let mut app = App::new();
+        app.add_event::<VfxEventRequest>();
+        let caster = app
+            .world_mut()
+            .spawn(Position::new(DVec3::new(0.0, 70.0, 0.0)))
+            .id();
+
+        emit_attack_particle(app.world_mut(), caster, SwordTechnique::Thrust);
+
+        let particles = emitted_particles(&app);
+        assert_eq!(particles.len(), 1, "刺应只发 1 条粒子");
+        match &particles[0] {
+            VfxEventPayloadV1::SpawnParticle {
+                event_id, color, ..
+            } => {
+                assert_eq!(
+                    event_id, "bong:sword_thrust_hit",
+                    "刺的粒子 event_id 必须是 client 注册的 THRUST_HIT"
+                );
+                assert_eq!(color.as_deref(), Some("#C03030"));
+            }
+            other => panic!("期望 SpawnParticle，实际 {other:?}"),
+        }
+    }
+
+    #[test]
+    fn emit_attack_particle_skips_when_caster_has_no_position() {
+        let mut app = App::new();
+        app.add_event::<VfxEventRequest>();
+        let caster = app.world_mut().spawn_empty().id();
+
+        emit_attack_particle(app.world_mut(), caster, SwordTechnique::Cleave);
+
+        assert!(
+            emitted_particles(&app).is_empty(),
+            "无 Position 的 caster 不应发粒子（静默跳过，不 panic）"
+        );
+    }
+
+    #[test]
+    fn emit_attack_particle_skips_parry_and_infuse() {
+        // 防回归：若误把格挡 / 灌注路由进 emit_attack_particle，会与各自 cast 的
+        // emit_self_visuals 双重发粒子。此函数对这两招必须不发。
+        for technique in [SwordTechnique::Parry, SwordTechnique::Infuse] {
+            let mut app = App::new();
+            app.add_event::<VfxEventRequest>();
+            let caster = app
+                .world_mut()
+                .spawn(Position::new(DVec3::new(1.0, 64.0, 1.0)))
+                .id();
+
+            emit_attack_particle(app.world_mut(), caster, technique);
+
+            assert!(
+                emitted_particles(&app).is_empty(),
+                "{technique:?} 不应经 emit_attack_particle 发粒子（它有自己的 emit_self_visuals）"
+            );
+        }
     }
 }

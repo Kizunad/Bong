@@ -176,7 +176,7 @@ mod tests {
             SoundRecipeRegistry::load_default().expect("default audio recipes should load");
         assert_eq!(
             registry.len(),
-            245,
+            246,
             "audio registry should exclude removed slide and double-jump movement recipes \
              plus include 7 supply_coffin recipes (break + open common/rare/precious + emerge) \
              plus 1 ambient_dan_zong recipe \
@@ -196,7 +196,8 @@ mod tests {
              plus 5 woliu erosion-path recipes (woliu_ambient_vortex / woliu_void_vortex / woliu_swallowing_vortex / woliu_vortex_echo / woliu_void_core) \
              plus 1 tribulation_ascend_success recipe (AV r3-P3#3 渡劫成功 AV) \
              plus 5 sword_path cast recipes (sword_condense_edge / sword_qi_slash / sword_resonance / \
-             sword_manifest_summon / sword_manifest_strike — plan-sword-path-v2 P4 server AV emit 接线)"
+             sword_manifest_summon / sword_manifest_strike — plan-sword-path-v2 P4 server AV emit 接线) \
+             plus 1 beng_quan recipe (崩拳专属施法音效，不再借用 baomai_hit_heavy 通用槽)"
         );
         assert!(
             registry.get("beast_trap_snap").is_some(),
@@ -416,6 +417,10 @@ mod tests {
         assert!(registry.get("npc_footstep_water").is_some());
         assert!(registry.get("ambient_detail_tsy_metal_echo").is_some());
         assert!(registry.get("baomai_hit_critical").is_some());
+        assert!(
+            registry.get("beng_quan").is_some(),
+            "崩拳专属施法音效 recipe `beng_quan` 必须加载（不再借用 baomai_hit_heavy 通用槽）"
+        );
         assert!(registry.get("dugu_poison_signature").is_some());
         for key in [
             "gather_herb_tick",

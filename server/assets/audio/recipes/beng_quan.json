@@ -1,0 +1,21 @@
+{
+  "id": "beng_quan",
+  "layers": [
+    {
+      "sound": "minecraft:entity.player.attack.knockback",
+      "volume": 0.55,
+      "pitch": 0.7,
+      "delay_ticks": 0
+    },
+    {
+      "sound": "minecraft:entity.wither.shoot",
+      "volume": 0.3,
+      "pitch": 1.7,
+      "delay_ticks": 1
+    }
+  ],
+  "priority": 70,
+  "attenuation": "MELEE",
+  "category": "PLAYERS",
+  "bus": "COMBAT"
+}

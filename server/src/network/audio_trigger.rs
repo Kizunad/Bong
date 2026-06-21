@@ -614,7 +614,8 @@ pub fn emit_baomai_v3_audio_triggers(
 
 fn baomai_recipe_for_skill(skill: BaomaiSkillId) -> &'static str {
     match skill {
-        BaomaiSkillId::BengQuan => "baomai_hit_heavy",
+        // 崩拳走专属配方（穿透爆发的形意拳直拳），不再借用通用 baomai_hit_heavy 槽。
+        BaomaiSkillId::BengQuan => "beng_quan",
         BaomaiSkillId::FullPowerCharge => "baomai_cast",
         BaomaiSkillId::FullPowerRelease => "baomai_signature",
         BaomaiSkillId::MountainShake => "baomai_hit_critical",
