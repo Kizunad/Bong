@@ -14,6 +14,7 @@ use crate::combat::anqi_v2::{
     AnqiSkillId, ArmorPierceEvent, EchoFractalEvent, MultiShotEvent, QiInjectionEvent,
 };
 use crate::combat::baomai_v3::{BaomaiSkillEvent, BaomaiSkillId};
+use crate::combat::body_conditioning::GuangboTicaoPracticeEvent;
 use crate::combat::carrier::CarrierChargedEvent;
 use crate::combat::components::WoundKind;
 use crate::combat::events::{AttackIntent, AttackSource, CombatEvent, DefenseIntent};
@@ -50,6 +51,18 @@ const ANIM_BREAKTHROUGH_GUYUAN: &str = "bong:breakthrough_guyuan";
 const ANIM_BREAKTHROUGH_TONGLING: &str = "bong:breakthrough_tongling";
 const ANIM_TRIBULATION_BRACE: &str = "bong:tribulation_brace";
 const ANIM_HARVEST_CROUCH: &str = "bong:harvest_crouch";
+/// 广播体操练习完成 → 复用 guard_raise（举臂伸展姿态），纯 cosmetic 复用，无净新动画。
+const ANIM_GUANGBO_TICAO: &str = "bong:guard_raise";
+/// 广播体操练习正反馈粒子 —— 走 `bong:vfx_event` JSON 通道（与所有 gameplay 粒子一致），
+/// 由客户端 `VfxRegistry` 查到 `GuangboTicaoPracticePlayer`，其内部 spawn vanilla
+/// HAPPY_VILLAGER（绿色心叶星点）粒子。复用 vanilla 贴图无新资产。
+///
+/// 必须与 client `GuangboTicaoPracticePlayer.EVENT_ID` 精确一致，否则客户端查表 miss、
+/// 粒子静默丢弃。改一处必须改另一处。
+const VFX_GUANGBO_TICAO_PRACTICE: &str = "bong:guangbo_ticao_practice";
+/// 广播体操动画分层 priority —— 落在 schema 合法区间 [100, 3999] 内、低于战斗招式
+/// （COMBAT_PRIORITY=1000），使练习姿态让位于实际战斗动画。
+const GUANGBO_TICAO_PRIORITY: u16 = 500;
 const ANIM_LINGTIAN_TILL: &str = "bong:lingtian_till";
 const BOTANY_HARVEST_VFX: &str = "bong:botany_harvest";
 const LINGTIAN_TILL_VFX: &str = "bong:lingtian_till";
@@ -343,6 +356,52 @@ pub fn emit_woliu_v2_visual_stop_triggers(
         );
     }
     seen_states.retain(|entity, _| seen_entities.contains(entity));
+}
+
+/// 广播体操（body.guangbo_ticao）练习完成 → 动画 + 粒子（纯 cosmetic）。
+///
+/// 读 `GuangboTicaoPracticeEvent`（由 cast_emit::tick_casts_or_interrupt 在 cast
+/// 自然完成时 emit），对练习者发：
+/// 1. `PlayAnim`：复用 `guard_raise`（举臂伸展姿态），无净新动画资产。
+/// 2. `SpawnParticle`：event_id `bong:guangbo_ticao_practice`，走 `bong:vfx_event` JSON 通道
+///    （与所有 gameplay 粒子一致），客户端 `GuangboTicaoPracticePlayer` 据此 spawn vanilla
+///    `happy_villager`（绿色心叶星点）正反馈，复用 vanilla 贴图无净新资产。
+///    **不可**直接发 `minecraft:happy_villager`——那会让客户端 `VfxRegistry` 查表 miss、粒子静默丢弃。
+///
+/// **纯 cosmetic**：不读 / 改任何真元 / proficiency 状态（守恒由消费侧
+/// `consume_guangbo_practice_events` 负责）。caster 无 `Position`/`UniqueId`（断线）时
+/// 动画静默 skip，粒子仍按其 Position 发出（无 Position 则整体 skip）。
+pub fn emit_guangbo_ticao_visual_triggers(
+    mut practices: EventReader<GuangboTicaoPracticeEvent>,
+    players: Query<PlayerAnimTargetItem<'_>, PlayerAnimTargetFilter>,
+    mut vfx_events: EventWriter<VfxEventRequest>,
+) {
+    for event in practices.read() {
+        // 1. 动画——复用 guard_raise 举臂伸展。caster 无 Position/UniqueId 时静默 skip。
+        emit_play_for_entity(
+            event.entity,
+            ANIM_GUANGBO_TICAO,
+            GUANGBO_TICAO_PRIORITY,
+            Some(2),
+            &players,
+            &mut vfx_events,
+        );
+
+        // 2. 粒子——绿色心叶星点正反馈，围绕练习者头部发出。无 Position 时跳过粒子。
+        let Ok((position, _unique_id)) = players.get(event.entity) else {
+            continue;
+        };
+        let origin = position.get();
+        emit_spawn_particle(
+            &mut vfx_events,
+            VFX_GUANGBO_TICAO_PRACTICE,
+            valence::prelude::DVec3::new(origin.x, origin.y + 1.2, origin.z),
+            "#7FE38F",
+            0.6,
+            6,
+            20,
+        );
+    }
 }
 
 pub fn emit_botany_harvest_visual_triggers(
@@ -1647,6 +1706,64 @@ mod tests {
             }
             other => panic!("expected SpawnParticle, got {other:?}"),
         }
+    }
+
+    fn add_guangbo_visual_test_system(app: &mut App) {
+        app.add_event::<GuangboTicaoPracticeEvent>();
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(Update, emit_guangbo_ticao_visual_triggers);
+    }
+
+    #[test]
+    fn guangbo_practice_emits_stretch_anim_and_happy_particle_for_skinned_player() {
+        let mut app = App::new();
+        add_guangbo_visual_test_system(&mut app);
+        let player = spawn_skinned_npc_target(&mut app, "Stretcher", [3.0, 64.0, 9.0]);
+
+        app.world_mut()
+            .send_event(GuangboTicaoPracticeEvent { entity: player });
+        app.update();
+
+        let emitted = drain_vfx(&mut app);
+        assert_eq!(
+            emitted.len(),
+            2,
+            "skinned 练习者应收 PlayAnim + SpawnParticle 两条 VFX，实际 {} 条",
+            emitted.len()
+        );
+        assert_play_anim(&emitted[0], ANIM_GUANGBO_TICAO, GUANGBO_TICAO_PRIORITY);
+        assert_spawn_particle(&emitted[1], VFX_GUANGBO_TICAO_PRACTICE, Some(6));
+        // 粒子在头部上方（origin.y + 1.2），颜色为温和绿。
+        match &emitted[1].payload {
+            VfxEventPayloadV1::SpawnParticle { origin, color, .. } => {
+                assert_eq!(color.as_deref(), Some("#7FE38F"));
+                assert!(
+                    (origin[1] - (64.0 + 1.2)).abs() < 1e-6,
+                    "练习粒子应在头部上方 y+1.2，实际 y={}",
+                    origin[1]
+                );
+            }
+            other => panic!("expected SpawnParticle, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn guangbo_practice_without_position_emits_nothing() {
+        // caster 无 Position/UniqueId（断线）→ 动画 skip + 粒子 skip（粒子也依赖 Position）。
+        let mut app = App::new();
+        add_guangbo_visual_test_system(&mut app);
+        let player = app.world_mut().spawn_empty().id();
+
+        app.world_mut()
+            .send_event(GuangboTicaoPracticeEvent { entity: player });
+        app.update();
+
+        let emitted = drain_vfx(&mut app);
+        assert!(
+            emitted.is_empty(),
+            "无 Position/UniqueId 的练习者不应产生任何 VFX，实际 {} 条",
+            emitted.len()
+        );
     }
 
     #[test]

@@ -19,6 +19,7 @@ use valence::prelude::{
 };
 
 use crate::alchemy::pill::apply_wound_heal;
+use crate::combat::body_conditioning::{GuangboTicaoPracticeEvent, GUANGBO_TICAO_ID};
 use crate::combat::components::{
     BodyPart, CastSource, Casting, QuickSlotBindings, SkillBarBindings, StatusEffects, Wounds,
 };
@@ -94,6 +95,7 @@ pub fn tick_casts_or_interrupt(
     decay_profiles: Option<Res<DecayProfileRegistry>>,
     mut audio_events: AudioEmitWriter,
     mut yidao_complete_events: EventWriter<YidaoCastCompleteEvent>,
+    mut guangbo_practice_events: EventWriter<GuangboTicaoPracticeEvent>,
     mut effect_intents: ParamSet<(
         EventWriter<ApplyStatusEffectIntent>,
         EventWriter<LifespanExtensionIntent>,
@@ -229,6 +231,21 @@ pub fn tick_casts_or_interrupt(
                     skill_id: skill_id.to_string(),
                     completed_at_tick: clock.tick,
                 });
+            }
+            // 广播体操（body.guangbo_ticao）：cast 自然完成 = 一次练习。
+            // 发 GuangboTicaoPracticeEvent → consume_guangbo_practice_events 走真元门
+            // 扣 qi_cost 并递增 proficiency（守恒在消费侧；此处只负责"练习发生了"）。
+            // AV（练习姿态 + 轻量正反馈粒子 + 伸展音）纯加法 cosmetic。
+            if casting.skill_id.as_deref() == Some(GUANGBO_TICAO_ID) {
+                guangbo_practice_events.send(GuangboTicaoPracticeEvent { entity });
+                emit_recipe_audio_with_context(
+                    &mut audio_events,
+                    "guangbo_ticao_practice",
+                    entity,
+                    position.get(),
+                    None,
+                    0.8,
+                );
             }
             // 1) 消耗：物品快捷槽找到绑定 instance_id，stack -= 1；技能栏只进入冷却。
             let mut effect_to_apply: Option<ItemEffect> = None;
@@ -899,7 +916,8 @@ mod tests {
     };
     use crate::network::audio_event_emit::{AudioRecipient, PlaySoundRecipeRequest};
     use std::collections::HashMap;
-    use valence::prelude::{App, DVec3, Events, Position, Query, Update, With};
+    use valence::prelude::{App, DVec3, Entity, Events, Position, Query, Update, With};
+    use valence::testing::create_mock_client;
 
     fn make_inventory_with_stack(instance_id: u64, stack: u32) -> PlayerInventory {
         let item = ItemInstance {
@@ -1050,6 +1068,7 @@ mod tests {
         app.insert_resource(ItemRegistry::from_map(templates));
         app.add_event::<crate::network::audio_event_emit::PlaySoundRecipeRequest>();
         app.add_event::<crate::combat::yidao::YidaoCastCompleteEvent>();
+        app.add_event::<GuangboTicaoPracticeEvent>();
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<crate::cultivation::lifespan::LifespanExtensionIntent>();
         app.add_event::<crate::cultivation::poison_trait::ConsumePoisonPillIntent>();
@@ -2089,6 +2108,7 @@ mod tests {
         // PlaySoundRecipeRequest event is required by the SystemParam)
         app.add_event::<crate::network::audio_event_emit::PlaySoundRecipeRequest>();
         app.add_event::<crate::combat::yidao::YidaoCastCompleteEvent>();
+        app.add_event::<GuangboTicaoPracticeEvent>();
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<crate::cultivation::lifespan::LifespanExtensionIntent>();
         app.add_event::<crate::cultivation::poison_trait::ConsumePoisonPillIntent>();
@@ -2188,5 +2208,162 @@ mod tests {
             emitted[0].recipient,
             AudioRecipient::Radius { .. }
         ));
+    }
+
+    // ── 广播体操 cast 完成 → GuangboTicaoPracticeEvent + AV recipe ────────────
+
+    /// 搭建跑 `tick_casts_or_interrupt` 所需的最小 App（注册全部依赖事件 + 音效 registry）。
+    fn build_cast_tick_app(clock_tick: u64) -> App {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: clock_tick });
+        app.insert_resource(ItemRegistry::from_map(HashMap::new()));
+        app.insert_resource(
+            crate::audio::SoundRecipeRegistry::load_default().expect("default recipes load"),
+        );
+        app.init_resource::<crate::audio::implementation::AudioImplementationDedup>();
+        app.add_event::<PlaySoundRecipeRequest>();
+        app.add_event::<crate::combat::yidao::YidaoCastCompleteEvent>();
+        app.add_event::<GuangboTicaoPracticeEvent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<crate::cultivation::lifespan::LifespanExtensionIntent>();
+        app.add_event::<crate::cultivation::poison_trait::ConsumePoisonPillIntent>();
+        app.add_systems(Update, tick_casts_or_interrupt);
+        app
+    }
+
+    fn empty_inventory_for_cast() -> PlayerInventory {
+        PlayerInventory {
+            revision: InventoryRevision(1),
+            containers: vec![],
+            equipped: HashMap::new(),
+            hotbar: Default::default(),
+            bone_coins: 0,
+            max_weight: 50.0,
+        }
+    }
+
+    fn guangbo_casting(skill_id: &str) -> Casting {
+        Casting {
+            source: CastSource::SkillBar,
+            slot: 0,
+            started_at_tick: 0,
+            duration_ticks: 60, // 与 known_techniques.body.guangbo_ticao cast_ticks 一致
+            started_at_ms: 0,
+            duration_ms: 3000,
+            bound_instance_id: None,
+            start_position: DVec3::new(0.0, 64.0, 0.0),
+            complete_cooldown_ticks: 200,
+            skill_id: Some(skill_id.to_string()),
+            skill_config: None,
+        }
+    }
+
+    fn spawn_caster(app: &mut App, casting: Casting) -> Entity {
+        let (client_bundle, _helper) = create_mock_client("Stretcher");
+        app.world_mut()
+            .spawn(client_bundle)
+            .insert((
+                Position::new([0.0, 64.0, 0.0]),
+                casting,
+                Wounds::default(),
+                empty_inventory_for_cast(),
+                PlayerState::default(),
+                QuickSlotBindings::default(),
+                SkillBarBindings::default(),
+            ))
+            .id()
+    }
+
+    #[test]
+    fn guangbo_ticao_natural_completion_sends_practice_event_and_audio() {
+        // clock=100 >= started 0 + duration 60 → 自然完成。
+        let mut app = build_cast_tick_app(100);
+        let entity = spawn_caster(&mut app, guangbo_casting(GUANGBO_TICAO_ID));
+
+        app.update();
+
+        // 1) GuangboTicaoPracticeEvent 已发出，指向正确的练习者。
+        let practice_events: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<GuangboTicaoPracticeEvent>>()
+            .drain()
+            .collect();
+        assert_eq!(
+            practice_events.len(),
+            1,
+            "广播体操 cast 自然完成应恰好发 1 条 GuangboTicaoPracticeEvent（死事件接通），实际 {} 条",
+            practice_events.len()
+        );
+        assert_eq!(
+            practice_events[0].entity, entity,
+            "练习事件应指向施法者本人"
+        );
+
+        // 2) Casting 已被移除（cast 完成）。
+        assert!(
+            app.world().get::<Casting>(entity).is_none(),
+            "cast 完成后 Casting 组件应被移除"
+        );
+
+        // 3) 练习 AV 音效已 emit（guangbo_ticao_practice recipe）。
+        let audio: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<PlaySoundRecipeRequest>>()
+            .drain()
+            .collect();
+        assert!(
+            audio
+                .iter()
+                .any(|e| e.recipe_id == "guangbo_ticao_practice"),
+            "广播体操完成应 emit guangbo_ticao_practice 音效，实际 recipes={:?}",
+            audio
+                .iter()
+                .map(|e| e.recipe_id.as_str())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn non_guangbo_skill_completion_sends_no_practice_event() {
+        // 负锚点：其它 skill_id（无 resolver 的通用招）完成时不应发广播体操练习事件。
+        let mut app = build_cast_tick_app(100);
+        let _entity = spawn_caster(&mut app, guangbo_casting("some.other.skill"));
+
+        app.update();
+
+        let practice_events: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<GuangboTicaoPracticeEvent>>()
+            .drain()
+            .collect();
+        assert!(
+            practice_events.is_empty(),
+            "非广播体操招式完成不得发 GuangboTicaoPracticeEvent，实际 {} 条",
+            practice_events.len()
+        );
+    }
+
+    #[test]
+    fn guangbo_ticao_not_yet_complete_sends_no_practice_event() {
+        // clock=10 < started 0 + duration 60 → cast 未完成 → 不发练习事件，Casting 保留。
+        let mut app = build_cast_tick_app(10);
+        let entity = spawn_caster(&mut app, guangbo_casting(GUANGBO_TICAO_ID));
+
+        app.update();
+
+        let practice_events: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<GuangboTicaoPracticeEvent>>()
+            .drain()
+            .collect();
+        assert!(
+            practice_events.is_empty(),
+            "cast 未完成不应发练习事件，实际 {} 条",
+            practice_events.len()
+        );
+        assert!(
+            app.world().get::<Casting>(entity).is_some(),
+            "cast 未完成时 Casting 应仍在"
+        );
     }
 }

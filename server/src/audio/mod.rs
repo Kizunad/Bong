@@ -176,7 +176,7 @@ mod tests {
             SoundRecipeRegistry::load_default().expect("default audio recipes should load");
         assert_eq!(
             registry.len(),
-            257,
+            258,
             "audio registry should exclude removed slide and double-jump movement recipes \
              plus include 7 supply_coffin recipes (break + open common/rare/precious + emerge) \
              plus 1 ambient_dan_zong recipe \
@@ -203,7 +203,14 @@ mod tests {
              全部复用 vanilla 音色分层，无新音频文件) \
              plus 5 woliu 基础招式 AV 差异化 recipes (woliu_hold_sustain / woliu_burst_pop / \
              woliu_mouth_funnel / woliu_pull_drag / woliu_heart_field — 持涡/瞬涡/涡口/涡引/涡心 \
-             各招专属施法音效，全部复用 vanilla 音色分层，无新音频文件)"
+             各招专属施法音效，全部复用 vanilla 音色分层，无新音频文件) \
+             plus 1 guangbo_ticao_practice recipe (广播体操练习完成 AV — 皮革整甲伸展声 + \
+             紫水晶清音正反馈，全部复用 vanilla 音色分层，无新音频文件)"
+        );
+        assert!(
+            registry.get("guangbo_ticao_practice").is_some(),
+            "广播体操练习音效 recipe `guangbo_ticao_practice` 必须加载（\
+             cast_emit::tick_casts_or_interrupt 在 body.guangbo_ticao cast 完成时 emit 引用）"
         );
         for anqi_recipe in [
             "anqi_charge_seal",
