@@ -246,6 +246,9 @@ public final class VfxBootstrap {
         registry.register(DeadDropBreakPlayer.EVENT_ID,         new DeadDropBreakPlayer());
         registry.register(MovementVfxPlayer.DASH,
             new MovementVfxPlayer(MovementVfxPlayer.Kind.DASH));
+        // 广播体操（body.guangbo_ticao）练习正反馈粒子 —— server emit_guangbo_ticao_visual_triggers 引用。
+        // vanilla HAPPY_VILLAGER 绿色心叶星点，复用 vanilla 贴图无新资产。
+        registry.register(GuangboTicaoPracticePlayer.EVENT_ID, new GuangboTicaoPracticePlayer());
         AlchemyCombatPillVfxPlayer combatPills = new AlchemyCombatPillVfxPlayer();
         for (net.minecraft.util.Identifier eventId : AlchemyCombatPillVfxPlayer.EVENT_IDS) {
             registry.register(eventId, combatPills);

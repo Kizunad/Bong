@@ -728,6 +728,9 @@ pub fn register(app: &mut App) {
             vfx_animation_trigger::emit_anqi_visual_triggers,
             // 蛊道两招（凝针 / 灌毒蛊）cast → 动画 + 粒子（纯 cosmetic，复用现有资产）。
             vfx_animation_trigger::emit_dugu_needle_visual_triggers,
+            // 广播体操练习完成 → guard_raise 伸展姿态 + happy_villager 正反馈粒子
+            //（纯 cosmetic，复用现有 anim + vanilla 粒子，无净新资产）。
+            vfx_animation_trigger::emit_guangbo_ticao_visual_triggers,
         )
             .before(vfx_event_emit::emit_vfx_event_payloads),
     );
