@@ -1,0 +1,11 @@
+{
+  "id": "sword_manifest_summon",
+  "layers": [
+    { "sound": "minecraft:item.trident.return", "volume": 0.55, "pitch": 1.2, "delay_ticks": 0 },
+    { "sound": "minecraft:block.beacon.activate", "volume": 0.25, "pitch": 1.6, "delay_ticks": 4 }
+  ],
+  "priority": 60,
+  "attenuation": "world_3d",
+  "category": "PLAYERS",
+  "bus": "COMBAT"
+}

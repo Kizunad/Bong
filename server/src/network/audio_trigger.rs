@@ -46,6 +46,7 @@ use crate::npc::spawn::NpcMarker;
 use crate::schema::tribulation::DuXuOutcomeV1;
 use crate::skill::events::{SkillLvUp, SkillScrollUsed, SkillXpGain, XpGainSource};
 use crate::social::events::{SocialPactEvent, SocialRenownDeltaEvent};
+use crate::sword_path::av_event::{SwordPathSkillCastEvent, SwordPathSkillId};
 
 #[derive(Debug, Default)]
 pub struct AudioTriggerState {
@@ -137,8 +138,10 @@ pub fn emit_combat_audio_triggers(
                 AttackSource::QiNeedle => school_hit_recipe("dugu", event.damage, critical),
                 AttackSource::SwordCleave => "sword_cleave",
                 AttackSource::SwordThrust => "sword_thrust",
-                // plan-sword-path-v2 §P4 留剑道五招专属音效，先沿用基础剑斩配方
-                // 保证音效链路不哑。
+                // plan-sword-path-v2 §P4：这里是**命中冲击**音效（伤害落地一刻），
+                // 沿用基础剑斩配方保证打击感。各招的**施法**专属音效（凝锋 / 剑气 /
+                // 剑鸣 / 化形 / 天门）走 emit_sword_path_audio_triggers 读
+                // SwordPathSkillCastEvent 独立 emit，与命中音效互补分层。
                 AttackSource::SwordPathCondenseEdge => "sword_cleave",
                 AttackSource::SwordPathQiSlash => "sword_thrust",
                 AttackSource::SwordPathResonance => "sword_cleave",
@@ -617,6 +620,59 @@ fn baomai_recipe_for_skill(skill: BaomaiSkillId) -> &'static str {
         BaomaiSkillId::MountainShake => "baomai_hit_critical",
         BaomaiSkillId::BloodBurn => "baomai_hit_light",
         BaomaiSkillId::Disperse => "baomai_signature",
+    }
+}
+
+/// plan-sword-path-v2 P4 — 剑道五招 cast → 各招专属音效配方。
+///
+/// 读 `SwordPathSkillCastEvent`，按招式发 `PlaySoundRecipeRequest`，引用客户端已
+/// 注册的 `audio_recipes/sword_*.json`。caster 无 `Position` 时落到 cast center
+/// （AV 事件自带），保证施法者断 Position 也能出招声。
+///
+/// **纯 cosmetic**：只发音效，不读 / 改任何战斗 / 真元状态。
+pub fn emit_sword_path_audio_triggers(
+    mut casts: EventReader<SwordPathSkillCastEvent>,
+    positions: Query<&Position>,
+    mut audio: AudioEmitWriter,
+) {
+    let mut audio = audio.context();
+    for event in casts.read() {
+        let origin = positions
+            .get(event.caster)
+            .map(|position| position.get())
+            .unwrap_or(event.center);
+        emit_play(
+            &mut audio,
+            sword_path_recipe_for_skill(event.skill),
+            event.caster,
+            origin,
+            Some(sword_path_audio_flag(event.skill).to_string()),
+            1.0,
+            0.0,
+        );
+    }
+}
+
+fn sword_path_recipe_for_skill(skill: SwordPathSkillId) -> &'static str {
+    match skill {
+        SwordPathSkillId::CondenseEdge => "sword_condense_edge",
+        SwordPathSkillId::QiSlash => "sword_qi_slash",
+        SwordPathSkillId::Resonance => "sword_resonance",
+        SwordPathSkillId::Manifest => "sword_manifest_summon",
+        // 蓄力沿用 infuse（注剑蓄势）；释放用 manifest_strike（开天劈击）。
+        SwordPathSkillId::HeavenGateCharge => "sword_infuse",
+        SwordPathSkillId::HeavenGateRelease => "sword_manifest_strike",
+    }
+}
+
+fn sword_path_audio_flag(skill: SwordPathSkillId) -> &'static str {
+    match skill {
+        SwordPathSkillId::CondenseEdge => "sword_path_condense_edge",
+        SwordPathSkillId::QiSlash => "sword_path_qi_slash",
+        SwordPathSkillId::Resonance => "sword_path_resonance",
+        SwordPathSkillId::Manifest => "sword_path_manifest",
+        SwordPathSkillId::HeavenGateCharge => "sword_path_heaven_gate_charge",
+        SwordPathSkillId::HeavenGateRelease => "sword_path_heaven_gate_release",
     }
 }
 
@@ -1767,5 +1823,134 @@ mod tests {
             emitted[1].recipient,
             AudioRecipient::Single(entity) if entity == target
         ));
+    }
+
+    // ─── plan-sword-path-v2 P4：emit_sword_path_audio_triggers ───
+
+    fn sword_path_cast_event(
+        skill: SwordPathSkillId,
+        caster: Entity,
+        center: DVec3,
+    ) -> SwordPathSkillCastEvent {
+        SwordPathSkillCastEvent {
+            skill,
+            caster,
+            center,
+            direction: None,
+            tick: 10,
+        }
+    }
+
+    fn setup_sword_path_audio_app() -> App {
+        let mut app = App::new();
+        app.init_resource::<AudioImplementationDedup>();
+        app.add_event::<SwordPathSkillCastEvent>();
+        app.add_event::<PlaySoundRecipeRequest>();
+        app.add_systems(Update, emit_sword_path_audio_triggers);
+        app
+    }
+
+    /// 五招各 emit 其专属音效配方 + 专属 flag（按招式 dedup）。
+    #[test]
+    fn sword_path_skills_emit_dedicated_recipes() {
+        let mut app = setup_sword_path_audio_app();
+        let caster = app.world_mut().spawn(Position::new([0.0, 64.0, 0.0])).id();
+        let center = DVec3::new(0.0, 64.0, 0.0);
+
+        for skill in [
+            SwordPathSkillId::CondenseEdge,
+            SwordPathSkillId::QiSlash,
+            SwordPathSkillId::Resonance,
+            SwordPathSkillId::Manifest,
+            SwordPathSkillId::HeavenGateCharge,
+            SwordPathSkillId::HeavenGateRelease,
+        ] {
+            app.world_mut()
+                .send_event(sword_path_cast_event(skill, caster, center));
+        }
+        app.update();
+
+        let emitted: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<PlaySoundRecipeRequest>>()
+            .drain()
+            .collect();
+        let recipes: Vec<_> = emitted.iter().map(|e| e.recipe_id.as_str()).collect();
+        assert_eq!(
+            recipes,
+            vec![
+                "sword_condense_edge",
+                "sword_qi_slash",
+                "sword_resonance",
+                "sword_manifest_summon",
+                "sword_infuse",
+                "sword_manifest_strike",
+            ],
+            "六个 cast 阶段（含天门 charge/release）各应 emit 其专属配方"
+        );
+        // flag 也按招式区分，便于 client HUD / dedup
+        let flags: Vec<_> = emitted
+            .iter()
+            .map(|e| e.flag.as_deref().unwrap_or(""))
+            .collect();
+        assert_eq!(
+            flags,
+            vec![
+                "sword_path_condense_edge",
+                "sword_path_qi_slash",
+                "sword_path_resonance",
+                "sword_path_manifest",
+                "sword_path_heaven_gate_charge",
+                "sword_path_heaven_gate_release",
+            ]
+        );
+    }
+
+    /// 所有引用的剑道配方都必须在 server SoundRecipeRegistry 注册（否则路由 fallback 报 warn）。
+    #[test]
+    fn all_referenced_sword_path_recipes_exist_in_registry() {
+        let registry = SoundRecipeRegistry::load_default().expect("default recipes should load");
+        for skill in [
+            SwordPathSkillId::CondenseEdge,
+            SwordPathSkillId::QiSlash,
+            SwordPathSkillId::Resonance,
+            SwordPathSkillId::Manifest,
+            SwordPathSkillId::HeavenGateCharge,
+            SwordPathSkillId::HeavenGateRelease,
+        ] {
+            let recipe_id = super::sword_path_recipe_for_skill(skill);
+            assert!(
+                registry.get(recipe_id).is_some(),
+                "剑道配方 `{recipe_id}`（招式 {skill:?}）必须在 server registry 注册，\
+                 否则 recipient() fallback 到 Single 并 warn——server 与 client 音效资产脱节"
+            );
+        }
+    }
+
+    /// caster 无 Position → 落到 event.center，仍 emit 音效（不哑）。
+    #[test]
+    fn sword_path_audio_falls_back_to_center_without_position() {
+        let mut app = setup_sword_path_audio_app();
+        // caster 没有 Position component
+        let caster = app.world_mut().spawn_empty().id();
+        app.world_mut().send_event(sword_path_cast_event(
+            SwordPathSkillId::QiSlash,
+            caster,
+            DVec3::new(7.0, 64.0, 7.0),
+        ));
+        app.update();
+
+        let emitted: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<PlaySoundRecipeRequest>>()
+            .drain()
+            .collect();
+        assert_eq!(emitted.len(), 1, "无 Position 也应出招声（落到 center）");
+        assert_eq!(emitted[0].recipe_id, "sword_qi_slash");
+        assert_eq!(
+            emitted[0].pos,
+            Some([7, 64, 7]),
+            "无 Position 时音源应落到 event.center"
+        );
     }
 }

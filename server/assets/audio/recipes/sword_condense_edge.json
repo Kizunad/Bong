@@ -1,0 +1,10 @@
+{
+  "id": "sword_condense_edge",
+  "layers": [
+    { "sound": "minecraft:block.grindstone.use", "volume": 0.55, "pitch": 1.35, "delay_ticks": 0 }
+  ],
+  "priority": 55,
+  "attenuation": "world_3d",
+  "category": "PLAYERS",
+  "bus": "COMBAT"
+}

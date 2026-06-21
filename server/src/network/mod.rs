@@ -720,6 +720,10 @@ pub fn register(app: &mut App) {
             vfx_animation_trigger::emit_baomai_v3_visual_triggers,
             animation_trigger::emit_animation_trigger_components,
             vfx_animation_trigger::emit_tuike_v2_visual_triggers,
+            // 必须在 heaven_gate_cast_system 之后跑：天门结算时 emit 的 HeavenGateRelease AV
+            // 才能同 tick 播出，否则 charge→release 间有 1 tick(~50ms)肉眼可察抖动。
+            vfx_animation_trigger::emit_sword_path_visual_triggers
+                .after(crate::sword_path::skill_register::heaven_gate_cast_system),
         )
             .before(vfx_event_emit::emit_vfx_event_payloads),
     );
@@ -740,6 +744,7 @@ pub fn register(app: &mut App) {
             audio_trigger::emit_woliu_v2_audio_triggers,
             audio_trigger::emit_baomai_v3_audio_triggers,
             audio_trigger::emit_tuike_v2_audio_triggers,
+            audio_trigger::emit_sword_path_audio_triggers,
             audio_trigger::emit_skill_audio_triggers,
             audio_trigger::emit_social_audio_triggers
                 .after(crate::cultivation::possession::process_duo_she_requests),

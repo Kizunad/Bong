@@ -176,7 +176,7 @@ mod tests {
             SoundRecipeRegistry::load_default().expect("default audio recipes should load");
         assert_eq!(
             registry.len(),
-            240,
+            245,
             "audio registry should exclude removed slide and double-jump movement recipes \
              plus include 7 supply_coffin recipes (break + open common/rare/precious + emerge) \
              plus 1 ambient_dan_zong recipe \
@@ -194,7 +194,9 @@ mod tests {
              plus 5 placeable container runtime recipes \
              plus 1 dead_drop_ward_break recipe \
              plus 5 woliu erosion-path recipes (woliu_ambient_vortex / woliu_void_vortex / woliu_swallowing_vortex / woliu_vortex_echo / woliu_void_core) \
-             plus 1 tribulation_ascend_success recipe (AV r3-P3#3 渡劫成功 AV)"
+             plus 1 tribulation_ascend_success recipe (AV r3-P3#3 渡劫成功 AV) \
+             plus 5 sword_path cast recipes (sword_condense_edge / sword_qi_slash / sword_resonance / \
+             sword_manifest_summon / sword_manifest_strike — plan-sword-path-v2 P4 server AV emit 接线)"
         );
         assert!(
             registry.get("beast_trap_snap").is_some(),
