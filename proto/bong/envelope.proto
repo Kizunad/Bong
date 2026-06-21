@@ -162,6 +162,8 @@ message ServerDataEnvelope {
     WorkbenchOpen workbench_open = 132;
     // plan-shield-block-v1 P4: 盾格挡命中通知（携带 template_id 触发材质差异化视听）。
     ShieldBlockHit shield_block_hit = 134;
+    // ─── 震脉 v2 HUD S2C（mirror dugu_v2 dual-emit；点亮 client ZhenmaiHudServerDataHandler） ─
+    ZhenmaiHud zhenmai_hud = 135;
     // 字段编号一旦分配永不复用（buf breaking 检测保证）。
   }
 }
@@ -3764,6 +3766,22 @@ message PermanentQiMaxDecayApplied {
   float  loss         = 2;
   float  qi_max_after = 3;
   uint64 tick         = 4;
+}
+
+// 震脉五招 HUD S2C（server → client，mirror dugu_v2 dual-emit）。
+// skill_id: "parry" | "neutralize" | "multipoint" | "harden" | "sever_chain"
+// meridian_id: 经脉判别名（neutralize/harden/sever_chain 携带；parry/multipoint 为空串）
+// 守恒红线：全部字段只读自 ECS Event，不重算真元/经脉，不扣 qi。
+// 字段严格匹配 client ZhenmaiHudServerDataHandler 解析键。
+message ZhenmaiHud {
+  string skill_id         = 1;
+  string meridian_id      = 2; // 空串表示无经脉维度（parry/multipoint）
+  float  contam_removed   = 3; // neutralize：去除的染毒量
+  uint32 remaining_points = 4; // multipoint：剩余反震点数
+  float  damage_reduction = 5; // harden：减伤比例 [0,1]
+  float  k_drain          = 6; // sever_chain：反噬增幅强度（仅展示）
+  uint64 duration_ms      = 7; // multipoint/harden/sever_chain：持续/窗口时长（ms，0=用 client 缺省）
+  uint64 tick             = 8;
 }
 
 // 与 Rust ClientRequestV1::ExternalContainerMove 精确对应。

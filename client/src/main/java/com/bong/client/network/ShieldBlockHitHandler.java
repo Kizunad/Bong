@@ -52,6 +52,9 @@ public final class ShieldBlockHitHandler implements ServerDataHandler {
     /** 格挡 HUD 提示时长（ms）。 */
     static final long BLOCK_HUD_DURATION_MS = 1_500L;
 
+    /** 盾弧瞬态确认时长（ms）：比 toast 更短，命中瞬间闪一下即隐藏（条件/瞬态硬约束）。 */
+    static final long SHIELD_BLOCK_HUD_FLASH_MS = 350L;
+
     /** 命中迸溅粒子 vfx_event id —— 木盾，与 VfxBootstrap 注册键一致。 */
     static final Identifier PARTICLE_BLOCK_WOOD = new Identifier("bong", "shield_block_wood");
 
@@ -90,6 +93,11 @@ public final class ShieldBlockHitHandler implements ServerDataHandler {
             ? payload.get("template_id").getAsString() : "unknown";
 
         triggerMaterialEffects(templateId);
+
+        // HUD：准星下方瞬态盾弧确认（条件式——仅命中瞬间闪一下，~350ms 后自动隐藏，绝不常驻）。
+        com.bong.client.hud.ZhenmaiHudStateStore.flashShieldBlock(
+            System.currentTimeMillis(), SHIELD_BLOCK_HUD_FLASH_MS
+        );
 
         String toastText = "bone_shield".equals(templateId) ? "骨盾架住" : "盾格挡";
         return ServerDataDispatch.handledWithEventAlert(

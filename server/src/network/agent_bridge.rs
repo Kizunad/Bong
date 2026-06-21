@@ -47,7 +47,7 @@ pub fn serialize_server_data_payload(payload: &ServerDataV1) -> Result<Vec<u8>, 
     // intercept raw packets via `serde_json::from_slice` keep passing.
     //
     // The proto encoding path is exhaustively guarded by:
-    //   - `s2c_all_proto_variants_encode_without_panic` (proto_convert.rs) — covers all 122
+    //   - `s2c_all_proto_variants_encode_without_panic` (proto_convert.rs) — covers all 123
     //     proto-encodable `ServerDataPayloadV1` variants; will panic-red if any proto arm is
     //     deleted or a new variant is added without a proto arm.
     //   - `c2s_all_proto_variants_encode_without_panic` (proto_convert.rs) — covers all 97
@@ -215,6 +215,8 @@ pub fn payload_type_label(payload_type: ServerDataType) -> &'static str {
         ServerDataType::PermanentQiMaxDecayApplied => "permanent_qi_max_decay_applied",
         // ─── plan-combat-skill-feedback-bridges-v1 P6 ─────────────
         ServerDataType::SwordBondHudState => "sword_bond_hud_state",
+        // ─── 震脉 v2 HUD S2C（client 路由键 = zhenmai_hud） ─
+        ServerDataType::ZhenmaiHud => "zhenmai_hud",
         // ─── plan-exploration-probe-return-v1 P0 ────────────────────
         ServerDataType::MineralProbeResult => "mineral_probe_result",
         ServerDataType::FreshnessUpdate => "freshness_update",

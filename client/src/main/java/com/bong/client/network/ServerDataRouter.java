@@ -258,6 +258,10 @@ public final class ServerDataRouter {
         // plan-combat-skill-feedback-bridges-v1 P6：人剑共生 HUD（SwordBondHudState → SwordBondHudStateStore → SwordPathHudPlanner）
         handlers.put("sword_bond_hud_state",
             new com.bong.client.combat.handler.SwordBondHudStateHandler());
+        // 震脉 5 招专属 HUD（parry/neutralize/multipoint/harden/sever_chain → ZhenmaiHudStateStore → ZhenmaiHudPlanner）。
+        // NOTE: server 侧需在 zhenmai_v2_event_bridge.rs 追加 S2C dual-emit（mirror dugu_v2_event_bridge），见 serverStateNeeded。
+        handlers.put("zhenmai_hud",
+            new com.bong.client.combat.handler.ZhenmaiHudServerDataHandler());
         // plan-exploration-probe-return-v1 P0：神识感知矿脉回执（actionbar overlay + SFX）
         handlers.put("mineral_probe_result", new MineralProbeResultHandler());
         // plan-exploration-probe-return-v1 P2：修炼顿悟邀约（InsightOfferStore → InsightOfferScreen）
