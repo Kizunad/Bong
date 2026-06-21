@@ -265,6 +265,8 @@ pub enum ServerDataType {
     PermanentQiMaxDecayApplied,
     // ─── plan-combat-skill-feedback-bridges-v1 P6：剑道人剑共生 HUD ─
     SwordBondHudState,
+    // ─── 震脉 v2 HUD S2C（mirror dugu_v2；点亮 client ZhenmaiHudServerDataHandler） ─
+    ZhenmaiHud,
     // ─── plan-exploration-probe-return-v1 P0：神识感知矿脉 S2C ───────
     MineralProbeResult,
     // ─── plan-exploration-probe-return-v1 P1：神识感知保鲜 S2C ──────
@@ -545,6 +547,10 @@ pub enum ServerDataPayloadV1 {
     // ─── plan-combat-skill-feedback-bridges-v1 P6：剑道人剑共生 HUD S2C ─
     /// 人剑共生 HUD 状态推送（守恒红线：stored_qi 只读展示，不二次扣 qi）。
     SwordBondHudState(SwordBondHudStateV1),
+    // ─── 震脉 v2 HUD S2C（mirror dugu_v2 dual-emit；点亮 client ZhenmaiHudServerDataHandler） ─
+    /// 震脉五招招式 HUD 反馈（parry/neutralize/multipoint/harden/sever_chain）。
+    /// 守恒红线：只读事件字段，不重算真元/经脉，不扣 qi。
+    ZhenmaiHud(ZhenmaiHudV1),
     // ─── plan-exploration-probe-return-v1 P0：神识感知矿脉 S2C ──────
     /// 神识感知矿脉回执（只读传输，不涉及 qi_physics 守恒）。
     MineralProbeResult(MineralProbeResultV1),
@@ -766,6 +772,33 @@ pub struct DuguV2HudQiDecayV1 {
     pub loss: f32,
     /// 衰减后真元上限（只读）
     pub qi_max_after: f32,
+    pub tick: u64,
+}
+
+/// 震脉五招 HUD S2C（server → client，mirror dugu_v2 dual-emit）。
+///
+/// 字段严格匹配 client `ZhenmaiHudServerDataHandler` 解析键：
+/// - `skill_id`：`parry` | `neutralize` | `multipoint` | `harden` | `sever_chain`（client switch key）
+/// - `meridian_id`：经脉判别名（neutralize/harden/sever_chain 携带；parry/multipoint 为空串）
+/// - `contam_removed`：neutralize 去除的染毒量
+/// - `remaining_points`：multipoint 剩余反震点数
+/// - `damage_reduction`：harden 减伤比例 [0,1]
+/// - `k_drain`：sever_chain 反噬增幅强度（仅展示）
+/// - `duration_ms`：multipoint/harden/sever_chain 持续/窗口时长（ms，0=client 用缺省 DEFAULT_DURATION_MS）
+///
+/// 守恒红线：全部字段只读自 ECS Event，不重算真元/经脉，不扣 qi。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ZhenmaiHudV1 {
+    pub skill_id: String,
+    /// 经脉判别名（空串表示无经脉维度，client `readString` 回退 ""）
+    pub meridian_id: String,
+    pub contam_removed: f32,
+    pub remaining_points: u32,
+    pub damage_reduction: f32,
+    pub k_drain: f32,
+    /// 持续/窗口时长（ms；0 → client `readDuration` 回退 DEFAULT_DURATION_MS）
+    pub duration_ms: u64,
     pub tick: u64,
 }
 
@@ -1700,6 +1733,11 @@ enum ServerDataPayloadWireV1 {
         #[serde(flatten)]
         data: SwordBondHudStateV1,
     },
+    // ─── 震脉 v2 HUD S2C（mirror dugu_v2） ─
+    ZhenmaiHud {
+        #[serde(flatten)]
+        data: ZhenmaiHudV1,
+    },
     // ─── plan-exploration-probe-return-v1 P0：神识感知矿脉 S2C ───────
     MineralProbeResult {
         #[serde(flatten)]
@@ -2591,6 +2629,8 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
             ServerDataPayloadWireV1::SwordBondHudState { data } => {
                 Ok(Self::SwordBondHudState(data))
             }
+            // ─── 震脉 v2 HUD S2C ──────────
+            ServerDataPayloadWireV1::ZhenmaiHud { data } => Ok(Self::ZhenmaiHud(data)),
             ServerDataPayloadWireV1::MineralProbeResult { data } => {
                 Ok(Self::MineralProbeResult(data))
             }
@@ -3165,6 +3205,8 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
             ServerDataPayloadV1::SwordBondHudState(data) => {
                 Self::SwordBondHudState { data: data.clone() }
             }
+            // ─── 震脉 v2 HUD S2C ──────────
+            ServerDataPayloadV1::ZhenmaiHud(data) => Self::ZhenmaiHud { data: data.clone() },
             ServerDataPayloadV1::MineralProbeResult(data) => {
                 Self::MineralProbeResult { data: data.clone() }
             }
@@ -3501,6 +3543,8 @@ impl ServerDataPayloadV1 {
             Self::PermanentQiMaxDecayApplied(..) => ServerDataType::PermanentQiMaxDecayApplied,
             // ─── plan-combat-skill-feedback-bridges-v1 P6 ──────────
             Self::SwordBondHudState(..) => ServerDataType::SwordBondHudState,
+            // ─── 震脉 v2 HUD S2C ──────────
+            Self::ZhenmaiHud(..) => ServerDataType::ZhenmaiHud,
             // ─── plan-exploration-probe-return-v1 P0 ────────────────
             Self::MineralProbeResult(..) => ServerDataType::MineralProbeResult,
             Self::FreshnessUpdate(..) => ServerDataType::FreshnessUpdate,
@@ -3653,6 +3697,7 @@ impl ServerDataPayloadV1 {
             Self::DuguV2ShroudActive(..) => false,
             Self::PermanentQiMaxDecayApplied(..) => false,
             Self::SwordBondHudState(..) => false,
+            Self::ZhenmaiHud(..) => false,
             Self::MineralProbeResult(..) => false,
             Self::FreshnessUpdate(..) => false,
             Self::InsightOffer(..) => false,
@@ -5375,6 +5420,126 @@ mod tests {
         assert!(
             !json.contains("\"qi_") || json.contains("abrasion_qi_payload"),
             "echo payload 不应包含真元计算字段"
+        );
+    }
+
+    // ─── 震脉 v2 HUD S2C：schema pin（字段须与 client ZhenmaiHudServerDataHandler 逐一对齐） ─
+
+    #[test]
+    fn zhenmai_hud_v1_roundtrip() {
+        let original = crate::schema::server_data::ZhenmaiHudV1 {
+            skill_id: "sever_chain".to_string(),
+            meridian_id: "Heart".to_string(),
+            contam_removed: 0.0,
+            remaining_points: 0,
+            damage_reduction: 0.0,
+            k_drain: 1.5,
+            duration_ms: 60_000,
+            tick: 999,
+        };
+        let json = serde_json::to_string(&original).expect("ZhenmaiHudV1 应能序列化");
+        let back: crate::schema::server_data::ZhenmaiHudV1 =
+            serde_json::from_str(&json).expect("ZhenmaiHudV1 应能反序列化");
+        assert_eq!(
+            original, back,
+            "ZhenmaiHudV1 JSON roundtrip 必须无损；JSON={json}"
+        );
+    }
+
+    #[test]
+    fn zhenmai_hud_payload_type_label_is_zhenmai_hud() {
+        let label = payload_type_label(ServerDataType::ZhenmaiHud);
+        assert_eq!(
+            label, "zhenmai_hud",
+            "期望 ZhenmaiHud 的 label 为 'zhenmai_hud'（client ServerDataRouter 路由键），实际 {label}"
+        );
+    }
+
+    #[test]
+    fn zhenmai_hud_wire_emits_client_contract_fields() {
+        // 字段名/类型须与 client ZhenmaiHudServerDataHandler.readString/readDouble/readDuration 对齐。
+        let inner = crate::schema::server_data::ZhenmaiHudV1 {
+            skill_id: "neutralize".to_string(),
+            meridian_id: "Lung".to_string(),
+            contam_removed: 2.5,
+            remaining_points: 0,
+            damage_reduction: 0.0,
+            k_drain: 0.0,
+            duration_ms: 0,
+            tick: 64,
+        };
+        let wrapper = ServerDataV1::new(ServerDataPayloadV1::ZhenmaiHud(inner));
+        let json = serde_json::to_string(&wrapper).expect("serialize ZhenmaiHud wrapper");
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            v["type"],
+            serde_json::json!("zhenmai_hud"),
+            "wire type 须为 client 路由键 'zhenmai_hud'，实际 {}",
+            v["type"]
+        );
+        // client switch(skill_id) 的判别键
+        assert_eq!(
+            v["skill_id"],
+            serde_json::json!("neutralize"),
+            "skill_id 须为 client switch 键 'neutralize'，实际 {}",
+            v["skill_id"]
+        );
+        // client readString("meridian_id")
+        assert_eq!(v["meridian_id"], serde_json::json!("Lung"));
+        // client readDouble("contam_removed", 0.0)
+        assert_eq!(v["contam_removed"], serde_json::json!(2.5));
+        // 契约字段全部在场（即使为零值，flatten 不 skip → client readX 各有所依）
+        for field in [
+            "skill_id",
+            "meridian_id",
+            "contam_removed",
+            "remaining_points",
+            "damage_reduction",
+            "k_drain",
+            "duration_ms",
+            "tick",
+        ] {
+            assert!(
+                v.get(field).is_some(),
+                "ZhenmaiHud wire 须含 client 契约字段 '{field}'；实际 JSON={json}"
+            );
+        }
+    }
+
+    #[test]
+    fn zhenmai_hud_harden_wire_damage_reduction_is_reduction_not_passthrough() {
+        // 契约语义 pin：client ZhenmaiHudPlanner.appendHarden 把 damage_reduction 当作
+        // 「减伤比例」渲染（value1*100 → 「减伤X%」、条形填充 = value1，1.0=全免）。
+        // 因此 wire 的 damage_reduction 必须是减伤比例（reduction），而不是 server 内部
+        // HardenProfile.damage_multiplier 的「伤害通过率」（passthrough）。
+        // bridge 负责转换 reduction = 1 - passthrough（见 zhenmai_v2_event_bridge.rs harden 分支）；
+        // 本 pin 锁住 wire 形态：harden 场景下 damage_reduction 是 [0,1] 的减伤比例。
+        // 例：Spirit 境 passthrough=0.35 → wire damage_reduction=0.65（实际减伤 65%）。
+        let inner = crate::schema::server_data::ZhenmaiHudV1 {
+            skill_id: "harden".to_string(),
+            meridian_id: "Heart".to_string(),
+            contam_removed: 0.0,
+            remaining_points: 0,
+            damage_reduction: 0.65,
+            k_drain: 0.0,
+            duration_ms: 1_000,
+            tick: 70,
+        };
+        let wrapper = ServerDataV1::new(ServerDataPayloadV1::ZhenmaiHud(inner));
+        let json = serde_json::to_string(&wrapper).expect("serialize harden ZhenmaiHud wrapper");
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["skill_id"], serde_json::json!("harden"));
+        let reduction = v["damage_reduction"]
+            .as_f64()
+            .expect("damage_reduction 须为数值");
+        assert!(
+            (reduction - 0.65).abs() < 1e-4,
+            "harden wire damage_reduction 须为减伤比例 0.65（client 渲染「减伤65%」），\
+             不是 passthrough multiplier 0.35；实际 {reduction}（JSON={json}）"
+        );
+        assert!(
+            (0.0..=1.0).contains(&reduction),
+            "damage_reduction 须落在减伤比例区间 [0,1]，实际 {reduction}"
         );
     }
 }

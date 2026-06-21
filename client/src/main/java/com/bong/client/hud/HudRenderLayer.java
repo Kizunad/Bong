@@ -63,5 +63,17 @@ public enum HudRenderLayer {
     /** plan-agent-ui-data-v1 P3：天道动态面板 VFX overlay（粒子底噪、vignette、shake）。 */
     AGENT_UI,
     /** plan-halfstep-rechallenge-integration-v1 P0：半步化虚重渡触发 HUD（灵机涌现 + 倒计时）。 */
-    HALFSTEP_RECHALLENGE
+    HALFSTEP_RECHALLENGE,
+    /** 震脉极限弹反成功瞬态高亮（中心环增亮，~450ms）。 */
+    ZHENMAI_PARRY,
+    /** 震脉局部中和瞬态去毒提示（含 contam 去除量，~1.4s）。 */
+    ZHENMAI_NEUTRALIZE,
+    /** 震脉多点反震激活期微指示（剩余反震点数，duration-based）。 */
+    ZHENMAI_MULTIPOINT,
+    /** 震脉护脉 buff 激活期微条（剩余时长 + 减伤%，duration-based）。 */
+    ZHENMAI_HARDEN,
+    /** 震脉绝脉断链断脉标记 + 反噬增幅倒计时（amplification 窗口期内显示）。 */
+    ZHENMAI_SEVER,
+    /** 盾格挡命中瞬态确认弧光（~350ms）。 */
+    SHIELD_BLOCK
 }

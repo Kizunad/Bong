@@ -1395,6 +1395,17 @@ impl From<&ServerDataPayloadV1> for Payload {
                     heaven_gate_ready: s.heaven_gate_ready,
                 })
             }
+            // 震脉 v2 HUD S2C（守恒红线：只读事件字段，不重算真元/经脉）
+            ServerDataPayloadV1::ZhenmaiHud(s) => Payload::ZhenmaiHud(bong::ZhenmaiHud {
+                skill_id: s.skill_id.clone(),
+                meridian_id: s.meridian_id.clone(),
+                contam_removed: s.contam_removed,
+                remaining_points: s.remaining_points,
+                damage_reduction: s.damage_reduction,
+                k_drain: s.k_drain,
+                duration_ms: s.duration_ms,
+                tick: s.tick,
+            }),
             // plan-exploration-probe-return-v1 P0：神识感知矿脉 S2C（只读传输，不涉及 qi_physics）
             ServerDataPayloadV1::MineralProbeResult(m) => {
                 Payload::MineralProbeResult(bong::MineralProbeResult {
@@ -5064,7 +5075,7 @@ mod tests {
             RiftPortalKindV1, RiftPortalRemovedV1, RiftPortalStateV1, SearchAbortReasonV1,
             SearchAbortedV1, SearchCompletedV1, SearchProgressV1, SearchStartedV1,
             SwordBondHudStateV1, TechniqueProficiencyUpdateV1, TribulationBroadcastV1,
-            TribulationStateV1, TsyCollapseStartedIpcV1,
+            TribulationStateV1, TsyCollapseStartedIpcV1, ZhenmaiHudV1,
         };
         use super::super::skill::{
             SkillCapChangedPayloadV1, SkillIdV1, SkillLvUpPayloadV1, SkillScrollUsedPayloadV1,
@@ -6071,6 +6082,16 @@ mod tests {
                     heaven_gate_ready: false,
                 }
             )),
+            fix!(ServerDataPayloadV1::ZhenmaiHud(ZhenmaiHudV1 {
+                skill_id: "sever_chain".to_string(),
+                meridian_id: "Heart".to_string(),
+                contam_removed: 0.0,
+                remaining_points: 0,
+                damage_reduction: 0.0,
+                k_drain: 1.5,
+                duration_ms: 60_000,
+                tick: 1,
+            })),
             fix!(ServerDataPayloadV1::MineralProbeResult(
                 MineralProbeResultV1 {
                     kind: "denied".to_string(),
@@ -6257,6 +6278,7 @@ mod tests {
             ServerDataType::DuguV2ShroudActive,
             ServerDataType::PermanentQiMaxDecayApplied,
             ServerDataType::SwordBondHudState,
+            ServerDataType::ZhenmaiHud,
             ServerDataType::MineralProbeResult,
             ServerDataType::FreshnessUpdate,
             ServerDataType::InsightOffer,
@@ -6302,9 +6324,9 @@ mod tests {
         );
     }
 
-    /// Exhaustive proto encoding guard for all 125 `ServerDataPayloadV1` variants.
+    /// Exhaustive proto encoding guard for all 126 `ServerDataPayloadV1` variants.
     ///
-    /// For each of the 122 proto-encodable variants (is_json_bypass=false):
+    /// For each of the 123 proto-encodable variants (is_json_bypass=false):
     ///   - Calls `ServerDataV1::new(variant).to_proto_bytes()`.
     ///   - Asserts the bytes are non-empty (proto envelope was built).
     ///   - Decodes and asserts the envelope contains a payload (proto arm exists in From impl).
@@ -6370,8 +6392,8 @@ mod tests {
         }
 
         assert_eq!(
-            proto_count, 122,
-            "Expected 122 proto-encodable S2C variants, got {proto_count}. \
+            proto_count, 123,
+            "Expected 123 proto-encodable S2C variants, got {proto_count}. \
              The fixture list or is_json_bypass classification may have changed."
         );
         assert_eq!(

@@ -135,6 +135,14 @@ public enum HudLayoutPreset {
             case AGENT_UI -> Widget.CRITICAL;
             // plan-halfstep-rechallenge-integration-v1 P0：重渡触发 HUD 归 CRITICAL（时限通知，常驻）
             case HALFSTEP_RECHALLENGE -> Widget.CRITICAL;
+            // 震脉瞬态成功反馈（极限弹反成功 / 盾格挡命中）归 CRITICAL：仅在触发瞬间闪现，
+            // 不受密度抑制——否则极简密度下玩家收不到「弹反/格挡成功」这一关键反馈。
+            case ZHENMAI_PARRY, SHIELD_BLOCK -> Widget.CRITICAL;
+            // 震脉持续/微指示（护脉减伤条 / 多点反震计数 / 局部中和提示 / 绝脉断链增幅倒计时条）归 BARS：
+            // 与其他战斗 buff 微条同组，极简密度下随 BARS 一并接受密度 alpha 处理。
+            // ZHENMAI_SEVER 是最长 60s 的增幅窗口倒计时条（与 ZHENMAI_HARDEN 同形），不是瞬态闪现，
+            // 不能归 CRITICAL（否则极简密度下会满亮常驻整整一分钟）。
+            case ZHENMAI_HARDEN, ZHENMAI_MULTIPOINT, ZHENMAI_NEUTRALIZE, ZHENMAI_SEVER -> Widget.BARS;
         };
     }
 

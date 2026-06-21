@@ -232,6 +232,10 @@ pub struct MultiPointBackfireEvent {
     pub attack_kind: ZhenmaiAttackKind,
     pub contact_index: u32,
     pub reflected_qi: f64,
+    /// 剩余反震点数（只读自 MultiPointActive.points - contact_count，饱和）。HUD dual-emit 用。
+    pub remaining_points: u32,
+    /// 反震激活到期 tick（只读自 MultiPointActive.expires_at_tick）。HUD duration_ms 计算用。
+    pub expires_at_tick: u64,
     pub tick: u64,
 }
 
@@ -240,6 +244,16 @@ pub struct MeridianHardenEvent {
     pub caster: Entity,
     pub meridian_ids: Vec<MeridianId>,
     pub damage_multiplier: f32,
+    /// 护脉 buff 到期 tick（只读自 MeridianHardenActive.expires_at_tick）。HUD duration_ms 计算用。
+    pub expires_at_tick: u64,
+    pub tick: u64,
+}
+
+/// 极限弹反成功事件（resolve_parry 成功扣 qi + 开防御窗后发出）。
+/// 纯瞬态闪现，无额外字段；HUD dual-emit 用（mirror dugu_v2，redis + S2C 双发）。
+#[derive(Debug, Clone, Event, PartialEq)]
+pub struct ParrySuccessEvent {
+    pub caster: Entity,
     pub tick: u64,
 }
 
@@ -286,6 +300,7 @@ pub fn register(app: &mut App) {
     app.add_event::<MeridianHardenEvent>();
     app.add_event::<MeridianSeveredVoluntaryEvent>();
     app.add_event::<BackfireAmplificationActiveEvent>();
+    app.add_event::<ParrySuccessEvent>();
     app.add_event::<JiemaiBackfireBloodSpray>();
     app.add_event::<QiTransfer>();
     app.add_systems(
@@ -507,6 +522,11 @@ fn resolve_parry(
         defender: caster,
         issued_at_tick: now_tick,
     });
+    // HUD dual-emit（mirror dugu_v2）：弹反成功瞬态闪现。守恒红线：不扣额外 qi，仅 HUD 通知。
+    world.send_event(ParrySuccessEvent {
+        caster,
+        tick: now_tick,
+    });
     insert_casting_snapshot(
         world,
         caster,
@@ -711,9 +731,10 @@ fn resolve_harden(
     if !spend_qi(world, caster, profile.start_qi) {
         return rejected(CastRejectReason::QiInsufficient);
     }
+    let harden_expires_at_tick = now_tick.saturating_add(profile.duration_ticks);
     world.entity_mut(caster).insert(MeridianHardenActive {
         started_at_tick: now_tick,
-        expires_at_tick: now_tick.saturating_add(profile.duration_ticks),
+        expires_at_tick: harden_expires_at_tick,
         meridians: meridians.clone(),
         damage_multiplier: profile.damage_multiplier,
         qi_per_second: profile.qi_per_second,
@@ -722,6 +743,7 @@ fn resolve_harden(
         caster,
         meridian_ids: meridians,
         damage_multiplier: profile.damage_multiplier,
+        expires_at_tick: harden_expires_at_tick,
         tick: now_tick,
     });
     insert_casting_snapshot(

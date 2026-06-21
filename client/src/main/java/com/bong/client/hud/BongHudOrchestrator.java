@@ -332,6 +332,13 @@ public final class BongHudOrchestrator {
                 screenWidth,
                 screenHeight
             ));
+            // 震脉 5 招 + 盾格挡专属条件式 HUD（各维度仅在激活/瞬态窗口内 emit，未激活完全隐藏）。
+            commands.addAll(ZhenmaiHudPlanner.buildCommands(
+                ZhenmaiHudStateStore.snapshot(nowMillis),
+                nowMillis,
+                screenWidth,
+                screenHeight
+            ));
             FalseSkinHudStateStore.State falseSkinSnapshot = FalseSkinHudStateStore.snapshot();
             commands.addAll(FalseSkinStackHud.buildCommands(
                 falseSkinSnapshot,

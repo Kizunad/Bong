@@ -652,6 +652,9 @@ pub fn resolve_attack_intents(
                         attack_kind: zhenmai_attack_kind,
                         contact_index: active.contact_count,
                         reflected_qi: reflected,
+                        remaining_points: u32::from(active.points)
+                            .saturating_sub(active.contact_count),
+                        expires_at_tick: active.expires_at_tick,
                         tick: clock.tick,
                     });
                 }
