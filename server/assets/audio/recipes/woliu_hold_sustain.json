@@ -1,0 +1,11 @@
+{
+  "id": "woliu_hold_sustain",
+  "layers": [
+    { "sound": "minecraft:block.beacon.activate", "volume": 0.45, "pitch": 0.5, "delay_ticks": 0 },
+    { "sound": "minecraft:block.conduit.ambient", "volume": 0.25, "pitch": 0.7, "delay_ticks": 4 }
+  ],
+  "priority": 62,
+  "attenuation": "world_3d",
+  "category": "AMBIENT",
+  "bus": "ENVIRONMENT"
+}

@@ -903,12 +903,19 @@ fn woliu_particle_count(skill: WoliuSkillId) -> u16 {
         WoliuSkillId::VortexResonance => 48,
         WoliuSkillId::TurbulenceBurst => 64,
         WoliuSkillId::VortexShield | WoliuSkillId::VacuumLock => 32,
-        WoliuSkillId::Heart => 36,
+        WoliuSkillId::Heart => 40,
+        // AV 差异化：基础 5 招粒子数体现语义体量
+        // 持涡=稀疏维持 / 瞬涡=密集瞬爆 / 涡口=中量漏斗 / 涡引=中量拖尾
+        WoliuSkillId::Hold => 12,
+        WoliuSkillId::Burst => 28,
+        WoliuSkillId::Mouth => 20,
+        WoliuSkillId::Pull => 24,
         // plan-woliu-path-v1：虚蚀路径粒子数
         WoliuSkillId::VoidVortex => 48,
         WoliuSkillId::SwallowingVortex | WoliuSkillId::VoidCore => 32,
         WoliuSkillId::AmbientVortex => 6,
         WoliuSkillId::VortexEcho => 4,
+        // VacuumPalm 及其余未列招式
         _ => 16,
     }
 }
@@ -919,12 +926,19 @@ fn woliu_particle_duration_ticks(skill: WoliuSkillId) -> u16 {
         WoliuSkillId::TurbulenceBurst => 44,
         WoliuSkillId::VortexShield | WoliuSkillId::VacuumLock => 60,
         WoliuSkillId::Heart => 100,
+        // AV 差异化：基础 5 招粒子时长体现节奏
+        // 持涡=长驻维持 / 瞬涡=极短瞬发(200ms≈4tick 的爆发感) / 涡口=中等 / 涡引=偏短拖拽
+        WoliuSkillId::Hold => 70,
+        WoliuSkillId::Burst => 14,
+        WoliuSkillId::Mouth => 48,
+        WoliuSkillId::Pull => 30,
         // plan-woliu-path-v1：虚蚀路径粒子持续
         WoliuSkillId::VoidVortex => 80,
         WoliuSkillId::VoidCore => 60,
         WoliuSkillId::AmbientVortex => 40,
         WoliuSkillId::SwallowingVortex => 32,
         WoliuSkillId::VortexEcho => 20,
+        // VacuumPalm 及其余未列招式
         _ => 42,
     }
 }

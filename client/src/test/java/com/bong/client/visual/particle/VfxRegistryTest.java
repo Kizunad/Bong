@@ -263,6 +263,22 @@ public class VfxRegistryTest {
             "bootstrap should register zhenmai sever flash");
         assertTrue(VfxRegistry.instance().contains(VortexSpiralPlayer.EVENT_ID),
             "bootstrap should register vortex_spiral");
+        // AV 差异化：woliu 基础 5 招专属 particle 注册（漏注册→cast 时 VFX 被静默丢弃）
+        assertTrue(VfxRegistry.instance().contains(VortexSpiralPlayer.HOLD_SUSTAIN),
+            "bootstrap should register woliu Hold particle (bong:woliu_hold_sustain); "
+                + "missing registration silently drops VFX on Hold cast");
+        assertTrue(VfxRegistry.instance().contains(VortexSpiralPlayer.BURST_POP),
+            "bootstrap should register woliu Burst particle (bong:woliu_burst_pop); "
+                + "missing registration silently drops VFX on Burst cast");
+        assertTrue(VfxRegistry.instance().contains(VortexSpiralPlayer.MOUTH_FUNNEL),
+            "bootstrap should register woliu Mouth particle (bong:woliu_mouth_funnel); "
+                + "missing registration silently drops VFX on Mouth cast");
+        assertTrue(VfxRegistry.instance().contains(VortexSpiralPlayer.PULL_DRAG),
+            "bootstrap should register woliu Pull particle (bong:woliu_pull_drag); "
+                + "missing registration silently drops VFX on Pull cast");
+        assertTrue(VfxRegistry.instance().contains(VortexSpiralPlayer.HEART_FIELD),
+            "bootstrap should register woliu Heart particle (bong:woliu_heart_field); "
+                + "missing registration silently drops VFX on Heart cast");
         assertTrue(VfxRegistry.instance().contains(VortexSpiralPlayer.VACUUM_PALM),
             "bootstrap should register woliu-v3 vacuum palm particle");
         assertTrue(VfxRegistry.instance().contains(VortexSpiralPlayer.VORTEX_SHIELD),
