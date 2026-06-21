@@ -162,6 +162,12 @@ pub enum StatusEffectKind {
     DamageVulnerability,
     /// plan-cultivation-pacing-v1 P1.5：仅加速奇经打通，对正经无效。
     ExtraordinaryMeridianAcceleration,
+    /// 全力一击（baomai full_power）释放后的「虚脱」debuff。
+    /// `magnitude` 承载共享 modifier（0.5）：同时作 qi 回复倍率（×magnitude）
+    /// 与 defense_power 倍率（×magnitude）。由 cultivation::full_power_strike
+    /// 释放时以 ApplyStatusEffectIntent 施加，标准 status 生命周期到期/`/reset`
+    /// 清除——取代旧的游离 `Exhausted` 组件（后者不进 status HUD 且 reset 脱钩）。
+    Exhausted,
 }
 
 pub const HALLUCINATION_DURATION_TICKS: u64 = 20 * 5;
@@ -305,6 +311,19 @@ mod tests {
         let decoded: StatusEffectKind =
             serde_json::from_str(&json).expect("HealthRegenBoost should deserialize");
         assert_eq!(decoded, StatusEffectKind::HealthRegenBoost);
+    }
+
+    /// 虚脱（全力一击转 debuff）作为单元变体的 serde 往返。
+    /// ApplyStatusEffectIntent 携带它，serde 须无损往返。
+    #[test]
+    fn exhausted_status_effect_kind_round_trips_via_serde() {
+        let json = serde_json::to_string(&StatusEffectKind::Exhausted)
+            .expect("Exhausted should serialize");
+        assert_eq!(json, "\"Exhausted\"");
+
+        let decoded: StatusEffectKind =
+            serde_json::from_str(&json).expect("Exhausted should deserialize");
+        assert_eq!(decoded, StatusEffectKind::Exhausted);
     }
 
     #[test]

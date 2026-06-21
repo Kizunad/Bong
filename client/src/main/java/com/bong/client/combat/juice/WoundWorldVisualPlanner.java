@@ -1,6 +1,5 @@
 package com.bong.client.combat.juice;
 
-import com.bong.client.combat.store.FullPowerStateStore;
 import com.bong.client.combat.store.StatusEffectStore;
 import com.bong.client.combat.store.WoundsStore;
 
@@ -45,10 +44,27 @@ public final class WoundWorldVisualPlanner {
         if (contamination > 0.3f) {
             out.add(new WoundCommand("meridian_contamination", 0.0f, 0x4D2E4E2E, false, false, true, contamination > 0.7f, false));
         }
-        if (exhausted || FullPowerStateStore.exhausted().active()) {
+        // 虚脱踉跄：显式 exhausted 入参，或标准 debuff 快照里存在虚脱条目（id "exhausted"）。
+        // 不再读 FullPowerStateStore——虚脱已收敛到标准 status，由 status_snapshot 驱动，
+        // /reset 与到期都会从快照消失，踉跄随之停止。
+        if (exhausted || hasExhaustedEffect(effects)) {
             out.add(new WoundCommand("exhausted", 0.0f, 0x33606060, false, false, false, false, true));
         }
         return List.copyOf(out);
+    }
+
+    private static boolean hasExhaustedEffect(List<StatusEffectStore.Effect> effects) {
+        if (effects == null) {
+            return false;
+        }
+        for (StatusEffectStore.Effect effect : effects) {
+            if (effect != null
+                && "exhausted".equals(effect.id())
+                && effect.remainingMs() > 0L) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static float contaminationFromEffects(List<StatusEffectStore.Effect> effects) {

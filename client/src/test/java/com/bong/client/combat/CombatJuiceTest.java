@@ -326,6 +326,34 @@ class CombatJuiceTest {
     }
 
     @Test
+    void exhausted_stumble_from_status_effect_snapshot() {
+        // 虚脱已收敛到标准 debuff（id "exhausted"）；快照里存在该条目即触发踉跄。
+        StatusEffectStore.Effect exhausted = new StatusEffectStore.Effect(
+            "exhausted", "虚脱", StatusEffectStore.Kind.DEBUFF, 1, 4000L, 0xFFFF8030, "全力一击", 5);
+        List<WoundWorldVisualPlanner.WoundCommand> commands =
+            WoundWorldVisualPlanner.plan(List.of(), List.of(exhausted), false);
+
+        assertTrue(
+            commands.stream().anyMatch(WoundWorldVisualPlanner.WoundCommand::exhaustedStumble),
+            "status_snapshot 含虚脱 debuff(id=exhausted) 时应产生踉跄命令");
+    }
+
+    @Test
+    void no_exhausted_stumble_when_effect_expired_or_absent() {
+        // 无虚脱条目 → 无踉跄。
+        assertFalse(
+            WoundWorldVisualPlanner.plan(List.of(), List.of(), false).stream()
+                .anyMatch(WoundWorldVisualPlanner.WoundCommand::exhaustedStumble));
+        // remaining_ms=0（过期）→ 无踉跄（status_snapshot 全量替换后理应不下发，双重保险）。
+        StatusEffectStore.Effect expired = new StatusEffectStore.Effect(
+            "exhausted", "虚脱", StatusEffectStore.Kind.DEBUFF, 1, 0L, 0xFFFF8030, "全力一击", 5);
+        assertFalse(
+            WoundWorldVisualPlanner.plan(List.of(), List.of(expired), false).stream()
+                .anyMatch(WoundWorldVisualPlanner.WoundCommand::exhaustedStumble),
+            "过期虚脱条目不应触发踉跄");
+    }
+
+    @Test
     void kill_slowmo_only_for_killer() {
         CombatJuiceProfile profile = CombatJuiceProfile.select(CombatSchool.BAOMAI, CombatJuiceTier.CRITICAL);
         CombatJuiceEvent remoteKill = new CombatJuiceEvent(

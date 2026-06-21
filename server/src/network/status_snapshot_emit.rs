@@ -116,6 +116,7 @@ fn status_effect_name(kind: &StatusEffectKind) -> String {
         StatusEffectKind::QiRegenSlowed => "回气减速".to_string(),
         StatusEffectKind::DamageVulnerability => "脆弱易伤".to_string(),
         StatusEffectKind::ExtraordinaryMeridianAcceleration => "奇经加速".to_string(),
+        StatusEffectKind::Exhausted => "虚脱".to_string(),
     }
 }
 
@@ -160,7 +161,8 @@ fn status_effect_category(kind: &StatusEffectKind) -> &'static str {
         | StatusEffectKind::MirrorExposed
         | StatusEffectKind::ResonanceLocked
         | StatusEffectKind::QiRegenSlowed
-        | StatusEffectKind::DamageVulnerability => "debuff",
+        | StatusEffectKind::DamageVulnerability
+        | StatusEffectKind::Exhausted => "debuff",
         StatusEffectKind::AlchemyBuff(_) => "unknown",
     }
 }
@@ -177,6 +179,7 @@ fn status_effect_source_label(kind: &StatusEffectKind) -> &'static str {
         | StatusEffectKind::QiRegenSlowed
         | StatusEffectKind::DamageVulnerability => "修炼丹药",
         StatusEffectKind::Immobilized => "机关陷阱",
+        StatusEffectKind::Exhausted => "全力一击",
         _ => "战场丹药",
     }
 }
@@ -194,6 +197,8 @@ fn status_effect_color(kind: &StatusEffectKind) -> i32 {
 fn status_effect_dispel(kind: &StatusEffectKind) -> i32 {
     match kind {
         StatusEffectKind::QiCapPermMinus => 5,
+        // 虚脱是自伤性恢复态，不可被普通驱散——仅随时长自然到期或 /reset 清除。
+        StatusEffectKind::Exhausted => 5,
         StatusEffectKind::Stunned
         | StatusEffectKind::Immobilized
         | StatusEffectKind::StaminaCrash => 3,
@@ -232,6 +237,124 @@ fn body_part_name(part: BodyPart) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── 虚脱 debuff 端到端同步：施加 → status_snapshot 显示「虚脱」；
+    //    清空 StatusEffects（/reset 或到期）→ status_snapshot effects 空 → client HUD 同步清 ──
+
+    use crate::combat::components::{ActiveStatusEffect, StatusEffects};
+    use crate::network::agent_bridge::SERVER_DATA_CHANNEL;
+    use valence::prelude::{App, Update};
+    use valence::protocol::packets::play::CustomPayloadS2c;
+    use valence::testing::{create_mock_client, MockClientHelper};
+
+    fn collect_status_snapshots(helper: &mut MockClientHelper) -> Vec<serde_json::Value> {
+        let mut out = Vec::new();
+        for frame in helper.collect_received().0 {
+            let Ok(packet) = frame.decode::<CustomPayloadS2c>() else {
+                continue;
+            };
+            if packet.channel.as_str() != SERVER_DATA_CHANNEL {
+                continue;
+            }
+            let Ok(json) = serde_json::from_slice::<serde_json::Value>(packet.data.0 .0) else {
+                continue;
+            };
+            if json.get("type").and_then(|t| t.as_str()) == Some("status_snapshot") {
+                out.push(json);
+            }
+        }
+        out
+    }
+
+    fn flush_clients(app: &mut App) {
+        let world = app.world_mut();
+        let mut q = world.query::<&mut valence::prelude::Client>();
+        for mut client in q.iter_mut(world) {
+            client.flush_packets().expect("mock client should flush");
+        }
+    }
+
+    /// 施加虚脱 status → status_snapshot 含一条 name="虚脱"/kind="debuff" 的 effect。
+    #[test]
+    fn exhausted_status_emits_xutuo_in_status_snapshot() {
+        let mut app = App::new();
+        app.add_systems(Update, emit_status_snapshot_payloads);
+
+        let (bundle, mut helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(bundle).id();
+        app.world_mut().entity_mut(entity).insert(StatusEffects {
+            active: vec![ActiveStatusEffect {
+                kind: StatusEffectKind::Exhausted,
+                magnitude: 0.5,
+                remaining_ticks: 1200,
+                source_pill: None,
+            }],
+        });
+
+        app.update();
+        flush_clients(&mut app);
+
+        let snaps = collect_status_snapshots(&mut helper);
+        assert_eq!(snaps.len(), 1, "应下发一帧 status_snapshot");
+        let effects = snaps[0]["effects"].as_array().expect("effects 数组");
+        assert!(
+            effects.iter().any(|e| e["name"] == "虚脱"
+                && e["kind"] == "debuff"
+                && e["id"] == "exhausted"),
+            "status_snapshot 应含虚脱 debuff（name=虚脱, kind=debuff, id=exhausted）；实际 {effects:?}"
+        );
+    }
+
+    /// 端到端清除（用户核心症状）：先有虚脱 → 把 StatusEffects 置 default（模拟 /reset 或到期）
+    /// → Changed<StatusEffects> 再次触发 emit → 下发 effects 空数组 → client 全量替换清空 HUD。
+    #[test]
+    fn clearing_status_effects_emits_empty_snapshot_so_client_hud_clears() {
+        let mut app = App::new();
+        app.add_systems(Update, emit_status_snapshot_payloads);
+
+        let (bundle, mut helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(bundle).id();
+        app.world_mut().entity_mut(entity).insert(StatusEffects {
+            active: vec![ActiveStatusEffect {
+                kind: StatusEffectKind::Exhausted,
+                magnitude: 0.5,
+                remaining_ticks: 1200,
+                source_pill: None,
+            }],
+        });
+
+        app.update();
+        flush_clients(&mut app);
+        let first = collect_status_snapshots(&mut helper);
+        assert_eq!(first.len(), 1);
+        assert_eq!(
+            first[0]["effects"].as_array().map(|a| a.len()),
+            Some(1),
+            "首帧应含虚脱"
+        );
+
+        // 模拟 /reset 的 `*status_effects = StatusEffects::default()`（DerefMut → Changed）。
+        *app.world_mut()
+            .entity_mut(entity)
+            .get_mut::<StatusEffects>()
+            .unwrap() = StatusEffects::default();
+
+        app.update();
+        flush_clients(&mut app);
+        let second = collect_status_snapshots(&mut helper);
+        assert_eq!(
+            second.len(),
+            1,
+            "清空 StatusEffects 必须再触发一帧 status_snapshot（Changed<StatusEffects>）"
+        );
+        assert_eq!(
+            second[0]["effects"].as_array().map(|a| a.len()),
+            Some(0),
+            "清空后 status_snapshot effects 必须为空数组——client 据此全量替换清空虚脱 HUD（根治脱钩）；\
+             实际 {:?}",
+            second[0]["effects"]
+        );
+    }
 
     // ── plan-cultivation-pacing-v1 P2.3 status_effect wire shape 测试 ──
 
@@ -274,6 +397,43 @@ mod tests {
             status_effect_name(&StatusEffectKind::ExtraordinaryMeridianAcceleration),
             "奇经加速"
         );
+    }
+
+    // ── 虚脱 debuff wire shape pin（全力一击转 debuff）──
+
+    /// 虚脱显示名锁 "虚脱"——client 标准 debuff HUD 据此显示。
+    #[test]
+    fn exhausted_name_is_xutuo() {
+        assert_eq!(status_effect_name(&StatusEffectKind::Exhausted), "虚脱");
+    }
+
+    /// 虚脱 id 锁 "exhausted"——client ExhaustedGreyOverlay / 体力踉跄按此 id 识别。
+    #[test]
+    fn exhausted_id_is_exhausted_lowercase() {
+        assert_eq!(status_effect_id(&StatusEffectKind::Exhausted), "exhausted");
+    }
+
+    /// 虚脱归类 debuff（橙色族），进标准 debuff HUD。
+    #[test]
+    fn exhausted_is_debuff_category() {
+        assert_eq!(
+            status_effect_category(&StatusEffectKind::Exhausted),
+            "debuff"
+        );
+        assert_eq!(
+            status_effect_color(&StatusEffectKind::Exhausted),
+            0xFFFF8030_u32 as i32
+        );
+    }
+
+    /// 虚脱来源标 "全力一击"，dispel 难度 5（不可普通驱散，仅到期/reset 清）。
+    #[test]
+    fn exhausted_source_label_and_dispel() {
+        assert_eq!(
+            status_effect_source_label(&StatusEffectKind::Exhausted),
+            "全力一击"
+        );
+        assert_eq!(status_effect_dispel(&StatusEffectKind::Exhausted), 5);
     }
 
     #[test]

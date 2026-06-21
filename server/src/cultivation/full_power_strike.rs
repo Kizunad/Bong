@@ -11,9 +11,12 @@ use valence::prelude::{
     IntoSystemConfigs, Position, Query, Res, UniqueId, Update,
 };
 
-use crate::combat::components::{Lifecycle, WoundKind, Wounds};
-use crate::combat::events::{AttackIntent, AttackReach, AttackSource, CombatEvent};
+use crate::combat::components::{Lifecycle, StatusEffects, WoundKind, Wounds};
+use crate::combat::events::{
+    ApplyStatusEffectIntent, AttackIntent, AttackReach, AttackSource, CombatEvent, StatusEffectKind,
+};
 use crate::combat::realm_gap::{classify_gap, realm_gap_multiplier, realm_index, RealmGapTier};
+use crate::combat::status::has_active_status;
 use crate::combat::{CombatClock, CombatSystemSet};
 use crate::cultivation::components::{Cultivation, Realm};
 use crate::cultivation::skill_registry::{CastRejectReason, CastResult, SkillRegistry};
@@ -25,8 +28,15 @@ pub const FULL_POWER_RELEASE_SKILL_ID: &str = "baomai.full_power_release";
 pub const FULL_POWER_CHARGE_RATE_PER_TICK: f64 = 50.0;
 pub const FULL_POWER_MIN_QI_TO_START: f64 = 100.0;
 pub const EXHAUST_TICKS_PER_QI_COMMITTED: u64 = 2;
-pub const EXHAUSTED_QI_RECOVERY_MODIFIER: f64 = 0.5;
-pub const EXHAUSTED_DEFENSE_MODIFIER: f32 = 0.5;
+/// 虚脱共享 modifier：同时作 qi 回复倍率（×0.5）与 defense_power 倍率（×0.5）。
+/// 以 `ApplyStatusEffectIntent.magnitude` 承载，消费侧 status.rs / tick.rs 读取。
+/// 旧的 `Exhausted` 组件分两字段 `qi_recovery_modifier`/`defense_modifier` 均为 0.5，
+/// 转 debuff 建模后统一为一个 magnitude，数值守恒不变。
+pub const EXHAUSTED_MODIFIER: f32 = 0.5;
+/// 兼容旧名（qi 回复倍率，f64）。值与 `EXHAUSTED_MODIFIER` 一致，供 tick.rs 守恒断言。
+pub const EXHAUSTED_QI_RECOVERY_MODIFIER: f64 = EXHAUSTED_MODIFIER as f64;
+/// 兼容旧名（防御倍率，f32）。值与 `EXHAUSTED_MODIFIER` 一致。
+pub const EXHAUSTED_DEFENSE_MODIFIER: f32 = EXHAUSTED_MODIFIER;
 pub const FULL_POWER_REACH: AttackReach = AttackReach {
     base: 8.0,
     step_bonus: 0.0,
@@ -47,26 +57,6 @@ pub struct ChargingState {
 #[derive(Debug, Clone, Copy, Component, PartialEq)]
 pub struct FullPowerChargeRateOverride {
     pub rate_per_tick: f64,
-}
-
-#[derive(Debug, Clone, Component, PartialEq)]
-pub struct Exhausted {
-    pub started_at_tick: u64,
-    pub recovery_at_tick: u64,
-    pub qi_recovery_modifier: f64,
-    pub defense_modifier: f32,
-}
-
-impl Exhausted {
-    pub fn from_committed_qi(now_tick: u64, qi_committed: f64) -> Self {
-        let duration = exhausted_duration_ticks(qi_committed);
-        Self {
-            started_at_tick: now_tick,
-            recovery_at_tick: now_tick.saturating_add(duration),
-            qi_recovery_modifier: EXHAUSTED_QI_RECOVERY_MODIFIER,
-            defense_modifier: EXHAUSTED_DEFENSE_MODIFIER,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Event, PartialEq)]
@@ -118,19 +108,12 @@ pub struct FullPowerStrikeKilledEvent {
     pub at_tick: u64,
 }
 
-#[derive(Debug, Clone, Event, PartialEq)]
-pub struct ExhaustedExpiredEvent {
-    pub entity: Entity,
-    pub at_tick: u64,
-}
-
 pub fn register(app: &mut App) {
     app.add_event::<ChargeStartedEvent>();
     app.add_event::<ChargeInterruptedEvent>();
     app.add_event::<FullPowerAttackIntent>();
     app.add_event::<FullPowerReleasedEvent>();
     app.add_event::<FullPowerStrikeKilledEvent>();
-    app.add_event::<ExhaustedExpiredEvent>();
     app.add_systems(
         Update,
         (
@@ -138,7 +121,6 @@ pub fn register(app: &mut App) {
                 .in_set(CombatSystemSet::Intent)
                 .after(crate::combat::debug::tick_combat_clock),
             apply_full_power_attack_intent_system.in_set(CombatSystemSet::Intent),
-            exhausted_expire_system.in_set(CombatSystemSet::Physics),
         ),
     );
     app.add_systems(
@@ -172,7 +154,7 @@ pub fn start_charge_fn(
     {
         return rejected(CastRejectReason::OnCooldown);
     }
-    if world.get::<ChargingState>(caster).is_some() || world.get::<Exhausted>(caster).is_some() {
+    if world.get::<ChargingState>(caster).is_some() || is_exhausted(world, caster) {
         return rejected(CastRejectReason::InRecovery);
     }
 
@@ -208,6 +190,27 @@ pub fn release_full_power_fn(
     slot: u8,
     target: Option<Entity>,
 ) -> CastResult {
+    // 标准注册入口：虚脱时长不缩放（multiplier=1.0）。
+    // baomai_v3::cast_full_power_release 走 release_full_power_with_exhaust 传入
+    // mastery 派生的缩放系数（flow>1.0 时传 None 跳过虚脱）。
+    release_full_power_with_exhaust(world, caster, slot, target, Some(1.0))
+}
+
+/// 全力一击释放核心实现。
+///
+/// `exhaust_multiplier`：
+/// - `Some(m)` → 虚脱时长 = `exhausted_duration_ticks(qi_released) * m`（baomai skill_lv 缩放）；
+/// - `None`    → 完全跳过虚脱（baomai flow>1.0 的「乘风」免虚脱分支）。
+///
+/// 虚脱以 `ApplyStatusEffectIntent{Exhausted, magnitude=EXHAUSTED_MODIFIER}` 施加，
+/// 由标准 status 生命周期到期/`/reset` 清除——不再插入游离 `Exhausted` 组件。
+pub fn release_full_power_with_exhaust(
+    world: &mut bevy_ecs::world::World,
+    caster: Entity,
+    slot: u8,
+    target: Option<Entity>,
+    exhaust_multiplier: Option<f64>,
+) -> CastResult {
     let now_tick = current_tick(world);
     if world
         .get::<crate::combat::components::SkillBarBindings>(caster)
@@ -224,12 +227,23 @@ pub fn release_full_power_fn(
     }
 
     let qi_released = state.qi_committed.max(0.0);
-    let exhausted = Exhausted::from_committed_qi(now_tick, qi_released);
     world
         .entity_mut(caster)
         .remove::<ChargingState>()
         .remove::<FullPowerChargeRateOverride>();
-    world.entity_mut(caster).insert(exhausted);
+    if let Some(multiplier) = exhaust_multiplier {
+        let base_duration = exhausted_duration_ticks(qi_released);
+        let duration = scale_exhaust_duration(base_duration, multiplier);
+        if duration > 0 {
+            world.send_event(ApplyStatusEffectIntent {
+                target: caster,
+                kind: StatusEffectKind::Exhausted,
+                magnitude: EXHAUSTED_MODIFIER,
+                duration_ticks: duration,
+                issued_at_tick: now_tick,
+            });
+        }
+    }
     if let Some(mut bindings) = world.get_mut::<crate::combat::components::SkillBarBindings>(caster)
     {
         bindings.set_cooldown(
@@ -363,24 +377,6 @@ pub fn charge_interrupt_system(
     }
 }
 
-pub fn exhausted_expire_system(
-    clock: Res<CombatClock>,
-    mut commands: Commands,
-    exhausted_q: Query<(Entity, &Exhausted)>,
-    mut expired: EventWriter<ExhaustedExpiredEvent>,
-) {
-    for (entity, exhausted) in &exhausted_q {
-        if exhausted.recovery_at_tick > clock.tick {
-            continue;
-        }
-        commands.entity(entity).remove::<Exhausted>();
-        expired.send(ExhaustedExpiredEvent {
-            entity,
-            at_tick: clock.tick,
-        });
-    }
-}
-
 pub fn full_power_kill_detection_system(
     clock: Res<CombatClock>,
     mut combat_events: EventReader<CombatEvent>,
@@ -438,6 +434,28 @@ pub fn exhausted_duration_ticks(qi_committed: f64) -> u64 {
     (qi_committed.ceil() as u64).saturating_mul(EXHAUST_TICKS_PER_QI_COMMITTED)
 }
 
+/// 按 baomai skill_lv 缩放系数缩放虚脱基础时长。
+/// 与旧 `Exhausted` 组件 retro 缩放等价：`(duration * m).round().max(1.0)`，
+/// 但 base_duration==0（释放真元过少）时保持 0（不施加虚脱）。
+fn scale_exhaust_duration(base_duration: u64, multiplier: f64) -> u64 {
+    if base_duration == 0 {
+        return 0;
+    }
+    let m = if multiplier.is_finite() {
+        multiplier.max(0.0)
+    } else {
+        1.0
+    };
+    (base_duration as f64 * m).round().max(1.0) as u64
+}
+
+/// 是否处于虚脱 debuff（取代旧的 `world.get::<Exhausted>().is_some()`）。
+fn is_exhausted(world: &bevy_ecs::world::World, entity: Entity) -> bool {
+    world
+        .get::<StatusEffects>(entity)
+        .is_some_and(|status| has_active_status(status, StatusEffectKind::Exhausted))
+}
+
 fn is_high_realm(realm: Realm) -> bool {
     realm_index(realm) >= realm_index(Realm::Spirit)
 }
@@ -471,7 +489,7 @@ fn rejected(reason: CastRejectReason) -> CastResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::combat::components::{SkillBarBindings, Wounds};
+    use crate::combat::components::{ActiveStatusEffect, SkillBarBindings, StatusEffects, Wounds};
     use crate::combat::events::CombatEvent;
     use crate::social::events::SocialRenownDeltaEvent;
     use valence::prelude::{App, Events, Update};
@@ -486,9 +504,34 @@ mod tests {
         app.add_event::<FullPowerAttackIntent>();
         app.add_event::<FullPowerReleasedEvent>();
         app.add_event::<FullPowerStrikeKilledEvent>();
-        app.add_event::<ExhaustedExpiredEvent>();
+        app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<SocialRenownDeltaEvent>();
         app
+    }
+
+    /// 测试辅助：读取最近一次施加给 caster 的虚脱 ApplyStatusEffectIntent 的时长。
+    fn last_exhausted_intent_duration(app: &App, caster: Entity) -> Option<u64> {
+        app.world()
+            .resource::<Events<ApplyStatusEffectIntent>>()
+            .iter_current_update_events()
+            .filter(|e| e.target == caster && e.kind == StatusEffectKind::Exhausted)
+            .map(|e| e.duration_ticks)
+            .last()
+    }
+
+    /// 测试辅助：把虚脱 status 直接写入实体的 StatusEffects（模拟 status_effect_apply_tick 后果）。
+    fn insert_exhausted_status(app: &mut App, caster: Entity, remaining_ticks: u64) {
+        app.world_mut()
+            .entity_mut(caster)
+            .get_mut::<StatusEffects>()
+            .expect("actor should have StatusEffects")
+            .active
+            .push(ActiveStatusEffect {
+                kind: StatusEffectKind::Exhausted,
+                magnitude: EXHAUSTED_MODIFIER,
+                remaining_ticks,
+                source_pill: None,
+            });
     }
 
     fn actor(app: &mut App, realm: Realm, qi_current: f64, qi_max: f64) -> Entity {
@@ -501,6 +544,7 @@ mod tests {
                     ..Default::default()
                 },
                 SkillBarBindings::default(),
+                StatusEffects::default(),
                 Wounds::default(),
                 Lifecycle {
                     character_id: format!("char:{realm:?}:{qi_max}"),
@@ -578,8 +622,10 @@ mod tests {
         );
     }
 
+    /// 释放：发 FullPowerAttackIntent + 以 ApplyStatusEffectIntent 施加虚脱 debuff
+    /// （duration = qi_released*2 = 1200），不再插入游离 Exhausted 组件。
     #[test]
-    fn release_full_power_emits_attack_intent_and_adds_exhausted() {
+    fn release_full_power_emits_attack_intent_and_applies_exhausted_debuff() {
         let mut app = app();
         let caster = actor(&mut app, Realm::Condense, 0.0, 600.0);
         let target = actor(&mut app, Realm::Solidify, 100.0, 2000.0);
@@ -594,8 +640,22 @@ mod tests {
 
         assert!(matches!(result, CastResult::Started { .. }));
         assert!(app.world().get::<ChargingState>(caster).is_none());
-        let exhausted = app.world().get::<Exhausted>(caster).unwrap();
-        assert_eq!(exhausted.recovery_at_tick, 1210);
+        assert_eq!(
+            last_exhausted_intent_duration(&app, caster),
+            Some(1200),
+            "虚脱 debuff 时长应为 qi_released(600)*EXHAUST_TICKS_PER_QI_COMMITTED(2)=1200"
+        );
+        let intent = app
+            .world()
+            .resource::<Events<ApplyStatusEffectIntent>>()
+            .iter_current_update_events()
+            .find(|e| e.target == caster && e.kind == StatusEffectKind::Exhausted)
+            .cloned()
+            .expect("应施加虚脱 debuff");
+        assert_eq!(
+            intent.magnitude, EXHAUSTED_MODIFIER,
+            "虚脱 magnitude 承载共享 modifier 0.5"
+        );
         assert!(app
             .world()
             .resource::<Events<FullPowerAttackIntent>>()
@@ -638,7 +698,11 @@ mod tests {
         let result = release_full_power_fn(app.world_mut(), caster, 1, None);
 
         assert!(matches!(result, CastResult::Started { .. }));
-        assert!(app.world().get::<Exhausted>(caster).is_some());
+        assert_eq!(
+            last_exhausted_intent_duration(&app, caster),
+            Some(1200),
+            "无目标释放也应施加虚脱 debuff（消耗真元仍触发虚脱）"
+        );
         let released = app.world().resource::<Events<FullPowerReleasedEvent>>();
         assert!(released
             .iter_current_update_events()
@@ -677,12 +741,11 @@ mod tests {
         );
 
         let exhausted_actor = actor(&mut app, Realm::Induce, 120.0, 120.0);
-        app.world_mut()
-            .entity_mut(exhausted_actor)
-            .insert(Exhausted::from_committed_qi(10, 100.0));
+        insert_exhausted_status(&mut app, exhausted_actor, 200);
         assert_eq!(
             start_charge_fn(app.world_mut(), exhausted_actor, 0, None),
-            rejected(CastRejectReason::InRecovery)
+            rejected(CastRejectReason::InRecovery),
+            "虚脱 debuff（StatusEffects）期间禁止重新蓄力"
         );
 
         let idle = actor(&mut app, Realm::Induce, 120.0, 120.0);
@@ -725,7 +788,10 @@ mod tests {
         app.update();
 
         assert!(app.world().get::<ChargingState>(caster).is_none());
-        assert!(app.world().get::<Exhausted>(caster).is_none());
+        assert!(
+            !is_exhausted(app.world(), caster),
+            "蓄力被打断不应进入虚脱（虚脱仅在成功释放后施加）"
+        );
         assert_eq!(
             app.world().get::<Cultivation>(caster).unwrap().qi_current,
             110.0
@@ -782,24 +848,65 @@ mod tests {
         assert_eq!(events.iter_current_update_events().count(), 1);
     }
 
+    /// 端到端状态机：释放 → status_effect_apply_tick 入 StatusEffects（虚脱生效）
+    /// → status_effect_tick 时长归零后移除（虚脱解除）。
+    /// 取代旧的游离 exhausted_expire_system——到期改由标准 status 生命周期管理。
     #[test]
     fn release_to_exhausted_to_normal_state_transition() {
-        let mut app = app();
-        let caster = actor(&mut app, Realm::Induce, 0.0, 200.0);
-        app.world_mut()
-            .entity_mut(caster)
-            .insert(Exhausted::from_committed_qi(10, 50.0));
-        app.add_systems(Update, exhausted_expire_system);
-        app.world_mut().resource_mut::<CombatClock>().tick = 110;
+        use crate::combat::components::STATUS_EFFECT_TICK_INTERVAL_TICKS;
+        use crate::combat::status::{status_effect_apply_tick, status_effect_tick};
 
+        let mut app = app();
+        // 短时长便于到期：qi_committed=1 → duration=2 ticks。
+        let caster = actor(&mut app, Realm::Induce, 0.0, 200.0);
+        app.world_mut().entity_mut(caster).insert(ChargingState {
+            slot: 0,
+            started_at_tick: 10,
+            qi_committed: 1.0,
+            target_qi: 1.0,
+        });
+        // qi_committed=1 < FULL_POWER_MIN_QI_TO_START(100) 会被拒；直接施加短时虚脱 status。
+        insert_exhausted_status(&mut app, caster, STATUS_EFFECT_TICK_INTERVAL_TICKS);
+        assert!(is_exhausted(app.world(), caster), "施加后应处于虚脱态");
+
+        // 推进标准 status tick：remaining 归零 → retain 移除。
+        app.add_systems(
+            Update,
+            (status_effect_apply_tick, status_effect_tick).chain(),
+        );
+        app.world_mut().resource_mut::<CombatClock>().tick = STATUS_EFFECT_TICK_INTERVAL_TICKS;
         app.update();
 
-        assert!(app.world().get::<Exhausted>(caster).is_none());
-        assert!(app
-            .world()
-            .resource::<Events<ExhaustedExpiredEvent>>()
-            .iter_current_update_events()
-            .any(|event| event.entity == caster));
+        assert!(
+            !is_exhausted(app.world(), caster),
+            "虚脱 status 到期后应由标准 status 生命周期移除（不再有独立 expire 系统）"
+        );
+    }
+
+    /// 虚脱 debuff 是否随成功释放真正进入 StatusEffects（走完整 apply 链路）。
+    #[test]
+    fn release_then_apply_tick_puts_exhausted_into_status_effects() {
+        use crate::combat::status::status_effect_apply_tick;
+
+        let mut app = app();
+        let caster = actor(&mut app, Realm::Condense, 0.0, 600.0);
+        app.world_mut().entity_mut(caster).insert(ChargingState {
+            slot: 0,
+            started_at_tick: 10,
+            qi_committed: 600.0,
+            target_qi: 600.0,
+        });
+
+        let result = release_full_power_fn(app.world_mut(), caster, 1, None);
+        assert!(matches!(result, CastResult::Started { .. }));
+
+        app.add_systems(Update, status_effect_apply_tick);
+        app.update();
+
+        assert!(
+            is_exhausted(app.world(), caster),
+            "release 发的 ApplyStatusEffectIntent 应被 status_effect_apply_tick 落入 StatusEffects"
+        );
     }
 
     #[test]
@@ -807,6 +914,21 @@ mod tests {
         assert_eq!(exhausted_duration_ticks(50.0), 100);
         assert_eq!(exhausted_duration_ticks(500.0), 1000);
         assert_eq!(exhausted_duration_ticks(2000.0), 4000);
+    }
+
+    /// scale_exhaust_duration：baomai skill_lv 缩放与边界。
+    #[test]
+    fn scale_exhaust_duration_applies_multiplier_and_floors_at_one() {
+        // 满级缩放系数 0.7（1 - 1.0*0.30）：1200 * 0.7 = 840。
+        assert_eq!(scale_exhaust_duration(1200, 0.7), 840);
+        // multiplier=1.0（标准入口）不变。
+        assert_eq!(scale_exhaust_duration(1200, 1.0), 1200);
+        // base=0（释放真元过少）→ 0，不施加虚脱。
+        assert_eq!(scale_exhaust_duration(0, 0.7), 0);
+        // 极小非零结果 floor 到 1（永不把存在的虚脱缩到 0）。
+        assert_eq!(scale_exhaust_duration(1, 0.0001), 1);
+        // 非有限 multiplier 兜底为 1.0。
+        assert_eq!(scale_exhaust_duration(100, f64::NAN), 100);
     }
 
     #[test]
