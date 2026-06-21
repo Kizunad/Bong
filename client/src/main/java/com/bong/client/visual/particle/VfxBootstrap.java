@@ -26,6 +26,12 @@ public final class VfxBootstrap {
         for (net.minecraft.util.Identifier eventId : SwordPathVfxPlayer.EVENT_IDS) {
             registry.register(eventId, swordPath);
         }
+        // 暗器六招粒子（封骨/狙击/齐射/魂注/破甲/分形）—— server emit_anqi_visual_triggers 引用。
+        // 复用既有 BongParticles sprite，无新贴图。
+        AnqiVfxPlayer anqi = new AnqiVfxPlayer();
+        for (net.minecraft.util.Identifier eventId : AnqiVfxPlayer.EVENT_IDS) {
+            registry.register(eventId, anqi);
+        }
         registry.register(BreakthroughPillarPlayer.EVENT_ID,     new BreakthroughPillarPlayer());
         registry.register(EnlightenmentAuraPlayer.EVENT_ID,      new EnlightenmentAuraPlayer());
         registry.register(BedRestAuraPlayer.EVENT_ID,            new BedRestAuraPlayer());

@@ -15,7 +15,11 @@ use crate::audio::implementation::{
 };
 use crate::audio::SoundRecipeRegistry;
 use crate::botany::components::HarvestTerminalEvent;
+use crate::combat::anqi_v2::{
+    AnqiSkillId, ArmorPierceEvent, DecoyDeployEvent, MultiShotEvent, QiInjectionEvent,
+};
 use crate::combat::baomai_v3::{BaomaiSkillEvent, BaomaiSkillId};
+use crate::combat::carrier::CarrierChargedEvent;
 use crate::combat::components::{Lifecycle, Wounds};
 use crate::combat::events::{AttackSource, CombatEvent, DeathEvent, DefenseKind};
 use crate::combat::tuike_v2::{ContamTransferredEvent, DonFalseSkinEvent, FalseSkinSheddedEvent};
@@ -674,6 +678,117 @@ fn sword_path_audio_flag(skill: SwordPathSkillId) -> &'static str {
         SwordPathSkillId::Manifest => "sword_path_manifest",
         SwordPathSkillId::HeavenGateCharge => "sword_path_heaven_gate_charge",
         SwordPathSkillId::HeavenGateRelease => "sword_path_heaven_gate_release",
+    }
+}
+
+/// 暗器六招 cast → `PlaySoundRecipeRequest`，引用 `audio_recipes/anqi_*.json`
+/// （全部复用 vanilla 音色分层，无新音频文件）。
+///
+/// 招式 → 事件源 / recipe 映射：
+/// - 封骨（充能）`CarrierChargedEvent` → `anqi_charge_seal`
+/// - 单射狙击 `QiInjectionEvent{SingleSnipe}` → `anqi_single_snipe`
+/// - 凝魂注射 `QiInjectionEvent{SoulInject}` → `anqi_soul_inject`
+/// - 多发齐射 `MultiShotEvent` → `anqi_multi_shot`
+/// - 破甲注射 `ArmorPierceEvent` → `anqi_armor_pierce`
+/// - 诱饵分形 `DecoyDeployEvent` → `anqi_echo_fractal`
+///
+/// **纯 cosmetic**：只发音效，不读 / 改任何战斗 / 真元状态。
+#[allow(clippy::too_many_arguments)]
+pub fn emit_anqi_audio_triggers(
+    mut charges: EventReader<CarrierChargedEvent>,
+    mut injections: EventReader<QiInjectionEvent>,
+    mut multi_shots: EventReader<MultiShotEvent>,
+    mut armor_pierces: EventReader<ArmorPierceEvent>,
+    mut echoes: EventReader<DecoyDeployEvent>,
+    positions: Query<&Position>,
+    mut audio: AudioEmitWriter,
+) {
+    let mut audio = audio.context();
+
+    for event in charges.read() {
+        let origin = positions
+            .get(event.carrier)
+            .map(|p| p.get())
+            .unwrap_or_default();
+        emit_play(
+            &mut audio,
+            "anqi_charge_seal",
+            event.carrier,
+            origin,
+            Some("anqi_charge_seal".to_string()),
+            1.0,
+            0.0,
+        );
+    }
+
+    for event in injections.read() {
+        let origin = positions
+            .get(event.caster)
+            .map(|p| p.get())
+            .unwrap_or_default();
+        let (recipe, flag) = match event.skill {
+            AnqiSkillId::SingleSnipe => ("anqi_single_snipe", "anqi_single_snipe"),
+            AnqiSkillId::SoulInject => ("anqi_soul_inject", "anqi_soul_inject"),
+            // MultiShot / ArmorPierce / EchoFractal 走各自 EventReader，不发 QiInjectionEvent。
+            _ => continue,
+        };
+        emit_play(
+            &mut audio,
+            recipe,
+            event.caster,
+            origin,
+            Some(flag.to_string()),
+            1.0,
+            0.0,
+        );
+    }
+
+    for event in multi_shots.read() {
+        let origin = positions
+            .get(event.caster)
+            .map(|p| p.get())
+            .unwrap_or_default();
+        emit_play(
+            &mut audio,
+            "anqi_multi_shot",
+            event.caster,
+            origin,
+            Some("anqi_multi_shot".to_string()),
+            1.0,
+            0.0,
+        );
+    }
+
+    for event in armor_pierces.read() {
+        let origin = positions
+            .get(event.caster)
+            .map(|p| p.get())
+            .unwrap_or_default();
+        emit_play(
+            &mut audio,
+            "anqi_armor_pierce",
+            event.caster,
+            origin,
+            Some("anqi_armor_pierce".to_string()),
+            1.0,
+            0.0,
+        );
+    }
+
+    for event in echoes.read() {
+        let origin = positions
+            .get(event.caster)
+            .map(|p| p.get())
+            .unwrap_or_default();
+        emit_play(
+            &mut audio,
+            "anqi_echo_fractal",
+            event.caster,
+            origin,
+            Some("anqi_echo_fractal".to_string()),
+            1.0,
+            0.0,
+        );
     }
 }
 
@@ -1952,6 +2067,153 @@ mod tests {
             emitted[0].pos,
             Some([7, 64, 7]),
             "无 Position 时音源应落到 event.center"
+        );
+    }
+
+    // ─── 暗器六招：emit_anqi_audio_triggers ───────────────────────
+
+    fn setup_anqi_audio_app() -> App {
+        use crate::combat::anqi_v2::{ArmorPierceEvent, MultiShotEvent, QiInjectionEvent};
+        use crate::combat::carrier::CarrierChargedEvent;
+
+        let mut app = App::new();
+        app.init_resource::<AudioImplementationDedup>();
+        app.add_event::<CarrierChargedEvent>();
+        app.add_event::<QiInjectionEvent>();
+        app.add_event::<MultiShotEvent>();
+        app.add_event::<ArmorPierceEvent>();
+        app.add_event::<crate::combat::anqi_v2::DecoyDeployEvent>();
+        app.add_event::<PlaySoundRecipeRequest>();
+        app.add_systems(Update, emit_anqi_audio_triggers);
+        app
+    }
+
+    fn injection_outcome() -> crate::qi_physics::HighDensityInjectionOutcome {
+        crate::qi_physics::HighDensityInjectionOutcome {
+            payload_qi: 50.0,
+            wound_qi: 40.0,
+            contamination_qi: 5.0,
+            overload_ratio: 0.5,
+            triggers_overload_tear: false,
+        }
+    }
+
+    fn armor_outcome() -> crate::qi_physics::ArmorPenetrationOutcome {
+        crate::qi_physics::ArmorPenetrationOutcome {
+            base_damage: 60.0,
+            ignored_defense_ratio: 0.6,
+            effective_damage: 70.0,
+            carrier_shatter_probability: 0.2,
+        }
+    }
+
+    /// 暗器六招各 emit 其专属 recipe（封骨/狙击/齐射/魂注/破甲/分形）。
+    #[test]
+    fn anqi_skills_emit_dedicated_recipes() {
+        use crate::combat::anqi_v2::{
+            AnqiSkillId, ArmorPierceEvent, DecoyDeployEvent, MultiShotEvent, QiInjectionEvent,
+        };
+        use crate::combat::carrier::{CarrierChargedEvent, CarrierKind};
+        use crate::cultivation::components::ColorKind;
+
+        let mut app = setup_anqi_audio_app();
+        let caster = app.world_mut().spawn(Position::new([0.0, 64.0, 0.0])).id();
+
+        app.world_mut().send_event(CarrierChargedEvent {
+            carrier: caster,
+            instance_id: 1,
+            qi_amount: 25.0,
+            qi_color: ColorKind::Solid,
+            full_charge: true,
+            tick: 10,
+        });
+        app.world_mut().send_event(QiInjectionEvent {
+            caster,
+            target: None,
+            skill: AnqiSkillId::SingleSnipe,
+            carrier_kind: CarrierKind::YibianShougu,
+            outcome: injection_outcome(),
+            tick: 11,
+        });
+        app.world_mut().send_event(QiInjectionEvent {
+            caster,
+            target: None,
+            skill: AnqiSkillId::SoulInject,
+            carrier_kind: CarrierKind::DyedBone,
+            outcome: injection_outcome(),
+            tick: 12,
+        });
+        app.world_mut().send_event(MultiShotEvent {
+            caster,
+            projectile_count: 5,
+            carrier_kind: CarrierKind::LingmuArrow,
+            shots: Vec::new(),
+            tick: 13,
+        });
+        app.world_mut().send_event(ArmorPierceEvent {
+            caster,
+            target: None,
+            carrier_kind: CarrierKind::FenglingheBone,
+            outcome: armor_outcome(),
+            tick: 14,
+        });
+        app.world_mut().send_event(DecoyDeployEvent {
+            caster,
+            echo_count: 3,
+            tick: 15,
+        });
+        app.update();
+
+        let emitted: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<PlaySoundRecipeRequest>>()
+            .drain()
+            .collect();
+        let mut recipes: Vec<_> = emitted.iter().map(|e| e.recipe_id.as_str()).collect();
+        recipes.sort_unstable();
+        let mut expected = vec![
+            "anqi_charge_seal",
+            "anqi_single_snipe",
+            "anqi_soul_inject",
+            "anqi_multi_shot",
+            "anqi_armor_pierce",
+            "anqi_echo_fractal",
+        ];
+        expected.sort_unstable();
+        assert_eq!(
+            recipes, expected,
+            "暗器六招各应 emit 其专属 recipe，实际 {recipes:?}"
+        );
+    }
+
+    /// QiInjectionEvent 的 MultiShot/ArmorPierce/EchoFractal 分支不发声（走各自 EventReader）。
+    #[test]
+    fn anqi_injection_only_handles_snipe_and_soul() {
+        use crate::combat::anqi_v2::{AnqiSkillId, QiInjectionEvent};
+        use crate::combat::carrier::CarrierKind;
+
+        let mut app = setup_anqi_audio_app();
+        let caster = app.world_mut().spawn(Position::new([0.0, 64.0, 0.0])).id();
+        // 故意发一个 MultiShot 标签的 QiInjectionEvent（实际生产不会，但守语义边界）
+        app.world_mut().send_event(QiInjectionEvent {
+            caster,
+            target: None,
+            skill: AnqiSkillId::MultiShot,
+            carrier_kind: CarrierKind::LingmuArrow,
+            outcome: injection_outcome(),
+            tick: 11,
+        });
+        app.update();
+
+        let emitted: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<PlaySoundRecipeRequest>>()
+            .drain()
+            .collect();
+        assert!(
+            emitted.is_empty(),
+            "QiInjectionEvent 的非 Snipe/Soul 分支不应在 audio 系统发声（走 MultiShot/ArmorPierce 专属 EventReader），实际 {} 条",
+            emitted.len()
         );
     }
 }

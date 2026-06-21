@@ -6,15 +6,17 @@ public record AnqiHudState(
     int echoCount,
     String abrasionContainer,
     float abrasionQiPayload,
+    int multiShotCount,
     long expiresAtMillis
 ) {
     public static AnqiHudState empty() {
-        return new AnqiHudState(0f, 0f, 0, "", 0f, 0L);
+        return new AnqiHudState(0f, 0f, 0, "", 0f, 0, 0L);
     }
 
     public boolean active(long nowMillis) {
         return expiresAtMillis > nowMillis
-            && (aimProgress > 0f || chargeProgress > 0f || echoCount > 0 || hasAbrasionContainer());
+            && (aimProgress > 0f || chargeProgress > 0f || echoCount > 0
+                || hasAbrasionContainer() || multiShotCount > 0);
     }
 
     public boolean hasAbrasionContainer() {
@@ -22,19 +24,23 @@ public record AnqiHudState(
     }
 
     public static AnqiHudState aim(float progress, long nowMillis, long durationMillis) {
-        return new AnqiHudState(clamp01(progress), 0f, 0, "", 0f, nowMillis + Math.max(1L, durationMillis));
+        return new AnqiHudState(clamp01(progress), 0f, 0, "", 0f, 0, nowMillis + Math.max(1L, durationMillis));
     }
 
     public static AnqiHudState charge(float progress, long nowMillis, long durationMillis) {
-        return new AnqiHudState(0f, clamp01(progress), 0, "", 0f, nowMillis + Math.max(1L, durationMillis));
+        return new AnqiHudState(0f, clamp01(progress), 0, "", 0f, 0, nowMillis + Math.max(1L, durationMillis));
     }
 
     public static AnqiHudState echo(int count, long nowMillis, long durationMillis) {
-        return new AnqiHudState(0f, 0f, Math.max(0, count), "", 0f, nowMillis + Math.max(1L, durationMillis));
+        return new AnqiHudState(0f, 0f, Math.max(0, count), "", 0f, 0, nowMillis + Math.max(1L, durationMillis));
     }
 
     public static AnqiHudState abrasion(String container, float qiPayload, long nowMillis, long durationMillis) {
-        return new AnqiHudState(0f, 0f, 0, container == null ? "" : container, Math.max(0f, qiPayload), nowMillis + Math.max(1L, durationMillis));
+        return new AnqiHudState(0f, 0f, 0, container == null ? "" : container, Math.max(0f, qiPayload), 0, nowMillis + Math.max(1L, durationMillis));
+    }
+
+    public static AnqiHudState multiShot(int count, long nowMillis, long durationMillis) {
+        return new AnqiHudState(0f, 0f, 0, "", 0f, Math.max(0, count), nowMillis + Math.max(1L, durationMillis));
     }
 
     static float clamp01(float value) {

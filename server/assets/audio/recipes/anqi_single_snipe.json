@@ -1,0 +1,11 @@
+{
+  "id": "anqi_single_snipe",
+  "layers": [
+    { "sound": "minecraft:entity.arrow.shoot", "volume": 0.7, "pitch": 1.3, "delay_ticks": 0 },
+    { "sound": "minecraft:entity.player.attack.sweep", "volume": 0.3, "pitch": 1.6, "delay_ticks": 0 }
+  ],
+  "priority": 60,
+  "attenuation": "world_3d",
+  "category": "PLAYERS",
+  "bus": "COMBAT"
+}

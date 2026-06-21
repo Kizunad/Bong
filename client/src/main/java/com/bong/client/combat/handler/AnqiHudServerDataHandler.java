@@ -14,11 +14,14 @@ import com.google.gson.JsonPrimitive;
  * 处理 {@code anqi_hud} server-data payloads，将 server emit 的暗器 HUD 状态写入
  * {@link AnqiHudStateStore}，供 {@code AnqiHudPlanner.buildCommands()} 渲染。
  *
- * <p>payload.kind 路由（当前 server 实际发送的三路）：
+ * <p>payload.kind 路由（server 实际发送的各路）：
  * <ul>
- *   <li>"echo"     → {@link AnqiHudStateStore#updateEcho}（DecoyDeployEvent.echo_count）</li>
- *   <li>"charge"   → {@link AnqiHudStateStore#updateCharge}（QiInjectionEvent.overload_ratio 作蓄力度量）</li>
- *   <li>"abrasion" → {@link AnqiHudStateStore#updateAbrasion}（CarrierAbrasionEvent.after_qi）</li>
+ *   <li>"echo"      → {@link AnqiHudStateStore#updateEcho}（DecoyDeployEvent.echo_count）</li>
+ *   <li>"charge"    → {@link AnqiHudStateStore#updateCharge}（QiInjectionEvent.overload_ratio /
+ *       ArmorPierceEvent.ignored_defense_ratio 作蓄力度量）</li>
+ *   <li>"abrasion"  → {@link AnqiHudStateStore#updateAbrasion}（CarrierAbrasionEvent.after_qi）</li>
+ *   <li>"multishot" → {@link AnqiHudStateStore#updateMultiShot}（MultiShotEvent.projectile_count，
+ *       server 复用 echo_count 字段承载弹数）</li>
  * </ul>
  *
  * <p>并发修复（blocker）：每个 kind 只更新对应维度，不清零其他维度。三路事件并存时
@@ -58,6 +61,11 @@ public final class AnqiHudServerDataHandler implements ServerDataHandler {
                 String container = readString(payload, "abrasion_container");
                 float qiPayload = (float) readDouble(payload, "abrasion_qi_payload", 0.0);
                 AnqiHudStateStore.updateAbrasion(container, qiPayload, now, DISPLAY_DURATION_MS, tick);
+            }
+            case "multishot" -> {
+                // 多发齐射：server 用 echo_count 字段承载 projectile_count（复用字段，无新 proto 字段）。
+                int volley = (int) readLong(payload, "echo_count", 0L);
+                AnqiHudStateStore.updateMultiShot(volley, now, DISPLAY_DURATION_MS, tick);
             }
             default -> {
                 // 未知 kind（包括 "aim"——server 当前不发，预留给未来 aim-phase plan）静默忽略，不修改 store

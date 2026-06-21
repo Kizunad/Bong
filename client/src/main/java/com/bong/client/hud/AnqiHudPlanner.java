@@ -8,6 +8,7 @@ public final class AnqiHudPlanner {
     private static final int AIM_COLOR = 0xFFE6D27A;
     private static final int CHARGE_COLOR = 0xFF8CE6FF;
     private static final int ECHO_COLOR = 0xFFB9A7FF;
+    private static final int MULTISHOT_COLOR = 0xFFD8E0B0;
     private static final int TEXT_COLOR = 0xFFEDE9D0;
     private static final int PANEL_BG = 0xB0121118;
 
@@ -28,6 +29,7 @@ public final class AnqiHudPlanner {
         if (aimProgress > 0f) appendAim(out, screenWidth, screenHeight, aimProgress);
         if (chargeProgress > 0f) appendCharge(out, screenWidth, screenHeight, chargeProgress);
         if (state.echoCount() > 0) appendEcho(out, screenWidth, screenHeight, state.echoCount());
+        if (state.multiShotCount() > 0) appendMultiShot(out, screenWidth, screenHeight, state.multiShotCount());
         if (state.hasAbrasionContainer()) {
             appendAbrasion(out, screenWidth, screenHeight, state.abrasionContainer(), state.abrasionQiPayload());
         }
@@ -57,6 +59,20 @@ public final class AnqiHudPlanner {
         int y = h / 2 + 18;
         out.add(HudRenderCommand.rect(HudRenderLayer.CARRIER, x - 4, y - 3, 54, 14, PANEL_BG));
         out.add(HudRenderCommand.text(HudRenderLayer.CARRIER, "echo " + count, x, y, ECHO_COLOR));
+    }
+
+    private static void appendMultiShot(List<HudRenderCommand> out, int w, int h, int count) {
+        // 多发齐射弹数指示——准星下方一排刻度块，每发一个小方块（极简，cast 后短暂显示）。
+        int cx = w / 2;
+        int y = h / 2 + 30;
+        int blockW = 4;
+        int gap = 2;
+        int total = count * blockW + (count - 1) * gap;
+        int x = cx - total / 2;
+        out.add(HudRenderCommand.rect(HudRenderLayer.CARRIER, x - 3, y - 2, total + 6, 7, PANEL_BG));
+        for (int i = 0; i < count; i++) {
+            out.add(HudRenderCommand.rect(HudRenderLayer.CARRIER, x + i * (blockW + gap), y, blockW, 3, MULTISHOT_COLOR));
+        }
     }
 
     private static void appendAbrasion(List<HudRenderCommand> out, int w, int h, String container, float qiPayload) {
