@@ -25,6 +25,7 @@ use crate::lingtian::events::{
 use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::schema::tribulation::DuXuOutcomeV1;
 use crate::schema::vfx_event::VfxEventPayloadV1;
+use crate::sword_path::av_event::{SwordPathSkillCastEvent, SwordPathSkillId};
 
 const ANIM_SWORD_SLASH_DOWN: &str = "bong:sword_slash_down";
 const ANIM_SWORD_STAB: &str = "bong:sword_stab";
@@ -54,6 +55,22 @@ const WOLIU_PRIORITY: u16 = 1300;
 const WOLIU_STOP_FADE_OUT_TICKS: u8 = 4;
 const BAOMAI_PRIORITY: u16 = 1500;
 const TUIKE_PRIORITY: u16 = 1350;
+/// 剑道五招动画优先级——与 baomai 同档（剑道是高阶器修流派）。
+const SWORD_PATH_PRIORITY: u16 = 1500;
+
+// plan-sword-path-v2 P4 — 剑道五招专属 AV 资产 id（client 侧已注册）：
+//   动画：BongAnimations / player_animation/*.json
+//   粒子：SwordPathVfxPlayer.EVENT_IDS（bong: 命名空间）
+const ANIM_SWORD_MANIFEST_CAST: &str = "bong:sword_manifest_cast";
+const ANIM_SWORD_HEAVEN_GATE_CHARGE: &str = "bong:sword_heaven_gate_charge";
+const ANIM_SWORD_HEAVEN_GATE_RELEASE: &str = "bong:sword_heaven_gate_release";
+const VFX_SWORD_CONDENSE_EDGE: &str = "bong:sword_condense_edge";
+const VFX_SWORD_QI_SLASH_PATH: &str = "bong:sword_qi_slash_path";
+const VFX_SWORD_RESONANCE: &str = "bong:sword_resonance";
+const VFX_SWORD_MANIFEST_SUMMON: &str = "bong:sword_manifest_summon";
+const VFX_HEAVEN_GATE_CHARGE: &str = "bong:heaven_gate_charge_2s";
+const VFX_HEAVEN_GATE_RELEASE: &str = "bong:heaven_gate_release";
+const VFX_HEAVEN_GATE_FLASH: &str = "bong:heaven_gate_flash";
 
 const COMBAT_PRIORITY: u16 = 1000;
 const HIT_RECOIL_PRIORITY: u16 = 2000;
@@ -67,13 +84,18 @@ type WoliuVisualStateItem<'a> = (Entity, &'a Position, &'a UniqueId, &'a VortexV
 ///
 /// `AttackSource::BurstMeridian` is intentionally skipped: that skill already emits its
 /// bespoke `bong:beng_quan` animation in `cultivation::burst_meridian`.
+///
+/// 剑道五招（`SwordPath*` source）同样跳过：它们的动画 / 粒子由
+/// `emit_sword_path_visual_triggers` 读 `SwordPathSkillCastEvent` 独立 emit（含化形 /
+/// 天门专属动画），否则会与本系统的基础剑斩动画双重触发（化形尤甚——基础 wound-kind
+/// 动画会盖掉 manifest_cast 专属动画）。
 pub fn emit_attack_animation_triggers(
     mut intents: EventReader<AttackIntent>,
     players: Query<PlayerAnimTargetItem<'_>, PlayerAnimTargetFilter>,
     mut vfx_events: EventWriter<VfxEventRequest>,
 ) {
     for intent in intents.read() {
-        if intent.source == AttackSource::BurstMeridian {
+        if intent.source == AttackSource::BurstMeridian || is_sword_path_source(intent.source) {
             continue;
         }
         let anim_id = attack_anim_for_source(intent.source, intent.wound_kind);
@@ -463,6 +485,127 @@ pub fn emit_tuike_v2_visual_triggers(
     }
 }
 
+/// plan-sword-path-v2 P4 — 剑道五招 cast → 专属动画 + 专属粒子。
+///
+/// 读 `SwordPathSkillCastEvent`，按招式发：
+/// 1. `PlayAnim`（攻击招式复用基础剑斩 / 化形 / 天门专属动画，引用 `BongAnimations`）。
+/// 2. `SpawnParticle`（各招专属 event_id，引用 `SwordPathVfxPlayer.EVENT_IDS`）。
+///
+/// **纯 cosmetic**：只发 `VfxEventRequest`，不读 / 改任何战斗 / 真元状态。caster
+/// 无 `Position`/`UniqueId`（断线 / 非 skinned）时动画静默 skip，粒子仍按 event.center
+/// 发出（粒子不依赖 player target）。
+pub fn emit_sword_path_visual_triggers(
+    mut casts: EventReader<SwordPathSkillCastEvent>,
+    players: Query<PlayerAnimTargetItem<'_>, PlayerAnimTargetFilter>,
+    mut vfx_events: EventWriter<VfxEventRequest>,
+) {
+    for event in casts.read() {
+        // 1. 动画——攻击招式复用基础剑斩；化形 / 天门用专属动画。
+        let anim_id = sword_path_anim_for_skill(event.skill);
+        emit_play_for_entity(
+            event.caster,
+            anim_id,
+            SWORD_PATH_PRIORITY,
+            Some(2),
+            &players,
+            &mut vfx_events,
+        );
+
+        // 2. 粒子——各招专属 event_id。方向仅剑气斩用（line trail）。
+        let particle_id = sword_path_particle_for_skill(event.skill);
+        let direction = event.direction.map(|d| [d.x, d.y, d.z]);
+        let color = sword_path_particle_color(event.skill);
+        let (count, duration) = sword_path_particle_count_duration(event.skill);
+        vfx_events.send(VfxEventRequest::new(
+            event.center,
+            VfxEventPayloadV1::SpawnParticle {
+                event_id: particle_id.to_string(),
+                origin: [event.center.x, event.center.y, event.center.z],
+                direction,
+                color: Some(color.to_string()),
+                strength: Some(sword_path_particle_strength(event.skill)),
+                count: Some(count),
+                duration_ticks: Some(duration),
+            },
+        ));
+
+        // 天门释放：额外叠一层开天 flash（双粒子层，区别于蓄力）。
+        if event.skill == SwordPathSkillId::HeavenGateRelease {
+            vfx_events.send(VfxEventRequest::new(
+                event.center,
+                VfxEventPayloadV1::SpawnParticle {
+                    event_id: VFX_HEAVEN_GATE_FLASH.to_string(),
+                    origin: [event.center.x, event.center.y + 1.0, event.center.z],
+                    direction: None,
+                    color: Some("#E8F0FF".to_string()),
+                    strength: Some(1.0),
+                    count: Some(24),
+                    duration_ticks: Some(30),
+                },
+            ));
+        }
+    }
+}
+
+fn sword_path_anim_for_skill(skill: SwordPathSkillId) -> &'static str {
+    match skill {
+        // 凝锋 / 共鸣 是横向 / 范围剑势 → 基础横劈动画。
+        SwordPathSkillId::CondenseEdge | SwordPathSkillId::Resonance => ANIM_SWORD_CLEAVE,
+        // 剑气斩是远程突刺势 → 基础刺击动画。
+        SwordPathSkillId::QiSlash => ANIM_SWORD_THRUST,
+        // 化形 / 天门有专属动画。
+        SwordPathSkillId::Manifest => ANIM_SWORD_MANIFEST_CAST,
+        SwordPathSkillId::HeavenGateCharge => ANIM_SWORD_HEAVEN_GATE_CHARGE,
+        SwordPathSkillId::HeavenGateRelease => ANIM_SWORD_HEAVEN_GATE_RELEASE,
+    }
+}
+
+fn sword_path_particle_for_skill(skill: SwordPathSkillId) -> &'static str {
+    match skill {
+        SwordPathSkillId::CondenseEdge => VFX_SWORD_CONDENSE_EDGE,
+        SwordPathSkillId::QiSlash => VFX_SWORD_QI_SLASH_PATH,
+        SwordPathSkillId::Resonance => VFX_SWORD_RESONANCE,
+        SwordPathSkillId::Manifest => VFX_SWORD_MANIFEST_SUMMON,
+        SwordPathSkillId::HeavenGateCharge => VFX_HEAVEN_GATE_CHARGE,
+        SwordPathSkillId::HeavenGateRelease => VFX_HEAVEN_GATE_RELEASE,
+    }
+}
+
+fn sword_path_particle_color(skill: SwordPathSkillId) -> &'static str {
+    match skill {
+        // 剑意凝锋——锋锐青白。
+        SwordPathSkillId::CondenseEdge => "#C8D8E8",
+        // 剑气斩——凝练剑气，偏冷青。
+        SwordPathSkillId::QiSlash => "#A8D0E0",
+        // 共鸣剑鸣——荡漾波纹白蓝。
+        SwordPathSkillId::Resonance => "#D0E0F0",
+        // 化形——剑意凝实，金白。
+        SwordPathSkillId::Manifest => "#E0E8D0",
+        // 天门——开天破虚，圣白。
+        SwordPathSkillId::HeavenGateCharge | SwordPathSkillId::HeavenGateRelease => "#E8F0FF",
+    }
+}
+
+fn sword_path_particle_strength(skill: SwordPathSkillId) -> f32 {
+    match skill {
+        SwordPathSkillId::HeavenGateRelease => 1.0,
+        SwordPathSkillId::HeavenGateCharge | SwordPathSkillId::Manifest => 0.9,
+        SwordPathSkillId::Resonance => 0.75,
+        _ => 0.7,
+    }
+}
+
+fn sword_path_particle_count_duration(skill: SwordPathSkillId) -> (u16, u16) {
+    match skill {
+        SwordPathSkillId::CondenseEdge => (10, 20),
+        SwordPathSkillId::QiSlash => (12, 20),
+        SwordPathSkillId::Resonance => (16, 30),
+        SwordPathSkillId::Manifest => (14, 24),
+        SwordPathSkillId::HeavenGateCharge => (12, 40),
+        SwordPathSkillId::HeavenGateRelease => (24, 30),
+    }
+}
+
 fn color_for_woliu_skill(skill: WoliuSkillId) -> &'static str {
     match skill {
         WoliuSkillId::Hold => "#244872",
@@ -594,6 +737,19 @@ fn emit_spawn_particle(
             duration_ticks: Some(duration_ticks),
         },
     ));
+}
+
+/// 剑道五招的 AttackIntent source —— 动画走 `emit_sword_path_visual_triggers`，
+/// 本系统跳过避免双重动画。
+fn is_sword_path_source(source: AttackSource) -> bool {
+    matches!(
+        source,
+        AttackSource::SwordPathCondenseEdge
+            | AttackSource::SwordPathQiSlash
+            | AttackSource::SwordPathResonance
+            | AttackSource::SwordPathManifest
+            | AttackSource::SwordPathHeavenGate
+    )
 }
 
 fn attack_anim_for_source(source: AttackSource, kind: WoundKind) -> &'static str {
@@ -1400,6 +1556,251 @@ mod tests {
             }
             other => panic!("expected SpawnParticle, got {other:?}"),
         }
+    }
+
+    // ─── plan-sword-path-v2 P4：emit_sword_path_visual_triggers ───
+
+    fn sword_path_cast(
+        skill: SwordPathSkillId,
+        caster: valence::prelude::Entity,
+        center: valence::prelude::DVec3,
+        direction: Option<valence::prelude::DVec3>,
+    ) -> SwordPathSkillCastEvent {
+        SwordPathSkillCastEvent {
+            skill,
+            caster,
+            center,
+            direction,
+            tick: 10,
+        }
+    }
+
+    fn setup_sword_path_visual_app() -> App {
+        let mut app = App::new();
+        app.add_event::<SwordPathSkillCastEvent>();
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(Update, emit_sword_path_visual_triggers);
+        app
+    }
+
+    /// 凝锋 → 基础横劈动画（SWORD_PATH_PRIORITY）+ 专属粒子。
+    #[test]
+    fn condense_edge_emits_cleave_anim_and_dedicated_particle() {
+        let mut app = setup_sword_path_visual_app();
+        let caster = spawn_player(&mut app, "Azure", [0.0, 64.0, 0.0]);
+        app.world_mut().send_event(sword_path_cast(
+            SwordPathSkillId::CondenseEdge,
+            caster,
+            valence::prelude::DVec3::new(0.0, 64.0, 0.0),
+            None,
+        ));
+        app.update();
+
+        let emitted = drain_vfx(&mut app);
+        assert_eq!(
+            emitted.len(),
+            2,
+            "凝锋应发 1 动画 + 1 粒子，实际 {}",
+            emitted.len()
+        );
+        assert_play_anim(&emitted[0], ANIM_SWORD_CLEAVE, SWORD_PATH_PRIORITY);
+        assert_spawn_particle(&emitted[1], VFX_SWORD_CONDENSE_EDGE, Some(10));
+    }
+
+    /// 剑气斩 → 基础刺击动画 + 朝向 line trail 粒子（direction 透传）。
+    #[test]
+    fn qi_slash_emits_thrust_anim_and_directional_particle() {
+        let mut app = setup_sword_path_visual_app();
+        let caster = spawn_player(&mut app, "Azure", [0.0, 64.0, 0.0]);
+        let dir = valence::prelude::DVec3::new(0.0, 0.0, 1.0);
+        app.world_mut().send_event(sword_path_cast(
+            SwordPathSkillId::QiSlash,
+            caster,
+            valence::prelude::DVec3::new(0.0, 64.0, 0.0),
+            Some(dir),
+        ));
+        app.update();
+
+        let emitted = drain_vfx(&mut app);
+        assert_eq!(emitted.len(), 2);
+        assert_play_anim(&emitted[0], ANIM_SWORD_THRUST, SWORD_PATH_PRIORITY);
+        match &emitted[1].payload {
+            VfxEventPayloadV1::SpawnParticle {
+                event_id,
+                direction,
+                ..
+            } => {
+                assert_eq!(event_id, VFX_SWORD_QI_SLASH_PATH);
+                assert_eq!(
+                    *direction,
+                    Some([0.0, 0.0, 1.0]),
+                    "剑气斩 line trail 必须透传 caster→target 方向，否则粒子朝向退化"
+                );
+            }
+            other => panic!("expected SpawnParticle, got {other:?}"),
+        }
+    }
+
+    /// 化形 → 专属 manifest_cast 动画（不是基础剑斩）+ 召唤粒子。
+    #[test]
+    fn manifest_emits_dedicated_cast_anim() {
+        let mut app = setup_sword_path_visual_app();
+        let caster = spawn_player(&mut app, "Azure", [0.0, 64.0, 0.0]);
+        app.world_mut().send_event(sword_path_cast(
+            SwordPathSkillId::Manifest,
+            caster,
+            valence::prelude::DVec3::new(0.0, 64.0, 0.0),
+            None,
+        ));
+        app.update();
+
+        let emitted = drain_vfx(&mut app);
+        assert_eq!(emitted.len(), 2);
+        assert_play_anim(&emitted[0], ANIM_SWORD_MANIFEST_CAST, SWORD_PATH_PRIORITY);
+        assert_spawn_particle(&emitted[1], VFX_SWORD_MANIFEST_SUMMON, Some(14));
+    }
+
+    /// 天门蓄力 → charge 动画 + charge 粒子（无额外 flash）。
+    #[test]
+    fn heaven_gate_charge_emits_charge_anim_only() {
+        let mut app = setup_sword_path_visual_app();
+        let caster = spawn_player(&mut app, "Azure", [0.0, 64.0, 0.0]);
+        app.world_mut().send_event(sword_path_cast(
+            SwordPathSkillId::HeavenGateCharge,
+            caster,
+            valence::prelude::DVec3::new(0.0, 64.0, 0.0),
+            None,
+        ));
+        app.update();
+
+        let emitted = drain_vfx(&mut app);
+        assert_eq!(
+            emitted.len(),
+            2,
+            "蓄力应只发 1 动画 + 1 粒子（无 flash），实际 {}",
+            emitted.len()
+        );
+        assert_play_anim(
+            &emitted[0],
+            ANIM_SWORD_HEAVEN_GATE_CHARGE,
+            SWORD_PATH_PRIORITY,
+        );
+        assert_spawn_particle(&emitted[1], VFX_HEAVEN_GATE_CHARGE, Some(12));
+    }
+
+    /// 天门释放 → release 动画 + release 粒子 + 额外开天 flash 粒子（三件）。
+    #[test]
+    fn heaven_gate_release_emits_release_anim_plus_flash_layer() {
+        let mut app = setup_sword_path_visual_app();
+        let caster = spawn_player(&mut app, "Azure", [0.0, 64.0, 0.0]);
+        app.world_mut().send_event(sword_path_cast(
+            SwordPathSkillId::HeavenGateRelease,
+            caster,
+            valence::prelude::DVec3::new(0.0, 64.0, 0.0),
+            None,
+        ));
+        app.update();
+
+        let emitted = drain_vfx(&mut app);
+        assert_eq!(
+            emitted.len(),
+            3,
+            "释放应发 1 动画 + release 粒子 + flash 粒子，实际 {}",
+            emitted.len()
+        );
+        assert_play_anim(
+            &emitted[0],
+            ANIM_SWORD_HEAVEN_GATE_RELEASE,
+            SWORD_PATH_PRIORITY,
+        );
+        assert_spawn_particle(&emitted[1], VFX_HEAVEN_GATE_RELEASE, Some(24));
+        assert_spawn_particle(&emitted[2], VFX_HEAVEN_GATE_FLASH, Some(24));
+    }
+
+    /// caster 无 UniqueId（非 skinned）→ 动画静默 skip，但粒子仍按 center 发出。
+    #[test]
+    fn sword_path_visual_without_unique_id_still_emits_particle() {
+        let mut app = setup_sword_path_visual_app();
+        // spawn 一个无 UniqueId 的 caster（emit_play_for_entity 会 skip 动画）
+        let caster = app.world_mut().spawn(Position::new([5.0, 64.0, 5.0])).id();
+        app.world_mut().send_event(sword_path_cast(
+            SwordPathSkillId::Resonance,
+            caster,
+            valence::prelude::DVec3::new(5.0, 64.0, 5.0),
+            None,
+        ));
+        app.update();
+
+        let emitted = drain_vfx(&mut app);
+        assert_eq!(
+            emitted.len(),
+            1,
+            "无 UniqueId 时只发粒子（动画 skip），实际 {}",
+            emitted.len()
+        );
+        assert_spawn_particle(&emitted[0], VFX_SWORD_RESONANCE, Some(16));
+    }
+
+    /// 凝锋 / 剑气斩 source 的 AttackIntent 不再走 emit_attack_animation_triggers
+    /// （避免与 emit_sword_path_visual_triggers 双重动画）。
+    #[test]
+    fn attack_animation_skips_sword_path_sources() {
+        let mut app = App::new();
+        app.add_event::<AttackIntent>();
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(Update, emit_attack_animation_triggers);
+        let attacker = spawn_player(&mut app, "Azure", [0.0, 64.0, 0.0]);
+
+        for source in [
+            AttackSource::SwordPathCondenseEdge,
+            AttackSource::SwordPathQiSlash,
+            AttackSource::SwordPathResonance,
+            AttackSource::SwordPathManifest,
+            AttackSource::SwordPathHeavenGate,
+        ] {
+            app.world_mut().send_event(AttackIntent {
+                attacker,
+                target: None,
+                issued_at_tick: 1,
+                reach: crate::combat::events::AttackReach::new(3.0, 0.0),
+                qi_invest: 1.0,
+                wound_kind: WoundKind::Cut,
+                source,
+                debug_command: None,
+            });
+        }
+        app.update();
+
+        assert!(
+            drain_vfx(&mut app).is_empty(),
+            "剑道 source 的 AttackIntent 不应触发通用攻击动画——动画由 \
+             emit_sword_path_visual_triggers 独立负责"
+        );
+    }
+
+    /// 回归保护：非剑道 source（基础剑劈）仍走 emit_attack_animation_triggers。
+    #[test]
+    fn attack_animation_still_fires_for_basic_sword_cleave() {
+        let mut app = App::new();
+        app.add_event::<AttackIntent>();
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(Update, emit_attack_animation_triggers);
+        let attacker = spawn_player(&mut app, "Azure", [0.0, 64.0, 0.0]);
+        app.world_mut().send_event(AttackIntent {
+            attacker,
+            target: None,
+            issued_at_tick: 1,
+            reach: crate::combat::events::AttackReach::new(3.0, 0.0),
+            qi_invest: 0.0,
+            wound_kind: WoundKind::Cut,
+            source: AttackSource::SwordCleave,
+            debug_command: None,
+        });
+        app.update();
+
+        let emitted = drain_vfx(&mut app);
+        assert_eq!(emitted.len(), 1, "基础剑劈 source 仍应触发通用攻击动画");
+        assert_play_anim(&emitted[0], ANIM_SWORD_CLEAVE, COMBAT_PRIORITY);
     }
 
     // ─── plan-shield-block-v1 P1 CR#5：emit_shield_raise_for_entity / emit_shield_stop_for_entity ───

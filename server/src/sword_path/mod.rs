@@ -4,6 +4,7 @@
 //! plan-sword-path-v2 接入 ECS：bond tracking / shatter / heaven gate cast /
 //! 盲区 tick 等 Bevy system；招式 cast 走 `skill_register`。
 
+pub mod av_event;
 pub mod bond;
 pub mod grade;
 pub mod heaven_gate;
@@ -20,6 +21,7 @@ pub fn register(app: &mut App) {
     app.add_event::<bond::SwordBondFormedEvent>()
         .add_event::<bond::SwordShatterEvent>()
         .add_event::<heaven_gate::HeavenGateCastEvent>()
+        .add_event::<av_event::SwordPathSkillCastEvent>()
         .init_resource::<heaven_gate::TiandaoBlindZoneRegistry>()
         .add_systems(
             Update,

@@ -6,13 +6,17 @@
 //! 2. 校验是否拥有该招式（`KnownTechniques` active + proficiency）。
 //! 3. 走 worldview §二 守恒律：真元消耗写 `Cultivation.qi_current`；下注真元到
 //!    灵剑容器走 `QiTransfer { reason: Channeling }`；化虚释放走 `ReleaseToZone`。
-//! 4. 应用效果（直接 AttackIntent / 状态效果 / 化形实体），招式自身的 vfx /
-//!    audio 暂留 P4，本 P 只保证 ECS 链路对得齐。
+//! 4. 应用效果（直接 AttackIntent / 状态效果 / 化形实体）。
+//! 5. P4 AV 接线：cast 成功后 emit `SwordPathSkillCastEvent`（见 `av_event`），
+//!    粒子 / 音效 / 动画由 `network::vfx_animation_trigger` +
+//!    `network::audio_trigger` 双系统读事件后 emit，引用 client 已注册的
+//!    `SwordPathVfxPlayer` 粒子 / `audio_recipes/sword_*.json` / `BongAnimations`。
+//!    纯 cosmetic，不触碰战斗数值 / qi_physics ledger / 命中结算。
 
 use std::collections::HashSet;
 
 use valence::prelude::{
-    bevy_ecs, DVec3, Entity, EventReader, Events, Position, Query, Res, ResMut,
+    bevy_ecs, DVec3, Entity, EventReader, EventWriter, Events, Position, Query, Res, ResMut,
 };
 
 use crate::combat::components::{
@@ -34,6 +38,7 @@ use crate::network::cast_emit::current_unix_millis;
 use crate::qi_physics::{QiAccountId, QiTransfer, QiTransferReason};
 use crate::world::zone::DEFAULT_SPAWN_ZONE_NAME;
 
+use super::av_event::{SwordPathSkillCastEvent, SwordPathSkillId};
 use super::bond::{SwordBondComponent, SwordShatterEvent};
 #[cfg(test)]
 use super::grade::SwordGrade;
@@ -118,6 +123,14 @@ fn cast_condense_edge(
         debug_command: None,
     });
 
+    emit_skill_av(
+        world,
+        caster,
+        SwordPathSkillId::CondenseEdge,
+        ctx.now_tick,
+        None,
+    );
+
     CastResult::Started {
         cooldown_ticks: u64::from(CONDENSE_EDGE.cooldown_ticks),
         anim_duration_ticks: CONDENSE_EDGE.cast_ticks,
@@ -162,9 +175,36 @@ fn cast_qi_slash(
         debug_command: None,
     });
 
+    // 剑气斩走朝向 line trail：方向 = caster → target，归一化；退化时落到 +X。
+    let direction = qi_slash_direction(world, caster, target);
+    emit_skill_av(
+        world,
+        caster,
+        SwordPathSkillId::QiSlash,
+        ctx.now_tick,
+        Some(direction),
+    );
+
     CastResult::Started {
         cooldown_ticks: u64::from(QI_SLASH.cooldown_ticks),
         anim_duration_ticks: QI_SLASH.cast_ticks,
+    }
+}
+
+/// 剑气斩朝向：caster → target 单位向量；任一 Position 缺失或两点重合时落到 +X。
+fn qi_slash_direction(world: &bevy_ecs::world::World, caster: Entity, target: Entity) -> DVec3 {
+    let caster_pos = world.get::<Position>(caster).map(|p| p.get());
+    let target_pos = world.get::<Position>(target).map(|p| p.get());
+    match (caster_pos, target_pos) {
+        (Some(from), Some(to)) => {
+            let delta = to - from;
+            if delta.length_squared() > f64::EPSILON {
+                delta.normalize()
+            } else {
+                DVec3::new(1.0, 0.0, 0.0)
+            }
+        }
+        _ => DVec3::new(1.0, 0.0, 0.0),
     }
 }
 
@@ -216,6 +256,14 @@ fn cast_resonance(
         });
     }
 
+    emit_skill_av(
+        world,
+        caster,
+        SwordPathSkillId::Resonance,
+        ctx.now_tick,
+        None,
+    );
+
     CastResult::Started {
         cooldown_ticks: u64::from(RESONANCE.cooldown_ticks),
         anim_duration_ticks: RESONANCE.cast_ticks,
@@ -266,6 +314,14 @@ fn cast_manifest(
         bond.bond_strength = (bond.bond_strength - effects::MANIFEST_BOND_PENALTY).max(0.0);
     }
 
+    emit_skill_av(
+        world,
+        caster,
+        SwordPathSkillId::Manifest,
+        ctx.now_tick,
+        None,
+    );
+
     CastResult::Started {
         cooldown_ticks: u64::from(MANIFEST.cooldown_ticks),
         anim_duration_ticks: MANIFEST.cast_ticks,
@@ -308,6 +364,16 @@ fn cast_heaven_gate(
             .unwrap_or(0.0),
     });
 
+    // 蓄力阶段 AV：天门 charge 动画 + 蓄力粒子。释放阶段 AV（开天 flash /
+    // shockwave / release 动画）由 heaven_gate_cast_system 在结算时 emit。
+    emit_skill_av(
+        world,
+        caster,
+        SwordPathSkillId::HeavenGateCharge,
+        ctx.now_tick,
+        None,
+    );
+
     CastResult::Started {
         cooldown_ticks: u64::from(HEAVEN_GATE.cooldown_ticks),
         anim_duration_ticks: HEAVEN_GATE.cast_ticks,
@@ -333,12 +399,23 @@ pub fn heaven_gate_cast_system(
     mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
     mut blind_registry: ResMut<TiandaoBlindZoneRegistry>,
     zone_registry: Option<Res<crate::world::zone::ZoneRegistry>>,
+    mut av_events: EventWriter<SwordPathSkillCastEvent>,
 ) {
     // 多 caster 同 tick 触发的情况罕见，但为了保证 deterministic 排序，按 Entity bits 排序。
     let mut pending: Vec<HeavenGateCastEvent> = events.read().cloned().collect();
     pending.sort_by_key(|e| e.caster.to_bits());
     for event in pending {
         let staging_buffer = event.qi_max + event.stored_qi;
+
+        // 释放阶段 AV：一剑开天的 flash / shockwave / release 动画（纯 cosmetic，
+        // 在 caster 当前位置触发）。蓄力阶段 AV 已在 cast_heaven_gate emit。
+        av_events.send(SwordPathSkillCastEvent {
+            skill: SwordPathSkillId::HeavenGateRelease,
+            caster: event.caster,
+            center: event.position,
+            direction: None,
+            tick: clock.tick,
+        });
 
         // 100 格 AoE：每个范围内目标按距离衰减伤害。已死 / 无 Position 的略过。
         let center = event.position;
@@ -380,8 +457,9 @@ pub fn heaven_gate_cast_system(
         // 走 ledger 回灌 zone。如果再让 `sword_shatter_system` 按 stored_qi 走
         // 一次反噬，就会重复扣 qi_max / 重复写 ledger，破坏 worldview §二 守恒。
         //
-        // 化虚走单向门 - cast 即结算 - 视觉碎剑由 P4 VFX 独立路径触发，逻辑上不
-        // 需要走通用 shatter pipeline。
+        // 化虚走单向门 - cast 即结算 - 视觉碎剑 / 开天 release AV 由本 system
+        // 上方 emit 的 SwordPathSkillCastEvent(HeavenGateRelease) 独立触发（见
+        // network::vfx_animation_trigger / audio_trigger），逻辑上不走通用 shatter pipeline。
         let _shatter_events_unused = shatter_events.as_deref_mut(); // 保留 ResMut 借出以维持系统签名兼容性
         if let Ok((mut cultivation, bond_opt)) = players.get_mut(event.caster) {
             cultivation.qi_max = (cultivation.qi_max * effects::HEAVEN_GATE_QI_MAX_RETAIN).max(0.0);
@@ -627,6 +705,32 @@ fn drain_qi(world: &mut bevy_ecs::world::World, caster: Entity, cost: f64) -> bo
     true
 }
 
+/// P4 — emit 剑道一招的 AV 呈现事件（粒子 / 音效 / 动画走 network 侧双系统）。
+///
+/// **纯 cosmetic**：只发 `SwordPathSkillCastEvent`，不触碰任何战斗 / 真元状态。
+/// `direction` 用于剑气斩的朝向 line trail；其余招式传 `None`。
+/// caster 无 `Position`（测试 / 异常态）时落到 `DVec3::ZERO`，AV 系统会再次按
+/// Position 查询渲染目标，缺失即静默 skip。
+fn emit_skill_av(
+    world: &mut bevy_ecs::world::World,
+    caster: Entity,
+    skill: SwordPathSkillId,
+    now_tick: u64,
+    direction: Option<DVec3>,
+) {
+    let center = world
+        .get::<Position>(caster)
+        .map(|p| p.get())
+        .unwrap_or(DVec3::ZERO);
+    world.send_event(SwordPathSkillCastEvent {
+        skill,
+        caster,
+        center,
+        direction,
+        tick: now_tick,
+    });
+}
+
 fn inject_bond_qi(world: &mut bevy_ecs::world::World, caster: Entity, qi_cost: f64) {
     // 灵剑必须 ≥ 凝脉品阶才有存储能力。注入按 plan §bond::QI_INJECT_RATIO = 0.1。
     let injected = match world.get_mut::<SwordBondComponent>(caster) {
@@ -665,6 +769,7 @@ mod tests {
         app.add_event::<HeavenGateCastEvent>();
         app.add_event::<SwordShatterEvent>();
         app.add_event::<QiTransfer>();
+        app.add_event::<SwordPathSkillCastEvent>();
         app.init_resource::<TiandaoBlindZoneRegistry>();
 
         let mut deps = app.world_mut().resource_mut::<SkillMeridianDependencies>();
@@ -772,6 +877,140 @@ mod tests {
         assert!(deps
             .lookup(SWORD_PATH_HEAVEN_GATE_ID)
             .contains(&MeridianId::Du));
+    }
+
+    fn drain_av(app: &App) -> Vec<SwordPathSkillId> {
+        app.world()
+            .resource::<Events<SwordPathSkillCastEvent>>()
+            .iter_current_update_events()
+            .map(|e| e.skill)
+            .collect()
+    }
+
+    /// P4 — 凝锋 cast 成功 → emit SwordPathSkillCastEvent(CondenseEdge)，无方向。
+    #[test]
+    fn condense_edge_emits_av_event() {
+        let (mut app, caster) = setup_app();
+        let target = app.world_mut().spawn(Position::default()).id();
+        let result = cast_condense_edge(app.world_mut(), caster, 0, Some(target));
+        assert!(matches!(result, CastResult::Started { .. }));
+
+        let avs = drain_av(&app);
+        assert_eq!(
+            avs,
+            vec![SwordPathSkillId::CondenseEdge],
+            "凝锋应 emit 恰好一个 CondenseEdge AV 事件，实际 {avs:?}"
+        );
+    }
+
+    /// P4 — 剑气斩 cast 成功 → emit AV(QiSlash) 且带 caster→target 方向。
+    #[test]
+    fn qi_slash_emits_av_event_with_direction() {
+        let (mut app, caster) = setup_app();
+        // caster 在原点；target 在 +Z 5 格
+        let target = app.world_mut().spawn(Position::new([0.0, 0.0, 5.0])).id();
+        let result = cast_qi_slash(app.world_mut(), caster, 0, Some(target));
+        assert!(matches!(result, CastResult::Started { .. }));
+
+        let events: Vec<_> = app
+            .world()
+            .resource::<Events<SwordPathSkillCastEvent>>()
+            .iter_current_update_events()
+            .cloned()
+            .collect();
+        assert_eq!(events.len(), 1, "剑气斩应 emit 恰好一个 AV 事件");
+        assert_eq!(events[0].skill, SwordPathSkillId::QiSlash);
+        let dir = events[0].direction.expect("剑气斩 AV 必须带方向");
+        assert!(
+            (dir - DVec3::new(0.0, 0.0, 1.0)).length() < 1e-6,
+            "方向应为 caster→target 单位向量 (+Z)，实际 {dir:?}"
+        );
+    }
+
+    /// P4 — 剑气斩 caster/target 重合时方向退化为 +X（不 panic / 不 NaN）。
+    #[test]
+    fn qi_slash_av_direction_degenerates_to_x_when_coincident() {
+        let (mut app, caster) = setup_app();
+        // target 与 caster 同位置（都在原点）
+        let target = app.world_mut().spawn(Position::default()).id();
+        let result = cast_qi_slash(app.world_mut(), caster, 0, Some(target));
+        assert!(matches!(result, CastResult::Started { .. }));
+
+        let dir = app
+            .world()
+            .resource::<Events<SwordPathSkillCastEvent>>()
+            .iter_current_update_events()
+            .next()
+            .expect("AV event")
+            .direction
+            .expect("方向存在");
+        assert!(
+            (dir - DVec3::new(1.0, 0.0, 0.0)).length() < 1e-6,
+            "caster/target 重合时方向应退化为 +X，实际 {dir:?}"
+        );
+    }
+
+    /// P4 — 剑鸣 cast 成功 → emit AV(Resonance)。
+    #[test]
+    fn resonance_emits_av_event() {
+        let (mut app, caster) = setup_app();
+        let result = cast_resonance(app.world_mut(), caster, 0, None);
+        assert!(matches!(result, CastResult::Started { .. }));
+        assert_eq!(drain_av(&app), vec![SwordPathSkillId::Resonance]);
+    }
+
+    /// P4 — 化形 cast 成功 → emit AV(Manifest)。
+    #[test]
+    fn manifest_emits_av_event() {
+        let (mut app, caster) = setup_app();
+        let target = app.world_mut().spawn(Position::default()).id();
+        let result = cast_manifest(app.world_mut(), caster, 0, Some(target));
+        assert!(matches!(result, CastResult::Started { .. }));
+        assert_eq!(drain_av(&app), vec![SwordPathSkillId::Manifest]);
+    }
+
+    /// P4 — 天门 cast → emit charge AV；结算 system → emit release AV。
+    #[test]
+    fn heaven_gate_emits_charge_then_release_av() {
+        let (mut app, caster) = setup_app();
+        app.add_systems(Update, heaven_gate_cast_system);
+
+        // cast 阶段：charge AV
+        let result = cast_heaven_gate(app.world_mut(), caster, 0, None);
+        assert!(matches!(result, CastResult::Started { .. }));
+        assert_eq!(
+            drain_av(&app),
+            vec![SwordPathSkillId::HeavenGateCharge],
+            "cast 阶段应 emit charge AV"
+        );
+
+        // 结算阶段：heaven_gate_cast_system 读 HeavenGateCastEvent → release AV
+        app.update();
+        let release_avs: Vec<_> = app
+            .world()
+            .resource::<Events<SwordPathSkillCastEvent>>()
+            .iter_current_update_events()
+            .map(|e| e.skill)
+            .filter(|s| *s == SwordPathSkillId::HeavenGateRelease)
+            .collect();
+        assert_eq!(
+            release_avs,
+            vec![SwordPathSkillId::HeavenGateRelease],
+            "结算 system 应 emit 恰好一个 release AV"
+        );
+    }
+
+    /// P4 — cast 被拒绝（真元不足）时**不**应 emit AV 事件（纯加法不污染拒绝路径）。
+    #[test]
+    fn rejected_cast_does_not_emit_av_event() {
+        let (mut app, caster) = setup_app();
+        if let Some(mut c) = app.world_mut().get_mut::<Cultivation>(caster) {
+            c.qi_current = 1.0; // < QI_SLASH.qi_cost
+        }
+        let target = app.world_mut().spawn(Position::default()).id();
+        let result = cast_qi_slash(app.world_mut(), caster, 0, Some(target));
+        assert!(matches!(result, CastResult::Rejected { .. }));
+        assert!(drain_av(&app).is_empty(), "被拒绝的 cast 不应 emit AV 事件");
     }
 
     /// P1.6 — 凝锋发 AttackIntent 走 SwordPathCondenseEdge source。
