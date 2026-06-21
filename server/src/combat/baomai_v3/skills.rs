@@ -247,21 +247,22 @@ pub fn cast_full_power_release(
     let now_tick = current_tick(world);
     let flow = active_flow_multiplier(world, caster, now_tick);
     let mastery = mastery_level(world, caster, BaomaiSkillId::FullPowerRelease);
-    let result = full_power_strike::release_full_power_fn(world, caster, slot, target);
+    // 虚脱时长缩放：flow>1.0「乘风」分支完全免虚脱（None）；
+    // 否则按 skill_lv 派生的 full_power_exhausted_duration_multiplier 缩放（Some）。
+    // 缩放在施加 Exhausted debuff 前一次性算好——不再插入组件后回头改时长。
+    let exhaust_multiplier = if flow > 1.0 {
+        None
+    } else {
+        Some(full_power_exhausted_duration_multiplier(mastery))
+    };
+    let result = full_power_strike::release_full_power_with_exhaust(
+        world,
+        caster,
+        slot,
+        target,
+        exhaust_multiplier,
+    );
     if matches!(result, CastResult::Started { .. }) {
-        if flow > 1.0 {
-            world
-                .entity_mut(caster)
-                .remove::<full_power_strike::Exhausted>();
-        } else if let Some(mut exhausted) = world.get_mut::<full_power_strike::Exhausted>(caster) {
-            let duration = exhausted
-                .recovery_at_tick
-                .saturating_sub(exhausted.started_at_tick);
-            let scaled = (duration as f64 * full_power_exhausted_duration_multiplier(mastery))
-                .round()
-                .max(1.0) as u64;
-            exhausted.recovery_at_tick = exhausted.started_at_tick.saturating_add(scaled);
-        }
         record_overload(
             world,
             caster,

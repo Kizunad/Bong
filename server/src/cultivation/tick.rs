@@ -16,7 +16,6 @@ use valence::prelude::{
 use crate::combat::components::{DerivedAttrs, StatusEffects};
 use crate::combat::events::StatusEffectKind;
 use crate::combat::woliu_v2::state::TurbulenceExposure;
-use crate::cultivation::full_power_strike::Exhausted;
 use crate::network::{gameplay_vfx, vfx_event_emit::VfxEventRequest};
 use crate::npc::spawn::NpcMarker;
 use crate::qi_physics::{
@@ -110,7 +109,6 @@ pub fn qi_regen_and_zone_drain_tick(
         Option<&QiColor>,
         Option<&LifespanComponent>,
         Option<&StatusEffects>,
-        Option<&Exhausted>,
         Option<&TurbulenceExposure>,
         Option<&JueBiAftershockDebuff>,
         Option<&DerivedAttrs>,
@@ -133,7 +131,6 @@ pub fn qi_regen_and_zone_drain_tick(
         qi_color,
         lifespan,
         statuses,
-        exhausted,
         turbulence,
         juebi_aftershock,
         derived_attrs,
@@ -207,8 +204,10 @@ pub fn qi_regen_and_zone_drain_tick(
         // 叠加所有 remaining_ticks > 0 的 magnitude，上限 3×，接入 rate 乘区。
         let qi_regen_boost = statuses.map(qi_regen_boost_multiplier).unwrap_or(1.0);
         let qi_regen_slowed = statuses.map(qi_regen_slowed_multiplier).unwrap_or(1.0);
-        let exhausted_multiplier = exhausted
-            .map(|state| state.qi_recovery_modifier)
+        // 虚脱 debuff：qi 回复 ×magnitude（旧 Exhausted.qi_recovery_modifier，恒为 0.5）。
+        // 现走 StatusEffects（StatusEffectKind::Exhausted），由标准 status 生命周期管理。
+        let exhausted_multiplier = statuses
+            .map(exhausted_qi_recovery_multiplier)
             .unwrap_or(1.0)
             .clamp(0.05, 1.0);
         let turbulence_multiplier = turbulence
@@ -429,6 +428,18 @@ fn has_frailty_status(status_effects: &StatusEffects) -> bool {
         .active
         .iter()
         .any(|effect| effect.kind == StatusEffectKind::Frailty && effect.remaining_ticks > 0)
+}
+
+/// 虚脱 debuff 的 qi 回复乘数。取所有 active `StatusEffectKind::Exhausted`
+/// 的 magnitude 连乘（实际只会有一条，magnitude 恒为 0.5）；无虚脱时返回 1.0。
+/// 取代旧的游离 `Exhausted` 组件的 `qi_recovery_modifier` 字段，数值守恒不变。
+pub(crate) fn exhausted_qi_recovery_multiplier(se: &StatusEffects) -> f64 {
+    se.active
+        .iter()
+        .filter(|e| e.kind == StatusEffectKind::Exhausted && e.remaining_ticks > 0)
+        .fold(1.0_f64, |acc, e| {
+            acc * f64::from(e.magnitude.clamp(0.0, 1.0))
+        })
 }
 
 #[cfg(test)]
@@ -686,9 +697,11 @@ mod tests {
         assert!((wind_candle_qi - normal_qi * 0.7).abs() < 1e-6);
     }
 
+    /// 虚脱 debuff（StatusEffectKind::Exhausted, magnitude=0.5）使 qi 回复减半。
+    /// 锁住「转 debuff 后 qi 回复守恒」：与旧游离 Exhausted 组件 ×0.5 结果一致。
     #[test]
     fn exhausted_qi_recovery_is_halved() {
-        fn run_once(exhausted: Option<Exhausted>) -> f64 {
+        fn run_once(exhausted: Option<StatusEffects>) -> f64 {
             let mut app = App::new();
             app.insert_resource(CultivationClock::default());
             app.insert_resource(ZoneRegistry::fallback());
@@ -716,10 +729,38 @@ mod tests {
         }
 
         let normal_qi = run_once(None);
-        let exhausted_qi = run_once(Some(Exhausted::from_committed_qi(0, 50.0)));
+        let exhausted_qi = run_once(Some(StatusEffects {
+            active: vec![ActiveStatusEffect {
+                kind: StatusEffectKind::Exhausted,
+                magnitude: 0.5,
+                remaining_ticks: 200,
+                source_pill: None,
+            }],
+        }));
 
         assert!(normal_qi > 0.0);
-        assert!((exhausted_qi - normal_qi * 0.5).abs() < 1e-6);
+        assert!(
+            (exhausted_qi - normal_qi * 0.5).abs() < 1e-6,
+            "虚脱 debuff(mag=0.5) 应使 qi 回复减半；normal={normal_qi}, exhausted={exhausted_qi}"
+        );
+    }
+
+    /// 过期的虚脱 debuff（remaining_ticks=0）不应削减 qi 回复。
+    #[test]
+    fn expired_exhausted_does_not_halve_qi_recovery() {
+        let se = StatusEffects {
+            active: vec![ActiveStatusEffect {
+                kind: StatusEffectKind::Exhausted,
+                magnitude: 0.5,
+                remaining_ticks: 0,
+                source_pill: None,
+            }],
+        };
+        assert_eq!(
+            exhausted_qi_recovery_multiplier(&se),
+            1.0,
+            "过期 Exhausted(remaining=0) 不应计入 qi 回复乘数"
+        );
     }
 
     #[test]

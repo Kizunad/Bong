@@ -21,9 +21,7 @@ use crate::cultivation::components::{
 use crate::cultivation::dugu::{
     DuguObfuscationDisrupted, DuguPoisonState, DuguPractice, PendingDuguInfusion,
 };
-use crate::cultivation::full_power_strike::{
-    ChargingState, Exhausted, FullPowerChargeRateOverride,
-};
+use crate::cultivation::full_power_strike::{ChargingState, FullPowerChargeRateOverride};
 use crate::cultivation::insight::InsightQuota;
 use crate::cultivation::insight_apply::{InsightModifiers, UnlockedPerceptions};
 use crate::cultivation::insight_flow::PendingInsightOffer;
@@ -349,7 +347,10 @@ fn remove_runtime_state(
             .remove::<BreakthroughCinematic>()
             .remove::<ChargingState>()
             .remove::<FullPowerChargeRateOverride>()
-            .remove::<Exhausted>()
+            // 虚脱（StatusEffectKind::Exhausted）现走 StatusEffects，由
+            // reset_combat_state 的 `*status_effects = StatusEffects::default()` 清除，
+            // 触发 Changed<StatusEffects> → 空 status_snapshot → client HUD 同步清空。
+            // 旧的 `.remove::<Exhausted>()` 不发同步事件导致 client 虚脱条脱钩（已修）。
             .remove::<TribulationState>()
             .remove::<TribulationOriginDimension>()
             .remove::<JueBiRuntimeContext>()

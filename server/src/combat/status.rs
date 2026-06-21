@@ -8,7 +8,6 @@ use crate::combat::events::{ApplyStatusEffectIntent, StatusEffectKind};
 use crate::combat::CombatClock;
 use crate::cultivation::components::Cultivation;
 use crate::cultivation::death_hooks::release_qi_amount_to_zone;
-use crate::cultivation::full_power_strike::Exhausted;
 use crate::cultivation::life_record::LifeRecord;
 use crate::qi_physics::constants::{QI_EPSILON, QI_ZHENMAI_PARRY_RECOVERY_MOVE_SPEED_MULTIPLIER};
 use crate::qi_physics::QiTransfer;
@@ -166,10 +165,9 @@ pub fn attribute_aggregate_tick(
         &StatusEffects,
         &mut DerivedAttrs,
         Option<&BodyRefiningMarker>,
-        Option<&Exhausted>,
     )>,
 ) {
-    for (status_effects, mut attrs, body_refining, exhausted) in &mut q {
+    for (status_effects, mut attrs, body_refining) in &mut q {
         attrs.attack_power = 1.0;
         attrs.defense_power = 1.0;
         attrs.move_speed_multiplier = 1.0;
@@ -257,9 +255,20 @@ pub fn attribute_aggregate_tick(
                 (attrs.defense_power * BODY_REFINING_DEFENSE_MULTIPLIER).clamp(0.05, 1.0);
         }
 
-        if let Some(exhausted) = exhausted {
+        // 虚脱 debuff：防御 ×magnitude（旧 Exhausted.defense_modifier，恒为 0.5）。
+        // 全力一击释放后由 ApplyStatusEffectIntent 施加，标准 status 生命周期管理。
+        let exhausted_defense_modifier = status_effects
+            .active
+            .iter()
+            .filter(|effect| {
+                effect.kind == StatusEffectKind::Exhausted && effect.remaining_ticks > 0
+            })
+            .fold(1.0_f32, |acc, effect| {
+                acc * effect.magnitude.clamp(0.0, 1.0)
+            });
+        if exhausted_defense_modifier < 1.0 {
             attrs.defense_power =
-                (attrs.defense_power * exhausted.defense_modifier).clamp(0.05, 1.0);
+                (attrs.defense_power * exhausted_defense_modifier).clamp(0.05, 1.0);
         }
 
         // Vulnerability 在所有 reduction 之后乘入。不 clamp 上限——脆弱就是脆弱。
@@ -815,6 +824,9 @@ mod tests {
         assert!((attrs.defense_power - 0.769).abs() < 0.01);
     }
 
+    /// 虚脱 debuff 现走 StatusEffects（StatusEffectKind::Exhausted, magnitude=0.5），
+    /// defense_power 在 DamageReduction(0.25)→0.75 基础上再 ×0.5 = 0.375。
+    /// 锁住「转 debuff 后数值守恒」：与旧游离 Exhausted 组件结果一致。
     #[test]
     fn exhausted_defense_modifier_is_halved_once() {
         let mut app = App::new();
@@ -824,22 +836,62 @@ mod tests {
             .world_mut()
             .spawn((
                 StatusEffects {
-                    active: vec![crate::combat::components::ActiveStatusEffect {
-                        kind: StatusEffectKind::DamageReduction,
-                        magnitude: 0.25,
-                        remaining_ticks: 20,
-                        source_pill: None,
-                    }],
+                    active: vec![
+                        crate::combat::components::ActiveStatusEffect {
+                            kind: StatusEffectKind::DamageReduction,
+                            magnitude: 0.25,
+                            remaining_ticks: 20,
+                            source_pill: None,
+                        },
+                        crate::combat::components::ActiveStatusEffect {
+                            kind: StatusEffectKind::Exhausted,
+                            magnitude: 0.5,
+                            remaining_ticks: 200,
+                            source_pill: None,
+                        },
+                    ],
                 },
                 DerivedAttrs::default(),
-                Exhausted::from_committed_qi(10, 100.0),
             ))
             .id();
 
         app.update();
 
         let attrs = app.world().entity(entity).get::<DerivedAttrs>().unwrap();
-        assert_eq!(attrs.defense_power, 0.375);
+        assert_eq!(
+            attrs.defense_power, 0.375,
+            "DamageReduction(0.25)→0.75 再 ×Exhausted(0.5) 应为 0.375（数值守恒）"
+        );
+    }
+
+    /// 过期的 Exhausted debuff 不应影响 defense_power（remaining_ticks=0）。
+    #[test]
+    fn expired_exhausted_does_not_reduce_defense() {
+        let mut app = App::new();
+        app.add_systems(Update, attribute_aggregate_tick);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                StatusEffects {
+                    active: vec![crate::combat::components::ActiveStatusEffect {
+                        kind: StatusEffectKind::Exhausted,
+                        magnitude: 0.5,
+                        remaining_ticks: 0,
+                        source_pill: None,
+                    }],
+                },
+                DerivedAttrs::default(),
+            ))
+            .id();
+
+        app.update();
+
+        let attrs = app.world().entity(entity).get::<DerivedAttrs>().unwrap();
+        assert_eq!(
+            attrs.defense_power, 1.0,
+            "过期 Exhausted(remaining=0) 不应削减 defense_power"
+        );
     }
 
     #[test]

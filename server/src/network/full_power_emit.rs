@@ -2,16 +2,18 @@ use valence::prelude::{
     Changed, Client, Entity, EventReader, EventWriter, Position, Query, Res, UniqueId, With,
 };
 
+use crate::combat::components::StatusEffects;
+use crate::combat::events::StatusEffectKind;
+use crate::combat::status::has_active_status;
 use crate::combat::CombatClock;
 use crate::cultivation::full_power_strike::{
-    ChargeInterruptedEvent, ChargingState, Exhausted, ExhaustedExpiredEvent, FullPowerReleasedEvent,
+    ChargeInterruptedEvent, ChargingState, FullPowerReleasedEvent,
 };
 use crate::network::agent_bridge::{payload_type_label, serialize_server_data_payload};
 use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::network::{log_payload_build_error, send_server_data_payload};
 use crate::schema::server_data::{
-    FullPowerChargingStateV1, FullPowerExhaustedStateV1, FullPowerReleaseV1, ServerDataPayloadV1,
-    ServerDataV1,
+    FullPowerChargingStateV1, FullPowerReleaseV1, ServerDataPayloadV1, ServerDataV1,
 };
 use crate::schema::vfx_event::VfxEventPayloadV1;
 
@@ -123,59 +125,43 @@ pub fn emit_full_power_release_payloads(
     }
 }
 
-pub fn emit_full_power_exhausted_state_payloads(
+/// 全力一击释放瞬间的虚脱灰雾 VFX（一次性）。
+///
+/// 虚脱状态本身现走标准 status（StatusEffectKind::Exhausted），其 HUD「虚脱」由
+/// status_snapshot 驱动；此处仅保留全局可见的灰雾粒子表现，由释放事件触发。
+/// 不再发 `FullPowerExhaustedState` S2C payload（旧独立 HUD 路径已废）。
+pub fn emit_full_power_exhausted_mist_vfx(
     mut released: EventReader<FullPowerReleasedEvent>,
-    mut expired: EventReader<ExhaustedExpiredEvent>,
-    ids: Query<&UniqueId>,
     positions: Query<&Position>,
-    exhausted_q: Query<&Exhausted>,
-    mut clients: Query<&mut Client, With<Client>>,
+    statuses: Query<&StatusEffects>,
     mut vfx_events: EventWriter<VfxEventRequest>,
 ) {
     for event in released.read() {
-        let Ok(exhausted) = exhausted_q.get(event.caster) else {
+        // 仅当释放确实施加了虚脱 debuff 时才放灰雾（flow>1.0 乘风免虚脱时不放）。
+        let exhausted = statuses
+            .get(event.caster)
+            .is_ok_and(|status| has_active_status(status, StatusEffectKind::Exhausted));
+        if !exhausted {
             continue;
-        };
-        send_server_data_to_entity(
-            event.caster,
-            ServerDataPayloadV1::FullPowerExhaustedState(FullPowerExhaustedStateV1 {
-                caster_uuid: actor_id(event.caster, ids.get(event.caster).ok()),
-                active: true,
-                started_tick: exhausted.started_at_tick,
-                recovery_at_tick: exhausted.recovery_at_tick,
-            }),
-            &mut clients,
-        );
-
+        }
         if let Ok(position) = positions.get(event.caster) {
             send_exhausted_mist_vfx(position, &mut vfx_events);
         }
     }
-
-    for event in expired.read() {
-        send_server_data_to_entity(
-            event.entity,
-            ServerDataPayloadV1::FullPowerExhaustedState(FullPowerExhaustedStateV1 {
-                caster_uuid: actor_id(event.entity, ids.get(event.entity).ok()),
-                active: false,
-                started_tick: event.at_tick,
-                recovery_at_tick: event.at_tick,
-            }),
-            &mut clients,
-        );
-    }
 }
 
+/// 虚脱期间的灰雾刷新 VFX。改读标准 StatusEffects（StatusEffectKind::Exhausted），
+/// 不再依赖游离 `Exhausted` 组件。
 pub fn emit_full_power_exhausted_mist_refresh_vfx(
     clock: Res<CombatClock>,
-    exhausted_q: Query<(&Exhausted, &Position)>,
+    exhausted_q: Query<(&StatusEffects, &Position)>,
     mut vfx_events: EventWriter<VfxEventRequest>,
 ) {
     if clock.tick % EXHAUSTED_MIST_REFRESH_TICKS != 0 {
         return;
     }
-    for (exhausted, position) in &exhausted_q {
-        if clock.tick == exhausted.started_at_tick || clock.tick >= exhausted.recovery_at_tick {
+    for (status, position) in &exhausted_q {
+        if !has_active_status(status, StatusEffectKind::Exhausted) {
             continue;
         }
         send_exhausted_mist_vfx(position, &mut vfx_events);
@@ -428,6 +414,7 @@ mod tests {
         );
     }
 
+    /// 虚脱灰雾刷新现读标准 StatusEffects（StatusEffectKind::Exhausted）。
     #[test]
     fn exhausted_mist_vfx_refreshes_while_exhausted() {
         let mut app = App::new();
@@ -436,11 +423,13 @@ mod tests {
         app.add_systems(Update, emit_full_power_exhausted_mist_refresh_vfx);
 
         let (caster, _helper) = spawn_mock_client(&mut app, "Caster");
-        app.world_mut().entity_mut(caster).insert(Exhausted {
-            started_at_tick: 10,
-            recovery_at_tick: 200,
-            qi_recovery_modifier: 0.5,
-            defense_modifier: 0.5,
+        app.world_mut().entity_mut(caster).insert(StatusEffects {
+            active: vec![crate::combat::components::ActiveStatusEffect {
+                kind: StatusEffectKind::Exhausted,
+                magnitude: 0.5,
+                remaining_ticks: 200,
+                source_pill: None,
+            }],
         });
 
         app.update();
@@ -451,6 +440,77 @@ mod tests {
                 .iter_current_update_events()
                 .count(),
             1
+        );
+    }
+
+    /// 无虚脱 status 时不刷新灰雾。
+    #[test]
+    fn exhausted_mist_vfx_skips_when_not_exhausted() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 40 });
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(Update, emit_full_power_exhausted_mist_refresh_vfx);
+
+        let (caster, _helper) = spawn_mock_client(&mut app, "Caster");
+        app.world_mut()
+            .entity_mut(caster)
+            .insert(StatusEffects::default());
+
+        app.update();
+
+        assert_eq!(
+            app.world()
+                .resource::<Events<VfxEventRequest>>()
+                .iter_current_update_events()
+                .count(),
+            0
+        );
+    }
+
+    /// 释放瞬间施加了虚脱 debuff → 放一次灰雾；同时不发任何 FullPowerExhaustedState payload
+    /// （旧独立 HUD 路径已废，虚脱 HUD 改由 status_snapshot 驱动）。
+    #[test]
+    fn release_emits_mist_once_and_no_exhausted_state_payload() {
+        let mut app = App::new();
+        app.add_event::<FullPowerReleasedEvent>();
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(Update, emit_full_power_exhausted_mist_vfx);
+
+        let (caster, mut caster_helper) = spawn_mock_client(&mut app, "Caster");
+        app.world_mut().entity_mut(caster).insert(StatusEffects {
+            active: vec![crate::combat::components::ActiveStatusEffect {
+                kind: StatusEffectKind::Exhausted,
+                magnitude: 0.5,
+                remaining_ticks: 200,
+                source_pill: None,
+            }],
+        });
+        app.world_mut().send_event(FullPowerReleasedEvent {
+            caster,
+            target: None,
+            qi_released: 100.0,
+            at_tick: 10,
+            hit_position: None,
+            realm_gap_tier: None,
+        });
+
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        assert_eq!(
+            app.world()
+                .resource::<Events<VfxEventRequest>>()
+                .iter_current_update_events()
+                .count(),
+            1,
+            "释放施加虚脱时应放一次灰雾 VFX"
+        );
+        let payloads = collect_full_power_payloads(&mut caster_helper);
+        assert!(
+            !payloads
+                .iter()
+                .any(|p| matches!(p, ServerDataPayloadV1::FullPowerExhaustedState(_))),
+            "不应再发 FullPowerExhaustedState payload（虚脱改由 status_snapshot 驱动）"
         );
     }
 }
