@@ -1,4 +1,4 @@
-use valence::prelude::{bevy_ecs, Entity, Events};
+use valence::prelude::{bevy_ecs, DVec3, Entity, Events, Position};
 
 use crate::combat::components::Wounds;
 use crate::combat::events::{ApplyStatusEffectIntent, StatusEffectKind};
@@ -6,11 +6,37 @@ use crate::cultivation::components::{Cultivation, MeridianId};
 use crate::cultivation::meridian::severed::SkillMeridianDependencies;
 use crate::cultivation::skill_registry::{CastRejectReason, CastResult, SkillRegistry};
 use crate::cultivation::technique_scroll::realm_rank;
+use crate::network::audio_event_emit::{AudioRecipient, PlaySoundRecipeRequest};
+use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::npc::patrol::NpcPatrol;
 use crate::qi_physics::constants::{QI_EPSILON, QI_ZONE_UNIT_CAPACITY};
 use crate::qi_physics::ledger::{QiAccountId, QiTransfer, QiTransferReason};
 use crate::qi_physics::release::qi_release_to_zone;
+use crate::schema::vfx_event::VfxEventPayloadV1;
 use crate::world::zone::ZoneRegistry;
+
+// ─── AV reuse map (纯加法 cosmetic，无净新资产) ────────────────────────────────
+// 三招 AV 全部复用既有 particle event_id（client 已注册）+ audio recipe（server JSON 已存在）。
+//
+// heal_basic → 医道平和色治疗脉络绿光（YidaoPeacePulsePlayer），与玩家「医道」回血同款语义。
+// buff_speed → 解脉中和尘 + 移动冲刺音，表达「经脉加速运转」的疾行尘。
+// buff_defense → 崩拳真元爆护体环 + 镇脉护盾嗡音，与 burst_meridian.ni_mai_hu_ti（同款 DamageReduction buff）一致。
+const HEAL_PARTICLE_ID: &str = "bong:yidao_meridian_repair";
+const HEAL_PARTICLE_COLOR: &str = "#A8E6CF";
+const HEAL_AUDIO_RECIPE: &str = "yidao_meridian_repair";
+
+const BUFF_SPEED_PARTICLE_ID: &str = "bong:jiemai_neutralize_dust";
+const BUFF_SPEED_PARTICLE_COLOR: &str = "#9FD8C8";
+const BUFF_SPEED_AUDIO_RECIPE: &str = "movement_dash";
+
+const BUFF_DEFENSE_PARTICLE_ID: &str = "bong:burst_meridian_beng_quan";
+const BUFF_DEFENSE_PARTICLE_COLOR: &str = "#5BA8C9";
+const BUFF_DEFENSE_AUDIO_RECIPE: &str = "zhenmai_shield_hum";
+
+/// AV 广播半径（与 audio/vfx 既有默认一致）。
+const NPC_SKILL_AV_RADIUS: f64 = 64.0;
+/// 护体/回血粒子原点抬高（贴近 NPC 胸口高度）。
+const NPC_SKILL_AV_Y_OFFSET: f64 = 1.0;
 
 pub const HEAL_QI_COST: f64 = 8.0;
 pub const HEAL_BASE_AMOUNT: f64 = 5.0;
@@ -123,6 +149,53 @@ fn release_npc_qi_to_zone(world: &mut bevy_ecs::world::World, caster: Entity, am
     }
 }
 
+/// 复用既有 particle + audio recipe 发射招式 AV（纯加法 cosmetic，无净新资产）。
+///
+/// NPC 是 MC mob 而非玩家实体，`PlayAnim`（玩家骨架动画）不适用，因此只发
+/// `SpawnParticle`（世界坐标广播，distance-filter 给附近玩家）+ `PlaySoundRecipeRequest`
+/// （`AudioRecipient::Radius` 半径广播）。与 brain_spider / tsy_hostile 等敌对 NPC 的
+/// AV 路径一致。缺 `Position` 或缺事件资源时静默跳过，绝不影响招式逻辑/守恒。
+fn emit_npc_skill_av(
+    world: &mut bevy_ecs::world::World,
+    caster: Entity,
+    particle_id: &str,
+    particle_color: &str,
+    audio_recipe: &str,
+) {
+    let Some(position) = world.get::<Position>(caster).map(|p| p.0) else {
+        return;
+    };
+    let origin = DVec3::new(position.x, position.y + NPC_SKILL_AV_Y_OFFSET, position.z);
+
+    world.send_event(VfxEventRequest::new(
+        origin,
+        VfxEventPayloadV1::SpawnParticle {
+            event_id: particle_id.to_string(),
+            origin: [origin.x, origin.y, origin.z],
+            direction: None,
+            color: Some(particle_color.to_string()),
+            strength: Some(0.75),
+            count: Some(12),
+            duration_ticks: Some(40),
+        },
+    ));
+
+    if let Some(mut events) = world.get_resource_mut::<Events<PlaySoundRecipeRequest>>() {
+        events.send(PlaySoundRecipeRequest {
+            recipe_id: audio_recipe.to_string(),
+            instance_id: 0,
+            pos: None,
+            flag: None,
+            volume_mul: 1.0,
+            pitch_shift: 0.0,
+            recipient: AudioRecipient::Radius {
+                origin,
+                radius: NPC_SKILL_AV_RADIUS,
+            },
+        });
+    }
+}
+
 pub fn register_npc_skills(registry: &mut SkillRegistry) {
     registry.register("npc.heal_basic", npc_heal_basic);
     registry.register("npc.buff_speed", npc_buff_speed);
@@ -178,6 +251,14 @@ fn npc_heal_basic(
         crate::alchemy::pill::apply_wound_heal(&mut wounds, None, heal_grades);
     }
 
+    emit_npc_skill_av(
+        world,
+        caster,
+        HEAL_PARTICLE_ID,
+        HEAL_PARTICLE_COLOR,
+        HEAL_AUDIO_RECIPE,
+    );
+
     CastResult::Started {
         cooldown_ticks: HEAL_COOLDOWN_TICKS,
         anim_duration_ticks: 20,
@@ -225,6 +306,14 @@ fn npc_buff_speed(
             issued_at_tick: clock,
         });
     }
+
+    emit_npc_skill_av(
+        world,
+        caster,
+        BUFF_SPEED_PARTICLE_ID,
+        BUFF_SPEED_PARTICLE_COLOR,
+        BUFF_SPEED_AUDIO_RECIPE,
+    );
 
     CastResult::Started {
         cooldown_ticks: BUFF_COOLDOWN_TICKS,
@@ -274,6 +363,14 @@ fn npc_buff_defense(
         });
     }
 
+    emit_npc_skill_av(
+        world,
+        caster,
+        BUFF_DEFENSE_PARTICLE_ID,
+        BUFF_DEFENSE_PARTICLE_COLOR,
+        BUFF_DEFENSE_AUDIO_RECIPE,
+    );
+
     CastResult::Started {
         cooldown_ticks: BUFF_COOLDOWN_TICKS,
         anim_duration_ticks: 10,
@@ -292,7 +389,31 @@ mod tests {
         let mut world = bevy_ecs::world::World::new();
         world.insert_resource(Events::<ApplyStatusEffectIntent>::default());
         world.insert_resource(Events::<QiTransfer>::default());
+        world.insert_resource(Events::<VfxEventRequest>::default());
+        world.insert_resource(Events::<PlaySoundRecipeRequest>::default());
         world
+    }
+
+    /// 收集本 tick 发出的 SpawnParticle (event_id, color)。
+    fn collected_particles(world: &bevy_ecs::world::World) -> Vec<(String, Option<String>)> {
+        let events = world.resource::<Events<VfxEventRequest>>();
+        let mut reader = events.get_reader();
+        reader
+            .read(events)
+            .filter_map(|req| match &req.payload {
+                VfxEventPayloadV1::SpawnParticle {
+                    event_id, color, ..
+                } => Some((event_id.clone(), color.clone())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// 收集本 tick 发出的 audio recipe_id。
+    fn collected_audio(world: &bevy_ecs::world::World) -> Vec<String> {
+        let events = world.resource::<Events<PlaySoundRecipeRequest>>();
+        let mut reader = events.get_reader();
+        reader.read(events).map(|r| r.recipe_id.clone()).collect()
     }
 
     fn make_cultivation(realm: Realm, qi: f64) -> Cultivation {
@@ -792,6 +913,161 @@ mod tests {
             transfers.is_empty(),
             "rejected skill (qi insufficient) should not emit QiTransfer, got {} events",
             transfers.len()
+        );
+    }
+
+    // === AV (particle + audio) emission ===
+    //
+    // 锁定：① 三招各发对应 reused particle event_id + color ② 各发对应 reused audio recipe
+    //       ③ AV 只在 cast 成功时发，rejection 不发 ④ 缺 Position 时静默跳过不发 AV 也不崩。
+
+    fn make_position() -> Position {
+        Position::new([14.0, 66.0, 14.0])
+    }
+
+    #[test]
+    fn heal_basic_emits_reused_heal_particle_and_audio() {
+        let mut world = world_with_events();
+        let wounds = make_wounds(50.0, 100.0, vec![]);
+        let entity = world
+            .spawn((
+                make_cultivation(Realm::Induce, 50.0),
+                wounds,
+                make_position(),
+            ))
+            .id();
+
+        npc_heal_basic(&mut world, entity, 0, None);
+
+        let particles = collected_particles(&world);
+        assert_eq!(
+            particles.len(),
+            1,
+            "heal should emit exactly 1 particle, got {particles:?}"
+        );
+        assert_eq!(
+            particles[0].0, HEAL_PARTICLE_ID,
+            "heal must reuse 医道治疗 particle id (no net-new asset)"
+        );
+        assert_eq!(
+            particles[0].1.as_deref(),
+            Some(HEAL_PARTICLE_COLOR),
+            "heal particle color should be the green heal tint"
+        );
+
+        let audio = collected_audio(&world);
+        assert_eq!(
+            audio,
+            vec![HEAL_AUDIO_RECIPE.to_string()],
+            "heal must reuse existing yidao_meridian_repair audio recipe"
+        );
+    }
+
+    #[test]
+    fn buff_speed_emits_reused_speed_particle_and_audio() {
+        let mut world = world_with_events();
+        let entity = world
+            .spawn((make_cultivation(Realm::Condense, 50.0), make_position()))
+            .id();
+
+        npc_buff_speed(&mut world, entity, 0, None);
+
+        let particles = collected_particles(&world);
+        assert_eq!(particles.len(), 1, "buff_speed should emit 1 particle");
+        assert_eq!(
+            particles[0].0, BUFF_SPEED_PARTICLE_ID,
+            "buff_speed must reuse 解脉中和尘 particle id"
+        );
+        assert_eq!(particles[0].1.as_deref(), Some(BUFF_SPEED_PARTICLE_COLOR));
+
+        let audio = collected_audio(&world);
+        assert_eq!(
+            audio,
+            vec![BUFF_SPEED_AUDIO_RECIPE.to_string()],
+            "buff_speed must reuse existing movement_dash audio recipe"
+        );
+    }
+
+    #[test]
+    fn buff_defense_emits_reused_shield_particle_and_audio() {
+        let mut world = world_with_events();
+        let entity = world
+            .spawn((make_cultivation(Realm::Condense, 50.0), make_position()))
+            .id();
+
+        npc_buff_defense(&mut world, entity, 0, None);
+
+        let particles = collected_particles(&world);
+        assert_eq!(particles.len(), 1, "buff_defense should emit 1 particle");
+        assert_eq!(
+            particles[0].0, BUFF_DEFENSE_PARTICLE_ID,
+            "buff_defense must reuse 崩拳护体环 particle id (same as ni_mai_hu_ti)"
+        );
+        assert_eq!(particles[0].1.as_deref(), Some(BUFF_DEFENSE_PARTICLE_COLOR));
+
+        let audio = collected_audio(&world);
+        assert_eq!(
+            audio,
+            vec![BUFF_DEFENSE_AUDIO_RECIPE.to_string()],
+            "buff_defense must reuse existing zhenmai_shield_hum audio recipe"
+        );
+    }
+
+    #[test]
+    fn three_skills_emit_distinct_particle_ids() {
+        // 招式差异化硬约束：三招 particle/audio 各不相同。
+        assert_ne!(HEAL_PARTICLE_ID, BUFF_SPEED_PARTICLE_ID);
+        assert_ne!(HEAL_PARTICLE_ID, BUFF_DEFENSE_PARTICLE_ID);
+        assert_ne!(BUFF_SPEED_PARTICLE_ID, BUFF_DEFENSE_PARTICLE_ID);
+        assert_ne!(HEAL_AUDIO_RECIPE, BUFF_SPEED_AUDIO_RECIPE);
+        assert_ne!(HEAL_AUDIO_RECIPE, BUFF_DEFENSE_AUDIO_RECIPE);
+        assert_ne!(BUFF_SPEED_AUDIO_RECIPE, BUFF_DEFENSE_AUDIO_RECIPE);
+    }
+
+    #[test]
+    fn rejected_skill_does_not_emit_av() {
+        let mut world = world_with_events();
+        // qi insufficient → rejected → no AV.
+        let entity = world
+            .spawn((make_cultivation(Realm::Induce, 1.0), make_position()))
+            .id();
+
+        let result = npc_heal_basic(&mut world, entity, 0, None);
+        assert!(matches!(result, CastResult::Rejected { .. }));
+
+        assert!(
+            collected_particles(&world).is_empty(),
+            "rejected cast must not emit particle AV"
+        );
+        assert!(
+            collected_audio(&world).is_empty(),
+            "rejected cast must not emit audio AV"
+        );
+    }
+
+    #[test]
+    fn av_skipped_without_position_but_cast_still_succeeds() {
+        // NPC 缺 Position（罕见，但不能 panic）：招式逻辑照常成功，仅 particle 跳过。
+        let mut world = world_with_events();
+        let entity = world.spawn(make_cultivation(Realm::Condense, 50.0)).id();
+
+        let result = npc_buff_defense(&mut world, entity, 0, None);
+        assert!(
+            matches!(result, CastResult::Started { .. }),
+            "cast should still succeed without Position"
+        );
+
+        assert!(
+            collected_particles(&world).is_empty(),
+            "no particle when Position absent"
+        );
+        // status effect intent 仍应发出（逻辑不受 AV 影响）。
+        let intents = world.resource::<Events<ApplyStatusEffectIntent>>();
+        let mut reader = intents.get_reader();
+        assert_eq!(
+            reader.read(intents).count(),
+            1,
+            "buff intent must fire regardless of AV path"
         );
     }
 }
