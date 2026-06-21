@@ -979,6 +979,65 @@ class ProtoServerDataBridgeTest {
     }
 
     // ═══════════════════════════════════════════════════════════════════
+    // cast_sync: enum prefix normalization (plan-skill-warn-hud)
+    //
+    // proto3 canonical JSON 把枚举打成 CAST_PHASE_* / CAST_OUTCOME_*；CastSyncHandler
+    // 期望 serde snake_case。bridgeCastSync 必须剥前缀转小写，否则整条 cast_sync 在
+    // proto 线上静默 noOp（连既有 casting/meridian_gated 也收不到）。
+    // ═══════════════════════════════════════════════════════════════════
+
+    @Test
+    void bridgeCastSyncStripsPhaseAndOutcomeEnumPrefixes() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setCastSync(Envelope.CastSync.newBuilder()
+                        .setPhase(Envelope.CastPhase.CAST_PHASE_CASTING)
+                        .setSlot(3)
+                        .setDurationMs(1500)
+                        .setStartedAtMs(1_700_000_000_000L)
+                        .setOutcome(Envelope.CastOutcome.CAST_OUTCOME_NONE))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        assertEquals("cast_sync", json.get("type").getAsString());
+        assertEquals("casting", json.get("phase").getAsString(),
+                "phase 必须从 CAST_PHASE_CASTING 剥成 'casting'（CastSyncHandler switch 期望），"
+                + "否则 proto 线上 cast bar 整条静默 noOp");
+        assertEquals("none", json.get("outcome").getAsString(),
+                "outcome 必须从 CAST_OUTCOME_NONE 剥成 'none'");
+    }
+
+    @Test
+    void bridgeCastSyncMaps通用警示RejectOutcomesToSnakeCase() {
+        // 每个 reject outcome 经 bridge 后必须落到 CastSyncHandler.parseOutcome 认得的 wire 串。
+        record Case(Envelope.CastOutcome proto, String expectedWire) {}
+        Case[] cases = new Case[] {
+            new Case(Envelope.CastOutcome.CAST_OUTCOME_MERIDIAN_GATED, "meridian_gated"),
+            new Case(Envelope.CastOutcome.CAST_OUTCOME_REJECT_QI_INSUFFICIENT, "reject_qi_insufficient"),
+            new Case(Envelope.CastOutcome.CAST_OUTCOME_REJECT_ON_COOLDOWN, "reject_on_cooldown"),
+            new Case(Envelope.CastOutcome.CAST_OUTCOME_REJECT_INVALID_TARGET, "reject_invalid_target"),
+            new Case(Envelope.CastOutcome.CAST_OUTCOME_REJECT_IN_RECOVERY, "reject_in_recovery"),
+            new Case(Envelope.CastOutcome.CAST_OUTCOME_REJECT_REALM_TOO_LOW, "reject_realm_too_low"),
+            new Case(Envelope.CastOutcome.CAST_OUTCOME_REJECT_NO_WEAPON, "reject_no_weapon"),
+        };
+        for (Case c : cases) {
+            Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                    .setCastSync(Envelope.CastSync.newBuilder()
+                            .setPhase(Envelope.CastPhase.CAST_PHASE_IDLE)
+                            .setSlot(0)
+                            .setDurationMs(0)
+                            .setStartedAtMs(1L)
+                            .setOutcome(c.proto()))
+                    .build();
+            JsonObject json = bridgeAndParse(envelope);
+            assertEquals("idle", json.get("phase").getAsString(),
+                    "施放前拒绝 phase 应为 idle for " + c.proto());
+            assertEquals(c.expectedWire(), json.get("outcome").getAsString(),
+                    "outcome " + c.proto() + " 应剥成 '" + c.expectedWire()
+                    + "'（CastSyncHandler.parseOutcome 据此映射文案）");
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
     // Helper
     // ═══════════════════════════════════════════════════════════════════
 

@@ -1820,6 +1820,13 @@ fn cast_outcome_to_proto(o: &super::combat_hud::CastOutcomeV1) -> i32 {
         CastOutcomeV1::Death => bong::CastOutcome::Death as i32,
         // plan-bug-qc-p1 §skill-cast P0：经脉门控拒绝 → MeridianGated proto 变体。
         CastOutcomeV1::MeridianGated => bong::CastOutcome::MeridianGated as i32,
+        // 通用技能警示（plan-skill-warn-hud）：resolver 拒绝原因 → proto 变体。
+        CastOutcomeV1::RejectQiInsufficient => bong::CastOutcome::RejectQiInsufficient as i32,
+        CastOutcomeV1::RejectOnCooldown => bong::CastOutcome::RejectOnCooldown as i32,
+        CastOutcomeV1::RejectInvalidTarget => bong::CastOutcome::RejectInvalidTarget as i32,
+        CastOutcomeV1::RejectInRecovery => bong::CastOutcome::RejectInRecovery as i32,
+        CastOutcomeV1::RejectRealmTooLow => bong::CastOutcome::RejectRealmTooLow as i32,
+        CastOutcomeV1::RejectNoWeapon => bong::CastOutcome::RejectNoWeapon as i32,
     }
 }
 

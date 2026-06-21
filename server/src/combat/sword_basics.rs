@@ -447,7 +447,7 @@ fn cast_sword_attack(
         return rejected(CastRejectReason::OnCooldown);
     }
     if !has_sword(world, caster) {
-        return rejected(CastRejectReason::InvalidTarget);
+        return rejected(CastRejectReason::NoWeapon);
     }
     if exhausted(world, caster) {
         return rejected(CastRejectReason::InRecovery);
@@ -561,7 +561,7 @@ fn cast_sword_parry(
         return rejected(CastRejectReason::OnCooldown);
     }
     if !has_sword(world, caster) {
-        return rejected(CastRejectReason::InvalidTarget);
+        return rejected(CastRejectReason::NoWeapon);
     }
     if exhausted(world, caster) {
         return rejected(CastRejectReason::InRecovery);
@@ -624,7 +624,7 @@ fn cast_sword_infuse(
         .cloned()
         .filter(|weapon| weapon.weapon_kind == WeaponKind::Sword)
     else {
-        return rejected(CastRejectReason::InvalidTarget);
+        return rejected(CastRejectReason::NoWeapon);
     };
     if exhausted(world, caster) {
         return rejected(CastRejectReason::InRecovery);
@@ -1084,6 +1084,119 @@ mod tests {
 
         let known = app.world().get::<KnownTechniques>(attacker).unwrap();
         assert!(known.entries[0].proficiency > 0.0);
+    }
+
+    // ── 缺武器拒绝（plan-skill-warn-hud）：手里没剑施放剑技 → NoWeapon ────────────
+
+    #[test]
+    fn cleave_without_sword_rejects_with_no_weapon_not_invalid_target() {
+        // 剑技需手持剑。caster 有目标 + 激活劈技但无 Weapon component → has_sword=false
+        // → 应拒绝 NoWeapon（专用「缺武器」原因），而非旧的笼统 InvalidTarget。
+        // 让通用警示 HUD 能显示「缺少武器」区别于「目标无效」。
+        let mut app = App::new();
+        let target = app.world_mut().spawn_empty().id();
+        let caster = app
+            .world_mut()
+            .spawn(known(SWORD_CLEAVE_SKILL_ID, 0.5))
+            .id();
+
+        let result = cast_sword_cleave(app.world_mut(), caster, 0, Some(target));
+
+        assert_eq!(
+            result,
+            CastResult::Rejected {
+                reason: CastRejectReason::NoWeapon
+            },
+            "手持无剑施放劈砍应拒绝 NoWeapon（缺武器），实际 {result:?}"
+        );
+        assert_ne!(
+            result,
+            CastResult::Rejected {
+                reason: CastRejectReason::InvalidTarget
+            },
+            "缺武器不应再笼统报 InvalidTarget——否则警示 HUD 会错显「目标无效」"
+        );
+    }
+
+    #[test]
+    fn cleave_without_target_still_rejects_invalid_target() {
+        // 回归：缺武器拒绝改 NoWeapon 后，无目标这条更早的分支仍报 InvalidTarget 不变。
+        let mut app = App::new();
+        let caster = app
+            .world_mut()
+            .spawn(known(SWORD_CLEAVE_SKILL_ID, 0.5))
+            .id();
+
+        let result = cast_sword_cleave(app.world_mut(), caster, 0, None);
+
+        assert_eq!(
+            result,
+            CastResult::Rejected {
+                reason: CastRejectReason::InvalidTarget
+            },
+            "无目标应仍报 InvalidTarget（早于 has_sword 检查），实际 {result:?}"
+        );
+    }
+
+    #[test]
+    fn parry_without_sword_rejects_no_weapon() {
+        // 格挡同样需手持剑：gate 顺序 OnCooldown → has_sword。fresh caster 无冷却、
+        // 无 Weapon → 直达 NoWeapon。pin 住「无剑格挡 → NoWeapon 而非笼统拒绝」，
+        // 让通用警示 HUD 对格挡也显示「缺少武器」。
+        let mut app = App::new();
+        let caster = app.world_mut().spawn(known(SWORD_PARRY_SKILL_ID, 0.5)).id();
+
+        let result = cast_sword_parry(app.world_mut(), caster, 0, None);
+
+        assert_eq!(
+            result,
+            CastResult::Rejected {
+                reason: CastRejectReason::NoWeapon
+            },
+            "无剑格挡应拒绝 NoWeapon（缺武器），实际 {result:?}"
+        );
+        assert_ne!(
+            result,
+            CastResult::Rejected {
+                reason: CastRejectReason::InvalidTarget
+            },
+            "缺武器格挡不应报 InvalidTarget——否则警示 HUD 错显「目标无效」"
+        );
+    }
+
+    #[test]
+    fn infuse_without_sword_rejects_no_weapon() {
+        // 灌注 gate 顺序 OnCooldown → 境界(RealmTooLow) → has_sword。需先满足境界门
+        // （Cultivation 存在且 realm≠Awaken）才能抵达 has_sword，故给 Condense 境界 +
+        // 不挂 Weapon → 直达 NoWeapon。pin 住「够境界但无剑 → NoWeapon 而非 RealmTooLow」。
+        let mut app = App::new();
+        let caster = app
+            .world_mut()
+            .spawn((
+                known(SWORD_INFUSE_SKILL_ID, 0.5),
+                Cultivation {
+                    realm: Realm::Condense,
+                    ..Default::default()
+                },
+            ))
+            .id();
+
+        let result = cast_sword_infuse(app.world_mut(), caster, 0, None);
+
+        assert_eq!(
+            result,
+            CastResult::Rejected {
+                reason: CastRejectReason::NoWeapon
+            },
+            "够境界但无剑灌注应拒绝 NoWeapon（缺武器），实际 {result:?}"
+        );
+        assert_ne!(
+            result,
+            CastResult::Rejected {
+                reason: CastRejectReason::RealmTooLow
+            },
+            "境界已达标，缺武器不应误报 RealmTooLow——否则警示 HUD 错显「境界不足」"
+        );
     }
 
     // ── 劈 / 刺专属粒子（client SwordBasicsVfxPlayer 早注册，此前 server 不 emit）──

@@ -27,11 +27,34 @@ pub enum CastRejectReason {
     OnCooldown,
     InvalidTarget,
     InRecovery,
+    /// 招式需手持对应武器（如剑技需持剑）但当前手里没有合规武器。
+    /// 仅用于把"缺武器"反馈给玩家——是否真正放出由各 resolver 既有判定决定，
+    /// 本变体不改施法逻辑，只让通用警示 HUD 能区分"缺武器"与"目标无效"。
+    NoWeapon,
 }
 
 impl CastRejectReason {
     /// 兼容旧调用点 —— 不带 meridian_id 的 `MeridianSevered`。
     pub const MERIDIAN_SEVERED: CastRejectReason = CastRejectReason::MeridianSevered(None);
+
+    /// 把施法被拒原因映射到推给 client 的 `CastOutcomeV1`（通用技能警示 HUD 用）。
+    ///
+    /// 纯反馈：cast 已被各 resolver 既有逻辑拒绝，本映射只决定"告诉玩家哪条原因"。
+    /// `MeridianSevered` 复用既有 `MeridianGated`（经脉门控本就推这个 outcome）。
+    /// 全 match、无 catch-all：新增 `CastRejectReason` 变体不加映射会触发 rustc
+    /// non-exhaustive 编译错误，逼使警示文案保持对所有原因生效（通用性不变量）。
+    pub fn to_cast_outcome(self) -> crate::schema::combat_hud::CastOutcomeV1 {
+        use crate::schema::combat_hud::CastOutcomeV1;
+        match self {
+            CastRejectReason::RealmTooLow => CastOutcomeV1::RejectRealmTooLow,
+            CastRejectReason::MeridianSevered(_) => CastOutcomeV1::MeridianGated,
+            CastRejectReason::QiInsufficient => CastOutcomeV1::RejectQiInsufficient,
+            CastRejectReason::OnCooldown => CastOutcomeV1::RejectOnCooldown,
+            CastRejectReason::InvalidTarget => CastOutcomeV1::RejectInvalidTarget,
+            CastRejectReason::InRecovery => CastOutcomeV1::RejectInRecovery,
+            CastRejectReason::NoWeapon => CastOutcomeV1::RejectNoWeapon,
+        }
+    }
 }
 
 pub type SkillFn = fn(
@@ -89,6 +112,76 @@ pub fn init_registry() -> SkillRegistry {
 mod tests {
     use super::*;
     use crate::cultivation::meridian::severed::SkillMeridianDependencies;
+    use crate::schema::combat_hud::CastOutcomeV1;
+
+    /// 通用技能警示：每个 `CastRejectReason` 变体都映射到一个非中性 `CastOutcomeV1`。
+    /// 锁住"覆盖所有拒绝原因"不变量——新增 reject 变体若忘了映射，rustc 会先在
+    /// `to_cast_outcome` 的 non-exhaustive match 处编译红，这里再正向锁每条映射目标。
+    #[test]
+    fn every_reject_reason_maps_to_distinct_warning_outcome() {
+        // 列举全部变体（含 MeridianSevered 的 Some/None 两态）。
+        let cases: &[(CastRejectReason, CastOutcomeV1)] = &[
+            (
+                CastRejectReason::RealmTooLow,
+                CastOutcomeV1::RejectRealmTooLow,
+            ),
+            (
+                CastRejectReason::QiInsufficient,
+                CastOutcomeV1::RejectQiInsufficient,
+            ),
+            (
+                CastRejectReason::OnCooldown,
+                CastOutcomeV1::RejectOnCooldown,
+            ),
+            (
+                CastRejectReason::InvalidTarget,
+                CastOutcomeV1::RejectInvalidTarget,
+            ),
+            (
+                CastRejectReason::InRecovery,
+                CastOutcomeV1::RejectInRecovery,
+            ),
+            (CastRejectReason::NoWeapon, CastOutcomeV1::RejectNoWeapon),
+            // MeridianSevered 两态都复用既有 MeridianGated（经脉门控本就推这个）。
+            (
+                CastRejectReason::MeridianSevered(None),
+                CastOutcomeV1::MeridianGated,
+            ),
+            (
+                CastRejectReason::MeridianSevered(Some(MeridianId::Lung)),
+                CastOutcomeV1::MeridianGated,
+            ),
+        ];
+        for (reason, expected) in cases {
+            let got = reason.to_cast_outcome();
+            assert_eq!(
+                got, *expected,
+                "CastRejectReason::{reason:?} 应映射到 {expected:?}（通用警示文案据此区分），实际 {got:?}"
+            );
+            // 拒绝原因绝不能落到 None/Completed 这类"无警示"outcome，否则玩家看不到为什么被拒。
+            assert_ne!(
+                got,
+                CastOutcomeV1::None,
+                "CastRejectReason::{reason:?} 映射成了 None —— 会导致警示 HUD 静默，违反通用性"
+            );
+            assert_ne!(got, CastOutcomeV1::Completed, "拒绝不应映射成 Completed");
+        }
+    }
+
+    /// NoWeapon 是新增的"缺武器"专用拒绝原因，必须映射到独立的 RejectNoWeapon，
+    /// 而非旧的 InvalidTarget——否则玩家分不清"目标无效"和"手里没武器"。
+    #[test]
+    fn no_weapon_maps_to_dedicated_outcome_not_invalid_target() {
+        assert_eq!(
+            CastRejectReason::NoWeapon.to_cast_outcome(),
+            CastOutcomeV1::RejectNoWeapon
+        );
+        assert_ne!(
+            CastRejectReason::NoWeapon.to_cast_outcome(),
+            CastOutcomeV1::RejectInvalidTarget,
+            "缺武器必须有独立 outcome，文案为「缺少武器」而非「目标无效」"
+        );
+    }
 
     /// 构造与生产路径完全一致的 SkillMeridianDependencies（不走 Bevy App）。
     fn build_production_deps() -> SkillMeridianDependencies {
