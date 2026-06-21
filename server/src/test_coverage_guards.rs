@@ -49,12 +49,6 @@ const INTENTIONAL_UNCONSUMED_EVENTS: &[UnconsumedEventTriage] = &[
         follow_up: "consumable feedback follow-up",
     },
     UnconsumedEventTriage {
-        event: "DuguObfuscationDisruptedEvent",
-        status: UnconsumedEventStatus::DeferredFollowUp,
-        reason: "毒蛊遮蔽被破坏事件当前缺运行时反馈 reader；保留为断连狩猎待办。",
-        follow_up: "code-disconnect hunting / dugu feedback",
-    },
-    UnconsumedEventTriage {
         event: "FlowFieldPrototype",
         status: UnconsumedEventStatus::DeferredFollowUp,
         reason: "兽潮 P0 原型事件已被 P1 FlowFieldComputeTask 替代为真实消费路径；旧 prototype 待删除或接调试可视化。",
@@ -101,12 +95,6 @@ const INTENTIONAL_UNCONSUMED_EVENTS: &[UnconsumedEventTriage] = &[
         status: UnconsumedEventStatus::DeferredFollowUp,
         reason: "NPC 作息变化事件缺社交/观察 reader；当前调度状态直接写组件。",
         follow_up: "npc schedule narration/social follow-up",
-    },
-    UnconsumedEventTriage {
-        event: "QiNeedleChargedEvent",
-        status: UnconsumedEventStatus::DeferredFollowUp,
-        reason: "凝针充能事件缺 HUD/VFX reader；技能状态本身已直接更新。",
-        follow_up: "dugu needle feedback follow-up",
     },
     UnconsumedEventTriage {
         event: "QiTransfer",

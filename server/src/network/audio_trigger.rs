@@ -22,10 +22,12 @@ use crate::combat::baomai_v3::{BaomaiSkillEvent, BaomaiSkillId};
 use crate::combat::carrier::CarrierChargedEvent;
 use crate::combat::components::{Lifecycle, Wounds};
 use crate::combat::events::{AttackSource, CombatEvent, DeathEvent, DefenseKind};
+use crate::combat::needle::QiNeedleChargedEvent;
 use crate::combat::tuike_v2::{ContamTransferredEvent, DonFalseSkinEvent, FalseSkinSheddedEvent};
 use crate::combat::woliu_v2::VortexCastEvent;
 use crate::cultivation::breakthrough::BreakthroughOutcome;
 use crate::cultivation::components::Cultivation;
+use crate::cultivation::dugu::DuguObfuscationDisruptedEvent;
 use crate::cultivation::life_record::LifeRecord;
 use crate::cultivation::meridian_open::MeridianOpenedEvent;
 use crate::cultivation::overload::MeridianOverloadEvent;
@@ -786,6 +788,54 @@ pub fn emit_anqi_audio_triggers(
             event.caster,
             origin,
             Some("anqi_echo_fractal".to_string()),
+            1.0,
+            0.0,
+        );
+    }
+}
+
+/// 蛊道（独孤毒流）基础两招 cast → `PlaySoundRecipeRequest`，引用 `audio_recipes/dugu_*.json`
+/// （全部复用 vanilla 音色分层，无新音频文件）。
+///
+/// - 凝针 `QiNeedleChargedEvent` → `dugu_cast`（arrow.shoot：真元凝针远距直刺）
+/// - 灌毒蛊 `DuguObfuscationDisruptedEvent` → `dugu_poison_cast`（bee aggressive：失谐真元覆毒）
+///
+/// **纯 cosmetic**：只发音效，不读 / 改任何战斗 / 真元状态。
+pub fn emit_dugu_needle_audio_triggers(
+    mut needles: EventReader<QiNeedleChargedEvent>,
+    mut infusions: EventReader<DuguObfuscationDisruptedEvent>,
+    positions: Query<&Position>,
+    mut audio: AudioEmitWriter,
+) {
+    let mut audio = audio.context();
+
+    for event in needles.read() {
+        let origin = positions
+            .get(event.shooter)
+            .map(|position| position.get())
+            .unwrap_or(DVec3::ZERO);
+        emit_play(
+            &mut audio,
+            "dugu_cast",
+            event.shooter,
+            origin,
+            Some("dugu_shoot_needle".to_string()),
+            1.0,
+            0.0,
+        );
+    }
+
+    for event in infusions.read() {
+        let origin = positions
+            .get(event.infuser)
+            .map(|position| position.get())
+            .unwrap_or(DVec3::ZERO);
+        emit_play(
+            &mut audio,
+            "dugu_poison_cast",
+            event.infuser,
+            origin,
+            Some("dugu_infuse_poison".to_string()),
             1.0,
             0.0,
         );
