@@ -26,6 +26,9 @@ import java.util.function.Consumer;
 
 /** Main InspectScreen tab for technique binding and details. */
 public final class TechniquesTabPanel {
+    /** 功法列表滚动视口固定高度（px）；约 8 行（每行 20 + gap 2 + 上下 padding 3）。 */
+    private static final int LIST_VIEWPORT_HEIGHT = 180;
+
     private final FlowLayout root;
     private final FlowLayout techniqueList;
     private final TechniqueSearchBar searchBar;
@@ -63,11 +66,16 @@ public final class TechniquesTabPanel {
         });
         listColumn.child(searchBar.component());
 
-        techniqueList = Containers.verticalFlow(Sizing.fixed(176), Sizing.content());
+        techniqueList = Containers.verticalFlow(Sizing.fill(100), Sizing.content());
         techniqueList.surface(Surface.flat(0xFF111111).and(Surface.outline(0xFF303030)));
         techniqueList.padding(Insets.of(3));
         techniqueList.gap(2);
-        listColumn.child(techniqueList);
+        // 功法可能很多（玄阶/黄阶各路招式），固定视口高度 + 纵向滚动条，
+        // 否则列表随内容无限拉长、溢出屏幕底部（无法滚动查看）。
+        var techniqueScroll = Containers.verticalScroll(
+            Sizing.fixed(176), Sizing.fixed(LIST_VIEWPORT_HEIGHT), techniqueList);
+        techniqueScroll.scrollbarThiccness(3);
+        listColumn.child(techniqueScroll);
         top.child(listColumn);
 
         FlowLayout configLayer = Containers.verticalFlow(Sizing.fixed(1), Sizing.fixed(1));
@@ -85,7 +93,7 @@ public final class TechniquesTabPanel {
         bottom.gap(4);
         meridianMiniView = new MeridianMiniSilhouette();
         bottom.child(meridianMiniView);
-        statusLine = Components.label(Text.literal("拖功法到左侧 1-9 槽；右键左侧技能槽清空。"));
+        statusLine = Components.label(Text.literal("拖功法到 1-9 槽绑定；绑定后可拖出槽外解绑，或右键清空。"));
         statusLine.color(Color.ofArgb(0xFFAAAAAA));
         FlowLayout statusBox = Containers.verticalFlow(Sizing.fixed(176), Sizing.fixed(58));
         statusBox.surface(Surface.flat(0xFF151412).and(Surface.outline(0xFF504838)));
@@ -194,11 +202,19 @@ public final class TechniquesTabPanel {
         String selectedText = selected == null ? "未选择功法" : "已选: " + selected.displayName();
         int boundSlot = selected == null ? -1 : SkillBarStore.findSkill(selected.id());
         String bindText = boundSlot >= 0 ? " · 槽 " + (boundSlot + 1) : " · 未绑定";
-        statusLine.text(Text.literal(selectedText + bindText + "\n拖到左侧 1-9；右键技能槽清空。"));
+        statusLine.text(Text.literal(selectedText + bindText + "\n拖到 1-9 绑定 / 拖出槽外解绑 / 右键清空。"));
     }
 
     public boolean bindSelectedTechniqueToSlot(int slot) {
-        TechniquesListPanel.Technique technique = selectedTechnique();
+        return bindTechniqueToSlot(selectedTechniqueId, slot);
+    }
+
+    /**
+     * 把指定 id 的功法绑到 1-9 槽（拖拽落槽走这条，不依赖「当前选中」状态）。
+     * 锁定功法（经脉断/封闭、未激活、config 必填缺失）拒绝绑定并在状态栏给原因。
+     */
+    public boolean bindTechniqueToSlot(String techniqueId, int slot) {
+        TechniquesListPanel.Technique technique = findTechnique(techniqueId);
         if (technique == null || slot < 0 || slot >= 9) return false;
         String lockReason = lockReason(technique);
         if (!lockReason.isBlank()) {
@@ -215,6 +231,42 @@ public final class TechniquesTabPanel {
         ClientRequestSender.sendSkillBarBindSkill(slot, technique.id());
         refreshSelection();
         return true;
+    }
+
+    /** 选中指定功法（拖拽起手时调用，使高亮/详情卡与两步点击一致）。 */
+    public void selectTechnique(String techniqueId) {
+        if (techniqueId == null || techniqueId.isBlank()) return;
+        if (findVisibleTechnique(techniqueId) == null) return;
+        selectedTechniqueId = techniqueId;
+        hoverTechniqueId = "";
+        configPanelManager.onSelectedTechniqueChanged(selectedTechniqueId);
+        refreshSelection();
+    }
+
+    /** 命中测试：屏幕坐标落在哪一行功法（拖拽起手用）；落在滚动条/空白/视口外返回 null。 */
+    public TechniquesListPanel.Technique techniqueAtScreen(double mouseX, double mouseY) {
+        for (TechniqueRowComponent row : techniqueRows) {
+            io.wispforest.owo.ui.core.Component c = row.component();
+            if (rowHit(mouseX, mouseY, c.x(), c.y(), c.width(), c.height())) {
+                return row.technique();
+            }
+        }
+        return null;
+    }
+
+    /** 锁定原因（空串=可绑定），供拖拽 ghost / 槽位高亮判定禁止态。 */
+    public String lockReasonFor(TechniquesListPanel.Technique technique) {
+        return lockReason(technique);
+    }
+
+    /** 按 id 取功法（全量 snapshot，不受搜索过滤影响）；从已绑槽拖出时用来还原 Technique。 */
+    public TechniquesListPanel.Technique techniqueById(String techniqueId) {
+        return findTechnique(techniqueId);
+    }
+
+    /** 半开区间矩形命中：{@code [x, x+w) × [y, y+h)}，与 hotbar 槽位命中保持同一约定。 */
+    static boolean rowHit(double px, double py, int x, int y, int w, int h) {
+        return px >= x && px < x + w && py >= y && py < y + h;
     }
 
     public boolean clearSkillSlot(int slot) {

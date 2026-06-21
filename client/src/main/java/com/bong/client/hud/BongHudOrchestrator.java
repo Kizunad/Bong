@@ -280,7 +280,8 @@ public final class BongHudOrchestrator {
                 com.bong.client.inventory.state.InventoryStateStore.snapshot().hotbar(),
                 nowMillis,
                 screenWidth,
-                screenHeight
+                screenHeight,
+                HudTextureProbe::exists
             ));
             // plan-weapon-v1 §4.3：武器槽贴 hotbar 左右两端。
             commands.addAll(WeaponHotbarHudPlanner.buildCommands(screenWidth, screenHeight));

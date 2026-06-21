@@ -77,6 +77,28 @@ public final class QuickBarHudPlanner {
         int screenWidth,
         int screenHeight
     ) {
+        // 旧重载：不做贴图存在性检查（保留历史行为：非空 iconTexture 即画，缺图由 MC 兜底）。
+        return buildCommands(
+            quickSlots, skillBar, selectedHotbarSlot, castState, nativeHotbar,
+            nowMillis, screenWidth, screenHeight, null
+        );
+    }
+
+    /**
+     * @param skillTextureExists 战斗栏技能图标的贴图存在性谓词；非 null 时缺图回退到文字标签
+     *                           （消除紫黑 missing-texture）；null 走旧行为。生产传 {@code HudTextureProbe::exists}。
+     */
+    public static List<HudRenderCommand> buildCommands(
+        QuickSlotConfig quickSlots,
+        SkillBarConfig skillBar,
+        int selectedHotbarSlot,
+        CastState castState,
+        List<InventoryItem> nativeHotbar,
+        long nowMillis,
+        int screenWidth,
+        int screenHeight,
+        java.util.function.Predicate<String> skillTextureExists
+    ) {
         List<HudRenderCommand> out = new ArrayList<>();
         if (screenWidth <= 0 || screenHeight <= 0) return out;
 
@@ -91,7 +113,7 @@ public final class QuickBarHudPlanner {
 
         // Lower row (1-9 战斗栏) —— 之前只画边框，现在与 InventoryModel.hotbar 同步
         // 物品（MC vanilla 那边没接入 Bong items，所以底部 native hotbar 也是空）。
-        appendCombatRow(out, selectedHotbarSlot, leftX, lowerY, nativeHotbar, skillBar, castState, nowMillis);
+        appendCombatRow(out, selectedHotbarSlot, leftX, lowerY, nativeHotbar, skillBar, castState, nowMillis, skillTextureExists);
 
         return out;
     }
@@ -147,7 +169,8 @@ public final class QuickBarHudPlanner {
         List<InventoryItem> nativeHotbar,
         SkillBarConfig skillBar,
         CastState castState,
-        long nowMillis
+        long nowMillis,
+        java.util.function.Predicate<String> skillTextureExists
     ) {
         SkillBarConfig skills = skillBar == null ? SkillBarConfig.empty() : skillBar;
         for (int i = 0; i < TOTAL_SLOTS; i++) {
@@ -193,12 +216,12 @@ public final class QuickBarHudPlanner {
                     0x404080FF
                 ));
                 int iconSize = SLOT_SIZE - 2 * ICON_INSET;
-                List<HudRenderCommand> iconCommands = LoadoutIconLayer.buildSkillIconCommands(
-                    skillEntry,
-                    x + ICON_INSET,
-                    y + ICON_INSET,
-                    iconSize
-                );
+                // 有谓词(生产)→ 存在性感知解析(缺图回退文字)；null(旧重载/部分测试)→ 旧行为。
+                List<HudRenderCommand> iconCommands = skillTextureExists == null
+                    ? LoadoutIconLayer.buildSkillIconCommands(
+                        skillEntry, x + ICON_INSET, y + ICON_INSET, iconSize)
+                    : LoadoutIconLayer.buildSkillIconCommands(
+                        skillEntry, x + ICON_INSET, y + ICON_INSET, iconSize, skillTextureExists);
                 if (iconCommands.isEmpty()) {
                     String label = skillLabel(skillEntry.displayName(), skillEntry.id());
                     out.add(HudRenderCommand.text(HudRenderLayer.QUICK_BAR, label, x + 4, y + 6, 0xFFE0D080));
