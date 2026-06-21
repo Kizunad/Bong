@@ -125,13 +125,12 @@ mod tests {
     ///   経脈ゲートが運行時に強制されるかどうかは P0 cast-entry 統一拦截の範疇。
     /// - 本不変量の対象は SkillRegistry ∩ TECHNIQUE_DEFINITIONS の積集合のみ。
     ///   TECHNIQUE_DEFINITIONS に存在するが SkillRegistry に未登録（skeleton）の招式は
-    ///   本不変量の外であり防御できない。現在の skeleton 招式：
-    ///     - burst_meridian.tie_shan_kao（Stomach 経脈前置）
-    ///     - burst_meridian.xue_beng_bu（GallBladder 経脈前置）
-    ///     - burst_meridian.ni_mai_hu_ti（Pericardium 経脈前置）
+    ///   本不変量の外であり防御できない。
     ///
-    ///   これらが SkillRegistry に resolver 登録された時点で、同時に declare を追加しなければ
-    ///   本不変量が即赤になる構造を維持すること。
+    ///   burst_meridian の 3 招（tie_shan_kao / xue_beng_bu / ni_mai_hu_ti）は
+    ///   かつて skeleton だったが現在は resolver 登録 + declare 済み
+    ///   （`cultivation::burst_meridian::register_skills` / `declare_meridian_dependencies`）。
+    ///   いずれかの register から declare を外すと本不変量が即赤になる。
     ///
     /// 故意に declare を削除すると本テストが赤くなり、将来の register-without-declare 漏れを防ぐ。
     #[test]
@@ -143,9 +142,8 @@ mod tests {
         let registry = init_registry();
 
         // 対象は SkillRegistry ∩ TECHNIQUE_DEFINITIONS の積集合。
-        // TECHNIQUE_DEFINITIONS に存在するが SkillRegistry 未登録の skeleton 招式
-        // （burst_meridian.tie_shan_kao / xue_beng_bu / ni_mai_hu_ti）は
-        // ここでは検出されないが、resolver 登録時に declare も必須（上のコメント参照）。
+        // burst_meridian 3 招は登録 + declare 済みなのでここで網羅される
+        // （declare を外すと missing に乗って赤になる）。
         let player_castable: HashSet<&str> =
             TECHNIQUE_DEFINITIONS.iter().map(|def| def.id).collect();
 
