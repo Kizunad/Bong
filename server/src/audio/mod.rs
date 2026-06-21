@@ -176,7 +176,7 @@ mod tests {
             SoundRecipeRegistry::load_default().expect("default audio recipes should load");
         assert_eq!(
             registry.len(),
-            246,
+            252,
             "audio registry should exclude removed slide and double-jump movement recipes \
              plus include 7 supply_coffin recipes (break + open common/rare/precious + emerge) \
              plus 1 ambient_dan_zong recipe \
@@ -197,8 +197,24 @@ mod tests {
              plus 1 tribulation_ascend_success recipe (AV r3-P3#3 渡劫成功 AV) \
              plus 5 sword_path cast recipes (sword_condense_edge / sword_qi_slash / sword_resonance / \
              sword_manifest_summon / sword_manifest_strike — plan-sword-path-v2 P4 server AV emit 接线) \
-             plus 1 beng_quan recipe (崩拳专属施法音效，不再借用 baomai_hit_heavy 通用槽)"
+             plus 1 beng_quan recipe (崩拳专属施法音效，不再借用 baomai_hit_heavy 通用槽) \
+             plus 6 anqi cast recipes (anqi_charge_seal / anqi_single_snipe / anqi_multi_shot / \
+             anqi_soul_inject / anqi_armor_pierce / anqi_echo_fractal — 暗器六招 server AV emit 接线，\
+             全部复用 vanilla 音色分层，无新音频文件)"
         );
+        for anqi_recipe in [
+            "anqi_charge_seal",
+            "anqi_single_snipe",
+            "anqi_multi_shot",
+            "anqi_soul_inject",
+            "anqi_armor_pierce",
+            "anqi_echo_fractal",
+        ] {
+            assert!(
+                registry.get(anqi_recipe).is_some(),
+                "暗器六招施法音效 recipe `{anqi_recipe}` 必须加载（server emit_anqi_audio_triggers 引用）"
+            );
+        }
         assert!(
             registry.get("beast_trap_snap").is_some(),
             "plan-trap-runtime-v1 P1 困兽夹咬合音效 recipe 必须加载"

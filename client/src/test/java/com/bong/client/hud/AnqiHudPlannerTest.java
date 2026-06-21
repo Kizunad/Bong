@@ -78,7 +78,7 @@ class AnqiHudPlannerTest {
     @Test
     void directRecordInputIsClampedAndNullSafe() {
         List<HudRenderCommand> commands = AnqiHudPlanner.buildCommands(
-            new AnqiHudState(2.0f, Float.NaN, 0, null, 0f, NOW + 500L),
+            new AnqiHudState(2.0f, Float.NaN, 0, null, 0f, 0, NOW + 500L),
             NOW,
             320,
             180

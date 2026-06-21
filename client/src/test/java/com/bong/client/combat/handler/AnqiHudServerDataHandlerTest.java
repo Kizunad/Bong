@@ -379,6 +379,63 @@ class AnqiHudServerDataHandlerTest {
             "e2e charge：chargeProgress=0.75 时 AnqiHudPlanner 必须产生非空命令列表（charge HUD 渲染回路通）；实际=空");
     }
 
+    // ─── AV 里程碑：kind="multishot"（多发齐射弹数）───────────────
+
+    @Test
+    void multiShotKindWritesMultiShotCountToStore() {
+        // server 用 echo_count 字段承载 projectile_count；handler 路由到 multishot 维度
+        ServerDataDispatch dispatch = handler.handle(parse(
+            "{\"v\":1,\"type\":\"anqi_hud\",\"kind\":\"multishot\",\"echo_count\":5}"
+        ));
+        assertTrue(dispatch.handled(),
+            "handler 应处理 multishot payload；实际=" + dispatch.logMessage());
+        AnqiHudState state = AnqiHudStateStore.snapshot();
+        assertEquals(5, state.multiShotCount(),
+            "multiShotCount 必须等于 payload.echo_count=5（复用字段承载弹数）；实际=" + state.multiShotCount());
+        assertEquals(0, state.echoCount(),
+            "multishot 不应污染 echo 维度，echoCount 应为 0；实际=" + state.echoCount());
+    }
+
+    @Test
+    void e2eProtoMultiShotReachesAnqiHudPlanner() {
+        // 完整 multishot 链路：proto bytes（kind=multishot, echo_count 承载弹数）→ bridge
+        // → router → store → planner（验证复用 echo_count 字段 + 新 kind 端到端，不需新 proto 字段）
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setAnqiHud(Envelope.AnqiHud.newBuilder()
+                        .setKind("multishot")
+                        .setEchoCount(5)
+                        .setTick(700L))
+                .build();
+
+        ProtoServerDataBridge.BridgeResult bridgeResult =
+                ProtoServerDataBridge.bridge(envelope.toByteArray());
+        assertTrue(bridgeResult.isSuccess(),
+            "e2e multishot：proto bridge 必须成功；错误=" + bridgeResult.errorMessage());
+
+        JsonObject json = JsonParser.parseString(bridgeResult.legacyJson()).getAsJsonObject();
+        assertEquals("multishot", json.get("kind").getAsString(),
+            "proto 链 kind 必须为 'multishot'（字符串透传）；实际=" + json.get("kind"));
+        assertEquals(5, json.get("echo_count").getAsInt(),
+            "proto 链 echo_count 必须为 5（承载弹数，不丢字段）；实际=" + json.get("echo_count"));
+
+        ServerDataRouter router = ServerDataRouter.createDefault();
+        String legacyJson = bridgeResult.legacyJson();
+        ServerDataRouter.RouteResult routeResult = router.route(
+                legacyJson, legacyJson.getBytes(StandardCharsets.UTF_8).length);
+        assertTrue(routeResult.isHandled(),
+            "e2e multishot：router 必须 handle anqi_hud multishot；实际=" + routeResult.logMessage());
+
+        AnqiHudState state = AnqiHudStateStore.snapshot();
+        assertEquals(5, state.multiShotCount(),
+            "e2e multishot：multiShotCount 必须为 5；实际=" + state.multiShotCount());
+
+        long now = System.currentTimeMillis();
+        java.util.List<com.bong.client.hud.HudRenderCommand> commands =
+                com.bong.client.hud.AnqiHudPlanner.buildCommands(state, now, 800, 600);
+        assertFalse(commands.isEmpty(),
+            "e2e multishot：multiShotCount=5 时 AnqiHudPlanner 必须产生非空命令列表（齐射 HUD 回路通）；实际=空");
+    }
+
     // ─── Helper ──────────────────────────────────────────────────
 
     private static ServerDataEnvelope parse(String json) {

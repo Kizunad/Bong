@@ -1,0 +1,11 @@
+{
+  "id": "anqi_armor_pierce",
+  "layers": [
+    { "sound": "minecraft:entity.arrow.shoot", "volume": 0.55, "pitch": 0.85, "delay_ticks": 0 },
+    { "sound": "minecraft:block.anvil.land", "volume": 0.3, "pitch": 1.8, "delay_ticks": 2 }
+  ],
+  "priority": 62,
+  "attenuation": "world_3d",
+  "category": "PLAYERS",
+  "bus": "COMBAT"
+}

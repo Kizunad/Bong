@@ -46,16 +46,21 @@ public final class AnqiHudStateStore {
             return new DimSlot(Math.max(0f, qiPayload), 0, c, expiresAt, tick);
         }
 
+        static DimSlot multiShot(int count, long expiresAt, long tick) {
+            return new DimSlot(0f, Math.max(0, count), "", expiresAt, tick);
+        }
+
         boolean active(long nowMillis) {
             return expiresAtMillis > nowMillis;
         }
     }
 
     // 每个维度独立 AtomicReference，互不干扰
-    private static final AtomicReference<DimSlot> AIM_SLOT      = new AtomicReference<>(DimSlot.empty());
-    private static final AtomicReference<DimSlot> ECHO_SLOT     = new AtomicReference<>(DimSlot.empty());
-    private static final AtomicReference<DimSlot> CHARGE_SLOT   = new AtomicReference<>(DimSlot.empty());
-    private static final AtomicReference<DimSlot> ABRASION_SLOT = new AtomicReference<>(DimSlot.empty());
+    private static final AtomicReference<DimSlot> AIM_SLOT       = new AtomicReference<>(DimSlot.empty());
+    private static final AtomicReference<DimSlot> ECHO_SLOT      = new AtomicReference<>(DimSlot.empty());
+    private static final AtomicReference<DimSlot> CHARGE_SLOT    = new AtomicReference<>(DimSlot.empty());
+    private static final AtomicReference<DimSlot> ABRASION_SLOT  = new AtomicReference<>(DimSlot.empty());
+    private static final AtomicReference<DimSlot> MULTISHOT_SLOT = new AtomicReference<>(DimSlot.empty());
 
     private AnqiHudStateStore() {}
 
@@ -93,6 +98,14 @@ public final class AnqiHudStateStore {
         updateSlotCas(ABRASION_SLOT, tick, DimSlot.abrasion(container, qiPayload, expiresAt, tick));
     }
 
+    /**
+     * 更新 multishot 维度（多发齐射弹数）。tick < slot.lastTick 的包静默丢弃（乱序保护）。
+     */
+    public static void updateMultiShot(int count, long nowMillis, long durationMillis, long tick) {
+        long expiresAt = nowMillis + Math.max(1L, durationMillis);
+        updateSlotCas(MULTISHOT_SLOT, tick, DimSlot.multiShot(count, expiresAt, tick));
+    }
+
     // ─── 合并快照（Planner 调用）─────────────────────────────────────
 
     /**
@@ -101,24 +114,29 @@ public final class AnqiHudStateStore {
      * Planner 的逐字段渲染逻辑无需修改。
      */
     public static AnqiHudState snapshot(long nowMillis) {
-        DimSlot aim      = AIM_SLOT.get();
-        DimSlot echo     = ECHO_SLOT.get();
-        DimSlot charge   = CHARGE_SLOT.get();
-        DimSlot abrasion = ABRASION_SLOT.get();
+        DimSlot aim       = AIM_SLOT.get();
+        DimSlot echo      = ECHO_SLOT.get();
+        DimSlot charge    = CHARGE_SLOT.get();
+        DimSlot abrasion  = ABRASION_SLOT.get();
+        DimSlot multiShot = MULTISHOT_SLOT.get();
 
-        float  aimProgress    = aim.active(nowMillis)      ? aim.value1()       : 0f;
-        float  chargeProgress = charge.active(nowMillis)   ? charge.value1()    : 0f;
-        int    echoCount      = echo.active(nowMillis)     ? echo.intValue()    : 0;
-        String abrasionCont   = abrasion.active(nowMillis) ? abrasion.strValue(): "";
-        float  abrasionQi     = abrasion.active(nowMillis) ? abrasion.value1()  : 0f;
+        float  aimProgress    = aim.active(nowMillis)       ? aim.value1()        : 0f;
+        float  chargeProgress = charge.active(nowMillis)    ? charge.value1()     : 0f;
+        int    echoCount      = echo.active(nowMillis)      ? echo.intValue()     : 0;
+        String abrasionCont   = abrasion.active(nowMillis)  ? abrasion.strValue() : "";
+        float  abrasionQi     = abrasion.active(nowMillis)  ? abrasion.value1()   : 0f;
+        int    multiShotCount = multiShot.active(nowMillis) ? multiShot.intValue(): 0;
 
         // expiresAtMillis: 取所有维度中最大值（保证 AnqiHudState.active() 判断正确）
         long expiresAt = Math.max(
-            Math.max(aim.expiresAtMillis(), echo.expiresAtMillis()),
-            Math.max(charge.expiresAtMillis(), abrasion.expiresAtMillis())
+            Math.max(
+                Math.max(aim.expiresAtMillis(), echo.expiresAtMillis()),
+                Math.max(charge.expiresAtMillis(), abrasion.expiresAtMillis())
+            ),
+            multiShot.expiresAtMillis()
         );
 
-        return new AnqiHudState(aimProgress, chargeProgress, echoCount, abrasionCont, abrasionQi, expiresAt);
+        return new AnqiHudState(aimProgress, chargeProgress, echoCount, abrasionCont, abrasionQi, multiShotCount, expiresAt);
     }
 
     /**
@@ -135,6 +153,7 @@ public final class AnqiHudStateStore {
         ECHO_SLOT.set(DimSlot.empty());
         CHARGE_SLOT.set(DimSlot.empty());
         ABRASION_SLOT.set(DimSlot.empty());
+        MULTISHOT_SLOT.set(DimSlot.empty());
     }
 
     // ─── 遗留兼容：replace(state)（仅测试向后兼容，生产已改 updateXxx） ─
@@ -157,6 +176,7 @@ public final class AnqiHudStateStore {
         ABRASION_SLOT.set(DimSlot.abrasion(
             state.abrasionContainer() == null ? "" : state.abrasionContainer(),
             state.abrasionQiPayload(), expiry, tick));
+        MULTISHOT_SLOT.set(DimSlot.multiShot(state.multiShotCount(), expiry, tick));
     }
 
     // ─── 内部 CAS 循环 ────────────────────────────────────────────

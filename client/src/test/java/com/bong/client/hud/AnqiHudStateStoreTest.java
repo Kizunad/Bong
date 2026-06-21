@@ -343,4 +343,84 @@ class AnqiHudStateStoreTest {
         assertEquals(0.7f, state.chargeProgress(), 0.001f,
             "echo stale 包丢弃不影响 charge，chargeProgress 仍应为 0.7；实际=" + state.chargeProgress());
     }
+
+    // ─── AV 里程碑：multishot 维度（多发齐射弹数）─────────────────────────
+
+    @Test
+    void updateMultiShotWritesIndependentDimension() {
+        // multishot 维度与 echo 独立：复用 echo_count 承载但走 MULTISHOT_SLOT，不串维度
+        AnqiHudStateStore.updateMultiShot(5, BASE_NOW, DUR, 1L);
+        AnqiHudStateStore.updateEcho(2, BASE_NOW, DUR, 1L);
+
+        AnqiHudState state = AnqiHudStateStore.snapshot(BASE_NOW);
+
+        assertEquals(5, state.multiShotCount(),
+            "multishot 维度应独立写入 multiShotCount=5；实际=" + state.multiShotCount());
+        assertEquals(2, state.echoCount(),
+            "multishot 与 echo 互不干扰，echoCount 仍应为 2；实际=" + state.echoCount());
+    }
+
+    @Test
+    void expiredMultiShotDroppedWhileEchoRemains() {
+        long shortDur = 60L;
+        AnqiHudStateStore.updateMultiShot(7, BASE_NOW, shortDur, 1L);
+        AnqiHudStateStore.updateEcho(4, BASE_NOW, DUR, 1L);
+
+        long afterMultiShotExpiry = BASE_NOW + shortDur + 1L;
+        AnqiHudState state = AnqiHudStateStore.snapshot(afterMultiShotExpiry);
+
+        assertEquals(0, state.multiShotCount(),
+            "multishot 过期后应从 snapshot 剔除（multiShotCount=0）；实际=" + state.multiShotCount());
+        assertEquals(4, state.echoCount(),
+            "multishot 过期不影响 echo，echoCount 仍应为 4；实际=" + state.echoCount());
+    }
+
+    @Test
+    void staleTickMultiShotIsDropped() {
+        AnqiHudStateStore.updateMultiShot(6, BASE_NOW, DUR, 12L);
+        AnqiHudStateStore.updateMultiShot(0, BASE_NOW, DUR, 4L); // stale：tick=4 < lastTick=12
+
+        AnqiHudState state = AnqiHudStateStore.snapshot(BASE_NOW);
+
+        assertEquals(6, state.multiShotCount(),
+            "multishot 乱序旧包（tick=4 < lastTick=12）应被丢弃，multiShotCount 仍应为 6；实际="
+                + state.multiShotCount());
+    }
+
+    @Test
+    void clearResetsMultiShotDimension() {
+        AnqiHudStateStore.updateMultiShot(8, BASE_NOW, DUR, 1L);
+        AnqiHudStateStore.clear();
+        AnqiHudState state = AnqiHudStateStore.snapshot(BASE_NOW);
+        assertEquals(0, state.multiShotCount(),
+            "clear() 后 multiShotCount 应为 0；实际=" + state.multiShotCount());
+    }
+
+    @Test
+    void plannerBuildsMultiShotIndicatorWhenActive() {
+        // multishot 维度有值 → Planner 产出齐射刻度块（CARRIER 层，count 个 width=4 块）
+        AnqiHudStateStore.updateMultiShot(5, BASE_NOW, DUR, 1L);
+        AnqiHudState state = AnqiHudStateStore.snapshot(BASE_NOW);
+        List<HudRenderCommand> commands = AnqiHudPlanner.buildCommands(state, BASE_NOW, 800, 600);
+
+        long blockCount = commands.stream()
+            .filter(cmd -> cmd.layer() == HudRenderLayer.CARRIER && cmd.width() == 4 && cmd.height() == 3)
+            .count();
+        assertEquals(5L, blockCount,
+            "multishot=5 应产出 5 个齐射刻度块（width=4,height=3）；实际块数=" + blockCount
+                + " commands=" + commands);
+    }
+
+    @Test
+    void multiShotInactiveProducesNoIndicator() {
+        // 未激活（无 multishot）→ 不产出齐射指示（HUD 极简：未激活隐藏）
+        AnqiHudStateStore.updateEcho(2, BASE_NOW, DUR, 1L);
+        AnqiHudState state = AnqiHudStateStore.snapshot(BASE_NOW);
+        List<HudRenderCommand> commands = AnqiHudPlanner.buildCommands(state, BASE_NOW, 800, 600);
+
+        boolean hasMultiShotBlock = commands.stream()
+            .anyMatch(cmd -> cmd.layer() == HudRenderLayer.CARRIER && cmd.width() == 4 && cmd.height() == 3);
+        assertFalse(hasMultiShotBlock,
+            "multishot 未激活时不应产出齐射刻度块（HUD 极简未激活隐藏）；commands=" + commands);
+    }
 }

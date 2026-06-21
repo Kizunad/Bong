@@ -10,7 +10,11 @@ use valence::prelude::{Entity, EventReader, EventWriter, Local, Position, Query,
 
 use crate::botany::components::HarvestTerminalEvent;
 use crate::botany::lifecycle::botany_quality_color;
+use crate::combat::anqi_v2::{
+    AnqiSkillId, ArmorPierceEvent, EchoFractalEvent, MultiShotEvent, QiInjectionEvent,
+};
 use crate::combat::baomai_v3::{BaomaiSkillEvent, BaomaiSkillId};
+use crate::combat::carrier::CarrierChargedEvent;
 use crate::combat::components::WoundKind;
 use crate::combat::events::{AttackIntent, AttackSource, CombatEvent, DefenseIntent};
 use crate::combat::tuike_v2::{ContamTransferredEvent, DonFalseSkinEvent, FalseSkinSheddedEvent};
@@ -71,6 +75,24 @@ const VFX_SWORD_MANIFEST_SUMMON: &str = "bong:sword_manifest_summon";
 const VFX_HEAVEN_GATE_CHARGE: &str = "bong:heaven_gate_charge_2s";
 const VFX_HEAVEN_GATE_RELEASE: &str = "bong:heaven_gate_release";
 const VFX_HEAVEN_GATE_FLASH: &str = "bong:heaven_gate_flash";
+
+/// 暗器六招动画优先级——与剑道 / baomai 同档（暗器是高阶器修流派）。
+const ANQI_PRIORITY: u16 = 1500;
+
+// 暗器六招专属 AV 资产 id（client 侧 AnqiVfxPlayer / BongAnimations 已注册）。
+// 动画全部复用现有 player_animation/*.json（windup_charge / cast_invoke /
+// release_burst / sword_stab）；粒子复用现有 BongParticles sprite（无新贴图）。
+const ANIM_ANQI_CHARGE: &str = "bong:windup_charge";
+const ANIM_ANQI_SNIPE: &str = "bong:sword_stab";
+const ANIM_ANQI_VOLLEY: &str = "bong:release_burst";
+const ANIM_ANQI_INJECT: &str = "bong:cast_invoke";
+const ANIM_ANQI_ECHO: &str = "bong:release_burst";
+const VFX_ANQI_CHARGE_SEAL: &str = "bong:anqi_charge_seal";
+const VFX_ANQI_SNIPE_BOLT: &str = "bong:anqi_snipe_bolt";
+const VFX_ANQI_MULTI_VOLLEY: &str = "bong:anqi_multi_volley";
+const VFX_ANQI_SOUL_INJECT: &str = "bong:anqi_soul_inject";
+const VFX_ANQI_ARMOR_PIERCE: &str = "bong:anqi_armor_pierce";
+const VFX_ANQI_ECHO_DECOY: &str = "bong:anqi_echo_decoy";
 
 const COMBAT_PRIORITY: u16 = 1000;
 const HIT_RECOIL_PRIORITY: u16 = 2000;
@@ -545,6 +567,241 @@ pub fn emit_sword_path_visual_triggers(
             ));
         }
     }
+}
+
+/// 暗器六招 cast → 动画 + 粒子（纯 cosmetic，复用现有 anim/sprite 资产）。
+///
+/// 与剑道五招的 `emit_sword_path_visual_triggers` 同模式：读 anqi_v2 已 emit 的
+/// 结果型 events，对 caster 发 `PlayAnim` + `SpawnParticle`，引用 client 已注册的
+/// `AnqiVfxPlayer` 粒子 event_id 与 `BongAnimations` 动画 id。
+///
+/// 招式 → 事件源映射：
+/// - 封骨（充能）`CarrierChargedEvent` → windup_charge 动画 + 封骨密封粒子
+/// - 单射狙击 `QiInjectionEvent{SingleSnipe}` → sword_stab 动画 + 狙击弹道（caster→target 方向）
+/// - 多发齐射 `MultiShotEvent` → release_burst 动画 + 扇形齐射粒子
+/// - 凝魂注射 `QiInjectionEvent{SoulInject}` → cast_invoke 动画 + 魂注紫雾
+/// - 破甲注射 `ArmorPierceEvent` → cast_invoke 动画 + 破甲金属火花（caster→target 方向）
+/// - 诱饵分形 `EchoFractalEvent` → release_burst 动画 + 分形回响涟漪
+///
+/// **纯 cosmetic**：不读 / 改任何战斗数值 / qi_physics ledger / 命中结算。
+#[allow(clippy::too_many_arguments)]
+pub fn emit_anqi_visual_triggers(
+    mut charges: EventReader<CarrierChargedEvent>,
+    mut injections: EventReader<QiInjectionEvent>,
+    mut multi_shots: EventReader<MultiShotEvent>,
+    mut armor_pierces: EventReader<ArmorPierceEvent>,
+    mut echoes: EventReader<EchoFractalEvent>,
+    players: Query<PlayerAnimTargetItem<'_>, PlayerAnimTargetFilter>,
+    positions: Query<&Position>,
+    mut vfx_events: EventWriter<VfxEventRequest>,
+) {
+    // 封骨（充能完成）：windup_charge 动画 + 封骨密封粒子（骨白）。
+    for event in charges.read() {
+        let Some(origin) = positions.get(event.carrier).map(|p| p.get()).ok() else {
+            continue;
+        };
+        emit_play_for_entity(
+            event.carrier,
+            ANIM_ANQI_CHARGE,
+            ANQI_PRIORITY,
+            Some(2),
+            &players,
+            &mut vfx_events,
+        );
+        emit_anqi_particle(
+            &mut vfx_events,
+            VFX_ANQI_CHARGE_SEAL,
+            origin,
+            None,
+            "#E8DCC8",
+            0.85,
+            12,
+            24,
+        );
+    }
+
+    // 单射狙击 / 凝魂注射：QiInjectionEvent 区分招式。狙击走 sword_stab + 弹道粒子，
+    // 凝魂走 cast_invoke + 魂注紫雾。
+    for event in injections.read() {
+        let origin = positions
+            .get(event.caster)
+            .map(|p| p.get())
+            .unwrap_or_default();
+        match event.skill {
+            AnqiSkillId::SingleSnipe => {
+                let direction = caster_target_direction(&positions, event.caster, event.target);
+                emit_play_for_entity(
+                    event.caster,
+                    ANIM_ANQI_SNIPE,
+                    ANQI_PRIORITY,
+                    Some(1),
+                    &players,
+                    &mut vfx_events,
+                );
+                emit_anqi_particle(
+                    &mut vfx_events,
+                    VFX_ANQI_SNIPE_BOLT,
+                    origin,
+                    Some(direction),
+                    "#C8E0F0",
+                    0.9,
+                    12,
+                    18,
+                );
+            }
+            AnqiSkillId::SoulInject => {
+                emit_play_for_entity(
+                    event.caster,
+                    ANIM_ANQI_INJECT,
+                    ANQI_PRIORITY,
+                    Some(2),
+                    &players,
+                    &mut vfx_events,
+                );
+                emit_anqi_particle(
+                    &mut vfx_events,
+                    VFX_ANQI_SOUL_INJECT,
+                    origin,
+                    None,
+                    "#B9A7FF",
+                    0.85,
+                    16,
+                    26,
+                );
+            }
+            // MultiShot / ArmorPierce / EchoFractal 走各自专属 EventReader，不在此分支。
+            _ => {}
+        }
+    }
+
+    // 多发齐射：release_burst 动画 + 扇形齐射粒子（散射弹幕）。
+    for event in multi_shots.read() {
+        let origin = positions
+            .get(event.caster)
+            .map(|p| p.get())
+            .unwrap_or_default();
+        emit_play_for_entity(
+            event.caster,
+            ANIM_ANQI_VOLLEY,
+            ANQI_PRIORITY,
+            Some(1),
+            &players,
+            &mut vfx_events,
+        );
+        // 粒子数量随弹数缩放（每发 4 颗，clamp 到合理上限）。
+        let count = (u16::from(event.projectile_count) * 4).clamp(8, 40);
+        emit_anqi_particle(
+            &mut vfx_events,
+            VFX_ANQI_MULTI_VOLLEY,
+            origin,
+            None,
+            "#D8E0B0",
+            0.8,
+            count,
+            22,
+        );
+    }
+
+    // 破甲注射：cast_invoke 动画 + 破甲金属火花（caster→target 朝向）。
+    for event in armor_pierces.read() {
+        let origin = positions
+            .get(event.caster)
+            .map(|p| p.get())
+            .unwrap_or_default();
+        let direction = caster_target_direction(&positions, event.caster, event.target);
+        emit_play_for_entity(
+            event.caster,
+            ANIM_ANQI_INJECT,
+            ANQI_PRIORITY,
+            Some(1),
+            &players,
+            &mut vfx_events,
+        );
+        emit_anqi_particle(
+            &mut vfx_events,
+            VFX_ANQI_ARMOR_PIERCE,
+            origin,
+            Some(direction),
+            "#C0C4C8",
+            0.95,
+            14,
+            20,
+        );
+    }
+
+    // 诱饵分形：release_burst 动画 + 分形回响涟漪（分身数缩放粒子）。
+    for event in echoes.read() {
+        let origin = positions
+            .get(event.caster)
+            .map(|p| p.get())
+            .unwrap_or_default();
+        emit_play_for_entity(
+            event.caster,
+            ANIM_ANQI_ECHO,
+            ANQI_PRIORITY,
+            Some(2),
+            &players,
+            &mut vfx_events,
+        );
+        let count = (event.outcome.echo_count as u16 * 5).clamp(10, 40);
+        emit_anqi_particle(
+            &mut vfx_events,
+            VFX_ANQI_ECHO_DECOY,
+            origin,
+            None,
+            "#B9A7FF",
+            0.78,
+            count,
+            30,
+        );
+    }
+}
+
+/// caster → target 的单位方向；任一 Position 缺失或两点重合时落到 +X。
+fn caster_target_direction(
+    positions: &Query<&Position>,
+    caster: Entity,
+    target: Option<Entity>,
+) -> [f64; 3] {
+    let fallback = [1.0, 0.0, 0.0];
+    let Some(target) = target else {
+        return fallback;
+    };
+    let (Ok(from), Ok(to)) = (positions.get(caster), positions.get(target)) else {
+        return fallback;
+    };
+    let delta = to.get() - from.get();
+    // try_normalize 在近零向量（caster≈target）时返回 None，避免 normalize 出 NaN 方向。
+    match delta.try_normalize() {
+        Some(dir) => [dir.x, dir.y, dir.z],
+        None => fallback,
+    }
+}
+
+/// 发一条暗器 `SpawnParticle` VFX 请求（统一参数封装，减少重复）。
+#[allow(clippy::too_many_arguments)]
+fn emit_anqi_particle(
+    vfx_events: &mut EventWriter<VfxEventRequest>,
+    event_id: &'static str,
+    origin: valence::prelude::DVec3,
+    direction: Option<[f64; 3]>,
+    color: &str,
+    strength: f32,
+    count: u16,
+    duration_ticks: u16,
+) {
+    vfx_events.send(VfxEventRequest::new(
+        origin,
+        VfxEventPayloadV1::SpawnParticle {
+            event_id: event_id.to_string(),
+            origin: [origin.x, origin.y, origin.z],
+            direction,
+            color: Some(color.to_string()),
+            strength: Some(strength),
+            count: Some(count),
+            duration_ticks: Some(duration_ticks),
+        },
+    ));
 }
 
 fn sword_path_anim_for_skill(skill: SwordPathSkillId) -> &'static str {
@@ -2083,5 +2340,222 @@ mod tests {
             emitted.len()
         );
         assert_play_anim(&emitted[0], ANIM_HURT_STAGGER, HIT_RECOIL_PRIORITY);
+    }
+
+    // ─── 暗器六招：emit_anqi_visual_triggers ──────────────────────
+
+    fn setup_anqi_visual_app() -> App {
+        let mut app = App::new();
+        app.add_event::<CarrierChargedEvent>();
+        app.add_event::<QiInjectionEvent>();
+        app.add_event::<MultiShotEvent>();
+        app.add_event::<ArmorPierceEvent>();
+        app.add_event::<EchoFractalEvent>();
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(Update, emit_anqi_visual_triggers);
+        app
+    }
+
+    fn anqi_injection_outcome() -> crate::qi_physics::HighDensityInjectionOutcome {
+        crate::qi_physics::HighDensityInjectionOutcome {
+            payload_qi: 50.0,
+            wound_qi: 40.0,
+            contamination_qi: 5.0,
+            overload_ratio: 0.5,
+            triggers_overload_tear: false,
+        }
+    }
+
+    /// 封骨充能：windup_charge 动画 + 封骨密封粒子。
+    #[test]
+    fn anqi_charge_emits_windup_anim_and_seal_particle() {
+        use crate::cultivation::components::ColorKind;
+        let mut app = setup_anqi_visual_app();
+        let caster = spawn_player(&mut app, "Carry", [0.0, 64.0, 0.0]);
+        app.world_mut().send_event(CarrierChargedEvent {
+            carrier: caster,
+            instance_id: 1,
+            qi_amount: 25.0,
+            qi_color: ColorKind::Solid,
+            full_charge: true,
+            tick: 10,
+        });
+        app.update();
+
+        let emitted = drain_vfx(&mut app);
+        assert_eq!(emitted.len(), 2, "封骨应 emit 1 动画 + 1 粒子");
+        assert_play_anim(&emitted[0], ANIM_ANQI_CHARGE, ANQI_PRIORITY);
+        assert_spawn_particle(&emitted[1], VFX_ANQI_CHARGE_SEAL, Some(12));
+    }
+
+    /// 单射狙击：sword_stab 动画 + 弹道粒子（caster→target 方向 +Z）。
+    #[test]
+    fn anqi_snipe_emits_directional_bolt() {
+        use crate::combat::anqi_v2::AnqiSkillId;
+        use crate::combat::carrier::CarrierKind;
+        let mut app = setup_anqi_visual_app();
+        let caster = spawn_player(&mut app, "Sniper", [0.0, 64.0, 0.0]);
+        let target = spawn_skinned_npc_target(&mut app, "Mark", [0.0, 64.0, 5.0]);
+        app.world_mut().send_event(QiInjectionEvent {
+            caster,
+            target: Some(target),
+            skill: AnqiSkillId::SingleSnipe,
+            carrier_kind: CarrierKind::YibianShougu,
+            outcome: anqi_injection_outcome(),
+            tick: 11,
+        });
+        app.update();
+
+        let emitted = drain_vfx(&mut app);
+        assert_eq!(emitted.len(), 2, "单射应 emit 1 动画 + 1 粒子");
+        assert_play_anim(&emitted[0], ANIM_ANQI_SNIPE, ANQI_PRIORITY);
+        match &emitted[1].payload {
+            VfxEventPayloadV1::SpawnParticle {
+                event_id,
+                direction,
+                ..
+            } => {
+                assert_eq!(event_id, VFX_ANQI_SNIPE_BOLT);
+                let dir = direction.expect("单射弹道必须带 caster→target 方向");
+                assert!(
+                    (dir[2] - 1.0).abs() < 1e-6 && dir[0].abs() < 1e-6,
+                    "方向应为 +Z 单位向量（caster→target），实际 {dir:?}"
+                );
+            }
+            other => panic!("expected SpawnParticle, got {other:?}"),
+        }
+    }
+
+    /// 凝魂注射：cast_invoke 动画 + 魂注紫雾（无方向）。
+    #[test]
+    fn anqi_soul_inject_emits_cast_invoke_and_mist() {
+        use crate::combat::anqi_v2::AnqiSkillId;
+        use crate::combat::carrier::CarrierKind;
+        let mut app = setup_anqi_visual_app();
+        let caster = spawn_player(&mut app, "Soul", [0.0, 64.0, 0.0]);
+        app.world_mut().send_event(QiInjectionEvent {
+            caster,
+            target: None,
+            skill: AnqiSkillId::SoulInject,
+            carrier_kind: CarrierKind::DyedBone,
+            outcome: anqi_injection_outcome(),
+            tick: 12,
+        });
+        app.update();
+
+        let emitted = drain_vfx(&mut app);
+        assert_eq!(emitted.len(), 2);
+        assert_play_anim(&emitted[0], ANIM_ANQI_INJECT, ANQI_PRIORITY);
+        assert_spawn_particle(&emitted[1], VFX_ANQI_SOUL_INJECT, Some(16));
+    }
+
+    /// 多发齐射：release_burst 动画 + 扇形齐射粒子（粒子数随弹数缩放）。
+    #[test]
+    fn anqi_multi_shot_scales_particle_count_with_projectiles() {
+        use crate::combat::carrier::CarrierKind;
+        let mut app = setup_anqi_visual_app();
+        let caster = spawn_player(&mut app, "Volley", [0.0, 64.0, 0.0]);
+        app.world_mut().send_event(MultiShotEvent {
+            caster,
+            projectile_count: 5,
+            carrier_kind: CarrierKind::LingmuArrow,
+            shots: Vec::new(),
+            tick: 13,
+        });
+        app.update();
+
+        let emitted = drain_vfx(&mut app);
+        assert_eq!(emitted.len(), 2);
+        assert_play_anim(&emitted[0], ANIM_ANQI_VOLLEY, ANQI_PRIORITY);
+        // 5 发 × 4 = 20 颗（在 clamp [8,40] 内）。
+        assert_spawn_particle(&emitted[1], VFX_ANQI_MULTI_VOLLEY, Some(20));
+    }
+
+    /// 破甲注射：cast_invoke 动画 + 破甲火花（caster→target 方向）。
+    #[test]
+    fn anqi_armor_pierce_emits_directional_sparks() {
+        use crate::combat::carrier::CarrierKind;
+        let mut app = setup_anqi_visual_app();
+        let caster = spawn_player(&mut app, "Pierce", [0.0, 64.0, 0.0]);
+        let target = spawn_skinned_npc_target(&mut app, "Armor", [5.0, 64.0, 0.0]);
+        app.world_mut().send_event(ArmorPierceEvent {
+            caster,
+            target: Some(target),
+            carrier_kind: CarrierKind::FenglingheBone,
+            outcome: crate::qi_physics::ArmorPenetrationOutcome {
+                base_damage: 60.0,
+                ignored_defense_ratio: 0.6,
+                effective_damage: 70.0,
+                carrier_shatter_probability: 0.2,
+            },
+            tick: 14,
+        });
+        app.update();
+
+        let emitted = drain_vfx(&mut app);
+        assert_eq!(emitted.len(), 2);
+        assert_play_anim(&emitted[0], ANIM_ANQI_INJECT, ANQI_PRIORITY);
+        match &emitted[1].payload {
+            VfxEventPayloadV1::SpawnParticle {
+                event_id,
+                direction,
+                ..
+            } => {
+                assert_eq!(event_id, VFX_ANQI_ARMOR_PIERCE);
+                let dir = direction.expect("破甲火花必须带 caster→target 方向");
+                assert!(
+                    (dir[0] - 1.0).abs() < 1e-6,
+                    "方向应为 +X 单位向量（caster→target），实际 {dir:?}"
+                );
+            }
+            other => panic!("expected SpawnParticle, got {other:?}"),
+        }
+    }
+
+    /// 诱饵分形：release_burst 动画 + 分形回响涟漪（粒子随分身数缩放）。
+    #[test]
+    fn anqi_echo_fractal_emits_decoy_ripple() {
+        use crate::combat::carrier::CarrierKind;
+        let mut app = setup_anqi_visual_app();
+        let caster = spawn_player(&mut app, "Echo", [0.0, 64.0, 0.0]);
+        app.world_mut().send_event(EchoFractalEvent {
+            caster,
+            carrier_kind: CarrierKind::ShangguBone,
+            outcome: crate::qi_physics::EchoFractalOutcome {
+                local_qi_density: 9.0,
+                threshold: 0.3,
+                echo_count: 4,
+                damage_per_echo: 2.0,
+            },
+            tick: 15,
+        });
+        app.update();
+
+        let emitted = drain_vfx(&mut app);
+        assert_eq!(emitted.len(), 2);
+        assert_play_anim(&emitted[0], ANIM_ANQI_ECHO, ANQI_PRIORITY);
+        // 4 分身 × 5 = 20 颗（在 clamp [10,40] 内）。
+        assert_spawn_particle(&emitted[1], VFX_ANQI_ECHO_DECOY, Some(20));
+    }
+
+    /// caster 无 Position（被拒绝/异常态）→ 封骨不 emit（守纯加法不污染）。
+    #[test]
+    fn anqi_charge_without_position_emits_nothing() {
+        use crate::cultivation::components::ColorKind;
+        let mut app = setup_anqi_visual_app();
+        let caster = app.world_mut().spawn_empty().id();
+        app.world_mut().send_event(CarrierChargedEvent {
+            carrier: caster,
+            instance_id: 1,
+            qi_amount: 25.0,
+            qi_color: ColorKind::Solid,
+            full_charge: true,
+            tick: 10,
+        });
+        app.update();
+        assert!(
+            drain_vfx(&mut app).is_empty(),
+            "caster 无 Position 时封骨 VFX 应静默 skip（纯 cosmetic 不强行渲染）"
+        );
     }
 }

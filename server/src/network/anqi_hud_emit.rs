@@ -12,11 +12,19 @@
 //! ## aim HUD 暂缺说明
 //! anqi_v2 当前 7 个事件全为结果型（MultiShot/QiInjection/ArmorPierce/EchoFractal/
 //! CarrierAbrasion/ContainerSwap/DecoyDeploy），无 aim 前摇/进度事件源。
-//! aim HUD 反馈延后至未来引入 aim-phase 事件的 plan；本阶段交付 echo/charge/abrasion 三路。
+//! aim HUD 反馈延后至未来引入 aim-phase 事件的 plan；本阶段交付 echo/charge/abrasion/multishot 多路。
+//!
+//! ## AV 里程碑补全（暗器 6 招 HUD 缺口）
+//! - 破甲注射（armor_pierce）：`ArmorPierceEvent` → kind="charge"（ignored_defense_ratio
+//!   作蓄力指示，复用现有 charge HUD，无新 schema 字段）。
+//! - 多发齐射（multi_shot）：`MultiShotEvent` → kind="multishot"（projectile_count 复用
+//!   `echo_count` 字段承载弹数，无新 proto 字段；client 侧独立 multishot 维度渲染）。
 
 use valence::prelude::{Client, Entity, EventReader, Query, UniqueId, With};
 
-use crate::combat::anqi_v2::{CarrierAbrasionEvent, DecoyDeployEvent, QiInjectionEvent};
+use crate::combat::anqi_v2::{
+    ArmorPierceEvent, CarrierAbrasionEvent, DecoyDeployEvent, MultiShotEvent, QiInjectionEvent,
+};
 use crate::network::agent_bridge::{
     payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
 };
@@ -31,6 +39,8 @@ pub fn emit_anqi_hud_payloads(
     mut decoys: EventReader<DecoyDeployEvent>,
     mut injections: EventReader<QiInjectionEvent>,
     mut abrasions: EventReader<CarrierAbrasionEvent>,
+    mut armor_pierces: EventReader<ArmorPierceEvent>,
+    mut multi_shots: EventReader<MultiShotEvent>,
     mut clients: Query<(Entity, &mut Client, Option<&UniqueId>), With<Client>>,
 ) {
     // ── DecoyDeployEvent → kind="echo" ────────────────────────────
@@ -133,6 +143,77 @@ pub fn emit_anqi_hud_payloads(
             payload_type,
             event.carrier,
             event.after_qi,
+        );
+    }
+
+    // ── ArmorPierceEvent → kind="charge" ──────────────────────────
+    // 破甲注射不发 QiInjectionEvent，单独 emit。ignored_defense_ratio（无视防御比例，
+    // 0..1）映射 charge_progress——破甲越彻底，蓄力条越满。复用现有 charge HUD 维度，
+    // 不引入新 schema 字段。守恒：只读 outcome，不重算。
+    for event in armor_pierces.read() {
+        let Ok((_, ref mut client, _)) = clients.get_mut(event.caster) else {
+            continue;
+        };
+        let charge = event.outcome.ignored_defense_ratio.clamp(0.0, 1.0);
+        let payload = ServerDataV1::new(ServerDataPayloadV1::AnqiHud(AnqiHudV1 {
+            kind: "charge".to_string(),
+            echo_count: 0,
+            aim_progress: 0.0,
+            charge_progress: charge,
+            abrasion_container: String::new(),
+            abrasion_qi_payload: 0.0,
+            tick: event.tick,
+        }));
+        let payload_type = payload_type_label(payload.payload_type());
+        let payload_bytes = match serialize_server_data_payload(&payload) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                log_payload_build_error(payload_type, &error);
+                continue;
+            }
+        };
+        send_server_data_payload(client, payload_bytes.as_slice());
+        tracing::debug!(
+            "[bong][network] sent {} {} charge(armor_pierce) payload caster={:?} ignored_defense_ratio(=charge_progress)={}",
+            SERVER_DATA_CHANNEL,
+            payload_type,
+            event.caster,
+            charge,
+        );
+    }
+
+    // ── MultiShotEvent → kind="multishot" ─────────────────────────
+    // 多发齐射：projectile_count 复用 echo_count 字段承载弹数（无新 proto 字段）。
+    // client 侧 AnqiHudServerDataHandler 路由 "multishot" 到独立 multishot 维度，
+    // 渲染齐射弹数指示。守恒：只读 projectile_count，不重算。
+    for event in multi_shots.read() {
+        let Ok((_, ref mut client, _)) = clients.get_mut(event.caster) else {
+            continue;
+        };
+        let payload = ServerDataV1::new(ServerDataPayloadV1::AnqiHud(AnqiHudV1 {
+            kind: "multishot".to_string(),
+            echo_count: u32::from(event.projectile_count),
+            aim_progress: 0.0,
+            charge_progress: 0.0,
+            abrasion_container: String::new(),
+            abrasion_qi_payload: 0.0,
+            tick: event.tick,
+        }));
+        let payload_type = payload_type_label(payload.payload_type());
+        let payload_bytes = match serialize_server_data_payload(&payload) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                log_payload_build_error(payload_type, &error);
+                continue;
+            }
+        };
+        send_server_data_payload(client, payload_bytes.as_slice());
+        tracing::debug!(
+            "[bong][network] sent {} {} multishot payload caster={:?} projectile_count={}",
+            SERVER_DATA_CHANNEL,
+            payload_type,
+            event.caster,
+            event.projectile_count,
         );
     }
 }
@@ -401,15 +482,20 @@ mod tests {
         use valence::protocol::packets::play::CustomPayloadS2c;
         use valence::testing::create_mock_client;
 
-        use crate::combat::anqi_v2::{CarrierAbrasionEvent, DecoyDeployEvent, QiInjectionEvent};
+        use crate::combat::anqi_v2::{
+            ArmorPierceEvent, CarrierAbrasionEvent, DecoyDeployEvent, MultiShotEvent,
+            QiInjectionEvent,
+        };
         use crate::network::agent_bridge::SERVER_DATA_CHANNEL;
         use crate::qi_physics::AbrasionDirection;
 
         let mut app = App::new();
-        // emit_anqi_hud_payloads 依赖三路 EventReader，全部需要 add_event
+        // emit_anqi_hud_payloads 依赖五路 EventReader，全部需要 add_event
         app.add_event::<DecoyDeployEvent>();
         app.add_event::<QiInjectionEvent>();
         app.add_event::<CarrierAbrasionEvent>();
+        app.add_event::<ArmorPierceEvent>();
+        app.add_event::<MultiShotEvent>();
         app.add_systems(Update, super::emit_anqi_hud_payloads);
 
         // spawn 一个带 Client 的实体，拿到 entity id 用于 event.carrier
@@ -466,6 +552,143 @@ mod tests {
             "emit 调用点（emit:111）必须用 as_wire_str()，不能用 Debug 格式；\
              as_wire_str()='pocket_pouch'，Debug='PocketPouch'；实际={}",
             container
+        );
+    }
+
+    /// AV 里程碑：ArmorPierceEvent → emit kind="charge"，charge_progress = ignored_defense_ratio。
+    #[test]
+    fn emit_system_armor_pierce_emits_charge_with_ignored_defense_ratio() {
+        use valence::prelude::{App, Update};
+        use valence::protocol::packets::play::CustomPayloadS2c;
+        use valence::testing::create_mock_client;
+
+        use crate::combat::anqi_v2::{
+            ArmorPierceEvent, CarrierAbrasionEvent, DecoyDeployEvent, MultiShotEvent,
+            QiInjectionEvent,
+        };
+        use crate::combat::carrier::CarrierKind;
+        use crate::network::agent_bridge::SERVER_DATA_CHANNEL;
+
+        let mut app = App::new();
+        app.add_event::<DecoyDeployEvent>();
+        app.add_event::<QiInjectionEvent>();
+        app.add_event::<CarrierAbrasionEvent>();
+        app.add_event::<ArmorPierceEvent>();
+        app.add_event::<MultiShotEvent>();
+        app.add_systems(Update, super::emit_anqi_hud_payloads);
+
+        let (client_bundle, mut helper) = create_mock_client("Pierce");
+        let entity = app.world_mut().spawn(client_bundle).id();
+
+        app.world_mut().send_event(ArmorPierceEvent {
+            caster: entity,
+            target: None,
+            carrier_kind: CarrierKind::FenglingheBone,
+            outcome: crate::qi_physics::ArmorPenetrationOutcome {
+                base_damage: 60.0,
+                ignored_defense_ratio: 0.6,
+                effective_damage: 70.0,
+                carrier_shatter_probability: 0.2,
+            },
+            tick: 70,
+        });
+        app.update();
+        {
+            let mut q = app.world_mut().query::<&mut valence::prelude::Client>();
+            for mut c in q.iter_mut(app.world_mut()) {
+                c.flush_packets().expect("flush");
+            }
+        }
+
+        let mut found: Option<(String, f64)> = None;
+        for frame in helper.collect_received().0 {
+            let Ok(packet) = frame.decode::<CustomPayloadS2c>() else {
+                continue;
+            };
+            if packet.channel.as_str() != SERVER_DATA_CHANNEL {
+                continue;
+            }
+            let payload: crate::schema::server_data::ServerDataV1 =
+                serde_json::from_slice(packet.data.0 .0).expect("deserialize");
+            if let crate::schema::server_data::ServerDataPayloadV1::AnqiHud(hud) = payload.payload {
+                found = Some((hud.kind, hud.charge_progress));
+                break;
+            }
+        }
+        let (kind, charge) = found.expect("ArmorPierceEvent 必须 emit anqi_hud payload");
+        assert_eq!(
+            kind, "charge",
+            "破甲注射应复用 charge HUD 维度（无新 schema 字段）；实际 kind='{kind}'"
+        );
+        assert!(
+            (charge - 0.6).abs() < 1e-6,
+            "charge_progress 应等于 ignored_defense_ratio 0.6（不重算）；实际={charge}"
+        );
+    }
+
+    /// AV 里程碑：MultiShotEvent → emit kind="multishot"，echo_count = projectile_count。
+    #[test]
+    fn emit_system_multi_shot_emits_multishot_with_projectile_count() {
+        use valence::prelude::{App, Update};
+        use valence::protocol::packets::play::CustomPayloadS2c;
+        use valence::testing::create_mock_client;
+
+        use crate::combat::anqi_v2::{
+            ArmorPierceEvent, CarrierAbrasionEvent, DecoyDeployEvent, MultiShotEvent,
+            QiInjectionEvent,
+        };
+        use crate::combat::carrier::CarrierKind;
+        use crate::network::agent_bridge::SERVER_DATA_CHANNEL;
+
+        let mut app = App::new();
+        app.add_event::<DecoyDeployEvent>();
+        app.add_event::<QiInjectionEvent>();
+        app.add_event::<CarrierAbrasionEvent>();
+        app.add_event::<ArmorPierceEvent>();
+        app.add_event::<MultiShotEvent>();
+        app.add_systems(Update, super::emit_anqi_hud_payloads);
+
+        let (client_bundle, mut helper) = create_mock_client("Volley");
+        let entity = app.world_mut().spawn(client_bundle).id();
+
+        app.world_mut().send_event(MultiShotEvent {
+            caster: entity,
+            projectile_count: 5,
+            carrier_kind: CarrierKind::LingmuArrow,
+            shots: Vec::new(),
+            tick: 80,
+        });
+        app.update();
+        {
+            let mut q = app.world_mut().query::<&mut valence::prelude::Client>();
+            for mut c in q.iter_mut(app.world_mut()) {
+                c.flush_packets().expect("flush");
+            }
+        }
+
+        let mut found: Option<(String, u32)> = None;
+        for frame in helper.collect_received().0 {
+            let Ok(packet) = frame.decode::<CustomPayloadS2c>() else {
+                continue;
+            };
+            if packet.channel.as_str() != SERVER_DATA_CHANNEL {
+                continue;
+            }
+            let payload: crate::schema::server_data::ServerDataV1 =
+                serde_json::from_slice(packet.data.0 .0).expect("deserialize");
+            if let crate::schema::server_data::ServerDataPayloadV1::AnqiHud(hud) = payload.payload {
+                found = Some((hud.kind, hud.echo_count));
+                break;
+            }
+        }
+        let (kind, count) = found.expect("MultiShotEvent 必须 emit anqi_hud payload");
+        assert_eq!(
+            kind, "multishot",
+            "多发齐射应用 kind='multishot'（client 路由到独立 multishot 维度）；实际 kind='{kind}'"
+        );
+        assert_eq!(
+            count, 5,
+            "echo_count 字段复用承载 projectile_count=5（无新 proto 字段）；实际={count}"
         );
     }
 }
