@@ -6815,13 +6815,16 @@ mod tests {
 
     #[test]
     fn skill_bar_cast_defined_skill_without_resolver_uses_generic_cast_path() {
+        // body.guangbo_ticao 是仍未实装 resolver 的 skeleton 招（不在 SkillRegistry 内，
+        // 无 required_meridians、无 SkillMeridianDependencies）→ 走通用施法路径，
+        // 通用路径无条件插入 Casting 并把 SkillConfigStore 里的配置带入 Casting.skill_config。
         let mut app = App::new();
         register_request_app(&mut app);
         app.world_mut()
             .resource_mut::<SkillConfigStore>()
             .set_config(
                 "offline:Azure",
-                "burst_meridian.tie_shan_kao",
+                "body.guangbo_ticao",
                 crate::skill::config::SkillConfig::new(std::collections::BTreeMap::from([(
                     "stance".to_string(),
                     serde_json::json!("short"),
@@ -6833,7 +6836,7 @@ mod tests {
         assert!(skill_bar.set(
             0,
             SkillSlot::Skill {
-                skill_id: "burst_meridian.tie_shan_kao".to_string(),
+                skill_id: "body.guangbo_ticao".to_string(),
             },
         ));
         let entity = app.world_mut().spawn(client_bundle).id();
@@ -6862,12 +6865,10 @@ mod tests {
         let casting = app.world().get::<Casting>(entity).unwrap();
         assert_eq!(casting.source, CastSource::SkillBar);
         assert_eq!(casting.slot, 0);
-        assert_eq!(casting.duration_ticks, 10);
-        assert_eq!(casting.complete_cooldown_ticks, 70);
-        assert_eq!(
-            casting.skill_id.as_deref(),
-            Some("burst_meridian.tie_shan_kao")
-        );
+        // cast/cd 来自 known_techniques.body.guangbo_ticao（cast 60 / cooldown 200）。
+        assert_eq!(casting.duration_ticks, 60);
+        assert_eq!(casting.complete_cooldown_ticks, 200);
+        assert_eq!(casting.skill_id.as_deref(), Some("body.guangbo_ticao"));
         assert_eq!(
             casting
                 .skill_config
@@ -7127,27 +7128,38 @@ mod tests {
         app.update();
     }
 
-    // ── 1. happy path：经脉满足 → cast 成功（generic 路径）─────────────────
+    /// 同 `send_skill_bar_cast`，但带 `entity_bits:` 目标（resolver 招式需要 target）。
+    fn send_skill_bar_cast_with_target(app: &mut App, entity: Entity, target: Entity) {
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: serde_json::to_vec(&ClientRequestV1::SkillBarCast {
+                    v: 1,
+                    slot: 0,
+                    target: Some(format!("entity_bits:{}", target.to_bits())),
+                })
+                .unwrap()
+                .into_boxed_slice(),
+            });
+        app.update();
+    }
+
+    // ── 1. happy path：经脉门通过 → resolver 施放成功 ─────────────────────────
 
     #[test]
-    fn skill_bar_cast_meridian_gate_passes_when_all_deps_satisfied_generic_path() {
-        // burst_meridian.tie_shan_kao 需要 Stomach integrity >= 0.5，无 resolver（generic 路径）。
-        // 设置 Stomach integrity=1.0 + 必要 SkillConfig（stance=short）→ cast 应成功
+    fn skill_bar_cast_meridian_gate_passes_when_all_deps_satisfied_resolver_path() {
+        // burst_meridian.tie_shan_kao 现已实装 resolver，required_meridians 要 Stomach
+        // opened=true + integrity ≥ 0.5。把经脉门和 resolver 自身的前置（target / realm
+        // Condense / qi ≥ 35 / Stomach 可用）全补齐 → 经脉门放行后 resolver 真正施放 →
+        // Casting 由 resolver 插入（cast 10 / cd 70，来自 known_techniques.tie_shan_kao）。
         let mut app = App::new();
         register_request_app(&mut app);
-        // tie_shan_kao 有 SkillConfigSchema，需要 stance 字段
-        app.world_mut()
-            .resource_mut::<SkillConfigStore>()
-            .set_config(
-                "offline:Azure",
-                "burst_meridian.tie_shan_kao",
-                crate::skill::config::SkillConfig::new(std::collections::BTreeMap::from([(
-                    "stance".to_string(),
-                    serde_json::json!("short"),
-                )])),
-            );
 
         let (client_bundle, _helper) = create_mock_client("Azure");
+        // 近身目标（TIE_SHAN_KAO reach max = 1.0，距离 1.0 命中）。
+        let target = app.world_mut().spawn(Position::new([1.0, 0.0, 0.0])).id();
         let mut skill_bar = SkillBarBindings::default();
         skill_bar.set(
             0,
@@ -7157,7 +7169,7 @@ mod tests {
         );
         let entity = app.world_mut().spawn(client_bundle).id();
         let mut ms = crate::cultivation::components::MeridianSystem::default();
-        // Stomach opened=true + integrity=1.0 ≥ min_health(0.5)：应放行
+        // Stomach opened=true + integrity=1.0 ≥ min_health(0.5)：经脉门 + resolver 均放行。
         {
             let stomach = ms.get_mut(crate::cultivation::components::MeridianId::Stomach);
             stomach.opened = true;
@@ -7170,15 +7182,26 @@ mod tests {
             empty_inventory(),
             ms,
             crate::cultivation::meridian::severed::MeridianSeveredPermanent::default(),
+            // resolver 前置：realm Condense + qi ≥ 35。
+            crate::cultivation::components::Cultivation {
+                realm: crate::cultivation::components::Realm::Condense,
+                qi_current: 100.0,
+                qi_max: 100.0,
+                ..Default::default()
+            },
         ));
 
-        send_skill_bar_cast(&mut app, entity);
+        send_skill_bar_cast_with_target(&mut app, entity, target);
 
-        assert!(
-            app.world().get::<Casting>(entity).is_some(),
-            "Stomach opened=true + integrity=1.0 ≥ min_health=0.5 时 cast 应成功（gate 放行 → generic cast 开始）；\
-             期望 Casting 存在；实际 Casting=None，说明 gate 错误拦截了经脉满足的 cast"
+        let casting = app.world().get::<Casting>(entity).expect(
+            "Stomach opened=true + integrity=1.0 ≥ min_health=0.5 + realm/qi/target 满足时，\
+             经脉门应放行 → resolver 施放成功；期望 Casting 存在；实际 Casting=None，\
+             说明经脉门错误拦截了满足条件的 cast",
         );
+        // resolver 路径插入的 Casting：cast/cd 来自 known_techniques.tie_shan_kao（10 / 70）。
+        assert_eq!(casting.source, CastSource::SkillBar);
+        assert_eq!(casting.duration_ticks, 10, "tie_shan_kao cast_ticks");
+        assert_eq!(casting.complete_cooldown_ticks, 70, "tie_shan_kao cooldown");
     }
 
     // ── 2. 门控：required_meridians integrity 不足 → 拒绝（generic 路径）────
@@ -7471,12 +7494,14 @@ mod tests {
 
     #[test]
     fn skill_bar_cast_meridian_gate_passes_when_integrity_exactly_at_min_health() {
-        // burst_meridian.tie_shan_kao 需要 Stomach integrity >= 0.5
-        // 设置 integrity = 0.5（恰好等于）→ 应放行（>= 0.5 成立）
+        // 经脉门边界：burst_meridian.tie_shan_kao 需要 Stomach integrity >= 0.5。
+        // integrity 恰好 = 0.5（off-by-one 边界）应放行（>= 成立）；resolver 其余前置补齐
+        // → 经脉门放行后 resolver 真正插入 Casting。
         let mut app = App::new();
         register_request_app(&mut app);
 
         let (client_bundle, _helper) = create_mock_client("Azure");
+        let target = app.world_mut().spawn(Position::new([1.0, 0.0, 0.0])).id();
         let mut skill_bar = SkillBarBindings::default();
         skill_bar.set(
             0,
@@ -7499,14 +7524,20 @@ mod tests {
             empty_inventory(),
             ms,
             crate::cultivation::meridian::severed::MeridianSeveredPermanent::default(),
+            crate::cultivation::components::Cultivation {
+                realm: crate::cultivation::components::Realm::Condense,
+                qi_current: 100.0,
+                qi_max: 100.0,
+                ..Default::default()
+            },
         ));
 
-        send_skill_bar_cast(&mut app, entity);
+        send_skill_bar_cast_with_target(&mut app, entity, target);
 
         assert!(
             app.world().get::<Casting>(entity).is_some(),
-            "Stomach opened=true + integrity=0.5 恰好等于 min_health=0.5 时应放行 cast（>= 成立）；\
-             期望 Casting 存在；实际无 Casting，说明边界判断为 < 而非 >=（off-by-one）"
+            "Stomach opened=true + integrity=0.5 恰好等于 min_health=0.5 时经脉门应放行（>= 成立）\
+             → resolver 施放；期望 Casting 存在；实际无 Casting，说明经脉门边界判断为 < 而非 >=（off-by-one）"
         );
     }
 
@@ -7671,9 +7702,9 @@ mod tests {
 
     #[test]
     fn skill_bar_cast_meridian_gate_passes_when_no_meridian_system_component() {
-        // entity 无 MeridianSystem component（pre-init 玩家），gate 应 skip 放行
-        // burst_meridian.tie_shan_kao 无 SkillBarBindings 中的 resolver（有 resolver），
-        // 用 burst_meridian.tie_shan_kao → generic path 且无 MeridianSystem → 放行
+        // entity 无 MeridianSystem component（pre-init 玩家）→ 经脉门应 skip 放行。
+        // 用 body.guangbo_ticao（仍是 skeleton：无 resolver、无 required_meridians、无 deps）
+        // 作载体：经脉门放行后走通用路径，无条件插入 Casting，纯粹锁住「无 MeridianSystem 放行」语义。
         let mut app = App::new();
         register_request_app(&mut app);
 
@@ -7682,7 +7713,7 @@ mod tests {
         skill_bar.set(
             0,
             SkillSlot::Skill {
-                skill_id: "burst_meridian.tie_shan_kao".to_string(),
+                skill_id: "body.guangbo_ticao".to_string(),
             },
         );
         let entity = app.world_mut().spawn(client_bundle).id();
@@ -7708,16 +7739,17 @@ mod tests {
 
     #[test]
     fn skill_bar_cast_meridian_gate_regression_no_deps_generic_path_still_works() {
-        // burst_meridian.tie_shan_kao 无 deps（SkillMeridianDependencies 默认空），
-        // entity 有 MeridianSystem（Stomach integrity=1.0）→ gate 放行 → generic cast 成功
-        // 这是对 test "skill_bar_cast_defined_skill_without_resolver_uses_generic_cast_path" 的回归验证
+        // body.guangbo_ticao 是无 resolver / 无 required_meridians / 无 deps 的 skeleton 招，
+        // entity 有 MeridianSystem → 经脉门无依赖可查直接放行 → 走通用路径成功施放。
+        // 这是对 "skill_bar_cast_defined_skill_without_resolver_uses_generic_cast_path" 的回归验证：
+        // 引入经脉门后，无依赖招的通用路径行为不变。
         let mut app = App::new();
         register_request_app(&mut app);
         app.world_mut()
             .resource_mut::<SkillConfigStore>()
             .set_config(
                 "offline:Azure",
-                "burst_meridian.tie_shan_kao",
+                "body.guangbo_ticao",
                 crate::skill::config::SkillConfig::new(std::collections::BTreeMap::from([(
                     "stance".to_string(),
                     serde_json::json!("short"),
@@ -7729,12 +7761,12 @@ mod tests {
         skill_bar.set(
             0,
             SkillSlot::Skill {
-                skill_id: "burst_meridian.tie_shan_kao".to_string(),
+                skill_id: "body.guangbo_ticao".to_string(),
             },
         );
         let entity = app.world_mut().spawn(client_bundle).id();
+        // 带一条 SEVERED 的无关经脉，验证经脉门不误伤无依赖招。
         let mut ms = crate::cultivation::components::MeridianSystem::default();
-        // Stomach opened=true + integrity=1.0 ≥ min_health(0.5)：应放行
         {
             let stomach = ms.get_mut(crate::cultivation::components::MeridianId::Stomach);
             stomach.opened = true;
@@ -7752,12 +7784,12 @@ mod tests {
         send_skill_bar_cast(&mut app, entity);
 
         let casting = app.world().get::<Casting>(entity).expect(
-            "回归：burst_meridian.tie_shan_kao Stomach opened=true + integrity=1.0 时应成功施放（与引入 gate 前行为一致）",
+            "回归：body.guangbo_ticao（无依赖 skeleton 招）有 MeridianSystem 时应成功施放（与引入 gate 前行为一致）",
         );
         assert_eq!(casting.source, CastSource::SkillBar);
         assert_eq!(
             casting.skill_id.as_deref(),
-            Some("burst_meridian.tie_shan_kao"),
+            Some("body.guangbo_ticao"),
             "skill_id 应与绑定技能一致"
         );
     }
