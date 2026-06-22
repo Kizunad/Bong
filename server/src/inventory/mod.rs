@@ -4191,6 +4191,19 @@ fn validate_move_semantics(
                     return Ok(());
                 }
 
+                // 工具 / 锄头双手可用：off_hand 也放行 Tool/Hoe（与 client InventoryEquipRules
+                // OFF_HAND 同步；副手工具采集由 gathering/tools.rs 扫描 off_hand 支持）。同样受
+                // two_hand 占用约束，不需要 weapon_spec（工具/锄头无 weapon_spec）。
+                if matches!(template.category, ItemCategory::Tool)
+                    || crate::lingtian::hoe::HoeKind::from_item_id(&item.template_id).is_some()
+                {
+                    if inventory.equipped.contains_key(EQUIP_SLOT_TWO_HAND) && !from_two_hand {
+                        return Err("cannot equip off_hand tool while two_hand slot is occupied"
+                            .to_string());
+                    }
+                    return Ok(());
+                }
+
                 let spec = template.weapon_spec.as_ref().ok_or_else(|| {
                     format!(
                         "item `{}` cannot equip to off_hand; expected dagger/fist weapon or treasure",
@@ -7118,6 +7131,46 @@ cols = 4
                 .get(EQUIP_SLOT_MAIN_HAND)
                 .map(|item| item.template_id.as_str()),
             Some("dun_qi_jia")
+        );
+    }
+
+    #[test]
+    fn apply_move_allows_tool_to_off_hand() {
+        // 用户反馈：工具双手都要能装。off_hand 现也放行 Tool/Hoe（与 client InventoryEquipRules
+        // OFF_HAND 同步）。此前 off_hand 只收 dagger/fist/treasure/shield，工具被拒。
+        use crate::schema::inventory::{EquipSlotV1, InventoryLocationV1};
+
+        let registry = load_item_registry().expect("item registry should load");
+        let mut inv = make_test_inventory_with_one_item();
+        inv.containers[0].items[0].instance.template_id = "stone_pickaxe".to_string();
+        inv.containers[0].items[0].instance.display_name = "石镐".to_string();
+
+        let outcome = apply_inventory_move(
+            &mut inv,
+            &registry,
+            42,
+            &InventoryLocationV1::Container {
+                container_id: "main_pack".to_string(),
+                row: 0,
+                col: 0,
+            },
+            &InventoryLocationV1::Equip {
+                slot: EquipSlotV1::OffHand,
+            },
+        )
+        .expect("tool should equip to off_hand");
+
+        assert_eq!(
+            outcome,
+            InventoryMoveOutcome::Moved {
+                revision: InventoryRevision(8)
+            }
+        );
+        assert_eq!(
+            inv.equipped
+                .get(EQUIP_SLOT_OFF_HAND)
+                .map(|item| item.template_id.as_str()),
+            Some("stone_pickaxe")
         );
     }
 

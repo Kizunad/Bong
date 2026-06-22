@@ -16,6 +16,22 @@ use crate::cultivation::components::Realm;
 
 const WORKBENCH: Option<CraftStationKind> = Some(CraftStationKind::Workbench);
 
+/// 石器是最原始工具（敲石成器），改为**手搓配方**（station None），让玩家在手搓台直接做出来，
+/// 不必先有制作台。其余 workbench 配方仍需制作台。用 recipe id 精确匹配这 3 个石器。
+const HANDCRAFT_STONE_TOOLS: [&str; 3] = [
+    "workbench.tool.stone_pickaxe",
+    "workbench.tool.stone_axe",
+    "workbench.weapon.stone_knife",
+];
+
+fn station_for(recipe_id: &str) -> Option<CraftStationKind> {
+    if HANDCRAFT_STONE_TOOLS.contains(&recipe_id) {
+        None
+    } else {
+        WORKBENCH
+    }
+}
+
 /// 7-元组配方描述：(id, name, materials, qi, time_sec, output, unlock)
 type RecipeRow<'a> = (
     &'a str,
@@ -192,7 +208,7 @@ fn register_survival_tools(registry: &mut CraftRegistry) -> Result<(), RegistryE
             output: (output.0.into(), output.1),
             requirements: CraftRequirements::default(),
             unlock_sources: unlock,
-            station: WORKBENCH,
+            station: station_for(id),
         })?;
     }
     Ok(())
@@ -384,7 +400,7 @@ fn register_processing(registry: &mut CraftRegistry) -> Result<(), RegistryError
             output: (output.0.into(), output.1),
             requirements: CraftRequirements::default(),
             unlock_sources: unlock,
-            station: WORKBENCH,
+            station: station_for(id),
         })?;
     }
     Ok(())
@@ -537,7 +553,7 @@ fn register_containers(registry: &mut CraftRegistry) -> Result<(), RegistryError
             output: (output.0.into(), output.1),
             requirements: CraftRequirements::default(),
             unlock_sources: unlock,
-            station: WORKBENCH,
+            station: station_for(id),
         })?;
     }
     Ok(())
@@ -624,7 +640,7 @@ fn register_basic_armor(registry: &mut CraftRegistry) -> Result<(), RegistryErro
             output: (output.into(), 1),
             requirements: CraftRequirements::default(),
             unlock_sources: vec![],
-            station: WORKBENCH,
+            station: station_for(id),
         })?;
     }
 
@@ -659,7 +675,7 @@ fn register_basic_armor(registry: &mut CraftRegistry) -> Result<(), RegistryErro
             output: (output.0.into(), output.1),
             requirements: CraftRequirements::default(),
             unlock_sources: vec![],
-            station: WORKBENCH,
+            station: station_for(id),
         })?;
     }
     Ok(())
@@ -747,7 +763,7 @@ fn register_weapon_components(registry: &mut CraftRegistry) -> Result<(), Regist
             output: (output.0.into(), output.1),
             requirements: CraftRequirements::default(),
             unlock_sources: unlock,
-            station: WORKBENCH,
+            station: station_for(id),
         })?;
     }
     Ok(())
@@ -890,7 +906,7 @@ fn register_cultivation_support(registry: &mut CraftRegistry) -> Result<(), Regi
             output: (output.0.into(), output.1),
             requirements: CraftRequirements::default(),
             unlock_sources: unlock,
-            station: WORKBENCH,
+            station: station_for(id),
         })?;
     }
     Ok(())
@@ -1038,7 +1054,7 @@ fn register_array_basics(registry: &mut CraftRegistry) -> Result<(), RegistryErr
             output: (output.0.into(), output.1),
             requirements: CraftRequirements::default(),
             unlock_sources: unlock,
-            station: WORKBENCH,
+            station: station_for(id),
         })?;
     }
     Ok(())
@@ -1093,7 +1109,7 @@ fn register_economy(registry: &mut CraftRegistry) -> Result<(), RegistryError> {
             output: (output.0.into(), output.1),
             requirements: CraftRequirements::default(),
             unlock_sources: unlock,
-            station: WORKBENCH,
+            station: station_for(id),
         })?;
     }
     Ok(())
@@ -1223,7 +1239,7 @@ fn register_shelter(registry: &mut CraftRegistry) -> Result<(), RegistryError> {
             output: (output.0.into(), output.1),
             requirements: CraftRequirements::default(),
             unlock_sources: unlock,
-            station: WORKBENCH,
+            station: station_for(id),
         })?;
     }
     Ok(())
@@ -1265,7 +1281,7 @@ fn register_alchemy_forge_prep(registry: &mut CraftRegistry) -> Result<(), Regis
             output: (output.into(), 1),
             requirements: CraftRequirements::default(),
             unlock_sources: vec![],
-            station: WORKBENCH,
+            station: station_for(id),
         })?;
     }
     Ok(())
@@ -1391,8 +1407,15 @@ mod tests {
         let mut registry = CraftRegistry::new();
         register_workbench_recipes(&mut registry).unwrap();
         for recipe in registry.iter() {
-            if recipe.id.as_str() == "craft.tool.workbench" {
-                continue; // self recipe is handcraft
+            let rid = recipe.id.as_str();
+            // self recipe + 石器工具(石镐/石斧/石刃)是手搓配方(station None)，其余制作台专属。
+            if rid == "craft.tool.workbench" || HANDCRAFT_STONE_TOOLS.contains(&rid) {
+                assert_eq!(
+                    recipe.station, None,
+                    "手搓配方 `{}` station 必须 None",
+                    recipe.id
+                );
+                continue;
             }
             assert_eq!(
                 recipe.station,
@@ -1786,8 +1809,10 @@ mod tests {
         let item_registry = crate::inventory::load_item_registry().expect("item registry loads");
 
         let mut workbench_count = 0u32;
+        let mut handcraft_stone_count = 0u32;
         for recipe in registry.iter() {
-            if recipe.id.as_str() == "craft.tool.workbench" {
+            let rid = recipe.id.as_str();
+            if rid == "craft.tool.workbench" {
                 assert_eq!(
                     recipe.station, None,
                     "[{}] self recipe must be handcraft",
@@ -1795,14 +1820,24 @@ mod tests {
                 );
                 continue;
             }
-            workbench_count += 1;
-
-            assert_eq!(
-                recipe.station,
-                Some(CraftStationKind::Workbench),
-                "[{}] station must be Workbench",
-                recipe.id
-            );
+            // 石器工具(石镐/石斧/石刃)改为手搓配方(station None)，让玩家在手搓台直接做。
+            // 仍走下面的物品/守恒校验，只是归手搓、不计入 workbench_count。
+            if HANDCRAFT_STONE_TOOLS.contains(&rid) {
+                assert_eq!(
+                    recipe.station, None,
+                    "[{}] 石器工具改手搓，station 必须 None",
+                    recipe.id
+                );
+                handcraft_stone_count += 1;
+            } else {
+                workbench_count += 1;
+                assert_eq!(
+                    recipe.station,
+                    Some(CraftStationKind::Workbench),
+                    "[{}] station must be Workbench",
+                    recipe.id
+                );
+            }
             assert!(
                 recipe.time_ticks > 0,
                 "[{}] time_ticks must be > 0, got {}",
@@ -1864,8 +1899,12 @@ mod tests {
             }
         }
         assert_eq!(
-            workbench_count, 89,
-            "expected exactly 89 workbench/coffin recipes (86 workbench.* + 3 coffin tiers P4)"
+            handcraft_stone_count, 3,
+            "石镐/石斧/石刃 三件石器工具应改为手搓配方(station None)"
+        );
+        assert_eq!(
+            workbench_count, 86,
+            "expected 86 制作台配方(原 89 - 3 件石器工具改手搓)"
         );
     }
 

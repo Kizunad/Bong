@@ -37,6 +37,9 @@ public final class CraftRecipeListWidget {
 
     private CraftCategory category;
     private String selectedId;
+    /** 配方列表滚动视口高度(px)；BODY_H 减标题/搜索/分类 tab/padding 后约余 208px,取 200 留余量,约 10 行。 */
+    private static final int LIST_VIEWPORT_HEIGHT = 200;
+
     private String query = "";
     private InventoryModel lastInventory = InventoryModel.empty();
 
@@ -71,7 +74,10 @@ public final class CraftRecipeListWidget {
         FlowLayout rowContent = Containers.verticalFlow(Sizing.fill(100), Sizing.content());
         rowContent.gap(1);
         rows = rowContent;
-        var scroll = Containers.verticalScroll(Sizing.fill(100), Sizing.fill(100), rowContent);
+        // viewport 高度必须 Sizing.fixed —— owo 里 Sizing.fill(100) 是"撑满父容器整高"(非剩余
+        // 空间),viewport 会被解算到 ≥ 内容高度,scroll 判定无需滚动 → 滚动条钉死拖不动(配方
+        // 22 条时尤其明显)。仿能滚的先例 TechniquesTabPanel(固定 viewport)。
+        var scroll = Containers.verticalScroll(Sizing.fill(100), Sizing.fixed(LIST_VIEWPORT_HEIGHT), rowContent);
         scroll.scrollbarThiccness(3);
         root.child(scroll);
     }

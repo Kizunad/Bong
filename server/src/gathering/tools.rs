@@ -1,7 +1,7 @@
 use crate::cultivation::components::Realm;
 use crate::inventory::{
     set_item_instance_durability, InventoryDurabilityChangedEvent, InventoryDurabilityUpdate,
-    ItemInstance, PlayerInventory, EQUIP_SLOT_MAIN_HAND, EQUIP_SLOT_TWO_HAND,
+    ItemInstance, PlayerInventory, EQUIP_SLOT_MAIN_HAND, EQUIP_SLOT_OFF_HAND, EQUIP_SLOT_TWO_HAND,
 };
 use valence::prelude::{Entity, EventWriter};
 
@@ -220,10 +220,18 @@ pub fn item_to_spec(item: &ItemInstance) -> Option<GatheringToolSpec> {
 }
 
 pub fn equipped_gathering_tool(inventory: &PlayerInventory) -> Option<GatheringToolSpec> {
+    // 工具双手可用：main_hand → off_hand → two_hand 依次找采集工具（副手工具也能采集，
+    // 否则"装得上副手却挖不动"比装不上更迷惑）。
     inventory
         .equipped
         .get(EQUIP_SLOT_MAIN_HAND)
         .and_then(item_to_spec)
+        .or_else(|| {
+            inventory
+                .equipped
+                .get(EQUIP_SLOT_OFF_HAND)
+                .and_then(item_to_spec)
+        })
         .or_else(|| {
             inventory
                 .equipped
@@ -236,13 +244,17 @@ fn equipped_gathering_tool_instance(
     inventory: &PlayerInventory,
     expected: GatheringToolSpec,
 ) -> Option<(GatheringToolSpec, u64, f64)> {
-    [EQUIP_SLOT_MAIN_HAND, EQUIP_SLOT_TWO_HAND]
-        .into_iter()
-        .filter_map(|slot| inventory.equipped.get(slot))
-        .find_map(|item| {
-            let spec = item_to_spec(item)?;
-            (spec.item_id == expected.item_id).then_some((spec, item.instance_id, item.durability))
-        })
+    [
+        EQUIP_SLOT_MAIN_HAND,
+        EQUIP_SLOT_OFF_HAND,
+        EQUIP_SLOT_TWO_HAND,
+    ]
+    .into_iter()
+    .filter_map(|slot| inventory.equipped.get(slot))
+    .find_map(|item| {
+        let spec = item_to_spec(item)?;
+        (spec.item_id == expected.item_id).then_some((spec, item.instance_id, item.durability))
+    })
 }
 
 fn damage_equipped_gathering_tool_in_inventory(
@@ -513,6 +525,25 @@ mod tests {
             1.0 - 1.0 / 90.0
         );
         assert_eq!(outcome.update.instance_id, 1);
+    }
+
+    #[test]
+    fn off_hand_tool_is_found_by_gathering_scan() {
+        // 工具双手可用：装在 off_hand 的工具也要能被采集扫描取到，否则"装得上副手却挖不动"
+        // 比装不上更迷惑。equipped_gathering_tool 扫描 main→off_hand→two_hand。
+        let mut equipped = HashMap::new();
+        equipped.insert(EQUIP_SLOT_OFF_HAND.to_string(), item("pickaxe_copper", 1.0));
+        let inventory = PlayerInventory {
+            revision: InventoryRevision(0),
+            containers: Vec::new(),
+            equipped,
+            hotbar: Default::default(),
+            bone_coins: 0,
+            max_weight: 10.0,
+        };
+
+        let spec = equipped_gathering_tool(&inventory).expect("副手工具应被采集扫描取到");
+        assert_eq!(spec.item_id, "pickaxe_copper");
     }
 
     #[test]
