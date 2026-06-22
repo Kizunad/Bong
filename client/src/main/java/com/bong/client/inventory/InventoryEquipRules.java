@@ -49,7 +49,17 @@ public final class InventoryEquipRules {
         "dun_qi_jia",
         "gua_dao",
         "gu_hai_qian",
-        "bing_jia_shou_tao"
+        "bing_jia_shou_tao",
+        // 采矿 / 伐木工具（server assets/items tools.toml + workbench_materials.toml，均 category="tool"）。
+        // 此前漏收录 → isTool()=false → 拖不进手槽。server 按 ItemCategory::Tool 放行，阻断纯在客户端。
+        "stone_pickaxe",
+        "pickaxe_bone",
+        "pickaxe_iron",
+        "pickaxe_copper",
+        "stone_axe",
+        "axe_bone",
+        "axe_iron",
+        "axe_copper"
     );
 
     private static final Set<String> TREASURE_TEMPLATE_IDS = Set.of(
@@ -89,9 +99,13 @@ public final class InventoryEquipRules {
             case MAIN_HAND -> (weaponKind != null || hoe || tool)
                 && (fromTwoHand || !isOccupied(equipped, EquipSlotType.TWO_HAND));
             // plan-shield-block-v1 P0 — 加 isShield 分支，与 server EquipSlotV1::OffHand Shield 校验对齐。
+            // 工具/锄头双手可用：off_hand 也放行 tool/hoe（与 server mod.rs OffHand 同步；副手工具
+            // 采集由 gathering/tools.rs 扫描 off_hand 支持）。两手互斥仍受 two_hand 占用约束。
             case OFF_HAND -> ((weaponKind == WeaponKind.DAGGER || weaponKind == WeaponKind.FIST)
                 || isTreasure(item)
-                || isShield(item))
+                || isShield(item)
+                || tool
+                || hoe)
                 && (fromTwoHand || !isOccupied(equipped, EquipSlotType.TWO_HAND));
             case TWO_HAND -> (weaponKind == WeaponKind.SPEAR || weaponKind == WeaponKind.STAFF)
                 && (fromTwoHand

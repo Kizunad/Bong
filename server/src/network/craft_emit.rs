@@ -686,6 +686,9 @@ pub fn build_recipe_list_payload(
             // 过滤后此处恒为 true；保留显式赋值作 safeguard——若未来移除上面的
             // filter（改为灰显锁定配方），这一行能继续如实反映解锁态而不至于语义破裂。
             unlocked: unlock_state.is_unlocked(player_id, &r.id),
+            // 下发 station 让客户端分流手搓台 / 制作台（此前漏发 → workbench 配方泄漏到
+            // 手搓台、点制作 StationOutOfRange 静默失败）。None=手搓配方。
+            station: r.station.map(|s| s.as_str().to_string()),
         })
         .collect();
     RecipeListV1 {

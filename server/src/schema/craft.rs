@@ -141,6 +141,11 @@ pub struct CraftRecipeEntryV1 {
     pub output: (String, u32),
     pub requirements: CraftRequirementsV1,
     pub unlocked: bool,
+    /// 配方所属工作站："workbench"=制作台专属；缺省(None)=手搓配方。
+    /// 客户端据此分流(手搓台只显 None、制作台屏只显 "workbench")，缺字段时旧行为=手搓。
+    /// 此前漏发本字段 → 制作台配方泄漏到手搓台、点制作报 StationOutOfRange 静默失败。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub station: Option<String>,
 }
 
 // ─── 5 sample types ────────────────────────────────────────────────────────
@@ -435,12 +440,49 @@ mod tests {
                 output: ("herb_knife_iron".into(), 1),
                 requirements: CraftRequirementsV1::default(),
                 unlocked: false,
+                station: Some("workbench".into()),
             }],
             ts: 1234567,
         };
         let s = serde_json::to_string(&v).unwrap();
         let back: RecipeListV1 = serde_json::from_str(&s).unwrap();
         assert_eq!(back, v);
+    }
+
+    #[test]
+    fn recipe_entry_station_field_serde_and_skip_when_none() {
+        // station=Some → JSON 含 "station":"workbench"；None → 整 key 省略(skip_serializing_if)，
+        // 旧 payload(无 station key)反序列化回 None(=手搓)，向后兼容不破。
+        let workbench = CraftRecipeEntryV1 {
+            id: "workbench.tool.pickaxe_iron".into(),
+            category: CraftCategoryV1::Tool,
+            display_name: "铁镐".into(),
+            materials: vec![("iron_ingot".into(), 3)],
+            qi_cost: 0.0,
+            time_ticks: 900,
+            output: ("pickaxe_iron".into(), 1),
+            requirements: CraftRequirementsV1::default(),
+            unlocked: true,
+            station: Some("workbench".into()),
+        };
+        let s = serde_json::to_string(&workbench).unwrap();
+        assert!(
+            s.contains("\"station\":\"workbench\""),
+            "workbench 配方应下发 station，实际 {s}"
+        );
+
+        let handcraft = CraftRecipeEntryV1 {
+            station: None,
+            ..workbench.clone()
+        };
+        let hs = serde_json::to_string(&handcraft).unwrap();
+        assert!(
+            !hs.contains("station"),
+            "手搓配方(None)应省略 station key，实际 {hs}"
+        );
+        // 缺 station key 的旧 wire 反序列化回 None。
+        let back: CraftRecipeEntryV1 = serde_json::from_str(&hs).unwrap();
+        assert_eq!(back.station, None);
     }
 
     #[test]

@@ -96,6 +96,9 @@ export const CraftRecipeEntryV1 = Type.Object(
     output: Type.Tuple([Type.String({ minLength: 1 }), Type.Integer({ minimum: 0 })]),
     requirements: CraftRequirementsV1,
     unlocked: Type.Boolean(),
+    // 配方所属工作站："workbench"=制作台专属；缺省=手搓配方。客户端据此分流手搓台/制作台。
+    // 与 Rust CraftRecipeEntryV1.station(skip_serializing_if None) 1:1：None 时整字段省略。
+    station: Type.Optional(Type.String()),
   },
   { additionalProperties: false },
 );

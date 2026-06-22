@@ -97,6 +97,41 @@ class InventoryEquipRulesTest {
     }
 
     @Test
+    void stonePickaxeCanEquipBothHands() {
+        // 用户反馈：石镐拖不到手槽 + 工具只单手。石镐(采矿工具)应主手/副手都能装。
+        // 主手=补全 TOOL_TEMPLATE_IDS 白名单(issue3)；副手=OFF_HAND 放行 tool(issue4)。
+        InventoryItem pickaxe = item(6006L, "stone_pickaxe", 1, 2);
+
+        assertTrue(InventoryEquipRules.isTool(pickaxe), "石镐应被识别为工具(白名单已补全)");
+        assertTrue(InventoryEquipRules.canEquip(pickaxe, EquipSlotType.MAIN_HAND, null, equipped()),
+            "石镐应能装主手");
+        assertTrue(InventoryEquipRules.canEquip(pickaxe, EquipSlotType.OFF_HAND, null, equipped()),
+            "石镐应能装副手(工具双手可用)");
+        assertFalse(InventoryEquipRules.canPlaceIntoHotbar(pickaxe), "工具不进 hotbar");
+    }
+
+    @Test
+    void toolAndHoeCanEquipOffHand() {
+        // 工具/锄头双手可用：off_hand 放行 tool/hoe（与 server mod.rs OffHand 同步）。
+        assertTrue(InventoryEquipRules.canEquip(item(5005L, "dun_qi_jia", 1, 1),
+            EquipSlotType.OFF_HAND, null, equipped()), "工具应能装副手");
+        assertTrue(InventoryEquipRules.canEquip(item(7007L, "hoe_iron", 1, 2),
+            EquipSlotType.OFF_HAND, null, equipped()), "锄头应能装副手");
+    }
+
+    @Test
+    void toolCannotEquipOffHandWhileTwoHandOccupied() {
+        // 两手互斥约束保留：two_hand 武器占用时工具不能装副手。
+        InventoryItem staff = item(1001L, "wooden_staff", 1, 3);
+        InventoryItem pickaxe = item(6006L, "stone_pickaxe", 1, 2);
+        EnumMap<EquipSlotType, InventoryItem> equipped = equipped();
+        equipped.put(EquipSlotType.TWO_HAND, staff);
+
+        assertFalse(InventoryEquipRules.canEquip(pickaxe, EquipSlotType.OFF_HAND, null, equipped),
+            "two_hand 占用时工具不应装副手");
+    }
+
+    @Test
     void consumablesStayHotbarCompatible() {
         assertTrue(InventoryEquipRules.canPlaceIntoHotbar(item(3003L, "guyuan_pill", 1, 1)));
     }
