@@ -453,7 +453,10 @@ pub fn register(app: &mut App) {
         .add_systems(
             PreUpdate,
             (
-                cultivation_drive_scorer_system,
+                // 显式声明 cultivation_drive（写 above_threshold_ticks）先于 tribulation_ready
+                // （读它）执行：同一 BigBrainSet::Scorers 内 Bevy 不保证默认相对顺序，无此约束则
+                // 599→600 临界 tick 可能读到 stale 值、延迟一拍渡劫。
+                cultivation_drive_scorer_system.before(tribulation_ready_scorer_system),
                 curiosity_scorer_system,
                 tribulation_ready_scorer_system,
                 seclusion_scorer_system,
