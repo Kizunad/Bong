@@ -453,7 +453,9 @@ pub fn register(app: &mut App) {
         .add_systems(
             PreUpdate,
             (
-                cultivation_drive_scorer_system,
+                // 计数器写在前、tribulation_ready 读在后：消除 above_threshold_ticks 写读乱序，
+                // 避免 599→600 临界 tick 读到 stale 值（候选4，与 Cosmetic→Standard 同 PR 一并修）。
+                cultivation_drive_scorer_system.before(tribulation_ready_scorer_system),
                 curiosity_scorer_system,
                 tribulation_ready_scorer_system,
                 seclusion_scorer_system,
