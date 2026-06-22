@@ -1,0 +1,19 @@
+# bone_shield materials -- gen_shield_models.py
+
+newmtl bone_shield_face
+Ka 1.000000 1.000000 1.000000
+Kd 0.910000 0.880000 0.800000
+Ks 0.000000 0.000000 0.000000
+Ns 10.000000
+d 1.000000
+illum 1
+map_Kd bong:item/bone_shield/0
+
+newmtl bone_shield_boss
+Ka 1.000000 1.000000 1.000000
+Kd 0.850000 0.780000 0.660000
+Ks 0.000000 0.000000 0.000000
+Ns 10.000000
+d 1.000000
+illum 1
+map_Kd bong:item/bone_shield/1

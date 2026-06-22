@@ -39,6 +39,10 @@ public final class WeaponEquippedHandler implements ServerDataHandler {
 
         // plan-shield-block-v1 §P3：off_hand 装备盾牌模板时同步写入 EquippedShieldStore
         if ("off_hand".equals(slot) && isShieldTemplate(templateId)) {
+            // #3 手持盾无盾模型：清空 off_hand 武器槽，保证两 store 对 off_hand 互斥。
+            // 否则若先前 off_hand 持武器，手持物渲染 mixin 的 bongOff!=null 分支会优先渲染
+            // 残留武器，盾分支(bongOff==null)永不触发 → 盾仍不显。与下方武器分支清盾槽对称。
+            WeaponEquippedStore.putOrClear("off_hand", null);
             EquippedShieldStore.equip(new EquippedShield(instanceId, templateId, durCurrent, durMax));
             // 盾牌不写入 WeaponEquippedStore（盾非武器），但仍返回 handled
             return ServerDataDispatch.handled(

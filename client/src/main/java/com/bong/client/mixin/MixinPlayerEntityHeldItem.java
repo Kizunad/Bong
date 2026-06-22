@@ -1,10 +1,13 @@
 package com.bong.client.mixin;
 
 import com.bong.client.block.BlockVanillaIconMap;
+import com.bong.client.combat.EquippedShield;
+import com.bong.client.combat.EquippedShieldStore;
 import com.bong.client.combat.EquippedWeapon;
 import com.bong.client.combat.SkillBarEntry;
 import com.bong.client.combat.SkillBarStore;
 import com.bong.client.combat.WeaponEquippedStore;
+import com.bong.client.weapon.ShieldVanillaIconMap;
 import com.bong.client.weapon.WeaponVanillaIconMap;
 
 import net.minecraft.client.MinecraftClient;
@@ -64,7 +67,24 @@ public abstract class MixinPlayerEntityHeldItem {
         if (MinecraftClient.getInstance().player != self) return;
 
         EquippedWeapon bong = WeaponEquippedStore.get(slot);
-        if (bong == null) return;
+        if (bong == null) {
+            // #3 手持盾无盾模型：off_hand 盾走独立 EquippedShieldStore（盾非武器），此前 TPV
+            // (getOffHandStack) 只查 WeaponEquippedStore → 第三人称/feature renderer 看不到盾。
+            if ("off_hand".equals(slot)) {
+                EquippedShield shield = EquippedShieldStore.snapshot();
+                if (shield != null) {
+                    ItemStack shieldFake = ShieldVanillaIconMap.createStackFor(shield.templateId());
+                    if (shieldFake != null) {
+                        cir.setReturnValue(shieldFake);
+                        if (offHandOverrideCount++ < 3) {
+                            LOGGER.info("getOffHandStack #{} shield override → {} (template={})",
+                                    offHandOverrideCount, shieldFake.getItem(), shield.templateId());
+                        }
+                    }
+                }
+            }
+            return;
+        }
 
         ItemStack fake = WeaponVanillaIconMap.createStackFor(bong.templateId());
         if (fake == null) return;
