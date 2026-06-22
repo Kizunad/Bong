@@ -2,6 +2,8 @@ package com.bong.client.network;
 
 import bong.Common;
 import bong.Envelope;
+import com.bong.client.combat.UnifiedEvent;
+import com.bong.client.combat.UnifiedEventStore;
 import com.bong.client.combat.inspect.TechniquesListPanel;
 import com.bong.client.hud.PillBuffHudPlanner;
 import com.bong.client.hud.BongToast;
@@ -13,6 +15,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -24,6 +27,7 @@ class ProtoServerDataBridgeTest {
         PillBuffHudPlanner.clear();
         TechniquesListPanel.resetForTests();
         BongToast.resetForTests();
+        UnifiedEventStore.resetForTests();
     }
 
     // ─── Happy path: Welcome ─────────────────────────────────────────
@@ -1152,6 +1156,70 @@ class ProtoServerDataBridgeTest {
                     "priority " + c.proto() + " 应剥成 '" + c.expectedWire()
                     + "'（parsePriority 据此；死亡事件用 P0_CRITICAL）");
         }
+    }
+
+    // ─── event_stream_push 端到端：bridge → router → handler → store ──
+    // 缺陷本质在下游消费链：枚举未剥 → handler noOp → 事件永不入库。这条用例走完整
+    // proto bytes → ProtoServerDataBridge → ServerDataRouter → EventStreamPushHandler
+    // → UnifiedEventStore，断言可观测的入库结果，单元桥接断言无法替代。
+
+    @Test
+    void eventStreamPushRoutesEndToEndIntoUnifiedEventStore() {
+        UnifiedEventStore.resetForTests();
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setEventStreamPush(Envelope.EventStreamPush.newBuilder()
+                        .setChannel(Envelope.EventChannel.EVENT_CHANNEL_COMBAT)
+                        .setPriority(Envelope.EventPriority.EVENT_PRIORITY_P1_IMPORTANT)
+                        .setSourceTag("hit-Head-Slash")
+                        .setText("命中 Head Slash -8")
+                        .setColor(0)
+                        .setCreatedAtMs(1_700_000_000_000L))
+                .build();
+
+        ProtoServerDataBridge.BridgeResult bridged = ProtoServerDataBridge.bridge(envelope.toByteArray());
+        assertTrue(bridged.isSuccess(), "bridge should succeed: " + bridged.errorMessage());
+
+        ServerDataRouter router = ServerDataRouter.createDefault();
+        ServerDataRouter.RouteResult result = router.route(
+                bridged.legacyJson(),
+                bridged.legacyJson().getBytes(StandardCharsets.UTF_8).length);
+
+        assertTrue(result.isHandled(),
+                "event_stream_push 应被 handler 接受(非 noOp)；枚举未剥时这里会 noOp，事件流永远空白");
+        List<UnifiedEvent> events = UnifiedEventStore.stream().snapshot();
+        assertEquals(1, events.size(),
+                "事件应入 UnifiedEventStore；修前因 channel/priority parse 为 null 而永不入库");
+        UnifiedEvent ev = events.get(0);
+        assertEquals(UnifiedEvent.Channel.COMBAT, ev.channel(),
+                "channel 应解析为 COMBAT（来自剥前缀后的 'combat'）");
+        assertEquals(UnifiedEvent.Priority.P1_IMPORTANT, ev.priority(),
+                "priority 应解析为 P1_IMPORTANT（来自剥前缀后的 'p1_important'）");
+        assertEquals("命中 Head Slash -8", ev.text(), "text 端到端原样透传");
+    }
+
+    @Test
+    void eventStreamPushUnspecifiedEnumStaysOutOfStore() {
+        // 错误分支：UNSPECIFIED 剥后为 'unspecified'，parseChannel/parsePriority 返回 null，
+        // handler noOp，事件不入库。锁住"坏 channel/priority 不污染事件流"。
+        UnifiedEventStore.resetForTests();
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setEventStreamPush(Envelope.EventStreamPush.newBuilder()
+                        .setChannel(Envelope.EventChannel.EVENT_CHANNEL_UNSPECIFIED)
+                        .setPriority(Envelope.EventPriority.EVENT_PRIORITY_UNSPECIFIED)
+                        .setText("x")
+                        .setCreatedAtMs(1L))
+                .build();
+
+        ProtoServerDataBridge.BridgeResult bridged = ProtoServerDataBridge.bridge(envelope.toByteArray());
+        assertTrue(bridged.isSuccess());
+        ServerDataRouter router = ServerDataRouter.createDefault();
+        ServerDataRouter.RouteResult result = router.route(
+                bridged.legacyJson(),
+                bridged.legacyJson().getBytes(StandardCharsets.UTF_8).length);
+
+        assertFalse(result.isHandled(), "UNSPECIFIED channel/priority 应 noOp，不被当作有效事件");
+        assertEquals(0, UnifiedEventStore.stream().snapshot().size(),
+                "坏枚举不应入 UnifiedEventStore");
     }
 
     // ═══════════════════════════════════════════════════════════════════
