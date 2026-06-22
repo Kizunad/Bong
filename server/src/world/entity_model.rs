@@ -22,8 +22,9 @@ use valence::entity::entity::NoGravity;
 use valence::entity::marker::MarkerEntityBundle;
 use valence::entity::tracked_data::TrackedData;
 use valence::prelude::{
-    apply_deferred, bevy_ecs, App, Commands, Component, DVec3, DetectChanges, Entity, EntityKind,
-    EntityLayerId, IntoSystemConfigs, Look, Position, Query, Ref, Res, ResMut, Resource, Update,
+    apply_deferred, bevy_ecs, App, Commands, Component, DVec3, Despawned, DetectChanges, Entity,
+    EntityKind, EntityLayerId, IntoSystemConfigs, Look, Position, Query, Ref, Res, ResMut,
+    Resource, Update, Without,
 };
 use valence::protocol::VarInt;
 
@@ -330,7 +331,9 @@ fn sync_spirit_eye_visuals(
         }
     });
     for visual in stale_visuals {
-        commands.entity(visual).despawn();
+        // Valence 层实体（MarkerEntityBundle）必须经 Despawned 标记移除，由 valence 先发客户端
+        // 移除包再 despawn；裸 .despawn() 会让 entity layer 索引悬空，send_entity_update_messages panic。
+        commands.entity(visual).insert(Despawned);
     }
 }
 
@@ -505,7 +508,7 @@ fn sync_tsy_container_visuals(mut commands: Commands, containers: TsyContainerVi
 
 fn cleanup_orphan_visual_entities(
     mut commands: Commands,
-    visuals: Query<(Entity, &BongVisualEntity)>,
+    visuals: Query<(Entity, &BongVisualEntity), Without<Despawned>>,
     sources: Query<()>,
 ) {
     for (visual, marker) in &visuals {
@@ -513,7 +516,9 @@ fn cleanup_orphan_visual_entities(
             continue;
         };
         if sources.get(source).is_err() {
-            commands.entity(visual).despawn();
+            // Valence 层实体（MarkerEntityBundle）必须经 Despawned 标记移除，由 valence 先发客户端
+            // 移除包再 despawn；裸 .despawn() 会让 entity layer 索引悬空，send_entity_update_messages panic。
+            commands.entity(visual).insert(Despawned);
         }
     }
 }
@@ -614,7 +619,30 @@ mod tests {
     use crate::world::dimension::DimensionKind;
     use crate::world::rift_portal::{PortalDirection, RiftPortal};
     use crate::world::tsy::DimensionAnchor;
-    use valence::prelude::{App, BlockPos};
+    use valence::prelude::{App, BlockPos, Update};
+
+    #[test]
+    fn cleanup_orphan_visual_marks_despawned_not_raw_despawn() {
+        // 回归锁 Valence 层崩溃：source 已消失的孤儿 visual marker（MarkerEntityBundle 层实体）
+        // 须经 insert(Despawned) 移除——裸 .despawn() 会让 entity layer 索引悬空触发
+        // send_entity_update_messages panic。断言系统跑后实体被标 Despawned（而非直接消失）。
+        let mut app = App::new();
+        app.add_systems(Update, cleanup_orphan_visual_entities);
+        let dead_source = app.world_mut().spawn_empty().id();
+        app.world_mut().entity_mut(dead_source).despawn();
+        let visual = app
+            .world_mut()
+            .spawn(BongVisualEntity {
+                kind: BongVisualKind::SpiritNiche,
+                source: Some(dead_source),
+            })
+            .id();
+        app.update();
+        assert!(
+            app.world().get::<Despawned>(visual).is_some(),
+            "孤儿 visual 应经 insert(Despawned) 标记移除（裸 .despawn() 会让 layer 悬空 panic）"
+        );
+    }
 
     #[test]
     fn entity_kind_ids_stay_aligned_with_client_raw_ids() {

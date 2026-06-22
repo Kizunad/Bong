@@ -2,8 +2,8 @@
 
 use valence::prelude::bevy_ecs::system::SystemParam;
 use valence::prelude::{
-    bevy_ecs, Added, App, Commands, Component, Entity, EntityLayerId, Event, EventReader,
-    EventWriter, IntoSystemConfigs, Position, Query, Res, SystemSet, Update,
+    bevy_ecs, Added, App, Commands, Component, Despawned, Entity, EntityLayerId, Event,
+    EventReader, EventWriter, IntoSystemConfigs, Position, Query, Res, SystemSet, Update, Without,
 };
 
 use crate::combat::components::{CombatState, Wounds};
@@ -746,7 +746,7 @@ fn dvec3_to_block_pos(pos: valence::prelude::DVec3) -> [i32; 3] {
 
 pub fn on_tsy_collapse_completed(
     mut events: EventReader<TsyCollapseCompleted>,
-    portals: Query<(Entity, &RiftPortal)>,
+    portals: Query<(Entity, &RiftPortal), Without<Despawned>>,
     players_in_tsy: Query<(Entity, &TsyPresence)>,
     mut deaths: EventWriter<DeathEvent>,
     mut commands: Commands,
@@ -755,7 +755,8 @@ pub fn on_tsy_collapse_completed(
     for event in events.read() {
         for (portal_entity, portal) in &portals {
             if portal.family_id == event.family_id {
-                commands.entity(portal_entity).despawn();
+                // RiftPortal 是 Position+EntityLayerId 层实体，须经 Despawned 标记移除。
+                commands.entity(portal_entity).insert(Despawned);
             }
         }
 
@@ -774,7 +775,7 @@ pub fn on_tsy_collapse_completed(
 }
 
 pub fn despawn_expired_portals(
-    portals: Query<(Entity, &RiftPortal)>,
+    portals: Query<(Entity, &RiftPortal), Without<Despawned>>,
     mut commands: Commands,
     clock: Res<CombatClock>,
 ) {
@@ -783,7 +784,8 @@ pub fn despawn_expired_portals(
             .activation_window
             .is_some_and(|win| clock.tick > win.end_at_tick)
         {
-            commands.entity(entity).despawn();
+            // RiftPortal 是 Position+EntityLayerId 层实体，须经 Despawned 标记移除。
+            commands.entity(entity).insert(Despawned);
         }
     }
 }
@@ -876,6 +878,25 @@ mod tests {
                 kind,
             ),
         )
+    }
+
+    #[test]
+    fn despawn_expired_portals_marks_despawned_not_raw_despawn() {
+        // 回归锁 Valence 层崩溃：过期 RiftPortal（Position+EntityLayerId 层实体）须经
+        // insert(Despawned) 移除——裸 .despawn() 会让 entity layer 索引悬空触发 panic。
+        let mut app = app_with_extract_system(despawn_expired_portals);
+        app.world_mut().resource_mut::<CombatClock>().tick = 100;
+        let (pos, mut rift) = portal("fam-expired", RiftKind::MainRift, DVec3::ZERO);
+        rift.activation_window = Some(TickWindow {
+            start_at_tick: 0,
+            end_at_tick: 50,
+        });
+        let portal_entity = app.world_mut().spawn((pos, rift)).id();
+        app.update();
+        assert!(
+            app.world().get::<Despawned>(portal_entity).is_some(),
+            "过期 portal 应经 insert(Despawned) 标记移除（裸 .despawn() 会让 layer 悬空 panic）"
+        );
     }
 
     fn presence(family_id: &str) -> TsyPresence {
@@ -1277,7 +1298,12 @@ mod tests {
                 at_tick: 100,
             });
         app.update();
-        assert!(app.world().get_entity(portal).is_none());
+        // RiftPortal 是 Position+EntityLayerId 层实体：collapse 后须经 insert(Despawned) 标记移除
+        // （valence 之后安全 despawn 并发客户端移除包），而非裸 .despawn() 让 entity layer 悬空 panic。
+        assert!(
+            app.world().get::<Despawned>(portal).is_some(),
+            "collapse 后 portal 应被标记 Despawned（裸 .despawn() 会触发 layer panic）"
+        );
         let deaths = app.world().resource::<Events<DeathEvent>>();
         let collected: Vec<_> = deaths.get_reader().read(deaths).cloned().collect();
         assert_eq!(collected.len(), 1);
