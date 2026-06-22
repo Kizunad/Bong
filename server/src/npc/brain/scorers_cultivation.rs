@@ -144,10 +144,8 @@ pub(crate) fn cultivation_drive_scorer_system(
         let value = match npcs.get_mut(*actor) {
             Ok((cultivation, meridians, patrol, schedule, pending, history, tier)) => {
                 // Standard（非 Cosmetic）：above_threshold_ticks 是渡劫计时的游戏状态推进，
-                // 远离玩家时也应进行——这与 tribulation_ready 的 hostile-distance 语义一致
-                // （渡劫本就发生在玩家不在近旁时）。Cosmetic 只在 Near 计算会与该语义直接矛盾，
-                // 导致计数器永不递增、自主渡劫永不触发。Standard 覆盖 Near/Mid/Far（Dormant 仍由
-                // update_npc_blackboard 冻结，属 off-screen 世界自演化的后续阶段）。
+                // 远离玩家时也应进行——与 tribulation_ready 的 hostile-distance 语义一致
+                // （渡劫本就发生在玩家不在近旁时）；Cosmetic 只在 Near 计算与之矛盾致永不触发。
                 match lod_gated_score_by_kind(tier, tick, &cfg, ScorerKind::Standard, || {
                     let raw = if pending.is_some() || matches!(cultivation.realm, Realm::Void) {
                         0.0
@@ -882,6 +880,99 @@ mod tests {
         assert_eq!(
             history.above_threshold_ticks, 1,
             "Far 档 NPC 的渡劫计时计数器应递增（修前 Cosmetic 跳过 Far → 恒为 0 → 自主渡劫死）"
+        );
+    }
+
+    #[test]
+    fn drive_before_ready_same_frame_write_then_read_reaches_ready() {
+        use crate::world::zone::ZoneRegistry;
+
+        // 锁 .before() 调度：同一 PreUpdate 帧先跑 cultivation_drive（写 above_threshold_ticks）
+        // 再跑 tribulation_ready（读它）。history 起于 SUSTAIN-1，本帧 drive 达阈值 → 计数器 +1
+        // 到 SUSTAIN → 同帧 ready 立即 1.0。若无 .before（ready 先跑）则读 stale SUSTAIN-1 → 0.0。
+        let mut app = App::new();
+        let mut zones = ZoneRegistry::fallback();
+        zones.zones[0].name = crate::world::zone::DEFAULT_SPAWN_ZONE_NAME.to_string();
+        zones.zones[0].spirit_qi = 0.9;
+        app.insert_resource(zones);
+        app.add_systems(
+            PreUpdate,
+            (
+                cultivation_drive_scorer_system.before(tribulation_ready_scorer_system),
+                tribulation_ready_scorer_system,
+            )
+                .in_set(BigBrainSet::Scorers),
+        );
+        // 玩家远在 500（>hostile 半径 100），不抑制渡劫。
+        app.world_mut()
+            .spawn((ClientMarker, Position::new([500.0, 66.0, 0.0])));
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position::new([0.0, 66.0, 0.0]),
+                spirit_cultivation_at_qi(0.9),
+                all_meridians_open(),
+                NpcPatrol::new(
+                    crate::world::zone::DEFAULT_SPAWN_ZONE_NAME,
+                    DVec3::new(0.0, 66.0, 0.0),
+                ),
+                NpcLodTier::Far,
+                CultivationDriveHistory {
+                    above_threshold_ticks: TRIBULATION_READY_SUSTAIN_TICKS - 1,
+                },
+            ))
+            .id();
+        // 两个 scorer actor 都需在场：cultivation_drive 经 CultivationDriveScorer 写计数器，
+        // tribulation_ready 经 TribulationReadyScorer 读。
+        app.world_mut()
+            .spawn((Actor(npc), Score::default(), CultivationDriveScorer));
+        let ready = app
+            .world_mut()
+            .spawn((Actor(npc), Score::default(), TribulationReadyScorer))
+            .id();
+        app.update();
+        assert_eq!(
+            app.world().get::<Score>(ready).unwrap().get(),
+            1.0,
+            "同帧 cultivation_drive(写) 先于 tribulation_ready(读)：计数器跨过 SUSTAIN 后 ready 当帧即 \
+             1.0；若乱序读到 stale SUSTAIN-1 则为 0.0"
+        );
+    }
+
+    #[test]
+    fn tribulation_ready_scorer_suppressed_at_exact_hostile_radius_far_tier() {
+        // 边界锁：dist == TRIBULATION_HOSTILE_RADIUS(100) 应判 0.0（抑制），证 `<=` 非 `<`，锁
+        // off-by-one。Far 档（Standard，tick0 计算），玩家恰在 100 距处。
+        let mut app = App::new();
+        app.add_systems(
+            PreUpdate,
+            tribulation_ready_scorer_system.in_set(BigBrainSet::Scorers),
+        );
+        app.world_mut()
+            .spawn((ClientMarker, Position::new([100.0, 66.0, 0.0])));
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position::new([0.0, 66.0, 0.0]),
+                spirit_cultivation_at_qi(0.9),
+                all_meridians_open(),
+                CultivationDriveHistory {
+                    above_threshold_ticks: TRIBULATION_READY_SUSTAIN_TICKS,
+                },
+                NpcLodTier::Far,
+            ))
+            .id();
+        let scorer = app
+            .world_mut()
+            .spawn((Actor(npc), Score::default(), TribulationReadyScorer))
+            .id();
+        app.update();
+        assert_eq!(
+            app.world().get::<Score>(scorer).unwrap().get(),
+            0.0,
+            "敌对玩家恰在 TRIBULATION_HOSTILE_RADIUS(100) 处应抑制渡劫（dist <= 100 → 0.0）"
         );
     }
 }
