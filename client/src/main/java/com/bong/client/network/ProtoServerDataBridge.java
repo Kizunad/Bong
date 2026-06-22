@@ -281,6 +281,9 @@ public final class ProtoServerDataBridge {
         if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.CAST_SYNC) {
             return bridgeCastSync(envelope.getCastSync(), typeString);
         }
+        if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.EVENT_STREAM_PUSH) {
+            return bridgeEventStreamPush(envelope.getEventStreamPush(), typeString);
+        }
         if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.SKILL_CONFIG_SNAPSHOT) {
             return bridgeSkillConfigSnapshot(envelope.getSkillConfigSnapshot(), typeString);
         }
@@ -653,6 +656,29 @@ public final class ProtoServerDataBridge {
             JsonObject root = JsonParser.parseString(raw).getAsJsonObject();
             stripEnumPrefix(root, "phase", "CAST_PHASE_");
             stripEnumPrefix(root, "outcome", "CAST_OUTCOME_");
+            return wrapLegacy(root, typeString);
+        } catch (com.google.protobuf.InvalidProtocolBufferException e) {
+            return BridgeResult.error("proto→JSON conversion failed for " + typeString + ": " + e.getMessage());
+        }
+    }
+
+    // ─── event_stream_push: enum name normalization ─────────────────
+    //
+    // event_stream_push 走 serialize_server_data_payload 的 proto 路径（见 server
+    // event_stream_emit.rs）。proto3 canonical JSON 把 EventChannel / EventPriority
+    // 打成枚举值全名（EVENT_CHANNEL_COMBAT / EVENT_PRIORITY_P1_IMPORTANT），而
+    // EventStreamPushHandler.parseChannel / parsePriority 只认 serde snake_case
+    // （"combat" / "p1_important"）。不剥前缀则 channel/priority 解析为 null，
+    // handler line 33 即 noOp —— 所有战斗/死亡事件流文本永远不进 UnifiedEventStore，
+    // HUD 事件流区永远空白。与 movement_state / cast_sync 同型修法。
+
+    private static BridgeResult bridgeEventStreamPush(
+            MessageOrBuilder msg, String typeString) {
+        try {
+            String raw = printAndNormalize(msg);
+            JsonObject root = JsonParser.parseString(raw).getAsJsonObject();
+            stripEnumPrefix(root, "channel", "EVENT_CHANNEL_");
+            stripEnumPrefix(root, "priority", "EVENT_PRIORITY_");
             return wrapLegacy(root, typeString);
         } catch (com.google.protobuf.InvalidProtocolBufferException e) {
             return BridgeResult.error("proto→JSON conversion failed for " + typeString + ": " + e.getMessage());

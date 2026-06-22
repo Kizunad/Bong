@@ -1037,6 +1037,83 @@ class ProtoServerDataBridgeTest {
         }
     }
 
+    // ─── event_stream_push: 战斗事件流 HUD 接收前提 ──────────────────
+    // proto3 JSON 把 EventChannel/EventPriority 打成枚举全名；EventStreamPushHandler
+    // 只认 serde snake_case。bridge 必须剥前缀转小写，否则 channel/priority parse 为
+    // null → handler noOp → HUD 事件流永远空白。锁住每个 channel/priority 变体的 wire 串。
+
+    @Test
+    void bridgeEventStreamPushStripsChannelAndPriorityPrefixes() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setEventStreamPush(Envelope.EventStreamPush.newBuilder()
+                        .setChannel(Envelope.EventChannel.EVENT_CHANNEL_COMBAT)
+                        .setPriority(Envelope.EventPriority.EVENT_PRIORITY_P1_IMPORTANT)
+                        .setSourceTag("hit-Head-Slash")
+                        .setText("命中 Head Slash -8")
+                        .setColor(0)
+                        .setCreatedAtMs(1_700_000_000_000L))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        assertEquals("event_stream_push", json.get("type").getAsString());
+        assertEquals("combat", json.get("channel").getAsString(),
+                "channel 必须从 EVENT_CHANNEL_COMBAT 剥成 'combat'（EventStreamPushHandler.parseChannel 期望），"
+                + "否则 proto 线上战斗事件流整条静默 noOp，HUD 事件流区永远空白");
+        assertEquals("p1_important", json.get("priority").getAsString(),
+                "priority 必须从 EVENT_PRIORITY_P1_IMPORTANT 剥成 'p1_important'（parsePriority 期望）");
+        assertEquals("命中 Head Slash -8", json.get("text").getAsString(), "text 应原样透传");
+        assertEquals("hit-Head-Slash", json.get("source_tag").getAsString(), "source_tag 应原样透传");
+    }
+
+    @Test
+    void bridgeEventStreamPushMapsAllChannelsToHandlerWire() {
+        record Case(Envelope.EventChannel proto, String expectedWire) {}
+        Case[] cases = new Case[] {
+            new Case(Envelope.EventChannel.EVENT_CHANNEL_COMBAT, "combat"),
+            new Case(Envelope.EventChannel.EVENT_CHANNEL_CULTIVATION, "cultivation"),
+            new Case(Envelope.EventChannel.EVENT_CHANNEL_WORLD, "world"),
+            new Case(Envelope.EventChannel.EVENT_CHANNEL_SOCIAL, "social"),
+            new Case(Envelope.EventChannel.EVENT_CHANNEL_SYSTEM, "system"),
+        };
+        for (Case c : cases) {
+            Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                    .setEventStreamPush(Envelope.EventStreamPush.newBuilder()
+                            .setChannel(c.proto())
+                            .setPriority(Envelope.EventPriority.EVENT_PRIORITY_P2_NORMAL)
+                            .setText("x")
+                            .setCreatedAtMs(1L))
+                    .build();
+            JsonObject json = bridgeAndParse(envelope);
+            assertEquals(c.expectedWire(), json.get("channel").getAsString(),
+                    "channel " + c.proto() + " 应剥成 '" + c.expectedWire()
+                    + "'（EventStreamPushHandler.parseChannel 据此入 UnifiedEventStore）");
+        }
+    }
+
+    @Test
+    void bridgeEventStreamPushMapsAllPrioritiesToHandlerWire() {
+        record Case(Envelope.EventPriority proto, String expectedWire) {}
+        Case[] cases = new Case[] {
+            new Case(Envelope.EventPriority.EVENT_PRIORITY_P0_CRITICAL, "p0_critical"),
+            new Case(Envelope.EventPriority.EVENT_PRIORITY_P1_IMPORTANT, "p1_important"),
+            new Case(Envelope.EventPriority.EVENT_PRIORITY_P2_NORMAL, "p2_normal"),
+            new Case(Envelope.EventPriority.EVENT_PRIORITY_P3_VERBOSE, "p3_verbose"),
+        };
+        for (Case c : cases) {
+            Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                    .setEventStreamPush(Envelope.EventStreamPush.newBuilder()
+                            .setChannel(Envelope.EventChannel.EVENT_CHANNEL_COMBAT)
+                            .setPriority(c.proto())
+                            .setText("x")
+                            .setCreatedAtMs(1L))
+                    .build();
+            JsonObject json = bridgeAndParse(envelope);
+            assertEquals(c.expectedWire(), json.get("priority").getAsString(),
+                    "priority " + c.proto() + " 应剥成 '" + c.expectedWire()
+                    + "'（parsePriority 据此；死亡事件用 P0_CRITICAL）");
+        }
+    }
+
     // ═══════════════════════════════════════════════════════════════════
     // Helper
     // ═══════════════════════════════════════════════════════════════════
