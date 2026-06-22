@@ -71,6 +71,26 @@ public class InspectScreenDuXuTest {
         assertFalse(screen.dispatchStartDuXuIfEligible());
 
         assertTrue(sent.isEmpty());
+        // 灰态按钮被点击但条件未满足时必须给玩家可见反馈（toast），而非静默 return。
+        BongToast toast = BongToast.current(System.currentTimeMillis());
+        assertEquals("渡虚劫需打通全部经脉", toast.text().getString(),
+            "通灵境但有脉未通 → 应提示打通经脉，而非静默无反馈");
+    }
+
+    @Test
+    void dispatchStartDuXuShowsRealmToastWhenNotSpirit() {
+        install();
+        InspectScreen screen = new InspectScreen(InventoryModel.empty());
+        BodyInspectComponent bodyInspect = new BodyInspectComponent();
+        bodyInspect.setMeridianBody(body("Solidify", null));
+        screen.setBodyInspectForTests(bodyInspect);
+
+        assertFalse(screen.dispatchStartDuXuIfEligible());
+
+        assertTrue(sent.isEmpty());
+        BongToast toast = BongToast.current(System.currentTimeMillis());
+        assertEquals("渡虚劫需通灵境", toast.text().getString(),
+            "境界不足 → 应提示需通灵境（按未满足条件分流文案）");
     }
 
     @Test
