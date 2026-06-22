@@ -2,6 +2,8 @@ package com.bong.client.network;
 
 import bong.Common;
 import bong.Envelope;
+import com.bong.client.combat.UnifiedEvent;
+import com.bong.client.combat.UnifiedEventStore;
 import com.bong.client.combat.inspect.TechniquesListPanel;
 import com.bong.client.hud.PillBuffHudPlanner;
 import com.bong.client.hud.BongToast;
@@ -13,6 +15,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -24,6 +27,7 @@ class ProtoServerDataBridgeTest {
         PillBuffHudPlanner.clear();
         TechniquesListPanel.resetForTests();
         BongToast.resetForTests();
+        UnifiedEventStore.resetForTests();
     }
 
     // ─── Happy path: Welcome ─────────────────────────────────────────
@@ -187,6 +191,46 @@ class ProtoServerDataBridgeTest {
 
         JsonObject json = JsonParser.parseString(result.legacyJson()).getAsJsonObject();
         assertEquals("death_screen", json.get("type").getAsString());
+        assertEquals("fortune", json.get("stage").getAsString(),
+                "stage 必须从 DEATH_SCREEN_STAGE_FORTUNE 剥成 'fortune'（DeathScreen.phaseLabel 期望），"
+                + "否则死亡界面阶段标签永远落 default '重生判定'");
+        assertEquals("ordinary", json.get("zone_kind").getAsString(),
+                "zone_kind 必须从 DEATH_SCREEN_ZONE_KIND_ORDINARY 剥成 'ordinary'（DeathScreen.zoneLabel 期望）");
+    }
+
+    // ─── death_screen: 顶层 stage/zone_kind + 嵌套 cinematic 枚举剥前缀 ──
+    // 死亡界面阶段标签 + cinematic 过场推进的接收前提：proto3 JSON 把所有 death 枚举
+    // 打成全名前缀，各消费方只认 serde 小写。锁住顶层与嵌套两层。
+    @Test
+    void bridgeDeathScreenStripsTopLevelAndCinematicEnumPrefixes() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setDeathScreen(Envelope.DeathScreen.newBuilder()
+                        .setVisible(true)
+                        .setCause("pk")
+                        .setStage(Envelope.DeathScreenStage.DEATH_SCREEN_STAGE_TRIBULATION)
+                        .setZoneKind(Envelope.DeathScreenZoneKind.DEATH_SCREEN_ZONE_KIND_NEGATIVE)
+                        .setCinematic(Envelope.DeathCinematicData.newBuilder()
+                                .setV(1)
+                                .setCharacterId("char-1")
+                                .setPhase(Envelope.DeathCinematicPhase.DEATH_CINEMATIC_PHASE_ROLL)
+                                .setZoneKind(Envelope.DeathCinematicZoneKind.DEATH_CINEMATIC_ZONE_KIND_DEATH)
+                                .setRoll(Envelope.DeathCinematicRoll.newBuilder()
+                                        .setResult(Envelope.DeathRollResult.DEATH_ROLL_RESULT_SURVIVE))))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        assertEquals("death_screen", json.get("type").getAsString());
+        assertEquals("tribulation", json.get("stage").getAsString(),
+                "顶层 stage 剥成 'tribulation'（DeathScreen.phaseLabel）");
+        assertEquals("negative", json.get("zone_kind").getAsString(),
+                "顶层 zone_kind 剥成 'negative'（DeathScreen.zoneLabel）");
+        JsonObject cinematic = json.getAsJsonObject("cinematic");
+        assertEquals("roll", cinematic.get("phase").getAsString(),
+                "cinematic.phase 剥成 'roll'（DeathCinematicState.Phase.fromWire），否则过场永远卡 PREDEATH");
+        assertEquals("death", cinematic.get("zone_kind").getAsString(),
+                "cinematic.zone_kind 一并归一化为 'death' 保持桥输出统一");
+        assertEquals("survive", cinematic.getAsJsonObject("roll").get("result").getAsString(),
+                "cinematic.roll.result 剥成 'survive'（DeathCinematicState.RollResult.fromWire）");
     }
 
     // ─── Happy path: TsyCollapseStarted maps to tsy_collapse_started_ipc ──
@@ -1035,6 +1079,147 @@ class ProtoServerDataBridgeTest {
                     "outcome " + c.proto() + " 应剥成 '" + c.expectedWire()
                     + "'（CastSyncHandler.parseOutcome 据此映射文案）");
         }
+    }
+
+    // ─── event_stream_push: 战斗事件流 HUD 接收前提 ──────────────────
+    // proto3 JSON 把 EventChannel/EventPriority 打成枚举全名；EventStreamPushHandler
+    // 只认 serde snake_case。bridge 必须剥前缀转小写，否则 channel/priority parse 为
+    // null → handler noOp → HUD 事件流永远空白。锁住每个 channel/priority 变体的 wire 串。
+
+    @Test
+    void bridgeEventStreamPushStripsChannelAndPriorityPrefixes() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setEventStreamPush(Envelope.EventStreamPush.newBuilder()
+                        .setChannel(Envelope.EventChannel.EVENT_CHANNEL_COMBAT)
+                        .setPriority(Envelope.EventPriority.EVENT_PRIORITY_P1_IMPORTANT)
+                        .setSourceTag("hit-Head-Slash")
+                        .setText("命中 Head Slash -8")
+                        .setColor(0)
+                        .setCreatedAtMs(1_700_000_000_000L))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        assertEquals("event_stream_push", json.get("type").getAsString());
+        assertEquals("combat", json.get("channel").getAsString(),
+                "channel 必须从 EVENT_CHANNEL_COMBAT 剥成 'combat'（EventStreamPushHandler.parseChannel 期望），"
+                + "否则 proto 线上战斗事件流整条静默 noOp，HUD 事件流区永远空白");
+        assertEquals("p1_important", json.get("priority").getAsString(),
+                "priority 必须从 EVENT_PRIORITY_P1_IMPORTANT 剥成 'p1_important'（parsePriority 期望）");
+        assertEquals("命中 Head Slash -8", json.get("text").getAsString(), "text 应原样透传");
+        assertEquals("hit-Head-Slash", json.get("source_tag").getAsString(), "source_tag 应原样透传");
+    }
+
+    @Test
+    void bridgeEventStreamPushMapsAllChannelsToHandlerWire() {
+        record Case(Envelope.EventChannel proto, String expectedWire) {}
+        Case[] cases = new Case[] {
+            new Case(Envelope.EventChannel.EVENT_CHANNEL_COMBAT, "combat"),
+            new Case(Envelope.EventChannel.EVENT_CHANNEL_CULTIVATION, "cultivation"),
+            new Case(Envelope.EventChannel.EVENT_CHANNEL_WORLD, "world"),
+            new Case(Envelope.EventChannel.EVENT_CHANNEL_SOCIAL, "social"),
+            new Case(Envelope.EventChannel.EVENT_CHANNEL_SYSTEM, "system"),
+        };
+        for (Case c : cases) {
+            Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                    .setEventStreamPush(Envelope.EventStreamPush.newBuilder()
+                            .setChannel(c.proto())
+                            .setPriority(Envelope.EventPriority.EVENT_PRIORITY_P2_NORMAL)
+                            .setText("x")
+                            .setCreatedAtMs(1L))
+                    .build();
+            JsonObject json = bridgeAndParse(envelope);
+            assertEquals(c.expectedWire(), json.get("channel").getAsString(),
+                    "channel " + c.proto() + " 应剥成 '" + c.expectedWire()
+                    + "'（EventStreamPushHandler.parseChannel 据此入 UnifiedEventStore）");
+        }
+    }
+
+    @Test
+    void bridgeEventStreamPushMapsAllPrioritiesToHandlerWire() {
+        record Case(Envelope.EventPriority proto, String expectedWire) {}
+        Case[] cases = new Case[] {
+            new Case(Envelope.EventPriority.EVENT_PRIORITY_P0_CRITICAL, "p0_critical"),
+            new Case(Envelope.EventPriority.EVENT_PRIORITY_P1_IMPORTANT, "p1_important"),
+            new Case(Envelope.EventPriority.EVENT_PRIORITY_P2_NORMAL, "p2_normal"),
+            new Case(Envelope.EventPriority.EVENT_PRIORITY_P3_VERBOSE, "p3_verbose"),
+        };
+        for (Case c : cases) {
+            Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                    .setEventStreamPush(Envelope.EventStreamPush.newBuilder()
+                            .setChannel(Envelope.EventChannel.EVENT_CHANNEL_COMBAT)
+                            .setPriority(c.proto())
+                            .setText("x")
+                            .setCreatedAtMs(1L))
+                    .build();
+            JsonObject json = bridgeAndParse(envelope);
+            assertEquals(c.expectedWire(), json.get("priority").getAsString(),
+                    "priority " + c.proto() + " 应剥成 '" + c.expectedWire()
+                    + "'（parsePriority 据此；死亡事件用 P0_CRITICAL）");
+        }
+    }
+
+    // ─── event_stream_push 端到端：bridge → router → handler → store ──
+    // 缺陷本质在下游消费链：枚举未剥 → handler noOp → 事件永不入库。这条用例走完整
+    // proto bytes → ProtoServerDataBridge → ServerDataRouter → EventStreamPushHandler
+    // → UnifiedEventStore，断言可观测的入库结果，单元桥接断言无法替代。
+
+    @Test
+    void eventStreamPushRoutesEndToEndIntoUnifiedEventStore() {
+        UnifiedEventStore.resetForTests();
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setEventStreamPush(Envelope.EventStreamPush.newBuilder()
+                        .setChannel(Envelope.EventChannel.EVENT_CHANNEL_COMBAT)
+                        .setPriority(Envelope.EventPriority.EVENT_PRIORITY_P1_IMPORTANT)
+                        .setSourceTag("hit-Head-Slash")
+                        .setText("命中 Head Slash -8")
+                        .setColor(0)
+                        .setCreatedAtMs(1_700_000_000_000L))
+                .build();
+
+        ProtoServerDataBridge.BridgeResult bridged = ProtoServerDataBridge.bridge(envelope.toByteArray());
+        assertTrue(bridged.isSuccess(), "bridge should succeed: " + bridged.errorMessage());
+
+        ServerDataRouter router = ServerDataRouter.createDefault();
+        ServerDataRouter.RouteResult result = router.route(
+                bridged.legacyJson(),
+                bridged.legacyJson().getBytes(StandardCharsets.UTF_8).length);
+
+        assertTrue(result.isHandled(),
+                "event_stream_push 应被 handler 接受(非 noOp)；枚举未剥时这里会 noOp，事件流永远空白");
+        List<UnifiedEvent> events = UnifiedEventStore.stream().snapshot();
+        assertEquals(1, events.size(),
+                "事件应入 UnifiedEventStore；修前因 channel/priority parse 为 null 而永不入库");
+        UnifiedEvent ev = events.get(0);
+        assertEquals(UnifiedEvent.Channel.COMBAT, ev.channel(),
+                "channel 应解析为 COMBAT（来自剥前缀后的 'combat'）");
+        assertEquals(UnifiedEvent.Priority.P1_IMPORTANT, ev.priority(),
+                "priority 应解析为 P1_IMPORTANT（来自剥前缀后的 'p1_important'）");
+        assertEquals("命中 Head Slash -8", ev.text(), "text 端到端原样透传");
+    }
+
+    @Test
+    void eventStreamPushUnspecifiedEnumStaysOutOfStore() {
+        // 错误分支：UNSPECIFIED 剥后为 'unspecified'，parseChannel/parsePriority 返回 null，
+        // handler noOp，事件不入库。锁住"坏 channel/priority 不污染事件流"。
+        UnifiedEventStore.resetForTests();
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setEventStreamPush(Envelope.EventStreamPush.newBuilder()
+                        .setChannel(Envelope.EventChannel.EVENT_CHANNEL_UNSPECIFIED)
+                        .setPriority(Envelope.EventPriority.EVENT_PRIORITY_UNSPECIFIED)
+                        .setText("x")
+                        .setCreatedAtMs(1L))
+                .build();
+
+        ProtoServerDataBridge.BridgeResult bridged = ProtoServerDataBridge.bridge(envelope.toByteArray());
+        assertTrue(bridged.isSuccess());
+        ServerDataRouter router = ServerDataRouter.createDefault();
+        ServerDataRouter.RouteResult result = router.route(
+                bridged.legacyJson(),
+                bridged.legacyJson().getBytes(StandardCharsets.UTF_8).length);
+
+        assertFalse(result.isHandled(), "UNSPECIFIED channel/priority 应 noOp，不被当作有效事件");
+        assertEquals(0, UnifiedEventStore.stream().snapshot().size(),
+                "坏枚举不应入 UnifiedEventStore");
     }
 
     // ═══════════════════════════════════════════════════════════════════
