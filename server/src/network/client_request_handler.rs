@@ -52,7 +52,7 @@ use crate::cultivation::meridian::severed::{
 use crate::cultivation::meridian_open::MeridianTarget;
 use crate::cultivation::poison_trait::{ConsumePoisonPillIntent, PoisonPillKind};
 use crate::cultivation::possession::{DuoSheRequestEvent, UseLifeCoreEvent};
-use crate::cultivation::skill_registry::{CastResult, SkillRegistry};
+use crate::cultivation::skill_registry::{CastRejectReason, CastResult, SkillRegistry};
 use crate::cultivation::technique_scroll::{
     can_learn_technique, learn_technique_if_allowed, LearnSource, ScrollReadOutcome,
     TechniqueLearnedEvent, TechniqueScrollReadEvent,
@@ -7794,6 +7794,70 @@ mod tests {
         );
     }
 
+    // ── 10b. 通用技能警示 HUD：resolver-path 拒绝把原因推回 client ───────────────
+    //
+    // plan-skill-warn-hud：以前 resolver 路径的 CastResult::Rejected 只 tracing::debug
+    // 默默 return，client 完全收不到 → 玩家"按了键没反应"。现在每个 resolver 拒绝都推
+    // 一条 CastSyncV1{phase: Idle, outcome: Reject*}，通用警示 HUD 据此弹中文提示。
+
+    #[test]
+    fn skill_bar_cast_resolver_reject_pushes_cast_sync_with_reason() {
+        // 经脉门放行（Stomach opened+integrity 满足）+ 提供近身目标，但 realm 默认 Awaken
+        // < tie_shan_kao 要求的 Condense → resolver 在 check_realm_gate 处拒绝 RealmTooLow。
+        // 期望：① 无 Casting（被 resolver 拒绝）② 推送 CastSyncV1{outcome=RejectRealmTooLow}。
+        let mut app = App::new();
+        register_request_app(&mut app);
+
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let target = app.world_mut().spawn(Position::new([1.0, 0.0, 0.0])).id();
+        let mut skill_bar = SkillBarBindings::default();
+        skill_bar.set(
+            0,
+            SkillSlot::Skill {
+                skill_id: "burst_meridian.tie_shan_kao".to_string(),
+            },
+        );
+        let entity = app.world_mut().spawn(client_bundle).id();
+        let mut ms = crate::cultivation::components::MeridianSystem::default();
+        {
+            // 经脉门放行：opened=true + integrity=1.0 ≥ min_health=0.5。
+            let stomach = ms.get_mut(crate::cultivation::components::MeridianId::Stomach);
+            stomach.opened = true;
+            stomach.integrity = 1.0;
+        }
+        app.world_mut().entity_mut(entity).insert((
+            Position::new([0.0, 0.0, 0.0]),
+            skill_bar,
+            QuickSlotBindings::default(),
+            empty_inventory(),
+            ms,
+            crate::cultivation::meridian::severed::MeridianSeveredPermanent::default(),
+            // realm = Awaken（默认）< Condense → resolver check_realm_gate 拒绝 RealmTooLow。
+            crate::cultivation::components::Cultivation {
+                realm: crate::cultivation::components::Realm::Awaken,
+                qi_current: 100.0,
+                qi_max: 100.0,
+                ..Default::default()
+            },
+        ));
+
+        send_skill_bar_cast_with_target(&mut app, entity, target);
+        flush_all_client_packets(&mut app);
+        let syncs = collect_cast_syncs(&mut helper);
+
+        assert!(
+            app.world().get::<Casting>(entity).is_none(),
+            "realm Awaken < Condense 时 resolver 应拒绝；期望无 Casting；实际 Casting 存在",
+        );
+        assert!(
+            syncs.iter().any(|s| s.outcome
+                == crate::schema::combat_hud::CastOutcomeV1::RejectRealmTooLow
+                && s.phase == CastPhaseV1::Idle),
+            "resolver 拒绝 RealmTooLow 时应推 CastSyncV1{{phase=Idle, outcome=RejectRealmTooLow}} \
+             让通用警示 HUD 显示「境界不足」；期望命中该 sync；实际 syncs={syncs:?}",
+        );
+    }
+
     // ── 11. helper 单元：check_player_skill_meridian_gate 直接单元测试 ───────────
 
     #[test]
@@ -8550,6 +8614,9 @@ fn handle_skill_bar_cast(
                     tracing::debug!(
                         "[bong][network] skill resolver rejected entity={entity:?} slot={slot} reason={reason:?}"
                     );
+                    // 通用技能警示 HUD：把 resolver 拒绝原因推回施法者 client。
+                    // 纯反馈——cast 已被上面的 resolver 逻辑拒绝，这里只让玩家看到原因。
+                    push_skill_cast_rejected_sync(world, entity, slot, reason);
                 }
                 CastResult::Interrupted => {
                     tracing::debug!(
@@ -8945,6 +9012,40 @@ fn emit_npc_refuse_audio(
         pitch_shift: 0.0,
         recipient: AudioRecipient::Single(player),
     });
+}
+
+/// 通用技能警示：resolver-path 施法被拒时把拒绝原因推回施法者 client。
+///
+/// 走与经脉门控拒绝完全相同的 `CastSyncV1{phase: Idle, outcome: Reject*}` 形态
+/// （施放前被拒，没有进行中 cast，Idle 语义正确；client 据 `outcome != None` 弹警示）。
+/// 复用既有 `push_cast_sync` / server_data CastSync 通道，不新增 S2C 变体。
+/// 纯反馈：cast 已被 resolver 既有逻辑拒绝，本函数只负责"显示原因"，不改施法结果。
+fn push_skill_cast_rejected_sync(
+    world: &mut bevy_ecs::world::World,
+    entity: Entity,
+    slot: u8,
+    reason: CastRejectReason,
+) {
+    let username = world
+        .get::<Username>(entity)
+        .map(|username| username.0.clone())
+        .unwrap_or_else(|| format!("entity:{:?}", entity));
+    let started_at_ms = current_unix_millis();
+    let Some(mut client) = world.get_mut::<Client>(entity) else {
+        return;
+    };
+    push_cast_sync(
+        &mut client,
+        CastSyncV1 {
+            phase: CastPhaseV1::Idle,
+            slot,
+            duration_ms: 0,
+            started_at_ms,
+            outcome: reason.to_cast_outcome(),
+        },
+        username.as_str(),
+        entity,
+    );
 }
 
 fn push_skill_cast_started_sync(world: &mut bevy_ecs::world::World, entity: Entity, slot: u8) {

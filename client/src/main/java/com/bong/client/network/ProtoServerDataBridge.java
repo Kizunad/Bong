@@ -278,6 +278,9 @@ public final class ProtoServerDataBridge {
         if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.MOVEMENT_STATE) {
             return bridgeMovementState(envelope.getMovementState(), typeString);
         }
+        if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.CAST_SYNC) {
+            return bridgeCastSync(envelope.getCastSync(), typeString);
+        }
         if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.SKILL_CONFIG_SNAPSHOT) {
             return bridgeSkillConfigSnapshot(envelope.getSkillConfigSnapshot(), typeString);
         }
@@ -629,6 +632,27 @@ public final class ProtoServerDataBridge {
             stripEnumPrefix(root, "movement_action", "MOVEMENT_ACTION_");
             stripEnumPrefix(root, "zone_kind", "MOVEMENT_ZONE_KIND_");
             stripEnumPrefix(root, "rejected_action", "MOVEMENT_ACTION_REQUEST_KIND_");
+            return wrapLegacy(root, typeString);
+        } catch (com.google.protobuf.InvalidProtocolBufferException e) {
+            return BridgeResult.error("proto→JSON conversion failed for " + typeString + ": " + e.getMessage());
+        }
+    }
+
+    // ─── cast_sync: enum name normalization ─────────────────────────
+    //
+    // proto3 canonical JSON 把 CastPhase / CastOutcome 打成 proto 枚举值名
+    // （CAST_PHASE_CASTING / CAST_OUTCOME_MERIDIAN_GATED）。CastSyncHandler 的
+    // phase / outcome switch 期望 serde snake_case（"casting" / "meridian_gated"），
+    // 故必须像 movement_state 一样剥前缀转小写，否则 proto 线上整条 cast_sync 静默 noOp。
+    // 这也是通用技能警示 HUD 的 reject_* outcome 能到达 client 的前提。
+
+    private static BridgeResult bridgeCastSync(
+            MessageOrBuilder msg, String typeString) {
+        try {
+            String raw = printAndNormalize(msg);
+            JsonObject root = JsonParser.parseString(raw).getAsJsonObject();
+            stripEnumPrefix(root, "phase", "CAST_PHASE_");
+            stripEnumPrefix(root, "outcome", "CAST_OUTCOME_");
             return wrapLegacy(root, typeString);
         } catch (com.google.protobuf.InvalidProtocolBufferException e) {
             return BridgeResult.error("proto→JSON conversion failed for " + typeString + ": " + e.getMessage());

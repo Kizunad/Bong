@@ -69,6 +69,22 @@ pub enum CastOutcomeV1 {
     Death,
     /// 经脉门控拒绝：施放前经脉未打通 / 已断 / integrity 不足，cast 被拒绝不扣 qi 不触发效果。
     MeridianGated,
+    // ─── 通用技能警示反馈（plan-skill-warn-hud）：施放前 resolver 拒绝的原因 ───────
+    // 与 CastRejectReason 1:1（MeridianSevered → MeridianGated 复用既有变体）。
+    // 纯反馈语义：cast 已被既有 resolver 逻辑拒绝，这些 outcome 只把"为什么被拒"
+    // 推到施法者 client 让通用警示 HUD 映射中文文案，不改施法是否成功。
+    /// 真元不足。
+    RejectQiInsufficient,
+    /// 招式冷却中。
+    RejectOnCooldown,
+    /// 目标无效（无目标 / 超距 / 未知功法激活态等）。
+    RejectInvalidTarget,
+    /// 处于硬直 / 恢复期（体力耗尽等）。
+    RejectInRecovery,
+    /// 境界不足。
+    RejectRealmTooLow,
+    /// 缺少所需武器（如剑技需手持剑）。
+    RejectNoWeapon,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]

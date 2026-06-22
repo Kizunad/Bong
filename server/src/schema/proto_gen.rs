@@ -4125,6 +4125,13 @@ mod tests {
             (CastPhase::Interrupt, CastOutcome::Death),
             // plan-bug-qc-p1 §skill-cast P0：经脉门控拒绝变体
             (CastPhase::Interrupt, CastOutcome::MeridianGated),
+            // plan-skill-warn-hud：通用技能警示 resolver 拒绝变体（施放前拒绝 → Idle phase）
+            (CastPhase::Idle, CastOutcome::RejectQiInsufficient),
+            (CastPhase::Idle, CastOutcome::RejectOnCooldown),
+            (CastPhase::Idle, CastOutcome::RejectInvalidTarget),
+            (CastPhase::Idle, CastOutcome::RejectInRecovery),
+            (CastPhase::Idle, CastOutcome::RejectRealmTooLow),
+            (CastPhase::Idle, CastOutcome::RejectNoWeapon),
         ];
         for (phase, outcome) in phases {
             let msg = CastSync {

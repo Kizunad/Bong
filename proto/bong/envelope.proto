@@ -1411,6 +1411,13 @@ enum CastOutcome {
   CAST_OUTCOME_DEATH                = 7;
   // plan-bug-qc-p1 §skill-cast P0：经脉门控拒绝（未打通/已断/integrity 不足）。
   CAST_OUTCOME_MERIDIAN_GATED       = 8;
+  // 通用技能警示（plan-skill-warn-hud）：施放前 resolver 拒绝原因 → client 警示文案。
+  CAST_OUTCOME_REJECT_QI_INSUFFICIENT = 9;
+  CAST_OUTCOME_REJECT_ON_COOLDOWN     = 10;
+  CAST_OUTCOME_REJECT_INVALID_TARGET  = 11;
+  CAST_OUTCOME_REJECT_IN_RECOVERY     = 12;
+  CAST_OUTCOME_REJECT_REALM_TOO_LOW   = 13;
+  CAST_OUTCOME_REJECT_NO_WEAPON       = 14;
 }
 
 // 与 Rust CastSyncV1 精确对应。
