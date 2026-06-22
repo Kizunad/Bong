@@ -421,7 +421,8 @@ pub fn hybrid_beast_formation_system(
             loadout.clone(),
             loadout.melee_archetype,
             loadout.melee_profile(),
-            NpcArchetype::Beast,
+            // NpcArchetype 由 `runtime`（npc_runtime_bundle）提供，此处不可再显式加，
+            // 否则同一 insert bundle 含重复组件 → Bevy 运行时 panic（缝合兽融合即崩服）。
             runtime,
             Navigator::new(),
             MovementController::new(),
@@ -1379,6 +1380,74 @@ mod tests {
             error < 1e-12,
             "守恒红线：hybrid({hybrid}) + released({released}) \
              应等于 total({total})，误差 {error:.2e}"
+        );
+    }
+
+    #[test]
+    fn formation_system_spawns_hybrid_without_duplicate_archetype_panic() {
+        // 回归（#433 引入的崩服 bug）：融合的 insert bundle 既显式加 `NpcArchetype::Beast`
+        // 又经 `npc_runtime_bundle`（已含 archetype）携带 → 同一 bundle 含重复组件 →
+        // Bevy `apply_deferred` panic "has duplicate components: NpcArchetype" → 缝合兽一融合
+        // 就崩服。此前所有融合测试只测纯函数 `fusion_qi_split`，从不驱动系统，故漏过整类
+        // ECS bundle bug。本测试真正跑一次 `hybrid_beast_formation_system`：app.update() 内
+        // apply_deferred 不 panic 且恰好生成 1 只 HybridBeast 即过。
+        use crate::world::dimension::DimensionKind;
+        use crate::world::zone::Zone;
+
+        let zone_name = "test_fusion_zone";
+        let mut app = App::new();
+        app.add_event::<HybridBeastFormationEvent>();
+        app.add_event::<QiTransfer>();
+        app.add_event::<VfxEventRequest>();
+        app.add_event::<PlaySoundRecipeRequest>();
+
+        // zone：spirit_qi < HUNGER_THRESHOLD 触发饥饿计数
+        let mut zones = ZoneRegistry::fallback();
+        zones
+            .register_runtime_zone(Zone {
+                name: zone_name.to_string(),
+                dimension: DimensionKind::Overworld,
+                bounds: (DVec3::new(-64.0, 0.0, -64.0), DVec3::new(64.0, 128.0, 64.0)),
+                spirit_qi: 0.0,
+                danger_level: 0,
+                active_events: Vec::new(),
+                patrol_anchors: Vec::new(),
+                blocked_tiles: Vec::new(),
+            })
+            .expect("register test zone");
+        app.insert_resource(zones);
+
+        // hunger 预热到 >= FUSION_HUNGER_TICKS，使融合时长条件满足
+        let mut hunger = ZoneBeastHungerTracker::default();
+        for _ in 0..=FUSION_HUNGER_TICKS {
+            hunger.tick_hungry(zone_name);
+        }
+        app.insert_resource(hunger);
+
+        // FUSION_MIN_BEASTS 只低阶陆生野兽（Rat, tier0, qi=0）同 zone
+        for i in 0..FUSION_MIN_BEASTS {
+            app.world_mut().spawn((
+                Position::new([i as f64, 64.0, 0.0]),
+                FaunaTag::new(BeastKind::Rat),
+                NpcPatrol::new(zone_name, DVec3::new(0.0, 64.0, 0.0)),
+                Cultivation::default(),
+                NpcMarker,
+            ));
+        }
+
+        app.add_systems(Update, hybrid_beast_formation_system);
+        // 旧 bug 在此 update 的 apply_deferred 阶段 panic；修复后正常完成。
+        app.update();
+
+        let mut query = app.world_mut().query::<&FaunaTag>();
+        let hybrid_count = query
+            .iter(app.world())
+            .filter(|tag| tag.beast_kind == BeastKind::HybridBeast)
+            .count();
+        assert_eq!(
+            hybrid_count, 1,
+            "融合条件满足应恰好生成 1 只 HybridBeast（系统跑完未 panic）；\
+             若回退到重复 NpcArchetype，会在 apply_deferred panic 而到不了这里"
         );
     }
 
