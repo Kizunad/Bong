@@ -15,6 +15,7 @@
 
 use std::collections::HashSet;
 
+use valence::entity::Look;
 use valence::prelude::{
     bevy_ecs, DVec3, Entity, EventReader, EventWriter, Events, Position, Query, Res, ResMut,
 };
@@ -103,18 +104,14 @@ fn cast_condense_edge(
         Err(reason) => return CastResult::Rejected { reason },
     };
 
-    let Some(target) = target else {
-        return CastResult::Rejected {
-            reason: CastRejectReason::InvalidTarget,
-        };
-    };
-
+    // 去掉"目标无效"门禁（Option B）：凝锋是近战剑势，准星没对准也照常挥出，
+    // target 透传 Option —— 有目标命中、无目标 resolver 跳过即空挥（不命中、无误伤）。
     apply_cast_costs(world, caster, slot, ctx.now_tick, &CONDENSE_EDGE_PROFILE);
     inject_bond_qi(world, caster, CONDENSE_EDGE.qi_cost);
 
     world.send_event(AttackIntent {
         attacker: caster,
-        target: Some(target),
+        target,
         issued_at_tick: ctx.now_tick,
         reach: AttackReach::new(CONDENSE_EDGE.range, 0.5),
         qi_invest: effects::CONDENSE_EDGE_DAMAGE_MULT,
@@ -150,12 +147,8 @@ fn cast_qi_slash(
         Err(reason) => return CastResult::Rejected { reason },
     };
 
-    let Some(target) = target else {
-        return CastResult::Rejected {
-            reason: CastRejectReason::InvalidTarget,
-        };
-    };
-
+    // 去掉"目标无效"门禁（Option B）：剑气斩是方向招，准星没对准也照常释放，target
+    // 透传 Option —— 有目标命中、无目标 resolver 跳过即空斩；朝向无目标时落到玩家面朝向。
     if !drain_qi(world, caster, QI_SLASH.qi_cost) {
         return CastResult::Rejected {
             reason: CastRejectReason::QiInsufficient,
@@ -166,7 +159,7 @@ fn cast_qi_slash(
 
     world.send_event(AttackIntent {
         attacker: caster,
-        target: Some(target),
+        target,
         issued_at_tick: ctx.now_tick,
         reach: AttackReach::new(QI_SLASH.range, 0.0),
         qi_invest: QI_SLASH.qi_cost as f32,
@@ -175,7 +168,7 @@ fn cast_qi_slash(
         debug_command: None,
     });
 
-    // 剑气斩走朝向 line trail：方向 = caster → target，归一化；退化时落到 +X。
+    // 剑气斩走朝向 line trail：有目标=caster→target，无目标=玩家面朝向，退化落 +X。
     let direction = qi_slash_direction(world, caster, target);
     emit_skill_av(
         world,
@@ -191,21 +184,33 @@ fn cast_qi_slash(
     }
 }
 
-/// 剑气斩朝向：caster → target 单位向量；任一 Position 缺失或两点重合时落到 +X。
-fn qi_slash_direction(world: &bevy_ecs::world::World, caster: Entity, target: Entity) -> DVec3 {
+/// 剑气斩朝向：
+/// - 有目标：caster → target 单位向量（原行为）。
+/// - 无目标（Option B 空斩）：玩家水平面朝向（Look.yaw）。
+/// - 任一退化（Position/Look 缺失、两点重合）：落到 +X，绝不 NaN。
+fn qi_slash_direction(
+    world: &bevy_ecs::world::World,
+    caster: Entity,
+    target: Option<Entity>,
+) -> DVec3 {
     let caster_pos = world.get::<Position>(caster).map(|p| p.get());
-    let target_pos = world.get::<Position>(target).map(|p| p.get());
-    match (caster_pos, target_pos) {
-        (Some(from), Some(to)) => {
+    if let (Some(from), Some(target)) = (caster_pos, target) {
+        if let Some(to) = world.get::<Position>(target).map(|p| p.get()) {
             let delta = to - from;
             if delta.length_squared() > f64::EPSILON {
-                delta.normalize()
-            } else {
-                DVec3::new(1.0, 0.0, 0.0)
+                return delta.normalize();
             }
         }
-        _ => DVec3::new(1.0, 0.0, 0.0),
     }
+    // 无目标：落到玩家面朝向（与 woliu_v2 朝向数学一致）。
+    if let Some(look) = world.get::<Look>(caster) {
+        let yaw = f64::from(look.yaw).to_radians();
+        let facing = DVec3::new(-yaw.sin(), 0.0, yaw.cos());
+        if facing.is_finite() {
+            return facing;
+        }
+    }
+    DVec3::new(1.0, 0.0, 0.0)
 }
 
 // ─── 剑鸣 ────────────────────────────────────────────────────────────────────
@@ -282,12 +287,8 @@ fn cast_manifest(
         Ok(ctx) => ctx,
         Err(reason) => return CastResult::Rejected { reason },
     };
-    let Some(target) = target else {
-        return CastResult::Rejected {
-            reason: CastRejectReason::InvalidTarget,
-        };
-    };
-
+    // 去掉"目标无效"门禁（Option B）：化形是方向招，准星没对准也照常释放，target 透传
+    // Option —— 有目标命中、无目标 resolver 跳过即空放（不命中、无误伤）。
     if !drain_qi(world, caster, MANIFEST.qi_cost) {
         return CastResult::Rejected {
             reason: CastRejectReason::QiInsufficient,
@@ -300,7 +301,7 @@ fn cast_manifest(
     // AttackIntent 作占位，保证伤害与品阶乘数走 combat pipeline。
     world.send_event(AttackIntent {
         attacker: caster,
-        target: Some(target),
+        target,
         issued_at_tick: ctx.now_tick,
         reach: AttackReach::new(MANIFEST.range, 0.0),
         qi_invest: effects::MANIFEST_ATTACK_MULT,
@@ -1011,6 +1012,76 @@ mod tests {
         let result = cast_qi_slash(app.world_mut(), caster, 0, Some(target));
         assert!(matches!(result, CastResult::Rejected { .. }));
         assert!(drain_av(&app).is_empty(), "被拒绝的 cast 不应 emit AV 事件");
+    }
+
+    /// Option B — 凝锋/剑气斩/化形去掉"目标无效"门禁：无目标照常挥出（Started），
+    /// AttackIntent.target==None（resolver 跳过即空挥/空斩，不命中、无误伤）。
+    #[test]
+    fn condense_edge_without_target_air_swings_not_rejected() {
+        let (mut app, caster) = setup_app();
+        let result = cast_condense_edge(app.world_mut(), caster, 0, None);
+        assert!(
+            matches!(result, CastResult::Started { .. }),
+            "无目标凝锋应空挥 Started（不再 InvalidTarget），实际 {result:?}"
+        );
+        let intent = app
+            .world()
+            .resource::<Events<AttackIntent>>()
+            .iter_current_update_events()
+            .next()
+            .expect("空挥仍应发 AttackIntent");
+        assert_eq!(
+            intent.target, None,
+            "空挥 AttackIntent.target 必须 None（不命中、无误伤）"
+        );
+    }
+
+    #[test]
+    fn qi_slash_without_target_air_swings_with_facing_direction() {
+        let (mut app, caster) = setup_app();
+        let result = cast_qi_slash(app.world_mut(), caster, 0, None);
+        assert!(
+            matches!(result, CastResult::Started { .. }),
+            "无目标剑气斩应空斩 Started，实际 {result:?}"
+        );
+        let intent = app
+            .world()
+            .resource::<Events<AttackIntent>>()
+            .iter_current_update_events()
+            .next()
+            .expect("空斩仍应发 AttackIntent");
+        assert_eq!(intent.target, None, "空斩 AttackIntent.target 必须 None");
+        // 朝向：无目标 + 无 Look → 退化 +X（有限、非 NaN）。
+        let dir = app
+            .world()
+            .resource::<Events<SwordPathSkillCastEvent>>()
+            .iter_current_update_events()
+            .next()
+            .expect("空斩应发 AV")
+            .direction
+            .expect("剑气斩 AV 必带方向");
+        assert!(dir.is_finite(), "空斩朝向必须有限不 NaN，实际 {dir:?}");
+        assert!(
+            (dir - DVec3::new(1.0, 0.0, 0.0)).length() < 1e-6,
+            "无目标无 Look 时朝向退化为 +X，实际 {dir:?}"
+        );
+    }
+
+    #[test]
+    fn manifest_without_target_air_swings_not_rejected() {
+        let (mut app, caster) = setup_app();
+        let result = cast_manifest(app.world_mut(), caster, 0, None);
+        assert!(
+            matches!(result, CastResult::Started { .. }),
+            "无目标化形应空放 Started，实际 {result:?}"
+        );
+        let intent = app
+            .world()
+            .resource::<Events<AttackIntent>>()
+            .iter_current_update_events()
+            .next()
+            .expect("空放仍应发 AttackIntent");
+        assert_eq!(intent.target, None, "空放 AttackIntent.target 必须 None");
     }
 
     /// P1.6 — 凝锋发 AttackIntent 走 SwordPathCondenseEdge source。
