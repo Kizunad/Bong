@@ -284,6 +284,9 @@ public final class ProtoServerDataBridge {
         if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.EVENT_STREAM_PUSH) {
             return bridgeEventStreamPush(envelope.getEventStreamPush(), typeString);
         }
+        if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.DEATH_SCREEN) {
+            return bridgeDeathScreen(envelope.getDeathScreen(), typeString);
+        }
         if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.SKILL_CONFIG_SNAPSHOT) {
             return bridgeSkillConfigSnapshot(envelope.getSkillConfigSnapshot(), typeString);
         }
@@ -679,6 +682,39 @@ public final class ProtoServerDataBridge {
             JsonObject root = JsonParser.parseString(raw).getAsJsonObject();
             stripEnumPrefix(root, "channel", "EVENT_CHANNEL_");
             stripEnumPrefix(root, "priority", "EVENT_PRIORITY_");
+            return wrapLegacy(root, typeString);
+        } catch (com.google.protobuf.InvalidProtocolBufferException e) {
+            return BridgeResult.error("proto→JSON conversion failed for " + typeString + ": " + e.getMessage());
+        }
+    }
+
+    // ─── death_screen: enum name normalization (顶层 + 嵌套 cinematic) ──
+    //
+    // death_screen 同走 proto 路径（server combat/lifecycle.rs → proto_convert.rs）。
+    // 顶层 stage / zone_kind 与嵌套 cinematic.phase / cinematic.roll.result 都是 proto
+    // 枚举，generic 路径会留全名前缀。各 client 消费方只认 serde 小写：
+    //   - DeathScreen.phaseLabel 期望 "fortune"/"tribulation"（stage）
+    //   - DeathScreen.zoneLabel  期望 "death"/"negative"（zone_kind）
+    //   - DeathCinematicState.Phase.fromWire 期望 "roll"/"insight_overlay"/… (phase)
+    //   - DeathCinematicState.RollResult.fromWire 期望 "survive"/"fall"/… (roll.result)
+    // 不剥则死亡界面阶段标签永远 default、cinematic 永远卡 PREDEATH。
+    // cinematic.zone_kind 当前无消费方，一并归一化保持桥输出统一。
+
+    private static BridgeResult bridgeDeathScreen(
+            MessageOrBuilder msg, String typeString) {
+        try {
+            String raw = printAndNormalize(msg);
+            JsonObject root = JsonParser.parseString(raw).getAsJsonObject();
+            stripEnumPrefix(root, "stage", "DEATH_SCREEN_STAGE_");
+            stripEnumPrefix(root, "zone_kind", "DEATH_SCREEN_ZONE_KIND_");
+            if (root.has("cinematic") && root.get("cinematic").isJsonObject()) {
+                JsonObject cinematic = root.getAsJsonObject("cinematic");
+                stripEnumPrefix(cinematic, "phase", "DEATH_CINEMATIC_PHASE_");
+                stripEnumPrefix(cinematic, "zone_kind", "DEATH_CINEMATIC_ZONE_KIND_");
+                if (cinematic.has("roll") && cinematic.get("roll").isJsonObject()) {
+                    stripEnumPrefix(cinematic.getAsJsonObject("roll"), "result", "DEATH_ROLL_RESULT_");
+                }
+            }
             return wrapLegacy(root, typeString);
         } catch (com.google.protobuf.InvalidProtocolBufferException e) {
             return BridgeResult.error("proto→JSON conversion failed for " + typeString + ": " + e.getMessage());

@@ -187,6 +187,46 @@ class ProtoServerDataBridgeTest {
 
         JsonObject json = JsonParser.parseString(result.legacyJson()).getAsJsonObject();
         assertEquals("death_screen", json.get("type").getAsString());
+        assertEquals("fortune", json.get("stage").getAsString(),
+                "stage 必须从 DEATH_SCREEN_STAGE_FORTUNE 剥成 'fortune'（DeathScreen.phaseLabel 期望），"
+                + "否则死亡界面阶段标签永远落 default '重生判定'");
+        assertEquals("ordinary", json.get("zone_kind").getAsString(),
+                "zone_kind 必须从 DEATH_SCREEN_ZONE_KIND_ORDINARY 剥成 'ordinary'（DeathScreen.zoneLabel 期望）");
+    }
+
+    // ─── death_screen: 顶层 stage/zone_kind + 嵌套 cinematic 枚举剥前缀 ──
+    // 死亡界面阶段标签 + cinematic 过场推进的接收前提：proto3 JSON 把所有 death 枚举
+    // 打成全名前缀，各消费方只认 serde 小写。锁住顶层与嵌套两层。
+    @Test
+    void bridgeDeathScreenStripsTopLevelAndCinematicEnumPrefixes() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setDeathScreen(Envelope.DeathScreen.newBuilder()
+                        .setVisible(true)
+                        .setCause("pk")
+                        .setStage(Envelope.DeathScreenStage.DEATH_SCREEN_STAGE_TRIBULATION)
+                        .setZoneKind(Envelope.DeathScreenZoneKind.DEATH_SCREEN_ZONE_KIND_NEGATIVE)
+                        .setCinematic(Envelope.DeathCinematicData.newBuilder()
+                                .setV(1)
+                                .setCharacterId("char-1")
+                                .setPhase(Envelope.DeathCinematicPhase.DEATH_CINEMATIC_PHASE_ROLL)
+                                .setZoneKind(Envelope.DeathCinematicZoneKind.DEATH_CINEMATIC_ZONE_KIND_DEATH)
+                                .setRoll(Envelope.DeathCinematicRoll.newBuilder()
+                                        .setResult(Envelope.DeathRollResult.DEATH_ROLL_RESULT_SURVIVE))))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        assertEquals("death_screen", json.get("type").getAsString());
+        assertEquals("tribulation", json.get("stage").getAsString(),
+                "顶层 stage 剥成 'tribulation'（DeathScreen.phaseLabel）");
+        assertEquals("negative", json.get("zone_kind").getAsString(),
+                "顶层 zone_kind 剥成 'negative'（DeathScreen.zoneLabel）");
+        JsonObject cinematic = json.getAsJsonObject("cinematic");
+        assertEquals("roll", cinematic.get("phase").getAsString(),
+                "cinematic.phase 剥成 'roll'（DeathCinematicState.Phase.fromWire），否则过场永远卡 PREDEATH");
+        assertEquals("death", cinematic.get("zone_kind").getAsString(),
+                "cinematic.zone_kind 一并归一化为 'death' 保持桥输出统一");
+        assertEquals("survive", cinematic.getAsJsonObject("roll").get("result").getAsString(),
+                "cinematic.roll.result 剥成 'survive'（DeathCinematicState.RollResult.fromWire）");
     }
 
     // ─── Happy path: TsyCollapseStarted maps to tsy_collapse_started_ipc ──
