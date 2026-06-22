@@ -973,6 +973,33 @@ fn resolve_rejects_qi_insufficient_without_cooldown() {
 }
 
 #[test]
+fn vacuum_palm_without_target_no_longer_invalid_target_unlike_locked_pull() {
+    // Option B：真空掌（掌）去"目标无效"门禁——准星没对准时以自身为中心释放真空涡流，
+    // 不再 InvalidTarget。对照真空拉（Pull，锁定类）无目标仍 InvalidTarget，证明只精确
+    // de-gate 掌、不误动锁定类（VacuumLock/Pull）。
+    let mut app = app(10);
+    let actor = spawn_actor(&mut app, Realm::Condense, 200.0);
+
+    let palm = resolve_woliu_v2_skill(app.world_mut(), actor, 0, None, WoliuSkillId::VacuumPalm);
+    assert_ne!(
+        palm,
+        CastResult::Rejected {
+            reason: CastRejectReason::InvalidTarget
+        },
+        "真空掌无目标不应再 InvalidTarget（Option B 去门禁，以自身为中心释放），实际 {palm:?}"
+    );
+
+    let pull = resolve_woliu_v2_skill(app.world_mut(), actor, 1, None, WoliuSkillId::Pull);
+    assert_eq!(
+        pull,
+        CastResult::Rejected {
+            reason: CastRejectReason::InvalidTarget
+        },
+        "真空拉是锁定类，无目标仍应 InvalidTarget（未被误 de-gate），实际 {pull:?}"
+    );
+}
+
+#[test]
 fn resolve_pull_rejects_missing_target_without_cooldown() {
     let mut app = app(10);
     let actor = spawn_actor(&mut app, Realm::Condense, 200.0);
@@ -1128,27 +1155,30 @@ fn resolve_mouth_rejects_out_of_range_target_without_cooldown() {
 }
 
 #[test]
-fn resolve_vacuum_palm_requires_target_before_spending_qi() {
+fn resolve_vacuum_palm_without_target_self_centers_and_casts() {
+    // Option B（去"目标无效"门禁）：真空掌无目标不再拒绝，而是以自身为中心释放真空涡流，
+    // 照常扣真元 + 设冷却（旧行为是"无目标→拒绝、不扣真元、不设冷却"，已翻转）。
     let mut app = app(10);
     let actor = spawn_actor(&mut app, Realm::Condense, 200.0);
 
     let result = resolve_woliu_v2_skill(app.world_mut(), actor, 1, None, WoliuSkillId::VacuumPalm);
 
-    assert_eq!(
-        result,
-        CastResult::Rejected {
-            reason: CastRejectReason::InvalidTarget
-        }
+    assert!(
+        matches!(result, CastResult::Started { .. }),
+        "无目标真空掌应以自身为中心释放 Started（不再 InvalidTarget），实际 {result:?}"
     );
-    assert_eq!(
-        app.world().get::<Cultivation>(actor).unwrap().qi_current,
-        200.0
+    assert!(
+        app.world().get::<Cultivation>(actor).unwrap().qi_current < 200.0,
+        "释放真空掌应照常扣真元（不再是拒绝不扣），实际 {}",
+        app.world().get::<Cultivation>(actor).unwrap().qi_current
     );
-    assert!(!app
-        .world()
-        .get::<SkillBarBindings>(actor)
-        .unwrap()
-        .is_on_cooldown(1, 10));
+    assert!(
+        app.world()
+            .get::<SkillBarBindings>(actor)
+            .unwrap()
+            .is_on_cooldown(1, 10),
+        "释放真空掌应照常设冷却"
+    );
 }
 
 #[test]

@@ -1011,7 +1011,21 @@ fn cast_center(
             ),
             None => Ok(caster_pos),
         },
-        WoliuSkillId::VacuumPalm | WoliuSkillId::VacuumLock => {
+        // 真空掌（掌）：去掉"目标无效"门禁（Option B）—— 准星没对准实体时以自身为中心
+        // 释放真空涡流（与 Mouth 的 None 处理一致），不再拦截。真空锁（VacuumLock）是
+        // 锁定类（锁定单一目标抽真元），保留目标校验。
+        WoliuSkillId::VacuumPalm => match target {
+            Some(target) => validated_target_position(
+                world,
+                caster_pos,
+                caster_dim,
+                target,
+                spec.influence_radius,
+                true,
+            ),
+            None => Ok(caster_pos),
+        },
+        WoliuSkillId::VacuumLock => {
             let target = target.ok_or(CastRejectReason::InvalidTarget)?;
             validated_target_position(
                 world,
