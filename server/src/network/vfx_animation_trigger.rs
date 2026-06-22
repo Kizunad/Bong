@@ -51,8 +51,10 @@ const ANIM_BREAKTHROUGH_GUYUAN: &str = "bong:breakthrough_guyuan";
 const ANIM_BREAKTHROUGH_TONGLING: &str = "bong:breakthrough_tongling";
 const ANIM_TRIBULATION_BRACE: &str = "bong:tribulation_brace";
 const ANIM_HARVEST_CROUCH: &str = "bong:harvest_crouch";
-/// 广播体操练习完成 → 复用 guard_raise（举臂伸展姿态），纯 cosmetic 复用，无净新动画。
-const ANIM_GUANGBO_TICAO: &str = "bong:guard_raise";
+/// 广播体操练习完成 → 专属完整套路动画（150tick/7.5s，5 节：伸展/扩胸/体转/体侧/下蹲）。
+/// 此前复用 guard_raise（4tick 举臂格挡），真机表现"只动了一下"；改为
+/// client `player_animation/guangbo_ticao.json`（client BongAnimationRegistry 自动扫描注册）。
+const ANIM_GUANGBO_TICAO: &str = "bong:guangbo_ticao";
 /// 广播体操练习正反馈粒子 —— 走 `bong:vfx_event` JSON 通道（与所有 gameplay 粒子一致），
 /// 由客户端 `VfxRegistry` 查到 `GuangboTicaoPracticePlayer`，其内部 spawn vanilla
 /// HAPPY_VILLAGER（绿色心叶星点）粒子。复用 vanilla 贴图无新资产。
@@ -362,7 +364,7 @@ pub fn emit_woliu_v2_visual_stop_triggers(
 ///
 /// 读 `GuangboTicaoPracticeEvent`（由 cast_emit::tick_casts_or_interrupt 在 cast
 /// 自然完成时 emit），对练习者发：
-/// 1. `PlayAnim`：复用 `guard_raise`（举臂伸展姿态），无净新动画资产。
+/// 1. `PlayAnim`：专属 `guangbo_ticao` 完整套路（150tick/7.5s，5 节）。
 /// 2. `SpawnParticle`：event_id `bong:guangbo_ticao_practice`，走 `bong:vfx_event` JSON 通道
 ///    （与所有 gameplay 粒子一致），客户端 `GuangboTicaoPracticePlayer` 据此 spawn vanilla
 ///    `happy_villager`（绿色心叶星点）正反馈，复用 vanilla 贴图无净新资产。
@@ -377,7 +379,7 @@ pub fn emit_guangbo_ticao_visual_triggers(
     mut vfx_events: EventWriter<VfxEventRequest>,
 ) {
     for event in practices.read() {
-        // 1. 动画——复用 guard_raise 举臂伸展。caster 无 Position/UniqueId 时静默 skip。
+        // 1. 动画——专属广播体操完整套路。caster 无 Position/UniqueId 时静默 skip。
         emit_play_for_entity(
             event.entity,
             ANIM_GUANGBO_TICAO,
@@ -1745,6 +1747,21 @@ mod tests {
             }
             other => panic!("expected SpawnParticle, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn guangbo_ticao_uses_dedicated_anim_not_guard_raise() {
+        // #4 各招专属动画：广播体操必须用专属完整套路 bong:guangbo_ticao，
+        // 不得回退到此前复用的 bong:guard_raise（4tick 举臂格挡，真机"只动一下"）。
+        // 防一次性修复被后续 refactor 静默还原。
+        assert_eq!(
+            ANIM_GUANGBO_TICAO, "bong:guangbo_ticao",
+            "广播体操应发专属套路 anim id 'bong:guangbo_ticao'，实际 '{ANIM_GUANGBO_TICAO}'"
+        );
+        assert_ne!(
+            ANIM_GUANGBO_TICAO, ANIM_GUARD_RAISE,
+            "广播体操不得复用 guard_raise（举臂格挡）——那是'只动一下'的根因"
+        );
     }
 
     #[test]
