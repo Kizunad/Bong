@@ -439,9 +439,9 @@ fn cast_sword_attack(
     target: Option<Entity>,
     technique: SwordTechnique,
 ) -> CastResult {
-    let Some(target) = target else {
-        return rejected(CastRejectReason::InvalidTarget);
-    };
+    // 去掉"目标无效"门禁：劈/刺是近战挥击，准星没对准实体也照常挥出（动画 / 粒子 / 体力 /
+    // 冷却照走）。命中走 AttackIntent —— target=Some 时正常命中，None 时 resolver 跳过即空挥。
+    // 不自动锁定、不改战斗解析、无误伤（用户选 Option B：只拆门禁）。
     let now_tick = current_tick(world);
     if is_on_cooldown(world, caster, slot, now_tick) {
         return rejected(CastRejectReason::OnCooldown);
@@ -466,7 +466,8 @@ fn cast_sword_attack(
     let qi_invest = drain_sword_qi_for_hit(world, caster);
     world.send_event(AttackIntent {
         attacker: caster,
-        target: Some(target),
+        // 直接透传 Option：有目标则命中，无目标则 resolver 跳过 = 空挥（不再拦截）。
+        target,
         issued_at_tick: now_tick,
         reach: AttackReach::new(profile.range, 0.0),
         qi_invest,
@@ -1119,8 +1120,10 @@ mod tests {
     }
 
     #[test]
-    fn cleave_without_target_still_rejects_invalid_target() {
-        // 回归：缺武器拒绝改 NoWeapon 后，无目标这条更早的分支仍报 InvalidTarget 不变。
+    fn cleave_without_target_no_longer_rejects_invalid_target() {
+        // Option B（去掉"目标无效"门禁）：无目标的劈砍不再报 InvalidTarget。
+        // 此 caster 无剑 → 现在落到更后的 NoWeapon 门，证明 no-target 门已彻底移除
+        // （而非仍把"准星没对准"当目标无效拦下）。
         let mut app = App::new();
         let caster = app
             .world_mut()
@@ -1129,12 +1132,64 @@ mod tests {
 
         let result = cast_sword_cleave(app.world_mut(), caster, 0, None);
 
-        assert_eq!(
+        assert_ne!(
             result,
             CastResult::Rejected {
                 reason: CastRejectReason::InvalidTarget
             },
-            "无目标应仍报 InvalidTarget（早于 has_sword 检查），实际 {result:?}"
+            "无目标近战不应再被'目标无效'拦截（Option B 拆门禁），实际 {result:?}"
+        );
+        assert_eq!(
+            result,
+            CastResult::Rejected {
+                reason: CastRejectReason::NoWeapon
+            },
+            "无剑时应落到 NoWeapon 门（no-target 门已移除，后续门照常），实际 {result:?}"
+        );
+    }
+
+    #[test]
+    fn sword_swing_without_target_air_swings_started_not_rejected() {
+        // Option B 核心行为：持剑挥击但准星没对准实体（target=None）→ 照常挥出（Started），
+        // 动画 / 体力 / 冷却照走、AttackIntent 以 None 目标发出（resolver 跳过 = 空挥，不命中、
+        // 不误伤）。不再被"目标无效"拦。
+        use crate::combat::weapon::{EquipSlot, Weapon, WeaponKind};
+
+        let mut app = App::new();
+        app.add_event::<AttackIntent>();
+        let caster = app
+            .world_mut()
+            .spawn((
+                known(SWORD_CLEAVE_SKILL_ID, 0.5),
+                Weapon {
+                    slot: EquipSlot::MainHand,
+                    instance_id: 1,
+                    template_id: "test_sword".to_string(),
+                    weapon_kind: WeaponKind::Sword,
+                    base_attack: 10.0,
+                    quality_tier: 0,
+                    durability: 100.0,
+                    durability_max: 100.0,
+                },
+            ))
+            .id();
+
+        let result = cast_sword_cleave(app.world_mut(), caster, 0, None);
+
+        assert!(
+            matches!(result, CastResult::Started { .. }),
+            "持剑无目标挥击应照常挥出 Started（空挥），实际 {result:?}"
+        );
+        // 确实发了一条 AttackIntent，且 target=None（空挥：resolver 会跳过、不命中）。
+        let events = app.world().resource::<Events<AttackIntent>>();
+        let intent = events
+            .iter_current_update_events()
+            .next()
+            .expect("无目标挥击仍应发 AttackIntent（命中走 resolver，None 则空挥）");
+        assert_eq!(intent.attacker, caster);
+        assert_eq!(
+            intent.target, None,
+            "空挥的 AttackIntent.target 必须是 None（resolver 跳过即不命中，无误伤）"
         );
     }
 
