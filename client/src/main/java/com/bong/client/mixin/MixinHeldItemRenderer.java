@@ -1,6 +1,8 @@
 package com.bong.client.mixin;
 
 import com.bong.client.block.BlockVanillaIconMap;
+import com.bong.client.combat.EquippedShield;
+import com.bong.client.combat.EquippedShieldStore;
 import com.bong.client.combat.EquippedWeapon;
 import com.bong.client.combat.SkillBarEntry;
 import com.bong.client.combat.SkillBarStore;
@@ -9,6 +11,7 @@ import com.bong.client.inventory.model.EquipSlotType;
 import com.bong.client.inventory.model.InventoryItem;
 import com.bong.client.inventory.state.InventoryStateStore;
 import com.bong.client.lingtian.HoeVanillaIconMap;
+import com.bong.client.weapon.ShieldVanillaIconMap;
 import com.bong.client.weapon.WeaponVanillaIconMap;
 
 import net.minecraft.client.MinecraftClient;
@@ -70,6 +73,16 @@ public abstract class MixinHeldItemRenderer {
         if (bongOff != null && this.offHand.isEmpty()) {
             ItemStack fake = WeaponVanillaIconMap.createStackFor(bongOff.templateId());
             if (fake != null) this.offHand = fake;
+        }
+
+        // #3 手持盾无盾模型：off_hand 盾走独立 EquippedShieldStore（盾非武器），此前 FPV 渲染
+        // 链只读 WeaponEquippedStore → off_hand 恒空 → 盾不显。无 off_hand 武器时补注入盾 fake stack。
+        if (bongOff == null && this.offHand.isEmpty()) {
+            EquippedShield shield = EquippedShieldStore.snapshot();
+            if (shield != null) {
+                ItemStack fake = ShieldVanillaIconMap.createStackFor(shield.templateId());
+                if (fake != null) this.offHand = fake;
+            }
         }
 
         if (bongMain == null && this.mainHand.isEmpty()) {

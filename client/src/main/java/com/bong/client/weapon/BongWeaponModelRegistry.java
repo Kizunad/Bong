@@ -43,6 +43,17 @@ public final class BongWeaponModelRegistry {
         "pickaxe_iron"
     );
 
+    /**
+     * plan-shield-block-v1 后续修复（#3 手持盾无盾模型）：盾牌也走本注册表的 fake-stack +
+     * SML 劫持渲染链。盾牌语义非武器（state 走 {@link com.bong.client.combat.EquippedShieldStore}），
+     * 但「手持物 3D 模型」与武器/工具同一条渲染管线，故宿主 item / OBJ 映射统一收口此处，
+     * 避免再开第二个 SML scope 来源导致接线孤岛。
+     */
+    public static final Set<String> SHIELD_TEMPLATE_IDS = Set.of(
+        "wooden_shield",
+        "bone_shield"
+    );
+
     private static final Map<String, Entry> ENTRIES;
     private static final Set<String> VANILLA_MODEL_PATHS;
 
@@ -131,6 +142,21 @@ public final class BongWeaponModelRegistry {
             () -> Items.IRON_PICKAXE,
             "item/iron_pickaxe",
             "bong:models/item/pickaxe_iron/pickaxe_iron.obj"
+        ));
+        // 盾牌（#3）：宿主选用 Bong 自有 item 体系里不出现的稀有 vanilla item，
+        // 与武器同理（vanilla inventory 恒空，宿主 item 不会真实渲染，无碰撞风险）。
+        // 木盾 → NAUTILUS_SHELL，骨盾 → PHANTOM_MEMBRANE。
+        entries.put("wooden_shield", new Entry(
+            "wooden_shield",
+            () -> Items.NAUTILUS_SHELL,
+            "item/nautilus_shell",
+            "bong:models/item/wooden_shield/wooden_shield.obj"
+        ));
+        entries.put("bone_shield", new Entry(
+            "bone_shield",
+            () -> Items.PHANTOM_MEMBRANE,
+            "item/phantom_membrane",
+            "bong:models/item/bone_shield/bone_shield.obj"
         ));
         ENTRIES = Collections.unmodifiableMap(entries);
         VANILLA_MODEL_PATHS = ENTRIES.values().stream()

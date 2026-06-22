@@ -1,0 +1,19 @@
+# wooden_shield materials -- gen_shield_models.py
+
+newmtl wooden_shield_face
+Ka 1.000000 1.000000 1.000000
+Kd 0.830000 0.770000 0.660000
+Ks 0.000000 0.000000 0.000000
+Ns 10.000000
+d 1.000000
+illum 1
+map_Kd bong:item/wooden_shield/0
+
+newmtl wooden_shield_boss
+Ka 1.000000 1.000000 1.000000
+Kd 0.600000 0.600000 0.630000
+Ks 0.000000 0.000000 0.000000
+Ns 10.000000
+d 1.000000
+illum 1
+map_Kd bong:item/wooden_shield/1

@@ -194,6 +194,34 @@ public class WeaponEquippedHandlerTest {
     }
 
     @Test
+    void offHandShield_afterOffHandWeapon_clearsWeaponStore() {
+        // #3 手持盾无盾模型回归：off_hand 先持武器，再换盾 → 必须清空 WeaponEquippedStore 的
+        // off_hand 武器，否则手持物渲染 mixin 的 bongOff!=null 分支会渲染残留武器、盾分支
+        // (bongOff==null) 永不触发 → 盾不显。
+        new WeaponEquippedHandler().handle(parseEnvelope("""
+            {"v":1,"type":"weapon_equipped","slot":"off_hand",
+             "weapon":{"instance_id":7,"template_id":"bone_dagger",
+                       "weapon_kind":"dagger","durability_current":120.0,
+                       "durability_max":120.0,"quality_tier":0}}
+            """));
+        assertNotNull(WeaponEquippedStore.get("off_hand"),
+            "前置：off_hand 应先持有武器 bone_dagger");
+
+        new WeaponEquippedHandler().handle(parseEnvelope("""
+            {"v":1,"type":"weapon_equipped","slot":"off_hand",
+             "weapon":{"instance_id":11,"template_id":"wooden_shield",
+                       "weapon_kind":"shield","durability_current":100.0,
+                       "durability_max":100.0,"quality_tier":0}}
+            """));
+
+        assertNull(WeaponEquippedStore.get("off_hand"),
+            "换盾后 off_hand 武器槽必须清空（否则渲染残留武器而非盾）");
+        assertNotNull(EquippedShieldStore.snapshot(),
+            "换盾后 EquippedShieldStore 应持有 wooden_shield");
+        assertEquals("wooden_shield", EquippedShieldStore.snapshot().templateId());
+    }
+
+    @Test
     void clearOffHand_alsosClearsShieldStore() {
         new WeaponEquippedHandler().handle(parseEnvelope("""
             {"v":1,"type":"weapon_equipped","slot":"off_hand",

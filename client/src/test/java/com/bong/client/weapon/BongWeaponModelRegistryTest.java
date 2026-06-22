@@ -128,6 +128,63 @@ class BongWeaponModelRegistryTest {
         }
     }
 
+    // ─── #3 手持盾无盾模型：盾牌也走本注册表 fake-stack + SML 劫持渲染链 ───
+    //
+    // 锁住：盾牌模板齐备、宿主 item model 路径正确、OBJ/MTL/贴图资源到位、且宿主路径进入
+    // SML vanillaModelPaths()——后者是「SML 真去劫持该 vanilla item model」的唯一开关，缺它
+    // fake stack 会渲染成原版宿主 item（nautilus_shell/phantom_membrane）而非盾牌（接线孤岛）。
+    // hostItem()（→ Items.X）触原版注册表需 MC Bootstrap，client 测试环境没有（见
+    // BlockVanillaIconMapTest），故真 ItemStack 合成由 e2e/真游戏覆盖；此处只锁注册表数据 + 资源。
+
+    @Test
+    void shieldTemplateIdsSetMatchesRegisteredShields() {
+        Set<String> expected = Set.of("wooden_shield", "bone_shield");
+        assertEquals(expected, BongWeaponModelRegistry.SHIELD_TEMPLATE_IDS,
+            "expected SHIELD_TEMPLATE_IDS=" + expected + ", actual=" + BongWeaponModelRegistry.SHIELD_TEMPLATE_IDS);
+        for (String templateId : BongWeaponModelRegistry.SHIELD_TEMPLATE_IDS) {
+            assertTrue(BongWeaponModelRegistry.get(templateId).isPresent(),
+                "expected " + templateId + " in registry because it's in SHIELD_TEMPLATE_IDS, actual isPresent=false");
+        }
+    }
+
+    @Test
+    void shieldRegistryMapsToExpectedHostsAndObjPaths() {
+        BongWeaponModelRegistry.Entry wooden = BongWeaponModelRegistry.get("wooden_shield").orElseThrow();
+        assertEquals("item/nautilus_shell", wooden.vanillaModelPath(), "木盾宿主 model 路径");
+        assertEquals("bong:models/item/wooden_shield/wooden_shield.obj", wooden.bongObjModelPath(), "木盾 OBJ 路径");
+
+        BongWeaponModelRegistry.Entry bone = BongWeaponModelRegistry.get("bone_shield").orElseThrow();
+        assertEquals("item/phantom_membrane", bone.vanillaModelPath(), "骨盾宿主 model 路径");
+        assertEquals("bong:models/item/bone_shield/bone_shield.obj", bone.bongObjModelPath(), "骨盾 OBJ 路径");
+    }
+
+    @Test
+    void shieldResourcePathsExistAndHostJsonPointsAtRegistryObj() throws IOException {
+        for (String templateId : BongWeaponModelRegistry.SHIELD_TEMPLATE_IDS) {
+            BongWeaponModelRegistry.Entry entry = BongWeaponModelRegistry.get(templateId).orElseThrow();
+            assertTrue(entry.bongObjModelPath() != null, templateId + " 盾必须有 OBJ（否则不进 SML scope）");
+            JsonObject hostJson = readHostJson(entry);
+
+            assertEquals("sml:builtin/obj", hostJson.get("parent").getAsString(), templateId + " host parent");
+            assertEquals(entry.bongObjModelPath(), hostJson.get("model").getAsString(), templateId + " host model");
+            assertTrue(Files.isRegularFile(bongResourcePath(entry.bongObjModelPath())), templateId + " OBJ missing");
+            assertTrue(Files.isRegularFile(bongResourcePath(mtlPath(entry.bongObjModelPath()))), templateId + " MTL missing");
+            assertTrue(Files.isDirectory(textureDir(templateId)), templateId + " texture dir missing");
+            assertTrue(hasPngTexture(textureDir(templateId)), templateId + " texture dir has no PNG");
+        }
+    }
+
+    @Test
+    void shieldHostsAreInSmlVanillaModelScope() {
+        // 关键接线断言：SML 仅劫持 LOAD_SCOPE 声明过的 vanilla model（见 WeaponRenderBootstrap）。
+        // 盾的宿主路径必须出现在 vanillaModelPaths()，否则盾 fake stack 渲染成原版海螺壳/幻翼膜。
+        Set<String> paths = BongWeaponModelRegistry.vanillaModelPaths();
+        assertTrue(paths.contains("item/nautilus_shell"),
+            "木盾宿主 item/nautilus_shell 必须在 SML vanillaModelPaths 内，实际=" + paths);
+        assertTrue(paths.contains("item/phantom_membrane"),
+            "骨盾宿主 item/phantom_membrane 必须在 SML vanillaModelPaths 内，实际=" + paths);
+    }
+
     @Test
     void vanillaModelPathSetIncludesOnlyObjBackedHosts() {
         Set<String> paths = BongWeaponModelRegistry.vanillaModelPaths();
