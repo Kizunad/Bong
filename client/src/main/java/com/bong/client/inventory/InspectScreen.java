@@ -371,19 +371,23 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         Object[] duXuBtn = buildActionButton("渡虚劫", this::dispatchStartDuXuIfEligible);
         Object[] forgeRateBtn = buildActionButton("淬炼·流速", () -> {
             var sel = bodyInspect.selectedChannel();
-            if (sel != null) {
-                com.bong.client.network.ClientRequestSender.sendForgeRequest(
-                    com.bong.client.network.ClientRequestProtocol.toMeridianId(sel),
-                    com.bong.client.network.ClientRequestProtocol.ForgeAxis.Rate);
+            if (sel == null) {
+                showActionToast("先选中一条经脉", ACTION_TOAST_WARN);
+                return;
             }
+            com.bong.client.network.ClientRequestSender.sendForgeRequest(
+                com.bong.client.network.ClientRequestProtocol.toMeridianId(sel),
+                com.bong.client.network.ClientRequestProtocol.ForgeAxis.Rate);
         });
         Object[] forgeCapBtn = buildActionButton("淬炼·容量", () -> {
             var sel = bodyInspect.selectedChannel();
-            if (sel != null) {
-                com.bong.client.network.ClientRequestSender.sendForgeRequest(
-                    com.bong.client.network.ClientRequestProtocol.toMeridianId(sel),
-                    com.bong.client.network.ClientRequestProtocol.ForgeAxis.Capacity);
+            if (sel == null) {
+                showActionToast("先选中一条经脉", ACTION_TOAST_WARN);
+                return;
             }
+            com.bong.client.network.ClientRequestSender.sendForgeRequest(
+                com.bong.client.network.ClientRequestProtocol.toMeridianId(sel),
+                com.bong.client.network.ClientRequestProtocol.ForgeAxis.Capacity);
         });
         var setTargetLabel = (LabelComponent) setTargetBtn[1];
         var duXuLabel = (LabelComponent) duXuBtn[1];
@@ -1678,6 +1682,12 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     boolean dispatchStartDuXuIfEligible() {
         MeridianBody body = bodyInspect == null ? MeridianStateStore.snapshot() : bodyInspect.meridianBody();
         if (!isDuXuEligible(body)) {
+            // 灰态按钮仍可点击（颜色仅 cosmetic），被拦时必须给玩家可见反馈，
+            // 与 dispatchSetMeridianTarget 的 showActionToast 一致。按未满足的具体条件分流文案。
+            String reason = (body == null || !"Spirit".equals(body.realm()))
+                ? "渡虚劫需通灵境"
+                : "渡虚劫需打通全部经脉";
+            showActionToast(reason, ACTION_TOAST_WARN);
             com.bong.client.BongClient.LOGGER.warn(
                 "[bong][inspect] start_du_xu skipped: requires Spirit realm and all 20 meridians opened");
             return false;

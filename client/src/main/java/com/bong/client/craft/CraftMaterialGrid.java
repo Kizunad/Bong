@@ -22,7 +22,9 @@ public final class CraftMaterialGrid {
     private final CraftProgressBar progressBar;
 
     public CraftMaterialGrid() {
-        root = Containers.verticalFlow(Sizing.fill(100), Sizing.fill(100));
+        // 水平用固定 MID_W（非 fill(100)）：作为 CraftScreen columns 的中间子，fill(100) 会占满父宽
+        // 把右侧 outputPreview 顶出可视区（owo fill 语义见 CraftScreenLayout.MID_W 注释）。
+        root = Containers.verticalFlow(Sizing.fixed(CraftScreenLayout.MID_W), Sizing.fill(100));
         root.padding(Insets.of(4));
         root.gap(4);
         root.horizontalAlignment(HorizontalAlignment.CENTER);
