@@ -442,6 +442,46 @@ mod tests {
         );
     }
 
+    #[test]
+    fn tool_equipped_off_hand_also_emits_tool_view() {
+        // 工具两手都要能装备渲染（用户点名"右手左手都需要"）：off_hand 装 tool 同样下发 tool view。
+        let mut app = App::new();
+        app.insert_resource(ItemRegistry::from_map(HashMap::from([(
+            "stone_pickaxe".to_string(),
+            tool_template(),
+        )])));
+        app.add_systems(Update, emit_weapon_equipped_payloads);
+
+        let (client_bundle, mut helper) = create_mock_client("Miner");
+        let mut inventory = empty_inventory();
+        inventory
+            .equipped
+            .insert("off_hand".to_string(), tool_instance(9));
+        app.world_mut().spawn((client_bundle, inventory));
+
+        app.update();
+        flush_client_packets(&mut app);
+
+        let frames = collect_server_data_frames(&mut helper);
+        let (_, payload) = frames
+            .iter()
+            .find(|(_, p)| {
+                p.get("type").and_then(|v| v.as_str()) == Some("weapon_equipped")
+                    && p.get("slot").and_then(|v| v.as_str()) == Some("off_hand")
+            })
+            .expect("工具装副手应下发 off_hand weapon_equipped payload");
+        let weapon = payload.get("weapon").expect("off_hand 工具 view 应存在");
+        assert_eq!(
+            weapon.get("weapon_kind").and_then(|v| v.as_str()),
+            Some("tool"),
+            "副手 tool 也应 weapon_kind=tool（两手对称）"
+        );
+        assert_eq!(
+            weapon.get("template_id").and_then(|v| v.as_str()),
+            Some("stone_pickaxe")
+        );
+    }
+
     fn empty_inventory() -> PlayerInventory {
         PlayerInventory {
             revision: InventoryRevision(1),

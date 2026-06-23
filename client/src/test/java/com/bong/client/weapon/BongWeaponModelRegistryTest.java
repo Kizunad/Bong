@@ -92,6 +92,9 @@ class BongWeaponModelRegistryTest {
         // 镐/斧/锄白嫖 vanilla 模型：vanillaModelPath 指向原版 item + bongObjModelPath=null
         // （不走 SML OBJ 劫持，宿主 item 即模型）。server 现对 category=tool 下发 tool view，
         // 这些 tool 才能在 WeaponEquippedStore 渲染出手持模型（修前工具手持完全无模型）。
+        // 注：只断言 vanillaModelPath + bongObjModelPath（字符串）。不断言 entry.hostItem()——
+        // 单测无 Minecraft bootstrap，Items.* 未初始化、supplier 取不到真 Item（既有 registry
+        // 测试同样只校验字符串路径）。host item 正确性由真机渲染兜底。
         record Case(String id, String vanillaPath) {}
         Case[] cases = {
             new Case("stone_pickaxe", "item/stone_pickaxe"),
