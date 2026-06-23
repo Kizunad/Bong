@@ -71,6 +71,7 @@ mod tests {
                     &cultivation,
                     &deps,
                     None,
+                    None, // meridian_sys（dugu-poison opened gate；测试无 MeridianSystem 传 None）
                     &cooldowns,
                     entity,
                     3.0,
@@ -125,6 +126,7 @@ mod tests {
                 &cultivation,
                 &deps,
                 None,
+                None, // meridian_sys（dugu-poison opened gate；测试无 MeridianSystem 传 None）
                 &cooldowns,
                 entity,
                 100,
@@ -145,6 +147,7 @@ mod tests {
                     &cultivation,
                     &deps,
                     None,
+                    None, // meridian_sys（dugu-poison opened gate；测试无 MeridianSystem 传 None）
                     &cooldowns,
                     entity,
                     3.0,
@@ -235,6 +238,7 @@ mod tests {
                     &cultivation,
                     &deps,
                     None,
+                    None, // meridian_sys（dugu-poison opened gate；测试无 MeridianSystem 传 None）
                     &cooldowns,
                     entity,
                     3.0,
@@ -681,6 +685,7 @@ mod tests {
                     &cultivation,
                     &deps,
                     None,
+                    None, // meridian_sys（dugu-poison opened gate；测试无 MeridianSystem 传 None）
                     &cooldowns,
                     entity,
                     3.0,
