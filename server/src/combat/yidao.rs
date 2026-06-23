@@ -1026,6 +1026,11 @@ fn apply_mass_meridian_repair(
                 emit_qi_transfer(world, caster, patient, qi_per_patient);
             }
             AcupointRepairOutcome::Failed => {
+                // 守恒修复 (bughunt r6 #SKILL-GATE-1): 群体修复失败分支与单目标失败路径同类 bug。
+                // debit_caster_qi 在循环前已按 qi_max 整体扣除，qi_per_patient 是每患者预分配份额。
+                // 失败路径既未转给患者，也未归还 zone，导致该份额静默蒸发。
+                // 与 apply_meridian_repair line 827 的修复一致：归还 zone。
+                release_failed_repair_qi_to_zone(world, caster, qi_per_patient);
                 out.failure_count += 1;
             }
             AcupointRepairOutcome::NotSevered | AcupointRepairOutcome::AlreadyDead => {}
@@ -2414,6 +2419,324 @@ mod tests {
         assert_eq!(
             healer_npc_decision(0.1, 1, 80.0, true, false, true).action,
             HealerNpcAction::LifeExtension
+        );
+    }
+
+    /// 守恒红线 (bughunt r6 #SKILL-GATE-1): 群体经脉修复全员失败时，
+    /// debit_caster_qi 预扣的全部真元必须通过 release_failed_repair_qi_to_zone 归还 zone，
+    /// 不允许任何份额静默蒸发。
+    ///
+    /// 测试策略：找一个让三名患者全部失败的 tick，验证 zone.spirit_qi 从 0 升到 >0，
+    /// 且 ReleaseToZone QiTransfer 总量等于施放者实际被扣除的真元。
+    ///
+    /// 注意：
+    ///   (a) 注入 ZoneRegistry 并将 spawn zone 清零，避免近满 zone 引发 zone+overflow 拆账，
+    ///       确保整额落入 zone，spirit_qi==0→>0 断言成立。
+    ///   (b) 施放者不需要 CurrentDimension 组件：release_failed_repair_qi_to_zone 内部
+    ///       默认 DimensionKind::Overworld，与 fallback spawn zone 维度一致。
+    #[test]
+    fn mass_meridian_repair_all_fail_releases_qi_per_patient_to_zone() {
+        use crate::world::zone::ZoneRegistry;
+
+        let mut app = app_with_yidao();
+        // (a) 注入清零的 ZoneRegistry，保证整额落入 zone
+        app.insert_resource(ZoneRegistry::fallback());
+        app.world_mut()
+            .resource_mut::<ZoneRegistry>()
+            .find_zone_mut("spawn")
+            .unwrap()
+            .spirit_qi = 0.0;
+
+        let medic = spawn_medic(&mut app, Realm::Void); // Position=[0,64,0] 在 spawn zone 内；(b) 无 CurrentDimension，默认 Overworld
+        let patients: Vec<Entity> = [MeridianId::Lung, MeridianId::Heart, MeridianId::Kidney]
+            .iter()
+            .map(|&meridian| {
+                let patient = spawn_patient(&mut app);
+                let mut severed = MeridianSeveredPermanent::default();
+                severed.insert(
+                    meridian,
+                    crate::cultivation::meridian::severed::SeveredSource::CombatWound,
+                    1,
+                );
+                app.world_mut().entity_mut(patient).insert(severed);
+                patient
+            })
+            .collect();
+
+        // 找一个让所有三名患者都失败的 tick
+        let threshold = mass_meridian_repair(
+            local_qi_density_for_mass_repair(app.world(), medic),
+            Realm::Void,
+            0.0,
+            true,
+        )
+        .unwrap()
+        .success_threshold;
+        let all_fail_tick = (0..10_000)
+            .find(|tick| {
+                patients.iter().all(|&patient| {
+                    // 失败 = roll >= threshold
+                    // 找 MeridianId 对应 patient 比较麻烦，用 Lung/Heart/Kidney 各取各的 roll
+                    let meridians = [MeridianId::Lung, MeridianId::Heart, MeridianId::Kidney];
+                    meridians.iter().all(|&m| {
+                        deterministic_success_roll(medic, patient, m, *tick) >= threshold
+                    })
+                })
+            })
+            .expect("全员失败 tick 未找到（roll space 足够大，理论必有）");
+
+        let qi_before = app.world().get::<Cultivation>(medic).unwrap().qi_current;
+
+        let outcome = apply_mass_meridian_repair(
+            app.world_mut(),
+            medic,
+            &patients,
+            0.0,
+            true,
+            all_fail_tick,
+        );
+
+        assert_eq!(
+            outcome.success_count, 0,
+            "前置：本 tick 应无成功修复"
+        );
+        assert_eq!(
+            outcome.failure_count,
+            patients.len() as u32,
+            "前置：所有患者应失败（failure_count 应等于 patients.len()）"
+        );
+
+        let qi_after = app.world().get::<Cultivation>(medic).unwrap().qi_current;
+        let deducted = qi_before - qi_after;
+        assert!(
+            deducted > 0.0,
+            "施放者应被扣除真元（实际扣除 {deducted}）"
+        );
+
+        // 守恒红线：ReleaseToZone 事件总量必须等于扣除量
+        let transfers: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<QiTransfer>>()
+            .drain()
+            .collect();
+        let released: f64 = transfers
+            .iter()
+            .filter(|t| t.reason == QiTransferReason::ReleaseToZone)
+            .map(|t| t.amount)
+            .sum();
+        assert!(
+            (released - deducted).abs() < 1e-6,
+            "守恒红线：群体修复全员失败，扣除 {deducted} 真元，\
+             ReleaseToZone 总量应等于扣除量（实际 {released}）——\
+             若 released==0 说明 Failed 分支未调用 release_failed_repair_qi_to_zone"
+        );
+
+        // zone.spirit_qi 应已从 0 上升（命中 zone 而非仅走 overflow）
+        let zone_after = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name("spawn")
+            .map(|z| z.spirit_qi)
+            .unwrap_or(0.0);
+        assert!(
+            zone_after > 0.0,
+            "回灌必须实际命中 zone（spirit_qi 从 0 上升）；实际 {zone_after}——\
+             若为 0 说明走了 overflow 兜底"
+        );
+
+        // 患者不应获得任何 qi
+        for (i, patient) in patients.iter().enumerate() {
+            assert_eq!(
+                app.world().get::<Cultivation>(*patient).unwrap().qi_current,
+                0.0,
+                "失败路径患者 #{i} 不应获得 qi"
+            );
+        }
+    }
+
+    /// 守恒红线 (bughunt r6 #SKILL-GATE-1): 群体修复部分成功时，
+    /// 失败患者的 qi_per_patient 份额必须归还 zone，成功患者的份额转给患者。
+    /// 总真元守恒：deducted == qi_transferred_to_patients + released_to_zone。
+    #[test]
+    fn mass_meridian_repair_partial_fail_conserves_qi() {
+        use crate::world::zone::ZoneRegistry;
+
+        let mut app = app_with_yidao();
+        app.insert_resource(ZoneRegistry::fallback());
+        app.world_mut()
+            .resource_mut::<ZoneRegistry>()
+            .find_zone_mut("spawn")
+            .unwrap()
+            .spirit_qi = 0.0;
+
+        let medic = spawn_medic(&mut app, Realm::Void);
+        let patients: Vec<(Entity, MeridianId)> = [
+            MeridianId::Lung,
+            MeridianId::Heart,
+            MeridianId::Kidney,
+        ]
+        .iter()
+        .map(|&meridian| {
+            let patient = spawn_patient(&mut app);
+            let mut severed = MeridianSeveredPermanent::default();
+            severed.insert(
+                meridian,
+                crate::cultivation::meridian::severed::SeveredSource::CombatWound,
+                1,
+            );
+            app.world_mut().entity_mut(patient).insert(severed);
+            (patient, meridian)
+        })
+        .collect();
+
+        let threshold = mass_meridian_repair(
+            local_qi_density_for_mass_repair(app.world(), medic),
+            Realm::Void,
+            0.0,
+            true,
+        )
+        .unwrap()
+        .success_threshold;
+
+        // 找一个恰好部分成功（1 或 2 人成功）的 tick
+        let partial_tick = (0..10_000)
+            .find(|tick| {
+                let success_count = patients
+                    .iter()
+                    .filter(|(patient, meridian)| {
+                        deterministic_success_roll(medic, *patient, *meridian, *tick) < threshold
+                    })
+                    .count();
+                (1..patients.len()).contains(&success_count)
+            })
+            .expect("部分成功 tick 未找到");
+
+        let patient_entities: Vec<Entity> = patients.iter().map(|(p, _)| *p).collect();
+        let qi_before = app.world().get::<Cultivation>(medic).unwrap().qi_current;
+
+        let outcome = apply_mass_meridian_repair(
+            app.world_mut(),
+            medic,
+            &patient_entities,
+            0.0,
+            true,
+            partial_tick,
+        );
+
+        assert!(
+            outcome.success_count > 0 && outcome.failure_count > 0,
+            "前置：partial_tick 应产生部分成功 + 部分失败（success={}, failure={}）",
+            outcome.success_count,
+            outcome.failure_count
+        );
+
+        let qi_after = app.world().get::<Cultivation>(medic).unwrap().qi_current;
+        let deducted = qi_before - qi_after;
+        assert!(deducted > 0.0, "施放者应被扣除真元");
+
+        let transfers: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<QiTransfer>>()
+            .drain()
+            .collect();
+
+        // 转给患者的真元
+        let qi_per_patient = 300.0 / patient_entities.len() as f64;
+        let transferred_to_patients = qi_per_patient * f64::from(outcome.success_count);
+
+        // 归还 zone 的真元（失败份额）
+        let released_to_zone: f64 = transfers
+            .iter()
+            .filter(|t| t.reason == QiTransferReason::ReleaseToZone)
+            .map(|t| t.amount)
+            .sum();
+
+        // 失败份额预期总量
+        let expected_released = qi_per_patient * f64::from(outcome.failure_count);
+
+        assert!(
+            (released_to_zone - expected_released).abs() < 1e-6,
+            "失败份额应全部归还 zone：预期 {expected_released}，实际 {released_to_zone}\
+             （failure_count={}，qi_per_patient={qi_per_patient}）",
+            outcome.failure_count
+        );
+
+        // 总守恒断言
+        let total_accounted = transferred_to_patients + released_to_zone;
+        assert!(
+            (total_accounted - deducted).abs() < 1e-6,
+            "总守恒：转给患者 {transferred_to_patients} + 归还 zone {released_to_zone} \
+             应等于扣除总量 {deducted}（实际合计 {total_accounted}）"
+        );
+    }
+
+    /// 正向路径：群体修复全员成功时，不应有任何 ReleaseToZone 事件（成功路径走 emit_qi_transfer 到患者）。
+    #[test]
+    fn mass_meridian_repair_all_success_emits_no_release_to_zone() {
+        let mut app = app_with_yidao();
+        // 高 mastery=100 → success_threshold 极低，tick=0 时几乎必然全部成功
+        let medic = spawn_medic(&mut app, Realm::Void);
+        app.world_mut().entity_mut(medic).insert(HealingMastery {
+            mass_meridian_repair: 100.0,
+            ..Default::default()
+        });
+        let patients: Vec<Entity> = [MeridianId::Lung, MeridianId::Heart, MeridianId::Kidney]
+            .iter()
+            .map(|&meridian| {
+                let patient = spawn_patient(&mut app);
+                let mut severed = MeridianSeveredPermanent::default();
+                severed.insert(
+                    meridian,
+                    crate::cultivation::meridian::severed::SeveredSource::CombatWound,
+                    1,
+                );
+                app.world_mut().entity_mut(patient).insert(severed);
+                patient
+            })
+            .collect();
+
+        // 找全员成功 tick：mastery=100 时 success_threshold=0.99（Void+peace），99% 成功。
+        // 搜索 10_000 ticks 内必能找到全员成功的 tick（3 名患者各独立，期望 ~100 ticks 内命中）。
+        // threshold 先计算好再闭包捕获，避免临时变量跨借用。
+        let success_threshold_for_all = mass_meridian_repair(
+            local_qi_density_for_mass_repair(app.world(), medic),
+            Realm::Void,
+            100.0,
+            true,
+        )
+        .unwrap()
+        .success_threshold;
+        let all_success_tick = (0..10_000u64)
+            .find(|&tick| {
+                let meridians = [MeridianId::Lung, MeridianId::Heart, MeridianId::Kidney];
+                patients.iter().enumerate().all(|(i, &patient)| {
+                    deterministic_success_roll(medic, patient, meridians[i], tick)
+                        < success_threshold_for_all
+                })
+            })
+            .expect("全员成功 tick 未找到（mastery=100 success_threshold=0.99，万 tick 内期望 ~10^6 次命中）");
+
+        apply_mass_meridian_repair(
+            app.world_mut(),
+            medic,
+            &patients,
+            100.0,
+            true,
+            all_success_tick,
+        );
+
+        let transfers: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<QiTransfer>>()
+            .drain()
+            .collect();
+        let release_count = transfers
+            .iter()
+            .filter(|t| t.reason == QiTransferReason::ReleaseToZone)
+            .count();
+        assert_eq!(
+            release_count, 0,
+            "全员成功路径不应产生 ReleaseToZone 事件（成功份额已转给患者），实际有 {release_count} 条"
         );
     }
 }
