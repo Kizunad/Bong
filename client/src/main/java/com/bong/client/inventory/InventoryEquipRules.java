@@ -241,7 +241,11 @@ public final class InventoryEquipRules {
         String normalized = itemId.toLowerCase(java.util.Locale.ROOT);
         if (normalized.contains("staff")) return WeaponKind.STAFF;
         if (normalized.contains("spear")) return WeaponKind.SPEAR;
-        if (normalized.contains("dagger") || normalized.contains("needle") || normalized.contains("spike")) {
+        if (normalized.contains("dagger") || normalized.contains("needle")
+            || normalized.contains("spike") || normalized.contains("knife")) {
+            // "knife" → 短刃归 DAGGER：stone_knife（workbench dagger，手搓起点可制作）此前不在
+            // WEAPON_KIND_BY_ITEM_ID、fallback 也不含 "knife" → weaponKindOf=null → canEquip(MAIN_HAND)=false
+            // → UI 拦截拖入手槽。补 "knife" 子串放行，覆盖未来同类短刃命名。
             return WeaponKind.DAGGER;
         }
         if (normalized.contains("saber")) return WeaponKind.SABER;

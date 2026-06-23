@@ -132,6 +132,23 @@ class InventoryEquipRulesTest {
     }
 
     @Test
+    void stoneKnifeCanEquipMainAndOffHandViaKnifeFallback() {
+        // 审计 A 组：stone_knife（workbench dagger，手搓起点可制作）此前不在 WEAPON_KIND_BY_ITEM_ID、
+        // weaponKindOf fallback 也不含 "knife" → 返 null → canEquip(MAIN_HAND)=false → UI 拦截拖入手槽。
+        // fallback 补 contains("knife")→DAGGER 后应放行主手 + 副手（dagger 走 OFF_HAND 分支）。
+        InventoryItem knife = item(8008L, "stone_knife", 1, 1);
+
+        assertTrue(InventoryEquipRules.isWeapon(knife),
+            "期望 isWeapon(stone_knife)=true（经 \"knife\" fallback 判为 DAGGER），实际 false——检查 weaponKindOf");
+        assertTrue(InventoryEquipRules.canEquip(knife, EquipSlotType.MAIN_HAND, null, equipped()),
+            "期望 stone_knife 可装主手，实际被拒——weaponKindOf 未识别 \"knife\"");
+        assertTrue(InventoryEquipRules.canEquip(knife, EquipSlotType.OFF_HAND, null, equipped()),
+            "期望 stone_knife（DAGGER）可装副手（OFF_HAND 放行 dagger），实际被拒");
+        assertFalse(InventoryEquipRules.canPlaceIntoHotbar(knife),
+            "期望 stone_knife（武器）不进 hotbar，实际放行");
+    }
+
+    @Test
     void consumablesStayHotbarCompatible() {
         assertTrue(InventoryEquipRules.canPlaceIntoHotbar(item(3003L, "guyuan_pill", 1, 1)));
     }
