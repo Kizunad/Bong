@@ -163,10 +163,17 @@ public final class BongWeaponModelRegistry {
             "hoe_xuantie", () -> Items.NETHERITE_HOE, "item/netherite_hoe", null));
         entries.put("bao_chu", new Entry(
             "bao_chu", () -> Items.STONE_HOE, "item/stone_hoe", null));
+        // ── 以下 A 组止血条目（凡器/暗器/锻造剑/石刃）host 选择有【两种策略】，按段标注，勿混用 ──
+        //   策略①「白嫖原版」：vanillaModelPath **不在** vanillaModelPaths() 内（未被任何 OBJ 劫持）
+        //      → 渲染原版 item 本体。选 host 时**刻意避开已劫持路径**（item/iron_sword=iron_sword.obj、
+        //      item/bone=bone_dagger.obj 等），否则会渲染成他者 OBJ 而非原版 item。
+        //   策略②「借用劫持」：vanillaModelPath **正好是**某带 OBJ 条目的已劫持路径 → 故意复用那把 OBJ
+        //      当过渡模型（行尾标「借 xxx.obj」）。
+        //   两类全部 bongObjModelPath=null（不新增 SML scope）；成员关系由 BongWeaponModelRegistryTest
+        //   .borrowedHostsAreSmlManagedWhilePlainVanillaHostsAreNot 锁住，防 host 选错重蹈孤岛。
+        //
         // 采集异形凡器（plan-tools-v1，category=tool）：server 已对 category=Tool 下发 weapon_kind="tool"
-        // view，但此前缺注册表条目 → 手持空手。全部 bongObjModelPath=null 白嫖 vanilla 宿主止血，专属
-        // OBJ 留后续。宿主按外形挑选，且**刻意避开已被 SML 劫持的 vanilla 路径**（item/iron_sword=
-        // iron_sword.obj、item/bone=bone_dagger.obj 等），否则会渲染成被劫持的他者 OBJ 而非原版 item。
+        // view，但此前缺注册表条目 → 手持空手。下列前 5 件走策略①，bing_jia_shou_tao 走策略②；专属 OBJ 留后续。
         entries.put("cai_yao_dao", new Entry(
             "cai_yao_dao", () -> Items.SHEARS, "item/shears", null));            // 采药刀：薄刃/园艺剪
         entries.put("cao_lian", new Entry(
@@ -182,7 +189,8 @@ public final class BongWeaponModelRegistry {
             "bing_jia_shou_tao", () -> Items.LEATHER, "item/leather", null));
         // 暗器（materials.toml，category=weapon + [item.weapon] dagger）：weapon_spec 分支已下发 view，
         // 此前缺注册表 → 空手。bone_spike 在新手默认 loadout（default.toml:58），开局即触发，优先级最高。
-        // bone_spike 借用 bone_dagger.obj（item/bone 已被劫持）——骨制暗器复用骨刃外形合理。
+        // bone_spike 走策略②借用 bone_dagger.obj（item/bone 已被劫持，骨制暗器复用骨刃外形合理）；
+        // poison_needle/zhenyuan_mine 走策略①白嫖原版 stick/fire_charge。
         entries.put("bone_spike", new Entry(
             "bone_spike", () -> Items.BONE, "item/bone", null));                  // 骨刺：借 bone_dagger.obj
         entries.put("poison_needle", new Entry(
@@ -190,8 +198,8 @@ public final class BongWeaponModelRegistry {
         entries.put("zhenyuan_mine", new Entry(
             "zhenyuan_mine", () -> Items.FIRE_CHARGE, "item/fire_charge", null)); // 真元诡雷：爆裂物
         // 锻造剑（forge.toml，category=weapon）：weapon_spec 已下发 view，此前缺注册表 → 空手。
-        // 次品/粗坯统一白嫖原版石剑（造型更糙，契合 flawed）；正品青锋/灵锋借用 iron_sword.obj 基础剑型。
-        // 刻意不借用 feixuan/spirit/rusted 等命名灵剑 OBJ，以免与那几把特例剑撞脸；专属 OBJ 留后续。
+        // 次品/粗坯走策略①白嫖原版石剑（造型更糙，契合 flawed）；正品青锋/灵锋走策略②借用 iron_sword.obj
+        // 基础剑型。刻意不借用 feixuan/spirit/rusted 等命名灵剑 OBJ，以免与那几把特例剑撞脸；专属 OBJ 留后续。
         entries.put("iron_sword_flawed", new Entry(
             "iron_sword_flawed", () -> Items.STONE_SWORD, "item/stone_sword", null));
         entries.put("qing_feng_sword", new Entry(
