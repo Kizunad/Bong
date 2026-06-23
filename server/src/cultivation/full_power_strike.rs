@@ -8,7 +8,7 @@ use std::collections::HashSet;
 
 use valence::prelude::{
     bevy_ecs, App, Commands, Component, DVec3, Entity, Event, EventReader, EventWriter,
-    IntoSystemConfigs, Position, Query, Res, UniqueId, Update,
+    IntoSystemConfigs, Position, Query, Res, ResMut, UniqueId, Update,
 };
 
 use crate::combat::components::{Lifecycle, StatusEffects, WoundKind, Wounds};
@@ -20,8 +20,12 @@ use crate::combat::status::has_active_status;
 use crate::combat::{CombatClock, CombatSystemSet};
 use crate::cultivation::components::{Cultivation, Realm};
 use crate::cultivation::skill_registry::{CastRejectReason, CastResult, SkillRegistry};
+use crate::qi_physics::constants::{QI_EPSILON, QI_ZONE_UNIT_CAPACITY};
+use crate::qi_physics::{qi_release_to_zone, QiAccountId, QiTransfer, QiTransferReason};
 use crate::schema::social::RenownTagV1;
 use crate::social::events::SocialRenownDeltaEvent;
+use crate::world::dimension::{CurrentDimension, DimensionKind};
+use crate::world::zone::ZoneRegistry;
 
 pub const FULL_POWER_CHARGE_SKILL_ID: &str = "baomai.full_power_charge";
 pub const FULL_POWER_RELEASE_SKILL_ID: &str = "baomai.full_power_release";
@@ -284,12 +288,17 @@ pub fn release_full_power_with_exhaust(
 
 pub fn charge_tick_system(
     mut q: Query<(
+        Entity,
         &mut ChargingState,
         &mut Cultivation,
         Option<&FullPowerChargeRateOverride>,
+        Option<&Position>,
+        Option<&CurrentDimension>,
     )>,
+    mut zones: ResMut<ZoneRegistry>,
+    mut qi_transfer_writer: EventWriter<QiTransfer>,
 ) {
-    for (mut charging, mut cultivation, rate_override) in &mut q {
+    for (entity, mut charging, mut cultivation, rate_override, position, dimension) in &mut q {
         let remaining = (charging.target_qi - charging.qi_committed).max(0.0);
         let charge_rate = rate_override
             .map(|override_rate| override_rate.rate_per_tick)
@@ -304,6 +313,148 @@ pub fn charge_tick_system(
         cultivation.qi_current =
             (cultivation.qi_current - to_consume).clamp(0.0, cultivation.qi_max);
         charging.qi_committed += to_consume;
+
+        // 守恒：每 tick 消耗的真元必须归还 zone（或 overflow），
+        // 以防真元从全局 ledger 凭空消失。
+        charge_tick_release_qi_to_zone(
+            entity,
+            to_consume,
+            position.map(|p| p.get()),
+            dimension.map(|d| d.0).unwrap_or(DimensionKind::Overworld),
+            &mut zones,
+            &mut qi_transfer_writer,
+        );
+    }
+}
+
+/// 蓄力 tick 真元守恒辅助：将本 tick 消耗量归还施法者所在 zone。
+///
+/// 遵循 `zhenmai_v2::drain_release_to_zone` / `baomai_v3::emit_spent_qi_release` 模式。
+/// zone 满载时 overflow 路由到具名 overflow 账户，绝不凭空丢弃真元。
+fn charge_tick_release_qi_to_zone(
+    entity: Entity,
+    amount: f64,
+    position: Option<DVec3>,
+    dimension: DimensionKind,
+    zones: &mut ZoneRegistry,
+    qi_transfer_writer: &mut EventWriter<QiTransfer>,
+) {
+    if amount <= QI_EPSILON {
+        return;
+    }
+    let from = QiAccountId::player(format!("entity:{}", entity.to_bits()));
+
+    let transfer = if let Some(position) = position {
+        let zone_name = zones
+            .find_zone(dimension, position)
+            .map(|zone| zone.name.clone());
+        if let Some(zone_name) = zone_name {
+            if let Some(zone) = zones.find_zone_mut(zone_name.as_str()) {
+                let to = QiAccountId::zone(zone.name.clone());
+                // 不 .max(0.0)：负灵域（spirit_qi<0）下当 0 会跳过负缺口、凭空多 credit，破坏守恒。
+                let zone_current = zone.spirit_qi * QI_ZONE_UNIT_CAPACITY;
+                match qi_release_to_zone(
+                    amount,
+                    from.clone(),
+                    to,
+                    zone_current,
+                    QI_ZONE_UNIT_CAPACITY,
+                ) {
+                    Ok(outcome) => {
+                        zone.spirit_qi =
+                            (outcome.zone_after / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
+                        if let Some(transfer) = outcome.transfer {
+                            if outcome.overflow > QI_EPSILON {
+                                // 满载溢出：溢出部分路由到 overflow 账户。
+                                let overflow_transfer = QiTransfer::new(
+                                    from.clone(),
+                                    QiAccountId::overflow(format!(
+                                        "full_power_strike:charge_tick:{}",
+                                        entity.to_bits()
+                                    )),
+                                    outcome.overflow,
+                                    QiTransferReason::Channeling,
+                                );
+                                qi_transfer_writer.send(transfer);
+                                if let Ok(ot) = overflow_transfer {
+                                    qi_transfer_writer.send(ot);
+                                }
+                                return;
+                            }
+                            Some(transfer)
+                        } else {
+                            // zone 全满 (accepted=0)：全量路由 overflow。
+                            QiTransfer::new(
+                                from.clone(),
+                                QiAccountId::overflow(format!(
+                                    "full_power_strike:charge_tick:{}",
+                                    entity.to_bits()
+                                )),
+                                amount,
+                                QiTransferReason::Channeling,
+                            )
+                            .ok()
+                        }
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            ?error,
+                            "[bong][full_power_strike] charge_tick qi_release_to_zone error; routing to overflow"
+                        );
+                        QiTransfer::new(
+                            from.clone(),
+                            QiAccountId::overflow(format!(
+                                "full_power_strike:charge_tick:{}",
+                                entity.to_bits()
+                            )),
+                            amount,
+                            QiTransferReason::Channeling,
+                        )
+                        .ok()
+                    }
+                }
+            } else {
+                // zone 名找到但 find_zone_mut 返回 None（不应发生，防御性路由）。
+                QiTransfer::new(
+                    from.clone(),
+                    QiAccountId::overflow(format!(
+                        "full_power_strike:charge_tick:{}",
+                        entity.to_bits()
+                    )),
+                    amount,
+                    QiTransferReason::Channeling,
+                )
+                .ok()
+            }
+        } else {
+            // 位置在任何已知 zone 之外。
+            QiTransfer::new(
+                from.clone(),
+                QiAccountId::overflow(format!(
+                    "full_power_strike:charge_tick:{}",
+                    entity.to_bits()
+                )),
+                amount,
+                QiTransferReason::Channeling,
+            )
+            .ok()
+        }
+    } else {
+        // 无 Position 组件（理论上不应发生，但防御性处理）。
+        QiTransfer::new(
+            from.clone(),
+            QiAccountId::overflow(format!(
+                "full_power_strike:charge_tick:{}",
+                entity.to_bits()
+            )),
+            amount,
+            QiTransferReason::Channeling,
+        )
+        .ok()
+    };
+
+    if let Some(t) = transfer {
+        qi_transfer_writer.send(t);
     }
 }
 
@@ -491,12 +642,17 @@ mod tests {
     use super::*;
     use crate::combat::components::{ActiveStatusEffect, SkillBarBindings, StatusEffects, Wounds};
     use crate::combat::events::CombatEvent;
+    use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
     use crate::social::events::SocialRenownDeltaEvent;
+    use crate::world::zone::ZoneRegistry;
     use valence::prelude::{App, Events, Update};
 
     fn app() -> App {
         let mut app = App::new();
         app.insert_resource(CombatClock { tick: 10 });
+        // ZoneRegistry は charge_tick_system の ResMut<ZoneRegistry> に必要。
+        // fallback zone（spirit_qi=0.9）を差し込む；守恒テストでは適宜 spirit_qi=0.0 に上書き。
+        app.insert_resource(ZoneRegistry::fallback());
         app.add_event::<AttackIntent>();
         app.add_event::<CombatEvent>();
         app.add_event::<ChargeStartedEvent>();
@@ -506,7 +662,13 @@ mod tests {
         app.add_event::<FullPowerStrikeKilledEvent>();
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<SocialRenownDeltaEvent>();
+        app.add_event::<QiTransfer>();
         app
+    }
+
+    fn app_with_zone() -> App {
+        // app() already includes ZoneRegistry::fallback().
+        app()
     }
 
     /// 测试辅助：读取最近一次施加给 caster 的虚脱 ApplyStatusEffectIntent 的时长。
@@ -550,6 +712,29 @@ mod tests {
                     character_id: format!("char:{realm:?}:{qi_max}"),
                     ..Default::default()
                 },
+            ))
+            .id()
+    }
+
+    /// spawn zone 范围：[-128, 64, -128] → [128, 80, 128]；y=65 在内。
+    /// 不插入 CurrentDimension——helper 默认为 Overworld，spawn zone 维度也是 Overworld。
+    fn actor_in_zone(app: &mut App, realm: Realm, qi_current: f64, qi_max: f64) -> Entity {
+        app.world_mut()
+            .spawn((
+                Cultivation {
+                    realm,
+                    qi_current,
+                    qi_max,
+                    ..Default::default()
+                },
+                SkillBarBindings::default(),
+                StatusEffects::default(),
+                Wounds::default(),
+                Lifecycle {
+                    character_id: format!("char:{realm:?}:{qi_max}"),
+                    ..Default::default()
+                },
+                Position::new([0.0_f64, 65.0, 0.0]),
             ))
             .id()
     }
@@ -1046,5 +1231,196 @@ mod tests {
             crate::combat::baomai_v3::events::BAOMAI_FULL_POWER_RELEASE_SKILL_ID,
             "full_power_strike::FULL_POWER_RELEASE_SKILL_ID should equal baomai_v3::BAOMAI_FULL_POWER_RELEASE_SKILL_ID"
         );
+    }
+
+    // ── SG-002 真元守恒修复测试 ──────────────────────────────────────────────────
+    //
+    // 修复前：charge_tick_system 每 tick 直接 -qi_current，不发任何 QiTransfer，
+    // 真元从全局 ledger 凭空消失（高严重性守恒漏洞）。
+    // 修复后：每 tick 消耗量通过 charge_tick_release_qi_to_zone 归还 zone 或 overflow。
+
+    /// happy path：施法者在 spawn zone 内蓄力一 tick → zone.spirit_qi 上升。
+    ///
+    /// 先清空 zone（spirit_qi=0）以确保精确守恒断言（pitfall a：fallback zone 默认
+    /// spirit_qi=0.9，只剩 ~5 raw room，若 to_consume > room 会分裂 accepted+overflow，
+    /// 导致 zone_after / QI_ZONE_UNIT_CAPACITY != to_consume / QI_ZONE_UNIT_CAPACITY）。
+    #[test]
+    fn charge_tick_credits_zone_qi_when_caster_in_zone() {
+        let mut app = app_with_zone();
+        // 清空 zone，让全部 to_consume 都能进 zone（无 overflow）。
+        app.world_mut()
+            .resource_mut::<ZoneRegistry>()
+            .find_zone_mut("spawn")
+            .unwrap()
+            .spirit_qi = 0.0;
+
+        // 施法者在 spawn zone 内（Position y=65 在 [64,80] 内）。
+        // CurrentDimension 不插入——默认 Overworld，与 spawn zone dimension 一致（pitfall b 豁免）。
+        let caster = actor_in_zone(&mut app, Realm::Induce, 150.0, 150.0);
+        app.world_mut().entity_mut(caster).insert(ChargingState {
+            slot: 0,
+            started_at_tick: 10,
+            qi_committed: 0.0,
+            target_qi: 150.0,
+        });
+        app.add_systems(Update, charge_tick_system);
+
+        app.update();
+
+        // 验证 qi_current 正确减少（基础行为不变）。
+        let qi_after = app.world().get::<Cultivation>(caster).unwrap().qi_current;
+        assert_eq!(
+            qi_after, 100.0,
+            "charge_tick 应扣除 FULL_POWER_CHARGE_RATE_PER_TICK=50 的真元；期望 100.0，实际 {qi_after}"
+        );
+
+        // 验证 zone.spirit_qi 上升（守恒修复核心）。
+        // to_consume=50；zone_cap=QI_ZONE_UNIT_CAPACITY=50；spirit_qi_delta = 50/50 = 1.0。
+        let spirit_qi_after = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name("spawn")
+            .unwrap()
+            .spirit_qi;
+        assert!(
+            spirit_qi_after > 0.0,
+            "charge_tick 消耗的真元应归还 spawn zone（spirit_qi 应上升）；\
+             修复前 spirit_qi 维持 0.0 不变；实际={spirit_qi_after}"
+        );
+        // 精确守恒：to_consume=50 == accepted=50 → spirit_qi = 50/50 = 1.0。
+        assert!(
+            (spirit_qi_after - 1.0).abs() < 1e-9,
+            "zone 完全空时全额接纳：spirit_qi 应 = 1.0（= 50 raw / QI_ZONE_UNIT_CAPACITY=50）；\
+             实际={spirit_qi_after}"
+        );
+    }
+
+    /// zone 满载时蓄力 → 不更新 spirit_qi，但发出 QiTransfer overflow 事件（真元不凭空消失）。
+    #[test]
+    fn charge_tick_with_full_zone_emits_overflow_transfer_not_credits_zone() {
+        let mut app = app_with_zone();
+        // 先将 zone 灌满。
+        app.world_mut()
+            .resource_mut::<ZoneRegistry>()
+            .find_zone_mut("spawn")
+            .unwrap()
+            .spirit_qi = 1.0;
+
+        let caster = actor_in_zone(&mut app, Realm::Induce, 150.0, 150.0);
+        app.world_mut().entity_mut(caster).insert(ChargingState {
+            slot: 0,
+            started_at_tick: 10,
+            qi_committed: 0.0,
+            target_qi: 150.0,
+        });
+        app.add_systems(Update, charge_tick_system);
+
+        app.update();
+
+        // spirit_qi 保持 1.0（满载无 room）。
+        let spirit_qi_after = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name("spawn")
+            .unwrap()
+            .spirit_qi;
+        assert_eq!(
+            spirit_qi_after, 1.0,
+            "满载 zone：spirit_qi 应保持 1.0，实际={spirit_qi_after}"
+        );
+        // 必须至少发一条 QiTransfer 事件（overflow 路由，守恒不丢失）。
+        let transfer_count = app.world().resource::<Events<QiTransfer>>().len();
+        assert!(
+            transfer_count >= 1,
+            "满载 zone 时 charge_tick 应 emit overflow QiTransfer 事件；实际数量={transfer_count}"
+        );
+    }
+
+    /// 施法者位置在 zone 外（y=10 < spawn zone 最低 y=64）→ overflow QiTransfer；qi_current 正确减少。
+    #[test]
+    fn charge_tick_outside_zone_emits_overflow_and_deducts_qi() {
+        let mut app = app_with_zone();
+
+        // 在 zone 外的实体（y=10 < 64）。
+        let caster = app
+            .world_mut()
+            .spawn((
+                Cultivation {
+                    realm: Realm::Induce,
+                    qi_current: 150.0,
+                    qi_max: 150.0,
+                    ..Default::default()
+                },
+                SkillBarBindings::default(),
+                StatusEffects::default(),
+                Wounds::default(),
+                Lifecycle {
+                    character_id: "char:outside_zone".to_string(),
+                    ..Default::default()
+                },
+                Position::new([0.0_f64, 10.0, 0.0]), // y=10 < 64，zone 外
+            ))
+            .id();
+        app.world_mut().entity_mut(caster).insert(ChargingState {
+            slot: 0,
+            started_at_tick: 10,
+            qi_committed: 0.0,
+            target_qi: 150.0,
+        });
+        app.add_systems(Update, charge_tick_system);
+
+        app.update();
+
+        // qi_current 已减少（守恒扣除）。
+        let qi_after = app.world().get::<Cultivation>(caster).unwrap().qi_current;
+        assert!(
+            qi_after < 150.0,
+            "zone 外 charge_tick 应先 spend qi；期望 < 150.0，实际={qi_after}"
+        );
+        // overflow QiTransfer 事件必须存在（真元不凭空消失）。
+        let transfer_count = app.world().resource::<Events<QiTransfer>>().len();
+        assert!(
+            transfer_count >= 1,
+            "zone 外 charge_tick 应 emit overflow QiTransfer 事件，守恒路由到 overflow 账户；\
+             实际数量={transfer_count}"
+        );
+    }
+
+    /// 蓄力结束（qi_committed == target_qi），下一 tick to_consume=0 → 不发 QiTransfer。
+    #[test]
+    fn charge_tick_does_not_emit_transfer_when_nothing_consumed() {
+        let mut app = app_with_zone();
+        app.world_mut()
+            .resource_mut::<ZoneRegistry>()
+            .find_zone_mut("spawn")
+            .unwrap()
+            .spirit_qi = 0.0;
+
+        let caster = actor_in_zone(&mut app, Realm::Induce, 0.0, 150.0);
+        // qi_current=0 → to_consume=0；qi_committed 已满
+        app.world_mut().entity_mut(caster).insert(ChargingState {
+            slot: 0,
+            started_at_tick: 10,
+            qi_committed: 150.0,
+            target_qi: 150.0,
+        });
+        app.add_systems(Update, charge_tick_system);
+
+        app.update();
+
+        // 没有消耗 → 没有 QiTransfer。
+        let transfer_count = app.world().resource::<Events<QiTransfer>>().len();
+        assert_eq!(
+            transfer_count, 0,
+            "to_consume=0 时不应发任何 QiTransfer 事件；实际数量={transfer_count}"
+        );
+        // spirit_qi 也不变。
+        let spirit_qi_after = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name("spawn")
+            .unwrap()
+            .spirit_qi;
+        assert_eq!(spirit_qi_after, 0.0);
     }
 }
