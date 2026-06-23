@@ -5,6 +5,9 @@ import net.minecraft.util.Identifier;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
+
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
@@ -45,6 +48,20 @@ class FaunaModelDisguiseTest {
             "textures/entity/fauna/ash_spider_disguised.png",
             disguiseTex.getPath(),
             "伪装贴图路径必须稳定（plan P2 设计决议），实际: " + disguiseTex.getPath()
+        );
+    }
+
+    @Test
+    void ash_spider_disguise_texture_file_exists_on_disk() {
+        // B 组修复：此前 ASH_SPIDER_DISGUISE_TEXTURE 指向的 png 在磁盘**不存在** → 拟态灰烬蛛伪装期
+        // 渲染 missing texture（紫黑格）。上面的 path-pin 测试只校验 Identifier 字符串，抓不到文件缺失。
+        // 锁住贴图文件真实存在，防再次丢失/路径漂移。
+        Identifier tex = FaunaModel.ASH_SPIDER_DISGUISE_TEXTURE;
+        Path file = Path.of("src", "main", "resources", "assets", tex.getNamespace(), tex.getPath());
+        assertTrue(
+            Files.isRegularFile(file),
+            "伪装贴图文件应存在于 " + file + "（FaunaModel.ASH_SPIDER_DISGUISE_TEXTURE 指向它），"
+                + "实际缺失 → 伪装期渲染 missing texture"
         );
     }
 
