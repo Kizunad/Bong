@@ -14,6 +14,7 @@ import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class BongWeaponModelRegistryTest {
@@ -84,6 +85,33 @@ class BongWeaponModelRegistryTest {
             "pickaxe_iron vanilla model path should be item/iron_pickaxe");
         assertEquals("bong:models/item/pickaxe_iron/pickaxe_iron.obj", entry.bongObjModelPath(),
             "pickaxe_iron bong OBJ path mismatch");
+    }
+
+    @Test
+    void toolModelRegistryVanillaPickaxeAxeHoeUseVanillaModelNoObj() {
+        // 镐/斧/锄白嫖 vanilla 模型：vanillaModelPath 指向原版 item + bongObjModelPath=null
+        // （不走 SML OBJ 劫持，宿主 item 即模型）。server 现对 category=tool 下发 tool view，
+        // 这些 tool 才能在 WeaponEquippedStore 渲染出手持模型（修前工具手持完全无模型）。
+        record Case(String id, String vanillaPath) {}
+        Case[] cases = {
+            new Case("stone_pickaxe", "item/stone_pickaxe"),
+            new Case("stone_axe", "item/stone_axe"),
+            new Case("pickaxe_copper", "item/stone_pickaxe"),
+            new Case("axe_copper", "item/stone_axe"),
+            new Case("hoe_iron", "item/iron_hoe"),
+            new Case("hoe_lingtie", "item/diamond_hoe"),
+            new Case("hoe_xuantie", "item/netherite_hoe"),
+            new Case("bao_chu", "item/stone_hoe"),
+        };
+        for (Case c : cases) {
+            BongWeaponModelRegistry.Entry entry = BongWeaponModelRegistry.get(c.id())
+                .orElseThrow(() -> new AssertionError(
+                    "工具 " + c.id() + " 应已注册，否则手持无模型"));
+            assertEquals(c.vanillaPath(), entry.vanillaModelPath(),
+                c.id() + " 应用 vanilla 模型路径 " + c.vanillaPath());
+            assertNull(entry.bongObjModelPath(),
+                c.id() + " 应 bongObjModelPath=null（白嫖原版，不自制 OBJ）");
+        }
     }
 
     @Test
