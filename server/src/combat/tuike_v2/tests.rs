@@ -1389,6 +1389,7 @@ fn maintenance_qi_per_sec_no_discount_when_chaotic() {
 /// 注意（pitfall b）：实体需要 CurrentDimension 才能 find_zone 成功；否则路由到 overflow。
 #[test]
 fn maintenance_tick_emits_qi_transfer_to_zone_for_conservation() {
+    use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
     use crate::qi_physics::QiTransferReason;
     use crate::world::dimension::{CurrentDimension, DimensionKind};
     use crate::world::zone::ZoneRegistry;
@@ -1458,6 +1459,23 @@ fn maintenance_tick_emits_qi_transfer_to_zone_for_conservation() {
             .any(|t| matches!(t.reason, QiTransferReason::ReleaseToZone)),
         "QiTransfer reason 应为 ReleaseToZone（release_qi_amount_to_zone 统一编码），实际={:?}",
         transfers.iter().map(|t| t.reason).collect::<Vec<_>>()
+    );
+
+    // CodeRabbit #688 Major：仅断言「有 ReleaseToZone 事件」无法证明 zone 真的记账了
+    // （可能 emit 了事件却没写 zone，或路由到 overflow）。直接验 zone.spirit_qi 实际上升：
+    // 已清零、扣减 0.1 < CAP=50 不溢出 → zone.spirit_qi 应等于 deducted/CAP。
+    let zone_after = app
+        .world()
+        .resource::<ZoneRegistry>()
+        .find_zone_by_name("spawn")
+        .unwrap()
+        .spirit_qi;
+    let deducted = 10.0 - qi_after; // = 0.1
+    let expected = deducted / QI_ZONE_UNIT_CAPACITY;
+    assert!(
+        (zone_after - expected).abs() < 1e-9,
+        "zone.spirit_qi 应被实际 credit deducted/CAP（期望 {expected}，已清零），实际 {zone_after}——\
+         若为 0 说明 emit 了事件却没真给 zone 记账（或走了 overflow）"
     );
 }
 
