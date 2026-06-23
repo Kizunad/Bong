@@ -1253,7 +1253,9 @@ fn build_spent_qi_release_transfer(
         if let Some(zone_name) = zone_name {
             if let Some(zone) = zones.find_zone_mut(zone_name.as_str()) {
                 let to = QiAccountId::zone(zone.name.clone());
-                let zone_current = zone.spirit_qi.max(0.0) * QI_ZONE_UNIT_CAPACITY;
+                // 不 .max(0.0)：负灵域（spirit_qi<0）下当 0 会跳过负缺口、凭空多 credit、破坏守恒。
+                // 与规范 helper death_hooks::release_qi_amount_to_zone 一致用裸 spirit_qi*CAP。
+                let zone_current = zone.spirit_qi * QI_ZONE_UNIT_CAPACITY;
                 match qi_release_to_zone(
                     amount,
                     from.clone(),
