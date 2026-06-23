@@ -1,5 +1,5 @@
-use valence::prelude::{App, DVec3, Events, Position};
 use crate::world::zone::ZoneRegistry;
+use valence::prelude::{App, DVec3, Events, Position};
 
 use super::events::{
     BaomaiSkillEvent, BaomaiSkillId, BloodBurnEvent, DispersedQiEvent, MountainShakeEvent,
