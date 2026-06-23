@@ -1296,7 +1296,8 @@ fn release_failed_repair_qi_to_zone(
     if amount <= QI_EPSILON {
         return;
     }
-    let from = QiAccountId::player(format!("entity:{}", caster.to_bits()));
+    // 账户 id 与成功路径（line 1279 `entity_wire_id(caster)`）一致，避免失败回灌事件账户格式分叉。
+    let from = QiAccountId::player(entity_wire_id(caster));
     let position = world.get::<Position>(caster).map(|p| p.get());
     let dimension = world
         .get::<CurrentDimension>(caster)
@@ -1310,7 +1311,10 @@ fn release_failed_repair_qi_to_zone(
         if let Some(zone_name) = zone_name {
             if let Some(zone) = zones.find_zone_mut(zone_name.as_str()) {
                 let to = QiAccountId::zone(zone.name.clone());
-                let zone_current = zone.spirit_qi.max(0.0) * QI_ZONE_UNIT_CAPACITY;
+                // 不要 .max(0.0)：负灵域（spirit_qi<0，worldview 负数区）下把它当 0 会让回灌跳过
+                // 负值缺口、凭空多 credit，反破坏守恒。与规范 helper（death_hooks::release_qi_amount_to_zone）
+                // 一致用裸 spirit_qi*CAP，qi_release_to_zone 能正确处理负 zone_current。
+                let zone_current = zone.spirit_qi * QI_ZONE_UNIT_CAPACITY;
                 match qi_release_to_zone(
                     amount,
                     from.clone(),
@@ -1865,8 +1869,14 @@ mod tests {
         use crate::world::zone::ZoneRegistry;
 
         let mut app = app_with_yidao();
-        // 注入 ZoneRegistry，使 release 能找到 zone。
+        // 注入 ZoneRegistry，使 release 能找到 zone。清空 spawn zone 余量（fallback 默认 spirit_qi≈0.9，
+        // 余量不足会把回灌拆成 zone+overflow），让全额落入 zone，便于断言「命中 zone」与「spirit_qi 上升」。
         app.insert_resource(ZoneRegistry::fallback());
+        app.world_mut()
+            .resource_mut::<ZoneRegistry>()
+            .find_zone_mut("spawn")
+            .unwrap()
+            .spirit_qi = 0.0;
 
         let medic = spawn_medic(&mut app, Realm::Awaken); // Position=[0,64,0]，在 spawn zone 内
         let patient = spawn_patient(&mut app);
@@ -1914,6 +1924,22 @@ mod tests {
             (released_to_zone - deducted).abs() < 1e-6,
             "守恒红线：失败路径扣除 {deducted} 真元，必须通过 ReleaseToZone QiTransfer 全额归还 \
              zone（实际归还 {released_to_zone}）"
+        );
+
+        // CodeRabbit #2：仅汇总 amount 无法区分「命中 zone」与「overflow 兜底」。直接验 zone.spirit_qi：
+        // 已清零，全额回灌后必 >0 且等于 deducted/CAP——若为 0 说明走了 overflow 而非真 zone credit。
+        let zone_after = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name("spawn")
+            .map(|zone| zone.spirit_qi)
+            .unwrap_or(0.0);
+        assert!(
+            zone_after > 0.0,
+            "回灌必须实际命中 zone 并提升 spirit_qi（已清零，命中后应 >0）；实际 {zone_after}——\
+             若为 0 说明走了 overflow 兜底而非真 zone credit。\
+             （不强求 ==deducted/CAP：cost 超 zone 余量时会 clamp 到 1.0 并把余量 overflow，守恒仍由\
+             上面的 released_to_zone==deducted 锁住）"
         );
 
         // 患者应分毫未得
