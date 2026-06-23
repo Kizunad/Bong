@@ -537,7 +537,14 @@ fn sync_bong_visual_state_metadata(
 }
 
 fn spirit_niche_visual_state(niche: &SpiritNiche) -> u8 {
-    if niche.revealed {
+    // 视觉态映射客户端 3 张贴图（BongEntityModelKind.SPIRIT_NICHE）：
+    //   0 = inactive/灰石（失效）· 1 = active/淡青发光（完好隐匿）· 2 = invaded/发红（已暴露）
+    // worldview §十一：灵龛随放置即激活、无独立"激活"步骤，故文档里 state 0「未激活」复用为「受损失效」——
+    // 被攻破（is_damaged，niche_defense 置位、修复清零）的灵龛 blocks 已破、灵纹熄灭，呈死灰石外观，
+    // 区别于完好的淡青发光态。优先级：受损 > 暴露 > 完好（坏了就先显坏）。
+    if niche.is_damaged {
+        0
+    } else if niche.revealed {
         2
     } else {
         1
@@ -681,6 +688,50 @@ mod tests {
             ],
             "entity raw_id contract drifted: client BongEntityModelKind must stay 1:1; \
              延寿棺四档连号 160-163，Baolongwang=164，Workbench=165，容器=166..=168"
+        );
+    }
+
+    #[test]
+    fn spirit_niche_visual_state_covers_inactive_active_invaded() {
+        fn niche(revealed: bool, is_damaged: bool) -> SpiritNiche {
+            SpiritNiche {
+                owner: "char:owner".to_string(),
+                pos: [10, 64, 10],
+                placed_at_tick: 1,
+                revealed,
+                revealed_by: if revealed {
+                    Some("char:finder".to_string())
+                } else {
+                    None
+                },
+                is_damaged,
+                guardians: Vec::new(),
+            }
+        }
+
+        // 完好隐匿 → 1 active（淡青发光）
+        assert_eq!(
+            spirit_niche_visual_state(&niche(false, false)),
+            1,
+            "完好未暴露的灵龛应为 active(1)/淡青"
+        );
+        // 已暴露 → 2 invaded（发红）
+        assert_eq!(
+            spirit_niche_visual_state(&niche(true, false)),
+            2,
+            "已暴露的灵龛应为 invaded(2)/发红"
+        );
+        // 受损 → 0 inactive（灰石失效）——修前 is_damaged 无任何视觉、state 0 永不触发
+        assert_eq!(
+            spirit_niche_visual_state(&niche(false, true)),
+            0,
+            "受损灵龛应为 inactive(0)/灰石；此前 spirit_niche_visual_state 忽略 is_damaged，state 0 死代码"
+        );
+        // 受损 + 暴露：受损优先（坏了就先显坏）
+        assert_eq!(
+            spirit_niche_visual_state(&niche(true, true)),
+            0,
+            "受损+暴露时受损优先 → inactive(0)"
         );
     }
 
