@@ -118,6 +118,74 @@ class BongWeaponModelRegistryTest {
     }
 
     @Test
+    void heldItemRegistryCoversToolsDaggersForgeSwordsAndStoneKnifeViaVanillaHosts() {
+        // 审计 A 组：6 异形凡器 + 3 暗器 + 5 锻造剑 + 石刃此前缺注册表条目 → createStackFor 返 null
+        // → FPV/TPV 手持空手。全部 bongObjModelPath=null（白嫖原版 / 借用既有劫持 OBJ，不自制 OBJ）。
+        // 只断言字符串路径：单测无 Minecraft bootstrap，Items.* 未初始化、hostItem() 取不到真 Item
+        // （既有 registry 测试同样只校验路径），host 正确性由真机渲染兜底。
+        record Case(String id, String vanillaPath) {}
+        Case[] cases = {
+            // 异形凡器（tools.toml，category=tool）
+            new Case("cai_yao_dao", "item/shears"),
+            new Case("cao_lian", "item/wooden_hoe"),
+            new Case("dun_qi_jia", "item/flint_and_steel"),
+            new Case("gua_dao", "item/stone_sword"),
+            new Case("gu_hai_qian", "item/flint_and_steel"),
+            new Case("bing_jia_shou_tao", "item/leather"),
+            // 暗器（materials.toml，category=weapon + dagger）
+            new Case("bone_spike", "item/bone"),
+            new Case("poison_needle", "item/stick"),
+            new Case("zhenyuan_mine", "item/fire_charge"),
+            // 锻造剑（forge.toml，category=weapon）
+            new Case("iron_sword_flawed", "item/stone_sword"),
+            new Case("qing_feng_sword", "item/iron_sword"),
+            new Case("qing_feng_sword_flawed", "item/stone_sword"),
+            new Case("ling_feng_sword", "item/iron_sword"),
+            new Case("ling_feng_sword_flawed", "item/stone_sword"),
+            // 石刃（workbench_materials.toml，category=weapon + dagger）
+            new Case("stone_knife", "item/stone_sword"),
+        };
+        for (Case c : cases) {
+            BongWeaponModelRegistry.Entry entry = BongWeaponModelRegistry.get(c.id())
+                .orElseThrow(() -> new AssertionError(
+                    "held-item " + c.id() + " 应已注册，否则手持空手"));
+            assertEquals(c.vanillaPath(), entry.vanillaModelPath(),
+                c.id() + " 宿主 vanilla 模型路径应为 " + c.vanillaPath());
+            assertNull(entry.bongObjModelPath(),
+                c.id() + " 应 bongObjModelPath=null（白嫖/借用，不自制 OBJ → 不新增 SML scope）");
+        }
+    }
+
+    @Test
+    void borrowedHostsAreSmlManagedWhilePlainVanillaHostsAreNot() {
+        // 关键接线断言（防 host 选错重蹈孤岛）：
+        // ① 借用既有 OBJ 的条目其宿主路径必须已在 vanillaModelPaths()（由 iron_sword/bone_dagger/
+        //    hand_wrap 等带 OBJ 的条目注入 SML scope），否则借不到 OBJ → 渲染成原版宿主 item。
+        // ② 纯白嫖原版的条目其路径**不得**在集合内，否则会意外渲染成某把被劫持的 Bong OBJ 而非原版 item。
+        Set<String> sml = BongWeaponModelRegistry.vanillaModelPaths();
+
+        assertTrue(sml.contains("item/iron_sword"),
+            "qing_feng/ling_feng 借 iron_sword.obj：item/iron_sword 须在 SML scope，实际=" + sml);
+        assertTrue(sml.contains("item/bone"),
+            "bone_spike 借 bone_dagger.obj：item/bone 须在 SML scope");
+        assertTrue(sml.contains("item/leather"),
+            "bing_jia_shou_tao 借 hand_wrap.obj：item/leather 须在 SML scope");
+
+        assertFalse(sml.contains("item/shears"),
+            "cai_yao_dao 应渲染原版 shears：item/shears 不得在 SML scope（否则被某 OBJ 劫持）");
+        assertFalse(sml.contains("item/stick"),
+            "poison_needle 应渲染原版 stick：item/stick 不得在 SML scope");
+        assertFalse(sml.contains("item/fire_charge"),
+            "zhenyuan_mine 应渲染原版 fire_charge：item/fire_charge 不得在 SML scope");
+        assertFalse(sml.contains("item/stone_sword"),
+            "石剑系（gua_dao/石刃/次品/粗坯剑）应渲染原版石剑：item/stone_sword 不得在 SML scope");
+        assertFalse(sml.contains("item/flint_and_steel"),
+            "钝气夹/骨骸钳应渲染原版打火石：item/flint_and_steel 不得在 SML scope");
+        assertFalse(sml.contains("item/wooden_hoe"),
+            "草镰应渲染原版木锄：item/wooden_hoe 不得在 SML scope");
+    }
+
+    @Test
     void axeBoneObjResourceExists() {
         var url = getClass().getClassLoader().getResource(
             "assets/bong/models/item/axe_bone/axe_bone.obj");

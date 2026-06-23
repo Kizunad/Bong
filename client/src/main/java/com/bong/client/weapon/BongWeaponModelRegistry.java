@@ -163,6 +163,58 @@ public final class BongWeaponModelRegistry {
             "hoe_xuantie", () -> Items.NETHERITE_HOE, "item/netherite_hoe", null));
         entries.put("bao_chu", new Entry(
             "bao_chu", () -> Items.STONE_HOE, "item/stone_hoe", null));
+        // ── 以下 A 组止血条目（凡器/暗器/锻造剑/石刃）host 选择有【两种策略】，按段标注，勿混用 ──
+        //   策略①「白嫖原版」：vanillaModelPath **不在** vanillaModelPaths() 内（未被任何 OBJ 劫持）
+        //      → 渲染原版 item 本体。选 host 时**刻意避开已劫持路径**（item/iron_sword=iron_sword.obj、
+        //      item/bone=bone_dagger.obj 等），否则会渲染成他者 OBJ 而非原版 item。
+        //   策略②「借用劫持」：vanillaModelPath **正好是**某带 OBJ 条目的已劫持路径 → 故意复用那把 OBJ
+        //      当过渡模型（行尾标「借 xxx.obj」）。
+        //   两类全部 bongObjModelPath=null（不新增 SML scope）；成员关系由 BongWeaponModelRegistryTest
+        //   .borrowedHostsAreSmlManagedWhilePlainVanillaHostsAreNot 锁住，防 host 选错重蹈孤岛。
+        //
+        // 采集异形凡器（plan-tools-v1，category=tool）：server 已对 category=Tool 下发 weapon_kind="tool"
+        // view，但此前缺注册表条目 → 手持空手。下列前 5 件走策略①，bing_jia_shou_tao 走策略②；专属 OBJ 留后续。
+        entries.put("cai_yao_dao", new Entry(
+            "cai_yao_dao", () -> Items.SHEARS, "item/shears", null));            // 采药刀：薄刃/园艺剪
+        entries.put("cao_lian", new Entry(
+            "cao_lian", () -> Items.WOODEN_HOE, "item/wooden_hoe", null));        // 草镰：长柄弯刃
+        entries.put("dun_qi_jia", new Entry(
+            "dun_qi_jia", () -> Items.FLINT_AND_STEEL, "item/flint_and_steel", null)); // 钝气夹：金属手夹
+        entries.put("gua_dao", new Entry(
+            "gua_dao", () -> Items.STONE_SWORD, "item/stone_sword", null));       // 刮刀：细刃（原版石剑）
+        entries.put("gu_hai_qian", new Entry(
+            "gu_hai_qian", () -> Items.FLINT_AND_STEEL, "item/flint_and_steel", null)); // 骨骸钳：重钳（同夹形）
+        // 冰甲手套：手部凡器，借用 hand_wrap.obj（item/leather 已被劫持）——同为手戴护具，造型最近。
+        entries.put("bing_jia_shou_tao", new Entry(
+            "bing_jia_shou_tao", () -> Items.LEATHER, "item/leather", null));
+        // 暗器（materials.toml，category=weapon + [item.weapon] dagger）：weapon_spec 分支已下发 view，
+        // 此前缺注册表 → 空手。bone_spike 在新手默认 loadout（default.toml:58），开局即触发，优先级最高。
+        // bone_spike 走策略②借用 bone_dagger.obj（item/bone 已被劫持，骨制暗器复用骨刃外形合理）；
+        // poison_needle/zhenyuan_mine 走策略①白嫖原版 stick/fire_charge。
+        entries.put("bone_spike", new Entry(
+            "bone_spike", () -> Items.BONE, "item/bone", null));                  // 骨刺：借 bone_dagger.obj
+        entries.put("poison_needle", new Entry(
+            "poison_needle", () -> Items.STICK, "item/stick", null));            // 毒针：细杆（原版木棍）
+        entries.put("zhenyuan_mine", new Entry(
+            "zhenyuan_mine", () -> Items.FIRE_CHARGE, "item/fire_charge", null)); // 真元诡雷：爆裂物
+        // 锻造剑（forge.toml，category=weapon）：weapon_spec 已下发 view，此前缺注册表 → 空手。
+        // 次品/粗坯走策略①白嫖原版石剑（造型更糙，契合 flawed）；正品青锋/灵锋走策略②借用 iron_sword.obj
+        // 基础剑型。刻意不借用 feixuan/spirit/rusted 等命名灵剑 OBJ，以免与那几把特例剑撞脸；专属 OBJ 留后续。
+        entries.put("iron_sword_flawed", new Entry(
+            "iron_sword_flawed", () -> Items.STONE_SWORD, "item/stone_sword", null));
+        entries.put("qing_feng_sword", new Entry(
+            "qing_feng_sword", () -> Items.IRON_SWORD, "item/iron_sword", null)); // 借 iron_sword.obj
+        entries.put("qing_feng_sword_flawed", new Entry(
+            "qing_feng_sword_flawed", () -> Items.STONE_SWORD, "item/stone_sword", null));
+        entries.put("ling_feng_sword", new Entry(
+            "ling_feng_sword", () -> Items.IRON_SWORD, "item/iron_sword", null)); // 借 iron_sword.obj
+        entries.put("ling_feng_sword_flawed", new Entry(
+            "ling_feng_sword_flawed", () -> Items.STONE_SWORD, "item/stone_sword", null));
+        // 石刃（workbench_materials.toml，category=weapon dagger，手搓起点可制作）：原版石剑止血。
+        // 不用 item/flint 宿主——minecraft/models/item/flint.json 是指向 crystal_shard_dagger 的孤儿
+        // override（SML 未注册该 scope → missing model），改用它需删 override + 同步资源包 sha1，留后续清理。
+        entries.put("stone_knife", new Entry(
+            "stone_knife", () -> Items.STONE_SWORD, "item/stone_sword", null));
         // 盾牌（#3）：宿主选用 Bong 自有 item 体系里不出现的稀有 vanilla item，
         // 与武器同理（vanilla inventory 恒空，宿主 item 不会真实渲染，无碰撞风险）。
         // 木盾 → NAUTILUS_SHELL，骨盾 → PHANTOM_MEMBRANE。
