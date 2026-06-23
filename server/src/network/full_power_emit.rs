@@ -67,14 +67,41 @@ pub fn emit_full_power_charging_clear_payloads(
     mut released: EventReader<FullPowerReleasedEvent>,
     mut interrupted: EventReader<ChargeInterruptedEvent>,
     ids: Query<&UniqueId>,
+    positions: Query<&Position>,
     mut clients: Query<&mut Client, With<Client>>,
+    mut vfx_events: EventWriter<VfxEventRequest>,
 ) {
+    // 蓄力结束（释放或被打断）即停掉 windup_charge 循环动画。该动画 isLoop:true（设计为
+    // "可持续到释放"的蓄力保持姿势），cast_full_power_charge 在蓄力开始时 PlayAnim 但无配套
+    // StopAnim——不在此处停，玩家释放/被打断后手臂会一直卡在蓄力姿势（同采集循环动画 bug）。
     for event in released.read() {
         send_charging_clear(event.caster, event.at_tick, &ids, &mut clients);
+        stop_windup_charge_anim(event.caster, &ids, &positions, &mut vfx_events);
     }
     for event in interrupted.read() {
         send_charging_clear(event.caster, event.at_tick, &ids, &mut clients);
+        stop_windup_charge_anim(event.caster, &ids, &positions, &mut vfx_events);
     }
+}
+
+/// 给 caster 发 StopAnim(bong:windup_charge)，停掉蓄力保持的循环动画。
+fn stop_windup_charge_anim(
+    caster: Entity,
+    ids: &Query<&UniqueId>,
+    positions: &Query<&Position>,
+    vfx_events: &mut EventWriter<VfxEventRequest>,
+) {
+    let (Ok(unique_id), Ok(position)) = (ids.get(caster), positions.get(caster)) else {
+        return;
+    };
+    vfx_events.send(VfxEventRequest::new(
+        position.get(),
+        VfxEventPayloadV1::StopAnim {
+            target_player: unique_id.0.to_string(),
+            anim_id: "bong:windup_charge".to_string(),
+            fade_out_ticks: Some(2),
+        },
+    ));
 }
 
 pub fn emit_full_power_release_payloads(
@@ -386,6 +413,65 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn charging_clear_stops_windup_charge_anim_on_release_and_interrupt() {
+        // 回归锁：蓄力结束（释放或被打断）必须 emit StopAnim(windup_charge) 停掉 isLoop:true 的
+        // 蓄力保持动画；否则玩家释放/被打断后手臂卡在蓄力姿势（cast_full_power_charge 只 PlayAnim）。
+        use crate::cultivation::full_power_strike::InterruptTrigger;
+
+        // 释放路径
+        {
+            let mut app = App::new();
+            app.add_event::<FullPowerReleasedEvent>();
+            app.add_event::<ChargeInterruptedEvent>();
+            app.add_event::<VfxEventRequest>();
+            app.add_systems(Update, emit_full_power_charging_clear_payloads);
+            let (caster, _h) = spawn_mock_client(&mut app, "Caster");
+            app.world_mut().send_event(FullPowerReleasedEvent {
+                caster,
+                target: None,
+                qi_released: 100.0,
+                at_tick: 10,
+                hit_position: None,
+                realm_gap_tier: None,
+            });
+            app.update();
+            assert!(
+                app.world()
+                    .resource::<Events<VfxEventRequest>>()
+                    .iter_current_update_events()
+                    .any(|r| matches!(&r.payload,
+                        VfxEventPayloadV1::StopAnim { anim_id, .. } if anim_id == "bong:windup_charge")),
+                "蓄力释放应 emit StopAnim(bong:windup_charge) 停掉循环蓄力动画"
+            );
+        }
+        // 打断路径
+        {
+            let mut app = App::new();
+            app.add_event::<FullPowerReleasedEvent>();
+            app.add_event::<ChargeInterruptedEvent>();
+            app.add_event::<VfxEventRequest>();
+            app.add_systems(Update, emit_full_power_charging_clear_payloads);
+            let (caster, _h) = spawn_mock_client(&mut app, "Caster");
+            app.world_mut().send_event(ChargeInterruptedEvent {
+                caster,
+                qi_lost: 50.0,
+                qi_refunded: 25.0,
+                trigger: InterruptTrigger::Damage,
+                at_tick: 10,
+            });
+            app.update();
+            assert!(
+                app.world()
+                    .resource::<Events<VfxEventRequest>>()
+                    .iter_current_update_events()
+                    .any(|r| matches!(&r.payload,
+                        VfxEventPayloadV1::StopAnim { anim_id, .. } if anim_id == "bong:windup_charge")),
+                "蓄力被打断应 emit StopAnim(bong:windup_charge)"
+            );
+        }
     }
 
     #[test]
