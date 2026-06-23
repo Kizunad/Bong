@@ -940,6 +940,7 @@ pub fn multipoint_contact(
     )
 }
 
+#[allow(clippy::type_complexity)]
 fn multipoint_duration_tick(
     clock: Res<CombatClock>,
     mut commands: Commands,
@@ -985,6 +986,7 @@ fn multipoint_duration_tick(
     }
 }
 
+#[allow(clippy::type_complexity)]
 fn harden_duration_tick(
     clock: Res<CombatClock>,
     mut commands: Commands,
