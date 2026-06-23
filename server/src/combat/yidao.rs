@@ -2472,34 +2472,28 @@ mod tests {
         )
         .unwrap()
         .success_threshold;
-        let all_fail_tick = (0..10_000)
+        // 每名患者各断一条经脉（Lung/Heart/Kidney，与 patients 同序），修复只 roll 各自那条。
+        // 原搜索对每名患者查全部 3 条经脉（要 9 个 roll 同时失败，概率 ~fail^9 → 10k tick 内几乎
+        // 找不到，故 .expect 撞红）；改为 zip 各查各自断的那条（3 个 roll），全员失败概率 fail^3，可达。
+        // Void 境界成功率高、单 tick 三人全败概率低，需较大搜索区间（搜索仅哈希、开销小）。
+        let severed_meridians = [MeridianId::Lung, MeridianId::Heart, MeridianId::Kidney];
+        let all_fail_tick = (0..2_000_000)
             .find(|tick| {
-                patients.iter().all(|&patient| {
-                    // 失败 = roll >= threshold
-                    // 找 MeridianId 对应 patient 比较麻烦，用 Lung/Heart/Kidney 各取各的 roll
-                    let meridians = [MeridianId::Lung, MeridianId::Heart, MeridianId::Kidney];
-                    meridians.iter().all(|&m| {
+                patients
+                    .iter()
+                    .zip(severed_meridians.iter())
+                    .all(|(&patient, &m)| {
                         deterministic_success_roll(medic, patient, m, *tick) >= threshold
                     })
-                })
             })
-            .expect("全员失败 tick 未找到（roll space 足够大，理论必有）");
+            .expect("全员失败 tick 未找到");
 
         let qi_before = app.world().get::<Cultivation>(medic).unwrap().qi_current;
 
-        let outcome = apply_mass_meridian_repair(
-            app.world_mut(),
-            medic,
-            &patients,
-            0.0,
-            true,
-            all_fail_tick,
-        );
+        let outcome =
+            apply_mass_meridian_repair(app.world_mut(), medic, &patients, 0.0, true, all_fail_tick);
 
-        assert_eq!(
-            outcome.success_count, 0,
-            "前置：本 tick 应无成功修复"
-        );
+        assert_eq!(outcome.success_count, 0, "前置：本 tick 应无成功修复");
         assert_eq!(
             outcome.failure_count,
             patients.len() as u32,
@@ -2508,10 +2502,7 @@ mod tests {
 
         let qi_after = app.world().get::<Cultivation>(medic).unwrap().qi_current;
         let deducted = qi_before - qi_after;
-        assert!(
-            deducted > 0.0,
-            "施放者应被扣除真元（实际扣除 {deducted}）"
-        );
+        assert!(deducted > 0.0, "施放者应被扣除真元（实际扣除 {deducted}）");
 
         // 守恒红线：ReleaseToZone 事件总量必须等于扣除量
         let transfers: Vec<_> = app
@@ -2570,24 +2561,21 @@ mod tests {
             .spirit_qi = 0.0;
 
         let medic = spawn_medic(&mut app, Realm::Void);
-        let patients: Vec<(Entity, MeridianId)> = [
-            MeridianId::Lung,
-            MeridianId::Heart,
-            MeridianId::Kidney,
-        ]
-        .iter()
-        .map(|&meridian| {
-            let patient = spawn_patient(&mut app);
-            let mut severed = MeridianSeveredPermanent::default();
-            severed.insert(
-                meridian,
-                crate::cultivation::meridian::severed::SeveredSource::CombatWound,
-                1,
-            );
-            app.world_mut().entity_mut(patient).insert(severed);
-            (patient, meridian)
-        })
-        .collect();
+        let patients: Vec<(Entity, MeridianId)> =
+            [MeridianId::Lung, MeridianId::Heart, MeridianId::Kidney]
+                .iter()
+                .map(|&meridian| {
+                    let patient = spawn_patient(&mut app);
+                    let mut severed = MeridianSeveredPermanent::default();
+                    severed.insert(
+                        meridian,
+                        crate::cultivation::meridian::severed::SeveredSource::CombatWound,
+                        1,
+                    );
+                    app.world_mut().entity_mut(patient).insert(severed);
+                    (patient, meridian)
+                })
+                .collect();
 
         let threshold = mass_meridian_repair(
             local_qi_density_for_mass_repair(app.world(), medic),
