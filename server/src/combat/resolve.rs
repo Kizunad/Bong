@@ -67,7 +67,6 @@ use crate::qi_physics::constants::{
     QI_ZHENMAI_CONCUSSION_BLEEDING_PER_SEC, QI_ZHENMAI_PARRY_RECOVERY_TICKS,
 };
 use crate::qi_physics::{flow_modifier, QiAccountId, QiTransfer};
-use crate::world::zone::ZoneRegistry;
 use crate::schema::anticheat::ViolationKindV1;
 use crate::schema::common::{GameEventType, NarrationStyle};
 use crate::schema::inventory::{EquipSlotV1, InventoryLocationV1};
@@ -75,6 +74,7 @@ use crate::schema::world_state::GameEvent;
 use crate::skill::components::SkillId;
 use crate::skill::events::{SkillXpGain, XpGainSource};
 use crate::world::events::ActiveEventsResource;
+use crate::world::zone::ZoneRegistry;
 
 const ARMOR_HIT_CONTAMINATION_MULTIPLIER: f64 = 0.1;
 const ARMOR_HIT_DURABILITY_COST_POINTS: f64 = 0.5;
@@ -4735,6 +4735,16 @@ mod tests {
         let mut app = App::new();
         app.insert_resource(CombatClock { tick: 1000 });
         app.insert_resource(ZoneRegistry::fallback());
+        // fallback() 的 spawn zone 默认接近满（spirit_qi≈0.9），余量不足以吸收整份格挡费用 →
+        // 会拆成 zone 部分 + overflow 部分。清空 spawn zone 让整份 qi_cost 落入 zone，
+        // 锁住「完好回灌」happy path（守恒两条路都成立，此处验全额入 zone 的契约）。
+        if let Some(zone) = app
+            .world_mut()
+            .resource_mut::<ZoneRegistry>()
+            .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
+        {
+            zone.spirit_qi = 0.0;
+        }
         app.add_event::<AttackIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<CombatEvent>();
@@ -4777,6 +4787,10 @@ mod tests {
                 qi_max: 100.0,
                 ..Cultivation::default()
             },
+            // 真实玩家出生即带 CurrentDimension（player/mod.rs），生产路径 find_zone 能定位 zone；
+            // 测试需显式补上，否则 defender_dim=None → release_qi_amount_to_zone 回退 Overflow 账户，
+            // 守恒回灌断言（to=Zone:spawn）撞红。
+            crate::world::dimension::CurrentDimension::default(),
         ));
 
         app.world_mut().send_event(AttackIntent {
