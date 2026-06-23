@@ -108,7 +108,18 @@ pub fn false_skin_maintenance_tick(
     if tick % crate::combat::components::TICKS_PER_SECOND != 0 {
         return;
     }
-    for (entity, mut cultivation, mut stack, practice, qi_color, attrs, inventory, position, current_dimension) in &mut query {
+    for (
+        entity,
+        mut cultivation,
+        mut stack,
+        practice,
+        qi_color,
+        attrs,
+        inventory,
+        position,
+        current_dimension,
+    ) in &mut query
+    {
         let cost = maintenance_qi_per_sec(&stack, practice, qi_color);
         if cost <= f64::EPSILON {
             continue;
