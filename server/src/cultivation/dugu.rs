@@ -20,12 +20,12 @@ use crate::inventory::{
 use crate::network::cast_emit::current_unix_millis;
 use crate::network::{gameplay_vfx, vfx_event_emit::VfxEventRequest};
 use crate::qi_physics::{MediumKind, QiTransfer, StyleAttack};
-use crate::world::dimension::CurrentDimension;
-use crate::world::zone::ZoneRegistry;
 use crate::schema::dugu::{
     AntidoteResultEventV1, AntidoteResultV1, DuguObfuscationStateV1, DuguPoisonProgressEventV1,
     DuguPoisonStateV1,
 };
+use crate::world::dimension::CurrentDimension;
+use crate::world::zone::ZoneRegistry;
 
 pub const DUGU_INFUSE_SKILL_ID: &str = "dugu.infuse_poison";
 pub const DUGU_INFUSE_COST: f64 = 5.0;
@@ -424,8 +424,15 @@ pub fn resolve_self_antidote_intent(
         if intent.healer != intent.target {
             continue;
         }
-        let Ok((mut meridians, mut cultivation, poison, lifecycle, position, current_dimension, life_record)) =
-            targets.get_mut(intent.target)
+        let Ok((
+            mut meridians,
+            mut cultivation,
+            poison,
+            lifecycle,
+            position,
+            current_dimension,
+            life_record,
+        )) = targets.get_mut(intent.target)
         else {
             continue;
         };
