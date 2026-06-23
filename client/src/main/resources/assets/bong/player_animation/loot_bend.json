@@ -7,7 +7,7 @@
     "beginTick": 0,
     "endTick": 20,
     "stopTick": 22,
-    "isLoop": true,
+    "isLoop": false,
     "returnTick": 0,
     "nsfw": false,
     "degrees": false,
