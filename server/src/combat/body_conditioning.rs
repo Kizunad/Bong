@@ -119,7 +119,11 @@ fn ensure_entry(known: &mut KnownTechniques) -> &mut KnownTechnique {
 pub fn consume_guangbo_practice_events(
     mut events: EventReader<GuangboTicaoPracticeEvent>,
     mut q: Query<(&mut KnownTechniques, Option<&mut Cultivation>)>,
-    locations: Query<(Option<&Position>, Option<&CurrentDimension>, Option<&LifeRecord>)>,
+    locations: Query<(
+        Option<&Position>,
+        Option<&CurrentDimension>,
+        Option<&LifeRecord>,
+    )>,
     mut zones: Option<ResMut<ZoneRegistry>>,
     mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
 ) {
@@ -946,7 +950,10 @@ mod tests {
                 transfers.len()
             );
             assert!(
-                matches!(transfers[0].to.kind, crate::qi_physics::QiAccountKind::Overflow),
+                matches!(
+                    transfers[0].to.kind,
+                    crate::qi_physics::QiAccountKind::Overflow
+                ),
                 "无 CurrentDimension 的 QiTransfer 应路由到 Overflow，实际 {:?}",
                 transfers[0].to
             );
