@@ -9903,7 +9903,8 @@ mod tests {
             .collect();
         assert!(
             transfers.is_empty(),
-            "zero actual drain must not emit any QiTransfer; got {}", transfers.len()
+            "zero actual drain must not emit any QiTransfer; got {}",
+            transfers.len()
         );
     }
 
