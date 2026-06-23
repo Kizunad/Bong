@@ -7,6 +7,10 @@ import com.bong.client.combat.EquippedWeapon;
 import com.bong.client.combat.SkillBarEntry;
 import com.bong.client.combat.SkillBarStore;
 import com.bong.client.combat.WeaponEquippedStore;
+import com.bong.client.inventory.model.EquipSlotType;
+import com.bong.client.inventory.model.InventoryItem;
+import com.bong.client.inventory.state.InventoryStateStore;
+import com.bong.client.lingtian.HoeVanillaIconMap;
 import com.bong.client.weapon.ShieldVanillaIconMap;
 import com.bong.client.weapon.WeaponVanillaIconMap;
 
@@ -114,6 +118,14 @@ public abstract class MixinPlayerEntityHeldItem {
             ItemStack blockFake = bong$selectedBlockStack().orElse(null);
             if (blockFake != null) {
                 cir.setReturnValue(blockFake);
+                return;
+            }
+            // 锄头 TPV 兜底：无 Bong 武器/方块 + 主手装备槽是 Bong 锄头时，合成 fake vanilla HOE stack，
+            // 让第三人称（HeldItemFeatureRenderer 走 getMainHandStack）也画锄头。此前只有 FPV
+            // (MixinHeldItemRenderer:95-101) 有此兜底，TPV 缺失 → 本人 F5 第三人称下锄头空手。镜像 FPV。
+            ItemStack hoeFake = bong$selectedHoeStack().orElse(null);
+            if (hoeFake != null) {
+                cir.setReturnValue(hoeFake);
             }
             return;
         }
@@ -126,6 +138,18 @@ public abstract class MixinPlayerEntityHeldItem {
             LOGGER.info("getMainHandStack #{} override → {} (template={})",
                 mainHandOverrideCount, fake.getItem(), bong.templateId());
         }
+    }
+
+    // 锄头主手 fake stack：读 InventoryStateStore 主手装备槽 itemId，若是 Bong 锄头则合成对应档位的
+    // vanilla 锄头 stack（铁/灵铁/玄铁 → IRON/DIAMOND/NETHERITE_HOE）。与 FPV MixinHeldItemRenderer
+    // 同一数据源（HoeVanillaIconMap），保证 FPV/TPV 三档一致。锄头非 Weapon Component，故不走
+    // WeaponEquippedStore，而是直接读装备槽状态。
+    private static java.util.Optional<ItemStack> bong$selectedHoeStack() {
+        InventoryItem main = InventoryStateStore.snapshot().equipped().get(EquipSlotType.MAIN_HAND);
+        if (main == null || main.isEmpty() || !HoeVanillaIconMap.isHoe(main.itemId())) {
+            return java.util.Optional.empty();
+        }
+        return java.util.Optional.ofNullable(HoeVanillaIconMap.createStackFor(main.itemId()));
     }
 
     private static java.util.Optional<ItemStack> bong$selectedBlockStack() {
