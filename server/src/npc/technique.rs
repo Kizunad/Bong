@@ -364,17 +364,22 @@ pub struct SelectedTechnique {
 
 /// NPC 战斗中选择功法。
 ///
-/// 过滤逻辑：active → category_filter 限定 → 经脉 SEVERED 排除 → 冷却排除 → qi 不足排除 →
+/// 过滤逻辑：active → category_filter 限定 → 经脉 SEVERED 排除 → 经脉 opened 实时检查 →
+/// 冷却排除 → qi 不足排除 →
 /// qi_ratio < 0.15 排除高 qi_cost 50% → Defense 排除（走独立 NpcDefenseAction）→
 /// 按 `category_weight(ctx) * proficiency` 加权随机选一个。全部不可用返回 None。
 ///
 /// `category_filter` 为 Some 时，只保留该类别的功法（NpcHealAction 用 Some(Heal)）。
+///
+/// `meridian_sys` 为 Some 时，额外检查依赖经脉的 `opened` 字段（dugu 毒关脉但不触发
+/// MeridianSeveredPermanent 的场景）。
 #[allow(clippy::too_many_arguments)]
 pub fn select_technique(
     known: &KnownTechniques,
     cultivation: &Cultivation,
     meridian_deps: &SkillMeridianDependencies,
     severed: Option<&MeridianSeveredPermanent>,
+    meridian_sys: Option<&MeridianSystem>,
     cooldowns: &NpcCooldownMap,
     npc_entity: Entity,
     _target_distance: f32,
@@ -399,6 +404,13 @@ pub fn select_technique(
         let deps = meridian_deps.lookup(&entry.id);
         if check_meridian_dependencies(deps, severed).is_err() {
             continue;
+        }
+        // 实时检查依赖经脉的 opened 状态：dugu 毒会关脉（opened=false）但不写入
+        // MeridianSeveredPermanent，所以上面的 SEVERED 检查不足以拦截这类情况。
+        if let Some(sys) = meridian_sys {
+            if deps.iter().any(|dep_id| !sys.get(*dep_id).opened) {
+                continue;
+            }
         }
         if cooldowns.is_on_cooldown(npc_entity, &entry.id, current_tick) {
             continue;
@@ -549,6 +561,7 @@ pub fn npc_heal_scorer_system(
             &Cultivation,
             Option<&KnownTechniques>,
             Option<&MeridianSeveredPermanent>,
+            Option<&MeridianSystem>,
             Option<&crate::combat::components::Wounds>,
             Option<&crate::npc::lod::NpcLodTier>,
         ),
@@ -570,7 +583,8 @@ pub fn npc_heal_scorer_system(
     let tick = lod_tick.as_deref().map(|t| t.0).unwrap_or(0);
 
     for (Actor(actor), mut score) in &mut scorers {
-        let Ok((_bb, cultivation, known_opt, severed_opt, wounds_opt, tier)) = npcs.get(*actor)
+        let Ok((_bb, cultivation, known_opt, severed_opt, meridian_sys_opt, wounds_opt, tier)) =
+            npcs.get(*actor)
         else {
             score.set(0.0);
             continue;
@@ -605,8 +619,15 @@ pub fn npc_heal_scorer_system(
                 if def.category != SkillCategory::Heal {
                     return false;
                 }
-                if check_meridian_dependencies(deps.lookup(&entry.id), severed_opt).is_err() {
+                let entry_deps = deps.lookup(&entry.id);
+                if check_meridian_dependencies(entry_deps, severed_opt).is_err() {
                     return false;
+                }
+                // 实时检查依赖经脉 opened（dugu 毒场景）
+                if let Some(sys) = meridian_sys_opt {
+                    if entry_deps.iter().any(|dep_id| !sys.get(*dep_id).opened) {
+                        return false;
+                    }
                 }
                 if cooldowns.is_on_cooldown(*actor, &entry.id, current_tick) {
                     return false;
@@ -632,11 +653,15 @@ pub fn npc_heal_scorer_system(
 }
 
 /// 检查 NPC 是否有可用的 Heal 类别功法（供 unit test 使用）。
+///
+/// `meridian_sys` 为 Some 时，额外检查依赖经脉的 `opened` 字段（镜像 select_technique
+/// 的实时 opened 检查，防止 dugu 毒关脉后仍释放治疗功法）。
 pub fn has_usable_heal_technique(
     known: &KnownTechniques,
     cultivation: &Cultivation,
     deps: &SkillMeridianDependencies,
     severed: Option<&MeridianSeveredPermanent>,
+    meridian_sys: Option<&MeridianSystem>,
     cooldowns: &NpcCooldownMap,
     npc_entity: Entity,
     current_tick: u64,
@@ -651,8 +676,15 @@ pub fn has_usable_heal_technique(
         if def.category != SkillCategory::Heal {
             return false;
         }
-        if check_meridian_dependencies(deps.lookup(&entry.id), severed).is_err() {
+        let entry_deps = deps.lookup(&entry.id);
+        if check_meridian_dependencies(entry_deps, severed).is_err() {
             return false;
+        }
+        // 实时检查依赖经脉 opened（dugu 毒场景）
+        if let Some(sys) = meridian_sys {
+            if entry_deps.iter().any(|dep_id| !sys.get(*dep_id).opened) {
+                return false;
+            }
         }
         if cooldowns.is_on_cooldown(npc_entity, &entry.id, current_tick) {
             return false;
@@ -704,6 +736,7 @@ pub fn npc_technique_scorer_system(
             Option<&KnownTechniques>,
             Option<&NpcLastTechniqueTick>,
             Option<&MeridianSeveredPermanent>,
+            Option<&MeridianSystem>,
             Option<&crate::combat::components::Wounds>,
             Option<&crate::npc::lod::NpcLodTier>,
         ),
@@ -725,7 +758,7 @@ pub fn npc_technique_scorer_system(
     let lod_t = lod_tick.as_deref().map(|t| t.0).unwrap_or(0);
 
     for (Actor(actor), mut score) in &mut scorers {
-        let Ok((bb, cultivation, known_opt, last_tick_opt, severed_opt, wounds_opt, tier)) =
+        let Ok((bb, cultivation, known_opt, last_tick_opt, severed_opt, meridian_sys_opt, wounds_opt, tier)) =
             npcs.get(*actor)
         else {
             score.set(0.0);
@@ -758,6 +791,7 @@ pub fn npc_technique_scorer_system(
                 cultivation,
                 deps,
                 severed_opt,
+                meridian_sys_opt,
                 cooldowns,
                 *actor,
                 bb.player_distance,
@@ -824,6 +858,7 @@ fn run_technique_action<T: Component>(
                         continue;
                     };
                     let severed = world.get::<MeridianSeveredPermanent>(actor_entity);
+                    let meridian_sys = world.get::<MeridianSystem>(actor_entity);
 
                     let empty_deps = SkillMeridianDependencies::default();
                     let deps = world
@@ -849,6 +884,7 @@ fn run_technique_action<T: Component>(
                         cultivation,
                         deps,
                         severed,
+                        meridian_sys,
                         cooldowns,
                         actor_entity,
                         target_distance,
@@ -1485,6 +1521,7 @@ mod tests {
             &cultivation,
             &deps,
             None,
+            None,
             &cooldowns,
             entity,
             3.0,
@@ -1522,6 +1559,7 @@ mod tests {
             &cultivation,
             &deps,
             None,
+            None,
             &cooldowns,
             entity,
             3.0,
@@ -1556,6 +1594,7 @@ mod tests {
             &known,
             &cultivation,
             &deps,
+            None,
             None,
             &cooldowns,
             entity,
@@ -1592,6 +1631,7 @@ mod tests {
             &cultivation,
             &deps,
             None,
+            None,
             &cooldowns,
             entity,
             3.0,
@@ -1625,6 +1665,7 @@ mod tests {
             &known,
             &cultivation,
             &deps,
+            None,
             None,
             &cooldowns,
             entity,
@@ -1668,6 +1709,7 @@ mod tests {
             &cultivation,
             &deps,
             Some(&severed),
+            None,
             &cooldowns,
             entity,
             3.0,
@@ -1678,6 +1720,241 @@ mod tests {
         assert!(
             result.is_none(),
             "technique with SEVERED dependent meridian should be excluded"
+        );
+    }
+
+    // === select_technique: dugu-poison opened=false gate (skill-gate-001) ===
+
+    /// dugu 毒将经脉 opened 设为 false 但不写入 MeridianSeveredPermanent；
+    /// 传入 meridian_sys=Some 时，select_technique 应拒绝该功法。
+    #[test]
+    fn select_technique_dugu_poisoned_meridian_closed_excluded() {
+        let known = KnownTechniques {
+            entries: vec![KnownTechnique {
+                id: "woliu.burst".to_string(),
+                proficiency: 0.5,
+                active: true,
+            }],
+        };
+        let cultivation = Cultivation {
+            realm: Realm::Condense,
+            qi_current: 100.0,
+            qi_max: 100.0,
+            ..Default::default()
+        };
+        let mut deps = SkillMeridianDependencies::default();
+        deps.declare("woliu.burst", vec![MeridianId::Lung]);
+
+        // Simulate dugu_poison_tick effect: Lung closed via opened=false, no SEVERED component
+        let mut meridian_sys = meridian_sys_with_opened(&[
+            MeridianId::LargeIntestine,
+            MeridianId::Stomach,
+            MeridianId::Spleen,
+            MeridianId::Heart,
+            MeridianId::SmallIntestine,
+        ]);
+        // Lung is left at default (opened=false) — simulates dugu poison closing it
+        {
+            let lung = meridian_sys.get_mut(MeridianId::Lung);
+            lung.opened = false;
+            lung.flow_capacity = 0.0;
+        }
+
+        let cooldowns = NpcCooldownMap::default();
+        let entity = Entity::from_raw(1);
+
+        let result = select_technique(
+            &known,
+            &cultivation,
+            &deps,
+            None, // no MeridianSeveredPermanent — dugu does NOT insert this
+            Some(&meridian_sys),
+            &cooldowns,
+            entity,
+            3.0,
+            100,
+            &default_ctx(),
+            None,
+        );
+        assert!(
+            result.is_none(),
+            "dugu-poisoned NPC with Lung closed (opened=false, no SEVERED component) must not \
+             be able to cast woliu.burst — expected None but got Some"
+        );
+    }
+
+    /// 经脉 opened=true 时（无毒），select_technique 应正常选出功法（happy path）。
+    #[test]
+    fn select_technique_meridian_open_allows_technique() {
+        let known = KnownTechniques {
+            entries: vec![KnownTechnique {
+                id: "woliu.burst".to_string(),
+                proficiency: 0.5,
+                active: true,
+            }],
+        };
+        let cultivation = Cultivation {
+            realm: Realm::Condense,
+            qi_current: 100.0,
+            qi_max: 100.0,
+            ..Default::default()
+        };
+        let mut deps = SkillMeridianDependencies::default();
+        deps.declare("woliu.burst", vec![MeridianId::Lung]);
+
+        // Lung is open
+        let meridian_sys = meridian_sys_with_opened(&[MeridianId::Lung]);
+
+        let cooldowns = NpcCooldownMap::default();
+        let entity = Entity::from_raw(1);
+
+        let result = select_technique(
+            &known,
+            &cultivation,
+            &deps,
+            None,
+            Some(&meridian_sys),
+            &cooldowns,
+            entity,
+            3.0,
+            100,
+            &default_ctx(),
+            None,
+        );
+        assert!(
+            result.is_some(),
+            "NPC with Lung open should be able to cast woliu.burst"
+        );
+        assert_eq!(result.unwrap().technique_id, "woliu.burst");
+    }
+
+    /// MeridianSystem 传 None 时（向后兼容），select_technique 不做 opened 检查，
+    /// 行为与修复前相同（仍可通过 SEVERED 途径拦截）。
+    #[test]
+    fn select_technique_no_meridian_sys_skips_opened_check() {
+        let known = KnownTechniques {
+            entries: vec![KnownTechnique {
+                id: "woliu.burst".to_string(),
+                proficiency: 0.5,
+                active: true,
+            }],
+        };
+        let cultivation = Cultivation {
+            realm: Realm::Condense,
+            qi_current: 100.0,
+            qi_max: 100.0,
+            ..Default::default()
+        };
+        let mut deps = SkillMeridianDependencies::default();
+        deps.declare("woliu.burst", vec![MeridianId::Lung]);
+
+        let cooldowns = NpcCooldownMap::default();
+        let entity = Entity::from_raw(1);
+
+        // No meridian_sys — opened check is skipped, skill is selectable
+        let result = select_technique(
+            &known,
+            &cultivation,
+            &deps,
+            None,
+            None, // no meridian_sys → no opened check
+            &cooldowns,
+            entity,
+            3.0,
+            100,
+            &default_ctx(),
+            None,
+        );
+        assert!(
+            result.is_some(),
+            "without meridian_sys, select_technique should not gate on opened field"
+        );
+    }
+
+    /// has_usable_heal_technique: dugu 毒关脉后 opened=false，heal 功法应被拒绝。
+    #[test]
+    fn has_usable_heal_dugu_poisoned_meridian_excluded() {
+        let known = KnownTechniques {
+            entries: vec![KnownTechnique {
+                id: "npc.heal_basic".to_string(),
+                proficiency: 0.5,
+                active: true,
+            }],
+        };
+        let cultivation = Cultivation {
+            realm: Realm::Induce,
+            qi_current: 100.0,
+            qi_max: 100.0,
+            ..Default::default()
+        };
+        // Declare that npc.heal_basic depends on Spleen
+        let mut deps = SkillMeridianDependencies::default();
+        deps.declare("npc.heal_basic", vec![MeridianId::Spleen]);
+
+        // dugu 毒把 Spleen 关掉（opened=false），但没有 MeridianSeveredPermanent
+        let mut meridian_sys = MeridianSystem::default();
+        {
+            let spleen = meridian_sys.get_mut(MeridianId::Spleen);
+            spleen.opened = false;
+            spleen.flow_capacity = 0.0;
+        }
+
+        let cooldowns = NpcCooldownMap::default();
+        let entity = Entity::from_raw(1);
+
+        let result = has_usable_heal_technique(
+            &known,
+            &cultivation,
+            &deps,
+            None, // no MeridianSeveredPermanent
+            Some(&meridian_sys),
+            &cooldowns,
+            entity,
+            100,
+        );
+        assert!(
+            !result,
+            "dugu-poisoned NPC with Spleen closed must not have usable heal — \
+             expected false but got true"
+        );
+    }
+
+    /// has_usable_heal_technique: 经脉 open 时治疗可用（happy path，含 opened 检查）。
+    #[test]
+    fn has_usable_heal_meridian_open_allows_heal() {
+        let known = KnownTechniques {
+            entries: vec![KnownTechnique {
+                id: "npc.heal_basic".to_string(),
+                proficiency: 0.5,
+                active: true,
+            }],
+        };
+        let cultivation = Cultivation {
+            realm: Realm::Induce,
+            qi_current: 100.0,
+            qi_max: 100.0,
+            ..Default::default()
+        };
+        let mut deps = SkillMeridianDependencies::default();
+        deps.declare("npc.heal_basic", vec![MeridianId::Spleen]);
+
+        let meridian_sys = meridian_sys_with_opened(&[MeridianId::Spleen]);
+        let cooldowns = NpcCooldownMap::default();
+        let entity = Entity::from_raw(1);
+
+        let result = has_usable_heal_technique(
+            &known,
+            &cultivation,
+            &deps,
+            None,
+            Some(&meridian_sys),
+            &cooldowns,
+            entity,
+            100,
+        );
+        assert!(
+            result,
+            "NPC with Spleen open should have usable heal technique"
         );
     }
 
@@ -1714,6 +1991,7 @@ mod tests {
             &cultivation,
             &deps,
             None,
+            None,
             &cooldowns,
             entity,
             3.0,
@@ -1741,6 +2019,7 @@ mod tests {
             &known,
             &cultivation,
             &deps,
+            None,
             None,
             &cooldowns,
             entity,
@@ -1856,6 +2135,7 @@ mod tests {
                 &known,
                 &cultivation,
                 &deps,
+                None,
                 None,
                 &cooldowns,
                 entity,
@@ -2125,6 +2405,7 @@ mod tests {
             &cultivation,
             &deps,
             None,
+            None,
             &cooldowns,
             entity,
             3.0,
@@ -2176,6 +2457,7 @@ mod tests {
                 &known,
                 &cultivation,
                 &deps,
+                None,
                 None,
                 &cooldowns,
                 entity,
@@ -2235,6 +2517,7 @@ mod tests {
             &cultivation,
             &deps,
             None,
+            None,
             &cooldowns,
             entity,
             3.0,
@@ -2275,6 +2558,7 @@ mod tests {
             &cultivation,
             &deps,
             None,
+            None,
             &cooldowns,
             entity,
             3.0,
@@ -2311,6 +2595,7 @@ mod tests {
             &known,
             &cultivation,
             &deps,
+            None,
             None,
             &cooldowns,
             entity,
@@ -2349,7 +2634,7 @@ mod tests {
         let cooldowns = NpcCooldownMap::default();
         let entity = Entity::from_raw(1);
         assert!(
-            has_usable_heal_technique(&known, &cultivation, &deps, None, &cooldowns, entity, 100),
+            has_usable_heal_technique(&known, &cultivation, &deps, None, None, &cooldowns, entity, 100),
             "NPC with active heal technique should have usable heal"
         );
     }
@@ -2373,7 +2658,7 @@ mod tests {
         let cooldowns = NpcCooldownMap::default();
         let entity = Entity::from_raw(1);
         assert!(
-            !has_usable_heal_technique(&known, &cultivation, &deps, None, &cooldowns, entity, 100),
+            !has_usable_heal_technique(&known, &cultivation, &deps, None, None, &cooldowns, entity, 100),
             "NPC with only Attack techniques should not have usable heal"
         );
     }
@@ -2398,7 +2683,7 @@ mod tests {
         let entity = Entity::from_raw(1);
         cooldowns.set(entity, "zhenmai.neutralize", 200);
         assert!(
-            !has_usable_heal_technique(&known, &cultivation, &deps, None, &cooldowns, entity, 100),
+            !has_usable_heal_technique(&known, &cultivation, &deps, None, None, &cooldowns, entity, 100),
             "heal technique on cooldown should not be usable"
         );
     }
@@ -2422,7 +2707,7 @@ mod tests {
         let cooldowns = NpcCooldownMap::default();
         let entity = Entity::from_raw(1);
         assert!(
-            !has_usable_heal_technique(&known, &cultivation, &deps, None, &cooldowns, entity, 100),
+            !has_usable_heal_technique(&known, &cultivation, &deps, None, None, &cooldowns, entity, 100),
             "inactive heal technique should not be usable"
         );
     }
@@ -2452,6 +2737,7 @@ mod tests {
                     &known,
                     &cultivation,
                     &deps,
+                    None,
                     None,
                     &cooldowns,
                     entity,
