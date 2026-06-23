@@ -1,5 +1,6 @@
 package com.bong.client.mixin;
 
+import com.bong.client.armor.ArmorFeatureRenderer;
 import com.bong.client.armor.ArmorModelRegistry;
 import com.bong.client.armor.ArmorTintRegistry;
 import com.bong.client.inventory.model.EquipSlotType;
@@ -43,8 +44,11 @@ public abstract class MixinPlayerEntityArmor {
         InventoryItem equipped = InventoryStateStore.snapshot().equipped().get(bongSlot);
         if (equipped == null || equipped.isEmpty()) return;
 
-        // If we have a custom OBJ model, skip leather dye -- ArmorFeatureRenderer handles it
-        if (ArmorModelRegistry.get(equipped.itemId()).isPresent()) {
+        // 已注册 OBJ 模型的甲：仅当 OBJ 渲染**已实装**时才跳过 leather-dye（交给 ArmorFeatureRenderer
+        // 画 OBJ）。OBJ 未实装时（OBJ_RENDER_READY=false）继续走下面的 leather-dye 兜底，否则甲全透明
+        // （ArmorFeatureRenderer.render 此时是 early-return 空实现）。翻 OBJ_RENDER_READY 即切回 OBJ。
+        if (ArmorFeatureRenderer.OBJ_RENDER_READY
+            && ArmorModelRegistry.get(equipped.itemId()).isPresent()) {
             return; // leave vanilla stack empty, ArmorFeatureRenderer will render the OBJ
         }
 

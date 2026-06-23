@@ -1,5 +1,6 @@
 package com.bong.client.armor;
 
+import net.minecraft.entity.EquipmentSlot;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
@@ -8,6 +9,7 @@ import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -51,15 +53,50 @@ class ArmorModelRegistryTest {
     }
 
     @Test
-    void mixinArmorReturnsEmptyWhenModelRegistered() {
+    void registeredObjArmorPiecesPresentForGatedSuppression() {
+        // MixinPlayerEntityArmor 仅在 ArmorFeatureRenderer.OBJ_RENDER_READY=true 时才对这些已注册
+        // OBJ 甲抑制 leather-dye；OBJ 未实装时它们改走 leather-dye 兜底（见下方 fallback 不变式）。
         assertTrue(ArmorModelRegistry.get("armor_iron_helmet").isPresent(),
-            "iron helmet should be in ArmorModelRegistry, causing mixin to skip leather dye");
+            "iron helmet should be in ArmorModelRegistry");
         assertTrue(ArmorModelRegistry.get("armor_iron_chestplate").isPresent(),
             "iron chestplate should be in ArmorModelRegistry");
         assertTrue(ArmorModelRegistry.get("armor_iron_leggings").isPresent(),
             "iron leggings should be in ArmorModelRegistry");
         assertTrue(ArmorModelRegistry.get("armor_iron_boots").isPresent(),
             "iron boots should be in ArmorModelRegistry");
+    }
+
+    @Test
+    void everyRegisteredObjArmorHasLeatherDyeFallbackSoNoneGoInvisible() {
+        // 核心不变式（修「穿甲全透明」）：OBJ 渲染未实装期（OBJ_RENDER_READY=false），
+        // MixinPlayerEntityArmor 让已注册铁/骨甲也走 leather-dye 兜底。前提是每件已注册甲在
+        // ArmorTintRegistry 里有对应 ArmorItemSpec 且 slot 一致——否则 createLeatherArmorStack
+        // 返 EMPTY → 该甲仍透明。锁住这条，任何注册了 OBJ 但漏 tint 兜底的甲都会撞红。
+        assertFalse(ArmorFeatureRenderer.OBJ_RENDER_READY,
+            "OBJ 渲染尚未实装，OBJ_RENDER_READY 应为 false（leather-dye 兜底生效中）。"
+                + "若已实装真实 OBJ 渲染并翻 true，请把本断言改为正向验证 OBJ 路径");
+
+        for (String id : new String[]{
+            "armor_iron_helmet", "armor_iron_chestplate", "armor_iron_leggings", "armor_iron_boots",
+            "armor_bone_helmet", "armor_bone_chestplate", "armor_bone_leggings", "armor_bone_boots"}) {
+            ArmorModelRegistry.ArmorModelSpec modelSpec = ArmorModelRegistry.get(id)
+                .orElseThrow(() -> new AssertionError(id + " 应在 ArmorModelRegistry"));
+            ArmorTintRegistry.ArmorItemSpec tint = ArmorTintRegistry.item(id);
+            assertNotNull(tint,
+                id + " 缺 ArmorTintRegistry 兜底 spec → OBJ 未实装期穿戴会透明（createLeatherArmorStack 返空）");
+            assertEquals(slotEnum(modelSpec.slot()), tint.slot(),
+                id + " leather-dye 兜底 slot 与 OBJ 注册 slot 不一致 → createLeatherArmorStack 因 slot 不匹配返空");
+        }
+    }
+
+    private static EquipmentSlot slotEnum(String slot) {
+        return switch (slot) {
+            case "head" -> EquipmentSlot.HEAD;
+            case "chest" -> EquipmentSlot.CHEST;
+            case "legs" -> EquipmentSlot.LEGS;
+            case "feet" -> EquipmentSlot.FEET;
+            default -> throw new IllegalArgumentException("unknown slot string: " + slot);
+        };
     }
 
     @Test
