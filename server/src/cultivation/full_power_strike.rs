@@ -353,8 +353,13 @@ fn charge_tick_release_qi_to_zone(
                 let to = QiAccountId::zone(zone.name.clone());
                 // 不 .max(0.0)：负灵域（spirit_qi<0）下当 0 会跳过负缺口、凭空多 credit，破坏守恒。
                 let zone_current = zone.spirit_qi * QI_ZONE_UNIT_CAPACITY;
-                match qi_release_to_zone(amount, from.clone(), to, zone_current, QI_ZONE_UNIT_CAPACITY)
-                {
+                match qi_release_to_zone(
+                    amount,
+                    from.clone(),
+                    to,
+                    zone_current,
+                    QI_ZONE_UNIT_CAPACITY,
+                ) {
                     Ok(outcome) => {
                         zone.spirit_qi =
                             (outcome.zone_after / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
