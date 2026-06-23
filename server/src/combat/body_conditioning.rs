@@ -2,12 +2,17 @@
 //! （+5% 移速 / +5% 跳跃 / +0.5% 四肢防御），每次施放递减增长 proficiency。
 //! `body_conditioning_aggregate` 在 Physics 阶段读 `KnownTechniques` 写入 `DerivedAttrs`。
 
-use valence::prelude::{bevy_ecs, Entity, Event, EventReader, Query};
+use valence::prelude::{bevy_ecs, Entity, Event, EventReader, Events, Position, Query, ResMut};
 
 use crate::combat::armor::ARMOR_MITIGATION_CAP;
 use crate::combat::components::{BodyPart, DerivedAttrs, WoundKind};
 use crate::cultivation::components::Cultivation;
+use crate::cultivation::death_hooks::release_qi_amount_to_zone;
 use crate::cultivation::known_techniques::{KnownTechnique, KnownTechniques};
+use crate::cultivation::life_record::LifeRecord;
+use crate::qi_physics::QiTransfer;
+use crate::world::dimension::CurrentDimension;
+use crate::world::zone::ZoneRegistry;
 
 pub const GUANGBO_TICAO_ID: &str = "body.guangbo_ticao";
 
@@ -104,14 +109,23 @@ fn ensure_entry(known: &mut KnownTechniques) -> &mut KnownTechnique {
     known.entries.last_mut().expect("entry was just inserted")
 }
 
-/// 消费 `GuangboTicaoPracticeEvent`：每次成功练习扣真元 + 递增 proficiency。
+/// 消费 `GuangboTicaoPracticeEvent`：每次成功练习扣真元 + 递增 proficiency，
+/// 并将消耗的真元回灌至当前区域（守恒：player_qi 减少必须对应 zone_qi 增加）。
 ///
 /// 守恒：通过 [`try_record_guangbo_practice`] 走真元门——真元不足则本次练习无效
 /// （不扣费、不涨熟练度）。无 `Cultivation` 组件的实体（理论上玩家恒有）按"无真元
 /// 可付"处理，同样不涨 proficiency，避免凭空增益。
+#[allow(clippy::too_many_arguments)]
 pub fn consume_guangbo_practice_events(
     mut events: EventReader<GuangboTicaoPracticeEvent>,
     mut q: Query<(&mut KnownTechniques, Option<&mut Cultivation>)>,
+    locations: Query<(
+        Option<&Position>,
+        Option<&CurrentDimension>,
+        Option<&LifeRecord>,
+    )>,
+    mut zones: Option<ResMut<ZoneRegistry>>,
+    mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
 ) {
     for event in events.read() {
         let Ok((mut known, cultivation)) = q.get_mut(event.entity) else {
@@ -121,7 +135,24 @@ pub fn consume_guangbo_practice_events(
             // 无修为组件 → 无真元可付 → 守恒下不给 proficiency。
             continue;
         };
-        try_record_guangbo_practice(&mut cultivation, &mut known);
+        let outcome = try_record_guangbo_practice(&mut cultivation, &mut known);
+        if matches!(outcome, PracticeOutcome::Trained { .. }) {
+            // 守恒：扣除的真元必须回灌区域，否则 world qi ledger 产生永久漏洞。
+            let (position, current_dimension, life_record) = locations
+                .get(event.entity)
+                .map(|(p, d, l)| (p, d, l))
+                .unwrap_or((None, None, None));
+            release_qi_amount_to_zone(
+                event.entity,
+                GUANGBO_TICAO_QI_COST,
+                position,
+                current_dimension,
+                life_record,
+                zones.as_deref_mut(),
+                qi_transfers.as_deref_mut(),
+                "guangbo_ticao",
+            );
+        }
     }
 }
 
@@ -558,11 +589,24 @@ mod tests {
 
     mod system {
         use super::*;
-        use valence::prelude::{App, Events, Update};
+        use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
+        use crate::qi_physics::{QiAccountId, QiTransfer, QiTransferReason};
+        use crate::world::dimension::{CurrentDimension, DimensionKind};
+        use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
+        use valence::prelude::{App, Events, Position, Update};
 
         fn build_app() -> App {
             let mut app = App::new();
             app.add_event::<GuangboTicaoPracticeEvent>();
+            app.add_systems(Update, consume_guangbo_practice_events);
+            app
+        }
+
+        fn build_app_with_zone() -> App {
+            let mut app = App::new();
+            app.add_event::<GuangboTicaoPracticeEvent>();
+            app.add_event::<QiTransfer>();
+            app.insert_resource(ZoneRegistry::fallback());
             app.add_systems(Update, consume_guangbo_practice_events);
             app
         }
@@ -670,6 +714,248 @@ mod tests {
             assert_eq!(
                 cultivation.qi_current, 5.0,
                 "无 KnownTechniques 的实体不应被扣真元"
+            );
+        }
+
+        // ── 守恒：zone credit 链路（扣真元 → 回灌区域）────────────────────────────
+
+        /// 成功练习应将 GUANGBO_TICAO_QI_COST 回灌到当前区域，emit QiTransfer 事件，
+        /// 且 zone.spirit_qi 应增加对应量。
+        ///
+        /// pitfall (a)：将 zone 清空（spirit_qi=0.0）避免接近满容量时发生溢出分割导致
+        ///              total ≠ cost 的断言失败。
+        /// pitfall (b)：施放者必须挂 CurrentDimension，否则 find_zone 返回 None，
+        ///              qi 路由到 Overflow 账户而非 zone。
+        #[test]
+        fn event_credits_qi_to_zone_and_emits_qi_transfer() {
+            let mut app = build_app_with_zone();
+
+            // pitfall (a)：清空 zone，确保 1.0 能整体被 zone 接受，无溢出分割。
+            app.world_mut()
+                .resource_mut::<ZoneRegistry>()
+                .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
+                .expect("spawn zone should exist")
+                .spirit_qi = 0.0;
+
+            let zone_before = app
+                .world()
+                .resource::<ZoneRegistry>()
+                .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+                .unwrap()
+                .spirit_qi;
+
+            // pitfall (b)：施放者必须有 CurrentDimension 组件。
+            let entity = app
+                .world_mut()
+                .spawn((
+                    KnownTechniques { entries: vec![] },
+                    cultivation_with_qi(5.0),
+                    Position::new([0.0, 64.0, 0.0]),
+                    CurrentDimension(DimensionKind::Overworld),
+                ))
+                .id();
+
+            app.world_mut()
+                .resource_mut::<Events<GuangboTicaoPracticeEvent>>()
+                .send(GuangboTicaoPracticeEvent { entity });
+
+            app.update();
+
+            // 真元应被扣除。
+            let cultivation = app.world().get::<Cultivation>(entity).unwrap();
+            assert_eq!(
+                cultivation.qi_current,
+                5.0 - GUANGBO_TICAO_QI_COST,
+                "守恒：练习应扣 GUANGBO_TICAO_QI_COST 真元，实际 {}",
+                cultivation.qi_current
+            );
+
+            // zone.spirit_qi 应增加（单位：spirit_qi 比例）。
+            let zone_after = app
+                .world()
+                .resource::<ZoneRegistry>()
+                .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+                .unwrap()
+                .spirit_qi;
+            let zone_delta_raw = (zone_after - zone_before) * QI_ZONE_UNIT_CAPACITY;
+            assert!(
+                (zone_delta_raw - GUANGBO_TICAO_QI_COST).abs() < 1e-6,
+                "守恒：扣除的 qi_cost 必须进入当前 zone；期望 delta={}, 实际 {zone_delta_raw}",
+                GUANGBO_TICAO_QI_COST
+            );
+
+            // QiTransfer 事件应被 emit（守恒审计链路）。
+            let transfers: Vec<_> = app
+                .world()
+                .resource::<Events<QiTransfer>>()
+                .iter_current_update_events()
+                .cloned()
+                .collect();
+            assert_eq!(
+                transfers.len(),
+                1,
+                "广播体操扣 {GUANGBO_TICAO_QI_COST} 真元时必须 emit 1 条 QiTransfer，实际 {} 条",
+                transfers.len()
+            );
+            let transfer = &transfers[0];
+            assert_eq!(
+                transfer.to,
+                QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME),
+                "QiTransfer.to 应回灌当前 spawn zone，实际 {:?}",
+                transfer.to
+            );
+            assert!(
+                (transfer.amount - GUANGBO_TICAO_QI_COST).abs() < 1e-6,
+                "QiTransfer.amount 应等于 GUANGBO_TICAO_QI_COST={GUANGBO_TICAO_QI_COST}，实际 {}",
+                transfer.amount
+            );
+            assert_eq!(
+                transfer.reason,
+                QiTransferReason::ReleaseToZone,
+                "广播体操释放真元应使用 ReleaseToZone，实际 {:?}",
+                transfer.reason
+            );
+        }
+
+        /// 真元不足时练习被拒——zone 不应得到任何 credit，QiTransfer 不应被 emit。
+        #[test]
+        fn insufficient_qi_no_zone_credit() {
+            let mut app = build_app_with_zone();
+
+            // 清空 zone 以便精确断言 delta == 0。
+            app.world_mut()
+                .resource_mut::<ZoneRegistry>()
+                .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
+                .expect("spawn zone should exist")
+                .spirit_qi = 0.0;
+
+            let zone_before = app
+                .world()
+                .resource::<ZoneRegistry>()
+                .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+                .unwrap()
+                .spirit_qi;
+
+            let entity = app
+                .world_mut()
+                .spawn((
+                    KnownTechniques { entries: vec![] },
+                    cultivation_with_qi(0.0),
+                    Position::new([0.0, 64.0, 0.0]),
+                    CurrentDimension(DimensionKind::Overworld),
+                ))
+                .id();
+
+            app.world_mut()
+                .resource_mut::<Events<GuangboTicaoPracticeEvent>>()
+                .send(GuangboTicaoPracticeEvent { entity });
+
+            app.update();
+
+            // zone 不应变化。
+            let zone_after = app
+                .world()
+                .resource::<ZoneRegistry>()
+                .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+                .unwrap()
+                .spirit_qi;
+            assert!(
+                (zone_after - zone_before).abs() < 1e-12,
+                "真元不足时 zone 不应得到任何 credit：before={zone_before}, after={zone_after}"
+            );
+
+            // QiTransfer 不应被 emit。
+            let transfers: Vec<_> = app
+                .world()
+                .resource::<Events<QiTransfer>>()
+                .iter_current_update_events()
+                .cloned()
+                .collect();
+            assert!(
+                transfers.is_empty(),
+                "真元不足练习不得 emit QiTransfer，实际 {} 条",
+                transfers.len()
+            );
+        }
+
+        /// 无 CurrentDimension 时 qi 路由到 Overflow（不泄漏到 void），zone 不变，
+        /// 但 QiTransfer 仍应 emit（到 Overflow 账户）——守恒规则：qi 必有去处。
+        #[test]
+        fn missing_current_dimension_routes_to_overflow_not_void() {
+            let mut app = build_app_with_zone();
+
+            // 清空 zone 以便精确判断 zone 未变。
+            app.world_mut()
+                .resource_mut::<ZoneRegistry>()
+                .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
+                .expect("spawn zone should exist")
+                .spirit_qi = 0.0;
+
+            let zone_before = app
+                .world()
+                .resource::<ZoneRegistry>()
+                .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+                .unwrap()
+                .spirit_qi;
+
+            // 无 CurrentDimension 组件（pitfall b 的反面验证）。
+            let entity = app
+                .world_mut()
+                .spawn((
+                    KnownTechniques { entries: vec![] },
+                    cultivation_with_qi(5.0),
+                    Position::new([0.0, 64.0, 0.0]),
+                    // 故意不挂 CurrentDimension
+                ))
+                .id();
+
+            app.world_mut()
+                .resource_mut::<Events<GuangboTicaoPracticeEvent>>()
+                .send(GuangboTicaoPracticeEvent { entity });
+
+            app.update();
+
+            // 真元仍应被扣（守恒：qi_current 已减少）。
+            let cultivation = app.world().get::<Cultivation>(entity).unwrap();
+            assert_eq!(
+                cultivation.qi_current,
+                5.0 - GUANGBO_TICAO_QI_COST,
+                "无 CurrentDimension 时真元仍应被扣，实际 {}",
+                cultivation.qi_current
+            );
+
+            // zone 不应变化（qi 路由到 Overflow 而非 zone）。
+            let zone_after = app
+                .world()
+                .resource::<ZoneRegistry>()
+                .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+                .unwrap()
+                .spirit_qi;
+            assert!(
+                (zone_after - zone_before).abs() < 1e-12,
+                "无 CurrentDimension 时 zone 不应变化（qi 走 overflow）：before={zone_before}, after={zone_after}"
+            );
+
+            // QiTransfer 仍应被 emit（到 Overflow 账户——守恒：qi 有去处）。
+            let transfers: Vec<_> = app
+                .world()
+                .resource::<Events<QiTransfer>>()
+                .iter_current_update_events()
+                .cloned()
+                .collect();
+            assert_eq!(
+                transfers.len(),
+                1,
+                "无 CurrentDimension 时 qi 走 Overflow，仍应 emit 1 条 QiTransfer，实际 {} 条",
+                transfers.len()
+            );
+            assert!(
+                matches!(
+                    transfers[0].to.kind,
+                    crate::qi_physics::QiAccountKind::Overflow
+                ),
+                "无 CurrentDimension 的 QiTransfer 应路由到 Overflow，实际 {:?}",
+                transfers[0].to
             );
         }
     }
