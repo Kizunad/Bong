@@ -1,10 +1,14 @@
-use valence::prelude::{Commands, Entity, EventWriter, Query, Res};
+use valence::prelude::{Commands, Entity, EventWriter, Events, Position, Query, Res, ResMut};
 
 use crate::combat::components::DerivedAttrs;
 use crate::combat::CombatClock;
 use crate::cultivation::color::PracticeLog;
 use crate::cultivation::components::{Cultivation, QiColor};
+use crate::cultivation::death_hooks::release_qi_amount_to_zone;
 use crate::inventory::{consume_item_instance_once, PlayerInventory, EQUIP_SLOT_FALSE_SKIN};
+use crate::qi_physics::QiTransfer;
+use crate::world::dimension::CurrentDimension;
+use crate::world::zone::ZoneRegistry;
 
 use super::events::{
     FalseSkinDecayedToAshEvent, FalseSkinSheddedEvent, TuikeSkillId, TuikeSkillVisual,
@@ -29,6 +33,8 @@ type MaintenanceFalseSkinItem<'a> = (
     Option<&'a QiColor>,
     Option<&'a mut DerivedAttrs>,
     Option<&'a mut PlayerInventory>,
+    Option<&'a Position>,
+    Option<&'a CurrentDimension>,
 );
 
 pub fn sync_false_skin_stack_from_inventory(
@@ -95,12 +101,14 @@ pub fn false_skin_maintenance_tick(
     clock: Option<Res<CombatClock>>,
     mut query: Query<MaintenanceFalseSkinItem<'_>>,
     mut shed_events: EventWriter<FalseSkinSheddedEvent>,
+    mut zones: Option<ResMut<ZoneRegistry>>,
+    mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
 ) {
     let tick = clock.as_deref().map(|clock| clock.tick).unwrap_or_default();
     if tick % crate::combat::components::TICKS_PER_SECOND != 0 {
         return;
     }
-    for (entity, mut cultivation, mut stack, practice, qi_color, attrs, inventory) in &mut query {
+    for (entity, mut cultivation, mut stack, practice, qi_color, attrs, inventory, position, current_dimension) in &mut query {
         let cost = maintenance_qi_per_sec(&stack, practice, qi_color);
         if cost <= f64::EPSILON {
             continue;
@@ -118,6 +126,17 @@ pub fn false_skin_maintenance_tick(
             continue;
         }
         cultivation.qi_current = (cultivation.qi_current - cost).clamp(0.0, cultivation.qi_max);
+        // 守恒：扣除的维护真元回灌 zone（同 skills.rs spend_qi → emit_spent_qi_release 路径）
+        release_qi_amount_to_zone(
+            entity,
+            cost,
+            position,
+            current_dimension,
+            None,
+            zones.as_deref_mut(),
+            qi_transfers.as_deref_mut(),
+            "false_skin_maintenance",
+        );
     }
 }
 

@@ -1375,3 +1375,153 @@ fn maintenance_qi_per_sec_no_discount_when_chaotic() {
         "期望杂色时维护费=0.5（无折扣，Heavy tier 基础费），实际={cost}"
     );
 }
+
+// ─── qi-sweep-1 守恒修复测试 ───────────────────────────────────────────────────
+
+/// 修复前：false_skin_maintenance_tick 裸扣 qi_current，不 emit QiTransfer，世界真元泄漏。
+/// 修复后：每次维护扣减后，应通过 release_qi_amount_to_zone 把等量真元回灌 zone，
+///         并 emit QiTransfer{reason: ReleaseToZone} 留痕。
+///
+/// 注意（pitfall a）：ZoneRegistry::fallback() 创建 spirit_qi=0.9 的 spawn zone（接近满载）。
+///   若 cost > zone 剩余容量（50 * (1-0.9) = 5），多出部分路由到 overflow 账户不销毁，
+///   但 total == cost 的断言会失败。因此将 spirit_qi 清零（满满 50 units 容量）。
+///
+/// 注意（pitfall b）：实体需要 CurrentDimension 才能 find_zone 成功；否则路由到 overflow。
+#[test]
+fn maintenance_tick_emits_qi_transfer_to_zone_for_conservation() {
+    use crate::qi_physics::QiTransferReason;
+    use crate::world::dimension::{CurrentDimension, DimensionKind};
+    use crate::world::zone::ZoneRegistry;
+    use valence::prelude::Position;
+
+    // Fan tier 维护费 = 0.1 qi/sec（无折扣），tick=120 整除 TICKS_PER_SECOND=20 触发维护。
+    let mut app = App::new();
+    app.insert_resource(CombatClock { tick: 120 });
+    app.add_event::<FalseSkinSheddedEvent>();
+    app.add_event::<crate::qi_physics::QiTransfer>();
+
+    // pitfall (a): 清空 zone spirit_qi → 满容量 50 units，不会触发 overflow split
+    let mut zones = ZoneRegistry::fallback();
+    zones.find_zone_mut("spawn").unwrap().spirit_qi = 0.0;
+    app.insert_resource(zones);
+
+    app.add_systems(Update, false_skin_maintenance_tick);
+
+    // pitfall (b): 必须插入 CurrentDimension；Position 在 spawn zone bounds 内（-128~128, 64~80, -128~128）
+    let entity = app
+        .world_mut()
+        .spawn((
+            cultivation(Realm::Awaken, 10.0, 10.0),
+            StackedFalseSkins::with_layer(FalseSkinLayer::new(1001, FalseSkinTier::Fan, 1.0, 0)),
+            WornFalseSkin {
+                instance_id: 1001,
+                tier: FalseSkinTier::Fan,
+                spirit_quality: 1.0,
+                contam_load: 0.0,
+                permanent_taint_load: 0.0,
+            },
+            Position::new([0.0_f64, 66.0, 0.0]),
+            CurrentDimension(DimensionKind::Overworld),
+            PracticeLog::default(),
+        ))
+        .id();
+
+    app.update();
+
+    // 维护扣减后 qi_current 应减少 0.1（Fan tier base cost，无折扣）
+    let qi_after = app
+        .world()
+        .entity(entity)
+        .get::<Cultivation>()
+        .unwrap()
+        .qi_current;
+    assert!(
+        (qi_after - 9.9).abs() < 1e-9,
+        "维护扣减后 qi_current 期望 9.9（10.0 - Fan 0.1），实际={qi_after}"
+    );
+
+    // 关键：必须 emit 至少一条 QiTransfer（守恒轨迹）
+    let transfers: Vec<_> = app
+        .world_mut()
+        .resource_mut::<Events<crate::qi_physics::QiTransfer>>()
+        .drain()
+        .collect();
+    assert!(
+        !transfers.is_empty(),
+        "false_skin_maintenance_tick 应 emit QiTransfer（守恒回灌 zone），实际未 emit（修复前的 bug）"
+    );
+
+    // reason 应为 ReleaseToZone（release_qi_amount_to_zone helper 统一编码）
+    assert!(
+        transfers
+            .iter()
+            .any(|t| matches!(t.reason, QiTransferReason::ReleaseToZone)),
+        "QiTransfer reason 应为 ReleaseToZone（release_qi_amount_to_zone 统一编码），实际={:?}",
+        transfers.iter().map(|t| t.reason).collect::<Vec<_>>()
+    );
+}
+
+/// 边界测试：没有 CurrentDimension（或没有 Position）的实体，
+/// release_qi_amount_to_zone 应回退到 overflow 账户而非崩溃或静默丢失。
+/// qi_current 仍应被扣减，且至少 emit 一条 QiTransfer（overflow 路由也留痕）。
+#[test]
+fn maintenance_tick_no_dimension_routes_to_overflow_not_silent_drop() {
+    use crate::qi_physics::QiTransfer;
+    use crate::world::zone::ZoneRegistry;
+    use valence::prelude::Position;
+
+    let mut app = App::new();
+    app.insert_resource(CombatClock { tick: 120 });
+    app.add_event::<FalseSkinSheddedEvent>();
+    app.add_event::<QiTransfer>();
+
+    let mut zones = ZoneRegistry::fallback();
+    zones.find_zone_mut("spawn").unwrap().spirit_qi = 0.0;
+    app.insert_resource(zones);
+
+    app.add_systems(Update, false_skin_maintenance_tick);
+
+    // 实体有 Position 但无 CurrentDimension → release_qi_amount_to_zone 走 overflow 分支
+    let entity = app
+        .world_mut()
+        .spawn((
+            cultivation(Realm::Awaken, 10.0, 10.0),
+            StackedFalseSkins::with_layer(FalseSkinLayer::new(1002, FalseSkinTier::Fan, 1.0, 0)),
+            WornFalseSkin {
+                instance_id: 1002,
+                tier: FalseSkinTier::Fan,
+                spirit_quality: 1.0,
+                contam_load: 0.0,
+                permanent_taint_load: 0.0,
+            },
+            Position::new([0.0_f64, 66.0, 0.0]),
+            // 故意不插入 CurrentDimension
+            PracticeLog::default(),
+        ))
+        .id();
+
+    app.update();
+
+    // qi_current 应减少（维护扣减正常发生）
+    let qi_after = app
+        .world()
+        .entity(entity)
+        .get::<Cultivation>()
+        .unwrap()
+        .qi_current;
+    assert!(
+        qi_after < 10.0,
+        "无 CurrentDimension 时 qi_current 仍应被维护扣减（overflow 路由不影响扣减），实际={qi_after}"
+    );
+
+    // overflow 路由同样 emit QiTransfer（守恒轨迹不丢失）
+    let transfers: Vec<_> = app
+        .world_mut()
+        .resource_mut::<Events<QiTransfer>>()
+        .drain()
+        .collect();
+    assert!(
+        !transfers.is_empty(),
+        "无 CurrentDimension 时应 emit overflow QiTransfer（真元不销毁），实际未 emit"
+    );
+}
