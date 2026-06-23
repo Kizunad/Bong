@@ -901,6 +901,47 @@ fn beng_quan_qi_conservation_amount_is_consistent() {
     );
 }
 
+/// 负灵域守恒（CodeRabbit 在 #681 yidao 抓出的 `.max(0.0)` bug，同存于本模块）：
+/// zone.spirit_qi<0（worldview 负数区）时，回灌必须从**负基线**累加（-0.5 + spent/CAP），
+/// 而非 `.max(0.0)` 把基线当 0（那样 zone_after=spent/CAP，等于凭空多 credit 0.5 个 CAP 的真元、破坏守恒）。
+#[test]
+fn beng_quan_in_negative_zone_credits_from_negative_baseline_not_zero() {
+    use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
+
+    let mut app = app_with_zone();
+    {
+        let mut registry = app.world_mut().resource_mut::<ZoneRegistry>();
+        registry.find_zone_mut("spawn").unwrap().spirit_qi = -0.5;
+    }
+    let caster = spawn_actor(
+        &mut app,
+        Realm::Condense,
+        100.0,
+        100.0,
+        DVec3::new(0.0, 65.0, 0.0),
+    );
+    let target = spawn_target(&mut app, DVec3::new(1.0, 65.0, 0.0));
+
+    let qi_before = app.world().get::<Cultivation>(caster).unwrap().qi_current;
+    cast_beng_quan(app.world_mut(), caster, 0, Some(target));
+    let qi_after = app.world().get::<Cultivation>(caster).unwrap().qi_current;
+    let spent = qi_before - qi_after;
+
+    let zone_after = app
+        .world()
+        .resource::<ZoneRegistry>()
+        .find_zone_by_name("spawn")
+        .unwrap()
+        .spirit_qi;
+    let expected = -0.5 + spent / QI_ZONE_UNIT_CAPACITY;
+    assert!(
+        (zone_after - expected).abs() < 1e-9,
+        "负灵域回灌应从 -0.5 基线累加 spent/CAP（期望 {expected}），实际 {zone_after}；\
+         若 ≈{}（=spent/CAP）说明 .max(0.0) 把负基线当 0、凭空多 credit、破坏守恒",
+        spent / QI_ZONE_UNIT_CAPACITY
+    );
+}
+
 #[test]
 fn full_power_meridian_deps_declared_under_canonical_id() {
     // 门控声明使用的是 BAOMAI_FULL_POWER_*_SKILL_ID（"baomai.*" 形式），

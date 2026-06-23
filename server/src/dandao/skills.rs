@@ -100,7 +100,9 @@ fn drain_dandao_qi(world: &mut bevy_ecs::world::World, caster: Entity, cost: f64
 
         if let Some(zone_name) = zone_name {
             if let Some(zone) = zones.find_zone_mut(&zone_name) {
-                let zone_current = zone.spirit_qi.max(0.0) * QI_ZONE_UNIT_CAPACITY;
+                // 不 .max(0.0)：负灵域（spirit_qi<0）下当 0 会跳过负缺口、凭空多 credit、破坏守恒。
+                // 与规范 helper death_hooks::release_qi_amount_to_zone 一致用裸 spirit_qi*CAP。
+                let zone_current = zone.spirit_qi * QI_ZONE_UNIT_CAPACITY;
                 let to = QiAccountId::zone(zone.name.clone());
                 match qi_release_to_zone(
                     cost,
