@@ -11,6 +11,7 @@ use crate::combat::needle::{
 };
 use crate::combat::CombatClock;
 use crate::cultivation::components::{ColorKind, Cultivation, MeridianId, MeridianSystem, Realm};
+use crate::cultivation::death_hooks::release_qi_amount_to_zone;
 use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
 use crate::cultivation::skill_registry::{CastRejectReason, CastResult, SkillRegistry};
 use crate::inventory::{
@@ -18,11 +19,13 @@ use crate::inventory::{
 };
 use crate::network::cast_emit::current_unix_millis;
 use crate::network::{gameplay_vfx, vfx_event_emit::VfxEventRequest};
-use crate::qi_physics::{MediumKind, StyleAttack};
+use crate::qi_physics::{MediumKind, QiTransfer, StyleAttack};
 use crate::schema::dugu::{
     AntidoteResultEventV1, AntidoteResultV1, DuguObfuscationStateV1, DuguPoisonProgressEventV1,
     DuguPoisonStateV1,
 };
+use crate::world::dimension::CurrentDimension;
+use crate::world::zone::ZoneRegistry;
 
 pub const DUGU_INFUSE_SKILL_ID: &str = "dugu.infuse_poison";
 pub const DUGU_INFUSE_COST: f64 = 5.0;
@@ -398,6 +401,7 @@ pub fn dugu_poison_ambient_vfx_tick(
     }
 }
 
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn resolve_self_antidote_intent(
     mut commands: Commands,
     clock: Res<CombatClock>,
@@ -407,16 +411,28 @@ pub fn resolve_self_antidote_intent(
         &mut Cultivation,
         &DuguPoisonState,
         Option<&Lifecycle>,
+        Option<&Position>,
+        Option<&CurrentDimension>,
+        Option<&LifeRecord>,
     )>,
     mut inventories: Query<&mut PlayerInventory>,
     mut result_events: EventWriter<AntidoteResultEvent>,
+    mut zones: Option<ResMut<ZoneRegistry>>,
+    mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
 ) {
     for intent in intents.read() {
         if intent.healer != intent.target {
             continue;
         }
-        let Ok((mut meridians, mut cultivation, poison, lifecycle)) =
-            targets.get_mut(intent.target)
+        let Ok((
+            mut meridians,
+            mut cultivation,
+            poison,
+            lifecycle,
+            position,
+            current_dimension,
+            life_record,
+        )) = targets.get_mut(intent.target)
         else {
             continue;
         };
@@ -440,8 +456,17 @@ pub fn resolve_self_antidote_intent(
         if consume_item_instance_once(&mut inventory, intent.antidote_instance_id).is_err() {
             continue;
         }
-        cultivation.qi_current =
-            (cultivation.qi_current - SELF_ANTIDOTE_QI_COST).clamp(0.0, cultivation.qi_max);
+        let accepted = release_qi_amount_to_zone(
+            intent.target,
+            SELF_ANTIDOTE_QI_COST,
+            position,
+            current_dimension,
+            life_record,
+            zones.as_deref_mut(),
+            qi_transfers.as_deref_mut(),
+            "dugu_self_antidote",
+        );
+        cultivation.qi_current = (cultivation.qi_current - accepted).clamp(0.0, cultivation.qi_max);
 
         let roll = intent
             .roll_override
@@ -731,7 +756,7 @@ mod tests {
 
     use std::collections::HashMap;
 
-    use valence::prelude::{App, Events, Update};
+    use valence::prelude::{App, Events, Position, Update};
 
     use crate::inventory::{
         ContainerState, InventoryRevision, ItemInstance, ItemRarity, PlacedItemState,
@@ -1264,6 +1289,7 @@ mod tests {
         app.insert_resource(CombatClock { tick: 30 });
         app.add_event::<SelfAntidoteIntent>();
         app.add_event::<AntidoteResultEvent>();
+        app.add_event::<QiTransfer>();
         app.add_systems(Update, resolve_self_antidote_intent);
         let mut meridians = MeridianSystem::default();
         open(&mut meridians, MeridianId::Heart, 70.0);
@@ -1312,6 +1338,7 @@ mod tests {
         app.insert_resource(CombatClock { tick: 31 });
         app.add_event::<SelfAntidoteIntent>();
         app.add_event::<AntidoteResultEvent>();
+        app.add_event::<QiTransfer>();
         app.add_systems(Update, resolve_self_antidote_intent);
         let mut meridians = MeridianSystem::default();
         open(&mut meridians, MeridianId::Heart, 70.0);
@@ -1352,6 +1379,272 @@ mod tests {
         assert_eq!(
             app.world().get::<Lifecycle>(entity).unwrap().state,
             LifecycleState::Alive
+        );
+    }
+
+    /// QS-003: zone credit — SELF_ANTIDOTE_QI_COST must be credited back to the zone,
+    /// not discarded from the ledger.
+    #[test]
+    fn antidote_self_qi_cost_credited_to_zone() {
+        use crate::world::dimension::DimensionKind;
+        use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
+
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 50 });
+        app.insert_resource(ZoneRegistry::fallback());
+        app.add_event::<SelfAntidoteIntent>();
+        app.add_event::<AntidoteResultEvent>();
+        app.add_event::<QiTransfer>();
+        app.add_systems(Update, resolve_self_antidote_intent);
+
+        // Empty the spawn zone so there is always enough room for the full 20.0 credit.
+        // (Pitfall-a: fallback zone starts near-full at spirit_qi≈0.9, only ~5 raw room;
+        // SELF_ANTIDOTE_QI_COST=20.0 would split into accepted+overflow otherwise.)
+        app.world_mut()
+            .resource_mut::<ZoneRegistry>()
+            .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
+            .unwrap()
+            .spirit_qi = 0.0;
+
+        let before = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .unwrap()
+            .spirit_qi;
+
+        let mut meridians = MeridianSystem::default();
+        open(&mut meridians, MeridianId::Heart, 70.0);
+        let inventory = inventory_with_jie_gu_rui(20);
+        // Pitfall-b: entity must have CurrentDimension so find_zone succeeds;
+        // without it the qi routes to overflow (not zone).
+        let entity = app
+            .world_mut()
+            .spawn((
+                meridians,
+                Cultivation {
+                    qi_current: 40.0,
+                    qi_max: 80.0,
+                    ..Cultivation::default()
+                },
+                DuguPoisonState {
+                    meridian_id: MeridianId::Heart,
+                    attacker: Entity::from_raw(99),
+                    attached_at_tick: 1,
+                    poisoner_realm_tier: 2,
+                    loss_per_tick: 0.7,
+                },
+                Lifecycle::default(),
+                inventory,
+                Position::new([8.0, 66.0, 8.0]),
+                CurrentDimension(DimensionKind::Overworld),
+            ))
+            .id();
+        app.world_mut().send_event(SelfAntidoteIntent {
+            healer: entity,
+            target: entity,
+            antidote_instance_id: 20,
+            source: IntentSource::Test,
+            roll_override: Some(0.95),
+        });
+
+        app.update();
+
+        // Cultivation qi should drop by exactly SELF_ANTIDOTE_QI_COST.
+        let cultivation = app.world().get::<Cultivation>(entity).unwrap();
+        assert_eq!(
+            cultivation.qi_current,
+            20.0,
+            "qi_current should have dropped by SELF_ANTIDOTE_QI_COST={} (was 40.0, expected 20.0, got {})",
+            SELF_ANTIDOTE_QI_COST,
+            cultivation.qi_current
+        );
+
+        // Zone should have gained spirit_qi (conservation: qi went from player → zone).
+        let after = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .unwrap()
+            .spirit_qi;
+        assert!(
+            after > before,
+            "zone spirit_qi should have increased after antidote use (before={before}, after={after}); \
+             SELF_ANTIDOTE_QI_COST must be credited to zone"
+        );
+
+        // Exactly one QiTransfer event should have been emitted (zone credit).
+        let transfers: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<QiTransfer>>()
+            .drain()
+            .collect();
+        assert_eq!(
+            transfers.len(),
+            1,
+            "expected exactly 1 QiTransfer event for antidote zone credit, got {}",
+            transfers.len()
+        );
+    }
+
+    /// QS-003 boundary: antidote with qi_current exactly at cost (boundary, should succeed).
+    #[test]
+    fn antidote_qi_exactly_at_cost_deducts_correctly_with_zone_credit() {
+        use crate::world::dimension::DimensionKind;
+        use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
+
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 60 });
+        app.insert_resource(ZoneRegistry::fallback());
+        app.add_event::<SelfAntidoteIntent>();
+        app.add_event::<AntidoteResultEvent>();
+        app.add_event::<QiTransfer>();
+        app.add_systems(Update, resolve_self_antidote_intent);
+
+        app.world_mut()
+            .resource_mut::<ZoneRegistry>()
+            .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
+            .unwrap()
+            .spirit_qi = 0.0;
+
+        let mut meridians = MeridianSystem::default();
+        open(&mut meridians, MeridianId::Heart, 50.0);
+        let inventory = inventory_with_jie_gu_rui(21);
+        let entity = app
+            .world_mut()
+            .spawn((
+                meridians,
+                Cultivation {
+                    qi_current: SELF_ANTIDOTE_QI_COST,
+                    qi_max: 80.0,
+                    ..Cultivation::default()
+                },
+                DuguPoisonState {
+                    meridian_id: MeridianId::Heart,
+                    attacker: Entity::from_raw(99),
+                    attached_at_tick: 1,
+                    poisoner_realm_tier: 2,
+                    loss_per_tick: 0.5,
+                },
+                Lifecycle::default(),
+                inventory,
+                Position::new([8.0, 66.0, 8.0]),
+                CurrentDimension(DimensionKind::Overworld),
+            ))
+            .id();
+        app.world_mut().send_event(SelfAntidoteIntent {
+            healer: entity,
+            target: entity,
+            antidote_instance_id: 21,
+            source: IntentSource::Test,
+            roll_override: Some(0.95),
+        });
+
+        app.update();
+
+        let cultivation = app.world().get::<Cultivation>(entity).unwrap();
+        assert_eq!(
+            cultivation.qi_current,
+            0.0,
+            "qi_current should reach exactly 0.0 when cost equals starting qi (was {}, SELF_ANTIDOTE_QI_COST={})",
+            cultivation.qi_current,
+            SELF_ANTIDOTE_QI_COST
+        );
+        assert!(
+            app.world().get::<DuguPoisonState>(entity).is_none(),
+            "poison should be removed after successful antidote"
+        );
+    }
+
+    /// QS-003 boundary: insufficient qi — antidote must not fire and zone must not change.
+    #[test]
+    fn antidote_rejected_when_qi_below_cost_no_zone_change() {
+        use crate::world::dimension::DimensionKind;
+        use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
+
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 70 });
+        app.insert_resource(ZoneRegistry::fallback());
+        app.add_event::<SelfAntidoteIntent>();
+        app.add_event::<AntidoteResultEvent>();
+        app.add_event::<QiTransfer>();
+        app.add_systems(Update, resolve_self_antidote_intent);
+
+        let before = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .unwrap()
+            .spirit_qi;
+
+        let mut meridians = MeridianSystem::default();
+        open(&mut meridians, MeridianId::Heart, 50.0);
+        let inventory = inventory_with_jie_gu_rui(22);
+        let entity = app
+            .world_mut()
+            .spawn((
+                meridians,
+                Cultivation {
+                    // just below the cost threshold
+                    qi_current: SELF_ANTIDOTE_QI_COST - 1.0,
+                    qi_max: 80.0,
+                    ..Cultivation::default()
+                },
+                DuguPoisonState {
+                    meridian_id: MeridianId::Heart,
+                    attacker: Entity::from_raw(99),
+                    attached_at_tick: 1,
+                    poisoner_realm_tier: 2,
+                    loss_per_tick: 0.5,
+                },
+                Lifecycle::default(),
+                inventory,
+                Position::new([8.0, 66.0, 8.0]),
+                CurrentDimension(DimensionKind::Overworld),
+            ))
+            .id();
+        app.world_mut().send_event(SelfAntidoteIntent {
+            healer: entity,
+            target: entity,
+            antidote_instance_id: 22,
+            source: IntentSource::Test,
+            roll_override: Some(0.95),
+        });
+
+        app.update();
+
+        // Poison should still be present (intent was rejected).
+        assert!(
+            app.world().get::<DuguPoisonState>(entity).is_some(),
+            "DuguPoisonState should remain when qi < SELF_ANTIDOTE_QI_COST"
+        );
+        // qi_current must not change.
+        let cultivation = app.world().get::<Cultivation>(entity).unwrap();
+        assert_eq!(
+            cultivation.qi_current,
+            SELF_ANTIDOTE_QI_COST - 1.0,
+            "qi_current must remain unchanged when antidote is rejected"
+        );
+        // Zone must not change.
+        let after = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .unwrap()
+            .spirit_qi;
+        assert_eq!(
+            before, after,
+            "zone spirit_qi must not change when antidote is rejected (no qi was spent)"
+        );
+        // No transfer events.
+        let transfers: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<QiTransfer>>()
+            .drain()
+            .collect();
+        assert!(
+            transfers.is_empty(),
+            "no QiTransfer events should be emitted when antidote is rejected"
         );
     }
 
