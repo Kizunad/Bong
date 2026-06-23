@@ -117,9 +117,15 @@
 
 ## 8. 世界观正典硬锚（写代码/schema/命名前先对，别凭"修仙常识"）
 
+<<<<<<< Updated upstream
 唯一权威 `docs/worldview.md`。下面是**最常被违反**的几条，违反 = Pi/Hive review 直接打回：
 
 - **六境界**（§三 修炼体系 L67-72，顺序固定）：**醒灵 → 引气 → 凝脉 → 固元 → 通灵 → 化虚**。严禁上古称呼：练气 / 筑基 / 金丹 / 元婴（L63 明禁）。
+=======
+唯一权威 `docs/worldview.md`。下面是**最常被违反**的几条，违反 = @pi/@hive review 直接打回：
+
+- **六境界**（§一 L68-72，顺序固定）：**醒灵 → 引气 → 凝脉 → 固元 → 通灵 → 化虚**。严禁上古称呼：练气 / 筑基 / 金丹 / 元婴（L63 明禁）。
+>>>>>>> Stashed changes
 - **命名禁词**（L63）：末法时代禁用 玄/陨/星/仙/太/古；优选衰败素朴意象 残/碎/锈/杂/粗/髓/朴/枯。例外：已入世俗医药的矿名（丹砂/朱砂/雄黄）OK。
 - **经济**：唯一真货币 = **骨币**（异变兽骨+阵法锁真元）；矿物=交易筹码非货币；灵石=劣质衰变物+燃料；金银=废土。
 - **zone 命名**：写新 zone 前查 worldview §十表格（已立：spawn / 青云残峰 / 血谷 / north_wastes / lingquan_marsh 等）。
@@ -176,6 +182,11 @@
 ## 14. （仅当你的流程会开 PR 时）review gate
 
 sisyphus 自动流水线以 `scripts/plan-finish.sh` 归档收尾、不开 PR；若你走的是开 PR 的变体：
+<<<<<<< Updated upstream
 - **gate 只看 `/review` + CodeRabbit，绝不等 Codex**。`chatgpt-codex-connector`("Codex usage limits reached") 是与本仓库无关的噪音，忽略。
 - **Review 不再自动跑，且已合并为单一 `/review`**：旧的 `/review pi` `/review hive` `/review claude` 三入口合一，在 PR 评论 `/review` 触发即可。引擎=对峙(claude finder swarm 跑 proxy 上 deepseek/sensenova 小模型) + 怀疑投票审判 + 裁决(codex 跑 gpt-5.5)，全走自家代理 proxy.kizun4.uk。触发词用 `/review` 而非 `@x`——`@pi`/`@hive`/`@claude` 会 mention 到 GitHub 上的真实陌生用户。CodeRabbit 仍自动（但额度耗尽会限流失败，那是计费问题不是代码问题）。
+=======
+- **gate 只看 Pi agent + CodeRabbit，绝不等 Codex**。`chatgpt-codex-connector`("Codex usage limits reached") 是与本仓库无关的噪音，忽略。
+- **Pi / Claude review 不再自动跑**：需在 PR 评论 `@pi`（结构化审核，不吃额度）/ `@claude_workflow_review` 触发；CodeRabbit 仍自动（但额度耗尽会限流失败，那是计费问题不是代码问题，可降级到 Pi-only）。
+>>>>>>> Stashed changes
 - 等待用轮询节奏（~20min/回合，最多 3 回合），别 busy-poll。修完 review 意见要重新等 re-review，不自判"应该过了"。

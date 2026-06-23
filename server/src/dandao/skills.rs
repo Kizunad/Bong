@@ -7,14 +7,18 @@
 //! 3. 真元是否足够（§8.1 #4: capacity_for_tier(realm) × 3%，不硬编绝对数值）
 //! 4. 冷却
 
-use valence::prelude::{bevy_ecs, Entity, Events};
+use valence::prelude::{bevy_ecs, Entity, Events, Position};
 
 use crate::cultivation::components::{Cultivation, Meridian, MeridianId, Realm};
 use crate::cultivation::meridian::severed::{
     check_meridian_dependencies, MeridianSeveredPermanent,
 };
 use crate::cultivation::skill_registry::{CastRejectReason, CastResult};
+use crate::qi_physics::constants::{QI_EPSILON, QI_ZONE_UNIT_CAPACITY};
 use crate::qi_physics::ledger::{QiAccountId, QiTransfer, QiTransferReason};
+use crate::qi_physics::release::qi_release_to_zone;
+use crate::world::dimension::{CurrentDimension, DimensionKind};
+use crate::world::zone::ZoneRegistry;
 
 pub const DANDAO_PILL_RUSH_SKILL_ID: &str = "dandao.pill_rush";
 pub const DANDAO_PILL_BOMB_SKILL_ID: &str = "dandao.pill_bomb";
@@ -57,31 +61,143 @@ pub fn dandao_qi_cost_base(realm: Realm) -> f64 {
     Meridian::capacity_for_tier(tier) * DANDAO_QI_RATIO
 }
 
-/// 实际扣除 qi 并 emit QiTransfer（player → zone 守恒）。
+/// 实际扣除 qi 并将散出真元归还玩家所在 zone（player → zone 守恒）。
+///
+/// 遵循 tuike_v2::skills::emit_spent_qi_release 的模式：
+/// 1. 解析施术者 Position + CurrentDimension 定位真实 zone。
+/// 2. 调用 qi_release_to_zone 更新 zone.spirit_qi。
+/// 3. Emit QiTransfer 作为审计记录。
+/// 4. 若无 zone 命中（户外边界外等），归入 overflow bucket，绝不静默销毁。
+///
 /// 返回 true 表示扣除成功。
 fn drain_dandao_qi(world: &mut bevy_ecs::world::World, caster: Entity, cost: f64) -> bool {
     if cost <= 0.0 {
         return true;
     }
-    let Some(mut cultivation) = world.get_mut::<Cultivation>(caster) else {
-        return false;
-    };
-    if cultivation.qi_current + f64::EPSILON < cost {
-        return false;
+    // Step 1: deduct qi_current (requires exclusive borrow, must finish before zone lookup).
+    {
+        let Some(mut cultivation) = world.get_mut::<Cultivation>(caster) else {
+            return false;
+        };
+        if cultivation.qi_current + f64::EPSILON < cost {
+            return false;
+        }
+        cultivation.qi_current = (cultivation.qi_current - cost).clamp(0.0, cultivation.qi_max);
     }
-    cultivation.qi_current = (cultivation.qi_current - cost).clamp(0.0, cultivation.qi_max);
 
-    // Emit QiTransfer for ledger audit (player → zone, ReleaseToZone reason).
-    if let Some(mut events) = world.get_resource_mut::<Events<QiTransfer>>() {
-        if let Ok(transfer) = QiTransfer::new(
-            QiAccountId::player(format!("entity:{caster:?}")),
-            QiAccountId::zone("current_zone".to_string()),
+    // Step 2: resolve real zone and credit spirit_qi; emit QiTransfer audit record.
+    let from = QiAccountId::player(format!("entity:{}", caster.to_bits()));
+    let position = world.get::<Position>(caster).map(|p| p.get());
+    let dimension = world
+        .get::<CurrentDimension>(caster)
+        .map(|d| d.0)
+        .unwrap_or(DimensionKind::Overworld);
+
+    let mut pending_transfers: Vec<QiTransfer> = Vec::new();
+
+    if let (Some(pos), Some(mut zones)) = (position, world.get_resource_mut::<ZoneRegistry>()) {
+        let zone_name = zones.find_zone(dimension, pos).map(|z| z.name.clone());
+
+        if let Some(zone_name) = zone_name {
+            if let Some(zone) = zones.find_zone_mut(&zone_name) {
+                let zone_current = zone.spirit_qi.max(0.0) * QI_ZONE_UNIT_CAPACITY;
+                let to = QiAccountId::zone(zone.name.clone());
+                match qi_release_to_zone(
+                    cost,
+                    from.clone(),
+                    to,
+                    zone_current,
+                    QI_ZONE_UNIT_CAPACITY,
+                ) {
+                    Ok(outcome) => {
+                        zone.spirit_qi =
+                            (outcome.zone_after / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
+                        if let Some(t) = outcome.transfer {
+                            pending_transfers.push(t);
+                        }
+                        if outcome.overflow > QI_EPSILON {
+                            // Zone full — route surplus to overflow rather than destroy.
+                            let overflow_to = QiAccountId::overflow(format!(
+                                "dandao_skill_overflow:{}",
+                                caster.to_bits()
+                            ));
+                            if let Ok(t) = QiTransfer::new(
+                                from.clone(),
+                                overflow_to,
+                                outcome.overflow,
+                                QiTransferReason::ReleaseToZone,
+                            ) {
+                                pending_transfers.push(t);
+                            }
+                        }
+                    }
+                    Err(err) => {
+                        tracing::warn!(
+                            ?err,
+                            "[bong][dandao] invalid qi release for {:?}; routing to overflow",
+                            caster
+                        );
+                        let overflow_to = QiAccountId::overflow(format!(
+                            "dandao_skill_overflow:{}",
+                            caster.to_bits()
+                        ));
+                        if let Ok(t) = QiTransfer::new(
+                            from.clone(),
+                            overflow_to,
+                            cost,
+                            QiTransferReason::ReleaseToZone,
+                        ) {
+                            pending_transfers.push(t);
+                        }
+                    }
+                }
+            } else {
+                // Zone name resolved but mutable lookup failed (shouldn't happen).
+                let overflow_to =
+                    QiAccountId::overflow(format!("dandao_skill_overflow:{}", caster.to_bits()));
+                if let Ok(t) = QiTransfer::new(
+                    from.clone(),
+                    overflow_to,
+                    cost,
+                    QiTransferReason::ReleaseToZone,
+                ) {
+                    pending_transfers.push(t);
+                }
+            }
+        } else {
+            // No zone at caster's position — route to overflow.
+            let overflow_to =
+                QiAccountId::overflow(format!("dandao_skill_no_zone:{}", caster.to_bits()));
+            if let Ok(t) = QiTransfer::new(
+                from.clone(),
+                overflow_to,
+                cost,
+                QiTransferReason::ReleaseToZone,
+            ) {
+                pending_transfers.push(t);
+            }
+        }
+    } else {
+        // No Position component or ZoneRegistry not present — overflow safety net.
+        let overflow_to =
+            QiAccountId::overflow(format!("dandao_skill_no_zone:{}", caster.to_bits()));
+        if let Ok(t) = QiTransfer::new(
+            from.clone(),
+            overflow_to,
             cost,
             QiTransferReason::ReleaseToZone,
         ) {
-            events.send(transfer);
+            pending_transfers.push(t);
         }
     }
+
+    // Step 3: emit all collected transfer events.
+    if let Some(mut events) = world.get_resource_mut::<Events<QiTransfer>>() {
+        for t in pending_transfers {
+            events.send(t);
+        }
+    }
+
     true
 }
 
@@ -220,6 +336,9 @@ pub fn resolve_pill_mist(
 mod skill_tests {
     use super::*;
     use crate::cultivation::components::Cultivation;
+    use crate::qi_physics::ledger::QiAccountKind;
+    use crate::world::dimension::{CurrentDimension, DimensionKind};
+    use crate::world::zone::ZoneRegistry;
 
     fn make_world_with_caster(
         realm: Realm,
@@ -235,6 +354,31 @@ mod skill_tests {
                 qi_max,
                 ..Default::default()
             })
+            .id();
+        (world, entity)
+    }
+
+    /// 构造带 ZoneRegistry + Position（在 spawn zone 内）的 world。
+    /// spawn zone bounds: [-128, 64, -128] → [~128, 80, ~128]，position [14, 66, 14] 在内。
+    fn make_world_with_zone(
+        realm: Realm,
+        qi_current: f64,
+        qi_max: f64,
+    ) -> (bevy_ecs::world::World, Entity) {
+        let mut world = bevy_ecs::world::World::new();
+        world.init_resource::<Events<QiTransfer>>();
+        world.insert_resource(ZoneRegistry::default());
+        let entity = world
+            .spawn((
+                Cultivation {
+                    realm,
+                    qi_current,
+                    qi_max,
+                    ..Default::default()
+                },
+                Position::new([14.0, 66.0, 14.0]),
+                CurrentDimension(DimensionKind::Overworld),
+            ))
             .id();
         (world, entity)
     }
@@ -584,23 +728,169 @@ mod skill_tests {
 
     #[test]
     fn pill_rush_emits_qi_transfer_event() {
+        // 使用带 ZoneRegistry + Position 的 world 以测试真实 zone 路径。
         let qi_cost = dandao_qi_cost_base(Realm::Awaken);
-        let (mut world, caster) = make_world_with_caster(Realm::Awaken, qi_cost + 1.0, 100.0);
+        let (mut world, caster) = make_world_with_zone(Realm::Awaken, qi_cost + 1.0, 100.0);
         let result = resolve_pill_rush(&mut world, caster, 0, None);
         assert!(matches!(result, CastResult::Started { .. }));
         let events = world.resource::<Events<QiTransfer>>();
         let mut reader = events.get_reader();
         let transfers: Vec<_> = reader.read(events).collect();
-        assert_eq!(transfers.len(), 1, "服丹急行应 emit 1 条 QiTransfer 事件");
-        assert_eq!(
-            transfers[0].reason,
-            QiTransferReason::ReleaseToZone,
-            "QiTransfer reason 应为 ReleaseToZone"
+        assert!(
+            !transfers.is_empty(),
+            "服丹急行应 emit QiTransfer 事件（守恒审计）"
+        );
+        let total_amount: f64 = transfers.iter().map(|t| t.amount).sum();
+        assert!(
+            (total_amount - qi_cost).abs() < f64::EPSILON,
+            "QiTransfer 总金额应等于 qi_cost={qi_cost}, 实际 {total_amount}"
         );
         assert!(
-            (transfers[0].amount - qi_cost).abs() < f64::EPSILON,
-            "QiTransfer 金额应等于 qi_cost={qi_cost}, 实际 {}",
-            transfers[0].amount
+            transfers
+                .iter()
+                .all(|t| t.reason == QiTransferReason::ReleaseToZone),
+            "所有 QiTransfer reason 应为 ReleaseToZone"
+        );
+        // 关键：to 账户不能是假占位符 "current_zone"——必须是真实 zone（spawn）或 overflow bucket。
+        assert!(
+            transfers.iter().all(|t| t.to.id != "current_zone"),
+            "QiTransfer to.id 不能是硬编码占位符 'current_zone'，应为真实 zone name 或 overflow bucket"
+        );
+    }
+
+    // --- 真元守恒：zone 实际入账验证 ---
+
+    #[test]
+    fn pill_rush_credits_zone_spirit_qi() {
+        // 验证核心修复：drain_dandao_qi 必须实际增加 zone.spirit_qi，而不仅是发事件。
+        let qi_cost = dandao_qi_cost_base(Realm::Awaken);
+        let (mut world, caster) = make_world_with_zone(Realm::Awaken, qi_cost + 10.0, 100.0);
+        let initial_zone_spirit_qi = world
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name("spawn")
+            .expect("spawn zone 必须存在")
+            .spirit_qi;
+
+        let result = resolve_pill_rush(&mut world, caster, 0, None);
+        assert!(matches!(result, CastResult::Started { .. }));
+
+        let final_zone_spirit_qi = world
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name("spawn")
+            .expect("spawn zone 必须存在")
+            .spirit_qi;
+
+        assert!(
+            final_zone_spirit_qi >= initial_zone_spirit_qi,
+            "服丹急行后 spawn zone.spirit_qi 应增加（qi 守恒）: 之前 {initial_zone_spirit_qi}, 之后 {final_zone_spirit_qi}"
+        );
+    }
+
+    #[test]
+    fn pill_bomb_credits_zone_spirit_qi() {
+        let qi_cost = dandao_qi_cost_base(Realm::Induce) * PILL_BOMB_QI_MULTIPLIER;
+        let (mut world, caster) = make_world_with_zone(Realm::Induce, qi_cost + 10.0, 200.0);
+        let initial_spirit_qi = world
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name("spawn")
+            .unwrap()
+            .spirit_qi;
+
+        let result = resolve_pill_bomb(&mut world, caster, 0, None);
+        assert!(matches!(result, CastResult::Started { .. }));
+
+        let final_spirit_qi = world
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name("spawn")
+            .unwrap()
+            .spirit_qi;
+
+        assert!(
+            final_spirit_qi >= initial_spirit_qi,
+            "投丹后 zone.spirit_qi 应增加（qi 守恒）: before={initial_spirit_qi}, after={final_spirit_qi}"
+        );
+    }
+
+    #[test]
+    fn pill_mist_credits_zone_spirit_qi() {
+        let (mut world, caster) = make_world_with_zone(Realm::Condense, 50.0, 200.0);
+        let initial_spirit_qi = world
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name("spawn")
+            .unwrap()
+            .spirit_qi;
+
+        let result = resolve_pill_mist(&mut world, caster, 0, None);
+        assert!(matches!(result, CastResult::Started { .. }));
+
+        let final_spirit_qi = world
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name("spawn")
+            .unwrap()
+            .spirit_qi;
+
+        assert!(
+            final_spirit_qi >= initial_spirit_qi,
+            "丹雾后 zone.spirit_qi 应增加（qi 守恒）: before={initial_spirit_qi}, after={final_spirit_qi}"
+        );
+    }
+
+    #[test]
+    fn drain_qi_no_position_routes_to_overflow_not_destroyed() {
+        // 无 Position 组件时，qi 不应被静默销毁，而是归入 overflow bucket。
+        let qi_cost = dandao_qi_cost_base(Realm::Awaken);
+        let (mut world, caster) = make_world_with_caster(Realm::Awaken, qi_cost + 1.0, 100.0);
+        // 注意：make_world_with_caster 不插入 ZoneRegistry 或 Position。
+        // 将 ZoneRegistry 插入，但不给 entity 加 Position。
+        world.insert_resource(ZoneRegistry::default());
+
+        let result = resolve_pill_rush(&mut world, caster, 0, None);
+        assert!(matches!(result, CastResult::Started { .. }));
+
+        let events = world.resource::<Events<QiTransfer>>();
+        let mut reader = events.get_reader();
+        let transfers: Vec<_> = reader.read(events).collect();
+
+        // qi 应该被 emit 为 overflow 而非丢失。
+        let total_amount: f64 = transfers.iter().map(|t| t.amount).sum();
+        assert!(
+            (total_amount - qi_cost).abs() < f64::EPSILON,
+            "无 Position 时 qi 不应被销毁：期望 overflow 总量 {qi_cost}, 实际 {total_amount}"
+        );
+        // overflow bucket 的 to 账户类型应为 Overflow。
+        assert!(
+            transfers
+                .iter()
+                .any(|t| t.to.kind == QiAccountKind::Overflow),
+            "无 Position 时应路由到 Overflow bucket，不能静默销毁"
+        );
+        assert!(
+            transfers.iter().all(|t| t.to.id != "current_zone"),
+            "overflow 路径不能使用假占位符 'current_zone'"
+        );
+    }
+
+    #[test]
+    fn qi_transfer_to_account_is_zone_kind_when_in_zone() {
+        // 在 zone 内施展时，QiTransfer.to 的 kind 应为 Zone（不是 Overflow / Player）。
+        let qi_cost = dandao_qi_cost_base(Realm::Awaken);
+        let (mut world, caster) = make_world_with_zone(Realm::Awaken, qi_cost + 1.0, 100.0);
+
+        resolve_pill_rush(&mut world, caster, 0, None);
+
+        let events = world.resource::<Events<QiTransfer>>();
+        let mut reader = events.get_reader();
+        let transfers: Vec<_> = reader.read(events).collect();
+
+        // 至少有一条 transfer 目标是 Zone（主路径；zone 满容时可能有 overflow 补充）。
+        let has_zone_transfer = transfers.iter().any(|t| t.to.kind == QiAccountKind::Zone);
+        assert!(
+            has_zone_transfer,
+            "在 zone 内施展时，至少一条 QiTransfer.to 应为 Zone 类型；实际 transfers={:?}",
+            transfers
+                .iter()
+                .map(|t| (&t.to.kind, &t.to.id))
+                .collect::<Vec<_>>()
         );
     }
 
