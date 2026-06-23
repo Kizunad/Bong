@@ -227,9 +227,9 @@ pub fn resolve_beng_quan(
         skill_config: None,
     });
 
-    if let Some(mut cultivation) = world.get_mut::<Cultivation>(caster) {
-        cultivation.qi_current = (cultivation.qi_current - cost).clamp(0.0, cultivation.qi_max);
-    }
+    // bughunt r3 — beng_quan 此前内联扣 qi_current 却不归还 zone（绕过 spend_qi）→ 真元蒸发、守恒破。
+    // 改走 spend_qi（与铁山靠/血崩步/逆脉护体同一路径）：扣费的同时把消耗回灌到 caster 所在 zone。
+    spend_qi(world, caster, cost);
     if let Some(mut meridians) = world.get_mut::<MeridianSystem>(caster) {
         for id in RIGHT_ARM_MERIDIANS {
             let meridian = meridians.get_mut(id);
@@ -748,8 +748,7 @@ fn emit_spent_qi_release(
         .unwrap_or(DimensionKind::Overworld);
 
     let mut transfers = Vec::new();
-    if let (Some(position), Some(mut zones)) =
-        (position, world.get_resource_mut::<ZoneRegistry>())
+    if let (Some(position), Some(mut zones)) = (position, world.get_resource_mut::<ZoneRegistry>())
     {
         let zone_name = zones
             .find_zone(dimension, position)
@@ -758,7 +757,13 @@ fn emit_spent_qi_release(
             if let Some(zone) = zones.find_zone_mut(zone_name.as_str()) {
                 let to = QiAccountId::zone(zone.name.clone());
                 let zone_current = zone.spirit_qi.max(0.0) * QI_ZONE_UNIT_CAPACITY;
-                match qi_release_to_zone(amount, from.clone(), to, zone_current, QI_ZONE_UNIT_CAPACITY) {
+                match qi_release_to_zone(
+                    amount,
+                    from.clone(),
+                    to,
+                    zone_current,
+                    QI_ZONE_UNIT_CAPACITY,
+                ) {
                     Ok(outcome) => {
                         zone.spirit_qi =
                             (outcome.zone_after / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
@@ -1884,8 +1889,13 @@ mod tests {
     fn xue_beng_bu_spend_qi_releases_to_zone() {
         let mut app = app_with_zone();
         // yaw=0 → facing = -z 方向（sin(0)=0, cos(0)=1），用 Look::new(0.0, 0.0)。
-        let caster =
-            spawn_caster_with_look(&mut app, Realm::Solidify, 100.0, DVec3::new(0.0, 70.0, 0.0), 0.0);
+        let caster = spawn_caster_with_look(
+            &mut app,
+            Realm::Solidify,
+            100.0,
+            DVec3::new(0.0, 70.0, 0.0),
+            0.0,
+        );
 
         let initial_spirit_qi = zone_spirit_qi(&app);
 
