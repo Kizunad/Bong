@@ -96,15 +96,19 @@ fn drain_dandao_qi(world: &mut bevy_ecs::world::World, caster: Entity, cost: f64
     let mut pending_transfers: Vec<QiTransfer> = Vec::new();
 
     if let (Some(pos), Some(mut zones)) = (position, world.get_resource_mut::<ZoneRegistry>()) {
-        let zone_name = zones
-            .find_zone(dimension, pos)
-            .map(|z| z.name.clone());
+        let zone_name = zones.find_zone(dimension, pos).map(|z| z.name.clone());
 
         if let Some(zone_name) = zone_name {
             if let Some(zone) = zones.find_zone_mut(&zone_name) {
                 let zone_current = zone.spirit_qi.max(0.0) * QI_ZONE_UNIT_CAPACITY;
                 let to = QiAccountId::zone(zone.name.clone());
-                match qi_release_to_zone(cost, from.clone(), to, zone_current, QI_ZONE_UNIT_CAPACITY) {
+                match qi_release_to_zone(
+                    cost,
+                    from.clone(),
+                    to,
+                    zone_current,
+                    QI_ZONE_UNIT_CAPACITY,
+                ) {
                     Ok(outcome) => {
                         zone.spirit_qi =
                             (outcome.zone_after / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
@@ -149,10 +153,8 @@ fn drain_dandao_qi(world: &mut bevy_ecs::world::World, caster: Entity, cost: f64
                 }
             } else {
                 // Zone name resolved but mutable lookup failed (shouldn't happen).
-                let overflow_to = QiAccountId::overflow(format!(
-                    "dandao_skill_overflow:{}",
-                    caster.to_bits()
-                ));
+                let overflow_to =
+                    QiAccountId::overflow(format!("dandao_skill_overflow:{}", caster.to_bits()));
                 if let Ok(t) = QiTransfer::new(
                     from.clone(),
                     overflow_to,
@@ -164,10 +166,8 @@ fn drain_dandao_qi(world: &mut bevy_ecs::world::World, caster: Entity, cost: f64
             }
         } else {
             // No zone at caster's position — route to overflow.
-            let overflow_to = QiAccountId::overflow(format!(
-                "dandao_skill_no_zone:{}",
-                caster.to_bits()
-            ));
+            let overflow_to =
+                QiAccountId::overflow(format!("dandao_skill_no_zone:{}", caster.to_bits()));
             if let Ok(t) = QiTransfer::new(
                 from.clone(),
                 overflow_to,
@@ -179,10 +179,8 @@ fn drain_dandao_qi(world: &mut bevy_ecs::world::World, caster: Entity, cost: f64
         }
     } else {
         // No Position component or ZoneRegistry not present — overflow safety net.
-        let overflow_to = QiAccountId::overflow(format!(
-            "dandao_skill_no_zone:{}",
-            caster.to_bits()
-        ));
+        let overflow_to =
+            QiAccountId::overflow(format!("dandao_skill_no_zone:{}", caster.to_bits()));
         if let Ok(t) = QiTransfer::new(
             from.clone(),
             overflow_to,
@@ -861,7 +859,9 @@ mod skill_tests {
         );
         // overflow bucket 的 to 账户类型应为 Overflow。
         assert!(
-            transfers.iter().any(|t| t.to.kind == QiAccountKind::Overflow),
+            transfers
+                .iter()
+                .any(|t| t.to.kind == QiAccountKind::Overflow),
             "无 Position 时应路由到 Overflow bucket，不能静默销毁"
         );
         assert!(
