@@ -7589,10 +7589,16 @@ mod tests {
             layer_block_state(&app, layer_entity, pos),
             Some(BlockState::AIR)
         );
+        // QS-02 修复后：Trap（qi_invest_ratio=0.10）部署时封入的真元，在过期衰减时归还 zone（守恒）。
+        // 旧断言「衰减无 QiTransfer」锁的是 bug 行为——Trap 部署扣了真元却不归还、过期蒸发。
         let transfers = app.world().resource::<Events<QiTransfer>>();
+        let released = transfers
+            .iter_current_update_events()
+            .filter(|t| t.reason == QiTransferReason::ReleaseToZone)
+            .count();
         assert!(
-            transfers.iter_current_update_events().next().is_none(),
-            "expected legacy trap decay to skip ordinary-trap qi release path"
+            released >= 1,
+            "expected Trap 衰减把封存真元归还 zone（QS-02 守恒修复），实际无 ReleaseToZone transfer"
         );
     }
 
@@ -8515,7 +8521,7 @@ mod tests {
             .find(|t| t.reason == QiTransferReason::Channeling && t.to == expected_container)
             .expect(
                 "Illusion deploy must emit Channeling QiTransfer; \
-                 before fix, should_release_sealed_qi_to_zone excluded Illusion"
+                 before fix, should_release_sealed_qi_to_zone excluded Illusion",
             );
         assert!(
             (seal.amount - expected_cost).abs() < f64::EPSILON,
@@ -8713,8 +8719,7 @@ mod tests {
         let overflow_total: f64 = transfers
             .iter_current_update_events()
             .filter(|t| {
-                t.from == container
-                    && t.to.kind == crate::qi_physics::QiAccountKind::Overflow
+                t.from == container && t.to.kind == crate::qi_physics::QiAccountKind::Overflow
             })
             .map(|t| t.amount)
             .sum();
