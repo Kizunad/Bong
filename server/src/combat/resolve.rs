@@ -74,6 +74,7 @@ use crate::schema::world_state::GameEvent;
 use crate::skill::components::SkillId;
 use crate::skill::events::{SkillXpGain, XpGainSource};
 use crate::world::events::ActiveEventsResource;
+use crate::world::zone::ZoneRegistry;
 
 const ARMOR_HIT_CONTAMINATION_MULTIPLIER: f64 = 0.1;
 const ARMOR_HIT_DURABILITY_COST_POINTS: f64 = 0.5;
@@ -162,7 +163,7 @@ type PositionLookItem<'a> = (&'a Position, Option<&'a Look>);
 
 /// 事件写出参数合并，避免 Bevy 0.14 顶层 SystemParam 数量上限。
 #[derive(SystemParam)]
-pub struct CombatResolveEventWriters<'w> {
+pub struct CombatResolveEventWriters<'w, 's> {
     status_effect_intents: EventWriter<'w, ApplyStatusEffectIntent>,
     out_events: EventWriter<'w, CombatEvent>,
     qi_transfers: Option<ResMut<'w, Events<QiTransfer>>>,
@@ -176,6 +177,10 @@ pub struct CombatResolveEventWriters<'w> {
     defense_intent_tx: Option<ResMut<'w, Events<DefenseIntent>>>,
     /// plan-shield-block-v1 P4 — player-scope narration（格挡成功 / 近破盾）。
     narrations: Option<ResMut<'w, crate::player::gameplay::PendingGameplayNarrations>>,
+    /// bughunt r2 QP-003 — jiemai 格挡真元守恒：扣除的 qi_cost 需回灌到防御方所在 zone。
+    zone_registry: Option<ResMut<'w, ZoneRegistry>>,
+    /// bughunt r2 QP-003 — 查询防御方当前维度，用于 find_zone 定位目标 zone。
+    defender_dim_q: Query<'w, 's, Option<&'static crate::world::dimension::CurrentDimension>>,
 }
 
 pub fn apply_defense_intents(
@@ -881,6 +886,27 @@ pub fn resolve_attack_intents(
                     let qi_cost = qi_cost.expect("checked Some above");
                     defender_cultivation.qi_current = (defender_cultivation.qi_current - qi_cost)
                         .clamp(0.0, defender_cultivation.qi_max);
+
+                    // bughunt r2 QP-003 — 守恒：扣减的格挡真元费用回灌到防御方所在 zone。
+                    // 格挡消耗是"主动施法真元散逸"，语义同 ReleaseToZone。
+                    {
+                        let defender_dim = event_writers
+                            .defender_dim_q
+                            .get(target_entity)
+                            .ok()
+                            .flatten();
+                        let defender_pos = positions.get(target_entity).ok().map(|(pos, _)| pos);
+                        crate::cultivation::death_hooks::release_qi_amount_to_zone(
+                            target_entity,
+                            qi_cost,
+                            defender_pos,
+                            defender_dim,
+                            life_record.as_deref(),
+                            event_writers.zone_registry.as_deref_mut(),
+                            event_writers.qi_transfers.as_deref_mut(),
+                            "jiemai_parry",
+                        );
+                    }
 
                     let before = emitted_contam_delta;
                     let effectiveness = jiemai_effectiveness(distance);
@@ -4691,6 +4717,218 @@ mod tests {
                 .get(&ColorKind::Violent)
                 .copied(),
             Some(crate::cultivation::color::STYLE_PRACTICE_AMOUNT)
+        );
+    }
+
+    // ── bughunt r2 QP-003 — jiemai 格挡真元守恒：扣除 qi_cost 后必须回灌到 zone ──
+
+    /// 完整 happy path：成功格挡后 QiTransfer 事件携带正确金额和 ReleaseToZone reason。
+    ///
+    /// 守恒不变式：`parry_qi_cost == qi_transfer.amount`（不凭空消失）。
+    /// 验证目标：防守方 qi_current 减少 PARRY_QI_COST；同 tick 内 QiTransfer 发出；
+    ///            amount == PARRY_QI_COST；reason == ReleaseToZone；to == zone:spawn（玩家在 spawn 区）。
+    #[test]
+    fn jiemai_parry_emits_qi_transfer_for_conservation() {
+        use crate::qi_physics::ledger::QiTransferReason;
+        use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
+
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 1000 });
+        app.insert_resource(ZoneRegistry::fallback());
+        // fallback() 的 spawn zone 默认接近满（spirit_qi≈0.9），余量不足以吸收整份格挡费用 →
+        // 会拆成 zone 部分 + overflow 部分。清空 spawn zone 让整份 qi_cost 落入 zone，
+        // 锁住「完好回灌」happy path（守恒两条路都成立，此处验全额入 zone 的契约）。
+        if let Some(zone) = app
+            .world_mut()
+            .resource_mut::<ZoneRegistry>()
+            .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
+        {
+            zone.spirit_qi = 0.0;
+        }
+        app.add_event::<AttackIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<CombatEvent>();
+        app.add_event::<DeathEvent>();
+        app.add_event::<crate::combat::weapon::WeaponBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
+        app.add_event::<QiTransfer>();
+        app.add_systems(Update, resolve_attack_intents);
+
+        let attacker = spawn_player(
+            &mut app,
+            "Attacker",
+            [0.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        let target = spawn_player(
+            &mut app,
+            "Defender",
+            [1.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+
+        let initial_qi = 20.0;
+        let parry_cost = crate::combat::zhenmai_v2::PARRY_QI_COST;
+        app.world_mut().entity_mut(target).insert((
+            CombatState {
+                incoming_window: Some(DefenseWindow {
+                    opened_at_tick: 999,
+                    duration_ms: 200,
+                }),
+                ..CombatState::default()
+            },
+            Cultivation {
+                realm: Realm::Induce,
+                qi_current: initial_qi,
+                qi_max: 100.0,
+                ..Cultivation::default()
+            },
+            // 真实玩家出生即带 CurrentDimension（player/mod.rs），生产路径 find_zone 能定位 zone；
+            // 测试需显式补上，否则 defender_dim=None → release_qi_amount_to_zone 回退 Overflow 账户，
+            // 守恒回灌断言（to=Zone:spawn）撞红。
+            crate::world::dimension::CurrentDimension::default(),
+        ));
+
+        app.world_mut().send_event(AttackIntent {
+            attacker,
+            target: Some(target),
+            issued_at_tick: 999,
+            reach: FIST_REACH,
+            qi_invest: 20.0,
+            wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
+            debug_command: None,
+        });
+
+        app.update();
+
+        // 验证：防守方真元扣减正确。
+        let cultivation = app.world().entity(target).get::<Cultivation>().unwrap();
+        assert_eq!(
+            cultivation.qi_current,
+            initial_qi - parry_cost,
+            "守恒前置：防守方 qi_current 应减少 PARRY_QI_COST={parry_cost}，\
+             实际 qi_current={:.3}（初始={initial_qi}）",
+            cultivation.qi_current,
+        );
+
+        // 主守恒断言：格挡消耗的真元必须回灌到所在 zone（ReleaseToZone reason）。
+        let transfers: Vec<_> = app
+            .world()
+            .resource::<Events<QiTransfer>>()
+            .iter_current_update_events()
+            .cloned()
+            .collect();
+        let parry_transfer = transfers.iter().find(|t| {
+            t.reason == QiTransferReason::ReleaseToZone
+                && (t.amount - parry_cost).abs() < f64::EPSILON
+        });
+        assert!(
+            parry_transfer.is_some(),
+            "守恒红线：jiemai 格挡消耗 {parry_cost} 真元，必须 emit QiTransfer(reason=ReleaseToZone, \
+             amount={parry_cost})；实际 transfers={:?}",
+            transfers,
+        );
+        let t = parry_transfer.unwrap();
+        assert_eq!(
+            t.to,
+            crate::qi_physics::QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME.to_string()),
+            "格挡真元应回灌到防守方所在 zone（spawn）；实际 to={:?}",
+            t.to,
+        );
+    }
+
+    /// 边界：防守方没有足够真元时格挡失败，不应 emit 任何 jiemai QiTransfer。
+    ///
+    /// 守恒不变式：无格挡发生 → 无真元被扣 → 无 QiTransfer 回灌（不凭空创造转账）。
+    #[test]
+    fn jiemai_parry_no_qi_transfer_when_insufficient_qi() {
+        use crate::qi_physics::ledger::QiTransferReason;
+        use crate::world::zone::ZoneRegistry;
+
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 1000 });
+        app.insert_resource(ZoneRegistry::fallback());
+        app.add_event::<AttackIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<CombatEvent>();
+        app.add_event::<DeathEvent>();
+        app.add_event::<crate::combat::weapon::WeaponBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
+        app.add_event::<QiTransfer>();
+        app.add_systems(Update, resolve_attack_intents);
+
+        let attacker = spawn_player(
+            &mut app,
+            "Attacker",
+            [0.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        let target = spawn_player(
+            &mut app,
+            "Defender",
+            [1.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+
+        // 防守方真元不足（1.0 < PARRY_QI_COST=8.0），格挡条件不满足。
+        app.world_mut().entity_mut(target).insert((
+            CombatState {
+                incoming_window: Some(DefenseWindow {
+                    opened_at_tick: 999,
+                    duration_ms: 200,
+                }),
+                ..CombatState::default()
+            },
+            Cultivation {
+                realm: Realm::Induce,
+                qi_current: 1.0, // < PARRY_QI_COST
+                qi_max: 100.0,
+                ..Cultivation::default()
+            },
+        ));
+
+        app.world_mut().send_event(AttackIntent {
+            attacker,
+            target: Some(target),
+            issued_at_tick: 999,
+            reach: FIST_REACH,
+            qi_invest: 20.0,
+            wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
+            debug_command: None,
+        });
+
+        app.update();
+
+        // 格挡未触发：qi_current 保持不变。
+        let cultivation = app.world().entity(target).get::<Cultivation>().unwrap();
+        assert_eq!(
+            cultivation.qi_current, 1.0,
+            "真元不足时格挡失败，qi_current 不应变动；实际 qi_current={:.3}",
+            cultivation.qi_current
+        );
+
+        // 守恒不变式：无格挡 → 无 ReleaseToZone QiTransfer 被 emit。
+        let transfers: Vec<_> = app
+            .world()
+            .resource::<Events<QiTransfer>>()
+            .iter_current_update_events()
+            .filter(|t| t.reason == QiTransferReason::ReleaseToZone)
+            .collect();
+        assert!(
+            transfers.is_empty(),
+            "格挡条件不满足时不应有 ReleaseToZone 转账（避免凭空回灌）；\
+             实际 transfers={:?}",
+            transfers,
         );
     }
 
