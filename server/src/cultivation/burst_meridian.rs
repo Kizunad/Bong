@@ -20,9 +20,14 @@ use crate::network::audio_event_emit::{
 };
 use crate::network::cast_emit::current_unix_millis;
 use crate::network::vfx_event_emit::VfxEventRequest;
-use crate::qi_physics::{MediumKind, StyleAttack};
+use crate::qi_physics::constants::{QI_EPSILON, QI_ZONE_UNIT_CAPACITY};
+use crate::qi_physics::{
+    qi_release_to_zone, MediumKind, QiAccountId, QiTransfer, QiTransferReason, StyleAttack,
+};
 use crate::schema::server_data::{BurstMeridianEventV1, ServerDataPayloadV1};
 use crate::schema::vfx_event::VfxEventPayloadV1;
+use crate::world::dimension::{CurrentDimension, DimensionKind};
+use crate::world::zone::ZoneRegistry;
 
 const BENG_QUAN_ANIM_ID: &str = "bong:beng_quan";
 const BENG_QUAN_PARTICLE_ID: &str = "bong:burst_meridian_beng_quan";
@@ -710,10 +715,116 @@ fn cast_timing(
     }
 }
 
-/// 扣真元（玩家私有池）—— 与崩拳同模式，clamp 进 [0, qi_max]，不凭空增减。
+/// 扣真元（玩家私有池）并将消耗的真元释放回区域灵气池，维持 qi_physics 守恒。
+/// 与 baomai_v3 / tuike_v2 的 spend_qi + emit_spent_qi_release 模式对齐。
 fn spend_qi(world: &mut bevy_ecs::world::World, caster: Entity, cost: f64) {
+    if cost <= f64::EPSILON {
+        return;
+    }
+    if !cost.is_finite() {
+        return;
+    }
     if let Some(mut cultivation) = world.get_mut::<Cultivation>(caster) {
         cultivation.qi_current = (cultivation.qi_current - cost).clamp(0.0, cultivation.qi_max);
+    }
+    emit_spent_qi_release(world, caster, cost, "burst_meridian:spend_qi");
+}
+
+/// 把消耗的真元释放回 ZoneRegistry，走 qi_release_to_zone 守恒路径；区域满时路由至 overflow。
+fn emit_spent_qi_release(
+    world: &mut bevy_ecs::world::World,
+    caster: Entity,
+    amount: f64,
+    sink: &'static str,
+) {
+    if amount <= QI_EPSILON {
+        return;
+    }
+    let from = QiAccountId::player(format!("entity:{}", caster.to_bits()));
+    let position = world.get::<Position>(caster).map(|p| p.get());
+    let dimension = world
+        .get::<CurrentDimension>(caster)
+        .map(|d| d.0)
+        .unwrap_or(DimensionKind::Overworld);
+
+    let mut transfers = Vec::new();
+    if let (Some(position), Some(mut zones)) =
+        (position, world.get_resource_mut::<ZoneRegistry>())
+    {
+        let zone_name = zones
+            .find_zone(dimension, position)
+            .map(|zone| zone.name.clone());
+        if let Some(zone_name) = zone_name {
+            if let Some(zone) = zones.find_zone_mut(zone_name.as_str()) {
+                let to = QiAccountId::zone(zone.name.clone());
+                let zone_current = zone.spirit_qi.max(0.0) * QI_ZONE_UNIT_CAPACITY;
+                match qi_release_to_zone(amount, from.clone(), to, zone_current, QI_ZONE_UNIT_CAPACITY) {
+                    Ok(outcome) => {
+                        zone.spirit_qi =
+                            (outcome.zone_after / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
+                        if let Some(transfer) = outcome.transfer {
+                            transfers.push(transfer);
+                        }
+                        if outcome.overflow > QI_EPSILON {
+                            push_spent_qi_overflow(
+                                &mut transfers,
+                                from.clone(),
+                                outcome.overflow,
+                                sink,
+                                caster,
+                            );
+                        }
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            ?error,
+                            "[bong][burst_meridian] invalid spent qi release for {:?}; route to overflow",
+                            caster
+                        );
+                        push_spent_qi_overflow(&mut transfers, from.clone(), amount, sink, caster);
+                    }
+                }
+            } else {
+                push_spent_qi_overflow(&mut transfers, from.clone(), amount, sink, caster);
+            }
+        } else {
+            push_spent_qi_overflow(&mut transfers, from.clone(), amount, sink, caster);
+        }
+    } else {
+        push_spent_qi_overflow(&mut transfers, from.clone(), amount, sink, caster);
+    }
+
+    for transfer in transfers {
+        if let Some(mut events) = world.get_resource_mut::<Events<QiTransfer>>() {
+            events.send(transfer);
+        }
+    }
+}
+
+fn push_spent_qi_overflow(
+    transfers: &mut Vec<QiTransfer>,
+    from: QiAccountId,
+    amount: f64,
+    sink: &'static str,
+    caster: Entity,
+) {
+    if amount <= QI_EPSILON {
+        return;
+    }
+    match QiTransfer::new(
+        from,
+        QiAccountId::overflow(format!("{sink}:{}", caster.to_bits())),
+        amount,
+        QiTransferReason::ReleaseToZone,
+    ) {
+        Ok(transfer) => transfers.push(transfer),
+        Err(error) => tracing::warn!(
+            ?error,
+            sink,
+            ?caster,
+            amount,
+            "[bong][burst_meridian] failed to build spent qi overflow transfer"
+        ),
     }
 }
 
@@ -1673,5 +1784,216 @@ mod tests {
         assert_eq!(flat_qi_cost(XUE_BENG_BU_SKILL_ID), Some(25.0));
         assert_eq!(flat_qi_cost(NI_MAI_HU_TI_SKILL_ID), Some(45.0));
         assert_eq!(flat_qi_cost("nonexistent.skill"), None);
+    }
+
+    // ─── 真元守恒：burst_meridian 招式扣 qi 后必须释放回区域 ────────────────────────
+    // 对齐 baomai_v3 / tuike_v2 的 emit_spent_qi_release 模式。
+    // resolve.rs 把 BurstMeridian 加入 source_uses_prepaid_qi 白名单，
+    // 意味着 combat resolver 不会补做任何区域释放——必须在 spend_qi 本地完成。
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    use crate::qi_physics::{QiTransfer, QiTransferReason};
+    use crate::world::zone::ZoneRegistry;
+
+    /// 带 ZoneRegistry（fallback spawn zone，覆盖 y=70 层面）和 QiTransfer event 的测试 App。
+    /// caster 位置应使用 DVec3::new(0.0, 70.0, 0.0) 才落在 spawn zone AABB 内。
+    fn app_with_zone() -> App {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 10 });
+        app.add_event::<AttackIntent>();
+        app.add_event::<BurstMeridianEvent>();
+        app.add_event::<VfxEventRequest>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<PlaySoundRecipeRequest>();
+        app.add_event::<QiTransfer>();
+        app.insert_resource(ZoneRegistry::fallback());
+        app
+    }
+
+    fn zone_spirit_qi(app: &App) -> f64 {
+        app.world()
+            .resource::<ZoneRegistry>()
+            .find_zone(
+                crate::world::dimension::DimensionKind::Overworld,
+                DVec3::new(0.0, 70.0, 0.0),
+            )
+            .expect("spawn zone must cover (0,70,0)")
+            .spirit_qi
+    }
+
+    fn qi_transfer_count(app: &App) -> usize {
+        app.world()
+            .resource::<Events<QiTransfer>>()
+            .iter_current_update_events()
+            .count()
+    }
+
+    /// beng_quan 施法后区域 spirit_qi 必须升高（消耗的真元返还区域）。
+    #[test]
+    fn beng_quan_spend_qi_releases_to_zone() {
+        let mut app = app_with_zone();
+        // 在 spawn zone AABB 内（y=70）生成施法者。
+        let caster = spawn_caster(&mut app, Realm::Induce, 100.0, DVec3::new(0.0, 70.0, 0.0));
+        let target = spawn_target(&mut app, DVec3::new(0.0, 70.0, f64::from(FIST_REACH.max)));
+
+        let initial_spirit_qi = zone_spirit_qi(&app);
+
+        let result = resolve_beng_quan(app.world_mut(), caster, 0, Some(target));
+
+        assert!(
+            matches!(result, CastResult::Started { .. }),
+            "beng_quan must succeed; got {result:?}"
+        );
+        assert!(
+            zone_spirit_qi(&app) > initial_spirit_qi,
+            "zone spirit_qi must rise after beng_quan spend_qi; \
+             before={initial_spirit_qi}, after={}",
+            zone_spirit_qi(&app)
+        );
+        assert!(
+            qi_transfer_count(&app) > 0,
+            "a QiTransfer must be emitted for the zone release"
+        );
+    }
+
+    /// tie_shan_kao 施法后区域 spirit_qi 必须升高（守恒同 beng_quan）。
+    #[test]
+    fn tie_shan_kao_spend_qi_releases_to_zone() {
+        let mut app = app_with_zone();
+        let caster = spawn_caster(&mut app, Realm::Condense, 100.0, DVec3::new(0.0, 70.0, 0.0));
+        let target = spawn_target(&mut app, DVec3::new(0.0, 70.0, 1.0));
+
+        let initial_spirit_qi = zone_spirit_qi(&app);
+
+        let result = resolve_tie_shan_kao(app.world_mut(), caster, 0, Some(target));
+
+        assert!(
+            matches!(result, CastResult::Started { .. }),
+            "tie_shan_kao must succeed; got {result:?}"
+        );
+        assert!(
+            zone_spirit_qi(&app) > initial_spirit_qi,
+            "zone spirit_qi must rise after tie_shan_kao spend_qi; \
+             before={initial_spirit_qi}, after={}",
+            zone_spirit_qi(&app)
+        );
+    }
+
+    /// xue_beng_bu 施法后区域 spirit_qi 必须升高。
+    #[test]
+    fn xue_beng_bu_spend_qi_releases_to_zone() {
+        let mut app = app_with_zone();
+        // yaw=0 → facing = -z 方向（sin(0)=0, cos(0)=1），用 Look::new(0.0, 0.0)。
+        let caster =
+            spawn_caster_with_look(&mut app, Realm::Solidify, 100.0, DVec3::new(0.0, 70.0, 0.0), 0.0);
+
+        let initial_spirit_qi = zone_spirit_qi(&app);
+
+        let result = resolve_xue_beng_bu(app.world_mut(), caster, 0, None);
+
+        assert!(
+            matches!(result, CastResult::Started { .. }),
+            "xue_beng_bu must succeed; got {result:?}"
+        );
+        assert!(
+            zone_spirit_qi(&app) > initial_spirit_qi,
+            "zone spirit_qi must rise after xue_beng_bu spend_qi; \
+             before={initial_spirit_qi}, after={}",
+            zone_spirit_qi(&app)
+        );
+    }
+
+    /// ni_mai_hu_ti 施法后区域 spirit_qi 必须升高。
+    #[test]
+    fn ni_mai_hu_ti_spend_qi_releases_to_zone() {
+        let mut app = app_with_zone();
+        let caster = spawn_caster(&mut app, Realm::Solidify, 100.0, DVec3::new(0.0, 70.0, 0.0));
+
+        let initial_spirit_qi = zone_spirit_qi(&app);
+
+        let result = resolve_ni_mai_hu_ti(app.world_mut(), caster, 0, None);
+
+        assert!(
+            matches!(result, CastResult::Started { .. }),
+            "ni_mai_hu_ti must succeed; got {result:?}"
+        );
+        assert!(
+            zone_spirit_qi(&app) > initial_spirit_qi,
+            "zone spirit_qi must rise after ni_mai_hu_ti spend_qi; \
+             before={initial_spirit_qi}, after={}",
+            zone_spirit_qi(&app)
+        );
+    }
+
+    /// 拒绝路径（如真元不足）不触发任何区域释放——守恒不能凭空注入灵气。
+    #[test]
+    fn rejected_cast_does_not_release_qi_to_zone() {
+        let mut app = app_with_zone();
+        let caster = spawn_caster(&mut app, Realm::Awaken, 0.0, DVec3::new(0.0, 70.0, 0.0));
+        let target = spawn_target(&mut app, DVec3::new(0.0, 70.0, 1.0));
+
+        let initial_spirit_qi = zone_spirit_qi(&app);
+
+        let result = resolve_beng_quan(app.world_mut(), caster, 0, Some(target));
+
+        assert!(
+            matches!(result, CastResult::Rejected { .. }),
+            "must be rejected; got {result:?}"
+        );
+        assert_eq!(
+            zone_spirit_qi(&app),
+            initial_spirit_qi,
+            "zone spirit_qi must be unchanged when cast is rejected — \
+             no qi was consumed so none can be released"
+        );
+        assert_eq!(
+            qi_transfer_count(&app),
+            0,
+            "no QiTransfer must be emitted on rejected cast"
+        );
+    }
+
+    /// 区域已满（spirit_qi = 1.0）时，消耗的真元应路由至 overflow，zone 不超限。
+    #[test]
+    fn beng_quan_routes_overflow_when_zone_is_full() {
+        let mut app = app_with_zone();
+        // 把 spawn zone 灵气填满。
+        app.world_mut()
+            .resource_mut::<ZoneRegistry>()
+            .find_zone_mut("spawn")
+            .expect("spawn zone must exist")
+            .spirit_qi = 1.0;
+
+        let caster = spawn_caster(&mut app, Realm::Induce, 100.0, DVec3::new(0.0, 70.0, 0.0));
+        let target = spawn_target(&mut app, DVec3::new(0.0, 70.0, f64::from(FIST_REACH.max)));
+
+        let result = resolve_beng_quan(app.world_mut(), caster, 0, Some(target));
+
+        assert!(
+            matches!(result, CastResult::Started { .. }),
+            "beng_quan must succeed even when zone is full; got {result:?}"
+        );
+        assert_eq!(
+            zone_spirit_qi(&app),
+            1.0,
+            "zone spirit_qi must not exceed 1.0 when zone is full"
+        );
+        // overflow 路径：仍发 QiTransfer（overflow 账户）。
+        assert!(
+            qi_transfer_count(&app) > 0,
+            "a QiTransfer (overflow) must be emitted even when zone is full"
+        );
+        // 拿到 overflow transfer，验证其目的账户种类。
+        let transfer = app
+            .world()
+            .resource::<Events<QiTransfer>>()
+            .iter_current_update_events()
+            .next()
+            .expect("at least one QiTransfer must be emitted");
+        assert_eq!(
+            transfer.reason,
+            QiTransferReason::ReleaseToZone,
+            "overflow transfer reason must be ReleaseToZone"
+        );
     }
 }
