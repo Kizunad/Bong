@@ -39,8 +39,9 @@ use bevy_transform::components::{GlobalTransform, Transform};
 use serde::{Deserialize, Serialize};
 use valence::entity::marker::MarkerEntityBundle;
 use valence::prelude::{
-    bevy_ecs, App, Commands, Component, DVec3, Entity, EntityLayerId, Event, EventReader,
-    EventWriter, IntoSystemConfigs, Position, Query, Res, ResMut, Resource, Update, With,
+    bevy_ecs, App, Commands, Component, DVec3, Despawned, Entity, EntityLayerId, Event,
+    EventReader, EventWriter, IntoSystemConfigs, Position, Query, Res, ResMut, Resource, Update,
+    With, Without,
 };
 
 use crate::combat::components::Wounds;
@@ -250,7 +251,9 @@ type FusionCandidateQuery<'w, 's> = Query<
         Option<&'static NpcPatrol>,
         &'static Cultivation,
     ),
-    With<NpcMarker>,
+    // Without<Despawned>：已标记待 despawn 的组件兽（融合后 insert(Despawned) 仍存活一帧）
+    // 不应再被选为融合候选，否则会对悬空实体重复发 HybridBeastFormationEvent。
+    (With<NpcMarker>, Without<Despawned>),
 >;
 
 /// P1 Rat 逃跑查询类型别名（需要可变引用写入 PressureSensor）。
@@ -515,8 +518,10 @@ pub fn hybrid_beast_formation_system(
         });
 
         // ── g. despawn 组件兽 ──────────────────────────────────────────────
+        // 组件兽是 spawn_beast_npc_at 的 MarkerEntityBundle 层实体，须经 Despawned 标记移除
+        // （valence 先发客户端移除包），裸 .despawn() 会让 entity layer 索引悬空触发 panic。
         for entity in &component_entities {
-            commands.entity(*entity).despawn();
+            commands.entity(*entity).insert(Despawned);
         }
 
         // ── h. 重置 zone 饥饿计数器（防止同周期再次触发）────────────────────

@@ -1,5 +1,7 @@
 use crate::cultivation::tick::CultivationClock;
-use valence::prelude::{bevy_ecs, Commands, Component, Entity, Event, Query, Res};
+use valence::prelude::{
+    bevy_ecs, Commands, Component, Despawned, Entity, Event, Query, Res, Without,
+};
 
 pub const DYING_MASTER_SPAWN_CHANCE: f64 = 0.005;
 pub const DYING_MASTER_DESPAWN_TICKS: u64 = 20 * 30;
@@ -60,7 +62,7 @@ pub fn log_dying_master_contract() {
 pub fn dying_master_despawn_tick(
     mut commands: Commands,
     clock: Res<CultivationClock>,
-    masters: Query<(Entity, &DyingMaster)>,
+    masters: Query<(Entity, &DyingMaster), Without<Despawned>>,
 ) {
     let now = clock.tick;
     for (entity, master) in &masters {
@@ -72,7 +74,9 @@ pub fn dying_master_despawn_tick(
             master.despawn_at_tick
         };
         if now >= despawn_at {
-            commands.entity(entity).despawn();
+            // DyingMaster 按 dying_elder 同型用 NPC MarkerEntityBundle 层实体（当前 spawn 未接线，
+            // 前瞻性修正）：层实体须经 Despawned 标记移除，避免裸 .despawn() 触发 layer panic。
+            commands.entity(entity).insert(Despawned);
         }
     }
 }

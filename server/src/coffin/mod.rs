@@ -5,8 +5,8 @@ use valence::entity::entity::Flags;
 use valence::message::SendMessage;
 use valence::prelude::{
     apply_deferred, bevy_ecs, Added, App, BlockPos, BlockState, ChunkLayer, Client, Commands,
-    Component, DVec3, Entity, Event, EventReader, EventWriter, IntoSystemConfigs, Position, Query,
-    Res, ResMut, Resource, SneakEvent, SneakState, Update, Username, With,
+    Component, DVec3, Despawned, Entity, Event, EventReader, EventWriter, IntoSystemConfigs,
+    Position, Query, Res, ResMut, Resource, SneakEvent, SneakState, Update, Username, With,
 };
 
 use crate::combat::components::TICKS_PER_SECOND;
@@ -540,7 +540,9 @@ fn handle_coffin_place_requests(
                      despawning orphan marker {marker:?}",
                     event.pos
                 );
-                commands.entity(marker).despawn();
+                // 棺渲染 marker 是 spawn_visual_marker 的 MarkerEntityBundle 层实体，须经 Despawned
+                // 标记移除（valence 先发客户端移除包），裸 .despawn() 会让 entity layer 索引悬空 panic。
+                commands.entity(marker).insert(Despawned);
             }
         }
 
@@ -1051,7 +1053,9 @@ fn grant_reclaim_drops_to_inventory(
 /// 已不存在 / 从未 spawn（None）时静默跳过。
 fn despawn_coffin_marker(commands: &mut Commands, marker: Option<Entity>) {
     if let Some(marker) = marker {
-        commands.entity(marker).despawn();
+        // 棺渲染 marker 是 spawn_visual_marker 的 MarkerEntityBundle 层实体，须经 Despawned
+        // 标记移除（valence 先发客户端移除包），裸 .despawn() 会让 entity layer 索引悬空 panic。
+        commands.entity(marker).insert(Despawned);
     }
 }
 
