@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use valence::prelude::{
     bevy_ecs, Commands, DVec3, Entity, Event, EventReader, EventWriter, IntoSystemConfigs,
-    ParamSet, Position, Query, Res, UniqueId,
+    ParamSet, Position, Query, Res, ResMut, UniqueId,
 };
 
 use crate::combat::components::{
@@ -18,9 +18,11 @@ use crate::cultivation::components::{
 use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
 use crate::cultivation::skill_registry::{CastRejectReason, CastResult, SkillRegistry};
 use crate::qi_physics::{
-    qi_negative_field_drain_ratio, qi_woliu_vortex_field_strength_for_realm, MediumKind,
-    QiAccountId, QiPhysicsError, QiTransfer, QiTransferReason, StyleAttack,
+    qi_negative_field_drain_ratio, qi_release_to_zone, qi_woliu_vortex_field_strength_for_realm,
+    MediumKind, QiAccountId, QiPhysicsError, QiTransfer, QiTransferReason, StyleAttack,
+    ZoneReleaseOutcome,
 };
+use crate::qi_physics::constants::{QI_EPSILON, QI_ZONE_UNIT_CAPACITY};
 use crate::schema::cultivation::meridian_id_to_string;
 use crate::schema::woliu::{
     ProjectileQiDrainedEventV1, VortexBackfireCauseV1, VortexBackfireEventV1, VortexFieldStateV1,
@@ -593,6 +595,8 @@ type MaintainActorItem<'a> = (
     &'a mut DerivedAttrs,
     &'a mut VortexField,
     Option<&'a mut LifeRecord>,
+    Option<&'a Position>,
+    Option<&'a CurrentDimension>,
 );
 
 pub fn vortex_maintain_tick(
@@ -601,16 +605,39 @@ pub fn vortex_maintain_tick(
     mut actors: Query<MaintainActorItem<'_>>,
     mut status_intents: EventWriter<ApplyStatusEffectIntent>,
     mut backfires: EventWriter<VortexBackfireEvent>,
+    mut zones: Option<ResMut<ZoneRegistry>>,
+    mut qi_transfers: EventWriter<QiTransfer>,
 ) {
-    for (entity, mut cultivation, mut meridians, mut statuses, mut attrs, mut field, life_record) in
-        &mut actors
+    for (
+        entity,
+        mut cultivation,
+        mut meridians,
+        mut statuses,
+        mut attrs,
+        mut field,
+        life_record,
+        position,
+        dimension,
+    ) in &mut actors
     {
         if clock.tick.saturating_sub(field.last_maintain_tick) >= TICKS_PER_SECOND {
             let elapsed_seconds =
                 clock.tick.saturating_sub(field.last_maintain_tick) / TICKS_PER_SECOND;
             field.last_maintain_tick = clock.tick;
             let cost = vortex_qi_cost_per_sec(cultivation.realm) * elapsed_seconds as f64;
+            let before = cultivation.qi_current;
             cultivation.qi_current = (cultivation.qi_current - cost).clamp(0.0, cultivation.qi_max);
+            let actual_cost = (before - cultivation.qi_current).max(0.0);
+            if actual_cost > QI_EPSILON {
+                vortex_maintain_release_to_zone(
+                    entity,
+                    actual_cost,
+                    position.map(|p| p.get()),
+                    dimension.map(|d| d.0).unwrap_or(DimensionKind::Overworld),
+                    zones.as_deref_mut(),
+                    &mut qi_transfers,
+                );
+            }
             if cultivation.qi_current <= f64::EPSILON {
                 close_vortex_without_backfire(
                     &mut commands,
@@ -974,6 +1001,96 @@ fn rejected(reason: CastRejectReason) -> CastResult {
     CastResult::Rejected { reason }
 }
 
+/// Release the per-tick vortex maintenance cost back to the caster's zone.
+///
+/// Mirrors the pattern established by `zhenmai_v2::drain_release_to_zone` — every
+/// `qi_current` deduction inside a tick-driven system must emit a corresponding
+/// [`QiTransfer`] with [`QiTransferReason::ReleaseToZone`] so the ledger stays
+/// conserved.
+fn vortex_maintain_release_to_zone(
+    entity: Entity,
+    cost: f64,
+    position: Option<DVec3>,
+    dimension: DimensionKind,
+    zones: Option<&mut ZoneRegistry>,
+    qi_transfers: &mut EventWriter<QiTransfer>,
+) {
+    if cost <= QI_EPSILON {
+        return;
+    }
+    let from = QiAccountId::player(format!("entity:{}", entity.to_bits()));
+    if let Some(transfer) =
+        build_vortex_maintain_zone_transfer(from, cost, position, dimension, zones, entity)
+    {
+        qi_transfers.send(transfer);
+    }
+}
+
+fn build_vortex_maintain_zone_transfer(
+    from: QiAccountId,
+    amount: f64,
+    position: Option<DVec3>,
+    dimension: DimensionKind,
+    zones: Option<&mut ZoneRegistry>,
+    entity: Entity,
+) -> Option<QiTransfer> {
+    if amount <= QI_EPSILON {
+        return None;
+    }
+    if let (Some(position), Some(zones)) = (position, zones) {
+        let zone_name = zones
+            .find_zone(dimension, position)
+            .map(|zone| zone.name.clone());
+        if let Some(zone_name) = zone_name {
+            if let Some(zone) = zones.find_zone_mut(zone_name.as_str()) {
+                let to = QiAccountId::zone(zone.name.clone());
+                let zone_current = zone.spirit_qi.max(0.0) * QI_ZONE_UNIT_CAPACITY;
+                match qi_release_to_zone(
+                    amount,
+                    from.clone(),
+                    to,
+                    zone_current,
+                    QI_ZONE_UNIT_CAPACITY,
+                ) {
+                    Ok(ZoneReleaseOutcome {
+                        zone_after,
+                        transfer: Some(transfer),
+                        overflow,
+                        ..
+                    }) => {
+                        zone.spirit_qi =
+                            (zone_after / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
+                        if overflow > QI_EPSILON {
+                            tracing::debug!(
+                                overflow,
+                                "[bong][woliu] vortex maintain zone saturated; overflow discarded"
+                            );
+                        }
+                        return Some(transfer);
+                    }
+                    Ok(_) => {
+                        // zone capped, overflow-only — fall through to overflow sink
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            ?error,
+                            "[bong][woliu] vortex maintain qi_release_to_zone error; routing to overflow"
+                        );
+                    }
+                }
+            }
+        }
+    }
+    // Fallback: no zone or ZoneRegistry absent — route to named overflow account.
+    QiTransfer::new(
+        from,
+        QiAccountId::overflow(format!("woliu.vortex_maintain:{}", entity.to_bits())),
+        amount,
+        QiTransferReason::ReleaseToZone,
+    )
+    .ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1160,8 +1277,247 @@ mod tests {
             .is_empty());
     }
 
+    // ── vortex_maintain_tick qi-ledger conservation tests ──────────────────────
+    //
+    // These tests lock the fix for the qi-evaporation bug (bughunt r3-P3#1):
+    // `vortex_maintain_tick` must emit a `QiTransfer { reason: ReleaseToZone }`
+    // for every per-second qi deduction so the ledger stays conserved.
+
     #[test]
-    fn maintain_timeout_severs_lung_and_removes_vortex_state() {
+    fn maintain_tick_emits_qi_transfer_release_to_zone_on_cost() {
+        // Happy path: one full second elapses, cost is deducted, a ReleaseToZone
+        // transfer must be emitted covering the exact amount deducted.
+        let mut app = app(TICKS_PER_SECOND);
+        let actor = spawn_actor(&mut app, Realm::Condense, 100.0);
+        app.world_mut().entity_mut(actor).insert(VortexField {
+            center: DVec3::ZERO,
+            radius: 1.5,
+            delta: 0.25,
+            cast_at_tick: 0,
+            maintain_max_ticks: 500,
+            caster: actor,
+            env_qi_at_cast: 0.9,
+            last_maintain_tick: 0,
+        });
+        app.add_systems(Update, vortex_maintain_tick);
+
+        app.update();
+
+        let expected_cost = vortex_qi_cost_per_sec(Realm::Condense); // 6.0
+        let events = app.world().resource::<Events<QiTransfer>>();
+        let releases: Vec<_> = events
+            .iter_current_update_events()
+            .filter(|t| t.reason == QiTransferReason::ReleaseToZone)
+            .collect();
+        assert!(
+            !releases.is_empty(),
+            "vortex_maintain_tick must emit a QiTransfer(ReleaseToZone) for the qi cost; \
+             none emitted — ledger leak detected"
+        );
+        let total_released: f64 = releases.iter().map(|t| t.amount).sum();
+        assert!(
+            (total_released - expected_cost).abs() < 1e-6,
+            "total ReleaseToZone amount must equal the deducted cost ({expected_cost}); \
+             got {total_released}"
+        );
+        assert_eq!(
+            app.world().get::<Cultivation>(actor).unwrap().qi_current,
+            100.0 - expected_cost,
+            "qi_current should be reduced by exactly the cost"
+        );
+    }
+
+    #[test]
+    fn maintain_tick_no_qi_transfer_when_interval_not_reached() {
+        // Boundary: if fewer than TICKS_PER_SECOND ticks have elapsed since the
+        // last maintain tick, no cost is charged and no QiTransfer emitted.
+        let partial_tick = TICKS_PER_SECOND - 1;
+        let mut app = app(partial_tick);
+        let actor = spawn_actor(&mut app, Realm::Condense, 100.0);
+        app.world_mut().entity_mut(actor).insert(VortexField {
+            center: DVec3::ZERO,
+            radius: 1.5,
+            delta: 0.25,
+            cast_at_tick: 0,
+            maintain_max_ticks: 500,
+            caster: actor,
+            env_qi_at_cast: 0.9,
+            last_maintain_tick: 0,
+        });
+        app.add_systems(Update, vortex_maintain_tick);
+
+        app.update();
+
+        let events = app.world().resource::<Events<QiTransfer>>();
+        let release_count = events
+            .iter_current_update_events()
+            .filter(|t| t.reason == QiTransferReason::ReleaseToZone)
+            .count();
+        assert_eq!(
+            release_count, 0,
+            "no QiTransfer should be emitted when the per-second interval has not elapsed; \
+             got {release_count} events"
+        );
+        assert_eq!(
+            app.world().get::<Cultivation>(actor).unwrap().qi_current,
+            100.0,
+            "qi_current must not change before the interval elapses"
+        );
+    }
+
+    #[test]
+    fn maintain_tick_emits_overflow_transfer_when_no_zone_registry() {
+        // Error branch: without a ZoneRegistry resource, the release must still
+        // emit a QiTransfer (to the overflow account) so nothing disappears silently.
+        let mut app = App::new();
+        app.insert_resource(CombatClock {
+            tick: TICKS_PER_SECOND,
+        });
+        // Deliberately do NOT insert ZoneRegistry.
+        app.add_event::<VortexBackfireEvent>();
+        app.add_event::<ProjectileQiDrainedEvent>();
+        app.add_event::<QiTransfer>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        let actor = app
+            .world_mut()
+            .spawn((
+                Cultivation {
+                    realm: Realm::Condense,
+                    qi_current: 50.0,
+                    qi_max: 100.0,
+                    ..Default::default()
+                },
+                MeridianSystem::default(),
+                StatusEffects::default(),
+                DerivedAttrs::default(),
+                Position::new([8.0, 66.0, 8.0]),
+                CurrentDimension(DimensionKind::Overworld),
+                SkillBarBindings::default(),
+                PracticeLog::default(),
+                VortexField {
+                    center: DVec3::ZERO,
+                    radius: 1.5,
+                    delta: 0.25,
+                    cast_at_tick: 0,
+                    maintain_max_ticks: 500,
+                    caster: Entity::PLACEHOLDER,
+                    env_qi_at_cast: 0.9,
+                    last_maintain_tick: 0,
+                },
+            ))
+            .id();
+        app.add_systems(Update, vortex_maintain_tick);
+
+        app.update();
+
+        let events = app.world().resource::<Events<QiTransfer>>();
+        let releases: Vec<_> = events
+            .iter_current_update_events()
+            .filter(|t| t.reason == QiTransferReason::ReleaseToZone)
+            .collect();
+        assert!(
+            !releases.is_empty(),
+            "vortex_maintain_tick must still emit a QiTransfer when ZoneRegistry is absent \
+             (overflow fallback); none found — qi evaporated silently"
+        );
+        let total: f64 = releases.iter().map(|t| t.amount).sum();
+        let expected = vortex_qi_cost_per_sec(Realm::Condense);
+        assert!(
+            (total - expected).abs() < 1e-6,
+            "overflow transfer amount must equal cost ({expected}); got {total}"
+        );
+    }
+
+    #[test]
+    fn maintain_tick_depletion_emits_transfer_before_closing() {
+        // Edge case: even when qi is fully depleted and vortex closes, the
+        // partial cost actually drained must still be released to the zone.
+        // Realm::Condense costs 6.0/s; start with 3.0 so only 3.0 is drained.
+        let mut app = app(TICKS_PER_SECOND);
+        let actor = spawn_actor(&mut app, Realm::Condense, 3.0);
+        app.world_mut().entity_mut(actor).insert(VortexField {
+            center: DVec3::ZERO,
+            radius: 1.5,
+            delta: 0.25,
+            cast_at_tick: 0,
+            maintain_max_ticks: 500,
+            caster: actor,
+            env_qi_at_cast: 0.9,
+            last_maintain_tick: 0,
+        });
+        upsert_status_effect(
+            &mut app.world_mut().get_mut::<StatusEffects>(actor).unwrap(),
+            ActiveStatusEffect {
+                kind: StatusEffectKind::VortexCasting,
+                magnitude: 1.0,
+                remaining_ticks: u64::MAX,
+                source_pill: None,
+            },
+        );
+        app.add_systems(Update, vortex_maintain_tick);
+
+        app.update();
+
+        // VortexField should be removed when qi hits 0.
+        assert!(app.world().get::<VortexField>(actor).is_none());
+        // But the 3.0 actually drained must still appear in the ledger.
+        let events = app.world().resource::<Events<QiTransfer>>();
+        let releases: Vec<_> = events
+            .iter_current_update_events()
+            .filter(|t| t.reason == QiTransferReason::ReleaseToZone)
+            .collect();
+        assert!(
+            !releases.is_empty(),
+            "QiTransfer(ReleaseToZone) must be emitted even when vortex closes on depletion; \
+             none emitted — partial cost evaporated"
+        );
+        let total: f64 = releases.iter().map(|t| t.amount).sum();
+        assert!(
+            (total - 3.0).abs() < 1e-6,
+            "released amount must equal actual drained (3.0, not full cost 6.0); got {total}"
+        );
+    }
+
+    #[test]
+    fn maintain_tick_timeout_does_not_emit_release_transfer() {
+        // The timeout path (ExceedMaintainMax) does not deduct qi_current, so
+        // no QiTransfer(ReleaseToZone) should be emitted for that branch.
+        let mut app = app(101);
+        let actor = spawn_actor(&mut app, Realm::Condense, 100.0);
+        // last_maintain_tick == clock.tick so the cost branch does NOT fire.
+        app.world_mut().entity_mut(actor).insert(VortexField {
+            center: DVec3::ZERO,
+            radius: 1.5,
+            delta: 0.25,
+            cast_at_tick: 0,
+            maintain_max_ticks: 100,
+            caster: actor,
+            env_qi_at_cast: 0.9,
+            last_maintain_tick: 101,
+        });
+        app.world_mut()
+            .get_mut::<MeridianSystem>(actor)
+            .unwrap()
+            .get_mut(MeridianId::Lung)
+            .opened = true;
+        app.add_systems(Update, vortex_maintain_tick);
+
+        app.update();
+
+        let events = app.world().resource::<Events<QiTransfer>>();
+        let release_count = events
+            .iter_current_update_events()
+            .filter(|t| t.reason == QiTransferReason::ReleaseToZone)
+            .count();
+        assert_eq!(
+            release_count, 0,
+            "timeout path must not emit ReleaseToZone because no qi was deducted; \
+             got {release_count} events"
+        );
+    }
+
+    #[test]
+    fn maintain_tick_timeout_severs_lung_and_removes_vortex_state() {
         let mut app = app(101);
         let actor = spawn_actor(&mut app, Realm::Condense, 100.0);
         app.world_mut().entity_mut(actor).insert(VortexField {
