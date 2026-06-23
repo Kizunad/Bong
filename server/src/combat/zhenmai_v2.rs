@@ -31,11 +31,11 @@ use crate::qi_physics::ledger::{QiAccountId, QiTransfer, QiTransferReason};
 use crate::qi_physics::{
     multi_point_dispersion, qi_release_to_zone, reverse_clamp, sever_meridian, QI_ZHENMAI_BETA,
 };
-use crate::world::dimension::{CurrentDimension, DimensionKind};
-use crate::world::zone::ZoneRegistry;
 use crate::schema::vfx_event::VfxEventPayloadV1;
 use crate::skill::config::SkillConfigStore;
 use crate::skill::events::{SkillXpGain, XpGainSource};
+use crate::world::dimension::{CurrentDimension, DimensionKind};
+use crate::world::zone::ZoneRegistry;
 
 pub const PLAN_ID: &str = "zhenmai-v2";
 pub const PARRY_SKILL_ID: &str = "zhenmai.parry";
@@ -1252,7 +1252,13 @@ fn build_spent_qi_release_transfer(
             if let Some(zone) = zones.find_zone_mut(zone_name.as_str()) {
                 let to = QiAccountId::zone(zone.name.clone());
                 let zone_current = zone.spirit_qi.max(0.0) * QI_ZONE_UNIT_CAPACITY;
-                match qi_release_to_zone(amount, from.clone(), to, zone_current, QI_ZONE_UNIT_CAPACITY) {
+                match qi_release_to_zone(
+                    amount,
+                    from.clone(),
+                    to,
+                    zone_current,
+                    QI_ZONE_UNIT_CAPACITY,
+                ) {
                     Ok(outcome) => {
                         zone.spirit_qi =
                             (outcome.zone_after / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
@@ -2102,7 +2108,9 @@ mod tests {
         );
         // The fallback uses ReleaseToZone reason on the overflow account.
         assert!(
-            transfers.iter().any(|t| t.reason == QiTransferReason::ReleaseToZone),
+            transfers
+                .iter()
+                .any(|t| t.reason == QiTransferReason::ReleaseToZone),
             "overflow transfer should still use ReleaseToZone reason"
         );
     }
@@ -2182,7 +2190,9 @@ mod tests {
             "multipoint_duration_tick must emit QiTransfer on each per-second drain; none found"
         );
         assert!(
-            transfers.iter().any(|t| t.reason == QiTransferReason::ReleaseToZone),
+            transfers
+                .iter()
+                .any(|t| t.reason == QiTransferReason::ReleaseToZone),
             "per-second drain must emit ReleaseToZone transfer; got {:?}",
             transfers.iter().map(|t| &t.reason).collect::<Vec<_>>()
         );
@@ -2273,7 +2283,9 @@ mod tests {
             "harden_duration_tick must emit QiTransfer on each per-second drain; none found"
         );
         assert!(
-            transfers.iter().any(|t| t.reason == QiTransferReason::ReleaseToZone),
+            transfers
+                .iter()
+                .any(|t| t.reason == QiTransferReason::ReleaseToZone),
             "per-second drain must emit ReleaseToZone transfer; got {:?}",
             transfers.iter().map(|t| &t.reason).collect::<Vec<_>>()
         );
