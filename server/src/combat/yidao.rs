@@ -19,17 +19,17 @@ use crate::cultivation::skill_registry::{CastRejectReason, CastResult, SkillRegi
 use crate::network::audio_event_emit::{AudioRecipient, PlaySoundRecipeRequest};
 use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::network::{redis_bridge::RedisOutbound, RedisBridgeResource};
+use crate::qi_physics::constants::{QI_EPSILON, QI_ZONE_UNIT_CAPACITY};
 use crate::qi_physics::{
     contam_purge, emergency_stabilize, life_extend, mass_meridian_repair, meridian_repair,
     qi_release_to_zone, yidao_cast_ticks, QiAccountId, QiTransfer, QiTransferReason,
 };
-use crate::qi_physics::constants::{QI_EPSILON, QI_ZONE_UNIT_CAPACITY};
-use crate::world::dimension::{CurrentDimension, DimensionKind};
-use crate::world::zone::ZoneRegistry;
 use crate::schema::vfx_event::VfxEventPayloadV1;
 use crate::schema::yidao::{
     MedicalContractStateV1, YidaoEventKindV1, YidaoEventV1, YidaoSkillIdV1,
 };
+use crate::world::dimension::{CurrentDimension, DimensionKind};
+use crate::world::zone::ZoneRegistry;
 
 const SINGLE_TARGET_RANGE_M: f64 = 5.0;
 const CLOSE_TARGET_RANGE_M: f64 = 1.0;
@@ -1304,17 +1304,20 @@ fn release_failed_repair_qi_to_zone(
         .unwrap_or(DimensionKind::Overworld);
 
     let mut transfers: Vec<QiTransfer> = Vec::new();
-    if let (Some(position), Some(mut zones)) =
-        (position, world.get_resource_mut::<ZoneRegistry>())
+    if let (Some(position), Some(mut zones)) = (position, world.get_resource_mut::<ZoneRegistry>())
     {
-        let zone_name = zones
-            .find_zone(dimension, position)
-            .map(|z| z.name.clone());
+        let zone_name = zones.find_zone(dimension, position).map(|z| z.name.clone());
         if let Some(zone_name) = zone_name {
             if let Some(zone) = zones.find_zone_mut(zone_name.as_str()) {
                 let to = QiAccountId::zone(zone.name.clone());
                 let zone_current = zone.spirit_qi.max(0.0) * QI_ZONE_UNIT_CAPACITY;
-                match qi_release_to_zone(amount, from.clone(), to, zone_current, QI_ZONE_UNIT_CAPACITY) {
+                match qi_release_to_zone(
+                    amount,
+                    from.clone(),
+                    to,
+                    zone_current,
+                    QI_ZONE_UNIT_CAPACITY,
+                ) {
                     Ok(outcome) => {
                         zone.spirit_qi =
                             (outcome.zone_after / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
@@ -1365,10 +1368,7 @@ fn release_failed_repair_qi_to_zone(
         } else {
             if let Ok(t) = QiTransfer::new(
                 from,
-                QiAccountId::overflow(format!(
-                    "yidao_failed_repair_overflow:{}",
-                    caster.to_bits()
-                )),
+                QiAccountId::overflow(format!("yidao_failed_repair_overflow:{}", caster.to_bits())),
                 amount,
                 QiTransferReason::ReleaseToZone,
             ) {
@@ -1378,10 +1378,7 @@ fn release_failed_repair_qi_to_zone(
     } else {
         if let Ok(t) = QiTransfer::new(
             from,
-            QiAccountId::overflow(format!(
-                "yidao_failed_repair_overflow:{}",
-                caster.to_bits()
-            )),
+            QiAccountId::overflow(format!("yidao_failed_repair_overflow:{}", caster.to_bits())),
             amount,
             QiTransferReason::ReleaseToZone,
         ) {
@@ -1888,20 +1885,12 @@ mod tests {
             })
             .expect("失败 tick 未找到");
 
-        let qi_before = app
-            .world()
-            .get::<Cultivation>(medic)
-            .unwrap()
-            .qi_current;
+        let qi_before = app.world().get::<Cultivation>(medic).unwrap().qi_current;
 
         let outcome = apply_meridian_repair(app.world_mut(), medic, patient, 0.0, true, fail_tick);
         assert_eq!(outcome.failure_count, 1, "前置：应触发失败路径");
 
-        let qi_after = app
-            .world()
-            .get::<Cultivation>(medic)
-            .unwrap()
-            .qi_current;
+        let qi_after = app.world().get::<Cultivation>(medic).unwrap().qi_current;
         let deducted = qi_before - qi_after;
         assert!(
             deducted > 0.0,
@@ -1955,20 +1944,12 @@ mod tests {
             })
             .expect("失败 tick 未找到");
 
-        let qi_before = app
-            .world()
-            .get::<Cultivation>(medic)
-            .unwrap()
-            .qi_current;
+        let qi_before = app.world().get::<Cultivation>(medic).unwrap().qi_current;
 
         let outcome = apply_meridian_repair(app.world_mut(), medic, patient, 0.0, true, fail_tick);
         assert_eq!(outcome.failure_count, 1);
 
-        let qi_after = app
-            .world()
-            .get::<Cultivation>(medic)
-            .unwrap()
-            .qi_current;
+        let qi_after = app.world().get::<Cultivation>(medic).unwrap().qi_current;
         let deducted = qi_before - qi_after;
 
         // overflow 路径仍应 emit 一条 ReleaseToZone 事件（overflow account 接收）
