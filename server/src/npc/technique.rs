@@ -758,8 +758,16 @@ pub fn npc_technique_scorer_system(
     let lod_t = lod_tick.as_deref().map(|t| t.0).unwrap_or(0);
 
     for (Actor(actor), mut score) in &mut scorers {
-        let Ok((bb, cultivation, known_opt, last_tick_opt, severed_opt, meridian_sys_opt, wounds_opt, tier)) =
-            npcs.get(*actor)
+        let Ok((
+            bb,
+            cultivation,
+            known_opt,
+            last_tick_opt,
+            severed_opt,
+            meridian_sys_opt,
+            wounds_opt,
+            tier,
+        )) = npcs.get(*actor)
         else {
             score.set(0.0);
             continue;
@@ -2634,7 +2642,16 @@ mod tests {
         let cooldowns = NpcCooldownMap::default();
         let entity = Entity::from_raw(1);
         assert!(
-            has_usable_heal_technique(&known, &cultivation, &deps, None, None, &cooldowns, entity, 100),
+            has_usable_heal_technique(
+                &known,
+                &cultivation,
+                &deps,
+                None,
+                None,
+                &cooldowns,
+                entity,
+                100
+            ),
             "NPC with active heal technique should have usable heal"
         );
     }
@@ -2658,7 +2675,16 @@ mod tests {
         let cooldowns = NpcCooldownMap::default();
         let entity = Entity::from_raw(1);
         assert!(
-            !has_usable_heal_technique(&known, &cultivation, &deps, None, None, &cooldowns, entity, 100),
+            !has_usable_heal_technique(
+                &known,
+                &cultivation,
+                &deps,
+                None,
+                None,
+                &cooldowns,
+                entity,
+                100
+            ),
             "NPC with only Attack techniques should not have usable heal"
         );
     }
@@ -2683,7 +2709,16 @@ mod tests {
         let entity = Entity::from_raw(1);
         cooldowns.set(entity, "zhenmai.neutralize", 200);
         assert!(
-            !has_usable_heal_technique(&known, &cultivation, &deps, None, None, &cooldowns, entity, 100),
+            !has_usable_heal_technique(
+                &known,
+                &cultivation,
+                &deps,
+                None,
+                None,
+                &cooldowns,
+                entity,
+                100
+            ),
             "heal technique on cooldown should not be usable"
         );
     }
@@ -2707,7 +2742,16 @@ mod tests {
         let cooldowns = NpcCooldownMap::default();
         let entity = Entity::from_raw(1);
         assert!(
-            !has_usable_heal_technique(&known, &cultivation, &deps, None, None, &cooldowns, entity, 100),
+            !has_usable_heal_technique(
+                &known,
+                &cultivation,
+                &deps,
+                None,
+                None,
+                &cooldowns,
+                entity,
+                100
+            ),
             "inactive heal technique should not be usable"
         );
     }
