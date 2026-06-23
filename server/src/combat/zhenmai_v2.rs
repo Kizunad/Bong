@@ -3,8 +3,8 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use valence::prelude::{
-    bevy_ecs, App, Commands, Component, DVec3, Entity, Event, GameMode, IntoSystemConfigs,
-    Position, Query, Res, UniqueId, Update, Username,
+    bevy_ecs, App, Commands, Component, DVec3, Entity, Event, EventWriter, GameMode,
+    IntoSystemConfigs, Position, Query, Res, ResMut, UniqueId, Update, Username,
 };
 
 use crate::combat::components::{
@@ -26,9 +26,13 @@ use crate::network::audio_event_emit::{AudioRecipient, PlaySoundRecipeRequest};
 use crate::network::cast_emit::current_unix_millis;
 use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::player::state::canonical_player_id;
-use crate::qi_physics::constants::QI_DRAIN_CLAMP;
+use crate::qi_physics::constants::{QI_DRAIN_CLAMP, QI_EPSILON, QI_ZONE_UNIT_CAPACITY};
 use crate::qi_physics::ledger::{QiAccountId, QiTransfer, QiTransferReason};
-use crate::qi_physics::{multi_point_dispersion, reverse_clamp, sever_meridian, QI_ZHENMAI_BETA};
+use crate::qi_physics::{
+    multi_point_dispersion, qi_release_to_zone, reverse_clamp, sever_meridian, QI_ZHENMAI_BETA,
+};
+use crate::world::dimension::{CurrentDimension, DimensionKind};
+use crate::world::zone::ZoneRegistry;
 use crate::schema::vfx_event::VfxEventPayloadV1;
 use crate::skill::config::SkillConfigStore;
 use crate::skill::events::{SkillXpGain, XpGainSource};
@@ -939,9 +943,17 @@ pub fn multipoint_contact(
 fn multipoint_duration_tick(
     clock: Res<CombatClock>,
     mut commands: Commands,
-    mut query: Query<(Entity, &MultiPointActive, Option<&mut Cultivation>)>,
+    mut query: Query<(
+        Entity,
+        &MultiPointActive,
+        Option<&mut Cultivation>,
+        Option<&Position>,
+        Option<&CurrentDimension>,
+    )>,
+    mut zones: Option<ResMut<ZoneRegistry>>,
+    mut qi_transfer_events: EventWriter<QiTransfer>,
 ) {
-    for (entity, active, cultivation) in &mut query {
+    for (entity, active, cultivation, position, dimension) in &mut query {
         if clock.tick >= active.expires_at_tick {
             commands.entity(entity).remove::<MultiPointActive>();
             continue;
@@ -950,8 +962,21 @@ fn multipoint_duration_tick(
             && (clock.tick - active.started_at_tick) % TICKS_PER_SECOND == 0
         {
             if let Some(mut cultivation) = cultivation {
+                let before = cultivation.qi_current;
                 cultivation.qi_current =
                     (cultivation.qi_current - active.qi_per_second).clamp(0.0, cultivation.qi_max);
+                let drained = (before - cultivation.qi_current).max(0.0);
+                if drained > QI_EPSILON {
+                    drain_release_to_zone(
+                        entity,
+                        drained,
+                        position.map(|p| p.get()),
+                        dimension.map(|d| d.0).unwrap_or(DimensionKind::Overworld),
+                        zones.as_deref_mut(),
+                        &mut qi_transfer_events,
+                        "zhenmai_v2.multipoint_tick",
+                    );
+                }
                 if cultivation.qi_current <= f64::EPSILON {
                     commands.entity(entity).remove::<MultiPointActive>();
                 }
@@ -963,9 +988,17 @@ fn multipoint_duration_tick(
 fn harden_duration_tick(
     clock: Res<CombatClock>,
     mut commands: Commands,
-    mut query: Query<(Entity, &MeridianHardenActive, Option<&mut Cultivation>)>,
+    mut query: Query<(
+        Entity,
+        &MeridianHardenActive,
+        Option<&mut Cultivation>,
+        Option<&Position>,
+        Option<&CurrentDimension>,
+    )>,
+    mut zones: Option<ResMut<ZoneRegistry>>,
+    mut qi_transfer_events: EventWriter<QiTransfer>,
 ) {
-    for (entity, active, cultivation) in &mut query {
+    for (entity, active, cultivation, position, dimension) in &mut query {
         if clock.tick >= active.expires_at_tick {
             commands.entity(entity).remove::<MeridianHardenActive>();
             continue;
@@ -974,8 +1007,21 @@ fn harden_duration_tick(
             && (clock.tick - active.started_at_tick) % TICKS_PER_SECOND == 0
         {
             if let Some(mut cultivation) = cultivation {
+                let before = cultivation.qi_current;
                 cultivation.qi_current =
                     (cultivation.qi_current - active.qi_per_second).clamp(0.0, cultivation.qi_max);
+                let drained = (before - cultivation.qi_current).max(0.0);
+                if drained > QI_EPSILON {
+                    drain_release_to_zone(
+                        entity,
+                        drained,
+                        position.map(|p| p.get()),
+                        dimension.map(|d| d.0).unwrap_or(DimensionKind::Overworld),
+                        zones.as_deref_mut(),
+                        &mut qi_transfer_events,
+                        "zhenmai_v2.harden_tick",
+                    );
+                }
                 if cultivation.qi_current <= f64::EPSILON {
                     commands.entity(entity).remove::<MeridianHardenActive>();
                 }
@@ -1115,14 +1161,133 @@ fn spend_qi(world: &mut bevy_ecs::world::World, caster: Entity, amount: f64) -> 
     if amount <= f64::EPSILON {
         return true;
     }
-    let Some(mut cultivation) = world.get_mut::<Cultivation>(caster) else {
-        return false;
-    };
-    if cultivation.qi_current + f64::EPSILON < amount {
-        return false;
+    {
+        let Some(mut cultivation) = world.get_mut::<Cultivation>(caster) else {
+            return false;
+        };
+        if cultivation.qi_current + f64::EPSILON < amount {
+            return false;
+        }
+        cultivation.qi_current = (cultivation.qi_current - amount).clamp(0.0, cultivation.qi_max);
     }
-    cultivation.qi_current = (cultivation.qi_current - amount).clamp(0.0, cultivation.qi_max);
+    emit_spent_qi_release_world(world, caster, amount, "zhenmai_v2.spend_qi");
     true
+}
+
+/// Release drained qi to the caster's zone and emit a [`QiTransfer`] event.
+/// Mirrors `tuike_v2::emit_spent_qi_release` for the world-exclusive (exclusive-system /
+/// one-shot) call path.
+fn emit_spent_qi_release_world(
+    world: &mut bevy_ecs::world::World,
+    caster: Entity,
+    amount: f64,
+    sink: &'static str,
+) {
+    if amount <= QI_EPSILON {
+        return;
+    }
+    let from = QiAccountId::player(format!("entity:{}", caster.to_bits()));
+    let position = world.get::<Position>(caster).map(|p| p.get());
+    let dimension = world
+        .get::<CurrentDimension>(caster)
+        .map(|d| d.0)
+        .unwrap_or(DimensionKind::Overworld);
+
+    let transfer = build_spent_qi_release_transfer(
+        from.clone(),
+        amount,
+        position,
+        dimension,
+        world.get_resource_mut::<ZoneRegistry>().as_deref_mut(),
+        sink,
+        caster,
+    );
+
+    if let Some(transfer) = transfer {
+        world.send_event(transfer);
+    }
+}
+
+/// Drain-tick path: release `drained` qi from `entity` back to its zone via the
+/// `ZoneRegistry` resource and emit the resulting [`QiTransfer`] via `EventWriter`.
+fn drain_release_to_zone(
+    entity: Entity,
+    drained: f64,
+    position: Option<DVec3>,
+    dimension: DimensionKind,
+    zones: Option<&mut ZoneRegistry>,
+    qi_transfer_events: &mut EventWriter<QiTransfer>,
+    sink: &'static str,
+) {
+    if drained <= QI_EPSILON {
+        return;
+    }
+    let from = QiAccountId::player(format!("entity:{}", entity.to_bits()));
+    if let Some(transfer) =
+        build_spent_qi_release_transfer(from, drained, position, dimension, zones, sink, entity)
+    {
+        qi_transfer_events.send(transfer);
+    }
+}
+
+/// Core bookkeeping: credit `amount` to the entity's zone and return the transfer record
+/// (or an overflow transfer when the entity has no zone / ZoneRegistry is absent).
+fn build_spent_qi_release_transfer(
+    from: QiAccountId,
+    amount: f64,
+    position: Option<DVec3>,
+    dimension: DimensionKind,
+    zones: Option<&mut ZoneRegistry>,
+    sink: &'static str,
+    entity: Entity,
+) -> Option<QiTransfer> {
+    if amount <= QI_EPSILON {
+        return None;
+    }
+    if let (Some(position), Some(zones)) = (position, zones) {
+        let zone_name = zones
+            .find_zone(dimension, position)
+            .map(|zone| zone.name.clone());
+        if let Some(zone_name) = zone_name {
+            if let Some(zone) = zones.find_zone_mut(zone_name.as_str()) {
+                let to = QiAccountId::zone(zone.name.clone());
+                let zone_current = zone.spirit_qi.max(0.0) * QI_ZONE_UNIT_CAPACITY;
+                match qi_release_to_zone(amount, from.clone(), to, zone_current, QI_ZONE_UNIT_CAPACITY) {
+                    Ok(outcome) => {
+                        zone.spirit_qi =
+                            (outcome.zone_after / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
+                        if let Some(transfer) = outcome.transfer {
+                            let overflow = outcome.overflow;
+                            if overflow > QI_EPSILON {
+                                tracing::debug!(
+                                    sink,
+                                    overflow,
+                                    "[bong][zhenmai_v2] zone saturated; overflow discarded"
+                                );
+                            }
+                            return Some(transfer);
+                        }
+                        // Overflow-only case (zone at cap) — route to overflow sink.
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            ?error,
+                            sink,
+                            "[bong][zhenmai_v2] qi_release_to_zone error; routing to overflow"
+                        );
+                    }
+                }
+            }
+        }
+    }
+    // Fallback: no zone or no ZoneRegistry — route to named overflow account.
+    QiTransfer::new(
+        from,
+        QiAccountId::overflow(format!("{sink}:{}", entity.to_bits())),
+        amount,
+        QiTransferReason::ReleaseToZone,
+    )
+    .ok()
 }
 
 fn contamination_for_meridian(
@@ -1841,5 +2006,327 @@ mod tests {
             .get::<MeridianSeveredPermanent>(entity)
             .unwrap()
             .is_severed(MeridianId::Ren));
+    }
+
+    // ── qi conservation tests (BUG-QP-02) ──────────────────────────────────────
+
+    /// Helper: position that falls inside the fallback spawn zone (spawn zone covers a wide
+    /// default area; any non-extreme coordinate is fine).
+    fn spawn_zone_position() -> DVec3 {
+        DVec3::new(0.0, 64.0, 0.0)
+    }
+
+    fn app_with_tick_systems() -> App {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 100 });
+        app.insert_resource(ZoneRegistry::fallback());
+        app.add_event::<QiTransfer>();
+        app.add_event::<MeridianHardenEvent>();
+        app.add_systems(
+            valence::prelude::Update,
+            (multipoint_duration_tick, harden_duration_tick),
+        );
+        app
+    }
+
+    // ── spend_qi (world-path) ──────────────────────────────────────────────────
+
+    #[test]
+    fn spend_qi_emits_release_to_zone_when_registry_present() {
+        let mut app = app_with_events();
+        app.add_event::<QiTransfer>();
+        // Use an empty zone so all 10.0 qi fits (spirit_qi=0.0 → zone_current=0.0, room=50.0).
+        let mut registry = ZoneRegistry::fallback();
+        registry.zones[0].spirit_qi = 0.0;
+        app.insert_resource(registry);
+        let entity = caster(&mut app, Realm::Condense, 50.0);
+        app.world_mut().entity_mut(entity).insert((
+            Position::new([0.0, 64.0, 0.0]),
+            CurrentDimension(DimensionKind::Overworld),
+        ));
+
+        let ok = spend_qi(app.world_mut(), entity, 10.0);
+
+        assert!(ok, "spend_qi should succeed when qi is sufficient");
+        assert_eq!(
+            app.world().get::<Cultivation>(entity).unwrap().qi_current,
+            40.0,
+            "qi_current should be reduced by the spent amount"
+        );
+        let events = app.world().resource::<Events<QiTransfer>>();
+        let mut reader = events.get_reader();
+        let transfers: Vec<_> = reader.read(events).collect();
+        assert!(
+            !transfers.is_empty(),
+            "spend_qi must emit a QiTransfer event; none found — ledger leak detected"
+        );
+        assert!(
+            transfers
+                .iter()
+                .any(|t| t.reason == QiTransferReason::ReleaseToZone),
+            "QiTransfer reason must be ReleaseToZone; got {:?}",
+            transfers.iter().map(|t| &t.reason).collect::<Vec<_>>()
+        );
+        // Total conserved: sum of all ReleaseToZone transfer amounts must equal 10.0.
+        let total: f64 = transfers
+            .iter()
+            .filter(|t| t.reason == QiTransferReason::ReleaseToZone)
+            .map(|t| t.amount)
+            .sum();
+        assert!(
+            (total - 10.0).abs() < 1e-6,
+            "total transferred qi must equal the drained amount (conservation); expected 10.0, got {total}"
+        );
+    }
+
+    #[test]
+    fn spend_qi_falls_back_to_overflow_when_no_zone_registry() {
+        let mut app = app_with_events();
+        app.add_event::<QiTransfer>();
+        // Deliberately do NOT insert ZoneRegistry.
+        let entity = caster(&mut app, Realm::Condense, 30.0);
+
+        let ok = spend_qi(app.world_mut(), entity, 5.0);
+
+        assert!(ok);
+        assert_eq!(
+            app.world().get::<Cultivation>(entity).unwrap().qi_current,
+            25.0
+        );
+        let events = app.world().resource::<Events<QiTransfer>>();
+        let mut reader = events.get_reader();
+        let transfers: Vec<_> = reader.read(events).collect();
+        assert!(
+            !transfers.is_empty(),
+            "spend_qi must emit an overflow QiTransfer when no ZoneRegistry is present"
+        );
+        // The fallback uses ReleaseToZone reason on the overflow account.
+        assert!(
+            transfers.iter().any(|t| t.reason == QiTransferReason::ReleaseToZone),
+            "overflow transfer should still use ReleaseToZone reason"
+        );
+    }
+
+    #[test]
+    fn spend_qi_returns_false_and_emits_nothing_when_insufficient() {
+        let mut app = app_with_events();
+        app.add_event::<QiTransfer>();
+        app.insert_resource(ZoneRegistry::fallback());
+        let entity = caster(&mut app, Realm::Condense, 3.0);
+
+        let ok = spend_qi(app.world_mut(), entity, 10.0);
+
+        assert!(!ok, "spend_qi should return false when qi is insufficient");
+        assert_eq!(
+            app.world().get::<Cultivation>(entity).unwrap().qi_current,
+            3.0,
+            "qi_current must be unchanged on failure"
+        );
+        let events = app.world().resource::<Events<QiTransfer>>();
+        let mut reader = events.get_reader();
+        let transfers: Vec<_> = reader.read(events).collect();
+        assert!(
+            transfers.is_empty(),
+            "no QiTransfer event should be emitted when spend_qi fails"
+        );
+    }
+
+    // ── multipoint_duration_tick (system-path) ─────────────────────────────────
+
+    #[test]
+    fn multipoint_tick_emits_qi_transfer_every_second() {
+        let mut app = app_with_tick_systems();
+        // CombatClock tick=100. Buff started at tick=0 → first drain at tick=TICKS_PER_SECOND.
+        // We set CombatClock to exactly TICKS_PER_SECOND so the drain fires.
+        app.insert_resource(CombatClock {
+            tick: TICKS_PER_SECOND,
+        });
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                Cultivation {
+                    realm: Realm::Condense,
+                    qi_current: 50.0,
+                    qi_max: 100.0,
+                    ..Default::default()
+                },
+                MultiPointActive {
+                    started_at_tick: 0,
+                    expires_at_tick: TICKS_PER_SECOND * 10,
+                    points: 3,
+                    k_drain: 0.3,
+                    qi_per_second: 5.0,
+                    contact_count: 0,
+                    self_damage_per_contact: 0.0,
+                },
+                Position::new([0.0, 64.0, 0.0]),
+                CurrentDimension(DimensionKind::Overworld),
+            ))
+            .id();
+
+        app.update();
+
+        let cultivation = app.world().get::<Cultivation>(entity).unwrap();
+        assert!(
+            cultivation.qi_current < 50.0,
+            "qi_current must decrease after multipoint tick; was 50.0, now {}",
+            cultivation.qi_current
+        );
+
+        let events = app.world().resource::<Events<QiTransfer>>();
+        let mut reader = events.get_reader();
+        let transfers: Vec<_> = reader.read(events).collect();
+        assert!(
+            !transfers.is_empty(),
+            "multipoint_duration_tick must emit QiTransfer on each per-second drain; none found"
+        );
+        assert!(
+            transfers.iter().any(|t| t.reason == QiTransferReason::ReleaseToZone),
+            "per-second drain must emit ReleaseToZone transfer; got {:?}",
+            transfers.iter().map(|t| &t.reason).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn multipoint_tick_emits_no_transfer_before_first_second() {
+        let mut app = app_with_tick_systems();
+        // Buff started at tick=0, clock at tick=5 (< TICKS_PER_SECOND) — no drain fires.
+        app.insert_resource(CombatClock { tick: 5 });
+
+        app.world_mut().spawn((
+            Cultivation {
+                realm: Realm::Condense,
+                qi_current: 50.0,
+                qi_max: 100.0,
+                ..Default::default()
+            },
+            MultiPointActive {
+                started_at_tick: 0,
+                expires_at_tick: TICKS_PER_SECOND * 10,
+                points: 3,
+                k_drain: 0.3,
+                qi_per_second: 5.0,
+                contact_count: 0,
+                self_damage_per_contact: 0.0,
+            },
+            Position::new([0.0, 64.0, 0.0]),
+            CurrentDimension(DimensionKind::Overworld),
+        ));
+
+        app.update();
+
+        let events = app.world().resource::<Events<QiTransfer>>();
+        let mut reader = events.get_reader();
+        let transfers: Vec<_> = reader.read(events).collect();
+        assert!(
+            transfers.is_empty(),
+            "no QiTransfer should be emitted when drain has not fired yet; got {} events",
+            transfers.len()
+        );
+    }
+
+    // ── harden_duration_tick (system-path) ────────────────────────────────────
+
+    #[test]
+    fn harden_tick_emits_qi_transfer_every_second() {
+        let mut app = app_with_tick_systems();
+        app.insert_resource(CombatClock {
+            tick: TICKS_PER_SECOND,
+        });
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                Cultivation {
+                    realm: Realm::Condense,
+                    qi_current: 60.0,
+                    qi_max: 100.0,
+                    ..Default::default()
+                },
+                MeridianHardenActive {
+                    started_at_tick: 0,
+                    expires_at_tick: TICKS_PER_SECOND * 10,
+                    meridians: vec![MeridianId::Lung],
+                    damage_multiplier: 0.5,
+                    qi_per_second: 4.0,
+                },
+                Position::new([0.0, 64.0, 0.0]),
+                CurrentDimension(DimensionKind::Overworld),
+            ))
+            .id();
+
+        app.update();
+
+        let cultivation = app.world().get::<Cultivation>(entity).unwrap();
+        assert!(
+            cultivation.qi_current < 60.0,
+            "qi_current must decrease after harden tick; was 60.0, now {}",
+            cultivation.qi_current
+        );
+
+        let events = app.world().resource::<Events<QiTransfer>>();
+        let mut reader = events.get_reader();
+        let transfers: Vec<_> = reader.read(events).collect();
+        assert!(
+            !transfers.is_empty(),
+            "harden_duration_tick must emit QiTransfer on each per-second drain; none found"
+        );
+        assert!(
+            transfers.iter().any(|t| t.reason == QiTransferReason::ReleaseToZone),
+            "per-second drain must emit ReleaseToZone transfer; got {:?}",
+            transfers.iter().map(|t| &t.reason).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn harden_tick_emits_no_transfer_when_buff_expires() {
+        let mut app = app_with_tick_systems();
+        // Clock at the expiry tick — buff is removed, no drain fires.
+        let expires = TICKS_PER_SECOND * 3;
+        app.insert_resource(CombatClock { tick: expires });
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                Cultivation {
+                    realm: Realm::Condense,
+                    qi_current: 60.0,
+                    qi_max: 100.0,
+                    ..Default::default()
+                },
+                MeridianHardenActive {
+                    started_at_tick: 0,
+                    expires_at_tick: expires,
+                    meridians: vec![MeridianId::Lung],
+                    damage_multiplier: 0.5,
+                    qi_per_second: 4.0,
+                },
+                Position::new([0.0, 64.0, 0.0]),
+                CurrentDimension(DimensionKind::Overworld),
+            ))
+            .id();
+
+        app.update();
+
+        // Component should be removed (expired).
+        assert!(
+            app.world().get::<MeridianHardenActive>(entity).is_none(),
+            "MeridianHardenActive must be removed when buff expires"
+        );
+        // qi_current unchanged — removal path skips drain.
+        assert_eq!(
+            app.world().get::<Cultivation>(entity).unwrap().qi_current,
+            60.0,
+            "qi must not be drained on expiry tick"
+        );
+        let events = app.world().resource::<Events<QiTransfer>>();
+        let mut reader = events.get_reader();
+        let transfers: Vec<_> = reader.read(events).collect();
+        assert!(
+            transfers.is_empty(),
+            "no QiTransfer should be emitted on buff expiry (no drain); got {} events",
+            transfers.len()
+        );
     }
 }
