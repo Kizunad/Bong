@@ -17,12 +17,12 @@ use crate::cultivation::components::{
 };
 use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
 use crate::cultivation::skill_registry::{CastRejectReason, CastResult, SkillRegistry};
+use crate::qi_physics::constants::{QI_EPSILON, QI_ZONE_UNIT_CAPACITY};
 use crate::qi_physics::{
     qi_negative_field_drain_ratio, qi_release_to_zone, qi_woliu_vortex_field_strength_for_realm,
     MediumKind, QiAccountId, QiPhysicsError, QiTransfer, QiTransferReason, StyleAttack,
     ZoneReleaseOutcome,
 };
-use crate::qi_physics::constants::{QI_EPSILON, QI_ZONE_UNIT_CAPACITY};
 use crate::schema::cultivation::meridian_id_to_string;
 use crate::schema::woliu::{
     ProjectileQiDrainedEventV1, VortexBackfireCauseV1, VortexBackfireEventV1, VortexFieldStateV1,
@@ -1058,8 +1058,7 @@ fn build_vortex_maintain_zone_transfer(
                         overflow,
                         ..
                     }) => {
-                        zone.spirit_qi =
-                            (zone_after / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
+                        zone.spirit_qi = (zone_after / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
                         if overflow > QI_EPSILON {
                             tracing::debug!(
                                 overflow,
@@ -1299,6 +1298,14 @@ mod tests {
             env_qi_at_cast: 0.9,
             last_maintain_tick: 0,
         });
+        // 清空 spawn zone 余量：fallback 默认 spirit_qi≈0.9，余量仅 ~5 不足以吸收整份 cost=6
+        // → 会拆成 zone 部分 + overflow 部分（守恒仍成立但非单笔）。清零后整份归还落入 zone，
+        // 锁住「全额回灌」契约。
+        app.world_mut()
+            .resource_mut::<ZoneRegistry>()
+            .find_zone_mut("spawn")
+            .unwrap()
+            .spirit_qi = 0.0;
         app.add_systems(Update, vortex_maintain_tick);
 
         app.update();
