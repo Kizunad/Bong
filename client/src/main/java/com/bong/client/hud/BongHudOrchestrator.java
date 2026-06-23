@@ -385,35 +385,33 @@ public final class BongHudOrchestrator {
             commands.addAll(TribulationBroadcastHudPlanner.buildCommands(screenWidth, screenHeight, nowMillis));
             // plan-halfstep-rechallenge-integration-v1 P0：半步化虚重渡触发 HUD（右上角）。
             commands.addAll(HalfStepRechallengeHudPlanner.buildCommands(screenWidth, screenHeight, nowMillis));
-            // plan-offscreen-war-v1 P9：战事双色血条 + WarPhase 文字（y=50，不压 tribulation y=28）。
-            commands.addAll(com.bong.client.hud.war.FactionWarHudPlanner.buildCommands(screenWidth, screenHeight, nowMillis));
-        commands.addAll(TargetInfoHudPlanner.buildCommands(
-            TargetInfoStateStore.snapshot(),
-            nowMillis,
-            widthMeasurer,
-            screenWidth,
-            screenHeight
-        ));
-        commands.addAll(com.bong.client.tsy.TsyBossHealthBar.buildCommands(
-            com.bong.client.tsy.TsyBossHealthStore.snapshot(),
-            nowMillis,
-            widthMeasurer,
-            screenWidth
-        ));
-        commands.addAll(com.bong.client.tsy.TsyCorpseDeathVfx.buildCommands(
-            com.bong.client.tsy.TsyDeathVfxStore.snapshot(),
-            nowMillis,
-            screenWidth,
-            screenHeight
-        ));
-        commands.addAll(NpcInteractionLogHudPlanner.buildCommands(
-            NpcInteractionLogStore.snapshot(),
-            NpcInteractionLogStore.visible(),
-            widthMeasurer,
-            screenWidth,
-            screenHeight
-        ));
-        commands.addAll(DerivedAttrIconHudPlanner.buildCommands(screenWidth, screenHeight));
+            commands.addAll(TargetInfoHudPlanner.buildCommands(
+                TargetInfoStateStore.snapshot(),
+                nowMillis,
+                widthMeasurer,
+                screenWidth,
+                screenHeight
+            ));
+            commands.addAll(com.bong.client.tsy.TsyBossHealthBar.buildCommands(
+                com.bong.client.tsy.TsyBossHealthStore.snapshot(),
+                nowMillis,
+                widthMeasurer,
+                screenWidth
+            ));
+            commands.addAll(com.bong.client.tsy.TsyCorpseDeathVfx.buildCommands(
+                com.bong.client.tsy.TsyDeathVfxStore.snapshot(),
+                nowMillis,
+                screenWidth,
+                screenHeight
+            ));
+            commands.addAll(NpcInteractionLogHudPlanner.buildCommands(
+                NpcInteractionLogStore.snapshot(),
+                NpcInteractionLogStore.visible(),
+                widthMeasurer,
+                screenWidth,
+                screenHeight
+            ));
+            commands.addAll(DerivedAttrIconHudPlanner.buildCommands(screenWidth, screenHeight));
             commands.addAll(NearDeathOverlayPlanner.buildCommands(
                 combatSnapshot.combatHudState(), screenWidth, screenHeight
             ));

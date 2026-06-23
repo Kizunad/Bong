@@ -1323,7 +1323,7 @@ impl From<&ServerDataPayloadV1> for Payload {
                     reason: loot_container_close_reason_to_proto(&c.reason),
                 })
             }
-            // plan-offscreen-war-v1 P9：战事 HUD 广播（守恒红线：零真元）
+            // plan-offscreen-war-v1 P9：历史战事状态 payload（守恒红线：零真元）
             ServerDataPayloadV1::FactionWarState(s) => {
                 Payload::FactionWarState(bong::FactionWarState {
                     war_id: s.war_id,

@@ -254,7 +254,7 @@ pub enum ServerDataType {
     LootContainerOpen,
     LootContainerUpdate,
     LootContainerClose,
-    // ─── plan-offscreen-war-v1 P9：战事 HUD 广播 ───────────────────
+    // ─── plan-offscreen-war-v1 P9：历史战事状态 payload（保留兼容） ───────
     FactionWarState,
     // ─── plan-combat-skill-feedback-bridges-v1 P4：暗器 HUD ────────
     AnqiHud,
@@ -528,8 +528,8 @@ pub enum ServerDataPayloadV1 {
     LootContainerOpen(LootContainerOpenV1),
     LootContainerUpdate(LootContainerUpdateV1),
     LootContainerClose(LootContainerCloseV1),
-    // ─── plan-offscreen-war-v1 P9：战事 HUD 广播 ───────────────────
-    /// 战事 HUD 状态广播（守恒红线：零真元；reframe b：零具名宗门）。
+    // ─── plan-offscreen-war-v1 P9：历史战事状态 payload（保留兼容） ───────
+    /// 战事状态 payload（守恒红线：零真元；reframe b：零具名宗门）。
     FactionWarState(FactionWarStateV1),
     // ─── plan-combat-skill-feedback-bridges-v1 P4：暗器 HUD S2C ───
     /// 暗器分身 HUD 状态推送（守恒红线：只读事件字段，不重算真元）。
@@ -678,7 +678,7 @@ pub struct LootContainerCloseV1 {
     pub reason: LootContainerCloseReasonV1,
 }
 
-/// plan-offscreen-war-v1 P9：战事 HUD 广播 payload（server → client）。
+/// plan-offscreen-war-v1 P9：战事状态 payload（历史 server_data 兼容）。
 ///
 /// 守恒红线：**不含任何真元字段**（零真元）。
 /// reframe b：zone 用匿名 `region_descriptor`（无具名宗门）。
@@ -1701,7 +1701,7 @@ enum ServerDataPayloadWireV1 {
         #[serde(flatten)]
         data: LootContainerCloseV1,
     },
-    // ─── plan-offscreen-war-v1 P9：战事 HUD 广播 ───────────────────
+    // ─── plan-offscreen-war-v1 P9：历史战事状态 payload（保留兼容） ───────
     FactionWarState {
         #[serde(flatten)]
         data: FactionWarStateV1,
@@ -5302,17 +5302,17 @@ mod tests {
 
     #[test]
     fn faction_war_state_wire_type_label_is_faction_war_state() {
-        // payload_type_label → "faction_war_state"（确保 client ServerDataRouter 能正确路由）
+        // payload_type_label → "faction_war_state"（历史 wire label 兼容）
         let label = payload_type_label(ServerDataType::FactionWarState);
         assert_eq!(
             label, "faction_war_state",
-            "期望 FactionWarState 的 label 为 'faction_war_state'（client 路由键），实际 {label}"
+            "期望 FactionWarState 的 label 为 'faction_war_state'（历史 wire label），实际 {label}"
         );
     }
 
     #[test]
     fn faction_war_state_serializes_type_field_as_faction_war_state() {
-        // wire type tag "faction_war_state" 能正确序列化和反序列化。
+        // wire type tag "faction_war_state" 保持历史兼容。
         // ServerDataV1 用 #[serde(flatten)]，所以 type + fields 全在顶层（无 "payload" 嵌套）。
         let inner = FactionWarStateV1 {
             war_id: 1,
