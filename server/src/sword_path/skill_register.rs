@@ -1525,12 +1525,14 @@ mod tests {
         app.world_mut().insert_resource(registry);
 
         // 给 caster 挂凝脉灵剑（stored_qi cap 远大于注入量，保证不截断）。
-        app.world_mut().entity_mut(caster).insert(SwordBondComponent {
-            bonded_weapon_entity: Entity::from_raw(1),
-            bond_strength: 1.0,
-            stored_qi: 0.0,
-            grade: SwordGrade::Condensed,
-        });
+        app.world_mut()
+            .entity_mut(caster)
+            .insert(SwordBondComponent {
+                bonded_weapon_entity: Entity::from_raw(1),
+                bond_strength: 1.0,
+                stored_qi: 0.0,
+                grade: SwordGrade::Condensed,
+            });
 
         let result = cast_qi_slash(app.world_mut(), caster, 0, None);
         assert!(matches!(result, CastResult::Started { .. }));
@@ -1594,12 +1596,14 @@ mod tests {
         registry.find_zone_mut("spawn").unwrap().spirit_qi = 0.3;
         app.world_mut().insert_resource(registry);
 
-        app.world_mut().entity_mut(caster).insert(SwordBondComponent {
-            bonded_weapon_entity: Entity::from_raw(2),
-            bond_strength: 0.5,
-            stored_qi: 0.0,
-            grade: SwordGrade::Mortal, // can_store_qi() = false
-        });
+        app.world_mut()
+            .entity_mut(caster)
+            .insert(SwordBondComponent {
+                bonded_weapon_entity: Entity::from_raw(2),
+                bond_strength: 0.5,
+                stored_qi: 0.0,
+                grade: SwordGrade::Mortal, // can_store_qi() = false
+            });
 
         let result = cast_qi_slash(app.world_mut(), caster, 0, None);
         assert!(matches!(result, CastResult::Started { .. }));
@@ -1611,8 +1615,7 @@ mod tests {
             .filter(|t| matches!(t.reason, QiTransferReason::Channeling))
             .count();
         assert_eq!(
-            channeling_count,
-            0,
+            channeling_count, 0,
             "Mortal 灵剑不应产生 Channeling event，实际 {channeling_count}"
         );
 
