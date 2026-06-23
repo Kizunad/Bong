@@ -15,9 +15,6 @@ import software.bernie.geckolib.util.GeckoLibUtil;
 import java.util.Objects;
 
 public final class FaunaEntity extends Entity implements GeoEntity {
-    private static final RawAnimation IDLE =
-        RawAnimation.begin().thenLoop("animation.fauna.idle");
-
     private final AnimatableInstanceCache cache = GeckoLibUtil.createInstanceCache(this);
     private final FaunaVisualKind visualKind;
 
@@ -37,8 +34,11 @@ public final class FaunaEntity extends Entity implements GeoEntity {
 
     @Override
     public void registerControllers(AnimatableManager.ControllerRegistrar controllers) {
+        // 按物种派生 idle 动画名：专属模型物种（animPath!=null）加载的是各自动画文件，其中没有
+        // 通用 animation.fauna.idle → 若硬编码会解析不到 → 实体定格 T-Pose。见 FaunaVisualKind.idleAnimationName()。
+        RawAnimation idle = RawAnimation.begin().thenLoop(visualKind.idleAnimationName());
         controllers.add(new AnimationController<>(this, "main", 5, state -> {
-            state.getController().setAnimation(IDLE);
+            state.getController().setAnimation(idle);
             return PlayState.CONTINUE;
         }));
     }

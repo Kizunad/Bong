@@ -68,6 +68,26 @@ public enum FaunaVisualKind {
         return new Identifier("bong", "animations/fauna.animation.json");
     }
 
+    /**
+     * 该物种 idle 动画的 GeckoLib 名称。
+     *
+     * <p>关键：{@link #animationId()} 对 animPath!=null 的物种只加载**各自**的
+     * {@code <animPath>.animation.json}，其中并无通用的 {@code animation.fauna.idle} key。
+     * 若 controller 仍硬编码 {@code animation.fauna.idle}，GeckoLib 解析不到 → 实体定格在
+     * 绑定姿势（俗称 T-Pose）。故按 animPath 派生与各物种动画文件一致的 idle key：
+     * <ul>
+     *   <li>animPath==null（通用 fauna 模型）→ {@code animation.fauna.idle}（在 fauna.animation.json 内）</li>
+     *   <li>animPath!=null（专属模型）→ {@code animation.bong.<animPath>.idle}（在该物种文件内）</li>
+     * </ul>
+     * 不变式：每个物种的动画文件**必须**含此 key（由 FaunaVisualKindTest 资源校验锁住）。
+     */
+    public String idleAnimationName() {
+        if (animPath != null) {
+            return "animation.bong." + animPath + ".idle";
+        }
+        return "animation.fauna.idle";
+    }
+
     public int expectedRawId() {
         return expectedRawId;
     }
