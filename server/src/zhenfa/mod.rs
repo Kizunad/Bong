@@ -4445,8 +4445,11 @@ fn send_zhenfa_release_overflow(
 }
 
 fn should_release_sealed_qi_to_zone(kind: ZhenfaKind) -> bool {
-    trap_content::OrdinaryTrapKind::from_zhenfa_kind(kind).is_some()
-        || kind == ZhenfaKind::DeceiveHeaven
+    // NetworkArray has cap_invest_ratio=0.0 so qi_cost is always zero; emit_zhenfa_seal_qi_transfer
+    // and release_zhenfa_qi_amount_to_zone both guard on `amount <= EPSILON`, so including it here
+    // is harmless.  We return true for every kind that can carry a nonzero qi_invest_amount so the
+    // conservation ledger stays balanced on both deploy and expiry.
+    !matches!(kind, ZhenfaKind::NetworkArray)
 }
 
 pub fn is_beast_target(tag: &FaunaTag) -> bool {
@@ -7586,10 +7589,16 @@ mod tests {
             layer_block_state(&app, layer_entity, pos),
             Some(BlockState::AIR)
         );
+        // QS-02 修复后：Trap（qi_invest_ratio=0.10）部署时封入的真元，在过期衰减时归还 zone（守恒）。
+        // 旧断言「衰减无 QiTransfer」锁的是 bug 行为——Trap 部署扣了真元却不归还、过期蒸发。
         let transfers = app.world().resource::<Events<QiTransfer>>();
+        let released = transfers
+            .iter_current_update_events()
+            .filter(|t| t.reason == QiTransferReason::ReleaseToZone)
+            .count();
         assert!(
-            transfers.iter_current_update_events().next().is_none(),
-            "expected legacy trap decay to skip ordinary-trap qi release path"
+            released >= 1,
+            "expected Trap 衰减把封存真元归还 zone（QS-02 守恒修复），实际无 ReleaseToZone transfer"
         );
     }
 
@@ -8416,6 +8425,308 @@ mod tests {
             (bonus_range - base_range * 1.5).abs() < 0.1,
             "期望正常 Intricate 色 active_trigger_range={bonus_range} ≈ base*1.5={expected}",
             expected = base_range * 1.5
+        );
+    }
+
+    // ── QS-02 fix: Ward/ShrineWard/Lingju/Illusion/Trap deploy & expiry must emit QiTransfer ─
+
+    /// Ward 放置必须发 Channeling QiTransfer，将真元从玩家账户密封进阵法容器。
+    /// 修复前 should_release_sealed_qi_to_zone 把 Ward 排除在外，
+    /// 导致 qi_current 扣减但守恒账本不挂账，真元凭空消失。
+    #[test]
+    fn ward_deploy_seals_qi_into_zhenfa_container() {
+        let mut app = app_with_loaded_zhenfa();
+        // 不需要 ZoneRegistry：deploy 只做 seal（player→container），不涉及 zone
+        let owner = spawn_player(&mut app, "Alice", [0.5, 64.0, 0.5]);
+
+        app.world_mut().send_event(ZhenfaPlaceRequest {
+            player: owner,
+            pos: [0, 64, 0],
+            kind: ZhenfaKind::Ward,
+            carrier: ZhenfaCarrierKind::LingqiBlock,
+            qi_invest_ratio: 0.20,
+            trigger: None,
+            item_instance_id: None,
+            target_face: None,
+            requested_at_tick: 1,
+        });
+        app.update();
+
+        let registry = app.world().resource::<ZhenfaRegistry>();
+        let instance = registry
+            .find_at([0, 64, 0])
+            .expect("Ward placement must succeed so the qi-seal transfer can be verified");
+        // qi_cost = max(min_invest_ratio, requested_ratio) * qi_max = 0.20 * 100.0 = 20.0
+        let expected_cost = instance.qi_invest_amount;
+        assert!(
+            expected_cost > f64::EPSILON,
+            "Ward qi_invest_amount must be nonzero; got {expected_cost}"
+        );
+        let expected_container = zhenfa_sealed_qi_account(&instance.owner_player_id, instance.id);
+        let transfers = app.world().resource::<Events<QiTransfer>>();
+        let seal = transfers
+            .iter_current_update_events()
+            .find(|t| {
+                t.reason == QiTransferReason::Channeling && t.to == expected_container
+            })
+            .expect(
+                "Ward deploy must emit a Channeling QiTransfer sealing qi into the zhenfa container; \
+                 before fix, should_release_sealed_qi_to_zone excluded Ward so no transfer was emitted"
+            );
+        assert_eq!(
+            seal.from,
+            QiAccountId::player(instance.owner_player_id.clone()),
+            "seal transfer 'from' must be the caster's player account"
+        );
+        assert!(
+            (seal.amount - expected_cost).abs() < f64::EPSILON,
+            "seal transfer amount must equal qi_invest_amount={expected_cost}; got {}",
+            seal.amount
+        );
+    }
+
+    /// Illusion 放置必须发 Channeling QiTransfer。Illusion min_invest_ratio=0.10，
+    /// 修复前与 Ward 相同缺陷：qi_current 扣减无账本挂账。
+    #[test]
+    fn illusion_deploy_seals_qi_into_zhenfa_container() {
+        let mut app = app_with_loaded_zhenfa();
+        let owner = spawn_player(&mut app, "Alice", [0.5, 64.0, 0.5]);
+
+        app.world_mut().send_event(ZhenfaPlaceRequest {
+            player: owner,
+            pos: [0, 64, 0],
+            kind: ZhenfaKind::Illusion,
+            carrier: ZhenfaCarrierKind::LingqiBlock,
+            qi_invest_ratio: 0.10,
+            trigger: None,
+            item_instance_id: None,
+            target_face: None,
+            requested_at_tick: 1,
+        });
+        app.update();
+
+        let registry = app.world().resource::<ZhenfaRegistry>();
+        let instance = registry
+            .find_at([0, 64, 0])
+            .expect("Illusion placement must succeed");
+        let expected_cost = instance.qi_invest_amount;
+        assert!(
+            expected_cost > f64::EPSILON,
+            "Illusion qi_invest_amount must be nonzero; got {expected_cost}"
+        );
+        let expected_container = zhenfa_sealed_qi_account(&instance.owner_player_id, instance.id);
+        let transfers = app.world().resource::<Events<QiTransfer>>();
+        let seal = transfers
+            .iter_current_update_events()
+            .find(|t| t.reason == QiTransferReason::Channeling && t.to == expected_container)
+            .expect(
+                "Illusion deploy must emit Channeling QiTransfer; \
+                 before fix, should_release_sealed_qi_to_zone excluded Illusion",
+            );
+        assert!(
+            (seal.amount - expected_cost).abs() < f64::EPSILON,
+            "seal amount must equal qi_invest_amount={expected_cost}; got {}",
+            seal.amount
+        );
+    }
+
+    /// Ward 到期后必须将密封真元释放回区域，守恒账本完整。
+    /// zone spirit_qi 先清零，避免 fallback 默认 0.9 导致 overflow 分叉使金额断言失败。
+    #[test]
+    fn ward_expiry_releases_sealed_qi_to_zone() {
+        let mut app = app_with_loaded_zhenfa();
+        // spirit_qi=0.0 → zone 有足够容量接收 Ward 密封真元，断言 total==cost 成立
+        let mut zones = ZoneRegistry::fallback();
+        zones.zones[0].spirit_qi = 0.0;
+        app.insert_resource(zones);
+
+        let owner = spawn_player(&mut app, "Alice", [0.5, 64.0, 0.5]);
+        let qi_invest_ratio = 0.20_f64;
+
+        app.world_mut().send_event(ZhenfaPlaceRequest {
+            player: owner,
+            pos: [0, 64, 0],
+            kind: ZhenfaKind::Ward,
+            carrier: ZhenfaCarrierKind::LingqiBlock,
+            qi_invest_ratio,
+            trigger: None,
+            item_instance_id: None,
+            target_face: None,
+            requested_at_tick: 1,
+        });
+        app.update();
+
+        let (expires_at_tick, qi_invest_amount, instance_id, owner_player_id) = {
+            let reg = app.world().resource::<ZhenfaRegistry>();
+            let inst = reg
+                .find_at([0, 64, 0])
+                .expect("Ward should be placed before expiry test");
+            (
+                inst.expires_at_tick,
+                inst.qi_invest_amount,
+                inst.id,
+                inst.owner_player_id.clone(),
+            )
+        };
+        assert!(
+            qi_invest_amount > f64::EPSILON,
+            "pre-condition: Ward qi_invest_amount must be nonzero for expiry release test"
+        );
+
+        // 推进到到期 tick，触发 tick_zhenfa_registry 清理
+        app.world_mut().resource_mut::<CombatClock>().tick = expires_at_tick;
+        app.update();
+
+        // Ward 已从 registry 移除
+        assert!(
+            app.world()
+                .resource::<ZhenfaRegistry>()
+                .find_at([0, 64, 0])
+                .is_none(),
+            "Ward must be removed from registry after expiry"
+        );
+
+        // 必须能看到 ReleaseToZone 转账从密封容器流向区域
+        let container = zhenfa_sealed_qi_account(&owner_player_id, instance_id);
+        let transfers = app.world().resource::<Events<QiTransfer>>();
+        let released: f64 = transfers
+            .iter_current_update_events()
+            .filter(|t| t.from == container)
+            .map(|t| t.amount)
+            .sum();
+        assert!(
+            (released - qi_invest_amount).abs() < f64::EPSILON,
+            "Ward expiry must release full qi_invest_amount={qi_invest_amount} from container to zone; \
+             before fix, should_release_sealed_qi_to_zone excluded Ward so no release was emitted; \
+             actual total released={released}"
+        );
+    }
+
+    /// Lingju 到期后必须释放密封真元。Lingju min_invest_ratio=0.30，是区域控制核心机制。
+    /// spirit_qi=0.0 以避免 fallback 容量不足导致 overflow 分叉。
+    #[test]
+    fn lingju_expiry_releases_sealed_qi_to_zone() {
+        let mut app = app_with_loaded_zhenfa();
+        let mut zones = ZoneRegistry::fallback();
+        zones.zones[0].spirit_qi = 0.0;
+        app.insert_resource(zones);
+        spawn_plot(&mut app, [0, 64, 0], PLOT_QI_CAP_BASE);
+
+        let owner = spawn_player(&mut app, "Alice", [0.5, 64.0, 0.5]);
+
+        send_lingju_place(&mut app, owner, [0, 64, 0], 1);
+        app.update();
+
+        let (expires_at_tick, qi_invest_amount, instance_id, owner_player_id) = {
+            let reg = app.world().resource::<ZhenfaRegistry>();
+            let inst = reg
+                .find_at([0, 64, 0])
+                .expect("Lingju should be placed before expiry test");
+            (
+                inst.expires_at_tick,
+                inst.qi_invest_amount,
+                inst.id,
+                inst.owner_player_id.clone(),
+            )
+        };
+        assert!(
+            qi_invest_amount > f64::EPSILON,
+            "pre-condition: Lingju qi_invest_amount must be nonzero (min_invest_ratio=0.30)"
+        );
+
+        app.world_mut().resource_mut::<CombatClock>().tick = expires_at_tick;
+        app.update();
+
+        assert!(
+            app.world()
+                .resource::<ZhenfaRegistry>()
+                .find_at([0, 64, 0])
+                .is_none(),
+            "Lingju must be removed from registry after expiry"
+        );
+
+        let container = zhenfa_sealed_qi_account(&owner_player_id, instance_id);
+        let transfers = app.world().resource::<Events<QiTransfer>>();
+        let released: f64 = transfers
+            .iter_current_update_events()
+            .filter(|t| t.from == container)
+            .map(|t| t.amount)
+            .sum();
+        assert!(
+            (released - qi_invest_amount).abs() < f64::EPSILON,
+            "Lingju expiry must release full qi_invest_amount={qi_invest_amount} to zone; \
+             before fix, should_release_sealed_qi_to_zone excluded Lingju; \
+             actual total released={released}"
+        );
+    }
+
+    /// 当区域满载时，Ward 到期释放真元必须路由到 overflow 账户（非凭空消失）。
+    /// 这是边界分支：zone 容量 = 0（spirit_qi = 1.0），qi_cost 全进 overflow。
+    #[test]
+    fn ward_expiry_qi_routes_to_overflow_when_zone_full() {
+        let mut app = app_with_loaded_zhenfa();
+        // spirit_qi=1.0 → zone 已满，release 全部路由到 overflow
+        let mut zones = ZoneRegistry::fallback();
+        zones.zones[0].spirit_qi = 1.0;
+        app.insert_resource(zones);
+
+        let owner = spawn_player(&mut app, "Alice", [0.5, 64.0, 0.5]);
+
+        app.world_mut().send_event(ZhenfaPlaceRequest {
+            player: owner,
+            pos: [0, 64, 0],
+            kind: ZhenfaKind::Ward,
+            carrier: ZhenfaCarrierKind::LingqiBlock,
+            qi_invest_ratio: 0.20,
+            trigger: None,
+            item_instance_id: None,
+            target_face: None,
+            requested_at_tick: 1,
+        });
+        app.update();
+
+        let (expires_at_tick, qi_invest_amount, instance_id, owner_player_id) = {
+            let reg = app.world().resource::<ZhenfaRegistry>();
+            let inst = reg
+                .find_at([0, 64, 0])
+                .expect("Ward should be placed before overflow expiry test");
+            (
+                inst.expires_at_tick,
+                inst.qi_invest_amount,
+                inst.id,
+                inst.owner_player_id.clone(),
+            )
+        };
+
+        app.world_mut().resource_mut::<CombatClock>().tick = expires_at_tick;
+        app.update();
+
+        // 区域 spirit_qi 不变（已满不能再增）
+        let zone_qi = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name(crate::world::zone::DEFAULT_SPAWN_ZONE_NAME)
+            .expect("spawn zone must exist")
+            .spirit_qi;
+        assert!(
+            (zone_qi - 1.0).abs() < 1e-9,
+            "full zone spirit_qi must remain 1.0 after Ward expiry; got {zone_qi}"
+        );
+
+        // overflow 账户应接收全部真元（守恒不丢失）
+        let container = zhenfa_sealed_qi_account(&owner_player_id, instance_id);
+        let transfers = app.world().resource::<Events<QiTransfer>>();
+        let overflow_total: f64 = transfers
+            .iter_current_update_events()
+            .filter(|t| {
+                t.from == container && t.to.kind == crate::qi_physics::QiAccountKind::Overflow
+            })
+            .map(|t| t.amount)
+            .sum();
+        assert!(
+            (overflow_total - qi_invest_amount).abs() < f64::EPSILON,
+            "when zone is full, Ward expiry must route full qi_invest_amount={qi_invest_amount} \
+             to overflow (not disappear); actual overflow={overflow_total}"
         );
     }
 }
