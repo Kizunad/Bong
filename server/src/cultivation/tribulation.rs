@@ -1359,6 +1359,7 @@ fn begin_heart_demon_phase(
 }
 
 #[allow(clippy::type_complexity)]
+#[allow(clippy::too_many_arguments)]
 pub fn tribulation_aoe_system(
     clock: Res<CombatClock>,
     tribulations: Query<(
@@ -1375,9 +1376,12 @@ pub fn tribulation_aoe_system(
         &mut Cultivation,
         &mut Wounds,
         Option<&Lifecycle>,
+        Option<&LifeRecord>,
     )>,
     mut failed: EventWriter<TribulationFailed>,
     mut deaths: EventWriter<DeathEvent>,
+    mut zones: Option<ResMut<ZoneRegistry>>,
+    mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
 ) {
     for (tribulator_entity, state, heart_demon, tribulator_dimension, origin_dimension) in
         &tribulations
@@ -1401,7 +1405,8 @@ pub fn tribulation_aoe_system(
             .map(|heart_demon| heart_demon.next_wave_multiplier)
             .unwrap_or(1.0);
         let strike_damage = profile.damage / profile.strikes.max(1) as f32;
-        for (entity, pos, current_dimension, mut cultivation, mut wounds, lifecycle) in &mut targets
+        for (entity, pos, current_dimension, mut cultivation, mut wounds, lifecycle, life_record) in
+            &mut targets
         {
             if tribulation_dimension_for_participant(current_dimension) != tribulation_dimension {
                 continue;
@@ -1420,7 +1425,19 @@ pub fn tribulation_aoe_system(
                 failed.send(TribulationFailed { entity, wave });
                 continue;
             }
+            let qi_before = cultivation.qi_current;
             cultivation.qi_current = (cultivation.qi_current - profile.qi_drain).max(0.0);
+            let actual_drain = qi_before - cultivation.qi_current;
+            release_qi_amount_to_zone(
+                entity,
+                actual_drain,
+                Some(pos),
+                current_dimension,
+                life_record,
+                zones.as_deref_mut(),
+                qi_transfers.as_deref_mut(),
+                "tribulation_wave_aoe",
+            );
             if profile.qi_max_freeze_ratio > 0.0 {
                 let frozen = cultivation.qi_max_frozen.unwrap_or(0.0);
                 cultivation.qi_max_frozen = Some(
@@ -1478,6 +1495,7 @@ pub fn juebi_phase_effect_system(
         &mut Cultivation,
         Option<&mut Wounds>,
         Option<&Lifecycle>,
+        Option<&LifeRecord>,
     )>,
     marked_targets: Query<
         Entity,
@@ -1488,6 +1506,8 @@ pub fn juebi_phase_effect_system(
         )>,
     >,
     mut deaths: EventWriter<DeathEvent>,
+    mut zones: Option<ResMut<ZoneRegistry>>,
+    mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
 ) {
     null_fields.fields.clear();
     for entity in &marked_targets {
@@ -1523,7 +1543,8 @@ pub fn juebi_phase_effect_system(
             });
         }
 
-        for (entity, position, target_dimension, mut cultivation, wounds, lifecycle) in &mut targets
+        for (entity, position, target_dimension, mut cultivation, wounds, lifecycle, life_record) in
+            &mut targets
         {
             if tribulation_dimension_for_participant(target_dimension) != dimension {
                 continue;
@@ -1561,6 +1582,17 @@ pub fn juebi_phase_effect_system(
                     cultivation.qi_current = (cultivation.qi_current
                         * (1.0 - JUEBI_PRESSURE_DRAIN_PER_TICK * intensity_scale * factor))
                         .max(0.0);
+                    let actual_drain = before - cultivation.qi_current;
+                    release_qi_amount_to_zone(
+                        entity,
+                        actual_drain,
+                        Some(position),
+                        target_dimension,
+                        life_record,
+                        zones.as_deref_mut(),
+                        qi_transfers.as_deref_mut(),
+                        "juebi_pressure_collapse",
+                    );
                     if before > 0.0 && cultivation.qi_current <= f64::EPSILON {
                         deaths.send(DeathEvent {
                             target: entity,
@@ -1603,6 +1635,17 @@ pub fn juebi_phase_effect_system(
                     }
                     let before = cultivation.qi_current;
                     cultivation.qi_current = (cultivation.qi_current * (1.0 - decay)).max(0.0);
+                    let actual_drain = before - cultivation.qi_current;
+                    release_qi_amount_to_zone(
+                        entity,
+                        actual_drain,
+                        Some(position),
+                        target_dimension,
+                        life_record,
+                        zones.as_deref_mut(),
+                        qi_transfers.as_deref_mut(),
+                        "juebi_null_field",
+                    );
                     if cultivation.realm == Realm::Void
                         && before > 0.0
                         && cultivation.qi_current <= f64::EPSILON
@@ -9681,5 +9724,452 @@ mod tests {
             .world()
             .resource::<HalfStepRechallengeQueue>()
             .is_empty());
+    }
+
+    // ── QS-01 zone-credit tests ──────────────────────────────────────────────
+
+    /// tribulation_aoe_system: a wave-1 drain (35 qi) from a player at distance 0
+    /// must credit the zone by exactly 35 qi (spirit_qi rises from 0 → 0.7)
+    /// and emit a QiTransfer event.
+    ///
+    /// Pitfall (a): zone starts at spirit_qi=0.0 so 35 qi fits entirely (cap=50).
+    /// Pitfall (b): target carries CurrentDimension so find_zone resolves the zone.
+    #[test]
+    fn tribulation_aoe_wave_drain_credits_zone() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 1200 });
+        app.add_event::<TribulationFailed>();
+        app.add_event::<DeathEvent>();
+        app.add_event::<QiTransfer>();
+
+        // Empty zone so there is room for 35 qi (cap = QI_ZONE_UNIT_CAPACITY = 50).
+        let mut zones = ZoneRegistry::fallback();
+        zones
+            .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
+            .expect("fallback zone should exist")
+            .spirit_qi = 0.0;
+        app.insert_resource(zones);
+        app.add_systems(Update, tribulation_aoe_system);
+
+        // DuXu wave 1: epicenter at origin, this tick = phase_started_tick
+        app.world_mut().spawn(TribulationState {
+            kind: TribulationKind::DuXu,
+            phase: TribulationPhase::Wave(1),
+            epicenter: [0.0, 64.0, 0.0],
+            wave_current: 1,
+            waves_total: 3,
+            started_tick: 0,
+            phase_started_tick: 1200,
+            next_wave_tick: 1500,
+            participants: vec!["offline:Azure".to_string()],
+            failed: false,
+        });
+
+        // Target at distance 0, within TRIBULATION_DANGER_RADIUS. Must have
+        // CurrentDimension so find_zone can resolve the spawn zone.
+        let target = app
+            .world_mut()
+            .spawn((
+                Position::new([0.0, 64.0, 0.0]),
+                CurrentDimension(DimensionKind::Overworld),
+                Cultivation {
+                    realm: Realm::Spirit,
+                    qi_current: 200.0,
+                    qi_max: 210.0,
+                    ..Default::default()
+                },
+                Wounds {
+                    health_current: 200.0,
+                    health_max: 200.0,
+                    entries: Vec::new(),
+                },
+                Lifecycle {
+                    character_id: "offline:Azure".to_string(),
+                    ..Default::default()
+                },
+            ))
+            .id();
+
+        app.update();
+
+        let cultivation = app
+            .world()
+            .get::<Cultivation>(target)
+            .expect("cultivation should remain");
+        let expected_after = 200.0 - DUXU_QI_DRAIN_BASE; // wave 1 × 35
+        assert_eq!(
+            cultivation.qi_current, expected_after,
+            "qi_current should be reduced by wave-1 drain ({DUXU_QI_DRAIN_BASE})"
+        );
+
+        // Zone spirit_qi should have risen by exactly drain/QI_ZONE_UNIT_CAPACITY = 35/50 = 0.70
+        let zone_after = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .expect("fallback zone should exist")
+            .spirit_qi;
+        let expected_zone = DUXU_QI_DRAIN_BASE / 50.0; // 0.70
+        assert!(
+            (zone_after - expected_zone).abs() < 1e-9,
+            "zone spirit_qi should rise by drain/cap: expected {expected_zone}, got {zone_after}"
+        );
+
+        // At least one QiTransfer event must have been emitted for the zone credit.
+        let transfers: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<QiTransfer>>()
+            .drain()
+            .collect();
+        assert!(
+            !transfers.is_empty(),
+            "tribulation_aoe wave drain must emit a QiTransfer event; got none"
+        );
+        assert!(
+            transfers
+                .iter()
+                .any(|t| t.reason == QiTransferReason::ReleaseToZone),
+            "at least one transfer should have reason ReleaseToZone"
+        );
+    }
+
+    /// tribulation_aoe_system: a player with qi_current=0.0 receives zero actual
+    /// drain from the wave; zone must not receive any credit and no transfer is emitted.
+    #[test]
+    fn tribulation_aoe_wave_drain_zero_qi_no_credit() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 1200 });
+        app.add_event::<TribulationFailed>();
+        app.add_event::<DeathEvent>();
+        app.add_event::<QiTransfer>();
+
+        let mut zones = ZoneRegistry::fallback();
+        zones
+            .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
+            .expect("fallback zone should exist")
+            .spirit_qi = 0.0;
+        app.insert_resource(zones);
+        app.add_systems(Update, tribulation_aoe_system);
+
+        app.world_mut().spawn(TribulationState {
+            kind: TribulationKind::DuXu,
+            phase: TribulationPhase::Wave(1),
+            epicenter: [0.0, 64.0, 0.0],
+            wave_current: 1,
+            waves_total: 3,
+            started_tick: 0,
+            phase_started_tick: 1200,
+            next_wave_tick: 1500,
+            participants: vec!["offline:Azure".to_string()],
+            failed: false,
+        });
+
+        app.world_mut().spawn((
+            Position::new([0.0, 64.0, 0.0]),
+            CurrentDimension(DimensionKind::Overworld),
+            Cultivation {
+                realm: Realm::Spirit,
+                qi_current: 0.0,
+                qi_max: 210.0,
+                ..Default::default()
+            },
+            Wounds {
+                health_current: 200.0,
+                health_max: 200.0,
+                entries: Vec::new(),
+            },
+            Lifecycle {
+                character_id: "offline:Azure".to_string(),
+                ..Default::default()
+            },
+        ));
+
+        app.update();
+
+        let zone_after = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .expect("fallback zone should exist")
+            .spirit_qi;
+        assert_eq!(
+            zone_after, 0.0,
+            "zero-qi player produces zero actual drain; zone must stay at 0.0"
+        );
+        let transfers: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<QiTransfer>>()
+            .drain()
+            .collect();
+        assert!(
+            transfers.is_empty(),
+            "zero actual drain must not emit any QiTransfer; got {}", transfers.len()
+        );
+    }
+
+    /// juebi_phase_effect_system wave 1 (pressure collapse): multiplicative
+    /// per-tick drain must be credited to the zone.
+    ///
+    /// Setup: target at distance 0 (factor=1.0), default intensity (scale=1.0).
+    /// Expected drain = qi_current × JUEBI_PRESSURE_DRAIN_PER_TICK × scale × factor
+    ///               = 100.0 × 0.02 × 1.0 × 1.0 = 2.0
+    #[test]
+    fn juebi_pressure_collapse_wave1_drain_credits_zone() {
+        let mut app = App::new();
+        // tick != phase_started_tick so per-tick phase damage is not triggered
+        app.insert_resource(CombatClock { tick: 101 });
+        app.insert_resource(JueBiNullFields::default());
+        app.add_event::<DeathEvent>();
+        app.add_event::<QiTransfer>();
+
+        let mut zones = ZoneRegistry::fallback();
+        zones
+            .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
+            .expect("fallback zone should exist")
+            .spirit_qi = 0.0;
+        app.insert_resource(zones);
+        app.add_systems(Update, juebi_phase_effect_system);
+
+        app.world_mut().spawn(TribulationState {
+            kind: TribulationKind::JueBi,
+            phase: TribulationPhase::Wave(1),
+            epicenter: [0.0, 64.0, 0.0],
+            wave_current: 1,
+            waves_total: JUEBI_WAVES_TOTAL,
+            started_tick: 0,
+            phase_started_tick: 100,
+            next_wave_tick: 100 + JUEBI_PHASE_TICKS,
+            participants: vec!["offline:Azure".to_string()],
+            failed: false,
+        });
+
+        // Target at epicenter (distance 0 → factor = 1.0, max drain rate).
+        // Default intensity (JueBiRuntimeContext absent) = JUEBI_INTENSITY_BASE → scale = 1.0.
+        // CurrentDimension required so zone lookup succeeds.
+        let target = app
+            .world_mut()
+            .spawn((
+                Position::new([0.0, 64.0, 0.0]),
+                CurrentDimension(DimensionKind::Overworld),
+                Cultivation {
+                    realm: Realm::Void,
+                    qi_current: 100.0,
+                    qi_max: 100.0,
+                    ..Default::default()
+                },
+                Wounds::default(),
+                Lifecycle {
+                    character_id: "offline:Azure".to_string(),
+                    ..Default::default()
+                },
+            ))
+            .id();
+
+        app.update();
+
+        let cultivation = app
+            .world()
+            .get::<Cultivation>(target)
+            .expect("cultivation should remain");
+        let expected_drain = 100.0 * JUEBI_PRESSURE_DRAIN_PER_TICK; // 2.0
+        let expected_after = 100.0 - expected_drain;
+        assert!(
+            (cultivation.qi_current - expected_after).abs() < 1e-9,
+            "qi_current after wave-1 pressure drain: expected {expected_after}, got {}",
+            cultivation.qi_current
+        );
+
+        let zone_after = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .expect("fallback zone should exist")
+            .spirit_qi;
+        // expected zone credit = expected_drain / QI_ZONE_UNIT_CAPACITY = 2.0 / 50.0 = 0.04
+        let expected_zone = expected_drain / 50.0;
+        assert!(
+            (zone_after - expected_zone).abs() < 1e-9,
+            "zone spirit_qi after juebi wave-1 pressure drain: expected {expected_zone}, got {zone_after}"
+        );
+
+        let transfers: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<QiTransfer>>()
+            .drain()
+            .collect();
+        assert!(
+            !transfers.is_empty(),
+            "juebi wave-1 pressure drain must emit a QiTransfer event"
+        );
+    }
+
+    /// juebi_phase_effect_system wave 3 (null field): exponential decay drain
+    /// applied to Void-realm target must be credited to the zone.
+    ///
+    /// Setup: elapsed = 100 ticks → null_radius = 50.0 → target at distance 0 is inside.
+    /// decay = JUEBI_NULL_VOID_DECAY_PER_TICK × scale(1.0) = 0.03
+    /// actual_drain = 100.0 × 0.03 = 3.0
+    #[test]
+    fn juebi_null_field_wave3_drain_credits_zone() {
+        let mut app = App::new();
+        // tick = phase_started_tick + 100 (elapsed=100 → null_radius = 50.0)
+        app.insert_resource(CombatClock { tick: 100 });
+        app.insert_resource(JueBiNullFields::default());
+        app.add_event::<DeathEvent>();
+        app.add_event::<QiTransfer>();
+
+        let mut zones = ZoneRegistry::fallback();
+        zones
+            .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
+            .expect("fallback zone should exist")
+            .spirit_qi = 0.0;
+        app.insert_resource(zones);
+        app.add_systems(Update, juebi_phase_effect_system);
+
+        // phase_started_tick = 0; clock.tick = 100; elapsed = 100
+        // null_radius = 150.0 × (100 / 300) = 50.0
+        app.world_mut().spawn(TribulationState {
+            kind: TribulationKind::JueBi,
+            phase: TribulationPhase::Wave(3),
+            epicenter: [0.0, 64.0, 0.0],
+            wave_current: 3,
+            waves_total: JUEBI_WAVES_TOTAL,
+            started_tick: 0,
+            phase_started_tick: 0,
+            next_wave_tick: JUEBI_PHASE_TICKS,
+            participants: vec!["offline:Azure".to_string()],
+            failed: false,
+        });
+
+        // Void realm so juebi_null_decay_for_realm returns JUEBI_NULL_VOID_DECAY_PER_TICK (0.03).
+        // Position at distance 0 (< null_radius 50.0) → inside the expanding null field.
+        let target = app
+            .world_mut()
+            .spawn((
+                Position::new([0.0, 64.0, 0.0]),
+                CurrentDimension(DimensionKind::Overworld),
+                Cultivation {
+                    realm: Realm::Void,
+                    qi_current: 100.0,
+                    qi_max: 100.0,
+                    ..Default::default()
+                },
+                Wounds::default(),
+                Lifecycle {
+                    character_id: "offline:Azure".to_string(),
+                    ..Default::default()
+                },
+            ))
+            .id();
+
+        app.update();
+
+        let cultivation = app
+            .world()
+            .get::<Cultivation>(target)
+            .expect("cultivation should remain");
+        // decay = 0.03 × 1.0 (intensity_scale) = 0.03; after = 100 × (1 - 0.03) = 97.0
+        let expected_after = 100.0 * (1.0 - JUEBI_NULL_VOID_DECAY_PER_TICK);
+        let actual_drain = 100.0 - expected_after; // 3.0
+        assert!(
+            (cultivation.qi_current - expected_after).abs() < 1e-9,
+            "qi_current after wave-3 null field decay: expected {expected_after}, got {}",
+            cultivation.qi_current
+        );
+
+        let zone_after = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .expect("fallback zone should exist")
+            .spirit_qi;
+        let expected_zone = actual_drain / 50.0; // 3.0 / 50.0 = 0.06
+        assert!(
+            (zone_after - expected_zone).abs() < 1e-9,
+            "zone spirit_qi after juebi wave-3 null field drain: expected {expected_zone}, got {zone_after}"
+        );
+
+        let transfers: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<QiTransfer>>()
+            .drain()
+            .collect();
+        assert!(
+            !transfers.is_empty(),
+            "juebi wave-3 null field drain must emit a QiTransfer event"
+        );
+    }
+
+    /// juebi_phase_effect_system wave 3 (null field): a target outside the
+    /// current null radius is not drained and emits no QiTransfer.
+    #[test]
+    fn juebi_null_field_wave3_no_drain_outside_radius() {
+        let mut app = App::new();
+        // elapsed = 1 tick → null_radius = 150.0 × (1/300) ≈ 0.5 (essentially 0)
+        app.insert_resource(CombatClock { tick: 1 });
+        app.insert_resource(JueBiNullFields::default());
+        app.add_event::<DeathEvent>();
+        app.add_event::<QiTransfer>();
+
+        let mut zones = ZoneRegistry::fallback();
+        zones
+            .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
+            .expect("fallback zone should exist")
+            .spirit_qi = 0.0;
+        app.insert_resource(zones);
+        app.add_systems(Update, juebi_phase_effect_system);
+
+        // phase_started_tick = 0; clock.tick = 1; elapsed = 1 → null_radius ≈ 0.5
+        app.world_mut().spawn(TribulationState {
+            kind: TribulationKind::JueBi,
+            phase: TribulationPhase::Wave(3),
+            epicenter: [0.0, 64.0, 0.0],
+            wave_current: 3,
+            waves_total: JUEBI_WAVES_TOTAL,
+            started_tick: 0,
+            phase_started_tick: 0,
+            next_wave_tick: JUEBI_PHASE_TICKS,
+            participants: vec!["offline:Azure".to_string()],
+            failed: false,
+        });
+
+        // Target at distance 10.0, outside null_radius ≈ 0.5 → skipped by wave-3 branch.
+        app.world_mut().spawn((
+            Position::new([10.0, 64.0, 0.0]),
+            CurrentDimension(DimensionKind::Overworld),
+            Cultivation {
+                realm: Realm::Void,
+                qi_current: 100.0,
+                qi_max: 100.0,
+                ..Default::default()
+            },
+            Wounds::default(),
+            Lifecycle {
+                character_id: "offline:Azure".to_string(),
+                ..Default::default()
+            },
+        ));
+
+        app.update();
+
+        let zone_after = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .expect("fallback zone should exist")
+            .spirit_qi;
+        assert_eq!(
+            zone_after, 0.0,
+            "target outside null radius must not generate zone credit"
+        );
+        let transfers: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<QiTransfer>>()
+            .drain()
+            .collect();
+        assert!(
+            transfers.is_empty(),
+            "target outside null radius must not emit any QiTransfer"
+        );
     }
 }
