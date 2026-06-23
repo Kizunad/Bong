@@ -16,7 +16,7 @@
 use valence::prelude::{Changed, Client, Entity, EventReader, Query, Res, With};
 
 use crate::combat::weapon::{ShieldBlockHit, ShieldBroken, WeaponBroken, WeaponKind};
-use crate::inventory::{ItemRegistry, PlayerInventory};
+use crate::inventory::{ItemCategory, ItemRegistry, PlayerInventory};
 use crate::network::agent_bridge::{
     payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
 };
@@ -66,6 +66,20 @@ fn shield_item_to_view(
         durability_current: (item.durability as f32) * spec.durability_max as f32,
         durability_max: spec.durability_max as f32,
         quality_tier: 0, // 盾牌暂无品质等级，统一填 0
+    }
+}
+
+/// 工具（category=tool，无 WeaponSpec/ShieldSpec）构造 WeaponViewV1（weapon_kind="tool"）。
+/// 工具无独立 durability spec，durability_current 直填 item.durability 比值、max 取 1.0；
+/// 仅用于手持 3D 模型渲染（HUD 不消费 tool 的耐久）。
+fn tool_item_to_view(item: &crate::inventory::ItemInstance) -> WeaponViewV1 {
+    WeaponViewV1 {
+        instance_id: item.instance_id,
+        template_id: item.template_id.clone(),
+        weapon_kind: "tool".to_string(),
+        durability_current: item.durability as f32,
+        durability_max: 1.0,
+        quality_tier: 0,
     }
 }
 
@@ -146,13 +160,19 @@ pub fn emit_weapon_equipped_payloads(
                     if let Some(weapon_spec) = tpl.weapon_spec.as_ref() {
                         // 普通武器路径
                         Some(item_to_view(item, weapon_spec))
-                    } else {
+                    } else if let Some(shield_spec) = tpl.shield_spec.as_ref() {
                         // plan-shield-block-v1 P3：盾牌以 weapon_kind="shield" 下发
                         // 客户端 WeaponEquippedHandler 检查 template_id._shield 后缀
                         // 并路由到 EquippedShieldStore.equip()，不写 WeaponEquippedStore
-                        tpl.shield_spec
-                            .as_ref()
-                            .map(|shield_spec| shield_item_to_view(item, shield_spec))
+                        Some(shield_item_to_view(item, shield_spec))
+                    } else if matches!(tpl.category, ItemCategory::Tool) {
+                        // 工具手持 3D 模型：tool 既无 weapon_spec 也无 shield_spec，过去 view=None
+                        // 永不进 WeaponEquippedStore → 手持无模型。下发 weapon_kind="tool" view，
+                        // 客户端非盾默认写入 WeaponEquippedStore，渲染层据 template_id 查
+                        // BongWeaponModelRegistry 取宿主 vanilla item 渲染（镐/斧/锄直接白嫖原版模型）。
+                        Some(tool_item_to_view(item))
+                    } else {
+                        None
                     }
                 });
                 (slot_wire_name(slot).to_string(), view)
@@ -324,6 +344,142 @@ mod tests {
             alchemy: None,
             lingering_owner_qi: None,
         }
+    }
+
+    fn tool_template() -> ItemTemplate {
+        // category=tool，无 weapon_spec / shield_spec —— 工具的典型形态。
+        ItemTemplate {
+            id: "stone_pickaxe".to_string(),
+            display_name: "石镐".to_string(),
+            category: ItemCategory::Tool,
+            placeable: None,
+            max_stack_count: 1,
+            grid_w: 1,
+            grid_h: 1,
+            base_weight: 1.2,
+            rarity: ItemRarity::Common,
+            spirit_quality_initial: 0.0,
+            description: String::new(),
+            effect: None,
+            cast_duration_ms: 0,
+            cooldown_ms: 0,
+            weapon_spec: None,
+            forge_station_spec: None,
+            blueprint_scroll_spec: None,
+            inscription_scroll_spec: None,
+            technique_scroll_spec: None,
+            recipe_fragment_spec: None,
+            container_spec: None,
+            shelflife_profile: None,
+            shield_spec: None,
+            shelflife_track: None,
+        }
+    }
+
+    fn tool_instance(instance_id: u64) -> ItemInstance {
+        ItemInstance {
+            instance_id,
+            template_id: "stone_pickaxe".to_string(),
+            display_name: "石镐".to_string(),
+            grid_w: 1,
+            grid_h: 1,
+            weight: 1.2,
+            rarity: ItemRarity::Common,
+            description: String::new(),
+            stack_count: 1,
+            spirit_quality: 0.0,
+            durability: 0.8,
+            freshness: None,
+            mineral_id: None,
+            charges: None,
+            forge_quality: None,
+            forge_color: None,
+            forge_side_effects: Vec::new(),
+            forge_achieved_tier: None,
+            alchemy: None,
+            lingering_owner_qi: None,
+        }
+    }
+
+    #[test]
+    fn tool_equipped_emits_weapon_kind_tool_view() {
+        // 工具手持模型前提：category=tool（无 weapon/shield spec）现也下发 weapon_equipped
+        // view（weapon_kind="tool"）。修前 view=None → 工具永不进 WeaponEquippedStore → 手持无模型。
+        let mut app = App::new();
+        app.insert_resource(ItemRegistry::from_map(HashMap::from([(
+            "stone_pickaxe".to_string(),
+            tool_template(),
+        )])));
+        app.add_systems(Update, emit_weapon_equipped_payloads);
+
+        let (client_bundle, mut helper) = create_mock_client("Miner");
+        let mut inventory = empty_inventory();
+        inventory
+            .equipped
+            .insert("main_hand".to_string(), tool_instance(7));
+        app.world_mut().spawn((client_bundle, inventory));
+
+        app.update();
+        flush_client_packets(&mut app);
+
+        let frames = collect_server_data_frames(&mut helper);
+        let (_, payload) = frames
+            .iter()
+            .find(|(_, p)| {
+                p.get("type").and_then(|v| v.as_str()) == Some("weapon_equipped")
+                    && p.get("slot").and_then(|v| v.as_str()) == Some("main_hand")
+            })
+            .expect("工具装主手应下发 main_hand weapon_equipped payload");
+        let weapon = payload.get("weapon").expect("工具 view 应存在（非 null）");
+        assert_eq!(
+            weapon.get("template_id").and_then(|v| v.as_str()),
+            Some("stone_pickaxe")
+        );
+        assert_eq!(
+            weapon.get("weapon_kind").and_then(|v| v.as_str()),
+            Some("tool"),
+            "tool 应以 weapon_kind=tool 下发，供客户端渲染宿主 vanilla 模型"
+        );
+    }
+
+    #[test]
+    fn tool_equipped_off_hand_also_emits_tool_view() {
+        // 工具两手都要能装备渲染（用户点名"右手左手都需要"）：off_hand 装 tool 同样下发 tool view。
+        let mut app = App::new();
+        app.insert_resource(ItemRegistry::from_map(HashMap::from([(
+            "stone_pickaxe".to_string(),
+            tool_template(),
+        )])));
+        app.add_systems(Update, emit_weapon_equipped_payloads);
+
+        let (client_bundle, mut helper) = create_mock_client("Miner");
+        let mut inventory = empty_inventory();
+        inventory
+            .equipped
+            .insert("off_hand".to_string(), tool_instance(9));
+        app.world_mut().spawn((client_bundle, inventory));
+
+        app.update();
+        flush_client_packets(&mut app);
+
+        let frames = collect_server_data_frames(&mut helper);
+        let (_, payload) = frames
+            .iter()
+            .find(|(_, p)| {
+                p.get("type").and_then(|v| v.as_str()) == Some("weapon_equipped")
+                    && p.get("slot").and_then(|v| v.as_str()) == Some("off_hand")
+            })
+            .expect("工具装副手应下发 off_hand weapon_equipped payload");
+        let weapon = payload.get("weapon").expect("off_hand 工具 view 应存在");
+        assert_eq!(
+            weapon.get("weapon_kind").and_then(|v| v.as_str()),
+            Some("tool"),
+            "副手 tool 也应 weapon_kind=tool（两手对称）"
+        );
+        assert_eq!(
+            weapon.get("template_id").and_then(|v| v.as_str()),
+            Some("stone_pickaxe")
+        );
     }
 
     fn empty_inventory() -> PlayerInventory {

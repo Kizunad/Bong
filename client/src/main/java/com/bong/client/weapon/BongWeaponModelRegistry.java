@@ -143,6 +143,26 @@ public final class BongWeaponModelRegistry {
             "item/iron_pickaxe",
             "bong:models/item/pickaxe_iron/pickaxe_iron.obj"
         ));
+        // 工具手持模型：镐/斧/锄直接白嫖 vanilla 模型（bongObjModelPath=null → 宿主 item 即模型，
+        // 不走 SML 劫持）。与 bone_sword→STONE_SWORD 同模式。server 现对 category=tool 下发
+        // weapon_kind="tool" view（weapon_equipped_emit.rs），客户端默认写 WeaponEquippedStore 渲染。
+        // 材质映射：骨=木 / 铜≈石 / 铁=铁 / 灵铁≈钻 / 玄铁≈下界合金（凡铁刨锄取石锄）。
+        entries.put("stone_pickaxe", new Entry(
+            "stone_pickaxe", () -> Items.STONE_PICKAXE, "item/stone_pickaxe", null));
+        entries.put("stone_axe", new Entry(
+            "stone_axe", () -> Items.STONE_AXE, "item/stone_axe", null));
+        entries.put("pickaxe_copper", new Entry(
+            "pickaxe_copper", () -> Items.STONE_PICKAXE, "item/stone_pickaxe", null));
+        entries.put("axe_copper", new Entry(
+            "axe_copper", () -> Items.STONE_AXE, "item/stone_axe", null));
+        entries.put("hoe_iron", new Entry(
+            "hoe_iron", () -> Items.IRON_HOE, "item/iron_hoe", null));
+        entries.put("hoe_lingtie", new Entry(
+            "hoe_lingtie", () -> Items.DIAMOND_HOE, "item/diamond_hoe", null));
+        entries.put("hoe_xuantie", new Entry(
+            "hoe_xuantie", () -> Items.NETHERITE_HOE, "item/netherite_hoe", null));
+        entries.put("bao_chu", new Entry(
+            "bao_chu", () -> Items.STONE_HOE, "item/stone_hoe", null));
         // 盾牌（#3）：宿主选用 Bong 自有 item 体系里不出现的稀有 vanilla item，
         // 与武器同理（vanilla inventory 恒空，宿主 item 不会真实渲染，无碰撞风险）。
         // 木盾 → NAUTILUS_SHELL，骨盾 → PHANTOM_MEMBRANE。
