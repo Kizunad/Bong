@@ -19,14 +19,17 @@ use crate::cultivation::skill_registry::{CastRejectReason, CastResult, SkillRegi
 use crate::network::audio_event_emit::{AudioRecipient, PlaySoundRecipeRequest};
 use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::network::{redis_bridge::RedisOutbound, RedisBridgeResource};
+use crate::qi_physics::constants::{QI_EPSILON, QI_ZONE_UNIT_CAPACITY};
 use crate::qi_physics::{
     contam_purge, emergency_stabilize, life_extend, mass_meridian_repair, meridian_repair,
-    yidao_cast_ticks, QiAccountId, QiTransfer, QiTransferReason,
+    qi_release_to_zone, yidao_cast_ticks, QiAccountId, QiTransfer, QiTransferReason,
 };
 use crate::schema::vfx_event::VfxEventPayloadV1;
 use crate::schema::yidao::{
     MedicalContractStateV1, YidaoEventKindV1, YidaoEventV1, YidaoSkillIdV1,
 };
+use crate::world::dimension::{CurrentDimension, DimensionKind};
+use crate::world::zone::ZoneRegistry;
 
 const SINGLE_TARGET_RANGE_M: f64 = 5.0;
 const CLOSE_TARGET_RANGE_M: f64 = 1.0;
@@ -819,6 +822,9 @@ fn apply_meridian_repair(
             out.qi_transferred = 0.0;
             out.karma_delta = calc.medic_karma_on_failure + calc.patient_karma_on_failure;
             out.detail = "meridian repair failed; dead meridian recorded".to_string();
+            // 守恒修复 (bughunt r3 #2): 失败路径 debit_caster_qi 已扣除真元，
+            // 但既未转给患者也未回灌 zone，造成守恒泄漏。将消耗归还施放者所在 zone。
+            release_failed_repair_qi_to_zone(world, caster, calc.qi_cost);
         }
         AcupointRepairOutcome::NotSevered | AcupointRepairOutcome::AlreadyDead => {}
     }
@@ -1279,6 +1285,118 @@ fn emit_qi_transfer(
     }
 }
 
+/// 将经脉修复失败时已扣除的真元回灌到施放者所在 zone，维持守恒。
+/// 语义与其他招式消耗散逸（ReleaseToZone）相同；
+/// 若 ZoneRegistry 或 Position 不可用则路由到 overflow 账户。
+fn release_failed_repair_qi_to_zone(
+    world: &mut bevy_ecs::world::World,
+    caster: Entity,
+    amount: f64,
+) {
+    if amount <= QI_EPSILON {
+        return;
+    }
+    // 账户 id 与成功路径（line 1279 `entity_wire_id(caster)`）一致，避免失败回灌事件账户格式分叉。
+    let from = QiAccountId::player(entity_wire_id(caster));
+    let position = world.get::<Position>(caster).map(|p| p.get());
+    let dimension = world
+        .get::<CurrentDimension>(caster)
+        .map(|d| d.0)
+        .unwrap_or(DimensionKind::Overworld);
+
+    let mut transfers: Vec<QiTransfer> = Vec::new();
+    if let (Some(position), Some(mut zones)) = (position, world.get_resource_mut::<ZoneRegistry>())
+    {
+        let zone_name = zones.find_zone(dimension, position).map(|z| z.name.clone());
+        if let Some(zone_name) = zone_name {
+            if let Some(zone) = zones.find_zone_mut(zone_name.as_str()) {
+                let to = QiAccountId::zone(zone.name.clone());
+                // 不要 .max(0.0)：负灵域（spirit_qi<0，worldview 负数区）下把它当 0 会让回灌跳过
+                // 负值缺口、凭空多 credit，反破坏守恒。与规范 helper（death_hooks::release_qi_amount_to_zone）
+                // 一致用裸 spirit_qi*CAP，qi_release_to_zone 能正确处理负 zone_current。
+                let zone_current = zone.spirit_qi * QI_ZONE_UNIT_CAPACITY;
+                match qi_release_to_zone(
+                    amount,
+                    from.clone(),
+                    to,
+                    zone_current,
+                    QI_ZONE_UNIT_CAPACITY,
+                ) {
+                    Ok(outcome) => {
+                        zone.spirit_qi =
+                            (outcome.zone_after / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
+                        if let Some(transfer) = outcome.transfer {
+                            transfers.push(transfer);
+                        }
+                        if outcome.overflow > QI_EPSILON {
+                            if let Ok(t) = QiTransfer::new(
+                                from,
+                                QiAccountId::overflow(format!(
+                                    "yidao_failed_repair_overflow:{}",
+                                    caster.to_bits()
+                                )),
+                                outcome.overflow,
+                                QiTransferReason::ReleaseToZone,
+                            ) {
+                                transfers.push(t);
+                            }
+                        }
+                    }
+                    Err(_) => {
+                        if let Ok(t) = QiTransfer::new(
+                            from,
+                            QiAccountId::overflow(format!(
+                                "yidao_failed_repair_overflow:{}",
+                                caster.to_bits()
+                            )),
+                            amount,
+                            QiTransferReason::ReleaseToZone,
+                        ) {
+                            transfers.push(t);
+                        }
+                    }
+                }
+            } else {
+                if let Ok(t) = QiTransfer::new(
+                    from,
+                    QiAccountId::overflow(format!(
+                        "yidao_failed_repair_overflow:{}",
+                        caster.to_bits()
+                    )),
+                    amount,
+                    QiTransferReason::ReleaseToZone,
+                ) {
+                    transfers.push(t);
+                }
+            }
+        } else {
+            if let Ok(t) = QiTransfer::new(
+                from,
+                QiAccountId::overflow(format!("yidao_failed_repair_overflow:{}", caster.to_bits())),
+                amount,
+                QiTransferReason::ReleaseToZone,
+            ) {
+                transfers.push(t);
+            }
+        }
+    } else {
+        if let Ok(t) = QiTransfer::new(
+            from,
+            QiAccountId::overflow(format!("yidao_failed_repair_overflow:{}", caster.to_bits())),
+            amount,
+            QiTransferReason::ReleaseToZone,
+        ) {
+            transfers.push(t);
+        }
+    }
+
+    if let Some(mut events) = world.get_resource_mut::<Events<QiTransfer>>() {
+        for t in transfers {
+            events.send(t);
+        }
+    }
+}
+
 fn first_repairable_meridian(
     world: &bevy_ecs::world::World,
     patient: Entity,
@@ -1714,6 +1832,8 @@ mod tests {
 
     #[test]
     fn failed_meridian_repair_reports_no_qi_transfer() {
+        // qi_transferred 字段描述"转给患者的真元"，失败时患者收到 0；
+        // zone 回灌通过 QiTransfer 事件独立记账，不体现在此字段。
         let mut app = app_with_yidao();
         let medic = spawn_medic(&mut app, Realm::Awaken);
         let patient = spawn_patient(&mut app);
@@ -1732,9 +1852,149 @@ mod tests {
 
         let outcome = apply_meridian_repair(app.world_mut(), medic, patient, 0.0, true, fail_tick);
 
-        assert_eq!(outcome.success_count, 0);
+        assert_eq!(outcome.success_count, 0, "失败时不应有成功患者");
+        assert_eq!(outcome.failure_count, 1, "应记录一次失败");
+        assert_eq!(
+            outcome.qi_transferred, 0.0,
+            "患者无收益（失败），qi_transferred 应为 0；zone 回灌通过独立 QiTransfer 事件处理"
+        );
+    }
+
+    /// 守恒断言：经脉修复失败时，施放者扣除的真元必须以 ReleaseToZone 归还 zone。
+    ///
+    /// 期望：emit 至少一条 QiTransfer(reason=ReleaseToZone)，其 amount 等于扣除的 qi_cost。
+    /// 边界：玩家 qi_current 从 300 跌到 300-qi_cost（不低于 0）。
+    #[test]
+    fn failed_meridian_repair_releases_qi_cost_to_zone() {
+        use crate::world::zone::ZoneRegistry;
+
+        let mut app = app_with_yidao();
+        // 注入 ZoneRegistry，使 release 能找到 zone。清空 spawn zone 余量（fallback 默认 spirit_qi≈0.9，
+        // 余量不足会把回灌拆成 zone+overflow），让全额落入 zone，便于断言「命中 zone」与「spirit_qi 上升」。
+        app.insert_resource(ZoneRegistry::fallback());
+        app.world_mut()
+            .resource_mut::<ZoneRegistry>()
+            .find_zone_mut("spawn")
+            .unwrap()
+            .spirit_qi = 0.0;
+
+        let medic = spawn_medic(&mut app, Realm::Awaken); // Position=[0,64,0]，在 spawn zone 内
+        let patient = spawn_patient(&mut app);
+        let mut severed = MeridianSeveredPermanent::default();
+        severed.insert(
+            MeridianId::Lung,
+            crate::cultivation::meridian::severed::SeveredSource::CombatWound,
+            1,
+        );
+        app.world_mut().entity_mut(patient).insert(severed);
+
+        // 找一个必然失败的 tick（roll >= success_threshold @ mastery=0, Awaken）
+        let fail_tick = (0..10_000)
+            .find(|tick| {
+                deterministic_success_roll(medic, patient, MeridianId::Lung, *tick) >= 0.99
+            })
+            .expect("失败 tick 未找到");
+
+        let qi_before = app.world().get::<Cultivation>(medic).unwrap().qi_current;
+
+        let outcome = apply_meridian_repair(app.world_mut(), medic, patient, 0.0, true, fail_tick);
+        assert_eq!(outcome.failure_count, 1, "前置：应触发失败路径");
+
+        let qi_after = app.world().get::<Cultivation>(medic).unwrap().qi_current;
+        let deducted = qi_before - qi_after;
+        assert!(
+            deducted > 0.0,
+            "失败时施放者应被扣除 qi_cost（实际扣除 {deducted}）"
+        );
+
+        // 守恒红线：必须有 ReleaseToZone QiTransfer，且总量 >= deducted（zone 接收 + 可能的 overflow 均属回灌）
+        let transfers: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<QiTransfer>>()
+            .drain()
+            .collect();
+
+        let released_to_zone: f64 = transfers
+            .iter()
+            .filter(|t| t.reason == QiTransferReason::ReleaseToZone)
+            .map(|t| t.amount)
+            .sum();
+
+        assert!(
+            (released_to_zone - deducted).abs() < 1e-6,
+            "守恒红线：失败路径扣除 {deducted} 真元，必须通过 ReleaseToZone QiTransfer 全额归还 \
+             zone（实际归还 {released_to_zone}）"
+        );
+
+        // CodeRabbit #2：仅汇总 amount 无法区分「命中 zone」与「overflow 兜底」。直接验 zone.spirit_qi：
+        // 已清零，全额回灌后必 >0 且等于 deducted/CAP——若为 0 说明走了 overflow 而非真 zone credit。
+        let zone_after = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name("spawn")
+            .map(|zone| zone.spirit_qi)
+            .unwrap_or(0.0);
+        assert!(
+            zone_after > 0.0,
+            "回灌必须实际命中 zone 并提升 spirit_qi（已清零，命中后应 >0）；实际 {zone_after}——\
+             若为 0 说明走了 overflow 兜底而非真 zone credit。\
+             （不强求 ==deducted/CAP：cost 超 zone 余量时会 clamp 到 1.0 并把余量 overflow，守恒仍由\
+             上面的 released_to_zone==deducted 锁住）"
+        );
+
+        // 患者应分毫未得
+        assert_eq!(
+            app.world().get::<Cultivation>(patient).unwrap().qi_current,
+            0.0,
+            "失败时患者 qi_current 不应有任何增加"
+        );
+    }
+
+    /// 边界：没有 ZoneRegistry 时，qi 路由到 overflow 账户，不丢失也不增多。
+    #[test]
+    fn failed_meridian_repair_releases_qi_to_overflow_without_zone_registry() {
+        // 不注入 ZoneRegistry —— 测试 overflow 回退路径。
+        let mut app = app_with_yidao();
+        let medic = spawn_medic(&mut app, Realm::Awaken);
+        let patient = spawn_patient(&mut app);
+        let mut severed = MeridianSeveredPermanent::default();
+        severed.insert(
+            MeridianId::Lung,
+            crate::cultivation::meridian::severed::SeveredSource::CombatWound,
+            1,
+        );
+        app.world_mut().entity_mut(patient).insert(severed);
+        let fail_tick = (0..10_000)
+            .find(|tick| {
+                deterministic_success_roll(medic, patient, MeridianId::Lung, *tick) >= 0.99
+            })
+            .expect("失败 tick 未找到");
+
+        let qi_before = app.world().get::<Cultivation>(medic).unwrap().qi_current;
+
+        let outcome = apply_meridian_repair(app.world_mut(), medic, patient, 0.0, true, fail_tick);
         assert_eq!(outcome.failure_count, 1);
-        assert_eq!(outcome.qi_transferred, 0.0);
+
+        let qi_after = app.world().get::<Cultivation>(medic).unwrap().qi_current;
+        let deducted = qi_before - qi_after;
+
+        // overflow 路径仍应 emit 一条 ReleaseToZone 事件（overflow account 接收）
+        let transfers: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<QiTransfer>>()
+            .drain()
+            .collect();
+
+        let total_released: f64 = transfers
+            .iter()
+            .filter(|t| t.reason == QiTransferReason::ReleaseToZone)
+            .map(|t| t.amount)
+            .sum();
+
+        assert!(
+            (total_released - deducted).abs() < 1e-6,
+            "overflow 路径：失败扣除 {deducted}，ReleaseToZone 事件总量应等于扣除量（实际 {total_released}）"
+        );
     }
 
     #[test]
