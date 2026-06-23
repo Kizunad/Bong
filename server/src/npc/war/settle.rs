@@ -16,12 +16,11 @@
 
 use std::collections::HashMap;
 
-use valence::prelude::{bevy_ecs, Client, EventReader, EventWriter, Query, Res, ResMut, Resource};
+use valence::prelude::{bevy_ecs, EventReader, EventWriter, Res, ResMut, Resource};
 
 use crate::npc::faction::{EmergentGroupId, NamedFactionId};
 use crate::npc::movement::GameTick;
 use crate::npc::war::{FactionWarOutcome, WarPhase, WarPhaseChanged, WarRole};
-use crate::schema::server_data::{FactionWarStateV1, ServerDataPayloadV1, ServerDataV1};
 use crate::social::events::{FactionReputationDeltaEvent, SocialRenownDeltaEvent};
 
 // ──────────────────────────── ZoneSpiritBonusStore ───────────────────────────
@@ -166,55 +165,6 @@ fn named_faction_for_war_group(group: EmergentGroupId) -> Option<NamedFactionId>
         1 => Some(NamedFactionId::CangyuanMerchants),
         2 => Some(NamedFactionId::NorthWasteDrifters),
         _ => None,
-    }
-}
-
-// ──────────────────────────── broadcast_faction_war_hud ──────────────────────
-
-/// plan-offscreen-war-v1 P9：在 `WarPhaseChanged` 事件沿广播 `faction_war_state`
-/// payload 给所有在线玩家（client HUD 显示战事双色血条）。
-///
-/// 守恒红线：`FactionWarStateV1` 不含任何真元字段（零真元）。
-/// reframe b：`region_descriptor` 为「{zone}一带散修」匿名描述符，无具名宗门。
-///
-/// Aftermath 阶段也推送（含 winner/loser），client 收到后根据 phase 决定淡出。
-pub fn broadcast_faction_war_hud(
-    mut phase_events: EventReader<WarPhaseChanged>,
-    mut clients: Query<&mut Client>,
-) {
-    use crate::network::agent_bridge::{payload_type_label, serialize_server_data_payload};
-    use crate::network::{log_payload_build_error, send_server_data_payload};
-
-    for event in phase_events.read() {
-        let (winner_group, loser_group) = match &event.outcome {
-            Some(o) => (Some(o.winner_group.0), Some(o.loser_group.0)),
-            None => (None, None),
-        };
-        let state = FactionWarStateV1 {
-            war_id: event.war_id.0,
-            zone: event.zone.clone(),
-            region_descriptor: event.region_descriptor.clone(),
-            phase: event.phase.as_str().to_string(),
-            groups: event.groups.iter().map(|g| g.0).collect(),
-            enlist_count: event.player_role_counts.enlist,
-            mercenary_count: event.player_role_counts.mercenary,
-            intercept_count: event.player_role_counts.intercept,
-            spectate_count: event.player_role_counts.spectate,
-            winner_group,
-            loser_group,
-        };
-        let payload = ServerDataV1::new(ServerDataPayloadV1::FactionWarState(state));
-        let payload_type = payload_type_label(payload.payload_type());
-        let payload_bytes = match serialize_server_data_payload(&payload) {
-            Ok(b) => b,
-            Err(e) => {
-                log_payload_build_error(payload_type, &e);
-                continue;
-            }
-        };
-        for mut client in clients.iter_mut() {
-            send_server_data_payload(&mut client, payload_bytes.as_slice());
-        }
     }
 }
 

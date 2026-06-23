@@ -7,7 +7,6 @@ import com.bong.client.combat.UnifiedEventStore;
 import com.bong.client.combat.inspect.TechniquesListPanel;
 import com.bong.client.hud.PillBuffHudPlanner;
 import com.bong.client.hud.BongToast;
-import com.bong.client.hud.war.FactionWarHudStore;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
@@ -23,7 +22,6 @@ class ProtoServerDataBridgeTest {
 
     @AfterEach
     void tearDown() {
-        FactionWarHudStore.resetForTests();
         PillBuffHudPlanner.clear();
         TechniquesListPanel.resetForTests();
         BongToast.resetForTests();
@@ -542,7 +540,7 @@ class ProtoServerDataBridgeTest {
     }
 
     @Test
-    void bridgeFactionWarStateProducesLegacyJsonAndRoutes() {
+    void bridgeFactionWarStateOutputIsIgnoredByDefaultRouter() {
         Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
                 .setFactionWarState(Envelope.FactionWarState.newBuilder()
                         .setWarId(42)
@@ -571,9 +569,7 @@ class ProtoServerDataBridgeTest {
         assertEquals(3, json.get("spectate_count").getAsInt());
 
         ServerDataRouter.RouteResult route = ServerDataRouter.createDefault().route(result.legacyJson(), 0);
-        assertTrue(route.isHandled(), "faction_war_state proto bridge output should route: " + route.logMessage());
-        assertEquals("42", FactionWarHudStore.snapshot().warId(),
-                "uint64 war_id normalized to JSON number must still be preserved as store string");
+        assertTrue(route.isNoOp(), "faction_war_state has no HUD handler and should be ignored: " + route.logMessage());
     }
 
     // ═══════════════════════════════════════════════════════════════════
