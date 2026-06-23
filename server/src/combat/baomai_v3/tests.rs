@@ -1,4 +1,5 @@
 use valence::prelude::{App, DVec3, Events, Position};
+use crate::world::zone::ZoneRegistry;
 
 use super::events::{
     BaomaiSkillEvent, BaomaiSkillId, BloodBurnEvent, DispersedQiEvent, MountainShakeEvent,
@@ -696,6 +697,207 @@ fn full_power_release_skill_id_constant_is_canonical_baomai() {
     assert_eq!(
         BAOMAI_FULL_POWER_RELEASE_SKILL_ID, "baomai.full_power_release",
         "BAOMAI_FULL_POWER_RELEASE_SKILL_ID 应为 'baomai.full_power_release'（无下划线）"
+    );
+}
+
+// ── 真元守恒测试 ────────────────────────────────────────────────────────────────
+//
+// BUG-QP-01: baomai_v3 spend_qi 曾只发 QiTransfer 事件（Collision reason）但不更新
+// zone.spirit_qi，导致真元从系统中蒸发。修复后，cast_beng_quan / cast_mountain_shake
+// 必须将消耗真元通过 emit_spent_qi_release 归还给 zone 或 overflow。
+//
+// 守恒语义：player.qi_current 减少 amount → zone.spirit_qi 增加 accepted / overflow 事件
+// 携带剩余量（二者合计 = amount）。
+
+fn app_with_zone() -> App {
+    let mut app = app();
+    app.insert_resource(ZoneRegistry::fallback());
+    app
+}
+
+/// 玩家在 spawn zone 内施放崩拳 → zone.spirit_qi 必须上升（真元归还区域）。
+/// 修复前：record_qi_transfer 只发死亡事件，zone.spirit_qi 维持 0.9 不变。
+/// 修复后：emit_spent_qi_release 直接写 zone.spirit_qi。
+#[test]
+fn beng_quan_in_zone_credits_zone_spirit_qi() {
+    let mut app = app_with_zone();
+    // spawn zone 的 y 范围是 [64, 80]；x/z 范围是 [-128, 128]。
+    let caster = spawn_actor(
+        &mut app,
+        Realm::Condense,
+        100.0,
+        100.0,
+        DVec3::new(0.0, 65.0, 0.0),
+    );
+    let target = spawn_target(&mut app, DVec3::new(1.0, 65.0, 0.0));
+    let initial_spirit_qi = app
+        .world()
+        .resource::<ZoneRegistry>()
+        .find_zone_by_name("spawn")
+        .unwrap()
+        .spirit_qi;
+
+    cast_beng_quan(app.world_mut(), caster, 0, Some(target));
+
+    let after_spirit_qi = app
+        .world()
+        .resource::<ZoneRegistry>()
+        .find_zone_by_name("spawn")
+        .unwrap()
+        .spirit_qi;
+    assert!(
+        after_spirit_qi > initial_spirit_qi,
+        "崩拳消耗真元应归还 spawn zone（spirit_qi 应上升）：\
+         before={initial_spirit_qi}, after={after_spirit_qi}；\
+         修复前 record_qi_transfer 只发事件不写 zone，spirit_qi 永远不变"
+    );
+}
+
+/// 区域满载（spirit_qi 接近上限 1.0）时，超出部分走 overflow QiTransfer 事件。
+/// zone_after 被 clamp(-1.0, 1.0)，所以即使大量注入也不超过 1.0。
+#[test]
+fn beng_quan_with_full_zone_routes_overflow_to_event() {
+    let mut app = app_with_zone();
+    // 预先把 zone 灵气撑满
+    {
+        let mut registry = app.world_mut().resource_mut::<ZoneRegistry>();
+        registry.find_zone_mut("spawn").unwrap().spirit_qi = 1.0;
+    }
+    let caster = spawn_actor(
+        &mut app,
+        Realm::Condense,
+        100.0,
+        100.0,
+        DVec3::new(0.0, 65.0, 0.0),
+    );
+    let target = spawn_target(&mut app, DVec3::new(1.0, 65.0, 0.0));
+
+    cast_beng_quan(app.world_mut(), caster, 0, Some(target));
+
+    // 满区域：spirit_qi 不变（没有 room），overflow 走 QiTransfer 事件
+    let after_spirit_qi = app
+        .world()
+        .resource::<ZoneRegistry>()
+        .find_zone_by_name("spawn")
+        .unwrap()
+        .spirit_qi;
+    assert_eq!(
+        after_spirit_qi, 1.0,
+        "区域满载时 spirit_qi 应保持 1.0，实际={after_spirit_qi}"
+    );
+    // 应有至少一条 QiTransfer overflow 事件
+    let transfer_count = app.world().resource::<Events<QiTransfer>>().len();
+    assert!(
+        transfer_count >= 1,
+        "满载区域 beng_quan 应 emit overflow QiTransfer 事件，实际数量={transfer_count}"
+    );
+}
+
+/// 玩家在 zone 外（无区域命中）施放崩拳 → 发 overflow QiTransfer 事件；qi_current 正确减少。
+#[test]
+fn beng_quan_outside_zone_emits_overflow_transfer_and_deducts_qi() {
+    let mut app = app_with_zone();
+    // 位于 zone 外（y < 64 不在 spawn 范围内）
+    let caster = spawn_actor(
+        &mut app,
+        Realm::Condense,
+        100.0,
+        100.0,
+        DVec3::new(0.0, 10.0, 0.0), // y=10 < zone min y=64
+    );
+    let target = spawn_target(&mut app, DVec3::new(1.0, 10.0, 0.0));
+
+    cast_beng_quan(app.world_mut(), caster, 0, Some(target));
+
+    // qi_current 应已减少（spend_qi 先于 emit_spent_qi_release 执行）
+    let qi_after = app.world().get::<Cultivation>(caster).unwrap().qi_current;
+    assert!(
+        qi_after < 100.0,
+        "cast 应先 spend_qi 扣除 qi_current；期望 < 100.0，实际={qi_after}"
+    );
+    // 无 zone 命中 → overflow 走 QiTransfer 事件
+    let transfer_count = app.world().resource::<Events<QiTransfer>>().len();
+    assert!(
+        transfer_count >= 1,
+        "zone 外崩拳应 emit overflow QiTransfer 事件，实际数量={transfer_count}"
+    );
+}
+
+/// 玩家在 spawn zone 内施放山动崩霆 → zone.spirit_qi 应上升。
+#[test]
+fn mountain_shake_in_zone_credits_zone_spirit_qi() {
+    let mut app = app_with_zone();
+    let caster = spawn_actor(
+        &mut app,
+        Realm::Solidify,
+        100.0,
+        1_000.0,
+        DVec3::new(0.0, 65.0, 0.0),
+    );
+    let initial_spirit_qi = app
+        .world()
+        .resource::<ZoneRegistry>()
+        .find_zone_by_name("spawn")
+        .unwrap()
+        .spirit_qi;
+
+    cast_mountain_shake(app.world_mut(), caster, 0, None);
+
+    let after_spirit_qi = app
+        .world()
+        .resource::<ZoneRegistry>()
+        .find_zone_by_name("spawn")
+        .unwrap()
+        .spirit_qi;
+    assert!(
+        after_spirit_qi > initial_spirit_qi,
+        "山动崩霆消耗真元应归还 spawn zone（spirit_qi 应上升）：\
+         before={initial_spirit_qi}, after={after_spirit_qi}"
+    );
+}
+
+/// qi_current 与 spirit_qi 之间的守恒量化检验：
+/// 崩拳消耗 base_cost（qi_max=100 时 = 40），zone 内全额接纳时
+/// zone.spirit_qi 的上升量恰好对应 accepted/QI_ZONE_UNIT_CAPACITY。
+#[test]
+fn beng_quan_qi_conservation_amount_is_consistent() {
+    use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
+
+    let mut app = app_with_zone();
+    // 先将 zone 清空（spirit_qi=0）以便精确计算接纳量
+    {
+        let mut registry = app.world_mut().resource_mut::<ZoneRegistry>();
+        registry.find_zone_mut("spawn").unwrap().spirit_qi = 0.0;
+    }
+    let caster = spawn_actor(
+        &mut app,
+        Realm::Condense,
+        100.0,
+        100.0,
+        DVec3::new(0.0, 65.0, 0.0),
+    );
+    let target = spawn_target(&mut app, DVec3::new(1.0, 65.0, 0.0));
+
+    let qi_before = app.world().get::<Cultivation>(caster).unwrap().qi_current;
+    cast_beng_quan(app.world_mut(), caster, 0, Some(target));
+    let qi_after = app.world().get::<Cultivation>(caster).unwrap().qi_current;
+    let spent = qi_before - qi_after;
+
+    let zone_spirit_qi_after = app
+        .world()
+        .resource::<ZoneRegistry>()
+        .find_zone_by_name("spawn")
+        .unwrap()
+        .spirit_qi;
+    let zone_accepted = zone_spirit_qi_after * QI_ZONE_UNIT_CAPACITY;
+
+    // accepted + overflow_emitted = spent（守恒）
+    // 当 zone 有足够容量且 spent < capacity 时 overflow=0，accepted=spent。
+    assert!(
+        (zone_accepted - spent).abs() < 1e-9,
+        "守恒断言失败：spent={spent}, zone_accepted={zone_accepted}（差 {}）；\
+         baomai_v3 emit_spent_qi_release 应将全部消耗真元归还 zone",
+        (zone_accepted - spent).abs()
     );
 }
 

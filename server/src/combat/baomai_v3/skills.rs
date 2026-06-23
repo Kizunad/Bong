@@ -21,13 +21,16 @@ use crate::network::audio_event_emit::{
     AudioRecipient, PlaySoundRecipeRequest, AUDIO_BROADCAST_RADIUS,
 };
 use crate::network::vfx_event_emit::VfxEventRequest;
+use crate::qi_physics::constants::{QI_EPSILON, QI_ZONE_UNIT_CAPACITY};
 use crate::qi_physics::{
-    aoe_ground_wave, blood_burn_conversion, body_transcendence, QiAccountId, QiTransfer,
-    QiTransferReason,
+    aoe_ground_wave, blood_burn_conversion, body_transcendence, qi_release_to_zone, QiAccountId,
+    QiTransfer, QiTransferReason,
 };
 use crate::schema::vfx_event::VfxEventPayloadV1;
 use crate::skill::components::SkillId;
 use crate::skill::events::{SkillXpGain, XpGainSource};
+use crate::world::dimension::{CurrentDimension, DimensionKind};
+use crate::world::zone::ZoneRegistry;
 
 use super::events::{
     BaomaiSkillEvent, BaomaiSkillId, BloodBurnEvent, DispersedQiEvent, MountainShakeEvent,
@@ -176,7 +179,7 @@ pub fn cast_beng_quan(
         flow,
         now_tick,
     );
-    record_qi_transfer(world, caster, BaomaiSkillId::BengQuan, base_cost);
+    emit_spent_qi_release(world, caster, base_cost, "baomai_v3:beng_quan");
     record_practice(world, caster, BaomaiSkillId::BengQuan);
     emit_particle(
         world,
@@ -386,12 +389,7 @@ pub fn cast_mountain_shake(
         active_flow_multiplier(world, caster, now_tick),
         now_tick,
     );
-    record_qi_transfer(
-        world,
-        caster,
-        BaomaiSkillId::MountainShake,
-        outcome.qi_spent,
-    );
+    emit_spent_qi_release(world, caster, outcome.qi_spent, "baomai_v3:mountain_shake");
     record_practice(world, caster, BaomaiSkillId::MountainShake);
     emit_particle(world, position, "bong:ground_wave_dust", "#A8885A", 1.0, 28);
     emit_audio(world, "mountain_shake_rumble", position);
@@ -806,22 +804,105 @@ fn record_practice(world: &mut bevy_ecs::world::World, caster: Entity, skill: Ba
     });
 }
 
-fn record_qi_transfer(
+fn emit_spent_qi_release(
     world: &mut bevy_ecs::world::World,
     caster: Entity,
-    skill: BaomaiSkillId,
     amount: f64,
+    sink: &'static str,
 ) {
-    if amount <= f64::EPSILON {
+    if amount <= QI_EPSILON {
         return;
     }
-    if let Ok(transfer) = QiTransfer::new(
-        QiAccountId::player(format!("entity:{}", caster.to_bits())),
-        QiAccountId::overflow(format!("baomai_v3:{}", skill.wire_kind())),
+    let from = QiAccountId::player(format!("entity:{}", caster.to_bits()));
+    let position = world.get::<Position>(caster).map(|p| p.get());
+    let dimension = world
+        .get::<CurrentDimension>(caster)
+        .map(|d| d.0)
+        .unwrap_or(DimensionKind::Overworld);
+
+    let mut transfers = Vec::new();
+    if let (Some(position), Some(mut zones)) = (position, world.get_resource_mut::<ZoneRegistry>())
+    {
+        let zone_name = zones
+            .find_zone(dimension, position)
+            .map(|zone| zone.name.clone());
+        if let Some(zone_name) = zone_name {
+            if let Some(zone) = zones.find_zone_mut(zone_name.as_str()) {
+                let to = QiAccountId::zone(zone.name.clone());
+                let zone_current = zone.spirit_qi.max(0.0) * QI_ZONE_UNIT_CAPACITY;
+                match qi_release_to_zone(
+                    amount,
+                    from.clone(),
+                    to,
+                    zone_current,
+                    QI_ZONE_UNIT_CAPACITY,
+                ) {
+                    Ok(outcome) => {
+                        zone.spirit_qi =
+                            (outcome.zone_after / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
+                        if let Some(transfer) = outcome.transfer {
+                            transfers.push(transfer);
+                        }
+                        if outcome.overflow > QI_EPSILON {
+                            push_spent_qi_overflow(
+                                &mut transfers,
+                                from.clone(),
+                                outcome.overflow,
+                                sink,
+                                caster,
+                            );
+                        }
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            ?error,
+                            "[bong][baomai_v3] invalid spent qi release for {:?}; route to overflow",
+                            caster
+                        );
+                        push_spent_qi_overflow(&mut transfers, from.clone(), amount, sink, caster);
+                    }
+                }
+            } else {
+                push_spent_qi_overflow(&mut transfers, from.clone(), amount, sink, caster);
+            }
+        } else {
+            push_spent_qi_overflow(&mut transfers, from.clone(), amount, sink, caster);
+        }
+    } else {
+        push_spent_qi_overflow(&mut transfers, from.clone(), amount, sink, caster);
+    }
+
+    for transfer in transfers {
+        if let Some(mut events) = world.get_resource_mut::<Events<QiTransfer>>() {
+            events.send(transfer);
+        }
+    }
+}
+
+fn push_spent_qi_overflow(
+    transfers: &mut Vec<QiTransfer>,
+    from: QiAccountId,
+    amount: f64,
+    sink: &'static str,
+    caster: Entity,
+) {
+    if amount <= QI_EPSILON {
+        return;
+    }
+    match QiTransfer::new(
+        from,
+        QiAccountId::overflow(format!("{sink}:{}", caster.to_bits())),
         amount,
-        QiTransferReason::Collision,
+        QiTransferReason::ReleaseToZone,
     ) {
-        world.send_event(transfer);
+        Ok(transfer) => transfers.push(transfer),
+        Err(error) => tracing::warn!(
+            ?error,
+            sink,
+            ?caster,
+            amount,
+            "[bong][baomai_v3] failed to build spent qi overflow transfer"
+        ),
     }
 }
 
