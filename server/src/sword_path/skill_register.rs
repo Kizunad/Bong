@@ -107,7 +107,8 @@ fn cast_condense_edge(
     // 去掉"目标无效"门禁（Option B）：凝锋是近战剑势，准星没对准也照常挥出，
     // target 透传 Option —— 有目标命中、无目标 resolver 跳过即空挥（不命中、无误伤）。
     apply_cast_costs(world, caster, slot, ctx.now_tick, &CONDENSE_EDGE_PROFILE);
-    inject_bond_qi(world, caster, CONDENSE_EDGE.qi_cost);
+    let injected = inject_bond_qi(world, caster, CONDENSE_EDGE.qi_cost);
+    credit_skill_qi_to_zone(world, caster, CONDENSE_EDGE.qi_cost, injected);
 
     world.send_event(AttackIntent {
         attacker: caster,
@@ -155,7 +156,8 @@ fn cast_qi_slash(
         };
     }
     apply_cast_costs(world, caster, slot, ctx.now_tick, &QI_SLASH_PROFILE);
-    inject_bond_qi(world, caster, QI_SLASH.qi_cost);
+    let injected = inject_bond_qi(world, caster, QI_SLASH.qi_cost);
+    credit_skill_qi_to_zone(world, caster, QI_SLASH.qi_cost, injected);
 
     world.send_event(AttackIntent {
         attacker: caster,
@@ -232,7 +234,8 @@ fn cast_resonance(
         };
     }
     apply_cast_costs(world, caster, slot, ctx.now_tick, &RESONANCE_PROFILE);
-    inject_bond_qi(world, caster, RESONANCE.qi_cost);
+    let injected = inject_bond_qi(world, caster, RESONANCE.qi_cost);
+    credit_skill_qi_to_zone(world, caster, RESONANCE.qi_cost, injected);
 
     // 6 格 AoE：扫范围内有 StatusEffects 的实体打 Slowed。
     // 范围内目标列表先 collect 出来，避免持有 query borrow 时 send_event。
@@ -295,7 +298,8 @@ fn cast_manifest(
         };
     }
     apply_cast_costs(world, caster, slot, ctx.now_tick, &MANIFEST_PROFILE);
-    inject_bond_qi(world, caster, MANIFEST.qi_cost);
+    let injected = inject_bond_qi(world, caster, MANIFEST.qi_cost);
+    credit_skill_qi_to_zone(world, caster, MANIFEST.qi_cost, injected);
 
     // 化形完整版（剑意实体追踪 5s）留待 v3 BOSS AI 之后做。本 phase 用单次高强度
     // AttackIntent 作占位，保证伤害与品阶乘数走 combat pipeline。
@@ -732,21 +736,72 @@ fn emit_skill_av(
     });
 }
 
-fn inject_bond_qi(world: &mut bevy_ecs::world::World, caster: Entity, qi_cost: f64) {
+/// 向灵剑注入真元，返回实际注入量（bond 不存在或品阶 < 凝脉时返回 0）。
+/// 调用方**必须**随后对 `(qi_cost - injected)` 调用 `credit_skill_qi_to_zone`
+/// 以保证守恒律（worldview §二）。
+fn inject_bond_qi(world: &mut bevy_ecs::world::World, caster: Entity, qi_cost: f64) -> f64 {
     // 灵剑必须 ≥ 凝脉品阶才有存储能力。注入按 plan §bond::QI_INJECT_RATIO = 0.1。
     let injected = match world.get_mut::<SwordBondComponent>(caster) {
         Some(mut bond) if bond.grade.can_store_qi() => bond.try_inject_qi(qi_cost),
-        _ => return,
+        _ => 0.0,
     };
-    if injected <= f64::EPSILON {
+    if injected > f64::EPSILON {
+        if let Some(mut events) = world.get_resource_mut::<Events<QiTransfer>>() {
+            if let Ok(transfer) = QiTransfer::new(
+                QiAccountId::player(format!("entity:{caster:?}")),
+                QiAccountId::container(format!("sword_bond:{caster:?}")),
+                injected,
+                QiTransferReason::Channeling,
+            ) {
+                events.send(transfer);
+            }
+        }
+    }
+    injected
+}
+
+/// 将剑道招式消耗中未注入灵剑的余量（`cost - injected`）归还给 caster 所在 zone，
+/// 并发 `QiTransfer(player → zone, remainder)` 守恒审计事件。
+///
+/// - 若 ZoneRegistry 不存在（测试 / 早期启动期）则静默 skip。
+/// - 若 remainder ≤ ε 则无需操作。
+fn credit_skill_qi_to_zone(
+    world: &mut bevy_ecs::world::World,
+    caster: Entity,
+    qi_cost: f64,
+    injected: f64,
+) {
+    let remainder = qi_cost - injected;
+    if remainder <= f64::EPSILON {
         return;
+    }
+    let pos = world
+        .get::<Position>(caster)
+        .map(|p| p.get())
+        .unwrap_or(DVec3::ZERO);
+    // 找到 caster 所在 zone 名（只读），再通过名字拿可变引用。
+    let zone_name: String = {
+        let Some(registry) = world.get_resource::<crate::world::zone::ZoneRegistry>() else {
+            return;
+        };
+        registry
+            .find_zone(crate::world::dimension::DimensionKind::Overworld, pos)
+            .map(|z| z.name.clone())
+            .unwrap_or_else(|| DEFAULT_SPAWN_ZONE_NAME.to_string())
+    };
+    if let Some(mut registry) = world.get_resource_mut::<crate::world::zone::ZoneRegistry>() {
+        if let Some(zone) = registry.find_zone_mut(&zone_name) {
+            zone.spirit_qi = (zone.spirit_qi
+                + remainder / crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY)
+                .clamp(-1.0, 1.0);
+        }
     }
     if let Some(mut events) = world.get_resource_mut::<Events<QiTransfer>>() {
         if let Ok(transfer) = QiTransfer::new(
             QiAccountId::player(format!("entity:{caster:?}")),
-            QiAccountId::container(format!("sword_bond:{caster:?}")),
-            injected,
-            QiTransferReason::Channeling,
+            QiAccountId::zone(zone_name),
+            remainder,
+            QiTransferReason::ReleaseToZone,
         ) {
             events.send(transfer);
         }
@@ -1398,6 +1453,247 @@ mod tests {
             (release_events[0].amount - 5100.0).abs() < 1e-6,
             "ReleaseToZone amount = qi_max(5000) + stored_qi(100) = 5100，实际 {}",
             release_events[0].amount
+        );
+    }
+
+    // ─── QP-002 守恒修复测试 ──────────────────────────────────────────────────────
+
+    /// QP-002 happy path — 无灵剑时 QI_SLASH 全部消耗应归还 zone（100% = qi_cost）。
+    /// 此前 drain_qi 把 qi 从 Cultivation 扣掉、没有任何 zone credit，守恒漏洞。
+    #[test]
+    fn qi_slash_without_bond_credits_full_cost_to_zone() {
+        let (mut app, caster) = setup_app();
+        // 插入含 spawn zone（spirit_qi=0.9）的 ZoneRegistry。
+        let zone_before = 0.9_f64;
+        let mut registry = crate::world::zone::ZoneRegistry::fallback();
+        registry.find_zone_mut("spawn").unwrap().spirit_qi = zone_before;
+        app.world_mut().insert_resource(registry);
+
+        let qi_before = app.world().get::<Cultivation>(caster).unwrap().qi_current;
+        let result = cast_qi_slash(app.world_mut(), caster, 0, None);
+        assert!(matches!(result, CastResult::Started { .. }));
+
+        // qi_current 应减少 QI_SLASH.qi_cost。
+        let qi_after = app.world().get::<Cultivation>(caster).unwrap().qi_current;
+        assert!(
+            (qi_before - qi_after - QI_SLASH.qi_cost).abs() < 1e-9,
+            "qi_current 应扣 {} (QI_SLASH.qi_cost)，实际差 {}",
+            QI_SLASH.qi_cost,
+            qi_before - qi_after,
+        );
+
+        // 无 bond → 全部 cost 归还 zone：ReleaseToZone event amount = QI_SLASH.qi_cost。
+        let release: Vec<_> = app
+            .world()
+            .resource::<Events<QiTransfer>>()
+            .iter_current_update_events()
+            .filter(|t| matches!(t.reason, QiTransferReason::ReleaseToZone))
+            .collect();
+        assert_eq!(
+            release.len(),
+            1,
+            "无 bond 剑气斩应有恰好 1 笔 ReleaseToZone，实际 {} 笔",
+            release.len()
+        );
+        assert!(
+            (release[0].amount - QI_SLASH.qi_cost).abs() < 1e-9,
+            "ReleaseToZone.amount 应等于 QI_SLASH.qi_cost={:.1}（全额归 zone），实际 {}",
+            QI_SLASH.qi_cost,
+            release[0].amount,
+        );
+
+        // zone.spirit_qi 应随之增加（qi 守恒）。
+        let zone_after = app
+            .world_mut()
+            .resource_mut::<crate::world::zone::ZoneRegistry>()
+            .find_zone_mut("spawn")
+            .map(|z| z.spirit_qi)
+            .unwrap_or(0.0);
+        assert!(
+            zone_after > zone_before,
+            "zone.spirit_qi 应在剑气斩后上升（守恒），实际 {zone_before} → {zone_after}"
+        );
+    }
+
+    /// QP-002 — 有凝脉灵剑时 10% 注入 bond、90% 归还 zone（守恒不漏）。
+    #[test]
+    fn qi_slash_with_condensed_bond_credits_remainder_to_zone() {
+        let (mut app, caster) = setup_app();
+        let zone_before = 0.5_f64;
+        let mut registry = crate::world::zone::ZoneRegistry::fallback();
+        registry.find_zone_mut("spawn").unwrap().spirit_qi = zone_before;
+        app.world_mut().insert_resource(registry);
+
+        // 给 caster 挂凝脉灵剑（stored_qi cap 远大于注入量，保证不截断）。
+        app.world_mut().entity_mut(caster).insert(SwordBondComponent {
+            bonded_weapon_entity: Entity::from_raw(1),
+            bond_strength: 1.0,
+            stored_qi: 0.0,
+            grade: SwordGrade::Condensed,
+        });
+
+        let result = cast_qi_slash(app.world_mut(), caster, 0, None);
+        assert!(matches!(result, CastResult::Started { .. }));
+
+        let transfers: Vec<_> = app
+            .world()
+            .resource::<Events<QiTransfer>>()
+            .iter_current_update_events()
+            .collect();
+
+        // 应有 1 笔 Channeling（player→sword_bond）+ 1 笔 ReleaseToZone（player→zone）。
+        let channeling: Vec<_> = transfers
+            .iter()
+            .filter(|t| matches!(t.reason, QiTransferReason::Channeling))
+            .collect();
+        let release: Vec<_> = transfers
+            .iter()
+            .filter(|t| matches!(t.reason, QiTransferReason::ReleaseToZone))
+            .collect();
+
+        assert_eq!(
+            channeling.len(),
+            1,
+            "有 bond 时应有 1 笔 Channeling audit event，实际 {}",
+            channeling.len()
+        );
+        let expected_injected = QI_SLASH.qi_cost * super::super::bond::QI_INJECT_RATIO;
+        assert!(
+            (channeling[0].amount - expected_injected).abs() < 1e-9,
+            "Channeling amount = cost × QI_INJECT_RATIO = {expected_injected:.2}，实际 {}",
+            channeling[0].amount,
+        );
+
+        assert_eq!(
+            release.len(),
+            1,
+            "有 bond 时仍应有 1 笔 ReleaseToZone，实际 {}",
+            release.len()
+        );
+        let expected_remainder = QI_SLASH.qi_cost - expected_injected;
+        assert!(
+            (release[0].amount - expected_remainder).abs() < 1e-9,
+            "ReleaseToZone amount = cost - injected = {expected_remainder:.2}，实际 {}",
+            release[0].amount,
+        );
+
+        // bond.stored_qi 应已注入 injected 量。
+        let bond = app.world().get::<SwordBondComponent>(caster).unwrap();
+        assert!(
+            (bond.stored_qi - expected_injected).abs() < 1e-9,
+            "bond.stored_qi 应等于注入量 {expected_injected:.2}，实际 {}",
+            bond.stored_qi,
+        );
+    }
+
+    /// QP-002 — 凝脉以下灵剑（Mortal）：bond 不存储，全部 cost 归还 zone（与无 bond 相同）。
+    #[test]
+    fn qi_slash_with_mortal_bond_credits_full_cost_to_zone() {
+        let (mut app, caster) = setup_app();
+        let mut registry = crate::world::zone::ZoneRegistry::fallback();
+        registry.find_zone_mut("spawn").unwrap().spirit_qi = 0.3;
+        app.world_mut().insert_resource(registry);
+
+        app.world_mut().entity_mut(caster).insert(SwordBondComponent {
+            bonded_weapon_entity: Entity::from_raw(2),
+            bond_strength: 0.5,
+            stored_qi: 0.0,
+            grade: SwordGrade::Mortal, // can_store_qi() = false
+        });
+
+        let result = cast_qi_slash(app.world_mut(), caster, 0, None);
+        assert!(matches!(result, CastResult::Started { .. }));
+
+        let channeling_count = app
+            .world()
+            .resource::<Events<QiTransfer>>()
+            .iter_current_update_events()
+            .filter(|t| matches!(t.reason, QiTransferReason::Channeling))
+            .count();
+        assert_eq!(
+            channeling_count,
+            0,
+            "Mortal 灵剑不应产生 Channeling event，实际 {channeling_count}"
+        );
+
+        let release: Vec<_> = app
+            .world()
+            .resource::<Events<QiTransfer>>()
+            .iter_current_update_events()
+            .filter(|t| matches!(t.reason, QiTransferReason::ReleaseToZone))
+            .collect();
+        assert_eq!(release.len(), 1, "Mortal 灵剑全部 cost 归 zone");
+        assert!(
+            (release[0].amount - QI_SLASH.qi_cost).abs() < 1e-9,
+            "全额归 zone = QI_SLASH.qi_cost={:.1}，实际 {}",
+            QI_SLASH.qi_cost,
+            release[0].amount,
+        );
+    }
+
+    /// QP-002 — 无 ZoneRegistry 资源时 cast 不 panic，守恒 skip（优雅降级）。
+    #[test]
+    fn qi_slash_without_zone_registry_does_not_panic() {
+        let (mut app, caster) = setup_app();
+        // 故意不插入 ZoneRegistry（模拟早期启动期）。
+
+        let result = cast_qi_slash(app.world_mut(), caster, 0, None);
+        // 应正常完成，不 panic，不 reject。
+        assert!(
+            matches!(result, CastResult::Started { .. }),
+            "无 ZoneRegistry 时 cast 不应 panic / reject，实际 {result:?}"
+        );
+    }
+
+    /// QP-002 — RESONANCE（20.0 qi）无 bond：全额归 zone。
+    #[test]
+    fn resonance_without_bond_credits_full_cost_to_zone() {
+        let (mut app, caster) = setup_app();
+        let mut registry = crate::world::zone::ZoneRegistry::fallback();
+        registry.find_zone_mut("spawn").unwrap().spirit_qi = 0.1;
+        app.world_mut().insert_resource(registry);
+
+        let result = cast_resonance(app.world_mut(), caster, 0, None);
+        assert!(matches!(result, CastResult::Started { .. }));
+
+        let release: Vec<_> = app
+            .world()
+            .resource::<Events<QiTransfer>>()
+            .iter_current_update_events()
+            .filter(|t| matches!(t.reason, QiTransferReason::ReleaseToZone))
+            .collect();
+        assert_eq!(release.len(), 1, "剑鸣无 bond 应有 1 笔 ReleaseToZone");
+        assert!(
+            (release[0].amount - RESONANCE.qi_cost).abs() < 1e-9,
+            "ReleaseToZone = RESONANCE.qi_cost={:.1}，实际 {}",
+            RESONANCE.qi_cost,
+            release[0].amount,
+        );
+    }
+
+    /// QP-002 — MANIFEST（40.0 qi）无 bond：全额归 zone。
+    #[test]
+    fn manifest_without_bond_credits_full_cost_to_zone() {
+        let (mut app, caster) = setup_app();
+        let mut registry = crate::world::zone::ZoneRegistry::fallback();
+        registry.find_zone_mut("spawn").unwrap().spirit_qi = 0.1;
+        app.world_mut().insert_resource(registry);
+
+        let result = cast_manifest(app.world_mut(), caster, 0, None);
+        assert!(matches!(result, CastResult::Started { .. }));
+
+        let release: Vec<_> = app
+            .world()
+            .resource::<Events<QiTransfer>>()
+            .iter_current_update_events()
+            .filter(|t| matches!(t.reason, QiTransferReason::ReleaseToZone))
+            .collect();
+        assert_eq!(release.len(), 1, "化形无 bond 应有 1 笔 ReleaseToZone");
+        assert!(
+            (release[0].amount - MANIFEST.qi_cost).abs() < 1e-9,
+            "ReleaseToZone = MANIFEST.qi_cost={:.1}，实际 {}",
+            MANIFEST.qi_cost,
+            release[0].amount,
         );
     }
 }
