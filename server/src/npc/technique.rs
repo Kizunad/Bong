@@ -418,7 +418,14 @@ pub fn select_technique(
         if f64::from(def.qi_cost) > cultivation.qi_current {
             continue;
         }
-        if category_filter.is_none() && def.category == SkillCategory::Defense {
+        // 通用功法池(category_filter=None)排除有专属 scorer/action 通道的类别：
+        // Defense 走 NpcDefenseScorer→jiemai；Heal 走 NpcHealScorer→NpcHealAction(filter=Some(Heal))。
+        // 二者若漏出到通用池，会被下方加权随机选中——且 category_weight(Heal/Defense) 即便为 0
+        // 也被 .max(0.001) 抬成非零权重，导致 NPC 满血时仍有概率用「通用功法回合」self-cast 治疗，
+        // 抢占进攻。Heal 此前漏排除（只挡了 Defense），与其专属通道重复且行为劣化。
+        if category_filter.is_none()
+            && matches!(def.category, SkillCategory::Defense | SkillCategory::Heal)
+        {
             continue;
         }
 
@@ -1648,6 +1655,123 @@ mod tests {
             None,
         );
         assert!(result.is_some(), "expired cooldown should allow technique");
+    }
+
+    #[test]
+    fn select_technique_general_pool_excludes_heal_but_heal_channel_keeps_it() {
+        // #3 回归锁：通用功法池(category_filter=None)必须排除 Heal——Heal 有专属
+        // NpcHealScorer→NpcHealAction(filter=Some(Heal)) 通道。若漏出到通用池，
+        // category_weight(Heal) 即便为 0 也被 .max(0.001) 抬成非零权重，NPC 满血时
+        // 仍有概率用「通用功法回合」self-cast 治疗，抢占进攻。Defense 早已被排除，Heal 此前漏排。
+        assert_eq!(
+            technique_definition("npc.heal_basic").map(|d| d.category),
+            Some(SkillCategory::Heal),
+            "前置假设：npc.heal_basic 必须是 Heal 类别"
+        );
+        let known = KnownTechniques {
+            entries: vec![KnownTechnique {
+                id: "npc.heal_basic".to_string(),
+                proficiency: 0.5,
+                active: true,
+            }],
+        };
+        let cultivation = Cultivation {
+            realm: Realm::Condense,
+            qi_current: 1000.0,
+            qi_max: 1000.0,
+            ..Default::default()
+        };
+        let deps = empty_deps();
+        let cooldowns = NpcCooldownMap::default();
+        let entity = Entity::from_raw(1);
+
+        // 通用池：唯一候选是 heal → 被排除 → 候选空 → None（确定性，不依赖加权 roll）。
+        let general = select_technique(
+            &known,
+            &cultivation,
+            &deps,
+            None,
+            None,
+            &cooldowns,
+            entity,
+            3.0,
+            100,
+            &default_ctx(),
+            None,
+        );
+        assert!(
+            general.is_none(),
+            "通用功法池必须排除 Heal，唯一 heal 候选时应返回 None，实得 {general:?}"
+        );
+
+        // 专属 heal 通道(filter=Some(Heal))：本修复不得误伤，仍须能选中 heal。
+        let heal_channel = select_technique(
+            &known,
+            &cultivation,
+            &deps,
+            None,
+            None,
+            &cooldowns,
+            entity,
+            3.0,
+            100,
+            &default_ctx(),
+            Some(SkillCategory::Heal),
+        );
+        assert_eq!(
+            heal_channel.map(|s| s.technique_id),
+            Some("npc.heal_basic".to_string()),
+            "Heal 专属通道(filter=Some(Heal))必须仍能选中 heal，修复只动通用池"
+        );
+    }
+
+    #[test]
+    fn select_technique_general_pool_picks_attack_over_leaked_heal() {
+        // 通用池同时含 attack+heal 且 heal 熟练度远高时，heal 被排除 → 结果必为 attack
+        // （确定性：候选集只剩 sword.cleave，与加权 roll 无关）。
+        let known = KnownTechniques {
+            entries: vec![
+                KnownTechnique {
+                    id: "npc.heal_basic".to_string(),
+                    proficiency: 0.9,
+                    active: true,
+                },
+                KnownTechnique {
+                    id: "sword.cleave".to_string(),
+                    proficiency: 0.1,
+                    active: true,
+                },
+            ],
+        };
+        let cultivation = Cultivation {
+            realm: Realm::Condense,
+            qi_current: 1000.0,
+            qi_max: 1000.0,
+            ..Default::default()
+        };
+        let deps = empty_deps();
+        let cooldowns = NpcCooldownMap::default();
+        let entity = Entity::from_raw(7);
+
+        let sel = select_technique(
+            &known,
+            &cultivation,
+            &deps,
+            None,
+            None,
+            &cooldowns,
+            entity,
+            3.0,
+            100,
+            &default_ctx(),
+            None,
+        )
+        .expect("attack 功法仍在通用池，应可选");
+        assert_eq!(
+            sel.technique_id, "sword.cleave",
+            "通用池排除 heal 后只剩 attack，即便 heal 熟练度更高也必须选 attack"
+        );
+        assert_eq!(sel.target, SkillTarget::NearestEnemy);
     }
 
     #[test]
