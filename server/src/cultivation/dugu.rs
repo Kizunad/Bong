@@ -187,7 +187,11 @@ pub fn resolve_infuse_dugu_poison_intents(
         Option<&Lifecycle>,
         Option<&PendingDuguInfusion>,
     )>,
-    locations: Query<(Option<&Position>, Option<&CurrentDimension>, Option<&LifeRecord>)>,
+    locations: Query<(
+        Option<&Position>,
+        Option<&CurrentDimension>,
+        Option<&LifeRecord>,
+    )>,
     mut disrupted_events: EventWriter<DuguObfuscationDisruptedEvent>,
     mut zones: Option<ResMut<ZoneRegistry>>,
     mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
@@ -900,11 +904,9 @@ mod tests {
 
         let cultivation = app.world().get::<Cultivation>(infuser).unwrap();
         assert_eq!(
-            cultivation.qi_current,
-            7.0,
+            cultivation.qi_current, 7.0,
             "qi_current should drop by DUGU_INFUSE_COST={} (was 12.0, expected 7.0, got {})",
-            DUGU_INFUSE_COST,
-            cultivation.qi_current
+            DUGU_INFUSE_COST, cultivation.qi_current
         );
         let pending = app.world().get::<PendingDuguInfusion>(infuser).unwrap();
         assert_eq!(pending.target_carrier, InfuseTarget::NextNeedle);
@@ -981,11 +983,9 @@ mod tests {
         // Cultivation qi should drop by exactly DUGU_INFUSE_COST.
         let cultivation = app.world().get::<Cultivation>(infuser).unwrap();
         assert_eq!(
-            cultivation.qi_current,
-            15.0,
+            cultivation.qi_current, 15.0,
             "qi_current should drop by DUGU_INFUSE_COST={} (was 20.0, expected 15.0, got {})",
-            DUGU_INFUSE_COST,
-            cultivation.qi_current
+            DUGU_INFUSE_COST, cultivation.qi_current
         );
 
         // Zone must gain spirit_qi (conservation: qi flows player → zone).
@@ -1063,12 +1063,10 @@ mod tests {
 
         let cultivation = app.world().get::<Cultivation>(infuser).unwrap();
         assert_eq!(
-            cultivation.qi_current,
-            0.0,
+            cultivation.qi_current, 0.0,
             "qi_current should reach exactly 0.0 when cost equals starting qi \
              (was DUGU_INFUSE_COST={}, got {})",
-            DUGU_INFUSE_COST,
-            cultivation.qi_current
+            DUGU_INFUSE_COST, cultivation.qi_current
         );
         // Infusion must still be scheduled even at the boundary.
         assert!(
@@ -1145,8 +1143,7 @@ mod tests {
             .unwrap()
             .spirit_qi;
         assert_eq!(
-            before,
-            after,
+            before, after,
             "zone spirit_qi must not change when infuse intent is rejected (no qi spent)"
         );
         // No QiTransfer events.
@@ -1212,8 +1209,7 @@ mod tests {
         // Qi must still be deducted (the cost is real even if zone routing fails).
         let cultivation = app.world().get::<Cultivation>(infuser).unwrap();
         assert_eq!(
-            cultivation.qi_current,
-            10.0,
+            cultivation.qi_current, 10.0,
             "qi_current should still drop by DUGU_INFUSE_COST even without CurrentDimension \
              (was 15.0, expected 10.0, got {})",
             cultivation.qi_current
