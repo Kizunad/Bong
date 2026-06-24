@@ -237,6 +237,7 @@ impl PlayerState {
             player,
             realm: realm_to_string(cultivation.realm).to_string(),
             spirit_qi: cultivation.qi_current,
+            spirit_qi_max: cultivation.qi_max,
             karma: normalized.karma,
             composite_power,
             breakdown,
@@ -3093,7 +3094,8 @@ mod player_state_tests {
         let cultivation = Cultivation {
             realm: Realm::Induce,
             qi_current: 78.0,
-            qi_max: 100.0,
+            // qi_max≠qi_current 且≠100 fallback：锁住 HUD 真元条分母 = 真实 qi_max（非 current、非 100）。
+            qi_max: 150.0,
             ..Cultivation::default()
         };
 
@@ -3117,15 +3119,19 @@ mod player_state_tests {
         );
         assert_eq!(json.get("realm"), Some(&serde_json::json!("Induce")));
         assert_eq!(json.get("spirit_qi"), Some(&serde_json::json!(78.0)));
+        // P0 HUD fix：下发真元上限，client 才能算正确分母（缺失则回退 max(100,current) 显示恒满）。
+        assert_eq!(json.get("spirit_qi_max"), Some(&serde_json::json!(150.0)));
         assert_eq!(json.get("karma"), Some(&serde_json::json!(0.2)));
         assert_eq!(json.get("zone"), Some(&serde_json::json!("blood_valley")));
 
         match payload.payload {
             ServerDataPayloadV1::PlayerState {
+                spirit_qi_max,
                 composite_power,
                 breakdown,
                 ..
             } => {
+                approx_eq(spirit_qi_max, cultivation.qi_max);
                 approx_eq(composite_power, state.composite_power(&cultivation));
                 approx_eq(breakdown.combat, state.power_breakdown(&cultivation).combat);
                 approx_eq(breakdown.wealth, state.power_breakdown(&cultivation).wealth);

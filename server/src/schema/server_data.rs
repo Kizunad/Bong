@@ -312,6 +312,9 @@ pub enum ServerDataPayloadV1 {
         player: Option<String>,
         realm: String,
         spirit_qi: f64,
+        /// 真元上限（cultivation.qi_max）。client HUD 用作真元条分母；缺失时 client 回退
+        /// max(100, current) 致高境界（固元 150 ~ 化虚 2625）真元条分母恒 100 显示恒满。
+        spirit_qi_max: f64,
         karma: f64,
         composite_power: f64,
         breakdown: PlayerPowerBreakdown,
@@ -1165,6 +1168,9 @@ enum ServerDataPayloadWireV1 {
         player: Option<String>,
         realm: String,
         spirit_qi: f64,
+        /// 真元上限（cultivation.qi_max），client HUD 真元条分母。
+        #[serde(default)]
+        spirit_qi_max: f64,
         karma: f64,
         composite_power: f64,
         breakdown: PlayerPowerBreakdown,
@@ -2124,6 +2130,7 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 player,
                 realm,
                 spirit_qi,
+                spirit_qi_max,
                 karma,
                 composite_power,
                 breakdown,
@@ -2135,6 +2142,7 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 player,
                 realm,
                 spirit_qi,
+                spirit_qi_max,
                 karma,
                 composite_power,
                 breakdown,
@@ -2688,6 +2696,7 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
                 player,
                 realm,
                 spirit_qi,
+                spirit_qi_max,
                 karma,
                 composite_power,
                 breakdown,
@@ -2699,6 +2708,7 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
                 player: player.clone(),
                 realm: realm.clone(),
                 spirit_qi: *spirit_qi,
+                spirit_qi_max: *spirit_qi_max,
                 karma: *karma,
                 composite_power: *composite_power,
                 breakdown: breakdown.clone(),

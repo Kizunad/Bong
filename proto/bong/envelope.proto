@@ -425,6 +425,7 @@ message PlayerState {
   PlayerPowerBreakdown       breakdown          = 8;
   optional SeasonState       season_state       = 9;
   optional PlayerSocialSnapshot social          = 10;
+  double                     spirit_qi_max      = 11;
 }
 
 // ─── 6. CultivationDetail ──────────────────────────────────────

@@ -326,6 +326,7 @@
         "type",
         "realm",
         "spirit_qi",
+        "spirit_qi_max",
         "karma",
         "composite_power",
         "breakdown",
@@ -349,6 +350,10 @@
         "spirit_qi": {
           "minimum": 0,
           "maximum": 160,
+          "type": "number"
+        },
+        "spirit_qi_max": {
+          "minimum": 0,
           "type": "number"
         },
         "karma": {

@@ -522,6 +522,7 @@ impl From<&ServerDataPayloadV1> for Payload {
                 player,
                 realm,
                 spirit_qi,
+                spirit_qi_max,
                 karma,
                 composite_power,
                 breakdown,
@@ -533,6 +534,7 @@ impl From<&ServerDataPayloadV1> for Payload {
                 player: player.clone(),
                 realm: realm_str_to_proto(realm),
                 spirit_qi: *spirit_qi,
+                spirit_qi_max: *spirit_qi_max,
                 karma: *karma,
                 composite_power: *composite_power,
                 zone: zone.clone(),
@@ -5148,6 +5150,7 @@ mod tests {
                 player: None,
                 realm: "Induce".to_string(),
                 spirit_qi: 1.0,
+                spirit_qi_max: 1.0,
                 karma: 0.0,
                 composite_power: 1.0,
                 breakdown: PlayerPowerBreakdown {

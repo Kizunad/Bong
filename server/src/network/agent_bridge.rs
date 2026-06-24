@@ -606,6 +606,7 @@ mod server_data_tests {
                     player: Some("offline:Steve".to_string()),
                     realm: "Induce".to_string(),
                     spirit_qi: 78.0,
+                    spirit_qi_max: 100.0,
                     karma: 0.2,
                     composite_power: 0.35,
                     breakdown: sample_player_breakdown(),
@@ -620,6 +621,7 @@ mod server_data_tests {
                     "player": "offline:Steve",
                     "realm": "Induce",
                     "spirit_qi": 78.0,
+                    "spirit_qi_max": 100.0,
                     "karma": 0.2,
                     "composite_power": 0.35,
                     "breakdown": {
