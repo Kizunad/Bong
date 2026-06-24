@@ -75,12 +75,17 @@ pub fn resolve_zhenmai_parry_skill(
 
 pub fn jiemai_qi_cost_for_realm(realm: Realm) -> Option<f64> {
     match realm {
+        // 醒灵期尚未引气，无法施展截脉弹反 → 无成本即无能力（scorer 同样评 0.0，一致）。
         Realm::Awaken => None,
         Realm::Induce => Some(5.0),
         Realm::Condense => Some(6.0),
         Realm::Solidify => Some(8.0),
         Realm::Spirit => Some(10.0),
-        Realm::Void => None,
+        // 化虚为最高境界，延续递增序列。此前误为 None：防御 scorer 给 Void 评 0.7、
+        // defense_interval_range(Spirit|Void)=(20,40)、zhenmai_v2::parry_qi_cost/parry_k_drain
+        // 都把 Void 当可防御，唯独本 gate 让 npc_defense_action Requested 阶段必败 →
+        // Void NPC 战斗中反复选 NpcDefenseAction 死循环空转，且 Void 玩家无法施放 zhenmai.parry。
+        Realm::Void => Some(12.0),
     }
 }
 
@@ -251,12 +256,38 @@ mod tests {
 
     #[test]
     fn realm_qi_cost_rejects_awaken_and_scales_v1_realms() {
+        // 仅醒灵期无截脉能力（None）；引气起逐级递增，化虚为序列顶端。
         assert_eq!(jiemai_qi_cost_for_realm(Realm::Awaken), None);
         assert_eq!(jiemai_qi_cost_for_realm(Realm::Induce), Some(5.0));
         assert_eq!(jiemai_qi_cost_for_realm(Realm::Condense), Some(6.0));
         assert_eq!(jiemai_qi_cost_for_realm(Realm::Solidify), Some(8.0));
         assert_eq!(jiemai_qi_cost_for_realm(Realm::Spirit), Some(10.0));
-        assert_eq!(jiemai_qi_cost_for_realm(Realm::Void), None);
+        assert_eq!(
+            jiemai_qi_cost_for_realm(Realm::Void),
+            Some(12.0),
+            "化虚期必须有截脉成本，否则防御 scorer(0.7) 与 action gate 矛盾，NPC 防御死循环"
+        );
+    }
+
+    #[test]
+    fn jiemai_cost_monotonically_increases_after_awaken() {
+        // 锁住「醒灵以上每境界都能防御且成本单调递增」——任何 realm 漏填(None)或乱序都撞红。
+        use Realm::*;
+        let costs: Vec<f64> = [Induce, Condense, Solidify, Spirit, Void]
+            .into_iter()
+            .map(|r| {
+                jiemai_qi_cost_for_realm(r)
+                    .unwrap_or_else(|| panic!("{r:?} 应当具备截脉能力（Some），实为 None"))
+            })
+            .collect();
+        for window in costs.windows(2) {
+            assert!(
+                window[1] > window[0],
+                "截脉成本须随境界单调递增，实测相邻两值 {} !> {}",
+                window[1],
+                window[0]
+            );
+        }
     }
 
     #[test]

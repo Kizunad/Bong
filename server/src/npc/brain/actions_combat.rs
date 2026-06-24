@@ -1120,7 +1120,10 @@ mod tests {
     }
 
     #[test]
-    fn defense_action_void_realm_fails_because_qi_cost_is_none() {
+    fn defense_action_void_realm_can_defend_after_jiemai_cost_fix() {
+        // 回归锁：化虚(最高境界)必须能 jiemai 防御。修复前 jiemai_qi_cost_for_realm(Void)=None
+        // 让 Requested 阶段必败，与防御 scorer(0.7)、defense_interval_range(Spirit|Void) 矛盾 →
+        // Void NPC 战斗中反复选 NpcDefenseAction 死循环空转。此测试锁住「化虚能进 Executing 并 emit」。
         use crate::cultivation::components::Cultivation;
 
         let mut app = App::new();
@@ -1156,12 +1159,30 @@ mod tests {
             ))
             .id();
 
+        // 第一次 update：Requested → Executing（化虚现已通过 jiemai_qi_cost gate）。
         app.update();
-
         assert_eq!(
             *app.world().get::<ActionState>(action_entity).unwrap(),
-            ActionState::Failure,
-            "Void realm has no qi cost for jiemai defense, so action should fail"
+            ActionState::Executing,
+            "化虚有了 jiemai 成本(Some(12.0))，Requested 应进入 Executing 而非 Failure"
+        );
+
+        // 第二次 update：Executing → Success 并 emit DefenseIntent（last_defense_tick=None → can_fire）。
+        app.update();
+        assert_eq!(
+            *app.world().get::<ActionState>(action_entity).unwrap(),
+            ActionState::Success,
+            "化虚首个 Executing tick 应 fire 成功"
+        );
+        let captured = &app.world().resource::<CapturedDefenseIntents>().0;
+        assert_eq!(
+            captured.len(),
+            1,
+            "化虚必须能 emit 恰好一条 DefenseIntent 完成防御，而非死循环空转"
+        );
+        assert_eq!(
+            captured[0].defender, npc,
+            "DefenseIntent.defender 应为该化虚 NPC"
         );
     }
 

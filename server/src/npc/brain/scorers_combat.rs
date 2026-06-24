@@ -672,6 +672,31 @@ mod tests {
     }
 
     #[test]
+    fn defense_score_and_jiemai_gate_agree_for_every_realm() {
+        // 本 bug 的本质回归锁：防御 scorer 评 >0 的境界，npc_defense_action 的施放 gate
+        // (jiemai_qi_cost_for_realm) 必须返回 Some，否则 picker 选中 NpcDefenseAction 后
+        // Requested 阶段必败 → NPC 战斗中反复选防御死循环空转。反向亦然（有成本却评 0 = 浪费）。
+        // 化虚此前 scorer=0.7 而 gate=None，恰好违反，故曾死循环。
+        use crate::combat::jiemai::jiemai_qi_cost_for_realm;
+        for realm in [
+            Realm::Awaken,
+            Realm::Induce,
+            Realm::Condense,
+            Realm::Solidify,
+            Realm::Spirit,
+            Realm::Void,
+        ] {
+            let scores = npc_defense_score_for_realm(realm) > 0.0;
+            let castable = jiemai_qi_cost_for_realm(realm).is_some();
+            assert_eq!(
+                scores, castable,
+                "realm {realm:?}: 防御 scorer 评分(>0)={scores} 但施放 gate 可用={castable}，\
+                 二者必须一致，否则 Void 类 scorer/action 不匹配会让 NPC 防御死循环"
+            );
+        }
+    }
+
+    #[test]
     fn defense_scorer_blocked_by_parry_recovery() {
         use crate::combat::components::{ActiveStatusEffect, StatusEffects};
         let statuses = StatusEffects {
