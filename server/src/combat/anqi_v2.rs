@@ -1459,6 +1459,100 @@ mod tests {
         );
     }
 
+    /// 部分饱和守恒边界（CodeRabbit #701）：zone 接近满（spirit_qi=0.9 → room=5）施放 qi_cost=25 →
+    /// zone 只吃 5 饱和到 1.0、overflow=20 路由 overflow 账户；zone+overflow==qi_cost，并断言 to 账户。
+    #[test]
+    fn cast_partial_saturation_splits_zone_and_overflow_account() {
+        use crate::qi_physics::ledger::QiAccountKind;
+        use crate::world::dimension::{CurrentDimension, DimensionKind};
+        use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
+
+        let mut world = bevy_ecs::world::World::new();
+        world.insert_resource(CombatClock { tick: 100 });
+        world.insert_resource(bevy_ecs::event::Events::<QiInjectionEvent>::default());
+        world.insert_resource(bevy_ecs::event::Events::<CarrierAbrasionEvent>::default());
+        world.insert_resource(bevy_ecs::event::Events::<QiTransfer>::default());
+        world.insert_resource(ZoneRegistry::fallback());
+        // zone 接近满：spirit_qi=0.9 → zone_current=45, room=5（CAP=50）
+        world
+            .resource_mut::<ZoneRegistry>()
+            .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
+            .expect("fallback registry 必须包含 spawn zone")
+            .spirit_qi = 0.9;
+
+        let (inventory, store) =
+            charged_inventory_and_store(43, AnqiSkillId::SingleSnipe.carrier_kind());
+        let caster = world
+            .spawn((
+                Cultivation {
+                    realm: Realm::Awaken,
+                    qi_current: 100.0,
+                    qi_max: 100.0, // qi_cost = 100*0.25 = 25
+                    ..Default::default()
+                },
+                SkillBarBindings::default(),
+                inventory,
+                store,
+                ContainerSlot {
+                    active: AnqiContainerKind::Quiver,
+                    switching_until_tick: 0,
+                },
+                valence::prelude::Position::new([0.0, 64.0, 0.0]),
+                CurrentDimension(DimensionKind::Overworld),
+            ))
+            .id();
+
+        let result = resolve_anqi_skill(&mut world, caster, 0, None, AnqiSkillId::SingleSnipe);
+        assert!(
+            matches!(result, CastResult::Started { .. }),
+            "SingleSnipe 应成功"
+        );
+
+        // zone 饱和到 1.0（吃 room=5）
+        let zone_after = world
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .unwrap()
+            .spirit_qi;
+        assert!(
+            (zone_after - 1.0).abs() < 1e-9,
+            "zone 应饱和到 1.0（0.9 吃 room=5），实际 {zone_after}"
+        );
+
+        let transfers: Vec<_> = world
+            .resource::<bevy_ecs::event::Events<QiTransfer>>()
+            .get_reader()
+            .read(world.resource::<bevy_ecs::event::Events<QiTransfer>>())
+            .cloned()
+            .collect();
+        let releases: Vec<_> = transfers
+            .iter()
+            .filter(|t| t.reason == QiTransferReason::ReleaseToZone)
+            .collect();
+        let zone_credit: f64 = releases
+            .iter()
+            .filter(|t| t.to.kind == QiAccountKind::Zone)
+            .map(|t| t.amount)
+            .sum();
+        let overflow_credit: f64 = releases
+            .iter()
+            .filter(|t| t.to.kind == QiAccountKind::Overflow)
+            .map(|t| t.amount)
+            .sum();
+        assert!(
+            (zone_credit - 5.0).abs() < 1e-6,
+            "进 zone 账户应 == room=5，实际 {zone_credit}"
+        );
+        assert!(
+            (overflow_credit - 20.0).abs() < 1e-6,
+            "饱和截断的 20 必须入 overflow 账户而非蒸发，实际 {overflow_credit}（#701）"
+        );
+        assert!(
+            ((zone_credit + overflow_credit) - 25.0).abs() < 1e-6,
+            "守恒：zone({zone_credit}) + overflow({overflow_credit}) 应 == qi_cost 25",
+        );
+    }
+
     /// 无 CurrentDimension 的实体（测试环境常见情形）施放时，qi_cost 应路由到
     /// overflow 账户（而非 zone），qi 账本仍然平衡——任何真元不蒸发。
     #[test]
