@@ -1,8 +1,12 @@
-use valence::prelude::{Commands, Entity, EventReader, EventWriter, Position, Query, Res, ResMut};
+use valence::prelude::{
+    Commands, Entity, EventReader, EventWriter, Events, Position, Query, Res, ResMut,
+};
 
 use crate::combat::components::TICKS_PER_SECOND;
 use crate::combat::CombatClock;
 use crate::cultivation::components::Cultivation;
+use crate::cultivation::death_hooks::release_qi_amount_to_zone;
+use crate::cultivation::life_record::LifeRecord;
 use crate::qi_physics::constants::{QI_EPSILON, QI_ZONE_UNIT_CAPACITY};
 use crate::qi_physics::ledger::{QiAccountId, QiTransfer, QiTransferReason, WorldQiAccount};
 use crate::qi_physics::release::qi_release_to_zone;
@@ -60,9 +64,18 @@ pub fn permanent_qi_max_decay_tick(
 pub fn shroud_maintain_tick(
     mut commands: Commands,
     clock: Res<CombatClock>,
-    mut actors: Query<(Entity, &mut Cultivation, &ShroudActive)>,
+    mut actors: Query<(
+        Entity,
+        &mut Cultivation,
+        &ShroudActive,
+        Option<&Position>,
+        Option<&CurrentDimension>,
+        Option<&LifeRecord>,
+    )>,
+    mut zones: Option<ResMut<ZoneRegistry>>,
+    mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
 ) {
-    for (entity, mut cultivation, shroud) in &mut actors {
+    for (entity, mut cultivation, shroud, position, current_dimension, life_record) in &mut actors {
         if !shroud.permanent_until_cancelled && clock.tick >= shroud.expires_at_tick {
             commands.entity(entity).remove::<ShroudActive>();
             continue;
@@ -71,8 +84,19 @@ pub fn shroud_maintain_tick(
             commands.entity(entity).remove::<ShroudActive>();
             continue;
         }
+        let drained = shroud.maintain_qi_per_tick;
         cultivation.qi_current =
-            (cultivation.qi_current - shroud.maintain_qi_per_tick).clamp(0.0, cultivation.qi_max);
+            (cultivation.qi_current - drained).clamp(0.0, cultivation.qi_max);
+        release_qi_amount_to_zone(
+            entity,
+            drained,
+            position,
+            current_dimension,
+            life_record,
+            zones.as_deref_mut(),
+            qi_transfers.as_deref_mut(),
+            "dugu_v2:shroud_maintain",
+        );
     }
 }
 
@@ -285,5 +309,292 @@ pub fn reverse_zone_credit_tick(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::combat::CombatClock;
+    use crate::combat::dugu_v2::events::DuguSkillId;
+    use crate::cultivation::components::{Cultivation, QiColor, Realm};
+    use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
+    use crate::world::dimension::{CurrentDimension, DimensionKind};
+    use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
+    use valence::prelude::{App, Position, Update};
+
+    fn make_shroud(expires_at_tick: u64, maintain_qi_per_tick: f64) -> ShroudActive {
+        ShroudActive {
+            skill: DuguSkillId::Shroud,
+            strength: 0.5,
+            fake_qi_color: QiColor::default(),
+            started_at_tick: 0,
+            expires_at_tick,
+            permanent_until_cancelled: false,
+            maintain_qi_per_tick,
+        }
+    }
+
+    fn setup_app_with_zone() -> App {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 1 });
+        app.insert_resource(ZoneRegistry::fallback());
+        app.add_event::<QiTransfer>();
+        // Empty the spawn zone so the full drain amount fits without overflow split
+        app.world_mut()
+            .resource_mut::<ZoneRegistry>()
+            .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
+            .unwrap()
+            .spirit_qi = 0.0;
+        app.add_systems(Update, shroud_maintain_tick);
+        app
+    }
+
+    /// Happy path: Shroud active, entity has Position + CurrentDimension → qi drains from player
+    /// and the same amount is credited into the spawn zone. Conservation holds.
+    #[test]
+    fn shroud_maintain_tick_credits_drained_qi_to_zone() {
+        let mut app = setup_app_with_zone();
+
+        let maintain = 0.5 / TICKS_PER_SECOND as f64; // 0.025
+        let initial_qi = 10.0_f64;
+        let entity = app
+            .world_mut()
+            .spawn((
+                Cultivation {
+                    qi_current: initial_qi,
+                    qi_max: 100.0,
+                    realm: Realm::Awaken,
+                    ..Default::default()
+                },
+                make_shroud(1000, maintain),
+                Position::new([0.0, 64.0, 0.0]),
+                CurrentDimension(DimensionKind::Overworld),
+            ))
+            .id();
+
+        let zone_before = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .unwrap()
+            .spirit_qi;
+
+        app.update();
+
+        // Player qi should have decreased by maintain_qi_per_tick
+        let cultivation = app.world().entity(entity).get::<Cultivation>().unwrap();
+        assert!(
+            (cultivation.qi_current - (initial_qi - maintain)).abs() < 1e-10,
+            "qi_current should decrease by maintain_qi_per_tick={maintain}; got {}",
+            cultivation.qi_current
+        );
+
+        // Zone should have received the drained amount (zone started empty so no overflow split)
+        let zone_after = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .unwrap()
+            .spirit_qi;
+        let zone_delta_abs = (zone_after - zone_before) * QI_ZONE_UNIT_CAPACITY;
+        assert!(
+            (zone_delta_abs - maintain).abs() < 1e-10,
+            "zone must receive exactly maintain_qi_per_tick={maintain} qi; got delta={zone_delta_abs}"
+        );
+
+        // A QiTransfer event must be emitted
+        let transfers: Vec<_> = app
+            .world()
+            .resource::<Events<QiTransfer>>()
+            .iter_current_update_events()
+            .cloned()
+            .collect();
+        assert_eq!(
+            transfers.len(),
+            1,
+            "exactly one QiTransfer event should be emitted; got {}",
+            transfers.len()
+        );
+        assert!(
+            (transfers[0].amount - maintain).abs() < 1e-10,
+            "QiTransfer amount should equal maintain_qi_per_tick; got {}",
+            transfers[0].amount
+        );
+    }
+
+    /// Boundary: when Shroud expires (clock.tick >= expires_at_tick), ShroudActive is removed
+    /// and no qi is drained.
+    #[test]
+    fn shroud_maintain_tick_removes_shroud_on_expiry() {
+        let mut app = setup_app_with_zone();
+
+        let initial_qi = 10.0_f64;
+        let maintain = 0.5 / TICKS_PER_SECOND as f64;
+        let entity = app
+            .world_mut()
+            .spawn((
+                Cultivation {
+                    qi_current: initial_qi,
+                    qi_max: 100.0,
+                    realm: Realm::Awaken,
+                    ..Default::default()
+                },
+                // expires_at_tick=1, CombatClock.tick=1 → should expire this tick
+                make_shroud(1, maintain),
+                Position::new([0.0, 64.0, 0.0]),
+                CurrentDimension(DimensionKind::Overworld),
+            ))
+            .id();
+
+        app.update();
+
+        // ShroudActive should be removed
+        assert!(
+            app.world().entity(entity).get::<ShroudActive>().is_none(),
+            "ShroudActive should be removed when clock.tick >= expires_at_tick"
+        );
+        // No qi should be drained when expired
+        let cultivation = app.world().entity(entity).get::<Cultivation>().unwrap();
+        assert!(
+            (cultivation.qi_current - initial_qi).abs() < 1e-10,
+            "qi_current should be unchanged when Shroud expires; got {}",
+            cultivation.qi_current
+        );
+        // No QiTransfer event
+        let transfers: Vec<_> = app
+            .world()
+            .resource::<Events<QiTransfer>>()
+            .iter_current_update_events()
+            .cloned()
+            .collect();
+        assert_eq!(
+            transfers.len(),
+            0,
+            "no QiTransfer should be emitted on expiry; got {}",
+            transfers.len()
+        );
+    }
+
+    /// Boundary: when qi_current <= maintain_qi_per_tick, Shroud collapses (removed) and
+    /// no qi drain happens (conserved; we don't drain the last sliver).
+    #[test]
+    fn shroud_maintain_tick_collapses_when_insufficient_qi() {
+        let mut app = setup_app_with_zone();
+
+        let maintain = 0.5 / TICKS_PER_SECOND as f64; // 0.025
+        let too_low_qi = maintain; // exactly at the boundary → should collapse
+        let entity = app
+            .world_mut()
+            .spawn((
+                Cultivation {
+                    qi_current: too_low_qi,
+                    qi_max: 100.0,
+                    realm: Realm::Awaken,
+                    ..Default::default()
+                },
+                make_shroud(1000, maintain),
+                Position::new([0.0, 64.0, 0.0]),
+                CurrentDimension(DimensionKind::Overworld),
+            ))
+            .id();
+
+        app.update();
+
+        // ShroudActive should collapse when qi_current <= maintain_qi_per_tick
+        assert!(
+            app.world().entity(entity).get::<ShroudActive>().is_none(),
+            "ShroudActive should collapse when qi_current <= maintain_qi_per_tick"
+        );
+        // qi is NOT drained in this branch (collapse, not drain)
+        let cultivation = app.world().entity(entity).get::<Cultivation>().unwrap();
+        assert!(
+            (cultivation.qi_current - too_low_qi).abs() < 1e-10,
+            "qi_current should be unchanged on collapse; got {}",
+            cultivation.qi_current
+        );
+    }
+
+    /// Error branch: no ZoneRegistry inserted → drain still happens (qi leaves player),
+    /// but qi routes to overflow (no zone credit). The function must not panic.
+    #[test]
+    fn shroud_maintain_tick_drains_qi_without_zone_registry() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 1 });
+        // Intentionally do NOT insert ZoneRegistry
+        app.add_event::<QiTransfer>();
+        app.add_systems(Update, shroud_maintain_tick);
+
+        let maintain = 0.5 / TICKS_PER_SECOND as f64;
+        let initial_qi = 10.0_f64;
+        let entity = app
+            .world_mut()
+            .spawn((
+                Cultivation {
+                    qi_current: initial_qi,
+                    qi_max: 100.0,
+                    realm: Realm::Awaken,
+                    ..Default::default()
+                },
+                make_shroud(1000, maintain),
+                Position::new([0.0, 64.0, 0.0]),
+                CurrentDimension(DimensionKind::Overworld),
+            ))
+            .id();
+
+        app.update(); // must not panic
+
+        // Player qi is still drained (the drain itself is unconditional; only zone credit differs)
+        let cultivation = app.world().entity(entity).get::<Cultivation>().unwrap();
+        assert!(
+            (cultivation.qi_current - (initial_qi - maintain)).abs() < 1e-10,
+            "qi_current should decrease even without ZoneRegistry; got {}",
+            cultivation.qi_current
+        );
+    }
+
+    /// Error branch: no Position on entity → qi drains but routes to overflow (no zone credit).
+    /// Must not panic.
+    #[test]
+    fn shroud_maintain_tick_drains_qi_without_position() {
+        let mut app = setup_app_with_zone();
+
+        let maintain = 0.5 / TICKS_PER_SECOND as f64;
+        let initial_qi = 10.0_f64;
+        let entity = app
+            .world_mut()
+            .spawn((
+                Cultivation {
+                    qi_current: initial_qi,
+                    qi_max: 100.0,
+                    realm: Realm::Awaken,
+                    ..Default::default()
+                },
+                make_shroud(1000, maintain),
+                // No Position, no CurrentDimension
+            ))
+            .id();
+
+        app.update(); // must not panic
+
+        let cultivation = app.world().entity(entity).get::<Cultivation>().unwrap();
+        assert!(
+            (cultivation.qi_current - (initial_qi - maintain)).abs() < 1e-10,
+            "qi_current should decrease even without Position; got {}",
+            cultivation.qi_current
+        );
+        // Zone should NOT have received any credit (overflow route taken instead)
+        let zone_after = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .unwrap()
+            .spirit_qi;
+        assert!(
+            zone_after.abs() < 1e-10,
+            "zone should not receive qi when entity has no Position; spirit_qi={}",
+            zone_after
+        );
     }
 }
