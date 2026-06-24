@@ -22,10 +22,13 @@ use crate::network::audio_event_emit::{
 use crate::network::cast_emit::current_unix_millis;
 use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::qi_physics::{
-    qi_excretion_loss, ContainerKind, EnvField, QiAccountId, QiTransfer, QiTransferReason,
+    constants::{QI_EPSILON, QI_ZONE_UNIT_CAPACITY},
+    qi_excretion_loss,
+    release::qi_release_to_zone,
+    ContainerKind, EnvField, QiAccountId, QiTransfer, QiTransferReason,
 };
 use crate::schema::vfx_event::VfxEventPayloadV1;
-use crate::world::zone::DEFAULT_SPAWN_ZONE_NAME;
+use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
 pub const SWORD_CLEAVE_SKILL_ID: &str = "sword.cleave";
 pub const SWORD_THRUST_SKILL_ID: &str = "sword.thrust";
@@ -265,6 +268,7 @@ pub fn sword_qi_store_tick(
     clock: Res<CombatClock>,
     mut commands: valence::prelude::Commands,
     mut stores: Query<(Entity, &mut SwordQiStore)>,
+    mut zones: Option<ResMut<ZoneRegistry>>,
     mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
 ) {
     if !clock.tick.is_multiple_of(SWORD_QI_STORE_TICK_INTERVAL) {
@@ -272,6 +276,17 @@ pub fn sword_qi_store_tick(
     }
     for (entity, mut store) in &mut stores {
         if store.remaining_ticks == 0 || store.stored_qi <= f64::EPSILON {
+            // Flush any remaining stored_qi to zone before removal.
+            let remainder = store.stored_qi;
+            if remainder > f64::EPSILON {
+                credit_qi_to_zone(
+                    zones.as_deref_mut(),
+                    qi_transfers.as_deref_mut(),
+                    store.container_account.clone(),
+                    remainder,
+                    QiTransferReason::ReleaseToZone,
+                );
+            }
             commands.entity(entity).remove::<SwordQiStore>();
             continue;
         }
@@ -285,10 +300,10 @@ pub fn sword_qi_store_tick(
         .min(store.stored_qi);
         if loss > f64::EPSILON {
             store.stored_qi = (store.stored_qi - loss).max(0.0);
-            emit_qi_transfer(
+            credit_qi_to_zone(
+                zones.as_deref_mut(),
                 qi_transfers.as_deref_mut(),
                 store.container_account.clone(),
-                QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME),
                 loss,
                 QiTransferReason::Excretion,
             );
@@ -297,6 +312,18 @@ pub fn sword_qi_store_tick(
             .remaining_ticks
             .saturating_sub(SWORD_QI_STORE_TICK_INTERVAL);
         if store.remaining_ticks == 0 || store.stored_qi <= f64::EPSILON {
+            // Flush remaining stored_qi to zone on expiry.
+            let remainder = store.stored_qi;
+            if remainder > f64::EPSILON {
+                credit_qi_to_zone(
+                    zones.as_deref_mut(),
+                    qi_transfers.as_deref_mut(),
+                    store.container_account.clone(),
+                    remainder,
+                    QiTransferReason::ReleaseToZone,
+                );
+                store.stored_qi = 0.0;
+            }
             commands.entity(entity).remove::<SwordQiStore>();
         }
     }
@@ -403,12 +430,19 @@ pub fn drain_sword_qi_for_hit(world: &mut bevy_ecs::world::World, caster: Entity
         store.stored_qi = (store.stored_qi - spent).max(0.0);
         (spent, store.container_account.clone())
     };
+    // Credit zone directly — QiTransfer is audit-only and has no EventReader.
+    // 守恒（#701）：与 tick 路径同源逻辑（apply_zone_credit + emit_zone_credit_transfers），zone 饱和/
+    // 缺失的截断部分路由 overflow 账户，不蒸发。World 单借用限制 → 分两步借 ZoneRegistry / Events。
+    let (accepted, overflow) = {
+        let mut zones = world.get_resource_mut::<ZoneRegistry>();
+        apply_zone_credit(zones.as_deref_mut(), &container_account, spent)
+    };
     let mut qi_transfers = world.get_resource_mut::<Events<QiTransfer>>();
-    emit_qi_transfer(
+    emit_zone_credit_transfers(
         qi_transfers.as_deref_mut(),
         container_account,
-        QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME),
-        spent,
+        accepted,
+        overflow,
         QiTransferReason::ReleaseToZone,
     );
     spent as f32
@@ -811,6 +845,86 @@ fn player_account_id_for_entity(entity: Entity, life_record: Option<&LifeRecord>
     QiAccountId::player(format!("entity:{entity:?}"))
 }
 
+/// 把 `amount` 入账 spawn zone（直接写 `zone.spirit_qi`，承重项——QiTransfer 全仓 audit-only 无
+/// EventReader），返回 `(accepted, overflow)`。守恒（CodeRabbit #701 Critical）：用
+/// `qi_release_to_zone` 算 accepted/overflow，zone 饱和被截断 / 缺 ZoneRegistry|spawn zone 时
+/// **截断/缺失的部分作为 overflow 返回**（由 caller 路由 overflow 账户），不凭空蒸发。
+/// 裸 `spirit_qi*CAP`（不 .max(0.0)，负灵域守恒）。
+fn apply_zone_credit(
+    zones: Option<&mut ZoneRegistry>,
+    from: &QiAccountId,
+    amount: f64,
+) -> (f64, f64) {
+    match zones {
+        Some(zones) => match zones.find_zone_mut(DEFAULT_SPAWN_ZONE_NAME) {
+            Some(zone) => {
+                let zone_current = zone.spirit_qi * QI_ZONE_UNIT_CAPACITY;
+                match qi_release_to_zone(
+                    amount,
+                    from.clone(),
+                    QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME),
+                    zone_current,
+                    QI_ZONE_UNIT_CAPACITY,
+                ) {
+                    Ok(outcome) => {
+                        zone.spirit_qi =
+                            (outcome.zone_after / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
+                        (outcome.accepted, outcome.overflow)
+                    }
+                    Err(_) => (0.0, amount), // invalid input：全额 overflow，不蒸发
+                }
+            }
+            None => (0.0, amount), // 无 spawn zone → 全额 overflow
+        },
+        None => (0.0, amount), // 无 ZoneRegistry → 全额 overflow
+    }
+}
+
+/// emit accepted→zone + overflow→overflow 账户两条审计 transfer（同 reason），accepted+overflow==amount。
+fn emit_zone_credit_transfers(
+    events: Option<&mut Events<QiTransfer>>,
+    from: QiAccountId,
+    accepted: f64,
+    overflow: f64,
+    reason: QiTransferReason,
+) {
+    let Some(events) = events else {
+        return;
+    };
+    if accepted > QI_EPSILON {
+        if let Ok(transfer) = QiTransfer::new(
+            from.clone(),
+            QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME),
+            accepted,
+            reason,
+        ) {
+            events.send(transfer);
+        }
+    }
+    if overflow > QI_EPSILON {
+        let overflow_to = QiAccountId::overflow("sword_qi_overflow".to_string());
+        if let Ok(transfer) = QiTransfer::new(from, overflow_to, overflow, reason) {
+            events.send(transfer);
+        }
+    }
+}
+
+/// Credit `amount` into spawn zone + emit audit transfer(s). zone/tick 路径共用（hit 路径因 World
+/// 单借用限制走 apply_zone_credit + emit_zone_credit_transfers 两步，但逻辑同源）。
+fn credit_qi_to_zone(
+    zones: Option<&mut ZoneRegistry>,
+    qi_transfers: Option<&mut Events<QiTransfer>>,
+    from: QiAccountId,
+    amount: f64,
+    reason: QiTransferReason,
+) {
+    if amount <= QI_EPSILON {
+        return;
+    }
+    let (accepted, overflow) = apply_zone_credit(zones, &from, amount);
+    emit_zone_credit_transfers(qi_transfers, from, accepted, overflow, reason);
+}
+
 fn emit_qi_transfer(
     events: Option<&mut Events<QiTransfer>>,
     from: QiAccountId,
@@ -971,12 +1085,24 @@ mod tests {
         assert!((parry.block_ratio - 0.6).abs() < f32::EPSILON);
     }
 
+    fn make_zone_registry_empty() -> ZoneRegistry {
+        use crate::world::zone::ZoneRegistry;
+        let mut registry = ZoneRegistry::fallback();
+        // Reset to 0.0 so the zone has full room; avoids overflow/split in assertions.
+        registry
+            .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
+            .unwrap()
+            .spirit_qi = 0.0;
+        registry
+    }
+
     #[test]
     fn sword_qi_store_leaks_to_zone_and_expires() {
         let mut app = App::new();
         app.insert_resource(CombatClock {
             tick: SWORD_QI_STORE_TICK_INTERVAL,
         });
+        app.insert_resource(make_zone_registry_empty());
         app.add_event::<QiTransfer>();
         app.add_systems(Update, sword_qi_store_tick);
         let entity = app
@@ -999,10 +1125,211 @@ mod tests {
         assert!(!transfers.is_empty());
     }
 
+    /// On expiry the full remaining stored_qi must flow to zone.spirit_qi (not disappear).
+    #[test]
+    fn sword_qi_store_expiry_credits_remaining_qi_to_zone() {
+        let stored = 10.0_f64;
+        let mut app = App::new();
+        // Set clock to the last tick (remaining_ticks will hit 0 after one interval).
+        app.insert_resource(CombatClock {
+            tick: SWORD_QI_STORE_TICK_INTERVAL,
+        });
+        app.insert_resource(make_zone_registry_empty());
+        app.add_event::<QiTransfer>();
+        app.add_systems(Update, sword_qi_store_tick);
+        let entity = app
+            .world_mut()
+            .spawn(SwordQiStore {
+                stored_qi: stored,
+                qi_per_hit: 2.0,
+                remaining_ticks: SWORD_QI_STORE_TICK_INTERVAL,
+                infuser_color: ColorKind::Mellow,
+                weapon_instance_id: 1,
+                container_account: QiAccountId::container("test_sword_expiry"),
+                carrier: ContainerKind::WieldedInWeapon,
+            })
+            .id();
+
+        app.update();
+
+        // Component must be removed.
+        assert!(
+            app.world().get::<SwordQiStore>(entity).is_none(),
+            "SwordQiStore must be removed on expiry"
+        );
+        // Zone must have received the qi (excretion loss is tiny over one interval;
+        // the remainder flush brings it back).
+        let zone_spirit_qi = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .unwrap()
+            .spirit_qi;
+        assert!(
+            zone_spirit_qi > 0.0,
+            "zone.spirit_qi must increase after SwordQiStore expiry: got {zone_spirit_qi}"
+        );
+        // The total credited to zone must equal original stored_qi (excretion + remainder).
+        let expected_zone_delta = stored / QI_ZONE_UNIT_CAPACITY;
+        assert!(
+            (zone_spirit_qi - expected_zone_delta).abs() < 1e-9,
+            "zone delta should equal stored/QI_ZONE_UNIT_CAPACITY={expected_zone_delta:.6}, \
+             got zone_spirit_qi={zone_spirit_qi:.6}"
+        );
+    }
+
+    /// On a hit, qi deducted from SwordQiStore must immediately raise zone.spirit_qi.
+    #[test]
+    fn sword_hit_credits_qi_to_zone() {
+        let mut app = App::new();
+        app.add_event::<QiTransfer>();
+        app.insert_resource(make_zone_registry_empty());
+        let container_account = QiAccountId::container("test_sword_zone_credit");
+        let entity = app
+            .world_mut()
+            .spawn(SwordQiStore {
+                stored_qi: 10.0,
+                qi_per_hit: 2.0,
+                remaining_ticks: SWORD_QI_STORE_TICK_INTERVAL,
+                infuser_color: ColorKind::Mellow,
+                weapon_instance_id: 1,
+                container_account: container_account.clone(),
+                carrier: ContainerKind::WieldedInWeapon,
+            })
+            .id();
+
+        let spent = drain_sword_qi_for_hit(app.world_mut(), entity);
+
+        // Spent amount matches qi_per_hit.
+        assert!(
+            (spent - 2.0).abs() < f32::EPSILON,
+            "spent should be qi_per_hit=2.0, got {spent}"
+        );
+        // Zone spirit_qi must be directly credited with spent/QI_ZONE_UNIT_CAPACITY.
+        let expected_zone_delta = 2.0_f64 / QI_ZONE_UNIT_CAPACITY;
+        let zone_spirit_qi = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .unwrap()
+            .spirit_qi;
+        assert!(
+            (zone_spirit_qi - expected_zone_delta).abs() < 1e-9,
+            "zone.spirit_qi should increase by spent/QI_ZONE_UNIT_CAPACITY={expected_zone_delta:.6}, \
+             got {zone_spirit_qi:.6} (bug: qi was not credited to zone on hit)"
+        );
+        // Audit event must also be emitted.
+        let events = app.world().resource::<Events<QiTransfer>>();
+        let mut reader = events.get_reader();
+        let transfers: Vec<_> = reader.read(events).collect();
+        assert_eq!(
+            transfers.len(),
+            1,
+            "one QiTransfer audit event expected per hit"
+        );
+        let transfer = transfers[0];
+        assert_eq!(
+            transfer.from, container_account,
+            "审计 transfer.from 应 == 命中扣减的 container_account（可溯源到来源容器）"
+        );
+        assert_eq!(
+            transfer.to,
+            QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME),
+            "非饱和命中 qi 全额入 spawn zone 账户，故 to 应为该 zone 账户"
+        );
+        assert_eq!(
+            transfer.reason,
+            QiTransferReason::ReleaseToZone,
+            "剑气回灌走 ReleaseToZone（区域回灌审计语义）"
+        );
+        assert!(
+            (transfer.amount - 2.0).abs() < f64::EPSILON,
+            "transfer amount should be qi_per_hit=2.0, got {}",
+            transfer.amount
+        );
+    }
+
+    /// 守恒最大边界（CodeRabbit #701 Critical）：spawn zone 接近饱和（spirit_qi=0.96 → room=2 raw）
+    /// 时命中消耗 spent=5 → zone 只吃 room=2 饱和到 1.0，截断的 3 必须路由 overflow 账户而非蒸发；
+    /// zone+overflow 之和 == spent（守恒，旧 += clamp 实现会丢 3）。
+    #[test]
+    fn sword_hit_saturated_zone_routes_overflow_no_evaporation() {
+        use crate::qi_physics::ledger::QiAccountKind;
+        let mut app = App::new();
+        app.add_event::<QiTransfer>();
+        // zone 接近满：spirit_qi=0.96 → zone_current=48, room=(50-48)=2
+        let mut reg = make_zone_registry_empty();
+        reg.find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
+            .unwrap()
+            .spirit_qi = 0.96;
+        app.insert_resource(reg);
+        let container_account = QiAccountId::container("test_sword_overflow");
+        let entity = app
+            .world_mut()
+            .spawn(SwordQiStore {
+                stored_qi: 100.0,
+                qi_per_hit: 5.0, // spent=5 > room=2 → 截断
+                remaining_ticks: SWORD_QI_STORE_TICK_INTERVAL,
+                infuser_color: ColorKind::Mellow,
+                weapon_instance_id: 1,
+                container_account,
+                carrier: ContainerKind::WieldedInWeapon,
+            })
+            .id();
+
+        let spent = drain_sword_qi_for_hit(app.world_mut(), entity);
+        assert!(
+            (spent - 5.0).abs() < f32::EPSILON,
+            "spent 应 == qi_per_hit=5（扣自 store），实际 {spent}"
+        );
+
+        let zone_after = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .unwrap()
+            .spirit_qi;
+        assert!(
+            (zone_after - 1.0).abs() < 1e-9,
+            "zone 应饱和到 1.0（吃 room=2 raw），实际 {zone_after}"
+        );
+
+        let events = app.world().resource::<Events<QiTransfer>>();
+        let mut reader = events.get_reader();
+        let releases: Vec<_> = reader
+            .read(events)
+            .filter(|t| t.reason == QiTransferReason::ReleaseToZone)
+            .collect();
+        let zone_credit: f64 = releases
+            .iter()
+            .filter(|t| t.to.kind == QiAccountKind::Zone)
+            .map(|t| t.amount)
+            .sum();
+        let overflow_credit: f64 = releases
+            .iter()
+            .filter(|t| t.to.kind == QiAccountKind::Overflow)
+            .map(|t| t.amount)
+            .sum();
+        assert!(
+            (zone_credit - 2.0).abs() < 1e-9,
+            "进 zone 账户应 == room=2，实际 {zone_credit}"
+        );
+        assert!(
+            (overflow_credit - 3.0).abs() < 1e-9,
+            "zone 饱和截断的 3 必须入 overflow 账户而非蒸发，实际 {overflow_credit}（#701 Critical）"
+        );
+        assert!(
+            ((zone_credit + overflow_credit) - 5.0).abs() < 1e-9,
+            "守恒：zone({zone_credit}) + overflow({overflow_credit}) 应 == spent 5，实际 {}",
+            zone_credit + overflow_credit
+        );
+    }
+
     #[test]
     fn sword_hit_releases_spent_stored_qi_to_zone() {
         let mut app = App::new();
         app.add_event::<QiTransfer>();
+        app.insert_resource(make_zone_registry_empty());
         let container_account = QiAccountId::container("test_sword_hit");
         let entity = app
             .world_mut()
@@ -1031,6 +1358,83 @@ mod tests {
         assert_eq!(transfer.to, QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME));
         assert_eq!(transfer.reason, QiTransferReason::ReleaseToZone);
         assert!((transfer.amount - 2.0).abs() < f64::EPSILON);
+    }
+
+    /// drain_sword_qi_for_hit returns 0.0 when there is no SwordQiStore on the entity.
+    #[test]
+    fn drain_hit_returns_zero_without_store() {
+        let mut app = App::new();
+        app.add_event::<QiTransfer>();
+        app.insert_resource(make_zone_registry_empty());
+        let entity = app.world_mut().spawn_empty().id();
+
+        let spent = drain_sword_qi_for_hit(app.world_mut(), entity);
+
+        assert_eq!(spent, 0.0, "no SwordQiStore → spent must be 0.0");
+        let events = app.world().resource::<Events<QiTransfer>>();
+        let mut reader = events.get_reader();
+        assert!(
+            reader.read(events).next().is_none(),
+            "no QiTransfer should be emitted when there is no store"
+        );
+        let zone_qi = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .unwrap()
+            .spirit_qi;
+        assert_eq!(
+            zone_qi, 0.0,
+            "zone.spirit_qi must not change when nothing was spent"
+        );
+    }
+
+    /// Excretion tick credits zone for the loss amount (not just emits an event).
+    #[test]
+    fn sword_qi_store_excretion_credits_zone() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock {
+            tick: SWORD_QI_STORE_TICK_INTERVAL,
+        });
+        let mut registry = make_zone_registry_empty();
+        // Store has enough remaining ticks to survive this tick (2 intervals → only 1 elapse).
+        app.insert_resource({
+            registry
+                .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
+                .unwrap()
+                .spirit_qi = 0.0;
+            registry
+        });
+        app.add_event::<QiTransfer>();
+        app.add_systems(Update, sword_qi_store_tick);
+        let _entity = app
+            .world_mut()
+            .spawn(SwordQiStore {
+                stored_qi: 50.0,
+                qi_per_hit: 5.0,
+                // 2 intervals remaining so it won't expire this tick.
+                remaining_ticks: 2 * SWORD_QI_STORE_TICK_INTERVAL,
+                infuser_color: ColorKind::Mellow,
+                weapon_instance_id: 1,
+                container_account: QiAccountId::container("test_excretion"),
+                carrier: ContainerKind::WieldedInWeapon,
+            })
+            .id();
+
+        app.update();
+
+        // After one excretion tick, zone must have received some qi.
+        let zone_qi = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .unwrap()
+            .spirit_qi;
+        assert!(
+            zone_qi > 0.0,
+            "zone.spirit_qi must increase after excretion tick, got {zone_qi} \
+             (bug: credit was not applied directly to zone)"
+        );
     }
 
     #[test]

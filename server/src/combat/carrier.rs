@@ -294,11 +294,22 @@ pub fn resolve_anqi_charge_skill(
         };
     }
 
-    let qi_target = world
-        .get::<Cultivation>(caster)
-        .map(default_qi_target)
-        .unwrap_or(0.0);
+    let Some(cultivation) = world.get::<Cultivation>(caster) else {
+        return CastResult::Rejected {
+            reason: CastRejectReason::QiInsufficient,
+        };
+    };
+    let qi_target = default_qi_target(cultivation);
     if qi_target <= f32::EPSILON {
+        return CastResult::Rejected {
+            reason: CastRejectReason::QiInsufficient,
+        };
+    }
+    // Guard: player must have enough qi_current to cover the charge cost.
+    // Without this check, resolve returns Started and sets the cooldown even
+    // when the player has qi_current=0; begin_charge_carrier then silently
+    // skips (line 403) — burning the cooldown with no charge effect.
+    if cultivation.qi_current + f64::EPSILON < f64::from(qi_target) {
         return CastResult::Rejected {
             reason: CastRejectReason::QiInsufficient,
         };
@@ -1118,6 +1129,7 @@ pub fn release_residual_to_zone(
 }
 
 /// Shared helper for returning qi from an explicit source account to a zone or overflow.
+#[allow(clippy::too_many_arguments)]
 fn release_account_to_zone(
     zones: Option<&mut ZoneRegistry>,
     qi_transfers: &mut EventWriter<QiTransfer>,
@@ -1844,6 +1856,194 @@ mod tests {
             matches!(result, CastResult::Started { .. }),
             "期望肺经完好时 resolve_anqi_charge_skill 返回 CastResult::Started（经脉门放行），\
              实际返回 {result:?}"
+        );
+    }
+
+    // ── qi 门测试：resolve_anqi_charge_skill 真元不足时提前拒绝 ────────────────────
+
+    /// 核心回归：qi_current=0 时 resolve 必须拒绝，而非启动冷却又无充能效果。
+    #[test]
+    fn charge_carrier_rejected_when_qi_current_is_zero() {
+        use crate::combat::components::SkillBarBindings;
+
+        let mut world = bevy_ecs::world::World::new();
+        world.insert_resource(CombatClock { tick: 1 });
+        world.insert_resource(bevy_ecs::event::Events::<ChargeCarrierIntent>::default());
+
+        // qi_max=300 → qi_target=(300*0.3).min(80)=80; qi_current=0 < 80 → 应拒绝
+        let caster = world
+            .spawn((
+                Cultivation {
+                    qi_current: 0.0,
+                    qi_max: 300.0,
+                    ..Default::default()
+                },
+                SkillBarBindings::default(),
+            ))
+            .id();
+
+        let result = resolve_anqi_charge_skill(&mut world, caster, 0, None);
+
+        assert!(
+            matches!(
+                result,
+                CastResult::Rejected {
+                    reason: CastRejectReason::QiInsufficient
+                }
+            ),
+            "期望 qi_current=0 时 resolve_anqi_charge_skill 返回 QiInsufficient（\
+             阻止空冷却 bug），实际返回 {result:?}"
+        );
+    }
+
+    /// 边界：qi_current 正好等于 qi_target 时应允许施法（临界 >= 等号成立）。
+    #[test]
+    fn charge_carrier_allowed_when_qi_current_exactly_equals_qi_target() {
+        use crate::combat::components::SkillBarBindings;
+
+        let mut world = bevy_ecs::world::World::new();
+        world.insert_resource(CombatClock { tick: 1 });
+        world.insert_resource(bevy_ecs::event::Events::<ChargeCarrierIntent>::default());
+
+        // qi_max=200 → qi_target=(200*0.3) f32 ≈ 60.000004（非整数 60，f32 0.3 不精确）。
+        // qi_current 取**真实** qi_target 值以精确测「==」临界，避免硬编码 60.0 因 f32 imprecision
+        // 被 guard 误判 < 而拒绝（workflow agent 原测试 bug）。
+        let cult_for_target = Cultivation {
+            qi_max: 200.0,
+            ..Default::default()
+        };
+        let qi_target_val = f64::from(default_qi_target(&cult_for_target));
+        let caster = world
+            .spawn((
+                Cultivation {
+                    qi_current: qi_target_val,
+                    qi_max: 200.0,
+                    ..Default::default()
+                },
+                SkillBarBindings::default(),
+            ))
+            .id();
+
+        let result = resolve_anqi_charge_skill(&mut world, caster, 0, None);
+
+        assert!(
+            matches!(result, CastResult::Started { .. }),
+            "期望 qi_current 精确等于 qi_target({qi_target_val}) 时允许充能（\
+             临界 >= 成立），实际返回 {result:?}"
+        );
+    }
+
+    /// 边界：qi_current 比 qi_target 少 1 时必须拒绝。
+    #[test]
+    fn charge_carrier_rejected_when_qi_current_one_below_qi_target() {
+        use crate::combat::components::SkillBarBindings;
+
+        let mut world = bevy_ecs::world::World::new();
+        world.insert_resource(CombatClock { tick: 1 });
+        world.insert_resource(bevy_ecs::event::Events::<ChargeCarrierIntent>::default());
+
+        // qi_max=200 → qi_target=60; qi_current=59 < 60 → 应拒绝
+        let caster = world
+            .spawn((
+                Cultivation {
+                    qi_current: 59.0,
+                    qi_max: 200.0,
+                    ..Default::default()
+                },
+                SkillBarBindings::default(),
+            ))
+            .id();
+
+        let result = resolve_anqi_charge_skill(&mut world, caster, 0, None);
+
+        assert!(
+            matches!(
+                result,
+                CastResult::Rejected {
+                    reason: CastRejectReason::QiInsufficient
+                }
+            ),
+            "期望 qi_current=59 < qi_target=60 时返回 QiInsufficient（单位以下拒绝），\
+             实际返回 {result:?}"
+        );
+    }
+
+    /// 高 qi_max 玩家（qi_target 触顶 80）qi_current 低于 80 时必须拒绝。
+    #[test]
+    fn charge_carrier_rejected_for_high_qi_max_player_with_low_qi_current() {
+        use crate::combat::components::SkillBarBindings;
+
+        let mut world = bevy_ecs::world::World::new();
+        world.insert_resource(CombatClock { tick: 1 });
+        world.insert_resource(bevy_ecs::event::Events::<ChargeCarrierIntent>::default());
+
+        // qi_max=600 → qi_target=(600*0.3).min(80)=80; qi_current=50 < 80 → 应拒绝
+        // 这是 bug 报告的典型场景：qi_max 高但战斗中 qi_current 被消耗
+        let caster = world
+            .spawn((
+                Cultivation {
+                    qi_current: 50.0,
+                    qi_max: 600.0,
+                    ..Default::default()
+                },
+                SkillBarBindings::default(),
+            ))
+            .id();
+
+        let result = resolve_anqi_charge_skill(&mut world, caster, 0, None);
+
+        assert!(
+            matches!(
+                result,
+                CastResult::Rejected {
+                    reason: CastRejectReason::QiInsufficient
+                }
+            ),
+            "期望高 qi_max(600) 低 qi_current(50) 玩家被拒绝（qi_target 触顶 80，\
+             qi_current<80），实际返回 {result:?}"
+        );
+    }
+
+    /// 验证低真元拒绝时不会设置冷却（不应烧冷却）。
+    #[test]
+    fn charge_carrier_rejected_qi_insufficient_does_not_set_cooldown() {
+        use crate::combat::components::SkillBarBindings;
+
+        let mut world = bevy_ecs::world::World::new();
+        world.insert_resource(CombatClock { tick: 10 });
+        world.insert_resource(bevy_ecs::event::Events::<ChargeCarrierIntent>::default());
+
+        let caster = world
+            .spawn((
+                Cultivation {
+                    qi_current: 0.0,
+                    qi_max: 300.0,
+                    ..Default::default()
+                },
+                SkillBarBindings::default(),
+            ))
+            .id();
+
+        let slot: u8 = 2;
+        let result = resolve_anqi_charge_skill(&mut world, caster, slot, None);
+
+        // 先验 Rejected
+        assert!(
+            matches!(
+                result,
+                CastResult::Rejected {
+                    reason: CastRejectReason::QiInsufficient
+                }
+            ),
+            "期望 qi_current=0 被拒绝，实际 {result:?}"
+        );
+
+        // 再验冷却未设置：slot 应仍处于 ready 状态（tick=10）
+        let bindings = world.get::<SkillBarBindings>(caster).unwrap();
+        assert!(
+            !bindings.is_on_cooldown(slot, 10),
+            "期望真元不足拒绝时不设置冷却（slot={slot} 应 ready），\
+             实际 slot 被置为冷却中 — 冷却被烧掉了"
         );
     }
 }
