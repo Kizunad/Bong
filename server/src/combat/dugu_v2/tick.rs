@@ -85,8 +85,7 @@ pub fn shroud_maintain_tick(
             continue;
         }
         let drained = shroud.maintain_qi_per_tick;
-        cultivation.qi_current =
-            (cultivation.qi_current - drained).clamp(0.0, cultivation.qi_max);
+        cultivation.qi_current = (cultivation.qi_current - drained).clamp(0.0, cultivation.qi_max);
         release_qi_amount_to_zone(
             entity,
             drained,
@@ -316,8 +315,8 @@ pub fn reverse_zone_credit_tick(
 mod tests {
     use super::*;
 
-    use crate::combat::CombatClock;
     use crate::combat::dugu_v2::events::DuguSkillId;
+    use crate::combat::CombatClock;
     use crate::cultivation::components::{Cultivation, QiColor, Realm};
     use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
     use crate::world::dimension::{CurrentDimension, DimensionKind};

@@ -285,14 +285,6 @@ pub enum QiTransferReason {
     ///   - 此路径是 audit-only + zone balance 更新，**禁止**调 `WorldQiAccount::transfer`
     ///     （后者会检查 player ledger 余额并拒绝）。
     DuguReturnToZone,
-    /// bughunt r7 — 独蛊 Shroud 每 tick 维护消耗 `maintain_qi_per_tick` 后逸散回施法者所在 zone。
-    ///
-    /// 守恒约束：`cultivation.qi_current -= shroud.maintain_qi_per_tick`；同 tick 内把
-    /// `maintain_qi_per_tick` 记入 zone 账户，并追加
-    /// `QiTransfer(from=player/npc:<id>, to=zone:<name>, reason=ShroudDrain)` audit。
-    /// 活体真元仍在 ECS，不镜像到 player/npc ledger balance。
-    /// zone 不可解析时 fallback overflow，真元绝不凭空消失。
-    ShroudDrain,
 }
 
 /// plan-qi-handling-attrition-v1 P0 — 搬运磨损操作类型，对应不同基础磨损率。
