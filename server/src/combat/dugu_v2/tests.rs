@@ -1532,7 +1532,8 @@ fn cast_cost_zone_credit_self_cure_happy_path() {
 
 /// 边界：caster 没有 Position 时（zone 无法定位），成本仍从 qi_current 扣减，
 /// QiTransfer 走 overflow 账户（qi 不蒸发，zone 不变）。
-/// 注：CurrentDimension 缺失时 fallback Overworld，zone 仍可达（不测此场景）。
+/// 注：实现要求 Position **和** CurrentDimension 同时存在才解析 zone；缺任一都路由 overflow，
+/// 无 Overworld 默认回退（见 release_cast_cost_to_zone 的 `dimension = get::<CurrentDimension>`）。
 #[test]
 fn cast_cost_without_position_routes_to_overflow() {
     use crate::qi_physics::ledger::QiTransfer;
@@ -1726,14 +1727,38 @@ fn cast_cost_zone_credit_reverse_includes_extra_cost() {
         !release_events.is_empty(),
         "Reverse cast 应 emit ≥1 ReleaseToZone QiTransfer（施法成本审计轨迹，QS-DUGU2-CASTCOST）"
     );
-    // 事件总量 == accepted_extra + accepted_base（只统计入账部分，overflow 静默丢弃与 zhenmai_v2 一致）
-    let total_released: f64 = release_events.iter().map(|t| t.amount).sum();
-    let expected_released = accepted_extra + accepted_base;
+    // 守恒（#693）：扣减的 qi 全额入账，不蒸发。
+    // - 入 zone 账户部分 == accepted_extra + accepted_base
+    // - zone 部分饱和的 overflow（base_cost 的 30）显式路由到 overflow 账户
+    // - 二者之和 == total_cost（80），ReleaseToZone 总量 == 全部扣减
+    use crate::qi_physics::ledger::QiAccountKind;
+    let zone_released: f64 = release_events
+        .iter()
+        .filter(|t| t.to.kind == QiAccountKind::Zone)
+        .map(|t| t.amount)
+        .sum();
+    let overflow_released: f64 = release_events
+        .iter()
+        .filter(|t| t.to.kind == QiAccountKind::Overflow)
+        .map(|t| t.amount)
+        .sum();
+    let expected_zone_released = accepted_extra + accepted_base; // = 50
+    let expected_overflow_released = total_cost - expected_zone_released; // = 30（base 饱和溢出）
     assert!(
-        (total_released - expected_released).abs() < 1e-9,
-        "Reverse ReleaseToZone 总量({total_released:.9}) 应 == accepted_extra({accepted_extra})\
-         + accepted_base({accepted_base}) = {expected_released};\
-         overflow 静默丢弃（与 zhenmai_v2 一致）"
+        (zone_released - expected_zone_released).abs() < 1e-9,
+        "Reverse 入 zone 账户的 ReleaseToZone 总量({zone_released:.9}) 应 == \
+         accepted_extra({accepted_extra}) + accepted_base({accepted_base}) = {expected_zone_released}"
+    );
+    assert!(
+        (overflow_released - expected_overflow_released).abs() < 1e-9,
+        "Reverse zone 饱和后的 overflow({overflow_released:.9}) 应显式路由到 overflow 账户 \
+         = {expected_overflow_released}（base_cost 超出 zone room 的部分），不得静默丢弃（#693）"
+    );
+    let total_released: f64 = release_events.iter().map(|t| t.amount).sum();
+    assert!(
+        (total_released - total_cost).abs() < 1e-9,
+        "守恒：ReleaseToZone 总量({total_released:.9}) 应 == 扣减的 total_cost({total_cost})，\
+         zone 部分饱和时 overflow 真元必须显式入账而非蒸发（#693）"
     );
 }
 
@@ -1779,5 +1804,131 @@ fn cast_cost_without_zone_registry_routes_to_overflow() {
     assert!(
         has_release,
         "无 ZoneRegistry 时仍应 emit ReleaseToZone QiTransfer（overflow 路径）"
+    );
+}
+
+/// 边界：amount <= QI_EPSILON 时 release_cast_cost_to_zone 提前返回——
+/// 不扣 qi_current、不发任何 QiTransfer、zone 不变（CodeRabbit #693 Minor 要求覆盖）。
+#[test]
+fn release_cast_cost_below_epsilon_is_noop() {
+    use super::skills::release_cast_cost_to_zone;
+    use crate::qi_physics::constants::QI_EPSILON;
+    use crate::qi_physics::ledger::QiTransfer;
+    use crate::world::zone::ZoneRegistry;
+
+    let mut app = setup_cast_cost_zone_app();
+    let caster = actor_with_dim(&mut app, Realm::Spirit, 100.0, 100.0, 0.0);
+
+    let qi_before = app.world().get::<Cultivation>(caster).unwrap().qi_current;
+    let zone_before = app
+        .world()
+        .resource::<ZoneRegistry>()
+        .find_zone_by_name("spawn")
+        .unwrap()
+        .spirit_qi;
+
+    release_cast_cost_to_zone(app.world_mut(), caster, QI_EPSILON, "dugu_v2:test");
+
+    let qi_after = app.world().get::<Cultivation>(caster).unwrap().qi_current;
+    assert!(
+        (qi_before - qi_after).abs() < 1e-12,
+        "amount<=QI_EPSILON 不应扣减 qi_current（before={qi_before} after={qi_after}）"
+    );
+    let zone_after = app
+        .world()
+        .resource::<ZoneRegistry>()
+        .find_zone_by_name("spawn")
+        .unwrap()
+        .spirit_qi;
+    assert!(
+        (zone_before - zone_after).abs() < 1e-12,
+        "amount<=QI_EPSILON 不应改动 zone（before={zone_before} after={zone_after}）"
+    );
+    let count = app
+        .world()
+        .resource::<Events<QiTransfer>>()
+        .iter_current_update_events()
+        .count();
+    assert_eq!(count, 0, "amount<=QI_EPSILON 不应 emit 任何 QiTransfer");
+}
+
+/// 错误分支：caster 缺少 Cultivation 时 release_cast_cost_to_zone 提前返回——
+/// 没东西可扣就不能凭空向 zone/overflow 释放真元（CodeRabbit #693 Minor 要求覆盖）。
+#[test]
+fn release_cast_cost_no_cultivation_releases_nothing() {
+    use super::skills::release_cast_cost_to_zone;
+    use crate::qi_physics::ledger::QiTransfer;
+    use crate::world::dimension::{CurrentDimension, DimensionKind};
+    use crate::world::zone::ZoneRegistry;
+
+    let mut app = setup_cast_cost_zone_app();
+    // 裸实体：有 Position + CurrentDimension 但**没有** Cultivation。
+    let bare = app
+        .world_mut()
+        .spawn((
+            Position::new([0.0, 64.0, 0.0]),
+            CurrentDimension(DimensionKind::Overworld),
+        ))
+        .id();
+
+    let zone_before = app
+        .world()
+        .resource::<ZoneRegistry>()
+        .find_zone_by_name("spawn")
+        .unwrap()
+        .spirit_qi;
+
+    release_cast_cost_to_zone(app.world_mut(), bare, 50.0, "dugu_v2:test");
+
+    let zone_after = app
+        .world()
+        .resource::<ZoneRegistry>()
+        .find_zone_by_name("spawn")
+        .unwrap()
+        .spirit_qi;
+    assert!(
+        (zone_before - zone_after).abs() < 1e-12,
+        "caster 无 Cultivation 时不应向 zone 释放真元（before={zone_before} after={zone_after}）"
+    );
+    let count = app
+        .world()
+        .resource::<Events<QiTransfer>>()
+        .iter_current_update_events()
+        .count();
+    assert_eq!(
+        count, 0,
+        "caster 无 Cultivation 时不应凭空 emit QiTransfer（没东西可扣）"
+    );
+}
+
+/// 防御性守恒（CodeRabbit #693 Minor）：调用方漏做余额预检、qi_current < amount 时，
+/// clamp 后实际只扣减 qi_current，释放金额必须 == 实际扣减量，绝不凭空多出 amount-qi_current。
+#[test]
+fn release_cast_cost_caps_release_to_actual_deduction() {
+    use super::skills::release_cast_cost_to_zone;
+    use crate::qi_physics::ledger::{QiTransfer, QiTransferReason};
+
+    let mut app = setup_cast_cost_zone_app();
+    // qi_current=5 但要求释放 80：实际只能扣 5。
+    let caster = actor_with_dim(&mut app, Realm::Spirit, 5.0, 100.0, 0.0);
+
+    release_cast_cost_to_zone(app.world_mut(), caster, 80.0, "dugu_v2:test");
+
+    let qi_after = app.world().get::<Cultivation>(caster).unwrap().qi_current;
+    assert!(
+        qi_after.abs() < 1e-12,
+        "qi_current 应被扣到 0（before=5, amount=80），实际={qi_after}"
+    );
+    let released: f64 = app
+        .world()
+        .resource::<Events<QiTransfer>>()
+        .iter_current_update_events()
+        .filter(|t| t.reason == QiTransferReason::ReleaseToZone)
+        .map(|t| t.amount)
+        .sum();
+    assert!(
+        (released - 5.0).abs() < 1e-9,
+        "释放总量应 == 实际扣减量 5（非请求的 80），实际={released:.9}；\
+         否则凭空多出 75 真元破守恒（#693 防御性守恒）"
     );
 }
