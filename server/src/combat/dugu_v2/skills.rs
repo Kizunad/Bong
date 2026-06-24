@@ -17,8 +17,12 @@ use crate::network::audio_event_emit::{
 };
 use crate::network::cast_emit::current_unix_millis;
 use crate::network::vfx_event_emit::VfxEventRequest;
-use crate::qi_physics::reverse_burst_all_marks;
+use crate::qi_physics::constants::{QI_EPSILON, QI_ZONE_UNIT_CAPACITY};
+use crate::qi_physics::ledger::{QiAccountId, QiTransfer, QiTransferReason};
+use crate::qi_physics::{qi_release_to_zone, reverse_burst_all_marks};
 use crate::schema::vfx_event::VfxEventPayloadV1;
+use crate::world::dimension::CurrentDimension;
+use crate::world::zone::ZoneRegistry;
 
 use super::events::{
     DuguSelfRevealedEvent, DuguSkillId, DuguSkillVisual, EclipseNeedleEvent, PenetrateChainEvent,
@@ -142,10 +146,7 @@ pub fn resolve_dugu_v2_skill(
         return rejected(reason);
     }
 
-    if let Some(mut cultivation) = world.get_mut::<Cultivation>(caster) {
-        cultivation.qi_current =
-            (cultivation.qi_current - spec.qi_cost).clamp(0.0, cultivation.qi_max);
-    }
+    release_cast_cost_to_zone(world, caster, spec.qi_cost, "dugu_v2:cast_cost");
     insert_cast(
         world,
         caster,
@@ -490,10 +491,7 @@ fn apply_reverse(
         radius_blocks: 10.0,
         expires_at_tick: now_tick.saturating_add(30 * TICKS_PER_SECOND),
     });
-    if let Some(mut caster_cultivation) = world.get_mut::<Cultivation>(caster) {
-        caster_cultivation.qi_current =
-            (caster_cultivation.qi_current - extra_qi_cost).clamp(0.0, caster_cultivation.qi_max);
-    }
+    release_cast_cost_to_zone(world, caster, extra_qi_cost, "dugu_v2:reverse_extra_cost");
     let mut state = world.get::<DuguState>(caster).cloned().unwrap_or_default();
     state.insidious_color_percent = (state.insidious_color_percent + 5.0 * targets.len() as f32)
         .clamp(0.0, SELF_CURE_SOFT_CAP_PERCENT);
@@ -843,6 +841,117 @@ pub(super) fn emit_anim(world: &mut bevy_ecs::world::World, entity: Entity, anim
                 fade_in_ticks: Some(2),
             },
         ));
+    }
+}
+
+/// Deduct `amount` from the caster's `qi_current` and release it to the caster's zone
+/// via [`qi_release_to_zone`], emitting a [`QiTransfer`] event for ledger conservation.
+///
+/// Mirrors the `spend_qi` + `emit_spent_qi_release_world` pattern from `zhenmai_v2`.
+///
+/// Zone resolution requires:
+///   - `Position` component on `caster` (to locate the zone)
+///   - `CurrentDimension` component on `caster` (to select the right dimension)
+///   - `ZoneRegistry` resource present in the world
+///
+/// If any of these are absent (e.g. unit tests without zone setup, or entities without
+/// `CurrentDimension`), the transfer is routed to a named overflow account so qi is
+/// never silently lost.
+pub(super) fn release_cast_cost_to_zone(
+    world: &mut bevy_ecs::world::World,
+    caster: Entity,
+    amount: f64,
+    sink: &'static str,
+) {
+    if amount <= QI_EPSILON {
+        return;
+    }
+    // Deduct from caster's qi_current, then release ONLY what was actually removed.
+    // 防御性守恒（CodeRabbit #693 Minor）：若调用方漏做余额预检且 qi_current < amount，
+    // clamp 后实际只扣减了 qi_current，回灌也必须按实际扣减量，否则凭空多出 amount-qi_current。
+    let amount = if let Some(mut cultivation) = world.get_mut::<Cultivation>(caster) {
+        let before = cultivation.qi_current;
+        cultivation.qi_current = (before - amount).clamp(0.0, cultivation.qi_max);
+        before - cultivation.qi_current
+    } else {
+        // caster 无 Cultivation：什么都没扣，不能凭空释放。
+        return;
+    };
+    if amount <= QI_EPSILON {
+        return;
+    }
+    // Route the spent qi to the caster's zone (conservation).
+    let from = QiAccountId::player(format!("entity:{}", caster.to_bits()));
+    let position = world.get::<Position>(caster).map(|p| p.get());
+    // Only resolve zone when CurrentDimension is explicitly present (real players get it at spawn).
+    // Without it, zone lookup falls through to overflow so test entities stay isolated.
+    let dimension = world.get::<CurrentDimension>(caster).map(|d| d.0);
+
+    // (zone_transfer, overflow_amount)：zone 部分饱和时 qi_release_to_zone 只 accept 一部分，剩余
+    // outcome.overflow 必须显式路由到 overflow 账户，否则被静默丢弃 → 蒸发、破守恒（CodeRabbit #693）。
+    // 无 zone / Err 时 overflow_amount=amount（全额走 overflow 账户）。
+    let (zone_transfer, overflow_amount) = if let (Some(position), Some(dimension), Some(zones)) = (
+        position,
+        dimension,
+        world.get_resource_mut::<ZoneRegistry>().as_deref_mut(),
+    ) {
+        let zone_name = zones.find_zone(dimension, position).map(|z| z.name.clone());
+        if let Some(zone_name) = zone_name {
+            if let Some(zone) = zones.find_zone_mut(zone_name.as_str()) {
+                let to = QiAccountId::zone(zone.name.clone());
+                let zone_current = zone.spirit_qi * QI_ZONE_UNIT_CAPACITY;
+                match qi_release_to_zone(
+                    amount,
+                    from.clone(),
+                    to,
+                    zone_current,
+                    QI_ZONE_UNIT_CAPACITY,
+                ) {
+                    Ok(outcome) => {
+                        zone.spirit_qi =
+                            (outcome.zone_after / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
+                        (outcome.transfer, outcome.overflow)
+                    }
+                    Err(err) => {
+                        tracing::warn!(
+                            ?err,
+                            sink,
+                            "[bong][dugu_v2] qi_release_to_zone error; routing to overflow"
+                        );
+                        (None, amount)
+                    }
+                }
+            } else {
+                (None, amount)
+            }
+        } else {
+            (None, amount)
+        }
+    } else {
+        (None, amount)
+    };
+
+    // 守恒：accepted 部分进 zone 账户、overflow 部分进 overflow 账户，二者之和 == amount（== 扣减的
+    // qi_current），任何 qi 都不会蒸发。
+    let mut transfers: Vec<QiTransfer> = Vec::new();
+    if let Some(transfer) = zone_transfer {
+        transfers.push(transfer);
+    }
+    if overflow_amount > QI_EPSILON {
+        if let Ok(overflow_transfer) = QiTransfer::new(
+            from,
+            QiAccountId::overflow(format!("{sink}:{}", caster.to_bits())),
+            overflow_amount,
+            QiTransferReason::ReleaseToZone,
+        ) {
+            transfers.push(overflow_transfer);
+        }
+    }
+
+    if let Some(mut events) = world.get_resource_mut::<Events<QiTransfer>>() {
+        for transfer in transfers {
+            events.send(transfer);
+        }
     }
 }
 
