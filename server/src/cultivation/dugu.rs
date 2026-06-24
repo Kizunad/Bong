@@ -176,6 +176,7 @@ pub fn declare_meridian_dependencies(
     dependencies.declare(DUGU_INFUSE_SKILL_ID, vec![]);
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn resolve_infuse_dugu_poison_intents(
     mut commands: Commands,
     clock: Res<CombatClock>,
@@ -186,7 +187,14 @@ pub fn resolve_infuse_dugu_poison_intents(
         Option<&Lifecycle>,
         Option<&PendingDuguInfusion>,
     )>,
+    locations: Query<(
+        Option<&Position>,
+        Option<&CurrentDimension>,
+        Option<&LifeRecord>,
+    )>,
     mut disrupted_events: EventWriter<DuguObfuscationDisruptedEvent>,
+    mut zones: Option<ResMut<ZoneRegistry>>,
+    mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
 ) {
     for intent in intents.read() {
         let Ok((mut cultivation, practice, lifecycle, pending)) = actors.get_mut(intent.infuser)
@@ -197,8 +205,21 @@ pub fn resolve_infuse_dugu_poison_intents(
             continue;
         }
 
-        cultivation.qi_current =
-            (cultivation.qi_current - DUGU_INFUSE_COST).clamp(0.0, cultivation.qi_max);
+        let (position, current_dimension, life_record) = locations
+            .get(intent.infuser)
+            .map(|(p, d, l)| (p, d, l))
+            .unwrap_or((None, None, None));
+        let accepted = release_qi_amount_to_zone(
+            intent.infuser,
+            DUGU_INFUSE_COST,
+            position,
+            current_dimension,
+            life_record,
+            zones.as_deref_mut(),
+            qi_transfers.as_deref_mut(),
+            "dugu_infuse_poison",
+        );
+        cultivation.qi_current = (cultivation.qi_current - accepted).clamp(0.0, cultivation.qi_max);
         let expires_at_tick = clock.tick.saturating_add(DUGU_INFUSION_TTL_TICKS);
         let disrupted_until = clock.tick.saturating_add(DUGU_EXPOSURE_TICKS);
         commands.entity(intent.infuser).insert((
@@ -834,11 +855,27 @@ mod tests {
 
     #[test]
     fn infuse_dugu_consumes_qi_and_opens_exposure_window() {
+        use crate::world::dimension::DimensionKind;
+        use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
+
         let mut app = App::new();
         app.insert_resource(CombatClock { tick: 100 });
+        app.insert_resource(ZoneRegistry::fallback());
         app.add_event::<InfuseDuguPoisonIntent>();
         app.add_event::<DuguObfuscationDisruptedEvent>();
+        app.add_event::<QiTransfer>();
         app.add_systems(Update, resolve_infuse_dugu_poison_intents);
+
+        // Pitfall-a: empty the spawn zone so the full DUGU_INFUSE_COST=5.0 can be credited
+        // without splitting into accepted+overflow (fallback zone starts near-full, ~5 raw room
+        // which is exactly the cost — zero it out to be safe).
+        app.world_mut()
+            .resource_mut::<ZoneRegistry>()
+            .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
+            .unwrap()
+            .spirit_qi = 0.0;
+
+        // Pitfall-b: entity must have CurrentDimension so find_zone succeeds.
         let infuser = app
             .world_mut()
             .spawn((
@@ -852,6 +889,8 @@ mod tests {
                     dugu_practice_level: 1,
                 },
                 Lifecycle::default(),
+                Position::new([8.0, 66.0, 8.0]),
+                CurrentDimension(DimensionKind::Overworld),
             ))
             .id();
 
@@ -864,7 +903,11 @@ mod tests {
         app.update();
 
         let cultivation = app.world().get::<Cultivation>(infuser).unwrap();
-        assert_eq!(cultivation.qi_current, 7.0);
+        assert_eq!(
+            cultivation.qi_current, 7.0,
+            "qi_current should drop by DUGU_INFUSE_COST={} (was 12.0, expected 7.0, got {})",
+            DUGU_INFUSE_COST, cultivation.qi_current
+        );
         let pending = app.world().get::<PendingDuguInfusion>(infuser).unwrap();
         assert_eq!(pending.target_carrier, InfuseTarget::NextNeedle);
         assert_eq!(pending.expires_at_tick, 100 + DUGU_INFUSION_TTL_TICKS);
@@ -879,6 +922,315 @@ mod tests {
         assert!(events.get_reader().read(events).any(|event| {
             event.infuser == infuser && event.until_tick == 100 + DUGU_EXPOSURE_TICKS
         }));
+    }
+
+    /// QS-002: zone credit — DUGU_INFUSE_COST must be credited to the zone, not discarded.
+    #[test]
+    fn infuse_poison_qi_cost_credited_to_zone() {
+        use crate::world::dimension::DimensionKind;
+        use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
+
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 100 });
+        app.insert_resource(ZoneRegistry::fallback());
+        app.add_event::<InfuseDuguPoisonIntent>();
+        app.add_event::<DuguObfuscationDisruptedEvent>();
+        app.add_event::<QiTransfer>();
+        app.add_systems(Update, resolve_infuse_dugu_poison_intents);
+
+        // Pitfall-a: empty spawn zone so there is room for full DUGU_INFUSE_COST=5.0 credit
+        // without split into accepted+overflow.
+        app.world_mut()
+            .resource_mut::<ZoneRegistry>()
+            .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
+            .unwrap()
+            .spirit_qi = 0.0;
+
+        let before = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .unwrap()
+            .spirit_qi;
+
+        // Pitfall-b: entity must have CurrentDimension so find_zone succeeds.
+        let infuser = app
+            .world_mut()
+            .spawn((
+                Cultivation {
+                    realm: Realm::Induce,
+                    qi_current: 20.0,
+                    qi_max: 30.0,
+                    ..Cultivation::default()
+                },
+                DuguPractice {
+                    dugu_practice_level: 1,
+                },
+                Lifecycle::default(),
+                Position::new([8.0, 66.0, 8.0]),
+                CurrentDimension(DimensionKind::Overworld),
+            ))
+            .id();
+
+        app.world_mut().send_event(InfuseDuguPoisonIntent {
+            infuser,
+            target_carrier: InfuseTarget::NextNeedle,
+            source: IntentSource::Test,
+        });
+
+        app.update();
+
+        // Cultivation qi should drop by exactly DUGU_INFUSE_COST.
+        let cultivation = app.world().get::<Cultivation>(infuser).unwrap();
+        assert_eq!(
+            cultivation.qi_current, 15.0,
+            "qi_current should drop by DUGU_INFUSE_COST={} (was 20.0, expected 15.0, got {})",
+            DUGU_INFUSE_COST, cultivation.qi_current
+        );
+
+        // Zone must gain spirit_qi (conservation: qi flows player → zone).
+        let after = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .unwrap()
+            .spirit_qi;
+        assert!(
+            after > before,
+            "zone spirit_qi should increase after infuse_poison cast (before={before}, after={after}); \
+             DUGU_INFUSE_COST must be credited to zone, not discarded"
+        );
+
+        // Exactly one QiTransfer event must have been emitted (zone credit).
+        let transfers: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<QiTransfer>>()
+            .drain()
+            .collect();
+        assert_eq!(
+            transfers.len(),
+            1,
+            "expected exactly 1 QiTransfer event for infuse_poison zone credit, got {}",
+            transfers.len()
+        );
+    }
+
+    /// QS-002 boundary: infuse with qi_current exactly at DUGU_INFUSE_COST (should succeed).
+    #[test]
+    fn infuse_poison_qi_exactly_at_cost_deducts_and_credits_zone() {
+        use crate::world::dimension::DimensionKind;
+        use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
+
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 200 });
+        app.insert_resource(ZoneRegistry::fallback());
+        app.add_event::<InfuseDuguPoisonIntent>();
+        app.add_event::<DuguObfuscationDisruptedEvent>();
+        app.add_event::<QiTransfer>();
+        app.add_systems(Update, resolve_infuse_dugu_poison_intents);
+
+        app.world_mut()
+            .resource_mut::<ZoneRegistry>()
+            .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
+            .unwrap()
+            .spirit_qi = 0.0;
+
+        let infuser = app
+            .world_mut()
+            .spawn((
+                Cultivation {
+                    realm: Realm::Induce,
+                    qi_current: DUGU_INFUSE_COST,
+                    qi_max: 30.0,
+                    ..Cultivation::default()
+                },
+                DuguPractice {
+                    dugu_practice_level: 1,
+                },
+                Lifecycle::default(),
+                Position::new([8.0, 66.0, 8.0]),
+                CurrentDimension(DimensionKind::Overworld),
+            ))
+            .id();
+
+        app.world_mut().send_event(InfuseDuguPoisonIntent {
+            infuser,
+            target_carrier: InfuseTarget::NextNeedle,
+            source: IntentSource::Test,
+        });
+
+        app.update();
+
+        let cultivation = app.world().get::<Cultivation>(infuser).unwrap();
+        assert_eq!(
+            cultivation.qi_current, 0.0,
+            "qi_current should reach exactly 0.0 when cost equals starting qi \
+             (was DUGU_INFUSE_COST={}, got {})",
+            DUGU_INFUSE_COST, cultivation.qi_current
+        );
+        // Infusion must still be scheduled even at the boundary.
+        assert!(
+            app.world().get::<PendingDuguInfusion>(infuser).is_some(),
+            "PendingDuguInfusion should be inserted even when qi is spent to exactly 0"
+        );
+    }
+
+    /// QS-002 boundary: insufficient qi — infuse must not fire and zone must not change.
+    #[test]
+    fn infuse_poison_rejected_when_qi_below_cost_no_zone_change() {
+        use crate::world::dimension::DimensionKind;
+        use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
+
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 300 });
+        app.insert_resource(ZoneRegistry::fallback());
+        app.add_event::<InfuseDuguPoisonIntent>();
+        app.add_event::<DuguObfuscationDisruptedEvent>();
+        app.add_event::<QiTransfer>();
+        app.add_systems(Update, resolve_infuse_dugu_poison_intents);
+
+        let before = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .unwrap()
+            .spirit_qi;
+
+        let infuser = app
+            .world_mut()
+            .spawn((
+                Cultivation {
+                    realm: Realm::Induce,
+                    // just below cost threshold — can_infuse_dugu requires qi_current >= DUGU_INFUSE_COST
+                    qi_current: DUGU_INFUSE_COST - 1.0,
+                    qi_max: 30.0,
+                    ..Cultivation::default()
+                },
+                DuguPractice {
+                    dugu_practice_level: 1,
+                },
+                Lifecycle::default(),
+                Position::new([8.0, 66.0, 8.0]),
+                CurrentDimension(DimensionKind::Overworld),
+            ))
+            .id();
+
+        app.world_mut().send_event(InfuseDuguPoisonIntent {
+            infuser,
+            target_carrier: InfuseTarget::NextNeedle,
+            source: IntentSource::Test,
+        });
+
+        app.update();
+
+        // Intent must be rejected — no PendingDuguInfusion inserted.
+        assert!(
+            app.world().get::<PendingDuguInfusion>(infuser).is_none(),
+            "PendingDuguInfusion must not be inserted when qi < DUGU_INFUSE_COST"
+        );
+        // qi_current must not change.
+        let cultivation = app.world().get::<Cultivation>(infuser).unwrap();
+        assert_eq!(
+            cultivation.qi_current,
+            DUGU_INFUSE_COST - 1.0,
+            "qi_current must remain unchanged when infuse intent is rejected"
+        );
+        // Zone must not change.
+        let after = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .unwrap()
+            .spirit_qi;
+        assert_eq!(
+            before, after,
+            "zone spirit_qi must not change when infuse intent is rejected (no qi spent)"
+        );
+        // No QiTransfer events.
+        let transfers: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<QiTransfer>>()
+            .drain()
+            .collect();
+        assert!(
+            transfers.is_empty(),
+            "no QiTransfer events should be emitted when infuse intent is rejected"
+        );
+    }
+
+    /// QS-002: without CurrentDimension, qi still deducts but routes to overflow (no zone credit).
+    /// This validates the system degrades gracefully rather than panicking.
+    #[test]
+    fn infuse_poison_without_dimension_deducts_qi_no_zone_credit() {
+        use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
+
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 400 });
+        app.insert_resource(ZoneRegistry::fallback());
+        app.add_event::<InfuseDuguPoisonIntent>();
+        app.add_event::<DuguObfuscationDisruptedEvent>();
+        app.add_event::<QiTransfer>();
+        app.add_systems(Update, resolve_infuse_dugu_poison_intents);
+
+        let before_zone = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .unwrap()
+            .spirit_qi;
+
+        // Spawn without CurrentDimension — find_zone will return None, qi routes to Overflow.
+        let infuser = app
+            .world_mut()
+            .spawn((
+                Cultivation {
+                    realm: Realm::Induce,
+                    qi_current: 15.0,
+                    qi_max: 30.0,
+                    ..Cultivation::default()
+                },
+                DuguPractice {
+                    dugu_practice_level: 1,
+                },
+                Lifecycle::default(),
+                Position::new([8.0, 66.0, 8.0]),
+                // No CurrentDimension intentionally.
+            ))
+            .id();
+
+        app.world_mut().send_event(InfuseDuguPoisonIntent {
+            infuser,
+            target_carrier: InfuseTarget::NextNeedle,
+            source: IntentSource::Test,
+        });
+
+        app.update();
+
+        // Qi must still be deducted (the cost is real even if zone routing fails).
+        let cultivation = app.world().get::<Cultivation>(infuser).unwrap();
+        assert_eq!(
+            cultivation.qi_current, 10.0,
+            "qi_current should still drop by DUGU_INFUSE_COST even without CurrentDimension \
+             (was 15.0, expected 10.0, got {})",
+            cultivation.qi_current
+        );
+        // Zone must not gain qi (no dimension means no zone lookup).
+        let after_zone = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .unwrap()
+            .spirit_qi;
+        assert_eq!(
+            before_zone, after_zone,
+            "zone spirit_qi must not change when CurrentDimension is absent \
+             (qi routes to Overflow, not zone)"
+        );
+        // Infusion is still scheduled — the cast itself succeeds.
+        assert!(
+            app.world().get::<PendingDuguInfusion>(infuser).is_some(),
+            "PendingDuguInfusion should still be inserted even when dimension is absent"
+        );
     }
 
     #[test]
