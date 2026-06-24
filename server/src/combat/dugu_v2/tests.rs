@@ -1333,8 +1333,8 @@ fn reverse_zero_returned_zone_qi_no_audit() {
 /// - zone 初始为空（spirit_qi=0.0）→ room=50，所有 cost 均全额入账，无 split。
 /// - 注册 QiTransfer event，以便验证 release_cast_cost_to_zone 发出的审计事件。
 fn setup_cast_cost_zone_app() -> App {
-    use crate::qi_physics::ledger::WorldQiAccount;
     use crate::qi_physics::ledger::QiTransfer;
+    use crate::qi_physics::ledger::WorldQiAccount;
     use crate::world::dimension::DimensionKind;
     use crate::world::zone::{Zone, ZoneRegistry};
     use valence::prelude::DVec3;
@@ -1397,7 +1397,7 @@ fn actor_with_dim(
 #[test]
 fn cast_cost_zone_credit_eclipse_happy_path() {
     use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
-    use crate::qi_physics::ledger::{QiTransferReason, QiTransfer};
+    use crate::qi_physics::ledger::{QiTransfer, QiTransferReason};
     use crate::world::zone::ZoneRegistry;
     use valence::prelude::Events;
 
@@ -1478,8 +1478,8 @@ fn cast_cost_zone_credit_eclipse_happy_path() {
 #[test]
 fn cast_cost_zone_credit_self_cure_happy_path() {
     use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
-    use crate::qi_physics::ledger::QiTransferReason;
     use crate::qi_physics::ledger::QiTransfer;
+    use crate::qi_physics::ledger::QiTransferReason;
     use crate::world::zone::ZoneRegistry;
     use valence::prelude::Events;
 
@@ -1535,8 +1535,8 @@ fn cast_cost_zone_credit_self_cure_happy_path() {
 /// 注：CurrentDimension 缺失时 fallback Overworld，zone 仍可达（不测此场景）。
 #[test]
 fn cast_cost_without_position_routes_to_overflow() {
-    use crate::qi_physics::ledger::QiTransferReason;
     use crate::qi_physics::ledger::QiTransfer;
+    use crate::qi_physics::ledger::QiTransferReason;
     use crate::world::zone::ZoneRegistry;
     use valence::prelude::Events;
 
@@ -1546,7 +1546,8 @@ fn cast_cost_without_position_routes_to_overflow() {
     // position == None → 走 overflow fallback）
     // 但 resolve_dugu_v2_skill 需要 TaintMark 等，改用 SelfCure 不需要目标
     use crate::world::dimension::{CurrentDimension, DimensionKind};
-    let caster = app.world_mut()
+    let caster = app
+        .world_mut()
         .spawn((
             Cultivation {
                 realm: Realm::Awaken,
@@ -1623,8 +1624,8 @@ fn cast_cost_without_position_routes_to_overflow() {
 #[test]
 fn cast_cost_zone_credit_reverse_includes_extra_cost() {
     use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
-    use crate::qi_physics::ledger::QiTransferReason;
     use crate::qi_physics::ledger::QiTransfer;
+    use crate::qi_physics::ledger::QiTransferReason;
     use crate::world::zone::ZoneRegistry;
     use valence::prelude::Events;
 
@@ -1651,7 +1652,11 @@ fn cast_cost_zone_credit_reverse_includes_extra_cost() {
         .find_zone_by_name("spawn")
         .unwrap()
         .spirit_qi;
-    let qi_before = app.world().get::<Cultivation>(void_caster).unwrap().qi_current;
+    let qi_before = app
+        .world()
+        .get::<Cultivation>(void_caster)
+        .unwrap()
+        .qi_current;
 
     let result = resolve_dugu_v2_skill(
         app.world_mut(),
@@ -1665,7 +1670,11 @@ fn cast_cost_zone_credit_reverse_includes_extra_cost() {
         "Reverse cast 应成功，实际={result:?}"
     );
 
-    let qi_after = app.world().get::<Cultivation>(void_caster).unwrap().qi_current;
+    let qi_after = app
+        .world()
+        .get::<Cultivation>(void_caster)
+        .unwrap()
+        .qi_current;
     let reverse_base_cost = 50.0_f64;
     let reverse_extra_cost = 30.0_f64; // REVERSE_QI_PER_TARGET × 1 target
     let total_cost = reverse_base_cost + reverse_extra_cost;
@@ -1695,7 +1704,8 @@ fn cast_cost_zone_credit_reverse_includes_extra_cost() {
 
     // extra_cost(30) 先入空 zone（room=50）：accepted=30, zone: 0→0.6
     // base_cost(50) 后入：zone_current_abs=30, room=20, accepted=20, zone: 0.6→1.0
-    let accepted_extra = reverse_extra_cost.min(QI_ZONE_UNIT_CAPACITY - zone_before.max(0.0) * QI_ZONE_UNIT_CAPACITY); // = 30
+    let accepted_extra = reverse_extra_cost
+        .min(QI_ZONE_UNIT_CAPACITY - zone_before.max(0.0) * QI_ZONE_UNIT_CAPACITY); // = 30
     let zone_after_extra = zone_before + accepted_extra / QI_ZONE_UNIT_CAPACITY; // = 0.6
     let room_for_base = (QI_ZONE_UNIT_CAPACITY - zone_after_extra * QI_ZONE_UNIT_CAPACITY).max(0.0);
     let accepted_base = reverse_base_cost.min(room_for_base); // = 20
@@ -1732,8 +1742,8 @@ fn cast_cost_zone_credit_reverse_includes_extra_cost() {
 /// 这覆盖"旧测试不含 ZoneRegistry"场景，确保 existing tests 不被修复破坏。
 #[test]
 fn cast_cost_without_zone_registry_routes_to_overflow() {
-    use crate::qi_physics::ledger::QiTransferReason;
     use crate::qi_physics::ledger::QiTransfer;
+    use crate::qi_physics::ledger::QiTransferReason;
     use valence::prelude::Events;
 
     // 使用不含 ZoneRegistry 的 setup_app（模拟旧测试环境）

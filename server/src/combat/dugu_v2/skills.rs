@@ -882,14 +882,18 @@ fn release_cast_cost_to_zone(
         dimension,
         world.get_resource_mut::<ZoneRegistry>().as_deref_mut(),
     ) {
-        let zone_name = zones
-            .find_zone(dimension, position)
-            .map(|z| z.name.clone());
+        let zone_name = zones.find_zone(dimension, position).map(|z| z.name.clone());
         if let Some(zone_name) = zone_name {
             if let Some(zone) = zones.find_zone_mut(zone_name.as_str()) {
                 let to = QiAccountId::zone(zone.name.clone());
                 let zone_current = zone.spirit_qi * QI_ZONE_UNIT_CAPACITY;
-                match qi_release_to_zone(amount, from.clone(), to, zone_current, QI_ZONE_UNIT_CAPACITY) {
+                match qi_release_to_zone(
+                    amount,
+                    from.clone(),
+                    to,
+                    zone_current,
+                    QI_ZONE_UNIT_CAPACITY,
+                ) {
                     Ok(outcome) => {
                         zone.spirit_qi =
                             (outcome.zone_after / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
