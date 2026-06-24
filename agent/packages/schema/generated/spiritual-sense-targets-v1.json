@@ -65,6 +65,10 @@
               {
                 "const": "DisguisedDaoZhang",
                 "type": "string"
+              },
+              {
+                "const": "DyingElderQi",
+                "type": "string"
               }
             ]
           },
