@@ -10,13 +10,13 @@ use crate::cultivation::components::{Cultivation, MeridianId, QiColor, Realm};
 use crate::cultivation::meridian::severed::{MeridianSeveredPermanent, SkillMeridianDependencies};
 use crate::cultivation::skill_registry::{CastRejectReason, CastResult, SkillFn, SkillRegistry};
 use crate::inventory::{PlayerInventory, EQUIP_SLOT_MAIN_HAND, EQUIP_SLOT_OFF_HAND};
+use crate::qi_physics::constants::{QI_EPSILON, QI_ZONE_UNIT_CAPACITY};
 use crate::qi_physics::{
     abrasion_loss, armor_penetrate, cone_dispersion, density_echo, high_density_inject,
     qi_release_to_zone, AbrasionDirection, AnqiContainerKind, ArmorPenetrationOutcome,
     ConeDispersionShot, EchoFractalOutcome, HighDensityInjectionOutcome, QiAccountId, QiTransfer,
     QiTransferReason,
 };
-use crate::qi_physics::constants::{QI_EPSILON, QI_ZONE_UNIT_CAPACITY};
 use crate::world::dimension::CurrentDimension;
 use crate::world::zone::ZoneRegistry;
 
@@ -480,13 +480,19 @@ fn resolve_anqi_skill(
         matches!(color.main, crate::cultivation::components::ColorKind::Solid)
     });
 
-    if let Some(mut cultivation) = world.get_mut::<Cultivation>(caster) {
-        cultivation.qi_current = (cultivation.qi_current - qi_cost).clamp(0.0, cultivation.qi_max);
-    }
+    // 防御性守恒：回灌「实际扣减量」(before-after) 而非请求 qi_cost——qi_current 被 clamp 到 0 时
+    // （边界 qi_current<qi_cost，guard 仅留 EPSILON 余量）按实际扣减回灌，绝不向 zone 多记凭空创生。
+    let actual_spent = if let Some(mut cultivation) = world.get_mut::<Cultivation>(caster) {
+        let before = cultivation.qi_current;
+        cultivation.qi_current = (before - qi_cost).clamp(0.0, cultivation.qi_max);
+        before - cultivation.qi_current
+    } else {
+        0.0
+    };
     emit_anqi_channeling_transfer(world, caster, skill, qi_cost);
     // 守恒：扣除的真元必须回灌区域，否则 world qi ledger 产生永久漏洞。
     // 无 Zone/CurrentDimension 时自动路由到 overflow 账户，qi 永远不蒸发。
-    release_cast_qi_to_zone(world, caster, qi_cost, "anqi_v2_cast");
+    release_cast_qi_to_zone(world, caster, actual_spent, "anqi_v2_cast");
     if world.get::<AnqiMastery>(caster).is_none() {
         world.entity_mut(caster).insert(AnqiMastery::default());
     }
@@ -723,9 +729,16 @@ fn release_cast_qi_to_zone(
             if let Some(zone) = zones.find_zone_mut(zone_name.as_str()) {
                 let to = QiAccountId::zone(zone.name.clone());
                 let zone_current = zone.spirit_qi * QI_ZONE_UNIT_CAPACITY;
-                match qi_release_to_zone(amount, from.clone(), to, zone_current, QI_ZONE_UNIT_CAPACITY) {
+                match qi_release_to_zone(
+                    amount,
+                    from.clone(),
+                    to,
+                    zone_current,
+                    QI_ZONE_UNIT_CAPACITY,
+                ) {
                     Ok(outcome) => {
-                        zone.spirit_qi = (outcome.zone_after / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
+                        zone.spirit_qi =
+                            (outcome.zone_after / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
                         (outcome.transfer, outcome.overflow)
                     }
                     Err(err) => {

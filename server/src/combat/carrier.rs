@@ -1129,6 +1129,7 @@ pub fn release_residual_to_zone(
 }
 
 /// Shared helper for returning qi from an explicit source account to a zone or overflow.
+#[allow(clippy::too_many_arguments)]
 fn release_account_to_zone(
     zones: Option<&mut ZoneRegistry>,
     qi_transfers: &mut EventWriter<QiTransfer>,
@@ -1904,8 +1905,14 @@ mod tests {
         world.insert_resource(CombatClock { tick: 1 });
         world.insert_resource(bevy_ecs::event::Events::<ChargeCarrierIntent>::default());
 
-        // qi_max=200 → qi_target=60; qi_current 精确等于 60 → 应允许
-        let qi_target_val = 60.0_f64;
+        // qi_max=200 → qi_target=(200*0.3) f32 ≈ 60.000004（非整数 60，f32 0.3 不精确）。
+        // qi_current 取**真实** qi_target 值以精确测「==」临界，避免硬编码 60.0 因 f32 imprecision
+        // 被 guard 误判 < 而拒绝（workflow agent 原测试 bug）。
+        let cult_for_target = Cultivation {
+            qi_max: 200.0,
+            ..Default::default()
+        };
+        let qi_target_val = f64::from(default_qi_target(&cult_for_target));
         let caster = world
             .spawn((
                 Cultivation {

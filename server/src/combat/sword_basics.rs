@@ -431,8 +431,7 @@ pub fn drain_sword_qi_for_hit(world: &mut bevy_ecs::world::World, caster: Entity
     // Credit zone directly — QiTransfer is audit-only and has no EventReader.
     if let Some(mut zones) = world.get_resource_mut::<ZoneRegistry>() {
         if let Some(zone) = zones.find_zone_mut(DEFAULT_SPAWN_ZONE_NAME) {
-            zone.spirit_qi =
-                (zone.spirit_qi + spent / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
+            zone.spirit_qi = (zone.spirit_qi + spent / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
         }
     }
     let mut qi_transfers = world.get_resource_mut::<Events<QiTransfer>>();
@@ -856,8 +855,7 @@ fn credit_qi_to_zone(
 ) {
     if let Some(zones) = zones {
         if let Some(zone) = zones.find_zone_mut(DEFAULT_SPAWN_ZONE_NAME) {
-            zone.spirit_qi =
-                (zone.spirit_qi + amount / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
+            zone.spirit_qi = (zone.spirit_qi + amount / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
         }
     }
     emit_qi_transfer(
@@ -1030,7 +1028,7 @@ mod tests {
     }
 
     fn make_zone_registry_empty() -> ZoneRegistry {
-        use crate::world::zone::{Zone, ZoneRegistry};
+        use crate::world::zone::ZoneRegistry;
         let mut registry = ZoneRegistry::fallback();
         // Reset to 0.0 so the zone has full room; avoids overflow/split in assertions.
         registry
@@ -1166,14 +1164,19 @@ mod tests {
         let events = app.world().resource::<Events<QiTransfer>>();
         let mut reader = events.get_reader();
         let transfers: Vec<_> = reader.read(events).collect();
-        assert_eq!(transfers.len(), 1, "one QiTransfer audit event expected per hit");
+        assert_eq!(
+            transfers.len(),
+            1,
+            "one QiTransfer audit event expected per hit"
+        );
         let transfer = transfers[0];
         assert_eq!(transfer.from, container_account);
         assert_eq!(transfer.to, QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME));
         assert_eq!(transfer.reason, QiTransferReason::ReleaseToZone);
         assert!(
             (transfer.amount - 2.0).abs() < f64::EPSILON,
-            "transfer amount should be qi_per_hit=2.0, got {}", transfer.amount
+            "transfer amount should be qi_per_hit=2.0, got {}",
+            transfer.amount
         );
     }
 
