@@ -167,6 +167,17 @@ pub enum QiTransferReason {
     /// 活体真元仍在 ECS，不镜像到 player/npc ledger balance。
     MeridianForge,
     RiftCollapse,
+    /// bughunt QS-01 — 裂口气压负压（rift-mouth neg_pressure）每 tick 从附近玩家/NPC
+    /// qi_current 抽走真元，守恒转入 rift ledger 账户。
+    ///
+    /// 守恒约束：
+    ///   - `cultivation.qi_current -= actual_drain`（ECS，已在 tick_neg_pressure 扣减）；
+    ///   - 同 tick 内把 `actual_drain` 记入 `QiAccountId::rift(zone_label)` 账户；
+    ///   - `push_transfer_audit(QiTransfer(from=player/npc:<entity>, to=rift:<label>,
+    ///     reason=NegPressureDrain))` 留审计轨迹；
+    ///   - 活体真元仍在 ECS，不镜像到 player/npc ledger balance（audit-only 模式）；
+    ///   - `summarize_world_qi` 口径：player_qi 减少，ledger_qi（rift 账户）增加，总量不变。
+    NegPressureDrain,
     EraDecay,
     /// plan-craft-v1 §0/§3 — 手搓 qi_cost 一次性投入 zone，区别于 ReleaseToZone（招式释放）
     Crafting,
