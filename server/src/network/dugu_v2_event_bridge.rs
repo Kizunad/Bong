@@ -463,6 +463,7 @@ mod tests {
             affected_targets: 1,
             permanent_decay_rate_per_min: 0.001,
             reveal_probability: 0.007,
+            returned_zone_qi: 0.0,
             tick: 99,
             visual: visual(),
         });
@@ -806,6 +807,7 @@ mod tests {
             affected_targets: 1,
             permanent_decay_rate_per_min: 0.0,
             reveal_probability: 0.007,
+            returned_zone_qi: 0.0,
             tick: 99,
             visual: visual(),
         });

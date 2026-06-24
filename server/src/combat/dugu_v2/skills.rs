@@ -351,6 +351,8 @@ fn apply_penetrate(
     let spec = penetrate_spec(cultivation.realm);
     let affected = affected_taint_targets(world, caster, target, spec.radius_blocks, false);
     let affected_count = affected.len().max(1) as u32;
+    let qi_drain_per_target = f64::from(15.0 * spec.multiplier);
+    let mut total_qi_drained: f64 = 0.0;
     for entity in affected {
         apply_damage(
             world,
@@ -361,8 +363,10 @@ fn apply_penetrate(
             now_tick,
         );
         if let Some(mut target_cultivation) = world.get_mut::<Cultivation>(entity) {
-            target_cultivation.qi_current =
-                (target_cultivation.qi_current - f64::from(15.0 * spec.multiplier)).max(0.0);
+            let before = target_cultivation.qi_current;
+            target_cultivation.qi_current = (before - qi_drain_per_target).max(0.0);
+            // Accumulate the actual amount deducted (clamped by floor at 0).
+            total_qi_drained += before - target_cultivation.qi_current;
         }
         if spec.extra_permanent_decay_rate_per_min > 0.0 {
             if let Some(mut taint) = world.get_mut::<TaintMark>(entity) {
@@ -388,6 +392,9 @@ fn apply_penetrate(
             permanent_decay_rate_per_min: mark.permanent_decay_rate_per_min
                 + spec.extra_permanent_decay_rate_per_min,
             reveal_probability,
+            // Total qi deducted from targets' qi_current — credited to zone by
+            // penetrate_zone_credit_tick so the world-qi ledger stays conserved.
+            returned_zone_qi: total_qi_drained as f32,
             tick: now_tick,
             visual: visual_for(DuguSkillId::Penetrate),
         },

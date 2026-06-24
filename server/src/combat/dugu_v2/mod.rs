@@ -29,6 +29,7 @@ pub fn register(app: &mut App) {
             tick::reverse_aftermath_decay_tick.after(tick::shroud_maintain_tick),
             tick::eclipse_zone_credit_tick,
             tick::reverse_zone_credit_tick,
+            tick::penetrate_zone_credit_tick,
         ),
     );
 }
