@@ -31,6 +31,7 @@ pub fn register(app: &mut App) {
             tick::eclipse_zone_credit_tick,
             tick::reverse_zone_credit_tick,
             tick::reverse_victim_qi_zone_credit_tick,
+            tick::penetrate_zone_credit_tick,
         ),
     );
 }

@@ -89,6 +89,9 @@ pub struct PenetrateChainEvent {
     pub affected_targets: u32,
     pub permanent_decay_rate_per_min: f32,
     pub reveal_probability: f32,
+    /// Total qi drained from all affected targets' `qi_current` during this cast.
+    /// Consumed by `penetrate_zone_credit_tick` to credit the target's zone.
+    pub returned_zone_qi: f32,
     pub tick: u64,
     pub visual: DuguSkillVisual,
 }

@@ -1337,6 +1337,243 @@ fn eclipse_then_reverse_chain_conservation_no_double_entry() {
     );
 }
 
+// ── Penetrate zone-credit tests (fix: qi-sweep-dugu-penetrate-target-drain) ──────────
+
+/// happy path: Penetrate 施放后，target 的 qi_current 扣减量累积到 returned_zone_qi，
+/// penetrate_zone_credit_tick 将其归还到 zone。
+///
+/// 守恒检查：zone.spirit_qi 增量 == returned_zone_qi（QI_ZONE_UNIT_CAPACITY 换算后）。
+#[test]
+fn penetrate_zone_credit_happy_path_zone_increases_by_drained_qi() {
+    use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
+    use crate::qi_physics::ledger::{QiTransferReason, WorldQiAccount};
+    use crate::world::zone::ZoneRegistry;
+
+    // 使用空 zone（spirit_qi=0.0）确保 accepted == total_drained（无截断）
+    let zone_qi_before = 0.0_f64;
+    let mut app = setup_zone_credit_app(zone_qi_before);
+
+    let caster = actor(&mut app, Realm::Spirit, 200.0, 200.0, 0.0);
+    let target = actor(&mut app, Realm::Spirit, 200.0, 200.0, 1.0);
+
+    // 给目标插入 TaintMark（Penetrate 需要 caster 的 TaintMark 在目标上）
+    app.world_mut().entity_mut(target).insert(TaintMark {
+        caster,
+        intensity: 10.0,
+        since_tick: 1,
+        expires_at_tick: None,
+        tier: TaintTier::Permanent,
+        temporary_qi_max_loss: 0.0,
+        permanent_decay_rate_per_min: 0.001,
+        returned_zone_qi: 9.9,
+    });
+
+    let target_qi_before = app
+        .world()
+        .get::<crate::cultivation::components::Cultivation>(target)
+        .unwrap()
+        .qi_current;
+
+    let result = resolve_dugu_v2_skill(
+        app.world_mut(),
+        caster,
+        0,
+        Some(target),
+        DuguSkillId::Penetrate,
+    );
+    assert!(
+        matches!(result, CastResult::Started { .. }),
+        "Penetrate cast 应成功，实际={result:?}"
+    );
+
+    let target_qi_after = app
+        .world()
+        .get::<crate::cultivation::components::Cultivation>(target)
+        .unwrap()
+        .qi_current;
+    let actual_drained = target_qi_before - target_qi_after;
+    assert!(
+        actual_drained > 0.0,
+        "Penetrate 应从目标扣减 qi_current，实际 drained={actual_drained}"
+    );
+
+    // PenetrateChainEvent.returned_zone_qi 应等于实际扣减量
+    let returned = {
+        let events = app.world().resource::<Events<PenetrateChainEvent>>();
+        events
+            .iter_current_update_events()
+            .next()
+            .expect("Penetrate 应发 PenetrateChainEvent")
+            .returned_zone_qi
+    };
+    assert!(
+        (f64::from(returned) - actual_drained).abs() < 1e-6,
+        "PenetrateChainEvent.returned_zone_qi({returned}) 应等于实际 qi 扣减量({actual_drained})"
+    );
+
+    // app.update() 触发 penetrate_zone_credit_tick 消费事件
+    app.update();
+
+    let zone_qi_after = app
+        .world()
+        .resource::<ZoneRegistry>()
+        .find_zone_by_name("spawn")
+        .expect("spawn zone should exist")
+        .spirit_qi;
+
+    let returned_abs = f64::from(returned);
+    let zone_current_abs = zone_qi_before.max(0.0) * QI_ZONE_UNIT_CAPACITY;
+    let room = (QI_ZONE_UNIT_CAPACITY - zone_current_abs).max(0.0);
+    let accepted = returned_abs.min(room);
+    let expected = (zone_qi_before + accepted / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
+    assert!(
+        (zone_qi_after - expected).abs() < 1e-9,
+        "Penetrate 后 zone.spirit_qi 应为 {expected:.9}（增量=accepted({accepted:.6})/CAP），\
+         实际={zone_qi_after:.9}（守恒：Penetrate 扣减的 target qi_current 必须归还 zone）"
+    );
+
+    // 审计 trail：应有 ≥1 条 DuguReturnToZone 记录
+    let account = app.world().resource::<WorldQiAccount>();
+    let dugu_transfers: Vec<_> = account
+        .transfers()
+        .iter()
+        .filter(|t| t.reason == QiTransferReason::DuguReturnToZone)
+        .collect();
+    assert!(
+        !dugu_transfers.is_empty(),
+        "Penetrate 后应至少有 1 条 DuguReturnToZone 审计记录，实际=0"
+    );
+    // 守恒：accepted + overflow == returned_abs
+    let total_audit: f64 = dugu_transfers.iter().map(|t| t.amount).sum();
+    assert!(
+        (total_audit - returned_abs).abs() < 1e-9,
+        "DuguReturnToZone 审计 amount 之和({total_audit:.9}) 应等于 returned({returned_abs:.9})"
+    );
+}
+
+/// 边界：target qi_current=0 时，returned_zone_qi=0，不产生审计记录，zone 不变。
+#[test]
+fn penetrate_zero_qi_drained_no_zone_credit_no_audit() {
+    use crate::qi_physics::ledger::{QiTransferReason, WorldQiAccount};
+    use crate::world::zone::ZoneRegistry;
+
+    let zone_qi_before = 0.5_f64;
+    let mut app = setup_zone_credit_app(zone_qi_before);
+
+    // 直接发送 returned_zone_qi=0 的 PenetrateChainEvent
+    let caster = app.world_mut().spawn_empty().id();
+    let target_entity = app
+        .world_mut()
+        .spawn(valence::prelude::Position::new([0.0, 64.0, 0.0]))
+        .id();
+    app.world_mut().send_event(PenetrateChainEvent {
+        caster,
+        target: target_entity,
+        taint_tier: TaintTier::Permanent,
+        multiplier: 3.0,
+        affected_targets: 1,
+        permanent_decay_rate_per_min: 0.001,
+        reveal_probability: 0.0,
+        returned_zone_qi: 0.0, // 边界：无 qi 被扣减
+        tick: 1,
+        visual: crate::combat::dugu_v2::skills::visual_for(DuguSkillId::Penetrate),
+    });
+
+    app.update();
+
+    let zone_qi_after = app
+        .world()
+        .resource::<ZoneRegistry>()
+        .find_zone_by_name("spawn")
+        .expect("spawn zone should exist")
+        .spirit_qi;
+
+    assert!(
+        (zone_qi_after - zone_qi_before).abs() < 1e-12,
+        "returned_zone_qi=0 时 zone.spirit_qi 不应改变，\
+         before={zone_qi_before} after={zone_qi_after}"
+    );
+
+    let account = app.world().resource::<WorldQiAccount>();
+    let count = account
+        .transfers()
+        .iter()
+        .filter(|t| t.reason == QiTransferReason::DuguReturnToZone)
+        .count();
+    assert_eq!(
+        count, 0,
+        "returned_zone_qi=0 时不应产生 DuguReturnToZone 审计记录，实际={count}"
+    );
+}
+
+/// 守恒不变式：Penetrate 后，target qi_current 的减少量 == PenetrateChainEvent.returned_zone_qi。
+///
+/// 这直接锁定修复前的 bug：`qi_current` 被扣减但 `returned_zone_qi` 为 0（未实现）。
+/// 修复后 returned_zone_qi == actual_drained，此测试保证两者精确匹配。
+#[test]
+fn penetrate_returned_zone_qi_equals_actual_qi_drained_conservation_invariant() {
+    let mut app = setup_zone_credit_app(0.0);
+
+    // 使用 Void 境（multiplier=5.0），qi_cost=20.0；给 target 足量 qi（200）以确保全额扣减
+    let caster = actor(&mut app, Realm::Void, 500.0, 500.0, 0.0);
+    let target = actor(&mut app, Realm::Spirit, 200.0, 200.0, 1.0);
+
+    app.world_mut().entity_mut(target).insert(TaintMark {
+        caster,
+        intensity: 10.0,
+        since_tick: 1,
+        expires_at_tick: None,
+        tier: TaintTier::Permanent,
+        temporary_qi_max_loss: 0.0,
+        permanent_decay_rate_per_min: 0.001,
+        returned_zone_qi: 9.9,
+    });
+
+    let target_qi_before = app
+        .world()
+        .get::<crate::cultivation::components::Cultivation>(target)
+        .unwrap()
+        .qi_current;
+
+    let _ = resolve_dugu_v2_skill(
+        app.world_mut(),
+        caster,
+        0,
+        Some(target),
+        DuguSkillId::Penetrate,
+    );
+
+    let target_qi_after = app
+        .world()
+        .get::<crate::cultivation::components::Cultivation>(target)
+        .unwrap()
+        .qi_current;
+    let actual_drained = target_qi_before - target_qi_after;
+
+    // Void 境 multiplier=5.0 → 期望扣减 15.0 * 5.0 = 75.0（target 有足够 qi）
+    let expected_drain = 15.0_f64 * 5.0;
+    assert!(
+        (actual_drained - expected_drain).abs() < 1e-9,
+        "Void 境 Penetrate 应扣减 target qi_current {expected_drain}，\
+         实际={actual_drained}"
+    );
+
+    let event_returned = {
+        let events = app.world().resource::<Events<PenetrateChainEvent>>();
+        events
+            .iter_current_update_events()
+            .next()
+            .expect("Penetrate 应发 PenetrateChainEvent")
+            .returned_zone_qi
+    };
+
+    assert!(
+        (f64::from(event_returned) - actual_drained).abs() < 1e-6,
+        "PenetrateChainEvent.returned_zone_qi({event_returned}) 必须 == 实际 qi 扣减量({actual_drained})；\
+         修复前 returned_zone_qi=0（漏洞），修复后 == actual_drained（守恒）"
+    );
+}
+
 /// 边界：Reverse returned_zone_qi=0 时不产生审计记录。
 #[test]
 fn reverse_zero_returned_zone_qi_no_audit() {
@@ -2109,7 +2346,6 @@ fn reverse_victim_qi_zone_credit_happy_path_full_credit() {
 #[test]
 fn reverse_victim_qi_zone_credit_overflow_to_overflow_account() {
     use crate::combat::dugu_v2::DuguReverseVictimQiEvent;
-    use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
     use crate::qi_physics::ledger::{QiTransferReason, WorldQiAccount};
     use crate::world::zone::ZoneRegistry;
 
