@@ -1228,9 +1228,20 @@ mod tests {
             "one QiTransfer audit event expected per hit"
         );
         let transfer = transfers[0];
-        assert_eq!(transfer.from, container_account);
-        assert_eq!(transfer.to, QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME));
-        assert_eq!(transfer.reason, QiTransferReason::ReleaseToZone);
+        assert_eq!(
+            transfer.from, container_account,
+            "审计 transfer.from 应 == 命中扣减的 container_account（可溯源到来源容器）"
+        );
+        assert_eq!(
+            transfer.to,
+            QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME),
+            "非饱和命中 qi 全额入 spawn zone 账户，故 to 应为该 zone 账户"
+        );
+        assert_eq!(
+            transfer.reason,
+            QiTransferReason::ReleaseToZone,
+            "剑气回灌走 ReleaseToZone（区域回灌审计语义）"
+        );
         assert!(
             (transfer.amount - 2.0).abs() < f64::EPSILON,
             "transfer amount should be qi_per_hit=2.0, got {}",
