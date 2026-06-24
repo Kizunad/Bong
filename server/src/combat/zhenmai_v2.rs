@@ -2103,12 +2103,18 @@ mod tests {
     /// 两类 ReleaseToZone 之和必须 == 30（扣减量全额入账，不蒸发）。
     #[test]
     fn spend_qi_partial_saturation_routes_overflow_not_discard() {
+        use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
         use crate::qi_physics::ledger::QiAccountKind;
         let mut app = app_with_events();
         app.add_event::<QiTransfer>();
-        // zone 接近饱和：spirit_qi=0.8 → zone_current=40, room=10。
+        // 期望值从常量推导（容量/spend 调整后测试不失真）。
+        let initial_spirit_qi = 0.8;
+        let spend_amount = 30.0;
+        // room = (1.0 - spirit_qi) * CAP；accepted = min(room, spend)，overflow = 剩余。
+        let expected_zone = ((1.0 - initial_spirit_qi) * QI_ZONE_UNIT_CAPACITY).min(spend_amount);
+        let expected_overflow = spend_amount - expected_zone;
         let mut registry = ZoneRegistry::fallback();
-        registry.zones[0].spirit_qi = 0.8;
+        registry.zones[0].spirit_qi = initial_spirit_qi;
         app.insert_resource(registry);
         let entity = caster(&mut app, Realm::Condense, 50.0);
         app.world_mut().entity_mut(entity).insert((
@@ -2116,8 +2122,8 @@ mod tests {
             CurrentDimension(DimensionKind::Overworld),
         ));
 
-        let ok = spend_qi(app.world_mut(), entity, 30.0);
-        assert!(ok, "spend_qi should succeed (qi 50 >= 30)");
+        let ok = spend_qi(app.world_mut(), entity, spend_amount);
+        assert!(ok, "spend_qi should succeed (qi 50 >= {spend_amount})");
 
         let events = app.world().resource::<Events<QiTransfer>>();
         let mut reader = events.get_reader();
@@ -2136,17 +2142,69 @@ mod tests {
             .map(|t| t.amount)
             .sum();
         assert!(
-            (zone_sum - 10.0).abs() < 1e-6,
-            "zone 仅接受 room=10（spirit_qi 0.8→1.0），实际入 zone 账户 {zone_sum}"
+            (zone_sum - expected_zone).abs() < 1e-6,
+            "zone 仅接受 room={expected_zone}（spirit_qi {initial_spirit_qi}→1.0），实际入 zone 账户 {zone_sum}"
         );
         assert!(
-            (overflow_sum - 20.0).abs() < 1e-6,
-            "饱和溢出 20 必须显式入 overflow 账户而非丢弃，实际 {overflow_sum}（#693）"
+            (overflow_sum - expected_overflow).abs() < 1e-6,
+            "饱和溢出 {expected_overflow} 必须显式入 overflow 账户而非丢弃，实际 {overflow_sum}（#693）"
         );
         let total: f64 = releases.iter().map(|t| t.amount).sum();
         assert!(
-            (total - 30.0).abs() < 1e-6,
-            "守恒：ReleaseToZone 总量应 == spend 的 30（zone 10 + overflow 20），实际 {total}（#693）"
+            (total - spend_amount).abs() < 1e-6,
+            "守恒：ReleaseToZone 总量应 == spend {spend_amount}（zone {expected_zone} + overflow {expected_overflow}），实际 {total}（#693）"
+        );
+    }
+
+    /// 最大边界（zone 满，room=0）：spirit_qi=1.0 时 spend_qi 全额走 overflow 账户。
+    /// 断言 Zone 账户得 0、Overflow 账户得 spend、总量 == spend，防 capped fallback 回归。
+    #[test]
+    fn spend_qi_zone_full_routes_all_to_overflow() {
+        use crate::qi_physics::ledger::QiAccountKind;
+        let mut app = app_with_events();
+        app.add_event::<QiTransfer>();
+        let spend_amount = 10.0;
+        // spirit_qi=1.0 → zone_current=CAP, room=0：accepted=0 → 全额 overflow fallback。
+        let mut registry = ZoneRegistry::fallback();
+        registry.zones[0].spirit_qi = 1.0;
+        app.insert_resource(registry);
+        let entity = caster(&mut app, Realm::Condense, 50.0);
+        app.world_mut().entity_mut(entity).insert((
+            Position::new([0.0, 64.0, 0.0]),
+            CurrentDimension(DimensionKind::Overworld),
+        ));
+
+        let ok = spend_qi(app.world_mut(), entity, spend_amount);
+        assert!(ok, "spend_qi should succeed (qi 50 >= {spend_amount})");
+
+        let events = app.world().resource::<Events<QiTransfer>>();
+        let mut reader = events.get_reader();
+        let releases: Vec<_> = reader
+            .read(events)
+            .filter(|t| t.reason == QiTransferReason::ReleaseToZone)
+            .collect();
+        let zone_sum: f64 = releases
+            .iter()
+            .filter(|t| t.to.kind == QiAccountKind::Zone)
+            .map(|t| t.amount)
+            .sum();
+        let overflow_sum: f64 = releases
+            .iter()
+            .filter(|t| t.to.kind == QiAccountKind::Overflow)
+            .map(|t| t.amount)
+            .sum();
+        assert!(
+            zone_sum.abs() < 1e-6,
+            "zone 满（room=0）应 0 入 zone 账户，实际 {zone_sum}"
+        );
+        assert!(
+            (overflow_sum - spend_amount).abs() < 1e-6,
+            "zone 满时全额 {spend_amount} 必须入 overflow 账户（非空转账），实际 {overflow_sum}"
+        );
+        let total: f64 = releases.iter().map(|t| t.amount).sum();
+        assert!(
+            (total - spend_amount).abs() < 1e-6,
+            "守恒：zone 满时 ReleaseToZone 总量应 == spend {spend_amount}（全 overflow），实际 {total}"
         );
     }
 

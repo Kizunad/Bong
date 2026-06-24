@@ -1366,17 +1366,21 @@ mod tests {
             env_qi_at_cast: 0.9,
             last_maintain_tick: 0,
         });
-        // spirit_qi=0.9 → zone_current=45, room=5；cost=6 → accepted=5 + overflow=1。
+        // 期望值从常量推导（QI_ZONE_UNIT_CAPACITY / vortex cost），容量或成本调整后测试不失真。
+        let initial_spirit_qi = 0.9;
+        let expected_cost = vortex_qi_cost_per_sec(Realm::Condense);
+        // 部分饱和：room = (1.0 - spirit_qi) * CAP；accepted = min(room, cost)，overflow = 剩余。
+        let expected_zone = ((1.0 - initial_spirit_qi) * QI_ZONE_UNIT_CAPACITY).min(expected_cost);
+        let expected_overflow = expected_cost - expected_zone;
         app.world_mut()
             .resource_mut::<ZoneRegistry>()
             .find_zone_mut("spawn")
             .unwrap()
-            .spirit_qi = 0.9;
+            .spirit_qi = initial_spirit_qi;
         app.add_systems(Update, vortex_maintain_tick);
 
         app.update();
 
-        let expected_cost = vortex_qi_cost_per_sec(Realm::Condense); // 6.0
         let events = app.world().resource::<Events<QiTransfer>>();
         let releases: Vec<_> = events
             .iter_current_update_events()
@@ -1393,17 +1397,17 @@ mod tests {
             .map(|t| t.amount)
             .sum();
         assert!(
-            (zone_sum - 5.0).abs() < 1e-6,
-            "zone 仅接受 room=5（spirit_qi 0.9→1.0），实际入 zone 账户 {zone_sum}"
+            (zone_sum - expected_zone).abs() < 1e-6,
+            "zone 仅接受 room={expected_zone}（spirit_qi {initial_spirit_qi}→1.0），实际入 zone 账户 {zone_sum}"
         );
         assert!(
-            (overflow_sum - 1.0).abs() < 1e-6,
-            "饱和溢出 1 必须显式入 overflow 账户而非丢弃，实际 {overflow_sum}（#693）"
+            (overflow_sum - expected_overflow).abs() < 1e-6,
+            "饱和溢出 {expected_overflow} 必须显式入 overflow 账户而非丢弃，实际 {overflow_sum}（#693）"
         );
         let total: f64 = releases.iter().map(|t| t.amount).sum();
         assert!(
             (total - expected_cost).abs() < 1e-6,
-            "守恒：ReleaseToZone 总量应 == cost {expected_cost}（zone 5 + overflow 1），实际 {total}"
+            "守恒：ReleaseToZone 总量应 == cost {expected_cost}（zone {expected_zone} + overflow {expected_overflow}），实际 {total}"
         );
     }
 
@@ -1424,28 +1428,31 @@ mod tests {
             env_qi_at_cast: 0.9,
             last_maintain_tick: 0,
         });
+        let initial_spirit_qi = -0.5;
         app.world_mut()
             .resource_mut::<ZoneRegistry>()
             .find_zone_mut("spawn")
             .unwrap()
-            .spirit_qi = -0.5;
+            .spirit_qi = initial_spirit_qi;
         app.add_systems(Update, vortex_maintain_tick);
 
         app.update();
 
-        let expected_cost = vortex_qi_cost_per_sec(Realm::Condense); // 6.0
+        let expected_cost = vortex_qi_cost_per_sec(Realm::Condense);
         let zone_after = app
             .world()
             .resource::<ZoneRegistry>()
             .find_zone_by_name("spawn")
             .unwrap()
             .spirit_qi;
-        // 裸 spirit_qi*CAP：zone_current=-25，accepted=6（room=75），zone_after=(-25+6)/50=-0.38。
-        let expected = (-0.5 * QI_ZONE_UNIT_CAPACITY + expected_cost) / QI_ZONE_UNIT_CAPACITY;
+        // 裸 spirit_qi*CAP：room=(1-spirit_qi)*CAP 充裕，cost 全额吸收 → zone_after=spirit_qi+cost/CAP。
+        let expected = initial_spirit_qi + expected_cost / QI_ZONE_UNIT_CAPACITY;
+        // bug 值（.max(0.0) 把负 zone 当 0）：zone_after 会变 cost/CAP，抹掉负缺口。
+        let buggy_clamped = expected_cost / QI_ZONE_UNIT_CAPACITY;
         assert!(
             (zone_after - expected).abs() < 1e-6,
-            "负灵域应按裸 spirit_qi*CAP 计：zone_after={zone_after:.4} 应={expected:.4}（-25+6 → -0.38）；\
-             若 ≈0.12 说明 .max(0.0) 抹掉了负缺口、凭空多出 25 qi（#681 同类）"
+            "负灵域应按裸 spirit_qi*CAP 计：zone_after={zone_after:.4} 应={expected:.4}；\
+             若 ≈{buggy_clamped:.4} 说明 .max(0.0) 抹掉了负缺口、凭空多出 qi（#681 同类）"
         );
         // room=75 > cost，全额入 zone，无 overflow。
         let total: f64 = app
@@ -1458,6 +1465,65 @@ mod tests {
         assert!(
             (total - expected_cost).abs() < 1e-6,
             "守恒：负灵域归还总量应 == cost {expected_cost}（全额入 zone），实际 {total}"
+        );
+    }
+
+    /// 最大边界（zone 满，room=0）：spirit_qi=1.0 时 helper 承诺「单条全额 overflow transfer」。
+    /// 断言 Zone 账户得 0、Overflow 账户得 expected_cost、总量 == 扣费，防 capped fallback 回归成
+    /// 空转账或错误入 zone。
+    #[test]
+    fn maintain_tick_zone_full_routes_all_to_overflow() {
+        use crate::qi_physics::ledger::QiAccountKind;
+        let mut app = app(TICKS_PER_SECOND);
+        let actor = spawn_actor(&mut app, Realm::Condense, 100.0);
+        app.world_mut().entity_mut(actor).insert(VortexField {
+            center: DVec3::ZERO,
+            radius: 1.5,
+            delta: 0.25,
+            cast_at_tick: 0,
+            maintain_max_ticks: 500,
+            caster: actor,
+            env_qi_at_cast: 0.9,
+            last_maintain_tick: 0,
+        });
+        // spirit_qi=1.0 → zone_current=CAP, room=0：全额溢出（accepted=0 → 走 overflow fallback）。
+        app.world_mut()
+            .resource_mut::<ZoneRegistry>()
+            .find_zone_mut("spawn")
+            .unwrap()
+            .spirit_qi = 1.0;
+        app.add_systems(Update, vortex_maintain_tick);
+
+        app.update();
+
+        let expected_cost = vortex_qi_cost_per_sec(Realm::Condense);
+        let events = app.world().resource::<Events<QiTransfer>>();
+        let releases: Vec<_> = events
+            .iter_current_update_events()
+            .filter(|t| t.reason == QiTransferReason::ReleaseToZone)
+            .collect();
+        let zone_sum: f64 = releases
+            .iter()
+            .filter(|t| t.to.kind == QiAccountKind::Zone)
+            .map(|t| t.amount)
+            .sum();
+        let overflow_sum: f64 = releases
+            .iter()
+            .filter(|t| t.to.kind == QiAccountKind::Overflow)
+            .map(|t| t.amount)
+            .sum();
+        assert!(
+            zone_sum.abs() < 1e-6,
+            "zone 满（room=0）应 0 入 zone 账户，实际 {zone_sum}"
+        );
+        assert!(
+            (overflow_sum - expected_cost).abs() < 1e-6,
+            "zone 满时全额 {expected_cost} 必须入 overflow 账户（非空转账），实际 {overflow_sum}"
+        );
+        let total: f64 = releases.iter().map(|t| t.amount).sum();
+        assert!(
+            (total - expected_cost).abs() < 1e-6,
+            "守恒：zone 满时 ReleaseToZone 总量应 == cost {expected_cost}（全 overflow），实际 {total}"
         );
     }
 
