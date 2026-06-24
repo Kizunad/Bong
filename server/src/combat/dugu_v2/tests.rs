@@ -711,7 +711,8 @@ fn eclipse_zone_credit_happy_path_zone_increases_by_returned_zone_qi() {
     // MF3 fix: zone_qi 增量 = returned/QI_ZONE_UNIT_CAPACITY（绝对量→归一化），而非裸加 returned
     use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
     let returned_abs = f64::from(returned);
-    let zone_current_abs = zone_qi_before.max(0.0) * QI_ZONE_UNIT_CAPACITY;
+    // 裸 spirit_qi*CAP（不 .max(0.0)）—— 与 impl 一致，不复制负灵域截断公式（CodeRabbit #698）。
+    let zone_current_abs = zone_qi_before * QI_ZONE_UNIT_CAPACITY;
     let room = (QI_ZONE_UNIT_CAPACITY - zone_current_abs).max(0.0);
     let accepted = returned_abs.min(room);
     let expected = (zone_qi_before + accepted / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
@@ -1064,7 +1065,8 @@ fn eclipse_zone_credit_overflow_no_evaporation_mf3_lock() {
     );
 
     // zone 增量 = accepted/QI_ZONE_UNIT_CAPACITY = room/QI_ZONE_UNIT_CAPACITY ≈ 0.02
-    let zone_current_abs = zone_qi_before.max(0.0) * QI_ZONE_UNIT_CAPACITY; // 49.0
+    // 裸 spirit_qi*CAP（不 .max(0.0)）—— 与 impl 一致，不复制负灵域截断公式（CodeRabbit #698）。
+    let zone_current_abs = zone_qi_before * QI_ZONE_UNIT_CAPACITY; // 49.0
     let room = (QI_ZONE_UNIT_CAPACITY - zone_current_abs).max(0.0); // 1.0
     let returned_abs = 10.0_f64;
     let accepted = returned_abs.min(room); // 1.0
@@ -1156,7 +1158,8 @@ fn eclipse_zone_credit_no_double_accounting_single_event_single_credit() {
     // MF3 fix: expected uses normalized formula
     use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
     let returned_abs = f64::from(returned);
-    let zone_current_abs = zone_qi_before.max(0.0) * QI_ZONE_UNIT_CAPACITY;
+    // 裸 spirit_qi*CAP（不 .max(0.0)）—— 与 impl 一致，不复制负灵域截断公式（CodeRabbit #698）。
+    let zone_current_abs = zone_qi_before * QI_ZONE_UNIT_CAPACITY;
     let room = (QI_ZONE_UNIT_CAPACITY - zone_current_abs).max(0.0);
     let accepted = returned_abs.min(room);
     let expected = (zone_qi_before + accepted / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
@@ -1422,7 +1425,8 @@ fn penetrate_zone_credit_happy_path_zone_increases_by_drained_qi() {
         .spirit_qi;
 
     let returned_abs = f64::from(returned);
-    let zone_current_abs = zone_qi_before.max(0.0) * QI_ZONE_UNIT_CAPACITY;
+    // 裸 spirit_qi*CAP（不 .max(0.0)）—— 与 impl 一致，不复制负灵域截断公式（CodeRabbit #698）。
+    let zone_current_abs = zone_qi_before * QI_ZONE_UNIT_CAPACITY;
     let room = (QI_ZONE_UNIT_CAPACITY - zone_current_abs).max(0.0);
     let accepted = returned_abs.min(room);
     let expected = (zone_qi_before + accepted / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
@@ -1451,7 +1455,9 @@ fn penetrate_zone_credit_happy_path_zone_increases_by_drained_qi() {
     );
 }
 
-/// 边界：target qi_current=0 时，returned_zone_qi=0，不产生审计记录，zone 不变。
+/// 边界：target qi_current=0 时，**走完整 Penetrate 施法链路**，apply_penetrate 算出 drained=0、
+/// returned_zone_qi=0，不产生审计记录、zone 不变（CodeRabbit #698：直接塞 0 事件无法捕获
+/// apply_penetrate 把实际扣减量算错/漏填字段的回归）。
 #[test]
 fn penetrate_zero_qi_drained_no_zone_credit_no_audit() {
     use crate::qi_physics::ledger::{QiTransferReason, WorldQiAccount};
@@ -1460,24 +1466,45 @@ fn penetrate_zero_qi_drained_no_zone_credit_no_audit() {
     let zone_qi_before = 0.5_f64;
     let mut app = setup_zone_credit_app(zone_qi_before);
 
-    // 直接发送 returned_zone_qi=0 的 PenetrateChainEvent
-    let caster = app.world_mut().spawn_empty().id();
-    let target_entity = app
-        .world_mut()
-        .spawn(valence::prelude::Position::new([0.0, 64.0, 0.0]))
-        .id();
-    app.world_mut().send_event(PenetrateChainEvent {
+    let caster = actor(&mut app, Realm::Spirit, 200.0, 200.0, 0.0);
+    // 目标 qi_current=0：apply_penetrate 应算出 drained=0。
+    let target = actor(&mut app, Realm::Spirit, 0.0, 200.0, 1.0);
+    app.world_mut().entity_mut(target).insert(TaintMark {
         caster,
-        target: target_entity,
-        taint_tier: TaintTier::Permanent,
-        multiplier: 3.0,
-        affected_targets: 1,
+        intensity: 10.0,
+        since_tick: 1,
+        expires_at_tick: None,
+        tier: TaintTier::Permanent,
+        temporary_qi_max_loss: 0.0,
         permanent_decay_rate_per_min: 0.001,
-        reveal_probability: 0.0,
-        returned_zone_qi: 0.0, // 边界：无 qi 被扣减
-        tick: 1,
-        visual: crate::combat::dugu_v2::skills::visual_for(DuguSkillId::Penetrate),
+        returned_zone_qi: 9.9,
     });
+
+    let result = resolve_dugu_v2_skill(
+        app.world_mut(),
+        caster,
+        0,
+        Some(target),
+        DuguSkillId::Penetrate,
+    );
+    assert!(
+        matches!(result, CastResult::Started { .. }),
+        "Penetrate cast 应成功（成本在 caster），实际={result:?}"
+    );
+
+    // apply_penetrate 应算出 returned_zone_qi == 0（目标无 qi 可扣）
+    let returned = {
+        let events = app.world().resource::<Events<PenetrateChainEvent>>();
+        events
+            .iter_current_update_events()
+            .next()
+            .expect("Penetrate 应发 PenetrateChainEvent")
+            .returned_zone_qi
+    };
+    assert!(
+        f64::from(returned).abs() < 1e-9,
+        "目标 qi_current=0 时 apply_penetrate 应算出 returned_zone_qi=0，实际={returned}"
+    );
 
     app.update();
 
@@ -1487,11 +1514,9 @@ fn penetrate_zero_qi_drained_no_zone_credit_no_audit() {
         .find_zone_by_name("spawn")
         .expect("spawn zone should exist")
         .spirit_qi;
-
     assert!(
         (zone_qi_after - zone_qi_before).abs() < 1e-12,
-        "returned_zone_qi=0 时 zone.spirit_qi 不应改变，\
-         before={zone_qi_before} after={zone_qi_after}"
+        "drained=0 时 zone.spirit_qi 不应改变，before={zone_qi_before} after={zone_qi_after}"
     );
 
     let account = app.world().resource::<WorldQiAccount>();
@@ -1502,7 +1527,7 @@ fn penetrate_zero_qi_drained_no_zone_credit_no_audit() {
         .count();
     assert_eq!(
         count, 0,
-        "returned_zone_qi=0 时不应产生 DuguReturnToZone 审计记录，实际={count}"
+        "drained=0 时不应产生 DuguReturnToZone 审计记录，实际={count}"
     );
 }
 
@@ -2259,6 +2284,14 @@ fn reverse_victim_qi_zone_credit_happy_path_full_credit() {
         returned_zone_qi: 4.95,
     });
 
+    // 清零前捕获 victim 实际 qi_current，把事件金额钉到它（CodeRabbit #698：仅断言 >0 时，
+    // 事件少报为 1.0 也能蒙混过关，剩余被清零 qi 已蒸发）。
+    let victim_qi_before = app
+        .world()
+        .get::<crate::cultivation::components::Cultivation>(victim)
+        .unwrap()
+        .qi_current;
+
     let result = resolve_dugu_v2_skill(
         app.world_mut(),
         void_caster,
@@ -2271,7 +2304,7 @@ fn reverse_victim_qi_zone_credit_happy_path_full_credit() {
         "Reverse cast 应成功，实际={result:?}"
     );
 
-    // 验证 DuguReverseVictimQiEvent 发送且 victim_qi_total == victim 初始 qi_current
+    // 验证 DuguReverseVictimQiEvent 发送且 victim_qi_total == 清零前实际 qi_current
     let victim_qi_total = {
         let events = app.world().resource::<Events<DuguReverseVictimQiEvent>>();
         let evt = events
@@ -2280,11 +2313,10 @@ fn reverse_victim_qi_zone_credit_happy_path_full_credit() {
             .expect("bughunt r8: Reverse 应发 DuguReverseVictimQiEvent");
         evt.victim_qi_total
     };
-    // 受害者 qi_current 在 Reverse 前未被 apply_damage 改变（apply_damage 只扣 HP）
-    // 所以 victim_qi_total 应 ≈ 初始 qi_current=30.0（apply_damage 不影响 qi）
+    // apply_damage 只扣 HP 不影响 qi，故事件金额必须精确等于清零前 qi_current（漏报即蒸发）。
     assert!(
-        victim_qi_total > 0.0,
-        "bughunt r8: victim_qi_total 应 > 0，实际={victim_qi_total}"
+        (f64::from(victim_qi_total) - victim_qi_before).abs() < 1e-6,
+        "bughunt r8: victim_qi_total({victim_qi_total}) 应 == 清零前 qi_current({victim_qi_before})"
     );
 
     // victim qi_current 应已被清零
@@ -2371,6 +2403,13 @@ fn reverse_victim_qi_zone_credit_overflow_to_overflow_account() {
         returned_zone_qi: 4.95,
     });
 
+    // 清零前捕获 victim 实际 qi_current，事件金额钉到它（CodeRabbit #698）。
+    let victim_qi_before = app
+        .world()
+        .get::<crate::cultivation::components::Cultivation>(victim)
+        .unwrap()
+        .qi_current;
+
     let result = resolve_dugu_v2_skill(
         app.world_mut(),
         void_caster,
@@ -2392,8 +2431,8 @@ fn reverse_victim_qi_zone_credit_overflow_to_overflow_account() {
             .victim_qi_total
     };
     assert!(
-        victim_qi_total > 0.0,
-        "victim_qi_total 应 > 0，实际={victim_qi_total}"
+        (f64::from(victim_qi_total) - victim_qi_before).abs() < 1e-6,
+        "victim_qi_total({victim_qi_total}) 应 == 清零前 qi_current({victim_qi_before})"
     );
 
     let zone_before = app

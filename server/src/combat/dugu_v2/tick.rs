@@ -19,6 +19,27 @@ use super::events::{
 };
 use super::state::{ReverseAftermathCloud, ShroudActive, TaintMark};
 
+/// 守恒兜底：zone 不可达（目标无 Position / 坐标落在所有 zone 之外）时，把已扣减/清零的 qi 路由到
+/// overflow 账户，绝不静默 `continue` 蒸发（CodeRabbit #698）。所有 dugu zone-credit tick 共用。
+fn route_dugu_qi_to_overflow(
+    qi_account: &mut Option<ResMut<WorldQiAccount>>,
+    caster: Entity,
+    sink: &str,
+    amount: f64,
+    reason: QiTransferReason,
+) {
+    if amount <= QI_EPSILON {
+        return;
+    }
+    if let Some(account) = qi_account.as_mut() {
+        let from = QiAccountId::player(format!("entity:{caster:?}"));
+        let to = QiAccountId::overflow(format!("{sink}:entity:{caster:?}"));
+        if let Ok(transfer) = QiTransfer::new(from, to, amount, reason) {
+            account.push_transfer_audit(transfer);
+        }
+    }
+}
+
 pub fn taint_decay_tick(
     mut commands: Commands,
     clock: Res<CombatClock>,
@@ -149,9 +170,24 @@ pub fn eclipse_zone_credit_tick(
                 d.map(|cd| cd.0).unwrap_or(DimensionKind::Overworld),
             )
         }) else {
+            // 目标无 Position：已散逸的 qi 路由 overflow，不蒸发（CodeRabbit #698）
+            route_dugu_qi_to_overflow(
+                &mut qi_account,
+                event.caster,
+                "dugu_eclipse_nozone",
+                returned,
+                QiTransferReason::DuguReturnToZone,
+            );
             continue;
         };
         let Some(zone) = zones.find_zone_mut_by_pos(dim, pos) else {
+            route_dugu_qi_to_overflow(
+                &mut qi_account,
+                event.caster,
+                "dugu_eclipse_nozone",
+                returned,
+                QiTransferReason::DuguReturnToZone,
+            );
             continue;
         };
         let zone_name = zone.name.clone();
@@ -250,6 +286,14 @@ pub fn reverse_zone_credit_tick(
             .map(|cd| cd.0)
             .unwrap_or(DimensionKind::Overworld);
         let Some(zone) = zones.find_zone_mut_by_pos(dim, pos) else {
+            // center 落在所有 zone 之外：脏残留 qi 路由 overflow，不蒸发（CodeRabbit #698）
+            route_dugu_qi_to_overflow(
+                &mut qi_account,
+                event.caster,
+                "dugu_reverse_nozone",
+                returned,
+                QiTransferReason::DuguReturnToZone,
+            );
             continue;
         };
         let zone_name = zone.name.clone();
@@ -347,6 +391,14 @@ pub fn reverse_victim_qi_zone_credit_tick(
             .map(|cd| cd.0)
             .unwrap_or(DimensionKind::Overworld);
         let Some(zone) = zones.find_zone_mut_by_pos(dim, pos) else {
+            // center 落在所有 zone 之外：被清零的 victim qi 路由 overflow，不蒸发（CodeRabbit #698）
+            route_dugu_qi_to_overflow(
+                &mut qi_account,
+                event.caster,
+                "dugu_reverse_victim_nozone",
+                victim_qi,
+                QiTransferReason::DuguReverseVictimQi,
+            );
             continue;
         };
         let zone_name = zone.name.clone();
@@ -437,9 +489,24 @@ pub fn penetrate_zone_credit_tick(
                 d.map(|cd| cd.0).unwrap_or(DimensionKind::Overworld),
             )
         }) else {
+            // 目标无 Position：已扣减的 qi 路由 overflow，不蒸发（CodeRabbit #698）
+            route_dugu_qi_to_overflow(
+                &mut qi_account,
+                event.caster,
+                "dugu_penetrate_nozone",
+                returned,
+                QiTransferReason::DuguReturnToZone,
+            );
             continue;
         };
         let Some(zone) = zones.find_zone_mut_by_pos(dim, pos) else {
+            route_dugu_qi_to_overflow(
+                &mut qi_account,
+                event.caster,
+                "dugu_penetrate_nozone",
+                returned,
+                QiTransferReason::DuguReturnToZone,
+            );
             continue;
         };
         let zone_name = zone.name.clone();
