@@ -327,6 +327,8 @@ export const ServerDataPlayerStateV1 = Type.Object(
     player: Type.Optional(Type.String()),
     realm: Type.String(),
     spirit_qi: Type.Number({ minimum: 0, maximum: 160 }),
+    // 真元上限（cultivation.qi_max）：client HUD 真元条分母。无上界——化虚境 qi_max 可达 ~2625。
+    spirit_qi_max: Type.Number({ minimum: 0 }),
     karma: Type.Number({ minimum: -1, maximum: 1 }),
     composite_power: Type.Number({ minimum: 0, maximum: 1 }),
     breakdown: PlayerPowerBreakdown,
