@@ -285,6 +285,17 @@ pub enum QiTransferReason {
     ///   - 此路径是 audit-only + zone balance 更新，**禁止**调 `WorldQiAccount::transfer`
     ///     （后者会检查 player ledger 余额并拒绝）。
     DuguReturnToZone,
+    /// bughunt r8 — Reverse（倒蚀）清零受害者 qi_current 时，被消灭的真元守恒归还受害者所在 zone。
+    ///
+    /// 与 `DuguReturnToZone`（脏真元残留散逸）**正交**：DuguReturnToZone 是 taint 残留按
+    /// intensity × ratio 计算，此路径是受害者自身真元库清零量（可为大值）。
+    ///
+    /// 守恒约束：
+    ///   - victim.qi_current 清零前先读取实际量（max(0, qi_current)），累加为 victim_qi_total；
+    ///   - victim_qi_total 走 qi_release_to_zone 归还受害者脚下 zone；
+    ///   - `push_transfer_audit(QiTransfer(from=npc/player:<victim>, to=zone:<name>, reason=DuguReverseVictimQi))`；
+    ///   - 此路径是 audit-only + zone balance 更新，**禁止**调 `WorldQiAccount::transfer`。
+    DuguReverseVictimQi,
 }
 
 /// plan-qi-handling-attrition-v1 P0 — 搬运磨损操作类型，对应不同基础磨损率。
