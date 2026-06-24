@@ -71,6 +71,11 @@ pub fn dead_zone_silent_qi_loss_tick(
     if handler.qi_drain_per_tick() <= 0.0 {
         return;
     }
+    // 不在缺 QiTransfer 事件资源时扣真元（CodeRabbit #699）：扣减必须连带 release 的审计轨迹，
+    // 缺资源时无法 emit → 直接跳过本 tick 抽取（生产环境该资源恒在，仅防御性早退）。
+    if qi_transfers.is_none() {
+        return;
+    }
 
     // Collect entities in dead zones first (immutable borrow), then apply drain.
     let mut to_drain: Vec<(Entity, f64)> = Vec::new();

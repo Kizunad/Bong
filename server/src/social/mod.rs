@@ -40,8 +40,6 @@ use crate::cultivation::components::{Cultivation, Karma, Realm};
 use crate::cultivation::death_hooks::release_qi_amount_to_zone;
 use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
 use crate::cultivation::lifespan::LifespanComponent;
-use crate::qi_physics::ledger::QiTransfer;
-use crate::world::dimension::CurrentDimension;
 use crate::identity::{reaction::npc_should_decline_trade, PlayerIdentities};
 use crate::inventory::{
     consume_item_instance_once, exchange_inventory_items, inventory_item_by_instance, ItemInstance,
@@ -60,6 +58,7 @@ use crate::player::state::{
     player_username_from_character_id, save_player_shrine_anchor_slice, PlayerState,
     PlayerStatePersistence,
 };
+use crate::qi_physics::ledger::QiTransfer;
 use crate::schema::common::NarrationStyle;
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 use crate::schema::social::{
@@ -68,6 +67,7 @@ use crate::schema::social::{
     SocialExposureEventV1, SocialFeudEventV1, SocialPactEventV1, SocialRemoteIdentityV1,
     SocialRenownDeltaV1, SparringInvitePayloadV1, TradeItemSummaryV1, TradeOfferPayloadV1,
 };
+use crate::world::dimension::CurrentDimension;
 use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
 const CHAT_EXPOSURE_RADIUS: f64 = 50.0;
@@ -1681,11 +1681,13 @@ fn handle_spirit_niche_place_requests(
                 &fallback_registry
             }
         };
+        // 用玩家当前维度查 zone_qi（CodeRabbit #699 Major）：硬编码 Overworld 会让非主世界玩家
+        // 按错维度判正/负灵域，与后续 release 用的 current_dimension 不一致 → 该扣不扣 / 回灌错维度。
+        let lookup_dim = current_dimension
+            .map(|d| d.0)
+            .unwrap_or(crate::world::dimension::DimensionKind::Overworld);
         let zone_qi: Option<f64> = zone_registry_ref
-            .find_zone(
-                crate::world::dimension::DimensionKind::Overworld,
-                position.get(),
-            )
+            .find_zone(lookup_dim, position.get())
             .map(|z| z.spirit_qi);
         if let Some(cultivation) = cultivation.as_deref_mut() {
             apply_spirit_niche_negative_qi_cost(
@@ -2096,14 +2098,17 @@ fn apply_spirit_niche_negative_qi_cost(
         Realm::Void => 2.5,
     };
     let damage = cultivation.qi_max * SPIRIT_NICHE_NEGATIVE_QI_DAMAGE_RATIO * realm_factor;
-    // Deduct qi from the player, then credit the same amount back to the negative zone so
+    // 守恒（CodeRabbit #699 Critical）：qi_current clamp 到 0，实际扣减 = min(damage, qi_current)；
+    // 必须只回灌实际扣减量，否则 qi_current<damage 时向 zone 多记、凭空创生真元。
+    let actual_damage = damage.min(cultivation.qi_current.max(0.0));
+    // Deduct qi from the player, then credit the SAME (actual) amount back to the negative zone so
     // the ledger stays balanced.  Negative-pressure zones act as sinks and accept incoming
     // qi (spirit_qi rises toward 0).  This mirrors the pattern used for jiemai_parry and
     // other skill-cost conservation fixes (see combat/resolve.rs).
     cultivation.qi_current = (cultivation.qi_current - damage).max(0.0);
     release_qi_amount_to_zone(
         entity,
-        damage,
+        actual_damage,
         Some(position),
         current_dimension,
         life_record,
@@ -5923,6 +5928,92 @@ mod tests {
         assert!(
             (matching[0].amount - 10.0).abs() < 1e-9,
             "spirit_niche_penalty: QiTransfer amount 应=10.0，实际={}",
+            matching[0].amount
+        );
+    }
+
+    /// 守恒 Critical（CodeRabbit #699）：qi_current < damage 时只回灌实际扣减量，不凭空创生真元。
+    /// qi_current=5, damage=10（qi_max=100, Awaken）→ 实扣 5、qi_current→0、zone 仅 +5（-0.5→-0.4），
+    /// 而非 bug 的 +10（-0.5→-0.3 凭空多 5 真元）。
+    #[test]
+    fn spirit_niche_place_negative_zone_credits_only_actual_deducted_qi() {
+        use crate::qi_physics::ledger::QiTransferReason;
+        use crate::world::dimension::{CurrentDimension, DimensionKind};
+        use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
+
+        let mut app = App::new();
+        app.insert_resource(SpiritNicheRegistry::default());
+        app.add_event::<SpiritNichePlaceRequest>();
+        app.add_event::<VfxEventRequest>();
+        app.add_event::<QiTransfer>();
+
+        let mut zone_registry = ZoneRegistry::fallback();
+        zone_registry
+            .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
+            .expect("spawn zone should exist in fallback registry")
+            .spirit_qi = -0.5;
+        app.insert_resource(zone_registry);
+        app.add_systems(Update, handle_spirit_niche_place_requests);
+
+        let (mut client_bundle, _helper) = create_mock_client("LowQi");
+        client_bundle.player.position = Position::new([8.0, 66.0, 8.0]);
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut().entity_mut(entity).insert((
+            Lifecycle {
+                character_id: "char:lowqi".to_string(),
+                ..Default::default()
+            },
+            inventory_with_item(spirit_niche_test_item(9002)),
+            Cultivation {
+                realm: Realm::Awaken,
+                qi_max: 100.0,
+                qi_current: 5.0, // < damage(10) → 实际只能扣 5
+                ..Default::default()
+            },
+            CurrentDimension(DimensionKind::Overworld),
+        ));
+
+        app.world_mut().send_event(SpiritNichePlaceRequest {
+            player: entity,
+            pos: [9, 66, 8],
+            item_instance_id: Some(9002),
+            tick: 1,
+        });
+        app.update();
+
+        // qi_current clamp 到 0（扣 5）
+        let qi_after = app
+            .world()
+            .get::<Cultivation>(entity)
+            .expect("Cultivation")
+            .qi_current;
+        assert!(
+            qi_after.abs() < 1e-9,
+            "qi_current 应被扣到 0（5 - damage10 clamp），实际={qi_after}"
+        );
+
+        // zone 只 +5（实际扣减量）：-25+5=-20 → spirit_qi=-0.4（非 bug 的 -0.3）
+        let zone_after = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .expect("spawn zone")
+            .spirit_qi;
+        assert!(
+            (zone_after - (-0.4)).abs() < 1e-9,
+            "zone 应只回灌实际扣减 5（-0.5→-0.4），实际={zone_after}；若 ≈-0.3 说明回灌了完整 damage 凭空创生真元"
+        );
+
+        // QiTransfer amount == 实际扣减 5（非请求的 10）
+        let transfers = app.world().resource::<Events<QiTransfer>>();
+        let matching: Vec<_> = transfers
+            .iter_current_update_events()
+            .filter(|t| t.reason == QiTransferReason::ReleaseToZone)
+            .collect();
+        assert_eq!(matching.len(), 1, "应恰好 1 个 ReleaseToZone");
+        assert!(
+            (matching[0].amount - 5.0).abs() < 1e-9,
+            "QiTransfer amount 应=实际扣减 5，实际={}",
             matching[0].amount
         );
     }
