@@ -89,6 +89,9 @@ pub struct PenetrateChainEvent {
     pub affected_targets: u32,
     pub permanent_decay_rate_per_min: f32,
     pub reveal_probability: f32,
+    /// Total qi drained from all affected targets' `qi_current` during this cast.
+    /// Consumed by `penetrate_zone_credit_tick` to credit the target's zone.
+    pub returned_zone_qi: f32,
     pub tick: u64,
     pub visual: DuguSkillVisual,
 }
@@ -121,6 +124,23 @@ pub struct PermanentQiMaxDecayApplied {
     pub loss: f32,
     pub qi_max_after: f32,
     pub tick: u64,
+}
+
+/// bughunt r8 — Reverse（倒蚀）将受害者真元库清零时，实际被抹除的 qi_current 总量。
+///
+/// 守恒约束：victims 的 qi_current 被清零（累计 victim_qi_total），这部分真元必须归还到
+/// 受害者所在 zone。此事件与 ReverseTriggeredEvent 并行发送，由
+/// reverse_victim_qi_zone_credit_tick 消费，走 DuguReverseVictimQi 审计轨迹。
+///
+/// 注意：victim_qi_total 与 ReverseTriggeredEvent.returned_zone_qi（脏真元残留）是
+/// **正交的**两条路径，不重复入账。
+#[derive(Debug, Clone, Event, PartialEq)]
+pub struct DuguReverseVictimQiEvent {
+    pub caster: Entity,
+    /// 所有受害者被清零的 qi_current 之和（≥ 0）
+    pub victim_qi_total: f32,
+    /// 受害者位置（用于 zone 查找，同 ReverseTriggeredEvent.center 逻辑）
+    pub center: DVec3,
 }
 
 #[derive(Debug, Clone, Event, PartialEq)]

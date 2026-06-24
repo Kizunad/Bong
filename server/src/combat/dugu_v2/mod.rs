@@ -5,8 +5,8 @@ pub mod state;
 pub mod tick;
 
 pub use events::{
-    DuguSelfRevealedEvent, EclipseNeedleEvent, PenetrateChainEvent, PermanentQiMaxDecayApplied,
-    ReverseTriggeredEvent, SelfCureProgressEvent, ShroudActivatedEvent,
+    DuguReverseVictimQiEvent, DuguSelfRevealedEvent, EclipseNeedleEvent, PenetrateChainEvent,
+    PermanentQiMaxDecayApplied, ReverseTriggeredEvent, SelfCureProgressEvent, ShroudActivatedEvent,
 };
 pub use skills::{declare_meridian_dependencies, register_skills};
 
@@ -18,6 +18,7 @@ pub fn register(app: &mut App) {
     app.add_event::<PenetrateChainEvent>();
     app.add_event::<ShroudActivatedEvent>();
     app.add_event::<ReverseTriggeredEvent>();
+    app.add_event::<DuguReverseVictimQiEvent>();
     app.add_event::<PermanentQiMaxDecayApplied>();
     app.add_event::<DuguSelfRevealedEvent>();
     app.add_systems(
@@ -29,6 +30,8 @@ pub fn register(app: &mut App) {
             tick::reverse_aftermath_decay_tick.after(tick::shroud_maintain_tick),
             tick::eclipse_zone_credit_tick,
             tick::reverse_zone_credit_tick,
+            tick::reverse_victim_qi_zone_credit_tick,
+            tick::penetrate_zone_credit_tick,
         ),
     );
 }
