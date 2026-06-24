@@ -37,8 +37,11 @@ use crate::combat::components::{Lifecycle, LifecycleState};
 use crate::combat::events::{ApplyStatusEffectIntent, DeathEvent, StatusEffectKind};
 use crate::combat::CombatClock;
 use crate::cultivation::components::{Cultivation, Karma, Realm};
+use crate::cultivation::death_hooks::release_qi_amount_to_zone;
 use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
 use crate::cultivation::lifespan::LifespanComponent;
+use crate::qi_physics::ledger::QiTransfer;
+use crate::world::dimension::CurrentDimension;
 use crate::identity::{reaction::npc_should_decline_trade, PlayerIdentities};
 use crate::inventory::{
     consume_item_instance_once, exchange_inventory_items, inventory_item_by_instance, ItemInstance,
@@ -1584,16 +1587,15 @@ fn handle_spirit_niche_place_requests(
         Option<&Username>,
         Option<&mut Client>,
         Option<&PlayerState>,
+        Option<&CurrentDimension>,
+        Option<&LifeRecord>,
     )>,
-    zone_registry: Option<Res<ZoneRegistry>>,
+    mut zone_registry: Option<ResMut<ZoneRegistry>>,
     mut registry: ResMut<SpiritNicheRegistry>,
     mut layers: Query<&mut ChunkLayer, With<crate::world::dimension::OverworldLayer>>,
     mut vfx_events: Option<ResMut<Events<VfxEventRequest>>>,
+    mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
 ) {
-    let zone_registry = zone_registry
-        .as_deref()
-        .cloned()
-        .unwrap_or_else(ZoneRegistry::fallback);
     for event in events.read() {
         let Ok((
             entity,
@@ -1605,6 +1607,8 @@ fn handle_spirit_niche_place_requests(
             username,
             client,
             player_state,
+            current_dimension,
+            life_record,
         )) = players.get_mut(event.player)
         else {
             continue;
@@ -1666,18 +1670,37 @@ fn handle_spirit_niche_place_requests(
             continue;
         }
 
-        let zone = zone_registry.find_zone(
-            crate::world::dimension::DimensionKind::Overworld,
-            position.get(),
-        );
+        // Extract zone_qi as a scalar first (immutable borrow), then drop the borrow before
+        // the mutable release call below.  Fallback registry has spirit_qi=0.9, so the cost
+        // guard (zone_qi < 0) will be false and release_qi_amount_to_zone is not reached.
+        let fallback_registry;
+        let zone_registry_ref: &ZoneRegistry = match zone_registry.as_deref() {
+            Some(r) => r,
+            None => {
+                fallback_registry = ZoneRegistry::fallback();
+                &fallback_registry
+            }
+        };
+        let zone_qi: Option<f64> = zone_registry_ref
+            .find_zone(
+                crate::world::dimension::DimensionKind::Overworld,
+                position.get(),
+            )
+            .map(|z| z.spirit_qi);
         if let Some(cultivation) = cultivation.as_deref_mut() {
-            apply_spirit_niche_negative_qi_cost(zone.map(|zone| zone.spirit_qi), cultivation);
+            apply_spirit_niche_negative_qi_cost(
+                zone_qi,
+                entity,
+                position,
+                current_dimension,
+                life_record,
+                zone_registry.as_deref_mut(),
+                qi_transfers.as_deref_mut(),
+                cultivation,
+            );
         }
         if let Some(mut lifespan) = lifespan {
-            apply_spirit_niche_negative_lifespan_cost(
-                zone.map(|zone| zone.spirit_qi),
-                &mut lifespan,
-            );
+            apply_spirit_niche_negative_lifespan_cost(zone_qi, &mut lifespan);
         }
 
         let niche = SpiritNiche {
@@ -2050,7 +2073,17 @@ fn niche_place_target_is_close(position: &Position, target: [i32; 3]) -> bool {
     distance_squared_to_niche(position.get(), target) <= SPIRIT_NICHE_RADIUS * SPIRIT_NICHE_RADIUS
 }
 
-fn apply_spirit_niche_negative_qi_cost(zone_qi: Option<f64>, cultivation: &mut Cultivation) {
+#[allow(clippy::too_many_arguments)]
+fn apply_spirit_niche_negative_qi_cost(
+    zone_qi: Option<f64>,
+    entity: Entity,
+    position: &Position,
+    current_dimension: Option<&CurrentDimension>,
+    life_record: Option<&LifeRecord>,
+    zones: Option<&mut ZoneRegistry>,
+    qi_transfers: Option<&mut Events<QiTransfer>>,
+    cultivation: &mut Cultivation,
+) {
     if !zone_qi.is_some_and(|qi| qi < 0.0) {
         return;
     }
@@ -2063,7 +2096,21 @@ fn apply_spirit_niche_negative_qi_cost(zone_qi: Option<f64>, cultivation: &mut C
         Realm::Void => 2.5,
     };
     let damage = cultivation.qi_max * SPIRIT_NICHE_NEGATIVE_QI_DAMAGE_RATIO * realm_factor;
+    // Deduct qi from the player, then credit the same amount back to the negative zone so
+    // the ledger stays balanced.  Negative-pressure zones act as sinks and accept incoming
+    // qi (spirit_qi rises toward 0).  This mirrors the pattern used for jiemai_parry and
+    // other skill-cost conservation fixes (see combat/resolve.rs).
     cultivation.qi_current = (cultivation.qi_current - damage).max(0.0);
+    release_qi_amount_to_zone(
+        entity,
+        damage,
+        Some(position),
+        current_dimension,
+        life_record,
+        zones,
+        qi_transfers,
+        "spirit_niche_penalty",
+    );
 }
 
 fn apply_spirit_niche_negative_lifespan_cost(
@@ -5775,5 +5822,304 @@ mod tests {
             .world_mut()
             .resource_mut::<Events<SpiritNicheRevealRequest>>();
         assert!(events.drain().next().is_none());
+    }
+
+    // ── QS-03 fix: spirit_niche_penalty qi conservation ─────────────────────
+
+    /// 在负灵域放置灵龛时，真元损耗应从玩家扣除 *并* 通过 QiTransfer 回灌至负灵域，
+    /// 守恒不变式：zone.spirit_qi 在扣减后升高（向 0 靠近），且 QiTransfer 事件被 emit。
+    ///
+    /// 测试构造细节：
+    /// - zone 初始 spirit_qi = -0.5 (负灵域, room = (50-(-25)).max(0)=75, 全额接收)
+    /// - 玩家 qi_max=100, qi_current=100, Realm::Awaken (realm_factor=1.0)
+    /// - 预期 damage = 100 * 0.1 * 1.0 = 10.0
+    /// - 玩家 qi_current 后 = 90.0
+    /// - zone spirit_qi 后 = (-25 + 10) / 50 = -0.3
+    /// - QiTransfer 事件 amount = 10.0, reason = ReleaseToZone
+    /// - entity 需插 CurrentDimension(Overworld) 否则 find_zone 返回 None 走 Overflow 而不更新 zone
+    #[test]
+    fn spirit_niche_place_negative_zone_debits_qi_and_credits_zone() {
+        use crate::qi_physics::ledger::QiTransferReason;
+        use crate::world::dimension::{CurrentDimension, DimensionKind};
+        use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
+
+        let mut app = App::new();
+        app.insert_resource(SpiritNicheRegistry::default());
+        app.add_event::<SpiritNichePlaceRequest>();
+        app.add_event::<VfxEventRequest>();
+        app.add_event::<QiTransfer>();
+
+        // 建立带负灵气的 zone registry
+        let mut zone_registry = ZoneRegistry::fallback();
+        zone_registry
+            .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
+            .expect("spawn zone should exist in fallback registry")
+            .spirit_qi = -0.5;
+        app.insert_resource(zone_registry);
+
+        app.add_systems(Update, handle_spirit_niche_place_requests);
+
+        // 玩家位置在 spawn zone 内（bounds: [-128,64,-128] → [128,80,128]）
+        let (mut client_bundle, _helper) = create_mock_client("Negative");
+        client_bundle.player.position = Position::new([8.0, 66.0, 8.0]);
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut().entity_mut(entity).insert((
+            Lifecycle {
+                character_id: "char:negative".to_string(),
+                ..Default::default()
+            },
+            inventory_with_item(spirit_niche_test_item(9001)),
+            Cultivation {
+                realm: Realm::Awaken,
+                qi_max: 100.0,
+                qi_current: 100.0,
+                ..Default::default()
+            },
+            // 必须插入 CurrentDimension 否则 find_zone 返回 None 走 Overflow 而不更新 zone (pitfall b)
+            CurrentDimension(DimensionKind::Overworld),
+        ));
+
+        app.world_mut().send_event(SpiritNichePlaceRequest {
+            player: entity,
+            pos: [9, 66, 8],
+            item_instance_id: Some(9001),
+            tick: 1,
+        });
+        app.update();
+
+        // 1. 玩家 qi_current 应扣减 10.0
+        let cultivation = app.world().get::<Cultivation>(entity).expect("Cultivation");
+        assert!(
+            (cultivation.qi_current - 90.0).abs() < 1e-9,
+            "spirit_niche_penalty: 预期 qi_current=90.0 (扣减10.0 damage), 实际={}",
+            cultivation.qi_current
+        );
+
+        // 2. zone spirit_qi 应升高（damage 10 = 10/50=0.2 → spirit_qi 从 -0.5 升至 -0.3）
+        let zone_after = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .expect("spawn zone must exist after update")
+            .spirit_qi;
+        assert!(
+            (zone_after - (-0.3)).abs() < 1e-9,
+            "spirit_niche_penalty: 预期 zone spirit_qi=-0.3 (从-0.5升高0.2), 实际={}",
+            zone_after
+        );
+
+        // 3. QiTransfer 事件应 emit，amount=10.0, reason=ReleaseToZone
+        let transfers = app.world().resource::<Events<QiTransfer>>();
+        let matching: Vec<_> = transfers
+            .iter_current_update_events()
+            .filter(|t| t.reason == QiTransferReason::ReleaseToZone)
+            .collect();
+        assert_eq!(
+            matching.len(),
+            1,
+            "spirit_niche_penalty: 应恰好 emit 1 个 ReleaseToZone QiTransfer，实际 {}",
+            matching.len()
+        );
+        assert!(
+            (matching[0].amount - 10.0).abs() < 1e-9,
+            "spirit_niche_penalty: QiTransfer amount 应=10.0，实际={}",
+            matching[0].amount
+        );
+    }
+
+    /// 边界：正灵域放置灵龛不触发真元损耗，zone 不变，无 QiTransfer emit。
+    #[test]
+    fn spirit_niche_place_positive_zone_no_qi_cost_no_transfer() {
+        use crate::qi_physics::ledger::QiTransferReason;
+        use crate::world::dimension::{CurrentDimension, DimensionKind};
+        use crate::world::zone::ZoneRegistry;
+
+        let mut app = App::new();
+        app.insert_resource(SpiritNicheRegistry::default());
+        app.add_event::<SpiritNichePlaceRequest>();
+        app.add_event::<VfxEventRequest>();
+        app.add_event::<QiTransfer>();
+
+        // 默认 spawn zone spirit_qi=0.9 (正灵域)
+        app.insert_resource(ZoneRegistry::fallback());
+        app.add_systems(Update, handle_spirit_niche_place_requests);
+
+        let (mut client_bundle, _helper) = create_mock_client("Positive");
+        client_bundle.player.position = Position::new([8.0, 66.0, 8.0]);
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut().entity_mut(entity).insert((
+            Lifecycle {
+                character_id: "char:positive".to_string(),
+                ..Default::default()
+            },
+            inventory_with_item(spirit_niche_test_item(9002)),
+            Cultivation {
+                realm: Realm::Awaken,
+                qi_max: 100.0,
+                qi_current: 80.0,
+                ..Default::default()
+            },
+            CurrentDimension(DimensionKind::Overworld),
+        ));
+
+        app.world_mut().send_event(SpiritNichePlaceRequest {
+            player: entity,
+            pos: [9, 66, 8],
+            item_instance_id: Some(9002),
+            tick: 2,
+        });
+        app.update();
+
+        // 正灵域：qi_current 不变
+        let cultivation = app.world().get::<Cultivation>(entity).expect("Cultivation");
+        assert!(
+            (cultivation.qi_current - 80.0).abs() < 1e-9,
+            "正灵域放置灵龛不应扣减 qi_current，预期 80.0，实际={}",
+            cultivation.qi_current
+        );
+
+        // 无 ReleaseToZone QiTransfer
+        let transfers = app.world().resource::<Events<QiTransfer>>();
+        let release_count = transfers
+            .iter_current_update_events()
+            .filter(|t| t.reason == QiTransferReason::ReleaseToZone)
+            .count();
+        assert_eq!(
+            release_count, 0,
+            "正灵域放置灵龛不应 emit ReleaseToZone QiTransfer，实际 {}",
+            release_count
+        );
+    }
+
+    /// 边界：玩家在负灵域放置时如果没有 Cultivation 组件，不崩溃也不产生任何 QiTransfer。
+    #[test]
+    fn spirit_niche_place_negative_zone_no_cultivation_no_qi_event() {
+        use crate::qi_physics::ledger::QiTransferReason;
+        use crate::world::dimension::{CurrentDimension, DimensionKind};
+        use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
+
+        let mut app = App::new();
+        app.insert_resource(SpiritNicheRegistry::default());
+        app.add_event::<SpiritNichePlaceRequest>();
+        app.add_event::<VfxEventRequest>();
+        app.add_event::<QiTransfer>();
+
+        // 负灵域
+        let mut zone_registry = ZoneRegistry::fallback();
+        zone_registry
+            .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
+            .expect("spawn zone should exist")
+            .spirit_qi = -0.5;
+        app.insert_resource(zone_registry);
+        app.add_systems(Update, handle_spirit_niche_place_requests);
+
+        let (mut client_bundle, _helper) = create_mock_client("NoCultivation");
+        client_bundle.player.position = Position::new([8.0, 66.0, 8.0]);
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut().entity_mut(entity).insert((
+            Lifecycle {
+                character_id: "char:nocultivation".to_string(),
+                ..Default::default()
+            },
+            inventory_with_item(spirit_niche_test_item(9003)),
+            CurrentDimension(DimensionKind::Overworld),
+            // 故意不插 Cultivation
+        ));
+
+        app.world_mut().send_event(SpiritNichePlaceRequest {
+            player: entity,
+            pos: [9, 66, 8],
+            item_instance_id: Some(9003),
+            tick: 3,
+        });
+        app.update();
+
+        // 灵龛放置成功（即使没有 Cultivation）
+        assert!(
+            app.world().get::<SpiritNiche>(entity).is_some(),
+            "无 Cultivation 时仍应成功放置灵龛"
+        );
+
+        // 无 ReleaseToZone QiTransfer（没有真元可扣）
+        let transfers = app.world().resource::<Events<QiTransfer>>();
+        let release_count = transfers
+            .iter_current_update_events()
+            .filter(|t| t.reason == QiTransferReason::ReleaseToZone)
+            .count();
+        assert_eq!(
+            release_count, 0,
+            "无 Cultivation 时不应产生 ReleaseToZone QiTransfer，实际 {}",
+            release_count
+        );
+    }
+
+    /// 边界：所有六个境界的 realm_factor 覆盖——负灵域 realm::Void 扣最多 (2.5x)。
+    #[test]
+    fn spirit_niche_place_negative_zone_void_realm_max_damage() {
+        use crate::world::dimension::{CurrentDimension, DimensionKind};
+        use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
+
+        let mut app = App::new();
+        app.insert_resource(SpiritNicheRegistry::default());
+        app.add_event::<SpiritNichePlaceRequest>();
+        app.add_event::<VfxEventRequest>();
+        app.add_event::<QiTransfer>();
+
+        let mut zone_registry = ZoneRegistry::fallback();
+        zone_registry
+            .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
+            .expect("spawn zone should exist")
+            .spirit_qi = -1.0; // 完全负灵域，room 最大
+        app.insert_resource(zone_registry);
+        app.add_systems(Update, handle_spirit_niche_place_requests);
+
+        let (mut client_bundle, _helper) = create_mock_client("VoidRealm");
+        client_bundle.player.position = Position::new([8.0, 66.0, 8.0]);
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut().entity_mut(entity).insert((
+            Lifecycle {
+                character_id: "char:voidrealm".to_string(),
+                ..Default::default()
+            },
+            inventory_with_item(spirit_niche_test_item(9004)),
+            Cultivation {
+                realm: Realm::Void,
+                qi_max: 100.0,
+                qi_current: 100.0,
+                ..Default::default()
+            },
+            CurrentDimension(DimensionKind::Overworld),
+        ));
+
+        app.world_mut().send_event(SpiritNichePlaceRequest {
+            player: entity,
+            pos: [9, 66, 8],
+            item_instance_id: Some(9004),
+            tick: 4,
+        });
+        app.update();
+
+        // Void realm_factor = 2.5; damage = 100 * 0.1 * 2.5 = 25.0
+        let expected_damage = 25.0_f64;
+        let cultivation = app.world().get::<Cultivation>(entity).expect("Cultivation");
+        assert!(
+            (cultivation.qi_current - (100.0 - expected_damage)).abs() < 1e-9,
+            "Void 境界 spirit_niche_penalty: 预期 qi_current={}, 实际={}",
+            100.0 - expected_damage,
+            cultivation.qi_current
+        );
+
+        // zone 应升高 25/50 = 0.5 → 从 -1.0 升至 -0.5
+        let zone_after = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .expect("spawn zone must exist")
+            .spirit_qi;
+        assert!(
+            (zone_after - (-0.5)).abs() < 1e-9,
+            "Void 境界 spirit_niche_penalty: 预期 zone spirit_qi=-0.5, 实际={}",
+            zone_after
+        );
     }
 }
