@@ -352,6 +352,7 @@ pub(crate) fn npc_defense_scorer_system(
             &Cultivation,
             Option<&StatusEffects>,
             Option<&NpcLodTier>,
+            Option<&Lifecycle>,
         ),
         With<NpcMarker>,
     >,
@@ -362,7 +363,13 @@ pub(crate) fn npc_defense_scorer_system(
     let cfg = lod_config.as_deref().cloned().unwrap_or_default();
     let tick = lod_tick.as_deref().map(|t| t.0).unwrap_or(0);
     for (Actor(actor), mut score) in &mut scorers {
-        let value = if let Ok((bb, cultivation, statuses_opt, tier)) = npcs.get(*actor) {
+        let value = if let Ok((bb, cultivation, statuses_opt, tier, lifecycle)) = npcs.get(*actor)
+        {
+            // NPC is not alive — suppress all defense scoring.
+            if lifecycle.is_some_and(|lc| lc.state != LifecycleState::Alive) {
+                score.set(0.0);
+                continue;
+            }
             match lod_gated_score_by_kind(tier, tick, &cfg, ScorerKind::Cosmetic, || {
                 if bb.nearest_player.is_none() {
                     return 0.0;
@@ -870,6 +877,191 @@ mod tests {
             app.world().get::<Score>(scorer).unwrap().get(),
             0.0,
             "defense scorer should return 0 during ParryRecovery"
+        );
+    }
+
+    // ─── Lifecycle guard tests for NpcDefenseScorer ────────────────────────
+
+    #[test]
+    fn defense_scorer_alive_npc_scores_normally() {
+        use crate::cultivation::components::Cultivation;
+        let mut app = App::new();
+        app.add_systems(
+            PreUpdate,
+            npc_defense_scorer_system.in_set(BigBrainSet::Scorers),
+        );
+
+        let player = app.world_mut().spawn_empty().id();
+
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                NpcBlackboard {
+                    nearest_player: Some(player),
+                    player_distance: 3.0,
+                    ..Default::default()
+                },
+                Cultivation {
+                    realm: Realm::Condense,
+                    ..Default::default()
+                },
+                Lifecycle {
+                    character_id: "npc_alive".to_string(),
+                    ..Default::default()
+                },
+            ))
+            .id();
+
+        let scorer = app
+            .world_mut()
+            .spawn((Actor(npc), Score::default(), NpcDefenseScorer))
+            .id();
+
+        app.update();
+
+        let actual = app.world().get::<Score>(scorer).unwrap().get();
+        assert!(
+            (actual - 0.65).abs() < f32::EPSILON,
+            "Alive Condense NPC with player nearby should score 0.65, got {actual}"
+        );
+    }
+
+    #[test]
+    fn defense_scorer_near_death_npc_scores_zero() {
+        use crate::cultivation::components::Cultivation;
+        let mut app = App::new();
+        app.add_systems(
+            PreUpdate,
+            npc_defense_scorer_system.in_set(BigBrainSet::Scorers),
+        );
+
+        let player = app.world_mut().spawn_empty().id();
+
+        let mut lifecycle = Lifecycle {
+            character_id: "npc_near_death".to_string(),
+            ..Default::default()
+        };
+        lifecycle.enter_near_death(10);
+
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                NpcBlackboard {
+                    nearest_player: Some(player),
+                    player_distance: 3.0,
+                    ..Default::default()
+                },
+                Cultivation {
+                    realm: Realm::Condense,
+                    ..Default::default()
+                },
+                lifecycle,
+            ))
+            .id();
+
+        let scorer = app
+            .world_mut()
+            .spawn((Actor(npc), Score::default(), NpcDefenseScorer))
+            .id();
+
+        app.update();
+
+        assert_eq!(
+            app.world().get::<Score>(scorer).unwrap().get(),
+            0.0,
+            "NearDeath NPC should have defense score suppressed to 0.0 — dead NPCs must not defend"
+        );
+    }
+
+    #[test]
+    fn defense_scorer_terminated_state_npc_scores_zero() {
+        use crate::cultivation::components::Cultivation;
+        let mut app = App::new();
+        app.add_systems(
+            PreUpdate,
+            npc_defense_scorer_system.in_set(BigBrainSet::Scorers),
+        );
+
+        let player = app.world_mut().spawn_empty().id();
+
+        let lifecycle = Lifecycle {
+            character_id: "npc_terminated".to_string(),
+            state: LifecycleState::Terminated,
+            ..Default::default()
+        };
+
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                NpcBlackboard {
+                    nearest_player: Some(player),
+                    player_distance: 3.0,
+                    ..Default::default()
+                },
+                Cultivation {
+                    realm: Realm::Solidify,
+                    ..Default::default()
+                },
+                lifecycle,
+            ))
+            .id();
+
+        let scorer = app
+            .world_mut()
+            .spawn((Actor(npc), Score::default(), NpcDefenseScorer))
+            .id();
+
+        app.update();
+
+        assert_eq!(
+            app.world().get::<Score>(scorer).unwrap().get(),
+            0.0,
+            "Terminated NPC should have defense score suppressed to 0.0"
+        );
+    }
+
+    #[test]
+    fn defense_scorer_no_lifecycle_component_scores_normally() {
+        use crate::cultivation::components::Cultivation;
+        let mut app = App::new();
+        app.add_systems(
+            PreUpdate,
+            npc_defense_scorer_system.in_set(BigBrainSet::Scorers),
+        );
+
+        let player = app.world_mut().spawn_empty().id();
+
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                NpcBlackboard {
+                    nearest_player: Some(player),
+                    player_distance: 3.0,
+                    ..Default::default()
+                },
+                Cultivation {
+                    realm: Realm::Condense,
+                    ..Default::default()
+                },
+                // No Lifecycle component — fallback should score normally
+            ))
+            .id();
+
+        let scorer = app
+            .world_mut()
+            .spawn((Actor(npc), Score::default(), NpcDefenseScorer))
+            .id();
+
+        app.update();
+
+        let actual = app.world().get::<Score>(scorer).unwrap().get();
+        assert!(
+            (actual - 0.65).abs() < f32::EPSILON,
+            "NPC without Lifecycle component should score normally for defense (not suppressed), got {actual}"
         );
     }
 
