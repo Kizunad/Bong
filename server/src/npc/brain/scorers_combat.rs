@@ -363,8 +363,7 @@ pub(crate) fn npc_defense_scorer_system(
     let cfg = lod_config.as_deref().cloned().unwrap_or_default();
     let tick = lod_tick.as_deref().map(|t| t.0).unwrap_or(0);
     for (Actor(actor), mut score) in &mut scorers {
-        let value = if let Ok((bb, cultivation, statuses_opt, tier, lifecycle)) = npcs.get(*actor)
-        {
+        let value = if let Ok((bb, cultivation, statuses_opt, tier, lifecycle)) = npcs.get(*actor) {
             // NPC is not alive — suppress all defense scoring.
             if lifecycle.is_some_and(|lc| lc.state != LifecycleState::Alive) {
                 score.set(0.0);
@@ -1020,6 +1019,56 @@ mod tests {
             app.world().get::<Score>(scorer).unwrap().get(),
             0.0,
             "Terminated NPC should have defense score suppressed to 0.0"
+        );
+    }
+
+    #[test]
+    fn defense_scorer_awaiting_revival_npc_scores_zero() {
+        // 补齐 LifecycleState::AwaitingRevival 变体覆盖（CodeRabbit #697 Major）：
+        // 「非 Alive 一律抑制」契约对每个变体都成立，防回归。
+        use crate::cultivation::components::Cultivation;
+        let mut app = App::new();
+        app.add_systems(
+            PreUpdate,
+            npc_defense_scorer_system.in_set(BigBrainSet::Scorers),
+        );
+
+        let player = app.world_mut().spawn_empty().id();
+
+        let lifecycle = Lifecycle {
+            character_id: "npc_awaiting_revival".to_string(),
+            state: LifecycleState::AwaitingRevival,
+            ..Default::default()
+        };
+
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                NpcBlackboard {
+                    nearest_player: Some(player),
+                    player_distance: 3.0,
+                    ..Default::default()
+                },
+                Cultivation {
+                    realm: Realm::Condense,
+                    ..Default::default()
+                },
+                lifecycle,
+            ))
+            .id();
+
+        let scorer = app
+            .world_mut()
+            .spawn((Actor(npc), Score::default(), NpcDefenseScorer))
+            .id();
+
+        app.update();
+
+        assert_eq!(
+            app.world().get::<Score>(scorer).unwrap().get(),
+            0.0,
+            "AwaitingRevival NPC should have defense score suppressed to 0.0 (非 Alive 一律抑制)"
         );
     }
 
