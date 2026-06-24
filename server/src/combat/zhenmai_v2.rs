@@ -1195,7 +1195,7 @@ fn emit_spent_qi_release_world(
         .map(|d| d.0)
         .unwrap_or(DimensionKind::Overworld);
 
-    let transfer = build_spent_qi_release_transfer(
+    let transfers = build_spent_qi_release_transfer(
         from.clone(),
         amount,
         position,
@@ -1205,7 +1205,7 @@ fn emit_spent_qi_release_world(
         caster,
     );
 
-    if let Some(transfer) = transfer {
+    for transfer in transfers {
         world.send_event(transfer);
     }
 }
@@ -1225,15 +1225,17 @@ fn drain_release_to_zone(
         return;
     }
     let from = QiAccountId::player(format!("entity:{}", entity.to_bits()));
-    if let Some(transfer) =
+    for transfer in
         build_spent_qi_release_transfer(from, drained, position, dimension, zones, sink, entity)
     {
         qi_transfer_events.send(transfer);
     }
 }
 
-/// Core bookkeeping: credit `amount` to the entity's zone and return the transfer record
-/// (or an overflow transfer when the entity has no zone / ZoneRegistry is absent).
+/// Core bookkeeping: credit `amount` to the entity's zone and return the transfer record(s).
+/// 返回 `Vec`：zone 部分饱和时同时含 ① zone transfer（accepted）和 ② overflow transfer
+/// （`outcome.overflow`，路由 overflow 账户）；无 zone / ZoneRegistry 缺失 / Err / zone 满时返回
+/// 单条全额 overflow transfer。accepted+overflow==amount，任何 qi 都不蒸发（守恒，CodeRabbit #693）。
 fn build_spent_qi_release_transfer(
     from: QiAccountId,
     amount: f64,
@@ -1242,10 +1244,11 @@ fn build_spent_qi_release_transfer(
     zones: Option<&mut ZoneRegistry>,
     sink: &'static str,
     entity: Entity,
-) -> Option<QiTransfer> {
+) -> Vec<QiTransfer> {
     if amount <= QI_EPSILON {
-        return None;
+        return Vec::new();
     }
+    let overflow_account = || QiAccountId::overflow(format!("{sink}:{}", entity.to_bits()));
     if let (Some(position), Some(zones)) = (position, zones) {
         let zone_name = zones
             .find_zone(dimension, position)
@@ -1267,17 +1270,21 @@ fn build_spent_qi_release_transfer(
                         zone.spirit_qi =
                             (outcome.zone_after / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
                         if let Some(transfer) = outcome.transfer {
-                            let overflow = outcome.overflow;
-                            if overflow > QI_EPSILON {
-                                tracing::debug!(
-                                    sink,
-                                    overflow,
-                                    "[bong][zhenmai_v2] zone saturated; overflow discarded"
-                                );
+                            let mut transfers = vec![transfer];
+                            // zone 部分饱和：剩余 overflow 显式入 overflow 账户，绝不静默丢弃。
+                            if outcome.overflow > QI_EPSILON {
+                                if let Ok(overflow_transfer) = QiTransfer::new(
+                                    from,
+                                    overflow_account(),
+                                    outcome.overflow,
+                                    QiTransferReason::ReleaseToZone,
+                                ) {
+                                    transfers.push(overflow_transfer);
+                                }
                             }
-                            return Some(transfer);
+                            return transfers;
                         }
-                        // Overflow-only case (zone at cap) — route to overflow sink.
+                        // Overflow-only case (zone at cap) — fall through to full overflow sink.
                     }
                     Err(error) => {
                         tracing::warn!(
@@ -1290,14 +1297,16 @@ fn build_spent_qi_release_transfer(
             }
         }
     }
-    // Fallback: no zone or no ZoneRegistry — route to named overflow account.
+    // Fallback: no zone / ZoneRegistry absent / Err / zone already at cap — route full amount to overflow.
     QiTransfer::new(
         from,
-        QiAccountId::overflow(format!("{sink}:{}", entity.to_bits())),
+        overflow_account(),
         amount,
         QiTransferReason::ReleaseToZone,
     )
     .ok()
+    .into_iter()
+    .collect()
 }
 
 fn contamination_for_meridian(
@@ -2086,6 +2095,58 @@ mod tests {
         assert!(
             (total - 10.0).abs() < 1e-6,
             "total transferred qi must equal the drained amount (conservation); expected 10.0, got {total}"
+        );
+    }
+
+    /// 部分饱和守恒（CodeRabbit #693）：zone 仅剩 room=10 但 spend 30 →
+    /// accepted=10 入 zone 账户、overflow=20 显式入 overflow 账户，绝不静默丢弃。
+    /// 两类 ReleaseToZone 之和必须 == 30（扣减量全额入账，不蒸发）。
+    #[test]
+    fn spend_qi_partial_saturation_routes_overflow_not_discard() {
+        use crate::qi_physics::ledger::QiAccountKind;
+        let mut app = app_with_events();
+        app.add_event::<QiTransfer>();
+        // zone 接近饱和：spirit_qi=0.8 → zone_current=40, room=10。
+        let mut registry = ZoneRegistry::fallback();
+        registry.zones[0].spirit_qi = 0.8;
+        app.insert_resource(registry);
+        let entity = caster(&mut app, Realm::Condense, 50.0);
+        app.world_mut().entity_mut(entity).insert((
+            Position::new([0.0, 64.0, 0.0]),
+            CurrentDimension(DimensionKind::Overworld),
+        ));
+
+        let ok = spend_qi(app.world_mut(), entity, 30.0);
+        assert!(ok, "spend_qi should succeed (qi 50 >= 30)");
+
+        let events = app.world().resource::<Events<QiTransfer>>();
+        let mut reader = events.get_reader();
+        let releases: Vec<_> = reader
+            .read(events)
+            .filter(|t| t.reason == QiTransferReason::ReleaseToZone)
+            .collect();
+        let zone_sum: f64 = releases
+            .iter()
+            .filter(|t| t.to.kind == QiAccountKind::Zone)
+            .map(|t| t.amount)
+            .sum();
+        let overflow_sum: f64 = releases
+            .iter()
+            .filter(|t| t.to.kind == QiAccountKind::Overflow)
+            .map(|t| t.amount)
+            .sum();
+        assert!(
+            (zone_sum - 10.0).abs() < 1e-6,
+            "zone 仅接受 room=10（spirit_qi 0.8→1.0），实际入 zone 账户 {zone_sum}"
+        );
+        assert!(
+            (overflow_sum - 20.0).abs() < 1e-6,
+            "饱和溢出 20 必须显式入 overflow 账户而非丢弃，实际 {overflow_sum}（#693）"
+        );
+        let total: f64 = releases.iter().map(|t| t.amount).sum();
+        assert!(
+            (total - 30.0).abs() < 1e-6,
+            "守恒：ReleaseToZone 总量应 == spend 的 30（zone 10 + overflow 20），实际 {total}（#693）"
         );
     }
 
