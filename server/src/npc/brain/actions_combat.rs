@@ -1120,7 +1120,12 @@ mod tests {
     }
 
     #[test]
-    fn defense_action_void_realm_fails_because_qi_cost_is_none() {
+    fn defense_action_void_realm_can_defend_after_jiemai_cost_fix() {
+        // 回归锁：化虚(最高境界)必须能 jiemai 防御。修复前 jiemai_qi_cost_for_realm(Void)=None
+        // 让 Requested 阶段必败，与防御 scorer(0.7)、defense_interval_range(Spirit|Void) 矛盾 →
+        // Void NPC 战斗中反复选 NpcDefenseAction 死循环空转。此测试锁住「化虚能进 Executing 并 emit」。
+        // qi_current 取恰好等于化虚成本(12.0)以锁等值边界：gate 是严格 `qi_current < qi_cost`，
+        // 故 12.0 == 12.0 应放行；若 gate 回归成 `<=` 则此测试撞红。配对 *_fails_below 锁错误分支。
         use crate::cultivation::components::Cultivation;
 
         let mut app = App::new();
@@ -1141,7 +1146,75 @@ mod tests {
                 NpcMarker,
                 Cultivation {
                     realm: crate::cultivation::components::Realm::Void,
-                    qi_current: 1000.0,
+                    // 恰好等于 jiemai_qi_cost_for_realm(Void) = 12.0（等值边界）。
+                    qi_current: 12.0,
+                    ..Default::default()
+                },
+            ))
+            .id();
+
+        let action_entity = app
+            .world_mut()
+            .spawn((
+                Actor(npc),
+                NpcDefenseAction::default(),
+                ActionState::Requested,
+            ))
+            .id();
+
+        // 第一次 update：Requested → Executing（化虚现已通过 jiemai_qi_cost gate）。
+        app.update();
+        assert_eq!(
+            *app.world().get::<ActionState>(action_entity).unwrap(),
+            ActionState::Executing,
+            "化虚有了 jiemai 成本(Some(12.0))，Requested 应进入 Executing 而非 Failure"
+        );
+
+        // 第二次 update：Executing → Success 并 emit DefenseIntent（last_defense_tick=None → can_fire）。
+        app.update();
+        assert_eq!(
+            *app.world().get::<ActionState>(action_entity).unwrap(),
+            ActionState::Success,
+            "化虚首个 Executing tick 应 fire 成功"
+        );
+        let captured = &app.world().resource::<CapturedDefenseIntents>().0;
+        assert_eq!(
+            captured.len(),
+            1,
+            "化虚必须能 emit 恰好一条 DefenseIntent 完成防御，而非死循环空转"
+        );
+        assert_eq!(
+            captured[0].defender, npc,
+            "DefenseIntent.defender 应为该化虚 NPC"
+        );
+    }
+
+    #[test]
+    fn defense_action_void_realm_fails_below_jiemai_cost() {
+        // 错误分支 + 低于成本边界：化虚真元仅 11.0 < jiemai 成本 12.0 → Requested 必败、不发
+        // DefenseIntent。与上面等值/充足成功用例配对，把 `qi_current < qi_cost` gate 两侧都锁死。
+        use crate::cultivation::components::Cultivation;
+
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 100 });
+        app.insert_resource(CapturedDefenseIntents::default());
+        app.add_event::<DefenseIntent>();
+        app.add_systems(
+            PreUpdate,
+            (
+                npc_defense_action_system,
+                capture_defense_intents.after(npc_defense_action_system),
+            ),
+        );
+
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Cultivation {
+                    realm: crate::cultivation::components::Realm::Void,
+                    // 低于 jiemai_qi_cost_for_realm(Void) = 12.0 的一点点。
+                    qi_current: 11.0,
                     ..Default::default()
                 },
             ))
@@ -1157,11 +1230,17 @@ mod tests {
             .id();
 
         app.update();
-
         assert_eq!(
             *app.world().get::<ActionState>(action_entity).unwrap(),
             ActionState::Failure,
-            "Void realm has no qi cost for jiemai defense, so action should fail"
+            "化虚真元 11.0 < 成本 12.0，Requested 应直接 Failure"
+        );
+        assert!(
+            app.world()
+                .resource::<CapturedDefenseIntents>()
+                .0
+                .is_empty(),
+            "真元不足时不得发出 DefenseIntent"
         );
     }
 
