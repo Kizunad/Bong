@@ -25,8 +25,9 @@ use crate::world::dimension::CurrentDimension;
 use crate::world::zone::ZoneRegistry;
 
 use super::events::{
-    DuguSelfRevealedEvent, DuguSkillId, DuguSkillVisual, EclipseNeedleEvent, PenetrateChainEvent,
-    ReverseTriggeredEvent, SelfCureProgressEvent, ShroudActivatedEvent, TaintTier,
+    DuguReverseVictimQiEvent, DuguSelfRevealedEvent, DuguSkillId, DuguSkillVisual,
+    EclipseNeedleEvent, PenetrateChainEvent, ReverseTriggeredEvent, SelfCureProgressEvent,
+    ShroudActivatedEvent, TaintTier,
 };
 use super::physics::{
     defender_resistance, dirty_qi_collision, eclipse_effect, fake_qi_color_for_realm,
@@ -467,6 +468,9 @@ fn apply_reverse(
         })
         .collect();
     let burst = reverse_burst_all_marks(intensities);
+    // bughunt r8: accumulate victim qi_current before zeroing so we can credit the zone.
+    // victim_qi_total tracks the actual pool destroyed (not taint-intensity-based returned_zone_qi).
+    let mut victim_qi_total: f64 = 0.0;
     for entity in &targets {
         apply_damage(
             world,
@@ -477,6 +481,7 @@ fn apply_reverse(
             now_tick,
         );
         if let Some(mut cultivation) = world.get_mut::<Cultivation>(*entity) {
+            victim_qi_total += cultivation.qi_current.max(0.0);
             cultivation.qi_current = 0.0;
         }
         world.entity_mut(*entity).remove::<TaintMark>();
@@ -511,6 +516,18 @@ fn apply_reverse(
             visual: visual_for(DuguSkillId::Reverse),
         },
     );
+    // bughunt r8: credit victim qi_current (destroyed above) to the target zone.
+    // This is orthogonal to ReverseTriggeredEvent.returned_zone_qi (taint residue).
+    if victim_qi_total > 0.0 {
+        send_event_if_present(
+            world,
+            DuguReverseVictimQiEvent {
+                caster,
+                victim_qi_total: victim_qi_total as f32,
+                center,
+            },
+        );
+    }
     send_event_if_present(
         world,
         JueBiTriggerEvent {

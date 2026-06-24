@@ -13,7 +13,9 @@ use crate::qi_physics::release::qi_release_to_zone;
 use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::zone::ZoneRegistry;
 
-use super::events::{EclipseNeedleEvent, PermanentQiMaxDecayApplied, ReverseTriggeredEvent};
+use super::events::{
+    DuguReverseVictimQiEvent, EclipseNeedleEvent, PermanentQiMaxDecayApplied, ReverseTriggeredEvent,
+};
 use super::state::{ReverseAftermathCloud, ShroudActive, TaintMark};
 
 pub fn taint_decay_tick(
@@ -155,7 +157,8 @@ pub fn eclipse_zone_credit_tick(
         let from = QiAccountId::player(format!("entity:{:?}", event.caster));
         let to = QiAccountId::zone(zone_name.clone());
         // MF3 fix: convert absolute→normalized via qi_release_to_zone (overflow never dropped)
-        let zone_current = zone.spirit_qi.max(0.0) * QI_ZONE_UNIT_CAPACITY;
+        // 不 .max(0.0)：负灵域 spirit_qi<0 当 0 会抹掉负缺口、凭空多 credit、破坏守恒（#681/#696 同类）。
+        let zone_current = zone.spirit_qi * QI_ZONE_UNIT_CAPACITY;
         match qi_release_to_zone(
             returned,
             from.clone(),
@@ -252,7 +255,8 @@ pub fn reverse_zone_credit_tick(
         let from = QiAccountId::player(format!("entity:{:?}", event.caster));
         let to = QiAccountId::zone(zone_name.clone());
         // MF3 fix: convert absolute→normalized via qi_release_to_zone (overflow never dropped)
-        let zone_current = zone.spirit_qi.max(0.0) * QI_ZONE_UNIT_CAPACITY;
+        // 不 .max(0.0)：负灵域 spirit_qi<0 当 0 会抹掉负缺口、凭空多 credit、破坏守恒（#681/#696 同类）。
+        let zone_current = zone.spirit_qi * QI_ZONE_UNIT_CAPACITY;
         match qi_release_to_zone(
             returned,
             from.clone(),
@@ -302,6 +306,100 @@ pub fn reverse_zone_credit_tick(
                         overflow_to,
                         returned,
                         QiTransferReason::DuguReturnToZone,
+                    ) {
+                        account.push_transfer_audit(t);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// bughunt r8 — Reverse（倒蚀）清零受害者 qi_current 时，被消灭的真元守恒归还受害者所在 zone。
+///
+/// `DuguReverseVictimQiEvent` 由 skills.rs apply_reverse() 在循环结束后发送，携带所有受害者
+/// qi_current 累加总量。此系统与 `reverse_zone_credit_tick`（处理脏真元残留）正交：
+///   - `reverse_zone_credit_tick`：returned_zone_qi = taint_intensity × ratio（小值）
+///   - 本系统：victim_qi_total = 受害者实际 qi_current 清零量（可为大值，如灵境目标 200）
+///
+/// 维度取施法者 CurrentDimension（缺失时 fallback Overworld），zone 查找用 event.center 坐标。
+pub fn reverse_victim_qi_zone_credit_tick(
+    mut events: EventReader<DuguReverseVictimQiEvent>,
+    caster_dims: Query<(Entity, Option<&CurrentDimension>)>,
+    mut zones: Option<ResMut<ZoneRegistry>>,
+    mut qi_account: Option<ResMut<WorldQiAccount>>,
+) {
+    let Some(ref mut zones) = zones else {
+        for _ in events.read() {}
+        return;
+    };
+    for event in events.read() {
+        let victim_qi = f64::from(event.victim_qi_total);
+        if victim_qi <= 0.0 {
+            continue;
+        }
+        let pos = event.center;
+        let dim = caster_dims
+            .get(event.caster)
+            .ok()
+            .and_then(|(_, d)| d)
+            .map(|cd| cd.0)
+            .unwrap_or(DimensionKind::Overworld);
+        let Some(zone) = zones.find_zone_mut_by_pos(dim, pos) else {
+            continue;
+        };
+        let zone_name = zone.name.clone();
+        let from = QiAccountId::player(format!("entity:{:?}", event.caster));
+        let to = QiAccountId::zone(zone_name.clone());
+        // 不 .max(0.0)：负灵域 spirit_qi<0 当 0 会抹掉负缺口、凭空多 credit、破坏守恒（#681/#696 同类）。
+        let zone_current = zone.spirit_qi * QI_ZONE_UNIT_CAPACITY;
+        match qi_release_to_zone(
+            victim_qi,
+            from.clone(),
+            to,
+            zone_current,
+            QI_ZONE_UNIT_CAPACITY,
+        ) {
+            Ok(outcome) => {
+                zone.spirit_qi = (outcome.zone_after / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
+                if let Some(ref mut account) = qi_account {
+                    account.push_transfer_audit(QiTransfer {
+                        from: from.clone(),
+                        to: QiAccountId::zone(zone_name.clone()),
+                        amount: outcome.accepted,
+                        reason: QiTransferReason::DuguReverseVictimQi,
+                    });
+                    if outcome.overflow > QI_EPSILON {
+                        let overflow_to = QiAccountId::overflow(format!(
+                            "dugu_reverse_victim_overflow:entity:{:?}",
+                            event.caster
+                        ));
+                        if let Ok(t) = QiTransfer::new(
+                            from,
+                            overflow_to,
+                            outcome.overflow,
+                            QiTransferReason::DuguReverseVictimQi,
+                        ) {
+                            account.push_transfer_audit(t);
+                        }
+                    }
+                }
+            }
+            Err(err) => {
+                tracing::warn!(
+                    ?err,
+                    "[bong][dugu_v2] reverse_victim_qi_zone_credit invalid qi release; routing to overflow"
+                );
+                if let Some(ref mut account) = qi_account {
+                    let overflow_to = QiAccountId::overflow(format!(
+                        "dugu_reverse_victim_err_overflow:entity:{:?}",
+                        event.caster
+                    ));
+                    if let Ok(t) = QiTransfer::new(
+                        from,
+                        overflow_to,
+                        victim_qi,
+                        QiTransferReason::DuguReverseVictimQi,
                     ) {
                         account.push_transfer_audit(t);
                     }

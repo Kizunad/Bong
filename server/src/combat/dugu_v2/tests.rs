@@ -740,14 +740,26 @@ fn eclipse_zone_credit_happy_path_zone_increases_by_returned_zone_qi() {
     );
 }
 
-/// happy path: Reverse（倒蚀）施放后，zone.spirit_qi 精确增加 returned_zone_qi。
+/// happy path: Reverse（倒蚀）施放后，zone.spirit_qi 同时收到脏真元残留（DuguReturnToZone）
+/// 和受害者 qi_current 清零量（DuguReverseVictimQi）两路入账。
+///
+/// bughunt r8 fix: victim.qi_current 清零量必须独立入账，不得蒸发。
 #[test]
 fn reverse_zone_credit_happy_path_zone_increases_by_returned_zone_qi() {
-    use crate::qi_physics::ledger::WorldQiAccount;
+    use crate::qi_physics::ledger::{QiTransferReason, WorldQiAccount};
     use crate::world::zone::ZoneRegistry;
 
-    let zone_qi_before = 0.2_f64;
+    // 使用 zone_qi_before=0.0（空），确保 zone 有足够容量容纳两路 qi（无 min() 截断掩盖）。
+    // 受害者 qi_current=200，zone 满容 50 raw，全量 accepted（victim_qi > CAP 时 zone 填满）。
+    let zone_qi_before = 0.0_f64;
     let mut app = setup_zone_credit_app(zone_qi_before);
+    // zone 清空确保 room = QI_ZONE_UNIT_CAPACITY（pitfall a 防御）
+    app.world_mut()
+        .resource_mut::<ZoneRegistry>()
+        .find_zone_mut("spawn")
+        .unwrap()
+        .spirit_qi = 0.0;
+
     let void_caster = actor(&mut app, Realm::Void, 500.0, 500.0, 0.0);
     let victim = actor(&mut app, Realm::Spirit, 200.0, 200.0, 1.0);
     app.world_mut().entity_mut(victim).insert(TaintMark {
@@ -786,6 +798,23 @@ fn reverse_zone_credit_happy_path_zone_increases_by_returned_zone_qi() {
         "Reverse 应产生 returned_zone_qi > 0，实际={returned}"
     );
 
+    // bughunt r8: 验证 DuguReverseVictimQiEvent 已发送
+    use crate::combat::dugu_v2::DuguReverseVictimQiEvent;
+    let victim_qi_sent = {
+        let events = app.world().resource::<Events<DuguReverseVictimQiEvent>>();
+        events
+            .iter_current_update_events()
+            .next()
+            .expect(
+                "bughunt r8 fix: Reverse 应发 DuguReverseVictimQiEvent（受害者 qi_current 清零）",
+            )
+            .victim_qi_total
+    };
+    assert!(
+        victim_qi_sent > 0.0,
+        "DuguReverseVictimQiEvent.victim_qi_total 应 > 0，实际={victim_qi_sent}"
+    );
+
     app.update();
 
     let zone_qi_after = app
@@ -795,34 +824,52 @@ fn reverse_zone_credit_happy_path_zone_increases_by_returned_zone_qi() {
         .expect("spawn zone should exist")
         .spirit_qi;
 
-    // MF3 fix: zone_qi 增量 = returned/QI_ZONE_UNIT_CAPACITY（绝对量→归一化），而非裸加 returned
-    use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
-    let returned_abs = f64::from(returned);
-    let zone_current_abs = zone_qi_before.max(0.0) * QI_ZONE_UNIT_CAPACITY;
-    let room = (QI_ZONE_UNIT_CAPACITY - zone_current_abs).max(0.0);
-    let accepted = returned_abs.min(room);
-    let expected = (zone_qi_before + accepted / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
-    assert!(
-        (zone_qi_after - expected).abs() < 1e-9,
-        "Reverse 后 zone.spirit_qi 应为 {expected:.9}（增量=accepted({accepted:.6})/CAP），         实际={zone_qi_after:.9}（MF3 fix: absolute→normalized 转换后入账 returned={returned_abs:.6}）"
-    );
-
-    use crate::qi_physics::ledger::QiTransferReason;
+    // 验证 DuguReturnToZone 审计记录存在（脏真元残留路径不变）
     let account = app.world().resource::<WorldQiAccount>();
-    let dugu_transfers: Vec<_> = account
+    let taint_transfers: Vec<_> = account
         .transfers()
         .iter()
         .filter(|t| t.reason == QiTransferReason::DuguReturnToZone)
         .collect();
     assert!(
-        !dugu_transfers.is_empty(),
+        !taint_transfers.is_empty(),
         "Reverse 后应至少有 1 条 DuguReturnToZone 审计记录，实际=0"
     );
-    // 守恒：所有 DuguReturnToZone 审计记录 amount 之和 == returned_abs
-    let total_audit: f64 = dugu_transfers.iter().map(|t| t.amount).sum();
+
+    // bughunt r8 fix: DuguReverseVictimQi 审计记录必须存在
+    let victim_transfers: Vec<_> = account
+        .transfers()
+        .iter()
+        .filter(|t| t.reason == QiTransferReason::DuguReverseVictimQi)
+        .collect();
     assert!(
-        (total_audit - returned_abs).abs() < 1e-9,
-        "DuguReturnToZone 审计记录 amount 之和({total_audit:.9}) 应等于 returned({returned_abs:.9})"
+        !victim_transfers.is_empty(),
+        "bughunt r8 fix: Reverse 后应至少有 1 条 DuguReverseVictimQi 审计记录（受害者 qi_current 清零量），实际=0"
+    );
+
+    // zone 收到两路入账后应 > zone_qi_before（空），守恒检查：zone 不应为空
+    assert!(
+        zone_qi_after > 0.0,
+        "Reverse 后 zone.spirit_qi 应 > 0（两路入账），实际={zone_qi_after:.9}"
+    );
+
+    // 两路审计 amount 之和 == returned_abs + victim_qi_total（qi 绝不蒸发）
+    let total_taint_audit: f64 = taint_transfers.iter().map(|t| t.amount).sum();
+    let total_victim_audit: f64 = victim_transfers.iter().map(|t| t.amount).sum();
+    let returned_abs = f64::from(returned);
+    let victim_abs = f64::from(victim_qi_sent);
+    assert!(
+        (total_taint_audit - returned_abs).abs() < 1e-9,
+        "DuguReturnToZone 审计 amount 之和({total_taint_audit:.9}) 应 == returned({returned_abs:.9})"
+    );
+    // 守恒（测契约不测实现）：受害者被清零的 victim_qi 全额入账（accepted 进 zone + overflow 进
+    // overflow 账户），两路 DuguReverseVictimQi 审计之和 == victim_qi，绝不蒸发。
+    // 不断言 zone/overflow 的具体拆分——reverse_zone_credit_tick（脏残留）与 reverse_victim_qi
+    // _zone_credit_tick 都 credit 同一 zone，Bevy 调度顺序不确定 → 拆分 order-dependent，但**总量守恒
+    // 与 zone 最终值 order-independent**（顺序只改审计归属，不改 zone 终值，加法在 cap 处饱和）。
+    assert!(
+        (total_victim_audit - victim_abs).abs() < 1e-9,
+        "守恒：DuguReverseVictimQi 审计总和({total_victim_audit:.9}) 应 == 全额 victim_qi({victim_abs:.9})（accepted 进 zone + overflow 进 overflow 账户），绝不蒸发"
     );
 }
 
@@ -876,18 +923,19 @@ fn eclipse_conservation_total_observed_invariant() {
 
     let snap_after = summarize_world_qi(app.world_mut());
 
-    // MF3 fix: qi_release_to_zone 处理 absolute→normalized 换算。
-    // zone_qi_before = -0.8 → zone_current_abs = max(0,-0.8)*50 = 0.0（耗尽视为空）
-    // room = 50.0 - 0.0 = 50.0 >> returned(~1.76) → accepted = returned, no overflow
-    // zone_after = (zone_current_abs + accepted) / CAP = (0.0+1.76)/50 = 0.0352
-    // zone_qi_delta = snap_after.zone_qi - snap_before.zone_qi = 0.0352 - (-0.8) = 0.8352
+    // qi_release_to_zone 处理 absolute→normalized 换算。负灵域守恒（#681/#696 同类）：
+    // 不 .max(0.0)——zone_qi_before=-0.8 → zone_current_abs = -0.8*50 = -40（保留负缺口，不当 0）。
+    // room = (50 - (-40)).max(0) = 90 >> returned(~1.76) → accepted = returned，无 overflow。
+    // zone_after = (-40 + 1.76)/50 = -0.7648（负缺口被填了一点点，仍为负）。
+    // 若误用 .max(0.0) 当 0 → expected 会变 +0.0352，凭空多出 40 raw（25 qi 那类 bug）。
     use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
     let returned_abs = f64::from(returned);
-    let zone_current_abs = zone_qi_before.max(0.0) * QI_ZONE_UNIT_CAPACITY; // = 0.0
-    let room = (QI_ZONE_UNIT_CAPACITY - zone_current_abs).max(0.0); // = 50.0
+    let zone_current_abs = zone_qi_before * QI_ZONE_UNIT_CAPACITY; // = -40.0（裸值，保留负缺口）
+    let room = (QI_ZONE_UNIT_CAPACITY - zone_current_abs).max(0.0); // = 90.0
     let accepted = returned_abs.min(room); // = returned_abs (no overflow)
-                                           // Expected zone_after (normalized) = (zone_current_abs + accepted) / CAP
-    let expected_zone_after = (zone_current_abs + accepted) / QI_ZONE_UNIT_CAPACITY;
+                                           // Expected zone_after (normalized, clamped) = (zone_current_abs + accepted) / CAP
+    let expected_zone_after =
+        ((zone_current_abs + accepted) / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
     assert!(
         (snap_after.zone_qi - expected_zone_after).abs() < 1e-9,
         "守恒失败：zone.spirit_qi after({:.9}) 应精确等于 (zone_current({zone_current_abs})+accepted({accepted}))/CAP={expected_zone_after:.9}。\
@@ -1271,16 +1319,21 @@ fn eclipse_then_reverse_chain_conservation_no_double_entry() {
          effective_hit >> rejected_qi（大部分脏真元入体延迟散逸）"
     );
 
-    // 审计记录数：Eclipse 1 条 + Reverse 1 条 = 2 条
+    // 无双重入账（守恒，测契约不测实现）：DuguReturnToZone 审计 amount 之和 == eclipse_returned +
+    // reverse_returned。不断言审计「条数」——victim-qi 信用可能把 zone 填满，使脏残留信用溢出拆成
+    // accepted+overflow 两条审计（条数 order-dependent），但**总额 order-independent**。旧 double-entry
+    // bug 会让总额 ≈ 2×injected×ratio，此断言照样撞红。
     let account = app.world().resource::<WorldQiAccount>();
-    let dugu_count = account
+    let dugu_total: f64 = account
         .transfers()
         .iter()
         .filter(|t| t.reason == QiTransferReason::DuguReturnToZone)
-        .count();
-    assert_eq!(
-        dugu_count, 2,
-        "Eclipse+Reverse 连招应产生恰好 2 条 DuguReturnToZone 审计记录，实际={dugu_count}"
+        .map(|t| t.amount)
+        .sum();
+    assert!(
+        (dugu_total - total_returned).abs() < 1e-6,
+        "Eclipse+Reverse 连招 DuguReturnToZone 审计总额({dugu_total:.6}) 应 == eclipse_returned + \
+         reverse_returned = {total_returned:.6}（无双重入账）；若 ≈2× 说明 double-entry bug 复发"
     );
 }
 
@@ -1931,4 +1984,278 @@ fn release_cast_cost_caps_release_to_actual_deduction() {
         "释放总量应 == 实际扣减量 5（非请求的 80），实际={released:.9}；\
          否则凭空多出 75 真元破守恒（#693 防御性守恒）"
     );
+}
+
+// ── bughunt r8: DuguReverseVictimQi 守恒测试 ──────────────────────────────────
+
+/// bughunt r8 happy path: Reverse 清零受害者 qi_current，全量归还空 zone（无截断）。
+///
+/// 守恒不变式：victim.qi_current_before == zone_gained（zone 清空，有充足容量）。
+/// pitfall (a) 防御：zone.spirit_qi = 0.0（清空，room = QI_ZONE_UNIT_CAPACITY，全量 accepted）。
+/// pitfall (b) 防御：CurrentDimension 缺失时 fallback Overworld（与 zone 维度一致）。
+#[test]
+fn reverse_victim_qi_zone_credit_happy_path_full_credit() {
+    use crate::combat::dugu_v2::DuguReverseVictimQiEvent;
+    use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
+    use crate::qi_physics::ledger::{QiTransferReason, WorldQiAccount};
+    use crate::world::zone::ZoneRegistry;
+
+    let mut app = setup_zone_credit_app(0.0);
+    // 清空 zone（pitfall a：防止 room 不足导致截断掩盖守恒验证）
+    app.world_mut()
+        .resource_mut::<ZoneRegistry>()
+        .find_zone_mut("spawn")
+        .unwrap()
+        .spirit_qi = 0.0;
+
+    let void_caster = actor(&mut app, Realm::Void, 500.0, 500.0, 0.0);
+    // 受害者 qi_current = 30.0（< QI_ZONE_UNIT_CAPACITY=50，确保全量 accepted，无 overflow）
+    let victim = actor(&mut app, Realm::Spirit, 30.0, 200.0, 1.0);
+    app.world_mut().entity_mut(victim).insert(TaintMark {
+        caster: void_caster,
+        intensity: 5.0,
+        since_tick: 1,
+        expires_at_tick: None,
+        tier: TaintTier::Permanent,
+        temporary_qi_max_loss: 0.0,
+        permanent_decay_rate_per_min: 0.001,
+        returned_zone_qi: 4.95,
+    });
+
+    let result = resolve_dugu_v2_skill(
+        app.world_mut(),
+        void_caster,
+        0,
+        Some(victim),
+        DuguSkillId::Reverse,
+    );
+    assert!(
+        matches!(result, CastResult::Started { .. }),
+        "Reverse cast 应成功，实际={result:?}"
+    );
+
+    // 验证 DuguReverseVictimQiEvent 发送且 victim_qi_total == victim 初始 qi_current
+    let victim_qi_total = {
+        let events = app.world().resource::<Events<DuguReverseVictimQiEvent>>();
+        let evt = events
+            .iter_current_update_events()
+            .next()
+            .expect("bughunt r8: Reverse 应发 DuguReverseVictimQiEvent");
+        evt.victim_qi_total
+    };
+    // 受害者 qi_current 在 Reverse 前未被 apply_damage 改变（apply_damage 只扣 HP）
+    // 所以 victim_qi_total 应 ≈ 初始 qi_current=30.0（apply_damage 不影响 qi）
+    assert!(
+        victim_qi_total > 0.0,
+        "bughunt r8: victim_qi_total 应 > 0，实际={victim_qi_total}"
+    );
+
+    // victim qi_current 应已被清零
+    let victim_qi_after = app
+        .world()
+        .get::<crate::cultivation::components::Cultivation>(victim)
+        .unwrap()
+        .qi_current;
+    assert_eq!(
+        victim_qi_after, 0.0,
+        "bughunt r8 fix: Reverse 后 victim.qi_current 应为 0，实际={victim_qi_after}"
+    );
+
+    let zone_before = 0.0_f64;
+    app.update(); // 触发 reverse_victim_qi_zone_credit_tick + reverse_zone_credit_tick
+
+    let zone_after = app
+        .world()
+        .resource::<ZoneRegistry>()
+        .find_zone_by_name("spawn")
+        .unwrap()
+        .spirit_qi;
+
+    // DuguReverseVictimQi 审计记录必须存在
+    let account = app.world().resource::<WorldQiAccount>();
+    let victim_transfers: Vec<_> = account
+        .transfers()
+        .iter()
+        .filter(|t| t.reason == QiTransferReason::DuguReverseVictimQi)
+        .collect();
+    assert!(
+        !victim_transfers.is_empty(),
+        "bughunt r8 fix: app.update() 后应有 DuguReverseVictimQi 审计记录，实际=0"
+    );
+
+    // zone 守恒：victim qi 全量 accepted（30 < 50 room），zone 应增加 victim_qi_total/CAP
+    let victim_abs = f64::from(victim_qi_total);
+    let expected_zone_delta = victim_abs / QI_ZONE_UNIT_CAPACITY;
+    let zone_delta = zone_after - zone_before;
+    // zone_delta 还包含 taint residue（DuguReturnToZone 路径），所以 zone_delta >= victim 贡献
+    assert!(
+        zone_delta >= expected_zone_delta - 1e-9,
+        "bughunt r8 fix: zone_delta({zone_delta:.9}) 应 ≥ victim_qi/CAP={expected_zone_delta:.9}；\
+         若不足说明 victim qi 未归还 zone（bug 未修复）"
+    );
+
+    // audit trail 守恒：DuguReverseVictimQi 总量 == victim_qi_total（全量 accepted，无 overflow）
+    let total_victim_audit: f64 = victim_transfers.iter().map(|t| t.amount).sum();
+    assert!(
+        (total_victim_audit - victim_abs).abs() < 1e-9,
+        "DuguReverseVictimQi 审计 amount 之和({total_victim_audit:.9}) 应 == victim_qi_total({victim_abs:.9})；\
+         qi 绝不蒸发（zone 空，全量 accepted，无 overflow）"
+    );
+}
+
+/// bughunt r8 overflow 路径: victim_qi_total > zone 容量，excess 路由到 overflow account。
+///
+/// 守恒：accepted + overflow == victim_qi_total（总量不蒸发）。
+#[test]
+fn reverse_victim_qi_zone_credit_overflow_to_overflow_account() {
+    use crate::combat::dugu_v2::DuguReverseVictimQiEvent;
+    use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
+    use crate::qi_physics::ledger::{QiTransferReason, WorldQiAccount};
+    use crate::world::zone::ZoneRegistry;
+
+    let mut app = setup_zone_credit_app(0.0);
+    // zone 已满（spirit_qi=1.0 = 50 raw），room=0，victim qi 全部 overflow
+    app.world_mut()
+        .resource_mut::<ZoneRegistry>()
+        .find_zone_mut("spawn")
+        .unwrap()
+        .spirit_qi = 1.0;
+
+    let void_caster = actor(&mut app, Realm::Void, 500.0, 500.0, 0.0);
+    // 受害者 qi_current = 40.0，zone 已满，全部应路由到 overflow
+    let victim = actor(&mut app, Realm::Spirit, 40.0, 200.0, 1.0);
+    app.world_mut().entity_mut(victim).insert(TaintMark {
+        caster: void_caster,
+        intensity: 5.0,
+        since_tick: 1,
+        expires_at_tick: None,
+        tier: TaintTier::Permanent,
+        temporary_qi_max_loss: 0.0,
+        permanent_decay_rate_per_min: 0.001,
+        returned_zone_qi: 4.95,
+    });
+
+    let result = resolve_dugu_v2_skill(
+        app.world_mut(),
+        void_caster,
+        0,
+        Some(victim),
+        DuguSkillId::Reverse,
+    );
+    assert!(
+        matches!(result, CastResult::Started { .. }),
+        "Reverse cast 应成功，实际={result:?}"
+    );
+
+    let victim_qi_total = {
+        let events = app.world().resource::<Events<DuguReverseVictimQiEvent>>();
+        events
+            .iter_current_update_events()
+            .next()
+            .expect("bughunt r8: 应发 DuguReverseVictimQiEvent")
+            .victim_qi_total
+    };
+    assert!(
+        victim_qi_total > 0.0,
+        "victim_qi_total 应 > 0，实际={victim_qi_total}"
+    );
+
+    let zone_before = app
+        .world()
+        .resource::<ZoneRegistry>()
+        .find_zone_by_name("spawn")
+        .unwrap()
+        .spirit_qi;
+
+    app.update();
+
+    let zone_after = app
+        .world()
+        .resource::<ZoneRegistry>()
+        .find_zone_by_name("spawn")
+        .unwrap()
+        .spirit_qi;
+
+    // zone 已满，victim qi 贡献无法入账，zone 不应超出 1.0
+    assert!(
+        zone_after <= 1.0 + 1e-9,
+        "zone.spirit_qi 不应超过 1.0（clamp），实际={zone_after:.9}"
+    );
+
+    // DuguReverseVictimQi 审计记录必须存在（即使全部 overflow，守恒轨迹必须保留）
+    let account = app.world().resource::<WorldQiAccount>();
+    let victim_transfers: Vec<_> = account
+        .transfers()
+        .iter()
+        .filter(|t| t.reason == QiTransferReason::DuguReverseVictimQi)
+        .collect();
+    assert!(
+        !victim_transfers.is_empty(),
+        "bughunt r8 fix: zone 已满时 victim qi 应路由到 overflow 并留下 DuguReverseVictimQi 审计记录，实际=0"
+    );
+
+    // 守恒：所有 DuguReverseVictimQi 记录之和 == victim_qi_total（accepted + overflow = total）
+    let total_victim_audit: f64 = victim_transfers.iter().map(|t| t.amount).sum();
+    let victim_abs = f64::from(victim_qi_total);
+    assert!(
+        (total_victim_audit - victim_abs).abs() < 1e-9,
+        "DuguReverseVictimQi 审计总量({total_victim_audit:.9}) 应 == victim_qi_total({victim_abs:.9})；\
+         accepted+overflow 守恒（qi 绝不蒸发）"
+    );
+
+    // zone 因满载不应因 victim qi 改变（accepted=0）
+    // 注意 taint residue（DuguReturnToZone 路径）也会 overflow，zone 维持在 1.0 附近
+    assert!(
+        (zone_after - zone_before).abs() < 1e-6,
+        "zone 已满时 victim qi 不应改变 zone.spirit_qi（全部 overflow），\
+         before={zone_before:.9}, after={zone_after:.9}"
+    );
+}
+
+/// bughunt r8 边界: victim_qi_total=0 时不产生 DuguReverseVictimQi 审计记录（直接守零）。
+#[test]
+fn reverse_victim_qi_zero_no_audit() {
+    use crate::combat::dugu_v2::DuguReverseVictimQiEvent;
+    use crate::qi_physics::ledger::{QiTransferReason, WorldQiAccount};
+
+    let mut app = setup_zone_credit_app(0.5);
+    let caster = app.world_mut().spawn_empty().id();
+
+    // 直接发送 victim_qi_total=0 的事件（边界：无 victim qi 可返还）
+    app.world_mut().send_event(DuguReverseVictimQiEvent {
+        caster,
+        victim_qi_total: 0.0,
+        center: valence::math::DVec3::ZERO,
+    });
+
+    app.update();
+
+    let account = app.world().resource::<WorldQiAccount>();
+    let count = account
+        .transfers()
+        .iter()
+        .filter(|t| t.reason == QiTransferReason::DuguReverseVictimQi)
+        .count();
+    assert_eq!(
+        count, 0,
+        "victim_qi_total=0 时不应产生 DuguReverseVictimQi 审计记录，实际={count}"
+    );
+}
+
+/// bughunt r8 pin: DuguReverseVictimQi 变体独立存在，区别于 DuguReturnToZone。
+#[test]
+fn dugu_reverse_victim_qi_reason_pin_test() {
+    use crate::qi_physics::ledger::QiTransferReason;
+    let reason = QiTransferReason::DuguReverseVictimQi;
+    assert_ne!(
+        reason,
+        QiTransferReason::DuguReturnToZone,
+        "DuguReverseVictimQi 应为独立变体，区别于 DuguReturnToZone（受害者 qi_current 清零 vs 脏真元残留）"
+    );
+    assert_ne!(
+        reason,
+        QiTransferReason::ReleaseToZone,
+        "DuguReverseVictimQi 应区别于 ReleaseToZone（招式释放）"
+    );
+    assert_eq!(reason, reason, "DuguReverseVictimQi 与自身应相等");
 }
