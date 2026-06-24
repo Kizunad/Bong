@@ -257,16 +257,23 @@ mod tests {
     #[test]
     fn realm_qi_cost_rejects_awaken_and_scales_v1_realms() {
         // 仅醒灵期无截脉能力（None）；引气起逐级递增，化虚为序列顶端。
-        assert_eq!(jiemai_qi_cost_for_realm(Realm::Awaken), None);
-        assert_eq!(jiemai_qi_cost_for_realm(Realm::Induce), Some(5.0));
-        assert_eq!(jiemai_qi_cost_for_realm(Realm::Condense), Some(6.0));
-        assert_eq!(jiemai_qi_cost_for_realm(Realm::Solidify), Some(8.0));
-        assert_eq!(jiemai_qi_cost_for_realm(Realm::Spirit), Some(10.0));
-        assert_eq!(
-            jiemai_qi_cost_for_realm(Realm::Void),
-            Some(12.0),
-            "化虚期必须有截脉成本，否则防御 scorer(0.7) 与 action gate 矛盾，NPC 防御死循环"
-        );
+        // 表驱动 + 带 realm/expected/actual 失败信息：成本表回归时直接指明哪个境界映射错、
+        // 该往「防御 gate 契约必须与境界能力一致」方向修。
+        for (realm, expected) in [
+            (Realm::Awaken, None),
+            (Realm::Induce, Some(5.0)),
+            (Realm::Condense, Some(6.0)),
+            (Realm::Solidify, Some(8.0)),
+            (Realm::Spirit, Some(10.0)),
+            (Realm::Void, Some(12.0)),
+        ] {
+            let actual = jiemai_qi_cost_for_realm(realm);
+            assert_eq!(
+                actual, expected,
+                "realm {realm:?}: 期望 qi cost 为 {expected:?}（防御 gate 必须与境界能力一致，\
+                 否则 scorer 评分>0 而 action 必败致 NPC 防御死循环），实际为 {actual:?}"
+            );
+        }
     }
 
     #[test]
