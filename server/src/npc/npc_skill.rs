@@ -79,7 +79,9 @@ fn release_npc_qi_to_zone(world: &mut bevy_ecs::world::World, caster: Entity, am
 
     if let Some(mut zones) = world.get_resource_mut::<ZoneRegistry>() {
         if let Some(zone) = zones.find_zone_mut(&home_zone) {
-            let zone_current = zone.spirit_qi.max(0.0) * QI_ZONE_UNIT_CAPACITY;
+            // 不 .max(0.0)：负灵域（spirit_qi<0）当 0 会抹掉负缺口、凭空多 credit、破坏守恒
+            // （#681/#696/#698 同类）。与规范 helper death_hooks::release_qi_amount_to_zone 一致用裸值。
+            let zone_current = zone.spirit_qi * QI_ZONE_UNIT_CAPACITY;
             match qi_release_to_zone(
                 amount,
                 from.clone(),
@@ -811,6 +813,46 @@ mod tests {
                 .iter()
                 .all(|t| t.reason == QiTransferReason::ReleaseToZone),
             "all transfers should have reason ReleaseToZone"
+        );
+    }
+
+    /// 负灵域守恒（#681/#696/#698 同类）：home_zone spirit_qi=-0.5 时不得 .max(0.0) 当 0——否则
+    /// 抹掉 -25 负缺口、凭空多 25 qi。修复后 zone_current=-25、heal cost 8 全额吸收（room=75），
+    /// zone_after=(-25+8)/50=-0.34（而非 bug 的 (0+8)/50=0.16）。
+    #[test]
+    fn heal_negative_home_zone_no_phantom_credit() {
+        let mut world = world_with_zone_registry();
+        let initial_spirit_qi = -0.5;
+        world
+            .resource_mut::<ZoneRegistry>()
+            .find_zone_mut("spawn")
+            .expect("default registry 必须含 spawn zone")
+            .spirit_qi = initial_spirit_qi;
+
+        let wounds = make_wounds(50.0, 100.0, vec![]);
+        let entity = world
+            .spawn((
+                make_cultivation(Realm::Induce, 50.0),
+                wounds,
+                NpcPatrol::new("spawn", DVec3::new(14.0, 66.0, 14.0)),
+            ))
+            .id();
+
+        npc_heal_basic(&mut world, entity, 0, None);
+
+        let zone_after = world
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name("spawn")
+            .expect("spawn zone")
+            .spirit_qi;
+        // 裸 spirit_qi*CAP：zone_current=-25, room=75 > cost 8 → 全额吸收, zone_after=(-25+8)/50
+        let expected =
+            (initial_spirit_qi * QI_ZONE_UNIT_CAPACITY + HEAL_QI_COST) / QI_ZONE_UNIT_CAPACITY;
+        let buggy_clamped = HEAL_QI_COST / QI_ZONE_UNIT_CAPACITY; // .max(0.0) 当 0 时的值 ≈0.16
+        assert!(
+            (zone_after - expected).abs() < 1e-9,
+            "负灵域应按裸 spirit_qi*CAP 计：zone_after={zone_after:.4} 应={expected:.4}；\
+             若 ≈{buggy_clamped:.4} 说明 .max(0.0) 抹掉了负缺口、凭空多出 qi（#681 同类）"
         );
     }
 
