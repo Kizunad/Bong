@@ -77,6 +77,7 @@ pub fn frost_breath_payload(origin: DVec3, strength: f32) -> VfxEventPayloadV1 {
 /// 玩家/NPC 真元已在 ECS Cultivation.qi_current 扣减，此处仅：
 ///   1. 确保 `QiAccountId::rift(zone_label)` 账户存在并增 `amount`；
 ///   2. `push_transfer_audit` 留审计轨迹。
+///
 /// 不调 `WorldQiAccount::transfer`（后者会检查 from 余额并拒绝，因为活体 qi 在 ECS 不在 ledger）。
 fn record_neg_pressure_drain_transfer(
     account: Option<&mut WorldQiAccount>,
@@ -111,7 +112,15 @@ fn record_neg_pressure_drain_transfer(
 pub fn tick_neg_pressure(
     providers: Option<Res<TerrainProviders>>,
     mut qi_account: Option<ResMut<WorldQiAccount>>,
-    mut actors: Query<(Entity, &Position, Option<&CurrentDimension>, &mut Cultivation), Without<NpcMarker>>,
+    mut actors: Query<
+        (
+            Entity,
+            &Position,
+            Option<&CurrentDimension>,
+            &mut Cultivation,
+        ),
+        Without<NpcMarker>,
+    >,
     mut vfx_events: EventWriter<VfxEventRequest>,
 ) {
     let Some(providers) = providers else {
@@ -257,7 +266,12 @@ mod tests {
     #[test]
     fn neg_pressure_drain_zero_amount_is_noop() {
         let mut account = WorldQiAccount::default();
-        record_neg_pressure_drain_transfer(Some(&mut account), Entity::from_raw(5), "rift_mouth", 0.0);
+        record_neg_pressure_drain_transfer(
+            Some(&mut account),
+            Entity::from_raw(5),
+            "rift_mouth",
+            0.0,
+        );
 
         let rift_id = QiAccountId::rift("rift_mouth");
         assert_eq!(account.balance(&rift_id), 0.0, "amount=0 不应写 rift 账户");
@@ -275,8 +289,18 @@ mod tests {
     #[test]
     fn neg_pressure_drain_rift_balance_accumulates() {
         let mut account = WorldQiAccount::default();
-        record_neg_pressure_drain_transfer(Some(&mut account), Entity::from_raw(1), "rift_mouth", 1.5);
-        record_neg_pressure_drain_transfer(Some(&mut account), Entity::from_raw(2), "rift_mouth", 2.5);
+        record_neg_pressure_drain_transfer(
+            Some(&mut account),
+            Entity::from_raw(1),
+            "rift_mouth",
+            1.5,
+        );
+        record_neg_pressure_drain_transfer(
+            Some(&mut account),
+            Entity::from_raw(2),
+            "rift_mouth",
+            2.5,
+        );
 
         let rift_id = QiAccountId::rift("rift_mouth");
         assert_eq!(
@@ -302,7 +326,12 @@ mod tests {
         // actual_drain = min(0.5, 0.1) = 0.1.
         let actual_drain = 0.5_f64.min(0.1_f64);
         let mut account = WorldQiAccount::default();
-        record_neg_pressure_drain_transfer(Some(&mut account), Entity::from_raw(9), "rift_mouth", actual_drain);
+        record_neg_pressure_drain_transfer(
+            Some(&mut account),
+            Entity::from_raw(9),
+            "rift_mouth",
+            actual_drain,
+        );
 
         let rift_id = QiAccountId::rift("rift_mouth");
         assert!(

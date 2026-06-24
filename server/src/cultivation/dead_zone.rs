@@ -51,6 +51,7 @@ pub fn apply_dead_zone_drain(cultivation: &mut Cultivation, handler: DeadZoneTic
     drain
 }
 
+#[allow(clippy::type_complexity)]
 pub fn dead_zone_silent_qi_loss_tick(
     handler: Option<ResMut<DeadZoneTickHandler>>,
     mut zones: Option<ResMut<ZoneRegistry>>,
