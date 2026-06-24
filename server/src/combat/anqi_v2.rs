@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
-use valence::prelude::{bevy_ecs, App, Entity, Event, Resource};
+use valence::prelude::{bevy_ecs, App, Entity, Event, Events, Position, Resource};
 
 use crate::combat::carrier::{BondKind, CarrierKind, CarrierStore, InjectionKind};
 use crate::combat::components::SkillBarBindings;
@@ -12,9 +12,13 @@ use crate::cultivation::skill_registry::{CastRejectReason, CastResult, SkillFn, 
 use crate::inventory::{PlayerInventory, EQUIP_SLOT_MAIN_HAND, EQUIP_SLOT_OFF_HAND};
 use crate::qi_physics::{
     abrasion_loss, armor_penetrate, cone_dispersion, density_echo, high_density_inject,
-    AbrasionDirection, AnqiContainerKind, ArmorPenetrationOutcome, ConeDispersionShot,
-    EchoFractalOutcome, HighDensityInjectionOutcome, QiAccountId, QiTransfer, QiTransferReason,
+    qi_release_to_zone, AbrasionDirection, AnqiContainerKind, ArmorPenetrationOutcome,
+    ConeDispersionShot, EchoFractalOutcome, HighDensityInjectionOutcome, QiAccountId, QiTransfer,
+    QiTransferReason,
 };
+use crate::qi_physics::constants::{QI_EPSILON, QI_ZONE_UNIT_CAPACITY};
+use crate::world::dimension::CurrentDimension;
+use crate::world::zone::ZoneRegistry;
 
 pub const ANQI_SINGLE_SNIPE_SKILL_ID: &str = "anqi.single_snipe";
 pub const ANQI_MULTI_SHOT_SKILL_ID: &str = "anqi.multi_shot";
@@ -480,6 +484,9 @@ fn resolve_anqi_skill(
         cultivation.qi_current = (cultivation.qi_current - qi_cost).clamp(0.0, cultivation.qi_max);
     }
     emit_anqi_channeling_transfer(world, caster, skill, qi_cost);
+    // 守恒：扣除的真元必须回灌区域，否则 world qi ledger 产生永久漏洞。
+    // 无 Zone/CurrentDimension 时自动路由到 overflow 账户，qi 永远不蒸发。
+    release_cast_qi_to_zone(world, caster, qi_cost, "anqi_v2_cast");
     if world.get::<AnqiMastery>(caster).is_none() {
         world.entity_mut(caster).insert(AnqiMastery::default());
     }
@@ -684,6 +691,79 @@ fn emit_anqi_channeling_transfer(
         QiTransferReason::Channeling,
     ) {
         events.send(transfer);
+    }
+}
+
+/// 守恒辅助：将施放代价 `amount` 从玩家账户回灌至当前区域 spirit_qi。
+///
+/// 若实体缺少 `Position`、`CurrentDimension`，或区域溢出，超额部分路由到具名
+/// overflow 账户，保证 qi 账本平衡（任何 qi 不蒸发）。
+/// 该函数在 resolve_anqi_skill 中 qi_current 已扣减、emit_anqi_channeling_transfer
+/// 已发送审计转账之后立即调用。
+fn release_cast_qi_to_zone(
+    world: &mut bevy_ecs::world::World,
+    caster: Entity,
+    amount: f64,
+    sink: &'static str,
+) {
+    if amount <= QI_EPSILON {
+        return;
+    }
+    let from = QiAccountId::player(format!("entity:{}", caster.to_bits()));
+    let position = world.get::<Position>(caster).map(|p| p.get());
+    let dimension = world.get::<CurrentDimension>(caster).map(|d| d.0);
+
+    let (zone_transfer, overflow_amount) = if let (Some(position), Some(dimension), Some(zones)) = (
+        position,
+        dimension,
+        world.get_resource_mut::<ZoneRegistry>().as_deref_mut(),
+    ) {
+        let zone_name = zones.find_zone(dimension, position).map(|z| z.name.clone());
+        if let Some(zone_name) = zone_name {
+            if let Some(zone) = zones.find_zone_mut(zone_name.as_str()) {
+                let to = QiAccountId::zone(zone.name.clone());
+                let zone_current = zone.spirit_qi * QI_ZONE_UNIT_CAPACITY;
+                match qi_release_to_zone(amount, from.clone(), to, zone_current, QI_ZONE_UNIT_CAPACITY) {
+                    Ok(outcome) => {
+                        zone.spirit_qi = (outcome.zone_after / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
+                        (outcome.transfer, outcome.overflow)
+                    }
+                    Err(err) => {
+                        tracing::warn!(
+                            ?err,
+                            "[bong][anqi_v2] qi_release_to_zone error for {sink}; routing to overflow"
+                        );
+                        (None, amount)
+                    }
+                }
+            } else {
+                (None, amount)
+            }
+        } else {
+            (None, amount)
+        }
+    } else {
+        (None, amount)
+    };
+
+    let mut transfers: Vec<QiTransfer> = Vec::new();
+    if let Some(transfer) = zone_transfer {
+        transfers.push(transfer);
+    }
+    if overflow_amount > QI_EPSILON {
+        if let Ok(overflow_transfer) = QiTransfer::new(
+            from,
+            QiAccountId::overflow(format!("{sink}:{}", caster.to_bits())),
+            overflow_amount,
+            QiTransferReason::ReleaseToZone,
+        ) {
+            transfers.push(overflow_transfer);
+        }
+    }
+    if let Some(mut events) = world.get_resource_mut::<Events<QiTransfer>>() {
+        for transfer in transfers {
+            events.send(transfer);
+        }
     }
 }
 
@@ -1053,16 +1133,20 @@ mod tests {
             .read(qi_transfers)
             .cloned()
             .collect();
+        // 修复 QS-ANQI-V2-CAST-LEAK 后：
+        //   transfer_events[0] = Channeling 审计转账（player→container）
+        //   transfer_events[1] = 区域回灌转账（player→overflow，因测试实体无 Position/CurrentDimension）
         assert_eq!(
             transfer_events.len(),
-            1,
-            "暗器技能成功扣 qi_current 时必须 emit 1 条 QiTransfer，实际 {} 条",
+            2,
+            "暗器技能成功扣 qi_current 时必须 emit 2 条 QiTransfer（Channeling 审计 + 区域回灌），\
+             实际 {} 条",
             transfer_events.len()
         );
         assert_eq!(
             transfer_events[0].from,
             QiAccountId::player(format!("entity:{}", caster.to_bits())),
-            "QiTransfer.from 必须指向施放者玩家账户"
+            "QiTransfer[0].from 必须指向施放者玩家账户（Channeling 审计）"
         );
         assert_eq!(
             transfer_events[0].to,
@@ -1071,17 +1155,33 @@ mod tests {
                 AnqiSkillId::SingleSnipe.as_str(),
                 caster.to_bits()
             )),
-            "QiTransfer.to 必须指向本次暗器技能的容器账户"
+            "QiTransfer[0].to 必须指向本次暗器技能的容器账户"
         );
         assert!(
             (transfer_events[0].amount - 25.0).abs() <= f64::EPSILON,
-            "QiTransfer.amount 应等于 qi_cost=25，实际 {}",
+            "QiTransfer[0].amount 应等于 qi_cost=25，实际 {}",
             transfer_events[0].amount
         );
         assert_eq!(
             transfer_events[0].reason,
             QiTransferReason::Channeling,
             "暗器施放扣款属于 Channeling 守恒轨迹"
+        );
+        // 区域回灌：无 Position/CurrentDimension → overflow 账户
+        assert_eq!(
+            transfer_events[1].from,
+            QiAccountId::player(format!("entity:{}", caster.to_bits())),
+            "QiTransfer[1].from 必须指向施放者玩家账户（区域回灌）"
+        );
+        assert_eq!(
+            transfer_events[1].reason,
+            QiTransferReason::ReleaseToZone,
+            "区域回灌 QiTransfer 必须标注 ReleaseToZone 原因"
+        );
+        assert!(
+            (transfer_events[1].amount - 25.0).abs() <= f64::EPSILON,
+            "区域回灌量应等于 qi_cost=25（overflow 全额），实际 {}",
+            transfer_events[1].amount
         );
 
         let abrasions = world.resource::<bevy_ecs::event::Events<CarrierAbrasionEvent>>();
@@ -1238,6 +1338,172 @@ mod tests {
             "期望非杂色 wound_qi≈{expected_normal:.4}（35.0×1.5×1.3），\
              实际={:.4}",
             normal.wound_qi,
+        );
+    }
+
+    // ── 守恒：zone credit 链路（QS-ANQI-V2-CAST-LEAK 修复验证）──────────────────
+
+    /// 成功施放 anqi 技能应将 qi_cost 回灌至当前区域 spirit_qi。
+    ///
+    /// pitfall (a): ZoneRegistry::fallback() 的 spawn zone 初始 spirit_qi≈0.9，
+    ///              仅剩 ~5 raw 余量；若 qi_cost > 余量则分裂为 zone 部分 + overflow，
+    ///              全额断言失败。修复：施放前将 spirit_qi 清零。
+    /// pitfall (b): 测试实体须挂 CurrentDimension；否则 find_zone 返回 None，
+    ///              qi 路由到 Overflow 而非 zone。
+    #[test]
+    fn cast_credits_qi_cost_to_zone_spirit_qi() {
+        use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
+        use crate::world::dimension::{CurrentDimension, DimensionKind};
+        use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
+
+        let mut world = bevy_ecs::world::World::new();
+        world.insert_resource(CombatClock { tick: 100 });
+        world.insert_resource(bevy_ecs::event::Events::<QiInjectionEvent>::default());
+        world.insert_resource(bevy_ecs::event::Events::<CarrierAbrasionEvent>::default());
+        world.insert_resource(bevy_ecs::event::Events::<QiTransfer>::default());
+        world.insert_resource(ZoneRegistry::fallback());
+
+        // pitfall (a): 清空 zone，确保整个 qi_cost 能全额被 zone 接受，无溢出分割。
+        world
+            .resource_mut::<ZoneRegistry>()
+            .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
+            .expect("fallback registry 必须包含 spawn zone")
+            .spirit_qi = 0.0;
+
+        let (inventory, store) =
+            charged_inventory_and_store(42, AnqiSkillId::SingleSnipe.carrier_kind());
+
+        // pitfall (b): 必须挂 CurrentDimension；Position 须在 spawn zone AABB 内。
+        let caster = world
+            .spawn((
+                Cultivation {
+                    realm: Realm::Awaken,
+                    qi_current: 100.0,
+                    qi_max: 100.0,
+                    ..Default::default()
+                },
+                SkillBarBindings::default(),
+                inventory,
+                store,
+                ContainerSlot {
+                    active: AnqiContainerKind::Quiver,
+                    switching_until_tick: 0,
+                },
+                valence::prelude::Position::new([0.0, 64.0, 0.0]),
+                CurrentDimension(DimensionKind::Overworld),
+            ))
+            .id();
+
+        let result = resolve_anqi_skill(&mut world, caster, 0, None, AnqiSkillId::SingleSnipe);
+
+        assert!(
+            matches!(result, CastResult::Started { .. }),
+            "SingleSnipe 应成功施放（Awaken 境界满足最低要求）"
+        );
+
+        // qi_current 应减去 qi_cost = 100.0 × 0.25 = 25.0。
+        let qi_current_after = world.get::<Cultivation>(caster).unwrap().qi_current;
+        assert!(
+            (qi_current_after - 75.0).abs() <= f64::EPSILON,
+            "守恒：qi_current 期望=75.0（扣 25.0），实际={}",
+            qi_current_after
+        );
+
+        // zone.spirit_qi 应增加 qi_cost / QI_ZONE_UNIT_CAPACITY = 25.0 / 50.0 = 0.5。
+        let zone_spirit_qi = world
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .expect("spawn zone 应存在")
+            .spirit_qi;
+        let expected_spirit_qi = 25.0 / QI_ZONE_UNIT_CAPACITY; // = 0.5
+        assert!(
+            (zone_spirit_qi - expected_spirit_qi).abs() < 1e-6,
+            "守恒：qi_cost=25.0 必须全额回灌 zone.spirit_qi；\
+             期望={expected_spirit_qi:.6}，实际={zone_spirit_qi:.6}"
+        );
+
+        // QiTransfer 事件：Channeling 审计 + ReleaseToZone。
+        let transfers: Vec<_> = world
+            .resource::<bevy_ecs::event::Events<QiTransfer>>()
+            .get_reader()
+            .read(world.resource::<bevy_ecs::event::Events<QiTransfer>>())
+            .cloned()
+            .collect();
+        assert_eq!(
+            transfers.len(),
+            2,
+            "应 emit 2 条 QiTransfer（Channeling 审计 + 区域回灌），实际 {} 条",
+            transfers.len()
+        );
+        let release_transfer = transfers
+            .iter()
+            .find(|t| t.reason == QiTransferReason::ReleaseToZone)
+            .expect("必须有一条 ReleaseToZone 类型的 QiTransfer");
+        assert!(
+            (release_transfer.amount - 25.0).abs() <= f64::EPSILON,
+            "ReleaseToZone QiTransfer.amount 期望=25.0，实际={}",
+            release_transfer.amount
+        );
+    }
+
+    /// 无 CurrentDimension 的实体（测试环境常见情形）施放时，qi_cost 应路由到
+    /// overflow 账户（而非 zone），qi 账本仍然平衡——任何真元不蒸发。
+    #[test]
+    fn cast_without_current_dimension_routes_to_overflow() {
+        let mut world = bevy_ecs::world::World::new();
+        world.insert_resource(CombatClock { tick: 100 });
+        world.insert_resource(bevy_ecs::event::Events::<QiInjectionEvent>::default());
+        world.insert_resource(bevy_ecs::event::Events::<CarrierAbrasionEvent>::default());
+        world.insert_resource(bevy_ecs::event::Events::<QiTransfer>::default());
+        // 不插入 ZoneRegistry，不给实体 CurrentDimension → overflow 路径。
+
+        let (inventory, store) =
+            charged_inventory_and_store(99, AnqiSkillId::SingleSnipe.carrier_kind());
+        let caster = world
+            .spawn((
+                Cultivation {
+                    realm: Realm::Awaken,
+                    qi_current: 100.0,
+                    qi_max: 100.0,
+                    ..Default::default()
+                },
+                SkillBarBindings::default(),
+                inventory,
+                store,
+                ContainerSlot {
+                    active: AnqiContainerKind::Quiver,
+                    switching_until_tick: 0,
+                },
+            ))
+            .id();
+
+        let result = resolve_anqi_skill(&mut world, caster, 0, None, AnqiSkillId::SingleSnipe);
+
+        assert!(matches!(result, CastResult::Started { .. }));
+
+        // qi_current 应被正确扣减（qi 不因路由到 overflow 而丢失）。
+        let qi_current_after = world.get::<Cultivation>(caster).unwrap().qi_current;
+        assert!(
+            (qi_current_after - 75.0).abs() <= f64::EPSILON,
+            "守恒：无 zone 时 qi_current 期望=75.0，实际={}",
+            qi_current_after
+        );
+
+        // 应有 ReleaseToZone 类型的 overflow QiTransfer（qi 不蒸发）。
+        let transfers: Vec<_> = world
+            .resource::<bevy_ecs::event::Events<QiTransfer>>()
+            .get_reader()
+            .read(world.resource::<bevy_ecs::event::Events<QiTransfer>>())
+            .cloned()
+            .collect();
+        let overflow_transfer = transfers
+            .iter()
+            .find(|t| t.reason == QiTransferReason::ReleaseToZone)
+            .expect("无 zone/dimension 时必须有 overflow ReleaseToZone QiTransfer，qi 不得蒸发");
+        assert!(
+            (overflow_transfer.amount - 25.0).abs() <= f64::EPSILON,
+            "overflow QiTransfer.amount 期望=25.0（qi_cost），实际={}",
+            overflow_transfer.amount
         );
     }
 }
