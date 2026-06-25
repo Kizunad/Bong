@@ -1,5 +1,6 @@
 package com.bong.client.tiandao;
 
+import com.bong.client.network.ServerDataEnvelope;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
@@ -9,7 +10,7 @@ public final class TiandaoPresencePayloadHandler {
     }
 
     public static Result handle(String jsonPayload, int payloadSizeBytes) {
-        if (jsonPayload == null || payloadSizeBytes < 0 || payloadSizeBytes > 8192) {
+        if (jsonPayload == null || payloadSizeBytes < 0 || payloadSizeBytes > ServerDataEnvelope.MAX_PAYLOAD_BYTES) {
             return Result.error("invalid payload size");
         }
         try {
