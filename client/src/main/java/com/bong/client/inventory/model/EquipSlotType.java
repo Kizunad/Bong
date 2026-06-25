@@ -26,4 +26,16 @@ public enum EquipSlotType {
     public String displayName() {
         return displayName;
     }
+
+    /**
+     * plan-layered-equip-v1 P0.3（决议 #2）：该槽的 C2S 装备态 wire 值。
+     * 手槽（MAIN_HAND/OFF_HAND/TWO_HAND）= "held"（持械），其余身体槽 = "worn"（穿戴）。
+     * 注：枚举废变体清理 + extra_hand 新增归 P4 面板重构；此 helper 仅供 PR-1 C2S state 必填使用。
+     */
+    public String wireState() {
+        return switch (this) {
+            case MAIN_HAND, OFF_HAND, TWO_HAND -> "held";
+            default -> "worn";
+        };
+    }
 }

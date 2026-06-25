@@ -568,11 +568,17 @@ public final class ClientRequestProtocol {
             return o;
         }
     }
-    public record EquipLoc(String slot) implements InvLocation {
+    /**
+     * plan-layered-equip-v1 P0.3（决议 #2）：equip 落位携带 state（worn / held）。
+     * server state 必填——身体槽（head/chest/legs/feet）穿戴件 = "worn"，
+     * 手槽（main_hand/off_hand/extra_hand_*）持械 = "held"。
+     */
+    public record EquipLoc(String slot, String state) implements InvLocation {
         public JsonObject toJson() {
             JsonObject o = new JsonObject();
             o.addProperty("kind", "equip");
             o.addProperty("slot", slot);
+            o.addProperty("state", state);
             return o;
         }
     }

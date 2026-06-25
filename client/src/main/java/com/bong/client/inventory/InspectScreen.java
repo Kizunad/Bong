@@ -2446,7 +2446,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 }
                 dispatchMoveIntent(dragged, fromLoc,
                     new com.bong.client.network.ClientRequestProtocol.EquipLoc(
-                        eq.slotType().name().toLowerCase()));
+                        eq.slotType().name().toLowerCase(), eq.slotType().wireState()));
                 clearAllHighlights();
                 return;
             }
@@ -2531,7 +2531,8 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             }
             case EQUIP -> dragState.sourceEquipSlot() == null ? null
                 : new com.bong.client.network.ClientRequestProtocol.EquipLoc(
-                    dragState.sourceEquipSlot().name().toLowerCase());
+                    dragState.sourceEquipSlot().name().toLowerCase(),
+                    dragState.sourceEquipSlot().wireState());
             case HOTBAR -> dragState.sourceHotbarIndex() < 0 ? null
                 : new com.bong.client.network.ClientRequestProtocol.HotbarLoc(
                     dragState.sourceHotbarIndex());
@@ -3288,7 +3289,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 anchor.col()
             ),
             new com.bong.client.network.ClientRequestProtocol.EquipLoc(
-                targetSlot.name().toLowerCase()
+                targetSlot.name().toLowerCase(), targetSlot.wireState()
             )
         );
     }
@@ -3303,7 +3304,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             dispatchMoveIntent(
                 item,
                 new com.bong.client.network.ClientRequestProtocol.EquipLoc(
-                    slotType.name().toLowerCase()
+                    slotType.name().toLowerCase(), slotType.wireState()
                 ),
                 new com.bong.client.network.ClientRequestProtocol.ContainerLoc(
                     grid.containerId(),
@@ -3764,7 +3765,8 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         }
         com.bong.client.network.ClientRequestSender.sendDropWeapon(
             item.instanceId(),
-            new com.bong.client.network.ClientRequestProtocol.EquipLoc(slotType.name().toLowerCase())
+            new com.bong.client.network.ClientRequestProtocol.EquipLoc(
+                slotType.name().toLowerCase(), slotType.wireState())
         );
         return true;
     }

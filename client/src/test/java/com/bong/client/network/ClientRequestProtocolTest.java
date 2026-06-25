@@ -219,11 +219,11 @@ public class ClientRequestProtocolTest {
     void encodesInventoryMoveFromEquipToContainer() {
         String json = ClientRequestProtocol.encodeInventoryMove(
             2002L,
-            new ClientRequestProtocol.EquipLoc("main_hand"),
+            new ClientRequestProtocol.EquipLoc("main_hand", "held"),
             new ClientRequestProtocol.ContainerLoc("small_pouch", 1, 2)
         );
         assertEquals(
-            "{\"type\":\"inventory_move_intent\",\"v\":1,\"instance_id\":2002,\"from\":{\"kind\":\"equip\",\"slot\":\"main_hand\"},\"to\":{\"kind\":\"container\",\"container_id\":\"small_pouch\",\"row\":1,\"col\":2}}",
+            "{\"type\":\"inventory_move_intent\",\"v\":1,\"instance_id\":2002,\"from\":{\"kind\":\"equip\",\"slot\":\"main_hand\",\"state\":\"held\"},\"to\":{\"kind\":\"container\",\"container_id\":\"small_pouch\",\"row\":1,\"col\":2}}",
             json
         );
     }
@@ -262,10 +262,10 @@ public class ClientRequestProtocolTest {
     void encodesDropWeapon() {
         String json = ClientRequestProtocol.encodeDropWeapon(
             2002L,
-            new ClientRequestProtocol.EquipLoc("main_hand")
+            new ClientRequestProtocol.EquipLoc("main_hand", "held")
         );
         assertEquals(
-            "{\"type\":\"drop_weapon_intent\",\"v\":1,\"instance_id\":2002,\"from\":{\"kind\":\"equip\",\"slot\":\"main_hand\"}}",
+            "{\"type\":\"drop_weapon_intent\",\"v\":1,\"instance_id\":2002,\"from\":{\"kind\":\"equip\",\"slot\":\"main_hand\",\"state\":\"held\"}}",
             json
         );
     }
@@ -834,12 +834,42 @@ public class ClientRequestProtocolTest {
         String json = ClientRequestProtocol.encodeExternalContainerMove(
             5, 200,
             new ClientRequestProtocol.ContainerLoc("ext_5", 2, 3),
-            new ClientRequestProtocol.EquipLoc("main_hand")
+            new ClientRequestProtocol.EquipLoc("main_hand", "held")
         );
         com.google.gson.JsonObject obj = com.google.gson.JsonParser.parseString(json).getAsJsonObject();
         com.google.gson.JsonObject to = obj.getAsJsonObject("to");
         assertEquals("equip", to.get("kind").getAsString());
         assertEquals("main_hand", to.get("slot").getAsString());
+        assertEquals("held", to.get("state").getAsString());
+    }
+
+    // plan-layered-equip-v1 P0.3（决议 #2）：EquipLoc.toJson 含 state（worn / held）正反 pin。
+    @Test
+    void equipLocEncodesWornState() {
+        String json = ClientRequestProtocol.encodeInventoryMove(
+            7007L,
+            new ClientRequestProtocol.ContainerLoc("main_pack", 0, 0),
+            new ClientRequestProtocol.EquipLoc("chest", "worn")
+        );
+        com.google.gson.JsonObject to = com.google.gson.JsonParser.parseString(json)
+            .getAsJsonObject().getAsJsonObject("to");
+        assertEquals("equip", to.get("kind").getAsString());
+        assertEquals("chest", to.get("slot").getAsString());
+        assertEquals("worn", to.get("state").getAsString());
+    }
+
+    @Test
+    void equipLocEncodesHeldState() {
+        String json = ClientRequestProtocol.encodeInventoryMove(
+            7008L,
+            new ClientRequestProtocol.ContainerLoc("main_pack", 0, 0),
+            new ClientRequestProtocol.EquipLoc("main_hand", "held")
+        );
+        com.google.gson.JsonObject to = com.google.gson.JsonParser.parseString(json)
+            .getAsJsonObject().getAsJsonObject("to");
+        assertEquals("equip", to.get("kind").getAsString());
+        assertEquals("main_hand", to.get("slot").getAsString());
+        assertEquals("held", to.get("state").getAsString());
     }
 
     // ─── plan-supply-coffin-loot-ui P2：supply_coffin_open ──────────

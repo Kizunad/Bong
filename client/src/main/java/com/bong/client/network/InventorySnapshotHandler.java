@@ -20,19 +20,18 @@ public final class InventorySnapshotHandler implements ServerDataHandler {
     private static final long JS_SAFE_INTEGER_MAX = 9_007_199_254_740_991L;
     private static final Pattern INTEGER_TOKEN_PATTERN = Pattern.compile("-?(0|[1-9]\\d*)");
 
+    // plan-layered-equip-v1 P0.3（决议 #17）：wire 现按 <slot>_worn / <slot>_held 拆分下发。
+    // 槽名集 = head/chest/legs/feet（身体槽，worn）+ main_hand/off_hand/extra_hand_0/extra_hand_1（手槽，held）。
+    // 删 false_skin/two_hand/treasure_belt_0..3/back_pack/waist_pouch/chest_satchel（背包随身体槽 worn 数组下发）。
+    // 注：EquipSlotType 废变体清理 + SlotContents 客户端模型归 P4 面板重构；PR-1 仅取代表件（held / worn 栈顶）填现有单件模型。
     private static final Map<String, EquipSlotType> EQUIP_SLOT_BY_WIRE_NAME = Map.ofEntries(
         Map.entry("head", EquipSlotType.HEAD),
         Map.entry("chest", EquipSlotType.CHEST),
         Map.entry("legs", EquipSlotType.LEGS),
         Map.entry("feet", EquipSlotType.FEET),
-        Map.entry("false_skin", EquipSlotType.FALSE_SKIN),
         Map.entry("main_hand", EquipSlotType.MAIN_HAND),
-        Map.entry("off_hand", EquipSlotType.OFF_HAND),
-        Map.entry("two_hand", EquipSlotType.TWO_HAND),
-        Map.entry("treasure_belt_0", EquipSlotType.TREASURE_BELT_0),
-        Map.entry("treasure_belt_1", EquipSlotType.TREASURE_BELT_1),
-        Map.entry("treasure_belt_2", EquipSlotType.TREASURE_BELT_2),
-        Map.entry("treasure_belt_3", EquipSlotType.TREASURE_BELT_3)
+        Map.entry("off_hand", EquipSlotType.OFF_HAND)
+        // extra_hand_0/1 槽 + SlotContents 多臂渲染归 P4（EquipSlotType 当前无 EXTRA_HAND 变体）。
     );
 
     @Override
@@ -215,22 +214,53 @@ public final class InventorySnapshotHandler implements ServerDataHandler {
         return gridEntries;
     }
 
+    /**
+     * plan-layered-equip-v1 P0.3（方案B，决议 #1）：解析 worn/held 拆分快照。
+     * 每槽读 `<slot>_held`（手槽持械）优先，否则 `<slot>_worn` 栈顶（worn 数组末尾，身体槽穿戴）
+     * 作该槽的代表件填入现有单件模型。SlotContents 多层客户端模型 + 多臂槽归 P4。
+     */
     private static EnumMap<EquipSlotType, InventoryItem> parseEquipped(JsonObject equippedObject) {
         EnumMap<EquipSlotType, InventoryItem> equipped = new EnumMap<>(EquipSlotType.class);
         for (Map.Entry<String, EquipSlotType> slotEntry : EQUIP_SLOT_BY_WIRE_NAME.entrySet()) {
-            JsonElement itemElement = equippedObject.get(slotEntry.getKey());
-            if (itemElement == null || itemElement.isJsonNull()) {
-                continue;
-            }
-            if (!itemElement.isJsonObject()) {
-                return null;
+            String wireName = slotEntry.getKey();
+            InventoryItem representative = null;
+
+            // held 优先（手槽持械）。
+            JsonElement heldElement = equippedObject.get(wireName + "_held");
+            if (heldElement != null && !heldElement.isJsonNull()) {
+                if (!heldElement.isJsonObject()) {
+                    return null;
+                }
+                representative = parseInventoryItem(heldElement.getAsJsonObject());
+                if (representative == null) {
+                    return null;
+                }
             }
 
-            InventoryItem item = parseInventoryItem(itemElement.getAsJsonObject());
-            if (item == null) {
-                return null;
+            // worn 栈顶（数组末尾，身体槽穿戴）。
+            if (representative == null) {
+                JsonElement wornElement = equippedObject.get(wireName + "_worn");
+                if (wornElement != null && !wornElement.isJsonNull()) {
+                    if (!wornElement.isJsonArray()) {
+                        return null;
+                    }
+                    JsonArray worn = wornElement.getAsJsonArray();
+                    if (worn.size() > 0) {
+                        JsonElement top = worn.get(worn.size() - 1);
+                        if (!top.isJsonObject()) {
+                            return null;
+                        }
+                        representative = parseInventoryItem(top.getAsJsonObject());
+                        if (representative == null) {
+                            return null;
+                        }
+                    }
+                }
             }
-            equipped.put(slotEntry.getValue(), item);
+
+            if (representative != null) {
+                equipped.put(slotEntry.getValue(), representative);
+            }
         }
 
         return equipped;
