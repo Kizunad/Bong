@@ -594,6 +594,7 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
             })
         }
         RedisOutbound::StyleBalanceTelemetry(evt) => {
+            evt.validate().map_err(ValidationError::new)?;
             let payload = serde_json::to_string(&evt).map_err(|error| {
                 ValidationError::new(format!(
                     "failed to serialize StyleBalanceTelemetryEventV1: {error}"
@@ -4676,6 +4677,36 @@ mod redis_bridge_tests {
             }
             other => panic!("expected publish, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn rejects_style_balance_telemetry_rejection_rate_above_schema_max() {
+        let result = prepare_outbound_command(RedisOutbound::StyleBalanceTelemetry(
+            crate::schema::style_balance::StyleBalanceTelemetryEventV1 {
+                v: 1,
+                attacker_player_id: "offline:Azure".to_string(),
+                defender_player_id: "offline:Crimson".to_string(),
+                attacker_color: None,
+                defender_color: None,
+                attacker_style: Some("baomai".to_string()),
+                defender_style: Some("jiemai".to_string()),
+                attacker_rejection_rate: Some(1.1),
+                defender_resistance: Some(0.95),
+                defender_drain_affinity: Some(0.2),
+                attacker_qi: Some(20.0),
+                distance_blocks: Some(3.0),
+                effective_hit: Some(11.8),
+                defender_lost: Some(0.59),
+                defender_absorbed: Some(0.12),
+                cause: "attack_intent:offline:Azure".to_string(),
+                resolved_at_tick: 404,
+            },
+        ));
+
+        assert!(
+            result.is_err(),
+            "TypeScript StyleBalanceTelemetryEventV1 attacker_rejection_rate maximum=1，1.1 应被 Rust outbound 校验拒绝"
+        );
     }
 
     #[test]
