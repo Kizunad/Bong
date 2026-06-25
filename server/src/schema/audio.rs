@@ -441,6 +441,11 @@ mod tests {
     #[test]
     fn sound_recipe_rejects_more_than_eight_layers() {
         let mut recipe = sample_recipe();
+        recipe.layers = vec![recipe.layers[0].clone(); AUDIO_RECIPE_LAYERS_MAX];
+        recipe
+            .validate()
+            .expect("TypeScript SoundRecipeV1 maxItems=8，8 层 recipe 应被 Rust validate() 接受");
+
         recipe.layers = vec![recipe.layers[0].clone(); 9];
         let error = recipe.validate().expect_err(
             "TypeScript SoundRecipeV1 maxItems=8，9 层 recipe 应被 Rust validate() 拒绝",
