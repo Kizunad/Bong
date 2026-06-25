@@ -19,7 +19,7 @@ use crate::combat::realm_gap::{classify_gap, realm_gap_multiplier, realm_index, 
 use crate::combat::status::has_active_status;
 use crate::combat::{CombatClock, CombatSystemSet};
 use crate::cultivation::components::{Cultivation, Realm};
-use crate::cultivation::skill_registry::{CastRejectReason, CastResult, SkillRegistry};
+use crate::cultivation::skill_registry::{CastRejectReason, CastResult};
 use crate::qi_physics::constants::{QI_EPSILON, QI_ZONE_UNIT_CAPACITY};
 use crate::qi_physics::{qi_release_to_zone, QiAccountId, QiTransfer, QiTransferReason};
 use crate::schema::social::RenownTagV1;
@@ -138,11 +138,6 @@ pub fn register(app: &mut App) {
                 .after(crate::combat::resolve::resolve_attack_intents),
         ),
     );
-}
-
-pub fn register_skills(registry: &mut SkillRegistry) {
-    registry.register(FULL_POWER_CHARGE_SKILL_ID, start_charge_fn);
-    registry.register(FULL_POWER_RELEASE_SKILL_ID, release_full_power_fn);
 }
 
 pub fn start_charge_fn(
@@ -286,6 +281,7 @@ pub fn release_full_power_with_exhaust(
     }
 }
 
+#[allow(clippy::type_complexity)]
 pub fn charge_tick_system(
     mut q: Query<(
         Entity,
@@ -642,7 +638,6 @@ mod tests {
     use super::*;
     use crate::combat::components::{ActiveStatusEffect, SkillBarBindings, StatusEffects, Wounds};
     use crate::combat::events::CombatEvent;
-    use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
     use crate::social::events::SocialRenownDeltaEvent;
     use crate::world::zone::ZoneRegistry;
     use valence::prelude::{App, Events, Update};
