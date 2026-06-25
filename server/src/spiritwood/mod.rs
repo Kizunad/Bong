@@ -18,7 +18,7 @@ use crate::gathering::session::{
 use crate::gathering::tools::{equipped_gathering_tool, GatheringTargetKind};
 use crate::inventory::{
     bump_revision, InventoryInstanceIdAllocator, ItemInstance, ItemRegistry, PlacedItemState,
-    PlayerInventory, EQUIP_SLOT_MAIN_HAND, EQUIP_SLOT_TWO_HAND, MAIN_PACK_CONTAINER_ID,
+    PlayerInventory, EQUIP_SLOT_MAIN_HAND, MAIN_PACK_CONTAINER_ID,
 };
 use crate::network::send_server_data_payload;
 use crate::player::gameplay::GameplayTick;
@@ -501,7 +501,7 @@ fn equipped_axe_tier(inventory: &PlayerInventory) -> Option<(u64, u8)> {
     inventory
         .equipped
         .get(EQUIP_SLOT_MAIN_HAND)
-        .or_else(|| inventory.equipped.get(EQUIP_SLOT_TWO_HAND))
+        .and_then(|s| s.held.as_ref())
         .and_then(|item| axe_tier_from_item(item).map(|tier| (item.instance_id, tier)))
 }
 
@@ -645,7 +645,7 @@ pub const ICE_CELLAR_ITEM_ID: &str = "food.container.ice_cellar";
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::inventory::{ContainerState, InventoryRevision, ItemRarity};
+    use crate::inventory::{ContainerState, InventoryRevision, ItemRarity, SlotContents};
     use std::collections::HashMap;
 
     fn item(template_id: &str, instance_id: u64) -> ItemInstance {
@@ -713,11 +713,12 @@ mod tests {
     }
 
     #[test]
-    fn harvest_tool_identity_accepts_two_hand_axe() {
+    fn harvest_tool_identity_accepts_main_hand_axe() {
         let mut inventory = empty_inventory();
-        inventory
-            .equipped
-            .insert(EQUIP_SLOT_TWO_HAND.to_string(), item("ling_iron_axe", 42));
+        inventory.equipped.insert(
+            EQUIP_SLOT_MAIN_HAND.to_string(),
+            SlotContents::held_single(item("ling_iron_axe", 42)),
+        );
 
         assert_eq!(equipped_harvest_tool_instance_id(&inventory), Some(42));
     }

@@ -480,6 +480,7 @@ fn inventory_template_count(inventory: &PlayerInventory, template_id: &str) -> u
     let equipped_count: u32 = inventory
         .equipped
         .values()
+        .flat_map(|s| s.iter_all())
         .filter(|item| item.template_id == template_id)
         .map(|item| item.stack_count)
         .sum();
@@ -516,6 +517,7 @@ fn find_material_instance_id(inventory: &PlayerInventory, template_id: &str) -> 
             inventory
                 .equipped
                 .values()
+                .flat_map(|s| s.iter_all())
                 .find(|item| item.template_id == template_id && item.stack_count > 0)
                 .map(|item| item.instance_id)
         })

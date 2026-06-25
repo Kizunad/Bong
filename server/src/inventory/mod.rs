@@ -76,25 +76,14 @@ pub const EQUIP_SLOT_HEAD: &str = "head";
 pub const EQUIP_SLOT_CHEST: &str = "chest";
 pub const EQUIP_SLOT_LEGS: &str = "legs";
 pub const EQUIP_SLOT_FEET: &str = "feet";
-pub const EQUIP_SLOT_FALSE_SKIN: &str = "false_skin";
 pub const EQUIP_SLOT_MAIN_HAND: &str = "main_hand";
 pub const EQUIP_SLOT_OFF_HAND: &str = "off_hand";
-pub const EQUIP_SLOT_TWO_HAND: &str = "two_hand";
-pub const EQUIP_SLOT_TREASURE_BELT_0: &str = "treasure_belt_0";
-pub const EQUIP_SLOT_TREASURE_BELT_1: &str = "treasure_belt_1";
-pub const EQUIP_SLOT_TREASURE_BELT_2: &str = "treasure_belt_2";
-pub const EQUIP_SLOT_TREASURE_BELT_3: &str = "treasure_belt_3";
-
-// plan-backpack-equip-v1 P0 — 背包装备槽常量。
-/// 背部大背包装备槽 id（运行时 key）。
-#[allow(dead_code)]
-pub const EQUIP_SLOT_BACK_PACK: &str = "back_pack";
-/// 腰间小囊装备槽 id（运行时 key）。
-#[allow(dead_code)]
-pub const EQUIP_SLOT_WAIST_POUCH: &str = "waist_pouch";
-/// 胸前挎包装备槽 id（运行时 key）。
-#[allow(dead_code)]
-pub const EQUIP_SLOT_CHEST_SATCHEL: &str = "chest_satchel";
+// plan-layered-equip-v1 P0.1（决议 #17 / #9 / #8）：删除 false_skin / two_hand /
+// treasure_belt_0..3 / back_pack / waist_pouch / chest_satchel 七个废弃装备槽。
+// - 伪皮归 CHEST worn 层（蜕壳流读 CHEST 扫 false_skin_kind_for_item）
+// - 双手武器放一手 held + 锁对侧手（weapon_two_handed 派生）
+// - 法宝激活态改由灵宝 UI 触发位承载（不再有 belt 装备槽）
+// - 背包按 ContainerSpec.equip_slot 指向身体槽（head/chest/legs/feet），作该槽 worn 层
 /// plan-dandao-path-v1 §8.1 #2 — 变异多臂额外手槽 0。
 #[allow(dead_code)]
 pub const EQUIP_SLOT_EXTRA_HAND_0: &str = "extra_hand_0";
@@ -104,6 +93,9 @@ pub const EQUIP_SLOT_EXTRA_HAND_1: &str = "extra_hand_1";
 /// 身体自带暗袋容器 id（不占装备槽，始终存在）。
 #[allow(dead_code)]
 pub const BODY_POCKET_CONTAINER_ID: &str = "body_pocket";
+/// plan-layered-equip-v1 P0.6（决议 #17）— default.toml 静态背包容器占位 id。
+/// `instantiate_inventory_from_loadout` 会把它重映射到运行时穿戴背包件的 `pack_<instance_id>`。
+pub const LOADOUT_PACK_PLACEHOLDER_CONTAINER_ID: &str = "pack_grass_pouch";
 /// 暗袋行数（2 行）。
 #[allow(dead_code)]
 pub const BODY_POCKET_ROWS: u8 = 2;
@@ -390,7 +382,7 @@ impl Resource for ItemRegistry {}
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LoadoutSpec {
     pub containers: Vec<ContainerState>,
-    pub equipped: HashMap<String, ItemInstance>,
+    pub equipped: HashMap<String, SlotContents>,
     pub hotbar: [Option<ItemInstance>; 9],
     pub bone_coins: u64,
     pub max_weight: f64,
@@ -544,11 +536,116 @@ impl InventoryInstanceIdAllocator {
     }
 }
 
+/// plan-layered-equip-v1 P0.1 — 装备态分类（决议 #16）。
+/// `Worn` = 穿戴层（计 worn cap、走 LIFO 栈语义）；`Held` = 手持（held-only，不计 cap）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EquipState {
+    Worn,
+    Held,
+}
+
+/// plan-layered-equip-v1 P0.1 — 单装备槽内容（决议 #1 方案B / #12 LIFO 栈语义）。
+///
+/// - `worn`：穿戴层 Vec，**语义 = 栈（LIFO，约定栈顶 = Vec 末尾）**。装备 = `worn.push`（push 到尾），
+///   卸下 = `worn.pop()`（pop 从尾），**只有栈顶（`worn.last()`）能被拖下/卸下**，下层被压住需先脱上层。
+/// - `held`：手持单件（Option，不分层、不计 worn cap）。
+///
+/// 空槽序列化为 `{worn:[],held:null}`。手槽（main_hand/off_hand/extra_hand_0/extra_hand_1）
+/// worn 恒空（worn_cap=0，见 `worn_cap`）；身体槽（head/chest/legs/feet）held 恒空。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct SlotContents {
+    #[serde(default)]
+    pub worn: Vec<ItemInstance>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub held: Option<ItemInstance>,
+}
+
+impl SlotContents {
+    /// 仅含一件 worn 的槽（迁移 / loadout 装配用）。
+    pub fn worn_single(item: ItemInstance) -> Self {
+        SlotContents {
+            worn: vec![item],
+            held: None,
+        }
+    }
+
+    /// 仅含 held 的槽（武器 / 工具）。
+    pub fn held_single(item: ItemInstance) -> Self {
+        SlotContents {
+            worn: Vec::new(),
+            held: Some(item),
+        }
+    }
+
+    /// 栈顶（最上层 / `worn.last()`）只读访问入口（决议 #12）。
+    pub fn worn_top(&self) -> Option<&ItemInstance> {
+        self.worn.last()
+    }
+
+    /// 栈顶可变访问入口（决议 #12）。
+    pub fn worn_top_mut(&mut self) -> Option<&mut ItemInstance> {
+        self.worn.last_mut()
+    }
+
+    /// 槽是否完全为空（无 worn 层且无 held）。
+    pub fn is_empty(&self) -> bool {
+        self.worn.is_empty() && self.held.is_none()
+    }
+
+    /// 迭代槽内全部件（worn 全层 + held），用于桶④「迭代全件」。
+    pub fn iter_all(&self) -> impl Iterator<Item = &ItemInstance> {
+        self.worn.iter().chain(self.held.iter())
+    }
+
+    /// 可变迭代槽内全部件。
+    pub fn iter_all_mut(&mut self) -> impl Iterator<Item = &mut ItemInstance> {
+        self.worn.iter_mut().chain(self.held.iter_mut())
+    }
+}
+
+/// plan-layered-equip-v1 P0.1 — 各槽 worn 层容量上限（决议 #6 / #14 / #17）。
+///
+/// - head / feet = 2；chest / legs = 3。
+/// - main_hand / off_hand / extra_hand_0 / extra_hand_1 = 0（held-only，不计 worn cap）。
+/// - 背包**无专属槽**（决议 #17）：背包按 `ContainerSpec.equip_slot` 占其指定身体槽
+///   （head/chest/legs/feet）的一个 worn 层，受该身体槽 cap，无独立退化槽。
+///
+/// worn 栈 LIFO（决议 #12）只作用于 head/chest/legs/feet worn 槽（手槽 worn 恒空）。
+pub fn worn_cap(slot: &str) -> u8 {
+    match slot {
+        EQUIP_SLOT_HEAD | EQUIP_SLOT_FEET => 2,
+        EQUIP_SLOT_CHEST | EQUIP_SLOT_LEGS => 3,
+        // 手槽 held-only，worn 恒空。
+        _ => 0,
+    }
+}
+
+/// plan-layered-equip-v1 P0.1 — 物品装备态分类（决议 #16 / #17）。
+///
+/// - `Weapon | Tool` → Held（不计 worn cap）。
+/// - `Armor | Treasure | Shield` + 伪皮物品 → Worn（计 worn cap）。
+/// - `Container`（背包）→ Worn（占其 `ContainerSpec.equip_slot` 指定身体槽的一个 worn 层）。
+/// - 其余（Hoe 等工具走 Tool）默认 Worn 兜底。
+pub fn classify_equip_state(item: &ItemInstance, registry: &ItemRegistry) -> EquipState {
+    match registry.get(&item.template_id).map(|t| t.category) {
+        Some(ItemCategory::Weapon) | Some(ItemCategory::Tool) => EquipState::Held,
+        _ => EquipState::Worn,
+    }
+}
+
+/// plan-layered-equip-v1 P0.1（决议 #7）— 双手武器判定（spear/staff 派生）。
+/// 双手兵器占一手 held + 锁对侧手（extra_hand 独立不锁）。
+pub fn weapon_two_handed(kind: crate::combat::weapon::WeaponKind) -> bool {
+    use crate::combat::weapon::WeaponKind;
+    matches!(kind, WeaponKind::Spear | WeaponKind::Staff)
+}
+
 #[derive(Debug, Clone, Component, Serialize, Deserialize)]
 pub struct PlayerInventory {
     pub revision: InventoryRevision,
     pub containers: Vec<ContainerState>,
-    pub equipped: HashMap<String, ItemInstance>,
+    pub equipped: HashMap<String, SlotContents>,
     pub hotbar: [Option<ItemInstance>; 9],
     pub bone_coins: u64,
     pub max_weight: f64,
@@ -703,8 +800,11 @@ pub fn apply_termination_drop_on_terminate(
                 ));
             }
         }
-        for (slot, item) in inventory.equipped.drain() {
-            drained.push((slot, 0, 0, item));
+        // plan-layered-equip-v1 P0.2（桶④）— drain 全件（worn 全层 + held），按槽 key 标记。
+        for (slot, contents) in inventory.equipped.drain() {
+            for item in contents.worn.into_iter().chain(contents.held) {
+                drained.push((slot.clone(), 0, 0, item));
+            }
         }
         for idx in 0..inventory.hotbar.len() {
             if let Some(item) = inventory.hotbar[idx].take() {
@@ -936,11 +1036,13 @@ pub(crate) fn attach_inventory_to_joined_clients(
     mut commands: Commands,
     mut allocator: valence::prelude::ResMut<InventoryInstanceIdAllocator>,
     default_loadout: valence::prelude::Res<DefaultLoadout>,
+    item_registry: valence::prelude::Res<ItemRegistry>,
     joined_clients: Query<Entity, JoinedClientsWithoutInventoryFilter>,
 ) {
     for entity in &joined_clients {
-        let player_inventory = instantiate_inventory_from_loadout(&default_loadout.0, &mut allocator)
-            .unwrap_or_else(|error| {
+        let player_inventory =
+            instantiate_inventory_from_loadout(&default_loadout.0, &mut allocator, &item_registry)
+                .unwrap_or_else(|error| {
                 panic!(
                     "[bong][inventory] failed to instantiate default loadout for joined client {entity:?}: {error}"
                 )
@@ -963,6 +1065,7 @@ pub(crate) fn attach_inventory_to_joined_clients(
 pub fn instantiate_inventory_from_loadout(
     loadout: &LoadoutSpec,
     allocator: &mut InventoryInstanceIdAllocator,
+    registry: &ItemRegistry,
 ) -> Result<PlayerInventory, String> {
     let mut containers = Vec::with_capacity(loadout.containers.len());
     for container in &loadout.containers {
@@ -984,9 +1087,41 @@ pub fn instantiate_inventory_from_loadout(
         });
     }
 
+    // plan-layered-equip-v1 P0.6 — 每槽 SlotContents 重建（worn 全件 + held），各自分配新 instance_id。
     let mut equipped = HashMap::with_capacity(loadout.equipped.len());
-    for (slot_id, item) in &loadout.equipped {
-        equipped.insert(slot_id.clone(), instantiate_item_instance(item, allocator)?);
+    // 收集穿戴背包件 instance_id（用于重映射静态占位容器 id），仅取第一个穿戴 container 件。
+    let mut first_worn_pack_instance: Option<u64> = None;
+    for (slot_id, contents) in &loadout.equipped {
+        let mut worn = Vec::with_capacity(contents.worn.len());
+        for item in &contents.worn {
+            let instance = instantiate_item_instance(item, allocator)?;
+            if first_worn_pack_instance.is_none()
+                && registry
+                    .get(&instance.template_id)
+                    .is_some_and(|t| t.container_spec.is_some())
+            {
+                first_worn_pack_instance = Some(instance.instance_id);
+            }
+            worn.push(instance);
+        }
+        let held = contents
+            .held
+            .as_ref()
+            .map(|item| instantiate_item_instance(item, allocator))
+            .transpose()?;
+        equipped.insert(slot_id.clone(), SlotContents { worn, held });
+    }
+
+    // plan-layered-equip-v1 P0.6（决议 #17 / #13.5）— 把静态占位背包容器 id 重映射到
+    // 运行时穿戴背包件的 `pack_<instance_id>`，使容器 ↔ 穿戴件命名空间对齐
+    // （封灵 attrition_exempt 反查 / rebuild_containers 共用一套命名规则）。
+    if let Some(instance_id) = first_worn_pack_instance {
+        let runtime_id = container_id_for_worn_pack(instance_id);
+        for container in containers.iter_mut() {
+            if container.id == LOADOUT_PACK_PLACEHOLDER_CONTAINER_ID {
+                container.id = runtime_id.clone();
+            }
+        }
     }
 
     let mut hotbar: [Option<ItemInstance>; 9] = Default::default();
@@ -1733,19 +1868,22 @@ pub fn parse_container_spec(
             raw.weight_capacity
         ));
     }
+    // plan-layered-equip-v1 P0.1（决议 #17）— 背包 ContainerSpec.equip_slot 指向身体槽。
     let valid_slots = [
-        EQUIP_SLOT_BACK_PACK,
-        EQUIP_SLOT_WAIST_POUCH,
-        EQUIP_SLOT_CHEST_SATCHEL,
+        EQUIP_SLOT_HEAD,
+        EQUIP_SLOT_CHEST,
+        EQUIP_SLOT_LEGS,
+        EQUIP_SLOT_FEET,
     ];
     if !valid_slots.contains(&raw.equip_slot.as_str()) {
         return Err(format!(
-            "{} item `{item_id}` has invalid container.equip_slot `{}`; expected one of [{}, {}, {}]",
+            "{} item `{item_id}` has invalid container.equip_slot `{}`; expected one of [{}, {}, {}, {}]",
             source_path.display(),
             raw.equip_slot,
-            EQUIP_SLOT_BACK_PACK,
-            EQUIP_SLOT_WAIST_POUCH,
-            EQUIP_SLOT_CHEST_SATCHEL
+            EQUIP_SLOT_HEAD,
+            EQUIP_SLOT_CHEST,
+            EQUIP_SLOT_LEGS,
+            EQUIP_SLOT_FEET
         ));
     }
     if !raw.durability_cost_per_op.is_finite() || raw.durability_cost_per_op < 0.0 {
@@ -2607,7 +2745,9 @@ impl LoadoutToml {
 
         ensure_required_containers_present(&containers, source_path)?;
 
-        let mut equipped = HashMap::new();
+        // plan-layered-equip-v1 P0.6（决议 #17）— 每条 [[equip]] 按 classify 落 SlotContents：
+        // 武器/工具 → held（手槽，每槽 ≤1）；盔甲/伪皮/背包件 → worn 栈尾（身体槽，可叠多件）。
+        let mut equipped: HashMap<String, SlotContents> = HashMap::new();
         for raw_equip in self.equip {
             let slot_id = required_non_empty(raw_equip.slot, source_path, "equip.slot")?;
             validate_equip_slot(slot_id.as_str(), source_path)?;
@@ -2621,11 +2761,19 @@ impl LoadoutToml {
                 registry,
             )?;
 
-            if equipped.insert(slot_id.clone(), instance).is_some() {
-                return Err(format!(
-                    "{} has duplicate equip slot `{slot_id}` in loadout",
-                    source_path.display()
-                ));
+            let state = classify_equip_state(&instance, registry);
+            let contents = equipped.entry(slot_id.clone()).or_default();
+            match state {
+                EquipState::Held => {
+                    if contents.held.is_some() {
+                        return Err(format!(
+                            "{} has duplicate held item in equip slot `{slot_id}`",
+                            source_path.display()
+                        ));
+                    }
+                    contents.held = Some(instance);
+                }
+                EquipState::Worn => contents.worn.push(instance),
             }
         }
 
@@ -2992,19 +3140,24 @@ pub fn move_equipped_item_to_first_container_slot(
     inventory: &mut PlayerInventory,
     instance_id: u64,
 ) -> Result<InventoryMoveOutcome, String> {
-    let (slot_key, _slot_wire) = inventory
-        .equipped
-        .iter()
-        .find_map(|(slot, item)| {
-            (item.instance_id == instance_id)
-                .then_some((slot.clone(), equip_slot_wire_from_runtime(slot.as_str())))
-        })
+    // plan-layered-equip-v1 P0.2 / §11.1 #12 — 在 equipped 里定位该 instance 的槽 + 装备态。
+    // worn 件仅栈顶（worn.last()）可移出，被压住的下层拒绝；held 件直接精确移除。
+    let loc = find_equipped_instance(inventory, instance_id)
         .ok_or_else(|| format!("equipped instance {instance_id} not found"))?;
-    let item = inventory
-        .equipped
-        .get(&slot_key)
-        .cloned()
-        .ok_or_else(|| format!("equipped slot `{slot_key}` missing instance {instance_id}"))?;
+    if let EquippedInstanceLoc::Worn { ref slot, index } = loc {
+        let worn_len = inventory
+            .equipped
+            .get(slot)
+            .map(|s| s.worn.len())
+            .unwrap_or(0);
+        if index + 1 != worn_len {
+            return Err(format!(
+                "instance {instance_id} 被上层压住，请先脱下上层（worn 栈 LIFO，仅栈顶可卸下）"
+            ));
+        }
+    }
+    let item = clone_item_at(inventory, instance_id)
+        .ok_or_else(|| format!("equipped instance {instance_id} missing"))?;
     let to = find_first_fit_container_location(inventory, &item)
         .ok_or_else(|| format!("no free container slot for instance {instance_id}"))?;
 
@@ -3014,6 +3167,42 @@ pub fn move_equipped_item_to_first_container_slot(
     Ok(InventoryMoveOutcome::Moved {
         revision: inventory.revision,
     })
+}
+
+/// plan-layered-equip-v1 P0.2 — equipped 内某 instance 的精确位置。
+#[derive(Debug, Clone)]
+pub enum EquippedInstanceLoc {
+    /// worn 层第 `index` 件（栈底=0，栈顶=worn.len()-1）。
+    Worn { slot: String, index: usize },
+    /// held 位。
+    Held { slot: String },
+}
+
+/// plan-layered-equip-v1 P0.2 — 在 equipped 里按 instance_id 定位件（worn 层索引 / held 位）。
+pub fn find_equipped_instance(
+    inventory: &PlayerInventory,
+    instance_id: u64,
+) -> Option<EquippedInstanceLoc> {
+    for (slot, contents) in &inventory.equipped {
+        if let Some(index) = contents
+            .worn
+            .iter()
+            .position(|item| item.instance_id == instance_id)
+        {
+            return Some(EquippedInstanceLoc::Worn {
+                slot: slot.clone(),
+                index,
+            });
+        }
+        if contents
+            .held
+            .as_ref()
+            .is_some_and(|item| item.instance_id == instance_id)
+        {
+            return Some(EquippedInstanceLoc::Held { slot: slot.clone() });
+        }
+    }
+    None
 }
 
 pub fn inventory_item_by_instance(
@@ -3039,8 +3228,8 @@ pub fn inventory_item_by_instance_borrow(
             return Some(&p.instance);
         }
     }
-    for item in inventory.equipped.values() {
-        if item.instance_id == instance_id {
+    for slot in inventory.equipped.values() {
+        if let Some(item) = slot.iter_all().find(|item| item.instance_id == instance_id) {
             return Some(item);
         }
     }
@@ -3081,26 +3270,39 @@ pub fn consume_item_instance_once(
         }
     }
 
-    if let Some(slot_key) = inventory
-        .equipped
-        .iter()
-        .find_map(|(key, item)| (item.instance_id == instance_id).then(|| key.clone()))
-    {
-        let remove = inventory
-            .equipped
-            .get(&slot_key)
-            .map(|item| item.stack_count <= 1)
-            .unwrap_or(false);
-        let remaining_stack = if remove {
-            inventory.equipped.remove(&slot_key);
-            0
-        } else {
-            let item = inventory
-                .equipped
-                .get_mut(&slot_key)
-                .expect("equipped slot key should still exist");
-            item.stack_count -= 1;
-            item.stack_count
+    // plan-layered-equip-v1 P0.2 — 在 equipped worn 层 / held 位按 instance 精确消耗一件。
+    if let Some(loc) = find_equipped_instance(inventory, instance_id) {
+        let remaining_stack = match loc {
+            EquippedInstanceLoc::Worn { slot, index } => {
+                let contents = inventory
+                    .equipped
+                    .get_mut(&slot)
+                    .expect("equipped slot key should still exist");
+                if contents.worn[index].stack_count > 1 {
+                    contents.worn[index].stack_count -= 1;
+                    contents.worn[index].stack_count
+                } else {
+                    contents.worn.remove(index);
+                    0
+                }
+            }
+            EquippedInstanceLoc::Held { slot } => {
+                let contents = inventory
+                    .equipped
+                    .get_mut(&slot)
+                    .expect("equipped slot key should still exist");
+                if let Some(held) = contents.held.as_mut() {
+                    if held.stack_count > 1 {
+                        held.stack_count -= 1;
+                        held.stack_count
+                    } else {
+                        contents.held = None;
+                        0
+                    }
+                } else {
+                    0
+                }
+            }
         };
         bump_revision(inventory);
         return Ok(InventoryConsumeOutcome {
@@ -3278,16 +3480,14 @@ pub fn apply_death_drop_to_inventory(
     registry: &ItemRegistry,
     seed: u64,
 ) -> DeathDropOutcome {
+    // plan-layered-equip-v1 P0.2 死亡掉落子任务（gap#2 blocker）— 高耐真武器（durability≥0.5）
+    // 免 50% 掉落 Roll；武器从手槽 held 派生（双手兵器即 main_hand.held，决议 #7，不再有 two_hand 槽）。
     let protected_weapon_ids = inventory
         .equipped
         .iter()
-        .filter(|(slot, item)| {
-            matches!(
-                slot.as_str(),
-                EQUIP_SLOT_MAIN_HAND | EQUIP_SLOT_OFF_HAND | EQUIP_SLOT_TWO_HAND
-            ) && item.durability >= 0.5
-        })
-        .filter_map(|(_, item)| {
+        .filter_map(|(_, contents)| contents.held.as_ref())
+        .filter(|item| item.durability >= 0.5)
+        .filter_map(|item| {
             registry
                 .get(&item.template_id)
                 .and_then(|template| template.weapon_spec.as_ref().map(|_| item.instance_id))
@@ -3300,15 +3500,15 @@ pub fn apply_death_drop_to_inventory(
             candidate_ids.push(placed.instance.instance_id);
         }
     }
-    for (slot, item) in &inventory.equipped {
-        let is_weapon_slot = matches!(
-            slot.as_str(),
-            EQUIP_SLOT_MAIN_HAND | EQUIP_SLOT_OFF_HAND | EQUIP_SLOT_TWO_HAND
-        );
-        if is_weapon_slot && protected_weapon_ids.contains(&item.instance_id) {
-            continue;
+    // plan-layered-equip-v1 P0.2（桶④）— 遍历全件：worn 全层 + held。
+    for contents in inventory.equipped.values() {
+        for item in contents.iter_all() {
+            // held 武器若受高耐保护则跳过；worn 件无保护。
+            if protected_weapon_ids.contains(&item.instance_id) {
+                continue;
+            }
+            candidate_ids.push(item.instance_id);
         }
-        candidate_ids.push(item.instance_id);
     }
     for item in inventory.hotbar.iter().flatten() {
         candidate_ids.push(item.instance_id);
@@ -3344,20 +3544,38 @@ pub fn apply_death_drop_to_inventory(
         container.items = kept;
     }
 
-    let equipped_to_drop = inventory
-        .equipped
-        .iter()
-        .filter(|(_, item)| selected.contains(&item.instance_id))
-        .map(|(slot, item)| (slot.clone(), item.clone()))
-        .collect::<Vec<_>>();
-    for (slot, item) in equipped_to_drop {
-        inventory.equipped.remove(&slot);
-        dropped.push(DroppedItemRecord {
-            container_id: slot,
-            row: 0,
-            col: 0,
-            instance: item,
-        });
+    // plan-layered-equip-v1 P0.2 死亡掉落子任务（gap#2 blocker）— 按 instance 精确移除：
+    // worn 件按 instance_id 在该槽 worn Vec 定位后移除该一件（保留同槽其余 worn 层）；
+    // held 命中则清 held=None。**禁止整槽 remove（会连带删未掉落的 worn 下层 / held）**。
+    for (slot, contents) in inventory.equipped.iter_mut() {
+        let mut idx = 0;
+        while idx < contents.worn.len() {
+            if selected.contains(&contents.worn[idx].instance_id) {
+                let instance = contents.worn.remove(idx);
+                dropped.push(DroppedItemRecord {
+                    container_id: slot.clone(),
+                    row: 0,
+                    col: 0,
+                    instance,
+                });
+            } else {
+                idx += 1;
+            }
+        }
+        if contents
+            .held
+            .as_ref()
+            .is_some_and(|item| selected.contains(&item.instance_id))
+        {
+            if let Some(instance) = contents.held.take() {
+                dropped.push(DroppedItemRecord {
+                    container_id: slot.clone(),
+                    row: 0,
+                    col: 0,
+                    instance,
+                });
+            }
+        }
     }
 
     for slot_idx in 0..inventory.hotbar.len() {
@@ -3396,7 +3614,12 @@ pub fn transfer_all_inventory_contents(
     for container in &mut from.containers {
         items.extend(container.items.drain(..).map(|placed| placed.instance));
     }
-    items.extend(from.equipped.drain().map(|(_, item)| item));
+    // plan-layered-equip-v1 P0.2（桶④）— transfer 全件（worn 全层 + held）。
+    items.extend(
+        from.equipped
+            .drain()
+            .flat_map(|(_, contents)| contents.worn.into_iter().chain(contents.held)),
+    );
     for slot in &mut from.hotbar {
         if let Some(item) = slot.take() {
             items.push(item);
@@ -3466,9 +3689,11 @@ pub fn calculate_current_weight(inventory: &PlayerInventory) -> f64 {
         .flat_map(|container| container.items.iter())
         .map(|entry| entry.instance.weight * entry.instance.stack_count as f64)
         .sum::<f64>();
+    // plan-layered-equip-v1 P3 公式7：遍历每槽 worn 全件 + held（含手持武器、含背包件自重）。
     let equipped_weight = inventory
         .equipped
         .values()
+        .flat_map(|slot| slot.iter_all())
         .map(|item| item.weight * item.stack_count as f64)
         .sum::<f64>();
     let hotbar_weight = inventory
@@ -3481,40 +3706,59 @@ pub fn calculate_current_weight(inventory: &PlayerInventory) -> f64 {
     container_weight + equipped_weight + hotbar_weight
 }
 
-/// plan-backpack-equip-v1 P0 — 根据已装备背包重算 `max_weight`。
+/// plan-layered-equip-v1 P0.2（决议 #17）— 容器 id 命名规则：穿戴背包件 → 容器 id。
 ///
-/// 公式：`BASE_CARRY_CAPACITY + Σ(所有背包槽已装备的 ContainerSpec.weight_capacity)`。
+/// 背包专属槽取消后，容器 id 由穿戴背包件 instance 派生（`pack_<instance_id>`），
+/// 与 rebuild_containers / attrition 反查 / 静态 `[[containers]]` 共用一套命名空间。
+pub fn container_id_for_worn_pack(instance_id: u64) -> String {
+    format!("pack_{instance_id}")
+}
+
+/// plan-layered-equip-v1 P0.2（决议 #17）— 反解容器 id → 穿戴背包件 instance_id。
+/// 仅识别 `pack_<id>` 前缀；body_pocket / 其余容器返回 None。
+pub fn worn_pack_instance_from_container_id(container_id: &str) -> Option<u64> {
+    container_id.strip_prefix("pack_")?.parse::<u64>().ok()
+}
+
+/// plan-layered-equip-v1 P0.2（决议 #17）— 迭代所有身体槽 worn 层里带 `container_spec` 的背包件。
+/// 产出 `(instance, ContainerSpec)`，供 compute_max_weight / rebuild_containers / attrition 共用。
+fn worn_container_items<'a>(
+    inventory: &'a PlayerInventory,
+    registry: &'a ItemRegistry,
+) -> impl Iterator<Item = (&'a ItemInstance, &'a ContainerSpec)> {
+    inventory
+        .equipped
+        .values()
+        .flat_map(|slot| slot.worn.iter())
+        .filter_map(move |item| {
+            registry
+                .get(&item.template_id)
+                .and_then(|t| t.container_spec.as_ref())
+                .map(|spec| (item, spec))
+        })
+}
+
+/// plan-layered-equip-v1 P0.2 / §11.1 #17 — 根据已装备背包重算 `max_weight`。
+///
+/// 公式：`BASE_CARRY_CAPACITY + Σ(所有身体槽 worn 层里带 container_spec 的件的 weight_capacity)`。
 /// 暗袋（body_pocket）不提供额外负重，始终使用 BASE_CARRY_CAPACITY 作为基础。
 #[allow(dead_code)]
 pub fn compute_max_weight(inventory: &PlayerInventory, registry: &ItemRegistry) -> f64 {
-    let backpack_bonus: f64 = [
-        EQUIP_SLOT_BACK_PACK,
-        EQUIP_SLOT_WAIST_POUCH,
-        EQUIP_SLOT_CHEST_SATCHEL,
-    ]
-    .iter()
-    .filter_map(|slot| {
-        let item = inventory.equipped.get(*slot)?;
-        let template = registry.get(&item.template_id)?;
-        template
-            .container_spec
-            .as_ref()
-            .map(|spec| spec.weight_capacity)
-    })
-    .sum();
+    let backpack_bonus: f64 = worn_container_items(inventory, registry)
+        .map(|(_, spec)| spec.weight_capacity)
+        .sum();
 
     BASE_CARRY_CAPACITY + backpack_bonus
 }
 
-/// plan-backpack-equip-v1 P0 — 根据装备槽中的背包重建动态容器列表。
+/// plan-layered-equip-v1 P0.2 / §11.1 #13.5 #17 — 根据身体槽 worn 层背包件重建动态容器列表。
 ///
-/// 规则：
+/// 规则（决议 #17，背包专属槽取消）：
 /// 1. `body_pocket`（2×3）始终存在；不存在时创建空容器。
-/// 2. 三个背包槽各自检查：有装备 + 有 container_spec → 确保对应容器在 containers 里；
-///    无装备 → 若容器为空则移除（有物品的容器不移除，防止数据丢失）。
-/// 3. 刷新 `max_weight = compute_max_weight(...)`。
-///
-/// 调用时机：`instantiate_inventory_from_loadout` 之后，以及任何背包槽装备变更后。
+/// 2. 扫所有身体槽 worn 层里带 `container_spec` 的背包件：容器 id = `pack_<instance_id>`；
+///    存在则更新 rows/cols（升级换品），否则 push 新空容器。
+/// 3. 移除已不再对应任何穿戴背包件的孤儿 `pack_*` 容器（仅当其为空时移除，防丢数据）。
+/// 4. 刷新 `max_weight = compute_max_weight(...)`。
 #[allow(dead_code)]
 pub fn rebuild_containers_from_equipment(inventory: &mut PlayerInventory, registry: &ItemRegistry) {
     // 1. 确保 body_pocket 始终存在。
@@ -3532,111 +3776,99 @@ pub fn rebuild_containers_from_equipment(inventory: &mut PlayerInventory, regist
         });
     }
 
-    // 2. 遍历三个背包槽。
-    for slot_id in [
-        EQUIP_SLOT_BACK_PACK,
-        EQUIP_SLOT_WAIST_POUCH,
-        EQUIP_SLOT_CHEST_SATCHEL,
-    ] {
-        let equipped_spec: Option<(u8, u8, String)> =
-            inventory.equipped.get(slot_id).and_then(|item| {
-                registry
-                    .get(&item.template_id)
-                    .and_then(|t| t.container_spec.as_ref())
-                    .map(|spec| (spec.rows, spec.cols, slot_id.to_string()))
-            });
+    // 2. 扫所有身体槽 worn 层里带 container_spec 的背包件，确保各自容器存在。
+    let live_specs: Vec<(String, u8, u8, String)> = worn_container_items(inventory, registry)
+        .map(|(item, spec)| {
+            (
+                container_id_for_worn_pack(item.instance_id),
+                spec.rows,
+                spec.cols,
+                item.display_name.clone(),
+            )
+        })
+        .collect();
+    let live_ids: std::collections::HashSet<String> =
+        live_specs.iter().map(|(id, _, _, _)| id.clone()).collect();
 
-        match equipped_spec {
-            Some((rows, cols, container_id)) => {
-                // 有装备且有 container_spec — 确保容器存在（规格如有变更则更新）。
-                if let Some(existing) = inventory
-                    .containers
-                    .iter_mut()
-                    .find(|c| c.id == container_id)
-                {
-                    // 更新行列（背包升级/换品场景）。
-                    existing.rows = rows;
-                    existing.cols = cols;
-                } else {
-                    inventory.containers.push(ContainerState {
-                        id: container_id,
-                        name: slot_display_name(slot_id),
-                        rows,
-                        cols,
-                        items: Vec::new(),
-                    });
-                }
-            }
-            None => {
-                // 无装备 — 容器为空则移除。
-                let container_pos = inventory.containers.iter().position(|c| c.id == slot_id);
-                if let Some(pos) = container_pos {
-                    if inventory.containers[pos].items.is_empty() {
-                        inventory.containers.remove(pos);
-                    }
-                }
-            }
+    for (container_id, rows, cols, name) in live_specs {
+        if let Some(existing) = inventory
+            .containers
+            .iter_mut()
+            .find(|c| c.id == container_id)
+        {
+            existing.rows = rows;
+            existing.cols = cols;
+        } else {
+            inventory.containers.push(ContainerState {
+                id: container_id,
+                name,
+                rows,
+                cols,
+                items: Vec::new(),
+            });
         }
     }
 
-    // 3. 刷新 max_weight。
+    // 3. 移除孤儿 pack_* 容器（背包件已卸下且容器为空）。
+    inventory.containers.retain(|c| {
+        if worn_pack_instance_from_container_id(&c.id).is_some() {
+            live_ids.contains(&c.id) || !c.items.is_empty()
+        } else {
+            true
+        }
+    });
+
+    // 4. 刷新 max_weight。
     inventory.max_weight = compute_max_weight(inventory, registry);
 }
 
-#[allow(dead_code)]
-fn slot_display_name(slot_id: &str) -> String {
-    match slot_id {
-        EQUIP_SLOT_BACK_PACK => "大背包".to_string(),
-        EQUIP_SLOT_WAIST_POUCH => "腰囊".to_string(),
-        EQUIP_SLOT_CHEST_SATCHEL => "挎包".to_string(),
-        other => other.to_string(),
-    }
-}
+// ─── plan-layered-equip-v1 P0.2 — 背包耐久扣减与破损溢出（决议 #17 重定向到 worn 背包件 instance） ───
 
-// ─── plan-backpack-equip-v1 P3 — 背包耐久扣减与破损溢出 ─────────────────────────
-
-/// plan-backpack-equip-v1 P3.1 — 背包破损事件，当背包耐久降至 ≤ε 时由 `apply_backpack_wear` 返回。
+/// 背包破损事件，当背包耐久降至 ≤ε 时由 `apply_backpack_wear` 返回。
 #[derive(Debug, Clone, PartialEq)]
 pub struct BackpackBreakEvent {
-    /// 对应的装备槽 id（"back_pack" / "waist_pouch" / "chest_satchel"）。
-    pub slot: String,
-    /// 触发耗损操作的容器 id（与 slot 相同，如 "back_pack"）。
+    /// 破损背包件的 instance_id。
+    pub backpack_instance_id: u64,
+    /// 触发耗损操作的容器 id（`pack_<instance_id>`）。
     pub container_id: String,
 }
 
-/// plan-backpack-equip-v1 P3.2 — 背包破损溢出结果。
+/// 背包破损溢出结果。
 #[derive(Debug, Clone, PartialEq)]
 pub struct BackpackBreakOutcome {
-    /// 装备槽 id。
-    pub slot: String,
-    /// 容器 id。
+    /// 破损背包件的 instance_id。
+    pub backpack_instance_id: u64,
+    /// 容器 id（`pack_<instance_id>`）。
     pub container_id: String,
     /// 背包内容物（调用方负责转为 DroppedItemEvent）。
     pub spilled_items: Vec<ItemInstance>,
-    /// 破损的背包物品实例（已从 equipped 中移除）。
+    /// 破损的背包物品实例（已从 equipped worn 中移除）。
     pub backpack_item: ItemInstance,
     /// 破损后重算的新 max_weight。
     pub new_max_weight: f64,
 }
 
-/// plan-backpack-equip-v1 P3.1 — 将容器 id 映射到对应的装备槽 id。
+/// plan-layered-equip-v1 P0.2（决议 #17 / #20）— 容器 id → 穿戴背包件可变借用定位。
 ///
-/// `body_pocket` 及未知容器返回 `None`（不扣耐久）。
-#[allow(dead_code)]
-fn container_id_to_equip_slot(container_id: &str) -> Option<&'static str> {
-    match container_id {
-        "back_pack" => Some(EQUIP_SLOT_BACK_PACK),
-        "waist_pouch" => Some(EQUIP_SLOT_WAIST_POUCH),
-        "chest_satchel" => Some(EQUIP_SLOT_CHEST_SATCHEL),
-        _ => None, // body_pocket 和未知 id 不扣
-    }
+/// 在所有身体槽 worn 层里按 `pack_<instance_id>` 反解出的 instance 定位背包件。
+/// `body_pocket` 及未知容器返回 `None`（不扣耐久 / 不豁免）。
+fn worn_pack_item_mut<'a>(
+    inventory: &'a mut PlayerInventory,
+    container_id: &str,
+) -> Option<&'a mut ItemInstance> {
+    let instance_id = worn_pack_instance_from_container_id(container_id)?;
+    inventory
+        .equipped
+        .values_mut()
+        .flat_map(|slot| slot.worn.iter_mut())
+        .find(|item| item.instance_id == instance_id)
 }
 
-/// plan-backpack-equip-v1 P3.1 — 对指定背包容器的装备物品扣减一次耐久损耗。
+/// plan-layered-equip-v1 P0.2 — 对指定背包容器的穿戴背包件扣减一次耐久损耗。
 ///
 /// 规则：
-/// - `container_id` 不对应背包槽（body_pocket 或未知）→ 返回 None，不扣减。
-/// - 对应槽未装备背包 → 返回 None。
+/// - `container_id` 非 `pack_*`（body_pocket 或未知）→ 返回 None，不扣减。
+/// - 对应背包件未穿戴 → 返回 None。
 /// - 背包模板无 `container_spec` → 返回 None。
 /// - `durability_cost_per_op == 0.0` → 不扣减（无损耗），返回 None。
 /// - 扣减后 `durability ≤ ε` → 返回 `Some(BackpackBreakEvent)`，否则返回 None。
@@ -3646,21 +3878,20 @@ pub fn apply_backpack_wear(
     registry: &ItemRegistry,
     container_id: &str,
 ) -> Option<BackpackBreakEvent> {
-    let slot = container_id_to_equip_slot(container_id)?;
-    let cost = {
-        let backpack = inventory.equipped.get_mut(slot)?;
+    let (instance_id, durability) = {
+        let backpack = worn_pack_item_mut(inventory, container_id)?;
         let template = registry.get(&backpack.template_id)?;
         let cost = template.container_spec.as_ref()?.durability_cost_per_op;
         if cost <= 0.0 {
             return None;
         }
         backpack.durability = (backpack.durability - cost).max(0.0);
-        backpack.durability
+        (backpack.instance_id, backpack.durability)
     };
     bump_revision(inventory);
-    if cost <= f64::EPSILON {
+    if durability <= f64::EPSILON {
         Some(BackpackBreakEvent {
-            slot: slot.to_string(),
+            backpack_instance_id: instance_id,
             container_id: container_id.to_string(),
         })
     } else {
@@ -3668,26 +3899,37 @@ pub fn apply_backpack_wear(
     }
 }
 
-/// plan-backpack-equip-v1 P3.2 — 处理背包破损溢出。
+/// plan-layered-equip-v1 P0.2 — 处理背包破损溢出。
 ///
 /// 逻辑：
-/// 1. 从 `equipped` 中移除背包物品。
-/// 2. 从 `containers` 中找到对应容器，提取所有 items。
+/// 1. 从身体槽 worn 层精确移除该背包件（按 instance_id）。
+/// 2. 从 `containers` 中找到对应 `pack_*` 容器，提取所有 items。
 /// 3. 移除该容器。
 /// 4. 调用 `rebuild_containers_from_equipment` 刷新 `max_weight`。
 /// 5. 返回 `BackpackBreakOutcome`（spilled_items 由调用方转为 DroppedItemEvent）。
 ///
-/// 若容器 id 不对应背包槽，或对应槽未装备，返回 `None`（无操作）。
+/// 若容器 id 非 `pack_*`，或对应背包件未穿戴，返回 `None`（无操作）。
 #[allow(dead_code)]
 pub fn handle_backpack_break(
     inventory: &mut PlayerInventory,
     registry: &ItemRegistry,
     container_id: &str,
 ) -> Option<BackpackBreakOutcome> {
-    let slot = container_id_to_equip_slot(container_id)?;
+    let instance_id = worn_pack_instance_from_container_id(container_id)?;
 
-    // 1. 从 equipped 中移除背包物品。
-    let backpack_item = inventory.equipped.remove(slot)?;
+    // 1. 在身体槽 worn 层按 instance_id 精确移除背包件。
+    let mut backpack_item: Option<ItemInstance> = None;
+    for slot in inventory.equipped.values_mut() {
+        if let Some(pos) = slot
+            .worn
+            .iter()
+            .position(|item| item.instance_id == instance_id)
+        {
+            backpack_item = Some(slot.worn.remove(pos));
+            break;
+        }
+    }
+    let backpack_item = backpack_item?;
 
     // 2. 提取容器内所有物品。
     let container_pos = inventory
@@ -3712,7 +3954,7 @@ pub fn handle_backpack_break(
     bump_revision(inventory);
 
     Some(BackpackBreakOutcome {
-        slot: slot.to_string(),
+        backpack_instance_id: instance_id,
         container_id: container_id.to_string(),
         spilled_items,
         backpack_item,
@@ -3826,7 +4068,7 @@ pub fn discard_inventory_item_to_dropped_loot(
             *row as u8,
             *col as u8,
         ),
-        crate::schema::inventory::InventoryLocationV1::Equip { slot } => {
+        crate::schema::inventory::InventoryLocationV1::Equip { slot, .. } => {
             (equip_slot_key(slot).to_string(), 0, 0)
         }
         crate::schema::inventory::InventoryLocationV1::Hotbar { index } => {
@@ -3982,14 +4224,9 @@ fn displaced_at_target(
                 )),
             }
         }
-        InventoryLocationV1::Equip { slot } => {
-            let key = equip_slot_key(slot);
-            match inventory.equipped.get(key) {
-                None => Ok(None),
-                Some(occupant) if occupant.instance_id == moving_instance_id => Ok(None),
-                Some(occupant) => Ok(Some(occupant.clone())),
-            }
-        }
+        // plan-layered-equip-v1 P0.2（决议 #3 拒绝不顶替）— equip 落位不做 swap 顶替；
+        // 满 / 占用由 validate_move_semantics / validate_attach_fits 拒绝。恒无 displaced。
+        InventoryLocationV1::Equip { .. } => Ok(None),
         InventoryLocationV1::Hotbar { index } => {
             let idx = *index as usize;
             if idx >= inventory.hotbar.len() {
@@ -4046,10 +4283,23 @@ fn validate_attach_fits(
             }
             Ok(())
         }
-        InventoryLocationV1::Equip { slot } => {
+        InventoryLocationV1::Equip { slot, state } => {
+            // plan-layered-equip-v1 P0.2（决议 #3 / #12）— worn 满则拒、held 占则拒。
+            use crate::schema::inventory::EquipStateV1;
             let key = equip_slot_key(slot);
-            if inventory.equipped.contains_key(key) {
-                return Err(format!("equip slot '{key}' occupied"));
+            let contents = inventory.equipped.get(key);
+            match state {
+                EquipStateV1::Worn => {
+                    let cur = contents.map(|c| c.worn.len()).unwrap_or(0);
+                    if cur as u8 >= worn_cap(key) {
+                        return Err(format!("equip slot '{key}' worn 层已满"));
+                    }
+                }
+                EquipStateV1::Held => {
+                    if contents.is_some_and(|c| c.held.is_some()) {
+                        return Err(format!("equip slot '{key}' held 已占用"));
+                    }
+                }
             }
             Ok(())
         }
@@ -4073,36 +4323,46 @@ fn validate_move_semantics(
     from: &crate::schema::inventory::InventoryLocationV1,
     to: &crate::schema::inventory::InventoryLocationV1,
 ) -> Result<(), String> {
-    use crate::combat::weapon::WeaponKind;
-    use crate::schema::inventory::{EquipSlotV1, InventoryLocationV1};
+    use crate::schema::inventory::InventoryLocationV1;
 
     let template = registry
         .get(&item.template_id)
         .ok_or_else(|| format!("unknown item template id `{}`", item.template_id))?;
-    let from_two_hand = matches!(
-        from,
-        InventoryLocationV1::Equip {
-            slot: EquipSlotV1::TwoHand
-        }
-    );
 
-    // plan-backpack-equip-v1 P0 — 从背包装备槽移出时，检查对应容器是否为空。
-    // 此校验在 to 方向之前执行，覆盖卸到任何位置（container / hotbar）的路径。
-    if let InventoryLocationV1::Equip { slot: from_slot } = from {
-        let from_slot_key = equip_slot_key(from_slot);
-        let is_backpack_slot = matches!(
-            from_slot,
-            EquipSlotV1::BackPack | EquipSlotV1::WaistPouch | EquipSlotV1::ChestSatchel
-        );
-        if is_backpack_slot {
-            if let Some(container) = inventory.containers.iter().find(|c| c.id == from_slot_key) {
-                if !container.items.is_empty() {
-                    return Err(format!(
-                        "cannot unequip backpack `{}` from {from_slot_key}: container `{from_slot_key}` is not empty ({} items remaining)",
-                        item.template_id,
-                        container.items.len()
-                    ));
-                }
+    // plan-layered-equip-v1 P0.2 / §11.1 #12 — 从 worn 槽移出时只允许栈顶件；
+    // 移动被压住的下层 = 拒绝（决议 #12）。从 held 移出无此限制。
+    if let InventoryLocationV1::Equip {
+        state: crate::schema::inventory::EquipStateV1::Worn,
+        ..
+    } = from
+    {
+        if let Some(EquippedInstanceLoc::Worn { slot, index }) =
+            find_equipped_instance(inventory, item.instance_id)
+        {
+            let worn_len = inventory
+                .equipped
+                .get(&slot)
+                .map(|s| s.worn.len())
+                .unwrap_or(0);
+            if worn_len > 0 && index + 1 != worn_len {
+                return Err(
+                    "该件被上层压住，请先脱下上层（worn 栈 LIFO，仅栈顶可卸下）".to_string()
+                );
+            }
+        }
+    }
+
+    // plan-layered-equip-v1 P0.2（决议 #17）— 从背包件（身体槽 worn 层）移出时，
+    // 检查其对应容器（pack_<instance_id>）是否为空。
+    if matches!(from, InventoryLocationV1::Equip { .. }) && template.container_spec.is_some() {
+        let container_id = container_id_for_worn_pack(item.instance_id);
+        if let Some(container) = inventory.containers.iter().find(|c| c.id == container_id) {
+            if !container.items.is_empty() {
+                return Err(format!(
+                    "cannot unequip backpack `{}`: container `{container_id}` is not empty ({} items remaining)",
+                    item.template_id,
+                    container.items.len()
+                ));
             }
         }
     }
@@ -4147,201 +4407,209 @@ fn validate_move_semantics(
                 item.template_id
             ))
         }
-        InventoryLocationV1::Equip { slot } => match slot {
-            EquipSlotV1::MainHand => {
-                if template.weapon_spec.is_none()
-                    && !matches!(template.category, ItemCategory::Tool)
-                    && crate::lingtian::hoe::HoeKind::from_item_id(&item.template_id).is_none()
-                {
-                    return Err(format!(
-                        "item `{}` cannot equip to main_hand; expected weapon, tool, or hoe",
-                        item.template_id
-                    ));
-                }
-                if (template.weapon_spec.is_some()
-                    || matches!(template.category, ItemCategory::Tool))
-                    && inventory.equipped.contains_key(EQUIP_SLOT_TWO_HAND)
-                    && !from_two_hand
-                {
-                    return Err(
-                        "cannot equip main_hand while two_hand slot is occupied".to_string()
-                    );
-                }
-                Ok(())
-            }
-            EquipSlotV1::OffHand => {
-                if matches!(template.category, ItemCategory::Treasure) {
-                    if inventory.equipped.contains_key(EQUIP_SLOT_TWO_HAND) && !from_two_hand {
-                        return Err(
-                            "cannot equip off_hand while two_hand slot is occupied".to_string()
-                        );
-                    }
-                    return Ok(());
-                }
+        InventoryLocationV1::Equip { slot, state } => {
+            // plan-layered-equip-v1 P1 — 是否「从同槽原位移回」（不触发占用拒绝）。
+            let from_same_slot = matches!(
+                from,
+                InventoryLocationV1::Equip { slot: from_slot, .. } if from_slot == slot
+            );
+            validate_equip_to(
+                registry,
+                inventory,
+                item,
+                template,
+                slot,
+                state,
+                from_same_slot,
+            )
+        }
+        _ => Ok(()),
+    }
+}
 
-                // plan-shield-block-v1 P0 — 盾牌（Shield 类）可装入 off_hand；
-                // 同样受 two_hand 占用约束，但不需要 weapon_spec（盾无 weapon_spec）。
-                if matches!(template.category, ItemCategory::Shield) {
-                    if inventory.equipped.contains_key(EQUIP_SLOT_TWO_HAND) && !from_two_hand {
-                        return Err(
-                            "cannot equip off_hand shield while two_hand slot is occupied"
-                                .to_string(),
-                        );
-                    }
-                    return Ok(());
-                }
+/// plan-layered-equip-v1 P1 — 装备到指定槽 + 装备态的校验（决议 #3 拒绝不顶替 / #6 手槽 / #7 双手锁 / #12 worn 栈 / #17 背包身体槽）。
+#[allow(clippy::too_many_arguments)]
+fn validate_equip_to(
+    registry: &ItemRegistry,
+    inventory: &PlayerInventory,
+    item: &ItemInstance,
+    template: &ItemTemplate,
+    slot: &crate::schema::inventory::EquipSlotV1,
+    state: &crate::schema::inventory::EquipStateV1,
+    from_same_slot: bool,
+) -> Result<(), String> {
+    use crate::combat::weapon::WeaponKind;
+    use crate::schema::inventory::{EquipSlotV1, EquipStateV1};
 
-                // 工具 / 锄头双手可用：off_hand 也放行 Tool/Hoe（与 client InventoryEquipRules
-                // OFF_HAND 同步；副手工具采集由 gathering/tools.rs 扫描 off_hand 支持）。同样受
-                // two_hand 占用约束，不需要 weapon_spec（工具/锄头无 weapon_spec）。
-                if matches!(template.category, ItemCategory::Tool)
-                    || crate::lingtian::hoe::HoeKind::from_item_id(&item.template_id).is_some()
-                {
-                    if inventory.equipped.contains_key(EQUIP_SLOT_TWO_HAND) && !from_two_hand {
-                        return Err("cannot equip off_hand tool while two_hand slot is occupied"
-                            .to_string());
-                    }
-                    return Ok(());
-                }
+    let slot_key = equip_slot_key(slot);
+    let is_hand_slot = matches!(
+        slot,
+        EquipSlotV1::MainHand
+            | EquipSlotV1::OffHand
+            | EquipSlotV1::ExtraHand0
+            | EquipSlotV1::ExtraHand1
+    );
 
-                let spec = template.weapon_spec.as_ref().ok_or_else(|| {
-                    format!(
-                        "item `{}` cannot equip to off_hand; expected dagger/fist weapon or treasure",
-                        item.template_id
-                    )
-                })?;
-                if !matches!(spec.weapon_kind, WeaponKind::Dagger | WeaponKind::Fist) {
-                    return Err(format!(
-                        "weapon `{}` cannot equip to off_hand; only dagger/fist are allowed",
-                        item.template_id
-                    ));
-                }
-                if inventory.equipped.contains_key(EQUIP_SLOT_TWO_HAND) && !from_two_hand {
-                    return Err("cannot equip off_hand while two_hand slot is occupied".to_string());
-                }
-                Ok(())
+    // 手槽 = held-only；身体槽 = worn-only（决议 #6 / #12）。
+    match (is_hand_slot, state) {
+        (true, EquipStateV1::Worn) => {
+            return Err(format!(
+                "手槽 {slot_key} 只能持械（held），不能穿戴（worn）"
+            ));
+        }
+        (false, EquipStateV1::Held) => {
+            return Err(format!(
+                "身体槽 {slot_key} 只能穿戴（worn），不能持械（held）"
+            ));
+        }
+        _ => {}
+    }
+
+    match slot {
+        EquipSlotV1::MainHand
+        | EquipSlotV1::OffHand
+        | EquipSlotV1::ExtraHand0
+        | EquipSlotV1::ExtraHand1 => {
+            // 类型校验：武器 / 工具 / 锄头。off_hand 另接受 Treasure / Shield。
+            let is_weapon = template.weapon_spec.is_some();
+            let is_tool = matches!(template.category, ItemCategory::Tool)
+                || crate::lingtian::hoe::HoeKind::from_item_id(&item.template_id).is_some();
+            let off_hand_extra = matches!(slot, EquipSlotV1::OffHand)
+                && matches!(
+                    template.category,
+                    ItemCategory::Treasure | ItemCategory::Shield
+                );
+            if !is_weapon && !is_tool && !off_hand_extra {
+                return Err(format!(
+                    "item `{}` cannot equip to {slot_key}; expected weapon, tool, or hoe",
+                    item.template_id
+                ));
             }
-            EquipSlotV1::TwoHand => {
-                let spec = template.weapon_spec.as_ref().ok_or_else(|| {
-                    format!(
-                        "item `{}` cannot equip to two_hand; expected spear/staff weapon",
-                        item.template_id
-                    )
-                })?;
-                if !matches!(spec.weapon_kind, WeaponKind::Spear | WeaponKind::Staff) {
-                    return Err(format!(
-                        "weapon `{}` cannot equip to two_hand; only spear/staff are allowed",
-                        item.template_id
-                    ));
+            // off_hand 武器仅 dagger/fist。
+            if matches!(slot, EquipSlotV1::OffHand) && is_weapon {
+                if let Some(spec) = template.weapon_spec.as_ref() {
+                    if !matches!(spec.weapon_kind, WeaponKind::Dagger | WeaponKind::Fist) {
+                        return Err(format!(
+                            "weapon `{}` cannot equip to off_hand; only dagger/fist are allowed",
+                            item.template_id
+                        ));
+                    }
                 }
-                if inventory.equipped.contains_key(EQUIP_SLOT_MAIN_HAND) && !from_two_hand {
-                    return Err(
-                        "cannot equip two_hand while main_hand slot is occupied".to_string()
-                    );
-                }
-                if inventory.equipped.contains_key(EQUIP_SLOT_OFF_HAND) && !from_two_hand {
-                    return Err("cannot equip two_hand while off_hand slot is occupied".to_string());
-                }
-                Ok(())
             }
-            EquipSlotV1::TreasureBelt0
-            | EquipSlotV1::TreasureBelt1
-            | EquipSlotV1::TreasureBelt2
-            | EquipSlotV1::TreasureBelt3 => {
-                if !matches!(template.category, ItemCategory::Treasure) {
-                    return Err(format!(
-                        "item `{}` cannot equip to {}; expected treasure",
-                        item.template_id,
-                        equip_slot_key(slot)
-                    ));
-                }
-                Ok(())
+
+            // held 互斥（决议 #3）：手槽已持械 → 拒绝（从同槽原位移回除外）。
+            if !from_same_slot
+                && inventory
+                    .equipped
+                    .get(slot_key)
+                    .is_some_and(|c| c.held.is_some())
+            {
+                return Err(format!("该手 {slot_key} 已持械，请先卸下"));
             }
-            EquipSlotV1::FalseSkin => {
-                if crate::combat::tuike::false_skin_kind_for_item(&item.template_id).is_none() {
-                    return Err(format!(
-                        "item `{}` cannot equip to false_skin; expected tuike false skin",
-                        item.template_id
-                    ));
+
+            // 双手武器锁对侧手（决议 #7）：main↔off 互锁，extra_hand 独立不锁。
+            if let Some(spec) = template.weapon_spec.as_ref() {
+                if weapon_two_handed(spec.weapon_kind) {
+                    let opposite = match slot {
+                        EquipSlotV1::MainHand => Some(EQUIP_SLOT_OFF_HAND),
+                        EquipSlotV1::OffHand => Some(EQUIP_SLOT_MAIN_HAND),
+                        _ => None,
+                    };
+                    if let Some(opp) = opposite {
+                        if inventory
+                            .equipped
+                            .get(opp)
+                            .is_some_and(|c| c.held.is_some())
+                        {
+                            return Err("双手兵器占用双手，对侧已被占用，请先卸下".to_string());
+                        }
+                    }
                 }
-                Ok(())
             }
-            EquipSlotV1::Head | EquipSlotV1::Chest | EquipSlotV1::Legs | EquipSlotV1::Feet => {
-                if !matches!(template.category, ItemCategory::Armor) {
-                    return Err(format!(
-                        "item `{}` cannot equip to {}; expected armor",
-                        item.template_id,
-                        equip_slot_key(slot)
-                    ));
+            // 对侧手已是双手武器 → 本手被锁，拒绝拖入。
+            let opposite_holder = match slot {
+                EquipSlotV1::MainHand => Some(EQUIP_SLOT_OFF_HAND),
+                EquipSlotV1::OffHand => Some(EQUIP_SLOT_MAIN_HAND),
+                _ => None,
+            };
+            if let Some(opp) = opposite_holder {
+                let opp_two_handed = inventory
+                    .equipped
+                    .get(opp)
+                    .and_then(|c| c.held.as_ref())
+                    .and_then(|held| registry.get(&held.template_id))
+                    .and_then(|t| t.weapon_spec.as_ref())
+                    .is_some_and(|spec| weapon_two_handed(spec.weapon_kind));
+                if opp_two_handed {
+                    return Err("双手兵器占用双手，对侧已锁定".to_string());
                 }
+            }
+            Ok(())
+        }
+        EquipSlotV1::Head | EquipSlotV1::Chest | EquipSlotV1::Legs | EquipSlotV1::Feet => {
+            // 身体槽 worn 层：盔甲 / 伪皮 / 背包件（决议 #16 / #17）。
+            let is_armor = matches!(template.category, ItemCategory::Armor);
+            let is_false_skin =
+                crate::combat::tuike::false_skin_kind_for_item(&item.template_id).is_some();
+            let is_container = template.container_spec.is_some();
+            if !is_armor && !is_false_skin && !is_container {
+                return Err(format!(
+                    "item `{}` cannot equip to {slot_key}; expected armor / false skin / container",
+                    item.template_id
+                ));
+            }
+
+            if is_armor {
                 if item.durability <= 0.0 {
                     return Err(format!(
-                        "armor `{}` cannot equip to {}; durability is 0",
-                        item.template_id,
-                        equip_slot_key(slot)
+                        "armor `{}` cannot equip to {slot_key}; durability is 0",
+                        item.template_id
                     ));
                 }
-                // TODO(plan-forge-v1): route forged/non-mundane armor through a shared armor
-                // template directory before adding non-`armor_<material>_<slot>` ids.
                 let expected_slot = crate::armor::mundane::equip_slot_for_item_id(
                     &item.template_id,
                 )
                 .ok_or_else(|| {
                     format!(
-                        "armor `{}` cannot equip to {}; unknown armor slot",
-                        item.template_id,
-                        equip_slot_key(slot)
+                        "armor `{}` cannot equip to {slot_key}; unknown armor slot",
+                        item.template_id
                     )
                 })?;
                 if expected_slot != *slot {
                     return Err(format!(
-                        "armor `{}` cannot equip to {}; expected {}",
+                        "armor `{}` cannot equip to {slot_key}; expected {}",
                         item.template_id,
-                        equip_slot_key(slot),
                         equip_slot_key(&expected_slot)
                     ));
                 }
-                Ok(())
             }
-            // plan-dandao-path-v1 §8.1 #2 — 多臂额外手槽：与 MainHand 相同校验。
-            EquipSlotV1::ExtraHand0 | EquipSlotV1::ExtraHand1 => {
-                if template.weapon_spec.is_none()
-                    && !matches!(template.category, ItemCategory::Tool)
-                    && crate::lingtian::hoe::HoeKind::from_item_id(&item.template_id).is_none()
-                {
-                    return Err(format!(
-                        "item `{}` cannot equip to {}; expected weapon, tool, or hoe",
-                        item.template_id,
-                        equip_slot_key(slot)
-                    ));
+
+            // 背包件：ContainerSpec.equip_slot 必须指向当前身体槽（决议 #17）。
+            if is_container && !is_armor && !is_false_skin {
+                if let Some(spec) = template.container_spec.as_ref() {
+                    if spec.equip_slot != slot_key {
+                        return Err(format!(
+                            "item `{}` has container.equip_slot `{}`; cannot equip to {slot_key}",
+                            item.template_id, spec.equip_slot,
+                        ));
+                    }
                 }
-                Ok(())
             }
-            // plan-backpack-equip-v1 P0 — 背包类装备槽校验（装备方向）。
-            EquipSlotV1::BackPack | EquipSlotV1::WaistPouch | EquipSlotV1::ChestSatchel => {
-                let target_slot_key = equip_slot_key(slot);
 
-                // 物品必须有 container_spec。
-                let spec = template.container_spec.as_ref().ok_or_else(|| {
-                    format!(
-                        "item `{}` cannot equip to {target_slot_key}; expected container item with container_spec",
-                        item.template_id,
-                    )
-                })?;
-
-                // equip_slot 必须与当前目标槽匹配。
-                if spec.equip_slot != target_slot_key {
-                    return Err(format!(
-                        "item `{}` has container.equip_slot `{}`; cannot equip to {target_slot_key}",
-                        item.template_id,
-                        spec.equip_slot,
-                    ));
+            // worn cap（决议 #3 / #12 / #17）：满则拒绝（从同槽原位移回除外）。
+            if !from_same_slot {
+                let cap = worn_cap(slot_key);
+                let cur = inventory
+                    .equipped
+                    .get(slot_key)
+                    .map(|c| c.worn.len())
+                    .unwrap_or(0);
+                if cur as u8 >= cap {
+                    return Err(format!("该部位 {slot_key} 已穿戴 {cap} 层，无法再叠加"));
                 }
-
-                Ok(())
             }
-        },
-        _ => Ok(()),
+            Ok(())
+        }
     }
 }
 
@@ -4371,13 +4639,22 @@ fn location_holds_instance(
                     && u64::from(p.col) == *col
             })
         }
-        InventoryLocationV1::Equip { slot } => {
+        InventoryLocationV1::Equip { slot, state } => {
+            use crate::schema::inventory::EquipStateV1;
             let key = equip_slot_key(slot);
-            inventory
-                .equipped
-                .get(key)
-                .map(|item| item.instance_id == instance_id)
-                .unwrap_or(false)
+            let Some(contents) = inventory.equipped.get(key) else {
+                return false;
+            };
+            match state {
+                EquipStateV1::Worn => contents
+                    .worn
+                    .iter()
+                    .any(|item| item.instance_id == instance_id),
+                EquipStateV1::Held => contents
+                    .held
+                    .as_ref()
+                    .is_some_and(|item| item.instance_id == instance_id),
+            }
         }
         InventoryLocationV1::Hotbar { index } => {
             let idx = *index as usize;
@@ -4402,8 +4679,8 @@ fn clone_item_at(inventory: &PlayerInventory, instance_id: u64) -> Option<ItemIn
             return Some(p.instance.clone());
         }
     }
-    for item in inventory.equipped.values() {
-        if item.instance_id == instance_id {
+    for slot in inventory.equipped.values() {
+        if let Some(item) = slot.iter_all().find(|item| item.instance_id == instance_id) {
             return Some(item.clone());
         }
     }
@@ -4428,8 +4705,11 @@ pub(crate) fn inventory_item_by_instance_mut(
             return Some(&mut placed.instance);
         }
     }
-    for item in inventory.equipped.values_mut() {
-        if item.instance_id == instance_id {
+    for slot in inventory.equipped.values_mut() {
+        if let Some(item) = slot
+            .iter_all_mut()
+            .find(|item| item.instance_id == instance_id)
+        {
             return Some(item);
         }
     }
@@ -4460,11 +4740,15 @@ pub(crate) fn inventory_location_by_instance(
         }
     }
 
-    for (slot, item) in &inventory.equipped {
-        if item.instance_id == instance_id {
-            return equip_slot_v1_for_runtime_key(slot)
-                .map(|slot| InventoryLocationV1::Equip { slot });
-        }
+    // plan-layered-equip-v1 P0.3（gap#5 / #26）— 在 worn/held 定位 instance 推导 state。
+    if let Some(loc) = find_equipped_instance(inventory, instance_id) {
+        use crate::schema::inventory::EquipStateV1;
+        let (slot_key, state) = match loc {
+            EquippedInstanceLoc::Worn { slot, .. } => (slot, EquipStateV1::Worn),
+            EquippedInstanceLoc::Held { slot } => (slot, EquipStateV1::Held),
+        };
+        return equip_slot_v1_for_runtime_key(&slot_key)
+            .map(|slot| InventoryLocationV1::Equip { slot, state });
     }
 
     inventory
@@ -4501,15 +4785,24 @@ pub(crate) fn inventory_instance_container_attrition_exempt(
         .is_some_and(|location| inventory_location_attrition_exempt(inventory, registry, location))
 }
 
+/// plan-layered-equip-v1 P0.2（决议 #20）— 容器 id → 穿戴背包件 instance → attrition_exempt。
+///
+/// 封灵背包搬运跳过 qi 磨损：容器 id（`pack_<instance_id>`）反解出背包件，读其
+/// `container_spec.attrition_exempt`。body_pocket / 未知容器恒 false。
 fn container_attrition_exempt(
     inventory: &PlayerInventory,
     registry: &ItemRegistry,
     container_id: &str,
 ) -> bool {
-    let Some(slot) = container_id_to_equip_slot(container_id) else {
+    let Some(instance_id) = worn_pack_instance_from_container_id(container_id) else {
         return false;
     };
-    let Some(container_item) = inventory.equipped.get(slot) else {
+    let Some(container_item) = inventory
+        .equipped
+        .values()
+        .flat_map(|slot| slot.worn.iter())
+        .find(|item| item.instance_id == instance_id)
+    else {
         return false;
     };
     registry
@@ -4526,28 +4819,36 @@ fn equip_slot_v1_for_runtime_key(slot: &str) -> Option<crate::schema::inventory:
         EQUIP_SLOT_CHEST => Some(EquipSlotV1::Chest),
         EQUIP_SLOT_LEGS => Some(EquipSlotV1::Legs),
         EQUIP_SLOT_FEET => Some(EquipSlotV1::Feet),
-        EQUIP_SLOT_FALSE_SKIN => Some(EquipSlotV1::FalseSkin),
         EQUIP_SLOT_MAIN_HAND => Some(EquipSlotV1::MainHand),
         EQUIP_SLOT_OFF_HAND => Some(EquipSlotV1::OffHand),
-        EQUIP_SLOT_TWO_HAND => Some(EquipSlotV1::TwoHand),
-        EQUIP_SLOT_TREASURE_BELT_0 => Some(EquipSlotV1::TreasureBelt0),
-        EQUIP_SLOT_TREASURE_BELT_1 => Some(EquipSlotV1::TreasureBelt1),
-        EQUIP_SLOT_TREASURE_BELT_2 => Some(EquipSlotV1::TreasureBelt2),
-        EQUIP_SLOT_TREASURE_BELT_3 => Some(EquipSlotV1::TreasureBelt3),
-        EQUIP_SLOT_BACK_PACK => Some(EquipSlotV1::BackPack),
-        EQUIP_SLOT_WAIST_POUCH => Some(EquipSlotV1::WaistPouch),
-        EQUIP_SLOT_CHEST_SATCHEL => Some(EquipSlotV1::ChestSatchel),
+        EQUIP_SLOT_EXTRA_HAND_0 => Some(EquipSlotV1::ExtraHand0),
+        EQUIP_SLOT_EXTRA_HAND_1 => Some(EquipSlotV1::ExtraHand1),
         _ => None,
     }
 }
 
+/// plan-layered-equip-v1 P0.2 / §11.1 #12 — 从 equipped 精确移除单件（worn 栈顶 / held），
+/// 不整槽删（保留同槽其余 worn 下层 / held）。worn 件即使非栈顶也按 instance 移除——
+/// 调用方（move/unequip 路径）已用 `find_equipped_instance` 做 LIFO 栈顶校验。
 fn detach_instance(inventory: &mut PlayerInventory, instance_id: u64) {
     for c in &mut inventory.containers {
         c.items.retain(|p| p.instance.instance_id != instance_id);
     }
+    for contents in inventory.equipped.values_mut() {
+        contents.worn.retain(|item| item.instance_id != instance_id);
+        if contents
+            .held
+            .as_ref()
+            .is_some_and(|item| item.instance_id == instance_id)
+        {
+            contents.held = None;
+        }
+    }
+    // plan-layered-equip-v1 P0.2 — 移出后槽全空则移除空 SlotContents（unequip/move 路径，
+    // 使 contains_key 反映槽空）；死亡掉落走独立 iter_mut 路径不经此，保留空槽语义。
     inventory
         .equipped
-        .retain(|_, item| item.instance_id != instance_id);
+        .retain(|_, contents| !contents.is_empty());
     for slot in inventory.hotbar.iter_mut() {
         if let Some(item) = slot {
             if item.instance_id == instance_id {
@@ -4562,7 +4863,7 @@ fn attach_at_location(
     item: ItemInstance,
     location: &crate::schema::inventory::InventoryLocationV1,
 ) -> Result<(), String> {
-    use crate::schema::inventory::InventoryLocationV1;
+    use crate::schema::inventory::{EquipStateV1, InventoryLocationV1};
     match location {
         InventoryLocationV1::Container {
             container_id,
@@ -4584,9 +4885,14 @@ fn attach_at_location(
             });
             Ok(())
         }
-        InventoryLocationV1::Equip { slot } => {
+        InventoryLocationV1::Equip { slot, state } => {
+            // plan-layered-equip-v1 P0.2（决议 #2 / #12）— 按 state 写 worn 栈尾（push）或 held。
             let key = equip_slot_key(slot).to_string();
-            inventory.equipped.insert(key, item);
+            let contents = inventory.equipped.entry(key).or_default();
+            match state {
+                EquipStateV1::Worn => contents.worn.push(item),
+                EquipStateV1::Held => contents.held = Some(item),
+            }
             Ok(())
         }
         InventoryLocationV1::Hotbar { index } => {
@@ -4665,22 +4971,14 @@ fn equip_slot_key(slot: &crate::schema::inventory::EquipSlotV1) -> &'static str 
         EquipSlotV1::Chest => EQUIP_SLOT_CHEST,
         EquipSlotV1::Legs => EQUIP_SLOT_LEGS,
         EquipSlotV1::Feet => EQUIP_SLOT_FEET,
-        EquipSlotV1::FalseSkin => EQUIP_SLOT_FALSE_SKIN,
         EquipSlotV1::MainHand => EQUIP_SLOT_MAIN_HAND,
         EquipSlotV1::OffHand => EQUIP_SLOT_OFF_HAND,
-        EquipSlotV1::TwoHand => EQUIP_SLOT_TWO_HAND,
-        EquipSlotV1::TreasureBelt0 => EQUIP_SLOT_TREASURE_BELT_0,
-        EquipSlotV1::TreasureBelt1 => EQUIP_SLOT_TREASURE_BELT_1,
-        EquipSlotV1::TreasureBelt2 => EQUIP_SLOT_TREASURE_BELT_2,
-        EquipSlotV1::TreasureBelt3 => EQUIP_SLOT_TREASURE_BELT_3,
-        EquipSlotV1::BackPack => EQUIP_SLOT_BACK_PACK,
-        EquipSlotV1::WaistPouch => EQUIP_SLOT_WAIST_POUCH,
-        EquipSlotV1::ChestSatchel => EQUIP_SLOT_CHEST_SATCHEL,
         EquipSlotV1::ExtraHand0 => EQUIP_SLOT_EXTRA_HAND_0,
         EquipSlotV1::ExtraHand1 => EQUIP_SLOT_EXTRA_HAND_1,
     }
 }
 
+#[allow(dead_code)]
 fn equip_slot_wire_from_runtime(slot: &str) -> crate::schema::inventory::EquipSlotV1 {
     use crate::schema::inventory::EquipSlotV1;
 
@@ -4689,10 +4987,10 @@ fn equip_slot_wire_from_runtime(slot: &str) -> crate::schema::inventory::EquipSl
         EQUIP_SLOT_CHEST => EquipSlotV1::Chest,
         EQUIP_SLOT_LEGS => EquipSlotV1::Legs,
         EQUIP_SLOT_FEET => EquipSlotV1::Feet,
-        EQUIP_SLOT_FALSE_SKIN => EquipSlotV1::FalseSkin,
         EQUIP_SLOT_MAIN_HAND => EquipSlotV1::MainHand,
         EQUIP_SLOT_OFF_HAND => EquipSlotV1::OffHand,
-        EQUIP_SLOT_TWO_HAND => EquipSlotV1::TwoHand,
+        EQUIP_SLOT_EXTRA_HAND_0 => EquipSlotV1::ExtraHand0,
+        EQUIP_SLOT_EXTRA_HAND_1 => EquipSlotV1::ExtraHand1,
         _ => EquipSlotV1::MainHand,
     }
 }
@@ -4817,30 +5115,26 @@ fn ensure_required_containers_present(
 }
 
 fn validate_container_id(id: &str, source_path: &Path) -> Result<(), String> {
-    // plan-backpack-equip-v1 P2 — 新增装备容器 id；旧 id 保留以兼容遗留 loadout。
-    let is_allowed = [
-        BODY_POCKET_CONTAINER_ID,
-        EQUIP_SLOT_BACK_PACK,
-        EQUIP_SLOT_WAIST_POUCH,
-        EQUIP_SLOT_CHEST_SATCHEL,
-        // 旧 id（历史兼容）
-        MAIN_PACK_CONTAINER_ID,
-        SMALL_POUCH_CONTAINER_ID,
-        FRONT_SATCHEL_CONTAINER_ID,
-    ]
-    .contains(&id);
+    // plan-layered-equip-v1 P0.6（决议 #17）— 容器 id：body_pocket（固定）、`pack_*`（穿戴背包件派生）、
+    // 旧 id（历史兼容）。背包专属槽 id（back_pack/waist_pouch/chest_satchel）取消。
+    let is_allowed = id == BODY_POCKET_CONTAINER_ID
+        || id == LOADOUT_PACK_PLACEHOLDER_CONTAINER_ID
+        || worn_pack_instance_from_container_id(id).is_some()
+        || [
+            MAIN_PACK_CONTAINER_ID,
+            SMALL_POUCH_CONTAINER_ID,
+            FRONT_SATCHEL_CONTAINER_ID,
+        ]
+        .contains(&id);
 
     if is_allowed {
         Ok(())
     } else {
         Err(format!(
             "{} has unsupported container id `{id}`; expected one of \
-            [{}, {}, {}, {}, {}, {}, {}]",
+            [{}, pack_<instance_id>, {}, {}, {}]",
             source_path.display(),
             BODY_POCKET_CONTAINER_ID,
-            EQUIP_SLOT_BACK_PACK,
-            EQUIP_SLOT_WAIST_POUCH,
-            EQUIP_SLOT_CHEST_SATCHEL,
             MAIN_PACK_CONTAINER_ID,
             SMALL_POUCH_CONTAINER_ID,
             FRONT_SATCHEL_CONTAINER_ID,
@@ -4849,22 +5143,14 @@ fn validate_container_id(id: &str, source_path: &Path) -> Result<(), String> {
 }
 
 fn validate_equip_slot(slot: &str, source_path: &Path) -> Result<(), String> {
+    // plan-layered-equip-v1 P0.1（决议 #17）— 仅余身体槽 + 手槽。
     let is_allowed = [
         EQUIP_SLOT_HEAD,
         EQUIP_SLOT_CHEST,
         EQUIP_SLOT_LEGS,
         EQUIP_SLOT_FEET,
-        EQUIP_SLOT_FALSE_SKIN,
         EQUIP_SLOT_MAIN_HAND,
         EQUIP_SLOT_OFF_HAND,
-        EQUIP_SLOT_TWO_HAND,
-        EQUIP_SLOT_TREASURE_BELT_0,
-        EQUIP_SLOT_TREASURE_BELT_1,
-        EQUIP_SLOT_TREASURE_BELT_2,
-        EQUIP_SLOT_TREASURE_BELT_3,
-        EQUIP_SLOT_BACK_PACK,
-        EQUIP_SLOT_WAIST_POUCH,
-        EQUIP_SLOT_CHEST_SATCHEL,
         EQUIP_SLOT_EXTRA_HAND_0,
         EQUIP_SLOT_EXTRA_HAND_1,
     ]
@@ -4874,23 +5160,14 @@ fn validate_equip_slot(slot: &str, source_path: &Path) -> Result<(), String> {
         Ok(())
     } else {
         Err(format!(
-            "{} has unsupported equip slot `{slot}`; expected one of [{}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}]",
+            "{} has unsupported equip slot `{slot}`; expected one of [{}, {}, {}, {}, {}, {}, {}, {}]",
             source_path.display(),
             EQUIP_SLOT_HEAD,
             EQUIP_SLOT_CHEST,
             EQUIP_SLOT_LEGS,
             EQUIP_SLOT_FEET,
-            EQUIP_SLOT_FALSE_SKIN,
             EQUIP_SLOT_MAIN_HAND,
             EQUIP_SLOT_OFF_HAND,
-            EQUIP_SLOT_TWO_HAND,
-            EQUIP_SLOT_TREASURE_BELT_0,
-            EQUIP_SLOT_TREASURE_BELT_1,
-            EQUIP_SLOT_TREASURE_BELT_2,
-            EQUIP_SLOT_TREASURE_BELT_3,
-            EQUIP_SLOT_BACK_PACK,
-            EQUIP_SLOT_WAIST_POUCH,
-            EQUIP_SLOT_CHEST_SATCHEL,
             EQUIP_SLOT_EXTRA_HAND_0,
             EQUIP_SLOT_EXTRA_HAND_1
         ))
@@ -5257,8 +5534,10 @@ mod tests {
             }],
         });
         inv.hotbar[0] = Some(make_test_item_instance(3, "hotbar_item"));
-        inv.equipped
-            .insert("weapon".to_string(), make_test_item_instance(4, "sword"));
+        inv.equipped.insert(
+            EQUIP_SLOT_MAIN_HAND.to_string(),
+            SlotContents::held_single(make_test_item_instance(4, "sword")),
+        );
         inv
     }
 
@@ -6038,6 +6317,7 @@ max_stack_count = 0
                 loadout
                     .equipped
                     .values()
+                    .flat_map(|s| s.iter_all())
                     .map(|item| item.template_id.as_str()),
             )
             .chain(
@@ -6122,8 +6402,9 @@ cols = 4
         let loadout = load_default_loadout(&registry).expect("default loadout should load");
         let mut allocator = InventoryInstanceIdAllocator::new(1);
 
-        let player_inventory = instantiate_inventory_from_loadout(&loadout, &mut allocator)
-            .expect("inventory should instantiate from loadout");
+        let player_inventory =
+            instantiate_inventory_from_loadout(&loadout, &mut allocator, &registry)
+                .expect("inventory should instantiate from loadout");
 
         assert_eq!(player_inventory.revision, InventoryRevision(1));
         assert_eq!(player_inventory.bone_coins, loadout.bone_coins);
@@ -6138,7 +6419,12 @@ cols = 4
             .containers
             .iter()
             .flat_map(|container| container.items.iter().map(|entry| &entry.instance))
-            .chain(player_inventory.equipped.values())
+            .chain(
+                player_inventory
+                    .equipped
+                    .values()
+                    .flat_map(|s| s.iter_all()),
+            )
             .chain(player_inventory.hotbar.iter().flatten())
         {
             assert!(item.instance_id <= JS_SAFE_INTEGER_MAX);
@@ -6452,7 +6738,7 @@ cols = 4
         let registry = load_item_registry().expect("item registry should load");
         let loadout = load_default_loadout(&registry).expect("default loadout should load");
         let mut allocator = InventoryInstanceIdAllocator::new(1);
-        let mut inventory = instantiate_inventory_from_loadout(&loadout, &mut allocator)
+        let mut inventory = instantiate_inventory_from_loadout(&loadout, &mut allocator, &registry)
             .expect("inventory should instantiate from loadout");
 
         let baseline_revision = inventory.revision;
@@ -7078,6 +7364,7 @@ cols = 4
             },
             &InventoryLocationV1::Equip {
                 slot: EquipSlotV1::MainHand,
+                state: crate::schema::inventory::EquipStateV1::Held,
             },
         )
         .expect("weapon should equip to main_hand");
@@ -7091,6 +7378,7 @@ cols = 4
         assert_eq!(
             inv.equipped
                 .get(EQUIP_SLOT_MAIN_HAND)
+                .and_then(|s| s.held.as_ref())
                 .map(|item| item.template_id.as_str()),
             Some("iron_sword")
         );
@@ -7116,6 +7404,7 @@ cols = 4
             },
             &InventoryLocationV1::Equip {
                 slot: EquipSlotV1::MainHand,
+                state: crate::schema::inventory::EquipStateV1::Held,
             },
         )
         .expect("tool should equip to main_hand");
@@ -7129,6 +7418,7 @@ cols = 4
         assert_eq!(
             inv.equipped
                 .get(EQUIP_SLOT_MAIN_HAND)
+                .and_then(|s| s.held.as_ref())
                 .map(|item| item.template_id.as_str()),
             Some("dun_qi_jia")
         );
@@ -7156,6 +7446,7 @@ cols = 4
             },
             &InventoryLocationV1::Equip {
                 slot: EquipSlotV1::OffHand,
+                state: crate::schema::inventory::EquipStateV1::Held,
             },
         )
         .expect("tool should equip to off_hand");
@@ -7169,6 +7460,7 @@ cols = 4
         assert_eq!(
             inv.equipped
                 .get(EQUIP_SLOT_OFF_HAND)
+                .and_then(|s| s.held.as_ref())
                 .map(|item| item.template_id.as_str()),
             Some("stone_pickaxe")
         );
@@ -7194,6 +7486,7 @@ cols = 4
             },
             &InventoryLocationV1::Equip {
                 slot: EquipSlotV1::MainHand,
+                state: crate::schema::inventory::EquipStateV1::Held,
             },
         )
         .expect_err("block items must not equip to main_hand");
@@ -7255,6 +7548,7 @@ cols = 4
             },
             &InventoryLocationV1::Equip {
                 slot: EquipSlotV1::Chest,
+                state: crate::schema::inventory::EquipStateV1::Worn,
             },
         )
         .expect("chestplate should equip to chest");
@@ -7268,6 +7562,7 @@ cols = 4
         assert_eq!(
             inv.equipped
                 .get(EQUIP_SLOT_CHEST)
+                .and_then(|s| s.worn.first())
                 .map(|item| item.template_id.as_str()),
             Some("armor_bone_chestplate")
         );
@@ -7293,6 +7588,7 @@ cols = 4
             },
             &InventoryLocationV1::Equip {
                 slot: EquipSlotV1::Head,
+                state: crate::schema::inventory::EquipStateV1::Worn,
             },
         )
         .expect_err("chestplate should not equip to head");
@@ -7321,6 +7617,7 @@ cols = 4
             },
             &InventoryLocationV1::Equip {
                 slot: EquipSlotV1::Chest,
+                state: crate::schema::inventory::EquipStateV1::Worn,
             },
         )
         .expect_err("broken armor should be rejected");
@@ -7328,17 +7625,23 @@ cols = 4
         assert!(error.contains("durability is 0"));
     }
 
+    // plan-layered-equip-v1 P0.2（决议 #7）— 两手兵器锁对侧手：staff 在 main_hand held →
+    // off_hand 被锁，任何件拖入 off_hand 被拒（two_hand 槽已删，改测对侧锁）。
     #[test]
-    fn apply_move_rejects_tool_to_main_hand_when_two_hand_occupied() {
+    fn apply_move_rejects_off_hand_when_main_hand_two_handed() {
         use crate::schema::inventory::{EquipSlotV1, InventoryLocationV1};
 
         let registry = load_item_registry().expect("item registry should load");
         let mut inv = make_test_inventory_with_one_item();
-        inv.containers[0].items[0].instance.template_id = "dun_qi_jia".to_string();
-        inv.containers[0].items[0].instance.display_name = "钝气夹".to_string();
+        // off_hand 能接受 dagger；这里用 bone_dagger 验证它依然被对侧锁挡住。
+        inv.containers[0].items[0].instance.template_id = "bone_dagger".to_string();
+        inv.containers[0].items[0].instance.display_name = "骨刀".to_string();
+        inv.containers[0].items[0].instance.grid_w = 1;
+        inv.containers[0].items[0].instance.grid_h = 1;
+        // 在 main_hand 持双手杖（staff 派生 two-handed），锁住 off_hand。
         inv.equipped.insert(
-            EQUIP_SLOT_TWO_HAND.to_string(),
-            ItemInstance {
+            EQUIP_SLOT_MAIN_HAND.to_string(),
+            SlotContents::held_single(ItemInstance {
                 instance_id: 77,
                 template_id: "wooden_staff".to_string(),
                 display_name: "木杖".to_string(),
@@ -7359,7 +7662,7 @@ cols = 4
                 forge_achieved_tier: None,
                 alchemy: None,
                 lingering_owner_qi: None,
-            },
+            }),
         );
 
         let error = apply_inventory_move(
@@ -7372,12 +7675,16 @@ cols = 4
                 col: 0,
             },
             &InventoryLocationV1::Equip {
-                slot: EquipSlotV1::MainHand,
+                slot: EquipSlotV1::OffHand,
+                state: crate::schema::inventory::EquipStateV1::Held,
             },
         )
-        .expect_err("tool should conflict with occupied two_hand");
+        .expect_err("off_hand should be locked by two-handed weapon in main_hand");
 
-        assert!(error.contains("two_hand slot is occupied"));
+        assert!(
+            error.contains("双手兵器占用双手，对侧已锁定"),
+            "期望对侧锁定拒绝，实际：{error}"
+        );
     }
 
     #[test]
@@ -7513,6 +7820,7 @@ cols = 4
             },
             &InventoryLocationV1::Equip {
                 slot: EquipSlotV1::OffHand,
+                state: crate::schema::inventory::EquipStateV1::Held,
             },
         )
         .expect_err("sword should be rejected from off_hand");
@@ -7520,8 +7828,9 @@ cols = 4
         assert!(error.contains("only dagger/fist are allowed"));
     }
 
-    // plan-shield-block-v1 P0 MAJOR #2 — off_hand 路径 a：无 weapon_spec 的非武器物品（armor）
-    // 装 off_hand 被拒，错误消息含 "expected dagger/fist weapon or treasure"。
+    // plan-shield-block-v1 P0 MAJOR #2 — off_hand：无 weapon_spec 的非武器物品（armor）装 off_hand
+    // 被拒。plan-layered-equip-v1 统一手槽校验器后，错误消息为「expected weapon, tool, or hoe」
+    // （off_hand 仅额外放行 Treasure/Shield，Armor 不在其列），行为（拒绝）不变。
     #[test]
     fn apply_move_rejects_non_weapon_armor_to_off_hand() {
         use crate::schema::inventory::{EquipSlotV1, InventoryLocationV1};
@@ -7545,35 +7854,41 @@ cols = 4
             },
             &InventoryLocationV1::Equip {
                 slot: EquipSlotV1::OffHand,
+                state: crate::schema::inventory::EquipStateV1::Held,
             },
         )
-        .expect_err("armor should be rejected from off_hand (path a: no weapon_spec)");
+        .expect_err("armor should be rejected from off_hand (no weapon_spec, not treasure/shield)");
 
         assert!(
-            error.contains("expected dagger/fist weapon or treasure"),
-            "期望错误消息含 'expected dagger/fist weapon or treasure'（off_hand 路径 a，\
-             无 weapon_spec 非武器物品），实际消息：{error}"
+            error.contains("expected weapon, tool, or hoe"),
+            "期望错误消息含 'expected weapon, tool, or hoe'（统一手槽校验器拒绝非武器/工具/锄头，\
+             Armor 不在 off_hand 额外放行的 Treasure/Shield 之列），实际消息：{error}"
         );
     }
 
+    // plan-layered-equip-v1 P0.2（决议 #7）— 两手兵器装入一手时，对侧手已被占用 → 拒绝
+    // （two_hand 槽已删，两手兵器入 main/off held 即锁对侧）。双手杖须装 main_hand
+    // （off_hand 仅收 dagger/fist，杖会先撞 dagger/fist 限制，无法触达双手锁分支）。
     #[test]
-    fn apply_move_rejects_two_hand_when_main_hand_occupied() {
+    fn apply_move_rejects_two_handed_weapon_when_opposite_hand_occupied() {
         use crate::schema::inventory::{EquipSlotV1, InventoryLocationV1};
 
         let registry = load_item_registry().expect("item registry should load");
         let mut inv = make_test_inventory_with_one_item();
+        // 待装的双手杖（staff 派生 two-handed），目标 main_hand held。
         inv.containers[0].items[0].instance.template_id = "wooden_staff".to_string();
         inv.containers[0].items[0].instance.display_name = "木杖".to_string();
         inv.containers[0].items[0].instance.grid_h = 3;
+        // off_hand 已持 dagger → 双手杖入 main_hand 时对侧（off_hand）被占用，应拒。
         inv.equipped.insert(
-            EQUIP_SLOT_MAIN_HAND.to_string(),
-            ItemInstance {
+            EQUIP_SLOT_OFF_HAND.to_string(),
+            SlotContents::held_single(ItemInstance {
                 instance_id: 77,
-                template_id: "iron_sword".to_string(),
-                display_name: "铁剑".to_string(),
+                template_id: "bone_dagger".to_string(),
+                display_name: "骨刀".to_string(),
                 grid_w: 1,
-                grid_h: 2,
-                weight: 1.2,
+                grid_h: 1,
+                weight: 0.5,
                 rarity: ItemRarity::Common,
                 description: String::new(),
                 stack_count: 1,
@@ -7588,7 +7903,7 @@ cols = 4
                 forge_achieved_tier: None,
                 alchemy: None,
                 lingering_owner_qi: None,
-            },
+            }),
         );
 
         let error = apply_inventory_move(
@@ -7601,12 +7916,17 @@ cols = 4
                 col: 0,
             },
             &InventoryLocationV1::Equip {
-                slot: EquipSlotV1::TwoHand,
+                slot: EquipSlotV1::MainHand,
+                state: crate::schema::inventory::EquipStateV1::Held,
             },
         )
-        .expect_err("two_hand should conflict with occupied main_hand");
+        .expect_err("two-handed weapon should conflict with occupied opposite hand");
 
-        assert!(error.contains("main_hand slot is occupied"));
+        // 命中双手兵器对侧锁：对侧 off_hand 已被 dagger 占用。
+        assert!(
+            error.contains("双手兵器占用双手，对侧已被占用"),
+            "期望双手兵器对侧占用拒绝，实际：{error}"
+        );
     }
 
     #[test]
@@ -7614,7 +7934,7 @@ cols = 4
         let mut inv = make_test_inventory_with_one_item();
         inv.equipped.insert(
             EQUIP_SLOT_MAIN_HAND.to_string(),
-            ItemInstance {
+            SlotContents::held_single(ItemInstance {
                 instance_id: 88,
                 template_id: "iron_sword".to_string(),
                 display_name: "铁剑".to_string(),
@@ -7635,14 +7955,21 @@ cols = 4
                 forge_achieved_tier: None,
                 alchemy: None,
                 lingering_owner_qi: None,
-            },
+            }),
         );
 
         let update = set_item_instance_durability(&mut inv, 88, 0.25)
             .expect("durability update should succeed");
 
         assert_eq!(update.revision, InventoryRevision(8));
-        assert_eq!(inv.equipped[EQUIP_SLOT_MAIN_HAND].durability, 0.25);
+        assert_eq!(
+            inv.equipped[EQUIP_SLOT_MAIN_HAND]
+                .held
+                .as_ref()
+                .unwrap()
+                .durability,
+            0.25
+        );
     }
 
     #[test]
@@ -7651,7 +7978,7 @@ cols = 4
         inv.containers[0].items.clear();
         inv.equipped.insert(
             EQUIP_SLOT_MAIN_HAND.to_string(),
-            ItemInstance {
+            SlotContents::held_single(ItemInstance {
                 instance_id: 88,
                 template_id: "iron_sword".to_string(),
                 display_name: "铁剑".to_string(),
@@ -7672,7 +7999,7 @@ cols = 4
                 forge_achieved_tier: None,
                 alchemy: None,
                 lingering_owner_qi: None,
-            },
+            }),
         );
 
         let outcome = move_equipped_item_to_first_container_slot(&mut inv, 88)
@@ -7684,7 +8011,13 @@ cols = 4
                 revision: InventoryRevision(8)
             }
         );
-        assert!(!inv.equipped.contains_key(EQUIP_SLOT_MAIN_HAND));
+        assert!(
+            inv.equipped
+                .get(EQUIP_SLOT_MAIN_HAND)
+                .map(|s| s.is_empty())
+                .unwrap_or(true),
+            "解装后 main_hand 应为空（held=None）"
+        );
         assert_eq!(inv.containers[0].items.len(), 1);
         assert_eq!(inv.containers[0].items[0].instance.instance_id, 88);
     }
@@ -7820,7 +8153,7 @@ cols = 4
         });
         inv.equipped.insert(
             EQUIP_SLOT_MAIN_HAND.to_string(),
-            ItemInstance {
+            SlotContents::held_single(ItemInstance {
                 instance_id: 100,
                 template_id: "rusted_blade".to_string(),
                 display_name: "残破旧铁短刃".to_string(),
@@ -7841,16 +8174,22 @@ cols = 4
                 forge_achieved_tier: None,
                 alchemy: None,
                 lingering_owner_qi: None,
-            },
+            }),
         );
 
         let out = apply_death_drop_to_inventory(&mut inv, &ItemRegistry::default(), 777);
 
         assert_eq!(out.dropped.len(), 2);
         assert_eq!(out.revision, InventoryRevision(8));
+        // 决议 #17/#12：死亡掉落按 instance 精确移除，空 SlotContents 会保留在 map 里，
+        // 故统计实际剩余件须遍历 iter_all（而非 equipped.len 数槽）。
         let remaining_count = inv.containers[0].items.len()
             + inv.hotbar.iter().flatten().count()
-            + inv.equipped.len();
+            + inv
+                .equipped
+                .values()
+                .map(|s| s.iter_all().count())
+                .sum::<usize>();
         assert_eq!(remaining_count, 2);
     }
 
@@ -8300,7 +8639,7 @@ cols = 4
         let mut inv = make_test_inventory_with_one_item();
         inv.equipped.insert(
             EQUIP_SLOT_MAIN_HAND.to_string(),
-            ItemInstance {
+            SlotContents::held_single(ItemInstance {
                 instance_id: 9001,
                 template_id: "iron_sword".to_string(),
                 display_name: "铁剑".to_string(),
@@ -8321,7 +8660,7 @@ cols = 4
                 forge_achieved_tier: None,
                 alchemy: None,
                 lingering_owner_qi: None,
-            },
+            }),
         );
 
         let out = apply_death_drop_to_inventory(&mut inv, &registry, 42);
@@ -8330,6 +8669,7 @@ cols = 4
         assert_eq!(
             inv.equipped
                 .get(EQUIP_SLOT_MAIN_HAND)
+                .and_then(|s| s.held.as_ref())
                 .map(|item| item.instance_id),
             Some(9001)
         );
@@ -8377,7 +8717,7 @@ cols = 4
         let mut inv = make_test_inventory_with_one_item();
         inv.equipped.insert(
             EQUIP_SLOT_MAIN_HAND.to_string(),
-            ItemInstance {
+            SlotContents::held_single(ItemInstance {
                 instance_id: 9002,
                 template_id: "iron_sword".to_string(),
                 display_name: "铁剑".to_string(),
@@ -8398,13 +8738,21 @@ cols = 4
                 forge_achieved_tier: None,
                 alchemy: None,
                 lingering_owner_qi: None,
-            },
+            }),
         );
 
         let out = apply_death_drop_to_inventory(&mut inv, &registry, 42);
 
         assert!(out.dropped.iter().any(|d| d.instance.instance_id == 9002));
-        assert!(!inv.equipped.contains_key(EQUIP_SLOT_MAIN_HAND));
+        // 死亡掉落按 instance 精确移除 held；空 SlotContents 会保留在 map 里，
+        // 故断言 main_hand held 已清空（而非整槽 contains_key）。
+        assert!(
+            inv.equipped
+                .get(EQUIP_SLOT_MAIN_HAND)
+                .map(|s| s.is_empty())
+                .unwrap_or(true),
+            "低耐武器掉落后 main_hand held 应为空"
+        );
     }
 
     #[test]
@@ -8436,7 +8784,7 @@ cols = 4
         });
         inv.equipped.insert(
             EQUIP_SLOT_MAIN_HAND.to_string(),
-            ItemInstance {
+            SlotContents::held_single(ItemInstance {
                 instance_id: 100,
                 template_id: "rusted_blade".to_string(),
                 display_name: "残破旧铁短刃".to_string(),
@@ -8457,7 +8805,7 @@ cols = 4
                 forge_achieved_tier: None,
                 alchemy: None,
                 lingering_owner_qi: None,
-            },
+            }),
         );
 
         let current = calculate_current_weight(&inv);
@@ -8557,7 +8905,7 @@ cols = 4
         let mut inv = make_empty_inventory();
         inv.equipped.insert(
             "main_hand".to_string(),
-            make_test_item_instance(7, "talisman"),
+            SlotContents::held_single(make_test_item_instance(7, "talisman")),
         );
         inv.hotbar[0] = Some(make_test_item_instance(8, "pill"));
         assert_eq!(
@@ -8592,7 +8940,7 @@ cols = 4
         });
         from.equipped.insert(
             EQUIP_SLOT_MAIN_HAND.to_string(),
-            make_test_item_instance(2, "iron_sword"),
+            SlotContents::held_single(make_test_item_instance(2, "iron_sword")),
         );
         from.hotbar[4] = Some(make_test_item_instance(3, "guyuan_pill"));
 
@@ -8716,8 +9064,7 @@ cols = 4
 
     #[test]
     fn attrition_exempt_container_marks_inner_instance_exempt() {
-        let mut sealed_bag =
-            make_container_template("sealed_bag", EQUIP_SLOT_BACK_PACK, 2, 2, 10.0);
+        let mut sealed_bag = make_container_template("sealed_bag", EQUIP_SLOT_CHEST, 2, 2, 10.0);
         sealed_bag
             .container_spec
             .as_mut()
@@ -8728,11 +9075,11 @@ cols = 4
 
         let mut inv = make_empty_inventory();
         inv.equipped.insert(
-            EQUIP_SLOT_BACK_PACK.to_string(),
-            make_container_item(1000, "sealed_bag"),
+            EQUIP_SLOT_CHEST.to_string(),
+            SlotContents::worn_single(make_container_item(1000, "sealed_bag")),
         );
         inv.containers.push(ContainerState {
-            id: EQUIP_SLOT_BACK_PACK.to_string(),
+            id: container_id_for_worn_pack(1000),
             name: "封灵背包".to_string(),
             rows: 2,
             cols: 2,
@@ -8751,18 +9098,17 @@ cols = 4
 
     #[test]
     fn ordinary_container_does_not_mark_inner_instance_exempt() {
-        let ordinary_bag =
-            make_container_template("ordinary_bag", EQUIP_SLOT_BACK_PACK, 2, 2, 10.0);
+        let ordinary_bag = make_container_template("ordinary_bag", EQUIP_SLOT_CHEST, 2, 2, 10.0);
         let registry =
             ItemRegistry::from_map(HashMap::from([("ordinary_bag".to_string(), ordinary_bag)]));
 
         let mut inv = make_empty_inventory();
         inv.equipped.insert(
-            EQUIP_SLOT_BACK_PACK.to_string(),
-            make_container_item(1002, "ordinary_bag"),
+            EQUIP_SLOT_CHEST.to_string(),
+            SlotContents::worn_single(make_container_item(1002, "ordinary_bag")),
         );
         inv.containers.push(ContainerState {
-            id: EQUIP_SLOT_BACK_PACK.to_string(),
+            id: container_id_for_worn_pack(1002),
             name: "普通背包".to_string(),
             rows: 2,
             cols: 2,
@@ -8781,8 +9127,7 @@ cols = 4
 
     #[test]
     fn equipped_or_hotbar_instance_is_not_container_attrition_exempt() {
-        let mut sealed_bag =
-            make_container_template("sealed_bag", EQUIP_SLOT_BACK_PACK, 2, 2, 10.0);
+        let mut sealed_bag = make_container_template("sealed_bag", EQUIP_SLOT_CHEST, 2, 2, 10.0);
         sealed_bag
             .container_spec
             .as_mut()
@@ -8793,8 +9138,8 @@ cols = 4
 
         let mut inv = make_empty_inventory();
         inv.equipped.insert(
-            EQUIP_SLOT_BACK_PACK.to_string(),
-            make_container_item(1004, "sealed_bag"),
+            EQUIP_SLOT_CHEST.to_string(),
+            SlotContents::worn_single(make_container_item(1004, "sealed_bag")),
         );
         inv.hotbar[0] = Some(make_test_item_instance(1005, "spirit_herb"));
 
@@ -8811,25 +9156,26 @@ cols = 4
     // P0.1 — ContainerSpec TOML 解析：正例
 
     #[test]
-    fn parse_container_spec_valid_back_pack() {
+    fn parse_container_spec_valid_chest() {
+        // 决议 #17：背包 equip_slot 指向身体槽（chest）。
         let raw = ContainerSpecToml {
             rows: 7,
             cols: 5,
             weight_capacity: 30.0,
-            equip_slot: EQUIP_SLOT_BACK_PACK.to_string(),
+            equip_slot: EQUIP_SLOT_CHEST.to_string(),
             durability_cost_per_op: 0.001,
             attrition_exempt: false,
             accept: None,
         };
-        let spec =
-            parse_container_spec(raw, Path::new("<test>"), "back_pack_item").expect("should parse");
+        let spec = parse_container_spec(raw, Path::new("<test>"), "chest_pack_item")
+            .expect("should parse");
         assert_eq!(spec.rows, 7, "rows mismatch");
         assert_eq!(spec.cols, 5, "cols mismatch");
         assert!(
             (spec.weight_capacity - 30.0).abs() < f64::EPSILON,
             "weight_capacity mismatch"
         );
-        assert_eq!(spec.equip_slot, EQUIP_SLOT_BACK_PACK, "equip_slot mismatch");
+        assert_eq!(spec.equip_slot, EQUIP_SLOT_CHEST, "equip_slot mismatch");
         assert!((spec.durability_cost_per_op - 0.001).abs() < f64::EPSILON);
         assert!(!spec.attrition_exempt, "普通背包默认不应豁免搬运磨损");
         assert_eq!(
@@ -8839,35 +9185,35 @@ cols = 4
     }
 
     #[test]
-    fn parse_container_spec_valid_waist_pouch() {
+    fn parse_container_spec_valid_head() {
         let raw = ContainerSpecToml {
             rows: 3,
             cols: 3,
             weight_capacity: 10.0,
-            equip_slot: EQUIP_SLOT_WAIST_POUCH.to_string(),
+            equip_slot: EQUIP_SLOT_HEAD.to_string(),
             durability_cost_per_op: 0.0,
             attrition_exempt: false,
             accept: None,
         };
-        let spec = parse_container_spec(raw, Path::new("<test>"), "waist_pouch_item")
-            .expect("should parse");
-        assert_eq!(spec.equip_slot, EQUIP_SLOT_WAIST_POUCH);
+        let spec =
+            parse_container_spec(raw, Path::new("<test>"), "head_pack_item").expect("should parse");
+        assert_eq!(spec.equip_slot, EQUIP_SLOT_HEAD);
     }
 
     #[test]
-    fn parse_container_spec_valid_chest_satchel() {
+    fn parse_container_spec_valid_legs() {
         let raw = ContainerSpecToml {
             rows: 4,
             cols: 3,
             weight_capacity: 20.0,
-            equip_slot: EQUIP_SLOT_CHEST_SATCHEL.to_string(),
+            equip_slot: EQUIP_SLOT_LEGS.to_string(),
             durability_cost_per_op: 0.0,
             attrition_exempt: true,
             accept: None,
         };
-        let spec = parse_container_spec(raw, Path::new("<test>"), "chest_satchel_item")
-            .expect("should parse");
-        assert_eq!(spec.equip_slot, EQUIP_SLOT_CHEST_SATCHEL);
+        let spec =
+            parse_container_spec(raw, Path::new("<test>"), "legs_pack_item").expect("should parse");
+        assert_eq!(spec.equip_slot, EQUIP_SLOT_LEGS);
         assert!(
             spec.attrition_exempt,
             "显式封灵容器应保留 attrition_exempt=true"
@@ -8933,7 +9279,7 @@ cols = 4
             rows: 2,
             cols: 2,
             weight_capacity: 0.0,
-            equip_slot: EQUIP_SLOT_WAIST_POUCH.to_string(),
+            equip_slot: EQUIP_SLOT_CHEST.to_string(),
             durability_cost_per_op: 0.0,
             attrition_exempt: false,
             accept: Some(Vec::new()),
@@ -8953,7 +9299,7 @@ cols = 4
             rows: 3,
             cols: 3,
             weight_capacity: 0.0,
-            equip_slot: EQUIP_SLOT_WAIST_POUCH.to_string(),
+            equip_slot: EQUIP_SLOT_CHEST.to_string(),
             durability_cost_per_op: 0.0,
             attrition_exempt: false,
             accept: Some(vec![
@@ -8981,7 +9327,7 @@ cols = 4
                 rows: 3,
                 cols: 3,
                 weight_capacity: 0.0,
-                equip_slot: EQUIP_SLOT_WAIST_POUCH.to_string(),
+                equip_slot: EQUIP_SLOT_CHEST.to_string(),
                 durability_cost_per_op: 0.0,
                 attrition_exempt: false,
                 accept: Some(vec![raw_prefix.to_string()]),
@@ -9009,7 +9355,7 @@ cols = 4
                 rows: 2,
                 cols: 2,
                 weight_capacity: 0.0,
-                equip_slot: EQUIP_SLOT_WAIST_POUCH.to_string(),
+                equip_slot: EQUIP_SLOT_CHEST.to_string(),
                 durability_cost_per_op: 0.0,
                 attrition_exempt: false,
                 accept: Some(accept),
@@ -9093,7 +9439,7 @@ cols = 4
             rows: 2,
             cols: 3,
             weight_capacity: 4.0,
-            equip_slot: EQUIP_SLOT_WAIST_POUCH.to_string(),
+            equip_slot: EQUIP_SLOT_CHEST.to_string(),
             durability_cost_per_op: 0.0,
             attrition_exempt: false,
             accept_filter: Some(vec![
@@ -9139,7 +9485,7 @@ cols = 4
             rows: 0,
             cols: 4,
             weight_capacity: 10.0,
-            equip_slot: EQUIP_SLOT_BACK_PACK.to_string(),
+            equip_slot: EQUIP_SLOT_CHEST.to_string(),
             durability_cost_per_op: 0.0,
             attrition_exempt: false,
             accept: None,
@@ -9155,7 +9501,7 @@ cols = 4
             rows: 17,
             cols: 4,
             weight_capacity: 10.0,
-            equip_slot: EQUIP_SLOT_BACK_PACK.to_string(),
+            equip_slot: EQUIP_SLOT_CHEST.to_string(),
             durability_cost_per_op: 0.0,
             attrition_exempt: false,
             accept: None,
@@ -9171,7 +9517,7 @@ cols = 4
             rows: 4,
             cols: 0,
             weight_capacity: 10.0,
-            equip_slot: EQUIP_SLOT_BACK_PACK.to_string(),
+            equip_slot: EQUIP_SLOT_CHEST.to_string(),
             durability_cost_per_op: 0.0,
             attrition_exempt: false,
             accept: None,
@@ -9187,7 +9533,7 @@ cols = 4
             rows: 4,
             cols: 4,
             weight_capacity: -1.0,
-            equip_slot: EQUIP_SLOT_BACK_PACK.to_string(),
+            equip_slot: EQUIP_SLOT_CHEST.to_string(),
             durability_cost_per_op: 0.0,
             attrition_exempt: false,
             accept: None,
@@ -9202,11 +9548,13 @@ cols = 4
 
     #[test]
     fn parse_container_spec_rejects_invalid_equip_slot() {
+        // 决议 #17：背包 equip_slot 只接受身体槽（head/chest/legs/feet）；
+        // 旧 back_pack 专属槽已删，作为 equip_slot 现属非法。
         let raw = ContainerSpecToml {
             rows: 4,
             cols: 4,
             weight_capacity: 10.0,
-            equip_slot: "main_hand".to_string(),
+            equip_slot: "back_pack".to_string(),
             durability_cost_per_op: 0.0,
             attrition_exempt: false,
             accept: None,
@@ -9225,7 +9573,7 @@ cols = 4
             rows: 4,
             cols: 4,
             weight_capacity: 10.0,
-            equip_slot: EQUIP_SLOT_BACK_PACK.to_string(),
+            equip_slot: EQUIP_SLOT_CHEST.to_string(),
             durability_cost_per_op: -0.1,
             attrition_exempt: false,
             accept: None,
@@ -9238,13 +9586,11 @@ cols = 4
         );
     }
 
-    // P0.2 — 常量存在性
+    // P0.2 — 常量存在性（决议 #17 删除 back_pack/waist_pouch/chest_satchel 专属槽常量后，
+    // 仅保留 body_pocket / 基础负重等仍存活的常量断言）。
 
     #[test]
-    fn backpack_equip_slot_constants_are_correct() {
-        assert_eq!(EQUIP_SLOT_BACK_PACK, "back_pack");
-        assert_eq!(EQUIP_SLOT_WAIST_POUCH, "waist_pouch");
-        assert_eq!(EQUIP_SLOT_CHEST_SATCHEL, "chest_satchel");
+    fn body_pocket_and_base_carry_constants_are_correct() {
         assert_eq!(BODY_POCKET_CONTAINER_ID, "body_pocket");
         assert_eq!(BODY_POCKET_ROWS, 2);
         assert_eq!(BODY_POCKET_COLS, 3);
@@ -9320,7 +9666,7 @@ cols = 4
     #[test]
     fn rebuild_containers_adds_container_for_equipped_backpack() {
         let backpack_template =
-            make_container_template("large_backpack", EQUIP_SLOT_BACK_PACK, 7, 5, 30.0);
+            make_container_template("large_backpack", EQUIP_SLOT_CHEST, 7, 5, 30.0);
         let registry = ItemRegistry::from_map(HashMap::from([(
             "large_backpack".to_string(),
             backpack_template,
@@ -9328,21 +9674,18 @@ cols = 4
 
         let mut inv = make_empty_inventory();
         inv.equipped.insert(
-            EQUIP_SLOT_BACK_PACK.to_string(),
-            make_container_item(200, "large_backpack"),
+            EQUIP_SLOT_CHEST.to_string(),
+            SlotContents::worn_single(make_container_item(200, "large_backpack")),
         );
 
         rebuild_containers_from_equipment(&mut inv, &registry);
 
+        let pack_id = container_id_for_worn_pack(200);
         assert!(
-            inv.containers.iter().any(|c| c.id == EQUIP_SLOT_BACK_PACK),
-            "back_pack container should be created when equipped"
+            inv.containers.iter().any(|c| c.id == pack_id),
+            "pack_<instance_id> container should be created when equipped to chest worn"
         );
-        let bp = inv
-            .containers
-            .iter()
-            .find(|c| c.id == EQUIP_SLOT_BACK_PACK)
-            .unwrap();
+        let bp = inv.containers.iter().find(|c| c.id == pack_id).unwrap();
         assert_eq!(bp.rows, 7, "rows should match container_spec");
         assert_eq!(bp.cols, 5, "cols should match container_spec");
     }
@@ -9350,16 +9693,17 @@ cols = 4
     #[test]
     fn rebuild_containers_removes_empty_container_when_unequipped() {
         let backpack_template =
-            make_container_template("large_backpack", EQUIP_SLOT_BACK_PACK, 7, 5, 30.0);
+            make_container_template("large_backpack", EQUIP_SLOT_CHEST, 7, 5, 30.0);
         let registry = ItemRegistry::from_map(HashMap::from([(
             "large_backpack".to_string(),
             backpack_template,
         )]));
 
         let mut inv = make_empty_inventory();
-        // Add the container but no equipped item.
+        // 预置一个 pack_<id> 容器但没有对应穿戴背包件（孤儿）。
+        let pack_id = container_id_for_worn_pack(200);
         inv.containers.push(ContainerState {
-            id: EQUIP_SLOT_BACK_PACK.to_string(),
+            id: pack_id.clone(),
             name: "大背包".to_string(),
             rows: 7,
             cols: 5,
@@ -9369,8 +9713,8 @@ cols = 4
         rebuild_containers_from_equipment(&mut inv, &registry);
 
         assert!(
-            !inv.containers.iter().any(|c| c.id == EQUIP_SLOT_BACK_PACK),
-            "empty back_pack container should be removed when unequipped"
+            !inv.containers.iter().any(|c| c.id == pack_id),
+            "empty pack container should be removed when unequipped"
         );
     }
 
@@ -9378,9 +9722,10 @@ cols = 4
     fn rebuild_containers_keeps_nonempty_container_even_when_unequipped() {
         let registry = ItemRegistry::from_map(HashMap::new());
         let mut inv = make_empty_inventory();
-        // Non-empty container without an equipped item.
+        // 非空 pack_<id> 容器但无对应穿戴背包件（数据安全：不丢内含物）。
+        let pack_id = container_id_for_worn_pack(200);
         inv.containers.push(ContainerState {
-            id: EQUIP_SLOT_BACK_PACK.to_string(),
+            id: pack_id.clone(),
             name: "大背包".to_string(),
             rows: 7,
             cols: 5,
@@ -9394,8 +9739,8 @@ cols = 4
         rebuild_containers_from_equipment(&mut inv, &registry);
 
         assert!(
-            inv.containers.iter().any(|c| c.id == EQUIP_SLOT_BACK_PACK),
-            "non-empty container should NOT be removed even if unequipped (data safety)"
+            inv.containers.iter().any(|c| c.id == pack_id),
+            "non-empty pack container should NOT be removed even if unequipped (data safety)"
         );
     }
 
@@ -9415,7 +9760,7 @@ cols = 4
     #[test]
     fn compute_max_weight_adds_equipped_backpack_capacity() {
         let backpack_template =
-            make_container_template("large_backpack", EQUIP_SLOT_BACK_PACK, 7, 5, 30.0);
+            make_container_template("large_backpack", EQUIP_SLOT_CHEST, 7, 5, 30.0);
         let registry = ItemRegistry::from_map(HashMap::from([(
             "large_backpack".to_string(),
             backpack_template,
@@ -9423,8 +9768,8 @@ cols = 4
 
         let mut inv = make_empty_inventory();
         inv.equipped.insert(
-            EQUIP_SLOT_BACK_PACK.to_string(),
-            make_container_item(300, "large_backpack"),
+            EQUIP_SLOT_CHEST.to_string(),
+            SlotContents::worn_single(make_container_item(300, "large_backpack")),
         );
 
         let w = compute_max_weight(&inv, &registry);
@@ -9435,11 +9780,13 @@ cols = 4
         );
     }
 
+    // 决议 #17：背包无专属槽，多个背包件骑在身体槽 worn 层；compute_max_weight 累加全部
+    // 身体槽 worn 层带 container_spec 的件的 weight_capacity（受各槽 worn_cap：chest=3/legs=3）。
     #[test]
-    fn compute_max_weight_sums_all_three_backpack_slots() {
-        let bp = make_container_template("large_backpack", EQUIP_SLOT_BACK_PACK, 7, 5, 30.0);
-        let wp = make_container_template("waist_pouch", EQUIP_SLOT_WAIST_POUCH, 3, 3, 10.0);
-        let cs = make_container_template("chest_satchel", EQUIP_SLOT_CHEST_SATCHEL, 3, 4, 20.0);
+    fn compute_max_weight_sums_multiple_worn_packs() {
+        let bp = make_container_template("large_backpack", EQUIP_SLOT_CHEST, 7, 5, 30.0);
+        let wp = make_container_template("waist_pouch", EQUIP_SLOT_CHEST, 3, 3, 10.0);
+        let cs = make_container_template("chest_satchel", EQUIP_SLOT_LEGS, 3, 4, 20.0);
         let registry = ItemRegistry::from_map(HashMap::from([
             ("large_backpack".to_string(), bp),
             ("waist_pouch".to_string(), wp),
@@ -9447,17 +9794,21 @@ cols = 4
         ]));
 
         let mut inv = make_empty_inventory();
+        // chest worn 两层（cap=3 内）：large_backpack + waist_pouch。
         inv.equipped.insert(
-            EQUIP_SLOT_BACK_PACK.to_string(),
-            make_container_item(1, "large_backpack"),
+            EQUIP_SLOT_CHEST.to_string(),
+            SlotContents {
+                worn: vec![
+                    make_container_item(1, "large_backpack"),
+                    make_container_item(2, "waist_pouch"),
+                ],
+                held: None,
+            },
         );
+        // legs worn 一层：chest_satchel。
         inv.equipped.insert(
-            EQUIP_SLOT_WAIST_POUCH.to_string(),
-            make_container_item(2, "waist_pouch"),
-        );
-        inv.equipped.insert(
-            EQUIP_SLOT_CHEST_SATCHEL.to_string(),
-            make_container_item(3, "chest_satchel"),
+            EQUIP_SLOT_LEGS.to_string(),
+            SlotContents::worn_single(make_container_item(3, "chest_satchel")),
         );
 
         let w = compute_max_weight(&inv, &registry);
@@ -9471,7 +9822,7 @@ cols = 4
     #[test]
     fn rebuild_containers_updates_max_weight() {
         let backpack_template =
-            make_container_template("large_backpack", EQUIP_SLOT_BACK_PACK, 7, 5, 30.0);
+            make_container_template("large_backpack", EQUIP_SLOT_CHEST, 7, 5, 30.0);
         let registry = ItemRegistry::from_map(HashMap::from([(
             "large_backpack".to_string(),
             backpack_template,
@@ -9479,8 +9830,8 @@ cols = 4
 
         let mut inv = make_empty_inventory();
         inv.equipped.insert(
-            EQUIP_SLOT_BACK_PACK.to_string(),
-            make_container_item(400, "large_backpack"),
+            EQUIP_SLOT_CHEST.to_string(),
+            SlotContents::worn_single(make_container_item(400, "large_backpack")),
         );
         inv.max_weight = 100.0; // stale value
 
@@ -9496,14 +9847,14 @@ cols = 4
     // P0.5 — validate_move_semantics 背包槽校验
 
     fn make_backpack_registry_and_inventory() -> (ItemRegistry, PlayerInventory) {
-        let bp_template =
-            make_container_template("large_backpack", EQUIP_SLOT_BACK_PACK, 7, 5, 30.0);
-        let wp_template = make_container_template("waist_pack", EQUIP_SLOT_WAIST_POUCH, 3, 3, 10.0);
-        let cs_template =
-            make_container_template("chest_bag", EQUIP_SLOT_CHEST_SATCHEL, 3, 4, 20.0);
+        // 决议 #17：背包 equip_slot 指向身体槽。large_backpack→chest，
+        // legs_pack→legs（供「错槽」用例），chest_bag→chest。
+        let bp_template = make_container_template("large_backpack", EQUIP_SLOT_CHEST, 7, 5, 30.0);
+        let wp_template = make_container_template("legs_pack", EQUIP_SLOT_LEGS, 3, 3, 10.0);
+        let cs_template = make_container_template("chest_bag", EQUIP_SLOT_CHEST, 3, 4, 20.0);
         let registry = ItemRegistry::from_map(HashMap::from([
             ("large_backpack".to_string(), bp_template),
-            ("waist_pack".to_string(), wp_template),
+            ("legs_pack".to_string(), wp_template),
             ("chest_bag".to_string(), cs_template),
         ]));
         let inv = PlayerInventory {
@@ -9523,9 +9874,10 @@ cols = 4
         (registry, inv)
     }
 
+    // 决议 #17：背包件 equip_slot=chest，装入 chest worn 应成功。
     #[test]
-    fn validate_move_semantics_accepts_back_pack_equip_to_back_pack_slot() {
-        use crate::schema::inventory::{EquipSlotV1, InventoryLocationV1};
+    fn validate_move_semantics_accepts_container_equip_to_chest_worn() {
+        use crate::schema::inventory::{EquipSlotV1, EquipStateV1, InventoryLocationV1};
         let (registry, inv) = make_backpack_registry_and_inventory();
         let item = make_container_item(501, "large_backpack");
         let from = InventoryLocationV1::Container {
@@ -9534,19 +9886,21 @@ cols = 4
             col: 0,
         };
         let to = InventoryLocationV1::Equip {
-            slot: EquipSlotV1::BackPack,
+            slot: EquipSlotV1::Chest,
+            state: EquipStateV1::Worn,
         };
         assert!(
             validate_move_semantics(&registry, &inv, &item, &from, &to).is_ok(),
-            "equipping large_backpack to back_pack slot should succeed"
+            "equipping large_backpack (equip_slot=chest) to chest worn should succeed"
         );
     }
 
+    // 非盔甲/非伪皮/非容器的杂项物品装 chest worn → 拒绝。
     #[test]
-    fn validate_move_semantics_rejects_non_container_item_to_back_pack_slot() {
-        use crate::schema::inventory::{EquipSlotV1, InventoryLocationV1};
+    fn validate_move_semantics_rejects_non_container_item_to_chest_worn() {
+        use crate::schema::inventory::{EquipSlotV1, EquipStateV1, InventoryLocationV1};
         let (registry, inv) = make_backpack_registry_and_inventory();
-        // Use a misc item (no container_spec).
+        // Use a misc item (no container_spec, not armor, not false skin).
         let misc_template = test_template("iron_ore", ItemCategory::Misc, 1, 1, 16);
         let registry_with_misc = ItemRegistry::from_map({
             let mut m = registry.templates.clone();
@@ -9560,34 +9914,37 @@ cols = 4
             col: 0,
         };
         let to = InventoryLocationV1::Equip {
-            slot: EquipSlotV1::BackPack,
+            slot: EquipSlotV1::Chest,
+            state: EquipStateV1::Worn,
         };
         let err = validate_move_semantics(&registry_with_misc, &inv, &item, &from, &to)
-            .expect_err("non-container item should not equip to back_pack slot");
+            .expect_err("non-container/non-armor misc item should not equip to chest worn");
         assert!(
-            err.contains("container_spec"),
-            "expected container_spec error, got: {err}"
+            err.contains("armor / false skin / container"),
+            "expected body-slot type rejection, got: {err}"
         );
     }
 
+    // 背包 equip_slot=legs，装入 chest worn → equip_slot 不匹配，拒绝。
     #[test]
     fn validate_move_semantics_rejects_wrong_slot_backpack() {
-        use crate::schema::inventory::{EquipSlotV1, InventoryLocationV1};
+        use crate::schema::inventory::{EquipSlotV1, EquipStateV1, InventoryLocationV1};
         let (registry, inv) = make_backpack_registry_and_inventory();
-        // large_backpack has equip_slot=back_pack; try to equip to waist_pouch slot.
-        let item = make_container_item(503, "large_backpack");
+        // legs_pack has equip_slot=legs; try to equip to chest worn.
+        let item = make_container_item(503, "legs_pack");
         let from = InventoryLocationV1::Container {
             container_id: "main_pack".to_string(),
             row: 0,
             col: 0,
         };
         let to = InventoryLocationV1::Equip {
-            slot: EquipSlotV1::WaistPouch,
+            slot: EquipSlotV1::Chest,
+            state: EquipStateV1::Worn,
         };
         let err = validate_move_semantics(&registry, &inv, &item, &from, &to)
-            .expect_err("large_backpack should not equip to waist_pouch slot");
+            .expect_err("legs_pack should not equip to chest worn");
         assert!(
-            err.contains("back_pack"),
+            err.contains("legs"),
             "expected equip_slot mismatch error, got: {err}"
         );
     }
@@ -9608,18 +9965,19 @@ cols = 4
         assert!(err.contains("hotbar"), "expected hotbar error, got: {err}");
     }
 
+    // 决议 #17：穿戴背包件容器 id = pack_<instance_id>；其非空时禁止卸下。
     #[test]
     fn validate_move_semantics_rejects_unequip_backpack_when_container_nonempty() {
-        use crate::schema::inventory::{EquipSlotV1, InventoryLocationV1};
+        use crate::schema::inventory::{EquipSlotV1, EquipStateV1, InventoryLocationV1};
         let (registry, mut inv) = make_backpack_registry_and_inventory();
-        // Equip the backpack.
+        // Equip the backpack into chest worn.
         inv.equipped.insert(
-            EQUIP_SLOT_BACK_PACK.to_string(),
-            make_container_item(505, "large_backpack"),
+            EQUIP_SLOT_CHEST.to_string(),
+            SlotContents::worn_single(make_container_item(505, "large_backpack")),
         );
-        // Add a non-empty back_pack container.
+        // 该背包件的 pack_505 容器非空。
         inv.containers.push(ContainerState {
-            id: EQUIP_SLOT_BACK_PACK.to_string(),
+            id: container_id_for_worn_pack(505),
             name: "大背包".to_string(),
             rows: 7,
             cols: 5,
@@ -9632,7 +9990,8 @@ cols = 4
 
         let item = make_container_item(505, "large_backpack");
         let from = InventoryLocationV1::Equip {
-            slot: EquipSlotV1::BackPack,
+            slot: EquipSlotV1::Chest,
+            state: EquipStateV1::Worn,
         };
         let to = InventoryLocationV1::Container {
             container_id: "main_pack".to_string(),
@@ -9649,15 +10008,15 @@ cols = 4
 
     #[test]
     fn validate_move_semantics_allows_unequip_backpack_when_container_empty() {
-        use crate::schema::inventory::{EquipSlotV1, InventoryLocationV1};
+        use crate::schema::inventory::{EquipSlotV1, EquipStateV1, InventoryLocationV1};
         let (registry, mut inv) = make_backpack_registry_and_inventory();
         inv.equipped.insert(
-            EQUIP_SLOT_BACK_PACK.to_string(),
-            make_container_item(506, "large_backpack"),
+            EQUIP_SLOT_CHEST.to_string(),
+            SlotContents::worn_single(make_container_item(506, "large_backpack")),
         );
-        // Empty back_pack container.
+        // pack_506 容器为空。
         inv.containers.push(ContainerState {
-            id: EQUIP_SLOT_BACK_PACK.to_string(),
+            id: container_id_for_worn_pack(506),
             name: "大背包".to_string(),
             rows: 7,
             cols: 5,
@@ -9666,7 +10025,8 @@ cols = 4
 
         let item = make_container_item(506, "large_backpack");
         let from = InventoryLocationV1::Equip {
-            slot: EquipSlotV1::BackPack,
+            slot: EquipSlotV1::Chest,
+            state: EquipStateV1::Worn,
         };
         let to = InventoryLocationV1::Container {
             container_id: "main_pack".to_string(),
@@ -9679,31 +10039,8 @@ cols = 4
         );
     }
 
-    // EquipSlotV1 serde pin 测试 — 新增三个 variant 必须正反 roundtrip
-
-    #[test]
-    fn equip_slot_v1_backpack_variants_serde_roundtrip() {
-        use crate::schema::inventory::EquipSlotV1;
-        let cases = [
-            (EquipSlotV1::BackPack, "\"back_pack\""),
-            (EquipSlotV1::WaistPouch, "\"waist_pouch\""),
-            (EquipSlotV1::ChestSatchel, "\"chest_satchel\""),
-        ];
-        for (variant, expected_json) in &cases {
-            let serialized =
-                serde_json::to_string(variant).expect("EquipSlotV1 variant should serialize");
-            assert_eq!(
-                serialized, *expected_json,
-                "serialize mismatch for {variant:?}"
-            );
-            let deserialized: EquipSlotV1 =
-                serde_json::from_str(expected_json).expect("EquipSlotV1 should deserialize");
-            assert_eq!(
-                deserialized, *variant,
-                "deserialize mismatch for {variant:?}"
-            );
-        }
-    }
+    // (决议 #17/#9/#8) back_pack/waist_pouch/chest_satchel EquipSlotV1 variant 已删除，
+    // 原 equip_slot_v1_backpack_variants_serde_roundtrip 测试随之移除。
 
     // ItemCategory serde pins
 
@@ -9772,7 +10109,8 @@ cols = 4
                 rows: 3,
                 cols: 3,
                 weight_capacity: 10.0,
-                equip_slot: EQUIP_SLOT_WAIST_POUCH.to_string(),
+                // 决议 #17：背包无专属槽，equip_slot 指向身体槽（chest），骑在 chest worn 层。
+                equip_slot: EQUIP_SLOT_CHEST.to_string(),
                 durability_cost_per_op: 0.008,
                 attrition_exempt: false,
                 accept_filter: None,
@@ -9827,11 +10165,15 @@ cols = 4
         };
 
         let mut inv = make_empty_inventory();
-        inv.equipped
-            .insert(EQUIP_SLOT_WAIST_POUCH.to_string(), backpack_instance);
+        // 决议 #17：背包件骑在 chest worn 层；容器 id = pack_<instance_id> = "pack_1"。
+        let pack_container_id = container_id_for_worn_pack(backpack_instance.instance_id);
+        inv.equipped.insert(
+            EQUIP_SLOT_CHEST.to_string(),
+            SlotContents::worn_single(backpack_instance),
+        );
         inv.containers.push(ContainerState {
-            id: EQUIP_SLOT_WAIST_POUCH.to_string(),
-            name: "腰囊".to_string(),
+            id: pack_container_id,
+            name: "草编囊".to_string(),
             rows: 3,
             cols: 3,
             items: container_items,
@@ -9846,12 +10188,12 @@ cols = 4
     #[test]
     fn apply_backpack_wear_deducts_cost_per_op() {
         let (registry, mut inv) = make_worn_grass_pouch_setup(1.0, false);
-        let event = apply_backpack_wear(&mut inv, &registry, EQUIP_SLOT_WAIST_POUCH);
+        let event = apply_backpack_wear(&mut inv, &registry, &container_id_for_worn_pack(1));
         assert!(
             event.is_none(),
             "durability 1.0 minus 0.008 should not break yet"
         );
-        let durability = inv.equipped.get(EQUIP_SLOT_WAIST_POUCH).unwrap().durability;
+        let durability = inv.equipped.get(EQUIP_SLOT_CHEST).unwrap().worn[0].durability;
         assert!(
             (durability - 0.992).abs() < 1e-9,
             "expected durability ≈ 0.992 after one wear, got {durability}"
@@ -9863,13 +10205,13 @@ cols = 4
         let (registry, mut inv) = make_worn_grass_pouch_setup(0.1, false);
         // 12 ops × 0.008 = 0.096 > 0.1 − 0.008×12 = 0.004; not yet broken after 12.
         for _ in 0..12 {
-            let event = apply_backpack_wear(&mut inv, &registry, EQUIP_SLOT_WAIST_POUCH);
+            let event = apply_backpack_wear(&mut inv, &registry, &container_id_for_worn_pack(1));
             assert!(
                 event.is_none(),
                 "should not break before 0.1/0.008 ≈ 12.5 ops"
             );
         }
-        let durability = inv.equipped.get(EQUIP_SLOT_WAIST_POUCH).unwrap().durability;
+        let durability = inv.equipped.get(EQUIP_SLOT_CHEST).unwrap().worn[0].durability;
         let expected = 0.1 - 12.0 * 0.008;
         assert!(
             (durability - expected).abs() < 1e-9,
@@ -9888,7 +10230,7 @@ cols = 4
             "body_pocket should never trigger wear deduction"
         );
         // 装备耐久不变。
-        let durability = inv.equipped.get(EQUIP_SLOT_WAIST_POUCH).unwrap().durability;
+        let durability = inv.equipped.get(EQUIP_SLOT_CHEST).unwrap().worn[0].durability;
         assert!(
             (durability - 1.0).abs() < f64::EPSILON,
             "worn_grass_pouch durability should be unchanged, got {durability}"
@@ -9913,25 +10255,29 @@ cols = 4
         let (registry, mut inv) = make_worn_grass_pouch_setup(0.3, false);
 
         for i in 1..38 {
-            let event = apply_backpack_wear(&mut inv, &registry, EQUIP_SLOT_WAIST_POUCH);
+            let event = apply_backpack_wear(&mut inv, &registry, &container_id_for_worn_pack(1));
             assert!(
                 event.is_none(),
                 "op {i}/38 should not break yet (durability = {})",
-                inv.equipped.get(EQUIP_SLOT_WAIST_POUCH).unwrap().durability
+                inv.equipped.get(EQUIP_SLOT_CHEST).unwrap().worn[0].durability
             );
         }
         // 第 38 次——应触发破损。
-        let event = apply_backpack_wear(&mut inv, &registry, EQUIP_SLOT_WAIST_POUCH);
+        let event = apply_backpack_wear(&mut inv, &registry, &container_id_for_worn_pack(1));
         assert!(
             event.is_some(),
             "38th op should trigger BackpackBreakEvent (durability = {})",
-            inv.equipped.get(EQUIP_SLOT_WAIST_POUCH).unwrap().durability
+            inv.equipped.get(EQUIP_SLOT_CHEST).unwrap().worn[0].durability
         );
         let ev = event.unwrap();
-        assert_eq!(ev.slot, EQUIP_SLOT_WAIST_POUCH, "break event slot mismatch");
         assert_eq!(
-            ev.container_id, EQUIP_SLOT_WAIST_POUCH,
-            "break event container_id mismatch"
+            ev.backpack_instance_id, 1,
+            "break event backpack_instance_id mismatch（应为 worn pack 的 instance_id）"
+        );
+        assert_eq!(
+            ev.container_id,
+            container_id_for_worn_pack(1),
+            "break event container_id mismatch（应为 pack_<instance_id>）"
         );
     }
 
@@ -9939,7 +10285,7 @@ cols = 4
 
     #[test]
     fn apply_backpack_wear_zero_cost_per_op_never_deducts() {
-        let template = make_container_template("lossless_bag", EQUIP_SLOT_BACK_PACK, 5, 5, 20.0);
+        let template = make_container_template("lossless_bag", EQUIP_SLOT_CHEST, 5, 5, 20.0);
         // make_container_template 默认 cost_per_op = 0.0。
         let registry =
             ItemRegistry::from_map(HashMap::from([("lossless_bag".to_string(), template)]));
@@ -9966,14 +10312,15 @@ cols = 4
             alchemy: None,
             lingering_owner_qi: None,
         };
-        inv.equipped.insert(EQUIP_SLOT_BACK_PACK.to_string(), bag);
+        inv.equipped
+            .insert(EQUIP_SLOT_CHEST.to_string(), SlotContents::worn_single(bag));
 
-        let event = apply_backpack_wear(&mut inv, &registry, EQUIP_SLOT_BACK_PACK);
+        let event = apply_backpack_wear(&mut inv, &registry, &container_id_for_worn_pack(200));
         assert!(
             event.is_none(),
             "zero cost_per_op should never trigger wear even at low durability"
         );
-        let durability = inv.equipped.get(EQUIP_SLOT_BACK_PACK).unwrap().durability;
+        let durability = inv.equipped.get(EQUIP_SLOT_CHEST).unwrap().worn[0].durability;
         assert!(
             (durability - 0.001).abs() < f64::EPSILON,
             "durability should be unchanged with cost_per_op=0.0"
@@ -9985,8 +10332,8 @@ cols = 4
     #[test]
     fn apply_backpack_wear_missing_equip_returns_none() {
         let (registry, mut inv) = make_worn_grass_pouch_setup(1.0, false);
-        // 试图对 back_pack 槽扣减，但该槽为空。
-        let event = apply_backpack_wear(&mut inv, &registry, EQUIP_SLOT_BACK_PACK);
+        // 试图对一个未穿戴的 pack 容器（pack_999）扣减——无对应 worn 背包件 → None。
+        let event = apply_backpack_wear(&mut inv, &registry, &container_id_for_worn_pack(999));
         assert!(
             event.is_none(),
             "empty equip slot should return None, not panic"
@@ -10000,20 +10347,23 @@ cols = 4
         let (registry, mut inv) = make_worn_grass_pouch_setup(0.0, true);
 
         let initial_max_weight = inv.max_weight;
-        let outcome = handle_backpack_break(&mut inv, &registry, EQUIP_SLOT_WAIST_POUCH)
+        let outcome = handle_backpack_break(&mut inv, &registry, &container_id_for_worn_pack(1))
             .expect("handle_backpack_break should return Some for valid slot");
 
-        // 背包已从 equipped 移除。
+        // 背包件已从 chest worn 层移除（空 SlotContents 可能保留，断言 worn 为空）。
         assert!(
-            !inv.equipped.contains_key(EQUIP_SLOT_WAIST_POUCH),
-            "backpack should be removed from equipped after break"
+            inv.equipped
+                .get(EQUIP_SLOT_CHEST)
+                .map(|s| s.worn.is_empty())
+                .unwrap_or(true),
+            "backpack should be removed from chest worn after break"
         );
 
-        // 容器已从 containers 移除。
+        // 容器（pack_1）已从 containers 移除。
         assert!(
             inv.containers
                 .iter()
-                .all(|c| c.id != EQUIP_SLOT_WAIST_POUCH),
+                .all(|c| c.id != container_id_for_worn_pack(1)),
             "container should be removed from containers after break"
         );
 
@@ -10068,7 +10418,7 @@ cols = 4
     fn handle_backpack_break_empty_container_spills_nothing() {
         let (registry, mut inv) = make_worn_grass_pouch_setup(0.0, false);
 
-        let outcome = handle_backpack_break(&mut inv, &registry, EQUIP_SLOT_WAIST_POUCH)
+        let outcome = handle_backpack_break(&mut inv, &registry, &container_id_for_worn_pack(1))
             .expect("break on empty container should still succeed");
 
         assert!(
@@ -10098,8 +10448,8 @@ cols = 4
     #[test]
     fn handle_backpack_break_unequipped_slot_returns_none() {
         let (registry, mut inv) = make_worn_grass_pouch_setup(0.0, false);
-        // back_pack 槽未装备。
-        let outcome = handle_backpack_break(&mut inv, &registry, EQUIP_SLOT_BACK_PACK);
+        // 对一个未穿戴的 pack 容器（pack_999）破损——无对应 worn 背包件 → None。
+        let outcome = handle_backpack_break(&mut inv, &registry, &container_id_for_worn_pack(999));
         assert!(
             outcome.is_none(),
             "unequipped slot should return None from handle_backpack_break"
@@ -10112,9 +10462,10 @@ cols = 4
     fn handle_backpack_break_missing_container_entry_spills_nothing() {
         let (registry, mut inv) = make_worn_grass_pouch_setup(0.0, false);
         // 手动移除容器，模拟 containers 与 equipped 不同步场景。
-        inv.containers.retain(|c| c.id != EQUIP_SLOT_WAIST_POUCH);
+        inv.containers
+            .retain(|c| c.id != container_id_for_worn_pack(1));
 
-        let outcome = handle_backpack_break(&mut inv, &registry, EQUIP_SLOT_WAIST_POUCH)
+        let outcome = handle_backpack_break(&mut inv, &registry, &container_id_for_worn_pack(1))
             .expect("should succeed even without matching container");
 
         assert!(
@@ -10132,22 +10483,22 @@ cols = 4
         let (registry, mut inv) = make_worn_grass_pouch_setup(0.3, false);
 
         for i in 1..=37 {
-            let ev = apply_backpack_wear(&mut inv, &registry, EQUIP_SLOT_WAIST_POUCH);
+            let ev = apply_backpack_wear(&mut inv, &registry, &container_id_for_worn_pack(1));
             assert!(
                 ev.is_none(),
                 "op {i}: should not break before op 38 (durability={})",
-                inv.equipped.get(EQUIP_SLOT_WAIST_POUCH).unwrap().durability
+                inv.equipped.get(EQUIP_SLOT_CHEST).unwrap().worn[0].durability
             );
         }
-        let ev = apply_backpack_wear(&mut inv, &registry, EQUIP_SLOT_WAIST_POUCH);
+        let ev = apply_backpack_wear(&mut inv, &registry, &container_id_for_worn_pack(1));
         assert!(
             ev.is_some(),
             "38th op should return BackpackBreakEvent, durability={}",
-            inv.equipped.get(EQUIP_SLOT_WAIST_POUCH).unwrap().durability
+            inv.equipped.get(EQUIP_SLOT_CHEST).unwrap().worn[0].durability
         );
         let ev = ev.unwrap();
-        assert_eq!(ev.slot, EQUIP_SLOT_WAIST_POUCH);
-        assert_eq!(ev.container_id, EQUIP_SLOT_WAIST_POUCH);
+        assert_eq!(ev.backpack_instance_id, 1);
+        assert_eq!(ev.container_id, container_id_for_worn_pack(1));
     }
 
     // P3 BackpackBreakEvent PartialEq pin 测试
@@ -10155,16 +10506,16 @@ cols = 4
     #[test]
     fn backpack_break_event_partial_eq_and_clone() {
         let ev1 = BackpackBreakEvent {
-            slot: "back_pack".to_string(),
-            container_id: "back_pack".to_string(),
+            backpack_instance_id: 1,
+            container_id: container_id_for_worn_pack(1),
         };
         let ev2 = ev1.clone();
         assert_eq!(ev1, ev2, "BackpackBreakEvent should implement PartialEq");
         let ev3 = BackpackBreakEvent {
-            slot: "waist_pouch".to_string(),
-            container_id: "waist_pouch".to_string(),
+            backpack_instance_id: 2,
+            container_id: container_id_for_worn_pack(2),
         };
-        assert_ne!(ev1, ev3, "different slots should not be equal");
+        assert_ne!(ev1, ev3, "different backpack instances should not be equal");
     }
 
     // plan-dandao-path-v1 — ExtraHand0/ExtraHand1 equip slot tests
@@ -10235,10 +10586,11 @@ cols = 4
         }
     }
 
+    // 决议 #17：false_skin 专属槽已删，伪皮改穿 chest worn（身体槽接受 armor/false skin/container）。
     #[test]
-    fn validate_move_semantics_accepts_low_cost_disguise_items_to_false_skin_slot() {
+    fn validate_move_semantics_accepts_low_cost_disguise_items_to_chest_worn() {
         use crate::combat::tuike::{CAMOUFLAGE_NET_ITEM_ID, DISGUISE_WRAP_ITEM_ID};
-        use crate::schema::inventory::{EquipSlotV1, InventoryLocationV1};
+        use crate::schema::inventory::{EquipSlotV1, EquipStateV1, InventoryLocationV1};
 
         let registry = ItemRegistry::from_map(HashMap::from([
             (
@@ -10257,7 +10609,8 @@ cols = 4
             col: 0,
         };
         let to = InventoryLocationV1::Equip {
-            slot: EquipSlotV1::FalseSkin,
+            slot: EquipSlotV1::Chest,
+            state: EquipStateV1::Worn,
         };
 
         for (instance_id, template_id) in
@@ -10266,14 +10619,14 @@ cols = 4
             let item = make_test_item_instance(instance_id, template_id);
             assert!(
                 validate_move_semantics(&registry, &inventory, &item, &from, &to).is_ok(),
-                "{template_id} should pass the false_skin equip slot guard"
+                "{template_id} (false skin) should be equippable to chest worn"
             );
         }
     }
 
     #[test]
-    fn validate_move_semantics_still_rejects_non_false_skin_item_to_false_skin_slot() {
-        use crate::schema::inventory::{EquipSlotV1, InventoryLocationV1};
+    fn validate_move_semantics_rejects_non_false_skin_misc_item_to_chest_worn() {
+        use crate::schema::inventory::{EquipSlotV1, EquipStateV1, InventoryLocationV1};
 
         let registry = ItemRegistry::from_map(HashMap::from([(
             "rough_cloth".to_string(),
@@ -10287,15 +10640,16 @@ cols = 4
             col: 0,
         };
         let to = InventoryLocationV1::Equip {
-            slot: EquipSlotV1::FalseSkin,
+            slot: EquipSlotV1::Chest,
+            state: EquipStateV1::Worn,
         };
 
         let error = validate_move_semantics(&registry, &inventory, &item, &from, &to)
-            .expect_err("non false-skin item should be rejected by false_skin slot guard");
+            .expect_err("non false-skin / non-armor / non-container misc item should be rejected");
 
         assert!(
-            error.contains("expected tuike false skin"),
-            "expected false_skin slot error, got: {error}"
+            error.contains("armor / false skin / container"),
+            "expected body-slot type rejection, got: {error}"
         );
     }
 
@@ -10353,6 +10707,7 @@ cols = 4
         };
         let to = InventoryLocationV1::Equip {
             slot: EquipSlotV1::ExtraHand0,
+            state: crate::schema::inventory::EquipStateV1::Held,
         };
         assert!(
             validate_move_semantics(&registry, &inv, &item, &from, &to).is_ok(),
@@ -10376,6 +10731,7 @@ cols = 4
         };
         let to = InventoryLocationV1::Equip {
             slot: EquipSlotV1::ExtraHand1,
+            state: crate::schema::inventory::EquipStateV1::Held,
         };
         assert!(
             validate_move_semantics(&registry, &inv, &item, &from, &to).is_ok(),
@@ -10399,6 +10755,7 @@ cols = 4
         };
         let to = InventoryLocationV1::Equip {
             slot: EquipSlotV1::ExtraHand0,
+            state: crate::schema::inventory::EquipStateV1::Held,
         };
         let err = validate_move_semantics(&registry, &inv, &item, &from, &to)
             .expect_err("misc item should not equip to ExtraHand0");
@@ -10424,6 +10781,7 @@ cols = 4
         };
         let to = InventoryLocationV1::Equip {
             slot: EquipSlotV1::ExtraHand1,
+            state: crate::schema::inventory::EquipStateV1::Held,
         };
         assert!(
             validate_move_semantics(&registry, &inv, &item, &from, &to).is_ok(),
@@ -10431,41 +10789,9 @@ cols = 4
         );
     }
 
-    // P3 container_id_to_equip_slot 映射完整性 pin 测试
-
-    #[test]
-    fn container_id_to_equip_slot_maps_all_three_slots() {
-        assert_eq!(
-            container_id_to_equip_slot("back_pack"),
-            Some(EQUIP_SLOT_BACK_PACK),
-            "back_pack should map to EQUIP_SLOT_BACK_PACK"
-        );
-        assert_eq!(
-            container_id_to_equip_slot("waist_pouch"),
-            Some(EQUIP_SLOT_WAIST_POUCH),
-            "waist_pouch should map to EQUIP_SLOT_WAIST_POUCH"
-        );
-        assert_eq!(
-            container_id_to_equip_slot("chest_satchel"),
-            Some(EQUIP_SLOT_CHEST_SATCHEL),
-            "chest_satchel should map to EQUIP_SLOT_CHEST_SATCHEL"
-        );
-        assert_eq!(
-            container_id_to_equip_slot("body_pocket"),
-            None,
-            "body_pocket should return None"
-        );
-        assert_eq!(
-            container_id_to_equip_slot("main_pack"),
-            None,
-            "main_pack should return None"
-        );
-        assert_eq!(
-            container_id_to_equip_slot(""),
-            None,
-            "empty string should return None"
-        );
-    }
+    // (决议 #17) container_id_to_equip_slot 函数已删除（背包无专属槽，容器 id = pack_<id>），
+    // 原 container_id_to_equip_slot_maps_all_three_slots pin 测试随之移除。
+    // 反查改由 worn_pack_instance_from_container_id 承担，见 layered_equip_p0_pins。
 
     // ── plan-onboarding-loop-v1 P1.1: 入门残卷 + fragment 物品解析测试 ──
 
@@ -11323,6 +11649,7 @@ cols = 4
             },
             &InventoryLocationV1::Equip {
                 slot: EquipSlotV1::OffHand,
+                state: crate::schema::inventory::EquipStateV1::Held,
             },
         );
         assert!(
@@ -11334,19 +11661,21 @@ cols = 4
         assert_eq!(
             inv.equipped
                 .get(EQUIP_SLOT_OFF_HAND)
+                .and_then(|s| s.held.as_ref())
                 .map(|item| item.template_id.as_str()),
             Some("wooden_shield"),
             "期望 OFF_HAND 槽被 wooden_shield 占用（plan-shield-block-v1 P0 post-state 断言），\
              实际 equipped[off_hand] = {:?}",
             inv.equipped
                 .get(EQUIP_SLOT_OFF_HAND)
+                .and_then(|s| s.held.as_ref())
                 .map(|i| &i.template_id)
         );
     }
 
-    /// two_hand 槽占用时拒绝装 off_hand 盾（边界）。
+    /// 主手持双手兵器（锁对侧）时拒绝装 off_hand 盾（边界，two_hand 槽已删，改对侧锁）。
     #[test]
-    fn apply_move_shield_to_off_hand_rejected_when_two_hand_occupied() {
+    fn apply_move_shield_to_off_hand_rejected_when_main_hand_two_handed() {
         use crate::schema::inventory::{EquipSlotV1, InventoryLocationV1};
 
         let registry = load_item_registry().expect("item registry should load");
@@ -11354,9 +11683,10 @@ cols = 4
         inv.containers[0].items[0].instance.template_id = "wooden_shield".to_string();
         inv.containers[0].items[0].instance.display_name = "木盾".to_string();
         inv.containers[0].items[0].instance.grid_h = 2;
+        // main_hand 持双手杖（staff 派生 two-handed），锁 off_hand。
         inv.equipped.insert(
-            EQUIP_SLOT_TWO_HAND.to_string(),
-            ItemInstance {
+            EQUIP_SLOT_MAIN_HAND.to_string(),
+            SlotContents::held_single(ItemInstance {
                 instance_id: 99,
                 template_id: "wooden_staff".to_string(),
                 display_name: "木杖".to_string(),
@@ -11377,7 +11707,7 @@ cols = 4
                 forge_achieved_tier: None,
                 alchemy: None,
                 lingering_owner_qi: None,
-            },
+            }),
         );
 
         let error = apply_inventory_move(
@@ -11391,16 +11721,17 @@ cols = 4
             },
             &InventoryLocationV1::Equip {
                 slot: EquipSlotV1::OffHand,
+                state: crate::schema::inventory::EquipStateV1::Held,
             },
         )
         .expect_err(
-            "期望 two_hand 占用时装盾到 off_hand 被拒绝，\
-             实际返回 Ok——校验逻辑漏掉了 two_hand 占用检查",
+            "期望主手双手兵器锁住 off_hand 时装盾被拒绝，\
+             实际返回 Ok——对侧锁校验漏掉",
         );
 
         assert!(
-            error.contains("two_hand slot is occupied"),
-            "期望错误消息含 'two_hand slot is occupied'，\
+            error.contains("双手兵器占用双手，对侧已锁定"),
+            "期望错误消息含 '双手兵器占用双手，对侧已锁定'，\
              实际消息：{error}"
         );
     }
@@ -11428,6 +11759,7 @@ cols = 4
             },
             &InventoryLocationV1::Equip {
                 slot: EquipSlotV1::OffHand,
+                state: crate::schema::inventory::EquipStateV1::Held,
             },
         )
         .expect_err(
@@ -11996,5 +12328,199 @@ cols = 4
             registry.get("vanilla:air").is_none(),
             "真 ItemRegistry 不得含 vanilla:air"
         );
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // plan-layered-equip-v1 P0 — 决议锁定行为 pin 测试（SlotContents / worn_cap /
+    // classify_equip_state / weapon_two_handed / pack 容器 id 反查）。
+    // 这些把 PR-1 重构的核心契约钉死，任何回归立刻撞红。
+    // ─────────────────────────────────────────────────────────────────────────
+    mod layered_equip_p0_pins {
+        use super::*;
+
+        // ── 1. SlotContents serde roundtrip（空 / 单 worn / 多 worn / worn+held / held-only）──
+
+        fn roundtrip(slot: &SlotContents) -> SlotContents {
+            let json = serde_json::to_string(slot).expect("SlotContents should serialize");
+            serde_json::from_str(&json).expect("SlotContents should deserialize")
+        }
+
+        #[test]
+        fn slot_contents_serde_roundtrip_empty() {
+            let empty = SlotContents::default();
+            let json = serde_json::to_string(&empty).expect("empty SlotContents should serialize");
+            // 空槽：worn 序列化为 []，held=None 时省略字段（skip_serializing_if）。
+            assert!(
+                json.contains("\"worn\":[]"),
+                "空槽应把 worn 序列化为 []，实际：{json}"
+            );
+            assert!(
+                !json.contains("held"),
+                "held=None 应被省略（skip_serializing_if），实际：{json}"
+            );
+            assert_eq!(roundtrip(&empty), empty, "空槽 roundtrip 应保持相等");
+        }
+
+        #[test]
+        fn slot_contents_serde_roundtrip_single_worn() {
+            let s = SlotContents::worn_single(make_test_item_instance(1, "armor_a"));
+            assert_eq!(roundtrip(&s), s, "单 worn 件 roundtrip 应保持相等");
+            assert_eq!(s.worn.len(), 1);
+            assert!(s.held.is_none());
+        }
+
+        #[test]
+        fn slot_contents_serde_roundtrip_multi_worn() {
+            let s = SlotContents {
+                worn: vec![
+                    make_test_item_instance(1, "layer_bottom"),
+                    make_test_item_instance(2, "layer_mid"),
+                    make_test_item_instance(3, "layer_top"),
+                ],
+                held: None,
+            };
+            let back = roundtrip(&s);
+            assert_eq!(back, s, "三层 worn roundtrip 应保持相等（含栈顺序）");
+            // 栈顺序：worn.last() = 栈顶。
+            assert_eq!(
+                back.worn_top().unwrap().instance_id,
+                3,
+                "worn_top 应为最后压入的件（栈顶 = Vec 末尾）"
+            );
+        }
+
+        #[test]
+        fn slot_contents_serde_roundtrip_worn_plus_held() {
+            let s = SlotContents {
+                worn: vec![make_test_item_instance(1, "armor_a")],
+                held: Some(make_test_item_instance(2, "sword_a")),
+            };
+            assert_eq!(roundtrip(&s), s, "worn+held roundtrip 应保持相等");
+        }
+
+        #[test]
+        fn slot_contents_serde_roundtrip_held_only() {
+            let s = SlotContents::held_single(make_test_item_instance(9, "sword_a"));
+            let json = serde_json::to_string(&s).expect("held-only should serialize");
+            assert!(
+                json.contains("\"held\""),
+                "held=Some 应序列化 held 字段：{json}"
+            );
+            assert_eq!(roundtrip(&s), s, "held-only roundtrip 应保持相等");
+        }
+
+        // ── 2. worn_cap 边界（决议 #6/#14/#17）──
+
+        #[test]
+        fn worn_cap_boundaries_per_slot() {
+            assert_eq!(worn_cap(EQUIP_SLOT_HEAD), 2, "head worn cap=2");
+            assert_eq!(worn_cap(EQUIP_SLOT_FEET), 2, "feet worn cap=2");
+            assert_eq!(worn_cap(EQUIP_SLOT_CHEST), 3, "chest worn cap=3");
+            assert_eq!(worn_cap(EQUIP_SLOT_LEGS), 3, "legs worn cap=3");
+            assert_eq!(
+                worn_cap(EQUIP_SLOT_MAIN_HAND),
+                0,
+                "main_hand held-only cap=0"
+            );
+            assert_eq!(worn_cap(EQUIP_SLOT_OFF_HAND), 0, "off_hand held-only cap=0");
+            assert_eq!(
+                worn_cap(EQUIP_SLOT_EXTRA_HAND_0),
+                0,
+                "extra_hand_0 held-only cap=0"
+            );
+            assert_eq!(
+                worn_cap(EQUIP_SLOT_EXTRA_HAND_1),
+                0,
+                "extra_hand_1 held-only cap=0"
+            );
+        }
+
+        // ── 3. classify_equip_state（决议 #16）：Weapon|Tool→Held，Armor|Container→Worn ──
+
+        fn make_tool_template(id: &str) -> ItemTemplate {
+            let mut t = make_misc_template(id);
+            t.category = ItemCategory::Tool;
+            t
+        }
+
+        fn make_armor_template(id: &str) -> ItemTemplate {
+            let mut t = make_misc_template(id);
+            t.category = ItemCategory::Armor;
+            t
+        }
+
+        #[test]
+        fn classify_equip_state_buckets() {
+            let registry = ItemRegistry::from_map(HashMap::from([
+                ("weapon_a".to_string(), make_weapon_template("weapon_a")),
+                ("tool_a".to_string(), make_tool_template("tool_a")),
+                ("armor_a".to_string(), make_armor_template("armor_a")),
+                (
+                    "container_a".to_string(),
+                    make_container_template("container_a", EQUIP_SLOT_CHEST, 2, 2, 5.0),
+                ),
+            ]));
+
+            assert_eq!(
+                classify_equip_state(&make_test_item_instance(1, "weapon_a"), &registry),
+                EquipState::Held,
+                "Weapon 应分类为 Held"
+            );
+            assert_eq!(
+                classify_equip_state(&make_test_item_instance(2, "tool_a"), &registry),
+                EquipState::Held,
+                "Tool 应分类为 Held"
+            );
+            assert_eq!(
+                classify_equip_state(&make_test_item_instance(3, "armor_a"), &registry),
+                EquipState::Worn,
+                "Armor 应分类为 Worn"
+            );
+            assert_eq!(
+                classify_equip_state(&make_test_item_instance(4, "container_a"), &registry),
+                EquipState::Worn,
+                "Container（背包）应分类为 Worn"
+            );
+        }
+
+        // ── 4. weapon_two_handed（决议 #7）：Spear/Staff→true，其余→false ──
+
+        #[test]
+        fn weapon_two_handed_per_kind() {
+            use crate::combat::weapon::WeaponKind;
+            assert!(weapon_two_handed(WeaponKind::Spear), "Spear 应为双手");
+            assert!(weapon_two_handed(WeaponKind::Staff), "Staff 应为双手");
+            assert!(!weapon_two_handed(WeaponKind::Sword), "Sword 应为单手");
+            assert!(!weapon_two_handed(WeaponKind::Dagger), "Dagger 应为单手");
+            assert!(!weapon_two_handed(WeaponKind::Fist), "Fist 应为单手");
+        }
+
+        // ── 6. container_id_for_worn_pack / worn_pack_instance_from_container_id 反查 roundtrip ──
+
+        #[test]
+        fn worn_pack_container_id_roundtrip() {
+            let id = container_id_for_worn_pack(42);
+            assert_eq!(id, "pack_42", "容器 id 应为 pack_<instance_id>");
+            assert_eq!(
+                worn_pack_instance_from_container_id(&id),
+                Some(42),
+                "pack_42 应反解回 instance_id=42"
+            );
+            assert_eq!(
+                worn_pack_instance_from_container_id("body_pocket"),
+                None,
+                "body_pocket 非 pack_ 前缀，应返回 None"
+            );
+            assert_eq!(
+                worn_pack_instance_from_container_id("main_pack"),
+                None,
+                "main_pack 非 pack_ 前缀，应返回 None"
+            );
+            assert_eq!(
+                worn_pack_instance_from_container_id("pack_notanumber"),
+                None,
+                "pack_ 后非数字应返回 None"
+            );
+        }
     }
 }

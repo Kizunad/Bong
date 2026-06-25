@@ -456,7 +456,10 @@ fn find_chargeable_hand(
         None => &[CarrierSlot::MainHand, CarrierSlot::OffHand][..],
     };
     slots.iter().find_map(|slot| {
-        let item = inventory.equipped.get(slot.equip_key())?;
+        let item = inventory
+            .equipped
+            .get(slot.equip_key())
+            .and_then(|s| s.held.as_ref())?;
         let kind = CarrierKind::from_template_id(&item.template_id)?;
         Some((*slot, item, kind))
     })
@@ -577,6 +580,7 @@ fn finish_charge(
         inventory
             .equipped
             .get(charging.slot.equip_key())
+            .and_then(|s| s.held.as_ref())
             .map(|item| item.template_id.as_str())
             .unwrap_or_default(),
     )
@@ -689,7 +693,11 @@ fn transform_equipped_item(
     let Some(template) = registry.get(template_id) else {
         return false;
     };
-    let Some(item) = inventory.equipped.get_mut(slot.equip_key()) else {
+    let Some(item) = inventory
+        .equipped
+        .get_mut(slot.equip_key())
+        .and_then(|s| s.held.as_mut())
+    else {
         return false;
     };
     item.template_id = template.id.clone();
@@ -748,6 +756,7 @@ fn degrade_equipped_instance(
             inventory
                 .equipped
                 .get(slot.equip_key())
+                .and_then(|s| s.held.as_ref())
                 .is_some_and(|item| item.instance_id == instance_id)
         })
     else {
@@ -756,6 +765,7 @@ fn degrade_equipped_instance(
     let material_template = inventory
         .equipped
         .get(slot.equip_key())
+        .and_then(|s| s.held.as_ref())
         .and_then(|item| CarrierKind::from_template_id(&item.template_id))
         .unwrap_or(CarrierKind::YibianShougu)
         .material_template_id();
@@ -778,7 +788,11 @@ fn throw_carrier_intents(
         else {
             continue;
         };
-        let Some(item) = inventory.equipped.get(intent.slot.equip_key()) else {
+        let Some(item) = inventory
+            .equipped
+            .get(intent.slot.equip_key())
+            .and_then(|s| s.held.as_ref())
+        else {
             continue;
         };
         let Some(imprint) = store.imprints_by_instance.remove(&item.instance_id) else {
@@ -795,7 +809,9 @@ fn throw_carrier_intents(
             stamina.current = (stamina.current - ANQI_THROW_STAMINA_COST).clamp(0.0, stamina.max);
             stamina.last_drain_tick = Some(clock.tick.max(intent.issued_at_tick));
         }
-        inventory.equipped.remove(intent.slot.equip_key());
+        if let Some(s) = inventory.equipped.get_mut(intent.slot.equip_key()) {
+            s.held = None;
+        }
         bump_revision(&mut inventory);
 
         let spawn_pos = position.get() + DVec3::new(0.0, 1.62, 0.0) + dir * 0.5;
@@ -1303,8 +1319,12 @@ mod tests {
     }
 
     fn inventory_with_main_hand(template_id: &str) -> PlayerInventory {
+        use crate::inventory::SlotContents;
         let mut equipped = HashMap::new();
-        equipped.insert(EQUIP_SLOT_MAIN_HAND.to_string(), item(7, template_id));
+        equipped.insert(
+            EQUIP_SLOT_MAIN_HAND.to_string(),
+            SlotContents::held_single(item(7, template_id)),
+        );
         PlayerInventory {
             revision: InventoryRevision(1),
             containers: Vec::new(),
@@ -1374,7 +1394,13 @@ mod tests {
             ANQI_CHARGED_TEMPLATE_ID
         ));
 
-        let item = inventory.equipped.get(EQUIP_SLOT_MAIN_HAND).unwrap();
+        let item = inventory
+            .equipped
+            .get(EQUIP_SLOT_MAIN_HAND)
+            .unwrap()
+            .held
+            .as_ref()
+            .unwrap();
         assert_eq!(item.template_id, ANQI_CHARGED_TEMPLATE_ID);
         assert_eq!(item.stack_count, 1);
         assert_eq!(inventory.revision.0, 2);

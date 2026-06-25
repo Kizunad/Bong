@@ -43,12 +43,39 @@
     }
   ],
   "equipped": {
-    "head": null,
-    "chest": null,
-    "legs": null,
-    "feet": null,
-    "false_skin": null,
-    "main_hand": {
+    "head_worn": [],
+    "chest_worn": [
+      {
+        "instance_id": 1006,
+        "item_id": "armor_iron_chest",
+        "display_name": "铁胸甲",
+        "grid_width": 2,
+        "grid_height": 2,
+        "weight": 6.0,
+        "rarity": "common",
+        "description": "凡铁胸甲，挡得住几下。",
+        "stack_count": 1,
+        "spirit_quality": 0.1,
+        "durability": 0.9
+      },
+      {
+        "instance_id": 1007,
+        "item_id": "worn_grass_pouch",
+        "display_name": "破草包",
+        "grid_width": 2,
+        "grid_height": 2,
+        "weight": 0.3,
+        "rarity": "common",
+        "description": "草编囊，罩在甲外当随身背包。",
+        "stack_count": 1,
+        "spirit_quality": 0.5,
+        "durability": 0.3
+      }
+    ],
+    "legs_worn": [],
+    "feet_worn": [],
+    "main_hand_worn": [],
+    "main_hand_held": {
       "instance_id": 1003,
       "item_id": "training_blade",
       "display_name": "训练短刃",
@@ -65,24 +92,9 @@
       "forge_side_effects": ["brittle_edge"],
       "forge_achieved_tier": 1
     },
-    "off_hand": null,
-    "two_hand": null,
-    "treasure_belt_0": {
-      "instance_id": 1005,
-      "item_id": "starter_talisman",
-      "display_name": "启程护符",
-      "grid_width": 1,
-      "grid_height": 1,
-      "weight": 0.2,
-      "rarity": "uncommon",
-      "description": "初入修途者配发的护身符。",
-      "stack_count": 1,
-      "spirit_quality": 0.76,
-      "durability": 0.93
-    },
-    "treasure_belt_1": null,
-    "treasure_belt_2": null,
-    "treasure_belt_3": null
+    "off_hand_worn": [],
+    "extra_hand_0_worn": [],
+    "extra_hand_1_worn": []
   },
   "hotbar": [
     {

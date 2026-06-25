@@ -5,7 +5,7 @@ use crate::combat::CombatClock;
 use crate::cultivation::color::PracticeLog;
 use crate::cultivation::components::{Cultivation, QiColor};
 use crate::cultivation::death_hooks::release_qi_amount_to_zone;
-use crate::inventory::{consume_item_instance_once, PlayerInventory, EQUIP_SLOT_FALSE_SKIN};
+use crate::inventory::{consume_item_instance_once, PlayerInventory, EQUIP_SLOT_CHEST};
 use crate::qi_physics::QiTransfer;
 use crate::world::dimension::CurrentDimension;
 use crate::world::zone::ZoneRegistry;
@@ -44,7 +44,12 @@ pub fn sync_false_skin_stack_from_inventory(
 ) {
     let now_tick = clock.as_deref().map(|clock| clock.tick).unwrap_or_default();
     for (entity, inventory, stack, worn, attrs) in &mut query {
-        let equipped = inventory.equipped.get(EQUIP_SLOT_FALSE_SKIN);
+        let equipped = inventory.equipped.get(EQUIP_SLOT_CHEST).and_then(|s| {
+            s.worn
+                .iter()
+                .rev()
+                .find(|item| false_skin_tier_for_item(&item.template_id).is_some())
+        });
         let next = equipped.and_then(|item| {
             false_skin_tier_for_item(item.template_id.as_str())
                 .map(|tier| (item.instance_id, tier, item.spirit_quality.max(0.1)))

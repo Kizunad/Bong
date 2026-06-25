@@ -568,7 +568,12 @@ fn inventory_qi(inventory: &PlayerInventory) -> f64 {
         .flat_map(|container| container.items.iter())
         .map(|placed| item_qi(&placed.instance))
         .sum::<f64>();
-    let equipped = inventory.equipped.values().map(item_qi).sum::<f64>();
+    let equipped = inventory
+        .equipped
+        .values()
+        .flat_map(|s| s.iter_all())
+        .map(item_qi)
+        .sum::<f64>();
     let hotbar = inventory
         .hotbar
         .iter()

@@ -23,7 +23,7 @@ use crate::inventory::{
 use crate::player::gameplay::PendingGameplayNarrations;
 use crate::qi_physics::ledger::{QiAccountId, QiTransfer, QiTransferReason, WorldQiAccount};
 use crate::schema::common::NarrationStyle;
-use crate::schema::inventory::{EquipSlotV1, InventoryLocationV1};
+use crate::schema::inventory::{EquipSlotV1, EquipStateV1, InventoryLocationV1};
 use crate::world::dimension::DimensionKind;
 use crate::world::zone::ZoneRegistry;
 
@@ -678,13 +678,15 @@ pub fn artifact_meridian_deepen_on_use(
         write_artifact_state_to_item(item, &state);
 
         if should_broken {
-            let broken_slot = inventory.equipped.iter().find_map(|(slot, item)| {
-                (item.instance_id == weapon_instance_id).then_some(match slot.as_str() {
-                    crate::inventory::EQUIP_SLOT_MAIN_HAND => EquipSlotV1::MainHand,
-                    crate::inventory::EQUIP_SLOT_OFF_HAND => EquipSlotV1::OffHand,
-                    crate::inventory::EQUIP_SLOT_TWO_HAND => EquipSlotV1::TwoHand,
-                    _ => EquipSlotV1::MainHand,
-                })
+            let broken_slot = inventory.equipped.iter().find_map(|(slot, contents)| {
+                contents
+                    .iter_all()
+                    .find(|item| item.instance_id == weapon_instance_id)
+                    .map(|_| match slot.as_str() {
+                        crate::inventory::EQUIP_SLOT_MAIN_HAND => EquipSlotV1::MainHand,
+                        crate::inventory::EQUIP_SLOT_OFF_HAND => EquipSlotV1::OffHand,
+                        _ => EquipSlotV1::MainHand,
+                    })
             });
             weapon.durability = 0.0;
             if let Err(error) =
@@ -716,7 +718,10 @@ pub fn artifact_meridian_deepen_on_use(
                                     [position.0.x, position.0.y, position.0.z],
                                     DimensionKind::Overworld,
                                     weapon_instance_id,
-                                    &InventoryLocationV1::Equip { slot },
+                                    &InventoryLocationV1::Equip {
+                                        slot,
+                                        state: EquipStateV1::Held,
+                                    },
                                 ) {
                                     Ok(_) => true,
                                     Err(drop_error) => {
@@ -910,7 +915,11 @@ fn for_each_artifact_item_mut(
             changed |= f(&mut placed.instance);
         }
     }
-    for item in inventory.equipped.values_mut() {
+    for item in inventory
+        .equipped
+        .values_mut()
+        .flat_map(|s| s.iter_all_mut())
+    {
         changed |= f(item);
     }
     for item in inventory.hotbar.iter_mut().flatten() {
@@ -929,7 +938,7 @@ fn find_item_by_instance(inventory: &PlayerInventory, instance_id: u64) -> Optio
             return Some(&placed.instance);
         }
     }
-    for item in inventory.equipped.values() {
+    for item in inventory.equipped.values().flat_map(|s| s.iter_all()) {
         if item.instance_id == instance_id {
             return Some(item);
         }

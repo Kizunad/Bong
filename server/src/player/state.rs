@@ -29,7 +29,11 @@ use crate::world::dimension::DimensionKind;
 
 pub const DEFAULT_PLAYER_DATA_DIR: &str = "data/players";
 
-const PLAYER_ROW_SCHEMA_VERSION: i32 = 1;
+// plan-layered-equip-v1 P0.6（决议 #4）— inventory schema 内容版本。
+// v1 = equipped 每槽单件 ItemInstance；v2 = SlotContents{worn:Vec, held:Option}。
+// PLAYER_ROW_SCHEMA_VERSION bump 到 2：load 时 schema_version < 2 触发 migrate_equipped_v1_to_v2。
+const PLAYER_ROW_SCHEMA_VERSION: i32 = 2;
+const INVENTORY_SCHEMA_VERSION: i32 = 2;
 const DEFAULT_INVENTORY_JSON: &str = "null";
 const MIN_SAFE_PLAYER_Y: f64 = crate::world::terrain::MIN_Y as f64;
 const MAX_SAFE_PLAYER_Y: f64 =
@@ -143,6 +147,7 @@ fn first_inventory_instance_for_template(
     inventory
         .equipped
         .values()
+        .flat_map(|s| s.iter_all())
         .find(|item| item.template_id == template_id)
         .map(|item| item.instance_id)
 }
@@ -1091,20 +1096,21 @@ fn load_player_inventory_from_sqlite(
     connection: &Connection,
     username: &str,
 ) -> io::Result<Option<PlayerInventory>> {
-    let inventory_json: Option<String> = connection
+    // plan-layered-equip-v1 P0.6（决议 #4）— 先读 schema_version 分流；旧版本走 v1→v2 迁移。
+    let row: Option<(String, i32)> = connection
         .query_row(
             "
-            SELECT inventory_json
+            SELECT inventory_json, schema_version
             FROM inventories
             WHERE username = ?1
             ",
             params![username],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .optional()
         .map_err(io::Error::other)?;
 
-    let Some(inventory_json) = inventory_json else {
+    let Some((inventory_json, schema_version)) = row else {
         return Ok(None);
     };
 
@@ -1112,9 +1118,101 @@ fn load_player_inventory_from_sqlite(
         return Ok(None);
     }
 
-    serde_json::from_str::<PlayerInventory>(&inventory_json)
+    if schema_version >= INVENTORY_SCHEMA_VERSION {
+        // 新版本：直接反序列化。
+        return serde_json::from_str::<PlayerInventory>(&inventory_json)
+            .map(Some)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error));
+    }
+
+    // 旧版本（v1）：解析为 Value → 迁移 equipped 形态 → 反序列化。
+    let mut value: serde_json::Value = serde_json::from_str(&inventory_json)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    migrate_equipped_v1_to_v2(&mut value);
+    serde_json::from_value::<PlayerInventory>(value)
         .map(Some)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+}
+
+/// plan-layered-equip-v1 P0.6（决议 #4 / #17）— inventory v1→v2 存档迁移（原地改写 Value）。
+///
+/// v1 `equipped` 形态：`{ "<slot>": <ItemInstance object>, ... }`（每槽单件）。
+/// v2 形态：`{ "<slot>": { "worn": [<ItemInstance>...], "held": <ItemInstance|null> }, ... }`。
+///
+/// 旧专槽映射去向（决议 #4 定死）：
+/// - `false_skin` → `chest.worn` 追加一件（伪皮归胸槽 worn 层，决议 #9）。
+/// - `two_hand` → `main_hand.held`（对侧 off_hand lock 由 P1 状态机 load 后重算，迁移只落 held，决议 #7）。
+/// - `treasure_belt_0..3` → **丢弃出装备槽**（法宝激活态改由灵宝 UI 触发位承载，决议 #8；
+///   触发位承载 store 暂未入此 inventory 结构，迁移不进装备 worn，避免污染身体槽）。
+/// - `back_pack/waist_pouch/chest_satchel` → 归 `chest.worn`（旧背包件按身体槽 worn 落位，决议 #17；
+///   现存档背包均 back_pack，默认落 chest worn 栈尾，与 default.toml worn_grass_pouch→chest 一致）。
+/// - `extra_hand_0/1` → `<slot>.held`（武器落 held，不误塞多件）。
+/// - `head/chest/legs/feet` → `<slot>.worn`（盔甲穿戴层）。
+/// - `main_hand/off_hand` → `<slot>.held`（手持武器/工具）。
+fn migrate_equipped_v1_to_v2(value: &mut serde_json::Value) {
+    use serde_json::{json, Value};
+
+    let Some(equipped) = value.get_mut("equipped").and_then(Value::as_object_mut) else {
+        return;
+    };
+    let old = std::mem::take(equipped);
+
+    // 累积每个目标身体/手槽的 worn 列表与 held 件。
+    let mut new_slots: std::collections::HashMap<String, (Vec<Value>, Option<Value>)> =
+        std::collections::HashMap::new();
+    let push_worn = |slots: &mut std::collections::HashMap<String, (Vec<Value>, Option<Value>)>,
+                     slot: &str,
+                     item: Value| {
+        slots.entry(slot.to_string()).or_default().0.push(item);
+    };
+    let set_held = |slots: &mut std::collections::HashMap<String, (Vec<Value>, Option<Value>)>,
+                    slot: &str,
+                    item: Value| {
+        slots.entry(slot.to_string()).or_default().1 = Some(item);
+    };
+
+    for (old_slot, item) in old {
+        // 已是 v2 形态（含 worn/held）的件：原样保留（容错幂等）。
+        if item.get("worn").is_some() || item.get("held").is_some() {
+            let entry = new_slots.entry(old_slot.clone()).or_default();
+            if let Some(worn) = item.get("worn").and_then(Value::as_array) {
+                entry.0.extend(worn.iter().cloned());
+            }
+            if let Some(held) = item.get("held") {
+                if !held.is_null() {
+                    entry.1 = Some(held.clone());
+                }
+            }
+            continue;
+        }
+        match old_slot.as_str() {
+            "false_skin" => push_worn(&mut new_slots, "chest", item),
+            "two_hand" => set_held(&mut new_slots, "main_hand", item),
+            "treasure_belt_0" | "treasure_belt_1" | "treasure_belt_2" | "treasure_belt_3" => {
+                // 法宝激活态归触发位（决议 #8）——不进装备槽 worn，迁移期丢弃出装备结构。
+            }
+            "back_pack" | "waist_pouch" | "chest_satchel" => {
+                push_worn(&mut new_slots, "chest", item)
+            }
+            "head" | "chest" | "legs" | "feet" => push_worn(&mut new_slots, &old_slot, item),
+            "main_hand" | "off_hand" | "extra_hand_0" | "extra_hand_1" => {
+                set_held(&mut new_slots, &old_slot, item)
+            }
+            // 未知旧槽：默认按 worn 落到原槽名（容错）。
+            other => push_worn(&mut new_slots, other, item),
+        }
+    }
+
+    let rebuilt = value
+        .get_mut("equipped")
+        .and_then(Value::as_object_mut)
+        .expect("equipped object present");
+    for (slot, (worn, held)) in new_slots {
+        rebuilt.insert(
+            slot,
+            json!({ "worn": worn, "held": held.unwrap_or(Value::Null) }),
+        );
+    }
 }
 
 fn load_player_ui_prefs_from_sqlite(
@@ -2214,7 +2312,7 @@ mod player_state_tests {
         let mut inventory = empty_weapon_inventory();
         inventory.equipped.insert(
             EQUIP_SLOT_MAIN_HAND.to_string(),
-            iron_sword_instance(9_001, durability),
+            crate::inventory::SlotContents::held_single(iron_sword_instance(9_001, durability)),
         );
         inventory
     }
@@ -2730,10 +2828,14 @@ mod player_state_tests {
 
         let loaded = load_player_slices(&persistence, "Azure");
         let loaded_inventory = loaded.inventory.expect("inventory should reload");
-        let main_hand = loaded_inventory
+        let main_hand_slot = loaded_inventory
             .equipped
             .get(EQUIP_SLOT_MAIN_HAND)
             .expect("main_hand iron_sword should reload from sqlite");
+        let main_hand = main_hand_slot
+            .held
+            .as_ref()
+            .expect("main_hand slot should have held iron_sword");
         let snapshot = persisted_inventory_snapshot(&persistence, "Azure");
 
         assert_eq!(main_hand.instance_id, 9_001);
@@ -2741,7 +2843,7 @@ mod player_state_tests {
         approx_eq(main_hand.durability, 0.87);
         assert_eq!(
             snapshot
-                .pointer("/equipped/main_hand/template_id")
+                .pointer("/equipped/main_hand/held/template_id")
                 .and_then(serde_json::Value::as_str),
             Some("iron_sword")
         );

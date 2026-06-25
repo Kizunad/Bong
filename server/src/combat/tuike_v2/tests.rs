@@ -11,7 +11,7 @@ use crate::cultivation::components::{
 use crate::cultivation::meridian::severed::SkillMeridianDependencies;
 use crate::cultivation::skill_registry::{CastRejectReason, CastResult};
 use crate::inventory::{
-    InventoryRevision, ItemInstance, ItemRarity, PlayerInventory, EQUIP_SLOT_FALSE_SKIN,
+    InventoryRevision, ItemInstance, ItemRarity, PlayerInventory, SlotContents, EQUIP_SLOT_CHEST,
 };
 
 use super::events::{
@@ -76,8 +76,8 @@ fn skin_item(instance_id: u64, template_id: &str, spirit_quality: f64) -> ItemIn
 fn inventory_with_skin(template_id: &str, spirit_quality: f64) -> PlayerInventory {
     let mut equipped = HashMap::new();
     equipped.insert(
-        EQUIP_SLOT_FALSE_SKIN.to_string(),
-        skin_item(1001, template_id, spirit_quality),
+        EQUIP_SLOT_CHEST.to_string(),
+        SlotContents::worn_single(skin_item(1001, template_id, spirit_quality)),
     );
     PlayerInventory {
         revision: InventoryRevision(1),
@@ -623,12 +623,14 @@ fn maintenance_sheds_outer_layer_when_qi_cannot_pay_upkeep() {
             .tuike_layers,
         0
     );
-    assert!(!app
+    // 蜕壳后 chest worn 层应已被 consume（worn 为空或 slot 不存在）
+    assert!(app
         .world()
         .get::<PlayerInventory>(entity)
         .unwrap()
         .equipped
-        .contains_key(EQUIP_SLOT_FALSE_SKIN));
+        .get(EQUIP_SLOT_CHEST)
+        .is_none_or(|s| s.worn.is_empty()));
     let mut residue_query = app.world_mut().query::<&FalseSkinResidue>();
     assert_eq!(residue_query.iter(app.world()).count(), 1);
 }

@@ -385,7 +385,7 @@ description = "不知哪个死人身上扒下来的草包。勉强能用，但�
 rows = 3
 cols = 3
 weight_capacity = 8.0
-equip_slot = "back_pack"
+equip_slot = "chest"
 durability_cost_per_op = 0.008
 
 [[item]]
@@ -403,7 +403,7 @@ description = "草根编的粗糙小包。能多带几样东西，但别指望�
 rows = 3
 cols = 3
 weight_capacity = 8.0
-equip_slot = "back_pack"
+equip_slot = "chest"
 durability_cost_per_op = 0.005
 
 # plan-workbench-recipes-v1 §P0.3 — 制作台物品定义。

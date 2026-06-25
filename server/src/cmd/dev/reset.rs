@@ -460,7 +460,10 @@ mod tests {
         let mut hotbar: [Option<ItemInstance>; 9] = Default::default();
         hotbar[0] = Some(item(2, "hotbar_item"));
         let mut equipped = HashMap::new();
-        equipped.insert("weapon".to_string(), item(3, "sword"));
+        equipped.insert(
+            "main_hand".to_string(),
+            crate::inventory::SlotContents::held_single(item(3, "sword")),
+        );
 
         PlayerInventory {
             revision: InventoryRevision(7),

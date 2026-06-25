@@ -8,7 +8,7 @@ use crate::cultivation::components::{
 };
 use crate::cultivation::meridian::severed::SkillMeridianDependencies;
 use crate::cultivation::skill_registry::{CastRejectReason, CastResult, SkillRegistry};
-use crate::inventory::{consume_item_instance_once, PlayerInventory, EQUIP_SLOT_FALSE_SKIN};
+use crate::inventory::{consume_item_instance_once, PlayerInventory, EQUIP_SLOT_CHEST};
 use crate::network::audio_event_emit::{
     AudioRecipient, PlaySoundRecipeRequest, AUDIO_BROADCAST_RADIUS,
 };
@@ -358,7 +358,12 @@ fn equipped_false_skin(
     caster: Entity,
 ) -> Option<(u64, super::state::FalseSkinTier, f64)> {
     let inventory = world.get::<PlayerInventory>(caster)?;
-    let item = inventory.equipped.get(EQUIP_SLOT_FALSE_SKIN)?;
+    let item = inventory.equipped.get(EQUIP_SLOT_CHEST).and_then(|s| {
+        s.worn
+            .iter()
+            .rev()
+            .find(|item| false_skin_tier_for_item(&item.template_id).is_some())
+    })?;
     let tier = false_skin_tier_for_item(item.template_id.as_str())?;
     Some((item.instance_id, tier, item.spirit_quality.max(0.1)))
 }

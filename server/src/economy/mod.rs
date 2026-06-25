@@ -239,7 +239,7 @@ fn inventory_items(inventory: &PlayerInventory) -> impl Iterator<Item = &ItemIns
         .containers
         .iter()
         .flat_map(|container| container.items.iter().map(|placed| &placed.instance))
-        .chain(inventory.equipped.values())
+        .chain(inventory.equipped.values().flat_map(|s| s.iter_all()))
         .chain(inventory.hotbar.iter().filter_map(|item| item.as_ref()))
 }
 

@@ -169,15 +169,12 @@ pub fn sync_weapon_component_from_equipped(
 fn current_weapon_from_inventory(inv: &PlayerInventory) -> Option<(&ItemInstance, EquipSlot)> {
     inv.equipped
         .get("main_hand")
+        .and_then(|s| s.held.as_ref())
         .map(|item| (item, EquipSlot::MainHand))
         .or_else(|| {
             inv.equipped
-                .get("two_hand")
-                .map(|item| (item, EquipSlot::TwoHand))
-        })
-        .or_else(|| {
-            inv.equipped
                 .get("off_hand")
+                .and_then(|s| s.held.as_ref())
                 .map(|item| (item, EquipSlot::OffHand))
         })
 }
@@ -232,11 +229,10 @@ pub struct UnequipWeaponIntent {
 /// 装备槽枚举(plan §2.2)。跟 inventory-v1 `EquipSlotV1` 对齐,仅限武器相关。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-#[allow(clippy::enum_variant_names)] // 三个都带 Hand 后缀属于语义(plan §2.2 槽位命名)
+#[allow(clippy::enum_variant_names)] // 两个都带 Hand 后缀属于语义(plan §2.2 槽位命名)
 pub enum EquipSlot {
     MainHand,
     OffHand,
-    TwoHand,
 }
 
 // ============================================================================
@@ -493,8 +489,10 @@ mod tests {
         // 装备 iron_sword
         {
             let mut inv = app.world_mut().get_mut::<PlayerInventory>(entity).unwrap();
-            inv.equipped
-                .insert("main_hand".to_string(), make_item(42, "iron_sword"));
+            inv.equipped.insert(
+                "main_hand".to_string(),
+                crate::inventory::SlotContents::held_single(make_item(42, "iron_sword")),
+            );
             bump(&mut inv);
         }
         app.update();
@@ -518,8 +516,10 @@ mod tests {
         app.insert_resource(test_registry_with_iron_sword());
         app.add_systems(Update, sync_weapon_component_from_equipped);
         let mut inv = empty_inventory();
-        inv.equipped
-            .insert("main_hand".to_string(), make_item(42, "iron_sword"));
+        inv.equipped.insert(
+            "main_hand".to_string(),
+            crate::inventory::SlotContents::held_single(make_item(42, "iron_sword")),
+        );
         let entity = app.world_mut().spawn(inv).id();
         app.update();
         assert!(app.world().entity(entity).get::<Weapon>().is_some());
@@ -540,8 +540,10 @@ mod tests {
         app.insert_resource(test_registry_with_iron_sword());
         app.add_systems(Update, sync_weapon_component_from_equipped);
         let mut inv = empty_inventory();
-        inv.equipped
-            .insert("main_hand".to_string(), make_item(42, "iron_sword"));
+        inv.equipped.insert(
+            "main_hand".to_string(),
+            crate::inventory::SlotContents::held_single(make_item(42, "iron_sword")),
+        );
         let entity = app.world_mut().spawn(inv).id();
         app.update();
         assert_eq!(
@@ -557,8 +559,10 @@ mod tests {
         {
             let mut inv = app.world_mut().get_mut::<PlayerInventory>(entity).unwrap();
             inv.equipped.clear();
-            inv.equipped
-                .insert("main_hand".to_string(), make_item(77, "spirit_saber"));
+            inv.equipped.insert(
+                "main_hand".to_string(),
+                crate::inventory::SlotContents::held_single(make_item(77, "spirit_saber")),
+            );
             bump(&mut inv);
         }
         app.update();

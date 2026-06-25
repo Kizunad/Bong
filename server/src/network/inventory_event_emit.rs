@@ -104,6 +104,7 @@ fn equipped_armor_for_instance(
     inventory: &PlayerInventory,
     instance_id: u64,
 ) -> Option<(EquipSlotV1, &ItemInstance)> {
+    // plan-layered-equip-v1 P0.2（桶②/③）— 在护甲身体槽 worn 全层按 instance 定位。
     [
         (EQUIP_SLOT_HEAD, EquipSlotV1::Head),
         (EQUIP_SLOT_CHEST, EquipSlotV1::Chest),
@@ -112,8 +113,12 @@ fn equipped_armor_for_instance(
     ]
     .into_iter()
     .find_map(|(slot_key, slot)| {
-        let item = inventory.equipped.get(slot_key)?;
-        (item.instance_id == instance_id).then_some((slot, item))
+        let contents = inventory.equipped.get(slot_key)?;
+        contents
+            .worn
+            .iter()
+            .find(|item| item.instance_id == instance_id)
+            .map(|item| (slot, item))
     })
 }
 
@@ -212,7 +217,10 @@ mod tests {
                 cols: 7,
                 items: vec![],
             }],
-            equipped: HashMap::from([(slot_key.to_string(), item)]),
+            equipped: HashMap::from([(
+                slot_key.to_string(),
+                crate::inventory::SlotContents::worn_single(item),
+            )]),
             hotbar: Default::default(),
             bone_coins: 0,
             max_weight: 50.0,

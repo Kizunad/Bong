@@ -14,7 +14,7 @@ use crate::cultivation::death_hooks::release_qi_amount_to_zone;
 use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
 use crate::inventory::{
     add_item_to_player_inventory, consume_item_instance_once, InventoryInstanceIdAllocator,
-    ItemRegistry, PlayerInventory, EQUIP_SLOT_FALSE_SKIN,
+    ItemRegistry, PlayerInventory, EQUIP_SLOT_CHEST,
 };
 use crate::qi_physics::{QiTransfer, StyleDefense};
 use crate::schema::tuike::{FalseSkinKindV1, FalseSkinStateV1, ShedEventV1};
@@ -392,6 +392,7 @@ fn count_template(inventory: &PlayerInventory, template_id: &str) -> u32 {
     let equipped_count = inventory
         .equipped
         .values()
+        .flat_map(|s| s.iter_all())
         .filter(|item| item.template_id == template_id)
         .map(|item| item.stack_count)
         .sum::<u32>();
@@ -429,6 +430,7 @@ fn first_instance_id_for_template(inventory: &PlayerInventory, template_id: &str
             inventory
                 .equipped
                 .values()
+                .flat_map(|s| s.iter_all())
                 .find(|item| item.template_id == template_id)
                 .map(|item| item.instance_id)
         })
@@ -542,7 +544,12 @@ pub fn sync_false_skin_from_inventory(
     >,
 ) {
     for (entity, inventory, skin, mut attrs) in &mut query {
-        let equipped = inventory.equipped.get(EQUIP_SLOT_FALSE_SKIN);
+        let equipped = inventory.equipped.get(EQUIP_SLOT_CHEST).and_then(|s| {
+            s.worn
+                .iter()
+                .rev()
+                .find(|item| false_skin_kind_for_item(&item.template_id).is_some())
+        });
         let next = equipped.and_then(|item| {
             false_skin_kind_for_item(item.template_id.as_str()).map(|kind| (item.instance_id, kind))
         });
@@ -1041,8 +1048,8 @@ mod tests {
         app.add_systems(Update, sync_false_skin_from_inventory);
         let mut inv = inventory_with_materials();
         inv.equipped.insert(
-            EQUIP_SLOT_FALSE_SKIN.to_string(),
-            item(42, ROTTEN_WOOD_ARMOR_ITEM_ID, 1),
+            EQUIP_SLOT_CHEST.to_string(),
+            crate::inventory::SlotContents::worn_single(item(42, ROTTEN_WOOD_ARMOR_ITEM_ID, 1)),
         );
         let entity = app.world_mut().spawn((inv, DerivedAttrs::default())).id();
 

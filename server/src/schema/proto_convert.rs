@@ -390,10 +390,11 @@ fn inventory_location_to_proto(
                 },
             )),
         },
-        InventoryLocationV1::Equip { slot } => bong::InventoryLocation {
+        InventoryLocationV1::Equip { slot, state } => bong::InventoryLocation {
             location: Some(bong::inventory_location::Location::Equip(
                 bong::InventoryLocationEquip {
                     slot: equip_slot_to_proto(slot),
+                    state: equip_state_to_proto(state),
                 },
             )),
         },
@@ -414,19 +415,18 @@ fn equip_slot_to_proto(s: &super::inventory::EquipSlotV1) -> i32 {
         EquipSlotV1::Chest => bong::EquipSlot::Chest as i32,
         EquipSlotV1::Legs => bong::EquipSlot::Legs as i32,
         EquipSlotV1::Feet => bong::EquipSlot::Feet as i32,
-        EquipSlotV1::FalseSkin => bong::EquipSlot::FalseSkin as i32,
         EquipSlotV1::MainHand => bong::EquipSlot::MainHand as i32,
         EquipSlotV1::OffHand => bong::EquipSlot::OffHand as i32,
-        EquipSlotV1::TwoHand => bong::EquipSlot::TwoHand as i32,
-        EquipSlotV1::TreasureBelt0 => bong::EquipSlot::TreasureBelt0 as i32,
-        EquipSlotV1::TreasureBelt1 => bong::EquipSlot::TreasureBelt1 as i32,
-        EquipSlotV1::TreasureBelt2 => bong::EquipSlot::TreasureBelt2 as i32,
-        EquipSlotV1::TreasureBelt3 => bong::EquipSlot::TreasureBelt3 as i32,
-        EquipSlotV1::BackPack => bong::EquipSlot::BackPack as i32,
-        EquipSlotV1::WaistPouch => bong::EquipSlot::WaistPouch as i32,
-        EquipSlotV1::ChestSatchel => bong::EquipSlot::ChestSatchel as i32,
         EquipSlotV1::ExtraHand0 => bong::EquipSlot::ExtraHand0 as i32,
         EquipSlotV1::ExtraHand1 => bong::EquipSlot::ExtraHand1 as i32,
+    }
+}
+
+fn equip_state_to_proto(s: &super::inventory::EquipStateV1) -> i32 {
+    use super::inventory::EquipStateV1;
+    match s {
+        EquipStateV1::Worn => bong::EquipState::Worn as i32,
+        EquipStateV1::Held => bong::EquipState::Held as i32,
     }
 }
 
@@ -1552,24 +1552,32 @@ fn inventory_snapshot_to_proto(
 fn equipped_to_proto(
     e: &super::inventory::EquippedInventorySnapshotV1,
 ) -> bong::EquippedInventorySnapshot {
+    let worn_to_proto = |worn: &[super::inventory::InventoryItemViewV1]| {
+        worn.iter().map(inventory_item_view_to_proto).collect()
+    };
     bong::EquippedInventorySnapshot {
-        head: e.head.as_ref().map(inventory_item_view_to_proto),
-        chest: e.chest.as_ref().map(inventory_item_view_to_proto),
-        legs: e.legs.as_ref().map(inventory_item_view_to_proto),
-        feet: e.feet.as_ref().map(inventory_item_view_to_proto),
-        false_skin: e.false_skin.as_ref().map(inventory_item_view_to_proto),
-        main_hand: e.main_hand.as_ref().map(inventory_item_view_to_proto),
-        off_hand: e.off_hand.as_ref().map(inventory_item_view_to_proto),
-        two_hand: e.two_hand.as_ref().map(inventory_item_view_to_proto),
-        treasure_belt_0: e.treasure_belt_0.as_ref().map(inventory_item_view_to_proto),
-        treasure_belt_1: e.treasure_belt_1.as_ref().map(inventory_item_view_to_proto),
-        treasure_belt_2: e.treasure_belt_2.as_ref().map(inventory_item_view_to_proto),
-        treasure_belt_3: e.treasure_belt_3.as_ref().map(inventory_item_view_to_proto),
-        back_pack: e.back_pack.as_ref().map(inventory_item_view_to_proto),
-        waist_pouch: e.waist_pouch.as_ref().map(inventory_item_view_to_proto),
-        chest_satchel: e.chest_satchel.as_ref().map(inventory_item_view_to_proto),
-        extra_hand_0: e.extra_hand_0.as_ref().map(inventory_item_view_to_proto),
-        extra_hand_1: e.extra_hand_1.as_ref().map(inventory_item_view_to_proto),
+        head_worn: worn_to_proto(&e.head_worn),
+        head_held: e.head_held.as_ref().map(inventory_item_view_to_proto),
+        chest_worn: worn_to_proto(&e.chest_worn),
+        chest_held: e.chest_held.as_ref().map(inventory_item_view_to_proto),
+        legs_worn: worn_to_proto(&e.legs_worn),
+        legs_held: e.legs_held.as_ref().map(inventory_item_view_to_proto),
+        feet_worn: worn_to_proto(&e.feet_worn),
+        feet_held: e.feet_held.as_ref().map(inventory_item_view_to_proto),
+        main_hand_worn: worn_to_proto(&e.main_hand_worn),
+        main_hand_held: e.main_hand_held.as_ref().map(inventory_item_view_to_proto),
+        off_hand_worn: worn_to_proto(&e.off_hand_worn),
+        off_hand_held: e.off_hand_held.as_ref().map(inventory_item_view_to_proto),
+        extra_hand_0_worn: worn_to_proto(&e.extra_hand_0_worn),
+        extra_hand_0_held: e
+            .extra_hand_0_held
+            .as_ref()
+            .map(inventory_item_view_to_proto),
+        extra_hand_1_worn: worn_to_proto(&e.extra_hand_1_worn),
+        extra_hand_1_held: e
+            .extra_hand_1_held
+            .as_ref()
+            .map(inventory_item_view_to_proto),
     }
 }
 
@@ -5207,25 +5215,7 @@ mod tests {
                     revision: 1,
                     containers: vec![],
                     placed_items: vec![],
-                    equipped: EquippedInventorySnapshotV1 {
-                        head: None,
-                        chest: None,
-                        legs: None,
-                        feet: None,
-                        false_skin: None,
-                        main_hand: None,
-                        off_hand: None,
-                        two_hand: None,
-                        treasure_belt_0: None,
-                        treasure_belt_1: None,
-                        treasure_belt_2: None,
-                        treasure_belt_3: None,
-                        back_pack: None,
-                        waist_pouch: None,
-                        chest_satchel: None,
-                        extra_hand_0: None,
-                        extra_hand_1: None,
-                    },
+                    equipped: EquippedInventorySnapshotV1::default(),
                     hotbar: vec![],
                     bone_coins: 0,
                     weight: InventoryWeightV1 {

@@ -139,7 +139,9 @@ use crate::qi_physics::AnqiContainerKind;
 use crate::schema::alchemy::{AlchemyInterventionResultV1, AlchemySessionStartV1};
 use crate::schema::client_request::{ClientRequestV1, SkillBarBindingV1};
 use crate::schema::combat_hud::{CastOutcomeV1, CastPhaseV1, CastSyncV1};
-use crate::schema::inventory::{ContainerIdV1, EquipSlotV1, InventoryEventV1, InventoryLocationV1};
+use crate::schema::inventory::{
+    ContainerIdV1, EquipSlotV1, EquipStateV1, InventoryEventV1, InventoryLocationV1,
+};
 use crate::schema::server_data::{PillBuffStatusV1, ServerDataPayloadV1, ServerDataV1};
 use crate::schema::social::GuardianKindV1;
 use crate::shelflife::{
@@ -1698,12 +1700,9 @@ pub fn handle_client_request_payloads(
                 item_instance_id,
                 ..
             } => {
-                if slot != EquipSlotV1::FalseSkin {
-                    tracing::warn!(
-                        "[bong][network][tuike] equip_false_skin rejected: slot={slot:?} item_instance_id={item_instance_id}"
-                    );
-                    continue;
-                }
+                // plan-layered-equip-v1 P0.1: FalseSkin slot removed; 伪皮归 CHEST worn 层.
+                // The client may pass any slot in the request; we ignore it and always target Chest/Worn.
+                let _ = slot;
                 let from = inventories.get(ev.client).ok().and_then(|inventory| {
                     find_inventory_instance_location(inventory, item_instance_id)
                 });
@@ -1719,7 +1718,8 @@ pub fn handle_client_request_payloads(
                     item_instance_id,
                     from,
                     InventoryLocationV1::Equip {
-                        slot: EquipSlotV1::FalseSkin,
+                        slot: EquipSlotV1::Chest,
+                        state: EquipStateV1::Worn,
                     },
                     &combat_params.item_registry,
                     &mut inventories,
@@ -3261,7 +3261,7 @@ fn find_inventory_instance_id_matching(
             }
         }
     }
-    for item in inventory.equipped.values() {
+    for item in inventory.equipped.values().flat_map(|s| s.iter_all()) {
         if predicate(item.template_id.as_str()) {
             return Some(item.instance_id);
         }
@@ -8413,6 +8413,7 @@ fn inventory_has_instance(inv: &PlayerInventory, instance_id: u64) -> bool {
     if inv
         .equipped
         .values()
+        .flat_map(|s| s.iter_all())
         .any(|item| item.instance_id == instance_id)
     {
         return true;
@@ -9339,6 +9340,7 @@ fn first_instance_for_template(inventory: &PlayerInventory, template_id: &str) -
     inventory
         .equipped
         .values()
+        .flat_map(|s| s.iter_all())
         .find(|item| item.template_id == template_id)
         .map(|item| item.instance_id)
 }
@@ -9362,10 +9364,14 @@ fn find_inventory_instance_location(
         }
     }
 
-    for (slot, item) in &inventory.equipped {
-        if item.instance_id == instance_id {
-            return equip_slot_v1_for_runtime(slot).map(|slot| InventoryLocationV1::Equip { slot });
-        }
+    if let Some(loc) = crate::inventory::find_equipped_instance(inventory, instance_id) {
+        use crate::inventory::EquippedInstanceLoc;
+        let (slot_key, state) = match loc {
+            EquippedInstanceLoc::Worn { slot, .. } => (slot, EquipStateV1::Worn),
+            EquippedInstanceLoc::Held { slot } => (slot, EquipStateV1::Held),
+        };
+        return equip_slot_v1_for_runtime(&slot_key)
+            .map(|slot| InventoryLocationV1::Equip { slot, state });
     }
 
     inventory
@@ -9395,17 +9401,10 @@ fn equip_slot_v1_for_runtime(slot: &str) -> Option<EquipSlotV1> {
         crate::inventory::EQUIP_SLOT_CHEST => Some(EquipSlotV1::Chest),
         crate::inventory::EQUIP_SLOT_LEGS => Some(EquipSlotV1::Legs),
         crate::inventory::EQUIP_SLOT_FEET => Some(EquipSlotV1::Feet),
-        crate::inventory::EQUIP_SLOT_FALSE_SKIN => Some(EquipSlotV1::FalseSkin),
         crate::inventory::EQUIP_SLOT_MAIN_HAND => Some(EquipSlotV1::MainHand),
         crate::inventory::EQUIP_SLOT_OFF_HAND => Some(EquipSlotV1::OffHand),
-        crate::inventory::EQUIP_SLOT_TWO_HAND => Some(EquipSlotV1::TwoHand),
-        crate::inventory::EQUIP_SLOT_TREASURE_BELT_0 => Some(EquipSlotV1::TreasureBelt0),
-        crate::inventory::EQUIP_SLOT_TREASURE_BELT_1 => Some(EquipSlotV1::TreasureBelt1),
-        crate::inventory::EQUIP_SLOT_TREASURE_BELT_2 => Some(EquipSlotV1::TreasureBelt2),
-        crate::inventory::EQUIP_SLOT_TREASURE_BELT_3 => Some(EquipSlotV1::TreasureBelt3),
-        crate::inventory::EQUIP_SLOT_BACK_PACK => Some(EquipSlotV1::BackPack),
-        crate::inventory::EQUIP_SLOT_WAIST_POUCH => Some(EquipSlotV1::WaistPouch),
-        crate::inventory::EQUIP_SLOT_CHEST_SATCHEL => Some(EquipSlotV1::ChestSatchel),
+        crate::inventory::EQUIP_SLOT_EXTRA_HAND_0 => Some(EquipSlotV1::ExtraHand0),
+        crate::inventory::EQUIP_SLOT_EXTRA_HAND_1 => Some(EquipSlotV1::ExtraHand1),
         _ => None,
     }
 }
@@ -9450,7 +9449,8 @@ fn handle_inventory_move(
     };
 
     if let InventoryLocationV1::Equip {
-        slot: EquipSlotV1::FalseSkin,
+        slot: EquipSlotV1::Chest,
+        state: EquipStateV1::Worn,
     } = &to
     {
         if let Some(kind) = item_before_move
@@ -11650,17 +11650,30 @@ fn consume_one_by_template(inventory: &mut PlayerInventory, template_id: &str) -
             return true;
         }
     }
-    let equipped_key = inventory
-        .equipped
-        .iter()
-        .find(|(_, v)| v.template_id == template_id)
-        .map(|(k, _)| k.clone());
-    if let Some(k) = equipped_key {
-        if let Some(slot) = inventory.equipped.get_mut(&k) {
-            if slot.stack_count > 1 {
-                slot.stack_count -= 1;
+    for (_, contents) in inventory.equipped.iter_mut() {
+        if let Some(pos) = contents
+            .worn
+            .iter()
+            .position(|item| item.template_id == template_id)
+        {
+            if contents.worn[pos].stack_count > 1 {
+                contents.worn[pos].stack_count -= 1;
             } else {
-                inventory.equipped.remove(&k);
+                contents.worn.remove(pos);
+            }
+            inventory.revision.0 = inventory.revision.0.saturating_add(1);
+            return true;
+        }
+        if contents
+            .held
+            .as_ref()
+            .is_some_and(|item| item.template_id == template_id)
+        {
+            let held = contents.held.as_mut().unwrap();
+            if held.stack_count > 1 {
+                held.stack_count -= 1;
+            } else {
+                contents.held = None;
             }
             inventory.revision.0 = inventory.revision.0.saturating_add(1);
             return true;
@@ -11701,7 +11714,7 @@ fn select_template_instances_for_consumption(
             }
         }
     }
-    for item in inventory.equipped.values() {
+    for item in inventory.equipped.values().flat_map(|s| s.iter_all()) {
         if item.template_id == template_id && item.stack_count > 0 {
             instance_ids.push(item.instance_id);
             remaining = remaining.saturating_sub(item.stack_count);
@@ -11731,7 +11744,7 @@ fn inventory_has_template_count(
             }
         }
     }
-    for item in inventory.equipped.values() {
+    for item in inventory.equipped.values().flat_map(|s| s.iter_all()) {
         if item.template_id == template_id {
             total = total.saturating_add(item.stack_count);
         }
@@ -11767,6 +11780,7 @@ fn resolve_pill_consume_target(
             inventory
                 .equipped
                 .values()
+                .flat_map(|s| s.iter_all())
                 .find(|item| item.template_id == template_id)
                 .cloned()
         })
@@ -12641,8 +12655,10 @@ mod take_pill_tests {
                 col: 0,
                 instance: make_pill(22, "guyuan_pill", 3),
             });
-        inv.equipped
-            .insert("treasure_belt_0".into(), make_pill(33, "guyuan_pill", 1));
+        inv.equipped.insert(
+            "off_hand".into(),
+            crate::inventory::SlotContents::held_single(make_pill(33, "guyuan_pill", 1)),
+        );
 
         assert_eq!(
             select_template_instances_for_consumption(&inv, "guyuan_pill", 5),
@@ -13548,7 +13564,10 @@ mod freshness_probe_handler_tests {
         };
         // 放进 equipped（模拟穿戴槽），容器与 hotbar 均为空
         let mut inv = empty_inventory();
-        inv.equipped.insert("body".to_string(), item);
+        inv.equipped.insert(
+            "chest".to_string(),
+            crate::inventory::SlotContents::worn_single(item),
+        );
         app.world_mut().entity_mut(entity).insert(inv);
 
         app.world_mut()

@@ -837,13 +837,17 @@ fn has_equipped_charged_carrier(
     [EQUIP_SLOT_MAIN_HAND, EQUIP_SLOT_OFF_HAND]
         .into_iter()
         .any(|slot| {
-            inventory.equipped.get(slot).is_some_and(|item| {
-                item.template_id == required.charged_template_id()
-                    && store
-                        .imprints_by_instance
-                        .get(&item.instance_id)
-                        .is_some_and(|imprint| imprint_matches_skill(imprint, required))
-            })
+            inventory
+                .equipped
+                .get(slot)
+                .and_then(|s| s.held.as_ref())
+                .is_some_and(|item| {
+                    item.template_id == required.charged_template_id()
+                        && store
+                            .imprints_by_instance
+                            .get(&item.instance_id)
+                            .is_some_and(|imprint| imprint_matches_skill(imprint, required))
+                })
         })
 }
 
@@ -933,7 +937,7 @@ mod tests {
         let mut equipped = HashMap::new();
         equipped.insert(
             EQUIP_SLOT_MAIN_HAND.to_string(),
-            charged_item(instance_id, kind),
+            crate::inventory::SlotContents::held_single(charged_item(instance_id, kind)),
         );
         let inventory = PlayerInventory {
             revision: InventoryRevision(1),

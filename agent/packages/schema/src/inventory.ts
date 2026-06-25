@@ -18,21 +18,26 @@ export const ContainerIdV1 = Type.Union([
 ]);
 export type ContainerIdV1 = Static<typeof ContainerIdV1>;
 
+// plan-layered-equip-v1 P0.4（决议 #17 / #9 / #8）：删 false_skin / two_hand /
+// treasure_belt_0..3 / back_pack / waist_pouch / chest_satchel；补 extra_hand_0/1（修漂移）。
 export const EquipSlotV1 = Type.Union([
   Type.Literal("head"),
   Type.Literal("chest"),
   Type.Literal("legs"),
   Type.Literal("feet"),
-  Type.Literal("false_skin"),
   Type.Literal("main_hand"),
   Type.Literal("off_hand"),
-  Type.Literal("two_hand"),
-  Type.Literal("treasure_belt_0"),
-  Type.Literal("treasure_belt_1"),
-  Type.Literal("treasure_belt_2"),
-  Type.Literal("treasure_belt_3"),
+  Type.Literal("extra_hand_0"),
+  Type.Literal("extra_hand_1"),
 ]);
 export type EquipSlotV1 = Static<typeof EquipSlotV1>;
+
+// plan-layered-equip-v1 P0.4（决议 #2）：装备落位是 worn 层还是 held 位。
+export const EquipStateV1 = Type.Union([
+  Type.Literal("worn"),
+  Type.Literal("held"),
+]);
+export type EquipStateV1 = Static<typeof EquipStateV1>;
 
 export const ItemRarityV1 = Type.Union([
   Type.Literal("common"),
@@ -237,20 +242,27 @@ const InventoryWeightV1 = Type.Object(
   { additionalProperties: false },
 );
 
+// plan-layered-equip-v1 P0.4（方案B，决议 #1 / #17）：每装备槽拆 worn(Array) + held(Optional)。
+// 背包件随其身体槽 worn 数组下发（无背包专属字段）。held 用 Optional 对齐 rust skip_serializing_if。
+const WornLayerV1 = Type.Array(InventoryItemViewV1);
 const EquippedInventorySnapshotV1 = Type.Object(
   {
-    head: NullableInventoryItemViewV1,
-    chest: NullableInventoryItemViewV1,
-    legs: NullableInventoryItemViewV1,
-    feet: NullableInventoryItemViewV1,
-    false_skin: NullableInventoryItemViewV1,
-    main_hand: NullableInventoryItemViewV1,
-    off_hand: NullableInventoryItemViewV1,
-    two_hand: NullableInventoryItemViewV1,
-    treasure_belt_0: NullableInventoryItemViewV1,
-    treasure_belt_1: NullableInventoryItemViewV1,
-    treasure_belt_2: NullableInventoryItemViewV1,
-    treasure_belt_3: NullableInventoryItemViewV1,
+    head_worn: WornLayerV1,
+    head_held: Type.Optional(NullableInventoryItemViewV1),
+    chest_worn: WornLayerV1,
+    chest_held: Type.Optional(NullableInventoryItemViewV1),
+    legs_worn: WornLayerV1,
+    legs_held: Type.Optional(NullableInventoryItemViewV1),
+    feet_worn: WornLayerV1,
+    feet_held: Type.Optional(NullableInventoryItemViewV1),
+    main_hand_worn: WornLayerV1,
+    main_hand_held: Type.Optional(NullableInventoryItemViewV1),
+    off_hand_worn: WornLayerV1,
+    off_hand_held: Type.Optional(NullableInventoryItemViewV1),
+    extra_hand_0_worn: WornLayerV1,
+    extra_hand_0_held: Type.Optional(NullableInventoryItemViewV1),
+    extra_hand_1_worn: WornLayerV1,
+    extra_hand_1_held: Type.Optional(NullableInventoryItemViewV1),
   },
   { additionalProperties: false },
 );
@@ -269,6 +281,8 @@ const InventoryLocationV1 = Type.Union([
     {
       kind: Type.Literal("equip"),
       slot: EquipSlotV1,
+      // plan-layered-equip-v1 P0.4（决议 #2）：state 必填（worn / held）。
+      state: EquipStateV1,
     },
     { additionalProperties: false },
   ),

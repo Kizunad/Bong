@@ -1,7 +1,7 @@
 use crate::cultivation::components::Realm;
 use crate::inventory::{
     set_item_instance_durability, InventoryDurabilityChangedEvent, InventoryDurabilityUpdate,
-    ItemInstance, PlayerInventory, EQUIP_SLOT_MAIN_HAND, EQUIP_SLOT_OFF_HAND, EQUIP_SLOT_TWO_HAND,
+    ItemInstance, PlayerInventory, EQUIP_SLOT_MAIN_HAND, EQUIP_SLOT_OFF_HAND,
 };
 use valence::prelude::{Entity, EventWriter};
 
@@ -220,22 +220,18 @@ pub fn item_to_spec(item: &ItemInstance) -> Option<GatheringToolSpec> {
 }
 
 pub fn equipped_gathering_tool(inventory: &PlayerInventory) -> Option<GatheringToolSpec> {
-    // 工具双手可用：main_hand → off_hand → two_hand 依次找采集工具（副手工具也能采集，
-    // 否则"装得上副手却挖不动"比装不上更迷惑）。
+    // 工具双手可用：main_hand → off_hand 依次找采集工具（副手工具也能采集，
+    // 否则"装得上副手却挖不动"比装不上更迷惑）。双手工具现统一放 main_hand held。
     inventory
         .equipped
         .get(EQUIP_SLOT_MAIN_HAND)
+        .and_then(|s| s.held.as_ref())
         .and_then(item_to_spec)
         .or_else(|| {
             inventory
                 .equipped
                 .get(EQUIP_SLOT_OFF_HAND)
-                .and_then(item_to_spec)
-        })
-        .or_else(|| {
-            inventory
-                .equipped
-                .get(EQUIP_SLOT_TWO_HAND)
+                .and_then(|s| s.held.as_ref())
                 .and_then(item_to_spec)
         })
 }
@@ -244,17 +240,13 @@ fn equipped_gathering_tool_instance(
     inventory: &PlayerInventory,
     expected: GatheringToolSpec,
 ) -> Option<(GatheringToolSpec, u64, f64)> {
-    [
-        EQUIP_SLOT_MAIN_HAND,
-        EQUIP_SLOT_OFF_HAND,
-        EQUIP_SLOT_TWO_HAND,
-    ]
-    .into_iter()
-    .filter_map(|slot| inventory.equipped.get(slot))
-    .find_map(|item| {
-        let spec = item_to_spec(item)?;
-        (spec.item_id == expected.item_id).then_some((spec, item.instance_id, item.durability))
-    })
+    [EQUIP_SLOT_MAIN_HAND, EQUIP_SLOT_OFF_HAND]
+        .into_iter()
+        .filter_map(|slot| inventory.equipped.get(slot).and_then(|s| s.held.as_ref()))
+        .find_map(|item| {
+            let spec = item_to_spec(item)?;
+            (spec.item_id == expected.item_id).then_some((spec, item.instance_id, item.durability))
+        })
 }
 
 fn damage_equipped_gathering_tool_in_inventory(
@@ -335,7 +327,7 @@ pub fn gather_time_ticks(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::inventory::{InventoryRevision, ItemRarity};
+    use crate::inventory::{InventoryRevision, ItemRarity, SlotContents, EQUIP_SLOT_MAIN_HAND};
     use std::collections::HashMap;
 
     fn item(template_id: &str, durability: f64) -> ItemInstance {
@@ -365,7 +357,10 @@ mod tests {
 
     fn inventory_with_main(template_id: &str) -> PlayerInventory {
         let mut equipped = HashMap::new();
-        equipped.insert(EQUIP_SLOT_MAIN_HAND.to_string(), item(template_id, 1.0));
+        equipped.insert(
+            EQUIP_SLOT_MAIN_HAND.to_string(),
+            SlotContents::held_single(item(template_id, 1.0)),
+        );
         PlayerInventory {
             revision: InventoryRevision(0),
             containers: Vec::new(),
@@ -376,17 +371,9 @@ mod tests {
         }
     }
 
+    /// 双手工具现在放在 main_hand held（two_hand 槽已废除）。
     fn inventory_with_two_hand(template_id: &str) -> PlayerInventory {
-        let mut equipped = HashMap::new();
-        equipped.insert(EQUIP_SLOT_TWO_HAND.to_string(), item(template_id, 1.0));
-        PlayerInventory {
-            revision: InventoryRevision(0),
-            containers: Vec::new(),
-            equipped,
-            hotbar: Default::default(),
-            bone_coins: 0,
-            max_weight: 10.0,
-        }
+        inventory_with_main(template_id)
     }
 
     #[test]
@@ -425,23 +412,27 @@ mod tests {
             .equipped
             .get_mut(EQUIP_SLOT_MAIN_HAND)
             .expect("main hand")
+            .held
+            .as_mut()
+            .expect("main hand held")
             .durability = 0.0;
         assert_eq!(equipped_gathering_tool(&inventory), None);
     }
 
     #[test]
-    fn equipped_tool_falls_back_to_two_hand_when_main_hand_is_not_gathering_tool() {
+    fn equipped_tool_falls_back_to_off_hand_when_main_hand_is_not_gathering_tool() {
         let mut inventory = inventory_with_main("iron_sword");
-        inventory
-            .equipped
-            .insert(EQUIP_SLOT_TWO_HAND.to_string(), item("pickaxe_iron", 1.0));
+        inventory.equipped.insert(
+            EQUIP_SLOT_OFF_HAND.to_string(),
+            SlotContents::held_single(item("pickaxe_iron", 1.0)),
+        );
 
         let actual = equipped_gathering_tool(&inventory).map(|spec| spec.kind);
 
         assert_eq!(
             actual,
             Some(GatheringToolKind::Pickaxe),
-            "expected equipped_gathering_tool to inspect two-hand when main-hand is not a gathering tool, got {actual:?}"
+            "expected equipped_gathering_tool to inspect off_hand when main_hand is not a gathering tool, got {actual:?}"
         );
     }
 
@@ -513,7 +504,7 @@ mod tests {
 
     #[test]
     fn successful_gathering_ticks_tool_durability() {
-        let mut inventory = inventory_with_two_hand("pickaxe_copper");
+        let mut inventory = inventory_with_main("pickaxe_copper");
         let spec = spec_for_item_id("pickaxe_copper").expect("fixture tool exists");
 
         let outcome = damage_equipped_gathering_tool_in_inventory(&mut inventory, spec)
@@ -521,7 +512,11 @@ mod tests {
 
         assert_eq!(outcome.spec.item_id, "pickaxe_copper");
         assert_eq!(
-            inventory.equipped[EQUIP_SLOT_TWO_HAND].durability,
+            inventory.equipped[EQUIP_SLOT_MAIN_HAND]
+                .held
+                .as_ref()
+                .expect("main hand held")
+                .durability,
             1.0 - 1.0 / 90.0
         );
         assert_eq!(outcome.update.instance_id, 1);
@@ -530,9 +525,12 @@ mod tests {
     #[test]
     fn off_hand_tool_is_found_by_gathering_scan() {
         // 工具双手可用：装在 off_hand 的工具也要能被采集扫描取到，否则"装得上副手却挖不动"
-        // 比装不上更迷惑。equipped_gathering_tool 扫描 main→off_hand→two_hand。
+        // 比装不上更迷惑。equipped_gathering_tool 扫描 main_hand→off_hand。
         let mut equipped = HashMap::new();
-        equipped.insert(EQUIP_SLOT_OFF_HAND.to_string(), item("pickaxe_copper", 1.0));
+        equipped.insert(
+            EQUIP_SLOT_OFF_HAND.to_string(),
+            SlotContents::held_single(item("pickaxe_copper", 1.0)),
+        );
         let inventory = PlayerInventory {
             revision: InventoryRevision(0),
             containers: Vec::new(),
@@ -555,7 +553,14 @@ mod tests {
             damage_equipped_gathering_tool_in_inventory(&mut inventory, expected),
             None
         );
-        assert_eq!(inventory.equipped[EQUIP_SLOT_MAIN_HAND].durability, 1.0);
+        assert_eq!(
+            inventory.equipped[EQUIP_SLOT_MAIN_HAND]
+                .held
+                .as_ref()
+                .expect("main hand held")
+                .durability,
+            1.0
+        );
     }
 
     #[test]

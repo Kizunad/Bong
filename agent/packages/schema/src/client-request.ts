@@ -19,7 +19,7 @@ import {
 } from "./container-interaction.js";
 import { ForgeAxis } from "./forge-event.js";
 import { MeridianId } from "./cultivation.js";
-import { ContainerIdV1, EquipSlotV1 } from "./inventory.js";
+import { ContainerIdV1, EquipSlotV1, EquipStateV1 } from "./inventory.js";
 import { MovementActionRequestV1 } from "./movement.js";
 import { GuardianKindV1 } from "./social.js";
 import { FalseSkinKindV1 } from "./tuike.js";
@@ -155,6 +155,8 @@ export const InventoryLocationV1 = Type.Union([
     {
       kind: Type.Literal("equip"),
       slot: EquipSlotV1,
+      // plan-layered-equip-v1 P0.4（决议 #2）：state 必填（worn / held）。
+      state: EquipStateV1,
     },
     { additionalProperties: false },
   ),

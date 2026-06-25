@@ -204,7 +204,7 @@ mod tests {
             }],
             equipped: HashMap::from([(
                 EQUIP_SLOT_MAIN_HAND.to_string(),
-                ItemInstance {
+                crate::inventory::SlotContents::held_single(ItemInstance {
                     instance_id: 7_001,
                     template_id: template_id.to_string(),
                     display_name: template_id.to_string(),
@@ -225,7 +225,7 @@ mod tests {
                     forge_achieved_tier: None,
                     alchemy: None,
                     lingering_owner_qi: None,
-                },
+                }),
             )]),
             hotbar: Default::default(),
             bone_coins: 0,
@@ -358,7 +358,11 @@ mod tests {
         assert_eq!(result.kind, ToolKind::GuHaiQian);
         assert_eq!(result.instance_id, 7_001);
         assert_eq!(
-            state.inventory.equipped[EQUIP_SLOT_MAIN_HAND].durability,
+            state.inventory.equipped[EQUIP_SLOT_MAIN_HAND]
+                .held
+                .as_ref()
+                .unwrap()
+                .durability,
             0.99
         );
 
@@ -395,7 +399,11 @@ mod tests {
         let state = app.world().resource::<TestButcherDurabilityState>();
         assert!(state.result.is_none());
         assert_eq!(
-            state.inventory.equipped[EQUIP_SLOT_MAIN_HAND].durability,
+            state.inventory.equipped[EQUIP_SLOT_MAIN_HAND]
+                .held
+                .as_ref()
+                .unwrap()
+                .durability,
             1.0
         );
         let events = app
@@ -424,7 +432,14 @@ mod tests {
         app.update();
 
         let inventory = app.world().get::<PlayerInventory>(player).unwrap();
-        assert_eq!(inventory.equipped[EQUIP_SLOT_MAIN_HAND].durability, 0.99);
+        assert_eq!(
+            inventory.equipped[EQUIP_SLOT_MAIN_HAND]
+                .held
+                .as_ref()
+                .unwrap()
+                .durability,
+            0.99
+        );
         let events = app
             .world()
             .resource::<Events<InventoryDurabilityChangedEvent>>();
@@ -459,7 +474,14 @@ mod tests {
         app.update();
 
         let inventory = app.world().get::<PlayerInventory>(player).unwrap();
-        assert_eq!(inventory.equipped[EQUIP_SLOT_MAIN_HAND].durability, 0.0);
+        assert_eq!(
+            inventory.equipped[EQUIP_SLOT_MAIN_HAND]
+                .held
+                .as_ref()
+                .unwrap()
+                .durability,
+            0.0
+        );
         assert_eq!(app.world().get::<Wounds>(player).unwrap().entries.len(), 1);
         assert_eq!(
             app.world()

@@ -15,18 +15,24 @@ pub type ContainerIdV1 = String;
 // ─── 预定义常量（避免散落字符串字面量） ────────────────────────────────────
 /// 贴身口袋（2×3，固定，不可卸）。
 pub const CONTAINER_ID_BODY_POCKET: &str = "body_pocket";
-/// 背部大背包（装备 back_pack 槽产生的容器）。
-pub const CONTAINER_ID_BACK_PACK: &str = "back_pack";
-/// 腰间小囊（装备 waist_pouch 槽产生的容器）。
-pub const CONTAINER_ID_WAIST_POUCH: &str = "waist_pouch";
-/// 胸前挎包（装备 chest_satchel 槽产生的容器）。
-pub const CONTAINER_ID_CHEST_SATCHEL: &str = "chest_satchel";
+// plan-layered-equip-v1 P0.3（决议 #17，gap#14）：删除 CONTAINER_ID_BACK_PACK /
+// WAIST_POUCH / CHEST_SATCHEL —— 背包专属槽取消后这三个容器 id 不再绑「装备槽产生的容器」，
+// 容器 id 改由穿戴背包件 instance 派生（见 inventory/mod.rs container_id_for_worn_pack）。
 /// 旧 main_pack id（历史兼容）。
 pub const CONTAINER_ID_MAIN_PACK: &str = "main_pack";
 /// 旧 small_pouch id（历史兼容）。
 pub const CONTAINER_ID_SMALL_POUCH: &str = "small_pouch";
 /// 旧 front_satchel id（历史兼容）。
 pub const CONTAINER_ID_FRONT_SATCHEL: &str = "front_satchel";
+
+/// plan-layered-equip-v1 P0.3 — 单装备槽内分层 wire 表示（方案B，决议 #1）。
+/// 每件可处于 worn 层（穿戴，repeated）或 held 位（手持，optional）。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum EquipStateV1 {
+    Worn,
+    Held,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
@@ -35,24 +41,10 @@ pub enum EquipSlotV1 {
     Chest,
     Legs,
     Feet,
-    FalseSkin,
     MainHand,
     OffHand,
-    TwoHand,
-    #[serde(rename = "treasure_belt_0")]
-    TreasureBelt0,
-    #[serde(rename = "treasure_belt_1")]
-    TreasureBelt1,
-    #[serde(rename = "treasure_belt_2")]
-    TreasureBelt2,
-    #[serde(rename = "treasure_belt_3")]
-    TreasureBelt3,
-    /// plan-backpack-equip-v1 P0 — 背部大背包槽。
-    BackPack,
-    /// plan-backpack-equip-v1 P0 — 腰间小囊槽。
-    WaistPouch,
-    /// plan-backpack-equip-v1 P0 — 胸前挎包槽。
-    ChestSatchel,
+    // plan-layered-equip-v1 P0.3（决议 #17 / #9 / #8）：删除 false_skin / two_hand /
+    // treasure_belt_0..3 / back_pack / waist_pouch / chest_satchel 九个废弃槽变体。
     /// plan-dandao-path-v1 §8.1 #2 — 变异多臂额外手槽 0。
     #[serde(rename = "extra_hand_0")]
     ExtraHand0,
@@ -169,36 +161,49 @@ pub struct InventoryWeightV1 {
     pub max: f64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+/// plan-layered-equip-v1 P0.3 — 分层装备快照（方案B，决议 #1）。
+///
+/// 每个装备槽拆 `<slot>_worn`（穿戴层，repeated，栈序：尾=顶）+ `<slot>_held`（手持，optional）。
+/// - 身体槽（head/chest/legs/feet）：worn 可叠多层（受 worn_cap），held 恒空。
+///   背包件按 `ContainerSpec.equip_slot` 出现在对应身体槽的 `_worn` 数组里（决议 #17，无背包专属字段）。
+/// - 手槽（main_hand/off_hand/extra_hand_0/extra_hand_1）：held-only，worn 恒空（held-only，决议 #6）。
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct EquippedInventorySnapshotV1 {
-    pub head: Option<InventoryItemViewV1>,
-    pub chest: Option<InventoryItemViewV1>,
-    pub legs: Option<InventoryItemViewV1>,
-    pub feet: Option<InventoryItemViewV1>,
-    pub false_skin: Option<InventoryItemViewV1>,
-    pub main_hand: Option<InventoryItemViewV1>,
-    pub off_hand: Option<InventoryItemViewV1>,
-    pub two_hand: Option<InventoryItemViewV1>,
-    pub treasure_belt_0: Option<InventoryItemViewV1>,
-    pub treasure_belt_1: Option<InventoryItemViewV1>,
-    pub treasure_belt_2: Option<InventoryItemViewV1>,
-    pub treasure_belt_3: Option<InventoryItemViewV1>,
-    /// plan-backpack-equip-v1 P0 — 背部大背包。
+    #[serde(default)]
+    pub head_worn: Vec<InventoryItemViewV1>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub back_pack: Option<InventoryItemViewV1>,
-    /// plan-backpack-equip-v1 P0 — 腰间小囊。
+    pub head_held: Option<InventoryItemViewV1>,
+    #[serde(default)]
+    pub chest_worn: Vec<InventoryItemViewV1>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub waist_pouch: Option<InventoryItemViewV1>,
-    /// plan-backpack-equip-v1 P0 — 胸前挎包。
+    pub chest_held: Option<InventoryItemViewV1>,
+    #[serde(default)]
+    pub legs_worn: Vec<InventoryItemViewV1>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub chest_satchel: Option<InventoryItemViewV1>,
+    pub legs_held: Option<InventoryItemViewV1>,
+    #[serde(default)]
+    pub feet_worn: Vec<InventoryItemViewV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub feet_held: Option<InventoryItemViewV1>,
+    #[serde(default)]
+    pub main_hand_worn: Vec<InventoryItemViewV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub main_hand_held: Option<InventoryItemViewV1>,
+    #[serde(default)]
+    pub off_hand_worn: Vec<InventoryItemViewV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub off_hand_held: Option<InventoryItemViewV1>,
     /// plan-dandao-path-v1 §8.1 #2 — 变异多臂额外手槽 0。
+    #[serde(default)]
+    pub extra_hand_0_worn: Vec<InventoryItemViewV1>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub extra_hand_0: Option<InventoryItemViewV1>,
+    pub extra_hand_0_held: Option<InventoryItemViewV1>,
     /// plan-dandao-path-v1 §8.1 #2 — 变异多臂额外手槽 1。
+    #[serde(default)]
+    pub extra_hand_1_worn: Vec<InventoryItemViewV1>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub extra_hand_1: Option<InventoryItemViewV1>,
+    pub extra_hand_1_held: Option<InventoryItemViewV1>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -211,6 +216,8 @@ pub enum InventoryLocationV1 {
     },
     Equip {
         slot: EquipSlotV1,
+        /// plan-layered-equip-v1 P0.3（决议 #2）— 落位是 worn 层还是 held 位（必填）。
+        state: EquipStateV1,
     },
     Hotbar {
         index: u8,
@@ -340,6 +347,8 @@ struct RawInventoryContainerLocationV1 {
 struct RawInventoryEquipLocationV1 {
     kind: String,
     slot: EquipSlotV1,
+    /// plan-layered-equip-v1 P0.3（决议 #2）— state 必填（worn / held）。
+    state: EquipStateV1,
 }
 
 #[derive(Debug, Deserialize)]
@@ -379,6 +388,7 @@ impl TryFrom<RawInventoryLocationV1> for InventoryLocationV1 {
 
                 Ok(Self::Equip {
                     slot: location.slot,
+                    state: location.state,
                 })
             }
             RawInventoryLocationV1::Hotbar(location) => {

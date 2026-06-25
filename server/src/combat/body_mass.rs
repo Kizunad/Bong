@@ -146,6 +146,9 @@ pub fn sync_stance_from_runtime(
 }
 
 fn equipped_armor_mass(inventory: &PlayerInventory) -> f64 {
+    // plan-layered-equip-v1 P0.2（桶②）— 遍历四护甲身体槽的 worn 全层求重。
+    // 注：gap#13（filter ArmorProfile 排背包/伪皮自重）由 PR-3（§P3 公式6）落地——
+    // 需 ItemRegistry 判 ArmorProfile，本 PR-1 仅 worn 化以编译。
     [
         EQUIP_SLOT_HEAD,
         EQUIP_SLOT_CHEST,
@@ -154,6 +157,7 @@ fn equipped_armor_mass(inventory: &PlayerInventory) -> f64 {
     ]
     .into_iter()
     .filter_map(|slot| inventory.equipped.get(slot))
+    .flat_map(|contents| contents.worn.iter())
     .map(|item| item.weight * f64::from(item.stack_count.max(1)))
     .sum()
 }
@@ -203,9 +207,10 @@ mod tests {
     #[test]
     fn body_mass_splits_armor_from_carried_weight() {
         let mut inventory = empty_inventory();
-        inventory
-            .equipped
-            .insert(EQUIP_SLOT_CHEST.to_string(), item(1, 12.0));
+        inventory.equipped.insert(
+            EQUIP_SLOT_CHEST.to_string(),
+            crate::inventory::SlotContents::worn_single(item(1, 12.0)),
+        );
         inventory.hotbar[0] = Some(item(2, 4.0));
 
         let mass = BodyMass::from_inventory(&inventory);

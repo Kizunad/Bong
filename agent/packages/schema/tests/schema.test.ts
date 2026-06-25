@@ -805,10 +805,13 @@ describe("sample files pass schema validation", () => {
     const data = loadSample("inventory-snapshot.sample.json");
     const result = validate(InventorySnapshotV1, data);
     expect(result.ok, result.errors.join("; ")).toBe(true);
-    expect(data.equipped.main_hand.forge_quality).toBe(0.74);
-    expect(data.equipped.main_hand.forge_color).toBe("Sharp");
-    expect(data.equipped.main_hand.forge_side_effects).toEqual(["brittle_edge"]);
-    expect(data.equipped.main_hand.forge_achieved_tier).toBe(1);
+    // plan-layered-equip-v1 P0.4：武器在 main_hand_held（方案B worn/held 拆分）。
+    expect(data.equipped.main_hand_held.forge_quality).toBe(0.74);
+    expect(data.equipped.main_hand_held.forge_color).toBe("Sharp");
+    expect(data.equipped.main_hand_held.forge_side_effects).toEqual(["brittle_edge"]);
+    expect(data.equipped.main_hand_held.forge_achieved_tier).toBe(1);
+    // chest_worn 叠 2 层（铁甲 + 背包件骑身体槽 worn，决议 #17）。
+    expect(data.equipped.chest_worn.length).toBe(2);
   });
 
   it("alchemy item data accepts pill residue metadata", () => {
@@ -1602,6 +1605,41 @@ describe("sample files pass schema validation", () => {
     const data = loadSample("client-request.inventory-move-intent.sample.json");
     const result = validate(ClientRequestV1, data);
     expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  // plan-layered-equip-v1 P0.5（决议 #2）：equip 落位 worn/held 正样本对拍。
+  it("client-request.inventory-move-intent.equip-worn.sample.json", () => {
+    const data = loadSample(
+      "client-request.inventory-move-intent.equip-worn.sample.json",
+    );
+    const result = validate(ClientRequestV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+    expect(data.to.kind).toBe("equip");
+    expect(data.to.slot).toBe("chest");
+    expect(data.to.state).toBe("worn");
+  });
+
+  it("client-request.inventory-move-intent.equip-held.sample.json", () => {
+    const data = loadSample(
+      "client-request.inventory-move-intent.equip-held.sample.json",
+    );
+    const result = validate(ClientRequestV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+    expect(data.to.kind).toBe("equip");
+    expect(data.to.slot).toBe("main_hand");
+    expect(data.to.state).toBe("held");
+  });
+
+  // plan-layered-equip-v1 P0.5：equip 落位缺 state（必填）应被拒（反样本）。
+  it("equip location without state is rejected", () => {
+    const result = validate(ClientRequestV1, {
+      v: 1,
+      type: "inventory_move_intent",
+      instance_id: 1003,
+      from: { kind: "container", container_id: "main_pack", row: 0, col: 0 },
+      to: { kind: "equip", slot: "main_hand" },
+    });
+    expect(result.ok).toBe(false);
   });
 
   it("client-request.apply-pill.sample.json", () => {

@@ -193,12 +193,12 @@ public class ClientRequestSenderTest {
         install();
         ClientRequestSender.sendDropWeapon(
             2002L,
-            new ClientRequestProtocol.EquipLoc("main_hand")
+            new ClientRequestProtocol.EquipLoc("main_hand", "held")
         );
         assertEquals(1, sent.size());
         assertEquals(new Identifier("bong", "client_request"), sent.get(0).channel());
         assertEquals(
-            "{\"type\":\"drop_weapon_intent\",\"v\":1,\"instance_id\":2002,\"from\":{\"kind\":\"equip\",\"slot\":\"main_hand\"}}",
+            "{\"type\":\"drop_weapon_intent\",\"v\":1,\"instance_id\":2002,\"from\":{\"kind\":\"equip\",\"slot\":\"main_hand\",\"state\":\"held\"}}",
             sent.get(0).body()
         );
     }

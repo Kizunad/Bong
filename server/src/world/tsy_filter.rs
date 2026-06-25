@@ -31,8 +31,8 @@ pub fn apply_entry_filter(inv: &mut PlayerInventory) -> Vec<FilteredItem> {
         }
     }
 
-    // equipped: HashMap<String, ItemInstance>
-    for item in inv.equipped.values_mut() {
+    // equipped: HashMap<String, SlotContents>
+    for item in inv.equipped.values_mut().flat_map(|s| s.iter_all_mut()) {
         try_strip(item, &mut filtered);
     }
 
@@ -88,7 +88,9 @@ pub fn strip_name(template_id: &str, original: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::inventory::{ContainerState, InventoryRevision, ItemRarity, PlacedItemState};
+    use crate::inventory::{
+        ContainerState, InventoryRevision, ItemRarity, PlacedItemState, SlotContents,
+    };
     use std::collections::HashMap;
 
     fn item(
@@ -189,11 +191,17 @@ mod tests {
         let mut inv = empty_inv();
         inv.equipped.insert(
             "main_hand".to_string(),
-            item(11, "weapon_jade_sword", "玉灵剑", 0.5),
+            SlotContents::held_single(item(11, "weapon_jade_sword", "玉灵剑", 0.5)),
         );
         let filtered = apply_entry_filter(&mut inv);
         assert_eq!(filtered.len(), 1);
-        let stripped = inv.equipped.get("main_hand").unwrap();
+        let stripped = inv
+            .equipped
+            .get("main_hand")
+            .unwrap()
+            .held
+            .as_ref()
+            .unwrap();
         assert_eq!(stripped.spirit_quality, 0.0);
         assert_eq!(stripped.display_name, "玉灵剑（失灵）");
     }

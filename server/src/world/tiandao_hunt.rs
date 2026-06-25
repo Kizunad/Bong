@@ -1514,7 +1514,11 @@ mod tests {
         };
         inventory.equipped.insert(
             EQUIP_SLOT_MAIN_HAND.to_string(),
-            test_item(9200, ZHENFA_FLAG_ITEM_ID_FOR_TEST, 1),
+            crate::inventory::SlotContents::held_single(test_item(
+                9200,
+                ZHENFA_FLAG_ITEM_ID_FOR_TEST,
+                1,
+            )),
         );
         inventory.containers[0]
             .items

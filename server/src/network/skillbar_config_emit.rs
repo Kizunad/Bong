@@ -119,6 +119,7 @@ fn lookup_template_id(inventory: &PlayerInventory, instance_id: u64) -> Option<S
     if let Some(item) = inventory
         .equipped
         .values()
+        .flat_map(|s| s.iter_all())
         .find(|item| item.instance_id == instance_id)
     {
         return Some(item.template_id.clone());
