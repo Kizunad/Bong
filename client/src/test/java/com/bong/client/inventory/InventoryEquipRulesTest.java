@@ -303,6 +303,51 @@ class InventoryEquipRulesTest {
             "期望 1×1 wooden_shield 仍不进 hotbar：唯一拦截必须是 !isShield");
     }
 
+    // ── fix CR major: 双手武器入主手须检查副手 + 全部多臂槽均空闲 ──
+
+    @Test
+    void twoHandWeaponRejectedFromMainHandWhenExtraHand0Occupied() {
+        // extra_hand_0 已占（held dagger）→ 双手杖入主手被拒（与 OFF_HAND 同等约束）。
+        InventoryItem staff = item(1001L, "wooden_staff", 1, 3);
+        EnumMap<EquipSlotType, SlotContents> equipped = equipped();
+        equipped.put(EquipSlotType.EXTRA_HAND_0, SlotContents.ofHeld(item(2002L, "bone_dagger", 1, 1)));
+
+        assertFalse(InventoryEquipRules.canEquip(staff, EquipSlotType.MAIN_HAND, null, equipped),
+            "期望双手杖在 EXTRA_HAND_0 已占时入主手被拒（双手需锁全部多臂槽），实际放行——检查 EXTRA_HAND_0 held 检查");
+    }
+
+    @Test
+    void twoHandWeaponRejectedFromMainHandWhenExtraHand1Occupied() {
+        // extra_hand_1 已占（held dagger）→ 双手杖入主手被拒。
+        InventoryItem staff = item(1001L, "wooden_staff", 1, 3);
+        EnumMap<EquipSlotType, SlotContents> equipped = equipped();
+        equipped.put(EquipSlotType.EXTRA_HAND_1, SlotContents.ofHeld(item(2002L, "bone_dagger", 1, 1)));
+
+        assertFalse(InventoryEquipRules.canEquip(staff, EquipSlotType.MAIN_HAND, null, equipped),
+            "期望双手杖在 EXTRA_HAND_1 已占时入主手被拒（双手需锁全部多臂槽），实际放行——检查 EXTRA_HAND_1 held 检查");
+    }
+
+    @Test
+    void twoHandWeaponAllowedWhenAllOffHandSlotsAreFree() {
+        // 副手 + EXTRA_HAND_0 + EXTRA_HAND_1 全空 → 双手杖可入主手（回归）。
+        InventoryItem staff = item(1001L, "wooden_staff", 1, 3);
+
+        assertTrue(InventoryEquipRules.canEquip(staff, EquipSlotType.MAIN_HAND, null, equipped()),
+            "期望副手及多臂槽全空时双手杖可入主手，实际被拒");
+    }
+
+    @Test
+    void twoHandWeaponRejectedWhenExtraHand0OccupiedButOffHandFree() {
+        // 精确边界：OFF_HAND 空但 EXTRA_HAND_0 有物 → 仍拒（任一已 held 即拒绝）。
+        InventoryItem staff = item(1001L, "wooden_staff", 1, 3);
+        EnumMap<EquipSlotType, SlotContents> equipped = equipped();
+        // OFF_HAND 保持空；只占 EXTRA_HAND_0
+        equipped.put(EquipSlotType.EXTRA_HAND_0, SlotContents.ofHeld(item(3003L, "starter_talisman", 1, 1)));
+
+        assertFalse(InventoryEquipRules.canEquip(staff, EquipSlotType.MAIN_HAND, null, equipped),
+            "期望 OFF_HAND 空但 EXTRA_HAND_0 占时双手杖入主手被拒，实际放行——任一多臂槽有物即锁");
+    }
+
     private static EnumMap<EquipSlotType, SlotContents> equipped() {
         return new EnumMap<>(EquipSlotType.class);
     }

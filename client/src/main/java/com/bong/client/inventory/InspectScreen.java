@@ -2309,7 +2309,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 dragState.drop();
                 dispatchMoveIntent(dragged, fromLoc,
                     new com.bong.client.network.ClientRequestProtocol.EquipLoc(
-                        slot.name().toLowerCase(), slot.wireState()));
+                        slot.name().toLowerCase(java.util.Locale.ROOT), slot.wireState()));
                 clearAllHighlights();
                 return;
             }
@@ -2394,7 +2394,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             }
             case EQUIP -> dragState.sourceEquipSlot() == null ? null
                 : new com.bong.client.network.ClientRequestProtocol.EquipLoc(
-                    dragState.sourceEquipSlot().name().toLowerCase(),
+                    dragState.sourceEquipSlot().name().toLowerCase(java.util.Locale.ROOT),
                     dragState.sourceEquipSlot().wireState());
             case HOTBAR -> dragState.sourceHotbarIndex() < 0 ? null
                 : new com.bong.client.network.ClientRequestProtocol.HotbarLoc(
@@ -3155,7 +3155,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 anchor.col()
             ),
             new com.bong.client.network.ClientRequestProtocol.EquipLoc(
-                targetSlot.name().toLowerCase(), targetSlot.wireState()
+                targetSlot.name().toLowerCase(java.util.Locale.ROOT), targetSlot.wireState()
             )
         );
     }
@@ -3171,7 +3171,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             dispatchMoveIntent(
                 item,
                 new com.bong.client.network.ClientRequestProtocol.EquipLoc(
-                    slotType.name().toLowerCase(), slotType.wireState()
+                    slotType.name().toLowerCase(java.util.Locale.ROOT), slotType.wireState()
                 ),
                 new com.bong.client.network.ClientRequestProtocol.ContainerLoc(
                     grid.containerId(),
@@ -3618,7 +3618,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         com.bong.client.network.ClientRequestSender.sendDropWeapon(
             item.instanceId(),
             new com.bong.client.network.ClientRequestProtocol.EquipLoc(
-                slotType.name().toLowerCase(), slotType.wireState())
+                slotType.name().toLowerCase(java.util.Locale.ROOT), slotType.wireState())
         );
         return true;
     }

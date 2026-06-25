@@ -119,8 +119,10 @@ public final class InventoryEquipRules {
         return switch (targetSlot) {
             case MAIN_HAND -> (weaponKind != null || hoe || tool)
                 && handHeldFree(equipped, targetSlot, sourceSlot)
-                // 双手武器入主手要求副手空闲（双手锁对侧手，取代旧 TWO_HAND 专槽）。
-                && (!twoHandWeapon || handHeldFree(equipped, EquipSlotType.OFF_HAND, sourceSlot));
+                // 双手武器入主手要求副手及全部多臂槽均空闲（双手锁对侧手，取代旧 TWO_HAND 专槽）。
+                && (!twoHandWeapon || (handHeldFree(equipped, EquipSlotType.OFF_HAND, sourceSlot)
+                    && handHeldFree(equipped, EquipSlotType.EXTRA_HAND_0, sourceSlot)
+                    && handHeldFree(equipped, EquipSlotType.EXTRA_HAND_1, sourceSlot)));
             // 工具/锄头双手可用：off_hand 放行 tool/hoe（与 server mod.rs OffHand 同步）。
             // 副手不收双手武器（spear/staff 只走主手 held + 锁副手）。
             case OFF_HAND, EXTRA_HAND_0, EXTRA_HAND_1 -> ((weaponKind == WeaponKind.DAGGER || weaponKind == WeaponKind.FIST)
