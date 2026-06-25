@@ -40,10 +40,6 @@
           "type": "string"
         },
         {
-          "const": "false_skin",
-          "type": "string"
-        },
-        {
           "const": "main_hand",
           "type": "string"
         },
@@ -52,23 +48,11 @@
           "type": "string"
         },
         {
-          "const": "two_hand",
+          "const": "extra_hand_0",
           "type": "string"
         },
         {
-          "const": "treasure_belt_0",
-          "type": "string"
-        },
-        {
-          "const": "treasure_belt_1",
-          "type": "string"
-        },
-        {
-          "const": "treasure_belt_2",
-          "type": "string"
-        },
-        {
-          "const": "treasure_belt_3",
+          "const": "extra_hand_1",
           "type": "string"
         }
       ]

@@ -71,7 +71,8 @@
               "type": "object",
               "required": [
                 "kind",
-                "slot"
+                "slot",
+                "state"
               ],
               "properties": {
                 "kind": {
@@ -97,10 +98,6 @@
                       "type": "string"
                     },
                     {
-                      "const": "false_skin",
-                      "type": "string"
-                    },
-                    {
                       "const": "main_hand",
                       "type": "string"
                     },
@@ -109,23 +106,23 @@
                       "type": "string"
                     },
                     {
-                      "const": "two_hand",
+                      "const": "extra_hand_0",
                       "type": "string"
                     },
                     {
-                      "const": "treasure_belt_0",
+                      "const": "extra_hand_1",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "state": {
+                  "anyOf": [
+                    {
+                      "const": "worn",
                       "type": "string"
                     },
                     {
-                      "const": "treasure_belt_1",
-                      "type": "string"
-                    },
-                    {
-                      "const": "treasure_belt_2",
-                      "type": "string"
-                    },
-                    {
-                      "const": "treasure_belt_3",
+                      "const": "held",
                       "type": "string"
                     }
                   ]
@@ -200,7 +197,8 @@
               "type": "object",
               "required": [
                 "kind",
-                "slot"
+                "slot",
+                "state"
               ],
               "properties": {
                 "kind": {
@@ -226,10 +224,6 @@
                       "type": "string"
                     },
                     {
-                      "const": "false_skin",
-                      "type": "string"
-                    },
-                    {
                       "const": "main_hand",
                       "type": "string"
                     },
@@ -238,23 +232,23 @@
                       "type": "string"
                     },
                     {
-                      "const": "two_hand",
+                      "const": "extra_hand_0",
                       "type": "string"
                     },
                     {
-                      "const": "treasure_belt_0",
+                      "const": "extra_hand_1",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "state": {
+                  "anyOf": [
+                    {
+                      "const": "worn",
                       "type": "string"
                     },
                     {
-                      "const": "treasure_belt_1",
-                      "type": "string"
-                    },
-                    {
-                      "const": "treasure_belt_2",
-                      "type": "string"
-                    },
-                    {
-                      "const": "treasure_belt_3",
+                      "const": "held",
                       "type": "string"
                     }
                   ]
@@ -356,7 +350,8 @@
               "type": "object",
               "required": [
                 "kind",
-                "slot"
+                "slot",
+                "state"
               ],
               "properties": {
                 "kind": {
@@ -382,10 +377,6 @@
                       "type": "string"
                     },
                     {
-                      "const": "false_skin",
-                      "type": "string"
-                    },
-                    {
                       "const": "main_hand",
                       "type": "string"
                     },
@@ -394,23 +385,23 @@
                       "type": "string"
                     },
                     {
-                      "const": "two_hand",
+                      "const": "extra_hand_0",
                       "type": "string"
                     },
                     {
-                      "const": "treasure_belt_0",
+                      "const": "extra_hand_1",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "state": {
+                  "anyOf": [
+                    {
+                      "const": "worn",
                       "type": "string"
                     },
                     {
-                      "const": "treasure_belt_1",
-                      "type": "string"
-                    },
-                    {
-                      "const": "treasure_belt_2",
-                      "type": "string"
-                    },
-                    {
-                      "const": "treasure_belt_3",
+                      "const": "held",
                       "type": "string"
                     }
                   ]

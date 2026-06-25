@@ -1,0 +1,16 @@
+{
+  "v": 1,
+  "type": "inventory_move_intent",
+  "instance_id": 1003,
+  "from": {
+    "kind": "container",
+    "container_id": "main_pack",
+    "row": 1,
+    "col": 0
+  },
+  "to": {
+    "kind": "equip",
+    "slot": "main_hand",
+    "state": "held"
+  }
+}
