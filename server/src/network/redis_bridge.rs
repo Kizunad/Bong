@@ -732,6 +732,7 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
             })
         }
         RedisOutbound::ForgeEvent(evt) => {
+            evt.validate().map_err(ValidationError::new)?;
             let payload = serde_json::to_string(&evt).map_err(|error| {
                 ValidationError::new(format!("failed to serialize ForgeEventV1: {error}"))
             })?;
@@ -2717,6 +2718,7 @@ mod redis_bridge_tests {
         );
     }
 
+    use crate::cultivation::components::MeridianId;
     use crate::fauna::rat_phase::RatPhase;
     use crate::schema::anticheat::{AntiCheatReportV1, ViolationKindV1};
     use crate::schema::combat_event::{
@@ -3397,6 +3399,90 @@ mod redis_bridge_tests {
         match death {
             RedisIoCommand::Publish { channel, .. } => assert_eq!(channel, CH_CULTIVATION_DEATH),
             other => panic!("expected publish, got {other:?}"),
+        }
+    }
+
+    fn forge_event_with(meridian: &str, axis: &str, from_tier: u8, to_tier: u8) -> ForgeEventV1 {
+        ForgeEventV1 {
+            meridian: meridian.into(),
+            axis: axis.into(),
+            from_tier,
+            to_tier,
+            success: true,
+        }
+    }
+
+    fn forge_event_meridian_wire(meridian: MeridianId) -> String {
+        serde_json::to_value(meridian)
+            .expect("MeridianId 应能序列化为 ForgeEventV1 wire 值")
+            .as_str()
+            .expect("MeridianId wire 值应为字符串")
+            .to_owned()
+    }
+
+    #[test]
+    fn rejects_forge_event_tier_above_schema_max() {
+        let result = prepare_outbound_command(RedisOutbound::ForgeEvent(forge_event_with(
+            "Lung", "Rate", 16, 17,
+        )));
+
+        assert!(
+            result.is_err(),
+            "TypeScript ForgeEventV1 from_tier/to_tier maximum=16，to_tier=17 应被 Rust outbound 校验拒绝"
+        );
+    }
+
+    #[test]
+    fn rejects_forge_event_from_tier_above_schema_max() {
+        let result = prepare_outbound_command(RedisOutbound::ForgeEvent(forge_event_with(
+            "Lung", "Rate", 17, 16,
+        )));
+
+        assert!(
+            result.is_err(),
+            "TypeScript ForgeEventV1 from_tier/to_tier maximum=16，from_tier=17 应被 Rust outbound 校验拒绝"
+        );
+    }
+
+    #[test]
+    fn rejects_forge_event_invalid_meridian_or_axis() {
+        for event in [
+            forge_event_with("NotAMeridian", "Rate", 0, 1),
+            forge_event_with("Lung", "Speed", 0, 1),
+        ] {
+            let result = prepare_outbound_command(RedisOutbound::ForgeEvent(event));
+
+            assert!(
+                result.is_err(),
+                "TypeScript ForgeEventV1 meridian/axis 枚举约束应被 Rust outbound 校验拒绝"
+            );
+        }
+    }
+
+    #[test]
+    fn publishes_forge_event_schema_tier_bounds() {
+        for meridian in MeridianId::ALL {
+            let meridian = forge_event_meridian_wire(meridian);
+            for axis in ["Rate", "Capacity"] {
+                for (from_tier, to_tier) in [(0, 0), (16, 16)] {
+                    let command = prepare_outbound_command(RedisOutbound::ForgeEvent(
+                        forge_event_with(&meridian, axis, from_tier, to_tier),
+                    ))
+                    .expect("TypeScript ForgeEventV1 合法 meridian/axis/tier 边界值应被接受");
+
+                    match command {
+                        RedisIoCommand::Publish { channel, payload } => {
+                            assert_eq!(channel, CH_FORGE_EVENT);
+                            let v: Value = serde_json::from_str(&payload).unwrap();
+                            assert_eq!(v["meridian"], meridian);
+                            assert_eq!(v["axis"], axis);
+                            assert_eq!(v["from_tier"], from_tier);
+                            assert_eq!(v["to_tier"], to_tier);
+                        }
+                        other => panic!("expected publish, got {other:?}"),
+                    }
+                }
+            }
         }
     }
 

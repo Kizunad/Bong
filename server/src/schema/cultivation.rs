@@ -182,6 +182,65 @@ pub struct ForgeEventV1 {
     pub success: bool,
 }
 
+pub(crate) const FORGE_EVENT_TIER_MAX: u8 = 16;
+
+impl ForgeEventV1 {
+    pub fn validate(&self) -> Result<(), String> {
+        if !is_valid_meridian_id_wire(&self.meridian) {
+            return Err(format!(
+                "ForgeEventV1.meridian must be a known MeridianId, got {}",
+                self.meridian
+            ));
+        }
+        if !matches!(self.axis.as_str(), "Rate" | "Capacity") {
+            return Err(format!(
+                "ForgeEventV1.axis must be Rate or Capacity, got {}",
+                self.axis
+            ));
+        }
+        if self.from_tier > FORGE_EVENT_TIER_MAX {
+            return Err(format!(
+                "ForgeEventV1.from_tier must be <= {FORGE_EVENT_TIER_MAX}, got {}",
+                self.from_tier
+            ));
+        }
+        if self.to_tier > FORGE_EVENT_TIER_MAX {
+            return Err(format!(
+                "ForgeEventV1.to_tier must be <= {FORGE_EVENT_TIER_MAX}, got {}",
+                self.to_tier
+            ));
+        }
+
+        Ok(())
+    }
+}
+
+fn is_valid_meridian_id_wire(value: &str) -> bool {
+    matches!(
+        value,
+        "Lung"
+            | "LargeIntestine"
+            | "Stomach"
+            | "Spleen"
+            | "Heart"
+            | "SmallIntestine"
+            | "Bladder"
+            | "Kidney"
+            | "Pericardium"
+            | "TripleEnergizer"
+            | "Gallbladder"
+            | "Liver"
+            | "Ren"
+            | "Du"
+            | "Chong"
+            | "Dai"
+            | "YinQiao"
+            | "YangQiao"
+            | "YinWei"
+            | "YangWei"
+    )
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum BiographyEntryV1 {
     BreakthroughStarted {
