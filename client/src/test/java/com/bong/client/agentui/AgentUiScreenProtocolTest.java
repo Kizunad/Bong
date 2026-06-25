@@ -303,6 +303,7 @@ public class AgentUiScreenProtocolTest {
     void agentUiScreen_buttonClick_sendsButtonClickPacket() {
         String xml = "<owo-ui><components><flow-layout/></components></owo-ui>";
         AgentUiScreen screen = AgentUiScreen.create("req-btn-001", xml, 600, 1000L);
+        AgentUiStore.setActive(screen);
 
         screen.simulateButtonClickForTests("enter_realm");
 
@@ -317,6 +318,8 @@ public class AgentUiScreenProtocolTest {
             "params.button_id 应为 'enter_realm'");
         assertEquals("req-btn-001", obj.get("request_id").getAsString(),
             "button_click 包 request_id 应为 'req-btn-001'");
+        assertNull(AgentUiStore.getActive(),
+            "button_click 关闭面板后应清空 AgentUiStore，避免按钮路径残留 closed screen");
     }
 
     /**
