@@ -41,6 +41,8 @@ use crate::fauna::dying_elder::{
 };
 use crate::npc::movement::GameTick;
 use crate::npc::spawn::NpcMarker;
+use crate::schema::channels::CH_ELDER_ENCOUNTER;
+use crate::schema::common::MAX_PAYLOAD_BYTES;
 use crate::schema::elder_encounter::{ElderEncounterEventKindV1, ElderEncounterEventV1};
 use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::zone::ZoneRegistry;
@@ -49,15 +51,25 @@ use crate::world::zone::ZoneRegistry;
 
 /// 序列化 `ElderEncounterEventV1` → JSON bytes；失败返回 None 并记录 warn。
 fn to_json_bytes(event: &ElderEncounterEventV1) -> Option<Vec<u8>> {
-    match serde_json::to_vec(event) {
-        Ok(bytes) => Some(bytes),
+    let bytes = match serde_json::to_vec(event) {
+        Ok(bytes) => bytes,
         Err(e) => {
             tracing::warn!(
                 "[bong][elder_encounter_emit] failed to serialize ElderEncounterEventV1: {e}"
             );
-            None
+            return None;
         }
+    };
+    if bytes.len() > MAX_PAYLOAD_BYTES {
+        tracing::error!(
+            "[bong][elder_encounter_emit] payload for {} rejected as oversize: {} > {}",
+            CH_ELDER_ENCOUNTER,
+            bytes.len(),
+            MAX_PAYLOAD_BYTES,
+        );
+        return None;
     }
+    Some(bytes)
 }
 
 /// 向 `players` Query 中所有在 `zone_name` 且维度为 Overworld 的玩家发送 S2C payload。
@@ -293,6 +305,7 @@ pub fn register(app: &mut App) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::schema::common::MAX_PAYLOAD_BYTES;
     use crate::schema::elder_encounter::ElderEncounterEventV1;
 
     // ── payload JSON 结构 pin 测试 ──────────────────────────────────────────
@@ -454,16 +467,98 @@ mod tests {
 
     #[test]
     fn channel_identifier_matches_client_handler() {
-        // 期望：channel identifier 硬编码为 "bong:elder_encounter"
-        // (channel 在 ident!("bong:elder_encounter") 中使用，这里通过字符串 pin 测试)
-        let channel = "bong:elder_encounter";
+        // ident! 需要字面量；这里 pin schema 常量与实际发送 channel 保持完全一致。
+        assert_eq!(
+            CH_ELDER_ENCOUNTER, "bong:elder_encounter",
+            "expected elder encounter channel to exactly match client handler identifier"
+        );
+    }
+
+    fn elder_encounter_event_with_skill_len(skill_len: usize) -> ElderEncounterEventV1 {
+        ElderEncounterEventV1 {
+            zone_name: "spawn".to_string(),
+            elder_entity_id: 1,
+            event_kind: ElderEncounterEventKindV1::Appeared,
+            betray_probability: 0.65,
+            dan_count: 0,
+            offered_skill_id: "x".repeat(skill_len),
+            qi_fraction: 1.0,
+            server_tick: 1000,
+        }
+    }
+
+    fn encoded_elder_encounter_len(skill_len: usize) -> usize {
+        serde_json::to_vec(&elder_encounter_event_with_skill_len(skill_len))
+            .expect("test elder encounter payload should serialize")
+            .len()
+    }
+
+    fn skill_len_for_payload_size(target_size: usize) -> usize {
+        let mut lo = 0usize;
+        let mut hi = target_size;
+        while lo < hi {
+            let mid = (lo + hi).div_ceil(2);
+            if encoded_elder_encounter_len(mid) <= target_size {
+                lo = mid;
+            } else {
+                hi = mid - 1;
+            }
+        }
+        assert_eq!(
+            encoded_elder_encounter_len(lo),
+            target_size,
+            "测试夹具应能构造 exactly target_size 的 elder_encounter payload"
+        );
+        lo
+    }
+
+    #[test]
+    fn max_sized_elder_encounter_payload_is_accepted() {
+        let skill_len = skill_len_for_payload_size(MAX_PAYLOAD_BYTES);
+        let event = elder_encounter_event_with_skill_len(skill_len);
+        let bytes = to_json_bytes(&event)
+            .expect("刚好等于 MAX_PAYLOAD_BYTES 的 elder_encounter 应允许下发");
+
+        assert_eq!(
+            bytes.len(),
+            MAX_PAYLOAD_BYTES,
+            "测试前置条件失败：payload 应刚好等于 MAX_PAYLOAD_BYTES"
+        );
+    }
+
+    #[test]
+    fn oversized_elder_encounter_payload_is_rejected() {
+        let event = elder_encounter_event_with_skill_len(MAX_PAYLOAD_BYTES);
+
+        let encoded_len = serde_json::to_vec(&event)
+            .expect("test elder encounter payload should serialize")
+            .len();
         assert!(
-            channel.starts_with("bong:"),
-            "expected channel to use 'bong:' prefix (matching client CHANNEL_NAMESPACE=bong), actual: {channel}"
+            encoded_len > MAX_PAYLOAD_BYTES,
+            "测试前置条件失败：payload 必须超出 MAX_PAYLOAD_BYTES；actual={encoded_len}, max={MAX_PAYLOAD_BYTES}"
         );
         assert!(
-            channel.ends_with("elder_encounter"),
-            "expected channel to end with 'elder_encounter' (matching client CHANNEL_PATH=elder_encounter), actual: {channel}"
+            to_json_bytes(&event).is_none(),
+            "超出 MAX_PAYLOAD_BYTES 的 elder_encounter 不应生成可下发 bytes；actual_len={encoded_len}, max={MAX_PAYLOAD_BYTES}"
+        );
+    }
+
+    #[test]
+    fn max_plus_one_elder_encounter_payload_is_rejected() {
+        let skill_len = skill_len_for_payload_size(MAX_PAYLOAD_BYTES + 1);
+        let event = elder_encounter_event_with_skill_len(skill_len);
+
+        let encoded_len = serde_json::to_vec(&event)
+            .expect("test elder encounter payload should serialize")
+            .len();
+        assert_eq!(
+            encoded_len,
+            MAX_PAYLOAD_BYTES + 1,
+            "测试前置条件失败：payload 应刚好等于 MAX_PAYLOAD_BYTES + 1"
+        );
+        assert!(
+            to_json_bytes(&event).is_none(),
+            "刚好超出 1 字节的 elder_encounter 不应生成可下发 bytes；actual_len={encoded_len}, max={MAX_PAYLOAD_BYTES}"
         );
     }
 }
