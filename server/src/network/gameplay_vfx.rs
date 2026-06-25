@@ -1,7 +1,9 @@
 use valence::prelude::{DVec3, Events};
 
 use crate::network::vfx_event_emit::VfxEventRequest;
-use crate::schema::vfx_event::VfxEventPayloadV1;
+use crate::schema::vfx_event::{
+    VfxEventPayloadV1, VFX_PARTICLE_COUNT_MAX, VFX_PARTICLE_DURATION_TICKS_MAX,
+};
 
 pub const CULTIVATION_ABSORB: &str = "bong:cultivation_absorb";
 pub const MERIDIAN_OPEN: &str = "bong:meridian_open";
@@ -67,8 +69,46 @@ pub fn spawn_request(
             direction,
             color: Some(color.to_string()),
             strength: Some(strength.clamp(0.0, 1.0)),
-            count: Some(count.clamp(1, 128) as u16),
-            duration_ticks: Some(duration_ticks.clamp(1, 200) as u16),
+            count: Some(count.clamp(1, VFX_PARTICLE_COUNT_MAX.into()) as u16),
+            duration_ticks: Some(
+                duration_ticks.clamp(1, VFX_PARTICLE_DURATION_TICKS_MAX.into()) as u16,
+            ),
         },
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::schema::vfx_event::VfxEventV1;
+
+    #[test]
+    fn spawn_request_clamps_particle_ranges_to_schema_contract() {
+        let request = spawn_request(
+            BREAKTHROUGH_PILLAR,
+            DVec3::new(1.0, 2.0, 3.0),
+            Some([0.0, 1.0, 0.0]),
+            "#FFE8A0",
+            1.5,
+            128,
+            999,
+        );
+
+        let VfxEventPayloadV1::SpawnParticle {
+            strength,
+            count,
+            duration_ticks,
+            ..
+        } = &request.payload
+        else {
+            panic!("spawn_request must build SpawnParticle payload");
+        };
+
+        assert_eq!(*strength, Some(1.0));
+        assert_eq!(*count, Some(VFX_PARTICLE_COUNT_MAX));
+        assert_eq!(*duration_ticks, Some(VFX_PARTICLE_DURATION_TICKS_MAX));
+        VfxEventV1::new(request.payload)
+            .to_json_bytes_checked()
+            .expect("gameplay VFX helper should produce schema-valid payloads");
+    }
 }
