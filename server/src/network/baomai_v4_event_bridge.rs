@@ -22,7 +22,7 @@ use crate::combat::baomai_v4::events::{
     ScarCircuitBrokenEvent, ScarCircuitFormedEvent,
 };
 use crate::network::agent_bridge::{
-    payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
+    payload_type_label, serialize_server_data_payload, PayloadBuildError, SERVER_DATA_CHANNEL,
 };
 use crate::network::redis_bridge::RedisOutbound;
 use crate::network::RedisBridgeResource;
@@ -32,6 +32,7 @@ use crate::schema::baomai_v4::{
     BaomaiV4ResonanceLockV1, BaomaiV4ScarCircuitBrokenV1, BaomaiV4ScarCircuitFormedV1,
 };
 use crate::schema::combat_hud::{EventChannelV1, EventPriorityV1, EventStreamPushV1};
+use crate::schema::common::MAX_PAYLOAD_BYTES;
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -48,6 +49,20 @@ fn current_unix_millis() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
+}
+
+fn is_oversized_payload(payload_type: &'static str, bytes: &[u8]) -> bool {
+    if bytes.len() <= MAX_PAYLOAD_BYTES {
+        return false;
+    }
+    log_payload_build_error(
+        payload_type,
+        &PayloadBuildError::Oversize {
+            size: bytes.len(),
+            max: MAX_PAYLOAD_BYTES,
+        },
+    );
+    true
 }
 
 // ── ScarCircuitFormed / Broken → Redis only ──────────────────────────────────
@@ -180,6 +195,9 @@ pub fn emit_crack_reading_payload(
                 continue;
             }
         };
+        if is_oversized_payload("crack_reading", &bytes) {
+            continue;
+        }
 
         let Ok(mut client) = clients.get_mut(event.reader) else {
             // reader 不是在线玩家（NPC 不需要 HUD）
@@ -232,7 +250,16 @@ pub fn emit_resonance_lock_payloads(
             "started_at": event.started_at,
             "ends_at": event.ends_at,
         });
-        let bytes = serde_json::to_vec(&s2c_payload).unwrap_or_default();
+        let bytes = match serde_json::to_vec(&s2c_payload) {
+            Ok(bytes) => bytes,
+            Err(err) => {
+                tracing::warn!("[bong][baomai-v4] resonance_lock serialize failed: {err}");
+                continue;
+            }
+        };
+        if is_oversized_payload("resonance_lock", &bytes) {
+            continue;
+        }
         for fighter in [event.fighter_a, event.fighter_b] {
             if let Ok(mut client) = clients.get_mut(fighter) {
                 client.send_custom_payload(ident!("bong:resonance_lock"), &bytes);
@@ -269,7 +296,16 @@ pub fn emit_resonance_lock_payloads(
             "reason": reason_json,
             "tick": event.tick,
         });
-        let bytes = serde_json::to_vec(&s2c_payload).unwrap_or_default();
+        let bytes = match serde_json::to_vec(&s2c_payload) {
+            Ok(bytes) => bytes,
+            Err(err) => {
+                tracing::warn!("[bong][baomai-v4] resonance_lock_end serialize failed: {err}");
+                continue;
+            }
+        };
+        if is_oversized_payload("resonance_lock_end", &bytes) {
+            continue;
+        }
         for fighter in [event.fighter_a, event.fighter_b] {
             if let Ok(mut client) = clients.get_mut(fighter) {
                 client.send_custom_payload(ident!("bong:resonance_lock_end"), &bytes);
@@ -285,12 +321,38 @@ mod tests {
     use super::*;
 
     use valence::prelude::{App, Update};
+    use valence::protocol::packets::play::CustomPayloadS2c;
+    use valence::testing::{create_mock_client, MockClientHelper};
 
     use crate::combat::baomai_v4::events::{CircuitBreakReason, LockEndReason};
     use crate::combat::baomai_v4::iron_cocoon::IronCocoonStage;
     use crate::combat::baomai_v4::scar_circuit::ScarCircuitKind;
     use crate::network::RedisBridgeResource;
     use crate::schema::baomai_v4::LockEndReasonWire;
+    use crate::schema::common::MAX_PAYLOAD_BYTES;
+
+    fn flush_clients(app: &mut App) {
+        let world = app.world_mut();
+        let mut clients = world.query::<&mut Client>();
+        for mut client in clients.iter_mut(world) {
+            client.flush_packets().expect("mock client should flush");
+        }
+    }
+
+    fn collect_payloads(helper: &mut MockClientHelper, channel: &str) -> Vec<serde_json::Value> {
+        let mut out = Vec::new();
+        for frame in helper.collect_received().0 {
+            let Ok(packet) = frame.decode::<CustomPayloadS2c>() else {
+                continue;
+            };
+            if packet.channel.as_str() != channel {
+                continue;
+            }
+            let value = serde_json::from_slice(packet.data.0 .0).expect("payload must be JSON");
+            out.push(value);
+        }
+        out
+    }
 
     fn app_with_bridge() -> (App, crossbeam_channel::Receiver<RedisOutbound>) {
         let mut app = App::new();
@@ -470,6 +532,36 @@ mod tests {
             other => panic!("expected BaomaiV4ResonanceLock, got {other:?}"),
         }
         assert!(rx.try_recv().is_err(), "exactly 1 Redis msg");
+    }
+
+    #[test]
+    fn oversized_resonance_lock_payload_is_not_sent() {
+        let (mut app, rx) = app_resonance();
+        let (huge_bundle, mut huge_helper) = create_mock_client("x".repeat(MAX_PAYLOAD_BYTES));
+        let (peer_bundle, _peer_helper) = create_mock_client("Peer");
+        let a = app.world_mut().spawn(huge_bundle).id();
+        let b = app.world_mut().spawn(peer_bundle).id();
+
+        app.world_mut().send_event(ResonanceLockEvent {
+            fighter_a: a,
+            fighter_b: b,
+            started_at: 1000,
+            ends_at: 1060,
+        });
+
+        app.update();
+        flush_clients(&mut app);
+
+        assert!(
+            matches!(rx.try_recv(), Ok(RedisOutbound::BaomaiV4ResonanceLock(_))),
+            "Redis 叙事不应受 S2C 超限保护影响"
+        );
+        let payloads = collect_payloads(&mut huge_helper, "bong:resonance_lock");
+        assert!(
+            payloads.is_empty(),
+            "超出 MAX_PAYLOAD_BYTES 的 resonance_lock 不应下发；实际收到 {} 帧",
+            payloads.len()
+        );
     }
 
     #[test]
