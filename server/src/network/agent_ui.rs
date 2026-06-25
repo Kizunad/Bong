@@ -737,6 +737,7 @@ mod tests {
 
     use crate::cultivation::components::{Cultivation, Realm};
     use crate::schema::agent_ui::AgentUiRequestCommandV1;
+    use crate::schema::common::MAX_PAYLOAD_BYTES;
 
     /// 构造最小 App：RedisBridgeResource + 所有 agent_ui 系统 + event。
     fn build_agent_ui_app() -> (App, crossbeam_channel::Receiver<RedisOutbound>) {
@@ -1613,6 +1614,24 @@ mod tests {
         payloads
     }
 
+    /// 从 MockClientHelper 抽取 bong:agent_ui_request 专属 channel 的裸 payload 长度。
+    fn collect_agent_ui_request_payload_lengths(
+        app: &mut App,
+        helper: &mut MockClientHelper,
+    ) -> Vec<usize> {
+        flush_all_clients(app);
+        let mut lengths = Vec::new();
+        for frame in helper.collect_received().0 {
+            let Ok(packet) = frame.decode::<CustomPayloadS2c>() else {
+                continue;
+            };
+            if packet.channel.as_str() == AGENT_UI_REQUEST_CHANNEL {
+                lengths.push(packet.data.0 .0.len());
+            }
+        }
+        lengths
+    }
+
     /// 从 MockClientHelper 抽取 bong:agent_ui_close 专属 channel 的裸 JSON payloads。
     ///
     /// payload 直接是 `AgentUiClosePayloadV1` JSON（无 ServerDataV1 外层 envelope）。
@@ -1728,6 +1747,48 @@ mod tests {
         );
         // 防回归：bong:server_data channel 上无 agent_ui_request
         assert_no_agent_ui_on_server_data_channel(&mut helper);
+    }
+
+    /// bug-hunt 回归：Rust 侧必须对齐 TS schema 的 request_id 长度上限。
+    ///
+    /// 修复前 validate() 未检查 request_id 长度，超长 id 会进入真实 S2C 路径，
+    /// 在 bong:agent_ui_request 上生成超过 MAX_PAYLOAD_BYTES 的 JSON payload。
+    #[test]
+    fn system_rejects_oversized_request_id_before_agent_ui_request_s2c() {
+        let (mut app, rx) = build_agent_ui_app();
+        let (bundle, mut helper) = create_mock_client("OversizedId");
+        let player = app.world_mut().spawn(bundle).id();
+        app.world_mut().entity_mut(player).insert(Cultivation {
+            realm: Realm::Condense,
+            ..Cultivation::default()
+        });
+
+        let mut cmd = make_cmd(&"r".repeat(MAX_PAYLOAD_BYTES + 1), "OversizedId", 0);
+        cmd.xml =
+            r#"<owo-ui><components><flow-layout><label>ok</label></flow-layout></components></owo-ui>"#
+                .to_string();
+        app.world_mut().send_event(AgentUiCmdEvent(cmd));
+        app.update();
+
+        let s2c_lengths = collect_agent_ui_request_payload_lengths(&mut app, &mut helper);
+        assert!(
+            s2c_lengths.is_empty(),
+            "超长 request_id 必须在 server validate 阶段拒绝，不应下发 bong:agent_ui_request；actual_lens={s2c_lengths:?}, max={MAX_PAYLOAD_BYTES}"
+        );
+
+        let redis_msgs: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
+        let has_invalid_command = redis_msgs.iter().any(|msg| {
+            matches!(
+                msg,
+                RedisOutbound::AgentUiResponse(resp)
+                    if matches!(resp.action, AgentUiActionType::Error)
+                        && resp.params.get("reason").map(String::as_str) == Some("invalid_command")
+            )
+        });
+        assert!(
+            has_invalid_command,
+            "超长 request_id 应返回 invalid_command，而不是静默丢弃；msgs={redis_msgs:?}"
+        );
     }
 
     /// wire JSON 结构 pin：bong:agent_ui_request payload 是裸 AgentUiRequestPayloadV1 JSON，
