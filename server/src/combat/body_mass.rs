@@ -1,8 +1,9 @@
 //! plan-knockback-physics-v1 — body mass and stance inputs for knockback.
 
 use serde::{Deserialize, Serialize};
-use valence::prelude::{bevy_ecs, Component, Query};
+use valence::prelude::{bevy_ecs, Component, Query, Res};
 
+use crate::combat::armor::ArmorProfileRegistry;
 use crate::combat::components::{CombatState, Stamina, StaminaState};
 use crate::inventory::{
     calculate_current_weight, PlayerInventory, EQUIP_SLOT_CHEST, EQUIP_SLOT_FEET, EQUIP_SLOT_HEAD,
@@ -50,8 +51,11 @@ impl BodyMass {
         (self.base_mass + self.armor_mass + self.inventory_mass).max(1.0)
     }
 
-    pub fn from_inventory(inventory: &PlayerInventory) -> Self {
-        let armor_mass = equipped_armor_mass(inventory);
+    pub fn from_inventory(
+        inventory: &PlayerInventory,
+        armor_profiles: &ArmorProfileRegistry,
+    ) -> Self {
+        let armor_mass = equipped_armor_mass(inventory, armor_profiles);
         let carried_mass = (calculate_current_weight(inventory) - armor_mass).max(0.0);
         Self {
             base_mass: HUMAN_BASE_MASS,
@@ -125,9 +129,12 @@ impl Default for Stance {
     }
 }
 
-pub fn sync_body_mass_from_inventory(mut players: Query<(&PlayerInventory, &mut BodyMass)>) {
+pub fn sync_body_mass_from_inventory(
+    mut players: Query<(&PlayerInventory, &mut BodyMass)>,
+    armor_profiles: Res<ArmorProfileRegistry>,
+) {
     for (inventory, mut body_mass) in &mut players {
-        let next = BodyMass::from_inventory(inventory);
+        let next = BodyMass::from_inventory(inventory, armor_profiles.as_ref());
         if *body_mass != next {
             *body_mass = next;
         }
@@ -145,10 +152,11 @@ pub fn sync_stance_from_runtime(
     }
 }
 
-fn equipped_armor_mass(inventory: &PlayerInventory) -> f64 {
-    // plan-layered-equip-v1 P0.2（桶②）— 遍历四护甲身体槽的 worn 全层求重。
-    // 注：gap#13（filter ArmorProfile 排背包/伪皮自重）由 PR-3（§P3 公式6）落地——
-    // 需 ItemRegistry 判 ArmorProfile，本 PR-1 仅 worn 化以编译。
+fn equipped_armor_mass(inventory: &PlayerInventory, armor_profiles: &ArmorProfileRegistry) -> f64 {
+    // plan-layered-equip-v1 P3 公式6（gap#13）— 遍历四护甲身体槽 worn 全层，
+    // **仅计有 ArmorProfile 的件**（排除同槽 worn 的背包 / 伪皮自重，否则误算进击退 total_mass）。
+    // 与 calculate_current_weight 一致按 worn 全层求和，但 mass 须排非护甲件——
+    // 背包件自重仍计入 current_weight（公式7），只是不计入 armor_mass / 击退。
     [
         EQUIP_SLOT_HEAD,
         EQUIP_SLOT_CHEST,
@@ -158,6 +166,7 @@ fn equipped_armor_mass(inventory: &PlayerInventory) -> f64 {
     .into_iter()
     .filter_map(|slot| inventory.equipped.get(slot))
     .flat_map(|contents| contents.worn.iter())
+    .filter(|item| armor_profiles.get(item.template_id.as_str()).is_some())
     .map(|item| item.weight * f64::from(item.stack_count.max(1)))
     .sum()
 }
@@ -165,8 +174,32 @@ fn equipped_armor_mass(inventory: &PlayerInventory) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::inventory::{InventoryRevision, ItemInstance, ItemRarity};
+    use crate::combat::armor::ArmorProfile;
+    use crate::combat::components::{BodyPart, WoundKind};
+    use crate::inventory::{InventoryRevision, ItemInstance, ItemRarity, SlotContents};
+    use crate::schema::inventory::EquipSlotV1;
     use std::collections::HashMap;
+
+    /// 构造一个把给定 template_id 标记为有 ArmorProfile 的注册表（公式6 过滤用）。
+    /// 未列入的 template_id（如背包 / 伪皮）视作无护甲 → 不计入 armor_mass。
+    fn armor_registry(armor_template_ids: &[&str]) -> ArmorProfileRegistry {
+        let map = armor_template_ids
+            .iter()
+            .map(|id| {
+                (
+                    id.to_string(),
+                    ArmorProfile {
+                        slot: EquipSlotV1::Chest,
+                        body_coverage: vec![BodyPart::Chest],
+                        kind_mitigation: HashMap::from([(WoundKind::Cut, 0.1)]),
+                        durability_max: 10,
+                        broken_multiplier: 0.3,
+                    },
+                )
+            })
+            .collect();
+        ArmorProfileRegistry::from_map(map)
+    }
 
     fn item(id: u64, weight: f64) -> ItemInstance {
         ItemInstance {
@@ -213,12 +246,57 @@ mod tests {
         );
         inventory.hotbar[0] = Some(item(2, 4.0));
 
-        let mass = BodyMass::from_inventory(&inventory);
+        // item_1 有 ArmorProfile → 计入 armor_mass；item_2 是 hotbar 件（不参与 armor_mass 槽扫描）。
+        let registry = armor_registry(&["item_1"]);
+        let mass = BodyMass::from_inventory(&inventory, &registry);
 
         assert_eq!(mass.base_mass, HUMAN_BASE_MASS);
-        assert_eq!(mass.armor_mass, 12.0);
-        assert_eq!(mass.inventory_mass, 4.0);
+        assert_eq!(
+            mass.armor_mass, 12.0,
+            "穿戴的护甲件(item_1, 12kg)应计入 armor_mass"
+        );
+        assert_eq!(
+            mass.inventory_mass, 4.0,
+            "hotbar 件(item_2, 4kg)是携带重量、不是护甲重量"
+        );
         assert_eq!(mass.total_mass(), 86.0);
+    }
+
+    #[test]
+    fn equipped_armor_mass_filters_non_armor_worn_items() {
+        // plan-layered-equip-v1 P3 公式6（gap#13）：chest worn=[铁甲 12kg, 背包 2kg]
+        // → armor_mass = 12（仅有 ArmorProfile 的甲，排背包自重）；
+        //   current_weight = 14（甲+背包自重均计入负重，公式7）；
+        //   carried(inventory_mass) = current_weight - armor_mass = 2（背包自重落携带侧，不计入击退护甲）。
+        let mut inventory = empty_inventory();
+        inventory.equipped.insert(
+            EQUIP_SLOT_CHEST.to_string(),
+            SlotContents {
+                worn: vec![item(1, 12.0), item(2, 2.0)],
+                held: None,
+            },
+        );
+
+        // 只有铁甲(item_1)有 ArmorProfile；背包(item_2)无 → 不计入 armor_mass。
+        let registry = armor_registry(&["item_1"]);
+
+        assert_eq!(
+            equipped_armor_mass(&inventory, &registry),
+            12.0,
+            "只有有 ArmorProfile 的铁甲计入 armor_mass，背包自重排除（公式6）"
+        );
+        assert_eq!(
+            calculate_current_weight(&inventory),
+            14.0,
+            "current_weight 含甲(12)+背包自重(2)（公式7）"
+        );
+
+        let mass = BodyMass::from_inventory(&inventory, &registry);
+        assert_eq!(mass.armor_mass, 12.0, "armor_mass 仅护甲");
+        assert_eq!(
+            mass.inventory_mass, 2.0,
+            "背包自重落 inventory_mass(carried = current_weight - armor_mass)"
+        );
     }
 
     #[test]
@@ -226,7 +304,8 @@ mod tests {
         let mut inventory = empty_inventory();
         inventory.hotbar[0] = Some(item(1, 100.0));
 
-        let mass = BodyMass::from_inventory(&inventory);
+        let registry = armor_registry(&[]);
+        let mass = BodyMass::from_inventory(&inventory, &registry);
 
         assert_eq!(mass.inventory_mass, MAX_INVENTORY_MASS);
     }
