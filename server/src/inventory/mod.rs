@@ -7929,6 +7929,532 @@ cols = 4
         );
     }
 
+    // ============================================================================
+    // plan-layered-equip-v1 PR-2 / P1 — 装备校验分层规则 state transition 饱和化
+    // （worn cap 满拒 / 被压层拒 / held 占拒 / 锁手拒 / worn+held 共存 / 卸顶后下层成新顶 /
+    //  双手占双手 / extra_hand 不锁 / 非双手不锁）。
+    // P0 (#736) 已落地 `validate_equip_to` 逻辑；本块锁住每条 state transition 防回归。
+    // ============================================================================
+
+    /// 紧凑构造一个装备/校验测试用的 `ItemInstance`（仅设关键字段）。
+    fn equip_test_instance(instance_id: u64, template_id: &str) -> ItemInstance {
+        ItemInstance {
+            instance_id,
+            template_id: template_id.to_string(),
+            display_name: template_id.to_string(),
+            grid_w: 1,
+            grid_h: 1,
+            weight: 1.0,
+            rarity: ItemRarity::Common,
+            description: String::new(),
+            stack_count: 1,
+            spirit_quality: 1.0,
+            durability: 1.0,
+            freshness: None,
+            mineral_id: None,
+            charges: None,
+            forge_quality: None,
+            forge_color: None,
+            forge_side_effects: Vec::new(),
+            forge_achieved_tier: None,
+            alchemy: None,
+            lingering_owner_qi: None,
+        }
+    }
+
+    /// 直接断言 `validate_move_semantics`：把 `item`（不依赖 inventory 实存）从 `from` 移到
+    /// `to` 应通过 / 拒绝。让我们逐条锁 worn cap / LIFO / held 互斥分支，不必走整条
+    /// apply_inventory_move（后者改 inventory，破坏 multi-step 断言）。
+    fn validate_equip_result(
+        registry: &ItemRegistry,
+        inventory: &PlayerInventory,
+        item: &ItemInstance,
+        from: &crate::schema::inventory::InventoryLocationV1,
+        to: &crate::schema::inventory::InventoryLocationV1,
+    ) -> Result<(), String> {
+        validate_move_semantics(registry, inventory, item, from, to)
+    }
+
+    fn container_from() -> crate::schema::inventory::InventoryLocationV1 {
+        crate::schema::inventory::InventoryLocationV1::Container {
+            container_id: MAIN_PACK_CONTAINER_ID.to_string(),
+            row: 0,
+            col: 0,
+        }
+    }
+
+    fn equip_to(
+        slot: crate::schema::inventory::EquipSlotV1,
+        state: crate::schema::inventory::EquipStateV1,
+    ) -> crate::schema::inventory::InventoryLocationV1 {
+        crate::schema::inventory::InventoryLocationV1::Equip { slot, state }
+    }
+
+    // ---- worn cap 满 → 拒绝（决议 #3 拒绝不顶替）----
+
+    #[test]
+    fn validate_chest_worn_cap_full_at_three_rejects_fourth_armor() {
+        use crate::schema::inventory::{EquipSlotV1, EquipStateV1};
+        let registry = load_item_registry().expect("registry");
+        let mut inv = make_test_inventory_with_one_item();
+        // chest cap = 3：填满 3 件胸甲（不同材质，均映射 Chest 槽）。
+        inv.equipped.insert(
+            EQUIP_SLOT_CHEST.to_string(),
+            SlotContents {
+                worn: vec![
+                    equip_test_instance(201, "armor_straw_chestplate"),
+                    equip_test_instance(202, "armor_bone_chestplate"),
+                    equip_test_instance(203, "armor_iron_chestplate"),
+                ],
+                held: None,
+            },
+        );
+        let fourth = equip_test_instance(204, "armor_bone_chestplate");
+        let error = validate_equip_result(
+            &registry,
+            &inv,
+            &fourth,
+            &container_from(),
+            &equip_to(EquipSlotV1::Chest, EquipStateV1::Worn),
+        )
+        .expect_err("chest worn cap is 3; the 4th armor must be rejected");
+        assert!(
+            error.contains("已穿戴 3 层") && error.contains("无法再叠加"),
+            "期望 chest 满 3 层拒绝文案，实际：{error}"
+        );
+    }
+
+    #[test]
+    fn validate_chest_worn_below_cap_accepts_third_armor() {
+        use crate::schema::inventory::{EquipSlotV1, EquipStateV1};
+        let registry = load_item_registry().expect("registry");
+        let mut inv = make_test_inventory_with_one_item();
+        // chest 已 2 件 → 第 3 件合法（cap=3，边界 off-by-one 正向）。
+        inv.equipped.insert(
+            EQUIP_SLOT_CHEST.to_string(),
+            SlotContents {
+                worn: vec![
+                    equip_test_instance(201, "armor_straw_chestplate"),
+                    equip_test_instance(202, "armor_bone_chestplate"),
+                ],
+                held: None,
+            },
+        );
+        let third = equip_test_instance(203, "armor_iron_chestplate");
+        validate_equip_result(
+            &registry,
+            &inv,
+            &third,
+            &container_from(),
+            &equip_to(EquipSlotV1::Chest, EquipStateV1::Worn),
+        )
+        .expect("chest worn cap is 3; the 3rd armor must be accepted");
+    }
+
+    #[test]
+    fn validate_head_worn_cap_full_at_two_rejects_third_armor() {
+        use crate::schema::inventory::{EquipSlotV1, EquipStateV1};
+        let registry = load_item_registry().expect("registry");
+        let mut inv = make_test_inventory_with_one_item();
+        // head cap = 2：填满 2 件头盔。
+        inv.equipped.insert(
+            EQUIP_SLOT_HEAD.to_string(),
+            SlotContents {
+                worn: vec![
+                    equip_test_instance(301, "armor_straw_helmet"),
+                    equip_test_instance(302, "armor_bone_helmet"),
+                ],
+                held: None,
+            },
+        );
+        let third = equip_test_instance(303, "armor_bone_helmet");
+        let error = validate_equip_result(
+            &registry,
+            &inv,
+            &third,
+            &container_from(),
+            &equip_to(EquipSlotV1::Head, EquipStateV1::Worn),
+        )
+        .expect_err("head worn cap is 2; the 3rd helmet must be rejected");
+        assert!(
+            error.contains("已穿戴 2 层"),
+            "期望 head 满 2 层拒绝文案，实际：{error}"
+        );
+    }
+
+    #[test]
+    fn validate_feet_worn_cap_full_at_two_rejects_third_armor() {
+        use crate::schema::inventory::{EquipSlotV1, EquipStateV1};
+        let registry = load_item_registry().expect("registry");
+        let mut inv = make_test_inventory_with_one_item();
+        // feet cap = 2：填满 2 件靴。
+        inv.equipped.insert(
+            EQUIP_SLOT_FEET.to_string(),
+            SlotContents {
+                worn: vec![
+                    equip_test_instance(401, "armor_straw_boots"),
+                    equip_test_instance(402, "armor_bone_boots"),
+                ],
+                held: None,
+            },
+        );
+        let third = equip_test_instance(403, "armor_bone_boots");
+        let error = validate_equip_result(
+            &registry,
+            &inv,
+            &third,
+            &container_from(),
+            &equip_to(EquipSlotV1::Feet, EquipStateV1::Worn),
+        )
+        .expect_err("feet worn cap is 2; the 3rd boots must be rejected");
+        assert!(
+            error.contains("已穿戴 2 层"),
+            "期望 feet 满 2 层拒绝文案，实际：{error}"
+        );
+    }
+
+    // ---- 背包件与盔甲同槽 cap 共算（决议 #17：背包占身体槽 worn 层）----
+
+    #[test]
+    fn validate_chest_cap_shared_between_armor_and_backpack() {
+        use crate::schema::inventory::{EquipSlotV1, EquipStateV1};
+        let registry = load_item_registry().expect("registry");
+        let mut inv = make_test_inventory_with_one_item();
+        // chest 已 2 件甲 → 拖入背包件（worn_grass_pouch，equip_slot=chest）作第 3 件合法。
+        inv.equipped.insert(
+            EQUIP_SLOT_CHEST.to_string(),
+            SlotContents {
+                worn: vec![
+                    equip_test_instance(501, "armor_straw_chestplate"),
+                    equip_test_instance(502, "armor_bone_chestplate"),
+                ],
+                held: None,
+            },
+        );
+        let pack = equip_test_instance(503, "worn_grass_pouch");
+        validate_equip_result(
+            &registry,
+            &inv,
+            &pack,
+            &container_from(),
+            &equip_to(EquipSlotV1::Chest, EquipStateV1::Worn),
+        )
+        .expect("backpack as 3rd worn layer shares chest cap (cap=3) and must be accepted");
+
+        // 再补满到 3 后，第 4 件（无论甲还是包）拒绝——cap 与盔甲/伪皮共算。
+        inv.equipped
+            .get_mut(EQUIP_SLOT_CHEST)
+            .unwrap()
+            .worn
+            .push(equip_test_instance(503, "worn_grass_pouch"));
+        let fourth = equip_test_instance(504, "grass_pouch");
+        let error = validate_equip_result(
+            &registry,
+            &inv,
+            &fourth,
+            &container_from(),
+            &equip_to(EquipSlotV1::Chest, EquipStateV1::Worn),
+        )
+        .expect_err("chest cap=3 shared with backpack; the 4th item must be rejected");
+        assert!(
+            error.contains("已穿戴 3 层"),
+            "期望 chest 共算满 3 层拒绝，实际：{error}"
+        );
+    }
+
+    // ---- held 互斥（决议 #3：手槽已持械拒绝，卸下才换）----
+
+    #[test]
+    fn validate_held_mutex_rejects_second_weapon_to_occupied_main_hand() {
+        use crate::schema::inventory::{EquipSlotV1, EquipStateV1};
+        let registry = load_item_registry().expect("registry");
+        let mut inv = make_test_inventory_with_one_item();
+        inv.equipped.insert(
+            EQUIP_SLOT_MAIN_HAND.to_string(),
+            SlotContents::held_single(equip_test_instance(601, "iron_sword")),
+        );
+        let second = equip_test_instance(602, "iron_sword");
+        let error = validate_equip_result(
+            &registry,
+            &inv,
+            &second,
+            &container_from(),
+            &equip_to(EquipSlotV1::MainHand, EquipStateV1::Held),
+        )
+        .expect_err("main_hand already held; second weapon must be rejected (no swap)");
+        assert!(
+            error.contains("已持械") && error.contains("请先卸下"),
+            "期望 held 互斥拒绝文案，实际：{error}"
+        );
+    }
+
+    // ---- 双手武器锁对侧手：off_hand→main_hand 反向（补 main→off 之外的方向）----
+    // 注：Spear 派生双手由 `weapon_two_handed_per_kind` 单测锁（资产暂无 spear 模板，
+    // 实物双手锁集成测用 staff）。本例验证「双手在 off_hand 时反向锁 main_hand」。
+
+    #[test]
+    fn validate_two_handed_in_off_hand_locks_main_hand() {
+        use crate::schema::inventory::{EquipSlotV1, EquipStateV1};
+        let registry = load_item_registry().expect("registry");
+        let mut inv = make_test_inventory_with_one_item();
+        // off_hand 持双手杖（staff 派生双手）→ main_hand 被反向锁。
+        inv.equipped.insert(
+            EQUIP_SLOT_OFF_HAND.to_string(),
+            SlotContents::held_single(equip_test_instance(701, "wooden_staff")),
+        );
+        // 往 main_hand 拖剑，应被对侧（off_hand）双手锁挡住。
+        let sword = equip_test_instance(702, "iron_sword");
+        let error = validate_equip_result(
+            &registry,
+            &inv,
+            &sword,
+            &container_from(),
+            &equip_to(EquipSlotV1::MainHand, EquipStateV1::Held),
+        )
+        .expect_err("two-handed staff in off_hand must lock main_hand (reverse direction)");
+        assert!(
+            error.contains("双手兵器占用双手，对侧已锁定"),
+            "期望反向双手锁拒绝文案，实际：{error}"
+        );
+    }
+
+    // ---- 非双手武器不锁对侧手 ----
+
+    #[test]
+    fn validate_one_handed_sword_does_not_lock_off_hand() {
+        use crate::schema::inventory::{EquipSlotV1, EquipStateV1};
+        let registry = load_item_registry().expect("registry");
+        let mut inv = make_test_inventory_with_one_item();
+        // main_hand 持单手剑（Sword 非双手）→ off_hand 不锁。
+        inv.equipped.insert(
+            EQUIP_SLOT_MAIN_HAND.to_string(),
+            SlotContents::held_single(equip_test_instance(801, "iron_sword")),
+        );
+        let dagger = equip_test_instance(802, "bone_dagger");
+        validate_equip_result(
+            &registry,
+            &inv,
+            &dagger,
+            &container_from(),
+            &equip_to(EquipSlotV1::OffHand, EquipStateV1::Held),
+        )
+        .expect("single-handed sword must NOT lock off_hand; dagger to off_hand should pass");
+    }
+
+    // ---- extra_hand 独立不受双手锁（决议 #6/#7：多臂额外手）----
+
+    #[test]
+    fn validate_two_handed_main_hand_does_not_lock_extra_hand() {
+        use crate::schema::inventory::{EquipSlotV1, EquipStateV1};
+        let registry = load_item_registry().expect("registry");
+        let mut inv = make_test_inventory_with_one_item();
+        // main_hand 持双手杖 → off_hand 被锁，但 extra_hand_0 不受锁。
+        inv.equipped.insert(
+            EQUIP_SLOT_MAIN_HAND.to_string(),
+            SlotContents::held_single(equip_test_instance(901, "wooden_staff")),
+        );
+        let tool = equip_test_instance(902, "bone_dagger");
+        validate_equip_result(
+            &registry,
+            &inv,
+            &tool,
+            &container_from(),
+            &equip_to(EquipSlotV1::ExtraHand0, EquipStateV1::Held),
+        )
+        .expect(
+            "extra_hand_0 is an independent multi-arm slot; two-handed weapon must NOT lock it",
+        );
+    }
+
+    // ---- worn + held 共存：身体槽 worn 满 + 手槽 held 一件并存合法 ----
+
+    #[test]
+    fn validate_worn_and_held_coexist_in_separate_slots() {
+        use crate::schema::inventory::{EquipSlotV1, EquipStateV1};
+        let registry = load_item_registry().expect("registry");
+        let mut inv = make_test_inventory_with_one_item();
+        // chest worn 已满 3 件 + main_hand 已 held 一把剑 —— 互不干扰。
+        inv.equipped.insert(
+            EQUIP_SLOT_CHEST.to_string(),
+            SlotContents {
+                worn: vec![
+                    equip_test_instance(1001, "armor_straw_chestplate"),
+                    equip_test_instance(1002, "armor_bone_chestplate"),
+                    equip_test_instance(1003, "armor_iron_chestplate"),
+                ],
+                held: None,
+            },
+        );
+        inv.equipped.insert(
+            EQUIP_SLOT_MAIN_HAND.to_string(),
+            SlotContents::held_single(equip_test_instance(1004, "iron_sword")),
+        );
+        // off_hand 仍空 → 拖入 dagger 合法（worn 满不影响其它槽 held）。
+        let dagger = equip_test_instance(1005, "bone_dagger");
+        validate_equip_result(
+            &registry,
+            &inv,
+            &dagger,
+            &container_from(),
+            &equip_to(EquipSlotV1::OffHand, EquipStateV1::Held),
+        )
+        .expect("full chest worn + main_hand held must not block off_hand held");
+    }
+
+    // ---- 卸下后可再装：held 卸下 → 同手可装新 held ----
+
+    #[test]
+    fn validate_rehome_held_then_equip_new_held_succeeds() {
+        use crate::schema::inventory::{EquipSlotV1, EquipStateV1, InventoryLocationV1};
+        let registry = load_item_registry().expect("registry");
+        let mut inv = make_test_inventory_with_one_item();
+        inv.containers[0].items.clear();
+        inv.equipped.insert(
+            EQUIP_SLOT_MAIN_HAND.to_string(),
+            SlotContents::held_single(equip_test_instance(1101, "iron_sword")),
+        );
+        // 卸下 main_hand 武器（rehome 到容器）。
+        move_equipped_item_to_first_container_slot(&mut inv, 1101)
+            .expect("held weapon should unequip and rehome");
+        assert!(
+            inv.equipped
+                .get(EQUIP_SLOT_MAIN_HAND)
+                .map(|s| s.held.is_none())
+                .unwrap_or(true),
+            "卸下后 main_hand.held 应为空"
+        );
+        // 卸下后同手可装新武器。
+        let new_sword = equip_test_instance(1102, "iron_sword");
+        validate_equip_result(
+            &registry,
+            &inv,
+            &new_sword,
+            &InventoryLocationV1::Container {
+                container_id: inv.containers[0].id.clone(),
+                row: 0,
+                col: 0,
+            },
+            &equip_to(EquipSlotV1::MainHand, EquipStateV1::Held),
+        )
+        .expect("after unequip, main_hand is free and a new weapon must be accepted");
+    }
+
+    // ============================================================================
+    // plan-layered-equip-v1 PR-2 / P1 — worn 栈 LIFO（决议 #12：仅栈顶可卸下）
+    // ============================================================================
+
+    #[test]
+    fn validate_move_worn_top_layer_out_succeeds() {
+        use crate::schema::inventory::{EquipSlotV1, EquipStateV1};
+        let registry = load_item_registry().expect("registry");
+        let mut inv = make_test_inventory_with_one_item();
+        // chest worn = [底甲 1201, 顶甲 1202]；移出栈顶 1202 → 合法。
+        inv.equipped.insert(
+            EQUIP_SLOT_CHEST.to_string(),
+            SlotContents {
+                worn: vec![
+                    equip_test_instance(1201, "armor_bone_chestplate"),
+                    equip_test_instance(1202, "armor_iron_chestplate"),
+                ],
+                held: None,
+            },
+        );
+        let top = equip_test_instance(1202, "armor_iron_chestplate");
+        validate_equip_result(
+            &registry,
+            &inv,
+            &top,
+            &equip_to(EquipSlotV1::Chest, EquipStateV1::Worn),
+            &container_from(),
+        )
+        .expect("moving the worn stack top (worn.last()) out must be allowed");
+    }
+
+    #[test]
+    fn validate_move_buried_worn_layer_out_rejected() {
+        use crate::schema::inventory::{EquipSlotV1, EquipStateV1};
+        let registry = load_item_registry().expect("registry");
+        let mut inv = make_test_inventory_with_one_item();
+        // chest worn = [底甲 1301, 顶甲 1302]；移出被压住的底层 1301 → 拒绝。
+        inv.equipped.insert(
+            EQUIP_SLOT_CHEST.to_string(),
+            SlotContents {
+                worn: vec![
+                    equip_test_instance(1301, "armor_bone_chestplate"),
+                    equip_test_instance(1302, "armor_iron_chestplate"),
+                ],
+                held: None,
+            },
+        );
+        let buried = equip_test_instance(1301, "armor_bone_chestplate");
+        let error = validate_equip_result(
+            &registry,
+            &inv,
+            &buried,
+            &equip_to(EquipSlotV1::Chest, EquipStateV1::Worn),
+            &container_from(),
+        )
+        .expect_err("moving a buried worn layer (not worn.last()) must be rejected");
+        assert!(
+            error.contains("被上层压住") && error.contains("worn 栈 LIFO"),
+            "期望被压层 LIFO 拒绝文案，实际：{error}"
+        );
+    }
+
+    #[test]
+    fn move_equipped_top_worn_layer_succeeds_buried_rejected_then_new_top() {
+        let mut inv = make_test_inventory_with_one_item();
+        inv.containers[0].items.clear();
+        // chest worn = [底甲 1401, 中甲 1402, 顶甲 1403]。
+        inv.equipped.insert(
+            EQUIP_SLOT_CHEST.to_string(),
+            SlotContents {
+                worn: vec![
+                    equip_test_instance(1401, "armor_straw_chestplate"),
+                    equip_test_instance(1402, "armor_bone_chestplate"),
+                    equip_test_instance(1403, "armor_iron_chestplate"),
+                ],
+                held: None,
+            },
+        );
+
+        // 脱被压住的底层（1401）→ 拒绝。
+        let err = move_equipped_item_to_first_container_slot(&mut inv, 1401)
+            .expect_err("buried bottom layer must not be removable");
+        assert!(err.contains("被上层压住"), "期望底层被压拒绝，实际：{err}");
+
+        // 脱栈顶（1403）→ 成功，剩 [1401, 1402]，1402 成新顶。
+        move_equipped_item_to_first_container_slot(&mut inv, 1403)
+            .expect("stack top must be removable");
+        let worn = &inv.equipped.get(EQUIP_SLOT_CHEST).unwrap().worn;
+        assert_eq!(
+            worn.iter().map(|i| i.instance_id).collect::<Vec<_>>(),
+            vec![1401, 1402],
+            "脱顶后 worn 应剩底+中两件，顶层移除"
+        );
+
+        // 脱新顶（1402）→ 成功，剩 [1401]，1401 成新顶。
+        move_equipped_item_to_first_container_slot(&mut inv, 1402)
+            .expect("the new stack top (former middle layer) must now be removable");
+        let worn = &inv.equipped.get(EQUIP_SLOT_CHEST).unwrap().worn;
+        assert_eq!(
+            worn.iter().map(|i| i.instance_id).collect::<Vec<_>>(),
+            vec![1401],
+            "脱新顶后 worn 应只剩底层（曾被压住，现成新顶）"
+        );
+
+        // 脱最后一层（1401，现唯一一层即栈顶）→ 成功，chest 槽清空。
+        move_equipped_item_to_first_container_slot(&mut inv, 1401)
+            .expect("last remaining worn layer is the top and must be removable");
+        assert!(
+            inv.equipped
+                .get(EQUIP_SLOT_CHEST)
+                .map(|s| s.worn.is_empty())
+                .unwrap_or(true),
+            "脱完所有层后 chest worn 应为空"
+        );
+    }
+
     #[test]
     fn set_item_instance_durability_updates_equipped_item_and_bumps_revision() {
         let mut inv = make_test_inventory_with_one_item();

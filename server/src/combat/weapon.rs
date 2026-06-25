@@ -113,11 +113,12 @@ impl Weapon {
     }
 }
 
-/// plan-weapon-v1 §2.3: 每 tick 同步 `PlayerInventory.equipped.{main/off/two}` ↔ `Weapon` component。
+/// plan-weapon-v1 §2.3: 每 tick 同步 `PlayerInventory.equipped.{main/off}.held` ↔ `Weapon` component。
 ///
 /// 使用 `Changed<PlayerInventory>` 过滤：只处理本 tick 有变动的玩家 Entity（含 revision 变化）。
-/// 选择顺序：main_hand > two_hand > off_hand。v1 的实际战斗结算只吃当前一个 `Weapon`
-/// component，但网络与 HUD 仍可单独收到各槽位 snapshot。
+/// 选择顺序：main_hand.held > off_hand.held（plan-layered-equip-v1 P2：two_hand 专槽已删，
+/// 双手兵器占一手 held + 锁对侧手，不再有独立 two_hand 槽）。v1 的实际战斗结算只吃当前一个
+/// `Weapon` component，但网络与 HUD 仍可单独收到各槽位 snapshot。
 pub fn sync_weapon_component_from_equipped(
     mut commands: Commands,
     registry: Res<ItemRegistry>,

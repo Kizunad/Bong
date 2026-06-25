@@ -509,6 +509,43 @@ mod tests {
             && (effect.magnitude - 0.30).abs() < f32::EPSILON));
     }
 
+    // plan-layered-equip-v1 PR-2 / P2（桶④ iter_all）— scan 遍历 SlotContents 时
+    // worn 层与 held 位的件都被扫到 equipped=true（决议 #16：装备槽 treasure 是 worn/held 件，
+    // 激活态正交由触发位承载留 P4；本测试锁 PR-2 当前迭代行为：装备件 equipped=true）。
+    #[test]
+    fn scan_iterates_both_worn_and_held_in_equipped_slot_contents() {
+        let registry = SpiritTreasureRegistry::default();
+        let mut inventory = inventory_with_container_item(88);
+        inventory.containers[0].items.clear();
+        // 同一槽 worn 一件 treasure + 另一槽 held 一件 treasure，scan 应都扫到、都 equipped=true。
+        inventory.equipped.insert(
+            crate::inventory::EQUIP_SLOT_CHEST.to_string(),
+            SlotContents::worn_single(item(88)),
+        );
+        inventory.equipped.insert(
+            crate::inventory::EQUIP_SLOT_OFF_HAND.to_string(),
+            SlotContents::held_single(item(89)),
+        );
+
+        let entries = scan_inventory_for_spirit_treasures(&registry, &inventory);
+
+        assert_eq!(
+            entries.len(),
+            2,
+            "worn 件 + held 件均应被 iter_all 扫到（桶④），实际 {}",
+            entries.len()
+        );
+        assert!(
+            entries.iter().all(|e| e.equipped && e.passive_active),
+            "装备槽（worn / held）treasure 当前应 equipped=true（触发位正交留 P4）"
+        );
+        assert!(
+            entries.iter().any(|e| e.instance_id == 88)
+                && entries.iter().any(|e| e.instance_id == 89),
+            "应同时包含 worn 件 88 与 held 件 89"
+        );
+    }
+
     #[test]
     fn affinity_scale_clamps_to_design_range() {
         assert!((affinity_scale(0.0) - 0.3).abs() < f32::EPSILON);
