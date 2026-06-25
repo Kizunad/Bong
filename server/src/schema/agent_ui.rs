@@ -292,6 +292,22 @@ mod tests {
     }
 
     #[test]
+    fn agent_ui_request_command_accepts_id_fields_at_128_chars() {
+        let cmd = AgentUiRequestCommandV1 {
+            request_id: "r".repeat(AGENT_UI_ID_MAX_CHARS),
+            target_player: "p".repeat(AGENT_UI_ID_MAX_CHARS),
+            xml: "x".into(),
+            timeout_ticks: 600,
+            realm_gate: 0,
+            allowed_button_ids: vec![],
+        };
+        assert!(
+            cmd.validate().is_ok(),
+            "request_id 和 target_player 正好 128 字符时应通过 validate()"
+        );
+    }
+
+    #[test]
     fn agent_ui_request_command_rejects_request_id_above_128_chars() {
         let cmd = AgentUiRequestCommandV1 {
             request_id: "r".repeat(129),
