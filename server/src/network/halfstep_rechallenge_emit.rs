@@ -32,6 +32,7 @@ use crate::cultivation::tribulation::{
 use crate::network::audio_event_emit::{AudioRecipient, PlaySoundRecipeRequest};
 use crate::network::redis_bridge::RedisOutbound;
 use crate::network::RedisBridgeResource;
+use crate::schema::common::MAX_PAYLOAD_BYTES;
 use crate::schema::halfstep_rechallenge::HalfStepRechallengeTriggerPayloadV1;
 use crate::schema::server_data::HalfStepRechallengeV1;
 use crate::schema::tribulation::DuXuOutcomeV1;
@@ -190,23 +191,38 @@ fn resolve_zone_name(pos: &Position, zone_registry: &Option<Res<ZoneRegistry>>) 
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// 向指定 client 发送 `bong:halfstep_rechallenge` JSON payload。
-///
-/// 直接序列化 `HalfStepRechallengeV1` 为 JSON，经专属 channel 发送——
-/// 不走 `bong:server_data` / proto 路径（该路径对 HalfStepRechallenge 无 proto 定义）。
-/// 仿照 `era_ambiance_emit.rs` L246-256 的 `to_json_bytes_checked` → `send_custom_payload` 模式。
-fn send_halfstep_rechallenge_to_client(client: &mut Client, data: HalfStepRechallengeV1) {
-    match serde_json::to_vec(&data) {
-        Ok(bytes) => {
-            client.send_custom_payload(ident!("bong:halfstep_rechallenge"), &bytes);
-        }
+fn to_json_bytes(data: &HalfStepRechallengeV1) -> Option<Vec<u8>> {
+    let bytes = match serde_json::to_vec(data) {
+        Ok(bytes) => bytes,
         Err(error) => {
             tracing::error!(
                 "[bong][halfstep-rechallenge] failed to serialize HalfStepRechallengeV1 for \
                  channel {}: {error}",
                 HALFSTEP_RECHALLENGE_CHANNEL
             );
+            return None;
         }
+    };
+    if bytes.len() > MAX_PAYLOAD_BYTES {
+        tracing::error!(
+            "[bong][halfstep-rechallenge] payload for {} rejected as oversize: {} > {}",
+            HALFSTEP_RECHALLENGE_CHANNEL,
+            bytes.len(),
+            MAX_PAYLOAD_BYTES,
+        );
+        return None;
+    }
+    Some(bytes)
+}
+
+/// 向指定 client 发送 `bong:halfstep_rechallenge` JSON payload。
+///
+/// 直接序列化 `HalfStepRechallengeV1` 为 JSON，经专属 channel 发送——
+/// 不走 `bong:server_data` / proto 路径（该路径对 HalfStepRechallenge 无 proto 定义）。
+/// 仿照 `era_ambiance_emit.rs` L246-256 的 `to_json_bytes_checked` → `send_custom_payload` 模式。
+fn send_halfstep_rechallenge_to_client(client: &mut Client, data: HalfStepRechallengeV1) {
+    if let Some(bytes) = to_json_bytes(&data) {
+        client.send_custom_payload(ident!("bong:halfstep_rechallenge"), &bytes);
     }
 }
 
@@ -332,6 +348,64 @@ mod tests {
             ),
         );
         app
+    }
+
+    fn halfstep_trigger_payload_with_char_len(char_len: usize) -> HalfStepRechallengeV1 {
+        HalfStepRechallengeV1::trigger("x".repeat(char_len), 42_000, 1000)
+    }
+
+    fn encoded_halfstep_trigger_len(char_len: usize) -> usize {
+        serde_json::to_vec(&halfstep_trigger_payload_with_char_len(char_len))
+            .expect("test halfstep_rechallenge payload should serialize")
+            .len()
+    }
+
+    fn char_len_for_halfstep_trigger_payload_size(target_size: usize) -> usize {
+        let mut lo = 0usize;
+        let mut hi = target_size;
+        while lo < hi {
+            let mid = (lo + hi).div_ceil(2);
+            if encoded_halfstep_trigger_len(mid) <= target_size {
+                lo = mid;
+            } else {
+                hi = mid - 1;
+            }
+        }
+        assert_eq!(
+            encoded_halfstep_trigger_len(lo),
+            target_size,
+            "测试夹具应能构造 exactly target_size 的 halfstep_rechallenge payload"
+        );
+        lo
+    }
+
+    fn emit_trigger_and_collect_halfstep_lens(char_id: String) -> Vec<usize> {
+        let mut app = make_app();
+        let at_tick: u64 = 42_000;
+        let (mut helper, entity) = spawn_halfstep_client(&mut app, "offline:Boundary", at_tick);
+
+        app.world_mut()
+            .resource_mut::<Events<HalfStepRechallengeTriggerEvent>>()
+            .send(HalfStepRechallengeTriggerEvent {
+                char_id,
+                entity,
+                is_dormant: false,
+                at_tick,
+            });
+
+        app.update();
+        flush_client_packets(&mut app);
+
+        helper
+            .collect_received()
+            .0
+            .into_iter()
+            .filter_map(|frame| {
+                let packet = frame.decode::<CustomPayloadS2c>().ok()?;
+                (packet.channel.as_str() == HALFSTEP_RECHALLENGE_CHANNEL)
+                    .then_some(packet.data.0 .0.len())
+            })
+            .collect()
     }
 
     /// 返回 (App, rx_outbound)，仅含 publish_halfstep_rechallenge_to_redis 系统。
@@ -648,6 +722,38 @@ mod tests {
             value.get("char_id").and_then(|v| v.as_str()),
             Some("offline:Azure"),
             "trigger payload char_id 字段应为 'offline:Azure'；当前 JSON={value}"
+        );
+    }
+
+    #[test]
+    fn max_sized_trigger_payload_is_accepted() {
+        let char_len = char_len_for_halfstep_trigger_payload_size(MAX_PAYLOAD_BYTES);
+        let bytes = to_json_bytes(&halfstep_trigger_payload_with_char_len(char_len))
+            .expect("刚好等于 MAX_PAYLOAD_BYTES 的 halfstep_rechallenge 应允许下发");
+
+        assert_eq!(
+            bytes.len(),
+            MAX_PAYLOAD_BYTES,
+            "测试前置条件失败：payload 应刚好等于 MAX_PAYLOAD_BYTES"
+        );
+    }
+
+    #[test]
+    fn oversized_trigger_payload_is_not_sent() {
+        let char_len = char_len_for_halfstep_trigger_payload_size(MAX_PAYLOAD_BYTES + 1);
+        let encoded_len = encoded_halfstep_trigger_len(char_len);
+        let oversized_lens = emit_trigger_and_collect_halfstep_lens("x".repeat(char_len));
+
+        assert_eq!(
+            encoded_len,
+            MAX_PAYLOAD_BYTES + 1,
+            "测试前置条件失败：payload 应刚好等于 MAX_PAYLOAD_BYTES + 1"
+        );
+
+        assert!(
+            oversized_lens.is_empty(),
+            "超出 MAX_PAYLOAD_BYTES 的 halfstep_rechallenge 不应下发；actual_lens={oversized_lens:?}, max={}",
+            MAX_PAYLOAD_BYTES
         );
     }
 
