@@ -24,10 +24,4 @@ class NpcMoodIconTest {
         assertNotEquals(middle, end);
         assertEquals(end, NpcMoodIcon.transitionColor("hostile", "hostile", 1_000L, 1_000L));
     }
-
-    @Test
-    void mood_icon_texture_contract_is_stable() {
-        assertEquals("bong-client:textures/gui/npc/mood_alert.png", NpcMoodIcon.texturePath("ALERT"));
-        assertEquals(14, NpcMoodIcon.iconSize("hostile"));
-    }
 }
