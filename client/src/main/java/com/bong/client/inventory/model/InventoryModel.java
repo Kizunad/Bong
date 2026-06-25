@@ -46,6 +46,10 @@ public final class InventoryModel {
 
     private final List<ContainerDef> containers;
     private final List<GridEntry> gridItems;
+    // plan-layered-equip-v1 P4（决议 #1/#12/#17）：装备槽内容由单件升级为分层 SlotContents（worn 栈 + held）。
+    // equippedSlots = 完整分层态（面板渲染用）；equipped = 每槽代表件（held / worn 栈顶）兼容旧单件渲染路径
+    //（护甲/手持模型同步、ArmorFeatureRenderer 等大量消费者不必改）。
+    private final Map<EquipSlotType, SlotContents> equippedSlots;
     private final Map<EquipSlotType, InventoryItem> equipped;
     private final List<InventoryItem> hotbar;
     private final double currentWeight;
@@ -59,7 +63,7 @@ public final class InventoryModel {
     private InventoryModel(
         List<ContainerDef> containers,
         List<GridEntry> gridItems,
-        Map<EquipSlotType, InventoryItem> equipped,
+        Map<EquipSlotType, SlotContents> equippedSlots,
         List<InventoryItem> hotbar,
         double currentWeight,
         double maxWeight,
@@ -71,7 +75,19 @@ public final class InventoryModel {
     ) {
         this.containers = List.copyOf(containers);
         this.gridItems = List.copyOf(gridItems);
-        this.equipped = Collections.unmodifiableMap(new EnumMap<>(equipped));
+        EnumMap<EquipSlotType, SlotContents> slots = new EnumMap<>(EquipSlotType.class);
+        EnumMap<EquipSlotType, InventoryItem> rep = new EnumMap<>(EquipSlotType.class);
+        for (Map.Entry<EquipSlotType, SlotContents> e : equippedSlots.entrySet()) {
+            SlotContents contents = e.getValue();
+            if (contents == null || contents.isEmpty()) continue;
+            slots.put(e.getKey(), contents);
+            InventoryItem representative = contents.representative();
+            if (representative != null) {
+                rep.put(e.getKey(), representative);
+            }
+        }
+        this.equippedSlots = Collections.unmodifiableMap(slots);
+        this.equipped = Collections.unmodifiableMap(rep);
         this.hotbar = Collections.unmodifiableList(new ArrayList<>(hotbar));
         this.currentWeight = currentWeight;
         this.maxWeight = maxWeight;
@@ -95,6 +111,11 @@ public final class InventoryModel {
             0.0, 50.0, 0,
             "", 0.0, 100.0, 0.0
         );
+    }
+
+    /** plan-layered-equip-v1 P4：完整分层装备态（worn 栈 + held），供 EquipmentPanel 渲染。 */
+    public Map<EquipSlotType, SlotContents> equippedSlots() {
+        return equippedSlots;
     }
 
     public List<ContainerDef> containers() {
@@ -180,7 +201,7 @@ public final class InventoryModel {
     public static final class Builder {
         private List<ContainerDef> containers = new ArrayList<>(DEFAULT_CONTAINERS);
         private final List<GridEntry> gridItems = new ArrayList<>();
-        private final EnumMap<EquipSlotType, InventoryItem> equipped = new EnumMap<>(EquipSlotType.class);
+        private final EnumMap<EquipSlotType, SlotContents> equippedSlots = new EnumMap<>(EquipSlotType.class);
         private final InventoryItem[] hotbar = new InventoryItem[HOTBAR_SIZE];
         private double currentWeight = 0.0;
         private double maxWeight = 50.0;
@@ -213,8 +234,31 @@ public final class InventoryModel {
             return gridItem(item, primaryContainerId, row, col);
         }
 
+        /**
+         * 单件装备便捷入口（兼容旧调用）：手槽 → held 单件，身体槽 → worn 单层栈。
+         * 多层 / held+worn 混合用 {@link #equipSlot(EquipSlotType, SlotContents)}。
+         */
         public Builder equip(EquipSlotType slot, InventoryItem item) {
-            equipped.put(slot, item);
+            if (slot == null) return this;
+            if (item == null || item.isEmpty()) {
+                equippedSlots.remove(slot);
+                return this;
+            }
+            SlotContents contents = slot.isHand()
+                ? SlotContents.ofHeld(item)
+                : SlotContents.ofWorn(item);
+            equippedSlots.put(slot, contents);
+            return this;
+        }
+
+        /** plan-layered-equip-v1 P4：直接设整槽分层内容（worn 栈 + held）。 */
+        public Builder equipSlot(EquipSlotType slot, SlotContents contents) {
+            if (slot == null) return this;
+            if (contents == null || contents.isEmpty()) {
+                equippedSlots.remove(slot);
+            } else {
+                equippedSlots.put(slot, contents);
+            }
             return this;
         }
 
@@ -250,7 +294,7 @@ public final class InventoryModel {
                 hotbarList.add(hotbar[i]);
             }
             return new InventoryModel(
-                containers, gridItems, equipped, hotbarList,
+                containers, gridItems, equippedSlots, hotbarList,
                 currentWeight, maxWeight, boneCoins,
                 realm, qiCurrent, qiMax, bodyLevel
             );

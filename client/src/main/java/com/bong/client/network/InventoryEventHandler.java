@@ -21,19 +21,16 @@ public final class InventoryEventHandler implements ServerDataHandler {
     private static final long JS_SAFE_INTEGER_MAX = 9_007_199_254_740_991L;
     private static final Pattern INTEGER_TOKEN_PATTERN = Pattern.compile("-?(0|[1-9]\\d*)");
 
+    // plan-layered-equip-v1 P4（决议 #17）：与 InventorySnapshotHandler 同槽集对齐。
     private static final Map<String, EquipSlotType> EQUIP_SLOT_BY_WIRE_NAME = Map.ofEntries(
         Map.entry("head", EquipSlotType.HEAD),
         Map.entry("chest", EquipSlotType.CHEST),
         Map.entry("legs", EquipSlotType.LEGS),
         Map.entry("feet", EquipSlotType.FEET),
-        Map.entry("false_skin", EquipSlotType.FALSE_SKIN),
         Map.entry("main_hand", EquipSlotType.MAIN_HAND),
         Map.entry("off_hand", EquipSlotType.OFF_HAND),
-        Map.entry("two_hand", EquipSlotType.TWO_HAND),
-        Map.entry("treasure_belt_0", EquipSlotType.TREASURE_BELT_0),
-        Map.entry("treasure_belt_1", EquipSlotType.TREASURE_BELT_1),
-        Map.entry("treasure_belt_2", EquipSlotType.TREASURE_BELT_2),
-        Map.entry("treasure_belt_3", EquipSlotType.TREASURE_BELT_3)
+        Map.entry("extra_hand_0", EquipSlotType.EXTRA_HAND_0),
+        Map.entry("extra_hand_1", EquipSlotType.EXTRA_HAND_1)
     );
 
     private sealed interface Location {}

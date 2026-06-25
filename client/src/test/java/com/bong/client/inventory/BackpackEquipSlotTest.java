@@ -3,60 +3,75 @@ package com.bong.client.inventory;
 import com.bong.client.inventory.model.EquipSlotType;
 import com.bong.client.inventory.model.InventoryItem;
 import com.bong.client.inventory.model.InventoryModel;
+import com.bong.client.inventory.model.SlotContents;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * P4.1 / P4.2 / P4.5 tests for plan-backpack-equip-v1.
+ * plan-layered-equip-v1 P4（决议 #17/#19）：BackpackEquipSlotTest 重写。
  *
- * Covers:
- *  - EquipSlotType new variants (BACK_PACK, WAIST_POUCH, CHEST_SATCHEL)
- *  - InventoryModel new constants (BODY_POCKET_CONTAINER_ID, BACK_PACK_CONTAINER_ID)
- *  - DEFAULT_CONTAINERS new layout (body_pocket 2×3 + back_pack 3×3)
- *  - Builder.containers() with 0–4 ContainerDef entries
- *  - 行囊 tab weight breakdown label via InspectScreen.backpackWeightBreakdown()
+ * <p>原「背包专属槽」语义（BACK_PACK/WAIST_POUCH/CHEST_SATCHEL 枚举 + backpackWeightBreakdown 重量条）
+ * 已被决议 #17/#19 取代——背包件骑身体槽 worn 层、重量沿用 BottomInfoBar。本测试改测：
+ * EquipSlotType 新变体集 / InventoryModel 容器常量 + Builder / 背包件骑身体槽 SlotContents worn 层。
  */
 public class BackpackEquipSlotTest {
 
     // ──────────────────────────────────────────────────────────────
-    //  P4.1 — EquipSlotType new variants
+    //  EquipSlotType 变体集（决议 #17：删 9 增 2）
     // ──────────────────────────────────────────────────────────────
 
     @Test
-    void backPackVariantExistsWithCorrectDisplayName() {
-        EquipSlotType slot = EquipSlotType.BACK_PACK;
-        assertEquals("背包", slot.displayName(),
-            "BACK_PACK displayName should be '背包', got: " + slot.displayName());
+    void equipSlotTypeHasExactlyEightVariants() {
+        assertEquals(8, EquipSlotType.values().length,
+            "期望 8 槽（HEAD/CHEST/LEGS/FEET + MAIN/OFF/EXTRA_HAND_0/1），实际 "
+                + EquipSlotType.values().length + "——检查决议 #17 删 9 增 2");
     }
 
     @Test
-    void waistPouchVariantExistsWithCorrectDisplayName() {
-        EquipSlotType slot = EquipSlotType.WAIST_POUCH;
-        assertEquals("腰包", slot.displayName(),
-            "WAIST_POUCH displayName should be '腰包', got: " + slot.displayName());
+    void deletedBackpackAndTreasureVariantsAreGone() {
+        for (EquipSlotType s : EquipSlotType.values()) {
+            String n = s.name();
+            assertFalse(n.equals("BACK_PACK") || n.equals("WAIST_POUCH") || n.equals("CHEST_SATCHEL")
+                    || n.equals("FALSE_SKIN") || n.equals("TWO_HAND") || n.startsWith("TREASURE_BELT"),
+                "决议 #17：废变体应已删除，发现残留 " + n);
+        }
     }
 
     @Test
-    void chestSatchelVariantExistsWithCorrectDisplayName() {
-        EquipSlotType slot = EquipSlotType.CHEST_SATCHEL;
-        assertEquals("前挂", slot.displayName(),
-            "CHEST_SATCHEL displayName should be '前挂', got: " + slot.displayName());
+    void extraHandVariantsExist() {
+        assertEquals("臂三", EquipSlotType.EXTRA_HAND_0.displayName());
+        assertEquals("臂四", EquipSlotType.EXTRA_HAND_1.displayName());
+        assertTrue(EquipSlotType.EXTRA_HAND_0.isHand(), "EXTRA_HAND_0 应为手槽");
+        assertTrue(EquipSlotType.EXTRA_HAND_1.isHand(), "EXTRA_HAND_1 应为手槽");
     }
 
     @Test
-    void allThreeNewBackpackSlotsAreDistinct() {
-        EquipSlotType back = EquipSlotType.BACK_PACK;
-        EquipSlotType waist = EquipSlotType.WAIST_POUCH;
-        EquipSlotType chest = EquipSlotType.CHEST_SATCHEL;
-        assertTrue(back != waist, "BACK_PACK and WAIST_POUCH must be distinct variants");
-        assertTrue(waist != chest, "WAIST_POUCH and CHEST_SATCHEL must be distinct variants");
-        assertTrue(back != chest, "BACK_PACK and CHEST_SATCHEL must be distinct variants");
+    void handSlotsReportHeldAndBodySlotsReportWorn() {
+        assertTrue(EquipSlotType.MAIN_HAND.isHand());
+        assertTrue(EquipSlotType.OFF_HAND.isHand());
+        assertFalse(EquipSlotType.HEAD.isHand());
+        assertFalse(EquipSlotType.CHEST.isHand());
+        assertEquals("held", EquipSlotType.MAIN_HAND.wireState());
+        assertEquals("held", EquipSlotType.EXTRA_HAND_0.wireState());
+        assertEquals("worn", EquipSlotType.CHEST.wireState());
+        assertEquals("worn", EquipSlotType.FEET.wireState());
+    }
+
+    @Test
+    void existingBodySlotDisplayNamesUnchanged() {
+        assertEquals("头甲", EquipSlotType.HEAD.displayName());
+        assertEquals("胸甲", EquipSlotType.CHEST.displayName());
+        assertEquals("腿甲", EquipSlotType.LEGS.displayName());
+        assertEquals("足甲", EquipSlotType.FEET.displayName());
+        assertEquals("右手", EquipSlotType.MAIN_HAND.displayName());
+        assertEquals("左手", EquipSlotType.OFF_HAND.displayName());
     }
 
     @Test
@@ -68,109 +83,39 @@ public class BackpackEquipSlotTest {
         }
     }
 
-    @Test
-    void existingSlotTypesAreUnchanged() {
-        // Regression guard: pre-existing slots must retain their display names.
-        assertEquals("头甲", EquipSlotType.HEAD.displayName());
-        assertEquals("胸甲", EquipSlotType.CHEST.displayName());
-        assertEquals("腿甲", EquipSlotType.LEGS.displayName());
-        assertEquals("足甲", EquipSlotType.FEET.displayName());
-        assertEquals("伪皮", EquipSlotType.FALSE_SKIN.displayName());
-        assertEquals("右手", EquipSlotType.MAIN_HAND.displayName());
-        assertEquals("左手", EquipSlotType.OFF_HAND.displayName());
-        assertEquals("双手", EquipSlotType.TWO_HAND.displayName());
-        assertEquals("宝1", EquipSlotType.TREASURE_BELT_0.displayName());
-        assertEquals("宝2", EquipSlotType.TREASURE_BELT_1.displayName());
-        assertEquals("宝3", EquipSlotType.TREASURE_BELT_2.displayName());
-        assertEquals("宝4", EquipSlotType.TREASURE_BELT_3.displayName());
-    }
-
     // ──────────────────────────────────────────────────────────────
-    //  P4.2 — InventoryModel constants + DEFAULT_CONTAINERS
+    //  InventoryModel 容器常量 + DEFAULT_CONTAINERS + Builder
     // ──────────────────────────────────────────────────────────────
 
     @Test
     void bodyPocketContainerIdConstantIsCorrect() {
-        assertEquals("body_pocket", InventoryModel.BODY_POCKET_CONTAINER_ID,
-            "BODY_POCKET_CONTAINER_ID must be 'body_pocket'");
+        assertEquals("body_pocket", InventoryModel.BODY_POCKET_CONTAINER_ID);
     }
 
     @Test
     void backPackContainerIdConstantIsCorrect() {
-        assertEquals("back_pack", InventoryModel.BACK_PACK_CONTAINER_ID,
-            "BACK_PACK_CONTAINER_ID must be 'back_pack'");
-    }
-
-    @Test
-    void defaultContainersHasTwoEntries() {
-        assertEquals(2, InventoryModel.DEFAULT_CONTAINERS.size(),
-            "DEFAULT_CONTAINERS should have exactly 2 entries: body_pocket + back_pack, size was: "
-                + InventoryModel.DEFAULT_CONTAINERS.size());
+        assertEquals("back_pack", InventoryModel.BACK_PACK_CONTAINER_ID);
     }
 
     @Test
     void defaultContainersFirstIsBodyPocket() {
         InventoryModel.ContainerDef def = InventoryModel.DEFAULT_CONTAINERS.get(0);
-        assertEquals(InventoryModel.BODY_POCKET_CONTAINER_ID, def.id(),
-            "First DEFAULT_CONTAINERS entry should be body_pocket, got: " + def.id());
-        assertEquals(2, def.rows(),
-            "body_pocket should be 2 rows, got: " + def.rows());
-        assertEquals(3, def.cols(),
-            "body_pocket should be 3 cols, got: " + def.cols());
+        assertEquals(InventoryModel.BODY_POCKET_CONTAINER_ID, def.id());
+        assertEquals(2, def.rows());
+        assertEquals(3, def.cols());
     }
-
-    @Test
-    void defaultContainersSecondIsBackPack() {
-        InventoryModel.ContainerDef def = InventoryModel.DEFAULT_CONTAINERS.get(1);
-        assertEquals(InventoryModel.BACK_PACK_CONTAINER_ID, def.id(),
-            "Second DEFAULT_CONTAINERS entry should be back_pack, got: " + def.id());
-        assertEquals(3, def.rows(),
-            "back_pack should be 3 rows, got: " + def.rows());
-        assertEquals(3, def.cols(),
-            "back_pack should be 3 cols, got: " + def.cols());
-    }
-
-    // ──────────────────────────────────────────────────────────────
-    //  P4.2 — Builder.containers() with varying ContainerDef counts
-    // ──────────────────────────────────────────────────────────────
 
     @Test
     void builderWithNullContainersFallsBackToDefaultContainers() {
         InventoryModel model = InventoryModel.builder().containers(null).build();
-        assertEquals(InventoryModel.DEFAULT_CONTAINERS.size(), model.containers().size(),
-            "null containers should fall back to DEFAULT_CONTAINERS");
+        assertEquals(InventoryModel.DEFAULT_CONTAINERS.size(), model.containers().size());
         assertEquals(InventoryModel.BODY_POCKET_CONTAINER_ID, model.containers().get(0).id());
     }
 
     @Test
     void builderWithEmptyContainersFallsBackToDefaultContainers() {
         InventoryModel model = InventoryModel.builder().containers(List.of()).build();
-        assertEquals(InventoryModel.DEFAULT_CONTAINERS.size(), model.containers().size(),
-            "empty containers should fall back to DEFAULT_CONTAINERS");
-    }
-
-    @Test
-    void builderWithOneContainerDefBuildsSingleContainerModel() {
-        List<InventoryModel.ContainerDef> one = List.of(
-            new InventoryModel.ContainerDef(InventoryModel.BODY_POCKET_CONTAINER_ID, "贴身口袋", 2, 3)
-        );
-        InventoryModel model = InventoryModel.builder().containers(one).build();
-        assertEquals(1, model.containers().size(),
-            "Builder with 1 ContainerDef should produce model with 1 container");
-        assertEquals(InventoryModel.BODY_POCKET_CONTAINER_ID, model.containers().get(0).id());
-    }
-
-    @Test
-    void builderWithThreeContainerDefsBuildsCorrectly() {
-        List<InventoryModel.ContainerDef> three = List.of(
-            new InventoryModel.ContainerDef(InventoryModel.BODY_POCKET_CONTAINER_ID, "贴身口袋", 2, 3),
-            new InventoryModel.ContainerDef(InventoryModel.BACK_PACK_CONTAINER_ID, "草包", 3, 3),
-            new InventoryModel.ContainerDef("waist_pouch", "腰包", 2, 2)
-        );
-        InventoryModel model = InventoryModel.builder().containers(three).build();
-        assertEquals(3, model.containers().size(),
-            "Builder with 3 ContainerDefs should produce model with 3 containers");
-        assertEquals("waist_pouch", model.containers().get(2).id());
+        assertEquals(InventoryModel.DEFAULT_CONTAINERS.size(), model.containers().size());
     }
 
     @Test
@@ -182,156 +127,63 @@ public class BackpackEquipSlotTest {
             new InventoryModel.ContainerDef("chest_satchel", "前挂", 2, 4)
         );
         InventoryModel model = InventoryModel.builder().containers(four).build();
-        assertEquals(4, model.containers().size(),
-            "Builder with 4 ContainerDefs should produce model with 4 containers");
+        assertEquals(4, model.containers().size());
         assertEquals("chest_satchel", model.containers().get(3).id());
     }
 
-    @Test
-    void builderGridItemDefaultsToPrimaryContainerOfFirstContainerDef() {
-        // Verify gridItem(item, row, col) routes to first container when containers() is set.
-        List<InventoryModel.ContainerDef> defs = List.of(
-            new InventoryModel.ContainerDef("body_pocket", "贴身口袋", 2, 3),
-            new InventoryModel.ContainerDef("back_pack", "背包", 3, 3)
-        );
-        InventoryModel model = InventoryModel.builder()
-            .containers(defs)
-            .gridItem(InventoryItem.simple("test_item", "测试"), 0, 0)
-            .build();
-        assertEquals("body_pocket", model.gridItems().get(0).containerId(),
-            "gridItem without explicit container should route to first container def");
-    }
-
     // ──────────────────────────────────────────────────────────────
-    //  P4.3 — 行囊 tab weight breakdown logic
+    //  决议 #17：背包件骑身体槽 worn 层（不再有专属背包 EquipSlotType）
     // ──────────────────────────────────────────────────────────────
 
     @Test
-    void weightBreakdownNormalLoad() {
-        InventoryModel model = InventoryModel.builder()
-            .containers(InventoryModel.DEFAULT_CONTAINERS)
-            .weight(12.3, 23.0)
-            .build();
-        String result = InspectScreen.backpackWeightBreakdown(model);
-        assertTrue(result.contains("12.3"),
-            "breakdown should contain current weight 12.3, got: " + result);
-        assertTrue(result.contains("23.0"),
-            "breakdown should contain max weight 23.0, got: " + result);
-        assertTrue(!result.contains("负重过载"),
-            "breakdown should NOT show overload text when within limit, got: " + result);
-    }
-
-    @Test
-    void weightBreakdownOverload() {
-        InventoryModel model = InventoryModel.builder()
-            .containers(InventoryModel.DEFAULT_CONTAINERS)
-            .weight(30.0, 23.0)
-            .build();
-        String result = InspectScreen.backpackWeightBreakdown(model);
-        assertTrue(result.contains("30.0"),
-            "breakdown should contain current weight 30.0, got: " + result);
-        assertTrue(result.contains("负重过载"),
-            "breakdown should show '负重过载' when overweight, got: " + result);
-    }
-
-    @Test
-    void weightBreakdownExactlyAtLimit() {
-        InventoryModel model = InventoryModel.builder()
-            .containers(InventoryModel.DEFAULT_CONTAINERS)
-            .weight(23.0, 23.0)
-            .build();
-        String result = InspectScreen.backpackWeightBreakdown(model);
-        // Exactly at max is NOT overload (currentWeight > maxWeight is false when equal)
-        assertTrue(!result.contains("负重过载"),
-            "breakdown at exact limit should NOT show overload, got: " + result);
-    }
-
-    @Test
-    void weightBreakdownNullModelReturnsEmpty() {
-        String result = InspectScreen.backpackWeightBreakdown(null);
-        assertEquals("", result,
-            "breakdown with null model should return empty string");
-    }
-
-    @Test
-    void weightBreakdownZeroWeight() {
-        InventoryModel model = InventoryModel.builder()
-            .containers(InventoryModel.DEFAULT_CONTAINERS)
-            .weight(0.0, 15.0)
-            .build();
-        String result = InspectScreen.backpackWeightBreakdown(model);
-        assertTrue(result.contains("0.0"),
-            "breakdown should contain 0.0 current weight, got: " + result);
-        assertTrue(result.contains("15.0"),
-            "breakdown should contain 15.0 max weight, got: " + result);
-    }
-
-    // ──────────────────────────────────────────────────────────────
-    //  P4.2 — InventoryModel.equipped() supports new backpack slots
-    // ──────────────────────────────────────────────────────────────
-
-    @Test
-    void modelEquippedSupportsBackPackSlot() {
+    void backpackRidesChestWornLayerAlongsideArmor() {
+        // 背包件与护甲同槽叠层：CHEST worn 栈含护甲（栈底）+ 背包件（栈顶）。
+        InventoryItem armor = InventoryItem.simple("armor_bone_chestplate", "骨甲");
         InventoryItem pouch = InventoryItem.simple("worn_grass_pouch", "破草包");
         InventoryModel model = InventoryModel.builder()
             .containers(InventoryModel.DEFAULT_CONTAINERS)
-            .equip(EquipSlotType.BACK_PACK, pouch)
+            .equipSlot(EquipSlotType.CHEST, new SlotContents(List.of(armor, pouch), null))
             .build();
-        assertNotNull(model.equipped().get(EquipSlotType.BACK_PACK),
-            "equipped() should contain BACK_PACK item");
-        assertEquals("worn_grass_pouch", model.equipped().get(EquipSlotType.BACK_PACK).itemId());
+
+        SlotContents chest = model.equippedSlots().get(EquipSlotType.CHEST);
+        assertNotNull(chest, "CHEST 槽应有内容");
+        assertEquals(2, chest.wornCount(), "CHEST worn 应有 2 层（护甲 + 背包件）");
+        assertEquals("armor_bone_chestplate", chest.worn().get(0).itemId(), "栈底应为护甲");
+        assertEquals("worn_grass_pouch", chest.wornTop().itemId(), "栈顶应为背包件（决议 #12 LIFO 尾=顶）");
     }
 
     @Test
-    void modelEquippedSupportsWaistPouchSlot() {
-        InventoryItem pouch = InventoryItem.simple("small_waist_bag", "小腰袋");
+    void representativeOfBodySlotIsWornTop() {
+        // equipped()（代表件）= worn 栈顶。
+        InventoryItem armor = InventoryItem.simple("armor_bone_chestplate", "骨甲");
+        InventoryItem pouch = InventoryItem.simple("worn_grass_pouch", "破草包");
         InventoryModel model = InventoryModel.builder()
-            .containers(InventoryModel.DEFAULT_CONTAINERS)
-            .equip(EquipSlotType.WAIST_POUCH, pouch)
+            .equipSlot(EquipSlotType.CHEST, new SlotContents(List.of(armor, pouch), null))
             .build();
-        assertNotNull(model.equipped().get(EquipSlotType.WAIST_POUCH),
-            "equipped() should contain WAIST_POUCH item");
-        assertEquals("small_waist_bag", model.equipped().get(EquipSlotType.WAIST_POUCH).itemId());
+        assertEquals("worn_grass_pouch", model.equipped().get(EquipSlotType.CHEST).itemId(),
+            "身体槽代表件应为 worn 栈顶");
     }
 
     @Test
-    void modelEquippedSupportsChestSatchelSlot() {
-        InventoryItem satchel = InventoryItem.simple("chest_satchel_item", "前挂包");
+    void handSlotRepresentativeIsHeld() {
+        InventoryItem sword = InventoryItem.simple("iron_sword", "铁剑");
         InventoryModel model = InventoryModel.builder()
-            .containers(InventoryModel.DEFAULT_CONTAINERS)
-            .equip(EquipSlotType.CHEST_SATCHEL, satchel)
+            .equip(EquipSlotType.MAIN_HAND, sword)
             .build();
-        assertNotNull(model.equipped().get(EquipSlotType.CHEST_SATCHEL),
-            "equipped() should contain CHEST_SATCHEL item");
-        assertEquals("chest_satchel_item", model.equipped().get(EquipSlotType.CHEST_SATCHEL).itemId());
+        SlotContents main = model.equippedSlots().get(EquipSlotType.MAIN_HAND);
+        assertNotNull(main);
+        assertNotNull(main.held(), "手槽应为 held");
+        assertEquals("iron_sword", model.equipped().get(EquipSlotType.MAIN_HAND).itemId());
+        assertTrue(main.worn().isEmpty(), "手槽 worn 应为空");
     }
 
     @Test
-    void modelEquippedAllThreeBackpackSlotsSimultaneously() {
-        InventoryModel model = InventoryModel.builder()
-            .containers(InventoryModel.DEFAULT_CONTAINERS)
-            .equip(EquipSlotType.BACK_PACK, InventoryItem.simple("worn_grass_pouch", "破草包"))
-            .equip(EquipSlotType.WAIST_POUCH, InventoryItem.simple("small_waist_bag", "小腰袋"))
-            .equip(EquipSlotType.CHEST_SATCHEL, InventoryItem.simple("chest_satchel_item", "前挂包"))
-            .build();
-        assertNotNull(model.equipped().get(EquipSlotType.BACK_PACK));
-        assertNotNull(model.equipped().get(EquipSlotType.WAIST_POUCH));
-        assertNotNull(model.equipped().get(EquipSlotType.CHEST_SATCHEL));
-        assertEquals("worn_grass_pouch", model.equipped().get(EquipSlotType.BACK_PACK).itemId());
-        assertEquals("small_waist_bag", model.equipped().get(EquipSlotType.WAIST_POUCH).itemId());
-        assertEquals("chest_satchel_item", model.equipped().get(EquipSlotType.CHEST_SATCHEL).itemId());
-    }
-
-    @Test
-    void modelEquippedBackpackSlotsAreEmptyByDefault() {
+    void emptySlotsAbsentFromEquippedMaps() {
         InventoryModel model = InventoryModel.builder()
             .containers(InventoryModel.DEFAULT_CONTAINERS)
             .build();
-        assertNull(model.equipped().get(EquipSlotType.BACK_PACK),
-            "BACK_PACK slot should be null when not equipped");
-        assertNull(model.equipped().get(EquipSlotType.WAIST_POUCH),
-            "WAIST_POUCH slot should be null when not equipped");
-        assertNull(model.equipped().get(EquipSlotType.CHEST_SATCHEL),
-            "CHEST_SATCHEL slot should be null when not equipped");
+        assertNull(model.equipped().get(EquipSlotType.CHEST), "空槽不应出现在 equipped()");
+        assertNull(model.equippedSlots().get(EquipSlotType.HEAD), "空槽不应出现在 equippedSlots()");
+        assertTrue(model.equippedSlots().isEmpty(), "无装备时 equippedSlots() 应为空");
     }
 }

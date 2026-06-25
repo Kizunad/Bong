@@ -4,6 +4,7 @@ import com.bong.client.armor.ArmorTintRegistry;
 import com.bong.client.combat.ArmorProfileStore;
 import com.bong.client.inventory.model.EquipSlotType;
 import com.bong.client.inventory.model.InventoryItem;
+import com.bong.client.inventory.model.SlotContents;
 import net.minecraft.entity.EquipmentSlot;
 
 import java.util.Map;
@@ -82,53 +83,101 @@ public final class InventoryEquipRules {
     private InventoryEquipRules() {
     }
 
+    // plan-layered-equip-v1 P4（决议 #17）：身体槽 worn 栈容量，镜像 server worn_cap（mod.rs:615）。
+    // head/feet=2、chest/legs=3。手槽 held-only（不计 worn cap）。
+    static int wornCap(EquipSlotType slot) {
+        if (slot == null) return 0;
+        return switch (slot) {
+            case HEAD, FEET -> 2;
+            case CHEST, LEGS -> 3;
+            default -> 0; // 手槽 = held-only
+        };
+    }
+
+    /**
+     * plan-layered-equip-v1 P4（决议 #3/#12/#16/#17）：分层校验某件能否落入目标槽。
+     *
+     * <p>手槽（held）：武器/工具/盾/法宝按类型放行 + 双手武器（spear/staff）锁对侧手 + held 互斥（已占拒）。
+     * 身体槽（worn 栈）：护甲（按部位）/ 伪皮 / 背包件，worn 未满才放行（满 → 拒，决议 #3 不顶替）。
+     * **仅校验「能否 push 栈顶」**——「能否拖动下层」由 drop 站点按 LIFO 仅栈顶可动单独拦（决议 #12）。
+     *
+     * @param sourceSlot 拖拽来源槽（同槽内重排 / 从己槽移出时放宽占用约束），可 null
+     */
     static boolean canEquip(
         InventoryItem item,
         EquipSlotType targetSlot,
         EquipSlotType sourceSlot,
-        Map<EquipSlotType, InventoryItem> equipped
+        Map<EquipSlotType, SlotContents> equipped
     ) {
         if (item == null || item.isEmpty() || targetSlot == null) return false;
 
         WeaponKind weaponKind = weaponKindOf(item.itemId());
         boolean hoe = isHoe(item.itemId());
         boolean tool = isTool(item.itemId());
-        boolean fromTwoHand = sourceSlot == EquipSlotType.TWO_HAND;
+        boolean twoHandWeapon = weaponKind == WeaponKind.SPEAR || weaponKind == WeaponKind.STAFF;
 
         return switch (targetSlot) {
             case MAIN_HAND -> (weaponKind != null || hoe || tool)
-                && (fromTwoHand || !isOccupied(equipped, EquipSlotType.TWO_HAND));
-            // plan-shield-block-v1 P0 — 加 isShield 分支，与 server EquipSlotV1::OffHand Shield 校验对齐。
-            // 工具/锄头双手可用：off_hand 也放行 tool/hoe（与 server mod.rs OffHand 同步；副手工具
-            // 采集由 gathering/tools.rs 扫描 off_hand 支持）。两手互斥仍受 two_hand 占用约束。
-            case OFF_HAND -> ((weaponKind == WeaponKind.DAGGER || weaponKind == WeaponKind.FIST)
+                && handHeldFree(equipped, targetSlot, sourceSlot)
+                // 双手武器入主手要求副手及全部多臂槽均空闲（双手锁对侧手，取代旧 TWO_HAND 专槽）。
+                && (!twoHandWeapon || (handHeldFree(equipped, EquipSlotType.OFF_HAND, sourceSlot)
+                    && handHeldFree(equipped, EquipSlotType.EXTRA_HAND_0, sourceSlot)
+                    && handHeldFree(equipped, EquipSlotType.EXTRA_HAND_1, sourceSlot)));
+            // 工具/锄头双手可用：off_hand 放行 tool/hoe（与 server mod.rs OffHand 同步）。
+            // 副手不收双手武器（spear/staff 只走主手 held + 锁副手）。
+            case OFF_HAND, EXTRA_HAND_0, EXTRA_HAND_1 -> ((weaponKind == WeaponKind.DAGGER || weaponKind == WeaponKind.FIST)
                 || isTreasure(item)
                 || isShield(item)
                 || tool
                 || hoe)
-                && (fromTwoHand || !isOccupied(equipped, EquipSlotType.TWO_HAND));
-            case TWO_HAND -> (weaponKind == WeaponKind.SPEAR || weaponKind == WeaponKind.STAFF)
-                && (fromTwoHand
-                    || (!isOccupied(equipped, EquipSlotType.MAIN_HAND)
-                    && !isOccupied(equipped, EquipSlotType.OFF_HAND)));
-            case FALSE_SKIN -> isFalseSkin(item);
-            case TREASURE_BELT_0, TREASURE_BELT_1, TREASURE_BELT_2, TREASURE_BELT_3 -> isTreasure(item);
-            case HEAD, CHEST, LEGS, FEET -> isArmorForSlot(item, targetSlot);
-            // Backpack slots — managed by server validation (plan-backpack-equip-v1 P4).
-            // Client does not apply local equip rules for container slots; server authoritative.
-            case BACK_PACK, WAIST_POUCH, CHEST_SATCHEL -> false;
+                && handHeldFree(equipped, targetSlot, sourceSlot)
+                // 对侧主手持双手武器时，副手被锁，不可装入。
+                && !mainHandHoldsTwoHand(equipped);
+            // 身体槽 worn 栈：护甲（按部位）/ 伪皮 / 背包件，worn 未满才放行（决议 #17）。
+            case HEAD, CHEST, LEGS, FEET ->
+                (isArmorForSlot(item, targetSlot) || isFalseSkin(item) || isContainer(item))
+                && wornHasRoom(equipped, targetSlot, sourceSlot);
         };
+    }
+
+    /** 该手槽 held 是否空闲（已占且非自身来源 → false，决议 #3 不顶替）。 */
+    private static boolean handHeldFree(
+        Map<EquipSlotType, SlotContents> equipped, EquipSlotType slot, EquipSlotType sourceSlot
+    ) {
+        if (slot == sourceSlot) return true;
+        SlotContents contents = equipped == null ? null : equipped.get(slot);
+        return contents == null || contents.held() == null;
+    }
+
+    /** 主手是否持双手武器（spear/staff）→ 锁副手/多臂。 */
+    private static boolean mainHandHoldsTwoHand(Map<EquipSlotType, SlotContents> equipped) {
+        SlotContents main = equipped == null ? null : equipped.get(EquipSlotType.MAIN_HAND);
+        if (main == null || main.held() == null) return false;
+        WeaponKind k = weaponKindOf(main.held().itemId());
+        return k == WeaponKind.SPEAR || k == WeaponKind.STAFF;
+    }
+
+    /** 身体槽 worn 栈是否未满（同槽来源放宽——拖回自己来源算合法）。 */
+    private static boolean wornHasRoom(
+        Map<EquipSlotType, SlotContents> equipped, EquipSlotType slot, EquipSlotType sourceSlot
+    ) {
+        if (slot == sourceSlot) return true;
+        SlotContents contents = equipped == null ? null : equipped.get(slot);
+        int count = contents == null ? 0 : contents.wornCount();
+        return count < wornCap(slot);
     }
 
     static EquipSlotType preferredWeaponQuickEquipSlot(
         InventoryItem item,
-        Map<EquipSlotType, InventoryItem> equipped,
+        Map<EquipSlotType, SlotContents> equipped,
         Predicate<EquipSlotType> usable
     ) {
+        // 决议 #17：TWO_HAND 专槽取消，双手武器走 MAIN_HAND held。手槽优先级：主手 → 副手 → 多臂。
         EquipSlotType[] order = {
             EquipSlotType.MAIN_HAND,
             EquipSlotType.OFF_HAND,
-            EquipSlotType.TWO_HAND
+            EquipSlotType.EXTRA_HAND_0,
+            EquipSlotType.EXTRA_HAND_1
         };
         for (EquipSlotType slot : order) {
             if (isOccupied(equipped, slot)) continue;
@@ -206,10 +255,23 @@ public final class InventoryEquipRules {
         };
     }
 
-    private static boolean isOccupied(Map<EquipSlotType, InventoryItem> equipped, EquipSlotType slot) {
+    /** 手槽视角的「已占」= held 非空；身体槽视角 = worn 栈非空（quick-equip 仅用于手槽）。 */
+    private static boolean isOccupied(Map<EquipSlotType, SlotContents> equipped, EquipSlotType slot) {
         if (equipped == null) return false;
-        InventoryItem existing = equipped.get(slot);
-        return existing != null && !existing.isEmpty();
+        SlotContents contents = equipped.get(slot);
+        if (contents == null) return false;
+        return slot.isHand() ? contents.held() != null : contents.wornCount() > 0;
+    }
+
+    // plan-layered-equip-v1 P4（决议 #17）：背包件（容器）按 ContainerSpec.equip_slot 指向身体槽作 worn 层。
+    // 客户端无 ItemRegistry，按已知模板名白名单识别（当前仓库仅 worn_grass_pouch / grass_pouch 配 container_spec）。
+    private static final Set<String> CONTAINER_TEMPLATE_IDS = Set.of(
+        "worn_grass_pouch",
+        "grass_pouch"
+    );
+
+    static boolean isContainer(InventoryItem item) {
+        return item != null && item.itemId() != null && CONTAINER_TEMPLATE_IDS.contains(item.itemId());
     }
 
     private static boolean isHoe(String itemId) {
