@@ -645,6 +645,7 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
             })
         }
         RedisOutbound::PseudoVeinSnapshot(evt) => {
+            evt.validate().map_err(ValidationError::new)?;
             let payload = serde_json::to_string(&evt).map_err(|error| {
                 ValidationError::new(format!("failed to serialize PseudoVeinSnapshotV1: {error}"))
             })?;
@@ -4904,6 +4905,26 @@ mod redis_bridge_tests {
             }
             other => panic!("expected publish, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn rejects_pseudo_vein_snapshot_spirit_qi_above_schema_max() {
+        let result =
+            prepare_outbound_command(RedisOutbound::PseudoVeinSnapshot(PseudoVeinSnapshotV1 {
+                v: 1,
+                id: "pseudo_vein_42".to_string(),
+                center_xz: [1280.0, -640.0],
+                spirit_qi_current: 1.1,
+                occupants: vec!["offline:Azure".to_string()],
+                spawned_at_tick: 24000,
+                estimated_decay_at_tick: 60000,
+                season_at_spawn: crate::schema::pseudo_vein::PseudoVeinSeasonV1::SummerToWinter,
+            }));
+
+        assert!(
+            result.is_err(),
+            "TypeScript PseudoVeinSnapshotV1 spirit_qi_current maximum=1，1.1 应被 Rust outbound 校验拒绝"
+        );
     }
 
     #[test]
