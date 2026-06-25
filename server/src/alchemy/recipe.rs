@@ -383,15 +383,22 @@ pub fn validate_stage_mineral_items<'a>(
         if ingredient.mineral_id.is_none() {
             continue;
         }
-        let Some(index) = remaining
+        if let Some(index) = remaining
             .iter()
-            .position(|item| item.template_id == ingredient.material || item.mineral_id.is_some())
+            .position(|item| ingredient.validate_item(item).is_ok())
+        {
+            remaining.remove(index);
+            continue;
+        }
+
+        let Some(item) = remaining
+            .iter()
+            .find(|item| item.template_id == ingredient.material || item.mineral_id.is_some())
         else {
             return Err(IngredientMismatch::MissingMineralId {
                 material: ingredient.material.clone(),
             });
         };
-        let item = remaining.remove(index);
         ingredient.validate_item(item)?;
     }
     Ok(())
@@ -400,6 +407,7 @@ pub fn validate_stage_mineral_items<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::inventory::{ItemInstance, ItemRarity};
 
     fn sample_recipe() -> Recipe {
         Recipe {
@@ -450,6 +458,31 @@ mod tests {
                 toxin_scale: 1.5,
                 side_effect_pool: vec![],
             }),
+        }
+    }
+
+    fn mineral_item(instance_id: u64, template_id: &str, mineral_id: &str) -> ItemInstance {
+        ItemInstance {
+            instance_id,
+            template_id: template_id.to_string(),
+            display_name: template_id.to_string(),
+            grid_w: 1,
+            grid_h: 1,
+            weight: 1.0,
+            rarity: ItemRarity::Common,
+            description: String::new(),
+            stack_count: 1,
+            spirit_quality: 0.0,
+            durability: 1.0,
+            freshness: None,
+            mineral_id: Some(mineral_id.to_string()),
+            charges: None,
+            forge_quality: None,
+            forge_color: None,
+            forge_side_effects: vec![],
+            forge_achieved_tier: None,
+            alchemy: None,
+            lingering_owner_qi: None,
         }
     }
 
@@ -511,6 +544,21 @@ mod tests {
         staged.insert("a".to_string(), 1);
         staged.insert("z".to_string(), 1); // unknown
         assert!(r.match_flawed(&staged).is_none());
+    }
+
+    #[test]
+    fn validate_stage_mineral_items_skips_wrong_mineral_candidate() {
+        let ingredient = IngredientSpec {
+            material: "iron_ore".to_string(),
+            count: 1,
+            mineral_id: Some("fan_tie".to_string()),
+        };
+        let wrong_first = mineral_item(1, "copper_ore", "tong_kuang");
+        let correct_second = mineral_item(2, "iron_ore", "fan_tie");
+
+        let result = validate_stage_mineral_items([&ingredient], [&wrong_first, &correct_second]);
+
+        assert_eq!(result, Ok(()));
     }
 
     #[test]
