@@ -4718,6 +4718,79 @@ mod redis_bridge_tests {
     }
 
     #[test]
+    fn rejects_pseudo_vein_dissipate_with_too_short_storm_duration() {
+        let result = prepare_outbound_command(RedisOutbound::PseudoVeinDissipate(
+            PseudoVeinDissipateEventV1 {
+                v: 1,
+                id: "pseudo_vein_42".to_string(),
+                center_xz: [1280.0, -640.0],
+                storm_anchors: vec![[1380.0, -650.0]],
+                storm_duration_ticks: 5999,
+                qi_redistribution: crate::schema::pseudo_vein::PseudoVeinQiRedistributionV1 {
+                    refill_to_hungry_ring: 0.7,
+                    collected_by_tiandao: 0.3,
+                },
+            },
+        ));
+
+        assert!(
+            result.is_err(),
+            "TypeScript PseudoVeinDissipateEventV1 storm_duration_ticks minimum=6000，5999 ticks 应被 Rust outbound 校验拒绝"
+        );
+    }
+
+    #[test]
+    fn rejects_pseudo_vein_dissipate_with_too_long_storm_duration() {
+        let result = prepare_outbound_command(RedisOutbound::PseudoVeinDissipate(
+            PseudoVeinDissipateEventV1 {
+                v: 1,
+                id: "pseudo_vein_42".to_string(),
+                center_xz: [1280.0, -640.0],
+                storm_anchors: vec![[1380.0, -650.0]],
+                storm_duration_ticks: 12001,
+                qi_redistribution: crate::schema::pseudo_vein::PseudoVeinQiRedistributionV1 {
+                    refill_to_hungry_ring: 0.7,
+                    collected_by_tiandao: 0.3,
+                },
+            },
+        ));
+
+        assert!(
+            result.is_err(),
+            "TypeScript PseudoVeinDissipateEventV1 storm_duration_ticks maximum=12000，12001 ticks 应被 Rust outbound 校验拒绝"
+        );
+    }
+
+    #[test]
+    fn publishes_pseudo_vein_dissipate_with_storm_duration_bounds() {
+        for storm_duration_ticks in [6000, 12000] {
+            let dissipate = prepare_outbound_command(RedisOutbound::PseudoVeinDissipate(
+                PseudoVeinDissipateEventV1 {
+                    v: 1,
+                    id: "pseudo_vein_42".to_string(),
+                    center_xz: [1280.0, -640.0],
+                    storm_anchors: vec![[1380.0, -650.0]],
+                    storm_duration_ticks,
+                    qi_redistribution: crate::schema::pseudo_vein::PseudoVeinQiRedistributionV1 {
+                        refill_to_hungry_ring: 0.7,
+                        collected_by_tiandao: 0.3,
+                    },
+                },
+            ))
+            .expect("TypeScript PseudoVeinDissipateEventV1 storm_duration_ticks 边界值应被接受");
+
+            match dissipate {
+                RedisIoCommand::Publish { channel, payload } => {
+                    assert_eq!(channel, CH_PSEUDO_VEIN_DISSIPATE);
+                    let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+                    assert_eq!(v["storm_duration_ticks"], storm_duration_ticks);
+                }
+                other => panic!("expected publish, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
     fn publishes_tsy_hostile_events_on_tsy_channel() {
         let spawned = prepare_outbound_command(RedisOutbound::TsyNpcSpawned(TsyNpcSpawnedV1 {
             v: 1,

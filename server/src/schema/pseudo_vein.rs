@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 
 pub(crate) const PSEUDO_VEIN_STORM_ANCHORS_MIN: usize = 1;
 pub(crate) const PSEUDO_VEIN_STORM_ANCHORS_MAX: usize = 3;
+pub(crate) const PSEUDO_VEIN_STORM_DURATION_TICKS_MIN: u64 = 6000;
+pub(crate) const PSEUDO_VEIN_STORM_DURATION_TICKS_MAX: u64 = 12000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -54,6 +56,15 @@ impl PseudoVeinDissipateEventV1 {
         {
             return Err(format!(
                 "PseudoVeinDissipateEventV1.storm_anchors must contain {PSEUDO_VEIN_STORM_ANCHORS_MIN}..={PSEUDO_VEIN_STORM_ANCHORS_MAX} anchors, got {anchor_count}"
+            ));
+        }
+
+        if !(PSEUDO_VEIN_STORM_DURATION_TICKS_MIN..=PSEUDO_VEIN_STORM_DURATION_TICKS_MAX)
+            .contains(&self.storm_duration_ticks)
+        {
+            return Err(format!(
+                "PseudoVeinDissipateEventV1.storm_duration_ticks must be {PSEUDO_VEIN_STORM_DURATION_TICKS_MIN}..={PSEUDO_VEIN_STORM_DURATION_TICKS_MAX}, got {}",
+                self.storm_duration_ticks
             ));
         }
 
