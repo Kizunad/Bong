@@ -279,6 +279,7 @@ public class AgentUiScreenProtocolTest {
     void agentUiScreen_close_esc_sendsDismissedPacket() {
         String xml = "<owo-ui><components><flow-layout/></components></owo-ui>";
         AgentUiScreen screen = AgentUiScreen.create("req-esc-001", xml, 600, 1000L);
+        AgentUiStore.setActive(screen);
 
         screen.close();
 
@@ -291,6 +292,8 @@ public class AgentUiScreenProtocolTest {
             "ESC 关闭的 action 应为 'dismissed'");
         assertEquals("req-esc-001", obj.get("request_id").getAsString(),
             "dismissed 包 request_id 应为 'req-esc-001'");
+        assertNull(AgentUiStore.getActive(),
+            "ESC close() 后应清空 AgentUiStore，避免 closed screen 被 tickLocalTimeout 每 tick 重复驱动");
     }
 
     /**
@@ -326,6 +329,7 @@ public class AgentUiScreenProtocolTest {
         int timeoutTicks = 600;
         // expireTick = currentTick + timeoutTicks + LOCAL_TIMEOUT_GRACE_TICKS = 1620
         AgentUiScreen screen = AgentUiScreen.create("req-timeout-001", xml, timeoutTicks, currentTick);
+        AgentUiStore.setActive(screen);
         long expireTick = currentTick + timeoutTicks + AgentUiScreen.LOCAL_TIMEOUT_GRACE_TICKS;
 
         // 精确在 expireTick 触发超时
@@ -335,6 +339,8 @@ public class AgentUiScreenProtocolTest {
             "tickLocalTimeout 超时后不应发任何包（server 权威），实际发了 " + sentPayloads.size() + " 个包");
         assertTrue(screen.isClosedForTests(),
             "超时后 closed 标志应为 true");
+        assertNull(AgentUiStore.getActive(),
+            "本地超时 closeWithoutResponse 后应清空 AgentUiStore，避免下个 client tick 重复 close");
     }
 
     /**
@@ -344,11 +350,30 @@ public class AgentUiScreenProtocolTest {
     void agentUiScreen_receiveCloseSignal_sendsNoPacket() {
         String xml = "<owo-ui><components><flow-layout/></components></owo-ui>";
         AgentUiScreen screen = AgentUiScreen.create("req-server-close-001", xml, 600, 1000L);
+        AgentUiStore.setActive(screen);
 
         screen.receiveCloseSignal();
 
         assertEquals(0, sentPayloads.size(),
             "receiveCloseSignal 后不应发任何包，实际发了 " + sentPayloads.size() + " 个包");
+        assertNull(AgentUiStore.getActive(),
+            "receiveCloseSignal closeWithoutResponse 后应清空 AgentUiStore");
+    }
+
+    /**
+     * 旧 screen 迟到 close 不应清掉新 active screen。
+     */
+    @Test
+    void agentUiScreen_close_staleScreenDoesNotClearReplacement() {
+        String xml = "<owo-ui><components><flow-layout/></components></owo-ui>";
+        AgentUiScreen oldScreen = AgentUiScreen.create("req-old", xml, 600, 1000L);
+        AgentUiScreen newScreen = AgentUiScreen.create("req-new", xml, 600, 1000L);
+        AgentUiStore.setActive(newScreen);
+
+        oldScreen.close();
+
+        assertSame(newScreen, AgentUiStore.getActive(),
+            "旧 screen close() 只能清自己仍为 active 的引用，不应误清新 screen");
     }
 
     /**

@@ -19,6 +19,13 @@ public final class AgentUiStore {
         activeScreen = screen;
     }
 
+    /** 若给定 screen 仍是当前活跃面板，则清除；防止旧面板迟到关闭误清新面板。 */
+    static void clearIfActive(AgentUiScreen screen) {
+        if (activeScreen == screen) {
+            activeScreen = null;
+        }
+    }
+
     /** 获取当前活跃 screen（null = 无活跃面板）。 */
     @Nullable
     public static AgentUiScreen getActive() {
