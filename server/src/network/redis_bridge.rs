@@ -703,6 +703,7 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
             })
         }
         RedisOutbound::ZongCoreActivated(evt) => {
+            evt.validate().map_err(ValidationError::new)?;
             let payload = serde_json::to_string(&evt).map_err(|error| {
                 ValidationError::new(format!("failed to serialize ZongCoreActivationV1: {error}"))
             })?;
@@ -3400,6 +3401,67 @@ mod redis_bridge_tests {
             RedisIoCommand::Publish { channel, .. } => assert_eq!(channel, CH_CULTIVATION_DEATH),
             other => panic!("expected publish, got {other:?}"),
         }
+    }
+
+    fn zong_core_activation_with_origin(origin_id: u8) -> ZongCoreActivationV1 {
+        ZongCoreActivationV1 {
+            v: 1,
+            zone_id: "jiuzong_bloodstream_ruin".into(),
+            core_id: "core:1".into(),
+            origin_id,
+            center_xz: [0.0, 0.0],
+            activated_until_tick: 100,
+            base_qi: 0.4,
+            active_qi: 0.6,
+            charge_required: vec!["bone_coin".into()],
+            narration_radius_blocks: 1000,
+            anomaly_kind: 5,
+        }
+    }
+
+    #[test]
+    fn accepts_zong_core_activation_origin_boundaries() {
+        for origin_id in [1, 7] {
+            let command = prepare_outbound_command(RedisOutbound::ZongCoreActivated(
+                zong_core_activation_with_origin(origin_id),
+            ))
+            .expect("TypeScript ZongCoreActivationV1 origin_id 边界值应被 Rust outbound 接受");
+
+            match command {
+                RedisIoCommand::Publish { channel, payload } => {
+                    assert_eq!(channel, CH_ZONG_CORE_ACTIVATED);
+                    let value: Value = serde_json::from_str(&payload).unwrap();
+                    assert_eq!(value["origin_id"], origin_id);
+                    assert_eq!(value["anomaly_kind"], 5);
+                }
+                other => panic!("expected publish, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn rejects_zong_core_activation_unknown_origin() {
+        let result = prepare_outbound_command(RedisOutbound::ZongCoreActivated(
+            zong_core_activation_with_origin(8),
+        ));
+
+        assert!(
+            result.is_err(),
+            "TypeScript ZongCoreActivationV1 origin_id 只允许 1..=7，origin_id=8 应被 Rust outbound 校验拒绝"
+        );
+    }
+
+    #[test]
+    fn rejects_zong_core_activation_invalid_qi() {
+        let mut event = zong_core_activation_with_origin(1);
+        event.base_qi = 1.1;
+
+        let result = prepare_outbound_command(RedisOutbound::ZongCoreActivated(event));
+
+        assert!(
+            result.is_err(),
+            "TypeScript ZongCoreActivationV1 base_qi maximum=1，base_qi=1.1 应被 Rust outbound 校验拒绝"
+        );
     }
 
     fn forge_event_with(meridian: &str, axis: &str, from_tier: u8, to_tier: u8) -> ForgeEventV1 {
