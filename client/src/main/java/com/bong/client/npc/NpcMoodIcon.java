@@ -24,19 +24,6 @@ public final class NpcMoodIcon {
         WorldRenderEvents.AFTER_ENTITIES.register(NpcMoodIcon::render);
     }
 
-    public static String texturePath(String mood) {
-        return switch (normalizeMood(mood)) {
-            case "alert" -> "bong-client:textures/gui/npc/mood_alert.png";
-            case "hostile" -> "bong-client:textures/gui/npc/mood_hostile.png";
-            case "fearful" -> "bong-client:textures/gui/npc/mood_fearful.png";
-            default -> "";
-        };
-    }
-
-    public static int iconSize(String mood) {
-        return "hostile".equals(normalizeMood(mood)) ? 14 : 12;
-    }
-
     public static int alphaAt(long transitionStartedAtMillis, long nowMillis) {
         long age = Math.max(0L, nowMillis - Math.max(0L, transitionStartedAtMillis));
         if (age >= 300L) {
