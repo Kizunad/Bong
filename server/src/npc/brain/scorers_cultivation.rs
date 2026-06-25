@@ -871,7 +871,7 @@ mod tests {
                 },
             ))
             .id();
-        let scorer = app
+        let _scorer = app
             .world_mut()
             .spawn((Actor(npc), Score::default(), CultivationDriveScorer))
             .id();

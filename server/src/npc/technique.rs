@@ -663,6 +663,7 @@ pub fn npc_heal_scorer_system(
 ///
 /// `meridian_sys` 为 Some 时，额外检查依赖经脉的 `opened` 字段（镜像 select_technique
 /// 的实时 opened 检查，防止 dugu 毒关脉后仍释放治疗功法）。
+#[allow(clippy::too_many_arguments)]
 pub fn has_usable_heal_technique(
     known: &KnownTechniques,
     cultivation: &Cultivation,
