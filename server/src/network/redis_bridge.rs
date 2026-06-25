@@ -2718,6 +2718,7 @@ mod redis_bridge_tests {
         );
     }
 
+    use crate::cultivation::components::MeridianId;
     use crate::fauna::rat_phase::RatPhase;
     use crate::schema::anticheat::{AntiCheatReportV1, ViolationKindV1};
     use crate::schema::combat_event::{
@@ -3411,6 +3412,14 @@ mod redis_bridge_tests {
         }
     }
 
+    fn forge_event_meridian_wire(meridian: MeridianId) -> String {
+        serde_json::to_value(meridian)
+            .expect("MeridianId 应能序列化为 ForgeEventV1 wire 值")
+            .as_str()
+            .expect("MeridianId wire 值应为字符串")
+            .to_owned()
+    }
+
     #[test]
     fn rejects_forge_event_tier_above_schema_max() {
         let result = prepare_outbound_command(RedisOutbound::ForgeEvent(forge_event_with(
@@ -3452,20 +3461,27 @@ mod redis_bridge_tests {
 
     #[test]
     fn publishes_forge_event_schema_tier_bounds() {
-        for (from_tier, to_tier) in [(0, 0), (16, 16)] {
-            let command = prepare_outbound_command(RedisOutbound::ForgeEvent(forge_event_with(
-                "Lung", "Rate", from_tier, to_tier,
-            )))
-            .expect("TypeScript ForgeEventV1 tier 边界值应被接受");
+        for meridian in MeridianId::ALL {
+            let meridian = forge_event_meridian_wire(meridian);
+            for axis in ["Rate", "Capacity"] {
+                for (from_tier, to_tier) in [(0, 0), (16, 16)] {
+                    let command = prepare_outbound_command(RedisOutbound::ForgeEvent(
+                        forge_event_with(&meridian, axis, from_tier, to_tier),
+                    ))
+                    .expect("TypeScript ForgeEventV1 合法 meridian/axis/tier 边界值应被接受");
 
-            match command {
-                RedisIoCommand::Publish { channel, payload } => {
-                    assert_eq!(channel, CH_FORGE_EVENT);
-                    let v: Value = serde_json::from_str(&payload).unwrap();
-                    assert_eq!(v["from_tier"], from_tier);
-                    assert_eq!(v["to_tier"], to_tier);
+                    match command {
+                        RedisIoCommand::Publish { channel, payload } => {
+                            assert_eq!(channel, CH_FORGE_EVENT);
+                            let v: Value = serde_json::from_str(&payload).unwrap();
+                            assert_eq!(v["meridian"], meridian);
+                            assert_eq!(v["axis"], axis);
+                            assert_eq!(v["from_tier"], from_tier);
+                            assert_eq!(v["to_tier"], to_tier);
+                        }
+                        other => panic!("expected publish, got {other:?}"),
+                    }
                 }
-                other => panic!("expected publish, got {other:?}"),
             }
         }
     }
