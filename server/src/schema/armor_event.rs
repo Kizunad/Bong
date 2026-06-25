@@ -2,6 +2,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::schema::inventory::EquipSlotV1;
 
+pub(crate) const ARMOR_DURABILITY_RATIO_MIN: f64 = 0.0;
+pub(crate) const ARMOR_DURABILITY_RATIO_MAX: f64 = 1.0;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct ArmorDurabilityChangedV1 {
@@ -14,6 +17,45 @@ pub struct ArmorDurabilityChangedV1 {
     pub max: f64,
     pub durability_ratio: f64,
     pub broken: bool,
+}
+
+impl ArmorDurabilityChangedV1 {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.v != 1 {
+            return Err(format!(
+                "ArmorDurabilityChangedV1.v must be 1, got {}",
+                self.v
+            ));
+        }
+        if self.entity_id.is_empty() {
+            return Err("ArmorDurabilityChangedV1.entity_id must be non-empty".to_string());
+        }
+        if self.template_id.is_empty() {
+            return Err("ArmorDurabilityChangedV1.template_id must be non-empty".to_string());
+        }
+        if self.cur < 0.0 {
+            return Err(format!(
+                "ArmorDurabilityChangedV1.cur must be >= 0, got {}",
+                self.cur
+            ));
+        }
+        if self.max < 0.0 {
+            return Err(format!(
+                "ArmorDurabilityChangedV1.max must be >= 0, got {}",
+                self.max
+            ));
+        }
+        if !(ARMOR_DURABILITY_RATIO_MIN..=ARMOR_DURABILITY_RATIO_MAX)
+            .contains(&self.durability_ratio)
+        {
+            return Err(format!(
+                "ArmorDurabilityChangedV1.durability_ratio must be {ARMOR_DURABILITY_RATIO_MIN}..={ARMOR_DURABILITY_RATIO_MAX}, got {}",
+                self.durability_ratio
+            ));
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]

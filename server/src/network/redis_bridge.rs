@@ -632,6 +632,7 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
             })
         }
         RedisOutbound::ArmorDurabilityChanged(evt) => {
+            evt.validate().map_err(ValidationError::new)?;
             let payload = serde_json::to_string(&evt).map_err(|error| {
                 ValidationError::new(format!(
                     "failed to serialize ArmorDurabilityChangedV1: {error}"
@@ -4558,20 +4559,28 @@ mod redis_bridge_tests {
         }
     }
 
+    fn armor_durability_changed_with(
+        cur: f64,
+        max: f64,
+        durability_ratio: f64,
+    ) -> ArmorDurabilityChangedV1 {
+        ArmorDurabilityChangedV1 {
+            v: 1,
+            entity_id: "offline:Crimson".to_string(),
+            slot: crate::schema::inventory::EquipSlotV1::Chest,
+            instance_id: 88,
+            template_id: "fake_spirit_hide".to_string(),
+            cur,
+            max,
+            durability_ratio,
+            broken: durability_ratio <= 0.0,
+        }
+    }
+
     #[test]
     fn publishes_armor_durability_changed_on_correct_channel() {
         let command = prepare_outbound_command(RedisOutbound::ArmorDurabilityChanged(
-            ArmorDurabilityChangedV1 {
-                v: 1,
-                entity_id: "offline:Crimson".to_string(),
-                slot: crate::schema::inventory::EquipSlotV1::Chest,
-                instance_id: 88,
-                template_id: "fake_spirit_hide".to_string(),
-                cur: 0.0,
-                max: 100.0,
-                durability_ratio: 0.0,
-                broken: true,
-            },
+            armor_durability_changed_with(0.0, 100.0, 0.0),
         ))
         .expect("armor durability payload should serialize");
 
@@ -4587,6 +4596,83 @@ mod redis_bridge_tests {
                 assert_eq!(v["broken"], true);
             }
             other => panic!("expected publish, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_armor_durability_changed_with_ratio_above_one() {
+        let result = prepare_outbound_command(RedisOutbound::ArmorDurabilityChanged(
+            armor_durability_changed_with(101.0, 100.0, 1.01),
+        ));
+
+        assert!(
+            result.is_err(),
+            "TypeScript ArmorDurabilityChangedV1 durability_ratio maximum=1，1.01 应被 Rust outbound 校验拒绝"
+        );
+    }
+
+    #[test]
+    fn rejects_armor_durability_changed_with_ratio_below_zero() {
+        let result = prepare_outbound_command(RedisOutbound::ArmorDurabilityChanged(
+            armor_durability_changed_with(0.0, 100.0, -0.01),
+        ));
+
+        assert!(
+            result.is_err(),
+            "TypeScript ArmorDurabilityChangedV1 durability_ratio minimum=0，-0.01 应被 Rust outbound 校验拒绝"
+        );
+    }
+
+    #[test]
+    fn publishes_armor_durability_changed_with_ratio_bounds() {
+        for durability_ratio in [0.0, 1.0] {
+            let command = prepare_outbound_command(RedisOutbound::ArmorDurabilityChanged(
+                armor_durability_changed_with(durability_ratio * 100.0, 100.0, durability_ratio),
+            ))
+            .expect("TypeScript ArmorDurabilityChangedV1 durability_ratio 边界值应被接受");
+
+            match command {
+                RedisIoCommand::Publish { channel, payload } => {
+                    assert_eq!(channel, CH_ARMOR_DURABILITY_CHANGED);
+                    let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+                    assert_eq!(v["durability_ratio"], durability_ratio);
+                }
+                other => panic!("expected publish, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn rejects_armor_durability_changed_with_negative_cur_or_max() {
+        for event in [
+            armor_durability_changed_with(-0.01, 100.0, 0.0),
+            armor_durability_changed_with(0.0, -0.01, 0.0),
+        ] {
+            let result = prepare_outbound_command(RedisOutbound::ArmorDurabilityChanged(event));
+
+            assert!(
+                result.is_err(),
+                "TypeScript ArmorDurabilityChangedV1 cur/max minimum=0，负数应被 Rust outbound 校验拒绝"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_armor_durability_changed_with_invalid_version_or_empty_text() {
+        let mut wrong_version = armor_durability_changed_with(0.0, 100.0, 0.0);
+        wrong_version.v = 2;
+        let mut empty_entity = armor_durability_changed_with(0.0, 100.0, 0.0);
+        empty_entity.entity_id.clear();
+        let mut empty_template = armor_durability_changed_with(0.0, 100.0, 0.0);
+        empty_template.template_id.clear();
+
+        for event in [wrong_version, empty_entity, empty_template] {
+            let result = prepare_outbound_command(RedisOutbound::ArmorDurabilityChanged(event));
+
+            assert!(
+                result.is_err(),
+                "TypeScript ArmorDurabilityChangedV1 v literal 和 minLength 字段应被 Rust outbound 校验拒绝"
+            );
         }
     }
 
