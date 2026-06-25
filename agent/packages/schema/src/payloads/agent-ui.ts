@@ -84,6 +84,8 @@ export type AgentUiRequestPayloadV1 = Static<typeof AgentUiRequestPayloadV1>;
  * - realm_gate_rejected: 玩家境界不足，server 拒绝面板请求
  * - invalid_button_id:   玩家点击了 allowed_button_ids 之外的按钮
  * - player_offline:      目标玩家已离线，server 无法路由
+ * - invalid_command:     agent→server 命令结构非法，server 拒绝处理
+ * - xml_sanitize_failed: server 清洗 XML 失败，面板不会下发
  *
  * 通过 AgentUiResponsePayloadV1ErrorReasonV1 可在调用方做完整 switch 校验。
  * params 字段仍保持 Record<string, string>（可扩展），此联合仅用于 TS 静态检查。
@@ -91,7 +93,9 @@ export type AgentUiRequestPayloadV1 = Static<typeof AgentUiRequestPayloadV1>;
 export type AgentUiErrorReasonV1 =
   | "realm_gate_rejected"
   | "invalid_button_id"
-  | "player_offline";
+  | "player_offline"
+  | "invalid_command"
+  | "xml_sanitize_failed";
 
 /**
  * 玩家面板交互响应，双向使用（C2S CustomPayload + server→agent Redis）。
