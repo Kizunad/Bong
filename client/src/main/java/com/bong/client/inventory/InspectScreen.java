@@ -87,7 +87,13 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     private FlowLayout[] containerWrappers;
     private LabelComponent[] containerLabels;
     private int containerCount;
-    private int activeContainer = 0;
+    // -1 = 尚未激活任一页（哨兵）。build() 末尾首次 switchToBackpackTab() 据此跳过幂等早退；
+    // 之后 0..containerCount-1 = 普通容器 tab，==containerCount = 行囊页。
+    private int activeContainer = -1;
+    // 容器 tab 列表 = model.containers() 去掉 body_pocket（它在行囊面板渲染、不单独占 tab）。
+    // switchContainer/switchToBackpackTab 必须用这份过滤后的列表索引 containerLabels[]/containerGrids[]，
+    // 不能用 model.containers()（body_pocket 在第 0 位会导致标签错位）。
+    private java.util.List<InventoryModel.ContainerDef> filteredContainerDefs = java.util.List.of();
 
     // --- 行囊 tab (plan-backpack-equip-v1 P4) ---
     // Special tab appended after container tabs; index = containerCount (virtual, not in containerGrids).
@@ -544,8 +550,17 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         FlowLayout rightCol = Containers.verticalFlow(Sizing.content(), Sizing.content());
         rightCol.gap(2);
 
-        // Container tabs (driven by model)
-        var containerDefs = model.containers();
+        // Container tabs (driven by model).
+        // body_pocket(贴身口袋) does NOT get its own tab — it's already rendered inside the
+        // 行囊 panel, so a separate tab would duplicate it. Filter it out of the tab/grid list.
+        var allDefs = model.containers();
+        java.util.List<InventoryModel.ContainerDef> containerDefs = new java.util.ArrayList<>();
+        for (var def : allDefs) {
+            if (!InventoryModel.BODY_POCKET_CONTAINER_ID.equals(def.id())) {
+                containerDefs.add(def);
+            }
+        }
+        filteredContainerDefs = containerDefs;
         containerCount = containerDefs.size();
         containerGrids = new BackpackGridPanel[containerCount];
         containerWrappers = new FlowLayout[containerCount];
@@ -553,22 +568,42 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
 
         FlowLayout containerRow = Containers.horizontalFlow(Sizing.content(), Sizing.content());
         containerRow.gap(2);
-        int maxCols = 0;
+        int maxCols = 3; // floor at body_pocket(2×3) width so 行囊 面板宽度不塌
         for (var def : containerDefs) maxCols = Math.max(maxCols, def.cols());
 
+        // 行囊 tab FIRST — 它是主页（背包装备槽 + 负重 + 贴身口袋），也是默认激活页。
+        {
+            FlowLayout backpackTab = Containers.horizontalFlow(Sizing.content(), Sizing.fixed(14));
+            backpackTab.surface(Surface.flat(0xFF282828));
+            backpackTab.padding(Insets.of(1, 4, 1, 4));
+            backpackTab.verticalAlignment(VerticalAlignment.CENTER);
+            backpackTab.cursorStyle(CursorStyle.HAND);
+            backpackTabLabel = Components.label(Text.literal("§f行囊"));
+            backpackTab.child(backpackTabLabel);
+            backpackTab.mouseDown().subscribe((mx, my, btn) -> {
+                if (btn == 0) { switchToBackpackTab(); return true; }
+                return false;
+            });
+            // 拖物品时 hover 到 tab 即切换该页，便于在 贴身口袋/破草包 间拖放。
+            backpackTab.mouseEnter().subscribe(() -> {
+                if (dragState.isDragging()) switchToBackpackTab();
+            });
+            containerRow.child(backpackTab);
+        }
+
+        // 其余动态容器 tab（back_pack/腰/胸 等装备产生的容器）。
         for (int i = 0; i < containerCount; i++) {
             final int ci = i;
             var def = containerDefs.get(i);
 
             FlowLayout tab = Containers.horizontalFlow(Sizing.content(), Sizing.fixed(14));
-            tab.surface(Surface.flat(i == 0 ? 0xFF282828 : 0xFF1E1E1E));
+            tab.surface(Surface.flat(0xFF1E1E1E));
             tab.padding(Insets.of(1, 4, 1, 4));
             tab.verticalAlignment(VerticalAlignment.CENTER);
             tab.cursorStyle(CursorStyle.HAND);
 
             var label = Components.label(Text.literal(
-                (i == 0 ? "§f" : "§7") + def.name()
-                + " §8(" + def.rows() + "×" + def.cols() + ")"
+                "§7" + def.name() + " §8(" + def.rows() + "×" + def.cols() + ")"
             ));
             containerLabels[i] = label;
             tab.child(label);
@@ -576,11 +611,14 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 if (btn == 0) { switchContainer(ci); return true; }
                 return false;
             });
+            tab.mouseEnter().subscribe(() -> {
+                if (dragState.isDragging()) switchContainer(ci);
+            });
             containerRow.child(tab);
         }
         rightCol.child(containerRow);
 
-        // Build all grids, show only active
+        // Build all grids, hidden by default (行囊 是初始激活页，见 build() 末尾 switchToBackpackTab())。
         int wrapperW = maxCols * GridSlotComponent.CELL_SIZE + 4;
         for (int i = 0; i < containerCount; i++) {
             var def = containerDefs.get(i);
@@ -591,27 +629,10 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             w.child(containerGrids[i].container());
             containerWrappers[i] = w;
             rightCol.child(w);
-            if (i != 0) w.positioning(Positioning.absolute(-9999, -9999));
+            w.positioning(Positioning.absolute(-9999, -9999));
         }
 
-        // 行囊 tab — appended after dynamic container tabs (plan-backpack-equip-v1 P4).
-        // Tab label in containerRow:
-        {
-            FlowLayout backpackTab = Containers.horizontalFlow(Sizing.content(), Sizing.fixed(14));
-            backpackTab.surface(Surface.flat(0xFF1E1E1E));
-            backpackTab.padding(Insets.of(1, 4, 1, 4));
-            backpackTab.verticalAlignment(VerticalAlignment.CENTER);
-            backpackTab.cursorStyle(CursorStyle.HAND);
-            backpackTabLabel = Components.label(Text.literal("§7行囊"));
-            backpackTab.child(backpackTabLabel);
-            backpackTab.mouseDown().subscribe((mx, my, btn) -> {
-                if (btn == 0) { switchToBackpackTab(); return true; }
-                return false;
-            });
-            containerRow.child(backpackTab);
-        }
-
-        // 行囊 panel — hidden until tab selected
+        // 行囊 panel
         backpackEquipWrapper = buildBackpackEquipPanel(wrapperW);
         rightCol.child(backpackEquipWrapper);
         backpackEquipWrapper.positioning(Positioning.absolute(-9999, -9999));
@@ -664,6 +685,9 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             });
         };
         InventoryStateStore.addListener(inventoryListener);
+
+        // 行囊 是默认激活页（排第一、主页）：隐藏所有容器网格，显示背包装备槽 + 贴身口袋。
+        switchToBackpackTab();
     }
 
     // ==================== Build helpers ====================
@@ -933,6 +957,9 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     // ==================== Active grid shortcut ====================
 
     private BackpackGridPanel activeGrid() {
+        // 行囊 active(activeContainer == containerCount) → body_pocket(贴身口袋) 是当前可交互网格。
+        // body_pocket 已从容器 tab 过滤掉、不在 containerGrids 里，单独经 bodyPocketGrid 接 pickup/drop。
+        if (activeContainer == containerCount) return bodyPocketGrid;
         if (activeContainer < 0 || activeContainer >= containerGrids.length) return null;
         return containerGrids[activeContainer];
     }
@@ -1459,7 +1486,8 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         if (backpackTabLabel != null) {
             backpackTabLabel.text(Text.literal("§7行囊"));
         }
-        var defs = model.containers();
+        // 用过滤后的列表索引 —— 与 containerLabels[]/containerGrids[] 同源同序（含 body_pocket 会错位）。
+        var defs = filteredContainerDefs;
         for (int i = 0; i < containerCount; i++) {
             containerWrappers[i].positioning(i == idx ? Positioning.layout() : Positioning.absolute(-9999, -9999));
             var def = defs.get(i);
@@ -1472,15 +1500,17 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
 
     /** 切换到行囊 tab：隐藏所有普通容器网格，显示背包装备槽 + 负重 + body_pocket。 */
     private void switchToBackpackTab() {
+        // 幂等早退：已在行囊页（含 drag-hover 反复进入）时不重复 hide/show + refresh，与 switchContainer 对称。
+        if (activeContainer == containerCount) return;
         // Hide all normal container grids
         if (containerWrappers != null) {
             for (FlowLayout w : containerWrappers) {
                 if (w != null) w.positioning(Positioning.absolute(-9999, -9999));
             }
         }
-        // Dim normal container labels
-        if (containerLabels != null && model != null) {
-            var defs = model.containers();
+        // Dim normal container labels（用过滤后的列表，与 containerLabels[] 同源同序）。
+        if (containerLabels != null) {
+            var defs = filteredContainerDefs;
             for (int i = 0; i < containerCount; i++) {
                 var def = defs.get(i);
                 containerLabels[i].text(Text.literal("§7" + def.name() + " §8(" + def.rows() + "×" + def.cols() + ")"));
@@ -1499,6 +1529,21 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         }
         // Refresh backpack slot states from model
         refreshBackpackEquipPanel();
+    }
+
+    /** 切换到承载指定 containerId 的页：body_pocket → 行囊页；其余 → 对应容器 tab。无匹配则不动。 */
+    private void switchToGridContainer(String containerId) {
+        if (containerId == null) return;
+        if (InventoryModel.BODY_POCKET_CONTAINER_ID.equals(containerId)) {
+            switchToBackpackTab();
+            return;
+        }
+        for (int i = 0; i < containerCount; i++) {
+            if (filteredContainerDefs.get(i).id().equals(containerId)) {
+                switchContainer(i);
+                return;
+            }
+        }
     }
 
     /** Build the 行囊 panel showing 3 backpack equip slots + weight bar + body_pocket grid. */
@@ -2892,7 +2937,9 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                         else placeItemAnywhere(item);
                     }
                 } else {
-                    // Try return to the active grid (user may have switched containers)
+                    // 先切回来源容器页（用户可能已手动/drag-hover 切走），再放回原位 —— 否则会落到
+                    // 当前隐藏的网格，物品视觉上凭空消失（数据不丢、下次 snapshot 重同步，但体验差）。
+                    switchToGridContainer(r.sourceContainerId());
                     BackpackGridPanel grid = activeGrid();
                     if (grid != null && grid.canPlace(item, r.sourceRow(), r.sourceCol()))
                         grid.place(item, r.sourceRow(), r.sourceCol());
@@ -2954,9 +3001,12 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 }
             }
         }
-        // 实在放不下 — 强制放进第一个容器第一格（覆盖，避免数据丢失）
+        // 实在放不下 — 强制放进第一个容器第一格（覆盖，避免数据丢失）；
+        // 无背包容器（containerGrids 空，纯新玩家）则回落 body_pocket，防静默丢物。
         if (containerGrids.length > 0) {
             containerGrids[0].place(item, 0, 0);
+        } else if (bodyPocketGrid != null) {
+            bodyPocketGrid.place(item, 0, 0);
         }
     }
 
