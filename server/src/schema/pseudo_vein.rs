@@ -4,6 +4,9 @@
 
 use serde::{Deserialize, Serialize};
 
+pub(crate) const PSEUDO_VEIN_STORM_ANCHORS_MIN: usize = 1;
+pub(crate) const PSEUDO_VEIN_STORM_ANCHORS_MAX: usize = 3;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PseudoVeinSeasonV1 {
@@ -42,6 +45,20 @@ pub struct PseudoVeinDissipateEventV1 {
     pub storm_anchors: Vec<[f64; 2]>,
     pub storm_duration_ticks: u64,
     pub qi_redistribution: PseudoVeinQiRedistributionV1,
+}
+
+impl PseudoVeinDissipateEventV1 {
+    pub fn validate(&self) -> Result<(), String> {
+        let anchor_count = self.storm_anchors.len();
+        if !(PSEUDO_VEIN_STORM_ANCHORS_MIN..=PSEUDO_VEIN_STORM_ANCHORS_MAX).contains(&anchor_count)
+        {
+            return Err(format!(
+                "PseudoVeinDissipateEventV1.storm_anchors must contain {PSEUDO_VEIN_STORM_ANCHORS_MIN}..={PSEUDO_VEIN_STORM_ANCHORS_MAX} anchors, got {anchor_count}"
+            ));
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
