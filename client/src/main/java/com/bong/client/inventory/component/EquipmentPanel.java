@@ -49,24 +49,34 @@ public class EquipmentPanel {
     private static final int ROW_EXTRA_Y = 72;   // extra0/legs/extra1 同行
     private static final int ROW_FEET_Y = 106;
 
+    /**
+     * 槽布局坐标表（单一真源）：EquipSlotType → {px, py}（绝对定位，相对面板左上角）。
+     * 构造器据此 addSlot；测试据此核坐标/重叠/越界（owo 未 mount 时 x()/y() 不可读，故用此表核布局）。
+     */
+    static final EnumMap<EquipSlotType, int[]> SLOT_LAYOUT = new EnumMap<>(EquipSlotType.class);
+    static {
+        SLOT_LAYOUT.put(EquipSlotType.HEAD, new int[]{CENTER_X, ROW_HEAD_Y});
+        SLOT_LAYOUT.put(EquipSlotType.CHEST, new int[]{CENTER_X, ROW_HANDS_Y});
+        SLOT_LAYOUT.put(EquipSlotType.LEGS, new int[]{CENTER_X, ROW_EXTRA_Y});
+        SLOT_LAYOUT.put(EquipSlotType.FEET, new int[]{CENTER_X, ROW_FEET_Y});
+        SLOT_LAYOUT.put(EquipSlotType.OFF_HAND, new int[]{SIDE_LEFT_X, ROW_HANDS_Y});
+        SLOT_LAYOUT.put(EquipSlotType.MAIN_HAND, new int[]{SIDE_RIGHT_X, ROW_HANDS_Y});
+        SLOT_LAYOUT.put(EquipSlotType.EXTRA_HAND_0, new int[]{SIDE_LEFT_X, ROW_EXTRA_Y});
+        SLOT_LAYOUT.put(EquipSlotType.EXTRA_HAND_1, new int[]{SIDE_RIGHT_X, ROW_EXTRA_Y});
+    }
+
+    static int panelWidth() { return PANEL_WIDTH; }
+    static int panelHeight() { return PANEL_HEIGHT; }
+
     private final FlowLayout container;
     private final EnumMap<EquipSlotType, EquipSlotComponent> slotComponents = new EnumMap<>(EquipSlotType.class);
 
     public EquipmentPanel() {
         container = Containers.verticalFlow(Sizing.fixed(PANEL_WIDTH), Sizing.fixed(PANEL_HEIGHT));
         container.surface(Surface.flat(0xFF181818));
-
-        // 中列一线（worn 身体槽）。
-        addSlot(EquipSlotType.HEAD, CENTER_X, ROW_HEAD_Y);
-        addSlot(EquipSlotType.CHEST, CENTER_X, ROW_HANDS_Y);
-        addSlot(EquipSlotType.LEGS, CENTER_X, ROW_EXTRA_Y);
-        addSlot(EquipSlotType.FEET, CENTER_X, ROW_FEET_Y);
-        // 左右手两侧（held 手槽）。
-        addSlot(EquipSlotType.OFF_HAND, SIDE_LEFT_X, ROW_HANDS_Y);
-        addSlot(EquipSlotType.MAIN_HAND, SIDE_RIGHT_X, ROW_HANDS_Y);
-        // 多臂槽（主/副手正下方）。
-        addSlot(EquipSlotType.EXTRA_HAND_0, SIDE_LEFT_X, ROW_EXTRA_Y);
-        addSlot(EquipSlotType.EXTRA_HAND_1, SIDE_RIGHT_X, ROW_EXTRA_Y);
+        for (var entry : SLOT_LAYOUT.entrySet()) {
+            addSlot(entry.getKey(), entry.getValue()[0], entry.getValue()[1]);
+        }
     }
 
     private void addSlot(EquipSlotType type, int px, int py) {
