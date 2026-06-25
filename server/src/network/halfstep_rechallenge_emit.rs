@@ -241,6 +241,8 @@ mod tests {
     use valence::protocol::packets::play::CustomPayloadS2c;
     use valence::testing::{create_mock_client, MockClientHelper};
 
+    const BOUNDARY_TEST_TICK: u64 = 42_000;
+
     fn spawn_halfstep_client(
         app: &mut App,
         name: &str,
@@ -351,7 +353,12 @@ mod tests {
     }
 
     fn halfstep_trigger_payload_with_char_len(char_len: usize) -> HalfStepRechallengeV1 {
-        HalfStepRechallengeV1::trigger("x".repeat(char_len), 42_000, 1000)
+        let half_step = HalfStepState::new(BOUNDARY_TEST_TICK);
+        HalfStepRechallengeV1::trigger(
+            "x".repeat(char_len),
+            half_step.rechallenge_window_until,
+            BOUNDARY_TEST_TICK,
+        )
     }
 
     fn encoded_halfstep_trigger_len(char_len: usize) -> usize {
@@ -381,7 +388,7 @@ mod tests {
 
     fn emit_trigger_and_collect_halfstep_lens(char_id: String) -> Vec<usize> {
         let mut app = make_app();
-        let at_tick: u64 = 42_000;
+        let at_tick = BOUNDARY_TEST_TICK;
         let (mut helper, entity) = spawn_halfstep_client(&mut app, "offline:Boundary", at_tick);
 
         app.world_mut()
@@ -728,13 +735,12 @@ mod tests {
     #[test]
     fn max_sized_trigger_payload_is_accepted() {
         let char_len = char_len_for_halfstep_trigger_payload_size(MAX_PAYLOAD_BYTES);
-        let bytes = to_json_bytes(&halfstep_trigger_payload_with_char_len(char_len))
-            .expect("刚好等于 MAX_PAYLOAD_BYTES 的 halfstep_rechallenge 应允许下发");
+        let payload_lens = emit_trigger_and_collect_halfstep_lens("x".repeat(char_len));
 
         assert_eq!(
-            bytes.len(),
-            MAX_PAYLOAD_BYTES,
-            "测试前置条件失败：payload 应刚好等于 MAX_PAYLOAD_BYTES"
+            payload_lens,
+            vec![MAX_PAYLOAD_BYTES],
+            "刚好等于 MAX_PAYLOAD_BYTES 的 halfstep_rechallenge 应完整下发"
         );
     }
 
