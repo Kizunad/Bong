@@ -16,7 +16,7 @@ import { SkillConfigSnapshotV1 } from "./skill-config.js";
 import { CarrierStateV1 } from "./combat-carrier.js";
 import { DuguPoisonStateV1 } from "./dugu.js";
 import { DeathCinematicS2cV1 } from "./death-cinematic.js";
-import { EventKind, MAX_PAYLOAD_BYTES } from "./common.js";
+import { EventKind } from "./common.js";
 import { IdentityPanelStateV1 } from "./identity.js";
 import {
   PoisonDoseEventV1,
@@ -102,6 +102,8 @@ import {
   AgentUiClosePayloadV1,
 } from "./payloads/agent-ui.js";
 import { TribulationKindV1 } from "./tribulation.js";
+
+export const SERVER_DATA_MAX_PAYLOAD_BYTES = 32_768;
 
 const MERIDIAN_CHANNEL_COUNT = 20;
 
@@ -267,7 +269,7 @@ export const ServerDataWelcomeV1 = Type.Object(
   {
     v: Type.Literal(1),
     type: Type.Literal("welcome"),
-    message: Type.String({ maxLength: MAX_PAYLOAD_BYTES }),
+    message: Type.String({ maxLength: SERVER_DATA_MAX_PAYLOAD_BYTES }),
   },
   { additionalProperties: false },
 );
@@ -277,7 +279,7 @@ export const ServerDataHeartbeatV1 = Type.Object(
   {
     v: Type.Literal(1),
     type: Type.Literal("heartbeat"),
-    message: Type.String({ maxLength: MAX_PAYLOAD_BYTES }),
+    message: Type.String({ maxLength: SERVER_DATA_MAX_PAYLOAD_BYTES }),
   },
   { additionalProperties: false },
 );
