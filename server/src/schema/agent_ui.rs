@@ -8,6 +8,8 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
+const AGENT_UI_ID_MAX_CHARS: usize = 128;
+
 // ─── Action 字面联合 ─────────────────────────────────────────────────────────
 
 /// 天道 UI 面板交互动作枚举，与 TypeScript `AgentUiActionType` 1:1。
@@ -49,10 +51,13 @@ pub struct AgentUiRequestCommandV1 {
 }
 
 impl AgentUiRequestCommandV1 {
-    /// 校验：realm_gate ∈ [0,6] && allowed_button_ids.len() ≤ 16 && timeout_ticks ∈ [20,2400]
+    /// 校验：request_id / target_player 为 1..=128 字符，realm_gate ∈ [0,6]，
+    /// allowed_button_ids.len() ≤ 16，timeout_ticks ∈ [20,2400]。
     ///
     /// realm_gate 范围：0=不门控，1=醒灵+，2=引气+，3=凝脉+，4=固元+，5=通灵+，6=化虚+（最高境界）。
     pub fn validate(&self) -> Result<(), String> {
+        validate_agent_ui_id("request_id", &self.request_id)?;
+        validate_agent_ui_id("target_player", &self.target_player)?;
         if self.realm_gate > 6 {
             return Err(format!("realm_gate={} 超出范围 0..=6", self.realm_gate));
         }
@@ -73,6 +78,19 @@ impl AgentUiRequestCommandV1 {
         }
         Ok(())
     }
+}
+
+fn validate_agent_ui_id(field: &str, value: &str) -> Result<(), String> {
+    let len = value.chars().count();
+    if len == 0 {
+        return Err(format!("{field} 不能为空"));
+    }
+    if len > AGENT_UI_ID_MAX_CHARS {
+        return Err(format!(
+            "{field} 长度 {len} 超出上限 {AGENT_UI_ID_MAX_CHARS}"
+        ));
+    }
+    Ok(())
 }
 
 // ─── Schema 2：Server → Client（bong:server_data 变体 agent_ui_request）───────
@@ -252,6 +270,63 @@ mod tests {
             .validate()
             .expect_err("allowed_button_ids 第 17 条应被 validate() 拒绝");
         assert!(err.contains("17"), "错误信息应包含长度 17，实为：{err}");
+    }
+
+    #[test]
+    fn agent_ui_request_command_rejects_empty_request_id() {
+        let cmd = AgentUiRequestCommandV1 {
+            request_id: String::new(),
+            target_player: "offline:Kiz".into(),
+            xml: "x".into(),
+            timeout_ticks: 600,
+            realm_gate: 0,
+            allowed_button_ids: vec![],
+        };
+        let err = cmd
+            .validate()
+            .expect_err("request_id 为空应被 validate() 拒绝");
+        assert!(
+            err.contains("request_id"),
+            "错误信息应指向 request_id，实为：{err}"
+        );
+    }
+
+    #[test]
+    fn agent_ui_request_command_rejects_request_id_above_128_chars() {
+        let cmd = AgentUiRequestCommandV1 {
+            request_id: "r".repeat(129),
+            target_player: "offline:Kiz".into(),
+            xml: "x".into(),
+            timeout_ticks: 600,
+            realm_gate: 0,
+            allowed_button_ids: vec![],
+        };
+        let err = cmd
+            .validate()
+            .expect_err("request_id 超过 128 字符应被 validate() 拒绝");
+        assert!(
+            err.contains("request_id") && err.contains("129"),
+            "错误信息应包含 request_id 和长度 129，实为：{err}"
+        );
+    }
+
+    #[test]
+    fn agent_ui_request_command_rejects_target_player_above_128_chars() {
+        let cmd = AgentUiRequestCommandV1 {
+            request_id: "req-ok".into(),
+            target_player: "p".repeat(129),
+            xml: "x".into(),
+            timeout_ticks: 600,
+            realm_gate: 0,
+            allowed_button_ids: vec![],
+        };
+        let err = cmd
+            .validate()
+            .expect_err("target_player 超过 128 字符应被 validate() 拒绝");
+        assert!(
+            err.contains("target_player") && err.contains("129"),
+            "错误信息应包含 target_player 和长度 129，实为：{err}"
+        );
     }
 
     #[test]
