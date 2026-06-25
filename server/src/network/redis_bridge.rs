@@ -4669,6 +4669,55 @@ mod redis_bridge_tests {
     }
 
     #[test]
+    fn rejects_pseudo_vein_dissipate_with_no_storm_anchors() {
+        let result = prepare_outbound_command(RedisOutbound::PseudoVeinDissipate(
+            PseudoVeinDissipateEventV1 {
+                v: 1,
+                id: "pseudo_vein_42".to_string(),
+                center_xz: [1280.0, -640.0],
+                storm_anchors: vec![],
+                storm_duration_ticks: 9000,
+                qi_redistribution: crate::schema::pseudo_vein::PseudoVeinQiRedistributionV1 {
+                    refill_to_hungry_ring: 0.7,
+                    collected_by_tiandao: 0.3,
+                },
+            },
+        ));
+
+        assert!(
+            result.is_err(),
+            "TypeScript PseudoVeinDissipateEventV1 storm_anchors minItems=1，0 个锚点应被 Rust outbound 校验拒绝"
+        );
+    }
+
+    #[test]
+    fn publishes_pseudo_vein_dissipate_with_max_storm_anchors() {
+        let dissipate = prepare_outbound_command(RedisOutbound::PseudoVeinDissipate(
+            PseudoVeinDissipateEventV1 {
+                v: 1,
+                id: "pseudo_vein_42".to_string(),
+                center_xz: [1280.0, -640.0],
+                storm_anchors: vec![[1380.0, -650.0], [1160.0, -720.0], [1270.0, -600.0]],
+                storm_duration_ticks: 9000,
+                qi_redistribution: crate::schema::pseudo_vein::PseudoVeinQiRedistributionV1 {
+                    refill_to_hungry_ring: 0.7,
+                    collected_by_tiandao: 0.3,
+                },
+            },
+        ))
+        .expect("TypeScript PseudoVeinDissipateEventV1 storm_anchors maxItems=3，应接受 3 个锚点");
+
+        match dissipate {
+            RedisIoCommand::Publish { channel, payload } => {
+                assert_eq!(channel, CH_PSEUDO_VEIN_DISSIPATE);
+                let v: Value = serde_json::from_str(payload.as_str()).unwrap();
+                assert_eq!(v["storm_anchors"].as_array().unwrap().len(), 3);
+            }
+            other => panic!("expected publish, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn publishes_tsy_hostile_events_on_tsy_channel() {
         let spawned = prepare_outbound_command(RedisOutbound::TsyNpcSpawned(TsyNpcSpawnedV1 {
             v: 1,

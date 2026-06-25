@@ -4,8 +4,8 @@
 
 use serde::{Deserialize, Serialize};
 
-pub const PSEUDO_VEIN_STORM_ANCHORS_MIN: usize = 1;
-pub const PSEUDO_VEIN_STORM_ANCHORS_MAX: usize = 3;
+pub(crate) const PSEUDO_VEIN_STORM_ANCHORS_MIN: usize = 1;
+pub(crate) const PSEUDO_VEIN_STORM_ANCHORS_MAX: usize = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
