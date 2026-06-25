@@ -635,6 +635,54 @@ fn maintenance_sheds_outer_layer_when_qi_cannot_pay_upkeep() {
     assert_eq!(residue_query.iter(app.world()).count(), 1);
 }
 
+// plan-layered-equip-v1 PR-2 / P2（决议 #9 / gap#7）— v2 sync 从 CHEST worn 层读取伪皮件，
+// 正确映射成 StackedFalseSkins 单层：层数 / 该层 spirit_quality / damage_capacity 字段值。
+// 注：v2 `damage_capacity` 是吸收上限字段，**未接 combat resolve 战斗结算**（dead path 待
+// tuike_v2 自身 plan 接入），本测试只断言字段值正确派生，不断言战斗吸收数值（gap#7 范围声明）。
+#[test]
+fn sync_from_chest_worn_maps_layer_fields_spirit_quality_and_damage_capacity() {
+    let mut app = App::new();
+    app.insert_resource(CombatClock { tick: 100 });
+    app.add_systems(Update, sync_false_skin_stack_from_inventory);
+    // CHEST worn 单件伪皮（fan 档），spirit_quality = 0.8。
+    let entity = app
+        .world_mut()
+        .spawn((
+            inventory_with_skin(FALSE_SKIN_FAN_ITEM_ID, 0.8),
+            DerivedAttrs::default(),
+        ))
+        .id();
+
+    app.update();
+
+    let stack = app.world().get::<StackedFalseSkins>(entity).unwrap();
+    assert_eq!(stack.layer_count(), 1, "CHEST worn 单件伪皮应同步成 1 层");
+    let outer = stack.outer().expect("应有外层");
+    assert_eq!(
+        outer.instance_id, 1001,
+        "层 instance_id 应来自 CHEST worn 件"
+    );
+    assert_eq!(outer.tier, FalseSkinTier::Fan, "档位应为 fan");
+    assert!(
+        (outer.spirit_quality - 0.8).abs() < f64::EPSILON,
+        "层 spirit_quality 应映射 CHEST worn 件的 0.8，实际 {}",
+        outer.spirit_quality
+    );
+    // damage_capacity = tier.baseline_damage_capacity() × spirit_quality（字段派生正确，
+    // 不接 resolve）。fan baseline = material_factor × 100；× 0.8 spirit_quality。
+    let expected_capacity = FalseSkinTier::Fan.baseline_damage_capacity() * 0.8;
+    assert!(
+        (outer.damage_capacity() - expected_capacity).abs() < 1e-9,
+        "层 damage_capacity 应 = fan baseline × 0.8 = {expected_capacity}，实际 {}",
+        outer.damage_capacity()
+    );
+    // 未受伤 → remaining == damage_capacity（damage_taken = 0）。
+    assert!(
+        (outer.remaining_damage_capacity() - outer.damage_capacity()).abs() < 1e-9,
+        "新装层未受伤，remaining_damage_capacity 应 == damage_capacity"
+    );
+}
+
 #[test]
 fn sync_inventory_missing_preserves_empty_stack_until_naked_window_expires() {
     let mut app = App::new();

@@ -1062,6 +1062,41 @@ mod tests {
         assert_eq!(skin.kind, FalseSkinKind::RottenWoodArmor);
     }
 
+    // plan-layered-equip-v1 PR-2 / P2（决议 #9 / gap#6）— CHEST worn 叠 2 件伪皮时，
+    // v1 单组件 `FalseSkin` 只认栈顶（worn.last()），被压住的下层不进 v1 单组件。
+    // 多层吸收语义全归 v2 StackedFalseSkins。
+    #[test]
+    fn sync_false_skin_v1_takes_chest_worn_top_only_when_two_skins_stacked() {
+        let mut app = App::new();
+        app.add_systems(Update, sync_false_skin_from_inventory);
+        let mut inv = inventory_with_materials();
+        // CHEST worn 栈：底层 = 蛛丝伪皮（instance 41），栈顶 = 朽木甲伪皮（instance 42）。
+        inv.equipped.insert(
+            EQUIP_SLOT_CHEST.to_string(),
+            crate::inventory::SlotContents {
+                worn: vec![
+                    item(41, SPIDER_SILK_FALSE_SKIN_ITEM_ID, 1),
+                    item(42, ROTTEN_WOOD_ARMOR_ITEM_ID, 1),
+                ],
+                held: None,
+            },
+        );
+        let entity = app.world_mut().spawn((inv, DerivedAttrs::default())).id();
+
+        app.update();
+
+        let skin = app.world().entity(entity).get::<FalseSkin>().unwrap();
+        assert_eq!(
+            skin.instance_id, 42,
+            "v1 FalseSkin 应只认 CHEST worn 栈顶（instance 42），不取被压住的底层 41"
+        );
+        assert_eq!(
+            skin.kind,
+            FalseSkinKind::RottenWoodArmor,
+            "栈顶是朽木甲 → v1 kind 应为 RottenWoodArmor，而非底层蛛丝"
+        );
+    }
+
     #[test]
     fn false_skin_kind_implements_qi_physics_style_defense() {
         let silk = FalseSkinKind::SpiderSilk;
