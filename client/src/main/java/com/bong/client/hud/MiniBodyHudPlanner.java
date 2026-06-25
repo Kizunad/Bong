@@ -308,9 +308,6 @@ public final class MiniBodyHudPlanner {
 
         InventoryItem item = equipped.get(EquipSlotType.MAIN_HAND);
         if (item == null || item.isEmpty()) {
-            item = equipped.get(EquipSlotType.TWO_HAND);
-        }
-        if (item == null || item.isEmpty()) {
             item = equipped.get(EquipSlotType.OFF_HAND);
         }
         if (item == null || item.isEmpty()) {

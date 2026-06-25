@@ -87,25 +87,12 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     private FlowLayout[] containerWrappers;
     private LabelComponent[] containerLabels;
     private int containerCount;
-    // -1 = 尚未激活任一页（哨兵）。build() 末尾首次 switchToBackpackTab() 据此跳过幂等早退；
-    // 之后 0..containerCount-1 = 普通容器 tab，==containerCount = 行囊页。
+    // plan-layered-equip-v1 P4（决议 #13/#18）：行囊面板 + containerCount 哨兵已删除。
+    // -1 = 尚未激活任一页（初始）；之后 activeContainer 落 0..containerCount-1（body_pocket=index 0，默认激活）。
     private int activeContainer = -1;
-    // 容器 tab 列表 = model.containers() 去掉 body_pocket（它在行囊面板渲染、不单独占 tab）。
-    // switchContainer/switchToBackpackTab 必须用这份过滤后的列表索引 containerLabels[]/containerGrids[]，
-    // 不能用 model.containers()（body_pocket 在第 0 位会导致标签错位）。
+    // 容器 tab 列表 = model.containers()，body_pocket 置 index 0（决议 #18）。
+    // switchContainer 用这份列表索引 containerLabels[]/containerGrids[]。
     private java.util.List<InventoryModel.ContainerDef> filteredContainerDefs = java.util.List.of();
-
-    // --- 行囊 tab (plan-backpack-equip-v1 P4) ---
-    // Special tab appended after container tabs; index = containerCount (virtual, not in containerGrids).
-    // Shows 3 backpack equip slots + weight detail + body_pocket grid.
-    // Sentinel: activeContainer == containerCount means 行囊 is active.
-    private LabelComponent backpackTabLabel;
-    private FlowLayout backpackEquipWrapper;    // hides/shows alongside containerWrappers
-    private EquipSlotComponent backpackSlotBack;
-    private EquipSlotComponent backpackSlotWaist;
-    private EquipSlotComponent backpackSlotChest;
-    private LabelComponent backpackWeightLabel;
-    private BackpackGridPanel bodyPocketGrid;    // body_pocket always-present 2×3
 
     private EquipmentPanel equipPanel;
     private StatusBarsPanel statusBars;
@@ -551,15 +538,26 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         rightCol.gap(2);
 
         // Container tabs (driven by model).
-        // body_pocket(贴身口袋) does NOT get its own tab — it's already rendered inside the
-        // 行囊 panel, so a separate tab would duplicate it. Filter it out of the tab/grid list.
+        // plan-layered-equip-v1 P4（决议 #13/#18）：行囊面板删除后，body_pocket 改为右侧容器 tab 列表
+        // **第一个**（最左 / 默认激活页），其余容器（身体槽 worn 背包件生成的容器）排其后。
+        // 不再过滤 body_pocket、不再有 activeContainer==containerCount 哨兵——activeContainer 落 0..containerCount-1。
         var allDefs = model.containers();
         java.util.List<InventoryModel.ContainerDef> containerDefs = new java.util.ArrayList<>();
+        InventoryModel.ContainerDef bodyPocketDef = null;
         for (var def : allDefs) {
-            if (!InventoryModel.BODY_POCKET_CONTAINER_ID.equals(def.id())) {
+            if (InventoryModel.BODY_POCKET_CONTAINER_ID.equals(def.id())) {
+                bodyPocketDef = def;
+            } else {
                 containerDefs.add(def);
             }
         }
+        // body_pocket 置 index 0（默认/最左，决议 #18）；server 未下发时补默认 2×3。
+        if (bodyPocketDef == null) {
+            bodyPocketDef = new InventoryModel.ContainerDef(
+                InventoryModel.BODY_POCKET_CONTAINER_ID, "贴身口袋", 2, 3);
+        }
+        containerDefs.add(0, bodyPocketDef);
+
         filteredContainerDefs = containerDefs;
         containerCount = containerDefs.size();
         containerGrids = new BackpackGridPanel[containerCount];
@@ -568,30 +566,10 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
 
         FlowLayout containerRow = Containers.horizontalFlow(Sizing.content(), Sizing.content());
         containerRow.gap(2);
-        int maxCols = 3; // floor at body_pocket(2×3) width so 行囊 面板宽度不塌
+        int maxCols = 3; // floor at body_pocket(2×3) width 防容器面板宽度塌
         for (var def : containerDefs) maxCols = Math.max(maxCols, def.cols());
 
-        // 行囊 tab FIRST — 它是主页（背包装备槽 + 负重 + 贴身口袋），也是默认激活页。
-        {
-            FlowLayout backpackTab = Containers.horizontalFlow(Sizing.content(), Sizing.fixed(14));
-            backpackTab.surface(Surface.flat(0xFF282828));
-            backpackTab.padding(Insets.of(1, 4, 1, 4));
-            backpackTab.verticalAlignment(VerticalAlignment.CENTER);
-            backpackTab.cursorStyle(CursorStyle.HAND);
-            backpackTabLabel = Components.label(Text.literal("§f行囊"));
-            backpackTab.child(backpackTabLabel);
-            backpackTab.mouseDown().subscribe((mx, my, btn) -> {
-                if (btn == 0) { switchToBackpackTab(); return true; }
-                return false;
-            });
-            // 拖物品时 hover 到 tab 即切换该页，便于在 贴身口袋/破草包 间拖放。
-            backpackTab.mouseEnter().subscribe(() -> {
-                if (dragState.isDragging()) switchToBackpackTab();
-            });
-            containerRow.child(backpackTab);
-        }
-
-        // 其余动态容器 tab（back_pack/腰/胸 等装备产生的容器）。
+        // 全部容器 tab（body_pocket 第一个 + 身体槽 worn 背包件产生的容器）。
         for (int i = 0; i < containerCount; i++) {
             final int ci = i;
             var def = containerDefs.get(i);
@@ -618,7 +596,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         }
         rightCol.child(containerRow);
 
-        // Build all grids, hidden by default (行囊 是初始激活页，见 build() 末尾 switchToBackpackTab())。
+        // Build all grids, hidden by default (body_pocket index 0 是初始激活页，见 build() 末尾 switchContainer(0))。
         int wrapperW = maxCols * GridSlotComponent.CELL_SIZE + 4;
         for (int i = 0; i < containerCount; i++) {
             var def = containerDefs.get(i);
@@ -631,11 +609,6 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             rightCol.child(w);
             w.positioning(Positioning.absolute(-9999, -9999));
         }
-
-        // 行囊 panel
-        backpackEquipWrapper = buildBackpackEquipPanel(wrapperW);
-        rightCol.child(backpackEquipWrapper);
-        backpackEquipWrapper.positioning(Positioning.absolute(-9999, -9999));
 
         // Tooltip
         tooltipPanel = new ItemTooltipPanel();
@@ -686,8 +659,10 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         };
         InventoryStateStore.addListener(inventoryListener);
 
-        // 行囊 是默认激活页（排第一、主页）：隐藏所有容器网格，显示背包装备槽 + 贴身口袋。
-        switchToBackpackTab();
+        // plan-layered-equip-v1 P4（决议 #18）：body_pocket（容器 tab 第一个，index 0）是默认激活页。
+        if (containerCount > 0) {
+            switchContainer(0);
+        }
     }
 
     // ==================== Build helpers ====================
@@ -957,9 +932,8 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     // ==================== Active grid shortcut ====================
 
     private BackpackGridPanel activeGrid() {
-        // 行囊 active(activeContainer == containerCount) → body_pocket(贴身口袋) 是当前可交互网格。
-        // body_pocket 已从容器 tab 过滤掉、不在 containerGrids 里，单独经 bodyPocketGrid 接 pickup/drop。
-        if (activeContainer == containerCount) return bodyPocketGrid;
+        // plan-layered-equip-v1 P4（决议 #13）：行囊面板删除后，body_pocket 是普通容器 grid（index 0），
+        // 与其他容器同走 containerGrids 路径，不再有 bodyPocketGrid 特例。
         if (activeContainer < 0 || activeContainer >= containerGrids.length) return null;
         return containerGrids[activeContainer];
     }
@@ -996,21 +970,8 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     static java.util.List<String> tabNamesForTests() {
         return java.util.List.of(TAB_NAMES);
     }
-
-    /**
-     * Build the weight detail breakdown string for the 行囊 tab (plan-backpack-equip-v1 P4).
-     * Exposed as package-private static for unit tests.
-     */
-    static String backpackWeightBreakdown(InventoryModel model) {
-        if (model == null) return "";
-        boolean overweight = model.currentWeight() > model.maxWeight();
-        return String.format(
-            java.util.Locale.ROOT,
-            "重量 %.1f / %.1f%s",
-            model.currentWeight(), model.maxWeight(),
-            overweight ? "  §c负重过载" : ""
-        );
-    }
+    // plan-layered-equip-v1 P4（决议 #19）：行囊重量条 backpackWeightBreakdown 删除——负重沿用整体
+    // inventory 底部既有 BottomInfoBar（读 model.currentWeight()/maxWeight()，过载变红）。
 
     /** plan-skill-v1 §5.1 三行固定刷新；listener / switchTab 共用此入口。 */
     private void refreshSkillRows(com.bong.client.skill.SkillSetSnapshot snapshot) {
@@ -1479,14 +1440,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     private void switchContainer(int idx) {
         if (idx == activeContainer || idx < 0 || idx >= containerCount) return;
         activeContainer = idx;
-        // Deactivate 行囊 tab if we're switching to a normal container.
-        if (backpackEquipWrapper != null) {
-            backpackEquipWrapper.positioning(Positioning.absolute(-9999, -9999));
-        }
-        if (backpackTabLabel != null) {
-            backpackTabLabel.text(Text.literal("§7行囊"));
-        }
-        // 用过滤后的列表索引 —— 与 containerLabels[]/containerGrids[] 同源同序（含 body_pocket 会错位）。
+        // 用 filteredContainerDefs 索引 —— 与 containerLabels[]/containerGrids[] 同源同序（body_pocket=index 0）。
         var defs = filteredContainerDefs;
         for (int i = 0; i < containerCount; i++) {
             containerWrappers[i].positioning(i == idx ? Positioning.layout() : Positioning.absolute(-9999, -9999));
@@ -1498,46 +1452,9 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         }
     }
 
-    /** 切换到行囊 tab：隐藏所有普通容器网格，显示背包装备槽 + 负重 + body_pocket。 */
-    private void switchToBackpackTab() {
-        // 幂等早退：已在行囊页（含 drag-hover 反复进入）时不重复 hide/show + refresh，与 switchContainer 对称。
-        if (activeContainer == containerCount) return;
-        // Hide all normal container grids
-        if (containerWrappers != null) {
-            for (FlowLayout w : containerWrappers) {
-                if (w != null) w.positioning(Positioning.absolute(-9999, -9999));
-            }
-        }
-        // Dim normal container labels（用过滤后的列表，与 containerLabels[] 同源同序）。
-        if (containerLabels != null) {
-            var defs = filteredContainerDefs;
-            for (int i = 0; i < containerCount; i++) {
-                var def = defs.get(i);
-                containerLabels[i].text(Text.literal("§7" + def.name() + " §8(" + def.rows() + "×" + def.cols() + ")"));
-            }
-        }
-        // Mark activeContainer as "行囊 is active" by using a sentinel that's out of normal range.
-        // We use containerCount itself so switchContainer guards (idx >= containerCount) still work.
-        activeContainer = containerCount;
-        // Show backpack panel
-        if (backpackEquipWrapper != null) {
-            backpackEquipWrapper.positioning(Positioning.layout());
-        }
-        // Highlight 行囊 tab label
-        if (backpackTabLabel != null) {
-            backpackTabLabel.text(Text.literal("§f行囊"));
-        }
-        // Refresh backpack slot states from model
-        refreshBackpackEquipPanel();
-    }
-
-    /** 切换到承载指定 containerId 的页：body_pocket → 行囊页；其余 → 对应容器 tab。无匹配则不动。 */
+    /** 切换到承载指定 containerId 的页（body_pocket 与其余容器同走普通 switchContainer，决议 #13）。无匹配则不动。 */
     private void switchToGridContainer(String containerId) {
         if (containerId == null) return;
-        if (InventoryModel.BODY_POCKET_CONTAINER_ID.equals(containerId)) {
-            switchToBackpackTab();
-            return;
-        }
         for (int i = 0; i < containerCount; i++) {
             if (filteredContainerDefs.get(i).id().equals(containerId)) {
                 switchContainer(i);
@@ -1546,94 +1463,35 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         }
     }
 
-    /** Build the 行囊 panel showing 3 backpack equip slots + weight bar + body_pocket grid. */
-    private FlowLayout buildBackpackEquipPanel(int wrapperW) {
-        int panelW = Math.max(wrapperW, 100);
-        FlowLayout panel = Containers.verticalFlow(Sizing.fixed(panelW), Sizing.content());
-        panel.surface(Surface.flat(0xFF111111));
-        panel.padding(Insets.of(4));
-        panel.gap(4);
-
-        // ── Row 1: three backpack equip slots ──
-        FlowLayout slotsRow = Containers.horizontalFlow(Sizing.content(), Sizing.content());
-        slotsRow.gap(6);
-
-        backpackSlotBack = buildLabeledEquipSlot(slotsRow, EquipSlotType.BACK_PACK, "背部");
-        backpackSlotWaist = buildLabeledEquipSlot(slotsRow, EquipSlotType.WAIST_POUCH, "腰间");
-        backpackSlotChest = buildLabeledEquipSlot(slotsRow, EquipSlotType.CHEST_SATCHEL, "胸前");
-        panel.child(slotsRow);
-
-        // ── Row 2: weight detail bar ──
-        backpackWeightLabel = Components.label(Text.literal("重量 0.0 / 15.0"));
-        backpackWeightLabel.color(Color.ofArgb(0xFFAAAAAA));
-        panel.child(backpackWeightLabel);
-
-        // ── Row 3: body_pocket grid (贴身口袋) ──
-        LabelComponent pocketLabel = Components.label(Text.literal("§7贴身口袋"));
-        pocketLabel.color(Color.ofArgb(0xFF888888));
-        panel.child(pocketLabel);
-
-        bodyPocketGrid = new BackpackGridPanel(InventoryModel.BODY_POCKET_CONTAINER_ID, 2, 3);
-        FlowLayout pocketWrapper = Containers.verticalFlow(Sizing.content(), Sizing.content());
-        pocketWrapper.surface(Surface.flat(0xFF0D0D0D));
-        pocketWrapper.padding(Insets.of(2));
-        pocketWrapper.child(bodyPocketGrid.container());
-        panel.child(pocketWrapper);
-
-        return panel;
-    }
-
     /**
-     * Helper: add a labeled equip slot column (icon + label) to {@code parent} and return the slot.
-     * Layout: [slot icon] then [label below].
+     * plan-layered-equip-v1 P4（决议 #12）：弹出该槽栈顶/held（仅 LIFO 顶层可动）。
+     * 手槽 → 清 held；身体槽 → pop worn 末尾（栈顶）；下层保持不动。乐观本地更新，server 快照为权威。
      */
-    private EquipSlotComponent buildLabeledEquipSlot(FlowLayout parent, EquipSlotType type, String label) {
-        FlowLayout col = Containers.verticalFlow(Sizing.content(), Sizing.content());
-        col.gap(2);
-        col.horizontalAlignment(HorizontalAlignment.CENTER);
-
-        EquipSlotComponent slot = new EquipSlotComponent(type);
-        col.child(slot);
-
-        LabelComponent lbl = Components.label(Text.literal("§8" + label));
-        col.child(lbl);
-
-        parent.child(col);
-        return slot;
+    private void popSlotTop(EquipSlotComponent eq) {
+        if (eq == null) return;
+        com.bong.client.inventory.model.SlotContents c = eq.contents();
+        if (eq.slotType().isHand() || c.held() != null) {
+            // 手槽（held）或恰好持械：清 held，worn 不变。
+            eq.setContents(new com.bong.client.inventory.model.SlotContents(c.worn(), null));
+            return;
+        }
+        java.util.List<InventoryItem> stack = new java.util.ArrayList<>(c.worn());
+        if (!stack.isEmpty()) {
+            stack.remove(stack.size() - 1); // pop 栈顶
+        }
+        eq.setContents(new com.bong.client.inventory.model.SlotContents(stack, c.held()));
     }
 
-    /** Refresh the backpack equip slot visuals and weight label from current model. */
-    private void refreshBackpackEquipPanel() {
-        if (model == null) return;
-        if (backpackSlotBack != null) {
-            backpackSlotBack.setItem(model.equipped().get(EquipSlotType.BACK_PACK));
-        }
-        if (backpackSlotWaist != null) {
-            backpackSlotWaist.setItem(model.equipped().get(EquipSlotType.WAIST_POUCH));
-        }
-        if (backpackSlotChest != null) {
-            backpackSlotChest.setItem(model.equipped().get(EquipSlotType.CHEST_SATCHEL));
-        }
-        if (backpackWeightLabel != null) {
-            boolean overweight = model.currentWeight() > model.maxWeight();
-            String weightText = String.format(
-                java.util.Locale.ROOT,
-                "重量 %.1f / %.1f%s",
-                model.currentWeight(), model.maxWeight(),
-                overweight ? "  §c负重过载" : ""
-            );
-            backpackWeightLabel.text(Text.literal(weightText));
-            backpackWeightLabel.color(Color.ofArgb(overweight ? 0xFFFF4444 : 0xFFAAAAAA));
-        }
-        if (bodyPocketGrid != null) {
-            bodyPocketGrid.populateFromModel(model);
-        }
-    }
-
-    /** Called from populateFromModel — refresh backpack panel if it's active. */
-    private void refreshBackpackEquipPanelIfActive() {
-        if (activeContainer == containerCount) {
-            refreshBackpackEquipPanel();
+    /** 把件推回槽：手槽 → held 单件；身体槽 → push worn 栈顶（决议 #12）。 */
+    private void pushSlot(EquipSlotComponent eq, InventoryItem item) {
+        if (eq == null || item == null) return;
+        com.bong.client.inventory.model.SlotContents c = eq.contents();
+        if (eq.slotType().isHand()) {
+            eq.setContents(new com.bong.client.inventory.model.SlotContents(c.worn(), item));
+        } else {
+            java.util.List<InventoryItem> stack = new java.util.ArrayList<>(c.worn());
+            stack.add(item);
+            eq.setContents(new com.bong.client.inventory.model.SlotContents(stack, c.held()));
         }
     }
 
@@ -1677,9 +1535,6 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         hydrateSkillBarFromStore();
 
         hydrateQuickUseFromStore();
-
-        // Keep 行囊 panel in sync when it's the active view.
-        refreshBackpackEquipPanelIfActive();
     }
 
     static void populateContainerGrids(InventoryModel model, BackpackGridPanel[] containerGrids) {
@@ -1929,7 +1784,9 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         if (button == 1) {
             if (activeTab == TAB_EQUIP) {
                 var eq = equipPanel.slotAtScreen(mouseX, mouseY);
-                if (eq != null && eq.item() != null && openWeaponContextMenu(eq.slotType(), eq.item(), (int) mouseX, (int) mouseY)) {
+                // 决议 #12：仅栈顶/held（representative）可操作。
+                InventoryItem top = eq == null ? null : eq.representative();
+                if (eq != null && top != null && openWeaponContextMenu(eq.slotType(), top, (int) mouseX, (int) mouseY)) {
                     itemInspectLongPress.cancel();
                     return true;
                 }
@@ -2010,13 +1867,14 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             }
 
             // Equip
+            // 决议 #12：仅栈顶/held（representative）可被拖下/卸下；下层被压住不可动。
             if (activeTab == TAB_EQUIP) {
                 var eq = equipPanel.slotAtScreen(mouseX, mouseY);
-                if (eq != null && eq.item() != null) {
-                    InventoryItem item = eq.item();
+                InventoryItem item = eq == null ? null : eq.representative();
+                if (eq != null && item != null) {
                     if (shift) quickUnequipToGrid(eq.slotType(), item);
                     else {
-                        eq.clearItem();
+                        popSlotTop(eq); // 乐观弹出栈顶/held（server 快照为权威）
                         dragState.pickupFromEquip(item, eq.slotType());
                     }
                     return true;
@@ -2245,7 +2103,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         }
         if (activeTab == TAB_EQUIP) {
             var eq = equipPanel.slotAtScreen(mouseX, mouseY);
-            if (eq != null && eq.item() != null) return eq.item();
+            if (eq != null && eq.representative() != null) return eq.representative();
         }
         int hIdx = hotbarSlotAtScreen(mouseX, mouseY);
         if (hIdx >= 0 && hotbarItems[hIdx] != null) return hotbarItems[hIdx];
@@ -2268,9 +2126,10 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
         if (keyCode == GLFW.GLFW_KEY_Q && activeTab == TAB_EQUIP && !dragState.isDragging()) {
             var eq = equipPanel.slotAtScreen(mouseX(), mouseY());
-            if (eq != null && eq.item() != null && InventoryEquipRules.isWeapon(eq.item())) {
-                if (dispatchDropWeaponFromEquip(eq.slotType(), eq.item())) {
-                    eq.clearItem();
+            InventoryItem top = eq == null ? null : eq.representative();
+            if (eq != null && top != null && InventoryEquipRules.isWeapon(top)) {
+                if (dispatchDropWeaponFromEquip(eq.slotType(), top)) {
+                    popSlotTop(eq);
                     clearAllHighlights();
                     return true;
                 }
@@ -2427,26 +2286,30 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         }
 
         // Equip (with hand restriction from physical body)
+        // plan-layered-equip-v1 P4（决议 #3/#12）：删除旧 swap 分支——满/占=飘红退回不顶替；
+        // worn 合法则 push 栈顶（乐观更新，server 快照为权威）。canEquip 已含「worn 满 / held 占 / 锁手」拒绝。
         if (activeTab == TAB_EQUIP) {
             var eq = equipPanel.slotAtScreen(mouseX, mouseY);
             if (eq != null) {
-                if (!isEquipSlotDropValid(dragged, eq.slotType())) {
+                if (eq.isDisabledByTwoHand() || !isEquipSlotDropValid(dragged, eq.slotType())) {
                     returnDragToSource();
                     clearAllHighlights();
                     return;
                 }
-                if (eq.item() == null) {
-                    eq.setItem(dragged);
-                    dragState.drop();
+                // 乐观本地落位：手槽 → held 单件；身体槽 → push worn 栈顶。
+                EquipSlotType slot = eq.slotType();
+                if (slot.isHand()) {
+                    eq.setContents(com.bong.client.inventory.model.SlotContents.ofHeld(dragged));
                 } else {
-                    InventoryItem old = eq.item();
-                    eq.setItem(dragged);
-                    dragState.drop();
-                    placeItemAnywhere(old);
+                    java.util.List<InventoryItem> stack =
+                        new java.util.ArrayList<>(eq.contents().worn());
+                    stack.add(dragged); // push 到栈顶（尾）
+                    eq.setContents(new com.bong.client.inventory.model.SlotContents(stack, eq.held()));
                 }
+                dragState.drop();
                 dispatchMoveIntent(dragged, fromLoc,
                     new com.bong.client.network.ClientRequestProtocol.EquipLoc(
-                        eq.slotType().name().toLowerCase(), eq.slotType().wireState()));
+                        slot.name().toLowerCase(), slot.wireState()));
                 clearAllHighlights();
                 return;
             }
@@ -2950,7 +2813,8 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             case EQUIP -> {
                 if (r.sourceEquipSlot() != null) {
                     var slot = equipPanel.slotFor(r.sourceEquipSlot());
-                    if (slot != null) slot.setItem(item);
+                    // 拖拽取消 → 把件还回来源槽（手槽 held / 身体槽 re-push 栈顶）。
+                    if (slot != null) pushSlot(slot, item);
                 }
             }
             case HOTBAR -> {
@@ -3002,12 +2866,10 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 }
             }
         }
-        // 实在放不下 — 强制放进第一个容器第一格（覆盖，避免数据丢失）；
-        // 无背包容器（containerGrids 空，纯新玩家）则回落 body_pocket，防静默丢物。
+        // 实在放不下 — 强制放进第一个容器第一格（body_pocket=index 0，覆盖避免数据丢失）。
+        // 决议 #13：body_pocket 现为普通容器（containerGrids[0]），不再有独立 bodyPocketGrid 回落分支。
         if (containerGrids.length > 0) {
             containerGrids[0].place(item, 0, 0);
-        } else if (bodyPocketGrid != null) {
-            bodyPocketGrid.place(item, 0, 0);
         }
     }
 
@@ -3220,9 +3082,10 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         PhysicalBody pb = bodyInspect != null ? bodyInspect.physicalBody() : null;
         if (pb == null) return true; // 无体表数据时不限制
         return switch (slot) {
-            case MAIN_HAND, TWO_HAND -> pb.canUseHand(PhysicalBody.Side.RIGHT);
+            // 决议 #17：TWO_HAND 专槽删除，双手武器走 MAIN_HAND（右手可用性）。
+            case MAIN_HAND -> pb.canUseHand(PhysicalBody.Side.RIGHT);
             case OFF_HAND -> pb.canUseHand(PhysicalBody.Side.LEFT);
-            default -> true;
+            default -> true; // EXTRA_HAND_0/1 多臂槽暂不受体表断臂限制
         };
     }
 
@@ -3239,18 +3102,20 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         );
     }
 
-    private EnumMap<EquipSlotType, InventoryItem> equippedStateForValidation(
+    /**
+     * plan-layered-equip-v1 P4：从当前面板各槽收集分层装备态（SlotContents）供 canEquip 校验。
+     * 拖拽来源槽若来自装备槽，把 dragged 件计回该槽（同槽重排放宽，与 canEquip sourceSlot 约定一致）。
+     */
+    private EnumMap<EquipSlotType, com.bong.client.inventory.model.SlotContents> equippedStateForValidation(
         InventoryItem dragged,
         EquipSlotType sourceSlot
     ) {
-        EnumMap<EquipSlotType, InventoryItem> equipped = new EnumMap<>(EquipSlotType.class);
+        EnumMap<EquipSlotType, com.bong.client.inventory.model.SlotContents> equipped =
+            new EnumMap<>(EquipSlotType.class);
         for (EquipSlotType type : EquipSlotType.values()) {
             var slot = equipPanel.slotFor(type);
-            if (slot == null || slot.item() == null || slot.item().isEmpty()) continue;
-            equipped.put(type, slot.item());
-        }
-        if (sourceSlot != null && dragged != null && !dragged.isEmpty()) {
-            equipped.put(sourceSlot, dragged);
+            if (slot == null || slot.isEmpty()) continue;
+            equipped.put(type, slot.contents());
         }
         return equipped;
     }
@@ -3270,17 +3135,18 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         if (anchor == null) return;
 
         var equipped = equippedStateForValidation(null, null);
-        EquipSlotType targetSlot = InventoryEquipRules.isTreasure(item)
-            ? firstEmptyTreasureBeltSlot(equipped)
-            : InventoryEquipRules.preferredWeaponQuickEquipSlot(
-                item,
-                equipped,
-                this::isEquipSlotUsable
-            );
+        // 决议 #8/#17：treasure 不再有专属 belt 槽，与武器/工具同走手槽（off_hand 优先）；激活态另由灵宝 UI 触发位承载。
+        EquipSlotType targetSlot = InventoryEquipRules.preferredWeaponQuickEquipSlot(
+            item,
+            equipped,
+            this::isEquipSlotUsable
+        );
         if (targetSlot == null) return;
 
         grid.remove(item);
-        equipPanel.slotFor(targetSlot).setItem(item);
+        // 手槽 quick-equip → held 单件。
+        equipPanel.slotFor(targetSlot).setContents(
+            com.bong.client.inventory.model.SlotContents.ofHeld(item));
         dispatchMoveIntent(
             item,
             new com.bong.client.network.ClientRequestProtocol.ContainerLoc(
@@ -3299,7 +3165,8 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         if (grid == null) return;
         var pos = grid.findFreeSpace(item);
         if (pos != null) {
-            equipPanel.slotFor(slotType).clearItem();
+            // 决议 #12：卸下仅弹出栈顶/held（被压住下层不动）。
+            popSlotTop(equipPanel.slotFor(slotType));
             grid.place(item, pos.row(), pos.col());
             dispatchMoveIntent(
                 item,
@@ -3313,20 +3180,6 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 )
             );
         }
-    }
-
-    private EquipSlotType firstEmptyTreasureBeltSlot(EnumMap<EquipSlotType, InventoryItem> equipped) {
-        EquipSlotType[] order = {
-            EquipSlotType.TREASURE_BELT_0,
-            EquipSlotType.TREASURE_BELT_1,
-            EquipSlotType.TREASURE_BELT_2,
-            EquipSlotType.TREASURE_BELT_3
-        };
-        for (EquipSlotType slot : order) {
-            InventoryItem item = equipped.get(slot);
-            if (item == null || item.isEmpty()) return slot;
-        }
-        return null;
     }
 
     private void quickMoveHotbarToGrid(int index) {
@@ -3682,7 +3535,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         }
         if (hovered == null && activeTab == TAB_EQUIP) {
             var eq = equipPanel.slotAtScreen(mx, my);
-            if (eq != null) hovered = eq.item();
+            if (eq != null) hovered = eq.representative();
         }
         if (hovered == null && activeTab == TAB_CULTIVATION && bodyInspect != null) {
             if (bodyInspect.activeLayer() == BodyInspectComponent.Layer.PHYSICAL) {
@@ -3752,8 +3605,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             case REPAIR -> openRepairScreen(menu.item());
             case DROP -> {
                 if (dispatchDropWeaponFromEquip(menu.slotType(), menu.item())) {
-                    var slot = equipPanel.slotFor(menu.slotType());
-                    if (slot != null) slot.clearItem();
+                    popSlotTop(equipPanel.slotFor(menu.slotType()));
                 }
             }
         }
