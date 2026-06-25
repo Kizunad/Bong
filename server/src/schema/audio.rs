@@ -15,6 +15,7 @@ pub const AUDIO_VOLUME_MAX: f32 = 4.0;
 pub const AUDIO_PITCH_MIN: f32 = 0.1;
 pub const AUDIO_PITCH_MAX: f32 = 2.0;
 pub const AUDIO_PRIORITY_MAX: u8 = 100;
+pub const AUDIO_RECIPE_LAYERS_MAX: usize = 8;
 
 #[derive(Debug)]
 pub enum AudioEventBuildError {
@@ -135,6 +136,13 @@ impl SoundRecipe {
             return Err(format!(
                 "recipe `{}` must contain at least one layer",
                 self.id
+            ));
+        }
+        if self.layers.len() > AUDIO_RECIPE_LAYERS_MAX {
+            return Err(format!(
+                "recipe `{}` layers count {} exceeds max {AUDIO_RECIPE_LAYERS_MAX}",
+                self.id,
+                self.layers.len()
             ));
         }
         if self.priority > AUDIO_PRIORITY_MAX {
@@ -428,6 +436,19 @@ mod tests {
         sample_recipe()
             .validate()
             .expect("sample recipe should validate");
+    }
+
+    #[test]
+    fn sound_recipe_rejects_more_than_eight_layers() {
+        let mut recipe = sample_recipe();
+        recipe.layers = vec![recipe.layers[0].clone(); 9];
+        let error = recipe.validate().expect_err(
+            "TypeScript SoundRecipeV1 maxItems=8，9 层 recipe 应被 Rust validate() 拒绝",
+        );
+        assert!(
+            error.contains("layers") && error.contains("9"),
+            "错误信息应指出 layers 数量 9 超限，实为：{error}"
+        );
     }
 
     #[test]
