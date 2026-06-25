@@ -100,6 +100,7 @@ import { ZongCoreActivationV1 } from "../src/zong-formation.js";
 import { RealmVisionParamsV1 } from "../src/realm-vision.js";
 import { ClientRequestV1 } from "../src/client-request.js";
 import {
+  SERVER_DATA_MAX_PAYLOAD_BYTES,
   ServerDataV1,
   ServerDataMineralProbeResultV1,
   ServerDataInsightOfferV1,
@@ -714,6 +715,33 @@ describe("sample files pass schema validation", () => {
     const data = loadSample("server-data.heartbeat.sample.json");
     const result = validate(ServerDataV1, data);
     expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("server-data legacy message accepts the Rust/Java envelope budget", () => {
+    const message = "x".repeat(9000);
+    const result = validate(ServerDataV1, {
+      v: 1,
+      type: "welcome",
+      message,
+    });
+
+    expect(
+      result.ok,
+      `expected ServerDataV1 to accept a 9000-byte legacy message because Rust and Java ServerDataEnvelope allow 32768-byte payloads, actual errors: ${result.errors.join("; ")}`,
+    ).toBe(true);
+  });
+
+  it("server-data legacy message rejects values above the envelope budget", () => {
+    const result = validate(ServerDataV1, {
+      v: 1,
+      type: "heartbeat",
+      message: "x".repeat(SERVER_DATA_MAX_PAYLOAD_BYTES + 1),
+    });
+
+    expect(
+      result.ok,
+      `expected ServerDataV1 to reject a legacy message longer than ${SERVER_DATA_MAX_PAYLOAD_BYTES} characters because it exceeds the envelope budget`,
+    ).toBe(false);
   });
 
   it("server-data.narration.sample.json", () => {

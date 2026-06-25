@@ -18,7 +18,7 @@
           "type": "string"
         },
         "message": {
-          "maxLength": 8192,
+          "maxLength": 32768,
           "type": "string"
         }
       }
@@ -41,7 +41,7 @@
           "type": "string"
         },
         "message": {
-          "maxLength": 8192,
+          "maxLength": 32768,
           "type": "string"
         }
       }
