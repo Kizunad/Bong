@@ -24,8 +24,7 @@ import com.google.gson.JsonArray;
  *       再做 JSON walk 没意义</li>
  * </ul>
  *
- * <p>版本 + 大小限制照搬 {@link ServerDataEnvelope}，与 Rust 侧 {@code MAX_PAYLOAD_BYTES=8192}
- * 对齐。
+ * <p>版本 + 大小限制照搬 {@link ServerDataEnvelope}，与 Rust 侧 {@code MAX_PAYLOAD_BYTES} 对齐。
  *
  * <p>字段校验对齐 {@code agent/packages/schema/src/vfx-event.ts} 的 TypeBox 约束：
  * <ul>
@@ -37,7 +36,7 @@ import com.google.gson.JsonArray;
  */
 public final class VfxEventEnvelope {
     public static final int EXPECTED_VERSION = 1;
-    public static final int MAX_PAYLOAD_BYTES = 8192;
+    public static final int MAX_PAYLOAD_BYTES = ServerDataEnvelope.MAX_PAYLOAD_BYTES;
     public static final int VFX_ANIM_PRIORITY_MIN = 100;
     public static final int VFX_ANIM_PRIORITY_MAX = 3999;
     public static final int VFX_FADE_TICKS_MAX = 40;

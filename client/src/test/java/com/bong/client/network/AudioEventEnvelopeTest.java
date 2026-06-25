@@ -78,6 +78,21 @@ public class AudioEventEnvelopeTest {
     }
 
     @Test
+    void acceptsPlayPayloadWithinServerDataEnvelopeBudget() {
+        String json = largePlayPayload();
+        int payloadSizeBytes = jsonLen(json);
+        assertTrue(payloadSizeBytes > 8192, "fixture must exceed the old 8192 byte client cap");
+        assertTrue(
+            payloadSizeBytes < ServerDataEnvelope.MAX_PAYLOAD_BYTES,
+            "fixture must stay within the Rust/server_data payload budget"
+        );
+
+        AudioEventParseResult result = AudioEventEnvelope.parsePlay(json, payloadSizeBytes);
+
+        assertTrue(result.isSuccess(), result.errorMessage());
+    }
+
+    @Test
     void rejectsBadRecipeId() throws IOException {
         String json = PayloadFixtureLoader.readText("invalid-audio-bad-recipe-id.json");
 
@@ -99,5 +114,21 @@ public class AudioEventEnvelopeTest {
 
     private static int jsonLen(String json) {
         return json.getBytes(StandardCharsets.UTF_8).length;
+    }
+
+    private static String largePlayPayload() {
+        String sound = "minecraft:" + "a".repeat(1_050);
+        StringBuilder layers = new StringBuilder();
+        for (int i = 0; i < 8; i++) {
+            if (i > 0) {
+                layers.append(',');
+            }
+            layers.append("""
+                {"sound":"%s","volume":0.4,"pitch":1.0,"delay_ticks":0}""".formatted(sound));
+        }
+        return """
+            {"v":1,"recipe_id":"large_recipe","instance_id":42,"volume_mul":1.0,"pitch_shift":0.0,
+             "recipe":{"id":"large_recipe","layers":[%s],"priority":40,"attenuation":"SELF","category":"VOICE","bus":"UI"}}
+            """.formatted(layers);
     }
 }
