@@ -22,7 +22,7 @@ import java.util.regex.Pattern;
 
 public final class AudioEventEnvelope {
     public static final int EXPECTED_VERSION = 1;
-    public static final int MAX_PAYLOAD_BYTES = 8192;
+    public static final int MAX_PAYLOAD_BYTES = ServerDataEnvelope.MAX_PAYLOAD_BYTES;
     public static final float AUDIO_VOLUME_MAX = 4.0f;
     public static final float AUDIO_PITCH_MIN = 0.1f;
     public static final float AUDIO_PITCH_MAX = 2.0f;

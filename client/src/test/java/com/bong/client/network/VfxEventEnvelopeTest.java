@@ -146,6 +146,23 @@ public class VfxEventEnvelopeTest {
     }
 
     @Test
+    void acceptsPayloadWithinServerDataEnvelopeBudget() {
+        String json = "{\"v\":1,\"type\":\"spawn_particle\",\"event_id\":\"bong:"
+            + "a".repeat(9_000)
+            + "\",\"origin\":[0.0,64.0,0.0]}";
+        int payloadSizeBytes = jsonLen(json);
+        assertTrue(payloadSizeBytes > 8192, "fixture must exceed the old 8192 byte client cap");
+        assertTrue(
+            payloadSizeBytes < ServerDataEnvelope.MAX_PAYLOAD_BYTES,
+            "fixture must stay within the Rust/server_data payload budget"
+        );
+
+        VfxEventParseResult result = VfxEventEnvelope.parse(json, payloadSizeBytes);
+
+        assertTrue(result.isSuccess(), result.errorMessage());
+    }
+
+    @Test
     void parsesSpawnParticleFixtureFull() throws IOException {
         String json = PayloadFixtureLoader.readText("valid-vfx-spawn-particle.json");
         VfxEventParseResult result = VfxEventEnvelope.parse(json, jsonLen(json));
