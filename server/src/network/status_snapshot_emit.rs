@@ -8,8 +8,9 @@ use valence::prelude::{Changed, Client, Entity, Query, Username, With};
 use crate::combat::components::{BodyPart, StatusEffects};
 use crate::combat::events::StatusEffectKind;
 use crate::cultivation::tick::cultivation_acceleration_multiplier;
-use crate::network::agent_bridge::SERVER_DATA_CHANNEL;
-use crate::network::send_server_data_payload;
+use crate::network::agent_bridge::{PayloadBuildError, SERVER_DATA_CHANNEL};
+use crate::network::{log_payload_build_error, send_server_data_payload};
+use crate::schema::common::MAX_PAYLOAD_BYTES;
 
 type StatusSnapshotEmitFilter = (With<Client>, Changed<StatusEffects>);
 
@@ -45,6 +46,16 @@ pub fn emit_status_snapshot_payloads(
         let Ok(bytes) = serde_json::to_vec(&payload) else {
             continue;
         };
+        if bytes.len() > MAX_PAYLOAD_BYTES {
+            log_payload_build_error(
+                "status_snapshot",
+                &PayloadBuildError::Oversize {
+                    size: bytes.len(),
+                    max: MAX_PAYLOAD_BYTES,
+                },
+            );
+            continue;
+        }
         send_server_data_payload(&mut client, bytes.as_slice());
         tracing::debug!(
             "[bong][network] sent {} status_snapshot payload to entity {entity:?} for `{}` ({} effects)",
@@ -353,6 +364,35 @@ mod tests {
             "清空后 status_snapshot effects 必须为空数组——client 据此全量替换清空虚脱 HUD（根治脱钩）；\
              实际 {:?}",
             second[0]["effects"]
+        );
+    }
+
+    #[test]
+    fn oversized_status_snapshot_is_not_sent() {
+        let mut app = App::new();
+        app.add_systems(Update, emit_status_snapshot_payloads);
+
+        let (bundle, mut helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(bundle).id();
+        app.world_mut().entity_mut(entity).insert(StatusEffects {
+            active: vec![ActiveStatusEffect {
+                kind: StatusEffectKind::AlchemyBuff(
+                    "x".repeat(crate::schema::common::MAX_PAYLOAD_BYTES),
+                ),
+                magnitude: 1.0,
+                remaining_ticks: 1200,
+                source_pill: None,
+            }],
+        });
+
+        app.update();
+        flush_clients(&mut app);
+
+        let snaps = collect_status_snapshots(&mut helper);
+        assert!(
+            snaps.is_empty(),
+            "超出 MAX_PAYLOAD_BYTES 的 status_snapshot 不应下发；实际收到 {} 帧",
+            snaps.len()
         );
     }
 
