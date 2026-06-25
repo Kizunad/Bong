@@ -87,7 +87,7 @@ export type AgentUiRequestPayloadV1 = Static<typeof AgentUiRequestPayloadV1>;
  * - invalid_command:     agent→server 命令结构非法，server 拒绝处理
  * - xml_sanitize_failed: server 清洗 XML 失败，面板不会下发
  *
- * 通过 AgentUiResponsePayloadV1ErrorReasonV1 可在调用方做完整 switch 校验。
+ * 通过 AgentUiErrorReasonV1 可在调用方做完整 switch 校验。
  * params 字段仍保持 Record<string, string>（可扩展），此联合仅用于 TS 静态检查。
  */
 export type AgentUiErrorReasonV1 =
