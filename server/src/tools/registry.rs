@@ -32,7 +32,10 @@ pub fn main_hand_tool(player: Entity, world: &World) -> Option<ToolKind> {
 }
 
 pub fn main_hand_tool_in_inventory(inventory: &PlayerInventory) -> Option<ToolKind> {
-    let item = inventory.equipped.get(EQUIP_SLOT_MAIN_HAND)?;
+    let item = inventory
+        .equipped
+        .get(EQUIP_SLOT_MAIN_HAND)
+        .and_then(|s| s.held.as_ref())?;
     if item.durability <= 0.0 {
         return None;
     }
@@ -42,7 +45,10 @@ pub fn main_hand_tool_in_inventory(inventory: &PlayerInventory) -> Option<ToolKi
 fn main_hand_tool_instance_in_inventory(
     inventory: &PlayerInventory,
 ) -> Option<(ToolKind, u64, f64)> {
-    let item = inventory.equipped.get(EQUIP_SLOT_MAIN_HAND)?;
+    let item = inventory
+        .equipped
+        .get(EQUIP_SLOT_MAIN_HAND)
+        .and_then(|s| s.held.as_ref())?;
     let kind = item_kind_to_tool(item.template_id.as_str())?;
     (item.durability > 0.0).then_some((kind, item.instance_id, item.durability))
 }
@@ -96,7 +102,9 @@ pub fn has_required_tool(actual: Option<ToolKind>, required: Option<ToolKind>) -
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::inventory::{InventoryRevision, ItemInstance, ItemRarity, PlayerInventory};
+    use crate::inventory::{
+        InventoryRevision, ItemInstance, ItemRarity, PlayerInventory, SlotContents,
+    };
     use std::collections::HashMap;
     use valence::prelude::App;
 
@@ -128,7 +136,10 @@ mod tests {
     fn inventory_with_main_hand(template_id: Option<&str>) -> PlayerInventory {
         let mut equipped = HashMap::new();
         if let Some(template_id) = template_id {
-            equipped.insert(EQUIP_SLOT_MAIN_HAND.to_string(), item(template_id, 42, 1.0));
+            equipped.insert(
+                EQUIP_SLOT_MAIN_HAND.to_string(),
+                SlotContents::held_single(item(template_id, 42, 1.0)),
+            );
         }
         PlayerInventory {
             revision: InventoryRevision(0),
@@ -170,6 +181,9 @@ mod tests {
             .equipped
             .get_mut(EQUIP_SLOT_MAIN_HAND)
             .expect("tool should be equipped")
+            .held
+            .as_mut()
+            .expect("held item should be present")
             .durability = 0.0;
 
         assert_eq!(main_hand_tool_in_inventory(&inventory), None);

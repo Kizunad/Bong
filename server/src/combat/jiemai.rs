@@ -70,6 +70,7 @@ pub fn jiemai_prep_window_ms(inventory: Option<&PlayerInventory>) -> u32 {
 }
 
 pub fn jiemai_armor_modifier_from_inventory(inventory: &PlayerInventory) -> f32 {
+    // plan-layered-equip-v1 P0.2（桶②，gap#4 修正错分桶）— 遍历四护甲身体槽 worn 全层取最重。
     let heaviest = [
         EQUIP_SLOT_HEAD,
         EQUIP_SLOT_CHEST,
@@ -78,6 +79,7 @@ pub fn jiemai_armor_modifier_from_inventory(inventory: &PlayerInventory) -> f32 
     ]
     .into_iter()
     .filter_map(|slot| inventory.equipped.get(slot))
+    .flat_map(|contents| contents.worn.iter())
     .map(|item| item.weight)
     .fold(0.0_f64, f64::max);
     jiemai_armor_modifier_for_item_weight(heaviest)
@@ -257,7 +259,10 @@ mod tests {
     #[test]
     fn armor_weight_modifies_prep_window() {
         let mut equipped = HashMap::new();
-        equipped.insert(EQUIP_SLOT_CHEST.to_string(), armor_item(2.5));
+        equipped.insert(
+            EQUIP_SLOT_CHEST.to_string(),
+            crate::inventory::SlotContents::worn_single(armor_item(2.5)),
+        );
         let inventory = PlayerInventory {
             revision: InventoryRevision(0),
             containers: Vec::new(),
@@ -269,9 +274,10 @@ mod tests {
         assert_eq!(jiemai_prep_window_ms(Some(&inventory)), 900);
 
         let mut heavy = inventory.clone();
-        heavy
-            .equipped
-            .insert(EQUIP_SLOT_LEGS.to_string(), armor_item(7.0));
+        heavy.equipped.insert(
+            EQUIP_SLOT_LEGS.to_string(),
+            crate::inventory::SlotContents::worn_single(armor_item(7.0)),
+        );
         assert_eq!(jiemai_prep_window_ms(Some(&heavy)), 600);
         assert_eq!(jiemai_prep_window_ms(None), 1000);
     }

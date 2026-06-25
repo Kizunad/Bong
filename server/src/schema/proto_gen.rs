@@ -1241,25 +1241,7 @@ mod tests {
                 cols: 3,
             }],
             placed_items: vec![],
-            equipped: Some(EquippedInventorySnapshot {
-                head: None,
-                chest: None,
-                legs: None,
-                feet: None,
-                false_skin: None,
-                main_hand: None,
-                off_hand: None,
-                two_hand: None,
-                treasure_belt_0: None,
-                treasure_belt_1: None,
-                treasure_belt_2: None,
-                treasure_belt_3: None,
-                back_pack: None,
-                waist_pouch: None,
-                chest_satchel: None,
-                extra_hand_0: None,
-                extra_hand_1: None,
-            }),
+            equipped: Some(EquippedInventorySnapshot::default()),
             hotbar: vec![], // 空 hotbar 边界
             bone_coins: 0,
             weight: Some(InventoryWeight {
@@ -1331,23 +1313,8 @@ mod tests {
                 item: Some(item.clone()),
             }],
             equipped: Some(EquippedInventorySnapshot {
-                head: None,
-                chest: None,
-                legs: None,
-                feet: None,
-                false_skin: None,
-                main_hand: Some(item.clone()),
-                off_hand: None,
-                two_hand: None,
-                treasure_belt_0: None,
-                treasure_belt_1: None,
-                treasure_belt_2: None,
-                treasure_belt_3: None,
-                back_pack: None,
-                waist_pouch: None,
-                chest_satchel: None,
-                extra_hand_0: None,
-                extra_hand_1: None,
+                main_hand_held: Some(item.clone()),
+                ..Default::default()
             }),
             hotbar: (0..9)
                 .map(|i| HotbarSlot {
@@ -1380,8 +1347,8 @@ mod tests {
         assert_eq!(decoded.bone_coins, 57);
         assert_eq!(decoded.weight.as_ref().unwrap().current, 0.2);
         let equipped = decoded.equipped.expect("equipped 应存在");
-        assert!(equipped.main_hand.is_some(), "main_hand 应有物品");
-        assert!(equipped.head.is_none(), "head 应为 None");
+        assert!(equipped.main_hand_held.is_some(), "main_hand_held 应有物品");
+        assert!(equipped.head_worn.is_empty(), "head_worn 应为空");
     }
 
     #[test]
@@ -8429,6 +8396,7 @@ mod tests {
                             location: Some(inventory_location::Location::Equip(
                                 InventoryLocationEquip {
                                     slot: EquipSlot::MainHand.into(),
+                                    state: EquipState::Held as i32,
                                 },
                             )),
                         }),
@@ -9891,6 +9859,7 @@ mod tests {
                         location: Some(inventory_location::Location::Equip(
                             InventoryLocationEquip {
                                 slot: EquipSlot::MainHand.into(),
+                                state: EquipState::Held as i32,
                             },
                         )),
                     }),
@@ -9910,10 +9879,12 @@ mod tests {
 
     #[test]
     fn equip_false_skin_roundtrip() {
+        // FalseSkin 槽已删除（plan-layered-equip-v1）；伪皮现在落到 Chest worn 层，
+        // 此处用 Chest 验证 EquipFalseSkin C2S 消息的 roundtrip。
         let envelope = ClientRequestEnvelope {
             payload: Some(client_request_envelope::Payload::EquipFalseSkin(
                 EquipFalseSkin {
-                    slot: EquipSlot::FalseSkin.into(),
+                    slot: EquipSlot::Chest.into(),
                     item_instance_id: 42,
                 },
             )),
@@ -9923,7 +9894,7 @@ mod tests {
             ClientRequestEnvelope::decode(bytes.as_slice()).expect("EquipFalseSkin decode 失败");
         match decoded.payload {
             Some(client_request_envelope::Payload::EquipFalseSkin(e)) => {
-                assert_eq!(e.slot, EquipSlot::FalseSkin as i32);
+                assert_eq!(e.slot, EquipSlot::Chest as i32);
             }
             other => panic!("expected EquipFalseSkin, got {other:?}"),
         }
@@ -11138,12 +11109,7 @@ mod tests {
                         })
                         .collect(),
                     equipped: Some(EquippedInventorySnapshot {
-                        head: None,
-                        chest: None,
-                        legs: None,
-                        feet: None,
-                        false_skin: None,
-                        main_hand: Some(InventoryItemView {
+                        main_hand_held: Some(InventoryItemView {
                             instance_id: 999,
                             item_id: "iron_sword".to_string(),
                             display_name: "铁剑".to_string(),
@@ -11165,17 +11131,7 @@ mod tests {
                             forge_side_effects: vec!["锋锐".to_string()],
                             forge_achieved_tier: Some(2),
                         }),
-                        off_hand: None,
-                        two_hand: None,
-                        treasure_belt_0: None,
-                        treasure_belt_1: None,
-                        treasure_belt_2: None,
-                        treasure_belt_3: None,
-                        back_pack: None,
-                        waist_pouch: None,
-                        chest_satchel: None,
-                        extra_hand_0: None,
-                        extra_hand_1: None,
+                        ..Default::default()
                     }),
                     hotbar: (0..9)
                         .map(|i| HotbarSlot {

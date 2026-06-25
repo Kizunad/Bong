@@ -14,7 +14,7 @@ use valence::math::DVec3;
 
 use super::{
     select_drop_instance_ids, DroppedItemRecord, ItemRegistry, PlayerInventory,
-    EQUIP_SLOT_MAIN_HAND, EQUIP_SLOT_OFF_HAND, EQUIP_SLOT_TWO_HAND,
+    EQUIP_SLOT_MAIN_HAND, EQUIP_SLOT_OFF_HAND,
 };
 use crate::world::tsy::TsyPresence;
 
@@ -63,16 +63,18 @@ pub fn apply_tsy_death_drop(
     // ----- 武器保护：与 apply_death_drop_to_inventory 一致 -----
     // 装在 main/off/two-hand 且耐久 ≥ 0.5 的真武器（template 有 weapon_spec）→
     // 免于原带物 50% Roll。秘境所得仍 100% 掉，保护只对 entry_carry 生效。
-    let protected_weapon_ids: HashSet<u64> = inventory
-        .equipped
+    // 武器保护：main_hand / off_hand 槽里 held 持握的真武器（template 有 weapon_spec）且耐久 ≥ 0.5。
+    // 双手武器也放在 main_hand.held，所以 held 派生覆盖所有手持武器槽。
+    let protected_weapon_ids: HashSet<u64> = [EQUIP_SLOT_MAIN_HAND, EQUIP_SLOT_OFF_HAND]
         .iter()
-        .filter(|(slot, item)| {
-            matches!(
-                slot.as_str(),
-                EQUIP_SLOT_MAIN_HAND | EQUIP_SLOT_OFF_HAND | EQUIP_SLOT_TWO_HAND
-            ) && item.durability >= 0.5
+        .filter_map(|slot| {
+            inventory
+                .equipped
+                .get(*slot)
+                .and_then(|contents| contents.held.as_ref())
         })
-        .filter_map(|(_, item)| {
+        .filter(|item| item.durability >= 0.5)
+        .filter_map(|item| {
             registry
                 .get(&item.template_id)
                 .and_then(|template| template.weapon_spec.as_ref().map(|_| item.instance_id))
@@ -100,20 +102,22 @@ pub fn apply_tsy_death_drop(
             }
         }
     }
-    for (slot, item) in &inventory.equipped {
-        let instance_id = item.instance_id;
-        if snapshot.contains(&instance_id) {
-            // entry_carry 中的高耐武器不进 candidate（保护）
-            if !protected_weapon_ids.contains(&instance_id) {
-                entry_carry_ids.push(instance_id);
+    for (slot, contents) in &inventory.equipped {
+        for item in contents.iter_all() {
+            let instance_id = item.instance_id;
+            if snapshot.contains(&instance_id) {
+                // entry_carry 中的高耐武器不进 candidate（保护）
+                if !protected_weapon_ids.contains(&instance_id) {
+                    entry_carry_ids.push(instance_id);
+                }
+            } else {
+                tsy_acquired_records.push(DroppedItemRecord {
+                    container_id: slot.clone(),
+                    row: 0,
+                    col: 0,
+                    instance: item.clone(),
+                });
             }
-        } else {
-            tsy_acquired_records.push(DroppedItemRecord {
-                container_id: slot.clone(),
-                row: 0,
-                col: 0,
-                instance: item.clone(),
-            });
         }
     }
     for (slot_idx, slot) in inventory.hotbar.iter().enumerate() {
@@ -184,25 +188,47 @@ pub fn apply_tsy_death_drop(
         container.items = kept;
     }
 
-    let equipped_to_remove: Vec<String> = inventory
-        .equipped
-        .iter()
-        .filter(|(_slot, item)| all_dropped_ids.contains(&item.instance_id))
-        .map(|(slot, _item)| slot.clone())
-        .collect();
-    for slot in equipped_to_remove {
-        if let Some(item) = inventory.equipped.remove(&slot) {
-            if entry_dropped_set.contains(&item.instance_id) {
-                entry_carry_dropped.push(DroppedItemRecord {
-                    container_id: slot,
-                    row: 0,
-                    col: 0,
-                    instance: item,
-                });
+    // 精确移除：不整槽删，只从 worn Vec / held Option 里按 instance_id 摘走要掉落的件。
+    for (slot, contents) in inventory.equipped.iter_mut() {
+        // worn: retain 保留件，drain 掉落件。
+        let mut i = 0;
+        while i < contents.worn.len() {
+            let inst_id = contents.worn[i].instance_id;
+            if all_dropped_ids.contains(&inst_id) {
+                let instance = contents.worn.remove(i);
+                if entry_dropped_set.contains(&inst_id) {
+                    entry_carry_dropped.push(DroppedItemRecord {
+                        container_id: slot.clone(),
+                        row: 0,
+                        col: 0,
+                        instance,
+                    });
+                }
+                // tsy_acquired 在 records 里已经记好，不重复 push。
+            } else {
+                i += 1;
             }
-            // tsy_acquired 在 records 里已经记好。
+        }
+        // held: 如果持握件在掉落集里，take() 摘走。
+        if let Some(ref item) = contents.held {
+            if all_dropped_ids.contains(&item.instance_id) {
+                let instance = contents.held.take().expect("held checked above");
+                if entry_dropped_set.contains(&instance.instance_id) {
+                    entry_carry_dropped.push(DroppedItemRecord {
+                        container_id: slot.clone(),
+                        row: 0,
+                        col: 0,
+                        instance,
+                    });
+                }
+            }
         }
     }
+
+    // 清理完全空的 SlotContents（worn 为空且 held 为 None），保持 HashMap 语义整洁。
+    inventory
+        .equipped
+        .retain(|_, contents| !contents.worn.is_empty() || contents.held.is_some());
 
     for slot_idx in 0..inventory.hotbar.len() {
         let should_remove = inventory.hotbar[slot_idx]
@@ -241,7 +267,7 @@ mod tests {
     use super::*;
     use crate::inventory::{
         ContainerState, InventoryRevision, ItemInstance, ItemRarity, PlacedItemState,
-        PlayerInventory,
+        PlayerInventory, SlotContents,
     };
     use crate::world::dimension::DimensionKind;
     use crate::world::tsy::DimensionAnchor;
@@ -409,7 +435,8 @@ mod tests {
     #[test]
     fn equipped_and_hotbar_partition_by_snapshot() {
         let mut inv = make_inventory(vec![item(1)]);
-        inv.equipped.insert("main_hand".into(), item(2));
+        inv.equipped
+            .insert("main_hand".into(), SlotContents::held_single(item(2)));
         inv.hotbar[0] = Some(item(3));
         // snapshot 只含 1 → 2、3 都是秘境所得 → 100% 掉
         let presence = presence_with_snapshot(vec![1]);
@@ -513,7 +540,8 @@ mod tests {
         weapon.durability = 0.9;
 
         let mut inv = make_inventory(vec![item(1), item(2), item(3), item(4)]);
-        inv.equipped.insert("main_hand".into(), weapon);
+        inv.equipped
+            .insert("main_hand".into(), SlotContents::held_single(weapon));
 
         // snapshot 包含 5 件（4 凡物 + 1 武器）
         let presence = presence_with_snapshot(vec![1, 2, 3, 4, 100]);
@@ -533,7 +561,12 @@ mod tests {
             "受保护武器应保留在 equipped"
         );
         assert_eq!(
-            inv.equipped["main_hand"].instance_id, 100,
+            inv.equipped["main_hand"]
+                .held
+                .as_ref()
+                .expect("held should still be present")
+                .instance_id,
+            100,
             "保留的就是原武器"
         );
     }
@@ -547,7 +580,8 @@ mod tests {
         weapon.durability = 0.2; // 残破，不保护
 
         let mut inv = make_inventory(vec![item(1)]);
-        inv.equipped.insert("main_hand".into(), weapon);
+        inv.equipped
+            .insert("main_hand".into(), SlotContents::held_single(weapon));
         let presence = presence_with_snapshot(vec![1, 100]);
         let outcome = apply_tsy_death_drop(&mut inv, &registry, &presence, DVec3::ZERO, 5);
 
@@ -563,7 +597,8 @@ mod tests {
         weapon.template_id = "test_acquired_blade".into();
         weapon.durability = 0.9;
         let mut inv = make_inventory(vec![]);
-        inv.equipped.insert("main_hand".into(), weapon);
+        inv.equipped
+            .insert("main_hand".into(), SlotContents::held_single(weapon));
         // snapshot 不含 200 → 200 是秘境所得
         let presence = presence_with_snapshot(vec![]);
         let outcome = apply_tsy_death_drop(&mut inv, &registry, &presence, DVec3::ZERO, 0);

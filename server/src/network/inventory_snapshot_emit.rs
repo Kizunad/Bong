@@ -5,12 +5,9 @@ use valence::prelude::{
 use crate::cultivation::components::Cultivation;
 use crate::cultivation::death_hooks::PlayerRevived;
 use crate::inventory::{
-    calculate_current_weight, ItemInstance, ItemRarity, PlayerInventory, EQUIP_SLOT_BACK_PACK,
-    EQUIP_SLOT_CHEST, EQUIP_SLOT_CHEST_SATCHEL, EQUIP_SLOT_EXTRA_HAND_0, EQUIP_SLOT_EXTRA_HAND_1,
-    EQUIP_SLOT_FALSE_SKIN, EQUIP_SLOT_FEET, EQUIP_SLOT_HEAD, EQUIP_SLOT_LEGS, EQUIP_SLOT_MAIN_HAND,
-    EQUIP_SLOT_OFF_HAND, EQUIP_SLOT_TREASURE_BELT_0, EQUIP_SLOT_TREASURE_BELT_1,
-    EQUIP_SLOT_TREASURE_BELT_2, EQUIP_SLOT_TREASURE_BELT_3, EQUIP_SLOT_TWO_HAND,
-    EQUIP_SLOT_WAIST_POUCH,
+    calculate_current_weight, ItemInstance, ItemRarity, PlayerInventory, EQUIP_SLOT_CHEST,
+    EQUIP_SLOT_EXTRA_HAND_0, EQUIP_SLOT_EXTRA_HAND_1, EQUIP_SLOT_FEET, EQUIP_SLOT_HEAD,
+    EQUIP_SLOT_LEGS, EQUIP_SLOT_MAIN_HAND, EQUIP_SLOT_OFF_HAND,
 };
 use crate::network::agent_bridge::{
     payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
@@ -190,26 +187,26 @@ pub(crate) fn build_inventory_snapshot(
         );
     }
 
+    // plan-layered-equip-v1 P0.3（方案B，决议 #1 / #17）— 每装备槽拆 worn(repeated) + held(optional)。
+    // 背包件随其身体槽 worn 数组下发（无背包专属字段）。
     let equipped = EquippedInventorySnapshotV1 {
-        head: equipped_slot_item(inventory, EQUIP_SLOT_HEAD),
-        chest: equipped_slot_item(inventory, EQUIP_SLOT_CHEST),
-        legs: equipped_slot_item(inventory, EQUIP_SLOT_LEGS),
-        feet: equipped_slot_item(inventory, EQUIP_SLOT_FEET),
-        false_skin: equipped_slot_item(inventory, EQUIP_SLOT_FALSE_SKIN),
-        main_hand: equipped_slot_item(inventory, EQUIP_SLOT_MAIN_HAND),
-        off_hand: equipped_slot_item(inventory, EQUIP_SLOT_OFF_HAND),
-        two_hand: equipped_slot_item(inventory, EQUIP_SLOT_TWO_HAND),
-        treasure_belt_0: equipped_slot_item(inventory, EQUIP_SLOT_TREASURE_BELT_0),
-        treasure_belt_1: equipped_slot_item(inventory, EQUIP_SLOT_TREASURE_BELT_1),
-        treasure_belt_2: equipped_slot_item(inventory, EQUIP_SLOT_TREASURE_BELT_2),
-        treasure_belt_3: equipped_slot_item(inventory, EQUIP_SLOT_TREASURE_BELT_3),
-        // plan-backpack-equip-v1 P0 — 背包装备槽。
-        back_pack: equipped_slot_item(inventory, EQUIP_SLOT_BACK_PACK),
-        waist_pouch: equipped_slot_item(inventory, EQUIP_SLOT_WAIST_POUCH),
-        chest_satchel: equipped_slot_item(inventory, EQUIP_SLOT_CHEST_SATCHEL),
+        head_worn: equipped_slot_worn(inventory, EQUIP_SLOT_HEAD),
+        head_held: equipped_slot_held(inventory, EQUIP_SLOT_HEAD),
+        chest_worn: equipped_slot_worn(inventory, EQUIP_SLOT_CHEST),
+        chest_held: equipped_slot_held(inventory, EQUIP_SLOT_CHEST),
+        legs_worn: equipped_slot_worn(inventory, EQUIP_SLOT_LEGS),
+        legs_held: equipped_slot_held(inventory, EQUIP_SLOT_LEGS),
+        feet_worn: equipped_slot_worn(inventory, EQUIP_SLOT_FEET),
+        feet_held: equipped_slot_held(inventory, EQUIP_SLOT_FEET),
+        main_hand_worn: equipped_slot_worn(inventory, EQUIP_SLOT_MAIN_HAND),
+        main_hand_held: equipped_slot_held(inventory, EQUIP_SLOT_MAIN_HAND),
+        off_hand_worn: equipped_slot_worn(inventory, EQUIP_SLOT_OFF_HAND),
+        off_hand_held: equipped_slot_held(inventory, EQUIP_SLOT_OFF_HAND),
         // plan-dandao-path-v1 §8.1 #2 — 变异多臂额外手槽。
-        extra_hand_0: equipped_slot_item(inventory, EQUIP_SLOT_EXTRA_HAND_0),
-        extra_hand_1: equipped_slot_item(inventory, EQUIP_SLOT_EXTRA_HAND_1),
+        extra_hand_0_worn: equipped_slot_worn(inventory, EQUIP_SLOT_EXTRA_HAND_0),
+        extra_hand_0_held: equipped_slot_held(inventory, EQUIP_SLOT_EXTRA_HAND_0),
+        extra_hand_1_worn: equipped_slot_worn(inventory, EQUIP_SLOT_EXTRA_HAND_1),
+        extra_hand_1_held: equipped_slot_held(inventory, EQUIP_SLOT_EXTRA_HAND_1),
     };
 
     let hotbar = inventory
@@ -239,8 +236,22 @@ pub(crate) fn build_inventory_snapshot(
     }
 }
 
-fn equipped_slot_item(inventory: &PlayerInventory, slot: &str) -> Option<InventoryItemViewV1> {
-    inventory.equipped.get(slot).map(item_view_from_instance)
+/// plan-layered-equip-v1 P0.3 — 某槽 worn 全层（栈序：尾=顶）的 view 列表。
+fn equipped_slot_worn(inventory: &PlayerInventory, slot: &str) -> Vec<InventoryItemViewV1> {
+    inventory
+        .equipped
+        .get(slot)
+        .map(|contents| contents.worn.iter().map(item_view_from_instance).collect())
+        .unwrap_or_default()
+}
+
+/// plan-layered-equip-v1 P0.3 — 某槽 held 件的 view。
+fn equipped_slot_held(inventory: &PlayerInventory, slot: &str) -> Option<InventoryItemViewV1> {
+    inventory
+        .equipped
+        .get(slot)
+        .and_then(|contents| contents.held.as_ref())
+        .map(item_view_from_instance)
 }
 
 pub(crate) fn item_view_from_instance(item: &ItemInstance) -> InventoryItemViewV1 {
@@ -670,7 +681,13 @@ mod tests {
         let mut equipped = HashMap::new();
         equipped.insert(
             EQUIP_SLOT_MAIN_HAND.to_string(),
-            make_item(2004, "training_blade", "训练短刃", 1.1, 1),
+            crate::inventory::SlotContents::held_single(make_item(
+                2004,
+                "training_blade",
+                "训练短刃",
+                1.1,
+                1,
+            )),
         );
 
         let mut hotbar: [Option<ItemInstance>; 9] = Default::default();
@@ -885,8 +902,13 @@ mod tests {
                 placed.instance.description = huge.clone();
             }
         }
-        for item in inventory.equipped.values_mut() {
-            item.description = huge.clone();
+        for slot in inventory.equipped.values_mut() {
+            for item in slot.worn.iter_mut() {
+                item.description = huge.clone();
+            }
+            if let Some(item) = slot.held.as_mut() {
+                item.description = huge.clone();
+            }
         }
         for item in inventory.hotbar.iter_mut().flatten() {
             item.description = huge.clone();

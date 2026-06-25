@@ -16,31 +16,35 @@ pub(crate) fn build_defense_profile_from_inventory(
 ) -> HashMap<(BodyPart, WoundKind), f32> {
     let mut profile: HashMap<(BodyPart, WoundKind), f32> = HashMap::new();
 
-    // MVP 只读四个护甲槽。
+    // plan-layered-equip-v1 P0.2（桶②）— 读四个护甲身体槽的 worn 全层（栈所有层）。
+    // 非护甲件（背包 / 伪皮）无 ArmorProfile，被 armor_profiles.get 自然跳过。
+    // 注：本 PR-1 保持 `.max()` 聚合（既有行为）；加性累加 + clamp 由 PR-3（§P3 公式1/2）落地。
     for slot in [
         EQUIP_SLOT_HEAD,
         EQUIP_SLOT_CHEST,
         EQUIP_SLOT_LEGS,
         EQUIP_SLOT_FEET,
     ] {
-        let Some(item) = inv.equipped.get(slot) else {
+        let Some(contents) = inv.equipped.get(slot) else {
             continue;
         };
-        let Some(ap) = armor_profiles.get(item.template_id.as_str()) else {
-            continue;
-        };
+        for item in contents.worn.iter() {
+            let Some(ap) = armor_profiles.get(item.template_id.as_str()) else {
+                continue;
+            };
 
-        let effective_mul = ap.effective_multiplier_for_durability_ratio(item.durability);
-        for body in &ap.body_coverage {
-            for (kind, mitigation) in &ap.kind_mitigation {
-                let m = (mitigation * effective_mul).clamp(0.0, ARMOR_MITIGATION_CAP);
-                if m <= 0.0 {
-                    continue;
+            let effective_mul = ap.effective_multiplier_for_durability_ratio(item.durability);
+            for body in &ap.body_coverage {
+                for (kind, mitigation) in &ap.kind_mitigation {
+                    let m = (mitigation * effective_mul).clamp(0.0, ARMOR_MITIGATION_CAP);
+                    if m <= 0.0 {
+                        continue;
+                    }
+                    profile
+                        .entry((*body, *kind))
+                        .and_modify(|existing| *existing = existing.max(m))
+                        .or_insert(m);
                 }
-                profile
-                    .entry((*body, *kind))
-                    .and_modify(|existing| *existing = existing.max(m))
-                    .or_insert(m);
             }
         }
     }
@@ -125,7 +129,10 @@ mod tests {
         app.add_systems(Update, sync_armor_to_derived_attrs);
 
         let mut equipped = HashMap::new();
-        equipped.insert(EQUIP_SLOT_CHEST.to_string(), make_item(42));
+        equipped.insert(
+            EQUIP_SLOT_CHEST.to_string(),
+            crate::inventory::SlotContents::worn_single(make_item(42)),
+        );
         let entity = app
             .world_mut()
             .spawn((
@@ -183,7 +190,10 @@ mod tests {
         let mut item = make_item(7);
         item.durability = 0.0;
         let mut equipped = HashMap::new();
-        equipped.insert(EQUIP_SLOT_CHEST.to_string(), item);
+        equipped.insert(
+            EQUIP_SLOT_CHEST.to_string(),
+            crate::inventory::SlotContents::worn_single(item),
+        );
         let entity = app
             .world_mut()
             .spawn((

@@ -229,6 +229,7 @@ pub fn raise_shield_handler(
                 match inv
                     .equipped
                     .get(EQUIP_SLOT_OFF_HAND)
+                    .and_then(|s| s.held.as_ref())
                     .map(|item| item.template_id.as_str())
                     .filter(|id| is_shield_template_id(id))
                 {
@@ -579,7 +580,7 @@ mod tests {
     use crate::combat::status::has_active_status;
     use crate::cultivation::death_hooks::{CultivationDeathTrigger, PlayerTerminated};
     use crate::cultivation::life_record::LifeRecord;
-    use crate::inventory::{ItemInstance, PlayerInventory, EQUIP_SLOT_OFF_HAND};
+    use crate::inventory::{ItemInstance, PlayerInventory, SlotContents, EQUIP_SLOT_OFF_HAND};
     use crate::network::vfx_event_emit::VfxEventRequest;
     use crate::persistence::{bootstrap_sqlite, PersistenceSettings};
     use crate::schema::vfx_event::VfxEventPayloadV1;
@@ -640,7 +641,7 @@ mod tests {
         };
         inv.equipped.insert(
             EQUIP_SLOT_OFF_HAND.to_string(),
-            make_item_instance(template_id),
+            SlotContents::held_single(make_item_instance(template_id)),
         );
         inv
     }

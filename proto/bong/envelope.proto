@@ -553,24 +553,27 @@ message PlacedInventoryItem {
   InventoryItemView item         = 4;
 }
 
+// plan-layered-equip-v1 P0.3（方案B，决议 #1 / #17）：每个装备槽拆
+// `<slot>_worn`（repeated，穿戴层，栈序：尾=顶）+ `<slot>_held`（optional，手持）。
+// 删除 false_skin / two_hand / treasure_belt_0..3 / back_pack / waist_pouch / chest_satchel 旧字段。
+// 背包件随其 ContainerSpec.equip_slot 指向的身体槽出现在对应 `<slot>_worn` 数组（无背包专属字段）。
 message EquippedInventorySnapshot {
-  optional InventoryItemView head           = 1;
-  optional InventoryItemView chest          = 2;
-  optional InventoryItemView legs           = 3;
-  optional InventoryItemView feet           = 4;
-  optional InventoryItemView false_skin     = 5;
-  optional InventoryItemView main_hand      = 6;
-  optional InventoryItemView off_hand       = 7;
-  optional InventoryItemView two_hand       = 8;
-  optional InventoryItemView treasure_belt_0 = 9;
-  optional InventoryItemView treasure_belt_1 = 10;
-  optional InventoryItemView treasure_belt_2 = 11;
-  optional InventoryItemView treasure_belt_3 = 12;
-  optional InventoryItemView back_pack      = 13;
-  optional InventoryItemView waist_pouch    = 14;
-  optional InventoryItemView chest_satchel  = 15;
-  optional InventoryItemView extra_hand_0   = 16;
-  optional InventoryItemView extra_hand_1   = 17;
+  repeated InventoryItemView head_worn         = 1;
+  optional InventoryItemView head_held         = 2;
+  repeated InventoryItemView chest_worn        = 3;
+  optional InventoryItemView chest_held        = 4;
+  repeated InventoryItemView legs_worn         = 5;
+  optional InventoryItemView legs_held         = 6;
+  repeated InventoryItemView feet_worn         = 7;
+  optional InventoryItemView feet_held         = 8;
+  repeated InventoryItemView main_hand_worn    = 9;
+  optional InventoryItemView main_hand_held    = 10;
+  repeated InventoryItemView off_hand_worn     = 11;
+  optional InventoryItemView off_hand_held     = 12;
+  repeated InventoryItemView extra_hand_0_worn = 13;
+  optional InventoryItemView extra_hand_0_held = 14;
+  repeated InventoryItemView extra_hand_1_worn = 15;
+  optional InventoryItemView extra_hand_1_held = 16;
 }
 
 message InventoryWeight {
@@ -1585,7 +1588,7 @@ message WeaponView {
 
 // 与 Rust WeaponEquippedV1 精确对应。
 message WeaponEquipped {
-  string              slot   = 1; // main_hand / off_hand / two_hand
+  string              slot   = 1; // main_hand / off_hand
   optional WeaponView weapon = 2;
 }
 
@@ -2553,29 +2556,31 @@ message InventoryLocationContainer {
 }
 
 // 与 Rust EquipSlotV1 精确对应。
+// plan-layered-equip-v1 P0.3（决议 #17 / #9 / #8）：删除 false_skin / two_hand /
+// treasure_belt_0..3 / back_pack / waist_pouch / chest_satchel 九个废弃槽。
 enum EquipSlot {
   EQUIP_SLOT_UNSPECIFIED     = 0;
   EQUIP_SLOT_HEAD            = 1;
   EQUIP_SLOT_CHEST           = 2;
   EQUIP_SLOT_LEGS            = 3;
   EQUIP_SLOT_FEET            = 4;
-  EQUIP_SLOT_FALSE_SKIN      = 5;
   EQUIP_SLOT_MAIN_HAND       = 6;
   EQUIP_SLOT_OFF_HAND        = 7;
-  EQUIP_SLOT_TWO_HAND        = 8;
-  EQUIP_SLOT_TREASURE_BELT_0 = 9;
-  EQUIP_SLOT_TREASURE_BELT_1 = 10;
-  EQUIP_SLOT_TREASURE_BELT_2 = 11;
-  EQUIP_SLOT_TREASURE_BELT_3 = 12;
-  EQUIP_SLOT_BACK_PACK       = 13;
-  EQUIP_SLOT_WAIST_POUCH     = 14;
-  EQUIP_SLOT_CHEST_SATCHEL   = 15;
   EQUIP_SLOT_EXTRA_HAND_0    = 16;
   EQUIP_SLOT_EXTRA_HAND_1    = 17;
 }
 
+// plan-layered-equip-v1 P0.3（决议 #2）— 装备落位是 worn 层还是 held 位。
+enum EquipState {
+  EQUIP_STATE_UNSPECIFIED = 0;
+  EQUIP_STATE_WORN        = 1;
+  EQUIP_STATE_HELD        = 2;
+}
+
 message InventoryLocationEquip {
   EquipSlot slot = 1;
+  // plan-layered-equip-v1 P0.3（决议 #2）— worn 层 / held 位（必填）。
+  EquipState state = 2;
 }
 
 message InventoryLocationHotbar {

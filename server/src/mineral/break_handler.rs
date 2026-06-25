@@ -30,7 +30,7 @@ use crate::gathering::session::{
     GatheringSessionStore,
 };
 use crate::gathering::tools::{equipped_gathering_tool, GatheringTargetKind};
-use crate::inventory::{ItemInstance, PlayerInventory, EQUIP_SLOT_MAIN_HAND, EQUIP_SLOT_TWO_HAND};
+use crate::inventory::{ItemInstance, PlayerInventory, EQUIP_SLOT_MAIN_HAND, EQUIP_SLOT_OFF_HAND};
 use crate::network::agent_bridge::{
     payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
 };
@@ -407,9 +407,9 @@ pub(super) fn handle_block_break_for_mineral(
 }
 
 pub fn equipped_pickaxe_tier(inventory: &PlayerInventory) -> Option<u8> {
-    [EQUIP_SLOT_MAIN_HAND, EQUIP_SLOT_TWO_HAND]
+    [EQUIP_SLOT_MAIN_HAND, EQUIP_SLOT_OFF_HAND]
         .into_iter()
-        .filter_map(|slot| inventory.equipped.get(slot))
+        .filter_map(|slot| inventory.equipped.get(slot).and_then(|s| s.held.as_ref()))
         .find_map(pickaxe_tier_from_usable_item)
 }
 
@@ -506,7 +506,8 @@ mod tests {
     use super::super::types::MineralId;
     use super::*;
     use crate::inventory::{
-        ContainerState, InventoryRevision, ItemRarity, PlacedItemState, MAIN_PACK_CONTAINER_ID,
+        ContainerState, InventoryRevision, ItemRarity, PlacedItemState, SlotContents,
+        EQUIP_SLOT_OFF_HAND, MAIN_PACK_CONTAINER_ID,
     };
     use std::collections::HashMap;
 
@@ -541,7 +542,10 @@ mod tests {
 
     fn inventory_with_main_hand(template_id: &str) -> PlayerInventory {
         let mut equipped = HashMap::new();
-        equipped.insert(EQUIP_SLOT_MAIN_HAND.to_string(), item(template_id));
+        equipped.insert(
+            EQUIP_SLOT_MAIN_HAND.to_string(),
+            SlotContents::held_single(item(template_id)),
+        );
         PlayerInventory {
             revision: InventoryRevision(0),
             containers: vec![ContainerState {
@@ -603,29 +607,29 @@ mod tests {
     }
 
     #[test]
-    fn equipped_pickaxe_tier_reads_two_hand_when_main_hand_empty() {
+    fn equipped_pickaxe_tier_reads_off_hand_when_main_hand_empty() {
         let mut inv = inventory_with_main_hand("minecraft:iron_sword");
         inv.equipped.clear();
         inv.equipped.insert(
-            EQUIP_SLOT_TWO_HAND.to_string(),
-            item("minecraft:diamond_pickaxe"),
+            EQUIP_SLOT_OFF_HAND.to_string(),
+            SlotContents::held_single(item("minecraft:diamond_pickaxe")),
         );
 
         assert_eq!(equipped_pickaxe_tier(&inv), Some(4));
     }
 
     #[test]
-    fn equipped_pickaxe_tier_reads_two_hand_when_main_hand_is_not_pickaxe() {
+    fn equipped_pickaxe_tier_reads_off_hand_when_main_hand_is_not_pickaxe() {
         let mut inv = inventory_with_main_hand("minecraft:iron_sword");
         inv.equipped.insert(
-            EQUIP_SLOT_TWO_HAND.to_string(),
-            item("minecraft:diamond_pickaxe"),
+            EQUIP_SLOT_OFF_HAND.to_string(),
+            SlotContents::held_single(item("minecraft:diamond_pickaxe")),
         );
 
         assert_eq!(
             equipped_pickaxe_tier(&inv),
             Some(4),
-            "two_hand pickaxe must count when main_hand holds a non-pickaxe item"
+            "off_hand pickaxe must count when main_hand holds a non-pickaxe item"
         );
     }
 
@@ -634,20 +638,20 @@ mod tests {
         let mut inv = inventory_with_main_hand("minecraft:iron_pickaxe");
         inv.equipped.insert(
             EQUIP_SLOT_MAIN_HAND.to_string(),
-            item_with_durability("minecraft:iron_pickaxe", 0.0),
+            SlotContents::held_single(item_with_durability("minecraft:iron_pickaxe", 0.0)),
         );
         inv.equipped.insert(
-            EQUIP_SLOT_TWO_HAND.to_string(),
-            item("minecraft:diamond_pickaxe"),
+            EQUIP_SLOT_OFF_HAND.to_string(),
+            SlotContents::held_single(item("minecraft:diamond_pickaxe")),
         );
 
         assert_eq!(
             equipped_pickaxe_tier(&inv),
             Some(4),
-            "broken main_hand pickaxe must be ignored so a usable two_hand pickaxe can satisfy mining tier"
+            "broken main_hand pickaxe must be ignored so a usable off_hand pickaxe can satisfy mining tier"
         );
 
-        inv.equipped.remove(EQUIP_SLOT_TWO_HAND);
+        inv.equipped.remove(EQUIP_SLOT_OFF_HAND);
         assert_eq!(
             equipped_pickaxe_tier(&inv),
             None,

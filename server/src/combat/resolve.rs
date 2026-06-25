@@ -53,7 +53,7 @@ use crate::inventory::{
     consume_item_instance_once, discard_inventory_item_to_dropped_loot,
     move_equipped_item_to_first_container_slot, set_item_instance_durability, DroppedLootRegistry,
     InventoryDurabilityChangedEvent, ItemRegistry, PlayerInventory, EQUIP_SLOT_CHEST,
-    EQUIP_SLOT_FALSE_SKIN, EQUIP_SLOT_FEET, EQUIP_SLOT_HEAD, EQUIP_SLOT_LEGS, EQUIP_SLOT_OFF_HAND,
+    EQUIP_SLOT_FEET, EQUIP_SLOT_HEAD, EQUIP_SLOT_LEGS, EQUIP_SLOT_OFF_HAND,
 };
 use crate::network::audio_event_emit::{
     AudioRecipient, PlaySoundRecipeRequest, AUDIO_BROADCAST_RADIUS,
@@ -69,7 +69,7 @@ use crate::qi_physics::constants::{
 use crate::qi_physics::{flow_modifier, QiAccountId, QiTransfer};
 use crate::schema::anticheat::ViolationKindV1;
 use crate::schema::common::{GameEventType, NarrationStyle};
-use crate::schema::inventory::{EquipSlotV1, InventoryLocationV1};
+use crate::schema::inventory::{EquipSlotV1, EquipStateV1, InventoryLocationV1};
 use crate::schema::world_state::GameEvent;
 use crate::skill::components::SkillId;
 use crate::skill::events::{SkillXpGain, XpGainSource};
@@ -737,13 +737,15 @@ pub fn resolve_attack_intents(
         if let Some((instance_id, template_id)) = broken_weapon {
             let mut broken_dislodged = false;
             if let Ok(mut inventory) = inventories.get_mut(intent.attacker) {
-                let broken_slot = inventory.equipped.iter().find_map(|(slot, item)| {
-                    (item.instance_id == instance_id).then_some(match slot.as_str() {
-                        crate::inventory::EQUIP_SLOT_MAIN_HAND => EquipSlotV1::MainHand,
-                        crate::inventory::EQUIP_SLOT_OFF_HAND => EquipSlotV1::OffHand,
-                        crate::inventory::EQUIP_SLOT_TWO_HAND => EquipSlotV1::TwoHand,
-                        _ => EquipSlotV1::MainHand,
-                    })
+                let broken_slot = inventory.equipped.iter().find_map(|(slot, contents)| {
+                    contents
+                        .iter_all()
+                        .find(|item| item.instance_id == instance_id)
+                        .map(|_| match slot.as_str() {
+                            crate::inventory::EQUIP_SLOT_MAIN_HAND => EquipSlotV1::MainHand,
+                            crate::inventory::EQUIP_SLOT_OFF_HAND => EquipSlotV1::OffHand,
+                            _ => EquipSlotV1::MainHand,
+                        })
                 });
                 if let Err(error) = set_item_instance_durability(&mut inventory, instance_id, 0.0) {
                     tracing::warn!(
@@ -774,7 +776,10 @@ pub fn resolve_attack_intents(
                                     ],
                                     crate::world::dimension::DimensionKind::Overworld,
                                     instance_id,
-                                    &InventoryLocationV1::Equip { slot },
+                                    &InventoryLocationV1::Equip {
+                                        slot,
+                                        state: EquipStateV1::Held,
+                                    },
                                 );
                                 match dropped {
                                     Ok(_) => {
@@ -1020,7 +1025,11 @@ pub fn resolve_attack_intents(
             let (shield_template_id, shield_proficiency) = inventories
                 .get(target_entity)
                 .ok()
-                .and_then(|inv| inv.equipped.get(EQUIP_SLOT_OFF_HAND).cloned())
+                .and_then(|inv| {
+                    inv.equipped
+                        .get(EQUIP_SLOT_OFF_HAND)
+                        .and_then(|s| s.held.clone())
+                })
                 .map(|item| {
                     let proficiency = defender_known_q
                         .get(target_entity)
@@ -1079,7 +1088,11 @@ pub fn resolve_attack_intents(
                 //   不施加互斥守护，两者独立减伤符合设计意图（盾减物理 + 截脉减真元污染）。
                 // 注意：block_ratio clamp to 0.95 确保不会除零。
                 if let Ok(mut inventory) = inventories.get_mut(target_entity) {
-                    if let Some(item) = inventory.equipped.get(EQUIP_SLOT_OFF_HAND) {
+                    if let Some(item) = inventory
+                        .equipped
+                        .get(EQUIP_SLOT_OFF_HAND)
+                        .and_then(|s| s.held.as_ref())
+                    {
                         let instance_id = item.instance_id;
                         let template_id_snap = item.template_id.clone();
                         // plan-shield-block-v1 P4：记录盾 template_id 供格挡命中通知。
@@ -1221,6 +1234,7 @@ pub fn resolve_attack_intents(
             if let (Some(_m), Some(armor_profiles)) = (armor_mitigation, armor_profiles.as_deref())
             {
                 if let Ok(mut inventory) = inventories.get_mut(target_entity) {
+                    // plan-layered-equip-v1 P0.2（桶②）— 遍历护甲身体槽 worn 全层，取减伤最高一件扣耐久。
                     let best: Option<(u64, u32, f64, f32)> = [
                         EQUIP_SLOT_HEAD,
                         EQUIP_SLOT_CHEST,
@@ -1228,8 +1242,9 @@ pub fn resolve_attack_intents(
                         EQUIP_SLOT_FEET,
                     ]
                     .into_iter()
-                    .filter_map(|slot| {
-                        let item = inventory.equipped.get(slot)?;
+                    .filter_map(|slot| inventory.equipped.get(slot))
+                    .flat_map(|contents| contents.worn.iter())
+                    .filter_map(|item| {
                         let ap = armor_profiles.get(item.template_id.as_str())?;
                         if !ap.body_coverage.contains(&hit_probe.body_part) {
                             return None;
@@ -1346,7 +1361,11 @@ pub fn resolve_attack_intents(
         if filter_result.depleted && false_skin_kind_before.is_some() {
             commands.entity(target_entity).remove::<FalseSkin>();
             if let Ok(mut inventory) = inventories.get_mut(target_entity) {
-                if let Some(item) = inventory.equipped.get(EQUIP_SLOT_FALSE_SKIN) {
+                if let Some(item) = inventory.equipped.get(EQUIP_SLOT_CHEST).and_then(|s| {
+                    s.worn.iter().rev().find(|i| {
+                        crate::combat::tuike::false_skin_kind_for_item(&i.template_id).is_some()
+                    })
+                }) {
                     let instance_id = item.instance_id;
                     let _ = consume_item_instance_once(&mut inventory, instance_id);
                 }
@@ -2202,7 +2221,7 @@ mod tests {
             }],
             equipped: std::collections::HashMap::from([(
                 crate::inventory::EQUIP_SLOT_CHEST.to_string(),
-                ItemInstance {
+                crate::inventory::SlotContents::worn_single(ItemInstance {
                     instance_id: 88,
                     template_id: "fake_spirit_hide".to_string(),
                     display_name: "假灵兽皮胸甲".to_string(),
@@ -2223,7 +2242,7 @@ mod tests {
                     forge_achieved_tier: None,
                     alchemy: None,
                     lingering_owner_qi: None,
-                },
+                }),
             )]),
             hotbar: Default::default(),
             bone_coins: 0,
@@ -2258,7 +2277,7 @@ mod tests {
 
         let inventory = app.world().entity(target).get::<PlayerInventory>().unwrap();
         assert!(
-            inventory.equipped[crate::inventory::EQUIP_SLOT_CHEST].durability < 1.0,
+            inventory.equipped[crate::inventory::EQUIP_SLOT_CHEST].worn[0].durability < 1.0,
             "armor hit should tick down durability"
         );
     }
@@ -2327,7 +2346,7 @@ mod tests {
             }],
             equipped: std::collections::HashMap::from([(
                 crate::inventory::EQUIP_SLOT_CHEST.to_string(),
-                ItemInstance {
+                crate::inventory::SlotContents::worn_single(ItemInstance {
                     instance_id: 89,
                     template_id: "fake_spirit_hide".to_string(),
                     display_name: "假灵兽皮胸甲".to_string(),
@@ -2348,7 +2367,7 @@ mod tests {
                     forge_achieved_tier: None,
                     alchemy: None,
                     lingering_owner_qi: None,
-                },
+                }),
             )]),
             hotbar: Default::default(),
             bone_coins: 0,
@@ -5218,7 +5237,7 @@ mod tests {
                     containers: Vec::new(),
                     equipped: std::collections::HashMap::from([(
                         EQUIP_SLOT_CHEST.to_string(),
-                        ItemInstance {
+                        crate::inventory::SlotContents::worn_single(ItemInstance {
                             instance_id: 90,
                             template_id: "heavy_armor".to_string(),
                             display_name: "heavy_armor".to_string(),
@@ -5239,7 +5258,7 @@ mod tests {
                             forge_achieved_tier: None,
                             alchemy: None,
                             lingering_owner_qi: None,
-                        },
+                        }),
                     )]),
                     hotbar: Default::default(),
                     bone_coins: 0,
@@ -5771,7 +5790,7 @@ mod tests {
             }],
             equipped: std::collections::HashMap::from([(
                 crate::inventory::EQUIP_SLOT_MAIN_HAND.to_string(),
-                ItemInstance {
+                crate::inventory::SlotContents::held_single(ItemInstance {
                     instance_id: 1,
                     template_id: "strong_sword".to_string(),
                     display_name: "强剑".to_string(),
@@ -5792,7 +5811,7 @@ mod tests {
                     forge_achieved_tier: None,
                     alchemy: None,
                     lingering_owner_qi: None,
-                },
+                }),
             )]),
             hotbar: Default::default(),
             bone_coins: 0,
@@ -5865,7 +5884,12 @@ mod tests {
         assert!(weapon.durability < 200.0, "durability ticked down");
         let inventory = app.world().entity(armed).get::<PlayerInventory>().unwrap();
         assert!(
-            inventory.equipped[crate::inventory::EQUIP_SLOT_MAIN_HAND].durability < 1.0,
+            inventory.equipped[crate::inventory::EQUIP_SLOT_MAIN_HAND]
+                .held
+                .as_ref()
+                .unwrap()
+                .durability
+                < 1.0,
             "inventory durability should persist the runtime wear"
         );
     }
@@ -5918,7 +5942,7 @@ mod tests {
             }],
             equipped: std::collections::HashMap::from([(
                 crate::inventory::EQUIP_SLOT_MAIN_HAND.to_string(),
-                ItemInstance {
+                crate::inventory::SlotContents::held_single(ItemInstance {
                     instance_id: 120,
                     template_id: "iron_sword".to_string(),
                     display_name: "铁剑".to_string(),
@@ -5939,7 +5963,7 @@ mod tests {
                     forge_achieved_tier: None,
                     alchemy: None,
                     lingering_owner_qi: None,
-                },
+                }),
             )]),
             hotbar: Default::default(),
             bone_coins: 0,
@@ -6063,7 +6087,7 @@ mod tests {
                     }],
                     equipped: std::collections::HashMap::from([(
                         crate::inventory::EQUIP_SLOT_MAIN_HAND.to_string(),
-                        ItemInstance {
+                        crate::inventory::SlotContents::held_single(ItemInstance {
                             instance_id: 130 + index as u64,
                             template_id: tool_kind.item_id().to_string(),
                             display_name: tool_kind.display_name().to_string(),
@@ -6084,7 +6108,7 @@ mod tests {
                             forge_achieved_tier: None,
                             alchemy: None,
                             lingering_owner_qi: None,
-                        },
+                        }),
                     )]),
                     hotbar: Default::default(),
                     bone_coins: 0,
@@ -6153,6 +6177,7 @@ mod tests {
                 inventory
                     .equipped
                     .get(crate::inventory::EQUIP_SLOT_MAIN_HAND)
+                    .and_then(|s| s.held.as_ref())
                     .unwrap()
                     .durability,
                 0.99,
@@ -6213,7 +6238,7 @@ mod tests {
                 }],
                 equipped: std::collections::HashMap::from([(
                     crate::inventory::EQUIP_SLOT_MAIN_HAND.to_string(),
-                    ItemInstance {
+                    crate::inventory::SlotContents::held_single(ItemInstance {
                         instance_id: 131,
                         template_id: "cao_lian".to_string(),
                         display_name: "草镰".to_string(),
@@ -6234,7 +6259,7 @@ mod tests {
                         forge_achieved_tier: None,
                         alchemy: None,
                         lingering_owner_qi: None,
-                    },
+                    }),
                 )]),
                 hotbar: Default::default(),
                 bone_coins: 0,
@@ -6342,7 +6367,7 @@ mod tests {
                 }],
                 equipped: std::collections::HashMap::from([(
                     crate::inventory::EQUIP_SLOT_MAIN_HAND.to_string(),
-                    ItemInstance {
+                    crate::inventory::SlotContents::held_single(ItemInstance {
                         instance_id: 42,
                         template_id: "glass_sword".to_string(),
                         display_name: "玻璃剑".to_string(),
@@ -6363,7 +6388,7 @@ mod tests {
                         forge_achieved_tier: None,
                         alchemy: None,
                         lingering_owner_qi: None,
-                    },
+                    }),
                 )]),
                 hotbar: Default::default(),
                 bone_coins: 0,
@@ -6425,9 +6450,11 @@ mod tests {
             .get::<PlayerInventory>()
             .unwrap();
         assert!(
-            !inventory
+            inventory
                 .equipped
-                .contains_key(crate::inventory::EQUIP_SLOT_MAIN_HAND),
+                .get(crate::inventory::EQUIP_SLOT_MAIN_HAND)
+                .and_then(|s| s.held.as_ref())
+                .is_none(),
             "broken weapon should leave the equip slot"
         );
         assert_eq!(inventory.containers[0].items.len(), 1);
@@ -6503,7 +6530,7 @@ mod tests {
                 }],
                 equipped: std::collections::HashMap::from([(
                     crate::inventory::EQUIP_SLOT_MAIN_HAND.to_string(),
-                    ItemInstance {
+                    crate::inventory::SlotContents::held_single(ItemInstance {
                         instance_id: 42,
                         template_id: "glass_sword".to_string(),
                         display_name: "玻璃剑".to_string(),
@@ -6524,7 +6551,7 @@ mod tests {
                         forge_achieved_tier: None,
                         alchemy: None,
                         lingering_owner_qi: None,
-                    },
+                    }),
                 )]),
                 hotbar: Default::default(),
                 bone_coins: 0,
@@ -6577,9 +6604,11 @@ mod tests {
             .get::<PlayerInventory>()
             .unwrap();
         assert!(
-            !inventory
+            inventory
                 .equipped
-                .contains_key(crate::inventory::EQUIP_SLOT_MAIN_HAND),
+                .get(crate::inventory::EQUIP_SLOT_MAIN_HAND)
+                .and_then(|s| s.held.as_ref())
+                .is_none(),
             "broken weapon should leave the equip slot even when bag is full"
         );
         assert_eq!(inventory.containers[0].items.len(), 1);
@@ -7479,7 +7508,7 @@ mod tests {
                 containers: vec![],
                 equipped: std::collections::HashMap::from([(
                     EQUIP_SLOT_OFF_HAND.to_string(),
-                    ItemInstance {
+                    crate::inventory::SlotContents::held_single(ItemInstance {
                         instance_id: 91,
                         template_id: "bone_shield".to_string(),
                         display_name: "骨盾".to_string(),
@@ -7500,7 +7529,7 @@ mod tests {
                         forge_achieved_tier: None,
                         alchemy: None,
                         lingering_owner_qi: None,
-                    },
+                    }),
                 )]),
                 hotbar: Default::default(),
                 bone_coins: 0,
@@ -7899,7 +7928,7 @@ mod tests {
             }],
             equipped: std::collections::HashMap::from([(
                 EQUIP_SLOT_OFF_HAND.to_string(),
-                ItemInstance {
+                crate::inventory::SlotContents::held_single(ItemInstance {
                     instance_id,
                     template_id: template_id.to_string(),
                     display_name: template_id.to_string(),
@@ -7920,7 +7949,7 @@ mod tests {
                     forge_achieved_tier: None,
                     alchemy: None,
                     lingering_owner_qi: None,
-                },
+                }),
             )]),
             hotbar: Default::default(),
             bone_coins: 0,
@@ -8106,7 +8135,10 @@ mod tests {
                 .get::<PlayerInventory>()
                 .unwrap();
             assert!(
-                inv.equipped.contains_key(EQUIP_SLOT_OFF_HAND),
+                inv.equipped
+                    .get(EQUIP_SLOT_OFF_HAND)
+                    .and_then(|s| s.held.as_ref())
+                    .is_some(),
                 "前提：off_hand 槽应有盾牌 instance_id=77"
             );
         }
@@ -8145,9 +8177,14 @@ mod tests {
             .get::<PlayerInventory>()
             .unwrap();
         assert!(
-            !inv.equipped.contains_key(EQUIP_SLOT_OFF_HAND),
-            "盾耐久归零后 off_hand 槽应为空（盾销毁）；实际仍存在 instance: {:?}",
-            inv.equipped.get(EQUIP_SLOT_OFF_HAND)
+            inv.equipped
+                .get(EQUIP_SLOT_OFF_HAND)
+                .and_then(|s| s.held.as_ref())
+                .is_none(),
+            "盾耐久归零后 off_hand 槽应为空（盾销毁）；实际仍存在 held: {:?}",
+            inv.equipped
+                .get(EQUIP_SLOT_OFF_HAND)
+                .and_then(|s| s.held.as_ref())
         );
     }
 
@@ -8199,8 +8236,11 @@ mod tests {
             .get::<PlayerInventory>()
             .unwrap();
         assert!(
-            inv.equipped.contains_key(EQUIP_SLOT_OFF_HAND),
-            "耐久未归零时 off_hand 盾应保留；实际 off_hand 为空"
+            inv.equipped
+                .get(EQUIP_SLOT_OFF_HAND)
+                .and_then(|s| s.held.as_ref())
+                .is_some(),
+            "耐久未归零时 off_hand 盾应保留；实际 off_hand held 为 None"
         );
     }
 
@@ -8376,8 +8416,11 @@ mod tests {
             .get::<PlayerInventory>()
             .unwrap();
         assert!(
-            inv.equipped.contains_key(EQUIP_SLOT_OFF_HAND),
-            "满耐久木盾一次格挡后 off_hand 盾应保留（未破盾）；实际 off_hand 为空"
+            inv.equipped
+                .get(EQUIP_SLOT_OFF_HAND)
+                .and_then(|s| s.held.as_ref())
+                .is_some(),
+            "满耐久木盾一次格挡后 off_hand 盾应保留（未破盾）；实际 off_hand held 为 None"
         );
     }
 

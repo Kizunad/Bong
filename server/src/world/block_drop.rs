@@ -639,7 +639,7 @@ mod tests {
         let mut inventory = empty_inventory();
         inventory.equipped.insert(
             EQUIP_SLOT_MAIN_HAND.to_string(),
-            item_instance(900, template_id, 1),
+            crate::inventory::SlotContents::held_single(item_instance(900, template_id, 1)),
         );
         inventory
     }
@@ -680,7 +680,7 @@ mod tests {
             .flat_map(|container| container.items.iter())
             .map(|placed: &PlacedItemState| &placed.instance)
             .chain(inventory.hotbar.iter().filter_map(|item| item.as_ref()))
-            .chain(inventory.equipped.values())
+            .chain(inventory.equipped.values().flat_map(|s| s.iter_all()))
             .filter(|item| item.template_id == template_id)
             .map(|item| item.stack_count)
             .sum()

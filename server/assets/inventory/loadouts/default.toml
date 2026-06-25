@@ -1,5 +1,7 @@
 # 末法残土 · 醒灵期散修起手装备。
-# plan-backpack-equip-v1 P2 — 新布局：贴身口袋 2×3（固定）+ 破草包 3×3（装备）。
+# plan-layered-equip-v1 P0（决议 #17）— 背包专属槽取消：破草包按 ContainerSpec.equip_slot
+# 指向身体槽（chest）作 worn 层穿戴；其容器在运行时由 instantiate 派生为 `pack_<instance_id>`，
+# 静态容器 id 用占位 `pack_grass_pouch`，由 instantiate 重映射到运行时穿戴件的 pack id。
 # worldview §四：「你唯一的优势是会死很多次」—— 起手装备简陋实用，
 # 仅一颗保命丹、一颗辅修丹、几片草药、7 枚骨币、一根骨刺自卫。
 # 所有 template_id 必须在 server/assets/items/*.toml 已注册且有对应 client PNG。
@@ -27,9 +29,9 @@ cols = 3
   template_id = "fengling_bone_coin"
   stack_count = 5
 
-# ─── 背部破草包 3×3（装备产生的容器） ────────────────────────────────────────
+# ─── 破草包 3×3（穿戴在 chest 身体槽的 worn 层背包件，运行时容器 id = pack_<instance_id>） ───
 [[containers]]
-id = "back_pack"
+id = "pack_grass_pouch"
 name = "破草包"
 rows = 3
 cols = 3
@@ -78,8 +80,9 @@ cols = 3
   stack_count = 4
 
 # ─── 装备 ─────────────────────────────────────────────────────────────────
+# 决议 #17：破草包按 ContainerSpec.equip_slot="chest" 作 chest 身体槽 worn 层穿戴。
 [[equip]]
-slot = "back_pack"
+slot = "chest"
 template_id = "worn_grass_pouch"
 durability = 0.3
 

@@ -244,7 +244,11 @@ impl ActiveLingtianSessions {
 /// 调用方法用：起 session 时验请求 `hoe_instance_id` 与主手实物匹配；
 /// apply 路径同样靠它定位锄实物再扣耐久。
 pub fn equipped_main_hand_hoe(inventory: &PlayerInventory) -> Option<(HoeKind, u64)> {
-    let item = inventory.equipped.get(MAIN_HAND_SLOT)?;
+    // plan-layered-equip-v1 P0.2（桶①）— 锄在 main_hand held。
+    let item = inventory
+        .equipped
+        .get(MAIN_HAND_SLOT)
+        .and_then(|s| s.held.as_ref())?;
     let kind = HoeKind::from_item_id(&item.template_id)?;
     Some((kind, item.instance_id))
 }
@@ -1496,7 +1500,12 @@ fn wear_main_hand_hoe(
     expected_instance_id: u64,
 ) {
     let cost = expected.use_durability_cost();
-    let Some(item) = inventory.equipped.get_mut(MAIN_HAND_SLOT) else {
+    // plan-layered-equip-v1 P0.2（桶①）— 锄在 main_hand held。
+    let Some(item) = inventory
+        .equipped
+        .get_mut(MAIN_HAND_SLOT)
+        .and_then(|s| s.held.as_mut())
+    else {
         return;
     };
     if item.instance_id != expected_instance_id {
@@ -1512,7 +1521,13 @@ fn wear_main_hand_hoe(
     }
     item.durability = (item.durability - cost).max(0.0);
     if item.durability <= 0.0 {
-        inventory.equipped.remove(MAIN_HAND_SLOT);
+        // 耐久归零：清 held；若该槽 SlotContents 随之全空则移除空槽（保持 contains_key 反映槽空）。
+        if let Some(contents) = inventory.equipped.get_mut(MAIN_HAND_SLOT) {
+            contents.held = None;
+            if contents.is_empty() {
+                inventory.equipped.remove(MAIN_HAND_SLOT);
+            }
+        }
     }
 }
 
@@ -1779,7 +1794,7 @@ mod tests {
         let mut equipped = HashMap::new();
         equipped.insert(
             MAIN_HAND_SLOT.to_string(),
-            make_hoe_instance(kind, durability),
+            crate::inventory::SlotContents::held_single(make_hoe_instance(kind, durability)),
         );
         PlayerInventory {
             revision: InventoryRevision(0),
@@ -1874,7 +1889,14 @@ mod tests {
         assert_eq!(plots.len(), 1);
         assert_eq!(plots[0].pos, pos);
         let inv = app.world().get::<PlayerInventory>(player).unwrap();
-        let dur = inv.equipped.get(MAIN_HAND_SLOT).unwrap().durability;
+        let dur = inv
+            .equipped
+            .get(MAIN_HAND_SLOT)
+            .unwrap()
+            .held
+            .as_ref()
+            .unwrap()
+            .durability;
         assert!((dur - 0.95).abs() < 1e-9, "Iron 锄一次扣 0.05；实得 {dur}");
     }
 
@@ -1971,7 +1993,7 @@ mod tests {
         let mut equipped = HashMap::new();
         equipped.insert(
             MAIN_HAND_SLOT.to_string(),
-            ItemInstance {
+            crate::inventory::SlotContents::held_single(ItemInstance {
                 instance_id: 99,
                 template_id: "rusted_blade".into(),
                 display_name: "rusted_blade".into(),
@@ -1992,7 +2014,7 @@ mod tests {
                 forge_achieved_tier: None,
                 alchemy: None,
                 lingering_owner_qi: None,
-            },
+            }),
         );
         let inv = PlayerInventory {
             revision: InventoryRevision(0),
@@ -2142,7 +2164,14 @@ mod tests {
         assert!(!plot.is_barren());
         // Xuantie 一次扣 0.01
         let inv = app.world().get::<PlayerInventory>(player).unwrap();
-        let dur = inv.equipped.get(MAIN_HAND_SLOT).unwrap().durability;
+        let dur = inv
+            .equipped
+            .get(MAIN_HAND_SLOT)
+            .unwrap()
+            .held
+            .as_ref()
+            .unwrap()
+            .durability;
         assert!((dur - 0.99).abs() < 1e-9, "Xuantie 一次扣 0.01；实得 {dur}");
     }
 

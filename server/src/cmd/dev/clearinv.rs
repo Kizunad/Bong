@@ -121,7 +121,10 @@ mod tests {
 
     fn inventory() -> PlayerInventory {
         let mut equipped = HashMap::new();
-        equipped.insert("weapon".to_string(), item(4, "sword"));
+        equipped.insert(
+            "main_hand".to_string(),
+            crate::inventory::SlotContents::held_single(item(4, "sword")),
+        );
         let mut hotbar: [Option<ItemInstance>; 9] = Default::default();
         hotbar[0] = Some(item(3, "hotbar_item"));
         PlayerInventory {

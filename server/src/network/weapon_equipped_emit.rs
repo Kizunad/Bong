@@ -33,7 +33,6 @@ fn slot_wire_name(slot: crate::combat::weapon::EquipSlot) -> &'static str {
     match slot {
         crate::combat::weapon::EquipSlot::MainHand => "main_hand",
         crate::combat::weapon::EquipSlot::OffHand => "off_hand",
-        crate::combat::weapon::EquipSlot::TwoHand => "two_hand",
     }
 }
 
@@ -148,33 +147,38 @@ pub fn emit_weapon_equipped_payloads(
     let updates: Vec<WeaponClientUpdate> = changed_inventories
         .iter()
         .map(|(entity, inventory)| {
+            // plan-layered-equip-v1 P0.2（桶①，决议 #7）— 删 two_hand 迭代项；
+            // 双手兵器从 main_hand.held 派生。武器/工具/盾从手槽 held 取。
             let slots = [
                 (crate::combat::weapon::EquipSlot::MainHand, "main_hand"),
                 (crate::combat::weapon::EquipSlot::OffHand, "off_hand"),
-                (crate::combat::weapon::EquipSlot::TwoHand, "two_hand"),
             ]
             .into_iter()
             .map(|(slot, key)| {
-                let view = inventory.equipped.get(key).and_then(|item| {
-                    let tpl = registry.get(&item.template_id)?;
-                    if let Some(weapon_spec) = tpl.weapon_spec.as_ref() {
-                        // 普通武器路径
-                        Some(item_to_view(item, weapon_spec))
-                    } else if let Some(shield_spec) = tpl.shield_spec.as_ref() {
-                        // plan-shield-block-v1 P3：盾牌以 weapon_kind="shield" 下发
-                        // 客户端 WeaponEquippedHandler 检查 template_id._shield 后缀
-                        // 并路由到 EquippedShieldStore.equip()，不写 WeaponEquippedStore
-                        Some(shield_item_to_view(item, shield_spec))
-                    } else if matches!(tpl.category, ItemCategory::Tool) {
-                        // 工具手持 3D 模型：tool 既无 weapon_spec 也无 shield_spec，过去 view=None
-                        // 永不进 WeaponEquippedStore → 手持无模型。下发 weapon_kind="tool" view，
-                        // 客户端非盾默认写入 WeaponEquippedStore，渲染层据 template_id 查
-                        // BongWeaponModelRegistry 取宿主 vanilla item 渲染（镐/斧/锄直接白嫖原版模型）。
-                        Some(tool_item_to_view(item))
-                    } else {
-                        None
-                    }
-                });
+                let view = inventory
+                    .equipped
+                    .get(key)
+                    .and_then(|s| s.held.as_ref())
+                    .and_then(|item| {
+                        let tpl = registry.get(&item.template_id)?;
+                        if let Some(weapon_spec) = tpl.weapon_spec.as_ref() {
+                            // 普通武器路径
+                            Some(item_to_view(item, weapon_spec))
+                        } else if let Some(shield_spec) = tpl.shield_spec.as_ref() {
+                            // plan-shield-block-v1 P3：盾牌以 weapon_kind="shield" 下发
+                            // 客户端 WeaponEquippedHandler 检查 template_id._shield 后缀
+                            // 并路由到 EquippedShieldStore.equip()，不写 WeaponEquippedStore
+                            Some(shield_item_to_view(item, shield_spec))
+                        } else if matches!(tpl.category, ItemCategory::Tool) {
+                            // 工具手持 3D 模型：tool 既无 weapon_spec 也无 shield_spec，过去 view=None
+                            // 永不进 WeaponEquippedStore → 手持无模型。下发 weapon_kind="tool" view，
+                            // 客户端非盾默认写入 WeaponEquippedStore，渲染层据 template_id 查
+                            // BongWeaponModelRegistry 取宿主 vanilla item 渲染（镐/斧/锄直接白嫖原版模型）。
+                            Some(tool_item_to_view(item))
+                        } else {
+                            None
+                        }
+                    });
                 (slot_wire_name(slot).to_string(), view)
             })
             .collect();
@@ -414,9 +418,10 @@ mod tests {
 
         let (client_bundle, mut helper) = create_mock_client("Miner");
         let mut inventory = empty_inventory();
-        inventory
-            .equipped
-            .insert("main_hand".to_string(), tool_instance(7));
+        inventory.equipped.insert(
+            "main_hand".to_string(),
+            crate::inventory::SlotContents::held_single(tool_instance(7)),
+        );
         app.world_mut().spawn((client_bundle, inventory));
 
         app.update();
@@ -454,9 +459,10 @@ mod tests {
 
         let (client_bundle, mut helper) = create_mock_client("Miner");
         let mut inventory = empty_inventory();
-        inventory
-            .equipped
-            .insert("off_hand".to_string(), tool_instance(9));
+        inventory.equipped.insert(
+            "off_hand".to_string(),
+            crate::inventory::SlotContents::held_single(tool_instance(9)),
+        );
         app.world_mut().spawn((client_bundle, inventory));
 
         app.update();
@@ -535,9 +541,10 @@ mod tests {
 
         let (client_bundle, mut helper) = create_mock_client("Azure");
         let mut inventory = empty_inventory();
-        inventory
-            .equipped
-            .insert("main_hand".to_string(), weapon_instance(42));
+        inventory.equipped.insert(
+            "main_hand".to_string(),
+            crate::inventory::SlotContents::held_single(weapon_instance(42)),
+        );
         app.world_mut().spawn((client_bundle, inventory));
 
         app.update();
@@ -781,7 +788,6 @@ mod tests {
     fn equip_slot_wire_name_stays_server_data_payload_field() {
         assert_eq!(slot_wire_name(EquipSlot::MainHand), "main_hand");
         assert_eq!(slot_wire_name(EquipSlot::OffHand), "off_hand");
-        assert_eq!(slot_wire_name(EquipSlot::TwoHand), "two_hand");
     }
 
     // ── plan-shield-block-v1 P3：盾牌装备推送路径 ────────────────────────────
@@ -860,7 +866,7 @@ mod tests {
         let mut inventory = empty_inventory();
         inventory.equipped.insert(
             "off_hand".to_string(),
-            shield_instance(10, "wooden_shield", 1.0),
+            crate::inventory::SlotContents::held_single(shield_instance(10, "wooden_shield", 1.0)),
         );
         app.world_mut().spawn((client_bundle, inventory));
 

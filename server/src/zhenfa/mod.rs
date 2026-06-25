@@ -1500,6 +1500,7 @@ fn inventory_template_count(inventory: &PlayerInventory, template_id: &str) -> u
             inventory
                 .equipped
                 .values()
+                .flat_map(|s| s.iter_all())
                 .filter(|item| item.template_id == template_id)
                 .map(|item| item.stack_count),
         )
@@ -1528,6 +1529,7 @@ fn find_inventory_instance_by_template(
             inventory
                 .equipped
                 .values()
+                .flat_map(|s| s.iter_all())
                 .find(|item| item.template_id == template_id)
                 .map(|item| item.instance_id)
         })
@@ -4103,6 +4105,7 @@ fn has_zhenfa_flag(inventory: Option<&PlayerInventory>) -> bool {
     inventory
         .equipped
         .values()
+        .flat_map(|s| s.iter_all())
         .chain(inventory.hotbar.iter().flatten())
         .any(|item| item.template_id == ZHENFA_FLAG_ITEM_ID)
 }
@@ -4553,7 +4556,8 @@ mod tests {
     use crate::cultivation::components::{QiColor, Realm};
     use crate::inventory::{
         inventory_item_by_instance_borrow, ContainerState, InventoryRevision, ItemCategory,
-        ItemInstance, ItemRarity, ItemTemplate, PlayerInventory, EQUIP_SLOT_MAIN_HAND,
+        ItemInstance, ItemRarity, ItemTemplate, PlayerInventory, SlotContents,
+        EQUIP_SLOT_MAIN_HAND,
     };
     use crate::lingtian::PLOT_QI_CAP_BASE;
     use valence::prelude::{App, ChunkLayer, DVec3, Entity, Events, UnloadedChunk};
@@ -5825,9 +5829,10 @@ mod tests {
 
     fn zhenfa_flag_inventory() -> PlayerInventory {
         let mut inventory = empty_inventory();
-        inventory
-            .equipped
-            .insert(EQUIP_SLOT_MAIN_HAND.to_string(), array_flag_item(9001));
+        inventory.equipped.insert(
+            EQUIP_SLOT_MAIN_HAND.to_string(),
+            SlotContents::held_single(array_flag_item(9001)),
+        );
         inventory
     }
 
@@ -5861,9 +5866,10 @@ mod tests {
 
     fn ordinary_trap_inventory(item: ItemInstance) -> PlayerInventory {
         let mut inventory = empty_inventory();
-        inventory
-            .equipped
-            .insert(EQUIP_SLOT_MAIN_HAND.to_string(), item);
+        inventory.equipped.insert(
+            EQUIP_SLOT_MAIN_HAND.to_string(),
+            SlotContents::held_single(item),
+        );
         inventory
     }
 

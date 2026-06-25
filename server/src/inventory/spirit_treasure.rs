@@ -9,7 +9,7 @@ use crate::combat::status::{remove_status_effect, upsert_status_effect};
 use crate::inventory::ancient_relics::AncientRelicSource;
 use crate::inventory::{
     InventoryInstanceIdAllocator, ItemInstance, ItemRarity, PlayerInventory,
-    EQUIP_SLOT_TREASURE_BELT_0,
+    EQUIP_SLOT_EXTRA_HAND_0,
 };
 use crate::schema::spirit_treasure::{
     SpiritTreasureClientStateV1, SpiritTreasurePassiveV1, SpiritTreasureStatePayloadV1,
@@ -181,7 +181,7 @@ pub fn jizhaojing_def() -> SpiritTreasureDef {
         dialogue_cooldown_s: 30,
         random_dialogue_interval_s: (300, 900),
         icon_texture: "bong-client:textures/gui/items/spirit_treasure_jizhaojing.png".to_string(),
-        equip_slot: EQUIP_SLOT_TREASURE_BELT_0.to_string(),
+        equip_slot: EQUIP_SLOT_EXTRA_HAND_0.to_string(),
     }
 }
 
@@ -235,7 +235,7 @@ pub fn scan_inventory_for_spirit_treasures(
     let mut seen = HashSet::new();
     let mut entries = Vec::new();
 
-    for item in inventory.equipped.values() {
+    for item in inventory.equipped.values().flat_map(|s| s.iter_all()) {
         push_entry_for_item(registry, item, true, &mut seen, &mut entries);
     }
 
@@ -421,7 +421,9 @@ fn sync_passive_status_effects(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::inventory::{ContainerState, InventoryRevision, ItemRarity, PlacedItemState};
+    use crate::inventory::{
+        ContainerState, InventoryRevision, ItemRarity, PlacedItemState, SlotContents,
+    };
 
     fn item(instance_id: u64) -> ItemInstance {
         ItemInstance {
@@ -486,9 +488,10 @@ mod tests {
         let mut registry = SpiritTreasureRegistry::default();
         let mut inventory = inventory_with_container_item(88);
         let equipped = inventory.containers[0].items.remove(0).instance;
-        inventory
-            .equipped
-            .insert(EQUIP_SLOT_TREASURE_BELT_0.to_string(), equipped);
+        inventory.equipped.insert(
+            EQUIP_SLOT_EXTRA_HAND_0.to_string(),
+            SlotContents::worn_single(equipped),
+        );
         let entries = scan_inventory_for_spirit_treasures(&registry, &inventory);
         let player = Entity::from_raw(7);
         registry.ensure_player_holder(JIZHAOJING_TEMPLATE_ID, 88, player, 0);

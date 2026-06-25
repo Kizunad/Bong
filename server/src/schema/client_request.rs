@@ -1505,7 +1505,7 @@ mod tests {
 
     #[test]
     fn drop_weapon_intent_roundtrip() {
-        let json = r#"{"type":"drop_weapon_intent","v":1,"instance_id":1001,"from":{"kind":"equip","slot":"main_hand"}}"#;
+        let json = r#"{"type":"drop_weapon_intent","v":1,"instance_id":1001,"from":{"kind":"equip","slot":"main_hand","state":"held"}}"#;
         let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
         match req {
             ClientRequestV1::DropWeaponIntent {
@@ -1519,6 +1519,7 @@ mod tests {
                     from,
                     InventoryLocationV1::Equip {
                         slot: crate::schema::inventory::EquipSlotV1::MainHand,
+                        state: crate::schema::inventory::EquipStateV1::Held,
                     }
                 );
             }
@@ -2518,7 +2519,7 @@ mod tests {
             "session_id": 5,
             "instance_id": 200,
             "from": {"kind": "container", "container_id": "ext_5", "row": 2, "col": 3},
-            "to": {"kind": "equip", "slot": "main_hand"}
+            "to": {"kind": "equip", "slot": "main_hand", "state": "held"}
         }"#;
         let req: ClientRequestV1 =
             serde_json::from_str(json).expect("move to equip slot should deserialize");
@@ -2664,7 +2665,7 @@ mod tests {
             "v": 1,
             "session_id": 10,
             "instance_id": 50,
-            "from": {"kind": "equip", "slot": "main_hand"},
+            "from": {"kind": "equip", "slot": "main_hand", "state": "held"},
             "to": {"kind": "container", "container_id": "ext_10", "row": 1, "col": 2}
         }"#;
         let req: ClientRequestV1 =
@@ -2784,8 +2785,8 @@ mod tests {
             "v": 1,
             "session_id": 1,
             "instance_id": 1,
-            "from": {"kind": "equip", "slot": "main_hand"},
-            "to": {"kind": "equip", "slot": "off_hand"}
+            "from": {"kind": "equip", "slot": "main_hand", "state": "held"},
+            "to": {"kind": "equip", "slot": "off_hand", "state": "held"}
         }"#;
         let req: ClientRequestV1 =
             serde_json::from_str(json).expect("equip→equip should deserialize");

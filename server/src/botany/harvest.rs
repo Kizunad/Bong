@@ -709,7 +709,7 @@ mod tests {
         if let Some(template_id) = template_id {
             inventory.equipped.insert(
                 EQUIP_SLOT_MAIN_HAND.to_string(),
-                tool_item(template_id, durability),
+                crate::inventory::SlotContents::held_single(tool_item(template_id, durability)),
             );
         }
         inventory
@@ -1014,7 +1014,11 @@ mod tests {
                 "{plant_id:?} should avoid contamination"
             );
             let inventory = app.world().get::<PlayerInventory>(client_entity).unwrap();
-            let tool = inventory.equipped.get(EQUIP_SLOT_MAIN_HAND).unwrap();
+            let tool = inventory
+                .equipped
+                .get(EQUIP_SLOT_MAIN_HAND)
+                .and_then(|s| s.held.as_ref())
+                .unwrap();
             assert!((tool.durability - 0.99).abs() < 1e-9);
 
             let durability_events = app
@@ -1072,7 +1076,11 @@ mod tests {
         assert_eq!(contamination.entries.len(), 1);
 
         let inventory = app.world().get::<PlayerInventory>(client_entity).unwrap();
-        let tool = inventory.equipped.get(EQUIP_SLOT_MAIN_HAND).unwrap();
+        let tool = inventory
+            .equipped
+            .get(EQUIP_SLOT_MAIN_HAND)
+            .and_then(|s| s.held.as_ref())
+            .unwrap();
         assert_eq!(tool.durability, 0.0);
 
         let durability_events = app

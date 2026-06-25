@@ -470,33 +470,13 @@ mod server_data_tests {
                 ),
             }],
             equipped: EquippedInventorySnapshotV1 {
-                head: None,
-                chest: None,
-                legs: None,
-                feet: None,
-                false_skin: None,
-                main_hand: Some(sample_inventory_item(
+                main_hand_held: Some(sample_inventory_item(
                     1003,
                     "training_blade",
                     "训练短刃",
                     ItemRarityV1::Common,
                 )),
-                off_hand: None,
-                two_hand: None,
-                treasure_belt_0: Some(sample_inventory_item(
-                    1005,
-                    "starter_talisman",
-                    "启程护符",
-                    ItemRarityV1::Uncommon,
-                )),
-                treasure_belt_1: None,
-                treasure_belt_2: None,
-                treasure_belt_3: None,
-                back_pack: None,
-                waist_pouch: None,
-                chest_satchel: None,
-                extra_hand_0: None,
-                extra_hand_1: None,
+                ..Default::default()
             },
             hotbar: vec![
                 Some(sample_inventory_item(

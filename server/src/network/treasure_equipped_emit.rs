@@ -6,10 +6,7 @@
 
 use valence::prelude::{Changed, Client, Entity, Query, Res, With};
 
-use crate::inventory::{
-    ItemCategory, ItemRegistry, PlayerInventory, EQUIP_SLOT_OFF_HAND, EQUIP_SLOT_TREASURE_BELT_0,
-    EQUIP_SLOT_TREASURE_BELT_1, EQUIP_SLOT_TREASURE_BELT_2, EQUIP_SLOT_TREASURE_BELT_3,
-};
+use crate::inventory::{ItemCategory, ItemRegistry, PlayerInventory, EQUIP_SLOT_OFF_HAND};
 use crate::network::agent_bridge::{
     payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
 };
@@ -54,13 +51,9 @@ pub fn emit_treasure_equipped_payloads(
     changed_inventories: Query<(Entity, &PlayerInventory), Changed<PlayerInventory>>,
     mut clients: Query<&mut Client, With<Client>>,
 ) {
-    let slots = [
-        EQUIP_SLOT_OFF_HAND,
-        EQUIP_SLOT_TREASURE_BELT_0,
-        EQUIP_SLOT_TREASURE_BELT_1,
-        EQUIP_SLOT_TREASURE_BELT_2,
-        EQUIP_SLOT_TREASURE_BELT_3,
-    ];
+    // plan-layered-equip-v1 P0.2（决议 #8 / #17）— treasure_belt 装备槽取消（法宝激活态由
+    // 灵宝 UI 触发位承载，PR-4 接入）。PR-1 仍下发 off_hand held treasure 作装备态展示。
+    let slots = [EQUIP_SLOT_OFF_HAND];
 
     let updates: Vec<TreasureClientUpdate> = changed_inventories
         .iter()
@@ -68,12 +61,16 @@ pub fn emit_treasure_equipped_payloads(
             let views = slots
                 .into_iter()
                 .map(|slot| {
-                    let view = inventory.equipped.get(slot).and_then(|item| {
-                        registry
-                            .get(&item.template_id)
-                            .filter(|tpl| matches!(tpl.category, ItemCategory::Treasure))
-                            .map(|_| treasure_view(item))
-                    });
+                    let view = inventory
+                        .equipped
+                        .get(slot)
+                        .and_then(|s| s.held.as_ref())
+                        .and_then(|item| {
+                            registry
+                                .get(&item.template_id)
+                                .filter(|tpl| matches!(tpl.category, ItemCategory::Treasure))
+                                .map(|_| treasure_view(item))
+                        });
                     (slot.to_string(), view)
                 })
                 .collect();
@@ -200,6 +197,7 @@ mod tests {
 
     #[test]
     fn treasure_equipped_uses_server_data_channel_and_type() {
+        // plan-layered-equip-v1 决议 #8/#17：treasure_belt 槽已删，法宝以 off_hand held 形式下发。
         let mut app = App::new();
         app.insert_resource(ItemRegistry::from_map(HashMap::from([(
             "starter_talisman".to_string(),
@@ -210,8 +208,8 @@ mod tests {
         let (client_bundle, mut helper) = create_mock_client("Azure");
         let mut inventory = empty_inventory();
         inventory.equipped.insert(
-            EQUIP_SLOT_TREASURE_BELT_0.to_string(),
-            treasure_instance(88),
+            EQUIP_SLOT_OFF_HAND.to_string(),
+            crate::inventory::SlotContents::held_single(treasure_instance(88)),
         );
         app.world_mut().spawn((client_bundle, inventory));
 
@@ -223,14 +221,13 @@ mod tests {
             .iter()
             .find(|(_, payload)| {
                 payload.get("type").and_then(|v| v.as_str()) == Some("treasure_equipped")
-                    && payload.get("slot").and_then(|v| v.as_str())
-                        == Some(EQUIP_SLOT_TREASURE_BELT_0)
+                    && payload.get("slot").and_then(|v| v.as_str()) == Some(EQUIP_SLOT_OFF_HAND)
             })
-            .expect("treasure_equipped payload should be sent");
+            .expect("off_hand treasure_equipped payload should be sent");
         assert_eq!(channel, SERVER_DATA_CHANNEL);
         assert_eq!(
             payload.get("slot").and_then(|v| v.as_str()),
-            Some(EQUIP_SLOT_TREASURE_BELT_0)
+            Some(EQUIP_SLOT_OFF_HAND)
         );
         assert_eq!(
             payload

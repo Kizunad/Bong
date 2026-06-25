@@ -880,6 +880,7 @@ pub fn handle_revival_action_intents(
     persistence: Res<PersistenceSettings>,
     player_persistence: Option<Res<PlayerStatePersistence>>,
     default_loadout: Option<Res<DefaultLoadout>>,
+    item_registry: Option<Res<crate::inventory::ItemRegistry>>,
     mut inventory_allocator: Option<ResMut<InventoryInstanceIdAllocator>>,
     mut intents: EventReader<RevivalActionIntent>,
     mut revived: EventWriter<PlayerRevived>,
@@ -1062,6 +1063,7 @@ pub fn handle_revival_action_intents(
                     skill_set,
                     player_persistence.as_deref(),
                     default_loadout.as_deref(),
+                    item_registry.as_deref(),
                     inventory_allocator.as_deref_mut(),
                     coffin_registry.as_deref_mut(),
                     &mut coffin_state_events,
@@ -1695,6 +1697,7 @@ fn reset_for_new_character(
     skill_set: Option<valence::prelude::Mut<'_, SkillSet>>,
     player_persistence: Option<&PlayerStatePersistence>,
     default_loadout: Option<&DefaultLoadout>,
+    item_registry: Option<&crate::inventory::ItemRegistry>,
     inventory_allocator: Option<&mut InventoryInstanceIdAllocator>,
     // P0 fix: coffin 清除参数（新建角色不应继承死亡前的棺状态）
     coffin_registry: Option<&mut crate::coffin::CoffinRegistry>,
@@ -1770,12 +1773,15 @@ fn reset_for_new_character(
         position.set(spawn_position);
     }
     let mut persisted_inventory = None;
-    if let (Some(default_loadout), Some(inventory_allocator)) =
-        (default_loadout, inventory_allocator)
+    if let (Some(default_loadout), Some(item_registry), Some(inventory_allocator)) =
+        (default_loadout, item_registry, inventory_allocator)
     {
-        let new_inventory =
-            instantiate_inventory_from_loadout(&default_loadout.0, inventory_allocator)
-                .expect("default loadout should instantiate");
+        let new_inventory = instantiate_inventory_from_loadout(
+            &default_loadout.0,
+            inventory_allocator,
+            item_registry,
+        )
+        .expect("default loadout should instantiate");
         if let Some(mut inventory) = inventory {
             *inventory = new_inventory.clone();
         } else {
@@ -4218,6 +4224,8 @@ mod tests {
         let default_loadout = crate::inventory::load_default_loadout(&item_registry)
             .expect("default loadout should load");
         app.insert_resource(DefaultLoadout(default_loadout));
+        // plan-layered-equip-v1 P0.6 — reset_for_new_character 现需 ItemRegistry 重建 inventory。
+        app.insert_resource(item_registry);
         app.insert_resource(InventoryInstanceIdAllocator::default());
 
         app.add_event::<RevivalActionIntent>();
@@ -4421,6 +4429,8 @@ mod tests {
         let default_loadout = crate::inventory::load_default_loadout(&item_registry)
             .expect("default loadout should load");
         app.insert_resource(DefaultLoadout(default_loadout));
+        // plan-layered-equip-v1 P0.6 — reset_for_new_character 现需 ItemRegistry 重建 inventory。
+        app.insert_resource(item_registry);
         app.insert_resource(InventoryInstanceIdAllocator::default());
 
         app.add_event::<RevivalActionIntent>();
@@ -5097,6 +5107,8 @@ mod tests {
         let default_loadout = crate::inventory::load_default_loadout(&item_registry)
             .expect("default loadout should load");
         app.insert_resource(DefaultLoadout(default_loadout));
+        // plan-layered-equip-v1 P0.6 — reset_for_new_character 现需 ItemRegistry 重建 inventory。
+        app.insert_resource(item_registry);
         app.insert_resource(InventoryInstanceIdAllocator::default());
         app.add_event::<RevivalActionIntent>();
         app.add_event::<PlayerRevived>();

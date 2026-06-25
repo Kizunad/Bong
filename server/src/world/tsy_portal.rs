@@ -187,7 +187,7 @@ fn collect_instance_ids(inv: &PlayerInventory) -> Vec<u64> {
             ids.push(placed.instance.instance_id);
         }
     }
-    for item in inv.equipped.values() {
+    for item in inv.equipped.values().flat_map(|s| s.iter_all()) {
         ids.push(item.instance_id);
     }
     for item in inv.hotbar.iter().flatten() {

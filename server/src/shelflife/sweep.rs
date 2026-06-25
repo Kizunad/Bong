@@ -77,7 +77,11 @@ pub fn sweep_shelflife_variants(
             }
         }
 
-        for item in inventory.equipped.values_mut() {
+        for item in inventory
+            .equipped
+            .values_mut()
+            .flat_map(|s| s.iter_all_mut())
+        {
             let entropy_seed = item.instance_id;
             if apply_variant_switch_with_season(
                 item,
