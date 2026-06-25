@@ -1241,6 +1241,12 @@ describe("sample files pass schema validation", () => {
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
 
+  it("server-data.tribulation-state.jue-bi.sample.json", () => {
+    const data = loadSample("server-data.tribulation-state.jue-bi.sample.json");
+    const result = validate(ServerDataV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
   it("server-data.burst-meridian-event.sample.json", () => {
     const data = loadSample("server-data.burst-meridian-event.sample.json");
     const result = validate(ServerDataV1, data);

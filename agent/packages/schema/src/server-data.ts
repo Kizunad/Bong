@@ -101,6 +101,7 @@ import {
   AgentUiRequestPayloadV1,
   AgentUiClosePayloadV1,
 } from "./payloads/agent-ui.js";
+import { TribulationKindV1 } from "./tribulation.js";
 
 const MERIDIAN_CHANNEL_COUNT = 20;
 
@@ -770,11 +771,7 @@ export const ServerDataTribulationStateV1 = Type.Object(
     active: Type.Boolean(),
     char_id: Type.String(),
     actor_name: Type.String(),
-    kind: Type.Union([
-      Type.Literal("du_xu"),
-      Type.Literal("zone_collapse"),
-      Type.Literal("targeted"),
-    ]),
+    kind: TribulationKindV1,
     phase: Type.Union([
       Type.Literal("omen"),
       Type.Literal("lock"),
