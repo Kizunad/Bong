@@ -24,6 +24,7 @@ import {
   AgentUiResponsePayloadV1,
   AgentUiClosePayloadV1,
   AgentUiActionType,
+  type AgentUiErrorReasonV1,
 } from "../src/payloads/agent-ui.js";
 
 // ─── AgentUiRequestCommandV1（agent → server Redis）──────────────────────────
@@ -209,6 +210,19 @@ describe("AgentUiResponsePayloadV1", () => {
       },
     };
     expect(Value.Check(AgentUiResponsePayloadV1, payload)).toBe(true);
+  });
+
+  it("AgentUiErrorReasonV1 覆盖 server 实发 error reason", () => {
+    const reasons: AgentUiErrorReasonV1[] = [
+      "realm_gate_rejected",
+      "invalid_button_id",
+      "player_offline",
+      "invalid_command",
+      "xml_sanitize_failed",
+    ];
+    expect(reasons).toHaveLength(5);
+    expect(reasons).toContain("invalid_command");
+    expect(reasons).toContain("xml_sanitize_failed");
   });
 
   it("happy path: parse_error", () => {
