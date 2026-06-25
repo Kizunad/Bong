@@ -58,10 +58,14 @@ if [[ ! -d "$WIN_INSTANCE" ]]; then
 fi
 
 if command -v powershell.exe >/dev/null 2>&1; then
+    # NB: powershell.exe 经 WSL interop 调用时退出码可能被污染成 126（命令其实跑成功了）。
+    #     这只是存活性安全检查，非零退出不该 abort 整个同步——用 `|| true` 兜住，
+    #     真检测到 PID 仍会在下面的 [[ -n ]] 分支 abort。
     RUNNING_CLIENT_PID="$(
         powershell.exe -NoProfile -Command '$process = Get-CimInstance Win32_Process | Where-Object { $_.Name -eq "java.exe" -and $_.CommandLine -match "Fabric_Bang_Test" } | Select-Object -First 1; if ($null -ne $process) { $process.ProcessId }' 2>/dev/null \
             | tr -d '\r' \
-            | head -n 1
+            | head -n 1 \
+            || true
     )"
     if [[ -n "$RUNNING_CLIENT_PID" ]]; then
         echo "[windows-client] 检测到 Fabric_Bang_Test 客户端仍在运行（PID $RUNNING_CLIENT_PID）。" >&2
