@@ -145,6 +145,29 @@ mod tests {
     }
 
     #[test]
+    fn accepts_zong_core_activation_numeric_boundaries() {
+        let mut min_qi = valid_zong_core_activation();
+        min_qi.base_qi = ZONG_CORE_QI_MIN;
+        min_qi.active_qi = ZONG_CORE_QI_MIN;
+        min_qi
+            .validate()
+            .expect("TypeScript ZongCoreActivationV1 qi minimum boundary should pass");
+
+        let mut max_qi = valid_zong_core_activation();
+        max_qi.base_qi = ZONG_CORE_QI_MAX;
+        max_qi.active_qi = ZONG_CORE_QI_MAX;
+        max_qi
+            .validate()
+            .expect("TypeScript ZongCoreActivationV1 qi maximum boundary should pass");
+
+        let mut min_radius = valid_zong_core_activation();
+        min_radius.narration_radius_blocks = 1;
+        min_radius
+            .validate()
+            .expect("TypeScript ZongCoreActivationV1 narration_radius_blocks minimum should pass");
+    }
+
+    #[test]
     fn rejects_zong_core_activation_contract_violations() {
         assert_zong_core_activation_invalid("version", |event| event.v = 2);
         assert_zong_core_activation_invalid("zone_id", |event| event.zone_id.clear());

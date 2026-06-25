@@ -3451,6 +3451,19 @@ mod redis_bridge_tests {
         );
     }
 
+    #[test]
+    fn rejects_zong_core_activation_invalid_qi() {
+        let mut event = zong_core_activation_with_origin(1);
+        event.base_qi = 1.1;
+
+        let result = prepare_outbound_command(RedisOutbound::ZongCoreActivated(event));
+
+        assert!(
+            result.is_err(),
+            "TypeScript ZongCoreActivationV1 base_qi maximum=1，base_qi=1.1 应被 Rust outbound 校验拒绝"
+        );
+    }
+
     fn forge_event_with(meridian: &str, axis: &str, from_tier: u8, to_tier: u8) -> ForgeEventV1 {
         ForgeEventV1 {
             meridian: meridian.into(),
