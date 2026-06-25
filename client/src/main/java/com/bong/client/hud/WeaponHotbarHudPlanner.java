@@ -73,12 +73,8 @@ public final class WeaponHotbarHudPlanner {
                 }
             }
         }
-        // two_hand 暂合并到 main_hand 渲染槽,语义待后续(plan §2.2 two_hand 占 main+off)
-        EquippedWeapon twoHand = WeaponEquippedStore.get("two_hand");
-        if (twoHand != null && mainHand == null) {
-            int x = hotbarLeftX - SLOT_GAP_TO_HOTBAR - SLOT_W;
-            drawWeaponSlot(out, x, upperY, totalHeight, twoHand);
-        }
+        // plan-layered-equip-v1 P4（决议 #17）：two_hand 专槽删除——双手武器走 main_hand held（上方已渲染），
+        // 不再单独查 two_hand 槽。
 
         return out;
     }
