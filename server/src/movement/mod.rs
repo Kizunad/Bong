@@ -1118,8 +1118,10 @@ mod tests {
     #[test]
     fn dash_drive_speed_scales_down_with_leg_wound() {
         // 腿伤越重距离越短 → 驱动速度越低（reject 已挡 leg_factor≈0 的彻底断腿）。
-        let mut wounded = MovementState::default();
-        wounded.leg_wound_factor = 0.3; // → dash_distance_for_runtime 乘 0.5
+        let wounded = MovementState {
+            leg_wound_factor: 0.3, // → dash_distance_for_runtime 乘 0.5
+            ..Default::default()
+        };
         let healthy = MovementState::default();
         assert!(
             dash_drive_speed_mps(0.0, &wounded) < dash_drive_speed_mps(0.0, &healthy),
@@ -1132,8 +1134,10 @@ mod tests {
         // 锁腿伤分段边界（<=0.4 → 0.5×，<=0.7 → 0.8×，否则 1.0×）的 off-by-one。
         let base = dash_proficiency::dash_distance(0.0); // 2.8
         let dist = |leg: f32| {
-            let mut m = MovementState::default();
-            m.leg_wound_factor = leg;
+            let m = MovementState {
+                leg_wound_factor: leg,
+                ..Default::default()
+            };
             dash_distance_for_runtime(0.0, &m)
         };
         assert_close(dist(0.4), base * 0.5); // 边界 ==0.4 落入重伤档

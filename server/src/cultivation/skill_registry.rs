@@ -73,6 +73,10 @@ impl Resource for SkillRegistry {}
 
 impl SkillRegistry {
     pub fn register(&mut self, skill_id: &'static str, skill_fn: SkillFn) {
+        assert!(
+            !self.entries.contains_key(skill_id),
+            "duplicate skill id registered: {skill_id}"
+        );
         self.entries.insert(skill_id, skill_fn);
     }
 
@@ -91,7 +95,6 @@ pub fn init_registry() -> SkillRegistry {
     crate::combat::carrier::register_skills(&mut registry);
     crate::combat::anqi_v2::register_skills(&mut registry);
     crate::cultivation::burst_meridian::register_skills(&mut registry);
-    crate::combat::jiemai::register_skills(&mut registry);
     crate::combat::zhenmai_v2::register_skills(&mut registry);
     crate::combat::woliu::register_skills(&mut registry);
     crate::combat::yidao::register_skills(&mut registry);
@@ -101,7 +104,6 @@ pub fn init_registry() -> SkillRegistry {
     crate::combat::tuike_v2::register_skills(&mut registry);
     crate::combat::sword_basics::register_skills(&mut registry);
     crate::cultivation::dugu::register_skills(&mut registry);
-    crate::cultivation::full_power_strike::register_skills(&mut registry);
     crate::dandao::register_skills(&mut registry);
     crate::sword_path::skill_register::register_skills(&mut registry);
     crate::npc::npc_skill::register_npc_skills(&mut registry);
@@ -181,6 +183,23 @@ mod tests {
             CastOutcomeV1::RejectInvalidTarget,
             "缺武器必须有独立 outcome，文案为「缺少武器」而非「目标无效」"
         );
+    }
+
+    #[test]
+    #[should_panic(expected = "duplicate skill id registered: test.duplicate")]
+    fn register_rejects_duplicate_skill_ids() {
+        fn noop_skill(
+            _world: &mut valence::prelude::bevy_ecs::world::World,
+            _caster: Entity,
+            _slot: u8,
+            _target: Option<Entity>,
+        ) -> CastResult {
+            CastResult::Interrupted
+        }
+
+        let mut registry = SkillRegistry::default();
+        registry.register("test.duplicate", noop_skill);
+        registry.register("test.duplicate", noop_skill);
     }
 
     /// 构造与生产路径完全一致的 SkillMeridianDependencies（不走 Bevy App）。

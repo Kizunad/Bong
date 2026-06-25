@@ -2029,12 +2029,6 @@ mod tests {
 
     // ── qi conservation tests (BUG-QP-02) ──────────────────────────────────────
 
-    /// Helper: position that falls inside the fallback spawn zone (spawn zone covers a wide
-    /// default area; any non-extreme coordinate is fine).
-    fn spawn_zone_position() -> DVec3 {
-        DVec3::new(0.0, 64.0, 0.0)
-    }
-
     fn app_with_tick_systems() -> App {
         let mut app = App::new();
         app.insert_resource(CombatClock { tick: 100 });

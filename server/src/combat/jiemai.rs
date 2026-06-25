@@ -1,77 +1,16 @@
 use valence::entity::Look;
-use valence::prelude::{bevy_ecs, DVec3, Entity, Events};
+use valence::prelude::DVec3;
 
-use crate::combat::components::{DefenseWindow, SkillBarBindings};
-use crate::combat::events::{DefenseIntent, StatusEffectKind};
-use crate::combat::CombatClock;
-use crate::cultivation::components::{ColorKind, Cultivation, Realm};
-use crate::cultivation::skill_registry::{CastRejectReason, CastResult, SkillRegistry};
+use crate::combat::components::DefenseWindow;
+use crate::cultivation::components::{ColorKind, Realm};
 use crate::inventory::{
     PlayerInventory, EQUIP_SLOT_CHEST, EQUIP_SLOT_FEET, EQUIP_SLOT_HEAD, EQUIP_SLOT_LEGS,
 };
 use crate::qi_physics::constants::{
     QI_ZHENMAI_CONCUSSION_BASE_SEVERITY, QI_ZHENMAI_CONTAM_RESIDUAL_MULTIPLIER,
-    QI_ZHENMAI_PARRY_RECOVERY_TICKS, QI_ZHENMAI_PREP_WINDOW_MS,
+    QI_ZHENMAI_PREP_WINDOW_MS,
 };
 use crate::qi_physics::StyleDefense;
-
-pub const ZHENMAI_PARRY_SKILL_ID: &str = "zhenmai.parry";
-
-pub fn register_skills(registry: &mut SkillRegistry) {
-    registry.register(ZHENMAI_PARRY_SKILL_ID, resolve_zhenmai_parry_skill);
-}
-
-pub fn resolve_zhenmai_parry_skill(
-    world: &mut bevy_ecs::world::World,
-    caster: Entity,
-    slot: u8,
-    _target: Option<Entity>,
-) -> CastResult {
-    let now_tick = world
-        .get_resource::<CombatClock>()
-        .map(|clock| clock.tick)
-        .unwrap_or_default();
-
-    if world
-        .get::<SkillBarBindings>(caster)
-        .is_some_and(|bindings| bindings.is_on_cooldown(slot, now_tick))
-    {
-        return rejected(CastRejectReason::OnCooldown);
-    }
-    let Some(cultivation) = world.get::<Cultivation>(caster) else {
-        return rejected(CastRejectReason::RealmTooLow);
-    };
-    if jiemai_qi_cost_for_realm(cultivation.realm).is_none() {
-        return rejected(CastRejectReason::RealmTooLow);
-    }
-    if world
-        .get::<crate::combat::components::StatusEffects>(caster)
-        .is_some_and(|statuses| {
-            crate::combat::status::has_active_status(statuses, StatusEffectKind::ParryRecovery)
-        })
-    {
-        return rejected(CastRejectReason::InRecovery);
-    }
-
-    let Some(mut defense_events) = world.get_resource_mut::<Events<DefenseIntent>>() else {
-        return rejected(CastRejectReason::InvalidTarget);
-    };
-    defense_events.send(DefenseIntent {
-        defender: caster,
-        issued_at_tick: now_tick,
-    });
-
-    if let Some(mut bindings) = world.get_mut::<SkillBarBindings>(caster) {
-        bindings.set_cooldown(
-            slot,
-            now_tick.saturating_add(QI_ZHENMAI_PARRY_RECOVERY_TICKS),
-        );
-    }
-    CastResult::Started {
-        cooldown_ticks: QI_ZHENMAI_PARRY_RECOVERY_TICKS,
-        anim_duration_ticks: 1,
-    }
-}
 
 pub fn jiemai_qi_cost_for_realm(realm: Realm) -> Option<f64> {
     match realm {
@@ -216,10 +155,6 @@ pub fn jiemai_fov_check(
     let yaw = f64::from(look.yaw).to_radians();
     let facing = DVec3::new(-yaw.sin(), 0.0, yaw.cos());
     facing.dot(to_attacker / len_sq.sqrt()) >= jiemai_fov_dot_threshold(realm)
-}
-
-fn rejected(reason: CastRejectReason) -> CastResult {
-    CastResult::Rejected { reason }
 }
 
 #[cfg(test)]

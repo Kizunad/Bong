@@ -1578,7 +1578,7 @@ mod tests {
         app.add_event::<ProjectileQiDrainedEvent>();
         app.add_event::<QiTransfer>();
         app.add_event::<ApplyStatusEffectIntent>();
-        let actor = app
+        let _actor = app
             .world_mut()
             .spawn((
                 Cultivation {
