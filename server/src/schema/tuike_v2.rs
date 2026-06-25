@@ -229,7 +229,8 @@ mod tests {
             animation_id: "bong:tuike_taint_transfer".to_string(),
             particle_id: "bong:ancient_skin_glow".to_string(),
             sound_recipe_id: "contam_transfer_hum".to_string(),
-            icon_texture: "bong-client:textures/gui/skill/tuike_transfer_taint.png".to_string(),
+            icon_texture: "bong-client:textures/gui/items/skill_scroll_tuike_transfer_taint.png"
+                .to_string(),
         };
         let json = serde_json::to_string(&event).expect("serialize");
         let parsed: TuikeSkillEventV1 = serde_json::from_str(&json).expect("deserialize");
@@ -249,7 +250,8 @@ mod tests {
                 animation_id: String::new(),
                 particle_id: "bong:false_skin_don_dust".to_string(),
                 sound_recipe_id: "don_skin_low_thud".to_string(),
-                icon_texture: "bong-client:textures/gui/skill/tuike_don.png".to_string(),
+                icon_texture: "bong-client:textures/gui/items/skill_scroll_tuike_don.png"
+                    .to_string(),
             },
         );
     }

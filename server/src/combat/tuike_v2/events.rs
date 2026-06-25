@@ -45,7 +45,7 @@ impl TuikeSkillVisual {
                 animation_id: "bong:tuike_don_skin",
                 particle_id: "bong:false_skin_don_dust",
                 sound_recipe_id: "don_skin_low_thud",
-                icon_texture: "bong-client:textures/gui/skill/tuike_don.png",
+                icon_texture: "bong-client:textures/gui/items/skill_scroll_tuike_don.png",
             },
             TuikeSkillId::Shed => Self {
                 animation_id: "bong:tuike_shed_burst",
@@ -55,7 +55,7 @@ impl TuikeSkillVisual {
                     "bong:false_skin_shed_burst"
                 },
                 sound_recipe_id: "shed_skin_burst",
-                icon_texture: "bong-client:textures/gui/skill/tuike_shed.png",
+                icon_texture: "bong-client:textures/gui/items/skill_scroll_tuike_shed.png",
             },
             TuikeSkillId::TransferTaint => Self {
                 animation_id: "bong:tuike_taint_transfer",
@@ -65,7 +65,8 @@ impl TuikeSkillVisual {
                     "bong:false_skin_don_dust"
                 },
                 sound_recipe_id: "contam_transfer_hum",
-                icon_texture: "bong-client:textures/gui/skill/tuike_transfer_taint.png",
+                icon_texture:
+                    "bong-client:textures/gui/items/skill_scroll_tuike_transfer_taint.png",
             },
         }
     }

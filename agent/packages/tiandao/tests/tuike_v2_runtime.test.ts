@@ -49,7 +49,7 @@ const validTransferPayload = {
   animation_id: "bong:tuike_taint_transfer",
   particle_id: "bong:ancient_skin_glow",
   sound_recipe_id: "contam_transfer_hum",
-  icon_texture: "bong-client:textures/gui/skill/tuike_transfer_taint.png",
+  icon_texture: "bong-client:textures/gui/items/skill_scroll_tuike_transfer_taint.png",
 } as const;
 
 describe("TuikeV2NarrationRuntime", () => {

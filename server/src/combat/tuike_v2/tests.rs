@@ -1110,7 +1110,7 @@ fn tuike_visual_don_pins_all_asset_ids() {
     assert_eq!(v.sound_recipe_id, "don_skin_low_thud");
     assert_eq!(
         v.icon_texture,
-        "bong-client:textures/gui/skill/tuike_don.png"
+        "bong-client:textures/gui/items/skill_scroll_tuike_don.png"
     );
 }
 
@@ -1122,7 +1122,7 @@ fn tuike_visual_shed_pins_all_asset_ids() {
     assert_eq!(v.sound_recipe_id, "shed_skin_burst");
     assert_eq!(
         v.icon_texture,
-        "bong-client:textures/gui/skill/tuike_shed.png"
+        "bong-client:textures/gui/items/skill_scroll_tuike_shed.png"
     );
 }
 
@@ -1145,7 +1145,7 @@ fn tuike_visual_transfer_pins_all_asset_ids() {
     assert_eq!(v.sound_recipe_id, "contam_transfer_hum");
     assert_eq!(
         v.icon_texture,
-        "bong-client:textures/gui/skill/tuike_transfer_taint.png"
+        "bong-client:textures/gui/items/skill_scroll_tuike_transfer_taint.png"
     );
 }
 

@@ -643,7 +643,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
         cast_ticks: 12,
         cooldown_ticks: 20,
         range: 0.0,
-        icon_texture: "bong-client:textures/gui/skill/tuike_don.png",
+        icon_texture: "bong-client:textures/gui/items/skill_scroll_tuike_don.png",
         category: SkillCategory::Buff,
     },
     TechniqueDefinition {
@@ -658,7 +658,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
         cast_ticks: 8,
         cooldown_ticks: 160,
         range: 0.0,
-        icon_texture: "bong-client:textures/gui/skill/tuike_shed.png",
+        icon_texture: "bong-client:textures/gui/items/skill_scroll_tuike_shed.png",
         category: SkillCategory::Buff,
     },
     TechniqueDefinition {
@@ -673,7 +673,7 @@ pub const TECHNIQUE_DEFINITIONS: [TechniqueDefinition; 48] = [
         cast_ticks: 10,
         cooldown_ticks: 100,
         range: 0.0,
-        icon_texture: "bong-client:textures/gui/skill/tuike_transfer_taint.png",
+        icon_texture: "bong-client:textures/gui/items/skill_scroll_tuike_transfer_taint.png",
         category: SkillCategory::Buff,
     },
     TechniqueDefinition {

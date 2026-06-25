@@ -4002,7 +4002,7 @@ mod redis_bridge_tests {
                 "bong:tuike_taint_transfer",
                 "bong:ancient_skin_glow",
                 "contam_transfer_hum",
-                "bong-client:textures/gui/skill/tuike_transfer_taint.png",
+                "bong-client:textures/gui/items/skill_scroll_tuike_transfer_taint.png",
             ),
         );
 
