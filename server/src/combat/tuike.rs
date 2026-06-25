@@ -440,6 +440,7 @@ pub struct FalseSkinForgeRequest {
     pub kind: FalseSkinKind,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn handle_false_skin_forge_requests(
     mut requests: EventReader<FalseSkinForgeRequest>,
     mut inventories: Query<&mut PlayerInventory>,

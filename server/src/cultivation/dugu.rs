@@ -205,10 +205,8 @@ pub fn resolve_infuse_dugu_poison_intents(
             continue;
         }
 
-        let (position, current_dimension, life_record) = locations
-            .get(intent.infuser)
-            .map(|(p, d, l)| (p, d, l))
-            .unwrap_or((None, None, None));
+        let (position, current_dimension, life_record) =
+            locations.get(intent.infuser).unwrap_or((None, None, None));
         let accepted = release_qi_amount_to_zone(
             intent.infuser,
             DUGU_INFUSE_COST,

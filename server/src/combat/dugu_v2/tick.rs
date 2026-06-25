@@ -85,6 +85,7 @@ pub fn permanent_qi_max_decay_tick(
     }
 }
 
+#[allow(clippy::type_complexity)]
 pub fn shroud_maintain_tick(
     mut commands: Commands,
     clock: Res<CombatClock>,

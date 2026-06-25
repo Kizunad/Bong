@@ -138,10 +138,8 @@ pub fn consume_guangbo_practice_events(
         let outcome = try_record_guangbo_practice(&mut cultivation, &mut known);
         if matches!(outcome, PracticeOutcome::Trained { .. }) {
             // 守恒：扣除的真元必须回灌区域，否则 world qi ledger 产生永久漏洞。
-            let (position, current_dimension, life_record) = locations
-                .get(event.entity)
-                .map(|(p, d, l)| (p, d, l))
-                .unwrap_or((None, None, None));
+            let (position, current_dimension, life_record) =
+                locations.get(event.entity).unwrap_or((None, None, None));
             release_qi_amount_to_zone(
                 event.entity,
                 GUANGBO_TICAO_QI_COST,

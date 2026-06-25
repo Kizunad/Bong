@@ -1361,21 +1361,7 @@ fn release_failed_repair_qi_to_zone(
                         }
                     }
                 }
-            } else {
-                if let Ok(t) = QiTransfer::new(
-                    from,
-                    QiAccountId::overflow(format!(
-                        "yidao_failed_repair_overflow:{}",
-                        caster.to_bits()
-                    )),
-                    amount,
-                    QiTransferReason::ReleaseToZone,
-                ) {
-                    transfers.push(t);
-                }
-            }
-        } else {
-            if let Ok(t) = QiTransfer::new(
+            } else if let Ok(t) = QiTransfer::new(
                 from,
                 QiAccountId::overflow(format!("yidao_failed_repair_overflow:{}", caster.to_bits())),
                 amount,
@@ -1383,9 +1369,7 @@ fn release_failed_repair_qi_to_zone(
             ) {
                 transfers.push(t);
             }
-        }
-    } else {
-        if let Ok(t) = QiTransfer::new(
+        } else if let Ok(t) = QiTransfer::new(
             from,
             QiAccountId::overflow(format!("yidao_failed_repair_overflow:{}", caster.to_bits())),
             amount,
@@ -1393,6 +1377,13 @@ fn release_failed_repair_qi_to_zone(
         ) {
             transfers.push(t);
         }
+    } else if let Ok(t) = QiTransfer::new(
+        from,
+        QiAccountId::overflow(format!("yidao_failed_repair_overflow:{}", caster.to_bits())),
+        amount,
+        QiTransferReason::ReleaseToZone,
+    ) {
+        transfers.push(t);
     }
 
     if let Some(mut events) = world.get_resource_mut::<Events<QiTransfer>>() {
