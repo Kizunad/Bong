@@ -220,6 +220,7 @@ describe("AgentUiResponsePayloadV1", () => {
       "invalid_command",
       "xml_sanitize_failed",
     ];
+    expect(reasons).toHaveLength(5);
     expect(reasons).toContain("invalid_command");
     expect(reasons).toContain("xml_sanitize_failed");
   });
