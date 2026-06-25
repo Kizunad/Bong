@@ -324,9 +324,13 @@ mod tests {
     use valence::protocol::packets::play::CustomPayloadS2c;
     use valence::testing::{create_mock_client, MockClientHelper};
 
+    use crate::combat::baomai_v4::crack_reading::{
+        CrackReadingResult, IntegrityBracket, MeridianReadEntry,
+    };
     use crate::combat::baomai_v4::events::{CircuitBreakReason, LockEndReason};
     use crate::combat::baomai_v4::iron_cocoon::IronCocoonStage;
     use crate::combat::baomai_v4::scar_circuit::ScarCircuitKind;
+    use crate::cultivation::components::MeridianId;
     use crate::network::RedisBridgeResource;
     use crate::schema::baomai_v4::LockEndReasonWire;
     use crate::schema::common::MAX_PAYLOAD_BYTES;
@@ -352,6 +356,83 @@ mod tests {
             out.push(value);
         }
         out
+    }
+
+    fn resonance_lock_wire_size(name_len: usize) -> usize {
+        let fighter_a_id = format!("offline:{}", "x".repeat(name_len));
+        let payload = serde_json::json!({
+            "v": 1,
+            "fighter_a_id": fighter_a_id,
+            "fighter_b_id": "offline:Peer",
+            "started_at": 1000_u64,
+            "ends_at": 1060_u64,
+        });
+        serde_json::to_vec(&payload)
+            .expect("resonance_lock test payload serializes")
+            .len()
+    }
+
+    fn username_len_for_resonance_lock_size(size: usize) -> usize {
+        let empty_size = resonance_lock_wire_size(0);
+        let name_len = size
+            .checked_sub(empty_size)
+            .expect("target size must be larger than empty resonance payload");
+        assert_eq!(
+            resonance_lock_wire_size(name_len),
+            size,
+            "test fixture must hit the requested resonance_lock wire size exactly"
+        );
+        name_len
+    }
+
+    fn resonance_lock_end_wire_size(name_len: usize) -> usize {
+        let fighter_a_id = format!("offline:{}", "x".repeat(name_len));
+        let reason_json =
+            serde_json::to_value(LockEndReasonWire::Expired).expect("reason serializes");
+        let payload = serde_json::json!({
+            "v": 1,
+            "fighter_a_id": fighter_a_id,
+            "fighter_b_id": "offline:Peer",
+            "reason": reason_json,
+            "tick": 1060_u64,
+        });
+        serde_json::to_vec(&payload)
+            .expect("resonance_lock_end test payload serializes")
+            .len()
+    }
+
+    fn username_len_for_resonance_lock_end_size(size: usize) -> usize {
+        let empty_size = resonance_lock_end_wire_size(0);
+        let name_len = size
+            .checked_sub(empty_size)
+            .expect("target size must be larger than empty resonance_lock_end payload");
+        assert_eq!(
+            resonance_lock_end_wire_size(name_len),
+            size,
+            "test fixture must hit the requested resonance_lock_end wire size exactly"
+        );
+        name_len
+    }
+
+    fn crack_reading_result(
+        target: Entity,
+        entries: usize,
+        current_tick: u64,
+    ) -> CrackReadingResult {
+        CrackReadingResult {
+            target,
+            meridian_states: vec![
+                MeridianReadEntry {
+                    id: MeridianId::Lung,
+                    integrity_bracket: IntegrityBracket::MicroTear,
+                    has_circuit: true,
+                    is_dead_armor: false,
+                };
+                entries
+            ],
+            is_deep_read: true,
+            display_until_tick: current_tick + 20,
+        }
     }
 
     fn app_with_bridge() -> (App, crossbeam_channel::Receiver<RedisOutbound>) {
@@ -494,6 +575,66 @@ mod tests {
         // No panic = pass (entities are empty, nothing to send)
     }
 
+    #[test]
+    fn crack_reading_happy_path_sends_payload() {
+        let mut app = App::new();
+        app.add_event::<CrackReadingResultEvent>();
+        app.add_systems(Update, emit_crack_reading_payload);
+
+        let (reader_bundle, mut reader_helper) = create_mock_client("Reader");
+        let reader = app.world_mut().spawn(reader_bundle).id();
+        let target = app.world_mut().spawn_empty().id();
+        app.world_mut().send_event(CrackReadingResultEvent {
+            reader,
+            target,
+            result: crack_reading_result(target, 1, 100),
+            tick: 100,
+        });
+
+        app.update();
+        flush_clients(&mut app);
+
+        let payloads = collect_payloads(&mut reader_helper, "bong:crack_reading");
+        assert_eq!(
+            payloads.len(),
+            1,
+            "正常 crack_reading 应向 reader 下发 1 帧 payload，实际 {}",
+            payloads.len()
+        );
+        assert_eq!(
+            payloads[0]["entries"].as_array().map(Vec::len),
+            Some(1),
+            "crack_reading payload 应保留 1 条经脉读数"
+        );
+    }
+
+    #[test]
+    fn oversized_crack_reading_payload_is_not_sent() {
+        let mut app = App::new();
+        app.add_event::<CrackReadingResultEvent>();
+        app.add_systems(Update, emit_crack_reading_payload);
+
+        let (reader_bundle, mut reader_helper) = create_mock_client("Reader");
+        let reader = app.world_mut().spawn(reader_bundle).id();
+        let target = app.world_mut().spawn_empty().id();
+        app.world_mut().send_event(CrackReadingResultEvent {
+            reader,
+            target,
+            result: crack_reading_result(target, MAX_PAYLOAD_BYTES, 100),
+            tick: 100,
+        });
+
+        app.update();
+        flush_clients(&mut app);
+
+        let payloads = collect_payloads(&mut reader_helper, "bong:crack_reading");
+        assert!(
+            payloads.is_empty(),
+            "超出 MAX_PAYLOAD_BYTES 的 crack_reading 不应下发；实际收到 {} 帧",
+            payloads.len()
+        );
+    }
+
     // ── ResonanceLock ─────────────────────────────────────────────────────────
 
     fn app_resonance() -> (App, crossbeam_channel::Receiver<RedisOutbound>) {
@@ -535,10 +676,82 @@ mod tests {
     }
 
     #[test]
+    fn resonance_lock_happy_path_sends_payload_to_both_clients() {
+        let (mut app, rx) = app_resonance();
+        let (a_bundle, mut a_helper) = create_mock_client("Alice");
+        let (b_bundle, mut b_helper) = create_mock_client("Peer");
+        let a = app.world_mut().spawn(a_bundle).id();
+        let b = app.world_mut().spawn(b_bundle).id();
+
+        app.world_mut().send_event(ResonanceLockEvent {
+            fighter_a: a,
+            fighter_b: b,
+            started_at: 1000,
+            ends_at: 1060,
+        });
+
+        app.update();
+        flush_clients(&mut app);
+
+        assert!(
+            matches!(rx.try_recv(), Ok(RedisOutbound::BaomaiV4ResonanceLock(_))),
+            "正常 resonance_lock 仍应发送 Redis 叙事事件"
+        );
+        let a_payloads = collect_payloads(&mut a_helper, "bong:resonance_lock");
+        let b_payloads = collect_payloads(&mut b_helper, "bong:resonance_lock");
+        assert_eq!(
+            a_payloads.len(),
+            1,
+            "fighter_a 应收到 1 帧 resonance_lock payload"
+        );
+        assert_eq!(
+            b_payloads.len(),
+            1,
+            "fighter_b 应收到 1 帧 resonance_lock payload"
+        );
+    }
+
+    #[test]
+    fn max_sized_resonance_lock_payload_is_sent() {
+        let (mut app, rx) = app_resonance();
+        let name_len = username_len_for_resonance_lock_size(MAX_PAYLOAD_BYTES);
+        let (huge_bundle, mut huge_helper) = create_mock_client("x".repeat(name_len));
+        let (peer_bundle, mut peer_helper) = create_mock_client("Peer");
+        let a = app.world_mut().spawn(huge_bundle).id();
+        let b = app.world_mut().spawn(peer_bundle).id();
+
+        app.world_mut().send_event(ResonanceLockEvent {
+            fighter_a: a,
+            fighter_b: b,
+            started_at: 1000,
+            ends_at: 1060,
+        });
+
+        app.update();
+        flush_clients(&mut app);
+
+        assert!(
+            matches!(rx.try_recv(), Ok(RedisOutbound::BaomaiV4ResonanceLock(_))),
+            "MAX_PAYLOAD_BYTES 边界内的 resonance_lock 仍应发送 Redis 叙事事件"
+        );
+        assert_eq!(
+            collect_payloads(&mut huge_helper, "bong:resonance_lock").len(),
+            1,
+            "刚好等于 MAX_PAYLOAD_BYTES 的 resonance_lock 应发送给 fighter_a"
+        );
+        assert_eq!(
+            collect_payloads(&mut peer_helper, "bong:resonance_lock").len(),
+            1,
+            "刚好等于 MAX_PAYLOAD_BYTES 的 resonance_lock 应发送给 fighter_b"
+        );
+    }
+
+    #[test]
     fn oversized_resonance_lock_payload_is_not_sent() {
         let (mut app, rx) = app_resonance();
-        let (huge_bundle, mut huge_helper) = create_mock_client("x".repeat(MAX_PAYLOAD_BYTES));
-        let (peer_bundle, _peer_helper) = create_mock_client("Peer");
+        let name_len = username_len_for_resonance_lock_size(MAX_PAYLOAD_BYTES + 1);
+        let (huge_bundle, mut huge_helper) = create_mock_client("x".repeat(name_len));
+        let (peer_bundle, mut peer_helper) = create_mock_client("Peer");
         let a = app.world_mut().spawn(huge_bundle).id();
         let b = app.world_mut().spawn(peer_bundle).id();
 
@@ -556,11 +769,13 @@ mod tests {
             matches!(rx.try_recv(), Ok(RedisOutbound::BaomaiV4ResonanceLock(_))),
             "Redis 叙事不应受 S2C 超限保护影响"
         );
-        let payloads = collect_payloads(&mut huge_helper, "bong:resonance_lock");
         assert!(
-            payloads.is_empty(),
-            "超出 MAX_PAYLOAD_BYTES 的 resonance_lock 不应下发；实际收到 {} 帧",
-            payloads.len()
+            collect_payloads(&mut huge_helper, "bong:resonance_lock").is_empty(),
+            "超出 MAX_PAYLOAD_BYTES 的 resonance_lock 不应下发给 fighter_a"
+        );
+        assert!(
+            collect_payloads(&mut peer_helper, "bong:resonance_lock").is_empty(),
+            "超出 MAX_PAYLOAD_BYTES 的 resonance_lock 不应下发给 fighter_b"
         );
     }
 
@@ -591,6 +806,42 @@ mod tests {
             }
             other => panic!("expected BaomaiV4ResonanceLockEnd, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn oversized_resonance_lock_end_payload_is_not_sent() {
+        let (mut app, rx) = app_resonance();
+        let name_len = username_len_for_resonance_lock_end_size(MAX_PAYLOAD_BYTES + 1);
+        let (huge_bundle, mut huge_helper) = create_mock_client("x".repeat(name_len));
+        let (peer_bundle, mut peer_helper) = create_mock_client("Peer");
+        let a = app.world_mut().spawn(huge_bundle).id();
+        let b = app.world_mut().spawn(peer_bundle).id();
+
+        app.world_mut().send_event(ResonanceLockEndEvent {
+            fighter_a: a,
+            fighter_b: b,
+            reason: LockEndReason::Expired,
+            tick: 1060,
+        });
+
+        app.update();
+        flush_clients(&mut app);
+
+        assert!(
+            matches!(
+                rx.try_recv(),
+                Ok(RedisOutbound::BaomaiV4ResonanceLockEnd(_))
+            ),
+            "Redis 叙事不应受 resonance_lock_end S2C 超限保护影响"
+        );
+        assert!(
+            collect_payloads(&mut huge_helper, "bong:resonance_lock_end").is_empty(),
+            "超出 MAX_PAYLOAD_BYTES 的 resonance_lock_end 不应下发给 fighter_a"
+        );
+        assert!(
+            collect_payloads(&mut peer_helper, "bong:resonance_lock_end").is_empty(),
+            "超出 MAX_PAYLOAD_BYTES 的 resonance_lock_end 不应下发给 fighter_b"
+        );
     }
 
     #[test]
