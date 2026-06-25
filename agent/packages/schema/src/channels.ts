@@ -6,7 +6,7 @@ export const CHANNELS = {
   /** Server → Agent: 世界状态快照 (Pub/Sub) */
   WORLD_STATE: "bong:world_state",
 
-  /** Server → Agent: 玩家聊天消息 (Redis List, RPUSH/BLPOP) */
+  /** Server → Agent: 玩家聊天消息 (Redis List, RPUSH + LRANGE/LTRIM 批量 drain) */
   PLAYER_CHAT: "bong:player_chat",
 
   /** Agent → Server: 天道指令 (Pub/Sub) */
