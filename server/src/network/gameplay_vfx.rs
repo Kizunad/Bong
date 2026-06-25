@@ -80,35 +80,147 @@ pub fn spawn_request(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::schema::vfx_event::VfxEventV1;
+    use crate::schema::vfx_event::{VfxEventBuildError, VfxEventV1};
+
+    #[derive(Debug, Clone, Copy)]
+    enum ExpectedParticleRangeError {
+        Count(u16),
+        Duration(u16),
+    }
+
+    fn matches_expected_particle_range_error(
+        actual: &VfxEventBuildError,
+        expected: ExpectedParticleRangeError,
+    ) -> bool {
+        match (actual, expected) {
+            (
+                VfxEventBuildError::ParticleCountOutOfRange { count },
+                ExpectedParticleRangeError::Count(expected_count),
+            ) => *count == expected_count,
+            (
+                VfxEventBuildError::ParticleDurationOutOfRange { ticks },
+                ExpectedParticleRangeError::Duration(expected_ticks),
+            ) => *ticks == expected_ticks,
+            _ => false,
+        }
+    }
 
     #[test]
-    fn spawn_request_clamps_particle_ranges_to_schema_contract() {
-        let request = spawn_request(
-            BREAKTHROUGH_PILLAR,
-            DVec3::new(1.0, 2.0, 3.0),
-            Some([0.0, 1.0, 0.0]),
-            "#FFE8A0",
-            1.5,
-            128,
-            999,
-        );
+    fn spawn_request_clamps_particle_ranges_to_schema_contract_boundaries() {
+        let cases = [
+            (0, 0, 1, 1, "zero input clamps to schema minimum"),
+            (1, 1, 1, 1, "schema minimum passes through unchanged"),
+            (
+                VFX_PARTICLE_COUNT_MAX as u32,
+                VFX_PARTICLE_DURATION_TICKS_MAX as u32,
+                VFX_PARTICLE_COUNT_MAX,
+                VFX_PARTICLE_DURATION_TICKS_MAX,
+                "schema maximum passes through unchanged",
+            ),
+            (
+                VFX_PARTICLE_COUNT_MAX as u32 + 1,
+                VFX_PARTICLE_DURATION_TICKS_MAX as u32 + 1,
+                VFX_PARTICLE_COUNT_MAX,
+                VFX_PARTICLE_DURATION_TICKS_MAX,
+                "max plus one clamps to schema maximum",
+            ),
+            (
+                128,
+                999,
+                VFX_PARTICLE_COUNT_MAX,
+                VFX_PARTICLE_DURATION_TICKS_MAX,
+                "legacy high gameplay inputs clamp to schema maximum",
+            ),
+        ];
 
-        let VfxEventPayloadV1::SpawnParticle {
-            strength,
-            count,
-            duration_ticks,
-            ..
-        } = &request.payload
-        else {
-            panic!("spawn_request must build SpawnParticle payload");
-        };
+        for (input_count, input_duration, expected_count, expected_duration, reason) in cases {
+            let request = spawn_request(
+                BREAKTHROUGH_PILLAR,
+                DVec3::new(1.0, 2.0, 3.0),
+                Some([0.0, 1.0, 0.0]),
+                "#FFE8A0",
+                1.5,
+                input_count,
+                input_duration,
+            );
 
-        assert_eq!(*strength, Some(1.0));
-        assert_eq!(*count, Some(VFX_PARTICLE_COUNT_MAX));
-        assert_eq!(*duration_ticks, Some(VFX_PARTICLE_DURATION_TICKS_MAX));
-        VfxEventV1::new(request.payload)
-            .to_json_bytes_checked()
-            .expect("gameplay VFX helper should produce schema-valid payloads");
+            let VfxEventPayloadV1::SpawnParticle {
+                strength,
+                count,
+                duration_ticks,
+                ..
+            } = &request.payload
+            else {
+                panic!("spawn_request must build SpawnParticle payload");
+            };
+
+            assert_eq!(
+                *strength,
+                Some(1.0),
+                "expected strength 1.0 because spawn_request clamps gameplay intensity to schema range, actual {strength:?}"
+            );
+            assert_eq!(
+                *count,
+                Some(expected_count),
+                "expected count {expected_count} because {reason}, actual {count:?}"
+            );
+            assert_eq!(
+                *duration_ticks,
+                Some(expected_duration),
+                "expected duration_ticks {expected_duration} because {reason}, actual {duration_ticks:?}"
+            );
+            VfxEventV1::new(request.payload)
+                .to_json_bytes_checked()
+                .expect("gameplay VFX helper should produce schema-valid payloads");
+        }
+    }
+
+    #[test]
+    fn checked_serializer_rejects_invalid_particle_ranges() {
+        let invalid_cases = [
+            (
+                Some(0),
+                Some(1),
+                "count zero is below schema minimum",
+                ExpectedParticleRangeError::Count(0),
+            ),
+            (
+                Some(VFX_PARTICLE_COUNT_MAX + 1),
+                Some(1),
+                "count max plus one exceeds schema maximum",
+                ExpectedParticleRangeError::Count(VFX_PARTICLE_COUNT_MAX + 1),
+            ),
+            (
+                Some(1),
+                Some(0),
+                "duration zero is below schema minimum",
+                ExpectedParticleRangeError::Duration(0),
+            ),
+            (
+                Some(1),
+                Some(VFX_PARTICLE_DURATION_TICKS_MAX + 1),
+                "duration max plus one exceeds schema maximum",
+                ExpectedParticleRangeError::Duration(VFX_PARTICLE_DURATION_TICKS_MAX + 1),
+            ),
+        ];
+
+        for (count, duration_ticks, reason, expected_error) in invalid_cases {
+            let payload = VfxEventPayloadV1::SpawnParticle {
+                event_id: BREAKTHROUGH_PILLAR.to_string(),
+                origin: [1.0, 2.0, 3.0],
+                direction: None,
+                color: Some("#FFE8A0".to_string()),
+                strength: Some(1.0),
+                count,
+                duration_ticks,
+            };
+            let err = VfxEventV1::new(payload)
+                .to_json_bytes_checked()
+                .expect_err("invalid particle range should be rejected by checked serializer");
+            assert!(
+                matches_expected_particle_range_error(&err, expected_error),
+                "expected checked serializer error {expected_error:?} because {reason}, actual {err:?}"
+            );
+        }
     }
 }
