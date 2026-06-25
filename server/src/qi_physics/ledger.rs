@@ -617,7 +617,7 @@ mod tests {
     use crate::cultivation::components::Cultivation;
     use crate::inventory::{
         ContainerState, InventoryRevision, ItemInstance, ItemRarity, PlacedItemState,
-        PlayerInventory,
+        PlayerInventory, SlotContents, EQUIP_SLOT_CHEST, EQUIP_SLOT_MAIN_HAND,
     };
     use crate::world::zone::ZoneRegistry;
 
@@ -1156,6 +1156,113 @@ mod tests {
             evo.is_ok(),
             "ArtifactEvolution QiTransfer::new 不应失败，实际 {:?}",
             evo.err()
+        );
+    }
+
+    // ── plan-layered-equip-v1 P3 — equipped 真元 carrier 守恒求和 pin ──
+
+    fn qi_item(instance_id: u64, spirit_quality: f64, stack_count: u32) -> ItemInstance {
+        ItemInstance {
+            instance_id,
+            template_id: format!("carrier_{instance_id}"),
+            display_name: "carrier".to_string(),
+            grid_w: 1,
+            grid_h: 1,
+            weight: 1.0,
+            rarity: ItemRarity::Common,
+            description: String::new(),
+            stack_count,
+            spirit_quality,
+            durability: 1.0,
+            freshness: None,
+            mineral_id: None,
+            charges: None,
+            forge_quality: None,
+            forge_color: None,
+            forge_side_effects: Vec::new(),
+            forge_achieved_tier: None,
+            alchemy: None,
+            lingering_owner_qi: None,
+        }
+    }
+
+    fn bare_inventory() -> PlayerInventory {
+        PlayerInventory {
+            revision: InventoryRevision(1),
+            containers: Vec::new(),
+            equipped: HashMap::new(),
+            hotbar: Default::default(),
+            bone_coins: 0,
+            max_weight: 45.0,
+        }
+    }
+
+    #[test]
+    fn inventory_qi_sums_two_carriers_in_same_worn_stack() {
+        // P3 守恒 pin：同槽 worn 两件 carrier（各带真元）→ inventory_qi = 两件 item_qi 之和。
+        // 分层前 .values().map(item_qi) 只会取 SlotContents（编译红或丢件）；
+        // 分层后 flat_map(worn.chain(held)) 保证同槽多件不漏。
+        let a = qi_item(1, 0.6, 1); // item_qi = 0.6 × 1 = 0.6
+        let b = qi_item(2, 0.3, 2); // item_qi = 0.3 × 2 = 0.6
+        let mut inv = bare_inventory();
+        inv.equipped.insert(
+            EQUIP_SLOT_CHEST.to_string(),
+            SlotContents {
+                worn: vec![a.clone(), b.clone()],
+                held: None,
+            },
+        );
+
+        let expected = item_qi(&a) + item_qi(&b);
+        assert_eq!(
+            inventory_qi(&inv),
+            expected,
+            "同槽 worn 两件 carrier 真元应为两件 item_qi 之和 ({} + {} = {expected})，分层求和不得漏件",
+            item_qi(&a),
+            item_qi(&b)
+        );
+    }
+
+    #[test]
+    fn inventory_qi_includes_held_carrier_after_imprint() {
+        // P3 carrier 守恒 pin（blocker）：手持 carrier 充能后 inventory_qi = held carrier item_qi。
+        // carrier imprint 写在手持件的 spirit_quality 上（carrier.rs 走 ledger 守恒）；
+        // inventory_qi 的 held 求和（chain(s.held.iter())）必须纳入该件，否则账实不符。
+        let charged = qi_item(7, 0.9, 1); // 充能后 spirit_quality=0.9 → item_qi=0.9
+        let mut inv = bare_inventory();
+        inv.equipped.insert(
+            EQUIP_SLOT_MAIN_HAND.to_string(),
+            SlotContents::held_single(charged.clone()),
+        );
+
+        assert_eq!(
+            inventory_qi(&inv),
+            item_qi(&charged),
+            "手持 carrier 充能后 inventory_qi 必须等于该 held 件 item_qi（{}），held 求和不得漏",
+            item_qi(&charged)
+        );
+    }
+
+    #[test]
+    fn inventory_qi_counts_both_worn_and_held_in_one_slot() {
+        // worn + held 共存槽：两侧都纳入求和（worn.chain(held)）。
+        // 注：身体槽 held 恒空、手槽 worn 恒空是上层校验约束；此处只验 inventory_qi 求和不漏任一侧。
+        let worn_a = qi_item(1, 0.5, 1); // 0.5
+        let held_b = qi_item(2, 0.4, 1); // 0.4
+        let mut inv = bare_inventory();
+        inv.equipped.insert(
+            EQUIP_SLOT_CHEST.to_string(),
+            SlotContents {
+                worn: vec![worn_a.clone()],
+                held: Some(held_b.clone()),
+            },
+        );
+
+        let expected = item_qi(&worn_a) + item_qi(&held_b);
+        assert_eq!(
+            inventory_qi(&inv),
+            expected,
+            "槽内 worn + held 两件都应计入 inventory_qi ({expected})"
         );
     }
 }
