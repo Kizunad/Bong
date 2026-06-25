@@ -690,6 +690,7 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
             })
         }
         RedisOutbound::PseudoVeinDissipate(evt) => {
+            evt.validate().map_err(ValidationError::new)?;
             let payload = serde_json::to_string(&evt).map_err(|error| {
                 ValidationError::new(format!(
                     "failed to serialize PseudoVeinDissipateEventV1: {error}"
@@ -4638,6 +4639,33 @@ mod redis_bridge_tests {
             }
             other => panic!("expected publish, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn rejects_pseudo_vein_dissipate_with_too_many_storm_anchors() {
+        let result = prepare_outbound_command(RedisOutbound::PseudoVeinDissipate(
+            PseudoVeinDissipateEventV1 {
+                v: 1,
+                id: "pseudo_vein_42".to_string(),
+                center_xz: [1280.0, -640.0],
+                storm_anchors: vec![
+                    [1380.0, -650.0],
+                    [1160.0, -720.0],
+                    [1270.0, -600.0],
+                    [1220.0, -690.0],
+                ],
+                storm_duration_ticks: 9000,
+                qi_redistribution: crate::schema::pseudo_vein::PseudoVeinQiRedistributionV1 {
+                    refill_to_hungry_ring: 0.7,
+                    collected_by_tiandao: 0.3,
+                },
+            },
+        ));
+
+        assert!(
+            result.is_err(),
+            "TypeScript PseudoVeinDissipateEventV1 storm_anchors maxItems=3，4 个锚点应被 Rust outbound 校验拒绝"
+        );
     }
 
     #[test]
