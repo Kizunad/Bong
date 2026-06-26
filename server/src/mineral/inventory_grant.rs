@@ -20,7 +20,7 @@ use super::types::MineralRarity;
 use crate::cultivation::components::Cultivation;
 use crate::inventory::{
     find_free_slot, find_mergeable_stack, InventoryInstanceIdAllocator, ItemInstance, ItemRarity,
-    PlacedItemState, PlayerInventory, MAIN_PACK_CONTAINER_ID,
+    PlacedItemState, PlayerInventory, BODY_POCKET_CONTAINER_ID,
 };
 use crate::network::inventory_snapshot_emit::send_inventory_snapshot_to_client;
 use crate::player::state::PlayerState;
@@ -64,32 +64,25 @@ pub fn consume_mineral_drops_into_inventory(
             continue;
         };
 
-        let Some(main_pack) = inventory
-            .containers
-            .iter_mut()
-            .find(|c| c.id == MAIN_PACK_CONTAINER_ID)
-        else {
-            tracing::warn!(
-                target: "bong::mineral",
-                "player {:?} missing main_pack container — mineral drop lost",
-                event.player
-            );
-            continue;
-        };
-
         let template_id = format!("mineral_{}", entry.canonical_name);
-        if let Some(placed) =
-            find_mergeable_stack(main_pack, template_id.as_str(), MINERAL_MAX_STACK_COUNT)
+        if let Some(container_index) =
+            find_mineral_merge_container_index(&inventory, template_id.as_str())
         {
+            let placed = find_mergeable_stack(
+                &mut inventory.containers[container_index],
+                template_id.as_str(),
+                MINERAL_MAX_STACK_COUNT,
+            )
+            .expect("container index was selected from an existing mergeable stack");
             placed.instance.stack_count = placed
                 .instance
                 .stack_count
                 .saturating_add(DEFAULT_DROP_STACK_COUNT);
         } else {
-            let Some((row, col)) = find_free_slot(main_pack, 1, 1) else {
+            let Some((container_index, row, col)) = find_mineral_free_slot(&inventory) else {
                 tracing::warn!(
                     target: "bong::mineral",
-                    "player {:?} main_pack is full — mineral drop {} lost",
+                    "player {:?} inventory has no free carried container slot — mineral drop {} lost",
                     event.player,
                     entry.canonical_name
                 );
@@ -113,7 +106,9 @@ pub fn consume_mineral_drops_into_inventory(
                 event.position,
                 profile_registry.as_deref(),
             );
-            main_pack.items.push(PlacedItemState { row, col, instance });
+            inventory.containers[container_index]
+                .items
+                .push(PlacedItemState { row, col, instance });
         }
 
         inventory.revision.0 = inventory.revision.0.saturating_add(1);
@@ -141,6 +136,54 @@ pub fn consume_mineral_drops_into_inventory(
             );
         }
     }
+}
+
+fn mineral_container_order(inventory: &PlayerInventory) -> Vec<usize> {
+    // 默认运行时背包已是 `pack_<instance_id>`，不再保证存在旧 `main_pack`。
+    let mut order: Vec<usize> = inventory
+        .containers
+        .iter()
+        .enumerate()
+        .filter_map(|(index, container)| {
+            (container.id != BODY_POCKET_CONTAINER_ID).then_some(index)
+        })
+        .collect();
+    order.extend(
+        inventory
+            .containers
+            .iter()
+            .enumerate()
+            .filter_map(|(index, container)| {
+                (container.id == BODY_POCKET_CONTAINER_ID).then_some(index)
+            }),
+    );
+    order
+}
+
+fn find_mineral_merge_container_index(
+    inventory: &PlayerInventory,
+    template_id: &str,
+) -> Option<usize> {
+    if MINERAL_MAX_STACK_COUNT <= 1 {
+        return None;
+    }
+
+    mineral_container_order(inventory)
+        .into_iter()
+        .find(|&index| {
+            inventory.containers[index].items.iter().any(|placed| {
+                placed.instance.template_id == template_id
+                    && placed.instance.stack_count < MINERAL_MAX_STACK_COUNT
+            })
+        })
+}
+
+fn find_mineral_free_slot(inventory: &PlayerInventory) -> Option<(usize, u8, u8)> {
+    mineral_container_order(inventory)
+        .into_iter()
+        .find_map(|index| {
+            find_free_slot(&inventory.containers[index], 1, 1).map(|(r, c)| (index, r, c))
+        })
 }
 
 fn build_mineral_item_instance(
@@ -240,7 +283,9 @@ mod tests {
     use super::super::types::MineralId;
     use super::*;
     use crate::inventory::{
-        ContainerState, InventoryRevision, PlayerInventory as Inv, MAIN_PACK_CONTAINER_ID as MAIN,
+        instantiate_inventory_from_loadout, load_default_loadout, load_item_registry,
+        ContainerState, InventoryRevision, PlayerInventory as Inv, BODY_POCKET_CONTAINER_ID,
+        MAIN_PACK_CONTAINER_ID as MAIN,
     };
     use crate::shelflife::DecayTrack;
     use std::collections::HashMap;
@@ -262,6 +307,41 @@ mod tests {
             bone_coins: 0,
             max_weight: 10.0,
             triggered_treasures: Vec::new(),
+        }
+    }
+
+    fn inventory_with_containers(containers: Vec<ContainerState>) -> Inv {
+        Inv {
+            revision: InventoryRevision(0),
+            containers,
+            equipped: HashMap::new(),
+            hotbar: Default::default(),
+            bone_coins: 0,
+            max_weight: 10.0,
+            triggered_treasures: Vec::new(),
+        }
+    }
+
+    fn placed_mineral(
+        mineral_id: MineralId,
+        instance_id: u64,
+        stack_count: u32,
+        row: u8,
+        col: u8,
+    ) -> PlacedItemState {
+        let reg = build_default_registry();
+        let entry = reg.get(mineral_id).expect("test mineral should exist");
+        PlacedItemState {
+            row,
+            col,
+            instance: build_mineral_item_instance(
+                instance_id,
+                entry,
+                stack_count,
+                0,
+                BlockPos::new(0, 64, 0),
+                None,
+            ),
         }
     }
 
@@ -368,6 +448,244 @@ mod tests {
         assert_eq!(xp.char_entity, player);
         assert_eq!(xp.skill, SkillId::Mineral);
         assert_eq!(xp.amount, 1);
+    }
+
+    #[test]
+    fn drop_event_with_default_runtime_pack_without_main_pack_is_not_lost() {
+        let item_registry = load_item_registry().expect("item registry should load");
+        let loadout = load_default_loadout(&item_registry).expect("default loadout should load");
+        let mut loadout_allocator = InventoryInstanceIdAllocator::new(3000);
+        let inventory =
+            instantiate_inventory_from_loadout(&loadout, &mut loadout_allocator, &item_registry)
+                .expect("default loadout should instantiate");
+        assert!(
+            inventory.containers.iter().all(|c| c.id != MAIN),
+            "current default runtime inventory should no longer contain `{MAIN}`; ids={:?}",
+            inventory
+                .containers
+                .iter()
+                .map(|c| c.id.as_str())
+                .collect::<Vec<_>>()
+        );
+        let runtime_pack_id = inventory
+            .containers
+            .iter()
+            .find(|c| c.id != BODY_POCKET_CONTAINER_ID)
+            .map(|c| c.id.clone())
+            .expect("default loadout should derive a runtime pack_<instance_id> container");
+
+        let mut app = App::new();
+        app.add_event::<MineralDropEvent>();
+        app.add_event::<SkillXpGain>();
+        app.insert_resource(build_default_registry());
+        app.insert_resource(crate::shelflife::build_default_registry());
+        app.insert_resource(MineralTickClock::default());
+        app.insert_resource(InventoryInstanceIdAllocator::new(9000));
+
+        let player = app.world_mut().spawn(inventory).id();
+        app.add_systems(Update, consume_mineral_drops_into_inventory);
+
+        app.world_mut()
+            .resource_mut::<Events<MineralDropEvent>>()
+            .send(MineralDropEvent {
+                player,
+                mineral_id: MineralId::FanTie,
+                position: BlockPos::new(1, 64, 2),
+            });
+
+        app.update();
+
+        let inv = app.world().get::<Inv>(player).expect("player inventory");
+        let runtime_pack = inv
+            .containers
+            .iter()
+            .find(|c| c.id == runtime_pack_id)
+            .expect("runtime pack container should still exist");
+        assert!(
+            runtime_pack
+                .items
+                .iter()
+                .any(|placed| placed.instance.mineral_id.as_deref() == Some("fan_tie")),
+            "矿物掉落必须进入默认运行时背包 `{runtime_pack_id}`，不能因缺 `{MAIN}` 静默丢失；\
+             当前 `{runtime_pack_id}` items={:?}",
+            runtime_pack
+                .items
+                .iter()
+                .map(|placed| placed.instance.template_id.as_str())
+                .collect::<Vec<_>>()
+        );
+
+        let xp_events = app.world().resource::<Events<SkillXpGain>>();
+        assert!(
+            xp_events.iter_current_update_events().next().is_some(),
+            "成功入包的矿物掉落应继续发 SkillXpGain；若缺 `{MAIN}` 直接 continue 会漏发"
+        );
+    }
+
+    #[test]
+    fn drop_event_falls_back_to_body_pocket_when_it_is_the_only_carried_container() {
+        let mut app = App::new();
+        app.add_event::<MineralDropEvent>();
+        app.add_event::<SkillXpGain>();
+        app.insert_resource(build_default_registry());
+        app.insert_resource(crate::shelflife::build_default_registry());
+        app.insert_resource(MineralTickClock::default());
+        app.insert_resource(InventoryInstanceIdAllocator::default());
+
+        let player = app
+            .world_mut()
+            .spawn(inventory_with_containers(vec![ContainerState {
+                id: BODY_POCKET_CONTAINER_ID.to_string(),
+                name: BODY_POCKET_CONTAINER_ID.to_string(),
+                rows: 1,
+                cols: 1,
+                items: Vec::new(),
+                owner_instance_id: None,
+            }]))
+            .id();
+        app.add_systems(Update, consume_mineral_drops_into_inventory);
+
+        app.world_mut()
+            .resource_mut::<Events<MineralDropEvent>>()
+            .send(MineralDropEvent {
+                player,
+                mineral_id: MineralId::FanTie,
+                position: BlockPos::new(1, 64, 2),
+            });
+
+        app.update();
+
+        let inv = app.world().get::<Inv>(player).expect("player inventory");
+        let body_pocket = inv
+            .containers
+            .iter()
+            .find(|c| c.id == BODY_POCKET_CONTAINER_ID)
+            .expect("body pocket should remain present");
+        assert_eq!(
+            body_pocket.items.len(),
+            1,
+            "只有 body_pocket 可用时矿物应落入口袋，而不是因缺 `{MAIN}` 丢失"
+        );
+        assert_eq!(body_pocket.items[0].instance.template_id, "mineral_fan_tie");
+        assert_eq!(inv.revision.0, 1);
+
+        let xp_events = app.world().resource::<Events<SkillXpGain>>();
+        assert!(
+            xp_events.iter_current_update_events().next().is_some(),
+            "body_pocket 兜底成功入包后仍应发 SkillXpGain"
+        );
+    }
+
+    #[test]
+    fn drop_event_merges_existing_stack_in_body_pocket_when_no_pack_exists() {
+        let mut app = App::new();
+        app.add_event::<MineralDropEvent>();
+        app.add_event::<SkillXpGain>();
+        app.insert_resource(build_default_registry());
+        app.insert_resource(crate::shelflife::build_default_registry());
+        app.insert_resource(MineralTickClock::default());
+        app.insert_resource(InventoryInstanceIdAllocator::default());
+
+        let player = app
+            .world_mut()
+            .spawn(inventory_with_containers(vec![ContainerState {
+                id: BODY_POCKET_CONTAINER_ID.to_string(),
+                name: BODY_POCKET_CONTAINER_ID.to_string(),
+                rows: 1,
+                cols: 1,
+                items: vec![placed_mineral(MineralId::FanTie, 42, 1, 0, 0)],
+                owner_instance_id: None,
+            }]))
+            .id();
+        app.add_systems(Update, consume_mineral_drops_into_inventory);
+
+        app.world_mut()
+            .resource_mut::<Events<MineralDropEvent>>()
+            .send(MineralDropEvent {
+                player,
+                mineral_id: MineralId::FanTie,
+                position: BlockPos::new(2, 64, 2),
+            });
+
+        app.update();
+
+        let inv = app.world().get::<Inv>(player).expect("player inventory");
+        let body_pocket = inv
+            .containers
+            .iter()
+            .find(|c| c.id == BODY_POCKET_CONTAINER_ID)
+            .expect("body pocket should remain present");
+        assert_eq!(
+            body_pocket.items.len(),
+            1,
+            "body_pocket 已有同矿物堆时应 merge，不应因无空槽丢失"
+        );
+        assert_eq!(body_pocket.items[0].instance.stack_count, 2);
+        assert_eq!(inv.revision.0, 1);
+    }
+
+    #[test]
+    fn drop_event_with_no_merge_target_or_free_slot_does_not_mutate_inventory_or_emit_xp() {
+        let mut app = App::new();
+        app.add_event::<MineralDropEvent>();
+        app.add_event::<SkillXpGain>();
+        app.insert_resource(build_default_registry());
+        app.insert_resource(crate::shelflife::build_default_registry());
+        app.insert_resource(MineralTickClock::default());
+        app.insert_resource(InventoryInstanceIdAllocator::default());
+
+        let mut inventory = inventory_with_containers(vec![
+            ContainerState {
+                id: "pack_42".to_string(),
+                name: "pack_42".to_string(),
+                rows: 1,
+                cols: 1,
+                items: vec![placed_mineral(MineralId::LingTie, 100, 1, 0, 0)],
+                owner_instance_id: Some(42),
+            },
+            ContainerState {
+                id: BODY_POCKET_CONTAINER_ID.to_string(),
+                name: BODY_POCKET_CONTAINER_ID.to_string(),
+                rows: 1,
+                cols: 1,
+                items: vec![placed_mineral(MineralId::SuiTie, 101, 1, 0, 0)],
+                owner_instance_id: None,
+            },
+        ]);
+        inventory.revision = InventoryRevision(7);
+        let player = app.world_mut().spawn(inventory).id();
+        app.add_systems(Update, consume_mineral_drops_into_inventory);
+
+        app.world_mut()
+            .resource_mut::<Events<MineralDropEvent>>()
+            .send(MineralDropEvent {
+                player,
+                mineral_id: MineralId::FanTie,
+                position: BlockPos::new(3, 64, 2),
+            });
+
+        app.update();
+
+        let inv = app.world().get::<Inv>(player).expect("player inventory");
+        assert_eq!(
+            inv.revision.0, 7,
+            "全容器满且无可 merge 堆时应 skip，不应递增 revision"
+        );
+        assert!(
+            inv.containers.iter().all(|container| {
+                container.items.len() == 1
+                    && container
+                        .items
+                        .iter()
+                        .all(|placed| placed.instance.template_id != "mineral_fan_tie")
+            }),
+            "无可用槽位时 fan_tie 掉落不能被写入任何容器"
+        );
+        let xp_events = app.world().resource::<Events<SkillXpGain>>();
+        assert!(
+            xp_events.iter_current_update_events().next().is_none(),
+            "掉落未入包时不应发送 SkillXpGain"
+        );
     }
 
     #[test]
