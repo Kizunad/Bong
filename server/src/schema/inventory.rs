@@ -247,6 +247,13 @@ pub struct ContainerSnapshotV1 {
     pub rows: u8,
     #[serde(deserialize_with = "deserialize_container_extent")]
     pub cols: u8,
+    /// plan-tarkov-backpack-v1 P3（决议 #4）— 该容器归属的穿戴背包件 instance_id，下发 client。
+    ///
+    /// 仅 `pack_<id>` 派生容器有值（`body_pocket` / 其它静态容器为 `None`，`skip_serializing_if`
+    /// 整体省略键）。`serde(default)` 容旧 sample（旧档/旧 client 无此字段读为 `None`），与
+    /// `deny_unknown_fields` 兼容（新增字段已在 struct 内）。client 双击穿戴背包件时直读 owner，免前缀解析。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner_instance_id: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -802,14 +809,35 @@ mod tests {
         assert_eq!(snapshot.placed_items.len(), 3);
         assert_eq!(snapshot.placed_items[0].item.item_id, "starter_talisman");
         // pack_1007 套包容器存在且 owner 形态合法（pack_<数字> 前缀）。
-        assert!(
-            snapshot.containers.iter().any(|c| c.id == "pack_1007"),
-            "sample 应含动态 pack_1007 套包容器；实际 ids = {:?}",
-            snapshot
-                .containers
-                .iter()
-                .map(|c| &c.id)
-                .collect::<Vec<_>>()
+        let pack = snapshot
+            .containers
+            .iter()
+            .find(|c| c.id == "pack_1007")
+            .unwrap_or_else(|| {
+                panic!(
+                    "sample 应含动态 pack_1007 套包容器；实际 ids = {:?}",
+                    snapshot
+                        .containers
+                        .iter()
+                        .map(|c| &c.id)
+                        .collect::<Vec<_>>()
+                )
+            });
+        // plan-tarkov-backpack-v1 P3（决议 #4）— pack_<id> 容器下发 owner_instance_id。
+        assert_eq!(
+            pack.owner_instance_id,
+            Some(1007),
+            "pack_1007 应携带 owner_instance_id=1007（穿戴 worn_grass_pouch 的 instance）"
+        );
+        // 静态容器无 owner（None），不下发该键。
+        let main_pack = snapshot
+            .containers
+            .iter()
+            .find(|c| c.id == "main_pack")
+            .expect("sample 应含 main_pack 静态容器");
+        assert_eq!(
+            main_pack.owner_instance_id, None,
+            "main_pack 非 pack_ 前缀，owner_instance_id 应为 None"
         );
         assert!(
             snapshot
@@ -852,6 +880,76 @@ mod tests {
         value["placed_items"][0]["item"]["attunement"] = json!(0.8);
 
         assert!(serde_json::from_value::<InventorySnapshotV1>(value).is_err());
+    }
+
+    // plan-tarkov-backpack-v1 P3（决议 #4）— ContainerSnapshotV1.owner_instance_id 含/缺字段两路兼容。
+    #[test]
+    fn container_snapshot_deserializes_with_owner_instance_id() {
+        let value = json!({
+            "id": "pack_1007",
+            "name": "破草包",
+            "rows": 3,
+            "cols": 3,
+            "owner_instance_id": 1007
+        });
+        let container: ContainerSnapshotV1 = serde_json::from_value(value)
+            .expect("含 owner_instance_id 的容器 snapshot 应反序列化成功");
+        assert_eq!(
+            container.owner_instance_id,
+            Some(1007),
+            "含字段时 owner_instance_id 应解析为 Some(1007)"
+        );
+    }
+
+    #[test]
+    fn container_snapshot_deserializes_without_owner_instance_id_legacy() {
+        // 旧 sample / 旧 client 无此字段：serde(default) 应读为 None（向后兼容，不撞 deny_unknown_fields）。
+        let value = json!({
+            "id": "main_pack",
+            "name": "主背包",
+            "rows": 5,
+            "cols": 7
+        });
+        let container: ContainerSnapshotV1 = serde_json::from_value(value)
+            .expect("缺 owner_instance_id 的旧容器 snapshot 应反序列化成功（serde default）");
+        assert_eq!(
+            container.owner_instance_id, None,
+            "缺字段时 owner_instance_id 应默认为 None"
+        );
+    }
+
+    #[test]
+    fn container_snapshot_none_owner_omits_key_on_serialize() {
+        // skip_serializing_if：owner_instance_id=None 时序列化应整体省略键（不输出 null）。
+        let container = ContainerSnapshotV1 {
+            id: "body_pocket".to_string(),
+            name: "贴身口袋".to_string(),
+            rows: 1,
+            cols: 4,
+            owner_instance_id: None,
+        };
+        let value = serde_json::to_value(&container).expect("容器 snapshot 应序列化");
+        assert!(
+            value.get("owner_instance_id").is_none(),
+            "owner_instance_id=None 时应省略键，实际 value = {value}"
+        );
+    }
+
+    #[test]
+    fn container_snapshot_some_owner_serializes_key() {
+        let container = ContainerSnapshotV1 {
+            id: "pack_42".to_string(),
+            name: "破草包".to_string(),
+            rows: 3,
+            cols: 3,
+            owner_instance_id: Some(42),
+        };
+        let value = serde_json::to_value(&container).expect("容器 snapshot 应序列化");
+        assert_eq!(
+            value.get("owner_instance_id"),
+            Some(&json!(42)),
+            "owner_instance_id=Some(42) 应输出键值 42"
+        );
     }
 
     #[test]

@@ -148,6 +148,14 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     private FlowLayout lootPanelLayout;
     private LootContainerStateStore.Listener lootStoreListener;
 
+    // plan-tarkov-backpack-v1 P3 — 穿戴背包件内含物视图（双击装备槽内背包件打开，挂入 outerRow）。
+    private WornContainerPanel wornContainerPanel;
+    private FlowLayout wornContainerPanelLayout;
+    // 双击计时（owo 无 clickCount，在 Screen 级 mouseClicked() 手算）：同槽两击 ≤ 窗口 → 双击。
+    private static final long DOUBLE_CLICK_WINDOW_MS = 400L;
+    private long lastEquipClickTimeMs = 0L;
+    private EquipSlotType lastEquipClickSlot = null;
+
     // Block picker panel (plan-worldgen-v4 P5 §8.1#5 — dev-only 方块审阅浮窗)
     private BlockPickerPanel blockPickerPanel;
     private FlowLayout blockPickerPanelLayout;
@@ -229,6 +237,8 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             LootContainerStateStore.removeListener(lootStoreListener);
             lootStoreListener = null;
         }
+        // plan-tarkov-backpack-v1 P3（交付物 #6）—— 解绑 WornContainerPanel 的 InventoryStateStore 订阅。
+        unmountWornContainerPanel();
         unmountBlockPickerPanel();
         super.removed();
     }
@@ -1636,6 +1646,25 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     // 镜像 server `worn_pack_instance_from_container_id`（inventory/mod.rs:3795）：
     // 仅 `pack_<数字>` 形态解析出 owner instance id；body_pocket / pack_grass_pouch（占位，
     // 非数字后缀）/ main_pack 等返回 empty（不视作可门控的套包容器，放行）。
+    /**
+     * plan-tarkov-backpack-v1 P3（交付物 #2）—— 装备槽双击判定（owo 无 clickCount，Screen 级手算）。
+     *
+     * <p>当前点击的槽与上次点击同一槽、且距上次点击 ≤ {@link #DOUBLE_CLICK_WINDOW_MS} 时视为双击。
+     * 不同槽、超窗、首次点击（lastSlot 为 null）均非双击。纯计时逻辑，抽出供单测覆盖状态转换。</p>
+     *
+     * @param lastSlot     上次点击的装备槽（首次为 null）
+     * @param lastTimeMs   上次点击时间戳（ms）
+     * @param currentSlot  本次点击的装备槽
+     * @param nowMs        本次点击时间戳（ms）
+     */
+    static boolean isEquipDoubleClick(
+            EquipSlotType lastSlot, long lastTimeMs, EquipSlotType currentSlot, long nowMs) {
+        if (currentSlot == null || lastSlot != currentSlot) {
+            return false;
+        }
+        return (nowMs - lastTimeMs) <= DOUBLE_CLICK_WINDOW_MS;
+    }
+
     static java.util.OptionalLong parseWornPackInstance(String containerId) {
         if (containerId == null || !containerId.startsWith("pack_")) {
             return java.util.OptionalLong.empty();
@@ -1924,6 +1953,21 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 var eq = equipPanel.slotAtScreen(mouseX, mouseY);
                 InventoryItem item = eq == null ? null : eq.representative();
                 if (eq != null && item != null) {
+                    // plan-tarkov-backpack-v1 P3（交付物 #2）—— 双击穿戴的背包件 → 打开其内含物视图。
+                    // owo 无 clickCount：在 Screen 级手算（同槽两击 ≤ DOUBLE_CLICK_WINDOW_MS 视为双击）。
+                    // 非 shift、栈顶件是容器（isContainer）时拦截，打开 pack_<owner> 视图；否则按单击拾取。
+                    long now = System.currentTimeMillis();
+                    boolean doubleClick = !shift && isEquipDoubleClick(
+                        lastEquipClickSlot, lastEquipClickTimeMs, eq.slotType(), now);
+                    lastEquipClickTimeMs = now;
+                    lastEquipClickSlot = eq.slotType();
+                    if (doubleClick && InventoryEquipRules.isContainer(item)) {
+                        // 重置计时，避免三连击再次触发；打开后吞掉本次点击（不拾取背包件）。
+                        lastEquipClickTimeMs = 0L;
+                        lastEquipClickSlot = null;
+                        openWornContainerPanel(item, eq.slotType());
+                        return true;
+                    }
                     if (shift) quickUnequipToGrid(eq.slotType(), item);
                     else {
                         popSlotTop(eq); // 乐观弹出栈顶/held（server 快照为权威）
@@ -2048,6 +2092,27 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                                 dragState.pickup(item, lootPanel.extContainerId(),
                                     anchor.row(), anchor.col());
                                 lg.remove(item);
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // plan-tarkov-backpack-v1 P3（交付物 #5）—— 从穿戴背包件内含物 grid 拾取（拖出）。
+            // 来源 = GRID（containerId = pack_<id>），松手落位走 sendInventoryMove（见 attemptDrop）。
+            if (wornContainerPanel != null && !wornContainerPanel.isClosed()) {
+                BackpackGridPanel wg = wornContainerPanel.grid();
+                if (wg != null && wg.containsPoint(mouseX, mouseY)) {
+                    var pos = wg.screenToGrid(mouseX, mouseY);
+                    if (pos != null) {
+                        InventoryItem item = wg.itemAt(pos.row(), pos.col());
+                        if (item != null && dragState.phase() == DragState.Phase.IDLE) {
+                            var anchor = wg.anchorOf(item);
+                            if (anchor != null) {
+                                dragState.pickup(item, wg.containerId(),
+                                    anchor.row(), anchor.col());
+                                wg.remove(item);
                                 return true;
                             }
                         }
@@ -2318,6 +2383,33 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                         clearAllHighlights();
                         return;
                     }
+                }
+            }
+        }
+
+        // plan-tarkov-backpack-v1 P3（交付物 #4）—— 拖入穿戴背包件内含物视图。
+        // 发包硬约束：走 dispatchMoveIntent → sendInventoryMove（ContainerLoc(pack_<id>,row,col)），
+        // 严禁 sendExternalContainerMove（loot 专用）。落位前同样过 isWornPackContainerDroppable 门控
+        // （owner 背包件必须仍穿戴在某身体槽 worn 层）。放在 loot 分支后、activeGrid 分支前。
+        if (wornContainerPanel != null && !wornContainerPanel.isClosed()) {
+            BackpackGridPanel wg = wornContainerPanel.grid();
+            if (wg != null && wg.containsPoint(mouseX, mouseY)) {
+                var pos = wg.screenToGrid(mouseX, mouseY);
+                if (pos != null && wg.canPlace(dragged, pos.row(), pos.col())) {
+                    if (!isWornPackContainerDroppable(
+                            InventoryStateStore.snapshot(), wg.containerId())) {
+                        showActionToast("背包未穿戴，无法放入内含物", ACTION_TOAST_WARN);
+                        returnDragToSource();
+                        clearAllHighlights();
+                        return;
+                    }
+                    wg.place(dragged, pos.row(), pos.col());
+                    dragState.drop();
+                    dispatchMoveIntent(dragged, fromLoc,
+                        new com.bong.client.network.ClientRequestProtocol.ContainerLoc(
+                            wg.containerId(), pos.row(), pos.col()));
+                    clearAllHighlights();
+                    return;
                 }
             }
         }
@@ -3734,6 +3826,45 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         if (lootPanelLayout != null && outerRow != null) {
             outerRow.removeChild(lootPanelLayout);
             lootPanelLayout = null;
+        }
+    }
+
+    // ==================== Worn container panel mount/unmount (P3) ============
+
+    /**
+     * plan-tarkov-backpack-v1 P3（交付物 #2/#3）—— 打开穿戴背包件的内含物视图。
+     *
+     * <p>由双击装备槽内的容器件触发。owner instance_id 来自被双击件，容器 id 约定为
+     * {@code pack_<instance_id>}（与 server {@code container_id_for_worn_pack} 一致）。已挂同一容器
+     * 则忽略；切换到另一个背包件则先卸旧再挂新。挂在 outerRow 的 discardStrip 之前（同 loot）。</p>
+     */
+    private void openWornContainerPanel(InventoryItem packItem, EquipSlotType slotType) {
+        if (packItem == null || outerRow == null) return;
+        String containerId = "pack_" + packItem.instanceId();
+        // 已挂同一容器：无需重建（listener 已在刷新）。
+        if (wornContainerPanel != null && !wornContainerPanel.isClosed()
+                && containerId.equals(wornContainerPanel.containerId())) {
+            return;
+        }
+        unmountWornContainerPanel(); // 切换背包件 / 清理陈旧面板
+        wornContainerPanel = new WornContainerPanel(containerId, this.model);
+        wornContainerPanelLayout = wornContainerPanel.build();
+        int discardIdx = outerRow.children().indexOf(discardStrip);
+        if (discardIdx >= 0) {
+            outerRow.child(discardIdx, wornContainerPanelLayout);
+        } else {
+            outerRow.child(wornContainerPanelLayout);
+        }
+    }
+
+    private void unmountWornContainerPanel() {
+        if (wornContainerPanel != null) {
+            wornContainerPanel.dispose();
+            wornContainerPanel = null;
+        }
+        if (wornContainerPanelLayout != null && outerRow != null) {
+            outerRow.removeChild(wornContainerPanelLayout);
+            wornContainerPanelLayout = null;
         }
     }
 

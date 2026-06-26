@@ -20,17 +20,32 @@ public final class InventoryModel {
     public static final String BODY_POCKET_CONTAINER_ID = "body_pocket";
     public static final String BACK_PACK_CONTAINER_ID = "back_pack";
 
-    /** Container definition — stable id + display name + grid dimensions. */
-    public record ContainerDef(String id, String name, int rows, int cols) {
+    /**
+     * Container definition — stable id + display name + grid dimensions.
+     *
+     * <p>plan-tarkov-backpack-v1 P3（决议 #4）：{@code ownerInstanceId} = 该容器归属的穿戴背包件
+     * instance_id（镜像 server ContainerSnapshotV1.owner_instance_id: Option&lt;u64&gt;）。仅
+     * {@code pack_<id>} 派生容器有值；body_pocket / 静态容器为 {@code null}。client 双击穿戴背包件
+     * 时直读 owner，免前缀解析。</p>
+     */
+    public record ContainerDef(String id, String name, int rows, int cols, Long ownerInstanceId) {
         public ContainerDef {
             Objects.requireNonNull(id, "id");
             Objects.requireNonNull(name, "name");
             if (id.isBlank()) throw new IllegalArgumentException("id must not be blank");
             if (rows <= 0 || cols <= 0) throw new IllegalArgumentException("invalid container size");
+            if (ownerInstanceId != null && ownerInstanceId < 0) {
+                throw new IllegalArgumentException("ownerInstanceId must be >= 0: " + ownerInstanceId);
+            }
+        }
+
+        /** 无 owner 的容器（静态容器 / 旧 client 缺字段）。 */
+        public ContainerDef(String id, String name, int rows, int cols) {
+            this(id, name, rows, cols, null);
         }
 
         public ContainerDef(String name, int rows, int cols) {
-            this(PRIMARY_CONTAINER_ID, name, rows, cols);
+            this(PRIMARY_CONTAINER_ID, name, rows, cols, null);
         }
     }
 
