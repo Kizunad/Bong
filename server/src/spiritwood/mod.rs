@@ -17,8 +17,8 @@ use crate::gathering::session::{
 };
 use crate::gathering::tools::{equipped_gathering_tool, GatheringTargetKind};
 use crate::inventory::{
-    bump_revision, InventoryInstanceIdAllocator, ItemInstance, ItemRegistry, PlacedItemState,
-    PlayerInventory, EQUIP_SLOT_MAIN_HAND, MAIN_PACK_CONTAINER_ID,
+    add_customized_item_to_player_inventory, InventoryInstanceIdAllocator, ItemInstance,
+    ItemRegistry, PlayerInventory, EQUIP_SLOT_MAIN_HAND,
 };
 use crate::network::send_server_data_payload;
 use crate::player::gameplay::GameplayTick;
@@ -558,46 +558,26 @@ fn grant_ling_mu_gun_to_inventory(
     let template = item_registry
         .get(LING_MU_GUN_ITEM_ID)
         .ok_or_else(|| format!("unknown item template `{LING_MU_GUN_ITEM_ID}`"))?;
-    let instance_id = allocator.next_id()?;
     let freshness = profile_registry
         .and_then(|registry| registry.get(&DecayProfileId::new(LING_MU_GUN_PROFILE_ID)))
         .map(|profile| Freshness::new(created_at_tick, LING_MU_INITIAL_QI, profile));
-    let instance = ItemInstance {
-        instance_id,
-        template_id: template.id.clone(),
-        display_name: template.display_name.clone(),
-        grid_w: template.grid_w,
-        grid_h: template.grid_h,
-        weight: template.base_weight,
-        rarity: template.rarity,
-        description: template.description.clone(),
+    let receipt = add_customized_item_to_player_inventory(
+        inventory,
+        item_registry,
+        allocator,
+        &template.id,
         stack_count,
-        spirit_quality: template.spirit_quality_initial,
-        durability: 1.0,
-        freshness,
-        mineral_id: None,
-        charges: None,
-        forge_quality: None,
-        forge_color: None,
-        forge_side_effects: Vec::new(),
-        forge_achieved_tier: None,
-        alchemy: None,
-        lingering_owner_qi: None,
-    };
-    let Some(main_pack) = inventory
-        .containers
-        .iter_mut()
-        .find(|container| container.id == MAIN_PACK_CONTAINER_ID)
-    else {
-        return Err(format!("missing `{MAIN_PACK_CONTAINER_ID}` container"));
-    };
-    main_pack.items.push(PlacedItemState {
-        row: 0,
-        col: 0,
-        instance,
-    });
-    bump_revision(inventory);
-    Ok(instance_id)
+        created_at_tick,
+        |instance| {
+            instance.freshness = freshness.clone();
+        },
+    )?;
+    Ok(receipt
+        .created_instance_ids
+        .first()
+        .copied()
+        .or_else(|| receipt.merged_instance_ids.first().copied())
+        .unwrap_or(receipt.instance_id))
 }
 
 pub fn ling_xia_container_behavior(
@@ -645,7 +625,11 @@ pub const ICE_CELLAR_ITEM_ID: &str = "food.container.ice_cellar";
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::inventory::{ContainerState, InventoryRevision, ItemRarity, SlotContents};
+    use crate::inventory::{
+        instantiate_inventory_from_loadout, load_default_loadout, ContainerState,
+        InventoryRevision, ItemRarity, SlotContents, BODY_POCKET_CONTAINER_ID,
+        MAIN_PACK_CONTAINER_ID,
+    };
     use std::collections::HashMap;
 
     fn item(template_id: &str, instance_id: u64) -> ItemInstance {
@@ -758,6 +742,103 @@ mod tests {
             .expect("ling_mu_gun should be fresh");
         assert_eq!(freshness.profile.as_str(), LING_MU_GUN_PROFILE_ID);
         assert_eq!(freshness.created_at_tick, 120);
+    }
+
+    #[test]
+    fn completed_drop_with_default_runtime_pack_without_main_pack_is_not_lost() {
+        let registry = crate::inventory::load_item_registry().expect("item registry should load");
+        let profiles = crate::shelflife::build_default_registry();
+        let loadout = load_default_loadout(&registry).expect("default loadout should load");
+        let mut allocator = InventoryInstanceIdAllocator::new(3_000);
+        let mut inventory = instantiate_inventory_from_loadout(&loadout, &mut allocator, &registry)
+            .expect("default loadout should instantiate");
+        let runtime_pack_id = inventory
+            .containers
+            .iter()
+            .find(|container| container.id != BODY_POCKET_CONTAINER_ID)
+            .map(|container| container.id.clone())
+            .expect("default loadout should create a runtime pack container");
+        assert!(
+            inventory
+                .containers
+                .iter()
+                .all(|container| container.id != MAIN_PACK_CONTAINER_ID),
+            "default loadout no longer creates `{MAIN_PACK_CONTAINER_ID}`; ids={:?}",
+            inventory
+                .containers
+                .iter()
+                .map(|container| container.id.as_str())
+                .collect::<Vec<_>>()
+        );
+
+        grant_ling_mu_gun_to_inventory(
+            &mut inventory,
+            &registry,
+            Some(&profiles),
+            &mut allocator,
+            3,
+            120,
+        )
+        .expect("ling_mu_gun drop should be granted into the runtime carried container");
+
+        let granted = inventory
+            .containers
+            .iter()
+            .flat_map(|container| container.items.iter())
+            .filter(|placed| placed.instance.template_id == LING_MU_GUN_ITEM_ID)
+            .map(|placed| placed.instance.stack_count)
+            .sum::<u32>();
+        assert_eq!(
+            granted,
+            3,
+            "灵木掉落必须进入随身容器，不能因缺 `{MAIN_PACK_CONTAINER_ID}` 静默丢失；\
+             runtime_pack={runtime_pack_id}, containers={:?}",
+            inventory
+                .containers
+                .iter()
+                .map(|container| (&container.id, container.items.len()))
+                .collect::<Vec<_>>()
+        );
+        let runtime_pack = inventory
+            .containers
+            .iter()
+            .find(|container| container.id == runtime_pack_id)
+            .expect("runtime pack should still exist after grant");
+        assert!(
+            runtime_pack
+                .items
+                .iter()
+                .all(|placed| placed.instance.template_id != LING_MU_GUN_ITEM_ID),
+            "默认破草包当前布局没有 1x2 空位，灵木不应硬塞进 runtime_pack；\
+             runtime_pack={runtime_pack_id}, items={:?}",
+            runtime_pack
+                .items
+                .iter()
+                .map(|placed| (&placed.instance.template_id, placed.row, placed.col))
+                .collect::<Vec<_>>()
+        );
+        let body_pocket = inventory
+            .containers
+            .iter()
+            .find(|container| container.id == BODY_POCKET_CONTAINER_ID)
+            .expect("body_pocket should still exist after grant");
+        let body_pocket_granted = body_pocket
+            .items
+            .iter()
+            .filter(|placed| placed.instance.template_id == LING_MU_GUN_ITEM_ID)
+            .map(|placed| placed.instance.stack_count)
+            .sum::<u32>();
+        assert_eq!(
+            body_pocket_granted,
+            3,
+            "默认破草包放不下 1x2 灵木时，掉落应 fallback 到 body_pocket；\
+             runtime_pack={runtime_pack_id}, body_pocket_items={:?}",
+            body_pocket
+                .items
+                .iter()
+                .map(|placed| (&placed.instance.template_id, placed.row, placed.col))
+                .collect::<Vec<_>>()
+        );
     }
 
     #[test]

@@ -1538,73 +1538,93 @@ fn add_item_to_player_inventory_inner(
         .ok_or_else(|| format!("unknown item template id `{template_id}`"))?;
 
     // plan-backpack-equip-v1 P2 — 不再强制要求 main_pack；
-    // 优先找非 body_pocket 的第一个容器（back_pack / main_pack 等），
-    // body_pocket 作为最后兜底。
-    let main_pack_index = inventory
+    // 优先尝试非 body_pocket 容器（pack_<id> / main_pack 等），都放不下再兜底 body_pocket。
+    let mut candidate_indices: Vec<usize> = inventory
         .containers
         .iter()
-        .position(|container| container.id != BODY_POCKET_CONTAINER_ID)
-        .or_else(|| {
-            inventory
-                .containers
-                .iter()
-                .position(|container| container.id == BODY_POCKET_CONTAINER_ID)
+        .enumerate()
+        .filter_map(|(index, container)| {
+            (container.id != BODY_POCKET_CONTAINER_ID).then_some(index)
         })
-        .ok_or_else(|| "player inventory has no containers".to_string())?;
+        .collect();
+    candidate_indices.extend(inventory.containers.iter().enumerate().filter_map(
+        |(index, container)| (container.id == BODY_POCKET_CONTAINER_ID).then_some(index),
+    ));
+    if candidate_indices.is_empty() {
+        return Err("player inventory has no containers".to_string());
+    }
 
     let max_stack_count = template.max_stack_count.max(1);
     let mut merge_probe = runtime_instance_from_template(template, 0, 1, current_tick);
     if let Some(customize_instance) = customize_instance {
         customize_instance(&mut merge_probe);
     }
-    let mut remaining = stack_count;
-    let mut staged = inventory.containers[main_pack_index].clone();
+    let mut selected_index = None;
+    let mut new_stacks = Vec::new();
+    'candidate: for candidate_index in candidate_indices {
+        if !container_accepts_runtime_grant(
+            inventory,
+            registry,
+            &inventory.containers[candidate_index],
+            &merge_probe,
+        ) {
+            continue;
+        }
+        let mut remaining = stack_count;
+        let mut staged = inventory.containers[candidate_index].clone();
 
-    if merge_existing_stacks && max_stack_count > 1 {
-        for placed in staged.items.iter_mut().filter(|placed| {
-            placed.instance.template_id == template.id
-                && stack_identity_matches(&placed.instance, &merge_probe)
-        }) {
-            let available = max_stack_count.saturating_sub(placed.instance.stack_count);
-            let merged = remaining.min(available);
-            placed.instance.stack_count = placed.instance.stack_count.saturating_add(merged);
-            remaining -= merged;
-            if remaining == 0 {
-                break;
+        if merge_existing_stacks && max_stack_count > 1 {
+            for placed in staged.items.iter_mut().filter(|placed| {
+                placed.instance.template_id == template.id
+                    && stack_identity_matches(&placed.instance, &merge_probe)
+            }) {
+                let available = max_stack_count.saturating_sub(placed.instance.stack_count);
+                let merged = remaining.min(available);
+                placed.instance.stack_count = placed.instance.stack_count.saturating_add(merged);
+                remaining -= merged;
+                if remaining == 0 {
+                    break;
+                }
             }
         }
-    }
 
-    let mut new_stacks = Vec::new();
-    while remaining > 0 {
-        let new_stack_count = remaining.min(max_stack_count);
-        let Some((row, col)) = find_free_slot(&staged, template.grid_w, template.grid_h) else {
-            return Err(format!("inventory full: {template_id}"));
-        };
-        let mut staged_instance =
-            runtime_instance_from_template(template, 0, new_stack_count, current_tick);
-        if let Some(customize_instance) = customize_instance {
-            customize_instance(&mut staged_instance);
+        let mut staged_new_stacks = Vec::new();
+        while remaining > 0 {
+            let new_stack_count = remaining.min(max_stack_count);
+            let Some((row, col)) = find_free_slot(&staged, template.grid_w, template.grid_h) else {
+                continue 'candidate;
+            };
+            let mut staged_instance =
+                runtime_instance_from_template(template, 0, new_stack_count, current_tick);
+            if let Some(customize_instance) = customize_instance {
+                customize_instance(&mut staged_instance);
+            }
+            staged.items.push(PlacedItemState {
+                row,
+                col,
+                instance: staged_instance,
+            });
+            staged_new_stacks.push((row, col, new_stack_count));
+            remaining -= new_stack_count;
         }
-        staged.items.push(PlacedItemState {
-            row,
-            col,
-            instance: staged_instance,
-        });
-        new_stacks.push((row, col, new_stack_count));
-        remaining -= new_stack_count;
+        selected_index = Some(candidate_index);
+        new_stacks = staged_new_stacks;
+        break;
     }
+    let Some(chosen_index) = selected_index else {
+        return Err(format!("inventory full: {template_id}"));
+    };
 
     let mut new_instance_ids = Vec::with_capacity(new_stacks.len());
     for _ in 0..new_stacks.len() {
         new_instance_ids.push(allocator.next_id()?);
     }
 
-    let main_pack = &mut inventory.containers[main_pack_index];
+    let target_container = &mut inventory.containers[chosen_index];
     let mut merged_instance_ids = Vec::new();
     let mut remaining = stack_count;
     if merge_existing_stacks && max_stack_count > 1 {
-        for placed in main_pack.items.iter_mut().filter(|placed| {
+        for placed in target_container.items.iter_mut().filter(|placed| {
             placed.instance.template_id == template.id
                 && stack_identity_matches(&placed.instance, &merge_probe)
         }) {
@@ -1633,7 +1653,9 @@ fn add_item_to_player_inventory_inner(
         if let Some(customize_instance) = customize_instance {
             customize_instance(&mut instance);
         }
-        main_pack.items.push(PlacedItemState { row, col, instance });
+        target_container
+            .items
+            .push(PlacedItemState { row, col, instance });
     }
 
     inventory.revision.0 = inventory.revision.0.saturating_add(1);
@@ -1646,6 +1668,21 @@ fn add_item_to_player_inventory_inner(
         created_instance_ids,
         merged_instance_ids,
     })
+}
+
+fn container_accepts_runtime_grant(
+    inventory: &PlayerInventory,
+    registry: &ItemRegistry,
+    container: &ContainerState,
+    item: &ItemInstance,
+) -> bool {
+    let Some(owner_instance_id) = container.owner_instance_id else {
+        return true;
+    };
+
+    worn_container_items(inventory, registry)
+        .find(|(owner, _)| owner.instance_id == owner_instance_id)
+        .is_some_and(|(_, spec)| item_passes_filter(&spec.accept_filter, item, registry))
 }
 
 pub fn find_free_slot(container: &ContainerState, grid_w: u8, grid_h: u8) -> Option<(u8, u8)> {
@@ -7059,6 +7096,190 @@ cols = 4
                 .iter()
                 .map(|p| &p.instance.template_id)
                 .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn runtime_grant_falls_back_to_body_pocket_when_primary_pack_is_full() {
+        let registry =
+            registry_from_templates(vec![test_template("one", ItemCategory::Misc, 1, 1, 1)]);
+        let mut inventory = empty_inventory(1, 1);
+        inventory.containers[0].items.push(PlacedItemState {
+            row: 0,
+            col: 0,
+            instance: make_test_item_instance(77, "filler"),
+        });
+        inventory.containers.push(ContainerState {
+            id: BODY_POCKET_CONTAINER_ID.to_string(),
+            name: "贴身口袋".to_string(),
+            rows: 2,
+            cols: 3,
+            items: Vec::new(),
+            owner_instance_id: None,
+        });
+        let mut allocator = InventoryInstanceIdAllocator::new(100);
+
+        let receipt =
+            add_item_to_player_inventory(&mut inventory, &registry, &mut allocator, "one", 1, 0)
+                .expect("body_pocket should receive runtime grant when primary pack is full");
+
+        assert_eq!(
+            receipt.created_instance_ids,
+            vec![100],
+            "expected runtime grant to create instance 100 because allocator starts at 100 and no stack merge is possible, actual {:?}",
+            receipt.created_instance_ids
+        );
+        assert_eq!(
+            inventory.containers[0].items.len(),
+            1,
+            "expected primary pack to keep only the original filler because it was full, actual items {:?}",
+            inventory.containers[0]
+                .items
+                .iter()
+                .map(|placed| &placed.instance.template_id)
+                .collect::<Vec<_>>()
+        );
+        let body_pocket = inventory
+            .containers
+            .iter()
+            .find(|container| container.id == BODY_POCKET_CONTAINER_ID)
+            .unwrap_or_else(|| {
+                panic!(
+                    "expected `{BODY_POCKET_CONTAINER_ID}` to exist because fallback grants need a final carried container, actual container ids {:?}",
+                    inventory
+                        .containers
+                        .iter()
+                        .map(|container| &container.id)
+                        .collect::<Vec<_>>()
+                )
+            });
+        assert_eq!(
+            body_pocket.items.len(),
+            1,
+            "expected body_pocket to receive the grant because primary pack was full, actual items {:?}",
+            body_pocket
+                .items
+                .iter()
+                .map(|placed| &placed.instance.template_id)
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            body_pocket.items[0].instance.template_id, "one",
+            "expected body_pocket item template to be `one` because that was the granted template, actual `{}`",
+            body_pocket.items[0].instance.template_id
+        );
+    }
+
+    #[test]
+    fn runtime_grant_skips_non_body_pack_when_accept_filter_rejects_item() {
+        let mut rejecting_pack_template =
+            test_template("mineral_pack", ItemCategory::Container, 1, 1, 1);
+        rejecting_pack_template.container_spec = Some(ContainerSpec {
+            rows: 2,
+            cols: 2,
+            weight_capacity: 10.0,
+            equip_slot: EQUIP_SLOT_CHEST.to_string(),
+            durability_cost_per_op: 0.0,
+            attrition_exempt: false,
+            accept_filter: Some(vec![ContainerAcceptFilter::Category(ItemCategory::Mineral)]),
+        });
+        let mut accepting_pack_template =
+            test_template("general_pack", ItemCategory::Container, 1, 1, 1);
+        accepting_pack_template.container_spec = Some(ContainerSpec {
+            rows: 2,
+            cols: 2,
+            weight_capacity: 10.0,
+            equip_slot: EQUIP_SLOT_CHEST.to_string(),
+            durability_cost_per_op: 0.0,
+            attrition_exempt: false,
+            accept_filter: None,
+        });
+        let registry = registry_from_templates(vec![
+            test_template("one", ItemCategory::Misc, 1, 1, 1),
+            rejecting_pack_template,
+            accepting_pack_template,
+        ]);
+        let rejecting_pack_item = make_test_item_instance(10, "mineral_pack");
+        let accepting_pack_item = make_test_item_instance(20, "general_pack");
+        let rejecting_pack_id = container_id_for_worn_pack(rejecting_pack_item.instance_id);
+        let accepting_pack_id = container_id_for_worn_pack(accepting_pack_item.instance_id);
+        let mut inventory = PlayerInventory {
+            triggered_treasures: Vec::new(),
+            revision: InventoryRevision(0),
+            containers: vec![
+                ContainerState {
+                    id: rejecting_pack_id.clone(),
+                    name: "矿物袋".to_string(),
+                    rows: 2,
+                    cols: 2,
+                    items: Vec::new(),
+                    owner_instance_id: Some(rejecting_pack_item.instance_id),
+                },
+                ContainerState {
+                    id: accepting_pack_id.clone(),
+                    name: "通用包".to_string(),
+                    rows: 2,
+                    cols: 2,
+                    items: Vec::new(),
+                    owner_instance_id: Some(accepting_pack_item.instance_id),
+                },
+            ],
+            equipped: HashMap::from([(
+                EQUIP_SLOT_CHEST.to_string(),
+                SlotContents {
+                    worn: vec![rejecting_pack_item, accepting_pack_item],
+                    held: None,
+                },
+            )]),
+            hotbar: Default::default(),
+            bone_coins: 0,
+            max_weight: 99.0,
+        };
+        let mut allocator = InventoryInstanceIdAllocator::new(200);
+
+        let receipt =
+            add_item_to_player_inventory(&mut inventory, &registry, &mut allocator, "one", 1, 0)
+                .expect("general pack should receive runtime grant after filtered pack rejects it");
+
+        assert_eq!(
+            receipt.created_instance_ids,
+            vec![200],
+            "expected grant to create instance 200 in accepting pack because rejecting pack filter only accepts minerals, actual {:?}",
+            receipt.created_instance_ids
+        );
+        let rejecting_pack = inventory
+            .containers
+            .iter()
+            .find(|container| container.id == rejecting_pack_id)
+            .expect("rejecting pack should still exist");
+        assert!(
+            rejecting_pack.items.is_empty(),
+            "expected rejecting pack to stay empty because its accept_filter rejects `one`, actual items {:?}",
+            rejecting_pack
+                .items
+                .iter()
+                .map(|placed| &placed.instance.template_id)
+                .collect::<Vec<_>>()
+        );
+        let accepting_pack = inventory
+            .containers
+            .iter()
+            .find(|container| container.id == accepting_pack_id)
+            .expect("accepting pack should still exist");
+        assert_eq!(
+            accepting_pack.items.len(),
+            1,
+            "expected accepting pack to receive one granted item because it has no accept_filter, actual items {:?}",
+            accepting_pack
+                .items
+                .iter()
+                .map(|placed| &placed.instance.template_id)
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            accepting_pack.items[0].instance.template_id, "one",
+            "expected accepting pack item template to be `one` because that was the granted template, actual `{}`",
+            accepting_pack.items[0].instance.template_id
         );
     }
 
