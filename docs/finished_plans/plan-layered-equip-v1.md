@@ -8,12 +8,12 @@
 
 | 阶段 | 内容 | 状态 | 验收日期 |
 |------|------|------|----------|
-| P0 | 数据模型 + wire schema（equipped → SlotContents{worn:Vec, held:Option}）+ 存档迁移 | ⬜ | YYYY-MM-DD |
-| P1 | 装备校验 + 分层规则（worn 栈 LIFO 仅顶可卸 / held 互斥 / 双手锁对侧手 / 多臂手槽） | ⬜ | YYYY-MM-DD |
-| P2 | 蜕壳流 retarget（伪皮归胸槽 worn 层，v2 + v1 全点）+ 移除 FALSE_SKIN 专槽 | ⬜ | YYYY-MM-DD |
-| P3 | 效果叠加语义（混装各自生效）+ 负重核验 + equipped 真元 carrier 守恒求和 | ⬜ | YYYY-MM-DD |
-| P4 | 客户端面板重构（删行囊 tab + 背包随身体槽 worn 层渲染 + body_pocket 默认容器 tab 第一个 + 删行囊重量条沿用 BottomInfoBar）+ worn 栈叠放渲染 + 法宝激活触发位（灵宝 UI 内） | ⬜ | YYYY-MM-DD |
-| P5 | 容量升级 hook（worn_cap 由常量 → 可升级派生值） | ⬜ | YYYY-MM-DD |
+| P0 | 数据模型 + wire schema（equipped → SlotContents{worn:Vec, held:Option}）+ 存档迁移 | ✅ | 2026-06-26 |
+| P1 | 装备校验 + 分层规则（worn 栈 LIFO 仅顶可卸 / held 互斥 / 双手锁对侧手 / 多臂手槽） | ✅ | 2026-06-26 |
+| P2 | 蜕壳流 retarget（伪皮归胸槽 worn 层，v2 + v1 全点）+ 移除 FALSE_SKIN 专槽 | ✅ | 2026-06-26 |
+| P3 | 效果叠加语义（混装各自生效）+ 负重核验 + equipped 真元 carrier 守恒求和 | ✅ | 2026-06-26 |
+| P4 | 客户端面板重构（删行囊 tab + 背包随身体槽 worn 层渲染 + body_pocket 默认容器 tab 第一个 + 删行囊重量条沿用 BottomInfoBar）+ worn 栈叠放渲染 + 法宝激活触发位（灵宝 UI 内） | ✅ | 2026-06-26 |
+| P5 | 容量升级 hook（worn_cap 由常量 → 可升级派生值） | ✅ | 2026-06-26 |
 
 > **worldview 前置**：`docs/worldview.md` §545 / §468 / 分层装备锚点的补写，按 docs/CLAUDE.md §6.3 **人工单独 PR 先 land**，不进自动 consume（见 §11 决议 #10 + §10）。
 
@@ -613,3 +613,34 @@ Agent(
 
 ### §10.5 单次 consume-plan 全自动到 merge
 用户提交 `/consume-plan layered-equip-v1` 后即可下班，醒来看 plan 是否在 `docs/finished_plans/`。**前置**：worldview PR 已人工 land + §11.1 决议全收口（本节已完成）。consume agent 按 §10.1 顺序逐 PR 实施 → 各自走 §10.4 等待 → 全 merge 后填 `## Finish Evidence` → `git mv` 入 finished_plans/。
+
+---
+
+## Finish Evidence（2026-06-26 全自动 consume 完成）
+
+### 落地清单（阶段 → 真实模块/文件）
+- **P0 数据模型 + wire + 迁移**：`server/src/inventory/mod.rs`（`struct SlotContents{worn:Vec, held:Option}` + `EquipState` + `worn_cap` + `classify_equip_state` + `weapon_two_handed`，删 7 常量/9 EquipSlotV1 变体 + 256 触点四桶 retarget）；`server/src/schema/inventory.rs`（`EquippedInventorySnapshotV1` 方案B worn[]+held + C2S `EquipLoc.state`）；`proto/bong/envelope.proto`（每槽 worn repeated + held optional）；`agent/packages/schema/src/inventory.ts`（同构 + 补漂移字段）；`server/src/player/state.rs`（`INVENTORY_SCHEMA_VERSION` + `migrate_equipped_v1_to_v2`：false_skin→chest worn / two_hand→main_hand held+锁 off_hand / treasure_belt→triggered_treasures / 背包旧槽→身体槽 worn）。
+- **P1 校验分层规则**：`server/src/inventory/mod.rs` `validate_move_semantics`（worn cap / worn 栈 LIFO 仅顶可卸 / held 互斥 / 双手锁 main+off+extra_hand / treasure-shield-container 分类）。
+- **P2 蜕壳流 retarget**：`server/src/combat/tuike.rs`（v1 取 CHEST worn.last()）+ `tuike_v2/{tick.rs,skills.rs}`（扫 CHEST worn 层）+ `resolve.rs` 读点；FALSE_SKIN 专槽全移除。
+- **P3 防御加性 + 负重 + qi 守恒**：`server/src/combat/armor_sync.rs`（`.max()`→Σ_worn 加性 clamp 0.85）+ `body_mass.rs`（equipped_armor_mass filter ArmorProfile）+ `qi_physics/ledger.rs`（inventory_qi flat_map(worn).chain(held) 守恒 pin）。
+- **P4 client 面板 + 法宝触发位**：`client/.../inventory/component/{EquipmentPanel,EquipSlotComponent}.java`（头/胸/腿/足中列+左右手+多臂 + worn 栈叠层渲染/栈顶高亮/下层 dim 0.40/双手灰显）+ `InspectScreen.java`（删行囊 tab/哨兵 + body_pocket 默认首 tab + attemptDrop 不 swap + LIFO）+ `InventoryEquipRules.java`（SlotContents 镜像）+ `InventoryModel`/`InventorySnapshotHandler`/`EquipSlotType`；**法宝触发位**：`server/src/inventory/mod.rs`（`triggered_treasures` + `TREASURE_TRIGGER_CAP=4` + `apply_treasure_activate`）+ `spirit_treasure.rs`（passive_active 读触发位）+ `client_request_handler.rs`（`handle_treasure_activate`）+ proto/agent C2S `TreasureActivate` + `SpiritTreasureScreen`（右键激活 + 飞入 12tick + toast）。
+- **P5 容量升级 hook**：`server/src/inventory/mod.rs`（`worn_cap_bonus`/`treasure_trigger_cap` 占位扩展点，默认 0/常量；升级源待 worldview 锚点）。
+
+### 关键 commit（squash，2026-06-25~26）
+- `8cf341edd` P0 模型+wire+迁移 (#736) · `f1d7d7779` P1+P2 校验/蜕壳饱和测试 (#738) · `8ad22d7d1` P3 防御加性/负重/守恒 (#740) · `9310bb47e` P4 client 面板重构 (#742) · `568925c22` 法宝触发位完整链路 (#745) · `8f254b9c6` P5 升级 hook (#746) · worldview 锚点 (#727) · plan 转 active (#728)。
+
+### 测试结果
+- server `cargo fmt --check` + `clippy --all-targets -D warnings` 全绿 + `cargo test` 9871+ passed / 0 failed（各 PR 累加 P0-P5 pin）。
+- agent `npm test -w @bong/schema` 717→721 passed（equip-worn/held sample 对拍 + 修 server↔agent 漂移）。
+- client `gradlew compileJava test`(Java 17) 2957→2969 passed。
+- e2e（全栈 smoke）每 PR pass；P5 末轮发现并修「并行 PR 合并产生重复 `triggered_treasures` 字段(E0062)」merge 产物。
+
+### 跨仓库核验
+- server：`SlotContents`/`EquipSlotV1`/`triggered_treasures`/`worn_cap_bonus`/`apply_treasure_activate`。
+- agent：`EquippedInventorySnapshotV1`(inventory.ts 方案B)/`TreasureActivateRequestV1`。
+- client：`EquipSlotType`(删 9 增 extra_hand)/`SlotContents`/`EQUIP_SLOT_BY_WIRE_NAME`/`EquipLoc.state`。
+
+### 遗留 / 后续（不在本 plan，需独立推进）
+1. **P5 升级源**：`worn_cap_bonus`/触发位容量目前恒返回占位值；实际"境界/功法/法宝 → +cap"的升级机制需先补 worldview 锚点（决议 #24）再接线。
+2. **v2 多层伤害吸收**：`tuike_v2::StackedFalseSkins.damage_capacity` 仍 dead_code，未接 `resolve` 战斗结算——归 tuike_v2 自身 plan（本 plan 只 retarget 读取来源）。
+3. **触发位 UI 细化**：触发位法宝以文字标签渲染（未接 item 贴图）；worn 栈 hover 分层 tooltip（"栈顶可卸/下层被压"）未做——纯视觉增强，可后续。
