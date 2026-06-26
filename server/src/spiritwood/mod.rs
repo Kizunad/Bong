@@ -799,6 +799,46 @@ mod tests {
                 .map(|container| (&container.id, container.items.len()))
                 .collect::<Vec<_>>()
         );
+        let runtime_pack = inventory
+            .containers
+            .iter()
+            .find(|container| container.id == runtime_pack_id)
+            .expect("runtime pack should still exist after grant");
+        assert!(
+            runtime_pack
+                .items
+                .iter()
+                .all(|placed| placed.instance.template_id != LING_MU_GUN_ITEM_ID),
+            "默认破草包当前布局没有 1x2 空位，灵木不应硬塞进 runtime_pack；\
+             runtime_pack={runtime_pack_id}, items={:?}",
+            runtime_pack
+                .items
+                .iter()
+                .map(|placed| (&placed.instance.template_id, placed.row, placed.col))
+                .collect::<Vec<_>>()
+        );
+        let body_pocket = inventory
+            .containers
+            .iter()
+            .find(|container| container.id == BODY_POCKET_CONTAINER_ID)
+            .expect("body_pocket should still exist after grant");
+        let body_pocket_granted = body_pocket
+            .items
+            .iter()
+            .filter(|placed| placed.instance.template_id == LING_MU_GUN_ITEM_ID)
+            .map(|placed| placed.instance.stack_count)
+            .sum::<u32>();
+        assert_eq!(
+            body_pocket_granted,
+            3,
+            "默认破草包放不下 1x2 灵木时，掉落应 fallback 到 body_pocket；\
+             runtime_pack={runtime_pack_id}, body_pocket_items={:?}",
+            body_pocket
+                .items
+                .iter()
+                .map(|placed| (&placed.instance.template_id, placed.row, placed.col))
+                .collect::<Vec<_>>()
+        );
     }
 
     #[test]
