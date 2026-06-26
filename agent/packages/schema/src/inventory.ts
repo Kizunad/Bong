@@ -325,6 +325,10 @@ export const ContainerSnapshotV1 = Type.Object(
     name: Type.String({ minLength: 1, maxLength: 64 }),
     rows: ContainerExtentV1,
     cols: ContainerExtentV1,
+    // plan-tarkov-backpack-v1 P3（决议 #4）— 该容器归属的穿戴背包件 instance_id，下发 client。
+    // 仅 pack_<id> 派生容器有值；body_pocket / 静态容器省略此键（Optional，向后兼容旧 client）。
+    // 镜像 Rust ContainerSnapshotV1.owner_instance_id: Option<u64>（serde skip_serializing_if）。
+    owner_instance_id: Type.Optional(SafeIntegerV1),
   },
   { additionalProperties: false },
 );

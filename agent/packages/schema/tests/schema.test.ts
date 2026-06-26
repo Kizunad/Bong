@@ -36,6 +36,7 @@ import {
 } from "../src/calamity.js";
 import {
   AlchemyItemDataV1,
+  ContainerSnapshotV1,
   InventoryEventV1,
   InventorySnapshotV1,
 } from "../src/inventory.js";
@@ -820,6 +821,45 @@ describe("sample files pass schema validation", () => {
     expect(
       data.placed_items.some((p) => p.container_id === "pack_1007"),
     ).toBe(true);
+    // plan-tarkov-backpack-v1 P3（决议 #4）— pack_<id> 容器下发 owner_instance_id；静态容器无此键。
+    const packContainer = data.containers.find((c) => c.id === "pack_1007");
+    expect(packContainer?.owner_instance_id).toBe(1007);
+    const mainPack = data.containers.find((c) => c.id === "main_pack");
+    expect(mainPack?.owner_instance_id).toBeUndefined();
+  });
+
+  // plan-tarkov-backpack-v1 P3（决议 #4）— ContainerSnapshotV1.owner_instance_id 含/缺/反向对拍。
+  it("container snapshot accepts owner_instance_id (present + absent) and rejects bad shapes", () => {
+    const base = {
+      id: "pack_1007",
+      name: "破草包",
+      rows: 3,
+      cols: 3,
+    };
+    // 含字段（pack 派生容器）：接受。
+    expect(
+      validate(ContainerSnapshotV1, { ...base, owner_instance_id: 1007 }).ok,
+    ).toBe(true);
+    // 缺字段（旧 client / 静态容器）：Optional → 接受，向后兼容。
+    const legacy = validate(ContainerSnapshotV1, {
+      id: "main_pack",
+      name: "主背包",
+      rows: 5,
+      cols: 7,
+    });
+    expect(legacy.ok, legacy.errors.join("; ")).toBe(true);
+    // 负数（u64 不允许负）：拒绝。
+    expect(
+      validate(ContainerSnapshotV1, { ...base, owner_instance_id: -1 }).ok,
+    ).toBe(false);
+    // 非整数：拒绝。
+    expect(
+      validate(ContainerSnapshotV1, { ...base, owner_instance_id: 1.5 }).ok,
+    ).toBe(false);
+    // 未知字段（additionalProperties:false 仍生效）：拒绝。
+    expect(
+      validate(ContainerSnapshotV1, { ...base, bogus_field: 1 }).ok,
+    ).toBe(false);
   });
 
   it("alchemy item data accepts pill residue metadata", () => {
