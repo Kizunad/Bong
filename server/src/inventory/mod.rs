@@ -4586,6 +4586,26 @@ fn validate_move_semantics(
                 from_same_slot,
             )
         }
+        // plan-tarkov-backpack-v1 P2（交付物 #2，决议 #2/#5）— 穿戴态门控（server 侧）。
+        // 拖入 `pack_<instance_id>` 容器时，校验该背包件当前确实穿戴在某身体槽 worn 层；
+        // 背包件已被卸到手持/格子（非穿戴态）后其 `pack_<id>` 容器仍残留于 snapshot，
+        // 但不可再被塞入新内含物——塔科夫式语义：卸下的包是「死容器」，重新穿上才能装东西。
+        // 非 `pack_<id>` 容器（如 body_pocket / main_pack）放行（保持现状无门控）。
+        InventoryLocationV1::Container { container_id, .. } => {
+            if let Some(owner_instance_id) = worn_pack_instance_from_container_id(container_id) {
+                let owner_is_worn = matches!(
+                    find_equipped_instance(inventory, owner_instance_id),
+                    Some(EquippedInstanceLoc::Worn { .. })
+                );
+                if !owner_is_worn {
+                    return Err(format!(
+                        "背包未穿戴，无法放入内含物：容器 `{container_id}` 的背包件 (instance {owner_instance_id}) \
+                         当前不在任何身体槽 worn 层（已卸到手持/格子）；请先穿上该背包再放入物品"
+                    ));
+                }
+            }
+            Ok(())
+        }
         _ => Ok(()),
     }
 }
@@ -11964,6 +11984,380 @@ cols = 4
             "跨包移动是同一 instance 的位置变更：lingering_owner_qi 必须守恒不变（不重算/复制/蒸发）；\
              期望 {qi_before:?}，实际 {:?}",
             moved.instance.lingering_owner_qi
+        );
+    }
+
+    // ===== plan-tarkov-backpack-v1 P2 测试清单（≥6 + e2e；穿戴态门控 + 软门控固化） =====
+
+    /// P2 fixture — registry：两个 worn pack 模板（chest_pack/legs_pack）+ 一个 1×1 misc
+    /// 可移动物品模板（dust）；validate_move_semantics 校验 moving item 的 template 必须命中
+    /// registry，故 dust 须注册。返回 (registry, inventory)，inventory 为空（worn pack 由各
+    /// 用例按需装备 + rebuild）。
+    fn make_p2_registry() -> ItemRegistry {
+        let chest_pack = make_container_template("chest_pack", EQUIP_SLOT_CHEST, 3, 3, 10.0);
+        let legs_pack = make_container_template("legs_pack", EQUIP_SLOT_LEGS, 3, 3, 8.0);
+        // 1×1 容量极小的 pack，用于「目标满 / 越界」边界用例。
+        let tiny_pack = make_container_template("tiny_pack", EQUIP_SLOT_CHEST, 1, 1, 5.0);
+        let mut dust = make_container_template("dust", EQUIP_SLOT_CHEST, 1, 1, 0.0);
+        dust.container_spec = None;
+        dust.category = ItemCategory::Misc;
+        dust.grid_w = 1;
+        dust.grid_h = 1;
+        ItemRegistry::from_map(HashMap::from([
+            ("chest_pack".to_string(), chest_pack),
+            ("legs_pack".to_string(), legs_pack),
+            ("tiny_pack".to_string(), tiny_pack),
+            ("dust".to_string(), dust),
+        ]))
+    }
+
+    /// P2 fixture — 空 inventory + 一个 5×7 main_pack 静态容器（源容器，存放待拖入的物品）。
+    fn make_p2_inventory() -> PlayerInventory {
+        let mut inv = make_empty_inventory();
+        inv.containers.push(ContainerState {
+            id: MAIN_PACK_CONTAINER_ID.to_string(),
+            name: "主背包".to_string(),
+            rows: 5,
+            cols: 7,
+            items: Vec::new(),
+            owner_instance_id: None,
+        });
+        inv
+    }
+
+    /// 交付物 #1 + #2（happy）— 拖入「穿戴中」的 pack_<id> 容器：门控放行，物品落位成功。
+    /// 同时核实拖入持久化路径：apply_inventory_move 把物品写入 pack_<id>.items（落盘由
+    /// flush_changed_player_inventories 自动承载，无额外入口；e2e 锁住跨重载）。
+    #[test]
+    fn move_item_into_worn_pack_container_succeeds() {
+        use crate::schema::inventory::InventoryLocationV1;
+        let registry = make_p2_registry();
+        let mut inv = make_p2_inventory();
+        // chest 穿戴 chest_pack（pack_2001），rebuild 建容器并回填 owner。
+        inv.equipped.insert(
+            EQUIP_SLOT_CHEST.to_string(),
+            SlotContents::worn_single(make_container_item(2001, "chest_pack")),
+        );
+        let _ = rebuild_containers_from_equipment(&mut inv, &registry);
+        // main_pack（默认容器）里放一件 dust，准备拖入 pack_2001。
+        let main = inv
+            .containers
+            .iter_mut()
+            .find(|c| c.id == MAIN_PACK_CONTAINER_ID)
+            .expect("main_pack 存在");
+        main.items.push(PlacedItemState {
+            row: 0,
+            col: 0,
+            instance: make_test_item_instance(70, "dust"),
+        });
+
+        let from = InventoryLocationV1::Container {
+            container_id: MAIN_PACK_CONTAINER_ID.to_string(),
+            row: 0,
+            col: 0,
+        };
+        let to = InventoryLocationV1::Container {
+            container_id: container_id_for_worn_pack(2001),
+            row: 0,
+            col: 0,
+        };
+        apply_inventory_move(&mut inv, &registry, 70, &from, &to)
+            .expect("拖入穿戴中的 pack_2001 应成功（owner 在 chest worn 层）");
+
+        let pack = inv
+            .containers
+            .iter()
+            .find(|c| c.id == container_id_for_worn_pack(2001))
+            .expect("pack_2001 存在");
+        assert!(
+            pack.items.iter().any(|p| p.instance.instance_id == 70),
+            "因为目标 pack_2001 当前穿戴中，门控应放行且 dust(70) 落位进该容器；\
+             实际 pack_2001 内含 ids = {:?}",
+            pack.items
+                .iter()
+                .map(|p| p.instance.instance_id)
+                .collect::<Vec<_>>()
+        );
+    }
+
+    /// 交付物 #2（错误分支）— 拖入「已卸下（非穿戴）」的 pack_<id> 容器：门控拒绝，
+    /// 返回带修复线索的 Err。背包件已从身体槽卸到 main_pack（格子），其 pack_<id> 容器仍残留。
+    #[test]
+    fn move_item_into_unworn_pack_container_rejected() {
+        use crate::schema::inventory::InventoryLocationV1;
+        let registry = make_p2_registry();
+        let mut inv = make_p2_inventory();
+        // pack_3001 容器存在（owner_instance_id=3001），但背包件 3001 不在任何 worn 层
+        // ——已卸到 main_pack 当普通物品。
+        inv.containers.push(ContainerState {
+            id: container_id_for_worn_pack(3001),
+            name: "已卸下的胸包".to_string(),
+            rows: 3,
+            cols: 3,
+            items: Vec::new(),
+            owner_instance_id: Some(3001),
+        });
+        let main = inv
+            .containers
+            .iter_mut()
+            .find(|c| c.id == MAIN_PACK_CONTAINER_ID)
+            .expect("main_pack 存在");
+        // 背包件本体卸在 main_pack（非 worn），以及一件待拖入的 dust。
+        main.items.push(PlacedItemState {
+            row: 0,
+            col: 0,
+            instance: make_container_item(3001, "chest_pack"),
+        });
+        main.items.push(PlacedItemState {
+            row: 0,
+            col: 3,
+            instance: make_test_item_instance(71, "dust"),
+        });
+
+        let from = InventoryLocationV1::Container {
+            container_id: MAIN_PACK_CONTAINER_ID.to_string(),
+            row: 0,
+            col: 3,
+        };
+        let to = InventoryLocationV1::Container {
+            container_id: container_id_for_worn_pack(3001),
+            row: 0,
+            col: 0,
+        };
+        let err = apply_inventory_move(&mut inv, &registry, 71, &from, &to)
+            .expect_err("拖入未穿戴的 pack_3001 应被穿戴态门控拒绝（owner 3001 不在任何 worn 层）");
+        assert!(
+            err.contains("背包未穿戴") && err.contains("3001"),
+            "期望带修复线索的拒绝（提示背包未穿戴 + owner instance id），因为塔科夫式语义下卸下的包是死容器；\
+             实际 err = {err}"
+        );
+        // 物品未落位（仍在 main_pack）。
+        let pack = inv
+            .containers
+            .iter()
+            .find(|c| c.id == container_id_for_worn_pack(3001))
+            .expect("pack_3001 仍存在");
+        assert!(
+            pack.items.is_empty(),
+            "拒绝后 dust(71) 不应进入 pack_3001；实际内含 {} 件",
+            pack.items.len()
+        );
+    }
+
+    /// 交付物 #2（错误分支）— 拖入「不存在」的 pack_<id> 容器：owner 不在 worn 层 → 拒绝。
+    /// （pack_<id> 容器本身都不存在；穿戴态门控先于落位层 unknown-container 报错命中。）
+    #[test]
+    fn move_item_into_nonexistent_pack_container_rejected() {
+        use crate::schema::inventory::InventoryLocationV1;
+        let registry = make_p2_registry();
+        let mut inv = make_p2_inventory();
+        let main = inv
+            .containers
+            .iter_mut()
+            .find(|c| c.id == MAIN_PACK_CONTAINER_ID)
+            .expect("main_pack 存在");
+        main.items.push(PlacedItemState {
+            row: 0,
+            col: 0,
+            instance: make_test_item_instance(72, "dust"),
+        });
+
+        let from = InventoryLocationV1::Container {
+            container_id: MAIN_PACK_CONTAINER_ID.to_string(),
+            row: 0,
+            col: 0,
+        };
+        // pack_9999 既无容器也无 worn owner。
+        let to = InventoryLocationV1::Container {
+            container_id: container_id_for_worn_pack(9999),
+            row: 0,
+            col: 0,
+        };
+        let err = apply_inventory_move(&mut inv, &registry, 72, &from, &to)
+            .expect_err("拖入不存在/未穿戴的 pack_9999 应被拒绝");
+        assert!(
+            err.contains("背包未穿戴") && err.contains("9999"),
+            "期望穿戴态门控在落位前拒绝（owner 9999 不在 worn 层）；实际 err = {err}"
+        );
+    }
+
+    /// 交付物 #2（状态转换）— 两个都穿戴中的 pack 之间移动：门控对源容器无要求、
+    /// 目标 pack owner 在 worn 层 → 放行成功。
+    #[test]
+    fn move_item_between_two_worn_packs_succeeds() {
+        use crate::schema::inventory::InventoryLocationV1;
+        let registry = make_p2_registry();
+        let mut inv = make_p2_inventory();
+        inv.equipped.insert(
+            EQUIP_SLOT_CHEST.to_string(),
+            SlotContents::worn_single(make_container_item(4001, "chest_pack")),
+        );
+        inv.equipped.insert(
+            EQUIP_SLOT_LEGS.to_string(),
+            SlotContents::worn_single(make_container_item(4002, "legs_pack")),
+        );
+        let _ = rebuild_containers_from_equipment(&mut inv, &registry);
+        // 在 pack_4001 放一件 dust。
+        let pack1 = inv
+            .containers
+            .iter_mut()
+            .find(|c| c.id == container_id_for_worn_pack(4001))
+            .expect("pack_4001 存在");
+        pack1.items.push(PlacedItemState {
+            row: 0,
+            col: 0,
+            instance: make_test_item_instance(73, "dust"),
+        });
+
+        let from = InventoryLocationV1::Container {
+            container_id: container_id_for_worn_pack(4001),
+            row: 0,
+            col: 0,
+        };
+        let to = InventoryLocationV1::Container {
+            container_id: container_id_for_worn_pack(4002),
+            row: 0,
+            col: 0,
+        };
+        apply_inventory_move(&mut inv, &registry, 73, &from, &to)
+            .expect("两个穿戴中的 pack 之间移动应成功");
+
+        let pack2 = inv
+            .containers
+            .iter()
+            .find(|c| c.id == container_id_for_worn_pack(4002))
+            .expect("pack_4002 存在");
+        assert!(
+            pack2.items.iter().any(|p| p.instance.instance_id == 73),
+            "dust(73) 应从 pack_4001 转入 pack_4002；实际 pack_4002 ids = {:?}",
+            pack2
+                .items
+                .iter()
+                .map(|p| p.instance.instance_id)
+                .collect::<Vec<_>>()
+        );
+    }
+
+    /// 交付物 #4 / 决议 #5（软门控）— 超重（current > max）时拖入穿戴中的 pack 仍成功：
+    /// 超限只打 OverloadedMarker，不在 move 路径硬拒绝。本测试固化「move 路径无重量门控」契约。
+    #[test]
+    fn move_into_pack_when_overloaded_still_succeeds() {
+        use crate::schema::inventory::InventoryLocationV1;
+        let registry = make_p2_registry();
+        let mut inv = make_p2_inventory();
+        inv.equipped.insert(
+            EQUIP_SLOT_CHEST.to_string(),
+            SlotContents::worn_single(make_container_item(5001, "chest_pack")),
+        );
+        let _ = rebuild_containers_from_equipment(&mut inv, &registry);
+        // 人为压低 max_weight 使其远小于实际负重，模拟超载态。
+        inv.max_weight = 0.01;
+        // main_pack 放一件重 dust。
+        let mut heavy = make_test_item_instance(74, "dust");
+        heavy.weight = 99.0;
+        let main = inv
+            .containers
+            .iter_mut()
+            .find(|c| c.id == MAIN_PACK_CONTAINER_ID)
+            .expect("main_pack 存在");
+        main.items.push(PlacedItemState {
+            row: 0,
+            col: 0,
+            instance: heavy,
+        });
+        // 确认确实超载（current_weight > max_weight）。
+        assert!(
+            calculate_current_weight(&inv) > inv.max_weight,
+            "前置：构造的 inventory 应处于超载态"
+        );
+
+        let from = InventoryLocationV1::Container {
+            container_id: MAIN_PACK_CONTAINER_ID.to_string(),
+            row: 0,
+            col: 0,
+        };
+        let to = InventoryLocationV1::Container {
+            container_id: container_id_for_worn_pack(5001),
+            row: 0,
+            col: 0,
+        };
+        apply_inventory_move(&mut inv, &registry, 74, &from, &to).expect(
+            "决议 #5 软门控：超载态下拖入穿戴中的 pack 仍应成功；move 路径不做重量硬拒绝（仅 OverloadedMarker debuff）",
+        );
+        let pack = inv
+            .containers
+            .iter()
+            .find(|c| c.id == container_id_for_worn_pack(5001))
+            .expect("pack_5001 存在");
+        assert!(
+            pack.items.iter().any(|p| p.instance.instance_id == 74),
+            "超载态下重物 dust(74) 仍应落位进 pack_5001（软门控）"
+        );
+    }
+
+    /// 交付物（边界：目标容器满）— 目标 pack 落位越界（无空位）→ 落位层拒绝（穿戴态门控放行后，
+    /// displaced_at_target 的 bounds 检查命中）。固化「门控放行 ≠ 一定落位成功」。
+    #[test]
+    fn move_into_full_pack_rejected_no_fit() {
+        use crate::schema::inventory::InventoryLocationV1;
+        let registry = make_p2_registry();
+        let mut inv = make_p2_inventory();
+        // 穿戴 1×1 的 tiny_pack（pack_6001），rebuild 建容器。
+        inv.equipped.insert(
+            EQUIP_SLOT_CHEST.to_string(),
+            SlotContents::worn_single(make_container_item(6001, "tiny_pack")),
+        );
+        let _ = rebuild_containers_from_equipment(&mut inv, &registry);
+        // tiny_pack 唯一格 (0,0) 已被占满。
+        let pack = inv
+            .containers
+            .iter_mut()
+            .find(|c| c.id == container_id_for_worn_pack(6001))
+            .expect("pack_6001 存在");
+        pack.items.push(PlacedItemState {
+            row: 0,
+            col: 0,
+            instance: make_test_item_instance(80, "dust"),
+        });
+        // main_pack 放一件待拖入的 dust。
+        let main = inv
+            .containers
+            .iter_mut()
+            .find(|c| c.id == MAIN_PACK_CONTAINER_ID)
+            .expect("main_pack 存在");
+        main.items.push(PlacedItemState {
+            row: 0,
+            col: 0,
+            instance: make_test_item_instance(81, "dust"),
+        });
+
+        let from = InventoryLocationV1::Container {
+            container_id: MAIN_PACK_CONTAINER_ID.to_string(),
+            row: 0,
+            col: 0,
+        };
+        // 目标 (0,1)：1×1 容器越界（col 1 + 1 > cols 1）→ 落位层 no-fit 拒绝。
+        let to = InventoryLocationV1::Container {
+            container_id: container_id_for_worn_pack(6001),
+            row: 0,
+            col: 1,
+        };
+        let err = apply_inventory_move(&mut inv, &registry, 81, &from, &to).expect_err(
+            "穿戴态门控放行后，落位层应因 1×1 容器越界（无空位）拒绝；门控放行 ≠ 一定能放下",
+        );
+        assert!(
+            err.contains("bounds") || err.contains("overlaps"),
+            "期望落位层 no-fit 拒绝（越界/重叠），因为 tiny_pack 仅 1×1 且已满；实际 err = {err}"
+        );
+        // dust(81) 未进 pack_6001。
+        let pack = inv
+            .containers
+            .iter()
+            .find(|c| c.id == container_id_for_worn_pack(6001))
+            .expect("pack_6001 仍存在");
+        assert!(
+            !pack.items.iter().any(|p| p.instance.instance_id == 81),
+            "no-fit 拒绝后 dust(81) 不应进入 pack_6001"
         );
     }
 

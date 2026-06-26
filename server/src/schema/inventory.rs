@@ -795,9 +795,25 @@ mod tests {
             .expect("inventory-snapshot.sample.json should deserialize into InventorySnapshotV1");
 
         assert_eq!(snapshot.revision, 12);
-        assert_eq!(snapshot.containers.len(), 3);
-        assert_eq!(snapshot.placed_items.len(), 2);
+        // plan-tarkov-backpack-v1 P2（schema 漂移修复）：sample 现含 4 个容器
+        // （main_pack/small_pouch/front_satchel + 动态 pack_1007 套包容器），placed_items 3 件
+        // （含 pack_1007 内的 spirit_herb）。Rust `ContainerIdV1 = String` 本就开放，无需改 struct。
+        assert_eq!(snapshot.containers.len(), 4);
+        assert_eq!(snapshot.placed_items.len(), 3);
         assert_eq!(snapshot.placed_items[0].item.item_id, "starter_talisman");
+        // pack_1007 套包容器存在且 owner 形态合法（pack_<数字> 前缀）。
+        assert!(
+            snapshot.containers.iter().any(|c| c.id == "pack_1007"),
+            "sample 应含动态 pack_1007 套包容器；实际 ids = {:?}",
+            snapshot.containers.iter().map(|c| &c.id).collect::<Vec<_>>()
+        );
+        assert!(
+            snapshot
+                .placed_items
+                .iter()
+                .any(|p| p.container_id == "pack_1007"),
+            "pack_1007 内应有 placed_item（spirit_herb）"
+        );
         assert_eq!(snapshot.hotbar.len(), HOTBAR_SLOT_COUNT);
         assert_eq!(snapshot.bone_coins, 57);
         assert_eq!(snapshot.realm, "Awaken");

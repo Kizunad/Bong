@@ -20,6 +20,12 @@
       "name": "前挂包",
       "rows": 3,
       "cols": 4
+    },
+    {
+      "id": "pack_1007",
+      "name": "破草包",
+      "rows": 3,
+      "cols": 3
     }
   ],
   "placed_items": [
@@ -39,6 +45,24 @@
         "stack_count": 1,
         "spirit_quality": 0.76,
         "durability": 0.93
+      }
+    },
+    {
+      "container_id": "pack_1007",
+      "row": 0,
+      "col": 0,
+      "item": {
+        "instance_id": 1008,
+        "item_id": "spirit_herb",
+        "display_name": "灵草",
+        "grid_width": 1,
+        "grid_height": 1,
+        "weight": 0.1,
+        "rarity": "common",
+        "description": "塞在破草包内的随身灵草。",
+        "stack_count": 3,
+        "spirit_quality": 0.4,
+        "durability": 1
       }
     }
   ],
