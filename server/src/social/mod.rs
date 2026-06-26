@@ -966,7 +966,7 @@ fn dispatch_trade_offers(
             continue;
         }
         let Some(offered_item) =
-            inventory_item_by_instance(initiator_inventory, request.offered_instance_id)
+            trade_item_by_instance(initiator_inventory, request.offered_instance_id)
         else {
             continue;
         };
@@ -1065,12 +1065,12 @@ fn handle_trade_offer_responses(
                 continue;
             }
             let Some(offered_item) =
-                inventory_item_by_instance(&initiator_inventory, pending.offered_instance_id)
+                trade_item_by_instance(&initiator_inventory, pending.offered_instance_id)
             else {
                 continue;
             };
             let Some(requested_item) =
-                inventory_item_by_instance(&target_inventory, requested_instance_id)
+                trade_item_by_instance(&target_inventory, requested_instance_id)
             else {
                 continue;
             };
@@ -1162,6 +1162,24 @@ fn trade_item_summary(item: &ItemInstance) -> TradeItemSummaryV1 {
         display_name: item.display_name.clone(),
         stack_count: item.stack_count,
     }
+}
+
+fn trade_item_by_instance(inventory: &PlayerInventory, instance_id: u64) -> Option<ItemInstance> {
+    for container in &inventory.containers {
+        if let Some(placed) = container
+            .items
+            .iter()
+            .find(|placed| placed.instance.instance_id == instance_id)
+        {
+            return Some(placed.instance.clone());
+        }
+    }
+    inventory
+        .hotbar
+        .iter()
+        .flatten()
+        .find(|item| item.instance_id == instance_id)
+        .cloned()
 }
 
 fn trade_item_summaries(inventory: &PlayerInventory) -> Vec<TradeItemSummaryV1> {
@@ -3306,7 +3324,8 @@ mod tests {
     use crate::combat::CombatClock;
     use crate::identity::{RevealedTag, RevealedTagKind};
     use crate::inventory::{
-        ContainerState, InventoryRevision, ItemInstance, ItemRarity, PlacedItemState,
+        ContainerState, InventoryRevision, ItemInstance, ItemRarity, PlacedItemState, SlotContents,
+        EQUIP_SLOT_MAIN_HAND,
     };
     use crate::persistence::bootstrap_sqlite;
     use crate::schema::server_data::ServerDataType;
@@ -3430,6 +3449,14 @@ mod tests {
 
     fn trade_inventory(instance_id: u64, name: &str) -> PlayerInventory {
         inventory_with_item(trade_test_item(instance_id, name))
+    }
+
+    fn move_first_trade_item_to_main_hand(inventory: &mut PlayerInventory) {
+        let item = inventory.containers[0].items.remove(0).instance;
+        inventory.equipped.insert(
+            EQUIP_SLOT_MAIN_HAND.to_string(),
+            SlotContents::held_single(item),
+        );
     }
 
     fn spawn_trade_player(app: &mut App, name: &str, character_id: &str, x: f64) -> Entity {
@@ -4317,6 +4344,68 @@ mod tests {
     }
 
     #[test]
+    fn trade_offer_dispatch_rejects_equipped_offered_item() {
+        let mut app = App::new();
+        app.init_resource::<TradeOfferRegistry>();
+        app.add_event::<TradeOfferRequest>();
+        app.add_systems(Update, dispatch_trade_offers);
+        let (mut initiator_bundle, mut initiator_helper) = create_mock_client("Initiator");
+        initiator_bundle.player.position = Position::new([0.0, 64.0, 0.0]);
+        let initiator = app.world_mut().spawn(initiator_bundle).id();
+        let mut initiator_inventory = trade_inventory(1001, "出物");
+        move_first_trade_item_to_main_hand(&mut initiator_inventory);
+        app.world_mut().entity_mut(initiator).insert((
+            Lifecycle {
+                character_id: "char:initiator".to_string(),
+                ..Default::default()
+            },
+            initiator_inventory,
+        ));
+        let (mut target_bundle, mut target_helper) = create_mock_client("Target");
+        target_bundle.player.position = Position::new([10.0, 64.0, 0.0]);
+        let target = app.world_mut().spawn(target_bundle).id();
+        app.world_mut().entity_mut(target).insert((
+            Lifecycle {
+                character_id: "char:target".to_string(),
+                ..Default::default()
+            },
+            trade_inventory(2002, "回物"),
+        ));
+
+        app.world_mut().send_event(TradeOfferRequest {
+            initiator,
+            target,
+            offered_instance_id: 1001,
+            tick: 42,
+        });
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        assert!(collect_server_data_payloads(&mut initiator_helper).is_empty());
+        assert!(
+            collect_server_data_payloads(&mut target_helper).is_empty(),
+            "equipped offered item must not create a trade offer payload"
+        );
+        assert!(
+            app.world()
+                .resource::<TradeOfferRegistry>()
+                .pending
+                .is_empty(),
+            "equipped offered item must not create pending trade state"
+        );
+        let inventory = app.world().get::<PlayerInventory>(initiator).unwrap();
+        assert_eq!(
+            inventory
+                .equipped
+                .get(EQUIP_SLOT_MAIN_HAND)
+                .and_then(|slot| slot.held.as_ref())
+                .map(|item| item.instance_id),
+            Some(1001),
+            "rejected trade offer must leave equipped item in main hand"
+        );
+    }
+
+    #[test]
     fn trade_acceptance_exchanges_items_records_life_and_exposure() {
         let mut app = setup_trade_app();
         let initiator = spawn_trade_player(&mut app, "Initiator", "char:initiator", 0.0);
@@ -4405,6 +4494,147 @@ mod tests {
             .resource::<TradeOfferRegistry>()
             .pending
             .is_empty());
+    }
+
+    #[test]
+    fn trade_response_rejects_equipped_requested_item() {
+        let mut app = setup_trade_app();
+        let initiator = spawn_trade_player(&mut app, "Initiator", "char:initiator", 0.0);
+        let target = spawn_trade_player(&mut app, "Target", "char:target", 10.0);
+
+        app.world_mut().send_event(TradeOfferRequest {
+            initiator,
+            target,
+            offered_instance_id: 1001,
+            tick: 42,
+        });
+        app.update();
+        let offer_id = app
+            .world()
+            .resource::<TradeOfferRegistry>()
+            .pending
+            .keys()
+            .next()
+            .expect("trade offer should be pending")
+            .clone();
+        move_first_trade_item_to_main_hand(
+            &mut app.world_mut().get_mut::<PlayerInventory>(target).unwrap(),
+        );
+
+        app.world_mut().send_event(TradeOfferResponseEvent {
+            player: target,
+            offer_id,
+            accepted: true,
+            requested_instance_id: Some(2002),
+            tick: 50,
+        });
+        app.update();
+
+        let initiator_inventory = app.world().get::<PlayerInventory>(initiator).unwrap();
+        let target_inventory = app.world().get::<PlayerInventory>(target).unwrap();
+        assert!(
+            inventory_item_by_instance(initiator_inventory, 1001).is_some(),
+            "rejected trade response must leave initiator offered item untouched"
+        );
+        assert_eq!(
+            target_inventory
+                .equipped
+                .get(EQUIP_SLOT_MAIN_HAND)
+                .and_then(|slot| slot.held.as_ref())
+                .map(|item| item.instance_id),
+            Some(2002),
+            "equipped requested item must remain equipped and untraded"
+        );
+        assert!(
+            app.world()
+                .get::<LifeRecord>(initiator)
+                .unwrap()
+                .biography
+                .is_empty(),
+            "rejected equipped-item trade must not record a completed trade"
+        );
+        assert!(
+            app.world()
+                .get::<LifeRecord>(target)
+                .unwrap()
+                .biography
+                .is_empty(),
+            "rejected equipped-item trade must not record a completed trade"
+        );
+    }
+
+    #[test]
+    fn trade_response_rejects_equipped_offered_item() {
+        let mut app = setup_trade_app();
+        let initiator = spawn_trade_player(&mut app, "Initiator", "char:initiator", 0.0);
+        let target = spawn_trade_player(&mut app, "Target", "char:target", 10.0);
+
+        app.world_mut().send_event(TradeOfferRequest {
+            initiator,
+            target,
+            offered_instance_id: 1001,
+            tick: 42,
+        });
+        app.update();
+        let offer_id = app
+            .world()
+            .resource::<TradeOfferRegistry>()
+            .pending
+            .keys()
+            .next()
+            .expect("trade offer should be pending")
+            .clone();
+        move_first_trade_item_to_main_hand(
+            &mut app
+                .world_mut()
+                .get_mut::<PlayerInventory>(initiator)
+                .unwrap(),
+        );
+
+        app.world_mut().send_event(TradeOfferResponseEvent {
+            player: target,
+            offer_id,
+            accepted: true,
+            requested_instance_id: Some(2002),
+            tick: 50,
+        });
+        app.update();
+
+        let initiator_inventory = app.world().get::<PlayerInventory>(initiator).unwrap();
+        let target_inventory = app.world().get::<PlayerInventory>(target).unwrap();
+        assert_eq!(
+            initiator_inventory
+                .equipped
+                .get(EQUIP_SLOT_MAIN_HAND)
+                .and_then(|slot| slot.held.as_ref())
+                .map(|item| item.instance_id),
+            Some(1001),
+            "equipped offered item must remain equipped and untraded"
+        );
+        assert!(
+            inventory_item_by_instance(target_inventory, 2002).is_some(),
+            "rejected trade response must leave target requested item untouched"
+        );
+        assert!(
+            inventory_item_by_instance(target_inventory, 1001).is_none(),
+            "target must not receive initiator equipped offered item"
+        );
+        assert!(
+            app.world()
+                .get::<LifeRecord>(initiator)
+                .unwrap()
+                .biography
+                .is_empty(),
+            "rejected equipped-item trade must not record a completed trade"
+        );
+        assert!(
+            app.world()
+                .get::<LifeRecord>(target)
+                .unwrap()
+                .biography
+                .is_empty(),
+            "rejected equipped-item trade must not record a completed trade"
+        );
     }
 
     #[test]
