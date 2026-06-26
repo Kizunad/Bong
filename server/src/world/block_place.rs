@@ -9,8 +9,7 @@ use crate::craft::{handle_workbench_place, send_workbench_audio, WORKBENCH_PLACE
 use crate::cultivation::components::Cultivation;
 use crate::inventory::external_container::ExternalContainerRegistry;
 use crate::inventory::{
-    consume_item_instance_once, inventory_item_by_instance_borrow, ItemCategory, ItemRegistry,
-    PlayerInventory,
+    consume_item_instance_once, ItemCategory, ItemInstance, ItemRegistry, PlayerInventory,
 };
 use crate::network::audio_event_emit::PlaySoundRecipeRequest;
 use crate::network::inventory_snapshot_emit::send_inventory_snapshot_to_client;
@@ -359,7 +358,7 @@ fn block_place_target_for_request(
         );
         return None;
     };
-    let Some(item) = inventory_item_by_instance_borrow(inventory, req.item_instance_id) else {
+    let Some(item) = block_place_item_by_instance(inventory, req.item_instance_id) else {
         tracing::warn!(
             "[bong][block_place] rejected: instance_id={} not held by {:?}",
             req.item_instance_id,
@@ -408,6 +407,26 @@ fn block_place_target_for_request(
         template_id: item.template_id.clone(),
         state,
     })
+}
+
+fn block_place_item_by_instance(
+    inventory: &PlayerInventory,
+    instance_id: u64,
+) -> Option<&ItemInstance> {
+    for container in &inventory.containers {
+        if let Some(placed) = container
+            .items
+            .iter()
+            .find(|placed| placed.instance.instance_id == instance_id)
+        {
+            return Some(&placed.instance);
+        }
+    }
+    inventory
+        .hotbar
+        .iter()
+        .flatten()
+        .find(|item| item.instance_id == instance_id)
 }
 
 pub fn placeable_kind_from_str(raw: &str) -> Option<PlaceableBlockKind> {
@@ -629,8 +648,9 @@ mod tests {
     use crate::craft::{WorkbenchBlock, WORKBENCH_ITEM_TEMPLATE};
     use crate::inventory::external_container::{ExternalContainer, ExternalContainerKind};
     use crate::inventory::{
-        ContainerState, InventoryInstanceIdAllocator, InventoryRevision, ItemInstance, ItemRarity,
-        ItemTemplate, PlacedItemState,
+        inventory_item_by_instance_borrow, ContainerState, InventoryInstanceIdAllocator,
+        InventoryRevision, ItemInstance, ItemRarity, ItemTemplate, PlacedItemState, SlotContents,
+        EQUIP_SLOT_MAIN_HAND,
     };
     use crate::network::agent_bridge::SERVER_DATA_CHANNEL;
     use crate::network::audio_event_emit::PlaySoundRecipeRequest;
@@ -1054,6 +1074,49 @@ mod tests {
         assert!(
             has_inventory_snapshot_payload(&mut helper),
             "successful placement should push a corrective inventory snapshot"
+        );
+    }
+
+    #[test]
+    fn handler_rejects_equipped_block_place_item() {
+        let equipped_item = item_instance(9102, "earth_crumb", 1);
+        let (mut app, client, layer_entity, mut helper) = block_place_app(
+            inventory_with_equipped_held_item(equipped_item),
+            DimensionKind::Overworld,
+        );
+
+        app.world_mut().send_event(BlockPlaceRequest {
+            client,
+            x: 1,
+            y: 64,
+            z: 1,
+            item_instance_id: 9102,
+            target_face: TrapTargetFace::Top,
+        });
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        assert_eq!(
+            block_state_at(&app, layer_entity, BlockPos::new(1, 64, 1)),
+            Some(BlockState::AIR),
+            "equipped block item must not be placeable through forged C2S instance ids"
+        );
+        let inventory = app
+            .world()
+            .get::<PlayerInventory>(client)
+            .expect("client should keep inventory");
+        assert!(
+            inventory_item_by_instance_borrow(inventory, 9102).is_some(),
+            "rejected equipped block item must remain equipped"
+        );
+        assert_eq!(
+            inventory.revision,
+            InventoryRevision(0),
+            "rejected equipped block place must not mutate inventory"
+        );
+        assert!(
+            !has_inventory_snapshot_payload(&mut helper),
+            "rejected equipped block place should not push a consumption snapshot"
         );
     }
 
@@ -2528,6 +2591,18 @@ mod tests {
             bone_coins: 0,
             max_weight: 99.0,
         }
+    }
+
+    fn inventory_with_equipped_held_item(item: ItemInstance) -> PlayerInventory {
+        let mut inventory = empty_inventory();
+        inventory.equipped.insert(
+            EQUIP_SLOT_MAIN_HAND.to_string(),
+            SlotContents {
+                worn: Vec::new(),
+                held: Some(item),
+            },
+        );
+        inventory
     }
 
     fn item_instance(instance_id: u64, template_id: &str, stack_count: u32) -> ItemInstance {
