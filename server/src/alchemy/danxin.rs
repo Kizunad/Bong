@@ -361,14 +361,29 @@ mod tests {
         app.update();
 
         let inventory = app.world().get::<PlayerInventory>(player).unwrap();
-        assert_eq!(
-            inventory.containers[0].items[0].instance.instance_id, 42,
-            "提示纸模板 2x1 放不进 1x1 容器时，丹药不能先被消耗"
+        let actual_instance_ids = inventory
+            .containers
+            .iter()
+            .flat_map(|container| container.items.iter())
+            .map(|placed| placed.instance.instance_id)
+            .collect::<Vec<_>>();
+        assert!(
+            actual_instance_ids.contains(&42),
+            "提示纸模板 2x1 放不进 1x1 容器时，丹药不能先被消耗；expected instance_id 42 because failed hint grant must rollback pill consume, actual inventory instance_ids={actual_instance_ids:?}"
         );
         assert_eq!(
             inventory.revision,
             InventoryRevision(0),
             "失败路径不应修改 inventory revision"
+        );
+        let next_instance_id = app
+            .world_mut()
+            .resource_mut::<InventoryInstanceIdAllocator>()
+            .next_id()
+            .unwrap();
+        assert_eq!(
+            next_instance_id, 100,
+            "提示纸入包失败时 staged allocator 必须回滚；expected next id 100 because failed hint grant must not consume a real inventory id, actual next id {next_instance_id}"
         );
         let events = app
             .world()
