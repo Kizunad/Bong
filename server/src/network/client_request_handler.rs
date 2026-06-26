@@ -5396,6 +5396,45 @@ mod tests {
     }
 
     #[test]
+    fn quick_slot_bind_resolves_equipped_template_instance() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+
+        let mut inventory = empty_inventory();
+        inventory.equipped.insert(
+            crate::inventory::EQUIP_SLOT_OFF_HAND.to_string(),
+            crate::inventory::SlotContents::held_single(inventory_test_item(77, "bone_whistle", 1)),
+        );
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app
+            .world_mut()
+            .spawn((client_bundle, QuickSlotBindings::default(), inventory))
+            .id();
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"quick_slot_bind","v":1,"slot":0,"item_id":"bone_whistle"}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+
+        app.update();
+
+        let bindings = app
+            .world()
+            .get::<QuickSlotBindings>(entity)
+            .expect("player should keep quick slot bindings");
+        assert_eq!(
+            bindings.get(0),
+            Some(77),
+            "quick_slot_bind must resolve template ids from equipped held/worn items"
+        );
+    }
+
+    #[test]
     fn inventory_move_applies_hidden_targeted_wear_to_spiritual_item() {
         let mut app = App::new();
         register_request_app(&mut app);
@@ -8621,6 +8660,27 @@ fn inventory_template_id_by_instance(inv: &PlayerInventory, instance_id: u64) ->
         .map(|item| item.template_id.clone())
 }
 
+fn inventory_instance_id_by_template(inv: &PlayerInventory, template: &str) -> Option<u64> {
+    for c in &inv.containers {
+        if let Some(p) = c.items.iter().find(|p| p.instance.template_id == template) {
+            return Some(p.instance.instance_id);
+        }
+    }
+    if let Some(item) = inv
+        .hotbar
+        .iter()
+        .flatten()
+        .find(|item| item.template_id == template)
+    {
+        return Some(item.instance_id);
+    }
+    inv.equipped
+        .values()
+        .flat_map(|s| s.iter_all())
+        .find(|item| item.template_id == template)
+        .map(|item| item.instance_id)
+}
+
 fn handle_quick_slot_bind(
     entity: valence::prelude::Entity,
     slot: u8,
@@ -8645,18 +8705,10 @@ fn handle_quick_slot_bind(
     let persisted_item_id = item_id.as_deref().filter(|item_id| !item_id.is_empty());
     let instance_id = match persisted_item_id {
         None => None,
-        Some(template) => inventories.get(entity).ok().and_then(|inv| {
-            for c in &inv.containers {
-                if let Some(p) = c.items.iter().find(|p| p.instance.template_id == template) {
-                    return Some(p.instance.instance_id);
-                }
-            }
-            inv.hotbar
-                .iter()
-                .flatten()
-                .find(|i| i.template_id == template)
-                .map(|i| i.instance_id)
-        }),
+        Some(template) => inventories
+            .get(entity)
+            .ok()
+            .and_then(|inv| inventory_instance_id_by_template(inv, template)),
     };
     if !bindings.set(slot, instance_id) {
         tracing::warn!(
