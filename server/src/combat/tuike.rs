@@ -389,16 +389,7 @@ fn count_template(inventory: &PlayerInventory, template_id: &str) -> u32 {
         .filter(|item| item.template_id == template_id)
         .map(|item| item.stack_count)
         .sum::<u32>();
-    let equipped_count = inventory
-        .equipped
-        .values()
-        .flat_map(|s| s.iter_all())
-        .filter(|item| item.template_id == template_id)
-        .map(|item| item.stack_count)
-        .sum::<u32>();
-    container_count
-        .saturating_add(hotbar_count)
-        .saturating_add(equipped_count)
+    container_count.saturating_add(hotbar_count)
 }
 
 fn consume_template_count(inventory: &mut PlayerInventory, template_id: &str, mut count: u32) {
@@ -423,14 +414,6 @@ fn first_instance_id_for_template(inventory: &PlayerInventory, template_id: &str
                 .hotbar
                 .iter()
                 .flatten()
-                .find(|item| item.template_id == template_id)
-                .map(|item| item.instance_id)
-        })
-        .or_else(|| {
-            inventory
-                .equipped
-                .values()
-                .flat_map(|s| s.iter_all())
                 .find(|item| item.template_id == template_id)
                 .map(|item| item.instance_id)
         })
@@ -581,7 +564,7 @@ mod tests {
     use crate::cultivation::components::Cultivation;
     use crate::inventory::{
         ContainerState, InventoryRevision, ItemCategory, ItemInstance, ItemRarity, ItemTemplate,
-        PlayerInventory,
+        PlayerInventory, SlotContents, EQUIP_SLOT_MAIN_HAND,
     };
     use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
     use crate::qi_physics::{QiAccountId, QiTransfer, QiTransferReason};
@@ -819,6 +802,69 @@ mod tests {
         assert_eq!(
             count_template(&inventory, SPIDER_SILK_FALSE_SKIN_ITEM_ID),
             1
+        );
+    }
+
+    #[test]
+    fn forge_false_skin_rejects_equipped_materials() {
+        let mut inventory = PlayerInventory {
+            triggered_treasures: Vec::new(),
+            revision: InventoryRevision(0),
+            containers: vec![ContainerState {
+                id: crate::inventory::MAIN_PACK_CONTAINER_ID.to_string(),
+                name: "Main".to_string(),
+                rows: 4,
+                cols: 9,
+                items: Vec::new(),
+            }],
+            equipped: HashMap::from([(
+                EQUIP_SLOT_MAIN_HAND.to_string(),
+                SlotContents::held_single(item(1, SPIDER_SILK_MATERIAL_ID, 1)),
+            )]),
+            hotbar: Default::default(),
+            bone_coins: 0,
+            max_weight: 45.0,
+        };
+        let registry = ItemRegistry::from_map(HashMap::from([
+            (
+                SPIDER_SILK_MATERIAL_ID.to_string(),
+                template(SPIDER_SILK_MATERIAL_ID),
+            ),
+            (
+                SPIDER_SILK_FALSE_SKIN_ITEM_ID.to_string(),
+                template(SPIDER_SILK_FALSE_SKIN_ITEM_ID),
+            ),
+        ]));
+        let mut cultivation = Cultivation {
+            realm: Realm::Induce,
+            qi_current: 20.0,
+            qi_max: 20.0,
+            ..Cultivation::default()
+        };
+        let mut allocator = InventoryInstanceIdAllocator::new(100);
+
+        let error = forge_false_skin(
+            recipe_for_kind(FalseSkinKind::SpiderSilk),
+            &mut cultivation,
+            &mut inventory,
+            &registry,
+            Some(&mut allocator),
+        )
+        .expect_err("equipped material must not satisfy false skin forge input");
+
+        assert_eq!(
+            error,
+            FalseSkinForgeError::MissingMaterial(SPIDER_SILK_MATERIAL_ID)
+        );
+        assert_eq!(cultivation.qi_current, 20.0);
+        assert!(inventory.containers[0].items.is_empty());
+        assert_eq!(
+            inventory
+                .equipped
+                .get(EQUIP_SLOT_MAIN_HAND)
+                .and_then(|slot| slot.held.as_ref())
+                .map(|item| item.instance_id),
+            Some(1)
         );
     }
 
