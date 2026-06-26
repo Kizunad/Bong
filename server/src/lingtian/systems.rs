@@ -28,8 +28,7 @@ use crate::combat::CombatClock;
 use crate::cultivation::components::Cultivation;
 use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
 use crate::inventory::{
-    InventoryInstanceIdAllocator, ItemInstance, ItemRegistry, ItemTemplate, PlayerInventory,
-    MAIN_PACK_CONTAINER_ID,
+    add_item_to_player_inventory, InventoryInstanceIdAllocator, ItemRegistry, PlayerInventory,
 };
 use crate::network::inventory_snapshot_emit::send_inventory_snapshot_to_client;
 use crate::network::{gameplay_vfx, vfx_event_emit::VfxEventRequest};
@@ -958,16 +957,23 @@ fn apply_harvest_completion(
         let owner = plot.owner;
 
         // 1. 给作物 item（plant_id 同名）
-        let Some(plant_item_template) = item_registry.get(plant_id) else {
+        if item_registry.get(plant_id).is_none() {
             tracing::warn!(
                 "[bong][lingtian] no ItemTemplate for plant_id={plant_id} (need entry in herbs.toml)"
             );
             return;
-        };
+        }
         if let Some(inv) = inventory.as_deref_mut() {
-            if !award_item_to_inventory(inv, plant_item_template, allocator) {
+            if let Err(error) = add_item_to_player_inventory(
+                inv,
+                item_registry,
+                allocator,
+                plant_id,
+                1,
+                now_lingtian_tick,
+            ) {
                 tracing::warn!(
-                    "[bong][lingtian] inventory full; dropped 1× {plant_id} for actor={actor:?}"
+                    "[bong][lingtian] harvest award failed; dropped 1× {plant_id} for actor={actor:?}: {error}"
                 );
             }
         } else {
@@ -981,20 +987,27 @@ fn apply_harvest_completion(
         let roll = rng.next_f32();
         let seed_dropped = if roll < drop_rate {
             let seed_id = seed_id_for(plant_id);
-            if let (Some(seed_template), Some(inv)) =
-                (item_registry.get(&seed_id), inventory.as_deref_mut())
-            {
-                if !award_item_to_inventory(inv, seed_template, allocator) {
+            if let Some(inv) = inventory.as_deref_mut() {
+                if item_registry.get(&seed_id).is_none() {
                     tracing::warn!(
-                        "[bong][lingtian] inventory full; dropped 1× {seed_id} for actor={actor:?}"
+                        "[bong][lingtian] no ItemTemplate for seed `{seed_id}` (need entry in seeds.toml)"
                     );
+                    false
+                } else {
+                    if let Err(error) = add_item_to_player_inventory(
+                        inv,
+                        item_registry,
+                        allocator,
+                        &seed_id,
+                        1,
+                        now_lingtian_tick,
+                    ) {
+                        tracing::warn!(
+                            "[bong][lingtian] harvest seed award failed; dropped 1× {seed_id} for actor={actor:?}: {error}"
+                        );
+                    }
+                    true
                 }
-                true
-            } else if inventory.is_some() {
-                tracing::warn!(
-                    "[bong][lingtian] no ItemTemplate for seed `{seed_id}` (need entry in seeds.toml)"
-                );
-                false
             } else {
                 tracing::debug!(
                     "[bong][lingtian] HarvestSession actor={actor:?} has no PlayerInventory; seed drop is consumed offscreen"
@@ -1044,107 +1057,6 @@ fn apply_harvest_completion(
             }
         }
     }
-}
-
-/// 把一个 1×1 item 加到玩家背包。
-///
-/// 策略（最简）：
-///   1. 在 `main_pack` 里找同 template_id 的栈 → stack += 1
-///   2. 否则在 `main_pack` 里找首个空 (row, col) 1×1 槽 → spawn 新 instance（allocator 给 id）
-///   3. 没空位 → 返回 false（调用方 warn 丢弃）
-///
-/// 仅支持 1×1 item（herbs / seeds 是 1×1）。多格 item 走另一路径（未实装，
-/// 留 P5+ 通用 inventory placement helper）。
-fn award_item_to_inventory(
-    inv: &mut PlayerInventory,
-    template: &ItemTemplate,
-    allocator: &mut InventoryInstanceIdAllocator,
-) -> bool {
-    if template.grid_w != 1 || template.grid_h != 1 {
-        tracing::warn!(
-            "[bong][lingtian] award_item_to_inventory: only 1×1 supported (template={} is {}×{})",
-            template.id,
-            template.grid_w,
-            template.grid_h,
-        );
-        return false;
-    }
-    let Some(main_pack) = inv
-        .containers
-        .iter_mut()
-        .find(|c| c.id == MAIN_PACK_CONTAINER_ID)
-    else {
-        tracing::warn!("[bong][lingtian] award_item_to_inventory: no main_pack container");
-        return false;
-    };
-
-    // 1. stack
-    if let Some(slot) = main_pack
-        .items
-        .iter_mut()
-        .find(|p| p.instance.template_id == template.id)
-    {
-        slot.instance.stack_count = slot.instance.stack_count.saturating_add(1);
-        bump_revision(inv);
-        return true;
-    }
-
-    // 2. 找首个空 (row, col)
-    let (rows, cols) = (main_pack.rows, main_pack.cols);
-    let mut occupied = vec![vec![false; usize::from(cols)]; usize::from(rows)];
-    for placed in &main_pack.items {
-        for dr in 0..placed.instance.grid_h {
-            for dc in 0..placed.instance.grid_w {
-                let r = usize::from(placed.row + dr);
-                let c = usize::from(placed.col + dc);
-                if r < occupied.len() && c < occupied[0].len() {
-                    occupied[r][c] = true;
-                }
-            }
-        }
-    }
-    for r in 0..rows {
-        for c in 0..cols {
-            if !occupied[usize::from(r)][usize::from(c)] {
-                let Ok(instance_id) = allocator.next_id() else {
-                    tracing::warn!(
-                        "[bong][lingtian] award_item_to_inventory: instance_id allocator exhausted"
-                    );
-                    return false;
-                };
-                let instance = ItemInstance {
-                    instance_id,
-                    template_id: template.id.clone(),
-                    display_name: template.display_name.clone(),
-                    grid_w: template.grid_w,
-                    grid_h: template.grid_h,
-                    weight: template.base_weight,
-                    rarity: template.rarity,
-                    description: template.description.clone(),
-                    stack_count: 1,
-                    spirit_quality: template.spirit_quality_initial,
-                    durability: 1.0,
-                    freshness: None,
-                    mineral_id: None,
-                    charges: None,
-                    forge_quality: None,
-                    forge_color: None,
-                    forge_side_effects: Vec::new(),
-                    forge_achieved_tier: None,
-                    alchemy: None,
-                    lingering_owner_qi: None,
-                };
-                main_pack.items.push(crate::inventory::PlacedItemState {
-                    row: r,
-                    col: c,
-                    instance,
-                });
-                bump_revision(inv);
-                return true;
-            }
-        }
-    }
-    false
 }
 
 fn bump_revision(inv: &mut PlayerInventory) {
@@ -1752,7 +1664,10 @@ fn plot_zone_is_collapsed(plot: &LingtianPlot, zone_registry: Option<&ZoneRegist
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::inventory::{InventoryRevision, ItemInstance, ItemRarity, PlayerInventory};
+    use crate::inventory::{
+        InventoryRevision, ItemInstance, ItemRarity, ItemTemplate, PlayerInventory,
+        MAIN_PACK_CONTAINER_ID,
+    };
     use crate::npc::spawn::NpcMarker;
     use std::collections::HashMap;
     use valence::prelude::{App, BlockPos, DVec3, IntoSystemConfigs, Update};
@@ -2660,7 +2575,7 @@ mod tests {
             display_name: display.into(),
             category: ItemCategory::Herb,
             placeable: None,
-            max_stack_count: 1,
+            max_stack_count: 64,
             grid_w: 1,
             grid_h: 1,
             base_weight: 0.1,
@@ -2723,14 +2638,14 @@ mod tests {
         ItemRegistry::from_map(m)
     }
 
-    fn build_harvest_app() -> App {
+    fn build_harvest_app_with_item_registry(item_registry: ItemRegistry) -> App {
         let mut app = App::new();
         let plant_registry = registry_with_three_test_plants();
         let seeds = SeedRegistry::from_plant_registry(&plant_registry);
         app.insert_resource(ActiveLingtianSessions::new())
             .insert_resource(plant_registry)
             .insert_resource(seeds)
-            .insert_resource(registry_with_herb_and_seed_templates())
+            .insert_resource(item_registry)
             .insert_resource(InventoryInstanceIdAllocator::default())
             .insert_resource(LingtianHarvestRng::new(0xDEAD_BEEF))
             .insert_resource(ZoneQiAccount::new())
@@ -2765,6 +2680,10 @@ mod tests {
                     .chain(),
             );
         app
+    }
+
+    fn build_harvest_app() -> App {
+        build_harvest_app_with_item_registry(registry_with_herb_and_seed_templates())
     }
 
     fn empty_inventory_8x8() -> PlayerInventory {
@@ -2809,6 +2728,15 @@ mod tests {
             .unwrap_or(0)
     }
 
+    fn count_in_all_containers(inv: &PlayerInventory, template_id: &str) -> u32 {
+        inv.containers
+            .iter()
+            .flat_map(|container| container.items.iter())
+            .filter(|placed| placed.instance.template_id == template_id)
+            .map(|placed| placed.instance.stack_count)
+            .sum()
+    }
+
     #[test]
     fn harvest_e2e_drops_plant_and_clears_plot() {
         let mut app = build_harvest_app();
@@ -2829,6 +2757,80 @@ mod tests {
         assert_eq!(p.harvest_count, 1, "harvest_count 应 +1");
         let inv = app.world().get::<PlayerInventory>(player).unwrap();
         assert_eq!(count_in_main_pack(inv, "ci_she_hao"), 1, "应得 1 株作物");
+    }
+
+    #[test]
+    fn harvest_with_default_runtime_pack_without_main_pack_is_not_lost() {
+        let item_registry =
+            crate::inventory::load_item_registry().expect("item registry should load");
+        let loadout =
+            crate::inventory::load_default_loadout(&item_registry).expect("default loadout loads");
+        let mut loadout_allocator = InventoryInstanceIdAllocator::new(3000);
+        let inventory = crate::inventory::instantiate_inventory_from_loadout(
+            &loadout,
+            &mut loadout_allocator,
+            &item_registry,
+        )
+        .expect("default loadout should instantiate");
+        let runtime_pack_id = inventory
+            .containers
+            .iter()
+            .find_map(|container| {
+                container
+                    .id
+                    .strip_prefix("pack_")
+                    .map(|_| container.id.clone())
+            })
+            .expect("default loadout should derive a runtime pack_<instance_id> container");
+        assert!(
+            inventory
+                .containers
+                .iter()
+                .all(|container| container.id != MAIN_PACK_CONTAINER_ID),
+            "default loadout no longer creates `{MAIN_PACK_CONTAINER_ID}`; ids={:?}",
+            inventory
+                .containers
+                .iter()
+                .map(|container| container.id.as_str())
+                .collect::<Vec<_>>()
+        );
+
+        let mut app = build_harvest_app_with_item_registry(item_registry);
+        let player = app.world_mut().spawn(inventory).id();
+        let pos = BlockPos::new(4, 64, 4);
+        let plot = spawn_ripe_plot(&mut app, "ci_she_hao", pos);
+        app.world_mut().send_event(StartHarvestRequest {
+            player,
+            pos,
+            mode: SessionMode::Manual,
+        });
+
+        for _ in 0..HARVEST_MANUAL_TICKS {
+            app.update();
+        }
+
+        let plot = app.world().get::<LingtianPlot>(plot).unwrap();
+        assert!(plot.crop.is_none(), "收获完成后 plot 应清空");
+        let inv = app.world().get::<PlayerInventory>(player).unwrap();
+        assert_eq!(
+            count_in_all_containers(inv, "ci_she_hao"),
+            1,
+            "灵田收获奖励必须进入随身容器，不能因缺 `{MAIN_PACK_CONTAINER_ID}` 静默丢失；\
+             runtime_pack={runtime_pack_id}, containers={:?}",
+            inv.containers
+                .iter()
+                .map(|container| {
+                    (
+                        container.id.as_str(),
+                        container
+                            .items
+                            .iter()
+                            .map(|placed| placed.instance.template_id.as_str())
+                            .collect::<Vec<_>>(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        );
     }
 
     #[test]
