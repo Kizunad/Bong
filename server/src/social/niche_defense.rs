@@ -477,13 +477,6 @@ fn inventory_template_count(inventory: &PlayerInventory, template_id: &str) -> u
         .filter(|placed| placed.instance.template_id == template_id)
         .map(|placed| placed.instance.stack_count)
         .sum();
-    let equipped_count: u32 = inventory
-        .equipped
-        .values()
-        .flat_map(|s| s.iter_all())
-        .filter(|item| item.template_id == template_id)
-        .map(|item| item.stack_count)
-        .sum();
     let hotbar_count: u32 = inventory
         .hotbar
         .iter()
@@ -491,9 +484,7 @@ fn inventory_template_count(inventory: &PlayerInventory, template_id: &str) -> u
         .filter(|item| item.template_id == template_id)
         .map(|item| item.stack_count)
         .sum();
-    container_count
-        .saturating_add(equipped_count)
-        .saturating_add(hotbar_count)
+    container_count.saturating_add(hotbar_count)
 }
 
 fn find_material_instance_id(inventory: &PlayerInventory, template_id: &str) -> Option<u64> {
@@ -510,14 +501,6 @@ fn find_material_instance_id(inventory: &PlayerInventory, template_id: &str) -> 
                 .hotbar
                 .iter()
                 .flatten()
-                .find(|item| item.template_id == template_id && item.stack_count > 0)
-                .map(|item| item.instance_id)
-        })
-        .or_else(|| {
-            inventory
-                .equipped
-                .values()
-                .flat_map(|s| s.iter_all())
                 .find(|item| item.template_id == template_id && item.stack_count > 0)
                 .map(|item| item.instance_id)
         })
@@ -539,8 +522,8 @@ mod tests {
     use std::collections::HashMap;
 
     use crate::inventory::{
-        ContainerState, InventoryRevision, ItemInstance, ItemRarity, PlacedItemState,
-        MAIN_PACK_CONTAINER_ID,
+        ContainerState, InventoryRevision, ItemInstance, ItemRarity, PlacedItemState, SlotContents,
+        EQUIP_SLOT_MAIN_HAND, MAIN_PACK_CONTAINER_ID,
     };
 
     fn niche() -> SpiritNiche {
@@ -731,6 +714,50 @@ mod tests {
         assert_eq!(guardian.kind, GuardianKind::ZhenfaTrap);
         assert_eq!(guardian.trap_tier, ZhenfaTrapTier::Advanced);
         assert!(inventory.containers[0].items.is_empty());
+    }
+
+    #[test]
+    fn inventory_activation_rejects_equipped_guardian_materials() {
+        let mut niche = niche();
+        let mut inventory = inventory_with(Vec::new());
+        inventory.equipped.insert(
+            EQUIP_SLOT_MAIN_HAND.to_string(),
+            SlotContents::held_single(item(ADVANCED_TRAP_STONE_ITEM_ID, 4, 1)),
+        );
+
+        let err = activate_guardian_from_inventory(
+            &mut niche,
+            &mut inventory,
+            "char:owner",
+            [10, 64, 10],
+            GuardianKind::ZhenfaTrap,
+            &[ADVANCED_TRAP_STONE_ITEM_ID.to_string()],
+            100,
+        )
+        .expect_err(
+            "equipped guardian material must not satisfy activation cost; \
+             if this succeeds, check inventory_template_count/find_material_instance_id",
+        );
+
+        assert_eq!(
+            err,
+            GuardianActivationError::MissingMaterial(ADVANCED_TRAP_STONE_ITEM_ID),
+            "expected MissingMaterial because equipped materials are not consumable costs, actual {err:?}"
+        );
+        assert!(
+            niche.guardians.is_empty(),
+            "expected no guardian because activation rejected equipped-only material, actual {:?}",
+            niche.guardians
+        );
+        assert_eq!(
+            inventory
+                .equipped
+                .get(EQUIP_SLOT_MAIN_HAND)
+                .and_then(|slot| slot.held.as_ref())
+                .map(|item| (item.instance_id, item.stack_count)),
+            Some((4, 1)),
+            "expected equipped material to remain untouched because activation failed before consume"
+        );
     }
 
     #[test]
