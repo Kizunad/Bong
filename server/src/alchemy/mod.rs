@@ -52,8 +52,8 @@ use crate::combat::CombatClock;
 use crate::cultivation::components::Cultivation;
 use crate::cultivation::overload::MeridianOverloadEvent;
 use crate::inventory::{
-    consume_item_instance_once, inventory_item_by_instance, inventory_item_by_instance_borrow,
-    AlchemyItemData, PlayerInventory,
+    consume_item_instance_once, inventory_item_by_instance_borrow, AlchemyItemData, ItemInstance,
+    PlayerInventory,
 };
 use crate::network::inventory_snapshot_emit::send_inventory_snapshot_to_client;
 use crate::player::state::{canonical_player_id, PlayerState};
@@ -460,7 +460,7 @@ pub fn handle_alchemy_furnace_place(
             );
             continue;
         };
-        let Some(instance) = inventory_item_by_instance(&inv, req.item_instance_id) else {
+        let Some(instance) = alchemy_furnace_item_by_instance(&inv, req.item_instance_id) else {
             tracing::warn!(
                 "[bong][alchemy] place_furnace rejected: instance_id={} not in inventory of {:?}",
                 req.item_instance_id,
@@ -513,6 +513,28 @@ pub fn handle_alchemy_furnace_place(
     }
 }
 
+fn alchemy_furnace_item_by_instance(
+    inventory: &PlayerInventory,
+    instance_id: u64,
+) -> Option<ItemInstance> {
+    for container in &inventory.containers {
+        if let Some(placed) = container
+            .items
+            .iter()
+            .find(|placed| placed.instance.instance_id == instance_id)
+        {
+            return Some(placed.instance.clone());
+        }
+    }
+
+    inventory
+        .hotbar
+        .iter()
+        .flatten()
+        .find(|item| item.instance_id == instance_id)
+        .cloned()
+}
+
 /// 玩家加入时只挂 `LearnedRecipes`（plan §1.4 方子学习）。
 ///
 /// plan §1.2：炉必须由玩家手持物品右键地面放置（`ClientRequestV1::AlchemyFurnacePlace`）。
@@ -546,7 +568,7 @@ mod integration_tests {
     use crate::cultivation::overload::MeridianOverloadEvent;
     use crate::inventory::{
         ContainerState, InventoryRevision, ItemInstance, ItemRarity, PlacedItemState,
-        PlayerInventory,
+        PlayerInventory, SlotContents, EQUIP_SLOT_MAIN_HAND,
     };
     use crate::skill::events::SkillXpGain;
     use valence::prelude::{App, Events, Update};
@@ -693,6 +715,16 @@ mod integration_tests {
             bone_coins: 0,
             max_weight: 45.0,
         }
+    }
+
+    fn inventory_with_equipped(instance: ItemInstance) -> PlayerInventory {
+        let mut inventory = inventory_with(instance.clone());
+        inventory.containers[0].items.clear();
+        inventory.equipped.insert(
+            EQUIP_SLOT_MAIN_HAND.to_string(),
+            SlotContents::held_single(instance),
+        );
+        inventory
     }
 
     fn build_place_app() -> App {
@@ -881,6 +913,44 @@ mod integration_tests {
         // item consumed (stack 1 → removed)
         let inv = app.world().get::<PlayerInventory>(player).unwrap();
         assert!(inv.containers[0].items.is_empty());
+    }
+
+    #[test]
+    fn place_furnace_rejects_equipped_furnace_item() {
+        let mut app = build_place_app();
+        let player = app
+            .world_mut()
+            .spawn(inventory_with_equipped(item_instance(
+                48,
+                "furnace_fantie",
+                1,
+            )))
+            .id();
+
+        app.world_mut().send_event(PlaceFurnaceRequest {
+            player,
+            pos: valence::prelude::BlockPos::new(-12, 64, 38),
+            item_instance_id: 48,
+        });
+        app.update();
+
+        assert_eq!(
+            app.world_mut()
+                .query::<&AlchemyFurnace>()
+                .iter(app.world())
+                .count(),
+            0,
+            "equipped furnace item must not create a placed furnace"
+        );
+        let inv = app.world().get::<PlayerInventory>(player).unwrap();
+        assert_eq!(
+            inv.equipped
+                .get(EQUIP_SLOT_MAIN_HAND)
+                .and_then(|slot| slot.held.as_ref())
+                .map(|item| item.instance_id),
+            Some(48),
+            "rejected furnace placement must leave equipped item untouched"
+        );
     }
 
     #[test]
