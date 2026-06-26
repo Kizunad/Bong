@@ -9601,6 +9601,273 @@ cols = 4
         assert!((current - 5.5).abs() < 1e-9);
     }
 
+    // ========================================================================
+    // plan-tarkov-backpack-v1 P1 — 重量递归上卷 pin 测试（决议 #3 固化现状语义）。
+    //
+    // 决议 #3：`calculate_current_weight` 三路 flat 求和（container + equipped +
+    // hotbar）经核实**不重叠**：穿戴背包件自重走 equipped（worn 层），其内含物走
+    // container（`pack_<id>.items`），背包件本身从不出现在任何 `ContainerState.items`
+    // 里 → flat 求和数学等价于「外层背包自重 + 逐层递归内含物」的上卷。**不改公式**，
+    // 仅以下列 pin 测试锁住该等价性，任何回归（误把背包件塞进 container、或漏算内含物、
+    // 或双计自重）立刻撞红。
+    // ========================================================================
+
+    /// P1 pin：外层 worn 背包 + 其 grid 内一件物品 → current = 包自重 + 内物品自重。
+    /// 锁住「内含物（嵌套容器里的件）确实被计入 current_weight」（递归上卷第二层）。
+    #[test]
+    fn calculate_current_weight_counts_item_in_nested_container() {
+        let mut inv = make_empty_inventory();
+
+        // 外层：worn 背包件骑 chest 槽，自重 2.5。
+        let mut pack = make_container_item(500, "large_backpack");
+        pack.weight = 2.5;
+        let pack_id = container_id_for_worn_pack(500);
+        inv.equipped.insert(
+            EQUIP_SLOT_CHEST.to_string(),
+            SlotContents::worn_single(pack),
+        );
+
+        // 内层：背包派生容器 pack_500 里放一件 herb，自重 3.0。
+        let mut inner = make_test_item_instance(501, "herb");
+        inner.weight = 3.0;
+        inv.containers.push(ContainerState {
+            id: pack_id,
+            name: "大背包".to_string(),
+            rows: 7,
+            cols: 5,
+            items: vec![PlacedItemState {
+                row: 0,
+                col: 0,
+                instance: inner,
+            }],
+            owner_instance_id: Some(500),
+        });
+
+        let current = calculate_current_weight(&inv);
+        let expected = 2.5 + 3.0; // 包自重 + 内物品自重，递归上卷两层之和。
+        assert!(
+            (current - expected).abs() < 1e-9,
+            "期望 current = 包自重(2.5) + 嵌套内物品自重(3.0) = {expected}（内含物必须被上卷计入），实际 {current}"
+        );
+    }
+
+    /// P1 pin：穿戴背包件自重只计一次——背包件在 equipped(worn) 计一次，
+    /// 绝不在 container_weight 里被重复计（背包件本身从不进 ContainerState.items）。
+    /// 锁住 flat 三路求和「不重叠」前提（决议 #3 的核心）。
+    #[test]
+    fn calculate_current_weight_no_double_count_for_worn_pack() {
+        let mut inv = make_empty_inventory();
+
+        // worn 背包件自重 4.0（仅此一件，container 空）。
+        let mut pack = make_container_item(600, "large_backpack");
+        pack.weight = 4.0;
+        let pack_id = container_id_for_worn_pack(600);
+        inv.equipped.insert(
+            EQUIP_SLOT_CHEST.to_string(),
+            SlotContents::worn_single(pack),
+        );
+
+        // 派生容器存在但为空——背包件本身不在此 items 里。
+        inv.containers.push(ContainerState {
+            id: pack_id,
+            name: "大背包".to_string(),
+            rows: 7,
+            cols: 5,
+            items: Vec::new(),
+            owner_instance_id: Some(600),
+        });
+
+        let current = calculate_current_weight(&inv);
+        assert!(
+            (current - 4.0).abs() < 1e-9,
+            "期望 current = 背包件自重 4.0（仅在 equipped 计一次，不被 container_weight 重复计），实际 {current}——若 >4.0 说明背包件自重被双计"
+        );
+    }
+
+    /// P1 pin（verifiable#4 危险边界 + 状态转换锁 P0 修复语义）：
+    /// 背包件被卸下（不再在任何身体槽 worn 层），但其旧 `pack_<id>` 容器尚未被
+    /// `rebuild_containers_from_equipment` 清除（P0 修复路径触发前的可达状态）。
+    /// - rebuild 前：孤儿容器内含物如实计入 current_weight（容器仍存在、items 仍在）。
+    /// - rebuild 后：孤儿容器被清除（内含物 spill 进 body_pocket），current_weight
+    ///   守恒不变（内含物换了位置但仍在某容器里），且不再出现「背包件自重 + 孤儿内含物」
+    ///   的 double-count 风险面。
+    #[test]
+    fn calculate_current_weight_after_unequip_pack_no_double_count_orphan_container() {
+        let registry = ItemRegistry::from_map(HashMap::new());
+        let mut inv = make_empty_inventory();
+
+        // body_pocket 作 spill 落点（2×3=6 格，足够容纳一件 1×1 内含物）。
+        inv.containers.push(ContainerState {
+            id: BODY_POCKET_CONTAINER_ID.to_string(),
+            name: "暗袋".to_string(),
+            rows: BODY_POCKET_ROWS,
+            cols: BODY_POCKET_COLS,
+            items: Vec::new(),
+            owner_instance_id: None,
+        });
+
+        // 孤儿 pack_700：容器仍存在 + 含一件 herb(自重 3.0)，但 equipped 里**没有**
+        // instance_id=700 的 worn 背包件（已卸下，背包件自重不再计入）。
+        let pack_id = container_id_for_worn_pack(700);
+        let mut inner = make_test_item_instance(701, "herb");
+        inner.weight = 3.0;
+        inv.containers.push(ContainerState {
+            id: pack_id.clone(),
+            name: "大背包".to_string(),
+            rows: 7,
+            cols: 5,
+            items: vec![PlacedItemState {
+                row: 0,
+                col: 0,
+                instance: inner,
+            }],
+            owner_instance_id: None,
+        });
+
+        // rebuild 前：孤儿内含物如实计入（容器尚在）。背包件已卸 → 不在 equipped。
+        let before = calculate_current_weight(&inv);
+        assert!(
+            (before - 3.0).abs() < 1e-9,
+            "rebuild 前期望 current = 孤儿容器内含物自重 3.0（容器仍存在故如实计入；背包件已卸不计自重），实际 {before}"
+        );
+
+        // 触发 P0 修复路径：rebuild 清除孤儿容器，内含物 spill 进 body_pocket。
+        let overflow = rebuild_containers_from_equipment(&mut inv, &registry);
+        assert!(
+            overflow.is_empty(),
+            "body_pocket 有空位，内含物应全部 spill 进去、无 overflow，实际 overflow={overflow:?}"
+        );
+        assert!(
+            !inv.containers.iter().any(|c| c.id == pack_id),
+            "rebuild 后孤儿容器 {pack_id} 必须被清除（不再可 access），实际容器列表={:?}",
+            inv.containers.iter().map(|c| &c.id).collect::<Vec<_>>()
+        );
+
+        // rebuild 后：内含物换位到 body_pocket，current 守恒不变、无 double-count。
+        let after = calculate_current_weight(&inv);
+        assert!(
+            (after - before).abs() < 1e-9,
+            "rebuild 前后 current 必须守恒（内含物只换位置不增减）：期望 {before}，实际 {after}——若变大说明孤儿内含物被 double-count，若变小说明 spill 丢物"
+        );
+    }
+
+    /// P1 pin（状态转换 A→B）：嵌套背包内含物使总重超 max_weight → OverloadedMarker 挂上。
+    /// 锁住 `sync_overloaded_marker` 对「内含物（container_weight）」的感知。
+    #[test]
+    fn overloaded_marker_triggers_when_nested_pack_contents_exceed_limit() {
+        use valence::prelude::{App, Update};
+
+        let mut app = App::new();
+        app.add_systems(Update, sync_overloaded_marker);
+
+        let mut inv = make_empty_inventory();
+        inv.max_weight = 10.0;
+
+        // worn 背包件自重 1.0。
+        let mut pack = make_container_item(800, "large_backpack");
+        pack.weight = 1.0;
+        let pack_id = container_id_for_worn_pack(800);
+        inv.equipped.insert(
+            EQUIP_SLOT_CHEST.to_string(),
+            SlotContents::worn_single(pack),
+        );
+
+        // 嵌套内含物自重 20.0 → current = 21.0 > max 10.0。
+        let mut heavy = make_test_item_instance(801, "ore");
+        heavy.weight = 20.0;
+        inv.containers.push(ContainerState {
+            id: pack_id,
+            name: "大背包".to_string(),
+            rows: 7,
+            cols: 5,
+            items: vec![PlacedItemState {
+                row: 0,
+                col: 0,
+                instance: heavy,
+            }],
+            owner_instance_id: Some(800),
+        });
+
+        let entity = app.world_mut().spawn(inv).id();
+        app.update();
+
+        let marker = app
+            .world()
+            .get::<OverloadedMarker>(entity)
+            .expect("嵌套内含物(20.0)+包自重(1.0)=21.0 > max(10.0)，应挂 OverloadedMarker");
+        assert!(
+            (marker.current_weight - 21.0).abs() < 1e-9,
+            "marker.current_weight 应反映含嵌套内含物的总重 21.0（包自重1.0+内含物20.0），实际 {}",
+            marker.current_weight
+        );
+        assert!(
+            marker.current_weight > marker.max_weight,
+            "marker 应记录超限（current {} > max {}）",
+            marker.current_weight,
+            marker.max_weight
+        );
+    }
+
+    /// P1 pin（状态转换 A→B→A）：移除嵌套内含物使总重回落 ≤ max → OverloadedMarker 清除。
+    #[test]
+    fn overloaded_marker_clears_after_removing_nested_item() {
+        use valence::prelude::{App, Update};
+
+        let mut app = App::new();
+        app.add_systems(Update, sync_overloaded_marker);
+
+        let mut inv = make_empty_inventory();
+        inv.max_weight = 10.0;
+
+        let mut pack = make_container_item(900, "large_backpack");
+        pack.weight = 1.0;
+        let pack_id = container_id_for_worn_pack(900);
+        inv.equipped.insert(
+            EQUIP_SLOT_CHEST.to_string(),
+            SlotContents::worn_single(pack),
+        );
+
+        let mut heavy = make_test_item_instance(901, "ore");
+        heavy.weight = 20.0;
+        inv.containers.push(ContainerState {
+            id: pack_id,
+            name: "大背包".to_string(),
+            rows: 7,
+            cols: 5,
+            items: vec![PlacedItemState {
+                row: 0,
+                col: 0,
+                instance: heavy,
+            }],
+            owner_instance_id: Some(900),
+        });
+
+        let entity = app.world_mut().spawn(inv).id();
+        app.update();
+        assert!(
+            app.world().get::<OverloadedMarker>(entity).is_some(),
+            "前置：超限态应先挂 marker（A→B）"
+        );
+
+        // 移除嵌套内含物 → current 回落到 1.0（仅包自重）≤ max 10.0。
+        {
+            let mut inv = app.world_mut().get_mut::<PlayerInventory>(entity).unwrap();
+            let pack_id = container_id_for_worn_pack(900);
+            let container = inv
+                .containers
+                .iter_mut()
+                .find(|c| c.id == pack_id)
+                .expect("pack_900 容器应存在");
+            container.items.clear();
+        }
+        app.update();
+
+        assert!(
+            app.world().get::<OverloadedMarker>(entity).is_none(),
+            "移除嵌套内含物后 current(1.0) ≤ max(10.0)，OverloadedMarker 应被清除（A→B→A 状态转换闭环）"
+        );
+    }
+
     #[test]
     fn sync_overloaded_marker_adds_and_removes_marker_based_on_weight() {
         use valence::prelude::{App, Update};
@@ -10961,6 +11228,38 @@ cols = 4
             (w - (BASE_CARRY_CAPACITY + 30.0)).abs() < f64::EPSILON,
             "expected BASE + 30.0 = {}, got {w}",
             BASE_CARRY_CAPACITY + 30.0
+        );
+    }
+
+    /// plan-tarkov-backpack-v1 P1 pin（固化决议 #3）：穿戴背包件自重**不**额外占
+    /// max_weight 上限——`compute_max_weight = BASE + Σ weight_capacity`，背包件自重
+    /// 已在 `current_weight` 侧计一次（equipped），不在 max 侧二次扣减。
+    /// 此处把背包件自重设得很大（50.0）并断言 max 仍只 = BASE + capacity，与自重无关。
+    #[test]
+    fn compute_max_weight_worn_pack_self_weight_not_added_to_max() {
+        // weight_capacity=30.0；下面把实际穿戴件自重设成 50.0（远大于容量）以坐实
+        // 「自重不参与 max 公式」。
+        let backpack_template =
+            make_container_template("large_backpack", EQUIP_SLOT_CHEST, 7, 5, 30.0);
+        let registry = ItemRegistry::from_map(HashMap::from([(
+            "large_backpack".to_string(),
+            backpack_template,
+        )]));
+
+        let mut inv = make_empty_inventory();
+        let mut pack = make_container_item(1000, "large_backpack");
+        pack.weight = 50.0; // 自重远大于 capacity，若被错误计入 max 则会撞红。
+        inv.equipped.insert(
+            EQUIP_SLOT_CHEST.to_string(),
+            SlotContents::worn_single(pack),
+        );
+
+        let w = compute_max_weight(&inv, &registry);
+        let expected = BASE_CARRY_CAPACITY + 30.0; // 仅 capacity，与背包件自重(50.0)无关。
+        assert!(
+            (w - expected).abs() < f64::EPSILON,
+            "期望 max = BASE({BASE_CARRY_CAPACITY}) + capacity(30.0) = {expected}，与背包自重(50.0)无关（决议 #3：自重已在 current 侧计、不占 max），实际 {w}——若 ≈ {} 说明自重被错误加进 max",
+            expected + 50.0
         );
     }
 

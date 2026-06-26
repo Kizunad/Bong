@@ -311,6 +311,55 @@ mod tests {
         assert_eq!(mass.inventory_mass, MAX_INVENTORY_MASS);
     }
 
+    /// plan-tarkov-backpack-v1 P1 pin（纯防回归，不改 body_mass 代码）：
+    /// `BodyMass::from_inventory` 的负重派生必须与 `calculate_current_weight` 保持一致——
+    /// `armor_mass + inventory_mass == calculate_current_weight` 当 carried 未触 cap 时。
+    /// 锁住「inventory_mass = (current_weight − armor_mass).max(0).min(cap)」的不变式：
+    /// 若 P1 之后有人误改了 calculate_current_weight 的求和路径（如双计背包自重），
+    /// 该一致性会在此撞红，提示 body_mass 与重量真源已发散。
+    #[test]
+    fn body_mass_carried_mass_consistent_with_current_weight() {
+        // chest worn = [铁甲 8.0(有 ArmorProfile), 背包件 2.0(无)]；hotbar = [散件 5.0]。
+        // current_weight = 8 + 2 + 5 = 15；armor_mass = 8；carried = 15 − 8 = 7（< cap 30，不触 cap）。
+        let mut inventory = empty_inventory();
+        inventory.equipped.insert(
+            EQUIP_SLOT_CHEST.to_string(),
+            SlotContents {
+                worn: vec![item(1, 8.0), item(2, 2.0)],
+                held: None,
+            },
+        );
+        inventory.hotbar[0] = Some(item(3, 5.0));
+
+        let registry = armor_registry(&["item_1"]);
+
+        let current = calculate_current_weight(&inventory);
+        let armor = equipped_armor_mass(&inventory, &registry);
+        let mass = BodyMass::from_inventory(&inventory, &registry);
+
+        assert!(
+            current < MAX_INVENTORY_MASS + armor,
+            "前置：本用例 carried(={}) 须 < cap({MAX_INVENTORY_MASS}) 以验证未触 cap 的一致性，实际 current={current} armor={armor}",
+            current - armor
+        );
+        assert_eq!(
+            mass.armor_mass, armor,
+            "BodyMass.armor_mass 应等于 equipped_armor_mass 直算值"
+        );
+        assert_eq!(
+            mass.armor_mass + mass.inventory_mass,
+            current,
+            "一致性不变式：armor_mass({}) + inventory_mass({}) 应 == calculate_current_weight({current})（未触 cap 时），若发散说明 body_mass 负重派生与重量真源已脱节",
+            mass.armor_mass,
+            mass.inventory_mass
+        );
+        assert_eq!(
+            mass.inventory_mass,
+            (current - armor).clamp(0.0, MAX_INVENTORY_MASS),
+            "inventory_mass 应 = (current_weight − armor_mass) 截到 [0, cap]，固化 carried 派生公式"
+        );
+    }
+
     #[test]
     fn npc_archetype_mass_matches_plan_table() {
         assert_eq!(
