@@ -4699,6 +4699,7 @@ mod tests {
                 hotbar: Default::default(),
                 bone_coins: 0,
                 max_weight: 50.0,
+                triggered_treasures: vec![],
             },
         ));
 
