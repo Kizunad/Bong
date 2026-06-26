@@ -1092,6 +1092,31 @@ fn sanitize_loaded_position(
     )
 }
 
+/// Bug A（真机回归）— 检测 #736 旧迁移 bug 污染并已落盘为 v2 的存档指纹：
+/// 存在 `pack_<instance_id>` 容器，却在 equipped 任何身体槽的 worn 层里找不到该 instance_id
+/// 的穿戴背包件（孤儿派生容器）。`pack_<id>` 容器只可能由穿戴背包件运行时派生，因此孤儿即污染。
+///
+/// 合法裸装玩家：equipped 空但**没有任何** `pack_<id>` 容器（背包卸下时容器会随之清掉），
+/// 故此判定不会误伤裸装玩家。返回 true 表示存档已污染、应丢弃回落默认 loadout。
+fn inventory_has_orphan_pack_container(inventory: &PlayerInventory) -> bool {
+    use std::collections::HashSet;
+    // equipped 所有身体槽 worn 层里的件 instance_id 集合（held 件不派生容器，无需收集）。
+    let worn_instance_ids: HashSet<u64> = inventory
+        .equipped
+        .values()
+        .flat_map(|slot| slot.worn.iter())
+        .map(|item| item.instance_id)
+        .collect();
+
+    inventory.containers.iter().any(|container| {
+        match crate::inventory::worn_pack_instance_from_container_id(&container.id) {
+            // `pack_<id>` 容器但 equipped 无对应 worn 背包件 ⇒ 孤儿派生容器 ⇒ #736 污染指纹。
+            Some(instance_id) => !worn_instance_ids.contains(&instance_id),
+            None => false,
+        }
+    })
+}
+
 fn load_player_inventory_from_sqlite(
     connection: &Connection,
     username: &str,
@@ -1120,9 +1145,25 @@ fn load_player_inventory_from_sqlite(
 
     if schema_version >= INVENTORY_SCHEMA_VERSION {
         // 新版本：直接反序列化。
-        return serde_json::from_str::<PlayerInventory>(&inventory_json)
-            .map(Some)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error));
+        let inventory = serde_json::from_str::<PlayerInventory>(&inventory_json)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+
+        // Bug A（真机回归）— #736 旧版迁移 bug 已被 #751 修，但**被那次 bug 污染并已落盘为
+        // v2** 的存档不会再走迁移分支自愈：它带「孤儿 `pack_<id>` 容器（派生自某穿戴背包件）却
+        // 在 equipped 里找不到对应背包件」的指纹（实测 Kizun3Desu：equipped 空、伪皮被冲进
+        // body_pocket、worn_grass_pouch 连同 iron_sword 全丢，只剩 pack_11 孤儿容器）。
+        // 这类存档已无法恢复丢失件（iron_sword 真丢了），最干净的恢复是丢弃污染存档、回落
+        // 默认 loadout（与 fresh join 一致）。判定指纹极窄：`pack_<id>` 容器只可能由穿戴背包件
+        // 派生，故「有 pack_<id> 容器但 equipped 无对应 instance」⇒ 必是 #736 污染，绝不会误伤
+        // 合法裸装玩家（裸装 equipped 空但也无任何 pack_<id> 容器）。
+        if inventory_has_orphan_pack_container(&inventory) {
+            tracing::warn!(
+                "[bong][player] detected #736-corrupted v2 inventory for `{username}` (orphan pack_* container without backing worn item); discarding corrupt save and falling back to default loadout"
+            );
+            return Ok(None);
+        }
+
+        return Ok(Some(inventory));
     }
 
     // 旧版本（v1）：解析为 Value → 迁移 equipped 形态 → 反序列化。
@@ -2619,6 +2660,291 @@ mod player_state_tests {
         assert!(
             inventory.containers.iter().any(|c| c.id == "body_pocket"),
             "body_pocket 容器应原样保留"
+        );
+    }
+
+    /// 把任意 inventory_json 以指定 schema_version 落进 sqlite，再走 load_player_inventory_from_sqlite。
+    /// 复现真机 join → 加载链路（DEFAULT_INVENTORY_JSON / orphan-pack / 正常 v2 / v1 迁移分流全覆盖）。
+    fn load_inventory_row(
+        schema_version: i32,
+        inventory_json: &str,
+    ) -> (Option<PlayerInventory>, PathBuf) {
+        let (persistence, data_dir) = sqlite_persistence("load-inventory-row");
+        let connection = Connection::open(persistence.db_path()).expect("sqlite db should open");
+        connection
+            .execute(
+                "INSERT INTO inventories (username, inventory_json, schema_version, last_updated_wall)
+                 VALUES (?1, ?2, ?3, 0)",
+                params!["LoadProbe", inventory_json, schema_version],
+            )
+            .expect("insert inventory row");
+        let loaded = load_player_inventory_from_sqlite(&connection, "LoadProbe")
+            .expect("load_player_inventory_from_sqlite should not error");
+        (loaded, data_dir)
+    }
+
+    // Bug A（真机回归）— 真机污染存档：#736 旧迁移 bug 把伪皮冲进 body_pocket、清空 equipped、
+    // 丢 iron_sword/worn_grass_pouch，只剩孤儿 pack_<id> 容器，且已落盘为 schema_version=2。
+    // 这是 Kizun3Desu 实测行内 JSON（worn_grass_pouch instance_id=11 派生 pack_11，但 equipped 空）。
+    // 加载时必须识别为污染、丢弃存档、回落默认 loadout（返回 None），否则玩家 join 后 equipped 永久空。
+    #[test]
+    fn corrupt_v2_with_orphan_pack_container_is_discarded_to_default_loadout() {
+        // 真机 Kizun3Desu v2 污染行的最小忠实复刻：equipped 空 + pack_11 孤儿容器 + body_pocket。
+        let corrupt_v2 = serde_json::json!({
+            "revision": 8,
+            "containers": [
+                {
+                    "id": "body_pocket", "name": "贴身口袋", "rows": 2, "cols": 3,
+                    "items": [
+                        { "row": 0, "col": 0, "instance": v1_equip_item(2, "ningmai_powder") },
+                        // 伪皮被旧迁移 bug 冲进 body_pocket（真机症状）。
+                        { "row": 0, "col": 1, "instance": v1_equip_item(12, "fake_spirit_hide") }
+                    ]
+                },
+                {
+                    // 孤儿 pack_11：派生自 worn_grass_pouch(instance_id=11)，但 equipped 里已无该件。
+                    "id": "pack_11", "name": "破草包", "rows": 3, "cols": 3,
+                    "items": [
+                        { "row": 0, "col": 0, "instance": v1_equip_item(4, "spirit_grass") }
+                    ]
+                }
+            ],
+            "equipped": {},
+            "hotbar": [null, null, null, null, null, null, null, null, null],
+            "bone_coins": 7,
+            "max_weight": 23.0,
+            "triggered_treasures": []
+        });
+        let (loaded, data_dir) = load_inventory_row(2, &corrupt_v2.to_string());
+        assert!(
+            loaded.is_none(),
+            "孤儿 pack_<id> 容器（equipped 无对应 worn 背包件）= #736 污染指纹，必须丢弃回落默认 loadout（返回 None），\
+             否则 attach_player_state 会把空 equipped 存档插上、抑制默认 loadout，玩家 join 后 equipped 永久空；实际 loaded.is_some()={}",
+            loaded.is_some()
+        );
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    // Bug A（防误伤）— 健康 v2 存档：equipped 有 chest.worn 背包件 + 与之自洽的 pack_<id> 容器。
+    // 这不是污染（容器有 backing worn 件），必须原样保留，绝不能被自愈逻辑误丢。
+    #[test]
+    fn healthy_v2_with_backed_pack_container_is_preserved() {
+        let pack_id = crate::inventory::container_id_for_worn_pack(11);
+        let healthy_v2 = serde_json::json!({
+            "revision": 3,
+            "containers": [
+                { "id": "body_pocket", "name": "贴身口袋", "rows": 2, "cols": 3, "items": [] },
+                {
+                    "id": pack_id, "name": "破草包", "rows": 3, "cols": 3,
+                    "items": [ { "row": 0, "col": 0, "instance": v1_equip_item(4, "spirit_grass") } ]
+                }
+            ],
+            // worn_grass_pouch instance_id=11，与 pack_11 自洽 ⇒ 非孤儿。
+            "equipped": {
+                "chest": { "worn": [ v1_equip_item(11, "worn_grass_pouch") ], "held": null }
+            },
+            "hotbar": [null, null, null, null, null, null, null, null, null],
+            "bone_coins": 7,
+            "max_weight": 23.0,
+            "triggered_treasures": []
+        });
+        let (loaded, data_dir) = load_inventory_row(2, &healthy_v2.to_string());
+        let inventory = loaded
+            .expect("健康 v2 存档（pack_<id> 有 backing worn 件）必须原样保留，不得被自愈误丢");
+        let chest = inventory
+            .equipped
+            .get(crate::inventory::EQUIP_SLOT_CHEST)
+            .expect("chest 槽应保留");
+        assert_eq!(
+            chest.worn.iter().map(|i| i.instance_id).collect::<Vec<_>>(),
+            vec![11],
+            "chest.worn 背包件 instance_id 应原样保留"
+        );
+        assert!(
+            inventory.containers.iter().any(|c| c.id == pack_id),
+            "自洽 pack_<id> 容器应原样保留"
+        );
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    // Bug A（防误伤）— 合法裸装玩家：equipped 空且无任何 pack_<id> 容器（卸背包时容器随之清掉）。
+    // 不是污染（没有孤儿容器），必须原样保留空 equipped，不能被误判为 #736 污染而重置。
+    #[test]
+    fn naked_v2_without_pack_container_is_preserved_not_reset() {
+        let naked_v2 = serde_json::json!({
+            "revision": 5,
+            "containers": [
+                { "id": "body_pocket", "name": "贴身口袋", "rows": 2, "cols": 3, "items": [] }
+            ],
+            "equipped": {},
+            "hotbar": [null, null, null, null, null, null, null, null, null],
+            "bone_coins": 0,
+            "max_weight": 23.0,
+            "triggered_treasures": []
+        });
+        let (loaded, data_dir) = load_inventory_row(2, &naked_v2.to_string());
+        let inventory =
+            loaded.expect("合法裸装存档（无 pack_<id> 容器）必须保留，不得误判为污染重置");
+        assert!(
+            inventory.equipped.is_empty(),
+            "裸装玩家 equipped 应保持空（保留其存档原貌），实际 {:?}",
+            inventory.equipped.keys().collect::<Vec<_>>()
+        );
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    // Bug A（真机回归核心）— 真机 v1 旧档（旧 default.toml 形态：chest=fake_spirit_hide、
+    // main_hand=iron_sword、back_pack=worn_grass_pouch + 同名 back_pack 容器装 7 件），
+    // 走完整 sqlite 加载链路（schema_version=1 → migrate → 反序列化）。
+    // 必须：equipped 非空 + chest.worn==[worn_grass_pouch, fake_spirit_hide] + main_hand.held==iron_sword
+    // + back_pack 容器改名到 pack_<worn_grass_pouch instance_id> 且 7 件原样保留 + body_pocket 不动。
+    // 这把真机 join 加载路径整条锁死，任何回归（迁空 / 错置 / 丢件 / 孤儿容器）立即撞红。
+    #[test]
+    fn real_v1_legacy_loadout_loads_with_equipped_populated_via_full_path() {
+        let v1_row = serde_json::json!({
+            "revision": 1,
+            "containers": [
+                {
+                    "id": "body_pocket", "name": "贴身口袋", "rows": 2, "cols": 3,
+                    "items": [
+                        { "row": 0, "col": 0, "instance": v1_equip_item(2, "ningmai_powder") },
+                        { "row": 0, "col": 1, "instance": v1_equip_item(3, "fengling_bone_coin") }
+                    ]
+                },
+                {
+                    "id": "back_pack", "name": "破草包", "rows": 3, "cols": 3,
+                    "items": [
+                        { "row": 0, "col": 0, "instance": v1_equip_item(4, "spirit_grass") },
+                        { "row": 0, "col": 1, "instance": v1_equip_item(5, "ningmai_powder") },
+                        { "row": 0, "col": 2, "instance": v1_equip_item(6, "guyuan_pill") },
+                        { "row": 1, "col": 0, "instance": v1_equip_item(7, "bone_spike") },
+                        { "row": 1, "col": 1, "instance": v1_equip_item(8, "ash_spider_silk") },
+                        { "row": 2, "col": 1, "instance": v1_equip_item(9, "ci_she_hao_seed") },
+                        { "row": 2, "col": 2, "instance": v1_equip_item(10, "ning_mai_cao_seed") }
+                    ]
+                }
+            ],
+            "equipped": {
+                "chest": v1_equip_item(11, "fake_spirit_hide"),
+                "main_hand": v1_equip_item(12, "iron_sword"),
+                "back_pack": v1_equip_item(13, "worn_grass_pouch")
+            },
+            "hotbar": [null, null, null, null, null, null, null, null, null],
+            "bone_coins": 7,
+            "max_weight": 23.0
+        });
+        let (loaded, data_dir) = load_inventory_row(1, &v1_row.to_string());
+        let inventory = loaded.expect("v1 旧档加载后 inventory 必须存在（不得迁空、不得误判污染）");
+
+        assert!(
+            !inventory.equipped.is_empty(),
+            "真机 join 加载后 equipped 绝不能为空（Bug A 核心症状）"
+        );
+        let chest = inventory
+            .equipped
+            .get(crate::inventory::EQUIP_SLOT_CHEST)
+            .expect("chest 槽必须存在");
+        assert_eq!(
+            chest
+                .worn
+                .iter()
+                .map(|i| i.template_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["worn_grass_pouch", "fake_spirit_hide"],
+            "chest.worn 应为 [背包件, 伪皮]（栈底→栈顶），与 default.toml fresh 实例化一致"
+        );
+        let main_hand = inventory
+            .equipped
+            .get(crate::inventory::EQUIP_SLOT_MAIN_HAND)
+            .expect("main_hand 槽必须存在（iron_sword 不得丢失）");
+        assert_eq!(
+            main_hand.held.as_ref().map(|i| i.template_id.as_str()),
+            Some("iron_sword"),
+            "iron_sword 必须迁入 main_hand.held（真机数据丢失尤其严重，必锁死）"
+        );
+
+        // back_pack 容器改名到 pack_<worn_grass_pouch instance_id=13>，7 件原样保留。
+        let expected_pack_id = crate::inventory::container_id_for_worn_pack(13);
+        let pack = inventory
+            .containers
+            .iter()
+            .find(|c| c.id == expected_pack_id)
+            .unwrap_or_else(|| {
+                panic!(
+                    "back_pack 容器应改名到 `{expected_pack_id}`；实际容器 ids = {:?}",
+                    inventory
+                        .containers
+                        .iter()
+                        .map(|c| &c.id)
+                        .collect::<Vec<_>>()
+                )
+            });
+        assert_eq!(
+            pack.items.len(),
+            7,
+            "改名后 pack 容器内 7 件原样保留（不丢数据）"
+        );
+        assert!(
+            !inventory.containers.iter().any(|c| c.id == "back_pack"),
+            "旧 back_pack 容器 id 不应残留（已改名，否则成无主孤儿 = 取不出）"
+        );
+        assert!(
+            inventory.containers.iter().any(|c| c.id == "body_pocket"),
+            "body_pocket 容器应原样保留"
+        );
+        // 关键：加载产物自身不得触发 orphan 判定（自洽，pack_13 有 backing worn 件）。
+        assert!(
+            !inventory_has_orphan_pack_container(&inventory),
+            "v1 迁移产物必须自洽：pack_<id> 容器与 chest.worn 背包件 instance_id 对齐，不得被误判孤儿"
+        );
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    // Bug A（fresh join 路径）— 全新玩家（无 sqlite 行）应回落默认 loadout（instantiate_inventory_from_loadout），
+    // equipped 正确填充：chest.worn==[worn_grass_pouch, fake_spirit_hide]、main_hand.held==iron_sword。
+    // 这把 default.toml → try_into_loadout → instantiate 的 fresh 实例化结构锁死。
+    #[test]
+    fn fresh_instantiate_from_default_loadout_populates_equipped() {
+        use crate::inventory::{
+            instantiate_inventory_from_loadout, load_default_loadout, load_item_registry,
+            InventoryInstanceIdAllocator,
+        };
+        // 真机 fresh join 路径：真实 ItemRegistry（assets/items）+ 真实 default.toml → instantiate。
+        let registry = load_item_registry().expect("load item registry from assets/items");
+        let loadout = load_default_loadout(&registry).expect("default loadout should load");
+        let mut allocator = InventoryInstanceIdAllocator::default();
+        let inventory = instantiate_inventory_from_loadout(&loadout, &mut allocator, &registry)
+            .expect("instantiate default loadout should succeed");
+
+        assert!(
+            !inventory.equipped.is_empty(),
+            "fresh 实例化后 equipped 绝不能为空"
+        );
+        let chest = inventory
+            .equipped
+            .get(crate::inventory::EQUIP_SLOT_CHEST)
+            .expect("chest 槽必须存在");
+        assert_eq!(
+            chest
+                .worn
+                .iter()
+                .map(|i| i.template_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["worn_grass_pouch", "fake_spirit_hide"],
+            "fresh chest.worn 应为 [破草包, 伪皮]（两条 [[equip]] slot=chest 聚合到 worn 栈）"
+        );
+        let main_hand = inventory
+            .equipped
+            .get(crate::inventory::EQUIP_SLOT_MAIN_HAND)
+            .expect("main_hand 槽必须存在");
+        assert_eq!(
+            main_hand.held.as_ref().map(|i| i.template_id.as_str()),
+            Some("iron_sword"),
+            "fresh main_hand.held 应为 iron_sword（[[equip]] slot=main_hand）"
+        );
+        assert!(
+            !inventory_has_orphan_pack_container(&inventory),
+            "fresh 实例化产物自洽：pack_<id> 与 chest.worn 背包件对齐，不得被误判孤儿"
         );
     }
 

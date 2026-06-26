@@ -3802,10 +3802,18 @@ pub fn compute_max_weight(inventory: &PlayerInventory, registry: &ItemRegistry) 
 /// 1. `body_pocket`（2×3）始终存在；不存在时创建空容器。
 /// 2. 扫所有身体槽 worn 层里带 `container_spec` 的背包件：容器 id = `pack_<instance_id>`；
 ///    存在则更新 rows/cols（升级换品），否则 push 新空容器。
-/// 3. 移除已不再对应任何穿戴背包件的孤儿 `pack_*` 容器（仅当其为空时移除，防丢数据）。
+/// 3. 移除已不再对应任何穿戴背包件的孤儿 `pack_*` 容器。**孤儿容器若非空，先把其物品
+///    溢出（spill）到其它存活容器（背包/暗袋），实在放不下的随返回值上抛由调用方掉落，
+///    再移除容器**——绝不允许残留「可 access 的孤儿容器」（Bug C：丢背包后还能从孤儿容器
+///    取物）。
 /// 4. 刷新 `max_weight = compute_max_weight(...)`。
+///
+/// 返回：溢出后仍无处安放、需由调用方转为掉落物的物品（无则空 Vec）。
 #[allow(dead_code)]
-pub fn rebuild_containers_from_equipment(inventory: &mut PlayerInventory, registry: &ItemRegistry) {
+pub fn rebuild_containers_from_equipment(
+    inventory: &mut PlayerInventory,
+    registry: &ItemRegistry,
+) -> Vec<ItemInstance> {
     // 1. 确保 body_pocket 始终存在。
     if !inventory
         .containers
@@ -3854,17 +3862,47 @@ pub fn rebuild_containers_from_equipment(inventory: &mut PlayerInventory, regist
         }
     }
 
-    // 3. 移除孤儿 pack_* 容器（背包件已卸下且容器为空）。
-    inventory.containers.retain(|c| {
-        if worn_pack_instance_from_container_id(&c.id).is_some() {
-            live_ids.contains(&c.id) || !c.items.is_empty()
-        } else {
-            true
+    // 3. 处理孤儿 pack_* 容器（无对应穿戴背包件）。
+    //    先收集孤儿容器 id（不可在迭代 containers 时同时 mutate），再逐个：
+    //    取出内含物 → 移除容器 → 把内含物 spill 进存活容器（背包优先、暗袋兜底） →
+    //    放不下的归到 overflow 由调用方掉落。决不保留可 access 的孤儿容器。
+    let orphan_ids: Vec<String> = inventory
+        .containers
+        .iter()
+        .filter(|c| {
+            worn_pack_instance_from_container_id(&c.id).is_some() && !live_ids.contains(&c.id)
+        })
+        .map(|c| c.id.clone())
+        .collect();
+
+    let mut overflow: Vec<ItemInstance> = Vec::new();
+    for orphan_id in orphan_ids {
+        let Some(pos) = inventory.containers.iter().position(|c| c.id == orphan_id) else {
+            continue;
+        };
+        // 取出孤儿容器（连同其物品），从 containers 中移除——孤儿不再可 access。
+        let orphan = inventory.containers.remove(pos);
+        for placed in orphan.items {
+            // spill 到其它存活容器；放不下则上抛 overflow（调用方掉落，不丢数据）。
+            match find_first_fit_container_location(inventory, &placed.instance) {
+                Some(location) => {
+                    // attach 不应失败（location 来自 find_first_fit 的实时校验）；
+                    // 万一失败也不丢件——回落 overflow。
+                    if let Err(_reason) =
+                        attach_at_location(inventory, placed.instance.clone(), &location)
+                    {
+                        overflow.push(placed.instance);
+                    }
+                }
+                None => overflow.push(placed.instance),
+            }
         }
-    });
+    }
 
     // 4. 刷新 max_weight。
     inventory.max_weight = compute_max_weight(inventory, registry);
+
+    overflow
 }
 
 // ─── plan-layered-equip-v1 P0.2 — 背包耐久扣减与破损溢出（决议 #17 重定向到 worn 背包件 instance） ───
@@ -3981,7 +4019,7 @@ pub fn handle_backpack_break(
         .containers
         .iter()
         .position(|c| c.id == container_id);
-    let spilled_items: Vec<ItemInstance> = if let Some(pos) = container_pos {
+    let mut spilled_items: Vec<ItemInstance> = if let Some(pos) = container_pos {
         // 3. 移除容器，并取出内容物。
         let container = inventory.containers.remove(pos);
         container
@@ -3994,7 +4032,9 @@ pub fn handle_backpack_break(
     };
 
     // 4. 刷新 max_weight（equipped 已更新，rebuild 会重算）。
-    rebuild_containers_from_equipment(inventory, registry);
+    //    rebuild 顺带清理任何其它孤儿 pack_* 容器，其 spill 不下的 overflow 一并掉落（不丢数据）。
+    let rebuild_overflow = rebuild_containers_from_equipment(inventory, registry);
+    spilled_items.extend(rebuild_overflow);
     let new_max_weight = inventory.max_weight;
     bump_revision(inventory);
 
@@ -10627,11 +10667,22 @@ cols = 4
         );
     }
 
+    // Bug C（真机回归）— 孤儿非空 pack_<id> 容器（无对应穿戴背包件）必须**清理**，不得残留可
+    // access：先把内含物 spill 到存活容器（body_pocket 兜底），再移除容器。物品有去向不丢。
+    // 旧行为（`|| !c.items.is_empty()` 保留孤儿）= 丢背包后仍能从孤儿容器取物 = 数据/玩法 bug。
     #[test]
-    fn rebuild_containers_keeps_nonempty_container_even_when_unequipped() {
+    fn rebuild_containers_spills_orphan_items_and_removes_container() {
         let registry = ItemRegistry::from_map(HashMap::new());
         let mut inv = make_empty_inventory();
-        // 非空 pack_<id> 容器但无对应穿戴背包件（数据安全：不丢内含物）。
+        // body_pocket 作为 spill 兜底落点（2×3 = 6 格，足够收 1 件）。
+        inv.containers.push(ContainerState {
+            id: BODY_POCKET_CONTAINER_ID.to_string(),
+            name: "暗袋".to_string(),
+            rows: BODY_POCKET_ROWS,
+            cols: BODY_POCKET_COLS,
+            items: Vec::new(),
+        });
+        // 孤儿 pack_200：装着 herb(instance_id=55) 但 equipped 里无 instance_id=200 的穿戴背包件。
         let pack_id = container_id_for_worn_pack(200);
         inv.containers.push(ContainerState {
             id: pack_id.clone(),
@@ -10645,11 +10696,128 @@ cols = 4
             }],
         });
 
-        rebuild_containers_from_equipment(&mut inv, &registry);
+        let overflow = rebuild_containers_from_equipment(&mut inv, &registry);
+
+        // 孤儿容器消失（不可再 access）。
+        assert!(
+            !inv.containers.iter().any(|c| c.id == pack_id),
+            "孤儿 pack_<id> 容器必须移除（丢背包后不允许残留可 access 的孤儿容器）"
+        );
+        // herb 应 spill 进 body_pocket（有去向、不丢、不进 overflow）。
+        assert!(
+            overflow.is_empty(),
+            "body_pocket 有空位时不应产生 overflow；实际 overflow={:?}",
+            overflow.iter().map(|i| &i.template_id).collect::<Vec<_>>()
+        );
+        let pocket = inv
+            .containers
+            .iter()
+            .find(|c| c.id == BODY_POCKET_CONTAINER_ID)
+            .expect("body_pocket 应存在");
+        assert_eq!(
+            pocket
+                .items
+                .iter()
+                .map(|p| p.instance.instance_id)
+                .collect::<Vec<_>>(),
+            vec![55],
+            "孤儿容器里的 herb(55) 应 spill 进 body_pocket，物品不丢"
+        );
+    }
+
+    // Bug C（边界）— spill 落点全满时，放不下的孤儿物品上抛 overflow（由调用方掉落），仍不丢、不残留孤儿。
+    #[test]
+    fn rebuild_containers_orphan_items_overflow_when_no_room() {
+        let registry = ItemRegistry::from_map(HashMap::new());
+        let mut inv = make_empty_inventory();
+        // 不提供任何存活容器（无 body_pocket、无 live pack）——rebuild 会建一个空 body_pocket(2×3)。
+        // 孤儿 pack 里塞 7 件 1×1，body_pocket 只能收 6 件 → 第 7 件 overflow。
+        let pack_id = container_id_for_worn_pack(200);
+        let mut items = Vec::new();
+        for i in 0..7u8 {
+            items.push(PlacedItemState {
+                row: i,
+                col: 0,
+                instance: make_test_item_instance(1000 + u64::from(i), "herb"),
+            });
+        }
+        inv.containers.push(ContainerState {
+            id: pack_id.clone(),
+            name: "大背包".to_string(),
+            rows: 7,
+            cols: 5,
+            items,
+        });
+
+        let overflow = rebuild_containers_from_equipment(&mut inv, &registry);
 
         assert!(
-            inv.containers.iter().any(|c| c.id == pack_id),
-            "non-empty pack container should NOT be removed even if unequipped (data safety)"
+            !inv.containers.iter().any(|c| c.id == pack_id),
+            "孤儿容器必须移除"
+        );
+        // body_pocket(2×3=6) 收 6 件，第 7 件无处安放 → overflow（不丢，调用方掉落）。
+        assert_eq!(
+            overflow.len(),
+            1,
+            "body_pocket 6 格满后第 7 件应进 overflow；实际 overflow.len()={}",
+            overflow.len()
+        );
+        let pocket = inv
+            .containers
+            .iter()
+            .find(|c| c.id == BODY_POCKET_CONTAINER_ID)
+            .expect("body_pocket 应被建出");
+        assert_eq!(pocket.items.len(), 6, "body_pocket 应收满 6 件");
+        // 总物品数守恒：6 spill + 1 overflow = 7 原始件，无丢失。
+        assert_eq!(
+            pocket.items.len() + overflow.len(),
+            7,
+            "spill + overflow 必须 = 原孤儿容器物品数（物品守恒，不丢数据）"
+        );
+    }
+
+    // Bug C（不误删）— 仍有对应穿戴背包件的非空 pack_<id> 容器（自洽，非孤儿）必须原样保留。
+    #[test]
+    fn rebuild_containers_preserves_nonempty_container_with_live_backpack() {
+        let backpack_template =
+            make_container_template("large_backpack", EQUIP_SLOT_CHEST, 7, 5, 30.0);
+        let registry = ItemRegistry::from_map(HashMap::from([(
+            "large_backpack".to_string(),
+            backpack_template,
+        )]));
+        let mut inv = make_empty_inventory();
+        inv.equipped.insert(
+            EQUIP_SLOT_CHEST.to_string(),
+            SlotContents::worn_single(make_container_item(200, "large_backpack")),
+        );
+        let pack_id = container_id_for_worn_pack(200);
+        inv.containers.push(ContainerState {
+            id: pack_id.clone(),
+            name: "大背包".to_string(),
+            rows: 7,
+            cols: 5,
+            items: vec![PlacedItemState {
+                row: 0,
+                col: 0,
+                instance: make_test_item_instance(55, "herb"),
+            }],
+        });
+
+        let overflow = rebuild_containers_from_equipment(&mut inv, &registry);
+
+        assert!(overflow.is_empty(), "自洽容器不应触发 spill/overflow");
+        let pack = inv
+            .containers
+            .iter()
+            .find(|c| c.id == pack_id)
+            .expect("有对应穿戴背包件的容器必须保留");
+        assert_eq!(
+            pack.items
+                .iter()
+                .map(|p| p.instance.instance_id)
+                .collect::<Vec<_>>(),
+            vec![55],
+            "自洽容器内含物原样保留，不被 spill 走"
         );
     }
 
