@@ -5396,6 +5396,113 @@ mod tests {
     }
 
     #[test]
+    fn quick_slot_bind_resolves_equipped_template_instance() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+
+        let mut inventory = empty_inventory();
+        inventory.equipped.insert(
+            crate::inventory::EQUIP_SLOT_OFF_HAND.to_string(),
+            crate::inventory::SlotContents::held_single(inventory_test_item(77, "bone_whistle", 1)),
+        );
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app
+            .world_mut()
+            .spawn((client_bundle, QuickSlotBindings::default(), inventory))
+            .id();
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"quick_slot_bind","v":1,"slot":0,"item_id":"bone_whistle"}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+
+        app.update();
+
+        let bindings = app
+            .world()
+            .get::<QuickSlotBindings>(entity)
+            .expect("player should keep quick slot bindings");
+        assert_eq!(
+            bindings.get(0),
+            Some(77),
+            "quick_slot_bind must resolve template ids from equipped held/worn items"
+        );
+    }
+
+    #[test]
+    fn inventory_instance_id_by_template_prefers_containers_hotbar_then_equipped() {
+        let mut inventory = inventory_with_item(inventory_test_item(11, "bone_whistle", 1));
+        inventory.hotbar[0] = Some(inventory_test_item(22, "bone_whistle", 1));
+        inventory.equipped.insert(
+            crate::inventory::EQUIP_SLOT_MAIN_HAND.to_string(),
+            crate::inventory::SlotContents::held_single(inventory_test_item(33, "bone_whistle", 1)),
+        );
+
+        assert_eq!(
+            inventory_instance_id_by_template(&inventory, "bone_whistle"),
+            Some(11),
+            "container match should keep the pre-existing quick_slot_bind precedence"
+        );
+
+        inventory.containers[0].items.clear();
+        assert_eq!(
+            inventory_instance_id_by_template(&inventory, "bone_whistle"),
+            Some(22),
+            "hotbar match should beat equipped when no container item matches"
+        );
+    }
+
+    #[test]
+    fn inventory_instance_id_by_template_finds_worn_equipped_item() {
+        let mut inventory = empty_inventory();
+        inventory.equipped.insert(
+            crate::inventory::EQUIP_SLOT_CHEST.to_string(),
+            crate::inventory::SlotContents::worn_single(inventory_test_item(44, "bone_whistle", 1)),
+        );
+
+        assert_eq!(
+            inventory_instance_id_by_template(&inventory, "bone_whistle"),
+            Some(44),
+            "worn equipped items should be eligible for quick_slot_bind template lookup"
+        );
+    }
+
+    #[test]
+    fn inventory_instance_id_by_template_uses_stable_equipped_slot_order() {
+        let mut inventory = empty_inventory();
+        inventory.equipped.insert(
+            crate::inventory::EQUIP_SLOT_OFF_HAND.to_string(),
+            crate::inventory::SlotContents::held_single(inventory_test_item(55, "bone_whistle", 1)),
+        );
+        inventory.equipped.insert(
+            crate::inventory::EQUIP_SLOT_MAIN_HAND.to_string(),
+            crate::inventory::SlotContents::held_single(inventory_test_item(66, "bone_whistle", 1)),
+        );
+
+        assert_eq!(
+            inventory_instance_id_by_template(&inventory, "bone_whistle"),
+            Some(66),
+            "equipped template lookup should not depend on HashMap iteration order"
+        );
+    }
+
+    #[test]
+    fn inventory_instance_id_by_template_returns_none_when_missing() {
+        let inventory = empty_inventory();
+
+        assert_eq!(
+            inventory_instance_id_by_template(&inventory, "bone_whistle"),
+            None,
+            "missing template should leave quick_slot_bind instance unresolved"
+        );
+    }
+
+    #[test]
     fn inventory_move_applies_hidden_targeted_wear_to_spiritual_item() {
         let mut app = App::new();
         register_request_app(&mut app);
@@ -8621,6 +8728,39 @@ fn inventory_template_id_by_instance(inv: &PlayerInventory, instance_id: u64) ->
         .map(|item| item.template_id.clone())
 }
 
+const EQUIPPED_QUICK_SLOT_LOOKUP_ORDER: [&str; 8] = [
+    crate::inventory::EQUIP_SLOT_MAIN_HAND,
+    crate::inventory::EQUIP_SLOT_OFF_HAND,
+    crate::inventory::EQUIP_SLOT_EXTRA_HAND_0,
+    crate::inventory::EQUIP_SLOT_EXTRA_HAND_1,
+    crate::inventory::EQUIP_SLOT_HEAD,
+    crate::inventory::EQUIP_SLOT_CHEST,
+    crate::inventory::EQUIP_SLOT_LEGS,
+    crate::inventory::EQUIP_SLOT_FEET,
+];
+
+fn inventory_instance_id_by_template(inv: &PlayerInventory, template: &str) -> Option<u64> {
+    for c in &inv.containers {
+        if let Some(p) = c.items.iter().find(|p| p.instance.template_id == template) {
+            return Some(p.instance.instance_id);
+        }
+    }
+    if let Some(item) = inv
+        .hotbar
+        .iter()
+        .flatten()
+        .find(|item| item.template_id == template)
+    {
+        return Some(item.instance_id);
+    }
+    EQUIPPED_QUICK_SLOT_LOOKUP_ORDER
+        .iter()
+        .filter_map(|slot| inv.equipped.get(*slot))
+        .flat_map(|contents| contents.iter_all())
+        .find(|item| item.template_id == template)
+        .map(|item| item.instance_id)
+}
+
 fn handle_quick_slot_bind(
     entity: valence::prelude::Entity,
     slot: u8,
@@ -8645,18 +8785,10 @@ fn handle_quick_slot_bind(
     let persisted_item_id = item_id.as_deref().filter(|item_id| !item_id.is_empty());
     let instance_id = match persisted_item_id {
         None => None,
-        Some(template) => inventories.get(entity).ok().and_then(|inv| {
-            for c in &inv.containers {
-                if let Some(p) = c.items.iter().find(|p| p.instance.template_id == template) {
-                    return Some(p.instance.instance_id);
-                }
-            }
-            inv.hotbar
-                .iter()
-                .flatten()
-                .find(|i| i.template_id == template)
-                .map(|i| i.instance_id)
-        }),
+        Some(template) => inventories
+            .get(entity)
+            .ok()
+            .and_then(|inv| inventory_instance_id_by_template(inv, template)),
     };
     if !bindings.set(slot, instance_id) {
         tracing::warn!(
