@@ -444,18 +444,21 @@ mod server_data_tests {
                     name: "主背包".to_string(),
                     rows: 5,
                     cols: 7,
+                    owner_instance_id: None,
                 },
                 ContainerSnapshotV1 {
                     id: "small_pouch".to_string(),
                     name: "小口袋".to_string(),
                     rows: 3,
                     cols: 3,
+                    owner_instance_id: None,
                 },
                 ContainerSnapshotV1 {
                     id: "front_satchel".to_string(),
                     name: "前挂包".to_string(),
                     rows: 3,
                     cols: 4,
+                    owner_instance_id: None,
                 },
             ],
             placed_items: vec![PlacedInventoryItemV1 {

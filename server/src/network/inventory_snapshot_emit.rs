@@ -5,9 +5,9 @@ use valence::prelude::{
 use crate::cultivation::components::Cultivation;
 use crate::cultivation::death_hooks::PlayerRevived;
 use crate::inventory::{
-    calculate_current_weight, ItemInstance, ItemRarity, PlayerInventory, EQUIP_SLOT_CHEST,
-    EQUIP_SLOT_EXTRA_HAND_0, EQUIP_SLOT_EXTRA_HAND_1, EQUIP_SLOT_FEET, EQUIP_SLOT_HEAD,
-    EQUIP_SLOT_LEGS, EQUIP_SLOT_MAIN_HAND, EQUIP_SLOT_OFF_HAND,
+    calculate_current_weight, worn_pack_instance_from_container_id, ItemInstance, ItemRarity,
+    PlayerInventory, EQUIP_SLOT_CHEST, EQUIP_SLOT_EXTRA_HAND_0, EQUIP_SLOT_EXTRA_HAND_1,
+    EQUIP_SLOT_FEET, EQUIP_SLOT_HEAD, EQUIP_SLOT_LEGS, EQUIP_SLOT_MAIN_HAND, EQUIP_SLOT_OFF_HAND,
 };
 use crate::network::agent_bridge::{
     payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
@@ -165,6 +165,10 @@ pub(crate) fn build_inventory_snapshot(
             name: container.name.clone(),
             rows: container.rows,
             cols: container.cols,
+            // plan-tarkov-backpack-v1 P3（决议 #4）— pack_<id> 派生容器下发 owner instance_id。
+            // 从 id 前缀重解（与 ContainerState.owner_instance_id 等价，不依赖 backfill 已跑）；
+            // body_pocket / 静态容器返回 None，skip_serializing_if 整体省略键。
+            owner_instance_id: worn_pack_instance_from_container_id(&container.id),
         });
 
         let mut ordered_items = container.items.clone();
@@ -712,6 +716,81 @@ mod tests {
         assert!(
             (left - right).abs() < 1e-9,
             "expected {left} approximately equals {right}"
+        );
+    }
+
+    // plan-tarkov-backpack-v1 P3（决议 #4）— build_inventory_snapshot 为 pack_<id> 容器下发
+    // owner_instance_id（从 id 前缀重解），body_pocket / 静态容器为 None。
+    #[test]
+    fn build_inventory_snapshot_fills_owner_instance_id_for_worn_pack() {
+        let mut inventory = make_inventory(7, false);
+        // 追加一个穿戴背包件派生容器 pack_1007 + 一个静态 body_pocket，覆盖 Some / None 两路。
+        inventory.containers.push(ContainerState {
+            id: "pack_1007".to_string(),
+            name: "破草包".to_string(),
+            rows: 3,
+            cols: 3,
+            items: vec![PlacedItemState {
+                row: 0,
+                col: 0,
+                instance: make_item(3001, "spirit_herb", "灵草", 0.1, 1),
+            }],
+            // 运行时内部字段已回填；emit 侧按 id 前缀重解，与此一致。
+            owner_instance_id: Some(1007),
+        });
+        inventory.containers.push(ContainerState {
+            id: "body_pocket".to_string(),
+            name: "贴身口袋".to_string(),
+            rows: 1,
+            cols: 4,
+            items: vec![],
+            owner_instance_id: None,
+        });
+
+        let snapshot = build_inventory_snapshot(
+            &inventory,
+            &PlayerState {
+                karma: 0.0,
+                inventory_score: 0.0,
+            },
+            &Cultivation {
+                realm: crate::cultivation::components::Realm::Awaken,
+                qi_current: 1.0,
+                qi_max: 10.0,
+                ..Cultivation::default()
+            },
+        );
+
+        let pack = snapshot
+            .containers
+            .iter()
+            .find(|c| c.id == "pack_1007")
+            .expect("snapshot 应含 pack_1007 容器");
+        assert_eq!(
+            pack.owner_instance_id,
+            Some(1007),
+            "pack_1007 emit 时应填 owner_instance_id=1007（从 pack_<id> 前缀重解）"
+        );
+
+        let body_pocket = snapshot
+            .containers
+            .iter()
+            .find(|c| c.id == "body_pocket")
+            .expect("snapshot 应含 body_pocket 容器");
+        assert_eq!(
+            body_pocket.owner_instance_id, None,
+            "body_pocket 非 pack_ 前缀，owner_instance_id 应为 None"
+        );
+
+        // 现有静态容器（main_pack 等）同样应为 None。
+        let main_pack = snapshot
+            .containers
+            .iter()
+            .find(|c| c.id == "main_pack")
+            .expect("snapshot 应含 main_pack 容器");
+        assert_eq!(
+            main_pack.owner_instance_id, None,
+            "main_pack 非 pack_ 前缀，owner_instance_id 应为 None"
         );
     }
 
