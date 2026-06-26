@@ -311,6 +311,8 @@ mod tests {
                     col: 0,
                     instance: item,
                 }],
+
+                owner_instance_id: None,
             }],
             equipped: Default::default(),
             hotbar: Default::default(),

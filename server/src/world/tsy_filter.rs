@@ -155,6 +155,8 @@ mod tests {
                 col: 0,
                 instance: item(1, "bone_coin", "骨币", 0.1),
             }],
+
+            owner_instance_id: None,
         });
         let filtered = apply_entry_filter(&mut inv);
         assert!(filtered.is_empty(), "0.1 < 0.3 should not be filtered");
@@ -176,6 +178,8 @@ mod tests {
                 col: 0,
                 instance: item(7, "bone_coin", "满灵骨币", 0.8),
             }],
+
+            owner_instance_id: None,
         });
         let filtered = apply_entry_filter(&mut inv);
         assert_eq!(filtered.len(), 1);
@@ -231,6 +235,8 @@ mod tests {
                 col: 0,
                 instance: item(99, "mystery_artifact", "无名之物", 0.4),
             }],
+
+            owner_instance_id: None,
         });
         let filtered = apply_entry_filter(&mut inv);
         assert_eq!(filtered.len(), 1);
@@ -254,6 +260,8 @@ mod tests {
                 col: 0,
                 instance: item(33, "weapon_iron", "铁剑", 0.3),
             }],
+
+            owner_instance_id: None,
         });
         let filtered = apply_entry_filter(&mut inv);
         assert_eq!(filtered.len(), 1);
@@ -284,6 +292,8 @@ mod tests {
                 col: 0,
                 instance: herb,
             }],
+
+            owner_instance_id: None,
         });
         apply_entry_filter(&mut inv);
         assert!(inv.containers[0].items[0].instance.freshness.is_none());

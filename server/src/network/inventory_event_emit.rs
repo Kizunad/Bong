@@ -217,6 +217,7 @@ mod tests {
                 rows: 5,
                 cols: 7,
                 items: vec![],
+                owner_instance_id: None,
             }],
             equipped: HashMap::from([(
                 slot_key.to_string(),

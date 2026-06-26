@@ -25,6 +25,7 @@ fn empty_inventory() -> PlayerInventory {
             rows: 5,
             cols: 7,
             items: Vec::new(),
+            owner_instance_id: None,
         }],
         equipped: Default::default(),
         hotbar: Default::default(),

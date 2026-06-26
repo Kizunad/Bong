@@ -1507,6 +1507,7 @@ mod tests {
                 rows: 4,
                 cols: 6,
                 items: Vec::new(),
+                owner_instance_id: None,
             }],
             equipped: HashMap::new(),
             hotbar: Default::default(),

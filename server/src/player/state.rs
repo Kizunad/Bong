@@ -1117,6 +1117,31 @@ fn inventory_has_orphan_pack_container(inventory: &PlayerInventory) -> bool {
     })
 }
 
+/// plan-tarkov-backpack-v1 P0（交付物 #6，决议 #1 衔接）— 旧存档 `owner_instance_id` 回填。
+///
+/// 旧存档（`ContainerState` 无 `owner_instance_id` 字段，`serde(default)` 读为 `None`）加载后，
+/// 遍历 containers：对 `pack_<id>` 前缀且 `owner_instance_id == None` 者，用
+/// `worn_pack_instance_from_container_id` 解析前缀回填 `Some(instance_id)`。
+///
+/// 语义：**纯内存层每次加载重算、不写回 DB**（不 bump `INVENTORY_SCHEMA_VERSION`、无 SQL migration）；
+/// 下次加载从前缀重新解析，幂等。回填**必须先于** `inventory_has_orphan_pack_container`——
+/// 回填后前缀路径与 owner 路径结果一致，避免误判合法新格式容器（防 #736 污染误删存档）。
+///
+/// 注意：回填只对 `owner_instance_id` 为 `None` 的 `pack_<id>` 容器生效；非 pack 容器
+/// （`body_pocket` 等）与已带 owner 的新格式容器不动（幂等）。
+fn backfill_owner_instance_ids(inventory: &mut PlayerInventory) {
+    for container in inventory.containers.iter_mut() {
+        if container.owner_instance_id.is_some() {
+            continue;
+        }
+        if let Some(instance_id) =
+            crate::inventory::worn_pack_instance_from_container_id(&container.id)
+        {
+            container.owner_instance_id = Some(instance_id);
+        }
+    }
+}
+
 fn load_player_inventory_from_sqlite(
     connection: &Connection,
     username: &str,
@@ -1145,8 +1170,13 @@ fn load_player_inventory_from_sqlite(
 
     if schema_version >= INVENTORY_SCHEMA_VERSION {
         // 新版本：直接反序列化。
-        let inventory = serde_json::from_str::<PlayerInventory>(&inventory_json)
+        let mut inventory = serde_json::from_str::<PlayerInventory>(&inventory_json)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+
+        // plan-tarkov-backpack-v1 P0（交付物 #6 顺序硬约束）— 先回填 owner_instance_id，
+        // **必须先于**下方孤儿检测：回填后 `pack_<id>` 容器带 owner，前缀路径与 owner 路径
+        // 一致，孤儿检测不会误判合法新格式容器。回填是纯内存层重算、不写回 DB（幂等）。
+        backfill_owner_instance_ids(&mut inventory);
 
         // Bug A（真机回归）— #736 旧版迁移 bug 已被 #751 修，但**被那次 bug 污染并已落盘为
         // v2** 的存档不会再走迁移分支自愈：它带「孤儿 `pack_<id>` 容器（派生自某穿戴背包件）却
@@ -2404,6 +2434,7 @@ mod player_state_tests {
                 rows: 5,
                 cols: 7,
                 items: Vec::new(),
+                owner_instance_id: None,
             }],
             equipped: HashMap::new(),
             hotbar: Default::default(),
@@ -2791,6 +2822,122 @@ mod player_state_tests {
             inventory.equipped.keys().collect::<Vec<_>>()
         );
         let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    // plan-tarkov-backpack-v1 P0（交付物 #6 / 测试清单）— 旧存档（无 owner_instance_id 字段）
+    // 加载后，`pack_<id>` 容器的 owner_instance_id 应由前缀解析回填，且回填发生在孤儿检测前
+    // （断言旧 pack_<id> 容器未被误删 + owner 正确）。
+    #[test]
+    fn load_backfills_owner_instance_id_for_legacy_pack_container() {
+        let pack_id = crate::inventory::container_id_for_worn_pack(11);
+        // 旧格式：containers 里 pack_11 无 owner_instance_id 字段（serde default → None）。
+        // equipped 有自洽 worn 件 ⇒ 非孤儿，应保留。
+        let legacy_v2 = serde_json::json!({
+            "revision": 3,
+            "containers": [
+                { "id": "body_pocket", "name": "贴身口袋", "rows": 2, "cols": 3, "items": [] },
+                {
+                    "id": pack_id, "name": "破草包", "rows": 3, "cols": 3,
+                    "items": [ { "row": 0, "col": 0, "instance": v1_equip_item(4, "spirit_grass") } ]
+                }
+            ],
+            "equipped": {
+                "chest": { "worn": [ v1_equip_item(11, "worn_grass_pouch") ], "held": null }
+            },
+            "hotbar": [null, null, null, null, null, null, null, null, null],
+            "bone_coins": 7,
+            "max_weight": 23.0,
+            "triggered_treasures": []
+        });
+        let (loaded, data_dir) = load_inventory_row(2, &legacy_v2.to_string());
+        let inventory = loaded.expect(
+            "旧存档（pack_<id> 有 backing worn 件、无 owner 字段）加载后必须保留——\
+             owner_instance_id 已回填，孤儿检测在回填后运行不会误判",
+        );
+        let pack = inventory
+            .containers
+            .iter()
+            .find(|c| c.id == pack_id)
+            .expect("旧 pack_<id> 容器必须未被误删（回填先于孤儿检测）");
+        assert_eq!(
+            pack.owner_instance_id,
+            Some(11),
+            "因为 backfill_owner_instance_ids 必须按 `pack_<id>` 前缀把 owner_instance_id 回填为 11，\
+             实际 = {:?}",
+            pack.owner_instance_id
+        );
+        // body_pocket（非 pack 容器）不应被回填。
+        let body = inventory
+            .containers
+            .iter()
+            .find(|c| c.id == "body_pocket")
+            .expect("body_pocket 应保留");
+        assert_eq!(
+            body.owner_instance_id, None,
+            "非 pack 容器（body_pocket）不应被回填 owner_instance_id"
+        );
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    // plan-tarkov-backpack-v1 P0（交付物 #7 / 测试清单）— 孤儿检测在回填后运行：
+    // 合法新格式容器（owner 已回填、与 equipped worn 件自洽）不被误判孤儿、不被丢弃。
+    #[test]
+    fn orphan_detection_runs_after_backfill_no_false_positive() {
+        // 直测：手工构造一个旧格式 inventory（pack_<id> owner=None 但有 backing worn 件），
+        // 先回填、再孤儿检测——回填后判定为合法（前缀路径与 owner 路径一致），不应误判孤儿。
+        let pack_id = crate::inventory::container_id_for_worn_pack(77);
+        let mut inventory = PlayerInventory {
+            triggered_treasures: Vec::new(),
+            revision: crate::inventory::InventoryRevision(1),
+            containers: vec![
+                crate::inventory::ContainerState {
+                    id: "body_pocket".to_string(),
+                    name: "贴身口袋".to_string(),
+                    rows: 2,
+                    cols: 3,
+                    items: Vec::new(),
+                    owner_instance_id: None,
+                },
+                crate::inventory::ContainerState {
+                    id: pack_id.clone(),
+                    name: "破草包".to_string(),
+                    rows: 3,
+                    cols: 3,
+                    items: Vec::new(),
+                    // 旧格式：owner 字段缺省。
+                    owner_instance_id: None,
+                },
+            ],
+            equipped: {
+                let mut e = std::collections::HashMap::new();
+                // worn 件 instance_id=77 与 pack_77 自洽（template 不影响孤儿判定，仅看 instance_id）。
+                e.insert(
+                    crate::inventory::EQUIP_SLOT_CHEST.to_string(),
+                    crate::inventory::SlotContents::worn_single(iron_sword_instance(77, 1.0)),
+                );
+                e
+            },
+            hotbar: Default::default(),
+            bone_coins: 0,
+            max_weight: 23.0,
+        };
+
+        // 回填前：pack_77 owner=None，但前缀解析可得 77（已有 backing worn 件 77）。
+        backfill_owner_instance_ids(&mut inventory);
+        assert_eq!(
+            inventory
+                .containers
+                .iter()
+                .find(|c| c.id == pack_id)
+                .and_then(|c| c.owner_instance_id),
+            Some(77),
+            "回填后 pack_77 owner 应为 77"
+        );
+        // 回填后孤儿检测：pack_77 有 backing worn 件 77 ⇒ 合法、非孤儿。
+        assert!(
+            !inventory_has_orphan_pack_container(&inventory),
+            "回填后合法新格式容器（owner 与 worn 件自洽）绝不应被误判孤儿（防 #736 污染误删）"
+        );
     }
 
     // Bug A（真机回归核心）— 真机 v1 旧档（旧 default.toml 形态：chest=fake_spirit_hide、
@@ -3642,6 +3789,8 @@ mod player_state_tests {
                         lingering_owner_qi: None,
                     },
                 }],
+
+                owner_instance_id: None,
             }],
             equipped: Default::default(),
             hotbar: Default::default(),

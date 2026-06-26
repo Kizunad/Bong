@@ -657,6 +657,7 @@ mod tests {
                 rows: 5,
                 cols: 7,
                 items: main_items,
+                owner_instance_id: None,
             },
             ContainerState {
                 id: "small_pouch".to_string(),
@@ -664,6 +665,7 @@ mod tests {
                 rows: 3,
                 cols: 3,
                 items: vec![],
+                owner_instance_id: None,
             },
             ContainerState {
                 id: "front_satchel".to_string(),
@@ -675,6 +677,8 @@ mod tests {
                     col: 2,
                     instance: make_item(2003, "forest_herb", "林地草药", 0.1, 5),
                 }],
+
+                owner_instance_id: None,
             },
         ];
 

@@ -395,6 +395,14 @@ pub struct ContainerState {
     pub rows: u8,
     pub cols: u8,
     pub items: Vec<PlacedItemState>,
+    /// plan-tarkov-backpack-v1 P0（决议 #1，方案 A）— 该容器归属的穿戴背包件 instance_id。
+    ///
+    /// 仅 `pack_<id>` 派生容器有值（`body_pocket` / 其它静态容器为 `None`）。
+    /// `serde(default)` 容旧存档（旧档无此字段读为 `None`），load 时按 `pack_` 前缀回填，
+    /// 不写回 DB、内存层每次加载幂等重算（见 `load_player_inventory_from_sqlite` 回填）。
+    /// **P0 仅服务端内部使用，不下发 client**（client 可从 `pack_` 前缀反解；下发推迟到 P3）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner_instance_id: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1128,23 +1136,26 @@ pub fn instantiate_inventory_from_loadout(
             rows: container.rows,
             cols: container.cols,
             items: placed_items,
+            owner_instance_id: None,
         });
     }
 
     // plan-layered-equip-v1 P0.6 — 每槽 SlotContents 重建（worn 全件 + held），各自分配新 instance_id。
     let mut equipped = HashMap::with_capacity(loadout.equipped.len());
-    // 收集穿戴背包件 instance_id（用于重映射静态占位容器 id），仅取第一个穿戴 container 件。
-    let mut first_worn_pack_instance: Option<u64> = None;
+    // plan-tarkov-backpack-v1 P0（交付物 #5，衔接决议 #2）— 收集**所有**穿戴背包件 instance_id。
+    // 旧版只取第一个；现遍历所有 worn container_spec 件，第一个复用静态占位容器 id 重映射，
+    // 其余 worn pack 由收尾 `rebuild_containers_from_equipment` 动态新建 `pack_<id>` 容器
+    // （不依赖 toml 预配多占位）。
+    let mut worn_pack_instances: Vec<u64> = Vec::new();
     for (slot_id, contents) in &loadout.equipped {
         let mut worn = Vec::with_capacity(contents.worn.len());
         for item in &contents.worn {
             let instance = instantiate_item_instance(item, allocator)?;
-            if first_worn_pack_instance.is_none()
-                && registry
-                    .get(&instance.template_id)
-                    .is_some_and(|t| t.container_spec.is_some())
+            if registry
+                .get(&instance.template_id)
+                .is_some_and(|t| t.container_spec.is_some())
             {
-                first_worn_pack_instance = Some(instance.instance_id);
+                worn_pack_instances.push(instance.instance_id);
             }
             worn.push(instance);
         }
@@ -1155,15 +1166,19 @@ pub fn instantiate_inventory_from_loadout(
             .transpose()?;
         equipped.insert(slot_id.clone(), SlotContents { worn, held });
     }
+    // 确定性：按 instance_id 排序，使「第一个 worn pack」（复用占位容器、携带占位预置物品）
+    // 在 HashMap 迭代顺序不定的情况下仍稳定（取最小 instance_id）。
+    worn_pack_instances.sort_unstable();
 
-    // plan-layered-equip-v1 P0.6（决议 #17 / #13.5）— 把静态占位背包容器 id 重映射到
-    // 运行时穿戴背包件的 `pack_<instance_id>`，使容器 ↔ 穿戴件命名空间对齐
-    // （封灵 attrition_exempt 反查 / rebuild_containers 共用一套命名规则）。
-    if let Some(instance_id) = first_worn_pack_instance {
-        let runtime_id = container_id_for_worn_pack(instance_id);
+    // plan-layered-equip-v1 P0.6（决议 #17 / #13.5）/ plan-tarkov-backpack-v1 P0（交付物 #5）—
+    // 把静态占位背包容器 id 重映射到**第一个**运行时穿戴背包件的 `pack_<instance_id>`，
+    // 并写 owner_instance_id；占位仅服务第一个 worn pack，其余 worn pack 走 rebuild 动态建容器。
+    if let Some(&first_instance_id) = worn_pack_instances.first() {
+        let runtime_id = container_id_for_worn_pack(first_instance_id);
         for container in containers.iter_mut() {
             if container.id == LOADOUT_PACK_PLACEHOLDER_CONTAINER_ID {
                 container.id = runtime_id.clone();
+                container.owner_instance_id = Some(first_instance_id);
             }
         }
     }
@@ -1176,7 +1191,7 @@ pub fn instantiate_inventory_from_loadout(
             .transpose()?;
     }
 
-    Ok(PlayerInventory {
+    let mut inventory = PlayerInventory {
         triggered_treasures: Vec::new(),
         revision: InventoryRevision(1),
         containers,
@@ -1184,7 +1199,17 @@ pub fn instantiate_inventory_from_loadout(
         hotbar,
         bone_coins: loadout.bone_coins,
         max_weight: loadout.max_weight,
-    })
+    };
+
+    // plan-tarkov-backpack-v1 P0（交付物 #5）— 多背包 loadout 才收尾 rebuild：为第 2+ 个
+    // worn pack 动态新建 `pack_<id>` 容器、为所有 pack 容器写 owner_instance_id。
+    // 第一个 worn pack 已复用占位容器（保留预置物品）；rebuild 按 id 匹配刷新已存在容器（不丢物品）。
+    // 仅在 `>1` 个 worn pack 时触发，保留单 / 零背包 loadout 的既有 `max_weight` 行为（避免回归）。
+    if worn_pack_instances.len() > 1 {
+        let _overflow = rebuild_containers_from_equipment(&mut inventory, registry);
+    }
+
+    Ok(inventory)
 }
 
 fn instantiate_item_instance(
@@ -1408,7 +1433,11 @@ impl ItemRegistry {
     }
 
     /// 测试用:从手动构造的 templates map 建 registry。
-    #[cfg(test)]
+    ///
+    /// plan-tarkov-backpack-v1 P0: 去掉 `#[cfg(test)]` 门控，使 `server/tests/` 集成 e2e
+    /// （外部 crate，看不到 cfg(test) 项）也能构造 registry。`#[doc(hidden)]` 标明仅供测试装配，
+    /// 非生产 API（生产经 `load_item_registry` 从 toml 加载）。
+    #[doc(hidden)]
     pub fn from_map(templates: HashMap<String, ItemTemplate>) -> Self {
         Self { templates }
     }
@@ -2785,6 +2814,7 @@ impl LoadoutToml {
                 rows: raw_container.rows,
                 cols: raw_container.cols,
                 items,
+                owner_instance_id: None,
             });
         }
 
@@ -3715,6 +3745,7 @@ pub(crate) fn force_attach_item_to_inventory(inventory: &mut PlayerInventory, it
                 rows: 16,
                 cols: 16,
                 items: Vec::new(),
+                owner_instance_id: None,
             });
             inventory.containers.len() - 1
         });
@@ -3826,24 +3857,30 @@ pub fn rebuild_containers_from_equipment(
             rows: BODY_POCKET_ROWS,
             cols: BODY_POCKET_COLS,
             items: Vec::new(),
+            owner_instance_id: None,
         });
     }
 
     // 2. 扫所有身体槽 worn 层里带 container_spec 的背包件，确保各自容器存在。
-    let live_specs: Vec<(String, u8, u8, String)> = worn_container_items(inventory, registry)
+    //    plan-tarkov-backpack-v1 P0（交付物 #2）：创建/刷新 `pack_<id>` 容器时写
+    //    `owner_instance_id = Some(instance_id)`，建立背包件 ↔ 容器的语义归属。
+    let live_specs: Vec<(String, u8, u8, String, u64)> = worn_container_items(inventory, registry)
         .map(|(item, spec)| {
             (
                 container_id_for_worn_pack(item.instance_id),
                 spec.rows,
                 spec.cols,
                 item.display_name.clone(),
+                item.instance_id,
             )
         })
         .collect();
-    let live_ids: std::collections::HashSet<String> =
-        live_specs.iter().map(|(id, _, _, _)| id.clone()).collect();
+    let live_ids: std::collections::HashSet<String> = live_specs
+        .iter()
+        .map(|(id, _, _, _, _)| id.clone())
+        .collect();
 
-    for (container_id, rows, cols, name) in live_specs {
+    for (container_id, rows, cols, name, instance_id) in live_specs {
         if let Some(existing) = inventory
             .containers
             .iter_mut()
@@ -3851,6 +3888,7 @@ pub fn rebuild_containers_from_equipment(
         {
             existing.rows = rows;
             existing.cols = cols;
+            existing.owner_instance_id = Some(instance_id);
         } else {
             inventory.containers.push(ContainerState {
                 id: container_id,
@@ -3858,6 +3896,7 @@ pub fn rebuild_containers_from_equipment(
                 rows,
                 cols,
                 items: Vec::new(),
+                owner_instance_id: Some(instance_id),
             });
         }
     }
@@ -3903,6 +3942,53 @@ pub fn rebuild_containers_from_equipment(
     inventory.max_weight = compute_max_weight(inventory, registry);
 
     overflow
+}
+
+/// plan-tarkov-backpack-v1 P0（交付物 #4 红线 — rebuild + overflow→掉落接进 move 路径）。
+///
+/// **这是「卸下 worn 背包件后内含物 spill / overflow→掉落」生产接线的唯一封装**——`handle_inventory_move`
+/// 的 worn-pack 卸下分支显式调用本函数（不再依赖任何不存在的 Bevy auto-system），server e2e
+/// 经本 seam 锁住接线（不绕 handler 直测 `apply_inventory_move` 内部）。
+///
+/// 流程：
+/// 1. 调 `rebuild_containers_from_equipment` 刷新容器列表——卸下的背包件已不在 worn 层，
+///    其 `pack_<id>` 容器变孤儿，rebuild 把内含物 spill 进其它存活容器（背包/暗袋），
+///    放不下的归 overflow。穿背包时（背包件进 worn 层）rebuild 即时新建对应 `pack_<id>` 容器。
+/// 2. overflow 逐件转 `DroppedLootEntry` 写入 `DroppedLootRegistry`（用既有 instance_id，
+///    不分配新 id），world_pos 在玩家脚下错位铺开（与 `discard_inventory_item_to_dropped_loot`
+///    同款）。**禁止静默丢失**——放不下的内含物连货掉地（塔科夫式直觉）。
+///
+/// 返回掉落的 instance_id 列表（供调用方日志 / 测试守恒断言；空 = 无 overflow）。
+pub fn rebuild_and_drop_overflow(
+    inventory: &mut PlayerInventory,
+    registry: &ItemRegistry,
+    dropped_registry: &mut DroppedLootRegistry,
+    player_pos: [f64; 3],
+    player_dimension: DimensionKind,
+) -> Vec<u64> {
+    let overflow = rebuild_containers_from_equipment(inventory, registry);
+    let mut dropped_ids = Vec::with_capacity(overflow.len());
+    for item in overflow {
+        let instance_id = item.instance_id;
+        // 错位铺开避免叠在同一格；index 取自当前 registry 大小（与 discard 一致）。
+        let next_idx = dropped_registry.entries.len();
+        let dropped = DroppedLootEntry {
+            instance_id,
+            source_container_id: "backpack_unequip_overflow".to_string(),
+            source_row: 0,
+            source_col: 0,
+            world_pos: [
+                player_pos[0] + 0.35 + next_idx as f64 * 0.1,
+                player_pos[1],
+                player_pos[2] + 0.35,
+            ],
+            dimension: player_dimension,
+            item,
+        };
+        dropped_registry.entries.insert(instance_id, dropped);
+        dropped_ids.push(instance_id);
+    }
+    dropped_ids
 }
 
 // ─── plan-layered-equip-v1 P0.2 — 背包耐久扣减与破损溢出（决议 #17 重定向到 worn 背包件 instance） ───
@@ -4437,20 +4523,12 @@ fn validate_move_semantics(
         }
     }
 
-    // plan-layered-equip-v1 P0.2（决议 #17）— 从背包件（身体槽 worn 层）移出时，
-    // 检查其对应容器（pack_<instance_id>）是否为空。
-    if matches!(from, InventoryLocationV1::Equip { .. }) && template.container_spec.is_some() {
-        let container_id = container_id_for_worn_pack(item.instance_id);
-        if let Some(container) = inventory.containers.iter().find(|c| c.id == container_id) {
-            if !container.items.is_empty() {
-                return Err(format!(
-                    "cannot unequip backpack `{}`: container `{container_id}` is not empty ({} items remaining)",
-                    item.template_id,
-                    container.items.len()
-                ));
-            }
-        }
-    }
+    // plan-tarkov-backpack-v1 P0（交付物 #3，决议 #2）— 移除「非空背包拒卸」硬门。
+    // 塔科夫式套包：非空背包可连货整体卸下；卸下后内含物由 `handle_inventory_move`
+    // 的 worn-pack 卸下分支调 `rebuild_containers_from_equipment` spill 进存活容器，
+    // 放不下的 overflow 转掉落物（见 `handle_inventory_move` 红线接线）。
+    // 此处不再因 `pack_<instance_id>` 容器非空返回 Err（原 plan-layered-equip-v1 P0.2
+    // 决议 #17 的非空拒卸分支已删除）。
 
     match to {
         InventoryLocationV1::Hotbar { .. } if template.weapon_spec.is_some() => Err(format!(
@@ -5683,6 +5761,7 @@ mod tests {
                 rows,
                 cols,
                 items: Vec::new(),
+                owner_instance_id: None,
             }],
             equipped: HashMap::new(),
             hotbar: Default::default(),
@@ -5708,6 +5787,8 @@ mod tests {
                 col: 0,
                 instance: make_test_item_instance(2, "side_item"),
             }],
+
+            owner_instance_id: None,
         });
         inv.hotbar[0] = Some(make_test_item_instance(3, "hotbar_item"));
         inv.equipped.insert(
@@ -7302,6 +7383,8 @@ cols = 4
                         col: 0,
                         instance: item,
                     }],
+
+                    owner_instance_id: None,
                 },
                 ContainerState {
                     id: SMALL_POUCH_CONTAINER_ID.to_string(),
@@ -7309,6 +7392,7 @@ cols = 4
                     rows: 3,
                     cols: 3,
                     items: Vec::new(),
+                    owner_instance_id: None,
                 },
                 ContainerState {
                     id: FRONT_SATCHEL_CONTAINER_ID.to_string(),
@@ -7316,6 +7400,7 @@ cols = 4
                     rows: 3,
                     cols: 4,
                     items: Vec::new(),
+                    owner_instance_id: None,
                 },
             ],
             equipped: HashMap::new(),
@@ -9598,6 +9683,8 @@ cols = 4
                 col: 0,
                 instance: make_test_item_instance(42, "iron_sword"),
             }],
+
+            owner_instance_id: None,
         });
         let got = inventory_item_by_instance_borrow(&inv, 42);
         assert!(got.is_some());
@@ -9626,6 +9713,7 @@ cols = 4
             rows: 8,
             cols: 8,
             items: Vec::new(),
+            owner_instance_id: None,
         });
         inv
     }
@@ -9828,6 +9916,8 @@ cols = 4
                 col: 0,
                 instance: make_test_item_instance(1100, "test_armor"),
             }],
+
+            owner_instance_id: None,
         });
         inv.triggered_treasures
             .push(make_test_item_instance(1200, "test_treasure"));
@@ -9886,6 +9976,8 @@ cols = 4
                 col: 0,
                 instance: make_test_item_instance(1, "spirit_grass"),
             }],
+
+            owner_instance_id: None,
         });
         from.equipped.insert(
             EQUIP_SLOT_MAIN_HAND.to_string(),
@@ -9906,6 +9998,8 @@ cols = 4
                 col: 0,
                 instance: make_test_item_instance(9, "existing"),
             }],
+
+            owner_instance_id: None,
         });
 
         let outcome = transfer_all_inventory_contents(&mut from, &mut to);
@@ -10037,6 +10131,8 @@ cols = 4
                 col: 0,
                 instance: make_test_item_instance(1001, "spirit_herb"),
             }],
+
+            owner_instance_id: None,
         });
 
         assert!(
@@ -10066,6 +10162,8 @@ cols = 4
                 col: 0,
                 instance: make_test_item_instance(1003, "spirit_herb"),
             }],
+
+            owner_instance_id: None,
         });
 
         assert!(
@@ -10596,6 +10694,8 @@ cols = 4
                 col: 0,
                 instance: make_test_item_instance(77, "herb_a"),
             }],
+
+            owner_instance_id: None,
         });
 
         rebuild_containers_from_equipment(&mut inv, &registry);
@@ -10657,6 +10757,7 @@ cols = 4
             rows: 7,
             cols: 5,
             items: Vec::new(),
+            owner_instance_id: None,
         });
 
         rebuild_containers_from_equipment(&mut inv, &registry);
@@ -10681,6 +10782,7 @@ cols = 4
             rows: BODY_POCKET_ROWS,
             cols: BODY_POCKET_COLS,
             items: Vec::new(),
+            owner_instance_id: None,
         });
         // 孤儿 pack_200：装着 herb(instance_id=55) 但 equipped 里无 instance_id=200 的穿戴背包件。
         let pack_id = container_id_for_worn_pack(200);
@@ -10694,6 +10796,8 @@ cols = 4
                 col: 0,
                 instance: make_test_item_instance(55, "herb"),
             }],
+
+            owner_instance_id: None,
         });
 
         let overflow = rebuild_containers_from_equipment(&mut inv, &registry);
@@ -10747,6 +10851,7 @@ cols = 4
             rows: 7,
             cols: 5,
             items,
+            owner_instance_id: None,
         });
 
         let overflow = rebuild_containers_from_equipment(&mut inv, &registry);
@@ -10801,6 +10906,8 @@ cols = 4
                 col: 0,
                 instance: make_test_item_instance(55, "herb"),
             }],
+
+            owner_instance_id: None,
         });
 
         let overflow = rebuild_containers_from_equipment(&mut inv, &registry);
@@ -10943,6 +11050,7 @@ cols = 4
                 rows: 5,
                 cols: 7,
                 items: Vec::new(),
+                owner_instance_id: None,
             }],
             equipped: HashMap::new(),
             hotbar: Default::default(),
@@ -11043,9 +11151,11 @@ cols = 4
         assert!(err.contains("hotbar"), "expected hotbar error, got: {err}");
     }
 
-    // 决议 #17：穿戴背包件容器 id = pack_<instance_id>；其非空时禁止卸下。
+    // plan-tarkov-backpack-v1 P0（交付物 #3 / 测试清单）— 非空拒卸硬门已移除：
+    // 穿戴背包件即使其 pack_<instance_id> 容器非空，也允许整体卸下（塔科夫式套包）。
+    // 内含物 spill/overflow 由 handle_inventory_move 卸包分支接管（见 e2e_*）。
     #[test]
-    fn validate_move_semantics_rejects_unequip_backpack_when_container_nonempty() {
+    fn validate_move_semantics_allows_unequip_backpack_when_container_nonempty() {
         use crate::schema::inventory::{EquipSlotV1, EquipStateV1, InventoryLocationV1};
         let (registry, mut inv) = make_backpack_registry_and_inventory();
         // Equip the backpack into chest worn.
@@ -11064,6 +11174,7 @@ cols = 4
                 col: 0,
                 instance: make_test_item_instance(99, "herb"),
             }],
+            owner_instance_id: Some(505),
         });
 
         let item = make_container_item(505, "large_backpack");
@@ -11076,11 +11187,10 @@ cols = 4
             row: 0,
             col: 0,
         };
-        let err = validate_move_semantics(&registry, &inv, &item, &from, &to)
-            .expect_err("cannot unequip backpack with items inside");
         assert!(
-            err.contains("not empty"),
-            "expected 'not empty' error, got: {err}"
+            validate_move_semantics(&registry, &inv, &item, &from, &to).is_ok(),
+            "非空背包应允许整体卸下（非空拒卸硬门已移除）；内含物 spill/overflow 在 \
+             handle_inventory_move 卸包分支处理，而非在校验层拒绝"
         );
     }
 
@@ -11099,6 +11209,7 @@ cols = 4
             rows: 7,
             cols: 5,
             items: Vec::new(),
+            owner_instance_id: None,
         });
 
         let item = make_container_item(506, "large_backpack");
@@ -11114,6 +11225,446 @@ cols = 4
         assert!(
             validate_move_semantics(&registry, &inv, &item, &from, &to).is_ok(),
             "unequipping backpack with empty container should succeed"
+        );
+    }
+
+    // ===== plan-tarkov-backpack-v1 P0 测试清单（≥9，含 e2e） =====
+
+    /// 交付物 #2 — rebuild 创建/刷新 `pack_<id>` 容器时写 owner_instance_id = Some(instance_id)。
+    #[test]
+    fn rebuild_sets_owner_instance_id_on_pack_container() {
+        let (registry, mut inv) = make_backpack_registry_and_inventory();
+        inv.equipped.insert(
+            EQUIP_SLOT_CHEST.to_string(),
+            SlotContents::worn_single(make_container_item(701, "large_backpack")),
+        );
+
+        let overflow = rebuild_containers_from_equipment(&mut inv, &registry);
+        assert!(
+            overflow.is_empty(),
+            "穿背包后 rebuild 不应产生 overflow（新建空容器）；实际 {} 件",
+            overflow.len()
+        );
+
+        let pack_id = container_id_for_worn_pack(701);
+        let pack = inv
+            .containers
+            .iter()
+            .find(|c| c.id == pack_id)
+            .unwrap_or_else(|| panic!("rebuild 后应存在 `{pack_id}` 容器"));
+        assert_eq!(
+            pack.owner_instance_id,
+            Some(701),
+            "因为 rebuild 必须把 `{pack_id}` 容器的 owner_instance_id 写为穿戴背包件的 instance_id(701)，\
+             实际 = {:?}",
+            pack.owner_instance_id
+        );
+    }
+
+    /// 交付物 #4 / 决议 #2 — 卸下非空背包：内含物 spill 进存活容器。
+    /// 直测生产 seam `rebuild_and_drop_overflow`（handle_inventory_move 卸包分支调用同一函数）。
+    #[test]
+    fn unequip_nonempty_backpack_spills_contents_into_other_container() {
+        let (registry, mut inv) = make_backpack_registry_and_inventory();
+        // 装上背包件（large_backpack, pack_801）并放两件内含物。
+        inv.equipped.insert(
+            EQUIP_SLOT_CHEST.to_string(),
+            SlotContents::worn_single(make_container_item(801, "large_backpack")),
+        );
+        inv.containers.push(ContainerState {
+            id: container_id_for_worn_pack(801),
+            name: "大背包".to_string(),
+            rows: 7,
+            cols: 5,
+            items: vec![
+                PlacedItemState {
+                    row: 0,
+                    col: 0,
+                    instance: make_test_item_instance(10, "spirit_herb"),
+                },
+                PlacedItemState {
+                    row: 1,
+                    col: 0,
+                    instance: make_test_item_instance(11, "bone_dust"),
+                },
+            ],
+            owner_instance_id: Some(801),
+        });
+
+        // 模拟卸下：把背包件从 chest worn 移走（apply_inventory_move 已 detach），
+        // 此时 pack_801 变孤儿。handle_inventory_move 卸包分支随即调 rebuild_and_drop_overflow。
+        let removed = inv
+            .equipped
+            .get_mut(EQUIP_SLOT_CHEST)
+            .and_then(|s| (!s.worn.is_empty()).then(|| s.worn.remove(0)));
+        assert!(removed.is_some(), "应能从 chest worn 移除背包件");
+
+        let mut dropped = DroppedLootRegistry::default();
+        let dropped_ids = rebuild_and_drop_overflow(
+            &mut inv,
+            &registry,
+            &mut dropped,
+            [0.0, 64.0, 0.0],
+            DimensionKind::Overworld,
+        );
+
+        // main_pack（5×7=35 格）能容下 spill → 不应有 overflow 掉落。
+        assert!(
+            dropped_ids.is_empty(),
+            "main_pack 空且足够大，spill 应全部进容器、无 overflow 掉落；实际掉落 {dropped_ids:?}"
+        );
+        // 孤儿 pack_801 已被移除（不可 access）。
+        assert!(
+            !inv.containers
+                .iter()
+                .any(|c| c.id == container_id_for_worn_pack(801)),
+            "卸下背包后其孤儿 pack_801 容器应被 rebuild 移除"
+        );
+        // 两件内含物 spill 进 main_pack。
+        let main = inv
+            .containers
+            .iter()
+            .find(|c| c.id == "main_pack")
+            .expect("main_pack 存在");
+        let main_ids: Vec<u64> = main.items.iter().map(|p| p.instance.instance_id).collect();
+        assert!(
+            main_ids.contains(&10) && main_ids.contains(&11),
+            "spirit_herb(10) 与 bone_dust(11) 应 spill 进 main_pack；实际 main_pack ids = {main_ids:?}"
+        );
+    }
+
+    /// 交付物 #4 / 决议 #2 红线 — 目标容器满时，overflow 内含物**转掉落物**（DroppedLootRegistry），
+    /// 禁止静默丢失（断言掉落 count 守恒、非空、instance 守恒）。
+    #[test]
+    fn unequip_nonempty_backpack_overflow_drops_items_not_lost() {
+        // 构造：唯一存活容器极小（1×1=1 格），背包内含 3 件 → 1 件 spill，2 件 overflow 掉落。
+        let bp = make_container_template("small_pack", EQUIP_SLOT_CHEST, 3, 3, 10.0);
+        let registry = ItemRegistry::from_map(HashMap::from([("small_pack".to_string(), bp)]));
+        let mut inv = make_empty_inventory();
+        // body_pocket（2×3=6 格）预填满——否则 rebuild 兜底创建空 body_pocket 会吸收全部 spill、
+        // 不产生 overflow。填满后 spill 只能去 tiny（1 格），其余 overflow 掉落。
+        inv.containers.push(ContainerState {
+            id: BODY_POCKET_CONTAINER_ID.to_string(),
+            name: "暗袋".to_string(),
+            rows: BODY_POCKET_ROWS,
+            cols: BODY_POCKET_COLS,
+            items: (0..6)
+                .map(|i| PlacedItemState {
+                    row: (i / 3) as u8,
+                    col: (i % 3) as u8,
+                    instance: make_test_item_instance(200 + i as u64, "filler"),
+                })
+                .collect(),
+            owner_instance_id: None,
+        });
+        // spill 容器：tiny 1×1。
+        inv.containers.push(ContainerState {
+            id: "tiny".to_string(),
+            name: "tiny".to_string(),
+            rows: 1,
+            cols: 1,
+            items: Vec::new(),
+            owner_instance_id: None,
+        });
+        // 穿上 small_pack（pack_900），内含 3 件 1×1。
+        inv.equipped.insert(
+            EQUIP_SLOT_CHEST.to_string(),
+            SlotContents::worn_single(make_container_item(900, "small_pack")),
+        );
+        inv.containers.push(ContainerState {
+            id: container_id_for_worn_pack(900),
+            name: "small".to_string(),
+            rows: 3,
+            cols: 3,
+            items: vec![
+                PlacedItemState {
+                    row: 0,
+                    col: 0,
+                    instance: make_test_item_instance(20, "a"),
+                },
+                PlacedItemState {
+                    row: 0,
+                    col: 1,
+                    instance: make_test_item_instance(21, "b"),
+                },
+                PlacedItemState {
+                    row: 0,
+                    col: 2,
+                    instance: make_test_item_instance(22, "c"),
+                },
+            ],
+            owner_instance_id: Some(900),
+        });
+
+        // 卸下：移走背包件。
+        inv.equipped
+            .get_mut(EQUIP_SLOT_CHEST)
+            .map(|s| s.worn.remove(0));
+
+        let mut dropped = DroppedLootRegistry::default();
+        let dropped_ids = rebuild_and_drop_overflow(
+            &mut inv,
+            &registry,
+            &mut dropped,
+            [5.0, 64.0, 5.0],
+            DimensionKind::Overworld,
+        );
+
+        // tiny 仅 1 格 → 1 件 spill 进 tiny，2 件 overflow 掉落（守恒：3 = 1 + 2）。
+        assert_eq!(
+            dropped_ids.len(),
+            2,
+            "tiny 容器仅 1 格，3 件内含物中 1 件 spill、2 件应转掉落物（守恒，禁止静默丢失）；实际掉落 {dropped_ids:?}"
+        );
+        assert_eq!(
+            dropped.entries.len(),
+            2,
+            "DroppedLootRegistry 应含 2 条掉落条目（overflow 全部入世界，不丢失）"
+        );
+        // 掉落物 + spill 件 = 原 3 件（instance 守恒，无凭空消失）。
+        let tiny = inv.containers.iter().find(|c| c.id == "tiny").unwrap();
+        let mut all_ids: Vec<u64> = tiny.items.iter().map(|p| p.instance.instance_id).collect();
+        all_ids.extend(dropped.entries.keys().copied());
+        all_ids.sort_unstable();
+        assert_eq!(
+            all_ids,
+            vec![20, 21, 22],
+            "spill + 掉落必须守恒覆盖全部 3 件原内含物（20/21/22）；实际并集 = {all_ids:?}"
+        );
+        // 掉落条目的 item 实例非空且 dimension 正确。
+        for id in &dropped_ids {
+            let entry = dropped
+                .entries
+                .get(id)
+                .unwrap_or_else(|| panic!("掉落 instance {id} 应在 registry"));
+            assert_eq!(
+                entry.dimension,
+                DimensionKind::Overworld,
+                "掉落物 dimension 应为玩家所在维度"
+            );
+            assert_eq!(
+                entry.item.instance_id, *id,
+                "掉落条目 item.instance_id 应与 key 一致（保留原 instance，不分配新 id）"
+            );
+        }
+    }
+
+    /// 交付物 #4 同步 — 穿背包路径触发 rebuild，`pack_<id>` 容器即时存在（P3 双击有容器可开）。
+    #[test]
+    fn equip_pack_creates_pack_container_via_rebuild() {
+        let (registry, mut inv) = make_backpack_registry_and_inventory();
+        // 穿上背包件后调 rebuild_and_drop_overflow（模拟 handle_inventory_move 穿包分支）。
+        inv.equipped.insert(
+            EQUIP_SLOT_CHEST.to_string(),
+            SlotContents::worn_single(make_container_item(950, "large_backpack")),
+        );
+        let mut dropped = DroppedLootRegistry::default();
+        let dropped_ids = rebuild_and_drop_overflow(
+            &mut inv,
+            &registry,
+            &mut dropped,
+            [0.0, 64.0, 0.0],
+            DimensionKind::Overworld,
+        );
+        assert!(
+            dropped_ids.is_empty(),
+            "穿包（新建空容器）不应产生 overflow 掉落；实际 {dropped_ids:?}"
+        );
+        let pack_id = container_id_for_worn_pack(950);
+        let pack = inv
+            .containers
+            .iter()
+            .find(|c| c.id == pack_id)
+            .unwrap_or_else(|| panic!("穿包后 rebuild 应即时新建 `{pack_id}` 容器（P3 双击可开）"));
+        assert_eq!(
+            pack.owner_instance_id,
+            Some(950),
+            "穿包新建容器的 owner_instance_id 应为背包件 instance_id(950)"
+        );
+    }
+
+    /// 交付物 #5 — 多背包 loadout：第一件复用占位、其余动态建容器，全部容器 id 正确。
+    #[test]
+    fn instantiate_remaps_all_worn_pack_placeholders() {
+        // 两件 worn pack：chest + legs 各一。占位容器仅 `pack_grass_pouch` 一个 +
+        // body_pocket（rebuild 兜底）。fixture 预置占位容器带一件预置物品，验证其不丢。
+        let chest_pack = make_container_template("chest_pack", EQUIP_SLOT_CHEST, 3, 3, 10.0);
+        let legs_pack = make_container_template("legs_pack", EQUIP_SLOT_LEGS, 3, 3, 8.0);
+        let registry = ItemRegistry::from_map(HashMap::from([
+            ("chest_pack".to_string(), chest_pack),
+            ("legs_pack".to_string(), legs_pack),
+        ]));
+
+        let mut equipped: HashMap<String, SlotContents> = HashMap::new();
+        equipped.insert(
+            EQUIP_SLOT_CHEST.to_string(),
+            SlotContents::worn_single(make_container_item(0, "chest_pack")),
+        );
+        equipped.insert(
+            EQUIP_SLOT_LEGS.to_string(),
+            SlotContents::worn_single(make_container_item(0, "legs_pack")),
+        );
+
+        // 占位容器（LOADOUT_PACK_PLACEHOLDER_CONTAINER_ID）携带一件预置物品。
+        let loadout = LoadoutSpec {
+            containers: vec![ContainerState {
+                id: LOADOUT_PACK_PLACEHOLDER_CONTAINER_ID.to_string(),
+                name: "占位包".to_string(),
+                rows: 3,
+                cols: 3,
+                items: vec![PlacedItemState {
+                    row: 0,
+                    col: 0,
+                    instance: make_test_item_instance(0, "preset_item"),
+                }],
+                owner_instance_id: None,
+            }],
+            equipped,
+            hotbar: Default::default(),
+            bone_coins: 0,
+            max_weight: 100.0,
+        };
+
+        let mut alloc = InventoryInstanceIdAllocator::new(2000);
+        let inv = instantiate_inventory_from_loadout(&loadout, &mut alloc, &registry)
+            .expect("instantiate 多背包 loadout");
+
+        // 占位 id 不应残留。
+        assert!(
+            !inv.containers
+                .iter()
+                .any(|c| c.id == LOADOUT_PACK_PLACEHOLDER_CONTAINER_ID),
+            "静态占位 `{LOADOUT_PACK_PLACEHOLDER_CONTAINER_ID}` 必须已重映射，不应残留"
+        );
+
+        // 收集运行时两件 worn pack 的 instance_id。
+        let worn_pack_ids: Vec<u64> = inv
+            .equipped
+            .values()
+            .flat_map(|s| s.worn.iter())
+            .filter(|i| {
+                registry
+                    .get(&i.template_id)
+                    .is_some_and(|t| t.container_spec.is_some())
+            })
+            .map(|i| i.instance_id)
+            .collect();
+        assert_eq!(
+            worn_pack_ids.len(),
+            2,
+            "应有两件运行时 worn pack；实际 {worn_pack_ids:?}"
+        );
+
+        // 两件 worn pack 各自都应有对应 `pack_<id>` 容器、owner 正确。
+        for inst_id in &worn_pack_ids {
+            let expected = container_id_for_worn_pack(*inst_id);
+            let c = inv
+                .containers
+                .iter()
+                .find(|c| c.id == expected)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "worn pack instance {inst_id} 应有容器 `{expected}`；实际 ids = {:?}",
+                        inv.containers.iter().map(|c| &c.id).collect::<Vec<_>>()
+                    )
+                });
+            assert_eq!(
+                c.owner_instance_id,
+                Some(*inst_id),
+                "容器 `{expected}` 的 owner_instance_id 应为 {inst_id}"
+            );
+        }
+
+        // 占位预置物品仍在某个 pack 容器（第一件 worn pack 复用占位容器，物品不丢）。
+        let preset_still_present = inv.containers.iter().any(|c| {
+            c.items
+                .iter()
+                .any(|p| p.instance.template_id == "preset_item")
+        });
+        assert!(
+            preset_still_present,
+            "占位容器的预置物品（preset_item）在重映射后不应丢失"
+        );
+    }
+
+    /// qi_physics 锚点 — 跨包移动 lingering_owner_qi 守恒（随 instance 走，不重算/复制/蒸发）。
+    #[test]
+    fn move_item_across_packs_preserves_lingering_owner_qi() {
+        use crate::schema::inventory::InventoryLocationV1;
+        // 自建 registry：两个 container 模板 + 一个 misc 物品模板（apply_inventory_move 校验需 registry 命中）。
+        let chest_pack = make_container_template("chest_pack", EQUIP_SLOT_CHEST, 3, 3, 10.0);
+        let legs_pack = make_container_template("legs_pack", EQUIP_SLOT_LEGS, 3, 3, 8.0);
+        let mut spirit_dust = make_container_template("spirit_dust", EQUIP_SLOT_CHEST, 1, 1, 0.0);
+        // spirit_dust 是普通可移动物品（非容器）：清掉 container_spec、改 Misc 类、1×1。
+        spirit_dust.container_spec = None;
+        spirit_dust.category = ItemCategory::Misc;
+        spirit_dust.grid_w = 1;
+        spirit_dust.grid_h = 1;
+        let registry = ItemRegistry::from_map(HashMap::from([
+            ("chest_pack".to_string(), chest_pack),
+            ("legs_pack".to_string(), legs_pack),
+            ("spirit_dust".to_string(), spirit_dust),
+        ]));
+        let mut inv = make_empty_inventory();
+        // 两件 worn pack：chest（chest_pack, pack_1001）+ legs（legs_pack, pack_1002）。
+        inv.equipped.insert(
+            EQUIP_SLOT_CHEST.to_string(),
+            SlotContents::worn_single(make_container_item(1001, "chest_pack")),
+        );
+        inv.equipped.insert(
+            EQUIP_SLOT_LEGS.to_string(),
+            SlotContents::worn_single(make_container_item(1002, "legs_pack")),
+        );
+        // 两个 pack 容器都建好（rebuild 后 owner 正确）。
+        let _ = rebuild_containers_from_equipment(&mut inv, &registry);
+
+        // 在 pack_1001 放一件带 lingering_owner_qi 的物品。
+        let mut item = make_test_item_instance(55, "spirit_dust");
+        item.lingering_owner_qi = Some(LingeringQi {
+            owner: "Kizun".to_string(),
+            expire_at: 12_345,
+        });
+        let qi_before = item.lingering_owner_qi.clone();
+        let pack1 = inv
+            .containers
+            .iter_mut()
+            .find(|c| c.id == container_id_for_worn_pack(1001))
+            .expect("pack_1001 存在");
+        pack1.items.push(PlacedItemState {
+            row: 0,
+            col: 0,
+            instance: item,
+        });
+
+        // 跨包移动：pack_1001 → pack_1002。
+        let from = InventoryLocationV1::Container {
+            container_id: container_id_for_worn_pack(1001),
+            row: 0,
+            col: 0,
+        };
+        let to = InventoryLocationV1::Container {
+            container_id: container_id_for_worn_pack(1002),
+            row: 0,
+            col: 0,
+        };
+        apply_inventory_move(&mut inv, &registry, 55, &from, &to).expect("跨包移动应成功");
+
+        // 移动后 instance 55 应在 pack_1002，且 lingering_owner_qi 不变（守恒）。
+        let pack2 = inv
+            .containers
+            .iter()
+            .find(|c| c.id == container_id_for_worn_pack(1002))
+            .expect("pack_1002 存在");
+        let moved = pack2
+            .items
+            .iter()
+            .find(|p| p.instance.instance_id == 55)
+            .expect("instance 55 应在 pack_1002");
+        assert_eq!(
+            moved.instance.lingering_owner_qi, qi_before,
+            "跨包移动是同一 instance 的位置变更：lingering_owner_qi 必须守恒不变（不重算/复制/蒸发）；\
+             期望 {qi_before:?}，实际 {:?}",
+            moved.instance.lingering_owner_qi
         );
     }
 
@@ -11255,6 +11806,7 @@ cols = 4
             rows: 3,
             cols: 3,
             items: container_items,
+            owner_instance_id: None,
         });
         inv.max_weight = BASE_CARRY_CAPACITY + 10.0;
 

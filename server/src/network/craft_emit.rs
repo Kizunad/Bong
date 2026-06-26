@@ -823,6 +823,7 @@ mod tests {
                 rows: 16,
                 cols: 1,
                 items: placed,
+                owner_instance_id: None,
             }],
             equipped: HashMap::new(),
             hotbar: Default::default(),

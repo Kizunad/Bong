@@ -2567,6 +2567,8 @@ mod tests {
                     col: 0,
                     instance: item,
                 }],
+
+                owner_instance_id: None,
             }],
             equipped: HashMap::new(),
             hotbar: Default::default(),
@@ -2585,6 +2587,7 @@ mod tests {
                 rows: 2,
                 cols: 9,
                 items: Vec::new(),
+                owner_instance_id: None,
             }],
             equipped: HashMap::new(),
             hotbar: Default::default(),

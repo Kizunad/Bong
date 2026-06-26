@@ -555,6 +555,7 @@ mod tests {
                 rows: 1,
                 cols: 1,
                 items: Vec::<PlacedItemState>::new(),
+                owner_instance_id: None,
             }],
             equipped,
             hotbar: Default::default(),

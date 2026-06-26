@@ -317,6 +317,7 @@ mod tests {
                 rows: 1,
                 cols: 16,
                 items: placed,
+                owner_instance_id: None,
             }],
             equipped: HashMap::new(),
             hotbar: Default::default(),

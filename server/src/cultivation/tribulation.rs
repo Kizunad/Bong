@@ -4117,6 +4117,7 @@ mod tests {
                         instance,
                     })
                     .collect(),
+                owner_instance_id: None,
             }],
             equipped: Default::default(),
             hotbar: Default::default(),

@@ -705,6 +705,8 @@ mod integration_tests {
                 col: 0,
                 instance,
             }],
+
+            owner_instance_id: None,
         };
         PlayerInventory {
             triggered_treasures: Vec::new(),
