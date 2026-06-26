@@ -469,6 +469,29 @@ mod tests {
                     .map(|_| container.id.clone())
             })
             .expect("default loadout should derive a runtime pack_<instance_id> container");
+        let output_template = item_registry
+            .get("cai_yao_dao")
+            .expect("cai_yao_dao should exist in item registry");
+        let runtime_pack_before = inventory
+            .containers
+            .iter()
+            .find(|container| container.id == runtime_pack_id)
+            .expect("runtime pack container should exist before forge outcome");
+        let occupied_before = runtime_pack_before
+            .items
+            .iter()
+            .map(|placed| (placed.row, placed.col))
+            .collect::<Vec<_>>();
+        let expected_slot = find_free_slot(
+            runtime_pack_before,
+            output_template.grid_w,
+            output_template.grid_h,
+        )
+        .expect("default runtime pack should have a real free slot for 1x1 forged tool");
+        assert!(
+            !occupied_before.contains(&expected_slot),
+            "测试前置条件错误：预期空槽 {expected_slot:?} 已被运行时背包 `{runtime_pack_id}` 占用"
+        );
 
         let mut app = app_with_registry(item_registry);
         let caster = app.world_mut().spawn(inventory).id();
@@ -483,16 +506,33 @@ mod tests {
             .iter()
             .find(|container| container.id == runtime_pack_id)
             .expect("runtime pack container should still exist");
+        let placed_tool = runtime_pack
+            .items
+            .iter()
+            .find(|placed| placed.instance.template_id == "cai_yao_dao")
+            .expect("1x1 锻造工具应优先落入默认运行时背包");
+        assert_eq!(
+            (placed_tool.row, placed_tool.col),
+            expected_slot,
+            "锻造工具应写入 find_free_slot 给出的真实空槽，不能固定覆盖 `(0, 0)`；\
+             runtime_pack `{runtime_pack_id}` items={:?}",
+            runtime_pack
+                .items
+                .iter()
+                .map(|placed| (placed.instance.template_id.as_str(), placed.row, placed.col))
+                .collect::<Vec<_>>()
+        );
         assert!(
+            !occupied_before.contains(&(placed_tool.row, placed_tool.col)),
+            "锻造工具坐标不能与发放前已有物品重叠；发放前占用={occupied_before:?}，发放后 items={:?}",
             runtime_pack
                 .items
                 .iter()
-                .any(|placed| placed.instance.template_id == "cai_yao_dao"),
-            "1x1 锻造工具应优先落入默认运行时背包 `{runtime_pack_id}`；当前 items={:?}",
-            runtime_pack
-                .items
-                .iter()
-                .map(|placed| placed.instance.template_id.as_str())
+                .map(|placed| (
+                    placed.instance.template_id.as_str(),
+                    placed.row,
+                    placed.col
+                ))
                 .collect::<Vec<_>>()
         );
     }
