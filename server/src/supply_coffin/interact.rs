@@ -172,6 +172,7 @@ pub fn handle_supply_coffin_interact(
             rows,
             cols,
             items: Vec::new(),
+            owner_instance_id: None,
         };
         pack_loot_into_grid(&mut container, &rolled, &item_registry, &mut allocator);
 

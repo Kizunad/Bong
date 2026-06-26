@@ -581,6 +581,7 @@ mod tests {
                         instance,
                     })
                     .collect(),
+                owner_instance_id: None,
             }],
             equipped: HashMap::new(),
             hotbar: Default::default(),

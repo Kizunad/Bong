@@ -771,6 +771,7 @@ mod tests {
                         instance: item(2, ROTTEN_WOOD_MATERIAL_ID, 1),
                     },
                 ],
+                owner_instance_id: None,
             }],
             equipped: HashMap::new(),
             hotbar: Default::default(),
@@ -833,6 +834,7 @@ mod tests {
                 rows: 4,
                 cols: 9,
                 items: Vec::new(),
+                owner_instance_id: None,
             }],
             equipped: HashMap::from([(
                 EQUIP_SLOT_MAIN_HAND.to_string(),

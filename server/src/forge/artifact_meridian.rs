@@ -1348,6 +1348,8 @@ mod tests {
                     col: 0,
                     instance: item,
                 }],
+
+                owner_instance_id: None,
             }],
             equipped: std::collections::HashMap::new(),
             hotbar: Default::default(),
@@ -1622,6 +1624,8 @@ mod tests {
                     col: 0,
                     instance: item,
                 }],
+
+                owner_instance_id: None,
             }],
             equipped: std::collections::HashMap::new(),
             hotbar: Default::default(),

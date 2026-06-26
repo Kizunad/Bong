@@ -1694,6 +1694,7 @@ pub fn handle_client_request_payloads(
                     alchemy_params.attrition_qi_transfers.as_deref_mut(),
                     alchemy_params.attrition_applied_events.as_deref_mut(),
                     alchemy_params.tsy_lifecycle.as_deref(),
+                    &mut dropped_loot_params.registry,
                 );
             }
             ClientRequestV1::EquipFalseSkin {
@@ -1735,6 +1736,7 @@ pub fn handle_client_request_payloads(
                     alchemy_params.attrition_qi_transfers.as_deref_mut(),
                     alchemy_params.attrition_applied_events.as_deref_mut(),
                     alchemy_params.tsy_lifecycle.as_deref(),
+                    &mut dropped_loot_params.registry,
                 );
             }
             ClientRequestV1::ForgeFalseSkin { kind, .. } => {
@@ -3687,6 +3689,8 @@ mod tests {
                     col: 0,
                     instance: item,
                 }],
+
+                owner_instance_id: None,
             }],
             equipped: Default::default(),
             hotbar: Default::default(),
@@ -3709,6 +3713,8 @@ mod tests {
                     col: 0,
                     instance: inventory_test_item(9001, template_id, count),
                 }],
+
+                owner_instance_id: None,
             }],
             equipped: Default::default(),
             hotbar: Default::default(),
@@ -3752,6 +3758,8 @@ mod tests {
                 rows: 5,
                 cols: 7,
                 items: Vec::new(),
+
+                owner_instance_id: None,
             }],
             equipped: Default::default(),
             hotbar: Default::default(),
@@ -3774,6 +3782,8 @@ mod tests {
                     col: 0,
                     instance: item,
                 }],
+
+                owner_instance_id: None,
             }],
             equipped: Default::default(),
             hotbar: Default::default(),
@@ -4694,6 +4704,8 @@ mod tests {
                             instance: wrong_mineral,
                         },
                     ],
+
+                    owner_instance_id: None,
                 }],
                 equipped: Default::default(),
                 hotbar: Default::default(),
@@ -4975,6 +4987,8 @@ mod tests {
                                 },
                             },
                         ],
+
+                        owner_instance_id: None,
                     }],
                     equipped: Default::default(),
                     hotbar: Default::default(),
@@ -9757,6 +9771,9 @@ fn handle_inventory_move(
     qi_transfers: Option<&mut Events<crate::qi_physics::ledger::QiTransfer>>,
     attrition_events: Option<&mut Events<AttritionAppliedEvent>>,
     tsy_lifecycle: Option<&TsyZoneStateRegistry>,
+    // plan-tarkov-backpack-v1 P0（交付物 #4 红线）— worn 背包件穿/卸时 rebuild 容器，
+    // 卸非空背包的 overflow 内含物转掉落物（写入 DroppedLootRegistry，禁止静默丢失）。
+    dropped_loot_registry: &mut DroppedLootRegistry,
 ) {
     let item_before_move = inventories
         .get(entity)
@@ -9863,6 +9880,68 @@ fn handle_inventory_move(
                         }
                     }
                 }
+            }
+
+            // plan-tarkov-backpack-v1 P0（交付物 #4 红线）— worn 背包件穿/卸触发容器 rebuild。
+            //
+            // - 卸下（from=Equip{Worn} 且被移走 instance 有 container_spec）：背包件已离 worn 层，
+            //   其 `pack_<id>` 容器变孤儿 → rebuild 把内含物 spill 进存活容器，overflow 转掉落物
+            //   （连货掉地，禁止静默丢失）。
+            // - 穿上（to=Equip{Worn} 且 instance 有 container_spec）：rebuild 即时新建 `pack_<id>`
+            //   容器，确保下一帧 snapshot 含该容器（P3 双击有容器可开）。
+            //
+            // rebuild 改 containers / equipped 后用 resync 推全量快照（Moved delta 表达不了
+            // spill/overflow/新建容器），覆盖客户端乐观态。
+            let moved_item_is_pack = item_before_move.as_ref().is_some_and(|item| {
+                item_registry
+                    .get(&item.template_id)
+                    .is_some_and(|t| t.container_spec.is_some())
+            });
+            let from_worn = matches!(
+                from,
+                InventoryLocationV1::Equip {
+                    state: EquipStateV1::Worn,
+                    ..
+                }
+            );
+            let to_worn = matches!(
+                to,
+                InventoryLocationV1::Equip {
+                    state: EquipStateV1::Worn,
+                    ..
+                }
+            );
+            let worn_pack_unequip = moved_item_is_pack && from_worn && !to_worn;
+            let worn_pack_equip = moved_item_is_pack && to_worn && !from_worn;
+
+            if worn_pack_unequip || worn_pack_equip {
+                let player_pos = client_position(positions, entity);
+                let player_dimension = dimensions.get(entity).map(|dim| dim.0).unwrap_or_default();
+                let dropped_ids = crate::inventory::rebuild_and_drop_overflow(
+                    &mut inventory,
+                    item_registry,
+                    dropped_loot_registry,
+                    player_pos,
+                    player_dimension,
+                );
+                if !dropped_ids.is_empty() {
+                    tracing::info!(
+                        "[bong][network][inventory] worn-pack unequip overflow dropped {} item(s) to world: {dropped_ids:?}",
+                        dropped_ids.len()
+                    );
+                }
+                tracing::info!(
+                    "[bong][network][inventory] worn-pack rebuild after move instance={instance_id} {from:?} -> {to:?} (unequip={worn_pack_unequip} equip={worn_pack_equip})"
+                );
+                resync_snapshot(
+                    entity,
+                    &inventory,
+                    clients,
+                    player_states,
+                    cultivations,
+                    "worn_pack_rebuild",
+                );
+                return;
             }
 
             tracing::info!(
@@ -13008,6 +13087,8 @@ mod take_pill_tests {
                 rows: 4,
                 cols: 4,
                 items: Vec::new(),
+
+                owner_instance_id: None,
             }],
             equipped: Default::default(),
             hotbar: Default::default(),
@@ -13737,6 +13818,8 @@ mod freshness_probe_handler_tests {
                 rows: 5,
                 cols: 7,
                 items: Vec::new(),
+
+                owner_instance_id: None,
             }],
             equipped: Default::default(),
             hotbar: Default::default(),
@@ -13759,6 +13842,8 @@ mod freshness_probe_handler_tests {
                     col: 0,
                     instance: item,
                 }],
+
+                owner_instance_id: None,
             }],
             equipped: Default::default(),
             hotbar: Default::default(),
@@ -13931,6 +14016,8 @@ mod freshness_probe_handler_tests {
                     rows: 5,
                     cols: 7,
                     items: Vec::new(),
+
+                    owner_instance_id: None,
                 },
                 // 第二容器持有目标物品
                 ContainerState {
@@ -13943,6 +14030,8 @@ mod freshness_probe_handler_tests {
                         col: 2,
                         instance: item,
                     }],
+
+                    owner_instance_id: None,
                 },
             ],
             equipped: Default::default(),

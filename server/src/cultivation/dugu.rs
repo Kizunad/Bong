@@ -827,6 +827,8 @@ mod tests {
                     col: 0,
                     instance: jie_gu_rui(instance_id),
                 }],
+
+                owner_instance_id: None,
             }],
             equipped: HashMap::new(),
             hotbar: Default::default(),

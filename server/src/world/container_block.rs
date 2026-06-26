@@ -162,6 +162,7 @@ pub fn build_external_container(session_id: u64, kind: ContainerBlockKind) -> Ex
             rows,
             cols,
             items: vec![],
+            owner_instance_id: None,
         },
         opened_by: None,
         timeout_wall_secs: 0,

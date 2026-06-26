@@ -3421,6 +3421,8 @@ mod tests {
                     col: 0,
                     instance: item,
                 }],
+
+                owner_instance_id: None,
             }],
             equipped: Default::default(),
             hotbar: Default::default(),
@@ -3439,6 +3441,7 @@ mod tests {
                 rows: 5,
                 cols: 7,
                 items: Vec::new(),
+                owner_instance_id: None,
             }],
             equipped: Default::default(),
             hotbar: Default::default(),

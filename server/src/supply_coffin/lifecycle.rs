@@ -284,6 +284,7 @@ mod tests {
                 rows: 1,
                 cols: 1,
                 items: vec![],
+                owner_instance_id: None,
             },
             opened_by: None,
             timeout_wall_secs: 0,

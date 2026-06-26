@@ -228,6 +228,8 @@ mod tests {
                 col: 0,
                 instance: item,
             }],
+
+            owner_instance_id: None,
         };
         PlayerInventory {
             triggered_treasures: Vec::new(),

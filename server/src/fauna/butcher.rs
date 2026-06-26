@@ -202,6 +202,7 @@ mod tests {
                 rows: 5,
                 cols: 7,
                 items: vec![],
+                owner_instance_id: None,
             }],
             equipped: HashMap::from([(
                 EQUIP_SLOT_MAIN_HAND.to_string(),

@@ -226,6 +226,7 @@ mod tests {
             rows,
             cols,
             items: Vec::new(),
+            owner_instance_id: None,
         }
     }
 

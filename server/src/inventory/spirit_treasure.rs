@@ -501,6 +501,8 @@ mod tests {
                     col: 0,
                     instance: item(instance_id),
                 }],
+
+                owner_instance_id: None,
             }],
             equipped: HashMap::new(),
             hotbar: Default::default(),

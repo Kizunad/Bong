@@ -2453,6 +2453,8 @@ mod tests {
                 col: 0,
                 instance: make_seed_instance(template_id, stack),
             }],
+
+            owner_instance_id: None,
         };
         PlayerInventory {
             triggered_treasures: Vec::new(),
@@ -2772,6 +2774,7 @@ mod tests {
             rows: 8,
             cols: 8,
             items: vec![],
+            owner_instance_id: None,
         };
         PlayerInventory {
             triggered_treasures: Vec::new(),

@@ -665,6 +665,7 @@ mod tests {
                 rows: 8,
                 cols: 8,
                 items: Vec::new(),
+                owner_instance_id: None,
             }],
             equipped: HashMap::new(),
             hotbar: Default::default(),

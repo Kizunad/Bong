@@ -909,6 +909,8 @@ mod tests {
                         lingering_owner_qi: None,
                     },
                 }],
+
+                owner_instance_id: None,
             }],
             equipped: HashMap::new(),
             hotbar: Default::default(),

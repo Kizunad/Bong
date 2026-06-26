@@ -2219,6 +2219,7 @@ mod tests {
                 rows: 5,
                 cols: 7,
                 items: vec![],
+                owner_instance_id: None,
             }],
             equipped: std::collections::HashMap::from([(
                 crate::inventory::EQUIP_SLOT_CHEST.to_string(),
@@ -2345,6 +2346,7 @@ mod tests {
                 rows: 5,
                 cols: 7,
                 items: vec![],
+                owner_instance_id: None,
             }],
             equipped: std::collections::HashMap::from([(
                 crate::inventory::EQUIP_SLOT_CHEST.to_string(),
@@ -5791,6 +5793,7 @@ mod tests {
                 rows: 5,
                 cols: 7,
                 items: vec![],
+                owner_instance_id: None,
             }],
             equipped: std::collections::HashMap::from([(
                 crate::inventory::EQUIP_SLOT_MAIN_HAND.to_string(),
@@ -5944,6 +5947,7 @@ mod tests {
                 rows: 5,
                 cols: 7,
                 items: vec![],
+                owner_instance_id: None,
             }],
             equipped: std::collections::HashMap::from([(
                 crate::inventory::EQUIP_SLOT_MAIN_HAND.to_string(),
@@ -6090,6 +6094,7 @@ mod tests {
                         rows: 5,
                         cols: 7,
                         items: vec![],
+                        owner_instance_id: None,
                     }],
                     equipped: std::collections::HashMap::from([(
                         crate::inventory::EQUIP_SLOT_MAIN_HAND.to_string(),
@@ -6242,6 +6247,7 @@ mod tests {
                     rows: 5,
                     cols: 7,
                     items: vec![],
+                    owner_instance_id: None,
                 }],
                 equipped: std::collections::HashMap::from([(
                     crate::inventory::EQUIP_SLOT_MAIN_HAND.to_string(),
@@ -6372,6 +6378,7 @@ mod tests {
                     rows: 5,
                     cols: 7,
                     items: vec![],
+                    owner_instance_id: None,
                 }],
                 equipped: std::collections::HashMap::from([(
                     crate::inventory::EQUIP_SLOT_MAIN_HAND.to_string(),
@@ -6536,6 +6543,8 @@ mod tests {
                             lingering_owner_qi: None,
                         },
                     }],
+
+                    owner_instance_id: None,
                 }],
                 equipped: std::collections::HashMap::from([(
                     crate::inventory::EQUIP_SLOT_MAIN_HAND.to_string(),
@@ -7936,6 +7945,7 @@ mod tests {
                 rows: 5,
                 cols: 7,
                 items: vec![],
+                owner_instance_id: None,
             }],
             equipped: std::collections::HashMap::from([(
                 EQUIP_SLOT_OFF_HAND.to_string(),

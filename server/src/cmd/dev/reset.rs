@@ -478,6 +478,8 @@ mod tests {
                     col: 0,
                     instance: item(1, "main_item"),
                 }],
+
+                owner_instance_id: None,
             }],
             equipped,
             hotbar,
