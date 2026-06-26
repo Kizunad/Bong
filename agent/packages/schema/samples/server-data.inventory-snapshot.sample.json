@@ -25,7 +25,8 @@
       "id": "pack_1007",
       "name": "破草包",
       "rows": 3,
-      "cols": 3
+      "cols": 3,
+      "owner_instance_id": 1007
     }
   ],
   "placed_items": [

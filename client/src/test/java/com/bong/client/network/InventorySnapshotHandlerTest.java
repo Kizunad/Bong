@@ -18,6 +18,7 @@ import java.util.Optional;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class InventorySnapshotHandlerTest {
@@ -58,6 +59,12 @@ public class InventorySnapshotHandlerTest {
         assertEquals(InventoryModel.SMALL_POUCH_CONTAINER_ID, snapshot.containers().get(1).id());
         assertEquals(InventoryModel.FRONT_SATCHEL_CONTAINER_ID, snapshot.containers().get(2).id());
         assertEquals("pack_1007", snapshot.containers().get(3).id());
+        // plan-tarkov-backpack-v1 P3（决议 #4）：pack_<id> 容器携带 server 下发的 owner_instance_id；
+        // 静态容器无该字段（null）。client 解析器须如实路由（含字段路）。
+        assertEquals(1007L, snapshot.containers().get(3).ownerInstanceId(),
+            "pack_1007 应解析出 owner_instance_id=1007（server P3 下发）");
+        assertNull(snapshot.containers().get(0).ownerInstanceId(),
+            "main_pack 静态容器无 owner_instance_id，应为 null");
         // pack_1007 套包容器内含物（spirit_herb）也须如实落入对应容器视图。
         InventoryModel.GridEntry packItem = snapshot.gridItems().stream()
             .filter(entry -> "spirit_herb".equals(entry.item().itemId()))
@@ -474,6 +481,92 @@ public class InventorySnapshotHandlerTest {
         assertEquals("Sharp", item.forgeColor());
         assertEquals(List.of("brittle_edge"), item.forgeSideEffects());
         assertEquals(2, item.forgeAchievedTier());
+    }
+
+    // plan-tarkov-backpack-v1 P3（决议 #4）— owner_instance_id 解析含/缺字段两路兼容。
+    @Test
+    void parsesOwnerInstanceIdWhenPresentAndDefaultsNullWhenAbsent() {
+        // pack_2007 含 owner_instance_id；body_pocket 缺该字段（旧/静态容器）。两者都应被如实解析、不丢容器。
+        String json = """
+            {
+              "v": 1,
+              "type": "inventory_snapshot",
+              "revision": 12,
+              "containers": [
+                {"id":"body_pocket","name":"贴身口袋","rows":2,"cols":3},
+                {"id":"pack_2007","name":"破草包","rows":3,"cols":3,"owner_instance_id":2007}
+              ],
+              "placed_items": [],
+              "equipped": {},
+              "hotbar": [null, null, null, null, null, null, null, null, null],
+              "bone_coins": 0,
+              "weight": {"current": 0, "max": 50},
+              "realm": "Awaken",
+              "qi_current": 0,
+              "qi_max": 100,
+              "body_level": 0.1
+            }
+            """;
+
+        ServerPayloadParseResult parseResult = ServerDataEnvelope.parse(
+            json,
+            json.getBytes(StandardCharsets.UTF_8).length
+        );
+        assertTrue(parseResult.isSuccess(), parseResult.errorMessage());
+
+        ServerDataDispatch dispatch = new InventorySnapshotHandler().handle(parseResult.envelope());
+        assertTrue(dispatch.handled(), dispatch.logMessage());
+
+        InventoryModel snapshot = InventoryStateStore.snapshot();
+        assertEquals(2, snapshot.containers().size(),
+            "含 owner_instance_id 与缺字段的容器都应被保留");
+        InventoryModel.ContainerDef bodyPocket = snapshot.containers().get(0);
+        assertEquals("body_pocket", bodyPocket.id());
+        assertNull(bodyPocket.ownerInstanceId(),
+            "缺 owner_instance_id 的容器应默认 null（向后兼容旧 server）");
+        InventoryModel.ContainerDef pack = snapshot.containers().get(1);
+        assertEquals("pack_2007", pack.id());
+        assertEquals(2007L, pack.ownerInstanceId(),
+            "含 owner_instance_id 字段应解析为对应 Long");
+    }
+
+    @Test
+    void ignoresInvalidOwnerInstanceIdAndStillParsesContainer() {
+        // 非法 owner_instance_id（负数）应被 readOptionalLong 视作无值 → null，不丢整个 snapshot。
+        String json = """
+            {
+              "v": 1,
+              "type": "inventory_snapshot",
+              "revision": 12,
+              "containers": [
+                {"id":"pack_2008","name":"破草包","rows":3,"cols":3,"owner_instance_id":-5}
+              ],
+              "placed_items": [],
+              "equipped": {},
+              "hotbar": [null, null, null, null, null, null, null, null, null],
+              "bone_coins": 0,
+              "weight": {"current": 0, "max": 50},
+              "realm": "Awaken",
+              "qi_current": 0,
+              "qi_max": 100,
+              "body_level": 0.1
+            }
+            """;
+
+        ServerPayloadParseResult parseResult = ServerDataEnvelope.parse(
+            json,
+            json.getBytes(StandardCharsets.UTF_8).length
+        );
+        assertTrue(parseResult.isSuccess(), parseResult.errorMessage());
+
+        ServerDataDispatch dispatch = new InventorySnapshotHandler().handle(parseResult.envelope());
+        assertTrue(dispatch.handled(), dispatch.logMessage());
+
+        InventoryModel snapshot = InventoryStateStore.snapshot();
+        assertEquals(1, snapshot.containers().size());
+        assertEquals("pack_2008", snapshot.containers().get(0).id());
+        assertNull(snapshot.containers().get(0).ownerInstanceId(),
+            "非法 owner_instance_id（负数）应降级为 null，容器本身仍保留");
     }
 
     private static String loadSharedFixture(String fileName) throws IOException {
