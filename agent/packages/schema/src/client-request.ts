@@ -299,6 +299,18 @@ export const InventoryDiscardItemRequestV1 = Type.Object(
 );
 export type InventoryDiscardItemRequestV1 = Static<typeof InventoryDiscardItemRequestV1>;
 
+// plan-layered-equip-v1 P4（决议 #8）— 法宝激活/卸下到灵宝 UI 触发位。
+export const TreasureActivateRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("treasure_activate"),
+    instance_id: Type.Integer({ minimum: 0, maximum: JS_SAFE_INTEGER_MAX }),
+    activate: Type.Boolean(),
+  },
+  { additionalProperties: false },
+);
+export type TreasureActivateRequestV1 = Static<typeof TreasureActivateRequestV1>;
+
 export const DropWeaponIntentRequestV1 = Type.Object(
   {
     v: Type.Literal(1),
@@ -1093,6 +1105,7 @@ export const ClientRequestV1 = Type.Union([
   MineralProbeRequestV1,
   FreshnessProbeRequestV1,
   InventoryDiscardItemRequestV1,
+  TreasureActivateRequestV1,
   DropWeaponIntentRequestV1,
   RepairWeaponIntentRequestV1,
   BotanyHarvestRequestV1,

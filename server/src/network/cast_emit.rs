@@ -944,6 +944,7 @@ mod tests {
             lingering_owner_qi: None,
         };
         PlayerInventory {
+            triggered_treasures: Vec::new(),
             revision: InventoryRevision(5),
             containers: vec![ContainerState {
                 id: MAIN_PACK_CONTAINER_ID.to_string(),
@@ -1033,6 +1034,7 @@ mod tests {
         );
 
         let mut inventory = PlayerInventory {
+            triggered_treasures: Vec::new(),
             revision: InventoryRevision(1),
             containers: vec![ContainerState {
                 id: MAIN_PACK_CONTAINER_ID.to_string(),
@@ -2067,6 +2069,7 @@ mod tests {
             lingering_owner_qi: None,
         };
         let mut inventory = PlayerInventory {
+            triggered_treasures: Vec::new(),
             revision: InventoryRevision(1),
             containers: vec![ContainerState {
                 id: MAIN_PACK_CONTAINER_ID.to_string(),
@@ -2234,6 +2237,7 @@ mod tests {
 
     fn empty_inventory_for_cast() -> PlayerInventory {
         PlayerInventory {
+            triggered_treasures: Vec::new(),
             revision: InventoryRevision(1),
             containers: vec![],
             equipped: HashMap::new(),

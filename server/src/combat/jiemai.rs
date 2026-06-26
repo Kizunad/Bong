@@ -264,6 +264,7 @@ mod tests {
             crate::inventory::SlotContents::worn_single(armor_item(2.5)),
         );
         let inventory = PlayerInventory {
+            triggered_treasures: Vec::new(),
             revision: InventoryRevision(0),
             containers: Vec::new(),
             equipped,

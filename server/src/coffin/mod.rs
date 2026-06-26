@@ -1819,6 +1819,7 @@ mod tests {
     /// 构造一个含 main_pack（4×4 格，宽松容量）的空背包组件。
     fn empty_player_inventory() -> PlayerInventory {
         PlayerInventory {
+            triggered_treasures: Vec::new(),
             revision: InventoryRevision(0),
             containers: vec![ContainerState {
                 id: MAIN_PACK_CONTAINER_ID.to_string(),
@@ -2175,6 +2176,7 @@ mod tests {
 
         // 构造一个只有 1 格的背包，然后填满它（stack 上限 64）。
         let mut inventory = PlayerInventory {
+            triggered_treasures: Vec::new(),
             revision: InventoryRevision(0),
             containers: vec![ContainerState {
                 id: MAIN_PACK_CONTAINER_ID.to_string(),
@@ -2308,6 +2310,7 @@ mod tests {
         let item_registry = make_coffin_item_registry();
         let mut allocator = InventoryInstanceIdAllocator::default();
         let mut full_inv = PlayerInventory {
+            triggered_treasures: Vec::new(),
             revision: InventoryRevision(0),
             containers: vec![ContainerState {
                 id: MAIN_PACK_CONTAINER_ID.to_string(),

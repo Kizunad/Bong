@@ -6,7 +6,9 @@
 
 use valence::prelude::{Changed, Client, Entity, Query, Res, With};
 
-use crate::inventory::{ItemCategory, ItemRegistry, PlayerInventory, EQUIP_SLOT_OFF_HAND};
+use crate::inventory::{
+    ItemCategory, ItemRegistry, PlayerInventory, EQUIP_SLOT_OFF_HAND, TREASURE_TRIGGER_CAP,
+};
 use crate::network::agent_bridge::{
     payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
 };
@@ -46,34 +48,44 @@ fn treasure_view(item: &crate::inventory::ItemInstance) -> TreasureViewV1 {
     }
 }
 
+/// plan-layered-equip-v1 P4（决议 #8）— 触发位 slot 命名约定：`trigger_0..trigger_(CAP-1)`。
+/// 与装备槽 wire 名（off_hand 等）正交，client `TreasurePanelSync` / `WeaponHotbarHudPlanner`
+/// 从这些 key 拉激活态法宝。
+pub fn trigger_slot_key(index: usize) -> String {
+    format!("trigger_{index}")
+}
+
 pub fn emit_treasure_equipped_payloads(
     registry: Res<ItemRegistry>,
     changed_inventories: Query<(Entity, &PlayerInventory), Changed<PlayerInventory>>,
     mut clients: Query<&mut Client, With<Client>>,
 ) {
-    // plan-layered-equip-v1 P0.2（决议 #8 / #17）— treasure_belt 装备槽取消（法宝激活态由
-    // 灵宝 UI 触发位承载，PR-4 接入）。PR-1 仍下发 off_hand held treasure 作装备态展示。
-    let slots = [EQUIP_SLOT_OFF_HAND];
-
+    // plan-layered-equip-v1 P0.2/P4（决议 #8 / #17）— treasure_belt 装备槽取消，法宝激活态由
+    // 灵宝 UI 触发位承载（trigger_0..trigger_(CAP-1)）。off_hand held treasure 仍下发作装备态展示。
     let updates: Vec<TreasureClientUpdate> = changed_inventories
         .iter()
         .map(|(entity, inventory)| {
-            let views = slots
-                .into_iter()
-                .map(|slot| {
-                    let view = inventory
-                        .equipped
-                        .get(slot)
-                        .and_then(|s| s.held.as_ref())
-                        .and_then(|item| {
-                            registry
-                                .get(&item.template_id)
-                                .filter(|tpl| matches!(tpl.category, ItemCategory::Treasure))
-                                .map(|_| treasure_view(item))
-                        });
-                    (slot.to_string(), view)
-                })
-                .collect();
+            let mut views: Vec<TreasureSlotUpdate> = Vec::with_capacity(1 + TREASURE_TRIGGER_CAP);
+
+            // off_hand held treasure（装备态展示，与触发位激活态正交，决议 #16）。
+            let off_hand_view = inventory
+                .equipped
+                .get(EQUIP_SLOT_OFF_HAND)
+                .and_then(|s| s.held.as_ref())
+                .and_then(|item| {
+                    registry
+                        .get(&item.template_id)
+                        .filter(|tpl| matches!(tpl.category, ItemCategory::Treasure))
+                        .map(|_| treasure_view(item))
+                });
+            views.push((EQUIP_SLOT_OFF_HAND.to_string(), off_hand_view));
+
+            // 触发位激活态法宝（决议 #8）：固定 CAP 个槽，空槽下发 None 以清除。
+            for index in 0..TREASURE_TRIGGER_CAP {
+                let view = inventory.triggered_treasures.get(index).map(treasure_view);
+                views.push((trigger_slot_key(index), view));
+            }
+
             (entity, views)
         })
         .collect();
@@ -155,6 +167,7 @@ mod tests {
 
     fn empty_inventory() -> PlayerInventory {
         PlayerInventory {
+            triggered_treasures: Vec::new(),
             revision: InventoryRevision(1),
             containers: vec![ContainerState {
                 id: "main_pack".to_string(),
@@ -236,5 +249,66 @@ mod tests {
                 .and_then(|v| v.as_str()),
             Some("starter_talisman")
         );
+    }
+
+    // plan-layered-equip-v1 P4（决议 #8）— 触发位法宝以 trigger_<idx> slot 下发；
+    // 占用槽带 treasure view，空槽下发 None（清除）。
+    #[test]
+    fn trigger_slot_treasure_emitted_per_index_with_empty_slots_cleared() {
+        let mut app = App::new();
+        app.insert_resource(ItemRegistry::from_map(HashMap::from([(
+            "starter_talisman".to_string(),
+            treasure_template(),
+        )])));
+        app.add_systems(Update, emit_treasure_equipped_payloads);
+
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let mut inventory = empty_inventory();
+        // 触发位放一件（index 0），其余槽空。
+        inventory.triggered_treasures.push(treasure_instance(77));
+        app.world_mut().spawn((client_bundle, inventory));
+
+        app.update();
+        flush_client_packets(&mut app);
+
+        let frames = collect_server_data_frames(&mut helper);
+
+        // index 0 槽应带 treasure view。
+        let slot0 = frames
+            .iter()
+            .find(|(_, p)| {
+                p.get("type").and_then(|v| v.as_str()) == Some("treasure_equipped")
+                    && p.get("slot").and_then(|v| v.as_str()) == Some(trigger_slot_key(0).as_str())
+            })
+            .expect("trigger_0 treasure_equipped payload should be sent");
+        assert_eq!(
+            slot0
+                .1
+                .get("treasure")
+                .and_then(|v| v.get("instance_id"))
+                .and_then(|v| v.as_u64()),
+            Some(77),
+            "trigger slot 0 should carry the activated treasure instance"
+        );
+
+        // 全部 CAP 个触发位槽都应有 payload（空槽 treasure=None 清除）。
+        for index in 0..TREASURE_TRIGGER_CAP {
+            let key = trigger_slot_key(index);
+            let frame = frames.iter().find(|(_, p)| {
+                p.get("type").and_then(|v| v.as_str()) == Some("treasure_equipped")
+                    && p.get("slot").and_then(|v| v.as_str()) == Some(key.as_str())
+            });
+            assert!(
+                frame.is_some(),
+                "trigger slot {key} must emit a payload (occupied or cleared)"
+            );
+            if index != 0 {
+                let treasure = frame.unwrap().1.get("treasure");
+                assert!(
+                    treasure.is_none() || treasure == Some(&serde_json::Value::Null),
+                    "empty trigger slot {key} should clear (treasure=None), got {treasure:?}"
+                );
+            }
+        }
     }
 }

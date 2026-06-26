@@ -235,18 +235,54 @@ pub fn scan_inventory_for_spirit_treasures(
     let mut seen = HashSet::new();
     let mut entries = Vec::new();
 
+    // plan-layered-equip-v1 P4（决议 #8/#16）：触发位先扫——触发位件 passive_active=true。
+    // 触发位与装备槽正交：触发位件不在装备结构里，equipped=false。
+    for item in &inventory.triggered_treasures {
+        push_entry_for_item(
+            registry,
+            item,
+            /* equipped */ false,
+            /* passive_active */ true,
+            &mut seen,
+            &mut entries,
+        );
+    }
+
+    // 装备槽 worn/held 里的 treasure 仍是 worn 装备件（equipped=true），
+    // 但激活态（passive_active）只由触发位承载，故 passive_active=false（决议 #16）。
     for item in inventory.equipped.values().flat_map(|s| s.iter_all()) {
-        push_entry_for_item(registry, item, true, &mut seen, &mut entries);
+        push_entry_for_item(
+            registry,
+            item,
+            /* equipped */ true,
+            /* passive_active */ false,
+            &mut seen,
+            &mut entries,
+        );
     }
 
     for container in &inventory.containers {
         for placed in &container.items {
-            push_entry_for_item(registry, &placed.instance, false, &mut seen, &mut entries);
+            push_entry_for_item(
+                registry,
+                &placed.instance,
+                /* equipped */ false,
+                /* passive_active */ false,
+                &mut seen,
+                &mut entries,
+            );
         }
     }
 
     for item in inventory.hotbar.iter().flatten() {
-        push_entry_for_item(registry, item, false, &mut seen, &mut entries);
+        push_entry_for_item(
+            registry,
+            item,
+            /* equipped */ false,
+            /* passive_active */ false,
+            &mut seen,
+            &mut entries,
+        );
     }
 
     entries
@@ -359,6 +395,7 @@ fn push_entry_for_item(
     registry: &SpiritTreasureRegistry,
     item: &ItemInstance,
     equipped: bool,
+    passive_active: bool,
     seen: &mut HashSet<u64>,
     entries: &mut Vec<ActiveTreasureEntry>,
 ) {
@@ -369,7 +406,7 @@ fn push_entry_for_item(
         template_id: item.template_id.clone(),
         instance_id: item.instance_id,
         equipped,
-        passive_active: equipped,
+        passive_active,
     });
 }
 
@@ -452,6 +489,7 @@ mod tests {
 
     fn inventory_with_container_item(instance_id: u64) -> PlayerInventory {
         PlayerInventory {
+            triggered_treasures: Vec::new(),
             revision: InventoryRevision(1),
             containers: vec![ContainerState {
                 id: "main_pack".to_string(),
@@ -483,8 +521,37 @@ mod tests {
         assert!(!entries[0].passive_active);
     }
 
+    // plan-layered-equip-v1 P4（决议 #8）— 激活态由触发位承载：触发位件才激活被动 status effect。
     #[test]
-    fn equipped_spirit_treasure_activates_scaled_passives() {
+    fn trigger_slot_spirit_treasure_activates_scaled_passives() {
+        let mut registry = SpiritTreasureRegistry::default();
+        let mut inventory = inventory_with_container_item(88);
+        let moved = inventory.containers[0].items.remove(0).instance;
+        inventory.triggered_treasures.push(moved);
+        let entries = scan_inventory_for_spirit_treasures(&registry, &inventory);
+        let player = Entity::from_raw(7);
+        registry.ensure_player_holder(JIZHAOJING_TEMPLATE_ID, 88, player, 0);
+        registry
+            .active
+            .get_mut(JIZHAOJING_TEMPLATE_ID)
+            .expect("state exists")
+            .affinity = 0.8;
+        let mut statuses = StatusEffects::default();
+
+        sync_passive_status_effects(&registry, entries.as_slice(), &mut statuses);
+
+        assert!(
+            statuses.active.iter().any(|effect| effect.kind
+                == StatusEffectKind::SpiritTreasurePerception
+                && (effect.magnitude - 0.30).abs() < f32::EPSILON),
+            "触发位件应激活被动 SpiritTreasurePerception (magnitude 0.30 @ affinity 0.8)"
+        );
+    }
+
+    // plan-layered-equip-v1 P4（决议 #16）— 仅装备槽（worn）的 treasure 不激活被动
+    // （激活态正交，passive_active=false → 不进 sync_passive_status_effects）。
+    #[test]
+    fn equip_slot_only_spirit_treasure_does_not_activate_passives() {
         let mut registry = SpiritTreasureRegistry::default();
         let mut inventory = inventory_with_container_item(88);
         let equipped = inventory.containers[0].items.remove(0).instance;
@@ -504,16 +571,18 @@ mod tests {
 
         sync_passive_status_effects(&registry, entries.as_slice(), &mut statuses);
 
-        assert!(statuses.active.iter().any(|effect| effect.kind
-            == StatusEffectKind::SpiritTreasurePerception
-            && (effect.magnitude - 0.30).abs() < f32::EPSILON));
+        assert!(
+            !statuses.active.iter().any(|effect| effect.kind
+                == StatusEffectKind::SpiritTreasurePerception),
+            "装备槽（非触发位）treasure 不应激活被动——passive_active 正交，仅触发位件生效（决议 #16）"
+        );
     }
 
-    // plan-layered-equip-v1 PR-2 / P2（桶④ iter_all）— scan 遍历 SlotContents 时
-    // worn 层与 held 位的件都被扫到 equipped=true（决议 #16：装备槽 treasure 是 worn/held 件，
-    // 激活态正交由触发位承载留 P4；本测试锁 PR-2 当前迭代行为：装备件 equipped=true）。
+    // plan-layered-equip-v1 P4（桶④ iter_all + 决议 #16）— scan 遍历 SlotContents 时
+    // worn 层与 held 位的件都被扫到 equipped=true，但激活态正交由触发位承载：
+    // **装备槽 treasure passive_active=false**（仅触发位件 passive_active=true）。
     #[test]
-    fn scan_iterates_both_worn_and_held_in_equipped_slot_contents() {
+    fn scan_equip_slot_treasure_is_equipped_but_not_passive_active() {
         let registry = SpiritTreasureRegistry::default();
         let mut inventory = inventory_with_container_item(88);
         inventory.containers[0].items.clear();
@@ -536,13 +605,72 @@ mod tests {
             entries.len()
         );
         assert!(
-            entries.iter().all(|e| e.equipped && e.passive_active),
-            "装备槽（worn / held）treasure 当前应 equipped=true（触发位正交留 P4）"
+            entries.iter().all(|e| e.equipped),
+            "装备槽（worn / held）treasure 应 equipped=true"
+        );
+        assert!(
+            entries.iter().all(|e| !e.passive_active),
+            "装备槽 treasure 激活态正交：passive_active 应为 false（仅触发位件 true，决议 #16）"
         );
         assert!(
             entries.iter().any(|e| e.instance_id == 88)
                 && entries.iter().any(|e| e.instance_id == 89),
             "应同时包含 worn 件 88 与 held 件 89"
+        );
+    }
+
+    // plan-layered-equip-v1 P4（决议 #8）— 触发位件 passive_active=true、equipped=false。
+    #[test]
+    fn scan_trigger_slot_treasure_is_passive_active_not_equipped() {
+        let registry = SpiritTreasureRegistry::default();
+        let mut inventory = inventory_with_container_item(88);
+        // 把件从背包移入触发位。
+        let moved = inventory.containers[0].items.remove(0).instance;
+        inventory.triggered_treasures.push(moved);
+
+        let entries = scan_inventory_for_spirit_treasures(&registry, &inventory);
+
+        assert_eq!(entries.len(), 1, "触发位件应被扫到");
+        assert!(
+            entries[0].passive_active,
+            "触发位件 passive_active 应为 true（决议 #8 激活态承载）"
+        );
+        assert!(
+            !entries[0].equipped,
+            "触发位件不在装备结构里，equipped 应为 false（与装备槽正交）"
+        );
+    }
+
+    // plan-layered-equip-v1 P4 — 同一模板的两件：一件在装备槽 worn（equipped/非激活），
+    // 一件在触发位（激活/非 equipped）——两条 entry 各自正确，互不污染。
+    #[test]
+    fn scan_orthogonal_equip_and_trigger_same_template_distinct_instances() {
+        let registry = SpiritTreasureRegistry::default();
+        let mut inventory = inventory_with_container_item(88);
+        inventory.containers[0].items.clear();
+        inventory.equipped.insert(
+            crate::inventory::EQUIP_SLOT_CHEST.to_string(),
+            SlotContents::worn_single(item(88)),
+        );
+        inventory.triggered_treasures.push(item(99));
+
+        let entries = scan_inventory_for_spirit_treasures(&registry, &inventory);
+
+        let equipped_entry = entries
+            .iter()
+            .find(|e| e.instance_id == 88)
+            .expect("装备槽件 88 应在 entries");
+        let trigger_entry = entries
+            .iter()
+            .find(|e| e.instance_id == 99)
+            .expect("触发位件 99 应在 entries");
+        assert!(
+            equipped_entry.equipped && !equipped_entry.passive_active,
+            "装备槽件 88：equipped=true / passive_active=false"
+        );
+        assert!(
+            !trigger_entry.equipped && trigger_entry.passive_active,
+            "触发位件 99：equipped=false / passive_active=true"
         );
     }
 

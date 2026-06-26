@@ -940,6 +940,7 @@ mod tests {
             crate::inventory::SlotContents::held_single(charged_item(instance_id, kind)),
         );
         let inventory = PlayerInventory {
+            triggered_treasures: Vec::new(),
             revision: InventoryRevision(1),
             containers: Vec::new(),
             equipped,

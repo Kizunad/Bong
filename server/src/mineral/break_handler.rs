@@ -547,6 +547,7 @@ mod tests {
             SlotContents::held_single(item(template_id)),
         );
         PlayerInventory {
+            triggered_treasures: Vec::new(),
             revision: InventoryRevision(0),
             containers: vec![ContainerState {
                 id: MAIN_PACK_CONTAINER_ID.to_string(),

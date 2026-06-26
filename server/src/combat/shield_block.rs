@@ -632,6 +632,7 @@ mod tests {
 
     fn make_inventory_with_off_hand(template_id: &str) -> PlayerInventory {
         let mut inv = PlayerInventory {
+            triggered_treasures: Vec::new(),
             revision: crate::inventory::InventoryRevision(0),
             containers: vec![],
             equipped: Default::default(),
@@ -648,6 +649,7 @@ mod tests {
 
     fn make_inventory_empty() -> PlayerInventory {
         PlayerInventory {
+            triggered_treasures: Vec::new(),
             revision: crate::inventory::InventoryRevision(0),
             containers: vec![],
             equipped: Default::default(),

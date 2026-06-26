@@ -3579,6 +3579,14 @@ impl From<&super::client_request::ClientRequestV1> for bong::client_request_enve
                 instance_id: *instance_id,
                 from: Some(inventory_location_to_proto(from)),
             }),
+            ClientRequestV1::TreasureActivate {
+                instance_id,
+                activate,
+                ..
+            } => Payload::TreasureActivate(bong::TreasureActivate {
+                instance_id: *instance_id,
+                activate: *activate,
+            }),
             ClientRequestV1::DropWeaponIntent {
                 instance_id, from, ..
             } => Payload::DropWeaponIntent(bong::DropWeaponIntent {
@@ -6706,6 +6714,11 @@ mod tests {
                     col: 0,
                 },
             }),
+            build(ClientRequestV1::TreasureActivate {
+                v: 1,
+                instance_id: 1,
+                activate: true,
+            }),
             build(ClientRequestV1::DropWeaponIntent {
                 v: 1,
                 instance_id: 1,
@@ -6937,13 +6950,13 @@ mod tests {
         use std::collections::HashSet;
         use std::mem::{discriminant, Discriminant};
         let fixtures = c2s_all_fixtures();
-        // The authoritative count is 99 (98 proto + 1 AgentUiResponse bypass).
+        // The authoritative count is 100 (99 proto + 1 AgentUiResponse bypass).
         let bypass_count = fixtures.iter().filter(|(_, b)| *b).count();
         let proto_count = fixtures.iter().filter(|(_, b)| !*b).count();
         assert_eq!(
             fixtures.len(),
-            99,
-            "C2S fixture list has {} entries but ClientRequestV1 has 99 variants. \
+            100,
+            "C2S fixture list has {} entries but ClientRequestV1 has 100 variants. \
              Add a fixture for every new variant in c2s_all_fixtures().",
             fixtures.len()
         );
@@ -6953,8 +6966,8 @@ mod tests {
              If a new bypass variant is added, update c2s_all_fixtures() and this assertion."
         );
         assert_eq!(
-            proto_count, 98,
-            "Expected 98 proto-encodable C2S variants, got {proto_count}."
+            proto_count, 99,
+            "Expected 99 proto-encodable C2S variants, got {proto_count}."
         );
 
         // Set-intersection coverage (mirrors the S2C `payload_type()` HashSet check, but keyed
@@ -6968,8 +6981,8 @@ mod tests {
             fixtures.iter().map(|(v, _)| discriminant(v)).collect();
         assert_eq!(
             distinct.len(),
-            99,
-            "C2S fixtures cover only {} DISTINCT ClientRequestV1 variants but there are 99. \
+            100,
+            "C2S fixtures cover only {} DISTINCT ClientRequestV1 variants but there are 100. \
              A variant's fixture was likely deleted and another duplicated — every variant must \
              have its OWN fixture or the proto guard silently skips it.",
             distinct.len()
@@ -7046,8 +7059,8 @@ mod tests {
         }
 
         assert_eq!(
-            proto_count, 98,
-            "Expected 98 proto-encodable C2S variants, got {proto_count}."
+            proto_count, 99,
+            "Expected 99 proto-encodable C2S variants, got {proto_count}."
         );
         assert_eq!(
             bypass_count, 1,

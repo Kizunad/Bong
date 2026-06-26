@@ -4101,6 +4101,7 @@ mod tests {
 
     fn test_inventory(items: Vec<ItemInstance>, bone_coins: u64) -> PlayerInventory {
         PlayerInventory {
+            triggered_treasures: Vec::new(),
             revision: InventoryRevision(1),
             containers: vec![ContainerState {
                 id: MAIN_PACK_CONTAINER_ID.to_string(),

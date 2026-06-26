@@ -247,6 +247,7 @@ mod tests {
             lingering_owner_qi: None,
         });
         PlayerInventory {
+            triggered_treasures: Vec::new(),
             revision: InventoryRevision(1),
             containers: Vec::new(),
             equipped: HashMap::new(),
@@ -258,6 +259,7 @@ mod tests {
 
     fn empty_inv() -> PlayerInventory {
         PlayerInventory {
+            triggered_treasures: Vec::new(),
             revision: InventoryRevision(1),
             containers: vec![ContainerState {
                 id: "bag".to_string(),

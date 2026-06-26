@@ -309,6 +309,7 @@ mod tests {
             })
             .collect();
         PlayerInventory {
+            triggered_treasures: Vec::new(),
             revision: InventoryRevision(1),
             containers: vec![ContainerState {
                 id: "main_pack".into(),

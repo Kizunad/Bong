@@ -5,6 +5,7 @@ import com.bong.client.combat.EquippedShieldStore;
 import com.bong.client.combat.EquippedWeapon;
 import com.bong.client.combat.EquippedTreasure;
 import com.bong.client.combat.TreasureEquippedStore;
+import com.bong.client.combat.TreasurePanelSync;
 import com.bong.client.combat.WeaponEquippedStore;
 
 import java.util.ArrayList;
@@ -66,10 +67,15 @@ public final class WeaponHotbarHudPlanner {
                 int x = hotbarLeftX + hotbarWidth + SLOT_GAP_TO_HOTBAR;
                 drawShieldSlot(out, x, upperY, totalHeight, offHandShield);
             } else {
-                EquippedTreasure offHandTreasure = TreasureEquippedStore.get("off_hand");
-                if (offHandTreasure != null) {
+                // plan-layered-equip-v1 P4（决议 #8）：法宝激活态迁触发位——off_hand 持械法宝优先，
+                // 否则取首个占用的触发位（trigger_0..trigger_(CAP-1)）激活态法宝展示在 HUD。
+                EquippedTreasure hudTreasure = TreasureEquippedStore.get("off_hand");
+                if (hudTreasure == null) {
+                    hudTreasure = firstTriggerTreasure();
+                }
+                if (hudTreasure != null) {
                     int x = hotbarLeftX + hotbarWidth + SLOT_GAP_TO_HOTBAR;
-                    drawTreasureSlot(out, x, upperY, totalHeight, offHandTreasure);
+                    drawTreasureSlot(out, x, upperY, totalHeight, hudTreasure);
                 }
             }
         }
@@ -77,6 +83,17 @@ public final class WeaponHotbarHudPlanner {
         // 不再单独查 two_hand 槽。
 
         return out;
+    }
+
+    // plan-layered-equip-v1 P4（决议 #8）：取首个占用的触发位法宝（trigger_0 起），供 HUD 单槽展示。
+    private static EquippedTreasure firstTriggerTreasure() {
+        for (int i = 0; i < TreasurePanelSync.TREASURE_TRIGGER_CAP; i++) {
+            EquippedTreasure t = TreasureEquippedStore.get(TreasurePanelSync.triggerSlotKey(i));
+            if (t != null) {
+                return t;
+            }
+        }
+        return null;
     }
 
     private static void drawWeaponSlot(

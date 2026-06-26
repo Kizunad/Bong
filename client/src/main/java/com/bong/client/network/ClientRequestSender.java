@@ -221,6 +221,11 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodeZhenfaTrigger(instanceId));
     }
 
+    // plan-layered-equip-v1 P4（决议 #8）— 法宝激活/卸下到灵宝 UI 触发位。
+    public static void sendTreasureActivate(long instanceId, boolean activate) {
+        dispatch(ClientRequestProtocol.encodeTreasureActivate(instanceId, activate));
+    }
+
     public static void sendZhenfaDisarm(BlockPos pos, ClientRequestProtocol.ZhenfaDisarmMode mode) {
         dispatch(ClientRequestProtocol.encodeZhenfaDisarm(pos, mode));
     }

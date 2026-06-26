@@ -17,6 +17,7 @@ use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 
 fn empty_inventory() -> PlayerInventory {
     PlayerInventory {
+        triggered_treasures: Vec::new(),
         revision: InventoryRevision(0),
         containers: vec![ContainerState {
             id: "main_pack".to_string(),

@@ -209,6 +209,7 @@ mod tests {
 
     fn make_inventory(slot_key: &str, item: ItemInstance) -> PlayerInventory {
         PlayerInventory {
+            triggered_treasures: Vec::new(),
             revision: InventoryRevision(7),
             containers: vec![ContainerState {
                 id: crate::inventory::MAIN_PACK_CONTAINER_ID.to_string(),

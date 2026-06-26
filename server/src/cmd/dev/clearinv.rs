@@ -128,6 +128,7 @@ mod tests {
         let mut hotbar: [Option<ItemInstance>; 9] = Default::default();
         hotbar[0] = Some(item(3, "hotbar_item"));
         PlayerInventory {
+            triggered_treasures: Vec::new(),
             revision: InventoryRevision(0),
             containers: vec![
                 ContainerState {

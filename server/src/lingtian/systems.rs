@@ -1797,6 +1797,7 @@ mod tests {
             crate::inventory::SlotContents::held_single(make_hoe_instance(kind, durability)),
         );
         PlayerInventory {
+            triggered_treasures: Vec::new(),
             revision: InventoryRevision(0),
             containers: vec![],
             equipped,
@@ -1941,6 +1942,7 @@ mod tests {
         let player = app
             .world_mut()
             .spawn(PlayerInventory {
+                triggered_treasures: Vec::new(),
                 revision: InventoryRevision(0),
                 containers: vec![],
                 equipped: HashMap::new(),
@@ -2017,6 +2019,7 @@ mod tests {
             }),
         );
         let inv = PlayerInventory {
+            triggered_treasures: Vec::new(),
             revision: InventoryRevision(0),
             containers: vec![],
             equipped,
@@ -2452,6 +2455,7 @@ mod tests {
             }],
         };
         PlayerInventory {
+            triggered_treasures: Vec::new(),
             revision: InventoryRevision(0),
             containers: vec![container],
             equipped: HashMap::new(),
@@ -2770,6 +2774,7 @@ mod tests {
             items: vec![],
         };
         PlayerInventory {
+            triggered_treasures: Vec::new(),
             revision: InventoryRevision(0),
             containers: vec![main_pack],
             equipped: HashMap::new(),

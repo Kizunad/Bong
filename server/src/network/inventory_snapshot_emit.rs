@@ -694,6 +694,7 @@ mod tests {
         hotbar[0] = Some(make_item(2005, "healing_draught", "疗伤药剂", 0.3, 2));
 
         PlayerInventory {
+            triggered_treasures: Vec::new(),
             revision: InventoryRevision(revision),
             containers,
             equipped,

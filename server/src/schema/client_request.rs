@@ -350,6 +350,15 @@ pub enum ClientRequestV1 {
         instance_id: u64,
         from: InventoryLocationV1,
     },
+    /// plan-layered-equip-v1 P4（决议 #8）— 法宝激活/卸下到灵宝 UI 触发位。
+    ///
+    /// `activate=true`：把 `instance_id` 指向的灵宝从背包/装备结构移入触发位（容量满则拒绝）。
+    /// `activate=false`：把触发位中的该灵宝卸下，落回背包（无空位则拒绝）。
+    TreasureActivate {
+        v: u8,
+        instance_id: u64,
+        activate: bool,
+    },
     DropWeaponIntent {
         v: u8,
         instance_id: u64,

@@ -821,6 +821,18 @@ public final class ClientRequestProtocol {
         return obj.toString();
     }
 
+    // plan-layered-equip-v1 P4（决议 #8）— 法宝激活/卸下到灵宝 UI 触发位。
+    // activate=true：移入触发位；activate=false：从触发位卸下落回背包。
+    public static String encodeTreasureActivate(long instanceId, boolean activate) {
+        if (instanceId < 0) {
+            throw new IllegalArgumentException("instanceId must be >= 0, got " + instanceId);
+        }
+        JsonObject obj = envelope("treasure_activate");
+        obj.addProperty("instance_id", instanceId);
+        obj.addProperty("activate", activate);
+        return obj.toString();
+    }
+
     public static String encodeZhenfaDisarm(BlockPos pos, ZhenfaDisarmMode mode) {
         if (pos == null) {
             throw new IllegalArgumentException("pos must not be null");
