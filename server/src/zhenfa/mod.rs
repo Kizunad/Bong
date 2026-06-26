@@ -6046,10 +6046,38 @@ mod tests {
         assert_eq!(
             app.world().resource::<ZhenfaRegistry>().len(),
             0,
-            "欺天阵材料消耗不能把 equipped 当可用背包材料"
+            "expected no DeceiveHeaven instance because equipped materials are not valid material inputs"
         );
         let cultivation = app.world().get::<Cultivation>(owner).unwrap();
-        assert_eq!(cultivation.qi_current, 100.0);
+        assert_eq!(
+            cultivation.qi_current, 100.0,
+            "expected qi_current 100.0 because rejected placement must not invest qi, actual {}",
+            cultivation.qi_current
+        );
+        let inventory = app.world().get::<PlayerInventory>(owner).unwrap();
+        assert_eq!(
+            inventory.bone_coins, DECEIVE_HEAVEN_BONE_COIN_COST,
+            "expected bone_coins {} because rejected placement must not spend material cost, actual {}",
+            DECEIVE_HEAVEN_BONE_COIN_COST, inventory.bone_coins
+        );
+        assert_eq!(
+            inventory
+                .equipped
+                .get(EQUIP_SLOT_OFF_HAND)
+                .and_then(|slot| slot.held.as_ref())
+                .map(|item| (item.instance_id, item.stack_count)),
+            Some((9101, DECEIVE_HEAVEN_SPIRITWOOD_COST)),
+            "expected off-hand spiritwood instance/stack unchanged because rejected placement must not mutate equipped slots"
+        );
+        assert_eq!(
+            inventory
+                .equipped
+                .get(EQUIP_SLOT_CHEST)
+                .and_then(|slot| slot.worn.first())
+                .map(|item| (item.instance_id, item.stack_count)),
+            Some((9102, DECEIVE_HEAVEN_BEAST_BONE_COST)),
+            "expected chest beast-bone instance/stack unchanged because rejected placement must not mutate equipped slots"
+        );
     }
 
     #[test]

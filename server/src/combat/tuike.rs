@@ -854,17 +854,27 @@ mod tests {
 
         assert_eq!(
             error,
-            FalseSkinForgeError::MissingMaterial(SPIDER_SILK_MATERIAL_ID)
+            FalseSkinForgeError::MissingMaterial(SPIDER_SILK_MATERIAL_ID),
+            "expected MissingMaterial because equipped materials are not forge inputs, actual {error:?}"
         );
-        assert_eq!(cultivation.qi_current, 20.0);
-        assert!(inventory.containers[0].items.is_empty());
+        assert_eq!(
+            cultivation.qi_current, 20.0,
+            "expected qi_current 20.0 because rejected forge must not spend qi, actual {}",
+            cultivation.qi_current
+        );
+        assert!(
+            inventory.containers[0].items.is_empty(),
+            "expected empty container because equipped material should not be moved or consumed, actual {:?}",
+            inventory.containers[0].items
+        );
         assert_eq!(
             inventory
                 .equipped
                 .get(EQUIP_SLOT_MAIN_HAND)
                 .and_then(|slot| slot.held.as_ref())
                 .map(|item| item.instance_id),
-            Some(1)
+            Some(1),
+            "expected main-hand equipped material instance 1 to remain because rejected forge must not mutate equipped slots"
         );
     }
 
