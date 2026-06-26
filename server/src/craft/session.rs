@@ -15,7 +15,7 @@
 use valence::prelude::{bevy_ecs, Component, Entity};
 
 use crate::cultivation::components::{ColorKind, Cultivation, QiColor, Realm};
-use crate::inventory::{ContainerState, ItemInstance, PlayerInventory};
+use crate::inventory::{bump_revision, ContainerState, ItemInstance, PlayerInventory};
 use crate::qi_physics::ledger::{QiAccountId, QiTransfer, QiTransferReason, WorldQiAccount};
 use crate::qi_physics::QiPhysicsError;
 
@@ -165,14 +165,16 @@ pub fn consume_materials_from_inventory(
     if needed == 0 {
         return Ok(());
     }
+    let mut consumed_any = false;
     // 先吃 containers
-    for container in inventory.containers.iter_mut() {
+    'containers: for container in inventory.containers.iter_mut() {
         let mut i = 0;
         while i < container.items.len() {
             if container.items[i].instance.template_id == template_id {
                 let take = needed.min(container.items[i].instance.stack_count);
                 container.items[i].instance.stack_count -= take;
                 needed -= take;
+                consumed_any |= take > 0;
                 if container.items[i].instance.stack_count == 0 {
                     container.items.remove(i);
                     continue;
@@ -180,7 +182,7 @@ pub fn consume_materials_from_inventory(
             }
             i += 1;
             if needed == 0 {
-                return Ok(());
+                break 'containers;
             }
         }
     }
@@ -194,6 +196,7 @@ pub fn consume_materials_from_inventory(
                 let take = needed.min(item.stack_count);
                 item.stack_count -= take;
                 needed -= take;
+                consumed_any |= take > 0;
                 item.stack_count == 0
             } else {
                 false
@@ -204,6 +207,9 @@ pub fn consume_materials_from_inventory(
         if drop_slot {
             *slot = None;
         }
+    }
+    if consumed_any {
+        bump_revision(inventory);
     }
     if needed == 0 {
         Ok(())
@@ -680,10 +686,30 @@ mod tests {
     }
 
     #[test]
+    fn consume_materials_bumps_revision_when_inventory_changes() {
+        let mut inv = make_inventory(&[("herb_a", 5)]);
+        let before = inv.revision;
+
+        consume_materials_from_inventory(&mut inv, "herb_a", 2).unwrap();
+
+        assert!(
+            inv.revision.0 > before.0,
+            "craft material consumption must bump inventory revision so client snapshots cannot look stale"
+        );
+    }
+
+    #[test]
     fn consume_materials_zero_count_is_noop() {
         let mut inv = make_inventory(&[("herb_a", 5)]);
+        let before = inv.revision;
+
         consume_materials_from_inventory(&mut inv, "herb_a", 0).unwrap();
+
         assert_eq!(count_template_in_inventory(&inv, "herb_a"), 5);
+        assert_eq!(
+            inv.revision, before,
+            "zero-count material consumption should not bump revision"
+        );
     }
 
     #[test]
