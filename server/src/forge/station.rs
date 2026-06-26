@@ -15,9 +15,7 @@ use valence::prelude::{
 
 use super::session::ForgeSessionId;
 use crate::cultivation::components::Cultivation;
-use crate::inventory::{
-    consume_item_instance_once, inventory_item_by_instance, ItemRegistry, PlayerInventory,
-};
+use crate::inventory::{consume_item_instance_once, ItemInstance, ItemRegistry, PlayerInventory};
 use crate::network::inventory_snapshot_emit::send_inventory_snapshot_to_client;
 use crate::player::state::PlayerState;
 
@@ -123,7 +121,7 @@ pub fn handle_place_station_request(
             );
             continue;
         };
-        let Some(instance) = inventory_item_by_instance(&inv, req.item_instance_id) else {
+        let Some(instance) = forge_station_item_by_instance(&inv, req.item_instance_id) else {
             tracing::warn!(
                 "[bong][forge] place_station rejected: instance_id={} not in inventory of {:?}",
                 req.item_instance_id,
@@ -185,12 +183,34 @@ pub fn handle_place_station_request(
     }
 }
 
+fn forge_station_item_by_instance(
+    inventory: &PlayerInventory,
+    instance_id: u64,
+) -> Option<ItemInstance> {
+    for container in &inventory.containers {
+        if let Some(placed) = container
+            .items
+            .iter()
+            .find(|placed| placed.instance.instance_id == instance_id)
+        {
+            return Some(placed.instance.clone());
+        }
+    }
+
+    inventory
+        .hotbar
+        .iter()
+        .flatten()
+        .find(|item| item.instance_id == instance_id)
+        .cloned()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::inventory::{
         ContainerState, ForgeStationSpec, InventoryRevision, ItemCategory, ItemInstance,
-        ItemRarity, ItemTemplate, PlacedItemState,
+        ItemRarity, ItemTemplate, PlacedItemState, SlotContents, EQUIP_SLOT_MAIN_HAND,
     };
     use crate::network::agent_bridge::SERVER_DATA_CHANNEL;
     use std::collections::HashMap;
@@ -299,6 +319,16 @@ mod tests {
         }
     }
 
+    fn inventory_with_equipped(item: ItemInstance) -> PlayerInventory {
+        let mut inventory = inventory_with(item.clone());
+        inventory.containers[0].items.clear();
+        inventory.equipped.insert(
+            EQUIP_SLOT_MAIN_HAND.to_string(),
+            SlotContents::held_single(item),
+        );
+        inventory
+    }
+
     fn place_app(templates: HashMap<String, ItemTemplate>) -> App {
         let mut app = App::new();
         app.insert_resource(ItemRegistry::from_map(templates));
@@ -373,6 +403,50 @@ mod tests {
         assert_eq!(stations[0].block_pos(), Some(pos));
         let inv = app.world().get::<PlayerInventory>(player).unwrap();
         assert!(inv.containers[0].items.is_empty());
+    }
+
+    #[test]
+    fn place_station_rejects_equipped_station_item() {
+        let mut templates = HashMap::new();
+        templates.insert(
+            "fan_iron_anvil".to_string(),
+            anvil_template("fan_iron_anvil", 1),
+        );
+        let mut app = place_app(templates);
+        let player = app
+            .world_mut()
+            .spawn(inventory_with_equipped(item_instance(
+                42,
+                "fan_iron_anvil",
+                1,
+            )))
+            .id();
+
+        app.world_mut().send_event(PlaceForgeStationRequest {
+            player,
+            pos: BlockPos::new(-12, 64, 38),
+            item_instance_id: 42,
+            station_tier: 1,
+        });
+        app.update();
+
+        assert_eq!(
+            app.world_mut()
+                .query::<&WeaponForgeStation>()
+                .iter(app.world())
+                .count(),
+            0,
+            "equipped forge station item must not create a placed station"
+        );
+        let inv = app.world().get::<PlayerInventory>(player).unwrap();
+        assert_eq!(
+            inv.equipped
+                .get(EQUIP_SLOT_MAIN_HAND)
+                .and_then(|slot| slot.held.as_ref())
+                .map(|item| item.instance_id),
+            Some(42),
+            "rejected forge station placement must leave equipped item untouched"
+        );
     }
 
     #[test]
