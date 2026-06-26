@@ -229,6 +229,39 @@ class InventoryEquipRulesTest {
             "期望 head worn 1 层（cap=2）时还能叠第 2 层，实际被拒——检查 wornHasRoom 边界");
     }
 
+    // Bug B（真机回归）— client FALSE_SKIN_TEMPLATE_IDS 必须镜像 server false_skin_kind_for_item
+    // (tuike.rs:124)。此前漏 fake_spirit_hide（及 disguise_wrap / camouflage_net）→ client canEquip(CHEST)
+    // 在 isFalseSkin=false 处把伪皮拦死，玩家拖不上胸槽（server 已认它为 SpiderSilk）。
+    @Test
+    void fakeSpiritHideCanEquipChestWornStack() {
+        // fake_spirit_hide 2×2，空 CHEST worn 栈应放行（cap=3）。
+        assertTrue(InventoryEquipRules.canEquip(item(1L, "fake_spirit_hide", 2, 2),
+                EquipSlotType.CHEST, null, equipped()),
+            "期望 fake_spirit_hide 可入 CHEST worn 栈（server 认它为伪皮 SpiderSilk），实际被拒"
+                + "——检查 client FALSE_SKIN_TEMPLATE_IDS 是否漏 fake_spirit_hide");
+    }
+
+    // Bug B（防漂移）— 与 server false_skin_kind_for_item 全名单逐一对齐，任何一个漏收都撞红。
+    @Test
+    void allServerFalseSkinsCanEquipBodySlot() {
+        // server tuike.rs:124 SpiderSilk 组：tuike_false_skin_silk / disguise_wrap / camouflage_net /
+        // fake_spirit_hide；RottenWoodArmor 组：tuike_rotten_wood_armor。全部应能装入空身体槽 worn。
+        String[] serverFalseSkins = {
+            "tuike_false_skin_silk",
+            "disguise_wrap",
+            "camouflage_net",
+            "fake_spirit_hide",
+            "tuike_rotten_wood_armor"
+        };
+        long id = 100L;
+        for (String skin : serverFalseSkins) {
+            assertTrue(InventoryEquipRules.canEquip(item(id++, skin, 2, 2),
+                    EquipSlotType.CHEST, null, equipped()),
+                "期望 server 伪皮 `" + skin + "` 在 client 也能装入 CHEST worn 栈，实际被拒"
+                    + "——client/server false_skin 名单漂移，检查 FALSE_SKIN_TEMPLATE_IDS");
+        }
+    }
+
     @Test
     void wornCapValuesMatchServer() {
         assertEquals(2, InventoryEquipRules.wornCap(EquipSlotType.HEAD), "head worn cap 应=2");

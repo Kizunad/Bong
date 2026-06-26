@@ -68,8 +68,16 @@ public final class InventoryEquipRules {
         "broken_artifact"
     );
 
+    // plan-layered-equip-v1 — 伪皮模板白名单，必须镜像 server false_skin_kind_for_item
+    // (server/src/combat/tuike.rs:124)：客户端无 ItemRegistry，靠此白名单让 canEquip(CHEST/...)
+    // 走 isFalseSkin 放行。漏一个 → server 认伪皮但 client 在 canEquip 阶段把胸槽拦死，玩家拖不上。
+    // 当前 server 名单：tuike_false_skin_silk / disguise_wrap / camouflage_net / fake_spirit_hide
+    // （均 SpiderSilk）+ tuike_rotten_wood_armor（RottenWoodArmor）。
     private static final Set<String> FALSE_SKIN_TEMPLATE_IDS = Set.of(
         "tuike_false_skin_silk",
+        "disguise_wrap",
+        "camouflage_net",
+        "fake_spirit_hide",
         "tuike_rotten_wood_armor"
     );
 
