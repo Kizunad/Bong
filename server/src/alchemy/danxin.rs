@@ -127,18 +127,26 @@ pub fn handle_danxin_identify_intents(
         let recipe = recipes.get(recipe_id);
         let hint = build_recipe_hint(pill.template_id.as_str(), recipe, accuracy);
 
-        if consume_item_instance_once(&mut inventory, intent.pill_instance_id).is_err() {
+        let mut staged_inventory = inventory.clone();
+        let mut staged_allocator = allocator.clone();
+        if consume_item_instance_once(&mut staged_inventory, intent.pill_instance_id).is_err() {
             continue;
         }
-        let _ = add_item_to_player_inventory_with_alchemy(
-            &mut inventory,
+        if add_item_to_player_inventory_with_alchemy(
+            &mut staged_inventory,
             &item_registry,
-            &mut allocator,
+            &mut staged_allocator,
             RECIPE_HINT_TEMPLATE_ID,
             1,
             Some(AlchemyItemData::RecipeHint { hint: hint.clone() }),
             0,
-        );
+        )
+        .is_err()
+        {
+            continue;
+        }
+        *inventory = staged_inventory;
+        *allocator = staged_allocator;
 
         if accuracy >= 0.80 {
             let player_id = usernames
@@ -156,10 +164,17 @@ pub fn handle_danxin_identify_intents(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use super::*;
     use crate::alchemy::recipe::{
         FireProfile, IngredientSpec, Outcomes, RecipeStage, ToleranceSpec,
     };
+    use crate::inventory::{
+        ContainerState, InventoryRevision, ItemCategory, ItemInstance, ItemRarity, ItemTemplate,
+        PlacedItemState,
+    };
+    use valence::prelude::{App, Update, Username};
 
     fn sample_recipe() -> Recipe {
         Recipe {
@@ -224,5 +239,159 @@ mod tests {
         let hint = build_recipe_hint("huiyuan_pill", Some(&recipe), 0.4);
 
         assert_eq!(hint.ingredients.len(), 1);
+    }
+
+    fn template(id: &str, category: ItemCategory, grid_w: u8, grid_h: u8) -> ItemTemplate {
+        ItemTemplate {
+            id: id.to_string(),
+            display_name: id.to_string(),
+            category,
+            placeable: None,
+            max_stack_count: 1,
+            grid_w,
+            grid_h,
+            base_weight: 0.1,
+            rarity: ItemRarity::Common,
+            spirit_quality_initial: 1.0,
+            description: id.to_string(),
+            effect: None,
+            cast_duration_ms: crate::inventory::DEFAULT_CAST_DURATION_MS,
+            cooldown_ms: crate::inventory::DEFAULT_COOLDOWN_MS,
+            weapon_spec: None,
+            forge_station_spec: None,
+            blueprint_scroll_spec: None,
+            inscription_scroll_spec: None,
+            technique_scroll_spec: None,
+            recipe_fragment_spec: None,
+            container_spec: None,
+            shelflife_profile: None,
+            shield_spec: None,
+            shelflife_track: None,
+        }
+    }
+
+    fn pill_instance(instance_id: u64) -> ItemInstance {
+        ItemInstance {
+            instance_id,
+            template_id: "huiyuan_pill".to_string(),
+            display_name: "huiyuan_pill".to_string(),
+            grid_w: 1,
+            grid_h: 1,
+            weight: 0.1,
+            rarity: ItemRarity::Common,
+            description: "huiyuan_pill".to_string(),
+            stack_count: 1,
+            spirit_quality: 1.0,
+            durability: 1.0,
+            freshness: None,
+            mineral_id: None,
+            charges: None,
+            forge_quality: None,
+            forge_color: None,
+            forge_side_effects: Vec::new(),
+            forge_achieved_tier: None,
+            alchemy: Some(AlchemyItemData::Pill {
+                recipe_id: "hui_yuan_pill_v0".to_string(),
+                quality_tier: 1,
+                effect_multiplier: 1.0,
+                consecrated: false,
+                side_effect: None,
+            }),
+            lingering_owner_qi: None,
+        }
+    }
+
+    #[test]
+    fn identify_does_not_consume_pill_or_emit_insight_when_hint_cannot_fit() {
+        let mut app = App::new();
+        let mut recipes = RecipeRegistry::new();
+        recipes.insert(sample_recipe()).unwrap();
+        app.insert_resource(recipes);
+        app.insert_resource(ItemRegistry::from_map(HashMap::from([
+            (
+                "huiyuan_pill".to_string(),
+                template("huiyuan_pill", ItemCategory::Pill, 1, 1),
+            ),
+            (
+                RECIPE_HINT_TEMPLATE_ID.to_string(),
+                template(RECIPE_HINT_TEMPLATE_ID, ItemCategory::RecipeHint, 2, 1),
+            ),
+        ])));
+        app.insert_resource(InventoryInstanceIdAllocator::new(100));
+        app.add_event::<DanxinIdentifyIntent>();
+        app.add_event::<AlchemyInsightEvent>();
+        app.add_systems(Update, handle_danxin_identify_intents);
+
+        let player = app
+            .world_mut()
+            .spawn((
+                PlayerInventory {
+                    revision: InventoryRevision(0),
+                    containers: vec![ContainerState {
+                        id: "pack_1".to_string(),
+                        name: "pack_1".to_string(),
+                        rows: 1,
+                        cols: 1,
+                        items: vec![PlacedItemState {
+                            row: 0,
+                            col: 0,
+                            instance: pill_instance(42),
+                        }],
+                        owner_instance_id: None,
+                    }],
+                    equipped: HashMap::new(),
+                    hotbar: Default::default(),
+                    bone_coins: 0,
+                    max_weight: 50.0,
+                    triggered_treasures: Vec::new(),
+                },
+                Cultivation {
+                    realm: Realm::Void,
+                    ..Default::default()
+                },
+                Username("Azure".to_string()),
+            ))
+            .id();
+        app.world_mut().send_event(DanxinIdentifyIntent {
+            player,
+            pill_instance_id: 42,
+            roll: 1.0,
+        });
+
+        app.update();
+
+        let inventory = app.world().get::<PlayerInventory>(player).unwrap();
+        let actual_instance_ids = inventory
+            .containers
+            .iter()
+            .flat_map(|container| container.items.iter())
+            .map(|placed| placed.instance.instance_id)
+            .collect::<Vec<_>>();
+        assert!(
+            actual_instance_ids.contains(&42),
+            "提示纸模板 2x1 放不进 1x1 容器时，丹药不能先被消耗；expected instance_id 42 because failed hint grant must rollback pill consume, actual inventory instance_ids={actual_instance_ids:?}"
+        );
+        assert_eq!(
+            inventory.revision,
+            InventoryRevision(0),
+            "失败路径不应修改 inventory revision"
+        );
+        let next_instance_id = app
+            .world_mut()
+            .resource_mut::<InventoryInstanceIdAllocator>()
+            .next_id()
+            .unwrap();
+        assert_eq!(
+            next_instance_id, 100,
+            "提示纸入包失败时 staged allocator 必须回滚；expected next id 100 because failed hint grant must not consume a real inventory id, actual next id {next_instance_id}"
+        );
+        let events = app
+            .world()
+            .resource::<valence::prelude::Events<AlchemyInsightEvent>>();
+        assert_eq!(
+            events.len(),
+            0,
+            "提示纸没有实际入包时不能发 insight，避免前端/叙事误报成功"
+        );
     }
 }
