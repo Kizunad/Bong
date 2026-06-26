@@ -4697,6 +4697,7 @@ mod tests {
                 }],
                 equipped: Default::default(),
                 hotbar: Default::default(),
+                triggered_treasures: Vec::new(),
                 bone_coins: 0,
                 max_weight: 50.0,
             },
