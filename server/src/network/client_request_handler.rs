@@ -4700,7 +4700,6 @@ mod tests {
                 triggered_treasures: Vec::new(),
                 bone_coins: 0,
                 max_weight: 50.0,
-                triggered_treasures: vec![],
             },
         ));
 
