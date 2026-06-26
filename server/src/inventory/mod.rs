@@ -11534,6 +11534,141 @@ cols = 4
         }
     }
 
+    // Bug2（真机回归）— fake_spirit_hide 真实数据为 category=misc（materials.toml），
+    // 但正典为蛛丝型伪皮。live-equip 校验（validate_move_semantics）必须放行其入胸槽 worn，
+    // 否则「出生自带却拖不回胸槽」自相矛盾。用真实 registry 证明放行靠 false_skin 闸而非 category。
+    #[test]
+    fn validate_move_semantics_accepts_fake_spirit_hide_to_chest_worn_with_real_registry() {
+        use crate::schema::inventory::{EquipSlotV1, EquipStateV1, InventoryLocationV1};
+
+        let registry = load_item_registry().expect("real item registry loads");
+        // 前置断言：fake_spirit_hide 真实 category 不是 Armor / Container，放行只能靠 false_skin 闸。
+        let template = registry
+            .get("fake_spirit_hide")
+            .expect("fake_spirit_hide template registered");
+        assert!(
+            !matches!(template.category, ItemCategory::Armor),
+            "fake_spirit_hide 真实 category 应非 Armor（证明放行靠 false_skin 闸）"
+        );
+        assert!(
+            template.container_spec.is_none(),
+            "fake_spirit_hide 非容器件（证明放行靠 false_skin 闸）"
+        );
+
+        let inventory = make_empty_inventory();
+        let item = make_test_item_instance(70, "fake_spirit_hide");
+        let from = InventoryLocationV1::Container {
+            container_id: MAIN_PACK_CONTAINER_ID.to_string(),
+            row: 0,
+            col: 0,
+        };
+        let to = InventoryLocationV1::Equip {
+            slot: EquipSlotV1::Chest,
+            state: EquipStateV1::Worn,
+        };
+        assert!(
+            validate_move_semantics(&registry, &inventory, &item, &from, &to).is_ok(),
+            "fake_spirit_hide（伪灵皮）必须能拖进胸槽 worn（live-equip 与 instantiate 一致）"
+        );
+    }
+
+    // Bug2（真机回归）— instantiate（绕校验）与 live-equip（走校验）对 fake_spirit_hide 一致：
+    // 出生自带后必须能卸下再拖回。default.toml 把 fake_spirit_hide 放 chest worn，
+    // 实例化后它确实在 chest.worn，且其 validate_move_semantics 放行（上一条已证）。
+    #[test]
+    fn fake_spirit_hide_instantiate_matches_live_equip_for_chest_worn() {
+        let registry = load_item_registry().expect("real item registry loads");
+        let loadout = load_default_loadout(&registry).expect("default loadout loads");
+        let mut alloc = InventoryInstanceIdAllocator::default();
+        let inv = instantiate_inventory_from_loadout(&loadout, &mut alloc, &registry)
+            .expect("instantiate default loadout");
+
+        let chest = inv
+            .equipped
+            .get(EQUIP_SLOT_CHEST)
+            .expect("chest slot present after instantiate");
+        let chest_worn: Vec<&str> = chest.worn.iter().map(|i| i.template_id.as_str()).collect();
+        assert_eq!(
+            chest_worn,
+            vec!["worn_grass_pouch", "fake_spirit_hide"],
+            "fresh 实例化的 chest.worn 应为 [背包件, 伪皮]；实际 {chest_worn:?}"
+        );
+
+        // instantiate 放进去的 fake_spirit_hide，live-equip 校验也必须能把它放回胸槽 worn。
+        use crate::schema::inventory::{EquipSlotV1, EquipStateV1, InventoryLocationV1};
+        let hide = chest
+            .worn
+            .iter()
+            .find(|i| i.template_id == "fake_spirit_hide")
+            .expect("fake_spirit_hide in chest worn");
+        let from = InventoryLocationV1::Container {
+            container_id: MAIN_PACK_CONTAINER_ID.to_string(),
+            row: 0,
+            col: 0,
+        };
+        let to = InventoryLocationV1::Equip {
+            slot: EquipSlotV1::Chest,
+            state: EquipStateV1::Worn,
+        };
+        let mut empty = make_empty_inventory();
+        empty.max_weight = inv.max_weight;
+        assert!(
+            validate_move_semantics(&registry, &empty, hide, &from, &to).is_ok(),
+            "instantiate 放进胸槽的 fake_spirit_hide，live-equip 必须也放行（instantiate==live）"
+        );
+    }
+
+    // Bug3（真机回归）— fresh 实例化后，运行时容器 id 必须与 default.toml worn_grass_pouch
+    // 自洽：静态占位 `pack_grass_pouch` 已重映射到 pack_<背包件 instance_id>，
+    // 不再残留占位 id / 旧 back_pack id。
+    #[test]
+    fn fresh_instantiate_container_id_self_consistent_with_worn_pack() {
+        let registry = load_item_registry().expect("real item registry loads");
+        let loadout = load_default_loadout(&registry).expect("default loadout loads");
+        let mut alloc = InventoryInstanceIdAllocator::default();
+        let inv = instantiate_inventory_from_loadout(&loadout, &mut alloc, &registry)
+            .expect("instantiate default loadout");
+
+        // 找到 chest.worn 里的背包件（worn_grass_pouch）instance_id。
+        let chest = inv.equipped.get(EQUIP_SLOT_CHEST).expect("chest present");
+        let pack = chest
+            .worn
+            .iter()
+            .find(|i| {
+                registry
+                    .get(&i.template_id)
+                    .is_some_and(|t| t.container_spec.is_some())
+            })
+            .expect("worn pack item present");
+        let expected_container_id = container_id_for_worn_pack(pack.instance_id);
+
+        assert!(
+            inv.containers.iter().any(|c| c.id == expected_container_id),
+            "运行时应存在与穿戴背包件自洽的容器 `{expected_container_id}`；实际 ids = {:?}",
+            inv.containers.iter().map(|c| &c.id).collect::<Vec<_>>()
+        );
+        assert!(
+            !inv.containers
+                .iter()
+                .any(|c| c.id == LOADOUT_PACK_PLACEHOLDER_CONTAINER_ID),
+            "静态占位容器 id `{LOADOUT_PACK_PLACEHOLDER_CONTAINER_ID}` 不应在运行时存活（必须已重映射）"
+        );
+        assert!(
+            !inv.containers.iter().any(|c| c.id == "back_pack"),
+            "运行时不应出现旧 back_pack 容器 id（命名空间已统一到 pack_<id>）"
+        );
+        // 背包件容器内物品应来自 default.toml 破草包（非空）。
+        let pack_container = inv
+            .containers
+            .iter()
+            .find(|c| c.id == expected_container_id)
+            .expect("pack container present");
+        assert!(
+            !pack_container.items.is_empty(),
+            "破草包容器应含 default.toml 起手物品（非空）"
+        );
+    }
+
     #[test]
     fn validate_move_semantics_rejects_non_false_skin_misc_item_to_chest_worn() {
         use crate::schema::inventory::{EquipSlotV1, EquipStateV1, InventoryLocationV1};

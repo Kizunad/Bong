@@ -1146,6 +1146,9 @@ fn load_player_inventory_from_sqlite(
 ///   决议 #8）。按 belt 槽序追加，超出 `TREASURE_TRIGGER_CAP` 的多余件丢弃（旧 belt 只有 4 槽，正常不会超）。
 /// - `back_pack/waist_pouch/chest_satchel` → 归 `chest.worn`（旧背包件按身体槽 worn 落位，决议 #17；
 ///   现存档背包均 back_pack，默认落 chest worn 栈尾，与 default.toml worn_grass_pouch→chest 一致）。
+///   **同时**把同名静态容器（旧档容器 id == 旧装备槽名）改名到运行时 `pack_<instance_id>`
+///   命名空间（Bug3），否则装在旧 back_pack 容器里的物品会被 rebuild_containers_from_equipment
+///   留成无主孤儿。
 /// - `extra_hand_0/1` → `<slot>.held`（武器落 held，不误塞多件）。
 /// - `head/chest/legs/feet` → `<slot>.worn`（盔甲穿戴层）。
 /// - `main_hand/off_hand` → `<slot>.held`（手持武器/工具）。
@@ -1163,6 +1166,13 @@ fn migrate_equipped_v1_to_v2(value: &mut serde_json::Value) {
 
     // 累积每个目标身体/手槽的 worn 列表与 held 件。
     let mut new_slots: std::collections::HashMap<String, (Vec<Value>, Option<Value>)> =
+        std::collections::HashMap::new();
+    // plan-layered-equip-v1 P0.6（决议 #17 / Bug3）— 旧背包专属装备槽（back_pack/waist_pouch/
+    // chest_satchel）的背包件迁去 chest.worn 后，其同名静态容器必须随之改名到运行时
+    // `pack_<instance_id>` 命名空间，否则 rebuild_containers_from_equipment 会新建空 pack_*、
+    // 把装着东西的旧 back_pack 容器留成无主孤儿（伪皮/物品全卡在里面取不出 = 真机症状）。
+    // legacy_slot_name → 该槽背包件的 instance_id。
+    let mut legacy_pack_container_renames: std::collections::HashMap<String, u64> =
         std::collections::HashMap::new();
     let push_worn = |slots: &mut std::collections::HashMap<String, (Vec<Value>, Option<Value>)>,
                      slot: &str,
@@ -1197,6 +1207,10 @@ fn migrate_equipped_v1_to_v2(value: &mut serde_json::Value) {
                 triggered.insert(old_slot.clone(), item);
             }
             "back_pack" | "waist_pouch" | "chest_satchel" => {
+                // 记下背包件 instance_id，下面把同名旧容器改名到 pack_<instance_id>。
+                if let Some(instance_id) = item.get("instance_id").and_then(Value::as_u64) {
+                    legacy_pack_container_renames.insert(old_slot.clone(), instance_id);
+                }
                 push_worn(&mut new_slots, "chest", item)
             }
             "head" | "chest" | "legs" | "feet" => push_worn(&mut new_slots, &old_slot, item),
@@ -1217,6 +1231,34 @@ fn migrate_equipped_v1_to_v2(value: &mut serde_json::Value) {
             slot,
             json!({ "worn": worn, "held": held.unwrap_or(Value::Null) }),
         );
+    }
+
+    // 旧背包专属容器改名到 pack_<instance_id>（决议 #17 / Bug3）。
+    // 旧档静态容器 id 与旧装备槽同名（back_pack/waist_pouch/chest_satchel，见 #736 前 default.toml）；
+    // 改名后容器随穿戴背包件进入 pack_<id> 命名空间，与 rebuild_containers_from_equipment 一致，
+    // 装在里面的物品不再丢失。
+    if !legacy_pack_container_renames.is_empty() {
+        if let Some(containers) = value.get_mut("containers").and_then(Value::as_array_mut) {
+            for container in containers.iter_mut() {
+                let Some(container_id) = container
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+                else {
+                    continue;
+                };
+                if let Some(&instance_id) = legacy_pack_container_renames.get(&container_id) {
+                    if let Some(obj) = container.as_object_mut() {
+                        obj.insert(
+                            "id".to_string(),
+                            Value::String(crate::inventory::container_id_for_worn_pack(
+                                instance_id,
+                            )),
+                        );
+                    }
+                }
+            }
+        }
     }
 
     // plan-layered-equip-v1 P4（决议 #8）：旧 treasure_belt_* 件迁入顶层 triggered_treasures。
@@ -2427,6 +2469,157 @@ mod player_state_tests {
         let inventory: PlayerInventory =
             serde_json::from_value(value).expect("deserializes with serde default empty trigger");
         assert!(inventory.triggered_treasures.is_empty());
+    }
+
+    /// 构造一个 v1 单件装备 object（带 instance_id），供 equipped 槽 / 容器 item 迁移测试复用。
+    fn v1_equip_item(instance_id: u64, template: &str) -> serde_json::Value {
+        serde_json::json!({
+            "instance_id": instance_id,
+            "template_id": template,
+            "display_name": template,
+            "grid_w": 2, "grid_h": 2, "weight": 0.5,
+            "rarity": "Common", "description": "", "stack_count": 1,
+            "spirit_quality": 0.5, "durability": 0.5
+        })
+    }
+
+    // Bug1（真机回归）— 旧 default.toml 形态：chest=fake_spirit_hide、main_hand=iron_sword、
+    // back_pack=worn_grass_pouch。迁移后 equipped 必须非空且正确：
+    // chest.worn == [worn_grass_pouch, fake_spirit_hide]（栈底背包件、栈顶伪皮，与 fresh 实例化一致），
+    // main_hand.held == iron_sword。绝不允许迁空 / 错置 / 把 equipped 件丢进容器。
+    #[test]
+    fn migrate_v1_legacy_default_loadout_keeps_equipped_correct() {
+        let mut value = v1_inventory_json_with_equipped(serde_json::json!({
+            "chest": v1_equip_item(1, "fake_spirit_hide"),
+            "main_hand": v1_equip_item(2, "iron_sword"),
+            "back_pack": v1_equip_item(3, "worn_grass_pouch"),
+        }));
+        migrate_equipped_v1_to_v2(&mut value);
+        let inventory: PlayerInventory =
+            serde_json::from_value(value).expect("migrated v2 json deserializes");
+
+        let chest = inventory
+            .equipped
+            .get(crate::inventory::EQUIP_SLOT_CHEST)
+            .expect("chest slot must exist after migration (equipped 不得迁空)");
+        let chest_worn: Vec<&str> = chest.worn.iter().map(|i| i.template_id.as_str()).collect();
+        assert_eq!(
+            chest_worn,
+            vec!["worn_grass_pouch", "fake_spirit_hide"],
+            "迁移后 chest.worn 应为 [背包件, 伪皮]（栈底→栈顶），与 default.toml fresh 实例化一致；实际 {chest_worn:?}"
+        );
+        assert!(
+            chest.held.is_none(),
+            "身体槽 chest 不应有 held 件；实际 {:?}",
+            chest.held.as_ref().map(|i| &i.template_id)
+        );
+
+        let main_hand = inventory
+            .equipped
+            .get(crate::inventory::EQUIP_SLOT_MAIN_HAND)
+            .expect("main_hand slot must exist after migration");
+        assert_eq!(
+            main_hand.held.as_ref().map(|i| i.template_id.as_str()),
+            Some("iron_sword"),
+            "武器应迁入 main_hand.held（而非 worn / 容器）"
+        );
+        assert!(
+            main_hand.worn.is_empty(),
+            "手槽 main_hand 不应有 worn 件；实际 {:?}",
+            main_hand.worn
+        );
+
+        // 不得残留旧背包专属槽 key。
+        assert!(
+            !inventory.equipped.contains_key("back_pack"),
+            "旧 back_pack 装备槽 key 不应在 v2 equipped 中存活"
+        );
+    }
+
+    // Bug3（真机回归）— 旧档背包件在 back_pack 装备槽，且有同名 `back_pack` 容器装着物品。
+    // 迁移后该容器必须改名到 pack_<背包件 instance_id>，否则 rebuild_containers_from_equipment
+    // 会新建空 pack_*、把旧 back_pack 容器留成无主孤儿（物品取不出）。
+    #[test]
+    fn migrate_v1_renames_legacy_backpack_container_to_pack_instance_namespace() {
+        let mut value = serde_json::json!({
+            "revision": 1,
+            "containers": [
+                {
+                    "id": "body_pocket", "name": "暗袋", "rows": 2, "cols": 3,
+                    "items": [{
+                        "row": 0, "col": 0,
+                        "instance": v1_equip_item(50, "fengling_bone_coin")
+                    }]
+                },
+                {
+                    "id": "back_pack", "name": "破草包", "rows": 3, "cols": 3,
+                    "items": [{
+                        "row": 0, "col": 0,
+                        "instance": v1_equip_item(51, "spirit_grass")
+                    }]
+                }
+            ],
+            "equipped": {
+                "back_pack": v1_equip_item(42, "worn_grass_pouch"),
+            },
+            "hotbar": [null, null, null, null, null, null, null, null, null],
+            "bone_coins": 7,
+            "max_weight": 23.0
+        });
+        migrate_equipped_v1_to_v2(&mut value);
+        let inventory: PlayerInventory =
+            serde_json::from_value(value).expect("migrated v2 json deserializes");
+
+        // 背包件迁到 chest.worn。
+        let chest = inventory
+            .equipped
+            .get(crate::inventory::EQUIP_SLOT_CHEST)
+            .expect("chest slot present");
+        assert_eq!(
+            chest
+                .worn
+                .iter()
+                .map(|i| i.template_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["worn_grass_pouch"],
+            "worn_grass_pouch 应迁到 chest.worn"
+        );
+        let pack_instance_id = chest.worn[0].instance_id;
+        assert_eq!(pack_instance_id, 42, "迁移保留原 instance_id");
+
+        // 旧 back_pack 容器应改名到 pack_42，且内含物品原样保留。
+        let expected_id = crate::inventory::container_id_for_worn_pack(pack_instance_id);
+        let renamed = inventory
+            .containers
+            .iter()
+            .find(|c| c.id == expected_id)
+            .unwrap_or_else(|| {
+                panic!(
+                    "应存在改名后的容器 `{expected_id}`；实际容器 ids = {:?}",
+                    inventory
+                        .containers
+                        .iter()
+                        .map(|c| &c.id)
+                        .collect::<Vec<_>>()
+                )
+            });
+        assert_eq!(
+            renamed.items.len(),
+            1,
+            "改名后容器内物品必须保留（不丢数据）"
+        );
+        assert_eq!(renamed.items[0].instance.template_id, "spirit_grass");
+
+        // 旧 back_pack id 不应再存在（已被改名，不留孤儿）。
+        assert!(
+            !inventory.containers.iter().any(|c| c.id == "back_pack"),
+            "旧 back_pack 容器 id 应已改名消失，不留无主孤儿"
+        );
+        // body_pocket 不动。
+        assert!(
+            inventory.containers.iter().any(|c| c.id == "body_pocket"),
+            "body_pocket 容器应原样保留"
+        );
     }
 
     fn persisted_inventory_snapshot(

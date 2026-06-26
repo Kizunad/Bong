@@ -27,6 +27,10 @@ pub const SPIDER_SILK_FALSE_SKIN_ITEM_ID: &str = "tuike_false_skin_silk";
 pub const ROTTEN_WOOD_ARMOR_ITEM_ID: &str = "tuike_rotten_wood_armor";
 pub const DISGUISE_WRAP_ITEM_ID: &str = "disguise_wrap";
 pub const CAMOUFLAGE_NET_ITEM_ID: &str = "camouflage_net";
+/// 出生自带的「伪灵皮」（worldview §五 行 440 / §六 行 556）：
+/// 拟态灰烬蛛丝缝制，挨打优先承受污染并蜕落 —— 正典即蛛丝型伪皮（蜕壳流单层壳）。
+/// 列入 false_skin 识别表后，胸槽 worn 校验、蜕壳扫描、instantiate↔live-equip 三处一致。
+pub const FAKE_SPIRIT_HIDE_ITEM_ID: &str = "fake_spirit_hide";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -119,9 +123,10 @@ impl From<FalseSkinKindV1> for FalseSkinKind {
 
 pub fn false_skin_kind_for_item(template_id: &str) -> Option<FalseSkinKind> {
     match template_id {
-        SPIDER_SILK_FALSE_SKIN_ITEM_ID | DISGUISE_WRAP_ITEM_ID | CAMOUFLAGE_NET_ITEM_ID => {
-            Some(FalseSkinKind::SpiderSilk)
-        }
+        SPIDER_SILK_FALSE_SKIN_ITEM_ID
+        | DISGUISE_WRAP_ITEM_ID
+        | CAMOUFLAGE_NET_ITEM_ID
+        | FAKE_SPIRIT_HIDE_ITEM_ID => Some(FalseSkinKind::SpiderSilk),
         ROTTEN_WOOD_ARMOR_ITEM_ID => Some(FalseSkinKind::RottenWoodArmor),
         _ => None,
     }
@@ -586,6 +591,18 @@ mod tests {
                 "{template_id} should pass the v1 false_skin equipment gate"
             );
         }
+    }
+
+    // Bug2（真机回归）— 出生自带「伪灵皮」(fake_spirit_hide) 是正典蛛丝型伪皮
+    // （worldview §五 行 440 / §六 行 556）。必须被 false_skin 识别表命中为 SpiderSilk，
+    // 否则胸槽 worn 校验拒收、蜕壳扫描忽略，「伪皮归胸」名存实亡。
+    #[test]
+    fn false_skin_kind_for_item_recognizes_fake_spirit_hide_as_spider_silk() {
+        assert_eq!(
+            false_skin_kind_for_item(FAKE_SPIRIT_HIDE_ITEM_ID),
+            Some(FalseSkinKind::SpiderSilk),
+            "fake_spirit_hide (伪灵皮) 应识别为蛛丝型伪皮，使其可装胸槽 worn 且蜕壳流可识别"
+        );
     }
 
     #[test]
