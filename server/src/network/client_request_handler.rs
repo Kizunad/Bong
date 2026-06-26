@@ -3688,34 +3688,38 @@ mod tests {
                 items: vec![PlacedItemState {
                     row: 0,
                     col: 0,
-                    instance: ItemInstance {
-                        instance_id: 9001,
-                        template_id: template_id.to_string(),
-                        display_name: template_id.to_string(),
-                        grid_w: 1,
-                        grid_h: 1,
-                        weight: 0.1,
-                        rarity: ItemRarity::Common,
-                        description: String::new(),
-                        stack_count: count,
-                        spirit_quality: 1.0,
-                        durability: 1.0,
-                        freshness: None,
-                        mineral_id: None,
-                        charges: None,
-                        forge_quality: None,
-                        forge_color: None,
-                        forge_side_effects: Vec::new(),
-                        forge_achieved_tier: None,
-                        alchemy: None,
-                        lingering_owner_qi: None,
-                    },
+                    instance: inventory_test_item(9001, template_id, count),
                 }],
             }],
             equipped: Default::default(),
             hotbar: Default::default(),
             bone_coins: 0,
             max_weight: 50.0,
+        }
+    }
+
+    fn inventory_test_item(instance_id: u64, template_id: &str, stack_count: u32) -> ItemInstance {
+        ItemInstance {
+            instance_id,
+            template_id: template_id.to_string(),
+            display_name: template_id.to_string(),
+            grid_w: 1,
+            grid_h: 1,
+            weight: 0.1,
+            rarity: ItemRarity::Common,
+            description: String::new(),
+            stack_count,
+            spirit_quality: 1.0,
+            durability: 1.0,
+            freshness: None,
+            mineral_id: None,
+            charges: None,
+            forge_quality: None,
+            forge_color: None,
+            forge_side_effects: Vec::new(),
+            forge_achieved_tier: None,
+            alchemy: None,
+            lingering_owner_qi: None,
         }
     }
 
@@ -4633,6 +4637,97 @@ mod tests {
                 })
             }),
             "expected flawed pill residue in inventory, got {item_summary:?}"
+        );
+    }
+
+    #[test]
+    fn alchemy_feed_slot_rejects_wrong_mineral_instance_on_live_request_path() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        app.insert_resource(crate::alchemy::recipe::load_recipe_registry().unwrap());
+
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        let mut wrong_mineral = inventory_test_item(9002, "dan_sha_aux", 1);
+        wrong_mineral.display_name = "假丹砂辅料".to_string();
+        wrong_mineral.mineral_id = Some("zhu_sha".to_string());
+        app.world_mut().entity_mut(entity).insert((
+            crate::cultivation::components::Cultivation::default(),
+            PlayerState::default(),
+            PlayerInventory {
+                revision: InventoryRevision(0),
+                containers: vec![ContainerState {
+                    id: "main_pack".into(),
+                    name: "main_pack".into(),
+                    rows: 5,
+                    cols: 7,
+                    items: vec![
+                        PlacedItemState {
+                            row: 0,
+                            col: 0,
+                            instance: inventory_test_item(9001, "ci_she_hao", 2),
+                        },
+                        PlacedItemState {
+                            row: 0,
+                            col: 1,
+                            instance: wrong_mineral,
+                        },
+                    ],
+                }],
+                equipped: Default::default(),
+                hotbar: Default::default(),
+                bone_coins: 0,
+                max_weight: 50.0,
+            },
+        ));
+
+        let mut furnace = AlchemyFurnace::placed(valence::prelude::BlockPos::new(5, 64, 6), 1);
+        furnace.owner = Some("offline:Azure".into());
+        let furnace_entity = app.world_mut().spawn(furnace).id();
+        for data in [
+            br#"{"type":"alchemy_ignite","v":1,"furnace_pos":[5,64,6],"recipe_id":"jie_du_dan_v1"}"#.as_slice(),
+            br#"{"type":"alchemy_feed_slot","v":1,"furnace_pos":[5,64,6],"slot_idx":0,"material":"ci_she_hao","count":2}"#.as_slice(),
+            br#"{"type":"alchemy_feed_slot","v":1,"furnace_pos":[5,64,6],"slot_idx":0,"material":"dan_sha_aux","count":1}"#.as_slice(),
+        ] {
+            app.world_mut()
+                .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+                .send(CustomPayloadEvent {
+                    client: entity,
+                    channel: ident!("bong:client_request").into(),
+                    data: data.to_vec().into_boxed_slice(),
+                });
+        }
+
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let furnace = app.world().get::<AlchemyFurnace>(furnace_entity).unwrap();
+        let staged = &furnace.session.as_ref().unwrap().staged.materials;
+        let staged_ci_she_hao = staged.get("ci_she_hao").copied();
+        assert_eq!(
+            staged_ci_she_hao,
+            Some(2),
+            "expected ci_she_hao×2 to stay staged because the first feed request succeeded before wrong mineral rejection, actual staged={staged:?}"
+        );
+        assert!(
+            !staged.contains_key("dan_sha_aux"),
+            "wrong mineral_id must not satisfy dan_sha_aux ingredient: {staged:?}"
+        );
+        let messages = collect_game_messages(&mut helper);
+        assert!(
+            messages
+                .iter()
+                .any(|message| message.contains("材料不足或矿物不符")),
+            "expected wrong-mineral live request to send alchemy rejection chat, actual messages={messages:?}"
+        );
+        let inventory = app.world().get::<PlayerInventory>(entity).unwrap();
+        assert!(
+            inventory.containers.iter().any(|container| {
+                container.items.iter().any(|placed| {
+                    placed.instance.instance_id == 9002 && placed.instance.stack_count == 1
+                })
+            }),
+            "rejected wrong-mineral item must remain in inventory"
         );
     }
 
@@ -10384,14 +10479,18 @@ fn handle_alchemy_feed_slot(
                 return;
             }
         };
-        if !inventory_has_template_count(&inventory, material.as_str(), count) {
+        let Some(selected_consumption) =
+            select_ingredient_instances_for_consumption(&inventory, expected, count)
+        else {
             send_alchemy_error(
                 &mut client,
                 &player_id,
-                format!("材料不足：{material}×{count}"),
+                format!("材料不足或矿物不符：{material}×{count}"),
             );
             return;
-        }
+        };
+        let staged_before_feed = session.staged.clone();
+        let inventory_before_feed = inventory.clone();
         if let Err(error) =
             session.feed_stage(recipe, slot_idx as usize, &[(material.clone(), count, 1.0)])
         {
@@ -10418,11 +10517,8 @@ fn handle_alchemy_feed_slot(
                 .map(|z| z.name.clone())
             });
 
-            let to_attrit =
-                select_template_instances_for_consumption(&inventory, material.as_str(), count);
-
-            for instance_id in to_attrit {
-                if let Some(item) = inventory_item_by_instance_mut(&mut inventory, instance_id) {
+            for (instance_id, _) in &selected_consumption {
+                if let Some(item) = inventory_item_by_instance_mut(&mut inventory, *instance_id) {
                     if is_attrition_exempt(item) {
                         continue;
                     }
@@ -10457,12 +10553,15 @@ fn handle_alchemy_feed_slot(
             }
         }
 
-        for _ in 0..count {
-            let consumed = consume_one_by_template(&mut inventory, material.as_str());
-            debug_assert!(
-                consumed,
-                "inventory_has_template_count checked availability first"
-            );
+        for (instance_id, selected_count) in selected_consumption {
+            for _ in 0..selected_count {
+                if let Err(error) = consume_item_instance_once(&mut inventory, instance_id) {
+                    session.staged = staged_before_feed;
+                    *inventory = inventory_before_feed;
+                    send_alchemy_error(&mut client, &player_id, format!("投料扣除失败：{error}"));
+                    return;
+                }
+            }
         }
         tracing::info!(
             "[bong][network][alchemy] `{player_id}` feed pos={furnace_pos:?} slot={slot_idx} {material}×{count}"
@@ -11621,6 +11720,7 @@ fn push_combat_pill_event_stream(
 
 /// 扣除一颗 template 匹配的 item（优先 hotbar → containers → equipped）。
 /// stack_count > 1 时减 1；否则移除整个 slot/placement。成功返回 true。
+#[cfg(test)]
 fn consume_one_by_template(inventory: &mut PlayerInventory, template_id: &str) -> bool {
     for slot in inventory.hotbar.iter_mut() {
         if let Some(item) = slot.as_mut() {
@@ -11682,6 +11782,7 @@ fn consume_one_by_template(inventory: &mut PlayerInventory, template_id: &str) -
     false
 }
 
+#[cfg(test)]
 fn select_template_instances_for_consumption(
     inventory: &PlayerInventory,
     template_id: &str,
@@ -11726,30 +11827,56 @@ fn select_template_instances_for_consumption(
     instance_ids
 }
 
-fn inventory_has_template_count(
+fn select_ingredient_instances_for_consumption(
     inventory: &PlayerInventory,
-    template_id: &str,
+    ingredient: &crate::alchemy::recipe::IngredientSpec,
     required: u32,
-) -> bool {
-    let mut total = 0u32;
+) -> Option<Vec<(u64, u32)>> {
+    let mut remaining = required;
+    let mut selected = Vec::new();
+    if remaining == 0 {
+        return Some(selected);
+    }
+
     for item in inventory.hotbar.iter().flatten() {
-        if item.template_id == template_id {
-            total = total.saturating_add(item.stack_count);
+        select_ingredient_item(ingredient, item, &mut remaining, &mut selected);
+        if remaining == 0 {
+            return Some(selected);
         }
     }
     for container in &inventory.containers {
         for placed in &container.items {
-            if placed.instance.template_id == template_id {
-                total = total.saturating_add(placed.instance.stack_count);
+            select_ingredient_item(ingredient, &placed.instance, &mut remaining, &mut selected);
+            if remaining == 0 {
+                return Some(selected);
             }
         }
     }
     for item in inventory.equipped.values().flat_map(|s| s.iter_all()) {
-        if item.template_id == template_id {
-            total = total.saturating_add(item.stack_count);
+        select_ingredient_item(ingredient, item, &mut remaining, &mut selected);
+        if remaining == 0 {
+            return Some(selected);
         }
     }
-    total >= required
+
+    None
+}
+
+fn select_ingredient_item(
+    ingredient: &crate::alchemy::recipe::IngredientSpec,
+    item: &ItemInstance,
+    remaining: &mut u32,
+    selected: &mut Vec<(u64, u32)>,
+) {
+    if *remaining == 0 || item.template_id != ingredient.material || item.stack_count == 0 {
+        return;
+    }
+    if ingredient.validate_item(item).is_err() {
+        return;
+    }
+    let take = (*remaining).min(item.stack_count);
+    selected.push((item.instance_id, take));
+    *remaining -= take;
 }
 
 fn resolve_pill_consume_target(
@@ -12664,6 +12791,70 @@ mod take_pill_tests {
             select_template_instances_for_consumption(&inv, "guyuan_pill", 5),
             vec![11, 22],
             "投料磨损应按 hotbar → containers → equipped 覆盖将被消耗的实例"
+        );
+    }
+
+    #[test]
+    fn alchemy_ingredient_selection_skips_wrong_mineral_and_uses_matching_instances() {
+        let mut inv = fresh_inventory();
+        let mut hotbar_wrong = make_pill(11, "dan_sha_aux", 2);
+        hotbar_wrong.mineral_id = Some("zhu_sha".into());
+        inv.hotbar[0] = Some(hotbar_wrong);
+
+        let mut container_match = make_pill(22, "dan_sha_aux", 1);
+        container_match.mineral_id = Some("dan_sha".into());
+        inv.containers[0]
+            .items
+            .push(crate::inventory::PlacedItemState {
+                row: 0,
+                col: 0,
+                instance: container_match,
+            });
+
+        let mut equipped_match = make_pill(33, "dan_sha_aux", 3);
+        equipped_match.mineral_id = Some("dan_sha".into());
+        inv.equipped.insert(
+            "off_hand".into(),
+            crate::inventory::SlotContents::held_single(equipped_match),
+        );
+        let ingredient = crate::alchemy::recipe::IngredientSpec {
+            material: "dan_sha_aux".into(),
+            count: 2,
+            mineral_id: Some("dan_sha".into()),
+        };
+
+        assert_eq!(
+            select_ingredient_instances_for_consumption(&inv, &ingredient, 2),
+            Some(vec![(22, 1), (33, 1)]),
+            "expected wrong mineral instance 11 to be skipped and matching instances to fill required count across inventory positions"
+        );
+    }
+
+    #[test]
+    fn alchemy_ingredient_selection_returns_none_when_matching_mineral_is_short() {
+        let mut inv = fresh_inventory();
+        let mut wrong_mineral = make_pill(11, "dan_sha_aux", 5);
+        wrong_mineral.mineral_id = Some("zhu_sha".into());
+        inv.hotbar[0] = Some(wrong_mineral);
+        let mut matching_mineral = make_pill(22, "dan_sha_aux", 1);
+        matching_mineral.mineral_id = Some("dan_sha".into());
+        inv.containers[0]
+            .items
+            .push(crate::inventory::PlacedItemState {
+                row: 0,
+                col: 0,
+                instance: matching_mineral,
+            });
+        let ingredient = crate::alchemy::recipe::IngredientSpec {
+            material: "dan_sha_aux".into(),
+            count: 2,
+            mineral_id: Some("dan_sha".into()),
+        };
+
+        assert_eq!(
+            select_ingredient_instances_for_consumption(&inv, &ingredient, 2),
+            None,
+            "expected selection to reject shortage when only one matching dan_sha item exists and wrong-mineral stacks cannot satisfy the ingredient"
         );
     }
 
