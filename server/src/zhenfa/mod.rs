@@ -1498,14 +1498,6 @@ fn inventory_template_count(inventory: &PlayerInventory, template_id: &str) -> u
         .map(|placed| placed.instance.stack_count)
         .chain(
             inventory
-                .equipped
-                .values()
-                .flat_map(|s| s.iter_all())
-                .filter(|item| item.template_id == template_id)
-                .map(|item| item.stack_count),
-        )
-        .chain(
-            inventory
                 .hotbar
                 .iter()
                 .flatten()
@@ -1525,14 +1517,6 @@ fn find_inventory_instance_by_template(
         .flat_map(|container| container.items.iter())
         .find(|placed| placed.instance.template_id == template_id)
         .map(|placed| placed.instance.instance_id)
-        .or_else(|| {
-            inventory
-                .equipped
-                .values()
-                .flat_map(|s| s.iter_all())
-                .find(|item| item.template_id == template_id)
-                .map(|item| item.instance_id)
-        })
         .or_else(|| {
             inventory
                 .hotbar
@@ -4556,8 +4540,8 @@ mod tests {
     use crate::cultivation::components::{QiColor, Realm};
     use crate::inventory::{
         inventory_item_by_instance_borrow, ContainerState, InventoryRevision, ItemCategory,
-        ItemInstance, ItemRarity, ItemTemplate, PlayerInventory, SlotContents,
-        EQUIP_SLOT_MAIN_HAND,
+        ItemInstance, ItemRarity, ItemTemplate, PlayerInventory, SlotContents, EQUIP_SLOT_CHEST,
+        EQUIP_SLOT_MAIN_HAND, EQUIP_SLOT_OFF_HAND,
     };
     use crate::lingtian::PLOT_QI_CAP_BASE;
     use valence::prelude::{App, ChunkLayer, DVec3, Entity, Events, UnloadedChunk};
@@ -6013,6 +5997,86 @@ mod tests {
         assert_eq!(
             inventory_template_count(inventory, DECEIVE_HEAVEN_BEAST_BONE_ITEM_ID),
             0
+        );
+    }
+
+    #[test]
+    fn deceive_heaven_rejects_equipped_materials() {
+        let mut app = app_with_loaded_zhenfa();
+        let owner = spawn_player(&mut app, "Alice", [0.0, 64.0, 0.0]);
+        app.world_mut().get_mut::<Cultivation>(owner).unwrap().realm = Realm::Solidify;
+
+        let mut inventory = empty_inventory();
+        inventory.bone_coins = DECEIVE_HEAVEN_BONE_COIN_COST;
+        inventory.equipped.insert(
+            EQUIP_SLOT_MAIN_HAND.to_string(),
+            SlotContents::held_single(array_flag_item(9001)),
+        );
+        inventory.equipped.insert(
+            EQUIP_SLOT_OFF_HAND.to_string(),
+            SlotContents::held_single(material_item(
+                9101,
+                DECEIVE_HEAVEN_SPIRITWOOD_ITEM_ID,
+                DECEIVE_HEAVEN_SPIRITWOOD_COST,
+            )),
+        );
+        inventory.equipped.insert(
+            EQUIP_SLOT_CHEST.to_string(),
+            SlotContents::worn_single(material_item(
+                9102,
+                DECEIVE_HEAVEN_BEAST_BONE_ITEM_ID,
+                DECEIVE_HEAVEN_BEAST_BONE_COST,
+            )),
+        );
+        app.world_mut().entity_mut(owner).insert(inventory);
+
+        app.world_mut().send_event(ZhenfaPlaceRequest {
+            player: owner,
+            pos: [1, 64, 1],
+            kind: ZhenfaKind::DeceiveHeaven,
+            carrier: ZhenfaCarrierKind::BeastCoreInlaid,
+            qi_invest_ratio: 0.80,
+            trigger: None,
+            item_instance_id: None,
+            target_face: None,
+            requested_at_tick: 10,
+        });
+        app.update();
+
+        assert_eq!(
+            app.world().resource::<ZhenfaRegistry>().len(),
+            0,
+            "expected no DeceiveHeaven instance because equipped materials are not valid material inputs"
+        );
+        let cultivation = app.world().get::<Cultivation>(owner).unwrap();
+        assert_eq!(
+            cultivation.qi_current, 100.0,
+            "expected qi_current 100.0 because rejected placement must not invest qi, actual {}",
+            cultivation.qi_current
+        );
+        let inventory = app.world().get::<PlayerInventory>(owner).unwrap();
+        assert_eq!(
+            inventory.bone_coins, DECEIVE_HEAVEN_BONE_COIN_COST,
+            "expected bone_coins {} because rejected placement must not spend material cost, actual {}",
+            DECEIVE_HEAVEN_BONE_COIN_COST, inventory.bone_coins
+        );
+        assert_eq!(
+            inventory
+                .equipped
+                .get(EQUIP_SLOT_OFF_HAND)
+                .and_then(|slot| slot.held.as_ref())
+                .map(|item| (item.instance_id, item.stack_count)),
+            Some((9101, DECEIVE_HEAVEN_SPIRITWOOD_COST)),
+            "expected off-hand spiritwood instance/stack unchanged because rejected placement must not mutate equipped slots"
+        );
+        assert_eq!(
+            inventory
+                .equipped
+                .get(EQUIP_SLOT_CHEST)
+                .and_then(|slot| slot.worn.first())
+                .map(|item| (item.instance_id, item.stack_count)),
+            Some((9102, DECEIVE_HEAVEN_BEAST_BONE_COST)),
+            "expected chest beast-bone instance/stack unchanged because rejected placement must not mutate equipped slots"
         );
     }
 
