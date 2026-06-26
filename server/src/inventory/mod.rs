@@ -13387,6 +13387,48 @@ cols = 4
             );
         }
 
+        // ── P5 边界 pin — worn_cap_bonus 空串 / 完全未知槽位（CR 补充）──
+
+        #[test]
+        fn p5_worn_cap_bonus_empty_slot_returns_zero() {
+            // P5 占位：空字符串不是任何规范槽位，bonus 恒 0。
+            // 断言信息：P5 占位——升级源未接前任意槽位 bonus 恒 0，空串亦不例外。
+            assert_eq!(
+                worn_cap_bonus(""),
+                0,
+                "P5 占位：worn_cap_bonus(\"\") 应为 0（升级源未接，任意非规范输入 bonus 恒 0）"
+            );
+        }
+
+        #[test]
+        fn p5_worn_cap_bonus_unknown_slot_returns_zero() {
+            // P5 占位：完全陌生的槽位名不是任何规范槽位，bonus 恒 0。
+            // 断言信息：P5 占位——升级源未接前任意槽位 bonus 恒 0，未知槽位亦不例外。
+            assert_eq!(
+                worn_cap_bonus("totally_unknown_slot"),
+                0,
+                "P5 占位：worn_cap_bonus(\"totally_unknown_slot\") 应为 0（升级源未接，任意非规范输入 bonus 恒 0）"
+            );
+        }
+
+        // ── worn_cap 非规范输入行为 pin（CR 补充）──
+
+        #[test]
+        fn worn_cap_noncanonical_inputs_default_to_zero() {
+            // worn_cap 对空串和未知槽位走 `_ => 0` 默认分支，行为是 held-only 语义（cap=0）。
+            // 锁定此占位行为：任何非规范输入恒 0，防回归改变 wildcard 分支语义。
+            assert_eq!(
+                worn_cap(""),
+                0,
+                "worn_cap(\"\") 应为 0：非规范输入走 _ => 0 默认分支（held-only 语义）"
+            );
+            assert_eq!(
+                worn_cap("unknown"),
+                0,
+                "worn_cap(\"unknown\") 应为 0：非规范输入走 _ => 0 默认分支（held-only 语义）"
+            );
+        }
+
         // ── 3. classify_equip_state（决议 #16）：Weapon|Tool→Held，Armor|Container→Worn ──
 
         fn make_tool_template(id: &str) -> ItemTemplate {
