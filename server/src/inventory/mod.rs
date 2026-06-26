@@ -1537,19 +1537,7 @@ fn add_item_to_player_inventory_inner(
         .get(template_id)
         .ok_or_else(|| format!("unknown item template id `{template_id}`"))?;
 
-    // plan-backpack-equip-v1 P2 — 不再强制要求 main_pack；
-    // 优先尝试非 body_pocket 容器（pack_<id> / main_pack 等），都放不下再兜底 body_pocket。
-    let mut candidate_indices: Vec<usize> = inventory
-        .containers
-        .iter()
-        .enumerate()
-        .filter_map(|(index, container)| {
-            (container.id != BODY_POCKET_CONTAINER_ID).then_some(index)
-        })
-        .collect();
-    candidate_indices.extend(inventory.containers.iter().enumerate().filter_map(
-        |(index, container)| (container.id == BODY_POCKET_CONTAINER_ID).then_some(index),
-    ));
+    let candidate_indices = carried_container_candidate_indices(inventory);
     if candidate_indices.is_empty() {
         return Err("player inventory has no containers".to_string());
     }
@@ -1668,6 +1656,64 @@ fn add_item_to_player_inventory_inner(
         created_instance_ids,
         merged_instance_ids,
     })
+}
+
+/// 放置已经实例化的 loot，保留调用方生成的 instance_id / 特殊字段。
+pub fn add_existing_item_to_player_inventory(
+    inventory: &mut PlayerInventory,
+    registry: &ItemRegistry,
+    item: ItemInstance,
+) -> Result<InventoryRevision, String> {
+    let candidate_indices = carried_container_candidate_indices(inventory);
+    if candidate_indices.is_empty() {
+        return Err("player inventory has no containers".to_string());
+    }
+
+    let template_id = item.template_id.clone();
+    for candidate_index in candidate_indices {
+        if !container_accepts_runtime_grant(
+            inventory,
+            registry,
+            &inventory.containers[candidate_index],
+            &item,
+        ) {
+            continue;
+        }
+        let Some((row, col)) = find_free_slot(
+            &inventory.containers[candidate_index],
+            item.grid_w,
+            item.grid_h,
+        ) else {
+            continue;
+        };
+        inventory.containers[candidate_index]
+            .items
+            .push(PlacedItemState {
+                row,
+                col,
+                instance: item,
+            });
+        inventory.revision.0 = inventory.revision.0.saturating_add(1);
+        return Ok(inventory.revision);
+    }
+
+    Err(format!("inventory full: {template_id}"))
+}
+
+fn carried_container_candidate_indices(inventory: &PlayerInventory) -> Vec<usize> {
+    // 优先尝试非 body_pocket 容器（pack_<id> / main_pack 等），都放不下再兜底 body_pocket。
+    let mut candidate_indices: Vec<usize> = inventory
+        .containers
+        .iter()
+        .enumerate()
+        .filter_map(|(index, container)| {
+            (container.id != BODY_POCKET_CONTAINER_ID).then_some(index)
+        })
+        .collect();
+    candidate_indices.extend(inventory.containers.iter().enumerate().filter_map(
+        |(index, container)| (container.id == BODY_POCKET_CONTAINER_ID).then_some(index),
+    ));
+    candidate_indices
 }
 
 fn container_accepts_runtime_grant(
@@ -7170,8 +7216,7 @@ cols = 4
         );
     }
 
-    #[test]
-    fn runtime_grant_skips_non_body_pack_when_accept_filter_rejects_item() {
+    fn filtered_pack_inventory_fixture() -> (ItemRegistry, PlayerInventory, String, String) {
         let mut rejecting_pack_template =
             test_template("mineral_pack", ItemCategory::Container, 1, 1, 1);
         rejecting_pack_template.container_spec = Some(ContainerSpec {
@@ -7203,7 +7248,7 @@ cols = 4
         let accepting_pack_item = make_test_item_instance(20, "general_pack");
         let rejecting_pack_id = container_id_for_worn_pack(rejecting_pack_item.instance_id);
         let accepting_pack_id = container_id_for_worn_pack(accepting_pack_item.instance_id);
-        let mut inventory = PlayerInventory {
+        let inventory = PlayerInventory {
             triggered_treasures: Vec::new(),
             revision: InventoryRevision(0),
             containers: vec![
@@ -7235,6 +7280,14 @@ cols = 4
             bone_coins: 0,
             max_weight: 99.0,
         };
+
+        (registry, inventory, rejecting_pack_id, accepting_pack_id)
+    }
+
+    #[test]
+    fn runtime_grant_skips_non_body_pack_when_accept_filter_rejects_item() {
+        let (registry, mut inventory, rejecting_pack_id, accepting_pack_id) =
+            filtered_pack_inventory_fixture();
         let mut allocator = InventoryInstanceIdAllocator::new(200);
 
         let receipt =
@@ -7280,6 +7333,58 @@ cols = 4
             accepting_pack.items[0].instance.template_id, "one",
             "expected accepting pack item template to be `one` because that was the granted template, actual `{}`",
             accepting_pack.items[0].instance.template_id
+        );
+    }
+
+    #[test]
+    fn existing_item_grant_skips_non_body_pack_when_accept_filter_rejects_item() {
+        let (registry, mut inventory, rejecting_pack_id, accepting_pack_id) =
+            filtered_pack_inventory_fixture();
+
+        let mut item = make_test_item_instance(300, "one");
+        item.spirit_quality = 0.75;
+        add_existing_item_to_player_inventory(&mut inventory, &registry, item)
+            .expect("existing item should land in accepting pack after filtered pack rejects it");
+
+        let rejecting_pack = inventory
+            .containers
+            .iter()
+            .find(|container| container.id == rejecting_pack_id)
+            .expect("rejecting pack should still exist");
+        assert!(
+            rejecting_pack.items.is_empty(),
+            "expected rejecting pack to stay empty because its accept_filter rejects `one`, actual items {:?}",
+            rejecting_pack
+                .items
+                .iter()
+                .map(|placed| &placed.instance.template_id)
+                .collect::<Vec<_>>()
+        );
+        let accepting_pack = inventory
+            .containers
+            .iter()
+            .find(|container| container.id == accepting_pack_id)
+            .expect("accepting pack should still exist");
+        assert_eq!(
+            accepting_pack.items.len(),
+            1,
+            "expected accepting pack to receive one existing loot item because it has no accept_filter, actual items {:?}",
+            accepting_pack
+                .items
+                .iter()
+                .map(|placed| &placed.instance.template_id)
+                .collect::<Vec<_>>()
+        );
+        let placed = &accepting_pack.items[0].instance;
+        assert_eq!(
+            placed.instance_id, 300,
+            "expected existing item grant to preserve caller-allocated instance_id 300, actual {}",
+            placed.instance_id
+        );
+        assert!(
+            (placed.spirit_quality - 0.75).abs() < f64::EPSILON,
+            "expected existing item grant to preserve spirit_quality 0.75, actual {}",
+            placed.spirit_quality
         );
     }
 
