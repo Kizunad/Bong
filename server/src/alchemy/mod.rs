@@ -685,6 +685,7 @@ mod integration_tests {
             }],
         };
         PlayerInventory {
+            triggered_treasures: Vec::new(),
             revision: InventoryRevision(0),
             containers: vec![container],
             equipped: HashMap::new(),

@@ -876,6 +876,7 @@ mod tests {
 
     fn make_inventory() -> PlayerInventory {
         PlayerInventory {
+            triggered_treasures: Vec::new(),
             revision: InventoryRevision(7),
             containers: vec![ContainerState {
                 id: "main_pack".to_string(),

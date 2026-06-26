@@ -1336,6 +1336,7 @@ mod tests {
         };
         write_artifact_state_to_item(&mut item, &state);
         PlayerInventory {
+            triggered_treasures: Vec::new(),
             revision: InventoryRevision(1),
             containers: vec![ContainerState {
                 id: "main_pack".to_string(),
@@ -1609,6 +1610,7 @@ mod tests {
         };
         write_artifact_state_to_item(&mut item, &state);
         PlayerInventory {
+            triggered_treasures: Vec::new(),
             revision: InventoryRevision(1),
             containers: vec![ContainerState {
                 id: "main_pack".to_string(),

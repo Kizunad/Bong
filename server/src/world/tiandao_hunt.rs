@@ -1499,6 +1499,7 @@ mod tests {
     fn deceive_heaven_test_inventory() -> PlayerInventory {
         const ZHENFA_FLAG_ITEM_ID_FOR_TEST: &str = "array_flag";
         let mut inventory = PlayerInventory {
+            triggered_treasures: Vec::new(),
             revision: InventoryRevision(0),
             containers: vec![ContainerState {
                 id: MAIN_PACK_CONTAINER_ID.to_string(),

@@ -98,6 +98,7 @@ mod tests {
             lingering_owner_qi: None,
         });
         PlayerInventory {
+            triggered_treasures: Vec::new(),
             revision: InventoryRevision(1),
             containers: Vec::new(),
             equipped: HashMap::new(),

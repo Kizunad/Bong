@@ -3390,6 +3390,7 @@ mod tests {
 
     fn inventory_with_item(item: ItemInstance) -> PlayerInventory {
         PlayerInventory {
+            triggered_treasures: Vec::new(),
             revision: InventoryRevision(0),
             containers: vec![ContainerState {
                 id: "main_pack".to_string(),
@@ -3411,6 +3412,7 @@ mod tests {
 
     fn empty_trade_inventory() -> PlayerInventory {
         PlayerInventory {
+            triggered_treasures: Vec::new(),
             revision: InventoryRevision(0),
             containers: vec![ContainerState {
                 id: "main_pack".to_string(),

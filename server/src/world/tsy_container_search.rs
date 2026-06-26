@@ -772,6 +772,7 @@ mod tests {
 
     fn make_inv() -> PlayerInventory {
         PlayerInventory {
+            triggered_treasures: Vec::new(),
             revision: crate::inventory::InventoryRevision(0),
             containers: vec![ContainerState {
                 id: MAIN_PACK_CONTAINER_ID.to_string(),
@@ -976,6 +977,7 @@ mod tests {
         // 期望：背包已满（1x1 背包放了 1 件）时，再放第二件不 panic、不插入，revision 不再增加。
         use crate::inventory::ContainerState;
         let mut inv = PlayerInventory {
+            triggered_treasures: Vec::new(),
             revision: crate::inventory::InventoryRevision(0),
             containers: vec![ContainerState {
                 id: MAIN_PACK_CONTAINER_ID.to_string(),
@@ -1024,6 +1026,7 @@ mod tests {
         // 不会因 grid_w>1 而塞到 col=0..0 导致溢出。
         use crate::inventory::ContainerState;
         let mut inv = PlayerInventory {
+            triggered_treasures: Vec::new(),
             revision: crate::inventory::InventoryRevision(0),
             containers: vec![ContainerState {
                 id: MAIN_PACK_CONTAINER_ID.to_string(),

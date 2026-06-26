@@ -2211,6 +2211,7 @@ mod tests {
 
         // 给 target 装一件胸甲，初始耐久比例 1.0。
         app.world_mut().entity_mut(target).insert(PlayerInventory {
+            triggered_treasures: Vec::new(),
             revision: InventoryRevision(1),
             containers: vec![ContainerState {
                 id: crate::inventory::MAIN_PACK_CONTAINER_ID.to_string(),
@@ -2336,6 +2337,7 @@ mod tests {
             Stamina::default(),
         );
         app.world_mut().entity_mut(target).insert(PlayerInventory {
+            triggered_treasures: Vec::new(),
             revision: InventoryRevision(1),
             containers: vec![ContainerState {
                 id: crate::inventory::MAIN_PACK_CONTAINER_ID.to_string(),
@@ -5233,6 +5235,7 @@ mod tests {
                     ..Cultivation::default()
                 },
                 PlayerInventory {
+                    triggered_treasures: Vec::new(),
                     revision: InventoryRevision(0),
                     containers: Vec::new(),
                     equipped: std::collections::HashMap::from([(
@@ -5780,6 +5783,7 @@ mod tests {
             Stamina::default(),
         );
         app.world_mut().entity_mut(armed).insert(PlayerInventory {
+            triggered_treasures: Vec::new(),
             revision: InventoryRevision(1),
             containers: vec![ContainerState {
                 id: crate::inventory::MAIN_PACK_CONTAINER_ID.to_string(),
@@ -5932,6 +5936,7 @@ mod tests {
             Stamina::default(),
         );
         app.world_mut().entity_mut(armed).insert(PlayerInventory {
+            triggered_treasures: Vec::new(),
             revision: InventoryRevision(1),
             containers: vec![ContainerState {
                 id: crate::inventory::MAIN_PACK_CONTAINER_ID.to_string(),
@@ -6077,6 +6082,7 @@ mod tests {
             app.world_mut()
                 .entity_mut(tool_user)
                 .insert(PlayerInventory {
+                    triggered_treasures: Vec::new(),
                     revision: InventoryRevision(1),
                     containers: vec![ContainerState {
                         id: crate::inventory::MAIN_PACK_CONTAINER_ID.to_string(),
@@ -6228,6 +6234,7 @@ mod tests {
         app.world_mut()
             .entity_mut(broken_tool_user)
             .insert(PlayerInventory {
+                triggered_treasures: Vec::new(),
                 revision: InventoryRevision(1),
                 containers: vec![ContainerState {
                     id: crate::inventory::MAIN_PACK_CONTAINER_ID.to_string(),
@@ -6357,6 +6364,7 @@ mod tests {
         app.world_mut()
             .entity_mut(attacker)
             .insert(PlayerInventory {
+                triggered_treasures: Vec::new(),
                 revision: InventoryRevision(1),
                 containers: vec![ContainerState {
                     id: crate::inventory::MAIN_PACK_CONTAINER_ID.to_string(),
@@ -6495,6 +6503,7 @@ mod tests {
         app.world_mut()
             .entity_mut(attacker)
             .insert(PlayerInventory {
+                triggered_treasures: Vec::new(),
                 revision: InventoryRevision(1),
                 containers: vec![ContainerState {
                     id: crate::inventory::MAIN_PACK_CONTAINER_ID.to_string(),
@@ -7504,6 +7513,7 @@ mod tests {
             }, // 朝 +Z
             // P4: off_hand 骨盾供 profile 查找（template_id → block_ratio=0.65）
             PlayerInventory {
+                triggered_treasures: Vec::new(),
                 revision: InventoryRevision(1),
                 containers: vec![],
                 equipped: std::collections::HashMap::from([(
@@ -7918,6 +7928,7 @@ mod tests {
         durability: f64,
     ) {
         let inv = PlayerInventory {
+            triggered_treasures: Vec::new(),
             revision: InventoryRevision(1),
             containers: vec![ContainerState {
                 id: crate::inventory::MAIN_PACK_CONTAINER_ID.to_string(),

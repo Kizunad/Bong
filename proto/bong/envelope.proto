@@ -292,6 +292,8 @@ message ClientRequestEnvelope {
     WorkbenchOpenReq            workbench_open                = 95;
     // plan-placeable-container-blocks-v1 P1 — 通用世界容器 marker 右键打开。
     ContainerOpenReq            container_open                = 98;
+    // plan-layered-equip-v1 P4 — 法宝激活/卸下到灵宝 UI 触发位（决议 #8）。
+    TreasureActivate            treasure_activate             = 99;
   }
 }
 
@@ -3624,6 +3626,13 @@ message ForgeFalseSkinC2s {
 message InventoryDiscardItem {
   uint64            instance_id = 1;
   InventoryLocation from        = 2;
+}
+
+// 与 Rust ClientRequestV1::TreasureActivate 精确对应（plan-layered-equip-v1 P4 决议 #8）。
+// activate=true：法宝移入触发位；activate=false：从触发位卸下落回背包。
+message TreasureActivate {
+  uint64 instance_id = 1;
+  bool   activate    = 2;
 }
 
 // 与 Rust ClientRequestV1::DropWeaponIntent 精确对应。

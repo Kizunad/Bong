@@ -548,6 +548,7 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::EquipFalseSkin { v, .. }
             | ClientRequestV1::ForgeFalseSkin { v, .. }
             | ClientRequestV1::InventoryDiscardItem { v, .. }
+            | ClientRequestV1::TreasureActivate { v, .. }
             | ClientRequestV1::DropWeaponIntent { v, .. }
             | ClientRequestV1::RepairWeaponIntent { v, .. }
             | ClientRequestV1::PickupDroppedItem { v, .. }
@@ -1762,6 +1763,22 @@ pub fn handle_client_request_payloads(
                     &skill_scroll_params.cultivations,
                     &dropped_loot_params.positions,
                     &skill_scroll_params.dimensions,
+                );
+            }
+            ClientRequestV1::TreasureActivate {
+                instance_id,
+                activate,
+                ..
+            } => {
+                handle_treasure_activate(
+                    ev.client,
+                    instance_id,
+                    activate,
+                    &combat_params.item_registry,
+                    &mut inventories,
+                    &mut clients,
+                    &player_states,
+                    &skill_scroll_params.cultivations,
                 );
             }
             ClientRequestV1::DropWeaponIntent {
@@ -3658,6 +3675,7 @@ mod tests {
 
     fn inventory_with_skill_scroll(item: ItemInstance) -> PlayerInventory {
         PlayerInventory {
+            triggered_treasures: Vec::new(),
             revision: InventoryRevision(0),
             containers: vec![ContainerState {
                 id: "main_pack".into(),
@@ -3679,6 +3697,7 @@ mod tests {
 
     fn inventory_with_stack(template_id: &str, count: u32) -> PlayerInventory {
         PlayerInventory {
+            triggered_treasures: Vec::new(),
             revision: InventoryRevision(0),
             containers: vec![ContainerState {
                 id: "main_pack".into(),
@@ -3721,6 +3740,7 @@ mod tests {
 
     fn empty_inventory() -> PlayerInventory {
         PlayerInventory {
+            triggered_treasures: Vec::new(),
             revision: InventoryRevision(0),
             containers: vec![ContainerState {
                 id: "main_pack".into(),
@@ -3738,6 +3758,7 @@ mod tests {
 
     fn inventory_with_item(item: ItemInstance) -> PlayerInventory {
         PlayerInventory {
+            triggered_treasures: Vec::new(),
             revision: InventoryRevision(0),
             containers: vec![ContainerState {
                 id: "main_pack".into(),
@@ -4797,6 +4818,7 @@ mod tests {
                 PlayerState::default(),
                 // tui_gu_dan 需要 tui_gu_teng×2 + fauna.mutated_bone×1
                 PlayerInventory {
+                    triggered_treasures: Vec::new(),
                     revision: InventoryRevision(0),
                     containers: vec![ContainerState {
                         id: "main_pack".into(),
@@ -9580,6 +9602,69 @@ fn handle_inventory_move(
     }
 }
 
+/// plan-layered-equip-v1 P4（决议 #8）— 法宝激活/卸下到灵宝 UI 触发位。
+///
+/// 把 `instance_id` 在 inventory 与触发位之间移动（`activate` 区分方向）。成功 / 拒绝后都
+/// `resync_snapshot` 推全量 inventory 快照覆盖客户端乐观态；改 PlayerInventory（get_mut）会触发
+/// `Changed<PlayerInventory>`，下一 tick `sync_spirit_treasures`（scan passive_active）与
+/// `emit_treasure_equipped_payloads`（触发位 payload）自动重跑。
+#[allow(clippy::too_many_arguments)]
+fn handle_treasure_activate(
+    entity: Entity,
+    instance_id: u64,
+    activate: bool,
+    item_registry: &ItemRegistry,
+    inventories: &mut Query<&mut PlayerInventory>,
+    clients: &mut Query<(&Username, &mut Client)>,
+    player_states: &Query<&PlayerState>,
+    cultivations: &Query<&Cultivation>,
+) {
+    let mut inventory = match inventories.get_mut(entity) {
+        Ok(inv) => inv,
+        Err(_) => {
+            tracing::warn!(
+                "[bong][network][inventory] treasure_activate entity={entity:?} has no PlayerInventory"
+            );
+            return;
+        }
+    };
+
+    match crate::inventory::apply_treasure_activate(
+        &mut inventory,
+        item_registry,
+        instance_id,
+        activate,
+    ) {
+        Ok(outcome) => {
+            tracing::info!(
+                "[bong][network][inventory] treasure_activate instance={instance_id} activate={activate} -> {outcome:?}"
+            );
+            resync_snapshot(
+                entity,
+                &inventory,
+                clients,
+                player_states,
+                cultivations,
+                "treasure_activate",
+            );
+        }
+        Err(reason) => {
+            tracing::warn!(
+                "[bong][network][inventory] rejected treasure_activate entity={entity:?} instance={instance_id} activate={activate}: {reason}"
+            );
+            // 客户端做了乐观飞入/卸下；server 拒绝 → 推权威快照覆盖。
+            resync_snapshot(
+                entity,
+                &inventory,
+                clients,
+                player_states,
+                cultivations,
+                "treasure_activate_rejection",
+            );
+        }
+    }
+}
+
 fn maybe_apply_targeted_item_wear(
     entity: Entity,
     inventory: &mut PlayerInventory,
@@ -12576,6 +12661,7 @@ mod take_pill_tests {
 
     fn fresh_inventory() -> PlayerInventory {
         PlayerInventory {
+            triggered_treasures: Vec::new(),
             revision: InventoryRevision(0),
             containers: vec![ContainerState {
                 id: "main".into(),
@@ -13240,6 +13326,7 @@ mod freshness_probe_handler_tests {
 
     fn empty_inventory() -> PlayerInventory {
         PlayerInventory {
+            triggered_treasures: Vec::new(),
             revision: InventoryRevision(0),
             containers: vec![ContainerState {
                 id: "main_pack".into(),
@@ -13257,6 +13344,7 @@ mod freshness_probe_handler_tests {
 
     fn inventory_with_item(item: ItemInstance) -> PlayerInventory {
         PlayerInventory {
+            triggered_treasures: Vec::new(),
             revision: InventoryRevision(0),
             containers: vec![ContainerState {
                 id: "main_pack".into(),
@@ -13430,6 +13518,7 @@ mod freshness_probe_handler_tests {
             lingering_owner_qi: None,
         };
         let inv = PlayerInventory {
+            triggered_treasures: Vec::new(),
             revision: InventoryRevision(0),
             containers: vec![
                 // 第一容器（空）

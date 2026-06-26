@@ -125,6 +125,7 @@ mod tests {
 
     fn empty_inv() -> PlayerInventory {
         PlayerInventory {
+            triggered_treasures: Vec::new(),
             revision: InventoryRevision(1),
             containers: Vec::new(),
             equipped: HashMap::new(),

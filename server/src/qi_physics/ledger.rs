@@ -985,6 +985,7 @@ mod tests {
 
     fn inventory_with_item(spirit_quality: f64, stack_count: u32) -> PlayerInventory {
         PlayerInventory {
+            triggered_treasures: Vec::new(),
             revision: InventoryRevision(1),
             containers: vec![ContainerState {
                 id: "main_pack".to_string(),
@@ -1188,6 +1189,7 @@ mod tests {
 
     fn bare_inventory() -> PlayerInventory {
         PlayerInventory {
+            triggered_treasures: Vec::new(),
             revision: InventoryRevision(1),
             containers: Vec::new(),
             equipped: HashMap::new(),

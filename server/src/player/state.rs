@@ -1142,8 +1142,8 @@ fn load_player_inventory_from_sqlite(
 /// 旧专槽映射去向（决议 #4 定死）：
 /// - `false_skin` → `chest.worn` 追加一件（伪皮归胸槽 worn 层，决议 #9）。
 /// - `two_hand` → `main_hand.held`（对侧 off_hand lock 由 P1 状态机 load 后重算，迁移只落 held，决议 #7）。
-/// - `treasure_belt_0..3` → **丢弃出装备槽**（法宝激活态改由灵宝 UI 触发位承载，决议 #8；
-///   触发位承载 store 暂未入此 inventory 结构，迁移不进装备 worn，避免污染身体槽）。
+/// - `treasure_belt_0..3` → **迁入触发位**（`triggered_treasures`，法宝激活态改由灵宝 UI 触发位承载，
+///   决议 #8）。按 belt 槽序追加，超出 `TREASURE_TRIGGER_CAP` 的多余件丢弃（旧 belt 只有 4 槽，正常不会超）。
 /// - `back_pack/waist_pouch/chest_satchel` → 归 `chest.worn`（旧背包件按身体槽 worn 落位，决议 #17；
 ///   现存档背包均 back_pack，默认落 chest worn 栈尾，与 default.toml worn_grass_pouch→chest 一致）。
 /// - `extra_hand_0/1` → `<slot>.held`（武器落 held，不误塞多件）。
@@ -1156,6 +1156,10 @@ fn migrate_equipped_v1_to_v2(value: &mut serde_json::Value) {
         return;
     };
     let old = std::mem::take(equipped);
+
+    // plan-layered-equip-v1 P4（决议 #8）：旧 treasure_belt_* 件迁入触发位，按 belt 槽序排列。
+    let mut triggered: std::collections::BTreeMap<String, Value> =
+        std::collections::BTreeMap::new();
 
     // 累积每个目标身体/手槽的 worn 列表与 held 件。
     let mut new_slots: std::collections::HashMap<String, (Vec<Value>, Option<Value>)> =
@@ -1189,7 +1193,8 @@ fn migrate_equipped_v1_to_v2(value: &mut serde_json::Value) {
             "false_skin" => push_worn(&mut new_slots, "chest", item),
             "two_hand" => set_held(&mut new_slots, "main_hand", item),
             "treasure_belt_0" | "treasure_belt_1" | "treasure_belt_2" | "treasure_belt_3" => {
-                // 法宝激活态归触发位（决议 #8）——不进装备槽 worn，迁移期丢弃出装备结构。
+                // 法宝激活态归触发位（决议 #8）——不进装备槽 worn，按 belt 槽序收集到 triggered。
+                triggered.insert(old_slot.clone(), item);
             }
             "back_pack" | "waist_pouch" | "chest_satchel" => {
                 push_worn(&mut new_slots, "chest", item)
@@ -1212,6 +1217,21 @@ fn migrate_equipped_v1_to_v2(value: &mut serde_json::Value) {
             slot,
             json!({ "worn": worn, "held": held.unwrap_or(Value::Null) }),
         );
+    }
+
+    // plan-layered-equip-v1 P4（决议 #8）：旧 treasure_belt_* 件迁入顶层 triggered_treasures。
+    // BTreeMap 按 belt_0..3 槽名升序迭代，保持原 belt 顺序；超出触发位容量的多余件丢弃。
+    if !triggered.is_empty() {
+        let trigger_items: Vec<Value> = triggered
+            .into_values()
+            .take(crate::inventory::TREASURE_TRIGGER_CAP)
+            .collect();
+        if let Some(obj) = value.as_object_mut() {
+            obj.insert(
+                "triggered_treasures".to_string(),
+                Value::Array(trigger_items),
+            );
+        }
     }
 }
 
@@ -2293,6 +2313,7 @@ mod player_state_tests {
 
     fn empty_weapon_inventory() -> PlayerInventory {
         PlayerInventory {
+            triggered_treasures: Vec::new(),
             revision: InventoryRevision(41),
             containers: vec![ContainerState {
                 id: MAIN_PACK_CONTAINER_ID.to_string(),
@@ -2315,6 +2336,97 @@ mod player_state_tests {
             crate::inventory::SlotContents::held_single(iron_sword_instance(9_001, durability)),
         );
         inventory
+    }
+
+    /// 构造一个 v1 形态的 inventory JSON（每装备槽单件 object），仅含 equipped 段供 migrate 测试。
+    fn v1_inventory_json_with_equipped(equipped: serde_json::Value) -> serde_json::Value {
+        serde_json::json!({
+            "revision": 1,
+            "containers": [],
+            "equipped": equipped,
+            "hotbar": [null, null, null, null, null, null, null, null, null],
+            "bone_coins": 0,
+            "max_weight": 50.0
+        })
+    }
+
+    fn v1_treasure_item(instance_id: u64, template: &str) -> serde_json::Value {
+        serde_json::json!({
+            "instance_id": instance_id,
+            "template_id": template,
+            "display_name": template,
+            "grid_w": 1, "grid_h": 1, "weight": 0.2,
+            "rarity": "Uncommon", "description": "", "stack_count": 1,
+            "spirit_quality": 0.5, "durability": 1.0
+        })
+    }
+
+    // plan-layered-equip-v1 P4（决议 #8）— 旧 treasure_belt_* 槽迁入触发位 triggered_treasures，
+    // 按 belt 槽序排列；不进装备槽 worn。
+    #[test]
+    fn migrate_v1_treasure_belt_lands_in_trigger_slots_in_order() {
+        let mut value = v1_inventory_json_with_equipped(serde_json::json!({
+            "treasure_belt_0": v1_treasure_item(10, "talisman_a"),
+            "treasure_belt_2": v1_treasure_item(12, "talisman_c"),
+            "treasure_belt_1": v1_treasure_item(11, "talisman_b"),
+        }));
+
+        migrate_equipped_v1_to_v2(&mut value);
+
+        // 触发位顺序应按 belt_0,belt_1,belt_2（BTreeMap 槽名升序）。
+        let triggered = value
+            .get("triggered_treasures")
+            .and_then(|v| v.as_array())
+            .expect("triggered_treasures array present after migration");
+        let ids: Vec<u64> = triggered
+            .iter()
+            .map(|item| item.get("instance_id").and_then(|v| v.as_u64()).unwrap())
+            .collect();
+        assert_eq!(
+            ids,
+            vec![10, 11, 12],
+            "treasure_belt_0/1/2 should map to trigger slots in belt order"
+        );
+
+        // 装备结构里不应留 treasure_belt 槽（也不应进 worn）。
+        let equipped = value.get("equipped").and_then(|v| v.as_object()).unwrap();
+        assert!(
+            !equipped.contains_key("treasure_belt_0")
+                && !equipped.contains_key("treasure_belt_1")
+                && !equipped.contains_key("treasure_belt_2"),
+            "no treasure_belt slot key should survive migration"
+        );
+    }
+
+    // 反序列化迁移产物为 PlayerInventory，确认 triggered_treasures 真正落进结构。
+    #[test]
+    fn migrate_v1_treasure_belt_deserializes_into_triggered_treasures_field() {
+        let mut value = v1_inventory_json_with_equipped(serde_json::json!({
+            "treasure_belt_0": v1_treasure_item(20, "talisman_x"),
+        }));
+        migrate_equipped_v1_to_v2(&mut value);
+
+        let inventory: PlayerInventory =
+            serde_json::from_value(value).expect("migrated v2 json deserializes");
+        assert_eq!(inventory.triggered_treasures.len(), 1);
+        assert_eq!(inventory.triggered_treasures[0].instance_id, 20);
+        assert_eq!(inventory.triggered_treasures[0].template_id, "talisman_x");
+    }
+
+    // 无 treasure_belt 的旧档迁移后不应凭空生出 triggered_treasures 字段（serde default 空）。
+    #[test]
+    fn migrate_v1_without_treasure_belt_leaves_trigger_slot_empty() {
+        let mut value = v1_inventory_json_with_equipped(serde_json::json!({
+            "main_hand": v1_treasure_item(30, "iron_sword"),
+        }));
+        migrate_equipped_v1_to_v2(&mut value);
+        assert!(
+            value.get("triggered_treasures").is_none(),
+            "no treasure_belt → migration must not inject triggered_treasures"
+        );
+        let inventory: PlayerInventory =
+            serde_json::from_value(value).expect("deserializes with serde default empty trigger");
+        assert!(inventory.triggered_treasures.is_empty());
     }
 
     fn persisted_inventory_snapshot(
@@ -2978,6 +3090,7 @@ mod player_state_tests {
         }))
         .expect("prefs should decode");
         let inventory = PlayerInventory {
+            triggered_treasures: Vec::new(),
             revision: crate::inventory::InventoryRevision(0),
             containers: vec![crate::inventory::ContainerState {
                 id: "main".to_string(),

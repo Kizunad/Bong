@@ -1734,6 +1734,38 @@ describe("sample files pass schema validation", () => {
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
 
+  // plan-layered-equip-v1 P4（决议 #8）— 法宝激活/卸下到触发位 C2S。
+  for (const sample of [
+    "client-request.treasure-activate.sample.json",
+    "client-request.treasure-activate.deactivate.sample.json",
+  ]) {
+    it(sample, () => {
+      const data = loadSample(sample);
+      const result = validate(ClientRequestV1, data);
+      expect(result.ok, result.errors.join("; ")).toBe(true);
+    });
+  }
+
+  it("client-request.treasure-activate rejects unknown property", () => {
+    const result = validate(ClientRequestV1, {
+      v: 1,
+      type: "treasure_activate",
+      instance_id: 2001,
+      activate: true,
+      bogus: "x",
+    });
+    expect(result.ok, "additionalProperties=false should reject unknown 'bogus'").toBe(false);
+  });
+
+  it("client-request.treasure-activate rejects missing activate", () => {
+    const result = validate(ClientRequestV1, {
+      v: 1,
+      type: "treasure_activate",
+      instance_id: 2001,
+    });
+    expect(result.ok, "activate is required").toBe(false);
+  });
+
   for (const sample of [
     "client-request.start-search.sample.json",
     "client-request.cancel-search.sample.json",

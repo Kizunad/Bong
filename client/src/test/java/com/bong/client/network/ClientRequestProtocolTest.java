@@ -1273,4 +1273,34 @@ public class ClientRequestProtocolTest {
             );
         }
     }
+
+    // plan-layered-equip-v1 P4（决议 #8）— 法宝激活/卸下到触发位 C2S。
+    @Test
+    void encodeTreasureActivateActivate() {
+        String json = ClientRequestProtocol.encodeTreasureActivate(2001L, true);
+        assertEquals(
+            "{\"type\":\"treasure_activate\",\"v\":1,\"instance_id\":2001,\"activate\":true}",
+            json,
+            "activate=true should move the treasure into the trigger slot, actual: " + json
+        );
+    }
+
+    @Test
+    void encodeTreasureActivateDeactivate() {
+        String json = ClientRequestProtocol.encodeTreasureActivate(2001L, false);
+        assertEquals(
+            "{\"type\":\"treasure_activate\",\"v\":1,\"instance_id\":2001,\"activate\":false}",
+            json,
+            "activate=false should unload the treasure from the trigger slot, actual: " + json
+        );
+    }
+
+    @Test
+    void encodeTreasureActivateRejectsNegativeInstance() {
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> ClientRequestProtocol.encodeTreasureActivate(-1L, true),
+            "negative instance_id must be rejected (schema bounds it to >= 0)"
+        );
+    }
 }

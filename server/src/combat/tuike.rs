@@ -752,6 +752,7 @@ mod tests {
 
     fn inventory_with_materials() -> PlayerInventory {
         PlayerInventory {
+            triggered_treasures: Vec::new(),
             revision: InventoryRevision(0),
             containers: vec![ContainerState {
                 id: crate::inventory::MAIN_PACK_CONTAINER_ID.to_string(),

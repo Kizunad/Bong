@@ -230,6 +230,7 @@ mod tests {
             }],
         };
         PlayerInventory {
+            triggered_treasures: Vec::new(),
             revision: crate::inventory::InventoryRevision(1),
             containers: vec![container],
             equipped: HashMap::new(),

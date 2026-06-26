@@ -362,6 +362,7 @@ mod tests {
             SlotContents::held_single(item(template_id, 1.0)),
         );
         PlayerInventory {
+            triggered_treasures: Vec::new(),
             revision: InventoryRevision(0),
             containers: Vec::new(),
             equipped,
@@ -532,6 +533,7 @@ mod tests {
             SlotContents::held_single(item("pickaxe_copper", 1.0)),
         );
         let inventory = PlayerInventory {
+            triggered_treasures: Vec::new(),
             revision: InventoryRevision(0),
             containers: Vec::new(),
             equipped,

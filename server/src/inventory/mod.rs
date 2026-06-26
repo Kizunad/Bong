@@ -649,7 +649,18 @@ pub struct PlayerInventory {
     pub hotbar: [Option<ItemInstance>; 9],
     pub bone_coins: u64,
     pub max_weight: f64,
+    /// plan-layered-equip-v1 P4 — 法宝激活「触发位」（决议 #8）。
+    ///
+    /// 法宝激活态承载从已删除的 `treasure_belt` 装备槽迁到灵宝 UI 内的「触发位」。
+    /// 容量上限 `TREASURE_TRIGGER_CAP`（默认 4 = 旧 belt 槽数，P5 可挂升级）。
+    /// 与装备槽正交（决议 #16）：装备槽 worn 里的 treasure 仍是 worn 装备件
+    /// （equipped=true / passive_active=false），唯有进入触发位才 passive_active=true。
+    #[serde(default)]
+    pub triggered_treasures: Vec<ItemInstance>,
 }
+
+/// plan-layered-equip-v1 P4 — 法宝触发位容量上限（默认 4 = 旧 treasure_belt 槽数，决议 #8）。
+pub const TREASURE_TRIGGER_CAP: usize = 4;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClearScope {
@@ -1133,6 +1144,7 @@ pub fn instantiate_inventory_from_loadout(
     }
 
     Ok(PlayerInventory {
+        triggered_treasures: Vec::new(),
         revision: InventoryRevision(1),
         containers,
         equipped,
@@ -4906,6 +4918,96 @@ fn attach_at_location(
     }
 }
 
+/// plan-layered-equip-v1 P4（决议 #8）— 法宝激活/卸下到触发位的结果。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TreasureActivateOutcome {
+    /// 法宝从背包/装备结构移入触发位（激活）。
+    Activated { revision: InventoryRevision },
+    /// 法宝从触发位卸下，落回背包（失活）。
+    Deactivated { revision: InventoryRevision },
+}
+
+/// plan-layered-equip-v1 P4（决议 #8）— 在 inventory 与触发位之间移动指定法宝实例。
+///
+/// - `activate = true`：把 `instance_id` 指向的件移入触发位。
+///   - 拒绝：实例不存在 / 模板未注册 / 非 `Treasure` 类 / 触发位已满（`TREASURE_TRIGGER_CAP`）/
+///     该件已在触发位。
+/// - `activate = false`：把触发位中的该件卸下、落回背包首个能放下的容器格。
+///   - 拒绝：该件不在触发位 / 背包无空位（不丢件，原样保留在触发位）。
+///
+/// 成功时 `bump_revision`。本路径是纯 inventory 结构变更，不走 qi 磨损（移入 UI 承載而非
+/// 装备槽搬运）。
+pub fn apply_treasure_activate(
+    inventory: &mut PlayerInventory,
+    registry: &ItemRegistry,
+    instance_id: u64,
+    activate: bool,
+) -> Result<TreasureActivateOutcome, String> {
+    if activate {
+        // 已在触发位 → 幂等拒绝（避免重复移入）。
+        if inventory
+            .triggered_treasures
+            .iter()
+            .any(|item| item.instance_id == instance_id)
+        {
+            return Err(format!(
+                "treasure instance {instance_id} already in trigger slot"
+            ));
+        }
+        // 容量满拒绝。
+        if inventory.triggered_treasures.len() >= TREASURE_TRIGGER_CAP {
+            return Err(format!(
+                "trigger slot full ({}/{}), cannot activate instance {instance_id}",
+                inventory.triggered_treasures.len(),
+                TREASURE_TRIGGER_CAP
+            ));
+        }
+        // 实例必须在 inventory（背包/装备/快捷栏）里。
+        let item = inventory_item_by_instance_borrow(inventory, instance_id)
+            .cloned()
+            .ok_or_else(|| format!("treasure instance {instance_id} not found in inventory"))?;
+        // 必须是 Treasure 类（不允许激活普通物品）。
+        let is_treasure = registry
+            .get(&item.template_id)
+            .is_some_and(|tpl| matches!(tpl.category, ItemCategory::Treasure));
+        if !is_treasure {
+            return Err(format!(
+                "instance {instance_id} (template '{}') is not a Treasure, cannot activate",
+                item.template_id
+            ));
+        }
+        detach_instance(inventory, instance_id);
+        inventory.triggered_treasures.push(item);
+        bump_revision(inventory);
+        Ok(TreasureActivateOutcome::Activated {
+            revision: inventory.revision,
+        })
+    } else {
+        // 卸下：必须在触发位。
+        let index = inventory
+            .triggered_treasures
+            .iter()
+            .position(|item| item.instance_id == instance_id)
+            .ok_or_else(|| {
+                format!("treasure instance {instance_id} not in trigger slot, cannot deactivate")
+            })?;
+        // 先看背包是否有空位（不真改），无空位则拒绝、不丢件。
+        let item = inventory.triggered_treasures[index].clone();
+        let Some(target) = find_first_fit_container_location(inventory, &item) else {
+            return Err(format!(
+                "no free inventory slot to receive deactivated treasure instance {instance_id}"
+            ));
+        };
+        // 有空位 → 从触发位移除并落回背包。
+        inventory.triggered_treasures.remove(index);
+        attach_at_location(inventory, item, &target)?;
+        bump_revision(inventory);
+        Ok(TreasureActivateOutcome::Deactivated {
+            revision: inventory.revision,
+        })
+    }
+}
+
 fn find_first_fit_container_location(
     inventory: &PlayerInventory,
     item: &ItemInstance,
@@ -5500,6 +5602,7 @@ mod tests {
 
     fn empty_inventory(rows: u8, cols: u8) -> PlayerInventory {
         PlayerInventory {
+            triggered_treasures: Vec::new(),
             revision: InventoryRevision(0),
             containers: vec![ContainerState {
                 id: MAIN_PACK_CONTAINER_ID.to_string(),
@@ -7113,6 +7216,7 @@ cols = 4
             lingering_owner_qi: None,
         };
         PlayerInventory {
+            triggered_treasures: Vec::new(),
             revision: InventoryRevision(7),
             containers: vec![
                 ContainerState {
@@ -9398,6 +9502,7 @@ cols = 4
 
     fn make_empty_inventory() -> PlayerInventory {
         PlayerInventory {
+            triggered_treasures: Vec::new(),
             revision: InventoryRevision(0),
             containers: Vec::new(),
             equipped: HashMap::new(),
@@ -9424,6 +9529,251 @@ cols = 4
         let got = inventory_item_by_instance_borrow(&inv, 42);
         assert!(got.is_some());
         assert_eq!(got.unwrap().template_id, "iron_sword");
+    }
+
+    // ─── plan-layered-equip-v1 P4（决议 #8）— 法宝触发位 apply_treasure_activate ───
+
+    /// 注册一个 treasure 模板 + 一个普通（armor）模板的 registry。
+    fn treasure_trigger_registry() -> ItemRegistry {
+        let treasure = raw_item_template_toml("test_treasure", "treasure")
+            .try_into_item_template(Path::new("<inline>"))
+            .expect("treasure template parses");
+        let armor = raw_item_template_toml("test_armor", "armor")
+            .try_into_item_template(Path::new("<inline>"))
+            .expect("armor template parses");
+        registry_from_templates(vec![treasure, armor])
+    }
+
+    /// 带一个 8x8 main_pack 容器的空 inventory（触发位 deactivate 落点）。
+    fn inventory_with_main_pack() -> PlayerInventory {
+        let mut inv = make_empty_inventory();
+        inv.containers.push(ContainerState {
+            id: MAIN_PACK_CONTAINER_ID.into(),
+            name: MAIN_PACK_CONTAINER_ID.into(),
+            rows: 8,
+            cols: 8,
+            items: Vec::new(),
+        });
+        inv
+    }
+
+    #[test]
+    fn treasure_activate_moves_treasure_from_container_to_trigger_slot() {
+        let registry = treasure_trigger_registry();
+        let mut inv = inventory_with_main_pack();
+        inv.containers[0].items.push(PlacedItemState {
+            row: 0,
+            col: 0,
+            instance: make_test_item_instance(500, "test_treasure"),
+        });
+        let before_rev = inv.revision.0;
+
+        let outcome = apply_treasure_activate(&mut inv, &registry, 500, true)
+            .expect("activating a treasure in the container should succeed");
+
+        assert!(
+            matches!(outcome, TreasureActivateOutcome::Activated { .. }),
+            "expected Activated, got {outcome:?}"
+        );
+        assert_eq!(
+            inv.triggered_treasures.len(),
+            1,
+            "treasure should be in the trigger slot"
+        );
+        assert_eq!(inv.triggered_treasures[0].instance_id, 500);
+        assert!(
+            inv.containers[0].items.is_empty(),
+            "treasure should have left the container (no duplication)"
+        );
+        assert!(inv.revision.0 > before_rev, "revision should bump");
+    }
+
+    #[test]
+    fn treasure_activate_roundtrip_deactivate_returns_to_container_preserving_instance() {
+        let registry = treasure_trigger_registry();
+        let mut inv = inventory_with_main_pack();
+        let mut original = make_test_item_instance(501, "test_treasure");
+        original.durability = 0.42; // 非默认值，断言实例（含耐久）原样保留，不是重新生成
+        inv.containers[0].items.push(PlacedItemState {
+            row: 1,
+            col: 2,
+            instance: original,
+        });
+
+        apply_treasure_activate(&mut inv, &registry, 501, true).expect("activate ok");
+        assert_eq!(inv.triggered_treasures.len(), 1);
+        assert!(inv.containers[0].items.is_empty());
+
+        let outcome =
+            apply_treasure_activate(&mut inv, &registry, 501, false).expect("deactivate ok");
+        assert!(
+            matches!(outcome, TreasureActivateOutcome::Deactivated { .. }),
+            "expected Deactivated, got {outcome:?}"
+        );
+        assert!(
+            inv.triggered_treasures.is_empty(),
+            "trigger slot should be empty after deactivate"
+        );
+        assert_eq!(
+            inv.containers[0].items.len(),
+            1,
+            "treasure should be back in the container"
+        );
+        let returned = &inv.containers[0].items[0].instance;
+        assert_eq!(returned.instance_id, 501, "same instance id preserved");
+        assert!(
+            (returned.durability - 0.42).abs() < f64::EPSILON,
+            "durability preserved (existing instance moved, not regenerated): expected 0.42, got {}",
+            returned.durability
+        );
+    }
+
+    #[test]
+    fn treasure_activate_rejects_when_trigger_slot_full() {
+        let registry = treasure_trigger_registry();
+        let mut inv = inventory_with_main_pack();
+        // 触发位预填满 CAP 件。
+        for i in 0..TREASURE_TRIGGER_CAP {
+            inv.triggered_treasures
+                .push(make_test_item_instance(600 + i as u64, "test_treasure"));
+        }
+        // 背包再放一件想激活的。
+        inv.containers[0].items.push(PlacedItemState {
+            row: 0,
+            col: 0,
+            instance: make_test_item_instance(700, "test_treasure"),
+        });
+
+        let result = apply_treasure_activate(&mut inv, &registry, 700, true);
+
+        assert!(
+            result.is_err(),
+            "activating into a full trigger slot must be rejected"
+        );
+        assert_eq!(
+            inv.triggered_treasures.len(),
+            TREASURE_TRIGGER_CAP,
+            "trigger slot unchanged on reject"
+        );
+        assert_eq!(
+            inv.containers[0].items.len(),
+            1,
+            "rejected treasure stays in the container (not dropped)"
+        );
+    }
+
+    #[test]
+    fn treasure_activate_rejects_non_treasure_item() {
+        let registry = treasure_trigger_registry();
+        let mut inv = inventory_with_main_pack();
+        inv.containers[0].items.push(PlacedItemState {
+            row: 0,
+            col: 0,
+            instance: make_test_item_instance(800, "test_armor"),
+        });
+
+        let result = apply_treasure_activate(&mut inv, &registry, 800, true);
+
+        assert!(
+            result.is_err(),
+            "non-Treasure items must not be activatable into the trigger slot"
+        );
+        assert!(
+            inv.triggered_treasures.is_empty(),
+            "trigger slot stays empty"
+        );
+        assert_eq!(
+            inv.containers[0].items.len(),
+            1,
+            "armor stays in the container"
+        );
+    }
+
+    #[test]
+    fn treasure_activate_rejects_unknown_instance() {
+        let registry = treasure_trigger_registry();
+        let mut inv = inventory_with_main_pack();
+        let result = apply_treasure_activate(&mut inv, &registry, 999, true);
+        assert!(
+            result.is_err(),
+            "activating a non-existent instance must be rejected"
+        );
+        assert!(inv.triggered_treasures.is_empty());
+    }
+
+    #[test]
+    fn treasure_activate_rejects_already_in_trigger_slot() {
+        let registry = treasure_trigger_registry();
+        let mut inv = inventory_with_main_pack();
+        inv.triggered_treasures
+            .push(make_test_item_instance(900, "test_treasure"));
+
+        let result = apply_treasure_activate(&mut inv, &registry, 900, true);
+
+        assert!(
+            result.is_err(),
+            "activating an instance already in the trigger slot must be rejected (idempotent)"
+        );
+        assert_eq!(
+            inv.triggered_treasures.len(),
+            1,
+            "no duplicate pushed on reject"
+        );
+    }
+
+    #[test]
+    fn treasure_deactivate_rejects_instance_not_in_trigger_slot() {
+        let registry = treasure_trigger_registry();
+        let mut inv = inventory_with_main_pack();
+        inv.containers[0].items.push(PlacedItemState {
+            row: 0,
+            col: 0,
+            instance: make_test_item_instance(1000, "test_treasure"),
+        });
+
+        // 该件在背包而非触发位 → 卸下应拒绝。
+        let result = apply_treasure_activate(&mut inv, &registry, 1000, false);
+        assert!(
+            result.is_err(),
+            "deactivating an instance that isn't in the trigger slot must be rejected"
+        );
+        assert_eq!(inv.containers[0].items.len(), 1, "container unchanged");
+    }
+
+    #[test]
+    fn treasure_deactivate_rejects_when_no_free_container_slot() {
+        let registry = treasure_trigger_registry();
+        let mut inv = make_empty_inventory();
+        // main_pack 满（1x1 且已占用），无空位接收卸下的件。
+        inv.containers.push(ContainerState {
+            id: MAIN_PACK_CONTAINER_ID.into(),
+            name: MAIN_PACK_CONTAINER_ID.into(),
+            rows: 1,
+            cols: 1,
+            items: vec![PlacedItemState {
+                row: 0,
+                col: 0,
+                instance: make_test_item_instance(1100, "test_armor"),
+            }],
+        });
+        inv.triggered_treasures
+            .push(make_test_item_instance(1200, "test_treasure"));
+
+        let result = apply_treasure_activate(&mut inv, &registry, 1200, false);
+
+        assert!(
+            result.is_err(),
+            "deactivating with no free container slot must be rejected (don't drop the item)"
+        );
+        assert_eq!(
+            inv.triggered_treasures.len(),
+            1,
+            "treasure stays in the trigger slot when there's nowhere to put it"
+        );
+        assert_eq!(
+            inv.triggered_treasures[0].instance_id, 1200,
+            "the same treasure is retained, not lost"
+        );
     }
 
     #[test]
@@ -10384,6 +10734,7 @@ cols = 4
             ("chest_bag".to_string(), cs_template),
         ]));
         let inv = PlayerInventory {
+            triggered_treasures: Vec::new(),
             revision: InventoryRevision(0),
             containers: vec![ContainerState {
                 id: MAIN_PACK_CONTAINER_ID.to_string(),
