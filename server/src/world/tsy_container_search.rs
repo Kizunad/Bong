@@ -571,18 +571,18 @@ pub fn tick_search_progress(
             loot.push(spirit_treasure);
         }
 
-        // 入背包（无空间则丢失，告 warn —— P3 demo 简化，不做 ownerless drop）
+        // 先扣钥匙再入背包：满包时钥匙自身释放的格子可承接本次 loot。
         if let Ok(mut inv) = inventories.get_mut(player_ent) {
-            for item in &loot {
-                place_loot_in_carried_inventory(&mut inv, &item_registry, item.clone());
-            }
-            // 扣钥匙
             if let Some(kid) = key_id {
                 if let Err(e) = consume_item_instance_once(&mut inv, kid) {
                     tracing::warn!(
                         "[bong][tsy-container] key consume failed for instance {kid}: {e}"
                     );
                 }
+            }
+            // 入背包（无空间则丢失，告 warn —— P3 demo 简化，不做 ownerless drop）
+            for item in &loot {
+                place_loot_in_carried_inventory(&mut inv, &item_registry, item.clone());
             }
         }
 
@@ -759,7 +759,10 @@ mod tests {
     use super::*;
     use crate::combat::components::{Wound, WoundKind};
     use crate::inventory::{ContainerState, PlacedItemState, MAIN_PACK_CONTAINER_ID};
+    use crate::world::loot_pool::{LootEntry, LootPool};
+    use crate::world::tsy_container::ContainerKind;
     use valence::prelude::{App, Update};
+    use valence::testing::ScenarioSingleClient;
 
     fn make_inv() -> PlayerInventory {
         PlayerInventory {
@@ -808,6 +811,23 @@ mod tests {
     fn place_test_loot(inv: &mut PlayerInventory, instance: ItemInstance) {
         let registry = ItemRegistry::from_map(HashMap::new());
         place_loot_in_carried_inventory(inv, &registry, instance);
+    }
+
+    fn placed_item_summaries(inv: &PlayerInventory) -> Vec<(String, u64, String, u8, u8)> {
+        inv.containers
+            .iter()
+            .flat_map(|container| {
+                container.items.iter().map(|placed| {
+                    (
+                        container.id.clone(),
+                        placed.instance.instance_id,
+                        placed.instance.template_id.clone(),
+                        placed.row,
+                        placed.col,
+                    )
+                })
+            })
+            .collect()
     }
 
     fn spirit_item(
@@ -885,9 +905,23 @@ mod tests {
         let mut inv = make_inv();
         let item = key_item("iron_sword", 99);
         place_test_loot(&mut inv, item);
-        assert_eq!(inv.containers[0].items.len(), 1);
-        assert_eq!(inv.containers[0].items[0].instance.instance_id, 99);
-        assert_eq!(inv.revision.0, 1);
+        assert_eq!(
+            inv.containers[0].items.len(),
+            1,
+            "expected one loot item because main_pack has space; actual items={:?}",
+            placed_item_summaries(&inv)
+        );
+        assert_eq!(
+            inv.containers[0].items[0].instance.instance_id,
+            99,
+            "expected inserted loot instance_id=99; actual items={:?}",
+            placed_item_summaries(&inv)
+        );
+        assert_eq!(
+            inv.revision.0, 1,
+            "expected revision=1 because one loot item was inserted; actual revision={}",
+            inv.revision.0
+        );
     }
 
     #[test]
@@ -896,7 +930,14 @@ mod tests {
         inv.containers.clear();
         // 不应 panic，仅警告
         place_test_loot(&mut inv, key_item("x", 1));
-        assert!(inv.containers.is_empty());
+        assert!(
+            inv.containers.is_empty(),
+            "expected no containers to remain because the test cleared inventory before placement; actual containers={:?}",
+            inv.containers
+                .iter()
+                .map(|container| container.id.as_str())
+                .collect::<Vec<_>>()
+        );
     }
 
     #[test]
@@ -950,6 +991,144 @@ mod tests {
                 .iter()
                 .map(|placed| (placed.instance.instance_id, placed.instance.template_id.as_str(), placed.row, placed.col))
                 .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn tick_search_progress_consumes_key_before_placing_loot_into_freed_slot() {
+        let scenario = ScenarioSingleClient::new();
+        let mut app = scenario.app;
+        let player = scenario.client;
+        app.add_event::<SearchCompleted>();
+        app.add_event::<SearchAborted>();
+        app.add_event::<RelicExtracted>();
+        app.add_event::<VfxEventRequest>();
+        app.add_event::<PlaySoundRecipeRequest>();
+        app.insert_resource(CombatClock { tick: 7 });
+        app.insert_resource(
+            crate::inventory::load_item_registry().expect("item registry should load"),
+        );
+        app.insert_resource(AncientRelicPool::default());
+        app.insert_resource(SpiritTreasureRegistry::default());
+        app.insert_resource(InventoryInstanceIdAllocator::new(50_000));
+        app.insert_resource(SurfaceStashPlayerLimit::default());
+        app.insert_resource(LootPoolRegistry::from_pools(HashMap::from([(
+            "single_key".to_string(),
+            LootPool {
+                rolls: (1, 1),
+                entries: vec![LootEntry {
+                    template_id: "key_array_core".to_string(),
+                    weight: 1,
+                    count: (1, 1),
+                }],
+            },
+        )])));
+        app.add_systems(Update, tick_search_progress);
+
+        let mut inv = PlayerInventory {
+            containers: vec![ContainerState {
+                id: MAIN_PACK_CONTAINER_ID.to_string(),
+                name: "tiny".to_string(),
+                rows: 1,
+                cols: 1,
+                items: vec![PlacedItemState {
+                    row: 0,
+                    col: 0,
+                    instance: key_item(KeyKind::StoneCasketKey.template_id(), 42),
+                }],
+                owner_instance_id: None,
+            }],
+            ..make_inv()
+        };
+        inv.revision.0 = 0;
+
+        let container = app
+            .world_mut()
+            .spawn((
+                LootContainer::new(
+                    ContainerKind::StoneCasket,
+                    "tsy_key_order_test".to_string(),
+                    crate::world::zone::TsyDepth::Shallow,
+                    "single_key".to_string(),
+                    0,
+                ),
+                Position::new([0.0, 64.0, 0.0]),
+            ))
+            .id();
+        app.world_mut().entity_mut(player).insert((
+            Username("Azure".to_string()),
+            Position::new([0.0, 64.0, 0.0]),
+            CombatState::default(),
+            Wounds::default(),
+            SearchProgress {
+                container,
+                required_ticks: 1,
+                elapsed_ticks: 0,
+                started_at_tick: 7,
+                started_pos: [0.0, 64.0, 0.0],
+                key_item_instance_id: Some(42),
+            },
+            inv,
+        ));
+        app.world_mut()
+            .entity_mut(container)
+            .get_mut::<LootContainer>()
+            .expect("container should exist")
+            .searched_by = Some(player);
+
+        app.update();
+
+        let inv = app
+            .world()
+            .get::<PlayerInventory>(player)
+            .expect("player inventory should remain attached");
+        let items = placed_item_summaries(inv);
+        assert!(
+            items
+                .iter()
+                .any(|(_, _, template_id, row, col)| template_id == "key_array_core" && *row == 0 && *col == 0),
+            "expected rolled loot to use the only freed slot after consuming key instance 42 first; actual items={items:?}"
+        );
+        assert!(
+            items
+                .iter()
+                .all(|(_, instance_id, template_id, _, _)| {
+                    *instance_id != 42 && template_id != KeyKind::StoneCasketKey.template_id()
+                }),
+            "expected consumed key instance 42 to be removed before loot placement; actual items={items:?}"
+        );
+        let container_state = app
+            .world()
+            .get::<LootContainer>(container)
+            .expect("container should remain attached");
+        assert!(
+            container_state.depleted,
+            "expected search completion to mark container depleted; actual container={container_state:?}"
+        );
+
+        let completed = app.world().resource::<Events<SearchCompleted>>();
+        let mut reader = completed.get_reader();
+        let emitted: Vec<_> = reader.read(completed).cloned().collect();
+        assert_eq!(
+            emitted.len(),
+            1,
+            "expected exactly one SearchCompleted event after required_ticks reached; actual events={emitted:?}"
+        );
+        assert_eq!(
+            emitted[0].player, player,
+            "expected SearchCompleted player to match searched player; actual event={:?}",
+            emitted[0]
+        );
+        assert_eq!(
+            emitted[0].container, container,
+            "expected SearchCompleted container to match searched container; actual event={:?}",
+            emitted[0]
+        );
+        assert_eq!(
+            emitted[0].loot.len(),
+            1,
+            "expected one rolled loot item from single_key pool; actual loot={:?}",
+            emitted[0].loot
         );
     }
 
