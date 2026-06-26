@@ -1201,12 +1201,18 @@ pub fn instantiate_inventory_from_loadout(
         max_weight: loadout.max_weight,
     };
 
-    // plan-tarkov-backpack-v1 P0（交付物 #5）— 多背包 loadout 才收尾 rebuild：为第 2+ 个
-    // worn pack 动态新建 `pack_<id>` 容器、为所有 pack 容器写 owner_instance_id。
-    // 第一个 worn pack 已复用占位容器（保留预置物品）；rebuild 按 id 匹配刷新已存在容器（不丢物品）。
-    // 仅在 `>1` 个 worn pack 时触发，保留单 / 零背包 loadout 的既有 `max_weight` 行为（避免回归）。
-    if worn_pack_instances.len() > 1 {
+    // plan-tarkov-backpack-v1 P0（交付物 #5）— 任何 worn pack loadout 都收尾 rebuild：
+    // - 只有占位容器时，第一个 worn pack 复用占位（保留预置物品）并回填 owner_instance_id；
+    // - 没有占位容器时，单背包也必须动态新建 `pack_<id>` 容器；
+    // - 多背包时为第 2+ 个 worn pack 动态建容器。
+    //
+    // 单背包既有 loadout 可能依赖显式 max_weight；仅多背包沿用 rebuild 的重算行为。
+    if !worn_pack_instances.is_empty() {
+        let configured_max_weight = inventory.max_weight;
         let _overflow = rebuild_containers_from_equipment(&mut inventory, registry);
+        if worn_pack_instances.len() == 1 {
+            inventory.max_weight = configured_max_weight;
+        }
     }
 
     Ok(inventory)
@@ -11884,6 +11890,61 @@ cols = 4
             preset_still_present,
             "占位容器的预置物品（preset_item）在重映射后不应丢失"
         );
+    }
+
+    /// 单背包 loadout 不应强依赖旧占位容器：`body_pocket` 是唯一必需静态容器，
+    /// worn 背包件的 `pack_<instance_id>` 容器必须由实例化收尾 rebuild 派生。
+    #[test]
+    fn instantiate_single_worn_pack_without_placeholder_creates_runtime_container() {
+        let chest_pack = make_container_template("chest_pack", EQUIP_SLOT_CHEST, 3, 3, 8.0);
+        let registry =
+            ItemRegistry::from_map(HashMap::from([("chest_pack".to_string(), chest_pack)]));
+
+        let loadout = LoadoutSpec {
+            containers: vec![ContainerState {
+                id: BODY_POCKET_CONTAINER_ID.to_string(),
+                name: "贴身口袋".to_string(),
+                rows: BODY_POCKET_ROWS,
+                cols: BODY_POCKET_COLS,
+                items: Vec::new(),
+                owner_instance_id: None,
+            }],
+            equipped: HashMap::from([(
+                EQUIP_SLOT_CHEST.to_string(),
+                SlotContents::worn_single(make_container_item(0, "chest_pack")),
+            )]),
+            hotbar: Default::default(),
+            bone_coins: 0,
+            max_weight: 23.0,
+        };
+
+        let mut alloc = InventoryInstanceIdAllocator::new(3000);
+        let inv = instantiate_inventory_from_loadout(&loadout, &mut alloc, &registry)
+            .expect("single worn-pack loadout should instantiate");
+
+        let pack_instance_id = inv
+            .equipped
+            .get(EQUIP_SLOT_CHEST)
+            .and_then(|slot| slot.worn.first())
+            .map(|item| item.instance_id)
+            .expect("chest worn pack should exist");
+        let expected_container_id = container_id_for_worn_pack(pack_instance_id);
+        let pack = inv
+            .containers
+            .iter()
+            .find(|container| container.id == expected_container_id)
+            .unwrap_or_else(|| {
+                panic!(
+                    "单背包 loadout 即使没有旧占位容器，也必须派生 `{expected_container_id}`；实际 ids = {:?}",
+                    inv.containers
+                        .iter()
+                        .map(|container| &container.id)
+                        .collect::<Vec<_>>()
+                )
+            });
+
+        assert_eq!(pack.owner_instance_id, Some(pack_instance_id));
+        assert_eq!((pack.rows, pack.cols), (3, 3));
     }
 
     /// qi_physics 锚点 — 跨包移动 lingering_owner_qi 守恒（随 instance 走，不重算/复制/蒸发）。
