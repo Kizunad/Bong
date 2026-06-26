@@ -3888,7 +3888,8 @@ pub fn rebuild_containers_from_equipment(
                 Some(location) => {
                     // attach 不应失败（location 来自 find_first_fit 的实时校验）；
                     // 万一失败也不丢件——回落 overflow。
-                    if let Err(_reason) = attach_at_location(inventory, placed.instance.clone(), &location)
+                    if let Err(_reason) =
+                        attach_at_location(inventory, placed.instance.clone(), &location)
                     {
                         overflow.push(placed.instance);
                     }
@@ -10714,7 +10715,11 @@ cols = 4
             .find(|c| c.id == BODY_POCKET_CONTAINER_ID)
             .expect("body_pocket 应存在");
         assert_eq!(
-            pocket.items.iter().map(|p| p.instance.instance_id).collect::<Vec<_>>(),
+            pocket
+                .items
+                .iter()
+                .map(|p| p.instance.instance_id)
+                .collect::<Vec<_>>(),
             vec![55],
             "孤儿容器里的 herb(55) 应 spill 进 body_pocket，物品不丢"
         );
@@ -10807,7 +10812,10 @@ cols = 4
             .find(|c| c.id == pack_id)
             .expect("有对应穿戴背包件的容器必须保留");
         assert_eq!(
-            pack.items.iter().map(|p| p.instance.instance_id).collect::<Vec<_>>(),
+            pack.items
+                .iter()
+                .map(|p| p.instance.instance_id)
+                .collect::<Vec<_>>(),
             vec![55],
             "自洽容器内含物原样保留，不被 spill 走"
         );

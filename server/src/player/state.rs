@@ -2749,7 +2749,8 @@ mod player_state_tests {
             "triggered_treasures": []
         });
         let (loaded, data_dir) = load_inventory_row(2, &healthy_v2.to_string());
-        let inventory = loaded.expect("健康 v2 存档（pack_<id> 有 backing worn 件）必须原样保留，不得被自愈误丢");
+        let inventory = loaded
+            .expect("健康 v2 存档（pack_<id> 有 backing worn 件）必须原样保留，不得被自愈误丢");
         let chest = inventory
             .equipped
             .get(crate::inventory::EQUIP_SLOT_CHEST)
@@ -2833,8 +2834,7 @@ mod player_state_tests {
             "max_weight": 23.0
         });
         let (loaded, data_dir) = load_inventory_row(1, &v1_row.to_string());
-        let inventory =
-            loaded.expect("v1 旧档加载后 inventory 必须存在（不得迁空、不得误判污染）");
+        let inventory = loaded.expect("v1 旧档加载后 inventory 必须存在（不得迁空、不得误判污染）");
 
         assert!(
             !inventory.equipped.is_empty(),
@@ -2845,7 +2845,11 @@ mod player_state_tests {
             .get(crate::inventory::EQUIP_SLOT_CHEST)
             .expect("chest 槽必须存在");
         assert_eq!(
-            chest.worn.iter().map(|i| i.template_id.as_str()).collect::<Vec<_>>(),
+            chest
+                .worn
+                .iter()
+                .map(|i| i.template_id.as_str())
+                .collect::<Vec<_>>(),
             vec!["worn_grass_pouch", "fake_spirit_hide"],
             "chest.worn 应为 [背包件, 伪皮]（栈底→栈顶），与 default.toml fresh 实例化一致"
         );
@@ -2868,10 +2872,18 @@ mod player_state_tests {
             .unwrap_or_else(|| {
                 panic!(
                     "back_pack 容器应改名到 `{expected_pack_id}`；实际容器 ids = {:?}",
-                    inventory.containers.iter().map(|c| &c.id).collect::<Vec<_>>()
+                    inventory
+                        .containers
+                        .iter()
+                        .map(|c| &c.id)
+                        .collect::<Vec<_>>()
                 )
             });
-        assert_eq!(pack.items.len(), 7, "改名后 pack 容器内 7 件原样保留（不丢数据）");
+        assert_eq!(
+            pack.items.len(),
+            7,
+            "改名后 pack 容器内 7 件原样保留（不丢数据）"
+        );
         assert!(
             !inventory.containers.iter().any(|c| c.id == "back_pack"),
             "旧 back_pack 容器 id 不应残留（已改名，否则成无主孤儿 = 取不出）"
@@ -2913,7 +2925,11 @@ mod player_state_tests {
             .get(crate::inventory::EQUIP_SLOT_CHEST)
             .expect("chest 槽必须存在");
         assert_eq!(
-            chest.worn.iter().map(|i| i.template_id.as_str()).collect::<Vec<_>>(),
+            chest
+                .worn
+                .iter()
+                .map(|i| i.template_id.as_str())
+                .collect::<Vec<_>>(),
             vec!["worn_grass_pouch", "fake_spirit_hide"],
             "fresh chest.worn 应为 [破草包, 伪皮]（两条 [[equip]] slot=chest 聚合到 worn 栈）"
         );
