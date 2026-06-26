@@ -621,6 +621,25 @@ pub fn worn_cap(slot: &str) -> u8 {
     }
 }
 
+/// **P5 hook — worn_cap 升级奖励（占位扩展点）**。
+///
+/// 当前恒返回 0，有效 cap = `worn_cap(slot) + worn_cap_bonus(slot, ...)` = 基础值不变。
+///
+/// 未来由境界 / 功法 / 法宝派生加成，需要以下前置工作才能接入：
+/// - 境界加成：`worldview.md` §四 装备容量锚点（决议 #24，尚无 worldview 节号）
+/// - 功法加成：修炼功法 modifier 系统设计
+/// - 法宝加成：triggered_treasures passive 效果框架
+///
+/// 调用方可选择性传入上下文；调用方拿不到 cultivation/techniques 时直接调 `worn_cap(slot)`
+/// 即可（等价于 bonus=0，行为与重构前完全一致）。
+///
+/// plan-layered-equip-v1 P5（决议 #24）— 升级源需 worldview 锚点，本 PR 不接任何升级源。
+#[allow(dead_code)]
+pub fn worn_cap_bonus(_slot: &str) -> u8 {
+    // P5 占位：升级源未接，返回 0。接入升级源时删除 #[allow(dead_code)] 并实现派生逻辑。
+    0
+}
+
 /// plan-layered-equip-v1 P0.1 — 物品装备态分类（决议 #16 / #17）。
 ///
 /// - `Weapon | Tool` → Held（不计 worn cap）。
@@ -661,6 +680,20 @@ pub struct PlayerInventory {
 
 /// plan-layered-equip-v1 P4 — 法宝触发位容量上限（默认 4 = 旧 treasure_belt 槽数，决议 #8）。
 pub const TREASURE_TRIGGER_CAP: usize = 4;
+
+/// **P5 hook — 法宝触发位有效容量（占位扩展点）**。
+///
+/// 当前恒返回 `TREASURE_TRIGGER_CAP`（= 4），行为与重构前完全一致。
+///
+/// 未来接入升级源（境界 / 功法 / 法宝 passive）时，把扩展逻辑写到此函数，调用方无需改动。
+/// 与 `worn_cap_bonus` 同步，升级源需 worldview 锚点（决议 #24）。
+///
+/// plan-layered-equip-v1 P5 — 升级源未接，本 PR 为占位扩展点。
+#[allow(dead_code)]
+pub fn treasure_trigger_cap() -> usize {
+    // P5 占位：升级源未接，返回基础常量。接入升级源时删除 #[allow(dead_code)] 并实现派生逻辑。
+    TREASURE_TRIGGER_CAP
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClearScope {
@@ -13309,6 +13342,90 @@ cols = 4
                 worn_cap(EQUIP_SLOT_EXTRA_HAND_1),
                 0,
                 "extra_hand_1 held-only cap=0"
+            );
+        }
+
+        // ── P5 pin — worn_cap_bonus 默认 0（扩展点未接升级源，行为不变）──
+
+        #[test]
+        fn p5_worn_cap_bonus_defaults_to_zero_so_effective_cap_equals_base() {
+            // P5 hook：升级源未接时 bonus=0，有效 cap = base。
+            // 当升级源接入时本测试需同步更新（预期值不再恒等 base）。
+            for slot in &[
+                EQUIP_SLOT_HEAD,
+                EQUIP_SLOT_CHEST,
+                EQUIP_SLOT_LEGS,
+                EQUIP_SLOT_FEET,
+                EQUIP_SLOT_MAIN_HAND,
+                EQUIP_SLOT_OFF_HAND,
+                EQUIP_SLOT_EXTRA_HAND_0,
+                EQUIP_SLOT_EXTRA_HAND_1,
+            ] {
+                let base = worn_cap(slot);
+                let bonus = worn_cap_bonus(slot);
+                assert_eq!(
+                    bonus, 0,
+                    "worn_cap_bonus({slot}) 应为 0（P5 占位，升级源未接）；\
+                     接入升级源后请删除此 assert_eq!(bonus,0) 并改为具体边界断言"
+                );
+                assert_eq!(
+                    base.saturating_add(bonus),
+                    base,
+                    "effective worn_cap({slot}) = base={base}+bonus=0，应等于 base（行为不变）"
+                );
+            }
+        }
+
+        #[test]
+        fn p5_treasure_trigger_cap_fn_equals_constant() {
+            // P5 hook：treasure_trigger_cap() 当前恒等于 TREASURE_TRIGGER_CAP 常量。
+            // 接入升级源后，该函数可返回比常量更大的值；届时删除此相等断言并改边界断言。
+            assert_eq!(
+                treasure_trigger_cap(),
+                TREASURE_TRIGGER_CAP,
+                "treasure_trigger_cap() 应等于常量 TREASURE_TRIGGER_CAP={TREASURE_TRIGGER_CAP}（P5 占位，升级源未接）"
+            );
+        }
+
+        // ── P5 边界 pin — worn_cap_bonus 空串 / 完全未知槽位（CR 补充）──
+
+        #[test]
+        fn p5_worn_cap_bonus_empty_slot_returns_zero() {
+            // P5 占位：空字符串不是任何规范槽位，bonus 恒 0。
+            // 断言信息：P5 占位——升级源未接前任意槽位 bonus 恒 0，空串亦不例外。
+            assert_eq!(
+                worn_cap_bonus(""),
+                0,
+                "P5 占位：worn_cap_bonus(\"\") 应为 0（升级源未接，任意非规范输入 bonus 恒 0）"
+            );
+        }
+
+        #[test]
+        fn p5_worn_cap_bonus_unknown_slot_returns_zero() {
+            // P5 占位：完全陌生的槽位名不是任何规范槽位，bonus 恒 0。
+            // 断言信息：P5 占位——升级源未接前任意槽位 bonus 恒 0，未知槽位亦不例外。
+            assert_eq!(
+                worn_cap_bonus("totally_unknown_slot"),
+                0,
+                "P5 占位：worn_cap_bonus(\"totally_unknown_slot\") 应为 0（升级源未接，任意非规范输入 bonus 恒 0）"
+            );
+        }
+
+        // ── worn_cap 非规范输入行为 pin（CR 补充）──
+
+        #[test]
+        fn worn_cap_noncanonical_inputs_default_to_zero() {
+            // worn_cap 对空串和未知槽位走 `_ => 0` 默认分支，行为是 held-only 语义（cap=0）。
+            // 锁定此占位行为：任何非规范输入恒 0，防回归改变 wildcard 分支语义。
+            assert_eq!(
+                worn_cap(""),
+                0,
+                "worn_cap(\"\") 应为 0：非规范输入走 _ => 0 默认分支（held-only 语义）"
+            );
+            assert_eq!(
+                worn_cap("unknown"),
+                0,
+                "worn_cap(\"unknown\") 应为 0：非规范输入走 _ => 0 默认分支（held-only 语义）"
             );
         }
 
