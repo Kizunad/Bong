@@ -805,7 +805,11 @@ mod tests {
         assert!(
             snapshot.containers.iter().any(|c| c.id == "pack_1007"),
             "sample 应含动态 pack_1007 套包容器；实际 ids = {:?}",
-            snapshot.containers.iter().map(|c| &c.id).collect::<Vec<_>>()
+            snapshot
+                .containers
+                .iter()
+                .map(|c| &c.id)
+                .collect::<Vec<_>>()
         );
         assert!(
             snapshot
