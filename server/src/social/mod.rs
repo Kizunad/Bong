@@ -4564,6 +4564,80 @@ mod tests {
     }
 
     #[test]
+    fn trade_response_rejects_equipped_offered_item() {
+        let mut app = setup_trade_app();
+        let initiator = spawn_trade_player(&mut app, "Initiator", "char:initiator", 0.0);
+        let target = spawn_trade_player(&mut app, "Target", "char:target", 10.0);
+
+        app.world_mut().send_event(TradeOfferRequest {
+            initiator,
+            target,
+            offered_instance_id: 1001,
+            tick: 42,
+        });
+        app.update();
+        let offer_id = app
+            .world()
+            .resource::<TradeOfferRegistry>()
+            .pending
+            .keys()
+            .next()
+            .expect("trade offer should be pending")
+            .clone();
+        move_first_trade_item_to_main_hand(
+            &mut app
+                .world_mut()
+                .get_mut::<PlayerInventory>(initiator)
+                .unwrap(),
+        );
+
+        app.world_mut().send_event(TradeOfferResponseEvent {
+            player: target,
+            offer_id,
+            accepted: true,
+            requested_instance_id: Some(2002),
+            tick: 50,
+        });
+        app.update();
+
+        let initiator_inventory = app.world().get::<PlayerInventory>(initiator).unwrap();
+        let target_inventory = app.world().get::<PlayerInventory>(target).unwrap();
+        assert_eq!(
+            initiator_inventory
+                .equipped
+                .get(EQUIP_SLOT_MAIN_HAND)
+                .and_then(|slot| slot.held.as_ref())
+                .map(|item| item.instance_id),
+            Some(1001),
+            "equipped offered item must remain equipped and untraded"
+        );
+        assert!(
+            inventory_item_by_instance(target_inventory, 2002).is_some(),
+            "rejected trade response must leave target requested item untouched"
+        );
+        assert!(
+            inventory_item_by_instance(target_inventory, 1001).is_none(),
+            "target must not receive initiator equipped offered item"
+        );
+        assert!(
+            app.world()
+                .get::<LifeRecord>(initiator)
+                .unwrap()
+                .biography
+                .is_empty(),
+            "rejected equipped-item trade must not record a completed trade"
+        );
+        assert!(
+            app.world()
+                .get::<LifeRecord>(target)
+                .unwrap()
+                .biography
+                .is_empty(),
+            "rejected equipped-item trade must not record a completed trade"
+        );
+    }
+
+    #[test]
     fn trade_response_rejects_terminal_expired_or_missing_items() {
         let cases = [
             "declined",
