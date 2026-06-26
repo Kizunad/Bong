@@ -34,8 +34,8 @@ use crate::inventory::spirit_treasure::{
 };
 use crate::inventory::InventoryInstanceIdAllocator;
 use crate::inventory::{
-    bump_revision, consume_item_instance_once, find_free_slot, inventory_item_by_instance_mut,
-    ItemInstance, ItemRegistry, PlacedItemState, PlayerInventory, MAIN_PACK_CONTAINER_ID,
+    add_existing_item_to_player_inventory, consume_item_instance_once,
+    inventory_item_by_instance_mut, ItemInstance, ItemRegistry, PlayerInventory,
 };
 use crate::network::audio_event_emit::{AudioRecipient, PlaySoundRecipeRequest};
 use crate::network::qi_attrition_emit::{
@@ -574,7 +574,7 @@ pub fn tick_search_progress(
         // 入背包（无空间则丢失，告 warn —— P3 demo 简化，不做 ownerless drop）
         if let Ok(mut inv) = inventories.get_mut(player_ent) {
             for item in &loot {
-                place_item_in_main_pack(&mut inv, item.clone());
+                place_loot_in_carried_inventory(&mut inv, &item_registry, item.clone());
             }
             // 扣钥匙
             if let Some(kid) = key_id {
@@ -693,28 +693,19 @@ pub(crate) fn find_key_in_inventory(inv: &PlayerInventory, kind: KeyKind) -> Opt
     None
 }
 
-fn place_item_in_main_pack(inv: &mut PlayerInventory, instance: ItemInstance) {
-    let Some(main_pack) = inv
-        .containers
-        .iter_mut()
-        .find(|c| c.id == MAIN_PACK_CONTAINER_ID)
-    else {
+fn place_loot_in_carried_inventory(
+    inv: &mut PlayerInventory,
+    registry: &ItemRegistry,
+    instance: ItemInstance,
+) {
+    let template_id = instance.template_id.clone();
+    let grid_w = instance.grid_w;
+    let grid_h = instance.grid_h;
+    if let Err(error) = add_existing_item_to_player_inventory(inv, registry, instance) {
         tracing::warn!(
-            "[bong][tsy-container] inventory 缺 `{MAIN_PACK_CONTAINER_ID}` 容器，loot 丢失"
+            "[bong][tsy-container] 背包无可用随身容器放置 `{template_id}`（{grid_w}x{grid_h}），loot 丢失: {error}"
         );
-        return;
-    };
-    let Some((row, col)) = find_free_slot(main_pack, instance.grid_w, instance.grid_h) else {
-        tracing::warn!(
-            "[bong][tsy-container] 背包无空位放置 `{}`（{}x{}），loot 丢失",
-            instance.template_id,
-            instance.grid_w,
-            instance.grid_h,
-        );
-        return;
-    };
-    main_pack.items.push(PlacedItemState { row, col, instance });
-    bump_revision(inv);
+    }
 }
 
 fn spawn_particle_vfx(
@@ -767,7 +758,7 @@ fn world_audio_request(
 mod tests {
     use super::*;
     use crate::combat::components::{Wound, WoundKind};
-    use crate::inventory::ContainerState;
+    use crate::inventory::{ContainerState, PlacedItemState, MAIN_PACK_CONTAINER_ID};
     use valence::prelude::{App, Update};
 
     fn make_inv() -> PlayerInventory {
@@ -812,6 +803,11 @@ mod tests {
             alchemy: None,
             lingering_owner_qi: None,
         }
+    }
+
+    fn place_test_loot(inv: &mut PlayerInventory, instance: ItemInstance) {
+        let registry = ItemRegistry::from_map(HashMap::new());
+        place_loot_in_carried_inventory(inv, &registry, instance);
     }
 
     fn spirit_item(
@@ -885,10 +881,10 @@ mod tests {
     }
 
     #[test]
-    fn place_item_in_main_pack_works() {
+    fn place_loot_in_carried_inventory_works_with_main_pack() {
         let mut inv = make_inv();
         let item = key_item("iron_sword", 99);
-        place_item_in_main_pack(&mut inv, item);
+        place_test_loot(&mut inv, item);
         assert_eq!(inv.containers[0].items.len(), 1);
         assert_eq!(inv.containers[0].items[0].instance.instance_id, 99);
         assert_eq!(inv.revision.0, 1);
@@ -899,14 +895,68 @@ mod tests {
         let mut inv = make_inv();
         inv.containers.clear();
         // 不应 panic，仅警告
-        place_item_in_main_pack(&mut inv, key_item("x", 1));
+        place_test_loot(&mut inv, key_item("x", 1));
         assert!(inv.containers.is_empty());
+    }
+
+    #[test]
+    fn place_item_with_default_runtime_pack_without_main_pack_is_not_lost() {
+        let registry = crate::inventory::load_item_registry().expect("item registry should load");
+        let loadout =
+            crate::inventory::load_default_loadout(&registry).expect("default loadout should load");
+        let mut allocator = InventoryInstanceIdAllocator::new(70_000);
+        let mut inv = crate::inventory::instantiate_inventory_from_loadout(
+            &loadout,
+            &mut allocator,
+            &registry,
+        )
+        .expect("default loadout should instantiate");
+        let runtime_pack_id = inv
+            .containers
+            .iter()
+            .find_map(|container| {
+                container
+                    .id
+                    .strip_prefix("pack_")
+                    .map(|_| container.id.clone())
+            })
+            .expect("default loadout should derive a runtime pack_<instance_id> container");
+        assert!(
+            inv.containers
+                .iter()
+                .all(|container| container.id != MAIN_PACK_CONTAINER_ID),
+            "default loadout no longer creates `{MAIN_PACK_CONTAINER_ID}`; ids={:?}",
+            inv.containers
+                .iter()
+                .map(|container| container.id.as_str())
+                .collect::<Vec<_>>()
+        );
+
+        place_loot_in_carried_inventory(&mut inv, &registry, key_item("iron_sword", 99));
+
+        let runtime_pack = inv
+            .containers
+            .iter()
+            .find(|container| container.id == runtime_pack_id)
+            .expect("runtime pack container should still exist");
+        assert!(
+            runtime_pack
+                .items
+                .iter()
+                .any(|placed| placed.instance.instance_id == 99),
+            "TSY container loot should land in default runtime pack `{runtime_pack_id}` when old `{MAIN_PACK_CONTAINER_ID}` is absent; runtime_pack_items={:?}",
+            runtime_pack
+                .items
+                .iter()
+                .map(|placed| (placed.instance.instance_id, placed.instance.template_id.as_str(), placed.row, placed.col))
+                .collect::<Vec<_>>()
+        );
     }
 
     // ——— loot 多件放不同槽位（bug fix: 不再全堆 (0,0)） ———
 
     #[test]
-    fn place_item_in_main_pack_multiple_items_land_in_distinct_slots() {
+    fn place_loot_in_carried_inventory_multiple_items_land_in_distinct_slots() {
         // 期望：3 件 1x1 loot 各自落在不同 (row,col) 槽位，而非全压到 (0,0)。
         // 修复前：全部 push row=0,col=0（叠在同一格）。
         let mut inv = make_inv(); // 4x5 背包，初始空
@@ -914,9 +964,9 @@ mod tests {
         let item_b = key_item("herb_b", 2);
         let item_c = key_item("herb_c", 3);
 
-        place_item_in_main_pack(&mut inv, item_a);
-        place_item_in_main_pack(&mut inv, item_b);
-        place_item_in_main_pack(&mut inv, item_c);
+        place_test_loot(&mut inv, item_a);
+        place_test_loot(&mut inv, item_b);
+        place_test_loot(&mut inv, item_c);
 
         let items = &inv.containers[0].items;
         assert_eq!(
@@ -941,10 +991,10 @@ mod tests {
     }
 
     #[test]
-    fn place_item_in_main_pack_first_item_goes_to_top_left() {
+    fn place_loot_in_carried_inventory_first_item_goes_to_top_left() {
         // 期望：空背包首件 loot 落在 (0,0)——find_free_slot 行主序扫描，空容器返回 (0,0)。
         let mut inv = make_inv();
-        place_item_in_main_pack(&mut inv, key_item("herb_a", 1));
+        place_test_loot(&mut inv, key_item("herb_a", 1));
 
         let placed = &inv.containers[0].items[0];
         assert_eq!(
@@ -957,11 +1007,11 @@ mod tests {
     }
 
     #[test]
-    fn place_item_in_main_pack_second_item_not_at_origin() {
+    fn place_loot_in_carried_inventory_second_item_not_at_origin() {
         // 期望：第二件 1x1 loot 不落在 (0,0)（(0,0) 已被第一件占用）。
         let mut inv = make_inv();
-        place_item_in_main_pack(&mut inv, key_item("item_a", 1));
-        place_item_in_main_pack(&mut inv, key_item("item_b", 2));
+        place_test_loot(&mut inv, key_item("item_a", 1));
+        place_test_loot(&mut inv, key_item("item_b", 2));
 
         let items = &inv.containers[0].items;
         let second = &items[1];
@@ -974,7 +1024,7 @@ mod tests {
     }
 
     #[test]
-    fn place_item_in_main_pack_full_pack_does_not_panic() {
+    fn place_loot_in_carried_inventory_full_pack_does_not_panic() {
         // 期望：背包已满（1x1 背包放了 1 件）时，再放第二件不 panic、不插入，revision 不再增加。
         use crate::inventory::ContainerState;
         let mut inv = PlayerInventory {
@@ -993,9 +1043,9 @@ mod tests {
             bone_coins: 0,
             max_weight: 100.0,
         };
-        place_item_in_main_pack(&mut inv, key_item("item_a", 1)); // 占满唯一格
+        place_test_loot(&mut inv, key_item("item_a", 1)); // 占满唯一格
         let rev_after_first = inv.revision.0;
-        place_item_in_main_pack(&mut inv, key_item("item_b", 2)); // 背包已满，应跳过
+        place_test_loot(&mut inv, key_item("item_b", 2)); // 背包已满，应跳过
 
         assert_eq!(
             inv.containers[0].items.len(),
@@ -1010,20 +1060,20 @@ mod tests {
     }
 
     #[test]
-    fn place_item_in_main_pack_revision_incremented_per_item() {
+    fn place_loot_in_carried_inventory_revision_incremented_per_item() {
         // 期望：每次成功放置 bump_revision，3 件物品后 revision=3。
         let mut inv = make_inv();
         assert_eq!(inv.revision.0, 0, "初始 revision 应为 0");
-        place_item_in_main_pack(&mut inv, key_item("a", 1));
+        place_test_loot(&mut inv, key_item("a", 1));
         assert_eq!(inv.revision.0, 1, "放第 1 件后 revision 应为 1");
-        place_item_in_main_pack(&mut inv, key_item("b", 2));
+        place_test_loot(&mut inv, key_item("b", 2));
         assert_eq!(inv.revision.0, 2, "放第 2 件后 revision 应为 2");
-        place_item_in_main_pack(&mut inv, key_item("c", 3));
+        place_test_loot(&mut inv, key_item("c", 3));
         assert_eq!(inv.revision.0, 3, "放第 3 件后 revision 应为 3");
     }
 
     #[test]
-    fn place_item_in_main_pack_2x1_item_finds_free_slot() {
+    fn place_loot_in_carried_inventory_2x1_item_finds_free_slot() {
         // 期望：2x1 (grid_w=2, grid_h=1) 物品能正确调用 find_free_slot，
         // 不会因 grid_w>1 而塞到 col=0..0 导致溢出。
         use crate::inventory::ContainerState;
@@ -1048,7 +1098,7 @@ mod tests {
             grid_h: 1,
             ..key_item("wide_relic", 10)
         };
-        place_item_in_main_pack(&mut inv, wide_item);
+        place_test_loot(&mut inv, wide_item);
         assert_eq!(
             inv.containers[0].items.len(),
             1,
