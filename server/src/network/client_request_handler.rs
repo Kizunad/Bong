@@ -4697,6 +4697,7 @@ mod tests {
                 }],
                 equipped: Default::default(),
                 hotbar: Default::default(),
+                triggered_treasures: Vec::new(),
                 bone_coins: 0,
                 max_weight: 50.0,
                 triggered_treasures: vec![],
@@ -5324,6 +5325,75 @@ mod tests {
             .world()
             .get_resource::<valence::prelude::Events<MovementActionIntent>>()
             .is_none());
+    }
+
+    #[test]
+    fn use_quick_slot_reads_template_from_equipped_instance() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        app.insert_resource(ItemRegistry::from_map(HashMap::from([(
+            "bone_whistle".to_string(),
+            ItemTemplate {
+                id: "bone_whistle".to_string(),
+                display_name: "骨哨".to_string(),
+                category: ItemCategory::Misc,
+                placeable: None,
+                max_stack_count: 1,
+                grid_w: 1,
+                grid_h: 1,
+                base_weight: 0.1,
+                rarity: ItemRarity::Common,
+                spirit_quality_initial: 1.0,
+                description: String::new(),
+                effect: None,
+                cast_duration_ms: 250,
+                cooldown_ms: 450,
+                weapon_spec: None,
+                forge_station_spec: None,
+                blueprint_scroll_spec: None,
+                inscription_scroll_spec: None,
+                technique_scroll_spec: None,
+                recipe_fragment_spec: None,
+                container_spec: None,
+                shelflife_profile: None,
+                shield_spec: None,
+                shelflife_track: None,
+            },
+        )])));
+
+        let mut inventory = empty_inventory();
+        inventory.equipped.insert(
+            crate::inventory::EQUIP_SLOT_OFF_HAND.to_string(),
+            crate::inventory::SlotContents::held_single(inventory_test_item(77, "bone_whistle", 1)),
+        );
+        let mut quick_slots = QuickSlotBindings::default();
+        assert!(quick_slots.set(0, Some(77)));
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app
+            .world_mut()
+            .spawn((client_bundle, quick_slots, inventory))
+            .id();
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"use_quick_slot","v":1,"slot":0}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+
+        app.update();
+
+        let casting = app
+            .world()
+            .get::<Casting>(entity)
+            .expect("equipped quick slot item should start casting");
+        assert_eq!(casting.bound_instance_id, Some(77));
+        assert_eq!(casting.duration_ms, 250);
+        assert_eq!(casting.duration_ticks, 5);
+        assert_eq!(casting.complete_cooldown_ticks, 9);
     }
 
     #[test]
@@ -8454,22 +8524,7 @@ fn handle_use_quick_slot(
     let (duration_ms, cooldown_ms) = inventories
         .get(entity)
         .ok()
-        .and_then(|inv| {
-            for c in &inv.containers {
-                if let Some(p) = c
-                    .items
-                    .iter()
-                    .find(|p| p.instance.instance_id == instance_id)
-                {
-                    return Some(p.instance.template_id.clone());
-                }
-            }
-            inv.hotbar
-                .iter()
-                .flatten()
-                .find(|i| i.instance_id == instance_id)
-                .map(|i| i.template_id.clone())
-        })
+        .and_then(|inv| inventory_template_id_by_instance(inv, instance_id))
         .and_then(|template_id| combat_params.item_registry.get(&template_id).cloned())
         .map(|t| (t.cast_duration_ms, t.cooldown_ms))
         .unwrap_or((TEMPLATE_DEFAULT_CAST_MS, TEMPLATE_DEFAULT_COOLDOWN_MS));
@@ -8540,6 +8595,31 @@ fn inventory_has_instance(inv: &PlayerInventory, instance_id: u64) -> bool {
         .iter()
         .flatten()
         .any(|item| item.instance_id == instance_id)
+}
+
+fn inventory_template_id_by_instance(inv: &PlayerInventory, instance_id: u64) -> Option<String> {
+    for c in &inv.containers {
+        if let Some(p) = c
+            .items
+            .iter()
+            .find(|p| p.instance.instance_id == instance_id)
+        {
+            return Some(p.instance.template_id.clone());
+        }
+    }
+    if let Some(item) = inv
+        .equipped
+        .values()
+        .flat_map(|s| s.iter_all())
+        .find(|item| item.instance_id == instance_id)
+    {
+        return Some(item.template_id.clone());
+    }
+    inv.hotbar
+        .iter()
+        .flatten()
+        .find(|item| item.instance_id == instance_id)
+        .map(|item| item.template_id.clone())
 }
 
 fn handle_quick_slot_bind(
