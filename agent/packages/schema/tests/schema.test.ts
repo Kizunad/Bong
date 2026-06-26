@@ -812,6 +812,14 @@ describe("sample files pass schema validation", () => {
     expect(data.equipped.main_hand_held.forge_achieved_tier).toBe(1);
     // chest_worn 叠 2 层（铁甲 + 背包件骑身体槽 worn，决议 #17）。
     expect(data.equipped.chest_worn.length).toBe(2);
+    // plan-tarkov-backpack-v1 P2（schema 漂移修复）：snapshot 现含动态 pack_<id> 套包容器
+    // （4 件：main_pack/small_pouch/front_satchel/pack_1007），且 pack_1007 内含 placed_item。
+    // 锁住 ContainerIdV1 开放为 pattern String + containers 放宽到 1..16 后 pack_ 容器合法。
+    expect(data.containers.length).toBe(4);
+    expect(data.containers.some((c) => c.id === "pack_1007")).toBe(true);
+    expect(
+      data.placed_items.some((p) => p.container_id === "pack_1007"),
+    ).toBe(true);
   });
 
   it("alchemy item data accepts pill residue metadata", () => {
@@ -1628,6 +1636,57 @@ describe("sample files pass schema validation", () => {
     expect(data.to.kind).toBe("equip");
     expect(data.to.slot).toBe("main_hand");
     expect(data.to.state).toBe("held");
+  });
+
+  // plan-tarkov-backpack-v1 P2（schema 漂移修复）：拖入 pack_<id> 容器的 move intent 正样本。
+  // 锁住 ContainerIdV1 开放为 pattern String 后，container→pack_<数字> 的 from/to 仍合法。
+  it("client-request.inventory-move-intent.into-pack.sample.json", () => {
+    const data = loadSample(
+      "client-request.inventory-move-intent.into-pack.sample.json",
+    );
+    const result = validate(ClientRequestV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+    expect(data.from.kind).toBe("container");
+    expect(data.from.container_id).toBe("main_pack");
+    expect(data.to.kind).toBe("container");
+    expect(data.to.container_id).toBe("pack_1007");
+  });
+
+  // plan-tarkov-backpack-v1 P2：pack_<数字> container_id 被 ContainerIdV1 pattern 接受（正）。
+  it("move intent into pack_<n> container is accepted", () => {
+    const result = validate(ClientRequestV1, {
+      v: 1,
+      type: "inventory_move_intent",
+      instance_id: 2048,
+      from: { kind: "container", container_id: "body_pocket", row: 0, col: 0 },
+      to: { kind: "container", container_id: "pack_4242", row: 0, col: 0 },
+    });
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  // plan-tarkov-backpack-v1 P2：未知形态 container_id（非 body_pocket / pack_* / 三个静态 id）
+  // 被 ContainerIdV1 pattern 拒绝（反）——证明 pattern 仍比裸 Type.String() 紧，没丢全部静态安全。
+  it("move intent into unknown-shape container_id is rejected", () => {
+    const result = validate(ClientRequestV1, {
+      v: 1,
+      type: "inventory_move_intent",
+      instance_id: 2049,
+      from: { kind: "container", container_id: "main_pack", row: 0, col: 0 },
+      to: { kind: "container", container_id: "evil_bag", row: 0, col: 0 },
+    });
+    expect(result.ok).toBe(false);
+  });
+
+  // plan-tarkov-backpack-v1 P2：pack_ 前缀但非数字/非占位后缀（如 pack_abc）也被拒（反）。
+  it("move intent into pack_<non-numeric> container_id is rejected", () => {
+    const result = validate(ClientRequestV1, {
+      v: 1,
+      type: "inventory_move_intent",
+      instance_id: 2050,
+      from: { kind: "container", container_id: "main_pack", row: 0, col: 0 },
+      to: { kind: "container", container_id: "pack_abc", row: 0, col: 0 },
+    });
+    expect(result.ok).toBe(false);
   });
 
   // plan-layered-equip-v1 P0.5：equip 落位缺 state（必填）应被拒（反样本）。

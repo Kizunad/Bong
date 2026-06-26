@@ -3702,6 +3702,160 @@ mod player_state_tests {
         let _ = fs::remove_dir_all(&data_dir);
     }
 
+    /// plan-tarkov-backpack-v1 P2 e2e（交付物 #1 / 测试清单）— 拖入穿戴中 pack 后跨重载持久化。
+    ///
+    /// 经 `apply_inventory_move` 真路径把物品拖入穿戴中的 `pack_<id>` 容器（穿戴态门控放行）→
+    /// `save_player_slices` 落盘 → `load_player_slices` 重载 → 物品仍在 `pack_<id>` 内。
+    /// 锁住「拖入持久化无额外入口、经 flush 自动落盘、重载不丢」契约；任何把 pack_<id> 容器
+    /// 内含物从持久化序列中摘掉的回归立即撞红。
+    #[test]
+    fn e2e_drag_item_into_pack_persists_across_reload() {
+        use crate::inventory::{
+            apply_inventory_move, container_id_for_worn_pack, rebuild_containers_from_equipment,
+            ContainerSpec, ItemCategory, ItemRegistry, ItemTemplate, PlacedItemState, SlotContents,
+            EQUIP_SLOT_CHEST,
+        };
+        use crate::schema::inventory::InventoryLocationV1;
+
+        let (persistence, data_dir) = sqlite_persistence("drag-into-pack-reload");
+
+        // 合成 registry：一个 worn pack 模板（chest，3×3）+ 一个 1×1 misc 可移动物品。
+        let pack_template = ItemTemplate {
+            id: "e2e_chest_pack".to_string(),
+            display_name: "胸前套包".to_string(),
+            category: ItemCategory::Container,
+            placeable: None,
+            max_stack_count: 1,
+            grid_w: 2,
+            grid_h: 2,
+            base_weight: 0.5,
+            rarity: ItemRarity::Common,
+            spirit_quality_initial: 1.0,
+            description: "e2e pack".to_string(),
+            effect: None,
+            cast_duration_ms: 0,
+            cooldown_ms: 0,
+            weapon_spec: None,
+            forge_station_spec: None,
+            blueprint_scroll_spec: None,
+            inscription_scroll_spec: None,
+            technique_scroll_spec: None,
+            recipe_fragment_spec: None,
+            container_spec: Some(ContainerSpec {
+                rows: 3,
+                cols: 3,
+                weight_capacity: 10.0,
+                equip_slot: EQUIP_SLOT_CHEST.to_string(),
+                durability_cost_per_op: 0.0,
+                attrition_exempt: false,
+                accept_filter: None,
+            }),
+            shield_spec: None,
+            shelflife_profile: None,
+            shelflife_track: None,
+        };
+        let mut dust = pack_template.clone();
+        dust.id = "e2e_dust".to_string();
+        dust.display_name = "灵尘".to_string();
+        dust.category = ItemCategory::Misc;
+        dust.container_spec = None;
+        dust.grid_w = 1;
+        dust.grid_h = 1;
+        let registry = ItemRegistry::from_map(HashMap::from([
+            ("e2e_chest_pack".to_string(), pack_template),
+            ("e2e_dust".to_string(), dust),
+        ]));
+
+        // 穿戴 chest pack（instance 8801）→ rebuild 建 pack_8801 容器 + 回填 owner。
+        let mut inventory = empty_weapon_inventory();
+        let mut pack_item = iron_sword_instance(8_801, 1.0);
+        pack_item.template_id = "e2e_chest_pack".to_string();
+        pack_item.grid_w = 2;
+        pack_item.grid_h = 2;
+        inventory.equipped.insert(
+            EQUIP_SLOT_CHEST.to_string(),
+            SlotContents::worn_single(pack_item),
+        );
+        let _ = rebuild_containers_from_equipment(&mut inventory, &registry);
+
+        // main_pack 放一件 dust（8802），准备拖入 pack_8801。
+        let mut dust_item = iron_sword_instance(8_802, 1.0);
+        dust_item.template_id = "e2e_dust".to_string();
+        dust_item.grid_w = 1;
+        dust_item.grid_h = 1;
+        let main = inventory
+            .containers
+            .iter_mut()
+            .find(|c| c.id == MAIN_PACK_CONTAINER_ID)
+            .expect("main_pack 存在");
+        main.items.push(PlacedItemState {
+            row: 0,
+            col: 0,
+            instance: dust_item,
+        });
+
+        // 拖入穿戴中的 pack_8801（穿戴态门控放行 + 落位）。
+        let pack_id = container_id_for_worn_pack(8_801);
+        let from = InventoryLocationV1::Container {
+            container_id: MAIN_PACK_CONTAINER_ID.to_string(),
+            row: 0,
+            col: 0,
+        };
+        let to = InventoryLocationV1::Container {
+            container_id: pack_id.clone(),
+            row: 1,
+            col: 2,
+        };
+        apply_inventory_move(&mut inventory, &registry, 8_802, &from, &to)
+            .expect("拖入穿戴中的 pack_8801 应成功");
+
+        // 落盘。
+        persist_player_with_inventory(&persistence, "PackReload", &inventory);
+
+        // 重载。
+        let loaded = load_player_slices(&persistence, "PackReload");
+        let loaded_inventory = loaded.inventory.expect("inventory should reload");
+
+        // pack_8801 容器仍存在，dust(8802) 仍在其中（位置守恒 row=1,col=2）。
+        let pack = loaded_inventory
+            .containers
+            .iter()
+            .find(|c| c.id == pack_id)
+            .unwrap_or_else(|| panic!("重载后 `{pack_id}` 容器应仍存在"));
+        let placed = pack
+            .items
+            .iter()
+            .find(|p| p.instance.instance_id == 8_802)
+            .unwrap_or_else(|| {
+                panic!(
+                    "重载后 dust(8802) 应仍在 `{pack_id}` 内（拖入持久化经 flush 自动落盘，不丢）"
+                )
+            });
+        assert_eq!(
+            (placed.row, placed.col),
+            (1, 2),
+            "重载后 dust 落位坐标应守恒 (1,2)；实际 ({},{})",
+            placed.row,
+            placed.col
+        );
+        assert_eq!(
+            placed.instance.template_id, "e2e_dust",
+            "重载后 instance 8802 模板应保持 e2e_dust"
+        );
+        // dust 不应残留在 main_pack。
+        let main = loaded_inventory
+            .containers
+            .iter()
+            .find(|c| c.id == MAIN_PACK_CONTAINER_ID)
+            .expect("main_pack 重载存在");
+        assert!(
+            !main.items.iter().any(|p| p.instance.instance_id == 8_802),
+            "拖入 pack 后 dust(8802) 不应再残留在 main_pack（move 而非 copy）"
+        );
+
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
     #[test]
     fn ui_prefs_accepts_legacy_payload_without_skill_bar() {
         let prefs: PlayerUiPrefs = serde_json::from_value(serde_json::json!({

@@ -50,10 +50,21 @@ public class InventorySnapshotHandlerTest {
 
         InventoryModel snapshot = InventoryStateStore.snapshot();
         assertNotNull(snapshot);
-        assertEquals(3, snapshot.containers().size());
+        // plan-tarkov-backpack-v1 P2（schema 漂移修复）：shared sample 现含 4 个容器
+        // （main_pack / small_pouch / front_satchel + 动态 pack_1007 套包容器）。client 解析器
+        // 须如实路由动态 pack_<id> 容器（containers 放宽到 1..16 后合法），不丢、不裁剪。
+        assertEquals(4, snapshot.containers().size());
         assertEquals(InventoryModel.PRIMARY_CONTAINER_ID, snapshot.containers().get(0).id());
         assertEquals(InventoryModel.SMALL_POUCH_CONTAINER_ID, snapshot.containers().get(1).id());
         assertEquals(InventoryModel.FRONT_SATCHEL_CONTAINER_ID, snapshot.containers().get(2).id());
+        assertEquals("pack_1007", snapshot.containers().get(3).id());
+        // pack_1007 套包容器内含物（spirit_herb）也须如实落入对应容器视图。
+        InventoryModel.GridEntry packItem = snapshot.gridItems().stream()
+            .filter(entry -> "spirit_herb".equals(entry.item().itemId()))
+            .findFirst()
+            .orElseThrow();
+        assertEquals("pack_1007", packItem.containerId());
+        assertEquals(1008L, packItem.item().instanceId());
 
         InventoryModel.GridEntry sentinel = snapshot.gridItems().stream()
             .filter(entry -> "starter_talisman".equals(entry.item().itemId()))

@@ -11,11 +11,24 @@ const GridCoordinateV1 = Type.Integer({ minimum: 0 });
 const GridSpanV1 = Type.Integer({ minimum: 1, maximum: 4 });
 const ContainerExtentV1 = Type.Integer({ minimum: 1, maximum: 16 });
 
-export const ContainerIdV1 = Type.Union([
-  Type.Literal("main_pack"),
-  Type.Literal("small_pouch"),
-  Type.Literal("front_satchel"),
-]);
+// plan-tarkov-backpack-v1 P2（schema 漂移修复，仅 TS 侧；Rust `ContainerIdV1 = String`
+// 已是开放字符串，server 反序列化 `pack_<id>` 本就通过）：原 3-literal union
+// (main_pack/small_pouch/front_satchel) 无法表达运行时动态的 `pack_<instance_id>` 套包容器，
+// 改为开放字符串 + pattern 约束——比裸 Type.String() 更紧、不丢全部静态安全。约束对齐 Rust
+// deserialize_non_empty_string_up_to_64（非空、≤64 字符）。
+//
+// 偏离 plan 说明：plan P2 给的 pattern 是 `^(body_pocket|pack_\\d+)$`，但 server 侧
+// `validate_container_id`（inventory/mod.rs:5389）实际放行的 id 集合还包含三个仍在运行时
+// 大量发出的静态容器（main_pack / small_pouch / front_satchel，遍布 forge / give / cast_emit /
+// block_drop / coffin / spawn_tutorial 等真路径）以及占位容器 `pack_grass_pouch`（非数字后缀）。
+// plan 原 pattern 会拒掉这些合法 wire id 并撞红现有 sample，破坏 server↔agent 契约。故 pattern
+// 扩到与 server allow-set 一致：body_pocket | pack_<数字> | pack_grass_pouch（占位）|
+// main_pack | small_pouch | front_satchel。仍比 Type.String() 紧，锁住「container_id 必为已知形态」。
+export const ContainerIdV1 = Type.String({
+  pattern: "^(body_pocket|pack_(\\d+|grass_pouch)|main_pack|small_pouch|front_satchel)$",
+  minLength: 1,
+  maxLength: 64,
+});
 export type ContainerIdV1 = Static<typeof ContainerIdV1>;
 
 // plan-layered-equip-v1 P0.4（决议 #17 / #9 / #8）：删 false_skin / two_hand /
@@ -320,7 +333,10 @@ export type ContainerSnapshotV1 = Static<typeof ContainerSnapshotV1>;
 export const InventorySnapshotV1 = Type.Object(
   {
     revision: RevisionV1,
-    containers: Type.Array(ContainerSnapshotV1, { minItems: 3, maxItems: 3 }),
+    // plan-tarkov-backpack-v1 P2（schema 漂移修复）：原固定 3 件无法表达运行时动态的
+    // `pack_<instance_id>` 套包容器（穿戴背包件即新增一个 pack 容器）。放宽到 minItems:1
+    // （body_pocket 恒存）、maxItems:16（对齐 Rust INVENTORY_CONTAINER_MAX）。
+    containers: Type.Array(ContainerSnapshotV1, { minItems: 1, maxItems: 16 }),
     placed_items: Type.Array(PlacedInventoryItemV1),
     equipped: EquippedInventorySnapshotV1,
     hotbar: Type.Array(NullableInventoryItemViewV1, {

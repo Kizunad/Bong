@@ -41,20 +41,10 @@
                   "type": "string"
                 },
                 "container_id": {
-                  "anyOf": [
-                    {
-                      "const": "main_pack",
-                      "type": "string"
-                    },
-                    {
-                      "const": "small_pouch",
-                      "type": "string"
-                    },
-                    {
-                      "const": "front_satchel",
-                      "type": "string"
-                    }
-                  ]
+                  "pattern": "^(body_pocket|pack_(\\d+|grass_pouch)|main_pack|small_pouch|front_satchel)$",
+                  "minLength": 1,
+                  "maxLength": 64,
+                  "type": "string"
                 },
                 "row": {
                   "minimum": 0,
@@ -167,20 +157,10 @@
                   "type": "string"
                 },
                 "container_id": {
-                  "anyOf": [
-                    {
-                      "const": "main_pack",
-                      "type": "string"
-                    },
-                    {
-                      "const": "small_pouch",
-                      "type": "string"
-                    },
-                    {
-                      "const": "front_satchel",
-                      "type": "string"
-                    }
-                  ]
+                  "pattern": "^(body_pocket|pack_(\\d+|grass_pouch)|main_pack|small_pouch|front_satchel)$",
+                  "minLength": 1,
+                  "maxLength": 64,
+                  "type": "string"
                 },
                 "row": {
                   "minimum": 0,
@@ -320,20 +300,10 @@
                   "type": "string"
                 },
                 "container_id": {
-                  "anyOf": [
-                    {
-                      "const": "main_pack",
-                      "type": "string"
-                    },
-                    {
-                      "const": "small_pouch",
-                      "type": "string"
-                    },
-                    {
-                      "const": "front_satchel",
-                      "type": "string"
-                    }
-                  ]
+                  "pattern": "^(body_pocket|pack_(\\d+|grass_pouch)|main_pack|small_pouch|front_satchel)$",
+                  "minLength": 1,
+                  "maxLength": 64,
+                  "type": "string"
                 },
                 "row": {
                   "minimum": 0,

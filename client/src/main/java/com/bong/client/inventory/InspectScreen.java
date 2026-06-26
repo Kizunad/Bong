@@ -1632,6 +1632,58 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         BongToast.show(text, color, System.currentTimeMillis(), ACTION_TOAST_MS);
     }
 
+    // plan-tarkov-backpack-v1 P2（交付物 #3，client 穿戴态门控）——
+    // 镜像 server `worn_pack_instance_from_container_id`（inventory/mod.rs:3795）：
+    // 仅 `pack_<数字>` 形态解析出 owner instance id；body_pocket / pack_grass_pouch（占位，
+    // 非数字后缀）/ main_pack 等返回 empty（不视作可门控的套包容器，放行）。
+    static java.util.OptionalLong parseWornPackInstance(String containerId) {
+        if (containerId == null || !containerId.startsWith("pack_")) {
+            return java.util.OptionalLong.empty();
+        }
+        String suffix = containerId.substring("pack_".length());
+        if (suffix.isEmpty()) {
+            return java.util.OptionalLong.empty();
+        }
+        for (int i = 0; i < suffix.length(); i++) {
+            if (!Character.isDigit(suffix.charAt(i))) {
+                return java.util.OptionalLong.empty();
+            }
+        }
+        try {
+            return java.util.OptionalLong.of(Long.parseLong(suffix));
+        } catch (NumberFormatException e) {
+            return java.util.OptionalLong.empty();
+        }
+    }
+
+    // plan-tarkov-backpack-v1 P2（交付物 #3）——拖入目标容器的穿戴态门控谓词（client 侧）。
+    // 仅 `pack_<数字>` 套包容器受门控：其 owner 背包件必须当前穿戴在某身体槽 worn 层才允许拖入
+    // （塔科夫式语义：卸下的包是死容器）。非套包容器（body_pocket / main_pack / pack_grass_pouch 等）
+    // 恒放行。与 server `validate_move_semantics` 的 Container 分支门控对齐，避免「拖进去瞬间弹回且无提示」。
+    static boolean isWornPackContainerDroppable(
+            com.bong.client.inventory.model.InventoryModel snapshot, String containerId) {
+        java.util.OptionalLong ownerOpt = parseWornPackInstance(containerId);
+        if (ownerOpt.isEmpty()) {
+            return true; // 非 pack_<数字> 容器不受穿戴态门控。
+        }
+        if (snapshot == null) {
+            return false; // 套包容器但无快照可校验穿戴态 → 保守拒绝（不乐观落位）。
+        }
+        long owner = ownerOpt.getAsLong();
+        for (com.bong.client.inventory.model.SlotContents contents :
+                snapshot.equippedSlots().values()) {
+            if (contents == null) {
+                continue;
+            }
+            for (InventoryItem worn : contents.worn()) {
+                if (worn != null && worn.instanceId() == owner) {
+                    return true; // owner 背包件确在某身体槽 worn 层 → 放行。
+                }
+            }
+        }
+        return false; // owner 不在任何 worn 层（已卸到手持/格子）→ 拒绝拖入。
+    }
+
     static boolean isDuXuEligible(MeridianBody body) {
         if (body == null || !"Spirit".equals(body.realm())) {
             return false;
@@ -2275,6 +2327,17 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         if (grid != null && grid.containsPoint(mouseX, mouseY)) {
             var pos = grid.screenToGrid(mouseX, mouseY);
             if (pos != null && grid.canPlace(dragged, pos.row(), pos.col())) {
+                // plan-tarkov-backpack-v1 P2（交付物 #3，穿戴态门控 client 侧）——
+                // 拖入 `pack_<数字>` 套包容器前，校验其 owner 背包件仍穿戴在某身体槽 worn 层。
+                // 非穿戴（已卸下的套包，server snapshot 仍含其容器但拒绝拖入）→ 不乐观落位 + 给 toast，
+                // 避免「拖进去瞬间弹回且无提示」。与 server validate_move_semantics 的 Container 门控对齐。
+                if (!isWornPackContainerDroppable(
+                        InventoryStateStore.snapshot(), grid.containerId())) {
+                    showActionToast("背包未穿戴，无法放入内含物", ACTION_TOAST_WARN);
+                    returnDragToSource();
+                    clearAllHighlights();
+                    return;
+                }
                 grid.place(dragged, pos.row(), pos.col());
                 dragState.drop();
                 dispatchMoveIntent(dragged, fromLoc,
