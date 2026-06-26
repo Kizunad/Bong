@@ -151,9 +151,11 @@ public final class InventorySnapshotHandler implements ServerDataHandler {
             if (id == null || name == null || rows == null || cols == null || rows <= 0 || cols <= 0) {
                 return null;
             }
+            // plan-tarkov-backpack-v1 P3（决议 #4）— 可选 owner_instance_id：缺省（旧 server）→ null。
+            Long ownerInstanceId = readOptionalLong(containerObject, "owner_instance_id");
 
             try {
-                containers.add(new InventoryModel.ContainerDef(id, name, rows, cols));
+                containers.add(new InventoryModel.ContainerDef(id, name, rows, cols, ownerInstanceId));
             } catch (IllegalArgumentException exception) {
                 return null;
             }
@@ -589,6 +591,44 @@ public final class InventorySnapshotHandler implements ServerDataHandler {
     }
 
     private static Long readRequiredLong(JsonObject object, String fieldName) {
+        JsonElement element = object.get(fieldName);
+        if (element == null || element.isJsonNull() || !element.isJsonPrimitive()) {
+            return null;
+        }
+
+        JsonPrimitive primitive = element.getAsJsonPrimitive();
+        if (!primitive.isNumber()) {
+            return null;
+        }
+
+        String token = primitive.getAsString();
+        if (!INTEGER_TOKEN_PATTERN.matcher(token).matches()) {
+            return null;
+        }
+
+        long value;
+        try {
+            value = Long.parseLong(token);
+        } catch (NumberFormatException exception) {
+            return null;
+        }
+
+        if (value < 0 || value > JS_SAFE_INTEGER_MAX) {
+            return null;
+        }
+
+        return value;
+    }
+
+    /**
+     * plan-tarkov-backpack-v1 P3（决议 #4）— 可选 u64（如 owner_instance_id）。
+     *
+     * <p>缺字段 / null / 非数字 / 越界 → 返回 {@code null}（视作"无值"，向后兼容旧 server snapshot
+     * 不下发该字段的情况）。这是与 {@link #readRequiredLong} 的关键差异：required 缺字段会让整个
+     * snapshot 被丢弃，optional 缺字段只让该字段为 null，其余照常解析。Gson 字段拉取式解析对未知
+     * key 天然忽略，故新增此可选字段对旧/新双向兼容。</p>
+     */
+    private static Long readOptionalLong(JsonObject object, String fieldName) {
         JsonElement element = object.get(fieldName);
         if (element == null || element.isJsonNull() || !element.isJsonPrimitive()) {
             return null;
