@@ -137,6 +137,8 @@ public class BongClient implements ClientModInitializer {
         SpiritTreasureScreenBootstrap.register();
         WeaponRenderBootstrap.register();
         ArmorRenderBootstrap.register();
+        // plan-tarkov-backpack-v1 P4 — 穿戴背包件（破草包）上身渲染（TPV），紧跟 Armor 注册。
+        com.bong.client.armor.WornPackRenderBootstrap.register();
         // plan-combat-skill-feedback-bridges-v1 P3 fix — 虚蚀模型 alpha 渲染回路
         VoidErosionRenderBootstrap.register();
         WeaponScreenshotHarness.install();
