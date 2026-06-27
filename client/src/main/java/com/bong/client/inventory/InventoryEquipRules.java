@@ -282,6 +282,14 @@ public final class InventoryEquipRules {
         return item != null && item.itemId() != null && CONTAINER_TEMPLATE_IDS.contains(item.itemId());
     }
 
+    // plan-tarkov-backpack-v1 P4 — public 版本，供跨包的 WornPackFeatureRenderer（com.bong.client.armor）
+    // 按「容器件（container_spec != null）」过滤穿戴层。客户端无 ItemRegistry，isContainer 的白名单
+    // (CONTAINER_TEMPLATE_IDS) 即 server container_spec 件在 client 的镜像，故此谓词等价于
+    // 「container_spec != null」。**不取 category**（category 是 display 分类，会误纳护甲/伪皮）。
+    public static boolean isContainerPublic(InventoryItem item) {
+        return isContainer(item);
+    }
+
     private static boolean isHoe(String itemId) {
         return itemId != null && HOE_TEMPLATE_IDS.contains(itemId);
     }
