@@ -230,6 +230,15 @@ public final class VfxBootstrap {
             new LingjuActivatePlayer());
         registry.register(ScatterBurstPlayer.EVENT_ID,
             new ScatterBurstPlayer());
+        // plan-tarkov-backpack-v1 P5 — 套包操作三类差异化视听反馈（卸/装/拖入）。
+        // server handle_inventory_move 经 classify_pack_move emit bong:inventory_pack_*；
+        // 漏注册任一路由 → server emit 的对应粒子+音效静默丢失（孤岛）。
+        registry.register(PackOperationVfxPlayer.UNEQUIP_EVENT,
+            new PackOperationVfxPlayer(PackOperationVfxPlayer.Kind.UNEQUIP));
+        registry.register(PackOperationVfxPlayer.EQUIP_EVENT,
+            new PackOperationVfxPlayer(PackOperationVfxPlayer.Kind.EQUIP));
+        registry.register(PackOperationVfxPlayer.STOW_EVENT,
+            new PackOperationVfxPlayer(PackOperationVfxPlayer.Kind.STOW));
         registry.register(NetworkArrayFormPlayer.FORM,
             new NetworkArrayFormPlayer(NetworkArrayFormPlayer.Kind.FORM));
         registry.register(NetworkArrayFormPlayer.BREAK,

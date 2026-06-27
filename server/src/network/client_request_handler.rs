@@ -1695,6 +1695,7 @@ pub fn handle_client_request_payloads(
                     alchemy_params.attrition_applied_events.as_deref_mut(),
                     alchemy_params.tsy_lifecycle.as_deref(),
                     &mut dropped_loot_params.registry,
+                    alchemy_params.vfx_events.as_deref_mut(),
                 );
             }
             ClientRequestV1::EquipFalseSkin {
@@ -1737,6 +1738,7 @@ pub fn handle_client_request_payloads(
                     alchemy_params.attrition_applied_events.as_deref_mut(),
                     alchemy_params.tsy_lifecycle.as_deref(),
                     &mut dropped_loot_params.registry,
+                    alchemy_params.vfx_events.as_deref_mut(),
                 );
             }
             ClientRequestV1::ForgeFalseSkin { kind, .. } => {
@@ -9774,6 +9776,9 @@ fn handle_inventory_move(
     // plan-tarkov-backpack-v1 P0（交付物 #4 红线）— worn 背包件穿/卸时 rebuild 容器，
     // 卸非空背包的 overflow 内含物转掉落物（写入 DroppedLootRegistry，禁止静默丢失）。
     dropped_loot_registry: &mut DroppedLootRegistry,
+    // plan-tarkov-backpack-v1 P5 — 套包操作差异化视听反馈（卸/装/拖入）。move 成功后按
+    // `classify_pack_move` 判别分支 emit 差异化 VfxEventRequest，client 消费播差异化粒子+音效。
+    vfx_events: Option<&mut Events<VfxEventRequest>>,
 ) {
     let item_before_move = inventories
         .get(entity)
@@ -9913,6 +9918,33 @@ fn handle_inventory_move(
             );
             let worn_pack_unequip = moved_item_is_pack && from_worn && !to_worn;
             let worn_pack_equip = moved_item_is_pack && to_worn && !from_worn;
+
+            // plan-tarkov-backpack-v1 P5 — 套包操作差异化视听反馈。
+            // 三类（卸/装/拖入）按 `classify_pack_move` 判别分支 emit 各自差异化的
+            // VfxEventRequest（event_id/color/count/duration 互不相同），client
+            // `PackOperationVfxPlayer` 派发播差异化粒子 + 内联 audio recipe。
+            // emit 放在 worn-pack rebuild/resync 路由之前，三类反馈统一从此触发。
+            let to_is_pack_container = matches!(
+                &to,
+                InventoryLocationV1::Container { container_id, .. }
+                    if container_id.starts_with("pack_")
+            );
+            if let Some(pack_vfx) = gameplay_vfx::classify_pack_move(
+                moved_item_is_pack,
+                from_worn,
+                to_worn,
+                to_is_pack_container,
+            ) {
+                if let Some(events) = vfx_events {
+                    let origin_arr = client_position(positions, entity);
+                    // worn 件挂胸前 ≈ 玩家中段；落地散落从脚踝偏上铺开。
+                    let origin = DVec3::new(origin_arr[0], origin_arr[1] + 0.9, origin_arr[2]);
+                    gameplay_vfx::send_spawn(
+                        events,
+                        gameplay_vfx::pack_move_request(pack_vfx, origin),
+                    );
+                }
+            }
 
             if worn_pack_unequip || worn_pack_equip {
                 let player_pos = client_position(positions, entity);

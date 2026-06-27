@@ -1,0 +1,21 @@
+{
+  "id": "inventory_pack_stow",
+  "layers": [
+    {
+      "sound": "minecraft:block.wool.hit",
+      "volume": 0.5,
+      "pitch": 1.2,
+      "delay_ticks": 0
+    },
+    {
+      "sound": "minecraft:entity.item.pickup",
+      "volume": 0.35,
+      "pitch": 0.9,
+      "delay_ticks": 1
+    }
+  ],
+  "priority": 50,
+  "attenuation": "world_3d",
+  "category": "BLOCKS",
+  "bus": "ENVIRONMENT"
+}

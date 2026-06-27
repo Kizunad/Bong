@@ -5974,6 +5974,73 @@ mod tests {
         assert_eq!(inv.revision, InventoryRevision(1));
     }
 
+    // plan-tarkov-backpack-v1 P5 — 背包平衡数值标定 sanity（固化 core.toml 解析正确）。
+    // 锁住起手破草包 / 升级小草包的 container_spec + 自重，任何误改数值立即撞红：
+    //   · 破草包(worn_grass_pouch)：3×3=9 格，容量 8.0（与 loadout BASE 15+8=23 自洽），自重 0.25。
+    //   · 小草包(grass_pouch)：3×3=9 格，容量 10.0（>破草包，差异化升级款），自重 0.3。
+    #[test]
+    fn grass_pouch_balance_values_parse_from_core_toml() {
+        let registry =
+            load_item_registry().expect("item registry should load from assets/items/*.toml");
+
+        let worn = registry
+            .get("worn_grass_pouch")
+            .expect("破草包 worn_grass_pouch 必须注册");
+        assert!(
+            (worn.base_weight - 0.25).abs() < f64::EPSILON,
+            "破草包自重应为 0.25（最轻起手款），实际 {}",
+            worn.base_weight
+        );
+        let worn_spec = worn
+            .container_spec
+            .as_ref()
+            .expect("破草包必须有 container_spec");
+        assert_eq!(
+            (worn_spec.rows, worn_spec.cols),
+            (3, 3),
+            "破草包应 3×3 grid"
+        );
+        assert!(
+            (worn_spec.weight_capacity - 8.0).abs() < f64::EPSILON,
+            "破草包容量应为 8.0（与 loadout BASE 15+8=23 自洽），实际 {}",
+            worn_spec.weight_capacity
+        );
+        assert_eq!(
+            worn_spec.equip_slot, EQUIP_SLOT_CHEST,
+            "破草包穿 chest 身体槽"
+        );
+
+        let pouch = registry
+            .get("grass_pouch")
+            .expect("小草包 grass_pouch 必须注册");
+        let pouch_spec = pouch
+            .container_spec
+            .as_ref()
+            .expect("小草包必须有 container_spec");
+        assert!(
+            pouch_spec.weight_capacity > worn_spec.weight_capacity,
+            "小草包是升级款，容量({})必须大于破草包({})",
+            pouch_spec.weight_capacity,
+            worn_spec.weight_capacity
+        );
+        assert!(
+            (pouch_spec.weight_capacity - 10.0).abs() < f64::EPSILON,
+            "小草包容量应标定为 10.0，实际 {}",
+            pouch_spec.weight_capacity
+        );
+
+        // 起手 loadout max_weight 必须与 BASE + 破草包容量自洽（防止数值漂移破坏起手负重）。
+        let loadout = load_default_loadout(&registry).expect("default loadout 应能加载");
+        assert!(
+            (loadout.max_weight - (BASE_CARRY_CAPACITY + worn_spec.weight_capacity)).abs()
+                < f64::EPSILON,
+            "loadout max_weight({}) 应等于 BASE({}) + 破草包容量({})",
+            loadout.max_weight,
+            BASE_CARRY_CAPACITY,
+            worn_spec.weight_capacity
+        );
+    }
+
     #[test]
     fn loads_item_registry_from_assets() {
         let registry =
@@ -11367,6 +11434,82 @@ cols = 4
         let bp = inv.containers.iter().find(|c| c.id == pack_id).unwrap();
         assert_eq!(bp.rows, 7, "rows should match container_spec");
         assert_eq!(bp.cols, 5, "cols should match container_spec");
+    }
+
+    // plan-tarkov-backpack-v1 P5（决议 #1）— 嵌套深度 2 层封顶固化回归。
+    // 深度上限 = 2 层：worn 背包 → 其 grid → 物品。放进 grid 的背包件**不**被
+    // `rebuild_containers_from_equipment` 展开为第 3 层可访问容器——rebuild 只扫身体槽
+    // worn 层（`worn_container_items`），grid 内的 PlacedItemState 永不被派生容器。
+    // 数据模型天然封顶；本测试锁住该不变量，任何「也展开 grid 内背包件」的回归立即撞红。
+    #[test]
+    fn rebuild_does_not_expand_container_item_placed_inside_grid_two_layer_cap() {
+        let outer = make_container_template("outer_pack", EQUIP_SLOT_CHEST, 3, 3, 12.0);
+        let inner = make_container_template("inner_pouch", EQUIP_SLOT_CHEST, 2, 2, 6.0);
+        let registry = ItemRegistry::from_map(HashMap::from([
+            ("outer_pack".to_string(), outer),
+            ("inner_pouch".to_string(), inner),
+        ]));
+
+        let mut inv = make_empty_inventory();
+        // 第 1 层：外层背包穿在 chest worn 层 → 第 2 层：其 grid 容器。
+        inv.equipped.insert(
+            EQUIP_SLOT_CHEST.to_string(),
+            SlotContents::worn_single(make_container_item(200, "outer_pack")),
+        );
+        rebuild_containers_from_equipment(&mut inv, &registry);
+        let outer_id = container_id_for_worn_pack(200);
+        assert!(
+            inv.containers.iter().any(|c| c.id == outer_id),
+            "穿戴的外层背包（worn 层）应派生可访问容器 {outer_id}"
+        );
+
+        // 把另一个背包件（inner_pouch，本身带 container_spec）放进外层背包的 grid——
+        // 它是 grid 里的一件物品，不是穿在身上的 worn 件。
+        let inner_instance_id = 201;
+        {
+            let outer_container = inv
+                .containers
+                .iter_mut()
+                .find(|c| c.id == outer_id)
+                .expect("外层容器应存在");
+            outer_container.items.push(PlacedItemState {
+                row: 0,
+                col: 0,
+                instance: make_container_item(inner_instance_id, "inner_pouch"),
+            });
+        }
+
+        rebuild_containers_from_equipment(&mut inv, &registry);
+
+        // 关键不变量：grid 内的背包件不得被展开为第 3 层容器。
+        let inner_id = container_id_for_worn_pack(inner_instance_id);
+        assert!(
+            !inv.containers.iter().any(|c| c.id == inner_id),
+            "嵌套深度封顶=2：grid 内背包件不得派生可访问容器（不应出现 {inner_id}）"
+        );
+        // inner_pouch 仍原样作为普通物品留在外层 grid，未被抽走。
+        let outer_container = inv
+            .containers
+            .iter()
+            .find(|c| c.id == outer_id)
+            .expect("外层容器应仍存在");
+        assert!(
+            outer_container
+                .items
+                .iter()
+                .any(|p| p.instance.instance_id == inner_instance_id),
+            "grid 内的背包件应原样保留为 PlacedItemState，不被展开抽走"
+        );
+        // pack_<id> 容器恰好 1 个（仅外层 worn 件），grid 内背包件不计入。
+        let pack_like = inv
+            .containers
+            .iter()
+            .filter(|c| worn_pack_instance_from_container_id(&c.id).is_some())
+            .count();
+        assert_eq!(
+            pack_like, 1,
+            "只应有 1 个 pack_<id> 容器（外层 worn 背包），grid 内背包件不派生第 3 层"
+        );
     }
 
     #[test]

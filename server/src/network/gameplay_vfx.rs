@@ -40,6 +40,14 @@ pub const POISON_MIST: &str = "bong:poison_mist";
 pub const MOVEMENT_DASH: &str = "bong:movement_dash";
 pub const DEAD_DROP_WARD_BREAK: &str = "bong:dead_drop_ward_break";
 
+// plan-tarkov-backpack-v1 P5 — 套包操作差异化视听反馈。三类操作各自独立 event_id，
+// client `PackOperationVfxPlayer` 按 event_id 派发到差异化粒子 + 内联 audio recipe
+// （落地散落 / 布料窸窣 / 轻 thunk）。三者 event_id / color / count / duration 均不同，
+// 由 `pack_move_request` 构造、`classify_pack_move` 判分支，pin 测试断言三类 payload 互不相同。
+pub const INVENTORY_PACK_UNEQUIP: &str = "bong:inventory_pack_unequip";
+pub const INVENTORY_PACK_EQUIP: &str = "bong:inventory_pack_equip";
+pub const INVENTORY_PACK_STOW: &str = "bong:inventory_pack_stow";
+
 pub fn block_center(pos: [i32; 3]) -> DVec3 {
     DVec3::new(
         f64::from(pos[0]) + 0.5,
@@ -74,6 +82,87 @@ pub fn spawn_request(
                 duration_ticks.clamp(1, VFX_PARTICLE_DURATION_TICKS_MAX.into()) as u16,
             ),
         },
+    )
+}
+
+/// plan-tarkov-backpack-v1 P5 — 套包操作三类差异化视听反馈的判别式。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PackMoveVfx {
+    /// 卸下非空/穿戴背包件（worn → 非 worn）：落地音 + 物品散落粒子。
+    Unequip,
+    /// 装上背包件（非 worn → worn）：布料窸窣音 + 轻柔布料粒子。
+    Equip,
+    /// 拖入物品到穿戴中的 `pack_<id>` 容器：轻 thunk 音 + 小尘扑。
+    Stow,
+}
+
+/// 由 `handle_inventory_move` 算出的移动语义布尔位判定 P5 视听反馈类别。
+///
+/// **接线契约**（pin 测试锁住，server emit 命中正确分支）：
+/// - 卸背包：被移走 instance 是背包件 + `from` 在 worn 层 + `to` 不在 worn 层 → `Unequip`
+/// - 穿背包：被移走 instance 是背包件 + `to` 在 worn 层 + `from` 不在 worn 层 → `Equip`
+/// - 拖入：`to` 是 `pack_<id>` 容器（且非穿/卸背包件本身的 worn 转移）→ `Stow`
+/// - 其余移动（格子↔hotbar、非 pack 容器互移等）→ `None`（无套包视听反馈）
+///
+/// worn 转移优先于 Stow 判定：避免「穿/卸背包件」被误判成「拖入容器」。
+pub fn classify_pack_move(
+    moved_item_is_pack: bool,
+    from_worn: bool,
+    to_worn: bool,
+    to_is_pack_container: bool,
+) -> Option<PackMoveVfx> {
+    if moved_item_is_pack && from_worn && !to_worn {
+        Some(PackMoveVfx::Unequip)
+    } else if moved_item_is_pack && to_worn && !from_worn {
+        Some(PackMoveVfx::Equip)
+    } else if to_is_pack_container {
+        Some(PackMoveVfx::Stow)
+    } else {
+        None
+    }
+}
+
+/// 按 `PackMoveVfx` 类别构造差异化 VFX 请求。三类的 event_id / 方向 / 颜色 / 强度 / 数量 /
+/// lifetime 全部不同——pin 测试断言三者 payload 互不相同（禁单方向 stub）。
+///
+/// - `Unequip`：暗草褐 `#7A6A3A`，16 粒，22 tick，向下散落（背包砸地连货散开）。
+/// - `Equip`：柔草绿 `#9CA87E`，8 粒，14 tick，向上轻飘（布料上身窸窣）。
+/// - `Stow`：浅褐 `#B0A878`，5 粒，10 tick，小幅上扑（物品入包轻顿）。
+pub fn pack_move_request(kind: PackMoveVfx, origin: DVec3) -> VfxEventRequest {
+    let (event_id, direction, color, strength, count, duration): (
+        &'static str,
+        [f64; 3],
+        &'static str,
+        f32,
+        u32,
+        u32,
+    ) = match kind {
+        PackMoveVfx::Unequip => (
+            INVENTORY_PACK_UNEQUIP,
+            [0.0, -1.0, 0.0],
+            "#7A6A3A",
+            0.85,
+            16,
+            22,
+        ),
+        PackMoveVfx::Equip => (
+            INVENTORY_PACK_EQUIP,
+            [0.0, 1.0, 0.0],
+            "#9CA87E",
+            0.55,
+            8,
+            14,
+        ),
+        PackMoveVfx::Stow => (INVENTORY_PACK_STOW, [0.0, 1.0, 0.0], "#B0A878", 0.40, 5, 10),
+    };
+    spawn_request(
+        event_id,
+        origin,
+        Some(direction),
+        color,
+        strength,
+        count,
+        duration,
     )
 }
 
@@ -221,6 +310,120 @@ mod tests {
                 matches_expected_particle_range_error(&err, expected_error),
                 "expected checked serializer error {expected_error:?} because {reason}, actual {err:?}"
             );
+        }
+    }
+
+    // ── plan-tarkov-backpack-v1 P5 — 套包操作差异化视听反馈 pin 测试 ────────────
+
+    fn spawn_particle_fields(
+        request: &VfxEventRequest,
+    ) -> (String, Option<String>, Option<u16>, Option<u16>) {
+        let VfxEventPayloadV1::SpawnParticle {
+            event_id,
+            color,
+            count,
+            duration_ticks,
+            ..
+        } = &request.payload
+        else {
+            panic!("pack_move_request must build SpawnParticle payload");
+        };
+        (event_id.clone(), color.clone(), *count, *duration_ticks)
+    }
+
+    #[test]
+    fn classify_pack_move_routes_each_branch_to_distinct_category() {
+        // 卸背包：背包件 + worn → 非 worn。
+        assert_eq!(
+            classify_pack_move(true, true, false, false),
+            Some(PackMoveVfx::Unequip),
+            "背包件从 worn 层移到非 worn 应判定为卸下（落地散落反馈）"
+        );
+        // 卸背包即便落点恰是 pack_ 容器，worn 转移仍优先（不退化成 Stow）。
+        assert_eq!(
+            classify_pack_move(true, true, false, true),
+            Some(PackMoveVfx::Unequip),
+            "卸背包优先于拖入判定，避免穿/卸被误判成 Stow"
+        );
+        // 穿背包：背包件 + 非 worn → worn。
+        assert_eq!(
+            classify_pack_move(true, false, true, false),
+            Some(PackMoveVfx::Equip),
+            "背包件移入 worn 层应判定为穿上（布料窸窣反馈）"
+        );
+        // 拖入：普通物品落入 pack_ 容器（非背包件 worn 转移）。
+        assert_eq!(
+            classify_pack_move(false, false, false, true),
+            Some(PackMoveVfx::Stow),
+            "普通物品落入穿戴 pack_ 容器应判定为拖入（轻 thunk 反馈）"
+        );
+        // 非套包移动（格子↔hotbar、非 pack 容器）无反馈。
+        assert_eq!(
+            classify_pack_move(false, false, false, false),
+            None,
+            "非套包移动不应触发任何套包视听反馈"
+        );
+        // 背包件在两个非 worn 位置间挪（捡起再放回格子）也不算穿/卸。
+        assert_eq!(
+            classify_pack_move(true, false, false, false),
+            None,
+            "背包件在非 worn 位置间移动不触发穿/卸反馈"
+        );
+    }
+
+    #[test]
+    fn pack_move_request_payloads_are_mutually_distinct() {
+        let origin = DVec3::new(4.0, 65.0, -2.0);
+        let unequip = spawn_particle_fields(&pack_move_request(PackMoveVfx::Unequip, origin));
+        let equip = spawn_particle_fields(&pack_move_request(PackMoveVfx::Equip, origin));
+        let stow = spawn_particle_fields(&pack_move_request(PackMoveVfx::Stow, origin));
+
+        // event_id 必须逐类不同——否则 client 无法把三类反馈派发到差异化 player。
+        assert_eq!(unequip.0, INVENTORY_PACK_UNEQUIP);
+        assert_eq!(equip.0, INVENTORY_PACK_EQUIP);
+        assert_eq!(stow.0, INVENTORY_PACK_STOW);
+        assert_ne!(unequip.0, equip.0, "卸/装 event_id 不能相同");
+        assert_ne!(unequip.0, stow.0, "卸/拖入 event_id 不能相同");
+        assert_ne!(equip.0, stow.0, "装/拖入 event_id 不能相同");
+
+        // 三类 payload 整体（event_id+color+count+duration）必须互不相同——
+        // 单方向 stub（三类发同款 payload）撞红。
+        assert_ne!(
+            unequip, equip,
+            "卸/装 payload 必须差异化（color/count/duration）"
+        );
+        assert_ne!(unequip, stow, "卸/拖入 payload 必须差异化");
+        assert_ne!(equip, stow, "装/拖入 payload 必须差异化");
+
+        // 量级方向锁定：卸下散落最多最久、拖入最少最短（强度递减直觉）。
+        assert!(
+            unequip.2 > equip.2 && equip.2 > stow.2,
+            "粒子数量应卸下>装上>拖入，实际 {:?}/{:?}/{:?}",
+            unequip.2,
+            equip.2,
+            stow.2
+        );
+        assert!(
+            unequip.3 > equip.3 && equip.3 > stow.3,
+            "lifetime 应卸下>装上>拖入，实际 {:?}/{:?}/{:?}",
+            unequip.3,
+            equip.3,
+            stow.3
+        );
+    }
+
+    #[test]
+    fn pack_move_request_payloads_serialize_within_schema_contract() {
+        let origin = DVec3::new(1.0, 70.0, 1.0);
+        for kind in [PackMoveVfx::Unequip, PackMoveVfx::Equip, PackMoveVfx::Stow] {
+            let request = pack_move_request(kind, origin);
+            VfxEventV1::new(request.payload)
+                .to_json_bytes_checked()
+                .unwrap_or_else(|err| {
+                    panic!(
+                        "pack_move_request({kind:?}) must serialize within schema range: {err:?}"
+                    )
+                });
         }
     }
 }
