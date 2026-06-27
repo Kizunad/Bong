@@ -8,12 +8,12 @@
 
 | 阶段 | 主题 | 状态 | 验收日期 |
 |------|------|------|----------|
-| P0 | 嵌套数据模型（`owner_instance_id`）+ 移除非空拒卸 + **把 rebuild+overflow→掉落接进 move 路径** + 多背包重映射 + 持久化回填（回填先于孤儿检测） | ⬜ | YYYY-MM-DD |
-| P1 | 重量递归上卷 pin 测试（含 orphan double-count 边界）+ 背包自重占上限语义收口 | ⬜ | YYYY-MM-DD |
-| P2 | 跨包/包内移动 + 拖入持久化 + 穿戴态门控（server+client 双侧）+ schema 漂移修复（仅 TS）+ 超限软门控固化 | ⬜ | YYYY-MM-DD |
-| P3 | client 双击打开穿戴背包件容器视图（`WornContainerPanel`，发包走 `sendInventoryMove`）+ `owner_instance_id` 全栈下发（单 PR） | ⬜ | YYYY-MM-DD |
-| P4 | 背包上身渲染（**先 GeckoLib 4.x player-attach API spike → 选型 → 接线**，TPV） | ⬜ | YYYY-MM-DD |
-| P5 | 视听反馈（卸包/装包/拖入差异化）+ 平衡（容量/自重参数 + 嵌套深度 2 层封顶固化） | ⬜ | YYYY-MM-DD |
+| P0 | 嵌套数据模型（`owner_instance_id`）+ 移除非空拒卸 + **把 rebuild+overflow→掉落接进 move 路径** + 多背包重映射 + 持久化回填（回填先于孤儿检测） | ✅ | 2026-06-27 |
+| P1 | 重量递归上卷 pin 测试（含 orphan double-count 边界）+ 背包自重占上限语义收口 | ✅ | 2026-06-27 |
+| P2 | 跨包/包内移动 + 拖入持久化 + 穿戴态门控（server+client 双侧）+ schema 漂移修复（仅 TS）+ 超限软门控固化 | ✅ | 2026-06-27 |
+| P3 | client 双击打开穿戴背包件容器视图（`WornContainerPanel`，发包走 `sendInventoryMove`）+ `owner_instance_id` 全栈下发（单 PR） | ✅ | 2026-06-27 |
+| P4 | 背包上身渲染（**先 GeckoLib 4.x player-attach API spike → 选型 → 接线**，TPV） | ✅ | 2026-06-27 |
+| P5 | 视听反馈（卸包/装包/拖入差异化）+ 平衡（容量/自重参数 + 嵌套深度 2 层封顶固化） | ✅ | 2026-06-27 |
 
 ---
 
@@ -51,7 +51,7 @@
 
 ---
 
-## P0 — 嵌套数据模型 + 移除非空拒卸 + rebuild/overflow 接线 ⬜
+## P0 — 嵌套数据模型 + 移除非空拒卸 + rebuild/overflow 接线 ✅ 2026-06-27
 
 **目标**：建立背包件 ↔ 容器的语义归属字段；移除「非空拒卸」硬门；**把 `rebuild_containers_from_equipment` + overflow→掉落事件真正接进 move 路径**（修复孤岛红线）；多背包占位全量重映射；老存档无缝兼容（回填先于孤儿检测）。
 
@@ -99,7 +99,7 @@
 
 ---
 
-## P1 — 重量递归上卷 ⬜
+## P1 — 重量递归上卷 ✅ 2026-06-27
 
 **目标**：用 pin 测试锁住「flat 求和 == 递归上卷」的数学等价性，**包含 orphan double-count 危险边界**（衔接 verifiable#4），并固化「背包自重是否占负重上限」语义。
 
@@ -128,7 +128,7 @@
 
 ---
 
-## P2 — 跨包/包内移动 + 拖入持久化 + 穿戴态门控 ⬜
+## P2 — 跨包/包内移动 + 拖入持久化 + 穿戴态门控 ✅ 2026-06-27
 
 **目标**：物品可拖入任意穿戴中 `pack_<id>` 容器并持久化；新增「目标背包件必须穿戴」门控（**server + client 双侧**，衔接 islands#3）；schema 漂移修复（仅 TS）；超限软门控固化（决议 #5）。
 
@@ -159,7 +159,7 @@
 
 ---
 
-## P3 — client 双击打开穿戴背包件容器视图 ⬜
+## P3 — client 双击打开穿戴背包件容器视图 ✅ 2026-06-27
 
 **目标**：双击装备槽内穿戴的背包件，在 InspectScreen 右侧挂出其内含物视图，支持拖入拖出。`owner_instance_id` 全栈下发（单 PR 全栈落地）。
 
@@ -195,7 +195,7 @@
 
 ---
 
-## P4 — 背包上身渲染（破草包 TPV） ⬜
+## P4 — 背包上身渲染（破草包 TPV） ✅ 2026-06-27
 
 **目标**：穿戴的背包件（破草包）在玩家身上（TPV / F5）渲染，补齐「配了 geo 模型却没上身」缺口。
 
@@ -228,7 +228,7 @@
 
 ---
 
-## P5 — 视听反馈 + 平衡 ⬜
+## P5 — 视听反馈 + 平衡 ✅ 2026-06-27
 
 **目标**：卸包/装包/拖入差异化视听反馈 + 容量/自重/嵌套深度参数标定。
 
@@ -331,3 +331,71 @@ Agent(
 ### §10.5 单次 consume-plan 全自动到 merge
 
 用户提交 `/consume-plan tarkov-backpack-v1` 后即可下班：主线串行跑 PR-1..PR-6，每个走「subagent 实施 → 等 CR/Pi → 修 → 重等 → merge」，全绿后在末 PR `git mv docs/plan-tarkov-backpack-v1.md docs/finished_plans/` 并填 `## Finish Evidence`（落地清单 / 关键 commit / 测试结果 / 跨仓库核验 / 遗留）。醒来看 plan 是否已在 `finished_plans/`。
+
+---
+
+## Finish Evidence
+
+塔科夫式套包系统（嵌套容器 + 上身渲染 + 差异化视听）全 6 PR（P0-P5）落地，2026-06-27 归档。
+
+### 落地清单（阶段 → 真实模块/文件）
+
+- **P0 — 嵌套数据模型 + rebuild/overflow 接线**：
+  - `server/src/inventory/mod.rs`：`ContainerState.owner_instance_id: Option<u64>`、`rebuild_containers_from_equipment`（写 `owner_instance_id`）、`rebuild_and_drop_overflow`（卸非空背包 overflow→`DroppedLootRegistry`）、`instantiate_inventory_from_loadout`（多背包重映射）。
+  - `server/src/network/client_request_handler.rs`：`handle_inventory_move` worn-pack 穿/卸分支显式调 `rebuild_and_drop_overflow` + resync。
+  - `server/src/player/state.rs`：`load_player_inventory_from_sqlite` 回填 `owner_instance_id`（先于孤儿检测）、`inventory_has_orphan_pack_container`。
+  - `server/tests/tarkov_backpack_p0_e2e.rs`：经 `rebuild_and_drop_overflow` seam 锁卸非空背包 overflow 不丢失。
+- **P1 — 重量递归上卷 pin**：`server/src/inventory/mod.rs`（`calculate_current_weight` / `compute_max_weight` 公式不改，pin 测试固化决议 #3 + orphan double-count 边界）。
+- **P2 — 跨包移动 + 穿戴态门控 + schema 漂移修复（TS）**：
+  - `server/src/inventory/mod.rs`：`validate_move_semantics` 穿戴态门控（`to=pack_<id>` 校验 owner worn）。
+  - `client/src/main/java/com/bong/client/inventory/InspectScreen.java`：client 侧门控 + toast。
+  - `agent/packages/schema/src/inventory.ts`：`ContainerIdV1` 收紧为 `^(body_pocket|pack_\d+)$` pattern、`containers` minItems:1/maxItems:16；sample 对拍。
+- **P3 — 双击容器视图 + owner_instance_id 全栈下发**：
+  - `client/.../inventory/WornContainerPanel.java`（双击打开、发包走 `sendInventoryMove`）、`InspectScreen.java`（双击计时 + drop/pickup 分支）、`InventoryEquipRules.isContainer()`。
+  - `server/src/schema/inventory.rs`：`ContainerSnapshotV1.owner_instance_id`；`server/src/network/inventory_snapshot_emit.rs`：`build_inventory_snapshot` 填字段。
+  - `agent/packages/schema/src/inventory.ts`：`ContainerSnapshotV1.owner_instance_id`；`client/.../InventorySnapshotHandler` 解析。
+- **P4 — 背包上身渲染（TPV，spike→route b）**：`client/.../armor/WornPackFeatureRenderer.java`、`WornPackModelRegistry.java`、`WornPackRenderBootstrap.java`、`BongClient.java`（注册）；复用 `grass_pouch_back.geo.json` + entity 贴图，spike 结论 = vanilla baked-model overlay（不用 GeckoLib runtime）。
+- **P5 — 视听反馈 + 平衡 + 2 层封顶**：
+  - `server/src/network/gameplay_vfx.rs`：`INVENTORY_PACK_UNEQUIP/EQUIP/STOW` 常量、`PackMoveVfx` 枚举、`classify_pack_move`、`pack_move_request`（三类差异化 payload）+ pin 测试。
+  - `server/src/network/client_request_handler.rs`：`handle_inventory_move` 经 `classify_pack_move` emit 差异化 `VfxEventRequest`。
+  - `client/.../visual/particle/PackOperationVfxPlayer.java`（三 Kind 差异化粒子 + 内联 audio recipe）、`VfxBootstrap.java`（注册三路由）、`assets/bong/audio_recipes/inventory_pack_{unequip,equip,stow}.json`。
+  - `server/src/inventory/mod.rs`：2 层封顶回归测试 `rebuild_does_not_expand_container_item_placed_inside_grid_two_layer_cap` + 平衡 sanity `grass_pouch_balance_values_parse_from_core_toml`。
+  - `server/assets/items/core.toml`：破草包(8.0/3×3/自重0.25) / 小草包(10.0 升级款) 数值标定 + 2 层封顶注释。
+
+### 关键 commit（hash + #PR + 一句话）
+
+- 定稿 `7c3656758`（#758）— plan §决议 #1-#6 pre-P0 收口 + §10 工作流定稿。
+- P0 `4b255485a`（#760）— 嵌套数据模型 `owner_instance_id` + 移除非空拒卸 + rebuild/overflow→掉落接进 move 路径 + 多背包重映射 + 持久化回填。
+- P1 `efa6772d9`（#762）— 重量递归上卷 pin 测试（固化决议 #3，不改公式）。
+- P2 `7a153389a`（#763）— 跨包/包内移动穿戴态门控（server+client）+ schema 漂移修复（仅 TS）。
+- P3 `6f9bb2ceb`（#765）— 双击打开穿戴背包件容器视图 + `owner_instance_id` 全栈下发。
+- P4 `c53d43eaa`（#773）— 破草包上身渲染（TPV，spike→route b vanilla baked-model overlay）。
+- P5 本 PR（`feat/tarkov-backpack-p5`）— 卸/装/拖入三类差异化视听反馈 + 嵌套深度 2 层封顶固化 + 破草包/小草包平衡数值标定。
+
+### 测试结果
+
+- P0：`cargo test` 全绿（9909 → 含 9 inventory 单测 + e2e `e2e_unequip_nonempty_pack_drops_overflow_not_lost`）。
+- P1：`cargo test` 全绿（+7 重量 pin 测试）。
+- P2：`cargo test`（+6 移动门控 + e2e）+ `cd agent/packages/schema && npm test` 双端对拍全绿。
+- P3：`cargo test` + schema `npm test` + `cd client && ./gradlew test` 全绿（含 `WornContainerPanelTest` + owner_instance_id 解析）。
+- P4：`cd client && ./gradlew test build` 全绿（3014 测试，含 registry 映射 + feature renderer 过滤）。
+- P5（本 PR）：
+  - server `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`：全绿（lib 9952 passed，含新增 `classify_pack_move_routes_each_branch_to_distinct_category` / `pack_move_request_payloads_are_mutually_distinct` / `pack_move_request_payloads_serialize_within_schema_contract` / `rebuild_does_not_expand_container_item_placed_inside_grid_two_layer_cap` / `grass_pouch_balance_values_parse_from_core_toml`；resourcepack 16 passed 含 `committed_manifest_matches_default_constants`）。
+  - schema `npm run build -w @bong/schema && npm run generate -w @bong/schema && cd packages/schema && npm test`：726 passed（VFX 走 `bong:vfx_event` JSON 通道，复用既有 spawn_particle schema，无新字段；regenerate 后 generated/ 无漂移）。
+  - client `./gradlew test build`（Java 17）：3022 passed / 0 failed（P4 3014 → +8：新增 `PackOperationVfxBootstrapTest` 注册+event_id 对齐 3 例、`PackOperationAudioRecipeAssetTest` 三类 recipe 资产对拍+互不相同 5 例）。
+  - 资源包：新增 3 个 `audio_recipes/*.json` 进 audio 子包（file_count 51→54），`scripts/build-resourcepack.sh` 重建 → 同步 `client/resourcepack/manifest.json`（sha1 `b1c4e20…`、size 72279732）+ `server/src/network/resourcepack.rs` 常量；`python3 -m unittest scripts/test_build_resourcepack.py` 4 passed。
+
+### 跨仓库核验（server / schema / client 命中 symbol）
+
+- **server**：`ContainerState.owner_instance_id`、`rebuild_and_drop_overflow`、`rebuild_containers_from_equipment`、`validate_move_semantics`（穿戴态门控）、`gameplay_vfx::{classify_pack_move, pack_move_request, PackMoveVfx, INVENTORY_PACK_UNEQUIP/EQUIP/STOW}`、`handle_inventory_move`（emit 接线）。
+- **schema**：`ContainerIdV1`（`^(body_pocket|pack_\d+)$` pattern）、`ContainerSnapshotV1.owner_instance_id`；VFX 复用 `VfxEventSpawnParticleV1`（无新字段）。
+- **client**：`WornContainerPanel`、`WornPackFeatureRenderer`、`WornPackRenderBootstrap`、`PackOperationVfxPlayer.{UNEQUIP_EVENT, EQUIP_EVENT, STOW_EVENT, Kind, audioRecipe}`、`VfxBootstrap`（注册三路由）。
+
+### 遗留 / 后续
+
+- **真机 F5 调位**（P4）：`WornPackFeatureRenderer` 的 OFFSET_X/Y/Z 为 tunable，破草包背面挂点比例/穿模需真机 F5 目测微调（资产正确、接线完成，纯数值校准）。
+- **front 挂点变体（P5 #4，未做）**：`grass_pouch_front.geo.json` 前胸挂点变体本 PR **未启用**——当前无前挂形制容器模板（破草包默认背面），启用属新形制引入、超出 P5 收口范围，留后续 plan（按 template→挂点映射接）。
+- **磨损降容量（P5 #3，决议 #5，未做）**：默认不做（避免破坏「捡了再丢」手感 + 需 rebuild 重算 max_weight 全链改动），留独立 plan。
+- **硬重量门控（决议 #5，未做）**：维持软门控（超重仅 `OverloadedMarker` debuff，不拒绝拖入/拾取/移动）。硬拒绝留独立 plan。
+- **hint 面板**：`plan-inventory-hint-panel-v1`（用户自理）。
+- **worldview**：本 plan 全程未改 `docs/worldview.md`（决议 #6：§五已锚定容器穿戴/自重计负重，套包/嵌套语义被正典覆盖）。

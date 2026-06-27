@@ -369,6 +369,16 @@ spirit_quality_initial = 0.7
 description = "灵气浸润之清水。可用于灵田补灵 / 部分丹方调和。"
 
 # plan-backpack-equip-v1 P2 — 背包类物品
+#
+# plan-tarkov-backpack-v1 P5（决议 #1）— 平衡标定 + 嵌套深度 2 层封顶：
+#   · 嵌套深度上限 = 2 层（worn 背包 → grid → 物品）。放进 grid 的背包件不被
+#     rebuild_containers_from_equipment 展开为可访问容器（只展开身体槽 worn 件），
+#     由数据模型天然封顶（见 inventory/mod.rs 回归测试 two_layer_cap）。
+#   · 起手破草包数值与 default.toml loadout 自洽：BASE_CARRY_CAPACITY(15.0) +
+#     worn_grass_pouch.weight_capacity(8.0) = 23.0 = loadout max_weight。改这里要同步
+#     default.toml max_weight 与 instantiate 重映射假设（pack_grass_pouch 3×3 装 7 件起手物）。
+#   · 破草包(worn_grass_pouch) < 小草包(grass_pouch)：破草包是起手最差款（缝线快散、磨损快），
+#     小草包是可制作升级款（容量略大、磨损慢）。
 
 [[item]]
 id = "worn_grass_pouch"
@@ -381,6 +391,7 @@ rarity = "common"
 spirit_quality_initial = 0.0
 description = "不知哪个死人身上扒下来的草包。勉强能用，但缝线快散了。"
 
+# 起手最差款：3×3=9 格，容量 8.0（与 loadout 23.0 自洽），自重轻，磨损最快。
 [item.container]
 rows = 3
 cols = 3
@@ -399,10 +410,11 @@ rarity = "common"
 spirit_quality_initial = 0.0
 description = "草根编的粗糙小包。能多带几样东西，但别指望装太多。"
 
+# 可制作升级款：同 3×3 格，容量 10.0（>破草包 8.0，能多带几样东西），自重略大、磨损更慢。
 [item.container]
 rows = 3
 cols = 3
-weight_capacity = 8.0
+weight_capacity = 10.0
 equip_slot = "chest"
 durability_cost_per_op = 0.005
 
