@@ -93,6 +93,10 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     // 容器 tab 列表 = model.containers()，body_pocket 置 index 0（决议 #18）。
     // switchContainer 用这份列表索引 containerLabels[]/containerGrids[]。
     private java.util.List<InventoryModel.ContainerDef> filteredContainerDefs = java.util.List.of();
+    // plan-tarkov-backpack-v1 后续修复：容器 tab 栏 + grids 的 holder。
+    // snapshot 结构变化（卸/穿背包→容器增删）时 clearChildren + rebuildContainerSection 重建，
+    // 无需重开界面（populateFromModel 只重填已有格子，不会增删 tab）。
+    private FlowLayout containerSection;
 
     private EquipmentPanel equipPanel;
     private StatusBarsPanel statusBars;
@@ -547,78 +551,13 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         FlowLayout rightCol = Containers.verticalFlow(Sizing.content(), Sizing.content());
         rightCol.gap(2);
 
-        // Container tabs (driven by model).
-        // plan-layered-equip-v1 P4（决议 #13/#18）：行囊面板删除后，body_pocket 改为右侧容器 tab 列表
-        // **第一个**（最左 / 默认激活页），其余容器（身体槽 worn 背包件生成的容器）排其后。
-        // 不再过滤 body_pocket、不再有 activeContainer==containerCount 哨兵——activeContainer 落 0..containerCount-1。
-        var allDefs = model.containers();
-        java.util.List<InventoryModel.ContainerDef> containerDefs = new java.util.ArrayList<>();
-        InventoryModel.ContainerDef bodyPocketDef = null;
-        for (var def : allDefs) {
-            if (InventoryModel.BODY_POCKET_CONTAINER_ID.equals(def.id())) {
-                bodyPocketDef = def;
-            } else {
-                containerDefs.add(def);
-            }
-        }
-        // body_pocket 置 index 0（默认/最左，决议 #18）；server 未下发时补默认 2×3。
-        if (bodyPocketDef == null) {
-            bodyPocketDef = new InventoryModel.ContainerDef(
-                InventoryModel.BODY_POCKET_CONTAINER_ID, "贴身口袋", 2, 3);
-        }
-        containerDefs.add(0, bodyPocketDef);
-
-        filteredContainerDefs = containerDefs;
-        containerCount = containerDefs.size();
-        containerGrids = new BackpackGridPanel[containerCount];
-        containerWrappers = new FlowLayout[containerCount];
-        containerLabels = new LabelComponent[containerCount];
-
-        FlowLayout containerRow = Containers.horizontalFlow(Sizing.content(), Sizing.content());
-        containerRow.gap(2);
-        int maxCols = 3; // floor at body_pocket(2×3) width 防容器面板宽度塌
-        for (var def : containerDefs) maxCols = Math.max(maxCols, def.cols());
-
-        // 全部容器 tab（body_pocket 第一个 + 身体槽 worn 背包件产生的容器）。
-        for (int i = 0; i < containerCount; i++) {
-            final int ci = i;
-            var def = containerDefs.get(i);
-
-            FlowLayout tab = Containers.horizontalFlow(Sizing.content(), Sizing.fixed(14));
-            tab.surface(Surface.flat(0xFF1E1E1E));
-            tab.padding(Insets.of(1, 4, 1, 4));
-            tab.verticalAlignment(VerticalAlignment.CENTER);
-            tab.cursorStyle(CursorStyle.HAND);
-
-            var label = Components.label(Text.literal(
-                "§7" + def.name() + " §8(" + def.rows() + "×" + def.cols() + ")"
-            ));
-            containerLabels[i] = label;
-            tab.child(label);
-            tab.mouseDown().subscribe((mx, my, btn) -> {
-                if (btn == 0) { switchContainer(ci); return true; }
-                return false;
-            });
-            tab.mouseEnter().subscribe(() -> {
-                if (dragState.isDragging()) switchContainer(ci);
-            });
-            containerRow.child(tab);
-        }
-        rightCol.child(containerRow);
-
-        // Build all grids, hidden by default (body_pocket index 0 是初始激活页，见 build() 末尾 switchContainer(0))。
-        int wrapperW = maxCols * GridSlotComponent.CELL_SIZE + 4;
-        for (int i = 0; i < containerCount; i++) {
-            var def = containerDefs.get(i);
-            containerGrids[i] = new BackpackGridPanel(def.id(), def.rows(), def.cols());
-            FlowLayout w = Containers.verticalFlow(Sizing.fixed(wrapperW), Sizing.content());
-            w.surface(Surface.flat(0xFF111111));
-            w.padding(Insets.of(2));
-            w.child(containerGrids[i].container());
-            containerWrappers[i] = w;
-            rightCol.child(w);
-            w.positioning(Positioning.absolute(-9999, -9999));
-        }
+        // Container tabs + grids（plan-tarkov-backpack-v1 后续修复）：放进 containerSection holder，
+        // 由 rebuildContainerSection() 从 model.containers() 重建；snapshot 结构变化时（卸/穿背包→
+        // 容器增删）listener 整体重建，无需重开界面。
+        containerSection = Containers.verticalFlow(Sizing.content(), Sizing.content());
+        containerSection.gap(2);
+        rebuildContainerSection();
+        rightCol.child(containerSection);
 
         // Tooltip
         tooltipPanel = new ItemTooltipPanel();
@@ -663,7 +602,13 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         inventoryListener = next -> {
             if (next == null) return;
             MinecraftClient.getInstance().execute(() -> {
+                // 容器集合变化（卸/穿背包→pack_<id> 增删）时重建 tab 栏 + grids，免重开界面；
+                // 仅内含物变化时 populateFromModel 重填已有格子即可。
+                boolean structuralChange = containerStructureChanged(next);
                 this.model = next;
+                if (structuralChange) {
+                    rebuildContainerSection();
+                }
                 populateFromModel();
             });
         };
@@ -1445,6 +1390,128 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         for (int i = 0; i < all.length; i++) {
             filterLabels[i].color(Color.ofArgb(all[i] == filter ? TAB_ACTIVE_COLOR : TAB_INACTIVE_COLOR));
         }
+    }
+
+    /**
+     * plan-tarkov-backpack-v1 后续修复：从 model.containers() 计算容器 tab 列表，
+     * body_pocket 恒置 index 0（默认/最左，决议 #18），server 未下发时补默认 2×3。
+     */
+    static java.util.List<InventoryModel.ContainerDef> computeContainerDefs(InventoryModel m) {
+        java.util.List<InventoryModel.ContainerDef> defs = new java.util.ArrayList<>();
+        InventoryModel.ContainerDef bodyPocketDef = null;
+        for (var def : m.containers()) {
+            if (InventoryModel.BODY_POCKET_CONTAINER_ID.equals(def.id())) {
+                bodyPocketDef = def;
+            } else {
+                defs.add(def);
+            }
+        }
+        if (bodyPocketDef == null) {
+            bodyPocketDef = new InventoryModel.ContainerDef(
+                InventoryModel.BODY_POCKET_CONTAINER_ID, "贴身口袋", 2, 3);
+        }
+        defs.add(0, bodyPocketDef);
+        return defs;
+    }
+
+    /**
+     * 两个有序容器列表的结构（id + rows + cols）是否不同。
+     * 仅内含物变化 → false（populateFromModel 即可重填）；容器增/删/换尺寸 → true（需 rebuildContainerSection）。
+     */
+    static boolean containerDefsDiffer(
+            java.util.List<InventoryModel.ContainerDef> a,
+            java.util.List<InventoryModel.ContainerDef> b) {
+        if (a.size() != b.size()) return true;
+        for (int i = 0; i < a.size(); i++) {
+            var x = a.get(i);
+            var y = b.get(i);
+            if (!x.id().equals(y.id()) || x.rows() != y.rows() || x.cols() != y.cols()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** 新 snapshot 的容器集合是否与当前 tab 栏结构不同 → 需重建 tab 栏 + grids。 */
+    private boolean containerStructureChanged(InventoryModel next) {
+        return containerDefsDiffer(computeContainerDefs(next), filteredContainerDefs);
+    }
+
+    /**
+     * plan-tarkov-backpack-v1 后续修复：从当前 model 重建容器 tab 栏 + grids 到 containerSection。
+     * build() 初次构建 + snapshot 结构变化（卸/穿背包→容器增删）时调用，免重开界面。
+     * 保留当前选中容器（id 仍在则切回，否则落 body_pocket=0）。
+     */
+    private void rebuildContainerSection() {
+        if (containerSection == null) return;
+        String prevActiveId = (activeContainer >= 0 && activeContainer < filteredContainerDefs.size())
+            ? filteredContainerDefs.get(activeContainer).id()
+            : null;
+
+        var containerDefs = computeContainerDefs(model);
+        filteredContainerDefs = containerDefs;
+        containerCount = containerDefs.size();
+        containerGrids = new BackpackGridPanel[containerCount];
+        containerWrappers = new FlowLayout[containerCount];
+        containerLabels = new LabelComponent[containerCount];
+        activeContainer = -1; // 强制下面 switchContainer 真正生效（不被 idx==activeContainer 短路）
+
+        containerSection.clearChildren();
+
+        FlowLayout containerRow = Containers.horizontalFlow(Sizing.content(), Sizing.content());
+        containerRow.gap(2);
+        int maxCols = 3; // floor at body_pocket(2×3) width 防容器面板宽度塌
+        for (var def : containerDefs) maxCols = Math.max(maxCols, def.cols());
+
+        // 全部容器 tab（body_pocket 第一个 + 身体槽 worn 背包件产生的容器）。
+        for (int i = 0; i < containerCount; i++) {
+            final int ci = i;
+            var def = containerDefs.get(i);
+
+            FlowLayout tab = Containers.horizontalFlow(Sizing.content(), Sizing.fixed(14));
+            tab.surface(Surface.flat(0xFF1E1E1E));
+            tab.padding(Insets.of(1, 4, 1, 4));
+            tab.verticalAlignment(VerticalAlignment.CENTER);
+            tab.cursorStyle(CursorStyle.HAND);
+
+            var label = Components.label(Text.literal(
+                "§7" + def.name() + " §8(" + def.rows() + "×" + def.cols() + ")"
+            ));
+            containerLabels[i] = label;
+            tab.child(label);
+            tab.mouseDown().subscribe((mx, my, btn) -> {
+                if (btn == 0) { switchContainer(ci); return true; }
+                return false;
+            });
+            tab.mouseEnter().subscribe(() -> {
+                if (dragState.isDragging()) switchContainer(ci);
+            });
+            containerRow.child(tab);
+        }
+        containerSection.child(containerRow);
+
+        // Build all grids, hidden by default（active 页由下方 switchContainer 切出）。
+        int wrapperW = maxCols * GridSlotComponent.CELL_SIZE + 4;
+        for (int i = 0; i < containerCount; i++) {
+            var def = containerDefs.get(i);
+            containerGrids[i] = new BackpackGridPanel(def.id(), def.rows(), def.cols());
+            FlowLayout w = Containers.verticalFlow(Sizing.fixed(wrapperW), Sizing.content());
+            w.surface(Surface.flat(0xFF111111));
+            w.padding(Insets.of(2));
+            w.child(containerGrids[i].container());
+            containerWrappers[i] = w;
+            containerSection.child(w);
+            w.positioning(Positioning.absolute(-9999, -9999));
+        }
+
+        // 恢复选中：原选中容器仍在 → 切回；否则落 body_pocket(index 0)。
+        int target = 0;
+        if (prevActiveId != null) {
+            for (int i = 0; i < containerCount; i++) {
+                if (filteredContainerDefs.get(i).id().equals(prevActiveId)) { target = i; break; }
+            }
+        }
+        if (containerCount > 0) switchContainer(target);
     }
 
     private void switchContainer(int idx) {
