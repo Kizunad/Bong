@@ -163,7 +163,8 @@ pub fn place_item_into_container(
     col: u8,
     instance: ItemInstance,
 ) -> Result<(), String> {
-    if row + instance.grid_h > container.rows || col + instance.grid_w > container.cols {
+    if !super::item_fits_in_container_bounds(container, row, col, instance.grid_w, instance.grid_h)
+    {
         return Err("out of bounds".to_string());
     }
     let probe = super::footprint_probe(row, col, instance.grid_w, instance.grid_h);
@@ -532,6 +533,46 @@ mod tests {
         assert!(
             place_item_into_container(&mut container, 1, 3, i3).is_err(),
             "2x2 item at (1,3) should fail: col+grid_w=5 > cols=4"
+        );
+    }
+
+    #[test]
+    fn place_item_rejects_overflowing_coordinates() {
+        let mut container = make_container(4, 3);
+        let instance = ItemInstance {
+            instance_id: 1,
+            template_id: "t".to_string(),
+            display_name: "T".to_string(),
+            grid_w: 2,
+            grid_h: 2,
+            weight: 1.0,
+            rarity: ItemRarity::Common,
+            description: String::new(),
+            stack_count: 1,
+            spirit_quality: 0.0,
+            durability: 1.0,
+            freshness: None,
+            mineral_id: None,
+            charges: None,
+            forge_quality: None,
+            forge_color: None,
+            forge_side_effects: Vec::new(),
+            forge_achieved_tier: None,
+            alchemy: None,
+            lingering_owner_qi: None,
+        };
+
+        assert!(
+            place_item_into_container(&mut container, u8::MAX, 0, instance.clone()).is_err(),
+            "overflowing row + grid_h must be rejected instead of panicking or wrapping"
+        );
+        assert!(
+            place_item_into_container(&mut container, 0, u8::MAX, instance).is_err(),
+            "overflowing col + grid_w must be rejected instead of panicking or wrapping"
+        );
+        assert!(
+            container.items.is_empty(),
+            "rejected overflow coordinates must not mutate the container"
         );
     }
 

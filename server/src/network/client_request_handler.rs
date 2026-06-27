@@ -12559,9 +12559,13 @@ fn handle_external_container_move(
             }
         };
 
-        if to_row + removed.instance.grid_h > target_container.rows
-            || to_col + removed.instance.grid_w > target_container.cols
-        {
+        if !crate::inventory::item_fits_in_container_bounds(
+            target_container,
+            to_row,
+            to_col,
+            removed.instance.grid_w,
+            removed.instance.grid_h,
+        ) {
             place_item_into_container(
                 &mut ext.container,
                 removed.row,

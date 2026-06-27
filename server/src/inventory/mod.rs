@@ -1752,6 +1752,17 @@ pub fn find_free_slot(container: &ContainerState, grid_w: u8, grid_h: u8) -> Opt
     None
 }
 
+pub(crate) fn item_fits_in_container_bounds(
+    container: &ContainerState,
+    row: u8,
+    col: u8,
+    grid_w: u8,
+    grid_h: u8,
+) -> bool {
+    u16::from(row) + u16::from(grid_h) <= u16::from(container.rows)
+        && u16::from(col) + u16::from(grid_w) <= u16::from(container.cols)
+}
+
 pub fn find_mergeable_stack<'a>(
     container: &'a mut ContainerState,
     template_id: &str,
