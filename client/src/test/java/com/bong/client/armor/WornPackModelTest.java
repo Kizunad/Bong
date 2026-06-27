@@ -65,6 +65,43 @@ class WornPackModelTest {
         assertNotNull(part.getChild("grass_pouch_back"));
     }
 
+    @Test
+    void convertedBoundingBoxSitsOnLowerBackWithinTorso() {
+        // Round 2 结构化核验：把 4 cube 经 y 翻转后求 vanilla body 局部系包围盒，核验挂点/比例/不穿模。
+        // body cuboid = addCuboid(-4,0,-2,8,12,4)：x∈[-4,4]、y∈[0,12](颈→腰)、z∈[-2,2](-2 前胸,+2 背)。
+        float minX = Float.MAX_VALUE, maxX = -Float.MAX_VALUE;
+        float minY = Float.MAX_VALUE, maxY = -Float.MAX_VALUE;
+        float minZ = Float.MAX_VALUE, maxZ = -Float.MAX_VALUE;
+        for (WornPackModel.GeoCube c : WornPackModel.GRASS_POUCH_BACK_CUBES) {
+            float yTop = WornPackModel.bedrockToVanillaCuboidY(c.oy(), c.sy());
+            float yBot = yTop + c.sy();
+            minX = Math.min(minX, c.ox());
+            maxX = Math.max(maxX, c.ox() + c.sx());
+            minY = Math.min(minY, yTop);
+            maxY = Math.max(maxY, yBot);
+            minZ = Math.min(minZ, c.oz());
+            maxZ = Math.max(maxZ, c.oz() + c.sz());
+        }
+
+        // 比例：背包件不应宽过躯干（body 半宽=4），否则会从肩膀两侧穿出。
+        assertTrue(Math.max(Math.abs(minX), Math.abs(maxX)) <= 4.0f,
+            "背包件横向半宽应 <= body 半宽 4，实际 |x|max=" + Math.max(Math.abs(minX), Math.abs(maxX)));
+
+        // 挂点(y)：应挂在躯干背后（颈 y=0 之下、不高过肩），底部不应深陷腿部以下。
+        assertTrue(minY >= 0.0f,
+            "背包件顶部不应高过肩(y<0)，实际 minY=" + minY + "（若 y 翻转缺失会得 minY≈11.5）");
+        assertTrue(maxY <= 13.0f,
+            "背包件底部不应深陷腿部以下(y>13)，实际 maxY=" + maxY + "（若 y 翻转缺失会得 maxY≈17.5）");
+        assertTrue(minY >= 5.0f,
+            "破草包挂在腰背(下-中段)，顶部应在背中部 y>=5，实际 minY=" + minY);
+
+        // 不穿模(z)：应落在躯干背面(z>=躯干背 ~2 附近，允许 <=1px 贴合嵌入)且不浮在身后过远。
+        assertTrue(minZ >= 1.0f,
+            "背包件不应陷入躯干前侧(z<1)，实际 minZ=" + minZ);
+        assertTrue(maxZ <= 6.0f,
+            "背包件不应浮在身后过远(z>6)，实际 maxZ=" + maxZ);
+    }
+
     private static void assertCube(
         WornPackModel.GeoCube c,
         float ox, float oy, float oz, float sx, float sy, float sz, int u, int v
