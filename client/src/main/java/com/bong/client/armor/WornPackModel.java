@@ -33,6 +33,13 @@ import java.util.List;
  * 故背包件在 z∈[1.5,4.5] 落在躯干背后并微微凸出。texture box-uv 在两边布局一致（GeckoLib 正因此能在
  * vanilla 实体上像素级还原 Bedrock geo），故贴图映射正确。
  *
+ * <p><b>bone pivot 不参与定位（pivot 校准复核）</b>：geo 单 bone {@code GrassPouch_Back} 的
+ * pivot 为 {@code [0,14,3]}，但**无 rotation 字段**。Bedrock geo 里 cube 的 {@code origin} 是
+ * **绝对 model-space 坐标**（与 pivot 同系），pivot 仅是 {@code rotation} 的旋转中心；无旋转时 cube 按
+ * origin 原位渲染。故本转换**直接用 cube origin**、不叠加 bone pivot 偏移——这是正确做法，请勿
+ * 误把 pivot [0,14,3] 当平移量加回去。pivot 的 y=14 仅作参考：{@code 24-14=10} = vanilla 躯干下-中段，
+ * 与本表 cube 落点 y∈[6.5,12.5] 一致（plan §P4「pivot Y=14 torso 中段、Z+3 背面」即此）。
+ *
  * <p>转写自 {@code assets/bong/geo/grass_pouch_back.geo.json}（geometry.bong.grass_pouch_back，
  * texture 32×32，单 bone GrassPouch_Back，4 cube）。改 geo 时同步本表 + {@code WornPackModelTest} pin。
  */
