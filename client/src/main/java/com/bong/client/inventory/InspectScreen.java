@@ -159,6 +159,12 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     private static final long DOUBLE_CLICK_WINDOW_MS = 400L;
     private long lastEquipClickTimeMs = 0L;
     private EquipSlotType lastEquipClickSlot = null;
+    // fix/tarkov-nest-persistence — grid / hotbar 格双击开包（背包卸到身上任意位置后仍可开）。
+    // 用 instanceId（比坐标稳）区分「同一物品的两连击」。
+    private long lastGridClickTimeMs = 0L;
+    private long lastGridClickInstanceId = -1L;
+    private long lastHotbarClickTimeMs = 0L;
+    private long lastHotbarClickInstanceId = -1L;
 
     // Block picker panel (plan-worldgen-v4 P5 §8.1#5 — dev-only 方块审阅浮窗)
     private BlockPickerPanel blockPickerPanel;
@@ -608,6 +614,21 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 this.model = next;
                 if (structuralChange) {
                     rebuildContainerSection();
+                    // fix/tarkov-nest-persistence §C4 — 容器视图不 stale：背包真离开（丢地/销毁）
+                    // 后其 pack_<id> 从 snapshot 消失，已挂载的 WornContainerPanel 须 dispose，
+                    // 否则空壳面板仍可点 → 产生 stale move_intent。卸到 body_pocket 等仍在身上的
+                    // 情形 pack_<id> 仍在 → 面板不关（用户可继续看包），这正是预期。
+                    if (wornContainerPanel != null && !wornContainerPanel.isClosed()) {
+                        boolean stillExists = next.containers().stream()
+                                .anyMatch(d -> wornContainerPanel.containerId().equals(d.id()));
+                        if (!stillExists) {
+                            // 若正从该被销毁容器拖拽，先取消拖拽避免 stale from-location。
+                            if (dragState.isDragging()) {
+                                dragState.cancel();
+                            }
+                            unmountWornContainerPanel();
+                        }
+                    }
                 }
                 populateFromModel();
             });
@@ -1732,6 +1753,26 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         return (nowMs - lastTimeMs) <= DOUBLE_CLICK_WINDOW_MS;
     }
 
+    /**
+     * fix/tarkov-nest-persistence §C1/§C2 —— grid / hotbar 格双击判定（按 instanceId 区分物品）。
+     *
+     * <p>同一 instance 两连击、且距上次 ≤ {@link #DOUBLE_CLICK_WINDOW_MS} 视为双击；不同 instance、
+     * 超窗、首次点击（lastInstanceId &lt; 0）均非双击。纯计时逻辑，抽出供单测覆盖状态转换。
+     * 用 instanceId（而非坐标）区分，背包在 body_pocket / hotbar 间移动后仍稳定。</p>
+     *
+     * @param lastInstanceId 上次点击物品 instance（首次为负数，如 -1）
+     * @param lastTimeMs     上次点击时间戳（ms）
+     * @param instanceId     本次点击物品 instance
+     * @param nowMs          本次点击时间戳（ms）
+     */
+    static boolean isInstanceDoubleClick(
+            long lastInstanceId, long lastTimeMs, long instanceId, long nowMs) {
+        if (lastInstanceId < 0 || lastInstanceId != instanceId) {
+            return false;
+        }
+        return (nowMs - lastTimeMs) <= DOUBLE_CLICK_WINDOW_MS;
+    }
+
     static java.util.OptionalLong parseWornPackInstance(String containerId) {
         if (containerId == null || !containerId.startsWith("pack_")) {
             return java.util.OptionalLong.empty();
@@ -1934,6 +1975,13 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 var eq = equipPanel.slotAtScreen(mouseX, mouseY);
                 // 决议 #12：仅栈顶/held（representative）可操作。
                 InventoryItem top = eq == null ? null : eq.representative();
+                // fix/tarkov-nest-persistence §C3 — 右键背包件直接开包（容器件对 weapon/pill 菜单
+                // 都返回 false，故前置拦截）。覆盖装备槽持有位。
+                if (eq != null && top != null && InventoryEquipRules.isContainer(top)) {
+                    openWornContainerPanel(top, eq.slotType());
+                    itemInspectLongPress.cancel();
+                    return true;
+                }
                 if (eq != null && top != null && openWeaponContextMenu(eq.slotType(), top, (int) mouseX, (int) mouseY)) {
                     itemInspectLongPress.cancel();
                     return true;
@@ -1953,6 +2001,12 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 var pos = grid.screenToGrid(mouseX, mouseY);
                 if (pos != null) {
                     InventoryItem item = grid.itemAt(pos.row(), pos.col());
+                    // fix/tarkov-nest-persistence §C3 — 右键 grid 内背包件直接开包（前置拦截）。
+                    if (item != null && InventoryEquipRules.isContainer(item)) {
+                        openWornContainerPanel(item, null);
+                        itemInspectLongPress.cancel();
+                        return true;
+                    }
                     // plan-interaction-intent-cleanup-v1 P1 — 感保鲜触发已从「任意物品 Shift+右键」
                     // 收窄并迁出鼠标路径：改为焦点槽位 Shift+F（见 keyPressed），且仅对「已知有
                     // 保鲜数据」的物品发探针，杜绝通配误触与对普通物品的无效探针。
@@ -1968,6 +2022,13 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             }
 
             int hIdx = hotbarSlotAtScreen(mouseX, mouseY);
+            // fix/tarkov-nest-persistence §C3 — 右键快捷栏背包件直接开包（前置拦截）。
+            if (hIdx >= 0 && hotbarItems[hIdx] != null
+                    && InventoryEquipRules.isContainer(hotbarItems[hIdx])) {
+                openWornContainerPanel(hotbarItems[hIdx], null);
+                itemInspectLongPress.cancel();
+                return true;
+            }
             if (hIdx >= 0 && hotbarItems[hIdx] != null
                     && openPillContextMenu(hotbarItems[hIdx], (int) mouseX, (int) mouseY)) {
                 itemInspectLongPress.cancel();
@@ -2001,6 +2062,21 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 if (pos != null) {
                     InventoryItem item = grid.itemAt(pos.row(), pos.col());
                     if (item != null) {
+                        // fix/tarkov-nest-persistence §C1 — 背包卸入 body_pocket grid 后双击开包。
+                        // 非 shift、同一 instance 两连击 ≤ 窗口、且为容器件 → 打开 WornContainerPanel。
+                        long now = System.currentTimeMillis();
+                        boolean dbl = !shift
+                                && isInstanceDoubleClick(lastGridClickInstanceId, lastGridClickTimeMs,
+                                        item.instanceId(), now)
+                                && InventoryEquipRules.isContainer(item);
+                        lastGridClickTimeMs = now;
+                        lastGridClickInstanceId = item.instanceId();
+                        if (dbl) {
+                            lastGridClickTimeMs = 0L;
+                            lastGridClickInstanceId = -1L; // 防三连
+                            openWornContainerPanel(item, null);
+                            return true;
+                        }
                         if (shift) quickEquipFromGrid(item);
                         else {
                             var anchor = grid.anchorOf(item);
@@ -2123,6 +2199,20 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             }
             if (hIdx >= 0 && hotbarItems[hIdx] != null) {
                 InventoryItem item = hotbarItems[hIdx];
+                // fix/tarkov-nest-persistence §C2 — 背包件在快捷栏槽双击开包。
+                long nowH = System.currentTimeMillis();
+                boolean dblH = !shift
+                        && isInstanceDoubleClick(lastHotbarClickInstanceId, lastHotbarClickTimeMs,
+                                item.instanceId(), nowH)
+                        && InventoryEquipRules.isContainer(item);
+                lastHotbarClickTimeMs = nowH;
+                lastHotbarClickInstanceId = item.instanceId();
+                if (dblH) {
+                    lastHotbarClickTimeMs = 0L;
+                    lastHotbarClickInstanceId = -1L;
+                    openWornContainerPanel(item, null);
+                    return true;
+                }
                 if (shift) quickMoveHotbarToGrid(hIdx);
                 else {
                     hotbarItems[hIdx] = null;

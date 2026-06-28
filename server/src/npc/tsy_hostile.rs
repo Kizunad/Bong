@@ -1743,6 +1743,12 @@ pub fn handle_npc_death_drop(
     mut loot_registry: Option<ResMut<DroppedLootRegistry>>,
     mut allocator: Option<ResMut<InventoryInstanceIdAllocator>>,
 ) {
+    // plan-tarkov-backpack-v1 套包修复 §7：无 death 事件时提前返回，避免每 tick 无条件
+    // as_deref_mut() 触发 DroppedLootRegistry 的 change-detection → emit_changed_dropped_loot_syncs
+    // 每 tick（~20Hz）广播全量快照刷屏。仅在真有 death 事件时才取可变借用。
+    if events.is_empty() {
+        return;
+    }
     let (
         Some(drop_tables),
         Some(item_registry),
