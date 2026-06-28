@@ -1189,9 +1189,10 @@ fn load_player_inventory_from_sqlite(
         let mut inventory = serde_json::from_str::<PlayerInventory>(&inventory_json)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
 
-        // plan-tarkov-backpack-v1 P0（交付物 #6 顺序硬约束）— 先回填 owner_instance_id，
-        // **必须先于**下方孤儿检测：回填后 `pack_<id>` 容器带 owner，前缀路径与 owner 路径
-        // 一致，孤儿检测不会误判合法新格式容器。回填是纯内存层重算、不写回 DB（幂等）。
+        // plan-tarkov-backpack-v1 P0 — 回填 owner_instance_id（None→Some(前缀解析)），供
+        // 依赖该字段的消费者用；纯内存层重算、不写回 DB（幂等）。
+        // 注：下方孤儿检测改为「前缀解析 + 携带面镜像」判 live（套包修复后位置无关），不再
+        // 依赖本回填的先后顺序——保留此调用是为字段完整性，非孤儿检测前置条件。
         backfill_owner_instance_ids(&mut inventory);
 
         // Bug A（真机回归）— #736 旧版迁移 bug 已被 #751 修，但**被那次 bug 污染并已落盘为

@@ -10257,7 +10257,6 @@ fn client_position(positions: &Query<&valence::prelude::Position>, entity: Entit
 }
 
 #[allow(clippy::too_many_arguments)]
-#[allow(clippy::too_many_arguments)]
 fn handle_inventory_discard(
     entity: Entity,
     instance_id: u64,
