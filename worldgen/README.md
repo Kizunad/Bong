@@ -1,63 +1,32 @@
-# 末法残土 — 世界生成
+# 末法残土 — 世界生成（worldgen）
 
-## 概述
+固定坐标大地图的地形生成。**两段式**：
 
-当前主流程已经切到 `terrain_gen`：
+1. **离线烘焙（Python）** — 把整张大地图的每一列烘焙成 mmap 友好的二进制 raster 层 + `manifest.json`。
+2. **运行时按需生成（Rust server）** — 启动时 `mmap` 这些 `.bin`，玩家走到哪就把对应 chunk 的列实时拼出来。
 
-- `blueprint` 定义固定坐标大地图布局
-- `terrain profiles` 生成区域 field
-- `stitching` 负责 `zone -> wilderness` 过渡
-- `preview exporters` 输出总览图与分区近景图
-- `bakers/` 目录当前提供 `worldpainter` 调试导出和 `raster` 运行时地形导出
+主流程在 `scripts/terrain_gen/`（blueprint → profiles → stitcher → bakers）。
 
-Datapack + Chunky + postprocess 仍保留为旧流程参考，但不再是固定布局大地图的主路径。
-
-当前建议把 `../server/zones.worldview.example.json` 作为世界蓝图输入：
-
-- Server 用它定义 authoritative zones
-- `scripts/postprocess.py` 用它筛选需要处理的 zone/chunk
-- 后续 worldgen/postprocess 可继续消费其中的 `worldgen.*` 扩展字段
-
-第一版地貌规则见：
-
-- `../docs/worldgen-terrain-profiles.md`
-- `../docs/worldgen-pipeline-v2.md`
-- `terrain-profiles.example.json`
+> ⚠️ **历史路线（datapack + Chunky + multi-noise biome + postprocess.py）已弃用**，仅作参考，不再是固定布局大地图的主路径。本文档末尾「附录」保留其说明。
 
 ---
 
-## 目录结构
+## 数据流总览
 
 ```
-worldgen/
-├── README.md                          ← 本文档
-├── worldgen.sh                        ← Phase A 一键预生成脚本
-├── pipeline.sh                        ← Phase A + Phase B 串联脚本
-├── scripts/
-│   └── postprocess.py                 ← Phase B Python 后处理脚本
-├── .venv/                             ← Python 虚拟环境（不提交到 git）
-├── worldgen-mofa/                     ← Datapack（放入 world/datapacks/）
-│   ├── pack.mcmeta                    ← Datapack 声明（pack_format: 15 = MC 1.20）
-│   └── data/
-│       ├── minecraft/dimension/
-│       │   └── overworld.json         ← 覆盖 overworld 维度，替换 biome_source
-│       └── mofa/worldgen/
-│           ├── biome/
-│           │   ├── spawn_haven.json       ← 出生安全区
-│           │   ├── kui_zeng.json          ← 馈赠区（普通）
-│           │   ├── kui_zeng_rich.json     ← 馈赠区（高灵气）
-│           │   ├── si_yu.json             ← 死域
-│           │   ├── fu_ling.json           ← 负灵域
-│           │   └── fu_ling_abyss.json     ← 坍缩渊
-│           └── noise_settings/
-│               └── blood_valley.json      ← 血谷地形（自定义噪声设置）
-└── server/                            ← Fabric 1.20.1 预生成服务端（不提交到 git）
-    ├── fabric-server-launch.jar
-    ├── mods/
-    │   ├── fabric-api.jar
-    │   └── chunky-fabric.jar
-    └── mofa-world/region/             ← 生成的世界存档
+蓝图 blueprint            profiles              stitcher                bakers                Rust runtime
+(固定坐标大地图)    →   (每套地貌一个      →  (zone↔wilderness    →  (raster .bin +    →  (mmap + 按需
+ zones.worldview.json    fill_*_tile)          边界融合)              manifest.json)        chunk 生成)
 ```
+
+| 阶段 | 代码 | 职责 |
+|------|------|------|
+| 蓝图 | `../server/zones.worldview.example.json` | 固定坐标布局：每个 zone 的 center/size/shape/边界/profile/POI |
+| profiles | `scripts/terrain_gen/profiles/*.py` | 每套地貌一个 `fill_*_tile`，纯 numpy 向量化，用 `dsl.*` 噪声原语填层 |
+| 层注册表 | `scripts/terrain_gen/fields.py` (`LAYER_REGISTRY`) | 所有层的唯一真相源：default / blend_mode / export_type |
+| stitcher | `scripts/terrain_gen/stitcher.py` (`synthesize_fields`) | 逐 tile 把 zone overlay 按 boundary_weight 融进 wilderness 基底 |
+| bakers | `scripts/terrain_gen/bakers/raster_export.py` | 写 little-endian `.bin` + `manifest.json`（version=2） |
+| 入口 | `scripts/terrain_gen/__main__.py` (`_run_pipeline`) | 串起上面全部 |
 
 ---
 
@@ -66,372 +35,179 @@ worldgen/
 ```bash
 cd worldgen
 
-# 1) 直接跑 terrain_gen 主流程（默认导出 raster）
+# 默认主流程：raster backend，写 .bin layers + manifest + zone PNG 预览
 bash pipeline.sh ../server/zones.worldview.example.json generated/terrain-gen-smoke raster
 
-# 2) 查看重点预览
-#   generated/terrain-gen-smoke/focus-layout-preview.png
-#   generated/terrain-gen-smoke/focus-surface-preview.png
-#   generated/terrain-gen-smoke/focus-height-preview.png
-
-# 3) 查看分区近景
-#   generated/terrain-gen-smoke/zone-blood_valley-surface-preview.png
-#   generated/terrain-gen-smoke/zone-qingyun_peaks-height-preview.png
-#   generated/terrain-gen-smoke/zone-north_wastes-layout-preview.png
-```
-
-也可以直接调用模块：
-
-```bash
-cd worldgen
+# 等价直接调模块
 python3 -m scripts.terrain_gen \
   --blueprint ../server/zones.worldview.example.json \
   --output-dir generated/terrain-gen-smoke \
   --backend raster
 ```
 
-当前关键输出：
+默认参数（不传时）：`--blueprint ../server/zones.worldview.example.json`、
+`--profiles terrain-profiles.example.json`、`--output-dir generated/terrain-gen`、
+`--tile-size 512`、`--backend raster`。
 
-- `generated/terrain-gen-smoke/terrain-plan.json`
-- `generated/terrain-gen-smoke/terrain-fields-summary.json`
-- `generated/terrain-gen-smoke/focus-*.png`
-- `generated/terrain-gen-smoke/zone-*.png`
-- `generated/terrain-gen-smoke/rasters/manifest.json`
+关键产物：
 
-如果要让 server 直接消费 raster 并在运行时生成 chunk：
+- `generated/<out>/terrain-plan.json` — 生成计划元数据
+- `generated/<out>/terrain-fields-summary.json` — 每 tile 每层 min/max 摘要
+- `generated/<out>/rasters/manifest.json` — **运行时入口**（tile 网格、层清单、调色板、POI 元数据）
+- `generated/<out>/rasters/*.bin` — 每 tile 每层的二进制
+- `generated/<out>/focus-*.png` / `zone-*-*.png` — 总览图 / 分区近景预览
+
+### 让 server 直接消费 raster
 
 ```bash
-cd worldgen
-python3 -m scripts.terrain_gen \
-  --blueprint ../server/zones.worldview.example.json \
-  --output-dir generated/terrain-gen-raster \
-  --backend raster
-
-# 然后让 server 直接读取 manifest
 cd ../server
-BONG_TERRAIN_RASTER_PATH=/home/kiz/Code/Bong/worldgen/generated/terrain-gen-raster/rasters/manifest.json cargo run
+BONG_TERRAIN_RASTER_PATH=/abs/path/worldgen/generated/terrain-gen-smoke/rasters/manifest.json cargo run
 ```
 
-`worldpainter` 后端仍可用于预览/调试 raster 是否合理，但正式运行路径已经切到
-`raster -> Rust TerrainProvider -> 按需 chunk 生成`。
+server 读到该 env → `TerrainProvider::load` 解析 manifest → `mmap` 各 `.bin` → 按需生成 chunk。
 
 ---
 
-## 核心原理
+## 核心概念
 
-### 1. 覆盖 overworld 维度
+### 1. LAYER_REGISTRY（`fields.py`）— 层的唯一真相源
 
-`data/minecraft/dimension/overworld.json` 是关键入口。当 datapack 中存在这个文件时，MC 会用它**替代默认的 overworld 生成逻辑**。
+每一个被流水线用到的层都必须在这里登记，声明三件事：
 
-```json
-{
-  "type": "minecraft:overworld",       // 维度类型（决定光照、天空、高度范围）
-  "generator": {
-    "type": "minecraft:noise",         // 使用噪声生成器（不是 flat 或 debug）
-    "settings": "minecraft:overworld", // 地形形状用原版 overworld 的 noise_settings
-    "biome_source": {                  // ← 这里替换了 biome 来源
-      "type": "minecraft:multi_noise", // 多噪声 biome 选择器
-      "biomes": [...]                  // 自定义 biome 列表
-    }
-  }
-}
+- **`safe_default`** — 无 zone 数据时的列值。**必须与 Rust 侧「无效果」语义一致**（例：`qi_density=0.12` 是末法世界「薄灵」基线）。
+- **`blend_mode`** — stitcher 如何把 zone overlay 融进 wilderness 基底：
+  - `maximum`（掩码/权重，叠加不抹除）· `minimum`（SDF 距离，越近越强）
+  - `lerp`（线性插值，灵气可升可降）· `swap`（离散 id，按抖动阈值二选一）
+  - `special`（height/water_level 等由专用代码处理）
+- **`export_type`** — `float32` 或 `uint8` 的 raster 序列化类型。
+
+层大致分类：核心几何层（`height` / `surface_id` / `subsurface_id` / `water_level` / `biome_id`）、
+修仙语义层（`qi_density` / `mofa_decay` / `qi_vein_flow` / `spirit_eye_candidates` / `realm_collapse_mask`）、
+垂直层（`sky_island_mask` / `underground_tier`）、生态层（`flora_*` / `ground_cover_*`）、
+矿物层（`mineral_density` / `mineral_kind`）、异常层（`anomaly_*`，给天道/血月/裂隙事件钩子）、
+结构层（`fossil_bbox`）、以及 TSY 维度专用层（`tsy_*`，主世界 manifest 由 `layer_whitelist` 过滤掉）。
+
+### 2. Spans — 列竖直结构的统一表示
+
+一个「列」的竖直结构 = 最多 4 段 `(floor_y, ceiling_y)` 实心段（`fields.py::ColumnSpans`）。
+这一单一表示替代了旧的 `height` + `cave_mask` + `sky_island_base_y` + `ceiling_height` 等一堆补丁层：
+
+- **`spans[0]` 永远是地表段**，其 `ceiling` = 可行走表面（NPC 寻路 / 装饰锚定 / `surface_y` 都读它）。
+- 地表段**下方**多一段 → 中间空气就是**洞穴**。
+- 地表段**上方**多一段 → 那是**浮岛**。
+- 段与段之间必须有真正的空气隙（构造时校验，非法编码直接报错）。
+
+二进制布局（mmap 固定步长）：`spans_count.bin`（每列 1 字节，0..=4）+
+`spans.bin`（每列 16 字节 = 4 段 × 2 个 little-endian `i16`，未用槽填哨兵 `i16::MAX`）。
+世界 Y ∈ [-64, 432)。Rust 侧 `server/src/world/terrain/raster.rs` 的 `ColumnSpanList` 是它的镜像。
+
+### 3. Profiles — 每套地貌一个填充器
+
+`profiles/` 下约 20 个 profile，每个是一个纯 numpy 向量化的 tile 填充器，
+用 `dsl.warped_height` / `fbm_height` / `radial_uplift` 等噪声原语合成多尺度地形，
+再写进 `LAYER_REGISTRY` 里登记的层数组。profile 只填**自己 zone 内**的理想态 field，边界交给 stitcher。
+
+已实现的 profile：
+
+```
+spawn_plain        broken_peaks       spring_marsh       rift_valley
+cave_network       waste_plateau      pseudo_vein_oasis  rift_mouth_barrens
+ash_dead_zone      sky_isle           abyssal_maze       ancient_battlefield
+tribulation_scorch jiu_zong_ruin      dan_zong_yi_yuan   wangyintai
+tsy_zongmen_ruin   tsy_daneng_crater  tsy_zhanchang      tsy_gaoshou_hermitage
 ```
 
-**关键点**：`settings` 仍然引用 `minecraft:overworld`，所以地形的高度曲线、洞穴、海平面等和原版完全一致。我们只替换了 biome 选择逻辑——用自定义的 6 个 biome 替代原版 60+ 个 biome。
+profile 的数值标定（base 高度 / 灵气 / 生态）在 `terrain-profiles.example.json` 与各 profile 文件内。
 
-### 2. Multi-Noise Biome 选择
+### 4. Stitcher — zone ↔ wilderness 边界融合
 
-MC 1.18+ 使用 **6 维噪声空间** 来决定每个位置生成哪个 biome：
+`synthesize_fields`（`stitcher.py`）逐 tile：先 `fill_wilderness_tile` 铺野外基底，
+再对每个与 tile 相交的 zone 算 `_compute_boundary_weight_array`（按 shape 隶属比 + 边界模式
+hard/semi_hard/soft + 噪声扰动得 0~1 权重），用 `_blend_tile_layers` 把 overlay 按各层 `blend_mode` 融进基底。
+height 连续 lerp + 噪声抖动接缝；离散 id 用**抖动阈值 swap**（避免硬边）；竖直结构由 `blend_spans` 处理
+（0.5 抖动线决定洞穴/浮岛归属，只有表面 ceiling 连续 lerp）。
 
-| 参数 | 含义 | 范围 |
-|------|------|------|
-| `temperature` | 冷 ↔ 热 | -1.0 ~ 1.0 |
-| `humidity` | 干 ↔ 湿 | -1.0 ~ 1.0 |
-| `continentalness` | 海洋 ↔ 内陆 | -1.0 ~ 1.0 |
-| `erosion` | 侵蚀强 ↔ 弱（影响地形平坦度） | -1.0 ~ 1.0 |
-| `weirdness` | 正常 ↔ 奇异（影响山峰/河谷） | -1.0 ~ 1.0 |
-| `depth` | 地表 ↔ 地下 | 0.0 ~ 1.0 |
-
-每个 biome 声明自己在这 6 维空间中的"舒适区"（一个范围），MC 会为每个方块位置采样噪声值，找到**距离最近**的 biome。
-
-**`offset`** 是一个偏移量——值越小，该 biome 越容易被选中（0.0 = 最高优先级）。`spawn_haven` 设了 0.05 的微小偏移，确保出生点附近大概率是安全区。
-
-### 3. 我们的 Biome 分布策略
-
-```
-                     hot (+temp)
-                        │
-          si_yu         │       kui_zeng_rich
-        (干+热+侵蚀)    │       (湿+热+未侵蚀)
-                        │
-   dry ─────────────────┼──────────────────── wet
-                        │
-          fu_ling       │       spawn_haven
-        (冷+干+奇异)    │       (中温+中湿+大陆+平静)
-                        │
-                     cold (-temp)
-
-   fu_ling_abyss = 极端角落（极冷+极干+海洋侧+低侵蚀+高奇异）
-   kui_zeng      = 温热+半干+负奇异（savanna 风格）
-```
-
-**世界观映射**：
-- **温度 → 灵气活跃度**：高温 = 灵气曾经充沛（现在被抢光了）
-- **湿度 → 灵气残留**：高湿 = 还有灵气（富灵区），低湿 = 枯竭
-- **大陆性 → 安全度**：越内陆越安全（spawn_haven），海洋侧是负灵域
-- **奇异度 → 扭曲度**：高奇异 = 负灵域的扭曲地形
+增量重生成（`--zone-filter a,b`）只挑**哪些 tile** 被合成，但被选 tile 仍融合**所有**重叠 zone →
+输出 byte 级等同全量跑，接缝无缝。`--zone-filter` 写了不存在的 zone 名会 fail-fast。
 
 ---
 
-## Biome 配置详解
+## Backend 与可选 pass
 
-### 每个 biome JSON 的结构
+`--backend` 三选一：
 
-```json
-{
-  "has_precipitation": true/false,     // 是否降雨/降雪
-  "temperature": 0.7,                  // 温度（影响草色、是否降雪）
-  "downfall": 0.5,                     // 降水量（影响草/树叶颜色）
+| backend | 产物 | 用途 |
+|---------|------|------|
+| `raster`（默认） | `rasters/*.bin` + `manifest.json` + PNG 预览 | **运行时正式路径** |
+| `worldpainter` | `worldpainter/` 项目 | 调试 / 肉眼审 raster 是否合理 |
+| `anvil` | 先跑 raster，再叠 `world/region/r.*.mca` | 直接产出可加载世界存档（snapshot/快照） |
 
-  "effects": {
-    "sky_color": 7907327,              // 天空颜色（十进制 RGB）
-    "fog_color": 12638463,             // 雾颜色
-    "water_color": 4159204,            // 水颜色
-    "water_fog_color": 329011,         // 水下雾颜色
-    "grass_color": 7842607,            // 草方块顶部颜色（覆盖默认计算）
-    "foliage_color": 7842607,          // 树叶颜色
-    "mood_sound": {...}                // 环境音效（洞穴声等）
-  },
+> `pipeline.sh` 的 `anvil` backend 会先跑一遍 `raster`（保证 PNG 预览完整），再用
+> `anvil_world_export` 读刚产出的真 spans 写 chunk。
 
-  "carvers": {                         // 地形雕刻器（洞穴）
-    "air": "minecraft:cave"
-  },
+其它可选 pass：
 
-  "features": [                        // 11 个生成步骤（generation steps）
-    [],  // 0: RAW_GENERATION
-    [],  // 1: LAKES
-    [],  // 2: LOCAL_MODIFICATIONS
-    [],  // 3: UNDERGROUND_STRUCTURES
-    [],  // 4: SURFACE_STRUCTURES
-    [],  // 5: STRONGHOLDS
-    [],  // 6: UNDERGROUND_ORES
-    [],  // 7: UNDERGROUND_DECORATION
-    [],  // 8: FLUID_SPRINGS
-    [],  // 9: VEGETAL_DECORATION ← 树/草/花在这里
-    []   // 10: TOP_LAYER_MODIFICATION
-  ],
-
-  "spawners": {...},                   // 生物刷怪表
-  "spawn_costs": {}                    // 生物密度控制
-}
-```
-
-### 6 个 Biome 对比
-
-| Biome | 世界观 | 降雨 | 温度 | 地表风格 | 植被 | 怪物 | 色调 |
-|-------|--------|------|------|---------|------|------|------|
-| `spawn_haven` | 出生安全区 | ✓ | 0.7 | 草地 | 橡树+花+草 | 无怪 | 自然绿 #77A62F |
-| `kui_zeng` | 馈赠区 | ✓ | 0.9 | 稀树草原 | 金合欢+草+枯灌木 | 僵尸、蜘蛛 | 黄绿 #A3D354 |
-| `kui_zeng_rich` | 高灵气馈赠区 | ✓ | 0.8 | 茂密丛林 | 橡树+花+草 | 僵尸、骷髅 | 翠绿 #4CB850 |
-| `si_yu` | 死域 | ✗ | 2.0 | 沙漠 | 仅枯灌木 | 尸壳 | 灰黄 #B7B248 |
-| `fu_ling` | 负灵域 | ✗ | 0.2 | 深板岩质感 | 无 | 末影人、骷髅 | 暗青 #637F43 |
-| `fu_ling_abyss` | 坍缩渊 | ✗ | 0.0 | 末地石质感 | 无 | 末影人 | 紫黑 #404040 |
-
-### 颜色值转换
-
-biome JSON 中的颜色是十进制整数，和十六进制的对应关系：
-
-```
-十六进制 → 十进制
-#77A62F  → 7842607   (spawn_haven 草色)
-#A3D354  → 10735444  (kui_zeng 草色)
-#9D9F97  → 10329495  (si_yu 雾色)
-#5E6E93  → 6186090   (fu_ling 天空色)
-
-转换公式: parseInt("77A62F", 16) = 7842607
-反向:     (7842607).toString(16) = "77a62f"
-```
+- **成套建筑布局**：zone 设 `architectural_layout` 时，`run_layout_pass` 跑 `COMPOUND_LAYOUT_REGISTRY`
+  里的布局，把 NBT 摆放写进 `rasters/placement_manifest.json`（NBT 源在 `../server/structures/<subdir>/`）。
+- **TSY 第二维度**：传 `--tsy-blueprint <json>` 会对 TSY 维度再跑一遍 export 到 `--tsy-output-dir`。
+- **3D 预览控制台（dev-only）**：`bash pipeline.sh --console`，raster 后启动 FastAPI（`http://127.0.0.1:8765`），
+  供 `worldgen/console/`（vite + three.js）查看。需先 `bash setup.sh --console` 装 fastapi+uvicorn。
 
 ---
 
-## 预生成流程
+## Rust 运行时如何消费
 
-### 依赖
+`server/src/world/terrain/`：
 
-| 工具 | 版本 | 说明 |
-|------|------|------|
-| Java | 17+ | 服务端运行环境（项目已有 Java 21） |
-| Fabric Server | 1.20.1 + Loader 0.16.10 | MC 服务端 |
-| Fabric API | 0.92.7+1.20.1 | Chunky 依赖 |
-| Chunky | 1.3.146 (Fabric) | chunk 预生成 mod |
+1. **入口** `world/mod.rs` 读 env `BONG_TERRAIN_RASTER_PATH` → `spawn_raster_world` →
+   `TerrainProvider::load`（`raster.rs`）解析 manifest + 校验 `version == 2`。
+2. **mmap** `TileFields`（`raster.rs`）每个 tile 的每层一个 `memmap2::Mmap`；
+   严格校验文件大小，`read_f32` / `read_u8` 按 `index*N` 切 little-endian 解码（零拷贝）。
+3. **采样** `TerrainProvider::sample(x, z)` → 定位 tile + 列索引 → 填出 `ColumnSample`（含 spans + 所有语义层）；
+   越界列回退程序化 `wilderness::sample`。
+4. **按需生成 chunk** `generate_chunks_around_players` system 遍历每个玩家 `View`，对未生成的 chunk 调
+   `ensure_chunk_generated`（限流每 tick 每客户端 1 个 chunk 防卡）→ 16×16 列各跑 `column::fill_column`
+   （spans → bedrock / 水 / 表面 / 洞穴掏空 / 浮岛逐 Y `set_block_state`）→ 再叠 decoration / flora /
+   structures / authored / mineral / biome 各 pass → `layer.insert_chunk`。
 
-### 手动流程
+> 世界高度刻意设 `WORLD_HEIGHT = 496`，让 Valence 9-bit packed heightmap 编码不溢出。
 
-```bash
-cd worldgen/server
+### ⚠️ 两套独立的「灵气 / zone」系统，别混
 
-# 1. 安装 datapack
-mkdir -p mofa-world/datapacks
-cp -r ../worldgen-mofa mofa-world/datapacks/
+- **raster `qi_density` 层** — 烘焙进 `.bin` 的**静态地形属性**，被 botany 植物存活、cultivation 负压、
+  terrain structures、worldgen/pseudo_vein 读取。
+- **运行时 zone 经济** — `server/src/world/zone.rs` 的 `Zone.spirit_qi` + `world/karma.rs` 的
+  `QiDensityHeatmap`，从 `zones.json` **动态加载**，技能扣灵气 / 区域守恒走它，**不从 raster 读**。
 
-# 2. 启动服务端
-java -Xmx2G -jar fabric-server-launch.jar --nogui
-
-# 3. 在控制台输入 Chunky 命令
-chunky radius 512      # 设置半径（格数）
-chunky start           # 开始预生成
-# 等待 "Task finished" 日志
-
-# 4. 保存并退出
-save-all flush
-stop
-```
-
-### 一键脚本
-
-```bash
-cd worldgen && bash worldgen.sh 512  # 参数是半径格数
-```
-
-### 输出
-
-生成的世界在 `server/mofa-world/region/` 目录，包含 `.mca` 文件（Anvil 格式）。
+raster 里 POI / FossilBbox 携带的 `zone: String` 只是叙事元数据。
 
 ---
 
-## 肉眼验证
-
-```bash
-# 启动服务端（端口 25566，离线模式）
-cd worldgen/server
-java -Xmx2G -jar fabric-server-launch.jar --nogui
-
-# MC Java 1.20.1 客户端连接 localhost:25566
-# /gamemode creative → 飞行查看地形
-# F3 调试界面可以看到当前所在 biome（如 mofa:si_yu）
-```
-
----
-
-## 调参指南
-
-### 想改 biome 分布比例？
-
-修改 `overworld.json` 中各 biome 的 `parameters` 范围：
-- 扩大范围 = 该 biome 出现更多
-- 缩小范围 = 出现更少
-- `offset` 越小 = 越优先（同一区域有多个 biome 竞争时）
-
-### 想改 biome 外观？
-
-修改对应的 `biome/*.json`：
-- `grass_color` / `foliage_color` → 草/叶颜色
-- `sky_color` / `fog_color` → 天空/雾
-- `features[9]` → 植被（树/草/花）
-- `spawners` → 刷怪
-
-### 想加矿石/洞穴？
-
-在 `features` 数组对应的步骤里添加原版 placed_feature：
-- `features[6]` = 矿石（如 `"minecraft:ore_iron_upper"`）
-- `features[8]` = 泉水（如 `"minecraft:spring_water"`）
-- `carvers.air` = 洞穴（如 `["minecraft:cave", "minecraft:cave_extra_underground"]`）
-
-**注意**：所有 biome 的同一步骤内，feature 顺序必须一致，否则会报 "Feature order cycle" 错误。
-
-### 想要全新地形形状（不是原版高度曲线）？
-
-在 `data/mofa/worldgen/noise_settings/` 下创建自定义 noise_settings JSON，然后在 `overworld.json` 中把 `"settings": "minecraft:overworld"` 改为 `"settings": "mofa:custom"`。可用 [Misode 生成器](https://misode.github.io/worldgen/noise-settings/) 可视化编辑。
-
----
-
-## Phase B — Python 后处理
-
-Phase A 生成基础地形后，用 Python 脚本在 Anvil (.mca) 文件上做方块级装饰增强。
-
-### 环境搭建
+## 测试
 
 ```bash
 cd worldgen
-python3 -m venv .venv
-source .venv/bin/activate
+python3 -m pytest tests/ scripts/terrain_gen/        # 全量
+python3 -m pytest tests/test_carvers.py -q           # 单文件示例
 ```
 
-### 运行后处理
-
-```bash
-cd worldgen
-source .venv/bin/activate
-
-# 确保 MC 服务端已关闭（session.lock 不能被占用）
-python3 scripts/postprocess.py              # 默认处理 server/mofa-world
-python3 scripts/postprocess.py path/to/world  # 或指定路径
-```
-
-### 后处理内容
-
-脚本扫描每个 chunk 的地表（最高固体方块上方为空气的位置），按 Y 高度分层散布装饰：
-
-| 层 | Y 范围 | 装饰方块 | 概率 |
-|---|--------|---------|------|
-| high_peak | >200 | skeleton_skull, cobweb, soul_lantern | 0.1~0.5% |
-| mid_slope | 80~200 | dead_coral_fan (3种), blackstone_button, cobweb | 0.2~0.4% |
-| low_valley | 30~80 | sculk_sensor, dead_bush, brown_mushroom | 0.2~0.5% |
-| abyss | <30 | sculk, sculk_sensor, sculk_vein | 0.3~0.8% |
-
-**特殊规则**：岩浆块 (`magma_block`) 上方 30% 概率放发光地衣 (`glow_lichen`)，5% 放菌光体 (`shroomlight`)。
-
-### 技术细节
-
-MC 1.18+ chunk section 的 `block_states` 使用 packed long array 存储 palette 索引：
-- `palette`：方块类型列表（Compound + Name + Properties）
-- `data`：64-bit long 数组，每个 entry 占 `max(4, ceil(log2(palette_size)))` bits
-- Entry 不跨越 long 边界，索引顺序为 YZX（`y*256 + z*16 + x`）
-- 脚本中 `decode_packed_indices()` / `encode_packed_indices()` 实现了完整的编解码
-
-### 调参
-
-编辑 `scripts/postprocess.py` 中的 `DECORATIONS` 字典和 `MAGMA_NEIGHBORS_DECORATIONS` 列表：
-
-```python
-# 示例：在中层增加一个新装饰
-"mid_slope": {
-    "y_min": 80, "y_max": 200,
-    "surface_scatter": [
-        (block("dead_brain_coral_fan", {"waterlogged": "false"}), 0.004),
-        # 新增：
-        (block("candle", {"candles": "1", "lit": "false", "waterlogged": "false"}), 0.002),
-    ],
-},
-```
-
-`SOLID_BLOCKS` 集合决定哪些方块被视为"地表"——如果换了 noise_settings 的方块调色板，记得同步更新。
+raster 后验（rift_axis_sdf 默认值 / height range / water depth）：
+`scripts/terrain_gen/harness/raster_check.py`。
 
 ---
 
-## 完整 Pipeline
+## 相关文档
 
-```bash
-cd worldgen
-
-# Phase A: Datapack 预生成
-bash worldgen.sh 512                       # 半径 512 格
-
-# Phase B: Python 后处理
-source .venv/bin/activate
-python3 scripts/postprocess.py             # 装饰增强
-
-# 验证: 启动服务端查看效果
-cd server && java -Xmx2G -jar fabric-server-launch.jar --nogui
-# MC 1.20.1 客户端连 localhost:25566
-```
+- `../docs/worldgen-pipeline-v2.md` — 流水线 v2 设计
+- `../docs/worldgen-terrain-profiles.md` — 地貌规则
+- `terrain-profiles.example.json` — profile 数值标定示例
+- `CLAUDE.md`「Architecture notes」/「Worldgen 流水线」节 — 顶层总览
 
 ---
 
-## 后续规划
+## 附录：弃用的 datapack 路线（仅供参考）
 
-1. **Valence 集成** — `AnvilLevel::new()` 加载预生成世界
-2. **AI 天道介入** — Agent 生成/修改 datapack JSON + 运行时方块替换
-3. **Zone 系统** — 按 zones.json 做精确区域控制（方块退化、结构放置）
-
-详见 [docs/plan-worldgen.md](../docs/plan-worldgen.md)。
+早期通过 datapack 覆盖 overworld 维度的 `biome_source`（multi-noise 6 维噪声选 6 个自定义 biome），
+配合 Chunky 预生成 + `scripts/postprocess.py` 在 Anvil `.mca` 上做方块级装饰。
+该路线**不再用于固定布局大地图**——固定坐标地图改由上文 `terrain_gen` raster 流水线驱动。
+`worldgen-mofa/`（datapack）与 `scripts/postprocess.py` 保留作历史参考。
