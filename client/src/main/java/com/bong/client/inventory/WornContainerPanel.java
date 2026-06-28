@@ -53,6 +53,9 @@ public final class WornContainerPanel {
     private FlowLayout container; // root FlowLayout of this panel
     private Consumer<InventoryModel> storeListener;
     private boolean closed;
+    // plan-tarkov-floating-windows：被 PackContainerWindow 包裹时，标题由窗口标题栏绘制，
+    // 内含面板自带的居中标题 label 抑制以免重复。build() 前调用 suppressTitle() 生效。
+    private boolean showTitle = true;
 
     /** 最近一次用于 populate 的 model（构造期 + listener 回刷），供包重 / 标题派生。 */
     private InventoryModel model;
@@ -80,7 +83,7 @@ public final class WornContainerPanel {
         // 标题 / 包重 label 依赖 textRenderer（运行时 owo 渲染需要）。headless 单测无 MinecraftClient
         // 时跳过 label 构建——grid + listener 订阅才是行为契约，label 纯显示。
         boolean hasClient = MinecraftClient.getInstance() != null;
-        if (hasClient) {
+        if (hasClient && showTitle) {
             titleLabel = Components.label(Text.literal(""))
                 .horizontalTextAlignment(HorizontalAlignment.CENTER);
             container.child(titleLabel);
@@ -211,6 +214,24 @@ public final class WornContainerPanel {
     /** 该容器 id（{@code pack_<id>}），InspectScreen 派发 move intent 的 to/from containerId。 */
     public String containerId() {
         return containerId;
+    }
+
+    /**
+     * plan-tarkov-floating-windows：抑制内含面板自带的居中标题 label（被 PackContainerWindow 包裹时，
+     * 标题改由窗口标题栏绘制）。必须在 {@link #build()} 前调用。
+     */
+    public WornContainerPanel suppressTitle() {
+        this.showTitle = false;
+        return this;
+    }
+
+    /**
+     * 当前容器显示名（取自最新 model 的 ContainerDef.name，缺省 "背包件"）。供 PackContainerWindow
+     * 标题栏绘制。listener 回刷 model 后随之更新。
+     */
+    public String displayName() {
+        InventoryModel.ContainerDef def = findContainerDef(model);
+        return def != null ? def.name() : "背包件";
     }
 
     /** 是否已 dispose。 */
