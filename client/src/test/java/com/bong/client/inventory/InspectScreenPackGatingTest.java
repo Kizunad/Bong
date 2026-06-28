@@ -50,13 +50,39 @@ public class InspectScreenPackGatingTest {
             .build();
     }
 
-    /** 套包(instance 1007)已卸下：chest worn 仅剩铁甲，套包不在任何 worn 层。 */
+    /** 套包(instance 1007)已卸下且不在任何携带面（真丢地/转移走）：chest worn 仅剩铁甲。 */
     private InventoryModel snapshotWithoutWornPack() {
         InventoryItem armor =
             InventoryItem.createFull(
                 1006L, "armor_iron_chest", "铁胸甲", 2, 2, 6.0, "common", "", 1, 0.1, 0.9);
         return InventoryModel.builder()
             .equipSlot(EquipSlotType.CHEST, new SlotContents(List.of(armor), null))
+            .build();
+    }
+
+    private static InventoryItem pouch() {
+        return InventoryItem.createFull(
+            WORN_PACK_INSTANCE, "worn_grass_pouch", "破草包", 2, 2, 0.3, "common", "", 1, 0.5, 0.3);
+    }
+
+    /** bug #2：套包被手持（MAIN_HAND held）—— 携带面之一，应放行。 */
+    private InventoryModel snapshotWithHeldPack() {
+        return InventoryModel.builder()
+            .equipSlot(EquipSlotType.MAIN_HAND, SlotContents.ofHeld(pouch()))
+            .build();
+    }
+
+    /** bug #2：套包在快捷栏 —— 携带面之一，应放行。 */
+    private InventoryModel snapshotWithPackInHotbar() {
+        return InventoryModel.builder()
+            .hotbar(3, pouch())
+            .build();
+    }
+
+    /** bug #2（核心）：套包当货物塞在 body_pocket grid —— 卸下不丢，仍可作为容器拖入，应放行。 */
+    private InventoryModel snapshotWithPackInBodyPocket() {
+        return InventoryModel.builder()
+            .gridItem(pouch(), InventoryModel.BODY_POCKET_CONTAINER_ID, 0, 0)
             .build();
     }
 
@@ -109,10 +135,33 @@ public class InspectScreenPackGatingTest {
     }
 
     @Test
-    void dropRejectedWhenPackNotWorn() {
+    void dropAllowedWhenPackHeld() {
+        // bug #2：放宽到携带面 —— 手持中的套包应放行（镜像 server find_pack_instances_anywhere）。
+        assertTrue(
+            InspectScreen.isWornPackContainerDroppable(snapshotWithHeldPack(), "pack_1007"),
+            "套包(1007)被手持（MAIN_HAND held）时应允许拖入（携带面之一）");
+    }
+
+    @Test
+    void dropAllowedWhenPackInHotbar() {
+        assertTrue(
+            InspectScreen.isWornPackContainerDroppable(snapshotWithPackInHotbar(), "pack_1007"),
+            "套包(1007)在快捷栏时应允许拖入（携带面之一）");
+    }
+
+    @Test
+    void dropAllowedWhenPackInBodyPocket() {
+        // bug #2 核心：背包卸到 body_pocket 当货物 → 此前只扫 worn 层会误拒，现应放行。
+        assertTrue(
+            InspectScreen.isWornPackContainerDroppable(snapshotWithPackInBodyPocket(), "pack_1007"),
+            "套包(1007)当货物塞在 body_pocket grid 时应允许拖入（卸下不丢，仍是有效容器）");
+    }
+
+    @Test
+    void dropRejectedWhenPackAbsentEverywhere() {
         assertFalse(
             InspectScreen.isWornPackContainerDroppable(snapshotWithoutWornPack(), "pack_1007"),
-            "套包(1007)已卸下（不在任何 worn 层）时应拒绝拖入（塔科夫式死容器语义）");
+            "套包(1007)不在任何携带面（worn/held/hotbar/body_pocket）→ 真丢地，应拒绝拖入");
     }
 
     @Test

@@ -152,9 +152,11 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     private FlowLayout lootPanelLayout;
     private LootContainerStateStore.Listener lootStoreListener;
 
-    // plan-tarkov-backpack-v1 P3 — 穿戴背包件内含物视图（双击装备槽内背包件打开，挂入 outerRow）。
-    private WornContainerPanel wornContainerPanel;
-    private FlowLayout wornContainerPanelLayout;
+    // plan-tarkov-floating-windows — 套包内含物悬浮窗口系统（双击/右键背包件打开，多开 + 可拖动 +
+    // z-order）。挂在 owo root（absolute 定位），不再占容器 tab，也不挂 outerRow（脱离 vertical flow）。
+    private final PackWindowManager packWindows = new PackWindowManager();
+    // build() 接收的 owo root FlowLayout（悬浮窗挂载点 + bringToFront 重挂目标）。
+    private FlowLayout root;
     // 双击计时（owo 无 clickCount，在 Screen 级 mouseClicked() 手算）：同槽两击 ≤ 窗口 → 双击。
     private static final long DOUBLE_CLICK_WINDOW_MS = 400L;
     private long lastEquipClickTimeMs = 0L;
@@ -247,8 +249,8 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             LootContainerStateStore.removeListener(lootStoreListener);
             lootStoreListener = null;
         }
-        // plan-tarkov-backpack-v1 P3（交付物 #6）—— 解绑 WornContainerPanel 的 InventoryStateStore 订阅。
-        unmountWornContainerPanel();
+        // plan-tarkov-floating-windows —— 全关悬浮窗（dispose 内含面板的 InventoryStateStore 订阅）。
+        packWindows.closeAll();
         unmountBlockPickerPanel();
         super.removed();
     }
@@ -601,6 +603,9 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         mountBlockPickerPanelIfDev();
 
         root.child(outerRow);
+        // plan-tarkov-floating-windows：悬浮窗挂在 root（absolute 定位），不进 outerRow 的 horizontal flow。
+        this.root = root;
+        packWindows.attach(root);
         populateFromModel();
 
         // Server 增量到达时（InventoryEventHandler 写入或新 snapshot 落地）刷新 UI。
@@ -614,20 +619,23 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 this.model = next;
                 if (structuralChange) {
                     rebuildContainerSection();
-                    // fix/tarkov-nest-persistence §C4 — 容器视图不 stale：背包真离开（丢地/销毁）
-                    // 后其 pack_<id> 从 snapshot 消失，已挂载的 WornContainerPanel 须 dispose，
-                    // 否则空壳面板仍可点 → 产生 stale move_intent。卸到 body_pocket 等仍在身上的
-                    // 情形 pack_<id> 仍在 → 面板不关（用户可继续看包），这正是预期。
-                    if (wornContainerPanel != null && !wornContainerPanel.isClosed()) {
-                        boolean stillExists = next.containers().stream()
-                                .anyMatch(d -> wornContainerPanel.containerId().equals(d.id()));
-                        if (!stillExists) {
-                            // 若正从该被销毁容器拖拽，先取消拖拽避免 stale from-location。
-                            if (dragState.isDragging()) {
-                                dragState.cancel();
-                            }
-                            unmountWornContainerPanel();
+                }
+                // plan-tarkov-floating-windows / fix/tarkov-nest-persistence §C4 —— 悬浮窗不 stale：
+                // 背包真离开（丢地/转移走）后其 pack_<id> 从 snapshot 消失，已开的悬浮窗须关闭，否则空壳
+                // 窗仍可点 → 产生 stale move_intent。卸到 body_pocket/手持/快捷栏等仍在携带面的情形 pack_<id>
+                // 仍在 → 窗口不关（用户可继续看包），这正是预期。
+                // 注意：pack_<id> 已不进容器 tab（bug #1），其增删不再触发 structuralChange，故 reconcile
+                // 必须在每个 snapshot 跑（不能挂在 structuralChange 内），否则丢地后窗口不关。
+                for (var win : packWindows.ordered()) {
+                    boolean stillExists = next.containers().stream()
+                            .anyMatch(d -> win.containerId().equals(d.id()));
+                    if (!stillExists) {
+                        // 若正从该被销毁容器拖拽，先取消拖拽避免 stale from-location。
+                        if (dragState.isDragging()
+                                && win.containerId().equals(dragState.sourceContainerId())) {
+                            dragState.cancel();
                         }
+                        packWindows.close(win.containerId());
                     }
                 }
                 populateFromModel();
@@ -1423,6 +1431,11 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         for (var def : m.containers()) {
             if (InventoryModel.BODY_POCKET_CONTAINER_ID.equals(def.id())) {
                 bodyPocketDef = def;
+            } else if (parseWornPackInstance(def.id()).isPresent()) {
+                // plan-tarkov-floating-windows bug #1：pack_<数字> 背包件容器不建顶层 tab，
+                // 统一经双击/右键开悬浮窗访问（无论 worn 还是当货物塞在 body_pocket）。tab 栏只代表
+                // 固定挂载的基础容器（body_pocket 等）。
+                continue;
             } else {
                 defs.add(def);
             }
@@ -1807,6 +1820,9 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             return false; // 套包容器但无快照可校验穿戴态 → 保守拒绝（不乐观落位）。
         }
         long owner = ownerOpt.getAsLong();
+        // plan-tarkov-floating-windows bug #2：放宽到「携带面任意位置」，精确镜像 server #777
+        // find_pack_instances_anywhere（worn + held + hotbar + body_pocket）。此前只扫 worn 层，
+        // 漏 held/hotbar/body_pocket，导致包卸到 body_pocket 当货物时 owner 找不到 → 误拒（拖进瞬间弹回）。
         for (com.bong.client.inventory.model.SlotContents contents :
                 snapshot.equippedSlots().values()) {
             if (contents == null) {
@@ -1814,11 +1830,25 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             }
             for (InventoryItem worn : contents.worn()) {
                 if (worn != null && worn.instanceId() == owner) {
-                    return true; // owner 背包件确在某身体槽 worn 层 → 放行。
+                    return true; // owner 背包件在某身体槽 worn 层。
                 }
             }
+            if (contents.held() != null && contents.held().instanceId() == owner) {
+                return true; // owner 背包件被手持。
+            }
         }
-        return false; // owner 不在任何 worn 层（已卸到手持/格子）→ 拒绝拖入。
+        for (InventoryItem h : snapshot.hotbar()) {
+            if (h != null && h.instanceId() == owner) {
+                return true; // owner 背包件在快捷栏。
+            }
+        }
+        for (InventoryModel.GridEntry e : snapshot.gridItems()) {
+            if (InventoryModel.BODY_POCKET_CONTAINER_ID.equals(e.containerId())
+                    && e.item() != null && e.item().instanceId() == owner) {
+                return true; // owner 背包件当货物塞在 body_pocket（卸下不丢，仍可作为容器拖入）。
+            }
+        }
+        return false; // owner 背包件不在任何携带面 → 真丢地/转移走，拒绝拖入。
     }
 
     static boolean isDuXuEligible(MeridianBody body) {
@@ -1968,6 +1998,19 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
 
         if (button == 0 && pendingMeridianUse != null && confirmPendingMeridianUse()) {
             return true;
+        }
+
+        // plan-tarkov-floating-windows：套包悬浮窗 z 最上，优先命中（点 ✕ 关闭 / grid 拾取 / 标题栏拖动 +
+        // 点击置顶）。命中即不穿透到主 grid。RAISED = 标题栏/空白区 → 置顶后交回 owo（focusHandler →
+        // DraggableContainer.childAt 返回窗口 → 后续 mouseDragged 路由 onMouseDrag 移位）。
+        PackWindowClick pw = handlePackWindowMouseDown(mouseX, mouseY, button);
+        if (pw == PackWindowClick.CONSUMED) {
+            itemInspectLongPress.cancel();
+            return true;
+        }
+        if (pw == PackWindowClick.RAISED) {
+            itemInspectLongPress.cancel();
+            return super.mouseClicked(mouseX, mouseY, button);
         }
 
         if (button == 1) {
@@ -2256,26 +2299,8 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 }
             }
 
-            // plan-tarkov-backpack-v1 P3（交付物 #5）—— 从穿戴背包件内含物 grid 拾取（拖出）。
-            // 来源 = GRID（containerId = pack_<id>），松手落位走 sendInventoryMove（见 attemptDrop）。
-            if (wornContainerPanel != null && !wornContainerPanel.isClosed()) {
-                BackpackGridPanel wg = wornContainerPanel.grid();
-                if (wg != null && wg.containsPoint(mouseX, mouseY)) {
-                    var pos = wg.screenToGrid(mouseX, mouseY);
-                    if (pos != null) {
-                        InventoryItem item = wg.itemAt(pos.row(), pos.col());
-                        if (item != null && dragState.phase() == DragState.Phase.IDLE) {
-                            var anchor = wg.anchorOf(item);
-                            if (anchor != null) {
-                                dragState.pickup(item, wg.containerId(),
-                                    anchor.row(), anchor.col());
-                                wg.remove(item);
-                                return true;
-                            }
-                        }
-                    }
-                }
-            }
+            // 套包悬浮窗 grid 的拾取（拖出）已在 mouseClicked 顶部 handlePackWindowMouseDown 处理
+            // （窗口 z 最上，先于主 grid/equip 命中）。
         }
 
         return super.mouseClicked(mouseX, mouseY, button);
@@ -2544,31 +2569,38 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             }
         }
 
-        // plan-tarkov-backpack-v1 P3（交付物 #4）—— 拖入穿戴背包件内含物视图。
-        // 发包硬约束：走 dispatchMoveIntent → sendInventoryMove（ContainerLoc(pack_<id>,row,col)），
-        // 严禁 sendExternalContainerMove（loot 专用）。落位前同样过 isWornPackContainerDroppable 门控
-        // （owner 背包件必须仍穿戴在某身体槽 worn 层）。放在 loot 分支后、activeGrid 分支前。
-        if (wornContainerPanel != null && !wornContainerPanel.isClosed()) {
-            BackpackGridPanel wg = wornContainerPanel.grid();
-            if (wg != null && wg.containsPoint(mouseX, mouseY)) {
-                var pos = wg.screenToGrid(mouseX, mouseY);
-                if (pos != null && wg.canPlace(dragged, pos.row(), pos.col())) {
-                    if (!isWornPackContainerDroppable(
-                            InventoryStateStore.snapshot(), wg.containerId())) {
-                        showActionToast("背包未穿戴，无法放入内含物", ACTION_TOAST_WARN);
-                        returnDragToSource();
-                        clearAllHighlights();
-                        return;
-                    }
-                    wg.place(dragged, pos.row(), pos.col());
-                    dragState.drop();
-                    dispatchMoveIntent(dragged, fromLoc,
-                        new com.bong.client.network.ClientRequestProtocol.ContainerLoc(
-                            wg.containerId(), pos.row(), pos.col()));
-                    clearAllHighlights();
-                    return;
-                }
+        // plan-tarkov-floating-windows（交付物 #4）—— 拖入套包悬浮窗内含物（含跨窗拖移：两窗 grid 的
+        // containerId 不同，dispatchMoveIntent 用各自 containerId 构 ContainerLoc）。
+        // 发包硬约束：走 dispatchMoveIntent → sendInventoryMove，严禁 sendExternalContainerMove（loot 专用）。
+        // 落位前过 isWornPackContainerDroppable 门控（owner 背包件须在携带面任意位置）。逆序遍历（z 最上优先）。
+        var packWins = packWindows.ordered();
+        for (int i = packWins.size() - 1; i >= 0; i--) {
+            var win = packWins.get(i);
+            if (win.isClosed()) {
+                continue;
             }
+            BackpackGridPanel wg = win.grid();
+            if (wg == null || !wg.containsPoint(mouseX, mouseY)) {
+                continue;
+            }
+            var pos = wg.screenToGrid(mouseX, mouseY);
+            if (pos == null || !wg.canPlace(dragged, pos.row(), pos.col())) {
+                continue;
+            }
+            if (!isWornPackContainerDroppable(
+                    InventoryStateStore.snapshot(), wg.containerId())) {
+                showActionToast("背包未在携带中，无法放入", ACTION_TOAST_WARN);
+                returnDragToSource();
+                clearAllHighlights();
+                return;
+            }
+            wg.place(dragged, pos.row(), pos.col());
+            dragState.drop();
+            dispatchMoveIntent(dragged, fromLoc,
+                new com.bong.client.network.ClientRequestProtocol.ContainerLoc(
+                    wg.containerId(), pos.row(), pos.col()));
+            clearAllHighlights();
+            return;
         }
 
         // Active grid
@@ -2582,7 +2614,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 // 避免「拖进去瞬间弹回且无提示」。与 server validate_move_semantics 的 Container 门控对齐。
                 if (!isWornPackContainerDroppable(
                         InventoryStateStore.snapshot(), grid.containerId())) {
-                    showActionToast("背包未穿戴，无法放入内含物", ACTION_TOAST_WARN);
+                    showActionToast("背包未在携带中，无法放入", ACTION_TOAST_WARN);
                     returnDragToSource();
                     clearAllHighlights();
                     return;
@@ -3996,33 +4028,76 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
      * 则忽略；切换到另一个背包件则先卸旧再挂新。挂在 outerRow 的 discardStrip 之前（同 loot）。</p>
      */
     private void openWornContainerPanel(InventoryItem packItem, EquipSlotType slotType) {
-        if (packItem == null || outerRow == null) return;
+        if (packItem == null || root == null) return;
         String containerId = "pack_" + packItem.instanceId();
-        // 已挂同一容器：无需重建（listener 已在刷新）。
-        if (wornContainerPanel != null && !wornContainerPanel.isClosed()
-                && containerId.equals(wornContainerPanel.containerId())) {
-            return;
-        }
-        unmountWornContainerPanel(); // 切换背包件 / 清理陈旧面板
-        wornContainerPanel = new WornContainerPanel(containerId, this.model);
-        wornContainerPanelLayout = wornContainerPanel.build();
-        int discardIdx = outerRow.children().indexOf(discardStrip);
-        if (discardIdx >= 0) {
-            outerRow.child(discardIdx, wornContainerPanelLayout);
-        } else {
-            outerRow.child(wornContainerPanelLayout);
-        }
+        // 已开则置顶（去重）；否则新建悬浮窗，初始坐标错开堆叠（占位策略，后续真机再调）。
+        int n = packWindows.size();
+        int anchorX = 8 + 16 * n;
+        int anchorY = 8 + 16 * n;
+        packWindows.open(containerId, this.model, anchorX, anchorY);
     }
 
-    private void unmountWornContainerPanel() {
-        if (wornContainerPanel != null) {
-            wornContainerPanel.dispose();
-            wornContainerPanel = null;
+    /** mouseClicked 顶部命中悬浮窗的三态结果。 */
+    private enum PackWindowClick {
+        /** 未命中任何悬浮窗 → 继续主 grid/equip 流程。 */
+        NONE,
+        /** 命中并已处理（关闭 / grid 拾取 / 空白置顶）→ 吞掉本次点击。 */
+        CONSUMED,
+        /** 命中标题栏（拖动起手）→ 已置顶，交回 owo 做 focus + 后续 onMouseDrag 移位。 */
+        RAISED
+    }
+
+    /**
+     * plan-tarkov-floating-windows：mouseClicked 顶部对悬浮窗的命中分流。逆序遍历（map 末尾=z 最上）：
+     * <ul>
+     *   <li>命中 ✕ → 关闭该窗（若正从它拖拽则先取消）→ CONSUMED；</li>
+     *   <li>左键命中 grid → 从该窗拾取物品（拖出）+ 置顶 → CONSUMED；</li>
+     *   <li>命中标题栏 / 非 grid 空白 → 置顶 → RAISED（交回 owo 处理拖动）。</li>
+     * </ul>
+     * 命中即停（不穿透到主 grid）。
+     */
+    private PackWindowClick handlePackWindowMouseDown(double mouseX, double mouseY, int button) {
+        var wins = packWindows.ordered();
+        for (int i = wins.size() - 1; i >= 0; i--) {
+            var win = wins.get(i);
+            if (win.isClosed() || !win.isInBoundingBox(mouseX, mouseY)) {
+                continue;
+            }
+            // ✕ 关闭按钮（任意键）。
+            if (win.isOverCloseButton(mouseX, mouseY)) {
+                if (dragState.isDragging()
+                        && win.containerId().equals(dragState.sourceContainerId())) {
+                    dragState.cancel();
+                    clearAllHighlights();
+                }
+                packWindows.close(win.containerId());
+                return PackWindowClick.CONSUMED;
+            }
+            // 左键命中内含物 grid → 拾取（拖出），随后置顶。
+            if (button == 0) {
+                BackpackGridPanel wg = win.grid();
+                if (wg != null && wg.containsPoint(mouseX, mouseY)) {
+                    var pos = wg.screenToGrid(mouseX, mouseY);
+                    if (pos != null) {
+                        InventoryItem item = wg.itemAt(pos.row(), pos.col());
+                        if (item != null && dragState.phase() == DragState.Phase.IDLE) {
+                            var anchor = wg.anchorOf(item);
+                            if (anchor != null) {
+                                dragState.pickup(item, wg.containerId(),
+                                    anchor.row(), anchor.col());
+                                wg.remove(item);
+                            }
+                        }
+                    }
+                    packWindows.raise(win);
+                    return PackWindowClick.CONSUMED; // grid 区命中即吞，不穿透主 grid。
+                }
+            }
+            // 标题栏 / 非 grid 空白 → 置顶后交回 owo（focus → 后续 onMouseDrag 拖动窗口）。
+            packWindows.raise(win);
+            return PackWindowClick.RAISED;
         }
-        if (wornContainerPanelLayout != null && outerRow != null) {
-            outerRow.removeChild(wornContainerPanelLayout);
-            wornContainerPanelLayout = null;
-        }
+        return PackWindowClick.NONE;
     }
 
     // ==================== Block picker panel mount/unmount (P5 §8.1#5) ====
