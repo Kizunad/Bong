@@ -1526,6 +1526,8 @@ fn inventory_snapshot_to_proto(
                 name: c.name.clone(),
                 rows: c.rows as u32,
                 cols: c.cols as u32,
+                owner_instance_id: c.owner_instance_id,
+                quick_access: c.quick_access,
             })
             .collect(),
         placed_items: s.placed_items.iter().map(placed_item_to_proto).collect(),
@@ -4075,6 +4077,149 @@ mod tests {
                 );
             }
             other => panic!("expected CoffinState payload, got {other:?}"),
+        }
+    }
+
+    // ─── fix/worn-pack-tab-missing：ContainerSnapshot proto wire 字段保真 ───────
+    //
+    // 根因回归锁：#779 把 owner_instance_id / quick_access 加进 serde 结构体
+    // ContainerSnapshotV1 + JSON 路径，但漏了 proto 定义 + proto 转换。生产 wire 走
+    // protobuf（agent_bridge cfg(not(test)) → to_proto_bytes），导致这两个字段在过线时
+    // 被静默丢弃 → client owner==null → 穿戴背包不出 tab。
+    //
+    // 这条若加在 #779 当时会 RED：proto struct 当时无该字段，构造 / 访问编译不过。
+    fn inv_snapshot_with_pack(
+        owner_instance_id: Option<u64>,
+        quick_access: bool,
+    ) -> super::super::inventory::InventorySnapshotV1 {
+        use super::super::inventory::{
+            ContainerSnapshotV1, EquippedInventorySnapshotV1, InventoryWeightV1,
+        };
+        super::super::inventory::InventorySnapshotV1 {
+            revision: 1,
+            containers: vec![
+                ContainerSnapshotV1 {
+                    id: "body_pocket".to_string(),
+                    name: "贴身口袋".to_string(),
+                    rows: 1,
+                    cols: 4,
+                    owner_instance_id: None,
+                    quick_access: true,
+                },
+                ContainerSnapshotV1 {
+                    id: "pack_12".to_string(),
+                    name: "破草包".to_string(),
+                    rows: 3,
+                    cols: 3,
+                    owner_instance_id,
+                    quick_access,
+                },
+            ],
+            placed_items: vec![],
+            equipped: EquippedInventorySnapshotV1::default(),
+            hotbar: vec![],
+            bone_coins: 0,
+            weight: InventoryWeightV1 {
+                current: 0.0,
+                max: 100.0,
+            },
+            realm: "Induce".to_string(),
+            qi_current: 0.0,
+            qi_max: 100.0,
+            body_level: 0.0,
+        }
+    }
+
+    /// pack_<id> 容器的 owner_instance_id / quick_access 必须经 proto encode→decode 往返存活。
+    /// 锁死「proto 层不得再吞字段」——直击 worn-pack-tab-missing 根因。
+    #[test]
+    fn s2c_inventory_snapshot_container_owner_proto_roundtrip() {
+        use bong::server_data_envelope::Payload;
+        use prost::Message;
+
+        let snapshot = inv_snapshot_with_pack(Some(12), true);
+        let payload = ServerDataPayloadV1::InventorySnapshot(Box::new(snapshot));
+        let proto_payload = server_data_to_proto_payload(&payload);
+        let envelope = bong::ServerDataEnvelope {
+            payload: Some(proto_payload),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded = bong::ServerDataEnvelope::decode(bytes.as_slice())
+            .expect("S2C InventorySnapshot proto decode should succeed");
+        match decoded.payload {
+            Some(Payload::InventorySnapshot(ref snap)) => {
+                let pack = snap
+                    .containers
+                    .iter()
+                    .find(|c| c.id == "pack_12")
+                    .expect("decoded proto 应含 pack_12 容器");
+                assert_eq!(
+                    pack.owner_instance_id,
+                    Some(12),
+                    "pack_12 的 owner_instance_id 必须经 proto wire 往返存活（期望 Some(12)，\
+                     因为穿戴背包件 instance=12 是 client computeContainerDefs 判 isPackOwnerInWornSlot \
+                     的唯一依据；丢失→owner==null→穿戴态不出 tab），实际 {:?}",
+                    pack.owner_instance_id
+                );
+                assert!(
+                    pack.quick_access,
+                    "pack_12 的 quick_access 必须经 proto wire 往返存活（期望 true，\
+                     因为这是容器内物品能进 F1-F9 快捷栏的资格位），实际 false"
+                );
+                // body_pocket：owner=None 应不写入 wire（proto3 optional 省键），quick_access=true 应保留。
+                let body = snap
+                    .containers
+                    .iter()
+                    .find(|c| c.id == "body_pocket")
+                    .expect("decoded proto 应含 body_pocket 容器");
+                assert!(
+                    body.owner_instance_id.is_none(),
+                    "body_pocket 非 pack_ 前缀，owner_instance_id 期望 None（不写 wire），实际 {:?}",
+                    body.owner_instance_id
+                );
+                assert!(
+                    body.quick_access,
+                    "body_pocket 期望 quick_access=true，实际 false"
+                );
+            }
+            other => panic!("expected InventorySnapshot payload, got {other:?}"),
+        }
+    }
+
+    /// 旧 server 兼容反向 case：owner=None + quick_access=false 时，
+    /// proto3 default 省键（optional uint64 None / bool false），decode 回 None/false。
+    #[test]
+    fn s2c_inventory_snapshot_container_owner_none_not_in_wire() {
+        use bong::server_data_envelope::Payload;
+        use prost::Message;
+
+        let snapshot = inv_snapshot_with_pack(None, false);
+        let payload = ServerDataPayloadV1::InventorySnapshot(Box::new(snapshot));
+        let proto_payload = server_data_to_proto_payload(&payload);
+        let envelope = bong::ServerDataEnvelope {
+            payload: Some(proto_payload),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded = bong::ServerDataEnvelope::decode(bytes.as_slice())
+            .expect("S2C InventorySnapshot proto decode should succeed");
+        match decoded.payload {
+            Some(Payload::InventorySnapshot(ref snap)) => {
+                let pack = snap
+                    .containers
+                    .iter()
+                    .find(|c| c.id == "pack_12")
+                    .expect("decoded proto 应含 pack_12 容器");
+                assert!(
+                    pack.owner_instance_id.is_none(),
+                    "owner=None 时 proto wire 不应携带 owner_instance_id，实际 {:?}",
+                    pack.owner_instance_id
+                );
+                assert!(
+                    !pack.quick_access,
+                    "quick_access=false 时 proto wire 应为 false，实际 true"
+                );
+            }
+            other => panic!("expected InventorySnapshot payload, got {other:?}"),
         }
     }
 

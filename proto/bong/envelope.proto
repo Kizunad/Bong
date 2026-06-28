@@ -546,6 +546,8 @@ message ContainerSnapshot {
   string name = 2;
   uint32 rows = 3; // Rust u8
   uint32 cols = 4; // Rust u8
+  optional uint64 owner_instance_id = 5; // pack_<id> 归属穿戴件 instance；body_pocket/静态容器无值
+  bool            quick_access      = 6; // 容器内物品可进 F1-F9 快捷栏
 }
 
 message PlacedInventoryItem {
