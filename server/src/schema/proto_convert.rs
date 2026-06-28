@@ -369,7 +369,84 @@ fn inventory_item_view_to_proto(
         forge_color: v.forge_color.as_ref().map(color_kind_to_proto),
         forge_side_effects: v.forge_side_effects.clone(),
         forge_achieved_tier: v.forge_achieved_tier.map(|t| t as u32),
+        // plan-alchemy-v2 丹药元数据：serde Option<AlchemyItemData> → flat proto。
+        // None → proto 不设 → JsonFormat 省键 → client readAlchemyLines 拿 null → 无 tooltip。
+        // 修复 InventoryItemView.alchemy proto 漂移（生产走 protobuf 时此前被静默丢弃）。
+        alchemy: v.alchemy.as_ref().map(alchemy_item_data_to_proto),
     }
+}
+
+/// serde `AlchemyItemData` → `bong::AlchemyItemDataProto`（flat 镜像，判别键 `kind`）。
+///
+/// 穷举 match 无 catch-all `_`：`AlchemyItemData` 新增变体时 rustc E0004 编译失败，
+/// 天然挡漏搬。各 `kind` 字符串必须与 serde `#[serde(tag="kind", rename_all="snake_case")]`
+/// 产出的 JSON 一致，否则 client switch(kind) 落到 default → 整条 item parse 返 null。
+fn alchemy_item_data_to_proto(d: &crate::inventory::AlchemyItemData) -> bong::AlchemyItemDataProto {
+    use crate::inventory::AlchemyItemData;
+    match d {
+        AlchemyItemData::Pill {
+            recipe_id,
+            quality_tier,
+            effect_multiplier,
+            consecrated,
+            side_effect,
+        } => bong::AlchemyItemDataProto {
+            kind: "pill".to_string(),
+            recipe_id: Some(recipe_id.clone()),
+            quality_tier: Some(*quality_tier as u32),
+            effect_multiplier: Some(*effect_multiplier),
+            consecrated: Some(*consecrated),
+            side_effect: side_effect.as_ref().map(|se| bong::AlchemyItemSideEffect {
+                tag: se.tag.clone(),
+                duration_s: Some(se.duration_s),
+                weight: Some(se.weight),
+                perm: Some(se.perm),
+                color: se.color.as_ref().map(color_kind_to_proto),
+                amount: se.amount,
+            }),
+            ..Default::default()
+        },
+        AlchemyItemData::RecipeFragment { fragment } => bong::AlchemyItemDataProto {
+            kind: "recipe_fragment".to_string(),
+            fragment: Some(bong::AlchemyItemFragment {
+                // RecipeId = String 别名，直接 clone。
+                recipe_id: fragment.recipe_id.clone(),
+                known_stages: fragment.known_stages.iter().map(|s| *s as u32).collect(),
+                max_quality_tier: fragment.max_quality_tier as u32,
+            }),
+            ..Default::default()
+        },
+        AlchemyItemData::RecipeHint { hint } => bong::AlchemyItemDataProto {
+            kind: "recipe_hint".to_string(),
+            hint: Some(bong::AlchemyItemHint {
+                source_pill: hint.source_pill.clone(),
+                recipe_id: hint.recipe_id.clone(),
+                accuracy: hint.accuracy,
+                ingredients: hint.ingredients.clone(),
+            }),
+            ..Default::default()
+        },
+        AlchemyItemData::PillResidue {
+            residue_kind,
+            produced_at_tick,
+            expires_at_tick,
+        } => bong::AlchemyItemDataProto {
+            kind: "pill_residue".to_string(),
+            // 用 serde 序列化拿 snake_case 字符串，对齐 JSON 路径（将来接 client 时不会再漂）。
+            residue_kind: Some(pill_residue_kind_str(residue_kind)),
+            produced_at_tick: Some(*produced_at_tick),
+            expires_at_tick: Some(*expires_at_tick),
+            ..Default::default()
+        },
+    }
+}
+
+/// `PillResidueKind` → serde snake_case 字符串（与 JSON 路径一致）。
+fn pill_residue_kind_str(k: &crate::alchemy::residue::PillResidueKind) -> String {
+    serde_json::to_value(k)
+        .ok()
+        .and_then(|v| v.as_str().map(str::to_string))
+        .unwrap_or_default()
 }
 
 fn inventory_location_to_proto(
@@ -4218,6 +4295,277 @@ mod tests {
                     !pack.quick_access,
                     "quick_access=false 时 proto wire 应为 false，实际 true"
                 );
+            }
+            other => panic!("expected InventorySnapshot payload, got {other:?}"),
+        }
+    }
+
+    // ─── fix/alchemy-proto-drift：InventoryItemView.alchemy proto wire 保真 ─────
+    //
+    // 根因（同 #780 ContainerSnapshot.owner_instance_id 一类）：serde 结构体
+    // InventoryItemViewV1.alchemy 在 proto wire 上无对应字段 → inventory_item_view_to_proto
+    // 不搬 → 生产走 protobuf（agent_bridge cfg(not(test))）时 alchemy 被静默丢弃 →
+    // client readAlchemyLines 拿 null → 丹药 / 残卷 / 丹心 tooltip 真机不显。
+    // 单测吃 JSON 路径（cfg(test)）永远抓不到，故这里**直接调 inventory_item_view_to_proto
+    // + bong::InventoryItemView::decode**（绕开 cfg(test) JSON 短路），走真实 proto wire。
+    //
+    // 修复前 bong::InventoryItemView 无 alchemy 字段 → 构造 / 访问编译不过 → RED。
+
+    /// 最小可用 InventoryItemViewV1（仅填必填字段 + 给定 alchemy），供 proto wire pin 测试。
+    fn alchemy_view(
+        alchemy: Option<crate::inventory::AlchemyItemData>,
+    ) -> super::super::inventory::InventoryItemViewV1 {
+        super::super::inventory::InventoryItemViewV1 {
+            instance_id: 7,
+            item_id: "qing_xin_dan".to_string(),
+            display_name: "清心丹".to_string(),
+            grid_width: 1,
+            grid_height: 1,
+            weight: 0.1,
+            rarity: super::super::inventory::ItemRarityV1::Uncommon,
+            description: String::new(),
+            stack_count: 1,
+            spirit_quality: 1.0,
+            durability: 1.0,
+            freshness: None,
+            freshness_current: None,
+            mineral_id: None,
+            scroll_kind: None,
+            scroll_skill_id: None,
+            scroll_xp_grant: None,
+            charges: None,
+            forge_quality: None,
+            forge_color: None,
+            forge_side_effects: vec![],
+            forge_achieved_tier: None,
+            alchemy,
+            lingering_owner_qi: None,
+        }
+    }
+
+    /// 把 InventoryItemViewV1 过真实 proto wire（encode→decode），返回 decode 后的 alchemy。
+    fn roundtrip_alchemy(
+        view: &super::super::inventory::InventoryItemViewV1,
+    ) -> Option<bong::AlchemyItemDataProto> {
+        let proto = inventory_item_view_to_proto(view);
+        let bytes = proto.encode_to_vec();
+        let decoded = bong::InventoryItemView::decode(bytes.as_slice())
+            .expect("InventoryItemView proto decode 应成功");
+        decoded.alchemy
+    }
+
+    #[test]
+    fn inventory_item_view_pill_alchemy_survives_proto_roundtrip() {
+        use crate::alchemy::recipe::SideEffect;
+        use crate::inventory::AlchemyItemData;
+
+        let view = alchemy_view(Some(AlchemyItemData::Pill {
+            recipe_id: "qing_xin_dan".to_string(),
+            quality_tier: 2,
+            effect_multiplier: 0.9,
+            consecrated: true,
+            side_effect: Some(SideEffect {
+                tag: "qi_drain_mild".to_string(),
+                duration_s: 30,
+                weight: 1,
+                perm: false,
+                color: None,
+                amount: Some(1.5),
+            }),
+        }));
+        let a = roundtrip_alchemy(&view).expect(
+            "alchemy 必须过 proto wire 存活（修复前 inventory_item_view_to_proto 不搬→None）",
+        );
+        assert_eq!(
+            a.kind, "pill",
+            "判别键 kind 必须是 \"pill\"，否则 client readAlchemyLines switch 落 default→整条 item parse 返 null"
+        );
+        assert_eq!(
+            a.recipe_id.as_deref(),
+            Some("qing_xin_dan"),
+            "recipe_id 必须保真（client pillAlchemyLines readRequiredString 读它）"
+        );
+        assert_eq!(
+            a.quality_tier,
+            Some(2),
+            "quality_tier 必须保真（client 渲染「丹药 2阶」），实际 {:?}",
+            a.quality_tier
+        );
+        assert_eq!(
+            a.effect_multiplier,
+            Some(0.9),
+            "effect_multiplier 必须保真（client 渲染「效力 90%」）"
+        );
+        assert_eq!(
+            a.consecrated,
+            Some(true),
+            "consecrated 必须保真（client 渲染「开光 · 持续翻倍」）"
+        );
+        let se = a
+            .side_effect
+            .expect("side_effect 必须过 wire 存活（client 渲染「副作用 ...」）");
+        assert_eq!(
+            se.tag, "qi_drain_mild",
+            "side_effect.tag 必须保真（client 唯一消费字段），实际 {:?}",
+            se.tag
+        );
+        assert_eq!(se.duration_s, Some(30), "side_effect.duration_s 全镜像保真");
+        assert_eq!(se.amount, Some(1.5), "side_effect.amount 全镜像保真");
+    }
+
+    #[test]
+    fn inventory_item_view_recipe_fragment_alchemy_survives_proto_roundtrip() {
+        use crate::alchemy::recipe_fragment::RecipeFragment;
+        use crate::inventory::AlchemyItemData;
+
+        let view = alchemy_view(Some(AlchemyItemData::RecipeFragment {
+            fragment: RecipeFragment {
+                recipe_id: "huang_long_dan".to_string(),
+                known_stages: vec![0, 2],
+                max_quality_tier: 3,
+            },
+        }));
+        let a = roundtrip_alchemy(&view).expect("recipe_fragment alchemy 必须过 proto wire 存活");
+        assert_eq!(
+            a.kind, "recipe_fragment",
+            "kind 必须是 \"recipe_fragment\"，否则 client fragmentAlchemyLines 分支取不到"
+        );
+        let f = a
+            .fragment
+            .expect("fragment 子结构必须过 wire 存活（client readRequiredObject(\"fragment\")）");
+        assert_eq!(
+            f.recipe_id, "huang_long_dan",
+            "fragment.recipe_id 必须保真（client 渲染「丹方残卷 ...」），实际 {:?}",
+            f.recipe_id
+        );
+        assert_eq!(
+            f.known_stages,
+            vec![0u32, 2u32],
+            "known_stages 必须保真（client 渲染「已知 N段」用 .size()），实际 {:?}",
+            f.known_stages
+        );
+        assert_eq!(
+            f.max_quality_tier, 3,
+            "max_quality_tier 必须保真（client 渲染「上限M阶」，且 client 校验 1..=3）"
+        );
+    }
+
+    #[test]
+    fn inventory_item_view_recipe_hint_alchemy_survives_proto_roundtrip() {
+        use crate::alchemy::danxin::RecipeHint;
+        use crate::inventory::AlchemyItemData;
+
+        let view = alchemy_view(Some(AlchemyItemData::RecipeHint {
+            hint: RecipeHint {
+                source_pill: "qing_xin_dan".to_string(),
+                recipe_id: Some("qing_xin_dan".to_string()),
+                accuracy: 0.75,
+                ingredients: vec!["ci_she_hao".to_string(), "ning_mai_cao".to_string()],
+            },
+        }));
+        let a = roundtrip_alchemy(&view).expect("recipe_hint alchemy 必须过 proto wire 存活");
+        assert_eq!(a.kind, "recipe_hint", "kind 必须是 \"recipe_hint\"");
+        let h = a
+            .hint
+            .expect("hint 子结构必须过 wire 存活（client readRequiredObject(\"hint\")）");
+        assert_eq!(
+            h.source_pill, "qing_xin_dan",
+            "hint.source_pill 必须保真（client 必填校验它），实际 {:?}",
+            h.source_pill
+        );
+        assert_eq!(
+            h.accuracy, 0.75,
+            "hint.accuracy 必须保真（client 渲染「准度 75%」，校验 0..=1）"
+        );
+        assert_eq!(
+            h.ingredients,
+            vec!["ci_she_hao".to_string(), "ning_mai_cao".to_string()],
+            "ingredients 必须保真（client 渲染「药痕 a/b」），实际 {:?}",
+            h.ingredients
+        );
+    }
+
+    #[test]
+    fn inventory_item_view_pill_residue_alchemy_survives_proto_roundtrip() {
+        use crate::alchemy::residue::PillResidueKind;
+        use crate::inventory::AlchemyItemData;
+
+        let view = alchemy_view(Some(AlchemyItemData::PillResidue {
+            residue_kind: PillResidueKind::FailedPill,
+            produced_at_tick: 100,
+            expires_at_tick: 500,
+        }));
+        let a = roundtrip_alchemy(&view).expect("pill_residue alchemy 必须过 proto wire 存活");
+        assert_eq!(a.kind, "pill_residue", "kind 必须是 \"pill_residue\"");
+        // residue_kind 字符串必须对齐 serde snake_case（FailedPill→\"failed_pill\"），
+        // 否则将来接 client tooltip 时会再漂一次。
+        assert_eq!(
+            a.residue_kind.as_deref(),
+            Some("failed_pill"),
+            "residue_kind 必须是 serde snake_case \"failed_pill\"（与 JSON 路径一致），实际 {:?}",
+            a.residue_kind
+        );
+        assert_eq!(a.produced_at_tick, Some(100), "produced_at_tick 全镜像保真");
+        assert_eq!(a.expires_at_tick, Some(500), "expires_at_tick 全镜像保真");
+    }
+
+    #[test]
+    fn inventory_item_view_no_alchemy_absent_in_proto_wire() {
+        // 守恒反向 case：非丹药物品 alchemy=None → proto 不设 → wire 不携带 →
+        // client readAlchemyLines element==null → List.of()（无 tooltip 行），语义与 serde Option 一致。
+        let view = alchemy_view(None);
+        assert!(
+            roundtrip_alchemy(&view).is_none(),
+            "alchemy=None 时 proto wire 不应携带 alchemy（缺 presence）；\
+             若 Some 说明误塞默认值→client 可能误判 kind"
+        );
+    }
+
+    /// 整快照端到端：把带 alchemy 的 item 塞进 placed_items，过
+    /// ServerDataEnvelope::encode→decode 全链，确认 InventorySnapshot payload 不丢 alchemy。
+    /// 锁死「生产 InventorySnapshot 过线时 item.alchemy 仍在」。
+    #[test]
+    fn s2c_inventory_snapshot_placed_item_alchemy_survives_full_envelope_roundtrip() {
+        use crate::inventory::AlchemyItemData;
+        use bong::server_data_envelope::Payload;
+
+        let mut snapshot = inv_snapshot_with_pack(Some(12), true);
+        snapshot.placed_items = vec![super::super::inventory::PlacedInventoryItemV1 {
+            container_id: "pack_12".to_string(),
+            row: 0,
+            col: 0,
+            item: alchemy_view(Some(AlchemyItemData::Pill {
+                recipe_id: "qing_xin_dan".to_string(),
+                quality_tier: 1,
+                effect_multiplier: 1.0,
+                consecrated: false,
+                side_effect: None,
+            })),
+        }];
+
+        let payload = ServerDataPayloadV1::InventorySnapshot(Box::new(snapshot));
+        let proto_payload = server_data_to_proto_payload(&payload);
+        let envelope = bong::ServerDataEnvelope {
+            payload: Some(proto_payload),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded = bong::ServerDataEnvelope::decode(bytes.as_slice())
+            .expect("S2C InventorySnapshot proto decode should succeed");
+        match decoded.payload {
+            Some(Payload::InventorySnapshot(ref snap)) => {
+                let placed = snap
+                    .placed_items
+                    .first()
+                    .expect("decoded proto 应含 1 个 placed_item");
+                let item = placed.item.as_ref().expect("placed_item.item 应存在");
+                let a = item.alchemy.as_ref().expect(
+                    "placed item 的 alchemy 必须经整条 InventorySnapshot envelope 往返存活（修复前丢失）",
+                );
+                assert_eq!(
+                    a.kind, "pill",
+                    "整快照往返后 alchemy.kind 仍须为 pill，否则 client 丹药 tooltip 不显"
+                );
+                assert_eq!(a.recipe_id.as_deref(), Some("qing_xin_dan"));
             }
             other => panic!("expected InventorySnapshot payload, got {other:?}"),
         }

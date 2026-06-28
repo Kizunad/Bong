@@ -379,7 +379,11 @@ public final class InventorySnapshotHandler implements ServerDataHandler {
             case "pill" -> pillAlchemyLines(alchemy);
             case "recipe_fragment" -> fragmentAlchemyLines(alchemy);
             case "recipe_hint" -> hintAlchemyLines(alchemy);
-            default -> null;
+            // 未知 alchemy kind（如 pill_residue 废丹/残渣，或未来 server-only 变体）→ 无 tooltip 行但
+            // **返空而非 null**：null 会让 parseInventoryItem 判该 item 无效 → parsePlacedItems 返 null →
+            // 整份 InventorySnapshot 被丢弃(noOp)。任何单个 item 的未知 alchemy kind 都不该 brick 整快照。
+            // 向前兼容：server 端新增 alchemy 变体时，旧 client 优雅降级（无 tooltip）而非卡死背包。
+            default -> List.of();
         };
     }
 

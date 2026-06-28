@@ -539,6 +539,56 @@ message InventoryItemView {
   optional ColorKind forge_color      = 18;
   repeated string  forge_side_effects = 19;
   optional uint32  forge_achieved_tier = 20;
+  // plan-alchemy-v2 物品级丹药元数据，serde AlchemyItemData (inventory/mod.rs) 的 flat 镜像。
+  // 缺省 = 非丹药物品；client readAlchemyLines 拿 null → 无 tooltip 行。
+  optional AlchemyItemDataProto alchemy = 21;
+}
+
+// serde AlchemyItemData (server/src/inventory/mod.rs `#[serde(tag="kind")]`) 的 flat 镜像。
+// 用显式 string kind 而非 proto3 oneof：oneof 的 proto3-JSON 不产生判别键
+// （序列化为 {"pill":{...}}，无 "kind"），而 client InventorySnapshotHandler.readAlchemyLines
+// 靠 alchemy.get("kind") 分支；flat + 显式 kind 才能与 serde JSON 形状一致。
+message AlchemyItemDataProto {
+  string kind = 1;                                  // "pill" / "recipe_fragment" / "recipe_hint" / "pill_residue"
+  // --- Pill ---
+  optional string recipe_id            = 2;
+  optional uint32 quality_tier         = 3;         // Rust u8
+  optional double effect_multiplier    = 4;
+  optional bool   consecrated          = 5;
+  optional AlchemyItemSideEffect side_effect = 6;
+  // --- RecipeFragment ---
+  optional AlchemyItemFragment fragment = 7;
+  // --- RecipeHint ---
+  optional AlchemyItemHint hint        = 8;
+  // --- PillResidue (client 暂不消费 tooltip，仍镜像以备后用) ---
+  optional string residue_kind         = 9;
+  optional uint64 produced_at_tick     = 10;
+  optional uint64 expires_at_tick      = 11;
+}
+
+// serde SideEffect (server/src/alchemy/recipe.rs) — client 仅读 .tag，但全镜像对齐。
+message AlchemyItemSideEffect {
+  string tag                 = 1;
+  optional uint32 duration_s = 2;
+  optional uint32 weight     = 3;
+  optional bool   perm       = 4;
+  optional ColorKind color   = 5;
+  optional double amount     = 6;
+}
+
+// serde RecipeFragment (server/src/alchemy/recipe_fragment.rs); recipe_id 是 RecipeId(=String) 裸串。
+message AlchemyItemFragment {
+  string          recipe_id        = 1;
+  repeated uint32 known_stages     = 2;   // Rust Vec<u8>
+  uint32          max_quality_tier = 3;   // Rust u8
+}
+
+// serde RecipeHint (server/src/alchemy/danxin.rs)。
+message AlchemyItemHint {
+  string          source_pill = 1;
+  optional string recipe_id   = 2;        // Option<RecipeId>
+  double          accuracy    = 3;
+  repeated string ingredients = 4;
 }
 
 message ContainerSnapshot {
