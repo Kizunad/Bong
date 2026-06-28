@@ -1175,6 +1175,7 @@ mod tests {
             forge_color: Some(ColorKind::Sharp as i32),
             forge_side_effects: vec!["brittle_edge".to_string()],
             forge_achieved_tier: Some(2),
+            alchemy: None,
         };
         let bytes = item.encode_to_vec();
         let decoded = InventoryItemView::decode(bytes.as_slice())
@@ -1219,6 +1220,7 @@ mod tests {
             forge_color: None,
             forge_side_effects: vec![],
             forge_achieved_tier: None,
+            alchemy: None,
         };
         let bytes = item.encode_to_vec();
         let decoded = InventoryItemView::decode(bytes.as_slice())
@@ -1290,6 +1292,7 @@ mod tests {
             forge_color: None,
             forge_side_effects: vec![],
             forge_achieved_tier: None,
+            alchemy: None,
         };
 
         let snapshot = InventorySnapshot {
@@ -1419,6 +1422,7 @@ mod tests {
                 forge_color: None,
                 forge_side_effects: vec![],
                 forge_achieved_tier: None,
+                alchemy: None,
             };
             let bytes = item.encode_to_vec();
             let decoded = InventoryItemView::decode(bytes.as_slice())
@@ -11117,6 +11121,7 @@ mod tests {
                                 forge_color: None,
                                 forge_side_effects: vec![],
                                 forge_achieved_tier: None,
+                                alchemy: None,
                             }),
                         })
                         .collect(),
@@ -11142,6 +11147,7 @@ mod tests {
                             forge_color: Some(ColorKind::Sharp as i32),
                             forge_side_effects: vec!["锋锐".to_string()],
                             forge_achieved_tier: Some(2),
+                            alchemy: None,
                         }),
                         ..Default::default()
                     }),
@@ -11169,6 +11175,7 @@ mod tests {
                                     forge_color: None,
                                     forge_side_effects: vec![],
                                     forge_achieved_tier: None,
+                                    alchemy: None,
                                 })
                             } else {
                                 None
