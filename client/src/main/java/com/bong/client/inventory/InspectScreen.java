@@ -624,8 +624,10 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 // 背包真离开（丢地/转移走）后其 pack_<id> 从 snapshot 消失，已开的悬浮窗须关闭，否则空壳
                 // 窗仍可点 → 产生 stale move_intent。卸到 body_pocket/手持/快捷栏等仍在携带面的情形 pack_<id>
                 // 仍在 → 窗口不关（用户可继续看包），这正是预期。
-                // 注意：pack_<id> 已不进容器 tab（bug #1），其增删不再触发 structuralChange，故 reconcile
-                // 必须在每个 snapshot 跑（不能挂在 structuralChange 内），否则丢地后窗口不关。
+                // 注意：A 准则后 worn pack 会进容器 tab，穿/卸 pack 经 structuralChange→rebuildContainerSection
+                // 增删该 tab；但 reconcile 仍必须每个 snapshot 跑（不依赖 structuralChange），否则丢地后窗口不关。
+                // 二者是独立通道：tab 增删看 worn 态（owner 在不在 worn 层），悬浮窗开关看 pack_<id> 在不在
+                // containers()——worn↔非worn 切换不改变 containers() 成员，故悬浮窗不被误关，互不冲突。
                 for (var win : packWindows.ordered()) {
                     boolean stillExists = next.containers().stream()
                             .anyMatch(d -> win.containerId().equals(d.id()));
@@ -894,6 +896,50 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         publishQuickUseSlot(index, item);
         if (isBlockQuickBarBindable(item)) {
             bindBlockItemToSkillBar(index, item);
+        }
+    }
+
+    /**
+     * B 准则（快捷栏来源限制）：被拖物品的来源是否允许指派到快捷使用栏（F1-F9）。
+     *
+     * <ul>
+     *   <li>{@code QUICK_USE}（快捷栏内重排）→ 放行。</li>
+     *   <li>{@code GRID} 且来源容器为 body_pocket，或该容器 def 的 {@code quickAccess}（[快捷] 背包）→ 放行。</li>
+     *   <li>其余 GRID / HOTBAR / EQUIP / MERIDIAN / BODY_PART / 来源容器未知 → 拒绝。</li>
+     * </ul>
+     *
+     * <p>HOTBAR 决策：{@code DragState.pickupFromHotbar} 不记 sourceContainerId（主手栏不属任何容器），
+     * 按规则 B 字面（仅 body_pocket / [快捷]容器物品可指派）严格解读 → 拒绝。若后续产品拍板放行
+     * 主手栏物品，单独为 HOTBAR 放行即可。
+     */
+    boolean isQuickAccessSource(DragState ds) {
+        if (ds == null || ds.sourceKind() == null) {
+            return false;
+        }
+        switch (ds.sourceKind()) {
+            case QUICK_USE:
+                return true;
+            case GRID: {
+                String cid = ds.sourceContainerId();
+                if (cid == null) {
+                    return false; // GRID 异常：无来源容器 id，兜底拒绝。
+                }
+                if (InventoryModel.BODY_POCKET_CONTAINER_ID.equals(cid)) {
+                    return true;
+                }
+                for (var def : model.containers()) {
+                    if (cid.equals(def.id())) {
+                        return def.quickAccess();
+                    }
+                }
+                return false;
+            }
+            case HOTBAR:
+            case EQUIP:
+            case MERIDIAN:
+            case BODY_PART:
+            default:
+                return false;
         }
     }
 
@@ -1422,8 +1468,32 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     }
 
     /**
+     * A 准则（worn-tab）：owner 背包件是否当前穿戴在某身体槽的 worn 层（区别于「当货物塞在
+     * body_pocket / 手持」）。worn → 显常驻 tab；否则只走悬浮窗。
+     *
+     * <p>判据走 {@link SlotContents#worn()} 全栈（而非 {@code wornTop()} / {@code held()}）：
+     * {@code held} 是手持代表件不算「穿戴上身」；用全栈而非栈顶避免叠穿（多层穿戴）时非栈顶 pack 漏判。
+     */
+    static boolean isPackOwnerInWornSlot(InventoryModel m, long ownerInstanceId) {
+        for (var contents : m.equippedSlots().values()) {
+            if (contents == null) continue;
+            for (var worn : contents.worn()) {
+                if (worn != null && worn.instanceId() == ownerInstanceId) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
      * plan-tarkov-backpack-v1 后续修复：从 model.containers() 计算容器 tab 列表，
      * body_pocket 恒置 index 0（默认/最左，决议 #18），server 未下发时补默认 2×3。
+     *
+     * <p>A 准则：穿戴态的 {@code pack_<id>} 容器（owner 在 worn 层）也进 tab；穿/卸背包经
+     * {@code containerStructureChanged → rebuildContainerSection} 自动增删该 tab（列表成员集合变化触发
+     * {@link #containerDefsDiffer}）。reconcile（每 snapshot 跑、不依赖 structuralChange）独立管理悬浮窗
+     * 开关，与 tab 增删互不冲突——worn↔非worn 切换不改变 {@code containers()} 成员，悬浮窗不被误关。
      */
     static java.util.List<InventoryModel.ContainerDef> computeContainerDefs(InventoryModel m) {
         java.util.List<InventoryModel.ContainerDef> defs = new java.util.ArrayList<>();
@@ -1432,10 +1502,14 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             if (InventoryModel.BODY_POCKET_CONTAINER_ID.equals(def.id())) {
                 bodyPocketDef = def;
             } else if (parseWornPackInstance(def.id()).isPresent()) {
-                // plan-tarkov-floating-windows bug #1：pack_<数字> 背包件容器不建顶层 tab，
-                // 统一经双击/右键开悬浮窗访问（无论 worn 还是当货物塞在 body_pocket）。tab 栏只代表
-                // 固定挂载的基础容器（body_pocket 等）。
-                continue;
+                // A 准则（worn-tab）：owner 背包件当前**穿戴**在某身体槽 worn 层 → 保留常驻 tab
+                // （双击/右键悬浮窗入口并存，不互斥）；非 worn（当货物躺 body_pocket / 手持 / 已落地）
+                // → skip，仅经悬浮窗访问。收窄 #778「pack 一律不显 tab」为「仅穿戴态显 tab」。
+                Long owner = def.ownerInstanceId();
+                if (owner != null && isPackOwnerInWornSlot(m, owner)) {
+                    defs.add(def);
+                }
+                // else（owner==null 旧 server 缺字段 / owner 不在 worn 层）：skip，不退化为显示。
             } else {
                 defs.add(def);
             }
@@ -2708,6 +2782,14 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         // Quick-use bar (F1-F9)
         int qIdx = quickUseSlotAtScreen(mouseX, mouseY);
         if (qIdx >= 0 && InventoryEquipRules.canPlaceIntoQuickUse(dragged)) {
+            // B 准则（快捷栏来源限制）：只有贴身口袋 / [快捷] 容器内物品（或快捷栏内重排）能指派到快捷栏。
+            // 来源门控与物品形态规则（canPlaceIntoQuickUse，验形态/排盾）正交——此处单独把关来源。
+            if (!isQuickAccessSource(dragState)) {
+                showActionToast("只有贴身口袋或快捷背包内物品能指派到快捷栏", ACTION_TOAST_WARN);
+                returnDragToSource();
+                clearAllHighlights();
+                return;
+            }
             InventoryItem old = quickUseItems[qIdx];
             quickUseItems[qIdx] = dragged;
             setQuickUseSlotVisual(qIdx, dragged);

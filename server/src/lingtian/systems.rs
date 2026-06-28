@@ -2359,6 +2359,7 @@ mod tests {
 
     fn make_inventory_with_seed(template_id: &str, stack: u32) -> PlayerInventory {
         let container = ContainerState {
+            quick_access: false,
             id: "main_pack".into(),
             name: "main_pack".into(),
             rows: 4,
@@ -2688,6 +2689,7 @@ mod tests {
 
     fn empty_inventory_8x8() -> PlayerInventory {
         let main_pack = ContainerState {
+            quick_access: false,
             id: MAIN_PACK_CONTAINER_ID.into(),
             name: "main".into(),
             rows: 8,

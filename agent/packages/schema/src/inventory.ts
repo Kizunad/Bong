@@ -329,6 +329,10 @@ export const ContainerSnapshotV1 = Type.Object(
     // 仅 pack_<id> 派生容器有值；body_pocket / 静态容器省略此键（Optional，向后兼容旧 client）。
     // 镜像 Rust ContainerSnapshotV1.owner_instance_id: Option<u64>（serde skip_serializing_if）。
     owner_instance_id: Type.Optional(SafeIntegerV1),
+    // [快捷] 标签：此容器内物品可被指派至快捷 hotbar（F1-F9）。body_pocket 恒 true；
+    // pack_<id> 取 owner ContainerSpec.quick_access；其余 false。镜像 Rust quick_access: bool
+    // （skip_serializing_if 省 false）。Optional + 缺省 = false（向后兼容旧 server/旧 sample）。
+    quick_access: Type.Optional(Type.Boolean()),
   },
   { additionalProperties: false },
 );

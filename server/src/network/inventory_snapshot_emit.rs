@@ -169,6 +169,10 @@ pub(crate) fn build_inventory_snapshot(
             // 从 id 前缀重解（与 ContainerState.owner_instance_id 等价，不依赖 backfill 已跑）；
             // body_pocket / 静态容器返回 None，skip_serializing_if 整体省略键。
             owner_instance_id: worn_pack_instance_from_container_id(&container.id),
+            // [快捷] 标签：body_pocket 隐式恒 true（贴身暗袋始终可入快捷栏）；
+            // pack_<id> 读 rebuild 回填进 ContainerState.quick_access 的 owner 模板值；其余 false。
+            quick_access: container.id == crate::inventory::BODY_POCKET_CONTAINER_ID
+                || container.quick_access,
         });
 
         let mut ordered_items = container.items.clone();
@@ -656,6 +660,7 @@ mod tests {
 
         let containers = vec![
             ContainerState {
+                quick_access: false,
                 id: "main_pack".to_string(),
                 name: "主背包".to_string(),
                 rows: 5,
@@ -664,6 +669,7 @@ mod tests {
                 owner_instance_id: None,
             },
             ContainerState {
+                quick_access: false,
                 id: "small_pouch".to_string(),
                 name: "小口袋".to_string(),
                 rows: 3,
@@ -672,6 +678,7 @@ mod tests {
                 owner_instance_id: None,
             },
             ContainerState {
+                quick_access: false,
                 id: "front_satchel".to_string(),
                 name: "前挂包".to_string(),
                 rows: 3,
@@ -726,6 +733,7 @@ mod tests {
         let mut inventory = make_inventory(7, false);
         // 追加一个穿戴背包件派生容器 pack_1007 + 一个静态 body_pocket，覆盖 Some / None 两路。
         inventory.containers.push(ContainerState {
+            quick_access: false,
             id: "pack_1007".to_string(),
             name: "破草包".to_string(),
             rows: 3,
@@ -739,6 +747,7 @@ mod tests {
             owner_instance_id: Some(1007),
         });
         inventory.containers.push(ContainerState {
+            quick_access: false,
             id: "body_pocket".to_string(),
             name: "贴身口袋".to_string(),
             rows: 1,
@@ -791,6 +800,83 @@ mod tests {
         assert_eq!(
             main_pack.owner_instance_id, None,
             "main_pack 非 pack_ 前缀，owner_instance_id 应为 None"
+        );
+    }
+
+    // worn-tab/quickbar plan — build_inventory_snapshot 下发 quick_access：
+    // body_pocket 特判恒 true；pack 读 ContainerState.quick_access 缓存；普通静态容器 false。
+    #[test]
+    fn build_inventory_snapshot_fills_quick_access() {
+        let mut inventory = make_inventory(9, false);
+        // 缓存了 quick_access=true 的 pack（模拟 owner 模板为快捷背包，rebuild 已回填）。
+        inventory.containers.push(ContainerState {
+            id: "pack_2001".to_string(),
+            name: "快捷腰包".to_string(),
+            rows: 2,
+            cols: 2,
+            items: vec![],
+            owner_instance_id: Some(2001),
+            quick_access: true,
+        });
+        // 普通 pack（quick_access=false）。
+        inventory.containers.push(ContainerState {
+            id: "pack_3001".to_string(),
+            name: "破草包".to_string(),
+            rows: 3,
+            cols: 3,
+            items: vec![],
+            owner_instance_id: Some(3001),
+            quick_access: false,
+        });
+        // body_pocket：缓存位 false，但 snapshot 应特判为 true。
+        inventory.containers.push(ContainerState {
+            id: "body_pocket".to_string(),
+            name: "贴身口袋".to_string(),
+            rows: 2,
+            cols: 3,
+            items: vec![],
+            owner_instance_id: None,
+            quick_access: false,
+        });
+
+        let snapshot = build_inventory_snapshot(
+            &inventory,
+            &PlayerState {
+                karma: 0.0,
+                inventory_score: 0.0,
+            },
+            &Cultivation {
+                realm: crate::cultivation::components::Realm::Awaken,
+                qi_current: 1.0,
+                qi_max: 10.0,
+                ..Cultivation::default()
+            },
+        );
+
+        let find = |id: &str| {
+            snapshot
+                .containers
+                .iter()
+                .find(|c| c.id == id)
+                .unwrap_or_else(|| panic!("snapshot 应含 {id} 容器"))
+                .quick_access
+        };
+
+        assert!(
+            find("body_pocket"),
+            "body_pocket 应被 snapshot 特判为 quick_access=true（即便 ContainerState 缓存位为 false）"
+        );
+        assert!(
+            find("pack_2001"),
+            "缓存 quick_access=true 的 pack 应下发 quick_access=true（owner 模板为快捷背包）"
+        );
+        assert!(
+            !find("pack_3001"),
+            "普通 pack（quick_access=false）应下发 false，其内物品不可入快捷栏"
+        );
+        assert!(
+            !find("main_pack"),
+            "普通静态容器 main_pack 应下发 quick_access=false"
         );
     }
 

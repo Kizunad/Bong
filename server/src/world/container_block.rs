@@ -163,6 +163,7 @@ pub fn build_external_container(session_id: u64, kind: ContainerBlockKind) -> Ex
             cols,
             items: vec![],
             owner_instance_id: None,
+            quick_access: false, // 外部方块容器，非快捷来源。
         },
         opened_by: None,
         timeout_wall_secs: 0,

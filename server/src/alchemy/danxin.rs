@@ -328,6 +328,7 @@ mod tests {
                 PlayerInventory {
                     revision: InventoryRevision(0),
                     containers: vec![ContainerState {
+                        quick_access: false,
                         id: "pack_1".to_string(),
                         name: "pack_1".to_string(),
                         rows: 1,

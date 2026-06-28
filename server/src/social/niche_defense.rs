@@ -568,6 +568,7 @@ mod tests {
             triggered_treasures: Vec::new(),
             revision: InventoryRevision(1),
             containers: vec![ContainerState {
+                quick_access: false,
                 id: MAIN_PACK_CONTAINER_ID.to_string(),
                 name: "Main Pack".to_string(),
                 rows: 4,

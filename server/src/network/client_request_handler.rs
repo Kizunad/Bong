@@ -3684,6 +3684,7 @@ mod tests {
             triggered_treasures: Vec::new(),
             revision: InventoryRevision(0),
             containers: vec![ContainerState {
+                quick_access: false,
                 id: "main_pack".into(),
                 name: "main_pack".into(),
                 rows: 5,
@@ -3708,6 +3709,7 @@ mod tests {
             triggered_treasures: Vec::new(),
             revision: InventoryRevision(0),
             containers: vec![ContainerState {
+                quick_access: false,
                 id: "main_pack".into(),
                 name: "main_pack".into(),
                 rows: 5,
@@ -3757,6 +3759,7 @@ mod tests {
             triggered_treasures: Vec::new(),
             revision: InventoryRevision(0),
             containers: vec![ContainerState {
+                quick_access: false,
                 id: "main_pack".into(),
                 name: "main_pack".into(),
                 rows: 5,
@@ -3777,6 +3780,7 @@ mod tests {
             triggered_treasures: Vec::new(),
             revision: InventoryRevision(0),
             containers: vec![ContainerState {
+                quick_access: false,
                 id: "main_pack".into(),
                 name: "main_pack".into(),
                 rows: 5,
@@ -4692,6 +4696,7 @@ mod tests {
             PlayerInventory {
                 revision: InventoryRevision(0),
                 containers: vec![ContainerState {
+                    quick_access: false,
                     id: "main_pack".into(),
                     name: "main_pack".into(),
                     rows: 5,
@@ -4933,6 +4938,7 @@ mod tests {
                     triggered_treasures: Vec::new(),
                     revision: InventoryRevision(0),
                     containers: vec![ContainerState {
+                        quick_access: false,
                         id: "main_pack".into(),
                         name: "main_pack".into(),
                         rows: 5,
@@ -13152,6 +13158,7 @@ mod take_pill_tests {
             triggered_treasures: Vec::new(),
             revision: InventoryRevision(0),
             containers: vec![ContainerState {
+                quick_access: false,
                 id: "main".into(),
                 name: "main".into(),
                 rows: 4,
@@ -13883,6 +13890,7 @@ mod freshness_probe_handler_tests {
             triggered_treasures: Vec::new(),
             revision: InventoryRevision(0),
             containers: vec![ContainerState {
+                quick_access: false,
                 id: "main_pack".into(),
                 name: "main_pack".into(),
                 rows: 5,
@@ -13903,6 +13911,7 @@ mod freshness_probe_handler_tests {
             triggered_treasures: Vec::new(),
             revision: InventoryRevision(0),
             containers: vec![ContainerState {
+                quick_access: false,
                 id: "main_pack".into(),
                 name: "main_pack".into(),
                 rows: 5,
@@ -14081,6 +14090,7 @@ mod freshness_probe_handler_tests {
             containers: vec![
                 // 第一容器（空）
                 ContainerState {
+                    quick_access: false,
                     id: "main_pack".into(),
                     name: "main_pack".into(),
                     rows: 5,
@@ -14091,6 +14101,7 @@ mod freshness_probe_handler_tests {
                 },
                 // 第二容器持有目标物品
                 ContainerState {
+                    quick_access: false,
                     id: "side_pack".into(),
                     name: "side_pack".into(),
                     rows: 3,

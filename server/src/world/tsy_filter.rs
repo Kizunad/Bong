@@ -146,6 +146,7 @@ mod tests {
     fn low_spirit_quality_items_pass_through_untouched() {
         let mut inv = empty_inv();
         inv.containers.push(ContainerState {
+            quick_access: false,
             id: "bag".to_string(),
             name: "Bag".to_string(),
             rows: 4,
@@ -169,6 +170,7 @@ mod tests {
     fn bone_coin_with_high_spirit_quality_becomes_dry_bone() {
         let mut inv = empty_inv();
         inv.containers.push(ContainerState {
+            quick_access: false,
             id: "bag".to_string(),
             name: "Bag".to_string(),
             rows: 4,
@@ -226,6 +228,7 @@ mod tests {
     fn unknown_template_falls_through_to_wuling_suffix() {
         let mut inv = empty_inv();
         inv.containers.push(ContainerState {
+            quick_access: false,
             id: "bag".to_string(),
             name: "Bag".to_string(),
             rows: 4,
@@ -251,6 +254,7 @@ mod tests {
         // ENTRY_FILTER_THRESHOLD = 0.3 严格 >=，所以 0.3 必须被过滤。
         let mut inv = empty_inv();
         inv.containers.push(ContainerState {
+            quick_access: false,
             id: "bag".to_string(),
             name: "Bag".to_string(),
             rows: 4,
@@ -283,6 +287,7 @@ mod tests {
             frozen_since_tick: None,
         });
         inv.containers.push(ContainerState {
+            quick_access: false,
             id: "bag".to_string(),
             name: "Bag".to_string(),
             rows: 4,

@@ -257,6 +257,7 @@ mod tests {
             triggered_treasures: Vec::new(),
             revision: InventoryRevision(7),
             containers: vec![ContainerState {
+                quick_access: false,
                 id: MAIN_PACK_CONTAINER_ID.to_string(),
                 name: "main_pack".to_string(),
                 rows: 5,
@@ -306,6 +307,7 @@ mod tests {
             instance: filler_instance(9_001, "filler"),
         });
         inventory.containers.push(ContainerState {
+            quick_access: false,
             id: BODY_POCKET_CONTAINER_ID.to_string(),
             name: BODY_POCKET_CONTAINER_ID.to_string(),
             rows: 1,

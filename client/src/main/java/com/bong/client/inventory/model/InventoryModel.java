@@ -28,7 +28,7 @@ public final class InventoryModel {
      * {@code pack_<id>} 派生容器有值；body_pocket / 静态容器为 {@code null}。client 双击穿戴背包件
      * 时直读 owner，免前缀解析。</p>
      */
-    public record ContainerDef(String id, String name, int rows, int cols, Long ownerInstanceId) {
+    public record ContainerDef(String id, String name, int rows, int cols, Long ownerInstanceId, boolean quickAccess) {
         public ContainerDef {
             Objects.requireNonNull(id, "id");
             Objects.requireNonNull(name, "name");
@@ -39,13 +39,22 @@ public final class InventoryModel {
             }
         }
 
+        /**
+         * B 准则（快捷栏来源限制）：{@code quickAccess} = 此容器内物品是否允许被指派到快捷使用栏（F1-F9）。
+         * 镜像 server {@code ContainerSnapshotV1.quick_access: bool}（body_pocket 恒 true；pack_&lt;id&gt;
+         * 取 owner ContainerSpec.quick_access；其余 false）。旧 server 缺字段 → false。
+         */
+        public ContainerDef(String id, String name, int rows, int cols, Long ownerInstanceId) {
+            this(id, name, rows, cols, ownerInstanceId, false);
+        }
+
         /** 无 owner 的容器（静态容器 / 旧 client 缺字段）。 */
         public ContainerDef(String id, String name, int rows, int cols) {
-            this(id, name, rows, cols, null);
+            this(id, name, rows, cols, null, false);
         }
 
         public ContainerDef(String name, int rows, int cols) {
-            this(PRIMARY_CONTAINER_ID, name, rows, cols, null);
+            this(PRIMARY_CONTAINER_ID, name, rows, cols, null, false);
         }
     }
 
@@ -55,8 +64,9 @@ public final class InventoryModel {
      * Server pushes the authoritative list; this is only used before the first snapshot arrives.
      */
     public static final List<ContainerDef> DEFAULT_CONTAINERS = List.of(
-        new ContainerDef(BODY_POCKET_CONTAINER_ID, "贴身口袋", 2, 3),
-        new ContainerDef(BACK_PACK_CONTAINER_ID, "破草包", 3, 3)
+        // body_pocket 恒为快捷来源（quickAccess=true）；back_pack 普通容器（false）。
+        new ContainerDef(BODY_POCKET_CONTAINER_ID, "贴身口袋", 2, 3, null, true),
+        new ContainerDef(BACK_PACK_CONTAINER_ID, "破草包", 3, 3, null, false)
     );
 
     private final List<ContainerDef> containers;

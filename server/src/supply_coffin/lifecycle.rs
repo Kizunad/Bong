@@ -279,6 +279,7 @@ mod tests {
         ExternalContainer {
             session_id: 1,
             container: ContainerState {
+                quick_access: false,
                 id: ExternalContainer::container_id(1),
                 name: "container".to_string(),
                 rows: 1,

@@ -222,6 +222,7 @@ mod tests {
 
     fn make_container(cols: u8, rows: u8) -> ContainerState {
         ContainerState {
+            quick_access: false,
             id: "test".to_string(),
             name: "Test".to_string(),
             rows,
