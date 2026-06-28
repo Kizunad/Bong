@@ -1762,6 +1762,7 @@ pub fn handle_client_request_payloads(
                     from,
                     &mut inventories,
                     &mut dropped_loot_params.registry,
+                    &combat_params.item_registry,
                     &mut clients,
                     &player_states,
                     &skill_scroll_params.cultivations,
@@ -1794,6 +1795,7 @@ pub fn handle_client_request_payloads(
                     from,
                     &mut inventories,
                     &mut dropped_loot_params.registry,
+                    &combat_params.item_registry,
                     &mut clients,
                     &player_states,
                     &skill_scroll_params.cultivations,
@@ -9946,7 +9948,13 @@ fn handle_inventory_move(
                 }
             }
 
-            if worn_pack_unequip || worn_pack_equip {
+            // plan-tarkov-backpack-v1 套包修复 §4：rebuild 触发条件从「worn 边界跨越」扩到
+            // 「任意 pack 件移动」。retention 后 worn↔body_pocket↔另一 pack↔hotbar↔held 的
+            // 任意移动都需 rebuild+resync——刷新 max_weight（worn 负重加成）/ owner_instance_id /
+            // body_pocket 存在性 + 推全量快照覆盖客户端乐观态。§2 后无孤儿时 overflow 为空、
+            // 零副作用（幂等）。worn_pack_unequip/equip 仅保留用于上方 classify_pack_move 的
+            // VFX 分类与本日志。
+            if moved_item_is_pack {
                 let player_pos = client_position(positions, entity);
                 let player_dimension = dimensions.get(entity).map(|dim| dim.0).unwrap_or_default();
                 let dropped_ids = crate::inventory::rebuild_and_drop_overflow(
@@ -9958,12 +9966,12 @@ fn handle_inventory_move(
                 );
                 if !dropped_ids.is_empty() {
                     tracing::info!(
-                        "[bong][network][inventory] worn-pack unequip overflow dropped {} item(s) to world: {dropped_ids:?}",
+                        "[bong][network][inventory] pack-move overflow dropped {} item(s) to world: {dropped_ids:?}",
                         dropped_ids.len()
                     );
                 }
                 tracing::info!(
-                    "[bong][network][inventory] worn-pack rebuild after move instance={instance_id} {from:?} -> {to:?} (unequip={worn_pack_unequip} equip={worn_pack_equip})"
+                    "[bong][network][inventory] pack-move rebuild after move instance={instance_id} {from:?} -> {to:?} (unequip={worn_pack_unequip} equip={worn_pack_equip})"
                 );
                 resync_snapshot(
                     entity,
@@ -10249,12 +10257,14 @@ fn client_position(positions: &Query<&valence::prelude::Position>, entity: Entit
 }
 
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
 fn handle_inventory_discard(
     entity: Entity,
     instance_id: u64,
     from: InventoryLocationV1,
     inventories: &mut Query<&mut PlayerInventory>,
     dropped_loot_registry: &mut DroppedLootRegistry,
+    item_registry: &ItemRegistry,
     clients: &mut Query<(&Username, &mut Client)>,
     player_states: &Query<&PlayerState>,
     cultivations: &Query<&Cultivation>,
@@ -10286,6 +10296,31 @@ fn handle_inventory_discard(
                 "[bong][network][inventory] discarded instance={instance_id} from {from:?} revision={}",
                 outcome.revision.0
             );
+            // plan-tarkov-backpack-v1 套包修复 §5：discard 是「真离开玩家」的合法 spill 触发点。
+            // 若被 discard 件是背包（有 container_spec），其 pack_<id> 容器现已孤儿 → 补调
+            // rebuild_and_drop_overflow：内含物连货掉地（塔科夫式直觉）+ 清孤儿容器，否则内含物
+            // 滞留 inventory 落盘，下次 load 触发 inventory_has_orphan_pack_container 重置 loadout
+            // （#736 复发面）。无孤儿时 rebuild 幂等。
+            let discarded_is_pack = item_registry
+                .get(&outcome.dropped.item.template_id)
+                .is_some_and(|t| t.container_spec.is_some());
+            if discarded_is_pack {
+                let player_pos = client_position(positions, entity);
+                let player_dimension = dimensions.get(entity).map(|dim| dim.0).unwrap_or_default();
+                let dropped_ids = crate::inventory::rebuild_and_drop_overflow(
+                    &mut inventory,
+                    item_registry,
+                    dropped_loot_registry,
+                    player_pos,
+                    player_dimension,
+                );
+                if !dropped_ids.is_empty() {
+                    tracing::info!(
+                        "[bong][network][inventory] discarded pack instance={instance_id}; spilled {} contained item(s) to world: {dropped_ids:?}",
+                        dropped_ids.len()
+                    );
+                }
+            }
             resync_snapshot(
                 entity,
                 &inventory,

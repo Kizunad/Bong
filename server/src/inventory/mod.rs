@@ -3914,6 +3914,44 @@ fn worn_container_items<'a>(
         })
 }
 
+/// plan-tarkov-backpack-v1 套包修复（fix/tarkov-nest-persistence）— 找出「玩家身上直接携带」
+/// 的带 `container_spec` 的背包件，产出 `(instance, ContainerSpec)`。
+///
+/// **携带面 = worn / held / hotbar / `body_pocket`（贴身暗袋）**。用于
+/// `rebuild_containers_from_equipment` 的 live_ids：背包件只要在这些携带位之一，其 `pack_<id>`
+/// 容器都应保留、内含物不 spill；只有背包真离开玩家（丢地/销毁 → 不在携带面）才 spill。
+///
+/// **为何不扫 `pack_*` 容器内含物（grid 内的背包件）**：P5 决议 #1「嵌套深度 2 层封顶」固化——
+/// worn 背包(层1) → 其 grid(层2) → 物品，放进 grid 的背包件是「货物」，**不**派生第 3 层可访问
+/// 容器（`rebuild_does_not_expand_container_item_placed_inside_grid_two_layer_cap` 锁死）。
+/// 同理 `main_pack` 等其它 grid 容器内的背包件也视为货物。仅 `body_pocket` 是与 worn 同级的
+/// 「贴身携带位」，故纳入携带面——这正是「卸包到暗袋」bug 的修复点。
+///
+/// 与 `worn_container_items` 的区别 = 携带面（worn+held+hotbar+body_pocket vs 仅 worn）。
+/// `compute_max_weight` 故意仍走 `worn_container_items`：只有穿戴态背包提供负重加成。
+fn find_pack_instances_anywhere<'a>(
+    inventory: &'a PlayerInventory,
+    registry: &'a ItemRegistry,
+) -> impl Iterator<Item = (&'a ItemInstance, &'a ContainerSpec)> {
+    let worn = inventory.equipped.values().flat_map(|s| s.worn.iter());
+    let held = inventory.equipped.values().filter_map(|s| s.held.as_ref());
+    let in_body_pocket = inventory
+        .containers
+        .iter()
+        .filter(|c| c.id == BODY_POCKET_CONTAINER_ID)
+        .flat_map(|c| c.items.iter().map(|p| &p.instance));
+    let in_hotbar = inventory.hotbar.iter().filter_map(|o| o.as_ref());
+    worn.chain(held)
+        .chain(in_body_pocket)
+        .chain(in_hotbar)
+        .filter_map(move |item| {
+            registry
+                .get(&item.template_id)
+                .and_then(|t| t.container_spec.as_ref())
+                .map(|spec| (item, spec))
+        })
+}
+
 /// plan-layered-equip-v1 P0.2 / §11.1 #17 — 根据已装备背包重算 `max_weight`。
 ///
 /// 公式：`BASE_CARRY_CAPACITY + Σ(所有身体槽 worn 层里带 container_spec 的件的 weight_capacity)`。
@@ -3964,17 +4002,21 @@ pub fn rebuild_containers_from_equipment(
     // 2. 扫所有身体槽 worn 层里带 container_spec 的背包件，确保各自容器存在。
     //    plan-tarkov-backpack-v1 P0（交付物 #2）：创建/刷新 `pack_<id>` 容器时写
     //    `owner_instance_id = Some(instance_id)`，建立背包件 ↔ 容器的语义归属。
-    let live_specs: Vec<(String, u8, u8, String, u64)> = worn_container_items(inventory, registry)
-        .map(|(item, spec)| {
-            (
-                container_id_for_worn_pack(item.instance_id),
-                spec.rows,
-                spec.cols,
-                item.display_name.clone(),
-                item.instance_id,
-            )
-        })
-        .collect();
+    //    plan-tarkov-backpack-v1 套包修复：live 判据从「仅 worn」扩到「身上任意位置」
+    //    （find_pack_instances_anywhere），背包移入 body_pocket / 另一 pack / hotbar / held
+    //    后其 pack_<id> 容器仍 live、内含物不 spill；只有真离开玩家（丢地/销毁）才孤儿化。
+    let live_specs: Vec<(String, u8, u8, String, u64)> =
+        find_pack_instances_anywhere(inventory, registry)
+            .map(|(item, spec)| {
+                (
+                    container_id_for_worn_pack(item.instance_id),
+                    spec.rows,
+                    spec.cols,
+                    item.display_name.clone(),
+                    item.instance_id,
+                )
+            })
+            .collect();
     let live_ids: std::collections::HashSet<String> = live_specs
         .iter()
         .map(|(id, _, _, _, _)| id.clone())
@@ -4079,7 +4121,9 @@ pub fn rebuild_and_drop_overflow(
             source_col: 0,
             world_pos: [
                 player_pos[0] + 0.35 + next_idx as f64 * 0.1,
-                player_pos[1],
+                // plan-tarkov-backpack-v1 套包修复 §8：+0.5 Y margin，防脚下 +0.35/+0.35
+                // 对角处为台阶/坡顶时物品渲染陷入地下。
+                player_pos[1] + 0.5,
                 player_pos[2] + 0.35,
             ],
             dimension: player_dimension,
@@ -4355,7 +4399,8 @@ pub fn discard_inventory_item_to_dropped_loot(
         source_col,
         world_pos: [
             player_pos[0] + 0.35 + next_idx as f64 * 0.1,
-            player_pos[1],
+            // plan-tarkov-backpack-v1 套包修复 §8：+0.5 Y margin，防脚下对角处为台阶/坡顶时陷地。
+            player_pos[1] + 0.5,
             player_pos[2] + 0.35,
         ],
         dimension: player_dimension,
@@ -4693,14 +4738,16 @@ fn validate_move_semantics(
         // 非 `pack_<id>` 容器（如 body_pocket / main_pack）放行（保持现状无门控）。
         InventoryLocationV1::Container { container_id, .. } => {
             if let Some(owner_instance_id) = worn_pack_instance_from_container_id(container_id) {
-                let owner_is_worn = matches!(
-                    find_equipped_instance(inventory, owner_instance_id),
-                    Some(EquippedInstanceLoc::Worn { .. })
-                );
-                if !owner_is_worn {
+                // plan-tarkov-backpack-v1 套包修复（决议 #2 重定义）：放宽门控——背包件在携带面
+                // （worn/held/hotbar/body_pocket）即视为「活背包」，可放入内含物；只有背包不在
+                // 携带面（丢地/销毁，或仅作为 pack_* grid 货物——2 层封顶下不可开）才拒。与存活
+                // 判据 find_pack_instances_anywhere 一致，避免「容器还在却拒绝拖入」的割裂。
+                let owner_carried = find_pack_instances_anywhere(inventory, registry)
+                    .any(|(item, _)| item.instance_id == owner_instance_id);
+                if !owner_carried {
                     return Err(format!(
-                        "背包未穿戴，无法放入内含物：容器 `{container_id}` 的背包件 (instance {owner_instance_id}) \
-                         当前不在任何身体槽 worn 层（已卸到手持/格子）；请先穿上该背包再放入物品"
+                        "背包已不在身上，无法放入内含物：容器 `{container_id}` 的背包件 \
+                         (instance {owner_instance_id}) 已丢弃/销毁；请重新拾取该背包"
                     ));
                 }
             }
@@ -10802,6 +10849,546 @@ cols = 4
         }
     }
 
+    // ─── plan-tarkov-backpack-v1 套包修复（fix/tarkov-nest-persistence）— 随包保留 + 任意位置开包 ───
+
+    /// 构造带一个穿戴背包（chest 槽）+ 其 pack_<id> 容器（含 n 件内含物）的 inventory。
+    /// 返回 (inventory, registry, pack_instance_id, 内含物 instance_id 列表)。
+    fn setup_worn_pack_with_contents(
+        contents: usize,
+    ) -> (PlayerInventory, ItemRegistry, u64, Vec<u64>) {
+        let pack_tpl = make_container_template("field_pack", EQUIP_SLOT_CHEST, 4, 4, 20.0);
+        let mut tpls = HashMap::from([("field_pack".to_string(), pack_tpl)]);
+        // 一个普通可放入的小物模板。
+        let mut herb = make_container_template("spirit_herb", EQUIP_SLOT_CHEST, 1, 1, 0.0);
+        herb.container_spec = None;
+        herb.category = ItemCategory::Misc;
+        herb.grid_w = 1;
+        herb.grid_h = 1;
+        tpls.insert("spirit_herb".to_string(), herb);
+        let registry = ItemRegistry::from_map(tpls);
+
+        let pack_id = 1000u64;
+        let mut inv = make_empty_inventory();
+        inv.equipped.insert(
+            EQUIP_SLOT_CHEST.to_string(),
+            SlotContents::worn_single(make_container_item(pack_id, "field_pack")),
+        );
+        let mut content_ids = Vec::new();
+        let mut items = Vec::new();
+        for i in 0..contents {
+            let cid = 2000 + i as u64;
+            content_ids.push(cid);
+            items.push(PlacedItemState {
+                row: i as u8,
+                col: 0,
+                instance: make_test_item_instance(cid, "spirit_herb"),
+            });
+        }
+        inv.containers.push(ContainerState {
+            id: container_id_for_worn_pack(pack_id),
+            name: "野战背包".to_string(),
+            rows: 4,
+            cols: 4,
+            items,
+            owner_instance_id: Some(pack_id),
+        });
+        // 确保 body_pocket 存在（rebuild 会创建，但显式给出更清晰）。
+        inv.containers.push(ContainerState {
+            id: BODY_POCKET_CONTAINER_ID.to_string(),
+            name: "暗袋".to_string(),
+            rows: BODY_POCKET_ROWS,
+            cols: BODY_POCKET_COLS,
+            items: Vec::new(),
+            owner_instance_id: None,
+        });
+        (inv, registry, pack_id, content_ids)
+    }
+
+    /// 把 chest 槽的 worn 背包件移入 body_pocket（占其首格），模拟「卸包到身上」。
+    fn move_worn_pack_to_body_pocket(inv: &mut PlayerInventory, pack_id: u64) {
+        let pack_item = inv
+            .equipped
+            .get_mut(EQUIP_SLOT_CHEST)
+            .and_then(|s| s.worn.pop())
+            .expect("pack should be worn");
+        assert_eq!(pack_item.instance_id, pack_id);
+        let bp = inv
+            .containers
+            .iter_mut()
+            .find(|c| c.id == BODY_POCKET_CONTAINER_ID)
+            .expect("body_pocket must exist");
+        bp.items.push(PlacedItemState {
+            row: 0,
+            col: 0,
+            instance: pack_item,
+        });
+    }
+
+    fn pack_container_present(inv: &PlayerInventory, pack_id: u64) -> bool {
+        inv.containers
+            .iter()
+            .any(|c| c.id == container_id_for_worn_pack(pack_id))
+    }
+
+    #[test]
+    fn rebuild_keeps_pack_container_when_pack_in_body_pocket() {
+        let (mut inv, registry, pack_id, content_ids) = setup_worn_pack_with_contents(2);
+        move_worn_pack_to_body_pocket(&mut inv, pack_id);
+
+        let overflow = rebuild_containers_from_equipment(&mut inv, &registry);
+
+        assert!(
+            overflow.is_empty(),
+            "背包仍在身上(body_pocket)时不应有任何 overflow，实际溢出 {} 件",
+            overflow.len()
+        );
+        assert!(
+            pack_container_present(&inv, pack_id),
+            "背包在 body_pocket 时其 pack_{pack_id} 容器应保留（核心存活判据），实际容器列表={:?}",
+            inv.containers.iter().map(|c| &c.id).collect::<Vec<_>>()
+        );
+        let pack_c = inv
+            .containers
+            .iter()
+            .find(|c| c.id == container_id_for_worn_pack(pack_id))
+            .unwrap();
+        assert_eq!(
+            pack_c.items.len(),
+            content_ids.len(),
+            "内含物应逐件守恒，不 spill"
+        );
+        for cid in &content_ids {
+            assert!(
+                pack_c.items.iter().any(|p| p.instance.instance_id == *cid),
+                "内含物 instance {cid} 应原位保留在 pack 容器内"
+            );
+        }
+    }
+
+    #[test]
+    fn rebuild_treats_pack_in_pack_grid_as_orphan_cargo() {
+        // P5「2 层封顶」交互：pack A 放进 worn pack B 的 grid（货物，层2）→ A 不属于携带面，
+        // 其残留 pack_A 容器视为孤儿被清理、内含物 spill（不派生第 3 层可访问容器）。
+        // 这把 retention（§2 携带面）与 2 层封顶（pack_* grid 内不展开）的交界锁死。
+        let pack_tpl = make_container_template("field_pack", EQUIP_SLOT_CHEST, 4, 4, 20.0);
+        let mut tpls = HashMap::from([("field_pack".to_string(), pack_tpl)]);
+        let mut herb = make_container_template("spirit_herb", EQUIP_SLOT_CHEST, 1, 1, 0.0);
+        herb.container_spec = None;
+        herb.category = ItemCategory::Misc;
+        herb.grid_w = 1;
+        herb.grid_h = 1;
+        tpls.insert("spirit_herb".to_string(), herb);
+        let registry = ItemRegistry::from_map(tpls);
+        let b_id = 100u64;
+        let a_id = 200u64;
+        let inner_id = 300u64;
+        let mut inv = make_empty_inventory();
+        // body_pocket 兜底 spill。
+        inv.containers.push(ContainerState {
+            id: BODY_POCKET_CONTAINER_ID.to_string(),
+            name: "暗袋".to_string(),
+            rows: BODY_POCKET_ROWS,
+            cols: BODY_POCKET_COLS,
+            items: Vec::new(),
+            owner_instance_id: None,
+        });
+        // pack B worn.
+        inv.equipped.insert(
+            EQUIP_SLOT_CHEST.to_string(),
+            SlotContents::worn_single(make_container_item(b_id, "field_pack")),
+        );
+        // pack B 容器，内含 pack A 件（货物）。
+        inv.containers.push(ContainerState {
+            id: container_id_for_worn_pack(b_id),
+            name: "B".to_string(),
+            rows: 4,
+            cols: 4,
+            items: vec![PlacedItemState {
+                row: 0,
+                col: 0,
+                instance: make_container_item(a_id, "field_pack"),
+            }],
+            owner_instance_id: Some(b_id),
+        });
+        // pack A 的残留容器（不该被 grid 内货物保有）。
+        inv.containers.push(ContainerState {
+            id: container_id_for_worn_pack(a_id),
+            name: "A".to_string(),
+            rows: 4,
+            cols: 4,
+            items: vec![PlacedItemState {
+                row: 0,
+                col: 0,
+                instance: make_test_item_instance(inner_id, "spirit_herb"),
+            }],
+            owner_instance_id: Some(a_id),
+        });
+
+        let overflow = rebuild_containers_from_equipment(&mut inv, &registry);
+        assert!(
+            !pack_container_present(&inv, a_id),
+            "2 层封顶：pack A 仅作为 pack B grid 内货物时不属携带面，其 pack_{a_id} 容器应被清理（不展开第 3 层）"
+        );
+        // 内含物不静默丢失：spill 进任一存活容器（body_pocket / pack_B）或 overflow。
+        let in_inv = inventory_item_by_instance_borrow(&inv, inner_id).is_some();
+        let in_overflow = overflow.iter().any(|i| i.instance_id == inner_id);
+        assert!(
+            in_inv || in_overflow,
+            "孤儿 pack_A 内含物 {inner_id} 必须 spill 到存活容器或 overflow，禁止静默丢失"
+        );
+        // pack B 仍在身上，其容器保留（pack A 件仍作为货物留在 B 内）。
+        assert!(pack_container_present(&inv, b_id), "worn pack B 容器应保留");
+    }
+
+    #[test]
+    fn rebuild_keeps_pack_container_when_pack_in_hotbar() {
+        let (mut inv, registry, pack_id, _) = setup_worn_pack_with_contents(1);
+        let pack_item = inv
+            .equipped
+            .get_mut(EQUIP_SLOT_CHEST)
+            .and_then(|s| s.worn.pop())
+            .unwrap();
+        inv.hotbar[0] = Some(pack_item);
+
+        let overflow = rebuild_containers_from_equipment(&mut inv, &registry);
+        assert!(overflow.is_empty(), "背包在 hotbar 不应 spill");
+        assert!(
+            pack_container_present(&inv, pack_id),
+            "背包在 hotbar 时 pack_{pack_id} 容器应保留"
+        );
+    }
+
+    #[test]
+    fn rebuild_keeps_pack_container_when_pack_held() {
+        let (mut inv, registry, pack_id, _) = setup_worn_pack_with_contents(1);
+        let pack_item = inv
+            .equipped
+            .get_mut(EQUIP_SLOT_CHEST)
+            .and_then(|s| s.worn.pop())
+            .unwrap();
+        // 移入手持位（另起一个手槽，held）。
+        inv.equipped.insert(
+            "main_hand".to_string(),
+            SlotContents {
+                worn: Vec::new(),
+                held: Some(pack_item),
+            },
+        );
+
+        let overflow = rebuild_containers_from_equipment(&mut inv, &registry);
+        assert!(overflow.is_empty(), "背包在 held 不应 spill");
+        assert!(
+            pack_container_present(&inv, pack_id),
+            "背包 held 时 pack_{pack_id} 容器应保留"
+        );
+    }
+
+    #[test]
+    fn rebuild_spills_only_when_pack_left_player() {
+        // 背包 detach 出 inventory（模拟丢地）后 rebuild → pack_<id> 孤儿、内含物 spill。
+        let (mut inv, registry, pack_id, content_ids) = setup_worn_pack_with_contents(2);
+        // 真离开玩家：从 worn 移除且不放回任何位置。
+        inv.equipped.get_mut(EQUIP_SLOT_CHEST).unwrap().worn.clear();
+
+        let overflow = rebuild_containers_from_equipment(&mut inv, &registry);
+
+        assert!(
+            !pack_container_present(&inv, pack_id),
+            "背包真离开玩家后 pack_{pack_id} 容器应被移除（孤儿清理）"
+        );
+        // 内含物去向：spill 进 body_pocket（2×3=6 格够放 2 件）；不应 overflow。
+        let bp = inv
+            .containers
+            .iter()
+            .find(|c| c.id == BODY_POCKET_CONTAINER_ID)
+            .unwrap();
+        let spilled: Vec<u64> = bp.items.iter().map(|p| p.instance.instance_id).collect();
+        for cid in &content_ids {
+            assert!(
+                spilled.contains(cid) || overflow.iter().any(|i| i.instance_id == *cid),
+                "内含物 instance {cid} 必须 spill 到存活容器或进 overflow，禁止静默丢失"
+            );
+        }
+    }
+
+    #[test]
+    fn rebuild_spills_to_overflow_when_no_room() {
+        // body_pocket 被占满 + 无其它存活容器 → 孤儿内含物进 overflow（连货掉地出口）。
+        let pack_tpl = make_container_template("field_pack", EQUIP_SLOT_CHEST, 1, 1, 20.0);
+        let mut tpls = HashMap::from([("field_pack".to_string(), pack_tpl)]);
+        let mut blocker = make_container_template("blocker", EQUIP_SLOT_CHEST, 1, 1, 0.0);
+        blocker.container_spec = None;
+        blocker.category = ItemCategory::Misc;
+        // body_pocket = BODY_POCKET_ROWS(2) 行 × BODY_POCKET_COLS(3) 列 → 占满需 w=3,h=2。
+        blocker.grid_w = 3;
+        blocker.grid_h = 2;
+        tpls.insert("blocker".to_string(), blocker);
+        let mut herb = make_container_template("spirit_herb", EQUIP_SLOT_CHEST, 1, 1, 0.0);
+        herb.container_spec = None;
+        herb.category = ItemCategory::Misc;
+        herb.grid_w = 1;
+        herb.grid_h = 1;
+        tpls.insert("spirit_herb".to_string(), herb);
+        let registry = ItemRegistry::from_map(tpls);
+
+        let pack_id = 1000u64;
+        let mut inv = make_empty_inventory();
+        // pack 已不在身上（worn 为空），但其容器仍残留（孤儿）。
+        let mut blocker_item = make_test_item_instance(5000, "blocker");
+        blocker_item.grid_w = 3;
+        blocker_item.grid_h = 2;
+        inv.containers.push(ContainerState {
+            id: BODY_POCKET_CONTAINER_ID.to_string(),
+            name: "暗袋".to_string(),
+            rows: BODY_POCKET_ROWS,
+            cols: BODY_POCKET_COLS,
+            items: vec![PlacedItemState {
+                row: 0,
+                col: 0,
+                instance: blocker_item,
+            }],
+            owner_instance_id: None,
+        });
+        inv.containers.push(ContainerState {
+            id: container_id_for_worn_pack(pack_id),
+            name: "孤儿包".to_string(),
+            rows: 1,
+            cols: 1,
+            items: vec![PlacedItemState {
+                row: 0,
+                col: 0,
+                instance: make_test_item_instance(6000, "spirit_herb"),
+            }],
+            owner_instance_id: Some(pack_id),
+        });
+
+        let overflow = rebuild_containers_from_equipment(&mut inv, &registry);
+        assert!(
+            overflow.iter().any(|i| i.instance_id == 6000),
+            "body_pocket 被占满时孤儿内含物应进 overflow（非静默丢失），实际 overflow={:?}",
+            overflow.iter().map(|i| i.instance_id).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn find_pack_instances_anywhere_finds_all_positions() {
+        let pack_tpl = make_container_template("field_pack", EQUIP_SLOT_CHEST, 4, 4, 20.0);
+        let registry =
+            ItemRegistry::from_map(HashMap::from([("field_pack".to_string(), pack_tpl)]));
+        let mut inv = make_empty_inventory();
+        // worn
+        inv.equipped.insert(
+            EQUIP_SLOT_CHEST.to_string(),
+            SlotContents::worn_single(make_container_item(1, "field_pack")),
+        );
+        // held
+        inv.equipped.insert(
+            "main_hand".to_string(),
+            SlotContents {
+                worn: Vec::new(),
+                held: Some(make_container_item(2, "field_pack")),
+            },
+        );
+        // hotbar
+        inv.hotbar[3] = Some(make_container_item(3, "field_pack"));
+        // body_pocket（携带面）
+        inv.containers.push(ContainerState {
+            id: BODY_POCKET_CONTAINER_ID.to_string(),
+            name: "暗袋".to_string(),
+            rows: BODY_POCKET_ROWS,
+            cols: BODY_POCKET_COLS,
+            items: vec![PlacedItemState {
+                row: 0,
+                col: 0,
+                instance: make_container_item(4, "field_pack"),
+            }],
+            owner_instance_id: None,
+        });
+        // 嵌套：worn pack(1) 的 grid 内放第 5 个 pack —— 货物，NOT 携带面（2 层封顶）。
+        inv.containers.push(ContainerState {
+            id: container_id_for_worn_pack(1),
+            name: "pack1".to_string(),
+            rows: 4,
+            cols: 4,
+            items: vec![PlacedItemState {
+                row: 0,
+                col: 0,
+                instance: make_container_item(5, "field_pack"),
+            }],
+            owner_instance_id: Some(1),
+        });
+
+        let found: Vec<u64> = find_pack_instances_anywhere(&inv, &registry)
+            .map(|(i, _)| i.instance_id)
+            .collect();
+        assert_eq!(
+            found.len(),
+            4,
+            "携带面=worn+held+hotbar+body_pocket 应命中 4 件背包，实际命中={found:?}"
+        );
+        for id in [1u64, 2, 3, 4] {
+            assert!(
+                found.contains(&id),
+                "应命中携带面 instance {id}，实际={found:?}"
+            );
+        }
+        assert!(
+            !found.contains(&5),
+            "pack_* grid 内的货物背包件(5)不属携带面（2 层封顶），不应命中，实际={found:?}"
+        );
+    }
+
+    #[test]
+    fn validate_move_accepts_deposit_when_pack_in_body_pocket() {
+        use crate::schema::inventory::InventoryLocationV1;
+        let (mut inv, registry, pack_id, _) = setup_worn_pack_with_contents(0);
+        move_worn_pack_to_body_pocket(&mut inv, pack_id);
+        let deposit = make_test_item_instance(9001, "spirit_herb");
+        let to = InventoryLocationV1::Container {
+            container_id: container_id_for_worn_pack(pack_id),
+            row: 0,
+            col: 0,
+        };
+        let from = InventoryLocationV1::Hotbar { index: 0 };
+        let res = validate_move_semantics(&registry, &inv, &deposit, &from, &to);
+        assert!(
+            res.is_ok(),
+            "背包在 body_pocket（仍在身上）时应允许往其 pack 容器拖入内含物，实际={res:?}"
+        );
+    }
+
+    #[test]
+    fn validate_move_rejects_deposit_when_pack_dropped() {
+        use crate::schema::inventory::InventoryLocationV1;
+        let (mut inv, registry, pack_id, _) = setup_worn_pack_with_contents(0);
+        // 背包真离开玩家：worn 清空、不放回任何位置（但 pack 容器残留模拟尚未 rebuild）。
+        inv.equipped.get_mut(EQUIP_SLOT_CHEST).unwrap().worn.clear();
+        let deposit = make_test_item_instance(9001, "spirit_herb");
+        let to = InventoryLocationV1::Container {
+            container_id: container_id_for_worn_pack(pack_id),
+            row: 0,
+            col: 0,
+        };
+        let from = InventoryLocationV1::Hotbar { index: 0 };
+        let res = validate_move_semantics(&registry, &inv, &deposit, &from, &to);
+        assert!(res.is_err(), "背包已离开玩家时拖入内含物应被拒");
+        let msg = res.unwrap_err();
+        assert!(
+            msg.contains(&pack_id.to_string()),
+            "拒绝文案应含背包 instance id {pack_id} 以便定位，实际文案={msg}"
+        );
+    }
+
+    #[test]
+    fn validate_move_still_rejects_buried_worn_item() {
+        use crate::schema::inventory::InventoryLocationV1;
+        use crate::schema::inventory::{EquipSlotV1, EquipStateV1};
+        // worn 栈两层，移动被压住的底层件 → 仍 Err（回归 LIFO 门未被误放宽）。
+        let armor = make_container_template("plate", EQUIP_SLOT_CHEST, 1, 1, 0.0);
+        let mut armor = armor;
+        armor.container_spec = None;
+        armor.category = ItemCategory::Armor;
+        let registry = ItemRegistry::from_map(HashMap::from([("plate".to_string(), armor)]));
+        let mut inv = make_empty_inventory();
+        let bottom = make_test_item_instance(10, "plate");
+        let top = make_test_item_instance(11, "plate");
+        inv.equipped.insert(
+            EQUIP_SLOT_CHEST.to_string(),
+            SlotContents {
+                worn: vec![bottom.clone(), top],
+                held: None,
+            },
+        );
+        let from = InventoryLocationV1::Equip {
+            slot: EquipSlotV1::Chest,
+            state: EquipStateV1::Worn,
+        };
+        let to = InventoryLocationV1::Hotbar { index: 0 };
+        let res = validate_move_semantics(&registry, &inv, &bottom, &from, &to);
+        assert!(
+            res.is_err(),
+            "被上层压住的 worn 件移动应仍被 LIFO 门拒绝（放宽门控不应波及此处）"
+        );
+    }
+
+    #[test]
+    fn compute_max_weight_ignores_pack_in_body_pocket() {
+        let (mut inv, registry, pack_id, _) = setup_worn_pack_with_contents(0);
+        // worn 时含 20.0 加成。
+        let worn_cap = compute_max_weight(&inv, &registry);
+        assert_eq!(
+            worn_cap,
+            BASE_CARRY_CAPACITY + 20.0,
+            "穿戴背包应提供 weight_capacity 加成"
+        );
+        move_worn_pack_to_body_pocket(&mut inv, pack_id);
+        let pocket_cap = compute_max_weight(&inv, &registry);
+        assert_eq!(
+            pocket_cap, BASE_CARRY_CAPACITY,
+            "背包在 body_pocket 时不提供负重加成（compute_max_weight 故意仍仅 worn）"
+        );
+    }
+
+    #[test]
+    fn rebuild_keeps_empty_pack_container_in_body_pocket() {
+        // 边界：空背包卸入 body_pocket，容器保留、无 overflow。
+        let (mut inv, registry, pack_id, _) = setup_worn_pack_with_contents(0);
+        move_worn_pack_to_body_pocket(&mut inv, pack_id);
+        let overflow = rebuild_containers_from_equipment(&mut inv, &registry);
+        assert!(overflow.is_empty());
+        assert!(
+            pack_container_present(&inv, pack_id),
+            "空背包卸入 body_pocket，其 pack 容器仍应保留"
+        );
+    }
+
+    #[test]
+    fn discard_worn_pack_spills_contents_and_clears_orphan() {
+        use crate::schema::inventory::{EquipSlotV1, EquipStateV1, InventoryLocationV1};
+        // 模拟 handle_inventory_discard 的组合：discard worn 背包 → rebuild_and_drop_overflow。
+        let (mut inv, registry, pack_id, content_ids) = setup_worn_pack_with_contents(2);
+        let mut dropped = DroppedLootRegistry::default();
+        let from = InventoryLocationV1::Equip {
+            slot: EquipSlotV1::Chest,
+            state: EquipStateV1::Worn,
+        };
+        // 1. discard 背包本体（从 worn 拿走、进 dropped registry）。
+        discard_inventory_item_to_dropped_loot(
+            &mut inv,
+            &mut dropped,
+            [0.0, 64.0, 0.0],
+            DimensionKind::Overworld,
+            pack_id,
+            &from,
+        )
+        .expect("discard worn pack should succeed");
+        assert!(
+            dropped.entries.contains_key(&pack_id),
+            "背包本体应进掉落物登记"
+        );
+        // 2. 补 rebuild（§5 handler 逻辑）：孤儿 pack 容器内含物 spill→掉地。
+        let spilled = rebuild_and_drop_overflow(
+            &mut inv,
+            &registry,
+            &mut dropped,
+            [0.0, 64.0, 0.0],
+            DimensionKind::Overworld,
+        );
+        assert!(
+            !pack_container_present(&inv, pack_id),
+            "discard + rebuild 后 pack_{pack_id} 孤儿容器不应残留 inventory（防 #736 重置 loadout）"
+        );
+        // 内含物去向：spill 进 body_pocket（仍在 inventory）或进 dropped（overflow）。
+        for cid in &content_ids {
+            let in_inv = inventory_item_by_instance_borrow(&inv, *cid).is_some();
+            let in_dropped = dropped.entries.contains_key(cid);
+            assert!(
+                in_inv || in_dropped,
+                "内含物 instance {cid} 必须在 inventory 或掉落物中，禁止静默丢失 (spilled overflow ids={spilled:?})"
+            );
+        }
+    }
+
     #[test]
     fn attrition_exempt_container_marks_inner_instance_exempt() {
         let mut sealed_bag = make_container_template("sealed_bag", EQUIP_SLOT_CHEST, 2, 2, 10.0);
@@ -12665,11 +13252,13 @@ cols = 4
             row: 0,
             col: 0,
         };
+        // §3 放宽后：携带面 = worn+held+hotbar+body_pocket。pack 3001 卸在 main_pack（grid 货物，
+        // 非携带面）→ 仍被门控拒绝；文案改为「背包已不在身上」（统一新语义）。
         let err = apply_inventory_move(&mut inv, &registry, 71, &from, &to)
-            .expect_err("拖入未穿戴的 pack_3001 应被穿戴态门控拒绝（owner 3001 不在任何 worn 层）");
+            .expect_err("拖入卸在 grid 内（非携带面）的 pack_3001 应被门控拒绝");
         assert!(
-            err.contains("背包未穿戴") && err.contains("3001"),
-            "期望带修复线索的拒绝（提示背包未穿戴 + owner instance id），因为塔科夫式语义下卸下的包是死容器；\
+            err.contains("背包已不在身上") && err.contains("3001"),
+            "期望带修复线索的拒绝（提示背包不在身上 + owner instance id），因为 grid 货物背包是死容器；\
              实际 err = {err}"
         );
         // 物品未落位（仍在 main_pack）。
@@ -12715,10 +13304,10 @@ cols = 4
             col: 0,
         };
         let err = apply_inventory_move(&mut inv, &registry, 72, &from, &to)
-            .expect_err("拖入不存在/未穿戴的 pack_9999 应被拒绝");
+            .expect_err("拖入不存在/不在携带面的 pack_9999 应被拒绝");
         assert!(
-            err.contains("背包未穿戴") && err.contains("9999"),
-            "期望穿戴态门控在落位前拒绝（owner 9999 不在 worn 层）；实际 err = {err}"
+            err.contains("背包已不在身上") && err.contains("9999"),
+            "期望门控在落位前拒绝（owner 9999 不在任何携带面）；实际 err = {err}"
         );
     }
 

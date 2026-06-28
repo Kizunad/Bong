@@ -1100,18 +1100,34 @@ fn sanitize_loaded_position(
 /// 故此判定不会误伤裸装玩家。返回 true 表示存档已污染、应丢弃回落默认 loadout。
 fn inventory_has_orphan_pack_container(inventory: &PlayerInventory) -> bool {
     use std::collections::HashSet;
-    // equipped 所有身体槽 worn 层里的件 instance_id 集合（held 件不派生容器，无需收集）。
-    let worn_instance_ids: HashSet<u64> = inventory
+    // plan-tarkov-backpack-v1 套包修复 §6：live 集合扩到「玩家身上直接携带面」
+    // （worn + held + hotbar + body_pocket），与 inventory/mod.rs 的 find_pack_instances_anywhere
+    // （rebuild live_ids）镜像一致——背包件合法移入 body_pocket / hotbar / held 后其 pack_<id>
+    // 容器仍 live，不得误判孤儿（防 #736 误删存档）。
+    //
+    // **不扫 pack_* / 其它 grid 容器内含物**：P5「2 层封顶」下 grid 内背包件是货物、不派生可访问
+    // 容器，故 rebuild 也不会为其建 pack_<id>；与 rebuild 镜像保证孤儿检测既不误删合法暗袋背包、
+    // 又仍能识别真孤儿（pack_<id> 容器但 owner 不在任何携带面）。此处只比 instance_id。
+    let live_instance_ids: HashSet<u64> = inventory
         .equipped
         .values()
         .flat_map(|slot| slot.worn.iter())
+        .chain(inventory.equipped.values().filter_map(|s| s.held.as_ref()))
+        .chain(
+            inventory
+                .containers
+                .iter()
+                .filter(|c| c.id == crate::inventory::BODY_POCKET_CONTAINER_ID)
+                .flat_map(|c| c.items.iter().map(|p| &p.instance)),
+        )
+        .chain(inventory.hotbar.iter().filter_map(|o| o.as_ref()))
         .map(|item| item.instance_id)
         .collect();
 
     inventory.containers.iter().any(|container| {
         match crate::inventory::worn_pack_instance_from_container_id(&container.id) {
-            // `pack_<id>` 容器但 equipped 无对应 worn 背包件 ⇒ 孤儿派生容器 ⇒ #736 污染指纹。
-            Some(instance_id) => !worn_instance_ids.contains(&instance_id),
+            // `pack_<id>` 容器但 owner 不在任何携带面 ⇒ 真孤儿 ⇒ #736 污染指纹。
+            Some(instance_id) => !live_instance_ids.contains(&instance_id),
             None => false,
         }
     })
@@ -2937,6 +2953,138 @@ mod player_state_tests {
         assert!(
             !inventory_has_orphan_pack_container(&inventory),
             "回填后合法新格式容器（owner 与 worn 件自洽）绝不应被误判孤儿（防 #736 污染误删）"
+        );
+    }
+
+    // ─── plan-tarkov-backpack-v1 套包修复 §6 — orphan 检测扩到「任意位置」（防 #736 复发）───
+
+    /// 构造一个仅含指定 containers + equipped + hotbar 的最小 inventory（孤儿检测只看 instance_id）。
+    fn orphan_test_inventory(
+        containers: Vec<crate::inventory::ContainerState>,
+        equipped: std::collections::HashMap<String, crate::inventory::SlotContents>,
+        hotbar: [Option<ItemInstance>; 9],
+    ) -> PlayerInventory {
+        PlayerInventory {
+            triggered_treasures: Vec::new(),
+            revision: crate::inventory::InventoryRevision(1),
+            containers,
+            equipped,
+            hotbar,
+            bone_coins: 0,
+            max_weight: 23.0,
+        }
+    }
+
+    fn pack_container(instance_id: u64) -> crate::inventory::ContainerState {
+        crate::inventory::ContainerState {
+            id: crate::inventory::container_id_for_worn_pack(instance_id),
+            name: "包".to_string(),
+            rows: 3,
+            cols: 3,
+            items: Vec::new(),
+            owner_instance_id: Some(instance_id),
+        }
+    }
+
+    #[test]
+    fn orphan_detection_false_for_pack_in_body_pocket() {
+        // 背包件躺在 body_pocket 容器内（合法 retention），其 pack_<id> 容器不应误判孤儿。
+        let bp = crate::inventory::ContainerState {
+            id: "body_pocket".to_string(),
+            name: "暗袋".to_string(),
+            rows: 2,
+            cols: 3,
+            items: vec![crate::inventory::PlacedItemState {
+                row: 0,
+                col: 0,
+                instance: iron_sword_instance(55, 1.0),
+            }],
+            owner_instance_id: None,
+        };
+        let inventory = orphan_test_inventory(
+            vec![bp, pack_container(55)],
+            std::collections::HashMap::new(),
+            Default::default(),
+        );
+        assert!(
+            !inventory_has_orphan_pack_container(&inventory),
+            "背包件在 body_pocket（任意位置存活判据）时 pack_55 不应被判孤儿（防 #736 误删存档）"
+        );
+    }
+
+    #[test]
+    fn orphan_detection_false_for_pack_in_hotbar() {
+        let mut hotbar: [Option<ItemInstance>; 9] = Default::default();
+        hotbar[2] = Some(iron_sword_instance(66, 1.0));
+        let inventory = orphan_test_inventory(
+            vec![pack_container(66)],
+            std::collections::HashMap::new(),
+            hotbar,
+        );
+        assert!(
+            !inventory_has_orphan_pack_container(&inventory),
+            "背包件在 hotbar 时 pack_66 不应被判孤儿"
+        );
+    }
+
+    #[test]
+    fn orphan_detection_false_for_pack_held() {
+        let mut equipped = std::collections::HashMap::new();
+        equipped.insert(
+            crate::inventory::EQUIP_SLOT_MAIN_HAND.to_string(),
+            crate::inventory::SlotContents {
+                worn: Vec::new(),
+                held: Some(iron_sword_instance(77, 1.0)),
+            },
+        );
+        let inventory =
+            orphan_test_inventory(vec![pack_container(77)], equipped, Default::default());
+        assert!(
+            !inventory_has_orphan_pack_container(&inventory),
+            "背包件 held 时 pack_77 不应被判孤儿"
+        );
+    }
+
+    #[test]
+    fn orphan_detection_true_for_truly_orphan_container() {
+        // pack_<id> 容器但该 instance 全 inventory 任意位置查无 ⇒ 真孤儿 ⇒ #736 污染指纹。
+        let inventory = orphan_test_inventory(
+            vec![pack_container(99)],
+            std::collections::HashMap::new(),
+            Default::default(),
+        );
+        assert!(
+            inventory_has_orphan_pack_container(&inventory),
+            "无任何 backing 背包件的 pack_99 容器应判为真孤儿（保留对真污染的检测）"
+        );
+    }
+
+    #[test]
+    fn orphan_detection_true_for_pack_container_when_owner_nested_in_pack_grid() {
+        // P5「2 层封顶」镜像：背包件 2 仅作为 host pack 的 grid 内货物时不属携带面，rebuild
+        // 永不为它建 pack_2 容器；若存档残留 pack_2 容器，则它确为孤儿（与 rebuild 镜像一致）。
+        let host = crate::inventory::ContainerState {
+            id: crate::inventory::container_id_for_worn_pack(1),
+            name: "host".to_string(),
+            rows: 4,
+            cols: 4,
+            items: vec![crate::inventory::PlacedItemState {
+                row: 0,
+                col: 0,
+                instance: iron_sword_instance(2, 1.0),
+            }],
+            owner_instance_id: Some(1),
+        };
+        let mut equipped = std::collections::HashMap::new();
+        equipped.insert(
+            crate::inventory::EQUIP_SLOT_CHEST.to_string(),
+            crate::inventory::SlotContents::worn_single(iron_sword_instance(1, 1.0)),
+        );
+        let inventory =
+            orphan_test_inventory(vec![host, pack_container(2)], equipped, Default::default());
+        assert!(
+            inventory_has_orphan_pack_container(&inventory),
+            "grid 内货物背包件 2 不属携带面（2 层封顶），其残留 pack_2 容器应判为孤儿（与 rebuild 镜像）"
         );
     }
 
