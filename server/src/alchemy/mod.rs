@@ -696,6 +696,7 @@ mod integration_tests {
 
     fn inventory_with(instance: ItemInstance) -> PlayerInventory {
         let container = ContainerState {
+            quick_access: false,
             id: "main_pack".into(),
             name: "main_pack".into(),
             rows: 4,

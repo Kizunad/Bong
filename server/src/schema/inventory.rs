@@ -254,6 +254,13 @@ pub struct ContainerSnapshotV1 {
     /// `deny_unknown_fields` 兼容（新增字段已在 struct 内）。client 双击穿戴背包件时直读 owner，免前缀解析。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub owner_instance_id: Option<u64>,
+    /// [快捷] 标签：此容器内物品可被指派至快捷 hotbar（F1-F9）。
+    ///
+    /// `body_pocket` 恒 true；`pack_<id>` 取 owner `ContainerSpec.quick_access`；其余 false。
+    /// `serde(default)` 容旧 client/旧 sample（缺字段读为 false）；false 时 `skip_serializing_if`
+    /// 省键节约 wire，与 `deny_unknown_fields` 兼容（新增字段已在 struct 内）。
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub quick_access: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -802,10 +809,32 @@ mod tests {
             .expect("inventory-snapshot.sample.json should deserialize into InventorySnapshotV1");
 
         assert_eq!(snapshot.revision, 12);
-        // plan-tarkov-backpack-v1 P2（schema 漂移修复）：sample 现含 4 个容器
-        // （main_pack/small_pouch/front_satchel + 动态 pack_1007 套包容器），placed_items 3 件
-        // （含 pack_1007 内的 spirit_herb）。Rust `ContainerIdV1 = String` 本就开放，无需改 struct。
-        assert_eq!(snapshot.containers.len(), 4);
+        // plan-tarkov-backpack-v1 P2（schema 漂移修复）：sample 现含 5 个容器
+        // （main_pack/small_pouch/front_satchel + 动态 pack_1007 套包容器 + body_pocket），
+        // placed_items 3 件（含 pack_1007 内的 spirit_herb）。
+        // worn-tab/quickbar plan：新增 body_pocket(quick_access=true) 验证快捷资格下发。
+        assert_eq!(snapshot.containers.len(), 5);
+        // [快捷] 标签下发：body_pocket=true（贴身口袋恒可入快捷栏），pack_1007 缺字段 → false（默认兼容）。
+        let body_pocket_qa = snapshot
+            .containers
+            .iter()
+            .find(|c| c.id == "body_pocket")
+            .map(|c| c.quick_access)
+            .expect("sample 应含 body_pocket 容器");
+        assert!(
+            body_pocket_qa,
+            "body_pocket 应下发 quick_access=true（sample 显式写 true）"
+        );
+        let pack_qa = snapshot
+            .containers
+            .iter()
+            .find(|c| c.id == "pack_1007")
+            .map(|c| c.quick_access)
+            .expect("sample 应含 pack_1007 容器");
+        assert!(
+            !pack_qa,
+            "pack_1007 sample 未写 quick_access，应反序列化为默认 false（旧 sample 兼容路径）"
+        );
         assert_eq!(snapshot.placed_items.len(), 3);
         assert_eq!(snapshot.placed_items[0].item.item_id, "starter_talisman");
         // pack_1007 套包容器存在且 owner 形态合法（pack_<数字> 前缀）。
@@ -922,6 +951,7 @@ mod tests {
     fn container_snapshot_none_owner_omits_key_on_serialize() {
         // skip_serializing_if：owner_instance_id=None 时序列化应整体省略键（不输出 null）。
         let container = ContainerSnapshotV1 {
+            quick_access: false,
             id: "body_pocket".to_string(),
             name: "贴身口袋".to_string(),
             rows: 1,
@@ -938,6 +968,7 @@ mod tests {
     #[test]
     fn container_snapshot_some_owner_serializes_key() {
         let container = ContainerSnapshotV1 {
+            quick_access: false,
             id: "pack_42".to_string(),
             name: "破草包".to_string(),
             rows: 3,

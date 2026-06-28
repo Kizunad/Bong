@@ -191,6 +191,7 @@ mod tests {
         let mut ext = ExternalContainer {
             session_id: 12,
             container: ContainerState {
+                quick_access: false,
                 id: ExternalContainer::container_id(12),
                 name: "货箱".to_string(),
                 rows: 4,
@@ -251,6 +252,7 @@ mod tests {
         let ext = ExternalContainer {
             session_id: 9,
             container: ContainerState {
+                quick_access: false,
                 id: ExternalContainer::container_id(9),
                 name: "死信箱".to_string(),
                 rows: 3,

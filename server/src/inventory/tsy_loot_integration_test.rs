@@ -72,6 +72,7 @@ mod tests {
             triggered_treasures: Vec::new(),
             revision: InventoryRevision(1),
             containers: vec![ContainerState {
+                quick_access: false,
                 id: "main_pack".into(),
                 name: "main".into(),
                 rows: 1,

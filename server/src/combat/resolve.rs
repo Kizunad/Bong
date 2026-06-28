@@ -2214,6 +2214,7 @@ mod tests {
             triggered_treasures: Vec::new(),
             revision: InventoryRevision(1),
             containers: vec![ContainerState {
+                quick_access: false,
                 id: crate::inventory::MAIN_PACK_CONTAINER_ID.to_string(),
                 name: "主背包".to_string(),
                 rows: 5,
@@ -2341,6 +2342,7 @@ mod tests {
             triggered_treasures: Vec::new(),
             revision: InventoryRevision(1),
             containers: vec![ContainerState {
+                quick_access: false,
                 id: crate::inventory::MAIN_PACK_CONTAINER_ID.to_string(),
                 name: "主背包".to_string(),
                 rows: 5,
@@ -5788,6 +5790,7 @@ mod tests {
             triggered_treasures: Vec::new(),
             revision: InventoryRevision(1),
             containers: vec![ContainerState {
+                quick_access: false,
                 id: crate::inventory::MAIN_PACK_CONTAINER_ID.to_string(),
                 name: "主背包".to_string(),
                 rows: 5,
@@ -5942,6 +5945,7 @@ mod tests {
             triggered_treasures: Vec::new(),
             revision: InventoryRevision(1),
             containers: vec![ContainerState {
+                quick_access: false,
                 id: crate::inventory::MAIN_PACK_CONTAINER_ID.to_string(),
                 name: "主背包".to_string(),
                 rows: 5,
@@ -6089,6 +6093,7 @@ mod tests {
                     triggered_treasures: Vec::new(),
                     revision: InventoryRevision(1),
                     containers: vec![ContainerState {
+                        quick_access: false,
                         id: crate::inventory::MAIN_PACK_CONTAINER_ID.to_string(),
                         name: "主背包".to_string(),
                         rows: 5,
@@ -6242,6 +6247,7 @@ mod tests {
                 triggered_treasures: Vec::new(),
                 revision: InventoryRevision(1),
                 containers: vec![ContainerState {
+                    quick_access: false,
                     id: crate::inventory::MAIN_PACK_CONTAINER_ID.to_string(),
                     name: "主背包".to_string(),
                     rows: 5,
@@ -6373,6 +6379,7 @@ mod tests {
                 triggered_treasures: Vec::new(),
                 revision: InventoryRevision(1),
                 containers: vec![ContainerState {
+                    quick_access: false,
                     id: crate::inventory::MAIN_PACK_CONTAINER_ID.to_string(),
                     name: "主背包".to_string(),
                     rows: 5,
@@ -6513,6 +6520,7 @@ mod tests {
                 triggered_treasures: Vec::new(),
                 revision: InventoryRevision(1),
                 containers: vec![ContainerState {
+                    quick_access: false,
                     id: crate::inventory::MAIN_PACK_CONTAINER_ID.to_string(),
                     name: "主背包".to_string(),
                     rows: 1,
@@ -7940,6 +7948,7 @@ mod tests {
             triggered_treasures: Vec::new(),
             revision: InventoryRevision(1),
             containers: vec![ContainerState {
+                quick_access: false,
                 id: crate::inventory::MAIN_PACK_CONTAINER_ID.to_string(),
                 name: "主背包".to_string(),
                 rows: 5,

@@ -2446,6 +2446,7 @@ mod player_state_tests {
             triggered_treasures: Vec::new(),
             revision: InventoryRevision(41),
             containers: vec![ContainerState {
+                quick_access: false,
                 id: MAIN_PACK_CONTAINER_ID.to_string(),
                 name: "Main Pack".to_string(),
                 rows: 5,
@@ -2908,6 +2909,7 @@ mod player_state_tests {
             revision: crate::inventory::InventoryRevision(1),
             containers: vec![
                 crate::inventory::ContainerState {
+                    quick_access: false,
                     id: "body_pocket".to_string(),
                     name: "贴身口袋".to_string(),
                     rows: 2,
@@ -2916,6 +2918,7 @@ mod player_state_tests {
                     owner_instance_id: None,
                 },
                 crate::inventory::ContainerState {
+                    quick_access: false,
                     id: pack_id.clone(),
                     name: "破草包".to_string(),
                     rows: 3,
@@ -2978,6 +2981,7 @@ mod player_state_tests {
 
     fn pack_container(instance_id: u64) -> crate::inventory::ContainerState {
         crate::inventory::ContainerState {
+            quick_access: false,
             id: crate::inventory::container_id_for_worn_pack(instance_id),
             name: "包".to_string(),
             rows: 3,
@@ -2991,6 +2995,7 @@ mod player_state_tests {
     fn orphan_detection_false_for_pack_in_body_pocket() {
         // 背包件躺在 body_pocket 容器内（合法 retention），其 pack_<id> 容器不应误判孤儿。
         let bp = crate::inventory::ContainerState {
+            quick_access: false,
             id: "body_pocket".to_string(),
             name: "暗袋".to_string(),
             rows: 2,
@@ -3065,6 +3070,7 @@ mod player_state_tests {
         // P5「2 层封顶」镜像：背包件 2 仅作为 host pack 的 grid 内货物时不属携带面，rebuild
         // 永不为它建 pack_2 容器；若存档残留 pack_2 容器，则它确为孤儿（与 rebuild 镜像一致）。
         let host = crate::inventory::ContainerState {
+            quick_access: false,
             id: crate::inventory::container_id_for_worn_pack(1),
             name: "host".to_string(),
             rows: 4,
@@ -3891,6 +3897,7 @@ mod player_state_tests {
             technique_scroll_spec: None,
             recipe_fragment_spec: None,
             container_spec: Some(ContainerSpec {
+                quick_access: false,
                 rows: 3,
                 cols: 3,
                 weight_capacity: 10.0,
@@ -4062,6 +4069,7 @@ mod player_state_tests {
             triggered_treasures: Vec::new(),
             revision: crate::inventory::InventoryRevision(0),
             containers: vec![crate::inventory::ContainerState {
+                quick_access: false,
                 id: "main".to_string(),
                 name: "main".to_string(),
                 rows: 5,

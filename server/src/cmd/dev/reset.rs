@@ -469,6 +469,7 @@ mod tests {
             triggered_treasures: Vec::new(),
             revision: InventoryRevision(7),
             containers: vec![ContainerState {
+                quick_access: false,
                 id: MAIN_PACK_CONTAINER_ID.to_string(),
                 name: "主背包".to_string(),
                 rows: 2,

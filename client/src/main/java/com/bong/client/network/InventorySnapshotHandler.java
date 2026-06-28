@@ -136,7 +136,8 @@ public final class InventorySnapshotHandler implements ServerDataHandler {
         );
     }
 
-    private static List<InventoryModel.ContainerDef> parseContainers(JsonArray containerElements) {
+    // package-private（非 private）：供单测直接对拍容器解析（含 quick_access / owner_instance_id）。
+    static List<InventoryModel.ContainerDef> parseContainers(JsonArray containerElements) {
         List<InventoryModel.ContainerDef> containers = new ArrayList<>(containerElements.size());
         for (JsonElement containerElement : containerElements) {
             if (containerElement == null || containerElement.isJsonNull() || !containerElement.isJsonObject()) {
@@ -153,9 +154,11 @@ public final class InventorySnapshotHandler implements ServerDataHandler {
             }
             // plan-tarkov-backpack-v1 P3（决议 #4）— 可选 owner_instance_id：缺省（旧 server）→ null。
             Long ownerInstanceId = readOptionalLong(containerObject, "owner_instance_id");
+            // B 准则：可选 quick_access（server skip_serializing_if 省 false）；缺省（旧 server）→ false。
+            boolean quickAccess = Boolean.TRUE.equals(readOptionalBoolean(containerObject, "quick_access"));
 
             try {
-                containers.add(new InventoryModel.ContainerDef(id, name, rows, cols, ownerInstanceId));
+                containers.add(new InventoryModel.ContainerDef(id, name, rows, cols, ownerInstanceId, quickAccess));
             } catch (IllegalArgumentException exception) {
                 return null;
             }

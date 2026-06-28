@@ -25,6 +25,13 @@
       "rows": 3,
       "cols": 3,
       "owner_instance_id": 1007
+    },
+    {
+      "id": "body_pocket",
+      "name": "贴身口袋",
+      "rows": 2,
+      "cols": 3,
+      "quick_access": true
     }
   ],
   "placed_items": [

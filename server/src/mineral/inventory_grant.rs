@@ -295,6 +295,7 @@ mod tests {
         Inv {
             revision: InventoryRevision(0),
             containers: vec![ContainerState {
+                quick_access: false,
                 id: MAIN.to_string(),
                 name: MAIN.to_string(),
                 rows: 4,
@@ -535,6 +536,7 @@ mod tests {
         let player = app
             .world_mut()
             .spawn(inventory_with_containers(vec![ContainerState {
+                quick_access: false,
                 id: BODY_POCKET_CONTAINER_ID.to_string(),
                 name: BODY_POCKET_CONTAINER_ID.to_string(),
                 rows: 1,
@@ -589,6 +591,7 @@ mod tests {
         let player = app
             .world_mut()
             .spawn(inventory_with_containers(vec![ContainerState {
+                quick_access: false,
                 id: BODY_POCKET_CONTAINER_ID.to_string(),
                 name: BODY_POCKET_CONTAINER_ID.to_string(),
                 rows: 1,
@@ -636,6 +639,7 @@ mod tests {
 
         let mut inventory = inventory_with_containers(vec![
             ContainerState {
+                quick_access: false,
                 id: "pack_42".to_string(),
                 name: "pack_42".to_string(),
                 rows: 1,
@@ -644,6 +648,7 @@ mod tests {
                 owner_instance_id: Some(42),
             },
             ContainerState {
+                quick_access: false,
                 id: BODY_POCKET_CONTAINER_ID.to_string(),
                 name: BODY_POCKET_CONTAINER_ID.to_string(),
                 rows: 1,

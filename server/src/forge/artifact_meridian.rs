@@ -1339,6 +1339,7 @@ mod tests {
             triggered_treasures: Vec::new(),
             revision: InventoryRevision(1),
             containers: vec![ContainerState {
+                quick_access: false,
                 id: "main_pack".to_string(),
                 name: "main".to_string(),
                 rows: 1,
@@ -1615,6 +1616,7 @@ mod tests {
             triggered_treasures: Vec::new(),
             revision: InventoryRevision(1),
             containers: vec![ContainerState {
+                quick_access: false,
                 id: "main_pack".to_string(),
                 name: "main".to_string(),
                 rows: 1,

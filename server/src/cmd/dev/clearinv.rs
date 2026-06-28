@@ -132,6 +132,7 @@ mod tests {
             revision: InventoryRevision(0),
             containers: vec![
                 ContainerState {
+                    quick_access: false,
                     id: MAIN_PACK_CONTAINER_ID.to_string(),
                     name: "主背包".to_string(),
                     rows: 2,
@@ -145,6 +146,7 @@ mod tests {
                     owner_instance_id: None,
                 },
                 ContainerState {
+                    quick_access: false,
                     id: "side_pack".to_string(),
                     name: "侧袋".to_string(),
                     rows: 1,

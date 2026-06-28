@@ -814,9 +814,9 @@ describe("sample files pass schema validation", () => {
     // chest_worn 叠 2 层（铁甲 + 背包件骑身体槽 worn，决议 #17）。
     expect(data.equipped.chest_worn.length).toBe(2);
     // plan-tarkov-backpack-v1 P2（schema 漂移修复）：snapshot 现含动态 pack_<id> 套包容器
-    // （4 件：main_pack/small_pouch/front_satchel/pack_1007），且 pack_1007 内含 placed_item。
-    // 锁住 ContainerIdV1 开放为 pattern String + containers 放宽到 1..16 后 pack_ 容器合法。
-    expect(data.containers.length).toBe(4);
+    // worn-tab/quickbar plan：再加 body_pocket(quick_access=true)
+    // → 5 件：main_pack/small_pouch/front_satchel/pack_1007/body_pocket，且 pack_1007 内含 placed_item。
+    expect(data.containers.length).toBe(5);
     expect(data.containers.some((c) => c.id === "pack_1007")).toBe(true);
     expect(
       data.placed_items.some((p) => p.container_id === "pack_1007"),
@@ -826,6 +826,10 @@ describe("sample files pass schema validation", () => {
     expect(packContainer?.owner_instance_id).toBe(1007);
     const mainPack = data.containers.find((c) => c.id === "main_pack");
     expect(mainPack?.owner_instance_id).toBeUndefined();
+    // [快捷] 标签：body_pocket 显式 true（贴身口袋恒可入快捷栏）；pack_1007 缺字段 → undefined（默认 false）。
+    const bodyPocket = data.containers.find((c) => c.id === "body_pocket");
+    expect(bodyPocket?.quick_access).toBe(true);
+    expect(packContainer?.quick_access).toBeUndefined();
   });
 
   // plan-tarkov-backpack-v1 P3（决议 #4）— ContainerSnapshotV1.owner_instance_id 含/缺/反向对拍。
@@ -859,6 +863,39 @@ describe("sample files pass schema validation", () => {
     // 未知字段（additionalProperties:false 仍生效）：拒绝。
     expect(
       validate(ContainerSnapshotV1, { ...base, bogus_field: 1 }).ok,
+    ).toBe(false);
+  });
+
+  // worn-tab/quickbar plan — ContainerSnapshotV1.quick_access 含/缺/反向对拍。
+  it("container snapshot accepts quick_access (present + absent) and rejects non-bool", () => {
+    const base = {
+      id: "body_pocket",
+      name: "贴身口袋",
+      rows: 2,
+      cols: 3,
+    };
+    // 含 quick_access:true（body_pocket）：接受。
+    expect(validate(ContainerSnapshotV1, { ...base, quick_access: true }).ok).toBe(
+      true,
+    );
+    // 含 quick_access:false（普通 pack）：接受。
+    expect(
+      validate(ContainerSnapshotV1, {
+        id: "pack_1007",
+        name: "破草包",
+        rows: 3,
+        cols: 3,
+        quick_access: false,
+      }).ok,
+    ).toBe(true);
+    // 缺字段（旧 server / 普通容器）：Optional → 接受，缺省视为 false。
+    expect(validate(ContainerSnapshotV1, base).ok).toBe(true);
+    // 非布尔（类型错）：拒绝。
+    expect(
+      validate(ContainerSnapshotV1, { ...base, quick_access: 1 }).ok,
+    ).toBe(false);
+    expect(
+      validate(ContainerSnapshotV1, { ...base, quick_access: "yes" }).ok,
     ).toBe(false);
   });
 

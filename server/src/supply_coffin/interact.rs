@@ -173,6 +173,7 @@ pub fn handle_supply_coffin_interact(
             cols,
             items: Vec::new(),
             owner_instance_id: None,
+            quick_access: false, // 外部供给棺容器，非快捷来源。
         };
         pack_loot_into_grid(&mut container, &rolled, &item_registry, &mut allocator);
 

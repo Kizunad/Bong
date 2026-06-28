@@ -224,6 +224,11 @@ pub struct ContainerSpec {
     /// plan-container-filter-and-completion-v1 P0 — 可接受物品筛选；None/empty = 全收。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub accept_filter: Option<Vec<ContainerAcceptFilter>>,
+    /// [快捷] 标签：此容器内物品允许被指派/拖入快捷 hotbar（F1-F9）。
+    /// `body_pocket` 隐式 true（非 ContainerSpec 件，snapshot 特判）；其余容器默认 false。
+    /// 未来「快捷腰包」等模板在 `[item.container]` 写 `quick_access = true` 即生效，无需改代码。
+    #[serde(default)]
+    pub quick_access: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -403,6 +408,14 @@ pub struct ContainerState {
     /// **P0 仅服务端内部使用，不下发 client**（client 可从 `pack_` 前缀反解；下发推迟到 P3）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub owner_instance_id: Option<u64>,
+    /// [快捷] 标签缓存：此容器内物品可被指派至快捷 hotbar。
+    ///
+    /// `body_pocket` 由 snapshot 特判恒 true（此处保持 false）；`pack_<id>` 由
+    /// `rebuild_containers_from_equipment` 从 owner 背包件 `ContainerSpec.quick_access` 回填。
+    /// `serde(default)` 容旧存档（旧档读为 false），rebuild 每次幂等重算，不依赖 DB 持久。
+    /// 缓存于此避免 snapshot 期再次反查 ItemRegistry（snapshot 路径不持 registry）。
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub quick_access: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1137,6 +1150,8 @@ pub fn instantiate_inventory_from_loadout(
             cols: container.cols,
             items: placed_items,
             owner_instance_id: None,
+            // 起始 loadout 实例化：rebuild_containers_from_equipment（下方）会按 owner 模板回填 pack 的值。
+            quick_access: false,
         });
     }
 
@@ -1996,6 +2011,9 @@ pub struct ContainerSpecToml {
     attrition_exempt: bool,
     #[serde(default)]
     accept: Option<Vec<String>>,
+    /// [快捷] 标签——见 `ContainerSpec.quick_access`。缺省 false。
+    #[serde(default)]
+    quick_access: bool,
 }
 
 /// plan-shield-block-v1 P2 — TOML 层的盾牌规格块（对应 `[item.shield_spec]`）。
@@ -2084,6 +2102,7 @@ pub fn parse_container_spec(
         durability_cost_per_op: raw.durability_cost_per_op,
         attrition_exempt: raw.attrition_exempt,
         accept_filter,
+        quick_access: raw.quick_access,
     })
 }
 
@@ -2915,6 +2934,8 @@ impl LoadoutToml {
                 cols: raw_container.cols,
                 items,
                 owner_instance_id: None,
+                // DB 加载占位：load 收尾 rebuild_containers_from_equipment 会按 owner 模板回填 pack 值。
+                quick_access: false,
             });
         }
 
@@ -3846,6 +3867,7 @@ pub(crate) fn force_attach_item_to_inventory(inventory: &mut PlayerInventory, it
                 cols: 16,
                 items: Vec::new(),
                 owner_instance_id: None,
+                quick_access: false, // 静态 main_pack 兜底容器，非快捷来源。
             });
             inventory.containers.len() - 1
         });
@@ -3996,6 +4018,8 @@ pub fn rebuild_containers_from_equipment(
             cols: BODY_POCKET_COLS,
             items: Vec::new(),
             owner_instance_id: None,
+            // body_pocket 的快捷资格由 snapshot 特判恒 true；此缓存位保持 false。
+            quick_access: false,
         });
     }
 
@@ -4005,7 +4029,9 @@ pub fn rebuild_containers_from_equipment(
     //    plan-tarkov-backpack-v1 套包修复：live 判据从「仅 worn」扩到「身上任意位置」
     //    （find_pack_instances_anywhere），背包移入 body_pocket / 另一 pack / hotbar / held
     //    后其 pack_<id> 容器仍 live、内含物不 spill；只有真离开玩家（丢地/销毁）才孤儿化。
-    let live_specs: Vec<(String, u8, u8, String, u64)> =
+    // [快捷] 元组末位携带 owner 背包件 ContainerSpec.quick_access，回填进 ContainerState.quick_access，
+    // 使 snapshot 无需反查 registry。未来「快捷腰包」模板设 quick_access=true 即随此链路下发生效。
+    let live_specs: Vec<(String, u8, u8, String, u64, bool)> =
         find_pack_instances_anywhere(inventory, registry)
             .map(|(item, spec)| {
                 (
@@ -4014,15 +4040,16 @@ pub fn rebuild_containers_from_equipment(
                     spec.cols,
                     item.display_name.clone(),
                     item.instance_id,
+                    spec.quick_access,
                 )
             })
             .collect();
     let live_ids: std::collections::HashSet<String> = live_specs
         .iter()
-        .map(|(id, _, _, _, _)| id.clone())
+        .map(|(id, _, _, _, _, _)| id.clone())
         .collect();
 
-    for (container_id, rows, cols, name, instance_id) in live_specs {
+    for (container_id, rows, cols, name, instance_id, quick_access) in live_specs {
         if let Some(existing) = inventory
             .containers
             .iter_mut()
@@ -4031,6 +4058,7 @@ pub fn rebuild_containers_from_equipment(
             existing.rows = rows;
             existing.cols = cols;
             existing.owner_instance_id = Some(instance_id);
+            existing.quick_access = quick_access;
         } else {
             inventory.containers.push(ContainerState {
                 id: container_id,
@@ -4039,6 +4067,7 @@ pub fn rebuild_containers_from_equipment(
                 cols,
                 items: Vec::new(),
                 owner_instance_id: Some(instance_id),
+                quick_access,
             });
         }
     }
@@ -5923,6 +5952,7 @@ mod tests {
             triggered_treasures: Vec::new(),
             revision: InventoryRevision(0),
             containers: vec![ContainerState {
+                quick_access: false,
                 id: MAIN_PACK_CONTAINER_ID.to_string(),
                 name: "主背包".to_string(),
                 rows,
@@ -5945,6 +5975,7 @@ mod tests {
             instance: make_test_item_instance(1, "main_item"),
         });
         inv.containers.push(ContainerState {
+            quick_access: false,
             id: "side_pack".to_string(),
             name: "侧袋".to_string(),
             rows: 1,
@@ -7281,6 +7312,7 @@ cols = 4
             instance: make_test_item_instance(77, "filler"),
         });
         inventory.containers.push(ContainerState {
+            quick_access: false,
             id: BODY_POCKET_CONTAINER_ID.to_string(),
             name: "贴身口袋".to_string(),
             rows: 2,
@@ -7345,6 +7377,7 @@ cols = 4
         let mut rejecting_pack_template =
             test_template("mineral_pack", ItemCategory::Container, 1, 1, 1);
         rejecting_pack_template.container_spec = Some(ContainerSpec {
+            quick_access: false,
             rows: 2,
             cols: 2,
             weight_capacity: 10.0,
@@ -7356,6 +7389,7 @@ cols = 4
         let mut accepting_pack_template =
             test_template("general_pack", ItemCategory::Container, 1, 1, 1);
         accepting_pack_template.container_spec = Some(ContainerSpec {
+            quick_access: false,
             rows: 2,
             cols: 2,
             weight_capacity: 10.0,
@@ -7378,6 +7412,7 @@ cols = 4
             revision: InventoryRevision(0),
             containers: vec![
                 ContainerState {
+                    quick_access: false,
                     id: rejecting_pack_id.clone(),
                     name: "矿物袋".to_string(),
                     rows: 2,
@@ -7386,6 +7421,7 @@ cols = 4
                     owner_instance_id: Some(rejecting_pack_item.instance_id),
                 },
                 ContainerState {
+                    quick_access: false,
                     id: accepting_pack_id.clone(),
                     name: "通用包".to_string(),
                     rows: 2,
@@ -7851,6 +7887,7 @@ cols = 4
             revision: InventoryRevision(7),
             containers: vec![
                 ContainerState {
+                    quick_access: false,
                     id: MAIN_PACK_CONTAINER_ID.to_string(),
                     name: "主背包".to_string(),
                     rows: 5,
@@ -7864,6 +7901,7 @@ cols = 4
                     owner_instance_id: None,
                 },
                 ContainerState {
+                    quick_access: false,
                     id: SMALL_POUCH_CONTAINER_ID.to_string(),
                     name: "小口袋".to_string(),
                     rows: 3,
@@ -7872,6 +7910,7 @@ cols = 4
                     owner_instance_id: None,
                 },
                 ContainerState {
+                    quick_access: false,
                     id: FRONT_SATCHEL_CONTAINER_ID.to_string(),
                     name: "前挂包".to_string(),
                     rows: 3,
@@ -10108,6 +10147,7 @@ cols = 4
         let mut inner = make_test_item_instance(501, "herb");
         inner.weight = 3.0;
         inv.containers.push(ContainerState {
+            quick_access: false,
             id: pack_id,
             name: "大背包".to_string(),
             rows: 7,
@@ -10146,6 +10186,7 @@ cols = 4
 
         // 派生容器存在但为空——背包件本身不在此 items 里。
         inv.containers.push(ContainerState {
+            quick_access: false,
             id: pack_id,
             name: "大背包".to_string(),
             rows: 7,
@@ -10175,6 +10216,7 @@ cols = 4
 
         // body_pocket 作 spill 落点（2×3=6 格，足够容纳一件 1×1 内含物）。
         inv.containers.push(ContainerState {
+            quick_access: false,
             id: BODY_POCKET_CONTAINER_ID.to_string(),
             name: "暗袋".to_string(),
             rows: BODY_POCKET_ROWS,
@@ -10189,6 +10231,7 @@ cols = 4
         let mut inner = make_test_item_instance(701, "herb");
         inner.weight = 3.0;
         inv.containers.push(ContainerState {
+            quick_access: false,
             id: pack_id.clone(),
             name: "大背包".to_string(),
             rows: 7,
@@ -10253,6 +10296,7 @@ cols = 4
         let mut heavy = make_test_item_instance(801, "ore");
         heavy.weight = 20.0;
         inv.containers.push(ContainerState {
+            quick_access: false,
             id: pack_id,
             name: "大背包".to_string(),
             rows: 7,
@@ -10307,6 +10351,7 @@ cols = 4
         let mut heavy = make_test_item_instance(901, "ore");
         heavy.weight = 20.0;
         inv.containers.push(ContainerState {
+            quick_access: false,
             id: pack_id,
             name: "大背包".to_string(),
             rows: 7,
@@ -10418,6 +10463,7 @@ cols = 4
     fn borrow_helper_finds_item_in_container() {
         let mut inv = make_empty_inventory();
         inv.containers.push(ContainerState {
+            quick_access: false,
             id: "main_pack".into(),
             name: "main_pack".into(),
             rows: 4,
@@ -10452,6 +10498,7 @@ cols = 4
     fn inventory_with_main_pack() -> PlayerInventory {
         let mut inv = make_empty_inventory();
         inv.containers.push(ContainerState {
+            quick_access: false,
             id: MAIN_PACK_CONTAINER_ID.into(),
             name: MAIN_PACK_CONTAINER_ID.into(),
             rows: 8,
@@ -10651,6 +10698,7 @@ cols = 4
         let mut inv = make_empty_inventory();
         // main_pack 满（1x1 且已占用），无空位接收卸下的件。
         inv.containers.push(ContainerState {
+            quick_access: false,
             id: MAIN_PACK_CONTAINER_ID.into(),
             name: MAIN_PACK_CONTAINER_ID.into(),
             rows: 1,
@@ -10711,6 +10759,7 @@ cols = 4
         from.revision = InventoryRevision(12);
         from.bone_coins = 9;
         from.containers.push(ContainerState {
+            quick_access: false,
             id: MAIN_PACK_CONTAINER_ID.to_string(),
             name: "主背包".to_string(),
             rows: 2,
@@ -10733,6 +10782,7 @@ cols = 4
         to.revision = InventoryRevision(20);
         to.bone_coins = 5;
         to.containers.push(ContainerState {
+            quick_access: false,
             id: MAIN_PACK_CONTAINER_ID.to_string(),
             name: "主背包".to_string(),
             rows: 3,
@@ -10809,6 +10859,7 @@ cols = 4
             technique_scroll_spec: None,
             recipe_fragment_spec: None,
             container_spec: Some(ContainerSpec {
+                quick_access: false,
                 rows,
                 cols,
                 weight_capacity,
@@ -10885,6 +10936,7 @@ cols = 4
             });
         }
         inv.containers.push(ContainerState {
+            quick_access: false,
             id: container_id_for_worn_pack(pack_id),
             name: "野战背包".to_string(),
             rows: 4,
@@ -10894,6 +10946,7 @@ cols = 4
         });
         // 确保 body_pocket 存在（rebuild 会创建，但显式给出更清晰）。
         inv.containers.push(ContainerState {
+            quick_access: false,
             id: BODY_POCKET_CONTAINER_ID.to_string(),
             name: "暗袋".to_string(),
             rows: BODY_POCKET_ROWS,
@@ -10985,6 +11038,7 @@ cols = 4
         let mut inv = make_empty_inventory();
         // body_pocket 兜底 spill。
         inv.containers.push(ContainerState {
+            quick_access: false,
             id: BODY_POCKET_CONTAINER_ID.to_string(),
             name: "暗袋".to_string(),
             rows: BODY_POCKET_ROWS,
@@ -10999,6 +11053,7 @@ cols = 4
         );
         // pack B 容器，内含 pack A 件（货物）。
         inv.containers.push(ContainerState {
+            quick_access: false,
             id: container_id_for_worn_pack(b_id),
             name: "B".to_string(),
             rows: 4,
@@ -11012,6 +11067,7 @@ cols = 4
         });
         // pack A 的残留容器（不该被 grid 内货物保有）。
         inv.containers.push(ContainerState {
+            quick_access: false,
             id: container_id_for_worn_pack(a_id),
             name: "A".to_string(),
             rows: 4,
@@ -11138,6 +11194,7 @@ cols = 4
         blocker_item.grid_w = 3;
         blocker_item.grid_h = 2;
         inv.containers.push(ContainerState {
+            quick_access: false,
             id: BODY_POCKET_CONTAINER_ID.to_string(),
             name: "暗袋".to_string(),
             rows: BODY_POCKET_ROWS,
@@ -11150,6 +11207,7 @@ cols = 4
             owner_instance_id: None,
         });
         inv.containers.push(ContainerState {
+            quick_access: false,
             id: container_id_for_worn_pack(pack_id),
             name: "孤儿包".to_string(),
             rows: 1,
@@ -11193,6 +11251,7 @@ cols = 4
         inv.hotbar[3] = Some(make_container_item(3, "field_pack"));
         // body_pocket（携带面）
         inv.containers.push(ContainerState {
+            quick_access: false,
             id: BODY_POCKET_CONTAINER_ID.to_string(),
             name: "暗袋".to_string(),
             rows: BODY_POCKET_ROWS,
@@ -11206,6 +11265,7 @@ cols = 4
         });
         // 嵌套：worn pack(1) 的 grid 内放第 5 个 pack —— 货物，NOT 携带面（2 层封顶）。
         inv.containers.push(ContainerState {
+            quick_access: false,
             id: container_id_for_worn_pack(1),
             name: "pack1".to_string(),
             rows: 4,
@@ -11406,6 +11466,7 @@ cols = 4
             SlotContents::worn_single(make_container_item(1000, "sealed_bag")),
         );
         inv.containers.push(ContainerState {
+            quick_access: false,
             id: container_id_for_worn_pack(1000),
             name: "封灵背包".to_string(),
             rows: 2,
@@ -11437,6 +11498,7 @@ cols = 4
             SlotContents::worn_single(make_container_item(1002, "ordinary_bag")),
         );
         inv.containers.push(ContainerState {
+            quick_access: false,
             id: container_id_for_worn_pack(1002),
             name: "普通背包".to_string(),
             rows: 2,
@@ -11490,6 +11552,7 @@ cols = 4
     fn parse_container_spec_valid_chest() {
         // 决议 #17：背包 equip_slot 指向身体槽（chest）。
         let raw = ContainerSpecToml {
+            quick_access: false,
             rows: 7,
             cols: 5,
             weight_capacity: 30.0,
@@ -11518,6 +11581,7 @@ cols = 4
     #[test]
     fn parse_container_spec_valid_head() {
         let raw = ContainerSpecToml {
+            quick_access: false,
             rows: 3,
             cols: 3,
             weight_capacity: 10.0,
@@ -11534,6 +11598,7 @@ cols = 4
     #[test]
     fn parse_container_spec_valid_legs() {
         let raw = ContainerSpecToml {
+            quick_access: false,
             rows: 4,
             cols: 3,
             weight_capacity: 20.0,
@@ -11548,6 +11613,130 @@ cols = 4
         assert!(
             spec.attrition_exempt,
             "显式封灵容器应保留 attrition_exempt=true"
+        );
+    }
+
+    // ── worn-tab/quickbar plan — ContainerSpec.quick_access 解析 + 透传 + rebuild 回填 ──
+
+    #[test]
+    fn parse_container_spec_propagates_quick_access_true() {
+        let raw = ContainerSpecToml {
+            quick_access: true,
+            rows: 2,
+            cols: 3,
+            weight_capacity: 5.0,
+            equip_slot: EQUIP_SLOT_CHEST.to_string(),
+            durability_cost_per_op: 0.0,
+            attrition_exempt: false,
+            accept: None,
+        };
+        let spec =
+            parse_container_spec(raw, Path::new("<test>"), "quick_pouch").expect("should parse");
+        assert!(
+            spec.quick_access,
+            "TOML quick_access=true 应透传到 ContainerSpec.quick_access=true（未来快捷腰包靠此生效）"
+        );
+    }
+
+    #[test]
+    fn container_spec_toml_quick_access_defaults_false_when_absent() {
+        // 旧 TOML 不写 quick_access → serde(default) 读为 false，不退化、不报 unknown_fields。
+        let toml_src = r#"
+            rows = 3
+            cols = 3
+            weight_capacity = 10.0
+            equip_slot = "chest"
+        "#;
+        let raw: ContainerSpecToml =
+            toml::from_str(toml_src).expect("旧 TOML（无 quick_access 键）应解析成功");
+        assert!(
+            !raw.quick_access,
+            "缺省 quick_access 应为 false（旧档兼容）"
+        );
+        let spec =
+            parse_container_spec(raw, Path::new("<test>"), "legacy_pack").expect("should parse");
+        assert!(
+            !spec.quick_access,
+            "未声明 quick_access 的容器应 quick_access=false，普通背包内物品不可入快捷栏"
+        );
+    }
+
+    #[test]
+    fn container_spec_toml_quick_access_true_parses_from_toml() {
+        let toml_src = r#"
+            rows = 2
+            cols = 3
+            weight_capacity = 4.0
+            equip_slot = "chest"
+            quick_access = true
+        "#;
+        let raw: ContainerSpecToml =
+            toml::from_str(toml_src).expect("含 quick_access=true 的 TOML 应解析成功");
+        assert!(raw.quick_access, "TOML quick_access=true 应读为 true");
+    }
+
+    #[test]
+    fn rebuild_backfills_pack_quick_access_from_owner_template() {
+        // owner 背包件模板 quick_access=true → rebuild 把派生 pack_<id> 容器 quick_access 置 true；
+        // 普通背包模板（false）→ pack 容器 quick_access=false。验证「字段就位、TOML 即生效」承诺链路。
+        let mut quick_tpl = make_container_template("quick_pack", EQUIP_SLOT_CHEST, 3, 3, 10.0);
+        quick_tpl.container_spec.as_mut().unwrap().quick_access = true;
+        let plain_tpl = make_container_template("plain_pack", EQUIP_SLOT_LEGS, 3, 3, 10.0);
+        let registry = ItemRegistry::from_map(HashMap::from([
+            ("quick_pack".to_string(), quick_tpl),
+            ("plain_pack".to_string(), plain_tpl),
+        ]));
+
+        let quick_id = 5001u64;
+        let plain_id = 5002u64;
+        let mut inv = make_empty_inventory();
+        inv.equipped.insert(
+            EQUIP_SLOT_CHEST.to_string(),
+            SlotContents::worn_single(make_container_item(quick_id, "quick_pack")),
+        );
+        inv.equipped.insert(
+            EQUIP_SLOT_LEGS.to_string(),
+            SlotContents::worn_single(make_container_item(plain_id, "plain_pack")),
+        );
+
+        let overflow = rebuild_containers_from_equipment(&mut inv, &registry);
+        assert!(overflow.is_empty(), "无内含物不应 overflow");
+
+        let quick_container = inv
+            .containers
+            .iter()
+            .find(|c| c.id == container_id_for_worn_pack(quick_id))
+            .expect("quick_pack 应有派生 pack 容器");
+        assert!(
+            quick_container.quick_access,
+            "owner 模板 quick_access=true → pack 容器 quick_access 应回填 true"
+        );
+
+        let plain_container = inv
+            .containers
+            .iter()
+            .find(|c| c.id == container_id_for_worn_pack(plain_id))
+            .expect("plain_pack 应有派生 pack 容器");
+        assert!(
+            !plain_container.quick_access,
+            "owner 模板 quick_access=false → pack 容器 quick_access 应保持 false"
+        );
+    }
+
+    #[test]
+    fn rebuild_keeps_body_pocket_quick_access_false_in_state() {
+        // body_pocket 的快捷资格由 snapshot 特判（恒 true），ContainerState 缓存位本身保持 false。
+        let registry = ItemRegistry::from_map(HashMap::new());
+        let mut inv = make_empty_inventory();
+        let _ = rebuild_containers_from_equipment(&mut inv, &registry);
+        let bp = inv
+            .containers
+            .iter()
+            .find(|c| c.id == BODY_POCKET_CONTAINER_ID)
+            .expect("rebuild 应保证 body_pocket 存在");
+        assert!(
+            !bp.quick_access,
+            "body_pocket 的 ContainerState.quick_access 缓存位应为 false（资格由 snapshot 特判 true）"
         );
     }
 
@@ -11607,6 +11796,7 @@ cols = 4
     #[test]
     fn parse_container_spec_accept_empty_is_explicit_all_accepting_filter() {
         let raw = ContainerSpecToml {
+            quick_access: false,
             rows: 2,
             cols: 2,
             weight_capacity: 0.0,
@@ -11627,6 +11817,7 @@ cols = 4
     #[test]
     fn parse_container_spec_accept_parses_categories_and_template_prefix() {
         let raw = ContainerSpecToml {
+            quick_access: false,
             rows: 3,
             cols: 3,
             weight_capacity: 0.0,
@@ -11655,6 +11846,7 @@ cols = 4
     fn parse_container_spec_accept_trims_template_prefix_payload() {
         for raw_prefix in ["prefix:anqi_", "prefix: anqi_"] {
             let raw = ContainerSpecToml {
+                quick_access: false,
                 rows: 3,
                 cols: 3,
                 weight_capacity: 0.0,
@@ -11683,6 +11875,7 @@ cols = 4
             (vec!["prefix:".to_string()], "empty container.accept prefix"),
         ] {
             let raw = ContainerSpecToml {
+                quick_access: false,
                 rows: 2,
                 cols: 2,
                 weight_capacity: 0.0,
@@ -11767,6 +11960,7 @@ cols = 4
     #[test]
     fn container_spec_accept_filter_serde_roundtrip() {
         let spec = ContainerSpec {
+            quick_access: false,
             rows: 2,
             cols: 3,
             weight_capacity: 4.0,
@@ -11813,6 +12007,7 @@ cols = 4
     #[test]
     fn parse_container_spec_rejects_rows_zero() {
         let raw = ContainerSpecToml {
+            quick_access: false,
             rows: 0,
             cols: 4,
             weight_capacity: 10.0,
@@ -11829,6 +12024,7 @@ cols = 4
     #[test]
     fn parse_container_spec_rejects_rows_overflow() {
         let raw = ContainerSpecToml {
+            quick_access: false,
             rows: 17,
             cols: 4,
             weight_capacity: 10.0,
@@ -11845,6 +12041,7 @@ cols = 4
     #[test]
     fn parse_container_spec_rejects_cols_zero() {
         let raw = ContainerSpecToml {
+            quick_access: false,
             rows: 4,
             cols: 0,
             weight_capacity: 10.0,
@@ -11861,6 +12058,7 @@ cols = 4
     #[test]
     fn parse_container_spec_rejects_negative_weight_capacity() {
         let raw = ContainerSpecToml {
+            quick_access: false,
             rows: 4,
             cols: 4,
             weight_capacity: -1.0,
@@ -11882,6 +12080,7 @@ cols = 4
         // 决议 #17：背包 equip_slot 只接受身体槽（head/chest/legs/feet）；
         // 旧 back_pack 专属槽已删，作为 equip_slot 现属非法。
         let raw = ContainerSpecToml {
+            quick_access: false,
             rows: 4,
             cols: 4,
             weight_capacity: 10.0,
@@ -11901,6 +12100,7 @@ cols = 4
     #[test]
     fn parse_container_spec_rejects_negative_durability_cost() {
         let raw = ContainerSpecToml {
+            quick_access: false,
             rows: 4,
             cols: 4,
             weight_capacity: 10.0,
@@ -11969,6 +12169,7 @@ cols = 4
         let registry = ItemRegistry::from_map(HashMap::new());
         let mut inv = make_empty_inventory();
         inv.containers.push(ContainerState {
+            quick_access: false,
             id: BODY_POCKET_CONTAINER_ID.to_string(),
             name: "暗袋".to_string(),
             rows: BODY_POCKET_ROWS,
@@ -12112,6 +12313,7 @@ cols = 4
         // 预置一个 pack_<id> 容器但没有对应穿戴背包件（孤儿）。
         let pack_id = container_id_for_worn_pack(200);
         inv.containers.push(ContainerState {
+            quick_access: false,
             id: pack_id.clone(),
             name: "大背包".to_string(),
             rows: 7,
@@ -12137,6 +12339,7 @@ cols = 4
         let mut inv = make_empty_inventory();
         // body_pocket 作为 spill 兜底落点（2×3 = 6 格，足够收 1 件）。
         inv.containers.push(ContainerState {
+            quick_access: false,
             id: BODY_POCKET_CONTAINER_ID.to_string(),
             name: "暗袋".to_string(),
             rows: BODY_POCKET_ROWS,
@@ -12147,6 +12350,7 @@ cols = 4
         // 孤儿 pack_200：装着 herb(instance_id=55) 但 equipped 里无 instance_id=200 的穿戴背包件。
         let pack_id = container_id_for_worn_pack(200);
         inv.containers.push(ContainerState {
+            quick_access: false,
             id: pack_id.clone(),
             name: "大背包".to_string(),
             rows: 7,
@@ -12206,6 +12410,7 @@ cols = 4
             });
         }
         inv.containers.push(ContainerState {
+            quick_access: false,
             id: pack_id.clone(),
             name: "大背包".to_string(),
             rows: 7,
@@ -12257,6 +12462,7 @@ cols = 4
         );
         let pack_id = container_id_for_worn_pack(200);
         inv.containers.push(ContainerState {
+            quick_access: false,
             id: pack_id.clone(),
             name: "大背包".to_string(),
             rows: 7,
@@ -12437,6 +12643,7 @@ cols = 4
             triggered_treasures: Vec::new(),
             revision: InventoryRevision(0),
             containers: vec![ContainerState {
+                quick_access: false,
                 id: MAIN_PACK_CONTAINER_ID.to_string(),
                 name: "主背包".to_string(),
                 rows: 5,
@@ -12557,6 +12764,7 @@ cols = 4
         );
         // 该背包件的 pack_505 容器非空。
         inv.containers.push(ContainerState {
+            quick_access: false,
             id: container_id_for_worn_pack(505),
             name: "大背包".to_string(),
             rows: 7,
@@ -12596,6 +12804,7 @@ cols = 4
         );
         // pack_506 容器为空。
         inv.containers.push(ContainerState {
+            quick_access: false,
             id: container_id_for_worn_pack(506),
             name: "大背包".to_string(),
             rows: 7,
@@ -12664,6 +12873,7 @@ cols = 4
             SlotContents::worn_single(make_container_item(801, "large_backpack")),
         );
         inv.containers.push(ContainerState {
+            quick_access: false,
             id: container_id_for_worn_pack(801),
             name: "大背包".to_string(),
             rows: 7,
@@ -12736,6 +12946,7 @@ cols = 4
         // body_pocket（2×3=6 格）预填满——否则 rebuild 兜底创建空 body_pocket 会吸收全部 spill、
         // 不产生 overflow。填满后 spill 只能去 tiny（1 格），其余 overflow 掉落。
         inv.containers.push(ContainerState {
+            quick_access: false,
             id: BODY_POCKET_CONTAINER_ID.to_string(),
             name: "暗袋".to_string(),
             rows: BODY_POCKET_ROWS,
@@ -12751,6 +12962,7 @@ cols = 4
         });
         // spill 容器：tiny 1×1。
         inv.containers.push(ContainerState {
+            quick_access: false,
             id: "tiny".to_string(),
             name: "tiny".to_string(),
             rows: 1,
@@ -12764,6 +12976,7 @@ cols = 4
             SlotContents::worn_single(make_container_item(900, "small_pack")),
         );
         inv.containers.push(ContainerState {
+            quick_access: false,
             id: container_id_for_worn_pack(900),
             name: "small".to_string(),
             rows: 3,
@@ -12900,6 +13113,7 @@ cols = 4
         // 占位容器（LOADOUT_PACK_PLACEHOLDER_CONTAINER_ID）携带一件预置物品。
         let loadout = LoadoutSpec {
             containers: vec![ContainerState {
+                quick_access: false,
                 id: LOADOUT_PACK_PLACEHOLDER_CONTAINER_ID.to_string(),
                 name: "占位包".to_string(),
                 rows: 3,
@@ -12989,6 +13203,7 @@ cols = 4
 
         let loadout = LoadoutSpec {
             containers: vec![ContainerState {
+                quick_access: false,
                 id: BODY_POCKET_CONTAINER_ID.to_string(),
                 name: "贴身口袋".to_string(),
                 rows: BODY_POCKET_ROWS,
@@ -13143,6 +13358,7 @@ cols = 4
     fn make_p2_inventory() -> PlayerInventory {
         let mut inv = make_empty_inventory();
         inv.containers.push(ContainerState {
+            quick_access: false,
             id: MAIN_PACK_CONTAINER_ID.to_string(),
             name: "主背包".to_string(),
             rows: 5,
@@ -13218,6 +13434,7 @@ cols = 4
         // pack_3001 容器存在（owner_instance_id=3001），但背包件 3001 不在任何 worn 层
         // ——已卸到 main_pack 当普通物品。
         inv.containers.push(ContainerState {
+            quick_access: false,
             id: container_id_for_worn_pack(3001),
             name: "已卸下的胸包".to_string(),
             rows: 3,
@@ -13558,6 +13775,7 @@ cols = 4
             technique_scroll_spec: None,
             recipe_fragment_spec: None,
             container_spec: Some(ContainerSpec {
+                quick_access: false,
                 rows: 3,
                 cols: 3,
                 weight_capacity: 10.0,
@@ -13624,6 +13842,7 @@ cols = 4
             SlotContents::worn_single(backpack_instance),
         );
         inv.containers.push(ContainerState {
+            quick_access: false,
             id: pack_container_id,
             name: "草编囊".to_string(),
             rows: 3,

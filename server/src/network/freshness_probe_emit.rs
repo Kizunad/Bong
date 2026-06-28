@@ -174,6 +174,7 @@ mod tests {
 
     fn make_inventory_with_item(item: ItemInstance) -> PlayerInventory {
         let container = ContainerState {
+            quick_access: false,
             id: "main_pack".to_string(),
             name: "main_pack".to_string(),
             rows: 4,

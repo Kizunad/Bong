@@ -440,6 +440,7 @@ mod server_data_tests {
             revision: 12,
             containers: vec![
                 ContainerSnapshotV1 {
+                    quick_access: false,
                     id: "main_pack".to_string(),
                     name: "主背包".to_string(),
                     rows: 5,
@@ -447,6 +448,7 @@ mod server_data_tests {
                     owner_instance_id: None,
                 },
                 ContainerSnapshotV1 {
+                    quick_access: false,
                     id: "small_pouch".to_string(),
                     name: "小口袋".to_string(),
                     rows: 3,
@@ -454,6 +456,7 @@ mod server_data_tests {
                     owner_instance_id: None,
                 },
                 ContainerSnapshotV1 {
+                    quick_access: false,
                     id: "front_satchel".to_string(),
                     name: "前挂包".to_string(),
                     rows: 3,

@@ -53,6 +53,7 @@ fn container_template(id: &str, rows: u8, cols: u8, weight_capacity: f64) -> Ite
             durability_cost_per_op: 0.0,
             attrition_exempt: false,
             accept_filter: None,
+            quick_access: false,
         }),
         shield_spec: None,
         shelflife_profile: None,
@@ -115,6 +116,7 @@ fn e2e_unequip_nonempty_pack_drops_overflow_not_lost() {
                     })
                     .collect(),
                 owner_instance_id: None,
+                quick_access: false,
             },
             // 卸下目标容器：stash 恰好 2×3=6 格 = 背包件 footprint，卸入后被填满，
             // 不再有空间接 spill（迫使 spill 只能去 tiny）。
@@ -125,6 +127,7 @@ fn e2e_unequip_nonempty_pack_drops_overflow_not_lost() {
                 cols: 2,
                 items: Vec::new(),
                 owner_instance_id: None,
+                quick_access: false,
             },
             // spill 容器：tiny 1×1（只容得下 1 件 spill，其余 overflow 掉落）。
             ContainerState {
@@ -134,6 +137,7 @@ fn e2e_unequip_nonempty_pack_drops_overflow_not_lost() {
                 cols: 1,
                 items: Vec::new(),
                 owner_instance_id: None,
+                quick_access: false,
             },
             // 背包件 4242 的内含容器，预置 3 件 1×1。
             ContainerState {
@@ -141,6 +145,7 @@ fn e2e_unequip_nonempty_pack_drops_overflow_not_lost() {
                 name: "e2e_pack".to_string(),
                 rows: 3,
                 cols: 3,
+                quick_access: false,
                 items: vec![
                     PlacedItemState {
                         row: 0,
@@ -306,6 +311,7 @@ fn setup_worn_pack_e2e(contents: &[u64]) -> (PlayerInventory, ItemRegistry, u64)
                 cols: 3,
                 items: Vec::new(),
                 owner_instance_id: None,
+                quick_access: false,
             },
             ContainerState {
                 id: container_id_for_worn_pack(pack_id),
@@ -314,6 +320,7 @@ fn setup_worn_pack_e2e(contents: &[u64]) -> (PlayerInventory, ItemRegistry, u64)
                 cols: 4,
                 items,
                 owner_instance_id: Some(pack_id),
+                quick_access: false,
             },
         ],
         equipped: {
