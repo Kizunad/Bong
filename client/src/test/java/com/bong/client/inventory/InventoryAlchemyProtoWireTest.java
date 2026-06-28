@@ -201,6 +201,34 @@ public class InventoryAlchemyProtoWireTest {
                 "hint.ingredients 须经 proto wire 存活并 join，实际 " + lines.get(1));
     }
 
+    // ── pill_residue / 未知 kind：client 不消费 tooltip，但绝不能 brick 整快照（本次回归防护）──
+
+    @Test
+    void pillResidueDoesNotBrickSnapshotThroughWire() {
+        // pill_residue（废丹/残渣）是 grant_alchemy_outcome_item 真发进背包的生产物品，client switch 无此分支。
+        // 修复前 readAlchemyLines default→null → parseInventoryItem→null → parsePlacedItems→null → 整快照 noOp，
+        // 背包里 1 个残渣就让整背包 UI 卡死/空。alchemyLinesThroughWire 内含 dispatch.handled() 断言 = 锁此回归。
+        Envelope.InventoryItemView item = baseItemView(5, "spent_pill_residue", "废丹")
+                .setAlchemy(Envelope.AlchemyItemDataProto.newBuilder().setKind("pill_residue"))
+                .build();
+
+        List<String> lines = alchemyLinesThroughWire(item);
+        assertTrue(lines.isEmpty(),
+                "pill_residue client 不消费 tooltip → 无 alchemy 行（default→List.of() 优雅降级），实际 " + lines);
+    }
+
+    @Test
+    void unknownFutureAlchemyKindDoesNotBrickSnapshotThroughWire() {
+        // 向前兼容：server 端将来新增 alchemy 变体时，旧 client 须优雅降级（空行）而非 brick 整快照。
+        Envelope.InventoryItemView item = baseItemView(6, "mystery_pill", "未知丹")
+                .setAlchemy(Envelope.AlchemyItemDataProto.newBuilder().setKind("some_future_server_only_kind"))
+                .build();
+
+        List<String> lines = alchemyLinesThroughWire(item);
+        assertTrue(lines.isEmpty(),
+                "未知 alchemy kind 须优雅降级(空行)不 brick 快照(向前兼容)，实际 " + lines);
+    }
+
     // ── 非丹药物品：alchemy 不写 wire → 无 tooltip 行（守恒反向 case）──
 
     @Test
