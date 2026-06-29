@@ -1015,3 +1015,76 @@ fn full_power_release_rejected_when_du_meridian_severed() {
          实际={result:?}——若为其他 Reject 原因则说明门控命中但 charge 状态前置拦截先于经脉检查"
     );
 }
+
+// ── sg-02 境界门控回归测试 ────────────────────────────────────────────────────
+//
+// BUG-SG-02: cast_full_power_charge / cast_full_power_release 原来只调用
+// check_static_deps（检查经脉断裂），不检查施法者境界。TechniqueDefinition 声明
+// required_realm="Induce" 但在施法路径中从未被读取。死亡引发 apply_revive_penalty
+// 将境界从引气降回醒灵，而 KnownTechniques 不清空，9 经脉玩家 qi_max=100
+// 满足 FULL_POWER_MIN_QI_TO_START 门槛——造成醒灵玩家可施放全力一击。
+
+#[test]
+fn full_power_charge_rejects_awaken_realm() {
+    // 醒灵境界应被境界门控拒绝，即使真元充足（qi_current=200 > FULL_POWER_MIN_QI_TO_START=100）。
+    // 修复前：check_static_deps 只检查经脉断裂，境界不足不拦截。
+    // 修复后：cast_full_power_charge 在 check_static_deps 之前先验证境界。
+    let mut app = app();
+    let caster = spawn_actor(&mut app, Realm::Awaken, 200.0, 200.0, DVec3::ZERO);
+    let result = cast_full_power_charge(app.world_mut(), caster, 0, None);
+    assert_eq!(
+        result,
+        CastResult::Rejected {
+            reason: CastRejectReason::RealmTooLow
+        },
+        "醒灵境界施法者应被 full_power_charge 境界门控拒绝（需要引气+），\
+         实际={result:?}——修复前 check_static_deps 只检查经脉断裂，境界不足不拦截"
+    );
+}
+
+#[test]
+fn full_power_charge_induce_realm_passes_realm_gate() {
+    // 引气（最低要求境界）应通过境界门控，继续进行施法流程。
+    // 若返回 RealmTooLow 则说明境界门控过度拒绝了合法施法者。
+    let mut app = app();
+    let caster = spawn_actor(&mut app, Realm::Induce, 400.0, 400.0, DVec3::ZERO);
+    let result = cast_full_power_charge(app.world_mut(), caster, 0, None);
+    assert!(
+        matches!(result, CastResult::Started { .. }),
+        "引气境界施法者应通过 full_power_charge 境界门控并开始蓄力，实际={result:?}"
+    );
+}
+
+#[test]
+fn full_power_release_rejects_awaken_realm() {
+    // 醒灵境界应在任何其他检查之前被境界门控拒绝（含无蓄力状态判断）。
+    // 修复前：check_static_deps 先执行（只查经脉），境界门控缺失。
+    let mut app = app();
+    let caster = spawn_actor(&mut app, Realm::Awaken, 200.0, 200.0, DVec3::ZERO);
+    let result = cast_full_power_release(app.world_mut(), caster, 0, None);
+    assert_eq!(
+        result,
+        CastResult::Rejected {
+            reason: CastRejectReason::RealmTooLow
+        },
+        "醒灵境界施法者应被 full_power_release 境界门控拒绝（需要引气+），\
+         实际={result:?}——修复前境界门控缺失，醒灵玩家可在蓄力完成后释放"
+    );
+}
+
+#[test]
+fn full_power_release_induce_realm_passes_realm_gate() {
+    // 引气境界通过境界门控后，因无蓄力状态（ChargingState）返回 InvalidTarget——
+    // 这证明境界门控已通过（若返回 RealmTooLow 则说明门控过度拒绝）。
+    let mut app = app();
+    let caster = spawn_actor(&mut app, Realm::Induce, 400.0, 400.0, DVec3::ZERO);
+    let result = cast_full_power_release(app.world_mut(), caster, 0, None);
+    assert_eq!(
+        result,
+        CastResult::Rejected {
+            reason: CastRejectReason::InvalidTarget
+        },
+        "引气境界施法者应通过境界门控，随后因无蓄力状态被 InvalidTarget 拒绝；\
+         若为 RealmTooLow 则说明境界门控误拒合法境界，实际={result:?}"
+    );
+}
