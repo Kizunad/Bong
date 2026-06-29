@@ -7094,6 +7094,7 @@ mod tests {
             SkillBarBindings::default(),
             QuickSlotBindings::default(),
             empty_inventory(),
+            known(&["burst_meridian.beng_quan"]),
         ));
         app.world_mut()
             .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
@@ -7165,6 +7166,7 @@ mod tests {
             skill_bar,
             QuickSlotBindings::default(),
             empty_inventory(),
+            known(&["body.guangbo_ticao"]),
         ));
         app.world_mut()
             .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
@@ -7224,6 +7226,7 @@ mod tests {
                 ..Default::default()
             },
             MeridianSystem::default(),
+            known(&["zhenmai.sever_chain"]),
         ));
 
         app.world_mut()
@@ -7381,11 +7384,14 @@ mod tests {
             },
         ));
         let entity = app.world_mut().spawn(client_bundle).id();
+        // Grant the technique so the ownership gate passes; the rejection is caused by the
+        // missing SkillConfigSchemas resource, not by lack of ownership.
         app.world_mut().entity_mut(entity).insert((
             Position::new([0.0, 0.0, 0.0]),
             skill_bar,
             QuickSlotBindings::default(),
             empty_inventory(),
+            known(&["zhenmai.sever_chain"]),
         ));
         app.world_mut()
             .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
@@ -7428,6 +7434,23 @@ mod tests {
                 }
             })
             .collect()
+    }
+
+    /// Build a minimal KnownTechniques component with exactly the listed technique ids
+    /// (active=true, proficiency=0.5). Use in skill_bar tests to grant only the
+    /// technique under test so the ownership gate passes without granting everything.
+    fn known(ids: &[&str]) -> KnownTechniques {
+        use crate::cultivation::known_techniques::KnownTechnique;
+        KnownTechniques {
+            entries: ids
+                .iter()
+                .map(|id| KnownTechnique {
+                    id: (*id).to_string(),
+                    proficiency: 0.5,
+                    active: true,
+                })
+                .collect(),
+        }
     }
 
     /// 发送一个 skill_bar_cast 消息（slot 0）给 entity，并驱动一次 app.update()。
@@ -7509,6 +7532,7 @@ mod tests {
                 qi_max: 100.0,
                 ..Default::default()
             },
+            known(&["burst_meridian.tie_shan_kao"]),
         ));
 
         send_skill_bar_cast_with_target(&mut app, entity, target);
@@ -7557,6 +7581,8 @@ mod tests {
             empty_inventory(),
             ms,
             crate::cultivation::meridian::severed::MeridianSeveredPermanent::default(),
+            // Grant ownership so the rejection is caused by the meridian gate, not by missing KnownTechniques.
+            known(&["burst_meridian.beng_quan"]),
         ));
 
         send_skill_bar_cast(&mut app, entity);
@@ -7616,6 +7642,8 @@ mod tests {
             empty_inventory(),
             ms,
             severed,
+            // Grant ownership so the rejection is caused by the meridian gate, not by missing KnownTechniques.
+            known(&["burst_meridian.beng_quan"]),
         ));
 
         send_skill_bar_cast(&mut app, entity);
@@ -7675,6 +7703,8 @@ mod tests {
             empty_inventory(),
             ms,
             severed,
+            // Grant ownership so the rejection is caused by the meridian deps_table gate, not by missing KnownTechniques.
+            known(&["sword.cleave"]),
         ));
 
         send_skill_bar_cast(&mut app, entity);
@@ -7729,6 +7759,9 @@ mod tests {
             empty_inventory(),
             ms,
             severed,
+            // Grant ownership so the cast can reach the meridian gate (and pass it), making the
+            // "no MeridianGated" assertion test the gate rather than the ownership gate.
+            known(&["sword.cleave"]),
         ));
 
         send_skill_bar_cast(&mut app, entity);
@@ -7787,6 +7820,8 @@ mod tests {
             empty_inventory(),
             ms,
             severed,
+            // Grant ownership so the rejection is caused by the meridian deps_table gate, not by missing KnownTechniques.
+            known(&["sword.cleave"]),
         ));
 
         send_skill_bar_cast(&mut app, entity);
@@ -7850,6 +7885,7 @@ mod tests {
                 qi_max: 100.0,
                 ..Default::default()
             },
+            known(&["burst_meridian.tie_shan_kao"]),
         ));
 
         send_skill_bar_cast_with_target(&mut app, entity, target);
@@ -7887,6 +7923,8 @@ mod tests {
             empty_inventory(),
             ms,
             crate::cultivation::meridian::severed::MeridianSeveredPermanent::default(),
+            // Grant ownership so the rejection is caused by the meridian gate (integrity too low), not by missing KnownTechniques.
+            known(&["burst_meridian.tie_shan_kao"]),
         ));
 
         send_skill_bar_cast(&mut app, entity);
@@ -7946,6 +7984,8 @@ mod tests {
             empty_inventory(),
             ms,
             crate::cultivation::meridian::severed::MeridianSeveredPermanent::default(),
+            // Grant ownership so the rejection is caused by the meridian gate (not opened), not by missing KnownTechniques.
+            known(&["burst_meridian.tie_shan_kao"]),
         ));
 
         send_skill_bar_cast(&mut app, entity);
@@ -7999,6 +8039,8 @@ mod tests {
             empty_inventory(),
             ms,
             crate::cultivation::meridian::severed::MeridianSeveredPermanent::default(),
+            // Grant ownership so the rejection is caused by the meridian gate (partial deps), not by missing KnownTechniques.
+            known(&["burst_meridian.beng_quan"]),
         ));
 
         send_skill_bar_cast(&mut app, entity);
@@ -8043,6 +8085,7 @@ mod tests {
             QuickSlotBindings::default(),
             empty_inventory(),
             // 故意不插入 MeridianSystem
+            known(&["body.guangbo_ticao"]),
         ));
 
         send_skill_bar_cast(&mut app, entity);
@@ -8099,6 +8142,7 @@ mod tests {
             empty_inventory(),
             ms,
             crate::cultivation::meridian::severed::MeridianSeveredPermanent::default(),
+            known(&["body.guangbo_ticao"]),
         ));
 
         send_skill_bar_cast(&mut app, entity);
@@ -8159,6 +8203,8 @@ mod tests {
                 qi_max: 100.0,
                 ..Default::default()
             },
+            // Grant ownership so the rejection is caused by the resolver (RealmTooLow), not by missing KnownTechniques.
+            known(&["burst_meridian.tie_shan_kao"]),
         ));
 
         send_skill_bar_cast_with_target(&mut app, entity, target);
@@ -8512,6 +8558,9 @@ mod tests {
                 skill_bar,
                 QuickSlotBindings::default(),
                 empty_inventory(),
+                // Grant ownership for slot 2's technique so the cooldown gate (not the ownership
+                // gate) is what blocks the cast, keeping the test non-vacuous.
+                known(&["burst_meridian.beng_quan"]),
             ))
             .id();
         for slot in [0_u8, 1, 2] {
@@ -8881,7 +8930,7 @@ fn handle_skill_bar_cast(
     let player_has_technique = known_techniques
         .get(entity)
         .ok()
-        .map(|kt| player_knows_technique(&kt, &skill_id))
+        .map(|kt| player_knows_technique(kt, &skill_id))
         .unwrap_or(false);
     if !player_has_technique {
         tracing::warn!(
@@ -9606,6 +9655,7 @@ fn send_authoritative_skill_config_snapshot(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn handle_skill_bar_bind(
     entity: valence::prelude::Entity,
     slot: u8,
@@ -9646,7 +9696,7 @@ fn handle_skill_bar_bind(
             let player_has_technique = known_techniques
                 .get(entity)
                 .ok()
-                .map(|kt| player_knows_technique(&kt, skill_id))
+                .map(|kt| player_knows_technique(kt, skill_id))
                 .unwrap_or(false);
             if !player_has_technique {
                 tracing::warn!(
