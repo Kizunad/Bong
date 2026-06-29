@@ -277,6 +277,9 @@ fn map_wound_kind(wound_kind: crate::combat::components::WoundKind) -> CombatWou
 fn map_attack_source(source: crate::combat::events::AttackSource) -> CombatAttackSourceV1 {
     match source {
         crate::combat::events::AttackSource::Melee => CombatAttackSourceV1::Melee,
+        // NpcMelee maps to Melee on the IPC wire — preserves schema compatibility while
+        // the internal resolver uses a distinct variant to bypass the qi anti-cheat gate.
+        crate::combat::events::AttackSource::NpcMelee => CombatAttackSourceV1::Melee,
         crate::combat::events::AttackSource::BurstMeridian => CombatAttackSourceV1::BurstMeridian,
         crate::combat::events::AttackSource::QiNeedle => CombatAttackSourceV1::QiNeedle,
         crate::combat::events::AttackSource::FullPower => CombatAttackSourceV1::FullPower,

@@ -1389,7 +1389,11 @@ fn daoxiang_instinct_action_system(
                         reach: profile.reach,
                         qi_invest: 25.0,
                         wound_kind: profile.wound_kind,
-                        source: AttackSource::Melee,
+                        // NpcMelee bypasses the qi anti-cheat gate: Daoxiang NPCs have
+                        // Cultivation{qi_current:0.0, qi_max:10.0} by default and TSY
+                        // zones have spirit_qi<-0.4 so regen never fires. qi_invest=25.0
+                        // would be permanently blocked by the gate as 0.0 < 25.0.
+                        source: AttackSource::NpcMelee,
                         debug_command: None,
                     });
                 }
@@ -1503,7 +1507,8 @@ fn zhinian_combo_step_action_system(
                         reach: profile.reach,
                         qi_invest,
                         wound_kind: profile.wound_kind,
-                        source: AttackSource::Melee,
+                        // NpcMelee bypasses qi gate (NPC qi_current=0.0 by default).
+                        source: AttackSource::NpcMelee,
                         debug_command: None,
                     });
                 }
@@ -1625,7 +1630,8 @@ fn sentinel_phase_action_system(
                                 _ => 30.0,
                             },
                             wound_kind: profile.wound_kind,
-                            source: AttackSource::Melee,
+                            // NpcMelee bypasses qi gate (NPC qi_current=0.0 by default).
+                            source: AttackSource::NpcMelee,
                             debug_command: None,
                         });
                     }

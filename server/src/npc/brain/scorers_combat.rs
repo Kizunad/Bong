@@ -438,6 +438,57 @@ mod tests {
         assert!((proximity_score(3.2) - 0.6).abs() < 1e-6);
     }
 
+    /// Regression test for bug npc-flee-blocked.
+    ///
+    /// At melee engagement distance (~3.2 blocks) BOTH PlayerProximityScorer
+    /// and ChaseTargetScorer clear the FirstToScore threshold (0.05). Because
+    /// FirstToScore picks the **first** scorer in the chain that clears the
+    /// threshold, PlayerProximityScorer MUST be registered before
+    /// ChaseTargetScorer in rogue_npc_thinker() and
+    /// scattered_cultivator_thinker() — otherwise chase fires and flee is
+    /// never evaluated.
+    ///
+    /// This test encodes that invariant at the math level so any constant
+    /// change that breaks the ordering assumption will fail loudly here.
+    #[test]
+    fn flee_scorer_takes_priority_over_chase_at_close_range_ordering_invariant() {
+        use crate::npc::brain::DEFAULT_FLEE_THRESHOLD;
+
+        let profile = NpcMeleeProfile::fist();
+        // 3.2 blocks is the canonical melee flee trigger distance (proximity_score ≈ 0.6).
+        let close_distance = 3.2_f32;
+
+        let flee_raw = proximity_score(close_distance);
+        let flee_final = score_for_flee_threshold(flee_raw, DEFAULT_FLEE_THRESHOLD);
+        let chase_at_close = chase_score(close_distance, &profile);
+
+        // Flee scorer activates (score == 1.0, the discrete on/off output).
+        assert_eq!(
+            flee_final, 1.0,
+            "PlayerProximityScorer should return 1.0 at {close_distance} blocks \
+             (raw proximity={flee_raw:.4}, threshold={DEFAULT_FLEE_THRESHOLD})"
+        );
+
+        // Chase scorer ALSO activates at the same distance — this is the conflict zone
+        // that makes ordering mandatory. If this assertion ever fails (chase no longer
+        // triggers at close range), the ordering constraint becomes irrelevant, but the
+        // code may also need re-evaluation of flee semantics.
+        assert!(
+            chase_at_close > 0.05,
+            "ChaseTargetScorer must also activate at {close_distance} blocks \
+             (got {chase_at_close:.4}); if not, the FirstToScore ordering no longer \
+             matters and this test should be revisited"
+        );
+
+        // Verify the boundary: just outside flee threshold should not trigger flee.
+        let just_outside = proximity_score(3.3);
+        assert_eq!(
+            score_for_flee_threshold(just_outside, DEFAULT_FLEE_THRESHOLD),
+            0.0,
+            "3.3 blocks (proximity={just_outside:.4}) should NOT trigger flee"
+        );
+    }
+
     #[test]
     fn chase_score_within_range() {
         let profile = NpcMeleeProfile::fist();
