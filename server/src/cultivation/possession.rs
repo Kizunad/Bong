@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use valence::prelude::{
-    bevy_ecs, Component, DVec3, Despawned, Entity, EntityLayerId, EventReader, EventWriter,
-    Events, ParamSet, Position, Query, Res, ResMut, Resource, Username, VisibleChunkLayer,
+    bevy_ecs, Component, DVec3, Despawned, Entity, EntityLayerId, EventReader, EventWriter, Events,
+    ParamSet, Position, Query, Res, ResMut, Resource, Username, VisibleChunkLayer,
     VisibleEntityLayers, Without,
 };
 
@@ -20,8 +20,8 @@ use crate::npc::spawn::NpcMarker;
 use crate::player::state::{
     position_array_from_dvec3, save_player_slow_slice, PlayerState, PlayerStatePersistence,
 };
-use crate::schema::death_lifecycle::DuoSheEventV1;
 use crate::qi_physics::QiTransfer;
+use crate::schema::death_lifecycle::DuoSheEventV1;
 use crate::world::dimension::{CurrentDimension, DimensionKind, DimensionLayers};
 use crate::world::zone::ZoneRegistry;
 
@@ -753,8 +753,7 @@ mod tests {
             .cloned()
             .collect();
         let clip_transfer = transfers.iter().find(|t| {
-            t.reason == QiTransferReason::ReleaseToZone
-                && (t.amount - expected_excess).abs() < 1e-9
+            t.reason == QiTransferReason::ReleaseToZone && (t.amount - expected_excess).abs() < 1e-9
         });
         assert!(
             clip_transfer.is_some(),
