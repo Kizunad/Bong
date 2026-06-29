@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use valence::prelude::{
     bevy_ecs, Component, DVec3, Despawned, Entity, EntityLayerId, EventReader, EventWriter,
-    ParamSet, Position, Query, Res, ResMut, Resource, Username, VisibleChunkLayer,
+    Events, ParamSet, Position, Query, Res, ResMut, Resource, Username, VisibleChunkLayer,
     VisibleEntityLayers, Without,
 };
 
@@ -21,7 +21,9 @@ use crate::player::state::{
     position_array_from_dvec3, save_player_slow_slice, PlayerState, PlayerStatePersistence,
 };
 use crate::schema::death_lifecycle::DuoSheEventV1;
+use crate::qi_physics::QiTransfer;
 use crate::world::dimension::{CurrentDimension, DimensionKind, DimensionLayers};
+use crate::world::zone::ZoneRegistry;
 
 pub const DUO_SHE_KARMA_DELTA: f64 = 100.0;
 pub const DUO_SHE_QI_MAX_FACTOR: f64 = 0.80;
@@ -137,6 +139,8 @@ pub fn process_duo_she_requests(
         Query<DuoSheTargetWriteItem<'_>, Without<Despawned>>,
     )>,
     mut commands: valence::prelude::Commands,
+    mut zones: Option<ResMut<ZoneRegistry>>,
+    mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
 ) {
     for request in requests.read() {
         if !cooldowns.is_ready(request.host, clock.tick) {
@@ -188,8 +192,25 @@ pub fn process_duo_she_requests(
             let host_prev_age = host_lifespan.years_lived;
 
             host_lifespan.years_lived = target_age.min(host_lifespan.cap_by_realm as f64);
-            host_cultivation.qi_max = (host_cultivation.qi_max * DUO_SHE_QI_MAX_FACTOR).max(1.0);
-            host_cultivation.qi_current = host_cultivation.qi_current.min(host_cultivation.qi_max);
+            let new_qi_max = (host_cultivation.qi_max * DUO_SHE_QI_MAX_FACTOR).max(1.0);
+            let excess = (host_cultivation.qi_current - new_qi_max).max(0.0);
+            host_cultivation.qi_max = new_qi_max;
+            host_cultivation.qi_current = host_cultivation.qi_current.min(new_qi_max);
+            // Qi conservation: the clipped excess must be returned to the zone rather than
+            // vanishing from the ledger. Pattern mirrors revive_penalty and other qi-reducing
+            // mechanics (ghost, hazard, dugu, skull_fiend, botany).
+            if excess > f64::EPSILON {
+                crate::cultivation::death_hooks::release_qi_amount_to_zone(
+                    request.host,
+                    excess,
+                    host_position.as_deref(),
+                    host_current_dimension.as_deref(),
+                    host_life_record.as_deref(),
+                    zones.as_deref_mut(),
+                    qi_transfers.as_deref_mut(),
+                    "duo_she_qi_max_clip",
+                );
+            }
             if let Some(mut host_karma) = host_karma {
                 host_karma.weight += DUO_SHE_KARMA_DELTA;
             }
@@ -636,5 +657,197 @@ mod tests {
         let target_entity = app.world().entity(target);
         assert!(target_entity.get::<PossessedVictim>().is_some());
         assert!(target_entity.get::<Despawned>().is_some());
+    }
+
+    /// 守恒修复验证（happy path）：
+    /// 夺舍者 qi_current > new_qi_max 时，被截断的超额部分必须回灌到所在 zone，
+    /// 不能从全局守恒账本中蒸发。
+    #[test]
+    fn duo_she_qi_max_clip_releases_excess_to_zone() {
+        use crate::qi_physics::ledger::QiTransferReason;
+        use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
+
+        let mut app = App::new();
+        app.insert_resource(CultivationClock { tick: 1 });
+        app.insert_resource(DuoSheCooldowns::default());
+        // Set up zone registry. Zero out spawn zone spirit_qi so the entire excess
+        // is absorbed (no split into overflow) — locks the full-credit happy path.
+        app.insert_resource(ZoneRegistry::fallback());
+        if let Some(zone) = app
+            .world_mut()
+            .resource_mut::<ZoneRegistry>()
+            .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
+        {
+            zone.spirit_qi = 0.0;
+        }
+        app.add_event::<DuoSheRequestEvent>();
+        app.add_event::<DuoSheEventEmitted>();
+        app.add_event::<DuoSheWarningEvent>();
+        app.add_event::<QiTransfer>();
+        app.add_systems(Update, process_duo_she_requests);
+
+        let qi_current = 100.0_f64;
+        let qi_max = 100.0_f64;
+        // Host entity: cultivation near qi_max, position inside spawn zone,
+        // CurrentDimension required for find_zone to locate the zone.
+        let host = app
+            .world_mut()
+            .spawn((
+                Cultivation {
+                    qi_current,
+                    qi_max,
+                    ..Cultivation::default()
+                },
+                Karma::default(),
+                PlayerState::default(),
+                LifespanComponent::new(120),
+                LifeRecord::new("offline:Host"),
+                Lifecycle::default(),
+                Position::new([0.0, 64.0, 0.0]),
+                CurrentDimension::default(),
+            ))
+            .id();
+        // Target: mortal player (PlayerState, no Cultivation) — eligible for DuoShe.
+        let _target = app
+            .world_mut()
+            .spawn((
+                PlayerState::default(),
+                LifespanComponent::new(80),
+                LifeRecord::new("offline:Target"),
+                Lifecycle::default(),
+            ))
+            .id();
+        app.world_mut()
+            .resource_mut::<Events<DuoSheRequestEvent>>()
+            .send(DuoSheRequestEvent {
+                host,
+                target_id: "offline:Target".to_string(),
+            });
+
+        app.update();
+
+        // Compute expected values using the same formula as production code.
+        let new_qi_max = (qi_max * DUO_SHE_QI_MAX_FACTOR).max(1.0);
+        let expected_excess = qi_current - new_qi_max;
+        let expected_qi_current = new_qi_max;
+
+        let host_entity = app.world().entity(host);
+        let cultivation = host_entity.get::<Cultivation>().unwrap();
+        assert!(
+            (cultivation.qi_max - new_qi_max).abs() < 1e-9,
+            "qi_max should be reduced to DUO_SHE_QI_MAX_FACTOR×old={new_qi_max:.3}; got {:.3}",
+            cultivation.qi_max
+        );
+        assert!(
+            (cultivation.qi_current - expected_qi_current).abs() < 1e-9,
+            "qi_current should be clipped to {expected_qi_current:.3}; got {:.3}",
+            cultivation.qi_current
+        );
+
+        // Conservation assertion: the excess qi must be returned to the zone as a
+        // ReleaseToZone transfer, not silently discarded from the ledger.
+        let transfers: Vec<_> = app
+            .world()
+            .resource::<Events<QiTransfer>>()
+            .iter_current_update_events()
+            .cloned()
+            .collect();
+        let clip_transfer = transfers.iter().find(|t| {
+            t.reason == QiTransferReason::ReleaseToZone
+                && (t.amount - expected_excess).abs() < 1e-9
+        });
+        assert!(
+            clip_transfer.is_some(),
+            "守恒红线：DuoShe qi_max clip 截断 {expected_excess:.3} 真元，\
+             必须 emit QiTransfer(reason=ReleaseToZone, amount={expected_excess:.3})；\
+             实际 transfers={transfers:?}"
+        );
+        let t = clip_transfer.unwrap();
+        assert_eq!(
+            t.to,
+            crate::qi_physics::QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME.to_string()),
+            "截断的超额真元应回灌到宿主所在 zone（spawn）；实际 to={:?}",
+            t.to
+        );
+    }
+
+    /// 边界 case：qi_current 已低于新 qi_max，无超额，不应 emit 任何 duo_she_qi_max_clip 转账。
+    /// 不创造真元（over-credit 防护）。
+    #[test]
+    fn duo_she_qi_max_clip_no_excess_no_transfer() {
+        use crate::world::zone::ZoneRegistry;
+
+        let mut app = App::new();
+        app.insert_resource(CultivationClock { tick: 2 });
+        app.insert_resource(DuoSheCooldowns::default());
+        app.insert_resource(ZoneRegistry::fallback());
+        app.add_event::<DuoSheRequestEvent>();
+        app.add_event::<DuoSheEventEmitted>();
+        app.add_event::<DuoSheWarningEvent>();
+        app.add_event::<QiTransfer>();
+        app.add_systems(Update, process_duo_she_requests);
+
+        // qi_current=50, qi_max=100 → new_qi_max=80 → excess = max(50-80, 0) = 0
+        let host = app
+            .world_mut()
+            .spawn((
+                Cultivation {
+                    qi_current: 50.0,
+                    qi_max: 100.0,
+                    ..Cultivation::default()
+                },
+                Karma::default(),
+                PlayerState::default(),
+                LifespanComponent::new(120),
+                LifeRecord::new("offline:Host2"),
+                Lifecycle::default(),
+                Position::new([0.0, 64.0, 0.0]),
+                CurrentDimension::default(),
+            ))
+            .id();
+        let _target = app
+            .world_mut()
+            .spawn((
+                PlayerState::default(),
+                LifespanComponent::new(80),
+                LifeRecord::new("offline:Target2"),
+                Lifecycle::default(),
+            ))
+            .id();
+        app.world_mut()
+            .resource_mut::<Events<DuoSheRequestEvent>>()
+            .send(DuoSheRequestEvent {
+                host,
+                target_id: "offline:Target2".to_string(),
+            });
+
+        app.update();
+
+        let host_entity = app.world().entity(host);
+        let cultivation = host_entity.get::<Cultivation>().unwrap();
+        // qi_current stays 50 (below new_qi_max of 80), qi_max becomes 80.
+        let new_qi_max = (100.0_f64 * DUO_SHE_QI_MAX_FACTOR).max(1.0);
+        assert!(
+            (cultivation.qi_max - new_qi_max).abs() < 1e-9,
+            "qi_max should be {new_qi_max:.3}; got {:.3}",
+            cultivation.qi_max
+        );
+        assert!(
+            (cultivation.qi_current - 50.0).abs() < 1e-9,
+            "qi_current below new_qi_max should remain unchanged at 50.0; got {:.3}",
+            cultivation.qi_current
+        );
+
+        // No excess → no ReleaseToZone transfer should be emitted for the clip path.
+        let transfers: Vec<_> = app
+            .world()
+            .resource::<Events<QiTransfer>>()
+            .iter_current_update_events()
+            .cloned()
+            .collect();
+        assert!(
+            transfers.is_empty(),
+            "无超额时不应 emit 任何 QiTransfer（不凭空创造转账）；实际 transfers={transfers:?}"
+        );
     }
 }
