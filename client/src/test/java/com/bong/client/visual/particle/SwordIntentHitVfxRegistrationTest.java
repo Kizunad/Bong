@@ -1,8 +1,13 @@
 package com.bong.client.visual.particle;
 
+import net.minecraft.client.particle.SpriteProvider;
+import net.minecraft.client.texture.Sprite;
 import net.minecraft.util.Identifier;
+import net.minecraft.util.math.random.Random;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+
+import java.lang.reflect.Method;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -84,5 +89,96 @@ class SwordIntentHitVfxRegistrationTest {
             "SWORD_INTENT_HIT 不应出现在 AnqiVfxPlayer.EVENT_IDS 中（防重复注册覆盖）");
         assertFalse(DuguNeedleVfxPlayer.EVENT_IDS.contains(intentHit),
             "SWORD_INTENT_HIT 不应出现在 DuguNeedleVfxPlayer.EVENT_IDS 中（防重复注册覆盖）");
+    }
+
+    // ─── 外观契约（fallback rgb/count/duration + sprite provider 路由） ────────
+    // 这些值是 server sword_intent_tracking_system emit payload 的 fallback 镜像；
+    // 真机粒子长相靠它们锁定。私有 static 方法经反射读取（无 getter，同 package 但 private）。
+
+    private static int invokeIntFallback(String methodName, Identifier eventId) throws Exception {
+        Method m = SwordPathVfxPlayer.class.getDeclaredMethod(methodName, Identifier.class);
+        m.setAccessible(true);
+        return (Integer) m.invoke(null, eventId); // auto-unbox → int
+    }
+
+    private static SpriteProvider invokeSpriteProvider(Identifier eventId) throws Exception {
+        Method m = SwordPathVfxPlayer.class.getDeclaredMethod("spriteProviderFor", Identifier.class);
+        m.setAccessible(true);
+        return (SpriteProvider) m.invoke(null, eventId);
+    }
+
+    @Test
+    void swordIntentHitFallbackRgbIsPaleGreenWhite() throws Exception {
+        int rgb = invokeIntFallback("fallbackRgb", SwordPathVfxPlayer.SWORD_INTENT_HIT);
+        assertEquals(0xE0E8D0, rgb,
+            "SWORD_INTENT_HIT fallbackRgb 必须为 0xE0E8D0（淡绿白，飞剑命中灵气余光，"
+                + "与 server sword_intent_tracking_system emit 的 color #E0E8D0 一致）；"
+                + "实际 0x" + Integer.toHexString(rgb).toUpperCase());
+    }
+
+    @Test
+    void swordIntentHitFallbackCountIsEight() throws Exception {
+        int count = invokeIntFallback("fallbackCount", SwordPathVfxPlayer.SWORD_INTENT_HIT);
+        assertEquals(8, count,
+            "SWORD_INTENT_HIT fallbackCount 必须为 8（契约锁定值，与 server emit count=8 一致，"
+                + "命中那帧迸 8 粒飞剑碎光）；实际 " + count);
+    }
+
+    @Test
+    void swordIntentHitFallbackDurationIsSixteen() throws Exception {
+        int duration = invokeIntFallback("fallbackDuration", SwordPathVfxPlayer.SWORD_INTENT_HIT);
+        assertEquals(16, duration,
+            "SWORD_INTENT_HIT fallbackDuration 必须为 16t（0.8s 短促命中闪光，"
+                + "与 server emit duration_ticks=16 一致）；实际 " + duration);
+    }
+
+    @Test
+    void swordIntentHitRoutesToFlyingSwordTrailSpriteProvider() throws Exception {
+        // spriteProviderFor 返回 BongParticles.flyingSwordTrailSprites（headless 下该 static volatile
+        // 为 null）。设两枚 sentinel 区分"飞剑轨迹"分支 vs 默认 swordQiTrail 分支，
+        // 锁住 SWORD_INTENT_HIT 与 SWORD_MANIFEST_* 同走飞剑轨迹、不落默认分支。
+        SpriteProvider flyingSentinel = new SpriteProvider() {
+            @Override
+            public Sprite getSprite(int age, int maxAge) {
+                return null;
+            }
+
+            @Override
+            public Sprite getSprite(Random random) {
+                return null;
+            }
+        };
+        SpriteProvider defaultSentinel = new SpriteProvider() {
+            @Override
+            public Sprite getSprite(int age, int maxAge) {
+                return null;
+            }
+
+            @Override
+            public Sprite getSprite(Random random) {
+                return null;
+            }
+        };
+        SpriteProvider savedFlying = BongParticles.flyingSwordTrailSprites;
+        SpriteProvider savedDefault = BongParticles.swordQiTrailSprites;
+        try {
+            BongParticles.flyingSwordTrailSprites = flyingSentinel;
+            BongParticles.swordQiTrailSprites = defaultSentinel;
+
+            SpriteProvider intentProvider =
+                invokeSpriteProvider(SwordPathVfxPlayer.SWORD_INTENT_HIT);
+            assertSame(flyingSentinel, intentProvider,
+                "SWORD_INTENT_HIT 必须路由到 BongParticles.flyingSwordTrailSprites（飞剑轨迹 sprite），"
+                    + "与 SWORD_MANIFEST_SUMMON/STRIKE 同一分支；实际取到的是默认/其他 provider");
+            assertSame(flyingSentinel,
+                invokeSpriteProvider(SwordPathVfxPlayer.SWORD_MANIFEST_SUMMON),
+                "SWORD_MANIFEST_SUMMON 也应走 flyingSwordTrailSprites（确认 SWORD_INTENT_HIT 复用同分支，"
+                    + "非独立贴图）");
+            assertNotSame(defaultSentinel, intentProvider,
+                "SWORD_INTENT_HIT 不应落到默认 swordQiTrailSprites 分支（否则飞剑命中粒子用错贴图）");
+        } finally {
+            BongParticles.flyingSwordTrailSprites = savedFlying;
+            BongParticles.swordQiTrailSprites = savedDefault;
+        }
     }
 }

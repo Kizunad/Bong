@@ -3,10 +3,12 @@
 //! 铸剑古殿（giant_sword_sea zone）定点守关 BOSS，首杀后 72h 复活，此后 1h 间隔。
 //! 刷新门槛：锚点 48 格内有玩家（防止无人空世界刷）。
 
+use valence::client::ClientMarker;
 use valence::prelude::{
-    bevy_ecs, App, Client, Commands, DVec3, Position, Query, Res, ResMut, Resource, Update, With,
+    bevy_ecs, App, Commands, DVec3, Position, Query, Res, ResMut, Resource, Update, With,
 };
 
+use crate::combat::components::{Lifecycle, LifecycleState};
 use crate::npc::heiwushi::{spawn_heiwushi_at, HeiwushiMarker};
 use crate::npc::movement::GameTick;
 use crate::world::dimension::DimensionLayers;
@@ -40,8 +42,8 @@ pub fn register(app: &mut App) {
 pub fn heiwushi_natural_spawn_system(
     tick: Option<Res<GameTick>>,
     mut state: ResMut<HeiwushiSpawnState>,
-    alive_bosses: Query<(), With<HeiwushiMarker>>,
-    players: Query<&Position, With<Client>>,
+    alive_bosses: Query<&Lifecycle, With<HeiwushiMarker>>,
+    players: Query<&Position, With<ClientMarker>>,
     zone_registry: Option<Res<ZoneRegistry>>,
     dimension_layers: Option<Res<DimensionLayers>>,
     mut commands: Commands,
@@ -55,7 +57,12 @@ pub fn heiwushi_natural_spawn_system(
     state.last_check_tick = now;
 
     // 1. 若已存在活体 → 确认存活，return。
-    let boss_count = alive_bosses.iter().count();
+    //    按 LifecycleState 过滤：Death action 只把 boss 置 Terminated 不移除 marker，
+    //    故 Terminated（尸体停留待 cleanup）不能算活体，否则 last_death_tick 永不落账。
+    let boss_count = alive_bosses
+        .iter()
+        .filter(|lc| lc.state != LifecycleState::Terminated)
+        .count();
     if boss_count > 0 {
         state.alive = true;
         return;
@@ -238,5 +245,144 @@ mod tests {
         let state = app.world().resource::<HeiwushiSpawnState>();
         assert_eq!(state.last_death_tick, Some(500), "死亡观测应记录当前 tick");
         assert_eq!(state.kills, 1, "死亡后 kills 应增 1");
+    }
+
+    /// `spawn_heiwushi_at` 契约：生成的 boss 必须带 `HeiwushiMarker` 且 `Lifecycle.state == Alive`。
+    ///
+    /// 这是 `heiwushi_natural_spawn_system` 活体判定的前置：生产系统用
+    /// `Query<&Lifecycle, With<HeiwushiMarker>>` 过滤 `LifecycleState::Terminated` 来数活体；
+    /// 若新 spawn 的 boss 不是 Alive，首帧就会被当成"刚死"，`last_death_tick` 立刻误落账、
+    /// 刷新冷却逻辑全乱。此处直接锁住 spawn 助手的输出，避免 Client 门控不可单测的盲区。
+    #[test]
+    fn spawn_heiwushi_at_produces_alive_marked_boss_at_anchor() {
+        let mut app = App::new();
+        let layer = app.world_mut().spawn_empty().id();
+        let mut commands = app.world_mut().commands();
+        let boss = spawn_heiwushi_at(
+            &mut commands,
+            layer,
+            HEIWUSHI_HOME_ZONE,
+            DVec3::new(4200.0, 85.0, 1200.0),
+            DVec3::new(4200.0, 85.0, 1200.0),
+            999,
+        );
+        app.world_mut().flush();
+
+        assert!(
+            app.world().get::<HeiwushiMarker>(boss).is_some(),
+            "spawn_heiwushi_at 生成的实体必须带 HeiwushiMarker（生产刷新系统按此过滤活体）"
+        );
+        // 生产 heiwushi_natural_spawn_system 用 Query<&Lifecycle, With<HeiwushiMarker>> 过滤
+        // LifecycleState::Terminated 来数活体；新生 boss 若非 Alive 会首帧被误判"刚死"，
+        // last_death_tick 立刻误落账、冷却逻辑全乱。锁住 spawn 助手输出 Alive。
+        let lifecycle = app
+            .world()
+            .get::<Lifecycle>(boss)
+            .expect("spawn_heiwushi_at 必须挂 Lifecycle（活体判定依赖它）");
+        assert_eq!(
+            lifecycle.state,
+            LifecycleState::Alive,
+            "新 spawn 的黑武士 Lifecycle.state 必须为 Alive，实际 {:?}",
+            lifecycle.state
+        );
+        let pos = app
+            .world()
+            .get::<Position>(boss)
+            .expect("spawn_heiwushi_at 必须挂 Position")
+            .get();
+        assert!(
+            (pos.x - 4200.0).abs() < 1e-6
+                && (pos.y - 85.0).abs() < 1e-6
+                && (pos.z - 1200.0).abs() < 1e-6,
+            "boss Position 应落在传入 spawn anchor (4200,85,1200)，实际 ({},{},{})",
+            pos.x,
+            pos.y,
+            pos.z
+        );
+    }
+
+    /// 在 app 里塞一个 overworld layer + DimensionLayers 资源，返回 layer entity。
+    fn install_layers(app: &mut App) {
+        let overworld = app.world_mut().spawn_empty().id();
+        let tsy = app.world_mut().spawn_empty().id();
+        app.insert_resource(DimensionLayers { overworld, tsy });
+    }
+
+    /// 在 fallback anchor (4200,85,1200) 的 48 格内塞一个假玩家（ClientMarker，可单测）。
+    fn install_player_near_anchor(app: &mut App) {
+        app.world_mut()
+            .spawn((ClientMarker, Position::new([4200.0, 85.0, 1200.0])));
+    }
+
+    /// 数当前活体黑武士（带 HeiwushiMarker）。
+    fn count_bosses(app: &mut App) -> usize {
+        let mut q = app.world_mut().query_filtered::<(), With<HeiwushiMarker>>();
+        q.iter(app.world()).count()
+    }
+
+    #[test]
+    fn spawns_boss_when_cooldown_elapsed_and_player_nearby() {
+        // 冷却已过 + 玩家在锚点 48 格内 + DimensionLayers 就位 → 应刷新 boss 且 alive=true。
+        let mut app = make_app();
+        install_layers(&mut app);
+        install_player_near_anchor(&mut app);
+        // 首杀冷却 72h，当前远超 → 冷却已过
+        let tick: u32 =
+            (HEIWUSHI_FIRST_KILL_RESPAWN_TICKS + HEIWUSHI_SPAWN_CHECK_INTERVAL_TICKS) as u32;
+        app.insert_resource(GameTick(tick));
+        {
+            let mut state = app.world_mut().resource_mut::<HeiwushiSpawnState>();
+            state.last_death_tick = Some(0);
+            state.kills = 1;
+            state.alive = false;
+        }
+        app.update();
+        assert_eq!(
+            count_bosses(&mut app),
+            1,
+            "冷却过+玩家在场+layer 就位时应刷出恰好 1 只黑武士"
+        );
+        assert!(
+            app.world().resource::<HeiwushiSpawnState>().alive,
+            "成功刷新后 state.alive 应为 true"
+        );
+    }
+
+    #[test]
+    fn spawns_boss_exactly_at_72h_first_kill_boundary() {
+        // 首杀冷却边界：now == 72h（now - last_death == cooldown，不 < cooldown）→ 应刷。
+        let mut app = make_app();
+        install_layers(&mut app);
+        install_player_near_anchor(&mut app);
+        app.insert_resource(GameTick(HEIWUSHI_FIRST_KILL_RESPAWN_TICKS as u32));
+        {
+            let mut state = app.world_mut().resource_mut::<HeiwushiSpawnState>();
+            state.last_death_tick = Some(0);
+            state.kills = 1;
+            state.alive = false;
+        }
+        app.update();
+        assert_eq!(
+            count_bosses(&mut app),
+            1,
+            "刚好到首杀 72h 边界（now-last_death==cooldown）应刷新，不应被 < 判定挡住"
+        );
+    }
+
+    #[test]
+    fn spawns_boss_exactly_at_1h_after_second_kill_boundary() {
+        // 二次后冷却边界：kills>=2 用 1h 冷却，now == 1h 边界 → 应刷。
+        let mut app = make_app();
+        install_layers(&mut app);
+        install_player_near_anchor(&mut app);
+        app.insert_resource(GameTick(HEIWUSHI_RESPAWN_TICKS as u32));
+        {
+            let mut state = app.world_mut().resource_mut::<HeiwushiSpawnState>();
+            state.last_death_tick = Some(0);
+            state.kills = 2;
+            state.alive = false;
+        }
+        app.update();
+        assert_eq!(count_bosses(&mut app), 1, "kills>=2 刚好到 1h 边界应刷新");
     }
 }

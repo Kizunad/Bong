@@ -306,8 +306,10 @@ fn cast_manifest(
     credit_skill_qi_to_zone(world, caster, MANIFEST.qi_cost, injected);
 
     // 化形完整版（plan-sword-path-complete §C）：spawn SwordIntentEntity 追踪实体，
-    // 5s 内追击目标 5 次（每次 damage = MANIFEST_ATTACK_MULT × base 注：走 qi_invest 路径）。
-    // 取 caster 当前位置为实体 origin；damage_per_hit 以 qi_invest 语义传递。
+    // 5s 内追击目标 5 次，每次发 AttackIntent。
+    // qi_invest = MANIFEST_ATTACK_MULT，与 condense_edge/qi_slash 同族（伤害倍率走 qi_invest 字段）；
+    // sword 源在 resolver 免扣 qi，实际单次伤害由 resolver 以 attacker attack_power × 倍率缩放，
+    // 不在此处手乘 base（否则与同族招式不一致）。
     let origin = world
         .get::<Position>(caster)
         .map(|p| p.get())
@@ -605,8 +607,9 @@ pub fn heaven_gate_phase_system(
             ));
         }
 
-        // ── 阶段 2: AoE 结算（elapsed == CRITICAL_END = 120，仅一次）──────────
-        if elapsed == HEAVEN_GATE_CRITICAL_END && !channeling.aoe_done {
+        // ── 阶段 2: AoE 结算（elapsed >= CRITICAL_END = 120，aoe_done guard 保证仅一次）──
+        // 用 >= 而非 ==：若服务器跳过第 120 帧，仍在首个 >=120 帧补发 AoE，不被跳帧吞掉。
+        if elapsed >= HEAVEN_GATE_CRITICAL_END && !channeling.aoe_done {
             let staging_buffer = channeling.qi_max + channeling.stored_qi;
             let radius_sq = super::techniques::effects::HEAVEN_GATE_RADIUS.powi(2);
             let mut emitted_targets = std::collections::HashSet::new();
@@ -660,7 +663,9 @@ pub fn heaven_gate_phase_system(
 
             // Caster 修为 / 灵剑 aftermath（与 heaven_gate_cast_system 完全一致的账目）
             if let Ok((mut cultivation, bond_opt)) = players.get_mut(caster) {
-                cultivation.qi_max = (cultivation.qi_max
+                // 用 cast 时快照 channeling.qi_max（非 aftermath 时刻的 live 值），
+                // 与 ledger 释放的 staging_buffer 快照一致；蓄力期间若有 buff 改 qi_max 不致账目漂移。
+                cultivation.qi_max = (channeling.qi_max
                     * super::techniques::effects::HEAVEN_GATE_QI_MAX_RETAIN)
                     .max(0.0);
                 cultivation.qi_current = 0.0;
@@ -1604,7 +1609,10 @@ mod tests {
         let target = app.world_mut().spawn(Position::default()).id();
 
         let result = cast_manifest(app.world_mut(), caster, 0, Some(target));
-        assert!(matches!(result, CastResult::Started { .. }));
+        assert!(
+            matches!(result, CastResult::Started { .. }),
+            "化形 cast 应返回 Started（带 bond + 目标），实际 {result:?}"
+        );
 
         // bond_strength 应从 0.8 扣 0.1 → 0.7
         let bond = app.world().get::<SwordBondComponent>(caster).unwrap();
@@ -2008,7 +2016,10 @@ mod tests {
         let (mut app, caster) = setup_phase_app();
         // CombatClock.tick = 100；cast → start_tick = 100 → elapsed = 100-100 = 0
         let result = cast_heaven_gate(app.world_mut(), caster, 0, None);
-        assert!(matches!(result, CastResult::Started { .. }));
+        assert!(
+            matches!(result, CastResult::Started { .. }),
+            "天门 cast 应返回 Started，实际 {result:?}"
+        );
         // tick 不动，直接跑系统
         app.update();
         let vfx = drain_vfx_ids(&app);
@@ -2023,7 +2034,10 @@ mod tests {
     fn phase_system_elapsed_60_emits_charge_1s_and_flash() {
         let (mut app, caster) = setup_phase_app();
         let result = cast_heaven_gate(app.world_mut(), caster, 0, None);
-        assert!(matches!(result, CastResult::Started { .. }));
+        assert!(
+            matches!(result, CastResult::Started { .. }),
+            "天门 cast 应返回 Started，实际 {result:?}"
+        );
         // start_tick=100，推进到 160 → elapsed=60
         app.world_mut().resource_mut::<CombatClock>().tick = 160;
         app.update();
@@ -2046,7 +2060,10 @@ mod tests {
         let target = app.world_mut().spawn(Position::new([5.0, 0.0, 0.0])).id();
 
         let result = cast_heaven_gate(app.world_mut(), caster, 0, None);
-        assert!(matches!(result, CastResult::Started { .. }));
+        assert!(
+            matches!(result, CastResult::Started { .. }),
+            "天门 cast 应返回 Started，实际 {result:?}"
+        );
         // start_tick=100，推进到 220 → elapsed=120
         app.world_mut().resource_mut::<CombatClock>().tick = 220;
         app.update();
@@ -2078,7 +2095,10 @@ mod tests {
         app.world_mut().spawn(Position::new([5.0, 0.0, 0.0]));
 
         let result = cast_heaven_gate(app.world_mut(), caster, 0, None);
-        assert!(matches!(result, CastResult::Started { .. }));
+        assert!(
+            matches!(result, CastResult::Started { .. }),
+            "天门 cast 应返回 Started，实际 {result:?}"
+        );
         // start_tick=100，固定在 220 → elapsed=120 两帧
         app.world_mut().resource_mut::<CombatClock>().tick = 220;
         app.update();
@@ -2106,7 +2126,10 @@ mod tests {
     fn phase_system_aftermath_removes_channeling_component() {
         let (mut app, caster) = setup_phase_app();
         let result = cast_heaven_gate(app.world_mut(), caster, 0, None);
-        assert!(matches!(result, CastResult::Started { .. }));
+        assert!(
+            matches!(result, CastResult::Started { .. }),
+            "天门 cast 应返回 Started，实际 {result:?}"
+        );
         assert!(
             app.world().get::<HeavenGateChanneling>(caster).is_some(),
             "cast 后 caster 必须有 HeavenGateChanneling 组件"
@@ -2128,7 +2151,10 @@ mod tests {
     fn phase_system_clock_before_start_no_panic() {
         let (mut app, caster) = setup_phase_app();
         let result = cast_heaven_gate(app.world_mut(), caster, 0, None);
-        assert!(matches!(result, CastResult::Started { .. }));
+        assert!(
+            matches!(result, CastResult::Started { .. }),
+            "天门 cast 应返回 Started，实际 {result:?}"
+        );
         // start_tick=100，把时钟设为 50（比 start 早）→ saturating_sub = 0 → charge_0s 粒子
         app.world_mut().resource_mut::<CombatClock>().tick = 50;
         app.update(); // 不应 panic
@@ -2144,7 +2170,10 @@ mod tests {
         // 无 SwordBondComponent
         let target = app.world_mut().spawn(Position::default()).id();
         let result = cast_manifest(app.world_mut(), caster, 0, Some(target));
-        assert!(matches!(result, CastResult::Started { .. }));
+        assert!(
+            matches!(result, CastResult::Started { .. }),
+            "无 bond 化形 cast 应返回 Started，实际 {result:?}"
+        );
         let mut q = app.world_mut().query::<&SwordIntentEntity>();
         let count = q.iter(app.world()).count();
         assert_eq!(
@@ -2166,7 +2195,10 @@ mod tests {
                 grade: SwordGrade::Spirit,
             });
         let result = cast_manifest(app.world_mut(), caster, 0, None);
-        assert!(matches!(result, CastResult::Started { .. }));
+        assert!(
+            matches!(result, CastResult::Started { .. }),
+            "bond_strength=0 化形 cast 应返回 Started，实际 {result:?}"
+        );
         let bond = app.world().get::<SwordBondComponent>(caster).unwrap();
         assert!(
             bond.bond_strength >= 0.0,

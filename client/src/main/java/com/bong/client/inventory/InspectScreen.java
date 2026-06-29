@@ -685,8 +685,8 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             return List.of();
         }
         String gradeLine   = "§7品阶：§f" + state.gradeName();
-        String storedLine  = String.format("§7封存：§f%.0f%%", state.storedQiRatio() * 100f);
-        String bondLine    = String.format("§7人剑合一：§f%.0f%%", state.bondStrength() * 100f);
+        String storedLine  = String.format(java.util.Locale.ROOT, "§7封存：§f%.0f%%", state.storedQiRatio() * 100f);
+        String bondLine    = String.format(java.util.Locale.ROOT, "§7人剑合一：§f%.0f%%", state.bondStrength() * 100f);
         return List.of(gradeLine, storedLine, bondLine);
     }
 

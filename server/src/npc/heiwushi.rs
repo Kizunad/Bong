@@ -801,14 +801,18 @@ fn heiwushi_death_action_system(
             ActionState::Requested => *action_state = ActionState::Executing,
             ActionState::Executing => {
                 navigator.stop();
-                lifecycle.state = LifecycleState::Terminated;
-                vfx_events.send(HeiwushiActionVfxEvent {
-                    boss: *actor,
-                    kind: HeiwushiActionKind::Death,
-                    origin,
-                    direction: None,
-                    tick: now,
-                });
+                // 仅在首次转入 Terminated 时 emit Death AV——否则尸体停留期间
+                // Death scorer 反复选中本 action 会重复播死亡特效/音效。
+                if lifecycle.state != LifecycleState::Terminated {
+                    lifecycle.state = LifecycleState::Terminated;
+                    vfx_events.send(HeiwushiActionVfxEvent {
+                        boss: *actor,
+                        kind: HeiwushiActionKind::Death,
+                        origin,
+                        direction: None,
+                        tick: now,
+                    });
+                }
                 *action_state = ActionState::Success;
             }
             ActionState::Cancelled => *action_state = ActionState::Failure,
@@ -2140,6 +2144,15 @@ mod tests {
         let mut app = App::new();
         app.add_systems(Update, heiwushi_chase_action_system);
         let boss = spawn_boss(app.world_mut(), HEIWUSHI_HEALTH_MAX, 20.0);
+        // 真实带 Position 的玩家目标：boss 在 (0,64,0)，玩家在 (50,64,0)。
+        // 若 nearest_player 是没有 Position 的 PLACEHOLDER（spawn_boss 默认），chase
+        // 会 unwrap_or(boss_pos) 退化成"原地 goal"，!is_idle 仍然为真——测试就锁不住
+        // "真的朝玩家走"（CodeRabbit #784 指出的盲点）。这里用真实目标关掉这条退路。
+        let player = app.world_mut().spawn(Position::new([50.0, 64.0, 0.0])).id();
+        app.world_mut()
+            .get_mut::<NpcBlackboard>(boss)
+            .unwrap()
+            .nearest_player = Some(player);
         app.world_mut()
             .spawn((Actor(boss), ActionState::Requested, HeiwushiChaseAction));
         app.update();
@@ -2150,6 +2163,106 @@ mod tests {
         assert!(
             !nav.is_idle(),
             "chase action 执行后 navigator 应有 goal（非 idle）"
+        );
+        let goal = nav
+            .current_goal_for_test()
+            .expect("chase 执行后 navigator 必须有 goal");
+        // goal 必须指向玩家 (50,64,0)，证明真追玩家而非退化到 boss 原地。
+        assert!(
+            goal.destination.distance(DVec3::new(50.0, 64.0, 0.0)) < 1e-6,
+            "chase goal 应指向玩家坐标 (50,64,0)，实际 {:?}（若为 (0,64,0) 说明退化到 boss 原地 fallback）",
+            goal.destination
+        );
+        assert!(
+            goal.destination.distance(DVec3::new(0.0, 64.0, 0.0)) > 1.0,
+            "chase goal 不应等于 boss 原地 (0,64,0)（那是 target 无 Position 时的退化分支），实际 {:?}",
+            goal.destination
+        );
+    }
+
+    /// §C — SwordIntent action happy path：spawn 剑意追踪实体 + 写 sword_intent 冷却
+    /// + emit HeiwushiActionVfxEvent{kind: SwordIntent}。
+    #[test]
+    fn sword_intent_action_spawns_intent_writes_cooldown_and_emits_vfx() {
+        use crate::sword_path::sword_intent_entity::SwordIntentEntity;
+        let mut app = App::new();
+        app.add_event::<HeiwushiActionVfxEvent>();
+        app.insert_resource(GameTick(123));
+        app.add_systems(Update, heiwushi_sword_intent_action_system);
+        let boss = spawn_boss(app.world_mut(), HEIWUSHI_HEALTH_MAX, 10.0);
+        // 真实带 Position 的目标（10 格外），用于锁 SwordIntentEntity.target 与方向计算。
+        let player = app.world_mut().spawn(Position::new([10.0, 64.0, 0.0])).id();
+        app.world_mut()
+            .get_mut::<NpcBlackboard>(boss)
+            .unwrap()
+            .nearest_player = Some(player);
+        app.world_mut().spawn((
+            Actor(boss),
+            ActionState::Requested,
+            HeiwushiSwordIntentAction,
+        ));
+
+        app.update(); // Requested → Executing
+        app.update(); // Executing → spawn + cooldown + vfx；Commands flush
+
+        // ① spawn 恰好 1 个 SwordIntentEntity，owner = boss、target = 玩家
+        let mut q = app.world_mut().query::<&SwordIntentEntity>();
+        let intents: Vec<_> = q.iter(app.world()).collect();
+        assert_eq!(
+            intents.len(),
+            1,
+            "SwordIntent action 应 spawn 恰好 1 个剑意追踪实体，实际 {}",
+            intents.len()
+        );
+        assert_eq!(
+            intents[0].owner, boss,
+            "剑意实体 owner 应为发招 boss {boss:?}，实际 {:?}",
+            intents[0].owner
+        );
+        assert_eq!(
+            intents[0].target,
+            Some(player),
+            "剑意实体 target 应为 nearest_player {player:?}，实际 {:?}",
+            intents[0].target
+        );
+
+        // ② 写了 sword_intent 冷却（置为 base_sword_intent = SWORD_INTENT_BASE_CD）
+        let cd = app
+            .world()
+            .get::<HeiwushiState>(boss)
+            .unwrap()
+            .skill_cooldowns
+            .sword_intent;
+        assert_eq!(
+            cd, SWORD_INTENT_BASE_CD,
+            "发招后 sword_intent 冷却应置为 base_sword_intent={SWORD_INTENT_BASE_CD}，实际 {cd}"
+        );
+
+        // ③ emit 了 HeiwushiActionVfxEvent{kind: SwordIntent, boss, tick}
+        let vfx = app.world().resource::<Events<HeiwushiActionVfxEvent>>();
+        let mut reader = vfx.get_reader();
+        let events: Vec<_> = reader.read(vfx).collect();
+        assert_eq!(
+            events.len(),
+            1,
+            "SwordIntent action 应 emit 恰好 1 个 HeiwushiActionVfxEvent，实际 {}",
+            events.len()
+        );
+        assert_eq!(
+            events[0].kind,
+            HeiwushiActionKind::SwordIntent,
+            "VFX 事件 kind 应为 SwordIntent，实际 {:?}",
+            events[0].kind
+        );
+        assert_eq!(
+            events[0].boss, boss,
+            "VFX 事件 boss 应为发招 boss {boss:?}，实际 {:?}",
+            events[0].boss
+        );
+        assert_eq!(
+            events[0].tick, 123,
+            "VFX 事件 tick 应为当前 GameTick=123，实际 {}",
+            events[0].tick
         );
     }
 

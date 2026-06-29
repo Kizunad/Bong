@@ -181,7 +181,7 @@ pub fn sword_intent_tracking_system(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use valence::prelude::{App, Events, Update};
+    use valence::prelude::{App, Events, Resource, Update};
 
     fn make_app() -> App {
         let mut app = App::new();
@@ -324,11 +324,32 @@ mod tests {
             .world()
             .get::<SwordIntentEntity>(entity)
             .expect("生成后应有 SwordIntentEntity 组件");
-        assert_eq!(intent.lifetime_ticks, SWORD_INTENT_LIFETIME_TICKS);
-        assert_eq!(intent.hits_remaining, SWORD_INTENT_HIT_COUNT);
-        assert_eq!(intent.damage_per_hit, 15.0);
-        assert_eq!(intent.source, AttackSource::SwordPathManifest);
-        assert_eq!(intent.hit_cooldown, 0);
+        assert_eq!(
+            intent.lifetime_ticks, SWORD_INTENT_LIFETIME_TICKS,
+            "spawn 时 lifetime_ticks 应初始化为常数 {SWORD_INTENT_LIFETIME_TICKS}（5s@20tps），实际 {}",
+            intent.lifetime_ticks
+        );
+        assert_eq!(
+            intent.hits_remaining, SWORD_INTENT_HIT_COUNT,
+            "spawn 时 hits_remaining 应初始化为常数 {SWORD_INTENT_HIT_COUNT}，实际 {}",
+            intent.hits_remaining
+        );
+        assert_eq!(
+            intent.damage_per_hit, 15.0,
+            "damage_per_hit 应原样保留入参 15.0，实际 {}",
+            intent.damage_per_hit
+        );
+        assert_eq!(
+            intent.source,
+            AttackSource::SwordPathManifest,
+            "source 应原样保留入参 SwordPathManifest，实际 {:?}",
+            intent.source
+        );
+        assert_eq!(
+            intent.hit_cooldown, 0,
+            "新生成实体 hit_cooldown 应为 0（尚未命中），实际 {}",
+            intent.hit_cooldown
+        );
 
         let pos = app
             .world()
@@ -338,6 +359,103 @@ mod tests {
             (pos.get().x - 5.0).abs() < 1e-6,
             "Position.x 应为 5.0，实际 {}",
             pos.get().x
+        );
+    }
+
+    /// `spawn_sword_intent(&mut Commands, ...)` 是 boss 路径入口（system 内有 Commands 可用）。
+    /// 走 App + system + `app.update()` flush Commands，断言生成实体的全部外部可观察状态。
+    #[test]
+    fn spawn_sword_intent_via_commands_creates_observable_entity() {
+        #[derive(Resource, Clone, Copy)]
+        struct SpawnArgs {
+            owner: Entity,
+            origin: DVec3,
+            target: Option<Entity>,
+            damage: f64,
+            source: AttackSource,
+        }
+
+        fn spawn_system(mut commands: Commands, args: Res<SpawnArgs>) {
+            spawn_sword_intent(
+                &mut commands,
+                args.owner,
+                args.origin,
+                args.target,
+                args.damage,
+                args.source,
+            );
+        }
+
+        let mut app = App::new();
+        // boss 路径会传真实 owner / target 实体（非 PLACEHOLDER）。
+        let owner = app.world_mut().spawn(Position::new([1.0, 64.0, 1.0])).id();
+        let target = app.world_mut().spawn(Position::new([9.0, 64.0, 3.0])).id();
+        app.insert_resource(SpawnArgs {
+            owner,
+            origin: DVec3::new(7.0, 70.0, 2.0),
+            target: Some(target),
+            damage: 12.5,
+            source: AttackSource::SwordPathManifest,
+        });
+        app.add_systems(Update, spawn_system);
+
+        app.update(); // flush Commands → 实体落地
+
+        let mut q = app.world_mut().query::<(&SwordIntentEntity, &Position)>();
+        let rows: Vec<_> = q.iter(app.world()).collect();
+        assert_eq!(
+            rows.len(),
+            1,
+            "spawn_sword_intent(Commands) 经 app.update() flush 后应生成恰好 1 个 SwordIntentEntity（boss 路径入口），实际 {}",
+            rows.len()
+        );
+        let (intent, pos) = rows[0];
+
+        assert_eq!(
+            intent.owner, owner,
+            "owner 应为传入的施法者实体 {owner:?}（boss 复用此入口），实际 {:?}",
+            intent.owner
+        );
+        assert_eq!(
+            intent.target,
+            Some(target),
+            "target 应原样保留传入目标 {target:?}，实际 {:?}",
+            intent.target
+        );
+        assert_eq!(
+            intent.source,
+            AttackSource::SwordPathManifest,
+            "source 应原样保留 SwordPathManifest，实际 {:?}",
+            intent.source
+        );
+        assert_eq!(
+            intent.lifetime_ticks, SWORD_INTENT_LIFETIME_TICKS,
+            "新生成实体 lifetime_ticks 应初始化为常数 {SWORD_INTENT_LIFETIME_TICKS}，实际 {}",
+            intent.lifetime_ticks
+        );
+        assert_eq!(
+            intent.hits_remaining, SWORD_INTENT_HIT_COUNT,
+            "新生成实体 hits_remaining 应初始化为常数 {SWORD_INTENT_HIT_COUNT}，实际 {}",
+            intent.hits_remaining
+        );
+        assert_eq!(
+            intent.hit_cooldown, 0,
+            "新生成实体 hit_cooldown 应为 0（尚未命中），实际 {}",
+            intent.hit_cooldown
+        );
+        assert!(
+            (intent.damage_per_hit - 12.5).abs() < 1e-9,
+            "damage_per_hit 应原样保留入参 12.5，实际 {}",
+            intent.damage_per_hit
+        );
+
+        let p = pos.get();
+        assert!(
+            (p.x - 7.0).abs() < 1e-9 && (p.y - 70.0).abs() < 1e-9 && (p.z - 2.0).abs() < 1e-9,
+            "Position 应为传入 origin (7,70,2)，实际 ({},{},{})",
+            p.x,
+            p.y,
+            p.z
         );
     }
 }

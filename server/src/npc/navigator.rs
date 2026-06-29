@@ -243,6 +243,13 @@ impl Navigator {
         self.consecutive_path_failures
     }
 
+    /// Test-only: read the current goal so brain-action tests can assert the
+    /// navigator was steered toward a *specific* destination (not just "not idle").
+    #[cfg(test)]
+    pub(crate) fn current_goal_for_test(&self) -> Option<NavigatorGoal> {
+        self.current_goal
+    }
+
     /// Override the pathfinding penalty for a given [`PathType`].
     /// Use negative values to make a type impassable.
     #[allow(dead_code)]
