@@ -480,9 +480,9 @@ pub fn heaven_gate_cast_system(
         // 上方 emit 的 SwordPathSkillCastEvent(HeavenGateRelease) 独立触发（见
         // network::vfx_animation_trigger / audio_trigger），逻辑上不走通用 shatter pipeline。
         let _shatter_events_unused = shatter_events.as_deref_mut(); // 保留 ResMut 借出以维持系统签名兼容性
-        // 守恒修复（#qi-sweep-heaven-gate-drain）：在归零前先快照 qi_current，
-        // 随后直写 zone.spirit_qi。QiTransfer 是 audit-only（无 EventReader），
-        // 不能代替 zone.spirit_qi 直写，见 sword_basics.rs:433 注释。
+                                                                    // 守恒修复（#qi-sweep-heaven-gate-drain）：在归零前先快照 qi_current，
+                                                                    // 随后直写 zone.spirit_qi。QiTransfer 是 audit-only（无 EventReader），
+                                                                    // 不能代替 zone.spirit_qi 直写，见 sword_basics.rs:433 注释。
         let qi_drained = if let Ok((mut cultivation, bond_opt)) = players.get_mut(event.caster) {
             let qi_drained = cultivation.qi_current;
             cultivation.qi_max = (cultivation.qi_max * effects::HEAVEN_GATE_QI_MAX_RETAIN).max(0.0);
@@ -2306,6 +2306,15 @@ mod tests {
         registry.find_zone_mut("spawn").unwrap().spirit_qi = 0.0;
         app.world_mut().insert_resource(registry);
 
+        // 坑 (c): staging_buffer = qi_max + stored_qi = 5000 + 0 = 5000；若 qi_current 也为 5000，
+        // 则两笔 ReleaseToZone amount 相同，filter 撞出 2 笔导致 assert_eq!(len, 1) 红。
+        // 令 qi_current = 3000 < qi_max=5000（天门无 qi_cost，cast 不扣真元），
+        // 使"qi_current 归还 zone"事件(amount=3000)与"staging_buffer 释放"事件(amount=5000)可区分。
+        app.world_mut()
+            .get_mut::<Cultivation>(caster)
+            .unwrap()
+            .qi_current = 3000.0;
+
         let qi_before = app.world().get::<Cultivation>(caster).unwrap().qi_current;
         let result = cast_heaven_gate(app.world_mut(), caster, 0, None);
         assert!(matches!(result, CastResult::Started { .. }));
@@ -2369,14 +2378,16 @@ mod tests {
         let qi_before = app.world().get::<Cultivation>(caster).unwrap().qi_current;
         let qi_max_before = app.world().get::<Cultivation>(caster).unwrap().qi_max;
 
-        // 手动 send HeavenGateCastEvent（模拟 legacy cast path）
+        // 手动 send HeavenGateCastEvent（模拟 legacy cast path）。
+        // 注：stored_qi 用 137.0（非零）使 staging_buffer = qi_max + 137.0 = 5137.0，
+        // 与 qi_current(5000.0) 区分，避免两笔 ReleaseToZone amount 碰撞导致 filter 撞出 2 笔。
         app.world_mut()
             .resource_mut::<Events<HeavenGateCastEvent>>()
             .send(HeavenGateCastEvent {
                 caster,
                 position: DVec3::ZERO,
                 qi_max: qi_max_before,
-                stored_qi: 0.0,
+                stored_qi: 137.0,
             });
 
         app.update();
@@ -2426,6 +2437,14 @@ mod tests {
     fn heaven_gate_aftermath_no_zone_registry_no_panic_audit_still_emitted() {
         let (mut app, caster) = setup_phase_app();
         // 故意不插入 ZoneRegistry。
+
+        // 坑 (c): staging_buffer = qi_max + stored_qi = 5000 + 0 = 5000；若 qi_current 也为 5000，
+        // 则两笔 ReleaseToZone amount 相同，filter 撞出 2 笔。
+        // 令 qi_current = 3000，使"qi_current 归还"事件(amount=3000)与"staging_buffer"事件(amount=5000)可区分。
+        app.world_mut()
+            .get_mut::<Cultivation>(caster)
+            .unwrap()
+            .qi_current = 3000.0;
 
         let qi_before = app.world().get::<Cultivation>(caster).unwrap().qi_current;
         let result = cast_heaven_gate(app.world_mut(), caster, 0, None);
