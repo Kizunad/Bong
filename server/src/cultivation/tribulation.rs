@@ -2829,7 +2829,6 @@ fn omen_cloud_block_for_offset(dx: i32, dz: i32) -> BlockState {
 }
 
 #[allow(clippy::type_complexity)]
-#[allow(clippy::type_complexity)]
 pub fn heart_demon_choice_system(
     mut choices: EventReader<HeartDemonChoiceSubmitted>,
     mut commands: Commands,
@@ -2845,8 +2844,14 @@ pub fn heart_demon_choice_system(
     mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
 ) {
     for choice in choices.read() {
-        let Ok((mut cultivation, state, life_record, existing_resolution, position, current_dimension)) =
-            players.get_mut(choice.entity)
+        let Ok((
+            mut cultivation,
+            state,
+            life_record,
+            existing_resolution,
+            position,
+            current_dimension,
+        )) = players.get_mut(choice.entity)
         else {
             continue;
         };
@@ -2888,7 +2893,16 @@ pub fn heart_demon_timeout_system(
     mut zones: Option<ResMut<ZoneRegistry>>,
     mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
 ) {
-    for (entity, mut cultivation, state, life_record, existing_resolution, position, current_dimension) in &mut players {
+    for (
+        entity,
+        mut cultivation,
+        state,
+        life_record,
+        existing_resolution,
+        position,
+        current_dimension,
+    ) in &mut players
+    {
         if !matches!(state.phase, TribulationPhase::HeartDemon) {
             continue;
         }
@@ -2916,6 +2930,7 @@ pub fn heart_demon_timeout_system(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn resolve_heart_demon_choice(
     decision: HeartDemonDecision,
     commands: &mut Commands,
