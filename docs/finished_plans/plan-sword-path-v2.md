@@ -72,8 +72,10 @@
 | P1 | ECS 接线——绑定触发 + 注入 + 碎裂 + 招式 cast + 经脉拦截 | ✅ 2026-05-17 |
 | P2 | 化虚·一剑开天门 runtime + 天道盲区 tick/过滤 + agent 屏蔽 | ✅ 2026-05-17 |
 | P3 | 黑武士 BOSS AI（big-brain 3 阶段 + spawn + 掉落 runtime）| ✅ 2026-06-07 |
-| P4 | VFX 资产全包（贴图 + audio_recipe + 动画 + VfxPlayer）+ 视听联调 | ⏳ |
-| P5 | v1 遗留测试补全 + e2e 集成测试 + InspectScreen 扩展 | ⬜ |
+| P4 | VFX 资产全包（贴图 + audio_recipe + 动画 + VfxPlayer）+ 视听联调 | ✅ 2026-06-29 |
+| P5 | v1 遗留测试补全 + e2e 集成测试 + InspectScreen 扩展 | ✅ 2026-06-29 |
+
+> **P4/P5 收口（2026-06-29，plan-sword-path-complete 工作流）**：剩余 deferred 全部在 worktree `feat/sword-path-complete` 落地——见本 plan `## Finish Evidence` 末尾「P4/P5 补完落地清单（2026-06-29）」。与 `plan-sword-path-v3` 同 PR 完成，两 plan 一并归档。
 
 > **实施进度（2026-06-07，单 plan 多 PR 序列化 §10.3）**：
 > - **PR-A（本次）= P3 server BOSS AI + P4 数据资产首批**。已落地：`server/src/npc/heiwushi.rs`（HeiwushiState/Phase/Cooldowns 成长型 + 5 Scorer + 6 Action + spawn + register，20 单测）、`fauna/drop.rs` HEIWUSHI_DROPS + 参数化覆盖、`combat::resolve` 近战端到端回归；client 侧 5 条 heiwushi audio_recipe + idle/walk/skill1-3/death geckolib 动画 + SwordPathVfxPlayer 注册（资产测试绿）。**关键修复**：近战斩击原 `qi_invest=35` 经 source=Melee 非 prepaid 白名单被 resolver qi 闸门丢弃（零伤害）→ 改 `qi_invest=0` 走物理命中路径，phase 伤害经 `derived_attrs.attack_power` 注入（已加 resolver 回归锁）。
@@ -843,3 +845,15 @@ cf67dff24  feat(sword_path-v2): P1+P2.1/2.2 ECS 接线（绑定 / 招式 cast / 
 | 共享类型：复用 v1 全部 struct/event | ✅ | 未新增数据结构，仅新增 systems + cast fn |
 | 跨仓库契约：server sword_path/systems.rs + skill_register.rs | ✅ | 两文件新建 |
 | qi_physics 锚点：QiTransfer { Channeling / ReleaseToZone } | ✅ | skill_register.rs:inject_bond_qi + systems.rs:sword_shatter_system + heaven_gate_cast_system |
+
+### P4/P5 补完落地清单（2026-06-29，plan-sword-path-complete 工作流）
+
+> P4/P5 的 deferred 全部在 worktree `feat/sword-path-complete` 落地。设计裁决：**复用现有 client 资产**（审计发现 `SwordPathVfxPlayer` + heiwushi geckolib 动画 + 5 条 heiwushi audio_recipe + SwordBond HUD 全链路早已注册）——真正缺口在 server 侧 emit。无新粒子贴图（黑武士招式复用现有 sprite + dark_barrage 视觉）。
+
+- **P4 黑武士 boss 视听 emit（§B）**：`server/src/network/heiwushi_av_trigger.rs`（新建）—— `emit_heiwushi_visual_triggers` + `emit_heiwushi_audio_triggers` 消费 `HeiwushiActionVfxEvent`，6 招（MeleeSlash/DarkBarrage/DarkVortex/ShadowTransform/Death/SwordIntent）各 emit `bong:heiwushi_*` 粒子 + `heiwushi_*` 音效；`server/src/npc/heiwushi.rs` 6 个 action system 在发招帧 emit `HeiwushiActionVfxEvent`（加 `HeiwushiActionKind`/`HeiwushiActionVfxEvent`）；`server/assets/audio/recipes/heiwushi_{melee_slash,dark_barrage,dark_vortex,transform,death}.json`（新建 5 条，补 server 端 registry）。12 单测（av_trigger 6 + audio pin 263）。
+- **P4 自然刷新（§A，补 v2 §P3.4 spawn 缺的世界遭遇）**：`server/src/npc/heiwushi_spawn.rs`（新建）—— `heiwushi_natural_spawn_system` 在 `giant_sword_sea`（铸剑古殿）定点守关，首杀 72h 复活、之后 1h，玩家 48 格在场门 + 10s 节流巡检。6 单测。**此前黑武士仅 `/summon heiwushi` dev 命令可生成，无任何世界刷新路径。**
+- **P5 InspectScreen 灵剑信息**：`client/.../inventory/InspectScreen.java` `swordBondInfoLines` + bond section（接 `SwordBondHudStateStore`）。9 client 单测。
+- **P5 schema 专属变体**：`CombatAttackSourceV1` 5 个 sword_path 变体（`agent/packages/schema/src/combat-event.ts` + `server/src/schema/combat_event.rs`），`network/combat_bridge.rs::map_attack_source` 从「5 招全 → SwordCleave」拆为各自变体；schema sample + 15 双端测试。
+- **P5 v1 遗留单测**：bond.rs/techniques.rs/tiandao_blind.rs 经核验**已有饱和测试**（9/20/8），原 plan 的「TODO 测试」claim 为 stale，无需补。
+
+**测试结果（2026-06-29）**：server `cargo test --lib` 10030 pass（含 audio pin 263 / heiwushi_av_trigger 6 / heiwushi_spawn 6 / sword_intent 6 / skill_register 35 / heiwushi 30 / combat_bridge 11）· `cargo clippy --all-targets -D warnings` 绿 · `cargo fmt --check` 绿 · schema 734 pass · client gradle BUILD SUCCESSFUL。

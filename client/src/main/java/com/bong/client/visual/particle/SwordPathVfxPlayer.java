@@ -29,6 +29,9 @@ public final class SwordPathVfxPlayer implements VfxPlayer {
     public static final Identifier HEIWUSHI_TRANSFORM = id("heiwushi_transform");
     public static final Identifier HEIWUSHI_DEATH = id("heiwushi_death");
     public static final Identifier SWORD_SCROLL_READ = id("sword_scroll_read");
+    // §C 剑意化形命中粒子（server sword_intent_tracking_system emit bong:sword_intent_hit；
+    // VfxBootstrap for-loop 自动注册 → flyingSwordTrailSprites, rgb=0xE0E8D0, count=8, duration=16t）
+    public static final Identifier SWORD_INTENT_HIT = id("sword_intent_hit");
 
     public static final List<Identifier> EVENT_IDS = List.of(
         SWORD_BOND_FORM,
@@ -50,7 +53,8 @@ public final class SwordPathVfxPlayer implements VfxPlayer {
         HEIWUSHI_DARK_VORTEX,
         HEIWUSHI_TRANSFORM,
         HEIWUSHI_DEATH,
-        SWORD_SCROLL_READ
+        SWORD_SCROLL_READ,
+        SWORD_INTENT_HIT
     );
 
     private static Identifier id(String path) {
@@ -105,7 +109,8 @@ public final class SwordPathVfxPlayer implements VfxPlayer {
             || eventId.equals(HEIWUSHI_DEATH) || eventId.equals(HEAVEN_GATE_FLASH)) {
             return BongParticles.tribulationSparkSprites;
         }
-        if (eventId.equals(SWORD_MANIFEST_SUMMON) || eventId.equals(SWORD_MANIFEST_STRIKE)) {
+        if (eventId.equals(SWORD_MANIFEST_SUMMON) || eventId.equals(SWORD_MANIFEST_STRIKE)
+            || eventId.equals(SWORD_INTENT_HIT)) {
             return BongParticles.flyingSwordTrailSprites;
         }
         return BongParticles.swordQiTrailSprites;
@@ -126,6 +131,10 @@ public final class SwordPathVfxPlayer implements VfxPlayer {
         if (eventId.equals(SWORD_SCROLL_READ)) {
             return 0xAABBCC;
         }
+        // 剑意命中：淡绿白（飞剑命中的灵气余光）
+        if (eventId.equals(SWORD_INTENT_HIT)) {
+            return 0xE0E8D0;
+        }
         return 0xC8D8E8;
     }
 
@@ -142,6 +151,10 @@ public final class SwordPathVfxPlayer implements VfxPlayer {
         if (eventId.equals(SWORD_SHATTER)) {
             return 18;
         }
+        // 剑意命中：8 粒子 sprite burst（契约锁定值）
+        if (eventId.equals(SWORD_INTENT_HIT)) {
+            return 8;
+        }
         return 10;
     }
 
@@ -151,6 +164,10 @@ public final class SwordPathVfxPlayer implements VfxPlayer {
         }
         if (eventId.equals(HEAVEN_GATE_SHOCKWAVE) || eventId.equals(HEIWUSHI_DARK_VORTEX)) {
             return 30;
+        }
+        // 剑意命中：16t（0.8s，短促命中闪光）
+        if (eventId.equals(SWORD_INTENT_HIT)) {
+            return 16;
         }
         return 20;
     }

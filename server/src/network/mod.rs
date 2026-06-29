@@ -76,6 +76,7 @@ pub mod era_ambiance_emit;
 pub mod spider_disguise_emit;
 // plan-halfstep-rechallenge-integration-v1 P0：半步化虚重渡触发 HUD S2C
 pub mod halfstep_rechallenge_emit;
+pub mod heiwushi_av_trigger;
 pub mod spirit_treasure_emit;
 pub mod status_snapshot_emit;
 pub mod sword_bond_state_emit;
@@ -755,6 +756,10 @@ pub fn register(app: &mut App) {
             audio_trigger::emit_social_audio_triggers
                 .after(crate::cultivation::possession::process_duo_she_requests),
             audio_trigger::emit_player_state_audio_triggers,
+            // plan-sword-path-complete §B — 黑武士 boss action → VFX + 音效。
+            heiwushi_av_trigger::emit_heiwushi_visual_triggers
+                .before(vfx_event_emit::emit_vfx_event_payloads),
+            heiwushi_av_trigger::emit_heiwushi_audio_triggers,
             npc_metadata::emit_npc_metadata_payloads,
         )
             .after(audio_trigger::tick_audio_dedup_clock)

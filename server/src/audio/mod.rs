@@ -176,7 +176,7 @@ mod tests {
             SoundRecipeRegistry::load_default().expect("default audio recipes should load");
         assert_eq!(
             registry.len(),
-            258,
+            263,
             "audio registry should exclude removed slide and double-jump movement recipes \
              plus include 7 supply_coffin recipes (break + open common/rare/precious + emerge) \
              plus 1 ambient_dan_zong recipe \
@@ -205,8 +205,23 @@ mod tests {
              woliu_mouth_funnel / woliu_pull_drag / woliu_heart_field — 持涡/瞬涡/涡口/涡引/涡心 \
              各招专属施法音效，全部复用 vanilla 音色分层，无新音频文件) \
              plus 1 guangbo_ticao_practice recipe (广播体操练习完成 AV — 皮革整甲伸展声 + \
-             紫水晶清音正反馈，全部复用 vanilla 音色分层，无新音频文件)"
+             紫水晶清音正反馈，全部复用 vanilla 音色分层，无新音频文件) \
+             plus 5 heiwushi boss action recipes (heiwushi_melee_slash / heiwushi_dark_barrage / \
+             heiwushi_dark_vortex / heiwushi_transform / heiwushi_death — plan-sword-path-complete §B \
+             黑武士 boss action server 端 AV emit 接线，全部复用 vanilla 音色分层，无新音频文件)"
         );
+        for heiwushi_recipe in [
+            "heiwushi_melee_slash",
+            "heiwushi_dark_barrage",
+            "heiwushi_dark_vortex",
+            "heiwushi_transform",
+            "heiwushi_death",
+        ] {
+            assert!(
+                registry.get(heiwushi_recipe).is_some(),
+                "黑武士 boss 招式音效 recipe `{heiwushi_recipe}` 必须加载（server heiwushi_av_trigger emit 引用）"
+            );
+        }
         assert!(
             registry.get("guangbo_ticao_practice").is_some(),
             "广播体操练习音效 recipe `guangbo_ticao_practice` 必须加载（\

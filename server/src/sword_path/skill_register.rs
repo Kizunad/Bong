@@ -17,7 +17,8 @@ use std::collections::HashSet;
 
 use valence::entity::Look;
 use valence::prelude::{
-    bevy_ecs, DVec3, Entity, EventReader, EventWriter, Events, Position, Query, Res, ResMut,
+    bevy_ecs, Commands, DVec3, Entity, EventReader, EventWriter, Events, Position, Query, Res,
+    ResMut,
 };
 
 use crate::combat::components::{
@@ -44,9 +45,12 @@ use super::bond::{SwordBondComponent, SwordShatterEvent};
 #[cfg(test)]
 use super::grade::SwordGrade;
 use super::heaven_gate::{
-    create_blind_zone_from_cast, HeavenGateCastEvent, TiandaoBlindZoneRegistry,
+    compute_heaven_gate_damage, create_blind_zone_from_cast, HeavenGateCastEvent,
+    HeavenGateChanneling, TiandaoBlindZoneRegistry, HEAVEN_GATE_AOE_END, HEAVEN_GATE_CHARGE_END,
+    HEAVEN_GATE_CRITICAL_END,
 };
 use super::shatter::compute_heaven_gate_shatter;
+use super::sword_intent_entity::spawn_sword_intent_in_world;
 use super::techniques::{effects, CONDENSE_EDGE, HEAVEN_GATE, MANIFEST, QI_SLASH, RESONANCE};
 
 pub const SWORD_PATH_CONDENSE_EDGE_ID: &str = "sword_path.condense_edge";
@@ -301,18 +305,24 @@ fn cast_manifest(
     let injected = inject_bond_qi(world, caster, MANIFEST.qi_cost);
     credit_skill_qi_to_zone(world, caster, MANIFEST.qi_cost, injected);
 
-    // 化形完整版（剑意实体追踪 5s）留待 v3 BOSS AI 之后做。本 phase 用单次高强度
-    // AttackIntent 作占位，保证伤害与品阶乘数走 combat pipeline。
-    world.send_event(AttackIntent {
-        attacker: caster,
+    // 化形完整版（plan-sword-path-complete §C）：spawn SwordIntentEntity 追踪实体，
+    // 5s 内追击目标 5 次，每次发 AttackIntent。
+    // qi_invest = MANIFEST_ATTACK_MULT，与 condense_edge/qi_slash 同族（伤害倍率走 qi_invest 字段）；
+    // sword 源在 resolver 免扣 qi，实际单次伤害由 resolver 以 attacker attack_power × 倍率缩放，
+    // 不在此处手乘 base（否则与同族招式不一致）。
+    let origin = world
+        .get::<Position>(caster)
+        .map(|p| p.get())
+        .unwrap_or(DVec3::ZERO);
+    let damage_per_hit = f64::from(effects::MANIFEST_ATTACK_MULT);
+    spawn_sword_intent_in_world(
+        world,
+        caster,
+        origin,
         target,
-        issued_at_tick: ctx.now_tick,
-        reach: AttackReach::new(MANIFEST.range, 0.0),
-        qi_invest: effects::MANIFEST_ATTACK_MULT,
-        wound_kind: WoundKind::Cut,
-        source: AttackSource::SwordPathManifest,
-        debug_command: None,
-    });
+        damage_per_hit,
+        AttackSource::SwordPathManifest,
+    );
 
     // 化形结束后 bond_strength -= 0.1 (plan §techniques::effects::MANIFEST_BOND_PENALTY)
     if let Some(mut bond) = world.get_mut::<SwordBondComponent>(caster) {
@@ -356,21 +366,25 @@ fn cast_heaven_gate(
         .map(|p| p.get())
         .unwrap_or(DVec3::ZERO);
 
-    // 化虚一击是单向门：cast 后立即发 HeavenGateCastEvent，由 heaven_gate_cast_system
-    // 统一处理境界跌落 + 真元归零 + 盲区注册 + shatter。这里只锁 cooldown + 发 event。
+    // 化虚四阶段（plan-sword-path-complete §D）：
+    // cast 时插入 HeavenGateChanneling 组件，由 heaven_gate_phase_system 分四阶段推进，
+    // 不再立即发 HeavenGateCastEvent（legacy 路径保留，但 cast 不触发它）。
     apply_cast_costs(world, caster, slot, ctx.now_tick, &HEAVEN_GATE_PROFILE);
-    world.send_event(HeavenGateCastEvent {
+    let stored_qi = world
+        .get::<SwordBondComponent>(caster)
+        .map(|b| b.stored_qi)
+        .unwrap_or(0.0);
+    world.entity_mut(caster).insert(HeavenGateChanneling {
         caster,
+        start_tick: ctx.now_tick,
         position,
         qi_max: cultivation.qi_max,
-        stored_qi: world
-            .get::<SwordBondComponent>(caster)
-            .map(|b| b.stored_qi)
-            .unwrap_or(0.0),
+        stored_qi,
+        aoe_done: false,
     });
 
-    // 蓄力阶段 AV：天门 charge 动画 + 蓄力粒子。释放阶段 AV（开天 flash /
-    // shockwave / release 动画）由 heaven_gate_cast_system 在结算时 emit。
+    // 蓄力阶段 AV：天门 charge 动画 + 蓄力粒子（elapsed==0 对应蓄力开始）。
+    // phase system 在 elapsed==60 emit charge_1s/flash，elapsed>=140 emit release。
     emit_skill_av(
         world,
         caster,
@@ -502,6 +516,219 @@ pub fn heaven_gate_cast_system(
             ) {
                 transfers.send(transfer);
             }
+        }
+    }
+}
+
+// ─── 天门四阶段 phase system（plan-sword-path-complete §D）────────────────────
+
+/// 粒子 / 阶段 VFX event id（对齐 §1.2 常数表）。
+const VFX_HEAVEN_GATE_CHARGE_0S: &str = "bong:heaven_gate_charge_0s";
+const VFX_HEAVEN_GATE_CHARGE_1S: &str = "bong:heaven_gate_charge_1s";
+const VFX_HEAVEN_GATE_FLASH: &str = "bong:heaven_gate_flash";
+const VFX_HEAVEN_GATE_SHOCKWAVE: &str = "bong:heaven_gate_shockwave";
+const VFX_HEAVEN_GATE_RELEASE_PARTICLE: &str = "bong:heaven_gate_release";
+
+/// 天门四阶段 system。替代旧的"cast 即结算"模式，按 elapsed 推进：
+///
+/// - elapsed == 0:  蓄力粒子 `bong:heaven_gate_charge_0s`
+/// - elapsed == 60: 临界粒子 `bong:heaven_gate_charge_1s` + `bong:heaven_gate_flash`
+/// - elapsed == 120 && !aoe_done: AoE 结算 + `bong:heaven_gate_shockwave`
+/// - elapsed >= 140: aftermath（qi 归零 / realm 跌落 / 盲区 / QiTransfer）+ `bong:heaven_gate_release`
+///
+/// **守恒不变量**：aftermath 的账目逐字搬运自 `heaven_gate_cast_system`（net 不变）。
+#[allow(clippy::too_many_arguments)]
+pub fn heaven_gate_phase_system(
+    clock: Res<CombatClock>,
+    mut channeling_q: Query<(Entity, &mut HeavenGateChanneling)>,
+    mut players: Query<(
+        &mut crate::cultivation::components::Cultivation,
+        Option<&mut SwordBondComponent>,
+    )>,
+    targets: Query<(Entity, &Position)>,
+    mut combat_intents: Option<ResMut<Events<AttackIntent>>>,
+    mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
+    mut blind_registry: ResMut<TiandaoBlindZoneRegistry>,
+    zone_registry: Option<Res<crate::world::zone::ZoneRegistry>>,
+    mut av_events: EventWriter<SwordPathSkillCastEvent>,
+    mut vfx_events: EventWriter<crate::network::vfx_event_emit::VfxEventRequest>,
+    mut commands: Commands,
+) {
+    use crate::cultivation::components::Realm;
+    use crate::schema::vfx_event::VfxEventPayloadV1;
+
+    let now = clock.tick;
+
+    for (channeling_entity, mut channeling) in &mut channeling_q {
+        let elapsed = (now.saturating_sub(channeling.start_tick)) as u32;
+        let origin = channeling.position;
+
+        // ── 阶段 0: 蓄力粒子（elapsed == 0 / cast 开始那帧）──────────────────
+        if elapsed == 0 {
+            vfx_events.send(crate::network::vfx_event_emit::VfxEventRequest::new(
+                origin,
+                VfxEventPayloadV1::SpawnParticle {
+                    event_id: VFX_HEAVEN_GATE_CHARGE_0S.to_string(),
+                    origin: [origin.x, origin.y, origin.z],
+                    direction: None,
+                    color: Some("#E8F0FF".to_string()),
+                    strength: Some(0.8),
+                    count: Some(12),
+                    duration_ticks: Some(40),
+                },
+            ));
+        }
+
+        // ── 阶段 1: 临界（elapsed == CHARGE_END = 60）───────────────────────────
+        if elapsed == HEAVEN_GATE_CHARGE_END {
+            vfx_events.send(crate::network::vfx_event_emit::VfxEventRequest::new(
+                origin,
+                VfxEventPayloadV1::SpawnParticle {
+                    event_id: VFX_HEAVEN_GATE_CHARGE_1S.to_string(),
+                    origin: [origin.x, origin.y, origin.z],
+                    direction: None,
+                    color: Some("#E8F0FF".to_string()),
+                    strength: Some(0.9),
+                    count: Some(16),
+                    duration_ticks: Some(30),
+                },
+            ));
+            vfx_events.send(crate::network::vfx_event_emit::VfxEventRequest::new(
+                origin,
+                VfxEventPayloadV1::SpawnParticle {
+                    event_id: VFX_HEAVEN_GATE_FLASH.to_string(),
+                    origin: [origin.x, origin.y, origin.z],
+                    direction: None,
+                    color: Some("#FFFFFF".to_string()),
+                    strength: Some(1.0),
+                    count: Some(4),
+                    duration_ticks: Some(8),
+                },
+            ));
+        }
+
+        // ── 阶段 2: AoE 结算（elapsed >= CRITICAL_END = 120，aoe_done guard 保证仅一次）──
+        // 用 >= 而非 ==：若服务器跳过第 120 帧，仍在首个 >=120 帧补发 AoE，不被跳帧吞掉。
+        if elapsed >= HEAVEN_GATE_CRITICAL_END && !channeling.aoe_done {
+            let staging_buffer = channeling.qi_max + channeling.stored_qi;
+            let radius_sq = super::techniques::effects::HEAVEN_GATE_RADIUS.powi(2);
+            let mut emitted_targets = std::collections::HashSet::new();
+            for (entity, position) in targets.iter() {
+                if entity == channeling.caster {
+                    continue;
+                }
+                let dist_sq = position.get().distance_squared(origin);
+                if dist_sq > radius_sq {
+                    continue;
+                }
+                if !emitted_targets.insert(entity) {
+                    continue;
+                }
+                let damage = compute_heaven_gate_damage(staging_buffer, dist_sq.sqrt());
+                if let Some(intents) = combat_intents.as_deref_mut() {
+                    intents.send(AttackIntent {
+                        attacker: channeling.caster,
+                        target: Some(entity),
+                        issued_at_tick: now,
+                        reach: AttackReach::new(
+                            super::techniques::effects::HEAVEN_GATE_RADIUS as f32,
+                            0.0,
+                        ),
+                        qi_invest: damage as f32,
+                        wound_kind: WoundKind::Cut,
+                        source: AttackSource::SwordPathHeavenGate,
+                        debug_command: None,
+                    });
+                }
+            }
+            vfx_events.send(crate::network::vfx_event_emit::VfxEventRequest::new(
+                origin,
+                VfxEventPayloadV1::SpawnParticle {
+                    event_id: VFX_HEAVEN_GATE_SHOCKWAVE.to_string(),
+                    origin: [origin.x, origin.y, origin.z],
+                    direction: None,
+                    color: Some("#E8F0FF".to_string()),
+                    strength: Some(1.0),
+                    count: Some(32),
+                    duration_ticks: Some(20),
+                },
+            ));
+            channeling.aoe_done = true;
+        }
+
+        // ── 阶段 3: aftermath（elapsed >= AOE_END = 140）────────────────────────
+        if elapsed >= HEAVEN_GATE_AOE_END {
+            let staging_buffer = channeling.qi_max + channeling.stored_qi;
+            let caster = channeling.caster;
+
+            // Caster 修为 / 灵剑 aftermath（与 heaven_gate_cast_system 完全一致的账目）
+            if let Ok((mut cultivation, bond_opt)) = players.get_mut(caster) {
+                // 用 cast 时快照 channeling.qi_max（非 aftermath 时刻的 live 值），
+                // 与 ledger 释放的 staging_buffer 快照一致；蓄力期间若有 buff 改 qi_max 不致账目漂移。
+                cultivation.qi_max = (channeling.qi_max
+                    * super::techniques::effects::HEAVEN_GATE_QI_MAX_RETAIN)
+                    .max(0.0);
+                cultivation.qi_current = 0.0;
+                cultivation.realm = Realm::Solidify;
+                if let Some(mut bond) = bond_opt {
+                    bond.stored_qi = 0.0;
+                }
+            }
+
+            // 盲区注册
+            let blind_zone_event = HeavenGateCastEvent {
+                caster,
+                position: origin,
+                qi_max: channeling.qi_max,
+                stored_qi: channeling.stored_qi,
+            };
+            let zone = create_blind_zone_from_cast(&blind_zone_event, now);
+            blind_registry.add(zone);
+
+            // 守恒：staging_buffer 通过 QiTransfer ledger 释放回 zone。
+            let target_zone = zone_registry
+                .as_deref()
+                .and_then(|r| {
+                    r.find_zone(crate::world::dimension::DimensionKind::Overworld, origin)
+                })
+                .map(|z| z.name.clone())
+                .unwrap_or_else(|| DEFAULT_SPAWN_ZONE_NAME.to_string());
+            if let Some(transfers) = qi_transfers.as_deref_mut() {
+                if let Ok(transfer) = QiTransfer::new(
+                    QiAccountId::player(format!("entity:{caster:?}")),
+                    QiAccountId::zone(target_zone),
+                    staging_buffer,
+                    QiTransferReason::ReleaseToZone,
+                ) {
+                    transfers.send(transfer);
+                }
+            }
+
+            // Release AV（一剑开天 flash / release 动画）
+            av_events.send(SwordPathSkillCastEvent {
+                skill: SwordPathSkillId::HeavenGateRelease,
+                caster,
+                center: origin,
+                direction: None,
+                tick: now,
+            });
+            vfx_events.send(crate::network::vfx_event_emit::VfxEventRequest::new(
+                origin,
+                VfxEventPayloadV1::SpawnParticle {
+                    event_id: VFX_HEAVEN_GATE_RELEASE_PARTICLE.to_string(),
+                    origin: [origin.x, origin.y, origin.z],
+                    direction: None,
+                    color: Some("#E8F0FF".to_string()),
+                    strength: Some(1.0),
+                    count: Some(24),
+                    duration_ticks: Some(30),
+                },
+            ));
+
+            // 移除 channeling 组件（channel 结束）
+            commands
+                .entity(channeling_entity)
+                .remove::<HeavenGateChanneling>();
         }
     }
 }
@@ -1025,13 +1252,15 @@ mod tests {
         assert_eq!(drain_av(&app), vec![SwordPathSkillId::Manifest]);
     }
 
-    /// P4 — 天门 cast → emit charge AV；结算 system → emit release AV。
+    /// P4 / §D — 天门 cast → emit charge AV；phase_system elapsed≥140 → emit release AV。
     #[test]
     fn heaven_gate_emits_charge_then_release_av() {
         let (mut app, caster) = setup_app();
-        app.add_systems(Update, heaven_gate_cast_system);
+        // heaven_gate_phase_system 需要 VfxEventRequest 注册。
+        app.add_event::<crate::network::vfx_event_emit::VfxEventRequest>();
+        app.add_systems(Update, heaven_gate_phase_system);
 
-        // cast 阶段：charge AV
+        // cast 阶段：charge AV（cast_heaven_gate 直接 emit，不走 system）
         let result = cast_heaven_gate(app.world_mut(), caster, 0, None);
         assert!(matches!(result, CastResult::Started { .. }));
         assert_eq!(
@@ -1040,7 +1269,10 @@ mod tests {
             "cast 阶段应 emit charge AV"
         );
 
-        // 结算阶段：heaven_gate_cast_system 读 HeavenGateCastEvent → release AV
+        // 推进 CombatClock 到 start_tick(100) + AOE_END(140) = 240 → aftermath 触发。
+        app.world_mut().resource_mut::<CombatClock>().tick = 240;
+
+        // 结算阶段：heaven_gate_phase_system elapsed=140 ≥ HEAVEN_GATE_AOE_END → release AV。
         app.update();
         let release_avs: Vec<_> = app
             .world()
@@ -1052,7 +1284,7 @@ mod tests {
         assert_eq!(
             release_avs,
             vec![SwordPathSkillId::HeavenGateRelease],
-            "结算 system 应 emit 恰好一个 release AV"
+            "phase_system elapsed=140 应 emit 恰好一个 release AV"
         );
     }
 
@@ -1124,19 +1356,35 @@ mod tests {
 
     #[test]
     fn manifest_without_target_air_swings_not_rejected() {
+        use super::super::sword_intent_entity::SwordIntentEntity;
         let (mut app, caster) = setup_app();
         let result = cast_manifest(app.world_mut(), caster, 0, None);
         assert!(
             matches!(result, CastResult::Started { .. }),
             "无目标化形应空放 Started，实际 {result:?}"
         );
-        let intent = app
-            .world()
-            .resource::<Events<AttackIntent>>()
-            .iter_current_update_events()
-            .next()
-            .expect("空放仍应发 AttackIntent");
-        assert_eq!(intent.target, None, "空放 AttackIntent.target 必须 None");
+        // §C 改为 spawn SwordIntentEntity，不再直发 AttackIntent。
+        // 无目标时应 spawn target==None 的追踪实体（空放）。
+        assert_eq!(
+            app.world()
+                .resource::<Events<AttackIntent>>()
+                .iter_current_update_events()
+                .count(),
+            0,
+            "化形 §C 不再直发 AttackIntent"
+        );
+        let mut q = app.world_mut().query::<&SwordIntentEntity>();
+        let intents: Vec<_> = q.iter(app.world()).collect();
+        assert_eq!(
+            intents.len(),
+            1,
+            "无目标空放应 spawn 1 个 SwordIntentEntity，实际 {}",
+            intents.len()
+        );
+        assert_eq!(
+            intents[0].target, None,
+            "空放 SwordIntentEntity.target 必须 None"
+        );
     }
 
     /// P1.6 — 凝锋发 AttackIntent 走 SwordPathCondenseEdge source。
@@ -1343,9 +1591,11 @@ mod tests {
         );
     }
 
-    /// P1.6 — 剑意化形发 AttackIntent + 扣 bond_strength 0.1（plan §effects::MANIFEST_BOND_PENALTY）。
+    /// P1.6 / §C — 剑意化形 spawn SwordIntentEntity + 扣 bond_strength 0.1。
+    /// （计划 sword-path-complete §C：化形改为 spawn 追踪实体，不再直发 AttackIntent）
     #[test]
-    fn manifest_emits_intent_and_dings_bond_strength() {
+    fn manifest_spawns_sword_intent_entity_and_dings_bond_strength() {
+        use super::super::sword_intent_entity::SwordIntentEntity;
         let (mut app, caster) = setup_app();
         // 给 caster 挂一个已绑定 bond，stored_qi 与 bond_strength 都 > 0
         app.world_mut()
@@ -1359,8 +1609,12 @@ mod tests {
         let target = app.world_mut().spawn(Position::default()).id();
 
         let result = cast_manifest(app.world_mut(), caster, 0, Some(target));
-        assert!(matches!(result, CastResult::Started { .. }));
+        assert!(
+            matches!(result, CastResult::Started { .. }),
+            "化形 cast 应返回 Started（带 bond + 目标），实际 {result:?}"
+        );
 
+        // bond_strength 应从 0.8 扣 0.1 → 0.7
         let bond = app.world().get::<SwordBondComponent>(caster).unwrap();
         assert!(
             (bond.bond_strength - 0.7).abs() < 1e-5,
@@ -1368,22 +1622,46 @@ mod tests {
             bond.bond_strength
         );
 
-        let intent = app
+        // 不应直发 AttackIntent（改为 SwordIntentEntity 追踪）
+        let intent_count = app
             .world()
             .resource::<Events<AttackIntent>>()
             .iter_current_update_events()
-            .next()
-            .expect("化形应发 AttackIntent");
-        assert_eq!(intent.source, AttackSource::SwordPathManifest);
+            .count();
+        assert_eq!(
+            intent_count, 0,
+            "化形 §C 改为 spawn 追踪实体，不再直发 AttackIntent（count={intent_count}）"
+        );
+
+        // 应 spawn 出一个 SwordIntentEntity，source = SwordPathManifest，target = 目标
+        let mut sword_intent_q = app.world_mut().query::<&SwordIntentEntity>();
+        let intents: Vec<_> = sword_intent_q.iter(app.world()).collect();
+        assert_eq!(
+            intents.len(),
+            1,
+            "化形 §C 应 spawn 恰好 1 个 SwordIntentEntity，实际 {}",
+            intents.len()
+        );
+        assert_eq!(
+            intents[0].source,
+            AttackSource::SwordPathManifest,
+            "SwordIntentEntity.source 应为 SwordPathManifest"
+        );
+        assert_eq!(
+            intents[0].target,
+            Some(target),
+            "SwordIntentEntity.target 应为施放目标"
+        );
     }
 
-    /// P2.1 — 化虚一击 → HeavenGateCastEvent → 系统结算：境界跌至固元，
-    /// qi_max 衰减 90%，qi_current = 0，盲区注册。
+    /// P2.1 / §D — 化虚一击 → HeavenGateChanneling + phase_system elapsed≥140 → 结算：
+    /// 境界跌至固元，qi_max 衰减 90%，qi_current = 0，盲区注册。
     ///
     /// review 修复（双重结算）：化虚是单向门，**不**走通用 SwordShatterEvent
     /// 路径——否则 sword_shatter_system 会再扣一次 qi_max + 再发一笔 ledger。
     #[test]
     fn heaven_gate_cast_system_full_aftermath() {
+        use crate::cultivation::components::Realm;
         let (mut app, caster) = setup_app();
         // 化虚需先有 bond 才能算 stored_qi；这里挂上 Void 灵剑 + 100 stored_qi
         app.world_mut()
@@ -1395,12 +1673,18 @@ mod tests {
                 grade: SwordGrade::Void,
             });
         // 范围内随便放个目标
-        let target = app.world_mut().spawn(Position::new([10.0, 0.0, 0.0])).id();
-        let _ = target;
+        let _target = app.world_mut().spawn(Position::new([10.0, 0.0, 0.0])).id();
 
-        app.add_systems(Update, heaven_gate_cast_system);
+        // §D：phase_system 替代旧 heaven_gate_cast_system。
+        app.add_event::<crate::network::vfx_event_emit::VfxEventRequest>();
+        app.add_systems(Update, heaven_gate_phase_system);
+
+        // cast 阶段：插入 HeavenGateChanneling（start_tick = 100 来自 CombatClock）。
         let cast_result = cast_heaven_gate(app.world_mut(), caster, 0, None);
         assert!(matches!(cast_result, CastResult::Started { .. }));
+
+        // 推进时钟到 100 + 140 = 240（elapsed=140 ≥ HEAVEN_GATE_AOE_END）。
+        app.world_mut().resource_mut::<CombatClock>().tick = 240;
         app.update();
 
         let cultivation = app.world().get::<Cultivation>(caster).unwrap();
@@ -1435,7 +1719,7 @@ mod tests {
             "化虚一击必须注册一个天道盲区，agent 才会屏蔽 caster"
         );
 
-        // QiTransfer 守恒：化虚释放 staging_buffer = qi_max(5000) + stored_qi(100) = 5100。
+        // QiTransfer 守恒：化虚释放 staging_buffer = qi_max_snapshot(5000) + stored_qi(100) = 5100。
         // 必须仅有一笔（不是两笔）ReleaseToZone event。
         let release_events: Vec<_> = app
             .world()
@@ -1451,7 +1735,7 @@ mod tests {
         );
         assert!(
             (release_events[0].amount - 5100.0).abs() < 1e-6,
-            "ReleaseToZone amount = qi_max(5000) + stored_qi(100) = 5100，实际 {}",
+            "ReleaseToZone amount = qi_max_snapshot(5000) + stored_qi(100) = 5100，实际 {}",
             release_events[0].amount
         );
     }
@@ -1697,6 +1981,229 @@ mod tests {
             "ReleaseToZone = MANIFEST.qi_cost={:.1}，实际 {}",
             MANIFEST.qi_cost,
             release[0].amount,
+        );
+    }
+
+    // ─── §D 四阶段 phase_system 专属测试 ────────────────────────────────────────
+
+    /// §D phase system 测试用 app 工厂（额外注册 VfxEventRequest + phase system）。
+    fn setup_phase_app() -> (App, Entity) {
+        let (mut app, caster) = setup_app();
+        app.add_event::<crate::network::vfx_event_emit::VfxEventRequest>();
+        app.add_systems(Update, heaven_gate_phase_system);
+        (app, caster)
+    }
+
+    /// 从 VfxEventRequest 事件中提取所有 SpawnParticle event_id。
+    fn drain_vfx_ids(app: &App) -> Vec<String> {
+        use crate::schema::vfx_event::VfxEventPayloadV1;
+        app.world()
+            .resource::<Events<crate::network::vfx_event_emit::VfxEventRequest>>()
+            .iter_current_update_events()
+            .filter_map(|req| {
+                if let VfxEventPayloadV1::SpawnParticle { event_id, .. } = &req.payload {
+                    Some(event_id.clone())
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    /// §D P0 — 蓄力帧（elapsed==0）：charge_0s 粒子。
+    #[test]
+    fn phase_system_elapsed_0_emits_charge_0s_particle() {
+        let (mut app, caster) = setup_phase_app();
+        // CombatClock.tick = 100；cast → start_tick = 100 → elapsed = 100-100 = 0
+        let result = cast_heaven_gate(app.world_mut(), caster, 0, None);
+        assert!(
+            matches!(result, CastResult::Started { .. }),
+            "天门 cast 应返回 Started，实际 {result:?}"
+        );
+        // tick 不动，直接跑系统
+        app.update();
+        let vfx = drain_vfx_ids(&app);
+        assert!(
+            vfx.contains(&"bong:heaven_gate_charge_0s".to_string()),
+            "elapsed==0 时应 emit charge_0s 粒子，实际 {vfx:?}"
+        );
+    }
+
+    /// §D P1 — 临界帧（elapsed==60 = CHARGE_END）：charge_1s + flash 粒子。
+    #[test]
+    fn phase_system_elapsed_60_emits_charge_1s_and_flash() {
+        let (mut app, caster) = setup_phase_app();
+        let result = cast_heaven_gate(app.world_mut(), caster, 0, None);
+        assert!(
+            matches!(result, CastResult::Started { .. }),
+            "天门 cast 应返回 Started，实际 {result:?}"
+        );
+        // start_tick=100，推进到 160 → elapsed=60
+        app.world_mut().resource_mut::<CombatClock>().tick = 160;
+        app.update();
+        let vfx = drain_vfx_ids(&app);
+        assert!(
+            vfx.contains(&"bong:heaven_gate_charge_1s".to_string()),
+            "elapsed==60 时应 emit charge_1s 粒子，实际 {vfx:?}"
+        );
+        assert!(
+            vfx.contains(&"bong:heaven_gate_flash".to_string()),
+            "elapsed==60 时应 emit flash 粒子，实际 {vfx:?}"
+        );
+    }
+
+    /// §D P2 — AoE 帧（elapsed==120 = CRITICAL_END）：对范围内目标发 AttackIntent。
+    #[test]
+    fn phase_system_elapsed_120_triggers_aoe_attack_intent() {
+        let (mut app, caster) = setup_phase_app();
+        // 范围内放一个目标（5 格内，HEAVEN_GATE_RADIUS=100，肯定命中）
+        let target = app.world_mut().spawn(Position::new([5.0, 0.0, 0.0])).id();
+
+        let result = cast_heaven_gate(app.world_mut(), caster, 0, None);
+        assert!(
+            matches!(result, CastResult::Started { .. }),
+            "天门 cast 应返回 Started，实际 {result:?}"
+        );
+        // start_tick=100，推进到 220 → elapsed=120
+        app.world_mut().resource_mut::<CombatClock>().tick = 220;
+        app.update();
+
+        let intents: Vec<_> = app
+            .world()
+            .resource::<Events<AttackIntent>>()
+            .iter_current_update_events()
+            .collect();
+        assert!(
+            intents
+                .iter()
+                .any(|i| i.target == Some(target) && i.source == AttackSource::SwordPathHeavenGate),
+            "elapsed==120 时应对范围内目标发 SwordPathHeavenGate AttackIntent，实际 {intents:?}"
+        );
+        // shockwave 粒子
+        let vfx = drain_vfx_ids(&app);
+        assert!(
+            vfx.contains(&"bong:heaven_gate_shockwave".to_string()),
+            "AoE 帧应 emit shockwave 粒子，实际 {vfx:?}"
+        );
+    }
+
+    /// §D — AoE 只结算一次（aoe_done guard）。
+    /// 若 phase_system 连续运行两帧 elapsed==120（时钟不前进），AoE 只触发一次。
+    #[test]
+    fn phase_system_aoe_fires_only_once() {
+        let (mut app, caster) = setup_phase_app();
+        app.world_mut().spawn(Position::new([5.0, 0.0, 0.0]));
+
+        let result = cast_heaven_gate(app.world_mut(), caster, 0, None);
+        assert!(
+            matches!(result, CastResult::Started { .. }),
+            "天门 cast 应返回 Started，实际 {result:?}"
+        );
+        // start_tick=100，固定在 220 → elapsed=120 两帧
+        app.world_mut().resource_mut::<CombatClock>().tick = 220;
+        app.update();
+        // 不推进时钟，再跑一帧
+        app.update();
+
+        // 只应有 1 笔 AoE AttackIntent（第 2 帧 aoe_done=true 不再结算）
+        let aoe_intents: Vec<_> = app
+            .world()
+            .resource::<Events<AttackIntent>>()
+            .iter_current_update_events()
+            .filter(|i| i.source == AttackSource::SwordPathHeavenGate)
+            .collect();
+        // 第 2 帧发生在 iter_current_update_events（只含最近一帧），应为 0
+        assert_eq!(
+            aoe_intents.len(),
+            0,
+            "第 2 帧 aoe_done=true，不应再发 AoE AttackIntent，实际 {}",
+            aoe_intents.len()
+        );
+    }
+
+    /// §D P3 — aftermath 后 HeavenGateChanneling 组件被移除。
+    #[test]
+    fn phase_system_aftermath_removes_channeling_component() {
+        let (mut app, caster) = setup_phase_app();
+        let result = cast_heaven_gate(app.world_mut(), caster, 0, None);
+        assert!(
+            matches!(result, CastResult::Started { .. }),
+            "天门 cast 应返回 Started，实际 {result:?}"
+        );
+        assert!(
+            app.world().get::<HeavenGateChanneling>(caster).is_some(),
+            "cast 后 caster 必须有 HeavenGateChanneling 组件"
+        );
+
+        // 推进到 aftermath
+        app.world_mut().resource_mut::<CombatClock>().tick = 240;
+        app.update();
+
+        assert!(
+            app.world().get::<HeavenGateChanneling>(caster).is_none(),
+            "aftermath 后 HeavenGateChanneling 必须被移除（channel 结束）"
+        );
+    }
+
+    /// §D — 蓄力帧之前（elapsed < 0，即时钟倒退或 u64 溢出）：无副作用，不 panic。
+    /// 实际场景：时钟精度问题导致 now < start_tick；u64 saturating_sub 保证 elapsed=0。
+    #[test]
+    fn phase_system_clock_before_start_no_panic() {
+        let (mut app, caster) = setup_phase_app();
+        let result = cast_heaven_gate(app.world_mut(), caster, 0, None);
+        assert!(
+            matches!(result, CastResult::Started { .. }),
+            "天门 cast 应返回 Started，实际 {result:?}"
+        );
+        // start_tick=100，把时钟设为 50（比 start 早）→ saturating_sub = 0 → charge_0s 粒子
+        app.world_mut().resource_mut::<CombatClock>().tick = 50;
+        app.update(); // 不应 panic
+    }
+
+    // ─── §C SwordIntentEntity 专属行为测试 ─────────────────────────────────────
+
+    /// §C — 化形无 bond 时 SwordIntentEntity 仍可 spawn（不依赖 bond）。
+    #[test]
+    fn manifest_spawns_sword_intent_entity_even_without_bond() {
+        use super::super::sword_intent_entity::SwordIntentEntity;
+        let (mut app, caster) = setup_app();
+        // 无 SwordBondComponent
+        let target = app.world_mut().spawn(Position::default()).id();
+        let result = cast_manifest(app.world_mut(), caster, 0, Some(target));
+        assert!(
+            matches!(result, CastResult::Started { .. }),
+            "无 bond 化形 cast 应返回 Started，实际 {result:?}"
+        );
+        let mut q = app.world_mut().query::<&SwordIntentEntity>();
+        let count = q.iter(app.world()).count();
+        assert_eq!(
+            count, 1,
+            "无 bond 时化形仍应 spawn SwordIntentEntity，count={count}"
+        );
+    }
+
+    /// §C — 化形 bond_strength 从 0.0 不能再扣（不能变负）。
+    #[test]
+    fn manifest_does_not_underflow_bond_strength_at_zero() {
+        let (mut app, caster) = setup_app();
+        app.world_mut()
+            .entity_mut(caster)
+            .insert(SwordBondComponent {
+                bonded_weapon_entity: Entity::from_raw(2),
+                bond_strength: 0.0,
+                stored_qi: 0.0,
+                grade: SwordGrade::Spirit,
+            });
+        let result = cast_manifest(app.world_mut(), caster, 0, None);
+        assert!(
+            matches!(result, CastResult::Started { .. }),
+            "bond_strength=0 化形 cast 应返回 Started，实际 {result:?}"
+        );
+        let bond = app.world().get::<SwordBondComponent>(caster).unwrap();
+        assert!(
+            bond.bond_strength >= 0.0,
+            "bond_strength 不应变负（clamp 下界 0）：实际 {}",
+            bond.bond_strength
         );
     }
 }

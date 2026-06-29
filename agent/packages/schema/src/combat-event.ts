@@ -44,6 +44,12 @@ export const CombatAttackSourceV1 = Type.Union([
   Type.Literal("full_power"),
   Type.Literal("sword_cleave"),
   Type.Literal("sword_thrust"),
+  // plan-sword-path-complete §E — 剑道五招专属变体（追加，保持旧 6 个顺序不变 → 向后兼容）
+  Type.Literal("sword_path_condense_edge"),
+  Type.Literal("sword_path_qi_slash"),
+  Type.Literal("sword_path_resonance"),
+  Type.Literal("sword_path_manifest"),
+  Type.Literal("sword_path_heaven_gate"),
 ]);
 export type CombatAttackSourceV1 = Static<typeof CombatAttackSourceV1>;
 

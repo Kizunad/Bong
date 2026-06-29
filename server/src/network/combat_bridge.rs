@@ -282,15 +282,21 @@ fn map_attack_source(source: crate::combat::events::AttackSource) -> CombatAttac
         crate::combat::events::AttackSource::FullPower => CombatAttackSourceV1::FullPower,
         crate::combat::events::AttackSource::SwordCleave => CombatAttackSourceV1::SwordCleave,
         crate::combat::events::AttackSource::SwordThrust => CombatAttackSourceV1::SwordThrust,
-        // plan-sword-path-v2 §P4 / schema 演进留 v3：IPC schema 暂未引入 SwordPath* 变体，
-        // 这里映射回最接近的 SwordCleave，避免破坏 agent 侧 enum 反序列化。schema 演进
-        // 与 SchemaV2 一起跟进。
-        crate::combat::events::AttackSource::SwordPathCondenseEdge
-        | crate::combat::events::AttackSource::SwordPathQiSlash
-        | crate::combat::events::AttackSource::SwordPathResonance
-        | crate::combat::events::AttackSource::SwordPathManifest
-        | crate::combat::events::AttackSource::SwordPathHeavenGate => {
-            CombatAttackSourceV1::SwordCleave
+        // plan-sword-path-complete §E — 五路各自映射到对应 schema 变体（schema 已含全部五变体）。
+        crate::combat::events::AttackSource::SwordPathCondenseEdge => {
+            CombatAttackSourceV1::SwordPathCondenseEdge
+        }
+        crate::combat::events::AttackSource::SwordPathQiSlash => {
+            CombatAttackSourceV1::SwordPathQiSlash
+        }
+        crate::combat::events::AttackSource::SwordPathResonance => {
+            CombatAttackSourceV1::SwordPathResonance
+        }
+        crate::combat::events::AttackSource::SwordPathManifest => {
+            CombatAttackSourceV1::SwordPathManifest
+        }
+        crate::combat::events::AttackSource::SwordPathHeavenGate => {
+            CombatAttackSourceV1::SwordPathHeavenGate
         }
     }
 }
@@ -731,5 +737,57 @@ mod tests {
         let summary_payload = summary_payload.expect("rounded summary publish should exist");
         assert_eq!(summary_payload.damage_total, 0.3);
         assert_eq!(summary_payload.contam_delta_total, 0.3);
+    }
+
+    // §E — 五路 SwordPath* 变体各自映射（plan-sword-path-complete §E carve-out）
+
+    #[test]
+    fn map_attack_source_sword_path_condense_edge_maps_to_own_variant() {
+        let result = map_attack_source(crate::combat::events::AttackSource::SwordPathCondenseEdge);
+        assert_eq!(
+            result,
+            CombatAttackSourceV1::SwordPathCondenseEdge,
+            "SwordPathCondenseEdge must map to CombatAttackSourceV1::SwordPathCondenseEdge (§E carve-out), not SwordCleave"
+        );
+    }
+
+    #[test]
+    fn map_attack_source_sword_path_qi_slash_maps_to_own_variant() {
+        let result = map_attack_source(crate::combat::events::AttackSource::SwordPathQiSlash);
+        assert_eq!(
+            result,
+            CombatAttackSourceV1::SwordPathQiSlash,
+            "SwordPathQiSlash must map to CombatAttackSourceV1::SwordPathQiSlash (§E carve-out), not SwordCleave"
+        );
+    }
+
+    #[test]
+    fn map_attack_source_sword_path_resonance_maps_to_own_variant() {
+        let result = map_attack_source(crate::combat::events::AttackSource::SwordPathResonance);
+        assert_eq!(
+            result,
+            CombatAttackSourceV1::SwordPathResonance,
+            "SwordPathResonance must map to CombatAttackSourceV1::SwordPathResonance (§E carve-out), not SwordCleave"
+        );
+    }
+
+    #[test]
+    fn map_attack_source_sword_path_manifest_maps_to_own_variant() {
+        let result = map_attack_source(crate::combat::events::AttackSource::SwordPathManifest);
+        assert_eq!(
+            result,
+            CombatAttackSourceV1::SwordPathManifest,
+            "SwordPathManifest must map to CombatAttackSourceV1::SwordPathManifest (§E carve-out), not SwordCleave"
+        );
+    }
+
+    #[test]
+    fn map_attack_source_sword_path_heaven_gate_maps_to_own_variant() {
+        let result = map_attack_source(crate::combat::events::AttackSource::SwordPathHeavenGate);
+        assert_eq!(
+            result,
+            CombatAttackSourceV1::SwordPathHeavenGate,
+            "SwordPathHeavenGate must map to CombatAttackSourceV1::SwordPathHeavenGate (§E carve-out), not SwordCleave"
+        );
     }
 }

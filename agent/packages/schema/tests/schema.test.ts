@@ -2263,6 +2263,109 @@ describe("sample files pass schema validation", () => {
     ).toBe(false);
   });
 
+  // plan-sword-path-complete §E — CombatAttackSourceV1 剑道五招变体 schema pin 测试。
+  // 正：每个新增变体字面量必须被 CombatAttackSourceV1 接受。
+  // 反：非法变体字符串必须被拒绝。
+  // sample：combat-event.realtime.sword-path.sample.json 载入端到端校验。
+
+  it("CombatAttackSourceV1 accepts sword_path_condense_edge", () => {
+    const result = validate(CombatRealtimeEventV1, {
+      v: 1,
+      kind: "combat_event",
+      tick: 1001,
+      target_id: "offline:Crimson",
+      source: "sword_path_condense_edge",
+    });
+    expect(
+      result.ok,
+      `sword_path_condense_edge 应为合法 CombatAttackSourceV1 变体（plan-sword-path-complete §E）: ${result.errors.join("; ")}`,
+    ).toBe(true);
+  });
+
+  it("CombatAttackSourceV1 accepts sword_path_qi_slash", () => {
+    const result = validate(CombatRealtimeEventV1, {
+      v: 1,
+      kind: "combat_event",
+      tick: 1002,
+      target_id: "offline:Crimson",
+      source: "sword_path_qi_slash",
+    });
+    expect(
+      result.ok,
+      `sword_path_qi_slash 应为合法 CombatAttackSourceV1 变体（plan-sword-path-complete §E）: ${result.errors.join("; ")}`,
+    ).toBe(true);
+  });
+
+  it("CombatAttackSourceV1 accepts sword_path_resonance", () => {
+    const result = validate(CombatRealtimeEventV1, {
+      v: 1,
+      kind: "combat_event",
+      tick: 1003,
+      target_id: "offline:Crimson",
+      source: "sword_path_resonance",
+    });
+    expect(
+      result.ok,
+      `sword_path_resonance 应为合法 CombatAttackSourceV1 变体（plan-sword-path-complete §E）: ${result.errors.join("; ")}`,
+    ).toBe(true);
+  });
+
+  it("CombatAttackSourceV1 accepts sword_path_manifest", () => {
+    const result = validate(CombatRealtimeEventV1, {
+      v: 1,
+      kind: "combat_event",
+      tick: 1004,
+      target_id: "offline:Crimson",
+      source: "sword_path_manifest",
+    });
+    expect(
+      result.ok,
+      `sword_path_manifest 应为合法 CombatAttackSourceV1 变体（plan-sword-path-complete §E）: ${result.errors.join("; ")}`,
+    ).toBe(true);
+  });
+
+  it("CombatAttackSourceV1 accepts sword_path_heaven_gate", () => {
+    const result = validate(CombatRealtimeEventV1, {
+      v: 1,
+      kind: "combat_event",
+      tick: 1005,
+      target_id: "offline:Crimson",
+      source: "sword_path_heaven_gate",
+    });
+    expect(
+      result.ok,
+      `sword_path_heaven_gate 应为合法 CombatAttackSourceV1 变体（plan-sword-path-complete §E）: ${result.errors.join("; ")}`,
+    ).toBe(true);
+  });
+
+  it("CombatAttackSourceV1 rejects unknown sword path variant", () => {
+    // 反：非法串（不在 Union 中）应被拒绝。
+    const result = validate(CombatRealtimeEventV1, {
+      v: 1,
+      kind: "combat_event",
+      tick: 9999,
+      target_id: "offline:Crimson",
+      source: "sword_path_void_walk",
+    });
+    expect(
+      result.ok,
+      "sword_path_void_walk 不是合法变体，应被 CombatAttackSourceV1 Union 拒绝",
+    ).toBe(false);
+  });
+
+  it("combat-event.realtime.sword-path.sample.json validates (sword_path_heaven_gate)", () => {
+    // 端到端：从磁盘加载 heaven_gate 来源的战斗事件 sample，验证通过 CombatRealtimeEventV1。
+    const data = loadSample("combat-event.realtime.sword-path.sample.json");
+    const result = validate(CombatRealtimeEventV1, data);
+    expect(
+      result.ok,
+      `combat-event.realtime.sword-path.sample.json 应通过 CombatRealtimeEventV1 验证（plan-sword-path-complete §E）: ${result.errors.join("; ")}`,
+    ).toBe(true);
+    // 精确断言：sample 的 source 必须是 sword_path_heaven_gate。
+    const event = data as { source?: string };
+    expect(event.source).toBe("sword_path_heaven_gate");
+  });
+
   it("anticheat-report.sample.json", () => {
     const data = loadSample("anticheat-report.sample.json");
     const result = validate(AntiCheatReportV1, data);

@@ -1,0 +1,13 @@
+{
+  "v": 1,
+  "kind": "combat_event",
+  "tick": 84011,
+  "target_id": "offline:Crimson",
+  "attacker_id": "offline:Azure",
+  "body_part": "chest",
+  "wound_kind": "cut",
+  "source": "sword_path_heaven_gate",
+  "damage": 480,
+  "contam_delta": 12,
+  "description": "heaven_gate AoE offline:Azure -> offline:Crimson 100格内 cut for 480.0 damage"
+}

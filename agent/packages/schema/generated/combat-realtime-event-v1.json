@@ -121,6 +121,26 @@
         {
           "const": "sword_thrust",
           "type": "string"
+        },
+        {
+          "const": "sword_path_condense_edge",
+          "type": "string"
+        },
+        {
+          "const": "sword_path_qi_slash",
+          "type": "string"
+        },
+        {
+          "const": "sword_path_resonance",
+          "type": "string"
+        },
+        {
+          "const": "sword_path_manifest",
+          "type": "string"
+        },
+        {
+          "const": "sword_path_heaven_gate",
+          "type": "string"
         }
       ]
     },

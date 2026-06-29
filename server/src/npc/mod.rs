@@ -14,6 +14,7 @@ pub mod equipment;
 pub mod faction;
 pub mod farming_brain;
 pub mod heiwushi;
+pub mod heiwushi_spawn;
 pub mod hunger;
 pub mod hydrate;
 #[cfg(test)]
@@ -80,6 +81,7 @@ pub fn register(app: &mut App) {
     brain_spider::register(app);
     brain_whale::register(app);
     heiwushi::register(app);
+    heiwushi_spawn::register(app);
     whale_narration::register(app);
     dormant::register(app);
     farming_brain::register(app);
