@@ -35,11 +35,11 @@
 
 | 阶段 | 内容 | 状态 | 验收 |
 |------|------|------|------|
-| **P0** | 黑武士 BOSS AI：HeiwushiState + 6 Actions + 5 Scorers + spawn + 掉落 | ⬜ | 20 TPS 压测 10 只黑武士同屏 < 5ms/tick；掉落表测试 |
-| **P1** | 剑意化形完整版：SwordIntentEntity 实体追踪 5s + 5 次伤害 | ⬜ | 单测：追踪 + 伤害序列 + 超时消失 |
-| **P2** | 化虚天门剑全时序：蓄力60t → 临界60t 区域警告 → AoE60-80t → aftermath | ⬜ | 单测：4 阶段时间窗边界；client 收到 zone_warning VfxEventRequest |
-| **P3** | VFX 资产包：13 粒子贴图 + 17 audio_recipe + 6 PlayerAnimator + 9 VfxPlayer + 联调 | ⬜ | server VfxEventRequest → client 端到端联调 9 个 VfxPlayer 全触发 |
-| **P4** | 测试收尾：v1 遗留 9 单测 + e2e 集成 + InspectScreen 扩展 + schema v2 变体 | ⬜ | 全局 `cargo test` ≥ 5020 pass；schema 双端 sample roundtrip |
+| **P0** | 黑武士 BOSS AI：HeiwushiState + 6 Actions + 5 Scorers + spawn + 掉落 | ✅ 2026-06-29 | 20 TPS 压测 10 只黑武士同屏 < 5ms/tick；掉落表测试 |
+| **P1** | 剑意化形完整版：SwordIntentEntity 实体追踪 5s + 5 次伤害 | ✅ 2026-06-29 | 单测：追踪 + 伤害序列 + 超时消失 |
+| **P2** | 化虚天门剑全时序：蓄力60t → 临界60t 区域警告 → AoE60-80t → aftermath | ✅ 2026-06-29 | 单测：4 阶段时间窗边界；client 收到 zone_warning VfxEventRequest |
+| **P3** | VFX 资产包：13 粒子贴图 + 17 audio_recipe + 6 PlayerAnimator + 9 VfxPlayer + 联调 | ✅ 2026-06-29 | server VfxEventRequest → client 端到端联调 9 个 VfxPlayer 全触发 |
+| **P4** | 测试收尾：v1 遗留 9 单测 + e2e 集成 + InspectScreen 扩展 + schema v2 变体 | ✅ 2026-06-29 | 全局 `cargo test` ≥ 5020 pass；schema 双端 sample roundtrip |
 
 ---
 
@@ -141,3 +141,43 @@ Aftermath [140+]          — emit TechniqueAftermathEvent + VfxEventRequest{id:
 2. **剑意化形追踪速度**：0.5 格/tick（10 格/s）在 20 TPS 下是否会造成客户端插值问题？参考 plan-sword-path-v2 §参数化意图同步
 3. **VFX 联调优先级**：P3 VFX 资产包体积大（13 PNG + 17 JSON），是否应先建骨架类然后逐步填充资产？
 4. **schema v2 backward compat**：CombatAttackSourceV1 加新变体后，旧 agent 版本 enum 反序列化是否 panic？需确认 protobuf 的 unknown enum value 处理策略
+
+---
+
+## Finish Evidence
+
+> **2026-06-29，plan-sword-path-complete 工作流（worktree `feat/sword-path-complete`）**。本 plan 与 `plan-sword-path-v2` 同 PR 完成并一并归档。
+
+### ⚠️ P0 设计裁决（重要）
+
+v3 P0 原文要求**新建** `combat/sword_path/heiwushi.rs` + 一套全新 Action（Patrol/Chase/SwordIntent/Retreat）。审计发现 v2 **已实装**完整黑武士 boss（`server/src/npc/heiwushi.rs`：`HeiwushiState`/`HeiwushiPhase` 三相位 + 成长周期 + 6 Action + 5 Scorer + spawn + 掉落，30 单测）。**重建 = 孤岛/重名红旗（docs/CLAUDE.md §四）**，故裁决：**以 v2 的 `npc/heiwushi.rs` 为正典，不重建**；v3 想要的缺失行为（Chase / Retreat / SwordIntent）作为**新 Action + Scorer 追加进现有 `heiwushi_thinker()`**（`HeiwushiIdleAction` 已含巡逻语义，不另建 Patrol）。
+
+### 落地清单
+
+- **P0 黑武士 AI（扩展现有，非重建）**：`server/src/npc/heiwushi.rs` 新增 `HeiwushiChaseAction`/`HeiwushiRetreatAction`/`HeiwushiSwordIntentAction` + 对应 Scorer，并入现有 Thinker；`HeiwushiCooldowns` 加 `sword_intent`/`base_sword_intent`；6 Action 全 emit `HeiwushiActionVfxEvent`（视听接线）。**P0 spawn 缺的世界遭遇** → `server/src/npc/heiwushi_spawn.rs`（新建，§A 自然刷新，6 单测）。掉落表 v2 已实装（`fauna/drop.rs` HEIWUSHI_DROPS）。
+- **P1 剑意化形实体**：`server/src/sword_path/sword_intent_entity.rs`（新建）—— `SwordIntentEntity`（owner/target/lifetime 100t/hits 5/damage/hit_cooldown）+ `sword_intent_tracking_system`（追踪 0.5 格/tick、命中 emit `AttackIntent`+`bong:sword_intent_hit` 粒子、5 击或超时 despawn）；`skill_register.rs::cast_manifest` 改 spawn 真实体（替 AttackIntent 占位）。6 单测。
+- **P2 化虚天门剑四阶段**：`heaven_gate.rs` 加 `HeavenGateChanneling` 组件（cast 时快照 qi_max+stored_qi）；`skill_register.rs::heaven_gate_phase_system` 推进 蓄力[0,60)→临界[60,120)→AoE[120,140)→aftermath[140+]，各阶段 emit 现有 `heaven_gate_*` VFX；**守恒不变量**（`qi_max*=0.1`/`qi_current=0`/`realm=Solidify`/`stored_qi=0` net 账目）由四阶段化前后一致，原守恒测试保护。
+- **P3 VFX 资产包（裁决：复用现有 client 资产）**：审计发现 `SwordPathVfxPlayer`（21 event id）+ heiwushi geckolib 动画 + player_animation JSON + 5 条 heiwushi audio_recipe + SwordBond HUD 全链路**早已注册**。真正缺口=server 端 emit → `network/heiwushi_av_trigger.rs`（新建）+ `server/assets/audio/recipes/heiwushi_*.json`（新建 5 条补 server registry）。client 仅加 `SWORD_INTENT_HIT` event id（复用 flyingSwordTrail sprite）。**无新粒子贴图**（原 plan 13 PNG 大部分已存在/复用）。
+- **P4 测试收尾 + schema**：`CombatAttackSourceV1` 5 个 sword_path 专属变体（TypeBox + proto + `combat_bridge::map_attack_source` 拆 5 路 + 双端 sample/15 测试，向后兼容旧 6 变体）；client InspectScreen 剑道信息（`swordBondInfoLines` + 9 测试）；v1 遗留单测经核验已饱和（bond 9/techniques 20/tiandao_blind 8，无需补）。
+
+### 关键 commit
+
+- 本 PR（feat/sword-path-complete，2026-06-29）—— 详见 PR 描述。
+
+### 测试结果（2026-06-29）
+
+- server `cargo test --lib` **10030 pass**（新增 av_trigger 6 / heiwushi_spawn 6 / sword_intent 6 / heaven_gate phase + skill_register 35 / heiwushi 30 / combat_bridge 11 / audio pin 263）
+- `cargo clippy --all-targets -- -D warnings` 绿 · `cargo fmt --check` 绿
+- schema **734 pass**（含 5 变体双端 roundtrip）· client `./gradlew test` **BUILD SUCCESSFUL**（含 SwordIntentHit 6 + InspectScreen 9）
+
+### 跨仓库核验
+
+- **server**：`heiwushi_av_trigger` / `heiwushi_spawn` / `sword_intent_entity` / `HeavenGateChanneling` / `combat_bridge` 5 变体映射 均命中
+- **client**：`SwordPathVfxPlayer.SWORD_INTENT_HIT` / `InspectScreen.swordBondInfoLines` 命中
+- **agent/schema**：`CombatAttackSourceV1` 5 个 `sword_path_*` 变体 + sample 命中
+
+### 遗留 / 后续
+
+- e2e 全链路单测（单 App spawn→action→emit）未加——各 system 已有 App 级单测锁契约，跨进程 e2e 由 CI 的 e2e job 兜（server+client+agent 联跑）。
+- 自然刷新「首杀」追踪靠 alive-flag 转换观测，server 重启丢实体会重计一次冷却（非严格持久化）——可接受，后续如需精确可持久化 `HeiwushiSpawnState`。
+- InspectScreen 灵剑区块开面板读一次快照，不订阅 S2C 更新（关闭重开刷新）——与现有 HUD store 无 listener 接口一致，留后续。

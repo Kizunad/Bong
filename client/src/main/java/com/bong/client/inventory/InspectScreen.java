@@ -16,6 +16,8 @@ import com.bong.client.cultivation.QiColorObservedState;
 import com.bong.client.cultivation.QiColorObservedStore;
 import com.bong.client.hud.BongToast;
 import com.bong.client.hud.LootContainerStateStore;
+import com.bong.client.hud.SwordBondHudState;
+import com.bong.client.hud.SwordBondHudStateStore;
 import com.bong.client.inspect.ItemInspectLongPressTracker;
 import com.bong.client.inspect.ItemInspectScreen;
 import com.bong.client.inventory.component.*;
@@ -496,6 +498,22 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
 
         cultivationTabContent.child(bodyInspect);
 
+        // 灵剑信息区块（F.3 §sword-path-complete 契约）
+        // 数据在打开面板时读 store 快照（store 由 SwordBondHudStateHandler S2C 写入）。
+        // active=false 时整个区块不添加，以免留白影响布局。
+        List<String> bondLines = swordBondInfoLines(SwordBondHudStateStore.snapshot());
+        if (!bondLines.isEmpty()) {
+            FlowLayout bondSection = Containers.verticalFlow(Sizing.fill(100), Sizing.content());
+            bondSection.gap(1);
+            bondSection.padding(Insets.of(4, 0, 0, 0));
+            for (String line : bondLines) {
+                LabelComponent bondLbl = Components.label(Text.literal(line));
+                bondLbl.color(Color.ofArgb(0xFFCCCCCC));
+                bondSection.child(bondLbl);
+            }
+            cultivationTabContent.child(bondSection);
+        }
+
         leftCol.child(cultivationTabContent);
         cultivationTabContent.positioning(Positioning.absolute(-9999, -9999));
 
@@ -652,6 +670,25 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     }
 
     // ==================== Build helpers ====================
+
+    /**
+     * 灵剑（剑道）信息行。仅当 {@code state.active()} 时返回 3 行：品阶 / 封存 / 人剑合一。
+     * active=false 返回空列表（调用方不渲染该区块）。
+     *
+     * <p>数据源：{@link SwordBondHudStateStore}（F.3 契约锁定接口）。
+     * 封存以百分比展示（storedQiRatio × 100），无独立 cap 字段。
+     *
+     * <p>设计为 {@code public static} 以便单测在不启动 MinecraftClient 的情况下验证行为。
+     */
+    public static List<String> swordBondInfoLines(SwordBondHudState state) {
+        if (!state.active()) {
+            return List.of();
+        }
+        String gradeLine   = "§7品阶：§f" + state.gradeName();
+        String storedLine  = String.format("§7封存：§f%.0f%%", state.storedQiRatio() * 100f);
+        String bondLine    = String.format("§7人剑合一：§f%.0f%%", state.bondStrength() * 100f);
+        return List.of(gradeLine, storedLine, bondLine);
+    }
 
     /** 返回 [wrapperFlow, innerLabel]；wrapper 用于添加到 actionBar，label 用于后续 .color() 调整。 */
     private Object[] buildActionButton(String text, Runnable onClick) {

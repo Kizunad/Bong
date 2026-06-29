@@ -10,7 +10,7 @@ use big_brain::prelude::{
 };
 use valence::entity::marker::MarkerEntityBundle;
 use valence::prelude::{
-    bevy_ecs, App, Commands, Component, DVec3, Entity, EntityLayerId, EventWriter,
+    bevy_ecs, App, Commands, Component, DVec3, Entity, EntityLayerId, Event, EventWriter,
     IntoSystemConfigs, Position, PreUpdate, Query, Res, Update, With,
 };
 
@@ -37,11 +37,49 @@ pub const CD_FLOOR_RATIO: f64 = 0.40;
 pub const MELEE_BASE_CD: u32 = 40;
 pub const BARRAGE_BASE_CD: u32 = 60;
 pub const VORTEX_BASE_CD: u32 = 80;
+/// 剑意召唤 base CD（8 秒 × 20 TPS = 160 ticks）。
+pub const SWORD_INTENT_BASE_CD: u32 = 160;
 pub const MELEE_RANGE: f32 = 3.0;
 pub const BARRAGE_MIN_RANGE: f32 = 4.0;
 pub const BARRAGE_MAX_RANGE: f32 = 8.0;
 pub const VORTEX_RANGE: f32 = 6.0;
+/// 追击 scorer 距离区间：16~32 格触发（拉近但不贴身）。
+pub const CHASE_MIN_RANGE: f32 = 16.0;
+pub const CHASE_MAX_RANGE: f32 = 32.0;
+/// 剑意 scorer 距离区间：4~20 格（中距离触发）。
+pub const SWORD_INTENT_MIN_RANGE: f32 = 4.0;
+pub const SWORD_INTENT_MAX_RANGE: f32 = 20.0;
+/// 撤退触发血量阈值（HP < 30%）。
+pub const RETREAT_HP_THRESHOLD: f32 = 0.30;
+/// 撤退触发玩家距离阈值（玩家≤5 格才撤）。
+pub const RETREAT_PLAYER_RANGE: f32 = 5.0;
 const THINKER_THRESHOLD: f32 = 0.3;
+
+// ─── 黑武士 boss action VFX 事件（plan-sword-path-complete §B）──────────────
+
+/// 黑武士 boss 成功发招那帧 emit 此事件；heiwushi_av_trigger 消费并转化为
+/// VfxEventRequest + PlaySoundRecipeRequest 发往 client。
+#[derive(Debug, Clone, Event)]
+pub struct HeiwushiActionVfxEvent {
+    pub boss: Entity,
+    pub kind: HeiwushiActionKind,
+    /// 发招时 boss 所在世界坐标（粒子/音效 origin）。
+    pub origin: DVec3,
+    /// 招式朝向（boss→target 方向单位向量）；None 表示无方向（全向型招式）。
+    pub direction: Option<DVec3>,
+    pub tick: u64,
+}
+
+/// 黑武士 boss 招式类型枚举（§B 六招对齐 audio recipe + particle event_id）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HeiwushiActionKind {
+    MeleeSlash,
+    DarkBarrage,
+    DarkVortex,
+    ShadowTransform,
+    Death,
+    SwordIntent,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Component)]
 pub struct HeiwushiMarker;
@@ -120,9 +158,13 @@ pub struct HeiwushiCooldowns {
     pub dark_barrage: u32,
     pub dark_vortex: u32,
     pub shadow_transform: u32,
+    /// 剑意召唤当前冷却（0 = 可用）。
+    pub sword_intent: u32,
     pub base_melee_slash: u32,
     pub base_dark_barrage: u32,
     pub base_dark_vortex: u32,
+    /// 剑意 base CD = SWORD_INTENT_BASE_CD (160)。
+    pub base_sword_intent: u32,
 }
 
 impl Default for HeiwushiCooldowns {
@@ -132,9 +174,11 @@ impl Default for HeiwushiCooldowns {
             dark_barrage: 0,
             dark_vortex: 0,
             shadow_transform: 0,
+            sword_intent: 0,
             base_melee_slash: MELEE_BASE_CD,
             base_dark_barrage: BARRAGE_BASE_CD,
             base_dark_vortex: VORTEX_BASE_CD,
+            base_sword_intent: SWORD_INTENT_BASE_CD,
         }
     }
 }
@@ -150,6 +194,7 @@ impl HeiwushiCooldowns {
         self.dark_barrage = self.dark_barrage.saturating_sub(1);
         self.dark_vortex = self.dark_vortex.saturating_sub(1);
         self.shadow_transform = self.shadow_transform.saturating_sub(1);
+        self.sword_intent = self.sword_intent.saturating_sub(1);
     }
 
     fn reset_ready(&mut self) {
@@ -157,6 +202,7 @@ impl HeiwushiCooldowns {
         self.dark_barrage = 0;
         self.dark_vortex = 0;
         self.shadow_transform = 0;
+        self.sword_intent = 0;
     }
 }
 
@@ -217,6 +263,18 @@ scorer_builder!(HeiwushiTransformScorer, "HeiwushiTransformScorer");
 scorer_builder!(HeiwushiVortexScorer, "HeiwushiVortexScorer");
 scorer_builder!(HeiwushiBarrageScorer, "HeiwushiBarrageScorer");
 scorer_builder!(HeiwushiMeleeScorer, "HeiwushiMeleeScorer");
+/// 追击：玩家 16~32 格 → 0.5。
+#[derive(Clone, Copy, Debug, Component)]
+pub struct HeiwushiChaseScorer;
+/// 撤退：HP<30% && 玩家≤5 格 → 0.9。
+#[derive(Clone, Copy, Debug, Component)]
+pub struct HeiwushiRetreatScorer;
+/// 剑意召唤：玩家 4~20 格 && CD==0 → 0.65。
+#[derive(Clone, Copy, Debug, Component)]
+pub struct HeiwushiSwordIntentScorer;
+scorer_builder!(HeiwushiChaseScorer, "HeiwushiChaseScorer");
+scorer_builder!(HeiwushiRetreatScorer, "HeiwushiRetreatScorer");
+scorer_builder!(HeiwushiSwordIntentScorer, "HeiwushiSwordIntentScorer");
 action_builder!(HeiwushiIdleAction, "HeiwushiIdleAction");
 action_builder!(HeiwushiMeleeSlashAction, "HeiwushiMeleeSlashAction");
 action_builder!(HeiwushiDarkBarrageAction, "HeiwushiDarkBarrageAction");
@@ -226,51 +284,72 @@ action_builder!(
     "HeiwushiShadowTransformAction"
 );
 action_builder!(HeiwushiDeathAction, "HeiwushiDeathAction");
+#[derive(Clone, Copy, Debug, Component)]
+pub struct HeiwushiChaseAction;
+#[derive(Clone, Copy, Debug, Component)]
+pub struct HeiwushiRetreatAction;
+#[derive(Clone, Copy, Debug, Component)]
+pub struct HeiwushiSwordIntentAction;
+action_builder!(HeiwushiChaseAction, "HeiwushiChaseAction");
+action_builder!(HeiwushiRetreatAction, "HeiwushiRetreatAction");
+action_builder!(HeiwushiSwordIntentAction, "HeiwushiSwordIntentAction");
 
 pub fn register(app: &mut App) {
-    app.add_systems(
-        PreUpdate,
-        heiwushi_cooldown_tick_system.before(BigBrainSet::Actions),
-    )
-    .add_systems(
-        PreUpdate,
-        (
-            heiwushi_death_scorer_system,
-            heiwushi_transform_scorer_system,
-            heiwushi_vortex_scorer_system,
-            heiwushi_barrage_scorer_system,
-            heiwushi_melee_scorer_system,
+    app.add_event::<HeiwushiActionVfxEvent>()
+        .add_systems(
+            PreUpdate,
+            heiwushi_cooldown_tick_system.before(BigBrainSet::Actions),
         )
-            .in_set(BigBrainSet::Scorers),
-    )
-    .add_systems(
-        PreUpdate,
-        (
-            heiwushi_idle_action_system,
-            heiwushi_melee_slash_action_system,
-            heiwushi_dark_barrage_action_system,
-            heiwushi_dark_vortex_action_system,
-            heiwushi_shadow_transform_action_system,
-            heiwushi_death_action_system,
+        .add_systems(
+            PreUpdate,
+            (
+                heiwushi_death_scorer_system,
+                heiwushi_transform_scorer_system,
+                heiwushi_vortex_scorer_system,
+                heiwushi_barrage_scorer_system,
+                heiwushi_sword_intent_scorer_system,
+                heiwushi_melee_scorer_system,
+                heiwushi_chase_scorer_system,
+                heiwushi_retreat_scorer_system,
+            )
+                .in_set(BigBrainSet::Scorers),
         )
-            .in_set(BigBrainSet::Actions),
-    )
-    .add_systems(
-        Update,
-        (heiwushi_growth_tick_system, heiwushi_phase_sync_system),
-    );
+        .add_systems(
+            PreUpdate,
+            (
+                heiwushi_idle_action_system,
+                heiwushi_melee_slash_action_system,
+                heiwushi_dark_barrage_action_system,
+                heiwushi_dark_vortex_action_system,
+                heiwushi_shadow_transform_action_system,
+                heiwushi_death_action_system,
+                heiwushi_chase_action_system,
+                heiwushi_retreat_action_system,
+                heiwushi_sword_intent_action_system,
+            )
+                .in_set(BigBrainSet::Actions),
+        )
+        .add_systems(
+            Update,
+            (heiwushi_growth_tick_system, heiwushi_phase_sync_system),
+        );
 }
 
 pub fn heiwushi_thinker() -> ThinkerBuilder {
+    // 优先级（高→低）：Death(1.0) → Transform(0.95) → Retreat(0.9) → Vortex(0.8) →
+    // Barrage(0.7) → SwordIntent(0.65) → Melee(0.6) → Chase(0.5) → otherwise Idle
     Thinker::build()
         .picker(FirstToScore {
             threshold: THINKER_THRESHOLD,
         })
         .when(HeiwushiDeathScorer, HeiwushiDeathAction)
         .when(HeiwushiTransformScorer, HeiwushiShadowTransformAction)
+        .when(HeiwushiRetreatScorer, HeiwushiRetreatAction)
         .when(HeiwushiVortexScorer, HeiwushiDarkVortexAction)
         .when(HeiwushiBarrageScorer, HeiwushiDarkBarrageAction)
+        .when(HeiwushiSwordIntentScorer, HeiwushiSwordIntentAction)
         .when(HeiwushiMeleeScorer, HeiwushiMeleeSlashAction)
+        .when(HeiwushiChaseScorer, HeiwushiChaseAction)
         .otherwise(HeiwushiIdleAction)
 }
 
@@ -490,17 +569,28 @@ fn heiwushi_idle_action_system(
 }
 
 fn heiwushi_melee_slash_action_system(
-    mut bosses: Query<(&NpcBlackboard, &mut HeiwushiState, &mut Navigator), With<HeiwushiMarker>>,
+    mut bosses: Query<
+        (
+            &NpcBlackboard,
+            &mut HeiwushiState,
+            &mut Navigator,
+            &Position,
+        ),
+        With<HeiwushiMarker>,
+    >,
+    all_positions: Query<&Position>,
     mut attacks: EventWriter<AttackIntent>,
+    mut vfx_events: EventWriter<HeiwushiActionVfxEvent>,
     tick: Option<Res<GameTick>>,
     mut actions: Query<(&Actor, &mut ActionState), With<HeiwushiMeleeSlashAction>>,
 ) {
     let now = tick.map(|t| u64::from(t.0)).unwrap_or(0);
     for (Actor(actor), mut action_state) in &mut actions {
-        let Ok((bb, mut state, mut navigator)) = bosses.get_mut(*actor) else {
+        let Ok((bb, mut state, mut navigator, boss_pos)) = bosses.get_mut(*actor) else {
             *action_state = ActionState::Failure;
             continue;
         };
+        let origin = boss_pos.get();
         match *action_state {
             ActionState::Requested => {
                 navigator.stop();
@@ -526,6 +616,20 @@ fn heiwushi_melee_slash_action_system(
                 state.skill_cooldowns.melee_slash = state
                     .skill_cooldowns
                     .effective_cd(state.skill_cooldowns.base_melee_slash, state.growth_cycles);
+                let target_pos = all_positions.get(target).map(|p| p.get()).unwrap_or(origin);
+                let raw = target_pos - origin;
+                let dir = if raw.length_squared() > f64::EPSILON {
+                    Some(raw.normalize())
+                } else {
+                    Some(DVec3::X)
+                };
+                vfx_events.send(HeiwushiActionVfxEvent {
+                    boss: *actor,
+                    kind: HeiwushiActionKind::MeleeSlash,
+                    origin,
+                    direction: dir,
+                    tick: now,
+                });
                 *action_state = ActionState::Success;
             }
             ActionState::Cancelled => *action_state = ActionState::Failure,
@@ -535,17 +639,20 @@ fn heiwushi_melee_slash_action_system(
 }
 
 fn heiwushi_dark_barrage_action_system(
-    mut bosses: Query<(&NpcBlackboard, &mut HeiwushiState), With<HeiwushiMarker>>,
+    mut bosses: Query<(&NpcBlackboard, &mut HeiwushiState, &Position), With<HeiwushiMarker>>,
+    all_positions: Query<&Position>,
     mut attacks: EventWriter<AttackIntent>,
+    mut vfx_events: EventWriter<HeiwushiActionVfxEvent>,
     tick: Option<Res<GameTick>>,
     mut actions: Query<(&Actor, &mut ActionState), With<HeiwushiDarkBarrageAction>>,
 ) {
     let now = tick.map(|t| u64::from(t.0)).unwrap_or(0);
     for (Actor(actor), mut action_state) in &mut actions {
-        let Ok((bb, mut state)) = bosses.get_mut(*actor) else {
+        let Ok((bb, mut state, boss_pos)) = bosses.get_mut(*actor) else {
             *action_state = ActionState::Failure;
             continue;
         };
+        let origin = boss_pos.get();
         match *action_state {
             ActionState::Requested => *action_state = ActionState::Executing,
             ActionState::Executing => {
@@ -566,6 +673,20 @@ fn heiwushi_dark_barrage_action_system(
                 state.skill_cooldowns.dark_barrage = state
                     .skill_cooldowns
                     .effective_cd(state.skill_cooldowns.base_dark_barrage, state.growth_cycles);
+                let target_pos = all_positions.get(target).map(|p| p.get()).unwrap_or(origin);
+                let raw = target_pos - origin;
+                let dir = if raw.length_squared() > f64::EPSILON {
+                    Some(raw.normalize())
+                } else {
+                    Some(DVec3::X)
+                };
+                vfx_events.send(HeiwushiActionVfxEvent {
+                    boss: *actor,
+                    kind: HeiwushiActionKind::DarkBarrage,
+                    origin,
+                    direction: dir,
+                    tick: now,
+                });
                 *action_state = ActionState::Success;
             }
             ActionState::Cancelled => *action_state = ActionState::Failure,
@@ -575,18 +696,20 @@ fn heiwushi_dark_barrage_action_system(
 }
 
 fn heiwushi_dark_vortex_action_system(
-    mut bosses: Query<(&NpcBlackboard, &mut HeiwushiState), With<HeiwushiMarker>>,
+    mut bosses: Query<(&NpcBlackboard, &mut HeiwushiState, &Position), With<HeiwushiMarker>>,
     mut attacks: EventWriter<AttackIntent>,
     mut statuses: EventWriter<ApplyStatusEffectIntent>,
+    mut vfx_events: EventWriter<HeiwushiActionVfxEvent>,
     tick: Option<Res<GameTick>>,
     mut actions: Query<(&Actor, &mut ActionState), With<HeiwushiDarkVortexAction>>,
 ) {
     let now = tick.map(|t| u64::from(t.0)).unwrap_or(0);
     for (Actor(actor), mut action_state) in &mut actions {
-        let Ok((bb, mut state)) = bosses.get_mut(*actor) else {
+        let Ok((bb, mut state, boss_pos)) = bosses.get_mut(*actor) else {
             *action_state = ActionState::Failure;
             continue;
         };
+        let origin = boss_pos.get();
         match *action_state {
             ActionState::Requested => *action_state = ActionState::Executing,
             ActionState::Executing => {
@@ -614,6 +737,13 @@ fn heiwushi_dark_vortex_action_system(
                 state.skill_cooldowns.dark_vortex = state
                     .skill_cooldowns
                     .effective_cd(state.skill_cooldowns.base_dark_vortex, state.growth_cycles);
+                vfx_events.send(HeiwushiActionVfxEvent {
+                    boss: *actor,
+                    kind: HeiwushiActionKind::DarkVortex,
+                    origin,
+                    direction: None,
+                    tick: now,
+                });
                 *action_state = ActionState::Success;
             }
             ActionState::Cancelled => *action_state = ActionState::Failure,
@@ -623,18 +753,29 @@ fn heiwushi_dark_vortex_action_system(
 }
 
 fn heiwushi_shadow_transform_action_system(
-    mut bosses: Query<&mut HeiwushiState, With<HeiwushiMarker>>,
+    mut bosses: Query<(&mut HeiwushiState, &Position), With<HeiwushiMarker>>,
+    mut vfx_events: EventWriter<HeiwushiActionVfxEvent>,
+    tick: Option<Res<GameTick>>,
     mut actions: Query<(&Actor, &mut ActionState), With<HeiwushiShadowTransformAction>>,
 ) {
+    let now = tick.map(|t| u64::from(t.0)).unwrap_or(0);
     for (Actor(actor), mut action_state) in &mut actions {
-        let Ok(mut state) = bosses.get_mut(*actor) else {
+        let Ok((mut state, boss_pos)) = bosses.get_mut(*actor) else {
             *action_state = ActionState::Failure;
             continue;
         };
+        let origin = boss_pos.get();
         match *action_state {
             ActionState::Requested => *action_state = ActionState::Executing,
             ActionState::Executing => {
                 state.apply_phase3_transform();
+                vfx_events.send(HeiwushiActionVfxEvent {
+                    boss: *actor,
+                    kind: HeiwushiActionKind::ShadowTransform,
+                    origin,
+                    direction: None,
+                    tick: now,
+                });
                 *action_state = ActionState::Success;
             }
             ActionState::Cancelled => *action_state = ActionState::Failure,
@@ -644,19 +785,224 @@ fn heiwushi_shadow_transform_action_system(
 }
 
 fn heiwushi_death_action_system(
-    mut bosses: Query<(&mut Lifecycle, &mut Navigator), With<HeiwushiMarker>>,
+    mut bosses: Query<(&mut Lifecycle, &mut Navigator, &Position), With<HeiwushiMarker>>,
+    mut vfx_events: EventWriter<HeiwushiActionVfxEvent>,
+    tick: Option<Res<GameTick>>,
     mut actions: Query<(&Actor, &mut ActionState), With<HeiwushiDeathAction>>,
 ) {
+    let now = tick.map(|t| u64::from(t.0)).unwrap_or(0);
     for (Actor(actor), mut action_state) in &mut actions {
-        let Ok((mut lifecycle, mut navigator)) = bosses.get_mut(*actor) else {
+        let Ok((mut lifecycle, mut navigator, boss_pos)) = bosses.get_mut(*actor) else {
+            *action_state = ActionState::Failure;
+            continue;
+        };
+        let origin = boss_pos.get();
+        match *action_state {
+            ActionState::Requested => *action_state = ActionState::Executing,
+            ActionState::Executing => {
+                navigator.stop();
+                lifecycle.state = LifecycleState::Terminated;
+                vfx_events.send(HeiwushiActionVfxEvent {
+                    boss: *actor,
+                    kind: HeiwushiActionKind::Death,
+                    origin,
+                    direction: None,
+                    tick: now,
+                });
+                *action_state = ActionState::Success;
+            }
+            ActionState::Cancelled => *action_state = ActionState::Failure,
+            ActionState::Init | ActionState::Success | ActionState::Failure => {}
+        }
+    }
+}
+
+// ─── §B 新增 Scorer/Action 系统 ─────────────────────────────────────────────
+
+fn heiwushi_chase_scorer_system(
+    bosses: Query<&NpcBlackboard, With<HeiwushiMarker>>,
+    mut scorers: Query<(&Actor, &mut Score), With<HeiwushiChaseScorer>>,
+) {
+    for (Actor(actor), mut score) in &mut scorers {
+        let value = bosses
+            .get(*actor)
+            .map(|bb| {
+                if (CHASE_MIN_RANGE..=CHASE_MAX_RANGE).contains(&bb.player_distance) {
+                    0.5
+                } else {
+                    0.0
+                }
+            })
+            .unwrap_or(0.0);
+        score.set(value);
+    }
+}
+
+fn heiwushi_retreat_scorer_system(
+    bosses: Query<(&Wounds, &NpcBlackboard), With<HeiwushiMarker>>,
+    mut scorers: Query<(&Actor, &mut Score), With<HeiwushiRetreatScorer>>,
+) {
+    for (Actor(actor), mut score) in &mut scorers {
+        let value = bosses
+            .get(*actor)
+            .map(|(wounds, bb)| {
+                let hp_ratio = wounds.health_current / wounds.health_max.max(1.0);
+                if hp_ratio < RETREAT_HP_THRESHOLD && bb.player_distance <= RETREAT_PLAYER_RANGE {
+                    0.9
+                } else {
+                    0.0
+                }
+            })
+            .unwrap_or(0.0);
+        score.set(value);
+    }
+}
+
+fn heiwushi_sword_intent_scorer_system(
+    bosses: Query<(&NpcBlackboard, &HeiwushiState), With<HeiwushiMarker>>,
+    mut scorers: Query<(&Actor, &mut Score), With<HeiwushiSwordIntentScorer>>,
+) {
+    for (Actor(actor), mut score) in &mut scorers {
+        let value = bosses
+            .get(*actor)
+            .map(|(bb, state)| {
+                if (SWORD_INTENT_MIN_RANGE..=SWORD_INTENT_MAX_RANGE).contains(&bb.player_distance)
+                    && state.skill_cooldowns.sword_intent == 0
+                {
+                    0.65
+                } else {
+                    0.0
+                }
+            })
+            .unwrap_or(0.0);
+        score.set(value);
+    }
+}
+
+fn heiwushi_chase_action_system(
+    mut bosses: Query<(&NpcBlackboard, &mut Navigator, &Position), With<HeiwushiMarker>>,
+    all_positions: Query<&Position>,
+    mut actions: Query<(&Actor, &mut ActionState), With<HeiwushiChaseAction>>,
+) {
+    for (Actor(actor), mut action_state) in &mut actions {
+        let Ok((bb, mut navigator, boss_pos)) = bosses.get_mut(*actor) else {
             *action_state = ActionState::Failure;
             continue;
         };
         match *action_state {
             ActionState::Requested => *action_state = ActionState::Executing,
             ActionState::Executing => {
+                let Some(target) = bb.nearest_player else {
+                    navigator.stop();
+                    *action_state = ActionState::Failure;
+                    continue;
+                };
+                let target_pos = all_positions
+                    .get(target)
+                    .map(|p| p.get())
+                    .unwrap_or(boss_pos.get());
+                navigator.set_goal(target_pos, 1.0);
+                // Chase 持续追击直到 scorer 降分（Failure 放弃本帧，下帧重评）。
+                *action_state = ActionState::Success;
+            }
+            ActionState::Cancelled => {
                 navigator.stop();
-                lifecycle.state = LifecycleState::Terminated;
+                *action_state = ActionState::Failure;
+            }
+            ActionState::Init | ActionState::Success | ActionState::Failure => {}
+        }
+    }
+}
+
+fn heiwushi_retreat_action_system(
+    mut bosses: Query<(&NpcBlackboard, &mut Navigator, &Position), With<HeiwushiMarker>>,
+    all_positions: Query<&Position>,
+    mut actions: Query<(&Actor, &mut ActionState), With<HeiwushiRetreatAction>>,
+) {
+    for (Actor(actor), mut action_state) in &mut actions {
+        let Ok((bb, mut navigator, boss_pos)) = bosses.get_mut(*actor) else {
+            *action_state = ActionState::Failure;
+            continue;
+        };
+        match *action_state {
+            ActionState::Requested => *action_state = ActionState::Executing,
+            ActionState::Executing => {
+                let origin = boss_pos.get();
+                let away_dir = match bb.nearest_player {
+                    Some(target) => {
+                        let target_pos =
+                            all_positions.get(target).map(|p| p.get()).unwrap_or(origin);
+                        let raw = origin - target_pos; // 背向玩家
+                        if raw.length_squared() > f64::EPSILON {
+                            raw.normalize()
+                        } else {
+                            DVec3::X
+                        }
+                    }
+                    None => DVec3::X,
+                };
+                // 撤退 10 格
+                let retreat_target = origin + away_dir * 10.0;
+                navigator.set_goal(retreat_target, 1.0);
+                *action_state = ActionState::Success;
+            }
+            ActionState::Cancelled => {
+                navigator.stop();
+                *action_state = ActionState::Failure;
+            }
+            ActionState::Init | ActionState::Success | ActionState::Failure => {}
+        }
+    }
+}
+
+fn heiwushi_sword_intent_action_system(
+    mut bosses: Query<(&NpcBlackboard, &mut HeiwushiState, &Position), With<HeiwushiMarker>>,
+    all_positions: Query<&Position>,
+    mut vfx_events: EventWriter<HeiwushiActionVfxEvent>,
+    mut commands: Commands,
+    tick: Option<Res<GameTick>>,
+    mut actions: Query<(&Actor, &mut ActionState), With<HeiwushiSwordIntentAction>>,
+) {
+    let now = tick.map(|t| u64::from(t.0)).unwrap_or(0);
+    for (Actor(actor), mut action_state) in &mut actions {
+        let Ok((bb, mut state, boss_pos)) = bosses.get_mut(*actor) else {
+            *action_state = ActionState::Failure;
+            continue;
+        };
+        let origin = boss_pos.get();
+        match *action_state {
+            ActionState::Requested => *action_state = ActionState::Executing,
+            ActionState::Executing => {
+                let Some(target) = bb.nearest_player else {
+                    *action_state = ActionState::Failure;
+                    continue;
+                };
+                // 召唤剑意追踪实体（复用剑道化形追踪逻辑，伤害 = base_attack * 0.8）。
+                let damage = f64::from(state.base_attack) * 0.8;
+                crate::sword_path::sword_intent_entity::spawn_sword_intent(
+                    &mut commands,
+                    *actor,
+                    origin,
+                    Some(target),
+                    damage,
+                    crate::combat::events::AttackSource::SwordPathManifest,
+                );
+                state.skill_cooldowns.sword_intent = state.skill_cooldowns.base_sword_intent;
+                // 方向 boss→target。
+                let target_pos = all_positions.get(target).map(|p| p.get()).unwrap_or(origin);
+                let raw = target_pos - origin;
+                let dir = if raw.length_squared() > f64::EPSILON {
+                    Some(raw.normalize())
+                } else {
+                    Some(DVec3::X)
+                };
+                vfx_events.send(HeiwushiActionVfxEvent {
+                    boss: *actor,
+                    kind: HeiwushiActionKind::SwordIntent,
+                    origin,
+                    direction: dir,
+                    tick: now,
+                });
                 *action_state = ActionState::Success;
             }
             ActionState::Cancelled => *action_state = ActionState::Failure,
@@ -818,6 +1164,7 @@ mod tests {
     fn melee_action_emits_attack_and_sets_scaled_cooldown() {
         let mut app = App::new();
         app.add_event::<AttackIntent>();
+        app.add_event::<HeiwushiActionVfxEvent>();
         app.insert_resource(GameTick(42));
         app.add_systems(Update, heiwushi_melee_slash_action_system);
         let boss = spawn_boss(app.world_mut(), HEIWUSHI_HEALTH_MAX, 2.0);
@@ -864,6 +1211,7 @@ mod tests {
         let mut app = App::new();
         app.add_event::<AttackIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<HeiwushiActionVfxEvent>();
         app.insert_resource(GameTick(77));
         app.add_systems(Update, heiwushi_dark_vortex_action_system);
         let boss = spawn_boss(app.world_mut(), HEIWUSHI_HEALTH_MAX, 4.0);
@@ -1227,7 +1575,9 @@ mod tests {
         // heiwushi_death_action_system 副作用：
         //   1. Lifecycle.state → LifecycleState::Terminated
         //   2. Navigator.stop()（is_idle() = true）
+        //   3. emit HeiwushiActionVfxEvent { kind: Death }
         let mut app = App::new();
+        app.add_event::<HeiwushiActionVfxEvent>();
         app.add_systems(Update, heiwushi_death_action_system);
         let boss = spawn_boss(app.world_mut(), 0.0, 3.0); // health=0 → death scorer 会打高分
 
@@ -1265,6 +1615,7 @@ mod tests {
     fn death_action_is_idempotent_on_already_terminated_boss() {
         // 死亡 action 在 boss 已经是 Terminated 时不应 panic / 改其他状态
         let mut app = App::new();
+        app.add_event::<HeiwushiActionVfxEvent>();
         app.add_systems(Update, heiwushi_death_action_system);
         let boss = spawn_boss(app.world_mut(), 0.0, 3.0);
 
@@ -1292,6 +1643,7 @@ mod tests {
         //   - ActionState 变为 Success
         //   - 第二次调用（幂等）不应再翻倍 base_attack
         let mut app = App::new();
+        app.add_event::<HeiwushiActionVfxEvent>();
         app.add_systems(Update, heiwushi_shadow_transform_action_system);
 
         // Phase1/2 boss，HP 已降至 <25%
@@ -1350,6 +1702,7 @@ mod tests {
         // apply_phase3_transform 有幂等守卫；Phase3 boss 再次收到 Requested → 应顺利 Success
         // 但 base_attack 不应再翻倍（守卫已 return）
         let mut app = App::new();
+        app.add_event::<HeiwushiActionVfxEvent>();
         app.add_systems(Update, heiwushi_shadow_transform_action_system);
 
         let boss = spawn_boss(app.world_mut(), 400.0, 3.0);
@@ -1506,6 +1859,7 @@ mod tests {
         //   update 3: tick_down(34→33), action 已 Success 不再执行, melee=33
         let mut app = App::new();
         app.add_event::<AttackIntent>();
+        app.add_event::<HeiwushiActionVfxEvent>();
         app.insert_resource(GameTick(42));
         // 顺序：cooldown_tick 先跑，melee_slash_action 后跑（模拟 PreUpdate 中 cooldown.before(Actions)）
         app.add_systems(
@@ -1579,5 +1933,256 @@ mod tests {
             "第三次 update（tick_down 后无 action）melee_slash 期望 33，实际 {}",
             cd_after_tick
         );
+    }
+
+    // ─── §B 新增 Scorer/Action 测试 ───────────────────────────────────────────
+
+    /// §B — Chase scorer：玩家在 16~32 格 → 0.5；范围外 → 0.0。
+    #[test]
+    fn chase_scorer_fires_in_range_and_zero_outside() {
+        let mut app = App::new();
+        app.add_systems(Update, heiwushi_chase_scorer_system);
+
+        // 距离 20（in range 16~32）
+        let boss = spawn_boss(app.world_mut(), HEIWUSHI_HEALTH_MAX, 20.0);
+        let scorer = app
+            .world_mut()
+            .spawn((Actor(boss), Score::default(), HeiwushiChaseScorer))
+            .id();
+        app.update();
+        assert_eq!(
+            app.world().get::<Score>(scorer).unwrap().get(),
+            0.5,
+            "距离 20 在 16~32 范围内，Chase scorer 期望 0.5"
+        );
+
+        // 距离 5（out of range）
+        app.world_mut()
+            .get_mut::<NpcBlackboard>(boss)
+            .unwrap()
+            .player_distance = 5.0;
+        app.update();
+        assert_eq!(
+            app.world().get::<Score>(scorer).unwrap().get(),
+            0.0,
+            "距离 5 不在 16~32 范围内，Chase scorer 期望 0.0"
+        );
+
+        // 距离 40（beyond 32）
+        app.world_mut()
+            .get_mut::<NpcBlackboard>(boss)
+            .unwrap()
+            .player_distance = 40.0;
+        app.update();
+        assert_eq!(
+            app.world().get::<Score>(scorer).unwrap().get(),
+            0.0,
+            "距离 40 超出 32，Chase scorer 期望 0.0"
+        );
+    }
+
+    /// §B — Retreat scorer：HP<30% && player≤5 → 0.9；否则 → 0.0。
+    #[test]
+    fn retreat_scorer_fires_when_low_hp_and_player_close() {
+        let mut app = App::new();
+        app.add_systems(Update, heiwushi_retreat_scorer_system);
+
+        // HP < 30%, distance = 4 → 0.9
+        let boss = spawn_boss(app.world_mut(), 500.0, 4.0); // 500/2100 ≈ 23.8% < 30%
+        let scorer = app
+            .world_mut()
+            .spawn((Actor(boss), Score::default(), HeiwushiRetreatScorer))
+            .id();
+        app.update();
+        assert_eq!(
+            app.world().get::<Score>(scorer).unwrap().get(),
+            0.9,
+            "HP<30% && player<=5 时 Retreat scorer 期望 0.9"
+        );
+
+        // HP < 30%, distance = 10 → 0.0（太远）
+        app.world_mut()
+            .get_mut::<NpcBlackboard>(boss)
+            .unwrap()
+            .player_distance = 10.0;
+        app.update();
+        assert_eq!(
+            app.world().get::<Score>(scorer).unwrap().get(),
+            0.0,
+            "HP<30% 但 distance>5 时 Retreat scorer 期望 0.0"
+        );
+
+        // HP = 70%, distance = 3 → 0.0（血量不低）
+        app.world_mut()
+            .get_mut::<Wounds>(boss)
+            .unwrap()
+            .health_current = 1500.0;
+        app.world_mut()
+            .get_mut::<NpcBlackboard>(boss)
+            .unwrap()
+            .player_distance = 3.0;
+        app.update();
+        assert_eq!(
+            app.world().get::<Score>(scorer).unwrap().get(),
+            0.0,
+            "HP≥30% 时 Retreat scorer 期望 0.0"
+        );
+    }
+
+    /// §B — SwordIntent scorer：玩家 4~20 格 && CD==0 → 0.65。
+    #[test]
+    fn sword_intent_scorer_fires_in_range_and_cd_zero() {
+        let mut app = App::new();
+        app.add_systems(Update, heiwushi_sword_intent_scorer_system);
+
+        // 距离 10, CD=0 → 0.65
+        let boss = spawn_boss(app.world_mut(), HEIWUSHI_HEALTH_MAX, 10.0);
+        let scorer = app
+            .world_mut()
+            .spawn((Actor(boss), Score::default(), HeiwushiSwordIntentScorer))
+            .id();
+        app.update();
+        assert_eq!(
+            app.world().get::<Score>(scorer).unwrap().get(),
+            0.65,
+            "距离 10 在 4~20 范围 && CD=0，SwordIntent scorer 期望 0.65"
+        );
+
+        // CD > 0 → 0.0
+        app.world_mut()
+            .get_mut::<HeiwushiState>(boss)
+            .unwrap()
+            .skill_cooldowns
+            .sword_intent = 50;
+        app.update();
+        assert_eq!(
+            app.world().get::<Score>(scorer).unwrap().get(),
+            0.0,
+            "CD>0 时 SwordIntent scorer 期望 0.0"
+        );
+
+        // 距离 25（beyond 20）, CD=0 → 0.0
+        app.world_mut()
+            .get_mut::<HeiwushiState>(boss)
+            .unwrap()
+            .skill_cooldowns
+            .sword_intent = 0;
+        app.world_mut()
+            .get_mut::<NpcBlackboard>(boss)
+            .unwrap()
+            .player_distance = 25.0;
+        app.update();
+        assert_eq!(
+            app.world().get::<Score>(scorer).unwrap().get(),
+            0.0,
+            "距离 25 超出 20 时 SwordIntent scorer 期望 0.0"
+        );
+    }
+
+    /// §B — Death action 现在 emit HeiwushiActionVfxEvent{kind: Death}。
+    #[test]
+    fn death_action_emits_death_vfx_event() {
+        let mut app = App::new();
+        app.add_event::<HeiwushiActionVfxEvent>();
+        app.add_systems(Update, heiwushi_death_action_system);
+        let boss = spawn_boss(app.world_mut(), 0.0, 3.0);
+        app.world_mut()
+            .spawn((Actor(boss), ActionState::Requested, HeiwushiDeathAction));
+        app.update();
+        app.update();
+
+        let events: Vec<_> = app
+            .world()
+            .resource::<Events<HeiwushiActionVfxEvent>>()
+            .iter_current_update_events()
+            .collect();
+        assert_eq!(events.len(), 1, "death action 应 emit 1 个 VFX 事件");
+        assert_eq!(events[0].kind, HeiwushiActionKind::Death);
+        assert_eq!(events[0].direction, None, "Death VFX dir 应为 None");
+    }
+
+    /// §B — SwordIntent cooldown 字段默认值 = SWORD_INTENT_BASE_CD (160)，tick_down 正常递减。
+    #[test]
+    fn sword_intent_cooldown_default_and_tick_down() {
+        let mut cd = HeiwushiCooldowns::default();
+        assert_eq!(
+            cd.base_sword_intent, SWORD_INTENT_BASE_CD,
+            "base_sword_intent 默认值应为 {SWORD_INTENT_BASE_CD}"
+        );
+        assert_eq!(cd.sword_intent, 0, "sword_intent 初始应为 0（即刻可用）");
+
+        cd.sword_intent = 5;
+        cd.tick_down();
+        assert_eq!(cd.sword_intent, 4, "tick_down 后 sword_intent 应减 1");
+
+        cd.sword_intent = 0;
+        cd.tick_down();
+        assert_eq!(
+            cd.sword_intent, 0,
+            "sword_intent=0 时 tick_down 饱和减法 → 仍为 0"
+        );
+    }
+
+    /// §B — reset_ready 同时清零 sword_intent。
+    #[test]
+    fn reset_ready_clears_sword_intent() {
+        let mut cd = HeiwushiCooldowns {
+            sword_intent: 100,
+            ..Default::default()
+        };
+        cd.reset_ready();
+        assert_eq!(cd.sword_intent, 0, "reset_ready 应将 sword_intent 归零");
+    }
+
+    /// §B — 追击 action 成功后 ActionState 变 Success。
+    #[test]
+    fn chase_action_sets_navigator_goal_and_succeeds() {
+        let mut app = App::new();
+        app.add_systems(Update, heiwushi_chase_action_system);
+        let boss = spawn_boss(app.world_mut(), HEIWUSHI_HEALTH_MAX, 20.0);
+        app.world_mut()
+            .spawn((Actor(boss), ActionState::Requested, HeiwushiChaseAction));
+        app.update();
+        app.update();
+        // 两次 update 后应达到 Success（Requested→Executing→Success）
+        // Navigator 应有 goal（不 idle）
+        let nav = app.world().get::<Navigator>(boss).unwrap();
+        assert!(
+            !nav.is_idle(),
+            "chase action 执行后 navigator 应有 goal（非 idle）"
+        );
+    }
+
+    /// §B — 撤退 action：无玩家目标时也不 panic（走 DVec3::X 退化路径）。
+    #[test]
+    fn retreat_action_no_nearest_player_does_not_panic() {
+        let mut app = App::new();
+        app.add_systems(Update, heiwushi_retreat_action_system);
+        // nearest_player = None
+        let boss = app
+            .world_mut()
+            .spawn((
+                HeiwushiMarker,
+                HeiwushiState::default(),
+                NpcBlackboard {
+                    nearest_player: None,
+                    player_distance: 4.0,
+                    ..Default::default()
+                },
+                Wounds {
+                    entries: Vec::new(),
+                    health_current: 500.0,
+                    health_max: HEIWUSHI_HEALTH_MAX,
+                },
+                Lifecycle::default(),
+                Navigator::new(),
+                NpcPatrol::new("giant_sword_sea", DVec3::ZERO),
+                Position::new([0.0, 64.0, 0.0]),
+            ))
+            .id();
+        app.world_mut()
+            .spawn((Actor(boss), ActionState::Requested, HeiwushiRetreatAction));
+        app.update();
+        app.update(); // 不应 panic
     }
 }
