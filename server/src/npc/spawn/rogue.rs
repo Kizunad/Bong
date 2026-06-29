@@ -156,9 +156,12 @@ pub(crate) fn rogue_npc_thinker() -> ThinkerBuilder {
         .when(NpcHealScorer, NpcHealAction)
         .when(NpcTechniqueScorer, NpcTechniqueAction)
         .when(MeleeRangeScorer, MeleeAttackAction)
+        // PlayerProximityScorer MUST come before ChaseTargetScorer: at close range
+        // (≤3.2 blocks) chase also scores >0.05 in a FirstToScore chain, so flee
+        // must be evaluated first or it is permanently blocked. See bug npc-flee-blocked.
+        .when(PlayerProximityScorer, FleeAction)
         .when(ChaseTargetScorer, ChaseAction)
         .when(NpcDefenseScorer, NpcDefenseAction::default())
-        .when(PlayerProximityScorer, FleeAction)
         .when(CultivationDriveScorer, CultivateAction)
         .when(TradeStallScorer, StallAction)
         .when(ReturnHomeScorer, ReturnHomeAction)
@@ -178,9 +181,12 @@ pub(crate) fn scattered_cultivator_thinker() -> ThinkerBuilder {
         .when(LingtianFarmingScorer::plant(), PlantAction)
         .when(LingtianFarmingScorer::till(), TillAction)
         .when(MeleeRangeScorer, MeleeAttackAction)
+        // PlayerProximityScorer MUST come before ChaseTargetScorer: at close range
+        // (≤3.2 blocks) chase also scores >0.05 in a FirstToScore chain, so flee
+        // must be evaluated first or it is permanently blocked. See bug npc-flee-blocked.
+        .when(PlayerProximityScorer, FleeAction)
         .when(ChaseTargetScorer, ChaseAction)
         .when(NpcDefenseScorer, NpcDefenseAction::default())
-        .when(PlayerProximityScorer, FleeAction)
         .when(CultivationDriveScorer, CultivateAction)
         .when(TradeStallScorer, StallAction)
         .when(ReturnHomeScorer, ReturnHomeAction)
