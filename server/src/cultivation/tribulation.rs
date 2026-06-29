@@ -29,8 +29,8 @@ use crate::network::halfstep_rechallenge_emit::HALFSTEP_QUOTA_RELEASE_BROADCAST_
 use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::network::RedisBridgeResource;
 use crate::qi_physics::{
-    constants::DEFAULT_SPIRIT_QI_TOTAL, EnvField, QiAccountId, QiTransfer, QiTransferReason,
-    WorldQiBudget,
+    constants::{DEFAULT_SPIRIT_QI_TOTAL, QI_EPSILON, QI_ZONE_UNIT_CAPACITY},
+    EnvField, QiAccountId, QiTransfer, QiTransferReason, WorldQiBudget,
 };
 use crate::schema::cultivation::{
     color_kind_to_string, realm_to_string, HeartDemonPregenRequestV1, QiColorStateV1,
@@ -2955,8 +2955,19 @@ fn resolve_heart_demon_choice(
         HeartDemonOutcome::Steadfast => {
             let effective_qi_max =
                 (cultivation.qi_max - cultivation.qi_max_frozen.unwrap_or(0.0)).max(0.0);
-            cultivation.qi_current =
-                (cultivation.qi_current + effective_qi_max * 0.10).min(effective_qi_max);
+            // Desired grant = 10% of effective_qi_max, capped by room to reach effective_qi_max.
+            let desired_grant =
+                (effective_qi_max * 0.10).min((effective_qi_max - cultivation.qi_current).max(0.0));
+            // Debit exactly that amount from the player's zone so total world qi is conserved.
+            // If the zone cannot be located (no Position / CurrentDimension / ZoneRegistry, or
+            // zone depleted) the grant is suppressed to zero rather than creating qi from nothing.
+            let actual_grant = debit_zone_for_heart_demon_steadfast(
+                desired_grant,
+                position,
+                current_dimension,
+                zones,
+            );
+            cultivation.qi_current += actual_grant;
         }
         HeartDemonOutcome::Obsession => {
             let qi_before = cultivation.qi_current;
@@ -2991,6 +3002,59 @@ fn resolve_heart_demon_choice(
             tick: decision.tick,
             next_wave_multiplier,
         });
+}
+
+/// Debit `desired_grant` qi units from the player's zone and return the actual amount debited.
+///
+/// Zone stores qi as `spirit_qi` ∈ [-1.0, 1.0] where each unit = `QI_ZONE_UNIT_CAPACITY`.
+/// The zone floor is -1.0; we only take what is available above that floor so the debit
+/// never silently disappears while the player still gains qi (which would create qi).
+///
+/// Returns 0.0 if the zone cannot be resolved (no Position / CurrentDimension / ZoneRegistry,
+/// or player outside all zones, or zone fully depleted). In that case the caller must NOT
+/// apply any grant to `cultivation.qi_current`.
+fn debit_zone_for_heart_demon_steadfast(
+    desired_grant: f64,
+    position: Option<&Position>,
+    current_dimension: Option<&CurrentDimension>,
+    zones: Option<&mut ZoneRegistry>,
+) -> f64 {
+    if desired_grant <= QI_EPSILON {
+        return 0.0;
+    }
+    let Some(position) = position else {
+        tracing::warn!(
+            "[bong][tribulation] HeartDemon Steadfast: no Position; qi grant suppressed to preserve conservation"
+        );
+        return 0.0;
+    };
+    let Some(current_dimension) = current_dimension else {
+        tracing::warn!(
+            "[bong][tribulation] HeartDemon Steadfast: no CurrentDimension; qi grant suppressed to preserve conservation"
+        );
+        return 0.0;
+    };
+    let Some(zones) = zones else {
+        tracing::warn!(
+            "[bong][tribulation] HeartDemon Steadfast: no ZoneRegistry; qi grant suppressed to preserve conservation"
+        );
+        return 0.0;
+    };
+    let dim = current_dimension.0;
+    let Some(zone) = zones.find_zone_mut_by_pos(dim, position.0) else {
+        tracing::warn!(
+            "[bong][tribulation] HeartDemon Steadfast: player outside known zone; qi grant suppressed to preserve conservation"
+        );
+        return 0.0;
+    };
+    // Available headroom above the zone floor of -1.0 (in raw qi units).
+    let available = ((zone.spirit_qi + 1.0) * QI_ZONE_UNIT_CAPACITY).max(0.0);
+    let actual_grant = desired_grant.min(available);
+    if actual_grant <= QI_EPSILON {
+        return 0.0;
+    }
+    zone.spirit_qi -= actual_grant / QI_ZONE_UNIT_CAPACITY;
+    actual_grant
 }
 
 fn heart_demon_outcome_for_choice(choice_idx: Option<u32>) -> HeartDemonOutcome {
@@ -5440,12 +5504,24 @@ mod tests {
 
     #[test]
     fn heart_demon_steadfast_choice_records_and_restores_qi() {
+        // Pitfall (a): empty zone first so there is room for the full 20 qi grant without
+        // hitting the zone capacity limit and splitting the debit.
         let mut app = App::new();
         app.add_event::<HeartDemonChoiceSubmitted>();
         app.add_systems(Update, heart_demon_choice_system);
+        let mut zones = ZoneRegistry::fallback();
+        zones
+            .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
+            .expect("fallback zone should exist")
+            .spirit_qi = 0.0;
+        app.insert_resource(zones);
+
+        // Pitfall (b): entity needs CurrentDimension for zone lookup to succeed.
         let entity = app
             .world_mut()
             .spawn((
+                Position::new([0.0, 70.0, 0.0]), // inside spawn zone (y in [64.0, 80.0])
+                CurrentDimension(DimensionKind::Overworld),
                 Cultivation {
                     realm: Realm::Spirit,
                     qi_current: 120.0,
@@ -5476,11 +5552,38 @@ mod tests {
         });
         app.update();
 
+        // effective_qi_max = (210.0 - 10.0).max(0.0) = 200.0
+        // desired_grant    = (200.0 * 0.10).min((200.0 - 120.0).max(0.0)) = 20.0
+        // available        = (0.0 + 1.0) * 50.0 = 50.0 >= 20.0 → actual_grant = 20.0
+        // Pitfall (c): use computed grant, not a hardcoded integer.
+        let effective_qi_max = 200.0_f64;
+        let expected_grant = (effective_qi_max * 0.10).min((effective_qi_max - 120.0).max(0.0));
+        let expected_qi_current = 120.0 + expected_grant;
+        // Zone spirit_qi starts at 0.0; debit = 20.0 / 50.0 = 0.4 → zone goes to -0.4.
+        let expected_zone_spirit_qi = 0.0 - expected_grant / 50.0;
+
         let cultivation = app
             .world()
             .get::<Cultivation>(entity)
             .expect("cultivation should remain attached");
-        assert_eq!(cultivation.qi_current, 140.0);
+        assert!(
+            (cultivation.qi_current - expected_qi_current).abs() < 1e-9,
+            "Steadfast should grant {expected_grant} qi: expected qi_current={expected_qi_current}, got {}",
+            cultivation.qi_current
+        );
+
+        let zone_spirit_qi = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .expect("spawn zone should exist")
+            .spirit_qi;
+        assert!(
+            (zone_spirit_qi - expected_zone_spirit_qi).abs() < 1e-9,
+            "Zone must be debited by grant/QI_ZONE_UNIT_CAPACITY to preserve conservation: \
+             expected spirit_qi={expected_zone_spirit_qi}, got {zone_spirit_qi}"
+        );
+
         let resolution = app
             .world()
             .get::<HeartDemonResolution>(entity)
@@ -5501,6 +5604,168 @@ mod tests {
                 tick: 2110
             })
         ));
+    }
+
+    #[test]
+    fn heart_demon_steadfast_no_grant_without_zone() {
+        // When the entity has no CurrentDimension the zone lookup fails and the grant is
+        // suppressed to zero — no qi from thin air.
+        let mut app = App::new();
+        app.add_event::<HeartDemonChoiceSubmitted>();
+        app.add_systems(Update, heart_demon_choice_system);
+        let mut zones = ZoneRegistry::fallback();
+        zones
+            .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
+            .expect("fallback zone should exist")
+            .spirit_qi = 0.0;
+        app.insert_resource(zones);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                Position::new([0.0, 70.0, 0.0]),
+                // Deliberately omit CurrentDimension so zone lookup returns None.
+                Cultivation {
+                    realm: Realm::Spirit,
+                    qi_current: 120.0,
+                    qi_max: 210.0,
+                    ..Default::default()
+                },
+                LifeRecord::new("offline:Azure2"),
+                TribulationState {
+                    kind: TribulationKind::DuXu,
+                    phase: TribulationPhase::HeartDemon,
+                    epicenter: [0.0, 66.0, 0.0],
+                    wave_current: 4,
+                    waves_total: 5,
+                    started_tick: 0,
+                    phase_started_tick: 100,
+                    next_wave_tick: 400,
+                    participants: vec!["offline:Azure2".to_string()],
+                    failed: false,
+                },
+            ))
+            .id();
+
+        app.world_mut().send_event(HeartDemonChoiceSubmitted {
+            entity,
+            choice_idx: Some(0), // Steadfast
+            submitted_at_tick: 110,
+        });
+        app.update();
+
+        let cultivation = app
+            .world()
+            .get::<Cultivation>(entity)
+            .expect("cultivation should remain attached");
+        assert_eq!(
+            cultivation.qi_current, 120.0,
+            "Without CurrentDimension the zone cannot be located; \
+             grant must be suppressed to preserve conservation (qi_current should stay at 120.0)"
+        );
+
+        // Zone must not be touched either.
+        let zone_spirit_qi = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .expect("spawn zone should exist")
+            .spirit_qi;
+        assert_eq!(
+            zone_spirit_qi, 0.0,
+            "Zone spirit_qi must stay at 0.0 when no grant was applied"
+        );
+    }
+
+    #[test]
+    fn heart_demon_steadfast_capped_by_zone_headroom() {
+        // Zone is near-depleted (spirit_qi = -0.9 → only 5 qi available above -1.0 floor).
+        // Player wants 10% of 300 = 30 qi but zone can only provide 5.
+        // actual_grant must equal the zone debit (no qi created from thin air).
+        let mut app = App::new();
+        app.add_event::<HeartDemonChoiceSubmitted>();
+        app.add_systems(Update, heart_demon_choice_system);
+        let mut zones = ZoneRegistry::fallback();
+        zones
+            .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
+            .expect("fallback zone should exist")
+            .spirit_qi = -0.9; // only (−0.9 + 1.0) × 50 = 5 qi available
+        app.insert_resource(zones);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                Position::new([0.0, 70.0, 0.0]),
+                CurrentDimension(DimensionKind::Overworld),
+                Cultivation {
+                    realm: Realm::Spirit,
+                    qi_current: 0.0,
+                    qi_max: 300.0,
+                    ..Default::default()
+                },
+                LifeRecord::new("offline:Azure3"),
+                TribulationState {
+                    kind: TribulationKind::DuXu,
+                    phase: TribulationPhase::HeartDemon,
+                    epicenter: [0.0, 66.0, 0.0],
+                    wave_current: 4,
+                    waves_total: 5,
+                    started_tick: 0,
+                    phase_started_tick: 100,
+                    next_wave_tick: 400,
+                    participants: vec!["offline:Azure3".to_string()],
+                    failed: false,
+                },
+            ))
+            .id();
+
+        app.world_mut().send_event(HeartDemonChoiceSubmitted {
+            entity,
+            choice_idx: Some(0), // Steadfast
+            submitted_at_tick: 110,
+        });
+        app.update();
+
+        // Zone had spirit_qi = -0.9; available = (-0.9 + 1.0) * 50.0 = 5.0 qi.
+        // desired_grant = (300.0 * 0.10).min((300.0 - 0.0).max(0.0)) = 30.0.
+        // actual_grant  = 30.0.min(5.0) = 5.0 (capped by zone headroom).
+        let zone_spirit_qi_before = -0.9_f64;
+        let zone_available = (zone_spirit_qi_before + 1.0) * 50.0; // 5.0
+        let desired_grant = (300.0_f64 * 0.10).min((300.0_f64 - 0.0_f64).max(0.0));
+        let expected_grant = desired_grant.min(zone_available);
+        let expected_qi_current = 0.0 + expected_grant;
+        let expected_zone_spirit_qi = zone_spirit_qi_before - expected_grant / 50.0;
+
+        let cultivation = app
+            .world()
+            .get::<Cultivation>(entity)
+            .expect("cultivation should remain attached");
+        assert!(
+            (cultivation.qi_current - expected_qi_current).abs() < 1e-9,
+            "Grant must be capped at zone headroom ({zone_available} qi): \
+             expected qi_current={expected_qi_current}, got {}",
+            cultivation.qi_current
+        );
+
+        let zone_spirit_qi = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .expect("spawn zone should exist")
+            .spirit_qi;
+        assert!(
+            (zone_spirit_qi - expected_zone_spirit_qi).abs() < 1e-9,
+            "Zone debit must equal actual grant / QI_ZONE_UNIT_CAPACITY: \
+             expected spirit_qi={expected_zone_spirit_qi}, got {zone_spirit_qi}"
+        );
+
+        // Conservation: player gain == zone debit × QI_ZONE_UNIT_CAPACITY.
+        let player_gain = cultivation.qi_current - 0.0;
+        let zone_debit = (zone_spirit_qi_before - zone_spirit_qi) * 50.0;
+        assert!(
+            (player_gain - zone_debit).abs() < 1e-9,
+            "Conservation: player_gain ({player_gain}) must equal zone_debit ({zone_debit})"
+        );
     }
 
     #[test]
