@@ -11,7 +11,7 @@ use valence::prelude::{
 use crate::combat::components::{Lifecycle, LifecycleState};
 use crate::npc::heiwushi::{spawn_heiwushi_at, HeiwushiMarker};
 use crate::npc::movement::GameTick;
-use crate::world::dimension::DimensionLayers;
+use crate::world::dimension::{CurrentDimension, DimensionKind, DimensionLayers};
 use crate::world::zone::ZoneRegistry;
 
 pub const HEIWUSHI_HOME_ZONE: &str = "giant_sword_sea";
@@ -43,7 +43,7 @@ pub fn heiwushi_natural_spawn_system(
     tick: Option<Res<GameTick>>,
     mut state: ResMut<HeiwushiSpawnState>,
     alive_bosses: Query<&Lifecycle, With<HeiwushiMarker>>,
-    players: Query<&Position, With<ClientMarker>>,
+    players: Query<(&Position, Option<&CurrentDimension>), With<ClientMarker>>,
     zone_registry: Option<Res<ZoneRegistry>>,
     dimension_layers: Option<Res<DimensionLayers>>,
     mut commands: Commands,
@@ -96,11 +96,14 @@ pub fn heiwushi_natural_spawn_system(
         .and_then(|z| z.patrol_anchors.first().copied())
         .unwrap_or(DVec3::new(4200.0, 85.0, 1200.0));
 
-    // 5. 玩家在场门：锚点 HEIWUSHI_PLAYER_PRESENCE_RADIUS 格内必须有玩家。
+    // 5. 玩家在场门：锚点 HEIWUSHI_PLAYER_PRESENCE_RADIUS 格内必须有**主世界**玩家。
+    //    boss 固定刷在 layers.overworld，故只数 Overworld 维度玩家——否则 TSY 维度玩家
+    //    坐标恰好贴近锚点也会误触发主世界刷新（CurrentDimension 缺省视为 Overworld）。
     let radius_sq = HEIWUSHI_PLAYER_PRESENCE_RADIUS * HEIWUSHI_PLAYER_PRESENCE_RADIUS;
-    let player_nearby = players
-        .iter()
-        .any(|pos| pos.get().distance_squared(anchor) <= radius_sq);
+    let player_nearby = players.iter().any(|(pos, dim)| {
+        let dim_kind = dim.map(|d| d.0).unwrap_or(DimensionKind::Overworld);
+        dim_kind == DimensionKind::Overworld && pos.get().distance_squared(anchor) <= radius_sq
+    });
     if !player_nearby {
         return;
     }
@@ -384,5 +387,33 @@ mod tests {
         }
         app.update();
         assert_eq!(count_bosses(&mut app), 1, "kills>=2 刚好到 1h 边界应刷新");
+    }
+
+    #[test]
+    fn no_spawn_when_player_near_anchor_but_in_other_dimension() {
+        // 玩家坐标贴近锚点但在 TSY 维度 → boss 固定刷主世界，不应误触发。
+        let mut app = make_app();
+        install_layers(&mut app);
+        // 在锚点坐标放一个 TSY 维度玩家（非 Overworld）
+        app.world_mut().spawn((
+            ClientMarker,
+            Position::new([4200.0, 85.0, 1200.0]),
+            CurrentDimension(DimensionKind::Tsy),
+        ));
+        let tick: u32 =
+            (HEIWUSHI_FIRST_KILL_RESPAWN_TICKS + HEIWUSHI_SPAWN_CHECK_INTERVAL_TICKS) as u32;
+        app.insert_resource(GameTick(tick));
+        {
+            let mut state = app.world_mut().resource_mut::<HeiwushiSpawnState>();
+            state.last_death_tick = Some(0);
+            state.kills = 1;
+            state.alive = false;
+        }
+        app.update();
+        assert_eq!(
+            count_bosses(&mut app),
+            0,
+            "玩家在 TSY 维度时不应在主世界刷出黑武士（维度门）"
+        );
     }
 }
