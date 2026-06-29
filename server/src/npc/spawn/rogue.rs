@@ -156,8 +156,14 @@ pub(crate) fn rogue_npc_thinker() -> ThinkerBuilder {
         .when(NpcHealScorer, NpcHealAction)
         .when(NpcTechniqueScorer, NpcTechniqueAction)
         .when(MeleeRangeScorer, MeleeAttackAction)
-        .when(ChaseTargetScorer, ChaseAction)
+        // NpcDefenseScorer must precede ChaseTargetScorer: FirstToScore evaluates choices in
+        // registration order and returns the FIRST one exceeding the threshold (not the highest).
+        // ChaseTargetScorer fires whenever a player is within CHASE_RANGE (~2–30 blocks) — the
+        // entire normal combat envelope — so placing it first permanently starves NpcDefenseAction.
+        // NpcDefenseScorer scores 0.5–0.7 only when a parry window is open (no ParryRecovery),
+        // so it naturally yields back to chase outside those windows.
         .when(NpcDefenseScorer, NpcDefenseAction::default())
+        .when(ChaseTargetScorer, ChaseAction)
         .when(PlayerProximityScorer, FleeAction)
         .when(CultivationDriveScorer, CultivateAction)
         .when(TradeStallScorer, StallAction)
@@ -178,8 +184,9 @@ pub(crate) fn scattered_cultivator_thinker() -> ThinkerBuilder {
         .when(LingtianFarmingScorer::plant(), PlantAction)
         .when(LingtianFarmingScorer::till(), TillAction)
         .when(MeleeRangeScorer, MeleeAttackAction)
-        .when(ChaseTargetScorer, ChaseAction)
+        // NpcDefenseScorer must precede ChaseTargetScorer — same reason as rogue_npc_thinker.
         .when(NpcDefenseScorer, NpcDefenseAction::default())
+        .when(ChaseTargetScorer, ChaseAction)
         .when(PlayerProximityScorer, FleeAction)
         .when(CultivationDriveScorer, CultivateAction)
         .when(TradeStallScorer, StallAction)
@@ -554,5 +561,112 @@ pub(crate) fn seed_initial_rogue_population_on_startup(
             progress.other_reserved,
         );
         progress.done = true;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::npc::brain::{chase_score, npc_defense_score_for_realm};
+    use crate::npc::spawn::NpcMeleeProfile;
+    use crate::cultivation::components::Realm;
+
+    /// Regression lock: NpcDefenseScorer must be registered before ChaseTargetScorer in
+    /// rogue_npc_thinker. FirstToScore evaluates choices in registration order and returns the
+    /// FIRST one exceeding the threshold — not the highest. ChaseTargetScorer fires for any
+    /// player within CHASE_RANGE (the normal combat envelope), so registering it first
+    /// permanently starves NpcDefenseAction, making Induce+ rogues structurally incapable of
+    /// parrying. This test locks the ordering by inspecting the Debug representation of the
+    /// ThinkerBuilder (which includes ChoiceBuilder entries with their scorer labels).
+    #[test]
+    fn rogue_npc_thinker_defense_before_chase() {
+        let builder = rogue_npc_thinker();
+        let debug_str = format!("{builder:?}");
+        let defense_pos = debug_str
+            .find("NpcDefenseScorer")
+            .expect("rogue_npc_thinker must include NpcDefenseScorer");
+        let chase_pos = debug_str
+            .find("ChaseTargetScorer")
+            .expect("rogue_npc_thinker must include ChaseTargetScorer");
+        assert!(
+            defense_pos < chase_pos,
+            "NpcDefenseScorer must be registered BEFORE ChaseTargetScorer in rogue_npc_thinker \
+             (FirstToScore picks first-above-threshold); \
+             found NpcDefenseScorer at byte {defense_pos}, ChaseTargetScorer at byte {chase_pos}"
+        );
+    }
+
+    /// Same regression lock for scattered_cultivator_thinker.
+    #[test]
+    fn scattered_cultivator_thinker_defense_before_chase() {
+        let builder = scattered_cultivator_thinker();
+        let debug_str = format!("{builder:?}");
+        let defense_pos = debug_str
+            .find("NpcDefenseScorer")
+            .expect("scattered_cultivator_thinker must include NpcDefenseScorer");
+        let chase_pos = debug_str
+            .find("ChaseTargetScorer")
+            .expect("scattered_cultivator_thinker must include ChaseTargetScorer");
+        assert!(
+            defense_pos < chase_pos,
+            "NpcDefenseScorer must be registered BEFORE ChaseTargetScorer in \
+             scattered_cultivator_thinker (FirstToScore picks first-above-threshold); \
+             found NpcDefenseScorer at byte {defense_pos}, ChaseTargetScorer at byte {chase_pos}"
+        );
+    }
+
+    /// Confirms that in the normal combat envelope both scorers exceed the FirstToScore threshold
+    /// of 0.05, which is what makes registration order decisive. If either scored 0 in practice
+    /// the reordering would be a no-op.
+    #[test]
+    fn both_defense_and_chase_score_above_first_to_score_threshold_in_combat_range() {
+        // 10 blocks: solidly within CHASE_RANGE (32) and above preferred_distance (~1.0 for fist).
+        let profile = NpcMeleeProfile::fist();
+        let chase = chase_score(10.0, &profile);
+        let defense_induce = npc_defense_score_for_realm(Realm::Induce);
+        let threshold = 0.05_f32;
+
+        assert!(
+            chase > threshold,
+            "ChaseTargetScorer should score > {threshold} at 10 blocks (got {chase}); \
+             otherwise the ordering fix would be a no-op"
+        );
+        assert!(
+            defense_induce > threshold,
+            "NpcDefenseScorer should score > {threshold} for Induce realm (got {defense_induce}); \
+             otherwise Induce+ rogues would never defend regardless of ordering"
+        );
+    }
+
+    /// Boundary: ChaseTargetScorer scores 0 when player is beyond CHASE_RANGE — in that case
+    /// neither scorer fires so ordering doesn't matter (safe baseline).
+    #[test]
+    fn chase_score_zero_beyond_chase_range_so_defense_never_misses_due_to_ordering() {
+        let profile = NpcMeleeProfile::fist();
+        // Just past CHASE_RANGE (32 blocks).
+        let chase_far = chase_score(33.0, &profile);
+        assert_eq!(
+            chase_far, 0.0,
+            "ChaseTargetScorer must score 0 beyond CHASE_RANGE=32; got {chase_far}"
+        );
+        // Defense still scores for Induce+ regardless, but can only fire if registered first.
+        // When player is out of range nearest_player=None so defense also scores 0 — consistent.
+    }
+
+    /// Boundary: at preferred_distance (melee contact), chase scores 0 and MeleeAttackAction
+    /// handles combat — defense ordering still matters for the MeleeAttack → parry interplay.
+    #[test]
+    fn chase_score_zero_at_preferred_distance_melee_contact() {
+        let profile = NpcMeleeProfile::fist();
+        // preferred_distance for fist profile is <= 1.0; distance 0.8 is below it.
+        let chase_contact = chase_score(0.8, &profile);
+        assert_eq!(
+            chase_contact, 0.0,
+            "ChaseTargetScorer must score 0 at or below preferred_distance; got {chase_contact}"
+        );
     }
 }
