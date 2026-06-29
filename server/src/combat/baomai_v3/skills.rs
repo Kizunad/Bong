@@ -203,6 +203,17 @@ pub fn cast_full_power_charge(
     slot: u8,
     target: Option<Entity>,
 ) -> CastResult {
+    // Realm gate: full_power techniques require Induce (引气) or higher.
+    // A player who learned these techniques at Induce and then died may regress
+    // to Awaken (apply_revive_penalty / qi_zero_decay_tick) while retaining
+    // KnownTechniques and 9 opened meridians (qi_max=100), satisfying the
+    // FULL_POWER_MIN_QI_TO_START=100 qi gate without actually being Induce.
+    let Some(cultivation) = world.get::<Cultivation>(caster).cloned() else {
+        return rejected(CastRejectReason::RealmTooLow);
+    };
+    if cultivation.realm == Realm::Awaken {
+        return rejected(CastRejectReason::RealmTooLow);
+    }
     if let Err(reason) = check_static_deps(world, caster, BAOMAI_FULL_POWER_CHARGE_SKILL_ID) {
         return rejected(reason);
     }
@@ -244,6 +255,13 @@ pub fn cast_full_power_release(
     slot: u8,
     target: Option<Entity>,
 ) -> CastResult {
+    // Realm gate: matches cast_full_power_charge — Induce (引气) or higher required.
+    let Some(cultivation) = world.get::<Cultivation>(caster).cloned() else {
+        return rejected(CastRejectReason::RealmTooLow);
+    };
+    if cultivation.realm == Realm::Awaken {
+        return rejected(CastRejectReason::RealmTooLow);
+    }
     if let Err(reason) = check_static_deps(world, caster, BAOMAI_FULL_POWER_RELEASE_SKILL_ID) {
         return rejected(reason);
     }
