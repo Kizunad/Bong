@@ -1,5 +1,7 @@
 # Bong · plan-npc-virtualize-v2 · active
 
+> **归档（被取代）2026-06-29**：本 plan 已被 `docs/finished_plans/plan-offscreen-war-v1.md` 取代——offscreen-war-v1 头部「反向被取代 / 归档」明确将本骨架折叠入其离屏世界闭环实现。本 plan 不再独立消费，归档留档。
+
 NPC 虚拟化**三态扩展**——在 v1 二态（Hydrated ↔ Dormant）基础上补 Drowsy 中间态（64-256 格 ECS entity 但仅核心 system 1Hz tick + 远视野 LOD 可见），消除玩家快速穿越边界时的 spawn/despawn 撕裂感并补足远视野 NPC 稀薄问题。
 
 **前置条件**（派生自 plan-npc-virtualize-v1 §1 P0 决策门 #1）：v1 上线后出现以下任一情况时启动本 plan：
@@ -125,3 +127,9 @@ NPC 虚拟化**三态扩展**——在 v1 二态（Hydrated ↔ Dormant）基础
 3. **Dr↔D 转换快照**：Drowsy↔Dormant 是否复用 `NpcDormantSnapshot` or 需独立 component（简单 vs 干净）
 4. **Drowsy 期被天道 agent 推演**：Drowsy NPC 出现在 NpcDigest 吗（v1 已含 hydrated + dormant，Drowsy 应加入 or 合并到 dormant 通道）
 5. **docs/CLAUDE.md §四 红旗**：是否加"Drowsy 期灵气未走 ledger"独立红旗 or 合并入 dormant 灵气红旗
+
+## 归档说明（被取代）
+
+- **取代者**：`docs/finished_plans/plan-offscreen-war-v1.md`（已归档）。其头部「反向被取代 / 归档」节点名列 `plan-npc-virtualize-v2`（Drowsy 可见性）为应作废骨架，内容折叠入 offscreen-war。
+- **代码现状（2026-06-29 核验）**：本 plan 主体 Drowsy/Mid LOD 已落地于 `server/src/npc/lod.rs`（Mid 80..=256 降频态）；剩余 P3（`BONG_DROWSY_SEED_COUNT` 种子 + 三态 ≥18 TPS e2e + 边界穿越压测）属测试/CI 脚手架，已并入 offscreen-war 的离屏层测试路线，无独立保留价值。
+- **处置**：归档留档（保留 git 历史），不再独立实施。离屏 NPC 虚拟化后续以 offscreen-war-v1 为准。

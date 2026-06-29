@@ -8,11 +8,11 @@
 
 | 阶段 | 主题 | 路由 | 状态 |
 |------|------|------|------|
-| P0 | 🔴 复活/新建角色不清 CoffinComponent → 永久钉棺 | plan_skeleton | ⬜ |
-| P1 | worldgen NBT 结构锚点偏移（structures.rs 漏 centering） | fix_pr | ⬜ |
-| P2 | anqi.charge_carrier 漏运行时经脉门 + declare | fix_pr | ⬜ |
-| P3 | VFX emit-orphan 整簇（8 粒子 id client 未注册） | plan_skeleton | ⬜ |
-| P4 | 派系 Resign/Expel/Betray 重连自动复籍 | fix_pr | ⬜ |
+| P0 | 🔴 复活/新建角色不清 CoffinComponent → 永久钉棺 | plan_skeleton | ✅ 2026-06-29 |
+| P1 | worldgen NBT 结构锚点偏移（structures.rs 漏 centering） | fix_pr | ✅ 2026-06-29 |
+| P2 | anqi.charge_carrier 漏运行时经脉门 + declare | fix_pr | ✅ 2026-06-29 |
+| P3 | VFX emit-orphan 整簇（8 粒子 id client 未注册） | plan_skeleton | ✅ 2026-06-29 |
+| P4 | 派系 Resign/Expel/Betray 重连自动复籍 | fix_pr | ✅ 2026-06-29 |
 
 ## P0 — 🔴 复活/新建角色不清 CoffinComponent（critical）
 
@@ -50,3 +50,32 @@
 ## 审计来源
 
 bug-hunt round5（workflow，5 全新角度 finder + 怀疑者对抗 + opus 裁决，8 候选）。**ROOT = fresh origin/main worktree**（方法论修正后第三轮）。已对 r1-r4 去重。**report-only**：critical 棺钉死优先；#0/#3/#7 局部明确可直接 fix_pr，#2/#4/#5/#6 需跨模块状态机/VFX 客户端授权设计。**本轮主线**：VFX emit-orphan 整簇（client 未注册粒子，与 r3 同类系统性缺口）+ 棺/派系跨会话状态机漏分支。**worldgen 锚点**：#0 呼应 worldgen-v4 P6 遗留（flora 已修 structures 漏，建议抽公共 centering helper）。
+
+## Finish Evidence
+
+> 本 plan 为 report-only findings 文档，记录 round5 自检确认的 7 个真 bug（含 1 critical）。全部已在后续独立 PR 修复并合并 origin/main；本归档 PR 仅补收尾文档（git mv + 本节，无代码变更）。核验方式：2026-06-29 代码审计。
+
+### 落地清单（每阶段 → 真实模块）
+- **P0 #2**（复活/新建角色不清 CoffinComponent → 永久钉棺，critical）：`server/src/combat/lifecycle.rs:1538` `revive_lifecycle` + `:1865` `reset_for_new_character` 均 `remove::<CoffinComponent>` + clear registry；测试 `revive_clears_coffin_component_and_registry_and_emits_state_changed`(`:4935+`)。
+- **P1 #0**（worldgen NBT 结构锚点偏移）：`server/src/world/terrain/structures.rs:2547-2550` 加 `half_x/half_z/centre_dx/centre_dz` centering（对齐 flora.rs）；测试 `stamp_structure_centres_odd_footprint_on_origin`(`:3029`)。
+- **P2 #3**（anqi.charge_carrier 漏运行时经脉门 + declare）：`server/src/combat/carrier.rs:290` 加 `check_meridian_dependencies` + `MeridianSeveredPermanent` 门；`anqi_v2.rs:361-363` 补 `declare(ANQI_CHARGE_CARRIER_SKILL_ID, [Lung])`；测试 `charge_carrier_cast_rejected_when_lung_severed`(`:1818`)。
+- **P3 #4/#5/#6**（VFX emit-orphan 整簇，8 粒子 id client 零注册）：`client/.../NpcParticleVfxPlayer.java` 8 Kind 枚举 + `VfxBootstrap.java:128-143` 注册（skull_fiend×4 / hybrid×2 / supply_coffin×2）。
+- **P4 #7**（派系 Resign/Expel/Betray 重连自动复籍）：`server/src/social/mod.rs:1546`(Resign) + `:1553`(Expel/Betray) `next_membership.faction = FactionId::Neutral`；测试组 faction=Neutral 验证(`:4880+`)。
+
+### 关键 commit
+- `dbfdad2ba` (2026-06-17) #603 — coffin clear on revive/terminate/new_char paths (r5-P0)
+- `b743ce823` (2026-06-17) #598 — centre stamp_structure footprint on scatter point (r5-P1)
+- `9f1fb5d3c` (2026-06-17) #594 — anqi.charge_carrier 补经脉门 + declare (r5-P2)
+- `68b0dffd9` (2026-06-18) #614 — 接入 NPC 粒子事件注册（skull_fiend/hybrid/supply_coffin 8 id）(r5-P3)
+- `e5d51ac36` (2026-06-17) #592 — 派系除籍后置 Neutral 防重连复籍 (r5-P4)
+
+### 测试结果
+本 PR 纯文档，无代码变更。各阶段 pin 测试见落地清单，落地代码于 #592/#594/#598/#603/#614 合并时 CI 全绿。
+
+### 跨仓库核验（2026-06-29）
+- **server**：`remove::<CoffinComponent>`(lifecycle 两路径) / `centre_dx`(structures) / `check_meridian_dependencies`(carrier) / `next_membership.faction = FactionId::Neutral`(social) 均命中。
+- **client**：`NpcParticleVfxPlayer` 8 Kind + `VfxBootstrap.java:128-143` SKULL_FIEND_LOCKING/TRAIL/IMPACT/STUNNED、HYBRID_FORMATION/RAGE、SUPPLY_COFFIN_EMERGE/BREAK 注册命中。
+- **agent**：无改动。
+
+### 遗留 / 后续
+无。7 项发现全部修复并测试锁定。

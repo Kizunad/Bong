@@ -1,5 +1,7 @@
 # Bong · plan-faction-wars-v1 · active
 
+> **归档（被取代）2026-06-29**：本 plan 已被 `docs/finished_plans/plan-offscreen-war-v1.md` 取代——offscreen-war-v1 头部「反向被取代 / 归档」明确将本骨架折叠入其离屏世界闭环实现（战争生命周期 + 玩家参与层）。本 plan 不再独立消费，归档留档。
+
 玩家可参与的**派系战争**——在 npc-virtualize-v3 dormant 批量战斗基础上，实装玩家可加入/佣兵/截胡的派系战争事件，让 worldview §十一"散修江湖派系势力消长"有玩家参与渠道。v1 以现有 `FactionId::Attack / Defend / Neutral` 为基础，扩展战争事件生命周期（宣战 → 野战 → 结算 → 余波），玩家可选择投靠、雇佣、背刺或旁观。
 
 **前置条件**（派生自 plan-npc-virtualize-v3 §8 开放问题）：以下任一满足时启动：
@@ -143,3 +145,9 @@
 3. **玩家参战上限**：同一场战争允许多少玩家加入（防止大量玩家倒向一方一击必杀）
 4. **战争频率**：dormant 触发战争的阈值（10 次/game-week）是否导致战争过于频繁，影响 zone 稳定性
 5. **截胡机制边界**：Intercept 截胡能劫什么资源（骨币 / 战死 NPC 掉落物 / zone 灵脉控制权临时占领）
+
+## 归档说明（被取代）
+
+- **取代者**：`docs/finished_plans/plan-offscreen-war-v1.md`（已归档）。offscreen-war-v1 显式「折叠 `plan-faction-wars-v1`：在 P2 dormant 批量战斗 + P5 具名势力上加战争生命周期与玩家参与」。
+- **代码现状（2026-06-29 核验）**：本 plan 声明的锚点（`FactionWarHudLayer` / WarPhase·WarRole 变体 / Redis key 格式等）与当前 origin/main 不符——等效战争功能由 offscreen-war 以不同设计实现并已归档。本 plan 无独立落地价值。
+- **处置**：归档留档（保留 git 历史），不再独立实施。派系战争后续以 offscreen-war-v1 及 `plan-faction-expansion-v1`（具名势力，已完成归档）为准。
