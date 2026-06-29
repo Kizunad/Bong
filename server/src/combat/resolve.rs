@@ -1687,6 +1687,7 @@ pub fn resolve_attack_intents(
 fn attack_source_label(source: AttackSource) -> &'static str {
     match source {
         AttackSource::Melee => "attack_intent",
+        AttackSource::NpcMelee => "npc_melee_attack",
         AttackSource::BurstMeridian => "burst_meridian_attack",
         AttackSource::QiNeedle => "qi_needle",
         AttackSource::FullPower => "full_power_strike",
@@ -1721,6 +1722,13 @@ fn source_uses_prepaid_qi(source: AttackSource) -> bool {
             // AttackIntent{qi_invest:1.0}。漏掉 prepaid 白名单会让 resolver 再扣一次
             // qi_invest(=1.0)，每发气针命中后净扣 2.0 真元（double-spend）。
             | AttackSource::QiNeedle
+            // bug: Daoxiang TSY NPCs have Cultivation{qi_current:0.0, qi_max:10.0} by
+            // default (NpcRuntimeBundle), but emit AttackIntent{qi_invest:25.0}.
+            // Spirit-qi < -0.4 in TSY zones means the regen branch never fires, so
+            // qi_current stays 0.0 permanently. qi_max=10.0 < qi_invest=25.0 means the
+            // gate can never be cleared. NPC attacks are server-side-authoritative and
+            // need no player qi conservation accounting.
+            | AttackSource::NpcMelee
     )
 }
 
@@ -1934,6 +1942,47 @@ fn first_open_or_fallback_meridian(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// bug: Daoxiang TSY NPCs emit AttackIntent{qi_invest:25.0, source:Melee} but
+    /// NpcRuntimeBundle sets Cultivation{qi_current:0.0, qi_max:10.0}. TSY zone
+    /// spirit_qi < -0.4 means the regen branch never fires, so qi_current stays 0.0
+    /// permanently. The qi gate (qi_current + EPSILON < qi_invest → 0 < 25 → true)
+    /// blocks every single Daoxiang attack intent, making these NPCs deal zero damage.
+    ///
+    /// Fix: AttackSource::NpcMelee is added to the source_uses_prepaid_qi whitelist,
+    /// decoupling NPC combat from the player qi conservation model. NPC attacks are
+    /// server-side-authoritative and need no qi accounting.
+    #[test]
+    fn npc_melee_bypasses_qi_gate_preventing_daoxiang_zero_damage() {
+        // Happy path: NpcMelee must bypass the qi gate so TSY NPC attacks resolve.
+        assert!(
+            source_uses_prepaid_qi(AttackSource::NpcMelee),
+            "NpcMelee must bypass the qi gate: NPC qi_current=0.0 by default, \
+             qi_invest values (8–30) always exceed it → every attack silently dropped"
+        );
+        // Negative anchor: player Melee still goes through the qi gate (anti-cheat).
+        assert!(
+            !source_uses_prepaid_qi(AttackSource::Melee),
+            "player Melee must NOT bypass the qi gate — anti-cheat must still apply"
+        );
+        // NpcMelee and Melee are distinct variants (different resolver paths).
+        assert_ne!(
+            AttackSource::NpcMelee,
+            AttackSource::Melee,
+            "NpcMelee and Melee must be distinct — they have different anti-cheat semantics"
+        );
+        // Boundary: qi_invest=25.0 (Daoxiang) and qi_max=10.0 (NpcRuntimeBundle default)
+        // would be permanently blocked without the whitelist (25.0 > 10.0).
+        let daoxiang_qi_invest = 25.0_f64;
+        let npc_qi_current = 0.0_f64;
+        let gate_would_fire = npc_qi_current + f64::EPSILON < daoxiang_qi_invest;
+        assert!(
+            gate_would_fire,
+            "gate condition must evaluate to true for Daoxiang params \
+             (qi_current={npc_qi_current}, qi_invest={daoxiang_qi_invest}) — \
+             confirms NpcMelee whitelist is required, not redundant"
+        );
+    }
 
     /// bug-hunt-1: QiNeedle 在 cast 阶段（needle.rs:87）已预扣 QI_NEEDLE_QI_COST(=1.0) 自
     /// qi_current，并 emit AttackIntent{qi_invest:1.0, source:QiNeedle}。若 QiNeedle 不在

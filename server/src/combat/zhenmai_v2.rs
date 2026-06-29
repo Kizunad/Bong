@@ -474,10 +474,12 @@ pub fn attack_kind_for_source(
         | AttackSource::SwordPathResonance
         | AttackSource::SwordPathManifest
         | AttackSource::SwordPathHeavenGate => ZhenmaiAttackKind::RealYuan,
-        AttackSource::Melee if wound_kind == crate::combat::components::WoundKind::Pierce => {
+        AttackSource::Melee | AttackSource::NpcMelee
+            if wound_kind == crate::combat::components::WoundKind::Pierce =>
+        {
             ZhenmaiAttackKind::PhysicalCarrier
         }
-        AttackSource::Melee => ZhenmaiAttackKind::RealYuan,
+        AttackSource::Melee | AttackSource::NpcMelee => ZhenmaiAttackKind::RealYuan,
     }
 }
 

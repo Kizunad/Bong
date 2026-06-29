@@ -156,9 +156,12 @@ pub(crate) fn rogue_npc_thinker() -> ThinkerBuilder {
         .when(NpcHealScorer, NpcHealAction)
         .when(NpcTechniqueScorer, NpcTechniqueAction)
         .when(MeleeRangeScorer, MeleeAttackAction)
+        // PlayerProximityScorer MUST come before ChaseTargetScorer: at close range
+        // (≤3.2 blocks) chase also scores >0.05 in a FirstToScore chain, so flee
+        // must be evaluated first or it is permanently blocked. See bug npc-flee-blocked.
+        .when(PlayerProximityScorer, FleeAction)
         .when(ChaseTargetScorer, ChaseAction)
         .when(NpcDefenseScorer, NpcDefenseAction::default())
-        .when(PlayerProximityScorer, FleeAction)
         .when(CultivationDriveScorer, CultivateAction)
         .when(TradeStallScorer, StallAction)
         .when(ReturnHomeScorer, ReturnHomeAction)
@@ -178,9 +181,12 @@ pub(crate) fn scattered_cultivator_thinker() -> ThinkerBuilder {
         .when(LingtianFarmingScorer::plant(), PlantAction)
         .when(LingtianFarmingScorer::till(), TillAction)
         .when(MeleeRangeScorer, MeleeAttackAction)
+        // PlayerProximityScorer MUST come before ChaseTargetScorer: at close range
+        // (≤3.2 blocks) chase also scores >0.05 in a FirstToScore chain, so flee
+        // must be evaluated first or it is permanently blocked. See bug npc-flee-blocked.
+        .when(PlayerProximityScorer, FleeAction)
         .when(ChaseTargetScorer, ChaseAction)
         .when(NpcDefenseScorer, NpcDefenseAction::default())
-        .when(PlayerProximityScorer, FleeAction)
         .when(CultivationDriveScorer, CultivateAction)
         .when(TradeStallScorer, StallAction)
         .when(ReturnHomeScorer, ReturnHomeAction)
@@ -554,5 +560,48 @@ pub(crate) fn seed_initial_rogue_population_on_startup(
             progress.other_reserved,
         );
         progress.done = true;
+    }
+}
+
+#[cfg(test)]
+mod ordering_tests {
+    use super::{rogue_npc_thinker, scattered_cultivator_thinker};
+
+    // FleeAction is wired behind PlayerProximityScorer and ChaseAction behind
+    // ChaseTargetScorer. The thinker uses FirstToScore, which picks the FIRST
+    // choice clearing the threshold IN REGISTRATION ORDER — not the highest score.
+    // At close range both scorers clear the threshold (locked separately by
+    // scorers_combat::flee_scorer_takes_priority_over_chase_at_close_range_ordering_invariant),
+    // so whichever is registered first wins. The bug was ChaseTargetScorer
+    // registered ahead of PlayerProximityScorer, permanently starving FleeAction.
+    // These tests fail the moment anyone reorders chase ahead of flee again.
+
+    fn assert_flee_before_chase(debug_str: &str, thinker_name: &str) {
+        let flee_pos = debug_str.find("PlayerProximityScorer").unwrap_or_else(|| {
+            panic!("{thinker_name} must register PlayerProximityScorer (drives FleeAction)")
+        });
+        let chase_pos = debug_str.find("ChaseTargetScorer").unwrap_or_else(|| {
+            panic!("{thinker_name} must register ChaseTargetScorer (drives ChaseAction)")
+        });
+        assert!(
+            flee_pos < chase_pos,
+            "{thinker_name}: PlayerProximityScorer (FleeAction) must be registered BEFORE \
+             ChaseTargetScorer (ChaseAction) — FirstToScore picks first-above-threshold in \
+             registration order, so chase-first permanently starves flee. \
+             found PlayerProximityScorer at byte {flee_pos}, ChaseTargetScorer at byte {chase_pos}"
+        );
+    }
+
+    #[test]
+    fn rogue_npc_thinker_flees_before_chasing() {
+        assert_flee_before_chase(&format!("{:?}", rogue_npc_thinker()), "rogue_npc_thinker");
+    }
+
+    #[test]
+    fn scattered_cultivator_thinker_flees_before_chasing() {
+        assert_flee_before_chase(
+            &format!("{:?}", scattered_cultivator_thinker()),
+            "scattered_cultivator_thinker",
+        );
     }
 }

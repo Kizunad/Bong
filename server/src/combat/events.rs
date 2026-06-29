@@ -48,6 +48,12 @@ pub struct AttackIntent {
 pub enum AttackSource {
     #[default]
     Melee,
+    /// NPC authoritative melee attack — bypasses the qi anti-cheat gate.
+    /// NPCs have `Cultivation { qi_current: 0.0, qi_max: 10.0 }` by default
+    /// (NpcRuntimeBundle), so any qi_invest > 0 would be permanently blocked
+    /// by the resolver gate if treated as a player Melee source.
+    /// NPC attacks are server-side-authoritative and require no qi accounting.
+    NpcMelee,
     BurstMeridian,
     QiNeedle,
     FullPower,
