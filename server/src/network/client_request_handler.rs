@@ -2067,6 +2067,7 @@ pub fn handle_client_request_payloads(
                     &mut commands,
                     &mut clients,
                     &mut combat_params,
+                    &skill_scroll_params.known_techniques,
                 );
             }
             ClientRequestV1::SkillBarBind { slot, binding, .. } => {
@@ -2078,6 +2079,7 @@ pub fn handle_client_request_payloads(
                     &inventories,
                     &clients,
                     persistence.as_deref(),
+                    &skill_scroll_params.known_techniques,
                 );
             }
             ClientRequestV1::SkillConfigIntent {
@@ -8847,6 +8849,7 @@ fn handle_skill_bar_cast(
     commands: &mut Commands,
     clients: &mut Query<(&Username, &mut Client)>,
     combat_params: &mut CombatRequestParams,
+    known_techniques: &Query<&mut KnownTechniques>,
 ) {
     if slot >= SkillBarBindings::SLOT_COUNT as u8 {
         tracing::warn!(
@@ -8874,6 +8877,19 @@ fn handle_skill_bar_cast(
         );
         return;
     };
+    // Ownership gate: reject if the player has not learned this technique.
+    let player_has_technique = known_techniques
+        .get(entity)
+        .ok()
+        .map(|kt| player_knows_technique(&kt, &skill_id))
+        .unwrap_or(false);
+    if !player_has_technique {
+        tracing::warn!(
+            "[bong][network] skill_bar_cast entity={entity:?} slot={slot} skill={skill_id} \
+             rejected: not in player KnownTechniques"
+        );
+        return;
+    }
     let skill_fn = combat_params
         .skill_registry
         .as_deref()
@@ -9598,6 +9614,7 @@ fn handle_skill_bar_bind(
     inventories: &Query<&mut PlayerInventory>,
     clients: &Query<(&Username, &mut Client)>,
     persistence: Option<&PlayerStatePersistence>,
+    known_techniques: &Query<&mut KnownTechniques>,
 ) {
     if slot >= SkillBarBindings::SLOT_COUNT as u8 {
         tracing::warn!("[bong][network] skill_bar_bind entity={entity:?} slot={slot} out of range");
@@ -9622,6 +9639,19 @@ fn handle_skill_bar_bind(
             if technique_definition(skill_id).is_none() {
                 tracing::warn!(
                     "[bong][network] skill_bar_bind entity={entity:?} slot={slot} rejected: unknown skill `{skill_id}`"
+                );
+                return;
+            }
+            // Ownership gate: reject if the player has not learned this technique.
+            let player_has_technique = known_techniques
+                .get(entity)
+                .ok()
+                .map(|kt| player_knows_technique(&kt, skill_id))
+                .unwrap_or(false);
+            if !player_has_technique {
+                tracing::warn!(
+                    "[bong][network] skill_bar_bind entity={entity:?} slot={slot} rejected: \
+                     technique `{skill_id}` not in player KnownTechniques"
                 );
                 return;
             }
@@ -9670,6 +9700,12 @@ fn binding_to_persist(
             crate::player::state::SkillSlotPersist::Skill { skill_id }
         }
     }
+}
+
+/// Returns true if the player has `skill_id` in their KnownTechniques with `active == true`.
+/// Used as the ownership gate in both skill_bar_bind and skill_bar_cast paths.
+fn player_knows_technique(known: &KnownTechniques, skill_id: &str) -> bool {
+    known.entries.iter().any(|e| e.id == skill_id && e.active)
 }
 
 fn first_instance_for_template(inventory: &PlayerInventory, template_id: &str) -> Option<u64> {
@@ -14522,6 +14558,148 @@ mod freshness_probe_handler_tests {
             "malformed JSON payload must not dispatch any RaiseShieldIntent; \
              actual intent count={}",
             captured.0.len()
+        );
+    }
+}
+
+// ── skill_bar ownership gate — player_knows_technique unit tests ────────────
+// Locks the gate that blocks SkillBarBind/Cast for techniques not in KnownTechniques.
+// Tests the pure helper function directly; no ECS required.
+#[cfg(test)]
+mod skill_bar_ownership_gate_tests {
+    use super::*;
+    use crate::cultivation::known_techniques::{KnownTechnique, KnownTechniques};
+
+    fn make_known(entries: &[(&str, bool)]) -> KnownTechniques {
+        KnownTechniques {
+            entries: entries
+                .iter()
+                .map(|(id, active)| KnownTechnique {
+                    id: (*id).to_string(),
+                    proficiency: 0.5,
+                    active: *active,
+                })
+                .collect(),
+        }
+    }
+
+    /// Happy path: technique is present and active → gate passes.
+    #[test]
+    fn active_technique_is_known() {
+        let kt = make_known(&[("sword.cleave", true)]);
+        assert!(
+            player_knows_technique(&kt, "sword.cleave"),
+            "player_knows_technique must return true when technique is present and active; \
+             entries={:?}",
+            kt.entries
+        );
+    }
+
+    /// Inactive technique in list → gate rejects (inactive = not in use / suspended).
+    #[test]
+    fn inactive_technique_is_not_known() {
+        let kt = make_known(&[("sword.cleave", false)]);
+        assert!(
+            !player_knows_technique(&kt, "sword.cleave"),
+            "player_knows_technique must return false when technique.active=false; \
+             entries={:?}",
+            kt.entries
+        );
+    }
+
+    /// Technique not in list at all → gate rejects.
+    #[test]
+    fn absent_technique_is_not_known() {
+        let kt = make_known(&[("sword.cleave", true)]);
+        assert!(
+            !player_knows_technique(&kt, "baomai.full_power_charge"),
+            "player_knows_technique must return false when technique is absent from entries; \
+             entries={:?}",
+            kt.entries
+        );
+    }
+
+    /// Empty KnownTechniques → gate rejects all techniques.
+    #[test]
+    fn empty_known_techniques_rejects_all() {
+        let kt = KnownTechniques { entries: vec![] };
+        assert!(
+            !player_knows_technique(&kt, "sword.cleave"),
+            "player_knows_technique must return false when KnownTechniques.entries is empty"
+        );
+        assert!(
+            !player_knows_technique(&kt, "baomai.full_power_charge"),
+            "player_knows_technique must return false for any technique when entries is empty"
+        );
+    }
+
+    /// Multiple techniques, the target one active → gate passes.
+    #[test]
+    fn active_among_many_is_known() {
+        let kt = make_known(&[
+            ("sword.cleave", true),
+            ("baomai.full_power_charge", true),
+            ("burst_meridian.ni_mai_hu_ti", false),
+        ]);
+        assert!(
+            player_knows_technique(&kt, "baomai.full_power_charge"),
+            "player_knows_technique must return true for the active target technique \
+             even when other techniques are also present; entries={:?}",
+            kt.entries
+        );
+    }
+
+    /// Multiple techniques, the target one inactive while others are active → gate rejects.
+    #[test]
+    fn inactive_among_active_siblings_is_not_known() {
+        let kt = make_known(&[
+            ("sword.cleave", true),
+            ("baomai.full_power_charge", false),
+            ("movement.dash", true),
+        ]);
+        assert!(
+            !player_knows_technique(&kt, "baomai.full_power_charge"),
+            "player_knows_technique must return false for inactive technique \
+             even when other active techniques exist; entries={:?}",
+            kt.entries
+        );
+    }
+
+    /// The dangerous real-world case from the bug report: baomai.full_power_charge with
+    /// empty required_meridians should be blocked at the ownership gate when not learned.
+    #[test]
+    fn baomai_full_power_charge_blocked_when_not_learned() {
+        // Player has only basic sword techniques — has NOT learned baomai.
+        let kt = make_known(&[("sword.cleave", true), ("sword.thrust", true)]);
+        assert!(
+            !player_knows_technique(&kt, "baomai.full_power_charge"),
+            "An Awaken-realm player without baomai in KnownTechniques must be blocked \
+             from casting baomai.full_power_charge (no meridian gate exists for this technique); \
+             entries={:?}",
+            kt.entries
+        );
+    }
+
+    /// Gate passes for the ni_mai_hu_ti case from the bug report when the player has it.
+    #[test]
+    fn ni_mai_hu_ti_passes_when_learned() {
+        let kt = make_known(&[("burst_meridian.ni_mai_hu_ti", true)]);
+        assert!(
+            player_knows_technique(&kt, "burst_meridian.ni_mai_hu_ti"),
+            "player_knows_technique must return true for ni_mai_hu_ti when learned and active"
+        );
+    }
+
+    /// Gate rejects ni_mai_hu_ti when not learned (original exploit path from bug report).
+    #[test]
+    fn ni_mai_hu_ti_blocked_when_not_learned() {
+        let kt = make_known(&[("sword.cleave", true)]);
+        assert!(
+            !player_knows_technique(&kt, "burst_meridian.ni_mai_hu_ti"),
+            "An Awaken-realm player without ni_mai_hu_ti in KnownTechniques must not be \
+             able to bind or cast it, even though technique_definition lookup would succeed; \
+             entries={:?}",
+            kt.entries
         );
     }
 }
