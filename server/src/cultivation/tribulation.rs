@@ -2829,6 +2829,7 @@ fn omen_cloud_block_for_offset(dx: i32, dz: i32) -> BlockState {
 }
 
 #[allow(clippy::type_complexity)]
+#[allow(clippy::type_complexity)]
 pub fn heart_demon_choice_system(
     mut choices: EventReader<HeartDemonChoiceSubmitted>,
     mut commands: Commands,
@@ -2837,10 +2838,14 @@ pub fn heart_demon_choice_system(
         &mut TribulationState,
         Option<&mut LifeRecord>,
         Option<&HeartDemonResolution>,
+        Option<&Position>,
+        Option<&CurrentDimension>,
     )>,
+    mut zones: Option<ResMut<ZoneRegistry>>,
+    mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
 ) {
     for choice in choices.read() {
-        let Ok((mut cultivation, state, life_record, existing_resolution)) =
+        let Ok((mut cultivation, state, life_record, existing_resolution, position, current_dimension)) =
             players.get_mut(choice.entity)
         else {
             continue;
@@ -2859,6 +2864,10 @@ pub fn heart_demon_choice_system(
             &state,
             life_record,
             existing_resolution,
+            position,
+            current_dimension,
+            zones.as_deref_mut(),
+            qi_transfers.as_deref_mut(),
         );
     }
 }
@@ -2873,9 +2882,13 @@ pub fn heart_demon_timeout_system(
         &mut TribulationState,
         Option<&mut LifeRecord>,
         Option<&HeartDemonResolution>,
+        Option<&Position>,
+        Option<&CurrentDimension>,
     )>,
+    mut zones: Option<ResMut<ZoneRegistry>>,
+    mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
 ) {
-    for (entity, mut cultivation, state, life_record, existing_resolution) in &mut players {
+    for (entity, mut cultivation, state, life_record, existing_resolution, position, current_dimension) in &mut players {
         if !matches!(state.phase, TribulationPhase::HeartDemon) {
             continue;
         }
@@ -2895,6 +2908,10 @@ pub fn heart_demon_timeout_system(
             &state,
             life_record,
             existing_resolution,
+            position,
+            current_dimension,
+            zones.as_deref_mut(),
+            qi_transfers.as_deref_mut(),
         );
     }
 }
@@ -2906,6 +2923,10 @@ fn resolve_heart_demon_choice(
     state: &TribulationState,
     life_record: Option<valence::prelude::Mut<'_, LifeRecord>>,
     existing_resolution: Option<&HeartDemonResolution>,
+    position: Option<&Position>,
+    current_dimension: Option<&CurrentDimension>,
+    zones: Option<&mut ZoneRegistry>,
+    qi_transfers: Option<&mut Events<QiTransfer>>,
 ) {
     if existing_resolution.is_some() {
         return;
@@ -2923,7 +2944,19 @@ fn resolve_heart_demon_choice(
                 (cultivation.qi_current + effective_qi_max * 0.10).min(effective_qi_max);
         }
         HeartDemonOutcome::Obsession => {
+            let qi_before = cultivation.qi_current;
             cultivation.qi_current *= 1.0 - DUXU_HEART_DEMON_OBSESSION_QI_PENALTY_RATIO;
+            let actual_drain = qi_before - cultivation.qi_current;
+            release_qi_amount_to_zone(
+                decision.entity,
+                actual_drain,
+                position,
+                current_dimension,
+                life_record.as_deref(),
+                zones,
+                qi_transfers,
+                "heart_demon_obsession",
+            );
             next_wave_multiplier = DUXU_HEART_DEMON_OBSESSION_NEXT_WAVE_MULTIPLIER;
         }
         HeartDemonOutcome::NoSolution => {}
@@ -5504,6 +5537,190 @@ mod tests {
         assert_eq!(
             resolution.next_wave_multiplier,
             DUXU_HEART_DEMON_OBSESSION_NEXT_WAVE_MULTIPLIER
+        );
+    }
+
+    /// The 30% qi penalty from HeartDemon Obsession must be conserved: the exact amount
+    /// drained from `qi_current` is released to the player's zone (not destroyed).
+    ///
+    /// Pitfall (a): zone starts at spirit_qi=0.0 so 30 qi fits entirely (cap=50).
+    /// Pitfall (b): entity carries CurrentDimension so find_zone resolves to spawn zone.
+    /// Pitfall (c): credit = qi_before - qi_after (actual), not ratio × qi_current.
+    #[test]
+    fn heart_demon_obsession_timeout_credits_penalty_to_zone() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock {
+            tick: 2100 + DUXU_HEART_DEMON_TIMEOUT_TICKS,
+        });
+        app.add_event::<QiTransfer>();
+
+        // Empty zone so all 30 qi (= 100 × 0.30) fit without overflow (cap = 50).
+        let mut zones = ZoneRegistry::fallback();
+        zones
+            .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
+            .expect("fallback spawn zone should exist")
+            .spirit_qi = 0.0;
+        app.insert_resource(zones);
+
+        app.add_systems(Update, heart_demon_timeout_system);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                Position::new([0.0, 64.0, 0.0]),
+                CurrentDimension(DimensionKind::Overworld),
+                Cultivation {
+                    realm: Realm::Spirit,
+                    qi_current: 100.0,
+                    qi_max: 210.0,
+                    ..Default::default()
+                },
+                LifeRecord::new("offline:Azure"),
+                TribulationState {
+                    kind: TribulationKind::DuXu,
+                    phase: TribulationPhase::HeartDemon,
+                    epicenter: [0.0, 64.0, 0.0],
+                    wave_current: 4,
+                    waves_total: 5,
+                    started_tick: 0,
+                    phase_started_tick: 2100,
+                    next_wave_tick: 2400,
+                    participants: vec!["offline:Azure".to_string()],
+                    failed: false,
+                },
+            ))
+            .id();
+
+        app.update();
+
+        // qi_current must be reduced by exactly DUXU_HEART_DEMON_OBSESSION_QI_PENALTY_RATIO.
+        let cultivation = app
+            .world()
+            .get::<Cultivation>(entity)
+            .expect("cultivation should remain attached");
+        let expected_qi = 100.0 * (1.0 - DUXU_HEART_DEMON_OBSESSION_QI_PENALTY_RATIO);
+        assert!(
+            (cultivation.qi_current - expected_qi).abs() < 1e-9,
+            "qi_current after Obsession penalty: expected {expected_qi}, got {}",
+            cultivation.qi_current
+        );
+
+        // The drained amount (30.0) must have been credited to the spawn zone.
+        // zone cap = 50.0, spirit_qi starts at 0.0, so accepted = 30.0 / 50.0 = 0.60.
+        let zone_after = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .expect("fallback spawn zone should exist")
+            .spirit_qi;
+        let actual_drain = 100.0 - expected_qi; // = 30.0
+        let expected_zone = actual_drain / 50.0; // zone cap = 50.0
+        assert!(
+            (zone_after - expected_zone).abs() < 1e-9,
+            "zone spirit_qi should rise by drain/cap: expected {expected_zone}, got {zone_after}"
+        );
+
+        // At least one QiTransfer event must have been emitted for the zone credit.
+        let transfers: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<QiTransfer>>()
+            .drain()
+            .collect();
+        assert!(
+            !transfers.is_empty(),
+            "heart_demon_obsession should emit at least one QiTransfer for zone credit"
+        );
+        assert_eq!(
+            transfers[0].to,
+            QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME),
+            "QiTransfer destination should be the spawn zone"
+        );
+    }
+
+    /// Obsession via choice index (non-timeout path) also conserves qi to the zone.
+    #[test]
+    fn heart_demon_obsession_choice_credits_penalty_to_zone() {
+        let mut app = App::new();
+        app.add_event::<HeartDemonChoiceSubmitted>();
+        app.add_event::<QiTransfer>();
+
+        // Empty zone so all 30 qi fit without overflow.
+        let mut zones = ZoneRegistry::fallback();
+        zones
+            .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
+            .expect("fallback spawn zone should exist")
+            .spirit_qi = 0.0;
+        app.insert_resource(zones);
+
+        app.add_systems(Update, heart_demon_choice_system);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                Position::new([0.0, 64.0, 0.0]),
+                CurrentDimension(DimensionKind::Overworld),
+                Cultivation {
+                    realm: Realm::Spirit,
+                    qi_current: 100.0,
+                    qi_max: 210.0,
+                    ..Default::default()
+                },
+                LifeRecord::new("offline:Azure"),
+                TribulationState {
+                    kind: TribulationKind::DuXu,
+                    phase: TribulationPhase::HeartDemon,
+                    epicenter: [0.0, 64.0, 0.0],
+                    wave_current: 4,
+                    waves_total: 5,
+                    started_tick: 0,
+                    phase_started_tick: 2100,
+                    next_wave_tick: 2400,
+                    participants: vec!["offline:Azure".to_string()],
+                    failed: false,
+                },
+            ))
+            .id();
+
+        // choice_idx = Some(1) → Obsession (not Steadfast/NoSolution)
+        app.world_mut().send_event(HeartDemonChoiceSubmitted {
+            entity,
+            choice_idx: Some(1),
+            submitted_at_tick: 2110,
+        });
+        app.update();
+
+        let cultivation = app
+            .world()
+            .get::<Cultivation>(entity)
+            .expect("cultivation should remain attached");
+        let expected_qi = 100.0 * (1.0 - DUXU_HEART_DEMON_OBSESSION_QI_PENALTY_RATIO);
+        assert!(
+            (cultivation.qi_current - expected_qi).abs() < 1e-9,
+            "qi_current after Obsession choice: expected {expected_qi}, got {}",
+            cultivation.qi_current
+        );
+
+        let zone_after = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .expect("fallback spawn zone should exist")
+            .spirit_qi;
+        let actual_drain = 100.0 - expected_qi;
+        let expected_zone = actual_drain / 50.0;
+        assert!(
+            (zone_after - expected_zone).abs() < 1e-9,
+            "zone spirit_qi should rise by drain/cap: expected {expected_zone}, got {zone_after}"
+        );
+
+        let transfers: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<QiTransfer>>()
+            .drain()
+            .collect();
+        assert!(
+            !transfers.is_empty(),
+            "heart_demon_obsession choice should emit at least one QiTransfer for zone credit"
         );
     }
 
