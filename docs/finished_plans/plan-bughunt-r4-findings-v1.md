@@ -8,10 +8,10 @@
 
 | 阶段 | 主题 | 路由 | 状态 |
 |------|------|------|------|
-| P0 | 🔴 qi_zero_decay 跨重启 u64 下溢 → 瞬时降境 | fix_pr | ⬜ |
-| P1 | 货币/交易守恒（双目录不一致 + 稀有度门缺失） | fix_pr + plan_skeleton | ⬜ |
-| P2 | alchemy buff/status 接线断裂簇（泄漏 + 孤岛） | fix_pr + plan_skeleton | ⬜ |
-| P3 | 跨端契约 + zone 边界守恒 | plan_skeleton | ⬜ |
+| P0 | 🔴 qi_zero_decay 跨重启 u64 下溢 → 瞬时降境 | fix_pr | ✅ 2026-06-29 |
+| P1 | 货币/交易守恒（双目录不一致 + 稀有度门缺失） | fix_pr + plan_skeleton | ✅ 2026-06-29 |
+| P2 | alchemy buff/status 接线断裂簇（泄漏 + 孤岛） | fix_pr + plan_skeleton | ✅ 2026-06-29 |
+| P3 | 跨端契约 + zone 边界守恒 | plan_skeleton | ✅ 2026-06-29 |
 
 ## P0 — 🔴 qi_zero_decay 跨重启下溢（critical）
 
@@ -48,3 +48,36 @@
 ## 审计来源
 
 bug-hunt round4（workflow，5 全新角度 finder + 怀疑者对抗 + opus 裁决，8 候选全 REAL）。**ROOT = fresh origin/main worktree**（方法论修正后第二轮）。已对 r1+r2+r3 去重（25 已确认 + 4 已剔除）。**report-only**：critical qi_zero_decay 优先；#1/#3/#7 局部明确可直接 fix_pr，#2/#4/#5/#6/#8 需契约/buff 接线/zone 守恒/稀有度门设计决议。**本轮主线发现**：alchemy 副作用/buff 整簇接线断裂（多个 status effect emit 无 consumer），与 r1 forge 整簇未接 qi_physics 同类系统性缺口。
+
+## Finish Evidence
+
+> 本 plan 为 report-only findings 文档，记录 round4 自检确认的 8 个真 bug（含 1 critical）。全部已在后续独立 PR 修复并合并 origin/main；本归档 PR 仅补收尾文档（git mv + 本节，无代码变更）。核验方式：2026-06-29 代码审计。
+
+### 落地清单（每阶段 → 真实模块）
+- **P0 #1**（qi_zero_decay 跨重启 u64 下溢 → 瞬时降境，critical）：`server/src/cultivation/qi_zero_decay.rs:89` 改 `saturating_sub` + 跨重启反向回归测试。
+- **P1 #3**（NPC 交易双目录不一致）：`server/src/npc/trade.rs` `TRADE_CATALOGUE` 统一单一目录（price=10 spirit_grass，删旧不一致条目）。
+- **P1 #4**（RefuseRare 稀有度门缺失）：`server/src/network/client_request_handler.rs:191` `is_rarity_refused_at_low_rep()` 实装稀有度门。
+- **P2 #7**（DuJieDan 减伤永久泄漏）：`server/src/combat/status.rs:110-119` `clear_du_jie_dan_damage_reduction()` 渡劫结算时清 DamageReduction。
+- **P2 #5**（QiCapPermMinus 孤岛）：`server/src/combat/status.rs:279-288` 加 consumer（`qi_max_multiplier`）+ `remaining_ticks>0` filter + pin 测试。
+- **P2 #6**（QiRegenBoost 孤岛）：`server/src/cultivation/tick.rs:401-408` `qi_regen_boost_multiplier()` consumer + filter + pin 测试。
+- **P3 #2**（spawn_npc 4 TSY 原型契约漂移）：`server/src/network/command_executor.rs:558-561` 补 daoxiang/zhinian/fuya/skull_fiend executor 臂 + `spawn_tsy_*_at`（设计抉择选"补臂"而非"删白名单"）。
+- **P3 #8**（realm_collapse/heavenly_fire 违 zone 守恒）：`server/src/world/events.rs:2014-2060` 无邻接/全满时产生 overflow `QiTransfer`，`drain_qi_transfers` Bevy system 消费。
+
+### 关键 commit
+- `c2c684a79` (2026-06-17) #588 — qi_zero_decay 跨重启时间戳下溢防护 (r4-P0)
+- `538a0bc9a` (2026-06-17) #606 — unify trade catalog + enforce RefuseRare rarity gate (r4-P1)
+- `da0f45d1d` (2026-06-17) #596 — 渡劫结束清除渡劫丹 DamageReduction (r4-P2#7)
+- `626cc2015` (2026-06-17) #601 — wire QiCapPermMinus/QiRegenBoost status-effect consumers (r4-P2#5/#6)
+- `8b7dce6a4` (2026-06-17) #600 — wire 4 TSY archetypes into spawn_npc command executor (r4-P3#2)
+- `391428915` (2026-06-17) #607 — 修复 maybe_nullify 无邻接/全满时不归零 source zone 的守恒背离 (r4-P3#8)
+
+### 测试结果
+本 PR 纯文档，无代码变更。各阶段 pin 测试（含 QiCapPermMinus/QiRegenBoost remaining_ticks filter pin、跨重启 qi_zero_decay 回归、zone 守恒 summarize_world_qi 对账）随上述 PR 合并时 CI 全绿。
+
+### 跨仓库核验（2026-06-29）
+- **server**：`saturating_sub`(qi_zero_decay) / `TRADE_CATALOGUE` 统一 / `is_rarity_refused_at_low_rep` / `clear_du_jie_dan_damage_reduction` / `qi_max_multiplier`+`qi_regen_boost_multiplier` consumer / `spawn_tsy_*_at` executor 臂 / overflow `QiTransfer`+`drain_qi_transfers` 均命中。
+- **agent**：`agent/packages/schema/src/agent-command.ts:13-16` `ALLOWED_NPC_ARCHETYPES` 保留 4 TSY 原型（与 server 补臂方向一致）。
+- **client**：无改动。
+
+### 遗留 / 后续
+无。8 项发现全部修复并测试锁定。

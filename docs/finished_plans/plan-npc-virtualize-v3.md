@@ -1,5 +1,7 @@
 # Bong · plan-npc-virtualize-v3 · active
 
+> **归档（被取代）2026-06-29**：本 plan 已被 `docs/finished_plans/plan-offscreen-war-v1.md` 取代——offscreen-war-v1 头部「反向被取代 / 归档」明确将本骨架折叠入其离屏世界闭环实现。本 plan 不再独立消费，归档留档。
+
 NPC 虚拟化**派系战争批量推演**——在 v1 二态框架基础上，实装 dormant↔dormant 敌对派系 NPC 互殴的批量推演（死亡 → release 灵气 → zone 竞争），让世界线在玩家不在场时仍有真实派系势力消长。
 
 **前置条件**（派生自 plan-npc-virtualize-v1 §8 决策门 #6 选项 C）：v1/v2 上线后以下情况激活：
@@ -110,3 +112,9 @@ NPC 虚拟化**派系战争批量推演**——在 v1 二态框架基础上，�
 3. **同境界战斗 50/50**：是否加熟练度 / 真元当前值修正（更真实 vs 纯随机更简单）
 4. **死亡 NPC 生平卷**：dormant 战死是否写完整 BiographyEntry（开销 vs 叙事完整性）
 5. **docs/CLAUDE.md §四 红旗**：是否加"dormant 战斗死亡未走 release 守恒"红旗独立一条
+
+## 归档说明（被取代）
+
+- **取代者**：`docs/finished_plans/plan-offscreen-war-v1.md`（已归档）。其头部「反向被取代 / 归档」节点名列 `plan-npc-virtualize-v3`（dormant 批量战争推演）为应作废骨架，内容折叠入 offscreen-war。
+- **代码现状（2026-06-29 核验）**：本 plan 自身声明的锚点（文件路径/函数名/命令）与当前 origin/main 不一致——dormant 批量战斗以 offscreen-war 的设计（`dormant/census.rs` 等）实现，并非本骨架原方案。本 plan 无独立落地价值。
+- **处置**：归档留档（保留 git 历史），不再独立实施。离屏批量战争后续以 offscreen-war-v1 为准。

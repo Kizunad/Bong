@@ -8,8 +8,8 @@
 
 | 阶段 | 主题 | 状态 |
 |------|------|------|
-| P0 | 玩家 skill-bar 施放路径接 SkillMeridianDependencies 校验（架构抉择：resolver 内置 check vs cast 入口统一拦截） | ⬜ |
-| P1 | 全招式依赖经脉声明审计（哪些 register 漏 declare） | ⬜ |
+| P0 | 玩家 skill-bar 施放路径接 SkillMeridianDependencies 校验（架构抉择：resolver 内置 check vs cast 入口统一拦截） | ✅ 2026-06-29 |
+| P1 | 全招式依赖经脉声明审计（哪些 register 漏 declare） | ✅ 2026-06-29 |
 
 ## 接入面 checklist
 
@@ -35,3 +35,25 @@
 ## 审计来源
 
 bug-hunt round1 confirmed（woliu.vortex 漏 declare，major）。**report-only**：架构抉择，不擅自大改。
+
+## Finish Evidence
+
+> 玩家 skill-bar 施放路径统一消费 `SkillMeridianDependencies` 校验依赖经脉，修复「断经脉仍能施放对应招式」破坏 worldview §四:286 物理可见性红线。P0/P1 于 2026-06-17~18 实现并合并 origin/main；本归档 PR 仅补收尾文档（git mv + 本节，无代码变更）。核验方式：2026-06-29 代码审计。
+
+### 落地清单（每阶段 → 真实模块）
+- **P0**（cast 入口统一拦截）：`server/src/cultivation/meridian/severed.rs:126` `check_player_skill_meridian_gate` helper；`server/src/network/client_request_handler.rs:8909` 在 skill_fn dispatch 前统一调用 + `:3914` 插入 `SkillMeridianDependencies::default()` Resource；20 个 `skill_bar_cast_meridian_gate_*` / `check_player_skill_meridian_gate_*` 测试。
+- **P1**（全流派 declare 审计补全）：`server/src/combat/woliu.rs:171` `declare(WOLIU_VORTEX_SKILL_ID, [Lung])` + `:194` resolver 内置 `check_meridian_dependencies`（双保险）；`anqi_v2.rs` / `baomai_v3/skills.rs` / `dugu_v2/skills.rs` / `zhenmai_v2.rs` / `yidao.rs` / `tuike_v2/skills.rs` / `sword_basics.rs` 均补 `declare()`。
+
+### 关键 commit
+- `25ba242ed` (2026-06-17) #609 — fix(skill-cast P0): 补 opened 门控检查，对齐 NPC 侧正典约束
+- `5db2dbfa0` (2026-06-18) #610 — fix(skill-cast P1): audit & complete skill meridian-dependency declarations
+
+### 测试结果
+本 PR 纯文档，无代码变更。P0 饱和测试 20 个 `skill_bar_cast_meridian_gate_*`（含断 Lung 后 woliu.vortex cast 被拒、backfire 自断经脉→再 cast 被拦），随 #609/#610 合并时 CI 全绿。
+
+### 跨仓库核验（2026-06-29）
+- **server**：`check_player_skill_meridian_gate`(severed.rs + client_request_handler.rs 调用点) / `SkillMeridianDependencies::default()` Resource / 各流派 `declare()` 均命中。
+- **agent / client**：无改动（纯 server cast 路径门控）。
+
+### 遗留 / 后续
+无。P0/P1 全部落地并测试锁定。

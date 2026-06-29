@@ -64,8 +64,8 @@
 
 | **P1** | ✅ 2026-06-11 | `FactionRelationMatrix` + are_hostile + scorer 偏置 + /faction list（基座相位） | 矩阵/接线/14 单测落地并接入 `assign_hostile_encounters`；**runtime 激活随 P2 `FactionZoneClaim`** |
 > **P1 落地（2026-06-11，基座相位）**：`server/src/npc/faction.rs` 新增 `FactionRelation`(Hostile/Neutral/Pact) + `FactionRelationMatrix`(三对初值，`are_hostile` 对称，未注册对组默认 Neutral) + `NamedFactionMembership` component；`assign_hostile_encounters`（真注册 Update system）双方携 membership 时走矩阵、否则 fallback 旧 `is_hostile_pair`；`faction_duel_scorer_system` 关系偏置(Hostile +0.2 / Pact -0.3)；`/faction list` 显示关系矩阵。14 新单测（cargo fmt+clippy(-D warnings)+test **8615 passed / 0 failed**）。**⚠️ 基座相位，runtime 暂不驱动真实战斗**：① production NPC 尚未附 `NamedFactionMembership`（spawn 散落各 archetype，须 P2 `FactionZoneClaim` 按 `zone_anchor` 绑定后才有 NPC 携带）；② dormant 批量战斗真实路径 `collect_zone_combat_pairs` 走 `EmergentGroupId` 维度，接 `NamedFactionId` 需 P2 给 dormant 快照加字段；③ schema `FactionRelationEntryV1` 仍 P0 二值 `hostile: bool`，三值同步留 P2（当前无 live publisher，不丢数据）。矩阵已被真实 system 消费且被 14 测试锁定，**激活数据入口（membership 附加）归 P2**。
-| **P2** | ⬜ | 领袖 NPC spawn + `FactionZoneClaim` 地盘绑定 + 领袖行为树 | 领袖 spawn 于正确 zone；FactionZoneClaim 与 FactionStore 一致；领袖 big-brain scorer 在地盘内激活 |
-| **P3** | ⬜ | 玩家挂靠具名势力 + NPC 信誉分组 + 领袖陨落/势力消亡 + agent 叙事 | 挂靠后 zone NPC 信誉正确分组；领袖死亡 → Headless + agent narration；NPC 清零 → 消亡 narration |
+| **P2** | ✅ 2026-06-29 | 领袖 NPC spawn + `FactionZoneClaim` 地盘绑定 + 领袖行为树 | 领袖 spawn 于正确 zone；FactionZoneClaim 与 FactionStore 一致；领袖 big-brain scorer 在地盘内激活 |
+| **P3** | ✅ 2026-06-29 | 玩家挂靠具名势力 + NPC 信誉分组 + 领袖陨落/势力消亡 + agent 叙事 | 挂靠后 zone NPC 信誉正确分组；领袖死亡 → Headless + agent narration；NPC 清零 → 消亡 narration |
 
 ---
 
@@ -143,3 +143,30 @@
 6. **具名势力数量**：v1 三个够吗？`NorthWasteDrifters` 北荒 zone 本身 NPC 稀少，是否改为另一个 zone 更密集的势力？待 worldgen 数据确认再拍
 
 **P0 启动前必须**：通过 Explore agent 核查 npc-virtualize-v3 dormant 批量战斗 P0-P1 是否已合并，确认 `DormantCombatOutcome` 接口稳定；核查 social-v1 §5 挂靠存储路径（`server/src/social/` `FactionMembership` 落盘格式）；核查 npc-ai-v1 `NpcTemplate` / big-brain Scorer 接口（领袖行为树挂载点）。全部收口才能开 P0。
+
+## Finish Evidence
+
+> NPC 派系从三档匿名占位扩展为具名散修势力（青云猎盟 / 沧渊商会 / 北荒漂流者）。全部 4 阶段于 2026-06-11~15 独立实现并合并 origin/main；本归档 PR 仅补收尾文档（git mv + 本节，无代码变更）。核验方式：2026-06-29 代码审计。
+
+### 落地清单（每阶段 → 真实模块）
+- **P0**（具名势力数据模型 + migration + schema）：`server/src/npc/faction.rs` `NamedFactionId`(QingyunHunters/CangyuanMerchants/NorthWasteDrifters) + `NamedFaction` + `FactionStatus`(Active/Headless/Decayed) + `NamedFactionRegistry` + `FactionStore::faction_id_for_war` 兼容层；`server/src/persistence/mod.rs` migration v30；`agent/packages/schema/samples/named-faction-state.sample.json`(+2 invalid)；Redis key `server/src/schema/channels.rs` `CH_NAMED_FACTION_STATE = "bong:named_faction_state"`。
+- **P1**（势力关系矩阵 + 关系驱动敌对）：`faction.rs` `FactionRelationMatrix` + `FactionRelation`(Hostile/Neutral/Pact) + `NamedFactionMembership`；`server/src/npc/social.rs` `faction_duel_scorer_system`(Hostile +0.2 / Pact -0.3)；`server/src/cmd/gameplay/war.rs` `/faction list`。
+- **P2**（领袖 NPC + 地盘绑定 + 行为树）：`faction.rs` `NamedFactionLeader` + `FactionZoneClaim` + `FactionZoneClaims` + `spawn_named_faction_leaders_on_startup` + `FactionLeaderTerritoryScorer` + `FactionLeaderPatrolAction`。
+- **P3**（玩家挂靠 + 信誉分组 + 领袖陨落/势力消亡 + agent 叙事）：`server/src/social/components.rs` `FactionReputation{per_faction}` + `FactionReputationTier`；`server/src/social/events.rs` `FactionReputationDeltaEvent`；`faction.rs` `NamedFactionLeaderDownEvent` + `NamedFactionDecayEvent`；`cmd/gameplay/war.rs` `/faction join <named_id>`；`agent/packages/tiandao/src/named-faction-narration.ts` `NamedFactionNarrationRuntime`。
+
+### 关键 commit
+- `b83d6b668` (2026-06-11) #504 — P0 NamedFactionId 具名势力注册表 + 数据模型 + migration + schema
+- `29670c4f8` (2026-06-11) #508 — P1 FactionRelationMatrix + 关系驱动敌对（基座相位）
+- `809448e3f` (2026-06-14) — P2 领袖 NPC 与地盘绑定
+- `382985c49` (2026-06-15) #568 — P3 具名势力信誉与叙事闭环
+
+### 测试结果
+本 PR 纯文档，无代码变更。落地代码（faction.rs / social / persistence migration v30 / schema sample 双端对拍 / agent narration）于 #504/#508/#568 + 直接 commit 809448e3f 合并时 CI 全绿。
+
+### 跨仓库核验（2026-06-29）
+- **server**：`NamedFactionId` / `NamedFactionRegistry` / `FactionStatus` / `FactionRelationMatrix` / `NamedFactionLeader` / `FactionZoneClaim` / `FactionReputation` / `NamedFactionLeaderDownEvent` / `NamedFactionDecayEvent` 均命中；migration v30 + `CH_NAMED_FACTION_STATE` Redis key 命中。
+- **agent**：`agent/packages/tiandao/src/named-faction-narration.ts` `NamedFactionNarrationRuntime` 命中（消费领袖陨落/势力消亡叙事）；`agent/packages/schema/samples/named-faction-state.sample.json` 双端对拍命中。
+- **client**：无新 CustomPayload（复用 faction HUD，只换 display_name）。
+
+### 遗留 / 后续
+- `plan-offscreen-war-v1`（已归档）头部「反向被取代/归档」曾列本 plan 为应折叠骨架，但本 plan 实际为**独立实现并完整落地**（#504~#568），并非被取代——故归档为"已完成"而非"被取代"。offscreen-war 的离屏战争层复用本 plan 产出的 `NamedFactionId` 等类型。

@@ -8,10 +8,10 @@
 
 | 阶段 | 主题 | 路由 | 状态 |
 |------|------|------|------|
-| P0 | 🔴 hydrate 复活逻辑死亡 NPC + 真元双计（守恒 critical） | plan_skeleton | ⬜ |
-| P1 | inventory/loot 守恒（TSY 搜刮 loot 全压 (0,0)） | fix_pr | ⬜ |
-| P2 | persistence 竞态 / 生命周期孤儿（DEFERRED race + JueBi 断线） | fix_pr + plan_skeleton | ⬜ |
-| P3 | 视听完整性（渡劫成功 + VoidPath 涡流五招） | plan_skeleton + fix_pr | ⬜ |
+| P0 | 🔴 hydrate 复活逻辑死亡 NPC + 真元双计（守恒 critical） | plan_skeleton | ✅ 2026-06-29 |
+| P1 | inventory/loot 守恒（TSY 搜刮 loot 全压 (0,0)） | fix_pr | ✅ 2026-06-29 |
+| P2 | persistence 竞态 / 生命周期孤儿（DEFERRED race + JueBi 断线） | fix_pr + plan_skeleton | ✅ 2026-06-29 |
+| P3 | 视听完整性（渡劫成功 + VoidPath 涡流五招） | plan_skeleton + fix_pr | ✅ 2026-06-29 |
 
 ## P0 — 🔴 hydrate 复活逻辑死亡 NPC + 真元双计（critical，守恒）
 
@@ -46,3 +46,34 @@
 ## 审计来源
 
 bug-hunt round3（workflow，5 角度 finder + 怀疑者对抗 + opus 裁决，9 候选）。**ROOT = fresh origin/main worktree `.worktree/bughunt-verify` @ 341fc4461**（方法论修正后首轮，杜绝扫 stale）。已对 r1+r2 去重，6 REAL 全新。**report-only**：critical hydrate 守恒优先；#1/#4/#7 局部明确可直接 fix_pr，#2/#3/#8 需守恒时序/断线设计/AV roadmap 决议。
+
+## Finish Evidence
+
+> 本 plan 为 report-only findings 文档，记录 round3 自检确认的 6 个真 bug。全部已在后续独立 PR 修复并合并 origin/main；本归档 PR 仅补收尾文档（git mv + 本节，无代码变更）。核验方式：2026-06-29 代码审计（grep 锚点 + Read 确认），落地代码于各 PR 合并时 CI 全绿。
+
+### 落地清单（每阶段 → 真实模块）
+- **P0 #2**（hydrate 复活逻辑死亡 NPC + 真元双计，critical）：`server/src/npc/hydrate/mod.rs:120-124` 加 `!combat_dead_pending_release` 守卫（rechallenge 路径 `:221-231` 同补）；pin 测试 `hydrate/mod.rs:2088-2263`。
+- **P1 #1**（TSY 搜刮 loot 全压 (0,0)）：`server/src/world/tsy_container_search.rs:696-708` `place_loot_in_carried_inventory` 改走 `find_free_slot`；回归测试 `:1166`（3 件落 3 不同槽）。
+- **P2 #7**（release_ascension DEFERRED 竞态）：`server/src/persistence/mod.rs:2907` 改 `TransactionBehavior::Immediate`（注释 r3-P2 fix）；并发 pin 测试 `:9257-9330`。
+- **P2 #8**（JueBi 断线孤儿）：`server/src/cultivation/tribulation.rs:3349` `abort_du_xu_on_client_removed` 改 `matches!(state.kind, TribulationKind::DuXu | TribulationKind::JueBi)`。
+- **P3 #3**（渡劫成功无视听）：`server/src/network/audio_trigger.rs:287` + `vfx_animation_trigger.rs:2430` 接 `EventReader<TribulationSettled>` + 专属 ascend SFX；测试 `audio_trigger.rs:1372-1445`。
+- **P3 #4**（VoidPath 五招粒子 client 零注册）：`client/.../VfxBootstrap.java:185-189` 注册 5 个 VoidPath 粒子 id + 5 audio recipes。
+
+### 关键 commit
+- `eb81f1dce` (2026-06-17) #589 — hydrate 跳过 combat_dead_pending_release 防复活+双计 (r3-P0)
+- `1390d57df` (2026-06-17) #591 — place_item_in_main_pack 用 find_free_slot 修复多件 loot 叠压 (0,0) (r3-P1)
+- `230b9b784` (2026-06-17) #590 — release_ascension_quota_slot 改 IMMEDIATE 事务 (r3-P2#7)
+- `859010d10` (2026-06-17) #608 — settle JueBi tribulation on disconnect (r3-P2#8)
+- `8e40e1279` (2026-06-18) #612 — wire tribulation-success audio+vfx + 专属 ascend SFX (r3-P3#3)
+- `be6c9b16f` (2026-06-18) #616 — VoidPath 5 粒子 + 5 audio recipes + VfxRegistry 测试 (r3-P3#4)；`e2294c81e` (2026-06-18) #619 — woliu erosion 技能图标 follow-up
+
+### 测试结果
+本 PR 纯文档（git mv + Finish Evidence），无代码变更。各阶段 pin 测试见落地清单路径，落地代码于 #589/#590/#591/#608/#612/#616 合并时 CI（server `cargo test` + client `gradlew test` + e2e）全绿。
+
+### 跨仓库核验（2026-06-29）
+- **server**：`combat_dead_pending_release` 守卫 / `TransactionBehavior::Immediate`(release_ascension) / `matches!(... JueBi)` / `EventReader<TribulationSettled>` 均命中。
+- **client**：`VfxBootstrap.java` VOID_SPHERE / SWALLOWING_SPIRAL / ECHO_RIPPLE / VOID_CORE_COLLAPSE / VORTEX_AMBIENT 注册命中。
+- **agent**：本轮无 agent 侧改动。
+
+### 遗留 / 后续
+无。6 项发现全部修复并测试锁定。
