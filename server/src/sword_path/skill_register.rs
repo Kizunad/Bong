@@ -417,7 +417,7 @@ pub fn heaven_gate_cast_system(
     mut shatter_events: Option<ResMut<Events<SwordShatterEvent>>>,
     mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
     mut blind_registry: ResMut<TiandaoBlindZoneRegistry>,
-    zone_registry: Option<Res<crate::world::zone::ZoneRegistry>>,
+    mut zone_registry: Option<ResMut<crate::world::zone::ZoneRegistry>>,
     mut av_events: EventWriter<SwordPathSkillCastEvent>,
 ) {
     // 多 caster 同 tick 触发的情况罕见，但为了保证 deterministic 排序，按 Entity bits 排序。
@@ -480,14 +480,29 @@ pub fn heaven_gate_cast_system(
         // 上方 emit 的 SwordPathSkillCastEvent(HeavenGateRelease) 独立触发（见
         // network::vfx_animation_trigger / audio_trigger），逻辑上不走通用 shatter pipeline。
         let _shatter_events_unused = shatter_events.as_deref_mut(); // 保留 ResMut 借出以维持系统签名兼容性
-        if let Ok((mut cultivation, bond_opt)) = players.get_mut(event.caster) {
+                                                                    // 守恒修复（#qi-sweep-heaven-gate-drain）：在归零前先快照 qi_current，
+                                                                    // 随后直写 zone.spirit_qi。QiTransfer 是 audit-only（无 EventReader），
+                                                                    // 不能代替 zone.spirit_qi 直写，见 sword_basics.rs:433 注释。
+        let qi_drained = if let Ok((mut cultivation, bond_opt)) = players.get_mut(event.caster) {
+            let qi_drained = cultivation.qi_current;
             cultivation.qi_max = (cultivation.qi_max * effects::HEAVEN_GATE_QI_MAX_RETAIN).max(0.0);
             cultivation.qi_current = 0.0;
             cultivation.realm = Realm::Solidify;
             if let Some(mut bond) = bond_opt {
                 bond.stored_qi = 0.0;
             }
-        }
+            qi_drained
+        } else {
+            0.0
+        };
+        // players borrow 已释放——现在可以安全地写 zone_registry。
+        credit_qi_current_to_zone(
+            event.caster,
+            event.position,
+            qi_drained,
+            zone_registry.as_deref_mut(),
+            qi_transfers.as_deref_mut(),
+        );
 
         // 盲区注册：把 caster 藏 5 min，agent world_state 不再推送其 snapshot。
         let zone = create_blind_zone_from_cast(&event, clock.tick);
@@ -549,7 +564,7 @@ pub fn heaven_gate_phase_system(
     mut combat_intents: Option<ResMut<Events<AttackIntent>>>,
     mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
     mut blind_registry: ResMut<TiandaoBlindZoneRegistry>,
-    zone_registry: Option<Res<crate::world::zone::ZoneRegistry>>,
+    mut zone_registry: Option<ResMut<crate::world::zone::ZoneRegistry>>,
     mut av_events: EventWriter<SwordPathSkillCastEvent>,
     mut vfx_events: EventWriter<crate::network::vfx_event_emit::VfxEventRequest>,
     mut commands: Commands,
@@ -662,9 +677,11 @@ pub fn heaven_gate_phase_system(
             let caster = channeling.caster;
 
             // Caster 修为 / 灵剑 aftermath（与 heaven_gate_cast_system 完全一致的账目）
-            if let Ok((mut cultivation, bond_opt)) = players.get_mut(caster) {
+            // 守恒修复（#qi-sweep-heaven-gate-drain）：先快照 qi_current，归零后直写 zone。
+            let qi_drained = if let Ok((mut cultivation, bond_opt)) = players.get_mut(caster) {
                 // 用 cast 时快照 channeling.qi_max（非 aftermath 时刻的 live 值），
                 // 与 ledger 释放的 staging_buffer 快照一致；蓄力期间若有 buff 改 qi_max 不致账目漂移。
+                let qi_drained = cultivation.qi_current;
                 cultivation.qi_max = (channeling.qi_max
                     * super::techniques::effects::HEAVEN_GATE_QI_MAX_RETAIN)
                     .max(0.0);
@@ -673,7 +690,18 @@ pub fn heaven_gate_phase_system(
                 if let Some(mut bond) = bond_opt {
                     bond.stored_qi = 0.0;
                 }
-            }
+                qi_drained
+            } else {
+                0.0
+            };
+            // players borrow 已释放——现在可以安全地写 zone_registry。
+            credit_qi_current_to_zone(
+                caster,
+                origin,
+                qi_drained,
+                zone_registry.as_deref_mut(),
+                qi_transfers.as_deref_mut(),
+            );
 
             // 盲区注册
             let blind_zone_event = HeavenGateCastEvent {
@@ -961,6 +989,51 @@ fn emit_skill_av(
         direction,
         tick: now_tick,
     });
+}
+
+/// 化虚 aftermath：`qi_current` 归零后直写 `zone.spirit_qi`（worldview §二 守恒）。
+///
+/// 与 `credit_skill_qi_to_zone`（ExclusiveSystem 版）逻辑一致，但接受已分解的
+/// Bevy 资源引用而非 `&mut World`，故可在普通 Schedule system 内调用。
+///
+/// `QiTransfer` 是 audit-only（无 `EventReader`），不能代替直写，见 sword_basics.rs:433。
+fn credit_qi_current_to_zone(
+    caster: Entity,
+    position: DVec3,
+    qi_drained: f64,
+    zone_registry: Option<&mut crate::world::zone::ZoneRegistry>,
+    qi_transfers: Option<&mut Events<QiTransfer>>,
+) {
+    if qi_drained <= f64::EPSILON {
+        return;
+    }
+    // 先读 zone 名（不可变路径），释放不可变借用后再写（可变路径）。
+    let zone_name: String = match &zone_registry {
+        Some(r) => r
+            .find_zone(crate::world::dimension::DimensionKind::Overworld, position)
+            .map(|z| z.name.clone())
+            .unwrap_or_else(|| DEFAULT_SPAWN_ZONE_NAME.to_string()),
+        None => DEFAULT_SPAWN_ZONE_NAME.to_string(),
+    };
+    // 直写 zone.spirit_qi（QiTransfer 是 audit-only，不驱动这条写路径）。
+    if let Some(reg) = zone_registry {
+        if let Some(zone) = reg.find_zone_mut(&zone_name) {
+            zone.spirit_qi = (zone.spirit_qi
+                + qi_drained / crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY)
+                .clamp(-1.0, 1.0);
+        }
+    }
+    // Audit event（供 summarize_world_qi 统计，不代替上面直写）。
+    if let Some(transfers) = qi_transfers {
+        if let Ok(transfer) = QiTransfer::new(
+            QiAccountId::player(format!("entity:{caster:?}")),
+            QiAccountId::zone(zone_name),
+            qi_drained,
+            QiTransferReason::ReleaseToZone,
+        ) {
+            transfers.send(transfer);
+        }
+    }
 }
 
 /// 向灵剑注入真元，返回实际注入量（bond 不存在或品阶 < 凝脉时返回 0）。
@@ -1719,8 +1792,10 @@ mod tests {
             "化虚一击必须注册一个天道盲区，agent 才会屏蔽 caster"
         );
 
-        // QiTransfer 守恒：化虚释放 staging_buffer = qi_max_snapshot(5000) + stored_qi(100) = 5100。
-        // 必须仅有一笔（不是两笔）ReleaseToZone event。
+        // QiTransfer 守恒：化虚应有 2 笔 ReleaseToZone：
+        //   1. qi_current 归零补归 zone（守恒修复 #qi-sweep-heaven-gate-drain）
+        //   2. staging_buffer = qi_max_snapshot(5000) + stored_qi(100) = 5100（bond 账目 audit）
+        // 两笔独立，不是双重结算——qi_current 与 staging_buffer 是不同来源。
         let release_events: Vec<_> = app
             .world()
             .resource::<Events<QiTransfer>>()
@@ -1729,14 +1804,21 @@ mod tests {
             .collect();
         assert_eq!(
             release_events.len(),
-            1,
-            "化虚一击应有且只有 1 笔 ReleaseToZone（staging_buffer）；多于 1 笔 \
-             意味着双重结算（review 第 2 轮 #1 critical bug）"
+            2,
+            "化虚一击应有恰好 2 笔 ReleaseToZone（qi_current + staging_buffer），实际 {} 笔",
+            release_events.len()
+        );
+        let mut amounts: Vec<f64> = release_events.iter().map(|t| t.amount).collect();
+        amounts.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        assert!(
+            (amounts[0] - 5000.0).abs() < 1e-6,
+            "第 1 笔应为 qi_current(5000.0)，实际 {}",
+            amounts[0]
         );
         assert!(
-            (release_events[0].amount - 5100.0).abs() < 1e-6,
-            "ReleaseToZone amount = qi_max_snapshot(5000) + stored_qi(100) = 5100，实际 {}",
-            release_events[0].amount
+            (amounts[1] - 5100.0).abs() < 1e-6,
+            "第 2 笔应为 staging_buffer(5100.0)，实际 {}",
+            amounts[1]
         );
     }
 
@@ -2204,6 +2286,195 @@ mod tests {
             bond.bond_strength >= 0.0,
             "bond_strength 不应变负（clamp 下界 0）：实际 {}",
             bond.bond_strength
+        );
+    }
+
+    // ─── #qi-sweep-heaven-gate-drain 守恒修复专属测试 ────────────────────────────
+
+    /// 守恒修复 happy path：phase_system aftermath 将 qi_current 直写 zone.spirit_qi。
+    ///
+    /// 修复前：qi_current 归零但 zone.spirit_qi 不变（真元蒸发）。
+    /// 修复后：zone.spirit_qi 上升，且有对应 ReleaseToZone QiTransfer（audit）。
+    ///
+    /// 坑 (a)：fallback zone spirit_qi 置 0 避免近满溢出造成断言偏差。
+    /// 坑 (b)：credit_qi_current_to_zone 用 DimensionKind::Overworld，不需要 CurrentDimension。
+    #[test]
+    fn heaven_gate_phase_system_credits_qi_current_to_zone() {
+        let (mut app, caster) = setup_phase_app();
+        // 坑 (a): 置空 zone，保证全量 qi_drained 都能入 zone（不被近满截断）。
+        let mut registry = crate::world::zone::ZoneRegistry::fallback();
+        registry.find_zone_mut("spawn").unwrap().spirit_qi = 0.0;
+        app.world_mut().insert_resource(registry);
+
+        // 坑 (c): staging_buffer = qi_max + stored_qi = 5000 + 0 = 5000；若 qi_current 也为 5000，
+        // 则两笔 ReleaseToZone amount 相同，filter 撞出 2 笔导致 assert_eq!(len, 1) 红。
+        // 令 qi_current = 3000 < qi_max=5000（天门无 qi_cost，cast 不扣真元），
+        // 使"qi_current 归还 zone"事件(amount=3000)与"staging_buffer 释放"事件(amount=5000)可区分。
+        app.world_mut()
+            .get_mut::<Cultivation>(caster)
+            .unwrap()
+            .qi_current = 3000.0;
+
+        let qi_before = app.world().get::<Cultivation>(caster).unwrap().qi_current;
+        let result = cast_heaven_gate(app.world_mut(), caster, 0, None);
+        assert!(matches!(result, CastResult::Started { .. }));
+
+        // 推进到 aftermath（elapsed >= HEAVEN_GATE_AOE_END = 140）
+        app.world_mut().resource_mut::<CombatClock>().tick = 240;
+        app.update();
+
+        // qi_current 归零（既有行为不变）
+        let qi_after = app.world().get::<Cultivation>(caster).unwrap().qi_current;
+        assert_eq!(
+            qi_after, 0.0,
+            "aftermath qi_current 必须归零，实际 {qi_after}"
+        );
+
+        // 守恒：zone.spirit_qi 必须上升（qi_before / QI_ZONE_UNIT_CAPACITY 转 zone 单位）
+        let zone_spirit_qi = app
+            .world_mut()
+            .resource_mut::<crate::world::zone::ZoneRegistry>()
+            .find_zone_mut("spawn")
+            .unwrap()
+            .spirit_qi;
+        assert!(
+            zone_spirit_qi > 0.0,
+            "heaven gate aftermath 必须将 qi_current 补归 zone.spirit_qi（\
+             修复前此值为 0.0，代表真元蒸发），实际 {zone_spirit_qi}"
+        );
+
+        // qi_drained 的 ReleaseToZone QiTransfer（audit entry）必须发出。
+        let qi_drained_events: Vec<_> = app
+            .world()
+            .resource::<Events<QiTransfer>>()
+            .iter_current_update_events()
+            .filter(|t| {
+                matches!(t.reason, QiTransferReason::ReleaseToZone)
+                    && (t.amount - qi_before).abs() < 1e-6
+            })
+            .collect();
+        assert_eq!(
+            qi_drained_events.len(),
+            1,
+            "应有 1 笔 amount=qi_current({qi_before}) 的 ReleaseToZone（qi_current 归还 zone），\
+             实际 {} 笔",
+            qi_drained_events.len()
+        );
+    }
+
+    /// 守恒修复 happy path — 旧 heaven_gate_cast_system（legacy path，由 HeavenGateCastEvent 触发）
+    /// 同样将 qi_current 直写 zone.spirit_qi。
+    #[test]
+    fn heaven_gate_cast_system_legacy_credits_qi_current_to_zone() {
+        let (mut app, caster) = setup_app();
+        // legacy system 注册到 Update schedule
+        app.add_systems(Update, heaven_gate_cast_system);
+
+        // 坑 (a): 置空 zone 避免溢出
+        let mut registry = crate::world::zone::ZoneRegistry::fallback();
+        registry.find_zone_mut("spawn").unwrap().spirit_qi = 0.0;
+        app.world_mut().insert_resource(registry);
+
+        let qi_before = app.world().get::<Cultivation>(caster).unwrap().qi_current;
+        let qi_max_before = app.world().get::<Cultivation>(caster).unwrap().qi_max;
+
+        // 手动 send HeavenGateCastEvent（模拟 legacy cast path）。
+        // 注：stored_qi 用 137.0（非零）使 staging_buffer = qi_max + 137.0 = 5137.0，
+        // 与 qi_current(5000.0) 区分，避免两笔 ReleaseToZone amount 碰撞导致 filter 撞出 2 笔。
+        app.world_mut()
+            .resource_mut::<Events<HeavenGateCastEvent>>()
+            .send(HeavenGateCastEvent {
+                caster,
+                position: DVec3::ZERO,
+                qi_max: qi_max_before,
+                stored_qi: 137.0,
+            });
+
+        app.update();
+
+        // qi_current 归零
+        let qi_after = app.world().get::<Cultivation>(caster).unwrap().qi_current;
+        assert_eq!(
+            qi_after, 0.0,
+            "legacy aftermath qi_current 必须归零，实际 {qi_after}"
+        );
+
+        // zone.spirit_qi 上升
+        let zone_spirit_qi = app
+            .world_mut()
+            .resource_mut::<crate::world::zone::ZoneRegistry>()
+            .find_zone_mut("spawn")
+            .unwrap()
+            .spirit_qi;
+        assert!(
+            zone_spirit_qi > 0.0,
+            "legacy heaven_gate_cast_system 必须将 qi_current 补归 zone.spirit_qi，实际 {zone_spirit_qi}"
+        );
+
+        // qi_drained ReleaseToZone audit 事件
+        let qi_drained_events: Vec<_> = app
+            .world()
+            .resource::<Events<QiTransfer>>()
+            .iter_current_update_events()
+            .filter(|t| {
+                matches!(t.reason, QiTransferReason::ReleaseToZone)
+                    && (t.amount - qi_before).abs() < 1e-6
+            })
+            .collect();
+        assert_eq!(
+            qi_drained_events.len(),
+            1,
+            "legacy path 应有 1 笔 amount=qi_current({qi_before}) 的 ReleaseToZone，实际 {} 笔",
+            qi_drained_events.len()
+        );
+    }
+
+    /// 守恒修复边界：无 ZoneRegistry 时不 panic，QiTransfer audit 仍然发出。
+    ///
+    /// 场景：测试/启动期 ZoneRegistry 尚未插入 → zone.spirit_qi 写跳过，
+    /// 但 QiTransfer 事件仍应落到默认 spawn zone 账户供 summarize_world_qi 统计。
+    #[test]
+    fn heaven_gate_aftermath_no_zone_registry_no_panic_audit_still_emitted() {
+        let (mut app, caster) = setup_phase_app();
+        // 故意不插入 ZoneRegistry。
+
+        // 坑 (c): staging_buffer = qi_max + stored_qi = 5000 + 0 = 5000；若 qi_current 也为 5000，
+        // 则两笔 ReleaseToZone amount 相同，filter 撞出 2 笔。
+        // 令 qi_current = 3000，使"qi_current 归还"事件(amount=3000)与"staging_buffer"事件(amount=5000)可区分。
+        app.world_mut()
+            .get_mut::<Cultivation>(caster)
+            .unwrap()
+            .qi_current = 3000.0;
+
+        let qi_before = app.world().get::<Cultivation>(caster).unwrap().qi_current;
+        let result = cast_heaven_gate(app.world_mut(), caster, 0, None);
+        assert!(matches!(result, CastResult::Started { .. }));
+
+        app.world_mut().resource_mut::<CombatClock>().tick = 240;
+        app.update(); // 不应 panic
+
+        // qi_current 归零（守恒不受影响）
+        let qi_after = app.world().get::<Cultivation>(caster).unwrap().qi_current;
+        assert_eq!(
+            qi_after, 0.0,
+            "无 ZoneRegistry 时 qi_current 仍必须归零，实际 {qi_after}"
+        );
+
+        // qi_drained 的 audit QiTransfer 仍应发出（zone_name = spawn 作为账户 fallback）
+        let qi_drained_events: Vec<_> = app
+            .world()
+            .resource::<Events<QiTransfer>>()
+            .iter_current_update_events()
+            .filter(|t| {
+                matches!(t.reason, QiTransferReason::ReleaseToZone)
+                    && (t.amount - qi_before).abs() < 1e-6
+            })
+            .collect();
+        assert_eq!(
+            qi_drained_events.len(),
+            1,
+            "无 ZoneRegistry 时 qi_drained QiTransfer 仍应发出（audit），实际 {} 笔",
+            qi_drained_events.len()
         );
     }
 }
