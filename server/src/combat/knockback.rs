@@ -80,7 +80,7 @@ pub fn weapon_efficiency(weapon_kind: Option<WeaponKind>) -> f64 {
 
 pub fn attack_source_knockback_modifier(source: AttackSource) -> f64 {
     match source {
-        AttackSource::Melee => 1.0,
+        AttackSource::Melee | AttackSource::NpcMelee => 1.0,
         AttackSource::BurstMeridian => 2.5,
         AttackSource::FullPower => 5.0,
         AttackSource::QiNeedle => 0.05,
