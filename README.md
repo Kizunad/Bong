@@ -15,13 +15,14 @@ AI-Native Xianxia (修仙) sandbox on Minecraft. Three-layer architecture:
 
 _自动生成于 2026-06-29 · 共 152 份 plan_
 
-```
+```text
 总进度  ██████████████████████████░░░░  87.8%
 ```
 
 **分布**：`merged` 78 · `wip` 9 · `design` 12 · `skeleton` 4 · `done` 49
 
 ### 战斗 / HUD / 视觉
+
 _战斗 ECS、流派、HUD、粒子、动画、Iris · 17 份 · 组均 88%_
 
 | 状态 | Plan | 进度 | PR | 最近更新 |
@@ -45,6 +46,7 @@ _战斗 ECS、流派、HUD、粒子、动画、Iris · 17 份 · 组均 88%_
 | `design` | **Iris 光影集成** <br/><sub>`plan-iris-integration-v1.md`</sub> | `█░░░░░░░░░░░`  12% | #47 | 2026-05-17 |
 
 ### 修炼 / 经济
+
 _六境修炼、天劫、炼丹/炼器、矿物、灵田、保质期 · 26 份 · 组均 93%_
 
 | 状态 | Plan | 进度 | PR | 最近更新 |
@@ -77,6 +79,7 @@ _六境修炼、天劫、炼丹/炼器、矿物、灵田、保质期 · 26 份 �
 | `design` | **半步 buff 数值校准** <br/><sub>`plan-halfstep-buff-calibration-v1.md`</sub> | `██░░░░░░░░░░`  20% | #441 | 2026-06-08 |
 
 ### 玩法 / NPC / 世界
+
 _背包、NPC AI、感知、社交、技艺、死亡周期 · 28 份 · 组均 78%_
 
 | 状态 | Plan | 进度 | PR | 最近更新 |
@@ -111,6 +114,7 @@ _背包、NPC AI、感知、社交、技艺、死亡周期 · 28 份 · 组均 7
 | `design` | **塔科夫式套包基础** <br/><sub>`plan-nested-pack-base-v1.md`</sub> | `█░░░░░░░░░░░`   6% | #476 | 2026-06-10 |
 
 ### 基础设施 / 工作流
+
 _IPC schema、持久化、工作流、内容、音效 · 21 份 · 组均 82%_
 
 | 状态 | Plan | 进度 | PR | 最近更新 |
@@ -138,6 +142,7 @@ _IPC schema、持久化、工作流、内容、音效 · 21 份 · 组均 82%_
 | `design` | **客户端登录/资源包 UX** <br/><sub>`plan-client-login-ux-v1.md`</sub> | `█░░░░░░░░░░░`   8% | #441 | 2026-06-08 |
 
 ### 地形 / 世界生成
+
 _末法残土 terrain profile、worldgen 流水线、CI 视觉快照 · 7 份 · 组均 86%_
 
 | 状态 | Plan | 进度 | PR | 最近更新 |
@@ -151,6 +156,7 @@ _末法残土 terrain profile、worldgen 流水线、CI 视觉快照 · 7 份 ·
 | `design` | **worldgen raster 校验修复** <br/><sub>`plan-worldgen-raster-check-qidensity-fix-v1.md`</sub> | `█░░░░░░░░░░░`  10% | — | 2026-06-15 |
 
 ### 骨架 plan
+
 _玩家旅程 / 经济 / 化虚等待开工骨架 · 4 份 · 组均 5%_
 
 | 状态 | Plan | 进度 | PR | 最近更新 |
@@ -161,6 +167,7 @@ _玩家旅程 / 经济 / 化虚等待开工骨架 · 4 份 · 组均 5%_
 | `skeleton` | **库存提示面板骨架** <br/><sub>`plans-skeleton/plan-inventory-hint-panel-v1.md`</sub> | `█░░░░░░░░░░░`   5% | — | 2026-06 |
 
 ### 已完成归档
+
 _M0/M1 阶段产物 + 已 docs/finished_plans 的子 plan · 49 份 · 组均 100%_
 
 | 状态 | Plan | 进度 | PR | 最近更新 |

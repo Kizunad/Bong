@@ -73,9 +73,9 @@ def render(data: dict) -> str:
     lines.append("")
     lines.append(f"_自动生成于 {data['generated_at']} · 共 {n_plans} 份 plan_")
     lines.append("")
-    lines.append(f"```")
+    lines.append("```text")
     lines.append(f"总进度  {progress_bar(overall, TOTAL_BAR_WIDTH)} {overall:5.1f}%")
-    lines.append(f"```")
+    lines.append("```")
     lines.append("")
 
     # State counts inline
@@ -98,6 +98,7 @@ def render(data: dict) -> str:
         avg = sum(p["percent"] for p in grp_plans) / len(grp_plans)
 
         lines.append(f"### {grp['title']}")
+        lines.append("")
         lines.append(
             f"_{grp['description']} · {len(grp_plans)} 份 · 组均 {avg:.0f}%_"
         )

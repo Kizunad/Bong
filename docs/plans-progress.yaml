@@ -1243,7 +1243,7 @@ plans:
   pr_refs:
   - 443
   blocking_on: []
-  summary: PR
+  summary: 状态效果 HUD buff/debuff 图标渲染补全，已归档 finished_plans/（修正源 YAML 被截断为 "PR" 的 summary）。
 - file: finished_plans/plan-agent-ui-data-v1.md
   group: infrastructure
   title: UI-as-Data 动态交互面板
