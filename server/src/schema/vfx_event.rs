@@ -1,10 +1,12 @@
 //! VFX 事件（S2C CustomPayload `bong:vfx_event`）—— Rust 侧。
 //!
 //! 与 `agent/packages/schema/src/vfx-event.ts` 1:1 对应，当前支持：
-//!   * `play_anim`：服务端广播一次性动作
+//!   * `play_anim`：服务端广播一次性动作（按玩家 UUID 寻人）
 //!   * `play_anim_inline`：携带 Emotecraft v3 JSON，客户端临时注册后立即播放
 //!   * `stop_anim`：终止持续动画
 //!   * `spawn_particle`：触发一次自定义粒子（`plan-particle-system-v1 §2.2`）
+//!   * `play_entity_anim`：按 MC 协议 entity_id 触发非玩家实体（GeckoLib FaunaEntity）招式动画
+//!     —— 黑武士这类无 UUID 的 Marker boss 走此路径
 //!
 //! 对齐方式：`agent/packages/schema/samples/vfx-event.*.sample.json` 由 Rust 测试
 //! `include_str!` 反序列化，保证双端形态同步。
@@ -28,8 +30,17 @@ pub const VFX_PARTICLE_COUNT_MAX: u16 = 64;
 /// 粒子持续时间上限（tick）。20 tick/s → 10s 足够一次性事件。
 pub const VFX_PARTICLE_DURATION_TICKS_MAX: u16 = 200;
 
+/// 实体一次性动画持续上限（tick）。20 tick/s → 10s。客户端到时回 idle loop。
+/// 与粒子上限同值但语义独立，单列常量。
+pub const VFX_ENTITY_ANIM_DURATION_TICKS_MAX: u16 = 200;
+
 /// inline 动画 JSON 字符串上限。最终 payload 仍受 `MAX_PAYLOAD_BYTES` 兜底。
 pub const VFX_INLINE_ANIM_JSON_MAX_CHARS: usize = 4096;
+
+/// 实体动画名（GeckoLib animation 名）最大字符数。与 client
+/// `VfxEventEnvelope.VFX_ENTITY_ANIM_NAME_MAX_CHARS` 及 schema
+/// `vfx-event.ts` `VFX_ENTITY_ANIM_NAME_MAX_CHARS` 逐字对齐（128）。
+pub const VFX_ENTITY_ANIM_NAME_MAX_CHARS: usize = 128;
 
 #[derive(Debug)]
 pub enum VfxEventBuildError {
@@ -64,6 +75,20 @@ pub enum VfxEventBuildError {
     InlineAnimJsonLengthOutOfRange {
         len: usize,
     },
+    /// `play_entity_anim` 的 `entity_id` 越界（< 1；Valence 从 1 起分配协议 id）。
+    EntityAnimIdOutOfRange {
+        entity_id: i32,
+    },
+    /// `play_entity_anim` 的 `anim` 为空字符串。
+    EntityAnimNameEmpty,
+    /// `play_entity_anim` 的 `anim` 长度超过 `VFX_ENTITY_ANIM_NAME_MAX_CHARS`。
+    EntityAnimNameLengthOutOfRange {
+        len: usize,
+    },
+    /// `play_entity_anim` 的 `duration_ticks` 越界（0 或 > `VFX_ENTITY_ANIM_DURATION_TICKS_MAX`）。
+    EntityAnimDurationOutOfRange {
+        ticks: u16,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -72,6 +97,7 @@ pub enum VfxEventType {
     PlayAnimInline,
     StopAnim,
     SpawnParticle,
+    PlayEntityAnim,
 }
 
 /// VFX payload 判别式。`#[serde(tag = "type")]` + `rename_all = "snake_case"` 与
@@ -128,6 +154,14 @@ pub enum VfxEventPayloadV1 {
         #[serde(skip_serializing_if = "Option::is_none")]
         duration_ticks: Option<u16>,
     },
+    PlayEntityAnim {
+        /// MC protocol entity_id（Valence `EntityId::get()`，i32，≥1）。
+        entity_id: i32,
+        /// GeckoLib 动画名（如 `animation.bong.heiwushi.dark_barrage`）。
+        anim: String,
+        /// 一次性动画持续 tick（客户端到时回 idle）。
+        duration_ticks: u16,
+    },
 }
 
 impl VfxEventPayloadV1 {
@@ -137,6 +171,7 @@ impl VfxEventPayloadV1 {
             Self::PlayAnimInline { .. } => VfxEventType::PlayAnimInline,
             Self::StopAnim { .. } => VfxEventType::StopAnim,
             Self::SpawnParticle { .. } => VfxEventType::SpawnParticle,
+            Self::PlayEntityAnim { .. } => VfxEventType::PlayEntityAnim,
         }
     }
 
@@ -209,6 +244,31 @@ impl VfxEventPayloadV1 {
                     if !is_valid_color_hex(hex) {
                         return Err(VfxEventBuildError::ParticleColorMalformed);
                     }
+                }
+            }
+            Self::PlayEntityAnim {
+                entity_id,
+                anim,
+                duration_ticks,
+            } => {
+                if *entity_id < 1 {
+                    return Err(VfxEventBuildError::EntityAnimIdOutOfRange {
+                        entity_id: *entity_id,
+                    });
+                }
+                if anim.is_empty() {
+                    return Err(VfxEventBuildError::EntityAnimNameEmpty);
+                }
+                let anim_len = anim.chars().count();
+                if anim_len > VFX_ENTITY_ANIM_NAME_MAX_CHARS {
+                    return Err(VfxEventBuildError::EntityAnimNameLengthOutOfRange {
+                        len: anim_len,
+                    });
+                }
+                if *duration_ticks == 0 || *duration_ticks > VFX_ENTITY_ANIM_DURATION_TICKS_MAX {
+                    return Err(VfxEventBuildError::EntityAnimDurationOutOfRange {
+                        ticks: *duration_ticks,
+                    });
                 }
             }
         }
@@ -318,6 +378,16 @@ impl VfxEventV1 {
             color,
             strength,
             count,
+            duration_ticks,
+        })
+    }
+
+    /// 构造一个实体动画触发事件（黑武士 boss 出招）。`entity_id` 取 Valence
+    /// `EntityId::get()`，`anim` 是 GeckoLib 动画名，`duration_ticks` 是动画占用时长。
+    pub fn play_entity_anim(entity_id: i32, anim: impl Into<String>, duration_ticks: u16) -> Self {
+        Self::new(VfxEventPayloadV1::PlayEntityAnim {
+            entity_id,
+            anim: anim.into(),
             duration_ticks,
         })
     }
@@ -472,6 +542,9 @@ mod tests {
             include_str!(
                 "../../../agent/packages/schema/samples/vfx-event.spawn-particle.sample.json"
             ),
+            include_str!(
+                "../../../agent/packages/schema/samples/vfx-event.play-entity-anim.sample.json"
+            ),
         ];
 
         for json in samples {
@@ -571,6 +644,147 @@ mod tests {
             None,
         );
         assert_eq!(particle.payload_type(), VfxEventType::SpawnParticle);
+        let entity_anim =
+            VfxEventV1::play_entity_anim(7, "animation.bong.heiwushi.dark_barrage", 15);
+        assert_eq!(entity_anim.payload_type(), VfxEventType::PlayEntityAnim);
+    }
+
+    // ========== PlayEntityAnim（黑武士 boss 招式动画）==========
+
+    #[test]
+    fn play_entity_anim_roundtrip() {
+        let event = VfxEventV1::play_entity_anim(42, "animation.bong.heiwushi.dark_vortex", 21);
+        let bytes = event.to_json_bytes_checked().expect("serialize");
+        // wire tag 必须是 snake_case `play_entity_anim`，与 client 解析的 type 串对齐。
+        let text = std::str::from_utf8(&bytes).unwrap();
+        assert!(
+            text.contains("\"type\":\"play_entity_anim\""),
+            "expected wire type 'play_entity_anim' so client parse switch hits the right branch, actual: {text}"
+        );
+        let back: VfxEventV1 = serde_json::from_slice(&bytes).expect("deserialize");
+        assert_eq!(event, back);
+        match back.payload {
+            VfxEventPayloadV1::PlayEntityAnim {
+                entity_id,
+                anim,
+                duration_ticks,
+            } => {
+                assert_eq!(entity_id, 42);
+                assert_eq!(anim, "animation.bong.heiwushi.dark_vortex");
+                assert_eq!(duration_ticks, 21);
+            }
+            other => panic!("expected PlayEntityAnim, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn play_entity_anim_rejects_entity_id_below_one() {
+        for bad in [0i32, -1] {
+            let event = VfxEventV1::play_entity_anim(bad, "animation.bong.heiwushi.transform", 16);
+            match event.to_json_bytes_checked() {
+                Err(VfxEventBuildError::EntityAnimIdOutOfRange { entity_id }) => {
+                    assert_eq!(entity_id, bad)
+                }
+                other => {
+                    panic!("expected EntityAnimIdOutOfRange for entity_id={bad}, got {other:?}")
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn play_entity_anim_rejects_empty_anim() {
+        let event = VfxEventV1::play_entity_anim(1, "", 10);
+        assert!(matches!(
+            event.to_json_bytes_checked(),
+            Err(VfxEventBuildError::EntityAnimNameEmpty)
+        ));
+    }
+
+    #[test]
+    fn play_entity_anim_accepts_anim_name_at_max_length() {
+        // 边界（上界）：anim 名恰为 VFX_ENTITY_ANIM_NAME_MAX_CHARS（128）应通过。
+        // 三端逐字对齐 128（client VfxEventEnvelope / schema vfx-event.ts）。
+        let name = "a".repeat(VFX_ENTITY_ANIM_NAME_MAX_CHARS);
+        assert_eq!(name.chars().count(), 128, "fixture 必须正好 128 char");
+        assert!(
+            VfxEventV1::play_entity_anim(1, name, 10)
+                .to_json_bytes_checked()
+                .is_ok(),
+            "anim 长度 == VFX_ENTITY_ANIM_NAME_MAX_CHARS(128) 应通过（off-by-one 下界内）"
+        );
+    }
+
+    #[test]
+    fn play_entity_anim_rejects_anim_name_above_max_length() {
+        // 边界（off-by-one 上界外）：anim 名 129 char 应被拒，并报告实际长度。
+        let name = "a".repeat(VFX_ENTITY_ANIM_NAME_MAX_CHARS + 1);
+        match VfxEventV1::play_entity_anim(1, name, 10).to_json_bytes_checked() {
+            Err(VfxEventBuildError::EntityAnimNameLengthOutOfRange { len }) => {
+                assert_eq!(
+                    len,
+                    VFX_ENTITY_ANIM_NAME_MAX_CHARS + 1,
+                    "应报告实际越界长度 129，便于定位"
+                )
+            }
+            other => panic!(
+                "expected EntityAnimNameLengthOutOfRange{{len:129}} (超 128 上限), got {other:?}"
+            ),
+        }
+    }
+
+    #[test]
+    fn play_entity_anim_rejects_duration_out_of_range() {
+        let zero = VfxEventV1::play_entity_anim(1, "animation.bong.heiwushi.idle", 0);
+        match zero.to_json_bytes_checked() {
+            Err(VfxEventBuildError::EntityAnimDurationOutOfRange { ticks }) => assert_eq!(ticks, 0),
+            other => panic!("expected EntityAnimDurationOutOfRange{{0}}, got {other:?}"),
+        }
+        let over = VfxEventV1::play_entity_anim(
+            1,
+            "animation.bong.heiwushi.idle",
+            VFX_ENTITY_ANIM_DURATION_TICKS_MAX + 1,
+        );
+        match over.to_json_bytes_checked() {
+            Err(VfxEventBuildError::EntityAnimDurationOutOfRange { ticks }) => {
+                assert_eq!(ticks, VFX_ENTITY_ANIM_DURATION_TICKS_MAX + 1)
+            }
+            other => panic!("expected EntityAnimDurationOutOfRange (over max), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn play_entity_anim_accepts_boundary_values() {
+        // entity_id=1（最小合法）/ duration=1（下界）/ duration=MAX（上界）均应通过。
+        assert!(VfxEventV1::play_entity_anim(1, "a", 1)
+            .to_json_bytes_checked()
+            .is_ok());
+        assert!(
+            VfxEventV1::play_entity_anim(1, "a", VFX_ENTITY_ANIM_DURATION_TICKS_MAX)
+                .to_json_bytes_checked()
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn sample_play_entity_anim_tag_alignment() {
+        let json = include_str!(
+            "../../../agent/packages/schema/samples/vfx-event.play-entity-anim.sample.json"
+        );
+        let payload: VfxEventV1 = serde_json::from_str(json).expect("deserialize");
+        assert_eq!(payload.v, VFX_EVENT_VERSION);
+        match payload.payload {
+            VfxEventPayloadV1::PlayEntityAnim {
+                entity_id,
+                anim,
+                duration_ticks,
+            } => {
+                assert_eq!(entity_id, 42);
+                assert_eq!(anim, "animation.bong.heiwushi.dark_barrage");
+                assert_eq!(duration_ticks, 15);
+            }
+            other => panic!("expected PlayEntityAnim, got {other:?}"),
+        }
     }
 
     // ========== SpawnParticle validation ==========

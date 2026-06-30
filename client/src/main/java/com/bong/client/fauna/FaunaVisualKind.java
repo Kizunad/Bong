@@ -23,7 +23,7 @@ public enum FaunaVisualKind {
     LIVING_PILLAR("living_pillar", 142, 2.0f, 5.0f, 1.0f, 0.6f, "living_pillar"),
     POISON_DRAGON("poison_dragon", 143, 2.5f, 2.0f, 1.0f, 0.7f, "poison_dragon"),
     BONE_DRAGON("bone_dragon", 144, 2.5f, 2.2f, 1.0f, 0.7f, "bone_dragon"),
-    HEIWUSHI("heiwushi", 145, 1.2f, 2.8f, 1.0f, 0.5f, null);
+    HEIWUSHI("heiwushi", 145, 1.2f, 2.8f, 1.0f, 0.5f, "heiwushi");
 
     private final String path;
     private final int expectedRawId;

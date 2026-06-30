@@ -152,9 +152,11 @@ public class FaunaRenderBootstrapTest {
         // 通用 fauna 模型（animPath==null）→ animation.fauna.idle（在 fauna.animation.json 内）
         assertEquals("animation.fauna.idle", FaunaVisualKind.DEVOUR_RAT.idleAnimationName(),
             "通用 fauna 物种应回退 animation.fauna.idle");
-        assertEquals("animation.fauna.idle", FaunaVisualKind.HEIWUSHI.idleAnimationName(),
-            "通用 fauna 物种应回退 animation.fauna.idle");
         // 专属模型（animPath!=null）→ animation.bong.<animPath>.idle（在各物种文件内）
+        // 黑武士现走专属 heiwushi.animation.json（boss 招式动画 dark_barrage/dark_vortex/transform
+        // 都在该文件，idle 同理），故 idle 名应为 animation.bong.heiwushi.idle 而非通用回退。
+        assertEquals("animation.bong.heiwushi.idle", FaunaVisualKind.HEIWUSHI.idleAnimationName(),
+            "黑武士走专属模型动画文件，idle 应取 animation.bong.heiwushi.idle");
         assertEquals("animation.bong.green_spider.idle", FaunaVisualKind.GREEN_SPIDER.idleAnimationName());
         assertEquals("animation.bong.ice_scorpion.idle", FaunaVisualKind.ICE_SCORPION.idleAnimationName());
         assertEquals("animation.bong.bone_dragon.idle", FaunaVisualKind.BONE_DRAGON.idleAnimationName());

@@ -429,6 +429,7 @@ pub fn handle_vfx_debug_commands(
                     VfxEventPayloadV1::PlayAnimInline { .. } => "play_inline",
                     VfxEventPayloadV1::StopAnim { .. } => "stop",
                     VfxEventPayloadV1::SpawnParticle { .. } => "particle",
+                    VfxEventPayloadV1::PlayEntityAnim { .. } => "entity_anim",
                 };
                 if let VfxEventPayloadV1::SpawnParticle {
                     event_id,
@@ -602,6 +603,8 @@ fn anim_id_from_payload(payload: &VfxEventPayloadV1) -> &str {
         // 粒子 variant 没有 anim_id 概念；debug 命令目前只生产 Play/Stop，
         // 保底返回 event_id 以便日志不致 panic。
         VfxEventPayloadV1::SpawnParticle { event_id, .. } => event_id,
+        // 实体动画 variant 的 anim 字段即动画名。
+        VfxEventPayloadV1::PlayEntityAnim { anim, .. } => anim,
     }
 }
 

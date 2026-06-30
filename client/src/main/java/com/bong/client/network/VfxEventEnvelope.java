@@ -43,6 +43,10 @@ public final class VfxEventEnvelope {
     public static final int VFX_PARTICLE_COUNT_MAX = 64;
     public static final int VFX_PARTICLE_DURATION_TICKS_MAX = 200;
     public static final int VFX_INLINE_ANIM_JSON_MAX_CHARS = 4096;
+    /** 实体一次性动画持续上限（tick），与 schema VFX_ENTITY_ANIM_DURATION_TICKS_MAX 对齐。 */
+    public static final int VFX_ENTITY_ANIM_DURATION_TICKS_MAX = 200;
+    /** 实体动画名（GeckoLib animation 名）最大长度，与 schema 对齐。 */
+    public static final int VFX_ENTITY_ANIM_NAME_MAX_CHARS = 128;
 
     private static final Pattern INTEGER_TOKEN_PATTERN = Pattern.compile("-?(0|[1-9]\\d*)");
     private static final Pattern UUID_PATTERN =
@@ -95,6 +99,7 @@ public final class VfxEventEnvelope {
                 case "play_anim_inline" -> parsePlayAnimInline(root);
                 case "stop_anim" -> parseStopAnim(root);
                 case "spawn_particle" -> parseSpawnParticle(root);
+                case "play_entity_anim" -> parsePlayEntityAnim(root);
                 default -> VfxEventParseResult.error("Unknown vfx_event type: '" + type + "'");
             };
         } catch (RuntimeException exception) {
@@ -256,6 +261,38 @@ public final class VfxEventEnvelope {
 
         return VfxEventParseResult.success(new VfxEventPayload.SpawnParticle(
             eventId, origin, direction, colorRgb, strength, count, durationTicks));
+    }
+
+    private static VfxEventParseResult parsePlayEntityAnim(JsonObject root) {
+        Integer entityId = readRequiredInteger(root, "entity_id");
+        if (entityId == null) {
+            return VfxEventParseResult.error("Missing required field 'entity_id'");
+        }
+        if (entityId < 1) {
+            return VfxEventParseResult.error("Field 'entity_id' must be >= 1: " + entityId);
+        }
+        String anim = readRequiredString(root, "anim");
+        if (anim == null || anim.isBlank()) {
+            return VfxEventParseResult.error("Invalid or missing 'anim'");
+        }
+        if (anim.length() > VFX_ENTITY_ANIM_NAME_MAX_CHARS) {
+            return VfxEventParseResult.error(
+                "Field 'anim' exceeds max length of " + VFX_ENTITY_ANIM_NAME_MAX_CHARS
+            );
+        }
+        Integer durationTicks = readRequiredInteger(root, "duration_ticks");
+        if (durationTicks == null) {
+            return VfxEventParseResult.error("Missing required field 'duration_ticks'");
+        }
+        if (durationTicks < 1 || durationTicks > VFX_ENTITY_ANIM_DURATION_TICKS_MAX) {
+            return VfxEventParseResult.error(
+                "Field 'duration_ticks' out of range [1," + VFX_ENTITY_ANIM_DURATION_TICKS_MAX + "]: "
+                    + durationTicks
+            );
+        }
+        return VfxEventParseResult.success(
+            new VfxEventPayload.PlayEntityAnim(entityId, anim, durationTicks)
+        );
     }
 
     /**

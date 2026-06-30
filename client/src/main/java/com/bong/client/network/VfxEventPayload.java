@@ -11,11 +11,12 @@ import java.util.UUID;
  * `bong:vfx_event` CustomPayload 解析后的强类型载荷。
  *
  * <p>与 {@code agent/packages/schema/src/vfx-event.ts} / {@code server/src/schema/vfx_event.rs}
- * 一一对应。当前四个 variant：
+ * 一一对应。当前五个 variant：
  * <ul>
  *   <li>{@link PlayAnim} / {@link StopAnim}：玩家骨骼动画触发（plan-player-animation-v1）</li>
  *   <li>{@link PlayAnimInline}：运行时注入完整 PlayerAnimator JSON 并立即播放</li>
  *   <li>{@link SpawnParticle}：世界内粒子触发（plan-particle-system-v1 §2.2）</li>
+ *   <li>{@link PlayEntityAnim}：按 MC 协议 entity_id 触发非玩家实体（GeckoLib FaunaEntity）招式动画</li>
  * </ul>
  *
  * <p>为什么是 sealed interface：消费侧（{@link VfxEventRouter}）用 {@code instanceof} / switch
@@ -27,7 +28,8 @@ import java.util.UUID;
  */
 public sealed interface VfxEventPayload
     permits VfxEventPayload.PlayAnim, VfxEventPayload.PlayAnimInline,
-    VfxEventPayload.StopAnim, VfxEventPayload.SpawnParticle {
+    VfxEventPayload.StopAnim, VfxEventPayload.SpawnParticle,
+    VfxEventPayload.PlayEntityAnim {
 
     /** JSON 里的 `type` 字段原值，仅给日志用。 */
     String type();
@@ -161,6 +163,37 @@ public sealed interface VfxEventPayload
         public String debugDescriptor() {
             return "spawn_particle event=" + eventId + " origin=["
                 + origin[0] + "," + origin[1] + "," + origin[2] + "]";
+        }
+    }
+
+    /**
+     * 非玩家实体一次性招式动画触发（黑武士 boss 出招）。
+     *
+     * <p>不同于 {@link PlayAnim} 按玩家 UUID 寻人：黑武士是无 UUID 的 Marker 实体，客户端按
+     * MC 协议 {@code entityId}（{@code world.getEntityById}）定位 {@code FaunaEntity}，
+     * 调 {@code triggerAction(anim, durationTicks)} 播一次性招式动画，到时回 idle。
+     *
+     * @param entityId      MC 协议 entity_id（Valence {@code EntityId.get()}，≥1）
+     * @param anim          GeckoLib 动画名（如 {@code animation.bong.heiwushi.dark_barrage}）
+     * @param durationTicks 动画占用时长 [1, {@value VfxEventEnvelope#VFX_ENTITY_ANIM_DURATION_TICKS_MAX}]
+     */
+    record PlayEntityAnim(
+        int entityId,
+        String anim,
+        int durationTicks
+    ) implements VfxEventPayload {
+        public PlayEntityAnim {
+            Objects.requireNonNull(anim, "anim");
+        }
+
+        @Override
+        public String type() {
+            return "play_entity_anim";
+        }
+
+        @Override
+        public String debugDescriptor() {
+            return "play_entity_anim entity=" + entityId + " anim=" + anim;
         }
     }
 }
