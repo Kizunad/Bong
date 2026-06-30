@@ -38,9 +38,10 @@ public final class FaunaEntity extends Entity implements GeoEntity {
      *
      * @param animName      GeckoLib 动画名（如 {@code animation.bong.heiwushi.dark_barrage}）
      * @param durationTicks 动画占用时长（tick）
+     * @return {@code true} 成功进入招式态；{@code false} 无效输入被拒（透传 {@link FaunaActionAnimation#trigger}）。
      */
-    public void triggerAction(String animName, int durationTicks) {
-        action.trigger(animName, durationTicks);
+    public boolean triggerAction(String animName, int durationTicks) {
+        return action.trigger(animName, durationTicks);
     }
 
     /** 当前招式动画名（无招式时为 null）；供 inspection / 测试。 */

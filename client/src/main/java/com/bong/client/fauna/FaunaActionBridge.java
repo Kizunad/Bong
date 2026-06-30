@@ -13,8 +13,9 @@ import net.minecraft.entity.Entity;
  *
  * <p>返回值：
  * <ul>
- *   <li>{@code true}：找到 {@link FaunaEntity} 并已触发</li>
- *   <li>{@code false}：world 未就绪 / id 找不到 / 不是 FaunaEntity（玩家不在视距等）→ router 记 bridgeMiss</li>
+ *   <li>{@code true}：找到 {@link FaunaEntity} 且触发成功（有效 payload）</li>
+ *   <li>{@code false}：world 未就绪 / id 找不到 / 不是 FaunaEntity（玩家不在视距等），
+ *       或命中实体但触发被拒（空白动画名 / 非正时长）→ router 记 bridgeMiss</li>
  * </ul>
  */
 public final class FaunaActionBridge implements VfxEntityAnimationBridge {
@@ -30,8 +31,9 @@ public final class FaunaActionBridge implements VfxEntityAnimationBridge {
         }
         Entity entity = world.getEntityById(entityId);
         if (entity instanceof FaunaEntity fauna) {
-            fauna.triggerAction(anim, durationTicks);
-            return true;
+            // 命中实体后回传真实触发结果：无效 payload（空白名 / 非正时长）下 router 应记 bridgeMiss，
+            // 不能恒 true 把无效事件吞成 handled。
+            return fauna.triggerAction(anim, durationTicks);
         }
         return false;
     }

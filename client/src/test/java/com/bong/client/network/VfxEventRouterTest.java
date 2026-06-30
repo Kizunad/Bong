@@ -177,6 +177,22 @@ public class VfxEventRouterTest {
         assertTrue(result.logMessage().contains("IllegalStateException"), result.logMessage());
     }
 
+    @Test
+    void entityBridgeExceptionBecomesBridgeMissNotCrash() throws IOException {
+        // play_entity_anim 路径的 entity bridge 抛异常 → router try/catch 兜底转 bridgeMiss，
+        // 而非让运行期失败撕裂整个 vfx_event 网络层。日志钉住异常类型供降级 warn。
+        ThrowingEntityBridge entityBridge = new ThrowingEntityBridge();
+        VfxEventRouter router =
+            new VfxEventRouter(new RecordingBridge(true), VfxParticleBridge.noop(), entityBridge);
+        String json = PayloadFixtureLoader.readText("valid-vfx-play-entity-anim.json");
+
+        VfxEventRouter.RouteResult result = router.route(json, jsonLen(json));
+
+        assertTrue(result.isBridgeMiss(), "entity bridge 抛异常应转 bridgeMiss: " + result.logMessage());
+        assertFalse(result.isHandled());
+        assertTrue(result.logMessage().contains("IllegalStateException"), result.logMessage());
+    }
+
     private static int jsonLen(String json) {
         return json.getBytes(StandardCharsets.UTF_8).length;
     }
@@ -278,6 +294,13 @@ public class VfxEventRouterTest {
         @Override
         public boolean stopAnim(UUID target, Identifier animId, OptionalInt fadeOutTicks) {
             throw new IllegalStateException("simulated bridge failure");
+        }
+    }
+
+    private static final class ThrowingEntityBridge implements VfxEntityAnimationBridge {
+        @Override
+        public boolean playEntityAnim(int entityId, String anim, int durationTicks) {
+            throw new IllegalStateException("simulated entity bridge failure");
         }
     }
 }

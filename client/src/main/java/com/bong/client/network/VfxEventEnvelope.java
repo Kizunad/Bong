@@ -272,7 +272,7 @@ public final class VfxEventEnvelope {
             return VfxEventParseResult.error("Field 'entity_id' must be >= 1: " + entityId);
         }
         String anim = readRequiredString(root, "anim");
-        if (anim == null || anim.isEmpty()) {
+        if (anim == null || anim.isBlank()) {
             return VfxEventParseResult.error("Invalid or missing 'anim'");
         }
         if (anim.length() > VFX_ENTITY_ANIM_NAME_MAX_CHARS) {

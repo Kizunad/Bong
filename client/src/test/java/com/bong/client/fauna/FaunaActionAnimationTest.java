@@ -27,7 +27,7 @@ class FaunaActionAnimationTest {
     @Test
     void triggerSetsAnimAndTicks() {
         FaunaActionAnimation action = new FaunaActionAnimation();
-        action.trigger(ANIM, 15);
+        assertTrue(action.trigger(ANIM, 15), "有效 trigger 应返回 true（成功进入招式态）");
         assertTrue(action.hasAction(), "trigger 后应有招式动画");
         assertEquals(ANIM, action.currentAnim(), "currentAnim 应为触发的动画名（controller 据此播招式）");
         assertEquals(15, action.remainingTicks());
@@ -85,14 +85,15 @@ class FaunaActionAnimationTest {
     @Test
     void triggerIgnoresNullBlankNameAndNonPositiveDuration() {
         FaunaActionAnimation action = new FaunaActionAnimation();
-        // 防御：无效输入不应建立招式态（否则 controller 会播空动画 or 卡死）。
-        action.trigger(null, 15);
+        // 防御：无效输入不应建立招式态（否则 controller 会播空动画 or 卡死），且 trigger 应返回
+        // false 让上游（bridge → router）把无效 payload 记成 bridgeMiss 而非吞掉当 handled。
+        assertFalse(action.trigger(null, 15), "null 动画名应返回 false");
         assertFalse(action.hasAction(), "null 动画名应被忽略");
-        action.trigger("   ", 15);
+        assertFalse(action.trigger("   ", 15), "空白动画名应返回 false");
         assertFalse(action.hasAction(), "空白动画名应被忽略");
-        action.trigger(ANIM, 0);
+        assertFalse(action.trigger(ANIM, 0), "duration=0 应返回 false");
         assertFalse(action.hasAction(), "duration=0 应被忽略");
-        action.trigger(ANIM, -5);
+        assertFalse(action.trigger(ANIM, -5), "duration<0 应返回 false");
         assertFalse(action.hasAction(), "duration<0 应被忽略");
     }
 
@@ -100,9 +101,9 @@ class FaunaActionAnimationTest {
     void invalidTriggerDoesNotClobberActiveAction() {
         FaunaActionAnimation action = new FaunaActionAnimation();
         action.trigger(ANIM, 10);
-        // 正在播招式时收到无效触发 → 不应把当前招式清掉。
-        action.trigger(null, 5);
-        action.trigger(ANIM, 0);
+        // 正在播招式时收到无效触发 → 应返回 false 且不把当前招式清掉。
+        assertFalse(action.trigger(null, 5), "无效触发应返回 false");
+        assertFalse(action.trigger(ANIM, 0), "无效触发应返回 false");
         assertTrue(action.hasAction(), "无效触发不应清掉正在播的招式");
         assertEquals(ANIM, action.currentAnim());
         assertEquals(10, action.remainingTicks(), "无效触发不应改动当前 ticks");

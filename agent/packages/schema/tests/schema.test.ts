@@ -2499,8 +2499,12 @@ describe("sample files pass schema validation", () => {
     expectReject({ ...base, duration_ticks: 0 });
     // 反：duration_ticks 越上界（off-by-one）。
     expectReject({ ...base, duration_ticks: VFX_ENTITY_ANIM_DURATION_TICKS_MAX + 1 });
-    // 反：缺 required 字段。
+    // 反：缺 required 字段 entity_id。
     expectReject({ v: 1, type: "play_entity_anim", anim: "x", duration_ticks: 5 });
+    // 反：缺 required 字段 anim。
+    expectReject({ v: 1, type: "play_entity_anim", entity_id: 1, duration_ticks: 5 });
+    // 反：缺 required 字段 duration_ticks。
+    expectReject({ v: 1, type: "play_entity_anim", entity_id: 1, anim: "x" });
     // 反：未知字段（additionalProperties:false 仍生效）。
     expectReject({ ...base, bogus_field: 1 });
 

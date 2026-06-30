@@ -37,6 +37,11 @@ pub const VFX_ENTITY_ANIM_DURATION_TICKS_MAX: u16 = 200;
 /// inline 动画 JSON 字符串上限。最终 payload 仍受 `MAX_PAYLOAD_BYTES` 兜底。
 pub const VFX_INLINE_ANIM_JSON_MAX_CHARS: usize = 4096;
 
+/// 实体动画名（GeckoLib animation 名）最大字符数。与 client
+/// `VfxEventEnvelope.VFX_ENTITY_ANIM_NAME_MAX_CHARS` 及 schema
+/// `vfx-event.ts` `VFX_ENTITY_ANIM_NAME_MAX_CHARS` 逐字对齐（128）。
+pub const VFX_ENTITY_ANIM_NAME_MAX_CHARS: usize = 128;
+
 #[derive(Debug)]
 pub enum VfxEventBuildError {
     Json(serde_json::Error),
@@ -76,6 +81,10 @@ pub enum VfxEventBuildError {
     },
     /// `play_entity_anim` 的 `anim` 为空字符串。
     EntityAnimNameEmpty,
+    /// `play_entity_anim` 的 `anim` 长度超过 `VFX_ENTITY_ANIM_NAME_MAX_CHARS`。
+    EntityAnimNameLengthOutOfRange {
+        len: usize,
+    },
     /// `play_entity_anim` 的 `duration_ticks` 越界（0 或 > `VFX_ENTITY_ANIM_DURATION_TICKS_MAX`）。
     EntityAnimDurationOutOfRange {
         ticks: u16,
@@ -249,6 +258,12 @@ impl VfxEventPayloadV1 {
                 }
                 if anim.is_empty() {
                     return Err(VfxEventBuildError::EntityAnimNameEmpty);
+                }
+                let anim_len = anim.chars().count();
+                if anim_len > VFX_ENTITY_ANIM_NAME_MAX_CHARS {
+                    return Err(VfxEventBuildError::EntityAnimNameLengthOutOfRange {
+                        len: anim_len,
+                    });
                 }
                 if *duration_ticks == 0 || *duration_ticks > VFX_ENTITY_ANIM_DURATION_TICKS_MAX {
                     return Err(VfxEventBuildError::EntityAnimDurationOutOfRange {
@@ -684,6 +699,38 @@ mod tests {
             event.to_json_bytes_checked(),
             Err(VfxEventBuildError::EntityAnimNameEmpty)
         ));
+    }
+
+    #[test]
+    fn play_entity_anim_accepts_anim_name_at_max_length() {
+        // 边界（上界）：anim 名恰为 VFX_ENTITY_ANIM_NAME_MAX_CHARS（128）应通过。
+        // 三端逐字对齐 128（client VfxEventEnvelope / schema vfx-event.ts）。
+        let name = "a".repeat(VFX_ENTITY_ANIM_NAME_MAX_CHARS);
+        assert_eq!(name.chars().count(), 128, "fixture 必须正好 128 char");
+        assert!(
+            VfxEventV1::play_entity_anim(1, name, 10)
+                .to_json_bytes_checked()
+                .is_ok(),
+            "anim 长度 == VFX_ENTITY_ANIM_NAME_MAX_CHARS(128) 应通过（off-by-one 下界内）"
+        );
+    }
+
+    #[test]
+    fn play_entity_anim_rejects_anim_name_above_max_length() {
+        // 边界（off-by-one 上界外）：anim 名 129 char 应被拒，并报告实际长度。
+        let name = "a".repeat(VFX_ENTITY_ANIM_NAME_MAX_CHARS + 1);
+        match VfxEventV1::play_entity_anim(1, name, 10).to_json_bytes_checked() {
+            Err(VfxEventBuildError::EntityAnimNameLengthOutOfRange { len }) => {
+                assert_eq!(
+                    len,
+                    VFX_ENTITY_ANIM_NAME_MAX_CHARS + 1,
+                    "应报告实际越界长度 129，便于定位"
+                )
+            }
+            other => panic!(
+                "expected EntityAnimNameLengthOutOfRange{{len:129}} (超 128 上限), got {other:?}"
+            ),
+        }
     }
 
     #[test]

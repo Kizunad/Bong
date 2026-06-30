@@ -282,6 +282,37 @@ public class VfxEventEnvelopeTest {
         assertTrue(zeroResult.errorMessage().contains("duration_ticks"), zeroResult.errorMessage());
     }
 
+    @Test
+    void rejectsPlayEntityAnimMissingEntityId() {
+        // 缺 required entity_id → 解析失败，错误消息钉住字段名（与 Rust/TypeBox required 一致）。
+        String json = "{\"v\":1,\"type\":\"play_entity_anim\",\"anim\":\"a\",\"duration_ticks\":15}";
+        VfxEventParseResult result = VfxEventEnvelope.parse(json, jsonLen(json));
+        assertFalse(result.isSuccess(), "缺 entity_id 应被拒");
+        assertTrue(result.errorMessage().contains("entity_id"), result.errorMessage());
+    }
+
+    @Test
+    void rejectsPlayEntityAnimMissingDurationTicks() {
+        // 缺 required duration_ticks → 解析失败，错误消息钉住字段名。
+        String json = "{\"v\":1,\"type\":\"play_entity_anim\",\"entity_id\":3,\"anim\":\"a\"}";
+        VfxEventParseResult result = VfxEventEnvelope.parse(json, jsonLen(json));
+        assertFalse(result.isSuccess(), "缺 duration_ticks 应被拒");
+        assertTrue(result.errorMessage().contains("duration_ticks"), result.errorMessage());
+    }
+
+    @Test
+    void rejectsPlayEntityAnimAnimNameTooLong() {
+        // 边界（off-by-one 上界外）：anim 名 129 char（超 128 上限）→ 解析失败。
+        // 三端逐字对齐 128（server vfx_event.rs / schema vfx-event.ts）。
+        String tooLong = "a".repeat(VfxEventEnvelope.VFX_ENTITY_ANIM_NAME_MAX_CHARS + 1);
+        String json = "{\"v\":1,\"type\":\"play_entity_anim\",\"entity_id\":3,\"anim\":\""
+            + tooLong + "\",\"duration_ticks\":15}";
+        VfxEventParseResult result = VfxEventEnvelope.parse(json, jsonLen(json));
+        assertFalse(result.isSuccess(), "anim 名超 128 上限应被拒");
+        assertTrue(result.errorMessage().contains("exceeds max length"), result.errorMessage());
+        assertTrue(result.errorMessage().contains("anim"), result.errorMessage());
+    }
+
     private static int jsonLen(String json) {
         return json.getBytes(StandardCharsets.UTF_8).length;
     }

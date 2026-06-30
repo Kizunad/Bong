@@ -19,13 +19,17 @@ public final class FaunaActionAnimation {
      *
      * <p>防御：{@code animName} 为 null/空白 或 {@code durationTicks <= 0} 时忽略（不改变现态），
      * 避免无效输入把正在播的动画清掉或卡死一个空动画。
+     *
+     * @return {@code true} 成功进入招式态（有效 payload）；{@code false} 被拒（无效输入，现态不变）。
+     *     供上游把"无效 payload"如实记成未处理（bridgeMiss）而非吞掉当 handled。
      */
-    public void trigger(String animName, int durationTicks) {
+    public boolean trigger(String animName, int durationTicks) {
         if (animName == null || animName.isBlank() || durationTicks <= 0) {
-            return;
+            return false;
         }
         this.anim = animName;
         this.ticks = durationTicks;
+        return true;
     }
 
     /** 推进一 tick；倒计时归零时清空当前招式（回到无动画态，controller 改播 idle）。 */
