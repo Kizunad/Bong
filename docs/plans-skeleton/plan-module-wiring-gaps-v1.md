@@ -38,8 +38,8 @@
 
 ### P0-4 mineral — 矿脉再生功能不可达 ★最清晰，候选优先修
 - **现状**：`ExhaustedMineralsLog::remove_respawned`（`mineral/persistence.rs`）有完整逻辑 + 单测，但 `mineral/mod.rs` Update 调度只注册 `tick_mineral_clock`/`record_exhausted_minerals`，**无系统在运行时调用 `remove_respawned` 重建 OreNode + 更新 `MineralOreIndex`**。带 `respawn_at_tick` 的矿脉到期后永不真正 respawn。
-- **修复线索**：加一个 Update 系统：到期时调 `remove_respawned` → 重建 `OreNode` + 更新 `MineralOreIndex`，注册进 `mod.rs`。函数与测试已存在，**接线最清晰、风险最低**，是本 plan 首个动手候选。
-- **待确认**：respawn 时是否需重新生成矿脉品质/储量（看 log 里存了什么）。
+- **修复线索 + 复杂度核实**（已读码）：加 Update 系统调 `remove_respawned(clock.tick)`，对每条到期 entry 镜像 `spawn_mineral_anchor_nodes` 的 `commands.spawn((MineralOreNode::new, mineral_gatherable)) + index.insert`——这部分清洁。**但**：耗尽时（`break_handler.rs:397-405`）`index.remove` + `entity.despawn()`，且方块已被 vanilla 挖成 **AIR**。仅重建 ECS 节点 → index 有项但世界无方块可挖 = 仍不可用。**真正修复需把矿石方块放回世界**（dimension `ChunkLayer` 写入 + mineral_id→block 映射 + 处理 chunk 未加载），原始 spawn 路径本身也不放块（块来自 worldgen 物化）。
+- **待决策**：respawn 的世界方块如何恢复（运行时写 ChunkLayer？还是依赖区块重生成？）；未加载区块时 respawn 入队还是跳过。**有设计抉择，非一行修复**。
 
 ---
 
@@ -98,6 +98,6 @@
 
 ## 备注
 
-- 本 plan 由 `/runwebui` 模块图谱审计自动汇总，**report-only**：多数项涉接线语义抉择，逐项确认触发条件后再开 worktree 修。
-- 首个动手候选：**P0-4 mineral**（函数+测试已就绪，仅缺调度注册）；次选 **P2 era interval**（疑似笔误，单值修改）。
+- 本 plan 由 `/runwebui` 模块图谱审计自动汇总，**report-only**：**所有 critical 孤岛经读码核实均涉设计抉择**（复活世界方块语义 / shader 触发源 / 事件 fire 条件 / era 间隔值 / dandao HUD+renderer 注册），无"一行清洁修复"——需逐项拍板后再开 worktree 实现。
+- 相对最轻量的候选：**P2 era intervalMs**（疑似笔误，单值；但需定"演绎时代"该多久推一次）；**P0-5 dandao 注册**（接 HUD 编排器 + FeatureRenderer，机械但碰 GeckoLib 坑）。**P0-4 mineral 不是首选**（需世界方块恢复，非纯调度）。
 - 关联记忆：[[project_module_map_webui]]、[[project_bughunt_findings]]、[[feedback_spawn_chain_wiring]]（emit 无 consumer 孤岛同源问题）。
