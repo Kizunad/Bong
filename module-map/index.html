@@ -106,7 +106,7 @@
   .modal-x:hover{color:#fff;background:var(--crit);border-color:var(--crit)}
   .modal-sub{padding:11px 18px;color:var(--fg);opacity:.85;font-size:13px;line-height:1.55;border-bottom:1px solid var(--border)}
   .me-host{flex:1 1 auto;min-height:64vh;position:relative;overflow:hidden;background:#0a0d12}
-  .me-host .map-container{height:100%!important;background:#0a0d12!important}
+  .me-host .map-container{height:100%!important;width:100%!important}
 
   /* ===== mind-map ===== */
   .mm{display:flex;align-items:center;padding:16px 20px 28px;overflow:auto}
@@ -34756,11 +34756,17 @@ function openModal(id){
   </div>`;
   modal.classList.add("open"); modal.setAttribute("aria-hidden","false");
   modal.querySelector(".modal-x").onclick=closeModal;
-  try{
-    const me=new MindElixir({ el: modal.querySelector("#memap"), direction: MindElixir.SIDE,
-      draggable:true, contextMenu:false, toolBar:true, keypress:false, editable:false, theme: MindElixir.DARK_THEME });
-    me.init(data);
-  }catch(err){ modal.querySelector("#memap").innerHTML='<div class="empty" style="padding:40px">脑图渲染失败: '+esc(err.message)+'</div>'; }
+  const host=modal.querySelector("#memap");
+  // 等弹窗 flex 布局结算后再 init,否则 20000px 画布滚动定位错 → 节点跑屏外
+  requestAnimationFrame(()=>{ requestAnimationFrame(()=>{
+    try{
+      void host.offsetHeight;
+      const me=new MindElixir({ el: host, direction: MindElixir.SIDE,
+        draggable:true, contextMenu:false, toolBar:true, keypress:false, editable:false, theme: MindElixir.DARK_THEME });
+      me.init(data);
+      requestAnimationFrame(()=>{ try{ me.toCenter(); }catch(_){} });
+    }catch(err){ host.innerHTML='<div class="empty" style="padding:40px">脑图渲染失败: '+esc(err.message)+'</div>'; }
+  }); });
 }
 function closeModal(){ const m=document.getElementById("modal"); m.classList.remove("open"); m.setAttribute("aria-hidden","true"); m.innerHTML=""; }
 
