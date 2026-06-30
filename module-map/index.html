@@ -83,6 +83,63 @@
   .gaptable td{padding:8px 10px;border-bottom:1px solid var(--border);vertical-align:top}
   .gaptable tr:hover td{background:var(--panel2)}
   footer{color:var(--dim);font-size:11px;text-align:center;padding:24px}
+
+  /* ===== v2: 卡片点击→弹窗脑图 ===== */
+  .card{cursor:pointer;padding:12px 14px}
+  .card .top{display:flex;align-items:center;gap:8px}
+  .card .summary{padding-top:6px}
+  .cardfoot{display:flex;gap:5px;flex-wrap:wrap;align-items:center;margin-top:9px}
+  .cardfoot .cnt{color:var(--dim);font-size:11px;background:var(--chip);border:1px solid var(--border);border-radius:5px;padding:1px 7px}
+
+  /* modal overlay */
+  .modal-overlay{position:fixed;inset:0;background:rgba(3,6,10,.74);backdrop-filter:blur(3px);
+    display:none;align-items:center;justify-content:center;z-index:100;padding:26px}
+  .modal-overlay.open{display:flex}
+  .modal-panel{background:var(--panel);border:1px solid var(--border);border-radius:14px;
+    width:min(1120px,96vw);max-height:92vh;display:flex;flex-direction:column;overflow:hidden;
+    box-shadow:0 24px 80px rgba(0,0,0,.6)}
+  .modal-head{display:flex;align-items:center;gap:10px;padding:14px 18px;border-bottom:1px solid var(--border)}
+  .modal-title{display:flex;flex-direction:column;gap:2px;min-width:0}
+  .modal-title b{color:var(--bright);font-size:16px}
+  .modal-x{margin-left:auto;background:var(--chip);border:1px solid var(--border);color:var(--dim);
+    border-radius:8px;width:30px;height:30px;cursor:pointer;font-size:13px;flex:none}
+  .modal-x:hover{color:#fff;background:var(--crit);border-color:var(--crit)}
+  .modal-sub{padding:11px 18px;color:var(--fg);opacity:.85;font-size:13px;line-height:1.55;border-bottom:1px solid var(--border)}
+
+  /* ===== mind-map ===== */
+  .mm{display:flex;align-items:center;padding:16px 20px 28px;overflow:auto}
+  .mm-root{position:relative;flex:none;background:var(--panel2);border:2px solid var(--border);
+    border-radius:13px;padding:13px 17px;min-width:140px;max-width:230px;z-index:2}
+  .l-server-b{border-color:var(--server)} .l-client-b{border-color:var(--client)}
+  .l-agent-b{border-color:var(--agent)} .l-feature-b{border-color:var(--feature)}
+  .mm-root-name{font-weight:700;color:var(--bright);font-size:15px;line-height:1.3}
+  .mm-root-meta{color:var(--dim);font-size:11.5px;margin-top:5px}
+  .mm-list{list-style:none;margin:0;padding:0 0 0 30px;position:relative;align-self:stretch;
+    display:flex;flex-direction:column;justify-content:center}
+  .mm-list::before{content:'';position:absolute;left:0;top:16px;bottom:16px;border-left:2px solid var(--border)}
+  .mm-branch{position:relative;padding-left:30px;margin:7px 0}
+  .mm-branch::before{content:'';position:absolute;left:0;top:21px;width:28px;height:0;border-top:2px solid var(--border)}
+  .mm-card{background:var(--panel2);border:1px solid var(--border);border-radius:10px;padding:9px 12px;max-width:720px}
+  .mm-card.cross{border-color:#2d4a63} .mm-card.gapbox{border-color:#4a3322}
+  .mm-h{font-weight:650;color:var(--bright);font-size:13px;display:flex;align-items:center;gap:7px}
+  .mm-role{color:var(--fg);opacity:.78;font-size:12px;margin:4px 0 6px;line-height:1.5}
+  .mm-row{display:flex;gap:8px;font-size:11.5px;margin:3px 0;line-height:1.6}
+  .mm-k{color:var(--dim);flex:none;min-width:38px;text-align:right}
+  .mm-v{color:var(--fg);opacity:.92;display:flex;flex-wrap:wrap;gap:4px;align-items:baseline}
+  .filechip{background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:1px 6px;
+    font-family:ui-monospace,monospace;font-size:11px;color:#9fd0ff;cursor:pointer;white-space:nowrap}
+  .filechip.short::after{content:'…';opacity:.55;margin-left:1px}
+  .filechip.expanded{color:#cfe8ff;white-space:normal;word-break:break-all}
+  .filechip.expanded::after{content:''}
+  .filechip:hover{border-color:var(--server)}
+  .symchip{background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:1px 6px;
+    font-family:ui-monospace,monospace;font-size:11px;color:#e3b341}
+  .w{font-size:11px} .w.up::before{content:'← ';color:var(--dim)} .w.down::before{content:'→ ';color:var(--client)}
+  .w+.w{margin-left:6px}
+  .dim{color:var(--dim)}
+  .mm-card .gap{margin-top:4px}
+  @media(max-width:640px){.mm{flex-direction:column;align-items:flex-start}
+    .mm-list::before{display:none} .mm-branch{padding-left:0} .mm-branch::before{display:none}}
 </style></head>
 <body>
 <header>
@@ -96,7 +153,8 @@
   </div>
 </header>
 <main id="main"></main>
-<footer>第一性原理拆解 · sonnet 调查 / opus 维护 · 新增模块见 module-map/README.md</footer>
+<footer>第一性原理拆解 · sonnet 调查 / opus 维护 · 点击模块卡片弹出脑图 · 新增模块见 module-map/README.md</footer>
+<div id="modal" class="modal-overlay" aria-hidden="true"></div>
 
 <script>
 /* ============================================================================
@@ -32176,33 +32234,87 @@ function gapHTML(g){
   return `<div class="gap ${sev}"><span class="sev">${label}</span>${g.note}</div>`;
 }
 
+/* ---- v2 脑图弹窗 ---- */
+const byId = {}; [...MODULES, ...FEATURES].forEach(o=> byId[o.id]=o);
+function isCrit(s){ return s==="critical"||s==="crit"; }
+function baseName(p){ const s=p.replace(/\/$/,""); const i=s.lastIndexOf("/"); const b=i>=0?s.slice(i+1):s; return p.endsWith("/")?b+"/":b; }
+function gapDots(o){ const cc=critCount(o), gc=gapCount(o); return cc>0?`<span class="badge crit">${cc} crit</span>`:gc>0?`<span class="badge warn">${gc} ⚑</span>`:""; }
+function fileChip(f){ const b=baseName(f); return `<span class="filechip${b!==f?" short":""}" data-full="${f}" data-base="${b}" title="${f}">${b}</span>`; }
+function branchHTML(comp){
+  const files=(comp.files||[]).map(fileChip).join("");
+  const syms=(comp.keySymbols||[]).map(s=>`<span class="symchip">${s}</span>`).join("");
+  const up=((comp.wiring&&comp.wiring.upstream)||[]).map(w=>`<span class="w up">${w}</span>`).join("");
+  const down=((comp.wiring&&comp.wiring.downstream)||[]).map(w=>`<span class="w down">${w}</span>`).join("");
+  const deps=(comp.deps||[]).join(" · ");
+  const ng=(comp.gaps||[]).filter(g=>g.severity!=="info");
+  const dot=ng.some(g=>isCrit(g.severity))?`<span class="badge crit">${ng.length}</span>`:ng.length?`<span class="badge warn">${ng.length}</span>`:"";
+  const gaps=(comp.gaps||[]).map(gapHTML).join("");
+  return `<li class="mm-branch"><div class="mm-card">
+    <div class="mm-h">${comp.name}${dot?" "+dot:""}</div>
+    ${comp.role?`<div class="mm-role">${comp.role}</div>`:""}
+    ${files?`<div class="mm-row"><span class="mm-k">文件</span><span class="mm-v">${files}</span></div>`:""}
+    ${syms?`<div class="mm-row"><span class="mm-k">符号</span><span class="mm-v">${syms}</span></div>`:""}
+    ${(up||down)?`<div class="mm-row"><span class="mm-k">接线</span><span class="mm-v">${up}${up&&down?"<br>":""}${down}</span></div>`:""}
+    ${deps?`<div class="mm-row"><span class="mm-k">依赖</span><span class="mm-v">${deps}</span></div>`:""}
+    ${gaps}
+  </div></li>`;
+}
+function extraBranches(o){
+  let out="";
+  const cross=o.crossLayer||[];
+  if(cross.length) out+=`<li class="mm-branch"><div class="mm-card cross">
+    <div class="mm-h">跨层契约</div>
+    ${cross.map(c=>`<div class="mm-row"><span class="mm-v">↔ <b>${c.with}</b> · ${c.contract} <span class="dim">(${c.via})</span></span></div>`).join("")}
+  </div></li>`;
+  const mg=o.gaps||[];
+  if(mg.length) out+=`<li class="mm-branch"><div class="mm-card gapbox">
+    <div class="mm-h">⚑ 模块缺口</div>${mg.map(gapHTML).join("")}
+  </div></li>`;
+  return out;
+}
+function openModal(id){
+  const o=byId[id]; if(!o) return;
+  const isFeature=!!o.aspects, layer=isFeature?"feature":o.layer;
+  const branches=o.components||o.aspects||[];
+  const pathTxt=isFeature?(o.spans?"↔ "+o.spans.join(" · "):""):(o.path||"");
+  const dots=gapDots(o);
+  const modal=document.getElementById("modal");
+  modal.innerHTML=`<div class="modal-panel">
+    <div class="modal-head">
+      <span class="layerdot l-${layer}"></span>
+      <div class="modal-title"><b>${isFeature?o.title:o.name}</b><span class="path mono">${pathTxt}</span></div>
+      <button class="modal-x" aria-label="关闭">✕</button>
+    </div>
+    <div class="modal-sub">${o.summary||""}</div>
+    <div class="mm">
+      <div class="mm-root l-${layer}-b">
+        <div class="mm-root-name">${isFeature?o.title:o.name}</div>
+        <div class="mm-root-meta">${branches.length} ${isFeature?"aspect":"组件"}${dots?" · "+dots:""}</div>
+      </div>
+      <ul class="mm-list">${branches.map(branchHTML).join("")}${extraBranches(o)}</ul>
+    </div>
+  </div>`;
+  modal.classList.add("open"); modal.setAttribute("aria-hidden","false");
+  modal.querySelector(".modal-x").onclick=closeModal;
+}
+function closeModal(){ const m=document.getElementById("modal"); m.classList.remove("open"); m.setAttribute("aria-hidden","true"); m.innerHTML=""; }
+
 function cardHTML(o, isFeature){
   const layer = isFeature?"feature":o.layer;
-  const comps = (o.components||o.aspects||[]);
-  const gc = gapCount(o), cc = critCount(o);
-  const badge = cc>0?`<span class="badge crit">${cc} crit</span>`
-              : gc>0?`<span class="badge warn">${gc} ⚑</span>`:"";
+  const badge = gapDots(o);
   const chips = (o.tags||[]).map(t=>`<span class="chip">${t}</span>`).join("")
     + (isFeature?(o.spans||[]).map(s=>`<span class="chip">↔ ${s}</span>`).join(""):"");
-  const cross = (o.crossLayer||[]).map(c=>
-    `<div class="kv"><span class="k">跨层</span><span class="v">↔ <b>${c.with}</b> · ${c.contract} <span style="color:var(--dim)">(${c.via})</span></span></div>`).join("");
-  const modGaps = (o.gaps||[]).map(gapHTML).join("");
-  return `<div class="card" data-id="${o.id}">
-    <div class="head">
-      <div class="top">
-        <span class="layerdot l-${layer}"></span>
-        <span class="name">${isFeature?o.title:o.name}</span>
-        ${badge}
-        <span class="path mono">${o.path||""}</span>
-      </div>
-      <div class="summary">${o.summary||""}</div>
-      ${chips?`<div class="chips">${chips}</div>`:""}
+  const count = (o.components||o.aspects||[]).length;
+  const pathTxt = isFeature ? (o.spans?`${o.spans.length} 层`:"") : (o.path||"");
+  return `<div class="card" data-id="${o.id}" tabindex="0">
+    <div class="top">
+      <span class="layerdot l-${layer}"></span>
+      <span class="name">${isFeature?o.title:o.name}</span>
+      ${badge}
+      <span class="path mono">${pathTxt}</span>
     </div>
-    <div class="body">
-      ${comps.map(compHTML).join("")}
-      ${cross}
-      ${modGaps?`<div style="margin-top:8px">${modGaps}</div>`:""}
-    </div>
+    <div class="summary">${o.summary||""}</div>
+    <div class="cardfoot"><span class="cnt">${count} ${isFeature?"aspect":"组件"}</span>${chips}</div>
   </div>`;
 }
 
@@ -32226,9 +32338,10 @@ function render(){
   wireCards();
 }
 function wireCards(){
-  document.querySelectorAll(".card .head").forEach(h=>
-    h.onclick=()=> h.parentElement.classList.toggle("open"));
-  if(state.q) document.querySelectorAll(".card").forEach(c=>c.classList.add("open"));
+  document.querySelectorAll(".card").forEach(c=>{
+    c.onclick=()=> openModal(c.dataset.id);
+    c.onkeydown=e=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); openModal(c.dataset.id); } };
+  });
 }
 function renderGaps(main){
   const rows=[];
@@ -32251,9 +32364,20 @@ function renderGaps(main){
 
 const search=document.getElementById("search");
 search.addEventListener("input",e=>{ state.q=e.target.value.trim().toLowerCase(); render(); });
+
+// 弹窗内：点文件名展开/收起全路径；点背景关闭
+const modalEl=document.getElementById("modal");
+modalEl.addEventListener("click",e=>{
+  const chip=e.target.closest(".filechip");
+  if(chip){ const exp=chip.classList.toggle("expanded"); chip.textContent=exp?chip.dataset.full:chip.dataset.base; return; }
+  if(e.target===modalEl) closeModal();
+});
 document.addEventListener("keydown",e=>{
+  if(e.key==="Escape"){
+    if(modalEl.classList.contains("open")){ closeModal(); return; }
+    search.value=""; state.q=""; search.blur(); render(); return;
+  }
   if(e.key==="/" && document.activeElement!==search){ e.preventDefault(); search.focus(); }
-  if(e.key==="Escape"){ search.value=""; state.q=""; search.blur(); render(); }
 });
 render();
 </script>
