@@ -5,11 +5,13 @@ import { Type, type Static } from "@sinclair/typebox";
  *
  * 设计参考：`docs/plans-skeleton/plan-player-animation-v1.md §4.1` + `plan-particle-system-v1.md §2.2`。
  *
- * 当前支持 4 个 variant：
- *   - `play_anim`：服务端广播一次性动作（挥剑、突破、渡劫…）
+ * 当前支持 5 个 variant：
+ *   - `play_anim`：服务端广播一次性动作（挥剑、突破、渡劫…），按玩家 UUID 寻人
  *   - `stop_anim`：终止某条持续动画（通常由状态切换驱动）
  *   - `spawn_particle`：触发一次自定义粒子（Bong 独有：剑气 / 符文 / 灵压涟漪…）
  *   - `play_anim_inline`：天道 Agent / dev LLM 直接注入完整 Emotecraft v3 JSON 并播放
+ *   - `play_entity_anim`：按 MC 协议 entity_id 触发**非玩家实体**（GeckoLib FaunaEntity）的
+ *     一次性招式动画。黑武士这类无 UUID 的 Marker boss 走此路径（UUID 寻人走不通）
  *
  * 形态约束：
  *   - `target_player`：目标玩家 UUID（RFC 4122 canonical `8-4-4-4-12` 36 字符）
@@ -50,6 +52,15 @@ export const VFX_PARTICLE_COUNT_MAX = 64;
 /** 粒子持续时间上限（tick）。20 tick/s → 10s，一次性事件够用。 */
 export const VFX_PARTICLE_DURATION_TICKS_MAX = 200;
 
+/**
+ * 实体一次性动画持续上限（tick）。20 tick/s → 10s。客户端到时回 idle loop。
+ * 与粒子上限同值但语义独立（一个管粒子寿命，一个管动画占用时长），故单列常量。
+ */
+export const VFX_ENTITY_ANIM_DURATION_TICKS_MAX = 200;
+
+/** 实体动画名最大长度（GeckoLib animation 名，如 animation.bong.heiwushi.dark_barrage）。 */
+export const VFX_ENTITY_ANIM_NAME_MAX_CHARS = 128;
+
 /** inline 动画 JSON 字符串上限。最终 CustomPayload 仍受 MAX_PAYLOAD_BYTES 兜底。 */
 export const VFX_INLINE_ANIM_JSON_MAX_CHARS = 4096;
 
@@ -58,6 +69,7 @@ export const VfxEventType = Type.Union([
   Type.Literal("stop_anim"),
   Type.Literal("spawn_particle"),
   Type.Literal("play_anim_inline"),
+  Type.Literal("play_entity_anim"),
 ]);
 export type VfxEventType = Static<typeof VfxEventType>;
 
@@ -142,10 +154,37 @@ export const VfxEventSpawnParticleV1 = Type.Object(
 );
 export type VfxEventSpawnParticleV1 = Static<typeof VfxEventSpawnParticleV1>;
 
+/**
+ * 实体一次性动画触发（黑武士 boss 出招）。
+ *
+ * <p>不同于 {@link VfxEventPlayAnimV1} 按玩家 UUID 寻人：黑武士是无 UUID 的 Marker 实体，
+ * 客户端按 MC 协议 {@code entity_id}（{@code world.getEntityById}）定位 {@code FaunaEntity}，
+ * 调 {@code triggerAction(anim, duration_ticks)} 播一次性招式动画，{@code duration_ticks} 到时回 idle。
+ *
+ * @property entity_id      MC 协议 entity_id（Valence {@code EntityId::get()}，i32，≥1）
+ * @property anim           GeckoLib 动画名（free-form，如 {@code animation.bong.heiwushi.dark_barrage}）
+ * @property duration_ticks 动画占用时长 [1, {@link VFX_ENTITY_ANIM_DURATION_TICKS_MAX}]
+ */
+export const VfxEventPlayEntityAnimV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("play_entity_anim"),
+    entity_id: Type.Integer({ minimum: 1 }),
+    anim: Type.String({ minLength: 1, maxLength: VFX_ENTITY_ANIM_NAME_MAX_CHARS }),
+    duration_ticks: Type.Integer({
+      minimum: 1,
+      maximum: VFX_ENTITY_ANIM_DURATION_TICKS_MAX,
+    }),
+  },
+  { additionalProperties: false },
+);
+export type VfxEventPlayEntityAnimV1 = Static<typeof VfxEventPlayEntityAnimV1>;
+
 export const VfxEventV1 = Type.Union([
   VfxEventPlayAnimV1,
   VfxEventPlayAnimInlineV1,
   VfxEventStopAnimV1,
   VfxEventSpawnParticleV1,
+  VfxEventPlayEntityAnimV1,
 ]);
 export type VfxEventV1 = Static<typeof VfxEventV1>;

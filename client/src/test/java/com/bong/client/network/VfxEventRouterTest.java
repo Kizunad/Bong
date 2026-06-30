@@ -123,6 +123,49 @@ public class VfxEventRouterTest {
     }
 
     @Test
+    void dispatchesPlayEntityAnimToEntityBridge() throws IOException {
+        RecordingBridge animBridge = new RecordingBridge(true);
+        RecordingEntityBridge entityBridge = new RecordingEntityBridge(true);
+        VfxEventRouter router = new VfxEventRouter(animBridge, VfxParticleBridge.noop(), entityBridge);
+        String json = PayloadFixtureLoader.readText("valid-vfx-play-entity-anim.json");
+
+        VfxEventRouter.RouteResult result = router.route(json, jsonLen(json));
+
+        assertTrue(result.isHandled(), "result should be handled: " + result.logMessage());
+        assertEquals(0, animBridge.playCalls.size(), "player animation bridge must not be touched");
+        assertEquals(1, entityBridge.calls.size());
+        RecordingEntityBridge.Call call = entityBridge.calls.get(0);
+        assertEquals(42, call.entityId);
+        assertEquals("animation.bong.heiwushi.dark_barrage", call.anim);
+        assertEquals(15, call.durationTicks);
+    }
+
+    @Test
+    void playEntityAnimDeclineBecomesBridgeMiss() throws IOException {
+        RecordingEntityBridge entityBridge = new RecordingEntityBridge(false);
+        VfxEventRouter router = new VfxEventRouter(new RecordingBridge(true), VfxParticleBridge.noop(), entityBridge);
+        String json = PayloadFixtureLoader.readText("valid-vfx-play-entity-anim.json");
+
+        VfxEventRouter.RouteResult result = router.route(json, jsonLen(json));
+
+        assertTrue(result.isBridgeMiss());
+        assertEquals(1, entityBridge.calls.size(), "bridge is still invoked; just returns false");
+        assertTrue(result.logMessage().contains("play_entity_anim"), result.logMessage());
+    }
+
+    @Test
+    void playEntityAnimFallsBackToBridgeMissWhenNoEntityBridge() throws IOException {
+        // 默认（1-arg / 2-arg）router 用 noop entity bridge → 总是 false → bridgeMiss。
+        VfxEventRouter router = new VfxEventRouter(new RecordingBridge(true));
+        String json = PayloadFixtureLoader.readText("valid-vfx-play-entity-anim.json");
+
+        VfxEventRouter.RouteResult result = router.route(json, jsonLen(json));
+
+        assertTrue(result.isBridgeMiss());
+        assertTrue(result.logMessage().contains("play_entity_anim"), result.logMessage());
+    }
+
+    @Test
     void bridgeExceptionBecomesBridgeMissNotCrash() throws IOException {
         ThrowingBridge bridge = new ThrowingBridge();
         VfxEventRouter router = new VfxEventRouter(bridge);
@@ -194,6 +237,24 @@ public class VfxEventRouterTest {
         public boolean spawnParticle(VfxEventPayload.SpawnParticle payload) {
             calls.add(payload);
             return returnValue;
+        }
+    }
+
+    private static final class RecordingEntityBridge implements VfxEntityAnimationBridge {
+        final List<Call> calls = new ArrayList<>();
+        private final boolean returnValue;
+
+        RecordingEntityBridge(boolean returnValue) {
+            this.returnValue = returnValue;
+        }
+
+        @Override
+        public boolean playEntityAnim(int entityId, String anim, int durationTicks) {
+            calls.add(new Call(entityId, anim, durationTicks));
+            return returnValue;
+        }
+
+        record Call(int entityId, String anim, int durationTicks) {
         }
     }
 

@@ -1,0 +1,7 @@
+{
+  "v": 1,
+  "type": "play_entity_anim",
+  "entity_id": 0,
+  "anim": "animation.bong.heiwushi.dark_barrage",
+  "duration_ticks": 15
+}

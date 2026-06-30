@@ -148,7 +148,10 @@ import {
 } from "../src/spirit-eye.js";
 import { SpiritualSenseTargetsV1 } from "../src/spiritual-sense.js";
 import { validate } from "../src/validate.js";
-import { VfxEventV1 } from "../src/vfx-event.js";
+import {
+  VfxEventV1,
+  VFX_ENTITY_ANIM_DURATION_TICKS_MAX,
+} from "../src/vfx-event.js";
 import { BreakthroughCinematicEventV1 } from "../src/breakthrough-cinematic.js";
 import {
   EraStateV1,
@@ -2465,6 +2468,50 @@ describe("sample files pass schema validation", () => {
     const data = loadSample("vfx-event.spawn-particle.sample.json");
     const result = validate(VfxEventV1, data);
     expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("vfx-event.play-entity-anim.sample.json", () => {
+    const data = loadSample("vfx-event.play-entity-anim.sample.json");
+    const result = validate(VfxEventV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  // play_entity_anim 正反对拍：黑武士 boss 按协议 entity_id 触发 GeckoLib 招式动画。
+  it("vfx-event play_entity_anim — accepts boundary values, rejects out-of-range", () => {
+    const base = {
+      v: 1,
+      type: "play_entity_anim",
+      entity_id: 1,
+      anim: "animation.bong.heiwushi.dark_vortex",
+      duration_ticks: 1,
+    };
+    // 正：entity_id=1（最小合法）/ duration_ticks=1（下界）通过。
+    expectAccept(base);
+    // 正：duration_ticks 上界通过。
+    expectAccept({ ...base, duration_ticks: VFX_ENTITY_ANIM_DURATION_TICKS_MAX });
+
+    // 反：entity_id < 1（Valence 从 1 起分配，0/-1 非法）。
+    expectReject({ ...base, entity_id: 0 });
+    expectReject({ ...base, entity_id: -1 });
+    // 反：anim 空串。
+    expectReject({ ...base, anim: "" });
+    // 反：duration_ticks=0（下界 off-by-one）。
+    expectReject({ ...base, duration_ticks: 0 });
+    // 反：duration_ticks 越上界（off-by-one）。
+    expectReject({ ...base, duration_ticks: VFX_ENTITY_ANIM_DURATION_TICKS_MAX + 1 });
+    // 反：缺 required 字段。
+    expectReject({ v: 1, type: "play_entity_anim", anim: "x", duration_ticks: 5 });
+    // 反：未知字段（additionalProperties:false 仍生效）。
+    expectReject({ ...base, bogus_field: 1 });
+
+    function expectAccept(data: unknown): void {
+      const result = validate(VfxEventV1, data);
+      expect(result.ok, `play_entity_anim should accept: ${result.errors.join("; ")}`).toBe(true);
+    }
+    function expectReject(data: unknown): void {
+      const result = validate(VfxEventV1, data);
+      expect(result.ok, `play_entity_anim should reject ${JSON.stringify(data)}`).toBe(false);
+    }
   });
 
   it("breakthrough-cinematic-event.sample.json", () => {

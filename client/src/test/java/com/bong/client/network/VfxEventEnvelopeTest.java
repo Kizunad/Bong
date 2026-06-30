@@ -234,6 +234,54 @@ public class VfxEventEnvelopeTest {
         assertTrue(result.errorMessage().contains("Missing version"));
     }
 
+    // ── play_entity_anim（黑武士 boss 招式动画）─────────────────────────────────
+
+    @Test
+    void parsesPlayEntityAnimFixture() throws IOException {
+        String json = PayloadFixtureLoader.readText("valid-vfx-play-entity-anim.json");
+        VfxEventParseResult result = VfxEventEnvelope.parse(json, jsonLen(json));
+
+        assertTrue(result.isSuccess(), "play_entity_anim payload should parse: " + result.errorMessage());
+        assertNotNull(result.payload());
+        assertTrue(result.payload() instanceof VfxEventPayload.PlayEntityAnim, "expected PlayEntityAnim variant");
+        VfxEventPayload.PlayEntityAnim anim = (VfxEventPayload.PlayEntityAnim) result.payload();
+        assertEquals(42, anim.entityId());
+        assertEquals("animation.bong.heiwushi.dark_barrage", anim.anim());
+        assertEquals(15, anim.durationTicks());
+        assertEquals("play_entity_anim", anim.type());
+    }
+
+    @Test
+    void rejectsPlayEntityAnimEntityIdBelowOne() throws IOException {
+        String json = PayloadFixtureLoader.readText("invalid-vfx-entity-anim-bad-id.json");
+        VfxEventParseResult result = VfxEventEnvelope.parse(json, jsonLen(json));
+        assertFalse(result.isSuccess());
+        assertTrue(result.errorMessage().contains("entity_id"), result.errorMessage());
+    }
+
+    @Test
+    void rejectsPlayEntityAnimEmptyAnim() {
+        String json = "{\"v\":1,\"type\":\"play_entity_anim\",\"entity_id\":3,\"anim\":\"\",\"duration_ticks\":15}";
+        VfxEventParseResult result = VfxEventEnvelope.parse(json, jsonLen(json));
+        assertFalse(result.isSuccess());
+        assertTrue(result.errorMessage().contains("anim"), result.errorMessage());
+    }
+
+    @Test
+    void rejectsPlayEntityAnimDurationOutOfRange() {
+        int overMax = VfxEventEnvelope.VFX_ENTITY_ANIM_DURATION_TICKS_MAX + 1;
+        String json = "{\"v\":1,\"type\":\"play_entity_anim\",\"entity_id\":3,\"anim\":\"a\",\"duration_ticks\":"
+            + overMax + "}";
+        VfxEventParseResult result = VfxEventEnvelope.parse(json, jsonLen(json));
+        assertFalse(result.isSuccess());
+        assertTrue(result.errorMessage().contains("duration_ticks"), result.errorMessage());
+
+        String zero = "{\"v\":1,\"type\":\"play_entity_anim\",\"entity_id\":3,\"anim\":\"a\",\"duration_ticks\":0}";
+        VfxEventParseResult zeroResult = VfxEventEnvelope.parse(zero, jsonLen(zero));
+        assertFalse(zeroResult.isSuccess());
+        assertTrue(zeroResult.errorMessage().contains("duration_ticks"), zeroResult.errorMessage());
+    }
+
     private static int jsonLen(String json) {
         return json.getBytes(StandardCharsets.UTF_8).length;
     }

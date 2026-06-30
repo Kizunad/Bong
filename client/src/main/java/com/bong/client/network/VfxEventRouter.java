@@ -6,11 +6,13 @@ import java.util.Objects;
  * `bong:vfx_event` 通道路由器：解析 → 分发。与 {@link ServerDataRouter} 平级但更简单——
  * 消费侧只是调一次 API，不产生 HUD state。
  *
- * <p>两个 bridge：
+ * <p>三个 bridge：
  * <ul>
- *   <li>{@link VfxEventAnimationBridge}：{@code play_anim} / {@code stop_anim} → 骨骼动画</li>
+ *   <li>{@link VfxEventAnimationBridge}：{@code play_anim} / {@code stop_anim} → 玩家骨骼动画</li>
  *   <li>{@link VfxParticleBridge}：{@code spawn_particle} → 粒子引擎
  *       （plan-particle-system-v1 §2.7 {@code VfxRegistry} 查表）</li>
+ *   <li>{@link VfxEntityAnimationBridge}：{@code play_entity_anim} → 非玩家实体（GeckoLib
+ *       {@code FaunaEntity}）招式动画，按 MC 协议 entity_id 定位</li>
  * </ul>
  *
  * <p>失败处理按三档：
@@ -27,17 +29,28 @@ import java.util.Objects;
 public final class VfxEventRouter {
     private final VfxEventAnimationBridge animationBridge;
     private final VfxParticleBridge particleBridge;
+    private final VfxEntityAnimationBridge entityAnimationBridge;
 
     public VfxEventRouter(VfxEventAnimationBridge animationBridge) {
-        this(animationBridge, VfxParticleBridge.noop());
+        this(animationBridge, VfxParticleBridge.noop(), VfxEntityAnimationBridge.noop());
     }
 
     public VfxEventRouter(
         VfxEventAnimationBridge animationBridge,
         VfxParticleBridge particleBridge
     ) {
+        this(animationBridge, particleBridge, VfxEntityAnimationBridge.noop());
+    }
+
+    public VfxEventRouter(
+        VfxEventAnimationBridge animationBridge,
+        VfxParticleBridge particleBridge,
+        VfxEntityAnimationBridge entityAnimationBridge
+    ) {
         this.animationBridge = Objects.requireNonNull(animationBridge, "animationBridge");
         this.particleBridge = Objects.requireNonNull(particleBridge, "particleBridge");
+        this.entityAnimationBridge =
+            Objects.requireNonNull(entityAnimationBridge, "entityAnimationBridge");
     }
 
     public RouteResult route(String jsonPayload, int payloadSizeBytes) {
@@ -80,6 +93,14 @@ public final class VfxEventRouter {
             } else if (payload instanceof VfxEventPayload.SpawnParticle particle) {
                 ok = particleBridge.spawnParticle(particle);
                 missContext = "bridge declined spawn_particle " + particle.eventId();
+            } else if (payload instanceof VfxEventPayload.PlayEntityAnim entityAnim) {
+                ok = entityAnimationBridge.playEntityAnim(
+                    entityAnim.entityId(),
+                    entityAnim.anim(),
+                    entityAnim.durationTicks()
+                );
+                missContext = "bridge declined play_entity_anim " + entityAnim.anim()
+                    + " on entity " + entityAnim.entityId();
             } else {
                 throw new IllegalStateException("Unhandled VfxEventPayload variant: " + payload.getClass().getName());
             }

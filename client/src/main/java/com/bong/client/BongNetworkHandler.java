@@ -1,6 +1,7 @@
 package com.bong.client;
 
 import com.bong.client.animation.ClientAnimationBridge;
+import com.bong.client.fauna.FaunaActionBridge;
 import com.bong.client.daozhan.DaoZhanDisguiseHandler;
 import com.bong.client.spider.SpiderDisguiseHandler;
 import com.bong.client.audio.SoundRecipePlayer;
@@ -62,7 +63,10 @@ public class BongNetworkHandler {
 
     private static final ServerDataRouter ROUTER = ServerDataRouter.createDefault();
     private static final VfxEventRouter VFX_ROUTER =
-        new VfxEventRouter(new ClientAnimationBridge(), new BongVfxParticleBridge());
+        new VfxEventRouter(
+            new ClientAnimationBridge(),
+            new BongVfxParticleBridge(),
+            new FaunaActionBridge());
     private static final AudioEventRouter AUDIO_ROUTER = new AudioEventRouter(SoundRecipePlayer.instance());
     private static final AmbientZoneHandler AMBIENT_ZONE_HANDLER =
         new AmbientZoneHandler(com.bong.client.audio.MusicStateMachine.instance());
