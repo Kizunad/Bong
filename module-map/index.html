@@ -96,7 +96,7 @@
     display:none;align-items:center;justify-content:center;z-index:100;padding:26px}
   .modal-overlay.open{display:flex}
   .modal-panel{background:var(--panel);border:1px solid var(--border);border-radius:14px;
-    width:min(1120px,96vw);max-height:92vh;display:flex;flex-direction:column;overflow:hidden;
+    width:min(1120px,96vw);height:88vh;max-height:92vh;display:flex;flex-direction:column;overflow:hidden;
     box-shadow:0 24px 80px rgba(0,0,0,.6)}
   .modal-head{display:flex;align-items:center;gap:10px;padding:14px 18px;border-bottom:1px solid var(--border)}
   .modal-title{display:flex;flex-direction:column;gap:2px;min-width:0}
@@ -34758,15 +34758,16 @@ function openModal(id){
   modal.querySelector(".modal-x").onclick=closeModal;
   const host=modal.querySelector("#memap");
   // 等弹窗 flex 布局结算后再 init,否则 20000px 画布滚动定位错 → 节点跑屏外
-  requestAnimationFrame(()=>{ requestAnimationFrame(()=>{
+  requestAnimationFrame(()=>{
     try{
       void host.offsetHeight;
-      const me=new MindElixir({ el: host, direction: MindElixir.SIDE,
-        draggable:true, contextMenu:false, toolBar:true, keypress:false, editable:false, theme: MindElixir.DARK_THEME });
+      const me=new MindElixir({ el: host, direction: MindElixir.RIGHT, mouseSelectionButton:2,
+        draggable:false, contextMenu:false, toolBar:true, keypress:false, editable:false, theme: MindElixir.DARK_THEME });
       me.init(data);
-      requestAnimationFrame(()=>{ try{ me.toCenter(); }catch(_){} });
+      const center=()=>{ try{ me.toCenter(); }catch(_){} };
+      center(); requestAnimationFrame(center); setTimeout(center,160); setTimeout(center,420);
     }catch(err){ host.innerHTML='<div class="empty" style="padding:40px">脑图渲染失败: '+esc(err.message)+'</div>'; }
-  }); });
+  });
 }
 function closeModal(){ const m=document.getElementById("modal"); m.classList.remove("open"); m.setAttribute("aria-hidden","true"); m.innerHTML=""; }
 
