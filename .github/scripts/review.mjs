@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Review v2 —— PR 评论 `/review` 触发(startsWith,见 review.yml)。SDK agent 编排 + 模型别名映射。
 //
-// 架构:opus(经 ANTHROPIC_DEFAULT_OPUS_MODEL 映射到 deepseek-v4-pro)当 orchestrator + 裁判,
+// 架构:opus(经 ANTHROPIC_DEFAULT_OPUS_MODEL 映射到 glm-5.2)当 orchestrator + 裁判,
 // 用 Task 工具自主 spawn 管理 sonnet(映射到 deepseek-v4-flash) finder/voter 子代理 swarm。
 // 全走自家代理 proxy.kizun4.uk(ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN,review.yml 注入)。
 // 不再用 codex(responses 端点跑 gpt-5.5 持续不稳)——全 claude harness + 映射。
@@ -25,8 +25,8 @@ const MAX_TURNS = Math.max(8, parseInt(process.env.REVIEW_MAX_TURNS || "40", 10)
 const FINDER_MAX_TURNS = Math.max(2, parseInt(process.env.REVIEW_FINDER_MAX_TURNS || "10", 10));
 // orchestrator(贵 pro)prompt 里的 diff 只作概览,截断更狠省 token;细节由 finder 子代理读真实文件补全。
 const MAX_DIFF = parseInt(process.env.REVIEW_MAX_DIFF || "100000", 10);
-// 模型别名:默认用 opus/sonnet,由 review.yml 的 ANTHROPIC_DEFAULT_OPUS_MODEL/SONNET_MODEL 映射到 deepseek pro/flash。
-// 想直接钉死模型 id 就设 REVIEW_OPUS_MODEL=deepseek-v4-pro 等。
+// 模型别名:默认用 opus/sonnet,由 review.yml 的 ANTHROPIC_DEFAULT_OPUS_MODEL/SONNET_MODEL 映射到 glm-5.2 / deepseek-v4-flash。
+// 想直接钉死模型 id 就设 REVIEW_OPUS_MODEL=glm-5.2 等。
 const OPUS = process.env.REVIEW_OPUS_MODEL || "opus";
 const SONNET = process.env.REVIEW_SONNET_MODEL || "sonnet";
 const _finderPin = parseInt(process.env.REVIEW_FINDERS || "", 10);

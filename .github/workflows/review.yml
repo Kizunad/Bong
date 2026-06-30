@@ -3,7 +3,7 @@ name: Review
 # 按需触发:在 PR 上评论 `/review`(以此开头)才跑。
 #
 # 引擎:.github/scripts/review.mjs —— @anthropic-ai/claude-agent-sdk 编排。
-# **opus(经 ANTHROPIC_DEFAULT_OPUS_MODEL 映射到 deepseek-v4-pro)当 orchestrator + 裁判,
+# **opus(经 ANTHROPIC_DEFAULT_OPUS_MODEL 映射到 glm-5.2)当 orchestrator + 裁判,
 # 用 Task 自主 spawn 管理 sonnet(映射 deepseek-v4-flash) finder/voter 子代理 swarm**,全走 proxy.kizun4.uk。
 # 混合编排:脚本按 diff 分档定 finder 预算 + 提供玩法模板(多维对峙/怀疑裁决/fan-out/代码断链 wiring),
 # opus 在预算+模板约束内自主调度。已弃用 codex(responses 端点跑 gpt-5.5 持续不稳)。
@@ -79,10 +79,10 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.issue.number || inputs.pr_number }}
-          # 模型映射:opus→deepseek-v4-pro(orchestrator+裁判) / sonnet→deepseek-v4-flash(swarm),全走 proxy。
+          # 模型映射:opus→glm-5.2(orchestrator+裁判) / sonnet→deepseek-v4-flash(swarm),全走 proxy。
           ANTHROPIC_BASE_URL: ${{ vars.REVIEW_PROXY_BASE || 'https://proxy.kizun4.uk' }}
           ANTHROPIC_AUTH_TOKEN: ${{ secrets.PI_CLIPROXY_KEY }}
-          ANTHROPIC_DEFAULT_OPUS_MODEL: ${{ vars.REVIEW_OPUS_MODEL || 'deepseek-v4-pro' }}
+          ANTHROPIC_DEFAULT_OPUS_MODEL: ${{ vars.REVIEW_OPUS_MODEL || 'glm-5.2' }}
           ANTHROPIC_DEFAULT_SONNET_MODEL: ${{ vars.REVIEW_SONNET_MODEL || 'deepseek-v4-flash' }}
           # 轮控/预算(env 可覆盖):
           REVIEW_MAX_TURNS: ${{ vars.REVIEW_MAX_TURNS || '40' }}
