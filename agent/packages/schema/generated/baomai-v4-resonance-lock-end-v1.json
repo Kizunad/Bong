@@ -1,0 +1,82 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "fighter_a_id",
+    "fighter_b_id",
+    "reason",
+    "tick"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "fighter_a_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "fighter_b_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "reason": {
+      "anyOf": [
+        {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "const": "expired",
+              "type": "string"
+            }
+          }
+        },
+        {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "type",
+            "entity_id"
+          ],
+          "properties": {
+            "type": {
+              "const": "retreated",
+              "type": "string"
+            },
+            "entity_id": {
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        },
+        {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "type",
+            "entity_id"
+          ],
+          "properties": {
+            "type": {
+              "const": "death",
+              "type": "string"
+            },
+            "entity_id": {
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        }
+      ]
+    },
+    "tick": {
+      "minimum": 0,
+      "type": "integer"
+    }
+  }
+}

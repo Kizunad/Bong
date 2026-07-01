@@ -1,0 +1,56 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "entity_id",
+    "circuit",
+    "tick"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "entity_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "circuit": {
+      "anyOf": [
+        {
+          "const": "tiger_mouth",
+          "type": "string"
+        },
+        {
+          "const": "triple_yang",
+          "type": "string"
+        },
+        {
+          "const": "heart_lung",
+          "type": "string"
+        },
+        {
+          "const": "liver_kidney",
+          "type": "string"
+        },
+        {
+          "const": "gall_stomach",
+          "type": "string"
+        },
+        {
+          "const": "spleen_kidney",
+          "type": "string"
+        },
+        {
+          "const": "ren_du_bridge",
+          "type": "string"
+        }
+      ]
+    },
+    "tick": {
+      "minimum": 0,
+      "type": "integer"
+    }
+  }
+}

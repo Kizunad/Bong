@@ -1,0 +1,6 @@
+{
+  "entity": "offline:kiz",
+  "stage": "echo_body",
+  "detection_modifier": 0.6,
+  "server_tick": 62000
+}

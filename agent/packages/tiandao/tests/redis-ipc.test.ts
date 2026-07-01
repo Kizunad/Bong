@@ -30,6 +30,7 @@ const {
   PLAYER_CHAT,
   POI_NOVICE_EVENT,
   PRICE_INDEX,
+  BONE_COIN_TICK,
   TSY_EVENT,
   WEATHER_EVENT_UPDATE,
   WORLD_STATE,
@@ -668,6 +669,140 @@ describe("redis-ipc", () => {
     );
 
     warn.mockRestore();
+  });
+
+  it("subscribes to the bone coin tick telemetry channel on connect", async () => {
+    const pub = new FakeRedisListClient();
+    const sub = new FakeRedisListClient();
+
+    const createClient = vi
+      .fn<(url: string) => FakeRedisListClient>()
+      .mockReturnValueOnce(sub)
+      .mockReturnValueOnce(pub);
+
+    const ipc = new RedisIpc({ url: "redis://fake" }, { createClient });
+
+    await ipc.connect();
+
+    expect(sub.getSubscribedChannels()).toEqual(expect.arrayContaining([BONE_COIN_TICK]));
+  });
+
+  it("observes bone coin tick telemetry from the economy channel", async () => {
+    const pub = new FakeRedisListClient();
+    const sub = new FakeRedisListClient();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const createClient = vi
+      .fn<(url: string) => FakeRedisListClient>()
+      .mockReturnValueOnce(sub)
+      .mockReturnValueOnce(pub);
+
+    const ipc = new RedisIpc(
+      { url: "redis://fake" },
+      {
+        createClient,
+      },
+    );
+    const callback = vi.fn();
+    ipc.onBoneCoinTick(callback);
+
+    await ipc.connect();
+    await sub.publish(
+      BONE_COIN_TICK,
+      JSON.stringify({
+        v: 1,
+        tick: 720_000,
+        season: "summer_to_winter",
+        total_spirit_qi: 4200.5,
+        total_face_value: 4100,
+        active_coin_count: 812,
+        rotten_coin_count: 3,
+        legacy_scalar_count: 0,
+        rhythm_multiplier: 1.05,
+        market_factor: 0.98,
+      }),
+    );
+    // invalid: season is not a recognized SeasonV1 literal
+    await sub.publish(
+      BONE_COIN_TICK,
+      JSON.stringify({
+        v: 1,
+        tick: 1,
+        season: "bad",
+        total_spirit_qi: 1,
+        total_face_value: 1,
+        active_coin_count: 1,
+        rotten_coin_count: 0,
+        legacy_scalar_count: 0,
+        rhythm_multiplier: 1,
+        market_factor: 1,
+      }),
+    );
+
+    expect(callback).toHaveBeenCalledTimes(1);
+    expect(callback).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tick: 720_000,
+        season: "summer_to_winter",
+        active_coin_count: 812,
+      }),
+    );
+    expect(ipc.drainBoneCoinTickEvents()).toEqual([
+      expect.objectContaining({
+        tick: 720_000,
+        season: "summer_to_winter",
+        total_spirit_qi: 4200.5,
+        active_coin_count: 812,
+        rotten_coin_count: 3,
+      }),
+    ]);
+    // drain empties the buffer — a second drain with no new events returns []
+    expect(ipc.drainBoneCoinTickEvents()).toEqual([]);
+    expect(warn).toHaveBeenCalledWith(
+      "[redis-ipc] invalid bone coin tick event:",
+      expect.stringContaining("season"),
+    );
+
+    warn.mockRestore();
+  });
+
+  it("also records bone coin tick events into the generic cross-system event bucket", async () => {
+    const pub = new FakeRedisListClient();
+    const sub = new FakeRedisListClient();
+
+    const createClient = vi
+      .fn<(url: string) => FakeRedisListClient>()
+      .mockReturnValueOnce(sub)
+      .mockReturnValueOnce(pub);
+
+    const ipc = new RedisIpc({ url: "redis://fake" }, { createClient });
+    const callback = vi.fn();
+    ipc.onCrossSystemEvent(callback);
+
+    await ipc.connect();
+    await sub.publish(
+      BONE_COIN_TICK,
+      JSON.stringify({
+        v: 1,
+        tick: 5,
+        season: "winter",
+        total_spirit_qi: 10,
+        total_face_value: 10,
+        active_coin_count: 2,
+        rotten_coin_count: 0,
+        legacy_scalar_count: 0,
+        rhythm_multiplier: 1,
+        market_factor: 1,
+      }),
+    );
+
+    expect(callback).toHaveBeenCalledTimes(1);
+    expect(callback).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channel: BONE_COIN_TICK,
+        payload: expect.objectContaining({ tick: 5, season: "winter" }),
+      }),
+    );
   });
 
   it("observes weather event updates from the dedicated channel", async () => {

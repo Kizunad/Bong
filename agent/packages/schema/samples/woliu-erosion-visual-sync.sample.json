@@ -1,0 +1,9 @@
+{
+  "entity_id": "offline:kiz",
+  "stage": 3,
+  "cumulative_erosion": 180.0,
+  "ambient_active": true,
+  "model_alpha": 0.55,
+  "sound_distortion_active": true,
+  "server_tick": 62000
+}

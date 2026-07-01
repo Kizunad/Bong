@@ -1,0 +1,78 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "entity_id",
+    "from",
+    "to",
+    "total_overloads",
+    "tick"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "entity_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "from": {
+      "anyOf": [
+        {
+          "const": "none",
+          "type": "string"
+        },
+        {
+          "const": "tough_skin",
+          "type": "string"
+        },
+        {
+          "const": "iron_bone",
+          "type": "string"
+        },
+        {
+          "const": "dull_flesh",
+          "type": "string"
+        },
+        {
+          "const": "scar_forged",
+          "type": "string"
+        }
+      ]
+    },
+    "to": {
+      "anyOf": [
+        {
+          "const": "none",
+          "type": "string"
+        },
+        {
+          "const": "tough_skin",
+          "type": "string"
+        },
+        {
+          "const": "iron_bone",
+          "type": "string"
+        },
+        {
+          "const": "dull_flesh",
+          "type": "string"
+        },
+        {
+          "const": "scar_forged",
+          "type": "string"
+        }
+      ]
+    },
+    "total_overloads": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "tick": {
+      "minimum": 0,
+      "type": "integer"
+    }
+  }
+}
