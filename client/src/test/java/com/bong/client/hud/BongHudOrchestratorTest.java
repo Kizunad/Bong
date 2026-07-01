@@ -9,6 +9,7 @@ import com.bong.client.identity.IdentityPanelStateStore;
 import com.bong.client.loop.HomeSequence;
 import com.bong.client.npc.NpcInteractionLogStore;
 import com.bong.client.npc.NpcMoodStore;
+import com.bong.client.social.NicheGuardianStore;
 import com.bong.client.inventory.model.InventoryModel;
 import com.bong.client.inventory.state.InventoryStateStore;
 import com.bong.client.skill.SkillId;
@@ -41,6 +42,7 @@ public class BongHudOrchestratorTest {
         TargetInfoStateStore.resetForTests();
         NpcMoodStore.clearAll();
         NpcInteractionLogStore.resetForTests();
+        NicheGuardianStore.resetForTests();
         com.bong.client.tsy.TsyBossHealthStore.resetForTests();
         com.bong.client.tsy.TsyDeathVfxStore.resetForTests();
         HudImmersionMode.resetForTests();

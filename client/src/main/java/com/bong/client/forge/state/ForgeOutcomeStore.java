@@ -11,7 +11,6 @@ public final class ForgeOutcomeStore {
     }
 
     private static volatile Snapshot lastOutcome = Snapshot.empty();
-    private static volatile Snapshot displayedOutcome = Snapshot.empty();
 
     private ForgeOutcomeStore() {}
 
@@ -19,27 +18,11 @@ public final class ForgeOutcomeStore {
         return lastOutcome;
     }
 
-    public static Snapshot displayedOutcome() {
-        return displayedOutcome;
-    }
-
     public static void replace(Snapshot next) {
         lastOutcome = next == null ? Snapshot.empty() : next;
     }
 
-    /** Mark the current outcome as displayed (UI dismissed). */
-    public static void markDisplayed() {
-        displayedOutcome = lastOutcome;
-    }
-
-    public static boolean hasNewOutcome() {
-        Snapshot a = lastOutcome;
-        Snapshot b = displayedOutcome;
-        return a.sessionId != b.sessionId || !a.bucket.equals(b.bucket);
-    }
-
     public static void resetForTests() {
         lastOutcome = Snapshot.empty();
-        displayedOutcome = Snapshot.empty();
     }
 }

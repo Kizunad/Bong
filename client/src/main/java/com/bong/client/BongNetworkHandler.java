@@ -154,6 +154,10 @@ public class BongNetworkHandler {
                 com.bong.client.fauna.HallucinationLayerStore.clearOnDisconnect();
                 // plan-dying-elder-v1 P3 — 断线时清理垂死大能遭遇状态
                 com.bong.client.dying_elder.DyingElderEncounterStore.clearOnDisconnect();
+                // F19 fix — 断线时清理天道临在状态；此前十余个 store 都在这里清理，唯独
+                // TiandaoPresenceStore 漏掉，导致断线重连后旧 presence（watch/pressure/
+                // tribulation/annihilate vignette）继续渲染/播放。
+                com.bong.client.tiandao.TiandaoPresenceStore.clear();
                 // plan-era-state-v1 P3 — 断线时重置时代天象状态
                 com.bong.client.era.EraAmbianceState.reset();
                 // plan-agent-ui-data-v1 P1 — 断线时清理天道 UI 面板状态

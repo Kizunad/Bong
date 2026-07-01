@@ -86,4 +86,57 @@ class TiandaoPresencePayloadHandlerTest {
         assertFalse(result.handled());
         assertFalse(TiandaoPresenceStore.snapshot().active());
     }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // F19 fix — BongNetworkHandler's DISCONNECT block cleared a dozen-plus
+    // stores but forgot TiandaoPresenceStore, so a stale presence (watch/
+    // pressure/tribulation/annihilate vignette+shake) kept rendering across a
+    // disconnect/reconnect. BongNetworkHandler.register() wires a Fabric
+    // ClientPlayConnectionEvents.DISCONNECT callback that requires a live
+    // Minecraft client instance and cannot be invoked directly from a unit
+    // test; mirrors DyingElderEncounterTest's source-scan pattern used for
+    // the same class of unreachable-from-unit-test wiring.
+    // ──────────────────────────────────────────────────────────────────────
+
+    @Test
+    void bongNetworkHandlerClearsTiandaoPresenceStoreOnDisconnect() throws Exception {
+        java.nio.file.Path testClasses = java.nio.file.Path.of("").toAbsolutePath().normalize();
+        java.nio.file.Path clientRoot;
+        if (java.nio.file.Files.isDirectory(testClasses.resolve("src"))) {
+            clientRoot = testClasses;
+        } else if (java.nio.file.Files.isDirectory(testClasses.resolve("client").resolve("src"))) {
+            clientRoot = testClasses.resolve("client");
+        } else {
+            clientRoot = testClasses;
+        }
+        java.nio.file.Path handlerSrc = clientRoot.resolve(
+            "src/main/java/com/bong/client/BongNetworkHandler.java"
+        );
+        assertTrue(
+            java.nio.file.Files.exists(handlerSrc),
+            "BongNetworkHandler.java must exist at " + handlerSrc.toAbsolutePath()
+                + " — cannot verify F19 fix without source file"
+        );
+        String src = java.nio.file.Files.readString(handlerSrc);
+
+        int disconnectBlockStart = src.indexOf("ClientPlayConnectionEvents.DISCONNECT.register(");
+        assertTrue(
+            disconnectBlockStart >= 0,
+            "expected a ClientPlayConnectionEvents.DISCONNECT.register(...) block in BongNetworkHandler, "
+                + "actual: not found in source"
+        );
+        int disconnectBlockEnd = src.indexOf("ClientPlayConnectionEvents.JOIN.register(", disconnectBlockStart);
+        assertTrue(
+            disconnectBlockEnd > disconnectBlockStart,
+            "expected a JOIN.register(...) block after DISCONNECT.register(...) to bound the disconnect block"
+        );
+        String disconnectBlock = src.substring(disconnectBlockStart, disconnectBlockEnd);
+
+        assertTrue(
+            disconnectBlock.contains("TiandaoPresenceStore.clear()"),
+            "expected the DISCONNECT block to call TiandaoPresenceStore.clear() because without it a stale "
+                + "presence vignette/shake survives across disconnect/reconnect (F19 fix), actual: call not found "
+                + "inside the DISCONNECT block"
+        );
+    }
 }

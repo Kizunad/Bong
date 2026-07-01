@@ -113,6 +113,113 @@ class ItemInspectScreenTest {
         );
     }
 
+    // ──────────────────────────────────────────────────────────────────────
+    // F17 fix — "充能次数" 此前误读 forgeAchievedTier()（法器灵核 T，已在"法器: 灵核 T"行
+    // 正确展示），真实数据源是 InventoryItem.charges()。下面用 tier != charges 的组合来钉死：
+    // 若代码退回旧 bug，这里断言的具体数字会立刻撞红。
+    // ──────────────────────────────────────────────────────────────────────
+
+    @Test
+    void chargeCountShowsChargesFieldNotForgeTier() {
+        InventoryItem item = InventoryItem.createFullWithVisualMeta(
+            42L,
+            "ancient_relic",
+            "上古遗物",
+            1,
+            1,
+            1.0,
+            "ancient",
+            "",
+            1,
+            1.0,
+            1.0,
+            2,       // charges — expected to appear in "充能次数"
+            "",
+            "",
+            0,
+            0.7,
+            "cold",
+            List.of("寒气"),
+            4,       // forgeAchievedTier — deliberately different from charges to catch field mix-up
+            List.of()
+        );
+
+        List<String> lines = ItemInspectScreen.detailLines(item);
+
+        assertTrue(
+            lines.stream().anyMatch(line -> line.contains("充能次数: 2")),
+            "expected '充能次数: 2' from InventoryItem.charges()=2 (not forgeAchievedTier=4), actual lines: " + lines
+        );
+        assertTrue(
+            lines.stream().anyMatch(line -> line.contains("法器: 灵核 T4")),
+            "expected forge tier line to independently show T4, actual lines: " + lines
+        );
+    }
+
+    @Test
+    void chargeCountShowsDashWhenChargesIsNull() {
+        InventoryItem item = InventoryItem.createFullWithForgeMeta(
+            42L,
+            "iron_sword",
+            "寒铁剑",
+            1,
+            3,
+            2.5,
+            "rare",
+            "剑身有冷纹。",
+            1,
+            0.82,
+            0.76,
+            "",
+            "",
+            0,
+            0.7,
+            "cold",
+            List.of("寒气"),
+            3
+        );
+
+        List<String> lines = ItemInspectScreen.detailLines(item);
+
+        assertTrue(
+            lines.stream().anyMatch(line -> line.contains("充能次数: -")),
+            "expected '充能次数: -' when InventoryItem.charges()==null, actual lines: " + lines
+        );
+    }
+
+    @Test
+    void chargeCountShowsZeroWhenChargesDepleted() {
+        InventoryItem item = InventoryItem.createFullWithVisualMeta(
+            42L,
+            "ancient_relic",
+            "上古遗物",
+            1,
+            1,
+            1.0,
+            "ancient",
+            "",
+            1,
+            1.0,
+            1.0,
+            0,       // charges depleted to zero, but still non-null — must not fall back to "-"
+            "",
+            "",
+            0,
+            null,
+            "",
+            List.of(),
+            null,
+            List.of()
+        );
+
+        List<String> lines = ItemInspectScreen.detailLines(item);
+
+        assertTrue(
+            lines.stream().anyMatch(line -> line.contains("充能次数: 0")),
+            "expected '充能次数: 0' when charges()==0 (depleted but non-null), actual lines: " + lines
+        );
+    }
+
     @Test
     void itemInspectOpensOnLongPress() {
         InventoryItem item = InventoryItem.simple("ning_mai_cao", "凝脉草");
