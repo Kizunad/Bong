@@ -12,27 +12,102 @@
 //! 的 unlock state 在角色死透重生后**不迁移**（"经验在玩家脑子里不在角色身上"
 //! 是 SkillSet 的语义；本 resource 跟 SkillSet 共进退）。具体清空入口由
 //! death-lifecycle plan 负责挂 hook，本 plan 只暴露 `clear_for_player` API。
+//!
+//! 持久化（照抄 `mineral::persistence::ExhaustedMineralsLog` 的 hydrate/dirty/
+//! 节流 flush 模式）：启动期从 `data/craft/recipe_unlocks.json` hydrate，
+//! unlock/clear 变更标 dirty，`tick_recipe_unlock_flush` 系统按节流窗口
+//! （默认 600 tick = 30 秒 @ 20 tps）刷盘。落盘格式：
+//! ```json
+//! { "version": 1, "by_player": { "offline:Alice": ["craft.example.a"] } }
+//! ```
 
 use std::collections::{HashMap, HashSet};
+use std::fs;
+use std::path::{Path, PathBuf};
 
-use valence::prelude::Resource;
+use serde::{Deserialize, Serialize};
+use valence::prelude::{ResMut, Resource};
 
 use super::events::{InsightTrigger, UnlockEventSource};
 use super::recipe::{RecipeId, UnlockSource};
 
-/// per-player canonical id 的 unlock 集合。
-#[derive(Debug, Default)]
+const DEFAULT_UNLOCK_PATH: &str = "data/craft/recipe_unlocks.json";
+
+/// 落盘 schema 版本 — writer（[`RecipeUnlockState::flush`]）与 loader
+/// （[`load_recipe_unlock_log`]）必须共用同一常量，避免两处字面量漂移。
+/// 递增时需要在 loader 里补迁移逻辑，而不是放宽校验。
+const RECIPE_UNLOCK_VERSION: u32 = 1;
+
+/// 落盘格式 wrapper — 留 `version` 字段方便后续 schema 演进。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RecipeUnlockFile {
+    pub version: u32,
+    pub by_player: HashMap<String, HashSet<RecipeId>>,
+}
+
+impl Default for RecipeUnlockFile {
+    fn default() -> Self {
+        Self {
+            version: RECIPE_UNLOCK_VERSION,
+            by_player: HashMap::new(),
+        }
+    }
+}
+
+/// per-player canonical id 的 unlock 集合 + 节流刷盘 — 在 `register` 时插入到
+/// ECS resource。
+#[derive(Debug)]
 pub struct RecipeUnlockState {
     /// `canonical_player_id`（如 `"offline:Alice"`）→ 已解锁配方集合。
     /// 玩家未注册时返回空 set，等同未解锁任何配方。
     by_player: HashMap<String, HashSet<RecipeId>>,
+    /// 自上次 flush 以来是否有未落盘的变更。
+    dirty: bool,
+    /// 距上次 flush 累计 tick 数，用于节流。
+    flush_clock: u32,
+    /// 节流窗口（tick）。默认 600 = 30 秒 @ 20 tps。
+    flush_interval_ticks: u32,
+    /// 落盘路径；test override 用 `with_path`。
+    file_path: PathBuf,
 }
 
 impl Resource for RecipeUnlockState {}
 
+impl Default for RecipeUnlockState {
+    fn default() -> Self {
+        Self {
+            by_player: HashMap::new(),
+            dirty: false,
+            flush_clock: 0,
+            flush_interval_ticks: 600,
+            file_path: PathBuf::from(DEFAULT_UNLOCK_PATH),
+        }
+    }
+}
+
 impl RecipeUnlockState {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn with_path(mut self, path: impl Into<PathBuf>) -> Self {
+        self.file_path = path.into();
+        self
+    }
+
+    pub fn with_flush_interval(mut self, ticks: u32) -> Self {
+        self.flush_interval_ticks = ticks;
+        self
+    }
+
+    /// 是否有未落盘的变更（测试 / flush 系统用）。
+    pub fn is_dirty(&self) -> bool {
+        self.dirty
+    }
+
+    /// 已注册玩家数（hydrate 启动日志用）。
+    pub fn player_count(&self) -> usize {
+        self.by_player.len()
     }
 
     /// 查询玩家是否已解锁某配方。未注册玩家恒返回 false。
@@ -47,12 +122,18 @@ impl RecipeUnlockState {
     /// 返回 true = 实际新增，false = 已解锁的 noop。
     pub fn unlock(&mut self, player: impl Into<String>, recipe: RecipeId) -> bool {
         let player = player.into();
-        self.by_player.entry(player).or_default().insert(recipe)
+        let inserted = self.by_player.entry(player).or_default().insert(recipe);
+        if inserted {
+            self.dirty = true;
+        }
+        inserted
     }
 
     /// 玩家死透重生时调用 — 清空该玩家所有 unlock state。
     pub fn clear_for_player(&mut self, player: &str) {
-        self.by_player.remove(player);
+        if self.by_player.remove(player).is_some() {
+            self.dirty = true;
+        }
     }
 
     /// 该玩家已解锁配方数量（UI 统计用）。
@@ -68,6 +149,112 @@ impl RecipeUnlockState {
         match self.by_player.get(player) {
             Some(set) => Box::new(set.iter()),
             None => Box::new(std::iter::empty()),
+        }
+    }
+
+    /// 强制刷盘 — 测试 / 关服 hook 用。
+    ///
+    /// 原子落盘：先写同目录 `.tmp` 临时文件，成功后 `rename` 到最终路径。
+    /// `rename` 在同一文件系统内是原子操作，避免写入中途失败/中断时把
+    /// `self.file_path` 留成截断 JSON（下次启动会走 corrupt fallback 丢已解锁进度）。
+    pub fn flush(&mut self) -> Result<(), String> {
+        if !self.dirty {
+            return Ok(());
+        }
+        if let Some(parent) = self.file_path.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("create dir {} failed: {e}", parent.display()))?;
+        }
+        let file = RecipeUnlockFile {
+            version: RECIPE_UNLOCK_VERSION,
+            by_player: self.by_player.clone(),
+        };
+        let json = serde_json::to_string_pretty(&file)
+            .map_err(|e| format!("serialize recipe unlock log failed: {e}"))?;
+        let tmp_path = self.file_path.with_extension("tmp");
+        fs::write(&tmp_path, json)
+            .map_err(|e| format!("write {} failed: {e}", tmp_path.display()))?;
+        fs::rename(&tmp_path, &self.file_path).map_err(|e| {
+            format!(
+                "rename {} to {} failed: {e}",
+                tmp_path.display(),
+                self.file_path.display()
+            )
+        })?;
+        self.dirty = false;
+        self.flush_clock = 0;
+        Ok(())
+    }
+
+    /// 启动期 hydrator — 从 `path` 读回磁盘 log，还原 in-memory state。
+    ///
+    /// - 文件不存在：等价 `default()`，静默（首次启动常态）。
+    /// - 文件存在但解析失败：warn + 启动一份空 state（避免 corrupt 文件阻塞启动）。
+    /// - 成功：`by_player` 预填；`dirty=false` 防止启动立即重写文件。
+    pub fn hydrated_from_path(path: impl Into<PathBuf>) -> Self {
+        let path: PathBuf = path.into();
+        let mut state = Self::default().with_path(path.clone());
+        if !path.exists() {
+            return state;
+        }
+        match load_recipe_unlock_log(&path) {
+            Ok(file) => {
+                state.by_player = file.by_player;
+                state.dirty = false;
+            }
+            Err(err) => {
+                tracing::warn!(
+                    target: "bong::craft",
+                    "failed to load recipe unlock log at {}: {err} — starting fresh",
+                    path.display()
+                );
+            }
+        }
+        state
+    }
+
+    /// 默认路径（`data/craft/recipe_unlocks.json`）hydrator — `register` 启动路径用。
+    pub fn hydrated() -> Self {
+        Self::hydrated_from_path(DEFAULT_UNLOCK_PATH)
+    }
+}
+
+/// 启动期 / 测试用 — 读取磁盘 log 重建 in-memory state。
+///
+/// 拒绝 `version` 与 [`RECIPE_UNLOCK_VERSION`] 不一致的文件（而不是静默接受
+/// 任意版本并直接恢复 `by_player`），像其他 schema loader
+/// （如 `mineral::persistence::load_exhausted_log` 的落盘约定）一样把版本漂移当错误处理。
+pub fn load_recipe_unlock_log(path: impl AsRef<Path>) -> Result<RecipeUnlockFile, String> {
+    let path = path.as_ref();
+    let raw =
+        fs::read_to_string(path).map_err(|e| format!("read {} failed: {e}", path.display()))?;
+    let file: RecipeUnlockFile =
+        serde_json::from_str(&raw).map_err(|e| format!("parse {} failed: {e}", path.display()))?;
+    if file.version != RECIPE_UNLOCK_VERSION {
+        return Err(format!(
+            "unsupported recipe unlock log version {} at {} (expected {RECIPE_UNLOCK_VERSION})",
+            file.version,
+            path.display()
+        ));
+    }
+    Ok(file)
+}
+
+/// system — 按节流窗口把 dirty 的 `RecipeUnlockState` 刷盘。
+/// 挂进 `Update`；unlock 三渠道 + 材料发现路径都是直接函数调用（非事件驱动），
+/// 所以本系统只负责节流计时 + flush，不读取任何 EventReader。
+pub fn tick_recipe_unlock_flush(mut state: ResMut<RecipeUnlockState>) {
+    state.flush_clock = state.flush_clock.saturating_add(1);
+    if state.flush_clock >= state.flush_interval_ticks && state.dirty {
+        // 无论 flush 成功与否都先清零计时器：`flush()` 失败时不会清 `dirty`，
+        // 如果不重置 `flush_clock`，下一帧阈值依旧满足 → 每个 Update 都重试写盘
+        // + warn，磁盘/权限故障时会刷爆日志。重置后退避到下一个节流窗口再重试。
+        state.flush_clock = 0;
+        if let Err(error) = state.flush() {
+            tracing::warn!(
+                target: "bong::craft",
+                "recipe unlock flush failed: {error}"
+            );
         }
     }
 }
@@ -368,6 +555,534 @@ mod tests {
         state.clear_for_player("offline:Alice");
         assert_eq!(state.unlocked_count("offline:Alice"), 0);
         assert!(state.is_unlocked("offline:Bob", &RecipeId::new("b")));
+    }
+
+    // ===== 持久化（照抄 mineral::persistence::ExhaustedMineralsLog 测试模式）=====
+
+    fn unique_tmp_path(name: &str) -> PathBuf {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("bong-craft-recipe-unlocks-{stamp}-{name}.json"))
+    }
+
+    #[test]
+    fn new_state_is_not_dirty() {
+        let state = RecipeUnlockState::new();
+        assert!(
+            !state.is_dirty(),
+            "freshly constructed state must not be dirty (nothing to flush)"
+        );
+    }
+
+    #[test]
+    fn unlock_marks_dirty_when_actually_new() {
+        let mut state = RecipeUnlockState::new();
+        assert!(
+            !state.is_dirty(),
+            "expected a freshly constructed state to be clean because nothing was unlocked yet"
+        );
+        state.unlock("offline:Alice", RecipeId::new("a"));
+        assert!(
+            state.is_dirty(),
+            "unlock() inserting a new recipe must mark state dirty so flush picks it up"
+        );
+    }
+
+    #[test]
+    fn repeated_unlock_does_not_redundantly_mark_dirty() {
+        let mut state = RecipeUnlockState::new();
+        state.unlock("offline:Alice", RecipeId::new("a"));
+        state.flush_clock = 0; // irrelevant to this assertion, just documenting isolation
+                               // manually clear dirty to simulate "already flushed"
+        state.dirty = false;
+        // unlocking the same recipe again is a noop — must NOT re-dirty the state,
+        // otherwise every duplicate unlock attempt would force an unnecessary disk write.
+        let inserted = state.unlock("offline:Alice", RecipeId::new("a"));
+        assert!(!inserted, "duplicate unlock must report no insertion");
+        assert!(
+            !state.is_dirty(),
+            "duplicate unlock must not re-mark a clean state dirty"
+        );
+    }
+
+    #[test]
+    fn clear_for_player_marks_dirty_only_when_something_removed() {
+        let mut state = RecipeUnlockState::new();
+        state.unlock("offline:Alice", RecipeId::new("a"));
+        state.dirty = false; // simulate "already flushed"
+        state.clear_for_player("offline:Alice");
+        assert!(
+            state.is_dirty(),
+            "clearing a player that actually had unlocks must mark state dirty"
+        );
+
+        state.dirty = false;
+        state.clear_for_player("offline:Alice"); // already empty — noop
+        assert!(
+            !state.is_dirty(),
+            "clearing an already-empty player must not spuriously mark dirty"
+        );
+    }
+
+    #[test]
+    fn flush_writes_json_and_roundtrips() {
+        let path = unique_tmp_path("flush_writes");
+        let mut state = RecipeUnlockState::default().with_path(&path);
+        state.unlock("offline:Alice", RecipeId::new("craft.example.a"));
+        state.flush().expect("flush should succeed");
+
+        let loaded = load_recipe_unlock_log(&path).expect("load should parse");
+        assert_eq!(
+            loaded.version, RECIPE_UNLOCK_VERSION,
+            "expected flush() to stamp version={RECIPE_UNLOCK_VERSION} (RECIPE_UNLOCK_VERSION) \
+             because writer and loader must agree on schema version, actual={}",
+            loaded.version
+        );
+        assert_eq!(
+            loaded
+                .by_player
+                .get("offline:Alice")
+                .map(|s| s.contains(&RecipeId::new("craft.example.a"))),
+            Some(true),
+            "flushed file must contain the unlocked recipe for offline:Alice"
+        );
+        assert!(
+            !state.is_dirty(),
+            "flush must clear the dirty flag on success"
+        );
+
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn flush_no_op_when_clean() {
+        let path = unique_tmp_path("flush_clean");
+        let mut state = RecipeUnlockState::default().with_path(&path);
+        // 没 unlock 过 → 不应写文件
+        state.flush().expect("clean flush ok");
+        assert!(!path.exists(), "clean flush should not create a file");
+    }
+
+    #[test]
+    fn hydrated_from_missing_path_returns_empty_state() {
+        let path = unique_tmp_path("hydrate_missing");
+        assert!(
+            !path.exists(),
+            "test precondition: unique_tmp_path must not collide with an existing file, \
+             otherwise this test would exercise the hydrate-from-existing-file path instead"
+        );
+        let state = RecipeUnlockState::hydrated_from_path(&path);
+        assert_eq!(
+            state.player_count(),
+            0,
+            "expected 0 players because hydrating from a nonexistent path is first-boot state, \
+             actual={}",
+            state.player_count()
+        );
+        assert!(!state.is_dirty(), "fresh startup state must not be dirty");
+        assert_eq!(
+            state.file_path,
+            path,
+            "hydrated_from_path must remember the path it was given so later flush() writes back \
+             to the same location, expected={}, actual={}",
+            path.display(),
+            state.file_path.display()
+        );
+    }
+
+    #[test]
+    fn hydrated_restores_state_from_prior_flush() {
+        let path = unique_tmp_path("hydrate_restore");
+        // 先 flush 一份到磁盘（模拟上次关服）
+        let mut prior = RecipeUnlockState::default().with_path(&path);
+        prior.unlock("offline:Alice", RecipeId::new("craft.example.a"));
+        prior.unlock("offline:Alice", RecipeId::new("craft.example.b"));
+        prior.unlock("offline:Bob", RecipeId::new("craft.example.c"));
+        prior.flush().expect("flush should succeed");
+
+        // hydrate 回来
+        let restored = RecipeUnlockState::hydrated_from_path(&path);
+        assert_eq!(
+            restored.unlocked_count("offline:Alice"),
+            2,
+            "Alice should have both recipes restored after restart"
+        );
+        assert!(
+            restored.is_unlocked("offline:Alice", &RecipeId::new("craft.example.a")),
+            "Alice's first flushed recipe (craft.example.a) must survive the flush/hydrate \
+             round-trip"
+        );
+        assert!(
+            restored.is_unlocked("offline:Alice", &RecipeId::new("craft.example.b")),
+            "Alice's second flushed recipe (craft.example.b) must survive the flush/hydrate \
+             round-trip — a single-recipe roundtrip alone would not catch a HashSet truncated to \
+             one entry"
+        );
+        assert!(
+            restored.is_unlocked("offline:Bob", &RecipeId::new("craft.example.c")),
+            "multi-player state must round-trip independently — Bob's unlock is separate from Alice's"
+        );
+        assert!(
+            !restored.is_unlocked("offline:Bob", &RecipeId::new("craft.example.a")),
+            "Bob must not inherit Alice's unlocks after hydrate — per-player isolation must survive persistence"
+        );
+        assert!(
+            !restored.is_dirty(),
+            "hydrated state must not be dirty on startup"
+        );
+
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn hydrated_falls_back_when_file_corrupt() {
+        let path = unique_tmp_path("hydrate_corrupt");
+        fs::write(&path, "corrupted json {{{").unwrap();
+        let state = RecipeUnlockState::hydrated_from_path(&path);
+        // 坏文件 → 空 state（warn log 已发，启动不阻塞）
+        assert_eq!(
+            state.player_count(),
+            0,
+            "expected corrupt JSON to fall back to an empty state (0 players) because startup \
+             must not be blocked by a bad log file, actual={}",
+            state.player_count()
+        );
+        assert!(
+            !state.is_dirty(),
+            "corrupt-file fallback must not be marked dirty, otherwise the next flush would \
+             immediately overwrite the corrupt file with an empty one before an operator can \
+             inspect it"
+        );
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn load_recipe_unlock_log_rejects_invalid_json() {
+        let path = unique_tmp_path("invalid_json");
+        fs::write(&path, "not valid json").unwrap();
+        assert!(
+            load_recipe_unlock_log(&path).is_err(),
+            "expected load_recipe_unlock_log to return Err for non-JSON content because the \
+             loader must fail loudly instead of silently returning a default value"
+        );
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn multi_player_flush_hydrate_keeps_each_player_isolated() {
+        let path = unique_tmp_path("multi_player_isolation");
+        let mut state = RecipeUnlockState::default().with_path(&path);
+        state.unlock("offline:Alice", RecipeId::new("craft.example.a"));
+        state.unlock("offline:Bob", RecipeId::new("craft.example.b"));
+        state.unlock("offline:Carol", RecipeId::new("craft.example.c"));
+        state.flush().expect("flush should succeed");
+
+        let restored = RecipeUnlockState::hydrated_from_path(&path);
+        assert_eq!(
+            restored.player_count(),
+            3,
+            "expected 3 players (Alice/Bob/Carol) restored because each unlocked exactly one \
+             distinct recipe before flush, actual={}",
+            restored.player_count()
+        );
+        assert!(
+            restored.is_unlocked("offline:Alice", &RecipeId::new("craft.example.a")),
+            "Alice must keep her own unlock (craft.example.a) after multi-player flush/hydrate"
+        );
+        assert!(
+            !restored.is_unlocked("offline:Alice", &RecipeId::new("craft.example.b")),
+            "Alice must not inherit Bob's recipe (craft.example.b) — per-player isolation must \
+             survive persistence, not just leak-free unlock()"
+        );
+        assert!(
+            restored.is_unlocked("offline:Bob", &RecipeId::new("craft.example.b")),
+            "Bob must keep his own unlock (craft.example.b) after multi-player flush/hydrate"
+        );
+        assert!(
+            !restored.is_unlocked("offline:Bob", &RecipeId::new("craft.example.c")),
+            "Bob must not inherit Carol's recipe (craft.example.c)"
+        );
+        assert!(
+            restored.is_unlocked("offline:Carol", &RecipeId::new("craft.example.c")),
+            "Carol must keep her own unlock (craft.example.c) after multi-player flush/hydrate"
+        );
+        assert!(
+            !restored.is_unlocked("offline:Carol", &RecipeId::new("craft.example.a")),
+            "Carol must not inherit Alice's recipe (craft.example.a)"
+        );
+
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn tick_recipe_unlock_flush_only_writes_after_interval_when_dirty() {
+        let path = unique_tmp_path("tick_flush_interval");
+        let mut app = valence::prelude::App::new();
+        let state = RecipeUnlockState::default()
+            .with_path(&path)
+            .with_flush_interval(3);
+        app.insert_resource(state);
+        app.add_systems(valence::prelude::Update, tick_recipe_unlock_flush);
+
+        // dirty=false, interval 未到 → 多次 tick 都不应写文件
+        app.update();
+        app.update();
+        assert!(
+            !path.exists(),
+            "flush system must not write to disk while state is clean"
+        );
+
+        // 标记 dirty，但节流窗口还没到（第 3 次 tick 才到期）
+        app.world_mut()
+            .resource_mut::<RecipeUnlockState>()
+            .unlock("offline:Alice", RecipeId::new("craft.example.a"));
+        app.update(); // tick 3 of interval-3 window (clock started counting from app.update() calls above)
+
+        // 继续 tick 直到节流窗口耗尽，确保最终确实落盘
+        for _ in 0..5 {
+            app.update();
+            if path.exists() {
+                break;
+            }
+        }
+        assert!(
+            path.exists(),
+            "flush system must eventually persist dirty state once flush_interval_ticks elapses"
+        );
+        let loaded = load_recipe_unlock_log(&path).expect("load should parse");
+        assert!(
+            loaded
+                .by_player
+                .get("offline:Alice")
+                .map(|s| s.contains(&RecipeId::new("craft.example.a")))
+                .unwrap_or(false),
+            "expected the throttled flush to persist Alice's unlock (craft.example.a) to disk \
+             because the flush_interval_ticks window elapsed, actual by_player={:?}",
+            loaded.by_player
+        );
+
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn tick_recipe_unlock_flush_clears_dirty_after_writing() {
+        let path = unique_tmp_path("tick_flush_clears_dirty");
+        let mut app = valence::prelude::App::new();
+        let state = RecipeUnlockState::default()
+            .with_path(&path)
+            .with_flush_interval(1);
+        app.insert_resource(state);
+        app.add_systems(valence::prelude::Update, tick_recipe_unlock_flush);
+
+        app.world_mut()
+            .resource_mut::<RecipeUnlockState>()
+            .unlock("offline:Alice", RecipeId::new("craft.example.a"));
+        app.update();
+
+        let resource = app.world().resource::<RecipeUnlockState>();
+        assert!(
+            !resource.is_dirty(),
+            "after a successful throttled flush the dirty flag must be cleared"
+        );
+
+        let _ = fs::remove_file(&path);
+    }
+
+    // ── version pinning (CodeRabbit: schema version must not be silently misread) ──
+
+    #[test]
+    fn load_recipe_unlock_log_accepts_current_version() {
+        let path = unique_tmp_path("version_pin_current");
+        fs::write(
+            &path,
+            format!(
+                r#"{{"version":{RECIPE_UNLOCK_VERSION},"by_player":{{"offline:Alice":["craft.example.a"]}}}}"#
+            ),
+        )
+        .unwrap();
+        let file = load_recipe_unlock_log(&path).expect(
+            "loader must accept a file whose version matches RECIPE_UNLOCK_VERSION — positive \
+             pin for the schema version contract",
+        );
+        assert_eq!(
+            file.version, RECIPE_UNLOCK_VERSION,
+            "expected the parsed version to equal RECIPE_UNLOCK_VERSION={RECIPE_UNLOCK_VERSION} \
+             because that's what was written to disk, actual={}",
+            file.version
+        );
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn load_recipe_unlock_log_rejects_unsupported_version() {
+        // version=999 is deliberately far from RECIPE_UNLOCK_VERSION so this test stays
+        // meaningful even if the schema is bumped in the future.
+        let path = unique_tmp_path("version_pin_unsupported");
+        fs::write(
+            &path,
+            r#"{"version":999,"by_player":{"offline:Alice":["craft.example.a"]}}"#,
+        )
+        .unwrap();
+        let result = load_recipe_unlock_log(&path);
+        assert!(
+            result.is_err(),
+            "expected Err for version=999 (!= RECIPE_UNLOCK_VERSION={RECIPE_UNLOCK_VERSION}) \
+             because silently accepting a mismatched schema version risks misinterpreting \
+             by_player as current-shape data, actual={result:?}"
+        );
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn load_recipe_unlock_log_rejects_stale_default_version_zero() {
+        // version=0 was the pre-fix `RecipeUnlockFile::default()` value (the bug CodeRabbit
+        // flagged: default() disagreed with the writer's version=1). Pin that a file
+        // carrying that stale value is rejected, not silently treated as current.
+        let path = unique_tmp_path("version_pin_zero");
+        fs::write(&path, r#"{"version":0,"by_player":{}}"#).unwrap();
+        let result = load_recipe_unlock_log(&path);
+        assert!(
+            result.is_err(),
+            "expected Err for version=0 because it no longer matches \
+             RECIPE_UNLOCK_VERSION={RECIPE_UNLOCK_VERSION} now that default() is fixed, \
+             actual={result:?}"
+        );
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn load_recipe_unlock_log_rejects_missing_version_field() {
+        // No "version" key at all. `RecipeUnlockFile::version` has no `#[serde(default)]`,
+        // so this must fail at parse time rather than silently defaulting to 0.
+        let path = unique_tmp_path("version_pin_missing_field");
+        fs::write(
+            &path,
+            r#"{"by_player":{"offline:Alice":["craft.example.a"]}}"#,
+        )
+        .unwrap();
+        let result = load_recipe_unlock_log(&path);
+        assert!(
+            result.is_err(),
+            "expected Err when the `version` field is entirely absent because \
+             RecipeUnlockFile::version must not silently become 0, actual={result:?}"
+        );
+        let _ = fs::remove_file(&path);
+    }
+
+    // ── write-failure branch (CodeRabbit: atomic flush must not corrupt existing file) ──
+
+    #[test]
+    fn flush_returns_err_when_parent_directory_cannot_be_created() {
+        // Block the parent directory: create a *regular file* at the path flush() would
+        // otherwise `create_dir_all` into. mkdir-over-an-existing-file fails regardless of
+        // user permissions (even as root), so this reliably forces the write-failure
+        // branch across CI environments (unlike chmod-based read-only tricks).
+        let blocker = unique_tmp_path("flush_fail_blocker_dir");
+        fs::write(&blocker, "i am a file blocking a directory").unwrap();
+        let path = blocker.join("nested").join("recipe_unlocks.json");
+
+        let mut state = RecipeUnlockState::default().with_path(&path);
+        state.unlock("offline:Alice", RecipeId::new("craft.example.a"));
+        let result = state.flush();
+        assert!(
+            result.is_err(),
+            "expected flush() to return Err because its parent directory cannot be created \
+             (a regular file occupies that path component), actual={result:?}"
+        );
+        assert!(
+            state.is_dirty(),
+            "a failed flush must leave the state dirty so a later retry can still persist the \
+             unlock — silently clearing dirty here would permanently lose Alice's unlock"
+        );
+
+        let _ = fs::remove_file(&blocker);
+    }
+
+    #[test]
+    fn flush_does_not_corrupt_existing_file_when_tmp_write_fails() {
+        let path = unique_tmp_path("flush_fail_atomic");
+        let mut state = RecipeUnlockState::default().with_path(&path);
+
+        // 1) A successful first flush establishes a valid on-disk file.
+        state.unlock("offline:Alice", RecipeId::new("craft.example.a"));
+        state.flush().expect("first flush should succeed");
+        let original_bytes = fs::read_to_string(&path).expect("file must exist after first flush");
+
+        // 2) Force the *next* flush's tmp-file write to fail by pre-creating a directory
+        // at the `.tmp` path flush() writes to (fs::write on a directory path always
+        // errors with EISDIR, regardless of permissions/root).
+        let tmp_path = path.with_extension("tmp");
+        fs::create_dir_all(&tmp_path).expect("setup: create blocking dir at tmp path");
+
+        state.unlock("offline:Bob", RecipeId::new("craft.example.b"));
+        let result = state.flush();
+        assert!(
+            result.is_err(),
+            "expected the second flush to fail because its tmp path is occupied by a \
+             directory, actual={result:?}"
+        );
+
+        // 3) Atomic-write contract: a failed write must NEVER touch the final path — only
+        // a successful `fs::write` + `fs::rename` pair may replace it.
+        let bytes_after_failed_flush =
+            fs::read_to_string(&path).expect("original file must still exist after failed flush");
+        assert_eq!(
+            bytes_after_failed_flush, original_bytes,
+            "expected the final file to be byte-for-byte unchanged after a failed flush \
+             because flush() must write a tmp file then rename, never write the final path \
+             directly — a truncated/half-written final file would lose Alice's \
+             already-persisted unlock"
+        );
+        assert!(
+            state.is_dirty(),
+            "a failed flush must leave dirty=true because Bob's unlock is not yet safely on \
+             disk"
+        );
+
+        let _ = fs::remove_dir_all(&tmp_path);
+        let _ = fs::remove_file(&path);
+    }
+
+    // ── throttle off-by-one (CodeRabbit: interval-1 must not write, interval must) ──
+
+    #[test]
+    fn tick_recipe_unlock_flush_off_by_one_interval_boundary() {
+        let path = unique_tmp_path("tick_flush_off_by_one");
+        let mut app = valence::prelude::App::new();
+        let state = RecipeUnlockState::default()
+            .with_path(&path)
+            .with_flush_interval(5);
+        app.insert_resource(state);
+        app.add_systems(valence::prelude::Update, tick_recipe_unlock_flush);
+
+        app.world_mut()
+            .resource_mut::<RecipeUnlockState>()
+            .unlock("offline:Alice", RecipeId::new("craft.example.a"));
+
+        // flush_clock is incremented *before* the threshold check each Update, so it
+        // reaches `flush_interval_ticks` (5) exactly on the 5th call. Ticks 1..=4
+        // (interval-1 and below) must NOT write yet — this pins the off-by-one boundary
+        // that the previous test only checked loosely (via a `break`-on-exists retry loop).
+        for i in 1..=4 {
+            app.update();
+            assert!(
+                !path.exists(),
+                "expected no flush at tick {i} of 5 (< flush_interval_ticks) because the \
+                 throttle window has not elapsed yet, but the file was written early"
+            );
+        }
+
+        // 5th tick == flush_interval_ticks → must write now.
+        app.update();
+        assert!(
+            path.exists(),
+            "expected a flush exactly at tick 5 (== flush_interval_ticks=5) because the \
+             throttle check uses `>=`, but no file was written"
+        );
+
+        let _ = fs::remove_file(&path);
     }
 
     #[test]
