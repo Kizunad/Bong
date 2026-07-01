@@ -31,6 +31,7 @@ class ProtoServerDataBridgeTest {
         TechniquesListPanel.resetForTests();
         BongToast.resetForTests();
         UnifiedEventStore.resetForTests();
+        com.bong.client.coffin.TutorialCoffinPosStore.resetForTests();
     }
 
     // ─── Happy path: Welcome ─────────────────────────────────────────
@@ -1332,6 +1333,56 @@ class ProtoServerDataBridgeTest {
         assertFalse(result.isHandled(), "UNSPECIFIED channel/priority 应 noOp，不被当作有效事件");
         assertEquals(0, UnifiedEventStore.stream().snapshot().size(),
                 "坏枚举不应入 UnifiedEventStore");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // F9 跨层修复：tutorial_coffin_pos proto bridge
+    // ═══════════════════════════════════════════════════════════════════
+
+    @Test
+    void bridgeTutorialCoffinPosProducesLegacyJsonAndRoutesIntoStore() {
+        com.bong.client.coffin.TutorialCoffinPosStore.resetForTests();
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setTutorialCoffinPos(Envelope.TutorialCoffinPos.newBuilder()
+                        .setX(12)
+                        .setY(71)
+                        .setZ(-33))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        assertEquals("tutorial_coffin_pos", json.get("type").getAsString());
+        assertEquals(12, json.get("x").getAsInt());
+        assertEquals(71, json.get("y").getAsInt());
+        assertEquals(-33, json.get("z").getAsInt(),
+                "negative z must survive the proto->JSON bridge untouched");
+
+        ServerDataRouter.RouteResult route = ServerDataRouter.createDefault()
+                .route(json.toString(), json.toString().getBytes(StandardCharsets.UTF_8).length);
+        assertTrue(route.isHandled(),
+                "tutorial_coffin_pos proto bridge output should route: " + route.logMessage());
+        assertFalse(route.isNoOp(), "tutorial_coffin_pos proto bridge output must not become no-op");
+
+        var stored = com.bong.client.coffin.TutorialCoffinPosStore.snapshot();
+        assertTrue(stored.isPresent(), "store should hold the broadcast coffin pos after routing");
+        assertEquals(new net.minecraft.util.math.BlockPos(12, 71, -33), stored.get());
+    }
+
+    @Test
+    void bridgeTutorialCoffinPosAtOriginIsPreservedIncludingDefaultValueFields() {
+        // x=0/y=0/z=0 must still survive the bridge (includingDefaultValueFields), otherwise
+        // a coffin that legitimately sits at the world origin would look like "no field".
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setTutorialCoffinPos(Envelope.TutorialCoffinPos.newBuilder()
+                        .setX(0).setY(0).setZ(0))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        assertEquals("tutorial_coffin_pos", json.get("type").getAsString());
+        assertTrue(json.has("x") && json.has("y") && json.has("z"),
+                "x=0/y=0/z=0 fields must be present, not dropped as proto3 defaults");
+        assertEquals(0, json.get("x").getAsInt());
+        assertEquals(0, json.get("y").getAsInt());
+        assertEquals(0, json.get("z").getAsInt());
     }
 
     // ═══════════════════════════════════════════════════════════════════

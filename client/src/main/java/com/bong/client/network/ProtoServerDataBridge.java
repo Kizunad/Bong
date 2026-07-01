@@ -178,6 +178,8 @@ public final class ProtoServerDataBridge {
         m.put(Envelope.ServerDataEnvelope.PayloadCase.WORKBENCH_OPEN, "workbench_open");
         // 功法 AV 里程碑 系列 2b：zhenmai 5 招专属 HUD S2C（server dual-emit → 条件式 HUD）
         m.put(Envelope.ServerDataEnvelope.PayloadCase.ZHENMAI_HUD, "zhenmai_hud");
+        // F9 跨层修复 — 出生引导棺权威坐标广播
+        m.put(Envelope.ServerDataEnvelope.PayloadCase.TUTORIAL_COFFIN_POS, "tutorial_coffin_pos");
         CASE_TO_TYPE = m;
     }
 
@@ -460,6 +462,8 @@ public final class ProtoServerDataBridge {
             case WORKBENCH_OPEN: return envelope.getWorkbenchOpen();
             // 功法 AV 里程碑 系列 2b：zhenmai 5 招专属 HUD S2C
             case ZHENMAI_HUD: return envelope.getZhenmaiHud();
+            // F9 跨层修复 — 出生引导棺权威坐标广播
+            case TUTORIAL_COFFIN_POS: return envelope.getTutorialCoffinPos();
             default: return null;
         }
     }

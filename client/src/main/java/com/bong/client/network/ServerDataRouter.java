@@ -242,6 +242,8 @@ public final class ServerDataRouter {
         // plan-workbench-recipes-v1 P3.1 — 制作台 UI 打开
         handlers.put("workbench_open",
             com.bong.client.craft.WorkbenchScreenBootstrap.handler());
+        // F9 跨层修复 — 出生引导棺权威坐标广播（取代 client 硬编码判定盒）
+        handlers.put("tutorial_coffin_pos", new TutorialCoffinPosHandler());
         // plan-combat-skill-feedback-bridges-v1 P4：暗器分身 HUD（echo/aim/charge/abrasion → AnqiHudStateStore）
         com.bong.client.combat.handler.AnqiHudServerDataHandler anqiHudServerDataHandler =
             new com.bong.client.combat.handler.AnqiHudServerDataHandler();
