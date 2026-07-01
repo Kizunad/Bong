@@ -36,8 +36,13 @@ public final class NpcInteractionLogStore {
         return visible;
     }
 
-    public static synchronized void resetForTests() {
+    /** 断线清理：重连后不应残留上一局会话的旧交互日志条目。 */
+    public static synchronized void clearOnDisconnect() {
         ENTRIES.clear();
         visible = false;
+    }
+
+    public static synchronized void resetForTests() {
+        clearOnDisconnect();
     }
 }
