@@ -8,6 +8,7 @@ import com.bong.client.identity.IdentityHudCornerLabel;
 import com.bong.client.loop.HomeSequence;
 import com.bong.client.npc.NpcInteractionLogHudPlanner;
 import com.bong.client.npc.NpcInteractionLogStore;
+import com.bong.client.social.NicheGuardianHudPlanner;
 import com.bong.client.state.PlayerStateStore;
 import com.bong.client.state.PlayerStateViewModel;
 import com.bong.client.tsy.ExtractState;
@@ -411,6 +412,8 @@ public final class BongHudOrchestrator {
                 screenWidth,
                 screenHeight
             ));
+            // F5 fix — 灵龛守护状态（NicheGuardianStore）此前只进不出，从未被任何 HUD planner 消费。
+            commands.addAll(NicheGuardianHudPlanner.buildCommands(screenWidth, screenHeight));
             commands.addAll(DerivedAttrIconHudPlanner.buildCommands(screenWidth, screenHeight));
             commands.addAll(NearDeathOverlayPlanner.buildCommands(
                 combatSnapshot.combatHudState(), screenWidth, screenHeight

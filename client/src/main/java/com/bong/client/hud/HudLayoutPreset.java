@@ -123,6 +123,9 @@ public enum HudLayoutPreset {
                 // plan-dying-elder-v1 P3：大能遭遇交互面板跟随 BARS 组
                 DYING_ELDER -> Widget.BARS;
             case TARGET_INFO -> Widget.TARGET;
+            // F5 fix — 灵龛守护面板与 NpcInteractionLogHudPlanner（TARGET_INFO）同组，
+            // 都是"目标/状态类侧栏信息"，密度收紧时一起隐藏/显示。
+            case NICHE_GUARDIAN -> Widget.TARGET;
             case EVENT_STREAM, TOAST -> Widget.EVENT_STREAM;
             case BOTANY -> Widget.BOTANY;
             case LINGTIAN_OVERLAY -> Widget.LINGTIAN;

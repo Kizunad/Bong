@@ -95,11 +95,13 @@ public final class ItemInspectScreen extends Screen {
         return Math.round(Math.max(0.0, Math.min(1.0, ratio)) * 100.0) + "%";
     }
 
+    /**
+     * F17 fix — 此前误读 {@link InventoryItem#forgeAchievedTier()}（法器灵核 T，已在"法器: 灵核 T"
+     * 行正确展示），"充能次数"真实数据源是 {@link InventoryItem#charges()}（先例：
+     * {@link com.bong.client.inventory.AncientRelicGlowRenderer#chargesLine}：null-check + charges() 展示）。
+     */
     private static String chargeText(InventoryItem item) {
-        if (item.forgeAchievedTier() != null) {
-            return String.valueOf(Math.max(1, item.forgeAchievedTier()));
-        }
-        return "-";
+        return item.charges() == null ? "-" : String.valueOf(item.charges());
     }
 
     private static void appendArtifactLines(List<String> lines, ArtifactState artifact) {

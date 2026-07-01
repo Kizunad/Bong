@@ -1,6 +1,7 @@
 package com.bong.client.death;
 
 import com.bong.client.hud.HudRenderCommand;
+import com.bong.client.hud.HudTextHelper;
 import com.google.gson.JsonParser;
 import org.junit.jupiter.api.Test;
 
@@ -211,6 +212,164 @@ class DeathCinematicTest {
         assertTrue(NearDeathCollapsePlanner.collapseFreezeBeforeDeath(18L));
         assertTrue(NearDeathCollapsePlanner.collapseFreezeBeforeDeath(20L));
         assertFalse(NearDeathCollapsePlanner.collapseFreezeBeforeDeath(21L));
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // F15 fix — NearDeathCollapsePlanner.buildCommands() 之前只 emit
+    // screenTint+edgeVignette+text 三条固定命令，qiEscapeDensityByHp /
+    // meridianGlowOnSevered / surfaceCrackLines / collapseFreezeBeforeDeath
+    // 四个已测纯函数从未被接进渲染输出。以下锁住接线后的可观察命令契约。
+    // ──────────────────────────────────────────────────────────────────────
+
+    @Test
+    void nearDeathCollapseHighHpAndNoFreezeEmitsOnlyBaseThreeCommands() {
+        // phaseTick=0/phaseDurationTicks=100 → progress=0 → hpPercent(代理)=1.0：
+        // 高于 qiEscapeDensityByHp/surfaceCrackLines 的 0.20/0.05 阈值，且 phaseTick=0 不在
+        // collapseFreezeBeforeDeath 的 [14,20] 冻结窗口内 —— 不应新增任何裂痕/外泄 rect。
+        DeathCinematicState state = baseState(
+            DeathCinematicState.Phase.PREDEATH, 0L, 100L, 0L, 380L, false, 1, false, 1_000L
+        );
+
+        List<HudRenderCommand> commands = NearDeathCollapsePlanner.buildCommands(state, 320, 180);
+
+        assertEquals(
+            3,
+            commands.size(),
+            "expected exactly 3 commands (tint+vignette+text) at hp≈1.0 with no severed/freeze signal, actual: "
+                + commands.size() + " -> " + commands
+        );
+        assertTrue(commands.get(0).isScreenTint());
+        assertTrue(commands.get(1).isEdgeVignette());
+        assertTrue(commands.get(2).isText());
+    }
+
+    @Test
+    void nearDeathCollapseLowHpAddsThreeQiEscapeRectsWithoutFreeze() {
+        // phaseTick=900/phaseDurationTicks=1000 → progress=0.9 → hpPercent(代理)=0.10：
+        // < 0.20 阈值 → qiEscapeDensityByHp 恒为 3；>= 0.05 → surfaceCrackLines 仍为 0；
+        // phaseTick=900 不在冻结窗口 → escape rect alpha 用未冻结常量 ESCAPE_ALPHA。
+        DeathCinematicState state = baseState(
+            DeathCinematicState.Phase.PREDEATH, 900L, 1_000L, 0L, 380L, false, 1, false, 1_000L
+        );
+
+        List<HudRenderCommand> commands = NearDeathCollapsePlanner.buildCommands(state, 320, 180);
+
+        int expectedEscapeColor = HudTextHelper.withAlpha(
+            NearDeathCollapsePlanner.QI_COLOR, NearDeathCollapsePlanner.ESCAPE_ALPHA
+        );
+        long escapeRectCount = commands.stream()
+            .filter(HudRenderCommand::isRect)
+            .filter(c -> c.color() == expectedEscapeColor)
+            .count();
+
+        assertEquals(
+            3,
+            escapeRectCount,
+            "expected 3 qi-escape rects at hpPercent=0.10 (qiEscapeDensityByHp(0.10)=3) using the non-frozen "
+                + "escape alpha, actual matching rects: " + escapeRectCount + " in " + commands
+        );
+        assertEquals(
+            6,
+            commands.size(),
+            "expected tint+vignette+3 escape rects+text = 6 total commands, actual: " + commands.size()
+        );
+    }
+
+    @Test
+    void nearDeathCollapseVeryLowHpAddsEscapeAndCrackRects() {
+        // phaseTick=200/phaseDurationTicks=200 → progress=1.0 → hpPercent(代理)=0.0:
+        // both qiEscapeDensityByHp(0.0)=3 and surfaceCrackLines(0.0)=8 fire; phaseTick=200
+        // is outside the [14,20] freeze window → both use their non-frozen alpha constants.
+        DeathCinematicState state = baseState(
+            DeathCinematicState.Phase.PREDEATH, 200L, 200L, 0L, 380L, false, 1, false, 1_000L
+        );
+
+        List<HudRenderCommand> commands = NearDeathCollapsePlanner.buildCommands(state, 320, 180);
+
+        int expectedEscapeColor = HudTextHelper.withAlpha(
+            NearDeathCollapsePlanner.QI_COLOR, NearDeathCollapsePlanner.ESCAPE_ALPHA
+        );
+        int expectedCrackColor = HudTextHelper.withAlpha(
+            NearDeathCollapsePlanner.SURFACE_COLOR, NearDeathCollapsePlanner.CRACK_ALPHA
+        );
+        long escapeRectCount = commands.stream().filter(HudRenderCommand::isRect)
+            .filter(c -> c.color() == expectedEscapeColor).count();
+        long crackRectCount = commands.stream().filter(HudRenderCommand::isRect)
+            .filter(c -> c.color() == expectedCrackColor).count();
+
+        assertEquals(3, escapeRectCount, "expected 3 qi-escape rects at hpPercent=0.0, actual: " + escapeRectCount);
+        assertEquals(8, crackRectCount, "expected 8 surface-crack rects at hpPercent=0.0, actual: " + crackRectCount);
+        // tint + vignette + 3 escape + 8 crack + text = 14
+        assertEquals(14, commands.size(), "expected 14 total commands, actual: " + commands.size() + " -> " + commands);
+    }
+
+    @Test
+    void nearDeathCollapseFreezeWindowLocksRectsToFrozenAlpha() {
+        // phaseTick=15/phaseDurationTicks=15 → progress clamps to 1.0 → hpPercent=0.0
+        // (same density as the non-frozen case above), but phaseTick=15 IS inside
+        // collapseFreezeBeforeDeath's [14,20] window → both escape and crack rects must
+        // use FROZEN_ALPHA instead of their normal progress-driven alpha.
+        DeathCinematicState frozenState = baseState(
+            DeathCinematicState.Phase.PREDEATH, 15L, 15L, 0L, 380L, false, 1, false, 1_000L
+        );
+
+        List<HudRenderCommand> commands = NearDeathCollapsePlanner.buildCommands(frozenState, 320, 180);
+
+        int frozenEscapeColor = HudTextHelper.withAlpha(
+            NearDeathCollapsePlanner.QI_COLOR, NearDeathCollapsePlanner.FROZEN_ALPHA
+        );
+        int frozenCrackColor = HudTextHelper.withAlpha(
+            NearDeathCollapsePlanner.SURFACE_COLOR, NearDeathCollapsePlanner.FROZEN_ALPHA
+        );
+        long frozenEscapeCount = commands.stream().filter(HudRenderCommand::isRect)
+            .filter(c -> c.color() == frozenEscapeColor).count();
+        long frozenCrackCount = commands.stream().filter(HudRenderCommand::isRect)
+            .filter(c -> c.color() == frozenCrackColor).count();
+
+        assertEquals(
+            3, frozenEscapeCount,
+            "expected 3 qi-escape rects locked to FROZEN_ALPHA inside the [14,20] freeze window, actual: "
+                + frozenEscapeCount + " in " + commands
+        );
+        assertEquals(
+            8, frozenCrackCount,
+            "expected 8 surface-crack rects locked to FROZEN_ALPHA inside the freeze window, actual: "
+                + frozenCrackCount + " in " + commands
+        );
+    }
+
+    @Test
+    void nearDeathCollapseFinalDeathForcesMeridianGlowEvenAtFullHp() {
+        // finalDeath=true is used as the "meridian already severed" surrogate signal
+        // (DeathCinematicState has no literal hasSeveredMeridian field). At hp≈1.0 the
+        // hp-driven branch of meridianGlowOnSevered would be false, so this isolates the
+        // finalDeath-driven branch: the edge vignette must switch from QI_COLOR to
+        // MERIDIAN_COLOR-derived alpha.
+        DeathCinematicState finalDeathState = baseState(
+            DeathCinematicState.Phase.PREDEATH, 0L, 100L, 0L, 380L, true, 1, false, 1_000L
+        );
+        DeathCinematicState nonFinalState = baseState(
+            DeathCinematicState.Phase.PREDEATH, 0L, 100L, 0L, 380L, false, 1, false, 1_000L
+        );
+
+        List<HudRenderCommand> finalCommands = NearDeathCollapsePlanner.buildCommands(finalDeathState, 320, 180);
+        List<HudRenderCommand> nonFinalCommands = NearDeathCollapsePlanner.buildCommands(nonFinalState, 320, 180);
+
+        int expectedMeridianVignette = HudTextHelper.withAlpha(NearDeathCollapsePlanner.MERIDIAN_COLOR, 80);
+        int expectedQiVignette = HudTextHelper.withAlpha(NearDeathCollapsePlanner.QI_COLOR, 80);
+
+        assertEquals(
+            expectedMeridianVignette,
+            finalCommands.get(1).color(),
+            "expected the edge vignette to use MERIDIAN_COLOR-derived alpha when finalDeath=true, actual: 0x"
+                + Integer.toHexString(finalCommands.get(1).color())
+        );
+        assertEquals(
+            expectedQiVignette,
+            nonFinalCommands.get(1).color(),
+            "expected the edge vignette to stay QI_COLOR-derived at hp≈1.0 when finalDeath=false, actual: 0x"
+                + Integer.toHexString(nonFinalCommands.get(1).color())
+        );
     }
 
     @Test
