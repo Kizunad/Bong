@@ -1,18 +1,6 @@
 package com.bong.client.mixin;
 
-import com.bong.client.block.BlockVanillaIconMap;
-import com.bong.client.combat.EquippedShield;
-import com.bong.client.combat.EquippedShieldStore;
-import com.bong.client.combat.EquippedWeapon;
-import com.bong.client.combat.SkillBarEntry;
-import com.bong.client.combat.SkillBarStore;
-import com.bong.client.combat.WeaponEquippedStore;
-import com.bong.client.inventory.model.EquipSlotType;
-import com.bong.client.inventory.model.InventoryItem;
-import com.bong.client.inventory.state.InventoryStateStore;
-import com.bong.client.lingtian.HoeVanillaIconMap;
-import com.bong.client.weapon.ShieldVanillaIconMap;
-import com.bong.client.weapon.WeaponVanillaIconMap;
+import com.bong.client.weapon.HeldItemStackResolver;
 
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.render.item.HeldItemRenderer;
@@ -26,20 +14,24 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 /**
- * plan-weapon-v1 §5.1：把 Bong 武器 (ItemInstance / {@link EquippedWeapon}) 注入
- * vanilla 持握渲染管线。
+ * plan-weapon-v1 §5.1：把 Bong 武器 (ItemInstance / {@link com.bong.client.combat.EquippedWeapon})
+ * 注入 vanilla 持握渲染管线。
  *
- * <p>链路：server 推 {@code WeaponEquippedV1} → {@link WeaponEquippedStore}。玩家真正
+ * <p>链路：server 推 {@code WeaponEquippedV1} → {@code WeaponEquippedStore}。玩家真正
  * 的 vanilla {@code PlayerEntity.getMainHandStack()} 是 EMPTY（Bong 不同步到 vanilla
  * inventory）。vanilla {@link HeldItemRenderer} 每 tick 从 player 拉 stack 缓存到
  * {@code mainHand} / {@code offHand} 字段；FPV 渲染直接读这俩字段,如果是 EMPTY 就画
  * 空手动画,不走通用 {@code renderItem} overload。
  *
  * <p>所以 target 选 {@link HeldItemRenderer#updateHeldItems()}：每 tick TAIL 后,如果
- * {@link WeaponEquippedStore} 有 Bong 武器而 vanilla 字段为空,直接改写 {@code mainHand}
- * 为 {@link WeaponVanillaIconMap} 合成的 fake {@code ItemStack}。后续 vanilla 渲染读到
- * 的就是非空 stack,走正常 item 渲染路径 → SML 劫持（见
+ * 字段为空则用 {@link HeldItemStackResolver} 算出的 fallback fake stack 覆盖。后续
+ * vanilla 渲染读到的就是非空 stack,走正常 item 渲染路径 → SML 劫持（见
  * {@link com.bong.client.weapon.WeaponRenderBootstrap}）→ Bong OBJ 模型。
+ *
+ * <p>F8：weapon → shield(仅 off_hand) → block → hoe 的 fallback 优先级链此前在本类与
+ * {@link MixinPlayerEntityHeldItem}（TPV）各自重复实现了一份，历史上因此漏同步过两次
+ * （盾 off_hand 只接了这里、锄头 TPV 缺失）。现统一委托给 {@link HeldItemStackResolver}
+ * （非-mixin 包，两处调用同一份实现，语义不变）。
  *
  * <p>副作用说明：attack / damage 等 gameplay 逻辑不读 {@code HeldItemRenderer} 字段,
  * 走 {@code player.getMainHandStack()},所以本 Mixin 只影响视觉,不干扰战斗数值。
@@ -56,58 +48,18 @@ public abstract class MixinHeldItemRenderer {
     private void bong$overrideHeldItemsForBongWeapons(CallbackInfo ci) {
         if (MinecraftClient.getInstance().player == null) return;
 
-        EquippedWeapon bongMain = WeaponEquippedStore.mainHandRenderWeapon();
-        if (bongMain != null && this.mainHand.isEmpty()) {
-            ItemStack fake = WeaponVanillaIconMap.createStackFor(bongMain.templateId());
-            if (fake != null) {
+        if (this.mainHand.isEmpty()) {
+            HeldItemStackResolver.resolveMainHand().ifPresent(fake -> {
                 this.mainHand = fake;
                 if (!loggedFirstInject) {
-                    LOGGER.info("注入 fake stack for main_hand/two_hand template={} → {}",
-                            bongMain.templateId(), fake.getItem());
+                    LOGGER.info("注入 fake stack for main_hand/two_hand → {}", fake.getItem());
                     loggedFirstInject = true;
                 }
-            }
+            });
         }
 
-        EquippedWeapon bongOff = WeaponEquippedStore.get("off_hand");
-        if (bongOff != null && this.offHand.isEmpty()) {
-            ItemStack fake = WeaponVanillaIconMap.createStackFor(bongOff.templateId());
-            if (fake != null) this.offHand = fake;
+        if (this.offHand.isEmpty()) {
+            HeldItemStackResolver.resolveOffHand().ifPresent(fake -> this.offHand = fake);
         }
-
-        // #3 手持盾无盾模型：off_hand 盾走独立 EquippedShieldStore（盾非武器），此前 FPV 渲染
-        // 链只读 WeaponEquippedStore → off_hand 恒空 → 盾不显。无 off_hand 武器时补注入盾 fake stack。
-        if (bongOff == null && this.offHand.isEmpty()) {
-            EquippedShield shield = EquippedShieldStore.snapshot();
-            if (shield != null) {
-                ItemStack fake = ShieldVanillaIconMap.createStackFor(shield.templateId());
-                if (fake != null) this.offHand = fake;
-            }
-        }
-
-        if (bongMain == null && this.mainHand.isEmpty()) {
-            ItemStack fake = bong$selectedBlockStack().orElse(null);
-            if (fake != null) this.mainHand = fake;
-        }
-
-        // plan-lingtian-v1 §1.2.1 — 无 Bong 武器/方块 + 主手装备槽是 Bong 锄头时，合成 fake
-        // vanilla HOE stack 让 HeldItemRenderer 画原生锄头 FP（三档材质区分铁/灵铁/玄铁）。
-        if (bongMain == null && this.mainHand.isEmpty()) {
-            InventoryItem main = InventoryStateStore.snapshot().equipped().get(EquipSlotType.MAIN_HAND);
-            if (main != null && !main.isEmpty() && HoeVanillaIconMap.isHoe(main.itemId())) {
-                ItemStack fake = HoeVanillaIconMap.createStackFor(main.itemId());
-                if (fake != null) this.mainHand = fake;
-            }
-        }
-    }
-
-    private static java.util.Optional<ItemStack> bong$selectedBlockStack() {
-        MinecraftClient client = MinecraftClient.getInstance();
-        if (client == null || client.player == null) return java.util.Optional.empty();
-
-        int selectedSlot = SkillBarStore.selectedSlot();
-        SkillBarEntry entry = SkillBarStore.snapshot().slot(selectedSlot);
-        if (entry == null || entry.kind() != SkillBarEntry.Kind.ITEM) return java.util.Optional.empty();
-        return BlockVanillaIconMap.createStackFor(entry.id());
     }
 }

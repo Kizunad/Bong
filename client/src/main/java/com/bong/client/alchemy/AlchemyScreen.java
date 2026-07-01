@@ -11,8 +11,8 @@ import com.bong.client.inventory.component.BackpackGridPanel;
 import com.bong.client.inventory.component.GridSlotComponent;
 import com.bong.client.inventory.model.InventoryItem;
 import com.bong.client.inventory.model.InventoryModel;
-import com.bong.client.inventory.model.MockInventoryData;
 import com.bong.client.inventory.state.DragState;
+import com.bong.client.inventory.state.InventoryStateStore;
 import com.bong.client.skill.SkillId;
 import com.bong.client.skill.SkillSetSnapshot;
 import com.bong.client.skill.SkillSetStore;
@@ -71,10 +71,10 @@ public final class AlchemyScreen extends BaseOwoScreen<FlowLayout> {
     private final InventoryItem[] furnaceItems = new InventoryItem[FURNACE_SLOTS];
 
     private BackpackGridPanel backpack;
-    private final InventoryModel mockModel;
     private final DragState dragState = new DragState();
     private final BlockPos furnacePos;
     private Consumer<SkillSetSnapshot> skillListener;
+    private Consumer<InventoryModel> inventoryListener;
 
     private int dupFlashTicks = 0;
 
@@ -85,7 +85,6 @@ public final class AlchemyScreen extends BaseOwoScreen<FlowLayout> {
     public AlchemyScreen(BlockPos furnacePos) {
         super(TITLE);
         this.furnacePos = furnacePos;
-        this.mockModel = MockInventoryData.create();
     }
 
     @Override
@@ -98,6 +97,10 @@ public final class AlchemyScreen extends BaseOwoScreen<FlowLayout> {
         if (skillListener != null) {
             SkillSetStore.removeListener(skillListener);
             skillListener = null;
+        }
+        if (inventoryListener != null) {
+            InventoryStateStore.removeListener(inventoryListener);
+            inventoryListener = null;
         }
         super.removed();
     }
@@ -125,10 +128,33 @@ public final class AlchemyScreen extends BaseOwoScreen<FlowLayout> {
         panel.child(buildBottomStrip());
 
         root.child(panel);
-        backpack.populateFromModel(mockModel);
+        backpack.populateFromModel(InventoryStateStore.snapshot());
         refreshAlchemySkillText();
         skillListener = next -> MinecraftClient.getInstance().execute(this::refreshAlchemySkillText);
         SkillSetStore.addListener(skillListener);
+        inventoryListener = this::scheduleBackpackRefresh;
+        InventoryStateStore.addListener(inventoryListener);
+    }
+
+    /**
+     * F13：背包列改由 {@link InventoryStateStore} 驱动，仿 {@code CraftScreen.scheduleRefresh()}
+     * 的监听生命周期——{@link InventoryStateStore} 的回调线程未必是客户端主线程（javadoc:
+     * "Listener is called on the thread that calls replace()"），owo UI 组件必须回到主线程改。
+     * 与 {@code CraftScreen} 一致做 null 判空（而非无条件 {@code MinecraftClient.getInstance().execute}），
+     * 避免 client 尚未就绪/已释放时的 NPE。
+     */
+    private void scheduleBackpackRefresh(InventoryModel model) {
+        MinecraftClient client = MinecraftClient.getInstance();
+        if (client != null) {
+            client.execute(() -> refreshBackpack(model));
+        } else {
+            refreshBackpack(model);
+        }
+    }
+
+    private void refreshBackpack(InventoryModel model) {
+        if (backpack == null) return;
+        backpack.populateFromModel(model);
     }
 
     private FlowLayout buildHeader() {
@@ -323,7 +349,9 @@ public final class AlchemyScreen extends BaseOwoScreen<FlowLayout> {
 
         col.child(Components.label(Text.literal("§f§l背包")));
 
-        backpack = new BackpackGridPanel("alchemy_mock", 5, 7);
+        // F13：容器 id 绑定真实 main_pack（5×7，与此处固定 5×7 面板尺寸一致），
+        // 不再用与任何真实数据都不匹配的占位 id（"alchemy_mock"）。
+        backpack = new BackpackGridPanel(InventoryModel.PRIMARY_CONTAINER_ID, 5, 7);
         col.child(backpack.container());
 
         weightLabel = Components.label(Text.literal(""));
