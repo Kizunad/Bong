@@ -10,11 +10,16 @@ import com.bong.client.hud.BongToast;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.google.protobuf.Descriptors;
+import com.google.protobuf.DynamicMessage;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.List;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -282,6 +287,117 @@ class ProtoServerDataBridgeTest {
         assertTrue(count >= 100,
                 "expected at least 100 mapped cases, got " + count +
                 " — did you forget to add a new PayloadCase→type mapping?");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // F18: PayloadCase 穷尽保护（编译期/测试期）
+    //
+    // CASE_TO_TYPE（手写 m.put）与 extractInner switch 此前均未对
+    // PayloadCase.values() 做穷尽校验——PayloadCase 是闭合 enum（proto3 oneof 无
+    // UNRECOGNIZED），漏映射新 variant 会在运行期静默丢包（bridge() 返回
+    // "unmapped PayloadCase: X" 或 "failed to extract inner message for X"，
+    // 上层只 LOGGER.warn，玩家侧对应功能悄无声息地失效）。
+    //
+    // 本测试反射遍历 proto schema 里 ServerDataEnvelope.payload oneof 的每个字段，
+    // 逐个构造"只设置该字段、内容为默认值"的最小 envelope，喂给 bridge()，断言
+    // 结果不是那两种"漏映射"专属错误信息。之所以不要求每个 case 都 isSuccess()：
+    // 少数 variant（CRAFT_OUTCOME / INVENTORY_EVENT）自身还嵌套一层 oneof，默认值
+    // 下那层 oneof 未设置，会走 "has no oneof variant set" 分支报错——这是预期行为
+    // （测的是"映射表是否穷尽"，不是"每个 variant 塞空数据也必须成功桥接"）。
+    //
+    // 排除清单（12 个，均已用 python 脚本对拍 proto 源文件 135 个 oneof 字段 −
+    // CASE_TO_TYPE 123 个映射 = 12 精确核对）：
+    //   - VFX_EVENT / AUDIO_PLAY_EVENT / AUDIO_STOP_EVENT / AMBIENT_ZONE_EVENT /
+    //     ZONE_ENVIRONMENT_STATE：各自走独立 CustomPayload channel
+    //     （bong:vfx_event / bong:audio/play / bong:audio/stop /
+    //     bong:audio/ambient_zone / bong:zone_environment，见 BongNetworkHandler
+    //     registerGlobalReceiver），从不经过 bong:server_data / ServerDataEnvelope。
+    //   - MUTATION_STATE / MUTATION_EVENT / DANDAO_STYLE / TSY_ENTER_EVENT /
+    //     TSY_EXIT_EVENT / TSY_NPC_SPAWNED / TSY_SENTINEL_PHASE_CHANGED：
+    //     全仓（含 main 与 test）零 getter 引用，proto schema 预留字段，尚无 client
+    //     消费方——接线时需同时补 CASE_TO_TYPE / extractInner 并从此排除清单移除。
+    // ═══════════════════════════════════════════════════════════════════
+
+    private static final Set<Envelope.ServerDataEnvelope.PayloadCase> KNOWN_UNMAPPED_PAYLOAD_CASES =
+            EnumSet.of(
+                    Envelope.ServerDataEnvelope.PayloadCase.VFX_EVENT,
+                    Envelope.ServerDataEnvelope.PayloadCase.AUDIO_PLAY_EVENT,
+                    Envelope.ServerDataEnvelope.PayloadCase.AUDIO_STOP_EVENT,
+                    Envelope.ServerDataEnvelope.PayloadCase.AMBIENT_ZONE_EVENT,
+                    Envelope.ServerDataEnvelope.PayloadCase.ZONE_ENVIRONMENT_STATE,
+                    Envelope.ServerDataEnvelope.PayloadCase.MUTATION_STATE,
+                    Envelope.ServerDataEnvelope.PayloadCase.MUTATION_EVENT,
+                    Envelope.ServerDataEnvelope.PayloadCase.DANDAO_STYLE,
+                    Envelope.ServerDataEnvelope.PayloadCase.TSY_ENTER_EVENT,
+                    Envelope.ServerDataEnvelope.PayloadCase.TSY_EXIT_EVENT,
+                    Envelope.ServerDataEnvelope.PayloadCase.TSY_NPC_SPAWNED,
+                    Envelope.ServerDataEnvelope.PayloadCase.TSY_SENTINEL_PHASE_CHANGED
+            );
+
+    @Test
+    void everyPayloadCaseIsMapped_orIsOnTheExplicitExclusionList() {
+        Descriptors.OneofDescriptor payloadOneof = payloadOneofDescriptor();
+        assertNotNull(payloadOneof,
+                "proto schema 里找不到 ServerDataEnvelope 的 'payload' oneof —— proto 生成物结构是否变了？");
+
+        List<String> mappingGaps = new ArrayList<>();
+        int exercised = 0;
+
+        for (Descriptors.FieldDescriptor field : payloadOneof.getFields()) {
+            Envelope.ServerDataEnvelope.PayloadCase payloadCase =
+                    Envelope.ServerDataEnvelope.PayloadCase.forNumber(field.getNumber());
+            assertNotNull(payloadCase,
+                    "proto 字段 " + field.getFullName() + " (号=" + field.getNumber()
+                            + ") 找不到对应 PayloadCase —— 生成代码与 .proto 是否不同步？");
+            if (KNOWN_UNMAPPED_PAYLOAD_CASES.contains(payloadCase)) {
+                continue;
+            }
+            exercised++;
+
+            // 构造"该 oneof 字段=消息类型默认值，其余字段不设"的最小 envelope。
+            Envelope.ServerDataEnvelope envelope = (Envelope.ServerDataEnvelope)
+                    Envelope.ServerDataEnvelope.newBuilder()
+                            .setField(field, DynamicMessage.getDefaultInstance(field.getMessageType()))
+                            .build();
+
+            ProtoServerDataBridge.BridgeResult result =
+                    ProtoServerDataBridge.bridge(envelope.toByteArray());
+
+            if (!result.isSuccess()) {
+                String err = result.errorMessage() == null ? "" : result.errorMessage();
+                boolean isMappingGap = err.startsWith("unmapped PayloadCase:")
+                        || err.startsWith("failed to extract inner message for ");
+                if (isMappingGap) {
+                    mappingGaps.add(payloadCase.name() + " → " + err);
+                }
+                // 非映射缺口的失败（如嵌套 oneof 默认值未设变体）不是本测试关心的问题，忽略。
+            }
+        }
+
+        assertTrue(exercised >= 100,
+                "期望穷举到 >=100 个非排除 PayloadCase（proto schema 变小了，还是排除清单配错了？），实际="
+                        + exercised);
+        assertTrue(mappingGaps.isEmpty(),
+                "以下 PayloadCase 在 ProtoServerDataBridge 里存在映射缺口"
+                        + "（CASE_TO_TYPE 或 extractInner 漏收录该 variant，新数据会在运行期静默丢包，"
+                        + "上层只 LOGGER.warn，对应功能悄无声息失效）。\n"
+                        + "若这是刻意排除的 channel-specific / 尚未接线 variant，"
+                        + "把它加进本测试的 KNOWN_UNMAPPED_PAYLOAD_CASES 并写明理由；"
+                        + "否则请在 ProtoServerDataBridge.CASE_TO_TYPE 静态块和 extractInner switch 里补上映射：\n"
+                        + String.join("\n", mappingGaps));
+    }
+
+    @Test
+    void knownUnmappedPayloadCasesExclusionList_matchesActualGapCount() {
+        // 回归 pin：排除清单大小必须精确等于"proto oneof 字段数 − CASE_TO_TYPE 映射数"，
+        // 防止有人往排除清单里顺手多塞一个其实已经映射好的 case（掩盖真实的映射缺口）。
+        Descriptors.OneofDescriptor payloadOneof = payloadOneofDescriptor();
+        int totalFields = payloadOneof.getFields().size();
+        int mapped = ProtoServerDataBridge.mappedCaseCount();
+        assertEquals(totalFields - mapped, KNOWN_UNMAPPED_PAYLOAD_CASES.size(),
+                "排除清单大小(" + KNOWN_UNMAPPED_PAYLOAD_CASES.size() + ")应精确等于 proto 字段总数("
+                        + totalFields + ") − CASE_TO_TYPE 映射数(" + mapped
+                        + ")。不一致说明排除清单本身配错了（多排或漏排）。");
     }
 
     // ─── Faction war HUD proto bridge ────────────────────────────────
@@ -1226,5 +1342,20 @@ class ProtoServerDataBridgeTest {
         ProtoServerDataBridge.BridgeResult result = ProtoServerDataBridge.bridge(envelope.toByteArray());
         assertTrue(result.isSuccess(), "bridge should succeed: " + result.errorMessage());
         return JsonParser.parseString(result.legacyJson()).getAsJsonObject();
+    }
+
+    /**
+     * 定位 {@code ServerDataEnvelope.payload} oneof 的 descriptor。protobuf-java 4.28.3 的
+     * {@code Descriptor} 没有 {@code findOneofByName}（旧版本 API 里有，这个版本没有），
+     * 只能遍历 {@link Descriptors.Descriptor#getOneofs()} 按名字找。
+     */
+    private static Descriptors.OneofDescriptor payloadOneofDescriptor() {
+        for (Descriptors.OneofDescriptor oneof :
+                Envelope.ServerDataEnvelope.getDescriptor().getOneofs()) {
+            if ("payload".equals(oneof.getName())) {
+                return oneof;
+            }
+        }
+        return null;
     }
 }

@@ -13,6 +13,7 @@ import com.bong.client.botany.BotanyHudBootstrap;
 import com.bong.client.botany.BotanyPlantRenderBootstrap;
 import com.bong.client.combat.CombatHudBootstrap;
 import com.bong.client.combat.juice.CombatJuiceSystem;
+import com.bong.client.cultivation.BreakthroughBillboardWorldRenderer;
 import com.bong.client.dandao.BaolongwangRenderBootstrap;
 import com.bong.client.debug.BongAnimCommand;
 import com.bong.client.debug.BongHudCommand;
@@ -77,6 +78,7 @@ public class BongClient implements ClientModInitializer {
         BongNetworkHandler.register();
         NpcNametagRenderer.register();
         NpcLodWorldRenderer.register();
+        BreakthroughBillboardWorldRenderer.register();
         NpcDialogueBubbleRenderer.register();
         NpcMoodIcon.register();
         HudRenderCallback.EVENT.register(BongHud::render);
