@@ -3,7 +3,10 @@
 //! 当前阶段：P0 数据契约 + 曲线 + 单测；P1 events + channel + IPC schema 双端；
 //! P2 client 侧接入 InspectScreen 技艺 tab（仅服务端侧 event/channel/schema 对接点 + 消费 system）。
 //!
-//! 未启用 —— `main.rs` 的 `mod skill` 带 `#[allow(dead_code)]`，系统挂载等 P3+ 触发点接入时再 `register(app)`。
+//! F26 — 已挂载：`main.rs` 顶部 `use bong_server::{ ..., skill, ... };` 正常声明本模块
+//! （无 `#[allow(dead_code)]`），且 `main.rs` 内 `skill::register(&mut app)` 已被实际调用，
+//! 本模块的 4 个 Event + [`consume_skill_xp_gain`] / [`record_skill_lv_up`] 两个 system 均已
+//! 在运行时挂载执行。
 
 pub mod components;
 pub mod config;
@@ -20,8 +23,7 @@ use events::{SkillLvUp, SkillXpGain};
 
 /// P1 阶段：注册 4 个 Event + 消费 `SkillXpGain` 的 system。
 ///
-/// **尚未被 `main.rs` 调用**（见 plan §9 P1：各 plan 触发点对接在 P3+）。
-/// 先提供 register 函数以便测试验证 framework 就绪。
+/// F26 — 已被 `main.rs`（`skill::register(&mut app)`）实际调用挂载，非仅供测试。
 pub fn register(app: &mut App) {
     app.init_resource::<config::SkillConfigStore>();
     app.insert_resource(config::SkillConfigSchemas::default());

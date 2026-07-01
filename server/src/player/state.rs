@@ -668,6 +668,37 @@ pub fn save_player_core_slice(
     Ok(persistence.db_path().to_path_buf())
 }
 
+/// F21 — 断连/组件缺失兜底：不依赖 [`LifespanComponent`]，直接把某用户名的
+/// `in_coffin` 清 0。用户名在 `player_lifespan` 里没有对应行时天然 no-op
+/// （`UPDATE ... WHERE username = ?1` 命中 0 行，既不报错也不误插入残缺行）。
+///
+/// 修 F21"重启复钉"风险：当 [`LifespanComponent`] 缺失（例如断连时组件已被
+/// ECS 移除）导致 [`crate::coffin::persist_in_coffin`] 早退只 `warn` 不写库，
+/// SQLite 会保留旧 `in_coffin=true`，玩家下次连接会被错误重钉到可能已不存在
+/// 的棺材坐标（见 `player::attach_player_state_to_joined_clients` 的
+/// `persisted.in_coffin` 读取路径）。
+///
+/// `coffin_grade` 一并写回默认档（`CoffinGrade::Mundane` / db 值 `"mundane"`），
+/// 而不是计划文本里写的 `NULL`——`player_lifespan.coffin_grade` 列是
+/// `NOT NULL DEFAULT 'mundane'`（见 `persistence::apply_migrations`
+/// user_version 27 迁移），写 NULL 会直接违反列约束、让整条 UPDATE 报错、
+/// 反而连 `in_coffin` 都清不掉。`in_coffin=0` 时读路径本就不读 `coffin_grade`
+/// （`load_player_lifespan_from_sqlite`：`if in_coffin { Some(grade) } else {
+/// None }`），所以写回默认档在语义上等价于"清空"。
+pub fn clear_coffin_flag_for_username(
+    persistence: &PlayerStatePersistence,
+    username: &str,
+) -> io::Result<PathBuf> {
+    let connection = open_player_connection(persistence)?;
+    connection
+        .execute(
+            "UPDATE player_lifespan SET in_coffin = 0, coffin_grade = ?2 WHERE username = ?1",
+            params![username, CoffinGrade::default().as_db_str()],
+        )
+        .map_err(io::Error::other)?;
+    Ok(persistence.db_path().to_path_buf())
+}
+
 pub fn save_player_slow_slice(
     persistence: &PlayerStatePersistence,
     username: &str,
@@ -4702,6 +4733,143 @@ mod player_state_tests {
         assert_eq!(
             grade, "bronze",
             "save_player_lifespan_slice 不应洗掉 bronze grade，期望 bronze，实际 {grade}"
+        );
+
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    // ─── F21 — clear_coffin_flag_for_username (断连时无 LifespanComponent 兜底) ───
+
+    #[test]
+    fn clear_coffin_flag_for_username_zeroes_in_coffin_and_resets_grade() {
+        let (persistence, data_dir) = sqlite_persistence("clear-coffin-flag-happy-path");
+        let lifespan = crate::cultivation::lifespan::LifespanComponent {
+            born_at_tick: 0,
+            years_lived: 3.0,
+            cap_by_realm: 100,
+            offline_pause_tick: None,
+        };
+        save_player_lifespan_slice_with_coffin(
+            &persistence,
+            "Azure",
+            &lifespan,
+            Some(CoffinGrade::Bronze),
+        )
+        .expect("seeding an in-coffin row should succeed");
+
+        {
+            let conn = Connection::open(persistence.db_path()).expect("db should open");
+            let (in_coffin, grade): (i64, String) = conn
+                .query_row(
+                    "SELECT in_coffin, coffin_grade FROM player_lifespan WHERE username = ?1",
+                    params!["Azure"],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .expect("seed row should exist");
+            assert_eq!(
+                in_coffin, 1,
+                "sanity check: seed row must start in_coffin=1"
+            );
+            assert_eq!(
+                grade, "bronze",
+                "sanity check: seed row must start grade=bronze"
+            );
+        }
+
+        clear_coffin_flag_for_username(&persistence, "Azure")
+            .expect("clearing an existing row should succeed");
+
+        let conn = Connection::open(persistence.db_path()).expect("db should open");
+        let (in_coffin, grade): (i64, String) = conn
+            .query_row(
+                "SELECT in_coffin, coffin_grade FROM player_lifespan WHERE username = ?1",
+                params!["Azure"],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("row should still exist after clearing");
+        assert_eq!(
+            in_coffin, 0,
+            "F21: in_coffin must be zeroed so the join-time re-pin check \
+             (`persisted.in_coffin`) does not fire on a coffin that may no longer exist"
+        );
+        assert_eq!(
+            grade,
+            CoffinGrade::default().as_db_str(),
+            "coffin_grade must reset to the NOT NULL column default ('mundane'), not NULL — the \
+             column has no NULL representation (NOT NULL DEFAULT 'mundane')"
+        );
+
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn clear_coffin_flag_for_username_is_a_noop_when_no_row_exists() {
+        let (persistence, data_dir) = sqlite_persistence("clear-coffin-flag-noop-no-row");
+
+        // 没有先 save_player_lifespan_slice_with_coffin 播种任何行。
+        clear_coffin_flag_for_username(&persistence, "GhostUser")
+            .expect("clearing a nonexistent row must succeed (0 rows affected), not error");
+
+        let conn = Connection::open(persistence.db_path()).expect("db should open");
+        let row_exists: Option<i64> = conn
+            .query_row(
+                "SELECT 1 FROM player_lifespan WHERE username = ?1",
+                params!["GhostUser"],
+                |row| row.get(0),
+            )
+            .optional()
+            .expect("query should not error");
+        assert!(
+            row_exists.is_none(),
+            "F21: clearing a username with no player_lifespan row must not insert a new \
+             (incomplete) row — `UPDATE ... WHERE username = ?1` on 0 matching rows is a true no-op"
+        );
+
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn clear_coffin_flag_for_username_only_touches_the_target_username() {
+        let (persistence, data_dir) = sqlite_persistence("clear-coffin-flag-isolation");
+        let lifespan = crate::cultivation::lifespan::LifespanComponent {
+            born_at_tick: 0,
+            years_lived: 1.0,
+            cap_by_realm: 100,
+            offline_pause_tick: None,
+        };
+        save_player_lifespan_slice_with_coffin(
+            &persistence,
+            "Azure",
+            &lifespan,
+            Some(CoffinGrade::Jade),
+        )
+        .expect("seeding Azure's in-coffin row should succeed");
+        save_player_lifespan_slice_with_coffin(
+            &persistence,
+            "Bystander",
+            &lifespan,
+            Some(CoffinGrade::Stone),
+        )
+        .expect("seeding Bystander's in-coffin row should succeed");
+
+        clear_coffin_flag_for_username(&persistence, "Azure")
+            .expect("clearing Azure's row should succeed");
+
+        let conn = Connection::open(persistence.db_path()).expect("db should open");
+        let (bystander_in_coffin, bystander_grade): (i64, String) = conn
+            .query_row(
+                "SELECT in_coffin, coffin_grade FROM player_lifespan WHERE username = ?1",
+                params!["Bystander"],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("Bystander row should still exist");
+        assert_eq!(
+            bystander_in_coffin, 1,
+            "F21: clearing Azure's coffin flag must not touch Bystander's row"
+        );
+        assert_eq!(
+            bystander_grade, "stone",
+            "F21: clearing Azure's coffin flag must not touch Bystander's grade"
         );
 
         let _ = fs::remove_dir_all(&data_dir);

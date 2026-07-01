@@ -303,7 +303,13 @@ fn apply_harvest_modifiers_to_item(
     }
 }
 
-fn herbalism_effective_lv(cultivation: Option<&Cultivation>, skill_set: Option<&SkillSet>) -> u8 {
+// F23 — `pub(crate)` (not private) so `lingtian::systems::handle_start_harvest` can reuse the
+// same herbalism-level resolution to gate `SessionMode::Auto` server-side (see botany/components.rs
+// `BotanySkillState::auto_unlock_level`). Botany's own harvest flow already used this locally.
+pub(crate) fn herbalism_effective_lv(
+    cultivation: Option<&Cultivation>,
+    skill_set: Option<&SkillSet>,
+) -> u8 {
     let real_lv = skill_set
         .and_then(|skill_set| {
             skill_set
