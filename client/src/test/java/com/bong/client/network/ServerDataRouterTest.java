@@ -177,7 +177,9 @@ public class ServerDataRouterTest {
             // plan-exploration-probe-return-v1 P2 — 修炼顿悟邀约 S2C
             "insight_offer",
             // 功法 AV 里程碑 系列 2b — zhenmai 5 招专属 HUD S2C（条件式 HUD 状态推送）
-            "zhenmai_hud"
+            "zhenmai_hud",
+            // F9 跨层修复 — 出生引导棺权威坐标广播（module-map 跨层修复）
+            "tutorial_coffin_pos"
             // NOTE: plan-agent-ui-data-v1 P1 — "agent_ui_request" / "agent_ui_close" 已迁移
             // 到专属 bong:agent_ui_request / bong:agent_ui_close channel（JSON），
             // 不再经 bong:server_data / proto 路径（proto_convert.rs unreachable!() panic）。

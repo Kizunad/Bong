@@ -281,6 +281,9 @@ pub enum ServerDataType {
     // ─── plan-halfstep-rechallenge-integration-v1 P0：半步化虚重渡触发 HUD ─
     /// 半步重渡触发通知（targeted→当事玩家）：灵机涌现提示 + 倒计时。
     HalfStepRechallenge,
+    // ─── F9 跨层修复：出生引导棺权威坐标广播 ───────────────────────
+    /// 出生引导棺权威坐标（join 时广播，取代 client 硬编码判定盒）。
+    TutorialCoffinPos,
 }
 
 #[derive(Debug, Clone)]
@@ -571,6 +574,12 @@ pub enum ServerDataPayloadV1 {
     // ─── plan-halfstep-rechallenge-integration-v1 P0：半步化虚重渡触发 HUD ─
     /// 半步重渡触发通知（targeted→当事玩家）。
     HalfStepRechallenge(HalfStepRechallengeV1),
+    // ─── F9 跨层修复：出生引导棺权威坐标广播 ───────────────────────
+    /// 出生引导棺权威坐标（server/src/world/spawn_tutorial.rs 的 `TutorialCoffin.pos`，
+    /// join 时广播给 client，取代硬编码 |x|<=8 / y∈[60,90] / |z|<=8 判定盒）。
+    TutorialCoffinPos {
+        position: [i32; 3],
+    },
 }
 
 /// 神识感知矿脉回执 S2C。扁平化 `MineralProbeResult` 枚举。
@@ -1776,6 +1785,10 @@ enum ServerDataPayloadWireV1 {
         #[serde(flatten)]
         data: HalfStepRechallengeV1,
     },
+    // ─── F9 跨层修复：出生引导棺权威坐标广播 ───────────────────────
+    TutorialCoffinPos {
+        position: [i32; 3],
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2650,6 +2663,10 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
             ServerDataPayloadWireV1::HalfStepRechallenge { data } => {
                 Ok(Self::HalfStepRechallenge(data))
             }
+            // ─── F9 跨层修复：出生引导棺权威坐标广播 ────────────────────
+            ServerDataPayloadWireV1::TutorialCoffinPos { position } => {
+                Ok(Self::TutorialCoffinPos { position })
+            }
         }
     }
 }
@@ -3232,6 +3249,10 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
             ServerDataPayloadV1::HalfStepRechallenge(data) => {
                 Self::HalfStepRechallenge { data: data.clone() }
             }
+            // ─── F9 跨层修复：出生引导棺权威坐标广播 ────────────────────
+            ServerDataPayloadV1::TutorialCoffinPos { position } => Self::TutorialCoffinPos {
+                position: *position,
+            },
         }
     }
 }
@@ -3565,6 +3586,8 @@ impl ServerDataPayloadV1 {
             Self::AgentUiClose(..) => ServerDataType::AgentUiClose,
             // ─── plan-halfstep-rechallenge-integration-v1 P0 ────────────────
             Self::HalfStepRechallenge(..) => ServerDataType::HalfStepRechallenge,
+            // ─── F9 跨层修复：出生引导棺权威坐标广播 ────────────────────
+            Self::TutorialCoffinPos { .. } => ServerDataType::TutorialCoffinPos,
         }
     }
 
@@ -3715,6 +3738,8 @@ impl ServerDataPayloadV1 {
             Self::AgentUiRequest(..) => true,
             Self::AgentUiClose(..) => true,
             Self::HalfStepRechallenge(..) => true,
+            // ─── F9 跨层修复：出生引导棺权威坐标广播（proto 路径） ──────
+            Self::TutorialCoffinPos { .. } => false,
         }
     }
 }
@@ -4177,6 +4202,10 @@ mod tests {
             ServerDataPayloadV1::WorkbenchOpen {
                 entity_id: 42,
                 position: [1, 64, -2],
+            },
+            // F9 跨层修复：出生引导棺权威坐标广播 wire tag pin。
+            ServerDataPayloadV1::TutorialCoffinPos {
+                position: [0, 69, 0],
             },
             ServerDataPayloadV1::CombatEventFloater(CombatEventFloaterV1 {
                 events: vec![CombatEventFloaterEntryV1 {

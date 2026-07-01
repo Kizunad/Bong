@@ -24,7 +24,10 @@ use crate::forge::learned::LearnedBlueprints;
 use crate::inventory::{
     add_item_to_player_inventory, InventoryInstanceIdAllocator, ItemRegistry, PlayerInventory,
 };
-use crate::network::agent_bridge::SERVER_DATA_CHANNEL;
+use crate::network::agent_bridge::{
+    payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
+};
+use crate::network::{log_payload_build_error, send_server_data_payload};
 use crate::npc::lifecycle::{NpcArchetype, NpcSpawnNotice, NpcSpawnSource};
 use crate::npc::spawn::{
     snap_spawn_y_to_surface, spawn_notice, spawn_rogue_npc_at, NpcSkinSpawnContext,
@@ -33,6 +36,7 @@ use crate::npc::spawn_rat::spawn_rat_npc_at;
 use crate::persistence::{load_player_cultivation_bundle, PersistenceSettings};
 use crate::player::gameplay::PendingGameplayNarrations;
 use crate::schema::common::NarrationStyle;
+use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 use crate::skin::{NpcSkinFallbackPolicy, SkinPool};
 use crate::world::dimension::DimensionLayers;
 use crate::world::terrain::TerrainProviders;
@@ -146,6 +150,15 @@ pub struct TutorialCoffin {
     pub pos: [i32; 3],
 }
 
+/// F9 跨层修复 — 标记该 client entity 已收到 `tutorial_coffin_pos` S2C 广播。
+///
+/// 不能直接绑死 `Added<Client>`（只在 join 那一 tick 触发一次）：若此刻
+/// `TutorialCoffin` marker 尚未从 POI 生成完毕（等 `skin_pool` ready 可能要
+/// 好几 tick），最早加入的玩家就永远收不到坐标。改用这个 marker + retry-until-sent
+/// 的写法：每 tick 扫一遍还没打标记的 client，coffin 一旦存在就补发。
+#[derive(Debug, Clone, Copy, Component)]
+pub struct TutorialCoffinPosSent;
+
 #[derive(Debug, Clone, Copy, Component)]
 pub struct TutorialLingquan {
     pub index: u8,
@@ -167,6 +180,9 @@ pub struct TutorialTelemetry {
 
 type JoinedTutorialClientQueryItem<'a> = (Entity, &'a Username);
 type JoinedTutorialClientFilter = (Added<Client>, Without<TutorialState>);
+/// F9 跨层修复 — 还没收到 `tutorial_coffin_pos` 广播的 client entity。
+type UnsentTutorialCoffinPosQueryItem<'a> = (Entity, &'a mut Client);
+type UnsentTutorialCoffinPosFilter = (With<Client>, Without<TutorialCoffinPosSent>);
 
 impl TutorialTelemetry {
     pub fn completion_rate_30min(&self) -> f64 {
@@ -186,6 +202,7 @@ pub fn register(app: &mut App) {
         Update,
         (
             attach_tutorial_state_to_joined_clients,
+            send_tutorial_coffin_pos_on_join,
             handle_coffin_open_requests,
             tutorial_hook_state_machine,
             dynamic_rat_swarm_spawner.after(tutorial_hook_state_machine),
@@ -227,6 +244,49 @@ fn tutorial_state_for_join(
     }
     telemetry.started = telemetry.started.saturating_add(1);
     TutorialState::new(now)
+}
+
+/// F9 跨层修复 — 把出生引导棺的权威坐标广播给尚未收到过的 client。
+///
+/// 不用一次性的 `Added<Client>` 系统：如果玩家在 `spawn_tutorial_poi_markers`
+/// 还没跑完（等 skin_pool ready）之前就 join，`TutorialCoffin` marker entity
+/// 还不存在，这一 tick 就会无坐标可发；`Added<Client>` 只在那一 tick 命中一次，
+/// 之后永远不会再命中同一个 entity。改成"没打 TutorialCoffinPosSent 标记的
+/// client 每 tick 都尝试"，coffin marker 一旦就绪就会在下一 tick 补发成功。
+fn send_tutorial_coffin_pos_on_join(
+    mut commands: Commands,
+    mut clients: Query<UnsentTutorialCoffinPosQueryItem<'_>, UnsentTutorialCoffinPosFilter>,
+    coffins: Query<&TutorialCoffin>,
+) {
+    let Some(coffin) = coffins.iter().next() else {
+        // POI marker 还没生成（等 providers/skin_pool ready）；下一 tick 重试。
+        return;
+    };
+    if clients.is_empty() {
+        return;
+    }
+
+    let payload = ServerDataV1::new(ServerDataPayloadV1::TutorialCoffinPos {
+        position: coffin.pos,
+    });
+    let payload_type = payload_type_label(payload.payload_type());
+    let payload_bytes = match serialize_server_data_payload(&payload) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            log_payload_build_error(payload_type, &error);
+            return;
+        }
+    };
+
+    for (entity, mut client) in &mut clients {
+        send_server_data_payload(&mut client, payload_bytes.as_slice());
+        commands.entity(entity).insert(TutorialCoffinPosSent);
+        tracing::info!(
+            "[bong][spawn-tutorial] sent {} pos={:?} to client entity {entity:?}",
+            payload_type,
+            coffin.pos
+        );
+    }
 }
 
 fn spawn_tutorial_poi_markers(
@@ -1312,5 +1372,137 @@ mod tests {
             !learned_with_bp.ids.is_empty(),
             "learned blueprint should satisfy the has-blueprint check"
         );
+    }
+
+    // ── F9 跨层修复：send_tutorial_coffin_pos_on_join ──────────────
+
+    mod tutorial_coffin_pos_broadcast {
+        use super::*;
+        use valence::protocol::packets::play::CustomPayloadS2c;
+        use valence::testing::{create_mock_client, MockClientHelper};
+
+        fn app_with_system() -> App {
+            let mut app = App::new();
+            app.add_systems(Update, send_tutorial_coffin_pos_on_join);
+            app
+        }
+
+        fn spawn_mock_client(app: &mut App, username: &str) -> (Entity, MockClientHelper) {
+            let (client_bundle, helper) = create_mock_client(username);
+            let entity = app.world_mut().spawn(client_bundle).id();
+            (entity, helper)
+        }
+
+        fn flush_all_client_packets(app: &mut App) {
+            let world = app.world_mut();
+            let mut query = world.query::<&mut Client>();
+            for mut client in query.iter_mut(world) {
+                client
+                    .flush_packets()
+                    .expect("mock client packets should flush successfully");
+            }
+        }
+
+        /// Decodes every `bong:server_data` frame the mock client received into
+        /// `ServerDataV1` and keeps only `TutorialCoffinPos` payloads.
+        fn collect_tutorial_coffin_pos_payloads(helper: &mut MockClientHelper) -> Vec<[i32; 3]> {
+            let mut positions = Vec::new();
+            for frame in helper.collect_received().0 {
+                let Ok(packet) = frame.decode::<CustomPayloadS2c>() else {
+                    continue;
+                };
+                if packet.channel.as_str() != SERVER_DATA_CHANNEL {
+                    continue;
+                }
+                let payload: ServerDataV1 = serde_json::from_slice(packet.data.0 .0)
+                    .expect("typed payload should decode as ServerDataV1");
+                if let ServerDataPayloadV1::TutorialCoffinPos { position } = payload.payload {
+                    positions.push(position);
+                }
+            }
+            positions
+        }
+
+        #[test]
+        fn sends_authoritative_pos_to_client_joined_after_coffin_marker_exists() {
+            let mut app = app_with_system();
+            app.world_mut().spawn(TutorialCoffin { pos: [12, 71, -33] });
+            let (_entity, mut helper) = spawn_mock_client(&mut app, "Azure");
+
+            app.update();
+            flush_all_client_packets(&mut app);
+
+            let positions = collect_tutorial_coffin_pos_payloads(&mut helper);
+            assert_eq!(
+                positions,
+                vec![[12, 71, -33]],
+                "newly joined client should receive exactly one tutorial_coffin_pos payload \
+                 carrying the TutorialCoffin's authoritative pos, not a hardcoded box"
+            );
+        }
+
+        #[test]
+        fn does_not_resend_once_client_is_marked_as_sent() {
+            let mut app = app_with_system();
+            app.world_mut().spawn(TutorialCoffin { pos: [0, 69, 0] });
+            let (entity, mut helper) = spawn_mock_client(&mut app, "Azure");
+
+            app.update();
+            flush_all_client_packets(&mut app);
+            assert_eq!(
+                collect_tutorial_coffin_pos_payloads(&mut helper).len(),
+                1,
+                "first tick after join should send exactly one payload"
+            );
+
+            // Second tick: same client, no new join. Must not resend.
+            app.update();
+            flush_all_client_packets(&mut app);
+            assert!(
+                collect_tutorial_coffin_pos_payloads(&mut helper).is_empty(),
+                "already-marked client must not receive a duplicate tutorial_coffin_pos payload"
+            );
+            assert!(
+                app.world()
+                    .entity(entity)
+                    .contains::<TutorialCoffinPosSent>(),
+                "client entity should be tagged TutorialCoffinPosSent after the first send"
+            );
+        }
+
+        #[test]
+        fn retries_until_coffin_marker_spawns_late() {
+            // Player joins before spawn_tutorial_poi_markers has produced the TutorialCoffin
+            // entity (e.g. still waiting on skin_pool readiness at server boot).
+            let mut app = app_with_system();
+            let (_entity, mut helper) = spawn_mock_client(&mut app, "Azure");
+
+            app.update();
+            flush_all_client_packets(&mut app);
+            assert!(
+                collect_tutorial_coffin_pos_payloads(&mut helper).is_empty(),
+                "no coffin marker yet -> no payload should be sent this tick"
+            );
+
+            // The POI marker becomes available on a later tick.
+            app.world_mut().spawn(TutorialCoffin { pos: [4, 65, 4] });
+            app.update();
+            flush_all_client_packets(&mut app);
+
+            assert_eq!(
+                collect_tutorial_coffin_pos_payloads(&mut helper),
+                vec![[4, 65, 4]],
+                "once the coffin marker exists, the previously-unsent client must receive it \
+                 on the next tick instead of being permanently skipped"
+            );
+        }
+
+        #[test]
+        fn no_clients_and_no_coffin_is_a_noop() {
+            // Regression guard: an empty world (no players, no coffin marker yet) must not
+            // panic when `coffins.iter().next()` is `None` and `clients` is empty.
+            let mut app = app_with_system();
+            app.update();
+        }
     }
 }

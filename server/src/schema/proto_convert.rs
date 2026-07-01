@@ -1550,6 +1550,14 @@ impl From<&ServerDataPayloadV1> for Payload {
                     此分支不可达——若触发说明调用方绕过了 JSON bypass 契约"
                 )
             }
+            // ─── F9 跨层修复：出生引导棺权威坐标广播（proto 路径） ────────
+            ServerDataPayloadV1::TutorialCoffinPos { position } => {
+                Payload::TutorialCoffinPos(bong::TutorialCoffinPos {
+                    x: position[0],
+                    y: position[1],
+                    z: position[2],
+                })
+            }
         }
     }
 }
@@ -4714,6 +4722,57 @@ mod tests {
         }
     }
 
+    // ─── F9 跨层修复：TutorialCoffinPos proto round-trip pin ───────────
+
+    /// Proves the F9 wire contract end to end: `ServerDataPayloadV1::TutorialCoffinPos`
+    /// → proto `Payload::TutorialCoffinPos` → bytes → decode → exact x/y/z survive.
+    /// Uses mixed-sign coordinates because spawn can legitimately sit west/south of
+    /// the origin; `sint32` must round-trip negatives without truncation.
+    #[test]
+    fn s2c_tutorial_coffin_pos_proto_roundtrip() {
+        use bong::server_data_envelope::Payload;
+        use prost::Message;
+        let payload = ServerDataPayloadV1::TutorialCoffinPos {
+            position: [-42, 65, 130],
+        };
+        let proto = server_data_to_proto_payload(&payload);
+        let envelope = bong::ServerDataEnvelope {
+            payload: Some(proto),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded = bong::ServerDataEnvelope::decode(bytes.as_slice())
+            .expect("TutorialCoffinPos proto decode");
+        match decoded.payload {
+            Some(Payload::TutorialCoffinPos(pos)) => {
+                assert_eq!(
+                    [pos.x, pos.y, pos.z],
+                    [-42, 65, 130],
+                    "negative x must survive the sint32 proto round trip untruncated"
+                );
+            }
+            other => panic!("expected TutorialCoffinPos payload, got {other:?}"),
+        }
+    }
+
+    /// `TutorialCoffinPos` is a plain proto-encoded S2C payload (join-time broadcast),
+    /// not a JSON-bypass variant — pin both classification signals so a future refactor
+    /// can't silently flip it into the bypass path (which would panic at
+    /// `to_proto_bytes()` per the `unreachable!()` guard).
+    #[test]
+    fn s2c_tutorial_coffin_pos_is_proto_not_bypass() {
+        let payload = ServerDataPayloadV1::TutorialCoffinPos {
+            position: [0, 69, 0],
+        };
+        assert!(
+            !payload.is_json_bypass(),
+            "TutorialCoffinPos has a proto definition; is_json_bypass() must be false"
+        );
+        assert_eq!(
+            payload.payload_type(),
+            super::super::server_data::ServerDataType::TutorialCoffinPos
+        );
+    }
+
     #[test]
     fn s2c_ui_open_roundtrip() {
         s2c_encode_decode_roundtrip(ServerDataPayloadV1::UiOpen {
@@ -5525,7 +5584,7 @@ mod tests {
 
     // ─── plan-test-coverage-guards-v1 P0：exhaustive proto encoding guard ────────
 
-    /// Returns a minimum-viable fixture for every `ServerDataPayloadV1` variant (125 total).
+    /// Returns a minimum-viable fixture for every `ServerDataPayloadV1` variant (126 total).
     ///
     /// **Why a list and not an exhaustive match?**
     /// The list itself cannot be made compile-time exhaustive — Rust cannot iterate enum variants.
@@ -6613,6 +6672,10 @@ mod tests {
                 character_id: "offline:Kiz".to_string(),
                 choices: vec![],
             })),
+            // F9 跨层修复：出生引导棺权威坐标广播。
+            fix!(ServerDataPayloadV1::TutorialCoffinPos {
+                position: [0, 69, 0],
+            }),
             // ─── JSON-bypass variants (3) — is_json_bypass() returns true ───────────
             fix!(ServerDataPayloadV1::AgentUiRequest(
                 AgentUiRequestPayloadV1 {
@@ -6637,7 +6700,7 @@ mod tests {
         ]
     }
 
-    /// Verifies that the fixture list covers every `ServerDataPayloadV1` variant (125 total).
+    /// Verifies that the fixture list covers every `ServerDataPayloadV1` variant (126 total).
     ///
     /// This cross-checks the fixture count against `ServerDataType` discriminant count derived
     /// from `payload_type()`. If a new variant is added and a fixture is not added to
@@ -6786,6 +6849,7 @@ mod tests {
             ServerDataType::AgentUiRequest,
             ServerDataType::AgentUiClose,
             ServerDataType::HalfStepRechallenge,
+            ServerDataType::TutorialCoffinPos,
         ];
 
         let total_variants = all_types.len();
@@ -6825,9 +6889,9 @@ mod tests {
         );
     }
 
-    /// Exhaustive proto encoding guard for all 126 `ServerDataPayloadV1` variants.
+    /// Exhaustive proto encoding guard for all 127 `ServerDataPayloadV1` variants.
     ///
-    /// For each of the 123 proto-encodable variants (is_json_bypass=false):
+    /// For each of the 124 proto-encodable variants (is_json_bypass=false):
     ///   - Calls `ServerDataV1::new(variant).to_proto_bytes()`.
     ///   - Asserts the bytes are non-empty (proto envelope was built).
     ///   - Decodes and asserts the envelope contains a payload (proto arm exists in From impl).
@@ -6893,8 +6957,8 @@ mod tests {
         }
 
         assert_eq!(
-            proto_count, 123,
-            "Expected 123 proto-encodable S2C variants, got {proto_count}. \
+            proto_count, 124,
+            "Expected 124 proto-encodable S2C variants, got {proto_count}. \
              The fixture list or is_json_bypass classification may have changed."
         );
         assert_eq!(
