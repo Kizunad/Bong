@@ -35,7 +35,7 @@ pub mod unlock;
 pub mod workbench;
 pub mod workbench_recipes;
 
-use valence::prelude::App;
+use valence::prelude::{App, Update};
 
 #[allow(unused_imports)]
 pub use events::{
@@ -60,8 +60,9 @@ pub use session::{
 };
 #[allow(unused_imports)]
 pub use unlock::{
-    find_recipes_unlockable_by_material, unlock_via_insight, unlock_via_material,
-    unlock_via_mentor, unlock_via_scroll, MaterialUnlockOutcome, RecipeUnlockState, UnlockOutcome,
+    find_recipes_unlockable_by_material, load_recipe_unlock_log, tick_recipe_unlock_flush,
+    unlock_via_insight, unlock_via_material, unlock_via_mentor, unlock_via_scroll,
+    MaterialUnlockOutcome, RecipeUnlockFile, RecipeUnlockState, UnlockOutcome,
 };
 #[allow(unused_imports)]
 pub use workbench::{
@@ -124,7 +125,16 @@ pub fn register(app: &mut App) {
     tracing::info!("[bong][craft] registered {} recipe(s)", registry.len());
 
     app.insert_resource(registry);
-    app.insert_resource(RecipeUnlockState::new());
+    // 孤岛修复（RecipeUnlockState 持久化）— 启动时从
+    // data/craft/recipe_unlocks.json hydrate 已解锁配方，避免重启清空玩家
+    // 残卷/师承/顿悟/材料发现解锁进度。照抄 mineral::persistence 的 hydrate 模式。
+    let unlock_state = RecipeUnlockState::hydrated();
+    tracing::info!(
+        target: "bong::craft",
+        "[bong][craft] hydrated recipe unlock state for {} player(s) from disk",
+        unlock_state.player_count()
+    );
+    app.insert_resource(unlock_state);
 
     app.add_event::<CraftStartedEvent>();
     app.add_event::<CraftCompletedEvent>();
@@ -137,6 +147,10 @@ pub fn register(app: &mut App) {
     // P3 三渠道解锁 intent —— 由各 source plan emit，被
     // `network/craft_emit::apply_unlock_intents` 系统消费
     app.add_event::<CraftUnlockIntent>();
+
+    // 孤岛修复 — 节流刷盘 RecipeUnlockState（unlock 三渠道 + 材料发现是直接函数
+    // 调用而非事件驱动，flush 系统只负责节流计时）。
+    app.add_systems(Update, tick_recipe_unlock_flush);
 }
 
 /// P1 验收基线：注册 5 个示例配方覆盖全 6 类（除 Misc 外）。
