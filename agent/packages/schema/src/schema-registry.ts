@@ -6,6 +6,13 @@ import { AntiCheatReportV1, ViolationKindV1 } from "./anticheat.js";
 import { ArmorDurabilityChangedV1 } from "./armor-event.js";
 import { BaomaiSkillEventV1, BaomaiSkillIdV1 } from "./baomai-v3.js";
 import {
+  BaomaiV4IronCocoonStageUpV1,
+  BaomaiV4ResonanceLockEndV1,
+  BaomaiV4ResonanceLockV1,
+  BaomaiV4ScarCircuitBrokenV1,
+  BaomaiV4ScarCircuitFormedV1,
+} from "./baomai-v4.js";
+import {
   AudioEventV1,
   PlaySoundRecipeEventV1,
   SoundRecipeV1,
@@ -199,6 +206,7 @@ import { NarrationV1 } from "./narration.js";
 import {
   DuXuOutcomeV1,
   DuXuResultV1,
+  HalfStepRechallengeTriggerPayloadV1,
   TribulationEventV1,
   TribulationKindV1,
   TribulationPhaseV1,
@@ -404,6 +412,13 @@ import {
   WoliuSkillIdV1,
 } from "./woliu_v2.js";
 import {
+  VoidErosionEventV1,
+  VoidErosionStageV1,
+  VoidErosionStateV1,
+  VoidErosionTiandaoModifierV1,
+  VoidErosionVisualSyncPayloadV1,
+} from "./woliu_erosion.js";
+import {
   DeceasedExposureSnapshotV1,
   DeceasedRenownSnapshotV1,
   DeceasedSocialSnapshotV1,
@@ -588,11 +603,17 @@ export const SCHEMA_REGISTRY = {
   armorDurabilityChangedV1: ArmorDurabilityChangedV1,
   baomaiSkillIdV1: BaomaiSkillIdV1,
   baomaiSkillEventV1: BaomaiSkillEventV1,
+  baomaiV4ScarCircuitFormedV1: BaomaiV4ScarCircuitFormedV1,
+  baomaiV4ScarCircuitBrokenV1: BaomaiV4ScarCircuitBrokenV1,
+  baomaiV4IronCocoonStageUpV1: BaomaiV4IronCocoonStageUpV1,
+  baomaiV4ResonanceLockV1: BaomaiV4ResonanceLockV1,
+  baomaiV4ResonanceLockEndV1: BaomaiV4ResonanceLockEndV1,
   tribulationKindV1: TribulationKindV1,
   tribulationPhaseV1: TribulationPhaseV1,
   duXuOutcomeV1: DuXuOutcomeV1,
   duXuResultV1: DuXuResultV1,
   tribulationEventV1: TribulationEventV1,
+  halfStepRechallengeTriggerPayloadV1: HalfStepRechallengeTriggerPayloadV1,
   voidActionKindV1: VoidActionKindV1,
   voidActionCostV1: VoidActionCostV1,
   barrierGeometryV1: BarrierGeometryV1,
@@ -707,6 +728,11 @@ export const SCHEMA_REGISTRY = {
   woliuBackfireV1: WoliuBackfireV1,
   turbulenceFieldV1: TurbulenceFieldV1,
   woliuPullDisplaceV1: WoliuPullDisplaceV1,
+  voidErosionStageV1: VoidErosionStageV1,
+  voidErosionStateV1: VoidErosionStateV1,
+  voidErosionEventV1: VoidErosionEventV1,
+  voidErosionVisualSyncPayloadV1: VoidErosionVisualSyncPayloadV1,
+  voidErosionTiandaoModifierV1: VoidErosionTiandaoModifierV1,
   duguPoisonStateV1: DuguPoisonStateV1,
   duguPoisonProgressEventV1: DuguPoisonProgressEventV1,
   duguObfuscationStateV1: DuguObfuscationStateV1,
@@ -1036,6 +1062,11 @@ export const GENERATED_SCHEMA_FILES = {
   "zhenmai-skill-event-v1.json": SCHEMA_REGISTRY.zhenmaiSkillEventV1,
   "baomai-skill-id-v1.json": SCHEMA_REGISTRY.baomaiSkillIdV1,
   "baomai-skill-event-v1.json": SCHEMA_REGISTRY.baomaiSkillEventV1,
+  "baomai-v4-scar-circuit-formed-v1.json": SCHEMA_REGISTRY.baomaiV4ScarCircuitFormedV1,
+  "baomai-v4-scar-circuit-broken-v1.json": SCHEMA_REGISTRY.baomaiV4ScarCircuitBrokenV1,
+  "baomai-v4-iron-cocoon-stage-up-v1.json": SCHEMA_REGISTRY.baomaiV4IronCocoonStageUpV1,
+  "baomai-v4-resonance-lock-v1.json": SCHEMA_REGISTRY.baomaiV4ResonanceLockV1,
+  "baomai-v4-resonance-lock-end-v1.json": SCHEMA_REGISTRY.baomaiV4ResonanceLockEndV1,
   "zhenfa-v2-event-v1.json": SCHEMA_REGISTRY.zhenfaV2EventV1,
   "tuike-v2-skill-event-v1.json": SCHEMA_REGISTRY.tuikeV2SkillEventV1,
   "false-skin-stack-state-v1.json": SCHEMA_REGISTRY.falseSkinStackStateV1,
@@ -1051,6 +1082,8 @@ export const GENERATED_SCHEMA_FILES = {
   "du-xu-outcome-v1.json": SCHEMA_REGISTRY.duXuOutcomeV1,
   "du-xu-result-v1.json": SCHEMA_REGISTRY.duXuResultV1,
   "tribulation-event-v1.json": SCHEMA_REGISTRY.tribulationEventV1,
+  "halfstep-rechallenge-trigger-payload-v1.json":
+    SCHEMA_REGISTRY.halfStepRechallengeTriggerPayloadV1,
   "void-action-kind-v1.json": SCHEMA_REGISTRY.voidActionKindV1,
   "void-action-cost-v1.json": SCHEMA_REGISTRY.voidActionCostV1,
   "barrier-geometry-v1.json": SCHEMA_REGISTRY.barrierGeometryV1,
@@ -1059,6 +1092,13 @@ export const GENERATED_SCHEMA_FILES = {
   "void-action-broadcast-v1.json": SCHEMA_REGISTRY.voidActionBroadcastV1,
   "void-action-cooldown-v1.json": SCHEMA_REGISTRY.voidActionCooldownV1,
   "void-action-state-v1.json": SCHEMA_REGISTRY.voidActionStateV1,
+  "void-erosion-stage-v1.json": SCHEMA_REGISTRY.voidErosionStageV1,
+  "void-erosion-state-v1.json": SCHEMA_REGISTRY.voidErosionStateV1,
+  "void-erosion-event-v1.json": SCHEMA_REGISTRY.voidErosionEventV1,
+  "void-erosion-visual-sync-payload-v1.json":
+    SCHEMA_REGISTRY.voidErosionVisualSyncPayloadV1,
+  "void-erosion-tiandao-modifier-v1.json":
+    SCHEMA_REGISTRY.voidErosionTiandaoModifierV1,
   "client-request-v1.json": SCHEMA_REGISTRY.clientRequestV1,
   "client-request-set-meridian-target-v1.json":
     SCHEMA_REGISTRY.clientRequestSetMeridianTargetV1,

@@ -1,0 +1,43 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "entity_id",
+    "stage",
+    "cumulative_erosion",
+    "ambient_active",
+    "model_alpha",
+    "sound_distortion_active",
+    "server_tick"
+  ],
+  "properties": {
+    "entity_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "stage": {
+      "minimum": 0,
+      "maximum": 4,
+      "type": "integer"
+    },
+    "cumulative_erosion": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "ambient_active": {
+      "type": "boolean"
+    },
+    "model_alpha": {
+      "minimum": 0,
+      "maximum": 1,
+      "type": "number"
+    },
+    "sound_distortion_active": {
+      "type": "boolean"
+    },
+    "server_tick": {
+      "minimum": 0,
+      "type": "integer"
+    }
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "char_id",
+    "zone_name",
+    "zone_halfstep_count",
+    "at_tick"
+  ],
+  "properties": {
+    "char_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "zone_name": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "zone_halfstep_count": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "at_tick": {
+      "minimum": 0,
+      "type": "integer"
+    }
+  }
+}

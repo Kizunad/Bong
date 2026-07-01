@@ -1,0 +1,33 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "v",
+    "fighter_a_id",
+    "fighter_b_id",
+    "started_at",
+    "ends_at"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "type": "number"
+    },
+    "fighter_a_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "fighter_b_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "started_at": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "ends_at": {
+      "minimum": 0,
+      "type": "integer"
+    }
+  }
+}

@@ -306,3 +306,35 @@ describe("shared sample pin: woliu-erosion-state.sample.json", () => {
     expect(raw.ambient_active).toBe(true);
   });
 });
+
+describe("shared sample pin: woliu-erosion-visual-sync.sample.json", () => {
+  it("loads and validates shared sample file (Rust serde ↔ TS TypeBox 双端对齐)", () => {
+    const raw = loadSample<VoidErosionVisualSyncPayloadV1>(
+      "woliu-erosion-visual-sync.sample.json",
+    );
+    const result = validateVoidErosionVisualSyncV1Contract(raw);
+    expect(result.ok).toBe(
+      true,
+      `woliu-erosion-visual-sync.sample.json failed TypeBox validation — update the sample when schema changes.`,
+    );
+    expect(raw.stage).toBe(3);
+    expect(raw.cumulative_erosion).toBeCloseTo(180.0, 3);
+    expect(raw.ambient_active).toBe(true);
+    expect(raw.sound_distortion_active).toBe(true);
+  });
+});
+
+describe("shared sample pin: woliu-erosion-tiandao-modifier.sample.json", () => {
+  it("loads and validates shared sample file (Rust serde ↔ TS TypeBox 双端对齐)", () => {
+    const raw = loadSample<VoidErosionTiandaoModifierV1>(
+      "woliu-erosion-tiandao-modifier.sample.json",
+    );
+    const result = validateVoidErosionTiandaoModifierV1Contract(raw);
+    expect(result.ok).toBe(
+      true,
+      `woliu-erosion-tiandao-modifier.sample.json failed TypeBox validation — update the sample when schema changes.`,
+    );
+    expect(raw.stage).toBe("echo_body");
+    expect(raw.detection_modifier).toBeCloseTo(0.6, 3);
+  });
+});

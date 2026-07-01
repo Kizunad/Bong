@@ -1,0 +1,63 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "entity",
+    "stage",
+    "cumulative_erosion",
+    "ambient_active",
+    "contam_mult",
+    "efficiency",
+    "server_tick"
+  ],
+  "properties": {
+    "entity": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "stage": {
+      "anyOf": [
+        {
+          "const": "none",
+          "type": "string"
+        },
+        {
+          "const": "low_pressure",
+          "type": "string"
+        },
+        {
+          "const": "void_shadow",
+          "type": "string"
+        },
+        {
+          "const": "echo_body",
+          "type": "string"
+        },
+        {
+          "const": "void_eroded",
+          "type": "string"
+        }
+      ]
+    },
+    "cumulative_erosion": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "ambient_active": {
+      "type": "boolean"
+    },
+    "contam_mult": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "efficiency": {
+      "minimum": 0,
+      "maximum": 1,
+      "type": "number"
+    },
+    "server_tick": {
+      "minimum": 0,
+      "type": "integer"
+    }
+  }
+}

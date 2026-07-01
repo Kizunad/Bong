@@ -5,6 +5,7 @@ import {
   type ChannelName,
   validateAlchemyInsightV1Contract,
   validateAlchemySessionEndV1Contract,
+  validateBoneCoinTickV1Contract,
   validateBotanyEcologySnapshotV1Contract,
   validateDeathCinematicS2cV1Contract,
   validateFactionEventV1Contract,
@@ -26,6 +27,7 @@ import type {
   AgentCommandV1,
   AlchemySessionEndV1,
   AlchemyInsightV1,
+  BoneCoinTickV1,
   BotanyEcologySnapshotV1,
   FactionEventV1,
   NarrationV1,
@@ -53,6 +55,7 @@ const {
   AGENT_WORLD_MODEL,
   PLAYER_CHAT,
   PRICE_INDEX,
+  BONE_COIN_TICK,
   TSY_EVENT,
   NPC_SPAWN,
   NPC_DEATH,
@@ -180,6 +183,7 @@ const CROSS_SYSTEM_EVENT_CHANNELS: readonly ChannelName[] = [
   MUTATION_EVENT,
   SEASON_CHANGED,
   PRICE_INDEX,
+  BONE_COIN_TICK,
   WEATHER_EVENT_UPDATE,
 ];
 const CROSS_SYSTEM_EVENT_CHANNEL_SET = new Set<string>(CROSS_SYSTEM_EVENT_CHANNELS);
@@ -244,6 +248,7 @@ export class RedisIpc {
   private latestPoiNoviceEvents: PoiNoviceRuntimeEventV1[] = [];
   private latestRatPhaseEvents: RatPhaseChangeEventV1[] = [];
   private latestPriceIndexEvents: PriceIndexV1[] = [];
+  private latestBoneCoinTickEvents: BoneCoinTickV1[] = [];
   private latestWeatherEventUpdates: WeatherEventUpdateV1[] = [];
   private latestCrossSystemEvents: CrossSystemRuntimeEventV1[] = [];
   private latestBotanyEcologyEvents: BotanyEcologySnapshotV1[] = [];
@@ -255,6 +260,7 @@ export class RedisIpc {
   private poiNoviceEventCallbacks: Array<(event: PoiNoviceRuntimeEventV1) => void> = [];
   private ratPhaseEventCallbacks: Array<(event: RatPhaseChangeEventV1) => void> = [];
   private priceIndexCallbacks: Array<(event: PriceIndexV1) => void> = [];
+  private boneCoinTickCallbacks: Array<(event: BoneCoinTickV1) => void> = [];
   private weatherEventCallbacks: Array<(event: WeatherEventUpdateV1) => void> = [];
   private crossSystemEventCallbacks: Array<(event: CrossSystemRuntimeEventV1) => void> = [];
   private botanyEcologyCallbacks: Array<(event: BotanyEcologySnapshotV1) => void> = [];
@@ -303,6 +309,11 @@ export class RedisIpc {
 
     if (channel === PRICE_INDEX) {
       this.handlePriceIndexMessage(message);
+      return;
+    }
+
+    if (channel === BONE_COIN_TICK) {
+      this.handleBoneCoinTickMessage(message);
       return;
     }
 
@@ -601,6 +612,32 @@ export class RedisIpc {
     }
   }
 
+  private handleBoneCoinTickMessage(message: string): void {
+    try {
+      const data = JSON.parse(message) as unknown;
+      const result = validateBoneCoinTickV1Contract(data);
+      if (!result.ok) {
+        console.warn("[redis-ipc] invalid bone coin tick event:", result.errors.join("; "));
+        return;
+      }
+      this.recordBoneCoinTickEvent(data as BoneCoinTickV1);
+      this.recordCrossSystemEvent({ channel: BONE_COIN_TICK, payload: data });
+    } catch (e) {
+      console.warn("[redis-ipc] failed to parse bone coin tick event:", e);
+    }
+  }
+
+  private recordBoneCoinTickEvent(event: BoneCoinTickV1): void {
+    this.latestBoneCoinTickEvents.push(event);
+    if (this.latestBoneCoinTickEvents.length > ECONOMY_EVENT_BUFFER_LIMIT) {
+      this.latestBoneCoinTickEvents =
+        this.latestBoneCoinTickEvents.slice(-ECONOMY_EVENT_BUFFER_LIMIT);
+    }
+    for (const cb of this.boneCoinTickCallbacks) {
+      cb(event);
+    }
+  }
+
   private handleWeatherEventUpdateMessage(message: string): void {
     try {
       const data = JSON.parse(message) as unknown;
@@ -771,6 +808,16 @@ export class RedisIpc {
 
   onPriceIndex(cb: (event: PriceIndexV1) => void): void {
     this.priceIndexCallbacks.push(cb);
+  }
+
+  drainBoneCoinTickEvents(): BoneCoinTickV1[] {
+    const events = [...this.latestBoneCoinTickEvents];
+    this.latestBoneCoinTickEvents = [];
+    return events;
+  }
+
+  onBoneCoinTick(cb: (event: BoneCoinTickV1) => void): void {
+    this.boneCoinTickCallbacks.push(cb);
   }
 
   drainWeatherEventUpdates(): WeatherEventUpdateV1[] {
