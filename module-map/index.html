@@ -7698,8 +7698,8 @@ const MODULES = [
         },
         "gaps": [
           {
-            "severity": "critical",
-            "note": "已核实：MutationHudPlanner.buildCommands() 唯一引用者是 MutationHudPlannerTest，主代码库无 HudOrchestrator/编排器调用。DANDAO_MUTATION 在 HudRenderLayer/HudLayoutPreset 已声明但 buildCommands 从未被触发——丹道 HUD 面板从不渲染（孤岛）"
+            "severity": "info",
+            "note": "✅ RESOLVED #798：已接线 BongHudOrchestrator 调用 MutationHudPlanner.buildCommands()，DANDAO_MUTATION 层按变异状态条件渲染。（原 critical 孤岛：buildCommands 唯一引用者是 MutationHudPlannerTest，主代码无编排器调用）"
           }
         ]
       },
@@ -7729,8 +7729,8 @@ const MODULES = [
         },
         "gaps": [
           {
-            "severity": "critical",
-            "note": "已核实：MutationFeatureRenderer 从未在任何 PlayerEntityRenderer 上注册——主代码仅 WornPackModel/WornPackFeatureRenderer/WornPackRenderBootstrap 三处 javadoc 把它当『从未注册的孤岛反面教材』引用。玩家身体异化叠加贴图永远不会渲染"
+            "severity": "info",
+            "note": "✅ RESOLVED #798：已通过 MutationRenderBootstrap 经 LivingEntityFeatureRendererRegistrationCallback 注册到 PlayerEntityRenderer（vanilla PlayerEntityModel 叠加，非 GeckoLib）。（原 critical 孤岛：从未注册，仅 WornPack 三处 javadoc 当反面教材引用）"
           }
         ]
       },
@@ -19961,8 +19961,8 @@ const MODULES = [
         },
         "gaps": [
           {
-            "severity": "warn",
-            "note": "RecipeUnlockState 仅内存 HashMap，无 DB 持久化（已核实 server/src 内无 persist/save/load 命中）；玩家下线重连解锁状态全部丢失。这是可达数据丢失，plan 未见明确持久化 P 规划"
+            "severity": "info",
+            "note": "✅ RESOLVED #797：已加持久化（data/craft/recipe_unlocks.json，按 mineral::ExhaustedMineralsLog 模式 hydrate/dirty/节流 flush + 原子写 + 版本校验）。（原 warn 可达数据丢失：仅内存 HashMap，玩家下线重连解锁状态全部丢失）"
           },
           {
             "severity": "info",
@@ -20127,8 +20127,8 @@ const MODULES = [
     ],
     "gaps": [
       {
-        "severity": "warn",
-        "note": "RecipeUnlockState 无持久化（内存 HashMap），服务器重启/玩家重连后解锁状态清零；可达数据丢失，需 DB 持久化层（plan 未明确规划）"
+        "severity": "info",
+        "note": "✅ RESOLVED #797：已加持久化（data/craft/recipe_unlocks.json，hydrate/dirty/节流 flush + 原子写 temp+rename + 版本常量校验，202 单测）。（原 warn 可达数据丢失：内存 HashMap，重启/重连解锁状态清零）"
       },
       {
         "severity": "info",
@@ -31506,7 +31506,7 @@ const FEATURES = [
   {
     "id": "feature/craft-chain",
     "title": "制作链 (Craft → Forge → Alchemy) — 跨层",
-    "summary": "三条制作子系统串成的完整经济闭环：手搓台 craft（CraftRegistry 配方 + CraftSession start/tick/finalize/cancel，qi 走 qi_physics::ledger::Crafting）→ 炼器 forge（BlueprintRegistry + ForgeSession 四步：备料/淬炼/铭刻/开光，开光把玩家 qi_current 通过 WorldQiAccount 守恒地搬进 zone 账户）→ 炼丹 alchemy（RecipeRegistry + AlchemyFurnace.session：起炉/调温/投料/注气/取丹，按火候曲线偏差 resolve 成 OutcomeBucket，服丹注入 Contamination）。骨币经济 economy 统计全世界 BoneCoinSupply→EconomyPriceIndex，被 NPC 交易估价消费。每层都是 server 权威（ECS 系统 + qi 守恒）+ client owo-lib Screen（手搓/炼器/炼丹屏，C2S 走 ClientRequestSender，S2C 走 server_data payload）+ agent 叙事（craft-runtime 4 类叙事 / economy-analyzer 价格趋势）。已知孤岛：RecipeUnlockState 纯内存无持久化（重启清空全玩家配方进度，且死亡重置 hook 未接线）；alchemy 的 InterventionRequest/StartAlchemyRequest 事件契约被 client_request_handler 旁路（前者零读者、后者无生产发送方），且 AlchemySession::tick() 从未被任何系统调度→火候曲线/多阶段投料时间窗在游玩期间退化，仅在取丹时一次性快进补齐。",
+    "summary": "三条制作子系统串成的完整经济闭环：手搓台 craft（CraftRegistry 配方 + CraftSession start/tick/finalize/cancel，qi 走 qi_physics::ledger::Crafting）→ 炼器 forge（BlueprintRegistry + ForgeSession 四步：备料/淬炼/铭刻/开光，开光把玩家 qi_current 通过 WorldQiAccount 守恒地搬进 zone 账户）→ 炼丹 alchemy（RecipeRegistry + AlchemyFurnace.session：起炉/调温/投料/注气/取丹，按火候曲线偏差 resolve 成 OutcomeBucket，服丹注入 Contamination）。骨币经济 economy 统计全世界 BoneCoinSupply→EconomyPriceIndex，被 NPC 交易估价消费。每层都是 server 权威（ECS 系统 + qi 守恒）+ client owo-lib Screen（手搓/炼器/炼丹屏，C2S 走 ClientRequestSender，S2C 走 server_data payload）+ agent 叙事（craft-runtime 4 类叙事 / economy-analyzer 价格趋势）。已知孤岛：RecipeUnlockState 持久化已修（✅ #797，data/craft/recipe_unlocks.json），但死亡重置 hook 仍未接线；alchemy 的 InterventionRequest/StartAlchemyRequest 事件契约被 client_request_handler 旁路（前者零读者、后者无生产发送方），且 AlchemySession::tick() 从未被任何系统调度→火候曲线/多阶段投料时间窗在游玩期间退化，仅在取丹时一次性快进补齐。",
     "spans": [
       "server/craft",
       "server/forge",
