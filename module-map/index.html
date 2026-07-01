@@ -2859,8 +2859,8 @@ const MODULES = [
         },
         "gaps": [
           {
-            "severity": "warn",
-            "note": "HalfStepRechallengeTriggerPayloadV1 已在 tribulation.ts:92 定义并从 index.ts 导出，channels.ts 已激活 HALFSTEP_RECHALLENGE 通道，Rust 侧有 server/src/schema/halfstep_rechallenge.rs，但未注册进 SCHEMA_REGISTRY——无 JSON Schema export，不走 pin 测试，Rust↔TS 字段漂移无自动捕获"
+            "severity": "info",
+            "note": "✅ RESOLVED #803(module-map triage 修复批次): HalfStepRechallengeTriggerPayloadV1 已在 tribulation.ts:92 定义并从 index.ts 导出，channels.ts 已激活 HALFSTEP_RECHALLENGE 通道，Rust 侧有 server/src/schema/halfstep_rechallenge.rs，但未注册进 SCHEMA_REGISTRY——无 JSON Schema export，不走 pin 测试，Rust↔TS 字段漂移无自动捕获"
           }
         ]
       },
@@ -3012,12 +3012,12 @@ const MODULES = [
         },
         "gaps": [
           {
-            "severity": "warn",
-            "note": "woliu_erosion.ts（VoidErosionStateV1/VoidErosionEventV1 等）已定义+从 index.ts 导出，Rust 侧有 server/src/schema/woliu_erosion.rs，但 grep schema-registry.ts 零命中——未进 SCHEMA_REGISTRY，无 JSON Schema export，Rust↔TS 字段漂移无自动 pin 测试捕获"
+            "severity": "info",
+            "note": "✅ RESOLVED #803(module-map triage 修复批次): woliu_erosion.ts（VoidErosionStateV1/VoidErosionEventV1 等）已定义+从 index.ts 导出，Rust 侧有 server/src/schema/woliu_erosion.rs，但 grep schema-registry.ts 零命中——未进 SCHEMA_REGISTRY，无 JSON Schema export，Rust↔TS 字段漂移无自动 pin 测试捕获"
           },
           {
-            "severity": "warn",
-            "note": "baomai-v4.ts 的 5 个 Redis payload 类型（BaomaiV4ScarCircuitFormed/Broken、IronCocoonStageUp、ResonanceLock/End）已定义+导出，channels.ts 已激活 BAOMAI_V4_* 通道，Rust 侧有 server/src/schema/baomai_v4.rs，但未进 SCHEMA_REGISTRY——无 JSON Schema export，无双端 pin 测试"
+            "severity": "info",
+            "note": "✅ RESOLVED #803(module-map triage 修复批次): baomai-v4.ts 的 5 个 Redis payload 类型（BaomaiV4ScarCircuitFormed/Broken、IronCocoonStageUp、ResonanceLock/End）已定义+导出，channels.ts 已激活 BAOMAI_V4_* 通道，Rust 侧有 server/src/schema/baomai_v4.rs，但未进 SCHEMA_REGISTRY——无 JSON Schema export，无双端 pin 测试"
           }
         ]
       },
@@ -4376,8 +4376,8 @@ const MODULES = [
         },
         "gaps": [
           {
-            "severity": "warn",
-            "note": "AlchemyScreen.buildUi (line 88) 用 MockInventoryData.create() 而非真实 InventoryStateStore；炉子材料拖拽仅本地 DragState 未发 C2S——投料动作无法真实同步到 server，炼丹投料链路目前为孤岛（plan-alchemy-v1 MVP 占位态）"
+            "severity": "info",
+            "note": "✅ RESOLVED #807(module-map triage 修复批次): AlchemyScreen.buildUi (line 88) 用 MockInventoryData.create() 而非真实 InventoryStateStore；炉子材料拖拽仅本地 DragState 未发 C2S——投料动作无法真实同步到 server，炼丹投料链路目前为孤岛（plan-alchemy-v1 MVP 占位态）"
           },
           {
             "severity": "info",
@@ -6980,8 +6980,8 @@ const MODULES = [
         },
         "gaps": [
           {
-            "severity": "warn",
-            "note": "全靠反射绑定 Sodium 私有 API（chunkStatus 字段名、onChunkStatusAdded 方法签名、常量 3=FLAG_HAS_BLOCK_DATA 均硬编码）；Sodium 0.6+ 已知可能重命名或移除，版本升级后静默失效（仅 warn 日志，不抛异常），无版本检测保护"
+            "severity": "info",
+            "note": "✅ RESOLVED #807(module-map triage 修复批次): 全靠反射绑定 Sodium 私有 API（chunkStatus 字段名、onChunkStatusAdded 方法签名、常量 3=FLAG_HAS_BLOCK_DATA 均硬编码）；Sodium 0.6+ 已知可能重命名或移除，版本升级后静默失效（仅 warn 日志，不抛异常），无版本检测保护"
           },
           {
             "severity": "info",
@@ -7425,12 +7425,12 @@ const MODULES = [
         },
         "gaps": [
           {
-            "severity": "warn",
-            "note": "已核实：BreakthroughCinematicHandler.java:50-52 仅把 plan.vfxEventIds()/audioRecipeId()/animationId() 拼进 LOGGER 字符串，未传给任何 VFX/音效/动画分发器——突破阶段粒子/音效/动作实际不会播放，只剩 VisualEffectState 屏幕特效 + Toast"
+            "severity": "info",
+            "note": "✅ RESOLVED #807(module-map triage 修复批次): 已核实：BreakthroughCinematicHandler.java:50-52 仅把 plan.vfxEventIds()/audioRecipeId()/animationId() 拼进 LOGGER 字符串，未传给任何 VFX/音效/动画分发器——突破阶段粒子/音效/动作实际不会播放，只剩 VisualEffectState 屏幕特效 + Toast"
           },
           {
-            "severity": "warn",
-            "note": "已核实：DistantBreakthroughRenderer.billboardFor() 的唯一调用者是 BreakthroughSpectacleRendererTest，主代码库无渲染消费者——远距离突破的方位指示器从未被渲染（孤岛）"
+            "severity": "info",
+            "note": "✅ RESOLVED #807(module-map triage 修复批次): 已核实：DistantBreakthroughRenderer.billboardFor() 的唯一调用者是 BreakthroughSpectacleRendererTest，主代码库无渲染消费者——远距离突破的方位指示器从未被渲染（孤岛）"
           }
         ]
       },
@@ -8188,8 +8188,8 @@ const MODULES = [
         },
         "gaps": [
           {
-            "severity": "warn",
-            "note": "qiEscapeDensityByHp / meridianGlowOnSevered / surfaceCrackLines / collapseFreezeBeforeDeath 四个公开方法 buildCommands 内部均未调用（仅 emit screenTint+vignette）；已被 DeathCinematicTest 单测覆盖但从未喂入实际 HUD 命令——规划中的粒子/裂纹视觉细节尚未接入渲染路径，是「已测但未渲染」的视觉孤岛"
+            "severity": "info",
+            "note": "✅ RESOLVED #806(module-map triage 修复批次): qiEscapeDensityByHp / meridianGlowOnSevered / surfaceCrackLines / collapseFreezeBeforeDeath 四个公开方法 buildCommands 内部均未调用（仅 emit screenTint+vignette）；已被 DeathCinematicTest 单测覆盖但从未喂入实际 HUD 命令——规划中的粒子/裂纹视觉细节尚未接入渲染路径，是「已测但未渲染」的视觉孤岛"
           }
         ]
       },
@@ -9680,8 +9680,8 @@ const MODULES = [
         },
         "gaps": [
           {
-            "severity": "warn",
-            "note": "ForgeOutcomeStore.markDisplayed() 全仓除自身定义外无任何调用方，hasNewOutcome() 首次结算后将永远返回 true——孤立 API，任何依赖它的通知 badge 都会卡死（当前无 badge 消费者，故影响有限）"
+            "severity": "info",
+            "note": "✅ RESOLVED #806(module-map triage 修复批次): ForgeOutcomeStore.markDisplayed() 全仓除自身定义外无任何调用方，hasNewOutcome() 首次结算后将永远返回 true——孤立 API，任何依赖它的通知 badge 都会卡死（当前无 badge 消费者，故影响有限）"
           }
         ]
       },
@@ -11150,8 +11150,8 @@ const MODULES = [
         },
         "gaps": [
           {
-            "severity": "warn",
-            "note": "已核实：chargeText() 直接把 forgeAchievedTier（法器灵核品阶 T1-T4，源码 line 99-100）当\"充能次数\"展示（line 46），语义错误——充能次数应来自独立字段而非品阶"
+            "severity": "info",
+            "note": "✅ RESOLVED #806(module-map triage 修复批次): 已核实：chargeText() 直接把 forgeAchievedTier（法器灵核品阶 T1-T4，源码 line 99-100）当\"充能次数\"展示（line 46），语义错误——充能次数应来自独立字段而非品阶"
           },
           {
             "severity": "info",
@@ -12434,8 +12434,8 @@ const MODULES = [
         },
         "gaps": [
           {
-            "severity": "warn",
-            "note": "FPV（MixinHeldItemRenderer）和 TPV（MixinPlayerEntityHeldItem）武器/盾/方块/锄头四路 fallback 逻辑高度重复，各自独立维护；一侧漏加新类型将导致 FPV/TPV 不一致（#3 盾 bug 曾复现此类问题）"
+            "severity": "info",
+            "note": "✅ RESOLVED #807(module-map triage 修复批次): FPV（MixinHeldItemRenderer）和 TPV（MixinPlayerEntityHeldItem）武器/盾/方块/锄头四路 fallback 逻辑高度重复，各自独立维护；一侧漏加新类型将导致 FPV/TPV 不一致（#3 盾 bug 曾复现此类问题）"
           }
         ]
       },
@@ -12531,8 +12531,8 @@ const MODULES = [
         },
         "gaps": [
           {
-            "severity": "warn",
-            "note": "bong$isSpawnTutorialCoffin 用硬编码坐标范围（|x|≤8, y∈[60,90], |z|≤8）识别出生引导棺（已核实 line 170）；若 spawn 区域迁移或地形重生成后坐标偏移将静默失效"
+            "severity": "info",
+            "note": "✅ RESOLVED #808(module-map triage 修复批次): bong$isSpawnTutorialCoffin 用硬编码坐标范围（|x|≤8, y∈[60,90], |z|≤8）识别出生引导棺（已核实 line 170）；若 spawn 区域迁移或地形重生成后坐标偏移将静默失效"
           }
         ]
       },
@@ -12812,8 +12812,8 @@ const MODULES = [
         },
         "gaps": [
           {
-            "severity": "warn",
-            "note": "CASE_TO_TYPE 映射表与 proto oneof 手动同步维护（已抽验确认为静态 Map 初始化），新增 proto 变体若忘记加入映射则 bridge 返回 error 丢包，无编译期保护"
+            "severity": "info",
+            "note": "✅ RESOLVED #807(module-map triage 修复批次): CASE_TO_TYPE 映射表与 proto oneof 手动同步维护（已抽验确认为静态 Map 初始化），新增 proto 变体若忘记加入映射则 bridge 返回 error 丢包，无编译期保护"
           },
           {
             "severity": "info",
@@ -14508,8 +14508,8 @@ const MODULES = [
         },
         "gaps": [
           {
-            "severity": "warn",
-            "note": "handleIncomingOffer(31/46) 守护：若当前打开的不是 TradeOfferScreen 则直接 return，传入交易邀请永不打断其他 GUI（如背包），超时前静默消失，玩家无任何提示"
+            "severity": "info",
+            "note": "✅ RESOLVED #806(module-map triage 修复批次): handleIncomingOffer(31/46) 守护：若当前打开的不是 TradeOfferScreen 则直接 return，传入交易邀请永不打断其他 GUI（如背包），超时前静默消失，玩家无任何提示"
           }
         ]
       },
@@ -14547,8 +14547,8 @@ const MODULES = [
         },
         "gaps": [
           {
-            "severity": "warn",
-            "note": "NicheGuardianPanel.buildLines() 全 client 内无任何调用方（已 grep 确认），守家状态面板从未接入 HUD overlay——孤岛，守家信息只活在 UnifiedEventStore 事件流"
+            "severity": "info",
+            "note": "✅ RESOLVED #806(module-map triage 修复批次): NicheGuardianPanel.buildLines() 全 client 内无任何调用方（已 grep 确认），守家状态面板从未接入 HUD overlay——孤岛，守家信息只活在 UnifiedEventStore 事件流"
           }
         ]
       },
@@ -15264,8 +15264,8 @@ const MODULES = [
         },
         "gaps": [
           {
-            "severity": "warn",
-            "note": "已核实：grep 全仓 TiandaoPresenceStore 引用仅出现在 BongHud / SoundRecipePlayer / 本包 PayloadHandler+Store，断线回调（network handler）无 clear() 调用；断线重连期间旧天道状态持续渲染，直到下一帧 server 重发 payload 才更新（视觉残留，自愈，非守恒）"
+            "severity": "info",
+            "note": "✅ RESOLVED #806(module-map triage 修复批次): 已核实：grep 全仓 TiandaoPresenceStore 引用仅出现在 BongHud / SoundRecipePlayer / 本包 PayloadHandler+Store，断线回调（network handler）无 clear() 调用；断线重连期间旧天道状态持续渲染，直到下一帧 server 重发 payload 才更新（视觉残留，自愈，非守恒）"
           }
         ]
       },
@@ -16710,7 +16710,7 @@ const MODULES = [
         "gaps": [
           {
             "severity": "warn",
-            "note": "只写不读（已 grep 确认仅 YidaoServerDataHandler 引用）：YidaoHudPlanner/BongHudOrchestrator 均未消费此 Store，NPC 医道 AI 状态入缓存后无 HUD 渲染出口——功能孤岛"
+            "note": "📋 v2-T14(triage 误判 FIXABLE→reclassified,需 server 补 healer_id↔targetId 桥接字段): 只写不读（已 grep 确认仅 YidaoServerDataHandler 引用）：YidaoHudPlanner/BongHudOrchestrator 均未消费此 Store，NPC 医道 AI 状态入缓存后无 HUD 渲染出口——功能孤岛"
           }
         ]
       },
@@ -18804,8 +18804,8 @@ const MODULES = [
         },
         "gaps": [
           {
-            "severity": "warn",
-            "note": "确认可达：出棺路径（grade=None）若 PlayerStatePersistence/Username/LifespanComponent 三者任一缺失（断连瞬间常发），persist_in_coffin 早退、SQLite 保留 in_coffin=true 旧值，玩家重连后被重钉至已不存在的棺（persist_in_coffin 内 tracing::warn 记录但无补偿机制，代码自述与 重启复钉 同风险路径）"
+            "severity": "info",
+            "note": "✅ RESOLVED #805(module-map triage 修复批次): 确认可达：出棺路径（grade=None）若 PlayerStatePersistence/Username/LifespanComponent 三者任一缺失（断连瞬间常发），persist_in_coffin 早退、SQLite 保留 in_coffin=true 旧值，玩家重连后被重钉至已不存在的棺（persist_in_coffin 内 tracing::warn 记录但无补偿机制，代码自述与 重启复钉 同风险路径）"
           }
         ]
       },
@@ -21433,8 +21433,8 @@ const MODULES = [
         },
         "gaps": [
           {
-            "severity": "warn",
-            "note": "半接线孤岛（核实修正）：server 始终向 CH_BONE_COIN_TICK 发布 BoneCoinTickV1，但 agent redis-ipc.ts 根本未 subscribe 该频道（只 subscribe PRICE_INDEX 并 drainPriceIndexEvents），既无 BoneCoinTick 回调也无 latest 缓存，BoneCoinTick 遥测在 agent 侧永远收不到。该 emit 当前无任何 consumer"
+            "severity": "info",
+            "note": "✅ RESOLVED #803(module-map triage 修复批次): 半接线孤岛（核实修正）：server 始终向 CH_BONE_COIN_TICK 发布 BoneCoinTickV1，但 agent redis-ipc.ts 根本未 subscribe 该频道（只 subscribe PRICE_INDEX 并 drainPriceIndexEvents），既无 BoneCoinTick 回调也无 latest 缓存，BoneCoinTick 遥测在 agent 侧永远收不到。该 emit 当前无任何 consumer"
           }
         ]
       }
@@ -23634,8 +23634,8 @@ const MODULES = [
         },
         "gaps": [
           {
-            "severity": "warn",
-            "note": "Auto 模式（herbalism Lv.3+ 解锁）权限验证仅在 client 侧，server handle_start_harvest 信任请求不复验，存在绕过可能"
+            "severity": "info",
+            "note": "✅ RESOLVED #805(module-map triage 修复批次): Auto 模式（herbalism Lv.3+ 解锁）权限验证仅在 client 侧，server handle_start_harvest 信任请求不复验，存在绕过可能"
           }
         ]
       },
@@ -24277,8 +24277,8 @@ const MODULES = [
         },
         "gaps": [
           {
-            "severity": "critical",
-            "note": "remove_respawned 有完整逻辑和单测，但全仓除测试外无调用方（grep src/ 仅 persistence.rs 内出现），mod.rs Update 调度只注册 tick_mineral_clock/record_exhausted_minerals，无系统在运行时调 remove_respawned 并重建 OreNode+更新 index；带 respawn_at_tick 的矿脉永不真正再生，再生功能实为孤岛"
+            "severity": "info",
+            "note": "✅ RESOLVED #804(module-map triage 修复批次): remove_respawned 有完整逻辑和单测，但全仓除测试外无调用方（grep src/ 仅 persistence.rs 内出现），mod.rs Update 调度只注册 tick_mineral_clock/record_exhausted_minerals，无系统在运行时调 remove_respawned 并重建 OreNode+更新 index；带 respawn_at_tick 的矿脉永不真正再生，再生功能实为孤岛"
           }
         ]
       },
@@ -26678,8 +26678,8 @@ const MODULES = [
         },
         "gaps": [
           {
-            "severity": "warn",
-            "note": "多个 QiTransferReason 变体（DuguReturnToZone/DuguReverseVictimQi/NegPressureDrain）注释标记为 audit-only（应走 push_transfer_audit 而非 transfer），但运行时仅 HalfStepBuff 在 WorldQiAccount::transfer 入口强制拒绝；其他 audit-only 变体若被误传给 transfer 会静默改 balance，无编译期保护——真实可达的守恒 footgun，依赖调用方自律。"
+            "severity": "info",
+            "note": "✅ RESOLVED #804(module-map triage 修复批次): 多个 QiTransferReason 变体（DuguReturnToZone/DuguReverseVictimQi/NegPressureDrain）注释标记为 audit-only（应走 push_transfer_audit 而非 transfer），但运行时仅 HalfStepBuff 在 WorldQiAccount::transfer 入口强制拒绝；其他 audit-only 变体若被误传给 transfer 会静默改 balance，无编译期保护——真实可达的守恒 footgun，依赖调用方自律。"
           }
         ]
       },
@@ -27664,8 +27664,8 @@ const MODULES = [
         },
         "gaps": [
           {
-            "severity": "warn",
-            "note": "FIELD_NAMES 与 field_mut match 臂须手动保持同步，目前靠 test 锁住，无编译期保障（新增字段漏 match 只在运行期返回 None）。"
+            "severity": "info",
+            "note": "✅ RESOLVED #804(module-map triage 修复批次): FIELD_NAMES 与 field_mut match 臂须手动保持同步，目前靠 test 锁住，无编译期保障（新增字段漏 match 只在运行期返回 None）。"
           }
         ]
       },
@@ -28183,8 +28183,8 @@ const MODULES = [
         },
         "gaps": [
           {
-            "severity": "warn",
-            "note": "mod.rs:6/23 doc-comment 仍写「未启用 / 尚未被 main.rs 调用」，但 main.rs:91 实际已 skill::register(&mut app)（位于 cmd::register 与 tools::register 之间，活跃路径）；文档与代码不一致，易误导后续维护者以为模块未挂载"
+            "severity": "info",
+            "note": "✅ RESOLVED #805(module-map triage 修复批次): mod.rs:6/23 doc-comment 仍写「未启用 / 尚未被 main.rs 调用」，但 main.rs:91 实际已 skill::register(&mut app)（位于 cmd::register 与 tools::register 之间，活跃路径）；文档与代码不一致，易误导后续维护者以为模块未挂载"
           }
         ]
       },
@@ -28369,8 +28369,8 @@ const MODULES = [
             "note": "✅ FALSE-POSITIVE(triage 读码核实,非真缺口): 池耗尽 next_for_key 无 failover 直接 panic（pool.rs:125），无优雅降级；SKIP 模式下 NPC 无皮肤但不 panic，行为不对称"
           },
           {
-            "severity": "warn",
-            "note": "预取线程每次 spawn 独立 tokio Runtime 与 Bevy 主 async 执行器隔离；多 pool key 同线程串行拉取，MineSkin 限速则整批延迟"
+            "severity": "info",
+            "note": "✅ RESOLVED #805(module-map triage 修复批次): 预取线程每次 spawn 独立 tokio Runtime 与 Bevy 主 async 执行器隔离；多 pool key 同线程串行拉取，MineSkin 限速则整批延迟"
           },
           {
             "severity": "info",
@@ -29159,8 +29159,8 @@ const MODULES = [
         },
         "gaps": [
           {
-            "severity": "warn",
-            "note": "SpiritWoodHarvestedLogs 仅内存 Resource（验证于 mod.rs:37/89），服务器重启后已砍 log 恢复可重采，无持久化防刷材料"
+            "severity": "info",
+            "note": "✅ RESOLVED #804(module-map triage 修复批次): SpiritWoodHarvestedLogs 仅内存 Resource（验证于 mod.rs:37/89），服务器重启后已砍 log 恢复可重采，无持久化防刷材料"
           }
         ]
       },
@@ -30019,8 +30019,8 @@ const MODULES = [
         },
         "gaps": [
           {
-            "severity": "warn",
-            "note": "/time advance 只推进 CultivationClock，不推进 GameTick（cmd/dev/time.rs 只 import 并直写 CultivationClock）；dev 测试快进时 NPC 冷却 / AI 节拍时间戳不跟随，可能导致冷却校验结果与生产态不一致"
+            "severity": "info",
+            "note": "✅ RESOLVED #805(module-map triage 修复批次): /time advance 只推进 CultivationClock，不推进 GameTick（cmd/dev/time.rs 只 import 并直写 CultivationClock）；dev 测试快进时 NPC 冷却 / AI 节拍时间戳不跟随，可能导致冷却校验结果与生产态不一致"
           }
         ]
       },
@@ -30127,8 +30127,8 @@ const MODULES = [
         },
         "gaps": [
           {
-            "severity": "warn",
-            "note": "已核实孤岛：tools/components.rs 的 ButcherableCorpse / ButcherSession 全仓无任何外部引用（grep 仅命中定义处自身）。真正被使用的屠宰逻辑在 fauna/butcher.rs，那里另有一个同名但独立的 ButcherSession struct——tools 版本是未接线的死代码，与 fauna 版本重名易混淆。"
+            "severity": "info",
+            "note": "✅ RESOLVED #805(module-map triage 修复批次): 已核实孤岛：tools/components.rs 的 ButcherableCorpse / ButcherSession 全仓无任何外部引用（grep 仅命中定义处自身）。真正被使用的屠宰逻辑在 fauna/butcher.rs，那里另有一个同名但独立的 ButcherSession struct——tools 版本是未接线的死代码，与 fauna 版本重名易混淆。"
           }
         ]
       },
@@ -30616,8 +30616,8 @@ const MODULES = [
         },
         "gaps": [
           {
-            "severity": "warn",
-            "note": "world/terrain/mod.rs:404 注释 'TSY chunk routing arrives with plan-tsy-worldgen-v1'——当前只为 overworld 生成 raster-backed chunk，TSY 维度无地形内容（仅空 LayerBundle）；若 plan 延迟落地，TSY 内玩家站在空洞中（仅 env BONG_TSY_RASTER_PATH 设置时才有 TSY 地形）"
+            "severity": "info",
+            "note": "✅ RESOLVED #805(module-map triage 修复批次): world/terrain/mod.rs:404 注释 'TSY chunk routing arrives with plan-tsy-worldgen-v1'——当前只为 overworld 生成 raster-backed chunk，TSY 维度无地形内容（仅空 LayerBundle）；若 plan 延迟落地，TSY 内玩家站在空洞中（仅 env BONG_TSY_RASTER_PATH 设置时才有 TSY 地形）"
           },
           {
             "severity": "info",
