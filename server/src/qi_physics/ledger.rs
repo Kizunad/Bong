@@ -384,10 +384,22 @@ impl WorldQiAccount {
         // plan-halfstep-buff-v1 P1：HalfStepBuff 是 audit-only 标记（容量扩张，非真元搬运），
         // 误调 transfer 会变动 balance，违反 doc-comment 语义 + worldview §二 守恒律。
         // 拒绝在入口，强制 caller 走 EventWriter<QiTransfer> 单纯 emit 路径。
-        if matches!(transfer.reason, QiTransferReason::HalfStepBuff) {
-            return Err(QiPhysicsError::AuditOnlyReason {
-                reason: "HalfStepBuff",
-            });
+        //
+        // plan-qi-conservation-leaks-v1 P4 / bughunt r8 — DuguReturnToZone /
+        // DuguReverseVictimQi 的 doc-comment 同样标注"audit-only，禁止调 transfer"
+        // （余额已经在 ECS Cultivation 组件或 zone balance 里正确更新，调用方必须走
+        // push_transfer_audit 单纯留痕）；NegPressureDrain（bughunt QS-01）注释里也写了
+        // "活体真元仍在 ECS，不镜像到 player/npc ledger balance"。三者此前只在文档里
+        // 约定，没有编译期/运行期防护——照搬 HalfStepBuff 先例把它们一并拒在入口。
+        let audit_only_label = match transfer.reason {
+            QiTransferReason::HalfStepBuff => Some("HalfStepBuff"),
+            QiTransferReason::DuguReturnToZone => Some("DuguReturnToZone"),
+            QiTransferReason::DuguReverseVictimQi => Some("DuguReverseVictimQi"),
+            QiTransferReason::NegPressureDrain => Some("NegPressureDrain"),
+            _ => None,
+        };
+        if let Some(reason) = audit_only_label {
+            return Err(QiPhysicsError::AuditOnlyReason { reason });
         }
 
         let amount = finite_non_negative(transfer.amount, "transfer.amount")?;
@@ -718,6 +730,93 @@ mod tests {
         assert!(
             account.transfers().is_empty(),
             "拒绝的 transfer 不应留下 audit trail；防止统计被误污染"
+        );
+    }
+
+    /// plan-qi-conservation-leaks-v1 P4 / bughunt r8 / bughunt QS-01 — F24 加固：
+    /// DuguReturnToZone / DuguReverseVictimQi / NegPressureDrain 三个 audit-only reason
+    /// 此前只在 doc-comment 里约定"禁止调 transfer"，没有编译期/运行期防护。
+    /// 每个变体各一条 case，断言 transfer() 拒绝 + balance 完全不变 + 不留 audit trail。
+    #[test]
+    fn transfer_rejects_all_audit_only_reasons_with_balance_untouched() {
+        let cases = [
+            (QiTransferReason::DuguReturnToZone, "DuguReturnToZone"),
+            (QiTransferReason::DuguReverseVictimQi, "DuguReverseVictimQi"),
+            (QiTransferReason::NegPressureDrain, "NegPressureDrain"),
+        ];
+        for (reason, label) in cases {
+            let from = QiAccountId::player("caster");
+            let to = QiAccountId::zone("spawn");
+            let mut account = WorldQiAccount::default();
+            account.set_balance(from.clone(), 50.0).unwrap();
+            account.set_balance(to.clone(), 5.0).unwrap();
+
+            let transfer =
+                QiTransfer::new(from.clone(), to.clone(), 10.0, reason).unwrap_or_else(|e| {
+                    panic!("QiTransfer::new must accept {label} at event level: {e:?}")
+                });
+            let err = account.transfer(transfer).expect_err(&format!(
+                "expected {label} to be rejected by WorldQiAccount::transfer, but it succeeded"
+            ));
+            assert!(
+                matches!(err, QiPhysicsError::AuditOnlyReason { reason } if reason == label),
+                "expected AuditOnlyReason::{label}, got {err:?}"
+            );
+            assert_eq!(
+                account.balance(&from),
+                50.0,
+                "{label}: rejected transfer must leave `from` balance untouched (still 50.0), got {}",
+                account.balance(&from)
+            );
+            assert_eq!(
+                account.balance(&to),
+                5.0,
+                "{label}: rejected transfer must leave `to` balance untouched (still 5.0), got {}",
+                account.balance(&to)
+            );
+            assert!(
+                account.transfers().is_empty(),
+                "{label}: rejected transfer must not append to the audit trail"
+            );
+        }
+    }
+
+    /// F24 加固不能误伤现有调用方：它们都走 `push_transfer_audit`（audit-only 记录，
+    /// 不touch balance），必须继续对这三个 reason 正常工作——否则真实调用方（
+    /// tsy_drain.rs / dugu_v2/tick.rs / cultivation/neg_pressure.rs 等）会被这次加固破坏。
+    #[test]
+    fn push_transfer_audit_still_works_for_hardened_reasons() {
+        let cases = [
+            QiTransferReason::DuguReturnToZone,
+            QiTransferReason::DuguReverseVictimQi,
+            QiTransferReason::NegPressureDrain,
+            QiTransferReason::HalfStepBuff,
+        ];
+        let mut account = WorldQiAccount::default();
+        // 故意不给 from 设置 balance —— push_transfer_audit 不检查余额，
+        // 这本身就是与 transfer() 的关键行为差异（audit-only 不受限于 InsufficientQi）。
+        let from = QiAccountId::player("caster");
+        let to = QiAccountId::zone("spawn");
+        for reason in cases {
+            let transfer = QiTransfer::new(from.clone(), to.clone(), 10.0, reason)
+                .expect("QiTransfer::new must accept audit-only reasons");
+            account.push_transfer_audit(transfer.clone());
+            assert_eq!(
+                account.transfers().last(),
+                Some(&transfer),
+                "push_transfer_audit must append the transfer verbatim to the audit trail for {reason:?}"
+            );
+        }
+        assert_eq!(
+            account.transfers().len(),
+            cases.len(),
+            "expected exactly {} audit entries (one per hardened reason), no rejections/drops",
+            cases.len()
+        );
+        assert_eq!(
+            account.total(),
+            0.0,
+            "push_transfer_audit must never mutate any account balance"
         );
     }
 
