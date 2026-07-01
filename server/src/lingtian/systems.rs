@@ -37,7 +37,7 @@ use crate::player::state::{canonical_player_id, PlayerState};
 use crate::qi_physics::{QiAccountId, QiTransfer, QiTransferReason};
 use crate::schema::common::GameEventType;
 use crate::schema::world_state::GameEvent;
-use crate::skill::components::SkillId;
+use crate::skill::components::{SkillId, SkillSet};
 use crate::skill::events::{SkillXpGain, XpGainSource};
 use crate::world::events::ActiveEventsResource;
 
@@ -61,7 +61,7 @@ use super::qi_account::{
 use super::seed::{seed_id_for, SeedRegistry};
 use super::session::{
     DrainQiSession, HarvestSession, PlantingSession, RenewSession, ReplenishSession,
-    ReplenishSource, TillSession, DRAIN_QI_TO_PLAYER_RATIO, DRAIN_QI_TO_ZONE_RATIO,
+    ReplenishSource, SessionMode, TillSession, DRAIN_QI_TO_PLAYER_RATIO, DRAIN_QI_TO_ZONE_RATIO,
     REPLENISH_COOLDOWN_LINGTIAN_TICKS,
 };
 use super::terrain::classify_for_till;
@@ -429,6 +429,8 @@ pub fn handle_start_harvest(
     mut events: EventReader<StartHarvestRequest>,
     mut sessions: ResMut<ActiveLingtianSessions>,
     plots: Query<&LingtianPlot>,
+    cultivations: Query<&Cultivation>,
+    skill_sets: Query<&SkillSet>,
 ) {
     for req in events.read() {
         if sessions.has_session(req.player) {
@@ -437,6 +439,27 @@ pub fn handle_start_harvest(
                 req.player
             );
             continue;
+        }
+        // F23 — Auto 模式（herbalism Lv.3+ 解锁）此前只在 client UI 层 gating，
+        // req.mode 直接来自客户端，server 从不校验 → 可绕过协议直发 Auto 拿免手动
+        // 采集。这里补服务端权威门禁：不足解锁等级则拒（仿下方"已有 session/无
+        // 熟瓜"两条拒绝分支；另参 `lingtian::processing::validate_processing_start`
+        // 的 SkillLocked 校验先例）。纯权限门禁，不涉 qi。
+        if req.mode == SessionMode::Auto {
+            let cultivation = cultivations.get(req.player).ok();
+            let skill_set = skill_sets.get(req.player).ok();
+            let effective_lv =
+                crate::botany::harvest::herbalism_effective_lv(cultivation, skill_set);
+            let auto_unlock_level =
+                crate::botany::components::BotanySkillState::default().auto_unlock_level;
+            if effective_lv < auto_unlock_level {
+                tracing::warn!(
+                    "[bong][lingtian] StartHarvestRequest(Auto) rejected: player={:?} \
+                     herbalism_lv={effective_lv} < auto_unlock_level={auto_unlock_level}",
+                    req.player
+                );
+                continue;
+            }
         }
         let plant_id = plots
             .iter()
@@ -2867,6 +2890,132 @@ mod tests {
         });
         app.update();
         assert!(app.world().resource::<ActiveLingtianSessions>().is_empty());
+    }
+
+    // ───────────────────────── F23 — Auto 采集服务端等级门禁 ─────────────────────────
+
+    fn skill_set_with_herbalism_lv(lv: u8) -> SkillSet {
+        let mut skills = HashMap::new();
+        skills.insert(
+            SkillId::Herbalism,
+            crate::skill::components::SkillEntry {
+                lv,
+                ..Default::default()
+            },
+        );
+        SkillSet {
+            skills,
+            consumed_scrolls: Default::default(),
+        }
+    }
+
+    #[test]
+    fn harvest_auto_rejected_when_herbalism_below_unlock_level() {
+        let mut app = build_harvest_app();
+        let player = app.world_mut().spawn(empty_inventory_8x8()).id();
+        // auto_unlock_level 默认 3；lv=2 明确不足。
+        app.world_mut()
+            .entity_mut(player)
+            .insert(skill_set_with_herbalism_lv(2));
+        let pos = BlockPos::new(0, 64, 0);
+        spawn_ripe_plot(&mut app, "ci_she_hao", pos);
+        app.world_mut().send_event(StartHarvestRequest {
+            player,
+            pos,
+            mode: SessionMode::Auto,
+        });
+        app.update();
+
+        assert!(
+            app.world().resource::<ActiveLingtianSessions>().is_empty(),
+            "F23: herbalism lv=2 < auto_unlock_level=3 必须被服务端拒绝，不能靠 client UI \
+             单层 gating（协议可绕过）"
+        );
+    }
+
+    #[test]
+    fn harvest_auto_rejected_when_herbalism_missing_entirely() {
+        // 完全没有 SkillSet/Cultivation 组件 —— 等价 herbalism lv=0，同样必须被拒。
+        let mut app = build_harvest_app();
+        let player = app.world_mut().spawn(empty_inventory_8x8()).id();
+        let pos = BlockPos::new(0, 64, 0);
+        spawn_ripe_plot(&mut app, "ci_she_hao", pos);
+        app.world_mut().send_event(StartHarvestRequest {
+            player,
+            pos,
+            mode: SessionMode::Auto,
+        });
+        app.update();
+
+        assert!(
+            app.world().resource::<ActiveLingtianSessions>().is_empty(),
+            "F23: 缺 SkillSet 组件时 herbalism_effective_lv 应回落到 0，同样触发门禁拒绝"
+        );
+    }
+
+    #[test]
+    fn harvest_auto_allowed_when_herbalism_meets_unlock_level() {
+        let mut app = build_harvest_app();
+        let player = app.world_mut().spawn(empty_inventory_8x8()).id();
+        // 刚好等于 auto_unlock_level=3 —— 边界值必须放行（>= 不是 >）。
+        app.world_mut()
+            .entity_mut(player)
+            .insert(skill_set_with_herbalism_lv(3));
+        let pos = BlockPos::new(0, 64, 0);
+        spawn_ripe_plot(&mut app, "ci_she_hao", pos);
+        app.world_mut().send_event(StartHarvestRequest {
+            player,
+            pos,
+            mode: SessionMode::Auto,
+        });
+        app.update();
+
+        assert!(
+            !app.world().resource::<ActiveLingtianSessions>().is_empty(),
+            "F23: herbalism lv=3 == auto_unlock_level 边界应放行，不应被拒"
+        );
+    }
+
+    #[test]
+    fn harvest_auto_allowed_when_herbalism_well_above_unlock_level() {
+        let mut app = build_harvest_app();
+        let player = app.world_mut().spawn(empty_inventory_8x8()).id();
+        app.world_mut()
+            .entity_mut(player)
+            .insert(skill_set_with_herbalism_lv(10));
+        let pos = BlockPos::new(0, 64, 0);
+        spawn_ripe_plot(&mut app, "ci_she_hao", pos);
+        app.world_mut().send_event(StartHarvestRequest {
+            player,
+            pos,
+            mode: SessionMode::Auto,
+        });
+        app.update();
+
+        assert!(
+            !app.world().resource::<ActiveLingtianSessions>().is_empty(),
+            "F23: herbalism lv 远高于门禁值时必须放行"
+        );
+    }
+
+    #[test]
+    fn harvest_manual_mode_is_unaffected_by_herbalism_level() {
+        // Manual 模式完全不该受门禁影响，即使玩家一点采集技艺都没有。
+        let mut app = build_harvest_app();
+        let player = app.world_mut().spawn(empty_inventory_8x8()).id();
+        let pos = BlockPos::new(0, 64, 0);
+        spawn_ripe_plot(&mut app, "ci_she_hao", pos);
+        app.world_mut().send_event(StartHarvestRequest {
+            player,
+            pos,
+            mode: SessionMode::Manual,
+        });
+        app.update();
+
+        assert!(
+            !app.world().resource::<ActiveLingtianSessions>().is_empty(),
+            "F23: Manual 模式不应被 herbalism 等级门禁拦截"
+        );
     }
 
     #[test]

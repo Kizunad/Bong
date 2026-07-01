@@ -103,9 +103,14 @@ pub struct RasterBootstrapConfig {
     pub raster_dir: PathBuf,
 }
 
+// F12 — 按维度分桶的已生成 chunk 记录。overworld / TSY 各自独立的 `ChunkLayer`
+// 实体，但 `ChunkPos` 坐标空间是共享的（都从 (0,0) 起算），若用单一
+// `HashSet<ChunkPos>` 会导致"overworld 已生成 (x,z)"错误地让 TSY 同坐标的
+// chunk 被判定为"已生成"而跳过（`ensure_chunk_generated` 的 early-return 只看
+// `generated.contains(&pos)`，不知道是哪个维度）。
 #[derive(Default)]
 struct GeneratedChunks {
-    loaded: HashSet<ChunkPos>,
+    loaded: HashMap<DimensionKind, HashSet<ChunkPos>>,
 }
 
 impl Resource for GeneratedChunks {}
@@ -200,70 +205,81 @@ fn recover_fall_through(
     let (Some(providers), Some(dimension_layers)) = (providers, dimension_layers) else {
         return;
     };
-    let overworld = dimension_layers.overworld;
     let tick = server.current_tick();
-    let Ok(mut layer) = layers.get_mut(overworld) else {
-        return;
-    };
-    let floor_y = layer.min_y();
-    for (entity, mut position, visible_chunk_layer, username) in &mut clients {
-        if visible_chunk_layer.0 != overworld {
+
+    // F12 — 按维度遍历而非硬编码 overworld；无 raster 的维度（provider=None）
+    // 跳过，与之前"TSY 玩家永远不会命中此系统"的行为一致，直到该维度真的有
+    // raster provider 才开始为其玩家跑穿地恢复。
+    for kind in [DimensionKind::Overworld, DimensionKind::Tsy] {
+        let Some(terrain) = providers.for_dimension(kind) else {
             continue;
-        }
-        let p = position.get();
-        let bx = p.x.floor() as i32;
-        let by = p.y.floor() as i32;
-        let bz = p.z.floor() as i32;
-        // 玩家身体所在方块在服务端有碰撞箱 = 重叠固体 = 客户端缺这块 chunk、正穿过它。
-        let feet_obstructed = layer
-            .block([bx, by, bz])
-            .map(|b| b.state.collision_shapes().len() > 0)
-            .unwrap_or(false);
-        match decide_fall_recovery(feet_obstructed, p.y, floor_y) {
-            FallRecovery::None => {
-                last_resend_tick.remove(&entity);
+        };
+        let layer_entity = dimension_layers.entity_for(kind);
+        let Ok(mut layer) = layers.get_mut(layer_entity) else {
+            continue;
+        };
+        let floor_y = layer.min_y();
+        for (entity, mut position, visible_chunk_layer, username) in &mut clients {
+            if visible_chunk_layer.0 != layer_entity {
+                continue;
             }
-            FallRecovery::Spawn => {
-                let seed = username
-                    .map(|username| username.0.as_str())
-                    .unwrap_or("fall-recovery");
-                position.set(crate::player::spawn_position_for_seed(
-                    seed,
-                    crate::player::spawn_selector::SpawnPurpose::FallRecovery,
-                ));
-                last_resend_tick.remove(&entity);
-                tracing::warn!(
-                    "[bong][world] {:?} fell out of world (y={:.1} < floor {} - {}) → rescued to spawn",
-                    entity,
-                    p.y,
-                    floor_y,
-                    VOID_RESCUE_MARGIN
-                );
-            }
-            FallRecovery::ResendAndBounce => {
-                // 节流：一次重发 + 弹回通常就能让客户端落稳；10 tick 内不重复，避免
-                // 在客户端尚未处理完重发时反复 remove/insert。
-                if last_resend_tick
-                    .get(&entity)
-                    .is_some_and(|&t| tick - t < 10)
-                {
-                    continue;
+            let p = position.get();
+            let bx = p.x.floor() as i32;
+            let by = p.y.floor() as i32;
+            let bz = p.z.floor() as i32;
+            // 玩家身体所在方块在服务端有碰撞箱 = 重叠固体 = 客户端缺这块 chunk、正穿过它。
+            let feet_obstructed = layer
+                .block([bx, by, bz])
+                .map(|b| b.state.collision_shapes().len() > 0)
+                .unwrap_or(false);
+            match decide_fall_recovery(feet_obstructed, p.y, floor_y) {
+                FallRecovery::None => {
+                    last_resend_tick.remove(&entity);
                 }
-                let cp = ChunkPos::new(bx.div_euclid(16), bz.div_euclid(16));
-                if let Some(chunk) = layer.remove_chunk(cp) {
-                    layer.insert_chunk(cp, chunk);
+                FallRecovery::Spawn => {
+                    let seed = username
+                        .map(|username| username.0.as_str())
+                        .unwrap_or("fall-recovery");
+                    position.set(crate::player::spawn_position_for_seed(
+                        seed,
+                        crate::player::spawn_selector::SpawnPurpose::FallRecovery,
+                    ));
+                    last_resend_tick.remove(&entity);
+                    tracing::warn!(
+                        "[bong][world] {:?} fell out of world in {:?} (y={:.1} < floor {} - {}) → rescued to spawn",
+                        entity,
+                        kind,
+                        p.y,
+                        floor_y,
+                        VOID_RESCUE_MARGIN
+                    );
                 }
-                let surface = providers.overworld.query_surface(bx, bz).y;
-                position.set([p.x, f64::from(surface + 2), p.z]);
-                last_resend_tick.insert(entity, tick);
-                tracing::debug!(
-                    "[bong][world] {:?} phased through chunk ({},{}) at y={:.1} → re-sent chunk + bounced to surface {}",
-                    entity,
-                    cp.x,
-                    cp.z,
-                    p.y,
-                    surface
-                );
+                FallRecovery::ResendAndBounce => {
+                    // 节流：一次重发 + 弹回通常就能让客户端落稳；10 tick 内不重复，避免
+                    // 在客户端尚未处理完重发时反复 remove/insert。
+                    if last_resend_tick
+                        .get(&entity)
+                        .is_some_and(|&t| tick - t < 10)
+                    {
+                        continue;
+                    }
+                    let cp = ChunkPos::new(bx.div_euclid(16), bz.div_euclid(16));
+                    if let Some(chunk) = layer.remove_chunk(cp) {
+                        layer.insert_chunk(cp, chunk);
+                    }
+                    let surface = terrain.query_surface(bx, bz).y;
+                    position.set([p.x, f64::from(surface + 2), p.z]);
+                    last_resend_tick.insert(entity, tick);
+                    tracing::debug!(
+                        "[bong][world] {:?} phased through chunk ({},{}) in {:?} at y={:.1} → re-sent chunk + bounced to surface {}",
+                        entity,
+                        cp.x,
+                        cp.z,
+                        kind,
+                        p.y,
+                        surface
+                    );
+                }
             }
         }
     }
@@ -397,19 +413,10 @@ fn generate_chunks_around_players(
     let Some(providers) = providers else {
         return;
     };
-    let terrain = &providers.overworld;
-    let generated = generated.as_mut();
-
-    // For now we only generate raster-backed chunks for the overworld layer.
-    // TSY chunk routing arrives with `plan-tsy-worldgen-v1`.
     let Some(dimension_layers) = dimension_layers else {
         return;
     };
-    let overworld_layer_entity = dimension_layers.overworld;
-
-    let Ok(mut layer) = layers.get_mut(overworld_layer_entity) else {
-        return;
-    };
+    let generated = generated.as_mut();
 
     // 每 client 每 tick 最多新生成的 chunk 数 —— 防止首次连接 / 远程传送
     // 时一帧内同步装填整个 view（200+ chunk）冻住 server tick，让玩家所有
@@ -426,28 +433,44 @@ fn generate_chunks_around_players(
     // per-client 1/tick → N 玩家时总量 N/tick，但每个玩家都向前推进。
     const MAX_NEW_CHUNKS_PER_CLIENT_PER_TICK: usize = 1;
 
-    for (view, visible_chunk_layer) in &clients {
-        if visible_chunk_layer.0 != overworld_layer_entity {
+    // F12 — 按维度遍历，而非硬编码 overworld。`for_dimension(kind)` 为 None
+    // （目前只有未设 BONG_TSY_RASTER_PATH 时的 TSY）就跳过该维度，保持"没有
+    // raster 就没有 chunk"的 legacy 空洞行为；提供该维度 raster 后自动接上同一套
+    // 生成路径，不需要再改这三个系统。
+    for kind in [DimensionKind::Overworld, DimensionKind::Tsy] {
+        let Some(terrain) = providers.for_dimension(kind) else {
             continue;
-        }
-        let mut client_budget = MAX_NEW_CHUNKS_PER_CLIENT_PER_TICK;
-        for pos in view.get().iter() {
-            if client_budget == 0 {
-                break;
+        };
+        let layer_entity = dimension_layers.entity_for(kind);
+        let Ok(mut layer) = layers.get_mut(layer_entity) else {
+            continue;
+        };
+        let loaded = generated.loaded.entry(kind).or_default();
+
+        for (view, visible_chunk_layer) in &clients {
+            if visible_chunk_layer.0 != layer_entity {
+                continue;
             }
-            let already = generated.loaded.contains(&pos) || layer.chunk(pos).is_some();
-            ensure_chunk_generated(
-                &mut layer,
-                pos,
-                terrain,
-                &mut generated.loaded,
-                mineral_index.as_deref(),
-                &mineral_nodes,
-                harvested_spiritwood.as_deref(),
-                &deco_registry,
-            );
-            if !already {
-                client_budget -= 1;
+            let mut client_budget = MAX_NEW_CHUNKS_PER_CLIENT_PER_TICK;
+            for pos in view.get().iter() {
+                if client_budget == 0 {
+                    break;
+                }
+                let already = loaded.contains(&pos) || layer.chunk(pos).is_some();
+                ensure_chunk_generated(
+                    &mut layer,
+                    pos,
+                    terrain,
+                    loaded,
+                    mineral_index.as_deref(),
+                    &mineral_nodes,
+                    harvested_spiritwood.as_deref(),
+                    &deco_registry,
+                    kind,
+                );
+                if !already {
+                    client_budget -= 1;
+                }
             }
         }
     }
@@ -460,38 +483,47 @@ fn remove_unviewed_chunks(
     dimension_layers: Option<Res<DimensionLayers>>,
     mut generated: ResMut<GeneratedChunks>,
 ) {
-    if providers.is_none() {
+    let Some(providers) = providers else {
         return;
-    }
+    };
     let Some(dimension_layers) = dimension_layers else {
         return;
     };
     let generated = generated.as_mut();
 
-    let Ok(mut layer) = layers.get_mut(dimension_layers.overworld) else {
-        return;
-    };
-    let visible_overworld_views = clients
-        .iter()
-        .filter_map(|(view, visible_chunk_layer)| {
-            (visible_chunk_layer.0 == dimension_layers.overworld).then(|| view.get())
-        })
-        .collect::<Vec<_>>();
-
-    generated.loaded.retain(|pos| layer.chunk(*pos).is_some());
-
-    let mut removed = Vec::new();
-    layer.retain_chunks(|pos, chunk| {
-        let keep = chunk.viewer_count_mut() > 0
-            || chunk_is_visible_in_any_view(pos, visible_overworld_views.iter().copied());
-        if !keep {
-            removed.push(pos);
+    // F12 — 同 `generate_chunks_around_players`：按维度遍历而非硬编码 overworld，
+    // 无 raster 的维度天然没有 `loaded` 记录，`retain`/`retain_chunks` 均为 no-op。
+    for kind in [DimensionKind::Overworld, DimensionKind::Tsy] {
+        if providers.for_dimension(kind).is_none() {
+            continue;
         }
-        keep
-    });
+        let layer_entity = dimension_layers.entity_for(kind);
+        let Ok(mut layer) = layers.get_mut(layer_entity) else {
+            continue;
+        };
+        let visible_views = clients
+            .iter()
+            .filter_map(|(view, visible_chunk_layer)| {
+                (visible_chunk_layer.0 == layer_entity).then(|| view.get())
+            })
+            .collect::<Vec<_>>();
 
-    for pos in removed {
-        generated.loaded.remove(&pos);
+        let loaded = generated.loaded.entry(kind).or_default();
+        loaded.retain(|pos| layer.chunk(*pos).is_some());
+
+        let mut removed = Vec::new();
+        layer.retain_chunks(|pos, chunk| {
+            let keep = chunk.viewer_count_mut() > 0
+                || chunk_is_visible_in_any_view(pos, visible_views.iter().copied());
+            if !keep {
+                removed.push(pos);
+            }
+            keep
+        });
+
+        for pos in removed {
+            loaded.remove(&pos);
+        }
     }
 }
 
@@ -509,6 +541,7 @@ fn ensure_chunk_generated(
     mineral_nodes: &Query<&MineralOreNode>,
     harvested_spiritwood: Option<&crate::spiritwood::SpiritWoodHarvestedLogs>,
     deco_registry: &nbt_registry::DecorationNbtRegistry,
+    dimension: DimensionKind,
 ) {
     if generated.contains(&pos) || layer.chunk(pos).is_some() {
         return;
@@ -542,8 +575,15 @@ fn ensure_chunk_generated(
     // density mask (P0 worldgen) already removed flora inside compound radius.
     authored::place_authored_structures(&mut chunk, pos, min_y, terrain);
     giant_sword::decorate_chunk(&mut chunk, pos, min_y, terrain);
-    overlay_mineral_ores(&mut chunk, pos, min_y, mineral_index, mineral_nodes);
-    erase_harvested_spiritwood_logs(&mut chunk, pos, min_y, harvested_spiritwood);
+    overlay_mineral_ores(
+        &mut chunk,
+        pos,
+        min_y,
+        mineral_index,
+        mineral_nodes,
+        dimension,
+    );
+    erase_harvested_spiritwood_logs(&mut chunk, pos, min_y, harvested_spiritwood, dimension);
     biome::fill_chunk_biomes(&mut chunk, pos.x, pos.z, WORLD_HEIGHT, terrain);
     layer.insert_chunk(pos, chunk);
     generated.insert(pos);
@@ -554,11 +594,12 @@ fn erase_harvested_spiritwood_logs(
     pos: ChunkPos,
     min_y: i32,
     harvested_spiritwood: Option<&crate::spiritwood::SpiritWoodHarvestedLogs>,
+    dimension: DimensionKind,
 ) {
     let Some(harvested_spiritwood) = harvested_spiritwood else {
         return;
     };
-    for block_pos in harvested_spiritwood.positions_in_chunk(DimensionKind::Overworld, pos) {
+    for block_pos in harvested_spiritwood.positions_in_chunk(dimension, pos) {
         let local_y = block_pos.y - min_y;
         if !(0..WORLD_HEIGHT as i32).contains(&local_y) {
             continue;
@@ -575,13 +616,14 @@ fn overlay_mineral_ores(
     min_y: i32,
     mineral_index: Option<&MineralOreIndex>,
     mineral_nodes: &Query<&MineralOreNode>,
+    dimension: DimensionKind,
 ) {
     let Some(mineral_index) = mineral_index else {
         return;
     };
 
-    for (dimension, block_pos, entity) in mineral_index.iter() {
-        if dimension != DimensionKind::Overworld {
+    for (node_dimension, block_pos, entity) in mineral_index.iter() {
+        if node_dimension != dimension {
             continue;
         }
         if block_pos.x.div_euclid(16) != pos.x || block_pos.z.div_euclid(16) != pos.z {
@@ -776,5 +818,310 @@ mod tests {
 
     fn heightmap_bits_for_dimension(height: u32) -> u32 {
         u32::BITS - height.leading_zeros()
+    }
+
+    // F12 — TSY chunk routing pin 测试。用 `valence::testing::ScenarioSingleClient`
+    // 建 overworld layer + 手动补一个 TSY `LayerBundle`，锁"按维度遍历"契约：
+    // provider 存在则该维度玩家能拿到 chunk / 穿地恢复，provider 缺失则维持
+    // legacy 空洞，且 overworld 路径不因 TSY provider 是否存在而回归。
+    mod tsy_routing {
+        use super::*;
+        use crate::world::dimension::{register_tsy_dimension, TsyLayer};
+        use std::collections::BTreeSet;
+        use valence::prelude::{EntityLayerId, LayerBundle, VisibleEntityLayers};
+        use valence::testing::ScenarioSingleClient;
+
+        /// 建一个同时有 overworld + TSY 两个 `ChunkLayer` 的测试 App。
+        /// 返回 (app, client, overworld_layer, tsy_layer)。
+        fn two_dimension_test_app() -> (App, Entity, Entity, Entity) {
+            let scenario = ScenarioSingleClient::new();
+            let mut app = scenario.app;
+            crate::world::dimension::mark_test_layer_as_overworld(&mut app);
+
+            {
+                let mut dimensions = app.world_mut().resource_mut::<DimensionTypeRegistry>();
+                register_tsy_dimension(&mut dimensions);
+            }
+            let tsy_layer = {
+                let world = app.world();
+                let bundle = LayerBundle::new(
+                    ident!("bong:tsy"),
+                    world.resource::<DimensionTypeRegistry>(),
+                    world.resource::<BiomeRegistry>(),
+                    world.resource::<Server>(),
+                );
+                app.world_mut().spawn((bundle, TsyLayer)).id()
+            };
+
+            app.insert_resource(DimensionLayers {
+                overworld: scenario.layer,
+                tsy: tsy_layer,
+            });
+            app.insert_resource(GeneratedChunks::default());
+            app.insert_resource(nbt_registry::DecorationNbtRegistry::empty());
+
+            (app, scenario.client, scenario.layer, tsy_layer)
+        }
+
+        fn move_client_to_layer(app: &mut App, client: Entity, layer: Entity) {
+            app.world_mut().entity_mut(client).insert((
+                EntityLayerId(layer),
+                VisibleChunkLayer(layer),
+                VisibleEntityLayers(BTreeSet::from([layer])),
+            ));
+        }
+
+        fn set_client_position(app: &mut App, client: Entity, pos: [f64; 3]) {
+            app.world_mut()
+                .entity_mut(client)
+                .insert(Position::new(pos));
+        }
+
+        fn loaded_contains(app: &App, kind: DimensionKind, pos: ChunkPos) -> bool {
+            app.world()
+                .resource::<GeneratedChunks>()
+                .loaded
+                .get(&kind)
+                .is_some_and(|set| set.contains(&pos))
+        }
+
+        fn loaded_count(app: &App, kind: DimensionKind) -> usize {
+            app.world()
+                .resource::<GeneratedChunks>()
+                .loaded
+                .get(&kind)
+                .map_or(0, |set| set.len())
+        }
+
+        #[test]
+        fn generate_chunks_creates_tsy_chunk_when_tsy_provider_present() {
+            let (mut app, client, _overworld, tsy_layer) = two_dimension_test_app();
+            move_client_to_layer(&mut app, client, tsy_layer);
+            set_client_position(&mut app, client, [8.5, 64.0, 8.5]);
+            app.insert_resource(TerrainProviders {
+                overworld: TerrainProvider::empty_for_tests(),
+                tsy: Some(TerrainProvider::empty_for_tests()),
+            });
+            app.add_systems(Update, generate_chunks_around_players);
+
+            app.update();
+
+            assert_eq!(
+                loaded_count(&app, DimensionKind::Tsy),
+                1,
+                "F12: a client whose VisibleChunkLayer points at the TSY layer must get a \
+                 chunk generated once TerrainProviders.tsy is Some — this is the exact gap F12 \
+                 closes (TerrainRuntime previously only ever looked at dimension_layers.overworld)"
+            );
+            assert_eq!(
+                loaded_count(&app, DimensionKind::Overworld),
+                0,
+                "no client is viewing the overworld layer in this scenario, so it must stay untouched"
+            );
+        }
+
+        #[test]
+        fn generate_chunks_skips_tsy_entirely_when_provider_absent() {
+            let (mut app, client, _overworld, tsy_layer) = two_dimension_test_app();
+            move_client_to_layer(&mut app, client, tsy_layer);
+            set_client_position(&mut app, client, [8.5, 64.0, 8.5]);
+            app.insert_resource(TerrainProviders {
+                overworld: TerrainProvider::empty_for_tests(),
+                tsy: None,
+            });
+            app.add_systems(Update, generate_chunks_around_players);
+
+            app.update();
+
+            assert_eq!(
+                loaded_count(&app, DimensionKind::Tsy),
+                0,
+                "F12 must not regress the 'no BONG_TSY_RASTER_PATH configured' legacy behaviour: \
+                 TerrainProviders.tsy=None must keep TSY a void, not panic or synthesize chunks"
+            );
+            assert!(
+                app.world()
+                    .get::<ChunkLayer>(tsy_layer)
+                    .expect("tsy layer entity should still carry a ChunkLayer component")
+                    .chunk(ChunkPos::new(0, 0))
+                    .is_none(),
+                "no chunk should have been inserted into the TSY ChunkLayer when its provider is absent"
+            );
+        }
+
+        #[test]
+        fn generate_chunks_overworld_unaffected_by_tsy_provider_presence() {
+            let (mut app, client, overworld_layer, _tsy_layer) = two_dimension_test_app();
+            move_client_to_layer(&mut app, client, overworld_layer);
+            set_client_position(&mut app, client, [8.5, 64.0, 8.5]);
+            // TSY provider 也存在 —— 证明 overworld 路径不受"TSY 是否也在跑"影响。
+            app.insert_resource(TerrainProviders {
+                overworld: TerrainProvider::empty_for_tests(),
+                tsy: Some(TerrainProvider::empty_for_tests()),
+            });
+            app.add_systems(Update, generate_chunks_around_players);
+
+            app.update();
+
+            assert_eq!(
+                loaded_count(&app, DimensionKind::Overworld),
+                1,
+                "F12 regression check: overworld chunk generation for an overworld viewer must \
+                 keep working exactly as before, even with a TSY provider now also present"
+            );
+            assert_eq!(
+                loaded_count(&app, DimensionKind::Tsy),
+                0,
+                "no client is viewing TSY in this scenario, so TSY must stay untouched"
+            );
+        }
+
+        #[test]
+        fn generate_chunks_per_dimension_bookkeeping_does_not_cross_contaminate_same_chunkpos() {
+            // 回归点：`GeneratedChunks.loaded` 从单一 `HashSet<ChunkPos>` 改成按维度分桶的
+            // `HashMap<DimensionKind, HashSet<ChunkPos>>`。若退化回单一集合，overworld 在
+            // (0,0) 生成的记录会让 TSY 同坐标 (0,0) 被误判"已生成"而跳过 —— 本测试用两个
+            // 分别看 overworld / TSY 的 client，一次 `app.update()` 后两边都应各自拿到 1 个
+            // chunk（而不是后者因"已生成"被跳过）。
+            let (mut app, client_a, overworld_layer, tsy_layer) = two_dimension_test_app();
+            move_client_to_layer(&mut app, client_a, overworld_layer);
+            set_client_position(&mut app, client_a, [8.5, 64.0, 8.5]);
+
+            // 第二个 client：用同一套 `create_mock_client` 先建出一个完整、合法的
+            // `ClientBundle`（含 Position/ViewDistance 等所有必需组件），再用和
+            // `move_client_to_layer`/`set_client_position` 相同的方式改写 layer 归属，
+            // 避免直接猜测 `PlayerEntityBundle` 内部字段路径。
+            let (second_bundle, _second_helper) =
+                valence::testing::create_mock_client("second-tsy-client");
+            let client_b = app.world_mut().spawn(second_bundle).id();
+            move_client_to_layer(&mut app, client_b, tsy_layer);
+            set_client_position(&mut app, client_b, [8.5, 64.0, 8.5]);
+
+            app.insert_resource(TerrainProviders {
+                overworld: TerrainProvider::empty_for_tests(),
+                tsy: Some(TerrainProvider::empty_for_tests()),
+            });
+            app.add_systems(Update, generate_chunks_around_players);
+
+            app.update();
+
+            assert_eq!(
+                loaded_count(&app, DimensionKind::Overworld),
+                1,
+                "overworld viewer must still get its chunk at (0,0)"
+            );
+            assert_eq!(
+                loaded_count(&app, DimensionKind::Tsy),
+                1,
+                "TSY viewer at the same world (x,z) must independently get its own chunk — a \
+                 shared HashSet<ChunkPos> would have made this a false 'already generated' hit"
+            );
+        }
+
+        #[test]
+        fn remove_unviewed_chunks_evicts_tsy_chunks_independently_of_overworld() {
+            let (mut app, client, _overworld, tsy_layer) = two_dimension_test_app();
+            move_client_to_layer(&mut app, client, tsy_layer);
+            set_client_position(&mut app, client, [8.5, 64.0, 8.5]);
+            app.insert_resource(TerrainProviders {
+                overworld: TerrainProvider::empty_for_tests(),
+                tsy: Some(TerrainProvider::empty_for_tests()),
+            });
+            app.add_systems(
+                Update,
+                (
+                    generate_chunks_around_players,
+                    remove_unviewed_chunks.after(generate_chunks_around_players),
+                ),
+            );
+
+            let origin = ChunkPos::new(0, 0);
+            app.update();
+            assert!(
+                loaded_contains(&app, DimensionKind::Tsy, origin),
+                "sanity check: chunk (0,0) must exist before we can assert its eviction"
+            );
+
+            // 把 view distance 缩到最小并把玩家挪出很远，让原先那个 TSY chunk 脱离视野。
+            // 注意：`generate_chunks_around_players` 仍挂在 schedule 上，之后的 update 会在
+            // 新位置附近生成别的 chunk（预期行为），所以断言只认 chunk (0,0) 是否被清掉，
+            // 不用整体 loaded 计数（否则会被"新位置又生成了别的 chunk"假阳性污染）。
+            app.world_mut()
+                .entity_mut(client)
+                .insert(valence::prelude::ViewDistance::new(2));
+            set_client_position(&mut app, client, [100_000.0, 64.0, 100_000.0]);
+            for _ in 0..10 {
+                app.update();
+            }
+
+            assert!(
+                !loaded_contains(&app, DimensionKind::Tsy, origin),
+                "F12: remove_unviewed_chunks must evict TSY chunks the same way it always did \
+                 for overworld — this only exercises correctly if the system's per-dimension \
+                 loop (and the per-dimension `loaded` bucket) actually reaches the TSY layer"
+            );
+            assert!(
+                app.world()
+                    .get::<ChunkLayer>(tsy_layer)
+                    .expect("tsy layer entity should still carry a ChunkLayer component")
+                    .chunk(origin)
+                    .is_none(),
+                "the evicted chunk must also be gone from the actual ChunkLayer, not just the \
+                 bookkeeping set"
+            );
+        }
+
+        #[test]
+        fn recover_fall_through_rescues_tsy_player_in_the_void_when_provider_present() {
+            let (mut app, client, _overworld, tsy_layer) = two_dimension_test_app();
+            move_client_to_layer(&mut app, client, tsy_layer);
+            // 深深低于 TSY floor(min_y=-64) - VOID_RESCUE_MARGIN(16)，且 TSY layer 未插入
+            // 任何 chunk（脚下自然无碰撞）→ 纯函数层面必判 FallRecovery::Spawn。
+            set_client_position(&mut app, client, [8.5, -500.0, 8.5]);
+            app.insert_resource(TerrainProviders {
+                overworld: TerrainProvider::empty_for_tests(),
+                tsy: Some(TerrainProvider::empty_for_tests()),
+            });
+            app.add_systems(Update, recover_fall_through);
+
+            app.update();
+
+            let rescued_y = app
+                .world()
+                .get::<Position>(client)
+                .expect("client should still have Position after rescue")
+                .get()
+                .y;
+            assert_ne!(
+                rescued_y, -500.0,
+                "F12: a TSY player fallen far below the TSY floor must be rescued once TSY has \
+                 a provider — previously recover_fall_through never even looked at TSY clients"
+            );
+        }
+
+        #[test]
+        fn recover_fall_through_leaves_tsy_player_untouched_when_provider_absent() {
+            let (mut app, client, _overworld, tsy_layer) = two_dimension_test_app();
+            move_client_to_layer(&mut app, client, tsy_layer);
+            set_client_position(&mut app, client, [8.5, -500.0, 8.5]);
+            app.insert_resource(TerrainProviders {
+                overworld: TerrainProvider::empty_for_tests(),
+                tsy: None,
+            });
+            app.add_systems(Update, recover_fall_through);
+
+            app.update();
+
+            let y_after = app
+                .world()
+                .get::<Position>(client)
+                .expect("client should still have Position")
+                .get()
+                .y;
+            assert_eq!(
+                y_after, -500.0,
+                "legacy behaviour must hold when TSY has no provider: no rescue, no panic"
+            );
+        }
     }
 }

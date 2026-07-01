@@ -172,7 +172,7 @@ impl SkinPool {
             .into_iter()
             .filter(|key| self.inflight.insert(*key))
             .collect();
-        self.spawn_fetch_serial(keys, PREFETCH_TARGET_PER_POOL_KEY, client);
+        self.spawn_fetch_concurrent(keys, PREFETCH_TARGET_PER_POOL_KEY, client);
     }
 
     fn maybe_mark_timeout(&mut self) {
@@ -205,7 +205,7 @@ impl SkinPool {
             self.inflight.insert(*key);
         }
         if let Ok(client) = MineSkinClient::from_env() {
-            self.spawn_fetch_serial(keys, PREFETCH_TARGET_PER_POOL_KEY, client);
+            self.spawn_fetch_concurrent(keys, PREFETCH_TARGET_PER_POOL_KEY, client);
         } else {
             for key in &keys {
                 self.inflight.remove(key);
@@ -213,7 +213,12 @@ impl SkinPool {
         }
     }
 
-    fn spawn_fetch_serial(
+    /// F11 — 并发抓取每个 pool key（沿用 `redis_bridge::spawn_redis_bridge` 的
+    /// 单线程 + 独立 tokio Runtime 模式）。旧实现在 runtime 内用 `for key in keys`
+    /// 顺序 `block_on`，一个 key 被限速/重试会阻塞同批后续所有 key；这里改用
+    /// `futures_util::future::join_all` 把所有 key 的 fetch 并发 join，仍逐 key
+    /// 通过既有 crossbeam channel 发回 Ready/Failed —— 不改外部 channel 语义。
+    fn spawn_fetch_concurrent(
         &mut self,
         keys: Vec<NpcSkinPoolKey>,
         count: usize,
@@ -242,8 +247,16 @@ impl SkinPool {
                     }
                 };
 
-                for key in keys {
-                    let result = runtime.block_on(async { client.fetch_random(count).await });
+                let results = runtime.block_on(async {
+                    let client_ref = &client;
+                    futures_util::future::join_all(
+                        keys.iter()
+                            .map(|key| async move { (*key, client_ref.fetch_random(count).await) }),
+                    )
+                    .await
+                });
+
+                for (key, result) in results {
                     match result {
                         Ok(skins) => {
                             let _ = sender.send(SkinFetchResult::Ready { key, skins });
@@ -286,6 +299,7 @@ impl SkinBucket {
     }
 }
 
+#[derive(Debug)]
 enum SkinFetchResult {
     Ready {
         key: NpcSkinPoolKey,
@@ -369,6 +383,10 @@ mod tests {
     use crate::npc::lifecycle::NpcArchetype;
     use crate::skin::npc_skin_selector::{NpcSkinTier, NpcVisualProfile};
     use crate::skin::{SignedSkin, SkinSource};
+    use std::collections::HashSet;
+    use std::time::{Duration, Instant};
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     fn skin(value: &str) -> SignedSkin {
         SignedSkin {
@@ -434,5 +452,188 @@ mod tests {
 
         assert_eq!(npc_uuid(entity), npc_uuid(entity));
         assert_ne!(npc_uuid(entity), Uuid::nil());
+    }
+
+    // F11 — `spawn_fetch_concurrent` pin 测试。MineSkin 的 `/v2/skins` 端点本身
+    // 不区分 pool key（key 只是我们内部的分桶概念），所以这些测试锁"整批完成"的
+    // 聚合契约（每个 key 都有且仅有一个结果、失败不吞掉其它 key、并发而非串行）
+    // 而非某个具体 key 的结果内容。
+
+    fn success_body() -> serde_json::Value {
+        serde_json::json!({
+            "skins": [{
+                "uuid": "skin-ok",
+                "texture": {
+                    "data": { "value": "value-ok", "signature": "sig-ok" },
+                    "hash": { "skin": "hash-ok" }
+                }
+            }]
+        })
+    }
+
+    /// 非阻塞轮询 crossbeam channel 直到收到 `want` 条结果或超时（用
+    /// `tokio::time::sleep` 让出控制权，不会像 `recv_timeout` 那样卡住整个
+    /// 单线程 runtime、饿死 wiremock 的后台 mock server task）。
+    async fn drain_until(
+        pool: &mut SkinPool,
+        want: usize,
+        timeout: Duration,
+    ) -> Vec<SkinFetchResult> {
+        let deadline = Instant::now() + timeout;
+        let mut collected = Vec::new();
+        while collected.len() < want && Instant::now() < deadline {
+            match pool.receiver.try_recv() {
+                Ok(result) => collected.push(result),
+                Err(_) => tokio::time::sleep(Duration::from_millis(10)).await,
+            }
+        }
+        collected
+    }
+
+    #[tokio::test]
+    async fn spawn_fetch_concurrent_delivers_ready_for_every_key() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v2/skins"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(success_body()))
+            .mount(&server)
+            .await;
+        let client = MineSkinClient::new(server.uri(), None);
+        let keys = vec![
+            NpcSkinPoolKey(NpcSkinTier::Commoner),
+            NpcSkinPoolKey(NpcSkinTier::RogueLow),
+            NpcSkinPoolKey(NpcSkinTier::RogueMid),
+        ];
+
+        let mut pool = SkinPool::default();
+        pool.spawn_fetch_concurrent(keys.clone(), 1, client);
+
+        let results = drain_until(&mut pool, keys.len(), Duration::from_secs(5)).await;
+        assert_eq!(
+            results.len(),
+            keys.len(),
+            "expected exactly one result per key (got {results:?}) because a healthy endpoint \
+             must not drop any key from the batch"
+        );
+        let ready_keys: HashSet<_> = results
+            .iter()
+            .map(|r| match r {
+                SkinFetchResult::Ready { key, skins } => {
+                    assert!(
+                        !skins.is_empty(),
+                        "Ready result for {key:?} must carry the fetched skins, got empty vec"
+                    );
+                    *key
+                }
+                SkinFetchResult::Failed { key, error } => {
+                    panic!("key {key:?} unexpectedly failed against a healthy mock: {error}")
+                }
+            })
+            .collect();
+        assert_eq!(
+            ready_keys,
+            keys.iter().copied().collect::<HashSet<_>>(),
+            "every requested key must appear exactly once among the Ready results"
+        );
+    }
+
+    #[tokio::test]
+    async fn spawn_fetch_concurrent_delivers_failed_for_every_key_without_dropping_any() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v2/skins"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&server)
+            .await;
+        let client = MineSkinClient::new(server.uri(), None);
+        let keys = vec![
+            NpcSkinPoolKey(NpcSkinTier::Commoner),
+            NpcSkinPoolKey(NpcSkinTier::RogueLow),
+        ];
+
+        let mut pool = SkinPool::default();
+        pool.spawn_fetch_concurrent(keys.clone(), 1, client);
+
+        // 每个 key 内部会走 3 次重试 + backoff（累计 ~700ms+），超时留够余量。
+        let results = drain_until(&mut pool, keys.len(), Duration::from_secs(10)).await;
+        assert_eq!(
+            results.len(),
+            keys.len(),
+            "a persistently-500 endpoint must still report a result for every key (got \
+             {results:?}); fewer than {} results would mean one key's exhausted retries \
+             aborted the whole join_all instead of only failing that key",
+            keys.len()
+        );
+        assert!(
+            results
+                .iter()
+                .all(|r| matches!(r, SkinFetchResult::Failed { .. })),
+            "expected only Failed results when the endpoint always 500s, got {results:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn spawn_fetch_concurrent_runs_keys_in_parallel_not_serially() {
+        let server = MockServer::start().await;
+        const PER_KEY_DELAY_MS: u64 = 300;
+        Mock::given(method("GET"))
+            .and(path("/v2/skins"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(success_body())
+                    .set_delay(Duration::from_millis(PER_KEY_DELAY_MS)),
+            )
+            .mount(&server)
+            .await;
+        let client = MineSkinClient::new(server.uri(), None);
+        let keys = vec![
+            NpcSkinPoolKey(NpcSkinTier::Commoner),
+            NpcSkinPoolKey(NpcSkinTier::RogueLow),
+            NpcSkinPoolKey(NpcSkinTier::RogueMid),
+        ];
+        let key_count = keys.len() as u64;
+
+        let mut pool = SkinPool::default();
+        let started = Instant::now();
+        pool.spawn_fetch_concurrent(keys.clone(), 1, client);
+
+        let results = drain_until(&mut pool, keys.len(), Duration::from_secs(5)).await;
+        let elapsed = started.elapsed();
+
+        assert_eq!(
+            results.len(),
+            keys.len(),
+            "all {} keys must complete, got {results:?}",
+            keys.len()
+        );
+        let serial_lower_bound = Duration::from_millis(PER_KEY_DELAY_MS * key_count);
+        assert!(
+            elapsed < serial_lower_bound,
+            "F11 regression: {} keys against a {PER_KEY_DELAY_MS}ms-delayed endpoint took \
+             {elapsed:?}, which is >= the serial lower bound {serial_lower_bound:?} (= {} keys * \
+             {PER_KEY_DELAY_MS}ms). A concurrent join_all should complete in ~{PER_KEY_DELAY_MS}ms \
+             regardless of key count; this bound only trips if fetches are still being awaited \
+             one-at-a-time like the pre-F11 `for key in keys {{ block_on(..) }}` loop.",
+            keys.len(),
+            keys.len()
+        );
+    }
+
+    #[tokio::test]
+    async fn spawn_fetch_concurrent_empty_keys_is_a_noop() {
+        let server = MockServer::start().await;
+        // 故意不挂任何 mock：一旦误发请求，wiremock 对未匹配请求默认 500 +
+        // panic-on-drop（`MockServer` verify），足以暴露"空 keys 却仍发起网络调用"
+        // 的回归。
+        let client = MineSkinClient::new(server.uri(), None);
+
+        let mut pool = SkinPool::default();
+        pool.spawn_fetch_concurrent(Vec::new(), 1, client);
+
+        let results = drain_until(&mut pool, 1, Duration::from_millis(300)).await;
+        assert!(
+            results.is_empty(),
+            "empty keys must not spawn any fetch thread or send any channel result, got {results:?}"
+        );
     }
 }

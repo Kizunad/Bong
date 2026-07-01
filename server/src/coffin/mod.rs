@@ -1149,14 +1149,43 @@ pub(crate) fn persist_in_coffin(
         // If we can't persist because components are missing, SQLite keeps the stale in_coffin=true,
         // and the player will be re-pinned to a potentially nonexistent coffin on reconnect.
         // This is the same risk path as the "重启复钉" bug — warn so it doesn't go unnoticed.
+        //
+        // F21 fix: when persistence + username are both available but only `LifespanComponent`
+        // is missing (e.g. already removed by the time a disconnect handler runs), fall back to
+        // `clear_coffin_flag_for_username` — a narrow UPDATE that clears `in_coffin` without
+        // needing a `LifespanComponent`. When persistence or username themselves are missing
+        // there is nothing to key the UPDATE on, so keep the old no-op+warn behaviour.
         if grade.is_none() {
-            tracing::warn!(
-                "[bong][coffin] cannot clear SQLite in_coffin (grade=None): \
-                 persistence={} username={} lifespan={} — player may re-pin to coffin on reconnect",
-                player_persistence.is_some(),
-                username.is_some(),
-                lifespan.is_some(),
-            );
+            match (player_persistence, username, lifespan) {
+                (Some(player_persistence), Some(username), None) => {
+                    if let Err(error) = crate::player::state::clear_coffin_flag_for_username(
+                        player_persistence,
+                        username.0.as_str(),
+                    ) {
+                        tracing::warn!(
+                            "[bong][coffin] F21 fallback clear_coffin_flag_for_username failed \
+                             for `{}`: {error} — player may re-pin to coffin on reconnect",
+                            username.0
+                        );
+                    } else {
+                        tracing::warn!(
+                            "[bong][coffin] LifespanComponent missing on coffin-exit persist for \
+                             `{}`; cleared in_coffin via F21 fallback (no-lifespan narrow UPDATE) \
+                             instead of leaving a stale in_coffin=true",
+                            username.0
+                        );
+                    }
+                }
+                _ => {
+                    tracing::warn!(
+                        "[bong][coffin] cannot clear SQLite in_coffin (grade=None): \
+                         persistence={} username={} lifespan={} — player may re-pin to coffin on reconnect",
+                        player_persistence.is_some(),
+                        username.is_some(),
+                        lifespan.is_some(),
+                    );
+                }
+            }
         }
         return;
     };
@@ -2789,5 +2818,157 @@ mod tests {
                 );
             }
         }
+    }
+
+    // ───────────────────────── F21 — persist_in_coffin 断连兜底 ─────────────────────────
+
+    use crate::player::state::PlayerStatePersistence;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn f21_temp_persistence(test_name: &str) -> (PlayerStatePersistence, PathBuf) {
+        let unique_suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after unix epoch")
+            .as_nanos();
+        let data_dir = std::env::temp_dir().join(format!(
+            "bong-coffin-persist-{test_name}-{}-{unique_suffix}",
+            std::process::id()
+        ));
+        let db_path = data_dir.join("bong.db");
+        crate::persistence::bootstrap_sqlite(&db_path, &format!("coffin-persist-{test_name}"))
+            .expect("sqlite bootstrap should succeed");
+        (
+            PlayerStatePersistence::with_db_path(&data_dir, &db_path),
+            data_dir,
+        )
+    }
+
+    fn f21_seed_in_coffin_row(persistence: &PlayerStatePersistence, username: &str) {
+        let lifespan = LifespanComponent {
+            born_at_tick: 0,
+            years_lived: 4.0,
+            cap_by_realm: 100,
+            offline_pause_tick: None,
+        };
+        crate::player::state::save_player_lifespan_slice_with_coffin(
+            persistence,
+            username,
+            &lifespan,
+            Some(CoffinGrade::Jade),
+        )
+        .expect("seeding an in-coffin row should succeed");
+    }
+
+    fn f21_read_in_coffin(persistence: &PlayerStatePersistence, username: &str) -> Option<i64> {
+        let conn = rusqlite::Connection::open(persistence.db_path()).expect("db should open");
+        conn.query_row(
+            "SELECT in_coffin FROM player_lifespan WHERE username = ?1",
+            rusqlite::params![username],
+            |row| row.get(0),
+        )
+        .ok()
+    }
+
+    #[test]
+    fn persist_in_coffin_falls_back_to_narrow_clear_when_lifespan_missing() {
+        let (persistence, data_dir) = f21_temp_persistence("fallback-happy-path");
+        f21_seed_in_coffin_row(&persistence, "Azure");
+        assert_eq!(
+            f21_read_in_coffin(&persistence, "Azure"),
+            Some(1),
+            "sanity check: seed row must start in_coffin=1"
+        );
+
+        let username = Username("Azure".to_string());
+        // grade=None (exit path) + persistence/username 都在，但 lifespan=None（已被移除）
+        // —— 这正是 F21 要兜住的组合。
+        persist_in_coffin(Some(&persistence), Some(&username), None, None);
+
+        assert_eq!(
+            f21_read_in_coffin(&persistence, "Azure"),
+            Some(0),
+            "F21: missing LifespanComponent must no longer leave in_coffin=1 stuck in SQLite \
+             when persistence + username are both available to key the fallback UPDATE on"
+        );
+
+        let _ = std::fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn persist_in_coffin_grade_none_with_lifespan_present_still_uses_normal_path() {
+        let (persistence, data_dir) = f21_temp_persistence("normal-path-regression");
+        f21_seed_in_coffin_row(&persistence, "Azure");
+
+        let username = Username("Azure".to_string());
+        let lifespan = LifespanComponent {
+            born_at_tick: 0,
+            years_lived: 4.0,
+            cap_by_realm: 100,
+            offline_pause_tick: None,
+        };
+        // 三者都在 —— 应该走原有的 save_player_lifespan_slice_with_coffin 路径，不碰 F21 分支。
+        persist_in_coffin(Some(&persistence), Some(&username), Some(&lifespan), None);
+
+        assert_eq!(
+            f21_read_in_coffin(&persistence, "Azure"),
+            Some(0),
+            "regression check: the pre-existing all-components-present exit path must still \
+             clear in_coffin exactly as before F21"
+        );
+
+        let _ = std::fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn persist_in_coffin_missing_username_leaves_other_rows_untouched() {
+        let (persistence, data_dir) = f21_temp_persistence("missing-username-noop");
+        f21_seed_in_coffin_row(&persistence, "Bystander");
+
+        // username=None：既不能走正常路径也不能走 F21 fallback（无法定位是谁），
+        // 必须保持原地 no-op + warn，不得误清任何行。
+        persist_in_coffin(Some(&persistence), None, None, None);
+
+        assert_eq!(
+            f21_read_in_coffin(&persistence, "Bystander"),
+            Some(1),
+            "F21: missing username must stay a no-op — must not accidentally clear an unrelated \
+             row"
+        );
+
+        let _ = std::fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn persist_in_coffin_missing_persistence_does_not_panic() {
+        let username = Username("Azure".to_string());
+        // persistence=None：没有 DB 句柄可写，必须原地 no-op + warn，且绝不 panic。
+        persist_in_coffin(None, Some(&username), None, None);
+    }
+
+    #[test]
+    fn persist_in_coffin_grade_some_with_lifespan_missing_does_not_use_f21_fallback() {
+        // F21 fallback 只在 grade.is_none() 时触发（那才是"清空"语义）；grade=Some 但
+        // lifespan=None 属于另一种缺组件场景（例如刚进棺就断连），必须维持原有 no-op+warn，
+        // 不能被 F21 误当成"清空"请求而抹掉 in_coffin。
+        let (persistence, data_dir) = f21_temp_persistence("grade-some-lifespan-missing");
+        f21_seed_in_coffin_row(&persistence, "Azure");
+
+        let username = Username("Azure".to_string());
+        persist_in_coffin(
+            Some(&persistence),
+            Some(&username),
+            None,
+            Some(CoffinGrade::Stone),
+        );
+
+        assert_eq!(
+            f21_read_in_coffin(&persistence, "Azure"),
+            Some(1),
+            "grade=Some + lifespan=None must remain a no-op (F21 only covers the grade=None \
+             clearing path), so the seeded in_coffin=1 row must be untouched"
+        );
+
+        let _ = std::fs::remove_dir_all(&data_dir);
     }
 }
