@@ -4,9 +4,9 @@
 
 | 阶段 | 内容 | 状态 |
 |------|------|------|
-| P0 | client/dandao — MutationHudPlanner + MutationFeatureRenderer 接线 | ⬜ |
-| P1 | server/craft — RecipeUnlockState 持久化（真实数据丢失修复） | ⬜ |
-| P2 | client/npc — NpcInteractionLogStore 断线清理 | ⬜ |
+| P0 | client/dandao — MutationHudPlanner + MutationFeatureRenderer 接线 | ✅ 2026-07-01 |
+| P1 | server/craft — RecipeUnlockState 持久化（真实数据丢失修复） | ✅ 2026-07-01 |
+| P2 | client/npc — NpcInteractionLogStore 断线清理 | ✅ 2026-07-01 |
 
 来源：`module-map/index.html`「⚑ 缺口」tab（sonnet 调查 → opus 抽查证实无 producer/consumer）。全量清单见 `docs/plans-skeleton/`（本 plan 由该骨架促成，只取可实施子集）。
 
@@ -75,4 +75,21 @@
 
 ## Finish Evidence
 
-（实施完成后填：落地清单 / 关键 commit / 测试结果 / 遗留。）
+**落地清单**（Sonnet 5 workflow 实施，各独立 PR）：
+- **P0** client/dandao：新建 `client/.../dandao/MutationRenderBootstrap.java`（`LivingEntityFeatureRendererRegistrationCallback` 注册 `MutationFeatureRenderer` 到所有 `PlayerEntityRenderer`）+ `BongHudOrchestrator.java` 追加 `MutationHudPlanner.buildCommands()` + `BongClient.java` 调 register。（正确识别 `MutationFeatureRenderer` 是 vanilla `PlayerEntityModel` 叠加非 GeckoLib，避开 player FeatureRenderer 驱动 GeoModel 的坑。）
+- **P1** server/craft：`craft/unlock.rs` 给 `RecipeUnlockState` 加持久化（照 `mineral::persistence::ExhaustedMineralsLog` hydrate/dirty/节流 flush 模式，落盘 `data/craft/recipe_unlocks.json`，version 常量校验 + 原子落盘 temp+rename + flush 失败退避）+ `craft/mod.rs` register hydrate + Update 挂 `tick_recipe_unlock_flush`。
+- **P2** client/npc：`NpcInteractionLogStore.clearOnDisconnect()` + `NpcInteractionLogControls` 里 `ClientPlayConnectionEvents.DISCONNECT` 注册调用（照 `InsightOfferScreenBootstrap` 单 store 先例）。
+
+**关键 commit / PR**：
+- PR #798（dandao HUD 接线）— 2026-07-01
+- PR #797（craft 持久化）+ commit 09ffef66f（响应 CodeRabbit 6 条：version 校验/原子落盘/flush 退避/补 8 测试/assert 信息，第 6 条 AppExit 关服刷盘超范围 defer）— 2026-07-01
+- PR #799（npc 断线日志）— 2026-07-01
+
+**测试结果**：
+- server：`cargo test -p bong-server craft::` → **202 passed / 0 failed**（含持久化饱和测试：dirty 标记/hydrate 三态/多玩家隔离/version pinning 正反/写盘失败分支/节流 off-by-one）；fmt + clippy 干净。
+- client：`./gradlew build` 绿；`MutationHudPlannerTest` 12/0、`BongHudOrchestratorTest` 12/0、`NpcInteractionLogStoreTest` 2/0。
+- e2e：三 PR 全 SUCCESS。
+
+**跨仓库核验**：三项均单端接线（P0/P2 纯 client，P1 纯 server），无新 IPC/schema/Redis key。
+
+**遗留 / 后续（→ v2，见 §9）**：CodeRabbit 今日 rate-limit，#798/#799 未获 CR 行内审（凭人工 diff 核验 + e2e 全绿合并）；#797 获完整 CR 审并已响应。§9 的 shader↔iris / mineral 世界方块复活 / social pvp / identity 声誉 / **★sword `stored_qi` 疑似脱守恒账（需核验）** / era 间隔 六项涉守恒或 gameplay 抉择，留 v2 待人工拍板（需另立 v2 plan / skeleton）。
