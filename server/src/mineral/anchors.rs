@@ -165,7 +165,10 @@ fn spawn_fossil_mineral_nodes(
     spawned
 }
 
-fn mineral_gatherable(mineral_id: MineralId, registry: &MineralRegistry) -> Gatherable {
+/// plan-cultivation-pacing-v1 P1.9 — `pub(crate)` 而非 module-private：respawn.rs
+/// 复用同一套 Gatherable 元数据构造逻辑，重生的 OreNode 必须和启动期物化的
+/// OreNode 拥有完全一致的 gathering 元数据（不能各写一份漂移）。
+pub(crate) fn mineral_gatherable(mineral_id: MineralId, registry: &MineralRegistry) -> Gatherable {
     let mineral_key = mineral_id.as_str();
     let display_name = registry
         .get(mineral_id)

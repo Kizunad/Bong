@@ -1,3 +1,4 @@
+pub mod persistence;
 pub mod session;
 
 use std::collections::HashSet;
@@ -6,8 +7,11 @@ use session::{WoodSession, WoodSessionStore, MOVEMENT_BREAK_DISTANCE_SQ};
 use valence::prelude::{
     bevy_ecs, App, BlockPos, BlockState, ChunkLayer, Client, DiggingEvent, DiggingState, Entity,
     Event, EventReader, EventWriter, GameMode, IntoSystemConfigs, Position, Query, Res, ResMut,
-    Resource, Update, Username, With,
+    Update, Username, With,
 };
+
+use persistence::tick_spiritwood_harvested_flush;
+pub use persistence::SpiritWoodHarvestedLogs;
 
 use crate::combat::events::CombatEvent;
 use crate::cultivation::components::{Cultivation, Realm};
@@ -33,43 +37,6 @@ pub const LING_MU_GUN_PROFILE_ID: &str = "ling_mu_gun_v1";
 const REQUIRED_AXE_TIER: u8 = 3;
 const LING_MU_INITIAL_QI: f32 = 100.0;
 
-#[derive(Debug, Default)]
-pub struct SpiritWoodHarvestedLogs {
-    positions: HashSet<(DimensionKind, [i32; 3])>,
-}
-
-impl Resource for SpiritWoodHarvestedLogs {}
-
-impl SpiritWoodHarvestedLogs {
-    pub fn contains(&self, dimension: DimensionKind, pos: BlockPos) -> bool {
-        self.positions.contains(&position_key(dimension, pos))
-    }
-
-    pub fn mark_harvested(&mut self, dimension: DimensionKind, pos: BlockPos) {
-        self.positions.insert(position_key(dimension, pos));
-    }
-
-    pub fn positions_in_chunk(
-        &self,
-        dimension: DimensionKind,
-        chunk: valence::prelude::ChunkPos,
-    ) -> Vec<BlockPos> {
-        self.positions
-            .iter()
-            .filter_map(|(stored_dimension, [x, y, z])| {
-                (*stored_dimension == dimension
-                    && x.div_euclid(16) == chunk.x
-                    && z.div_euclid(16) == chunk.z)
-                    .then_some(BlockPos::new(*x, *y, *z))
-            })
-            .collect()
-    }
-}
-
-fn position_key(dimension: DimensionKind, pos: BlockPos) -> (DimensionKind, [i32; 3]) {
-    (dimension, [pos.x, pos.y, pos.z])
-}
-
 #[derive(Debug, Clone, PartialEq, Event)]
 struct LumberTerminalEvent {
     client_entity: Entity,
@@ -86,7 +53,15 @@ struct LumberTerminalEvent {
 
 pub fn register(app: &mut App) {
     app.insert_resource(WoodSessionStore::default());
-    app.insert_resource(SpiritWoodHarvestedLogs::default());
+    // F27 — 启动时从 data/spiritwood/harvested.json hydrate 已采伐灵木 log 位置，
+    // 避免重启后已砍伐位置全部"恢复"可采（灵木原木 ling_mu_gun 无限刷的孤岛）。
+    let harvested_logs = SpiritWoodHarvestedLogs::hydrated();
+    tracing::info!(
+        target: "bong::spiritwood",
+        "[bong][spiritwood] hydrated {} harvested log position(s) from disk",
+        harvested_logs.len()
+    );
+    app.insert_resource(harvested_logs);
     app.add_event::<LumberTerminalEvent>();
     app.add_systems(
         Update,
@@ -99,6 +74,8 @@ pub fn register(app: &mut App) {
         )
             .chain(),
     );
+    // 节流刷盘系统不参与上面的 chain（不依赖采伐 session 状态），单独挂进 Update。
+    app.add_systems(Update, tick_spiritwood_harvested_flush);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -280,7 +257,7 @@ fn complete_spiritwood_sessions(
         let Some(session) = store.remove(player) else {
             continue;
         };
-        harvested_logs.mark_harvested(session.dimension, session.log_pos);
+        harvested_logs.mark_harvested(session.dimension, session.log_pos, now_tick);
         if let Some(dimension_layers) = dimension_layers.as_deref() {
             if let Ok(mut layer) = layers.get_mut(dimension_layers.entity_for(session.dimension)) {
                 layer.set_block(session.log_pos, BlockState::AIR);
@@ -845,7 +822,7 @@ mod tests {
     #[test]
     fn harvested_logs_are_chunk_addressable() {
         let mut logs = SpiritWoodHarvestedLogs::default();
-        logs.mark_harvested(DimensionKind::Overworld, BlockPos::new(17, 80, -1));
+        logs.mark_harvested(DimensionKind::Overworld, BlockPos::new(17, 80, -1), 0);
 
         assert!(logs.contains(DimensionKind::Overworld, BlockPos::new(17, 80, -1)));
         assert_eq!(

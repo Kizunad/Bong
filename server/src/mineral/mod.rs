@@ -20,6 +20,7 @@ pub mod inventory_grant;
 pub mod persistence;
 pub mod probe;
 pub mod registry;
+pub mod respawn;
 pub mod session;
 pub mod types;
 
@@ -52,6 +53,7 @@ use events::emit_mineral_feedback_chat;
 use inventory_grant::consume_mineral_drops_into_inventory;
 use persistence::{record_exhausted_minerals, tick_mineral_clock};
 use probe::resolve_mineral_probe_intents;
+use respawn::respawn_exhausted_minerals;
 
 pub fn register(app: &mut App) {
     let registry = build_default_registry();
@@ -98,6 +100,10 @@ pub fn register(app: &mut App) {
             // Bevy 的 Events 支持单 tick 内 writer → reader 管道（EventReader 扫整帧的 events）。
             consume_mineral_drops_into_inventory,
             record_exhausted_minerals,
+            // plan-cultivation-pacing-v1 P1.9 — record_exhausted_minerals 写入
+            // respawn_at_tick 后，必须有系统真正调用 remove_respawned 并把到期矿脉
+            // 重新物化，否则矿脉永远停在耗尽态（此前的孤岛）。
+            respawn_exhausted_minerals,
             record_karma_flag_weights,
             forward_karma_flag_to_agent,
         ),

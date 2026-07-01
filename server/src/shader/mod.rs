@@ -1,70 +1,60 @@
 use serde::{Deserialize, Serialize};
 use valence::prelude::{bevy_ecs, App, Resource};
 
-#[derive(Debug, Clone, Serialize, Deserialize, Resource)]
-pub struct ShaderStatePayload {
-    pub bong_realm: f32,
-    pub bong_lingqi: f32,
-    pub bong_tribulation: f32,
-    pub bong_enlightenment: f32,
-    pub bong_inkwash: f32,
-    pub bong_bloodmoon: f32,
-    pub bong_meditation: f32,
-    pub bong_demonic: f32,
-    pub bong_wind_strength: f32,
-    pub bong_wind_angle: f32,
+/// F25 加固 — `field_mut()` 的 match 臂与 `FIELD_NAMES` 数组此前是两份平行手写
+/// 列表，仅靠运行期测试互校，新增/删字段漏改一处编译期无保护。
+///
+/// 用单一宏调用同时生成 struct 字段 / `Default` / `field_mut` 的 match 分支 /
+/// `FIELD_NAMES` 数组，遗漏字段会直接变成"字段名列表少写一个"这一处编译错误，
+/// 而不是四处手写列表里悄悄漏掉一处。公开 API（字段名 / `field_mut` 签名 /
+/// `FIELD_NAMES`）保持不变。
+macro_rules! shader_state_fields {
+    ($($field:ident),+ $(,)?) => {
+        #[derive(Debug, Clone, Serialize, Deserialize, Resource)]
+        pub struct ShaderStatePayload {
+            $(pub $field: f32,)+
+        }
+
+        impl Default for ShaderStatePayload {
+            fn default() -> Self {
+                Self {
+                    $($field: 0.0,)+
+                }
+            }
+        }
+
+        impl ShaderStatePayload {
+            pub fn field_mut(&mut self, name: &str) -> Option<&mut f32> {
+                match name {
+                    $(stringify!($field) => Some(&mut self.$field),)+
+                    _ => None,
+                }
+            }
+
+            pub const FIELD_NAMES: &'static [&'static str] = &[
+                $(stringify!($field)),+
+            ];
+        }
+    };
 }
 
-impl Default for ShaderStatePayload {
-    fn default() -> Self {
-        Self {
-            bong_realm: 0.0,
-            bong_lingqi: 0.0,
-            bong_tribulation: 0.0,
-            bong_enlightenment: 0.0,
-            bong_inkwash: 0.0,
-            bong_bloodmoon: 0.0,
-            bong_meditation: 0.0,
-            bong_demonic: 0.0,
-            bong_wind_strength: 0.0,
-            bong_wind_angle: 0.0,
-        }
-    }
-}
+shader_state_fields!(
+    bong_realm,
+    bong_lingqi,
+    bong_tribulation,
+    bong_enlightenment,
+    bong_inkwash,
+    bong_bloodmoon,
+    bong_meditation,
+    bong_demonic,
+    bong_wind_strength,
+    bong_wind_angle,
+);
 
 impl ShaderStatePayload {
     pub fn to_json_bytes(&self) -> Vec<u8> {
         serde_json::to_vec(self).expect("ShaderStatePayload serialization should never fail")
     }
-
-    pub fn field_mut(&mut self, name: &str) -> Option<&mut f32> {
-        match name {
-            "bong_realm" => Some(&mut self.bong_realm),
-            "bong_lingqi" => Some(&mut self.bong_lingqi),
-            "bong_tribulation" => Some(&mut self.bong_tribulation),
-            "bong_enlightenment" => Some(&mut self.bong_enlightenment),
-            "bong_inkwash" => Some(&mut self.bong_inkwash),
-            "bong_bloodmoon" => Some(&mut self.bong_bloodmoon),
-            "bong_meditation" => Some(&mut self.bong_meditation),
-            "bong_demonic" => Some(&mut self.bong_demonic),
-            "bong_wind_strength" => Some(&mut self.bong_wind_strength),
-            "bong_wind_angle" => Some(&mut self.bong_wind_angle),
-            _ => None,
-        }
-    }
-
-    pub const FIELD_NAMES: &'static [&'static str] = &[
-        "bong_realm",
-        "bong_lingqi",
-        "bong_tribulation",
-        "bong_enlightenment",
-        "bong_inkwash",
-        "bong_bloodmoon",
-        "bong_meditation",
-        "bong_demonic",
-        "bong_wind_strength",
-        "bong_wind_angle",
-    ];
 }
 
 pub fn register(app: &mut App) {
