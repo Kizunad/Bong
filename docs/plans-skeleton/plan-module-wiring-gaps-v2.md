@@ -1,8 +1,10 @@
 # plan-module-wiring-gaps-v2
 
-> 主题：module-map ⚑ 旗全量 triage（2026-07-01，53 sonnet agent 逐模块读真实代码）后，**涉 gameplay 设计抉择或 qi_physics 守恒**的 39 面旗归档成 **13 个决策主题**。本 v2 是 **report-only 决策菜单**——每个主题都需人工拍板触发语义/平衡数值/守恒口径后才能落地实施，禁止自动拍板（docs/CLAUDE.md §五 + qi 守恒红线）。可实施的 29 面(FALSE_POSITIVE 9 + FIXABLE 20 已在同批 PR 修/清，另 9 FIXABLE 分批)见 `plan-module-wiring-fixes-v2`（active）。
+> 主题：module-map ⚑ 旗全量 triage（2026-07-01，53 sonnet agent 逐模块读真实代码）后，**涉 gameplay 设计抉择或 qi_physics 守恒**的 40 面旗归档成 **14 个决策主题**。本 v2 是 **report-only 决策菜单**——每个主题都需人工拍板触发语义/平衡数值/守恒口径后才能落地实施，禁止自动拍板（docs/CLAUDE.md §五 + qi 守恒红线）。
 >
-> **triage 分布**：77 面 → 29 FIXABLE（机械接线，另立 active plan 实施）/ 9 FALSE_POSITIVE（过时观察，已清旗）/ **39 NEEDS_DECISION（本文档）**。其中 5 面涉 qi 守恒（★标）。
+> **triage 分布 + 处置**：77 面 → **28 FIXABLE 已修**（机械接线，#803–808 已合并/PR，各旗已在 map 标 RESOLVED）/ **9 FALSE_POSITIVE 已清**（过时观察，#802 降 info）/ **40 NEEDS_DECISION（本文档）**。其中 5 面涉 qi 守恒（★标）。
+>
+> 注：40 = 原 39 NEEDS_DECISION + 1（T14 yidao，triage 初判 FIXABLE，实施时 Read server 代码发现是不可转换 id 空间的跨层项，reclassified 进本菜单）。
 
 ## 阶段总览（每个主题 = 一个候选未来 plan，均 ⬜ 待决策）
 
@@ -21,6 +23,7 @@
 | T11 | NPC 战力/装备/AI 平衡 | 2 | — | 装备倍率如何组合进伤害管线 + 拟态蛛 Ambush 战斗数值 |
 | T12 | 世界后果/运行时地形驱动 | 3 | — | 焦土方块资产 + terrain_profile 是否驱动运行时地形 + 新环境效果 variant |
 | T13 | client 渲染/UX 收尾（真机/资产/第三方）| 11 | — | OBJ 护甲/阵法核心/Iris uniform/畸变呼吸/音频渐出/多槽特效等各自技术方案 |
+| T14 | yidao 健康师 AI HUD（跨层 id 桥接）| 1 | — | server 补 healer_id↔targetId 可换算字段（reclassified from FIXABLE）|
 
 ---
 
@@ -92,6 +95,10 @@
 **决策**：多为"选技术方案/等资产/第三方集成取舍/架构契约"，各自独立。建议按优先级挑选（如 iris uniform、armor OBJ 属视觉资产落地走 [[feedback_part_based_modeling]] 真机流程；insight offer 字段扩展有 heart_demon_offer 先例但字段语义需裁定）。
 
 ---
+
+## T14 — yidao 健康师 AI HUD（跨层 id 桥接，triage 误判 FIXABLE 后 reclassified）
+
+**涉旗**：`client/yidao › YidaoNpcAiStateStore`。triage 初判 FIXABLE，实施(Sonnet 5)时 Read server 代码发现前提**错误**：server `healer_id='entity_bits:<Bevy Entity::to_bits() u64>'`（`combat/yidao.rs:1618`）与 client `targetId='entity:<Valence EntityId i32>'`（`network/npc_metadata.rs`）是**两套不可转换的 id 空间，服务端无任何桥接字段**。若照 triage 方案把 TargetInfoHudPlanner 接上 YidaoNpcAiStateStore，生产环境永不命中（fails-closed=新增孤岛，违反反孤岛铁律），故未 ship。**决策**：server 侧在 healer AI payload 或 npc_metadata 补一个可与 targetId 换算的 id 字段（如同时携带 Valence EntityId），client 再按原接线方式消费。属跨层契约扩展，非纯 client 接线。
 
 ## §决策指引
 
