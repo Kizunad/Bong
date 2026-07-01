@@ -13,7 +13,7 @@
 
 ---
 
-## P0 — server critical 孤岛（已 grep 证实可达） ⬜
+## P0 — critical 孤岛（server + client · 已 grep 证实可达） ⬜
 
 每项均 opus 维护层 grep 全 `server/src` 确认无生产/消费方。**修复涉接线语义抉择，需逐项拍板触发条件后再动手。**
 
