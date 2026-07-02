@@ -29,7 +29,7 @@
 - **进料**：`ItemRegistry`（`inventory/mod.rs:1332 load_item_registry`，`server/assets/items/onboarding_scrolls.toml` 现有 scroll 族）；`TutorialState`/`TutorialHook`（`spawn_tutorial.rs`）；`docs/library/cultivation/经脉浅述.json` 正文；`ClientRequestV1` C2S 通道（`client_request.rs`）。
 - **出料**：S2C `ServerDataPayloadV1::ScrollOpen`（新）→ client 阅读屏；`bong:vfx_event` `play_anim` + `spawn_particle`；**复用出口**：后续书信/图谱/丹方预览挂同一 `readable_scroll_spec` + 同一屏。
 - **共享类型 / event**：`ServerDataPayloadV1` 加 variant（不复用 `LootContainerOpenV1`——语义是容器非文本，且其 `deny_unknown_fields`）；`TutorialHook` 加 variant；复用 `VfxEventRequest` / `BongAnimationRegistry` / `HeldItemStackResolver`。**不新造** first-join / 动画 / VFX 任何机制。
-- **跨仓库契约**（并行实施前锁死，见 §9）：proto `envelope.proto` C2S 新 oneof `scroll_read_request`、S2C 新 oneof `scroll_open`（tag 取下一空闲号）；TS schema `client-request.ts` / `server-data.ts` + `samples/*.json` 双端对拍；client 桥两处 + `ScrollOpenHandler` 注册进 `ServerDataRouter`。
+- **跨仓库契约**（并行实施前锁死，字段/tag 定稿见 §9）：proto `envelope.proto` C2S 新 oneof `scroll_read_request`（**tag 100**）、S2C 新 oneof `scroll_open`（**tag 137**）；TS schema `client-request.ts` / `server-data.ts` + `samples/*.json` 双端对拍；client 桥两处 + `ScrollOpenHandler` 注册进 `ServerDataRouter`。
 - **worldview 锚点**：§三 修炼体系（12 正经 + 8 奇经正典，`worldview.md:59-119`）；末法残卷命名惯例（《×××·残页/残卷》，onboarding_scrolls 先例）；`plan-spawn-tutorial-v1` O.13 沉默引导——**发放静默入包、阅读由玩家自发**，不弹强制引导。
 - **qi_physics 锚点**：**无灵气流动**——纯阅读，不扣不还不衰减，不触 ledger。显式声明以过红旗清单。
 
@@ -41,8 +41,8 @@
 - 新物品 `scroll_meridian_primer`《经脉浅述·残卷》进 `onboarding_scrolls.toml`（`category="scroll"`, grid 1×2, max_stack=1），正文从 `经脉浅述.json` 摘编 3~5 页（每页 ≤ 500 字，具体分页见 §8 #3）。
 - C2S `ClientRequestV1::ScrollReadRequest { v, instance_id }`：handler 查实例模板有 `readable_scroll_spec` → emit S2C `ScrollOpen { scroll_id, title, body_pages }` + `play_anim`；无 spec / 非本人物品 → 静默拒绝 + warn。
 - S2C `ServerDataPayloadV1::ScrollOpen`（proto/serde/TS/samples 四件套，落点清单照 `reference_server_data_payload_field` 模式扩到新 variant）。
-- **首入发放**：join 时 `TutorialState.has(TutorialHook::MeridianPrimerGranted)` 判定，未发则 `add_item_to_player_inventory` + 打 hook（存量老玩家也补发；发放静默，无 narration，对齐沉默引导）。发放方式最终拍板见 §8 #1。
-- **测试**：spec 解析正反 sample；ScrollReadRequest happy/无 spec/伪 instance_id/重复请求；发放幂等（重连不重发、老玩家补发一次）；payload roundtrip 对拍。
+- **首入发放（原子性硬要求）**：join 时判定 → 发放 → 打 hook 必须在**同一 system 同一 tick**内完成，且 inventory 与 `TutorialState` 落进同一次持久化 flush。幂等用**双重判定**兜崩溃窗口：`TutorialState.has(TutorialHook::MeridianPrimerGranted)` **或** 背包已存在 `scroll_meridian_primer` 模板实例，任一命中即跳过补发——覆盖"物品已落 hook 未落"与"hook 已落物品未落"两个中断顺序（后者不该出现：实现顺序固定为先加物品后打 hook）。存量老玩家也补发；发放静默，无 narration，对齐沉默引导。发放方式最终拍板见 §8 #1。
+- **测试**：spec 解析正反 sample；ScrollReadRequest happy/无 spec/伪 instance_id/重复请求；发放幂等（重连不重发、老玩家补发一次、**模拟"物品已发 hook 未持久化"的崩溃窗口重登不重发**）；payload roundtrip 对拍。
 
 ## P1 client 阅读屏（可复用壳）⬜
 
@@ -77,7 +77,24 @@
 
 ## §9 契约锁定（并行实施硬约束）
 
-server/client 并行开工前，proto 两个新 oneof（`scroll_read_request` / `scroll_open`）的字段名、类型、tag 号必须先在本 plan 定稿并出 samples；实施 agent 不得擅改契约、不得擅自 commit 跨端接缝（[[feedback_parallel_impl_locked_contract]]）。
+字段、类型、tag 在此定稿（2026-07-02 按 `envelope.proto` 现状分配：C2S oneof 最大 tag=99、S2C payload oneof 最大 tag=136）：
+
+```proto
+// C2S，oneof payload tag = 100
+message ScrollReadRequest {
+  uint32 v           = 1;   // 版本，恒 1
+  string instance_id = 2;   // 背包内物品实例 id
+}
+
+// S2C，oneof payload tag = 137
+message ScrollOpen {
+  string scroll_id           = 1;   // 模板 id，如 scroll_meridian_primer
+  string title               = 2;
+  repeated string body_pages = 3;   // 每元素一页，≥1
+}
+```
+
+纯 string/uint32 字段，无 enum——不触 proto3 枚举全名前缀 fixup 坑。P0 实施落 proto 时若 tag 100/137 已被并行 PR 占用，顺延取号并**回写本节**（tag 号以本节为唯一真相，两端不得各自取号）。实施 agent 不得擅改契约、不得擅自 commit 跨端接缝（[[feedback_parallel_impl_locked_contract]]）。samples（`scroll-read-request.sample.json` / `scroll-open.sample.json`）随 P0 四件套一起出。
 
 ## §10（升 active 时补）
 
