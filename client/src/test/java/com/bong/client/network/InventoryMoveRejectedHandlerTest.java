@@ -17,7 +17,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * plan-inventory-hint-panel-v1 P1 — {@link InventoryMoveRejectedHandler} 饱和测试。
  * <p>
- * 覆盖：① happy path（全部 23 个 wire tag 文案）② 边界（空 reason / 未知 reason / cap 缺省 /
+ * 覆盖：① happy path（全部 24 个 wire tag 文案）② 边界（空 reason / 未知 reason / cap 缺省 /
  * 空 required_realm）③ 错误分支（缺字段 → noOp）④ 状态转换（500ms 去重窗口：命中/边界/过期/跨
  * reason 不互相影响）。断言可观察契约（toast 文案 / color / duration），不绑渲染内部。
  */
@@ -39,7 +39,7 @@ class InventoryMoveRejectedHandlerTest {
         InventoryMoveRejectedHandler.resetForTests();
     }
 
-    // ─── happy path：全部 23 个 wire tag 都有专属文案 ──────────────────
+    // ─── happy path：全部 24 个 wire tag 都有专属文案 ──────────────────
 
     private static final List<String> ALL_WIRE_TAGS = List.of(
         "from_location_mismatch",
@@ -62,14 +62,15 @@ class InventoryMoveRejectedHandlerTest {
         "two_handed_locks_other",
         "armor_durability_zero",
         "armor_slot_mismatch",
+        "armor_slot_unresolvable",
         "pack_equip_slot_mismatch",
         "worn_cap_full",
         "realm_too_low"
     );
 
     @Test
-    void allTwentyThreeWireTagsProduceDistinctPrefixedMessages() {
-        assertEquals(23, ALL_WIRE_TAGS.size(), "wire tag fixture list itself must stay in sync with server enum");
+    void allTwentyFourWireTagsProduceDistinctPrefixedMessages() {
+        assertEquals(24, ALL_WIRE_TAGS.size(), "wire tag fixture list itself must stay in sync with server enum");
 
         List<String> messages = ALL_WIRE_TAGS.stream()
             .map(tag -> InventoryMoveRejectedHandler.messageFor(tag, "Condense", "chest", 3))
@@ -191,6 +192,36 @@ class InventoryMoveRejectedHandlerTest {
         String message = InventoryMoveRejectedHandler.messageFor("armor_slot_mismatch", null, null, null);
         assertTrue(message.startsWith(PREFIX), "must still be a well-formed message: " + message);
         assertFalse(message.contains("null"), "must never leak the literal string 'null': " + message);
+    }
+
+    // ─── armor_slot_unresolvable：数据/注册表缺口（equip_slot_for_item_id 返回 None），
+    //     区别于 armor_slot_mismatch（已知 expected_slot，只是穿错槽）；此 reason 从不
+    //     携带 slot，绝不能让 "unknown" 占位符泄漏进中文文案 ─────────────
+
+    @Test
+    void armorSlotUnresolvableMessageDoesNotLeakUnknownPlaceholder() {
+        String message = InventoryMoveRejectedHandler.messageFor("armor_slot_unresolvable", null, null, null);
+        assertTrue(message.startsWith(PREFIX), "must still be a well-formed message: " + message);
+        assertFalse(message.toLowerCase().contains("unknown"),
+            "must never leak the raw server-side 'unknown' placeholder tag: " + message);
+        assertFalse(message.contains("null"), "must never leak the literal string 'null': " + message);
+    }
+
+    @Test
+    void armorSlotUnresolvableMessageIsDistinctFromArmorSlotMismatch() {
+        String unresolvable = InventoryMoveRejectedHandler.messageFor("armor_slot_unresolvable", null, "chest", null);
+        String mismatch = InventoryMoveRejectedHandler.messageFor("armor_slot_mismatch", null, "chest", null);
+        assertFalse(unresolvable.equals(mismatch),
+            "armor_slot_unresolvable (无法解析槽位) and armor_slot_mismatch (穿错已知槽位) "
+                + "carry different semantics and must not collapse into the same copy: " + unresolvable);
+    }
+
+    @Test
+    void armorSlotUnresolvableIgnoresAnyStraySlotField() {
+        // server never sends `slot` alongside armor_slot_unresolvable (ArmorSlotUnresolvable::slot()
+        // is always None), but the client copy must not depend on it being absent either way.
+        String message = InventoryMoveRejectedHandler.messageFor("armor_slot_unresolvable", null, "chest", null);
+        assertTrue(message.startsWith(PREFIX), "must still be a well-formed message: " + message);
     }
 
     // ─── slotDisplayName：全部映射 + 边界 ────────────────────────────

@@ -100,6 +100,26 @@ mod tests {
     }
 
     #[test]
+    fn maps_armor_slot_unresolvable_with_no_slot_and_distinct_tag() {
+        // 与 armor_slot_mismatch 的核心区别：连 slot 都没有——不能塞 "unknown" 占位符
+        // 冒充一个真实槽位 key 下发 client（那正是本 plan 修的缺陷）。
+        let v1 = inventory_move_rejected_v1_from_reason(
+            &InventoryMoveRejectReason::ArmorSlotUnresolvable,
+        );
+        assert_eq!(v1.reason, "armor_slot_unresolvable");
+        assert_ne!(
+            v1.reason, "armor_slot_mismatch",
+            "armor_slot_unresolvable 必须是独立 tag，不能与 armor_slot_mismatch 共用"
+        );
+        assert!(
+            v1.slot.is_none(),
+            "槽位解析不出来时不应下发任何 slot 值（包括伪造的 'unknown'）"
+        );
+        assert!(v1.cap.is_none());
+        assert!(v1.required_realm.is_none());
+    }
+
+    #[test]
     fn maps_pack_equip_slot_mismatch_with_slot() {
         let v1 = inventory_move_rejected_v1_from_reason(
             &InventoryMoveRejectReason::PackEquipSlotMismatch {
@@ -163,6 +183,7 @@ mod tests {
             HandOccupied,
             TwoHandedLocksOther,
             ArmorDurabilityZero,
+            ArmorSlotUnresolvable,
         ];
         let mut tags: Vec<String> = unit_variants
             .iter()

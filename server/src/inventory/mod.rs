@@ -3085,8 +3085,13 @@ pub enum InventoryMoveRejectReason {
     TwoHandedLocksOther,
     /// 护甲耐久为 0，无法装备。
     ArmorDurabilityZero,
-    /// 护甲槽位与其规格不符。`expected_slot` 是该护甲实际应装的槽位 key。
+    /// 护甲槽位与其规格不符（已知 `expected_slot`——护甲穿错了槽）。
     ArmorSlotMismatch { expected_slot: String },
+    /// 护甲 `template_id` 无法解析出应装槽位（`equip_slot_for_item_id` 返回 `None`，
+    /// 数据/注册表缺口——不遵循 `armor_<material>_<slot>` 命名）。与 `ArmorSlotMismatch`
+    /// 语义不同：那是"槽位已知但穿错了"，这是"槽位压根解析不出来"，不携带
+    /// 任何可下发的槽位信息（不得塞 `"unknown"` 占位字符串糊弄 client 中文文案）。
+    ArmorSlotUnresolvable,
     /// 背包件 `ContainerSpec.equip_slot` 与目标身体槽不符。`expected_slot` 是背包声明的槽位 key。
     PackEquipSlotMismatch { expected_slot: String },
     /// 身体槽 worn 层已满（决议 #3/#12/#17）。`slot` 是槽位 key，`cap` 是该槽上限。
@@ -3121,6 +3126,7 @@ impl InventoryMoveRejectReason {
             Self::TwoHandedLocksOther => "two_handed_locks_other",
             Self::ArmorDurabilityZero => "armor_durability_zero",
             Self::ArmorSlotMismatch { .. } => "armor_slot_mismatch",
+            Self::ArmorSlotUnresolvable => "armor_slot_unresolvable",
             Self::PackEquipSlotMismatch { .. } => "pack_equip_slot_mismatch",
             Self::WornCapFull { .. } => "worn_cap_full",
             Self::RealmTooLow { .. } => "realm_too_low",
@@ -3196,6 +3202,10 @@ impl InventoryMoveRejectReason {
             Self::ArmorDurabilityZero => "armor cannot equip; durability is 0".to_string(),
             Self::ArmorSlotMismatch { expected_slot } => {
                 format!("armor cannot equip to this slot; expected {expected_slot}")
+            }
+            Self::ArmorSlotUnresolvable => {
+                "armor template_id does not resolve to any known equip slot (registry gap)"
+                    .to_string()
             }
             Self::PackEquipSlotMismatch { expected_slot } => {
                 format!("container.equip_slot `{expected_slot}`; cannot equip to target slot")
@@ -5090,12 +5100,9 @@ fn validate_equip_to(
                 if item.durability <= 0.0 {
                     return Err(InventoryMoveRejectReason::ArmorDurabilityZero);
                 }
-                let expected_slot = crate::armor::mundane::equip_slot_for_item_id(
-                    &item.template_id,
-                )
-                .ok_or(InventoryMoveRejectReason::ArmorSlotMismatch {
-                    expected_slot: "unknown".to_string(),
-                })?;
+                let expected_slot =
+                    crate::armor::mundane::equip_slot_for_item_id(&item.template_id)
+                        .ok_or(InventoryMoveRejectReason::ArmorSlotUnresolvable)?;
                 if expected_slot != *slot {
                     return Err(InventoryMoveRejectReason::ArmorSlotMismatch {
                         expected_slot: equip_slot_key(&expected_slot).to_string(),
@@ -8539,6 +8546,73 @@ cols = 4
             error,
             InventoryMoveRejectReason::ArmorSlotMismatch { expected_slot } if expected_slot == "chest"
         ));
+    }
+
+    /// 数据/注册表缺口场景：category=Armor 但 `template_id` 不遵循
+    /// `armor_<material>_<slot>` 命名（`equip_slot_for_item_id` 因此返回 `None`）。
+    /// 这与上面 `apply_move_rejects_mundane_armor_to_wrong_slot`（已知 expected_slot=="chest"，
+    /// 穿错槽）是不同语义分支——此处连 expected_slot 都解析不出来，必须走独立的
+    /// `ArmorSlotUnresolvable`，不能塞进 `ArmorSlotMismatch` 硬编一个 `"unknown"` 占位符
+    /// （该占位符此前会原样下发 client，拼进中文文案变成"应装于unknown"）。
+    #[test]
+    fn apply_move_rejects_armor_with_unresolvable_equip_slot() {
+        use crate::schema::inventory::{EquipSlotV1, InventoryLocationV1};
+
+        let mut mystery_armor =
+            make_container_template("mystery_plate", EQUIP_SLOT_CHEST, 1, 1, 0.0);
+        mystery_armor.container_spec = None;
+        mystery_armor.category = ItemCategory::Armor;
+        let registry = ItemRegistry::from_map(HashMap::from([(
+            "mystery_plate".to_string(),
+            mystery_armor,
+        )]));
+
+        let mut inv = make_empty_inventory();
+        inv.containers.push(ContainerState {
+            quick_access: false,
+            id: MAIN_PACK_CONTAINER_ID.to_string(),
+            name: "主背包".to_string(),
+            rows: 5,
+            cols: 7,
+            items: vec![PlacedItemState {
+                row: 0,
+                col: 0,
+                instance: make_container_item(42, "mystery_plate"),
+            }],
+            owner_instance_id: None,
+        });
+
+        let error = apply_inventory_move(
+            &mut inv,
+            &registry,
+            42,
+            &InventoryLocationV1::Container {
+                container_id: MAIN_PACK_CONTAINER_ID.to_string(),
+                row: 0,
+                col: 0,
+            },
+            &InventoryLocationV1::Equip {
+                slot: EquipSlotV1::Chest,
+                state: crate::schema::inventory::EquipStateV1::Worn,
+            },
+        )
+        .expect_err("armor with unresolvable equip slot should be rejected");
+
+        assert!(
+            matches!(error, InventoryMoveRejectReason::ArmorSlotUnresolvable),
+            "unresolvable armor equip slot must use the dedicated variant, not \
+             ArmorSlotMismatch with a fake 'unknown' expected_slot placeholder, 实际={error:?}"
+        );
+        assert_eq!(
+            error.to_wire_tag(),
+            "armor_slot_unresolvable",
+            "wire tag must be distinct from armor_slot_mismatch"
+        );
+        assert_eq!(
+            error.slot(),
+            None,
+            "unresolvable slot carries no slot data — nothing to hand off to client"
+        );
     }
 
     #[test]

@@ -94,7 +94,7 @@ public final class InventoryMoveRejectedHandler implements ServerDataHandler {
     }
 
     /**
-     * 全部 23 个 {@code InventoryMoveRejectReason} wire tag 的文案表（package-private 供测试直接断言）。
+     * 全部 24 个 {@code InventoryMoveRejectReason} wire tag 的文案表（package-private 供测试直接断言）。
      * 未知 reason 兜底显示通用拒绝文案（不静默丢弃 —— 拒绝已真实发生，玩家仍需被告知）。
      */
     static String messageFor(String reason, String requiredRealm, String slot, Integer cap) {
@@ -108,6 +108,7 @@ public final class InventoryMoveRejectedHandler implements ServerDataHandler {
             case "off_hand_type_mismatch" -> "副手仅可持匕首或空手武技，此物不可入副手";
             case "armor_durability_zero" -> "此甲损毁殆尽，无法穿戴";
             case "armor_slot_mismatch" -> "此甲不合此槽位" + slotSuffix(slot);
+            case "armor_slot_unresolvable" -> "此物无法识别装备部位，或非制式护甲";
             case "pack_equip_slot_mismatch" -> "此背包不合此槽位" + slotSuffix(slot);
             case "worn_stack_not_top" -> "该件被上层压住，请先卸下最外层（穿戴栈仅栈顶可卸）";
             case "forbidden_in_hotbar" -> "此品类不可放入快捷栏，须留在装备槽";
