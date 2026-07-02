@@ -429,6 +429,183 @@ class ProtoServerDataBridgeTest {
                         + ")。不一致说明排除清单本身配错了（多排或漏排）。");
     }
 
+    // ═══════════════════════════════════════════════════════════════════
+    // P5 round-trip 守卫（plan-wire-format-bridge-v1 §P5，长效防复发 pin）
+    //
+    // 上面的 everyPayloadCaseIsMapped_orIsOnTheExplicitExclusionList 只验证
+    // "CASE_TO_TYPE / extractInner 是否穷尽覆盖所有 PayloadCase"，喂的是*默认值*
+    // 消息，不触碰 handler 语义（很多 handler 在字段全默认时本就该 noOp，测不出
+    // 问题）。本节补 handler 侧：用反射把每个已映射 payloadCase 的内部消息全部
+    // 标量/枚举字段填成非默认值（递归子消息，跳过 map 字段），喂给 bridge() →
+    // 断言 isSuccess()，再喂给 ServerDataRouter 默认路由 → 断言路由结果不是
+    // noOp（除非在 NOOP_EXPECTED_WITH_NON_DEFAULT_DATA 里显式登记原因）。
+    // 目标：未来 server 改 proto 形状 / 加新枚举 variant / handler 改判定逻辑
+    // 若导致某条链路悄悄退化成 noOp，这里立刻撞红——这是本 plan 的长效价值。
+    // ═══════════════════════════════════════════════════════════════════
+
+    /**
+     * 少数 payloadCase 即便塞入"每个标量字段都非默认值"的数据，其 handler 仍会
+     * 合法地判定 noOp —— 原因不是桥接/映射缺陷，而是 handler 自身的业务前置
+     * 条件（例如需要跨调用维护的会话态、多个字段间的一致性校验）。逐条登记，
+     * 防止真回归混进来被当作"预期 noOp"放过。
+     *
+     * <p>本测试的通用 fuzz 填法（{@link #nonDefaultScalarOrMessage}）对每个
+     * string/enum-like 字段一律填 {@code "rt_probe_" + fieldName}，不了解具体
+     * 业务语义，故以下 18 条在真实数据下（P0–P4 逐条 fixture 已锁）是正常工作
+     * 的，这里 noOp 纯属"通用假数据没通过业务校验"，不是 wire 契约缺陷：
+     * <ul>
+     *   <li>{@code INVENTORY_SNAPSHOT} / {@code SKILL_SNAPSHOT} / {@code BREAKTHROUGH_CINEMATIC} /
+     *       {@code SPIRIT_TREASURE_STATE} / {@code SPIRIT_TREASURE_DIALOGUE} / {@code COMBAT_HUD_STATE}：
+     *       要求内部字段满足业务不变式（已知技能 id 集合、槽位形状等），随机 fuzz 值不满足。</li>
+     *   <li>{@code QUICK_SLOT_CONFIG} / {@code SKILL_BAR_CONFIG}：entry 数组要求定长 9（快捷栏槽位数），
+     *       fuzz 只填了 1 个 repeated 元素。</li>
+     *   <li>{@code TECHNIQUE_PROFICIENCY_UPDATE}：proficiency/gain 要求落在 [0,1]，fuzz 填 7.0f 越界。</li>
+     *   <li>{@code SKILL_CONFIG_SNAPSHOT}：config 字段要求嵌套 JSON object 形状，fuzz 只填了标量字符串。</li>
+     *   <li>{@code UI_OPEN}：dynamic XML 路径在测试环境被显式禁用（与本条数据内容无关的全局开关）。</li>
+     *   <li>{@code INVENTORY_EVENT}：handler 要求先有权威 inventory snapshot 才接受增量事件，
+     *       单测未先灌 snapshot。</li>
+     *   <li>{@code DROPPED_LOOT_SYNC} / {@code LOOT_CONTAINER_CLOSE} / {@code ANQI_HUD} / {@code ZHENMAI_HUD}：
+     *       字段是纯 string（非 proto enum，未走 stripEnumPrefix 桥层），
+     *       handler 自己维护一份已知 id/kind/reason 白名单，fuzz 字符串命中不了。</li>
+     *   <li>{@code MINERAL_PROBE_RESULT} / {@code WORKBENCH_OPEN}：handler 需要本地玩家实例
+     *       （{@code MinecraftClient.player}），单测环境没有真实客户端会话。</li>
+     * </ul>
+     */
+    private static final Set<Envelope.ServerDataEnvelope.PayloadCase> NOOP_EXPECTED_WITH_NON_DEFAULT_DATA =
+            EnumSet.of(
+                    Envelope.ServerDataEnvelope.PayloadCase.INVENTORY_SNAPSHOT,
+                    Envelope.ServerDataEnvelope.PayloadCase.COMBAT_HUD_STATE,
+                    Envelope.ServerDataEnvelope.PayloadCase.QUICK_SLOT_CONFIG,
+                    Envelope.ServerDataEnvelope.PayloadCase.SKILL_BAR_CONFIG,
+                    Envelope.ServerDataEnvelope.PayloadCase.TECHNIQUE_PROFICIENCY_UPDATE,
+                    Envelope.ServerDataEnvelope.PayloadCase.SKILL_CONFIG_SNAPSHOT,
+                    Envelope.ServerDataEnvelope.PayloadCase.BREAKTHROUGH_CINEMATIC,
+                    Envelope.ServerDataEnvelope.PayloadCase.UI_OPEN,
+                    Envelope.ServerDataEnvelope.PayloadCase.INVENTORY_EVENT,
+                    Envelope.ServerDataEnvelope.PayloadCase.DROPPED_LOOT_SYNC,
+                    Envelope.ServerDataEnvelope.PayloadCase.SKILL_SNAPSHOT,
+                    Envelope.ServerDataEnvelope.PayloadCase.SPIRIT_TREASURE_STATE,
+                    Envelope.ServerDataEnvelope.PayloadCase.SPIRIT_TREASURE_DIALOGUE,
+                    Envelope.ServerDataEnvelope.PayloadCase.LOOT_CONTAINER_CLOSE,
+                    Envelope.ServerDataEnvelope.PayloadCase.ANQI_HUD,
+                    Envelope.ServerDataEnvelope.PayloadCase.MINERAL_PROBE_RESULT,
+                    Envelope.ServerDataEnvelope.PayloadCase.WORKBENCH_OPEN,
+                    Envelope.ServerDataEnvelope.PayloadCase.ZHENMAI_HUD
+            );
+
+    @Test
+    void everyMappedPayloadCaseRoundTripsIntoNonNoOpHandlerDispatch() {
+        Descriptors.OneofDescriptor payloadOneof = payloadOneofDescriptor();
+        ServerDataRouter router = ServerDataRouter.createDefault();
+
+        List<String> bridgeFailures = new ArrayList<>();
+        List<String> noOpRegressions = new ArrayList<>();
+        int exercised = 0;
+
+        for (Descriptors.FieldDescriptor field : payloadOneof.getFields()) {
+            Envelope.ServerDataEnvelope.PayloadCase payloadCase =
+                    Envelope.ServerDataEnvelope.PayloadCase.forNumber(field.getNumber());
+            if (KNOWN_UNMAPPED_PAYLOAD_CASES.contains(payloadCase)) {
+                continue;
+            }
+            exercised++;
+
+            DynamicMessage.Builder inner = DynamicMessage.newBuilder(field.getMessageType());
+            populateNonDefault(inner, 0);
+
+            Envelope.ServerDataEnvelope envelope = (Envelope.ServerDataEnvelope)
+                    Envelope.ServerDataEnvelope.newBuilder()
+                            .setField(field, inner.build())
+                            .build();
+
+            ProtoServerDataBridge.BridgeResult result =
+                    ProtoServerDataBridge.bridge(envelope.toByteArray());
+
+            if (!result.isSuccess()) {
+                bridgeFailures.add(payloadCase.name() + " → bridge() failed: " + result.errorMessage());
+                continue;
+            }
+
+            ServerDataRouter.RouteResult route = router.route(result.legacyJson(),
+                    result.legacyJson().getBytes(StandardCharsets.UTF_8).length);
+
+            if (route.isNoOp() && !NOOP_EXPECTED_WITH_NON_DEFAULT_DATA.contains(payloadCase)) {
+                noOpRegressions.add(payloadCase.name() + " → " + route.logMessage());
+            }
+        }
+
+        assertTrue(exercised >= 100,
+                "期望穷举到 >=100 个已映射 PayloadCase，实际=" + exercised
+                        + "（KNOWN_UNMAPPED_PAYLOAD_CASES 配错了？）");
+        assertTrue(bridgeFailures.isEmpty(),
+                "以下已映射 PayloadCase 喂入非默认值数据后 bridge() 转换失败"
+                        + "（proto 形状/桥层 fixup 与 handler 期望脱节）：\n"
+                        + String.join("\n", bridgeFailures));
+        assertTrue(noOpRegressions.isEmpty(),
+                "以下已映射 PayloadCase 喂入非默认值数据后路由到的 handler 仍判定 noOp"
+                        + "（说明桥层枚举/坐标/字段名 fixup 没接上，或 handler 判定逻辑与 wire "
+                        + "形状脱节；若这是 handler 本身合法的业务前置条件而非 bug，"
+                        + "把它加进 NOOP_EXPECTED_WITH_NON_DEFAULT_DATA 并写明理由）：\n"
+                        + String.join("\n", noOpRegressions));
+    }
+
+    /**
+     * 递归把 {@code builder} 的每个字段（标量/枚举/子消息）填成非默认值，供
+     * round-trip 守卫构造"内容饱满"的测试消息。跳过 map 字段（本仓库 wire
+     * 契约里 map 用量很少，且 map 的 key/value 语义因字段而异，通用填法收益
+     * 低于复杂度）；深度封顶防御万一出现自引用消息类型导致死循环。
+     */
+    private static void populateNonDefault(com.google.protobuf.Message.Builder builder, int depth) {
+        if (depth > 6) {
+            return;
+        }
+        for (Descriptors.FieldDescriptor field : builder.getDescriptorForType().getFields()) {
+            if (field.isMapField()) {
+                continue;
+            }
+            if (field.isRepeated()) {
+                builder.addRepeatedField(field, nonDefaultScalarOrMessage(field, depth));
+            } else {
+                builder.setField(field, nonDefaultScalarOrMessage(field, depth));
+            }
+        }
+    }
+
+    private static Object nonDefaultScalarOrMessage(Descriptors.FieldDescriptor field, int depth) {
+        switch (field.getJavaType()) {
+            case INT:
+                return 7;
+            case LONG:
+                return 7L;
+            case FLOAT:
+                return 1.5f;
+            case DOUBLE:
+                return 1.5d;
+            case BOOLEAN:
+                return true;
+            case STRING:
+                return "rt_probe_" + field.getName();
+            case BYTE_STRING:
+                return com.google.protobuf.ByteString.copyFromUtf8("rt_probe");
+            case ENUM: {
+                for (Descriptors.EnumValueDescriptor value : field.getEnumType().getValues()) {
+                    if (value.getNumber() != 0) {
+                        return value;
+                    }
+                }
+                return field.getEnumType().getValues().get(0);
+            }
+            case MESSAGE: {
+                DynamicMessage.Builder sub = DynamicMessage.newBuilder(field.getMessageType());
+                populateNonDefault(sub, depth + 1);
+                return sub.build();
+            }
+            default:
+                throw new IllegalStateException("unhandled proto JavaType " + field.getJavaType()
+                        + " for field " + field.getFullName());
+        }
+    }
+
     // ─── Faction war state: intentionally unmapped (plan-wire-format-bridge-v1 P5) ──
     @Test
     void bridgeFactionWarStateIsIntentionallyUnmapped() {
