@@ -73,7 +73,7 @@ use crate::inventory::{
     inventory_item_by_instance_borrow, inventory_item_by_instance_mut,
     inventory_location_attrition_exempt, pickup_dropped_loot_instance, DroppedLootRegistry,
     InventoryDurabilityChangedEvent, InventoryInstanceIdAllocator, InventoryMoveOutcome,
-    ItemInstance, ItemTemplate, PlayerInventory,
+    InventoryMoveRejectReason, ItemInstance, ItemTemplate, PlayerInventory,
 };
 use crate::inventory::{
     AlchemyItemData, ItemEffect, ItemRegistry,
@@ -104,6 +104,7 @@ use crate::shelflife::probe::FreshnessProbeIntent;
 // dropped_loot_sync is emitted by dropped_loot_sync_emit.
 use crate::combat::shield_block::{LowerShieldIntent, RaiseShieldIntent};
 use crate::identity::PlayerIdentities;
+use crate::network::inventory_move_rejected_emit::emit_inventory_move_rejected;
 use crate::network::inventory_snapshot_emit::send_inventory_snapshot_to_client;
 use crate::network::npc_metadata::{
     display_name as npc_display_name, greeting_text_for_archetype,
@@ -8614,6 +8615,113 @@ mod tests {
         let bindings = app.world().get::<SkillBarBindings>(entity).unwrap();
         assert!(matches!(bindings.slots[0], SkillSlot::Empty));
     }
+
+    // ─────────────────────────────────────────────────────────────────
+    // plan-inventory-hint-panel-v1 P0 — 伪皮胸槽境界门控并入 InventoryMoveRejectReason::
+    // RealmTooLow：拒绝走 enum（走 emit_inventory_move_rejected 下发结构化 payload），
+    // 而不是原独立硬编码分支的 warn-only（连 Result 都不走）。
+    // ─────────────────────────────────────────────────────────────────
+
+    /// 从 `MockClientHelper` 收到的包里解出所有 `InventoryMoveRejected` payload
+    /// （测试构建走 JSON 序列化，见 `serialize_server_data_payload` 的 `#[cfg(test)]` 分支）。
+    fn collect_inventory_move_rejected(
+        helper: &mut MockClientHelper,
+    ) -> Vec<crate::schema::server_data::InventoryMoveRejectedV1> {
+        let mut payloads = Vec::new();
+        for frame in helper.collect_received().0 {
+            let Ok(packet) = frame.decode::<CustomPayloadS2c>() else {
+                continue;
+            };
+            if packet.channel.as_str() != crate::network::agent_bridge::SERVER_DATA_CHANNEL {
+                continue;
+            }
+            let Ok(payload) = serde_json::from_slice::<crate::schema::server_data::ServerDataV1>(
+                packet.data.0 .0,
+            ) else {
+                continue;
+            };
+            if let crate::schema::server_data::ServerDataPayloadV1::InventoryMoveRejected(data) =
+                payload.payload
+            {
+                payloads.push(data);
+            }
+        }
+        payloads
+    }
+
+    /// 境界不足时装备伪皮（fake_spirit_hide → SpiderSilk，min_realm=Induce）：
+    /// realm=Awaken（< Induce）应被拒绝，走 `InventoryMoveRejectReason::RealmTooLow`
+    /// → 下发 `InventoryMoveRejectedV1{reason:"realm_too_low", required_realm:"Induce"}`
+    /// → 不修改 inventory（伪皮件仍在原容器格，未落进 chest worn）。
+    #[test]
+    fn equip_false_skin_realm_too_low_emits_structured_rejection() {
+        use crate::combat::tuike::FAKE_SPIRIT_HIDE_ITEM_ID;
+        use crate::cultivation::components::{Cultivation, Realm};
+
+        let mut app = App::new();
+        register_request_app(&mut app);
+
+        let (client_bundle, mut helper) = create_mock_client("Kiz");
+        let item = inventory_test_item(9101, FAKE_SPIRIT_HIDE_ITEM_ID, 1);
+        let player = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                inventory_with_item(item),
+                Cultivation {
+                    realm: Realm::Awaken,
+                    ..Default::default()
+                },
+            ))
+            .id();
+
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: player,
+                channel: ident!("bong:client_request").into(),
+                data: serde_json::to_vec(&ClientRequestV1::EquipFalseSkin {
+                    v: 1,
+                    slot: crate::schema::inventory::EquipSlotV1::Chest,
+                    item_instance_id: 9101,
+                })
+                .expect("equip_false_skin request should serialize")
+                .into_boxed_slice(),
+            });
+
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let rejections = collect_inventory_move_rejected(&mut helper);
+        assert_eq!(
+            rejections.len(),
+            1,
+            "境界不足的伪皮装备应下发恰好 1 条 InventoryMoveRejected"
+        );
+        let rejection = &rejections[0];
+        assert_eq!(rejection.reason, "realm_too_low");
+        assert_eq!(
+            rejection.required_realm.as_deref(),
+            Some("Induce"),
+            "SpiderSilk 型伪皮 min_realm=Induce，应下发英文 tag 供 client RealmLabel 转中文"
+        );
+        assert!(rejection.slot.is_none(), "realm_too_low 不带 slot/cap");
+        assert!(rejection.cap.is_none());
+
+        // 拒绝后伪皮件仍留在原格，未被写入 chest worn（走 enum 拒绝而非静默放行）。
+        let inventory = app
+            .world()
+            .get::<PlayerInventory>(player)
+            .expect("player inventory should still exist");
+        assert!(
+            inventory
+                .equipped
+                .get(crate::inventory::EQUIP_SLOT_CHEST)
+                .map(|c| c.worn.is_empty())
+                .unwrap_or(true),
+            "境界不足时伪皮不应落进 chest worn"
+        );
+    }
 }
 
 fn parse_session_mode(raw: &str) -> SessionMode {
@@ -9907,10 +10015,16 @@ fn handle_inventory_move(
                 .map(|cultivation| can_equip_false_skin(cultivation.realm, kind))
                 .unwrap_or(false);
             if !realm_allowed {
+                // plan-inventory-hint-panel-v1 P0 —— 伪皮胸槽境界门控并入 InventoryMoveRejectReason
+                // ::RealmTooLow（原独立硬编码分支只 tracing::warn! + resync，连 Result 都不走）。
+                let reason = InventoryMoveRejectReason::RealmTooLow {
+                    required_realm: crate::schema::cultivation::realm_to_string(kind.min_realm())
+                        .to_string(),
+                };
                 tracing::warn!(
-                    "[bong][network][tuike] rejected false_skin equip entity={entity:?} instance={instance_id}: realm too low for {:?}",
-                    kind
+                    "[bong][network][tuike] rejected false_skin equip entity={entity:?} instance={instance_id}: {reason}"
                 );
+                emit_inventory_move_rejected(entity, &reason, clients);
                 resync_snapshot(
                     entity,
                     &inventory,
@@ -10106,6 +10220,9 @@ fn handle_inventory_move(
             tracing::warn!(
                 "[bong][network][inventory] rejected move_intent entity={entity:?} instance={instance_id}: {reason}"
             );
+            // plan-inventory-hint-panel-v1 P0 —— 结构化拒绝原因下发触发者，供 client
+            // 失败 toast（P1）消费；不影响既有 resync 权威覆盖。
+            emit_inventory_move_rejected(entity, &reason, clients);
             // Client did optimistic update but server didn't move. Resync to
             // overwrite the diverged client state with authoritative truth.
             resync_snapshot(
