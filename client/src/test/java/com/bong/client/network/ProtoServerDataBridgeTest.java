@@ -2,11 +2,21 @@ package com.bong.client.network;
 
 import bong.Common;
 import bong.Envelope;
+import com.bong.client.combat.DefenseWindowState;
+import com.bong.client.combat.DefenseWindowStore;
 import com.bong.client.combat.UnifiedEvent;
 import com.bong.client.combat.UnifiedEventStore;
 import com.bong.client.combat.inspect.TechniquesListPanel;
+import com.bong.client.combat.store.DeathStateStore;
+import com.bong.client.combat.store.FalseSkinHudStateStore;
+import com.bong.client.combat.store.FullPowerStateStore;
+import com.bong.client.combat.store.WoundsStore;
+import com.bong.client.hud.LootContainerStateStore;
 import com.bong.client.hud.PillBuffHudPlanner;
+import com.bong.client.hud.PoisonTraitHudStateStore;
 import com.bong.client.hud.BongToast;
+import com.bong.client.social.NicheGuardianStore;
+import com.bong.client.social.SocialStateStore;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
@@ -32,6 +42,15 @@ class ProtoServerDataBridgeTest {
         BongToast.resetForTests();
         UnifiedEventStore.resetForTests();
         com.bong.client.coffin.TutorialCoffinPosStore.resetForTests();
+        SocialStateStore.resetForTests();
+        NicheGuardianStore.resetForTests();
+        LootContainerStateStore.clear();
+        DefenseWindowStore.resetForTests();
+        DeathStateStore.resetForTests();
+        FullPowerStateStore.resetForTests();
+        WoundsStore.resetForTests();
+        FalseSkinHudStateStore.resetForTests();
+        PoisonTraitHudStateStore.clear();
     }
 
     // ─── Happy path: Welcome ─────────────────────────────────────────
@@ -1436,6 +1455,445 @@ class ProtoServerDataBridgeTest {
         assertFalse(json.has("required_realm"));
         assertFalse(json.has("slot"));
         assertFalse(json.has("cap"));
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // P0 — RC1 uint64→JSON字符串 (docs/wire-format-bridge-audit-report.md RC1 节, 14 条)
+    //
+    // §8.1 收口决议 #2：printAndNormalize()/normalizeNumericStrings()
+    // (ProtoServerDataBridge.java:1028-1073) 已在桥层对全部 124 payloadCase 无差别把
+    // proto3-JSON 的 uint64 字符串转回 JSON number，是通用路径 + 全部专属 fixup 的公共
+    // 前置步骤。以下 14 条逐一 fixture 实证：喂真实 proto3-JSON 形状（uint64 字段）→
+    // bridge() → 断言对应 handler 非 noOp 且字段落地为正确数值（非 null / 非 fallback
+    // 0 或 1）。全部预期 PASS（已被 normalizeNumericStrings 覆盖，非活 bug）——按 P0
+    // 决议"仅对 fixture 真失败的才修"，本节全绿则不改 36 处 readLong reader。
+    // ═══════════════════════════════════════════════════════════════════
+
+    // ─── RC1 #1: social_pact.tick ────────────────────────────────────
+    @Test
+    void socialPactTickNormalizesToNumberAndAppliesRelationship() {
+        long tick = 1_234_567_890L;
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setSocialPact(Envelope.SocialPact.newBuilder()
+                        .setLeft("player_a")
+                        .setRight("player_b")
+                        .setTerms("mutual_aid")
+                        .setTick(tick)
+                        .setBroken(false))
+                .build();
+
+        ProtoServerDataBridge.BridgeResult result = ProtoServerDataBridge.bridge(envelope.toByteArray());
+        assertTrue(result.isSuccess(), "bridge should succeed for social_pact: " + result.errorMessage());
+
+        ServerDataRouter.RouteResult route = ServerDataRouter.createDefault()
+                .route(result.legacyJson(), result.legacyJson().getBytes(StandardCharsets.UTF_8).length);
+        assertTrue(route.isHandled(),
+                "social_pact.tick (uint64) must parse as JSON number via printAndNormalize, "
+                + "not noOp via readLong's isNumber() gate: " + route.logMessage());
+
+        List<SocialStateStore.SocialRelationshipSignal> relationships = SocialStateStore.relationships();
+        assertEquals(1, relationships.size());
+        assertEquals(tick, relationships.get(0).tick(),
+                "SocialRelationshipSignal.tick must carry the real server tick");
+    }
+
+    // ─── RC1 #2: sparring_invite.expires_at_ms ───────────────────────
+    @Test
+    void sparringInviteExpiresAtMsNormalizesToNumber() {
+        long expiresAtMs = 1_719_999_999_999L;
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setSparringInvite(Envelope.SparringInvite.newBuilder()
+                        .setInviteId("invite-1")
+                        .setInitiator("player_a")
+                        .setTarget("player_b")
+                        .setExpiresAtMs(expiresAtMs))
+                .build();
+
+        ProtoServerDataBridge.BridgeResult result = ProtoServerDataBridge.bridge(envelope.toByteArray());
+        assertTrue(result.isSuccess(), "bridge should succeed for sparring_invite: " + result.errorMessage());
+
+        ServerDataRouter.RouteResult route = ServerDataRouter.createDefault()
+                .route(result.legacyJson(), result.legacyJson().getBytes(StandardCharsets.UTF_8).length);
+        assertTrue(route.isHandled(),
+                "sparring_invite.expires_at_ms (uint64) must not noOp: " + route.logMessage());
+
+        SocialStateStore.SparringInvite invite = SocialStateStore.sparringInvite();
+        assertNotNull(invite, "sparring invite must be recorded");
+        assertEquals(expiresAtMs, invite.expiresAtMs());
+    }
+
+    // ─── RC1 #3/#4: trade_offer.expires_at_ms / offered_item.instance_id ─
+    private static Envelope.ServerDataEnvelope buildTradeOfferEnvelope(long expiresAtMs, long instanceId) {
+        return Envelope.ServerDataEnvelope.newBuilder()
+                .setTradeOffer(Envelope.TradeOffer.newBuilder()
+                        .setOfferId("offer-1")
+                        .setInitiator("player_a")
+                        .setTarget("player_b")
+                        .setOfferedItem(Envelope.TradeItemSummary.newBuilder()
+                                .setInstanceId(instanceId)
+                                .setItemId("spirit_stone")
+                                .setDisplayName("灵石")
+                                .setStackCount(1))
+                        .addRequestedItems(Envelope.TradeItemSummary.newBuilder()
+                                .setInstanceId(777L)
+                                .setItemId("herb")
+                                .setDisplayName("药草")
+                                .setStackCount(2))
+                        .setExpiresAtMs(expiresAtMs))
+                .build();
+    }
+
+    @Test
+    void tradeOfferExpiresAtMsNormalizesToNumber() {
+        long expiresAtMs = 1_720_000_000_000L;
+        Envelope.ServerDataEnvelope envelope = buildTradeOfferEnvelope(expiresAtMs, 555L);
+
+        ProtoServerDataBridge.BridgeResult result = ProtoServerDataBridge.bridge(envelope.toByteArray());
+        assertTrue(result.isSuccess(), "bridge should succeed for trade_offer: " + result.errorMessage());
+
+        ServerDataRouter.RouteResult route = ServerDataRouter.createDefault()
+                .route(result.legacyJson(), result.legacyJson().getBytes(StandardCharsets.UTF_8).length);
+        assertTrue(route.isHandled(),
+                "trade_offer.expires_at_ms (uint64) must not noOp: " + route.logMessage());
+
+        SocialStateStore.TradeOffer offer = SocialStateStore.tradeOffer();
+        assertNotNull(offer, "trade offer must be recorded");
+        assertEquals(expiresAtMs, offer.expiresAtMs());
+    }
+
+    @Test
+    void tradeOfferOfferedItemInstanceIdNormalizesToNumber() {
+        long instanceId = 9_876_543_210L; // > Integer.MAX_VALUE — proves genuine uint64, not int32
+        Envelope.ServerDataEnvelope envelope = buildTradeOfferEnvelope(1_720_000_000_000L, instanceId);
+
+        ProtoServerDataBridge.BridgeResult result = ProtoServerDataBridge.bridge(envelope.toByteArray());
+        assertTrue(result.isSuccess(), "bridge should succeed for trade_offer: " + result.errorMessage());
+
+        ServerDataRouter.RouteResult route = ServerDataRouter.createDefault()
+                .route(result.legacyJson(), result.legacyJson().getBytes(StandardCharsets.UTF_8).length);
+        assertTrue(route.isHandled(),
+                "trade_offer.offered_item.instance_id (uint64) must not noOp "
+                + "(parseTradeItem returning null would independently noOp the whole trade offer): "
+                + route.logMessage());
+
+        SocialStateStore.TradeOffer offer = SocialStateStore.tradeOffer();
+        assertNotNull(offer, "trade offer must be recorded");
+        assertEquals(instanceId, offer.offeredItem().instanceId());
+    }
+
+    // ─── RC1 #5: poison_overdose_event.player_entity_id ──────────────
+    @Test
+    void poisonOverdoseEventPlayerEntityIdNormalizesToNumber() {
+        long playerEntityId = 4_294_967_296L; // > uint32 max — proves genuine uint64
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setPoisonOverdoseEvent(Envelope.PoisonOverdoseEvent.newBuilder()
+                        .setPlayerEntityId(playerEntityId)
+                        .setOverflow(0.2f)
+                        .setLifespanPenaltyYears(3.5f)
+                        .setMicroTearProbability(0.1f)
+                        .setAtTick(100L))
+                .build();
+
+        ProtoServerDataBridge.BridgeResult result = ProtoServerDataBridge.bridge(envelope.toByteArray());
+        assertTrue(result.isSuccess(), "bridge should succeed for poison_overdose_event: " + result.errorMessage());
+
+        ServerDataRouter.RouteResult route = ServerDataRouter.createDefault()
+                .route(result.legacyJson(), result.legacyJson().getBytes(StandardCharsets.UTF_8).length);
+        assertTrue(route.isHandled(),
+                "poison_overdose_event.player_entity_id (uint64) must not noOp via "
+                + "readNonNegativeLong's isNumber() gate: " + route.logMessage());
+
+        assertEquals(3.5f, PoisonTraitHudStateStore.snapshot().lifespanYearsLost(), 1e-6f,
+                "the lifespan-loss warning must actually apply once player_entity_id parses");
+    }
+
+    // ─── RC1 #6: loot_container_update.session_id ────────────────────
+    @Test
+    void lootContainerUpdateSessionIdNormalizesToNumber() {
+        long sessionId = 10_000_000_001L;
+        LootContainerStateStore.open(new LootContainerStateStore.OpenSession(
+                sessionId, "supply_coffin", "legendary", 3, 4, 120L, List.of()));
+
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setLootContainerUpdate(Envelope.LootContainerUpdate.newBuilder()
+                        .setSessionId(sessionId))
+                .build();
+
+        ProtoServerDataBridge.BridgeResult result = ProtoServerDataBridge.bridge(envelope.toByteArray());
+        assertTrue(result.isSuccess(), "bridge should succeed for loot_container_update: " + result.errorMessage());
+
+        ServerDataRouter.RouteResult route = ServerDataRouter.createDefault()
+                .route(result.legacyJson(), result.legacyJson().getBytes(StandardCharsets.UTF_8).length);
+        assertTrue(route.isHandled(),
+                "loot_container_update.session_id (uint64) must not noOp: " + route.logMessage());
+
+        LootContainerStateStore.Session current = LootContainerStateStore.current();
+        assertTrue(current instanceof LootContainerStateStore.OpenSession,
+                "session must remain open (not silently dropped) after update");
+        assertEquals(sessionId, ((LootContainerStateStore.OpenSession) current).sessionId());
+    }
+
+    // ─── RC1 #7: defense_window.started_at_ms / expires_at_ms ────────
+    @Test
+    void defenseWindowStartedAndExpiresAtMsNormalizeToNumbers() {
+        long startedAtMs = 1_720_000_000_000L;
+        long expiresAtMs = startedAtMs + 600L;
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setDefenseWindow(Envelope.DefenseWindow.newBuilder()
+                        .setDurationMs(600)
+                        .setStartedAtMs(startedAtMs)
+                        .setExpiresAtMs(expiresAtMs))
+                .build();
+
+        ProtoServerDataBridge.BridgeResult result = ProtoServerDataBridge.bridge(envelope.toByteArray());
+        assertTrue(result.isSuccess(), "bridge should succeed for defense_window: " + result.errorMessage());
+
+        ServerDataRouter.RouteResult route = ServerDataRouter.createDefault()
+                .route(result.legacyJson(), result.legacyJson().getBytes(StandardCharsets.UTF_8).length);
+        assertTrue(route.isHandled(),
+                "defense_window.started_at_ms/expires_at_ms (uint64) must not noOp — otherwise "
+                + "the 截脉弹反窗口 HUD red ring never renders: " + route.logMessage());
+
+        DefenseWindowState snapshot = DefenseWindowStore.snapshot();
+        assertTrue(snapshot.active());
+        assertEquals(startedAtMs, snapshot.startedAtMs());
+        assertEquals(expiresAtMs, snapshot.expiresAtMs());
+    }
+
+    // ─── RC1 #8: death_screen.cinematic.{phase_tick,phase_duration_ticks,
+    //             total_elapsed_ticks,total_duration_ticks,rebirth_weakened_ticks} ─
+    @Test
+    void deathScreenCinematicUint64TimingFieldsNormalizeToNumbers() {
+        long phaseTick = 1_234_567L;
+        long phaseDurationTicks = 2_000_000L;
+        long totalElapsedTicks = 5_555_555L;
+        long totalDurationTicks = 9_999_999L;
+        long rebirthWeakenedTicks = 42_000L;
+
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setDeathScreen(Envelope.DeathScreen.newBuilder()
+                        .setVisible(true)
+                        .setCause("pk")
+                        .setCinematic(Envelope.DeathCinematicData.newBuilder()
+                                .setV(1)
+                                .setCharacterId("char-1")
+                                .setPhase(Envelope.DeathCinematicPhase.DEATH_CINEMATIC_PHASE_ROLL)
+                                .setPhaseTick(phaseTick)
+                                .setPhaseDurationTicks(phaseDurationTicks)
+                                .setTotalElapsedTicks(totalElapsedTicks)
+                                .setTotalDurationTicks(totalDurationTicks)
+                                .setRebirthWeakenedTicks(rebirthWeakenedTicks)
+                                .setRoll(Envelope.DeathCinematicRoll.newBuilder()
+                                        .setResult(Envelope.DeathRollResult.DEATH_ROLL_RESULT_SURVIVE))))
+                .build();
+
+        ProtoServerDataBridge.BridgeResult result = ProtoServerDataBridge.bridge(envelope.toByteArray());
+        assertTrue(result.isSuccess(), "bridge should succeed for death_screen: " + result.errorMessage());
+
+        ServerDataRouter.RouteResult route = ServerDataRouter.createDefault()
+                .route(result.legacyJson(), result.legacyJson().getBytes(StandardCharsets.UTF_8).length);
+        assertTrue(route.isHandled(), route.logMessage());
+
+        var cinematic = DeathStateStore.snapshot().cinematic();
+        assertEquals(phaseTick, cinematic.phaseTick(),
+                "phase_tick (uint64) must land as the real value, not the readLong fallback 0");
+        assertEquals(phaseDurationTicks, cinematic.phaseDurationTicks(),
+                "phase_duration_ticks (uint64) must land as the real value, not the readDurationTicks fallback 1");
+        assertEquals(totalElapsedTicks, cinematic.totalElapsedTicks());
+        assertEquals(totalDurationTicks, cinematic.totalDurationTicks());
+        assertEquals(rebirthWeakenedTicks, cinematic.rebirthWeakenedTicks());
+    }
+
+    // ─── RC1 #9: social_renown_delta.tags_added[].last_seen_tick ─────
+    @Test
+    void socialRenownDeltaTagsAddedLastSeenTickNormalizesToNumber() {
+        long lastSeenTick = 987_654_321L;
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setSocialRenownDelta(Envelope.SocialRenownDelta.newBuilder()
+                        .setCharId("char-1")
+                        .setFameDelta(5)
+                        .setNotorietyDelta(0)
+                        .addTagsAdded(Envelope.RenownTag.newBuilder()
+                                .setTag("savior")
+                                .setWeight(1.0)
+                                .setLastSeenTick(lastSeenTick)
+                                .setPermanent(true))
+                        .setTick(100L)
+                        .setReason("quest"))
+                .build();
+
+        ProtoServerDataBridge.BridgeResult result = ProtoServerDataBridge.bridge(envelope.toByteArray());
+        assertTrue(result.isSuccess(), "bridge should succeed for social_renown_delta: " + result.errorMessage());
+
+        ServerDataRouter.RouteResult route = ServerDataRouter.createDefault()
+                .route(result.legacyJson(), result.legacyJson().getBytes(StandardCharsets.UTF_8).length);
+        assertTrue(route.isHandled(),
+                "social_renown_delta must not noOp: " + route.logMessage());
+
+        List<SocialStateStore.SocialRenownDelta> deltas = SocialStateStore.renownDeltas();
+        assertEquals(1, deltas.size());
+        assertEquals(1, deltas.get(0).tagsAdded().size(),
+                "tags_added[].last_seen_tick (uint64) must not silently drop the whole tag "
+                + "via parseRenownTags' per-tag readLong isNumber() gate");
+        assertEquals(lastSeenTick, deltas.get(0).tagsAdded().get(0).lastSeenTick());
+    }
+
+    // ─── RC1 #10: niche_intrusion.items_taken (repeated uint64) ──────
+    @Test
+    void nicheIntrusionItemsTakenNormalizesRepeatedUint64ToNumbers() {
+        long item1 = 1_000_000_001L;
+        long item2 = 1_000_000_002L;
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setNicheIntrusion(Envelope.NicheIntrusion.newBuilder()
+                        .setIntruderId("intruder-1")
+                        .addItemsTaken(item1)
+                        .addItemsTaken(item2)
+                        .setTaintDelta(0.3f))
+                .build();
+
+        ProtoServerDataBridge.BridgeResult result = ProtoServerDataBridge.bridge(envelope.toByteArray());
+        assertTrue(result.isSuccess(), "bridge should succeed for niche_intrusion: " + result.errorMessage());
+
+        ServerDataRouter.RouteResult route = ServerDataRouter.createDefault()
+                .route(result.legacyJson(), result.legacyJson().getBytes(StandardCharsets.UTF_8).length);
+        assertTrue(route.isHandled(),
+                "niche_intrusion must not noOp: " + route.logMessage());
+
+        List<NicheGuardianStore.NicheIntrusionAlert> alerts = NicheGuardianStore.intrusionAlerts();
+        assertEquals(1, alerts.size());
+        assertEquals(List.of(item1, item2), alerts.get(0).itemsTaken(),
+                "repeated uint64 items_taken must land as real ids, not be filtered out by "
+                + "readLongArray's per-element isNumber() gate");
+    }
+
+    // ─── RC1 #11: full_power_exhausted_state.started_tick / recovery_at_tick ─
+    @Test
+    void fullPowerExhaustedStateStartedAndRecoveryTickNormalizeToNumbers() {
+        long startedTick = 100_000_000L;
+        long recoveryAtTick = startedTick + 36_000L;
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setFullPowerExhausted(Envelope.FullPowerExhaustedState.newBuilder()
+                        .setCasterUuid("caster-1")
+                        .setActive(true)
+                        .setStartedTick(startedTick)
+                        .setRecoveryAtTick(recoveryAtTick))
+                .build();
+
+        ProtoServerDataBridge.BridgeResult result = ProtoServerDataBridge.bridge(envelope.toByteArray());
+        assertTrue(result.isSuccess(), "bridge should succeed for full_power_exhausted_state: " + result.errorMessage());
+
+        ServerDataRouter.RouteResult route = ServerDataRouter.createDefault()
+                .route(result.legacyJson(), result.legacyJson().getBytes(StandardCharsets.UTF_8).length);
+        assertTrue(route.isHandled(),
+                "full_power_exhausted_state.started_tick/recovery_at_tick (uint64) must not noOp: "
+                + route.logMessage());
+
+        FullPowerStateStore.ExhaustedState exhausted = FullPowerStateStore.exhausted();
+        assertTrue(exhausted.active());
+        assertEquals(startedTick, exhausted.startedTick());
+        assertEquals(recoveryAtTick, exhausted.recoveryAtTick());
+    }
+
+    // ─── RC1 #12: wounds_snapshot.wounds[].updated_at_ms ─────────────
+    @Test
+    void woundsSnapshotUpdatedAtMsNormalizesToNumber() {
+        long updatedAtMs = 1_720_555_555_555L;
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setWoundsSnapshot(Envelope.WoundsSnapshot.newBuilder()
+                        .addWounds(Envelope.WoundEntry.newBuilder()
+                                .setPart("chest")
+                                .setKind("cut")
+                                .setSeverity(0.4f)
+                                .setState("bleeding")
+                                .setInfection(0.1f)
+                                .setUpdatedAtMs(updatedAtMs)))
+                .build();
+
+        ProtoServerDataBridge.BridgeResult result = ProtoServerDataBridge.bridge(envelope.toByteArray());
+        assertTrue(result.isSuccess(), "bridge should succeed for wounds_snapshot: " + result.errorMessage());
+
+        ServerDataRouter.RouteResult route = ServerDataRouter.createDefault()
+                .route(result.legacyJson(), result.legacyJson().getBytes(StandardCharsets.UTF_8).length);
+        assertTrue(route.isHandled(), route.logMessage());
+
+        WoundsStore.Wound wound = WoundsStore.get("chest");
+        assertNotNull(wound, "wound entry for 'chest' must be present");
+        assertEquals(updatedAtMs, wound.updatedAtMs(),
+                "wounds[].updated_at_ms (uint64) must not silently fall back to 0 via "
+                + "readDouble's isNumber() gate");
+    }
+
+    // ─── RC1 #13: false_skin_state.equipped_at_tick ──────────────────
+    @Test
+    void falseSkinStateEquippedAtTickNormalizesToNumber() {
+        long equippedAtTick = 5_555_555L;
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setFalseSkinState(Envelope.FalseSkinState.newBuilder()
+                        .setTargetId("target-1")
+                        .setLayersRemaining(2)
+                        .setContamCapacityPerLayer(10.0)
+                        .setAbsorbedContam(2.5)
+                        .setEquippedAtTick(equippedAtTick))
+                .build();
+
+        ProtoServerDataBridge.BridgeResult result = ProtoServerDataBridge.bridge(envelope.toByteArray());
+        assertTrue(result.isSuccess(), "bridge should succeed for false_skin_state: " + result.errorMessage());
+
+        ServerDataRouter.RouteResult route = ServerDataRouter.createDefault()
+                .route(result.legacyJson(), result.legacyJson().getBytes(StandardCharsets.UTF_8).length);
+        assertTrue(route.isHandled(), route.logMessage());
+
+        FalseSkinHudStateStore.State state = FalseSkinHudStateStore.snapshot();
+        assertEquals(equippedAtTick, state.equippedAtTick(),
+                "equipped_at_tick (uint64) must not silently fall back to 0 via readDouble's isNumber() gate");
+    }
+
+    // ─── RC1 #14: recipe_unlocked.unlocked_at_tick ───────────────────
+    // NOTE: full router non-noOp assertion is not possible today — RecipeUnlockedHandler
+    // also gates on `source.kind`, and the proto3-JSON shape of the `source` oneof
+    // (UnlockEventSource) never produces a "kind" discriminator field (RC5,
+    // docs/wire-format-bridge-audit-report.md RC5 节, P4 scope — out of this P0 pass).
+    // So this pins the bridge-output (printAndNormalize) contract only: the raw JSON
+    // field itself must be a number, independent of whether the handler ultimately
+    // consumes it.
+    @Test
+    void recipeUnlockedUnlockedAtTickNormalizesToNumberAtBridgeLevel() {
+        long unlockedAtTick = 4_242_424_242L;
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setRecipeUnlocked(Envelope.RecipeUnlocked.newBuilder()
+                        .setV(1)
+                        .setRecipeId("recipe-1")
+                        .setUnlockedAtTick(unlockedAtTick))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        assertTrue(json.get("unlocked_at_tick").getAsJsonPrimitive().isNumber(),
+                "unlocked_at_tick must be a JSON number after printAndNormalize, "
+                + "not a proto3-canonical string");
+        assertEquals(unlockedAtTick, json.get("unlocked_at_tick").getAsLong());
+    }
+
+    // ─── RC1 residual gap (§8.1 #2): > Long.MAX_VALUE true uint64 ────
+    // normalizeNumericStrings' Long.parseLong throws for real uint64 values above
+    // Long.MAX_VALUE (represented on the wire via the negative-long unsigned trick) and
+    // silently keeps the JSON string via the catch(NumberFormatException) branch. This
+    // is a known, accepted residual gap (§8.1 #2 决议：游戏内 id/tick 罕见触达该量级，
+    // 不修 reader，仅钉住行为防止未来误判为"已修好"）.
+    @Test
+    void uint64FieldAboveLongMaxValueStaysStringKnownResidualGap() {
+        long unsignedMaxWireValue = -1L; // unsigned representation: 18446744073709551615
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setInventorySnapshot(Envelope.InventorySnapshot.newBuilder()
+                        .setRevision(unsignedMaxWireValue))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        assertTrue(json.get("revision").getAsJsonPrimitive().isString(),
+                "known residual gap: uint64 values beyond Long.MAX_VALUE stay JSON strings "
+                + "after normalizeNumericStrings (NumberFormatException is caught silently); "
+                + "if any RC1 handler's id/tick ever plausibly reaches this magnitude it would "
+                + "need string-tolerant readLong, but none currently do");
+        assertEquals("18446744073709551615", json.get("revision").getAsString());
     }
 
     // ═══════════════════════════════════════════════════════════════════
