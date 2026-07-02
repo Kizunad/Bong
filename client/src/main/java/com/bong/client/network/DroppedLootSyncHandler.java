@@ -38,16 +38,18 @@ public final class DroppedLootSyncHandler implements ServerDataHandler {
         String sourceContainerId = readRequiredString(object, "source_container_id");
         Integer sourceRow = readRequiredInt(object, "source_row");
         Integer sourceCol = readRequiredInt(object, "source_col");
-        JsonArray pos = readRequiredArray(object, "world_pos");
+        // Wire 形状 = proto。生产 --release 走 protobuf：DroppedLootEntry 把 Rust [f64;3] 在 proto
+        // 侧拆成 flat world_pos_x/y/z 三字段，经 ProtoServerDataBridge（preservingProtoFieldNames）
+        // 展平后即为这三个 key —— 这是 client 真实收到的形状，不是 world_pos 数组。
+        // 历史 bug：这里曾读 world_pos 数组 → proto 路径每条 entry 被拒 → DroppedItemStore 永不填充
+        // → 从 InventoryUI 丢弃的物品在世界里没有任何 icon（DroppedItemWorldRenderer 无内容可渲染）。
+        // 单测吃数组 JSON 走假路径所以一直绿，掩盖了真实 proto wire 的破损。
+        Double x = readRequiredDouble(object, "world_pos_x");
+        Double y = readRequiredDouble(object, "world_pos_y");
+        Double z = readRequiredDouble(object, "world_pos_z");
         InventoryItem item = parseInventoryItem(readRequiredObject(object, "item"));
         if (instanceId == null || sourceContainerId == null || sourceRow == null || sourceCol == null
-            || pos == null || pos.size() != 3 || item == null) {
-            return null;
-        }
-        Double x = readRequiredDouble(pos.get(0));
-        Double y = readRequiredDouble(pos.get(1));
-        Double z = readRequiredDouble(pos.get(2));
-        if (x == null || y == null || z == null) {
+            || x == null || y == null || z == null || item == null) {
             return null;
         }
         return new DroppedItemStore.Entry(instanceId, sourceContainerId, sourceRow, sourceCol, x, y, z, item);
