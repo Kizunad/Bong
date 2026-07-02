@@ -3031,6 +3031,201 @@ impl LoadoutToml {
 
 // ─── Inventory move (client → server intent application) ────────────────────
 
+/// plan-inventory-hint-panel-v1 P0 — 结构化拒绝原因（仿 `CastRejectReason`
+/// @ `cultivation/skill_registry.rs:20-34`）。
+///
+/// 收敛 `apply_inventory_move` / `validate_move_semantics` 及其 `?` 传播链
+/// （`displaced_at_target` / `validate_attach_fits` / `attach_at_location` /
+/// `validate_equip_to`）里散落的裸 `String` 拒绝原因，让每条拒绝都能：
+/// 1. 经 [`InventoryMoveRejectReason::to_wire_tag`] 下发结构化 `InventoryMoveRejectedV1` payload；
+/// 2. 经 [`InventoryMoveRejectReason::to_log_string`] / `Display` 继续供 `tracing::warn!` 打日志
+///    （字符串内容与 P0 前的原始文案尽量保持一致，便于比对既有日志）。
+///
+/// `RealmTooLow` 额外并入了 `client_request_handler.rs` 里独立硬编码的伪皮胸槽境界门控——
+/// 该分支此前完全绕过 `Result`，只 `tracing::warn!` + `resync_snapshot`。
+#[derive(Debug, Clone, PartialEq)]
+pub enum InventoryMoveRejectReason {
+    /// `from` 位置不含该 instance（客户端过期乐观态 / 幽灵拖拽）。
+    FromLocationMismatch,
+    /// instance_id 在 inventory 里彻底找不到。
+    InstanceNotFound,
+    /// container_id 未知（幽灵容器 / 客户端过期状态）。
+    UnknownContainerId,
+    /// 落位越界（行列超出容器边界，或 row/col 转换失败）。
+    TargetOutOfBounds,
+    /// 目标格被另一实例占用（单一 anchor 精确匹配失败，或非 swap 候选）。
+    TargetOccupied { instance_id: u64 },
+    /// 目标区域与多个物品重叠，v1 不支持多重叠 swap。
+    MultiOverlapNotSupported,
+    /// hotbar 下标越界。
+    HotbarIndexOutOfRange,
+    /// hotbar 目标槽已被占用。
+    HotbarOccupied,
+    /// swap 候选（occupant）的 footprint 与拖拽物不一致。
+    SwapFootprintMismatch,
+    /// item template 未在 `ItemRegistry` 注册。
+    UnknownItemTemplate,
+    /// 从 worn 栈非栈顶层移出（LIFO 保护，决议 #12）。
+    WornStackNotTop,
+    /// 该品类不允许进 hotbar（武器/工具/护甲/盾/法宝/容器 六类，决议见 `validate_move_semantics`）。
+    ForbiddenInHotbar { category: ItemCategory },
+    /// 背包件已不在携带面（worn/held/hotbar/body_pocket 之外——已丢弃/销毁），
+    /// 无法再放入内含物。`owner_instance_id` 是该背包件的 instance id。
+    PackDetached { owner_instance_id: u64 },
+    /// 手槽/身体槽装备态不匹配（手槽只能 held，身体槽只能 worn）。
+    HeldWornMismatch,
+    /// 目标槽物品品类不符（手槽：非武器/工具/锄头，off_hand 另收法宝/盾；
+    /// 身体槽：非护甲/伪皮/容器）。
+    EquipCategoryMismatch,
+    /// off_hand 武器种类不符（仅 dagger/fist）。
+    OffHandTypeMismatch,
+    /// 该手已持械，须先卸下才能换装（决议 #3 拒绝不顶替）。
+    HandOccupied,
+    /// 双手兵器占用双手——本手被对侧双手兵器锁，或双手兵器入本手时对侧已被占用。
+    TwoHandedLocksOther,
+    /// 护甲耐久为 0，无法装备。
+    ArmorDurabilityZero,
+    /// 护甲槽位与其规格不符。`expected_slot` 是该护甲实际应装的槽位 key。
+    ArmorSlotMismatch { expected_slot: String },
+    /// 背包件 `ContainerSpec.equip_slot` 与目标身体槽不符。`expected_slot` 是背包声明的槽位 key。
+    PackEquipSlotMismatch { expected_slot: String },
+    /// 身体槽 worn 层已满（决议 #3/#12/#17）。`slot` 是槽位 key，`cap` 是该槽上限。
+    WornCapFull { slot: String, cap: u8 },
+    /// 境界不足——并入伪皮胸槽境界门控（原 `client_request_handler.rs:9896-9925` 独立硬编码分支）。
+    /// `required_realm` 存 `realm_to_string` 输出的英文 tag（如 `"Condense"`）。
+    RealmTooLow { required_realm: String },
+}
+
+impl InventoryMoveRejectReason {
+    /// 下发 `InventoryMoveRejectedV1.reason` 用的 snake_case string tag（wire 形状安全：
+    /// string tag 而非 proto enum，避免枚举前缀 noOp，见 plan-wire-format-bridge-v1 教训）。
+    pub fn to_wire_tag(&self) -> &'static str {
+        match self {
+            Self::FromLocationMismatch => "from_location_mismatch",
+            Self::InstanceNotFound => "instance_not_found",
+            Self::UnknownContainerId => "unknown_container_id",
+            Self::TargetOutOfBounds => "target_out_of_bounds",
+            Self::TargetOccupied { .. } => "target_occupied",
+            Self::MultiOverlapNotSupported => "multi_overlap_not_supported",
+            Self::HotbarIndexOutOfRange => "hotbar_index_out_of_range",
+            Self::HotbarOccupied => "hotbar_occupied",
+            Self::SwapFootprintMismatch => "swap_footprint_mismatch",
+            Self::UnknownItemTemplate => "unknown_item_template",
+            Self::WornStackNotTop => "worn_stack_not_top",
+            Self::ForbiddenInHotbar { .. } => "forbidden_in_hotbar",
+            Self::PackDetached { .. } => "pack_detached",
+            Self::HeldWornMismatch => "held_worn_mismatch",
+            Self::EquipCategoryMismatch => "equip_category_mismatch",
+            Self::OffHandTypeMismatch => "off_hand_type_mismatch",
+            Self::HandOccupied => "hand_occupied",
+            Self::TwoHandedLocksOther => "two_handed_locks_other",
+            Self::ArmorDurabilityZero => "armor_durability_zero",
+            Self::ArmorSlotMismatch { .. } => "armor_slot_mismatch",
+            Self::PackEquipSlotMismatch { .. } => "pack_equip_slot_mismatch",
+            Self::WornCapFull { .. } => "worn_cap_full",
+            Self::RealmTooLow { .. } => "realm_too_low",
+        }
+    }
+
+    /// 境界不足时的 required_realm 英文 tag（其余变体 `None`）——`InventoryMoveRejectedV1.required_realm`。
+    pub fn required_realm(&self) -> Option<&str> {
+        match self {
+            Self::RealmTooLow { required_realm } => Some(required_realm.as_str()),
+            _ => None,
+        }
+    }
+
+    /// worn_cap 满 / 护甲槽位不符 / 背包 equip_slot 不符时的槽位 key（其余变体 `None`）——
+    /// `InventoryMoveRejectedV1.slot`。
+    pub fn slot(&self) -> Option<&str> {
+        match self {
+            Self::WornCapFull { slot, .. } => Some(slot.as_str()),
+            Self::ArmorSlotMismatch { expected_slot } => Some(expected_slot.as_str()),
+            Self::PackEquipSlotMismatch { expected_slot } => Some(expected_slot.as_str()),
+            _ => None,
+        }
+    }
+
+    /// worn_cap 满时的槽位上限（其余变体 `None`）——`InventoryMoveRejectedV1.cap`。
+    pub fn cap(&self) -> Option<u32> {
+        match self {
+            Self::WornCapFull { cap, .. } => Some(u32::from(*cap)),
+            _ => None,
+        }
+    }
+
+    /// 人类可读日志文案，供既有 `tracing::warn!("...: {reason}")` 继续打日志
+    /// （内容与 P0 前散落各处的原始 `String` 文案尽量保持一致）。
+    pub fn to_log_string(&self) -> String {
+        match self {
+            Self::FromLocationMismatch => "from-location does not hold instance".to_string(),
+            Self::InstanceNotFound => "instance not found in inventory".to_string(),
+            Self::UnknownContainerId => "unknown container_id".to_string(),
+            Self::TargetOutOfBounds => "target rectangle exceeds container bounds".to_string(),
+            Self::TargetOccupied { instance_id } => {
+                format!("target overlaps instance {instance_id}")
+            }
+            Self::MultiOverlapNotSupported => {
+                "target overlaps multiple items — multi-overlap not supported".to_string()
+            }
+            Self::HotbarIndexOutOfRange => "hotbar index out of range".to_string(),
+            Self::HotbarOccupied => "hotbar index occupied".to_string(),
+            Self::SwapFootprintMismatch => {
+                "swap rejected: occupant footprint differs from dragged item".to_string()
+            }
+            Self::UnknownItemTemplate => "unknown item template id".to_string(),
+            Self::WornStackNotTop => {
+                "该件被上层压住，请先脱下上层（worn 栈 LIFO，仅栈顶可卸下）".to_string()
+            }
+            Self::ForbiddenInHotbar { category } => {
+                format!("{category:?} cannot move to hotbar; must stay in equipped slots")
+            }
+            Self::PackDetached { owner_instance_id } => format!(
+                "背包已不在身上，无法放入内含物：背包件 (instance {owner_instance_id}) \
+                 已丢弃/销毁；请重新拾取该背包"
+            ),
+            Self::HeldWornMismatch => {
+                "手槽/身体槽装备态不匹配（手槽只能 held，身体槽只能 worn）".to_string()
+            }
+            Self::EquipCategoryMismatch => "item category cannot equip to target slot".to_string(),
+            Self::OffHandTypeMismatch => {
+                "weapon cannot equip to off_hand; only dagger/fist are allowed".to_string()
+            }
+            Self::HandOccupied => "该手已持械，请先卸下".to_string(),
+            Self::TwoHandedLocksOther => "双手兵器占用双手，对侧已锁定".to_string(),
+            Self::ArmorDurabilityZero => "armor cannot equip; durability is 0".to_string(),
+            Self::ArmorSlotMismatch { expected_slot } => {
+                format!("armor cannot equip to this slot; expected {expected_slot}")
+            }
+            Self::PackEquipSlotMismatch { expected_slot } => {
+                format!("container.equip_slot `{expected_slot}`; cannot equip to target slot")
+            }
+            Self::WornCapFull { slot, cap } => {
+                format!("该部位 {slot} 已穿戴 {cap} 层，无法再叠加")
+            }
+            Self::RealmTooLow { required_realm } => {
+                format!("realm too low; required {required_realm}")
+            }
+        }
+    }
+}
+
+impl std::fmt::Display for InventoryMoveRejectReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.to_log_string())
+    }
+}
+
+/// 兼容既有调用点：`attach_at_location` / `validate_attach_fits` 等 helper 的
+/// `Result<_, InventoryMoveRejectReason>` 通过 `?` 传播进仍返回 `Result<_, String>`
+/// 的兄弟函数（`exchange_inventory_items` / `pickup_dropped_loot_instance` /
+/// `apply_treasure_activate` 等，均在本 plan 范围外，不改其签名）。
+impl From<InventoryMoveRejectReason> for String {
+    fn from(reason: InventoryMoveRejectReason) -> Self {
+        reason.to_log_string()
+    }
+}
+
 /// Outcome of a successful `apply_inventory_move`.
 ///
 /// `Swapped` means the target slot was occupied by a same-footprint item; the
@@ -3161,15 +3356,13 @@ pub fn apply_inventory_move(
     instance_id: u64,
     from: &crate::schema::inventory::InventoryLocationV1,
     to: &crate::schema::inventory::InventoryLocationV1,
-) -> Result<InventoryMoveOutcome, String> {
+) -> Result<InventoryMoveOutcome, InventoryMoveRejectReason> {
     if !location_holds_instance(inventory, instance_id, from) {
-        return Err(format!(
-            "from-location {from:?} does not hold instance {instance_id}"
-        ));
+        return Err(InventoryMoveRejectReason::FromLocationMismatch);
     }
 
-    let item = clone_item_at(inventory, instance_id)
-        .ok_or_else(|| format!("instance {instance_id} not found in inventory"))?;
+    let item =
+        clone_item_at(inventory, instance_id).ok_or(InventoryMoveRejectReason::InstanceNotFound)?;
 
     validate_move_semantics(registry, inventory, &item, from, to)?;
 
@@ -3188,14 +3381,7 @@ pub fn apply_inventory_move(
         Some(occupant) => {
             // Footprint-matched swap. Validate occupant fits at `from`.
             if occupant.grid_w != item.grid_w || occupant.grid_h != item.grid_h {
-                return Err(format!(
-                    "swap rejected: occupant {} footprint {}x{} differs from dragged {}x{}",
-                    occupant.instance_id,
-                    occupant.grid_w,
-                    occupant.grid_h,
-                    item.grid_w,
-                    item.grid_h
-                ));
+                return Err(InventoryMoveRejectReason::SwapFootprintMismatch);
             }
             // Build a temp inventory after detaching both, then check occupant
             // fits at `from` against remaining items.
@@ -3209,7 +3395,7 @@ pub fn apply_inventory_move(
                     .expect("restoring original from is always valid (just detached)");
                 attach_at_location(inventory, occupant, to)
                     .expect("restoring original to is always valid (just detached)");
-                return Err(format!("swap rejected: {reason}"));
+                return Err(reason);
             }
             attach_at_location(inventory, item, to)?;
             attach_at_location(inventory, occupant, from)?;
@@ -4512,7 +4698,7 @@ fn displaced_at_target(
     item: &ItemInstance,
     moving_instance_id: u64,
     location: &crate::schema::inventory::InventoryLocationV1,
-) -> Result<Option<ItemInstance>, String> {
+) -> Result<Option<ItemInstance>, InventoryMoveRejectReason> {
     use crate::schema::inventory::InventoryLocationV1;
     match location {
         InventoryLocationV1::Container {
@@ -4525,14 +4711,16 @@ fn displaced_at_target(
                 .containers
                 .iter()
                 .find(|c| c.id == cid)
-                .ok_or_else(|| format!("unknown container_id '{cid}'"))?;
+                .ok_or(InventoryMoveRejectReason::UnknownContainerId)?;
 
-            let row_u8 = u8::try_from(*row).map_err(|_| format!("row {row} out of u8 range"))?;
-            let col_u8 = u8::try_from(*col).map_err(|_| format!("col {col} out of u8 range"))?;
+            let row_u8 =
+                u8::try_from(*row).map_err(|_| InventoryMoveRejectReason::TargetOutOfBounds)?;
+            let col_u8 =
+                u8::try_from(*col).map_err(|_| InventoryMoveRejectReason::TargetOutOfBounds)?;
             if u16::from(row_u8) + u16::from(item.grid_h) > u16::from(container.rows)
                 || u16::from(col_u8) + u16::from(item.grid_w) > u16::from(container.cols)
             {
-                return Err("target rectangle exceeds container bounds".to_string());
+                return Err(InventoryMoveRejectReason::TargetOutOfBounds);
             }
 
             let candidate = PlacedItemState {
@@ -4557,16 +4745,13 @@ fn displaced_at_target(
                 1 => {
                     let occ = overlapping.pop().unwrap();
                     if occ.row != row_u8 || occ.col != col_u8 {
-                        return Err(format!(
-                            "target overlaps instance {} at ({},{}) but anchors mismatch — multi-cell swap not supported",
-                            occ.instance.instance_id, occ.row, occ.col
-                        ));
+                        return Err(InventoryMoveRejectReason::TargetOccupied {
+                            instance_id: occ.instance.instance_id,
+                        });
                     }
                     Ok(Some(occ.instance.clone()))
                 }
-                n => Err(format!(
-                    "target overlaps {n} items — multi-overlap not supported"
-                )),
+                _ => Err(InventoryMoveRejectReason::MultiOverlapNotSupported),
             }
         }
         // plan-layered-equip-v1 P0.2（决议 #3 拒绝不顶替）— equip 落位不做 swap 顶替；
@@ -4575,7 +4760,7 @@ fn displaced_at_target(
         InventoryLocationV1::Hotbar { index } => {
             let idx = *index as usize;
             if idx >= inventory.hotbar.len() {
-                return Err(format!("hotbar index {idx} out of range"));
+                return Err(InventoryMoveRejectReason::HotbarIndexOutOfRange);
             }
             match &inventory.hotbar[idx] {
                 None => Ok(None),
@@ -4592,7 +4777,7 @@ fn validate_attach_fits(
     inventory: &PlayerInventory,
     item: &ItemInstance,
     location: &crate::schema::inventory::InventoryLocationV1,
-) -> Result<(), String> {
+) -> Result<(), InventoryMoveRejectReason> {
     use crate::schema::inventory::InventoryLocationV1;
     match location {
         InventoryLocationV1::Container {
@@ -4605,13 +4790,15 @@ fn validate_attach_fits(
                 .containers
                 .iter()
                 .find(|c| c.id == cid)
-                .ok_or_else(|| format!("unknown container_id '{cid}'"))?;
-            let row_u8 = u8::try_from(*row).map_err(|_| format!("row {row} out of u8 range"))?;
-            let col_u8 = u8::try_from(*col).map_err(|_| format!("col {col} out of u8 range"))?;
+                .ok_or(InventoryMoveRejectReason::UnknownContainerId)?;
+            let row_u8 =
+                u8::try_from(*row).map_err(|_| InventoryMoveRejectReason::TargetOutOfBounds)?;
+            let col_u8 =
+                u8::try_from(*col).map_err(|_| InventoryMoveRejectReason::TargetOutOfBounds)?;
             if u16::from(row_u8) + u16::from(item.grid_h) > u16::from(container.rows)
                 || u16::from(col_u8) + u16::from(item.grid_w) > u16::from(container.cols)
             {
-                return Err("target rectangle exceeds container bounds".to_string());
+                return Err(InventoryMoveRejectReason::TargetOutOfBounds);
             }
             let candidate = PlacedItemState {
                 row: row_u8,
@@ -4620,10 +4807,9 @@ fn validate_attach_fits(
             };
             for existing in &container.items {
                 if placed_item_footprints_overlap(existing, &candidate) {
-                    return Err(format!(
-                        "target overlaps instance {}",
-                        existing.instance.instance_id
-                    ));
+                    return Err(InventoryMoveRejectReason::TargetOccupied {
+                        instance_id: existing.instance.instance_id,
+                    });
                 }
             }
             Ok(())
@@ -4636,13 +4822,17 @@ fn validate_attach_fits(
             match state {
                 EquipStateV1::Worn => {
                     let cur = contents.map(|c| c.worn.len()).unwrap_or(0);
-                    if cur as u8 >= worn_cap(key) {
-                        return Err(format!("equip slot '{key}' worn 层已满"));
+                    let cap = worn_cap(key);
+                    if cur as u8 >= cap {
+                        return Err(InventoryMoveRejectReason::WornCapFull {
+                            slot: key.to_string(),
+                            cap,
+                        });
                     }
                 }
                 EquipStateV1::Held => {
                     if contents.is_some_and(|c| c.held.is_some()) {
-                        return Err(format!("equip slot '{key}' held 已占用"));
+                        return Err(InventoryMoveRejectReason::HandOccupied);
                     }
                 }
             }
@@ -4651,10 +4841,10 @@ fn validate_attach_fits(
         InventoryLocationV1::Hotbar { index } => {
             let idx = *index as usize;
             if idx >= inventory.hotbar.len() {
-                return Err(format!("hotbar index {idx} out of range"));
+                return Err(InventoryMoveRejectReason::HotbarIndexOutOfRange);
             }
             if inventory.hotbar[idx].is_some() {
-                return Err(format!("hotbar index {idx} occupied"));
+                return Err(InventoryMoveRejectReason::HotbarOccupied);
             }
             Ok(())
         }
@@ -4667,12 +4857,12 @@ fn validate_move_semantics(
     item: &ItemInstance,
     from: &crate::schema::inventory::InventoryLocationV1,
     to: &crate::schema::inventory::InventoryLocationV1,
-) -> Result<(), String> {
+) -> Result<(), InventoryMoveRejectReason> {
     use crate::schema::inventory::InventoryLocationV1;
 
     let template = registry
         .get(&item.template_id)
-        .ok_or_else(|| format!("unknown item template id `{}`", item.template_id))?;
+        .ok_or(InventoryMoveRejectReason::UnknownItemTemplate)?;
 
     // plan-layered-equip-v1 P0.2 / §11.1 #12 — 从 worn 槽移出时只允许栈顶件；
     // 移动被压住的下层 = 拒绝（决议 #12）。从 held 移出无此限制。
@@ -4690,9 +4880,7 @@ fn validate_move_semantics(
                 .map(|s| s.worn.len())
                 .unwrap_or(0);
             if worn_len > 0 && index + 1 != worn_len {
-                return Err(
-                    "该件被上层压住，请先脱下上层（worn 栈 LIFO，仅栈顶可卸下）".to_string()
-                );
+                return Err(InventoryMoveRejectReason::WornStackNotTop);
             }
         }
     }
@@ -4705,44 +4893,40 @@ fn validate_move_semantics(
     // 决议 #17 的非空拒卸分支已删除）。
 
     match to {
-        InventoryLocationV1::Hotbar { .. } if template.weapon_spec.is_some() => Err(format!(
-            "weapon `{}` cannot move to hotbar; weapons must stay in equipped slots",
-            item.template_id
-        )),
+        InventoryLocationV1::Hotbar { .. } if template.weapon_spec.is_some() => {
+            Err(InventoryMoveRejectReason::ForbiddenInHotbar {
+                category: ItemCategory::Weapon,
+            })
+        }
         InventoryLocationV1::Hotbar { .. } if matches!(template.category, ItemCategory::Tool) => {
-            Err(format!(
-                "tool `{}` cannot move to hotbar; tools must stay in equipped slots",
-                item.template_id
-            ))
+            Err(InventoryMoveRejectReason::ForbiddenInHotbar {
+                category: ItemCategory::Tool,
+            })
         }
         InventoryLocationV1::Hotbar { .. } if matches!(template.category, ItemCategory::Armor) => {
-            Err(format!(
-                "armor `{}` cannot move to hotbar; armor must stay in equipped slots",
-                item.template_id
-            ))
+            Err(InventoryMoveRejectReason::ForbiddenInHotbar {
+                category: ItemCategory::Armor,
+            })
         }
         // plan-shield-block-v1 P0 — 盾牌（Shield 类）同样不能进 hotbar，必须留在 off_hand 槽。
         InventoryLocationV1::Hotbar { .. } if matches!(template.category, ItemCategory::Shield) => {
-            Err(format!(
-                "shield `{}` cannot move to hotbar; shield must stay in equipped slots",
-                item.template_id
-            ))
+            Err(InventoryMoveRejectReason::ForbiddenInHotbar {
+                category: ItemCategory::Shield,
+            })
         }
         InventoryLocationV1::Hotbar { .. }
             if matches!(template.category, ItemCategory::Treasure) =>
         {
-            Err(format!(
-                "treasure `{}` cannot move to hotbar; treasures must stay in equipped slots",
-                item.template_id
-            ))
+            Err(InventoryMoveRejectReason::ForbiddenInHotbar {
+                category: ItemCategory::Treasure,
+            })
         }
         InventoryLocationV1::Hotbar { .. }
             if matches!(template.category, ItemCategory::Container) =>
         {
-            Err(format!(
-                "container `{}` cannot move to hotbar; containers must stay in equipped slots",
-                item.template_id
-            ))
+            Err(InventoryMoveRejectReason::ForbiddenInHotbar {
+                category: ItemCategory::Container,
+            })
         }
         InventoryLocationV1::Equip { slot, state } => {
             // plan-layered-equip-v1 P1 — 是否「从同槽原位移回」（不触发占用拒绝）。
@@ -4774,10 +4958,7 @@ fn validate_move_semantics(
                 let owner_carried = find_pack_instances_anywhere(inventory, registry)
                     .any(|(item, _)| item.instance_id == owner_instance_id);
                 if !owner_carried {
-                    return Err(format!(
-                        "背包已不在身上，无法放入内含物：容器 `{container_id}` 的背包件 \
-                         (instance {owner_instance_id}) 已丢弃/销毁；请重新拾取该背包"
-                    ));
+                    return Err(InventoryMoveRejectReason::PackDetached { owner_instance_id });
                 }
             }
             Ok(())
@@ -4796,7 +4977,7 @@ fn validate_equip_to(
     slot: &crate::schema::inventory::EquipSlotV1,
     state: &crate::schema::inventory::EquipStateV1,
     from_same_slot: bool,
-) -> Result<(), String> {
+) -> Result<(), InventoryMoveRejectReason> {
     use crate::combat::weapon::WeaponKind;
     use crate::schema::inventory::{EquipSlotV1, EquipStateV1};
 
@@ -4812,14 +4993,10 @@ fn validate_equip_to(
     // 手槽 = held-only；身体槽 = worn-only（决议 #6 / #12）。
     match (is_hand_slot, state) {
         (true, EquipStateV1::Worn) => {
-            return Err(format!(
-                "手槽 {slot_key} 只能持械（held），不能穿戴（worn）"
-            ));
+            return Err(InventoryMoveRejectReason::HeldWornMismatch);
         }
         (false, EquipStateV1::Held) => {
-            return Err(format!(
-                "身体槽 {slot_key} 只能穿戴（worn），不能持械（held）"
-            ));
+            return Err(InventoryMoveRejectReason::HeldWornMismatch);
         }
         _ => {}
     }
@@ -4839,19 +5016,13 @@ fn validate_equip_to(
                     ItemCategory::Treasure | ItemCategory::Shield
                 );
             if !is_weapon && !is_tool && !off_hand_extra {
-                return Err(format!(
-                    "item `{}` cannot equip to {slot_key}; expected weapon, tool, or hoe",
-                    item.template_id
-                ));
+                return Err(InventoryMoveRejectReason::EquipCategoryMismatch);
             }
             // off_hand 武器仅 dagger/fist。
             if matches!(slot, EquipSlotV1::OffHand) && is_weapon {
                 if let Some(spec) = template.weapon_spec.as_ref() {
                     if !matches!(spec.weapon_kind, WeaponKind::Dagger | WeaponKind::Fist) {
-                        return Err(format!(
-                            "weapon `{}` cannot equip to off_hand; only dagger/fist are allowed",
-                            item.template_id
-                        ));
+                        return Err(InventoryMoveRejectReason::OffHandTypeMismatch);
                     }
                 }
             }
@@ -4863,7 +5034,7 @@ fn validate_equip_to(
                     .get(slot_key)
                     .is_some_and(|c| c.held.is_some())
             {
-                return Err(format!("该手 {slot_key} 已持械，请先卸下"));
+                return Err(InventoryMoveRejectReason::HandOccupied);
             }
 
             // 双手武器锁对侧手（决议 #7）：main↔off 互锁，extra_hand 独立不锁。
@@ -4880,7 +5051,7 @@ fn validate_equip_to(
                             .get(opp)
                             .is_some_and(|c| c.held.is_some())
                         {
-                            return Err("双手兵器占用双手，对侧已被占用，请先卸下".to_string());
+                            return Err(InventoryMoveRejectReason::TwoHandedLocksOther);
                         }
                     }
                 }
@@ -4900,7 +5071,7 @@ fn validate_equip_to(
                     .and_then(|t| t.weapon_spec.as_ref())
                     .is_some_and(|spec| weapon_two_handed(spec.weapon_kind));
                 if opp_two_handed {
-                    return Err("双手兵器占用双手，对侧已锁定".to_string());
+                    return Err(InventoryMoveRejectReason::TwoHandedLocksOther);
                 }
             }
             Ok(())
@@ -4912,34 +5083,23 @@ fn validate_equip_to(
                 crate::combat::tuike::false_skin_kind_for_item(&item.template_id).is_some();
             let is_container = template.container_spec.is_some();
             if !is_armor && !is_false_skin && !is_container {
-                return Err(format!(
-                    "item `{}` cannot equip to {slot_key}; expected armor / false skin / container",
-                    item.template_id
-                ));
+                return Err(InventoryMoveRejectReason::EquipCategoryMismatch);
             }
 
             if is_armor {
                 if item.durability <= 0.0 {
-                    return Err(format!(
-                        "armor `{}` cannot equip to {slot_key}; durability is 0",
-                        item.template_id
-                    ));
+                    return Err(InventoryMoveRejectReason::ArmorDurabilityZero);
                 }
                 let expected_slot = crate::armor::mundane::equip_slot_for_item_id(
                     &item.template_id,
                 )
-                .ok_or_else(|| {
-                    format!(
-                        "armor `{}` cannot equip to {slot_key}; unknown armor slot",
-                        item.template_id
-                    )
+                .ok_or(InventoryMoveRejectReason::ArmorSlotMismatch {
+                    expected_slot: "unknown".to_string(),
                 })?;
                 if expected_slot != *slot {
-                    return Err(format!(
-                        "armor `{}` cannot equip to {slot_key}; expected {}",
-                        item.template_id,
-                        equip_slot_key(&expected_slot)
-                    ));
+                    return Err(InventoryMoveRejectReason::ArmorSlotMismatch {
+                        expected_slot: equip_slot_key(&expected_slot).to_string(),
+                    });
                 }
             }
 
@@ -4947,10 +5107,9 @@ fn validate_equip_to(
             if is_container && !is_armor && !is_false_skin {
                 if let Some(spec) = template.container_spec.as_ref() {
                     if spec.equip_slot != slot_key {
-                        return Err(format!(
-                            "item `{}` has container.equip_slot `{}`; cannot equip to {slot_key}",
-                            item.template_id, spec.equip_slot,
-                        ));
+                        return Err(InventoryMoveRejectReason::PackEquipSlotMismatch {
+                            expected_slot: spec.equip_slot.clone(),
+                        });
                     }
                 }
             }
@@ -4964,7 +5123,10 @@ fn validate_equip_to(
                     .map(|c| c.worn.len())
                     .unwrap_or(0);
                 if cur as u8 >= cap {
-                    return Err(format!("该部位 {slot_key} 已穿戴 {cap} 层，无法再叠加"));
+                    return Err(InventoryMoveRejectReason::WornCapFull {
+                        slot: slot_key.to_string(),
+                        cap,
+                    });
                 }
             }
             Ok(())
@@ -5221,7 +5383,7 @@ fn attach_at_location(
     inventory: &mut PlayerInventory,
     item: ItemInstance,
     location: &crate::schema::inventory::InventoryLocationV1,
-) -> Result<(), String> {
+) -> Result<(), InventoryMoveRejectReason> {
     use crate::schema::inventory::{EquipStateV1, InventoryLocationV1};
     match location {
         InventoryLocationV1::Container {
@@ -5234,9 +5396,11 @@ fn attach_at_location(
                 .containers
                 .iter_mut()
                 .find(|c| c.id == cid)
-                .ok_or_else(|| format!("unknown container_id '{cid}'"))?;
-            let row_u8 = u8::try_from(*row).map_err(|_| "row out of range".to_string())?;
-            let col_u8 = u8::try_from(*col).map_err(|_| "col out of range".to_string())?;
+                .ok_or(InventoryMoveRejectReason::UnknownContainerId)?;
+            let row_u8 =
+                u8::try_from(*row).map_err(|_| InventoryMoveRejectReason::TargetOutOfBounds)?;
+            let col_u8 =
+                u8::try_from(*col).map_err(|_| InventoryMoveRejectReason::TargetOutOfBounds)?;
             container.items.push(PlacedItemState {
                 row: row_u8,
                 col: col_u8,
@@ -5257,7 +5421,7 @@ fn attach_at_location(
         InventoryLocationV1::Hotbar { index } => {
             let idx = *index as usize;
             if idx >= inventory.hotbar.len() {
-                return Err(format!("hotbar index {idx} out of range"));
+                return Err(InventoryMoveRejectReason::HotbarIndexOutOfRange);
             }
             inventory.hotbar[idx] = Some(item);
             Ok(())
@@ -8270,8 +8434,8 @@ cols = 4
         .expect_err("block items must not equip to main_hand");
 
         assert!(
-            error.contains("expected weapon, tool, or hoe"),
-            "expected main_hand category rejection, got: {error}"
+            matches!(error, InventoryMoveRejectReason::EquipCategoryMismatch),
+            "expected main_hand category rejection, got: {error:?}"
         );
         assert!(!inv.equipped.contains_key(EQUIP_SLOT_MAIN_HAND));
     }
@@ -8371,7 +8535,10 @@ cols = 4
         )
         .expect_err("chestplate should not equip to head");
 
-        assert!(error.contains("expected chest"));
+        assert!(matches!(
+            error,
+            InventoryMoveRejectReason::ArmorSlotMismatch { expected_slot } if expected_slot == "chest"
+        ));
     }
 
     #[test]
@@ -8400,7 +8567,10 @@ cols = 4
         )
         .expect_err("broken armor should be rejected");
 
-        assert!(error.contains("durability is 0"));
+        assert!(matches!(
+            error,
+            InventoryMoveRejectReason::ArmorDurabilityZero
+        ));
     }
 
     // plan-layered-equip-v1 P0.2（决议 #7）— 两手兵器锁对侧手：staff 在 main_hand held →
@@ -8460,8 +8630,8 @@ cols = 4
         .expect_err("off_hand should be locked by two-handed weapon in main_hand");
 
         assert!(
-            error.contains("双手兵器占用双手，对侧已锁定"),
-            "期望对侧锁定拒绝，实际：{error}"
+            matches!(error, InventoryMoveRejectReason::TwoHandedLocksOther),
+            "期望对侧锁定拒绝，实际：{error:?}"
         );
     }
 
@@ -8488,7 +8658,12 @@ cols = 4
         )
         .expect_err("weapon should be rejected from hotbar");
 
-        assert!(error.contains("cannot move to hotbar"));
+        assert!(matches!(
+            error,
+            InventoryMoveRejectReason::ForbiddenInHotbar {
+                category: ItemCategory::Weapon
+            }
+        ));
     }
 
     #[test]
@@ -8513,7 +8688,12 @@ cols = 4
         )
         .expect_err("tool should be rejected from hotbar");
 
-        assert!(error.contains("tool `cai_yao_dao` cannot move to hotbar"));
+        assert!(matches!(
+            error,
+            InventoryMoveRejectReason::ForbiddenInHotbar {
+                category: ItemCategory::Tool
+            }
+        ));
     }
 
     #[test]
@@ -8538,7 +8718,12 @@ cols = 4
         )
         .expect_err("armor should be rejected from hotbar");
 
-        assert!(error.contains("armor `armor_bone_boots` cannot move to hotbar"));
+        assert!(matches!(
+            error,
+            InventoryMoveRejectReason::ForbiddenInHotbar {
+                category: ItemCategory::Armor
+            }
+        ));
     }
 
     // plan-shield-block-v1 P0 MAJOR #1 — 盾不能进 hotbar（Shield category 守卫回归）。
@@ -8566,14 +8751,13 @@ cols = 4
         .expect_err("shield should be rejected from hotbar");
 
         assert!(
-            error.contains("shield `wooden_shield` cannot move to hotbar"),
-            "期望错误消息含 'shield `wooden_shield` cannot move to hotbar'，\
-             实际消息：{error}"
-        );
-        assert!(
-            error.contains("shield must stay in equipped slots"),
-            "期望错误消息含 'shield must stay in equipped slots'，\
-             实际消息：{error}"
+            matches!(
+                error,
+                InventoryMoveRejectReason::ForbiddenInHotbar {
+                    category: ItemCategory::Shield
+                }
+            ),
+            "期望盾牌不可进 hotbar 拒绝，实际：{error:?}"
         );
     }
 
@@ -8603,7 +8787,10 @@ cols = 4
         )
         .expect_err("sword should be rejected from off_hand");
 
-        assert!(error.contains("only dagger/fist are allowed"));
+        assert!(matches!(
+            error,
+            InventoryMoveRejectReason::OffHandTypeMismatch
+        ));
     }
 
     // plan-shield-block-v1 P0 MAJOR #2 — off_hand：无 weapon_spec 的非武器物品（armor）装 off_hand
@@ -8638,9 +8825,9 @@ cols = 4
         .expect_err("armor should be rejected from off_hand (no weapon_spec, not treasure/shield)");
 
         assert!(
-            error.contains("expected weapon, tool, or hoe"),
-            "期望错误消息含 'expected weapon, tool, or hoe'（统一手槽校验器拒绝非武器/工具/锄头，\
-             Armor 不在 off_hand 额外放行的 Treasure/Shield 之列），实际消息：{error}"
+            matches!(error, InventoryMoveRejectReason::EquipCategoryMismatch),
+            "期望统一手槽校验器拒绝非武器/工具/锄头（Armor 不在 off_hand 额外放行的 \
+             Treasure/Shield 之列），实际：{error:?}"
         );
     }
 
@@ -8702,8 +8889,8 @@ cols = 4
 
         // 命中双手兵器对侧锁：对侧 off_hand 已被 dagger 占用。
         assert!(
-            error.contains("双手兵器占用双手，对侧已被占用"),
-            "期望双手兵器对侧占用拒绝，实际：{error}"
+            matches!(error, InventoryMoveRejectReason::TwoHandedLocksOther),
+            "期望双手兵器对侧占用拒绝，实际：{error:?}"
         );
     }
 
@@ -8749,7 +8936,7 @@ cols = 4
         item: &ItemInstance,
         from: &crate::schema::inventory::InventoryLocationV1,
         to: &crate::schema::inventory::InventoryLocationV1,
-    ) -> Result<(), String> {
+    ) -> Result<(), InventoryMoveRejectReason> {
         validate_move_semantics(registry, inventory, item, from, to)
     }
 
@@ -8797,8 +8984,12 @@ cols = 4
         )
         .expect_err("chest worn cap is 3; the 4th armor must be rejected");
         assert!(
-            error.contains("已穿戴 3 层") && error.contains("无法再叠加"),
-            "期望 chest 满 3 层拒绝文案，实际：{error}"
+            matches!(
+                error,
+                InventoryMoveRejectReason::WornCapFull { ref slot, cap }
+                    if slot.as_str() == EQUIP_SLOT_CHEST && cap == 3
+            ),
+            "期望 chest 满 3 层拒绝，实际：{error:?}"
         );
     }
 
@@ -8855,8 +9046,12 @@ cols = 4
         )
         .expect_err("head worn cap is 2; the 3rd helmet must be rejected");
         assert!(
-            error.contains("已穿戴 2 层"),
-            "期望 head 满 2 层拒绝文案，实际：{error}"
+            matches!(
+                error,
+                InventoryMoveRejectReason::WornCapFull { ref slot, cap }
+                    if slot.as_str() == EQUIP_SLOT_HEAD && cap == 2
+            ),
+            "期望 head 满 2 层拒绝，实际：{error:?}"
         );
     }
 
@@ -8886,8 +9081,12 @@ cols = 4
         )
         .expect_err("feet worn cap is 2; the 3rd boots must be rejected");
         assert!(
-            error.contains("已穿戴 2 层"),
-            "期望 feet 满 2 层拒绝文案，实际：{error}"
+            matches!(
+                error,
+                InventoryMoveRejectReason::WornCapFull { ref slot, cap }
+                    if slot.as_str() == EQUIP_SLOT_FEET && cap == 2
+            ),
+            "期望 feet 满 2 层拒绝，实际：{error:?}"
         );
     }
 
@@ -8935,8 +9134,12 @@ cols = 4
         )
         .expect_err("chest cap=3 shared with backpack; the 4th item must be rejected");
         assert!(
-            error.contains("已穿戴 3 层"),
-            "期望 chest 共算满 3 层拒绝，实际：{error}"
+            matches!(
+                error,
+                InventoryMoveRejectReason::WornCapFull { ref slot, cap }
+                    if slot.as_str() == EQUIP_SLOT_CHEST && cap == 3
+            ),
+            "期望 chest 共算满 3 层拒绝，实际：{error:?}"
         );
     }
 
@@ -8961,8 +9164,8 @@ cols = 4
         )
         .expect_err("main_hand already held; second weapon must be rejected (no swap)");
         assert!(
-            error.contains("已持械") && error.contains("请先卸下"),
-            "期望 held 互斥拒绝文案，实际：{error}"
+            matches!(error, InventoryMoveRejectReason::HandOccupied),
+            "期望 held 互斥拒绝，实际：{error:?}"
         );
     }
 
@@ -8991,8 +9194,8 @@ cols = 4
         )
         .expect_err("two-handed staff in off_hand must lock main_hand (reverse direction)");
         assert!(
-            error.contains("双手兵器占用双手，对侧已锁定"),
-            "期望反向双手锁拒绝文案，实际：{error}"
+            matches!(error, InventoryMoveRejectReason::TwoHandedLocksOther),
+            "期望反向双手锁拒绝，实际：{error:?}"
         );
     }
 
@@ -9174,8 +9377,8 @@ cols = 4
         )
         .expect_err("moving a buried worn layer (not worn.last()) must be rejected");
         assert!(
-            error.contains("被上层压住") && error.contains("worn 栈 LIFO"),
-            "期望被压层 LIFO 拒绝文案，实际：{error}"
+            matches!(error, InventoryMoveRejectReason::WornStackNotTop),
+            "期望被压层 LIFO 拒绝，实际：{error:?}"
         );
     }
 
@@ -11332,10 +11535,14 @@ cols = 4
         let from = InventoryLocationV1::Hotbar { index: 0 };
         let res = validate_move_semantics(&registry, &inv, &deposit, &from, &to);
         assert!(res.is_err(), "背包已离开玩家时拖入内含物应被拒");
-        let msg = res.unwrap_err();
+        let err = res.unwrap_err();
         assert!(
-            msg.contains(&pack_id.to_string()),
-            "拒绝文案应含背包 instance id {pack_id} 以便定位，实际文案={msg}"
+            matches!(
+                err,
+                InventoryMoveRejectReason::PackDetached { owner_instance_id }
+                    if owner_instance_id == pack_id
+            ),
+            "拒绝原因应为 PackDetached{{owner_instance_id: {pack_id}}} 以便定位，实际={err:?}"
         );
     }
 
@@ -12705,8 +12912,8 @@ cols = 4
         let err = validate_move_semantics(&registry_with_misc, &inv, &item, &from, &to)
             .expect_err("non-container/non-armor misc item should not equip to chest worn");
         assert!(
-            err.contains("armor / false skin / container"),
-            "expected body-slot type rejection, got: {err}"
+            matches!(err, InventoryMoveRejectReason::EquipCategoryMismatch),
+            "expected body-slot type rejection, got: {err:?}"
         );
     }
 
@@ -12729,8 +12936,12 @@ cols = 4
         let err = validate_move_semantics(&registry, &inv, &item, &from, &to)
             .expect_err("legs_pack should not equip to chest worn");
         assert!(
-            err.contains("legs"),
-            "expected equip_slot mismatch error, got: {err}"
+            matches!(
+                err,
+                InventoryMoveRejectReason::PackEquipSlotMismatch { ref expected_slot }
+                    if expected_slot == "legs"
+            ),
+            "expected equip_slot mismatch error, got: {err:?}"
         );
     }
 
@@ -12747,7 +12958,15 @@ cols = 4
         let to = InventoryLocationV1::Hotbar { index: 0 };
         let err = validate_move_semantics(&registry, &inv, &item, &from, &to)
             .expect_err("container item should not move to hotbar");
-        assert!(err.contains("hotbar"), "expected hotbar error, got: {err}");
+        assert!(
+            matches!(
+                err,
+                InventoryMoveRejectReason::ForbiddenInHotbar {
+                    category: ItemCategory::Container
+                }
+            ),
+            "expected hotbar error, got: {err:?}"
+        );
     }
 
     // plan-tarkov-backpack-v1 P0（交付物 #3 / 测试清单）— 非空拒卸硬门已移除：
@@ -13474,9 +13693,14 @@ cols = 4
         let err = apply_inventory_move(&mut inv, &registry, 71, &from, &to)
             .expect_err("拖入卸在 grid 内（非携带面）的 pack_3001 应被门控拒绝");
         assert!(
-            err.contains("背包已不在身上") && err.contains("3001"),
+            matches!(
+                err,
+                InventoryMoveRejectReason::PackDetached {
+                    owner_instance_id: 3001
+                }
+            ),
             "期望带修复线索的拒绝（提示背包不在身上 + owner instance id），因为 grid 货物背包是死容器；\
-             实际 err = {err}"
+             实际 err = {err:?}"
         );
         // 物品未落位（仍在 main_pack）。
         let pack = inv
@@ -13523,8 +13747,13 @@ cols = 4
         let err = apply_inventory_move(&mut inv, &registry, 72, &from, &to)
             .expect_err("拖入不存在/不在携带面的 pack_9999 应被拒绝");
         assert!(
-            err.contains("背包已不在身上") && err.contains("9999"),
-            "期望门控在落位前拒绝（owner 9999 不在任何携带面）；实际 err = {err}"
+            matches!(
+                err,
+                InventoryMoveRejectReason::PackDetached {
+                    owner_instance_id: 9999
+                }
+            ),
+            "期望门控在落位前拒绝（owner 9999 不在任何携带面）；实际 err = {err:?}"
         );
     }
 
@@ -13693,8 +13922,12 @@ cols = 4
             "穿戴态门控放行后，落位层应因 1×1 容器越界（无空位）拒绝；门控放行 ≠ 一定能放下",
         );
         assert!(
-            err.contains("bounds") || err.contains("overlaps"),
-            "期望落位层 no-fit 拒绝（越界/重叠），因为 tiny_pack 仅 1×1 且已满；实际 err = {err}"
+            matches!(
+                err,
+                InventoryMoveRejectReason::TargetOutOfBounds
+                    | InventoryMoveRejectReason::TargetOccupied { .. }
+            ),
+            "期望落位层 no-fit 拒绝（越界/重叠），因为 tiny_pack 仅 1×1 且已满；实际 err = {err:?}"
         );
         // dust(81) 未进 pack_6001。
         let pack = inv
@@ -14455,8 +14688,8 @@ cols = 4
             .expect_err("non false-skin / non-armor / non-container misc item should be rejected");
 
         assert!(
-            error.contains("armor / false skin / container"),
-            "expected body-slot type rejection, got: {error}"
+            matches!(error, InventoryMoveRejectReason::EquipCategoryMismatch),
+            "expected body-slot type rejection, got: {error:?}"
         );
     }
 
@@ -14567,8 +14800,8 @@ cols = 4
         let err = validate_move_semantics(&registry, &inv, &item, &from, &to)
             .expect_err("misc item should not equip to ExtraHand0");
         assert!(
-            err.contains("weapon, tool, or hoe"),
-            "expected weapon/tool/hoe error, got: {err}"
+            matches!(err, InventoryMoveRejectReason::EquipCategoryMismatch),
+            "expected weapon/tool/hoe error, got: {err:?}"
         );
     }
 
@@ -15537,9 +15770,8 @@ cols = 4
         );
 
         assert!(
-            error.contains("双手兵器占用双手，对侧已锁定"),
-            "期望错误消息含 '双手兵器占用双手，对侧已锁定'，\
-             实际消息：{error}"
+            matches!(error, InventoryMoveRejectReason::TwoHandedLocksOther),
+            "期望对侧双手锁拒绝，实际：{error:?}"
         );
     }
 
@@ -15575,9 +15807,8 @@ cols = 4
         );
 
         assert!(
-            error.contains("only dagger/fist are allowed"),
-            "期望错误消息含 'only dagger/fist are allowed'，\
-             实际消息：{error}"
+            matches!(error, InventoryMoveRejectReason::OffHandTypeMismatch),
+            "期望 off_hand 武器类型不符拒绝，实际：{error:?}"
         );
     }
 
