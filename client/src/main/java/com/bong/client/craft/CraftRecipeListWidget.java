@@ -14,7 +14,7 @@ import io.wispforest.owo.ui.core.Surface;
 import io.wispforest.owo.ui.core.VerticalAlignment;
 import net.minecraft.text.Text;
 
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -33,7 +33,9 @@ public final class CraftRecipeListWidget {
     private final Consumer<String> onSelected;
     private final Predicate<CraftRecipe> stationScope;
     private final Set<String> favorites = new LinkedHashSet<>();
-    private final Map<String, FlowLayout> rowById = new HashMap<>();
+    // LinkedHashMap：保留插入顺序，供 refresh() 的 id 序列 diff 判定使用（HashMap 顺序不稳定会误判）。
+    private final Map<String, FlowLayout> rowById = new LinkedHashMap<>();
+    private final Map<String, LabelComponent> labelById = new LinkedHashMap<>();
 
     private CraftCategory category;
     private String selectedId;
@@ -42,6 +44,12 @@ public final class CraftRecipeListWidget {
 
     private String query = "";
     private InventoryModel lastInventory = InventoryModel.empty();
+    /** 上一次 refresh() 渲染出的行 id 序列（含顺序），用于判定是否需要 clearChildren 重建。 */
+    private List<String> renderedIds = List.of();
+    /** 是否已经跑过至少一次完整重建（含"无匹配配方"占位）。首次 refresh() 必须走重建路径，
+     * 否则初始 recipes 为空时 renderedIds(List.of()) == nextIds(List.of()) 会被误判"无需重建"，
+     * 导致占位 label 都不渲染。 */
+    private boolean rowsBuilt = false;
 
     /** 旧签名：不限 station（向后兼容测试），实际屏幕应传 stationScope。 */
     public CraftRecipeListWidget(Consumer<String> onSelected) {
@@ -92,21 +100,73 @@ public final class CraftRecipeListWidget {
 
     public void refresh(InventoryModel inventory) {
         lastInventory = inventory == null ? InventoryModel.empty() : inventory;
-        rows.clearChildren();
-        rowById.clear();
         List<CraftRecipe> scoped = CraftStore.recipes().stream()
             .filter(stationScope)
             .collect(Collectors.toList());
         List<CraftRecipe> recipes = CraftRecipeFilter.filter(scoped, category, query, favorites);
+        List<String> nextIds = recipes.stream().map(CraftRecipe::id).toList();
+
+        if (!shouldRebuildRows(rowsBuilt, renderedIds, nextIds)) {
+            // id 序列（含顺序）完全一致 → 原地更新每行文案/颜色/tooltip/选中态，不 clearChildren。
+            // owo ScrollContainer.layout() 会在内容清空瞬间把 maxScroll 算成 0 并 clamp scrollOffset
+            // 回 0，随后行加回来 offset 也回不来 —— 这是"滚动条自动回弹到顶部"的根因，见 PR 描述。
+            for (CraftRecipe recipe : recipes) {
+                FlowLayout row = rowById.get(recipe.id());
+                LabelComponent text = labelById.get(recipe.id());
+                if (row == null || text == null) {
+                    continue; // 理论不可达：needsRebuild=false 已保证 id 集合与 rowById 一致
+                }
+                applyRowContent(row, text, recipe, lastInventory);
+            }
+            return;
+        }
+
+        rows.clearChildren();
+        rowById.clear();
+        labelById.clear();
+        rowsBuilt = true;
         if (recipes.isEmpty()) {
             rows.child(label("无匹配配方", 0xFF888888));
+            renderedIds = List.of();
             return;
         }
         for (CraftRecipe recipe : recipes) {
-            FlowLayout r = row(recipe, inventory);
+            FlowLayout r = row(recipe, lastInventory);
             rowById.put(recipe.id(), r);
             rows.child(r);
         }
+        renderedIds = nextIds;
+    }
+
+    /**
+     * refresh() 是否必须走 clearChildren 重建路径的完整判定：
+     * 首次刷新（{@code rowsBuilt == false}）必须重建——即使 id 序列与初值同为空，
+     * 否则空列表的「无匹配配方」占位 label 永远不会渲染；此后仅当 id 序列结构性变化时重建。
+     */
+    static boolean shouldRebuildRows(boolean rowsBuilt, List<String> currentIds, List<String> nextIds) {
+        return !rowsBuilt || needsRebuild(currentIds, nextIds);
+    }
+
+    /**
+     * 判定配方 id 序列是否发生结构性变化（新增/删除/重排/空 ↔ 非空）。
+     * 序列完全一致（含顺序）时无需重建行，可走原地更新路径以保留滚动位置。
+     */
+    static boolean needsRebuild(List<String> currentIds, List<String> nextIds) {
+        return !currentIds.equals(nextIds);
+    }
+
+    /** 把配方最新状态（收藏/锁定/可做数量/选中态）写入已存在的行，不新建/不重排组件树。 */
+    private void applyRowContent(FlowLayout row, LabelComponent text, CraftRecipe recipe, InventoryModel inventory) {
+        String fav = favorites.contains(recipe.id()) ? "★" : " ";
+        String lock = recipe.unlocked() ? " " : "🔒";
+        int max = CraftInventoryCounter.maxCraftable(recipe, inventory);
+        String count = recipe.unlocked() ? (max > 0 ? " §a" + max : " §8-") : " §8?";
+        text.text(Text.literal(fav + lock + CraftRecipeFilter.displayName(recipe) + count));
+        text.color(Color.ofArgb(recipe.unlocked() ? 0xFFE8DDC4 : 0xFF777777));
+        row.tooltip(Text.literal(recipe.unlocked()
+            ? recipe.displayName() + " · 右键收藏"
+            : "??? · " + CraftRecipeFilter.unlockHint(recipe)));
+        row.surface(recipe.id().equals(selectedId) ? SELECTED_SURFACE : Surface.BLANK);
     }
 
     private void selectRow(String recipeId, InventoryModel inventory) {
@@ -163,31 +223,24 @@ public final class CraftRecipeListWidget {
         FlowLayout row = Containers.horizontalFlow(Sizing.fill(100), Sizing.fixed(18));
         row.verticalAlignment(VerticalAlignment.CENTER);
         row.padding(Insets.of(1, 2, 2, 2));
-        if (recipe.id().equals(selectedId)) {
-            row.surface(SELECTED_SURFACE);
-        }
-        String fav = favorites.contains(recipe.id()) ? "★" : " ";
-        String lock = recipe.unlocked() ? " " : "🔒";
-        int max = CraftInventoryCounter.maxCraftable(recipe, inventory);
-        String count = recipe.unlocked() ? (max > 0 ? " §a" + max : " §8-") : " §8?";
-        LabelComponent text = label(fav + lock + CraftRecipeFilter.displayName(recipe) + count,
-            recipe.unlocked() ? 0xFFE8DDC4 : 0xFF777777);
+        LabelComponent text = label("", 0xFFE8DDC4);
         text.maxWidth(CraftScreenLayout.LEFT_W - 12);
         row.child(text);
         row.cursorStyle(CursorStyle.HAND);
-        row.tooltip(Text.literal(recipe.unlocked()
-            ? recipe.displayName() + " · 右键收藏"
-            : "??? · " + CraftRecipeFilter.unlockHint(recipe)));
+        applyRowContent(row, text, recipe, inventory);
+        labelById.put(recipe.id(), text);
         row.mouseDown().subscribe((x, y, button) -> {
             if (button == 0) {
-                selectRow(recipe.id(), inventory);
+                selectRow(recipe.id(), lastInventory);
                 return true;
             }
             if (button == 1) {
                 if (!favorites.remove(recipe.id())) {
                     favorites.add(recipe.id());
                 }
-                refresh(inventory);
+                // 用 lastInventory 而非闭包捕获的 inventory：后者是本行构建瞬间的旧快照，
+                // 若在此之前已发生过原地更新（diff 路径不重建行/不重订阅），捕获值会 stale。
+                refresh(lastInventory);
                 return true;
             }
             return false;
