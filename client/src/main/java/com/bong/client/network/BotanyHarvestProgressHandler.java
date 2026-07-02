@@ -3,7 +3,6 @@ package com.bong.client.network;
 import com.bong.client.botany.BotanyHarvestMode;
 import com.bong.client.botany.HarvestSessionStore;
 import com.bong.client.botany.HarvestSessionViewModel;
-import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonPrimitive;
@@ -36,7 +35,7 @@ public final class BotanyHarvestProgressHandler implements ServerDataHandler {
             readOptionalBoolean(payload, "completed") == Boolean.TRUE,
             readOptionalString(payload, "detail"),
             readHazardHints(payload),
-            readOptionalDoubleTriple(payload, "target_pos"),
+            readOptionalFlatTriple(payload, "target_pos"),
             System.currentTimeMillis()
         );
 
@@ -79,24 +78,23 @@ public final class BotanyHarvestProgressHandler implements ServerDataHandler {
         return element.getAsJsonPrimitive();
     }
 
-    private static double[] readOptionalDoubleTriple(JsonObject object, String fieldName) {
-        JsonElement element = object.get(fieldName);
-        if (element == null || !element.isJsonArray()) {
+    /**
+     * proto→legacy-JSON 桥不做 flat→array 重塑（见 ProtoServerDataBridge 类注释）：
+     * proto {@code BotanyHarvestProgress.target_pos_x/y/z} 是 {@code optional double}
+     * （Rust {@code Option<[f64;3]>} 拆三字段），生产走 protobuf 时读数组形状（旧
+     * {@code readOptionalDoubleTriple}）永远拿 null → 目标坐标静默丢失。
+     * 这里改读 flat 三字段，保持原 optional 降级语义：
+     * 三个字段都在 → 组成坐标；三个都不在 → 合法的「无目标」，返回 null（采集会话仍应用）；
+     * 只有部分在（残缺）→ 视为异常，同样返回 null，不拼半个坐标。
+     */
+    private static double[] readOptionalFlatTriple(JsonObject object, String prefix) {
+        Double x = readOptionalDouble(object, prefix + "_x");
+        Double y = readOptionalDouble(object, prefix + "_y");
+        Double z = readOptionalDouble(object, prefix + "_z");
+        if (x == null || y == null || z == null) {
             return null;
         }
-        JsonArray array = element.getAsJsonArray();
-        if (array.size() != 3) {
-            return null;
-        }
-        double[] out = new double[3];
-        for (int i = 0; i < 3; i++) {
-            JsonElement el = array.get(i);
-            if (!el.isJsonPrimitive() || !el.getAsJsonPrimitive().isNumber()) {
-                return null;
-            }
-            out[i] = el.getAsDouble();
-        }
-        return out;
+        return new double[] {x, y, z};
     }
 
     private static List<String> readHazardHints(JsonObject object) {

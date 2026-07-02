@@ -102,7 +102,7 @@ public final class InventoryEventHandler implements ServerDataHandler {
             }
             case "dropped" -> {
                 Location from = parseLocation(readRequiredObject(payload, "from"));
-                WorldPos worldPos = parseWorldPos(readRequiredArray(payload, "world_pos"));
+                WorldPos worldPos = parseWorldPos(payload);
                 InventoryItem droppedItem = parseInventoryItem(readRequiredObject(payload, "item"));
                 if (from == null || worldPos == null || droppedItem == null || droppedItem.instanceId() != instanceId) {
                     return ServerDataDispatch.noOp(envelope.type(),
@@ -475,13 +475,24 @@ public final class InventoryEventHandler implements ServerDataHandler {
         );
     }
 
-    private static WorldPos parseWorldPos(com.google.gson.JsonArray array) {
-        if (array == null || array.size() != 3) {
-            return null;
-        }
-        Double x = readRequiredDouble(array.get(0));
-        Double y = readRequiredDouble(array.get(1));
-        Double z = readRequiredDouble(array.get(2));
+    /**
+     * Reads the dropped-event world position as three flattened sibling fields
+     * {@code world_pos_x/world_pos_y/world_pos_z}, matching how {@code InventoryEventDropped}
+     * (proto/bong/envelope.proto) lays a Rust {@code [f64;3]} out on the wire — same pattern as
+     * {@code ContainerInteractionHandler#readFlatVec3} / {@code ExtractServerDataHandler}.
+     * {@code ProtoServerDataBridge#bridgeOneofFlat} flattens the outer {@code InventoryEvent.event}
+     * oneof (moved/dropped/stack_changed/durability_changed) to a top-level {@code "kind"} tag but
+     * does not reshape these three flat coordinate fields back into a JSON array, so a "dropped"
+     * event bridged from the real production proto wire (server {@code --release}) carries
+     * {@code world_pos_x/world_pos_y/world_pos_z} as direct sibling fields of the payload, not a
+     * {@code "world_pos": [x, y, z]} array. Reading it as an array here (the previous shape) always
+     * returned {@code null} on that wire, silently no-op'ing every dropped-item event.
+     * Returns {@code null} if any of the three fields is missing or non-numeric.
+     */
+    private static WorldPos parseWorldPos(JsonObject payload) {
+        Double x = readRequiredDouble(payload, "world_pos_x");
+        Double y = readRequiredDouble(payload, "world_pos_y");
+        Double z = readRequiredDouble(payload, "world_pos_z");
         if (x == null || y == null || z == null) {
             return null;
         }
@@ -490,15 +501,43 @@ public final class InventoryEventHandler implements ServerDataHandler {
 
     // ─── Location parsing ───────────────────────────────────────────────────
 
+    /**
+     * proto-native shape of {@code InventoryLocation.location} (proto/bong/envelope.proto):
+     * {@code container}/{@code equip}/{@code hotbar}. {@code ProtoServerDataBridge.bridgeOneofFlat}
+     * for {@code inventory_event} only flattens the *outer* {@code InventoryEvent.event} oneof
+     * (moved/dropped/stack_changed/durability_changed) into a top-level {@code "kind"} tag — it does
+     * not reshape the *nested* {@code InventoryLocation.location} oneof carried by "from"/"to".
+     * JsonFormat prints a set oneof case using the proto field name itself as the JSON key
+     * (e.g. {@code {"container": {"container_id": ..., "row": ..., "col": ...}}}), not a
+     * {@code "kind"} discriminator, so real-proto-sourced "from"/"to" objects never carry a "kind"
+     * field at all. {@link #parseLocation} falls back to these raw field names when "kind" is absent.
+     */
+    private static final String[] PROTO_LOCATION_ONEOF_FIELDS = {"container", "equip", "hotbar"};
+
+    /** {@code EquipSlot} proto enum values print with this prefix (e.g. {@code EQUIP_SLOT_HEAD}). */
+    private static final String PROTO_EQUIP_SLOT_PREFIX = "EQUIP_SLOT_";
+
     private static Location parseLocation(JsonObject obj) {
         if (obj == null) return null;
         String kind = readRequiredString(obj, "kind");
-        if (kind == null) return null;
+        JsonObject fields = obj;
+        if (kind == null) {
+            // No "kind" discriminator — try the raw proto InventoryLocation.location oneof shape.
+            for (String candidate : PROTO_LOCATION_ONEOF_FIELDS) {
+                JsonElement nested = obj.get(candidate);
+                if (nested != null && nested.isJsonObject()) {
+                    kind = candidate;
+                    fields = nested.getAsJsonObject();
+                    break;
+                }
+            }
+            if (kind == null) return null;
+        }
         return switch (kind) {
             case "container" -> {
-                String containerId = readRequiredString(obj, "container_id");
-                Long row = readRequiredLong(obj, "row");
-                Long col = readRequiredLong(obj, "col");
+                String containerId = readRequiredString(fields, "container_id");
+                Long row = readRequiredLong(fields, "row");
+                Long col = readRequiredLong(fields, "col");
                 if (containerId == null || row == null || col == null
                     || row > Integer.MAX_VALUE || col > Integer.MAX_VALUE) {
                     yield null;
@@ -506,13 +545,19 @@ public final class InventoryEventHandler implements ServerDataHandler {
                 yield new ContainerLoc(containerId, row.intValue(), col.intValue());
             }
             case "equip" -> {
-                String slotName = readRequiredString(obj, "slot");
+                String slotName = readRequiredString(fields, "slot");
                 if (slotName == null) yield null;
+                if (slotName.startsWith(PROTO_EQUIP_SLOT_PREFIX)) {
+                    // Proto wire shape: full EquipSlot enum value name (e.g. "EQUIP_SLOT_HEAD"),
+                    // not the legacy lowercase wire name ("head") EQUIP_SLOT_BY_WIRE_NAME expects.
+                    slotName = slotName.substring(PROTO_EQUIP_SLOT_PREFIX.length())
+                        .toLowerCase(java.util.Locale.ROOT);
+                }
                 EquipSlotType slot = EQUIP_SLOT_BY_WIRE_NAME.get(slotName);
                 yield slot == null ? null : new EquipLoc(slot);
             }
             case "hotbar" -> {
-                Long index = readRequiredLong(obj, "index");
+                Long index = readRequiredLong(fields, "index");
                 if (index == null || index >= InventoryModel.HOTBAR_SIZE) yield null;
                 yield new HotbarLoc(index.intValue());
             }
@@ -558,26 +603,6 @@ public final class InventoryEventHandler implements ServerDataHandler {
 
         double value = primitive.getAsDouble();
         return Double.isFinite(value) ? value : null;
-    }
-
-    private static Double readRequiredDouble(JsonElement element) {
-        if (element == null || element.isJsonNull() || !element.isJsonPrimitive()) {
-            return null;
-        }
-        JsonPrimitive primitive = element.getAsJsonPrimitive();
-        if (!primitive.isNumber()) {
-            return null;
-        }
-        double value = primitive.getAsDouble();
-        return Double.isFinite(value) ? value : null;
-    }
-
-    private static com.google.gson.JsonArray readRequiredArray(JsonObject object, String fieldName) {
-        JsonElement element = object.get(fieldName);
-        if (element == null || element.isJsonNull() || !element.isJsonArray()) {
-            return null;
-        }
-        return element.getAsJsonArray();
     }
 
     private static Long readRequiredLong(JsonObject object, String fieldName) {

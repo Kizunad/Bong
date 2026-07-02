@@ -4,7 +4,6 @@ import com.bong.client.alchemy.state.AlchemyFurnaceStore;
 import com.bong.client.network.ServerDataDispatch;
 import com.bong.client.network.ServerDataEnvelope;
 import com.bong.client.network.ServerDataHandler;
-import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import net.minecraft.util.math.BlockPos;
 
@@ -21,12 +20,15 @@ public final class AlchemyFurnaceHandler implements ServerDataHandler {
             String owner = p.has("owner_name") && p.get("owner_name").isJsonPrimitive()
                 ? p.get("owner_name").getAsString() : "self";
             boolean hasSession = p.has("has_session") && p.get("has_session").getAsBoolean();
+            // proto AlchemyFurnace.pos_x/pos_y/pos_z 是 flat optional int32（拆自 Rust
+            // Option<(i32,i32,i32)>），ProtoServerDataBridge 不做 flat→array 重塑；三字段全存在
+            // 且均为数字才重建 BlockPos，任一缺失/非数字 → pos 仍降级为 null（其余快照字段照常应用）。
             BlockPos pos = null;
-            if (p.has("pos") && p.get("pos").isJsonArray()) {
-                JsonArray arr = p.getAsJsonArray("pos");
-                if (arr.size() == 3) {
-                    pos = new BlockPos(arr.get(0).getAsInt(), arr.get(1).getAsInt(), arr.get(2).getAsInt());
-                }
+            if (p.has("pos_x") && p.has("pos_y") && p.has("pos_z")
+                    && p.get("pos_x").isJsonPrimitive() && p.get("pos_x").getAsJsonPrimitive().isNumber()
+                    && p.get("pos_y").isJsonPrimitive() && p.get("pos_y").getAsJsonPrimitive().isNumber()
+                    && p.get("pos_z").isJsonPrimitive() && p.get("pos_z").getAsJsonPrimitive().isNumber()) {
+                pos = new BlockPos(p.get("pos_x").getAsInt(), p.get("pos_y").getAsInt(), p.get("pos_z").getAsInt());
             }
             AlchemyFurnaceStore.replace(new AlchemyFurnaceStore.Snapshot(pos, tier, integrity, integrityMax, owner, hasSession));
             return ServerDataDispatch.handled(envelope.type(),

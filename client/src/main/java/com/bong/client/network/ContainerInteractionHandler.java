@@ -3,7 +3,6 @@ package com.bong.client.network;
 import com.bong.client.hud.SearchHudStateStore;
 import com.bong.client.tsy.TsyContainerStateStore;
 import com.bong.client.tsy.TsyContainerView;
-import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonPrimitive;
@@ -27,7 +26,13 @@ public final class ContainerInteractionHandler implements ServerDataHandler {
 
     private static ServerDataDispatch handleContainerState(String type, JsonObject payload) {
         Long entityId = readLong(payload, "entity_id");
-        double[] pos = readDoubleTriple(payload, "world_pos");
+        // ContainerStateProto (proto/bong/envelope.proto) carries world_pos as three flat
+        // double fields (world_pos_x/world_pos_y/world_pos_z), not a JSON array — proto [f64;3]
+        // fields are always split flat on the wire. ProtoServerDataBridge does not reshape
+        // flat fields back into arrays, so reading "world_pos" as an array here silently
+        // returned null under the production (--release) proto wire, dropping every
+        // container_state update.
+        double[] pos = readFlatVec3(payload, "world_pos");
         if (entityId == null || pos == null) {
             return ServerDataDispatch.noOp(type, "Ignoring container_state: missing entity_id/world_pos");
         }
@@ -137,23 +142,24 @@ public final class ContainerInteractionHandler implements ServerDataHandler {
         return element.getAsJsonPrimitive();
     }
 
-    private static double[] readDoubleTriple(JsonObject object, String fieldName) {
-        JsonElement element = object.get(fieldName);
-        if (element == null || !element.isJsonArray()) {
+    /**
+     * Reads a flattened {@code [f64;3]} coordinate as three sibling fields
+     * {@code <fieldPrefix>_x/_y/_z} (e.g. {@code world_pos_x/world_pos_y/world_pos_z}),
+     * matching how {@code ContainerStateProto} lays out {@code world_pos} on the wire.
+     * Returns {@code null} if any of the three fields is missing or not a number.
+     */
+    private static double[] readFlatVec3(JsonObject object, String fieldPrefix) {
+        Double x = readDouble(object, fieldPrefix + "_x");
+        Double y = readDouble(object, fieldPrefix + "_y");
+        Double z = readDouble(object, fieldPrefix + "_z");
+        if (x == null || y == null || z == null) {
             return null;
         }
-        JsonArray array = element.getAsJsonArray();
-        if (array.size() != 3) {
-            return null;
-        }
-        double[] out = new double[3];
-        for (int i = 0; i < 3; i++) {
-            JsonElement value = array.get(i);
-            if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive().isNumber()) {
-                return null;
-            }
-            out[i] = value.getAsDouble();
-        }
-        return out;
+        return new double[] {x, y, z};
+    }
+
+    private static Double readDouble(JsonObject object, String fieldName) {
+        JsonPrimitive primitive = readPrimitive(object, fieldName);
+        return primitive != null && primitive.isNumber() ? primitive.getAsDouble() : null;
     }
 }

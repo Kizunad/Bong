@@ -56,7 +56,13 @@ public record BreakthroughCinematicPayload(
         String realmTo = readString(payload, "realm_to");
         Result result = Result.fromWire(readString(payload, "result"));
         Boolean interrupted = readBoolean(payload, "interrupted");
-        double[] worldPos = readVec3(payload, "world_pos");
+        // proto BreakthroughCinematic.world_pos_{x,y,z}（[f64;3] 拆平的三个 flat 字段，见
+        // proto/bong/envelope.proto）；ProtoServerDataBridge 用 preservingProtoFieldNames，
+        // 不做 flat→array 重塑，所以生产（--release）线上这里永远不是 JSON 数组。
+        // 任一缺失/非数字 → null，保持原「world_pos 缺失就整体 parse 失败」语义。
+        Double worldX = readDouble(payload, "world_pos_x");
+        Double worldY = readDouble(payload, "world_pos_y");
+        Double worldZ = readDouble(payload, "world_pos_z");
         Double visibleRadiusBlocks = readDouble(payload, "visible_radius_blocks");
         Boolean global = readBoolean(payload, "global");
         Boolean distantBillboard = readBoolean(payload, "distant_billboard");
@@ -68,7 +74,8 @@ public record BreakthroughCinematicPayload(
 
         if (actorId == null || phase == null || phaseTick == null || phaseDurationTicks == null
             || realmFrom == null || realmTo == null || result == null || interrupted == null
-            || worldPos == null || visibleRadiusBlocks == null || global == null || distantBillboard == null
+            || worldX == null || worldY == null || worldZ == null
+            || visibleRadiusBlocks == null || global == null || distantBillboard == null
             || particleDensity == null || intensity == null || atTick == null) {
             return null;
         }
@@ -82,9 +89,9 @@ public record BreakthroughCinematicPayload(
             realmTo,
             result,
             interrupted,
-            worldPos[0],
-            worldPos[1],
-            worldPos[2],
+            worldX,
+            worldY,
+            worldZ,
             visibleRadiusBlocks,
             global,
             distantBillboard,
@@ -191,22 +198,6 @@ public record BreakthroughCinematicPayload(
     private static Double readDouble(JsonObject obj, String field) {
         JsonPrimitive primitive = readPrimitive(obj, field);
         return primitive != null && primitive.isNumber() ? primitive.getAsDouble() : null;
-    }
-
-    private static double[] readVec3(JsonObject obj, String field) {
-        JsonElement element = obj.get(field);
-        if (element == null || !element.isJsonArray() || element.getAsJsonArray().size() != 3) {
-            return null;
-        }
-        double[] values = new double[3];
-        for (int i = 0; i < 3; i++) {
-            JsonElement item = element.getAsJsonArray().get(i);
-            if (!item.isJsonPrimitive() || !item.getAsJsonPrimitive().isNumber()) {
-                return null;
-            }
-            values[i] = item.getAsDouble();
-        }
-        return values;
     }
 
     private static JsonPrimitive readPrimitive(JsonObject obj, String field) {
