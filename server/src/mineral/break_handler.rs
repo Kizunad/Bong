@@ -450,6 +450,7 @@ pub fn pickaxe_tier_from_item(item: &ItemInstance) -> Option<u8> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn send_mining_progress_to_client(
     client: &mut Client,
     session_id: String,
