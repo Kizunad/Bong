@@ -2,7 +2,6 @@ package com.bong.client.network;
 
 import com.bong.client.tsy.ExtractStateStore;
 import com.bong.client.tsy.RiftPortalView;
-import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonPrimitive;
@@ -15,7 +14,7 @@ public final class ExtractServerDataHandler implements ServerDataHandler {
         switch (envelope.type()) {
             case "rift_portal_state" -> {
                 Long entityId = readLong(payload, "entity_id");
-                double[] pos = readDoubleTriple(payload, "world_pos");
+                double[] pos = readFlatVec3(payload, "world_pos");
                 if (entityId == null || pos == null) {
                     return ServerDataDispatch.noOp(envelope.type(), "Ignoring rift_portal_state: missing entity_id/world_pos");
                 }
@@ -119,23 +118,25 @@ public final class ExtractServerDataHandler implements ServerDataHandler {
         return element.getAsJsonPrimitive();
     }
 
-    private static double[] readDoubleTriple(JsonObject object, String fieldName) {
-        JsonElement element = object.get(fieldName);
-        if (element == null || !element.isJsonArray()) {
+    /**
+     * proto→legacy-JSON 桥不做 flat→array 重塑（见 ProtoServerDataBridge 类注释）：
+     * proto {@code [f64;3]} 坐标一律拆成 {@code <prefix>_x/_y/_z} 三个 flat 字段落地。
+     * 生产走 protobuf 时读数组形状（旧 {@code readDoubleTriple}）永远拿 null →
+     * 静默 noOp 丢数据。故这里改读 flat 三字段，任一缺失/非数字即返回 null（保持
+     * "null → noOp" 的拒绝语义不变）。
+     */
+    private static double[] readFlatVec3(JsonObject object, String prefix) {
+        Double x = readDoubleOrNull(object, prefix + "_x");
+        Double y = readDoubleOrNull(object, prefix + "_y");
+        Double z = readDoubleOrNull(object, prefix + "_z");
+        if (x == null || y == null || z == null) {
             return null;
         }
-        JsonArray array = element.getAsJsonArray();
-        if (array.size() != 3) {
-            return null;
-        }
-        double[] out = new double[3];
-        for (int i = 0; i < 3; i++) {
-            JsonElement value = array.get(i);
-            if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive().isNumber()) {
-                return null;
-            }
-            out[i] = value.getAsDouble();
-        }
-        return out;
+        return new double[] {x, y, z};
+    }
+
+    private static Double readDoubleOrNull(JsonObject object, String fieldName) {
+        JsonPrimitive primitive = readPrimitive(object, fieldName);
+        return primitive != null && primitive.isNumber() ? primitive.getAsDouble() : null;
     }
 }
