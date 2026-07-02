@@ -139,8 +139,10 @@ def render(path, yaw=-35.0, pitch=22.0, size=600, bg=(22, 23, 26), light=(-0.35,
         inside = (w0 >= 0) & (w1 >= 0) & (w2 >= 0)
         if not inside.any():
             continue
-        # 重心对应三角 (0->A? ) — w2,w0,w1 对应顶点 0,1,2
-        b0, b1, b2 = w2, w0, w1
+        # 重心权重：w0=λC (AB 边), w1=λA (BC 边), w2=λB (余) → 顶点 0,1,2 取 w1,w2,w0。
+        # 曾错位成 (w2,w0,w1)：深度场在三角形内被旋转，倾斜面深度高估 → 薄壁模型
+        # 内腔面赢过外墙渲出黑楔（LootCrateVineChest 实证）。
+        b0, b1, b2 = w1, w2, w0
         depth = b0 * p[0, 2] + b1 * p[1, 2] + b2 * p[2, 2]
         u = b0 * uvs[0, 0] + b1 * uvs[1, 0] + b2 * uvs[2, 0]
         v = b0 * uvs[0, 1] + b1 * uvs[1, 1] + b2 * uvs[2, 1]
