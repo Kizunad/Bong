@@ -14,8 +14,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 public class EventAlertHandlerTest {
     @Test
     void parsesInfoAlertWithCustomDurationAndNoEffect() {
+        // plan-wire-format-bridge-v1 P3/RC6: duration_ms 从未在真实 proto EventAlert 里
+        // 存在过(只有 tick 单位的 duration_ticks)——handler 现在改读 duration_ticks 并按
+        // 1 tick=50ms 换算，duration_ms 字段本身被忽略。50 ticks * 50ms/tick = 2500ms。
         ServerDataDispatch dispatch = new EventAlertHandler(() -> 77L).handle(parseEnvelope(
-            "{\"v\":1,\"type\":\"event_alert\",\"title\":\"灵潮回涌\",\"message\":\"谷中灵气逐渐平稳\",\"severity\":\"info\",\"duration_ms\":2500}"
+            "{\"v\":1,\"type\":\"event_alert\",\"title\":\"灵潮回涌\",\"message\":\"谷中灵气逐渐平稳\",\"severity\":\"info\",\"duration_ticks\":50}"
         ));
 
         assertTrue(dispatch.handled());
@@ -54,7 +57,10 @@ public class EventAlertHandlerTest {
         ServerDataDispatch.ToastSpec toastSpec = dispatch.alertToast().orElseThrow();
         assertEquals("Thunder Tribulation：天劫将至，请于三十息内离开血谷中央。", toastSpec.text());
         assertEquals(EventAlertHandler.WARNING_COLOR, toastSpec.color());
-        assertEquals(5_000L, toastSpec.durationMillis());
+        // plan-wire-format-bridge-v1 P3/RC6: duration_ticks 现在也驱动 toast 展示时长
+        // (此前只喂给 RealmCollapseHudState，toast 时长恒 severity 默认值)。
+        // 600 ticks * 50ms/tick = 30_000ms，覆盖掉 WARNING 默认的 5_000ms。
+        assertEquals(30_000L, toastSpec.durationMillis());
         assertTrue(dispatch.visualEffectState().isEmpty());
     }
 

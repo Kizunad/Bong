@@ -40,7 +40,10 @@ public class PlayerStateHandlerTest {
         assertTrue(playerState.social().topTags().isEmpty());
         assertFalse(playerState.social().hasFaction());
         assertEquals("green_cloud_peak", playerState.zoneId());
-        assertEquals("青云峰", playerState.zoneLabel());
+        // plan-wire-format-bridge-v1 P3/RC6: zone_label 从未在真实 proto PlayerState 里存在过
+        // (server Zone 类型只有 name，无独立展示名概念)——handler 现在恒不读该字段(即便
+        // fixture 里手写了也忽略)，zoneLabel() 回退到 zoneId。
+        assertEquals("green_cloud_peak", playerState.zoneLabel());
         assertEquals(0.78, playerState.zoneSpiritQiNormalized(), 0.0001);
         assertEquals(0.0, playerState.localNegPressure(), 0.0001);
     }

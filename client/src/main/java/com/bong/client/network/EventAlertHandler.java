@@ -14,6 +14,12 @@ public final class EventAlertHandler implements ServerDataHandler {
     static final int INFO_COLOR = 0x9FD3FF;
     static final int WARNING_COLOR = 0xFFAA55;
     static final int CRITICAL_COLOR = 0xFF5555;
+    /**
+     * plan-wire-format-bridge-v1 P3/RC6：{@code duration_ms} 从未在 proto {@code EventAlert}
+     * 里存在过（只有 tick 单位的 {@code duration_ticks}）——恒读一个死字段。改读真实
+     * {@code duration_ticks} 并按 1 tick = 50ms 换算，服务端才能实际控制 toast 展示时长。
+     */
+    private static final long MILLIS_PER_TICK = 50L;
 
     private final LongSupplier nowMillisSupplier;
 
@@ -38,7 +44,9 @@ public final class EventAlertHandler implements ServerDataHandler {
         }
 
         Severity severity = Severity.fromWireName(readOptionalString(payload, "severity"));
-        long durationMillis = normalizeDuration(readOptionalLong(payload, "duration_ms"), severity.defaultDurationMillis());
+        Long durationTicks = readOptionalLong(payload, "duration_ticks");
+        Long durationMillisFromTicks = durationTicks == null ? null : durationTicks * MILLIS_PER_TICK;
+        long durationMillis = normalizeDuration(durationMillisFromTicks, severity.defaultDurationMillis());
         ServerDataDispatch.ToastSpec toastSpec = new ServerDataDispatch.ToastSpec(
             formatToastText(title, message),
             severity.color(),
@@ -49,7 +57,7 @@ public final class EventAlertHandler implements ServerDataHandler {
             readOptionalString(payload, "event"),
             message,
             readOptionalString(payload, "zone"),
-            readOptionalLong(payload, "duration_ticks"),
+            durationTicks,
             nowMillisSupplier.getAsLong()
         );
 

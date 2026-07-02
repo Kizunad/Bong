@@ -328,6 +328,9 @@ pub enum ServerDataPayloadV1 {
         local_neg_pressure: Option<f32>,
         season_state: Option<SeasonStateV1>,
         social: Option<PlayerSocialSnapshotV1>,
+        /// plan-wire-format-bridge-v1 P3/RC6：`zone` 对应 `Zone::spirit_qi`（`ZoneRegistry`
+        /// 查得）。未知 zone 名（stale）时为 `None`。
+        zone_spirit_qi: Option<f64>,
     },
     CoffinState(CoffinStateV1),
     UiOpen {
@@ -389,6 +392,9 @@ pub enum ServerDataPayloadV1 {
         progress: f64,
         interrupted: bool,
         completed: bool,
+        /// plan-wire-format-bridge-v1 P3/RC6：此前 proto 从未有此二字段（RC6 `mining_progress`）。
+        mineral_id: String,
+        display_name: String,
     },
     LumberProgress {
         session_id: String,
@@ -1217,6 +1223,8 @@ enum ServerDataPayloadWireV1 {
         season_state: Option<SeasonStateV1>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         social: Option<PlayerSocialSnapshotV1>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        zone_spirit_qi: Option<f64>,
     },
     CoffinState {
         #[serde(flatten)]
@@ -1296,6 +1304,10 @@ enum ServerDataPayloadWireV1 {
         progress: f64,
         interrupted: bool,
         completed: bool,
+        #[serde(default)]
+        mineral_id: String,
+        #[serde(default)]
+        display_name: String,
     },
     LumberProgress {
         session_id: String,
@@ -2183,6 +2195,7 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 local_neg_pressure,
                 season_state,
                 social,
+                zone_spirit_qi,
             } => Ok(Self::PlayerState {
                 player,
                 realm,
@@ -2195,6 +2208,7 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 local_neg_pressure,
                 season_state,
                 social,
+                zone_spirit_qi,
             }),
             ServerDataPayloadWireV1::CoffinState { state } => Ok(Self::CoffinState(state)),
             ServerDataPayloadWireV1::UiOpen { ui, xml } => Ok(Self::UiOpen { ui, xml }),
@@ -2283,12 +2297,16 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 progress,
                 interrupted,
                 completed,
+                mineral_id,
+                display_name,
             } => Ok(Self::MiningProgress {
                 session_id,
                 ore_pos,
                 progress,
                 interrupted,
                 completed,
+                mineral_id,
+                display_name,
             }),
             ServerDataPayloadWireV1::LumberProgress {
                 session_id,
@@ -2757,6 +2775,7 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
                 local_neg_pressure,
                 season_state,
                 social,
+                zone_spirit_qi,
             } => Self::PlayerState {
                 player: player.clone(),
                 realm: realm.clone(),
@@ -2769,6 +2788,7 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
                 local_neg_pressure: *local_neg_pressure,
                 season_state: *season_state,
                 social: social.clone(),
+                zone_spirit_qi: *zone_spirit_qi,
             },
             ServerDataPayloadV1::CoffinState(state) => Self::CoffinState { state: *state },
             ServerDataPayloadV1::UiOpen { ui, xml } => Self::UiOpen {
@@ -2864,12 +2884,16 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
                 progress,
                 interrupted,
                 completed,
+                mineral_id,
+                display_name,
             } => Self::MiningProgress {
                 session_id: session_id.clone(),
                 ore_pos: *ore_pos,
                 progress: *progress,
                 interrupted: *interrupted,
                 completed: *completed,
+                mineral_id: mineral_id.clone(),
+                display_name: display_name.clone(),
             },
             ServerDataPayloadV1::LumberProgress {
                 session_id,

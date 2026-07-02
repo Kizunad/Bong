@@ -108,6 +108,18 @@ public class ExtractServerDataHandlerTest {
             "world_pos_y=64.0 须经 proto wire 存活到 RiftPortalView.y()，实际 " + portal.y());
         assertEquals(-7.25, portal.z(), 1e-9,
             "world_pos_z=-7.25 须经 proto wire 存活到 RiftPortalView.z()，实际 " + portal.z());
+
+        // plan-wire-format-bridge-v1 P1/RC2 配套验证（收口 §8.1 #1 要求：direction 枚举前缀
+        // 修好后，一并验 rift_portal_state 端到端恢复）——kind/direction 须被
+        // ProtoServerDataBridge.bridgeStripEnums 剥成裸小写词，而非恒落 proto 全名
+        // "RIFT_PORTAL_KIND_MAIN_RIFT" / "RIFT_PORTAL_DIRECTION_EXIT"（那样 TSY 撤离逻辑的
+        // "exit" 字面量比较恒不命中，Y 键撤离交互与裂口种类展示双双失效）。
+        assertEquals("main_rift", portal.kind(),
+            "kind 须剥成 'main_rift'，实际 " + portal.kind()
+            + "——若仍是 proto 全名前缀说明 bridgeStripEnums 未接线 rift_portal_state.kind");
+        assertEquals("exit", portal.direction(),
+            "direction 须剥成 'exit'（TSY 撤离方向判定），实际 " + portal.direction()
+            + "——若仍是 'RIFT_PORTAL_DIRECTION_EXIT' 说明 Y 键撤离交互恒不命中 \"exit\" 比较");
     }
 
     @Test

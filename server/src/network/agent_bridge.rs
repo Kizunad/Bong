@@ -604,6 +604,7 @@ mod server_data_tests {
                     local_neg_pressure: None,
                     season_state: None,
                     social: None,
+                    zone_spirit_qi: Some(0.42),
                 }),
                 json!({
                     "v": SERVER_DATA_VERSION,
@@ -622,6 +623,7 @@ mod server_data_tests {
                         "territory": 0.1,
                     },
                     "zone": "blood_valley",
+                    "zone_spirit_qi": 0.42,
                 }),
             ),
             (

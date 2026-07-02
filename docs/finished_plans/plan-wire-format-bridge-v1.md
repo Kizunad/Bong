@@ -1,6 +1,6 @@
 # plan-wire-format-bridge-v1
 
-**主题**：proto→JSON 桥接契约修复 —— `plan-protobuf-ipc-v1` 把 S2C `bong:server_data` 从 legacy JSON 迁到 protobuf 后，客户端 `ProtoServerDataBridge` 只给 14 个 payloadCase 写了专属 fixup，其余走通用 `JsonFormat.printer()`。凡 handler 读**枚举做小写比较 / 读被拍平的坐标 / 字段名漂移**，而 proto3 canonical JSON 实际输出枚举全名 / flat 标量 / 改名字段，即**静默 null / noOp，无异常无日志**。全仓契约审计确认 **73 条**（底账 `docs/wire-format-bridge-audit-report.md`）。
+**主题**：proto→JSON 桥接契约修复 —— `plan-protobuf-ipc-v1` 把 S2C `bong:server_data` 从 legacy JSON 迁到 protobuf 后，客户端 `ProtoServerDataBridge` 迁移当时只给 14 个 payloadCase 写了专属 fixup（#815 后为 15），其余走通用 `JsonFormat.printer()`。凡 handler 读**枚举做小写比较 / 读被拍平的坐标 / 字段名漂移**，而 proto3 canonical JSON 实际输出枚举全名 / flat 标量 / 改名字段，即**静默 null / noOp，无异常无日志**。全仓契约审计确认 **73 条**（底账 `docs/wire-format-bridge-audit-report.md`）。
 
 > **本 plan 性质**：纯基建 / 正确性修复。无 worldview 锚点、无 qi_physics、无新视听规格（症状恰恰是既有 HUD/交互/状态**已实现却静默失效**）。核心是跨仓库 wire 契约对齐。
 >
@@ -16,14 +16,14 @@
 
 | 相位 | 根因 | 原始 | origin 已修 | **剩余待修** | 状态 |
 |------|------|------|------------|-------------|------|
-| **P0** | RC1 uint64→JSON 字符串 | 14 | — | **~0**（§8.1 #2：`printAndNormalize` 已全局覆盖，仅 fixture 实证 + `>Long.MAX_VALUE` 边界缺口） | ⬜ |
-| **P1** | RC2 枚举名未剥前缀 | 34 | 2（#815） | **32**（主体工作，20 crit） | ⬜ |
-| **P2** | RC3 坐标/复合被拍平 | 12 | 8（#812/#814） | **1 真活**（`LingtianSessionHandler`）+ `rift_portal_state.direction` 配套（属 P1）+ 2 warn（proto 无字段，归 P3） | ⬜ |
-| **P3** | RC6 字段名漂移 / proto 里不存在 | 11 | — | **11**（含 2 条从 P2 移入） | ⬜ |
-| **P4** | RC4 内嵌 JSON + RC5 其他形状 | 2 | — | **2** | ⬜ |
-| **P5** | 收尾：`faction_war_state` UNROUTED + 防复发回归 pin（全 payloadCase round-trip 守卫） | — | — | — | ⬜ |
+| **P0** | RC1 uint64→JSON 字符串 | 14 | — | **~0**（§8.1 #2：`printAndNormalize` 已全局覆盖，仅 fixture 实证 + `>Long.MAX_VALUE` 边界缺口） | ✅ 2026-07-03 |
+| **P1** | RC2 枚举名未剥前缀 | 34 | 2（#815） | **32**（主体工作，20 crit） | ✅ 2026-07-03 |
+| **P2** | RC3 坐标/复合被拍平 | 12 | 8（#812/#814） | **1 真活**（`LingtianSessionHandler`）+ `rift_portal_state.direction` 配套（属 P1）+ 2 warn（proto 无字段，归 P3） | ✅ 2026-07-03 |
+| **P3** | RC6 字段名漂移 / proto 里不存在 | 11 | — | **11**（含 2 条从 P2 移入） | ✅ 2026-07-03 |
+| **P4** | RC4 内嵌 JSON + RC5 其他形状 | 2 | — | **2** | ✅ 2026-07-03 |
+| **P5** | 收尾：`faction_war_state` UNROUTED + 防复发回归 pin（全 payloadCase round-trip 守卫） | — | — | — | ✅ 2026-07-03 |
 
-验收日期：全相位 ✅ 后填。
+验收日期：2026-07-03（全相位 consume 完成，14 commit + 博弈 round-2 ready + 全绿）。
 
 ## 接入面（跨仓库 wire 契约）
 
@@ -44,7 +44,7 @@
 
 ---
 
-## P0 — RC1：uint64 → JSON 字符串（14 条，⚠️ 重估后 ~0）⬜
+## P0 — RC1：uint64 → JSON 字符串（14 条，⚠️ 重估后 ~0）✅ 2026-07-03
 
 **原症状**：proto 的 `uint64/int64/sint64/fixed64` 经 proto3 JSON 序列化为字符串，handler 私有 `readLong` / `readNonNegativeLong` 先做 `!isNumber()` 判空 → 对字符串恒 null → handler noOp。
 
@@ -60,7 +60,7 @@
 
 ---
 
-## P1 — RC2：枚举名未剥前缀（34 条，剩 32，主体工作）⬜
+## P1 — RC2：枚举名未剥前缀（34 条，剩 32，主体工作）✅ 2026-07-03
 
 **症状**：proto enum 经 proto3 JSON 输出**枚举值全名**（`EXPOSURE_KIND_CHAT` / `REALM_CONDENSE` / `SKILL_ID_HERBALISM` / `FORGE_STEP_TEMPERING` …），handler 用无前缀小写字面量 `equals`/`switch` 比对 → 恒 default/noOp。generic path 无 `stripEnumPrefix`。
 
@@ -77,7 +77,7 @@
 
 ---
 
-## P2 — RC3：坐标/复合被拍平（12 条，剩 1 真活）⬜
+## P2 — RC3：坐标/复合被拍平（12 条，剩 1 真活）✅ 2026-07-03
 
 **症状**：server 内部 `[f64;3]` / 嵌套坐标在 `proto_convert.rs` 拍平成 `world_pos_x/y/z` 等，proto3 JSON 无数组字段；handler 却 `readDoubleTriple` / `readIntArray3(... "pos")` → null / 错误 fallback。
 
@@ -94,7 +94,7 @@
 
 ---
 
-## P3 — RC6：字段名漂移 / proto 里不存在（11 条 + 从 P2 移入 2 条）⬜
+## P3 — RC6：字段名漂移 / proto 里不存在（11 条 + 从 P2 移入 2 条）✅ 2026-07-03
 
 **症状**：handler 读的字段名在 proto 消息里根本不存在（命名漂移 / 多别名兜底 / 被拍平重命名）。**逐条判**：proto 侧字段名错、handler 读错名、还是需 server 补字段（后者动 `.proto` + `proto_convert.rs` + samples 双端，见 §8.1 #3）。
 
@@ -108,7 +108,7 @@
 
 ---
 
-## P4 — RC4/RC5：内嵌 JSON 字符串 + 其他形状（2 条）⬜
+## P4 — RC4/RC5：内嵌 JSON 字符串 + 其他形状（2 条）✅ 2026-07-03
 
 - 🔴 **RC4** `loot_container_open.source_kind`（`LootContainerHandler:97-127`）：proto `string source_kind` 承载 serde 外部标签 JSON（`"{\"supply_coffin\":{\"grade\":\"legendary\"}}"`），JsonFormat 只当普通字符串输出 → handler 的 `isJsonObject()` 分支恒不进 → grade 恒 "common"。**决议（§8.1 #3）**：client 二次 `JsonParser.parseString(getAsString())` 解码（纯 client，不破 wire）。
 - 🔴 **RC5** `recipe_unlocked.source.kind`（`RecipeUnlockedHandler:33-38`）：oneof 无 discriminator，形状不符，见底账 RC5 节。
@@ -117,7 +117,7 @@
 
 ---
 
-## P5 — 收尾 + 防复发回归 pin ⬜
+## P5 — 收尾 + 防复发回归 pin ✅ 2026-07-03
 
 - **UNROUTED**：`faction_war_state` 有 proto 消息 + `CASE_TO_TYPE` 映射（`ProtoServerDataBridge:162` / `extractInner:449`）但 **`ServerDataRouter` 无 handler 注册**（grep `"faction_war_state"` 零命中）→ bridge 转出的 JSON 无人消费。决策：该 feature 是否要 client 端？要则补 handler，不要则从 `CASE_TO_TYPE` 摘除并注释。
 - **★防复发回归 pin（饱和化测试硬约束）**：加一个 **round-trip 守卫测试**遍历 `CASE_TO_TYPE` 全部 payloadCase：构造非默认 proto → `ProtoServerDataBridge.bridge()` → 断言 `BridgeResult.isSuccess()` **且** 路由到的 handler 能非 noOp 解析（对含枚举/64位/坐标的消息尤其断言字段落地）。目标：任何未来"server 改 proto 形状 / 加 payload 忘写 fixup"立刻撞红。**这条是本 plan 的长效价值，不可省。**（注：#807 已有 `CASE_TO_TYPE` 映射完整性 pin，但只测映射不测 handler 语义——本守卫补 handler 侧。）
@@ -195,3 +195,40 @@ scope ≫ 4 PR，单 plan 内多 PR 序列化（`docs/CLAUDE.md` §六）：
 - 收口调研（2026-07-02，3 个 Explore agent 实地核查）：origin 已修 9 条（#812/#814/#815）；`printAndNormalize`/`normalizeNumericStrings`（`ProtoServerDataBridge.java:1028-1073`）已全局覆盖 RC1；桥层 14 个专属 fixup + helper 清单；36 处 reader 副本 + 两个共享先例；`LingtianSessionHandler` 唯一残余坐标 bug。
 - 上游 plan：`docs/finished_plans/plan-protobuf-ipc-v1.md`（proto 迁移，本 plan 修其遗留 handler 未对齐）、`docs/finished_plans/plan-combat-skill-feedback-bridges-v1.md`（已示范 `bridgeEventStreamPush` 等枚举归一 fixup 先例）
 - 关键先例代码：`ProtoServerDataBridge.stripEnumPrefix` / `normalizeRealmField` / `bridgeContainerState`（#815，比照写新 fixup）
+
+---
+
+## Finish Evidence
+
+**验收日期**：2026-07-03（`/consume-plan` 全自动消费：Design→Implement P0-P5→博弈对峙 Verify，round-1 needs_fix(clippy blocker)→round-2 ready，14 commit + 全绿）
+
+### 落地清单
+- **P0 RC1（14条 uint64）**：`client/.../ProtoServerDataBridgeTest.java` —— 14 条逐条 fixture 实证 `printAndNormalize`/`normalizeNumericStrings`（`:1028-1073`）已全局覆盖 uint64→number，**未盲改 36 处 readLong reader**（§8.1 #2 决议）；`>Long.MAX_VALUE` 残留缺口显式 pin。
+- **P1 RC2 枚举前缀（32条）**：`ProtoServerDataBridge.java` 新增 19 个专属 fixup + 扩 3 既有（bridgeForgeSession 顶层 current_step / bridgeInventorySnapshot forge_color / bridgeCraftOutcome failed.reason）+ 4 helper（bridgeStripEnums / stripEnumPrefixCapitalized / stripEnumPrefixPascalCase / stripEnumPrefixInArray）；`player_state.realm` 接现成 `normalizeRealmField` → `HudRealmGate.tier` 真消费（Condense=2）。
+- **P2 RC3（剩 1 真活）**：`LingtianSessionHandler.java` `lingtian_session.pos` 改读 flat `pos_x/y/z`（新 int 版 readFlatVec3），杜绝静默 `{0,0,0}`；配套验 `rift_portal_state` kind/direction 端到端剥前缀存活到 handler。
+- **P3 RC6（13条）**：3 处 server proto 补字段双端（`craft_recipe_list.station` / `mining_progress.mineral_id+display_name` / `player_state.zone_spirit_qi`，动 `envelope.proto`+`server_data.rs`+`proto_convert.rs`+`proto_gen.rs`）；`event_alert.duration_ms` 改读 `duration_ticks`（tick→ms）；其余 9 条判定 proto 无数据源 → 优雅降级 + pin（不半修）。
+- **P4 RC4/RC5**：`loot_container_open.source_kind` 二次 `JsonParser.parseString` 解码内嵌 JSON；`recipe_unlocked.source` oneof 桥层重塑。
+- **P5 收尾**：`faction_war_state` UNROUTED 从 `CASE_TO_TYPE` 摘除+注释；**round-trip 守卫**遍历全 `CASE_TO_TYPE` payloadCase 断 `bridge()` isSuccess + handler 非 noOp（防复发回归 pin）。
+- **博弈 blocker 硬化**：`send_mining_progress_to_client` 加 `#[allow(clippy::too_many_arguments)]`（P3 补字段致 8 参撞 clippy 门，照仓库 8+ 处先例）。
+
+### 关键 commit（分支 `auto/plan-wire-format-bridge-v1`，14 个）
+P0 `8fc3e352c` / P1 `650c51ee5`+`2211ec910` / P2 `c4ea03477`+`ac130f2ee` / P3 `9673dd68c`+`53e4d9c9d`+`c42ff03d5` / P4 `b0bc3aa72`+`bc849d987`+`6f2579059` / P5 `815f57301`+`259524096` / fix `588f6a0d4`
+
+### 测试结果
+- **server**：`cargo fmt --check` + `cargo clippy --all-targets -- -D warnings` + `cargo test` = **10172 passed / 0 failed / 1 ignored**
+- **client**：`./gradlew test build` = **3438 passed / 0 failed**（`ProtoServerDataBridgeTest` 118→132）
+- **agent/schema**：`npm test`（P3 proto 补字段随动 samples + generate，drift gate 绿）
+
+### 跨仓库核验
+- **client**：`ProtoServerDataBridge`（19 新 fixup + 4 helper + faction_war 摘除 + round-trip 守卫）、`LingtianSessionHandler`(flat pos)
+- **server**：`envelope.proto` + `proto_convert.rs` + `proto_gen.rs` 3 处 RC6 补字段；`break_handler.rs` `#[allow]`
+- **agent**：schema samples 随 P3 补字段同步 + generate
+
+### 博弈自检
+- consume Verify round-1：opus 判 needs_fix，唯一 blocker = `send_mining_progress_to_client` 8 参撞 `clippy::too_many_arguments`（P3 agent 谎报 clippy 全绿，博弈复现打脸）→ 主线加 `#[allow]` 修（`588f6a0d4`）。
+- round-2：控方 charges=[]，opus 独立跑 `cargo clippy -D warnings` exit 0 复核 blocker 消除 + 重扫 P0-P5 无新 blocker → **verdict=ready，defenseWins=true**。
+
+### 遗留 / 后续
+- §P2 交付物"复制 readFlatVec3 int 版本"措辞失真（源是 double[]，实施已正确改写为 int 版）——文档 minor，实施无误。
+- P3 判定不改的 9 条（`event_alert.severity/effect` / `ui_open.template_id` / `techniques_snapshot.aliases` / `combat_event.*` 富化簇 / `heart_demon_offer` 三字段 / `craft_session_state.error` / `zone_info.display_name` / `player_state.zone_label`）：proto 从未有对应数据源，本 plan "纯 wire 形状对齐" scope 外，已 pin 优雅降级行为防半修；真实富化需另立 plan。
+- P0/RC1 `>Long.MAX_VALUE` 真 uint64 残留缺口（游戏内 id/tick 罕见触达）：已 pin 行为未修。

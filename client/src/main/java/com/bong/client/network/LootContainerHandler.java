@@ -6,7 +6,9 @@ import com.bong.client.inventory.model.InventoryModel;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import com.google.gson.JsonPrimitive;
+import com.google.gson.JsonSyntaxException;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -98,6 +100,26 @@ public final class LootContainerHandler implements ServerDataHandler {
         if (sourceKindEl == null) {
             return new SourceKindInfo("unknown", "common");
         }
+        // plan-wire-format-bridge-v1 P4/RC4：proto `source_kind` 是 `string` 字段，
+        // 承载 server 侧 serde 外部标签 `LootContainerSourceKindV1` 的 JSON *再编码成字符串*
+        // （proto_convert.rs: `serde_json::to_string(&o.source_kind)`），例如
+        // supply_coffin → `"{\"supply_coffin\":{\"grade\":\"legendary\"}}"`，
+        // dead_drop → `"\"dead_drop\""`。JsonFormat 不知道字符串里嵌了 JSON，只会把它
+        // 当成普通字符串输出——下方 isJsonObject/variant-key 分支永远够不着，grade
+        // 恒 "common"。在应用原有对象形态逻辑前先二次解码内嵌 JSON；解码失败（真正
+        // 的裸字符串，例如手搓测试 fixture 或旧格式残留）则回退到原始文本。
+        if (sourceKindEl.isJsonPrimitive() && sourceKindEl.getAsJsonPrimitive().isString()) {
+            String raw = sourceKindEl.getAsString();
+            // 只对"看起来像内嵌 JSON"的两种 server 编码形状（对象 `{...}` / 再引用的字符串
+            // `"..."`）尝试二次解码；裸字符串（未来格式残留 / 测试直喂旧版 legacy 值）
+            // 原样跳过，不依赖 Gson lenient 解析猜裸标识符。
+            if (raw.startsWith("{") || raw.startsWith("\"")) {
+                JsonElement decoded = tryParseInnerJson(raw);
+                if (decoded != null) {
+                    sourceKindEl = decoded;
+                }
+            }
+        }
         if (sourceKindEl.isJsonPrimitive()) {
             return new SourceKindInfo(sourceKindEl.getAsString(), "common");
         }
@@ -127,6 +149,18 @@ public final class LootContainerHandler implements ServerDataHandler {
     }
 
     record SourceKindInfo(String kind, String grade) {}
+
+    /** 尝试把字符串当 JSON 再解析一次；失败（含空串/EOF/语法错误）返回 null 不抛异常。 */
+    private static JsonElement tryParseInnerJson(String raw) {
+        if (raw == null || raw.isEmpty()) {
+            return null;
+        }
+        try {
+            return JsonParser.parseString(raw);
+        } catch (JsonSyntaxException | IllegalStateException e) {
+            return null;
+        }
+    }
 
     static List<InventoryModel.GridEntry> parsePlacedItems(
         JsonObject payload, String containerId, int maxRows, int maxCols

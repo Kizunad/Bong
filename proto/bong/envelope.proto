@@ -432,6 +432,10 @@ message PlayerState {
   optional SeasonState       season_state       = 9;
   optional PlayerSocialSnapshot social          = 10;
   double                     spirit_qi_max      = 11;
+  // plan-wire-format-bridge-v1 P3/RC6：此前 proto 里根本没有此字段，client
+  // PlayerStateViewModel.zoneSpiritQiNormalized() 恒为 NaN 归一化默认值。
+  // 未知/无法解析 zone 时省略（client 走既有默认 clamp）。
+  optional double            zone_spirit_qi     = 12;
 }
 
 // ─── 6. CultivationDetail ──────────────────────────────────────
@@ -1120,6 +1124,9 @@ message CraftRecipeEntry {
   CraftOutputPair            output       = 7;
   CraftRequirements          requirements = 8;
   bool                       unlocked     = 9;
+  // plan-wire-format-bridge-v1 P3/RC6：此前漏发,制作台配方泄漏到手搓台。
+  // 缺省(未设置)=手搓配方,"workbench"=制作台专属,client CraftRecipeListHandler 按此分流。
+  optional string            station      = 10;
 }
 
 // 与 Rust RecipeListV1 精确对应。
@@ -1287,6 +1294,10 @@ message MiningProgress {
   double progress   = 5;
   bool   interrupted = 6;
   bool   completed  = 7;
+  // plan-wire-format-bridge-v1 P3/RC6：此前 proto 从未有此二字段,
+  // client MiningProgressHandler 恒 fallback 到通用 "矿脉"。
+  string mineral_id   = 8;
+  string display_name = 9;
 }
 
 // ServerDataPayloadV1::LumberProgress inline variant 精确对应。
