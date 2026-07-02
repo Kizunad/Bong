@@ -328,8 +328,7 @@ class ProtoServerDataBridgeTest {
     // 下那层 oneof 未设置，会走 "has no oneof variant set" 分支报错——这是预期行为
     // （测的是"映射表是否穷尽"，不是"每个 variant 塞空数据也必须成功桥接"）。
     //
-    // 排除清单（12 个，均已用 python 脚本对拍 proto 源文件 135 个 oneof 字段 −
-    // CASE_TO_TYPE 123 个映射 = 12 精确核对）：
+    // 排除清单（13 个）：
     //   - VFX_EVENT / AUDIO_PLAY_EVENT / AUDIO_STOP_EVENT / AMBIENT_ZONE_EVENT /
     //     ZONE_ENVIRONMENT_STATE：各自走独立 CustomPayload channel
     //     （bong:vfx_event / bong:audio/play / bong:audio/stop /
@@ -339,6 +338,12 @@ class ProtoServerDataBridgeTest {
     //     TSY_EXIT_EVENT / TSY_NPC_SPAWNED / TSY_SENTINEL_PHASE_CHANGED：
     //     全仓（含 main 与 test）零 getter 引用，proto schema 预留字段，尚无 client
     //     消费方——接线时需同时补 CASE_TO_TYPE / extractInner 并从此排除清单移除。
+    //   - FACTION_WAR_STATE（plan-wire-format-bridge-v1 P5，2026-07-03 摘除）：
+    //     proto 消息仍在，但 #667「移除涌现冲突战事 HUD」已拆掉 client 侧 HUD
+    //     handler/planner/store，server 侧 npc/war/settle.rs 也不再构造/广播该
+    //     payload（生产路径零引用）。此前 CASE_TO_TYPE 里保留了映射，bridge()
+    //     会成功转出一份没有任何 handler 消费的 JSON——本条从映射摘除，改走
+    //     "unmapped PayloadCase" 错误路径，见 bridgeFactionWarStateIsIntentionallyUnmapped。
     // ═══════════════════════════════════════════════════════════════════
 
     private static final Set<Envelope.ServerDataEnvelope.PayloadCase> KNOWN_UNMAPPED_PAYLOAD_CASES =
@@ -354,7 +359,8 @@ class ProtoServerDataBridgeTest {
                     Envelope.ServerDataEnvelope.PayloadCase.TSY_ENTER_EVENT,
                     Envelope.ServerDataEnvelope.PayloadCase.TSY_EXIT_EVENT,
                     Envelope.ServerDataEnvelope.PayloadCase.TSY_NPC_SPAWNED,
-                    Envelope.ServerDataEnvelope.PayloadCase.TSY_SENTINEL_PHASE_CHANGED
+                    Envelope.ServerDataEnvelope.PayloadCase.TSY_SENTINEL_PHASE_CHANGED,
+                    Envelope.ServerDataEnvelope.PayloadCase.FACTION_WAR_STATE
             );
 
     @Test
@@ -423,9 +429,16 @@ class ProtoServerDataBridgeTest {
                         + ")。不一致说明排除清单本身配错了（多排或漏排）。");
     }
 
-    // ─── Faction war HUD proto bridge ────────────────────────────────
+    // ─── Faction war state: intentionally unmapped (plan-wire-format-bridge-v1 P5) ──
     @Test
-    void bridgeFactionWarStateProducesLegacyJson() {
+    void bridgeFactionWarStateIsIntentionallyUnmapped() {
+        // #667「移除涌现冲突战事 HUD」拆掉了 client 侧 HUD handler/planner/store，
+        // server 侧 npc/war/settle.rs 也不再构造/广播这个 payload（生产路径零引用）。
+        // FACTION_WAR_STATE 已从 CASE_TO_TYPE / extractInner 摘除并入
+        // KNOWN_UNMAPPED_PAYLOAD_CASES —— bridge() 必须走 "unmapped PayloadCase"
+        // 错误分支，而不是悄悄转出一份没人消费的 JSON。任何未来重新接线该 feature
+        // 都必须同时补 CASE_TO_TYPE / extractInner 并把此 case 从排除清单移除，
+        // 届时这条测试会先撞红提醒。
         Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
                 .setFactionWarState(Envelope.FactionWarState.newBuilder()
                         .setWarId(42)
@@ -442,15 +455,13 @@ class ProtoServerDataBridgeTest {
                         .setLoserGroup(-1))
                 .build();
 
-        JsonObject json = bridgeAndParse(envelope);
+        ProtoServerDataBridge.BridgeResult result = ProtoServerDataBridge.bridge(envelope.toByteArray());
 
-        assertEquals(1, json.get("v").getAsInt());
-        assertEquals("faction_war_state", json.get("type").getAsString());
-        assertEquals(42, json.get("war_id").getAsLong());
-        assertEquals("blood_valley", json.get("zone").getAsString());
-        assertEquals("残灰谷", json.get("region_descriptor").getAsString());
-        assertEquals("skirmish", json.get("phase").getAsString());
-        assertEquals(2, json.getAsJsonArray("groups").size());
+        assertFalse(result.isSuccess(),
+                "faction_war_state should no longer bridge — feature has no client consumer, expected 'unmapped PayloadCase' error");
+        assertNotNull(result.errorMessage());
+        assertTrue(result.errorMessage().startsWith("unmapped PayloadCase:"),
+                "expected 'unmapped PayloadCase' error for faction_war_state, got: " + result.errorMessage());
     }
 
     // ─── FullPower variants map to correct type strings ──────────────
@@ -676,39 +687,6 @@ class ProtoServerDataBridgeTest {
         var technique = TechniquesListPanel.snapshot().get(0);
         assertEquals("woliu.vortex", technique.id());
         assertEquals(0.42f, technique.proficiency(), 1e-6f);
-    }
-
-    @Test
-    void bridgeFactionWarStateOutputIsIgnoredByDefaultRouter() {
-        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
-                .setFactionWarState(Envelope.FactionWarState.newBuilder()
-                        .setWarId(42)
-                        .setZone("残灰谷")
-                        .setRegionDescriptor("残灰谷一带散修")
-                        .setPhase("skirmish")
-                        .addGroups(0)
-                        .addGroups(1)
-                        .setEnlistCount(2)
-                        .setMercenaryCount(1)
-                        .setInterceptCount(0)
-                        .setSpectateCount(3)
-                        .setWinnerGroup(-1)
-                        .setLoserGroup(-1))
-                .build();
-
-        ProtoServerDataBridge.BridgeResult result = ProtoServerDataBridge.bridge(envelope.toByteArray());
-        assertTrue(result.isSuccess(), "bridge should succeed for faction_war_state: " + result.errorMessage());
-
-        JsonObject json = JsonParser.parseString(result.legacyJson()).getAsJsonObject();
-        assertEquals("faction_war_state", json.get("type").getAsString());
-        assertEquals(42, json.get("war_id").getAsLong());
-        assertEquals("残灰谷", json.get("zone").getAsString());
-        assertEquals(2, json.getAsJsonArray("groups").size());
-        assertEquals(2, json.get("enlist_count").getAsInt());
-        assertEquals(3, json.get("spectate_count").getAsInt());
-
-        ServerDataRouter.RouteResult route = ServerDataRouter.createDefault().route(result.legacyJson(), 0);
-        assertTrue(route.isNoOp(), "faction_war_state has no HUD handler and should be ignored: " + route.logMessage());
     }
 
     // ═══════════════════════════════════════════════════════════════════

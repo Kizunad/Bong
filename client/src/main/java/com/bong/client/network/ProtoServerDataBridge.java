@@ -159,7 +159,11 @@ public final class ProtoServerDataBridge {
         m.put(Envelope.ServerDataEnvelope.PayloadCase.LOOT_CONTAINER_OPEN, "loot_container_open");
         m.put(Envelope.ServerDataEnvelope.PayloadCase.LOOT_CONTAINER_UPDATE, "loot_container_update");
         m.put(Envelope.ServerDataEnvelope.PayloadCase.LOOT_CONTAINER_CLOSE, "loot_container_close");
-        m.put(Envelope.ServerDataEnvelope.PayloadCase.FACTION_WAR_STATE, "faction_war_state");
+        // plan-wire-format-bridge-v1 P5：FACTION_WAR_STATE 摘除 —— proto 消息还在，
+        // 但 #667「移除涌现冲突战事 HUD」已拆掉 client 侧 HUD handler/planner/store，
+        // 且 server 侧 npc/war/settle.rs 也不再构造/广播这个 payload（生产路径零
+        // 引用，仅剩 server_data.rs 的 schema roundtrip 单测）。继续保留映射只会让
+        // bridge() 白白转一份没人消费的 JSON；见 KNOWN_UNMAPPED_PAYLOAD_CASES。
         // plan-combat-skill-feedback-bridges-v1 P4：暗器 HUD
         m.put(Envelope.ServerDataEnvelope.PayloadCase.ANQI_HUD, "anqi_hud");
         // plan-combat-skill-feedback-bridges-v1 P5：毒蛊 v2 HUD S2C
@@ -553,7 +557,7 @@ public final class ProtoServerDataBridge {
             case LOOT_CONTAINER_OPEN: return envelope.getLootContainerOpen();
             case LOOT_CONTAINER_UPDATE: return envelope.getLootContainerUpdate();
             case LOOT_CONTAINER_CLOSE: return envelope.getLootContainerClose();
-            case FACTION_WAR_STATE: return envelope.getFactionWarState();
+            // FACTION_WAR_STATE intentionally omitted — see CASE_TO_TYPE comment above.
             // plan-combat-skill-feedback-bridges-v1 P4：暗器 HUD
             case ANQI_HUD: return envelope.getAnqiHud();
             // plan-combat-skill-feedback-bridges-v1 P5：毒蛊 v2 HUD S2C
