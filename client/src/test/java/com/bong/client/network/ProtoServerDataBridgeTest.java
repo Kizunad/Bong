@@ -51,6 +51,9 @@ class ProtoServerDataBridgeTest {
         WoundsStore.resetForTests();
         FalseSkinHudStateStore.resetForTests();
         PoisonTraitHudStateStore.clear();
+        com.bong.client.craft.CraftStore.clear();
+        com.bong.client.gathering.GatheringSessionStore.resetForTests();
+        com.bong.client.insight.InsightOfferStore.resetForTests();
     }
 
     // ─── Happy path: Welcome ─────────────────────────────────────────
@@ -2435,6 +2438,358 @@ class ProtoServerDataBridgeTest {
                 .getAsJsonArray("head_worn").get(0).getAsJsonObject();
         assertEquals("Mellow", headWorn0.get("forge_color").getAsString(),
                 "equipped.head_worn[0].forge_color 必须剥成 'Mellow'");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // plan-wire-format-bridge-v1 P3／RC6 字段名漂移 / proto 里不存在
+    // (docs/wire-format-bridge-audit-report.md RC6 节, 11 条 + 从 P2 移入 2 条)
+    // ═══════════════════════════════════════════════════════════════════
+
+    // ─── RC6 #1 crit: craft_recipe_list.recipes[].station（proto 补字段） ───
+    @Test
+    void craftRecipeListCarriesStationSoWorkbenchAndHandcraftScreensDoNotCrossLeak() {
+        Envelope.CraftRecipeEntry workbenchRecipe = Envelope.CraftRecipeEntry.newBuilder()
+                .setId("craft.example.iron_helm")
+                .setCategory(Envelope.CraftCategory.CRAFT_CATEGORY_ARMOR_CRAFT)
+                .setDisplayName("铁盔")
+                .addMaterials(Envelope.CraftMaterialPair.newBuilder()
+                        .setTemplateId("iron_ingot").setCount(3))
+                .setQiCost(0.0)
+                .setTimeTicks(1200)
+                .setOutput(Envelope.CraftOutputPair.newBuilder()
+                        .setTemplateId("iron_helm").setCount(1))
+                .setRequirements(Envelope.CraftRequirements.newBuilder())
+                .setUnlocked(true)
+                .setStation("workbench")
+                .build();
+        Envelope.CraftRecipeEntry handcraftRecipe = Envelope.CraftRecipeEntry.newBuilder()
+                .setId("craft.example.herb_knife")
+                .setCategory(Envelope.CraftCategory.CRAFT_CATEGORY_TOOL)
+                .setDisplayName("采药刀")
+                .setQiCost(0.0)
+                .setTimeTicks(600)
+                .setOutput(Envelope.CraftOutputPair.newBuilder()
+                        .setTemplateId("herb_knife").setCount(1))
+                .setRequirements(Envelope.CraftRequirements.newBuilder())
+                .setUnlocked(true)
+                // 无 setStation：手搓配方，缺省(未设置)=手搓。
+                .build();
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setCraftRecipeList(Envelope.CraftRecipeList.newBuilder()
+                        .setV(1)
+                        .setPlayerId("offline:Alice")
+                        .addRecipes(workbenchRecipe)
+                        .addRecipes(handcraftRecipe)
+                        .setTs(1))
+                .build();
+
+        ProtoServerDataBridge.BridgeResult result = ProtoServerDataBridge.bridge(envelope.toByteArray());
+        assertTrue(result.isSuccess(), "bridge should succeed for craft_recipe_list: " + result.errorMessage());
+        ServerDataRouter.RouteResult route = ServerDataRouter.createDefault()
+                .route(result.legacyJson(), result.legacyJson().getBytes(StandardCharsets.UTF_8).length);
+        assertTrue(route.isHandled(), "craft_recipe_list must not noOp: " + route.logMessage());
+
+        List<com.bong.client.craft.CraftRecipe> recipes = com.bong.client.craft.CraftStore.recipes();
+        assertEquals(2, recipes.size());
+        com.bong.client.craft.CraftRecipe workbench = recipes.stream()
+                .filter(r -> r.id().equals("craft.example.iron_helm")).findFirst().orElseThrow();
+        assertEquals("workbench", workbench.station(),
+                "station 此前从未在 proto 里发送，恒 null → 制作台屏空 → 补字段后必须读到 'workbench'");
+        assertTrue(workbench.isWorkbenchRecipe(), "带 station='workbench' 的配方必须只在制作台屏出现");
+        assertFalse(workbench.isHandcraft(), "workbench 配方不能泄漏进手搓台过滤");
+
+        com.bong.client.craft.CraftRecipe handcraft = recipes.stream()
+                .filter(r -> r.id().equals("craft.example.herb_knife")).findFirst().orElseThrow();
+        assertNull(handcraft.station(), "未设置 station 的配方 station 必须为 null（手搓）");
+        assertTrue(handcraft.isHandcraft(), "手搓配方必须只在手搓台出现");
+        assertFalse(handcraft.isWorkbenchRecipe(), "手搓配方不能被制作台屏误收");
+    }
+
+    // ─── RC6 #2 crit: event_alert.severity（无 server 数据源, 恒 WARNING 默认） ───
+    @Test
+    void eventAlertSeverityAlwaysFallsBackToWarningBecauseNoWireFieldExists() {
+        // event_alert.severity proto 里从未存在过(只有 event/message/zone/duration_ticks)，
+        // Severity.fromWireName(null) 恒返回 WARNING —— 这是已知优雅降级，非本 plan 修复范围
+        // (无法从 EventKind 派生正确 severity 属游戏设计判断，非纯 wire 对齐)。此测试钉死
+        // 该降级行为，防止未来有人"半修"引入不一致。
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setEventAlert(Envelope.EventAlert.newBuilder()
+                        .setEvent(Envelope.EventKind.EVENT_KIND_THUNDER_TRIBULATION)
+                        .setMessage("天劫将至"))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        assertFalse(json.has("severity"), "severity 字段在 proto EventAlert 里从未存在过");
+
+        String legacyJson = json.toString();
+        ServerDataRouter.RouteResult route = ServerDataRouter.createDefault()
+                .route(legacyJson, legacyJson.getBytes(StandardCharsets.UTF_8).length);
+        assertTrue(route.isHandled(), "event_alert 仍应正常路由（severity 缺失不导致 noOp）: "
+                + route.logMessage());
+        ServerDataDispatch.ToastSpec toastSpec = route.dispatch().alertToast().orElseThrow();
+        assertEquals(EventAlertHandler.WARNING_COLOR, toastSpec.color(),
+                "缺失 severity 恒 fallback 到 WARNING 色（Severity.fromWireName(null)）");
+    }
+
+    // ─── RC6 #3 crit: ui_open.template_id（server 从未populate过，整条路径恒死） ───
+    @Test
+    void uiOpenRawXmlPathStillWorksWhileTemplateIdRemainsUnpopulatedByServer() {
+        // ui_open.template_id: server 端 UiOpen 从未有过 template 概念（proto_convert.rs
+        // 只有 ui/xml 两字段），resolveTemplateOpenState 分支永远拿不到非空 template_id。
+        // 唯一功能路径(raw ui+xml)不受影响 —— 钉死这条仍然工作。
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setUiOpen(Envelope.UiOpen.newBuilder()
+                        .setUi("cultivation_panel")
+                        .setXml("<flow-layout><label text=\"修仙面板\"/></flow-layout>"))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        assertFalse(json.has("template_id"), "template_id 从未在 proto UiOpen 里存在过");
+        assertEquals("cultivation_panel", json.get("ui").getAsString());
+    }
+
+    // ─── RC6 #4 warn: techniques_snapshot.aliases（proto 无此字段, 恒空列表但优雅降级） ───
+    @Test
+    void techniquesSnapshotAliasesAlwaysEmptyButIdAndDisplayNameSearchStillWork() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setTechniquesSnapshot(Envelope.TechniquesSnapshot.newBuilder()
+                        .addEntries(Envelope.TechniqueEntry.newBuilder()
+                                .setId("technique.flying_sword")
+                                .setDisplayName("御剑术")
+                                .setGrade("earth")))
+                .build();
+
+        ProtoServerDataBridge.BridgeResult result = ProtoServerDataBridge.bridge(envelope.toByteArray());
+        assertTrue(result.isSuccess());
+        ServerDataRouter.RouteResult route = ServerDataRouter.createDefault()
+                .route(result.legacyJson(), result.legacyJson().getBytes(StandardCharsets.UTF_8).length);
+        assertTrue(route.isHandled(), "techniques_snapshot must not noOp: " + route.logMessage());
+
+        List<TechniquesListPanel.Technique> snapshot = TechniquesListPanel.snapshot();
+        assertEquals(1, snapshot.size());
+        assertTrue(snapshot.get(0).aliases().isEmpty(),
+                "aliases 在 proto TechniqueEntry 里从未存在过，恒空列表（无源数据可补，属"
+                + "已知优雅降级——alias 搜索永远不命中，但 id/display_name 搜索仍可用）");
+    }
+
+    // ─── RC6 #5 warn: combat_event enrichment 簇（无 server 数据源, kind-based 降级） ───
+    @Test
+    void combatEventFloaterDegradesGracefullyToKindBasedDefaultsWithoutEnrichmentFields() {
+        // school/tier/attacker_uuid/target_uuid/direction/rare_drop/kill/perfect 等富化字段
+        // 在 CombatEventFloaterEntry proto 里从未存在过(只有 kind/amount/text/x/y/z)，且服务端
+        // 内部结构体同样从未携带过这些数据——属新功能范畴（需要 uuid 追踪/完美招架判定等全新
+        // 服务端逻辑），非本 plan 的"wire 形状对齐"范围。此测试钉死 kind 字符串驱动的基础路径
+        // 仍然工作（不因富化字段缺失而 noOp）。
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setCombatEventFloater(Envelope.CombatEventFloater.newBuilder()
+                        .addEvents(Envelope.CombatEventFloaterEntry.newBuilder()
+                                .setKind("damage")
+                                .setAmount(12.5f)
+                                .setText("12.5")
+                                .setX(1.0).setY(2.0).setZ(3.0)))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        JsonObject event = json.getAsJsonArray("events").get(0).getAsJsonObject();
+        assertEquals("damage", event.get("kind").getAsString());
+        assertFalse(event.has("school"), "school 从未在 proto CombatEventFloaterEntry 里存在过");
+        assertFalse(event.has("attacker_uuid"), "attacker_uuid 同理，从未存在过");
+        assertFalse(event.has("perfect"), "perfect 同理，从未存在过");
+    }
+
+    // ─── RC6 #6 warn: heart_demon_offer.choices[].alignment/cost_summary/cost_flavor ───
+    @Test
+    void heartDemonOfferChoiceUsesNeutralAlignmentAndGenericCostFallbackWithoutWireData() {
+        // alignment/cost_summary/cost_flavor 在 HeartDemonOfferChoice proto 里从未存在过
+        // (只有 choice_id/category/title/effect_summary/flavor/style_hint 6 字段)。
+        // HeartDemonOfferHandler 已对这三字段做 fallback()，行为等价于 InsightChoice 的
+        // 6 参数便捷构造器（NEUTRAL alignment + "代价待结算"/"心魔会索取对应代价。"）——
+        // 钉死该降级契约。
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setHeartDemonOffer(Envelope.HeartDemonOffer.newBuilder()
+                        .setTriggerId("hd-1")
+                        .addChoices(Envelope.HeartDemonOfferChoice.newBuilder()
+                                .setChoiceId("choice-1")
+                                .setCategory("Composure")
+                                .setTitle("忍耐")
+                                .setEffectSummary("composure +10%")
+                                .setFlavor("心魔低语。")
+                                .setStyleHint("忍")))
+                .build();
+
+        ProtoServerDataBridge.BridgeResult result = ProtoServerDataBridge.bridge(envelope.toByteArray());
+        assertTrue(result.isSuccess());
+        ServerDataRouter.RouteResult route = ServerDataRouter.createDefault()
+                .route(result.legacyJson(), result.legacyJson().getBytes(StandardCharsets.UTF_8).length);
+        assertTrue(route.isHandled(), "heart_demon_offer must not noOp: " + route.logMessage());
+
+        com.bong.client.insight.InsightOfferViewModel offer =
+                com.bong.client.insight.InsightOfferStore.snapshot();
+        com.bong.client.insight.InsightChoice choice = offer.choices().get(0);
+        assertEquals(com.bong.client.insight.InsightAlignment.NEUTRAL, choice.alignment(),
+                "alignment 无源数据，恒 NEUTRAL（无法从 wire 判断阵营倾向）");
+        assertEquals("代价待结算", choice.costSummary(),
+                "cost_summary 无源数据，恒通用兜底文案");
+        assertEquals("心魔会索取对应代价。", choice.costFlavor(),
+                "cost_flavor 无源数据，恒通用兜底文案");
+    }
+
+    // ─── RC6 #7 warn: event_alert.effect（proto 无此字段, VisualEffectState.none() 降级） ───
+    @Test
+    void eventAlertEffectAlwaysEmptyBecauseNoEffectSubmessageExistsOnWire() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setEventAlert(Envelope.EventAlert.newBuilder()
+                        .setEvent(Envelope.EventKind.EVENT_KIND_BEAST_TIDE)
+                        .setMessage("兽潮将至"))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        assertFalse(json.has("effect"), "effect 子消息在 proto EventAlert 里从未存在过");
+    }
+
+    // ─── RC6 #8 info: zone_info.display_name（Zone 服务端类型无展示名概念） ───
+    @Test
+    void zoneInfoDisplayNameNeverExistsOnWireBecauseServerZoneHasNoDisplayNameConcept() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setZoneInfo(Envelope.ZoneInfo.newBuilder()
+                        .setZone("qingyun_peaks")
+                        .setSpiritQi(0.8)
+                        .setDangerLevel(1))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        assertFalse(json.has("display_name"),
+                "display_name 从未在 proto ZoneInfo 里存在过（server Zone 类型只有 name 字段，"
+                + "无独立展示名概念——非纯 wire 对齐可修，需先立 zone 展示名 plan）");
+    }
+
+    // ─── RC6 #9 info: craft_session_state.error（proto 无此字段, 恒空字符串） ───
+    @Test
+    void craftSessionStateErrorAlwaysEmptyBecauseNoErrorFieldExistsOnWire() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setCraftSessionState(Envelope.CraftSessionState.newBuilder()
+                        .setV(1)
+                        .setPlayerId("offline:Alice")
+                        .setActive(true)
+                        .setRecipeId("craft.example.foo")
+                        .setElapsedTicks(30)
+                        .setTotalTicks(100)
+                        .setCompletedCount(1)
+                        .setTotalCount(3)
+                        .setTs(1))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        assertFalse(json.has("error"), "error 从未在 proto CraftSessionState 里存在过");
+    }
+
+    // ─── RC6 #10 info: combat_event.color（proto 无此字段, 恒 kind 派生默认色） ───
+    @Test
+    void combatEventColorAlwaysAbsentSoFloaterUsesKindDerivedDefaultColor() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setCombatEventFloater(Envelope.CombatEventFloater.newBuilder()
+                        .addEvents(Envelope.CombatEventFloaterEntry.newBuilder()
+                                .setKind("heal")
+                                .setAmount(5.0f)
+                                .setText("+5")
+                                .setX(0).setY(0).setZ(0)))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        JsonObject event = json.getAsJsonArray("events").get(0).getAsJsonObject();
+        assertFalse(event.has("color"), "color 从未在 proto CombatEventFloaterEntry 里存在过");
+    }
+
+    // ─── RC6 #11 info: event_alert.duration_ms（改读真实 duration_ticks, tick→ms 换算） ───
+    @Test
+    void eventAlertDurationMsDerivesFromRealDurationTicksInsteadOfDeadField() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setEventAlert(Envelope.EventAlert.newBuilder()
+                        .setEvent(Envelope.EventKind.EVENT_KIND_POISON_MIASMA)
+                        .setMessage("毒瘴弥漫")
+                        .setDurationTicks(200)) // 200 tick * 50ms/tick = 10_000ms
+                .build();
+
+        ProtoServerDataBridge.BridgeResult result = ProtoServerDataBridge.bridge(envelope.toByteArray());
+        assertTrue(result.isSuccess());
+        ServerDataRouter.RouteResult route = ServerDataRouter.createDefault()
+                .route(result.legacyJson(), result.legacyJson().getBytes(StandardCharsets.UTF_8).length);
+        assertTrue(route.isHandled(), "event_alert must not noOp: " + route.logMessage());
+        ServerDataDispatch.ToastSpec toastSpec = route.dispatch().alertToast().orElseThrow();
+        assertEquals(10_000L, toastSpec.durationMillis(),
+                "duration_ms 此前读一个从未存在的字段恒 fallback 到 severity 默认时长；"
+                + "改读真实 duration_ticks(uint64, proto 确有此字段)并按 1 tick=50ms 换算后，"
+                + "服务端应可精确控制 toast 展示时长");
+    }
+
+    // ─── RC6 #12 warn(从 P2 移入): player_state.zone_label（无 server 数据源，恒 null） ───
+    @Test
+    void playerStateZoneLabelAlwaysNullBecauseServerZoneHasNoDisplayNameConcept() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setPlayerState(Envelope.PlayerState.newBuilder()
+                        .setRealm(Common.Realm.REALM_CONDENSE)
+                        .setSpiritQi(78.0)
+                        .setSpiritQiMax(100.0)
+                        .setKarma(0.2)
+                        .setCompositePower(0.35)
+                        .setZone("blood_valley")
+                        .setBreakdown(Envelope.PlayerPowerBreakdown.newBuilder()
+                                .setCombat(0.2).setWealth(0.4).setSocial(0.65)
+                                .setKarma(0.2).setTerritory(0.1)))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        assertFalse(json.has("zone_label"), "zone_label 从未在 proto PlayerState 里存在过");
+    }
+
+    // ─── RC6 #13 warn(从 P2 移入): player_state.zone_spirit_qi（proto 已补字段, 真实读取） ───
+    @Test
+    void playerStateZoneSpiritQiReadsRealValueOnceProtoFieldIsPopulated() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setPlayerState(Envelope.PlayerState.newBuilder()
+                        .setRealm(Common.Realm.REALM_CONDENSE)
+                        .setSpiritQi(78.0)
+                        .setSpiritQiMax(100.0)
+                        .setKarma(0.2)
+                        .setCompositePower(0.35)
+                        .setZone("blood_valley")
+                        .setZoneSpiritQi(0.42)
+                        .setBreakdown(Envelope.PlayerPowerBreakdown.newBuilder()
+                                .setCombat(0.2).setWealth(0.4).setSocial(0.65)
+                                .setKarma(0.2).setTerritory(0.1)))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        assertEquals(0.42, json.get("zone_spirit_qi").getAsDouble(), 1e-9,
+                "zone_spirit_qi 此前在 proto 里根本不存在(PlayerStateViewModel."
+                + "zoneSpiritQiNormalized() 恒 NaN 归一化默认)——补字段后必须原样落地");
+    }
+
+    // ─── RC6 #14 crit(从 P2 移入): mining_progress.mineral_id/display_name（proto 补字段） ───
+    @Test
+    void miningProgressCarriesMineralIdAndDisplayNameInsteadOfGenericFallbackLabel() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setMiningProgress(Envelope.MiningProgress.newBuilder()
+                        .setSessionId("mining:1:64:2:cu_tie")
+                        .setOrePosX(1).setOrePosY(64).setOrePosZ(2)
+                        .setProgress(0.3)
+                        .setInterrupted(false)
+                        .setCompleted(false)
+                        .setMineralId("cu_tie")
+                        .setDisplayName("粗铁矿脉"))
+                .build();
+
+        ProtoServerDataBridge.BridgeResult result = ProtoServerDataBridge.bridge(envelope.toByteArray());
+        assertTrue(result.isSuccess());
+        ServerDataRouter.RouteResult route = ServerDataRouter.createDefault()
+                .route(result.legacyJson(), result.legacyJson().getBytes(StandardCharsets.UTF_8).length);
+        assertTrue(route.isHandled(), "mining_progress must not noOp: " + route.logMessage());
+
+        com.bong.client.gathering.GatheringSessionViewModel session =
+                com.bong.client.gathering.GatheringSessionStore.snapshot();
+        assertEquals("粗铁矿脉", session.targetName(),
+                "此前 mineral_id/display_name 从未在 proto 里存在过，GatheringProgressPayloadReader"
+                + ".firstNonBlank 恒 fallback 到通用 '矿脉'；补字段后必须显示真实矿种展示名");
     }
 
     // ═══════════════════════════════════════════════════════════════════
