@@ -172,9 +172,7 @@ public final class CraftScreen extends BaseOwoScreen<FlowLayout> {
         CraftRecipe selected = currentRecipe();
         recipeList.setSelectedId(selectedId);
         recipeList.refresh(inventory);
-        CraftSessionStateView session = CraftStore.sessionState();
-        actionBar.refresh(selected, inventory, session);
-        materialGrid.refresh(selected, inventory, session, actionBar.quantity());
+        refreshActionAndMaterial(selected, inventory);
         outputPreview.refresh(selected, flashTicks);
         updateSubtitle(selected, inventory);
     }
@@ -186,9 +184,7 @@ public final class CraftScreen extends BaseOwoScreen<FlowLayout> {
         }
         InventoryModel inventory = InventoryStateStore.snapshot();
         CraftRecipe selected = currentRecipe();
-        CraftSessionStateView session = CraftStore.sessionState();
-        actionBar.refresh(selected, inventory, session);
-        materialGrid.refresh(selected, inventory, session, actionBar.quantity());
+        refreshActionAndMaterial(selected, inventory);
         outputPreview.refresh(selected, flashTicks);
         updateSubtitle(selected, inventory);
     }
@@ -206,9 +202,7 @@ public final class CraftScreen extends BaseOwoScreen<FlowLayout> {
         CraftRecipe selected = currentRecipe();
         recipeList.setSelectedId(selectedId);
         recipeList.refresh(inventory);
-        CraftSessionStateView session = CraftStore.sessionState();
-        actionBar.refresh(selected, inventory, session);
-        materialGrid.refresh(selected, inventory, session, actionBar.quantity());
+        refreshActionAndMaterial(selected, inventory);
         updateSubtitle(selected, inventory);
     }
 
@@ -217,11 +211,7 @@ public final class CraftScreen extends BaseOwoScreen<FlowLayout> {
         if (materialGrid == null || actionBar == null) {
             return;
         }
-        InventoryModel inventory = InventoryStateStore.snapshot();
-        CraftRecipe selected = currentRecipe();
-        CraftSessionStateView session = CraftStore.sessionState();
-        actionBar.refresh(selected, inventory, session);
-        materialGrid.refresh(selected, inventory, session, actionBar.quantity());
+        refreshActionAndMaterial(currentRecipe(), InventoryStateStore.snapshot());
     }
 
     /** outcomeListener：制作完成/失败后 outputPreview 需要反映最新产物；inventory 快照会另行
@@ -232,8 +222,14 @@ public final class CraftScreen extends BaseOwoScreen<FlowLayout> {
         }
         InventoryModel inventory = InventoryStateStore.snapshot();
         CraftRecipe selected = currentRecipe();
-        CraftSessionStateView session = CraftStore.sessionState();
         outputPreview.refresh(selected, flashTicks);
+        refreshActionAndMaterial(selected, inventory);
+    }
+
+    /** 五条刷新路径共用的 actionBar+materialGrid 段：session 现取现用，quantity 依赖
+     * actionBar 先 refresh 完再读，顺序不能倒。 */
+    private void refreshActionAndMaterial(CraftRecipe selected, InventoryModel inventory) {
+        CraftSessionStateView session = CraftStore.sessionState();
         actionBar.refresh(selected, inventory, session);
         materialGrid.refresh(selected, inventory, session, actionBar.quantity());
     }

@@ -106,7 +106,7 @@ public final class CraftRecipeListWidget {
         List<CraftRecipe> recipes = CraftRecipeFilter.filter(scoped, category, query, favorites);
         List<String> nextIds = recipes.stream().map(CraftRecipe::id).toList();
 
-        if (rowsBuilt && !needsRebuild(renderedIds, nextIds)) {
+        if (!shouldRebuildRows(rowsBuilt, renderedIds, nextIds)) {
             // id 序列（含顺序）完全一致 → 原地更新每行文案/颜色/tooltip/选中态，不 clearChildren。
             // owo ScrollContainer.layout() 会在内容清空瞬间把 maxScroll 算成 0 并 clamp scrollOffset
             // 回 0，随后行加回来 offset 也回不来 —— 这是"滚动条自动回弹到顶部"的根因，见 PR 描述。
@@ -136,6 +136,15 @@ public final class CraftRecipeListWidget {
             rows.child(r);
         }
         renderedIds = nextIds;
+    }
+
+    /**
+     * refresh() 是否必须走 clearChildren 重建路径的完整判定：
+     * 首次刷新（{@code rowsBuilt == false}）必须重建——即使 id 序列与初值同为空，
+     * 否则空列表的「无匹配配方」占位 label 永远不会渲染；此后仅当 id 序列结构性变化时重建。
+     */
+    static boolean shouldRebuildRows(boolean rowsBuilt, List<String> currentIds, List<String> nextIds) {
+        return !rowsBuilt || needsRebuild(currentIds, nextIds);
     }
 
     /**

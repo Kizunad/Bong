@@ -107,4 +107,43 @@ class CraftRecipeListWidgetTest {
             "期望 true 因为即便前缀完全相同，长度不同意味着行数不同，必须重建，"
                 + "实际 " + CraftRecipeListWidget.needsRebuild(current, next));
     }
+
+    // ---- shouldRebuildRows：refresh() 实际使用的完整判定（rowsBuilt 首刷边界 + id 序列 diff） ----
+
+    @Test
+    void firstRefreshWithEmptyListMustRebuild() {
+        assertTrue(CraftRecipeListWidget.shouldRebuildRows(false, List.of(), List.of()),
+            "期望 true 因为首次 refresh（rowsBuilt=false）必须走重建路径渲染「无匹配配方」占位，"
+                + "即使 id 序列与初值同为空 —— 否则占位 label 永远不出现，"
+                + "实际 " + CraftRecipeListWidget.shouldRebuildRows(false, List.of(), List.of()));
+    }
+
+    @Test
+    void firstRefreshWithRecipesMustRebuild() {
+        assertTrue(CraftRecipeListWidget.shouldRebuildRows(false, List.of(), List.of("a", "b")),
+            "期望 true 因为首次 refresh（rowsBuilt=false）没有任何已渲染行，必须重建，"
+                + "实际 " + CraftRecipeListWidget.shouldRebuildRows(false, List.of(), List.of("a", "b")));
+    }
+
+    @Test
+    void builtAndIdenticalSequenceSkipsRebuild() {
+        assertFalse(CraftRecipeListWidget.shouldRebuildRows(true, List.of("a", "b"), List.of("a", "b")),
+            "期望 false 因为已完成首刷（rowsBuilt=true）且 id 序列完全一致，"
+                + "应走原地更新路径以保留滚动位置，"
+                + "实际 " + CraftRecipeListWidget.shouldRebuildRows(true, List.of("a", "b"), List.of("a", "b")));
+    }
+
+    @Test
+    void builtButSequenceChangedMustRebuild() {
+        assertTrue(CraftRecipeListWidget.shouldRebuildRows(true, List.of("a", "b"), List.of("b", "a")),
+            "期望 true 因为已完成首刷但 id 序列发生重排，行的视觉位置必须跟着换，"
+                + "实际 " + CraftRecipeListWidget.shouldRebuildRows(true, List.of("a", "b"), List.of("b", "a")));
+    }
+
+    @Test
+    void builtAndBothEmptySkipsRebuild() {
+        assertFalse(CraftRecipeListWidget.shouldRebuildRows(true, List.of(), List.of()),
+            "期望 false 因为首刷已渲染过「无匹配配方」占位（rowsBuilt=true）且仍为空列表，"
+                + "占位无需重建，实际 " + CraftRecipeListWidget.shouldRebuildRows(true, List.of(), List.of()));
+    }
 }
