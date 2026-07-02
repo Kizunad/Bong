@@ -37,17 +37,22 @@ public final class CraftScreen extends BaseOwoScreen<FlowLayout> {
     private int flashTicks;
     private long lastTickSoundElapsed = -1;
 
-    private final Consumer<List<CraftRecipe>> recipeListener = recipes -> scheduleRefresh();
-    private final Consumer<CraftSessionStateView> sessionListener = state -> scheduleRefresh();
+    // 5 个 listener 按"变了什么"分组件路由刷新，而不是统一 scheduleRefresh()→refreshAll()：
+    // inventory 快照 server 推得很勤，若每次都 refreshAll()（内部含 recipeList.refresh()），
+    // 会把左栏配方列表也牵连进刷新节奏——配合 CraftRecipeListWidget 的 diff 式 refresh() 本身
+    // 不会重建行，但收窄刷新范围仍是工程卫生：session/outcome 事件与"配方集合是否变化"无关，
+    // 没理由碰 recipeList / subtitle。
+    private final Consumer<List<CraftRecipe>> recipeListener = recipes -> scheduleRefresh(this::refreshAll);
+    private final Consumer<CraftSessionStateView> sessionListener = state -> scheduleRefresh(this::refreshSessionOnly);
     private final Consumer<CraftStore.CraftOutcomeEvent> outcomeListener = event -> {
         if (event.kind() == CraftStore.CraftOutcomeEvent.Kind.COMPLETED) {
             flashTicks = 6;
             playCompleteSound();
         }
-        scheduleRefresh();
+        scheduleRefresh(this::refreshOutcomeOnly);
     };
-    private final Consumer<CraftStore.RecipeUnlockedEvent> unlockListener = event -> scheduleRefresh();
-    private final Consumer<InventoryModel> inventoryListener = inventory -> scheduleRefresh();
+    private final Consumer<CraftStore.RecipeUnlockedEvent> unlockListener = event -> scheduleRefresh(this::refreshAll);
+    private final Consumer<InventoryModel> inventoryListener = inventory -> scheduleRefresh(this::refreshInventoryOnly);
 
     public CraftScreen() {
         super(TITLE);
@@ -157,6 +162,7 @@ public final class CraftScreen extends BaseOwoScreen<FlowLayout> {
         InventoryStateStore.addListener(inventoryListener);
     }
 
+    /** 初始化 / 配方集合或解锁态变化（recipeListener、unlockListener）：结构可能变，全量刷新。 */
     private void refreshAll() {
         if (recipeList == null || materialGrid == null || outputPreview == null || actionBar == null) {
             return;
@@ -170,13 +176,10 @@ public final class CraftScreen extends BaseOwoScreen<FlowLayout> {
         actionBar.refresh(selected, inventory, session);
         materialGrid.refresh(selected, inventory, session, actionBar.quantity());
         outputPreview.refresh(selected, flashTicks);
-        if (subtitle != null) {
-            int known = (int) CraftStore.recipes().stream().filter(CraftRecipe::isHandcraft).count();
-            int craftable = selected == null ? 0 : CraftInventoryCounter.maxCraftable(selected, inventory);
-            subtitle.text(Text.literal("C 关闭 · 已知配方 " + known + " · 当前可做 x" + craftable));
-        }
+        updateSubtitle(selected, inventory);
     }
 
+    /** 左栏点击选中配方（不经 listener）：右栏 + 副标题，不碰 recipeList 自身。 */
     private void refreshRightPanel() {
         if (materialGrid == null || outputPreview == null || actionBar == null) {
             return;
@@ -187,17 +190,67 @@ public final class CraftScreen extends BaseOwoScreen<FlowLayout> {
         actionBar.refresh(selected, inventory, session);
         materialGrid.refresh(selected, inventory, session, actionBar.quantity());
         outputPreview.refresh(selected, flashTicks);
-        if (subtitle != null) {
-            int known = (int) CraftStore.recipes().stream().filter(CraftRecipe::isHandcraft).count();
-            int craftable = selected == null ? 0 : CraftInventoryCounter.maxCraftable(selected, inventory);
-            subtitle.text(Text.literal("C 关闭 · 已知配方 " + known + " · 当前可做 x" + craftable));
+        updateSubtitle(selected, inventory);
+    }
+
+    /**
+     * inventoryListener：server 快照推得很勤的高频路径。recipeList.refresh() 内部走 diff 式
+     * 原地更新（id 序列不变则不 clearChildren），不会触发 owo ScrollContainer 的滚动回弹；
+     * outputPreview 与配方数量无关，跳过。
+     */
+    private void refreshInventoryOnly() {
+        if (recipeList == null || materialGrid == null || actionBar == null) {
+            return;
         }
+        InventoryModel inventory = InventoryStateStore.snapshot();
+        CraftRecipe selected = currentRecipe();
+        recipeList.setSelectedId(selectedId);
+        recipeList.refresh(inventory);
+        CraftSessionStateView session = CraftStore.sessionState();
+        actionBar.refresh(selected, inventory, session);
+        materialGrid.refresh(selected, inventory, session, actionBar.quantity());
+        updateSubtitle(selected, inventory);
+    }
+
+    /** sessionListener：制作进度相关，只有 actionBar / materialGrid 会随 session tick 变化。 */
+    private void refreshSessionOnly() {
+        if (materialGrid == null || actionBar == null) {
+            return;
+        }
+        InventoryModel inventory = InventoryStateStore.snapshot();
+        CraftRecipe selected = currentRecipe();
+        CraftSessionStateView session = CraftStore.sessionState();
+        actionBar.refresh(selected, inventory, session);
+        materialGrid.refresh(selected, inventory, session, actionBar.quantity());
+    }
+
+    /** outcomeListener：制作完成/失败后 outputPreview 需要反映最新产物；inventory 快照会另行
+     * 触发 inventoryListener 推数量，这里只需 actionBar/materialGrid 跟上 session 状态复位。 */
+    private void refreshOutcomeOnly() {
+        if (outputPreview == null || materialGrid == null || actionBar == null) {
+            return;
+        }
+        InventoryModel inventory = InventoryStateStore.snapshot();
+        CraftRecipe selected = currentRecipe();
+        CraftSessionStateView session = CraftStore.sessionState();
+        outputPreview.refresh(selected, flashTicks);
+        actionBar.refresh(selected, inventory, session);
+        materialGrid.refresh(selected, inventory, session, actionBar.quantity());
     }
 
     private void refreshOutputOnly() {
         if (outputPreview != null) {
             outputPreview.refresh(currentRecipe(), flashTicks);
         }
+    }
+
+    private void updateSubtitle(CraftRecipe selected, InventoryModel inventory) {
+        if (subtitle == null) {
+            return;
+        }
+        int known = (int) CraftStore.recipes().stream().filter(CraftRecipe::isHandcraft).count();
+        int craftable = selected == null ? 0 : CraftInventoryCounter.maxCraftable(selected, inventory);
+        subtitle.text(Text.literal("C 关闭 · 已知配方 " + known + " · 当前可做 x" + craftable));
     }
 
     private void ensureSelection() {
@@ -228,12 +281,12 @@ public final class CraftScreen extends BaseOwoScreen<FlowLayout> {
         playTickSound();
     }
 
-    private void scheduleRefresh() {
+    private void scheduleRefresh(Runnable action) {
         MinecraftClient client = MinecraftClient.getInstance();
         if (client != null) {
-            client.execute(this::refreshAll);
+            client.execute(action);
         } else {
-            refreshAll();
+            action.run();
         }
     }
 
