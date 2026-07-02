@@ -125,7 +125,8 @@ public class DroppedLootSyncHandlerTest {
 
         ServerDataRouter.RouteResult result = ServerDataRouter.createDefault().route(payload, 0);
 
-        assertFalse(result.isHandled(), result.logMessage());
+        assertFalse(result.isHandled(),
+                "world_pos_z 缺失 → entry 非法 → 整份 payload 应被拒(unhandled)，实际 log=" + result.logMessage());
         assertTrue(DroppedItemStore.snapshot().isEmpty(),
                 "world_pos_z 缺失 → entry 非法 → store 不应被污染");
     }
@@ -143,7 +144,8 @@ public class DroppedLootSyncHandlerTest {
 
         ServerDataRouter.RouteResult result = ServerDataRouter.createDefault().route(payload, 0);
 
-        assertFalse(result.isHandled(), result.logMessage());
+        assertFalse(result.isHandled(),
+                "charges 非整数 → item 解析失败 → entry 被拒 → 整份 payload 应 unhandled，实际 log=" + result.logMessage());
         assertTrue(DroppedItemStore.snapshot().isEmpty(),
                 "charges 非整数 → item 解析失败 → entry 被拒 → store 不应被污染");
     }
@@ -165,7 +167,8 @@ public class DroppedLootSyncHandlerTest {
         ServerDataRouter.RouteResult result = ServerDataRouter.createDefault()
                 .route(legacyJson, legacyJson.getBytes(StandardCharsets.UTF_8).length);
 
-        assertFalse(result.isParseError(), result.logMessage());
+        assertFalse(result.isParseError(),
+                "proto-bridged 合法 JSON 不应解析报错(parse error)，实际 log=" + result.logMessage());
         assertTrue(result.isHandled(),
                 "dropped_loot_sync 应被 handler 接受（非 noOp）；noOp 说明 entry 解析失败——proto wire 是 flat "
                 + "world_pos_x/y/z，handler 读错形状会丢弃整条 entry。log=" + result.logMessage());
