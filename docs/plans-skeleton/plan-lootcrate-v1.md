@@ -3,7 +3,7 @@
 > **一句话主题**：新增 5 变种世界散布 LootCrate（骨扎皮箱/符封遗匣/锈铁行军箱/藤蚀腐木箱/残灰陶瓮，bbmodel 资产已产出），**镜像供应棺全链路**（refresh tick 自动散布 + `ExternalContainer` 会话开箱 + 超时碎裂进冷却重刷），零新 proto——把"搜打撤捡箱子"体验从剑冢单 zone 扩展到全世界，按 zone 危险度分变种分品质。
 
 **状态**：骨架（skeleton）。升 active 前按 docs/CLAUDE.md §五 收口 §8。
-**资产**：5 个 bbmodel 生成器已落地 `scripts/models/gen_loot_crates.py`（本 PR 附带，3 轮打磨 + 真渲染核验），`local_models/LootCrate*.bbmodel` 供 Blockbench 手调，渲染总览 `scripts/models/render_loot_crates_all.png`。
+**资产**：5 个 bbmodel 生成器已落地 `scripts/models/gen_loot_crates.py`（本 PR 附带，3 轮打磨 + 真渲染核验，黑盒测试 `test_gen_loot_crates.py` 11 例），`local_models/lootcrate/LootCrate*.bbmodel` 供 Blockbench 手调，真渲染总览 `scripts/models/render_loot_crates_all.png`（三视图示意拼版为 `loot_crates_preview_all.png`）。
 
 | 阶段 | 主题 | 状态 |
 |------|------|------|
@@ -37,6 +37,11 @@
 
 - `world/entity_model.rs`：`EntityKind` 常量 169~173（`LOOT_CRATE_BONE_LASH` 等）+ `BongVisualKind` 5 变种 + `entity_kind()` match + 契约测试期望数组扩展（`:687`）。
 - 新模块 `server/src/lootcrate/`（镜像 supply_coffin 结构）：`LootCrateVariant` enum、`LootCrateRegistry`（per-variant per-zone-tier 的 max_active/cooldown/间距）、`refresh.rs`（spawn director，选点复用 `pick_valid_pos` 模式但 zone 集合来自分布配置而非单 zone）、`interact.rs`（距离≤4 校验/占用锁/roll→`ExternalContainer`）、`lifecycle.rs`（超时碎裂/离范围关箱/掉线释放锁——复用 supply_coffin 语义）。`main.rs` 注册。
+- **`ExternalContainerKind::LootCrate` 的下游分支清单**（只加枚举不接线=孤岛红旗，逐项核对）：
+  - `external_kind_to_source_kind`（`inventory/external_container.rs:16-34`）：补 `LootCrate` → `LootContainerSourceKindV1` 映射（wire 侧 source_kind 枚举是否需新变体见 §8 #7 payload 核查）；
+  - `loot_container_open_from_external_container`（`world/container_open.rs:153-162`）：确认开箱 S2C 构造走同一路径、variant 信息随 payload 下发（P4 主题皮肤依赖）；
+  - `container_open_audio_cue`（`world/container_block.rs:415-430`）：补 `LootCrate` 开箱 SFX 分派（按变种，音色表见 P3）；
+  - `lifecycle` 的 `is_supply_coffin_lifecycle_managed` 类认领判定（`supply_coffin/lifecycle.rs:123-125`）：LootCrate 由自己的 lifecycle 认领，勿被棺的 tick 误管。
 - despawn 一律 `insert(Despawned)`。
 - **测试**：镜像 supply_coffin 测试族——补位/冷却/间距/水面拒绝/占用互斥/超时碎裂/重刷；raw_id 对齐契约测试。
 

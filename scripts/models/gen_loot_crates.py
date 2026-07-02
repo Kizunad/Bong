@@ -763,6 +763,14 @@ def summarize(spec, cubes):
     print(f"  bbox : {bb[0]/PX:.2f}W × {bb[1]/PX:.2f}H × {bb[2]/PX:.2f}D 格 | cubes {len(cubes)} ({parts})")
 
 
+def _rel(p: Path) -> Path:
+    """REPO 内路径打印相对形式；测试重定向到临时目录时回退绝对路径。"""
+    try:
+        return p.relative_to(REPO)
+    except ValueError:
+        return p
+
+
 def combine_previews(paths, out):
     imgs = [Image.open(p) for p in paths]
     w = max(i.width for i in imgs)
@@ -794,15 +802,17 @@ def main():
             out = LOCAL_MODELS / f"LootCrate{''.join(w.capitalize() for w in key.split('_'))}.bbmodel"
             out.parent.mkdir(parents=True, exist_ok=True)
             out.write_text(json.dumps(build_bbmodel(spec, cubes, tex), ensure_ascii=False, indent=1))
-            print(f"  → bbmodel: {out.relative_to(REPO)} ({out.stat().st_size} B)")
+            print(f"  → bbmodel: {_rel(out)} ({out.stat().st_size} B)")
         p = render_preview(spec, cubes, tex, PREVIEW_DIR / f"loot_crate_{key}_preview.png")
         previews.append(p)
-        print(f"  → preview: {p.relative_to(REPO)}")
+        print(f"  → preview: {_rel(p)}")
 
     if len(previews) > 1:
-        allp = PREVIEW_DIR / "loot_crates_render_all.png"
+        # 三视图示意拼版；真渲染总览另由 render_bbmodel.py 逐个渲染后拼为
+        # scripts/models/render_loot_crates_all.png（plan/PR 引用的是后者）。
+        allp = PREVIEW_DIR / "loot_crates_preview_all.png"
         combine_previews(previews, allp)
-        print(f"→ combined: {allp.relative_to(REPO)}")
+        print(f"→ combined: {_rel(allp)}")
 
 
 if __name__ == "__main__":
