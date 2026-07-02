@@ -1385,6 +1385,59 @@ class ProtoServerDataBridgeTest {
         assertEquals(0, json.get("z").getAsInt());
     }
 
+    // ─── plan-inventory-hint-panel-v1 P0/P1：InventoryMoveRejected proto round-trip ──
+    @Test
+    void bridgeInventoryMoveRejectedWithAllFieldsPreservesStructuredValues() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setInventoryMoveRejected(Envelope.InventoryMoveRejected.newBuilder()
+                        .setReason("worn_cap_full")
+                        .setSlot("chest")
+                        .setCap(3))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+
+        assertEquals(1, json.get("v").getAsInt());
+        assertEquals("inventory_move_rejected", json.get("type").getAsString());
+        assertEquals("worn_cap_full", json.get("reason").getAsString());
+        assertEquals("chest", json.get("slot").getAsString());
+        assertEquals(3, json.get("cap").getAsInt(), "cap is uint32, must round-trip as a JSON number not string");
+        assertFalse(json.has("required_realm"),
+                "required_realm is proto3 optional and unset here — must be omitted, not null/empty string");
+    }
+
+    @Test
+    void bridgeInventoryMoveRejectedRealmTooLowCarriesEnglishTagOnly() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setInventoryMoveRejected(Envelope.InventoryMoveRejected.newBuilder()
+                        .setReason("realm_too_low")
+                        .setRequiredRealm("Condense"))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+
+        assertEquals("realm_too_low", json.get("reason").getAsString());
+        assertEquals("Condense", json.get("required_realm").getAsString(),
+                "server must ship the English realm_to_string tag; Chinese conversion happens client-side");
+        assertFalse(json.has("slot"));
+        assertFalse(json.has("cap"));
+    }
+
+    @Test
+    void bridgeInventoryMoveRejectedMinimalReasonOmitsOptionalFields() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setInventoryMoveRejected(Envelope.InventoryMoveRejected.newBuilder()
+                        .setReason("hand_occupied"))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+
+        assertEquals("hand_occupied", json.get("reason").getAsString());
+        assertFalse(json.has("required_realm"));
+        assertFalse(json.has("slot"));
+        assertFalse(json.has("cap"));
+    }
+
     // ═══════════════════════════════════════════════════════════════════
     // Helper
     // ═══════════════════════════════════════════════════════════════════

@@ -264,6 +264,8 @@ public final class ServerDataRouter {
             new com.bong.client.combat.handler.ZhenmaiHudServerDataHandler());
         // plan-exploration-probe-return-v1 P0：神识感知矿脉回执（actionbar overlay + SFX）
         handlers.put("mineral_probe_result", new MineralProbeResultHandler());
+        // plan-inventory-hint-panel-v1 P1：库存操作拒绝原因失败 toast（"天道警示：..."）
+        handlers.put("inventory_move_rejected", new InventoryMoveRejectedHandler());
         // plan-exploration-probe-return-v1 P2：修炼顿悟邀约（InsightOfferStore → InsightOfferScreen）
         handlers.put("insight_offer", new InsightOfferHandler());
         // plan-agent-ui-data-v1 P1 — 天道动态 UI 面板

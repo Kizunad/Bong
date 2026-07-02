@@ -174,6 +174,8 @@ public class ServerDataRouterTest {
             "sword_bond_hud_state",
             // plan-exploration-probe-return-v1 P0 — 神识感知矿脉回执 S2C
             "mineral_probe_result",
+            // plan-inventory-hint-panel-v1 P1 — 库存操作拒绝原因失败 toast
+            "inventory_move_rejected",
             // plan-exploration-probe-return-v1 P2 — 修炼顿悟邀约 S2C
             "insight_offer",
             // 功法 AV 里程碑 系列 2b — zhenmai 5 招专属 HUD S2C（条件式 HUD 状态推送）
