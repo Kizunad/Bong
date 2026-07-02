@@ -284,6 +284,9 @@ pub enum ServerDataType {
     // ─── F9 跨层修复：出生引导棺权威坐标广播 ───────────────────────
     /// 出生引导棺权威坐标（join 时广播，取代 client 硬编码判定盒）。
     TutorialCoffinPos,
+    // ─── plan-inventory-hint-panel-v1 P0：库存操作拒绝原因结构化 S2C ───
+    /// 库存操作拒绝原因（targeted→触发操作的玩家，不广播）。
+    InventoryMoveRejected,
 }
 
 #[derive(Debug, Clone)]
@@ -580,6 +583,9 @@ pub enum ServerDataPayloadV1 {
     TutorialCoffinPos {
         position: [i32; 3],
     },
+    // ─── plan-inventory-hint-panel-v1 P0：库存操作拒绝原因结构化 S2C ───
+    /// 库存操作拒绝原因（targeted→触发操作的玩家，不广播）。模式照抄 `MineralProbeResult`。
+    InventoryMoveRejected(InventoryMoveRejectedV1),
 }
 
 /// 神识感知矿脉回执 S2C。扁平化 `MineralProbeResult` 枚举。
@@ -597,6 +603,27 @@ pub struct MineralProbeResultV1 {
     pub display_name_zh: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub denial_reason: Option<String>,
+}
+
+/// plan-inventory-hint-panel-v1 P0 — 库存操作拒绝原因结构化 S2C payload。
+///
+/// 仅发给触发操作的玩家（不广播）。`reason` 是 [`crate::inventory::InventoryMoveRejectReason::to_wire_tag`]
+/// 输出的 snake_case string tag（wire 形状安全：string tag 而非 proto enum，避免枚举前缀
+/// noOp，见 plan-wire-format-bridge-v1 教训）；`required_realm` / `slot` / `cap` 仅在对应原因
+/// 携带该信息时才有值（其余原因为 `None`）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InventoryMoveRejectedV1 {
+    pub reason: String,
+    /// 境界不足时的 required_realm 英文 tag（如 `"Condense"`），其余原因为 `None`。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub required_realm: Option<String>,
+    /// worn_cap 满 / 护甲槽位不符 / 背包 equip_slot 不符时的槽位 key，其余原因为 `None`。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub slot: Option<String>,
+    /// worn_cap 满时的槽位上限，其余原因为 `None`。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cap: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1789,6 +1816,11 @@ enum ServerDataPayloadWireV1 {
     TutorialCoffinPos {
         position: [i32; 3],
     },
+    // ─── plan-inventory-hint-panel-v1 P0：库存操作拒绝原因结构化 S2C ───
+    InventoryMoveRejected {
+        #[serde(flatten)]
+        data: InventoryMoveRejectedV1,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2667,6 +2699,10 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
             ServerDataPayloadWireV1::TutorialCoffinPos { position } => {
                 Ok(Self::TutorialCoffinPos { position })
             }
+            // ─── plan-inventory-hint-panel-v1 P0：库存操作拒绝原因结构化 S2C ───
+            ServerDataPayloadWireV1::InventoryMoveRejected { data } => {
+                Ok(Self::InventoryMoveRejected(data))
+            }
         }
     }
 }
@@ -3253,6 +3289,10 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
             ServerDataPayloadV1::TutorialCoffinPos { position } => Self::TutorialCoffinPos {
                 position: *position,
             },
+            // ─── plan-inventory-hint-panel-v1 P0：库存操作拒绝原因结构化 S2C ───
+            ServerDataPayloadV1::InventoryMoveRejected(data) => {
+                Self::InventoryMoveRejected { data: data.clone() }
+            }
         }
     }
 }
@@ -3588,6 +3628,8 @@ impl ServerDataPayloadV1 {
             Self::HalfStepRechallenge(..) => ServerDataType::HalfStepRechallenge,
             // ─── F9 跨层修复：出生引导棺权威坐标广播 ────────────────────
             Self::TutorialCoffinPos { .. } => ServerDataType::TutorialCoffinPos,
+            // ─── plan-inventory-hint-panel-v1 P0：库存操作拒绝原因结构化 S2C ───
+            Self::InventoryMoveRejected(..) => ServerDataType::InventoryMoveRejected,
         }
     }
 
@@ -3740,6 +3782,8 @@ impl ServerDataPayloadV1 {
             Self::HalfStepRechallenge(..) => true,
             // ─── F9 跨层修复：出生引导棺权威坐标广播（proto 路径） ──────
             Self::TutorialCoffinPos { .. } => false,
+            // ─── plan-inventory-hint-panel-v1 P0：库存操作拒绝原因结构化 S2C（proto 路径） ───
+            Self::InventoryMoveRejected(..) => false,
         }
     }
 }
@@ -4284,6 +4328,13 @@ mod tests {
                 char_id: "offline:Kiz".to_string(),
                 rechallenge_window_until: 50_000,
                 at_tick: 1_000,
+            }),
+            // ─── plan-inventory-hint-panel-v1 P0 wire/label guard ─────
+            ServerDataPayloadV1::InventoryMoveRejected(InventoryMoveRejectedV1 {
+                reason: "worn_cap_full".to_string(),
+                required_realm: None,
+                slot: Some("chest".to_string()),
+                cap: Some(3),
             }),
         ];
 

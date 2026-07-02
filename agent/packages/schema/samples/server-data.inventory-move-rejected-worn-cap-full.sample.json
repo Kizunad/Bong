@@ -1,0 +1,6 @@
+{
+  "type": "inventory_move_rejected",
+  "reason": "worn_cap_full",
+  "slot": "chest",
+  "cap": 3
+}

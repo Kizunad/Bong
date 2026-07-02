@@ -166,6 +166,8 @@ message ServerDataEnvelope {
     ZhenmaiHud zhenmai_hud = 135;
     // ─── F9：出生引导棺权威坐标广播（module-map 跨层修复；防 spawn 迁移后 client 硬编码盒失效） ─
     TutorialCoffinPos tutorial_coffin_pos = 136;
+    // ─── plan-inventory-hint-panel-v1 P0：库存操作拒绝原因结构化 S2C ───
+    InventoryMoveRejected inventory_move_rejected = 137;
     // 字段编号一旦分配永不复用（buf breaking 检测保证）。
   }
 }
@@ -3920,6 +3922,17 @@ message MineralProbeResult {
   optional uint32  remaining_units   = 3; // found only
   optional string  display_name_zh   = 4; // found only
   optional string  denial_reason     = 5; // denied only: realm_too_low/out_of_range/not_mineral_ore/stale_ore_index/mineral_not_registered
+}
+
+// ─── plan-inventory-hint-panel-v1 P0：库存操作拒绝原因结构化 S2C ────
+// 与 Rust InventoryMoveRejectedV1 精确对应。仅发给触发操作的玩家（不广播）。
+// reason 用 string tag（非 proto enum，避免枚举前缀 noOp，见 plan-wire-format-bridge-v1 教训）；
+// required_realm/slot/cap 只在对应拒绝原因携带该信息时才有值。
+message InventoryMoveRejected {
+  string           reason          = 1; // snake_case tag，见 InventoryMoveRejectReason::to_wire_tag
+  optional string  required_realm  = 2; // realm_too_low：英文 tag（如 "Condense"）
+  optional string  slot            = 3; // worn_cap_full / armor_slot_mismatch / pack_equip_slot_mismatch
+  optional uint32  cap             = 4; // worn_cap_full：槽位上限
 }
 
 // ─── plan-exploration-probe-return-v1 P1：神识感知保鲜 C2S ────────

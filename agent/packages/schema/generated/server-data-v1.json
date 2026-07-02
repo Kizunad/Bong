@@ -19346,6 +19346,36 @@
       "type": "object",
       "required": [
         "type",
+        "reason"
+      ],
+      "properties": {
+        "type": {
+          "const": "inventory_move_rejected",
+          "type": "string"
+        },
+        "reason": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "required_realm": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "slot": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "cap": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "type",
         "offer_id",
         "trigger_id",
         "character_id",
