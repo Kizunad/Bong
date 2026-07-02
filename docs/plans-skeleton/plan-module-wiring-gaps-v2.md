@@ -1,6 +1,6 @@
 # plan-module-wiring-gaps-v2
 
-> 主题：module-map ⚑ 旗全量 triage（2026-07-01，53 sonnet agent 逐模块读真实代码）后，**涉 gameplay 设计抉择或 qi_physics 守恒**的 40 面旗归档成 **14 个决策主题**。本 v2 是 **report-only 决策菜单**——每个主题都需人工拍板触发语义/平衡数值/守恒口径后才能落地实施，禁止自动拍板（docs/CLAUDE.md §五 + qi 守恒红线）。
+> 主题：module-map ⚑ 旗全量 triage（2026-07-01，53 sonnet agent 逐模块读真实代码）后，**涉 gameplay 设计抉择或 qi_physics 守恒**的旗归档成 **17 个决策主题**（T1–T14 按 triage 模块旗级归类；T15–T17 为 module-map webui 全级聚合暴露的 feature 级 critical 补收）。本 v2 是 **report-only 决策菜单**——每个主题都需人工拍板触发语义/平衡数值/守恒口径后才能落地实施，禁止自动拍板（docs/CLAUDE.md §五 + qi 守恒红线）。
 >
 > **triage 分布 + 处置**：77 面 → **28 FIXABLE 已修**（机械接线，#803–808 已合并/PR，各旗已在 map 标 RESOLVED）/ **9 FALSE_POSITIVE 已清**（过时观察，#802 降 info）/ **40 NEEDS_DECISION（本文档）**。其中 5 面涉 qi 守恒（★标）。
 >
@@ -24,6 +24,9 @@
 | T12 | 世界后果/运行时地形驱动 | 3 | — | 焦土方块资产 + terrain_profile 是否驱动运行时地形 + 新环境效果 variant |
 | T13 | client 渲染/UX 收尾（真机/资产/第三方）| 11 | — | OBJ 护甲/阵法核心/Iris uniform/畸变呼吸/音频渐出/多槽特效等各自技术方案 |
 | T14 | yidao 健康师 AI HUD（跨层 id 桥接）| 1 | — | server 补 healer_id↔targetId 可换算字段（reclassified from FIXABLE）|
+| T15 | 黑武士 (HeiWuShi) BOSS 战斗 UI/反馈 | 2★crit | — | boss 血条/相位 UI（复用 TsyBossHealthBar）+ 命中反馈按 entity_id（marker 无 UUID）|
+| T16 | npc-combat 双 threat 概念脱钩 | 1★crit | — | 是否把 brain 运行时 ThreatAssessment 下行 client，统一威胁条语义 |
+| T17 | shader↔iris 全链驱动（server 写入源）| 1★crit | — | 哪些 gameplay 事件写 ShaderStatePayload + 上线补发快照（配 T13 iris client 端）|
 
 ---
 
@@ -99,6 +102,24 @@
 ## T14 — yidao 健康师 AI HUD（跨层 id 桥接，triage 误判 FIXABLE 后 reclassified）
 
 **涉旗**：`client/yidao › YidaoNpcAiStateStore`。triage 初判 FIXABLE，实施(Sonnet 5)时 Read server 代码发现前提**错误**：server `healer_id='entity_bits:<Bevy Entity::to_bits() u64>'`（`combat/yidao.rs:1618`）与 client `targetId='entity:<Valence EntityId i32>'`（`network/npc_metadata.rs`）是**两套不可转换的 id 空间，服务端无任何桥接字段**。若照 triage 方案把 TargetInfoHudPlanner 接上 YidaoNpcAiStateStore，生产环境永不命中（fails-closed=新增孤岛，违反反孤岛铁律），故未 ship。**决策**：server 侧在 healer AI payload 或 npc_metadata 补一个可与 targetId 换算的 id 字段（如同时携带 Valence EntityId），client 再按原接线方式消费。属跨层契约扩展，非纯 client 接线。
+
+## T15 — 黑武士 (HeiWuShi) BOSS 战斗 UI/反馈 ★crit×2
+
+**涉旗**（feature/heiwushi，均 critical）：
+- **无 boss 血条/相位 UI**：client 已有 `TsyBossHealthBar` 先例却未复用，2100 HP 三相 boss 对玩家完全没有血量与 Phase2/Phase3 进度指示。
+- **命中反馈接线缺口**：client `CombatEventHandler` 伤害浮字按 `target_uuid` 键控，黑武士是无 UUID 的 Marker 实体 → 攻击 boss 大概率不出伤害数字/受击反馈（需用 `entity_id` 路径补，正如 `PlayEntityAnim` 所做）。需真机验证后定级。
+
+**决策**：server 广播 boss hp/phase（复用 TsyBossHealthBar 数据通道）+ client 伤害浮字改走 entity_id 键控。与 **T2（应龙 BOSS 同步）** 是同类但不同 boss，可合并设计一套「Marker BOSS 战斗 UI/反馈」通用方案。
+
+## T16 — npc-combat 双 threat 概念脱钩 ★crit
+
+**涉旗**（feature/npc-combat，critical）：client 威胁条 `ThreatAssessmentBar` 读 `npc_mood.threat_level`（`npc_mood.rs::threat_level_for` 的境界/派系**静态启发式**），而 brain `threat.rs` 的**运行时** `ThreatAssessment.score` / `SelfInterestDecision` 从不下行 client → 威胁条不反映 NPC 真实战斗 AI 意图（伏击/逃跑/守备），显示可能与行为背离。**决策**：是否把 brain 运行时 threat 下行 client（新 payload 字段），统一"威胁"语义为单一真相源；涉跨层契约扩展。
+
+## T17 — shader↔iris 全链驱动（server 写入源）★crit
+
+**涉旗**（server/shader）：`ShaderStatePayload` 唯一写入者是 `cmd/dev/shader_push.rs`，`bong:shader_state` 广播也只在该 dev 命令 → **渡劫/境界提升/灵气变化等任何生产 gameplay 事件均不驱动 shader 更新**，所有 Iris 视觉特效正常游戏中永不触发（只能 dev 手动推）；附带 warn：新上线玩家收不到当前快照（全零 uniform 初始化直到下次手动 broadcast）。**决策**：定义哪些 gameplay 事件写 `ShaderStatePayload` + 玩家 join 时补发快照。这是 **shader↔iris 跨层链的 server 端**，与 **T13 的 client/iris uniform 注入** 合起来才是完整链（两端都需拍板才能通）。
+
+> **§补记（为何 T15–T17 是补收）**：v2 初版按 triage 的 **模块旗级**（39/40 NEEDS_DECISION）归主题，但 module-map webui 现按**全级聚合**（module + component + **feature dossier**）统计，暴露出 feature 级的 critical 未被 triage 纳入主题。现补 T15/T16/T17 使**全部 12 个严重缺口**都有归属主题。另：`feature/craft-chain` 的「alchemy 投料/调温链路孤岛 + AlchemySession::tick() 未调度」critical 归 **T7**（forge/lingtian/alchemy 加工触发）范围。93 个警示多为 map ⚑ 观察（不完善/待定/半接线），保留在 webui 缺口视图作检阅清单，不逐条立主题——待推进某主题时连带处理。
 
 ## §决策指引
 
