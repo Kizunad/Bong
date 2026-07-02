@@ -259,12 +259,7 @@ public final class ProtoServerDataBridge {
                     });
         }
         if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.CRAFT_OUTCOME) {
-            return bridgeOneofFlat(envelope.getCraftOutcome(), typeString,
-                    co -> switch (co.getOutcomeCase()) {
-                        case COMPLETED -> new OneofVariant("completed", co.getCompleted());
-                        case FAILED -> new OneofVariant("failed", co.getFailed());
-                        default -> null;
-                    });
+            return bridgeCraftOutcome(envelope.getCraftOutcome(), typeString);
         }
         if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.QUICK_SLOT_CONFIG) {
             return bridgeSlotConfig(envelope.getQuickSlotConfig(), typeString, "entry", null);
@@ -305,6 +300,112 @@ public final class ProtoServerDataBridge {
         }
         if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.CONTAINER_STATE) {
             return bridgeContainerState(envelope.getContainerState(), typeString);
+        }
+
+        // ─── plan-wire-format-bridge-v1 P1／RC2 枚举前缀 fixups ──────────
+        // 下面这批 payloadCase 此前全部走 generic path（无 stripEnumPrefix），
+        // proto3 canonical JSON 把枚举打成全名前缀字符串，各 handler 只认 serde
+        // snake_case（或个别 PascalCase/首字母大写变体），不剥则整条链路静默
+        // noOp / 恒 default。详见 docs/wire-format-bridge-audit-report.md RC2 节
+        // 与 docs/plan-wire-format-bridge-v1.md §P1。
+        if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.PLAYER_STATE) {
+            return bridgePlayerState(envelope.getPlayerState(), typeString);
+        }
+        if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.SOCIAL_EXPOSURE) {
+            return bridgeStripEnums(envelope.getSocialExposure(), typeString,
+                    new String[] {"kind", "EXPOSURE_KIND_"});
+        }
+        if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.RIFT_PORTAL_STATE) {
+            return bridgeStripEnums(envelope.getRiftPortalState(), typeString,
+                    new String[] {"direction", "RIFT_PORTAL_DIRECTION_"},
+                    new String[] {"kind", "RIFT_PORTAL_KIND_"});
+        }
+        if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.SEARCH_ABORTED) {
+            return bridgeStripEnums(envelope.getSearchAborted(), typeString,
+                    new String[] {"reason", "SEARCH_ABORT_REASON_"});
+        }
+        if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.YIDAO_HUD_STATE) {
+            return bridgeStripEnums(envelope.getYidaoHudState(), typeString,
+                    new String[] {"active_skill", "YIDAO_SKILL_ID_"});
+        }
+        if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.SKILL_XP_GAIN) {
+            return bridgeStripEnums(envelope.getSkillXpGain(), typeString,
+                    new String[] {"skill", "SKILL_ID_"});
+        }
+        if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.SKILL_LV_UP) {
+            return bridgeStripEnums(envelope.getSkillLvUp(), typeString,
+                    new String[] {"skill", "SKILL_ID_"});
+        }
+        if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.SKILL_CAP_CHANGED) {
+            return bridgeStripEnums(envelope.getSkillCapChanged(), typeString,
+                    new String[] {"skill", "SKILL_ID_"});
+        }
+        if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.SKILL_SCROLL_USED) {
+            return bridgeStripEnums(envelope.getSkillScrollUsed(), typeString,
+                    new String[] {"skill", "SKILL_ID_"});
+        }
+        if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.ALCHEMY_OUTCOME_RESOLVED) {
+            return bridgeStripEnums(envelope.getAlchemyOutcomeResolved(), typeString,
+                    new String[] {"bucket", "ALCHEMY_OUTCOME_BUCKET_"});
+        }
+        if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.ALCHEMY_CONTAMINATION) {
+            return bridgeAlchemyContamination(envelope.getAlchemyContamination(), typeString);
+        }
+        if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.BOTANY_PLANT_V2_RENDER_PROFILES) {
+            return bridgeBotanyPlantV2RenderProfiles(envelope.getBotanyPlantV2RenderProfiles(), typeString);
+        }
+        if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.GATHERING_SESSION) {
+            return bridgeStripEnums(envelope.getGatheringSession(), typeString,
+                    new String[] {"target_type", "GATHERING_TARGET_TYPE_"},
+                    new String[] {"quality_hint", "GATHERING_QUALITY_HINT_"});
+        }
+        if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.LINGTIAN_SESSION) {
+            return bridgeStripEnums(envelope.getLingtianSession(), typeString,
+                    new String[] {"kind", "LINGTIAN_SESSION_KIND_"});
+        }
+        if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.CARRIER_STATE) {
+            return bridgeStripEnums(envelope.getCarrierState(), typeString,
+                    new String[] {"phase", "CARRIER_CHARGE_PHASE_"});
+        }
+        if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.FALSE_SKIN_STATE) {
+            return bridgeFalseSkinState(envelope.getFalseSkinState(), typeString);
+        }
+        if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.QI_COLOR_OBSERVED) {
+            return bridgeStripEnums(envelope.getQiColorObserved(), typeString,
+                    new String[] {"main", "COLOR_KIND_"},
+                    new String[] {"secondary", "COLOR_KIND_"});
+        }
+        if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.SPIRITUAL_SENSE_TARGETS) {
+            return bridgeSpiritualSenseTargets(envelope.getSpiritualSenseTargets(), typeString);
+        }
+        if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.EVENT_ALERT) {
+            return bridgeStripEnums(envelope.getEventAlert(), typeString,
+                    new String[] {"event", "EVENT_KIND_"});
+        }
+        // ─── plan-wire-format-bridge-v1 P1／RC2 warn+info 批 ─────────────
+        if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.EXTRACT_STARTED) {
+            return bridgeStripEnums(envelope.getExtractStarted(), typeString,
+                    new String[] {"portal_kind", "RIFT_PORTAL_KIND_"});
+        }
+        if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.EXTRACT_ABORTED) {
+            return bridgeStripEnums(envelope.getExtractAborted(), typeString,
+                    new String[] {"reason", "EXTRACT_ABORTED_REASON_"});
+        }
+        if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.EXTRACT_FAILED) {
+            return bridgeStripEnums(envelope.getExtractFailed(), typeString,
+                    new String[] {"reason", "EXTRACT_FAILED_REASON_"});
+        }
+        if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.FORGE_OUTCOME) {
+            return bridgeStripEnums(envelope.getForgeOutcome(), typeString,
+                    new String[] {"bucket", "FORGE_OUTCOME_BUCKET_"},
+                    new String[] {"color", "COLOR_KIND_"});
+        }
+        if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.REALM_VISION_PARAMS) {
+            return bridgeStripEnums(envelope.getRealmVisionParams(), typeString,
+                    new String[] {"fog_shape", "FOG_SHAPE_"});
+        }
+        if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.SPIRIT_TREASURE_DIALOGUE) {
+            return bridgeSpiritTreasureDialogue(envelope.getSpiritTreasureDialogue(), typeString);
         }
 
         // Extract the inner oneof message.
@@ -563,6 +664,13 @@ public final class ProtoServerDataBridge {
                 JsonObject stepState = root.getAsJsonObject("step_state");
                 flattenOneofInPlace(stepState, FORGE_STEP_VARIANTS, "step");
             }
+            // plan-wire-format-bridge-v1 P1／RC2 crit：顶层 current_step（ForgeStep 枚举）
+            // 与嵌套 step_state 的 oneof tag 是两个独立字段——上面只剥了后者，前者此前
+            // 从未被剥过，proto3 JSON 打成 "FORGE_STEP_TEMPERING" 全名，ForgeScreen 的
+            // step 路由 / TemperingInputHandler / InscriptionPanelComponent /
+            // ConsecrationPanelComponent 全部只认 "billet"/"tempering"/"inscription"/
+            // "consecration"/"done"，不剥则整个锻造小游戏 UI 永久卡死/空白。
+            stripEnumPrefix(root, "current_step", "FORGE_STEP_");
             String innerJson = root.toString();
             String legacyJson = "{\"v\":1,\"type\":\"" + typeString + "\"," + innerJson.substring(1);
             return BridgeResult.success(legacyJson);
@@ -616,27 +724,70 @@ public final class ProtoServerDataBridge {
         try {
             String raw = printAndNormalize(msg);
             JsonObject root = JsonParser.parseString(raw).getAsJsonObject();
+            JsonArray unwrappedHotbar = null;
             if (root.has("hotbar") && root.get("hotbar").isJsonArray()) {
                 JsonArray hotbar = root.getAsJsonArray("hotbar");
-                JsonArray unwrapped = new JsonArray(hotbar.size());
+                unwrappedHotbar = new JsonArray(hotbar.size());
                 for (JsonElement slot : hotbar) {
                     if (slot == null || !slot.isJsonObject()) {
-                        unwrapped.add(JsonNull.INSTANCE);
+                        unwrappedHotbar.add(JsonNull.INSTANCE);
                         continue;
                     }
                     JsonObject wrapper = slot.getAsJsonObject();
                     if (wrapper.has("item") && wrapper.get("item").isJsonObject()) {
-                        unwrapped.add(wrapper.getAsJsonObject("item"));
+                        unwrappedHotbar.add(wrapper.getAsJsonObject("item"));
                     } else {
-                        unwrapped.add(JsonNull.INSTANCE);
+                        unwrappedHotbar.add(JsonNull.INSTANCE);
                     }
                 }
-                root.add("hotbar", unwrapped);
+                root.add("hotbar", unwrappedHotbar);
+            }
+            // plan-wire-format-bridge-v1 P1／RC2 warn：InventoryItemView.forge_color
+            // (optional ColorKind) 在 placed_items[].item / equipped.*_worn[] /
+            // equipped.*_held / hotbar[] 四处都可能出现，proto3 JSON 打成
+            // "COLOR_KIND_SHARP" 全名；ItemTooltipPanel.forgeColorLabel() 只认 Rust
+            // 风格首字母大写单词（"Sharp"/"Heavy"/...），不剥则任何锻造染色物品的提示
+            // 文案永久显示裸 proto 常量。
+            if (root.has("placed_items") && root.get("placed_items").isJsonArray()) {
+                for (JsonElement el : root.getAsJsonArray("placed_items")) {
+                    if (el == null || !el.isJsonObject()) continue;
+                    JsonObject placed = el.getAsJsonObject();
+                    if (placed.has("item") && placed.get("item").isJsonObject()) {
+                        stripForgeColorFromItem(placed.getAsJsonObject("item"));
+                    }
+                }
+            }
+            if (root.has("equipped") && root.get("equipped").isJsonObject()) {
+                JsonObject equipped = root.getAsJsonObject("equipped");
+                for (Map.Entry<String, JsonElement> entry : equipped.entrySet()) {
+                    JsonElement value = entry.getValue();
+                    if (value == null) continue;
+                    if (value.isJsonArray()) {
+                        for (JsonElement itemEl : value.getAsJsonArray()) {
+                            if (itemEl != null && itemEl.isJsonObject()) {
+                                stripForgeColorFromItem(itemEl.getAsJsonObject());
+                            }
+                        }
+                    } else if (value.isJsonObject()) {
+                        stripForgeColorFromItem(value.getAsJsonObject());
+                    }
+                }
+            }
+            if (unwrappedHotbar != null) {
+                for (JsonElement itemEl : unwrappedHotbar) {
+                    if (itemEl != null && itemEl.isJsonObject()) {
+                        stripForgeColorFromItem(itemEl.getAsJsonObject());
+                    }
+                }
             }
             return wrapLegacy(root, typeString);
         } catch (com.google.protobuf.InvalidProtocolBufferException e) {
             return BridgeResult.error("proto→JSON conversion failed for " + typeString + ": " + e.getMessage());
         }
+    }
+
+    private static void stripForgeColorFromItem(JsonObject item) {
+        stripEnumPrefixCapitalized(item, "forge_color", "COLOR_KIND_");
     }
 
     // ─── movement_state: enum name normalization ────────────────────
@@ -1002,14 +1153,229 @@ public final class ProtoServerDataBridge {
         }
     }
 
-    private static void normalizeRealmField(JsonObject obj, String field) {
+    /**
+     * 剥前缀后只把首字母大写、其余小写（单个 wire 单词 → "Sharp"/"Condense" 风格）。
+     * 用于 {@code normalizeRealmField}（Realm）与 forge_color / alchemy_contamination
+     * 的 color 字段（ColorKind）——这两处消费端期望 Rust 风格首字母大写单词，而非
+     * {@link #stripEnumPrefix} 产出的全小写。
+     */
+    private static void stripEnumPrefixCapitalized(JsonObject obj, String field, String prefix) {
         if (!obj.has(field) || !obj.get(field).isJsonPrimitive()) return;
         String value = obj.get(field).getAsString();
-        if (value.startsWith("REALM_")) {
-            String suffix = value.substring("REALM_".length());
+        if (value.startsWith(prefix)) {
+            String suffix = value.substring(prefix.length());
             obj.addProperty(field,
                     suffix.substring(0, 1).toUpperCase(Locale.ROOT)
                     + suffix.substring(1).toLowerCase(Locale.ROOT));
+        }
+    }
+
+    /**
+     * 剥前缀后把 SCREAMING_SNAKE_CASE 的每个下划线分段转成 PascalCase 再拼接
+     * （"ZHENFA_WARD_ALERT" → "ZhenfaWardAlert"）。目前只有
+     * {@code spiritual_sense_targets.entries[].kind}（{@code SenseKind.fromWire}）
+     * 需要这种多段 PascalCase，其余枚举消费端都认全小写或单段首字母大写。
+     */
+    private static void stripEnumPrefixPascalCase(JsonObject obj, String field, String prefix) {
+        if (!obj.has(field) || !obj.get(field).isJsonPrimitive()) return;
+        String value = obj.get(field).getAsString();
+        if (!value.startsWith(prefix)) return;
+        String suffix = value.substring(prefix.length());
+        StringBuilder sb = new StringBuilder();
+        for (String part : suffix.split("_")) {
+            if (part.isEmpty()) continue;
+            sb.append(part.substring(0, 1).toUpperCase(Locale.ROOT));
+            sb.append(part.substring(1).toLowerCase(Locale.ROOT));
+        }
+        obj.addProperty(field, sb.toString());
+    }
+
+    /** 对 {@code root.<arrayField>[].<innerField>} 逐元素剥枚举前缀（转小写）。 */
+    private static void stripEnumPrefixInArray(JsonObject root, String arrayField, String innerField, String prefix) {
+        if (!root.has(arrayField) || !root.get(arrayField).isJsonArray()) return;
+        for (JsonElement el : root.getAsJsonArray(arrayField)) {
+            if (el != null && el.isJsonObject()) {
+                stripEnumPrefix(el.getAsJsonObject(), innerField, prefix);
+            }
+        }
+    }
+
+    private static void normalizeRealmField(JsonObject obj, String field) {
+        stripEnumPrefixCapitalized(obj, field, "REALM_");
+    }
+
+    /**
+     * 通用「仅剥若干顶层字段枚举前缀」fixup，用于 generic path 无差别覆盖的
+     * simple-field payloadCase（proto 枚举字段直接挂在消息顶层，不涉及嵌套数组/
+     * oneof）。嵌套数组/oneof 场景仍走各自专属方法（如 bridgeAlchemyContamination）。
+     */
+    private static BridgeResult bridgeStripEnums(
+            MessageOrBuilder msg, String typeString, String[]... fieldPrefixPairs) {
+        try {
+            String raw = printAndNormalize(msg);
+            JsonObject root = JsonParser.parseString(raw).getAsJsonObject();
+            for (String[] pair : fieldPrefixPairs) {
+                stripEnumPrefix(root, pair[0], pair[1]);
+            }
+            return wrapLegacy(root, typeString);
+        } catch (com.google.protobuf.InvalidProtocolBufferException e) {
+            return BridgeResult.error("proto→JSON conversion failed for " + typeString + ": " + e.getMessage());
+        }
+    }
+
+    // ─── player_state: realm enum normalization ─────────────────────
+    //
+    // proto3 canonical JSON 把 Realm 打成 "REALM_CONDENSE" 全名；PLAYER_STATE
+    // 之前无 specialCase，走 generic path 不剥。HudRealmGate.tier() /
+    // RealmLabel.displayName 只认 normalizeRealmField 产出的 "Condense" 式大小写
+    // （复用 bridgeCultivationDetail 已在用的同一 helper）。不剥则所有境界门控 HUD
+    // 恒判醒灵（tier 0），境界中文标签也恒显示裸 proto 常量。
+
+    private static BridgeResult bridgePlayerState(MessageOrBuilder msg, String typeString) {
+        try {
+            String raw = printAndNormalize(msg);
+            JsonObject root = JsonParser.parseString(raw).getAsJsonObject();
+            normalizeRealmField(root, "realm");
+            return wrapLegacy(root, typeString);
+        } catch (com.google.protobuf.InvalidProtocolBufferException e) {
+            return BridgeResult.error("proto→JSON conversion failed for " + typeString + ": " + e.getMessage());
+        }
+    }
+
+    // ─── alchemy_contamination: per-level color enum normalization ──
+    //
+    // AlchemyContaminationHandler 用 String.equals("Mellow")/("Violent")（Rust 风格
+    // 首字母大写单词）挑 mellow/violent 两条快捷字段，不是 stripEnumPrefix 产出的
+    // 全小写。不剥（或剥错大小写）则 ContaminationWarningStore 永远停在初始 0/0/true，
+    // 玩家看不到真实的中毒警示。
+
+    private static BridgeResult bridgeAlchemyContamination(MessageOrBuilder msg, String typeString) {
+        try {
+            String raw = printAndNormalize(msg);
+            JsonObject root = JsonParser.parseString(raw).getAsJsonObject();
+            if (root.has("levels") && root.get("levels").isJsonArray()) {
+                for (JsonElement el : root.getAsJsonArray("levels")) {
+                    if (el != null && el.isJsonObject()) {
+                        stripEnumPrefixCapitalized(el.getAsJsonObject(), "color", "COLOR_KIND_");
+                    }
+                }
+            }
+            return wrapLegacy(root, typeString);
+        } catch (com.google.protobuf.InvalidProtocolBufferException e) {
+            return BridgeResult.error("proto→JSON conversion failed for " + typeString + ": " + e.getMessage());
+        }
+    }
+
+    // ─── botany_plant_v2_render_profiles: per-profile overlay enum ──
+    //
+    // BotanyPlantRenderProfile.fromWireName() 只认 "emissive"/"dual_phase" 全小写
+    // 裸词，不剥则所有发光/昼夜双相植物覆盖层视觉在生产环境永远回落 NONE。
+
+    private static BridgeResult bridgeBotanyPlantV2RenderProfiles(MessageOrBuilder msg, String typeString) {
+        try {
+            String raw = printAndNormalize(msg);
+            JsonObject root = JsonParser.parseString(raw).getAsJsonObject();
+            stripEnumPrefixInArray(root, "profiles", "model_overlay", "BOTANY_MODEL_OVERLAY_");
+            return wrapLegacy(root, typeString);
+        } catch (com.google.protobuf.InvalidProtocolBufferException e) {
+            return BridgeResult.error("proto→JSON conversion failed for " + typeString + ": " + e.getMessage());
+        }
+    }
+
+    // ─── false_skin_state: top-level kind + per-layer tier enums ────
+    //
+    // FalseSkinHudStateStore.sanitizeTier() 只认 "fan"/"light"/"mid"/"heavy"/
+    // "ancient" 全小写；tierForLegacyKind() 只认 "rotten_wood_armor" 全小写。
+    // 不剥则每层伪装皮的 tier 永久被 sanitizeTier 兜底成最低档 "fan"。
+
+    private static BridgeResult bridgeFalseSkinState(MessageOrBuilder msg, String typeString) {
+        try {
+            String raw = printAndNormalize(msg);
+            JsonObject root = JsonParser.parseString(raw).getAsJsonObject();
+            stripEnumPrefix(root, "kind", "FALSE_SKIN_KIND_");
+            stripEnumPrefixInArray(root, "layers", "tier", "FALSE_SKIN_TIER_");
+            return wrapLegacy(root, typeString);
+        } catch (com.google.protobuf.InvalidProtocolBufferException e) {
+            return BridgeResult.error("proto→JSON conversion failed for " + typeString + ": " + e.getMessage());
+        }
+    }
+
+    // ─── spiritual_sense_targets: per-entry SenseKind (PascalCase) ──
+    //
+    // SenseKind.fromWire() 精确匹配多段 PascalCase 字面量（"AmbientLeyline"／
+    // "ZhenfaWardAlert"／"DyingElderQi"…），既不是全小写也不是单段首字母大写，
+    // 必须用 stripEnumPrefixPascalCase。不剥则每条神识目标恒回落 LIVING_QI，
+    // 濒死大能 / 伪装蛛 / 阵法警示等差异化视觉永久失效。
+
+    private static BridgeResult bridgeSpiritualSenseTargets(MessageOrBuilder msg, String typeString) {
+        try {
+            String raw = printAndNormalize(msg);
+            JsonObject root = JsonParser.parseString(raw).getAsJsonObject();
+            if (root.has("entries") && root.get("entries").isJsonArray()) {
+                for (JsonElement el : root.getAsJsonArray("entries")) {
+                    if (el != null && el.isJsonObject()) {
+                        stripEnumPrefixPascalCase(el.getAsJsonObject(), "kind", "SENSE_KIND_");
+                    }
+                }
+            }
+            return wrapLegacy(root, typeString);
+        } catch (com.google.protobuf.InvalidProtocolBufferException e) {
+            return BridgeResult.error("proto→JSON conversion failed for " + typeString + ": " + e.getMessage());
+        }
+    }
+
+    // ─── spirit_treasure_dialogue: nested dialogue.tone enum ────────
+    //
+    // SpiritTreasureDialogueProto 把实际数据包在嵌套 "dialogue" 消息里；tone 是
+    // SpiritTreasureDialogueTone 枚举，proto3 JSON 打成
+    // "SPIRIT_TREASURE_DIALOGUE_TONE_COLD" 全名，而 JiZhaoJingTabPanel 直接把它拼进
+    // 玩家可见文案。剥前缀转小写还原成 "cold"/"curious"/"warning"/"amused"/"silent"。
+
+    private static BridgeResult bridgeSpiritTreasureDialogue(MessageOrBuilder msg, String typeString) {
+        try {
+            String raw = printAndNormalize(msg);
+            JsonObject root = JsonParser.parseString(raw).getAsJsonObject();
+            if (root.has("dialogue") && root.get("dialogue").isJsonObject()) {
+                stripEnumPrefix(root.getAsJsonObject("dialogue"), "tone", "SPIRIT_TREASURE_DIALOGUE_TONE_");
+            }
+            return wrapLegacy(root, typeString);
+        } catch (com.google.protobuf.InvalidProtocolBufferException e) {
+            return BridgeResult.error("proto→JSON conversion failed for " + typeString + ": " + e.getMessage());
+        }
+    }
+
+    // ─── craft_outcome: oneof flatten + failed.reason enum ──────────
+    //
+    // bridgeOneofFlat 只摊平 completed/failed oneof 判别 kind，不剥摊平后消息自身
+    // 的枚举字段。CraftOutcomeFailed.reason（CraftFailureReason）此前从未被剥过，
+    // 目前是 dead field（无消费方读取），但 fixup 一并补齐防止将来接线时静默复发。
+
+    private static BridgeResult bridgeCraftOutcome(Envelope.CraftOutcome msg, String typeString) {
+        OneofVariant v = switch (msg.getOutcomeCase()) {
+            case COMPLETED -> new OneofVariant("completed", msg.getCompleted());
+            case FAILED -> new OneofVariant("failed", msg.getFailed());
+            default -> null;
+        };
+        if (v == null) {
+            return BridgeResult.error(typeString + " has no oneof variant set");
+        }
+        try {
+            String raw = printAndNormalize(v.inner());
+            JsonObject inner = raw.equals("{}") ? new JsonObject() : JsonParser.parseString(raw).getAsJsonObject();
+            if ("failed".equals(v.kind())) {
+                stripEnumPrefix(inner, "reason", "CRAFT_FAILURE_REASON_");
+            }
+            JsonObject root = new JsonObject();
+            root.addProperty("v", 1);
+            root.addProperty("type", typeString);
+            root.addProperty("kind", v.kind());
+            for (Map.Entry<String, JsonElement> e : inner.entrySet()) {
+                root.add(e.getKey(), e.getValue());
+            }
+            return BridgeResult.success(root.toString());
+        } catch (com.google.protobuf.InvalidProtocolBufferException e) {
+            return BridgeResult.error("proto→JSON conversion failed for "
+                    + typeString + "/" + v.kind() + ": " + e.getMessage());
         }
     }
 

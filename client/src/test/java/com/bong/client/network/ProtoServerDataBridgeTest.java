@@ -1897,6 +1897,353 @@ class ProtoServerDataBridgeTest {
     }
 
     // ═══════════════════════════════════════════════════════════════════
+    // plan-wire-format-bridge-v1 P1／RC2 枚举前缀 fixup — crit 批（20 条）
+    // 每条：喂真实 proto3-JSON 枚举全名 → bridge() → 断言输出剥成消费端期望的
+    // wire 值（对应各 handler/store/switch 实际比较的字面量，详见
+    // docs/wire-format-bridge-audit-report.md RC2 节）。
+    // ═══════════════════════════════════════════════════════════════════
+
+    @Test
+    void bridgePlayerStateNormalizesRealmEnum() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setPlayerState(Envelope.PlayerState.newBuilder()
+                        .setRealm(Common.Realm.REALM_CONDENSE)
+                        .setZone("zone-1"))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        assertEquals("player_state", json.get("type").getAsString());
+        assertEquals("Condense", json.get("realm").getAsString(),
+                "realm 必须从 REALM_CONDENSE 剥成 'Condense'（normalizeRealmField 产出格式，"
+                + "HudRealmGate.tier() 小写后比对），否则所有境界门控 HUD 恒判醒灵");
+    }
+
+    @Test
+    void bridgeSocialExposureStripsKindEnumPrefix() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setSocialExposure(Envelope.SocialExposure.newBuilder()
+                        .setActor("player-1")
+                        .setKind(Envelope.ExposureKind.EXPOSURE_KIND_DIVINE)
+                        .setTick(10))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        assertEquals("divine", json.get("kind").getAsString(),
+                "kind 必须从 EXPOSURE_KIND_DIVINE 剥成 'divine'（SocialServerDataHandler."
+                + "EXPOSURE_KINDS 只认全小写裸词），否则 social_exposure 整条恒 noOp");
+    }
+
+    @Test
+    void bridgeRiftPortalStateStripsDirectionAndKindEnumPrefixes() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setRiftPortalState(Envelope.RiftPortalState.newBuilder()
+                        .setEntityId(1)
+                        .setKind(Envelope.RiftPortalKind.RIFT_PORTAL_KIND_MAIN_RIFT)
+                        .setDirection(Envelope.RiftPortalDirection.RIFT_PORTAL_DIRECTION_EXIT)
+                        .setFamilyId("family-1"))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        assertEquals("exit", json.get("direction").getAsString(),
+                "direction 必须剥成 'exit'（ExtractStateStore.nearestPortal() 字面量比对），"
+                + "否则 Y 键撤离 / TSY 塌缩本族裂口面板永远匹配不到");
+        assertEquals("main_rift", json.get("kind").getAsString(),
+                "kind 必须剥成 'main_rift'（ExtractProgressHudPlanner.kindLabel switch）");
+    }
+
+    @Test
+    void bridgeSearchAbortedStripsReasonEnumPrefix() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setSearchAborted(Envelope.SearchAborted.newBuilder()
+                        .setPlayerId("player-1")
+                        .setContainerEntityId(2)
+                        .setReason(Envelope.SearchAbortReason.SEARCH_ABORT_REASON_COMBAT)
+                        .setAtTick(5))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        assertEquals("combat", json.get("reason").getAsString(),
+                "reason 必须剥成 'combat'（SearchHudStateStore.abortReason switch），"
+                + "否则搜索中断 HUD 恒显示通用无原因态");
+    }
+
+    @Test
+    void bridgeYidaoHudStateStripsActiveSkillEnumPrefix() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setYidaoHudState(Envelope.YidaoHudState.newBuilder()
+                        .setHealerId("healer-1")
+                        .setActiveSkill(Envelope.YidaoSkillId.YIDAO_SKILL_ID_MERIDIAN_REPAIR))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        assertEquals("meridian_repair", json.get("active_skill").getAsString(),
+                "active_skill 必须剥成 'meridian_repair'（YidaoHudPlanner.skillLabel switch），"
+                + "否则医道 NPC 施法中的技能永远显示'待机'");
+    }
+
+    @Test
+    void bridgeSkillXpGainStripsSkillEnumPrefix() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setSkillXpGain(Envelope.SkillXpGain.newBuilder()
+                        .setCharId(1)
+                        .setSkill(Common.SkillId.SKILL_ID_HERBALISM)
+                        .setAmount(10))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        assertEquals("herbalism", json.get("skill").getAsString(),
+                "skill 必须剥成 'herbalism'（SkillId.fromWire 精确 lowercase 匹配），"
+                + "否则 skill_xp_gain 整条链路对所有技能恒 noOp");
+    }
+
+    @Test
+    void bridgeSkillLvUpStripsSkillEnumPrefix() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setSkillLvUp(Envelope.SkillLvUp.newBuilder()
+                        .setCharId(1)
+                        .setSkill(Common.SkillId.SKILL_ID_COMBAT)
+                        .setNewLv(3))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        assertEquals("combat", json.get("skill").getAsString(),
+                "skill 必须剥成 'combat'，否则 skill_lv_up 恒 noOp");
+    }
+
+    @Test
+    void bridgeSkillCapChangedStripsSkillEnumPrefix() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setSkillCapChanged(Envelope.SkillCapChanged.newBuilder()
+                        .setCharId(1)
+                        .setSkill(Common.SkillId.SKILL_ID_FORGING)
+                        .setNewCap(2))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        assertEquals("forging", json.get("skill").getAsString(),
+                "skill 必须剥成 'forging'，否则 skill_cap_changed 恒 noOp");
+    }
+
+    @Test
+    void bridgeSkillScrollUsedStripsSkillEnumPrefix() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setSkillScrollUsed(Envelope.SkillScrollUsed.newBuilder()
+                        .setCharId(1)
+                        .setScrollId("scroll-1")
+                        .setSkill(Common.SkillId.SKILL_ID_ALCHEMY)
+                        .setXpGranted(5)
+                        .setWasDuplicate(false))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        assertEquals("alchemy", json.get("skill").getAsString(),
+                "skill 必须剥成 'alchemy'，否则 skill_scroll_used 恒 noOp（残卷顿悟永不落地）");
+    }
+
+    @Test
+    void bridgeAlchemyOutcomeResolvedStripsBucketEnumPrefix() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setAlchemyOutcomeResolved(Envelope.AlchemyOutcomeResolved.newBuilder()
+                        .setBucket(Envelope.AlchemyOutcomeBucket.ALCHEMY_OUTCOME_BUCKET_PERFECT))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        assertEquals("perfect", json.get("bucket").getAsString(),
+                "bucket 必须剥成 'perfect'（AlchemyProgressHudPlanner/AlchemyScreen switch），"
+                + "否则炼丹结果 HUD/试药史恒显示灰色默认'炼废'标签");
+    }
+
+    @Test
+    void bridgeForgeSessionStripsTopLevelCurrentStepEnumPrefix() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setForgeSession(Envelope.ForgeSessionData.newBuilder()
+                        .setSessionId(1)
+                        .setBlueprintId("bp-1")
+                        .setActive(true)
+                        .setCurrentStep(Envelope.ForgeStep.FORGE_STEP_TEMPERING)
+                        .setStepIndex(1)
+                        .setAchievedTier(0))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        assertEquals("tempering", json.get("current_step").getAsString(),
+                "顶层 current_step 必须剥成 'tempering'（此前 bridgeForgeSession 只剥了嵌套 "
+                + "step_state 的 oneof tag，顶层字段从未被剥），否则 ForgeScreen 的三段式 UI "
+                + "路由（tempering/inscription/consecration）永久卡死/空白");
+    }
+
+    @Test
+    void bridgeAlchemyContaminationStripsPerLevelColorToPascalCase() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setAlchemyContamination(Envelope.AlchemyContamination.newBuilder()
+                        .addLevels(Envelope.AlchemyContaminationLevel.newBuilder()
+                                .setColor(Common.ColorKind.COLOR_KIND_MELLOW)
+                                .setCurrent(1.0)
+                                .setMax(10.0)
+                                .setOk(true))
+                        .addLevels(Envelope.AlchemyContaminationLevel.newBuilder()
+                                .setColor(Common.ColorKind.COLOR_KIND_VIOLENT)
+                                .setCurrent(2.0)
+                                .setMax(20.0)
+                                .setOk(false)))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        JsonArray levels = json.getAsJsonArray("levels");
+        assertEquals("Mellow", levels.get(0).getAsJsonObject().get("color").getAsString(),
+                "level[0].color 必须剥成 'Mellow'（首字母大写单词，AlchemyContaminationHandler "
+                + "用 String.equals(\"Mellow\") 精确比对，不是全小写），否则中毒警示恒 0/0/true");
+        assertEquals("Violent", levels.get(1).getAsJsonObject().get("color").getAsString(),
+                "level[1].color 必须剥成 'Violent'");
+    }
+
+    @Test
+    void bridgeBotanyPlantV2RenderProfilesStripsModelOverlayEnumPrefix() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setBotanyPlantV2RenderProfiles(Envelope.BotanyPlantV2RenderProfiles.newBuilder()
+                        .addProfiles(Envelope.BotanyPlantV2RenderProfile.newBuilder()
+                                .setPlantId("plant-1")
+                                .setBaseMeshRef("mesh-1")
+                                .setTintRgb(0xFFFFFF)
+                                .setModelOverlay(Envelope.BotanyModelOverlay.BOTANY_MODEL_OVERLAY_DUAL_PHASE)))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        JsonArray profiles = json.getAsJsonArray("profiles");
+        assertEquals("dual_phase", profiles.get(0).getAsJsonObject().get("model_overlay").getAsString(),
+                "profiles[0].model_overlay 必须剥成 'dual_phase'（BotanyPlantRenderProfile."
+                + "fromWireName switch 只认全小写裸词），否则发光/昼夜双相植物视觉恒回落 NONE");
+    }
+
+    @Test
+    void bridgeGatheringSessionStripsTargetTypeAndQualityHintEnumPrefixes() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setGatheringSession(Envelope.GatheringSession.newBuilder()
+                        .setSessionId("session-1")
+                        .setTargetName("铁矿")
+                        .setTargetType(Envelope.GatheringTargetType.GATHERING_TARGET_TYPE_ORE)
+                        .setQualityHint(Envelope.GatheringQualityHint.GATHERING_QUALITY_HINT_PERFECT_POSSIBLE))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        assertEquals("ore", json.get("target_type").getAsString(),
+                "target_type 必须剥成 'ore'（GatheringSessionViewModel.displayTargetName switch），"
+                + "否则采集目标标签恒回落默认'草药'");
+        assertEquals("perfect_possible", json.get("quality_hint").getAsString(),
+                "quality_hint 必须剥成 'perfect_possible'（qualityLabel/hasPerfectQualityHint），"
+                + "否则极品品质提示标签永不显示");
+    }
+
+    @Test
+    void bridgeLingtianSessionStripsKindEnumPrefix() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setLingtianSession(Envelope.LingtianSessionData.newBuilder()
+                        .setActive(true)
+                        .setKind(Envelope.LingtianSessionKind.LINGTIAN_SESSION_KIND_PLANTING)
+                        .setPosX(1)
+                        .setPosY(2)
+                        .setPosZ(3))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        assertEquals("planting", json.get("kind").getAsString(),
+                "kind 必须剥成 'planting'（LingtianSessionStore.Kind.fromWire switch），"
+                + "否则灵田 HUD 恒标 '开垦' 无论实际种植/收获/翻新/补灵/吸灵");
+    }
+
+    @Test
+    void bridgeCarrierStateStripsPhaseEnumPrefix() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setCarrierState(Envelope.CarrierState.newBuilder()
+                        .setCarrier("carrier-1")
+                        .setPhase(Envelope.CarrierChargePhase.CARRIER_CHARGE_PHASE_CHARGING)
+                        .setProgress(0.5f))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        assertEquals("charging", json.get("phase").getAsString(),
+                "phase 必须剥成 'charging'（CarrierStateHandler.readPhase switch），"
+                + "否则载体充能相位恒回落 IDLE");
+    }
+
+    @Test
+    void bridgeFalseSkinStateStripsTopLevelKindAndPerLayerTierEnumPrefixes() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setFalseSkinState(Envelope.FalseSkinState.newBuilder()
+                        .setTargetId("target-1")
+                        .setKind(Envelope.FalseSkinKind.FALSE_SKIN_KIND_ROTTEN_WOOD_ARMOR)
+                        .setLayersRemaining(1)
+                        .addLayers(Envelope.FalseSkinLayerState.newBuilder()
+                                .setTier(Envelope.FalseSkinTier.FALSE_SKIN_TIER_HEAVY)
+                                .setSpiritQuality(1.0)
+                                .setDamageCapacity(1.0)))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        assertEquals("rotten_wood_armor", json.get("kind").getAsString(),
+                "顶层 kind 必须剥成 'rotten_wood_armor'（tierForLegacyKind 字面量比对）");
+        JsonArray layers = json.getAsJsonArray("layers");
+        assertEquals("heavy", layers.get(0).getAsJsonObject().get("tier").getAsString(),
+                "layers[0].tier 必须剥成 'heavy'（sanitizeTier switch），否则每层伪装皮 tier "
+                + "永久被兜底成最低档 'fan'");
+    }
+
+    @Test
+    void bridgeQiColorObservedStripsMainAndSecondaryEnumPrefixes() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setQiColorObserved(Envelope.QiColorObserved.newBuilder()
+                        .setObserver("observer-1")
+                        .setObserved("observed-1")
+                        .setMain(Common.ColorKind.COLOR_KIND_SHARP)
+                        .setSecondary(Common.ColorKind.COLOR_KIND_HEAVY))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        assertEquals("sharp", json.get("main").getAsString(),
+                "main 必须剥成 'sharp'（ColorKind.fromWire 大小写不敏感比对，standard 小写足够），"
+                + "否则神识观色功能对每条消息恒 noOp");
+        assertEquals("heavy", json.get("secondary").getAsString(),
+                "secondary 必须同理剥成 'heavy'");
+    }
+
+    @Test
+    void bridgeSpiritualSenseTargetsStripsPerEntryKindToPascalCase() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setSpiritualSenseTargets(Envelope.SpiritualSenseTargets.newBuilder()
+                        .addEntries(Envelope.SenseEntry.newBuilder()
+                                .setKind(Envelope.SenseKind.SENSE_KIND_ZHENFA_WARD_ALERT)
+                                .setX(1).setY(2).setZ(3).setIntensity(0.5))
+                        .addEntries(Envelope.SenseEntry.newBuilder()
+                                .setKind(Envelope.SenseKind.SENSE_KIND_DYING_ELDER_QI)
+                                .setX(4).setY(5).setZ(6).setIntensity(0.9))
+                        .setGeneration(1))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        JsonArray entries = json.getAsJsonArray("entries");
+        assertEquals("ZhenfaWardAlert", entries.get(0).getAsJsonObject().get("kind").getAsString(),
+                "entries[0].kind 必须剥成多段 PascalCase 'ZhenfaWardAlert'（SenseKind.fromWire "
+                + "精确匹配，不是全小写也不是单段首字母大写），否则阵法警示恒回落 LIVING_QI");
+        assertEquals("DyingElderQi", entries.get(1).getAsJsonObject().get("kind").getAsString(),
+                "entries[1].kind 必须剥成 'DyingElderQi'（垂死大能感知视觉差异化前提）");
+    }
+
+    @Test
+    void bridgeEventAlertStripsEventEnumPrefix() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setEventAlert(Envelope.EventAlert.newBuilder()
+                        .setEvent(Envelope.EventKind.EVENT_KIND_REALM_COLLAPSE)
+                        .setMessage("境界崩塌"))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        assertEquals("realm_collapse", json.get("event").getAsString(),
+                "event 必须剥成 'realm_collapse'（EventAlertHandler.parseRealmCollapseHudState "
+                + "字面量比对），否则境界崩塌倒计时 HUD 永不激活、toast 标题永远泄漏裸 "
+                + "'Event Kind Realm Collapse' 前缀");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
     // Helper
     // ═══════════════════════════════════════════════════════════════════
 
