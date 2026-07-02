@@ -8,9 +8,10 @@
 | 阶段 | 主题 | 状态 |
 |------|------|------|
 | P0 | server 底盘——EntityKind 169~173 + lootcrate 模块（refresh/interact/lifecycle）| ⬜ |
-| P1 | loot 表——5 变种 loot pool（loot_pools.json 数据驱动）+ 分布配置 | ⬜ |
+| P1 | loot 表——5 变种独立 loot pool（loot_pools.json 数据驱动，权重概率 roll）+ 分布配置 | ⬜ |
 | P2 | client 渲染——BongEntityModelKind 5 注册 + renderer + 资源包 sha1 | ⬜ |
 | P3 | 视听 + 平衡——出土/开箱/碎裂 AV、密度与冷却校准 | ⬜ |
+| P4 | Loot UI 美化——LootContainerScreen 视觉升级（变种主题皮肤/品质边框/揭示动效）| ⬜ |
 
 ---
 
@@ -39,9 +40,11 @@
 - despawn 一律 `insert(Despawned)`。
 - **测试**：镜像 supply_coffin 测试族——补位/冷却/间距/水面拒绝/占用互斥/超时碎裂/重刷；raw_id 对齐契约测试。
 
-## P1 loot 表（数据驱动）⬜
+## P1 loot 表（数据驱动，用户定调 2026-07-03：每变种必须不同 + 概率刷法参照供应棺）⬜
 
-- `loot_pools.json` 加 5 pool：`lootcrate_bone_lash`（拾荒基础：材料/凡器/骨片）、`lootcrate_talisman`（宗门遗产：残卷/符纸/丹药，低概率功法）、`lootcrate_rust_trunk`（军旅：武器部件/护甲件/工具）、`lootcrate_vine_chest`（野外：植物/种子/腐坏食物——接 shelflife）、`lootcrate_ash_urn`（窖藏：陈酒/骨币小额/灵材）。走 `roll_loot_pool`（`loot_pool.rs:94`），启动校验 template 引用。
+- `loot_pools.json` 加 5 个**互不相同**的 pool：`lootcrate_bone_lash`（拾荒基础：材料/凡器/骨片）、`lootcrate_talisman`（宗门遗产：残卷/符纸/丹药，低概率功法）、`lootcrate_rust_trunk`（军旅：武器部件/护甲件/工具）、`lootcrate_vine_chest`（野外：植物/种子/腐坏食物——接 shelflife）、`lootcrate_ash_urn`（窖藏：陈酒/骨币小额/灵材）。
+- **roll 语义对齐供应棺**（`supply_coffin/loot.rs:181-226`）：按权重**不重复**抽 `roll_count_range` 种、每种 min~max 数量、deterministic splitmix64 种子——落在 `roll_loot_pool`（`loot_pool.rs:94`）上如缺此语义则扩该函数（加 no-repeat + count range，供应棺后续迁移也能用）。启动校验 template 引用。
+- **刷新完整性**：碎裂→冷却→refresh 补位重刷（P0 lifecycle）保证物资持续供给；每次重刷重新 roll（不是复位旧内容）。
 - **分布配置**：变种×zone 危险度映射（低危出 vine/bone_lash，高危出 talisman/rust_trunk，遗迹 zone 出 ash_urn/talisman）——具体表 §8 #2 收口；danger 数据与 `plan-ambient-threat-v1` 同源。
 - **测试**：pool 引用校验；roll 分布 pin；变种→zone 映射专属 case。
 
@@ -60,6 +63,16 @@
 - **平衡**：全世界 max_active 总量、per-zone 密度、冷却时长、与 supply_coffin/SurfaceStash 的密度叠加预算——§8 #3 校准。
 - **测试**：VFX 事件注册防孤岛（`VfxBootstrap` 核对）；SFX recipe JSON 校验。
 
+## P4 Loot UI 美化（用户定调 2026-07-03）⬜
+
+现状：`LootContainerScreen`/`LootContainerPanel`（`loot_container_open`(119) payload → Store → Bootstrap 打开，供应棺/放置容器/lootcrate 共用一屏）为功能性素屏。升级为主题化开箱体验，**惠及所有 ExternalContainer 来源**：
+
+- **变种主题皮肤**：payload 已带 source_kind/variant → 屏按来源换主题（标题文案 + 顶栏配色 + 边框风格五套：骨白/漆红/锈灰/腐木绿/陶灰，与 bbmodel 主材呼应）；供应棺/放置容器各给默认主题。皮肤资产倾向程序化 nine-patch + 现有 GUI 纹理复用（不足则 gen-image 批产，走资源包 sha1 同步）。
+- **品质边框**：loot 格子按物品 rarity 上色描边（复用 InspectScreen 既有 rarity 色映射），hover tooltip 沿用现有 ItemTooltipPanel。
+- **揭示动效**：开箱时格子 stagger 逐个揭示（每格延迟 2~3 tick，淡入+微缩放），配翻捡 SFX tick；「全部拿取」按钮（一键收包，背包满则部分收+toast）。
+- **owo 已知坑**：viewport 高度 `Sizing.fixed`（fill 顶飞坑）；内容刷新 diff 原地更新不 `clearChildren`（滚动回弹坑）。
+- **测试**：主题按 source_kind 分派全 variant pin；rarity 边框映射；全部拿取的背包满/部分收边界；揭示动效不阻塞交互（动效中可点击）。
+
 ---
 
 ## §8 开放问题（升 active / P0 决策门前收口）
@@ -70,7 +83,8 @@
 4. **符封遗匣的门槛**：talisman 变种是否要"撕符"前置（消耗动作/境界门槛/符纸反噬小惩罚）作为高价值箱的开箱代价——正典上封条是有主之物的封印。
 5. **supply_coffin loot 硬编迁移**：顺手把 supply_coffin 三档 loot 迁 `loot_pools.json`（统一数据驱动）还是留原样——倾向留原样，本 plan 不动它（防 scope 蔓延），只登记后续待办。
 6. **天道叙事**：开高价值箱是否 emit 事件进天道 narration 信号（低优先）。
+7. **P4 皮肤资产形态**：程序化 nine-patch（零新贴图）够不够五套主题的质感，还是 gen-image 批产 GUI 纹理（进资源包，吃 sha1 同步）；`loot_container_open` payload 是否已带足 source_kind/variant 字段（不足则 server 补字段，wire 变更连 samples/.proto 一起改）。
 
 ## §10（升 active 时补）
 
-scope 预估 4 PR（P0~P3 各一）。资产生成器与渲染总览已随本 skeleton PR 落地（3 轮打磨完成）；P2 的 Blockbench 手调稿与资源包 sha1 属实施期交付物。
+scope 预估 5 PR（P0~P4 各一）。资产生成器与渲染总览已随本 skeleton PR 落地（3 轮打磨完成）；P2 的 Blockbench 手调稿与资源包 sha1、P4 的 GUI 皮肤属实施期交付物。
