@@ -407,6 +407,10 @@ public final class ProtoServerDataBridge {
         if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.SPIRIT_TREASURE_DIALOGUE) {
             return bridgeSpiritTreasureDialogue(envelope.getSpiritTreasureDialogue(), typeString);
         }
+        // ─── plan-wire-format-bridge-v1 P4／RC5：recipe_unlocked.source oneof 重塑 ──
+        if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.RECIPE_UNLOCKED) {
+            return bridgeRecipeUnlocked(envelope.getRecipeUnlocked(), typeString);
+        }
 
         // Extract the inner oneof message.
         MessageOrBuilder inner = extractInner(envelope, payloadCase);
@@ -1337,6 +1341,42 @@ public final class ProtoServerDataBridge {
             JsonObject root = JsonParser.parseString(raw).getAsJsonObject();
             if (root.has("dialogue") && root.get("dialogue").isJsonObject()) {
                 stripEnumPrefix(root.getAsJsonObject("dialogue"), "tone", "SPIRIT_TREASURE_DIALOGUE_TONE_");
+            }
+            return wrapLegacy(root, typeString);
+        } catch (com.google.protobuf.InvalidProtocolBufferException e) {
+            return BridgeResult.error("proto→JSON conversion failed for " + typeString + ": " + e.getMessage());
+        }
+    }
+
+    // ─── recipe_unlocked: source oneof reshape (RC5) ─────────────────
+    //
+    // UnlockEventSource 是 `oneof source { scroll_item_template | mentor_npc_archetype
+    // | insight_trigger }`；proto3-JSON 对 oneof 直接在顶层用「被设置成员自身的字段
+    // 名」打印（如 {"scroll_item_template":"..."}），没有任何 "kind" 判别字段。
+    // RecipeUnlockedHandler 却期望 {"kind":"scroll"|"mentor"|"insight", ...} 这种
+    // tagged-union 形状（读 sourceObj.get("kind")）——generic path 恒 null →
+    // 整个残卷/师承/顿悟解锁通知链路静默 noOp。这里把 oneof 重塑成 handler 期望的
+    // 判别式对象，insight 分支额外剥 InsightTrigger 枚举前缀。
+
+    private static BridgeResult bridgeRecipeUnlocked(Envelope.RecipeUnlocked msg, String typeString) {
+        try {
+            String raw = printAndNormalize(msg);
+            JsonObject root = JsonParser.parseString(raw).getAsJsonObject();
+            if (root.has("source") && root.get("source").isJsonObject()) {
+                JsonObject rawSource = root.getAsJsonObject("source");
+                JsonObject normalized = new JsonObject();
+                if (rawSource.has("scroll_item_template")) {
+                    normalized.addProperty("kind", "scroll");
+                    normalized.add("item_template", rawSource.get("scroll_item_template"));
+                } else if (rawSource.has("mentor_npc_archetype")) {
+                    normalized.addProperty("kind", "mentor");
+                    normalized.add("npc_archetype", rawSource.get("mentor_npc_archetype"));
+                } else if (rawSource.has("insight_trigger")) {
+                    normalized.addProperty("kind", "insight");
+                    normalized.add("trigger", rawSource.get("insight_trigger"));
+                    stripEnumPrefix(normalized, "trigger", "INSIGHT_TRIGGER_");
+                }
+                root.add("source", normalized);
             }
             return wrapLegacy(root, typeString);
         } catch (com.google.protobuf.InvalidProtocolBufferException e) {
