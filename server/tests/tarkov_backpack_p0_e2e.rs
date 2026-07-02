@@ -44,6 +44,7 @@ fn container_template(id: &str, rows: u8, cols: u8, weight_capacity: f64) -> Ite
         blueprint_scroll_spec: None,
         inscription_scroll_spec: None,
         technique_scroll_spec: None,
+        readable_scroll_spec: None,
         recipe_fragment_spec: None,
         container_spec: Some(ContainerSpec {
             rows,

@@ -229,6 +229,7 @@ mod tests {
                 kind: "combat_technique".to_string(),
                 skill_id: skill_id.to_string(),
             }),
+            readable_scroll_spec: None,
             recipe_fragment_spec: None,
             container_spec: None,
             shelflife_profile: None,
