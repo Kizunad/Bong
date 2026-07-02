@@ -12,6 +12,7 @@ import java.nio.charset.StandardCharsets;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -131,6 +132,71 @@ public class ContainerInteractionHandlerTest {
                 "world_pos_z=-200.25 须经 proto wire（flat 字段）正确落进 store.z，实际 " + view.z());
         assertEquals("tsy", view.familyId(),
                 "family_id 应随 world_pos 一起正常存活（非本次回归目标，但顺带验证整条 container_state 未被破坏）");
+    }
+
+    // ── container_state: ContainerKind / KeyKind 枚举前缀在 proto wire 上被剥除 ──
+    //
+    // fix/container-state-enum-prefix：proto3 canonical JSON 把枚举打成 CONTAINER_KIND_* /
+    // KEY_KIND_*，而 TsyContainerView.kindLabelZh() 与 serde 侧（container-state sample）期望
+    // snake_case。修复前 CONTAINER_STATE 走 generic bridge 路径不剥前缀 → kind 全落「容器」默认标签、
+    // locked 也带 KEY_KIND_ 前缀。ProtoServerDataBridge 新增 bridgeContainerState 剥两者前缀。
+
+    @Test
+    void containerKindAndLockedEnumPrefixStrippedThroughProtoWire() {
+        TsyContainerView view = viewThroughProtoWire(Envelope.ContainerStateProto.newBuilder()
+                .setEntityId(88L)
+                .setKind(Envelope.ContainerKind.CONTAINER_KIND_STONE_CASKET)
+                .setFamilyId("tsy")
+                .setWorldPosX(1.0).setWorldPosY(2.0).setWorldPosZ(3.0)
+                .setLocked(Envelope.KeyKind.KEY_KIND_STONE_CASKET_KEY)
+                .setDepleted(false));
+
+        assertNotNull(view, "proto wire 解析成功后 store 里应有 entity_id=88 的容器视图");
+        assertEquals("stone_casket", view.kind(),
+                "ContainerKind.CONTAINER_KIND_STONE_CASKET 须被 bridge 剥前缀+小写成 serde snake_case "
+                + "\"stone_casket\"，实际 \"" + view.kind() + "\"；若仍是 CONTAINER_KIND_* 说明枚举前缀未剥（修复前 RED）");
+        assertEquals("石匣", view.kindLabelZh(),
+                "剥前缀后 kindLabelZh() 应命中 \"stone_casket\"→\"石匣\"，实际 \"" + view.kindLabelZh()
+                + "\"；修复前 kind 带 CONTAINER_KIND_ 前缀 → 落 default「容器」");
+        assertEquals("stone_casket_key", view.locked(),
+                "KeyKind.KEY_KIND_STONE_CASKET_KEY 须被剥前缀+小写成 \"stone_casket_key\"，实际 \"" + view.locked() + "\"");
+    }
+
+    @Test
+    void containerKindStoragePouchStrippedAndUnlockedOptionalAbsentThroughProtoWire() {
+        // 第二个 kind 变体 + optional locked 不 set（未上锁）→ locked 缺省为 null（合法降级），
+        // 不应出现带前缀的字符串。同时 world_pos 全 0 边界不应被误判「缺失」。
+        TsyContainerView view = viewThroughProtoWire(Envelope.ContainerStateProto.newBuilder()
+                .setEntityId(89L)
+                .setKind(Envelope.ContainerKind.CONTAINER_KIND_STORAGE_POUCH)
+                .setFamilyId("tsy")
+                .setWorldPosX(0.0).setWorldPosY(0.0).setWorldPosZ(0.0)
+                .setDepleted(false));
+
+        assertNotNull(view, "store 里应有 entity_id=89 的容器视图");
+        assertEquals("storage_pouch", view.kind(),
+                "CONTAINER_KIND_STORAGE_POUCH 应剥成 \"storage_pouch\"，实际 \"" + view.kind() + "\"");
+        assertEquals("储物袋残骸", view.kindLabelZh(),
+                "\"storage_pouch\"→\"储物袋残骸\"，实际 \"" + view.kindLabelZh() + "\"");
+        assertNull(view.locked(),
+                "未 set 的 optional locked 应缺省为 null（未上锁），不应出现带前缀的字符串，实际 \"" + view.locked() + "\"");
+    }
+
+    /** 过真机生产链解析一个 ContainerStateProto，返回落进 store 的 view。 */
+    private static TsyContainerView viewThroughProtoWire(Envelope.ContainerStateProto.Builder builder) {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setContainerState(builder)
+                .build();
+        ProtoServerDataBridge.BridgeResult bridged = ProtoServerDataBridge.bridge(envelope.toByteArray());
+        assertTrue(bridged.isSuccess(), "proto→legacyJson 桥接应成功，实际 error=" + bridged.errorMessage());
+        String legacyJson = bridged.legacyJson();
+        ServerPayloadParseResult parsed = ServerDataEnvelope.parse(
+                legacyJson, legacyJson.getBytes(StandardCharsets.UTF_8).length);
+        assertTrue(parsed.isSuccess(), "legacyJson 应能被解析，实际 error=" + parsed.errorMessage());
+        ServerDataDispatch dispatch = new ContainerInteractionHandler().handle(parsed.envelope());
+        assertTrue(dispatch.handled(),
+                "container_state 应被 handler 接受，实际 log=" + dispatch.logMessage());
+        return TsyContainerStateStore.get(builder.getEntityId());
     }
 
     private static void route(String json) {
