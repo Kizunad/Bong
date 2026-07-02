@@ -2083,6 +2083,124 @@ describe("sample files pass schema validation", () => {
     ).toBe(false);
   });
 
+  // ── plan-scroll-reading-v1 P0：ScrollReadRequestV1 / ServerDataScrollOpenV1 schema pin ──
+
+  it("client-request.scroll-read-request.sample.json 正样本通过", () => {
+    const data = loadSample("client-request.scroll-read-request.sample.json");
+    const result = validate(ClientRequestV1, data);
+    expect(
+      result.ok,
+      `scroll_read_request sample must be accepted by ClientRequestV1, errors: ${result.errors.join("; ")}`,
+    ).toBe(true);
+  });
+
+  it("ScrollReadRequestV1 负样本：缺少 v 字段应拒绝", () => {
+    const bad = loadObjectSample(
+      "client-request.scroll-read-request.sample.json",
+    );
+    delete bad.v;
+    const result = validate(ClientRequestV1, bad);
+    expect(result.ok, "scroll_read_request without v field must be rejected").toBe(
+      false,
+    );
+  });
+
+  it("ScrollReadRequestV1 负样本：缺少 instance_id 字段应拒绝", () => {
+    const bad = loadObjectSample(
+      "client-request.scroll-read-request.sample.json",
+    );
+    delete bad.instance_id;
+    const result = validate(ClientRequestV1, bad);
+    expect(
+      result.ok,
+      "scroll_read_request without instance_id field must be rejected",
+    ).toBe(false);
+  });
+
+  it("ScrollReadRequestV1 负样本：v:2 字面量应拒绝 (Type.Literal(1))", () => {
+    const bad = loadObjectSample(
+      "client-request.scroll-read-request.sample.json",
+    );
+    bad.v = 2;
+    const result = validate(ClientRequestV1, bad);
+    expect(
+      result.ok,
+      "scroll_read_request with v:2 must be rejected because v is Type.Literal(1)",
+    ).toBe(false);
+  });
+
+  it("ScrollReadRequestV1 负样本：instance_id 为负数应拒绝 (minimum:0)", () => {
+    const bad = loadObjectSample(
+      "client-request.scroll-read-request.sample.json",
+    );
+    bad.instance_id = -1;
+    const result = validate(ClientRequestV1, bad);
+    expect(
+      result.ok,
+      "scroll_read_request with negative instance_id must be rejected",
+    ).toBe(false);
+  });
+
+  it("ScrollReadRequestV1 负样本：额外字段应拒绝 (additionalProperties:false)", () => {
+    const bad = loadObjectSample(
+      "client-request.scroll-read-request.sample.json",
+    );
+    bad.extra = true;
+    const result = validate(ClientRequestV1, bad);
+    expect(
+      result.ok,
+      "scroll_read_request with extra field must be rejected because additionalProperties is false",
+    ).toBe(false);
+  });
+
+  it("server-data.scroll-open.sample.json 正样本通过", () => {
+    const data = loadSample("server-data.scroll-open.sample.json");
+    const result = validate(ServerDataV1, data);
+    expect(
+      result.ok,
+      `scroll_open sample must be accepted by ServerDataV1, errors: ${result.errors.join("; ")}`,
+    ).toBe(true);
+  });
+
+  it("ServerDataScrollOpenV1 负样本：缺少 title 字段应拒绝", () => {
+    const bad = loadObjectSample("server-data.scroll-open.sample.json");
+    delete bad.title;
+    const result = validate(ServerDataV1, bad);
+    expect(result.ok, "scroll_open without title field must be rejected").toBe(
+      false,
+    );
+  });
+
+  it("ServerDataScrollOpenV1 负样本：body_pages 为空数组应拒绝 (minItems:1)", () => {
+    const bad = loadObjectSample("server-data.scroll-open.sample.json");
+    bad.body_pages = [];
+    const result = validate(ServerDataV1, bad);
+    expect(
+      result.ok,
+      "scroll_open with empty body_pages must be rejected (§9: at least 1 page)",
+    ).toBe(false);
+  });
+
+  it("ServerDataScrollOpenV1 边界：单页 body_pages 应通过 (minItems:1 下界)", () => {
+    const bad = loadObjectSample("server-data.scroll-open.sample.json");
+    bad.body_pages = ["only page"];
+    const result = validate(ServerDataV1, bad);
+    expect(
+      result.ok,
+      `single-page body_pages must be accepted, errors: ${result.errors.join("; ")}`,
+    ).toBe(true);
+  });
+
+  it("ServerDataScrollOpenV1 负样本：额外字段应拒绝 (additionalProperties:false)", () => {
+    const bad = loadObjectSample("server-data.scroll-open.sample.json");
+    bad.extra = true;
+    const result = validate(ServerDataV1, bad);
+    expect(
+      result.ok,
+      "scroll_open with extra field must be rejected because additionalProperties is false",
+    ).toBe(false);
+  });
+
   it("client-request.use-quick-slot.sample.json", () => {
     const data = loadSample("client-request.use-quick-slot.sample.json");
     const result = validate(ClientRequestV1, data);

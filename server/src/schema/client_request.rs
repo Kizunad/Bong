@@ -678,6 +678,19 @@ pub enum ClientRequestV1 {
     LowerShield {
         v: u8,
     },
+    /// plan-scroll-reading-v1 P0 — 玩家请求阅读一本可阅读残卷（proto C2S tag 100，§9）。
+    /// server 查 `instance_id` 对应实例模板是否有 `readable_scroll_spec`：
+    /// 有 → emit S2C `ScrollOpen` + `play_anim`；无 spec / 非本人物品 → 静默拒绝 + warn。
+    /// 读取不消耗物品。
+    ///
+    /// **§9 契约落实偏差记录**：plan §9 proto 片段写的是 `string instance_id`，但全仓
+    /// instance_id 字段（20+ 处，`envelope.proto` 与本文件其余 C2S 变体）无一例外为
+    /// `u64`/`uint64`（含 client Java `InventoryItem.instanceId` 为 `long`）。判定为 plan
+    /// 起草笔误，此处按仓库既有惯例用 `u64`，proto tag/message 名不变。
+    ScrollReadRequest {
+        v: u8,
+        instance_id: u64,
+    },
     // ─── plan-agent-ui-data-v1 P0：天道 UI 面板交互响应 ──────────────
     /// 玩家面板交互响应（button_click / dismissed / timeout / parse_error 等）。
     /// server 校验 request_id / allowed_button_ids 后转 `bong:agent_ui_response`。
@@ -2999,6 +3012,115 @@ mod tests {
             raise_json, lower_json,
             "RaiseShield and LowerShield must produce different wire JSON; \
              raise={raise_json} lower={lower_json}"
+        );
+    }
+
+    // ─── plan-scroll-reading-v1 P0：ScrollReadRequest serde pin + TS↔Rust sample 对拍 ───
+
+    /// 正样本对拍：TS 端 sample（TypeBox source of truth）必须反序列化为
+    /// ScrollReadRequest{v:1, instance_id:42}。
+    #[test]
+    fn scroll_read_request_ts_sample_deserializes_in_rust() {
+        let json = include_str!(
+            "../../../agent/packages/schema/samples/client-request.scroll-read-request.sample.json"
+        );
+        let req: ClientRequestV1 = serde_json::from_str(json)
+            .unwrap_or_else(|e| panic!("scroll-read-request sample should deserialize: {e}"));
+        assert!(
+            matches!(
+                req,
+                ClientRequestV1::ScrollReadRequest {
+                    v: 1,
+                    instance_id: 42
+                }
+            ),
+            "positive sample must deserialize to ScrollReadRequest{{v:1, instance_id:42}}, got {req:?}"
+        );
+    }
+
+    #[test]
+    fn scroll_read_request_roundtrip() {
+        let json = r#"{"type":"scroll_read_request","v":1,"instance_id":42}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json)
+            .unwrap_or_else(|e| panic!("scroll_read_request should deserialize: {e}"));
+        assert!(
+            matches!(
+                req,
+                ClientRequestV1::ScrollReadRequest {
+                    v: 1,
+                    instance_id: 42
+                }
+            ),
+            "expected ScrollReadRequest{{v:1, instance_id:42}}, got {req:?}"
+        );
+        let encoded = serde_json::to_string(&req).expect("ScrollReadRequest serializes");
+        let encoded_val: serde_json::Value = serde_json::from_str(&encoded).unwrap();
+        let expected_val: serde_json::Value = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            encoded_val, expected_val,
+            "ScrollReadRequest round-trip must preserve wire structure; expected={expected_val} actual={encoded_val}"
+        );
+    }
+
+    /// 缺失 v 字段应反序列化失败。
+    #[test]
+    fn scroll_read_request_rejects_missing_v() {
+        let json = r#"{"type":"scroll_read_request","instance_id":42}"#;
+        let result: Result<ClientRequestV1, _> = serde_json::from_str(json);
+        assert!(
+            result.is_err(),
+            "scroll_read_request without v field should fail deserialization"
+        );
+    }
+
+    /// 缺失 instance_id 字段应反序列化失败。
+    #[test]
+    fn scroll_read_request_rejects_missing_instance_id() {
+        let json = r#"{"type":"scroll_read_request","v":1}"#;
+        let result: Result<ClientRequestV1, _> = serde_json::from_str(json);
+        assert!(
+            result.is_err(),
+            "scroll_read_request without instance_id field should fail deserialization"
+        );
+    }
+
+    /// 额外字段被拒绝（deny_unknown_fields）。
+    #[test]
+    fn scroll_read_request_rejects_extra_fields() {
+        let json = r#"{"type":"scroll_read_request","v":1,"instance_id":42,"extra":true}"#;
+        let result: Result<ClientRequestV1, _> = serde_json::from_str(json);
+        assert!(
+            result.is_err(),
+            "scroll_read_request with extra field should fail deserialization (deny_unknown_fields)"
+        );
+    }
+
+    /// instance_id 为负数应反序列化失败（u64 边界）。
+    #[test]
+    fn scroll_read_request_rejects_negative_instance_id() {
+        let json = r#"{"type":"scroll_read_request","v":1,"instance_id":-1}"#;
+        let result: Result<ClientRequestV1, _> = serde_json::from_str(json);
+        assert!(
+            result.is_err(),
+            "scroll_read_request with negative instance_id should fail (u64 cannot hold negatives)"
+        );
+    }
+
+    /// instance_id 为 0（边界值）应能正常反序列化——0 是合法的最小 instance_id。
+    #[test]
+    fn scroll_read_request_accepts_zero_instance_id() {
+        let json = r#"{"type":"scroll_read_request","v":1,"instance_id":0}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json)
+            .unwrap_or_else(|e| panic!("instance_id:0 should deserialize: {e}"));
+        assert!(
+            matches!(
+                req,
+                ClientRequestV1::ScrollReadRequest {
+                    v: 1,
+                    instance_id: 0
+                }
+            ),
+            "expected ScrollReadRequest{{v:1, instance_id:0}}, got {req:?}"
         );
     }
 

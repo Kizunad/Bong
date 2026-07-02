@@ -355,6 +355,8 @@ import {
   ServerDataMineralProbeResultV1,
   // plan-inventory-hint-panel-v1 P0
   ServerDataInventoryMoveRejectedV1,
+  // plan-scroll-reading-v1 P0
+  ServerDataScrollOpenV1,
 } from "./server-data.js";
 import {
   MovementActionRequestV1,
@@ -853,6 +855,8 @@ export const SCHEMA_REGISTRY = {
   serverDataMineralProbeResultV1: ServerDataMineralProbeResultV1,
   // plan-inventory-hint-panel-v1 P0 — 库存操作拒绝原因结构化 S2C
   serverDataInventoryMoveRejectedV1: ServerDataInventoryMoveRejectedV1,
+  // plan-scroll-reading-v1 P0 — 可阅读残卷阅读屏 S2C
+  serverDataScrollOpenV1: ServerDataScrollOpenV1,
   tutorialHookV1: TutorialHookV1,
   tutorialHookEventV1: TutorialHookEventV1,
   coffinOpenedV1: CoffinOpenedV1,
@@ -1490,6 +1494,8 @@ export const GENERATED_SCHEMA_FILES = {
   // plan-inventory-hint-panel-v1 P0 — 库存操作拒绝原因结构化 S2C
   "server-data-inventory-move-rejected-v1.json":
     SCHEMA_REGISTRY.serverDataInventoryMoveRejectedV1,
+  // plan-scroll-reading-v1 P0 — 可阅读残卷阅读屏 S2C
+  "server-data-scroll-open-v1.json": SCHEMA_REGISTRY.serverDataScrollOpenV1,
 } as const satisfies Record<string, TSchema>;
 
 export type SchemaRegistryKey = keyof typeof SCHEMA_REGISTRY;

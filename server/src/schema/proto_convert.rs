@@ -1573,6 +1573,16 @@ impl From<&ServerDataPayloadV1> for Payload {
                     cap: r.cap,
                 })
             }
+            // ─── plan-scroll-reading-v1 P0：可阅读残卷阅读屏（只读传输，不涉及 qi_physics）───
+            ServerDataPayloadV1::ScrollOpen {
+                scroll_id,
+                title,
+                body_pages,
+            } => Payload::ScrollOpen(bong::ScrollOpen {
+                scroll_id: scroll_id.clone(),
+                title: title.clone(),
+                body_pages: body_pages.clone(),
+            }),
         }
     }
 }
@@ -4020,6 +4030,13 @@ impl From<&super::client_request::ClientRequestV1> for bong::client_request_enve
             // plan-shield-block-v1 P1 — 持续举盾 / 放盾 C2S
             ClientRequestV1::RaiseShield { .. } => Payload::RaiseShield(bong::RaiseShield {}),
             ClientRequestV1::LowerShield { .. } => Payload::LowerShield(bong::LowerShield {}),
+            // plan-scroll-reading-v1 P0 — 阅读可阅读残卷 C2S（tag 100，§9）
+            ClientRequestV1::ScrollReadRequest { v, instance_id } => {
+                Payload::ScrollReadRequest(bong::ScrollReadRequest {
+                    v: u32::from(*v),
+                    instance_id: *instance_id,
+                })
+            }
             // ─── plan-agent-ui-data-v1 P0：天道 UI 响应（JSON CustomPayload，无 proto 定义）
             // AgentUiResponse 通过 JSON CustomPayload 接收，不走 proto 编码路径。
             // 若此分支被触发，说明调用方走错了路径（proto bypass 契约被破坏）。
@@ -4871,6 +4888,146 @@ mod tests {
             payload.payload_type(),
             super::super::server_data::ServerDataType::InventoryMoveRejected
         );
+    }
+
+    // ─── plan-scroll-reading-v1 P0：ScrollOpen proto round-trip pin（tag 138，§9）───
+
+    /// 3 页正文（经脉入门残卷实际形态）→ proto → decode → 字段逐一保真。
+    #[test]
+    fn s2c_scroll_open_three_pages_proto_roundtrip() {
+        use bong::server_data_envelope::Payload;
+        use prost::Message;
+
+        let payload = ServerDataPayloadV1::ScrollOpen {
+            scroll_id: "scroll_meridian_primer".to_string(),
+            title: "《经脉浅述·残卷》".to_string(),
+            body_pages: vec![
+                "第一页".to_string(),
+                "第二页".to_string(),
+                "第三页".to_string(),
+            ],
+        };
+        let proto = server_data_to_proto_payload(&payload);
+        let envelope = bong::ServerDataEnvelope {
+            payload: Some(proto),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded =
+            bong::ServerDataEnvelope::decode(bytes.as_slice()).expect("ScrollOpen proto decode");
+        match decoded.payload {
+            Some(Payload::ScrollOpen(r)) => {
+                assert_eq!(r.scroll_id, "scroll_meridian_primer");
+                assert_eq!(r.title, "《经脉浅述·残卷》");
+                assert_eq!(
+                    r.body_pages,
+                    vec![
+                        "第一页".to_string(),
+                        "第二页".to_string(),
+                        "第三页".to_string()
+                    ]
+                );
+            }
+            other => panic!("expected ScrollOpen payload, got {other:?}"),
+        }
+    }
+
+    /// 边界：单页正文（`body_pages.len()==1`，§9 "至少 1 页"下界）proto round-trip 保真。
+    #[test]
+    fn s2c_scroll_open_single_page_proto_roundtrip() {
+        use bong::server_data_envelope::Payload;
+        use prost::Message;
+
+        let payload = ServerDataPayloadV1::ScrollOpen {
+            scroll_id: "scroll_x".to_string(),
+            title: "t".to_string(),
+            body_pages: vec!["only page".to_string()],
+        };
+        let proto = server_data_to_proto_payload(&payload);
+        let envelope = bong::ServerDataEnvelope {
+            payload: Some(proto),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded =
+            bong::ServerDataEnvelope::decode(bytes.as_slice()).expect("ScrollOpen proto decode");
+        match decoded.payload {
+            Some(Payload::ScrollOpen(r)) => {
+                assert_eq!(r.body_pages, vec!["only page".to_string()]);
+            }
+            other => panic!("expected ScrollOpen payload, got {other:?}"),
+        }
+    }
+
+    /// `ScrollOpen` 走 proto 路径，不是 JSON-bypass —— pin 两个分类信号防回归。
+    #[test]
+    fn s2c_scroll_open_is_proto_not_bypass() {
+        let payload = ServerDataPayloadV1::ScrollOpen {
+            scroll_id: "scroll_x".to_string(),
+            title: "t".to_string(),
+            body_pages: vec!["p".to_string()],
+        };
+        assert!(
+            !payload.is_json_bypass(),
+            "ScrollOpen has a proto definition; is_json_bypass() must be false"
+        );
+        assert_eq!(
+            payload.payload_type(),
+            super::super::server_data::ServerDataType::ScrollOpen
+        );
+    }
+
+    // ─── plan-scroll-reading-v1 P0：ScrollReadRequest proto round-trip pin（tag 100，§9）───
+
+    /// C2S ScrollReadRequest{v,instance_id} → proto → decode → 字段逐一保真。
+    #[test]
+    fn c2s_scroll_read_request_proto_roundtrip() {
+        use crate::schema::client_request::ClientRequestV1;
+        use bong::client_request_envelope::Payload;
+        use prost::Message;
+
+        let req = ClientRequestV1::ScrollReadRequest {
+            v: 1,
+            instance_id: 42,
+        };
+        let proto = Payload::from(&req);
+        let envelope = bong::ClientRequestEnvelope {
+            payload: Some(proto),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded = bong::ClientRequestEnvelope::decode(bytes.as_slice())
+            .expect("ScrollReadRequest proto decode");
+        match decoded.payload {
+            Some(Payload::ScrollReadRequest(r)) => {
+                assert_eq!(r.v, 1);
+                assert_eq!(r.instance_id, 42);
+            }
+            other => panic!("expected ScrollReadRequest payload, got {other:?}"),
+        }
+    }
+
+    /// 边界：instance_id=0（u64 下界）proto round-trip 保真。
+    #[test]
+    fn c2s_scroll_read_request_zero_instance_id_proto_roundtrip() {
+        use crate::schema::client_request::ClientRequestV1;
+        use bong::client_request_envelope::Payload;
+        use prost::Message;
+
+        let req = ClientRequestV1::ScrollReadRequest {
+            v: 1,
+            instance_id: 0,
+        };
+        let proto = Payload::from(&req);
+        let envelope = bong::ClientRequestEnvelope {
+            payload: Some(proto),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded = bong::ClientRequestEnvelope::decode(bytes.as_slice())
+            .expect("ScrollReadRequest proto decode");
+        match decoded.payload {
+            Some(Payload::ScrollReadRequest(r)) => {
+                assert_eq!(r.instance_id, 0);
+            }
+            other => panic!("expected ScrollReadRequest payload, got {other:?}"),
+        }
     }
 
     #[test]
@@ -6789,6 +6946,16 @@ mod tests {
                     cap: Some(3),
                 }
             )),
+            // plan-scroll-reading-v1 P0：可阅读残卷阅读屏。
+            fix!(ServerDataPayloadV1::ScrollOpen {
+                scroll_id: "scroll_meridian_primer".to_string(),
+                title: "《经脉浅述·残卷》".to_string(),
+                body_pages: vec![
+                    "第一页".to_string(),
+                    "第二页".to_string(),
+                    "第三页".to_string()
+                ],
+            }),
             // ─── JSON-bypass variants (3) — is_json_bypass() returns true ───────────
             fix!(ServerDataPayloadV1::AgentUiRequest(
                 AgentUiRequestPayloadV1 {
@@ -6964,6 +7131,7 @@ mod tests {
             ServerDataType::HalfStepRechallenge,
             ServerDataType::TutorialCoffinPos,
             ServerDataType::InventoryMoveRejected,
+            ServerDataType::ScrollOpen,
         ];
 
         let total_variants = all_types.len();
@@ -7071,8 +7239,8 @@ mod tests {
         }
 
         assert_eq!(
-            proto_count, 125,
-            "Expected 125 proto-encodable S2C variants, got {proto_count}. \
+            proto_count, 126,
+            "Expected 126 proto-encodable S2C variants, got {proto_count}. \
              The fixture list or is_json_bypass classification may have changed."
         );
         assert_eq!(
@@ -7084,7 +7252,7 @@ mod tests {
 
     // ─── plan-test-coverage-guards-v1 P0：C2S exhaustive proto encoding guard ──
 
-    /// Returns a minimum-viable fixture for every `ClientRequestV1` variant (99 total).
+    /// Returns a minimum-viable fixture for every `ClientRequestV1` variant (101 total).
     ///
     /// The same exhaustiveness strategy as `s2c_all_fixtures()` applies:
     ///   - No compile-time list exhaustiveness, but `c2s_fixture_count_matches_variant_count()`
@@ -7604,6 +7772,10 @@ mod tests {
             build(ClientRequestV1::WorkbenchOpen { v: 1, entity_id: 1 }),
             build(ClientRequestV1::RaiseShield { v: 1 }),
             build(ClientRequestV1::LowerShield { v: 1 }),
+            build(ClientRequestV1::ScrollReadRequest {
+                v: 1,
+                instance_id: 1,
+            }),
             // ─── JSON-bypass variant (1) ────────────────────────────────────────
             build(ClientRequestV1::AgentUiResponse {
                 v: 1,
@@ -7614,20 +7786,20 @@ mod tests {
         ]
     }
 
-    /// Verifies that the C2S fixture list covers every `ClientRequestV1` variant (99 total).
+    /// Verifies that the C2S fixture list covers every `ClientRequestV1` variant (100 total).
     #[test]
     fn c2s_fixture_count_matches_variant_count() {
         use crate::schema::client_request::ClientRequestV1;
         use std::collections::HashSet;
         use std::mem::{discriminant, Discriminant};
         let fixtures = c2s_all_fixtures();
-        // The authoritative count is 100 (99 proto + 1 AgentUiResponse bypass).
+        // The authoritative count is 101 (100 proto + 1 AgentUiResponse bypass).
         let bypass_count = fixtures.iter().filter(|(_, b)| *b).count();
         let proto_count = fixtures.iter().filter(|(_, b)| !*b).count();
         assert_eq!(
             fixtures.len(),
-            100,
-            "C2S fixture list has {} entries but ClientRequestV1 has 100 variants. \
+            101,
+            "C2S fixture list has {} entries but ClientRequestV1 has 101 variants. \
              Add a fixture for every new variant in c2s_all_fixtures().",
             fixtures.len()
         );
@@ -7637,8 +7809,8 @@ mod tests {
              If a new bypass variant is added, update c2s_all_fixtures() and this assertion."
         );
         assert_eq!(
-            proto_count, 99,
-            "Expected 99 proto-encodable C2S variants, got {proto_count}."
+            proto_count, 100,
+            "Expected 100 proto-encodable C2S variants, got {proto_count}."
         );
 
         // Set-intersection coverage (mirrors the S2C `payload_type()` HashSet check, but keyed
@@ -7652,18 +7824,18 @@ mod tests {
             fixtures.iter().map(|(v, _)| discriminant(v)).collect();
         assert_eq!(
             distinct.len(),
-            100,
-            "C2S fixtures cover only {} DISTINCT ClientRequestV1 variants but there are 100. \
+            101,
+            "C2S fixtures cover only {} DISTINCT ClientRequestV1 variants but there are 101. \
              A variant's fixture was likely deleted and another duplicated — every variant must \
              have its OWN fixture or the proto guard silently skips it.",
             distinct.len()
         );
     }
 
-    /// Exhaustive proto encoding guard for all 99 `ClientRequestV1` variants.
+    /// Exhaustive proto encoding guard for all 101 `ClientRequestV1` variants.
     ///
     /// Same strategy as `s2c_all_proto_variants_encode_without_panic`.
-    /// For the 98 proto-encodable variants: encode → decode → assert payload present.
+    /// For the 100 proto-encodable variants: encode → decode → assert payload present.
     /// For AgentUiResponse (bypass): assert `to_proto_bytes()` panics.
     ///
     /// MUTATION GUARDS:
@@ -7730,8 +7902,8 @@ mod tests {
         }
 
         assert_eq!(
-            proto_count, 99,
-            "Expected 99 proto-encodable C2S variants, got {proto_count}."
+            proto_count, 100,
+            "Expected 100 proto-encodable C2S variants, got {proto_count}."
         );
         assert_eq!(
             bypass_count, 1,

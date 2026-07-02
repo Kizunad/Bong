@@ -1,0 +1,5 @@
+{
+  "type": "scroll_read_request",
+  "v": 1,
+  "instance_id": 42
+}

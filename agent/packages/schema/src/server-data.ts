@@ -1725,6 +1725,28 @@ export type ServerDataInventoryMoveRejectedV1 = Static<
   typeof ServerDataInventoryMoveRejectedV1
 >;
 
+// ── plan-scroll-reading-v1 P0 ── 可阅读残卷阅读屏 S2C（proto tag 138，§9） ──────
+/**
+ * server → client：打开一本可阅读残卷的阅读屏。
+ *
+ * 对应 Rust `ServerDataPayloadV1::ScrollOpen`。字段只携带正文，不 hardcode 经脉内容——
+ * 任意 `readable_scroll_spec` 挂载的物品皆可复用同一 client 阅读屏（可复用性验收）。
+ * `body_pages` 每元素一页，至少 1 页。
+ */
+export const ServerDataScrollOpenV1 = Type.Object(
+  {
+    // 与 Rust `ServerDataV1.v`（envelope 顶层版本号，flatten 进同一 JSON 对象）对齐；
+    // Optional 是因为本 TS 类型也单独描述"payload-only"形状（不含 envelope）时可省略。
+    v: Type.Optional(Type.Literal(1)),
+    type: Type.Literal("scroll_open"),
+    scroll_id: Type.String({ minLength: 1 }),
+    title: Type.String({ minLength: 1 }),
+    body_pages: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }),
+  },
+  { additionalProperties: false },
+);
+export type ServerDataScrollOpenV1 = Static<typeof ServerDataScrollOpenV1>;
+
 // ── plan-agent-ui-data-v1 P0 ── 天道 UI 面板 S2C ──────────────────────────────
 
 /**
@@ -1853,6 +1875,8 @@ export const ServerDataV1 = Type.Union([
   ServerDataMineralProbeResultV1,
   // plan-inventory-hint-panel-v1 P0
   ServerDataInventoryMoveRejectedV1,
+  // plan-scroll-reading-v1 P0
+  ServerDataScrollOpenV1,
   // plan-exploration-probe-return-v1 P2
   ServerDataInsightOfferV1,
   // plan-agent-ui-data-v1 P0 — 天道 UI 面板请求 + 关闭信号
