@@ -45,6 +45,8 @@ use crate::world::zone::TsyDepth;
 use crate::world::zone::DEFAULT_SPAWN_ZONE_NAME;
 
 pub const SPIRIT_NICHE_BASE_TEMPLATE_ID: &str = "niche_base";
+/// plan-scroll-reading-v1 P0 §8.1 #1 — 首入静默发放的经脉入门残卷模板 id。
+pub const MERIDIAN_PRIMER_TEMPLATE_ID: &str = "scroll_meridian_primer";
 pub const TUTORIAL_KAIMAI_LOOT_POOL_ID: &str = "tutorial_kaimai_chest";
 pub const COFFIN_OPEN_INTERACT_RADIUS: f64 = 6.0;
 pub const TUTORIAL_LINGQUAN_REACH_RADIUS: f64 = 8.0;
@@ -79,6 +81,9 @@ pub enum TutorialHook {
     CraftHintShown,
     FirstAlchemyHint,
     FirstForgeHint,
+    /// plan-scroll-reading-v1 P0 §8.1 #1 — 首入静默发放《经脉浅述·残卷》。
+    /// join tick-poll 系统命中即 trigger；存量老玩家也补发一次。
+    MeridianPrimerGranted,
 }
 
 #[derive(Debug, Clone, Component, Serialize, Deserialize, PartialEq)]
@@ -159,6 +164,17 @@ pub struct TutorialCoffin {
 #[derive(Debug, Clone, Copy, Component)]
 pub struct TutorialCoffinPosSent;
 
+/// plan-scroll-reading-v1 P0 §8.1 #1 — 标记该 client entity 已跑过一次经脉入门残卷
+/// 首入发放判定（无论结果是 Granted / AlreadyGranted / MissingItemTemplate）。
+///
+/// 纯效率优化，**不是**幂等的唯一防线——真正防重发靠 `grant_meridian_primer_once` 内部
+/// 的双重判定（hook 已打 OR 背包已有实例）。tick-poll 模式（仿 `TutorialCoffinPosSent`）：
+/// 不用 `Added<Client>`，否则若这一 tick `TutorialState`/`PlayerInventory` 尚未挂载完毕
+/// （见 `attach_tutorial_state_to_joined_clients` 与库存 attach 系统的挂载时序），
+/// 就会永久错过该 entity（`spawn_tutorial.rs:153-158` 记录过的同类教训）。
+#[derive(Debug, Clone, Copy, Component)]
+pub struct MeridianPrimerJoinChecked;
+
 #[derive(Debug, Clone, Copy, Component)]
 pub struct TutorialLingquan {
     pub index: u8,
@@ -183,6 +199,10 @@ type JoinedTutorialClientFilter = (Added<Client>, Without<TutorialState>);
 /// F9 跨层修复 — 还没收到 `tutorial_coffin_pos` 广播的 client entity。
 type UnsentTutorialCoffinPosQueryItem<'a> = (Entity, &'a mut Client);
 type UnsentTutorialCoffinPosFilter = (With<Client>, Without<TutorialCoffinPosSent>);
+/// plan-scroll-reading-v1 P0 §8.1 #1 — 还没跑过残卷发放判定的 client entity。
+/// 要求 `TutorialState` + `PlayerInventory` 都已挂载（缺任一都天然不命中，下 tick 重试）。
+type UnsentMeridianPrimerQueryItem<'a> = (Entity, &'a mut TutorialState, &'a mut PlayerInventory);
+type UnsentMeridianPrimerFilter = (With<Client>, Without<MeridianPrimerJoinChecked>);
 
 impl TutorialTelemetry {
     pub fn completion_rate_30min(&self) -> f64 {
@@ -203,6 +223,7 @@ pub fn register(app: &mut App) {
         (
             attach_tutorial_state_to_joined_clients,
             send_tutorial_coffin_pos_on_join,
+            grant_meridian_primer_on_join,
             handle_coffin_open_requests,
             tutorial_hook_state_machine,
             dynamic_rat_swarm_spawner.after(tutorial_hook_state_machine),
@@ -286,6 +307,123 @@ fn send_tutorial_coffin_pos_on_join(
             payload_type,
             coffin.pos
         );
+    }
+}
+
+/// plan-scroll-reading-v1 P0 §8.1 #1 — 结果分类：Granted（首次真的塞了物品）/
+/// AlreadyGranted（双重判定命中任一，跳过补发；若 hook 未打则本函数已顺带打上收敛）/
+/// MissingItemTemplate（registry 未注册该模板——配置错误）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MeridianPrimerGrantOutcome {
+    Granted { instance_id: u64 },
+    AlreadyGranted,
+    MissingItemTemplate { error: String },
+}
+
+/// 背包（containers + equipped + hotbar 三处，与 `inventory_item_by_instance_borrow`
+/// 扫描范围一致）内是否已存在某 `template_id` 的物品实例。
+fn inventory_has_template(inventory: &PlayerInventory, template_id: &str) -> bool {
+    let in_containers = inventory.containers.iter().any(|c| {
+        c.items
+            .iter()
+            .any(|p| p.instance.template_id == template_id)
+    });
+    if in_containers {
+        return true;
+    }
+    let in_equipped = inventory
+        .equipped
+        .values()
+        .any(|slot| slot.iter_all().any(|item| item.template_id == template_id));
+    if in_equipped {
+        return true;
+    }
+    inventory
+        .hotbar
+        .iter()
+        .flatten()
+        .any(|item| item.template_id == template_id)
+}
+
+/// plan-scroll-reading-v1 P0 §8.1 #1 — 首入静默发放《经脉浅述·残卷》，一次性、幂等。
+///
+/// **双重判定幂等**（覆盖两个中断窗口）：
+/// - `TutorialState.has(MeridianPrimerGranted)` 已为 true → 跳过（正常收敛路径）。
+/// - 背包已存在 `MERIDIAN_PRIMER_TEMPLATE_ID` 实例（hook 写入前进程崩溃，物品已落盘
+///   但 hook 未落盘的中断窗口）→ 跳过补发物品，但**顺带把 hook 补打上**使状态收敛，
+///   防止此系统对同一玩家每 tick 重新判定。
+///
+/// 不覆盖"hook 已打但物品缺失"的顺序——实现顺序固定为先加物品后打 hook（见下方
+/// `Ok` 分支），只要这两步不被拆到跨 tick 执行，这个顺序就不会出现。
+pub fn grant_meridian_primer_once(
+    state: &mut TutorialState,
+    inventory: &mut PlayerInventory,
+    registry: &ItemRegistry,
+    allocator: &mut InventoryInstanceIdAllocator,
+) -> MeridianPrimerGrantOutcome {
+    if state.has(TutorialHook::MeridianPrimerGranted) {
+        return MeridianPrimerGrantOutcome::AlreadyGranted;
+    }
+    if inventory_has_template(inventory, MERIDIAN_PRIMER_TEMPLATE_ID) {
+        // 崩溃窗口收敛：物品已在背包但 hook 未持久化，补打 hook，不重发物品。
+        state.trigger(TutorialHook::MeridianPrimerGranted);
+        return MeridianPrimerGrantOutcome::AlreadyGranted;
+    }
+
+    match add_item_to_player_inventory(
+        inventory,
+        registry,
+        allocator,
+        MERIDIAN_PRIMER_TEMPLATE_ID,
+        1,
+        0,
+    ) {
+        Ok(receipt) => {
+            state.trigger(TutorialHook::MeridianPrimerGranted);
+            MeridianPrimerGrantOutcome::Granted {
+                instance_id: receipt.instance_id,
+            }
+        }
+        Err(error) => MeridianPrimerGrantOutcome::MissingItemTemplate { error },
+    }
+}
+
+/// plan-scroll-reading-v1 P0 §8.1 #1 — join tick-poll 扫未打 `MeridianPrimerJoinChecked`
+/// 标记的 client，逐一跑 `grant_meridian_primer_once`。**不用 `Added<Client>`**：同一 tick
+/// 内 `TutorialState` / `PlayerInventory` 若尚未挂载完毕，本 tick 自然不命中查询（缺任一
+/// 必需 component 的 entity 不会被 Bevy Query 选中），下一 tick 自动重试，不会永久漏发
+/// （`send_tutorial_coffin_pos_on_join` 同款教训，见该函数 doc）。
+///
+/// 存量老玩家：首次升级到本版本后，join 时 `TutorialState` 从持久化恢复但没有
+/// `MeridianPrimerGranted` hook，也没有该 scroll 实例 → 本系统照样命中并补发一次。
+///
+/// 发放静默，无 narration（对齐 `plan-spawn-tutorial-v1` 沉默引导原则）。
+fn grant_meridian_primer_on_join(
+    mut commands: Commands,
+    registry: Res<ItemRegistry>,
+    mut allocator: ResMut<InventoryInstanceIdAllocator>,
+    mut clients: Query<UnsentMeridianPrimerQueryItem<'_>, UnsentMeridianPrimerFilter>,
+) {
+    for (entity, mut state, mut inventory) in &mut clients {
+        match grant_meridian_primer_once(&mut state, &mut inventory, &registry, &mut allocator) {
+            MeridianPrimerGrantOutcome::Granted { instance_id } => {
+                commands.entity(entity).insert(MeridianPrimerJoinChecked);
+                tracing::info!(
+                    "[bong][spawn-tutorial] granted meridian primer scroll instance_id={instance_id} to entity={entity:?}"
+                );
+            }
+            MeridianPrimerGrantOutcome::AlreadyGranted => {
+                commands.entity(entity).insert(MeridianPrimerJoinChecked);
+            }
+            MeridianPrimerGrantOutcome::MissingItemTemplate { error } => {
+                // 配置错误（registry 缺该模板）不会随 tick 自愈；仍打标记防止刷屏 warn，
+                // 热修复 registry 需要玩家重连（attach 系统在 join 时重新跑一次判定）。
+                commands.entity(entity).insert(MeridianPrimerJoinChecked);
+                tracing::warn!(
+                    "[bong][spawn-tutorial] failed to grant meridian primer scroll to entity={entity:?}: {error}"
+                );
+            }
+        }
     }
 }
 
@@ -977,6 +1115,7 @@ mod tests {
                 blueprint_scroll_spec: None,
                 inscription_scroll_spec: None,
                 technique_scroll_spec: None,
+                readable_scroll_spec: None,
                 recipe_fragment_spec: None,
                 container_spec: None,
                 shelflife_profile: None,
@@ -985,6 +1124,52 @@ mod tests {
             },
         );
         ItemRegistry::from_map(templates)
+    }
+
+    /// plan-scroll-reading-v1 P0 — registry 仅含 `MERIDIAN_PRIMER_TEMPLATE_ID`（挂了
+    /// `readable_scroll_spec`），供 grant 幂等测试使用。
+    fn registry_with_meridian_primer() -> ItemRegistry {
+        let mut templates = HashMap::new();
+        templates.insert(
+            MERIDIAN_PRIMER_TEMPLATE_ID.to_string(),
+            ItemTemplate {
+                id: MERIDIAN_PRIMER_TEMPLATE_ID.to_string(),
+                display_name: "《经脉浅述·残卷》".to_string(),
+                category: ItemCategory::Scroll,
+                placeable: None,
+                max_stack_count: 1,
+                grid_w: 1,
+                grid_h: 2,
+                base_weight: 0.05,
+                rarity: ItemRarity::Common,
+                spirit_quality_initial: 0.3,
+                description: "残破的入门讲义，记述经脉通行之序。翻开可读。".to_string(),
+                effect: None,
+                cast_duration_ms: 1500,
+                cooldown_ms: 1500,
+                weapon_spec: None,
+                forge_station_spec: None,
+                blueprint_scroll_spec: None,
+                inscription_scroll_spec: None,
+                technique_scroll_spec: None,
+                readable_scroll_spec: Some(crate::inventory::ReadableScrollSpec {
+                    title: "《经脉浅述·残卷》".to_string(),
+                    body_pages: vec!["第一页".to_string(), "第二页".to_string()],
+                    anim_id: Some("bong:read_scroll".to_string()),
+                }),
+                recipe_fragment_spec: None,
+                container_spec: None,
+                shelflife_profile: None,
+                shield_spec: None,
+                shelflife_track: None,
+            },
+        );
+        ItemRegistry::from_map(templates)
+    }
+
+    /// registry 缺 `MERIDIAN_PRIMER_TEMPLATE_ID`（配置错误场景）——只含无关模板。
+    fn registry_missing_meridian_primer() -> ItemRegistry {
+        ItemRegistry::from_map(HashMap::new())
     }
 
     fn empty_inventory() -> PlayerInventory {
@@ -1041,6 +1226,187 @@ mod tests {
         );
         assert_eq!(second, CoffinGrantOutcome::AlreadyOpened);
         assert_eq!(inventory.containers[0].items.len(), 1);
+    }
+
+    // ── plan-scroll-reading-v1 P0 §8.1 #1：grant_meridian_primer_once ──────────
+
+    #[test]
+    fn grant_meridian_primer_once_happy_path() {
+        let registry = registry_with_meridian_primer();
+        let mut allocator = InventoryInstanceIdAllocator::new(200);
+        let mut state = TutorialState::new(0);
+        let mut inventory = empty_inventory();
+
+        let outcome =
+            grant_meridian_primer_once(&mut state, &mut inventory, &registry, &mut allocator);
+
+        assert!(matches!(
+            outcome,
+            MeridianPrimerGrantOutcome::Granted { instance_id: 200 }
+        ));
+        assert_eq!(inventory.containers[0].items.len(), 1);
+        assert_eq!(
+            inventory.containers[0].items[0].instance.template_id,
+            MERIDIAN_PRIMER_TEMPLATE_ID
+        );
+        assert!(
+            state.has(TutorialHook::MeridianPrimerGranted),
+            "successful grant must trigger the hook"
+        );
+    }
+
+    #[test]
+    fn grant_meridian_primer_once_does_not_regrant_when_hook_already_set() {
+        // 正常收敛路径：hook 已打（例如上次 join 已发放），重复调用必须是 no-op。
+        let registry = registry_with_meridian_primer();
+        let mut allocator = InventoryInstanceIdAllocator::new(200);
+        let mut state = TutorialState::new(0);
+        state.trigger(TutorialHook::MeridianPrimerGranted);
+        let mut inventory = empty_inventory();
+
+        let outcome =
+            grant_meridian_primer_once(&mut state, &mut inventory, &registry, &mut allocator);
+
+        assert_eq!(outcome, MeridianPrimerGrantOutcome::AlreadyGranted);
+        assert!(
+            inventory.containers[0].items.is_empty(),
+            "hook already set must short-circuit before touching inventory at all"
+        );
+    }
+
+    #[test]
+    fn grant_meridian_primer_once_reconnect_does_not_regrant() {
+        // 模拟"重连"：同一 state/inventory 上连续两次调用（第一次真发放，第二次是重连判定）。
+        let registry = registry_with_meridian_primer();
+        let mut allocator = InventoryInstanceIdAllocator::new(200);
+        let mut state = TutorialState::new(0);
+        let mut inventory = empty_inventory();
+
+        let first =
+            grant_meridian_primer_once(&mut state, &mut inventory, &registry, &mut allocator);
+        assert!(matches!(first, MeridianPrimerGrantOutcome::Granted { .. }));
+
+        let second =
+            grant_meridian_primer_once(&mut state, &mut inventory, &registry, &mut allocator);
+        assert_eq!(
+            second,
+            MeridianPrimerGrantOutcome::AlreadyGranted,
+            "reconnect (second call on same state) must not grant a second copy"
+        );
+        assert_eq!(
+            inventory.containers[0].items.len(),
+            1,
+            "exactly one scroll instance must exist after a granted + a reconnect call"
+        );
+    }
+
+    #[test]
+    fn grant_meridian_primer_once_crash_window_item_present_hook_missing_does_not_duplicate() {
+        // 模拟"物品已发 hook 未持久化"的崩溃窗口重登：inventory 里已经有一份
+        // MERIDIAN_PRIMER_TEMPLATE_ID（上次 add_item 已落盘），但 TutorialState 的 hook
+        // 没跟着落盘（进程在两次写之间崩溃）。重登后必须：不重发物品 + 补打 hook 收敛。
+        let registry = registry_with_meridian_primer();
+        let mut allocator = InventoryInstanceIdAllocator::new(200);
+        let mut state = TutorialState::new(0); // hook 未设置——模拟未持久化
+        let mut inventory = inventory_with_items(vec![(MERIDIAN_PRIMER_TEMPLATE_ID, 777)]);
+
+        let outcome =
+            grant_meridian_primer_once(&mut state, &mut inventory, &registry, &mut allocator);
+
+        assert_eq!(
+            outcome,
+            MeridianPrimerGrantOutcome::AlreadyGranted,
+            "existing inventory instance must be detected even though the hook was never set"
+        );
+        assert_eq!(
+            inventory.containers[0].items.len(),
+            1,
+            "must not add a second copy on top of the crash-window survivor instance"
+        );
+        assert!(
+            state.has(TutorialHook::MeridianPrimerGranted),
+            "hook must be backfilled so this player converges and stops being re-checked forever"
+        );
+    }
+
+    #[test]
+    fn grant_meridian_primer_once_old_player_backfill_when_never_granted() {
+        // 存量老玩家：TutorialState 有真实历史内容（非新建 tick=0），但从未拿到过残卷。
+        let registry = registry_with_meridian_primer();
+        let mut allocator = InventoryInstanceIdAllocator::new(200);
+        let mut state = TutorialState::new(500);
+        state.trigger(TutorialHook::CoffinOpened);
+        state.trigger(TutorialHook::Moved200Blocks);
+        let mut inventory = empty_inventory();
+
+        let outcome =
+            grant_meridian_primer_once(&mut state, &mut inventory, &registry, &mut allocator);
+
+        assert!(
+            matches!(outcome, MeridianPrimerGrantOutcome::Granted { .. }),
+            "old players who never received the scroll must be backfilled exactly once, got {outcome:?}"
+        );
+        assert_eq!(inventory.containers[0].items.len(), 1);
+    }
+
+    #[test]
+    fn grant_meridian_primer_once_missing_template_reports_error_without_panicking() {
+        let registry = registry_missing_meridian_primer();
+        let mut allocator = InventoryInstanceIdAllocator::new(200);
+        let mut state = TutorialState::new(0);
+        let mut inventory = empty_inventory();
+
+        let outcome =
+            grant_meridian_primer_once(&mut state, &mut inventory, &registry, &mut allocator);
+
+        assert!(
+            matches!(
+                outcome,
+                MeridianPrimerGrantOutcome::MissingItemTemplate { .. }
+            ),
+            "missing registry template must report an error, not panic, got {outcome:?}"
+        );
+        assert!(
+            !state.has(TutorialHook::MeridianPrimerGranted),
+            "hook must not be set when the grant itself failed"
+        );
+        assert!(inventory.containers[0].items.is_empty());
+    }
+
+    #[test]
+    fn inventory_has_template_scans_containers_equipped_and_hotbar() {
+        // containers
+        let with_container_item = inventory_with_items(vec![(MERIDIAN_PRIMER_TEMPLATE_ID, 1)]);
+        assert!(inventory_has_template(
+            &with_container_item,
+            MERIDIAN_PRIMER_TEMPLATE_ID
+        ));
+
+        // empty inventory: not present
+        let empty = empty_inventory();
+        assert!(!inventory_has_template(&empty, MERIDIAN_PRIMER_TEMPLATE_ID));
+
+        // equipped slot
+        let mut equipped_inv = empty_inventory();
+        equipped_inv.equipped.insert(
+            "main_hand".to_string(),
+            crate::inventory::SlotContents {
+                worn: vec![test_item(2, MERIDIAN_PRIMER_TEMPLATE_ID)],
+                held: None,
+            },
+        );
+        assert!(inventory_has_template(
+            &equipped_inv,
+            MERIDIAN_PRIMER_TEMPLATE_ID
+        ));
+
+        // hotbar slot
+        let mut hotbar_inv = empty_inventory();
+        hotbar_inv.hotbar[0] = Some(test_item(3, MERIDIAN_PRIMER_TEMPLATE_ID));
+        assert!(inventory_has_template(
+            &hotbar_inv,
+            MERIDIAN_PRIMER_TEMPLATE_ID
+        ));
     }
 
     #[test]
@@ -1501,6 +1867,201 @@ mod tests {
         fn no_clients_and_no_coffin_is_a_noop() {
             // Regression guard: an empty world (no players, no coffin marker yet) must not
             // panic when `coffins.iter().next()` is `None` and `clients` is empty.
+            let mut app = app_with_system();
+            app.update();
+        }
+    }
+
+    // ── plan-scroll-reading-v1 P0 §8.1 #1：grant_meridian_primer_on_join tick-poll ──
+
+    mod meridian_primer_join_grant {
+        use super::*;
+        use valence::testing::create_mock_client;
+
+        fn app_with_system() -> App {
+            let mut app = App::new();
+            app.insert_resource(registry_with_meridian_primer());
+            app.insert_resource(InventoryInstanceIdAllocator::new(300));
+            app.add_systems(Update, grant_meridian_primer_on_join);
+            app
+        }
+
+        fn spawn_client_with_state(
+            app: &mut App,
+            username: &str,
+            state: TutorialState,
+            inventory: PlayerInventory,
+        ) -> Entity {
+            let (client_bundle, _helper) = create_mock_client(username);
+            app.world_mut()
+                .spawn(client_bundle)
+                .insert(state)
+                .insert(inventory)
+                .id()
+        }
+
+        fn scroll_count(app: &App, entity: Entity) -> usize {
+            app.world()
+                .entity(entity)
+                .get::<PlayerInventory>()
+                .expect("PlayerInventory must be attached")
+                .containers
+                .iter()
+                .flat_map(|c| c.items.iter())
+                .filter(|p| p.instance.template_id == MERIDIAN_PRIMER_TEMPLATE_ID)
+                .count()
+        }
+
+        fn has_hook(app: &App, entity: Entity) -> bool {
+            app.world()
+                .entity(entity)
+                .get::<TutorialState>()
+                .expect("TutorialState must be attached")
+                .has(TutorialHook::MeridianPrimerGranted)
+        }
+
+        #[test]
+        fn grants_to_freshly_joined_client_with_no_prior_hook() {
+            let mut app = app_with_system();
+            let entity = spawn_client_with_state(
+                &mut app,
+                "Azure",
+                TutorialState::new(0),
+                empty_inventory(),
+            );
+
+            app.update();
+
+            assert_eq!(
+                scroll_count(&app, entity),
+                1,
+                "fresh client should receive exactly one meridian primer scroll after one tick"
+            );
+            assert!(has_hook(&app, entity));
+            assert!(
+                app.world()
+                    .entity(entity)
+                    .contains::<MeridianPrimerJoinChecked>(),
+                "entity should be marked checked after the system processes it"
+            );
+        }
+
+        #[test]
+        fn does_not_regrant_on_reconnect_simulation_second_tick() {
+            let mut app = app_with_system();
+            let entity = spawn_client_with_state(
+                &mut app,
+                "Azure",
+                TutorialState::new(0),
+                empty_inventory(),
+            );
+
+            app.update();
+            assert_eq!(
+                scroll_count(&app, entity),
+                1,
+                "first tick should grant once"
+            );
+
+            // Second tick simulates the same connected client being polled again
+            // (e.g. system runs every tick, not just on join).
+            app.update();
+            assert_eq!(
+                scroll_count(&app, entity),
+                1,
+                "second tick (reconnect-equivalent poll) must not add a duplicate copy"
+            );
+        }
+
+        #[test]
+        fn backfills_old_player_whose_restored_state_predates_this_hook() {
+            // Simulates a pre-existing player: TutorialState restored from persistence with
+            // unrelated hooks already triggered, but never MeridianPrimerGranted (this hook
+            // didn't exist yet when they last played).
+            let mut restored_state = TutorialState::new(12_000);
+            restored_state.trigger(TutorialHook::CoffinOpened);
+            restored_state.trigger(TutorialHook::RealmAdvancedToInduce);
+            let mut app = app_with_system();
+            let entity =
+                spawn_client_with_state(&mut app, "Veteran", restored_state, empty_inventory());
+
+            app.update();
+
+            assert_eq!(
+                scroll_count(&app, entity),
+                1,
+                "old player with restored state must be backfilled exactly once"
+            );
+            assert!(has_hook(&app, entity));
+        }
+
+        #[test]
+        fn crash_window_item_present_hook_missing_does_not_duplicate_and_converges() {
+            let mut inventory_with_survivor = empty_inventory();
+            inventory_with_survivor.containers[0]
+                .items
+                .push(PlacedItemState {
+                    row: 0,
+                    col: 0,
+                    instance: test_item(999, MERIDIAN_PRIMER_TEMPLATE_ID),
+                });
+            let mut app = app_with_system();
+            let entity = spawn_client_with_state(
+                &mut app,
+                "Azure",
+                TutorialState::new(0), // hook NOT set -- simulates the crash window
+                inventory_with_survivor,
+            );
+
+            app.update();
+
+            assert_eq!(
+                scroll_count(&app, entity),
+                1,
+                "crash-window survivor instance must not be duplicated"
+            );
+            assert!(
+                has_hook(&app, entity),
+                "hook must converge to true even though it started false"
+            );
+        }
+
+        #[test]
+        fn client_without_tutorial_state_yet_is_skipped_until_attached() {
+            // Simulates the ordering hazard this system is designed to tolerate: a client
+            // joins before `attach_tutorial_state_to_joined_clients` (or the inventory attach
+            // system) has run this tick. Because the query requires both components, this
+            // entity simply won't match yet -- no panic, no premature grant.
+            let mut app = app_with_system();
+            let (client_bundle, _helper) = create_mock_client("Azure");
+            let entity = app.world_mut().spawn(client_bundle).id();
+
+            app.update();
+            assert!(
+                !app.world()
+                    .entity(entity)
+                    .contains::<MeridianPrimerJoinChecked>(),
+                "entity without TutorialState/PlayerInventory must not be processed yet"
+            );
+
+            // The attach systems (simulated here by directly inserting the components)
+            // catch up on a later tick.
+            app.world_mut()
+                .entity_mut(entity)
+                .insert(TutorialState::new(0))
+                .insert(empty_inventory());
+            app.update();
+
+            assert_eq!(
+                scroll_count(&app, entity),
+                1,
+                "once TutorialState/PlayerInventory attach, the next tick must grant \
+                 (mirrors send_tutorial_coffin_pos_on_join's late-marker-arrival tolerance)"
+            );
+        }
+
+        #[test]
+        fn no_clients_is_a_noop() {
             let mut app = app_with_system();
             app.update();
         }
