@@ -408,12 +408,18 @@ mod tests {
             breakdown: None,
             season_state: None,
             social: None,
+            zone_spirit_qi: Some(0.55),
         };
         let bytes = state.encode_to_vec();
         let decoded = PlayerState::decode(bytes.as_slice()).unwrap();
         assert_eq!(decoded.player.as_deref(), Some("test_player"));
         assert_eq!(decoded.realm, Realm::Spirit as i32);
         assert_eq!(decoded.local_neg_pressure, Some(0.3));
+        assert_eq!(
+            decoded.zone_spirit_qi,
+            Some(0.55),
+            "zone_spirit_qi should round-trip (plan-wire-format-bridge-v1 P3: 此前 proto 无此字段)"
+        );
 
         // 无 optional
         let state2 = PlayerState {
@@ -428,11 +434,13 @@ mod tests {
             breakdown: None,
             season_state: None,
             social: None,
+            zone_spirit_qi: None,
         };
         let bytes = state2.encode_to_vec();
         let decoded = PlayerState::decode(bytes.as_slice()).unwrap();
         assert!(decoded.player.is_none());
         assert!(decoded.local_neg_pressure.is_none());
+        assert!(decoded.zone_spirit_qi.is_none());
     }
 
     #[test]
@@ -680,12 +688,14 @@ mod tests {
                 exposed_to_count: 3,
                 faction_membership: None,
             }),
+            zone_spirit_qi: Some(0.61),
         };
         let bytes = state.encode_to_vec();
         let decoded = PlayerState::decode(bytes.as_slice()).expect("PlayerState full decode 失败");
         assert_eq!(decoded.player.as_deref(), Some("test_player"));
         assert_eq!(decoded.realm, Realm::Condense as i32);
         assert_eq!(decoded.spirit_qi, 42.5);
+        assert_eq!(decoded.zone_spirit_qi, Some(0.61), "zone_spirit_qi 不匹配");
         let bd = decoded.breakdown.expect("breakdown 应存在");
         assert_eq!(bd.combat, 50.0, "breakdown.combat 不匹配");
         assert_eq!(bd.territory, 5.0, "breakdown.territory 不匹配");
@@ -715,6 +725,7 @@ mod tests {
             breakdown: None,
             season_state: None,
             social: None,
+            zone_spirit_qi: None,
         };
         let bytes = state.encode_to_vec();
         let decoded =
@@ -723,6 +734,7 @@ mod tests {
         assert!(decoded.breakdown.is_none(), "breakdown 应为 None");
         assert!(decoded.season_state.is_none(), "season_state 应为 None");
         assert!(decoded.social.is_none(), "social 应为 None");
+        assert!(decoded.zone_spirit_qi.is_none(), "zone_spirit_qi 应为 None");
     }
 
     #[test]
@@ -746,6 +758,7 @@ mod tests {
                 }),
                 season_state: None,
                 social: None,
+                zone_spirit_qi: Some(-0.3),
             })),
         };
         let bytes = envelope.encode_to_vec();
@@ -755,6 +768,7 @@ mod tests {
             Some(server_data_envelope::Payload::PlayerState(ps)) => {
                 assert_eq!(ps.realm, Realm::Spirit as i32);
                 assert_eq!(ps.breakdown.unwrap().combat, 200.0);
+                assert_eq!(ps.zone_spirit_qi, Some(-0.3), "zone_spirit_qi 不匹配");
             }
             other => panic!("期望 PlayerState payload，实际 {other:?}"),
         }
@@ -2619,6 +2633,7 @@ mod tests {
                     skill_lv_min: None,
                 }),
                 unlocked: false,
+                station: Some("workbench".to_string()),
             }],
             ts: 1234567,
         };
@@ -2636,6 +2651,11 @@ mod tests {
             "herb_knife_iron"
         );
         assert!(!decoded.recipes[0].unlocked);
+        assert_eq!(
+            decoded.recipes[0].station.as_deref(),
+            Some("workbench"),
+            "station should round-trip (plan-wire-format-bridge-v1 P3: 此前漏发导致制作台配方泄漏到手搓台)"
+        );
     }
 
     #[test]
@@ -2674,6 +2694,7 @@ mod tests {
                 skill_lv_min: Some(2),
             }),
             unlocked: true,
+            station: None,
         };
         let bytes = entry.encode_to_vec();
         let decoded = CraftRecipeEntry::decode(bytes.as_slice())
@@ -3072,6 +3093,8 @@ mod tests {
             progress: 0.75,
             interrupted: false,
             completed: false,
+            mineral_id: "fan_tie".to_string(),
+            display_name: "凡铁".to_string(),
         };
         let bytes = msg.encode_to_vec();
         let decoded = MiningProgress::decode(bytes.as_slice()).expect("MiningProgress decode 失败");
@@ -3082,6 +3105,14 @@ mod tests {
         assert!((decoded.progress - 0.75).abs() < 1e-9);
         assert!(!decoded.interrupted);
         assert!(!decoded.completed);
+        assert_eq!(
+            decoded.mineral_id, "fan_tie",
+            "mineral_id should round-trip (plan-wire-format-bridge-v1 P3: 此前 proto 无此字段)"
+        );
+        assert_eq!(
+            decoded.display_name, "凡铁",
+            "display_name should round-trip"
+        );
     }
 
     #[test]
@@ -3094,11 +3125,14 @@ mod tests {
             progress: 1.0,
             interrupted: false,
             completed: true,
+            mineral_id: "ling_jing".to_string(),
+            display_name: "灵晶".to_string(),
         };
         let bytes = msg.encode_to_vec();
         let decoded = MiningProgress::decode(bytes.as_slice())
             .expect("MiningProgress (completed) decode 失败");
         assert!(decoded.completed);
+        assert_eq!(decoded.mineral_id, "ling_jing");
     }
 
     #[test]
@@ -3631,6 +3665,8 @@ mod tests {
                     progress: 0.0,
                     interrupted: false,
                     completed: false,
+                    mineral_id: "".to_string(),
+                    display_name: "".to_string(),
                 }),
             ),
             (
@@ -10808,6 +10844,7 @@ mod tests {
             breakdown: None,
             season_state: None,
             social: None,
+            zone_spirit_qi: None,
         };
         let mut bytes = state.encode_to_vec();
 
@@ -11008,6 +11045,7 @@ mod tests {
                     year_index: 3,
                 }),
                 social: None,
+                zone_spirit_qi: Some(0.72),
             })),
         };
 

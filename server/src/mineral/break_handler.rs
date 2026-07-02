@@ -265,6 +265,8 @@ pub(super) fn handle_block_break_for_mineral(
                         0.0,
                         true,
                         false,
+                        mineral_id.to_string(),
+                        entry.display_name_zh.to_string(),
                     );
                 }
             }
@@ -315,6 +317,8 @@ pub(super) fn handle_block_break_for_mineral(
                     0.0,
                     false,
                     false,
+                    mineral_id.to_string(),
+                    entry.display_name_zh.to_string(),
                 );
             }
             events.gathering_frames.send(progress_frame);
@@ -376,6 +380,8 @@ pub(super) fn handle_block_break_for_mineral(
                     1.0,
                     false,
                     true,
+                    mineral_id.to_string(),
+                    entry.display_name_zh.to_string(),
                 );
             }
             events.gathering_frames.send(gathering_frame);
@@ -451,6 +457,8 @@ fn send_mining_progress_to_client(
     progress: f64,
     interrupted: bool,
     completed: bool,
+    mineral_id: String,
+    display_name: String,
 ) {
     let payload = ServerDataV1::new(ServerDataPayloadV1::MiningProgress {
         session_id,
@@ -458,6 +466,8 @@ fn send_mining_progress_to_client(
         progress,
         interrupted,
         completed,
+        mineral_id,
+        display_name,
     });
     let payload_type = payload_type_label(payload.payload_type());
     let payload_bytes = match serialize_server_data_payload(&payload) {
@@ -481,6 +491,8 @@ fn build_mining_progress_payload(
     progress: f64,
     interrupted: bool,
     completed: bool,
+    mineral_id: String,
+    display_name: String,
 ) -> ServerDataV1 {
     ServerDataV1::new(ServerDataPayloadV1::MiningProgress {
         session_id,
@@ -488,6 +500,8 @@ fn build_mining_progress_payload(
         progress,
         interrupted,
         completed,
+        mineral_id,
+        display_name,
     })
 }
 
@@ -678,6 +692,8 @@ mod tests {
             1.0,
             false,
             true,
+            "fan_tie".to_string(),
+            "凡铁".to_string(),
         );
 
         let bytes = serialize_server_data_payload(&payload).expect("mining progress serializes");
@@ -687,6 +703,16 @@ mod tests {
         assert_eq!(value["ore_pos"], serde_json::json!([1, 64, 2]));
         assert_eq!(value["progress"], 1.0);
         assert_eq!(value["completed"], true);
+        // plan-wire-format-bridge-v1 P3/RC6：此前 proto 无此二字段，client
+        // MiningProgressHandler 恒 fallback 到通用 "矿脉"，看不到真实矿种。
+        assert_eq!(
+            value["mineral_id"], "fan_tie",
+            "mineral_id should round-trip"
+        );
+        assert_eq!(
+            value["display_name"], "凡铁",
+            "display_name should round-trip"
+        );
     }
 
     /// 真值表：Survival Start/Stop/Abort 只管理采集进度与完成点；

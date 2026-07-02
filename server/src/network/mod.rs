@@ -1385,6 +1385,7 @@ pub(crate) fn build_player_state_payload(
         zone.into(),
         None,
         None,
+        None,
     );
     serialize_server_data_payload(&payload)
 }
@@ -2058,12 +2059,18 @@ fn emit_player_state_payloads(
         );
         let local_neg_pressure =
             local_neg_pressure_at(terrain_providers, current_dimension, position);
+        // plan-wire-format-bridge-v1 P3/RC6：此前 zone_spirit_qi 在 proto 里根本不存在，
+        // client PlayerStateViewModel.zoneSpiritQiNormalized() 恒为 NaN 归一化默认值。
+        let zone_spirit_qi = zone_registry
+            .find_zone_by_name(zone_name.as_str())
+            .map(|zone| zone.spirit_qi);
         let mut payload = player_state.server_payload_with_social_and_local_pressure(
             cultivation,
             Some(canonical_player_id(username.0.as_str())),
             zone_name,
             social,
             local_neg_pressure,
+            zone_spirit_qi,
         );
         if let ServerDataPayloadV1::PlayerState { season_state, .. } = &mut payload.payload {
             *season_state = Some(season_state_for_client);
@@ -4936,6 +4943,7 @@ mod tests {
                     Some(canonical_player_id(username.0.as_str())),
                     zone_name,
                     social,
+                    None,
                     None,
                 );
                 let payload_type = payload_type_label(payload.payload_type());

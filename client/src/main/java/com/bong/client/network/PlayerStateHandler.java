@@ -64,7 +64,9 @@ public final class PlayerStateHandler implements ServerDataHandler {
             breakdown,
             readOptionalSocialSnapshot(payload),
             zoneId,
-            readOptionalString(payload, "zone_label"),
+            // plan-wire-format-bridge-v1 P3/RC6: "zone_label" 从未在 proto PlayerState 里存在过
+            // (Zone 服务端类型只有 name/id，没有独立展示名概念)——恒 null，client 端已归一化默认。
+            null,
             zoneSpiritQi,
             readOptionalDouble(payload, "local_neg_pressure", 0.0)
         );

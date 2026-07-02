@@ -220,6 +220,10 @@ impl PlayerState {
         )
     }
 
+    /// `zone_spirit_qi`：plan-wire-format-bridge-v1 P3/RC6 —— 调用方从 `ZoneRegistry` 查得的
+    /// 当前 zone 灵气浓度（`Zone::spirit_qi`）。此前该字段在 proto 里根本不存在，client
+    /// `PlayerStateViewModel.zoneSpiritQiNormalized()` 恒为 NaN 归一化默认值。
+    /// 无法解析 zone（stale/未知 zone 名）时传 `None`，client 端已有默认值 clamp。
     pub fn server_payload_with_social_and_local_pressure(
         &self,
         cultivation: &Cultivation,
@@ -227,6 +231,7 @@ impl PlayerState {
         zone: impl Into<String>,
         social: Option<PlayerSocialSnapshotV1>,
         local_neg_pressure: Option<f32>,
+        zone_spirit_qi: Option<f64>,
     ) -> ServerDataV1 {
         let normalized = self.normalized();
         let breakdown = normalized.power_breakdown(cultivation);
@@ -250,6 +255,7 @@ impl PlayerState {
             local_neg_pressure,
             season_state: None,
             social,
+            zone_spirit_qi,
         })
     }
 }
@@ -4328,6 +4334,7 @@ mod player_state_tests {
             &cultivation,
             Some(canonical_player_id("Steve")),
             "blood_valley",
+            None,
             None,
             None,
         );

@@ -607,6 +607,7 @@ impl From<&ServerDataPayloadV1> for Payload {
                 local_neg_pressure,
                 season_state,
                 social,
+                zone_spirit_qi,
             } => Payload::PlayerState(bong::PlayerState {
                 player: player.clone(),
                 realm: realm_str_to_proto(realm),
@@ -619,6 +620,7 @@ impl From<&ServerDataPayloadV1> for Payload {
                 breakdown: Some(breakdown_to_proto(breakdown)),
                 season_state: season_state.as_ref().map(season_state_to_proto),
                 social: social.as_ref().map(social_snapshot_to_proto),
+                zone_spirit_qi: *zone_spirit_qi,
             }),
             ServerDataPayloadV1::CoffinState(s) => Payload::CoffinState(bong::CoffinState {
                 in_coffin: s.in_coffin,
@@ -779,6 +781,8 @@ impl From<&ServerDataPayloadV1> for Payload {
                 progress,
                 interrupted,
                 completed,
+                mineral_id,
+                display_name,
             } => Payload::MiningProgress(bong::MiningProgress {
                 session_id: session_id.clone(),
                 ore_pos_x: ore_pos[0],
@@ -787,6 +791,8 @@ impl From<&ServerDataPayloadV1> for Payload {
                 progress: *progress,
                 interrupted: *interrupted,
                 completed: *completed,
+                mineral_id: mineral_id.clone(),
+                display_name: display_name.clone(),
             }),
             ServerDataPayloadV1::LumberProgress {
                 session_id,
@@ -2965,6 +2971,7 @@ fn craft_recipe_list_to_proto(l: &super::craft::RecipeListV1) -> bong::CraftReci
                     skill_lv_min: r.requirements.skill_lv_min.map(|v| v as u32),
                 }),
                 unlocked: r.unlocked,
+                station: r.station.clone(),
             })
             .collect(),
         ts: l.ts,
@@ -5826,6 +5833,7 @@ mod tests {
                 local_neg_pressure: None,
                 season_state: None,
                 social: None,
+                zone_spirit_qi: Some(0.42),
             }),
             fix!(ServerDataPayloadV1::CoffinState(CoffinStateV1 {
                 in_coffin: false,
@@ -5912,6 +5920,8 @@ mod tests {
                 progress: 0.2,
                 interrupted: false,
                 completed: false,
+                mineral_id: "cu_tie".to_string(),
+                display_name: "粗铁".to_string(),
             }),
             fix!(ServerDataPayloadV1::LumberProgress {
                 session_id: "ses:3".to_string(),
