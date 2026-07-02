@@ -61,6 +61,8 @@ pub mod quickslot_config_emit;
 pub mod rat_phase_bridge;
 pub mod redis_bridge;
 pub mod resourcepack;
+// plan-scroll-reading-v1 P0 — 可阅读残卷阅读屏 S2C `ScrollOpen` 回执发送。
+pub mod scroll_open_emit;
 pub mod skill_config_emit;
 pub mod skill_emit;
 pub mod skill_snapshot_emit;

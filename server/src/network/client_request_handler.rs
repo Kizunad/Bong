@@ -423,6 +423,13 @@ const NPC_INTERACTION_MAX_DISTANCE: f64 = 6.0;
 /// 20 tick/s × 60 s × 5 = 6000。
 const BREAKTHROUGH_BOOST_DURATION_TICKS: u64 = 6_000;
 
+/// plan-scroll-reading-v1 P0/P2：阅读残卷循环姿态动画 priority——"中低"档位，
+/// 低于战斗层（`COMBAT_PRIORITY`=1000）、高于仪式套路层（`GUANGBO_TICAO_PRIORITY`=500）。
+/// 合法区间 [`VFX_ANIM_PRIORITY_MIN`, `VFX_ANIM_PRIORITY_MAX`] = [100, 3999]。
+const SCROLL_READ_ANIM_PRIORITY: u16 = 600;
+/// 淡入 tick 数（§8.1 #4 决议：fadeIn 4 tick）。
+const SCROLL_READ_ANIM_FADE_IN_TICKS: u8 = 4;
+
 fn meridian_label(id: MeridianId) -> &'static str {
     match id {
         MeridianId::Lung => "肺经",
@@ -600,6 +607,7 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::GiveDanToElder { v, .. }
             | ClientRequestV1::RaiseShield { v }
             | ClientRequestV1::LowerShield { v }
+            | ClientRequestV1::ScrollReadRequest { v, .. }
             | ClientRequestV1::AgentUiResponse { v, .. } => *v,
         };
         if v != SUPPORTED_VERSION {
@@ -2596,6 +2604,64 @@ pub fn handle_client_request_payloads(
                     .lower_shield_tx
                     .send(LowerShieldIntent { player: ev.client });
             }
+            // ─── plan-scroll-reading-v1 P0：可阅读残卷阅读请求 ─────────────
+            // 读取不消耗物品（区别于 read_combat_technique_scroll 消耗式学招）。
+            // 无 spec / 伪 instance_id / 非本人物品三类均静默拒绝 + warn（不向 client
+            // 暴露具体拒绝原因，避免给作弊 client 探测 instance_id 分布的信号）。
+            ClientRequestV1::ScrollReadRequest { instance_id, .. } => {
+                let Ok(inventory) = inventories.get(ev.client) else {
+                    tracing::warn!(
+                        "[bong][network] client_request scroll_read_request rejected: entity={:?} has no PlayerInventory",
+                        ev.client
+                    );
+                    continue;
+                };
+                match crate::network::scroll_open_emit::resolve_scroll_read_request(
+                    inventory,
+                    &combat_params.item_registry,
+                    instance_id,
+                ) {
+                    Ok(resolution) => {
+                        tracing::info!(
+                            "[bong][network] client_request scroll_read_request entity={:?} instance_id={instance_id}",
+                            ev.client
+                        );
+                        let anim_id = resolution.anim_id.clone();
+                        crate::network::scroll_open_emit::emit_scroll_open(
+                            ev.client,
+                            resolution.into_payload(),
+                            &mut clients,
+                        );
+                        // §8.1 #1：动画只在模板挂了 anim_id 时才播（残卷不强制有阅读动画）。
+                        if let Some(anim_id) = anim_id {
+                            if let (Ok(position), Ok(unique_id)) = (
+                                combat_params.positions.get(ev.client),
+                                combat_params.unique_ids.get(ev.client),
+                            ) {
+                                if let Some(vfx_events) = alchemy_params.vfx_events.as_deref_mut() {
+                                    vfx_events.send(
+                                        crate::network::vfx_event_emit::VfxEventRequest::new(
+                                            position.get(),
+                                            crate::schema::vfx_event::VfxEventPayloadV1::PlayAnim {
+                                                target_player: unique_id.0.to_string(),
+                                                anim_id,
+                                                priority: SCROLL_READ_ANIM_PRIORITY,
+                                                fade_in_ticks: Some(SCROLL_READ_ANIM_FADE_IN_TICKS),
+                                            },
+                                        ),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    Err(reason) => {
+                        tracing::warn!(
+                            "[bong][network] client_request scroll_read_request rejected: entity={:?} instance_id={instance_id} reason={reason:?}",
+                            ev.client
+                        );
+                    }
+                }
+            }
             // ─── plan-agent-ui-data-v1 P0：天道 UI 面板响应 ─────────────
             // agent_ui.rs 的 receive_agent_ui_response_system 负责处理；
             // 此处仅记录 trace 并发出 AgentUiResponseEvent Bevy event。
@@ -3641,6 +3707,7 @@ mod tests {
                     }),
                     inscription_scroll_spec: None,
                     technique_scroll_spec: None,
+                    readable_scroll_spec: None,
                     recipe_fragment_spec: None,
                     container_spec: None,
                     shelflife_profile: None,
@@ -3672,6 +3739,7 @@ mod tests {
                         inscription_id: "sharp_v0".to_string(),
                     }),
                     technique_scroll_spec: None,
+                    readable_scroll_spec: None,
                     recipe_fragment_spec: None,
                     container_spec: None,
                     shelflife_profile: None,
@@ -5379,6 +5447,7 @@ mod tests {
                 blueprint_scroll_spec: None,
                 inscription_scroll_spec: None,
                 technique_scroll_spec: None,
+                readable_scroll_spec: None,
                 recipe_fragment_spec: None,
                 container_spec: None,
                 shelflife_profile: None,
@@ -5555,6 +5624,7 @@ mod tests {
                 blueprint_scroll_spec: None,
                 inscription_scroll_spec: None,
                 technique_scroll_spec: None,
+                readable_scroll_spec: None,
                 recipe_fragment_spec: None,
                 container_spec: None,
                 shelflife_profile: None,
@@ -5655,6 +5725,7 @@ mod tests {
                 blueprint_scroll_spec: None,
                 inscription_scroll_spec: None,
                 technique_scroll_spec: None,
+                readable_scroll_spec: None,
                 recipe_fragment_spec: None,
                 container_spec: None,
                 shelflife_profile: None,
