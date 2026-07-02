@@ -29,6 +29,7 @@ public record TsyContainerView(
             case "storage_pouch" -> "储物袋残骸";
             case "stone_casket" -> "石匣";
             case "relic_core" -> "法阵核心";
+            case "surface_stash" -> "散修遗缴";
             default -> "容器";
         };
     }

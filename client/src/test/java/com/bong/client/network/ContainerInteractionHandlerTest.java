@@ -182,6 +182,25 @@ public class ContainerInteractionHandlerTest {
                 "未 set 的 optional locked 应缺省为 null（未上锁），不应出现带前缀的字符串，实际 \"" + view.locked() + "\"");
     }
 
+    @Test
+    void containerKindSurfaceStashResolvesLabelThroughProtoWire() {
+        // fix/surface-stash-label：surface_stash（散修遗缴，plan-onboarding-loop-v1 P0.1 地表容器）
+        // 此前 kindLabelZh() 无对应 case → 即便枚举前缀已剥仍落 default「容器」。补上后应显示专属名。
+        TsyContainerView view = viewThroughProtoWire(Envelope.ContainerStateProto.newBuilder()
+                .setEntityId(90L)
+                .setKind(Envelope.ContainerKind.CONTAINER_KIND_SURFACE_STASH)
+                .setFamilyId("surface")
+                .setWorldPosX(5.0).setWorldPosY(64.0).setWorldPosZ(5.0)
+                .setDepleted(false));
+
+        assertNotNull(view, "store 里应有 entity_id=90 的容器视图");
+        assertEquals("surface_stash", view.kind(),
+                "CONTAINER_KIND_SURFACE_STASH 应剥成 \"surface_stash\"，实际 \"" + view.kind() + "\"");
+        assertEquals("散修遗缴", view.kindLabelZh(),
+                "\"surface_stash\"→\"散修遗缴\"（server ContainerKind::SurfaceStash 注释的正典名），"
+                + "实际 \"" + view.kindLabelZh() + "\"；若为「容器」说明 kindLabelZh() 仍缺 surface_stash 分支");
+    }
+
     /** 过真机生产链解析一个 ContainerStateProto，返回落进 store 的 view。 */
     private static TsyContainerView viewThroughProtoWire(Envelope.ContainerStateProto.Builder builder) {
         Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
