@@ -307,4 +307,102 @@ class ItemTooltipPanelTest {
         panel.setHoveredEquipSlot(EquipSlotType.HEAD, SlotContents.empty());
         assertEquals(EquipSlotType.HEAD, panel.hoveredSlotTypeForTest());
     }
+
+    // ─── plan-inventory-hint-panel-v1 §P3：视听规格收尾（面板 chrome 4-tick 淡入）────────────
+    // targetChanged/fadeProgress/applyFadeAlpha 均为纯函数契约（不依赖 System.currentTimeMillis
+    // 或 MinecraftClient），供测试直接饱和断言边界，不绑定 draw() 内部像素调用序列。
+
+    private static InventoryItem fixtureItem(long instanceId, String itemId) {
+        return InventoryItem.createFull(instanceId, itemId, itemId, 1, 1, 0.1, "common", "", 1, 1.0, 1.0);
+    }
+
+    @Test
+    void targetChangedFalseWhenSameItemAndSlotRepeated() {
+        InventoryItem item = fixtureItem(1L, "kaimai_dan");
+        // 同一 instanceId/内容两次独立构造的对象须 equals() 相等（value equality，非引用），
+        // 否则每帧都会把淡入计时器错误复位，永远卡在 progress=0（面板全透明）。
+        InventoryItem sameContentAgain = fixtureItem(1L, "kaimai_dan");
+        assertEquals(item, sameContentAgain, "InventoryItem.equals 须走值语义，否则淡入计时器永不稳定");
+
+        assertEquals(false, ItemTooltipPanel.targetChanged(item, EquipSlotType.CHEST, sameContentAgain, EquipSlotType.CHEST),
+            "item 内容相同 + slotType 相同 → 未变化，不应复位淡入计时器");
+    }
+
+    @Test
+    void targetChangedTrueWhenItemDiffers() {
+        InventoryItem a = fixtureItem(1L, "kaimai_dan");
+        InventoryItem b = fixtureItem(2L, "ling_stone");
+        assertEquals(true, ItemTooltipPanel.targetChanged(a, null, b, null),
+            "instanceId/itemId 不同的两件物品须判定为目标变化");
+    }
+
+    @Test
+    void targetChangedTrueWhenSlotTypeDiffersWithSameItem() {
+        InventoryItem item = fixtureItem(1L, "kaimai_dan");
+        assertEquals(true, ItemTooltipPanel.targetChanged(item, EquipSlotType.HEAD, item, EquipSlotType.CHEST),
+            "item 相同但 slotType 从 HEAD 切到 CHEST（如 hover 跨槽拖过） → 须判定为变化");
+    }
+
+    @Test
+    void targetChangedTrueWhenTransitioningBetweenNullAndNonNullItem() {
+        InventoryItem item = fixtureItem(1L, "kaimai_dan");
+        assertEquals(true, ItemTooltipPanel.targetChanged(null, null, item, null), "null→非 null item 须判定为变化");
+        assertEquals(true, ItemTooltipPanel.targetChanged(item, null, null, null), "非 null→null item 须判定为变化");
+    }
+
+    @Test
+    void targetChangedFalseWhenBothItemAndSlotAreNull() {
+        assertEquals(false, ItemTooltipPanel.targetChanged(null, null, null, null),
+            "hint 面板持续无 hover（item/slot 均为 null）不应反复复位淡入计时器");
+    }
+
+    @Test
+    void fadeProgressAtOrBeforeZeroElapsedIsFullyTransparent() {
+        assertEquals(0f, ItemTooltipPanel.fadeProgress(0L), "elapsed=0（刚复位）→ progress=0");
+        assertEquals(0f, ItemTooltipPanel.fadeProgress(-5L), "负 elapsed（防御性，理论不该发生）仍 clamp 到 0，不越界为负");
+    }
+
+    @Test
+    void fadeProgressAtDurationBoundaryIsFullyOpaque() {
+        assertEquals(1f, ItemTooltipPanel.fadeProgress(ItemTooltipPanel.FADE_DURATION_MILLIS),
+            "elapsed 恰好等于 FADE_DURATION_MILLIS（4 tick=200ms）→ progress=1（边界含）");
+        assertEquals(1f, ItemTooltipPanel.fadeProgress(ItemTooltipPanel.FADE_DURATION_MILLIS + 1000L),
+            "elapsed 远超过淡入时长 → 仍 clamp 到 1，不越界为 >1");
+    }
+
+    @Test
+    void fadeProgressMidpointIsLinearInterpolation() {
+        long half = ItemTooltipPanel.FADE_DURATION_MILLIS / 2;
+        assertEquals(0.5f, ItemTooltipPanel.fadeProgress(half), 0.001f,
+            "淡入时长过半 → progress 线性插值到 0.5");
+    }
+
+    @Test
+    void applyFadeAlphaAtZeroProgressStripsAlphaButKeepsRgb() {
+        int result = ItemTooltipPanel.applyFadeAlpha(0xE0141414, 0f);
+        assertEquals(0x00141414, result, "progress=0 → alpha 通道清零（全透明），RGB 不变");
+    }
+
+    @Test
+    void applyFadeAlphaAtFullProgressPreservesOriginalColor() {
+        int result = ItemTooltipPanel.applyFadeAlpha(0xE0141414, 1f);
+        assertEquals(0xE0141414, result, "progress=1（淡入完成）→ 原色不变，含原 alpha 0xE0");
+    }
+
+    @Test
+    void applyFadeAlphaAtHalfProgressHalvesBaseAlpha() {
+        // BORDER_COLOR 基础 alpha=0xFF(255)；半程淡入 → alpha≈127~128（Math.round(255*0.5)=128）。
+        int result = ItemTooltipPanel.applyFadeAlpha(0xFF3A3A3A, 0.5f);
+        int alpha = (result >>> 24) & 0xFF;
+        assertEquals(128, alpha, "基础 alpha=255 时半程淡入 → Math.round(255*0.5)=128");
+        assertEquals(0x3A3A3A, result & 0x00FFFFFF, "RGB 通道须原样保留，不受淡入影响");
+    }
+
+    @Test
+    void applyFadeAlphaClampsOutOfRangeProgress() {
+        // 防御性边界：progress 理论上不该越界（fadeProgress 已 clamp），但 applyFadeAlpha 作为
+        // 独立可测契约，自身也须对越界输入防御，不产生越界 alpha（<0 或 >255）。
+        assertEquals(0x00141414, ItemTooltipPanel.applyFadeAlpha(0xE0141414, -0.5f), "progress<0 → clamp 到 0");
+        assertEquals(0xE0141414, ItemTooltipPanel.applyFadeAlpha(0xE0141414, 1.5f), "progress>1 → clamp 到 1");
+    }
 }

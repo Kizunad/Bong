@@ -25,9 +25,17 @@ public class ItemTooltipPanel extends BaseComponent {
      * 和 desc 行高估算约 81 px。112 给足余量；超出的长描述仍由动态 sizing 自动扩展。
      */
     private static final int DEFAULT_HEIGHT = 112;
-    private static final int BG_COLOR = 0xCC181818;
+    // plan-inventory-hint-panel-v1 §P3 视听规格：hover 面板背景 0xE0141414（较原
+    // 0xCC181818 更深更不透明，与失败 toast 的警示语感区分开——toast 走瞬时红色文字，
+    // hover 面板走常驻深色底板 + 逐行红/绿约束提示）。
+    private static final int BG_COLOR = 0xE0141414;
     private static final int BORDER_COLOR = 0xFF3A3A3A;
     private static final int HINT_COLOR = 0x60AAAAAA;
+
+    // plan-inventory-hint-panel-v1 §P3：hover 目标切换时面板淡入 4 tick（20 tick/s ⇒ 200ms）。
+    // 只淡入面板"底板+边框"（chrome），不淡入文字——文字读数优先即时可读，边框/底色的渐显
+    // 只为视觉过渡不生硬，不影响信息可读性。
+    static final long FADE_DURATION_MILLIS = 200L;
 
     // Icon 占左上角一个正方形，文字从 icon 右边起。
     private static final int ICON_SIZE = 32;
@@ -50,6 +58,9 @@ public class ItemTooltipPanel extends BaseComponent {
     private EquipSlotType hoveredSlotType;
     private int hoveredSlotWornCount;
     private int currentHeight = DEFAULT_HEIGHT;
+    // plan-inventory-hint-panel-v1 §P3：hover 目标（item + slotType 组合）上次变化的时间戳，
+    // 驱动面板 chrome 4-tick 淡入。初值 0 使首次 draw() 即 elapsed 极大 ⇒ fadeProgress=1（不留白）。
+    private long hoverChangedAtMillis;
 
     public ItemTooltipPanel() {
         this.sizing(Sizing.fixed(PANEL_WIDTH), Sizing.fixed(DEFAULT_HEIGHT));
@@ -71,6 +82,9 @@ public class ItemTooltipPanel extends BaseComponent {
     }
 
     private void applyHover(InventoryItem item, EquipSlotType slotType, int wornCount) {
+        if (targetChanged(hoveredItem, hoveredSlotType, item, slotType)) {
+            hoverChangedAtMillis = System.currentTimeMillis();
+        }
         this.hoveredItem = item;
         this.hoveredSlotType = slotType;
         this.hoveredSlotWornCount = wornCount;
@@ -138,8 +152,9 @@ public class ItemTooltipPanel extends BaseComponent {
     @Override
     public void draw(OwoUIDrawContext context, int mouseX, int mouseY, float partialTicks, float delta) {
         int h = this.height;
-        context.fill(x, y, x + PANEL_WIDTH, y + h, BG_COLOR);
-        GridSlotComponent.drawSlotBorder(context, x, y, PANEL_WIDTH, h, BORDER_COLOR);
+        float fade = fadeProgress(System.currentTimeMillis() - hoverChangedAtMillis);
+        context.fill(x, y, x + PANEL_WIDTH, y + h, applyFadeAlpha(BG_COLOR, fade));
+        GridSlotComponent.drawSlotBorder(context, x, y, PANEL_WIDTH, h, applyFadeAlpha(BORDER_COLOR, fade));
         if (AncientRelicGlowRenderer.shouldGlow(hoveredItem)) {
             AncientRelicGlowRenderer.drawGlowBorder(context, x, y, PANEL_WIDTH, h, System.currentTimeMillis());
         }
@@ -333,6 +348,44 @@ public class ItemTooltipPanel extends BaseComponent {
         }
         int cap = EquipSlotComponent.wornCap(slotType);
         return wornCount >= cap ? CONSTRAINT_FULL_COLOR : CONSTRAINT_OK_COLOR;
+    }
+
+    /**
+     * plan-inventory-hint-panel-v1 §P3：hover 目标（item + slotType 组合）是否较上一帧发生变化，
+     * 驱动面板 chrome 淡入计时器复位。纯函数（不摸 {@code System.currentTimeMillis()}），供测试
+     * 直接断言：同一 item/slot 连续多帧 → false（计时器不复位，淡入不会卡在 0）；item 或 slot
+     * 任一变化（含 null↔非 null）→ true。
+     */
+    static boolean targetChanged(InventoryItem prevItem, EquipSlotType prevSlot, InventoryItem nextItem, EquipSlotType nextSlot) {
+        return !java.util.Objects.equals(prevItem, nextItem) || prevSlot != nextSlot;
+    }
+
+    /**
+     * plan-inventory-hint-panel-v1 §P3："fade-in 4 tick"（20 tick/s ⇒ {@link #FADE_DURATION_MILLIS}
+     * = 200ms）淡入进度纯函数。{@code elapsedMillis<=0} → 0（刚复位，尚未淡入）；
+     * {@code elapsedMillis>=FADE_DURATION_MILLIS} → 1（淡入完成，稳态全不透明）；
+     * 区间内线性插值。
+     */
+    static float fadeProgress(long elapsedMillis) {
+        if (elapsedMillis <= 0L) {
+            return 0f;
+        }
+        if (elapsedMillis >= FADE_DURATION_MILLIS) {
+            return 1f;
+        }
+        return (float) elapsedMillis / (float) FADE_DURATION_MILLIS;
+    }
+
+    /**
+     * plan-inventory-hint-panel-v1 §P3：把淡入进度应用到 ARGB 色值的 alpha 通道（RGB 不变）。
+     * 纯函数供测试直接断言边界：progress=0 → alpha=0（全透明）；progress=1 → alpha=原值不变；
+     * progress 越界（&lt;0 或 &gt;1）被 clamp，不产生越界 alpha。
+     */
+    static int applyFadeAlpha(int argbColor, float progress) {
+        float clamped = Math.max(0f, Math.min(1f, progress));
+        int baseAlpha = (argbColor >>> 24) & 0xFF;
+        int fadedAlpha = Math.round(baseAlpha * clamped);
+        return (fadedAlpha << 24) | (argbColor & 0x00FFFFFF);
     }
 
     static String rarityLabel(String rarity) {
