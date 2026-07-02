@@ -47,7 +47,7 @@ pub fn serialize_server_data_payload(payload: &ServerDataV1) -> Result<Vec<u8>, 
     // intercept raw packets via `serde_json::from_slice` keep passing.
     //
     // The proto encoding path is exhaustively guarded by:
-    //   - `s2c_all_proto_variants_encode_without_panic` (proto_convert.rs) — covers all 124
+    //   - `s2c_all_proto_variants_encode_without_panic` (proto_convert.rs) — covers all 125
     //     proto-encodable `ServerDataPayloadV1` variants; will panic-red if any proto arm is
     //     deleted or a new variant is added without a proto arm.
     //   - `c2s_all_proto_variants_encode_without_panic` (proto_convert.rs) — covers all 97
@@ -229,6 +229,8 @@ pub fn payload_type_label(payload_type: ServerDataType) -> &'static str {
         ServerDataType::HalfStepRechallenge => "half_step_rechallenge",
         // ─── F9 跨层修复：出生引导棺权威坐标广播 ────────────────────
         ServerDataType::TutorialCoffinPos => "tutorial_coffin_pos",
+        // ─── plan-inventory-hint-panel-v1 P0：库存操作拒绝原因结构化 S2C ───
+        ServerDataType::InventoryMoveRejected => "inventory_move_rejected",
     }
 }
 

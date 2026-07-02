@@ -84,6 +84,54 @@ class EquipSlotComponentTest {
             new EquipSlotComponent(EquipSlotType.EXTRA_HAND_0).slotType());
     }
 
+    // ─── plan-inventory-hint-panel-v1 P2：wornCap 静态镜像（server mod.rs:636-643），
+    // 每个 EquipSlotType 变体一条专属 case（8 个枚举变体全覆盖）。 ───────────────
+
+    @Test
+    void wornCapHeadIsTwo() {
+        assertEquals(2, EquipSlotComponent.wornCap(EquipSlotType.HEAD),
+            "server worn_cap(\"head\") == 2（mod.rs:638）");
+    }
+
+    @Test
+    void wornCapFeetIsTwo() {
+        assertEquals(2, EquipSlotComponent.wornCap(EquipSlotType.FEET),
+            "server worn_cap(\"feet\") == 2（mod.rs:638）");
+    }
+
+    @Test
+    void wornCapChestIsThree() {
+        assertEquals(3, EquipSlotComponent.wornCap(EquipSlotType.CHEST),
+            "server worn_cap(\"chest\") == 3（mod.rs:639）");
+    }
+
+    @Test
+    void wornCapLegsIsThree() {
+        assertEquals(3, EquipSlotComponent.wornCap(EquipSlotType.LEGS),
+            "server worn_cap(\"legs\") == 3（mod.rs:639）");
+    }
+
+    @Test
+    void wornCapMainHandIsZero() {
+        assertEquals(0, EquipSlotComponent.wornCap(EquipSlotType.MAIN_HAND),
+            "手槽 held-only，worn 恒空，cap == 0（mod.rs:641）");
+    }
+
+    @Test
+    void wornCapOffHandIsZero() {
+        assertEquals(0, EquipSlotComponent.wornCap(EquipSlotType.OFF_HAND));
+    }
+
+    @Test
+    void wornCapExtraHand0IsZero() {
+        assertEquals(0, EquipSlotComponent.wornCap(EquipSlotType.EXTRA_HAND_0));
+    }
+
+    @Test
+    void wornCapExtraHand1IsZero() {
+        assertEquals(0, EquipSlotComponent.wornCap(EquipSlotType.EXTRA_HAND_1));
+    }
+
     private static InventoryItem item(long id, String itemId) {
         return InventoryItem.createFull(id, itemId, itemId, 1, 1, 1.0, "common", "", 1, 1.0, 1.0);
     }

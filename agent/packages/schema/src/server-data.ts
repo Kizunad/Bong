@@ -1703,6 +1703,28 @@ export const ServerDataMineralProbeResultV1 = Type.Object(
 );
 export type ServerDataMineralProbeResultV1 = Static<typeof ServerDataMineralProbeResultV1>;
 
+// ── plan-inventory-hint-panel-v1 P0 ── 库存操作拒绝原因结构化 S2C ────────────
+/**
+ * 库存操作拒绝原因。仅发给触发操作的玩家（不广播）。
+ *
+ * `reason` 是 server `InventoryMoveRejectReason::to_wire_tag()` 输出的 snake_case tag
+ * （wire 形状安全：string tag 而非 proto enum，避免枚举前缀 noOp）。
+ * `required_realm` / `slot` / `cap` 仅在对应拒绝原因携带该信息时才有值。
+ */
+export const ServerDataInventoryMoveRejectedV1 = Type.Object(
+  {
+    type: Type.Literal("inventory_move_rejected"),
+    reason: Type.String({ minLength: 1 }),
+    required_realm: Type.Optional(Type.String({ minLength: 1 })),
+    slot: Type.Optional(Type.String({ minLength: 1 })),
+    cap: Type.Optional(Type.Integer({ minimum: 0 })),
+  },
+  { additionalProperties: false },
+);
+export type ServerDataInventoryMoveRejectedV1 = Static<
+  typeof ServerDataInventoryMoveRejectedV1
+>;
+
 // ── plan-agent-ui-data-v1 P0 ── 天道 UI 面板 S2C ──────────────────────────────
 
 /**
@@ -1829,6 +1851,8 @@ export const ServerDataV1 = Type.Union([
   ServerDataKnockbackSyncV1,
   // plan-exploration-probe-return-v1 P0
   ServerDataMineralProbeResultV1,
+  // plan-inventory-hint-panel-v1 P0
+  ServerDataInventoryMoveRejectedV1,
   // plan-exploration-probe-return-v1 P2
   ServerDataInsightOfferV1,
   // plan-agent-ui-data-v1 P0 — 天道 UI 面板请求 + 关闭信号

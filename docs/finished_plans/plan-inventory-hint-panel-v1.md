@@ -8,12 +8,12 @@
 
 | 相位 | 交付物 | 状态 |
 |------|--------|------|
-| **P0** | server 拒绝原因结构化 —— `InventoryMoveRejectReason` enum + 收敛 `Result` + 境界门控并入 + **新增专属 `InventoryMoveRejectedV1` S2C payload**（proto 双端）+ emit | ⬜ |
-| **P1** | client 失败 toast —— 新增 `InventoryMoveRejectedHandler`（活链路）→ 文案表（境界名走 `RealmLabel`）→ `BongToast.show(String,int,long,long)` | ⬜ |
-| **P2** | tab/槽 hover 预警 —— 照抄 `ItemTooltipPanel`+`updateTooltipFromHover`，覆盖空槽（传槽身份），只覆盖静态规则 | ⬜ |
-| **P3** | 视听规格收尾 —— toast 时长/文字色/前缀、hover 面板位置/配色/淡入淡出、不遮挡拖拽 ghost | ⬜ |
+| **P0** | server 拒绝原因结构化 —— `InventoryMoveRejectReason` enum + 收敛 `Result` + 境界门控并入 + **新增专属 `InventoryMoveRejectedV1` S2C payload**（proto 双端）+ emit | ✅ 2026-07-03 |
+| **P1** | client 失败 toast —— 新增 `InventoryMoveRejectedHandler`（活链路）→ 文案表（境界名走 `RealmLabel`）→ `BongToast.show(String,int,long,long)` | ✅ 2026-07-03 |
+| **P2** | tab/槽 hover 预警 —— 照抄 `ItemTooltipPanel`+`updateTooltipFromHover`，覆盖空槽（传槽身份），只覆盖静态规则 | ✅ 2026-07-03 |
+| **P3** | 视听规格收尾 —— toast 时长/文字色/前缀、hover 面板位置/配色/淡入淡出、不遮挡拖拽 ghost | ✅ 2026-07-03 |
 
-验收日期：全相位 ✅ 后填。
+验收日期：2026-07-03（全相位 consume 完成，7 commit + 博弈 ready + 全绿）。
 
 ## 接入面（跨仓库契约，已坐实 + 博弈复核修正）
 
@@ -31,7 +31,7 @@
 
 ---
 
-## P0 — server 拒绝原因结构化 + 新增专属 payload ⬜
+## P0 — server 拒绝原因结构化 + 新增专属 payload ✅ 2026-07-03
 
 **目标**：把当前散落成裸 `String` + 只进日志的拒绝原因收敛成 typed enum，经一条**专属结构化 payload** 下发 client。
 
@@ -50,7 +50,7 @@
 
 ---
 
-## P1 — client 失败 toast ⬜
+## P1 — client 失败 toast ✅ 2026-07-03
 
 **目标**：拒绝发生时飘一条红色警示,把原因用正典语感文案告诉玩家。
 
@@ -63,7 +63,7 @@
 
 ---
 
-## P2 — tab/槽 hover 预警 ⬜
+## P2 — tab/槽 hover 预警 ✅ 2026-07-03
 
 **目标**：hover inventory tab / 装备槽时主动显示该容器/槽约束,不必等失败才提示。
 
@@ -76,7 +76,7 @@
 
 ---
 
-## P3 — 视听规格收尾 ⬜
+## P3 — 视听规格收尾 ✅ 2026-07-03
 
 **HUD / 屏幕效果规格**（内联，达可实现精度，博弈复核后修正）：
 - **失败 toast**（走 `BongToast.show(String,int,long,long)` 活重载）：
@@ -151,3 +151,42 @@ scope ~3-4 PR，单 plan 内序列化（`docs/CLAUDE.md` §六）。
 - 收口调研（2026-07-02，Explore agent 实地核查 + sonnet 博弈自检复核）：server 拒绝路径 `inventory/mod.rs` + 境界门控 `client_request_handler.rs:9896-9925`;拒绝下发**专属 payload 惯例**（`MineralProbeResultV1`/`CastSyncV1`，仅 ProbeDenial 走 EventAlert）;client 活链路 `network/*Handler`→ToastSpec→`BongToast.show(String,int,..)`（死代码 `BongEventAlertOverlay`/非 network `EventAlertHandler` 已排除）;境界映射 `realm_to_string`↔`RealmLabel.displayName`。
 - 博弈修正记录：原收口"复用泛型 EventAlert"被控方证伪（EventAlert 仅 1/3 先例在用 + 死代码引用 + message 裸 String 无编码语法）→ 改专属结构化 payload + 活链路。
 - 相关先例 plan：`docs/finished_plans/plan-tarkov-backpack-v1.md`（删了 container-not-empty 拒绝）;`plan-mineral-*`（`MineralProbeResultV1` 专属拒绝 payload 范本）;`plan-wire-format-bridge-v1`（wire 形状教训：reason 用 string tag 避枚举前缀）。
+
+---
+
+## Finish Evidence
+
+**验收日期**：2026-07-03（`/consume-plan` 全自动消费：Design→Implement P0-P3→博弈对峙 Verify，7 commit + opus verdict=ready + 全绿）
+
+### 落地清单
+- **P0 server 拒绝原因结构化 + 专属 payload**：`server/src/inventory/mod.rs`（`InventoryMoveRejectReason` enum 含 `ArmorSlotUnresolvable`，`apply_inventory_move`/`validate_move_semantics`/`validate_equip_to`/`displaced_at_target`/`validate_attach_fits`/`attach_at_location` 收敛为 `Result<_, InventoryMoveRejectReason>`，`client_request_handler.rs:9896-9925` 伪皮胸槽境界门控并入 `RealmTooLow`）；`server/src/schema/server_data.rs`（`ServerDataPayloadV1::InventoryMoveRejected` variant + `InventoryMoveRejectedV1` struct + 双向 round-trip）；`proto/bong/envelope.proto`（`InventoryMoveRejected` message，oneof 字段 137）；`server/src/schema/proto_convert.rs`（From arm + pin count 125）；`agent/packages/schema/src/server-data.ts`（`ServerDataInventoryMoveRejectedV1` TypeBox + ServerDataV1 union + samples，drift gate 绿）；`server/src/network/inventory_move_rejected_emit.rs`（emit 只发触发者不广播）。
+- **P1 client 失败 toast**：`client/.../network/InventoryMoveRejectedHandler.java`（活链路 → `BongToast.show(String,int,long,long)`；文案表覆盖全变体；境界 `RealmLabel.displayName` 现场转中文；500ms 去重）；`ProtoServerDataBridge.java`（`CASE_TO_TYPE` + `extractInner()` switch 两处映射）；`ServerDataRouter.java`（注册 `inventory_move_rejected`）。
+- **P2 hover 预警**：`ItemTooltipPanel.java`（「约束说明」区 + 空槽 `slotType` 通道）；`InspectScreen.java`（`updateTooltipFromHover` 接约束）；`EquipSlotComponent.java`（`slotType()`）。只覆盖静态规则（`worn_cap` 常量），动态 `worn_cap_bonus` 仍走 toast。
+- **P3 视听**：`ItemTooltipPanel.java`（背板 `0xE0141414` + 1px 边框 + 满足绿/不满足红 + 4-tick 淡入）；toast 走 `BongToast.WARNING_COLOR 0xFFAA55`，背景恒 `0x88000000`。
+
+### 关键 commit（分支 `auto/plan-inventory-hint-panel-v1`）
+- `af3476e44`（2026-07-03）feat(inventory): InventoryMoveRejectReason enum 收敛库存移动拒绝路径
+- `80edd7151` feat(schema): InventoryMoveRejectedV1 拒绝原因结构化 S2C payload 双端
+- `e778346b1` feat(network): emit InventoryMoveRejectedV1 + 伪皮境界门控并入 enum
+- `deac28c3f` feat(client): 库存拒绝原因失败 toast — InventoryMoveRejectedHandler 接入 P1
+- `228079671` feat(client): 装备槽 hover 约束预警 — ItemTooltipPanel「约束说明」区 P2
+- `664be932f` feat(client): hover 约束面板视听规格收尾 P3
+- `91e845e5d` fix(inventory): armor 无法解析槽位改用独立 ArmorSlotUnresolvable 变体，杜绝 unknown 占位符泄漏（博弈 major 硬化）
+
+### 测试结果
+- **server**：`cargo fmt --check` ✅ + `cargo clippy --all-targets -- -D warnings` ✅ + `cargo test` = **10172 passed / 0 failed / 1 ignored**
+- **client**：`./gradlew test build` = **BUILD SUCCESSFUL / 3368 passed / 0 failed**（`InventoryMoveRejectedHandlerTest` 36 tests）
+- **agent/schema**：`npm test`（packages/schema）738 passed，`generated-artifacts` drift gate 绿
+
+### 跨仓库核验
+- **server**：`InventoryMoveRejectReason`（+`ArmorSlotUnresolvable`）、`InventoryMoveRejectedV1`、`ServerDataPayloadV1::InventoryMoveRejected`、`inventory_move_rejected_emit`
+- **agent**：`ServerDataInventoryMoveRejectedV1` TypeBox + ServerDataV1 union + samples
+- **client**：`InventoryMoveRejectedHandler`、`ProtoServerDataBridge`（CASE_TO_TYPE + extractInner `INVENTORY_MOVE_REJECTED`）、`ServerDataRouter` 注册 `inventory_move_rejected`、`RealmLabel.displayName`
+
+### 博弈自检
+- promote 阶段两轮 sonnet 博弈：round-1 2 blocker（"复用 EventAlert" 证据被证伪 + 死代码引用）→ round-2 ready（改专属结构化 payload + 活链路）。
+- consume Verify 博弈：opus verdict=ready、defenseWins=true，端到端链路逐点核验真通无孤岛。控方 major（armor `unknown` 泄漏）判"真实但不可达"→ 主线顺手硬化（`91e845e5d`，补 None 分支专属测试）；minor（拖拽 ghost 隐藏）opus 核实为 docked 面板 z=200 架构裁剪、非漏做，未改。
+
+### 遗留 / 后续
+- hover 面板"拖拽进行中隐藏"：`ItemTooltipPanel` 为 rightCol 固定 docked 面板（非跟随光标浮动 tooltip），拖拽 ghost 以 z=200 覆盖绘制结构上不遮挡——原 §P3 该条属范围裁剪非漏实现（opus 核实在案）。
+- `worn_cap_bonus`（`mod.rs:659-661`，P5 占位恒 0）将来由境界/功法派生启用后，动态加成类拒绝仍走 P1 toast、hover 不承诺（§P2 边界已声明）。

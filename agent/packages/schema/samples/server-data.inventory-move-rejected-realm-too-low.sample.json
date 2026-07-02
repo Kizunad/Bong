@@ -1,0 +1,5 @@
+{
+  "type": "inventory_move_rejected",
+  "reason": "realm_too_low",
+  "required_realm": "Condense"
+}

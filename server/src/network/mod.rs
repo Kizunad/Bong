@@ -41,6 +41,7 @@ pub mod full_power_emit;
 pub mod gameplay_vfx;
 pub mod identity_panel_emit;
 pub mod inventory_event_emit;
+pub mod inventory_move_rejected_emit;
 pub mod inventory_snapshot_emit;
 pub mod knockback_sync_emit;
 pub mod meridian_severed_emit;

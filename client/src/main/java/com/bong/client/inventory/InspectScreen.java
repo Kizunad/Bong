@@ -3988,36 +3988,49 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         matrices.pop();
     }
 
+    /**
+     * plan-inventory-hint-panel-v1 P2：hover 检测框架，逐候选区域早返回。装备槽分支
+     * （{@code activeTab == TAB_EQUIP}）走专属 {@code setHoveredEquipSlot}——即便槽为空
+     * （{@code eq.representative()==null}）也要早返回展示"约束说明"区，不落回 hotbar/quickUse
+     * 兜底（原实现里 hovered==null 会继续往下探测其它区域，装备槽约束面板因而被空槽悄悄吞掉）。
+     */
     private void updateTooltipFromHover(double mx, double my) {
         if (dragState.isDragging()) { tooltipPanel.setHoveredItem(dragState.draggedItem()); return; }
-        InventoryItem hovered = null;
+
         BackpackGridPanel grid = activeGrid();
         if (grid != null && grid.containsPoint(mx, my)) {
             var pos = grid.screenToGrid(mx, my);
-            if (pos != null) hovered = grid.itemAt(pos.row(), pos.col());
+            InventoryItem item = pos == null ? null : grid.itemAt(pos.row(), pos.col());
+            if (item != null) { tooltipPanel.setHoveredItem(item); return; }
         }
-        if (hovered == null && activeTab == TAB_EQUIP) {
+
+        if (activeTab == TAB_EQUIP) {
             var eq = equipPanel.slotAtScreen(mx, my);
-            if (eq != null) hovered = eq.representative();
-        }
-        if (hovered == null && activeTab == TAB_CULTIVATION && bodyInspect != null) {
-            if (bodyInspect.activeLayer() == BodyInspectComponent.Layer.PHYSICAL) {
-                BodyPart bp = bodyInspect.bodyPartAtScreen(mx, my);
-                if (bp != null) hovered = bodyInspect.physicalItemAt(bp);
-            } else {
-                MeridianChannel ch = bodyInspect.channelAtScreen(mx, my);
-                if (ch != null) hovered = bodyInspect.meridianItemAt(ch);
+            if (eq != null) {
+                tooltipPanel.setHoveredEquipSlot(eq.slotType(), eq.contents());
+                return;
             }
         }
-        if (hovered == null) {
-            int idx = hotbarSlotAtScreen(mx, my);
-            if (idx >= 0) hovered = hotbarItems[idx];
+
+        if (activeTab == TAB_CULTIVATION && bodyInspect != null) {
+            InventoryItem item = null;
+            if (bodyInspect.activeLayer() == BodyInspectComponent.Layer.PHYSICAL) {
+                BodyPart bp = bodyInspect.bodyPartAtScreen(mx, my);
+                if (bp != null) item = bodyInspect.physicalItemAt(bp);
+            } else {
+                MeridianChannel ch = bodyInspect.channelAtScreen(mx, my);
+                if (ch != null) item = bodyInspect.meridianItemAt(ch);
+            }
+            if (item != null) { tooltipPanel.setHoveredItem(item); return; }
         }
-        if (hovered == null) {
-            int idx = quickUseSlotAtScreen(mx, my);
-            if (idx >= 0) hovered = quickUseItems[idx];
-        }
-        tooltipPanel.setHoveredItem(hovered);
+
+        int hotbarIdx = hotbarSlotAtScreen(mx, my);
+        if (hotbarIdx >= 0) { tooltipPanel.setHoveredItem(hotbarItems[hotbarIdx]); return; }
+
+        int quickUseIdx = quickUseSlotAtScreen(mx, my);
+        if (quickUseIdx >= 0) { tooltipPanel.setHoveredItem(quickUseItems[quickUseIdx]); return; }
+
+        tooltipPanel.setHoveredItem(null);
     }
 
     private void drawPendingMeridianPrompt(DrawContext context) {

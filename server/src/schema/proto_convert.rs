@@ -1558,6 +1558,15 @@ impl From<&ServerDataPayloadV1> for Payload {
                     z: position[2],
                 })
             }
+            // ─── plan-inventory-hint-panel-v1 P0：库存操作拒绝原因结构化 S2C（只读传输，不涉及 qi_physics）
+            ServerDataPayloadV1::InventoryMoveRejected(r) => {
+                Payload::InventoryMoveRejected(bong::InventoryMoveRejected {
+                    reason: r.reason.clone(),
+                    required_realm: r.required_realm.clone(),
+                    slot: r.slot.clone(),
+                    cap: r.cap,
+                })
+            }
         }
     }
 }
@@ -4773,6 +4782,90 @@ mod tests {
         );
     }
 
+    // ─── plan-inventory-hint-panel-v1 P0：InventoryMoveRejectedV1 proto round-trip pin ───
+
+    /// worn_cap_full 拒绝（slot + cap 都携带）→ proto → decode → 字段逐一保真。
+    #[test]
+    fn s2c_inventory_move_rejected_worn_cap_full_proto_roundtrip() {
+        use super::super::server_data::InventoryMoveRejectedV1;
+        use bong::server_data_envelope::Payload;
+        use prost::Message;
+
+        let payload = ServerDataPayloadV1::InventoryMoveRejected(InventoryMoveRejectedV1 {
+            reason: "worn_cap_full".to_string(),
+            required_realm: None,
+            slot: Some("chest".to_string()),
+            cap: Some(3),
+        });
+        let proto = server_data_to_proto_payload(&payload);
+        let envelope = bong::ServerDataEnvelope {
+            payload: Some(proto),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded = bong::ServerDataEnvelope::decode(bytes.as_slice())
+            .expect("InventoryMoveRejected proto decode");
+        match decoded.payload {
+            Some(Payload::InventoryMoveRejected(r)) => {
+                assert_eq!(r.reason, "worn_cap_full");
+                assert!(r.required_realm.is_none());
+                assert_eq!(r.slot.as_deref(), Some("chest"));
+                assert_eq!(r.cap, Some(3));
+            }
+            other => panic!("expected InventoryMoveRejected payload, got {other:?}"),
+        }
+    }
+
+    /// realm_too_low 拒绝（required_realm 携带，slot/cap 为 None）→ proto round-trip 保真。
+    #[test]
+    fn s2c_inventory_move_rejected_realm_too_low_proto_roundtrip() {
+        use super::super::server_data::InventoryMoveRejectedV1;
+        use bong::server_data_envelope::Payload;
+        use prost::Message;
+
+        let payload = ServerDataPayloadV1::InventoryMoveRejected(InventoryMoveRejectedV1 {
+            reason: "realm_too_low".to_string(),
+            required_realm: Some("Condense".to_string()),
+            slot: None,
+            cap: None,
+        });
+        let proto = server_data_to_proto_payload(&payload);
+        let envelope = bong::ServerDataEnvelope {
+            payload: Some(proto),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded = bong::ServerDataEnvelope::decode(bytes.as_slice())
+            .expect("InventoryMoveRejected proto decode");
+        match decoded.payload {
+            Some(Payload::InventoryMoveRejected(r)) => {
+                assert_eq!(r.reason, "realm_too_low");
+                assert_eq!(r.required_realm.as_deref(), Some("Condense"));
+                assert!(r.slot.is_none());
+                assert!(r.cap.is_none());
+            }
+            other => panic!("expected InventoryMoveRejected payload, got {other:?}"),
+        }
+    }
+
+    /// `InventoryMoveRejected` 走 proto 路径，不是 JSON-bypass —— pin 两个分类信号防回归。
+    #[test]
+    fn s2c_inventory_move_rejected_is_proto_not_bypass() {
+        use super::super::server_data::InventoryMoveRejectedV1;
+        let payload = ServerDataPayloadV1::InventoryMoveRejected(InventoryMoveRejectedV1 {
+            reason: "hand_occupied".to_string(),
+            required_realm: None,
+            slot: None,
+            cap: None,
+        });
+        assert!(
+            !payload.is_json_bypass(),
+            "InventoryMoveRejected has a proto definition; is_json_bypass() must be false"
+        );
+        assert_eq!(
+            payload.payload_type(),
+            super::super::server_data::ServerDataType::InventoryMoveRejected
+        );
+    }
+
     #[test]
     fn s2c_ui_open_roundtrip() {
         s2c_encode_decode_roundtrip(ServerDataPayloadV1::UiOpen {
@@ -5646,13 +5739,14 @@ mod tests {
             ExtractFailedV1, ExtractProgressV1, ExtractStartedV1, FactionWarStateV1,
             FullPowerChargingStateV1, FullPowerExhaustedStateV1, FullPowerReleaseV1,
             GatheringQualityHintV1, GatheringTargetTypeV1, HalfStepRechallengeV1,
-            HeartDemonOfferV1, KnockbackSyncV1, LootContainerCloseReasonV1, LootContainerCloseV1,
-            LootContainerOpenV1, LootContainerSourceKindV1, LootContainerUpdateV1,
-            MineralProbeResultV1, PillBuffStatusV1, QiColorObservedV1, RiftPortalDirectionV1,
-            RiftPortalKindV1, RiftPortalRemovedV1, RiftPortalStateV1, SearchAbortReasonV1,
-            SearchAbortedV1, SearchCompletedV1, SearchProgressV1, SearchStartedV1,
-            SwordBondHudStateV1, TechniqueProficiencyUpdateV1, TribulationBroadcastV1,
-            TribulationStateV1, TsyCollapseStartedIpcV1, ZhenmaiHudV1,
+            HeartDemonOfferV1, InventoryMoveRejectedV1, KnockbackSyncV1,
+            LootContainerCloseReasonV1, LootContainerCloseV1, LootContainerOpenV1,
+            LootContainerSourceKindV1, LootContainerUpdateV1, MineralProbeResultV1,
+            PillBuffStatusV1, QiColorObservedV1, RiftPortalDirectionV1, RiftPortalKindV1,
+            RiftPortalRemovedV1, RiftPortalStateV1, SearchAbortReasonV1, SearchAbortedV1,
+            SearchCompletedV1, SearchProgressV1, SearchStartedV1, SwordBondHudStateV1,
+            TechniqueProficiencyUpdateV1, TribulationBroadcastV1, TribulationStateV1,
+            TsyCollapseStartedIpcV1, ZhenmaiHudV1,
         };
         use super::super::skill::{
             SkillCapChangedPayloadV1, SkillIdV1, SkillLvUpPayloadV1, SkillScrollUsedPayloadV1,
@@ -6676,6 +6770,15 @@ mod tests {
             fix!(ServerDataPayloadV1::TutorialCoffinPos {
                 position: [0, 69, 0],
             }),
+            // plan-inventory-hint-panel-v1 P0：库存操作拒绝原因结构化 S2C。
+            fix!(ServerDataPayloadV1::InventoryMoveRejected(
+                InventoryMoveRejectedV1 {
+                    reason: "worn_cap_full".to_string(),
+                    required_realm: None,
+                    slot: Some("chest".to_string()),
+                    cap: Some(3),
+                }
+            )),
             // ─── JSON-bypass variants (3) — is_json_bypass() returns true ───────────
             fix!(ServerDataPayloadV1::AgentUiRequest(
                 AgentUiRequestPayloadV1 {
@@ -6850,6 +6953,7 @@ mod tests {
             ServerDataType::AgentUiClose,
             ServerDataType::HalfStepRechallenge,
             ServerDataType::TutorialCoffinPos,
+            ServerDataType::InventoryMoveRejected,
         ];
 
         let total_variants = all_types.len();
@@ -6957,8 +7061,8 @@ mod tests {
         }
 
         assert_eq!(
-            proto_count, 124,
-            "Expected 124 proto-encodable S2C variants, got {proto_count}. \
+            proto_count, 125,
+            "Expected 125 proto-encodable S2C variants, got {proto_count}. \
              The fixture list or is_json_bypass classification may have changed."
         );
         assert_eq!(
