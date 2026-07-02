@@ -3,7 +3,9 @@ package com.bong.client.inventory.component;
 import com.bong.client.armor.ArmorTintRegistry;
 import com.bong.client.botany.BotanySpiritQualityVisuals;
 import com.bong.client.inventory.RarityVisuals;
+import com.bong.client.inventory.model.EquipSlotType;
 import com.bong.client.inventory.model.InventoryItem;
+import com.bong.client.inventory.model.SlotContents;
 import com.bong.client.inventory.AncientRelicGlowRenderer;
 import io.wispforest.owo.ui.base.BaseComponent;
 import io.wispforest.owo.ui.core.OwoUIDrawContext;
@@ -38,7 +40,15 @@ public class ItemTooltipPanel extends BaseComponent {
     private static final int QUALITY_BAR_HEIGHT = 3;
     private static final int QUALITY_TRACK_COLOR = 0x66000000;
 
+    // plan-inventory-hint-panel-v1 P2「约束说明」区配色（与 §P3 视听规格一致：满足=绿/不满足=红）。
+    static final int CONSTRAINT_OK_COLOR = 0xFF66BB66;
+    static final int CONSTRAINT_FULL_COLOR = 0xFFCC5555;
+    static final int CONSTRAINT_NEUTRAL_COLOR = 0xFFAAAAAA;
+    private static final int EMPTY_SLOT_HEADER_COLOR = 0xFFCCCCCC;
+
     private InventoryItem hoveredItem;
+    private EquipSlotType hoveredSlotType;
+    private int hoveredSlotWornCount;
     private int currentHeight = DEFAULT_HEIGHT;
 
     public ItemTooltipPanel() {
@@ -46,8 +56,25 @@ public class ItemTooltipPanel extends BaseComponent {
     }
 
     public void setHoveredItem(InventoryItem item) {
+        applyHover(item, null, 0);
+    }
+
+    /**
+     * plan-inventory-hint-panel-v1 P2：装备槽 hover 专属入口——额外传入槽身份 + worn 层数，
+     * 使面板即便槽为空（{@code contents.representative()==null}）也能显示"约束说明"区
+     * （核心价值：预看 {@code worn_cap}，不必等失败 toast 才知道，plan §P2）。
+     */
+    public void setHoveredEquipSlot(EquipSlotType slotType, SlotContents contents) {
+        InventoryItem item = contents == null ? null : contents.representative();
+        int wornCount = contents == null ? 0 : contents.wornCount();
+        applyHover(item, slotType, wornCount);
+    }
+
+    private void applyHover(InventoryItem item, EquipSlotType slotType, int wornCount) {
         this.hoveredItem = item;
-        int required = computeRequiredHeight(item);
+        this.hoveredSlotType = slotType;
+        this.hoveredSlotWornCount = wornCount;
+        int required = computeRequiredHeight(item, slotType);
         if (required != currentHeight) {
             currentHeight = required;
             // owo-lib BaseComponent.sizing 是 Observable，改值会自动触发 notifyParentIfMounted，
@@ -56,7 +83,9 @@ public class ItemTooltipPanel extends BaseComponent {
         }
     }
 
-    private int computeRequiredHeight(InventoryItem item) {
+    private int computeRequiredHeight(InventoryItem item, EquipSlotType slotType) {
+        // 空槽但来自装备槽 hover（slotType != null）：仍需渲染"约束说明"区（非通用 hint），
+        // DEFAULT_HEIGHT 足够容纳槽名 + 约束行两行，无需额外扩高。
         if (item == null || item.isEmpty()) return DEFAULT_HEIGHT;
 
         TextRenderer textRenderer = MinecraftClient.getInstance().textRenderer;
@@ -97,6 +126,10 @@ public class ItemTooltipPanel extends BaseComponent {
             int lines = textRenderer.wrapLines(Text.literal(item.description()), maxWidth).size();
             needed += lines * (textRenderer.fontHeight + DESC_LINE_STEP);
         }
+        // plan-inventory-hint-panel-v1 P2：装备槽 hover 时（slotType != null）在描述后追加一行"约束说明"。
+        if (slotType != null) {
+            needed += lineBlock;
+        }
         needed += PADDING_BOTTOM;
 
         return Math.max(DEFAULT_HEIGHT, needed);
@@ -114,6 +147,12 @@ public class ItemTooltipPanel extends BaseComponent {
         TextRenderer textRenderer = MinecraftClient.getInstance().textRenderer;
 
         if (hoveredItem == null || hoveredItem.isEmpty()) {
+            if (hoveredSlotType != null) {
+                // plan-inventory-hint-panel-v1 P2：空装备槽 hover——核心价值恰在此处（cap 预看，
+                // 不必等失败 toast 才知道）。不落回通用 "移动光标至物品查看详情" hint。
+                drawEmptySlotConstraint(context, textRenderer);
+                return;
+            }
             String hint = "移动光标至物品查看详情";
             int hintX = x + (PANEL_WIDTH - textRenderer.getWidth(hint)) / 2;
             int hintY = y + (h - textRenderer.fontHeight) / 2;
@@ -244,6 +283,56 @@ public class ItemTooltipPanel extends BaseComponent {
                 cy += textRenderer.fontHeight + DESC_LINE_STEP;
             }
         }
+
+        // plan-inventory-hint-panel-v1 P2：装备槽 hover（有件的槽）—— 追加一行"约束说明"。
+        if (hoveredSlotType != null) {
+            if (cy > y + h - textRenderer.fontHeight - PADDING_BOTTOM) {
+                cy = y + h - textRenderer.fontHeight - PADDING_BOTTOM;
+            }
+            String constraintLine = slotConstraintLine(hoveredSlotType, hoveredSlotWornCount);
+            int constraintColor = slotConstraintColor(hoveredSlotType, hoveredSlotWornCount);
+            context.drawTextWithShadow(textRenderer, Text.literal(constraintLine), descLeft, cy, constraintColor);
+        }
+    }
+
+    /** 空槽（{@code hoveredItem==null}）但来自装备槽 hover：只画槽名 + 约束行，不画物品面板。 */
+    private void drawEmptySlotConstraint(OwoUIDrawContext context, TextRenderer textRenderer) {
+        int lx = x + ICON_MARGIN;
+        int ly = y + PADDING_TOP;
+        context.drawTextWithShadow(
+            textRenderer, Text.literal(hoveredSlotType.displayName() + "（空）"), lx, ly, EMPTY_SLOT_HEADER_COLOR
+        );
+        ly += textRenderer.fontHeight + BLOCK_LINE_STEP;
+        String constraintLine = slotConstraintLine(hoveredSlotType, hoveredSlotWornCount);
+        int constraintColor = slotConstraintColor(hoveredSlotType, hoveredSlotWornCount);
+        context.drawTextWithShadow(textRenderer, Text.literal(constraintLine), lx, ly, constraintColor);
+    }
+
+    /**
+     * plan-inventory-hint-panel-v1 P2：装备槽"约束说明"文案（package-private 供测试直接断言）。
+     * 手槽（held-only，{@link EquipSlotType#isHand()}）无 worn cap 概念，恒返回持械位提示；
+     * 身体槽按 {@link EquipSlotComponent#wornCap(EquipSlotType)} 静态常量算叠层进度。
+     * 满员措辞与 P1 toast（{@code InventoryMoveRejectedHandler.capFullMessage}）语感一致——
+     * 均含"已穿戴 N 层，无法再叠加"，且本行额外带"已满"字面量（plan §P2 测试声明点名）。
+     */
+    static String slotConstraintLine(EquipSlotType slotType, int wornCount) {
+        if (slotType.isHand()) {
+            return "持械位 · 仅可持 1 件";
+        }
+        int cap = EquipSlotComponent.wornCap(slotType);
+        if (wornCount >= cap) {
+            return "已满 · 已穿戴 " + cap + " 层，无法再叠加";
+        }
+        return "可叠 " + wornCount + "/" + cap + " 层";
+    }
+
+    /** 约束行配色：手槽中性灰；身体槽按是否已满走绿/红（§P3 视听规格）。 */
+    static int slotConstraintColor(EquipSlotType slotType, int wornCount) {
+        if (slotType.isHand()) {
+            return CONSTRAINT_NEUTRAL_COLOR;
+        }
+        int cap = EquipSlotComponent.wornCap(slotType);
+        return wornCount >= cap ? CONSTRAINT_FULL_COLOR : CONSTRAINT_OK_COLOR;
     }
 
     static String rarityLabel(String rarity) {
@@ -377,4 +466,16 @@ public class ItemTooltipPanel extends BaseComponent {
 
     @Override
     protected int determineVerticalContentSize(Sizing sizing) { return currentHeight; }
+
+    // ─── plan-inventory-hint-panel-v1 P2：测试专用访问器 ──────────────────────
+    // draw()/computeRequiredHeight() 对非空 item 会触达 MinecraftClient.getInstance()
+    // （无 MC 启动的单测环境会 NPE），故这些访问器只安全覆盖"空槽 hover"路径
+    // （item==null 时 computeRequiredHeight 不touch MC，见既有惯例 PackContainerWindow.*ForTest()）。
+    InventoryItem hoveredItemForTest() { return hoveredItem; }
+
+    EquipSlotType hoveredSlotTypeForTest() { return hoveredSlotType; }
+
+    int hoveredSlotWornCountForTest() { return hoveredSlotWornCount; }
+
+    int currentHeightForTest() { return currentHeight; }
 }

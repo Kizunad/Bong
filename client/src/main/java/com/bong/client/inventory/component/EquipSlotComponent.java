@@ -56,6 +56,23 @@ public class EquipSlotComponent extends BaseComponent {
 
     public EquipSlotType slotType() { return slotType; }
 
+    /**
+     * plan-inventory-hint-panel-v1 P2：{@code worn_cap} 静态规则客户端镜像
+     * （server {@code worn_cap()} @ {@code inventory/mod.rs:636-643}——head/feet=2、chest/legs=3、
+     * 手槽（held-only，worn 恒空）=0）。
+     *
+     * <p><b>只覆盖静态常量</b>：{@code worn_cap_bonus}（server mod.rs:659-661，P5 占位，
+     * 当前恒返回 0）一旦未来接入境界/功法派生加成，无法纯 client 推算——届时动态加成类拒绝
+     * 仍须走 P1 失败 toast，本方法/hover 面板不承诺动态结果（plan §P2 边界）。
+     */
+    static int wornCap(EquipSlotType slotType) {
+        return switch (slotType) {
+            case HEAD, FEET -> 2;
+            case CHEST, LEGS -> 3;
+            case MAIN_HAND, OFF_HAND, EXTRA_HAND_0, EXTRA_HAND_1 -> 0;
+        };
+    }
+
     public SlotContents contents() { return contents; }
 
     public void setContents(SlotContents contents) {
