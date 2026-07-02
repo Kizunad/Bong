@@ -2793,6 +2793,221 @@ class ProtoServerDataBridgeTest {
     }
 
     // ═══════════════════════════════════════════════════════════════════
+    // plan-wire-format-bridge-v1 P4 — RC4/RC5：内嵌 JSON 字符串 + 其他形状不符（2 条）
+    // 每条：喂真实 server 侧编码形状（proto string 字段/oneof）→ bridge() → 断言
+    // handler 非 noOp + 字段落地为期望值（不是原始转义 JSON 文本/恒 default）。
+    // ═══════════════════════════════════════════════════════════════════
+
+    // ─── RC4 crit: loot_container_open.source_kind（内嵌 JSON 字符串二次解码） ───
+    //
+    // server proto_convert.rs: `source_kind: serde_json::to_string(&o.source_kind)`——
+    // LootContainerSourceKindV1 是 serde 外部标签枚举(rename_all=snake_case)，先被
+    // serde_json 序列化成 JSON，再整体塞进 proto `string` 字段。JsonFormat 对这个
+    // string 字段只会原样打印被转义的 JSON 文本，handler 此前直接把这段转义文本当
+    // kind 用、grade 恒 "common"。修复后 LootContainerHandler.parseSourceKind 二次
+    // JsonParser.parseString 解码，必须还原出真实 kind/grade。
+
+    @Test
+    void bridgeLootContainerOpenDecodesEmbeddedSupplyCoffinSourceKind() {
+        // server 侧对 SupplyCoffin{grade:"legendary"} 的实际编码：
+        // serde_json::to_string(&SupplyCoffin{grade:"legendary"})
+        //   == "{\"supply_coffin\":{\"grade\":\"legendary\"}}"
+        String serverEncodedSourceKind = "{\"supply_coffin\":{\"grade\":\"legendary\"}}";
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setLootContainerOpen(Envelope.LootContainerOpen.newBuilder()
+                        .setSessionId(101L)
+                        .setSourceKind(serverEncodedSourceKind)
+                        .setRows(3)
+                        .setCols(4)
+                        .setTimeoutWallSecs(1_800L))
+                .build();
+
+        ProtoServerDataBridge.BridgeResult result = ProtoServerDataBridge.bridge(envelope.toByteArray());
+        assertTrue(result.isSuccess(), "bridge should succeed: " + result.errorMessage());
+        ServerDataRouter.RouteResult route = ServerDataRouter.createDefault()
+                .route(result.legacyJson(), result.legacyJson().getBytes(StandardCharsets.UTF_8).length);
+        assertTrue(route.isHandled(), "loot_container_open must not noOp: " + route.logMessage());
+
+        LootContainerStateStore.OpenSession session =
+                (LootContainerStateStore.OpenSession) LootContainerStateStore.current();
+        assertEquals("supply_coffin", session.sourceKind(),
+                "kind 此前恒为原始转义 JSON 文本 '{\"supply_coffin\":...}'（isJsonPrimitive 分支"
+                + "短路了 isJsonObject/variant-key 解析）；二次解码后必须还原成 'supply_coffin'");
+        assertEquals("legendary", session.grade(),
+                "grade 此前恒 hardcode 'common'（丢失真实稀有度）；二次解码后必须还原成 'legendary'");
+    }
+
+    @Test
+    void bridgeLootContainerOpenDecodesEmbeddedStorageCrateSourceKind() {
+        // server 侧对 StorageCrate{is_herb:true} 的实际编码。
+        String serverEncodedSourceKind = "{\"storage_crate\":{\"is_herb\":true}}";
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setLootContainerOpen(Envelope.LootContainerOpen.newBuilder()
+                        .setSessionId(102L)
+                        .setSourceKind(serverEncodedSourceKind)
+                        .setRows(4)
+                        .setCols(4)
+                        .setTimeoutWallSecs(0L))
+                .build();
+
+        ProtoServerDataBridge.BridgeResult result = ProtoServerDataBridge.bridge(envelope.toByteArray());
+        assertTrue(result.isSuccess());
+        ServerDataRouter.RouteResult route = ServerDataRouter.createDefault()
+                .route(result.legacyJson(), result.legacyJson().getBytes(StandardCharsets.UTF_8).length);
+        assertTrue(route.isHandled(), "loot_container_open must not noOp: " + route.logMessage());
+
+        LootContainerStateStore.OpenSession session =
+                (LootContainerStateStore.OpenSession) LootContainerStateStore.current();
+        assertEquals("storage_crate", session.sourceKind());
+        assertEquals("herb", session.grade(),
+                "is_herb=true 内嵌在转义 JSON 字符串里，二次解码后必须还原成 herb 分类");
+    }
+
+    @Test
+    void bridgeLootContainerOpenDecodesEmbeddedDeadDropSourceKind() {
+        // server 侧对 unit variant DeadDrop 的实际编码：外部标签枚举把它序列化成裸
+        // JSON 字符串 "dead_drop"，再整体 serde_json::to_string 一次 → proto string
+        // 字段的原始内容是 "\"dead_drop\""（带字面双引号）。
+        String serverEncodedSourceKind = "\"dead_drop\"";
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setLootContainerOpen(Envelope.LootContainerOpen.newBuilder()
+                        .setSessionId(103L)
+                        .setSourceKind(serverEncodedSourceKind)
+                        .setRows(3)
+                        .setCols(3)
+                        .setTimeoutWallSecs(0L))
+                .build();
+
+        ProtoServerDataBridge.BridgeResult result = ProtoServerDataBridge.bridge(envelope.toByteArray());
+        assertTrue(result.isSuccess());
+        ServerDataRouter.RouteResult route = ServerDataRouter.createDefault()
+                .route(result.legacyJson(), result.legacyJson().getBytes(StandardCharsets.UTF_8).length);
+        assertTrue(route.isHandled(), "loot_container_open must not noOp: " + route.logMessage());
+
+        LootContainerStateStore.OpenSession session =
+                (LootContainerStateStore.OpenSession) LootContainerStateStore.current();
+        assertEquals("dead_drop", session.sourceKind(),
+                "此前 kind 会带着字面双引号变成 '\"dead_drop\"'（原始转义文本），"
+                + "二次解码后必须去掉多余引号还原成 'dead_drop'");
+        assertEquals("common", session.grade());
+    }
+
+    // ─── RC5 crit: recipe_unlocked.source（oneof 无判别字段，重塑三分支） ───
+    //
+    // UnlockEventSource proto3-JSON 对 set 的 oneof 成员直接在顶层用其自身字段名打印
+    // （无 "kind" 判别字段），RecipeUnlockedHandler 却读 sourceObj.get("kind") 恒 null
+    // → 整条残卷/师承/顿悟解锁通知链路此前静默永久丢弃（CraftStore.recordUnlock 从
+    // 未被调用）。bridgeRecipeUnlocked 把三种 oneof 分支重塑成 {kind,...} 判别式对象。
+
+    @Test
+    void bridgeRecipeUnlockedScrollSourceRoutesToCraftStore() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setRecipeUnlocked(Envelope.RecipeUnlocked.newBuilder()
+                        .setV(1)
+                        .setPlayerId("player-1")
+                        .setRecipeId("pill_qi_gathering")
+                        .setSource(Envelope.UnlockEventSource.newBuilder()
+                                .setScrollItemTemplate("scroll_meridian_intro"))
+                        .setUnlockedAtTick(1000L))
+                .build();
+
+        ProtoServerDataBridge.BridgeResult result = ProtoServerDataBridge.bridge(envelope.toByteArray());
+        assertTrue(result.isSuccess(), "bridge should succeed: " + result.errorMessage());
+        ServerDataRouter.RouteResult route = ServerDataRouter.createDefault()
+                .route(result.legacyJson(), result.legacyJson().getBytes(StandardCharsets.UTF_8).length);
+        assertTrue(route.isHandled(),
+                "recipe_unlocked(scroll) must not noOp — 此前 source.kind 恒 null: "
+                + route.logMessage());
+
+        com.bong.client.craft.CraftStore.RecipeUnlockedEvent event =
+                com.bong.client.craft.CraftStore.lastUnlocked().orElseThrow(
+                        () -> new AssertionError("CraftStore.recordUnlock 应被调用"));
+        assertEquals("pill_qi_gathering", event.recipeId());
+        assertEquals(1000L, event.unlockedAtTick());
+        com.bong.client.craft.CraftStore.RecipeUnlockedEvent.Scroll scroll =
+                assertInstanceOf(com.bong.client.craft.CraftStore.RecipeUnlockedEvent.Scroll.class,
+                        event.source());
+        assertEquals("scroll_meridian_intro", scroll.itemTemplate());
+    }
+
+    @Test
+    void bridgeRecipeUnlockedMentorSourceRoutesToCraftStore() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setRecipeUnlocked(Envelope.RecipeUnlocked.newBuilder()
+                        .setV(1)
+                        .setPlayerId("player-1")
+                        .setRecipeId("armor_iron_plate")
+                        .setSource(Envelope.UnlockEventSource.newBuilder()
+                                .setMentorNpcArchetype("blacksmith_elder"))
+                        .setUnlockedAtTick(2000L))
+                .build();
+
+        ProtoServerDataBridge.BridgeResult result = ProtoServerDataBridge.bridge(envelope.toByteArray());
+        assertTrue(result.isSuccess());
+        ServerDataRouter.RouteResult route = ServerDataRouter.createDefault()
+                .route(result.legacyJson(), result.legacyJson().getBytes(StandardCharsets.UTF_8).length);
+        assertTrue(route.isHandled(), "recipe_unlocked(mentor) must not noOp: " + route.logMessage());
+
+        com.bong.client.craft.CraftStore.RecipeUnlockedEvent event =
+                com.bong.client.craft.CraftStore.lastUnlocked().orElseThrow();
+        assertEquals("armor_iron_plate", event.recipeId());
+        com.bong.client.craft.CraftStore.RecipeUnlockedEvent.Mentor mentor =
+                assertInstanceOf(com.bong.client.craft.CraftStore.RecipeUnlockedEvent.Mentor.class,
+                        event.source());
+        assertEquals("blacksmith_elder", mentor.npcArchetype());
+    }
+
+    @Test
+    void bridgeRecipeUnlockedInsightSourceStripsTriggerEnumPrefix() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setRecipeUnlocked(Envelope.RecipeUnlocked.newBuilder()
+                        .setV(1)
+                        .setPlayerId("player-1")
+                        .setRecipeId("technique_breakthrough_insight")
+                        .setSource(Envelope.UnlockEventSource.newBuilder()
+                                .setInsightTrigger(Envelope.InsightTrigger.INSIGHT_TRIGGER_NEAR_DEATH))
+                        .setUnlockedAtTick(3000L))
+                .build();
+
+        ProtoServerDataBridge.BridgeResult result = ProtoServerDataBridge.bridge(envelope.toByteArray());
+        assertTrue(result.isSuccess());
+        ServerDataRouter.RouteResult route = ServerDataRouter.createDefault()
+                .route(result.legacyJson(), result.legacyJson().getBytes(StandardCharsets.UTF_8).length);
+        assertTrue(route.isHandled(), "recipe_unlocked(insight) must not noOp: " + route.logMessage());
+
+        com.bong.client.craft.CraftStore.RecipeUnlockedEvent event =
+                com.bong.client.craft.CraftStore.lastUnlocked().orElseThrow();
+        com.bong.client.craft.CraftStore.RecipeUnlockedEvent.Insight insight =
+                assertInstanceOf(com.bong.client.craft.CraftStore.RecipeUnlockedEvent.Insight.class,
+                        event.source());
+        assertEquals("near_death", insight.trigger(),
+                "trigger 必须从 proto 全名 INSIGHT_TRIGGER_NEAR_DEATH 剥成 'near_death'"
+                + "（RecipeUnlockedHandler switch 只认 breakthrough/near_death/defeat_stronger）");
+    }
+
+    @Test
+    void bridgeRecipeUnlockedWithoutSourceOneofSetIsNoOp() {
+        // oneof 未设置(SOURCE_NOT_SET)：proto3 printer 完全省略 "source" 字段，
+        // handler 应保持既有"缺失 source 即 noOp"契约（不是本 fixup 的回归目标）。
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setRecipeUnlocked(Envelope.RecipeUnlocked.newBuilder()
+                        .setV(1)
+                        .setPlayerId("player-1")
+                        .setRecipeId("recipe-no-source")
+                        .setUnlockedAtTick(4000L))
+                .build();
+
+        ProtoServerDataBridge.BridgeResult result = ProtoServerDataBridge.bridge(envelope.toByteArray());
+        assertTrue(result.isSuccess());
+        ServerDataRouter.RouteResult route = ServerDataRouter.createDefault()
+                .route(result.legacyJson(), result.legacyJson().getBytes(StandardCharsets.UTF_8).length);
+        assertTrue(route.isNoOp(),
+                "source oneof 未设置时应保持 noOp 契约(缺字段本就不应解锁配方): "
+                + route.logMessage());
+        assertTrue(com.bong.client.craft.CraftStore.lastUnlocked().isEmpty());
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
     // Helper
     // ═══════════════════════════════════════════════════════════════════
 
