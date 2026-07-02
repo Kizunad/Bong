@@ -2244,6 +2244,200 @@ class ProtoServerDataBridgeTest {
     }
 
     // ═══════════════════════════════════════════════════════════════════
+    // plan-wire-format-bridge-v1 P1／RC2 枚举前缀 fixup — warn/info 批（12 条）
+    // ═══════════════════════════════════════════════════════════════════
+
+    @Test
+    void bridgeExtractStartedStripsPortalKindEnumPrefix() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setExtractStarted(Envelope.ExtractStarted.newBuilder()
+                        .setPlayerId("player-1")
+                        .setPortalEntityId(1)
+                        .setPortalKind(Envelope.RiftPortalKind.RIFT_PORTAL_KIND_DEEP_RIFT)
+                        .setRequiredTicks(100)
+                        .setAtTick(1))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        assertEquals("deep_rift", json.get("portal_kind").getAsString(),
+                "portal_kind 必须剥成 'deep_rift'（ExtractProgressHudPlanner.kindLabel），"
+                + "否则撤离进度条永远显示通用回落标签而非真实裂缝类型");
+    }
+
+    @Test
+    void bridgeExtractAbortedStripsReasonEnumPrefix() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setExtractAborted(Envelope.ExtractAborted.newBuilder()
+                        .setPlayerId("player-1")
+                        .setReason(Envelope.ExtractAbortedReason.EXTRACT_ABORTED_REASON_OUT_OF_RANGE))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        assertEquals("out_of_range", json.get("reason").getAsString(),
+                "reason 必须剥成 'out_of_range'（ExtractStateStore.reasonLabel/"
+                + "isRejectionReason switch），否则撤离中断原因永远显示未明，且拒绝类"
+                + "原因错误触发红屏闪烁");
+    }
+
+    @Test
+    void bridgeExtractFailedStripsReasonEnumPrefix() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setExtractFailed(Envelope.ExtractFailed.newBuilder()
+                        .setPlayerId("player-1")
+                        .setReason(Envelope.ExtractFailedReason.EXTRACT_FAILED_REASON_SPIRIT_QI_DRAINED))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        assertEquals("spirit_qi_drained", json.get("reason").getAsString(),
+                "reason 必须剥成 'spirit_qi_drained'（ExtractStateStore.reasonLabel），"
+                + "否则撤离失败横幅永远显示'未明'而非'真元耗尽'");
+    }
+
+    @Test
+    void bridgeForgeOutcomeStripsBucketAndColorEnumPrefixes() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setForgeOutcome(Envelope.ForgeOutcome.newBuilder()
+                        .setSessionId(1)
+                        .setBlueprintId("bp-1")
+                        .setBucket(Envelope.ForgeOutcomeBucket.FORGE_OUTCOME_BUCKET_PERFECT)
+                        .setQuality(1.0f)
+                        .setColor(Common.ColorKind.COLOR_KIND_SHARP)
+                        .setAchievedTier(3))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        assertEquals("perfect", json.get("bucket").getAsString(),
+                "bucket 必须剥成 'perfect'（ForgeScreen '上次结果' 展示行），否则永远显示裸 "
+                + "proto 常量 'FORGE_OUTCOME_BUCKET_PERFECT'");
+        assertEquals("sharp", json.get("color").getAsString(),
+                "color 必须剥成 'sharp'（ForgeScreen 色=xxx 展示行）");
+    }
+
+    @Test
+    void bridgeRealmVisionParamsStripsFogShapeEnumPrefix() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setRealmVisionParams(Envelope.RealmVisionParams.newBuilder()
+                        .setFogStart(10.0)
+                        .setFogEnd(50.0)
+                        .setFogShape(Envelope.FogShape.FOG_SHAPE_SPHERE))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        assertEquals("sphere", json.get("fog_shape").getAsString(),
+                "fog_shape 必须剥成 'sphere'（FogShape.fromWire 接受 'Sphere'/'sphere'，剥前缀"
+                + "转小写落在接受集合内），否则高境界球形雾效永远退化成默认 CYLINDER");
+    }
+
+    @Test
+    void bridgeSpiritTreasureDialogueStripsNestedToneEnumPrefix() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setSpiritTreasureDialogue(Envelope.SpiritTreasureDialogueProto.newBuilder()
+                        .setDialogue(Envelope.SpiritTreasureDialogueData.newBuilder()
+                                .setRequestId("req-1")
+                                .setCharacterId("char-1")
+                                .setTreasureId("treasure-1")
+                                .setText("……")
+                                .setTone(Envelope.SpiritTreasureDialogueTone.SPIRIT_TREASURE_DIALOGUE_TONE_COLD)
+                                .setAffinityDelta(0.1))
+                        .setDisplayName("某灵宝")
+                        .setZone("zone-1"))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        JsonObject dialogue = json.getAsJsonObject("dialogue");
+        assertEquals("cold", dialogue.get("tone").getAsString(),
+                "嵌套 dialogue.tone 必须剥成 'cold'（JiZhaoJingTabPanel 直接把它拼进玩家可见"
+                + "文案），否则永久污染显示裸 proto 常量 'SPIRIT_TREASURE_DIALOGUE_TONE_COLD'");
+    }
+
+    @Test
+    void bridgeCraftOutcomeFailedStripsReasonEnumPrefix() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setCraftOutcome(Envelope.CraftOutcome.newBuilder()
+                        .setFailed(Envelope.CraftOutcomeFailed.newBuilder()
+                                .setV(1)
+                                .setPlayerId("player-1")
+                                .setRecipeId("recipe-1")
+                                .setReason(Envelope.CraftFailureReason.CRAFT_FAILURE_REASON_PLAYER_CANCELLED)))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        assertEquals("failed", json.get("kind").getAsString(),
+                "craft_outcome oneof 判别 kind 必须仍是 'failed'（bridgeOneofFlat 摊平逻辑"
+                + "不能因新增 reason 剥离而破坏）");
+        assertEquals("player_cancelled", json.get("reason").getAsString(),
+                "reason 必须剥成 'player_cancelled'（当前虽是 dead field，仍需与其余枚举字段"
+                + "同规格，防止未来接线时静默复发）");
+    }
+
+    @Test
+    void bridgeCraftOutcomeCompletedStillWorksAfterReasonFixup() {
+        // 回归防线：给 craft_outcome 加 reason 剥离不能破坏既有 completed 变体路径。
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setCraftOutcome(Envelope.CraftOutcome.newBuilder()
+                        .setCompleted(Envelope.CraftOutcomeCompleted.newBuilder()
+                                .setV(1)
+                                .setPlayerId("player-1")
+                                .setRecipeId("recipe-1")
+                                .setOutputTemplate("output-1")
+                                .setOutputCount(2)))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+        assertEquals("completed", json.get("kind").getAsString());
+        assertEquals("output-1", json.get("output_template").getAsString());
+        assertEquals(2, json.get("output_count").getAsInt());
+    }
+
+    @Test
+    void bridgeInventorySnapshotStripsForgeColorAcrossHotbarPlacedAndEquipped() {
+        Envelope.InventoryItemView.Builder hotbarItem = Envelope.InventoryItemView.newBuilder()
+                .setInstanceId(1)
+                .setItemId("sword-1")
+                .setDisplayName("锐剑")
+                .setForgeColor(Common.ColorKind.COLOR_KIND_SHARP);
+        Envelope.InventoryItemView.Builder placedItem = Envelope.InventoryItemView.newBuilder()
+                .setInstanceId(2)
+                .setItemId("armor-1")
+                .setDisplayName("厚甲")
+                .setForgeColor(Common.ColorKind.COLOR_KIND_HEAVY);
+        Envelope.InventoryItemView.Builder wornItem = Envelope.InventoryItemView.newBuilder()
+                .setInstanceId(3)
+                .setItemId("helm-1")
+                .setDisplayName("醇盔")
+                .setForgeColor(Common.ColorKind.COLOR_KIND_MELLOW);
+
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setInventorySnapshot(Envelope.InventorySnapshot.newBuilder()
+                        .setRevision(1)
+                        .addPlacedItems(Envelope.PlacedInventoryItem.newBuilder()
+                                .setContainerId("bag-1")
+                                .setRow(0).setCol(0)
+                                .setItem(placedItem))
+                        .setEquipped(Envelope.EquippedInventorySnapshot.newBuilder()
+                                .addHeadWorn(wornItem))
+                        .addHotbar(Envelope.HotbarSlot.newBuilder().setItem(hotbarItem)))
+                .build();
+
+        JsonObject json = bridgeAndParse(envelope);
+
+        JsonObject hotbarSlot0 = json.getAsJsonArray("hotbar").get(0).getAsJsonObject();
+        assertEquals("Sharp", hotbarSlot0.get("forge_color").getAsString(),
+                "hotbar[0].forge_color 必须剥成 'Sharp'（ItemTooltipPanel.forgeColorLabel "
+                + "精确 switch），否则染色武器 tooltip 永远显示裸 proto 常量");
+
+        JsonObject placed0 = json.getAsJsonArray("placed_items").get(0).getAsJsonObject()
+                .getAsJsonObject("item");
+        assertEquals("Heavy", placed0.get("forge_color").getAsString(),
+                "placed_items[0].item.forge_color 必须剥成 'Heavy'");
+
+        JsonObject headWorn0 = json.getAsJsonObject("equipped")
+                .getAsJsonArray("head_worn").get(0).getAsJsonObject();
+        assertEquals("Mellow", headWorn0.get("forge_color").getAsString(),
+                "equipped.head_worn[0].forge_color 必须剥成 'Mellow'");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
     // Helper
     // ═══════════════════════════════════════════════════════════════════
 
