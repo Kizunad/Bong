@@ -36,7 +36,7 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 REPO = Path(__file__).resolve().parents[2]
-LOCAL_MODELS = REPO / "local_models"
+LOCAL_MODELS = REPO / "local_models" / "lootcrate"
 PREVIEW_DIR = REPO / "scripts" / "models"
 
 PX = 16.0
