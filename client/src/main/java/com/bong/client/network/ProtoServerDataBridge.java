@@ -301,6 +301,9 @@ public final class ProtoServerDataBridge {
         if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.CRAFT_RECIPE_LIST) {
             return bridgeCraftRecipeList(envelope.getCraftRecipeList(), typeString);
         }
+        if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.CONTAINER_STATE) {
+            return bridgeContainerState(envelope.getContainerState(), typeString);
+        }
 
         // Extract the inner oneof message.
         MessageOrBuilder inner = extractInner(envelope, payloadCase);
@@ -663,6 +666,28 @@ public final class ProtoServerDataBridge {
             JsonObject root = JsonParser.parseString(raw).getAsJsonObject();
             stripEnumPrefix(root, "phase", "CAST_PHASE_");
             stripEnumPrefix(root, "outcome", "CAST_OUTCOME_");
+            return wrapLegacy(root, typeString);
+        } catch (com.google.protobuf.InvalidProtocolBufferException e) {
+            return BridgeResult.error("proto→JSON conversion failed for " + typeString + ": " + e.getMessage());
+        }
+    }
+
+    // ─── container_state: enum name normalization ───────────────────
+    //
+    // proto3 canonical JSON 把 ContainerKind / KeyKind 打成 proto 枚举值名
+    // （CONTAINER_KIND_STONE_CASKET / KEY_KIND_STONE_CASKET_KEY）。serde/TypeBox 侧
+    // （samples/server-data.container-state.sample.json）与 TsyContainerView.kindLabelZh()
+    // 期望 serde snake_case（"stone_casket"），故必须像 movement_state / cast_sync 一样剥前缀转
+    // 小写，否则 kind 全落 kindLabelZh() 的 default「容器」、locked 也带 KEY_KIND_ 前缀。
+    // CONTAINER_STATE 之前无 special-case，走 generic path（不剥枚举），故整条链路 kind/locked 破损。
+
+    private static BridgeResult bridgeContainerState(
+            MessageOrBuilder msg, String typeString) {
+        try {
+            String raw = printAndNormalize(msg);
+            JsonObject root = JsonParser.parseString(raw).getAsJsonObject();
+            stripEnumPrefix(root, "kind", "CONTAINER_KIND_");
+            stripEnumPrefix(root, "locked", "KEY_KIND_");
             return wrapLegacy(root, typeString);
         } catch (com.google.protobuf.InvalidProtocolBufferException e) {
             return BridgeResult.error("proto→JSON conversion failed for " + typeString + ": " + e.getMessage());
