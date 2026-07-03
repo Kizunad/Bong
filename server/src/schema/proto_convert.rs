@@ -4037,6 +4037,10 @@ impl From<&super::client_request::ClientRequestV1> for bong::client_request_enve
                     instance_id: *instance_id,
                 })
             }
+            // plan-scroll-reading-v1 P1 §8.1#4 — 关闭阅读屏 C2S（tag 101）
+            ClientRequestV1::ScrollReadClosed { .. } => {
+                Payload::ScrollReadClosed(bong::ScrollReadClosed {})
+            }
             // ─── plan-agent-ui-data-v1 P0：天道 UI 响应（JSON CustomPayload，无 proto 定义）
             // AgentUiResponse 通过 JSON CustomPayload 接收，不走 proto 编码路径。
             // 若此分支被触发，说明调用方走错了路径（proto bypass 契约被破坏）。
@@ -7252,7 +7256,7 @@ mod tests {
 
     // ─── plan-test-coverage-guards-v1 P0：C2S exhaustive proto encoding guard ──
 
-    /// Returns a minimum-viable fixture for every `ClientRequestV1` variant (101 total).
+    /// Returns a minimum-viable fixture for every `ClientRequestV1` variant (102 total).
     ///
     /// The same exhaustiveness strategy as `s2c_all_fixtures()` applies:
     ///   - No compile-time list exhaustiveness, but `c2s_fixture_count_matches_variant_count()`
@@ -7776,6 +7780,7 @@ mod tests {
                 v: 1,
                 instance_id: 1,
             }),
+            build(ClientRequestV1::ScrollReadClosed { v: 1 }),
             // ─── JSON-bypass variant (1) ────────────────────────────────────────
             build(ClientRequestV1::AgentUiResponse {
                 v: 1,
@@ -7786,20 +7791,20 @@ mod tests {
         ]
     }
 
-    /// Verifies that the C2S fixture list covers every `ClientRequestV1` variant (100 total).
+    /// Verifies that the C2S fixture list covers every `ClientRequestV1` variant (101 total).
     #[test]
     fn c2s_fixture_count_matches_variant_count() {
         use crate::schema::client_request::ClientRequestV1;
         use std::collections::HashSet;
         use std::mem::{discriminant, Discriminant};
         let fixtures = c2s_all_fixtures();
-        // The authoritative count is 101 (100 proto + 1 AgentUiResponse bypass).
+        // The authoritative count is 102 (101 proto + 1 AgentUiResponse bypass).
         let bypass_count = fixtures.iter().filter(|(_, b)| *b).count();
         let proto_count = fixtures.iter().filter(|(_, b)| !*b).count();
         assert_eq!(
             fixtures.len(),
-            101,
-            "C2S fixture list has {} entries but ClientRequestV1 has 101 variants. \
+            102,
+            "C2S fixture list has {} entries but ClientRequestV1 has 102 variants. \
              Add a fixture for every new variant in c2s_all_fixtures().",
             fixtures.len()
         );
@@ -7809,8 +7814,8 @@ mod tests {
              If a new bypass variant is added, update c2s_all_fixtures() and this assertion."
         );
         assert_eq!(
-            proto_count, 100,
-            "Expected 100 proto-encodable C2S variants, got {proto_count}."
+            proto_count, 101,
+            "Expected 101 proto-encodable C2S variants, got {proto_count}."
         );
 
         // Set-intersection coverage (mirrors the S2C `payload_type()` HashSet check, but keyed
@@ -7824,18 +7829,18 @@ mod tests {
             fixtures.iter().map(|(v, _)| discriminant(v)).collect();
         assert_eq!(
             distinct.len(),
-            101,
-            "C2S fixtures cover only {} DISTINCT ClientRequestV1 variants but there are 101. \
+            102,
+            "C2S fixtures cover only {} DISTINCT ClientRequestV1 variants but there are 102. \
              A variant's fixture was likely deleted and another duplicated — every variant must \
              have its OWN fixture or the proto guard silently skips it.",
             distinct.len()
         );
     }
 
-    /// Exhaustive proto encoding guard for all 101 `ClientRequestV1` variants.
+    /// Exhaustive proto encoding guard for all 102 `ClientRequestV1` variants.
     ///
     /// Same strategy as `s2c_all_proto_variants_encode_without_panic`.
-    /// For the 100 proto-encodable variants: encode → decode → assert payload present.
+    /// For the 101 proto-encodable variants: encode → decode → assert payload present.
     /// For AgentUiResponse (bypass): assert `to_proto_bytes()` panics.
     ///
     /// MUTATION GUARDS:
@@ -7902,8 +7907,8 @@ mod tests {
         }
 
         assert_eq!(
-            proto_count, 100,
-            "Expected 100 proto-encodable C2S variants, got {proto_count}."
+            proto_count, 101,
+            "Expected 101 proto-encodable C2S variants, got {proto_count}."
         );
         assert_eq!(
             bypass_count, 1,

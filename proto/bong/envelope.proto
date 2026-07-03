@@ -302,6 +302,9 @@ message ClientRequestEnvelope {
     TreasureActivate            treasure_activate             = 99;
     // plan-scroll-reading-v1 P0 — 阅读可阅读残卷（经脉入门残卷等）。
     ScrollReadRequest           scroll_read_request           = 100;
+    // plan-scroll-reading-v1 P1 §8.1#4 — 关闭阅读屏，通知 server 阅读会话结束
+    // （P2 落地 emit_scroll_read_stop_for_entity 真正停止循环阅读动画）。
+    ScrollReadClosed            scroll_read_closed            = 101;
   }
 }
 
@@ -4022,3 +4025,8 @@ message ScrollReadRequest {
   uint32 v           = 1; // 版本，恒 1
   uint64 instance_id = 2;
 }
+
+// ─── plan-scroll-reading-v1 P1：关闭阅读屏 C2S（tag 101，§8.1#4） ────
+// 与 Rust ClientRequestV1::ScrollReadClosed 精确对应。空消息——server 依 ev.client
+// 定位是谁关的屏，无需回传 instance_id/scroll_id（镜像 RaiseShield/LowerShield 结构）。
+message ScrollReadClosed {}

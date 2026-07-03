@@ -691,6 +691,14 @@ pub enum ClientRequestV1 {
         v: u8,
         instance_id: u64,
     },
+    /// plan-scroll-reading-v1 P1 §8.1#4 — 玩家关闭阅读屏（ESC / 关闭按钮），通知
+    /// server 阅读会话结束（proto C2S tag 101）。空消息——依 `ev.client` 定位实体，
+    /// 无需回传 instance_id/scroll_id（镜像 `RaiseShield`/`LowerShield` 结构）。
+    /// server 侧 P2 落地 `emit_scroll_read_stop_for_entity` 真正停止循环阅读动画；
+    /// P1 仅落契约 + 接收确认。
+    ScrollReadClosed {
+        v: u8,
+    },
     // ─── plan-agent-ui-data-v1 P0：天道 UI 面板交互响应 ──────────────
     /// 玩家面板交互响应（button_click / dismissed / timeout / parse_error 等）。
     /// server 校验 request_id / allowed_button_ids 后转 `bong:agent_ui_response`。
@@ -3121,6 +3129,84 @@ mod tests {
                 }
             ),
             "expected ScrollReadRequest{{v:1, instance_id:0}}, got {req:?}"
+        );
+    }
+
+    // ─── plan-scroll-reading-v1 P1 §8.1#4：ScrollReadClosed serde pin + TS↔Rust sample 对拍 ───
+
+    /// 正样本对拍：TS 端 sample（TypeBox source of truth）必须反序列化为
+    /// ScrollReadClosed{v:1}。
+    #[test]
+    fn scroll_read_closed_ts_sample_deserializes_in_rust() {
+        let json = include_str!(
+            "../../../agent/packages/schema/samples/client-request.scroll-read-closed.sample.json"
+        );
+        let req: ClientRequestV1 = serde_json::from_str(json)
+            .unwrap_or_else(|e| panic!("scroll-read-closed sample should deserialize: {e}"));
+        assert!(
+            matches!(req, ClientRequestV1::ScrollReadClosed { v: 1 }),
+            "positive sample must deserialize to ScrollReadClosed{{v:1}}, got {req:?}"
+        );
+    }
+
+    /// happy-path round-trip：{"type":"scroll_read_closed","v":1} 反序列化为
+    /// ScrollReadClosed{v:1}，再序列化回去应保持 wire 结构一致。
+    #[test]
+    fn scroll_read_closed_roundtrip() {
+        let json = r#"{"type":"scroll_read_closed","v":1}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json)
+            .unwrap_or_else(|e| panic!("scroll_read_closed should deserialize: {e}"));
+        assert!(
+            matches!(req, ClientRequestV1::ScrollReadClosed { v: 1 }),
+            "expected ScrollReadClosed{{v:1}}, got {req:?}"
+        );
+        let encoded = serde_json::to_string(&req).expect("ScrollReadClosed serializes");
+        let encoded_val: serde_json::Value = serde_json::from_str(&encoded).unwrap();
+        let expected_val: serde_json::Value = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            encoded_val, expected_val,
+            "ScrollReadClosed round-trip must preserve wire structure; expected={expected_val} actual={encoded_val}"
+        );
+    }
+
+    /// 缺失 v 字段应反序列化失败。
+    #[test]
+    fn scroll_read_closed_rejects_missing_v() {
+        let json = r#"{"type":"scroll_read_closed"}"#;
+        let result: Result<ClientRequestV1, _> = serde_json::from_str(json);
+        assert!(
+            result.is_err(),
+            "scroll_read_closed without v field should fail deserialization; \
+             missing v field cannot satisfy ClientRequestV1::ScrollReadClosed{{v:u8}}"
+        );
+    }
+
+    /// 额外字段被拒绝（deny_unknown_fields）。
+    #[test]
+    fn scroll_read_closed_rejects_extra_fields() {
+        let json = r#"{"type":"scroll_read_closed","v":1,"extra":true}"#;
+        let result: Result<ClientRequestV1, _> = serde_json::from_str(json);
+        assert!(
+            result.is_err(),
+            "scroll_read_closed with extra field should fail deserialization (deny_unknown_fields)"
+        );
+    }
+
+    /// ScrollReadClosed 与 ScrollReadRequest 是独立变体，互不混用（边界：type 字面量隔离）。
+    #[test]
+    fn scroll_read_closed_and_scroll_read_request_are_distinct_variants() {
+        let closed: ClientRequestV1 =
+            serde_json::from_str(r#"{"type":"scroll_read_closed","v":1}"#).unwrap();
+        let request: ClientRequestV1 =
+            serde_json::from_str(r#"{"type":"scroll_read_request","v":1,"instance_id":1}"#)
+                .unwrap();
+        assert!(
+            matches!(closed, ClientRequestV1::ScrollReadClosed { .. }),
+            "scroll_read_closed must deserialize to ScrollReadClosed variant, got {closed:?}"
+        );
+        assert!(
+            matches!(request, ClientRequestV1::ScrollReadRequest { .. }),
+            "scroll_read_request must deserialize to ScrollReadRequest variant, got {request:?}"
         );
     }
 

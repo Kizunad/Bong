@@ -608,6 +608,7 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::RaiseShield { v }
             | ClientRequestV1::LowerShield { v }
             | ClientRequestV1::ScrollReadRequest { v, .. }
+            | ClientRequestV1::ScrollReadClosed { v }
             | ClientRequestV1::AgentUiResponse { v, .. } => *v,
         };
         if v != SUPPORTED_VERSION {
@@ -2661,6 +2662,16 @@ pub fn handle_client_request_payloads(
                         );
                     }
                 }
+            }
+            // ─── plan-scroll-reading-v1 P1 §8.1#4：阅读屏关闭确认 ─────────
+            // 契约落地于 P1（proto tag 101 + client 关屏时发出）；实际停止循环阅读
+            // 动画（emit_scroll_read_stop_for_entity + StopAnim）留给 P2 落地，P1
+            // 先接住确认信号，避免 client 发出的包被 server 当未知类型丢弃。
+            ClientRequestV1::ScrollReadClosed { .. } => {
+                tracing::debug!(
+                    "[bong][network] client_request scroll_read_closed entity={:?} (anim stop wiring lands in P2)",
+                    ev.client
+                );
             }
             // ─── plan-agent-ui-data-v1 P0：天道 UI 面板响应 ─────────────
             // agent_ui.rs 的 receive_agent_ui_response_system 负责处理；

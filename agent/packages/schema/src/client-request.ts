@@ -1079,6 +1079,22 @@ export const ScrollReadRequestV1 = Type.Object(
 );
 export type ScrollReadRequestV1 = Static<typeof ScrollReadRequestV1>;
 
+// plan-scroll-reading-v1 P1 §8.1#4 — 玩家关闭阅读屏（ESC / 关闭按钮），通知
+// server 阅读会话结束（proto C2S tag 101，镜像 RaiseShield/LowerShield 结构）。
+// 对应 Rust ClientRequestV1::ScrollReadClosed { v }。空消息——server 依连接实体
+// 定位是谁关的屏，无需回传 instance_id/scroll_id。P1 只落契约 + 接收确认，实际
+// 停止循环阅读动画（emit_scroll_read_stop_for_entity）留给 P2。
+export const ScrollReadClosedRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("scroll_read_closed"),
+  },
+  { additionalProperties: false },
+);
+export type ScrollReadClosedRequestV1 = Static<
+  typeof ScrollReadClosedRequestV1
+>;
+
 // plan-worldgen-v4 P5 §8.1#5 — 画廊审阅 owo 方块面板 dev-only give-block C2S。
 // 玩家在 InspectScreen 内 BlockPickerPanel 点击某个 vanilla 方块条目后发送此包，
 // server dev handler 经 gamemode 校验后从 ItemRegistry 取 "vanilla:<block_id>"
@@ -1181,6 +1197,7 @@ export const ClientRequestV1 = Type.Union([
   RaiseShieldRequestV1,
   LowerShieldRequestV1,
   ScrollReadRequestV1,
+  ScrollReadClosedRequestV1,
   // plan-agent-ui-data-v1 P0 — 天道 UI 面板响应
   AgentUiResponseRequestV1,
 ]);

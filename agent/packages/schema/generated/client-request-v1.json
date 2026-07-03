@@ -3590,6 +3590,24 @@
       "type": "object",
       "required": [
         "v",
+        "type"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "scroll_read_closed",
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
         "type",
         "request_id",
         "action",

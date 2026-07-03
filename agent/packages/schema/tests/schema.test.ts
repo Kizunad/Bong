@@ -2153,6 +2153,72 @@ describe("sample files pass schema validation", () => {
     ).toBe(false);
   });
 
+  // ── plan-scroll-reading-v1 P1 §8.1#4：ScrollReadClosedRequestV1 schema pin ──
+
+  it("client-request.scroll-read-closed.sample.json 正样本通过", () => {
+    const data = loadSample("client-request.scroll-read-closed.sample.json");
+    const result = validate(ClientRequestV1, data);
+    expect(
+      result.ok,
+      `scroll_read_closed sample must be accepted by ClientRequestV1, errors: ${result.errors.join("; ")}`,
+    ).toBe(true);
+  });
+
+  it("ScrollReadClosedRequestV1 负样本：额外字段应拒绝 (additionalProperties:false)", () => {
+    const bad = loadSample(
+      "client-request.scroll-read-closed.invalid-extra-field.sample.json",
+    );
+    const result = validate(ClientRequestV1, bad);
+    expect(
+      result.ok,
+      "scroll_read_closed with extra field must be rejected because additionalProperties is false",
+    ).toBe(false);
+  });
+
+  it("ScrollReadClosedRequestV1 负样本：缺少 v 字段应拒绝", () => {
+    const bad = loadSample(
+      "client-request.scroll-read-closed.invalid-missing-v.sample.json",
+    );
+    const result = validate(ClientRequestV1, bad);
+    expect(
+      result.ok,
+      "scroll_read_closed without v field must be rejected",
+    ).toBe(false);
+  });
+
+  it("ScrollReadClosedRequestV1 负样本：缺少 type 字段应拒绝", () => {
+    const bad = loadSample(
+      "client-request.scroll-read-closed.invalid-missing-type.sample.json",
+    );
+    const result = validate(ClientRequestV1, bad);
+    expect(
+      result.ok,
+      "scroll_read_closed without type field must be rejected",
+    ).toBe(false);
+  });
+
+  it("ScrollReadClosedRequestV1 负样本：type 字面量错误 (invalid_action) 应拒绝", () => {
+    const bad = loadSample(
+      "client-request.scroll-read-closed.invalid-type-value.sample.json",
+    );
+    const result = validate(ClientRequestV1, bad);
+    expect(
+      result.ok,
+      "type:'invalid_action' must be rejected because it does not match any ClientRequestV1 union member",
+    ).toBe(false);
+  });
+
+  it("ScrollReadClosedRequestV1 负样本：v:2 字面量应拒绝 (Type.Literal(1))", () => {
+    const bad = loadSample(
+      "client-request.scroll-read-closed.invalid-v-nonone.sample.json",
+    );
+    const result = validate(ClientRequestV1, bad);
+    expect(
+      result.ok,
+      "scroll_read_closed with v:2 must be rejected because v is Type.Literal(1)",
+    ).toBe(false);
+  });
+
   it("server-data.scroll-open.sample.json 正样本通过", () => {
     const data = loadSample("server-data.scroll-open.sample.json");
     const result = validate(ServerDataV1, data);
