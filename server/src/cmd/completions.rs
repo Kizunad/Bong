@@ -643,6 +643,7 @@ mod tests {
                         shelflife_profile: None,
                         shield_spec: None,
                         shelflife_track: None,
+                        readable_scroll_spec: None,
                     },
                 )
             })
