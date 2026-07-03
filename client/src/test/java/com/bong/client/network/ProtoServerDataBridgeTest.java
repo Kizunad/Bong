@@ -54,6 +54,7 @@ class ProtoServerDataBridgeTest {
         com.bong.client.craft.CraftStore.clear();
         com.bong.client.gathering.GatheringSessionStore.resetForTests();
         com.bong.client.insight.InsightOfferStore.resetForTests();
+        com.bong.client.scroll.ScrollReadStore.resetForTests();
     }
 
     // ─── Happy path: Welcome ─────────────────────────────────────────

@@ -186,6 +186,8 @@ public final class ProtoServerDataBridge {
         m.put(Envelope.ServerDataEnvelope.PayloadCase.TUTORIAL_COFFIN_POS, "tutorial_coffin_pos");
         // plan-inventory-hint-panel-v1 P0 — 库存操作拒绝原因结构化 S2C
         m.put(Envelope.ServerDataEnvelope.PayloadCase.INVENTORY_MOVE_REJECTED, "inventory_move_rejected");
+        // plan-scroll-reading-v1 P0 — 可阅读残卷阅读屏 S2C（proto tag 138，§9）
+        m.put(Envelope.ServerDataEnvelope.PayloadCase.SCROLL_OPEN, "scroll_open");
         CASE_TO_TYPE = m;
     }
 
@@ -580,6 +582,8 @@ public final class ProtoServerDataBridge {
             case TUTORIAL_COFFIN_POS: return envelope.getTutorialCoffinPos();
             // plan-inventory-hint-panel-v1 P0 — 库存操作拒绝原因结构化 S2C
             case INVENTORY_MOVE_REJECTED: return envelope.getInventoryMoveRejected();
+            // plan-scroll-reading-v1 P0 — 可阅读残卷阅读屏 S2C（proto tag 138，§9）
+            case SCROLL_OPEN: return envelope.getScrollOpen();
             default: return null;
         }
     }

@@ -287,6 +287,9 @@ pub enum ServerDataType {
     // ─── plan-inventory-hint-panel-v1 P0：库存操作拒绝原因结构化 S2C ───
     /// 库存操作拒绝原因（targeted→触发操作的玩家，不广播）。
     InventoryMoveRejected,
+    // ─── plan-scroll-reading-v1 P0：可阅读残卷阅读屏（proto tag 138，§9） ───
+    /// 打开一本可阅读残卷的阅读屏（targeted→请求阅读的玩家，不广播）。
+    ScrollOpen,
 }
 
 #[derive(Debug, Clone)]
@@ -592,6 +595,17 @@ pub enum ServerDataPayloadV1 {
     // ─── plan-inventory-hint-panel-v1 P0：库存操作拒绝原因结构化 S2C ───
     /// 库存操作拒绝原因（targeted→触发操作的玩家，不广播）。模式照抄 `MineralProbeResult`。
     InventoryMoveRejected(InventoryMoveRejectedV1),
+    // ─── plan-scroll-reading-v1 P0：可阅读残卷阅读屏（proto tag 138，§9） ───
+    /// 打开一本可阅读残卷的阅读屏（targeted→请求阅读的玩家，不广播）。
+    /// 字段只携带正文，不 hardcode 经脉内容——任意 `readable_scroll_spec` 挂载的物品
+    /// 皆可复用同一 client 阅读屏（可复用性验收）。
+    ScrollOpen {
+        /// 模板 id，如 `scroll_meridian_primer`。
+        scroll_id: String,
+        title: String,
+        /// 正文分页，每元素一页；至少 1 页。
+        body_pages: Vec<String>,
+    },
 }
 
 /// 神识感知矿脉回执 S2C。扁平化 `MineralProbeResult` 枚举。
@@ -1833,6 +1847,12 @@ enum ServerDataPayloadWireV1 {
         #[serde(flatten)]
         data: InventoryMoveRejectedV1,
     },
+    // ─── plan-scroll-reading-v1 P0：可阅读残卷阅读屏（proto tag 138，§9） ───
+    ScrollOpen {
+        scroll_id: String,
+        title: String,
+        body_pages: Vec<String>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2721,6 +2741,16 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
             ServerDataPayloadWireV1::InventoryMoveRejected { data } => {
                 Ok(Self::InventoryMoveRejected(data))
             }
+            // ─── plan-scroll-reading-v1 P0：可阅读残卷阅读屏 ───
+            ServerDataPayloadWireV1::ScrollOpen {
+                scroll_id,
+                title,
+                body_pages,
+            } => Ok(Self::ScrollOpen {
+                scroll_id,
+                title,
+                body_pages,
+            }),
         }
     }
 }
@@ -3317,6 +3347,16 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
             ServerDataPayloadV1::InventoryMoveRejected(data) => {
                 Self::InventoryMoveRejected { data: data.clone() }
             }
+            // ─── plan-scroll-reading-v1 P0：可阅读残卷阅读屏 ───
+            ServerDataPayloadV1::ScrollOpen {
+                scroll_id,
+                title,
+                body_pages,
+            } => Self::ScrollOpen {
+                scroll_id: scroll_id.clone(),
+                title: title.clone(),
+                body_pages: body_pages.clone(),
+            },
         }
     }
 }
@@ -3654,6 +3694,8 @@ impl ServerDataPayloadV1 {
             Self::TutorialCoffinPos { .. } => ServerDataType::TutorialCoffinPos,
             // ─── plan-inventory-hint-panel-v1 P0：库存操作拒绝原因结构化 S2C ───
             Self::InventoryMoveRejected(..) => ServerDataType::InventoryMoveRejected,
+            // ─── plan-scroll-reading-v1 P0：可阅读残卷阅读屏 ───
+            Self::ScrollOpen { .. } => ServerDataType::ScrollOpen,
         }
     }
 
@@ -3808,6 +3850,8 @@ impl ServerDataPayloadV1 {
             Self::TutorialCoffinPos { .. } => false,
             // ─── plan-inventory-hint-panel-v1 P0：库存操作拒绝原因结构化 S2C（proto 路径） ───
             Self::InventoryMoveRejected(..) => false,
+            // ─── plan-scroll-reading-v1 P0：可阅读残卷阅读屏（proto 路径） ───
+            Self::ScrollOpen { .. } => false,
         }
     }
 }
@@ -4360,6 +4404,12 @@ mod tests {
                 slot: Some("chest".to_string()),
                 cap: Some(3),
             }),
+            // ─── plan-scroll-reading-v1 P0 wire/label guard ─────
+            ServerDataPayloadV1::ScrollOpen {
+                scroll_id: "scroll_meridian_primer".to_string(),
+                title: "《经脉浅述·残卷》".to_string(),
+                body_pages: vec!["第一页".to_string(), "第二页".to_string()],
+            },
         ];
 
         for payload in cases {
@@ -4376,6 +4426,97 @@ mod tests {
                 "wire type {wire_type} does not match payload_type_label {label}"
             );
         }
+    }
+
+    // ─── plan-scroll-reading-v1 P0：ScrollOpen serde pin + TS↔Rust sample 对拍 ───
+
+    /// TS 端 sample（TypeBox source of truth）必须反序列化为 ScrollOpen 且字段全等。
+    #[test]
+    fn scroll_open_ts_sample_deserializes_in_rust() {
+        let json = include_str!(
+            "../../../agent/packages/schema/samples/server-data.scroll-open.sample.json"
+        );
+        let envelope: ServerDataV1 = serde_json::from_str(json)
+            .unwrap_or_else(|e| panic!("scroll-open sample should deserialize: {e}"));
+        match envelope.payload {
+            ServerDataPayloadV1::ScrollOpen {
+                scroll_id,
+                title,
+                body_pages,
+            } => {
+                assert_eq!(scroll_id, "scroll_meridian_primer");
+                assert_eq!(title, "《经脉浅述·残卷》");
+                assert_eq!(
+                    body_pages.len(),
+                    3,
+                    "sample 应有 3 页正文，得到 {}",
+                    body_pages.len()
+                );
+            }
+            other => panic!("expected ScrollOpen, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn scroll_open_roundtrip() {
+        let payload = ServerDataPayloadV1::ScrollOpen {
+            scroll_id: "scroll_meridian_primer".to_string(),
+            title: "《经脉浅述·残卷》".to_string(),
+            body_pages: vec!["第一页".to_string(), "第二页".to_string()],
+        };
+        let envelope = ServerDataV1::new(payload);
+        let bytes = serde_json::to_vec(&envelope).expect("ScrollOpen serializes");
+        let decoded: ServerDataV1 =
+            serde_json::from_slice(&bytes).expect("ScrollOpen round-trip deserializes");
+        match decoded.payload {
+            ServerDataPayloadV1::ScrollOpen {
+                scroll_id,
+                title,
+                body_pages,
+            } => {
+                assert_eq!(scroll_id, "scroll_meridian_primer");
+                assert_eq!(title, "《经脉浅述·残卷》");
+                assert_eq!(body_pages, vec!["第一页".to_string(), "第二页".to_string()]);
+            }
+            other => panic!("expected ScrollOpen after round-trip, got {other:?}"),
+        }
+    }
+
+    /// 边界：body_pages 为空数组——wire 层不校验（校验在 TOML 解析层 `parse_readable_scroll_spec`），
+    /// 但 serde 本身必须允许空数组反序列化（不是 wire 契约拒绝的形状）。
+    #[test]
+    fn scroll_open_wire_accepts_empty_body_pages() {
+        let json = r#"{"v":1,"type":"scroll_open","scroll_id":"x","title":"t","body_pages":[]}"#;
+        let envelope: ServerDataV1 =
+            serde_json::from_str(json).expect("empty body_pages array should deserialize");
+        match envelope.payload {
+            ServerDataPayloadV1::ScrollOpen { body_pages, .. } => {
+                assert!(body_pages.is_empty());
+            }
+            other => panic!("expected ScrollOpen, got {other:?}"),
+        }
+    }
+
+    /// 缺失 title 字段应反序列化失败。
+    #[test]
+    fn scroll_open_rejects_missing_title() {
+        let json = r#"{"v":1,"type":"scroll_open","scroll_id":"x","body_pages":["p1"]}"#;
+        let result: Result<ServerDataV1, _> = serde_json::from_str(json);
+        assert!(
+            result.is_err(),
+            "scroll_open without title should fail deserialization"
+        );
+    }
+
+    /// 额外字段被拒绝（deny_unknown_fields）。
+    #[test]
+    fn scroll_open_rejects_extra_fields() {
+        let json = r#"{"v":1,"type":"scroll_open","scroll_id":"x","title":"t","body_pages":["p1"],"extra":true}"#;
+        let result: Result<ServerDataV1, _> = serde_json::from_str(json);
+        assert!(
+            result.is_err(),
+            "scroll_open with extra field should fail deserialization (deny_unknown_fields)"
+        );
     }
 
     #[test]
@@ -4696,6 +4837,9 @@ mod tests {
             ),
             include_str!(
                 "../../../agent/packages/schema/samples/server-data.coffin-state-no-grade.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.scroll-open.sample.json"
             ),
         ];
 

@@ -1,0 +1,10 @@
+{
+  "id": "scroll_read_page_turn",
+  "layers": [
+    { "sound": "minecraft:item.book.page_turn", "volume": 0.6, "pitch": 1.1, "delay_ticks": 0 }
+  ],
+  "priority": 35,
+  "attenuation": "player_local",
+  "category": "VOICE",
+  "bus": "UI"
+}

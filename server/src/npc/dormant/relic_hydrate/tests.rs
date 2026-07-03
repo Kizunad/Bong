@@ -51,6 +51,7 @@ fn test_template(template_id: &str, spirit_quality_initial: f64) -> ItemTemplate
         blueprint_scroll_spec: None,
         inscription_scroll_spec: None,
         technique_scroll_spec: None,
+        readable_scroll_spec: None,
         recipe_fragment_spec: None,
         container_spec: None,
         shelflife_profile: None,

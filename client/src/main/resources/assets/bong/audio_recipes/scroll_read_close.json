@@ -1,0 +1,10 @@
+{
+  "id": "scroll_read_close",
+  "layers": [
+    { "sound": "minecraft:item.book.put", "volume": 0.7, "pitch": 1.0, "delay_ticks": 0 }
+  ],
+  "priority": 38,
+  "attenuation": "player_local",
+  "category": "VOICE",
+  "bus": "UI"
+}

@@ -19376,6 +19376,42 @@
       "type": "object",
       "required": [
         "type",
+        "scroll_id",
+        "title",
+        "body_pages"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "scroll_open",
+          "type": "string"
+        },
+        "scroll_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "title": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "body_pages": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "type",
         "offer_id",
         "trigger_id",
         "character_id",

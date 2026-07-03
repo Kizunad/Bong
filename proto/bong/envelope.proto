@@ -168,6 +168,8 @@ message ServerDataEnvelope {
     TutorialCoffinPos tutorial_coffin_pos = 136;
     // ─── plan-inventory-hint-panel-v1 P0：库存操作拒绝原因结构化 S2C ───
     InventoryMoveRejected inventory_move_rejected = 137;
+    // ─── plan-scroll-reading-v1 P0：可阅读残卷阅读屏 S2C（原定 137 被 #825 抢占，顺延取 138，见 §9） ───
+    ScrollOpen scroll_open = 138;
     // 字段编号一旦分配永不复用（buf breaking 检测保证）。
   }
 }
@@ -298,6 +300,11 @@ message ClientRequestEnvelope {
     ContainerOpenReq            container_open                = 98;
     // plan-layered-equip-v1 P4 — 法宝激活/卸下到灵宝 UI 触发位（决议 #8）。
     TreasureActivate            treasure_activate             = 99;
+    // plan-scroll-reading-v1 P0 — 阅读可阅读残卷（经脉入门残卷等）。
+    ScrollReadRequest           scroll_read_request           = 100;
+    // plan-scroll-reading-v1 P1 §8.1#4 — 关闭阅读屏，通知 server 阅读会话结束
+    // （P2 落地 emit_scroll_read_stop_for_entity 真正停止循环阅读动画）。
+    ScrollReadClosed            scroll_read_closed            = 101;
   }
 }
 
@@ -3946,6 +3953,16 @@ message InventoryMoveRejected {
   optional uint32  cap             = 4; // worn_cap_full：槽位上限
 }
 
+// ─── plan-scroll-reading-v1 P0：可阅读残卷阅读屏 S2C（tag 138，§9） ────
+// 与 Rust ServerDataPayloadV1::ScrollOpen 精确对应。仅发给请求阅读的玩家（不广播）。
+// body_pages 每元素一页，至少 1 页；字段只携带正文，不 hardcode 经脉内容——任意
+// readable_scroll_spec 挂载的物品皆可复用同一 client 阅读屏。
+message ScrollOpen {
+  string           scroll_id  = 1; // 模板 id，如 scroll_meridian_primer
+  string           title      = 2;
+  repeated string  body_pages = 3;
+}
+
 // ─── plan-exploration-probe-return-v1 P1：神识感知保鲜 C2S ────────
 // 与 Rust ClientRequestV1::FreshnessProbe 精确对应。
 // instance_id = 玩家 inventory 中物品的实例 ID（直接定位，消除容器 tab 歧义）。
@@ -3999,3 +4016,17 @@ message InsightOffer {
 // 与 Rust ClientRequestV1::RaiseShield / LowerShield 精确对应。
 message RaiseShield {}
 message LowerShield {}
+
+// ─── plan-scroll-reading-v1 P0：阅读可阅读残卷 C2S（tag 100，§9） ────
+// 与 Rust ClientRequestV1::ScrollReadRequest 精确对应。instance_id = 玩家 inventory
+// 中物品的实例 ID（全仓 instance_id 字段惯例为 uint64，§9 proto 草稿写的 string 是笔误，
+// 按既有惯例订正，tag/message 名不变）。
+message ScrollReadRequest {
+  uint32 v           = 1; // 版本，恒 1
+  uint64 instance_id = 2;
+}
+
+// ─── plan-scroll-reading-v1 P1：关闭阅读屏 C2S（tag 101，§8.1#4） ────
+// 与 Rust ClientRequestV1::ScrollReadClosed 精确对应。空消息——server 依 ev.client
+// 定位是谁关的屏，无需回传 instance_id/scroll_id（镜像 RaiseShield/LowerShield 结构）。
+message ScrollReadClosed {}

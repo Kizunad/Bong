@@ -169,6 +169,61 @@ class HeldItemStackResolverTest {
             "装备槽物品不是 Bong 锄头模板时不应误命中 hoe fallback；实际=" + result);
     }
 
+    // ---- resolveMainHand：scroll tier（plan-scroll-reading-v1 P2，第五级）------
+
+    @Test
+    void resolveMainHand_hoeUnregistered_fallsThroughToScrollTierSafely() {
+        // block 与 hoe 均未命中已知模板时，链条应继续下探到 scroll tier 而非提前返回——
+        // "not_a_hoe_either" 不是残卷模板，scroll tier 同样安全返回 empty（守卫短路，
+        // 不触发 Items 求值）。这条测试锁住"hoe → scroll"这一级的下探关系。
+        SkillBarStore.setSelectedSlot(0);
+        SkillBarStore.updateSlot(0, SkillBarEntry.item("not_a_registered_block_xyz", "？", 0, 0, ""));
+        InventoryStateStore.replace(InventoryModel.builder()
+            .equip(EquipSlotType.MAIN_HAND, InventoryItem.simple("not_a_hoe_either", "杂物"))
+            .build());
+
+        Optional<ItemStack> result = assertDoesNotThrow(
+            HeldItemStackResolver::resolveMainHand,
+            "block/hoe/scroll 均未注册时应安全返回 empty，不应抛异常");
+
+        assertTrue(result.isEmpty(),
+            "block、hoe、scroll 均未命中已知模板时应返回 empty；实际=" + result);
+    }
+
+    @Test
+    void resolveMainHand_equippedMainHandItemIsNotReadableScroll_returnsEmpty() {
+        // 装备槽物品不是 Bong 锄头也不是可阅读残卷（即使碰巧是真实武器模板 id）——
+        // isReadableScroll() 对它应返回 false（纯 key 查找），不会被误判合成 fake paper stack。
+        InventoryStateStore.replace(InventoryModel.builder()
+            .equip(EquipSlotType.MAIN_HAND, InventoryItem.simple("iron_sword", "铁剑（非残卷）"))
+            .build());
+
+        Optional<ItemStack> result = assertDoesNotThrow(HeldItemStackResolver::resolveMainHand,
+            "非残卷 id 的 isReadableScroll() 判定不应触发 Items 求值异常");
+
+        assertTrue(result.isEmpty(),
+            "装备槽物品不是可阅读残卷模板时不应误命中 scroll fallback；实际=" + result);
+    }
+
+    @Test
+    void resolveMainHand_unmappedWeapon_doesNotFallThroughToScrollTier() {
+        // "scroll_meridian_primer" 是诱饵：真实已注册可阅读残卷模板。武器已装备但未注册
+        // 模型时不应下探到 scroll tier（同 block/hoe 门控语义）——若下探会命中诱饵触发
+        // Items 求值异常。
+        WeaponEquippedStore.putOrClear("main_hand",
+            new EquippedWeapon("main_hand", 1L, "totally_unregistered_weapon_xyz", "sword", 100f, 100f, 1));
+        InventoryStateStore.replace(InventoryModel.builder()
+            .equip(EquipSlotType.MAIN_HAND, InventoryItem.simple("scroll_meridian_primer", "《经脉浅述·残卷》"))
+            .build());
+
+        Optional<ItemStack> result = assertDoesNotThrow(
+            HeldItemStackResolver::resolveMainHand,
+            "不应下探到 scroll tier（若下探会命中诱饵 scroll_meridian_primer 触发 Items 求值异常）");
+
+        assertTrue(result.isEmpty(),
+            "武器已装备但未注册模型时应返回 empty，不应下探到 scroll fallback；实际=" + result);
+    }
+
     // ---- resolveOffHand：全空 --------------------------------------------
 
     @Test

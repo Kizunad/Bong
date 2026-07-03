@@ -231,6 +231,7 @@ pub fn payload_type_label(payload_type: ServerDataType) -> &'static str {
         ServerDataType::TutorialCoffinPos => "tutorial_coffin_pos",
         // ─── plan-inventory-hint-panel-v1 P0：库存操作拒绝原因结构化 S2C ───
         ServerDataType::InventoryMoveRejected => "inventory_move_rejected",
+        ServerDataType::ScrollOpen => "scroll_open",
     }
 }
 

@@ -554,6 +554,21 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodeLowerShield());
     }
 
+    /**
+     * plan-scroll-reading-v1 P0 — 通知 server 玩家请求阅读一本可阅读残卷
+     * （对应 ClientRequestV1::ScrollReadRequest）。
+     *
+     * @param instanceId 待阅读残卷的 inventory instance_id
+     */
+    public static void sendScrollReadRequest(long instanceId) {
+        dispatch(ClientRequestProtocol.encodeScrollReadRequest(instanceId));
+    }
+
+    /** plan-scroll-reading-v1 P1 — 通知 server 玩家关闭阅读屏（对应 ClientRequestV1::ScrollReadClosed）。 */
+    public static void sendScrollReadClosed() {
+        dispatch(ClientRequestProtocol.encodeScrollReadClosed());
+    }
+
     // ─── plan-worldgen-v4 P5 §8.1#5：画廊审阅 owo 方块面板 dev-only give-block C2S ──
 
     /**

@@ -61,6 +61,8 @@ pub mod quickslot_config_emit;
 pub mod rat_phase_bridge;
 pub mod redis_bridge;
 pub mod resourcepack;
+// plan-scroll-reading-v1 P0 — 可阅读残卷阅读屏 S2C `ScrollOpen` 回执发送。
+pub mod scroll_open_emit;
 pub mod skill_config_emit;
 pub mod skill_emit;
 pub mod skill_snapshot_emit;
@@ -792,6 +794,20 @@ pub fn register(app: &mut App) {
     app.add_systems(
         Update,
         client_request_handler::handle_client_request_payloads,
+    );
+    // plan-scroll-reading-v1 P2 §8.1 #4 — 读卷循环动画死亡/断线兜底清理（模板：
+    // combat::shield_block::cleanup_shield_on_{death,disconnect}）。死亡分支需在
+    // death_arbiter_tick 之后（DeathEvent 已 emit）；断线分支需在
+    // despawn_disconnected_clients 之前（entity 尚未被 despawn，marker 仍可查）。
+    app.add_systems(
+        Update,
+        scroll_open_emit::cleanup_scroll_reading_on_death
+            .after(crate::combat::lifecycle::death_arbiter_tick),
+    );
+    app.add_systems(
+        Update,
+        scroll_open_emit::cleanup_scroll_reading_on_disconnect
+            .before(crate::player::despawn_disconnected_clients),
     );
     app.add_systems(
         Update,

@@ -1347,6 +1347,35 @@ public final class ClientRequestProtocol {
         return envelope("lower_shield").toString();
     }
 
+    // ─── plan-scroll-reading-v1 P0：请求阅读可阅读残卷 C2S ────────────────
+
+    /**
+     * plan-scroll-reading-v1 P0 — 玩家右键可阅读残卷菜单点击 [阅读] 时发送。
+     *
+     * <p>对应 server {@code ClientRequestV1::ScrollReadRequest}（proto tag 100）。
+     * {@code instance_id} 为 wire {@code u64}——§9 契约草案写的是 {@code string instance_id}，
+     * 但仓库既有惯例（20+ 处 instance_id 字段与 client {@link com.bong.client.inventory.model.InventoryItem#instanceId()}
+     * 均为数字）统一为 {@code u64}，故此处按数字编码，与 server {@code client_request.rs} 注释对齐。</p>
+     *
+     * @param instanceId 待阅读残卷的 inventory instance_id
+     */
+    public static String encodeScrollReadRequest(long instanceId) {
+        JsonObject obj = envelope("scroll_read_request");
+        obj.addProperty("instance_id", instanceId);
+        return obj.toString();
+    }
+
+    // ─── plan-scroll-reading-v1 P1 §8.1#4：关闭阅读屏 C2S ────────────────
+
+    /**
+     * plan-scroll-reading-v1 P1 — 玩家关闭阅读屏（ESC / 关闭按钮）时发送。
+     *
+     * <p>对应 server {@code ClientRequestV1::ScrollReadClosed}（proto tag 101）。</p>
+     */
+    public static String encodeScrollReadClosed() {
+        return envelope("scroll_read_closed").toString();
+    }
+
     // ─── plan-worldgen-v4 P5 §8.1#5：画廊审阅 owo 方块面板 dev-only give-block C2S ──
 
     /** give-block 数量上限（与 schema BlockPickerActionV1 count Integer(1..64) 对齐）。 */

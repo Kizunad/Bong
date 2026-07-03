@@ -584,4 +584,49 @@ public class ClientRequestSenderTest {
         assertEquals(0, sent.size(),
             "no client_request should be sent when arguments are invalid, actual sent=" + sent);
     }
+
+    // ─── plan-scroll-reading-v1 P0：sendScrollReadRequest（发起端孤岛修复）────────
+
+    @Test
+    void sendScrollReadRequestUsesCorrectChannelAndJson() {
+        install();
+        ClientRequestSender.sendScrollReadRequest(4002L);
+        assertEquals(1, sent.size(),
+            "sendScrollReadRequest must produce exactly one client_request, actual sent=" + sent);
+        assertEquals(new Identifier("bong", "client_request"), sent.get(0).channel());
+        assertEquals(
+            "{\"type\":\"scroll_read_request\",\"v\":1,\"instance_id\":4002}",
+            sent.get(0).body(),
+            "wire payload must match Rust ClientRequestV1::ScrollReadRequest, actual=" + sent.get(0).body()
+        );
+    }
+
+    @Test
+    void sendScrollReadRequestZeroInstanceIdStillDispatches() {
+        // sender 层不做业务校验（0 是否合法由 server resolve_scroll_read_request 判定）；
+        // 只锁「sender 忠实转发 encode 结果」这一段契约。
+        install();
+        ClientRequestSender.sendScrollReadRequest(0L);
+        assertEquals(1, sent.size());
+        assertEquals(
+            "{\"type\":\"scroll_read_request\",\"v\":1,\"instance_id\":0}",
+            sent.get(0).body()
+        );
+    }
+
+    // ─── plan-scroll-reading-v1 P1 §8.1#4：sendScrollReadClosed ───────────────
+
+    @Test
+    void sendScrollReadClosedUsesCorrectChannelAndJson() {
+        install();
+        ClientRequestSender.sendScrollReadClosed();
+        assertEquals(1, sent.size(),
+            "sendScrollReadClosed must produce exactly one client_request, actual sent=" + sent);
+        assertEquals(new Identifier("bong", "client_request"), sent.get(0).channel());
+        assertEquals(
+            "{\"type\":\"scroll_read_closed\",\"v\":1}",
+            sent.get(0).body(),
+            "wire payload must match Rust ClientRequestV1::ScrollReadClosed, actual=" + sent.get(0).body()
+        );
+    }
 }

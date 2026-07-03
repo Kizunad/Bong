@@ -140,6 +140,9 @@ pub struct ItemTemplate {
     pub blueprint_scroll_spec: Option<BlueprintScrollSpec>,
     pub inscription_scroll_spec: Option<InscriptionScrollSpec>,
     pub technique_scroll_spec: Option<TechniqueScrollSpec>,
+    /// plan-scroll-reading-v1 P0 — 可阅读残卷规格；读取不消耗物品（区别于 `technique_scroll_spec`
+    /// 消耗式学招）。任意 scroll/book 类物品皆可挂此字段，供 C2S `ScrollReadRequest` 查询。
+    pub readable_scroll_spec: Option<ReadableScrollSpec>,
     /// plan-onboarding-loop-v1 P1.1 — 丹方 fragment 物品规格；category=RecipeFragment 时可填。
     pub recipe_fragment_spec: Option<RecipeFragmentSpec>,
     /// plan-backpack-equip-v1 P0 — 可装备容器规格；category=Container 时必填。
@@ -268,6 +271,20 @@ pub struct InscriptionScrollSpec {
 pub struct TechniqueScrollSpec {
     pub kind: String,
     pub skill_id: String,
+}
+
+/// plan-scroll-reading-v1 P0 — 可阅读残卷的模板级静态规格。
+///
+/// 读取不消耗物品（区别于 `TechniqueScrollSpec` 消耗式学招）。正文按页内联存于
+/// TOML（不运行时读 `docs/library/`，与其余 `*ScrollSpec` 惯例统一）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct ReadableScrollSpec {
+    /// 阅读屏标题，如 "《经脉浅述·残卷》"。
+    pub title: String,
+    /// 正文分页，每元素一页；`ScrollOpen` payload 原样透传。至少 1 页。
+    pub body_pages: Vec<String>,
+    /// 开卷时 client 播放的循环姿态动画 id（如 `bong:read_scroll`）；None = 无动画。
+    pub anim_id: Option<String>,
 }
 
 /// plan-onboarding-loop-v1 P1.1 — 丹方 fragment 物品的模板级静态规格。
@@ -1294,6 +1311,7 @@ fn vanilla_block_template(block_id: &str) -> ItemTemplate {
         blueprint_scroll_spec: None,
         inscription_scroll_spec: None,
         technique_scroll_spec: None,
+        readable_scroll_spec: None,
         recipe_fragment_spec: None,
         container_spec: None,
         shield_spec: None,
@@ -1931,6 +1949,9 @@ struct ItemTemplateToml {
     inscription_scroll: Option<InscriptionScrollSpecToml>,
     #[serde(default)]
     technique_scroll: Option<TechniqueScrollSpecToml>,
+    /// plan-scroll-reading-v1 P0：任意 scroll/book 类物品可挂，读取不消耗。
+    #[serde(default)]
+    readable_scroll: Option<ReadableScrollSpecToml>,
     /// plan-onboarding-loop-v1 P1.1：category == "recipe_fragment" 时可填。
     #[serde(default)]
     recipe_fragment: Option<RecipeFragmentSpecToml>,
@@ -1986,6 +2007,16 @@ pub struct TechniqueScrollSpecToml {
     #[serde(default = "default_combat_technique_scroll_kind")]
     kind: String,
     skill_id: String,
+}
+
+/// plan-scroll-reading-v1 P0 — TOML 层的可阅读残卷规格块（对应 `[item.readable_scroll]`）。
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReadableScrollSpecToml {
+    title: String,
+    body_pages: Vec<String>,
+    #[serde(default)]
+    anim_id: Option<String>,
 }
 
 /// plan-onboarding-loop-v1 P1.1 — TOML 层的丹方 fragment 规格块（对应 `[item.recipe_fragment]`）。
@@ -2270,6 +2301,10 @@ impl ItemTemplateToml {
             .technique_scroll
             .map(|raw| parse_technique_scroll_spec(raw, source_path, id.as_str()))
             .transpose()?;
+        let readable_scroll_spec = self
+            .readable_scroll
+            .map(|raw| parse_readable_scroll_spec(raw, source_path, id.as_str()))
+            .transpose()?;
         let recipe_fragment_spec = match (&category, self.recipe_fragment) {
             (ItemCategory::RecipeFragment, Some(raw)) => {
                 Some(parse_recipe_fragment_spec(raw, source_path, id.as_str())?)
@@ -2372,6 +2407,7 @@ impl ItemTemplateToml {
             blueprint_scroll_spec,
             inscription_scroll_spec,
             technique_scroll_spec,
+            readable_scroll_spec,
             recipe_fragment_spec,
             container_spec,
             shield_spec,
@@ -2450,6 +2486,48 @@ pub fn parse_technique_scroll_spec(
         ));
     }
     Ok(TechniqueScrollSpec { kind, skill_id })
+}
+
+/// plan-scroll-reading-v1 P0 — 解析 TOML `[item.readable_scroll]` 为 `ReadableScrollSpec`。
+///
+/// 校验：`title` 非空；`body_pages` 至少 1 页且每页非空；`anim_id`（若填）非空白字符串。
+pub fn parse_readable_scroll_spec(
+    raw: ReadableScrollSpecToml,
+    source_path: &Path,
+    item_id: &str,
+) -> Result<ReadableScrollSpec, String> {
+    let title = required_non_empty(
+        raw.title,
+        source_path,
+        &format!("item `{item_id}` readable_scroll.title"),
+    )?;
+    if raw.body_pages.is_empty() {
+        return Err(format!(
+            "{} item `{item_id}` has readable_scroll.body_pages with 0 pages; expected >= 1",
+            source_path.display()
+        ));
+    }
+    let mut body_pages = Vec::with_capacity(raw.body_pages.len());
+    for (idx, page) in raw.body_pages.into_iter().enumerate() {
+        body_pages.push(required_non_empty(
+            page,
+            source_path,
+            &format!("item `{item_id}` readable_scroll.body_pages[{idx}]"),
+        )?);
+    }
+    let anim_id = match raw.anim_id {
+        Some(raw_anim_id) => Some(required_non_empty(
+            raw_anim_id,
+            source_path,
+            &format!("item `{item_id}` readable_scroll.anim_id"),
+        )?),
+        None => None,
+    };
+    Ok(ReadableScrollSpec {
+        title,
+        body_pages,
+        anim_id,
+    })
 }
 
 /// plan-onboarding-loop-v1 P1.1 — 解析 TOML `[item.recipe_fragment]` 为 `RecipeFragmentSpec`。
@@ -5866,6 +5944,7 @@ mod tests {
                     blueprint_scroll_spec: None,
                     inscription_scroll_spec: None,
                     technique_scroll_spec: None,
+                    readable_scroll_spec: None,
                     recipe_fragment_spec: None,
                     container_spec: None,
                     shield_spec: None,
@@ -5905,6 +5984,7 @@ mod tests {
             blueprint_scroll_spec: None,
             inscription_scroll_spec: None,
             technique_scroll_spec: None,
+            readable_scroll_spec: None,
             recipe_fragment_spec: None,
             container_spec: None,
             shield_spec: None,
@@ -5935,6 +6015,7 @@ mod tests {
             blueprint_scroll: None,
             inscription_scroll: None,
             technique_scroll: None,
+            readable_scroll: None,
             recipe_fragment: None,
             container: None,
             shield_spec: None,
@@ -6967,6 +7048,164 @@ max_stack_count = 0
         assert!(error.contains("blueprint_scroll.blueprint_id"));
     }
 
+    // ── plan-scroll-reading-v1 P0：parse_readable_scroll_spec ──────────────────
+
+    #[test]
+    fn parse_readable_scroll_spec_accepts_three_pages_and_anim_id() {
+        let spec = parse_readable_scroll_spec(
+            ReadableScrollSpecToml {
+                title: "《经脉浅述·残卷》".to_string(),
+                body_pages: vec![
+                    "第一页".to_string(),
+                    "第二页".to_string(),
+                    "第三页".to_string(),
+                ],
+                anim_id: Some("bong:read_scroll".to_string()),
+            },
+            Path::new("<inline-items.toml>"),
+            "scroll_meridian_primer",
+        )
+        .expect("readable scroll spec should parse");
+
+        assert_eq!(spec.title, "《经脉浅述·残卷》");
+        assert_eq!(spec.body_pages.len(), 3);
+        assert_eq!(spec.anim_id.as_deref(), Some("bong:read_scroll"));
+    }
+
+    #[test]
+    fn parse_readable_scroll_spec_accepts_none_anim_id() {
+        let spec = parse_readable_scroll_spec(
+            ReadableScrollSpecToml {
+                title: "无动画残卷".to_string(),
+                body_pages: vec!["单页".to_string()],
+                anim_id: None,
+            },
+            Path::new("<inline-items.toml>"),
+            "scroll_no_anim",
+        )
+        .expect("readable scroll without anim_id should parse (anim_id is Optional)");
+
+        assert_eq!(spec.anim_id, None);
+    }
+
+    #[test]
+    fn parse_readable_scroll_spec_rejects_empty_title() {
+        let error = parse_readable_scroll_spec(
+            ReadableScrollSpecToml {
+                title: "   ".to_string(),
+                body_pages: vec!["p1".to_string()],
+                anim_id: None,
+            },
+            Path::new("<inline-items.toml>"),
+            "bad_readable_scroll",
+        )
+        .expect_err("blank title should fail");
+
+        assert!(error.contains("readable_scroll.title"));
+    }
+
+    #[test]
+    fn parse_readable_scroll_spec_rejects_zero_pages() {
+        let error = parse_readable_scroll_spec(
+            ReadableScrollSpecToml {
+                title: "t".to_string(),
+                body_pages: vec![],
+                anim_id: None,
+            },
+            Path::new("<inline-items.toml>"),
+            "bad_readable_scroll",
+        )
+        .expect_err("0 body_pages should fail (§9 至少 1 页)");
+
+        assert!(error.contains("body_pages"));
+    }
+
+    #[test]
+    fn parse_readable_scroll_spec_rejects_blank_page() {
+        // 边界：第 2 页（非首页）为纯空白，必须也被拒绝（逐页校验，不只查第一页）。
+        let error = parse_readable_scroll_spec(
+            ReadableScrollSpecToml {
+                title: "t".to_string(),
+                body_pages: vec!["第一页有内容".to_string(), "   ".to_string()],
+                anim_id: None,
+            },
+            Path::new("<inline-items.toml>"),
+            "bad_readable_scroll",
+        )
+        .expect_err("blank page (index 1) should fail");
+
+        assert!(error.contains("body_pages[1]"));
+    }
+
+    #[test]
+    fn parse_readable_scroll_spec_rejects_blank_anim_id_when_some() {
+        let error = parse_readable_scroll_spec(
+            ReadableScrollSpecToml {
+                title: "t".to_string(),
+                body_pages: vec!["p1".to_string()],
+                anim_id: Some("   ".to_string()),
+            },
+            Path::new("<inline-items.toml>"),
+            "bad_readable_scroll",
+        )
+        .expect_err("blank anim_id (Some(whitespace)) should fail, not silently accept");
+
+        assert!(error.contains("readable_scroll.anim_id"));
+    }
+
+    #[test]
+    fn parse_readable_scroll_spec_accepts_single_page_boundary() {
+        // 边界：恰好 1 页（下界，§9 "至少 1 页"）。
+        let spec = parse_readable_scroll_spec(
+            ReadableScrollSpecToml {
+                title: "t".to_string(),
+                body_pages: vec!["only page".to_string()],
+                anim_id: None,
+            },
+            Path::new("<inline-items.toml>"),
+            "scroll_single_page",
+        )
+        .expect("exactly 1 page should be accepted (lower boundary)");
+
+        assert_eq!(spec.body_pages, vec!["only page".to_string()]);
+    }
+
+    #[test]
+    fn onboarding_scroll_meridian_primer_parses() {
+        let registry = load_item_registry().expect("item registry should load");
+        let template = registry
+            .get("scroll_meridian_primer")
+            .expect("scroll_meridian_primer should be registered from onboarding_scrolls.toml");
+
+        assert_eq!(template.category, ItemCategory::Scroll);
+        assert_eq!(template.max_stack_count, 1);
+        assert_eq!(template.grid_w, 1);
+        assert_eq!(template.grid_h, 2);
+
+        let spec = template
+            .readable_scroll_spec
+            .as_ref()
+            .expect("scroll_meridian_primer must carry a readable_scroll_spec");
+        assert_eq!(spec.title, "《经脉浅述·残卷》");
+        assert_eq!(
+            spec.body_pages.len(),
+            3,
+            "§8.1 #3 决议：3 页正文，实得 {} 页",
+            spec.body_pages.len()
+        );
+        for (idx, page) in spec.body_pages.iter().enumerate() {
+            assert!(
+                !page.trim().is_empty(),
+                "page[{idx}] must not be blank once loaded from the real TOML asset"
+            );
+        }
+        assert_eq!(
+            spec.anim_id.as_deref(),
+            Some("bong:read_scroll"),
+            "P2 阅读动画 id 应在 P0 就写入 TOML（anim_id 字段），供 P2 直接消费"
+        );
+    }
+
     #[test]
     fn parse_inscription_scroll_spec_accepts_inscription_id() {
         let spec = parse_inscription_scroll_spec(
@@ -7224,6 +7463,7 @@ cols = 4
                 blueprint_scroll_spec: None,
                 inscription_scroll_spec: None,
                 technique_scroll_spec: None,
+                readable_scroll_spec: None,
                 recipe_fragment_spec: None,
                 container_spec: None,
                 shield_spec: None,
@@ -7293,6 +7533,7 @@ cols = 4
                 blueprint_scroll_spec: None,
                 inscription_scroll_spec: None,
                 technique_scroll_spec: None,
+                readable_scroll_spec: None,
                 recipe_fragment_spec: None,
                 container_spec: None,
                 shield_spec: None,
@@ -10209,6 +10450,7 @@ cols = 4
                 blueprint_scroll_spec: None,
                 inscription_scroll_spec: None,
                 technique_scroll_spec: None,
+                readable_scroll_spec: None,
                 recipe_fragment_spec: None,
                 container_spec: None,
                 shield_spec: None,
@@ -10287,6 +10529,7 @@ cols = 4
                 blueprint_scroll_spec: None,
                 inscription_scroll_spec: None,
                 technique_scroll_spec: None,
+                readable_scroll_spec: None,
                 recipe_fragment_spec: None,
                 container_spec: None,
                 shield_spec: None,
@@ -11134,6 +11377,7 @@ cols = 4
             blueprint_scroll_spec: None,
             inscription_scroll_spec: None,
             technique_scroll_spec: None,
+            readable_scroll_spec: None,
             recipe_fragment_spec: None,
             container_spec: Some(ContainerSpec {
                 quick_access: false,
@@ -14080,6 +14324,7 @@ cols = 4
             blueprint_scroll_spec: None,
             inscription_scroll_spec: None,
             technique_scroll_spec: None,
+            readable_scroll_spec: None,
             recipe_fragment_spec: None,
             container_spec: Some(ContainerSpec {
                 quick_access: false,
@@ -14526,6 +14771,7 @@ cols = 4
             blueprint_scroll_spec: None,
             inscription_scroll_spec: None,
             technique_scroll_spec: None,
+            readable_scroll_spec: None,
             recipe_fragment_spec: None,
             container_spec: None,
             shield_spec: None,
@@ -14556,6 +14802,7 @@ cols = 4
             blueprint_scroll_spec: None,
             inscription_scroll_spec: None,
             technique_scroll_spec: None,
+            readable_scroll_spec: None,
             recipe_fragment_spec: None,
             container_spec: None,
             shield_spec: None,
@@ -15323,6 +15570,7 @@ cols = 4
             blueprint_scroll_spec: None,
             inscription_scroll_spec: None,
             technique_scroll_spec: None,
+            readable_scroll_spec: None,
             recipe_fragment_spec: None,
             container_spec: None,
             shield_spec: None,
@@ -15392,6 +15640,7 @@ cols = 4
             blueprint_scroll_spec: None,
             inscription_scroll_spec: None,
             technique_scroll_spec: None,
+            readable_scroll_spec: None,
             recipe_fragment_spec: None,
             container_spec: None,
             shield_spec: None,
@@ -15478,6 +15727,7 @@ cols = 4
             blueprint_scroll: None,
             inscription_scroll: None,
             technique_scroll: None,
+            readable_scroll: None,
             recipe_fragment: None,
             container: None,
             shield_spec: None,
@@ -15524,6 +15774,7 @@ cols = 4
             blueprint_scroll: None,
             inscription_scroll: None,
             technique_scroll: None,
+            readable_scroll: None,
             recipe_fragment: None,
             container: None,
             shelflife_profile: Some("some_profile".to_string()),
@@ -15571,6 +15822,7 @@ cols = 4
             blueprint_scroll: None,
             inscription_scroll: None,
             technique_scroll: None,
+            readable_scroll: None,
             recipe_fragment: None,
             container: None,
             shield_spec: None,
@@ -15623,6 +15875,7 @@ cols = 4
             blueprint_scroll: None,
             inscription_scroll: None,
             technique_scroll: None,
+            readable_scroll: None,
             recipe_fragment: None,
             container: None,
             shield_spec: None,
@@ -16285,6 +16538,7 @@ cols = 4
             blueprint_scroll: None,
             inscription_scroll: None,
             technique_scroll: None,
+            readable_scroll: None,
             recipe_fragment: None,
             container: None,
             shield_spec: None, // ← 故意缺失
@@ -16328,6 +16582,7 @@ cols = 4
             blueprint_scroll: None,
             inscription_scroll: None,
             technique_scroll: None,
+            readable_scroll: None,
             recipe_fragment: None,
             container: None,
             shield_spec: Some(ShieldSpecToml {
