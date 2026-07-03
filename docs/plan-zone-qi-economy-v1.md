@@ -60,7 +60,7 @@ spawn zone `spirit_qi` 被观测到 0.00 且永不恢复。三个叠加根因：
 - `ZoneConfig` / `Zone` 加 `qi_equilibrium: f64`（默认 0.0 = 不回流，向后兼容）与 `qi_inflow_per_min: f64`；`zones.json` 给 spawn 配 `qi_equilibrium: 0.35`（> 开脉门槛 `MIN_ZONE_QI_TO_OPEN=0.3`）+ inflow 初值（标定见 §8 #2）。
 - qi_physics 新增：`fn zone_equilibrium_inflow(spirit_qi, equilibrium, inflow_per_min, dt) -> f64` + 常数；**只补到 equilibrium 即停**（浓度钳制），来源扣**独立待分配池**（§8.1 #1：非 `WorldQiBudget`，勿碰化虚名额闸门），余额不足则缩量、绝不透支。
 - heartbeat（`world/heartbeat.rs`）新增回流 system：直写 `zone.spirit_qi`（遵循 #676 后守恒写法：改真实池 + 记 `QiTransfer(ZoneInflow)` 审计），负灵域（spirit_qi<0）zone 不回流（保留死域/负灵域设定）。
-- **测试**：钳制在 equilibrium 不过冲；预算耗尽缩量；负灵域跳过；回流↔吸收长跑总量守恒；`REALM_COLLAPSE` 事件 zone 是否回流见 §8 #5。
+- **测试**：钳制在 equilibrium 不过冲；**待分配池余额不足缩量**；负灵域跳过；回流↔吸收长跑总量守恒；`REALM_COLLAPSE` 事件 zone 跳回流（§8.1 #5）。
 
 ## P2 NPC 让灵地板 ⬜
 
@@ -73,7 +73,7 @@ spawn zone `spirit_qi` 被观测到 0.00 且永不恢复。三个叠加根因：
 
 baseline 0.35 永远过不了 `MIN_ZONE_QI_TO_GUYUAN=0.8`（`breakthrough.rs:357-390`），需要窗口机制。路线二选一或并行（§8 #3 拍板）：
 
-- **灵潮**：复用伪灵脉 runtime（`pseudo_vein_runtime.rs`，phase 机 + settlement 已有守恒结算），周期性把目标 zone 短暂推到 0.85 再回落；qi 来源走**独立待分配池借还**（§8.1 #3：inject/settle 改借还款、修 70% 凭空创生，非 WorldQiBudget），不凭空。
+- **灵潮**：复用伪灵脉 runtime（`pseudo_vein_runtime.rs`，phase 机 + settlement——**现仅收回 30%、70% 留 zone 凭空创生**，须按 §8.1 #3 改造为借还款），周期性把目标 zone 短暂推到 0.85 再回落；qi 来源走**独立待分配池借还**（§8.1 #3：inject/settle 改借还款、修 70% 凭空创生，非 WorldQiBudget），不凭空。
 - **灵眼**：spawn 附近落一口 `SpiritEyeRegistry` POI（`breakthrough.rs:368` 已有 `in_spirit_eye` 替代门槛 + 环境加成路径，纯配置接入）。
 - **视听（须在升 active 时写到实现精度，docs/CLAUDE.md §四）**：灵潮复用 `PSEUDO_VEIN_RISING/ACTIVE/DISSIPATING` VFX 事件族与其既有 audio_recipe；narration 走天道 zone-scope（示例文案 ≥2 条、标 scope/style）；HUD 无新增常驻元素（对齐 HUD 沉浸极简约束）。
 - **测试**：灵潮窗口内固元前置通过 / 窗口外拒绝（`MIN_ZONE_QI_TO_GUYUAN` 边界）；潮起潮落全程守恒对拍。
@@ -126,9 +126,9 @@ baseline 0.35 永远过不了 `MIN_ZONE_QI_TO_GUYUAN=0.8`（`breakthrough.rs:357
 
 ### #4 其他抽取源过地板
 
-**决议**：`QI_TIANDAO_WATCH_ZONE_DRAIN_PER_MINUTE`（`constants.rs:70`）+ `LINGTIAN_DRAIN_ZONE_RATIO`（`constants.rs:86`）纳入 P2 scope（同"地板"物理概念，不拆 P4）。调用现场：`world/tiandao_hunt.rs:1023` `apply_watch_zone_qi_drain`（`:1050` 直扣 `zone.spirit_qi`）已定位；Lingtian drain 调用现场 P2 实施补 grep（§10.7）——两者 P2 均须过 floor。
+**决议**：真正会击穿地板的 zone-drain 抽取源纳入 P2 scope 加 floor（同"地板"物理概念，不拆 P4）——两条：① **天道监视** `QI_TIANDAO_WATCH_ZONE_DRAIN_PER_MINUTE`（`constants.rs:70`）→ `world/tiandao_hunt.rs:1024` `apply_watch_zone_qi_drain`（`:1051` 直扣 `zone.spirit_qi`）；② **灵田区域抽吸** `ReplenishSource::Zone`（`lingtian/systems.rs:1262-1267` `*z -= amount`，`amount = plot_qi_amount()` = 0.5 硬编）。**⚠️ 更正（round-2 博弈）**：`LINGTIAN_DRAIN_ZONE_RATIO`（`constants.rs:86`）**不是抽取常数、不钳**——它是灵田偷灵结算把已扣 plot_qi 的 20% **回 credit 给 zone** 的散逸比例（`systems.rs:1116→1133 *zone_qi += actual_to_zone`，往 zone 加钱），给它加 floor 是 no-op。
 
-**落点**：`constants.rs:70,86`；调用现场待 P2；plan §P2。
+**落点**：`tiandao_hunt.rs:1024,1051`（天道监视）；`lingtian/systems.rs:1262-1267`（灵田区域抽吸，`plot_qi_amount`=0.5，`:519` 已有 `zone_qi >= amount` 预检）；`constants.rs:70`；plan §P2。
 
 ### #5 事件 zone 边界
 
