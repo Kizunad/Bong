@@ -449,6 +449,7 @@ mod tests {
             last_pressure_target: None,
             recently_drained: Vec::new(),
             drained_qi: 0.0,
+            harass_cooldown_until_tick: 0,
         }
     }
 
