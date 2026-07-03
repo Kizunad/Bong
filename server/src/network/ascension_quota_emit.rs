@@ -122,6 +122,7 @@ mod tests {
         bootstrap_sqlite, complete_tribulation_ascension, persist_active_tribulation,
         ActiveTribulationRecord,
     };
+    use crate::qi_physics::constants::DEFAULT_SPIRIT_QI_TOTAL;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
     use valence::prelude::{App, Events, Update};
@@ -211,7 +212,10 @@ mod tests {
             .expect("quota setup should succeed");
         let mut app = App::new();
         app.insert_resource(settings);
-        app.insert_resource(WorldQiBudget::from_total(100.0));
+        // plan-zone-qi-economy-v1 P0 §8.1 决议 #2：满预算 → quota_limit=2 这条
+        // 不变式（"1 人占用=50% 满载率"）只在预算取 DEFAULT_SPIRIT_QI_TOTAL 本身
+        // 时成立（DEFAULT_VOID_QUOTA_K 随之等比例缩放）；不能再写死旧尺度 100.0。
+        app.insert_resource(WorldQiBudget::from_total(DEFAULT_SPIRIT_QI_TOTAL));
         app.insert_resource(VoidQuotaConfig::default());
         app.add_event::<AscensionQuotaOpened>();
         app.add_event::<AscensionQuotaOccupied>();
@@ -225,7 +229,13 @@ mod tests {
         assert_eq!(payloads.len(), 1);
         assert_eq!(
             payloads[0],
-            AscensionQuotaV1::with_world_qi(1, 2, 100.0, DEFAULT_VOID_QUOTA_K, VOID_QUOTA_BASIS)
+            AscensionQuotaV1::with_world_qi(
+                1,
+                2,
+                DEFAULT_SPIRIT_QI_TOTAL,
+                DEFAULT_VOID_QUOTA_K,
+                VOID_QUOTA_BASIS
+            )
         );
 
         let _ = std::fs::remove_dir_all(root);
@@ -266,7 +276,11 @@ mod tests {
         .expect("void-quota JueBi should count as an in-flight quota slot");
         let mut app = App::new();
         app.insert_resource(settings);
-        app.insert_resource(WorldQiBudget::from_total(50.0));
+        // plan-zone-qi-economy-v1 P0 §8.1 决议 #2：50.0 是旧尺度下 DEFAULT_VOID_QUOTA_K
+        // 本身（half-full budget → limit=1）；DEFAULT_VOID_QUOTA_K 缩放后必须用
+        // DEFAULT_SPIRIT_QI_TOTAL/2 保持同一"半满预算"语义，否则 limit 会跌到 0。
+        let half_budget = DEFAULT_SPIRIT_QI_TOTAL / 2.0;
+        app.insert_resource(WorldQiBudget::from_total(half_budget));
         app.insert_resource(VoidQuotaConfig::default());
         app.add_event::<AscensionQuotaOpened>();
         app.add_event::<AscensionQuotaOccupied>();
@@ -282,7 +296,7 @@ mod tests {
             vec![AscensionQuotaV1::with_world_qi(
                 2,
                 1,
-                50.0,
+                half_budget,
                 DEFAULT_VOID_QUOTA_K,
                 VOID_QUOTA_BASIS
             )]
@@ -296,7 +310,10 @@ mod tests {
         let (settings, root) = persistence_settings("budget-refresh");
         let mut app = App::new();
         app.insert_resource(settings);
-        app.insert_resource(WorldQiBudget::from_total(100.0));
+        // plan-zone-qi-economy-v1 P0 §8.1 决议 #2：起始满预算 / 变更后半满预算，
+        // 均须按 DEFAULT_SPIRIT_QI_TOTAL 缩放，保持与 DEFAULT_VOID_QUOTA_K 的比例
+        // 不变（否则变更后的 half_budget 相对新 K 会跌到 limit=0）。
+        app.insert_resource(WorldQiBudget::from_total(DEFAULT_SPIRIT_QI_TOTAL));
         app.insert_resource(VoidQuotaConfig::default());
         app.add_event::<AscensionQuotaOpened>();
         app.add_event::<AscensionQuotaOccupied>();
@@ -307,9 +324,10 @@ mod tests {
         flush_all_client_packets(&mut app);
         let _ = collect_ascension_quota_payloads(&mut helper);
 
+        let half_budget = DEFAULT_SPIRIT_QI_TOTAL / 2.0;
         app.world_mut()
             .resource_mut::<WorldQiBudget>()
-            .current_total = 50.0;
+            .current_total = half_budget;
         app.update();
         flush_all_client_packets(&mut app);
 
@@ -319,7 +337,7 @@ mod tests {
             vec![AscensionQuotaV1::with_world_qi(
                 0,
                 1,
-                50.0,
+                half_budget,
                 DEFAULT_VOID_QUOTA_K,
                 VOID_QUOTA_BASIS
             )]
@@ -358,7 +376,8 @@ mod tests {
         let (settings, root) = persistence_settings("broadcast-events");
         let mut app = App::new();
         app.insert_resource(settings);
-        app.insert_resource(WorldQiBudget::from_total(100.0));
+        // plan-zone-qi-economy-v1 P0 §8.1 决议 #2：满预算 → quota_limit=2。
+        app.insert_resource(WorldQiBudget::from_total(DEFAULT_SPIRIT_QI_TOTAL));
         app.insert_resource(VoidQuotaConfig::default());
         app.add_event::<AscensionQuotaOpened>();
         app.add_event::<AscensionQuotaOccupied>();
@@ -378,8 +397,13 @@ mod tests {
 
         let first_payloads = collect_ascension_quota_payloads(&mut first);
         let second_payloads = collect_ascension_quota_payloads(&mut second);
-        let expected =
-            AscensionQuotaV1::with_world_qi(1, 2, 100.0, DEFAULT_VOID_QUOTA_K, VOID_QUOTA_BASIS);
+        let expected = AscensionQuotaV1::with_world_qi(
+            1,
+            2,
+            DEFAULT_SPIRIT_QI_TOTAL,
+            DEFAULT_VOID_QUOTA_K,
+            VOID_QUOTA_BASIS,
+        );
         assert_eq!(first_payloads, vec![expected.clone()]);
         assert_eq!(second_payloads, vec![expected]);
 

@@ -879,7 +879,12 @@ mod tests {
 
         let mut app = App::new();
         app.insert_resource(AscensionQuotaStore::default());
-        app.insert_resource(crate::qi_physics::WorldQiBudget::from_total(100.0));
+        // plan-zone-qi-economy-v1 P0 §8.1 决议 #2：满预算 → quota_limit=2 只在预算取
+        // DEFAULT_SPIRIT_QI_TOTAL 本身时成立（DEFAULT_VOID_QUOTA_K 等比例缩放）；
+        // 旧尺度字面量 100.0 在缩放后会把 quota_limit 压到 0，卡死化虚渡劫。
+        app.insert_resource(crate::qi_physics::WorldQiBudget::from_total(
+            crate::qi_physics::constants::DEFAULT_SPIRIT_QI_TOTAL,
+        ));
         app.insert_resource(crate::cultivation::tribulation::VoidQuotaConfig::default());
         let (settings, persistence_root) = npc_brain_persistence_settings("rogue-tribulation-loop");
         app.insert_resource(settings);
