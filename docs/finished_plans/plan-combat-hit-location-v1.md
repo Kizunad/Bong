@@ -142,3 +142,29 @@
 3. 边界/拒绝理由：本次 promote 不新增阶段承载它——同一批改动里同时改"瞄准来源"（P0 raycast 签名）与"defender facing 契约"（Back 判定）会让测试面同时爆炸，无法定位回归来源。列为**本 plan 范围外的 stretch / 独立小增量**：待 P0 raycast 改造落地、P1 四肢分布数据出来后，若要做 Back 应作为独立后续增量（新 plan 或本 plan 追加阶段），带专属 pin 测试（后半球 dot 判定边界、胸高 remap、偷袭系数叠乘），不与本 plan 的 P0-P3 主线合并。
 
 **落点**：`combat/raycast.rs:45-88`（`classify_body_part` 签名，Back 恒不产出的位置）+ `resolve.rs:8935-8936`（Back 永不触发的现状注释）+ plan §8（列为非目标，不计入 P0-P3 主线交付物）。
+
+## Finish Evidence
+
+> 全部 P0-P3 ✅（2026-07-04 验收，consume workflow + Verify 博弈 `ready`/`defenseWins=True`，含 Severed 孤岛修复轮）。
+
+### 落地清单
+- **P0 射线改造**：`combat/raycast.rs::raycast_humanoid` 加瞄准方向参数（玩家读 `Look`（`resolve.rs:413` positions.get）/NPC 确定性 jitter `npc_aim_seed`+`weapon_aim_jitter_scale`），废除恒瞄胸心 fallback；14 条 raycast 饱和测试（分布/确定性/武器缩放/俯仰侧向）
+- **P1 arm_wound**：`combat/arm_wound.rs` 五级 debuff（照抄 `movement/leg_wound.rs`）+ 六维惩罚（攻击/格挡/散布三维接生产端 `resolve.rs`/`shield_block.rs`/`anqi_v2.rs`/`needle.rs`；冷却/蓄力/cast 暂缓公开披露）；直方图校准（胸40-50/头8-12/臂15-20/腿15-20）
+- **P2 §P2 旁路**：反向 grep 穷举，6 处 3 改（`carrier.rs` 暗器弹道几何/`npc/movement.rs` 碰撞相对高度/`resolve.rs:989` 反伤）3 留（涡流/独孤/死域陷阱 + 理由注释），各 pin
+- **P3 部位视听**：`network/gameplay_vfx.rs` `COMBAT_HIT_HEAD_CRIT`/`_LIMB`/`_LEG_WOUND_DECAL` + client `VfxBootstrap` 注册 + `audio_trigger.rs` 部位路由；client eventId 逐字对齐测试
+- **Severed 脱手**：`main_arm_severed` → `discard_inventory_item_to_dropped_loot` 武器脱手落地 + 清持械槽 `remove::<Weapon>()`；3 pin（触发/副手不误触发/未达阈值不误触发）
+
+### 关键 commit（2026-07-04）
+`0eb0dc4e9` 射线废恒瞄胸口 · `c14dab69c` P1 arm_wound 六维+直方图 · `ec8bc5e9c` P2 六旁路 · `5333c2404` P3 VFX · `cc5384978` P3 audio · `4d5cdc80d` P3 client · `970f4c04d` Severed 脱手
+
+### 测试结果
+server `cargo fmt+clippy+test` **10338 passed / 0 failed**；client `./gradlew test build`。
+
+### 跨仓库核验
+server(combat/raycast·resolve·arm_wound·carrier·woliu·dugu + npc/movement + world/container_block + network/gameplay_vfx·audio_trigger + audio) / client(visual/particle VfxBootstrap + CombatHitDirectionPlayer/LegWoundBloodDecalPlayer)。**无 wire 变更**。
+
+### 遗留 / 后续
+- 臂伤冷却/蓄力/cast_ticks 三维惩罚暂缓（公开披露，纯函数已备，后续接宿主系统不改信号）
+- 禁双持 + 主手臂断后"持续无法重装武器"暂缓（依赖 inventory 装备校验读 Wounds 跨模块重构，后续 PR）
+- parry 反伤路径 MAIN_ARM Severed 未接脱手（边缘：reflected_damage 达 Severed 阈值罕见）
+- #3 物种战术瞄准归 fauna / #4 classify 阈值 P1 已校准 / #5 Back 部位独立化
