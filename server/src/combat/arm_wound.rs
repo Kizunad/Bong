@@ -49,6 +49,36 @@
 //! 不在本 work item 声明的文件范围内，本阶段只把这三维实现为完整测试覆盖的纯函数
 //! （决议表数值已锁定、可随时被下游系统读取），暂不改动上述宿主文件，避免单个 P1
 //! 阶段同时牵动过多不相关模块导致测试面失焦。
+//!
+//! ## Severed 行为级后果落地状态（决议 §8.1 #2 原文额外强调的两条）
+//!
+//! 决议对 Severed 分级除六维倍率外，还点名两条"行为级"后果——本节显式记录两条各自
+//! 的落地状态，避免 `main_arm_severed`/`off_arm_severed` 这两个 bool 字段被算出来却
+//! 无人读取的静默孤岛（这两个字段本身只是"读点"，真正的后果必须由消费端接住）：
+//!
+//! - **① 断臂脱手落地：已实现。** `combat/resolve.rs::resolve_attack_intents`
+//!   在命中结算后检查 `hit_probe.body_part == MAIN_ARM &&
+//!   is_severed(wound_severity_to_grade(wound_severity))`——本次命中让主手臂
+//!   （持械侧）直接判定为 Severed 时，读取目标 entity 当前的 `Weapon` component
+//!   （若其 `slot == EquipSlot::MainHand`），把对应 instance 经
+//!   `inventory::discard_inventory_item_to_dropped_loot` 送入
+//!   `DroppedLootRegistry`（世界掉落，走既有掉落物链路，与武器耐久归零脱手同构但不
+//!   走"塞回随身容器"分支——断臂后没有手可以把武器放回背包），并 `remove::<Weapon>()`
+//!   清空该 entity 的武器 runtime component。副手臂(OFF_ARM) Severed **不**触发此
+//!   逻辑（副手臂对应盾/副手件，决议原文"脱手落地"只点名持械侧）。
+//! - **② 禁双持：本 PR 暂缓，非静默——原因如下。** 决议原文"无法双手持械"字面上要求
+//!   在**装备时**校验：副手臂(OFF_ARM) Severed 时禁止把武器件（`OffHandTypeMismatch`
+//!   规则允许的 dagger/fist 类武器）装入 off_hand 槽。但装备校验入口
+//!   `inventory::apply_inventory_move` / `inventory::validate_move_semantics` 的签名
+//!   只接受 `PlayerInventory` + `ItemRegistry` + 位置参数，**完全不接触 combat 侧的
+//!   `Wounds` component**——要让装备校验感知臂伤，需要把 `Entity`/`Wounds` 一路从
+//!   network handler 穿透到 inventory 校验层（跨模块签名变更，波及
+//!   `client_request_handler` 及所有直接调用 `apply_inventory_move` 的既有测试），
+//!   属于本 work item 声明范围外的重装备重构，不在本 PR 干净落地。
+//!   `ArmWoundFactors.off_arm_severed` 字段因此暂时**只读不消费**——这是显式记录的
+//!   已知缺口而非遗忘：后续 PR 若要补齐，落点应是给 `apply_inventory_move`（或其上游
+//!   network handler）加一个可选的"当前臂伤态"输入，命中"目标槽=weapon 类 && 对侧
+//!   OFF_ARM already Severed"时拒绝，返回新增的 `InventoryMoveRejectReason` 变体。
 
 use crate::combat::components::{BodyPart, Wound, Wounds};
 
@@ -203,7 +233,17 @@ pub struct ArmWoundFactors {
     pub cast_ticks_multiplier: f32,
     pub main_arm_grade: ArmWoundGrade,
     pub off_arm_grade: ArmWoundGrade,
+    /// 决议 §8.1 #2 行为级后果 ①（已实现，见模块顶部文档"Severed 行为级后果落地状态"）：
+    /// `combat/resolve.rs::resolve_attack_intents` 命中当拍即读该标志同等条件
+    /// （`hit_probe.body_part == MAIN_ARM && is_severed(...)`）触发断臂脱手落地——
+    /// 此字段本身不驱动任何逻辑，只是暴露给下游只读判定用（如 UI/日志），真正触发点
+    /// 是 resolve.rs 里对命中部位与本次伤势的直接重算，不经由本字段回读。
     pub main_arm_severed: bool,
+    /// 决议 §8.1 #2 行为级后果 ②"禁双持"（**本 PR 暂缓，非静默** —— 见模块顶部文档
+    /// "Severed 行为级后果落地状态"条目 ② 的完整理由：装备校验入口
+    /// `inventory::apply_inventory_move` 不接触 `Wounds`，需要跨模块签名重构才能让
+    /// 装备时校验读到这个标志，超出本 work item 声明范围）。当前**零消费**——后续 PR
+    /// 补齐前，副手臂断裂不会阻止装备武器件到 off_hand。
     pub off_arm_severed: bool,
 }
 

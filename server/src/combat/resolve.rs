@@ -25,7 +25,7 @@ use crate::combat::sword_basics;
 use crate::combat::tuike::{tuike_filter_contam, FalseSkin, ShedEvent};
 use crate::combat::tuike_v2::physics::naked_defense_damage_multiplier;
 use crate::combat::tuike_v2::StackedFalseSkins;
-use crate::combat::weapon::{ShieldBlockHit, ShieldBroken, Weapon, WeaponBroken};
+use crate::combat::weapon::{EquipSlot, ShieldBlockHit, ShieldBroken, Weapon, WeaponBroken};
 use crate::combat::zhenmai_v2::{
     self, BackfireAmplification, MeridianHardenActive, MultiPointActive,
 };
@@ -1452,6 +1452,58 @@ pub fn resolve_attack_intents(
         let wound_bleeding = wound.bleeding_per_sec;
         let wound_severity = wound.severity;
         wounds.entries.push(wound);
+
+        // plan-combat-hit-location-v1 P4（决议 §8.1 #2 Severed 行为级后果 #1 —
+        // 消除 arm_wound::ArmWoundFactors.main_arm_severed 零消费孤岛）——
+        // 主手臂(MAIN_ARM)本次命中直接判定为 Severed 分级 → 该侧持械立即脱手落地。
+        // 与"武器耐久归零脱手"（本文件上方 broken_weapon 分支）刻意不同：耐久归零时
+        // 武器仍完整，优先塞回随身容器；断臂时持械的手已经不在了，没有"塞回背包"
+        // 这个物理动作可言，直接走 dropped_loot 世界掉落（既有链路，`discard_
+        // inventory_item_to_dropped_loot` + `DroppedLootRegistry`，与 §4664 剑招/耐久
+        // 脱手同一套 API，见 inventory::discard_inventory_item_to_dropped_loot）。
+        // 只处理 `EquipSlot::MainHand`：`sync_weapon_component_from_equipped`
+        // 的选择顺序是 main_hand.held > off_hand.held，若目标此刻的 `Weapon` component
+        // 追踪的其实是副手武器（主手空手/主手非武器），断主手臂不应误删副手件。
+        if hit_probe.body_part == arm_wound::MAIN_ARM
+            && arm_wound::is_severed(arm_wound::wound_severity_to_grade(wound_severity))
+        {
+            if let Ok(severed_weapon) = weapons.get(target_entity) {
+                if severed_weapon.slot == EquipSlot::MainHand {
+                    let dropped_instance_id = severed_weapon.instance_id;
+                    if let Ok(mut target_inventory) = inventories.get_mut(target_entity) {
+                        if let Some(dropped_loot_registry) = dropped_loot_registry.as_mut() {
+                            match discard_inventory_item_to_dropped_loot(
+                                &mut target_inventory,
+                                dropped_loot_registry,
+                                [target_position.x, target_position.y, target_position.z],
+                                crate::world::dimension::DimensionKind::Overworld,
+                                dropped_instance_id,
+                                &InventoryLocationV1::Equip {
+                                    slot: EquipSlotV1::MainHand,
+                                    state: EquipStateV1::Held,
+                                },
+                            ) {
+                                Ok(_) => {
+                                    commands.entity(target_entity).remove::<Weapon>();
+                                }
+                                Err(drop_error) => {
+                                    tracing::warn!(
+                                        "[bong][combat][arm_wound] main arm severed but failed to drop weapon instance {} for target: {}",
+                                        dropped_instance_id,
+                                        drop_error
+                                    );
+                                }
+                            }
+                        } else {
+                            tracing::warn!(
+                                "[bong][combat][arm_wound] main arm severed weapon instance {} cannot fall back to dropped loot because DroppedLootRegistry is unavailable",
+                                dropped_instance_id
+                            );
+                        }
+                    }
+                }
+            }
+        }
 
         if wound_bleeding > 0.0 {
             event_writers
@@ -7666,6 +7718,47 @@ mod tests {
         }
     }
 
+    // ── 断臂脱手落地：命中几何 helper ────────────────────────────────────────────
+    //
+    // `resolve_attack_intents` 的命中部位完全由 `raycast_humanoid` + 攻方真实瞄准
+    // 方向决定（决议 §8.1 #1，无恒瞄 fallback），要在集成测试里稳定命中 ArmL/ArmR
+    // 就必须真算一条精确打在目标 AABB 侧面臂区（`classify_body_part`：
+    // rel_y ∈ (0.55, 0.88]、|lateral| > 0.19）的射线，而非依赖概率 jitter。
+    // 下面两个 helper 把这条射线的目标点固定在 target_feet=(0,64,2.0) 正前方
+    // AABB 的 z_min 侧面（半宽 0.3，取 x=±0.29 贴近边缘换取最大 lateral 裕度，
+    // y=65.3 → rel_y=1.3/1.8≈0.72 落在臂/胸带正中），再用 `Look::set_vec` 精确
+    // 反推攻方 yaw/pitch——不经手工 yaw/pitch 三角函数换算，规避 `Look` 与内部
+    // `direction_to_yaw_pitch` 约定不一致的坑（见 raycast.rs 该函数注释）。
+    fn arm_hit_target_feet() -> DVec3 {
+        DVec3::new(0.0, 64.0, 2.0)
+    }
+
+    /// `is_main_arm_side`：`true` 对应 `arm_wound::MAIN_ARM`(ArmR，lateral>0，
+    /// x 取负号，见 `classify_body_part` 叉乘推导)；`false` 对应 `arm_wound::OFF_ARM`
+    /// (ArmL，lateral<0，x 取正号)。两侧共享同一 y/z，只有 x 符号相反。
+    fn arm_hit_point(is_main_arm_side: bool) -> DVec3 {
+        let x = if is_main_arm_side { -0.29 } else { 0.29 };
+        DVec3::new(x, 65.3, 1.7)
+    }
+
+    /// 攻方脚下坐标固定在 `(0,64,0)`，与 `arm_hit_target_feet()` 沿 +Z 相距 2 格
+    /// （在任意 reach≥2 的攻击类型下都能命中，含 FIST_REACH=2.6）。
+    fn arm_hit_attacker_feet() -> [f64; 3] {
+        [0.0, 64.0, 0.0]
+    }
+
+    /// 由攻方脚下坐标 + 目标命中点反推一个恰好瞄准该点的 `Look`（yaw/pitch 由
+    /// `Look::set_vec` 从归一化方向向量反解，非手工三角函数）。
+    fn aim_look_at_point(attacker_feet: DVec3, hit_point: DVec3) -> Look {
+        let eye = attacker_feet + DVec3::new(0.0, ATTACKER_EYE_HEIGHT, 0.0);
+        let dir = (hit_point - eye).normalize();
+        let mut look = Look::default();
+        look.set_vec(
+            valence::prelude::Vec3::new(dir.x as f32, dir.y as f32, dir.z as f32).normalize(),
+        );
+        look
+    }
+
     /// 决议 §8.1 #2：攻方主手臂（ArmR）Fracture 伤势应把自身物理攻击伤害削减到
     /// 健康臂的 0.60 倍（`arm_wound::attack_damage_multiplier(Fracture)`）。
     /// 用 fist 攻击（base=1.0）会撞 `damage.max(1.0)` 下限而看不出差异，
@@ -8062,6 +8155,341 @@ mod tests {
             "双臂皆 Fracture 时格挡效果应仍是 0.5*0.60=0.30（只读副手臂），不应叠乘为 0.5*0.60*0.60=0.18，\
              实际 {:?}",
             events[0].defense_effectiveness
+        );
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // plan-combat-hit-location-v1 P4（决议 §8.1 #2 Severed 行为级后果 #1）——
+    // 断臂脱手落地 pin 测试：消除 `ArmWoundFactors.main_arm_severed` 零消费孤岛。
+    // ══════════════════════════════════════════════════════════════════════════
+
+    /// 造一把挂在 `target` main_hand 槽（inventory 侧 + `Weapon` runtime component
+    /// 双侧一致）的武器，供断臂脱手测试断言"武器消失于持械槽、出现于世界掉落"。
+    fn equip_main_hand_weapon(app: &mut App, target: Entity, instance_id: u64) {
+        use crate::combat::weapon::{EquipSlot, WeaponKind};
+        app.world_mut().entity_mut(target).insert((
+            PlayerInventory {
+                triggered_treasures: Vec::new(),
+                revision: InventoryRevision(1),
+                containers: vec![],
+                equipped: std::collections::HashMap::from([(
+                    crate::inventory::EQUIP_SLOT_MAIN_HAND.to_string(),
+                    crate::inventory::SlotContents::held_single(ItemInstance {
+                        instance_id,
+                        template_id: "iron_sword".to_string(),
+                        display_name: "铁剑".to_string(),
+                        grid_w: 1,
+                        grid_h: 2,
+                        weight: 1.2,
+                        rarity: ItemRarity::Common,
+                        description: String::new(),
+                        stack_count: 1,
+                        spirit_quality: 1.0,
+                        durability: 1.0,
+                        freshness: None,
+                        mineral_id: None,
+                        charges: None,
+                        forge_quality: None,
+                        forge_color: None,
+                        forge_side_effects: Vec::new(),
+                        forge_achieved_tier: None,
+                        alchemy: None,
+                        lingering_owner_qi: None,
+                    }),
+                )]),
+                hotbar: Default::default(),
+                bone_coins: 0,
+                max_weight: 50.0,
+            },
+            Weapon {
+                slot: EquipSlot::MainHand,
+                instance_id,
+                template_id: "iron_sword".to_string(),
+                weapon_kind: WeaponKind::Sword,
+                base_attack: 20.0,
+                quality_tier: 0,
+                durability: 200.0,
+                durability_max: 200.0,
+            },
+        ));
+    }
+
+    /// 决议 §8.1 #2 行为级后果 ①：主手臂(MAIN_ARM=ArmR)单次命中直接判定 Severed
+    /// （severity>=70）→ 该侧持械立即脱手，走 `DroppedLootRegistry` 世界掉落。
+    /// 三重断言对应任务书原文三点：脱手落地事件（registry 新增条目）/ 持械槽清空 /
+    /// 掉落物守恒（instance_id 与武器本体完整进入世界，不丢失也不复制）。
+    #[test]
+    fn main_arm_severed_hit_drops_weapon_into_world_and_clears_equip_slot() {
+        let mut app = make_arm_wound_app();
+        app.insert_resource(weapon_test_registry());
+        app.insert_resource(DroppedLootRegistry::default());
+
+        let attacker = spawn_player(
+            &mut app,
+            "SeveredAtk",
+            arm_hit_attacker_feet(),
+            Wounds::default(),
+            Stamina::default(),
+        );
+        // attack_power=150 * body_part_multiplier(ArmR)=0.7 → base_damage=105，
+        // 稳超 Severed 阈值 70.0（留足浮点/geometry 裕度）。
+        app.world_mut().entity_mut(attacker).insert(DerivedAttrs {
+            attack_power: 150.0,
+            ..DerivedAttrs::default()
+        });
+        let target_feet = arm_hit_target_feet();
+        let target = spawn_player(
+            &mut app,
+            "SeveredDef",
+            [target_feet.x, target_feet.y, target_feet.z],
+            Wounds {
+                health_current: 1000.0,
+                health_max: 1000.0,
+                ..Wounds::default()
+            },
+            Stamina::default(),
+        );
+        equip_main_hand_weapon(&mut app, target, 9301);
+
+        let look = aim_look_at_point(
+            DVec3::new(
+                arm_hit_attacker_feet()[0],
+                arm_hit_attacker_feet()[1],
+                arm_hit_attacker_feet()[2],
+            ),
+            arm_hit_point(true),
+        );
+        app.world_mut().entity_mut(attacker).insert(look);
+
+        app.world_mut().send_event(AttackIntent {
+            attacker,
+            target: Some(target),
+            issued_at_tick: 9000,
+            reach: AttackReach::new(4.0, 0.0),
+            qi_invest: 0.0, // physical path：伤害不经 qi 闸门/距离 decay，只看武器/属性
+            wound_kind: WoundKind::Cut,
+            source: AttackSource::Melee,
+            debug_command: None,
+        });
+        app.update();
+
+        let target_wounds = app.world().entity(target).get::<Wounds>().unwrap();
+        assert_eq!(
+            target_wounds.entries.last().map(|w| w.location),
+            Some(arm_wound::MAIN_ARM),
+            "geometry helper 应命中 MAIN_ARM(ArmR)，实际 {:?}；若此断言先撞红说明射线\
+             geometry 算错了，后续脱手断言无意义",
+            target_wounds.entries.last().map(|w| w.location)
+        );
+        assert_eq!(
+            arm_wound::worst_wound_grade(target_wounds, arm_wound::MAIN_ARM),
+            arm_wound::ArmWoundGrade::Severed,
+            "本次命中伤势应达到 Severed 分级，实际最重分级 {:?}（severity={:?}）；\
+             断臂脱手的前置条件未达成",
+            arm_wound::worst_wound_grade(target_wounds, arm_wound::MAIN_ARM),
+            target_wounds.entries.last().map(|w| w.severity)
+        );
+
+        // ① 持械槽清空：Weapon runtime component 已移除。
+        assert!(
+            app.world().entity(target).get::<Weapon>().is_none(),
+            "主手臂 Severed 后 target 的 Weapon component 应被 remove（脱手）"
+        );
+        // ① 持械槽清空：inventory 侧 main_hand.held 同步清空（不是只删 runtime 影子）。
+        let inventory = app.world().entity(target).get::<PlayerInventory>().unwrap();
+        assert!(
+            inventory
+                .equipped
+                .get(crate::inventory::EQUIP_SLOT_MAIN_HAND)
+                .and_then(|s| s.held.as_ref())
+                .is_none(),
+            "断臂脱手应清空 inventory 侧 main_hand 持握槽，而不仅仅移除 runtime Weapon component"
+        );
+        // ① 掉落物守恒：武器整体（instance_id 不变）进入世界 DroppedLootRegistry，
+        // 既不凭空消失也不复制。
+        let dropped_registry = app.world().resource::<DroppedLootRegistry>();
+        let dropped = dropped_registry.entries.get(&9301).expect(
+            "断臂脱手的武器 instance 应出现在 DroppedLootRegistry（世界掉落），\
+                     而不是被静默丢弃",
+        );
+        assert_eq!(dropped.instance_id, 9301);
+        assert_eq!(
+            dropped.item.template_id, "iron_sword",
+            "掉落物应是原封不动的同一把剑，template_id 不应在脱手过程中被篡改"
+        );
+    }
+
+    /// 决议 §8.1 #2：副手臂(OFF_ARM=ArmL) Severed **不**触发脱手——脱手落地只针对
+    /// 持械侧（主手臂）。若这条误连到 OFF_ARM，副手完好的持械手会被无理由缴械。
+    #[test]
+    fn off_arm_severed_hit_does_not_drop_main_hand_weapon() {
+        let mut app = make_arm_wound_app();
+        app.insert_resource(weapon_test_registry());
+        app.insert_resource(DroppedLootRegistry::default());
+
+        let attacker = spawn_player(
+            &mut app,
+            "OffSeveredAtk",
+            arm_hit_attacker_feet(),
+            Wounds::default(),
+            Stamina::default(),
+        );
+        app.world_mut().entity_mut(attacker).insert(DerivedAttrs {
+            attack_power: 150.0,
+            ..DerivedAttrs::default()
+        });
+        let target_feet = arm_hit_target_feet();
+        let target = spawn_player(
+            &mut app,
+            "OffSeveredDef",
+            [target_feet.x, target_feet.y, target_feet.z],
+            Wounds {
+                health_current: 1000.0,
+                health_max: 1000.0,
+                ..Wounds::default()
+            },
+            Stamina::default(),
+        );
+        equip_main_hand_weapon(&mut app, target, 9302);
+
+        let look = aim_look_at_point(
+            DVec3::new(
+                arm_hit_attacker_feet()[0],
+                arm_hit_attacker_feet()[1],
+                arm_hit_attacker_feet()[2],
+            ),
+            arm_hit_point(false), // false = OFF_ARM(ArmL) 侧
+        );
+        app.world_mut().entity_mut(attacker).insert(look);
+
+        app.world_mut().send_event(AttackIntent {
+            attacker,
+            target: Some(target),
+            issued_at_tick: 9001,
+            reach: AttackReach::new(4.0, 0.0),
+            qi_invest: 0.0,
+            wound_kind: WoundKind::Cut,
+            source: AttackSource::Melee,
+            debug_command: None,
+        });
+        app.update();
+
+        let target_wounds = app.world().entity(target).get::<Wounds>().unwrap();
+        assert_eq!(
+            target_wounds.entries.last().map(|w| w.location),
+            Some(arm_wound::OFF_ARM),
+            "geometry helper 应命中 OFF_ARM(ArmL)，实际 {:?}",
+            target_wounds.entries.last().map(|w| w.location)
+        );
+        assert_eq!(
+            arm_wound::worst_wound_grade(target_wounds, arm_wound::OFF_ARM),
+            arm_wound::ArmWoundGrade::Severed,
+            "本次命中应达到 Severed 分级才能验证副手断裂不触发脱手这件事，实际 {:?}",
+            arm_wound::worst_wound_grade(target_wounds, arm_wound::OFF_ARM)
+        );
+
+        assert!(
+            app.world().entity(target).get::<Weapon>().is_some(),
+            "副手臂(OFF_ARM) Severed 不应移除主手武器 Weapon component"
+        );
+        let inventory = app.world().entity(target).get::<PlayerInventory>().unwrap();
+        assert!(
+            inventory
+                .equipped
+                .get(crate::inventory::EQUIP_SLOT_MAIN_HAND)
+                .and_then(|s| s.held.as_ref())
+                .is_some(),
+            "副手臂 Severed 时主手武器应仍留在装备槽（脱手只认主手臂）"
+        );
+        assert!(
+            !app.world()
+                .resource::<DroppedLootRegistry>()
+                .entries
+                .contains_key(&9302),
+            "副手臂断裂不应把主手武器送进世界掉落"
+        );
+    }
+
+    /// 边界：主手臂命中但伤势只到 Fracture（未达 Severed 阈值 70.0）不应触发脱手——
+    /// 锁住"只有 Severed 才脱手"这条边界，防止阈值判定被误改成 `>=` Fracture 起就掉。
+    #[test]
+    fn main_arm_fracture_grade_hit_does_not_trigger_weapon_drop() {
+        let mut app = make_arm_wound_app();
+        app.insert_resource(weapon_test_registry());
+        app.insert_resource(DroppedLootRegistry::default());
+
+        let attacker = spawn_player(
+            &mut app,
+            "FractureAtk",
+            arm_hit_attacker_feet(),
+            Wounds::default(),
+            Stamina::default(),
+        );
+        // attack_power=20 * body_part_multiplier(ArmR)=0.7 → base_damage=14.0，
+        // 落在 Fracture 区间 [35,70) 之外偏低（Laceration 区间 [15,35)），
+        // 无论如何都远低于 Severed 阈值 70.0，且不会意外撞进 Severed。
+        app.world_mut().entity_mut(attacker).insert(DerivedAttrs {
+            attack_power: 20.0,
+            ..DerivedAttrs::default()
+        });
+        let target_feet = arm_hit_target_feet();
+        let target = spawn_player(
+            &mut app,
+            "FractureDef",
+            [target_feet.x, target_feet.y, target_feet.z],
+            Wounds {
+                health_current: 1000.0,
+                health_max: 1000.0,
+                ..Wounds::default()
+            },
+            Stamina::default(),
+        );
+        equip_main_hand_weapon(&mut app, target, 9303);
+
+        let look = aim_look_at_point(
+            DVec3::new(
+                arm_hit_attacker_feet()[0],
+                arm_hit_attacker_feet()[1],
+                arm_hit_attacker_feet()[2],
+            ),
+            arm_hit_point(true),
+        );
+        app.world_mut().entity_mut(attacker).insert(look);
+
+        app.world_mut().send_event(AttackIntent {
+            attacker,
+            target: Some(target),
+            issued_at_tick: 9002,
+            reach: AttackReach::new(4.0, 0.0),
+            qi_invest: 0.0,
+            wound_kind: WoundKind::Cut,
+            source: AttackSource::Melee,
+            debug_command: None,
+        });
+        app.update();
+
+        let target_wounds = app.world().entity(target).get::<Wounds>().unwrap();
+        assert_eq!(
+            target_wounds.entries.last().map(|w| w.location),
+            Some(arm_wound::MAIN_ARM)
+        );
+        assert_ne!(
+            arm_wound::worst_wound_grade(target_wounds, arm_wound::MAIN_ARM),
+            arm_wound::ArmWoundGrade::Severed,
+            "本测试要验证的是 Severed 以下分级不脱手，前置条件要求本次命中不能是 Severed；\
+             实际却是 Severed，说明伤害计算改动了，该测试需要重新校准 attack_power"
+        );
+
+        assert!(
+            app.world().entity(target).get::<Weapon>().is_some(),
+            "未达 Severed 分级不应移除 Weapon component"
+        );
+        assert!(
+            !app.world()
+                .resource::<DroppedLootRegistry>()
+                .entries
+                .contains_key(&9303),
+            "未达 Severed 分级不应把武器送进世界掉落"
         );
     }
 
