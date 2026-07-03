@@ -57,10 +57,10 @@ pub use knockback::{
     WallCollisionResult, MAX_BLOCK_PENETRATION, MAX_KNOCKBACK_DISTANCE,
 };
 pub use ledger::{
-    assert_conservation, build_qi_ledger_hash_fields, snapshot_for_ipc, summarize_world_qi,
-    AttritionOpKind, QiAccountId, QiAccountKind, QiPhysicsIpcSnapshot, QiTransfer,
-    QiTransferReason, WorldQiAccount, WorldQiBudget, WorldQiSnapshot,
-    QI_LEDGER_ACCOUNT_FIELD_PREFIX,
+    assert_conservation, build_qi_ledger_hash_fields, credit_pending_inflow,
+    pending_inflow_account, snapshot_for_ipc, summarize_world_qi, AttritionOpKind, QiAccountId,
+    QiAccountKind, QiPhysicsIpcSnapshot, QiTransfer, QiTransferReason, WorldQiAccount,
+    WorldQiBudget, WorldQiSnapshot, PENDING_INFLOW_ACCOUNT_ID, QI_LEDGER_ACCOUNT_FIELD_PREFIX,
 };
 pub use projectile::{
     armor_penetrate, cone_dispersion, high_density_inject, ArmorPenetrationOutcome,
@@ -144,4 +144,48 @@ pub fn register(app: &mut App) {
         .init_resource::<WorldQiAccount>()
         .add_event::<QiTransfer>()
         .add_systems(valence::prelude::Update, era_decay_tick);
+}
+
+#[cfg(test)]
+mod tests {
+    use valence::prelude::App;
+
+    use super::*;
+    use crate::qi_physics::constants::DEFAULT_SPIRIT_QI_TOTAL;
+
+    /// plan-zone-qi-economy-v1 P0 §8.1 决议 #1（历史注水清算 = 起服重置，不迁移）：
+    /// `WorldQiAccount`（含独立待分配池账户）从不持久化（`persistence::mod` 文档锚点：
+    /// "持久层完全不碰 WorldQiAccount / ledger"），每次 `register(app)`（服务器启动路径）
+    /// 都通过 `init_resource::<WorldQiAccount>()` 得到一个全新的空账本——旧 bug 攒下的错误
+    /// 余额天然清零，不需要额外迁移逻辑。
+    #[test]
+    fn register_resets_ledger_and_pending_inflow_pool_to_empty_on_every_boot() {
+        let mut app = App::new();
+        register(&mut app);
+
+        let account = app.world().resource::<WorldQiAccount>();
+        assert_eq!(
+            account.total(),
+            0.0,
+            "a freshly-registered WorldQiAccount must start with zero balance across all \
+             accounts (no historical inflated `zone:<name>` residue survives a restart)"
+        );
+        assert!(
+            !account.has_account(&pending_inflow_account()),
+            "the pending inflow pool must not pre-exist on boot — it is created lazily on \
+             first credit"
+        );
+        assert!(
+            account.transfers().is_empty(),
+            "a freshly-registered ledger must carry no audit history from a previous boot"
+        );
+
+        let budget = app.world().resource::<WorldQiBudget>();
+        assert_eq!(
+            budget.current_total, DEFAULT_SPIRIT_QI_TOTAL,
+            "budget must reset to the (now 20000.0) default total on boot unless \
+             BONG_SPIRIT_QI_TOTAL overrides it — no carry-over from a prior run"
+        );
+        assert_eq!(budget.era_decay_accum, 0.0);
+    }
 }

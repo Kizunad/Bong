@@ -447,6 +447,77 @@ impl WorldQiAccount {
     }
 }
 
+/// plan-zone-qi-economy-v1 P0 §8.1 决议 #1 — 独立"待分配池"账户 id。
+///
+/// 开脉 / 突破消耗真元回充的目标**不是** `zone:<name>` 账户，也**不是**
+/// `WorldQiBudget.current_total`：
+///   - 不选 `zone:<name>`：那个 key 会被 `apply_dormant_regen_with_multiplier`
+///     （`npc::dormant::mod`）等系统按 `zone.spirit_qi * QI_ZONE_UNIT_CAPACITY`
+///     **整体覆写**，credit 进同名账户的金额会被下一次 dormant tick 静默清零/顶替
+///     ——这正是旧 `credit_meridian_open_cost` "只写 ledger 不动真实字段"之外的第二重
+///     蒸发路径。
+///   - 不选 `WorldQiBudget.current_total`：那是 `compute_void_quota_limit`
+///     （`cultivation::tribulation`）的化虚名额闸门基准，注入会让名额随修炼活跃度
+///     膨胀、可被玩家刷高，破坏 void-quota 稀缺性（用户 2026-07-03 拍板红线）。
+///
+/// 待分配池是全服单例（不按 zone 拆分），P1 heartbeat 回流 system 会按各 zone 的
+/// `qi_equilibrium` 配置从这一个账户滴灌进 `zone.spirit_qi`。
+pub const PENDING_INFLOW_ACCOUNT_ID: &str = "pending_inflow";
+
+/// 独立待分配池账户（`QiAccountKind::Overflow` + 固定 id，见 [`PENDING_INFLOW_ACCOUNT_ID`]）。
+pub fn pending_inflow_account() -> QiAccountId {
+    QiAccountId::overflow(PENDING_INFLOW_ACCOUNT_ID)
+}
+
+/// plan-zone-qi-economy-v1 P0 §8.1 决议 #1 — 消耗（开脉 / 突破）真元回充独立待分配池。
+///
+/// 记账范本照抄 `npc::dormant::apply_dormant_regen_with_multiplier`（双账本严格同步：
+/// `set_balance` + `transfer` + 真实字段变更），**不照抄**旧 `credit_meridian_open_cost`
+/// "只手写 `set_balance` 叠加、绕开 `transfer()` insufficient 检查与审计"的写法
+/// （那正是记账蒸发 bug 本身）。
+///
+/// 玩家 / NPC 侧真实真元活在 ECS `Cultivation.qi_current`（调用方已在此之前完成扣减），
+/// 此 ledger 上的 `from` 账户对 `MeridianOpen` / `Breakthrough` 这类 reason 而言是
+/// audit-only、不长期镜像——这里把它的 ledger 影子余额临时"引燃"成本次转移额，使
+/// [`WorldQiAccount::transfer`] 的原子记账（insufficient 检查 + from/to 同步扣加 +
+/// 审计追加）可以照常生效，而不是绕开它手写 `set_balance`。转移后 `from` 侧影子余额
+/// 归零，不留残留、不跨 tick 累积。
+///
+/// `amount == 0.0` 是显式 no-op（不创建待分配池账户、不追加审计）；`amount < 0.0` /
+/// 非有限值经由 [`QiTransfer::new`] 的 `finite_non_negative` 校验拒绝
+/// （错误 `field` 固定为 `"transfer.amount"`，供上游按 field 精确匹配）。
+///
+/// `zone_name` 仅用于失败诊断（待分配池是全服单例，与具体 zone 无关）；供
+/// `practice_session_tick`（§8.1 决议 #6，独立守恒待办）未来复用同一签名。
+pub fn credit_pending_inflow(
+    account: &mut WorldQiAccount,
+    zone_name: &str,
+    from: QiAccountId,
+    amount: f64,
+    reason: QiTransferReason,
+) -> Result<(), QiPhysicsError> {
+    if amount == 0.0 {
+        return Ok(());
+    }
+    let to = pending_inflow_account();
+    let transfer = QiTransfer::new(from.clone(), to.clone(), amount, reason)?;
+    if !account.has_account(&to) {
+        account.set_balance(to.clone(), 0.0)?;
+    }
+    account.set_balance(from, amount)?;
+    if let Err(error) = account.transfer(transfer) {
+        tracing::warn!(
+            "[bong][qi_physics] credit_pending_inflow failed zone={} amount={} reason={:?} error={:?}",
+            zone_name,
+            amount,
+            reason,
+            error
+        );
+        return Err(error);
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct WorldQiSnapshot {
     pub player_qi: f64,
@@ -655,6 +726,196 @@ mod tests {
         assert_eq!(decay, 2.0);
         assert_eq!(budget.current_total, 98.0);
         assert_eq!(budget.era_decay_accum, 2.0);
+    }
+
+    #[test]
+    fn pending_inflow_account_uses_overflow_kind_and_stable_id() {
+        let account = pending_inflow_account();
+        assert_eq!(account.kind, QiAccountKind::Overflow);
+        assert_eq!(account.id, PENDING_INFLOW_ACCOUNT_ID);
+    }
+
+    #[test]
+    fn credit_pending_inflow_zero_amount_is_noop() {
+        let mut ledger = WorldQiAccount::default();
+        let from = QiAccountId::player("player_a");
+
+        credit_pending_inflow(
+            &mut ledger,
+            "spawn",
+            from,
+            0.0,
+            QiTransferReason::MeridianOpen,
+        )
+        .expect("zero amount must be a no-op, not an error");
+
+        assert!(
+            !ledger.has_account(&pending_inflow_account()),
+            "zero-amount credit must not create the pending inflow account"
+        );
+        assert!(
+            ledger.transfers().is_empty(),
+            "zero-amount credit must not append a transfer audit"
+        );
+    }
+
+    #[test]
+    fn credit_pending_inflow_rejects_negative_amount() {
+        let mut ledger = WorldQiAccount::default();
+        let from = QiAccountId::player("player_a");
+
+        let err = credit_pending_inflow(
+            &mut ledger,
+            "spawn",
+            from,
+            -1.0,
+            QiTransferReason::MeridianOpen,
+        )
+        .expect_err("negative amount must be rejected");
+
+        assert!(
+            matches!(
+                err,
+                QiPhysicsError::InvalidAmount {
+                    field: "transfer.amount",
+                    value: -1.0,
+                }
+            ),
+            "negative credit must surface transfer.amount InvalidAmount, matching the \
+             pre-existing credit_active_breakthrough_cost boundary contract; got {err:?}"
+        );
+        assert!(
+            !ledger.has_account(&pending_inflow_account()),
+            "rejected negative credit must not create the pending inflow account"
+        );
+        assert!(ledger.transfers().is_empty());
+    }
+
+    #[test]
+    fn credit_pending_inflow_rejects_non_finite_amount() {
+        let mut ledger = WorldQiAccount::default();
+        let from = QiAccountId::player("player_a");
+
+        let err = credit_pending_inflow(
+            &mut ledger,
+            "spawn",
+            from,
+            f64::NAN,
+            QiTransferReason::MeridianOpen,
+        )
+        .expect_err("NaN amount must be rejected");
+
+        assert!(matches!(
+            err,
+            QiPhysicsError::InvalidAmount {
+                field: "transfer.amount",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn credit_pending_inflow_credits_pool_and_leaves_audit_trail() {
+        let mut ledger = WorldQiAccount::default();
+        let from = QiAccountId::player("player_a");
+
+        credit_pending_inflow(
+            &mut ledger,
+            "spawn",
+            from.clone(),
+            8.0,
+            QiTransferReason::Breakthrough,
+        )
+        .expect("positive credit should succeed");
+
+        assert_eq!(
+            ledger.balance(&pending_inflow_account()),
+            8.0,
+            "pending inflow pool must rise by the credited amount"
+        );
+        assert_eq!(
+            ledger.balance(&from),
+            0.0,
+            "the audit-only actor account must not retain a residual ledger shadow balance \
+             after the transfer (real qi lives in ECS Cultivation.qi_current, not here)"
+        );
+        let transfer = ledger
+            .transfers()
+            .last()
+            .expect("credit should append exactly one transfer audit");
+        assert_eq!(transfer.from, from);
+        assert_eq!(transfer.to, pending_inflow_account());
+        assert_eq!(transfer.amount, 8.0);
+        assert_eq!(transfer.reason, QiTransferReason::Breakthrough);
+    }
+
+    #[test]
+    fn credit_pending_inflow_accumulates_across_repeated_calls_without_leakage() {
+        let mut ledger = WorldQiAccount::default();
+
+        credit_pending_inflow(
+            &mut ledger,
+            "spawn",
+            QiAccountId::player("player_a"),
+            5.0,
+            QiTransferReason::MeridianOpen,
+        )
+        .expect("first credit should succeed");
+        credit_pending_inflow(
+            &mut ledger,
+            "spawn",
+            QiAccountId::npc("dormant:rogue:1"),
+            3.0,
+            QiTransferReason::Breakthrough,
+        )
+        .expect("second credit from a different actor should succeed");
+        credit_pending_inflow(
+            &mut ledger,
+            "spawn",
+            QiAccountId::player("player_a"),
+            2.0,
+            QiTransferReason::MeridianOpen,
+        )
+        .expect("repeated credit from the same actor must not leak or double-count");
+
+        assert_eq!(
+            ledger.balance(&pending_inflow_account()),
+            10.0,
+            "pool balance must equal the exact sum of all credited amounts (5+3+2), \
+             proving repeated same-actor credits neither leak into nor double-count \
+             against the shared pending pool"
+        );
+        assert_eq!(ledger.transfers().len(), 3);
+    }
+
+    #[test]
+    fn credit_pending_inflow_never_clobbers_a_same_named_zone_ledger_account() {
+        // 回归锁：旧 bug 是 credit_meridian_open_cost 把消耗写进 `zone:<name>` 账户，
+        // 而该 key 会被 apply_dormant_regen_with_multiplier 按
+        // `zone.spirit_qi * QI_ZONE_UNIT_CAPACITY` 整体覆写，credit 的钱被静默清零。
+        // 待分配池必须是独立 key，不与任何 zone 账户碰撞。
+        let mut ledger = WorldQiAccount::default();
+        let zone_account = QiAccountId::zone("spawn");
+        ledger
+            .set_balance(zone_account.clone(), 999.0)
+            .expect("seed a real zone ledger balance to prove no collision");
+
+        credit_pending_inflow(
+            &mut ledger,
+            "spawn",
+            QiAccountId::player("player_a"),
+            8.0,
+            QiTransferReason::MeridianOpen,
+        )
+        .expect("credit should succeed");
+
+        assert_eq!(
+            ledger.balance(&zone_account),
+            999.0,
+            "crediting the pending pool must not touch the same-named zone:<name> ledger \
+             account that other systems (dormant regen) overwrite wholesale"
+        );
+        assert_eq!(ledger.balance(&pending_inflow_account()), 8.0);
     }
 
     #[test]
