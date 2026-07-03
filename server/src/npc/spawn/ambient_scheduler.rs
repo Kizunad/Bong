@@ -32,6 +32,7 @@
 //! 复用 `movement::movement_zone_kind` 的既有死域/负灵域判定口径（不新造第二套定义）放大
 //! [`ThreatBudget`]，已接入 [`decide_ambient_check`] 新增的 `zone_kind` 参数。
 
+use std::collections::HashMap;
 use std::marker::PhantomData;
 
 use valence::client::ClientMarker;
@@ -40,11 +41,13 @@ use valence::prelude::{
     Resource, Update, With, Without,
 };
 
+use crate::fauna::mimic_spider::{return_spider_drained_qi_to_zone, MimicSpiderBlackboard};
+use crate::fauna::rat_phase::return_rat_drained_qi_to_zone;
 use crate::movement::{movement_zone_kind, MovementZoneKind};
 use crate::npc::dormant::{planar_distance, should_run_interval};
 use crate::npc::movement::GameTick;
 use crate::npc::spawn::PoissonSpawnSampler;
-use crate::npc::spawn_rat::spawn_rat_npc_at;
+use crate::npc::spawn_rat::{spawn_rat_npc_at, RatBlackboard};
 use crate::world::dimension::{CurrentDimension, DimensionKind, DimensionLayers};
 use crate::world::era::WorldEraState;
 use crate::world::mob_spawn::{
@@ -177,9 +180,12 @@ pub fn dead_zone_threat_budget(budget: ThreatBudget, zone_kind: MovementZoneKind
     }
     let scaled_max_alive =
         ((f64::from(budget.max_alive) * multiplier).round() as u32).max(budget.max_alive);
-    let scaled_interval = ((f64::from(budget.spawn_interval_ticks) / multiplier).round() as u32)
-        .max(1)
-        .min(budget.spawn_interval_ticks);
+    // §Verify blocker① — 量化到 AMBIENT_SCHEDULER_STRIDE_TICKS 的整数倍，见 round_to_stride 文档。
+    let scaled_interval = round_to_stride(
+        ((f64::from(budget.spawn_interval_ticks) / multiplier).round() as u32)
+            .max(1)
+            .min(budget.spawn_interval_ticks),
+    );
     let scaled_pack_max = ((f64::from(budget.pack_size_range.1) * multiplier).round() as u32)
         .max(budget.pack_size_range.1);
     ThreatBudget {
@@ -187,6 +193,21 @@ pub fn dead_zone_threat_budget(budget: ThreatBudget, zone_kind: MovementZoneKind
         spawn_interval_ticks: scaled_interval,
         pack_size_range: (budget.pack_size_range.0, scaled_pack_max),
     }
+}
+
+/// 把 spawn_interval_ticks 量化到 [`AMBIENT_SCHEDULER_STRIDE_TICKS`] 的整数倍（§Verify
+/// blocker①——stride 混叠）：`ambient_scheduler_system` 的粗节流只在 `now_tick` 恰好是
+/// stride(50) 整数倍时才真正跑到 `should_run_interval(now_tick, interval)` 判定；若
+/// `interval` 本身不是 50 的整数倍，`now_tick % interval == 0` 的下一次命中会被推迟到
+/// `lcm(50, interval)`——对于与 50 互质/低公因子的档位（如 10/14），这能从设计预期的
+/// 十几秒~几十秒暴涨到 5200~20850 tick（约 4~17 分钟）。四舍五入到最近的 stride 倍数
+/// （`(ticks + stride/2) / stride * stride`，与 blocker 给出的 `((iv + 25)/50)*50` 例子
+/// 等价），并钳最低为一个 stride（不能是 0——0 会让 `should_run_interval` 的
+/// `interval.max(1)` 钳到 1，退化成"每 tick 都刷"）。
+fn round_to_stride(ticks: u32) -> u32 {
+    let stride = AMBIENT_SCHEDULER_STRIDE_TICKS as u32;
+    let rounded = ((ticks + stride / 2) / stride) * stride;
+    rounded.max(stride)
 }
 
 // ---------------------------------------------------------------------------
@@ -579,14 +600,23 @@ pub fn register(app: &mut App) {
 /// 通用 ambient 调度系统，按 `M: AmbientMarkerData` 单态化——每个 marker 类型注册一次
 /// 独立实例（各自持有独立的 `AmbientSchedulerState<M>`/`AmbientSchedulerConfig<M>`
 /// 资源与独立的 `Query<&M, ...>`），互不干扰。
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn ambient_scheduler_system<M: AmbientMarkerData>(
     tick: Option<Res<GameTick>>,
     mut state: ResMut<AmbientSchedulerState<M>>,
     config: Res<AmbientSchedulerConfig<M>>,
-    alive: Query<(Entity, &M, &Position), Without<Despawned>>,
+    alive: Query<
+        (
+            Entity,
+            &M,
+            &Position,
+            Option<&RatBlackboard>,
+            Option<&MimicSpiderBlackboard>,
+        ),
+        Without<Despawned>,
+    >,
     players: Query<(&Position, Option<&CurrentDimension>), With<ClientMarker>>,
-    zone_registry: Option<Res<ZoneRegistry>>,
+    zone_registry: Option<ResMut<ZoneRegistry>>,
     dimension_layers: Option<Res<DimensionLayers>>,
     era_state: Option<Res<WorldEraState>>,
     mut commands: Commands,
@@ -602,7 +632,8 @@ pub fn ambient_scheduler_system<M: AmbientMarkerData>(
     }
     state.last_check_tick = now;
 
-    let Some(registry) = zone_registry.as_deref() else {
+    let mut zone_registry = zone_registry;
+    let Some(registry) = zone_registry.as_deref_mut() else {
         return;
     };
     let Some(layers) = dimension_layers.as_deref() else {
@@ -625,12 +656,33 @@ pub fn ambient_scheduler_system<M: AmbientMarkerData>(
     // 1) 超距回收：任意存活 ambient marker 距最近 Overworld 玩家 > 96 格 → Despawned。
     //    Valence 层实体裸 despawn 会在下一次 send_entity_update_messages 崩服，必须走
     //    insert(Despawned) 软删除模式（对齐 heiwushi/scenario/dying_master 现有回收路径）。
-    for (entity, _marker, pos) in &alive {
+    for (entity, _marker, pos, rat_blackboard, spider_blackboard) in &alive {
         let nearest = overworld_players
             .iter()
             .map(|p| planar_distance(pos.get(), *p))
             .fold(f64::INFINITY, f64::min);
         if should_recycle_ambient(nearest) {
+            // §Verify blocker②(守恒蒸发红线) — 持有 drained_qi>0 的鼠患/拟态蛛（咬玩家/
+            // 吸收 Disguised 期偷来的 qi）超距回收若直接 insert(Despawned)，不会触发
+            // `release_drained_qi_on_death_system`/`spider_release_qi_on_death_system`
+            // （两者只监听 `DeathEvent`，超距回收从不发它），残余 qi 会在软删除时 100%
+            // 蒸发。回收前必须先走与死亡归还同一条计算路径把 qi 还给 zone，再
+            // insert(Despawned)。
+            if rat_blackboard.is_some() || spider_blackboard.is_some() {
+                if let Some(zone_name) = registry
+                    .find_zone(DimensionKind::Overworld, pos.get())
+                    .map(|zone| zone.name.clone())
+                {
+                    if let Some(zone) = registry.find_zone_mut(zone_name.as_str()) {
+                        if let Some(rat) = rat_blackboard {
+                            return_rat_drained_qi_to_zone(zone, rat.drained_qi);
+                        }
+                        if let Some(spider) = spider_blackboard {
+                            return_spider_drained_qi_to_zone(zone, spider.drained_qi);
+                        }
+                    }
+                }
+            }
             commands.entity(entity).insert(Despawned);
         }
     }
@@ -640,6 +692,14 @@ pub fn ambient_scheduler_system<M: AmbientMarkerData>(
         return;
     }
 
+    // §Verify blocker③(并发预算越界) — 本 tick 内逐玩家循环重复读同一份 tick 前 `alive`
+    // 快照，`Commands::spawn` 延迟应用到下一次 flush，后一个玩家看不到前一个玩家本 tick
+    // 已排队的 spawn。同一 zone 若有多名玩家各自独立通过预算门，各自都会刷出一只，合计
+    // 可越过 `max_alive`。用本地累加器记录"本 tick 已排队但未落地"的 spawn 数，并入
+    // `alive_count` 一起送进 `decide_ambient_check`，让同 zone 后续玩家的判定看得见前面
+    // 玩家本 tick 已经占用的预算。
+    let mut pending_spawns_by_zone: HashMap<String, u32> = HashMap::new();
+
     // 2) 逐玩家找 zone，判定预算 + 间隔 + era 密度门，命中就在距该玩家 24~64 格环带内刷新。
     for player_pos in &overworld_players {
         let Some(zone) = registry.find_zone(DimensionKind::Overworld, *player_pos) else {
@@ -648,10 +708,11 @@ pub fn ambient_scheduler_system<M: AmbientMarkerData>(
 
         let alive_in_zone: Vec<DVec3> = alive
             .iter()
-            .filter(|(_, marker, _)| marker.home_zone() == zone.name)
-            .map(|(_, _, pos)| pos.get())
+            .filter(|(_, marker, _, _, _)| marker.home_zone() == zone.name)
+            .map(|(_, _, pos, _, _)| pos.get())
             .collect();
-        let alive_count = alive_in_zone.len() as u32;
+        let pending_in_zone = pending_spawns_by_zone.get(&zone.name).copied().unwrap_or(0);
+        let alive_count = alive_in_zone.len() as u32 + pending_in_zone;
 
         let spawn_seed =
             now.wrapping_add((zone.name.len() as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15));
@@ -690,6 +751,7 @@ pub fn ambient_scheduler_system<M: AmbientMarkerData>(
         commands
             .entity(spawned)
             .insert(M::new(now, zone.name.clone()));
+        *pending_spawns_by_zone.entry(zone.name.clone()).or_insert(0) += 1;
     }
 }
 
@@ -697,7 +759,6 @@ pub fn ambient_scheduler_system<M: AmbientMarkerData>(
 mod tests {
     use super::*;
     use crate::npc::spawn::common::NpcMarker;
-    use crate::npc::spawn_rat::RatBlackboard;
     use valence::prelude::App;
 
     // -----------------------------------------------------------------
@@ -1320,6 +1381,39 @@ mod tests {
     }
 
     #[test]
+    fn dead_zone_threat_budget_scaled_interval_stays_multiple_of_stride_across_all_dangers_and_kinds(
+    ) {
+        // §Verify blocker①(stride 混叠)：死域/负灵域乘区缩放产出的 spawn_interval_ticks
+        // 必须仍是 AMBIENT_SCHEDULER_STRIDE_TICKS(50) 的整数倍——否则粗节流会漏检
+        // should_run_interval 恰好命中的 tick，有效间隔暴涨到 lcm(50, interval)（几千 tick，
+        // 几分钟起步），而非设计预期的十几秒~几十秒。
+        for danger in 1..=7u8 {
+            for zone_kind in [
+                MovementZoneKind::Normal,
+                MovementZoneKind::Dead,
+                MovementZoneKind::Negative,
+                MovementZoneKind::ResidueAsh,
+            ] {
+                let scaled = dead_zone_threat_budget(threat_budget(danger), zone_kind);
+                assert_eq!(
+                    scaled.spawn_interval_ticks % AMBIENT_SCHEDULER_STRIDE_TICKS as u32,
+                    0,
+                    "danger={danger} zone_kind={zone_kind:?} 缩放后 spawn_interval_ticks={} \
+                     必须是 stride={} 的整数倍，否则粗节流吞检、有效间隔暴涨到 lcm(50,interval)",
+                    scaled.spawn_interval_ticks,
+                    AMBIENT_SCHEDULER_STRIDE_TICKS
+                );
+                assert!(
+                    (100..=600).contains(&scaled.spawn_interval_ticks),
+                    "danger={danger} zone_kind={zone_kind:?} 有效检查间隔={} tick 应落在设计\
+                     范围(十几秒~几十秒，即 100~600 tick 量级)，不应因量化误差跌出该范围",
+                    scaled.spawn_interval_ticks
+                );
+            }
+        }
+    }
+
+    #[test]
     fn danger_tide_weight_danger_one_is_identity() {
         // danger=0（zones.json 缺失兜底）与 danger=1 都应钳到权重 1.0——覆盖所有沿用
         // `danger_level: 0` 兜底 fixture 的既有 heartbeat.rs 测试，保证它们行为不变。
@@ -1648,6 +1742,43 @@ mod tests {
     }
 
     #[test]
+    fn same_zone_multiple_players_do_not_exceed_max_alive_in_single_tick() {
+        // §Verify blocker③(并发预算越界)：danger=1 → max_alive=2。zone 内已有 1 个活体，
+        // 两名玩家同处一 zone 各自独立判定预算——修复前二者都读到同一份 tick 前快照
+        // "alive_count=1 < 2" 各刷一只，合计变成 3，越过 max_alive；修复后第二个玩家的
+        // 判定应看见第一个玩家本 tick 已排队的 1 个 spawn（alive_count=1+1=2 达到上限），
+        // 本 tick 应只新增 1 个，总数封顶在 max_alive=2。
+        let mut app = make_app();
+        install_layers(&mut app);
+        install_zone_registry(&mut app, 1); // danger=1 → max_alive=2
+        app.insert_resource(GameTick(0));
+        app.world_mut()
+            .spawn((ClientMarker, Position::new([0.0, 64.0, 0.0])));
+        app.world_mut()
+            .spawn((ClientMarker, Position::new([100.0, 64.0, 100.0])));
+
+        app.world_mut().spawn((
+            Position::new([10.0, 64.0, 10.0]),
+            AmbientThreatMarker {
+                spawned_at: 0,
+                home_zone: "test_zone".to_string(),
+            },
+        ));
+        app.update();
+
+        let mut q = app
+            .world_mut()
+            .query_filtered::<(), With<AmbientThreatMarker>>();
+        let total = q.iter(app.world()).count();
+        assert_eq!(
+            total, 2,
+            "danger=1 max_alive=2：已有 1 活体 + 2 名同 zone 玩家各自触发一次巡检判定，\
+             单次巡检结束后总活体数不应越过 max_alive=2（实际={total}）——越过说明并发预算门\
+             被绕过（Commands::spawn 延迟应用让后一个玩家看不到前一个玩家本 tick 已排队的 spawn）"
+        );
+    }
+
+    #[test]
     fn recycles_marker_beyond_despawn_radius_via_insert_despawned() {
         let mut app = make_app();
         install_layers(&mut app);
@@ -1671,6 +1802,106 @@ mod tests {
         assert!(
             app.world().get::<Despawned>(stray).is_some(),
             "超距 ambient 威胁必须通过 insert(Despawned) 回收（裸 despawn 会崩服）"
+        );
+    }
+
+    #[test]
+    fn recycle_returns_rat_drained_qi_to_zone_instead_of_evaporating() {
+        // §Verify blocker②(守恒蒸发红线)：超距回收持有 drained_qi>0 的鼠患（咬玩家偷来的
+        // qi）必须先走与 `release_drained_qi_on_death_system` 一致的公式把残余 qi 还给
+        // zone，再 insert(Despawned)——否则这部分 qi 会在软删除时 100% 蒸发。
+        use valence::prelude::ChunkPos;
+
+        let mut app = make_app();
+        install_layers(&mut app);
+        install_zone_registry(&mut app, 1); // spirit_qi = 0.5
+        app.insert_resource(GameTick(0));
+        app.world_mut()
+            .spawn((ClientMarker, Position::new([10_000.0, 64.0, 10_000.0])));
+
+        let mut rat_blackboard = RatBlackboard::new("test_zone", ChunkPos::new(0, 0));
+        rat_blackboard.drained_qi = 100.0;
+        let stray = app
+            .world_mut()
+            .spawn((
+                Position::new([0.0, 64.0, 0.0]),
+                AmbientThreatMarker {
+                    spawned_at: 0,
+                    home_zone: "test_zone".to_string(),
+                },
+                rat_blackboard,
+            ))
+            .id();
+        app.update();
+
+        assert!(
+            app.world().get::<Despawned>(stray).is_some(),
+            "守恒修复不应影响回收本身——超距鼠患仍应被 insert(Despawned)"
+        );
+        let zone_after = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name("test_zone")
+            .expect("test_zone 必须仍存在")
+            .spirit_qi;
+        let expected = (0.5
+            + (100.0 * crate::fauna::rat_phase::RAT_DRAINED_QI_DEATH_RETURN_RATIO)
+                / crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY)
+            .clamp(-1.0, 1.0);
+        assert!(
+            (zone_after - expected).abs() < 1e-9,
+            "超距回收 drained_qi=100 的鼠患必须按 drained_qi × ratio / QI_ZONE_UNIT_CAPACITY \
+             把残余 qi 还给 zone（与死亡归还同一条公式），期望 zone.spirit_qi={expected}，\
+             实际={zone_after}（回收前 zone.spirit_qi=0.5）——相等说明蒸发未修复"
+        );
+    }
+
+    #[test]
+    fn recycle_returns_spider_drained_qi_to_zone_instead_of_evaporating() {
+        // §Verify blocker②同一红线，覆盖 danger5-7 池内的拟态蛛（AshSpider）——它与鼠患
+        // 共用本调度核的超距回收路径，同样持有 drained_qi（Disguised 期吸收的 qi）。
+        let mut app = make_app();
+        install_layers(&mut app);
+        install_zone_registry(&mut app, 5); // spirit_qi = 0.5
+        app.insert_resource(GameTick(0));
+        app.world_mut()
+            .spawn((ClientMarker, Position::new([10_000.0, 64.0, 10_000.0])));
+
+        let mut spider_blackboard =
+            MimicSpiderBlackboard::new("test_zone", DVec3::new(0.0, 64.0, 0.0));
+        spider_blackboard.drained_qi = 50.0;
+        let stray = app
+            .world_mut()
+            .spawn((
+                Position::new([0.0, 64.0, 0.0]),
+                AmbientThreatMarker {
+                    spawned_at: 0,
+                    home_zone: "test_zone".to_string(),
+                },
+                spider_blackboard,
+            ))
+            .id();
+        app.update();
+
+        assert!(
+            app.world().get::<Despawned>(stray).is_some(),
+            "守恒修复不应影响回收本身——超距拟态蛛仍应被 insert(Despawned)"
+        );
+        let zone_after = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name("test_zone")
+            .expect("test_zone 必须仍存在")
+            .spirit_qi;
+        let expected = (0.5
+            + (50.0 * crate::fauna::mimic_spider::SPIDER_DRAINED_QI_DEATH_RETURN_RATIO)
+                / crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY)
+            .clamp(-1.0, 1.0);
+        assert!(
+            (zone_after - expected).abs() < 1e-9,
+            "超距回收 drained_qi=50 的拟态蛛必须按 drained_qi × ratio / QI_ZONE_UNIT_CAPACITY \
+             把残余 qi 还给 zone，期望 zone.spirit_qi={expected}，实际={zone_after}\
+             （回收前 zone.spirit_qi=0.5）——相等说明蒸发未修复"
         );
     }
 
