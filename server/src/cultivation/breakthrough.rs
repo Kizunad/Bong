@@ -97,6 +97,26 @@ pub fn qi_max_multiplier(next: Realm) -> f64 {
     }
 }
 
+/// NPC spawn 时按境界直接确定 `qi_max`（容量上限，非当前真元）。
+///
+/// plan-npc-realm-distribution-v1 §8.1 #2 决议：全仓不存在可组合出这六个数值的
+/// 干净递推公式（纯乘链 / 递推加法式均与正典不吻合），因此直接把 worldview
+/// §三:195 权威表转写为查表——这是决议明确允许的兜底实现，六个输出值必须与
+/// 正典表逐一相等（10 / 40 / 150 / 540 / 2100 / 10700）。
+///
+/// 只决定容量上限；`qi_current` 由调用方显式保持 `0.0`（不满灵），真元靠
+/// `apply_dormant_regen_with_multiplier` 从 zone 逐步吸收，不撞 qi_physics 守恒红线。
+pub fn qi_max_for_realm(realm: Realm) -> f64 {
+    match realm {
+        Realm::Awaken => 10.0,
+        Realm::Induce => 40.0,
+        Realm::Condense => 150.0,
+        Realm::Solidify => 540.0,
+        Realm::Spirit => 2100.0,
+        Realm::Void => 10700.0,
+    }
+}
+
 /// plan-skill-v1 §4 境界软挂钩：每个境界压制 skill 的 `effective_lv = min(real_lv, cap)`。
 ///
 /// 数值表（plan §4）：醒灵=3 · 引气=5 · 凝脉=7 · 固元=8 · 通灵=9 · 化虚=10。
@@ -1002,6 +1022,52 @@ mod tests {
     impl RollSource for FixedRoll {
         fn roll_unit(&mut self) -> f64 {
             self.0
+        }
+    }
+
+    #[test]
+    fn qi_max_for_realm_matches_worldview_table_exactly() {
+        // plan-npc-realm-distribution-v1 §8.1 #2 决议：qi_max_for_realm 的六个输出
+        // 必须与 worldview §三:195-203 权威表逐一相等（10/40/150/540/2100/10700）。
+        // 严禁与 combat_power.rs:61 test-only fixture（10/30/60/120/200/400）混淆
+        // ——那是完全不同的一套非正典数值，本测试专门守住不能被悄悄换成那套。
+        assert_eq!(qi_max_for_realm(Realm::Awaken), 10.0, "醒灵进入时 qi_max");
+        assert_eq!(qi_max_for_realm(Realm::Induce), 40.0, "引气进入时 qi_max");
+        assert_eq!(
+            qi_max_for_realm(Realm::Condense),
+            150.0,
+            "凝脉进入时 qi_max"
+        );
+        assert_eq!(
+            qi_max_for_realm(Realm::Solidify),
+            540.0,
+            "固元进入时 qi_max"
+        );
+        assert_eq!(qi_max_for_realm(Realm::Spirit), 2100.0, "通灵进入时 qi_max");
+        assert_eq!(qi_max_for_realm(Realm::Void), 10700.0, "化虚进入时 qi_max");
+    }
+
+    #[test]
+    fn qi_max_for_realm_strictly_increasing_across_all_realm_transitions() {
+        // 状态转换饱和覆盖：六境界依 rank 严格递增，不允许任何一档打平或倒退。
+        let ordered = [
+            Realm::Awaken,
+            Realm::Induce,
+            Realm::Condense,
+            Realm::Solidify,
+            Realm::Spirit,
+            Realm::Void,
+        ];
+        for pair in ordered.windows(2) {
+            let (prev, next) = (pair[0], pair[1]);
+            assert!(
+                qi_max_for_realm(prev) < qi_max_for_realm(next),
+                "{:?}({}) 必须严格小于 {:?}({})",
+                prev,
+                qi_max_for_realm(prev),
+                next,
+                qi_max_for_realm(next)
+            );
         }
     }
 
