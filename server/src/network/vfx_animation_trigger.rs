@@ -17,9 +17,14 @@ use crate::combat::baomai_v3::{BaomaiSkillEvent, BaomaiSkillId};
 use crate::combat::body_conditioning::GuangboTicaoPracticeEvent;
 use crate::combat::carrier::CarrierChargedEvent;
 use crate::combat::components::WoundKind;
+use crate::combat::dugu_v2::events::{
+    EclipseNeedleEvent, PenetrateChainEvent, ReverseTriggeredEvent, SelfCureProgressEvent,
+    ShroudActivatedEvent,
+};
 use crate::combat::events::{AttackIntent, AttackSource, CombatEvent, DefenseIntent};
 use crate::combat::needle::QiNeedleChargedEvent;
 use crate::combat::tuike_v2::{ContamTransferredEvent, DonFalseSkinEvent, FalseSkinSheddedEvent};
+use crate::combat::woliu::{VortexBackfireEvent, VortexField};
 use crate::combat::woliu_v2::state::VortexV2State;
 use crate::combat::woliu_v2::{VortexCastEvent, WoliuSkillId};
 use crate::combat::CombatClock;
@@ -117,6 +122,17 @@ const VFX_ANQI_ECHO_DECOY: &str = "bong:anqi_echo_decoy";
 const ANIM_DUGU_NEEDLE_THROW: &str = "bong:dugu_needle_throw";
 const VFX_DUGU_NEEDLE_BOLT: &str = "bong:dugu_needle_bolt";
 const VFX_DUGU_POISON_INFUSE: &str = "bong:dugu_poison_infuse";
+
+/// 绝灵涡流（woliu v1）起手式——复用 v2 涡旋站桩动画资产（client 已注册）。
+const ANIM_WOLIU_V1_STANCE: &str = "bong:vortex_spiral_stance";
+/// 绝灵涡流开涡吸入环。**与 client `VortexSpiralPlayer.WOLIU_V1_FIELD_OPEN` 逐字对齐。**
+const VFX_WOLIU_V1_FIELD_OPEN: &str = "bong:woliu_vortex_field";
+/// 绝灵涡流存续低频涡环。**与 client `VortexSpiralPlayer.WOLIU_V1_FIELD_AMBIENT` 逐字对齐。**
+const VFX_WOLIU_V1_FIELD_AMBIENT: &str = "bong:woliu_vortex_field_ambient";
+/// 绝灵涡流反噬断经爆裂。**与 client `VortexSpiralPlayer.WOLIU_V1_BACKFIRE` 逐字对齐。**
+const VFX_WOLIU_V1_BACKFIRE: &str = "bong:woliu_vortex_backfire";
+/// 存续涡环的发射周期（tick）。20tick=1s：低频到不吃 per-chunk cap，又足以标示领域仍在。
+const WOLIU_V1_AMBIENT_PERIOD_TICKS: u64 = 20;
 /// 蛊道两招动画优先级——与基础战斗动画同档（蛊道两招是醒灵 / 引气期入门远程招）。
 const DUGU_PRIORITY: u16 = 1100;
 
@@ -942,6 +958,198 @@ pub fn emit_dugu_needle_visual_triggers(
             0.85,
             14,
             24,
+        );
+    }
+}
+
+/// 蛊道 v2 五招 cast → 粒子（纯 cosmetic）。
+///
+/// anim + audio 已由 `combat::dugu_v2::skills` 在 cast 内联 emit（`emit_anim`/`emit_audio`），
+/// 此处只补 `visual.particle_id` → `SpawnParticle` 这一段——此前 particle_id 只随
+/// `dugu_v2_event_bridge` 进 Redis 叙事通道，client 从未收到 `bong:vfx_event`，导致
+/// `dugu_taint_pulse` / `dugu_dark_green_mist` / `dugu_reverse_burst` 三张贴图永不可见。
+///
+/// **event_id 与 client `DuguV2VfxPlayer.EVENT_IDS` 逐字对齐。**
+///
+/// 粒子语义（各招差异化）：
+/// - 蚀针 Eclipse → `dugu_taint_pulse` 毒渍脉冲印于**受害者**脚下（ground decal）
+/// - 侵染 Penetrate → 同贴图但更亮更密（count 随链上受害者数增长）
+/// - 神识遮蔽 Shroud → `dugu_dark_green_mist` 深绿雾绕**施法者**（count 随 strength）
+/// - 自蕴 SelfCure → 同雾但更稀薄（疗毒内敛，不该像开罩一样张扬）
+/// - 倒蚀 Reverse → `dugu_reverse_burst` 亮毒绿爆发线束于**爆心**
+pub fn emit_dugu_v2_visual_triggers(
+    mut eclipses: EventReader<EclipseNeedleEvent>,
+    mut self_cures: EventReader<SelfCureProgressEvent>,
+    mut penetrates: EventReader<PenetrateChainEvent>,
+    mut shrouds: EventReader<ShroudActivatedEvent>,
+    mut reverses: EventReader<ReverseTriggeredEvent>,
+    positions: Query<&Position>,
+    mut vfx_events: EventWriter<VfxEventRequest>,
+) {
+    // 蚀针：毒渍脉冲印于受害者脚下；受害者已断 Position 时落到施法者（至少能看到出手反馈）。
+    for event in eclipses.read() {
+        let Ok(position) = positions
+            .get(event.target)
+            .or_else(|_| positions.get(event.caster))
+        else {
+            continue;
+        };
+        emit_anqi_particle(
+            &mut vfx_events,
+            event.visual.particle_id,
+            position.get(),
+            None,
+            "#57803A",
+            1.0,
+            12,
+            30,
+        );
+    }
+
+    // 自蕴：稀薄深绿雾绕施法者（疗毒内敛）。
+    for event in self_cures.read() {
+        let Ok(position) = positions.get(event.caster) else {
+            continue;
+        };
+        emit_anqi_particle(
+            &mut vfx_events,
+            event.visual.particle_id,
+            position.get(),
+            None,
+            "#3E6B4A",
+            0.8,
+            14,
+            40,
+        );
+    }
+
+    // 侵染：链式毒渍，密度随受害者数增长（封顶防拥挤 chunk 刷屏）。
+    for event in penetrates.read() {
+        let Ok(position) = positions
+            .get(event.target)
+            .or_else(|_| positions.get(event.caster))
+        else {
+            continue;
+        };
+        let count = (12 + event.affected_targets.saturating_mul(4)).min(32) as u16;
+        emit_anqi_particle(
+            &mut vfx_events,
+            event.visual.particle_id,
+            position.get(),
+            None,
+            "#6B9C46",
+            1.15,
+            count,
+            36,
+        );
+    }
+
+    // 神识遮蔽：深绿雾罩绕施法者，浓度随遮蔽强度。
+    for event in shrouds.read() {
+        let Ok(position) = positions.get(event.caster) else {
+            continue;
+        };
+        emit_anqi_particle(
+            &mut vfx_events,
+            event.visual.particle_id,
+            position.get(),
+            None,
+            "#335C41",
+            event.strength.clamp(0.6, 1.5),
+            28,
+            60,
+        );
+    }
+
+    // 倒蚀：亮毒绿爆发线束于爆心（事件自带 center，不依赖 Position）。
+    for event in reverses.read() {
+        let count = (18 + event.affected_targets.saturating_mul(6)).min(48) as u16;
+        emit_anqi_particle(
+            &mut vfx_events,
+            event.visual.particle_id,
+            event.center,
+            None,
+            "#A0E070",
+            1.3,
+            count,
+            24,
+        );
+    }
+}
+
+/// 绝灵涡流（woliu v1 `woliu.vortex`）持续领域 → 动画 + 粒子（纯 cosmetic）。
+///
+/// v1 是长驻负灵域场（`VortexField` component），不是 v2 那种一次性 cast 事件，
+/// 所以走 **lifecycle 驱动**（与 [`emit_woliu_v2_visual_stop_triggers`] 同模式）：
+/// - field **出现** → caster 涡旋起手式动画 + `woliu_vortex_field` 开涡吸入环
+/// - field **存续** → 每 [`WOLIU_V1_AMBIENT_PERIOD_TICKS`] tick 一次
+///   `woliu_vortex_field_ambient` 低频涡环（强度随半径）
+/// - **反噬** `VortexBackfireEvent` → `woliu_vortex_backfire` 断经暗红爆裂
+///
+/// 不读 / 改任何战斗 / 真元状态；event_id 与 client `VortexSpiralPlayer` 注册逐字对齐。
+pub fn emit_woliu_v1_vortex_visual_triggers(
+    clock: Res<CombatClock>,
+    mut active_fields: Local<HashSet<Entity>>,
+    fields: Query<(Entity, &VortexField)>,
+    players: Query<PlayerAnimTargetItem<'_>, PlayerAnimTargetFilter>,
+    mut backfires: EventReader<VortexBackfireEvent>,
+    positions: Query<&Position>,
+    mut vfx_events: EventWriter<VfxEventRequest>,
+) {
+    let mut seen = HashSet::new();
+    for (entity, field) in &fields {
+        seen.insert(entity);
+        // 强度随领域半径（8 米基准），钳在肉眼可辨但不刷屏的区间。
+        let strength = (field.radius / 8.0).clamp(0.8, 1.6);
+        if !active_fields.contains(&entity) {
+            emit_play_for_entity(
+                field.caster,
+                ANIM_WOLIU_V1_STANCE,
+                WOLIU_PRIORITY,
+                Some(2),
+                &players,
+                &mut vfx_events,
+            );
+            emit_anqi_particle(
+                &mut vfx_events,
+                VFX_WOLIU_V1_FIELD_OPEN,
+                field.center,
+                None,
+                "#7FD4C8",
+                strength,
+                24,
+                30,
+            );
+        } else if clock.tick.saturating_sub(field.cast_at_tick) % WOLIU_V1_AMBIENT_PERIOD_TICKS == 0
+        {
+            emit_anqi_particle(
+                &mut vfx_events,
+                VFX_WOLIU_V1_FIELD_AMBIENT,
+                field.center,
+                None,
+                "#5FB8AC",
+                strength,
+                12,
+                (WOLIU_V1_AMBIENT_PERIOD_TICKS + 4) as u16,
+            );
+        }
+    }
+    *active_fields = seen;
+
+    // 反噬（久持断肺经 / 环境灵气枯竭）：断经暗红爆裂于施法者。
+    for event in backfires.read() {
+        let Ok(position) = positions.get(event.caster) else {
+            continue;
+        };
+        emit_anqi_particle(
+            &mut vfx_events,
+            VFX_WOLIU_V1_BACKFIRE,
+            position.get(),
+            None,
+            "#B84A3F",
+            1.3,
+            30,
+            20,
         );
     }
 }
@@ -2942,5 +3150,343 @@ mod tests {
             emitted.len()
         );
         assert_spawn_particle(&emitted[0], VFX_DUGU_NEEDLE_BOLT, Some(10));
+    }
+
+    // ========== 蛊道 v2 五招粒子（emit_dugu_v2_visual_triggers） ==========
+
+    fn setup_dugu_v2_visual_app() -> App {
+        let mut app = App::new();
+        app.add_event::<EclipseNeedleEvent>();
+        app.add_event::<SelfCureProgressEvent>();
+        app.add_event::<PenetrateChainEvent>();
+        app.add_event::<ShroudActivatedEvent>();
+        app.add_event::<ReverseTriggeredEvent>();
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(Update, emit_dugu_v2_visual_triggers);
+        app
+    }
+
+    fn dugu_v2_visual(
+        skill: crate::combat::dugu_v2::events::DuguSkillId,
+    ) -> crate::combat::dugu_v2::events::DuguSkillVisual {
+        crate::combat::dugu_v2::skills::visual_for(skill)
+    }
+
+    fn assert_spawn_particle_origin(request: &VfxEventRequest, expected: [f64; 3]) {
+        match &request.payload {
+            VfxEventPayloadV1::SpawnParticle { origin, .. } => {
+                assert_eq!(
+                    *origin, expected,
+                    "粒子 origin 应落在 {expected:?}（事件语义位置），实际 {origin:?}"
+                );
+            }
+            other => panic!("expected SpawnParticle, got {other:?}"),
+        }
+    }
+
+    /// 蚀针：毒渍脉冲印于受害者（target）脚下，event_id 与 client DuguV2VfxPlayer 对齐。
+    #[test]
+    fn dugu_v2_eclipse_emits_taint_pulse_at_target() {
+        use crate::combat::dugu_v2::events::{DuguSkillId, TaintTier};
+        let mut app = setup_dugu_v2_visual_app();
+        let caster = spawn_player(&mut app, "Caster", [0.0, 64.0, 0.0]);
+        let target = spawn_player(&mut app, "Victim", [5.0, 64.0, 5.0]);
+        app.world_mut().send_event(EclipseNeedleEvent {
+            caster,
+            target,
+            target_realm: Realm::Awaken,
+            tier: TaintTier::Temporary,
+            injected_qi: 4.0,
+            hp_loss: 2.0,
+            qi_loss: 3.0,
+            qi_max_loss: 0.0,
+            permanent_decay_rate_per_min: 0.0,
+            returned_zone_qi: 3.0,
+            reveal_probability: 0.1,
+            tick: 7,
+            visual: dugu_v2_visual(DuguSkillId::Eclipse),
+        });
+        app.update();
+        let emitted = drain_vfx(&mut app);
+        assert_eq!(
+            emitted.len(),
+            1,
+            "蚀针应只发 1 条粒子（anim/audio 在 skills.rs 内联）"
+        );
+        assert_spawn_particle(&emitted[0], "bong:dugu_taint_pulse", Some(12));
+        assert_spawn_particle_origin(&emitted[0], [5.0, 64.0, 5.0]);
+    }
+
+    /// 蚀针受害者断 Position → 落到施法者位置（出手反馈不丢）。
+    #[test]
+    fn dugu_v2_eclipse_falls_back_to_caster_origin_when_target_positionless() {
+        use crate::combat::dugu_v2::events::{DuguSkillId, TaintTier};
+        let mut app = setup_dugu_v2_visual_app();
+        let caster = spawn_player(&mut app, "Caster", [1.0, 64.0, 2.0]);
+        let target = app.world_mut().spawn_empty().id();
+        app.world_mut().send_event(EclipseNeedleEvent {
+            caster,
+            target,
+            target_realm: Realm::Awaken,
+            tier: TaintTier::Immediate,
+            injected_qi: 1.0,
+            hp_loss: 1.0,
+            qi_loss: 1.0,
+            qi_max_loss: 0.0,
+            permanent_decay_rate_per_min: 0.0,
+            returned_zone_qi: 1.0,
+            reveal_probability: 0.1,
+            tick: 8,
+            visual: dugu_v2_visual(DuguSkillId::Eclipse),
+        });
+        app.update();
+        let emitted = drain_vfx(&mut app);
+        assert_eq!(emitted.len(), 1);
+        assert_spawn_particle_origin(&emitted[0], [1.0, 64.0, 2.0]);
+    }
+
+    /// 自蕴：稀薄深绿雾绕施法者。
+    #[test]
+    fn dugu_v2_self_cure_emits_thin_mist_at_caster() {
+        use crate::combat::dugu_v2::events::DuguSkillId;
+        let mut app = setup_dugu_v2_visual_app();
+        let caster = spawn_player(&mut app, "Caster", [3.0, 64.0, 3.0]);
+        app.world_mut().send_event(SelfCureProgressEvent {
+            caster,
+            hours_used: 2.5,
+            daily_hours_after: 2.5,
+            gain_percent: 10.0,
+            insidious_color_percent: 5.0,
+            morphology_percent: 1.0,
+            self_revealed: false,
+            tick: 9,
+            visual: dugu_v2_visual(DuguSkillId::SelfCure),
+        });
+        app.update();
+        let emitted = drain_vfx(&mut app);
+        assert_eq!(emitted.len(), 1);
+        assert_spawn_particle(&emitted[0], "bong:dugu_dark_green_mist", Some(14));
+        assert_spawn_particle_origin(&emitted[0], [3.0, 64.0, 3.0]);
+    }
+
+    /// 侵染：毒渍密度随链上受害者数增长且封顶 32。
+    #[test]
+    fn dugu_v2_penetrate_particle_count_scales_with_targets_and_caps() {
+        use crate::combat::dugu_v2::events::{DuguSkillId, TaintTier};
+        let mut app = setup_dugu_v2_visual_app();
+        let caster = spawn_player(&mut app, "Caster", [0.0, 64.0, 0.0]);
+        let target = spawn_player(&mut app, "Victim", [2.0, 64.0, 0.0]);
+        for (affected, expected_count) in [(2u32, 20u16), (99u32, 32u16)] {
+            app.world_mut().send_event(PenetrateChainEvent {
+                caster,
+                target,
+                taint_tier: TaintTier::Temporary,
+                multiplier: 1.5,
+                affected_targets: affected,
+                permanent_decay_rate_per_min: 0.0,
+                reveal_probability: 0.2,
+                returned_zone_qi: 5.0,
+                tick: 10,
+                visual: dugu_v2_visual(DuguSkillId::Penetrate),
+            });
+            app.update();
+            let emitted = drain_vfx(&mut app);
+            assert_eq!(emitted.len(), 1);
+            assert_spawn_particle(&emitted[0], "bong:dugu_taint_pulse", Some(expected_count));
+        }
+    }
+
+    /// 神识遮蔽：深绿雾罩绕施法者，strength 透传（钳 [0.6, 1.5]）。
+    #[test]
+    fn dugu_v2_shroud_emits_mist_with_clamped_strength() {
+        use crate::combat::dugu_v2::events::DuguSkillId;
+        let mut app = setup_dugu_v2_visual_app();
+        let caster = spawn_player(&mut app, "Caster", [0.0, 64.0, 0.0]);
+        app.world_mut().send_event(ShroudActivatedEvent {
+            caster,
+            strength: 9.0,
+            expires_at_tick: 600,
+            tick: 11,
+            visual: dugu_v2_visual(DuguSkillId::Shroud),
+        });
+        app.update();
+        let emitted = drain_vfx(&mut app);
+        assert_eq!(emitted.len(), 1);
+        assert_spawn_particle(&emitted[0], "bong:dugu_dark_green_mist", Some(28));
+        match &emitted[0].payload {
+            VfxEventPayloadV1::SpawnParticle { strength, .. } => {
+                assert_eq!(
+                    *strength,
+                    Some(1.5),
+                    "遮蔽强度 9.0 应被钳到 1.5（视觉浓度上限），实际 {strength:?}"
+                );
+            }
+            other => panic!("expected SpawnParticle, got {other:?}"),
+        }
+    }
+
+    /// 倒蚀：爆发线束于事件自带爆心（不依赖 Position），count 随受害者数封顶 48。
+    #[test]
+    fn dugu_v2_reverse_emits_burst_at_event_center() {
+        use crate::combat::dugu_v2::events::DuguSkillId;
+        use valence::prelude::DVec3;
+        let mut app = setup_dugu_v2_visual_app();
+        let caster = app.world_mut().spawn_empty().id();
+        app.world_mut().send_event(ReverseTriggeredEvent {
+            caster,
+            affected_targets: 3,
+            burst_damage: 12.0,
+            returned_zone_qi: 6.0,
+            juebi_delay_ticks: None,
+            tick: 12,
+            center: DVec3::new(10.0, 65.0, -4.0),
+            visual: dugu_v2_visual(DuguSkillId::Reverse),
+        });
+        app.update();
+        let emitted = drain_vfx(&mut app);
+        assert_eq!(
+            emitted.len(),
+            1,
+            "倒蚀无 Position 也必须出粒子（事件自带爆心）"
+        );
+        assert_spawn_particle(&emitted[0], "bong:dugu_reverse_burst", Some(36));
+        assert_spawn_particle_origin(&emitted[0], [10.0, 65.0, -4.0]);
+    }
+
+    /// 五招 particle_id 全部落在 client DuguV2VfxPlayer.EVENT_IDS 的三个注册项内
+    ///（谁改 visual_for 忘改 client 注册，此测撞红）。
+    #[test]
+    fn dugu_v2_all_skill_particle_ids_are_client_registered() {
+        use crate::combat::dugu_v2::events::DuguSkillId;
+        const CLIENT_REGISTERED: [&str; 3] = [
+            "bong:dugu_taint_pulse",
+            "bong:dugu_dark_green_mist",
+            "bong:dugu_reverse_burst",
+        ];
+        for skill in DuguSkillId::ALL {
+            let visual = dugu_v2_visual(skill);
+            assert!(
+                CLIENT_REGISTERED.contains(&visual.particle_id),
+                "{skill:?} 的 particle_id {} 未在 client DuguV2VfxPlayer.EVENT_IDS 注册，\
+                 VfxRegistry 查表将 miss、粒子静默丢弃",
+                visual.particle_id
+            );
+        }
+    }
+
+    // ========== 绝灵涡流 woliu v1（emit_woliu_v1_vortex_visual_triggers） ==========
+
+    fn setup_woliu_v1_visual_app(tick: u64) -> App {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick });
+        app.add_event::<VortexBackfireEvent>();
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(Update, emit_woliu_v1_vortex_visual_triggers);
+        app
+    }
+
+    fn spawn_v1_field(app: &mut App, caster: Entity, cast_at_tick: u64) -> Entity {
+        use valence::prelude::DVec3;
+        let field = VortexField {
+            center: DVec3::new(0.0, 64.0, 0.0),
+            radius: 8.0,
+            delta: 4.0,
+            cast_at_tick,
+            maintain_max_ticks: 1200,
+            caster,
+            env_qi_at_cast: 50.0,
+            last_maintain_tick: cast_at_tick,
+        };
+        app.world_mut().entity_mut(caster).insert(field);
+        caster
+    }
+
+    /// field 出现 → 起手式动画 + 开涡吸入环；同 field 下一 tick 不重发开涡。
+    #[test]
+    fn woliu_v1_field_appear_emits_stance_anim_and_open_burst_once() {
+        let mut app = setup_woliu_v1_visual_app(101);
+        let caster = spawn_player(&mut app, "Caster", [0.0, 64.0, 0.0]);
+        spawn_v1_field(&mut app, caster, 101);
+
+        app.update();
+        let emitted = drain_vfx(&mut app);
+        assert_eq!(
+            emitted.len(),
+            2,
+            "开涡应发 1 动画 + 1 粒子，实际 {} 条",
+            emitted.len()
+        );
+        assert_play_anim(&emitted[0], ANIM_WOLIU_V1_STANCE, WOLIU_PRIORITY);
+        assert_spawn_particle(&emitted[1], VFX_WOLIU_V1_FIELD_OPEN, Some(24));
+
+        // 下一 tick（非 ambient 周期）：不得重发开涡。
+        app.world_mut().resource_mut::<CombatClock>().tick = 102;
+        app.update();
+        assert!(
+            drain_vfx(&mut app).is_empty(),
+            "field 存续第 2 tick（非周期点）不应重发任何粒子"
+        );
+    }
+
+    /// 存续满一个周期（20 tick）→ 低频涡环；非周期 tick 静默。
+    #[test]
+    fn woliu_v1_field_sustain_emits_ambient_ring_on_period() {
+        let mut app = setup_woliu_v1_visual_app(101);
+        let caster = spawn_player(&mut app, "Caster", [0.0, 64.0, 0.0]);
+        spawn_v1_field(&mut app, caster, 101);
+        app.update();
+        drain_vfx(&mut app); // 吃掉开涡
+
+        app.world_mut().resource_mut::<CombatClock>().tick = 101 + WOLIU_V1_AMBIENT_PERIOD_TICKS;
+        app.update();
+        let emitted = drain_vfx(&mut app);
+        assert_eq!(emitted.len(), 1, "存续满 20 tick 应发 1 条低频涡环");
+        assert_spawn_particle(&emitted[0], VFX_WOLIU_V1_FIELD_AMBIENT, Some(12));
+    }
+
+    /// field 移除后重新开涡 → 再次发开涡（lifecycle 状态正确清退）。
+    #[test]
+    fn woliu_v1_field_reopen_after_removal_emits_open_again() {
+        let mut app = setup_woliu_v1_visual_app(101);
+        let caster = spawn_player(&mut app, "Caster", [0.0, 64.0, 0.0]);
+        spawn_v1_field(&mut app, caster, 101);
+        app.update();
+        drain_vfx(&mut app);
+
+        app.world_mut().entity_mut(caster).remove::<VortexField>();
+        app.world_mut().resource_mut::<CombatClock>().tick = 105;
+        app.update();
+        assert!(drain_vfx(&mut app).is_empty(), "关涡后不应再发粒子");
+
+        spawn_v1_field(&mut app, caster, 110);
+        app.world_mut().resource_mut::<CombatClock>().tick = 110;
+        app.update();
+        let emitted = drain_vfx(&mut app);
+        assert_eq!(emitted.len(), 2, "重新开涡应再次发动画 + 开涡粒子");
+        assert_spawn_particle(&emitted[1], VFX_WOLIU_V1_FIELD_OPEN, Some(24));
+    }
+
+    /// 反噬 → 断经暗红爆裂于施法者位置。
+    #[test]
+    fn woliu_v1_backfire_emits_burst_at_caster() {
+        use crate::combat::woliu::BackfireCause;
+        use crate::cultivation::components::MeridianId;
+        let mut app = setup_woliu_v1_visual_app(200);
+        let caster = spawn_player(&mut app, "Caster", [6.0, 64.0, 6.0]);
+        app.world_mut().send_event(VortexBackfireEvent {
+            caster,
+            cause: BackfireCause::ExceedMaintainMax,
+            meridian_severed: MeridianId::Lung,
+            tick: 200,
+            env_qi: 10.0,
+            delta: 4.0,
+            resisted: false,
+        });
+        app.update();
+        let emitted = drain_vfx(&mut app);
+        assert_eq!(emitted.len(), 1);
+        assert_spawn_particle(&emitted[0], VFX_WOLIU_V1_BACKFIRE, Some(30));
+        assert_spawn_particle_color(&emitted[0], "#B84A3F");
+        assert_spawn_particle_origin(&emitted[0], [6.0, 64.0, 6.0]);
     }
 }

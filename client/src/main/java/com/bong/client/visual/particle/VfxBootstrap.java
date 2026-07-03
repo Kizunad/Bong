@@ -38,6 +38,12 @@ public final class VfxBootstrap {
         for (net.minecraft.util.Identifier eventId : DuguNeedleVfxPlayer.EVENT_IDS) {
             registry.register(eventId, duguNeedle);
         }
+        // 蛊道 v2 五招粒子（蚀针毒渍/深绿雾罩/倒蚀爆发）—— server emit_dugu_v2_visual_triggers 引用。
+        // 三张专属贴图 #173 起就位、#838 进图集白名单，此处首次接通 event_id → player。
+        DuguV2VfxPlayer duguV2 = new DuguV2VfxPlayer();
+        for (net.minecraft.util.Identifier eventId : DuguV2VfxPlayer.EVENT_IDS) {
+            registry.register(eventId, duguV2);
+        }
         registry.register(BreakthroughPillarPlayer.EVENT_ID,     new BreakthroughPillarPlayer());
         registry.register(EnlightenmentAuraPlayer.EVENT_ID,      new EnlightenmentAuraPlayer());
         registry.register(BedRestAuraPlayer.EVENT_ID,            new BedRestAuraPlayer());
@@ -187,6 +193,10 @@ public final class VfxBootstrap {
         registry.register(VortexSpiralPlayer.SWALLOWING_SPIRAL,  woliuVortex);
         registry.register(VortexSpiralPlayer.ECHO_RIPPLE,        woliuVortex);
         registry.register(VortexSpiralPlayer.VOID_CORE_COLLAPSE, woliuVortex);
+        // 绝灵涡流（woliu v1 长驻负灵域）三态 —— server emit_woliu_v1_vortex_visual_triggers 引用。
+        registry.register(VortexSpiralPlayer.WOLIU_V1_FIELD_OPEN,    woliuVortex);
+        registry.register(VortexSpiralPlayer.WOLIU_V1_FIELD_AMBIENT, woliuVortex);
+        registry.register(VortexSpiralPlayer.WOLIU_V1_BACKFIRE,      woliuVortex);
         registry.register(CultivationAbsorbPlayer.EVENT_ID,      new CultivationAbsorbPlayer());
         registry.register(MeridianOpenFlashPlayer.EVENT_ID,      new MeridianOpenFlashPlayer());
         registry.register(BreakthroughFailPlayer.EVENT_ID,       new BreakthroughFailPlayer());

@@ -24,6 +24,7 @@ use crate::combat::components::{Lifecycle, Wounds};
 use crate::combat::events::{AttackSource, CombatEvent, DeathEvent, DefenseKind};
 use crate::combat::needle::QiNeedleChargedEvent;
 use crate::combat::tuike_v2::{ContamTransferredEvent, DonFalseSkinEvent, FalseSkinSheddedEvent};
+use crate::combat::woliu::{VortexBackfireEvent, VortexField};
 use crate::combat::woliu_v2::VortexCastEvent;
 use crate::cultivation::breakthrough::BreakthroughOutcome;
 use crate::cultivation::components::Cultivation;
@@ -594,6 +595,53 @@ pub fn emit_woliu_v2_audio_triggers(
             Some(event.skill.as_str().to_string()),
             1.0,
             0.0,
+        );
+    }
+}
+
+/// 绝灵涡流（woliu v1 `woliu.vortex`）→ 音效（纯 cosmetic）。
+///
+/// v1 是长驻领域（`VortexField` component）无 cast 事件，开涡走 lifecycle 检测
+/// （与 vfx 侧 `emit_woliu_v1_vortex_visual_triggers` 同模式、状态各自独立）：
+/// - field 出现 → `woliu_cast`（复用现有 recipe，零新资产）
+/// - 反噬 `VortexBackfireEvent` → `woliu_burst_pop`（爆裂声，断经反噬语义）
+pub fn emit_woliu_v1_vortex_audio_triggers(
+    mut active_fields: bevy_ecs::prelude::Local<std::collections::HashSet<Entity>>,
+    fields: Query<(Entity, &VortexField)>,
+    mut backfires: EventReader<VortexBackfireEvent>,
+    positions: Query<&Position>,
+    mut audio: AudioEmitWriter,
+) {
+    let mut audio = audio.context();
+    let mut seen = std::collections::HashSet::new();
+    for (entity, field) in &fields {
+        seen.insert(entity);
+        if !active_fields.contains(&entity) {
+            emit_play(
+                &mut audio,
+                "woliu_cast",
+                field.caster,
+                field.center,
+                Some("woliu.vortex".to_string()),
+                1.0,
+                0.0,
+            );
+        }
+    }
+    *active_fields = seen;
+
+    for event in backfires.read() {
+        let Ok(position) = positions.get(event.caster) else {
+            continue;
+        };
+        emit_play(
+            &mut audio,
+            "woliu_burst_pop",
+            event.caster,
+            position.get(),
+            Some("woliu.vortex.backfire".to_string()),
+            1.0,
+            -0.2,
         );
     }
 }
@@ -2266,6 +2314,87 @@ mod tests {
             emitted.is_empty(),
             "QiInjectionEvent 的非 Snipe/Soul 分支不应在 audio 系统发声（走 MultiShot/ArmorPierce 专属 EventReader），实际 {} 条",
             emitted.len()
+        );
+    }
+
+    // ========== 绝灵涡流 woliu v1（emit_woliu_v1_vortex_audio_triggers） ==========
+
+    fn setup_woliu_v1_audio_app() -> App {
+        let mut app = App::new();
+        app.add_event::<VortexBackfireEvent>();
+        app.add_event::<PlaySoundRecipeRequest>();
+        app.add_systems(Update, emit_woliu_v1_vortex_audio_triggers);
+        app
+    }
+
+    fn drain_audio(app: &mut App) -> Vec<PlaySoundRecipeRequest> {
+        app.world_mut()
+            .resource_mut::<Events<PlaySoundRecipeRequest>>()
+            .drain()
+            .collect()
+    }
+
+    /// field 出现 → woliu_cast 一次；存续 tick 不重复发声。
+    #[test]
+    fn woliu_v1_field_appear_plays_cast_recipe_once() {
+        use crate::combat::woliu::VortexField;
+        use valence::prelude::DVec3;
+        let mut app = setup_woliu_v1_audio_app();
+        let caster = app.world_mut().spawn(Position::new([0.0, 64.0, 0.0])).id();
+        app.world_mut().entity_mut(caster).insert(VortexField {
+            center: DVec3::new(0.0, 64.0, 0.0),
+            radius: 8.0,
+            delta: 4.0,
+            cast_at_tick: 100,
+            maintain_max_ticks: 1200,
+            caster,
+            env_qi_at_cast: 50.0,
+            last_maintain_tick: 100,
+        });
+
+        app.update();
+        let emitted = drain_audio(&mut app);
+        assert_eq!(
+            emitted.len(),
+            1,
+            "开涡应发 1 条音效，实际 {} 条",
+            emitted.len()
+        );
+        assert_eq!(
+            emitted[0].recipe_id, "woliu_cast",
+            "开涡应复用 woliu_cast recipe（零新资产），实际 {}",
+            emitted[0].recipe_id
+        );
+
+        app.update();
+        assert!(
+            drain_audio(&mut app).is_empty(),
+            "field 存续期间不应重复发开涡音效"
+        );
+    }
+
+    /// 反噬 → woliu_burst_pop 爆裂声。
+    #[test]
+    fn woliu_v1_backfire_plays_burst_pop() {
+        use crate::combat::woliu::{BackfireCause, VortexBackfireEvent};
+        let mut app = setup_woliu_v1_audio_app();
+        let caster = app.world_mut().spawn(Position::new([2.0, 64.0, 2.0])).id();
+        app.world_mut().send_event(VortexBackfireEvent {
+            caster,
+            cause: BackfireCause::EnvQiTooLow,
+            meridian_severed: crate::cultivation::components::MeridianId::Lung,
+            tick: 300,
+            env_qi: 1.0,
+            delta: 4.0,
+            resisted: false,
+        });
+        app.update();
+        let emitted = drain_audio(&mut app);
+        assert_eq!(emitted.len(), 1);
+        assert_eq!(
+            emitted[0].recipe_id, "woliu_burst_pop",
+            "反噬应发爆裂声 recipe，实际 {}",
+            emitted[0].recipe_id
         );
     }
 }

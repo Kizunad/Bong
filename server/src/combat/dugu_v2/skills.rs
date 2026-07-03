@@ -328,6 +328,7 @@ fn apply_self_cure(
             morphology_percent: state.morphology_percent,
             self_revealed: state.self_revealed,
             tick: now_tick,
+            visual: visual_for(DuguSkillId::SelfCure),
         },
     );
     if let Some(pos) = world.get::<Position>(caster).map(|p| p.get()) {
