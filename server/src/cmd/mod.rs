@@ -1,20 +1,26 @@
+pub mod completions;
 pub mod dev;
 pub mod gameplay;
 pub mod ping;
 pub mod registry_pin;
 
-use valence::prelude::App;
+use valence::prelude::{App, PostStartup};
+use valence::EventLoopPreUpdate;
 
 pub fn register(app: &mut App) {
     let _pinned_command_names = registry_pin::COMMAND_NAMES;
     ping::register(app);
     dev::register(app);
     gameplay::register(app);
+    // Tab 补全：全部 add_command 完成后（PostStartup）标记 AskServer 节点，
+    // 运行期在事件循环里应答客户端补全请求。
+    app.add_systems(PostStartup, completions::mark_ask_server_arguments);
+    app.add_systems(EventLoopPreUpdate, completions::answer_command_completions);
 }
 
+/// 测试用：注册全部命令的最小 App（completions / registry_pin 测试共用）。
 #[cfg(test)]
-mod tests {
-    use super::*;
+pub fn test_command_app() -> App {
     use crate::combat::events::DebugCombatCommand;
     use crate::cultivation::tribulation::StartDuXuRequest;
     use crate::fauna::rat_phase::RatPhaseChangeEvent;
@@ -23,29 +29,35 @@ mod tests {
     use crate::player::gameplay::GameplayActionQueue;
     use crate::shader::ShaderStatePayload;
     use crate::world::tsy_dev_command::TsySpawnRequested;
+
+    let mut app = App::new();
+    app.add_plugins(valence::command::manager::CommandPlugin);
+    app.add_event::<DebugCombatCommand>();
+    app.add_event::<RatPhaseChangeEvent>();
+    app.add_event::<TsySpawnRequested>();
+    app.add_event::<StartDuXuRequest>();
+    // plan-offscreen-war-v1 P6：/faction 命令系统用 EventWriter<WarParticipateIntent>
+    app.add_event::<WarParticipateIntent>();
+    app.insert_resource(PendingScenario::default());
+    app.insert_resource(GameplayActionQueue::default());
+    app.insert_resource(ShaderStatePayload::default());
+    register(&mut app);
+    app.finish();
+    app.cleanup();
+    app.update();
+    app
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
     use valence::command::CommandRegistry;
-    use valence::prelude::App;
     use valence::protocol::packets::play::command_tree_s2c::{
         CommandTreeS2c, NodeData, Parser, StringArg,
     };
 
     fn setup_registry_app() -> App {
-        let mut app = App::new();
-        app.add_plugins(valence::command::manager::CommandPlugin);
-        app.add_event::<DebugCombatCommand>();
-        app.add_event::<RatPhaseChangeEvent>();
-        app.add_event::<TsySpawnRequested>();
-        app.add_event::<StartDuXuRequest>();
-        // plan-offscreen-war-v1 P6：/faction 命令系统用 EventWriter<WarParticipateIntent>
-        app.add_event::<WarParticipateIntent>();
-        app.insert_resource(PendingScenario::default());
-        app.insert_resource(GameplayActionQueue::default());
-        app.insert_resource(ShaderStatePayload::default());
-        register(&mut app);
-        app.finish();
-        app.cleanup();
-        app.update();
-        app
+        test_command_app()
     }
 
     #[test]
