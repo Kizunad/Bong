@@ -6,7 +6,7 @@
 
 | 阶段 | 主题 | 状态 |
 |------|------|------|
-| P0 | 消耗真归还——开脉/突破消耗回流 WorldQiBudget，堵"记账蒸发" | ⬜ |
+| P0 | 消耗真归还——开脉/突破消耗回流**独立待分配池**（§8.1#1·非 WorldQiBudget），堵"记账蒸发" | ⬜ |
 | P1 | 平衡回流——zones.json 配 equilibrium/inflow，heartbeat 从预算滴灌 | ⬜ |
 | P2 | NPC 让灵地板——hydrated + dormant 吸取地板 0.3 | ⬜ |
 | P3 | 固元突破窗口——灵潮（伪灵脉复用）/ 灵眼，含视听 | ⬜ |
@@ -27,7 +27,7 @@ spawn zone `spirit_qi` 被观测到 0.00 且永不恢复。三个叠加根因：
 
 - **进料**：`cultivation::meridian_open` / `cultivation::breakthrough` 的消耗流；`qi_physics::ledger::WorldQiBudget`（已有 `from_total` / `apply_era_decay` / env `BONG_SPIRIT_QI_TOTAL`，`ledger.rs:15-55`）；`server/zones.json`（`ZoneConfig`，`world/zone.rs:501`）；`world/pseudo_vein_runtime.rs`（灵潮复用）；`world/spirit_eye.rs`（`SpiritEyeRegistry`）；`npc/dormant/mod.rs` + `cultivation/tick.rs`（NPC 吸取路径）。
 - **出料**：`zone.spirit_qi`（玩家/NPC 修炼吸收、开脉门槛 0.3、固元门槛 0.8 全部消费此值）；`ZoneInfo` payload（client HUD 自动受益，wire 不变）；`heartbeat::compute_world_pressure` 的 `avg_zone_qi`（天道 world_state 监控恢复有意义读数）；`QiTransfer` 审计流。
-- **共享类型 / event**：复用 `QiTransfer` / `QiTransferReason`（P1 新增 variant `ZoneInflow`，理由：现有 reason 无"天地→zone"语义）；复用 `WorldQiBudget`（不另造预算资源）；`Zone` / `ZoneConfig` 加字段不另造注册表；复用 `PSEUDO_VEIN_*_VFX_EVENT_ID`（`pseudo_vein_runtime.rs:36-40`）。
+- **共享类型 / event**：复用 `QiTransfer` / `QiTransferReason`（P1 新增 variant `ZoneInflow`，理由：现有 reason 无"天地→zone"语义）；**新增独立待分配池 ledger 账户**（§8.1#1，**非复用 `WorldQiBudget.current_total`**——它是化虚名额闸门 `compute_void_quota_limit`，注入破坏 void-quota 稀缺性）；`Zone` / `ZoneConfig` 加字段不另造注册表；复用 `PSEUDO_VEIN_*_VFX_EVENT_ID`（`pseudo_vein_runtime.rs:36-40`）。
 - **跨仓库契约**：纯 server plan。`ZoneInfo` / `PlayerState` payload 结构不动；`zones.json` 为 server 本地配置非 IPC schema。agent 侧仅被动受益（`world_state` 里 avg_zone_qi 不再恒 0），client 零改动。
 - **worldview 锚点**：worldview §二（真元物理/守恒：全服 `SPIRIT_QI_TOTAL` 恒定，修炼消耗=别人少掉；本 plan 的"消耗→预算→回流"正是该正典的闭环实现）；末法薄灵设定（低 equilibrium 是观感要求，不是资源匮乏 bug）。
 - **qi_physics 锚点**（红旗强约束）：消费 `regen_from_zone`（`excretion.rs:43`）、`qi_release_to_zone`、`WorldQiAccount::transfer`、`WorldQiBudget::apply_era_decay`。**新常数/公式全部落 `qi_physics`**：`QI_ZONE_INFLOW_*`、`QI_NPC_ABSORB_FLOOR`、`fn zone_equilibrium_inflow(...)`；zones.json 只声明参数（equilibrium/inflow_per_min），公式唯一实现在 qi_physics。
@@ -35,7 +35,7 @@ spawn zone `spirit_qi` 被观测到 0.00 且永不恢复。三个叠加根因：
 ## 总体设计：天地回环
 
 ```
-玩家/NPC 开脉·突破消耗 ──QiTransfer(MeridianOpen/Breakthrough)──→ WorldQiBudget（天地）
+玩家/NPC 开脉·突破消耗 ──QiTransfer(MeridianOpen/Breakthrough)──→ 独立待分配池（§8.1#1·非 WorldQiBudget，勿碰化虚名额闸门）
                                                                        │ 每 zone 按配置滴灌
         zone.spirit_qi ←──QiTransfer(ZoneInflow)、只补到 qi_equilibrium 即停──┘
               │ regen_from_zone 吸收（NPC 受让灵地板约束）
@@ -58,7 +58,7 @@ spawn zone `spirit_qi` 被观测到 0.00 且永不恢复。三个叠加根因：
 ## P1 平衡回流（低浓度、活流量）⬜
 
 - `ZoneConfig` / `Zone` 加 `qi_equilibrium: f64`（默认 0.0 = 不回流，向后兼容）与 `qi_inflow_per_min: f64`；`zones.json` 给 spawn 配 `qi_equilibrium: 0.35`（> 开脉门槛 `MIN_ZONE_QI_TO_OPEN=0.3`）+ inflow 初值（标定见 §8 #2）。
-- qi_physics 新增：`fn zone_equilibrium_inflow(spirit_qi, equilibrium, inflow_per_min, dt) -> f64` + 常数；**只补到 equilibrium 即停**（浓度钳制），来源扣 `WorldQiBudget`，预算不足则按余额缩量、绝不透支。
+- qi_physics 新增：`fn zone_equilibrium_inflow(spirit_qi, equilibrium, inflow_per_min, dt) -> f64` + 常数；**只补到 equilibrium 即停**（浓度钳制），来源扣**独立待分配池**（§8.1 #1：非 `WorldQiBudget`，勿碰化虚名额闸门），余额不足则缩量、绝不透支。
 - heartbeat（`world/heartbeat.rs`）新增回流 system：直写 `zone.spirit_qi`（遵循 #676 后守恒写法：改真实池 + 记 `QiTransfer(ZoneInflow)` 审计），负灵域（spirit_qi<0）zone 不回流（保留死域/负灵域设定）。
 - **测试**：钳制在 equilibrium 不过冲；预算耗尽缩量；负灵域跳过；回流↔吸收长跑总量守恒；`REALM_COLLAPSE` 事件 zone 是否回流见 §8 #5。
 
@@ -73,7 +73,7 @@ spawn zone `spirit_qi` 被观测到 0.00 且永不恢复。三个叠加根因：
 
 baseline 0.35 永远过不了 `MIN_ZONE_QI_TO_GUYUAN=0.8`（`breakthrough.rs:357-390`），需要窗口机制。路线二选一或并行（§8 #3 拍板）：
 
-- **灵潮**：复用伪灵脉 runtime（`pseudo_vein_runtime.rs`，phase 机 + settlement 已有守恒结算），周期性把目标 zone 短暂推到 0.85 再回落；qi 来源同样走 WorldQiBudget，不凭空。
+- **灵潮**：复用伪灵脉 runtime（`pseudo_vein_runtime.rs`，phase 机 + settlement 已有守恒结算），周期性把目标 zone 短暂推到 0.85 再回落；qi 来源走**独立待分配池借还**（§8.1 #3：inject/settle 改借还款、修 70% 凭空创生，非 WorldQiBudget），不凭空。
 - **灵眼**：spawn 附近落一口 `SpiritEyeRegistry` POI（`breakthrough.rs:368` 已有 `in_spirit_eye` 替代门槛 + 环境加成路径，纯配置接入）。
 - **视听（须在升 active 时写到实现精度，docs/CLAUDE.md §四）**：灵潮复用 `PSEUDO_VEIN_RISING/ACTIVE/DISSIPATING` VFX 事件族与其既有 audio_recipe；narration 走天道 zone-scope（示例文案 ≥2 条、标 scope/style）；HUD 无新增常驻元素（对齐 HUD 沉浸极简约束）。
 - **测试**：灵潮窗口内固元前置通过 / 窗口外拒绝（`MIN_ZONE_QI_TO_GUYUAN` 边界）；潮起潮落全程守恒对拍。
@@ -126,17 +126,17 @@ baseline 0.35 永远过不了 `MIN_ZONE_QI_TO_GUYUAN=0.8`（`breakthrough.rs:357
 
 ### #4 其他抽取源过地板
 
-**决议**：`QI_TIANDAO_WATCH_ZONE_DRAIN_PER_MINUTE`（`constants.rs:70`）+ `LINGTIAN_DRAIN_ZONE_RATIO`（`constants.rs:86`）纳入 P2 scope（同"地板"物理概念，不拆 P4）。**残留**：这两条实际扣 `zone.spirit_qi` 的调用现场本次未定位，P2 实施补 grep（§10.7）。
+**决议**：`QI_TIANDAO_WATCH_ZONE_DRAIN_PER_MINUTE`（`constants.rs:70`）+ `LINGTIAN_DRAIN_ZONE_RATIO`（`constants.rs:86`）纳入 P2 scope（同"地板"物理概念，不拆 P4）。调用现场：`world/tiandao_hunt.rs:1023` `apply_watch_zone_qi_drain`（`:1050` 直扣 `zone.spirit_qi`）已定位；Lingtian drain 调用现场 P2 实施补 grep（§10.7）——两者 P2 均须过 floor。
 
 **落点**：`constants.rs:70,86`；调用现场待 P2；plan §P2。
 
 ### #5 事件 zone 边界
 
 **决议**：
-1. P1 inflow system **显式排除** `zone.active_events` 含 `REALM_COLLAPSE` 的 zone（`network/mod.rs:2294` `EVENT_REALM_COLLAPSE`）。
+1. P1 inflow system **显式排除** `zone.active_events` 含 `EVENT_REALM_COLLAPSE` 的 zone——现成范式在 `heartbeat.rs:1480`（`active_events.contains(...EVENT_REALM_COLLAPSE)`，正是 P1 inflow 要复用的模板），非 `network/mod.rs:2294`（那是灵蝗潮无关代码）。
 2. 负灵域（`zone.spirit_qi < 0.0`）inflow `continue`（用 `< 0.0`，不对齐 botany `-0.2`）；负灵域回正不属本 plan。
 
-**落点**：`heartbeat.rs`（新 inflow system，紧邻 `heartbeat_tick:569`）；`network/mod.rs:2294`；`zone.rs:481-485`；plan §P1。
+**落点**：`heartbeat.rs`（新 inflow system，紧邻 `heartbeat_tick:569`，复用 `:1480` EVENT_REALM_COLLAPSE 判断范式）；`zone.rs:481-485`；plan §P1。
 
 ### #6 邻接待办不占用
 
@@ -158,7 +158,7 @@ scope ~4 代码 PR + 1 前置 worldview docs PR，单 plan 内序列化（`docs/
 - **§10.3 测试要求**：P0 消耗守恒对拍（待分配池等额升、总量不变）+ 起服重置；P1 钳 equilibrium/预算缩量/负灵域跳/REALM_COLLAPSE 跳/长跑守恒；P2 NPC 地板边界/玩家不受限/dormant 批 tick 不压穿；P3 灵潮窗口边界/潮起潮落守恒。**守恒断言取 const 引用不写字面（含 20000）**（docs/CLAUDE.md §四）。
 - **§10.4 CR 等待**：每 PR ScheduleWakeup 1200s×≤3 等 CR（[[feedback_wait_coderabbit_approve]]）；限流时博弈过+e2e 绿即 merge。
 - **§10.5 subagent 实施**：每 PR 独立 `claude` subagent（opus+`ultrathink`），主线收 result+merge；**每 PR push 前跑对抗博弈自检**（sonnet 控方/辩方/端到端 → opus 裁决，[[feedback_consume_presubmit_debate]]），★守恒 plan 控方专攻"灵气凭空产生/消失"。P3 视听全复用伪灵脉资产则豁免 3 轮 PROMISE。
-- **§10.6 单次 consume 全自动到 merge**：收口已完成（本 §8.1 + 用户拍板 2 红线），worldview PR（§10.0）land 后 `/consume-plan` 即可。
+- **§10.6 单次 consume 全自动到 merge**：收口已完成（本 §8.1 + 用户拍板 2 红线），`/consume-plan` 即可。worldview PR（§10.0）可与 consume 代码 PR 并行推进，但 **zone-qi 归档（进 finished_plans）前必确认 worldview PR 已 land**（时序口径以 §10.0 为准）。
 - **§10.7 实施残留待办**（§8.1 已标）：① NPC 私池稳态遥测后二次校准 `qi_inflow_per_min`；② TiandaoWatch/Lingtian drain 调用现场 P2 定位；③ `PSEUDO_VEIN_MAX_QI` 0.6→0.85 前 grep 确认无下游依赖；④ `inject_zone_for_pseudo_vein` 70% 凭空创生（本 plan P3 顺修；**若最终只选灵眼不选灵潮，此既有缺陷需单列 P 修，勿搁置**）。
 
 ## 落地证据链
