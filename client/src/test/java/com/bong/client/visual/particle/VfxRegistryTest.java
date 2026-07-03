@@ -355,6 +355,13 @@ public class VfxRegistryTest {
             "bootstrap should register combat_hit");
         assertTrue(VfxRegistry.instance().contains(CombatHitDirectionPlayer.PARRY),
             "bootstrap should register combat_parry");
+        // plan-combat-hit-location-v1 P3 — 部位差异视听反馈：四肢/头部命中各自独立 event_id。
+        assertTrue(VfxRegistry.instance().contains(CombatHitDirectionPlayer.LIMB),
+            "bootstrap should register combat_hit_limb");
+        assertTrue(VfxRegistry.instance().contains(CombatHitDirectionPlayer.HEAD_CRIT),
+            "bootstrap should register combat_hit_head_crit");
+        assertTrue(VfxRegistry.instance().contains(LegWoundBloodDecalPlayer.EVENT_ID),
+            "bootstrap should register combat_leg_wound_decal");
         assertTrue(VfxRegistry.instance().contains(ForgeHammerStrikePlayer.HAMMER),
             "bootstrap should register forge_hammer_strike");
         assertTrue(VfxRegistry.instance().contains(ForgeHammerStrikePlayer.INSCRIPTION),

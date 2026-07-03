@@ -192,6 +192,14 @@ public final class VfxBootstrap {
         registry.register(BreakthroughFailPlayer.EVENT_ID,       new BreakthroughFailPlayer());
         registry.register(CombatHitDirectionPlayer.HIT,          new CombatHitDirectionPlayer(false));
         registry.register(CombatHitDirectionPlayer.PARRY,        new CombatHitDirectionPlayer(true));
+        // plan-combat-hit-location-v1 P3 — 部位差异视听反馈：四肢命中复用 HIT 分支
+        // （血色三线，颜色/lifetime 由 server payload 差异化），头部命中走专属暴击星形 burst。
+        registry.register(CombatHitDirectionPlayer.LIMB,
+            new CombatHitDirectionPlayer(false));
+        registry.register(CombatHitDirectionPlayer.HEAD_CRIT,
+            new CombatHitDirectionPlayer(CombatHitDirectionPlayer.Kind.HEAD_CRIT));
+        // 腿伤减速触发时目标脚下血渍 decal（复用 lingqi_ripple 环形贴图，无新资产）。
+        registry.register(LegWoundBloodDecalPlayer.EVENT_ID, new LegWoundBloodDecalPlayer());
         registry.register(ForgeHammerStrikePlayer.HAMMER,
             new ForgeHammerStrikePlayer(ForgeHammerStrikePlayer.Kind.HAMMER));
         registry.register(ForgeHammerStrikePlayer.INSCRIPTION,
