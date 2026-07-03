@@ -17,7 +17,7 @@
 
 玩家在主世界见不到任何**周期性 ambient**威胁刷新，根因是"有威胁触发链路但全挂特殊事件，唯独没有常驻调度器"：
 
-1. **没有 ambient 敌对 spawner**：历史 zombie 定时刷新器已删未补（`server/src/npc/spawn/mod.rs:192` 注释 "PostStartup zombie spawn 已移除"）。现存威胁 spawn 全挂特殊触发：兽潮要求邻 zone `spirit_qi < 0.15` 且先有灵脉/秘境塌缩事件（`world/heartbeat.rs:733`, `BEAST_TIDE_LOW_QI_THRESHOLD=0.15`）；植物招怪要玩家亲手采 `AttractsMobs` 植物（`botany/hazard.rs:228`）；tsy_hostile 全套敌对（道伥/执念/畸变体/skull_fiend/守灵）**只有 `/tsy_spawn` dev 命令入口**（`npc/tsy_hostile.rs:561`）；黑武士限 `giant_sword_sea`。
+1. **没有 ambient 敌对 spawner**：历史 zombie 定时刷新器已删未补（`server/src/npc/spawn/mod.rs:192` 注释 "PostStartup zombie spawn 已移除"）。现存威胁 spawn 全挂特殊触发：兽潮实为两条入口——**主入口** `maybe_queue_beast_tide`（`world/heartbeat.rs:661` 无条件调用 / `:1350-1439` 定义）按 zone `spirit_qi < 0.15` 持续累计满 `BEAST_TIDE_LOW_QI_REQUIRED_TICKS`（5 分钟，`low_qi_ticks_by_zone` 计时）**独立触发，不依赖任何灵脉/秘境塌缩事件先决**（`BEAST_TIDE_LOW_QI_THRESHOLD=0.15`，常数定义于 `heartbeat.rs:55-56`）；**次入口**挂 `PseudoVeinDissipated` 邻域扩散分支（`heartbeat.rs:716-750`，阈值判定在 `:733`），塌缩/秘境事件是这条次入口的触发源而非主入口的前置条件；植物招怪要玩家亲手采 `AttractsMobs` 植物（`botany/hazard.rs:228`）；tsy_hostile 全套敌对（道伥/执念/畸变体/skull_fiend/守灵）**只有 `/tsy_spawn` dev 命令入口**（`npc/tsy_hostile.rs:561`）；黑武士限 `giant_sword_sea`。
 2. **`danger_level` 不是死字段，但无刷怪系统读它**——措辞修正（Explore 核验，R1）：zones.json 28 个 zone 全标了 danger 1~7（spawn=1，north_waste_east_scorch=7），**已有 4 处真实读取消费**：
    - `world/heartbeat.rs:938` 深区采集判定（`zone.danger_level >= DEEP_GATHERING_DANGER_LEVEL`(=3)）
    - `world/heartbeat.rs:944` 归途安全路线判定（`zone.danger_level <= RETURN_ROUTE_DANGER_LEVEL_MAX`(=1)）
@@ -25,7 +25,7 @@
    - `server/src/movement/mod.rs:851` 死域口径：`zone.danger_level >= 5 && zone.spirit_qi <= 0.1` → `MovementZoneKind::Dead`
 
    写入侧：`command_executor.rs:1109`（era 政令改写）/ `world/events.rs:2810`（realm collapse 写 `COLLAPSED_ZONE_DANGER_LEVEL=5`）/ `world/events.rs:1306`（`.max(4)`）。本 plan 要接的缺口精确说是——**没有刷怪系统读它**，字段本身活跃于导航/安全判定语义。P3"负灵域威胁加成"必须直接对齐 `movement/mod.rs:851` 已有死域口径，不造第二套"死域"定义（§8.1 #4）。
-3. **rat 对玩家中立**：thinker 只有 qi 源追踪/避枯竭/群聚/游荡（`npc/spawn_rat.rs:52-61`），无对玩家的攻击 Scorer；仅兽潮态咬打坐修士（`LOCUST_CULTIVATOR_BITE_RADIUS=6.0`, `LOCUST_BITE_QI_STEAL=1`, `world/events.rs`）。P2 守恒路径已现成（`combat/rat_bite.rs:25-73` `RatBiteEvent` + `apply_rat_bite_qi_drain`），零风险，见 §8.1 P2 附注。
+3. **rat 的 `SeekQiSourceAction` 现已对玩家生效**：`rat_npc_thinker`（`npc/spawn_rat.rs:52-61`）无条件挂 `QiSourceProximityScorer → SeekQiSourceAction`（不受兽潮态门控），其目标查询 `QiSourceTargetQuery`（`npc/brain_rat.rs:37-48`）过滤器实为 `Without<NpcMarker>`（不是 `With`），命中所有持有 `Cultivation` 的非-NPC 实体（即玩家修士）——近距即 emit `RatBiteEvent`（`seek_qi_source_action_system`，`brain_rat.rs:212-255`），单测 `seek_qi_source_action_triggers_rat_bite_at_close_range`（`brain_rat.rs:432-474`）已实证会命中该类目标并触发咬击；此外兽潮态另有独立的打坐修士咬击（`LOCUST_CULTIVATOR_BITE_RADIUS=6.0`, `LOCUST_BITE_QI_STEAL=1`, `world/events.rs`）。P2 守恒路径已现成（`combat/rat_bite.rs:25-73` `RatBiteEvent` + `apply_rat_bite_qi_drain`），零风险，见 P2 段落。
 
 **交叉预警**：`plan-zone-qi-economy-v1`（active，落地序先于本 plan P3，见 §8.1 #5）P1 会把 spawn 稳在 equilibrium 0.35——qi 经济落地后，现存唯一自然威胁入口（兽潮 qi<0.15）被彻底焊死。威胁刷新必须改以 danger_level 为主驱动，这正是本 plan 的立项动因之一。
 
@@ -69,9 +69,9 @@
 
 ## P2 rat 袭扰行为 + 视听 ⬜
 
-给 ambient 档 rat 加"低威胁骚扰"：新增 `PlayerHarassScorer`（玩家 ≤ 8 格且冷却就绪时起评）→ `HarassBiteAction`（冲近咬一口 → emit `RatBiteEvent{rat, target: player, qi_steal: 1}` → 立即进逃逸/游荡冷却 20s）。不伤血、不锁定追杀——是"烦人的末法鼠患"不是战斗怪；打坐时被咬会打断凝神（对齐兽潮咬击既有语义）。
+rat 现有的 `SeekQiSourceAction`（`brain_rat.rs:37-48` `QiSourceTargetQuery` 的 `Without<NpcMarker>` 过滤器）已会主动索敌玩家并咬击——P2 的目标不是"填补对玩家的中立空白"，而是**复用/收编既有 `SeekQiSourceAction` 分支或与之互斥编排**表达"低威胁骚扰"：新增 `PlayerHarassScorer`（玩家 ≤ 8 格且冷却就绪时起评）→ `HarassBiteAction`（冲近咬一口 → emit `RatBiteEvent{rat, target: player, qi_steal: 1}` → 立即进逃逸/游荡冷却 20s）。`rat_npc_thinker` 用 `FirstToScore` picker（`spawn_rat.rs:53-56`），`PlayerHarassScorer` 与既有 `QiSourceProximityScorer` **必须互斥编排**（明确谁在 picker 序列中排前、避免同一目标被两条分支各自 emit `RatBiteEvent` 造成双倍咬击/冲突），不能简单并列两个都可能命中玩家的 Scorer。不伤血、不锁定追杀——是"烦人的末法鼠患"不是战斗怪；打坐时被咬会打断凝神（对齐兽潮咬击既有语义）。
 
-**守恒路径零风险**（§8.1 P2 附注，Explore 核验确认现成）：`combat/rat_bite.rs:25-73` 的 `apply_rat_bite_qi_drain` 已是完整 `QiTransfer`（`from: player`, `to: npc:rat`, `reason: RatBiteDrain`）实现；rat 平时对玩家中立是因为 `brain_rat.rs` 的 `QiSourceTargetQuery` 带 `With<NpcMarker>` 只吸 NPC 修士——`PlayerHarassScorer` 只需 emit 已有的 `RatBiteEvent{target: player}`，全链复用，**不新写扣减公式**。
+**守恒路径零风险**（Explore 核验确认现成）：`combat/rat_bite.rs:25-73` 的 `apply_rat_bite_qi_drain` 已是完整 `QiTransfer`（`from: player`, `to: npc:rat`, `reason: RatBiteDrain`）实现；`brain_rat.rs` 的 `QiSourceTargetQuery` 过滤器实为 `Without<NpcMarker>`（`brain_rat.rs:37-48`），rat 现在已会主动索敌玩家并 emit `RatBiteEvent`（`seek_qi_source_action_system`，`brain_rat.rs:212-255`）——`PlayerHarassScorer`/`HarassBiteAction` 不是从零建攻击链，而是复用已有 `RatBiteEvent{target: player}` 发射路径，**不新写扣减公式**；实施时需按上段与既有 `SeekQiSourceAction` 分支互斥编排，避免同 `FirstToScore` picker 下双 Scorer 冲突同时命中同一玩家目标。
 
 **视听（全复用既有原语，无新增资产）**：
 - 粒子：咬中瞬间复用既有 qi 抽取类 VfxPlayer 事件（兽潮咬击现有表现；若无则 `BongSpriteParticle` 复用既有灰白 sprite，burst 4 粒、lifetime 8 tick、色 `#9B9B8C`、自咬点向上飘 0.03 b/t），经 `VfxBootstrap.registerDefaults()` 注册核对，漏注册=静默孤岛。
@@ -82,7 +82,7 @@
 
 ## P3 生态联动 ⬜
 
-- **兽潮门槛改造**：`BEAST_TIDE_LOW_QI_THRESHOLD`（`heartbeat.rs:733` 附近，值 0.15）判定改双因子（qi 骤降速率或塌缩事件）× danger 加权——阈值常数保留在 `heartbeat.rs` 不动，新增的 danger 权重因子放在 ambient 模块内独立计算后与既有判定组合。**落地顺序**：`plan-zone-qi-economy-v1` P1（equilibrium=0.35）先行落地，再启动本 P3——equilibrium(0.35) > 阈值(0.15) 意味着经济落地后单靠 qi 阈值兽潮入口被焊死，需先确认 zone-qi 落地后的真实 equilibrium 数值再收口双因子加权系数（跨 plan 依赖，非"带着开放问题进 P0"——公式结构已锁定，仅加权系数留给依赖 plan 落地后填，且 P3 非 P0 范围，§8.1 #5）。
+- **兽潮门槛改造**：`BEAST_TIDE_LOW_QI_THRESHOLD`（`heartbeat.rs:55-56`，值 0.15）驱动两条既有入口——主入口 `maybe_queue_beast_tide`（`heartbeat.rs:661` 调用 / `:1350-1439` 定义，按 `low_qi_ticks_by_zone` 累计满 `BEAST_TIDE_LOW_QI_REQUIRED_TICKS` 独立触发，不依赖塌缩事件）、次入口挂 `PseudoVeinDissipated` 邻域扩散分支（`heartbeat.rs:716-750`，阈值判定在 `:733`）。改双因子（qi 持续低位时长或塌缩/扩散事件）× danger 加权——阈值常数保留在 `heartbeat.rs` 不动，新增的 danger 权重因子放在 ambient 模块内独立计算后分别与两条入口的既有判定组合。**落地顺序**：`plan-zone-qi-economy-v1` P1（equilibrium=0.35）先行落地，再启动本 P3——equilibrium(0.35) > 阈值(0.15) 意味着经济落地后单靠 qi 阈值兽潮入口被焊死，需先确认 zone-qi 落地后的真实 equilibrium 数值再收口双因子加权系数（跨 plan 依赖，非"带着开放问题进 P0"——公式结构已锁定，仅加权系数留给依赖 plan 落地后填，且 P3 非 P0 范围，§8.1 #5）。
 - **负灵域/死域加成**：直接对齐 `movement/mod.rs:851` 已编码的死域判定口径——`zone.danger_level >= 5 && zone.spirit_qi <= 0.1`（或 `REALM_COLLAPSE` 活跃事件）→ 判定为死域，威胁预算在此类 zone 乘区放大。**不新造第二套"死域"定义**；正典依据 worldview §一:22（"死域连野兽都活不了"）+ §七:759（负灵域野兽材质枯萎化飞灰），不新开 worldview 条目（§8.1 #4）。
 - **horde 衔接**：ambient 刷出的常驻 beast 使 `beast_horde_detect_system`（`fauna/migration.rs:388`）的 `beast_count==0` 短路自然消失，迁徙系统开始有料可迁——**只声明衔接，不吞 `plan-beast-horde-v1` P2 领地争夺 scope**。
 - **测试**：双因子门槛矩阵（qi 骤降速率单独触发 / collapse 事件单独触发 / 两者都不满足三态）；负灵域乘区对齐 `movement_zone_kind` 断言；ambient 存量触发迁徙的集成 case。
@@ -143,11 +143,11 @@
 ### #5 兽潮双因子公式（与 zone-qi-economy 联动，需同期收口）
 
 **决议**：
-1. 双因子 = (qi 骤降速率 **或** collapse 事件) × danger 加权。`BEAST_TIDE_LOW_QI_THRESHOLD = 0.15`（`heartbeat.rs:733` 附近判定，常数定义于 heartbeat 模块）**保留原位不动**，新增的 danger 权重因子放在 ambient 模块内独立计算，通过读取 `Zone.danger_level` 与既有 qi 阈值判定组合，不直接改写 heartbeat 内的常量定义。
+1. 双因子 = (zone 持续低灵气时长 **或** 邻域塌缩扩散事件) × danger 加权。`BEAST_TIDE_LOW_QI_THRESHOLD = 0.15`（定义于 `heartbeat.rs:55-56`）驱动两条既有入口——**主入口** `maybe_queue_beast_tide`（`heartbeat.rs:661` 无条件调用 / `:1350-1439` 定义）按 `low_qi_ticks_by_zone` 累计满 `BEAST_TIDE_LOW_QI_REQUIRED_TICKS`（5 分钟）独立触发，**不依赖任何塌缩事件先决**；**次入口**挂 `PseudoVeinDissipated` 邻域扩散分支（`heartbeat.rs:716-750`，阈值判定在 `:733`）。两条入口的阈值常数**保留原位不动**，新增的 danger 权重因子放在 ambient 模块内独立计算，通过读取 `Zone.danger_level` 分别与两条入口的既有判定组合，不直接改写 heartbeat 内的常量定义或两条入口各自的触发条件。
 2. 落地顺序：`plan-zone-qi-economy-v1` P1（把 spawn 稳在 equilibrium=0.35）**先行落地**，再启动本 plan P3——equilibrium(0.35) > 阈值(0.15) 意味着经济落地后单靠 qi 阈值兽潮入口被焊死（这正是本 plan 立项动因之一，见背景诊断），需先确认 zone-qi 落地后的真实 equilibrium 数值，再收口双因子加权系数的具体数值。P3 测试用"双因子门槛矩阵"覆盖 qi 骤降速率单独触发 / collapse 事件单独触发 / 两者都不满足三态。
 3. 这不是"带着开放问题进 P0"——公式**结构**已在此锁定（双因子 OR 逻辑 + danger 加权、常数归属 heartbeat 不动），只有加权**系数数值**留给 zone-qi-economy 落地后按真实 equilibrium 回填，且 P3 属生态联动阶段非 P0 范围，不阻塞本 plan P0 决策门。
 
-**落点**：`server/src/world/heartbeat.rs:733-756`（`BEAST_TIDE_LOW_QI_THRESHOLD` 现况判定逻辑）+ `docs/plan-zone-qi-economy-v1.md` §P1（equilibrium 落地依据，跨 plan 依赖锚点）+ plan §P3「兽潮门槛改造」段 / §8.1 #5
+**落点**：`server/src/world/heartbeat.rs:661`（`maybe_queue_beast_tide` 主入口调用点）+ `:1350-1439`（`maybe_queue_beast_tide` 定义 + `low_qi_ticks_by_zone` 累计逻辑，主入口不依赖塌缩事件）+ `:716-750`（`PseudoVeinDissipated` 邻域扩散次入口，阈值判定在 `:733`）+ `:55-56`（`BEAST_TIDE_LOW_QI_THRESHOLD`/`BEAST_TIDE_LOW_QI_REQUIRED_TICKS` 常数定义）+ `docs/plan-zone-qi-economy-v1.md` §P1（equilibrium 落地依据，跨 plan 依赖锚点）+ plan §P3「兽潮门槛改造」段 / §8.1 #5
 
 ### #6 昼夜/天气权重
 
