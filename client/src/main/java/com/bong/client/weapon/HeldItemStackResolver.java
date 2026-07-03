@@ -11,13 +11,16 @@ import com.bong.client.inventory.model.EquipSlotType;
 import com.bong.client.inventory.model.InventoryItem;
 import com.bong.client.inventory.state.InventoryStateStore;
 import com.bong.client.lingtian.HoeVanillaIconMap;
+import com.bong.client.scroll.ScrollVanillaIconMap;
 
 import net.minecraft.item.ItemStack;
 
 import java.util.Optional;
 
 /**
- * F8：手持物品 fallback 解析——{@code weapon → shield(仅 off_hand) → block → hoe}。
+ * F8：手持物品 fallback 解析——{@code weapon → shield(仅 off_hand) → block → hoe → scroll}。
+ * 主手第五级 {@code scroll}（plan-scroll-reading-v1 P2）追加于 hoe 之后，白嫖
+ * vanilla paper，逻辑同 hoe：装备槽 template_id 命中已知可阅读残卷即合成 fake stack。
  *
  * <p>此前 {@code MixinHeldItemRenderer}（FPV，hook {@code HeldItemRenderer.updateHeldItems}）
  * 与 {@code MixinPlayerEntityHeldItem}（TPV，hook {@code LivingEntity.getMainHandStack}/
@@ -60,7 +63,12 @@ public final class HeldItemStackResolver {
             return blockStack;
         }
 
-        return selectedHoeStack();
+        Optional<ItemStack> hoeStack = selectedHoeStack();
+        if (hoeStack.isPresent()) {
+            return hoeStack;
+        }
+
+        return selectedScrollStack();
     }
 
     /**
@@ -107,5 +115,17 @@ public final class HeldItemStackResolver {
             return Optional.empty();
         }
         return Optional.ofNullable(HoeVanillaIconMap.createStackFor(main.itemId()));
+    }
+
+    /**
+     * plan-scroll-reading-v1 P2 — 主手第五级 fallback：已装备的可阅读残卷（白嫖 paper）。
+     * 逻辑与 {@link #selectedHoeStack()} 同构，只是查 {@link ScrollVanillaIconMap}。
+     */
+    private static Optional<ItemStack> selectedScrollStack() {
+        InventoryItem main = InventoryStateStore.snapshot().equipped().get(EquipSlotType.MAIN_HAND);
+        if (main == null || main.isEmpty() || !ScrollVanillaIconMap.isReadableScroll(main.itemId())) {
+            return Optional.empty();
+        }
+        return Optional.ofNullable(ScrollVanillaIconMap.createStackFor(main.itemId()));
     }
 }
