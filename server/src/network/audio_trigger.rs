@@ -631,14 +631,19 @@ pub fn emit_woliu_v1_vortex_audio_triggers(
     *active_fields = seen;
 
     for event in backfires.read() {
-        let Ok(position) = positions.get(event.caster) else {
+        // caster 断 Position（断线瞬间）时兜底到领域中心——反噬是重要负反馈，不能静默丢。
+        let Ok(origin) = positions
+            .get(event.caster)
+            .map(|p| p.get())
+            .or_else(|_| fields.get(event.caster).map(|(_, field)| field.center))
+        else {
             continue;
         };
         emit_play(
             &mut audio,
             "woliu_burst_pop",
             event.caster,
-            position.get(),
+            origin,
             Some("woliu.vortex.backfire".to_string()),
             1.0,
             -0.2,
@@ -2390,10 +2395,59 @@ mod tests {
         });
         app.update();
         let emitted = drain_audio(&mut app);
-        assert_eq!(emitted.len(), 1);
+        assert_eq!(
+            emitted.len(),
+            1,
+            "反噬应发 1 条爆裂声，实际 {} 条",
+            emitted.len()
+        );
         assert_eq!(
             emitted[0].recipe_id, "woliu_burst_pop",
             "反噬应发爆裂声 recipe，实际 {}",
+            emitted[0].recipe_id
+        );
+    }
+
+    /// 反噬 caster 断 Position 但领域仍在 → 回落 field.center 仍发声（重要负反馈不静默丢）。
+    #[test]
+    fn woliu_v1_backfire_falls_back_to_field_center_when_caster_positionless() {
+        use crate::combat::woliu::{BackfireCause, VortexBackfireEvent, VortexField};
+        use valence::prelude::DVec3;
+        let mut app = setup_woliu_v1_audio_app();
+        let caster = app.world_mut().spawn_empty().id();
+        app.world_mut().entity_mut(caster).insert(VortexField {
+            center: DVec3::new(4.0, 64.0, -2.0),
+            radius: 8.0,
+            delta: 4.0,
+            cast_at_tick: 100,
+            maintain_max_ticks: 1200,
+            caster,
+            env_qi_at_cast: 50.0,
+            last_maintain_tick: 100,
+        });
+        app.update();
+        drain_audio(&mut app); // 吃掉开涡音效
+
+        app.world_mut().send_event(VortexBackfireEvent {
+            caster,
+            cause: BackfireCause::ExceedMaintainMax,
+            meridian_severed: crate::cultivation::components::MeridianId::Lung,
+            tick: 120,
+            env_qi: 10.0,
+            delta: 4.0,
+            resisted: false,
+        });
+        app.update();
+        let emitted = drain_audio(&mut app);
+        assert_eq!(
+            emitted.len(),
+            1,
+            "caster 无 Position 但领域仍在时，反噬音效应回落 field.center 发出，实际 {} 条",
+            emitted.len()
+        );
+        assert_eq!(
+            emitted[0].recipe_id, "woliu_burst_pop",
+            "回落路径也必须是爆裂声 recipe，实际 {}",
             emitted[0].recipe_id
         );
     }

@@ -66,16 +66,90 @@ public class WoliuV1VortexVfxBootstrapTest {
         );
     }
 
+    /** 三态 effectSpec 对 count/durationTicks 的裁剪边界：越界输入必须收敛到 [min, max]。 */
+    @Test
+    void effectSpecClampsCountAndDurationBoundaries() {
+        // 开涡：count ∈ [12, 56]，duration ∈ [15, 70]
+        assertClampedSpec(VortexSpiralPlayer.WOLIU_V1_FIELD_OPEN, 12, 56, 15, 70);
+        // 存续：count ∈ [6, 32]，duration ∈ [12, 60]
+        assertClampedSpec(VortexSpiralPlayer.WOLIU_V1_FIELD_AMBIENT, 6, 32, 12, 60);
+        // 反噬：count ∈ [16, 64]，duration ∈ [10, 44]
+        assertClampedSpec(VortexSpiralPlayer.WOLIU_V1_BACKFIRE, 16, 64, 10, 44);
+    }
+
+    /** strength 走 clamp01：负值收敛到 0、超 1 收敛到 1（三态同口径）。 */
+    @Test
+    void effectSpecClampsStrengthToUnitInterval() {
+        for (net.minecraft.util.Identifier eventId : java.util.List.of(
+            VortexSpiralPlayer.WOLIU_V1_FIELD_OPEN,
+            VortexSpiralPlayer.WOLIU_V1_FIELD_AMBIENT,
+            VortexSpiralPlayer.WOLIU_V1_BACKFIRE
+        )) {
+            assertEquals(
+                1.0,
+                specFor(eventId, java.util.OptionalInt.empty(), java.util.OptionalInt.empty(),
+                    java.util.Optional.of(9.0)).strength(),
+                1e-9,
+                eventId + " strength=9.0 应被 clamp01 收敛到 1.0"
+            );
+            assertEquals(
+                0.0,
+                specFor(eventId, java.util.OptionalInt.empty(), java.util.OptionalInt.empty(),
+                    java.util.Optional.of(-3.0)).strength(),
+                1e-9,
+                eventId + " strength=-3.0 应被 clamp01 收敛到 0.0"
+            );
+        }
+    }
+
+    private static void assertClampedSpec(
+        net.minecraft.util.Identifier eventId,
+        int countMin, int countMax, int durationMin, int durationMax
+    ) {
+        // 下界外（min-1）→ 收敛到 min；上界外（max+1 与远超值）→ 收敛到 max；界内原样透传。
+        VortexSpiralPlayer.EffectSpec below = specFor(eventId,
+            java.util.OptionalInt.of(countMin - 1), java.util.OptionalInt.of(durationMin - 1),
+            java.util.Optional.empty());
+        assertEquals(countMin, below.count(),
+            eventId + " count=" + (countMin - 1) + "（下界外 1）应收敛到 " + countMin);
+        assertEquals(durationMin, below.maxAge(),
+            eventId + " duration=" + (durationMin - 1) + "（下界外 1）应收敛到 " + durationMin);
+
+        VortexSpiralPlayer.EffectSpec above = specFor(eventId,
+            java.util.OptionalInt.of(countMax + 1), java.util.OptionalInt.of(durationMax + 1),
+            java.util.Optional.empty());
+        assertEquals(countMax, above.count(),
+            eventId + " count=" + (countMax + 1) + "（上界外 1）应收敛到 " + countMax);
+        assertEquals(durationMax, above.maxAge(),
+            eventId + " duration=" + (durationMax + 1) + "（上界外 1）应收敛到 " + durationMax);
+
+        VortexSpiralPlayer.EffectSpec inside = specFor(eventId,
+            java.util.OptionalInt.of(countMin), java.util.OptionalInt.of(durationMax),
+            java.util.Optional.empty());
+        assertEquals(countMin, inside.count(), eventId + " 界内 count 应原样透传");
+        assertEquals(durationMax, inside.maxAge(), eventId + " 界内 duration 应原样透传");
+    }
+
     private static VortexSpiralPlayer.EffectSpec specFor(net.minecraft.util.Identifier eventId) {
+        return specFor(eventId, java.util.OptionalInt.empty(), java.util.OptionalInt.empty(),
+            java.util.Optional.empty());
+    }
+
+    private static VortexSpiralPlayer.EffectSpec specFor(
+        net.minecraft.util.Identifier eventId,
+        java.util.OptionalInt count,
+        java.util.OptionalInt durationTicks,
+        java.util.Optional<Double> strength
+    ) {
         return VortexSpiralPlayer.effectSpec(
             new com.bong.client.network.VfxEventPayload.SpawnParticle(
                 eventId,
                 new double[] {0.0, 64.0, 0.0},
                 java.util.Optional.empty(),
                 java.util.OptionalInt.empty(),
-                java.util.Optional.empty(),
-                java.util.OptionalInt.empty(),
-                java.util.OptionalInt.empty()
+                strength,
+                count,
+                durationTicks
             )
         );
     }

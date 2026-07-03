@@ -1137,14 +1137,19 @@ pub fn emit_woliu_v1_vortex_visual_triggers(
     *active_fields = seen;
 
     // 反噬（久持断肺经 / 环境灵气枯竭）：断经暗红爆裂于施法者。
+    // caster 断 Position（断线瞬间）时兜底到领域中心——与 audio 侧同口径，重要负反馈不静默丢。
     for event in backfires.read() {
-        let Ok(position) = positions.get(event.caster) else {
+        let Ok(origin) = positions
+            .get(event.caster)
+            .map(|p| p.get())
+            .or_else(|_| fields.get(event.caster).map(|(_, field)| field.center))
+        else {
             continue;
         };
         emit_anqi_particle(
             &mut vfx_events,
             VFX_WOLIU_V1_BACKFIRE,
-            position.get(),
+            origin,
             None,
             "#B84A3F",
             1.3,
@@ -3241,7 +3246,12 @@ mod tests {
         });
         app.update();
         let emitted = drain_vfx(&mut app);
-        assert_eq!(emitted.len(), 1);
+        assert_eq!(
+            emitted.len(),
+            1,
+            "受害者断 Position 时粒子应回落到施法者位置（出手反馈不丢），实际 {} 条",
+            emitted.len()
+        );
         assert_spawn_particle_origin(&emitted[0], [1.0, 64.0, 2.0]);
     }
 
@@ -3264,7 +3274,12 @@ mod tests {
         });
         app.update();
         let emitted = drain_vfx(&mut app);
-        assert_eq!(emitted.len(), 1);
+        assert_eq!(
+            emitted.len(),
+            1,
+            "自蕴应只发 1 条雾粒子（anim/audio 在 skills.rs 内联），实际 {} 条",
+            emitted.len()
+        );
         assert_spawn_particle(&emitted[0], "bong:dugu_dark_green_mist", Some(14));
         assert_spawn_particle_origin(&emitted[0], [3.0, 64.0, 3.0]);
     }
@@ -3291,7 +3306,12 @@ mod tests {
             });
             app.update();
             let emitted = drain_vfx(&mut app);
-            assert_eq!(emitted.len(), 1);
+            assert_eq!(
+                emitted.len(),
+                1,
+                "侵染（affected={affected}）应只发 1 条毒渍粒子，实际 {} 条",
+                emitted.len()
+            );
             assert_spawn_particle(&emitted[0], "bong:dugu_taint_pulse", Some(expected_count));
         }
     }
@@ -3311,7 +3331,12 @@ mod tests {
         });
         app.update();
         let emitted = drain_vfx(&mut app);
-        assert_eq!(emitted.len(), 1);
+        assert_eq!(
+            emitted.len(),
+            1,
+            "神识遮蔽应只发 1 条雾罩粒子，实际 {} 条",
+            emitted.len()
+        );
         assert_spawn_particle(&emitted[0], "bong:dugu_dark_green_mist", Some(28));
         match &emitted[0].payload {
             VfxEventPayloadV1::SpawnParticle { strength, .. } => {
@@ -3484,9 +3509,158 @@ mod tests {
         });
         app.update();
         let emitted = drain_vfx(&mut app);
-        assert_eq!(emitted.len(), 1);
+        assert_eq!(
+            emitted.len(),
+            1,
+            "反噬应发 1 条爆裂粒子（断经负反馈），实际 {} 条",
+            emitted.len()
+        );
         assert_spawn_particle(&emitted[0], VFX_WOLIU_V1_BACKFIRE, Some(30));
         assert_spawn_particle_color(&emitted[0], "#B84A3F");
         assert_spawn_particle_origin(&emitted[0], [6.0, 64.0, 6.0]);
+    }
+
+    /// 自蕴施法者断 Position → 静默 skip（无位置可放雾，无回落来源）。
+    #[test]
+    fn dugu_v2_self_cure_skips_when_caster_positionless() {
+        use crate::combat::dugu_v2::events::DuguSkillId;
+        let mut app = setup_dugu_v2_visual_app();
+        let caster = app.world_mut().spawn_empty().id();
+        app.world_mut().send_event(SelfCureProgressEvent {
+            caster,
+            hours_used: 2.5,
+            daily_hours_after: 2.5,
+            gain_percent: 10.0,
+            insidious_color_percent: 5.0,
+            morphology_percent: 1.0,
+            self_revealed: false,
+            tick: 9,
+            visual: dugu_v2_visual(DuguSkillId::SelfCure),
+        });
+        app.update();
+        assert!(
+            drain_vfx(&mut app).is_empty(),
+            "自蕴施法者无 Position 应静默 skip，不得以默认坐标发粒子"
+        );
+    }
+
+    /// 神识遮蔽施法者断 Position → 静默 skip。
+    #[test]
+    fn dugu_v2_shroud_skips_when_caster_positionless() {
+        use crate::combat::dugu_v2::events::DuguSkillId;
+        let mut app = setup_dugu_v2_visual_app();
+        let caster = app.world_mut().spawn_empty().id();
+        app.world_mut().send_event(ShroudActivatedEvent {
+            caster,
+            strength: 1.0,
+            expires_at_tick: 600,
+            tick: 11,
+            visual: dugu_v2_visual(DuguSkillId::Shroud),
+        });
+        app.update();
+        assert!(
+            drain_vfx(&mut app).is_empty(),
+            "遮蔽施法者无 Position 应静默 skip，不得以默认坐标发粒子"
+        );
+    }
+
+    /// 侵染 target 与 caster 双双断 Position → 静默 skip（回落链穷尽）。
+    #[test]
+    fn dugu_v2_penetrate_skips_when_both_positionless() {
+        use crate::combat::dugu_v2::events::{DuguSkillId, TaintTier};
+        let mut app = setup_dugu_v2_visual_app();
+        let caster = app.world_mut().spawn_empty().id();
+        let target = app.world_mut().spawn_empty().id();
+        app.world_mut().send_event(PenetrateChainEvent {
+            caster,
+            target,
+            taint_tier: TaintTier::Temporary,
+            multiplier: 1.5,
+            affected_targets: 2,
+            permanent_decay_rate_per_min: 0.0,
+            reveal_probability: 0.2,
+            returned_zone_qi: 5.0,
+            tick: 10,
+            visual: dugu_v2_visual(DuguSkillId::Penetrate),
+        });
+        app.update();
+        assert!(
+            drain_vfx(&mut app).is_empty(),
+            "侵染 target 与 caster 均无 Position 时应静默 skip（回落链穷尽）"
+        );
+    }
+
+    /// 反噬 caster 断 Position 但领域仍在 → 回落到 field.center（重要负反馈不静默丢）。
+    #[test]
+    fn woliu_v1_backfire_falls_back_to_field_center_when_caster_positionless() {
+        use crate::combat::woliu::BackfireCause;
+        use crate::cultivation::components::MeridianId;
+        let mut app = setup_woliu_v1_visual_app(200);
+        let caster = app.world_mut().spawn_empty().id();
+        spawn_v1_field(&mut app, caster, 200);
+        app.update();
+        drain_vfx(&mut app); // 吃掉开涡（无 player 组件时动画 skip、粒子仍发）
+
+        app.world_mut().send_event(VortexBackfireEvent {
+            caster,
+            cause: BackfireCause::ExceedMaintainMax,
+            meridian_severed: MeridianId::Lung,
+            tick: 201,
+            env_qi: 10.0,
+            delta: 4.0,
+            resisted: false,
+        });
+        app.world_mut().resource_mut::<CombatClock>().tick = 201;
+        app.update();
+        let emitted = drain_vfx(&mut app);
+        assert_eq!(
+            emitted.len(),
+            1,
+            "caster 无 Position 但领域仍在时，反噬粒子应回落 field.center，实际 {} 条",
+            emitted.len()
+        );
+        assert_spawn_particle(&emitted[0], VFX_WOLIU_V1_BACKFIRE, Some(30));
+        assert_spawn_particle_origin(&emitted[0], [0.0, 64.0, 0.0]);
+    }
+
+    /// 反噬 caster 无 Position 且领域已散 → 回落链穷尽，静默 skip。
+    #[test]
+    fn woliu_v1_backfire_skips_when_positionless_and_no_field() {
+        use crate::combat::woliu::BackfireCause;
+        use crate::cultivation::components::MeridianId;
+        let mut app = setup_woliu_v1_visual_app(200);
+        let caster = app.world_mut().spawn_empty().id();
+        app.world_mut().send_event(VortexBackfireEvent {
+            caster,
+            cause: BackfireCause::EnvQiTooLow,
+            meridian_severed: MeridianId::Lung,
+            tick: 200,
+            env_qi: 1.0,
+            delta: 4.0,
+            resisted: false,
+        });
+        app.update();
+        assert!(
+            drain_vfx(&mut app).is_empty(),
+            "caster 无 Position 且无领域可回落时应静默 skip"
+        );
+    }
+
+    /// server 侧三个 v1 event_id 字面值锁死——与 client VortexSpiralPlayer.WOLIU_V1_* 逐字对齐
+    ///（对照 dugu_v2_all_skill_particle_ids_are_client_registered 的同款防线）。
+    #[test]
+    fn woliu_v1_particle_ids_match_client_registration() {
+        assert_eq!(
+            VFX_WOLIU_V1_FIELD_OPEN, "bong:woliu_vortex_field",
+            "开涡 event_id 必须与 client VortexSpiralPlayer.WOLIU_V1_FIELD_OPEN 逐字一致，否则粒子静默丢弃"
+        );
+        assert_eq!(
+            VFX_WOLIU_V1_FIELD_AMBIENT, "bong:woliu_vortex_field_ambient",
+            "存续 event_id 必须与 client VortexSpiralPlayer.WOLIU_V1_FIELD_AMBIENT 逐字一致"
+        );
+        assert_eq!(
+            VFX_WOLIU_V1_BACKFIRE, "bong:woliu_vortex_backfire",
+            "反噬 event_id 必须与 client VortexSpiralPlayer.WOLIU_V1_BACKFIRE 逐字一致"
+        );
     }
 }
