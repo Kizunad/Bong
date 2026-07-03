@@ -749,6 +749,69 @@ mod tests {
     }
 
     #[test]
+    fn production_wiring_event_loop_pre_update_answers_completions() {
+        // CR #829（第二轮 Minor）：走生产接线本体 —— cmd::register 把
+        // answer_command_completions 挂进 EventLoopPreUpdate；本测试用
+        // test_command_app（真实 register 全量命令）+ run_schedule 驱动该
+        // schedule。若有人把这条 add_systems 删掉或挂错 schedule，这里撞红。
+        use valence::prelude::Events;
+        use valence::protocol::{Bounded, Encode, Packet};
+        use valence::testing::create_mock_client;
+        use valence::EventLoopPreUpdate;
+
+        let mut app = crate::cmd::test_command_app();
+        app.add_event::<PacketEvent>();
+        app.insert_resource(test_item_registry(&[("qicao_grass", "气草")]));
+        app.insert_resource(ZoneRegistry::fallback());
+
+        let (bundle, mut helper) = create_mock_client("Alice");
+        let client = app.world_mut().spawn(bundle).id();
+
+        let request = RequestCommandCompletionsC2s {
+            transaction_id: VarInt(9),
+            text: Bounded("/give qica"),
+        };
+        let mut body = Vec::new();
+        request.encode(&mut body).expect("encode request body");
+        app.world_mut()
+            .resource_mut::<Events<PacketEvent>>()
+            .send(PacketEvent {
+                client,
+                timestamp: std::time::Instant::now(),
+                id: <RequestCommandCompletionsC2s as Packet>::ID,
+                data: body.into(),
+            });
+        app.world_mut().run_schedule(EventLoopPreUpdate);
+
+        let world = app.world_mut();
+        let mut q = world.query::<&mut Client>();
+        for mut c in q.iter_mut(world) {
+            c.flush_packets().expect("mock client flush should succeed");
+        }
+        let reply = helper
+            .collect_received()
+            .0
+            .into_iter()
+            .find_map(|frame| {
+                frame.decode::<CommandSuggestionsS2c>().ok().map(|pkt| {
+                    (
+                        pkt.id.0,
+                        pkt.matches
+                            .iter()
+                            .map(|m| m.suggested_match.to_string())
+                            .collect::<Vec<_>>(),
+                    )
+                })
+            })
+            .expect(
+                "经 cmd::register 生产接线（EventLoopPreUpdate）驱动后应收到 \
+                 CommandSuggestionsS2c —— 收不到说明调度注册被删/挂错 schedule",
+            );
+        assert_eq!(reply.0, 9, "transaction_id 应回显");
+        assert_eq!(reply.1, vec!["qicao_grass"], "应命中 qica 前缀模板");
+    }
+
+    #[test]
     fn answer_completions_end_to_end_silent_for_unrouted_text() {
         // 未路由命令（/kill self 等）不应产生任何回包 —— 静默是契约的一半。
         assert!(
