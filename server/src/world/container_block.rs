@@ -355,6 +355,10 @@ fn emit_dead_drop_ward_combat(
                 attacker: ward.owner,
                 target,
                 resolved_at_tick: now,
+                // plan-combat-hit-location-v1 P2（决议 §8.1 旁路桶 #6，保留）——死域结界
+                // 反噬是半径覆盖式判定（`in_dead_drop_ward_radius`），触发时机（结界被
+                // 破坏瞬间）没有攻击者朝向或弹道可用，与涡流 AoE 同源：Chest 只是
+                // 代表部位，不是遗漏的方向性分支。
                 body_part: BodyPart::Chest,
                 wound_kind: WoundKind::Blunt,
                 source: AttackSource::Melee,
@@ -926,6 +930,75 @@ mod tests {
             gameplay_vfx::DEAD_DROP_WARD_BREAK,
             "bong:dead_drop_ward_break",
             "server vfx event id must use the registered bong namespace"
+        );
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // plan-combat-hit-location-v1 P2（决议 §8.1 旁路桶 #6，保留）— 死域陷阱反噬 pin
+    // ══════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn dead_drop_ward_combat_hits_players_in_radius_with_chest_body_part() {
+        use valence::testing::create_mock_client;
+
+        // 死域结界反噬是半径覆盖式判定（`in_dead_drop_ward_radius`），触发时机（结界被
+        // 破坏瞬间）没有攻击者朝向或弹道可用——本 plan P2 决议保留 Chest 作代表部位
+        // （见 `emit_dead_drop_ward_combat` 内注释）。本测试证明这不是遗漏的方向性
+        // 判定，而是设计上就与朝向无关：任意在半径内的玩家都恒命中 Chest。
+        let mut app = App::new();
+        app.add_event::<CombatEvent>();
+
+        let owner = app.world_mut().spawn_empty().id();
+
+        let (mut bundle, _helper) = create_mock_client("Raider");
+        bundle.player.position = Position::new([1.0, 64.0, 1.0]);
+        let target = app
+            .world_mut()
+            .spawn(bundle)
+            .insert(CurrentDimension(DimensionKind::Overworld))
+            .id();
+
+        let ward = DeadDropWard {
+            owner,
+            ward_active: true,
+        };
+        let block_pos = [0, 64, 0];
+
+        app.add_systems(
+            Update,
+            move |players: Query<(Entity, &Position, Option<&CurrentDimension>), With<Client>>,
+                  mut combat_events: ResMut<Events<CombatEvent>>| {
+                trigger_dead_drop_ward(
+                    &ward,
+                    block_pos,
+                    DimensionKind::Overworld,
+                    100,
+                    &players,
+                    Some(&mut combat_events),
+                    None,
+                    None,
+                    None,
+                );
+            },
+        );
+
+        app.update();
+
+        let events = app.world().resource::<Events<CombatEvent>>();
+        let event = events
+            .iter_current_update_events()
+            .find(|event| event.target == target)
+            .expect("玩家在死域陷阱反噬半径内应收到恰好一条 CombatEvent");
+        assert_eq!(
+            event.attacker, owner,
+            "反噬 CombatEvent.attacker 应归因给结界所有者，实测 {:?}",
+            event.attacker
+        );
+        assert_eq!(
+            event.body_part,
+            BodyPart::Chest,
+            "死域陷阱反噬（半径覆盖式，无攻击者朝向）应恒命中 Chest（代表部位），实测 {:?}",
+            event.body_part
         );
     }
 

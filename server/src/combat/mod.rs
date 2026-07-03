@@ -1,5 +1,6 @@
 pub mod anqi_v2;
 pub mod anticheat;
+pub mod arm_wound;
 pub mod armor;
 pub mod armor_sync;
 pub mod baomai_v3;

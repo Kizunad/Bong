@@ -4,9 +4,11 @@ use valence::prelude::{
     Res, ResMut,
 };
 
-use crate::combat::components::{Lifecycle, LifecycleState, Stamina, WoundKind};
+use crate::combat::arm_wound;
+use crate::combat::components::{Lifecycle, LifecycleState, Stamina, WoundKind, Wounds};
 use crate::combat::events::{AttackIntent, AttackReach, AttackSource};
 use crate::combat::projectile::residual_qi_after_miss;
+use crate::combat::raycast;
 use crate::combat::CombatClock;
 use crate::cultivation::components::{Cultivation, QiColor, Realm};
 use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
@@ -21,7 +23,16 @@ type NeedleActorQueryItem<'a> = (
     Option<&'a Lifecycle>,
     Option<&'a Position>,
     Option<&'a QiColor>,
+    // plan-combat-hit-location-v1 P1（决议 §8.1 #2）— 发射者主手臂伤势缩放气针散布角。
+    Option<&'a Wounds>,
 );
+
+/// plan-combat-hit-location-v1 P1（决议 §8.1 #2）— 气针基线散布角标准差（度）。
+/// 气针发射方向此前无任何随机抖动（`dir_unit` 直传即用，零误差），臂伤惩罚"散布角+50%"
+/// 若无基线可乘则永远是 0×1.5=0——引入一个保守的小基线代表持针手的自然轻微颤抖，
+/// 健康臂时命中精度肉眼几乎无感知差异，臂伤（Fracture/Severed）时按
+/// `arm_wound::spread_multiplier` 放大该标准差。
+pub const QI_NEEDLE_BASE_SPREAD_SIGMA_DEG: f64 = 3.0;
 
 pub const QI_NEEDLE_SKILL_ID: &str = "dugu.shoot_needle";
 pub const QI_NEEDLE_QI_COST: f64 = 1.0;
@@ -82,7 +93,7 @@ pub fn resolve_shoot_needle_intents(
     mut qi_transfers: EventWriter<QiTransfer>,
 ) {
     for intent in intents.read() {
-        let Ok((mut cultivation, mut stamina, lifecycle, position, qi_color)) =
+        let Ok((mut cultivation, mut stamina, lifecycle, position, qi_color, wounds)) =
             actors.get_mut(intent.shooter)
         else {
             continue;
@@ -95,7 +106,14 @@ pub fn resolve_shoot_needle_intents(
             (cultivation.qi_current - QI_NEEDLE_QI_COST).clamp(0.0, cultivation.qi_max);
         stamina.current = (stamina.current - QI_NEEDLE_STAMINA_COST).clamp(0.0, stamina.max);
 
-        let dir = normalized_dir(intent.dir_unit);
+        // plan-combat-hit-location-v1 P1（决议 §8.1 #2）— 主手臂伤势放大发射方向散布抖动。
+        let spread_multiplier = arm_wound::combined_factor_from_optional(wounds).spread_multiplier;
+        let jitter_seed = intent.shooter.to_bits() ^ clock.tick;
+        let dir = jitter_direction(
+            normalized_dir(intent.dir_unit),
+            jitter_seed,
+            QI_NEEDLE_BASE_SPREAD_SIGMA_DEG * f64::from(spread_multiplier),
+        );
         let spawn_pos = position
             .map(|position| position.get() + dir * 0.3)
             .unwrap_or(DVec3::ZERO);
@@ -191,6 +209,37 @@ pub fn normalized_dir(dir: [f64; 3]) -> DVec3 {
         DVec3::new(0.0, 0.0, 1.0)
     } else {
         raw.normalize()
+    }
+}
+
+/// plan-combat-hit-location-v1 P1（决议 §8.1 #2）— 对已归一化方向 `dir` 施加确定性
+/// 二维高斯角度抖动（复用 `combat::raycast::gaussian_pair` 同一套 splitmix64 PRNG）。
+/// `sigma_deg <= 0.0` 时直接返回原方向（不做任何计算，健康臂在 spread_multiplier=1.0
+/// 且 base=3.0 时仍会有基线抖动——只有显式传 0 才完全跳过，供测试锁定"零抖动"分支）。
+///
+/// 实现：在垂直于 `dir` 的平面内取两条正交基向量，用小角度正切位移代替真正的球面旋转
+/// （sigma 通常个位数度，`tan(θ)≈θ` 近似误差可忽略），再重新归一化。
+pub fn jitter_direction(dir: DVec3, seed: u64, sigma_deg: f64) -> DVec3 {
+    if sigma_deg <= 0.0 {
+        return dir;
+    }
+    let up_hint = if dir.y.abs() < 0.99 {
+        DVec3::new(0.0, 1.0, 0.0)
+    } else {
+        DVec3::new(1.0, 0.0, 0.0)
+    };
+    let right = dir.cross(up_hint).normalize();
+    let up = right.cross(dir).normalize();
+
+    let (g1, g2) = raycast::gaussian_pair(seed);
+    let angle1 = (g1 * sigma_deg).to_radians();
+    let angle2 = (g2 * sigma_deg).to_radians();
+    let jittered = dir + right * angle1.tan() + up * angle2.tan();
+
+    if jittered.length_squared() <= f64::EPSILON {
+        dir
+    } else {
+        jittered.normalize()
     }
 }
 
@@ -633,6 +682,186 @@ mod tests {
             transfers.is_empty(),
             "qi_payload=0 针过期不应 emit QiTransfer（期望 noop），实际 emit {}",
             transfers.len()
+        );
+    }
+
+    // ── plan-combat-hit-location-v1 P1（决议 §8.1 #2）— jitter_direction 散布抖动 ──
+
+    #[test]
+    fn jitter_direction_zero_sigma_returns_original_direction_unchanged() {
+        let dir = DVec3::new(0.0, 0.0, 1.0);
+        assert_eq!(jitter_direction(dir, 12345, 0.0), dir);
+    }
+
+    #[test]
+    fn jitter_direction_is_deterministic_for_same_seed() {
+        let dir = DVec3::new(0.0, 0.0, 1.0);
+        let a = jitter_direction(dir, 777, 5.0);
+        let b = jitter_direction(dir, 777, 5.0);
+        assert_eq!(a, b, "同一 seed 必须复现完全相同的抖动方向（确定性要求）");
+    }
+
+    #[test]
+    fn jitter_direction_varies_across_distinct_seeds() {
+        let dir = DVec3::new(0.0, 0.0, 1.0);
+        let a = jitter_direction(dir, 1, 5.0);
+        let b = jitter_direction(dir, 2, 5.0);
+        assert_ne!(a, b, "不同 seed 应产生不同抖动方向，否则抖动形同虚设");
+    }
+
+    #[test]
+    fn jitter_direction_output_stays_normalized() {
+        let dir = DVec3::new(0.3, 0.1, 0.95).normalize();
+        let jittered = jitter_direction(dir, 999, 8.0);
+        assert!(
+            (jittered.length() - 1.0).abs() < 1e-9,
+            "抖动后方向必须仍是单位向量，实际长度 {}",
+            jittered.length()
+        );
+    }
+
+    #[test]
+    fn jitter_direction_larger_sigma_widens_average_deviation() {
+        // 散布直方图 pin：更大 sigma 应产生更大的平均偏移角（非单次抽样，用批量均值降噪）。
+        let dir = DVec3::new(0.0, 0.0, 1.0);
+        let sample_deviation = |sigma: f64| -> f64 {
+            let mut total = 0.0;
+            for tick in 0..500u64 {
+                let jittered = jitter_direction(dir, tick, sigma);
+                total += dir.dot(jittered).clamp(-1.0, 1.0).acos();
+            }
+            total / 500.0
+        };
+        let small = sample_deviation(3.0);
+        let large = sample_deviation(4.5); // 3.0 * spread_multiplier(Fracture)=1.5
+        assert!(
+            large > small,
+            "sigma=4.5(臂伤后)的平均偏移角({large:.5}rad) 应大于 sigma=3.0(健康臂)的平均偏移角({small:.5}rad)"
+        );
+    }
+
+    // ── resolve_shoot_needle_intents 消费臂伤散布惩罚（端到端）────────────────────
+
+    fn spawn_shooter_with_wounds(app: &mut App, realm: Realm, wounds: Option<Wounds>) -> Entity {
+        let (cultivation, stamina) = actor(realm, 10.0, 10.0);
+        let mut entity = app
+            .world_mut()
+            .spawn((cultivation, stamina, Lifecycle::default()));
+        if let Some(wounds) = wounds {
+            entity.insert(wounds);
+        }
+        entity.id()
+    }
+
+    fn severed_main_arm_wounds() -> Wounds {
+        use crate::combat::arm_wound::MAIN_ARM;
+        use crate::combat::components::{Wound, WoundKind};
+        Wounds {
+            entries: vec![Wound {
+                location: MAIN_ARM,
+                kind: WoundKind::Cut,
+                severity: 80.0, // Severed grade → spread_multiplier 1.5
+                bleeding_per_sec: 0.0,
+                created_at_tick: 0,
+                inflicted_by: None,
+            }],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn resolve_shoot_needle_intents_widens_spread_when_main_arm_severed() {
+        // 端到端：主手臂断裂（Severed）的射手，气针发射方向的抖动幅度应系统性大于
+        // 健康臂射手——用同一批固定 tick 序列对比两者的平均偏移角。
+        let dir_unit = [0.0, 0.0, 1.0];
+
+        let healthy_deviation = {
+            let mut app = App::new();
+            app.insert_resource(CombatClock { tick: 0 });
+            app.add_event::<ShootNeedleIntent>();
+            app.add_event::<AttackIntent>();
+            app.add_event::<QiNeedleChargedEvent>();
+            app.add_event::<QiTransfer>();
+            app.add_systems(Update, resolve_shoot_needle_intents);
+            let shooter = spawn_shooter_with_wounds(&mut app, Realm::Induce, None);
+            let mut total = 0.0;
+            for tick in 0..200u64 {
+                app.world_mut().resource_mut::<CombatClock>().tick = tick;
+                app.world_mut()
+                    .get_mut::<Cultivation>(shooter)
+                    .unwrap()
+                    .qi_current = 10.0;
+                app.world_mut().get_mut::<Stamina>(shooter).unwrap().current = 10.0;
+                app.world_mut().send_event(ShootNeedleIntent {
+                    shooter,
+                    target: None,
+                    dir_unit,
+                    source: IntentSource::Test,
+                });
+                app.update();
+                let needle = {
+                    let world = app.world_mut();
+                    let mut query = world.query::<&QiNeedle>();
+                    query.iter(world).last().cloned()
+                };
+                if let Some(needle) = needle {
+                    let v = DVec3::from(needle.velocity).normalize();
+                    total += DVec3::from(dir_unit)
+                        .normalize()
+                        .dot(v)
+                        .clamp(-1.0, 1.0)
+                        .acos();
+                }
+            }
+            total / 200.0
+        };
+
+        let severed_deviation = {
+            let mut app = App::new();
+            app.insert_resource(CombatClock { tick: 0 });
+            app.add_event::<ShootNeedleIntent>();
+            app.add_event::<AttackIntent>();
+            app.add_event::<QiNeedleChargedEvent>();
+            app.add_event::<QiTransfer>();
+            app.add_systems(Update, resolve_shoot_needle_intents);
+            let shooter =
+                spawn_shooter_with_wounds(&mut app, Realm::Induce, Some(severed_main_arm_wounds()));
+            let mut total = 0.0;
+            for tick in 0..200u64 {
+                app.world_mut().resource_mut::<CombatClock>().tick = tick;
+                app.world_mut()
+                    .get_mut::<Cultivation>(shooter)
+                    .unwrap()
+                    .qi_current = 10.0;
+                app.world_mut().get_mut::<Stamina>(shooter).unwrap().current = 10.0;
+                app.world_mut().send_event(ShootNeedleIntent {
+                    shooter,
+                    target: None,
+                    dir_unit,
+                    source: IntentSource::Test,
+                });
+                app.update();
+                let needle = {
+                    let world = app.world_mut();
+                    let mut query = world.query::<&QiNeedle>();
+                    query.iter(world).last().cloned()
+                };
+                if let Some(needle) = needle {
+                    let v = DVec3::from(needle.velocity).normalize();
+                    total += DVec3::from(dir_unit)
+                        .normalize()
+                        .dot(v)
+                        .clamp(-1.0, 1.0)
+                        .acos();
+                }
+            }
+            total / 200.0
+        };
+
+        assert!(
+            severed_deviation > healthy_deviation,
+            "主手臂断裂射手的平均发射偏移角({severed_deviation:.5}rad) 应大于健康臂射手\
+             ({healthy_deviation:.5}rad)——散布惩罚未生效"
         );
     }
 }
