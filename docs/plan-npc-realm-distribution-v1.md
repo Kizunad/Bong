@@ -55,7 +55,7 @@
 
     **总计 24 处外部生产调用站点**（5 + 19，均已逐一 grep + Read 核实存在，非静态估算）。
   - **活体种群入口（独立于 dormant 快照，P0/P1 均须覆盖）**：`seed_initial_rogue_population_on_startup`（`rogue.rs:353`）是与 `dormant_rogue_seed_snapshot`（下条）**完全独立**的第二条种群生产线——它在 `mod.rs:199` 注册于 `Update`（生产系统，非测试专属），`RoguePopulationSeedConfig::default().target_count` 默认 `20`（`rogue.rs:62`，可用 `BONG_ROGUE_SEED_COUNT` 覆盖但生产默认非 0，必跑），逐 tick 调用 `spawn_scattered_cultivator_at`（调用点 `rogue.rs:517-527`）产出**真实 entity**、把 `Realm::Awaken` 硬编在调用处（`rogue.rs:525`）。此路径**不产出 dormant snapshot**、**不经过** `dormant_rogue_seed_snapshot`/hydrate 往返——P0 R2 pin 测试（hydrate round-trip）和 P1 的 `classify_zones_by_qi` 分布表若只接到 `dormant_rogue_seed_snapshot`，这条活体路径会永久锁死醒灵，直接推翻 P1"末法长尾分布"目标。P0/P1 均须显式把此路径纳入交付物（见下方 P0/P1 正文）
-- 种群 seeder `dormant_rogue_seed_snapshot`（`npc/dormant/mod.rs:1274-1285`，:1285 恒 `Cultivation::default()`，其注册入口 `seed_initial_dormant_population_on_startup` 在 `dormant/mod.rs:1111`）；zone 灵气分档 `classify_zones_by_qi`（**真定义 `npc/spawn/rogue.rs:99`**，`dormant/mod.rs:1145-1148` 只是调用点，非定义）；确定性哈希 `deterministic_hash(char_id, salt)`（**真定义 `npc/dormant/mod.rs:1400`**；`seed_rogue_faction :1228` 是用例之一 salt=0，`GROUP_SALT` 具名常量在 `:1245`，用于 `:1252` 的分组哈希）
+- 种群 seeder `dormant_rogue_seed_snapshot`（`npc/dormant/mod.rs:1274-1285`，:1285 恒 `Cultivation::default()`，其注册入口 `seed_initial_dormant_population_on_startup` 在 `dormant/mod.rs:1111`）；zone 灵气分档 `classify_zones_by_qi`（**真定义 `npc/spawn/rogue.rs:99`**，`dormant/mod.rs:1145-1148` 只是调用点，非定义）；确定性哈希 `deterministic_hash(char_id, salt)`（**真定义 `npc/dormant/mod.rs:1400`**；`seed_rogue_faction :1228` 是用例之一 salt=0，`GROUP_SALT` 具名常量在 `:1245`，用于 `:1252` 的分组哈希；**当前签名是模块私有 `fn`（无 `pub`），P1「活体种群入口同源接入」要求 `npc/spawn/rogue.rs` 的 `seed_initial_rogue_population_on_startup` 跨模块调用它——P0/P1 交界处须先把此 fn 签名一行改为 `pub(crate) fn`，不新造第二套哈希函数，见下方 P1 正文前置说明**）
 - **出料**：正确的 `Cultivation.realm` → 下游**零改动自动生效**：战力 `compute_combat_power`（`combat_power.rs:22-46`，realm_ordinal×20；**其内 `default_cultivation` 测试专用 qi_max 表 `combat_power.rs:61-65`（10/30/60/120/200/400）是 test-only fixture，非正典，P0 严禁复用/参照**）、离屏战争结算（`dormant/combat.rs:57`）、死亡遗物门槛（`combat.rs:245`，固元起）、AI 威胁评估（`brain/threat.rs:134-249`，realm_delta 权重 0.4）、全部招式境界门控、寿元 `LifespanComponent::for_realm`
 - **共享类型**：`Realm` 枚举 / `Cultivation`（`cultivation/components.rs:15-22,386-398`）不动；既有身份境界逻辑 `leader_realm_for`（`faction.rs:1123-1130`，Qingyun→Solidify 固元 / Cangyuan→Spirit 通灵 / NorthWaste→**Awaken 醒灵，非高境**——三档不是清一色高境界）、TSY 硬编 realm（`tsy_hostile.rs:778`「道乡默认 Induce」/`:922`）复用不重造，但见下方 P0 R1 pin 测试注意事项（TSY realm 目前是局部变量喂 technique，未必已过 bundle）
 - **跨仓库契约**：无 wire 变更（NPC cultivation 已在 world_state 快照内）；agent 侧天道推演读到的散修境界将首次真实
@@ -73,7 +73,7 @@
 
 ## P0 choke point 修复 ⬜
 
-- `npc_runtime_bundle_with_age`（`lifecycle.rs:596`）加 `realm: Realm` 入参：`Cultivation` 不再恒 `::default()`，改为 `realm` + `qi_max_for_realm(realm)`（新函数，见 §8.1 #2）算出的 `qi_max`/`qi_current`；同一处 `:608 LifespanComponent::for_realm(...)` 同步吃 `realm` 而非 `Cultivation::default().realm`；四处 spawn 调用点透传各自已持有的 `realm` 参数——`rogue.rs:290`（`spawn_rogue_npc_at`）/ `disciple.rs:159` / `commoner.rs:86` / `rogue.rs:340`（`spawn_scattered_cultivator_at`，函数签名 `:298` 已持 `realm` 形参 `:306`，本条只需把该形参透传进 bundle 调用，函数签名不用改）
+- `npc_runtime_bundle_with_age`（`lifecycle.rs:596`）加 `realm: Realm` 入参：`Cultivation` 不再恒 `::default()`，改为 `realm` + `qi_max_for_realm(realm)`（新函数，见 §8.1 #2）算出的 `qi_max`；**`qi_current` 显式初始化 `0.0`（不满灵，见 §8.1 #2 守恒论证——`qi_max_for_realm` 只定容量上限，真元靠 `apply_dormant_regen_with_multiplier` 从 zone 逐步吸收，spawn 时满灵会凭空产生真元、撞 qi_physics 守恒红线）**；同一处 `:608 LifespanComponent::for_realm(...)` 同步吃 `realm` 而非 `Cultivation::default().realm`；四处 spawn 调用点透传各自已持有的 `realm` 参数——`rogue.rs:290`（`spawn_rogue_npc_at`）/ `disciple.rs:159` / `commoner.rs:86` / `rogue.rs:340`（`spawn_scattered_cultivator_at`，函数签名 `:298` 已持 `realm` 形参 `:306`，本条只需把该形参透传进 bundle 调用，函数签名不用改）
 - **`npc_runtime_bundle`（2-arg 姐妹函数，`lifecycle.rs:592`）同步加 `realm: Realm` 入参**（转调 `_with_age(entity, archetype, realm, 0.0)`，禁止签名不改、内部继续悄悄塞 `Realm::Awaken`）——**优先方案：给 wrapper 加 realm 形参全透传**，不做"编译期强逼但默认吞没"的折中。全仓 **19 个生产调用点**（穷举清单见接入面「`npc_runtime_bundle` 全仓生产站点穷举」表，非"约 20 处"估算，2026-07-03 第三轮博弈复核逐条 grep+Read 核实）逐一改传：
   - **身份站点（5 处）**透传已持有的局部变量：`disciple.rs:233` 传 `guard_realm`（`:217` 定义）/ `world/tsy_lifecycle.rs:837` 传 `corpse.origin_realm.unwrap_or(Realm::Awaken)`（`spawn_daoxiang_from_corpse` 入参已保证走到此行时 `origin_realm` 通常为 `Some`，见调用侧 `:619`/`:737` 的 `None` 分支已提前 despawn 不会到达此处，但函数签名允许 `Option`，兜底值仅为类型安全非业务默认）/ `tsy_hostile.rs:795` 传 `daoxiang_realm`（`:778` 定义）/ `tsy_hostile.rs:939` 传 `zhinian_realm`（`:922` 定义）/ **`tsy_hostile.rs:1086` 传字面量 `Realm::Spirit`**（`spawn_tsy_sentinel_at`，秘境守灵，复用 `GuardianRelic` tag，对齐 `disciple.rs:233`，`finished_plans/plan-tsy-hostile-v1.md` 定性为上古宗门遗迹守护 boss——2026-07-03 第三轮新收口，此前两轮遗漏）
   - 其余 **13 处**非身份调用点（`spawn_pillar.rs:95`/`spawn/zombie.rs:81`/`spawn_whale.rs:211`/`spawn_rat.rs:125`/`spawn_spider.rs:105`/`scenario.rs:153`/`heiwushi.rs:406`/`dandao/boss_spawn.rs:181`/`tsy_hostile.rs:977`/`tsy_hostile.rs:1020`/**`world/events.rs:2610`/`world/events.rs:2791`（2026-07-03 第三轮新收口，此前两轮遗漏）**/`fauna/hybrid_beast.rs:415`）在调用处显式写字面量 `Realm::Awaken`（逐处显式，非 wrapper 内建默认）；`fauna/dying_elder.rs:429` 单独处理（见下方回归锁——传入的 realm 实参会被随后的 `Cultivation` 字面量整体覆盖，不属于「非身份 Awaken」也不属于「身份透传」，是第三类"结果不受影响"站点，占位传 `Realm::Awaken` 即可）
@@ -94,8 +94,9 @@
 ## P1 种群 seeder 境界分布 ⬜
 
 - `dormant_rogue_seed_snapshot`（`dormant/mod.rs:1285`）替换 `Cultivation::default()`：按 `deterministic_hash(char_id, "realm")` 抽样，权重按 zone 灵气档（`classify_zones_by_qi` 现成 resource/background 二分）查分布表
+- **前置改动（P1 开工第一步）**：`deterministic_hash`（`dormant/mod.rs:1400`）当前是模块私有 `fn`，`npc/spawn/rogue.rs` 与 `npc/dormant/mod.rs` 是两个不同模块——跨模块调用需先把签名一行改为 `pub(crate) fn deterministic_hash(...)`。**只改可见性，不新造第二套哈希/抽样逻辑**（违反接入面「不新增第二套抽样逻辑」红线）。
 - **活体种群入口同源接入（2026-07-03 博弈复核补充，P1 必做非 P0 附带项）**：`seed_initial_rogue_population_on_startup`（`rogue.rs:353`，`mod.rs:199` 注册于 `Update`，生产系统必跑）里调用 `spawn_scattered_cultivator_at` 时硬编的 `Realm::Awaken`（调用点 `rogue.rs:517-527`，硬编在 `:525`）必须换成与 `dormant_rogue_seed_snapshot` **同源同规则**的抽样：同一份 §8.1 #1 分布表 + 同一个 `deterministic_hash` 派生函数（seed 可用该函数已在作用域内的 `zone_spirit_qi`/`global_index`/`zone_name` 组合出 char_id 等价输入，不新增第二套抽样逻辑）。此路径产出真实 entity、不进 dormant 快照，若遗漏则该活体种群永久锁死醒灵，直接推翻本阶段目标——不能假设"改完 `dormant_rogue_seed_snapshot` 活体路径会自动继承"
-- 分布表（数值 §8 #1 收口，末法长尾基调）：background zone 约 醒灵 55 / 引气 30 / 凝脉 12 / 固元 3 / 通灵 0；resource zone 整体上移一档、通灵 ≤1%；**化虚不自然刷**（正典稀有，仅垂死大能类稀有实体）
+- 分布表数值以 §8.1 #1 决议表为准（末法长尾基调，2026-07-04 第五轮已订正基数与高境界占比，不在此重复列数字防止双源漂移）；**化虚不自然刷**（正典稀有，仅垂死大能类稀有实体）
 - 确定性要求专属测试：同 seed 两次 genesis 境界逐 NPC 一致；分布直方图区间 pin
 - **活体种群产出实体 pin 测试（专属，不可用 dormant hydrate 往返代替）**：起 `App` 跑 `seed_initial_rogue_population_on_startup` 到 `progress.done`，直接 query 产出实体的 `Cultivation.realm` 分布，断言 ① 不再恒为 `Realm::Awaken` ② 分布落在 §8.1 #1 分布表容差区间内 ③ 同 seed 两次跑该 system 逐实体 realm 一致（确定性）
 - 与 `plan-ambient-threat-v1` 的物种池合账（archetype 池选择不受本 plan 影响，只是 realm 抽样叠加在其之上）
@@ -131,24 +132,29 @@
 
 | 境界 | background zone | resource zone |
 |------|----------------|---------------|
-| 醒灵 | 55% | 35% |
+| 醒灵 | 57% | 42.5% |
 | 引气 | 30% | 35% |
 | 凝脉 | 12% | 20% |
-| 固元 | 3% | 8% |
-| 通灵 | 0% | 2% |
+| 固元 | 1% | 2% |
+| 通灵 | 0% | 0.5% |
 | 化虚 | 0%（不自然刷） | 0%（不自然刷） |
 
-按当前 genesis 种群量级（数百 dormant），预期全服固元 10-20 人、通灵 ≤5 人——遗物门槛（固元起）与派系首领（固元/通灵）在此分布下不再是全服孤例。身份逻辑（`leader_realm_for`、TSY 硬编）优先级高于抽样：有显式 realm 的路径不走分布表。
+**基数订正（2026-07-04 第五轮博弈复核）**：genesis 种群量级不是"数百"——`BONG_DORMANT_ROGUE_SEED_COUNT` 默认 **1000**（`server/src/npc/dormant/mod.rs:179` `unwrap_or(1000)`；`scripts/start.sh:65` 写死同值）。按 `resource_fraction=0.8`（`dormant/mod.rs:182`/`spawn/rogue.rs:65`）拆分，resource zone 分到 800、background zone 分到 200。**上表百分比已按此基数下调高境界 tail**（第四轮版本 resource 固元 8%/通灵 2%、background 固元 3% 在 1000 基数下会算出固元≈70/通灵≈16，超出末法稀有基调 3.5-7 倍——见下方验算）：
+
+- background：200 × (57/30/12/1/0/0)% = 114 醒灵 / 60 引气 / 24 凝脉 / **2 固元** / 0 通灵
+- resource：800 × (42.5/35/20/2/0.5/0)% = 340 醒灵 / 280 引气 / 160 凝脉 / **16 固元** / **4 通灵**
+- 全服合计：**固元 ≈18 人**、**通灵 ≈4 人**——遗物门槛（固元起）与派系首领（固元/通灵）在此分布下不再是全服孤例，同时维持末法长尾稀有基调。身份逻辑（`leader_realm_for`、TSY 硬编）优先级高于抽样：有显式 realm 的路径不走分布表。**数值允许 PR 实施时按实测微调，但长尾形状（固元个位数~20 内、通灵个位数）不可放大回第四轮量级。**
 
 ### #3 存量存档迁移
 
-**决议**：**一次性确定性重 roll**（拒绝"只对新 seed 生效"——genesis 人口只 seed 一次，不迁移则世界永远全员醒灵；bug 产物无保留价值）：
-1. 启动 hydrate 时检测迁移标记（`data/npc/realm_migration_v1.marker` 或快照文件 version 字段），无标记 → 对全体 dormant snapshot 按 §8.1 #1 分布重 roll（`deterministic_hash(char_id, "realm")`，与 P1 seeder 同源同 salt → 跨重启稳定）
-2. 有显式身份 realm 者（派系首领/TSY）直接写身份值不抽样
-3. 重 roll 后立即触发 P2 一致性派生（功法/经脉/视觉按新 realm 重派），消灭存量"凝脉功法+醒灵组件"矛盾体
-4. 写标记防重复迁移；标记本身进 flush/hydrate 测试
+**决议**：**一次性确定性重 roll**（拒绝"只对新 seed 生效"——genesis 人口只 seed 一次，不迁移则世界永远全员醒灵；bug 产物无保留价值），迁移标记**拍定用独立 marker 文件 `data/npc/realm_migration_v1.marker`**（2026-07-04 第五轮博弈复核收口，二选一已裁决）：
+1. **拒绝快照 version 字段方案**：`NpcDormantSnapshot`（`dormant/mod.rs:274`）当前无 `version` 字段，仓库亦无同类"快照内嵌版本号"先例；新增字段要求改 snapshot 结构体 + 序列化兼容旧存档（额外迁移面），而 marker 文件是纯外部旁路信号，不动既有数据结构，实现面更小、风险更低。**采用 marker 文件方案，不引入 snapshot version 字段。**
+2. 启动 hydrate 时检测迁移标记文件 `data/npc/realm_migration_v1.marker` 是否存在，**不存在** → 对全体 dormant snapshot 按 §8.1 #1 分布重 roll（`deterministic_hash(char_id, "realm")`，与 P1 seeder 同源同 salt → 跨重启稳定），重 roll 完成后写入该 marker 文件；**存在** → 跳过重 roll，直接走既有 hydrate
+3. 有显式身份 realm 者（派系首领/TSY）直接写身份值不抽样，不受 marker 状态影响
+4. 重 roll 后立即触发 P2 一致性派生（功法/经脉/视觉按新 realm 重派），消灭存量"凝脉功法+醒灵组件"矛盾体
+5. **幂等测试要求（marker 方案专属）**：① 无 marker 时 hydrate 触发重 roll 且写出 marker 文件 ② 已有 marker 时 hydrate **不**重复重 roll（同一批 dormant 快照两次 hydrate 前后 `realm` 完全一致，而非"恰好抽到同一值"的巧合）③ marker 文件路径/内容对拍 `data/npc/realm_migration_v1.marker`（专属 pin，防止路径漂移）④ marker 写入失败（如目录不可写）时的降级行为需显式测试覆盖，不允许静默吞错导致每次重启重复重 roll
 
-**落点**：迁移逻辑挂 `npc/dormant/mod.rs` hydrate 入口（`seed_initial_dormant_population_on_startup` 同文件）；plan P1 交付物加"迁移器 + marker 幂等测试"。
+**落点**：迁移逻辑挂 `npc/dormant/mod.rs` hydrate 入口（`seed_initial_dormant_population_on_startup` 同文件）；marker 文件读写落 `data/npc/realm_migration_v1.marker`；plan P1 交付物加"迁移器 + marker 幂等测试（4 条，见上）"。
 
 ### #2 qi_max 派生口径【唯一硬阻塞，Explore 核验】
 
