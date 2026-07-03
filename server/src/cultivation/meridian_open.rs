@@ -22,7 +22,7 @@ use super::tick::CultivationClock;
 use super::topology::MeridianTopology;
 use crate::network::{gameplay_vfx, vfx_event_emit::VfxEventRequest};
 use crate::npc::spawn::NpcMarker;
-use crate::qi_physics::{QiAccountId, QiTransfer, QiTransferReason, WorldQiAccount};
+use crate::qi_physics::{QiAccountId, QiTransferReason, WorldQiAccount};
 use crate::skill::components::SkillId;
 use crate::skill::events::{SkillXpGain, XpGainSource};
 
@@ -296,26 +296,32 @@ fn meridian_open_actor_account_id(
     }
 }
 
+/// plan-zone-qi-economy-v1 P0 §8.1 决议 #1：开脉消耗回充**独立待分配池**
+/// （`qi_physics::ledger::credit_pending_inflow`），不再注水 audit-only 的
+/// `zone:<name>` 账户（旧写法会被 `apply_dormant_regen_with_multiplier` 整体覆写、
+/// 且从不写回 `zone.spirit_qi`——记账蒸发 bug 本身）。`meridian_open_tick` 沿用旧
+/// "best-effort、失败静默丢弃"行为：进度/qi 扣减已经生效，ledger credit 失败不回滚
+/// 玩家侧状态（与 `credit_active_breakthrough_cost` 的显式回滚分支不同——那里失败
+/// 会撤销整次突破尝试）。
 fn credit_meridian_open_cost(
     account: &mut WorldQiAccount,
     zone_name: &str,
     from: QiAccountId,
     amount: f64,
 ) {
-    if amount <= 0.0 {
-        return;
-    }
-    let to = QiAccountId::zone(zone_name.to_string());
-    let Ok(transfer) = QiTransfer::new(from, to.clone(), amount, QiTransferReason::MeridianOpen)
-    else {
-        return;
-    };
-    if !account.has_account(&to) && account.set_balance(to.clone(), 0.0).is_err() {
-        return;
-    }
-    let zone_balance = account.balance(&to);
-    if account.set_balance(to, zone_balance + amount).is_ok() {
-        account.push_transfer_audit(transfer);
+    if let Err(error) = crate::qi_physics::credit_pending_inflow(
+        account,
+        zone_name,
+        from,
+        amount,
+        QiTransferReason::MeridianOpen,
+    ) {
+        tracing::warn!(
+            "[bong][cultivation] meridian_open pending inflow credit failed zone={} amount={} error={:?}",
+            zone_name,
+            amount,
+            error
+        );
     }
 }
 
@@ -465,7 +471,7 @@ mod tests {
     }
 
     #[test]
-    fn meridian_open_cost_is_credited_to_zone_ledger() {
+    fn meridian_open_cost_is_credited_to_pending_inflow_pool_not_zone_ledger() {
         let mut app = App::new();
         app.insert_resource(CultivationClock { tick: 42 });
         app.insert_resource(MeridianTopology::standard());
@@ -494,16 +500,74 @@ mod tests {
         assert!((cultivation.qi_current - (1000.0 - expected_cost)).abs() < 1e-12);
 
         let account = app.world().resource::<WorldQiAccount>();
+        // plan-zone-qi-economy-v1 P0 §8.1 决议 #1：目标账户是独立待分配池，不是
+        // zone:<name>（该 key 会被 dormant regen 整体覆写，credit 进去等于蒸发）。
+        let pending_pool = crate::qi_physics::pending_inflow_account();
         let zone_account = QiAccountId::zone("spawn");
-        assert!((account.balance(&zone_account) - expected_cost).abs() < 1e-12);
+        assert!(
+            (account.balance(&pending_pool) - expected_cost).abs() < 1e-12,
+            "meridian open cost must credit the independent pending inflow pool, got {}",
+            account.balance(&pending_pool)
+        );
+        assert_eq!(
+            account.balance(&zone_account),
+            0.0,
+            "meridian open must never touch the zone:<name> ledger account (dormant regen \
+             overwrites it wholesale from zone.spirit_qi, clobbering any credit stuffed there)"
+        );
         let transfer = account
             .transfers()
             .iter()
             .find(|transfer| transfer.reason == QiTransferReason::MeridianOpen)
             .expect("meridian open should append a MeridianOpen audit record");
         assert_eq!(transfer.from.kind, crate::qi_physics::QiAccountKind::Player);
-        assert_eq!(transfer.to, zone_account);
+        assert_eq!(transfer.to, pending_pool);
         assert!((transfer.amount - expected_cost).abs() < 1e-12);
+    }
+
+    #[test]
+    fn meridian_open_preserves_total_observed_qi_conservation() {
+        // plan-zone-qi-economy-v1 P0 §10.3 — 开脉消耗真元回充守恒对拍：total_observed()
+        // = player_qi + zone_qi + container_qi + ledger_qi（含待分配池），必须严格不变。
+        use crate::qi_physics::{assert_conservation, summarize_world_qi};
+
+        let mut app = App::new();
+        app.insert_resource(CultivationClock { tick: 42 });
+        app.insert_resource(MeridianTopology::standard());
+        let mut zones = ZoneRegistry::fallback();
+        zones.find_zone_mut("spawn").unwrap().spirit_qi = 1.0;
+        app.insert_resource(zones);
+        add_meridian_open_system(&mut app);
+
+        let mut cultivation = player_with_qi(1000.0);
+        cultivation.qi_max = 1000.0;
+        let player = app
+            .world_mut()
+            .spawn((
+                Position::new([8.0, 66.0, 8.0]),
+                MeridianTarget(MeridianId::Lung),
+                cultivation,
+                MeridianSystem::default(),
+            ))
+            .id();
+
+        let before = summarize_world_qi(app.world_mut());
+        app.update();
+        let cultivation = app.world().entity(player).get::<Cultivation>().unwrap();
+        assert!(
+            cultivation.qi_current < 1000.0,
+            "sanity: meridian open must actually spend qi for this conservation test to be \
+             meaningful"
+        );
+        let after = summarize_world_qi(app.world_mut());
+
+        assert_conservation(&before, &after, 0.0).unwrap_or_else(|error| {
+            panic!(
+                "meridian open must conserve total_observed qi with zero era decay — got \
+                 drift: {error} (before={before:?}, after={after:?}); a mismatch means spent \
+                 qi vanished instead of reaching the pending inflow pool"
+            )
+        });
     }
 
     #[test]
