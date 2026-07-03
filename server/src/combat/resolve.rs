@@ -1034,7 +1034,10 @@ pub fn resolve_attack_intents(
                                 - reflected_damage)
                                 .clamp(0.0, attacker_wounds.health_max);
                             attacker_wounds.entries.push(Wound {
-                                location: BodyPart::Chest,
+                                // plan-combat-hit-location-v1 P2（决议 §8.1 旁路桶 #1）——
+                                // 剑招招架反伤打的是攻方持械的那只手：格挡时兵刃互击的
+                                // 冲击沿武器传回持械臂，物理上不该落在恒定的胸口。
+                                location: crate::combat::arm_wound::MAIN_ARM,
                                 kind: crate::combat::components::WoundKind::Blunt,
                                 severity: reflected_damage,
                                 bleeding_per_sec: 0.0,
@@ -7191,6 +7194,15 @@ mod tests {
         assert!(
             (attacker_wounds.entries[0].severity - 0.075).abs() < 0.001,
             "reflected physical damage should be 15% of blocked damage"
+        );
+        // plan-combat-hit-location-v1 P2（决议 §8.1 旁路桶 #1）—— 剑招招架反伤应命中
+        // 攻方持械臂（MAIN_ARM = ArmR），而非旧实现里硬编的恒定 Chest。
+        assert_eq!(
+            attacker_wounds.entries[0].location,
+            crate::combat::arm_wound::MAIN_ARM,
+            "招架反伤应命中攻方持械臂（ArmR），实测 {:?}；若这里变回 Chest 说明 P2 \
+             反伤旁路清理被回退了",
+            attacker_wounds.entries[0].location
         );
 
         let known = app
