@@ -10,8 +10,8 @@ use valence::prelude::{
 
 use crate::alchemy::{AlchemyOutcomeEvent, ResolvedOutcome, StartAlchemyRequest};
 use crate::audio::implementation::{
-    breakthrough_recipe, combat_hit_recipe, forge_hammer_recipe, parry_recipe, school_hit_recipe,
-    AudioImplementationDedup,
+    breakthrough_recipe, combat_hit_recipe_for_body_part, forge_hammer_recipe, parry_recipe,
+    school_hit_recipe, AudioImplementationDedup,
 };
 use crate::audio::SoundRecipeRegistry;
 use crate::botany::components::HarvestTerminalEvent;
@@ -154,7 +154,7 @@ pub fn emit_combat_audio_triggers(
                 AttackSource::SwordPathManifest => "sword_cleave",
                 AttackSource::SwordPathHeavenGate => "sword_cleave",
                 AttackSource::Melee | AttackSource::NpcMelee => {
-                    combat_hit_recipe(total_damage, critical)
+                    combat_hit_recipe_for_body_part(event.body_part, total_damage, critical)
                 }
             }
         } else if npc_markers.get(event.target).is_ok() && total_damage > 0.0 {
@@ -1277,6 +1277,152 @@ mod tests {
             .collect();
         let recipes: Vec<_> = emitted.into_iter().map(|event| event.recipe_id).collect();
         assert_eq!(recipes, vec!["hit_heavy", "wound_inflict"]);
+    }
+
+    /// plan-combat-hit-location-v1 P3 — 部位差异视听反馈：头部命中即便伤害轻微（低于
+    /// hit_heavy 的 10.0 分级线）也要走专属 combat_hit_head_crit，而非退化成 hit_light。
+    #[test]
+    fn head_hit_event_emits_head_crit_recipe_regardless_of_damage_tier() {
+        let mut app = App::new();
+        app.init_resource::<AudioImplementationDedup>();
+        app.add_event::<CombatEvent>();
+        app.add_event::<PlaySoundRecipeRequest>();
+        app.add_systems(Update, emit_combat_audio_triggers);
+        let attacker = app.world_mut().spawn(Position::new([0.0, 64.0, 0.0])).id();
+        let target = app.world_mut().spawn(Position::new([1.0, 64.0, 0.0])).id();
+        app.world_mut().send_event(CombatEvent {
+            attacker,
+            target,
+            resolved_at_tick: 5,
+            body_part: BodyPart::Head,
+            wound_kind: WoundKind::Blunt,
+            source: crate::combat::events::AttackSource::Melee,
+            debug_command: false,
+            physical_damage: 0.0,
+            // 故意选一个低于 hit_heavy(10.0)/hit_critical(24.0) 分级线的伤害，
+            // 证明部位路由优先于伤害分级——不这样测就无法区分"恰好碰上高伤害"的假阳性。
+            damage: 2.0,
+            contam_delta: 0.0,
+            description: "test head crit routes before damage tier".to_string(),
+            defense_kind: None,
+            defense_effectiveness: None,
+            defense_contam_reduced: None,
+            defense_wound_severity: None,
+        });
+
+        app.update();
+
+        let emitted: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<PlaySoundRecipeRequest>>()
+            .drain()
+            .collect();
+        let recipes: Vec<_> = emitted.into_iter().map(|event| event.recipe_id).collect();
+        assert_eq!(
+            recipes,
+            vec!["combat_hit_head_crit"],
+            "轻伤头部命中应仍走专属 combat_hit_head_crit，而不是按伤害分级落回 hit_light \
+             （命中要害的反馈不该被伤害数值淹没）"
+        );
+    }
+
+    /// plan-combat-hit-location-v1 P3 — 四肢命中应统一走更闷的 combat_hit_limb，
+    /// 四个部位变体（ArmL/ArmR/LegL/LegR）都要命中同一条 recipe。
+    #[test]
+    fn limb_hit_events_emit_limb_recipe_for_all_four_variants() {
+        for limb in [
+            BodyPart::ArmL,
+            BodyPart::ArmR,
+            BodyPart::LegL,
+            BodyPart::LegR,
+        ] {
+            let mut app = App::new();
+            app.init_resource::<AudioImplementationDedup>();
+            app.add_event::<CombatEvent>();
+            app.add_event::<PlaySoundRecipeRequest>();
+            app.add_systems(Update, emit_combat_audio_triggers);
+            let attacker = app.world_mut().spawn(Position::new([0.0, 64.0, 0.0])).id();
+            let target = app.world_mut().spawn(Position::new([1.0, 64.0, 0.0])).id();
+            app.world_mut().send_event(CombatEvent {
+                attacker,
+                target,
+                resolved_at_tick: 5,
+                body_part: limb,
+                wound_kind: WoundKind::Blunt,
+                source: crate::combat::events::AttackSource::Melee,
+                debug_command: false,
+                physical_damage: 0.0,
+                damage: 12.0,
+                contam_delta: 0.0,
+                description: format!("test limb hit routes to combat_hit_limb for {limb:?}"),
+                defense_kind: None,
+                defense_effectiveness: None,
+                defense_contam_reduced: None,
+                defense_wound_severity: None,
+            });
+
+            app.update();
+
+            let emitted: Vec<_> = app
+                .world_mut()
+                .resource_mut::<Events<PlaySoundRecipeRequest>>()
+                .drain()
+                .collect();
+            let recipes: Vec<_> = emitted.into_iter().map(|event| event.recipe_id).collect();
+            assert_eq!(
+                recipes,
+                vec!["combat_hit_limb", "wound_inflict"],
+                "四肢部位 {limb:?} 命中应路由到 combat_hit_limb（damage=12.0 仍越过 \
+                 wound_inflict 的 8.0 阈值，两条 recipe 都应出现）"
+            );
+        }
+    }
+
+    /// 胸/腹/背命中不应受本次部位差异改动影响，维持既有伤害分级 recipe 选择。
+    #[test]
+    fn torso_hits_still_use_damage_tier_recipe_unaffected_by_body_part_routing() {
+        for (part, damage, expected) in [
+            (BodyPart::Chest, 3.0, "hit_light"),
+            (BodyPart::Abdomen, 12.0, "hit_heavy"),
+            (BodyPart::Back, 30.0, "hit_critical"),
+        ] {
+            let mut app = App::new();
+            app.init_resource::<AudioImplementationDedup>();
+            app.add_event::<CombatEvent>();
+            app.add_event::<PlaySoundRecipeRequest>();
+            app.add_systems(Update, emit_combat_audio_triggers);
+            let attacker = app.world_mut().spawn(Position::new([0.0, 64.0, 0.0])).id();
+            let target = app.world_mut().spawn(Position::new([1.0, 64.0, 0.0])).id();
+            app.world_mut().send_event(CombatEvent {
+                attacker,
+                target,
+                resolved_at_tick: 5,
+                body_part: part,
+                wound_kind: WoundKind::Blunt,
+                source: crate::combat::events::AttackSource::Melee,
+                debug_command: false,
+                physical_damage: 0.0,
+                damage,
+                contam_delta: 0.0,
+                description: format!("test torso hit {part:?} keeps damage tier recipe"),
+                defense_kind: None,
+                defense_effectiveness: None,
+                defense_contam_reduced: None,
+                defense_wound_severity: None,
+            });
+
+            app.update();
+
+            let emitted: Vec<_> = app
+                .world_mut()
+                .resource_mut::<Events<PlaySoundRecipeRequest>>()
+                .drain()
+                .collect();
+            assert_eq!(
+                emitted[0].recipe_id, expected,
+                "{part:?} 命中 damage={damage} 应维持既有分级 recipe {expected}，不受部位差异改动影响"
+            );
+        }
     }
 
     #[test]

@@ -1,0 +1,21 @@
+{
+  "id": "combat_hit_head_crit",
+  "layers": [
+    {
+      "sound": "minecraft:entity.player.attack.crit",
+      "volume": 0.55,
+      "pitch": 1.15,
+      "delay_ticks": 0
+    },
+    {
+      "sound": "minecraft:entity.arrow.hit_player",
+      "volume": 0.35,
+      "pitch": 1.0,
+      "delay_ticks": 1
+    }
+  ],
+  "priority": 82,
+  "attenuation": "MELEE",
+  "category": "PLAYERS",
+  "bus": "COMBAT"
+}
