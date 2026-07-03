@@ -33,6 +33,19 @@ use super::recipe::{RecipeId, UnlockSource};
 
 const DEFAULT_UNLOCK_PATH: &str = "data/craft/recipe_unlocks.json";
 
+/// 基线常显配方 — 不经任何解锁渠道，对所有玩家恒可见、恒可做，死亡重生也不清。
+///
+/// 目前仅制作台自身（`workbench_recipes::register_workbench_self_recipe`）：
+/// 它是整棵 workbench 配方树的物理入口。若连它也走材料发现，玩家没摸过
+/// spirit_wood / iron_ingot / shu_gu 之前根本不知道"制作台"这条路存在，
+/// 入口配方被入口自身的原料锁死。秘传配方（残卷/师承/顿悟）不属于此列。
+pub const BASELINE_RECIPES: &[&str] = &["craft.tool.workbench"];
+
+/// 某配方是否属于基线常显集合（[`BASELINE_RECIPES`]）。
+pub fn is_baseline_recipe(recipe: &RecipeId) -> bool {
+    BASELINE_RECIPES.contains(&recipe.as_str())
+}
+
 /// 落盘 schema 版本 — writer（[`RecipeUnlockState::flush`]）与 loader
 /// （[`load_recipe_unlock_log`]）必须共用同一常量，避免两处字面量漂移。
 /// 递增时需要在 loader 里补迁移逻辑，而不是放宽校验。
@@ -110,8 +123,15 @@ impl RecipeUnlockState {
         self.by_player.len()
     }
 
-    /// 查询玩家是否已解锁某配方。未注册玩家恒返回 false。
+    /// 查询玩家是否已解锁某配方。基线配方恒 true；未注册玩家恒返回 false。
+    ///
+    /// 基线豁免在此单点生效：`start_craft` 门、`build_recipe_list_payload`
+    /// 下发过滤、`apply_material_discovery_unlock` 的已解锁短路（避免把基线
+    /// 配方写进 `by_player` / 落盘）全部经由本函数，无需各调用点自查。
     pub fn is_unlocked(&self, player: &str, recipe: &RecipeId) -> bool {
+        if is_baseline_recipe(recipe) {
+            return true;
+        }
         self.by_player
             .get(player)
             .map(|s| s.contains(recipe))
@@ -527,6 +547,114 @@ mod tests {
         let state = RecipeUnlockState::new();
         assert!(!state.is_unlocked("offline:Alice", &RecipeId::new("anything")));
         assert_eq!(state.unlocked_count("offline:Alice"), 0);
+    }
+
+    // ── 基线常显豁免（BASELINE_RECIPES / is_baseline_recipe）──────────
+
+    #[test]
+    fn baseline_workbench_recipe_always_unlocked_for_unregistered_player() {
+        let state = RecipeUnlockState::new();
+        assert!(
+            state.is_unlocked("offline:Alice", &RecipeId::new("craft.tool.workbench")),
+            "制作台自身配方必须对从未注册的玩家恒解锁 —— 它是 workbench 配方树的入口，\
+             走材料发现会被自己的原料锁死"
+        );
+    }
+
+    #[test]
+    fn baseline_exemption_is_exact_id_match_not_prefix() {
+        let state = RecipeUnlockState::new();
+        for near_miss in [
+            "craft.tool.workbench2",
+            "craft.tool.workbench.fake",
+            "craft.tool.workbenc",
+        ] {
+            assert!(
+                !state.is_unlocked("offline:Alice", &RecipeId::new(near_miss)),
+                "基线豁免必须精确匹配 id，近似 id `{near_miss}` 不应被误豁免"
+            );
+        }
+    }
+
+    #[test]
+    fn baseline_recipe_survives_clear_for_player() {
+        // 死亡重生清空 unlock state 后基线配方仍常显（豁免不依赖 by_player 存储）。
+        let mut state = RecipeUnlockState::new();
+        state.unlock("offline:Alice", RecipeId::new("craft.example.a"));
+        state.clear_for_player("offline:Alice");
+        assert!(
+            state.is_unlocked("offline:Alice", &RecipeId::new("craft.tool.workbench")),
+            "clear_for_player 之后基线配方必须仍然解锁 —— 常显豁免不能被死亡重生清掉"
+        );
+        assert!(
+            !state.is_unlocked("offline:Alice", &RecipeId::new("craft.example.a")),
+            "非基线配方仍应被 clear_for_player 正常清空"
+        );
+    }
+
+    #[test]
+    fn baseline_recipe_not_counted_nor_persisted() {
+        // 豁免走谓词而非写入 by_player：不占 unlocked_count、不进落盘文件。
+        let path = unique_tmp_path("baseline_not_persisted");
+        let mut state = RecipeUnlockState::default().with_path(&path);
+        assert_eq!(
+            state.unlocked_count("offline:Alice"),
+            0,
+            "基线豁免不应计入 unlocked_count（它不在 by_player 存储里）"
+        );
+        assert!(
+            !state.is_dirty(),
+            "仅查询基线配方不应标 dirty —— is_unlocked 是只读谓词"
+        );
+        state.unlock("offline:Alice", RecipeId::new("craft.example.a"));
+        state.flush().expect("flush should succeed");
+        let loaded = load_recipe_unlock_log(&path).expect("load should parse");
+        assert!(
+            !loaded
+                .by_player
+                .get("offline:Alice")
+                .map(|s| s.contains(&RecipeId::new("craft.tool.workbench")))
+                .unwrap_or(false),
+            "基线配方不应出现在落盘文件里 —— 豁免是代码谓词，不是持久化状态"
+        );
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn baseline_recipe_material_discovery_short_circuits_to_already() {
+        // 材料发现渠道对基线配方应短路成 Already（不重复写 state / 不重复刷 UI），
+        // 与 apply_material_discovery_unlock 的 is_unlocked 前置短路语义一致。
+        let mut state = RecipeUnlockState::new();
+        let recipe = empty_source_recipe("craft.tool.workbench", &[("spirit_wood", 4)]);
+        assert_eq!(
+            unlock_via_material(&mut state, "offline:Alice", &recipe, "spirit_wood"),
+            MaterialUnlockOutcome::Already,
+            "基线配方走材料发现必须返回 Already（is_unlocked 恒 true），\
+             返回 Newly 会把它写进 by_player 并触发多余的列表刷新"
+        );
+        assert!(!state.is_dirty(), "基线配方的材料发现不应产生任何状态写入");
+    }
+
+    #[test]
+    fn is_baseline_recipe_matches_registered_workbench_self_recipe() {
+        // 常量与真实注册表对拍：BASELINE_RECIPES 里的每个 id 必须真实存在于
+        // registry，防止配方改名后豁免名单静默漂移成空挂。
+        let mut registry = super::super::registry::CraftRegistry::new();
+        crate::craft::workbench_recipes::register_workbench_recipes(&mut registry).unwrap();
+        for id in BASELINE_RECIPES {
+            let rid = RecipeId::new(*id);
+            assert!(is_baseline_recipe(&rid));
+            let recipe = registry.get(&rid).unwrap_or_else(|| {
+                panic!(
+                    "BASELINE_RECIPES 含 `{id}` 但 registry 查无此配方 —— 配方改名后豁免名单未同步"
+                )
+            });
+            assert!(
+                recipe.unlock_sources.is_empty(),
+                "基线配方 `{id}` 不应同时声明显式解锁渠道（残卷/师承/顿悟），\
+                 否则秘传门控被常显豁免绕过"
+            );
+        }
     }
 
     #[test]
