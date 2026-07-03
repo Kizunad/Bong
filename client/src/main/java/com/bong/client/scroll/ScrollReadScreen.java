@@ -171,6 +171,7 @@ public final class ScrollReadScreen extends BaseOwoScreen<FlowLayout> {
         if (pageIndicatorLabel != null) {
             pageIndicatorLabel.text(Text.literal(pageIndicatorText()));
         }
+        ScrollReadAudio.playPageTurn();
     }
 
     private String pageIndicatorText() {
@@ -183,6 +184,7 @@ public final class ScrollReadScreen extends BaseOwoScreen<FlowLayout> {
     public void close() {
         if (!closed) {
             closed = true;
+            ScrollReadAudio.playClose();
             ScrollReadStore.close();
         }
         MinecraftClient mc = MinecraftClient.getInstance();
