@@ -579,6 +579,8 @@ mod tests {
                 center[0], center[1], center[2],
             )],
             blocked_tiles: vec![],
+            qi_equilibrium: 0.0,
+            qi_inflow_per_min: 0.0,
         }
     }
 

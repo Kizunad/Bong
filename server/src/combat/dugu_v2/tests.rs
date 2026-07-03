@@ -655,6 +655,8 @@ fn setup_zone_credit_app(zone_spirit_qi_before: f64) -> App {
         active_events: Vec::new(),
         patrol_anchors: Vec::new(),
         blocked_tiles: Vec::new(),
+        qi_equilibrium: 0.0,
+        qi_inflow_per_min: 0.0,
     };
     app.insert_resource(ZoneRegistry { zones: vec![zone] });
     app.insert_resource(WorldQiAccount::default());
@@ -1673,6 +1675,8 @@ fn setup_cast_cost_zone_app() -> App {
         active_events: Vec::new(),
         patrol_anchors: Vec::new(),
         blocked_tiles: Vec::new(),
+        qi_equilibrium: 0.0,
+        qi_inflow_per_min: 0.0,
     };
     app.insert_resource(ZoneRegistry { zones: vec![zone] });
     app.insert_resource(WorldQiAccount::default());

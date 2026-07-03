@@ -1705,6 +1705,8 @@ fn spawn_pseudo_vein_from_omen(
         active_events: vec![EVENT_PSEUDO_VEIN.to_string()],
         patrol_anchors: vec![center],
         blocked_tiles: Vec::new(),
+        qi_equilibrium: 0.0,
+        qi_inflow_per_min: 0.0,
     };
     if zone_registry.register_runtime_zone(zone).is_err() {
         return false;
@@ -2082,6 +2084,8 @@ mod tests {
             active_events: Vec::new(),
             patrol_anchors: vec![DVec3::new(x, 65.0, z)],
             blocked_tiles: Vec::new(),
+            qi_equilibrium: 0.0,
+            qi_inflow_per_min: 0.0,
         }
     }
 

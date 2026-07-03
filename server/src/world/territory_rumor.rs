@@ -559,6 +559,8 @@ mod rumor_tests {
             active_events: vec![],
             patrol_anchors: vec![DVec3::new(100.0, 66.0, 100.0)],
             blocked_tiles: vec![],
+            qi_equilibrium: 0.0,
+            qi_inflow_per_min: 0.0,
         };
         app.insert_resource(ZoneRegistry { zones: vec![zone] });
         app.insert_resource(CultivationClock { tick: now_tick });
@@ -702,6 +704,8 @@ mod rumor_tests {
             active_events: vec![],
             patrol_anchors: vec![DVec3::new(100.0, 66.0, 100.0)],
             blocked_tiles: vec![],
+            qi_equilibrium: 0.0,
+            qi_inflow_per_min: 0.0,
         };
         app.insert_resource(ZoneRegistry { zones: vec![zone] });
         app.insert_resource(CultivationClock { tick: now });
@@ -782,6 +786,8 @@ mod rumor_tests {
             active_events: vec![],
             patrol_anchors: vec![DVec3::new(100.0, 66.0, 100.0)],
             blocked_tiles: vec![],
+            qi_equilibrium: 0.0,
+            qi_inflow_per_min: 0.0,
         };
         app.insert_resource(ZoneRegistry { zones: vec![zone] });
         app.insert_resource(CultivationClock { tick: now });
@@ -857,6 +863,8 @@ mod rumor_tests {
             active_events: vec![],
             patrol_anchors: vec![DVec3::new(100.0, 66.0, 100.0)],
             blocked_tiles: vec![],
+            qi_equilibrium: 0.0,
+            qi_inflow_per_min: 0.0,
         };
         let zone_b = Zone {
             name: "zone_b".to_string(),
@@ -867,6 +875,8 @@ mod rumor_tests {
             active_events: vec![],
             patrol_anchors: vec![DVec3::new(300.0, 66.0, 100.0)],
             blocked_tiles: vec![],
+            qi_equilibrium: 0.0,
+            qi_inflow_per_min: 0.0,
         };
         let zone_far = Zone {
             name: "zone_far".to_string(),
@@ -880,6 +890,8 @@ mod rumor_tests {
             active_events: vec![],
             patrol_anchors: vec![DVec3::new(2100.0, 66.0, 100.0)],
             blocked_tiles: vec![],
+            qi_equilibrium: 0.0,
+            qi_inflow_per_min: 0.0,
         };
 
         let mut app = App::new();
@@ -1007,6 +1019,8 @@ mod rumor_tests {
                 active_events: vec![],
                 patrol_anchors: vec![DVec3::new(100.0, 66.0, 100.0)],
                 blocked_tiles: vec![],
+                qi_equilibrium: 0.0,
+                qi_inflow_per_min: 0.0,
             }],
         });
         app.insert_resource(CultivationClock { tick: now });
@@ -1102,6 +1116,8 @@ mod rumor_tests {
                 active_events: vec![],
                 patrol_anchors: vec![DVec3::new(100.0, 66.0, 100.0)],
                 blocked_tiles: vec![],
+                qi_equilibrium: 0.0,
+                qi_inflow_per_min: 0.0,
             }],
         });
         app.insert_resource(CultivationClock { tick: now });

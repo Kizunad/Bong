@@ -158,6 +158,8 @@ fn build_zone(z: &BlueprintZone) -> Zone {
             .map(|a| DVec3::new(a[0], a[1], a[2]))
             .collect(),
         blocked_tiles: z.blocked_tiles.iter().map(|[x, z]| (*x, *z)).collect(),
+        qi_equilibrium: 0.0,
+        qi_inflow_per_min: 0.0,
     }
 }
 

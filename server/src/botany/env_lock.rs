@@ -367,6 +367,8 @@ mod tests {
             active_events: events.iter().map(|event| event.to_string()).collect(),
             patrol_anchors: vec![],
             blocked_tiles: vec![],
+            qi_equilibrium: 0.0,
+            qi_inflow_per_min: 0.0,
         }
     }
 

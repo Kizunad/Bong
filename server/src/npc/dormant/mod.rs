@@ -1757,6 +1757,8 @@ mod tests {
             active_events: Vec::new(),
             patrol_anchors: vec![DVec3::new(10.0, 64.0, 10.0)],
             blocked_tiles: Vec::new(),
+            qi_equilibrium: 0.0,
+            qi_inflow_per_min: 0.0,
         }
     }
 
@@ -2356,6 +2358,8 @@ mod tests {
             active_events: Vec::new(),
             patrol_anchors: Vec::new(),
             blocked_tiles: Vec::new(),
+            qi_equilibrium: 0.0,
+            qi_inflow_per_min: 0.0,
         };
         app.insert_resource(ZoneRegistry {
             zones: vec![zone(), second_zone],

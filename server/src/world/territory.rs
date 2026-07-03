@@ -1244,6 +1244,8 @@ mod territory_tests {
             active_events: vec![],
             patrol_anchors: vec![],
             blocked_tiles: vec![],
+            qi_equilibrium: 0.0,
+            qi_inflow_per_min: 0.0,
         };
         app.insert_resource(ZoneRegistry { zones: vec![zone] });
         app.insert_resource(CultivationClock {
@@ -1349,6 +1351,8 @@ mod territory_tests {
             active_events: vec![],
             patrol_anchors: vec![],
             blocked_tiles: vec![],
+            qi_equilibrium: 0.0,
+            qi_inflow_per_min: 0.0,
         };
         app.insert_resource(ZoneRegistry { zones: vec![zone] });
 
@@ -1428,6 +1432,8 @@ mod territory_tests {
             active_events: vec![],
             patrol_anchors: vec![],
             blocked_tiles: vec![],
+            qi_equilibrium: 0.0,
+            qi_inflow_per_min: 0.0,
         };
         app.insert_resource(ZoneRegistry { zones: vec![zone] });
         app.insert_resource(CultivationClock { tick: eval_tick });
@@ -1505,6 +1511,8 @@ mod territory_tests {
             active_events: vec![],
             patrol_anchors: vec![],
             blocked_tiles: vec![],
+            qi_equilibrium: 0.0,
+            qi_inflow_per_min: 0.0,
         };
         app.insert_resource(ZoneRegistry { zones: vec![zone] });
         let eval_tick = TERRITORY_EVAL_INTERVAL_TICKS;
@@ -1609,6 +1617,8 @@ mod territory_tests {
             active_events: vec![],
             patrol_anchors: vec![],
             blocked_tiles: vec![],
+            qi_equilibrium: 0.0,
+            qi_inflow_per_min: 0.0,
         };
         app.insert_resource(ZoneRegistry { zones: vec![zone] });
         app.insert_resource(CultivationClock {
@@ -1694,6 +1704,8 @@ mod territory_tests {
             active_events: vec![],
             patrol_anchors: vec![],
             blocked_tiles: vec![],
+            qi_equilibrium: 0.0,
+            qi_inflow_per_min: 0.0,
         };
         app.insert_resource(ZoneRegistry { zones: vec![zone] });
         app.insert_resource(CultivationClock { tick: 100 });
@@ -1767,6 +1779,8 @@ mod territory_tests {
                 active_events: vec![],
                 patrol_anchors: vec![],
                 blocked_tiles: vec![],
+                qi_equilibrium: 0.0,
+                qi_inflow_per_min: 0.0,
             }],
         });
         app.add_systems(Update, territory_qi_depleted_system);
@@ -3105,6 +3119,8 @@ mod territory_tests {
                 active_events: vec![],
                 patrol_anchors: vec![],
                 blocked_tiles: vec![],
+                qi_equilibrium: 0.0,
+                qi_inflow_per_min: 0.0,
             }],
         });
         app.add_systems(valence::prelude::Update, recompute_territory_perks);

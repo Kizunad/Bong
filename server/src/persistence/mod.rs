@@ -9357,6 +9357,8 @@ mod persistence_tests {
                 active_events: vec!["beast_tide".to_string()],
                 patrol_anchors: Vec::new(),
                 blocked_tiles: Vec::new(),
+                qi_equilibrium: 0.0,
+                qi_inflow_per_min: 0.0,
             }],
         };
 
@@ -9621,6 +9623,8 @@ mod persistence_tests {
                 active_events: Vec::new(),
                 patrol_anchors: Vec::new(),
                 blocked_tiles: Vec::new(),
+                qi_equilibrium: 0.0,
+                qi_inflow_per_min: 0.0,
             }],
         };
         persist_zone_runtime_snapshot(&settings, &zones)
@@ -9668,6 +9672,8 @@ mod persistence_tests {
                 active_events: Vec::new(),
                 patrol_anchors: Vec::new(),
                 blocked_tiles: Vec::new(),
+                qi_equilibrium: 0.0,
+                qi_inflow_per_min: 0.0,
             }],
         };
         persist_zone_runtime_snapshot(&settings, &existing_zones)
@@ -9874,6 +9880,8 @@ mod persistence_tests {
                 active_events: Vec::new(),
                 patrol_anchors: Vec::new(),
                 blocked_tiles: Vec::new(),
+                qi_equilibrium: 0.0,
+                qi_inflow_per_min: 0.0,
             }],
         };
         persist_zone_runtime_snapshot(&settings, &persisted)
@@ -9907,6 +9915,8 @@ mod persistence_tests {
                 active_events: Vec::new(),
                 patrol_anchors: Vec::new(),
                 blocked_tiles: Vec::new(),
+                qi_equilibrium: 0.0,
+                qi_inflow_per_min: 0.0,
             }],
         });
         app.add_systems(Update, persist_zone_runtime_system);
@@ -11476,6 +11486,8 @@ mod persistence_tests {
                             active_events: Vec::new(),
                             patrol_anchors: Vec::new(),
                             blocked_tiles: Vec::new(),
+                            qi_equilibrium: 0.0,
+                            qi_inflow_per_min: 0.0,
                         }],
                     };
 
@@ -11722,6 +11734,8 @@ mod persistence_tests {
                                 active_events: Vec::new(),
                                 patrol_anchors: Vec::new(),
                                 blocked_tiles: Vec::new(),
+                                qi_equilibrium: 0.0,
+                                qi_inflow_per_min: 0.0,
                             }],
                         };
 

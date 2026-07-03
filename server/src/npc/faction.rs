@@ -2737,6 +2737,8 @@ mod tests {
                 DVec3::new(max_x - 4.0, 66.0, max_z - 4.0),
             ],
             blocked_tiles: Vec::new(),
+            qi_equilibrium: 0.0,
+            qi_inflow_per_min: 0.0,
         }
     }
 

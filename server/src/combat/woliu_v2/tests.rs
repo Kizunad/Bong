@@ -156,6 +156,8 @@ fn two_zone_registry() -> ZoneRegistry {
                 active_events: Vec::new(),
                 patrol_anchors: vec![DVec3::new(8.0, 66.0, 8.0)],
                 blocked_tiles: Vec::new(),
+                qi_equilibrium: 0.0,
+                qi_inflow_per_min: 0.0,
             },
             Zone {
                 name: "nearby_training_ring".to_string(),
@@ -166,6 +168,8 @@ fn two_zone_registry() -> ZoneRegistry {
                 active_events: Vec::new(),
                 patrol_anchors: vec![DVec3::new(20.0, 66.0, 8.0)],
                 blocked_tiles: Vec::new(),
+                qi_equilibrium: 0.0,
+                qi_inflow_per_min: 0.0,
             },
         ],
     }

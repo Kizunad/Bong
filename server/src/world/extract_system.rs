@@ -1135,6 +1135,8 @@ mod tests {
                 active_events: vec!["rift_mouth_entry".to_string()],
                 patrol_anchors: vec![DVec3::new(-500.0, 74.0, -8500.0)],
                 blocked_tiles: vec![],
+                qi_equilibrium: 0.0,
+                qi_inflow_per_min: 0.0,
             }],
         });
         let portal = app
@@ -1179,6 +1181,8 @@ mod tests {
                 active_events: vec![],
                 patrol_anchors: vec![],
                 blocked_tiles: vec![],
+                qi_equilibrium: 0.0,
+                qi_inflow_per_min: 0.0,
             }],
         });
         let existing = app
@@ -1249,6 +1253,8 @@ mod tests {
                 active_events: vec![],
                 patrol_anchors: vec![],
                 blocked_tiles: vec![],
+                qi_equilibrium: 0.0,
+                qi_inflow_per_min: 0.0,
             }],
         });
         app.add_event::<TsyCollapseStarted>();

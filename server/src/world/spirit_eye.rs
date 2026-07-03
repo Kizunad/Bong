@@ -621,6 +621,8 @@ mod tests {
             active_events: Vec::new(),
             patrol_anchors: vec![DVec3::new(min_x + 16.0, 90.0, 16.0)],
             blocked_tiles: Vec::new(),
+            qi_equilibrium: 0.0,
+            qi_inflow_per_min: 0.0,
         }
     }
 

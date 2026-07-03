@@ -733,7 +733,9 @@
           "safe_y": 72.0
         }
       ],
-      "blocked_tiles": []
+      "blocked_tiles": [],
+      "qi_equilibrium": 0.35,
+      "qi_inflow_per_min": 0.4
     },
     {
       "name": "giant_sword_sea",

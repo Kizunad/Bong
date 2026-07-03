@@ -4007,6 +4007,8 @@ mod events_tests {
                     active_events: Vec::new(),
                     patrol_anchors: Vec::new(),
                     blocked_tiles: Vec::new(),
+                    qi_equilibrium: 0.0,
+                    qi_inflow_per_min: 0.0,
                 },
                 Zone {
                     name: "low".to_string(),
@@ -4017,6 +4019,8 @@ mod events_tests {
                     active_events: Vec::new(),
                     patrol_anchors: Vec::new(),
                     blocked_tiles: Vec::new(),
+                    qi_equilibrium: 0.0,
+                    qi_inflow_per_min: 0.0,
                 },
                 Zone {
                     name: "high".to_string(),
@@ -4027,6 +4031,8 @@ mod events_tests {
                     active_events: Vec::new(),
                     patrol_anchors: Vec::new(),
                     blocked_tiles: Vec::new(),
+                    qi_equilibrium: 0.0,
+                    qi_inflow_per_min: 0.0,
                 },
             ],
         };
@@ -4077,6 +4083,8 @@ mod events_tests {
                     active_events: Vec::new(),
                     patrol_anchors: Vec::new(),
                     blocked_tiles: Vec::new(),
+                    qi_equilibrium: 0.0,
+                    qi_inflow_per_min: 0.0,
                 },
                 Zone {
                     name: "near_full".to_string(),
@@ -4087,6 +4095,8 @@ mod events_tests {
                     active_events: Vec::new(),
                     patrol_anchors: Vec::new(),
                     blocked_tiles: Vec::new(),
+                    qi_equilibrium: 0.0,
+                    qi_inflow_per_min: 0.0,
                 },
             ],
         };
@@ -4168,6 +4178,8 @@ mod events_tests {
                     active_events: Vec::new(),
                     patrol_anchors: Vec::new(),
                     blocked_tiles: Vec::new(),
+                    qi_equilibrium: 0.0,
+                    qi_inflow_per_min: 0.0,
                 },
                 Zone {
                     name: "half".to_string(),
@@ -4178,6 +4190,8 @@ mod events_tests {
                     active_events: Vec::new(),
                     patrol_anchors: Vec::new(),
                     blocked_tiles: Vec::new(),
+                    qi_equilibrium: 0.0,
+                    qi_inflow_per_min: 0.0,
                 },
                 Zone {
                     name: "near_full".to_string(),
@@ -4188,6 +4202,8 @@ mod events_tests {
                     active_events: Vec::new(),
                     patrol_anchors: Vec::new(),
                     blocked_tiles: Vec::new(),
+                    qi_equilibrium: 0.0,
+                    qi_inflow_per_min: 0.0,
                 },
             ],
         };
@@ -4241,6 +4257,8 @@ mod events_tests {
                     active_events: Vec::new(),
                     patrol_anchors: Vec::new(),
                     blocked_tiles: Vec::new(),
+                    qi_equilibrium: 0.0,
+                    qi_inflow_per_min: 0.0,
                 },
                 Zone {
                     name: "neighbor".to_string(),
@@ -4251,6 +4269,8 @@ mod events_tests {
                     active_events: Vec::new(),
                     patrol_anchors: Vec::new(),
                     blocked_tiles: Vec::new(),
+                    qi_equilibrium: 0.0,
+                    qi_inflow_per_min: 0.0,
                 },
             ],
         };
@@ -4290,6 +4310,8 @@ mod events_tests {
                 active_events: Vec::new(),
                 patrol_anchors: Vec::new(),
                 blocked_tiles: Vec::new(),
+                qi_equilibrium: 0.0,
+                qi_inflow_per_min: 0.0,
             }],
         };
 
@@ -4856,6 +4878,8 @@ mod events_tests {
                 active_events: Vec::new(),
                 patrol_anchors: vec![DVec3::new(150.0, 70.0, 150.0)],
                 blocked_tiles: Vec::new(),
+                qi_equilibrium: 0.0,
+                qi_inflow_per_min: 0.0,
             });
 
         {
@@ -5132,6 +5156,8 @@ mod events_tests {
                     active_events: Vec::new(),
                     patrol_anchors: Vec::new(),
                     blocked_tiles: Vec::new(),
+                    qi_equilibrium: 0.0,
+                    qi_inflow_per_min: 0.0,
                 });
                 let before_total: f64 = zones.zones.iter().map(|zone| zone.spirit_qi).sum();
 
@@ -5221,6 +5247,8 @@ mod events_tests {
                 active_events: Vec::new(),
                 patrol_anchors: Vec::new(),
                 blocked_tiles: Vec::new(),
+                qi_equilibrium: 0.0,
+                qi_inflow_per_min: 0.0,
             });
         }
 
@@ -5325,6 +5353,8 @@ mod events_tests {
                     active_events: Vec::new(),
                     patrol_anchors: Vec::new(),
                     blocked_tiles: Vec::new(),
+                    qi_equilibrium: 0.0,
+                    qi_inflow_per_min: 0.0,
                 },
                 Zone {
                     name: "full_neighbor".to_string(),
@@ -5335,6 +5365,8 @@ mod events_tests {
                     active_events: Vec::new(),
                     patrol_anchors: Vec::new(),
                     blocked_tiles: Vec::new(),
+                    qi_equilibrium: 0.0,
+                    qi_inflow_per_min: 0.0,
                 },
             ],
         };

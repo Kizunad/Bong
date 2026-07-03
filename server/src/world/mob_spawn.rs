@@ -143,6 +143,8 @@ mod tests {
             active_events: vec!["no_cadence".to_string()],
             patrol_anchors: Vec::new(),
             blocked_tiles: Vec::new(),
+            qi_equilibrium: 0.0,
+            qi_inflow_per_min: 0.0,
         }
     }
 

@@ -142,6 +142,8 @@ mod tests {
             active_events: vec![],
             patrol_anchors: vec![],
             blocked_tiles: vec![],
+            qi_equilibrium: 0.0,
+            qi_inflow_per_min: 0.0,
         }
     }
 

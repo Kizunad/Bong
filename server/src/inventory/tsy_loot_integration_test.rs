@@ -108,6 +108,8 @@ mod tests {
                     },
                     patrol_anchors: vec![DVec3::new(50.0, (ymin + ymax) * 0.5, 50.0)],
                     blocked_tiles: Vec::new(),
+                    qi_equilibrium: 0.0,
+                    qi_inflow_per_min: 0.0,
                 })
                 .expect("register zone");
         }
