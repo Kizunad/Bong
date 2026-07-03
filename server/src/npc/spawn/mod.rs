@@ -2238,4 +2238,209 @@ mod tests {
             count_after_2
         );
     }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // plan-npc-realm-distribution-v1 P2 — 境界-功法-视觉单一来源一致性 audit
+    //
+    // P0 之前的 bug 形态是「意图 realm（喂进 assign_npc_techniques /
+    // select_npc_visual_profile 的局部变量）≠ 组件 realm（npc_runtime_bundle_with_age
+    // 恒吞成的 Cultivation::default()）」。P0 修完 choke point 后两者理论上已收敛到
+    // 同一个函数参数，但那只是「输入端不再分叉」——本审计从真实 spawn 出的 entity
+    // 上*读回* Cultivation.realm，再拿它去核对同一个 entity 上落地的 KnownTechniques /
+    // NpcVisualProfile，验证的是「组件落地结果」的一致性而非「调用参数」的一致性，
+    // 两者不是同一件事：只审计参数传递不会抓到「entity 落地后又被别的 system 悄悄
+    // 改写 Cultivation.realm 但没有联动重算功法/视觉」这类漂移。
+    //
+    // 覆盖：spawn_rogue_npc_at / spawn_scattered_cultivator_at / spawn_disciple_npc_at
+    // / spawn_commoner_npc_at，全 6 境界。GuardianRelic（spawn_relic_guard_npc_at）
+    // 走固定 Realm::Spirit 单点，已有专属 pin
+    // (spawn_relic_guard_npc_at_writes_spirit_realm_into_cultivation)，本审计不重复。
+
+    fn spawn_test_realm_audit_population(mut commands: Commands, layer: Res<TestLayer>) {
+        let realms = [
+            Realm::Awaken,
+            Realm::Induce,
+            Realm::Condense,
+            Realm::Solidify,
+            Realm::Spirit,
+            Realm::Void,
+        ];
+        for (i, realm) in realms.into_iter().enumerate() {
+            let x = 200.0 + i as f64 * 10.0;
+            rogue::spawn_rogue_npc_at(
+                &mut commands,
+                NpcSkinSpawnContext::new(None, NpcSkinFallbackPolicy::AllowFallback),
+                layer.0,
+                DEFAULT_SPAWN_ZONE_NAME,
+                DVec3::new(x, 66.0, 200.0),
+                DVec3::new(x, 66.0, 200.0),
+                realm,
+                0.0,
+            );
+            rogue::spawn_scattered_cultivator_at(
+                &mut commands,
+                NpcSkinSpawnContext::new(None, NpcSkinFallbackPolicy::AllowFallback),
+                layer.0,
+                DEFAULT_SPAWN_ZONE_NAME,
+                DVec3::new(x, 66.0, 210.0),
+                DVec3::new(x, 66.0, 210.0),
+                0.5,
+                realm,
+                0.0,
+            );
+            disciple::spawn_disciple_npc_at(
+                &mut commands,
+                NpcSkinSpawnContext::new(None, NpcSkinFallbackPolicy::AllowFallback),
+                layer.0,
+                DEFAULT_SPAWN_ZONE_NAME,
+                DVec3::new(x, 66.0, 220.0),
+                DVec3::new(x, 66.0, 220.0),
+                FactionId::Attack,
+                FactionRank::Disciple,
+                realm,
+                None,
+                0.0,
+            );
+            commoner::spawn_commoner_npc_at(
+                &mut commands,
+                NpcSkinSpawnContext::new(None, NpcSkinFallbackPolicy::AllowFallback),
+                layer.0,
+                DEFAULT_SPAWN_ZONE_NAME,
+                DVec3::new(x, 66.0, 230.0),
+                DVec3::new(x, 66.0, 230.0),
+                realm,
+                0.0,
+            );
+        }
+    }
+
+    #[test]
+    fn spawn_paths_technique_realm_never_exceeds_persisted_cultivation_realm() {
+        use crate::cultivation::known_techniques::technique_definition;
+        use crate::cultivation::known_techniques::KnownTechniques;
+        use crate::npc::technique::technique_realm_satisfied;
+
+        let mut app = App::new();
+        app.add_systems(
+            valence::prelude::Startup,
+            (
+                setup_test_layer,
+                spawn_test_realm_audit_population.after(setup_test_layer),
+            ),
+        );
+        app.update();
+        app.update();
+
+        let world = app.world_mut();
+        let mut query = world.query_filtered::<(
+            Entity,
+            &Cultivation,
+            Option<&KnownTechniques>,
+            &NpcArchetype,
+        ), With<NpcMarker>>();
+        let mut checked_entities = 0usize;
+        let mut checked_techniques = 0usize;
+        for (entity, cultivation, known, archetype) in query.iter(world) {
+            checked_entities += 1;
+            let Some(known) = known else { continue };
+            for entry in &known.entries {
+                checked_techniques += 1;
+                let def = technique_definition(&entry.id).unwrap_or_else(|| {
+                    panic!(
+                        "entity={entity:?} archetype={archetype:?} realm={:?}: technique {} \
+                         not found in TECHNIQUE_DEFINITIONS",
+                        cultivation.realm, entry.id
+                    )
+                });
+                assert!(
+                    technique_realm_satisfied(def, cultivation.realm),
+                    "entity={entity:?} archetype={archetype:?}: persisted Cultivation.realm={:?} \
+                     does not satisfy technique {} (required_realm={}) — 意图 realm 与组件落地 \
+                     realm 出现双源漂移",
+                    cultivation.realm,
+                    entry.id,
+                    def.required_realm
+                );
+            }
+        }
+
+        // 防止 query 因 filter 打偏而恒真（entities=0 或 techniques=0 都会让上面的
+        // assert 循环体一次不跑，测试看似通过实则没测到任何东西）。
+        assert_eq!(
+            checked_entities, 24,
+            "expected 4 spawn fns x 6 realms = 24 NpcMarker entities, got {checked_entities} — \
+             spawn population fixture 本身跑偏，下面的 realm 断言可能从未真正执行"
+        );
+        assert!(
+            checked_techniques > 0,
+            "expected at least one KnownTechniques entry across the 24 spawned entities — got 0, \
+             the audit loop body never actually ran an assertion"
+        );
+    }
+
+    #[test]
+    fn spawn_paths_visual_profile_matches_persisted_cultivation_realm() {
+        use crate::skin::{select_npc_visual_profile, NpcVisualProfile};
+
+        let mut app = App::new();
+        app.add_systems(
+            valence::prelude::Startup,
+            (
+                setup_test_layer,
+                spawn_test_realm_audit_population.after(setup_test_layer),
+            ),
+        );
+        app.update();
+        app.update();
+
+        let world = app.world_mut();
+        let mut query = world.query_filtered::<(
+            Entity,
+            &Cultivation,
+            &NpcArchetype,
+            Option<&NpcVisualProfile>,
+            Option<&FactionMembership>,
+        ), With<NpcMarker>>();
+        let mut checked_profiles = 0usize;
+        for (entity, cultivation, archetype, profile, membership) in query.iter(world) {
+            let Some(profile) = profile else { continue };
+            checked_profiles += 1;
+            let faction_id = membership.map(|m| m.faction_id);
+            let faction_rank = membership.map(|m| m.rank);
+            // age_ratio 不影响 skin_tier/high_realm，只影响 age_band——用一个固定值
+            // 重算，只比对 realm 派生的两个字段，不比对完整 struct。
+            let recomputed = select_npc_visual_profile(
+                *archetype,
+                cultivation.realm,
+                faction_id,
+                faction_rank,
+                0.5,
+            );
+            assert_eq!(
+                profile.skin_tier, recomputed.skin_tier,
+                "entity={entity:?} archetype={archetype:?}: NpcVisualProfile.skin_tier 落地值 {:?} \
+                 与「用 entity 上实际 Cultivation.realm={:?} 重算」得到的 {:?} 不一致 — \
+                 视觉档位吃的 realm 与组件最终落地的 realm 出现双源漂移",
+                profile.skin_tier,
+                cultivation.realm,
+                recomputed.skin_tier
+            );
+            assert_eq!(
+                profile.has_high_realm_aura(),
+                recomputed.has_high_realm_aura(),
+                "entity={entity:?} archetype={archetype:?}: NpcVisualProfile.high_realm 落地值 {} \
+                 与用实际 Cultivation.realm={:?} 重算的 {} 不一致",
+                profile.has_high_realm_aura(),
+                cultivation.realm,
+                recomputed.has_high_realm_aura()
+            );
+        }
+
+        assert_eq!(
+            checked_profiles, 24,
+            "expected all 24 spawned entities (Rogue/ScatteredCultivator/Disciple/Commoner all \
+             carry NpcVisualProfile) to be checked, got {checked_profiles} — fixture 跑偏或 \
+             NpcVisualProfile 未落地，下面的 realm 一致性断言可能从未真正执行"
+        );
+    }
 }
