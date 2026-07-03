@@ -1293,6 +1293,51 @@ mod tests {
     }
 
     #[test]
+    fn hydrate_preserves_non_default_snapshot_realm_regardless_of_bundle_default() {
+        // plan-npc-realm-distribution-v1 P0 R2 骨架（不是 P1 分布测试）：
+        // spawn_from_snapshot（hydrate/mod.rs:720-724）用 `snapshot.cultivation`
+        // 整体覆盖 spawn_disciple_npc_at 内部 bundle 算出的 Cultivation ——
+        // P0 choke-point 修复对 hydrate 路径零效果，这是既有行为不是本 plan 引入。
+        // 本测试手工构造非默认 realm 快照（不依赖尚未落地的 P1 seeder产出的分布），
+        // 锁定"snapshot 内容保真"这条真实回归线，不是恒真的"hydrate 不丢 realm"。
+        let mut app = App::new();
+        app.add_event::<InitiateXuhuaTribulation>();
+
+        let overworld = app.world_mut().spawn_empty().id();
+        let tsy = app.world_mut().spawn_empty().id();
+        app.insert_resource(DimensionLayers { overworld, tsy });
+        app.insert_resource(NpcVirtualizationConfig::default());
+
+        let mut snap = disciple_snapshot("disciple_solidify", DVec3::new(20.0, 64.0, 20.0));
+        snap.cultivation.realm = Realm::Solidify;
+        snap.shared_lifespan = LifespanComponent::for_realm(Realm::Solidify);
+        let mut store = NpcDormantStore::default();
+        store.insert(snap);
+        app.insert_resource(store);
+
+        app.world_mut()
+            .spawn((ClientMarker, Position(DVec3::new(20.0, 64.0, 20.0))));
+
+        app.add_systems(Update, hydrate_dormant_near_players_system);
+        app.update();
+
+        let hit = {
+            let world = app.world_mut();
+            let mut query = world.query::<(&NpcArchetype, &Cultivation)>();
+            query
+                .iter(world)
+                .find(|(archetype, _)| **archetype == NpcArchetype::Disciple)
+                .map(|(_, cultivation)| cultivation.realm)
+        };
+        assert_eq!(
+            hit,
+            Some(Realm::Solidify),
+            "hydrate 必须原样保留快照 realm(Solidify)，不受 spawn_disciple_npc_at \
+             内部 bundle 默认值影响"
+        );
+    }
+
+    #[test]
     fn home_base_uses_scatter_position_not_zone_center() {
         const ARRIVAL_DISTANCE: f64 = 1.8;
 

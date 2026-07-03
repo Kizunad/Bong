@@ -1540,6 +1540,7 @@ fn planar_distance_sq(left: DVec3, right: DVec3) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cultivation::components::Cultivation;
     use serde_json::json;
     use valence::prelude::Events;
     use valence::testing::create_mock_client;
@@ -2845,6 +2846,53 @@ mod tests {
                 .all(|(leader, _, _, _, _)| *leader != NamedFactionId::NorthWasteDrifters),
             "NorthWasteDrifters 初始 Headless，P2 不应刷新领袖"
         );
+    }
+
+    #[test]
+    fn leader_spawn_writes_leader_realm_into_cultivation_component() {
+        // plan-npc-realm-distribution-v1 P0 choke-point pin: 派系首领 spawn 后
+        // Cultivation.realm 必须等于 leader_realm_for(faction)（三档全覆盖），
+        // 而不是被 npc_runtime_bundle 恒吞成 Realm::Awaken（修复前的 bug）。
+        let mut app = App::new();
+        app.insert_resource(NamedFactionRegistry::startup_default());
+        let claims =
+            FactionZoneClaims::from_registry(app.world().resource::<NamedFactionRegistry>());
+        app.insert_resource(claims);
+        app.insert_resource(p2_zone_registry());
+        app.world_mut().spawn(OverworldLayer);
+        app.add_systems(Update, spawn_named_faction_leaders_on_startup);
+        app.update();
+
+        let mut leaders = app
+            .world_mut()
+            .query::<(&NamedFactionLeader, &Cultivation)>();
+        let rows = leaders
+            .iter(app.world())
+            .map(|(leader, cultivation)| (leader.faction, cultivation.realm))
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            rows.len(),
+            2,
+            "P2 只应为 Active 势力刷新 2 名领袖，实际 {:?}",
+            rows
+        );
+        assert!(
+            rows.contains(&(NamedFactionId::QingyunHunters, Realm::Solidify)),
+            "青云猎盟盟主 Cultivation.realm 期望 Solidify（leader_realm_for 定义），实际 {:?}——\
+             若仍是 Awaken 说明 npc_runtime_bundle choke point 未修复",
+            rows
+        );
+        assert!(
+            rows.contains(&(NamedFactionId::CangyuanMerchants, Realm::Spirit)),
+            "沧渊商会会首 Cultivation.realm 期望 Spirit（leader_realm_for 定义），实际 {:?}——\
+             若仍是 Awaken 说明 npc_runtime_bundle choke point 未修复",
+            rows
+        );
+        // NorthWasteDrifters 是 Headless，本轮不刷新，故不在 rows 内；
+        // 但 leader_realm_for 本身对三档全覆盖已由既有 pin 测试
+        // （leader_realm_matches_plan_table）单独锁定 Realm::Awaken 一档，
+        // 此测试不重复断言纯函数，只锁"写进组件"这一步。
     }
 
     #[test]

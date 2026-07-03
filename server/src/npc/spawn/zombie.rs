@@ -3,6 +3,7 @@ use big_brain::prelude::{FirstToScore, Thinker, ThinkerBuilder};
 use valence::entity::zombie::ZombieEntityBundle;
 use valence::prelude::{Commands, DVec3, Entity, EntityKind, EntityLayerId, Position};
 
+use crate::cultivation::components::Realm;
 use crate::npc::brain::{
     AgeingScorer, ChaseAction, ChaseTargetScorer, DashAction, DashScorer, MeleeAttackAction,
     MeleeRangeScorer, RetireAction,
@@ -76,9 +77,11 @@ pub fn spawn_zombie_npc_at(
         ))
         .id();
 
-    commands
-        .entity(entity)
-        .insert(npc_runtime_bundle(entity, NpcArchetype::Zombie));
+    commands.entity(entity).insert(npc_runtime_bundle(
+        entity,
+        NpcArchetype::Zombie,
+        Realm::Awaken,
+    ));
 
     entity
 }

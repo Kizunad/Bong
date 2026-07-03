@@ -3,6 +3,7 @@ use big_brain::prelude::{FirstToScore, Thinker, ThinkerBuilder};
 use valence::entity::marker::MarkerEntityBundle;
 use valence::prelude::{Commands, DVec3, Entity, EntityLayerId, Position};
 
+use crate::cultivation::components::Realm;
 use crate::fauna::components::{fauna_spawn_seed, fauna_tag_for_beast_spawn};
 use crate::fauna::visual::{entity_kind_for_beast, visual_kind_for_beast};
 use crate::npc::brain::{
@@ -107,7 +108,12 @@ pub fn spawn_beast_npc_at(
         beast_npc_thinker(),
     ));
 
-    let mut runtime = npc_runtime_bundle_with_age(entity, NpcArchetype::Beast, initial_age_ticks);
+    let mut runtime = npc_runtime_bundle_with_age(
+        entity,
+        NpcArchetype::Beast,
+        Realm::Awaken,
+        initial_age_ticks,
+    );
     let hp = fauna_tag.beast_kind.health_max();
     runtime.wounds.health_current = hp;
     runtime.wounds.health_max = hp;

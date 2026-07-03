@@ -3932,7 +3932,7 @@ mod tests {
                     NpcBlackboard::default(),
                     Position::new([14.0, 66.0, 14.0]),
                     EntityKind::ZOMBIE,
-                    npc_runtime_bundle(Entity::PLACEHOLDER, NpcArchetype::Disciple),
+                    npc_runtime_bundle(Entity::PLACEHOLDER, NpcArchetype::Disciple, Realm::Awaken),
                     FactionMembership {
                         faction_id: FactionId::Defend,
                         rank: FactionRank::Disciple,

@@ -426,7 +426,13 @@ pub(crate) fn dying_elder_apply_spawn_system(
         };
 
         // ── 覆盖 npc_runtime_bundle 中的 Cultivation（化虚级 qi）
-        let mut runtime = npc_runtime_bundle(entity, NpcArchetype::DyingElder);
+        // realm 实参不影响最终结果——下方 `runtime.cultivation = cultivation`
+        // 会用 Realm::Void 化虚字面量整体覆盖（P0 回归锁见 lifecycle.rs 测试）。
+        let mut runtime = npc_runtime_bundle(
+            entity,
+            NpcArchetype::DyingElder,
+            crate::cultivation::components::Realm::Awaken,
+        );
         runtime.cultivation = cultivation;
         commands.entity(entity).insert(runtime);
 
@@ -2566,6 +2572,54 @@ mod tests {
             spawned_bb.home_zone, "tsy_deep",
             "spawn entity home_zone 应为 'tsy_deep'（来自 spawn request），实际 = '{}'",
             spawned_bb.home_zone
+        );
+    }
+
+    /// plan-npc-realm-distribution-v1 P0 回归锁：dying_elder 的化虚 `Cultivation`
+    /// 字面量构造（:391-394）经 `:429-430` 整体覆盖 `npc_runtime_bundle` 产出的
+    /// Cultivation，不受 P0 choke-point 修复影响——realm 必须仍是 `Realm::Void`，
+    /// qi_current/qi_max 必须仍是 `DYING_ELDER_INITIAL_QI`（满灵，大能特例，
+    /// 不适用"NPC spawn 不满灵"的通用红线，因为它走的是覆盖分支非通用 bundle 输出）。
+    #[test]
+    fn apply_spawn_system_keeps_void_realm_and_full_qi_regression_lock() {
+        use valence::prelude::App;
+        let mut app = App::new();
+        app.add_event::<DyingElderSpawnRequest>();
+        app.add_event::<DyingElderAppearedEvent>();
+        app.add_systems(valence::prelude::Update, dying_elder_apply_spawn_system);
+
+        let pos = DVec3::new(5.0, 64.0, 5.0);
+        let bb = DyingElderBlackboard::new("tsy_deep", pos, 7, 50);
+        app.world_mut().send_event(DyingElderSpawnRequest {
+            zone_name: "tsy_deep".to_string(),
+            spawn_pos: pos,
+            blackboard: bb,
+            tick: 50,
+        });
+        app.update();
+
+        let mut query = app
+            .world_mut()
+            .query::<(&crate::cultivation::components::Cultivation, &NpcMarker)>();
+        let results: Vec<_> = query.iter(app.world()).collect();
+        assert_eq!(results.len(), 1, "应恰好创建 1 个大能 entity");
+        let (cultivation, _) = results[0];
+        assert_eq!(
+            cultivation.realm,
+            crate::cultivation::components::Realm::Void,
+            "大能 Cultivation.realm 必须是 Void（化虚），实际 = {:?}——\
+             若被 P0 choke-point 修复误伤，说明 :429-430 的覆盖顺序被破坏",
+            cultivation.realm
+        );
+        assert!(
+            (cultivation.qi_current - DYING_ELDER_INITIAL_QI).abs() < f64::EPSILON,
+            "大能 qi_current 必须等于 DYING_ELDER_INITIAL_QI（满灵特例），实际 = {}",
+            cultivation.qi_current
+        );
+        assert!(
+            (cultivation.qi_max - DYING_ELDER_INITIAL_QI).abs() < f64::EPSILON,
+            "大能 qi_max 必须等于 DYING_ELDER_INITIAL_QI，实际 = {}",
+            cultivation.qi_max
         );
     }
 

@@ -402,7 +402,7 @@ mod tests {
 
     use crate::combat::components::WoundKind;
     use crate::combat::events::FIST_REACH;
-    use crate::cultivation::components::Realm;
+    use crate::cultivation::components::{Cultivation, Realm};
     use crate::npc::faction::{FactionId, FactionMembership, FactionRank, MissionExecuteState};
     use crate::npc::movement::MovementCapabilities;
     use crate::npc::patrol::NpcPatrol;
@@ -1122,6 +1122,31 @@ mod tests {
             .world()
             .get::<ThinkerBuilder>(guard)
             .expect("relic guard should carry the live guardian thinker");
+    }
+
+    #[test]
+    fn spawn_relic_guard_npc_at_writes_spirit_realm_into_cultivation() {
+        // plan-npc-realm-distribution-v1 P0 R1 pin：GuardianRelic 守护者的 `guard_realm`
+        // 局部变量（disciple.rs:217 定义为 Realm::Spirit）此前只喂 npc_meridian_system_for_realm/
+        // assign_npc_techniques，最后 npc_runtime_bundle 恒吞成 Realm::Awaken。
+        let mut app = App::new();
+        app.add_systems(
+            valence::prelude::Startup,
+            (
+                setup_test_layer,
+                spawn_test_relic_guard.after(setup_test_layer),
+            ),
+        );
+        app.update();
+        app.update();
+
+        let guard = only_spawned_npc(&mut app);
+
+        assert_eq!(
+            app.world().get::<Cultivation>(guard).map(|c| c.realm),
+            Some(Realm::Spirit),
+            "GuardianRelic 守护者 Cultivation.realm 期望 Spirit（guard_realm 定义于 disciple.rs:217）"
+        );
     }
 
     fn only_spawned_npc(app: &mut App) -> Entity {

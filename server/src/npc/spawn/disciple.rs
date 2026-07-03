@@ -156,7 +156,8 @@ pub fn spawn_disciple_npc_at(
         .entity(entity)
         .insert((known_techniques, NpcLastTechniqueTick::default(), trade_inv));
 
-    let runtime = npc_runtime_bundle_with_age(entity, NpcArchetype::Disciple, initial_age_ticks);
+    let runtime =
+        npc_runtime_bundle_with_age(entity, NpcArchetype::Disciple, realm, initial_age_ticks);
     commands.entity(entity).insert(runtime);
 
     entity
@@ -230,7 +231,7 @@ pub fn spawn_relic_guard_npc_at(
         .insert((known_techniques, NpcLastTechniqueTick::default()));
 
     // GuardianRelic 不老：max_age 极大 + rate_multiplier 不会撞上限
-    let runtime = npc_runtime_bundle(entity, NpcArchetype::GuardianRelic);
+    let runtime = npc_runtime_bundle(entity, NpcArchetype::GuardianRelic, guard_realm);
     commands.entity(entity).insert(runtime);
 
     entity

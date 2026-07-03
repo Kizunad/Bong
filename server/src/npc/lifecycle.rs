@@ -11,7 +11,8 @@ use valence::prelude::{
 use crate::combat::components::{
     CombatState, DerivedAttrs, Lifecycle, LifecycleState, Stamina, StatusEffects, Wounds,
 };
-use crate::cultivation::components::{Contamination, Cultivation, MeridianSystem};
+use crate::cultivation::breakthrough::qi_max_for_realm;
+use crate::cultivation::components::{Contamination, Cultivation, MeridianSystem, Realm};
 use crate::cultivation::death_hooks::{
     CultivationDeathCause, CultivationDeathTrigger, PlayerTerminated,
 };
@@ -589,27 +590,38 @@ pub struct NpcRuntimeBundle {
     pub lifecycle: Lifecycle,
 }
 
-pub fn npc_runtime_bundle(entity: Entity, archetype: NpcArchetype) -> NpcRuntimeBundle {
-    npc_runtime_bundle_with_age(entity, archetype, 0.0)
+pub fn npc_runtime_bundle(
+    entity: Entity,
+    archetype: NpcArchetype,
+    realm: Realm,
+) -> NpcRuntimeBundle {
+    npc_runtime_bundle_with_age(entity, archetype, realm, 0.0)
 }
 
 pub fn npc_runtime_bundle_with_age(
     entity: Entity,
     archetype: NpcArchetype,
+    realm: Realm,
     initial_age_ticks: f64,
 ) -> NpcRuntimeBundle {
     let char_id = canonical_npc_id(entity);
+    let cultivation = Cultivation {
+        realm,
+        qi_current: 0.0,
+        qi_max: qi_max_for_realm(realm),
+        ..Cultivation::default()
+    };
     let mut bundle = NpcRuntimeBundle {
         archetype,
         lifespan: NpcLifespan::new(
             initial_age_ticks.max(0.0),
             archetype.default_max_age_ticks(),
         ),
-        shared_lifespan: LifespanComponent::for_realm(Cultivation::default().realm),
+        shared_lifespan: LifespanComponent::for_realm(realm),
         death_registry: DeathRegistry::new(char_id.clone()),
         life_record: LifeRecord::new(char_id.clone()),
         lifespan_extension_ledger: LifespanExtensionLedger::default(),
-        cultivation: Cultivation::default(),
+        cultivation,
         meridian_system: MeridianSystem::default(),
         contamination: Contamination::default(),
         wounds: Wounds::default(),
@@ -1064,13 +1076,64 @@ mod tests {
     fn npc_runtime_bundle_with_age_syncs_shared_lifespan_source_of_truth() {
         let mut app = App::new();
         let entity = app.world_mut().spawn_empty().id();
-        let bundle = npc_runtime_bundle_with_age(entity, NpcArchetype::Commoner, 45_000.0);
+        let bundle =
+            npc_runtime_bundle_with_age(entity, NpcArchetype::Commoner, Realm::Awaken, 45_000.0);
         assert_eq!(bundle.lifespan.age_ticks, 45_000.0);
         assert_eq!(
             bundle.shared_lifespan.cap_by_realm,
             LifespanCapTable::MORTAL
         );
         assert!((bundle.shared_lifespan.years_lived - 40.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn npc_runtime_bundle_writes_realm_and_never_satiates_qi_current() {
+        // plan-npc-realm-distribution-v1 P0 choke-point 饱和覆盖：六境界全覆盖
+        // ① Cultivation.realm 等于传入的 realm（不再恒 Awaken）
+        // ② qi_max 等于 qi_max_for_realm(realm)（对拍 worldview 表，见 breakthrough.rs 测试）
+        // ③ qi_current 显式保持 0.0（不满灵——满灵会凭空产生真元撞 qi_physics 守恒红线）
+        // ④ shared_lifespan 吃的是传入 realm 而非 Cultivation::default().realm
+        for realm in [
+            Realm::Awaken,
+            Realm::Induce,
+            Realm::Condense,
+            Realm::Solidify,
+            Realm::Spirit,
+            Realm::Void,
+        ] {
+            let mut app = App::new();
+            let entity = app.world_mut().spawn_empty().id();
+            let bundle = npc_runtime_bundle_with_age(entity, NpcArchetype::Beast, realm, 0.0);
+            assert_eq!(
+                bundle.cultivation.realm, realm,
+                "realm={realm:?}: Cultivation.realm 必须等于传入的 realm，实际 {:?}",
+                bundle.cultivation.realm
+            );
+            assert_eq!(
+                bundle.cultivation.qi_current, 0.0,
+                "realm={realm:?}: qi_current 必须保持 0.0（不满灵），实际 {}",
+                bundle.cultivation.qi_current
+            );
+            assert_eq!(
+                bundle.cultivation.qi_max,
+                qi_max_for_realm(realm),
+                "realm={realm:?}: qi_max 必须等于 qi_max_for_realm(realm)，实际 {}",
+                bundle.cultivation.qi_max
+            );
+            assert_eq!(
+                bundle.shared_lifespan.cap_by_realm,
+                LifespanCapTable::for_realm(realm),
+                "realm={realm:?}: shared_lifespan 必须吃传入 realm 而非默认 Awaken"
+            );
+        }
+
+        // 2-arg wrapper 同源透传（不允许悄悄塞 Realm::Awaken 折中默认值）。
+        let mut app = App::new();
+        let entity = app.world_mut().spawn_empty().id();
+        let bundle = npc_runtime_bundle(entity, NpcArchetype::Beast, Realm::Solidify);
+        assert_eq!(bundle.cultivation.realm, Realm::Solidify);
+        assert_eq!(bundle.cultivation.qi_current, 0.0);
+        assert_eq!(bundle.cultivation.qi_max, qi_max_for_realm(Realm::Solidify));
     }
 
     #[test]
@@ -1189,7 +1252,7 @@ mod tests {
             .world_mut()
             .spawn((NpcMarker, Position::new([0.0, 64.0, 0.0])))
             .id();
-        let mut attacker_bundle = npc_runtime_bundle(attacker, NpcArchetype::Zombie);
+        let mut attacker_bundle = npc_runtime_bundle(attacker, NpcArchetype::Zombie, Realm::Awaken);
         attacker_bundle.cultivation.qi_current = 80.0;
         attacker_bundle.cultivation.qi_max = 100.0;
         app.world_mut().entity_mut(attacker).insert(attacker_bundle);
@@ -1198,7 +1261,7 @@ mod tests {
             .world_mut()
             .spawn((NpcMarker, Position::new([1.0, 64.0, 0.0])))
             .id();
-        let mut victim_bundle = npc_runtime_bundle(victim, NpcArchetype::Commoner);
+        let mut victim_bundle = npc_runtime_bundle(victim, NpcArchetype::Commoner, Realm::Awaken);
         victim_bundle.wounds.health_current = 3.0;
         victim_bundle.wounds.health_max = 100.0;
         victim_bundle.cultivation.qi_current = 80.0;

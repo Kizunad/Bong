@@ -287,7 +287,8 @@ pub fn spawn_rogue_npc_at(
         NpcPlayerReputation::default(),
     ));
 
-    let runtime = npc_runtime_bundle_with_age(entity, NpcArchetype::Rogue, initial_age_ticks);
+    let runtime =
+        npc_runtime_bundle_with_age(entity, NpcArchetype::Rogue, realm, initial_age_ticks);
     commands.entity(entity).insert(runtime);
 
     entity
@@ -337,7 +338,8 @@ pub fn spawn_scattered_cultivator_at(
         .entity(entity)
         .insert(ScatteredCultivatorBundle::new(temperament));
 
-    let runtime = npc_runtime_bundle_with_age(entity, NpcArchetype::Rogue, initial_age_ticks);
+    let runtime =
+        npc_runtime_bundle_with_age(entity, NpcArchetype::Rogue, realm, initial_age_ticks);
     commands.entity(entity).insert(runtime);
 
     entity
