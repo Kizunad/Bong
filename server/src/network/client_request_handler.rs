@@ -433,6 +433,15 @@ const SCROLL_READ_ANIM_PRIORITY: u16 = 600;
 /// 淡入 tick 数（§8.1 #4 决议：fadeIn 4 tick）。
 const SCROLL_READ_ANIM_FADE_IN_TICKS: u8 = 4;
 
+/// plan-scroll-reading-v1 P2 — 展开微光 VFX `bong:scroll_open_glow`，淡金色，
+/// burst 12 粒（client `ScrollOpenGlowPlayer` 再叠加自身的 continuous 层，本端只发一次
+/// SpawnParticle，两层视觉由 client 侧固定常量生成，不经 payload 传递）。
+const SCROLL_OPEN_GLOW_EVENT_ID: &str = "bong:scroll_open_glow";
+const SCROLL_OPEN_GLOW_COLOR: &str = "#E8D9A0";
+const SCROLL_OPEN_GLOW_COUNT: u16 = 12;
+const SCROLL_OPEN_GLOW_STRENGTH: f32 = 0.85;
+const SCROLL_OPEN_GLOW_DURATION_TICKS: u16 = 20;
+
 fn meridian_label(id: MeridianId) -> &'static str {
     match id {
         MeridianId::Lung => "肺经",
@@ -2636,6 +2645,28 @@ pub fn handle_client_request_payloads(
                             resolution.into_payload(),
                             &mut clients,
                         );
+                        // P2 — 展开微光：与 anim_id 是否存在无关，任意成功开卷都应有视觉反馈。
+                        if let Ok(position) = combat_params.positions.get(ev.client) {
+                            if let Some(vfx_events) = alchemy_params.vfx_events.as_deref_mut() {
+                                vfx_events
+                                    .send(crate::network::vfx_event_emit::VfxEventRequest::new(
+                                    position.get(),
+                                    crate::schema::vfx_event::VfxEventPayloadV1::SpawnParticle {
+                                        event_id: SCROLL_OPEN_GLOW_EVENT_ID.to_string(),
+                                        origin: [
+                                            position.get().x,
+                                            position.get().y,
+                                            position.get().z,
+                                        ],
+                                        direction: None,
+                                        color: Some(SCROLL_OPEN_GLOW_COLOR.to_string()),
+                                        strength: Some(SCROLL_OPEN_GLOW_STRENGTH),
+                                        count: Some(SCROLL_OPEN_GLOW_COUNT),
+                                        duration_ticks: Some(SCROLL_OPEN_GLOW_DURATION_TICKS),
+                                    },
+                                ));
+                            }
+                        }
                         // §8.1 #1：动画只在模板挂了 anim_id 时才播（残卷不强制有阅读动画）。
                         if let Some(anim_id) = anim_id {
                             // P2 — 插入 ScrollReading marker（真相源，供 ScrollReadClosed /
@@ -8921,6 +8952,15 @@ mod tests {
         })
     }
 
+    fn scroll_anim_find_spawn_particle<'a>(
+        reqs: &'a [crate::network::vfx_event_emit::VfxEventRequest],
+        event_id: &str,
+    ) -> Option<&'a crate::network::vfx_event_emit::VfxEventRequest> {
+        reqs.iter().find(|r| {
+            matches!(&r.payload, VfxEventPayloadV1::SpawnParticle { event_id: id, .. } if id == event_id)
+        })
+    }
+
     fn send_scroll_read_request(app: &mut App, entity: Entity, instance_id: u64) {
         app.world_mut()
             .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
@@ -9009,6 +9049,58 @@ mod tests {
             scroll_anim_find_play(&emitted, "bong:read_scroll").is_none(),
             "no anim_id means no PlayAnim should be emitted, got {emitted:?}"
         );
+        assert!(
+            scroll_anim_find_spawn_particle(&emitted, "bong:scroll_open_glow").is_some(),
+            "展开微光与 anim_id 是否存在无关——即便残卷没有阅读动画，开卷仍应有 \
+             SpawnParticle{{event_id==\"bong:scroll_open_glow\"}}，got {emitted:?}"
+        );
+    }
+
+    // ── happy path: 开卷发展开微光 SpawnParticle（与 anim_id 是否存在无关）──────
+    #[test]
+    fn scroll_read_request_emits_scroll_open_glow_particle() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        app.insert_resource(ItemRegistry::from_map(HashMap::from([(
+            "scroll_meridian_primer".to_string(),
+            readable_scroll_template("scroll_meridian_primer", Some("bong:read_scroll")),
+        )])));
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                inventory_with_scroll(42, "scroll_meridian_primer"),
+            ))
+            .id();
+
+        send_scroll_read_request(&mut app, entity, 42);
+        app.update();
+
+        let emitted = scroll_anim_drain_vfx(&mut app);
+        let glow = scroll_anim_find_spawn_particle(&emitted, "bong:scroll_open_glow").expect(
+            "ScrollReadRequest must emit SpawnParticle{event_id==\"bong:scroll_open_glow\"}",
+        );
+        match &glow.payload {
+            VfxEventPayloadV1::SpawnParticle {
+                color,
+                count,
+                strength,
+                duration_ticks,
+                ..
+            } => {
+                assert_eq!(
+                    color.as_deref(),
+                    Some("#E8D9A0"),
+                    "scroll_open_glow must use the pinned pale-gold color #E8D9A0"
+                );
+                assert_eq!(*count, Some(12), "burst count must be pinned to 12");
+                assert_eq!(*strength, Some(0.85));
+                assert_eq!(*duration_ticks, Some(20));
+            }
+            other => panic!("expected SpawnParticle, got {other:?}"),
+        }
     }
 
     // ── happy path: 关屏发 StopAnim + 移除 marker ───────────────────────

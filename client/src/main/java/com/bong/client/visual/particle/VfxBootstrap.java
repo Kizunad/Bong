@@ -280,5 +280,7 @@ public final class VfxBootstrap {
             new net.minecraft.util.Identifier("bong", "shield_block_bone"),
             new FaunaBoneShatterPlayer()
         );
+        // plan-scroll-reading-v1 P2 — 卷轴展开淡金色微光（server 在 ScrollOpen 同帧 emit）。
+        registry.register(ScrollOpenGlowPlayer.EVENT_ID, new ScrollOpenGlowPlayer());
     }
 }
