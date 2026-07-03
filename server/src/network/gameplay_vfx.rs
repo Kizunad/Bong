@@ -40,6 +40,10 @@ pub const POISON_MIST: &str = "bong:poison_mist";
 pub const MOVEMENT_DASH: &str = "bong:movement_dash";
 pub const DEAD_DROP_WARD_BREAK: &str = "bong:dead_drop_ward_break";
 
+// plan-ambient-threat-v1 P2 —— rat 袭扰咬击瞬间的灰白尘粒反馈（无既有"咬击" VFX 可复用，
+// 兽潮/SeekQiSourceAction 现有咬击路径均未挂 VFX，此为新增最小反馈）。
+pub const RAT_BITE_NIP: &str = "bong:rat_bite_nip";
+
 // plan-tarkov-backpack-v1 P5 — 套包操作差异化视听反馈。三类操作各自独立 event_id，
 // client `PackOperationVfxPlayer` 按 event_id 派发到差异化粒子 + 内联 audio recipe
 // （落地散落 / 布料窸窣 / 轻 thunk）。三者 event_id / color / count / duration 均不同，
