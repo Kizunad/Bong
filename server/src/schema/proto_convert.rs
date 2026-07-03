@@ -1949,6 +1949,7 @@ fn cast_outcome_to_proto(o: &super::combat_hud::CastOutcomeV1) -> i32 {
         CastOutcomeV1::RejectInRecovery => bong::CastOutcome::RejectInRecovery as i32,
         CastOutcomeV1::RejectRealmTooLow => bong::CastOutcome::RejectRealmTooLow as i32,
         CastOutcomeV1::RejectNoWeapon => bong::CastOutcome::RejectNoWeapon as i32,
+        CastOutcomeV1::RejectTechniqueInactive => bong::CastOutcome::RejectTechniqueInactive as i32,
     }
 }
 

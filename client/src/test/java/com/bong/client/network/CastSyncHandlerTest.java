@@ -104,7 +104,8 @@ public class CastSyncHandlerTest {
             new Case("reject_invalid_target", CastOutcome.REJECT_INVALID_TARGET),
             new Case("reject_in_recovery", CastOutcome.REJECT_IN_RECOVERY),
             new Case("reject_realm_too_low", CastOutcome.REJECT_REALM_TOO_LOW),
-            new Case("reject_no_weapon", CastOutcome.REJECT_NO_WEAPON)
+            new Case("reject_no_weapon", CastOutcome.REJECT_NO_WEAPON),
+            new Case("reject_technique_inactive", CastOutcome.REJECT_TECHNIQUE_INACTIVE)
         );
         for (Case c : cases) {
             CastStateStore.resetForTests();
@@ -130,7 +131,8 @@ public class CastSyncHandlerTest {
             new Case("reject_invalid_target", "目标无效"),
             new Case("reject_in_recovery", "尚未恢复"),
             new Case("reject_realm_too_low", "境界不足"),
-            new Case("reject_no_weapon", "缺少武器")
+            new Case("reject_no_weapon", "缺少武器"),
+            new Case("reject_technique_inactive", "招式未激活")
         );
         for (Case c : cases) {
             UnifiedEventStore.resetForTests();

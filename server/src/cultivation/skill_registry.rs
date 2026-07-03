@@ -31,6 +31,10 @@ pub enum CastRejectReason {
     /// 仅用于把"缺武器"反馈给玩家——是否真正放出由各 resolver 既有判定决定，
     /// 本变体不改施法逻辑，只让通用警示 HUD 能区分"缺武器"与"目标无效"。
     NoWeapon,
+    /// 招式未习得或未激活（KnownTechniques 缺失 / entries 无此 id / active=false）。
+    /// 与 NoWeapon 同理是纯反馈拆分：此前冒用 InvalidTarget，玩家贴脸锁定目标
+    /// 仍看到"目标无效"，被文案误导（一剑开天门实证）。
+    TechniqueInactive,
 }
 
 impl CastRejectReason {
@@ -53,6 +57,7 @@ impl CastRejectReason {
             CastRejectReason::InvalidTarget => CastOutcomeV1::RejectInvalidTarget,
             CastRejectReason::InRecovery => CastOutcomeV1::RejectInRecovery,
             CastRejectReason::NoWeapon => CastOutcomeV1::RejectNoWeapon,
+            CastRejectReason::TechniqueInactive => CastOutcomeV1::RejectTechniqueInactive,
         }
     }
 }

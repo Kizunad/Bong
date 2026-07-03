@@ -32,7 +32,9 @@ public enum CastOutcome {
     /** 境界不足。 */
     REJECT_REALM_TOO_LOW,
     /** 缺少所需武器。 */
-    REJECT_NO_WEAPON;
+    REJECT_NO_WEAPON,
+    /** 招式未习得或未激活（此前冒用 REJECT_INVALID_TARGET）。 */
+    REJECT_TECHNIQUE_INACTIVE;
 
     public boolean consumesItem() {
         return this == COMPLETED;
@@ -45,7 +47,7 @@ public enum CastOutcome {
             // 归入 interrupt 分类让 HUD 显示拒绝反馈而非静默忽略。
             case MERIDIAN_GATED, REJECT_QI_INSUFFICIENT, REJECT_ON_COOLDOWN,
                  REJECT_INVALID_TARGET, REJECT_IN_RECOVERY, REJECT_REALM_TOO_LOW,
-                 REJECT_NO_WEAPON -> true;
+                 REJECT_NO_WEAPON, REJECT_TECHNIQUE_INACTIVE -> true;
             default -> false;
         };
     }
@@ -59,7 +61,7 @@ public enum CastOutcome {
         return switch (this) {
             case MERIDIAN_GATED, REJECT_QI_INSUFFICIENT, REJECT_ON_COOLDOWN,
                  REJECT_INVALID_TARGET, REJECT_IN_RECOVERY, REJECT_REALM_TOO_LOW,
-                 REJECT_NO_WEAPON -> true;
+                 REJECT_NO_WEAPON, REJECT_TECHNIQUE_INACTIVE -> true;
             default -> false;
         };
     }
@@ -77,6 +79,7 @@ public enum CastOutcome {
             case REJECT_IN_RECOVERY -> "尚未恢复";
             case REJECT_REALM_TOO_LOW -> "境界不足";
             case REJECT_NO_WEAPON -> "缺少武器";
+            case REJECT_TECHNIQUE_INACTIVE -> "招式未激活";
             default -> null;
         };
     }
