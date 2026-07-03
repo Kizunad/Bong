@@ -23,6 +23,14 @@
 //! `danger_level` 不够），调用点 `ambient_scheduler_system` 本就持有 `&Zone`，属零成本改动，
 //! 不影响"泛型调度核不关心具体物种"的设计初衷。TSY 自然涌现**不**接入本调度核/本表——
 //! 直调 `spawn_tsy_hostiles_for_family`（`npc/tsy_hostile.rs:561`），见 §8.1 #3。
+//!
+//! **P3 收口**（§8.1 #4/#5，生态联动）：[`danger_tide_weight`] 是兽潮双因子门槛改造的
+//! danger 加权因子——`world/heartbeat.rs` 的 `maybe_queue_beast_tide`（主入口）与
+//! `chain_reaction_tick` 内 `PseudoVeinDissipated` 分支（次入口）各自读取本函数返回值去
+//! 缩放"有效阈值/时长/强度"，两条入口内 `BEAST_TIDE_LOW_QI_THRESHOLD`/
+//! `BEAST_TIDE_LOW_QI_REQUIRED_TICKS` 常数本身原位不动。[`dead_zone_threat_budget`] 直接
+//! 复用 `movement::movement_zone_kind` 的既有死域/负灵域判定口径（不新造第二套定义）放大
+//! [`ThreatBudget`]，已接入 [`decide_ambient_check`] 新增的 `zone_kind` 参数。
 
 use std::marker::PhantomData;
 
@@ -32,6 +40,7 @@ use valence::prelude::{
     Resource, Update, With, Without,
 };
 
+use crate::movement::{movement_zone_kind, MovementZoneKind};
 use crate::npc::dormant::{planar_distance, should_run_interval};
 use crate::npc::movement::GameTick;
 use crate::npc::spawn::PoissonSpawnSampler;
@@ -112,6 +121,71 @@ pub fn threat_budget(danger: u8) -> ThreatBudget {
             spawn_interval_ticks: 150,
             pack_size_range: (8, 10),
         },
+    }
+}
+
+// ---------------------------------------------------------------------------
+// P3 生态联动 — 兽潮门槛双因子 danger 加权 + 死域/负灵域威胁乘区（§8.1 #4/#5）
+// ---------------------------------------------------------------------------
+
+/// 兽潮双因子门槛改造的 danger 加权因子（§8.1 #5）。**不修改** `world/heartbeat.rs` 内
+/// `BEAST_TIDE_LOW_QI_THRESHOLD`（值 0.15）/`BEAST_TIDE_LOW_QI_REQUIRED_TICKS`
+/// 常数本身——两条既有兽潮入口（主入口 `maybe_queue_beast_tide` 按
+/// `low_qi_ticks_by_zone` 累计满时长独立触发；次入口 `PseudoVeinDissipated` 邻域扩散
+/// 分支）各自在调用点读取本函数返回值去缩放"有效阈值/时长/强度"，常数定义原位不动。
+///
+/// danger 越高，危险度地理对应的生态失衡越剧烈——兽潮应当越容易触发、触发时越猛烈：
+/// danger1 → `1.0`（无收紧，行为与本 plan P3 落地前完全一致，覆盖全部沿用
+/// `danger_level: 0`/`1` 兜底默认值的既有测试 fixture）；danger7 → `1.6`（+60%）。
+/// 线性插值，`danger_level` 钳到 `[1, 7]`（`0` 兜底值与 `>7` 脏数据/未来扩展均钳到
+/// 最近合法边界，不 panic，语义对齐 [`threat_budget`] 的钳位处理）。
+pub fn danger_tide_weight(danger_level: u8) -> f64 {
+    let clamped = danger_level.clamp(1, 7);
+    1.0 + (f64::from(clamped) - 1.0) * 0.1
+}
+
+/// 主入口 `maybe_queue_beast_tide` 用：把 `BEAST_TIDE_LOW_QI_REQUIRED_TICKS` 按 danger
+/// 权重缩短为"有效所需 tick 数"的缩放系数——[`danger_tide_weight`] 的倒数，权重越大
+/// （危险度越高）达到触发所需的持续低灵气时长越短。danger1 → `1.0`（不变，5 分钟阈值
+/// 原样保留）；danger7 → `1.0 / 1.6 ≈ 0.625`（缩至约 62.5%，5 分钟阈值降到约 3 分钟多）。
+/// 调用点负责 `(BEAST_TIDE_LOW_QI_REQUIRED_TICKS as f64 * scale).round() as u64`，本函数
+/// 只返回纯缩放系数，不接触常数本身。
+pub fn danger_tide_required_ticks_scale(danger_level: u8) -> f64 {
+    1.0 / danger_tide_weight(danger_level)
+}
+
+/// 死域/负灵域威胁预算乘区（§8.1 #4）：直接复用 `movement::movement_zone_kind` 已编码的
+/// 死域判定口径（`zone.danger_level >= 5 && zone.spirit_qi <= 0.1` 或 `REALM_COLLAPSE`
+/// 活跃事件），**不新造第二套"死域"定义**。正典依据 worldview §一:22"死域连野兽都活不了"+
+/// §七:759"负灵域野兽材质枯萎化飞灰"——死域/负灵域里没有寻常生灵却有更浓的凶险（游荡的
+/// 死物/邪祟），故这里放大的是**威胁 spawn 预算**而非"允许更多活体野兽"。
+///
+/// `MovementZoneKind::Dead` → `max_alive`/`pack_size_range` 上限 ×1.5、`spawn_interval_ticks`
+/// 缩至约 2/3（更频繁刷新）；`MovementZoneKind::Negative` → ×1.2/缩至约 5/6；
+/// `Normal`/`ResidueAsh` → 原样返回，不放大（`ResidueAsh` 是灰烬地表微观判定，非本 plan
+/// 危险度语义覆盖范围，保守不动）。所有取整用 `.round()`，`max_alive`/`pack_size_range`
+/// 上界用 `.max(原值)` 保证乘区只增不减，`spawn_interval_ticks` 用 `.min(原值)` 保证只
+/// 缩短不延长，且钳 `>= 1` 防止除零/零间隔。
+pub fn dead_zone_threat_budget(budget: ThreatBudget, zone_kind: MovementZoneKind) -> ThreatBudget {
+    let multiplier: f64 = match zone_kind {
+        MovementZoneKind::Dead => 1.5,
+        MovementZoneKind::Negative => 1.2,
+        MovementZoneKind::Normal | MovementZoneKind::ResidueAsh => 1.0,
+    };
+    if (multiplier - 1.0).abs() < f64::EPSILON {
+        return budget;
+    }
+    let scaled_max_alive =
+        ((f64::from(budget.max_alive) * multiplier).round() as u32).max(budget.max_alive);
+    let scaled_interval = ((f64::from(budget.spawn_interval_ticks) / multiplier).round() as u32)
+        .max(1)
+        .min(budget.spawn_interval_ticks);
+    let scaled_pack_max = ((f64::from(budget.pack_size_range.1) * multiplier).round() as u32)
+        .max(budget.pack_size_range.1);
+    ThreatBudget {
+        max_alive: scaled_max_alive,
+        spawn_interval_ticks: scaled_interval,
+        pack_size_range: (budget.pack_size_range.0, scaled_pack_max),
     }
 }
 
@@ -300,15 +374,19 @@ pub enum AmbientCheckOutcome {
 /// 纯函数：给定 zone danger、当前 tick、zone 内活体计数、era 密度门参数，判定本次是否应该
 /// 刷新。**不做玩家在场判定**——调用方需先过滤出"确有 Overworld 玩家在场"的 zone 才调用
 /// 本函数（玩家在场门在 ECS 系统层用位置查询完成，此处保持纯粹便于饱和单测）。
+///
+/// `zone_kind`（P3 §8.1 #4）：调用方用 `movement::movement_zone_kind(Some(zone), false)`
+/// 算出后传入，本函数只负责把它喂给 [`dead_zone_threat_budget`] 放大预算，不重算判定。
 pub fn decide_ambient_check(
     now_tick: u64,
     danger_level: u8,
+    zone_kind: MovementZoneKind,
     alive_count: u32,
     counts_against_threat_budget: bool,
     era_beast_density_mul: f64,
     era_spawn_seed: u64,
 ) -> AmbientCheckOutcome {
-    let budget = threat_budget(danger_level);
+    let budget = dead_zone_threat_budget(threat_budget(danger_level), zone_kind);
     if !should_run_interval(now_tick, budget.spawn_interval_ticks as u32) {
         return AmbientCheckOutcome::Throttled;
     }
@@ -578,9 +656,13 @@ pub fn ambient_scheduler_system<M: AmbientMarkerData>(
         let spawn_seed =
             now.wrapping_add((zone.name.len() as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15));
 
+        // P3 §8.1 #4 — 死域/负灵域预算乘区：复用既有 `movement_zone_kind` 判定口径
+        // （`on_residue_ash=false`，ambient 调度核只关心危险度地理，不关心灰烬地表微观判定）。
+        let zone_kind = movement_zone_kind(Some(zone), false);
         let outcome = decide_ambient_check(
             now,
             zone.danger_level,
+            zone_kind,
             alive_count,
             config.counts_against_threat_budget,
             density_mul,
@@ -1016,14 +1098,14 @@ mod tests {
     #[test]
     fn decide_throttled_when_interval_not_elapsed() {
         // danger=1 → interval 600；tick=599 不是 600 的倍数也不是 0 → Throttled。
-        let outcome = decide_ambient_check(599, 1, 0, true, 1.0, 0);
+        let outcome = decide_ambient_check(599, 1, MovementZoneKind::Normal, 0, true, 1.0, 0);
         assert_eq!(outcome, AmbientCheckOutcome::Throttled);
     }
 
     #[test]
     fn decide_runs_at_tick_zero_regardless_of_interval() {
         // should_run_interval 的 `tick == 0` 分支：世界刚起服第一帧就该有判定机会。
-        let outcome = decide_ambient_check(0, 7, 0, true, 1.0, 0);
+        let outcome = decide_ambient_check(0, 7, MovementZoneKind::Normal, 0, true, 1.0, 0);
         assert_eq!(
             outcome,
             AmbientCheckOutcome::ShouldSpawn {
@@ -1035,14 +1117,30 @@ mod tests {
     #[test]
     fn decide_budget_saturated_when_alive_count_at_max() {
         let budget = threat_budget(1);
-        let outcome = decide_ambient_check(600, 1, budget.max_alive, true, 1.0, 0);
+        let outcome = decide_ambient_check(
+            600,
+            1,
+            MovementZoneKind::Normal,
+            budget.max_alive,
+            true,
+            1.0,
+            0,
+        );
         assert_eq!(outcome, AmbientCheckOutcome::BudgetSaturated);
     }
 
     #[test]
     fn decide_budget_saturated_boundary_one_below_max_passes() {
         let budget = threat_budget(1);
-        let outcome = decide_ambient_check(600, 1, budget.max_alive - 1, true, 1.0, 0);
+        let outcome = decide_ambient_check(
+            600,
+            1,
+            MovementZoneKind::Normal,
+            budget.max_alive - 1,
+            true,
+            1.0,
+            0,
+        );
         assert_eq!(
             outcome,
             AmbientCheckOutcome::ShouldSpawn { budget },
@@ -1055,14 +1153,22 @@ mod tests {
         // plan-mundane-fauna-v1 的被动 pool 用 counts_against_threat_budget=false：
         // 即使"活体数"远超 max_alive 也不应被威胁预算拦截（它压根不算威胁预算的一部分）。
         let budget = threat_budget(1);
-        let outcome = decide_ambient_check(600, 1, budget.max_alive * 100, false, 1.0, 0);
+        let outcome = decide_ambient_check(
+            600,
+            1,
+            MovementZoneKind::Normal,
+            budget.max_alive * 100,
+            false,
+            1.0,
+            0,
+        );
         assert_eq!(outcome, AmbientCheckOutcome::ShouldSpawn { budget });
     }
 
     #[test]
     fn decide_era_gate_blocks_when_density_mul_zero() {
         // beast_density_mul=0.0 时 era_beast_spawn_gate 恒 false（有效概率钳到 0）。
-        let outcome = decide_ambient_check(600, 1, 0, true, 0.0, 42);
+        let outcome = decide_ambient_check(600, 1, MovementZoneKind::Normal, 0, true, 0.0, 42);
         assert_eq!(outcome, AmbientCheckOutcome::EraGateBlocked);
     }
 
@@ -1070,7 +1176,7 @@ mod tests {
     fn decide_era_gate_passes_when_density_mul_at_or_above_one() {
         // Calamity 时代 beast_density_mul > 1.0 时应始终放行（clamp 到
         // ERA_BEAST_SPAWN_DENSITY_CLAMP_MAX=2.0 后仍 >= 1.0）。
-        let outcome = decide_ambient_check(600, 1, 0, true, 1.5, 999);
+        let outcome = decide_ambient_check(600, 1, MovementZoneKind::Normal, 0, true, 1.5, 999);
         assert_eq!(
             outcome,
             AmbientCheckOutcome::ShouldSpawn {
@@ -1083,12 +1189,198 @@ mod tests {
     fn decide_era_gate_clamp_extreme_density_still_passes() {
         // beast_density_mul 远超 ERA_BEAST_SPAWN_DENSITY_CLAMP_MAX(2.0) 时应被钳到 2.0
         // 而非无脑当成"必过"外的其他分支——不管 seed 取什么都应放行。
-        let outcome = decide_ambient_check(600, 1, 0, true, 99.0, 0);
+        let outcome = decide_ambient_check(600, 1, MovementZoneKind::Normal, 0, true, 99.0, 0);
         assert_eq!(
             outcome,
             AmbientCheckOutcome::ShouldSpawn {
                 budget: threat_budget(1)
             }
+        );
+    }
+
+    #[test]
+    fn decide_ambient_check_dead_zone_widens_budget_over_normal() {
+        // 同一 danger=7 档下，Dead zone_kind 应比 Normal 命中放大后的预算（§8.1 #4），
+        // 而不是"zone_kind 参数被悄悄忽略"的回归。
+        let outcome = decide_ambient_check(0, 7, MovementZoneKind::Dead, 0, true, 1.0, 0);
+        assert_eq!(
+            outcome,
+            AmbientCheckOutcome::ShouldSpawn {
+                budget: dead_zone_threat_budget(threat_budget(7), MovementZoneKind::Dead)
+            },
+            "Dead zone_kind 必须命中 dead_zone_threat_budget 放大后的预算，不是原始 threat_budget(7)"
+        );
+        assert_ne!(
+            threat_budget(7),
+            dead_zone_threat_budget(threat_budget(7), MovementZoneKind::Dead),
+            "测试前置条件：danger=7 的死域乘区必须真的放大了预算，否则本用例测不出回归"
+        );
+    }
+
+    #[test]
+    fn decide_ambient_check_dead_zone_budget_saturation_uses_widened_max_alive() {
+        // 死域放大后的 max_alive 更宽——原本会 BudgetSaturated 的活体数在死域里应放行。
+        let normal_budget = threat_budget(7);
+        let dead_budget = dead_zone_threat_budget(normal_budget, MovementZoneKind::Dead);
+        assert!(
+            dead_budget.max_alive > normal_budget.max_alive,
+            "前置条件：死域 max_alive 必须严格大于常态，否则本用例的活体数选取无意义"
+        );
+        let alive_count = normal_budget.max_alive; // 常态下已饱和，死域里应仍未饱和
+        let outcome = decide_ambient_check(0, 7, MovementZoneKind::Dead, alive_count, true, 1.0, 0);
+        assert_eq!(
+            outcome,
+            AmbientCheckOutcome::ShouldSpawn {
+                budget: dead_budget
+            },
+            "活体数={alive_count} 常态下已达上限={}，死域放宽后的上限={} 应仍放行",
+            normal_budget.max_alive,
+            dead_budget.max_alive
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // dead_zone_threat_budget / danger_tide_weight —— P3 生态联动（§8.1 #4/#5）
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn dead_zone_threat_budget_normal_is_identity() {
+        // Normal zone_kind 必须原样返回预算——不放大不缩小，否则常态世界的预算表全部
+        // 静默漂移，回归极难察觉。
+        for danger in 1..=7u8 {
+            let budget = threat_budget(danger);
+            assert_eq!(
+                dead_zone_threat_budget(budget, MovementZoneKind::Normal),
+                budget,
+                "danger={danger} 的 Normal zone_kind 必须是 identity"
+            );
+        }
+    }
+
+    #[test]
+    fn dead_zone_threat_budget_residue_ash_is_identity() {
+        // ResidueAsh 是灰烬地表微观判定，非本 plan 危险度语义覆盖范围——保守不放大。
+        let budget = threat_budget(4);
+        assert_eq!(
+            dead_zone_threat_budget(budget, MovementZoneKind::ResidueAsh),
+            budget
+        );
+    }
+
+    #[test]
+    fn dead_zone_threat_budget_dead_amplifies_max_alive_and_shortens_interval() {
+        let budget = threat_budget(5);
+        let scaled = dead_zone_threat_budget(budget, MovementZoneKind::Dead);
+        assert!(
+            scaled.max_alive > budget.max_alive,
+            "Dead zone_kind 必须放大 max_alive：原始 {}，放大后 {}",
+            budget.max_alive,
+            scaled.max_alive
+        );
+        assert!(
+            scaled.spawn_interval_ticks < budget.spawn_interval_ticks,
+            "Dead zone_kind 必须缩短 spawn_interval_ticks（更频繁刷新）：原始 {}，缩短后 {}",
+            budget.spawn_interval_ticks,
+            scaled.spawn_interval_ticks
+        );
+        assert!(
+            scaled.pack_size_range.1 >= budget.pack_size_range.1,
+            "Dead zone_kind 的 pack_size 上限不应低于原始值"
+        );
+    }
+
+    #[test]
+    fn dead_zone_threat_budget_negative_amplifies_less_than_dead() {
+        let budget = threat_budget(5);
+        let dead = dead_zone_threat_budget(budget, MovementZoneKind::Dead);
+        let negative = dead_zone_threat_budget(budget, MovementZoneKind::Negative);
+        assert!(
+            negative.max_alive >= budget.max_alive,
+            "Negative zone_kind 也应放大（不小于原始值）"
+        );
+        assert!(
+            negative.max_alive <= dead.max_alive,
+            "Negative 乘区({:?})不应超过 Dead 乘区({:?})——死域凶险程度高于负灵域",
+            negative.max_alive,
+            dead.max_alive
+        );
+    }
+
+    #[test]
+    fn dead_zone_threat_budget_never_zeroes_interval() {
+        // 极端情况下缩放不能把 spawn_interval_ticks 缩到 0——0 会让 should_run_interval
+        // 出现除零/无限刷新的边界灾难。
+        for danger in 1..=7u8 {
+            let scaled = dead_zone_threat_budget(threat_budget(danger), MovementZoneKind::Dead);
+            assert!(
+                scaled.spawn_interval_ticks >= 1,
+                "danger={danger} 死域缩放后 spawn_interval_ticks 不能为 0"
+            );
+        }
+    }
+
+    #[test]
+    fn danger_tide_weight_danger_one_is_identity() {
+        // danger=0（zones.json 缺失兜底）与 danger=1 都应钳到权重 1.0——覆盖所有沿用
+        // `danger_level: 0` 兜底 fixture 的既有 heartbeat.rs 测试，保证它们行为不变。
+        assert_eq!(danger_tide_weight(0), 1.0);
+        assert_eq!(danger_tide_weight(1), 1.0);
+    }
+
+    #[test]
+    fn danger_tide_weight_danger_seven_is_max() {
+        assert!(
+            (danger_tide_weight(7) - 1.6).abs() < 1e-9,
+            "danger=7 权重应为 1.6（+60%），实际 {}",
+            danger_tide_weight(7)
+        );
+    }
+
+    #[test]
+    fn danger_tide_weight_monotonic_non_decreasing() {
+        let mut prev = danger_tide_weight(1);
+        for danger in 2..=7u8 {
+            let cur = danger_tide_weight(danger);
+            assert!(
+                cur >= prev,
+                "danger={danger} 权重 {cur} 不应低于前一档 {prev}——danger 越高兽潮应越容易触发"
+            );
+            prev = cur;
+        }
+    }
+
+    #[test]
+    fn danger_tide_weight_above_seven_clamps_to_seven() {
+        assert_eq!(danger_tide_weight(200), danger_tide_weight(7));
+    }
+
+    #[test]
+    fn danger_tide_required_ticks_scale_is_reciprocal_of_weight() {
+        for danger in 0..=7u8 {
+            let scale = danger_tide_required_ticks_scale(danger);
+            let weight = danger_tide_weight(danger);
+            assert!(
+                (scale * weight - 1.0).abs() < 1e-9,
+                "danger={danger}: scale({scale}) * weight({weight}) 应恒为 1.0"
+            );
+        }
+    }
+
+    #[test]
+    fn danger_tide_required_ticks_scale_danger_one_is_identity() {
+        assert_eq!(danger_tide_required_ticks_scale(1), 1.0);
+    }
+
+    #[test]
+    fn danger_tide_required_ticks_scale_danger_seven_shortens_duration() {
+        let scale = danger_tide_required_ticks_scale(7);
+        assert!(
+            scale < 1.0,
+            "danger=7 的 required_ticks 缩放系数必须 < 1.0（缩短所需时长），实际 {scale}"
+        );
+        assert!(
+            (scale - 0.625).abs() < 1e-9,
+            "danger=7 应缩至 1/1.6=0.625，实际 {scale}"
         );
     }
 
@@ -1444,5 +1736,119 @@ mod tests {
             "本轮巡检 tick=0，所有 TestFaunaMarker（既有 100 个预置 spawned_at=0 + 新刷 1 个\
              由 M::new(now, ..) 构造）都应记录 spawned_at=0，验证 marker 构造契约按 tick 落账"
         );
+    }
+
+    // -----------------------------------------------------------------
+    // P3 §8.1 — ambient 存量 beast 衔接 beast_horde_detect_system 集成 case
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn ambient_spawned_beast_feeds_beast_horde_detect_system_beast_count() {
+        // 声明性集成 case（plan §P3「horde 衔接」）：ambient 调度核刷出的常驻 beast 走
+        // `spawn_natural_mob_at` → `spawn_beast_npc_at`，本就挂 `NpcArchetype::Beast`
+        // （`npc/spawn/beast.rs:82`），天然被 `fauna::migration::is_horde_beast` 识别——
+        // **不需要在 `fauna/migration.rs` 里改一行代码**（本 plan 只声明衔接，不吞
+        // `plan-beast-horde-v1` P2 领地争夺 scope）。本用例把这条衔接坐实成一条真实跑通
+        // 的断言，防止未来任一侧重构悄悄断开这条链路。
+        use crate::fauna::migration::{
+            beast_horde_detect_system, BeastHordeEvent, BeastHordeState, FlowFieldComputeTask,
+            FlowFieldPrototype, ZoneDepletionEvent,
+        };
+        use valence::prelude::Events;
+
+        let mut app = App::new();
+        app.insert_resource(AmbientSchedulerState::<AmbientThreatMarker>::default())
+            .insert_resource(AmbientSchedulerConfig::<AmbientThreatMarker>::new(
+                threat_budget,
+                ambient_threat_pool_fn,
+                true,
+            ))
+            .add_systems(Update, ambient_scheduler_system::<AmbientThreatMarker>);
+        install_layers(&mut app);
+        app.insert_resource(ZoneRegistry {
+            zones: vec![
+                Zone {
+                    name: "test_zone".to_string(),
+                    dimension: DimensionKind::Overworld,
+                    bounds: (
+                        DVec3::new(-500.0, 0.0, -500.0),
+                        DVec3::new(500.0, 200.0, 500.0),
+                    ),
+                    spirit_qi: 0.05,
+                    danger_level: 7,
+                    active_events: Vec::new(),
+                    patrol_anchors: Vec::new(),
+                    blocked_tiles: Vec::new(),
+                    qi_equilibrium: 0.0,
+                    qi_inflow_per_min: 0.0,
+                },
+                // select_migration_target_zone 需要一个 spirit_qi 更高的邻域才能选出
+                // migration target；无 ZoneGraph 时 fallback 到全体 zones。
+                Zone {
+                    name: "test_zone_refuge".to_string(),
+                    dimension: DimensionKind::Overworld,
+                    bounds: (
+                        DVec3::new(1000.0, 0.0, 1000.0),
+                        DVec3::new(1500.0, 200.0, 1500.0),
+                    ),
+                    spirit_qi: 0.8,
+                    danger_level: 1,
+                    active_events: Vec::new(),
+                    patrol_anchors: Vec::new(),
+                    blocked_tiles: Vec::new(),
+                    qi_equilibrium: 0.0,
+                    qi_inflow_per_min: 0.0,
+                },
+            ],
+        });
+        app.insert_resource(GameTick(0));
+        app.world_mut()
+            .spawn((ClientMarker, Position::new([0.0, 64.0, 0.0])));
+        app.update(); // 用真实 pool_fn 刷出 1 只 ambient beast（携带 NpcArchetype::Beast）。
+
+        let mut marker_q = app
+            .world_mut()
+            .query_filtered::<(), With<AmbientThreatMarker>>();
+        assert_eq!(
+            marker_q.iter(app.world()).count(),
+            1,
+            "前置条件：ambient 调度核必须先真的刷出 1 个威胁实体，否则本用例测不出衔接"
+        );
+
+        // 接上 beast_horde_detect_system：同一 App 里追加 migration 系统链路，喂一条低
+        // 灵气 ZoneDepletionEvent 触发兽潮检测——不改 fauna/migration.rs 任何判定逻辑。
+        app.insert_resource(BeastHordeState::default());
+        app.add_event::<ZoneDepletionEvent>();
+        app.add_event::<BeastHordeEvent>();
+        app.add_event::<FlowFieldPrototype>();
+        app.add_event::<FlowFieldComputeTask>();
+        app.add_systems(Update, beast_horde_detect_system);
+        app.world_mut()
+            .resource_mut::<Events<ZoneDepletionEvent>>()
+            .send(ZoneDepletionEvent {
+                zone: "test_zone".to_string(),
+                spirit_qi: 0.05,
+                spirit_qi_rate_of_change: -0.01,
+                tick: 0,
+            });
+        app.update();
+
+        let hordes: Vec<BeastHordeEvent> = {
+            let events = app.world().resource::<Events<BeastHordeEvent>>();
+            events.get_reader().read(events).cloned().collect()
+        };
+        assert_eq!(
+            hordes.len(),
+            1,
+            "beast_horde_detect_system 应识别出 ambient 已刷出的存量 beast 并触发迁徙，\
+             不应因 beast_count==0 短路——若为空数组，说明 ambient marker 挂的组件没被\
+             migration 的 is_horde_beast 识别到，horde 衔接已断"
+        );
+        assert!(
+            hordes[0].beast_count >= 1,
+            "beast_count 应 >= 1（至少数到 ambient 刷出的那只），实际 {}",
+            hordes[0].beast_count
+        );
+        assert_eq!(hordes[0].source_zone, "test_zone");
     }
 }
