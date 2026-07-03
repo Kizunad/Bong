@@ -555,6 +555,30 @@ mod tests {
     }
 
     #[test]
+    fn item_templates_source_maps_ids_and_display_names() {
+        // CR #829：ItemTemplates 分支（/give 主功能）专用测试 —— 锁 id→value、
+        // display_name→tooltip 的映射与 iter_templates 的全量枚举。
+        let items = test_item_registry(&[("qicao_grass", "气草"), ("fan_tie", "凡铁")]);
+        let out = candidates_for(CompletionSource::ItemTemplates, &items, None);
+        assert_eq!(
+            out.len(),
+            2,
+            "候选数应等于 registry 模板数（iter_templates 全量枚举）"
+        );
+        for (id, name) in [("qicao_grass", "气草"), ("fan_tie", "凡铁")] {
+            let c = out
+                .iter()
+                .find(|c| c.value == id)
+                .unwrap_or_else(|| panic!("候选缺少模板 `{id}`"));
+            assert_eq!(
+                c.tooltip.as_deref(),
+                Some(name),
+                "模板 `{id}` 的 tooltip 应为 display_name `{name}`"
+            );
+        }
+    }
+
+    #[test]
     fn technique_source_yields_all_definitions_with_tooltips() {
         let items = ItemRegistry::from_map(Default::default());
         let out = candidates_for(CompletionSource::Techniques, &items, None);
@@ -582,6 +606,155 @@ mod tests {
             "zone 候选数应与 registry 一致"
         );
         assert!(out.iter().any(|c| c.value == zones.zones[0].name));
+    }
+
+    /// 手搓最小 ItemRegistry（id + display_name，其余字段默认量）。
+    fn test_item_registry(entries: &[(&str, &str)]) -> ItemRegistry {
+        use crate::inventory::{
+            ItemCategory, ItemRarity, ItemTemplate, DEFAULT_CAST_DURATION_MS, DEFAULT_COOLDOWN_MS,
+        };
+        let map = entries
+            .iter()
+            .map(|(id, name)| {
+                (
+                    (*id).to_string(),
+                    ItemTemplate {
+                        id: (*id).to_string(),
+                        display_name: (*name).to_string(),
+                        category: ItemCategory::Misc,
+                        placeable: None,
+                        max_stack_count: 64,
+                        grid_w: 1,
+                        grid_h: 1,
+                        base_weight: 0.1,
+                        rarity: ItemRarity::Common,
+                        spirit_quality_initial: 1.0,
+                        description: String::new(),
+                        effect: None,
+                        cast_duration_ms: DEFAULT_CAST_DURATION_MS,
+                        cooldown_ms: DEFAULT_COOLDOWN_MS,
+                        weapon_spec: None,
+                        forge_station_spec: None,
+                        blueprint_scroll_spec: None,
+                        inscription_scroll_spec: None,
+                        technique_scroll_spec: None,
+                        recipe_fragment_spec: None,
+                        container_spec: None,
+                        shelflife_profile: None,
+                        shield_spec: None,
+                        shelflife_track: None,
+                    },
+                )
+            })
+            .collect();
+        ItemRegistry::from_map(map)
+    }
+
+    // ── 全链路集成：真 packet 进 → answer_command_completions → 真 packet 出 ──
+
+    /// 回包摘要：(transaction_id, start, length, [(候选, tooltip 明文)])。
+    type SuggestionsReply = (i32, i32, i32, Vec<(String, Option<String>)>);
+
+    /// 构造跑 [`answer_command_completions`] 的最小 App + mock client，
+    /// 把 `text` 封成真实 `RequestCommandCompletionsC2s` wire 帧注入 PacketEvent。
+    fn completion_roundtrip(text: &str, transaction_id: i32) -> Vec<SuggestionsReply> {
+        use valence::prelude::{App, Events, Update};
+        use valence::protocol::{Bounded, Encode, Packet};
+        use valence::testing::create_mock_client;
+
+        let mut app = App::new();
+        app.add_event::<PacketEvent>();
+        app.insert_resource(test_item_registry(&[
+            ("qicao_grass", "气草"),
+            ("qingye_leaf", "青叶"),
+            ("fan_tie", "凡铁"),
+        ]));
+        app.insert_resource(ZoneRegistry::fallback());
+        app.add_systems(Update, answer_command_completions);
+
+        let (bundle, mut helper) = create_mock_client("Alice");
+        let client = app.world_mut().spawn(bundle).id();
+
+        let request = RequestCommandCompletionsC2s {
+            transaction_id: VarInt(transaction_id),
+            text: Bounded(text),
+        };
+        let mut body = Vec::new();
+        request.encode(&mut body).expect("encode request body");
+        app.world_mut()
+            .resource_mut::<Events<PacketEvent>>()
+            .send(PacketEvent {
+                client,
+                timestamp: std::time::Instant::now(),
+                id: <RequestCommandCompletionsC2s as Packet>::ID,
+                data: body.into(),
+            });
+        app.update();
+
+        let world = app.world_mut();
+        let mut q = world.query::<&mut Client>();
+        for mut c in q.iter_mut(world) {
+            c.flush_packets().expect("mock client flush should succeed");
+        }
+        helper
+            .collect_received()
+            .0
+            .into_iter()
+            .filter_map(|frame| {
+                let pkt = frame.decode::<CommandSuggestionsS2c>().ok()?;
+                Some((
+                    pkt.id.0,
+                    pkt.start.0,
+                    pkt.length.0,
+                    pkt.matches
+                        .iter()
+                        .map(|m| {
+                            (
+                                m.suggested_match.to_string(),
+                                m.tooltip.as_ref().map(|t| t.to_legacy_lossy()),
+                            )
+                        })
+                        .collect(),
+                ))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn answer_completions_end_to_end_replies_suggestions_packet() {
+        // CR #829：request→decode→路由→过滤→CommandSuggestionsS2c 回包全链路。
+        let replies = completion_roundtrip("/give qi", 42);
+        assert_eq!(
+            replies.len(),
+            1,
+            "一条命中路由的请求应恰好收到一个 CommandSuggestionsS2c 回包"
+        );
+        let (id, start, length, matches) = &replies[0];
+        assert_eq!(*id, 42, "回包必须回显请求的 transaction_id");
+        assert_eq!(
+            (*start, *length),
+            (6, 2),
+            "start 应指向 partial 词首（`/give ` = 6 字符），length = partial 长度"
+        );
+        assert_eq!(
+            matches.iter().map(|(v, _)| v.as_str()).collect::<Vec<_>>(),
+            vec!["qicao_grass", "qingye_leaf"],
+            "应只包含 qi 前缀命中的模板且按字典序"
+        );
+        assert_eq!(
+            matches[0].1.as_deref(),
+            Some("气草"),
+            "候选应携带中文 display_name tooltip"
+        );
+    }
+
+    #[test]
+    fn answer_completions_end_to_end_silent_for_unrouted_text() {
+        // 未路由命令（/kill self 等）不应产生任何回包 —— 静默是契约的一半。
+        assert!(
+            completion_roundtrip("/kill se", 7).is_empty(),
+            "未命中路由的补全请求不应收到 CommandSuggestionsS2c"
+        );
     }
 
     // ── 图改写：ROUTES ↔ 真实命令图 对拍 ─────────────────────────────
