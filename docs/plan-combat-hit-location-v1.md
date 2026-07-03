@@ -40,19 +40,32 @@
 - **臂伤消费端**（调研缺口：腿有 `leg_wound.rs` 减速，臂伤现无 gameplay 后果）：ArmL/ArmR 按伤势分级叠加攻击惩罚 + debuff（分级表见 §8.1 #2，镜像 `wound_severity_to_grade` 模式，落点 `combat/` 新 `arm_wound.rs`，结构照抄 `movement/leg_wound.rs:13-65`）
 - 测试抓手：分布 pin 测试（固定 seed 直方图区间断言）；臂伤分级 → 攻击惩罚映射表专属 case
 
-## P2 非-raycast 旁路清理（原"硬编 Chest 六处"，Explore 核实收窄为 3 处真旁路）⬜
+## P2 非-raycast 旁路清理（原骨架"硬编 Chest 六处"；本 plan 决议桶收录 6 处生产旁路，非全仓穷举）⬜
 
 - 原骨架列 6 处硬编 Chest，混淆了测试夹具与生产旁路。Explore 核实（2026-07-03）后收窄：
-  - **删除**（非生产，测试夹具本身以 Chest 为设计意图，不是待修 bug）：`sword_basics.rs:1474`（`#[test] hit_events_raise_matching_sword_proficiency`）、`lifecycle.rs:2678`（`#[test]` 死亡生命周期）、`lifecycle.rs:4876`（`#[test]` shield-block）。**"剑招按剑轨迹定部位"是伪需求**——剑招本身走 `raycast_humanoid` 决议出的部位，`sword_basics.rs` 生产代码里没有硬编 Chest。
-  - **真生产硬编只有 3 处**，且都是**本就不经 `raycast_humanoid` 的独立结算旁路**（投射 / AoE / 反伤各自有独立几何逻辑，不是"漏改的 melee 分支"）：
+  - **删除**（非生产，测试夹具本身以 Chest 为设计意图，不是待修 bug）：`sword_basics.rs:1474`（`#[test] hit_events_raise_matching_sword_proficiency`）、`lifecycle.rs:2678`（`#[test] sync_combat_state_marks_both_sides_and_charges_attacker_stamina`——用例只为验证 `sync_combat_state_from_events` 双方状态流转与攻方体力扣除，Chest 是任意占位值，处置=删除仍正确）、`lifecycle.rs:4876`（`#[test]` shield-block）。**"剑招按剑轨迹定部位"是伪需求**——剑招本身走 `raycast_humanoid` 决议出的部位，`sword_basics.rs` 生产代码里没有硬编 Chest。
+  - **反向 grep 复核（2026-07-03，博弈 blocker 修复）**：`grep -rn "BodyPart::Chest" server/src/`（排除 `#[test]`/`#[cfg(test)]`/`tests/` 目录）命中远不止 3 处——原"真生产硬编只有 3 处"是**未穷举的低估**，本轮复核确认另有至少 3 处同属非-raycast 旁路桶（内功侵蚀 / 碰撞击退 / 陷阱反噬，见下方 #4-#6）。此外 `cultivation/tribulation.rs:1453/1691`（渡劫天罚 AoE）、`zhenfa/mod.rs:3522/3540/3700`（阵法伤害）、`alchemy/mod.rs:365/377`（丹毒/丹伤）经核实同样落在各自文件 `#[cfg(test)] mod tests` 边界之外，是生产代码而非测试夹具——但这三处的伤害语义是"天罚 / 阵法 / 丹毒"，与本 plan P0-P3"攻防双方近战瞄准"主题不同源，**不划入本 plan P2 旁路桶**，留给 tribulation / zhenfa / alchemy 各自 plan 处理（同一红旗，不同 owner，不在本 plan 内顺手代管）。
+  - **本 plan P2 决议桶收录 6 处**，且都是**本就不经 `raycast_humanoid` 的独立结算旁路**（投射 / AoE / 反伤 / 碰撞 / 陷阱 / 内功侵蚀各自有独立几何或语义逻辑，不是"漏改的 melee 分支"）——**此列表非穷举，实施时须以 `grep -rn "BodyPart::Chest" server/src/`（排除 `#[test]`/`#[cfg(test)]`/`tests/` 目录）穷举当次所有生产站点为准**，若扫出本表未列的新站点，比照下方判例逐条决断（是否属"本 plan 主题"仍按上一条边界判断，不属于则移交对应 plan），不得因"表里没有"跳过：
     1. 剑招招架反伤：`resolve.rs:989`（`Wound.location` 硬编 Chest）
     2. 暗器投射：`carrier.rs:975`（`Wound`）+ `carrier.rs:1003`（`CombatEvent`）成对硬编
     3. 涡流 AoE：`woliu_v2/skills.rs:652`（`Wound`）+ `woliu_v2/skills.rs:671`（`CombatEvent`）成对硬编
+    4. 独孤流派内功侵蚀：`dugu_v2/skills.rs:598`（`fn apply_damage`，`Wound.location` 硬编 Chest；生产调用点 `dugu_v2/skills.rs:197/359/482`，分别对应 Eclipse/Penetrate/Reverse 三招内功伤害，均为无方向性浊气侵蚀，非武器几何命中）
+    5. NPC 碰撞击退钝伤：`npc/movement.rs:885`（`fn apply_collision_wound`，`Wound.location` 硬编 Chest；生产调用点 `npc/movement.rs:626/673` 直调 + `:910` 经 `queue_collision_wound` 转发，`#[cfg(test)]` 边界在 `:1025` 之后，不影响这些站点）
+    6. 死域结界陷阱反噬：`world/container_block.rs:358`（`fn emit_dead_drop_ward_combat`，`CombatEvent.body_part` 硬编 Chest；半径覆盖式陷阱反噬，`#[cfg(test)]` 边界在 `:525` 之后，不影响该站点）
 - 逐条决断（旁路简化 vs 该改）：
   - 反伤 `resolve.rs:989`：反伤打持盾/持械臂在物理上更合理（挡招的是拿盾那只手）——倾向改，本阶段实测校准后收口，若保留须写理由注释
   - 暗器投射 `carrier.rs:975/1003`：投射命中点应按弹道终点几何算部位（非胸心）——倾向改
   - 涡流 AoE `woliu_v2/skills.rs:652/671`：AoE 命中判定是半径覆盖，"部位"概念本身弱化——倾向保留 Chest，但须写明"AoE 无方向性，Chest 作代表部位"的理由注释
-- 每处一条 pin 测试（保留者测"恒 Chest + 注释解释原因"；改掉者测"新判定逻辑输出非 Chest 分布"）
+  - 独孤流派内功侵蚀 `dugu_v2/skills.rs:598`：Eclipse/Penetrate/Reverse 三招是浊气/真元层面的内部侵蚀伤害，无实体弹道或碰撞几何可依——倾向保留 Chest（浊气蚀体从真元枢纽蔓延，语义上比"随机部位"更合理），须写明"内功侵蚀无方向性，Chest 代表真元枢纽受创"的理由注释
+  - NPC 碰撞击退钝伤 `npc/movement.rs:885`：调用侧已有 `tentative`/`target.position` 相对坐标（dx/dz/dy 判定见 `movement.rs:860-871`），几何数据齐备，理论上可复用类似 `classify_body_part` 的高度判定算出真实部位——倾向改，本阶段按现成相对高度数据接一版简化部位判定（不必引入完整散布模型），若因收益/复杂度比不划算而保留则须写明理由注释
+  - 死域结界陷阱反噬 `world/container_block.rs:358`：陷阱反噬是半径覆盖式判定，触发时机（结界被破坏瞬间）无攻击者朝向或弹道可用，与涡流 AoE 同源——倾向保留 Chest，须写明"陷阱反噬无方向性，Chest 作代表部位"的理由注释
+- 每处一条 pin 测试（保留者测"恒 Chest + 注释解释原因"；改掉者测"新判定逻辑输出非 Chest 分布"）：
+  1. `resolve.rs:989` 反伤 → 改后测"招架反伤命中主手/持械臂而非恒 Chest"
+  2. `carrier.rs:975/1003` 暗器投射 → 改后测"投射命中部位随弹道终点几何变化，非恒 Chest"
+  3. `woliu_v2/skills.rs:652/671` 涡流 AoE → 保留后测"AoE 命中恒 Chest + 存在解释性注释"
+  4. `dugu_v2/skills.rs:598` 独孤内功侵蚀 → 保留后测"Eclipse/Penetrate/Reverse 三招伤害恒 Chest + 存在解释性注释"
+  5. `npc/movement.rs:885` 碰撞击退 → 改后测"碰撞钝伤部位随相对高度（dx/dz/dy）变化，非恒 Chest"
+  6. `world/container_block.rs:358` 死域陷阱反噬 → 保留后测"陷阱反噬命中恒 Chest + 存在解释性注释"
 
 ## P3 部位差异视听反馈 ⬜
 
