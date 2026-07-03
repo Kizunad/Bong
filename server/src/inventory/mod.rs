@@ -1485,6 +1485,11 @@ impl ItemRegistry {
     pub fn len(&self) -> usize {
         self.templates.len()
     }
+
+    /// 迭代全部模板（无序）— dev 命令 Tab 补全等需要枚举全量 id 的场景用。
+    pub fn iter_templates(&self) -> impl Iterator<Item = &ItemTemplate> {
+        self.templates.values()
+    }
 }
 
 pub fn add_item_to_player_inventory(
