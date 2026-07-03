@@ -308,6 +308,21 @@ pub enum QiTransferReason {
     ///   - `push_transfer_audit(QiTransfer(from=npc/player:<victim>, to=zone:<name>, reason=DuguReverseVictimQi))`；
     ///   - 此路径是 audit-only + zone balance 更新，**禁止**调 `WorldQiAccount::transfer`。
     DuguReverseVictimQi,
+    /// plan-zone-qi-economy-v1 P1 §8.1 决议 #5 — heartbeat 平衡回流：独立待分配池
+    /// （`pending_inflow_account`）按 zone 的 `qi_equilibrium` / `qi_inflow_per_min` 配置
+    /// 滴灌回 `zone.spirit_qi`。
+    ///
+    /// 守恒约束：
+    ///   - `zone.spirit_qi` 增加量 == 待分配池账户减少量（换算系数 `QI_ZONE_UNIT_CAPACITY`）；
+    ///   - 只补到 `qi_equilibrium` 即停（`zone_equilibrium_inflow` 已钳位），绝不过冲；
+    ///   - 待分配池余额不足时缩量，绝不透支（**禁止**凭空创生）；
+    ///   - `active_events` 含 `EVENT_REALM_COLLAPSE` 或 `zone.spirit_qi < 0.0`（负灵域）的
+    ///     zone 本 reason 不生效（调用方 `continue`，不产生 `QiTransfer`）；
+    ///   - 这是**真实 `WorldQiAccount::transfer`**（非 audit-only）：`from` 是待分配池、
+    ///     `to` 是 zone 的 ledger 镜像账户，调用前需按 `apply_dormant_regen_with_multiplier`
+    ///     范本先用 `set_balance` 把 zone 镜像同步到 `zone.spirit_qi * QI_ZONE_UNIT_CAPACITY`
+    ///     真实值，转账后再把结果写回 `zone.spirit_qi`。
+    ZoneInflow,
 }
 
 /// plan-qi-handling-attrition-v1 P0 — 搬运磨损操作类型，对应不同基础磨损率。
@@ -1520,6 +1535,98 @@ mod tests {
             evo.is_ok(),
             "ArtifactEvolution QiTransfer::new 不应失败，实际 {:?}",
             evo.err()
+        );
+    }
+
+    // ── plan-zone-qi-economy-v1 P1 §8.1 决议 #5 — ZoneInflow 变体 pin 测试 ──
+
+    #[test]
+    fn zone_inflow_reason_is_distinct_from_other_variants() {
+        let inflow = QiTransferReason::ZoneInflow;
+        assert_ne!(inflow, QiTransferReason::MeridianOpen);
+        assert_ne!(inflow, QiTransferReason::Breakthrough);
+        assert_ne!(inflow, QiTransferReason::ReleaseToZone);
+        assert_ne!(inflow, QiTransferReason::CultivationRegen);
+        assert_eq!(
+            inflow,
+            QiTransferReason::ZoneInflow,
+            "ZoneInflow 与自身应相等"
+        );
+    }
+
+    #[test]
+    fn zone_inflow_is_not_audit_only_and_actually_moves_balance() {
+        // ZoneInflow 是真实 WorldQiAccount::transfer（非 audit-only）：待分配池 -> zone
+        // 镜像账户之间必须发生真实的余额搬运，而不是像 HalfStepBuff/NegPressureDrain 那样
+        // 被 transfer() 拒绝、只能走 push_transfer_audit。
+        let pool = pending_inflow_account();
+        let zone_account = QiAccountId::zone("spawn");
+
+        let mut ledger = WorldQiAccount::default();
+        ledger
+            .set_balance(pool.clone(), 10.0)
+            .expect("seeding pool balance must succeed");
+        ledger
+            .set_balance(zone_account.clone(), 5.0)
+            .expect("seeding zone mirror balance must succeed");
+
+        let transfer = QiTransfer::new(
+            pool.clone(),
+            zone_account.clone(),
+            3.0,
+            QiTransferReason::ZoneInflow,
+        )
+        .expect("ZoneInflow QiTransfer::new must succeed (not audit-only)");
+        ledger.transfer(transfer).expect(
+            "ZoneInflow must be accepted by WorldQiAccount::transfer, not rejected as audit-only",
+        );
+
+        assert_eq!(
+            ledger.balance(&pool),
+            7.0,
+            "pending pool balance must actually decrease by the transferred amount"
+        );
+        assert_eq!(
+            ledger.balance(&zone_account),
+            8.0,
+            "zone mirror balance must actually increase by the transferred amount"
+        );
+    }
+
+    #[test]
+    fn zone_inflow_transfer_rejects_insufficient_pool_balance() {
+        // 待分配池余额不足时 transfer() 必须拒绝（InsufficientQi），而不是让池子变负数
+        // ——这是"绝不透支"红线在 ledger 层的直接体现；heartbeat system 自己会先用
+        // `ledger.balance(&pool)` 缩量，但 ledger 本身的兜底检查也必须存在。
+        let pool = pending_inflow_account();
+        let zone_account = QiAccountId::zone("spawn");
+
+        let mut ledger = WorldQiAccount::default();
+        ledger
+            .set_balance(pool.clone(), 1.0)
+            .expect("seeding pool balance must succeed");
+        ledger
+            .set_balance(zone_account.clone(), 0.0)
+            .expect("seeding zone mirror balance must succeed");
+
+        let transfer = QiTransfer::new(
+            pool.clone(),
+            zone_account.clone(),
+            5.0,
+            QiTransferReason::ZoneInflow,
+        )
+        .expect("QiTransfer::new only validates amount shape, not balance sufficiency");
+        let err = ledger
+            .transfer(transfer)
+            .expect_err("transferring more than the pool holds must be rejected, never overdraw");
+        assert!(
+            matches!(err, QiPhysicsError::InsufficientQi { .. }),
+            "expected InsufficientQi, got {err:?}"
+        );
+        assert_eq!(
+            ledger.balance(&pool),
+            1.0,
+            "a rejected transfer must leave the pool balance completely untouched"
         );
     }
 

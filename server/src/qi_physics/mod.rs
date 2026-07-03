@@ -22,6 +22,7 @@ pub mod release;
 pub mod tiandao;
 pub mod traits;
 pub mod wear;
+pub mod zone_inflow;
 
 use valence::prelude::App;
 
@@ -73,6 +74,7 @@ pub use tiandao::{
 };
 pub use traits::{Container, SimpleStyleAttack, SimpleStyleDefense, StyleAttack, StyleDefense};
 pub use wear::qi_targeted_item_wear_fraction;
+pub use zone_inflow::zone_equilibrium_inflow;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum QiPhysicsError {
