@@ -1039,6 +1039,44 @@ mod tests {
     }
 
     #[test]
+    fn build_recipe_list_payload_always_includes_baseline_workbench_recipe() {
+        // 基线常显豁免（unlock::BASELINE_RECIPES）：制作台自身配方对空 unlock
+        // state 的新玩家必须直接出现在列表里且 unlocked=true —— 它是 workbench
+        // 配方树的入口，被材料发现藏住会让玩家不知道有制作台这条路。
+        let mut registry = CraftRegistry::new();
+        crate::craft::workbench_recipes::register_workbench_recipes(&mut registry).unwrap();
+
+        let empty = RecipeUnlockState::new();
+        let payload = build_recipe_list_payload("offline:Newbie", &registry, &empty);
+        let workbench = payload
+            .recipes
+            .iter()
+            .find(|r| r.id == "craft.tool.workbench")
+            .unwrap_or_else(|| {
+                panic!(
+                    "期望空 unlock state 下 craft.tool.workbench 仍被下发（基线常显），\
+                     实际下发列表={:?}",
+                    payload.recipes.iter().map(|r| &r.id).collect::<Vec<_>>()
+                )
+            });
+        assert!(
+            workbench.unlocked,
+            "基线配方下发时 unlocked 字段必须为 true"
+        );
+        assert_eq!(
+            workbench.station, None,
+            "制作台自身是手搓配方（station=None），客户端应把它分流到手搓台"
+        );
+        // 豁免不外溢：注册表里其余 100+ 空源 workbench 配方在空 state 下仍全部隐藏。
+        assert_eq!(
+            payload.recipes.len(),
+            1,
+            "空 unlock state 下应只下发基线配方本身，实际={:?}",
+            payload.recipes.iter().map(|r| &r.id).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
     fn emit_recipe_list_sends_once_to_online_client() {
         let mut app = App::new();
         let mut registry = CraftRegistry::new();

@@ -285,6 +285,7 @@ pub fn start_craft(
     // "持有任一原料"被动解锁（unlock::unlock_via_material +
     // craft_emit::apply_material_discovery_unlock）；残卷/师承/顿悟门控的
     // 秘传配方仍走对应渠道写入 unlock_state。两者最终都收敛到 is_unlocked。
+    // 例外：unlock::BASELINE_RECIPES（制作台自身）恒解锁，由 is_unlocked 单点豁免。
     if !deps.unlock_state.is_unlocked(request.player_id, &recipe.id) {
         return Err(StartCraftError::NotUnlocked(recipe.id.clone()));
     }
@@ -855,6 +856,96 @@ mod tests {
         assert!(matches!(err, StartCraftError::NotUnlocked(_)));
         // 失败时无副作用：材料仍在
         assert_eq!(count_template_in_inventory(&inv, "herb_a"), 5);
+    }
+
+    #[test]
+    fn start_craft_baseline_workbench_passes_unlock_gate_with_empty_state() {
+        // 基线常显豁免（unlock::BASELINE_RECIPES）：制作台自身配方对空 unlock
+        // state 的新玩家必须直接可做 —— 不经材料发现、不经三渠道。
+        let mut registry = CraftRegistry::new();
+        crate::craft::workbench_recipes::register_workbench_recipes(&mut registry).unwrap();
+        let unlock = RecipeUnlockState::new(); // 从未解锁过任何配方
+        let mut inv = make_inventory(&[("spirit_wood", 4), ("iron_ingot", 2), ("shu_gu", 2)]);
+        let mut cult = Cultivation {
+            qi_current: 50.0,
+            qi_max: 80.0,
+            ..Default::default()
+        };
+        let color = QiColor::default();
+        let mut ledger = WorldQiAccount::default();
+        ledger
+            .set_balance(QiAccountId::player("offline:Alice"), cult.qi_current)
+            .unwrap();
+
+        let mut deps =
+            ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger);
+        // 制作台自身是手搓配方（station: None），附近没有制作台也必须能做 ——
+        // 否则"造第一张制作台"死锁。
+        deps.has_nearby_workbench = false;
+
+        let success = start_craft(
+            StartCraftRequest {
+                caster: caster_entity(),
+                player_id: "offline:Alice",
+                recipe_id: &RecipeId::new("craft.tool.workbench"),
+                current_tick: 0,
+                zone_id: "spawn",
+                quantity: 1,
+            },
+            deps,
+        )
+        .unwrap_or_else(|err| {
+            panic!(
+                "期望基线豁免让空 unlock state 玩家直接开工制作台，因为它是 workbench \
+                 配方树的入口配方；实际报错 {err:?}"
+            )
+        });
+        assert_eq!(
+            success.session.recipe_id,
+            RecipeId::new("craft.tool.workbench")
+        );
+        // 材料照常扣除（豁免只绕 unlock 门，不绕材料校验）
+        assert_eq!(count_template_in_inventory(&inv, "spirit_wood"), 0);
+        assert_eq!(count_template_in_inventory(&inv, "iron_ingot"), 0);
+        assert_eq!(count_template_in_inventory(&inv, "shu_gu"), 0);
+    }
+
+    #[test]
+    fn start_craft_baseline_exemption_does_not_leak_to_other_workbench_recipes() {
+        // 对照组：同一注册表里其他空源配方（如石镐）对空 unlock state 仍应 NotUnlocked
+        // —— 豁免名单精确到 craft.tool.workbench，不是放开整棵 workbench 树。
+        let mut registry = CraftRegistry::new();
+        crate::craft::workbench_recipes::register_workbench_recipes(&mut registry).unwrap();
+        let unlock = RecipeUnlockState::new();
+        let mut inv = make_inventory(&[("stone_chunk", 3), ("wood_handle", 1)]);
+        let mut cult = Cultivation {
+            qi_current: 50.0,
+            qi_max: 80.0,
+            ..Default::default()
+        };
+        let color = QiColor::default();
+        let mut ledger = WorldQiAccount::default();
+        ledger
+            .set_balance(QiAccountId::player("offline:Alice"), cult.qi_current)
+            .unwrap();
+
+        let err = start_craft(
+            StartCraftRequest {
+                caster: caster_entity(),
+                player_id: "offline:Alice",
+                recipe_id: &RecipeId::new("workbench.tool.stone_pickaxe"),
+                current_tick: 0,
+                zone_id: "spawn",
+                quantity: 1,
+            },
+            ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, StartCraftError::NotUnlocked(_)),
+            "期望石镐对空 unlock state 仍 NotUnlocked（基线豁免只覆盖制作台自身），\
+             实际={err:?}"
+        );
     }
 
     #[test]
