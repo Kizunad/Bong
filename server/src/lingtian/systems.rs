@@ -34,7 +34,9 @@ use crate::network::inventory_snapshot_emit::send_inventory_snapshot_to_client;
 use crate::network::{gameplay_vfx, vfx_event_emit::VfxEventRequest};
 use crate::npc::spawn::NpcMarker;
 use crate::player::state::{canonical_player_id, PlayerState};
-use crate::qi_physics::{QiAccountId, QiTransfer, QiTransferReason};
+use crate::qi_physics::{
+    constants::QI_NPC_ABSORB_FLOOR, QiAccountId, QiTransfer, QiTransferReason,
+};
 use crate::schema::common::GameEventType;
 use crate::schema::world_state::GameEvent;
 use crate::skill::components::{SkillId, SkillSet};
@@ -516,7 +518,12 @@ pub fn handle_start_replenish(
         }
         // 来源材料检查
         let material_ok = match req.source {
-            ReplenishSource::Zone => zone_qi.get(DEFAULT_ZONE) >= req.source.plot_qi_amount(),
+            // plan-zone-qi-economy-v1 P2：地板红线——zone 抽吸来源必须留住
+            // QI_NPC_ABSORB_FLOOR 以上的底仓，不能把 zone 抽穿地板。
+            ReplenishSource::Zone => {
+                zone_qi.get(DEFAULT_ZONE)
+                    >= req.source.plot_qi_amount() + QI_NPC_ABSORB_FLOOR as f32
+            }
             ReplenishSource::BoneCoin => inventories
                 .get(req.player)
                 .map(|inv| inv.bone_coins >= 1)
@@ -1260,8 +1267,10 @@ fn apply_replenish_completion(
     let mut paid = true;
     match source {
         ReplenishSource::Zone => {
+            // plan-zone-qi-economy-v1 P2：复验时同样要求地板以上余量覆盖 amount，
+            // 防止 session 期间 zone 被其它路径抽到贴近地板后仍照付出穿地板。
             let z = zone_qi.get_mut(zone_key);
-            if *z >= amount {
+            if *z - amount >= QI_NPC_ABSORB_FLOOR as f32 {
                 *z -= amount;
             } else {
                 paid = false;
@@ -3288,6 +3297,66 @@ mod tests {
         assert!((p.plot_qi - 0.5).abs() < 1e-6, "plot_qi 应 +0.5");
         let z = app.world().resource::<ZoneQiAccount>().get(DEFAULT_ZONE);
         assert!((z - 4.5).abs() < 1e-6, "zone qi 应 -0.5");
+    }
+
+    /// plan-zone-qi-economy-v1 P2：地板红线——zone qi 不足以支付 `plot_qi_amount()`
+    /// 且留住 `QI_NPC_ABSORB_FLOOR` 底仓时，StartReplenishRequest 必须被材料检查直接
+    /// 拒绝（不开 session），不能像修 P0 之前那样把 zone 抽穿地板。
+    #[test]
+    fn replenish_zone_rejected_when_zone_qi_insufficient_to_cover_floor() {
+        let mut app = build_app();
+        // amount=0.5，floor=0.3 → 需要 >= 0.8 才允许；这里只给 0.79（差一点点）。
+        app.world_mut()
+            .resource_mut::<ZoneQiAccount>()
+            .set(DEFAULT_ZONE, 0.79);
+        let player = app.world_mut().spawn(empty_inventory_8x8()).id();
+        let pos = BlockPos::new(0, 64, 0);
+        spawn_empty_plot(&mut app, pos);
+        app.world_mut().send_event(StartReplenishRequest {
+            player,
+            pos,
+            source: ReplenishSource::Zone,
+        });
+        app.update();
+        assert!(
+            app.world().resource::<ActiveLingtianSessions>().is_empty(),
+            "zone_qi=0.79 不足以支付 amount(0.5)+floor(0.3)=0.8，应被材料检查拒绝，不应开 session"
+        );
+        // zone qi 分毫未动（连 session 都没开）。
+        let z = app.world().resource::<ZoneQiAccount>().get(DEFAULT_ZONE);
+        assert!((z - 0.79).abs() < 1e-6, "被拒绝的请求不应触碰 zone qi");
+    }
+
+    /// 边界回归：zone qi 恰好等于 amount+floor（0.8）时应被允许，补灵后 zone 恰好
+    /// 停在地板（0.3），不多不少。
+    #[test]
+    fn replenish_zone_allowed_exactly_at_floor_boundary() {
+        let mut app = build_app();
+        app.world_mut()
+            .resource_mut::<ZoneQiAccount>()
+            .set(DEFAULT_ZONE, 0.8);
+        let player = app.world_mut().spawn(empty_inventory_8x8()).id();
+        let pos = BlockPos::new(0, 64, 0);
+        let plot = spawn_empty_plot(&mut app, pos);
+        app.world_mut().send_event(StartReplenishRequest {
+            player,
+            pos,
+            source: ReplenishSource::Zone,
+        });
+        for _ in 0..ReplenishSource::Zone.duration_ticks() {
+            app.update();
+        }
+        assert!(
+            app.world().resource::<ActiveLingtianSessions>().is_empty(),
+            "zone_qi=0.8 恰好等于 amount+floor，应被允许并正常完成"
+        );
+        let p = app.world().get::<LingtianPlot>(plot).unwrap();
+        assert!((p.plot_qi - 0.5).abs() < 1e-6, "plot_qi 应 +0.5");
+        let z = app.world().resource::<ZoneQiAccount>().get(DEFAULT_ZONE);
+        assert!(
+            (z - 0.3).abs() < 1e-6,
+            "zone qi 补灵后应恰好停在地板 0.3，实际 {z}"
+        );
     }
 
     #[test]
