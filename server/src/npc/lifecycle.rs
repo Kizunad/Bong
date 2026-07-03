@@ -622,7 +622,11 @@ pub fn npc_runtime_bundle_with_age(
         life_record: LifeRecord::new(char_id.clone()),
         lifespan_extension_ledger: LifespanExtensionLedger::default(),
         cultivation,
-        meridian_system: MeridianSystem::default(),
+        // plan-npc-realm-distribution-v1 P2：经脉必须和 Cultivation.realm 同源，
+        // 否则 spawn 侧用 npc_meridian_system_for_realm(realm) 算出「已开 N 脉」去
+        // 筛技能，entity 上真正落地的 MeridianSystem 却仍是全闭的 default()——
+        // 一个 realm 派生出两份互相矛盾的经脉状态。
+        meridian_system: crate::npc::technique::npc_meridian_system_for_realm(realm),
         contamination: Contamination::default(),
         wounds: Wounds::default(),
         stamina: Stamina::default(),
@@ -1093,6 +1097,10 @@ mod tests {
         // ② qi_max 等于 qi_max_for_realm(realm)（对拍 worldview 表，见 breakthrough.rs 测试）
         // ③ qi_current 显式保持 0.0（不满灵——满灵会凭空产生真元撞 qi_physics 守恒红线）
         // ④ shared_lifespan 吃的是传入 realm 而非 Cultivation::default().realm
+        // ⑤（P2 收口）meridian_system 已开经脉数等于 realm.required_meridians()——
+        //   此前恒为 MeridianSystem::default()（全闭），与同一 realm 派生的
+        //   npc_meridian_system_for_realm(realm)（spawn 侧只用来筛技能、从不落地）
+        //   互相矛盾，是「意图 realm ≠ 组件状态」双源的另一种形态。
         for realm in [
             Realm::Awaken,
             Realm::Induce,
@@ -1125,6 +1133,13 @@ mod tests {
                 LifespanCapTable::for_realm(realm),
                 "realm={realm:?}: shared_lifespan 必须吃传入 realm 而非默认 Awaken"
             );
+            assert_eq!(
+                bundle.meridian_system.opened_count(),
+                realm.required_meridians(),
+                "realm={realm:?}: meridian_system 已开经脉数必须等于 realm.required_meridians()（{}），实际 {}",
+                realm.required_meridians(),
+                bundle.meridian_system.opened_count()
+            );
         }
 
         // 2-arg wrapper 同源透传（不允许悄悄塞 Realm::Awaken 折中默认值）。
@@ -1132,6 +1147,11 @@ mod tests {
         let entity = app.world_mut().spawn_empty().id();
         let bundle = npc_runtime_bundle(entity, NpcArchetype::Beast, Realm::Solidify);
         assert_eq!(bundle.cultivation.realm, Realm::Solidify);
+        assert_eq!(
+            bundle.meridian_system.opened_count(),
+            Realm::Solidify.required_meridians(),
+            "2-arg wrapper 的 meridian_system 同样必须按传入 realm 派生，不能悄悄用默认全闭"
+        );
         assert_eq!(bundle.cultivation.qi_current, 0.0);
         assert_eq!(bundle.cultivation.qi_max, qi_max_for_realm(Realm::Solidify));
     }
