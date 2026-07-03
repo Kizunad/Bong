@@ -245,6 +245,9 @@ pub struct CombatRequestParams<'w, 's> {
     pub skill_meridian_deps: Option<Res<'w, SkillMeridianDependencies>>,
     /// plan-bug-qc-p1 §skill-cast P0：玩家永久断脉状态，供 cast 前 SEVERED 门控。
     pub player_severed: Query<'w, 's, Option<&'static MeridianSeveredPermanent>>,
+    /// plan-scroll-reading-v1 P2：读卷中标记（真相源），供 `ScrollReadClosed` 分支查询以
+    /// 决定是否需要发 `StopAnim` + 移除 marker。
+    pub scroll_reading_q: Query<'w, 's, &'static crate::network::scroll_open_emit::ScrollReading>,
 }
 
 #[derive(SystemParam)]
@@ -2635,6 +2638,14 @@ pub fn handle_client_request_payloads(
                         );
                         // §8.1 #1：动画只在模板挂了 anim_id 时才播（残卷不强制有阅读动画）。
                         if let Some(anim_id) = anim_id {
+                            // P2 — 插入 ScrollReading marker（真相源，供 ScrollReadClosed /
+                            // 死亡兜底停止动画）。插入不依赖 Position/UniqueId 查得到——就算
+                            // entity 暂查不到坐标，"该玩家正在读卷"这件事本身仍然成立。
+                            commands.entity(ev.client).insert(
+                                crate::network::scroll_open_emit::ScrollReading {
+                                    anim_id: anim_id.clone(),
+                                },
+                            );
                             if let (Ok(position), Ok(unique_id)) = (
                                 combat_params.positions.get(ev.client),
                                 combat_params.unique_ids.get(ev.client),
@@ -2663,15 +2674,43 @@ pub fn handle_client_request_payloads(
                     }
                 }
             }
-            // ─── plan-scroll-reading-v1 P1 §8.1#4：阅读屏关闭确认 ─────────
-            // 契约落地于 P1（proto tag 101 + client 关屏时发出）；实际停止循环阅读
-            // 动画（emit_scroll_read_stop_for_entity + StopAnim）留给 P2 落地，P1
-            // 先接住确认信号，避免 client 发出的包被 server 当未知类型丢弃。
+            // ─── plan-scroll-reading-v1 P2 §8.1#4：阅读屏关闭 → 停止循环阅读动画 ─────
+            // ScrollReading marker 是"读卷中"的真相源（而非 status）；命中就发
+            // StopAnim + 移除 marker，未命中（该玩家当时没有挂动画，或已被死亡/断线
+            // 兜底清理过）静默跳过，不重复停止。
             ClientRequestV1::ScrollReadClosed { .. } => {
-                tracing::debug!(
-                    "[bong][network] client_request scroll_read_closed entity={:?} (anim stop wiring lands in P2)",
-                    ev.client
-                );
+                if let Ok(reading) = combat_params.scroll_reading_q.get(ev.client) {
+                    let anim_id = reading.anim_id.clone();
+                    if let (Ok(position), Ok(unique_id)) = (
+                        combat_params.positions.get(ev.client),
+                        combat_params.unique_ids.get(ev.client),
+                    ) {
+                        if let Some(vfx_events) = alchemy_params.vfx_events.as_deref_mut() {
+                            vfx_events.send(crate::network::vfx_event_emit::VfxEventRequest::new(
+                                position.get(),
+                                crate::schema::vfx_event::VfxEventPayloadV1::StopAnim {
+                                    target_player: unique_id.0.to_string(),
+                                    anim_id,
+                                    fade_out_ticks: Some(
+                                        crate::network::vfx_animation_trigger::SCROLL_READ_ANIM_FADE_OUT_TICKS,
+                                    ),
+                                },
+                            ));
+                        }
+                    }
+                    commands
+                        .entity(ev.client)
+                        .remove::<crate::network::scroll_open_emit::ScrollReading>();
+                    tracing::debug!(
+                        "[bong][network] client_request scroll_read_closed entity={:?} anim stopped",
+                        ev.client
+                    );
+                } else {
+                    tracing::debug!(
+                        "[bong][network] client_request scroll_read_closed entity={:?} (no ScrollReading marker, no-op)",
+                        ev.client
+                    );
+                }
             }
             // ─── plan-agent-ui-data-v1 P0：天道 UI 面板响应 ─────────────
             // agent_ui.rs 的 receive_agent_ui_response_system 负责处理；
@@ -8802,6 +8841,276 @@ mod tests {
                 .map(|c| c.worn.is_empty())
                 .unwrap_or(true),
             "境界不足时伪皮不应落进 chest worn"
+        );
+    }
+
+    // ─── plan-scroll-reading-v1 P2 — ScrollReadRequest/ScrollReadClosed 循环动画 e2e ───
+    // 覆盖「开卷插 marker + 发 PlayAnim」→「关屏发 StopAnim + 移除 marker」全链路，以及
+    // anim_id=None（无动画残卷）/ 未开卷即关屏（no-op）/ 重复关屏（幂等）三个边界。
+    use crate::network::scroll_open_emit::ScrollReading;
+    use crate::schema::vfx_event::VfxEventPayloadV1;
+
+    fn readable_scroll_template(id: &str, anim_id: Option<&str>) -> ItemTemplate {
+        ItemTemplate {
+            id: id.to_string(),
+            display_name: "《测试残卷》".to_string(),
+            category: ItemCategory::Scroll,
+            placeable: None,
+            max_stack_count: 1,
+            grid_w: 1,
+            grid_h: 2,
+            base_weight: 0.05,
+            rarity: ItemRarity::Common,
+            spirit_quality_initial: 0.3,
+            description: "test".to_string(),
+            effect: None,
+            cast_duration_ms: 1500,
+            cooldown_ms: 1500,
+            weapon_spec: None,
+            forge_station_spec: None,
+            blueprint_scroll_spec: None,
+            inscription_scroll_spec: None,
+            technique_scroll_spec: None,
+            readable_scroll_spec: Some(crate::inventory::ReadableScrollSpec {
+                title: "《测试残卷》".to_string(),
+                body_pages: vec!["第一页".to_string()],
+                anim_id: anim_id.map(|s| s.to_string()),
+            }),
+            recipe_fragment_spec: None,
+            container_spec: None,
+            shelflife_profile: None,
+            shield_spec: None,
+            shelflife_track: None,
+        }
+    }
+
+    fn inventory_with_scroll(instance_id: u64, template_id: &str) -> PlayerInventory {
+        let mut inv = empty_inventory();
+        inv.containers[0].items.push(PlacedItemState {
+            row: 0,
+            col: 0,
+            instance: inventory_test_item(instance_id, template_id, 1),
+        });
+        inv
+    }
+
+    fn scroll_anim_drain_vfx(
+        app: &mut App,
+    ) -> Vec<crate::network::vfx_event_emit::VfxEventRequest> {
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<crate::network::vfx_event_emit::VfxEventRequest>>()
+            .drain()
+            .collect()
+    }
+
+    fn scroll_anim_find_play<'a>(
+        reqs: &'a [crate::network::vfx_event_emit::VfxEventRequest],
+        anim_id: &str,
+    ) -> Option<&'a crate::network::vfx_event_emit::VfxEventRequest> {
+        reqs.iter().find(|r| {
+            matches!(&r.payload, VfxEventPayloadV1::PlayAnim { anim_id: id, .. } if id == anim_id)
+        })
+    }
+
+    fn scroll_anim_find_stop<'a>(
+        reqs: &'a [crate::network::vfx_event_emit::VfxEventRequest],
+        anim_id: &str,
+    ) -> Option<&'a crate::network::vfx_event_emit::VfxEventRequest> {
+        reqs.iter().find(|r| {
+            matches!(&r.payload, VfxEventPayloadV1::StopAnim { anim_id: id, .. } if id == anim_id)
+        })
+    }
+
+    fn send_scroll_read_request(app: &mut App, entity: Entity, instance_id: u64) {
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: serde_json::to_vec(&ClientRequestV1::ScrollReadRequest { v: 1, instance_id })
+                    .expect("scroll_read_request should serialize")
+                    .into_boxed_slice(),
+            });
+    }
+
+    fn send_scroll_read_closed(app: &mut App, entity: Entity) {
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: serde_json::to_vec(&ClientRequestV1::ScrollReadClosed { v: 1 })
+                    .expect("scroll_read_closed should serialize")
+                    .into_boxed_slice(),
+            });
+    }
+
+    // ── happy path: 开卷插 marker + 发 PlayAnim ─────────────────────────
+    #[test]
+    fn scroll_read_request_inserts_marker_and_emits_play_anim() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        app.insert_resource(ItemRegistry::from_map(HashMap::from([(
+            "scroll_meridian_primer".to_string(),
+            readable_scroll_template("scroll_meridian_primer", Some("bong:read_scroll")),
+        )])));
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                inventory_with_scroll(42, "scroll_meridian_primer"),
+            ))
+            .id();
+
+        send_scroll_read_request(&mut app, entity, 42);
+        app.update();
+
+        assert!(
+            app.world().get::<ScrollReading>(entity).is_some(),
+            "ScrollReadRequest with anim_id must insert ScrollReading marker \
+             (真相源 for ScrollReadClosed / death cleanup to find later)"
+        );
+        let emitted = scroll_anim_drain_vfx(&mut app);
+        assert!(
+            scroll_anim_find_play(&emitted, "bong:read_scroll").is_some(),
+            "ScrollReadRequest must emit PlayAnim{{anim_id==\"bong:read_scroll\"}} \
+             when spec has anim_id, got {emitted:?}"
+        );
+    }
+
+    // ── 边界: spec.anim_id=None → 不插 marker、不发 PlayAnim ──────────────
+    #[test]
+    fn scroll_read_request_without_anim_id_does_not_insert_marker() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        app.insert_resource(ItemRegistry::from_map(HashMap::from([(
+            "scroll_no_anim".to_string(),
+            readable_scroll_template("scroll_no_anim", None),
+        )])));
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app
+            .world_mut()
+            .spawn((client_bundle, inventory_with_scroll(7, "scroll_no_anim")))
+            .id();
+
+        send_scroll_read_request(&mut app, entity, 7);
+        app.update();
+
+        assert!(
+            app.world().get::<ScrollReading>(entity).is_none(),
+            "spec.anim_id=None must not insert a ScrollReading marker — there is no \
+             loop animation to stop later"
+        );
+        let emitted = scroll_anim_drain_vfx(&mut app);
+        assert!(
+            scroll_anim_find_play(&emitted, "bong:read_scroll").is_none(),
+            "no anim_id means no PlayAnim should be emitted, got {emitted:?}"
+        );
+    }
+
+    // ── happy path: 关屏发 StopAnim + 移除 marker ───────────────────────
+    #[test]
+    fn scroll_read_closed_emits_stop_anim_and_removes_marker() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        app.insert_resource(ItemRegistry::from_map(HashMap::from([(
+            "scroll_meridian_primer".to_string(),
+            readable_scroll_template("scroll_meridian_primer", Some("bong:read_scroll")),
+        )])));
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                inventory_with_scroll(42, "scroll_meridian_primer"),
+            ))
+            .id();
+
+        send_scroll_read_request(&mut app, entity, 42);
+        app.update();
+        let _ = scroll_anim_drain_vfx(&mut app); // discard open events, focus on close
+
+        send_scroll_read_closed(&mut app, entity);
+        app.update();
+
+        let emitted = scroll_anim_drain_vfx(&mut app);
+        assert!(
+            scroll_anim_find_stop(&emitted, "bong:read_scroll").is_some(),
+            "ScrollReadClosed must emit StopAnim{{anim_id==\"bong:read_scroll\"}} \
+             when a ScrollReading marker was present, got {emitted:?}"
+        );
+        assert!(
+            app.world().get::<ScrollReading>(entity).is_none(),
+            "ScrollReadClosed must remove the ScrollReading marker after stopping the anim"
+        );
+    }
+
+    // ── 边界: 未开卷即发 ScrollReadClosed → no-op（不 panic，不发 StopAnim）──
+    #[test]
+    fn scroll_read_closed_without_active_reading_is_noop() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+
+        send_scroll_read_closed(&mut app, entity);
+        app.update();
+
+        let emitted = scroll_anim_drain_vfx(&mut app);
+        assert!(
+            scroll_anim_find_stop(&emitted, "bong:read_scroll").is_none(),
+            "ScrollReadClosed with no prior ScrollReadRequest must not emit StopAnim \
+             (no ScrollReading marker to act on), got {emitted:?}"
+        );
+        assert!(
+            app.world().get::<ScrollReading>(entity).is_none(),
+            "no marker should exist to begin with"
+        );
+    }
+
+    // ── 重复关屏: 第二次 ScrollReadClosed 不再重复发 StopAnim ────────────
+    #[test]
+    fn repeated_scroll_read_closed_only_stops_once() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        app.insert_resource(ItemRegistry::from_map(HashMap::from([(
+            "scroll_meridian_primer".to_string(),
+            readable_scroll_template("scroll_meridian_primer", Some("bong:read_scroll")),
+        )])));
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                inventory_with_scroll(42, "scroll_meridian_primer"),
+            ))
+            .id();
+
+        send_scroll_read_request(&mut app, entity, 42);
+        app.update();
+        let _ = scroll_anim_drain_vfx(&mut app);
+
+        send_scroll_read_closed(&mut app, entity);
+        app.update();
+        let first_close = scroll_anim_drain_vfx(&mut app);
+        assert!(
+            scroll_anim_find_stop(&first_close, "bong:read_scroll").is_some(),
+            "first ScrollReadClosed must stop the animation, got {first_close:?}"
+        );
+
+        send_scroll_read_closed(&mut app, entity);
+        app.update();
+        let second_close = scroll_anim_drain_vfx(&mut app);
+        assert!(
+            scroll_anim_find_stop(&second_close, "bong:read_scroll").is_none(),
+            "second ScrollReadClosed after marker already removed must be a no-op \
+             (idempotent close, not a repeated StopAnim), got {second_close:?}"
         );
     }
 }

@@ -7,10 +7,16 @@
 //! 校验分支（`ScrollReadRejectReason`）覆盖 §9 描述的三类静默拒绝：
 //! 实例不属于该玩家背包 / 模板未注册 / 模板无 `readable_scroll_spec`。
 
-use valence::prelude::{Client, Entity, Query, Username};
+use valence::prelude::{
+    bevy_ecs, Client, Commands, Component, Entity, EventReader, EventWriter, Position, Query,
+    RemovedComponents, UniqueId, Username,
+};
 
+use crate::combat::events::DeathEvent;
 use crate::inventory::{inventory_item_by_instance_borrow, ItemRegistry, PlayerInventory};
 use crate::network::agent_bridge::{payload_type_label, serialize_server_data_payload};
+use crate::network::vfx_animation_trigger::emit_scroll_read_stop_for_entity;
+use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::network::{log_payload_build_error, send_server_data_payload};
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 
@@ -101,6 +107,73 @@ pub fn emit_scroll_open(
     };
     if let Ok((_, mut client)) = clients.get_mut(entity) {
         send_server_data_payload(&mut client, payload_bytes.as_slice());
+    }
+}
+
+/// plan-scroll-reading-v1 P2 — 玩家正在阅读残卷的持续标记 component。
+///
+/// **专属 marker 而非 status（§8.1 #4 决议）**：读卷不属于战斗 `StatusEffects`
+/// 体系（无 qi/duration 语义），且需要在死亡时区分"死前是否在读卷"——照抄
+/// `combat::shield_block::ShieldBlock` 用独立 component 做真相源的模式（而非
+/// `has_active_status` 判定，理由同 `cleanup_shield_on_death` 顶部注释：death_arbiter_tick
+/// 的 `enter_near_death` 会无条件清空 status_effects，专属 component 不受影响）。
+///
+/// 存储循环动画 id 快照（而非重新查 `readable_scroll_spec`），因为关屏 / 死亡两条清理
+/// 路径都只需要"当时播的是哪个动画"这一件事，不需要重新解析物品模板。
+#[derive(Debug, Clone, Component)]
+pub struct ScrollReading {
+    pub anim_id: String,
+}
+
+/// plan-scroll-reading-v1 P2 §8.1 #4 — 玩家死亡时强制清理 `ScrollReading` 标记 +
+/// 停止循环阅读动画，防止死亡画面里手臂残留举卷姿势。
+/// 模板：`combat::shield_block::cleanup_shield_on_death`。
+pub fn cleanup_scroll_reading_on_death(
+    mut death_events: EventReader<DeathEvent>,
+    mut commands: Commands,
+    reading_q: Query<&ScrollReading>,
+    positions: Query<&Position>,
+    unique_ids: Query<&UniqueId>,
+    mut vfx_events: EventWriter<VfxEventRequest>,
+) {
+    for ev in death_events.read() {
+        let entity = ev.target;
+        if let Ok(reading) = reading_q.get(entity) {
+            emit_scroll_read_stop_for_entity(
+                entity,
+                &reading.anim_id,
+                &positions,
+                &unique_ids,
+                &mut vfx_events,
+            );
+            if let Some(mut entity_commands) = commands.get_entity(entity) {
+                entity_commands.remove::<ScrollReading>();
+            }
+            tracing::debug!(
+                "[bong][scroll] cleanup_on_death: removed ScrollReading for {entity:?}"
+            );
+        }
+    }
+}
+
+/// plan-scroll-reading-v1 P2 §8.1 #4 — 断线时强制清理 `ScrollReading` 标记。
+/// 在 `despawn_disconnected_clients` 之前运行（注册处 `.before()` 约束）。
+/// 断线后实体渲染模型随之消失，无需单独发 `StopAnim`（模板：
+/// `combat::shield_block::cleanup_shield_on_disconnect` 顶部注释同理）。
+pub fn cleanup_scroll_reading_on_disconnect(
+    mut commands: Commands,
+    mut disconnected_clients: RemovedComponents<Client>,
+    reading_q: Query<&ScrollReading>,
+) {
+    for entity in disconnected_clients.read() {
+        if reading_q.get(entity).is_ok() {
+            if let Some(mut entity_commands) = commands.get_entity(entity) {
+                entity_commands.remove::<ScrollReading>();
+            }
+            tracing::debug!(
+                "[bong][scroll] cleanup_on_disconnect: removed ScrollReading for {entity:?}"
+            );
+        }
     }
 }
 
@@ -383,5 +456,167 @@ mod tests {
             result.is_ok(),
             "挂在 equipped 槽的可阅读残卷也应能被解析到，得到 {result:?}"
         );
+    }
+
+    // ─── plan-scroll-reading-v1 P2 §8.1 #4 — 死亡/断线兜底清理 ScrollReading ───
+
+    mod cleanup_tests {
+        use super::*;
+        use crate::combat::events::DeathEvent;
+        use valence::prelude::{App, DVec3, Events, Update};
+
+        fn make_app() -> App {
+            let mut app = App::new();
+            app.add_event::<DeathEvent>();
+            app.add_event::<VfxEventRequest>();
+            app.add_systems(
+                Update,
+                (
+                    cleanup_scroll_reading_on_death,
+                    cleanup_scroll_reading_on_disconnect,
+                ),
+            );
+            app
+        }
+
+        fn drain_vfx(app: &mut App) -> Vec<VfxEventRequest> {
+            app.world_mut()
+                .resource_mut::<Events<VfxEventRequest>>()
+                .drain()
+                .collect()
+        }
+
+        fn find_stop_anim<'a>(
+            reqs: &'a [VfxEventRequest],
+            anim_id: &str,
+        ) -> Option<&'a VfxEventRequest> {
+            reqs.iter().find(|r| {
+                matches!(
+                    &r.payload,
+                    crate::schema::vfx_event::VfxEventPayloadV1::StopAnim { anim_id: id, .. }
+                        if id == anim_id
+                )
+            })
+        }
+
+        // ── happy path: 死亡时读卷中 → 发 StopAnim + 移除 marker ────────────
+        #[test]
+        fn cleanup_on_death_emits_stop_anim_and_removes_marker_when_reading() {
+            let mut app = make_app();
+            let entity = app
+                .world_mut()
+                .spawn((
+                    ScrollReading {
+                        anim_id: "bong:read_scroll".to_string(),
+                    },
+                    Position::new(DVec3::new(0.0, 64.0, 0.0)),
+                    UniqueId(uuid::Uuid::new_v5(
+                        &uuid::Uuid::NAMESPACE_OID,
+                        b"scroll_death_reading",
+                    )),
+                ))
+                .id();
+
+            app.world_mut()
+                .resource_mut::<Events<DeathEvent>>()
+                .send(DeathEvent {
+                    target: entity,
+                    cause: "test_death_while_reading".to_string(),
+                    attacker: None,
+                    attacker_player_id: None,
+                    at_tick: 0,
+                });
+            app.update();
+
+            let emitted = drain_vfx(&mut app);
+            assert!(
+                find_stop_anim(&emitted, "bong:read_scroll").is_some(),
+                "cleanup_scroll_reading_on_death must emit StopAnim{{anim_id==\"bong:read_scroll\"}} \
+                 when the player dies while ScrollReading marker is present, got {emitted:?}"
+            );
+            assert!(
+                app.world().get::<ScrollReading>(entity).is_none(),
+                "cleanup_scroll_reading_on_death must remove the ScrollReading marker after death"
+            );
+        }
+
+        // ── 边界: 死亡时未读卷 → 不发 StopAnim（无 marker 无需清理）─────────
+        #[test]
+        fn cleanup_on_death_no_stop_anim_when_not_reading() {
+            let mut app = make_app();
+            let entity = app
+                .world_mut()
+                .spawn((
+                    Position::new(DVec3::new(0.0, 64.0, 0.0)),
+                    UniqueId(uuid::Uuid::new_v5(
+                        &uuid::Uuid::NAMESPACE_OID,
+                        b"scroll_death_not_reading",
+                    )),
+                ))
+                .id();
+
+            app.world_mut()
+                .resource_mut::<Events<DeathEvent>>()
+                .send(DeathEvent {
+                    target: entity,
+                    cause: "test_death_no_reading".to_string(),
+                    attacker: None,
+                    attacker_player_id: None,
+                    at_tick: 0,
+                });
+            app.update();
+
+            let emitted = drain_vfx(&mut app);
+            assert!(
+                find_stop_anim(&emitted, "bong:read_scroll").is_none(),
+                "cleanup_scroll_reading_on_death must NOT emit StopAnim when the player was not \
+                 reading (no ScrollReading marker present), got {emitted:?}"
+            );
+        }
+
+        // ── happy path: 断线时读卷中 → Client 移除后 marker 也被清掉 ────────
+        // 用真实 `create_mock_client` bundle + 显式 remove::<Client>() 触发
+        // `RemovedComponents<Client>`（区别于 combat::shield_block 测试注释里记录的
+        // "Client 不可单测构造" 限制——此仓库其余测试已证实 create_mock_client 可行）。
+        #[test]
+        fn cleanup_on_disconnect_removes_marker_after_client_removed() {
+            let mut app = make_app();
+            let (client_bundle, _helper) = valence::testing::create_mock_client("Azure");
+            let entity = app
+                .world_mut()
+                .spawn((
+                    client_bundle,
+                    ScrollReading {
+                        anim_id: "bong:read_scroll".to_string(),
+                    },
+                ))
+                .id();
+
+            app.world_mut().entity_mut(entity).remove::<Client>();
+            app.update();
+
+            assert!(
+                app.world().get::<ScrollReading>(entity).is_none(),
+                "cleanup_scroll_reading_on_disconnect must remove the ScrollReading marker \
+                 once RemovedComponents<Client> reports the disconnect"
+            );
+        }
+
+        // ── 边界: 断线时未读卷 → 无 marker 可清，不 panic ────────────────
+        #[test]
+        fn cleanup_on_disconnect_noop_when_not_reading() {
+            let mut app = make_app();
+            let (client_bundle, _helper) = valence::testing::create_mock_client("Bob");
+            let entity = app.world_mut().spawn(client_bundle).id();
+
+            app.world_mut().entity_mut(entity).remove::<Client>();
+            app.update();
+
+            assert!(
+                app.world().get::<ScrollReading>(entity).is_none(),
+                "no marker should exist to begin with, and cleanup must not panic when there \
+                 is nothing to remove"
+            );
+        }
     }
 }

@@ -1297,6 +1297,38 @@ pub fn emit_shield_stop_for_entity(
     emit_stop_for_entity(position, unique_id, ANIM_SHIELD_RAISE, 3, vfx_events);
 }
 
+/// plan-scroll-reading-v1 P2 — 阅读循环动画停止信号 fade_out ticks（阖卷收势，比盾牌略缓）。
+/// `pub(crate)`：`client_request_handler` 的 `ScrollReadClosed` 分支复用同一常量，
+/// 避免与本模块 `emit_scroll_read_stop_for_entity` 内部值各自取一份产生漂移。
+pub(crate) const SCROLL_READ_ANIM_FADE_OUT_TICKS: u8 = 4;
+
+/// plan-scroll-reading-v1 P2 — 向 entity 发送阅读循环动画停止信号（`StopAnim`）。
+/// 由 `client_request_handler` 的 `ScrollReadClosed` 分支 + `scroll_open_emit` 的死亡兜底
+/// 清理系统共用。`anim_id` 取自调用方持有的 `ScrollReading` marker component 快照
+/// （非编译期 `&'static` 常量——区别于 `emit_shield_stop_for_entity` 固定的
+/// `ANIM_SHIELD_RAISE`，因为未来其他可阅读残卷可能挂不同循环动画 id，见 §8.1 #6 复用清单）。
+/// entity 若无 Position/UniqueId 则静默 skip（断线后实体已无 Client component）。
+pub fn emit_scroll_read_stop_for_entity(
+    entity: valence::prelude::Entity,
+    anim_id: &str,
+    positions: &Query<&valence::prelude::Position>,
+    unique_ids: &Query<&valence::prelude::UniqueId>,
+    vfx_events: &mut EventWriter<VfxEventRequest>,
+) {
+    let (Ok(position), Ok(unique_id)) = (positions.get(entity), unique_ids.get(entity)) else {
+        return;
+    };
+    let origin = position.get();
+    vfx_events.send(VfxEventRequest::new(
+        origin,
+        VfxEventPayloadV1::StopAnim {
+            target_player: unique_id.0.to_string(),
+            anim_id: anim_id.to_string(),
+            fade_out_ticks: Some(SCROLL_READ_ANIM_FADE_OUT_TICKS),
+        },
+    ));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
