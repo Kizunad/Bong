@@ -1289,6 +1289,31 @@ mod tests {
     }
 
     #[test]
+    fn beng_quan_whiff_particle_direction_follows_caster_look() {
+        // CR #835：覆盖 whiff_focus_point 的 Look 分支——空挥粒子方向必须沿
+        // 施法者视线（yaw=-90 => 朝东 +X），而非无 Look 时的 +Z 兜底。
+        let mut app = app();
+        let caster = spawn_caster_with_look(&mut app, Realm::Induce, 100.0, DVec3::ZERO, -90.0);
+
+        let result = resolve_beng_quan(app.world_mut(), caster, 0, None);
+        assert!(matches!(result, CastResult::Started { .. }));
+
+        let vfx_events = app.world().resource::<Events<VfxEventRequest>>();
+        let direction = vfx_events
+            .iter_current_update_events()
+            .find_map(|event| match &event.payload {
+                VfxEventPayloadV1::SpawnParticle { direction, .. } => *direction,
+                _ => None,
+            })
+            .expect("空挥应发带方向的 SpawnParticle");
+        assert!(
+            direction[0] > 0.9 && direction[1].abs() < 1e-3 && direction[2].abs() < 1e-3,
+            "yaw=-90 的空挥粒子方向应沿视线朝 +X（whiff_focus_point Look 分支），\
+             实际 direction={direction:?}"
+        );
+    }
+
+    #[test]
     fn beng_quan_rejects_cooldown_before_mutation() {
         let mut app = app();
         let caster = spawn_caster(&mut app, Realm::Induce, 100.0, DVec3::ZERO);
