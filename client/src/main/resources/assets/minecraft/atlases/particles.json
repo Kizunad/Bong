@@ -167,6 +167,22 @@
     {
       "type": "single",
       "resource": "bong:particle/wood_debris"
+    },
+    {
+      "type": "single",
+      "resource": "bong:particle/vortex_spiral"
+    },
+    {
+      "type": "single",
+      "resource": "bong:particle/dugu_taint_pulse"
+    },
+    {
+      "type": "single",
+      "resource": "bong:particle/dugu_reverse_burst"
+    },
+    {
+      "type": "single",
+      "resource": "bong:particle/dugu_dark_green_mist"
     }
   ]
 }
