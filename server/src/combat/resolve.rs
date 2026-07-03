@@ -1477,6 +1477,22 @@ pub fn resolve_attack_intents(
                     duration_ticks: LEG_SLOWED_DURATION_TICKS,
                     issued_at_tick: clock.tick,
                 });
+            // plan-combat-hit-location-v1 P3 — 腿伤减速触发时目标脚下血渍 decal
+            // （复用 client BongGroundDecalParticle 基类，lifetime 100t，无新贴图）。
+            if let Some(events) = event_writers.vfx_events.as_deref_mut() {
+                gameplay_vfx::send_spawn(
+                    events,
+                    gameplay_vfx::spawn_request(
+                        gameplay_vfx::COMBAT_LEG_WOUND_DECAL,
+                        target_position,
+                        None,
+                        "#8C1F1F",
+                        (wound_severity / 20.0).clamp(0.3, 1.0),
+                        1,
+                        100,
+                    ),
+                );
+            }
         }
 
         if hit_probe.body_part == BodyPart::Head && wound_severity >= HEAD_STUN_SEVERITY_THRESHOLD {
@@ -1595,18 +1611,52 @@ pub fn resolve_attack_intents(
             } else {
                 [0.0, 0.0, 0.0]
             };
-            gameplay_vfx::send_spawn(
-                events,
-                gameplay_vfx::spawn_request(
-                    gameplay_vfx::COMBAT_HIT,
-                    hit_origin,
-                    Some(hit_dir),
-                    "#FF3344",
-                    (wound_severity / 20.0).clamp(0.25, 1.0),
-                    6,
-                    12,
-                ),
-            );
+            // plan-combat-hit-location-v1 P3 — 部位差异视听反馈：头部命中暴击星形 burst，
+            // 四肢命中血色三线沿命中法线；胸/腹/背命中维持既有 COMBAT_HIT 不变。
+            match hit_probe.body_part {
+                BodyPart::Head => {
+                    gameplay_vfx::send_spawn(
+                        events,
+                        gameplay_vfx::spawn_request(
+                            gameplay_vfx::COMBAT_HIT_HEAD_CRIT,
+                            hit_origin,
+                            Some(hit_dir),
+                            "#FFE9A0",
+                            (wound_severity / 20.0).clamp(0.25, 1.0),
+                            6,
+                            8,
+                        ),
+                    );
+                }
+                BodyPart::ArmL | BodyPart::ArmR | BodyPart::LegL | BodyPart::LegR => {
+                    gameplay_vfx::send_spawn(
+                        events,
+                        gameplay_vfx::spawn_request(
+                            gameplay_vfx::COMBAT_HIT_LIMB,
+                            hit_origin,
+                            Some(hit_dir),
+                            "#8C1F1F",
+                            (wound_severity / 20.0).clamp(0.25, 1.0),
+                            3,
+                            6,
+                        ),
+                    );
+                }
+                BodyPart::Chest | BodyPart::Abdomen | BodyPart::Back => {
+                    gameplay_vfx::send_spawn(
+                        events,
+                        gameplay_vfx::spawn_request(
+                            gameplay_vfx::COMBAT_HIT,
+                            hit_origin,
+                            Some(hit_dir),
+                            "#FF3344",
+                            (wound_severity / 20.0).clamp(0.25, 1.0),
+                            6,
+                            12,
+                        ),
+                    );
+                }
+            }
             if jiemai_success || sword_parry_success || shield_block_success {
                 gameplay_vfx::send_spawn(
                     events,
@@ -2067,7 +2117,7 @@ mod tests {
     };
     use crate::combat::events::{
         ApplyStatusEffectIntent, AttackIntent, AttackReach, AttackSource, DefenseKind,
-        StatusEffectKind, FIST_REACH,
+        StatusEffectKind, FIST_REACH, SPEAR_REACH,
     };
     use crate::combat::jiemai::jiemai_contam_multiplier_for_effectiveness;
     use crate::cultivation::components::{
@@ -2639,6 +2689,362 @@ mod tests {
             } => {
                 assert_eq!(event_id, gameplay_vfx::COMBAT_HIT);
                 assert!(direction.is_some(), "combat_hit should carry hit direction");
+            }
+            other => panic!("expected SpawnParticle, got {other:?}"),
+        }
+    }
+
+    /// 在固定攻防几何下，扫描确定性 NPC jitter tick，找到第一个命中 `wanted` 部位的
+    /// `issued_at_tick`——不硬编魔数 tick，而是用生产同款 `expected_npc_hit_body_part`
+    /// 复算，保证测试与实现共用同一套确定性瞄准公式（plan-combat-hit-location-v1 P3）。
+    fn find_npc_tick_hitting(
+        attacker_feet: [f64; 3],
+        attacker_canonical_id: &str,
+        target_feet: [f64; 3],
+        reach: AttackReach,
+        wanted: BodyPart,
+    ) -> u64 {
+        (0..2000u64)
+            .find(|&tick| {
+                expected_npc_hit_body_part(
+                    attacker_feet,
+                    attacker_canonical_id,
+                    target_feet,
+                    tick,
+                    reach,
+                ) == wanted
+            })
+            .unwrap_or_else(|| {
+                panic!("未能在 0..2000 tick 内为部位 {wanted:?} 找到确定性 jitter 命中样本")
+            })
+    }
+
+    #[test]
+    fn head_hit_emits_head_crit_vfx_not_generic_combat_hit() {
+        let mut app = App::new();
+        app.add_event::<AttackIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<CombatEvent>();
+        app.add_event::<DeathEvent>();
+        app.add_event::<VfxEventRequest>();
+        app.add_event::<crate::combat::weapon::WeaponBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
+        app.add_systems(Update, resolve_attack_intents);
+
+        let attacker_feet = [0.0, 64.0, 0.0];
+        let target_feet = [1.0, 64.0, 0.0];
+        let npc_attacker = spawn_npc(
+            &mut app,
+            attacker_feet,
+            Wounds::default(),
+            Stamina::default(),
+        );
+        let target = spawn_player(
+            &mut app,
+            "HeadTarget",
+            target_feet,
+            Wounds::default(),
+            Stamina::default(),
+        );
+        let canonical = canonical_npc_id(npc_attacker);
+        let tick = find_npc_tick_hitting(
+            attacker_feet,
+            &canonical,
+            target_feet,
+            FIST_REACH,
+            BodyPart::Head,
+        );
+        app.insert_resource(CombatClock { tick });
+
+        app.world_mut().send_event(AttackIntent {
+            attacker: npc_attacker,
+            target: Some(target),
+            issued_at_tick: tick,
+            reach: FIST_REACH,
+            qi_invest: 10.0,
+            wound_kind: WoundKind::Blunt,
+            source: AttackSource::NpcMelee,
+            debug_command: None,
+        });
+        app.update();
+
+        let target_ref = app.world().entity(target);
+        let wounds = target_ref
+            .get::<Wounds>()
+            .expect("target should keep wounds");
+        assert_eq!(
+            wounds.entries[0].location,
+            BodyPart::Head,
+            "找到的 tick 应确实产出 Head 命中（否则测试自身校准漂移）"
+        );
+
+        let vfx_events = app.world().resource::<Events<VfxEventRequest>>();
+        let payloads: Vec<_> = vfx_events.iter_current_update_events().collect();
+        let head_event = payloads
+            .iter()
+            .find(|event| {
+                matches!(
+                    &event.payload,
+                    crate::schema::vfx_event::VfxEventPayloadV1::SpawnParticle { event_id, .. }
+                        if event_id == gameplay_vfx::COMBAT_HIT_HEAD_CRIT
+                )
+            })
+            .expect(
+                "头部命中应 emit bong:combat_hit_head_crit（暴击星形 burst），而非通用 combat_hit",
+            );
+        match &head_event.payload {
+            crate::schema::vfx_event::VfxEventPayloadV1::SpawnParticle {
+                color,
+                count,
+                duration_ticks,
+                ..
+            } => {
+                assert_eq!(
+                    color.as_deref(),
+                    Some("#FFE9A0"),
+                    "头部暴击 burst 应为白金色 #FFE9A0"
+                );
+                assert_eq!(*count, Some(6), "头部暴击 burst 应为 ×6");
+                assert_eq!(*duration_ticks, Some(8), "头部暴击 burst lifetime 应为 8t");
+            }
+            other => panic!("expected SpawnParticle, got {other:?}"),
+        }
+        assert!(
+            !payloads.iter().any(|event| matches!(
+                &event.payload,
+                crate::schema::vfx_event::VfxEventPayloadV1::SpawnParticle { event_id, .. }
+                    if event_id == gameplay_vfx::COMBAT_HIT
+            )),
+            "头部命中不应再退化 emit 通用 bong:combat_hit（应二选一，不叠加旧事件）"
+        );
+    }
+
+    #[test]
+    fn limb_hit_emits_limb_vfx_distinct_from_head_and_torso() {
+        let mut app = App::new();
+        app.add_event::<AttackIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<CombatEvent>();
+        app.add_event::<DeathEvent>();
+        app.add_event::<VfxEventRequest>();
+        app.add_event::<crate::combat::weapon::WeaponBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
+        app.add_systems(Update, resolve_attack_intents);
+
+        let attacker_feet = [0.0, 64.0, 0.0];
+        let target_feet = [1.0, 64.0, 0.0];
+        let npc_attacker = spawn_npc(
+            &mut app,
+            attacker_feet,
+            Wounds::default(),
+            Stamina::default(),
+        );
+        let target = spawn_player(
+            &mut app,
+            "LimbTarget",
+            target_feet,
+            Wounds::default(),
+            Stamina::default(),
+        );
+        let canonical = canonical_npc_id(npc_attacker);
+        // ArmL/ArmR/LegL/LegR 均应路由到同一个 COMBAT_HIT_LIMB——扫第一个命中任意四肢的 tick。
+        let tick = (0..2000u64)
+            .find(|&tick| {
+                matches!(
+                    expected_npc_hit_body_part(
+                        attacker_feet,
+                        &canonical,
+                        target_feet,
+                        tick,
+                        FIST_REACH,
+                    ),
+                    BodyPart::ArmL | BodyPart::ArmR | BodyPart::LegL | BodyPart::LegR
+                )
+            })
+            .expect("未能在 0..2000 tick 内找到任意四肢命中样本");
+        app.insert_resource(CombatClock { tick });
+
+        app.world_mut().send_event(AttackIntent {
+            attacker: npc_attacker,
+            target: Some(target),
+            issued_at_tick: tick,
+            reach: FIST_REACH,
+            qi_invest: 10.0,
+            wound_kind: WoundKind::Blunt,
+            source: AttackSource::NpcMelee,
+            debug_command: None,
+        });
+        app.update();
+
+        let target_ref = app.world().entity(target);
+        let wounds = target_ref
+            .get::<Wounds>()
+            .expect("target should keep wounds");
+        assert!(
+            matches!(
+                wounds.entries[0].location,
+                BodyPart::ArmL | BodyPart::ArmR | BodyPart::LegL | BodyPart::LegR
+            ),
+            "找到的 tick 应确实产出四肢命中，实际 {:?}",
+            wounds.entries[0].location
+        );
+
+        let vfx_events = app.world().resource::<Events<VfxEventRequest>>();
+        let payloads: Vec<_> = vfx_events.iter_current_update_events().collect();
+        let limb_event = payloads
+            .iter()
+            .find(|event| {
+                matches!(
+                    &event.payload,
+                    crate::schema::vfx_event::VfxEventPayloadV1::SpawnParticle { event_id, .. }
+                        if event_id == gameplay_vfx::COMBAT_HIT_LIMB
+                )
+            })
+            .expect("四肢命中应 emit bong:combat_hit_limb（血色三线），而非通用 combat_hit");
+        match &limb_event.payload {
+            crate::schema::vfx_event::VfxEventPayloadV1::SpawnParticle {
+                color,
+                count,
+                duration_ticks,
+                direction,
+                ..
+            } => {
+                assert_eq!(
+                    color.as_deref(),
+                    Some("#8C1F1F"),
+                    "四肢命中血色应为 #8C1F1F"
+                );
+                assert_eq!(*count, Some(3), "四肢命中应为 ×3（沿命中法线三线）");
+                assert_eq!(*duration_ticks, Some(6), "四肢命中 lifetime 应为 6t");
+                assert!(direction.is_some(), "四肢命中应携带命中法线方向");
+            }
+            other => panic!("expected SpawnParticle, got {other:?}"),
+        }
+        assert!(
+            !payloads.iter().any(|event| matches!(
+                &event.payload,
+                crate::schema::vfx_event::VfxEventPayloadV1::SpawnParticle { event_id, .. }
+                    if event_id == gameplay_vfx::COMBAT_HIT_HEAD_CRIT
+                        || event_id == gameplay_vfx::COMBAT_HIT
+            )),
+            "四肢命中不应叠加 emit 头部或通用 combat_hit 事件"
+        );
+    }
+
+    #[test]
+    fn leg_wound_slowdown_emits_ground_blood_decal() {
+        let mut app = App::new();
+        app.add_event::<AttackIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<CombatEvent>();
+        app.add_event::<DeathEvent>();
+        app.add_event::<VfxEventRequest>();
+        app.add_event::<crate::combat::weapon::WeaponBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
+        app.add_systems(Update, resolve_attack_intents);
+
+        let attacker_feet = [0.0, 64.0, 0.0];
+        let target_feet = [1.0, 64.0, 0.0];
+        let npc_attacker = spawn_npc(
+            &mut app,
+            attacker_feet,
+            Wounds::default(),
+            Stamina::default(),
+        );
+        let target = spawn_player(
+            &mut app,
+            "LegTarget",
+            target_feet,
+            Wounds::default(),
+            Stamina::default(),
+        );
+        let canonical = canonical_npc_id(npc_attacker);
+        // 用 SPEAR_REACH（伤害衰减系数更宽松）+ 更高 qi_invest，方便稳定越过
+        // LEG_SLOWED_SEVERITY_THRESHOLD 触发减速与血渍 decal。
+        let tick = (0..2000u64)
+            .find(|&tick| {
+                matches!(
+                    expected_npc_hit_body_part(
+                        attacker_feet,
+                        &canonical,
+                        target_feet,
+                        tick,
+                        SPEAR_REACH,
+                    ),
+                    BodyPart::LegL | BodyPart::LegR
+                )
+            })
+            .expect("未能在 0..2000 tick 内找到腿部命中样本");
+        app.insert_resource(CombatClock { tick });
+
+        app.world_mut().send_event(AttackIntent {
+            attacker: npc_attacker,
+            target: Some(target),
+            issued_at_tick: tick,
+            reach: SPEAR_REACH,
+            qi_invest: 60.0,
+            wound_kind: WoundKind::Pierce,
+            source: AttackSource::NpcMelee,
+            debug_command: None,
+        });
+        app.update();
+
+        let target_ref = app.world().entity(target);
+        let wounds = target_ref
+            .get::<Wounds>()
+            .expect("target should keep wounds");
+        let wound_severity = wounds.entries[0].severity;
+        assert!(
+            matches!(wounds.entries[0].location, BodyPart::LegL | BodyPart::LegR),
+            "找到的 tick 应确实产出腿部命中，实际 {:?}",
+            wounds.entries[0].location
+        );
+        assert!(
+            wound_severity >= LEG_SLOWED_SEVERITY_THRESHOLD,
+            "本测试要求腿伤严重度 {wound_severity} 越过减速阈值 {LEG_SLOWED_SEVERITY_THRESHOLD}\
+             才能触发血渍 decal，否则测试自身前置条件不成立"
+        );
+
+        let status_events = app.world().resource::<Events<ApplyStatusEffectIntent>>();
+        assert!(
+            status_events
+                .iter_current_update_events()
+                .any(|event| event.kind == StatusEffectKind::Slowed),
+            "腿伤越过阈值应确实触发 Slowed 减速（本测试的前置条件）"
+        );
+
+        let vfx_events = app.world().resource::<Events<VfxEventRequest>>();
+        let decal_event = vfx_events
+            .iter_current_update_events()
+            .find(|event| {
+                matches!(
+                    &event.payload,
+                    crate::schema::vfx_event::VfxEventPayloadV1::SpawnParticle { event_id, .. }
+                        if event_id == gameplay_vfx::COMBAT_LEG_WOUND_DECAL
+                )
+            })
+            .expect("腿伤减速触发时应 emit bong:combat_leg_wound_decal 血渍 decal");
+        match &decal_event.payload {
+            crate::schema::vfx_event::VfxEventPayloadV1::SpawnParticle {
+                duration_ticks,
+                direction,
+                ..
+            } => {
+                assert_eq!(
+                    *duration_ticks,
+                    Some(100),
+                    "血渍 decal lifetime 应为 100t（区别于命中粒子的 6-12t）"
+                );
+                assert!(
+                    direction.is_none(),
+                    "地面 decal 不携带命中方向（水平贴地，无需法线）"
+                );
             }
             other => panic!("expected SpawnParticle, got {other:?}"),
         }
