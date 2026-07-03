@@ -85,6 +85,9 @@ pub enum CastOutcomeV1 {
     RejectRealmTooLow,
     /// 缺少所需武器（如剑技需手持剑）。
     RejectNoWeapon,
+    /// 招式未习得或未激活（KnownTechniques 缺失 / active=false）。
+    /// 此前这类拒绝冒用 RejectInvalidTarget，玩家被"目标无效"文案误导。
+    RejectTechniqueInactive,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]

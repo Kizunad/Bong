@@ -487,7 +487,7 @@ fn cast_sword_attack(
         return rejected(CastRejectReason::InRecovery);
     }
     let Some(proficiency) = known_active_proficiency(world, caster, technique) else {
-        return rejected(CastRejectReason::InvalidTarget);
+        return rejected(CastRejectReason::TechniqueInactive);
     };
     let profile = sword_profile(technique, proficiency);
     spend_stamina(world, caster, profile.stamina_cost);
@@ -602,7 +602,7 @@ fn cast_sword_parry(
         return rejected(CastRejectReason::InRecovery);
     }
     let Some(proficiency) = known_active_proficiency(world, caster, SwordTechnique::Parry) else {
-        return rejected(CastRejectReason::InvalidTarget);
+        return rejected(CastRejectReason::TechniqueInactive);
     };
     let profile = sword_profile(SwordTechnique::Parry, proficiency);
     spend_stamina(world, caster, profile.stamina_cost);
@@ -665,7 +665,7 @@ fn cast_sword_infuse(
         return rejected(CastRejectReason::InRecovery);
     }
     let Some(proficiency) = known_active_proficiency(world, caster, SwordTechnique::Infuse) else {
-        return rejected(CastRejectReason::InvalidTarget);
+        return rejected(CastRejectReason::TechniqueInactive);
     };
     let profile = sword_profile(SwordTechnique::Infuse, proficiency);
     let amount = (cultivation.qi_current * SWORD_INFUSE_MAX_FRACTION)
