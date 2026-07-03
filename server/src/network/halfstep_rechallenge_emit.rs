@@ -999,6 +999,8 @@ mod tests {
             active_events: Vec::new(),
             patrol_anchors: Vec::new(),
             blocked_tiles: Vec::new(),
+            qi_equilibrium: 0.0,
+            qi_inflow_per_min: 0.0,
         };
         let zone_b = Zone {
             name: "zone_b".to_string(),
@@ -1012,6 +1014,8 @@ mod tests {
             active_events: Vec::new(),
             patrol_anchors: Vec::new(),
             blocked_tiles: Vec::new(),
+            qi_equilibrium: 0.0,
+            qi_inflow_per_min: 0.0,
         };
         let registry = ZoneRegistry {
             zones: vec![zone_a, zone_b],
@@ -1085,6 +1089,8 @@ mod tests {
             active_events: Vec::new(),
             patrol_anchors: Vec::new(),
             blocked_tiles: Vec::new(),
+            qi_equilibrium: 0.0,
+            qi_inflow_per_min: 0.0,
         };
         let registry = ZoneRegistry {
             zones: vec![qingyun],

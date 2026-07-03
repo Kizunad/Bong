@@ -26,7 +26,7 @@ use crate::npc::tsy_hostile::{
     spawn_tsy_daoxiang_at, spawn_tsy_fuya_at, spawn_tsy_skull_fiend_at, spawn_tsy_zhinian_at,
 };
 use crate::npc::war::{WarParticipateIntent, WarRole};
-use crate::qi_physics::ledger::QiTransfer;
+use crate::qi_physics::ledger::{QiTransfer, WorldQiAccount};
 use crate::schema::agent_command::{AgentCommandV1, Command};
 use crate::schema::common::{CommandType, GameEventType, MAX_COMMANDS_PER_TICK};
 use crate::schema::pseudo_vein::PseudoVeinSeasonV1;
@@ -97,6 +97,9 @@ pub(crate) struct CommandExecutorWorldResources<'w> {
     active_events: Option<ResMut<'w, ActiveEventsResource>>,
     tiandao_power: Option<ResMut<'w, TiandaoPower>>,
     calamity_arsenal: Option<Res<'w, CalamityArsenal>>,
+    // plan-zone-qi-economy-v1 P3 §8.1 决议 #3 — 灵潮注入从独立待分配池真实借出，
+    // agent-command 驱动的 spawn_event{event=pseudo_vein} 路径需要 ledger 访问权。
+    qi_ledger: Option<ResMut<'w, WorldQiAccount>>,
 }
 
 struct SpawnEventCommandResources<'a> {
@@ -106,6 +109,7 @@ struct SpawnEventCommandResources<'a> {
     calamity_arsenal: Option<&'a CalamityArsenal>,
     karma_weights: Option<&'a KarmaWeightStore>,
     qi_heatmap: Option<&'a QiDensityHeatmap>,
+    qi_ledger: Option<&'a mut WorldQiAccount>,
 }
 
 /// 合并 agent command 执行上下文，避免 Bevy 0.14 顶层 SystemParam 16 上限。
@@ -218,6 +222,7 @@ pub fn execute_agent_commands(
                 &mut world_resources.active_events,
                 &mut world_resources.tiandao_power,
                 world_resources.calamity_arsenal.as_deref(),
+                &mut world_resources.qi_ledger,
                 &mut npc_registry,
                 &mut skin_pool,
                 &mut faction_store,
@@ -266,6 +271,7 @@ fn execute_single_command(
     active_events: &mut Option<ResMut<ActiveEventsResource>>,
     tiandao_power: &mut Option<ResMut<TiandaoPower>>,
     calamity_arsenal: Option<&CalamityArsenal>,
+    qi_ledger: &mut Option<ResMut<WorldQiAccount>>,
     npc_registry: &mut Option<ResMut<NpcRegistry>>,
     skin_pool: &mut Option<ResMut<SkinPool>>,
     faction_store: &mut Option<ResMut<FactionStore>>,
@@ -336,6 +342,7 @@ fn execute_single_command(
                 calamity_arsenal,
                 karma_weights,
                 qi_heatmap,
+                qi_ledger: qi_ledger.as_deref_mut(),
             },
             tick,
             pseudo_vein_runtimes,
@@ -922,6 +929,7 @@ fn execute_spawn_event(
         calamity_arsenal,
         karma_weights,
         qi_heatmap,
+        qi_ledger,
     } = resources;
 
     if event_name(command) == Some(EVENT_PSEUDO_VEIN) {
@@ -929,6 +937,7 @@ fn execute_spawn_event(
             command,
             commands,
             zone_registry,
+            qi_ledger,
             tick,
             pseudo_vein_runtimes,
             qi_transfers,
@@ -962,10 +971,12 @@ fn execute_spawn_event(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn execute_spawn_pseudo_vein(
     command: &Command,
     commands: &mut Commands,
     zone_registry: Option<&mut ZoneRegistry>,
+    qi_ledger: Option<&mut WorldQiAccount>,
     tick: Option<u64>,
     pseudo_vein_runtimes: &Query<&PseudoVeinRuntime>,
     qi_transfers: &mut EventWriter<QiTransfer>,
@@ -999,12 +1010,24 @@ fn execute_spawn_pseudo_vein(
 
     let now = tick.unwrap_or_default();
     let center = zone.center();
-    let injected_qi = if let Some(transfer) = inject_zone_for_pseudo_vein(zone) {
-        let amount = transfer.amount;
-        qi_transfers.send(transfer);
-        amount
-    } else {
-        0.0
+    let injected_qi = match qi_ledger {
+        Some(ledger) => {
+            if let Some(transfer) = inject_zone_for_pseudo_vein(zone, ledger) {
+                let amount = transfer.amount;
+                qi_transfers.send(transfer);
+                amount
+            } else {
+                0.0
+            }
+        }
+        None => {
+            tracing::warn!(
+                "[bong][network] cannot borrow pending-inflow qi for pseudo_vein zone `{}` \
+                 because WorldQiAccount is missing; spawning with zero injection",
+                zone.name
+            );
+            0.0
+        }
     };
     pending_pseudo_vein_zones.insert(zone.name.clone());
     let mut runtime = PseudoVeinRuntime::new(
@@ -1349,7 +1372,8 @@ mod command_executor_tests {
 
     use crate::npc::brain::{canonical_npc_id, NpcBehaviorConfig, DEFAULT_FLEE_THRESHOLD};
     use crate::npc::faction::FactionStore;
-    use crate::qi_physics::ledger::{QiAccountId, QiTransferReason};
+    use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
+    use crate::qi_physics::ledger::{pending_inflow_account, QiAccountId, QiTransferReason};
     use crate::schema::agent_command::Command;
     use crate::world::events::{
         ActiveEventsResource, EVENT_KARMA_BACKLASH, EVENT_THUNDER_TRIBULATION,
@@ -1358,7 +1382,9 @@ mod command_executor_tests {
     use crate::world::karma::{
         TARGETED_CALAMITY_BASE_PROBABILITY, TARGETED_CALAMITY_MAX_PROBABILITY,
     };
-    use crate::world::pseudo_vein_runtime::{PseudoVeinPhase, PseudoVeinRuntime};
+    use crate::world::pseudo_vein_runtime::{
+        PseudoVeinPhase, PseudoVeinRuntime, PSEUDO_VEIN_MAX_QI,
+    };
 
     fn command(command_type: CommandType, target: &str, params: HashMap<String, Value>) -> Command {
         Command {
@@ -1388,6 +1414,7 @@ mod command_executor_tests {
         app.insert_resource(FactionStore::default());
         app.insert_resource(KarmaWeightStore::default());
         app.insert_resource(QiDensityHeatmap::default());
+        app.insert_resource(WorldQiAccount::default());
         app.add_event::<NpcSpawnNotice>();
         app.add_event::<FactionEventNotice>();
         app.add_event::<QiTransfer>();
@@ -1454,12 +1481,18 @@ mod command_executor_tests {
 
     #[test]
     fn spawn_event_pseudo_vein_injects_zone_qi_transfer() {
+        // plan-zone-qi-economy-v1 P3 §8.1 决议 #3 — 灵潮注入从独立待分配池真实借出
+        // （非凭空创生的 QiAccountId::tiandao()），需要先给池子充值才能借到全额。
         let mut app = setup_executor_app();
         app.world_mut()
             .resource_mut::<ZoneRegistry>()
             .find_zone_mut("spawn")
             .expect("fallback registry should contain spawn")
             .spirit_qi = 0.1;
+        app.world_mut()
+            .resource_mut::<WorldQiAccount>()
+            .set_balance(pending_inflow_account(), 1000.0)
+            .expect("seeding pending pool must succeed");
         let mut params = HashMap::new();
         params.insert("event".to_string(), json!("pseudo_vein"));
 
@@ -1481,17 +1514,33 @@ mod command_executor_tests {
             .find_zone_by_name("spawn")
             .expect("spawn zone should remain registered")
             .spirit_qi;
-        assert_eq!(zone_qi, 0.6);
+        assert_eq!(
+            zone_qi, PSEUDO_VEIN_MAX_QI,
+            "a well-funded pending pool must let the zone reach the full pseudo-vein target"
+        );
+        let expected_absolute = (PSEUDO_VEIN_MAX_QI - 0.1) * QI_ZONE_UNIT_CAPACITY;
         let transfers = app
             .world()
             .resource::<Events<QiTransfer>>()
             .iter_current_update_events()
             .collect::<Vec<_>>();
         assert_eq!(transfers.len(), 1);
-        assert_eq!(transfers[0].from, QiAccountId::tiandao());
+        assert_eq!(
+            transfers[0].from,
+            pending_inflow_account(),
+            "灵潮注入必须从独立待分配池真实借出，不是凭空创生的 tiandao 账户（§8.1 决议 #3）"
+        );
         assert_eq!(transfers[0].to, QiAccountId::zone("spawn"));
-        assert_eq!(transfers[0].amount, 0.5);
+        assert_eq!(transfers[0].amount, expected_absolute);
         assert_eq!(transfers[0].reason, QiTransferReason::ReleaseToZone);
+        assert_eq!(
+            app.world()
+                .resource::<WorldQiAccount>()
+                .balance(&pending_inflow_account()),
+            1000.0 - expected_absolute,
+            "the pending pool must be debited by exactly the amount credited to the zone \
+             (conservation: no qi created out of thin air)"
+        );
     }
 
     #[test]
@@ -1502,6 +1551,10 @@ mod command_executor_tests {
             .find_zone_mut("spawn")
             .expect("fallback registry should contain spawn")
             .spirit_qi = 0.1;
+        app.world_mut()
+            .resource_mut::<WorldQiAccount>()
+            .set_balance(pending_inflow_account(), 1000.0)
+            .expect("seeding pending pool must succeed");
         let mut params = HashMap::new();
         params.insert("event".to_string(), json!("pseudo_vein"));
 
@@ -1529,7 +1582,10 @@ mod command_executor_tests {
         let runtimes = query.iter(app.world()).collect::<Vec<_>>();
         assert_eq!(runtimes.len(), 1);
         assert_eq!(runtimes[0].zone_id, "spawn");
-        assert_eq!(runtimes[0].injected_qi, 0.5);
+        assert_eq!(
+            runtimes[0].injected_qi,
+            (PSEUDO_VEIN_MAX_QI - 0.1) * QI_ZONE_UNIT_CAPACITY
+        );
     }
 
     #[test]
@@ -1540,6 +1596,10 @@ mod command_executor_tests {
             .find_zone_mut("spawn")
             .expect("fallback registry should contain spawn")
             .spirit_qi = 0.1;
+        app.world_mut()
+            .resource_mut::<WorldQiAccount>()
+            .set_balance(pending_inflow_account(), 1000.0)
+            .expect("seeding pending pool must succeed");
         let mut params = HashMap::new();
         params.insert("event".to_string(), json!("pseudo_vein"));
 
@@ -1561,7 +1621,10 @@ mod command_executor_tests {
         let runtimes = query.iter(app.world()).collect::<Vec<_>>();
         assert_eq!(runtimes.len(), 1);
         assert_eq!(runtimes[0].zone_id, "spawn");
-        assert_eq!(runtimes[0].injected_qi, 0.5);
+        assert_eq!(
+            runtimes[0].injected_qi,
+            (PSEUDO_VEIN_MAX_QI - 0.1) * QI_ZONE_UNIT_CAPACITY
+        );
         let transfers = app
             .world()
             .resource::<Events<QiTransfer>>()

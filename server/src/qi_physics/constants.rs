@@ -61,7 +61,15 @@ pub const QI_RHYTHM_ACTIVE: f64 = 1.2;
 /// worldview §十七：汐转波动范围。
 pub const QI_RHYTHM_TURBULENT_RANGE: (f64, f64) = (0.7, 1.5);
 /// worldview §十：全服灵气预算默认值；生产值由 server config 初始化。
-pub const DEFAULT_SPIRIT_QI_TOTAL: f64 = 100.0;
+///
+/// plan-zone-qi-economy-v1 §8.1 #2（用户 2026-07-03 拍板）：100.0 → 20000.0。
+/// 实测全 zones 满仓仅 ≈453 绝对点、目标编制（3 化虚 + 4 固元）峰值持有 ≈4500，
+/// 旧值 100 比经济规模小两个数量级——是"zone 灵气永不恢复"经济死局的根因之一。
+/// 20000 ≈ 目标峰值 4.4×，留 NPC 私池 + 波动冗余。`DEFAULT_VOID_QUOTA_K`
+/// （`cultivation::tribulation::DEFAULT_VOID_QUOTA_K`）按此值等比例导出，
+/// 化虚名额闸门（满预算 2 名额）不受影响，勿手改该常量。
+/// `docs/worldview.md:874` 的字面值 100 走独立 docs PR 同步（§10.0），不在本改动范围。
+pub const DEFAULT_SPIRIT_QI_TOTAL: f64 = 20000.0;
 /// worldview §十：天道时代衰减下限。
 pub const QI_TIANDAO_DECAY_PER_ERA_MIN: f64 = 0.01;
 /// worldview §十：天道时代衰减上限。
@@ -78,6 +86,12 @@ pub const QI_REGION_STARVATION_THRESHOLD: f64 = 0.1;
 pub const QI_CULTIVATION_REGEN_RATE: f64 = 0.003;
 /// plan-cultivation-v1：1.0 zone 浓度可支撑的玩家真元点数。
 pub const QI_ZONE_UNIT_CAPACITY: f64 = 50.0;
+/// plan-zone-qi-economy-v1 P2：NPC 吸取地板——与 `cultivation::meridian_open::MIN_ZONE_QI_TO_OPEN`
+/// 同值但独立声明（语义不同：NPC 只喝地板以上的"溢出层"，玩家开脉/修炼吸取永远有底仓不受此约束）。
+/// 落点：`npc::dormant::apply_dormant_regen_with_multiplier`、
+/// `cultivation::tick::qi_regen_and_zone_drain_tick`（NpcMarker 分支）、
+/// `world::tiandao_hunt::apply_watch_zone_qi_drain`、`lingtian::systems::ReplenishSource::Zone`。
+pub const QI_NPC_ABSORB_FLOOR: f64 = 0.3;
 /// player gather：采集动作默认真元奖励，以 zone qi 对冲供给。
 pub const QI_GATHER_REWARD: f64 = 14.0;
 /// plan-lingtian-v1：偷灵注入操作者比例。

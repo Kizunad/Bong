@@ -165,3 +165,30 @@ scope ~4 代码 PR + 1 前置 worldview docs PR，单 plan 内序列化（`docs/
 
 - 收口调研（2026-07-03，Explore agent 实地核查 qi_physics 17 文件 + zones.json + meridian_open/breakthrough/tribulation/void/dormant/heartbeat/pseudo_vein/spirit_eye + 用户拍板 2 守恒/worldview 红线）：**WorldQiBudget 双重语义冲突 → 独立待分配池**（保护 void-quota 稀缺性）；**SPIRIT_QI_TOTAL 100→20000 + worldview PR**；六条决议 file:line + 保守默认数值。
 - 相关 plan：`plan-qi-physics-v1`（ledger/QiTransfer 唯一物理实现）；`plan-void-quota-v1`/`plan-tribulation-balance-v1`（WorldQiBudget 化虚名额闸门，本 plan **刻意不碰**）；`plan-offscreen-war-v1`（dormant 守恒范本）；`#676` 系列（记账蒸发历史结论）。
+
+## Finish Evidence
+
+> 全部 P0-P3 ✅（2026-07-03 验收，consume workflow + 守恒博弈 Verify `ready`/`defenseWins=True`）。★qi 守恒 plan。
+
+### 落地清单
+- **P0 消耗真归还**：`qi_physics/ledger.rs`（`pending_inflow_account()` 独立待分配池 + `credit_pending_inflow` helper，双账本同步照抄 dormant）；`cultivation/meridian_open.rs::credit_meridian_open_cost` + `breakthrough.rs::credit_active_breakthrough_cost` 的 `to` 改指向待分配池（**不碰 WorldQiBudget**，保护 void-quota 稀缺性）；`qi_physics/constants.rs::DEFAULT_SPIRIT_QI_TOTAL` 100→20000（`DEFAULT_VOID_QUOTA_K` 自动跟随）
+- **P1 平衡回流**：`qi_physics/zone_inflow.rs::zone_equilibrium_inflow`（钳 equilibrium 不过冲）；`world/zone.rs` `Zone`/`ZoneConfig` 加 `qi_equilibrium`/`qi_inflow_per_min`（serde default，validate 范围，136 处字面量补齐）；`zones.json` spawn 0.35/0.4；`world/heartbeat.rs::ZoneQiInflowClock`+`zone_qi_inflow_tick`（待分配池滴灌、排除负灵域/REALM_COLLAPSE）；`ledger QiTransferReason::ZoneInflow`
+- **P2 NPC 让灵地板**：`qi_physics/constants.rs::QI_NPC_ABSORB_FLOOR=0.3`；`npc/dormant/mod.rs::apply_dormant_regen_with_multiplier`（地板以上余量，覆盖 war_multiplier）；`cultivation/tick.rs`（NPC 过地板/玩家不受限）；`world/tiandao_hunt.rs::apply_watch_zone_qi_drain` + `lingtian/systems.rs::ReplenishSource::Zone`（两真抽取源过地板）
+- **P3 灵潮/灵眼**：`world/pseudo_vein_runtime.rs`（inject/settle 走待分配池借还款，**修 70% 凭空创生**为足额归还，`PSEUDO_VEIN_MAX_QI` 0.6→0.85）；`ledger PseudoVeinSettle`；`cultivation/breakthrough.rs::in_spirit_eye` 灵眼纯配置 + zone-scope narration
+
+### 关键 commit（off origin/main，2026-07-03）
+`ff8e942a5` 待分配池账户+helper · `af8b800df` 消耗回充待分配池（堵蒸发）· `62ef407d7` SPIRIT_QI_TOTAL→20000+void-quota基准 · `0b08d04d6` zone_equilibrium_inflow+ZoneInflow · `00cd998c4` Zone qi_equilibrium/inflow字段 · `592e00a9b` heartbeat回流system · `076ce6e9e` QI_NPC_ABSORB_FLOOR=0.3 · `f33cb5eae` 天道/灵田过地板 · `2edb15d89` P3灵潮借还款+灵眼 ·（`4c4f47fb9` 附带修 pre-existing 测试基线）
+
+### 测试结果
+`cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` — **10336 passed / 0 failed**。守恒对拍锁 `total_observed()` 消耗前后不变（const 引用非字面）；P0 待分配池 6 单测 / P1 zone_inflow 16+heartbeat 10 / P2 地板 20 / P3 借还款守恒。
+
+### 跨仓库核验
+纯 server（qi_physics/cultivation/world/lingtian/npc/dormant）。**无 wire/schema/agent/client 改动**。守恒红线：全程走 `qi_physics::ledger::QiTransfer` 双账本，`SPIRIT_QI_TOTAL` 恒定，不碰 `WorldQiBudget.current_total`。
+
+### 守恒博弈 Verify
+控/辩/守恒端到端 sonnet → opus 主审：**verdict=ready, defenseWins=True**。控方唯一 blocker（P3 settle 用 `min(injected_qi, zone余额)` 不 track baseline）经复核降为 **minor 设计取舍**（物理守恒精确成立、非违规）。
+
+### 遗留 / 后续
+- **§8.1#4 zone-qi↔realm 联动**：`npc-realm-distribution-v1` 落地后按 `account:npc:*` dump 用新 room 分布重标 `qi_inflow_per_min`（cross-plan，挂 realm reminder）
+- **灵潮 settle baseline**：主审判定 minor 设计取舍（窗口内超吸会把 zone 现余刮回 pool，物理守恒仍成立）；后续要保 baseline 可单列小修
+- **NPC 私池稳态遥测**（§10.7①）：dump `account:npc:*` 后二次校准 inflow

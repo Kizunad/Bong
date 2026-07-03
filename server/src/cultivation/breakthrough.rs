@@ -21,9 +21,7 @@ use crate::network::gameplay_vfx;
 use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::npc::spawn::NpcMarker;
 use crate::player::gameplay::PendingGameplayNarrations;
-use crate::qi_physics::{
-    QiAccountId, QiPhysicsError, QiTransfer, QiTransferReason, WorldQiAccount,
-};
+use crate::qi_physics::{QiAccountId, QiPhysicsError, QiTransferReason, WorldQiAccount};
 use crate::schema::common::NarrationStyle;
 use crate::skill::components::SkillId;
 use crate::skill::events::{SkillCapChanged, SkillXpGain, XpGainSource};
@@ -587,23 +585,24 @@ pub(crate) fn breakthrough_actor_account_id(
     }
 }
 
+/// plan-zone-qi-economy-v1 P0 §8.1 决议 #1：突破消耗回充**独立待分配池**
+/// （`qi_physics::ledger::credit_pending_inflow`），不再注水 audit-only 的
+/// `zone:<name>` 账户（会被 `apply_dormant_regen_with_multiplier` 整体覆写、且从不
+/// 写回 `zone.spirit_qi`——记账蒸发 bug 本身）。失败仍透传 `BreakthroughLedgerError`
+/// （经 `From<QiPhysicsError>` 自动转换），调用方保留 `LedgerUnavailable` 回滚分支。
 pub(crate) fn credit_active_breakthrough_cost(
     account: &mut WorldQiAccount,
     zone_name: &str,
     from: QiAccountId,
     amount: f64,
 ) -> Result<(), BreakthroughLedgerError> {
-    if amount == 0.0 {
-        return Ok(());
-    }
-    let to = QiAccountId::zone(zone_name.to_string());
-    let transfer = QiTransfer::new(from, to.clone(), amount, QiTransferReason::Breakthrough)?;
-    if !account.has_account(&to) {
-        account.set_balance(to.clone(), 0.0)?;
-    }
-    let zone_balance = account.balance(&to);
-    account.set_balance(to, zone_balance + amount)?;
-    account.push_transfer_audit(transfer);
+    crate::qi_physics::credit_pending_inflow(
+        account,
+        zone_name,
+        from,
+        amount,
+        QiTransferReason::Breakthrough,
+    )?;
     Ok(())
 }
 
@@ -1075,13 +1074,21 @@ mod tests {
     fn credit_active_breakthrough_cost_handles_boundaries() {
         let mut ledger = WorldQiAccount::default();
         let from = QiAccountId::player("player_a");
+        // plan-zone-qi-economy-v1 P0 §8.1 决议 #1：目标是独立待分配池，不是
+        // zone:<name>（那个 key 会被 dormant regen 整体覆写，credit 进去等于蒸发）。
+        let pending_pool = crate::qi_physics::pending_inflow_account();
 
         credit_active_breakthrough_cost(&mut ledger, "spawn", from.clone(), 0.0)
             .expect("zero breakthrough cost should be a no-op");
         assert_eq!(
+            ledger.balance(&pending_pool),
+            0.0,
+            "zero breakthrough cost should not create pending pool balance"
+        );
+        assert_eq!(
             ledger.balance(&QiAccountId::zone("spawn")),
             0.0,
-            "zero breakthrough cost should not create zone balance"
+            "zero breakthrough cost must never touch the zone:<name> ledger account"
         );
         assert!(
             ledger.transfers().is_empty(),
@@ -1102,11 +1109,18 @@ mod tests {
         );
 
         credit_active_breakthrough_cost(&mut ledger, "spawn", from.clone(), 8.0)
-            .expect("positive breakthrough cost should credit the zone ledger");
+            .expect("positive breakthrough cost should credit the pending inflow pool");
+        assert_eq!(
+            ledger.balance(&pending_pool),
+            8.0,
+            "first positive breakthrough cost should create the pending pool account and \
+             credit the spent qi"
+        );
         assert_eq!(
             ledger.balance(&QiAccountId::zone("spawn")),
-            8.0,
-            "first positive breakthrough cost should create the zone account and credit the spent qi"
+            0.0,
+            "positive breakthrough cost must still never touch the zone:<name> ledger account \
+             (dormant regen owns that key and overwrites it wholesale from zone.spirit_qi)"
         );
         let transfer = ledger
             .transfers()
@@ -1117,9 +1131,8 @@ mod tests {
             "breakthrough audit transfer must preserve the stable actor account as source"
         );
         assert_eq!(
-            transfer.to,
-            QiAccountId::zone("spawn"),
-            "breakthrough audit transfer must target the resolved zone account"
+            transfer.to, pending_pool,
+            "breakthrough audit transfer must target the independent pending inflow pool"
         );
         assert_eq!(
             transfer.reason,
@@ -1578,7 +1591,7 @@ mod tests {
     }
 
     #[test]
-    fn breakthrough_success_credits_cost_to_zone_ledger() {
+    fn breakthrough_success_credits_cost_to_pending_inflow_pool_not_zone_ledger() {
         let mut app = App::new();
         let mut zones = ZoneRegistry::fallback();
         zones.find_zone_mut("spawn").unwrap().spirit_qi = 0.9;
@@ -1622,10 +1635,18 @@ mod tests {
             "successful breakthrough should spend exactly 8 qi from the player"
         );
         let ledger = app.world().resource::<WorldQiAccount>();
+        let pending_pool = crate::qi_physics::pending_inflow_account();
+        assert_eq!(
+            ledger.balance(&pending_pool),
+            8.0,
+            "successful breakthrough should credit the spent 8 qi to the independent pending \
+             inflow pool"
+        );
         assert_eq!(
             ledger.balance(&QiAccountId::zone("spawn")),
-            8.0,
-            "successful breakthrough should credit the spent 8 qi to the zone ledger"
+            0.0,
+            "successful breakthrough must never touch the zone:<name> ledger account (that key \
+             is owned/overwritten wholesale by dormant regen from zone.spirit_qi)"
         );
         let transfer = ledger
             .transfers()
@@ -1642,9 +1663,8 @@ mod tests {
             "successful breakthrough audit should use stable player id as source"
         );
         assert_eq!(
-            transfer.to,
-            QiAccountId::zone("spawn"),
-            "successful breakthrough audit should target the resolved zone"
+            transfer.to, pending_pool,
+            "successful breakthrough audit should target the independent pending inflow pool"
         );
         assert_eq!(
             transfer.amount, 8.0,
@@ -1653,7 +1673,75 @@ mod tests {
     }
 
     #[test]
-    fn breakthrough_failure_also_credits_cost_to_zone_ledger() {
+    fn breakthrough_and_meridian_open_preserve_total_observed_qi_conservation() {
+        // plan-zone-qi-economy-v1 P0 §10.3 — 开脉→突破全链路总量不变的端到端守恒对拍。
+        // total_observed() = player_qi + zone_qi + container_qi + ledger_qi（含待分配池）。
+        // 消耗 → 待分配池等额升，player_qi 等额降，total_observed() 必须严格不变
+        // （无天道时代衰减，era_decay=0）。
+        use crate::qi_physics::{assert_conservation, summarize_world_qi};
+
+        let mut app = App::new();
+        let mut zones = ZoneRegistry::fallback();
+        zones.find_zone_mut("spawn").unwrap().spirit_qi = 0.9;
+        app.insert_resource(CultivationClock { tick: 10 });
+        app.insert_resource(zones);
+        app.insert_resource(WorldQiAccount::default());
+        app.add_event::<BreakthroughRequest>();
+        app.add_event::<BreakthroughOutcome>();
+        app.add_event::<CultivationDeathTrigger>();
+        app.add_event::<VfxEventRequest>();
+        app.add_event::<SkillCapChanged>();
+        app.add_event::<SkillXpGain>();
+        app.add_event::<SpiritEyeUsedForBreakthroughEvent>();
+        app.add_systems(Update, breakthrough_system);
+
+        let (cultivation, meridians) = setup_for_induce();
+        let player = app
+            .world_mut()
+            .spawn((
+                cultivation,
+                meridians,
+                LifeRecord::new("player_a"),
+                Position::new([8.0, 66.0, 8.0]),
+            ))
+            .id();
+
+        let before = summarize_world_qi(app.world_mut());
+
+        app.world_mut().send_event(BreakthroughRequest {
+            entity: player,
+            material_bonus: 0.0,
+        });
+        app.update();
+
+        let cultivation = app.world().get::<Cultivation>(player).unwrap();
+        assert_eq!(
+            cultivation.realm,
+            Realm::Induce,
+            "sanity: breakthrough must actually succeed for this conservation test to be \
+             meaningful (spent qi must leave the player)"
+        );
+
+        let after = summarize_world_qi(app.world_mut());
+        assert_conservation(&before, &after, 0.0).unwrap_or_else(|error| {
+            panic!(
+                "breakthrough must conserve total_observed qi (player_qi + zone_qi + \
+                 container_qi + ledger_qi) with zero era decay — got drift: {error} \
+                 (before={before:?}, after={after:?}); a mismatch here means spent qi is \
+                 vanishing (not reaching the pending inflow pool) or being double-counted"
+            )
+        });
+        assert!(
+            (before.total_observed() - after.total_observed()).abs() < 1e-9,
+            "explicit total_observed equality check (belt-and-suspenders alongside \
+             assert_conservation): before={}, after={}",
+            before.total_observed(),
+            after.total_observed()
+        );
+    }
+
+    #[test]
+    fn breakthrough_failure_also_credits_cost_to_pending_inflow_pool_not_zone_ledger() {
         let mut app = App::new();
         let mut zones = ZoneRegistry::fallback();
         zones.find_zone_mut("spawn").unwrap().spirit_qi = 0.9;
@@ -1698,10 +1786,17 @@ mod tests {
             "failed breakthrough should still spend exactly 8 qi"
         );
         let ledger = app.world().resource::<WorldQiAccount>();
+        let pending_pool = crate::qi_physics::pending_inflow_account();
+        assert_eq!(
+            ledger.balance(&pending_pool),
+            8.0,
+            "failed breakthrough should still credit spent qi to the independent pending \
+             inflow pool"
+        );
         assert_eq!(
             ledger.balance(&QiAccountId::zone("spawn")),
-            8.0,
-            "failed breakthrough should still credit spent qi to the zone ledger"
+            0.0,
+            "failed breakthrough must never touch the zone:<name> ledger account either"
         );
         let transfer = ledger
             .transfers()
@@ -1711,6 +1806,10 @@ mod tests {
             transfer.reason,
             QiTransferReason::Breakthrough,
             "failed breakthrough audit should use the dedicated reason"
+        );
+        assert_eq!(
+            transfer.to, pending_pool,
+            "failed breakthrough audit should target the independent pending inflow pool"
         );
         assert_eq!(
             transfer.amount, 8.0,

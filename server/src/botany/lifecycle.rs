@@ -680,6 +680,8 @@ mod tests {
                 active_events: vec![],
                 patrol_anchors: vec![],
                 blocked_tiles: vec![],
+                qi_equilibrium: 0.0,
+                qi_inflow_per_min: 0.0,
             }],
         });
         app.add_systems(Update, run_botany_lifecycle_tick);
@@ -713,6 +715,8 @@ mod tests {
                 active_events: vec![],
                 patrol_anchors: vec![],
                 blocked_tiles: vec![],
+                qi_equilibrium: 0.0,
+                qi_inflow_per_min: 0.0,
             }],
         });
 
@@ -759,6 +763,8 @@ mod tests {
                 active_events: vec![],
                 patrol_anchors: vec![],
                 blocked_tiles: vec![],
+                qi_equilibrium: 0.0,
+                qi_inflow_per_min: 0.0,
             }],
         });
         app.add_event::<VfxEventRequest>();
@@ -832,6 +838,8 @@ mod tests {
                 active_events: vec![],
                 patrol_anchors: vec![],
                 blocked_tiles: vec![],
+                qi_equilibrium: 0.0,
+                qi_inflow_per_min: 0.0,
             }],
         });
         app.add_event::<VfxEventRequest>();
@@ -898,6 +906,8 @@ mod tests {
                 active_events: vec![],
                 patrol_anchors: vec![],
                 blocked_tiles: vec![],
+                qi_equilibrium: 0.0,
+                qi_inflow_per_min: 0.0,
             }],
         });
         app.add_event::<VfxEventRequest>();
@@ -948,6 +958,8 @@ mod tests {
                     active_events: vec![],
                     patrol_anchors: vec![],
                     blocked_tiles: vec![],
+                    qi_equilibrium: 0.0,
+                    qi_inflow_per_min: 0.0,
                 },
                 Zone {
                     name: "lingquan_marsh".to_string(),
@@ -961,6 +973,8 @@ mod tests {
                     active_events: vec![],
                     patrol_anchors: vec![],
                     blocked_tiles: vec![],
+                    qi_equilibrium: 0.0,
+                    qi_inflow_per_min: 0.0,
                 },
             ],
         });
@@ -1005,6 +1019,8 @@ mod tests {
                 active_events: vec![],
                 patrol_anchors: vec![],
                 blocked_tiles: vec![],
+                qi_equilibrium: 0.0,
+                qi_inflow_per_min: 0.0,
             }],
         });
 
@@ -1062,6 +1078,8 @@ mod tests {
                 active_events: vec![],
                 patrol_anchors: vec![],
                 blocked_tiles: vec![],
+                qi_equilibrium: 0.0,
+                qi_inflow_per_min: 0.0,
             }],
         });
 
@@ -1102,6 +1120,8 @@ mod tests {
             active_events: vec!["thunder_tribulation".to_string()],
             patrol_anchors: vec![],
             blocked_tiles: vec![],
+            qi_equilibrium: 0.0,
+            qi_inflow_per_min: 0.0,
         };
         let cfg = BotanyVariantRoll { chance_inverse: 1 }; // 强制
         let v = roll_variant_for_zone(&zone, 42, &cfg);
@@ -1122,6 +1142,8 @@ mod tests {
             active_events: vec![],
             patrol_anchors: vec![],
             blocked_tiles: vec![],
+            qi_equilibrium: 0.0,
+            qi_inflow_per_min: 0.0,
         };
         let cfg = BotanyVariantRoll { chance_inverse: 1 };
         assert_eq!(
@@ -1144,6 +1166,8 @@ mod tests {
             active_events: vec!["thunder_tribulation".to_string()],
             patrol_anchors: vec![],
             blocked_tiles: vec![],
+            qi_equilibrium: 0.0,
+            qi_inflow_per_min: 0.0,
         };
         let cfg = BotanyVariantRoll { chance_inverse: 0 };
         assert_eq!(roll_variant_for_zone(&zone, 42, &cfg), PlantVariant::None);
@@ -1163,6 +1187,8 @@ mod tests {
             active_events: vec![],
             patrol_anchors: vec![],
             blocked_tiles: vec![],
+            qi_equilibrium: 0.0,
+            qi_inflow_per_min: 0.0,
         };
         let cfg = BotanyVariantRoll { chance_inverse: 1 };
         assert_eq!(roll_variant_for_zone(&zone, 42, &cfg), PlantVariant::None);
@@ -1189,6 +1215,8 @@ mod tests {
             active_events: vec![],
             patrol_anchors: vec![],
             blocked_tiles: vec![],
+            qi_equilibrium: 0.0,
+            qi_inflow_per_min: 0.0,
         };
         app.insert_resource(ZoneRegistry {
             zones: vec![marsh_zone],
@@ -1305,6 +1333,8 @@ mod tests {
                 active_events: vec!["portal_rift".to_string()],
                 patrol_anchors: vec![],
                 blocked_tiles: vec![],
+                qi_equilibrium: 0.0,
+                qi_inflow_per_min: 0.0,
             }],
         });
         app.add_systems(Update, run_botany_lifecycle_tick);

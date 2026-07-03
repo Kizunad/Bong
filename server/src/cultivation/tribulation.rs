@@ -6451,7 +6451,12 @@ mod tests {
 
     #[test]
     fn void_quota_limit_uses_world_qi_budget_floor() {
-        let k = DEFAULT_VOID_QUOTA_K;
+        // 本测试锁的是 compute_void_quota_limit 纯数学 floor-division 边界行为，
+        // 与生产 DEFAULT_VOID_QUOTA_K 的具体尺度无关（plan-zone-qi-economy-v1 P0
+        // §8.1 决议 #2 之后 DEFAULT_VOID_QUOTA_K 随 DEFAULT_SPIRIT_QI_TOTAL 等比例
+        // 缩放，若此处仍绑死生产常量，下方 49.999/50.0/99.999/100.0 边界值会随之
+        // 失效）。用测试本地固定 k=50.0 保持边界值语义不变、且与生产常量解耦。
+        let k = 50.0;
         assert_eq!(compute_void_quota_limit(0.0, k), 0);
         assert_eq!(compute_void_quota_limit(49.999, k), 0);
         assert_eq!(compute_void_quota_limit(50.0, k), 1);
@@ -9148,7 +9153,11 @@ mod tests {
         app.init_resource::<TribulationMetrics>();
         app.init_resource::<QuotaFullTracker>();
         app.init_resource::<HalfStepRechallengeQueue>();
-        app.insert_resource(WorldQiBudget::from_total(100.0));
+        // plan-zone-qi-economy-v1 P0 §8.1 决议 #2：DEFAULT_VOID_QUOTA_K 随
+        // DEFAULT_SPIRIT_QI_TOTAL 等比例缩放，"满预算 → quota_limit=2" 这条不变式
+        // 只有在预算取 DEFAULT_SPIRIT_QI_TOTAL 本身时才成立——不能再写死旧尺度下的
+        // 字面量 100.0（缩放后那只是全局预算的 0.5%，quota_limit 会跌到 0）。
+        app.insert_resource(WorldQiBudget::from_total(DEFAULT_SPIRIT_QI_TOTAL));
         app.insert_resource(VoidQuotaConfig::default());
         app.add_event::<TribulationSettled>();
         app.add_event::<AscensionQuotaOpened>();

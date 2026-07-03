@@ -67,6 +67,8 @@ mod tests {
                     },
                     patrol_anchors: Vec::new(),
                     blocked_tiles: Vec::new(),
+                    qi_equilibrium: 0.0,
+                    qi_inflow_per_min: 0.0,
                 })
                 .expect("register_runtime_zone ok");
         }

@@ -469,6 +469,8 @@ mod narration_tests {
                 active_events: vec![],
                 patrol_anchors: vec![DVec3::new(100.0, 66.0, 100.0)],
                 blocked_tiles: vec![],
+                qi_equilibrium: 0.0,
+                qi_inflow_per_min: 0.0,
             }],
         });
         app.add_systems(Update, territory_narration_system);

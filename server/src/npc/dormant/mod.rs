@@ -48,7 +48,7 @@ use crate::npc::movement::GameTick;
 use crate::npc::schedule::schedule_seed_from_char_id;
 use crate::npc::spawn::{classify_zones_by_qi, initial_age_for_index};
 use crate::qi_physics::{
-    constants::{QI_EPSILON, QI_ZONE_UNIT_CAPACITY},
+    constants::{QI_EPSILON, QI_NPC_ABSORB_FLOOR, QI_ZONE_UNIT_CAPACITY},
     qi_release_to_zone, regen_from_zone, QiAccountId, QiTransfer, QiTransferReason, WorldQiAccount,
 };
 use crate::schema::cultivation::realm_to_string;
@@ -1432,7 +1432,9 @@ pub fn apply_dormant_regen_with_multiplier(
         .filter(|zone| planar_distance(zone.center(), pos) <= DORMANT_ZONE_ABSORPTION_RADIUS_BLOCKS)
         .map(|zone| zone.name.clone())?;
     let zone = zones.find_zone_mut(zone_name.as_str())?;
-    if zone.spirit_qi <= 0.0 {
+    // plan-zone-qi-economy-v1 P2：NPC 只喝地板（QI_NPC_ABSORB_FLOOR）以上的溢出层，
+    // 给玩家开脉/修炼留底仓（玩家吸取路径不经此函数，不受此约束）。
+    if zone.spirit_qi <= QI_NPC_ABSORB_FLOOR {
         return None;
     }
 
@@ -1458,8 +1460,11 @@ pub fn apply_dormant_regen_with_multiplier(
     } else {
         1.0
     };
+    // plan-zone-qi-economy-v1 P2：地板以上的可吸取余量（不是 zone 全量）驱动 regen 公式，
+    // 这样 drain <= zone.spirit_qi - QI_NPC_ABSORB_FLOOR，最终写回必然 >= 地板，无需额外钳位。
+    let absorbable_zone_qi = (zone.spirit_qi - QI_NPC_ABSORB_FLOOR).max(0.0);
     let (gain, drain) = regen_from_zone(
-        zone.spirit_qi,
+        absorbable_zone_qi,
         rate * effective_multiplier,
         avg_integrity,
         room,
@@ -1757,6 +1762,8 @@ mod tests {
             active_events: Vec::new(),
             patrol_anchors: vec![DVec3::new(10.0, 64.0, 10.0)],
             blocked_tiles: Vec::new(),
+            qi_equilibrium: 0.0,
+            qi_inflow_per_min: 0.0,
         }
     }
 
@@ -2176,6 +2183,121 @@ mod tests {
         );
     }
 
+    /// plan-zone-qi-economy-v1 P2：地板红线——zone_qi 在 (0, QI_NPC_ABSORB_FLOOR] 时
+    /// dormant NPC 必须完全放弃吸取，不能像玩家一样吃到地板以下。
+    #[test]
+    fn dormant_regen_stops_at_or_below_absorb_floor() {
+        for zone_qi in [QI_NPC_ABSORB_FLOOR, 0.2, 0.05, 0.0] {
+            let mut snapshot = snapshot("npc_a", DVec3::new(10.0, 64.0, 10.0));
+            open_regular_meridians(&mut snapshot, 1);
+            let mut z = zone();
+            z.spirit_qi = zone_qi;
+            let mut zones = ZoneRegistry { zones: vec![z] };
+            let mut ledger = WorldQiAccount::default();
+
+            assert!(
+                apply_dormant_regen(&mut snapshot, &mut zones, &mut ledger).is_none(),
+                "zone_qi={zone_qi} 已在/低于地板 {QI_NPC_ABSORB_FLOOR}，dormant regen 不应发生任何转移"
+            );
+            assert_eq!(
+                snapshot.cultivation.qi_current, 0.1,
+                "zone_qi={zone_qi} 时 NPC qi_current 不应变化"
+            );
+            assert_eq!(
+                zones
+                    .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
+                    .unwrap()
+                    .spirit_qi,
+                zone_qi,
+                "zone_qi={zone_qi} 时 zone.spirit_qi 不应被 dormant regen 触碰"
+            );
+        }
+    }
+
+    /// 边界回归：zone_qi 略高于地板时 dormant regen 仍可发生，但写回后必须 >= 地板，
+    /// 一次 tick 的微量 drain 不会把 zone 拉穿地板（drain 本就远小于 0.31-0.3 的余量）。
+    #[test]
+    fn dormant_regen_never_dips_zone_below_absorb_floor() {
+        let mut snapshot = snapshot("npc_a", DVec3::new(10.0, 64.0, 10.0));
+        open_regular_meridians(&mut snapshot, 1);
+        let mut z = zone();
+        z.spirit_qi = QI_NPC_ABSORB_FLOOR + 0.01;
+        let mut zones = ZoneRegistry { zones: vec![z] };
+        let mut ledger = WorldQiAccount::default();
+
+        let transfer = apply_dormant_regen(&mut snapshot, &mut zones, &mut ledger)
+            .expect("地板以上还有 0.01 余量，应发生一次转移");
+
+        assert!(transfer.amount > 0.0);
+        let zone_after = zones
+            .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
+            .unwrap()
+            .spirit_qi;
+        assert!(
+            zone_after >= QI_NPC_ABSORB_FLOOR,
+            "zone_qi 写回后 {zone_after} 不应低于地板 {QI_NPC_ABSORB_FLOOR}"
+        );
+    }
+
+    /// 一批连续 tick（模拟长跑 dormant 批处理）不应把带回流 zone 压穿地板——
+    /// 即使反复调用，收敛点也应停在地板附近，绝不低于它。
+    #[test]
+    fn repeated_dormant_regen_ticks_converge_to_absorb_floor_without_crossing_it() {
+        let mut snapshot = snapshot("npc_a", DVec3::new(10.0, 64.0, 10.0));
+        open_regular_meridians(&mut snapshot, 1);
+        // qi_max 拉大，避免 room 提前耗尽掩盖地板行为。
+        snapshot.cultivation.qi_max = 1000.0;
+        let mut z = zone();
+        z.spirit_qi = 0.8;
+        let mut zones = ZoneRegistry { zones: vec![z] };
+        let mut ledger = WorldQiAccount::default();
+
+        for _ in 0..10_000 {
+            if apply_dormant_regen(&mut snapshot, &mut zones, &mut ledger).is_none() {
+                break;
+            }
+            let current = zones
+                .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
+                .unwrap()
+                .spirit_qi;
+            assert!(
+                current >= QI_NPC_ABSORB_FLOOR,
+                "批量 tick 期间 zone_qi 一度跌破地板：{current} < {QI_NPC_ABSORB_FLOOR}"
+            );
+        }
+        let final_qi = zones
+            .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
+            .unwrap()
+            .spirit_qi;
+        assert!(
+            final_qi >= QI_NPC_ABSORB_FLOOR,
+            "长跑收敛后 zone_qi={final_qi} 不应低于地板 {QI_NPC_ABSORB_FLOOR}"
+        );
+    }
+
+    /// plan-offscreen-war-v1 P9 war_multiplier 路径同样过地板——战事 zone 不给后门。
+    #[test]
+    fn dormant_regen_with_war_multiplier_still_respects_absorb_floor() {
+        let mut snapshot = snapshot("npc_a", DVec3::new(10.0, 64.0, 10.0));
+        open_regular_meridians(&mut snapshot, 1);
+        let mut z = zone();
+        z.spirit_qi = QI_NPC_ABSORB_FLOOR + 0.001;
+        let mut zones = ZoneRegistry { zones: vec![z] };
+        let mut ledger = WorldQiAccount::default();
+
+        // war_multiplier 拉到 10x，即便如此也不能把 zone 拉穿地板。
+        let _ = apply_dormant_regen_with_multiplier(&mut snapshot, &mut zones, &mut ledger, 10.0);
+
+        let zone_after = zones
+            .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
+            .unwrap()
+            .spirit_qi;
+        assert!(
+            zone_after >= QI_NPC_ABSORB_FLOOR,
+            "war_multiplier=10x 不应突破地板，实际 {zone_after}"
+        );
+    }
+
     #[test]
     fn dormant_realm_label_uses_shared_schema_serializer() {
         let mut snapshot = snapshot("npc_a", DVec3::new(10.0, 64.0, 10.0));
@@ -2356,6 +2478,8 @@ mod tests {
             active_events: Vec::new(),
             patrol_anchors: Vec::new(),
             blocked_tiles: Vec::new(),
+            qi_equilibrium: 0.0,
+            qi_inflow_per_min: 0.0,
         };
         app.insert_resource(ZoneRegistry {
             zones: vec![zone(), second_zone],

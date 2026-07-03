@@ -7,7 +7,8 @@ use crate::network::{redis_bridge::RedisOutbound, RedisBridgeResource};
 use crate::player::state::canonical_player_id;
 use crate::qi_physics::{
     constants::{
-        QI_TIANDAO_MOVING_ESCAPE_DECAY_MULTIPLIER, QI_TIANDAO_WATCH_ZONE_DRAIN_PER_MINUTE,
+        QI_NPC_ABSORB_FLOOR, QI_TIANDAO_MOVING_ESCAPE_DECAY_MULTIPLIER,
+        QI_TIANDAO_WATCH_ZONE_DRAIN_PER_MINUTE,
     },
     QiAccountId, QiTransfer, QiTransferReason, WorldQiAccount,
 };
@@ -1033,7 +1034,10 @@ fn apply_watch_zone_qi_drain(
         return None;
     }
     let zone = zones.find_zone_mut(zone_name)?;
-    let amount = zone.spirit_qi.max(0.0).min(requested);
+    // plan-zone-qi-economy-v1 P2：天道监视抽离过地板——只抽 QI_NPC_ABSORB_FLOOR 以上的溢出层，
+    // 抽干到地板后停手，不给天道监视开"抽到 0"的后门。
+    let absorbable = (zone.spirit_qi - QI_NPC_ABSORB_FLOOR).max(0.0);
+    let amount = absorbable.min(requested);
     if amount <= 0.0 {
         return None;
     }
@@ -1643,6 +1647,8 @@ mod tests {
                 active_events: Vec::new(),
                 patrol_anchors: Vec::new(),
                 blocked_tiles: Vec::new(),
+                qi_equilibrium: 0.0,
+                qi_inflow_per_min: 0.0,
             }],
         }
     }
@@ -2998,9 +3004,12 @@ mod tests {
 
     #[test]
     fn watch_zone_qi_drain_partial_transfer_preserves_conservation() {
-        let mut zones = single_zone_registry("spawn", 0.02);
+        // plan-zone-qi-economy-v1 P2：zone_qi=0.32，地板 QI_NPC_ABSORB_FLOOR=0.3，
+        // 地板以上可吸取余量仅 0.02 < 单次请求量 0.05 —— 必须部分转移且钳在地板，
+        // 而非（改地板前旧行为）一路抽到 0。
+        let mut zones = single_zone_registry("spawn", 0.32);
         let mut ledger = WorldQiAccount::default();
-        let before = qi_snapshot(0.02, &ledger);
+        let before = qi_snapshot(0.32, &ledger);
 
         let transfer = apply_watch_zone_qi_drain(
             "spawn",
@@ -3010,10 +3019,10 @@ mod tests {
             &mut zones,
             &mut ledger,
         )
-        .expect("低于单次抽取量但大于 0 的 zone qi 必须被部分转移");
+        .expect("地板以上有余量（即便小于单次请求量）必须被部分转移");
 
         assert_close(transfer.amount, 0.02);
-        assert_close(zones.find_zone_by_name("spawn").unwrap().spirit_qi, 0.0);
+        assert_close(zones.find_zone_by_name("spawn").unwrap().spirit_qi, 0.3);
         assert_close(ledger.balance(&QiAccountId::tiandao()), 0.02);
         crate::qi_physics::assert_conservation(
             &before,
@@ -3021,6 +3030,57 @@ mod tests {
             0.0,
         )
         .expect("Watch 级部分抽取必须保持 zone_qi + ledger_qi 守恒");
+    }
+
+    #[test]
+    fn watch_zone_qi_drain_is_noop_when_zone_qi_is_positive_but_at_or_below_absorb_floor() {
+        // plan-zone-qi-economy-v1 P2：地板红线——zone_qi 在 (0, QI_NPC_ABSORB_FLOOR] 区间
+        // 时（不同于既有的 0.0/负值 用例），天道监视也不得再抽，否则地板形同虚设。
+        for zone_qi in [0.3, 0.2, 0.05] {
+            let mut zones = single_zone_registry("spawn", zone_qi);
+            let mut ledger = WorldQiAccount::default();
+
+            let transfer = apply_watch_zone_qi_drain(
+                "spawn",
+                tiandao_response_profile(TiandaoResponseLevel::Watch)
+                    .unwrap()
+                    .interval_ticks,
+                &mut zones,
+                &mut ledger,
+            );
+
+            assert!(
+                transfer.is_none(),
+                "zone_qi={zone_qi} 已在/低于 QI_NPC_ABSORB_FLOOR(0.3)，Watch 级不应再抽取，\
+                 got={transfer:?}"
+            );
+            assert_close(zones.find_zone_by_name("spawn").unwrap().spirit_qi, zone_qi);
+            assert_close(ledger.total(), 0.0);
+        }
+    }
+
+    #[test]
+    fn watch_zone_qi_drain_stops_exactly_at_absorb_floor_boundary() {
+        // 边界回归：zone_qi 略高于地板（0.31）时只能抽出地板以上的 0.01，
+        // 即使单次请求量 0.05 远大于此，也绝不能把 zone 拉穿地板。
+        let mut zones = single_zone_registry("spawn", 0.31);
+        let mut ledger = WorldQiAccount::default();
+
+        let transfer = apply_watch_zone_qi_drain(
+            "spawn",
+            tiandao_response_profile(TiandaoResponseLevel::Watch)
+                .unwrap()
+                .interval_ticks,
+            &mut zones,
+            &mut ledger,
+        )
+        .expect("地板以上还有 0.01 余量，必须发生一次部分转移");
+
+        assert_close(transfer.amount, 0.01);
+        assert_close(
+            zones.find_zone_by_name("spawn").unwrap().spirit_qi,
+            crate::qi_physics::constants::QI_NPC_ABSORB_FLOOR,
+        );
     }
 
     #[test]

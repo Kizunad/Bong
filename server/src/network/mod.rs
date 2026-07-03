@@ -4337,6 +4337,8 @@ mod tests {
                 active_events: Vec::new(),
                 patrol_anchors: vec![DVec3::new(14.0, 66.0, 14.0)],
                 blocked_tiles: Vec::new(),
+                qi_equilibrium: 0.0,
+                qi_inflow_per_min: 0.0,
             };
             let blood_valley = Zone {
                 name: "blood_valley".to_string(),
@@ -4350,6 +4352,8 @@ mod tests {
                 active_events: Vec::new(),
                 patrol_anchors: vec![DVec3::new(1004.0, 66.0, 1004.0)],
                 blocked_tiles: Vec::new(),
+                qi_equilibrium: 0.0,
+                qi_inflow_per_min: 0.0,
             };
 
             let zone_registry = ZoneRegistry {
@@ -4733,6 +4737,8 @@ mod tests {
                         active_events: vec![],
                         patrol_anchors: vec![DVec3::new(14.0, 66.0, 14.0)],
                         blocked_tiles: vec![],
+                        qi_equilibrium: 0.0,
+                        qi_inflow_per_min: 0.0,
                     },
                     Zone {
                         name: "blood_valley".to_string(),
@@ -4746,6 +4752,8 @@ mod tests {
                         active_events: vec!["beast_tide".to_string()],
                         patrol_anchors: vec![DVec3::new(1004.0, 66.0, 1004.0)],
                         blocked_tiles: vec![],
+                        qi_equilibrium: 0.0,
+                        qi_inflow_per_min: 0.0,
                     },
                 ],
             };
@@ -4843,6 +4851,8 @@ mod tests {
                 active_events: vec![EVENT_REALM_COLLAPSE.to_string()],
                 patrol_anchors: vec![DVec3::new(14.0, 66.0, 14.0)],
                 blocked_tiles: vec![],
+                qi_equilibrium: 0.0,
+                qi_inflow_per_min: 0.0,
             };
             let mut app = setup_zone_transition_app(ZoneRegistry {
                 zones: vec![collapsed_zone],
@@ -4881,6 +4891,8 @@ mod tests {
                 active_events: vec![EVENT_TSY_RACE_OUT.to_string()],
                 patrol_anchors: vec![DVec3::new(14.0, 66.0, 14.0)],
                 blocked_tiles: vec![],
+                qi_equilibrium: 0.0,
+                qi_inflow_per_min: 0.0,
             };
             let mut app = setup_zone_transition_app(ZoneRegistry {
                 zones: vec![race_out_zone],

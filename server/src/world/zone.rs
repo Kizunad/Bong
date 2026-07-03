@@ -21,6 +21,10 @@ const MIN_ZONE_SPIRIT_QI: f64 = -1.0;
 const MAX_ZONE_SPIRIT_QI: f64 = 1.0;
 const COLLAPSED_ZONE_EVENT_NAME: &str = "realm_collapse";
 
+/// plan-zone-qi-economy-v1 P1 — `qi_equilibrium` 下限。0.0 = 不参与回流（向后兼容默认值）；
+/// 非零值必须落在 `[0.0, MAX_ZONE_SPIRIT_QI]` 内，与 `spirit_qi` 同一浓度量纲。
+const MIN_ZONE_QI_EQUILIBRIUM: f64 = 0.0;
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Zone {
     pub name: String,
@@ -33,6 +37,14 @@ pub struct Zone {
     pub active_events: Vec<String>,
     pub patrol_anchors: Vec<DVec3>,
     pub blocked_tiles: Vec<(i32, i32)>,
+    /// plan-zone-qi-economy-v1 P1 — 平衡浓度钳位点（`spirit_qi` 同量纲，0..=1）。
+    /// `0.0` = 不回流（向后兼容默认值，pre-P1 `zones.json` 快照/测试 fixture 无此字段）。
+    /// heartbeat 回流 system 只把 `spirit_qi` 补到这个值即停，绝不过冲。
+    pub qi_equilibrium: f64,
+    /// plan-zone-qi-economy-v1 P1 — 回流速率（绝对灵气点/分钟，`QI_ZONE_UNIT_CAPACITY`
+    /// 换算前的原始单位）。`0.0` = 不回流（向后兼容默认值）。来源是独立待分配池
+    /// （`qi_physics::ledger::pending_inflow_account`），绝不凭空创生。
+    pub qi_inflow_per_min: f64,
 }
 
 #[allow(dead_code)]
@@ -69,6 +81,10 @@ impl Zone {
                 .map(dvec3_from_array)
                 .collect(),
             blocked_tiles: Vec::new(),
+            // 这是 zones.json 缺失/校验失败时的硬编码兜底，不是生产配置来源；
+            // 保持 P1 向后兼容默认值 0.0（不回流）。真实 spawn 回流参数在 zones.json。
+            qi_equilibrium: 0.0,
+            qi_inflow_per_min: 0.0,
         }
     }
 
@@ -517,6 +533,12 @@ struct ZoneConfig {
     patrol_anchors: Vec<[f64; 3]>,
     #[serde(default)]
     blocked_tiles: Vec<[i32; 2]>,
+    /// plan-zone-qi-economy-v1 P1 — `#[serde(default)]` = 0.0（向后兼容，pre-P1
+    /// `zones.json` 快照缺此字段时不回流）。
+    #[serde(default)]
+    qi_equilibrium: f64,
+    #[serde(default)]
+    qi_inflow_per_min: f64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -570,6 +592,24 @@ fn validate_zone(zone: ZoneConfig, seen_names: &mut HashSet<String>) -> Result<Z
     {
         return Err(format!(
             "zone `{name}` spirit_qi must be a finite value within [{MIN_ZONE_SPIRIT_QI}, {MAX_ZONE_SPIRIT_QI}]"
+        ));
+    }
+
+    // plan-zone-qi-economy-v1 P1 — `qi_equilibrium` 与 `spirit_qi` 同量纲（0..=1），
+    // 0.0 是显式"不回流"（向后兼容默认值），非零值必须落在合法浓度区间内。
+    if !zone.qi_equilibrium.is_finite()
+        || !(MIN_ZONE_QI_EQUILIBRIUM..=MAX_ZONE_SPIRIT_QI).contains(&zone.qi_equilibrium)
+    {
+        return Err(format!(
+            "zone `{name}` qi_equilibrium must be a finite value within [{MIN_ZONE_QI_EQUILIBRIUM}, {MAX_ZONE_SPIRIT_QI}]"
+        ));
+    }
+
+    // plan-zone-qi-economy-v1 P1 — `qi_inflow_per_min` 是绝对灵气点/分钟，只需非负有限，
+    // 无上界（标定值由 zones.json 配置，heartbeat 回流 system 自身按待分配池余额缩量）。
+    if !zone.qi_inflow_per_min.is_finite() || zone.qi_inflow_per_min < 0.0 {
+        return Err(format!(
+            "zone `{name}` qi_inflow_per_min must be a finite non-negative value"
         ));
     }
 
@@ -641,6 +681,8 @@ fn validate_zone(zone: ZoneConfig, seen_names: &mut HashSet<String>) -> Result<Z
         active_events: zone.active_events,
         patrol_anchors,
         blocked_tiles,
+        qi_equilibrium: zone.qi_equilibrium,
+        qi_inflow_per_min: zone.qi_inflow_per_min,
     })
 }
 
@@ -978,6 +1020,253 @@ mod zone_tests {
         assert_eq!(registry.zones[0].spirit_qi, 1.0);
     }
 
+    // ----- plan-zone-qi-economy-v1 P1 — qi_equilibrium / qi_inflow_per_min field tests -----
+
+    #[test]
+    fn qi_equilibrium_and_inflow_default_to_zero_when_omitted_from_zones_json() {
+        // 向后兼容红线：pre-P1 快照（没有这两个字段）必须解析成 0.0，不回流，不报错。
+        let path = unique_temp_path("bong-zones-qi-equilibrium-omitted", ".json");
+        fs::write(
+            &path,
+            r#"{
+  "zones": [
+    {
+      "name": "spawn",
+      "aabb": { "min": [0.0, 64.0, 0.0], "max": [32.0, 80.0, 32.0] },
+      "spirit_qi": 0.9,
+      "danger_level": 0
+    }
+  ]
+}"#,
+        )
+        .expect("fixture should be writable");
+        let registry = ZoneRegistry::load_from_path(&path);
+        assert_eq!(registry.zones.len(), 1);
+        assert_eq!(
+            registry.zones[0].qi_equilibrium, 0.0,
+            "omitted qi_equilibrium must default to 0.0 (opt-out), not fail to parse"
+        );
+        assert_eq!(
+            registry.zones[0].qi_inflow_per_min, 0.0,
+            "omitted qi_inflow_per_min must default to 0.0 (opt-out), not fail to parse"
+        );
+    }
+
+    #[test]
+    fn qi_equilibrium_and_inflow_round_trip_when_present() {
+        let path = unique_temp_path("bong-zones-qi-equilibrium-present", ".json");
+        fs::write(
+            &path,
+            r#"{
+  "zones": [
+    {
+      "name": "spawn",
+      "aabb": { "min": [0.0, 64.0, 0.0], "max": [32.0, 80.0, 32.0] },
+      "spirit_qi": 0.2,
+      "danger_level": 0,
+      "qi_equilibrium": 0.35,
+      "qi_inflow_per_min": 0.4
+    }
+  ]
+}"#,
+        )
+        .expect("fixture should be writable");
+        let registry = ZoneRegistry::load_from_path(&path);
+        assert_eq!(registry.zones.len(), 1);
+        assert_eq!(registry.zones[0].qi_equilibrium, 0.35);
+        assert_eq!(registry.zones[0].qi_inflow_per_min, 0.4);
+    }
+
+    #[test]
+    fn accepts_qi_equilibrium_at_bounds() {
+        for bound in [0.0_f64, 1.0_f64] {
+            let path = unique_temp_path("bong-zones-qi-equilibrium-bound", ".json");
+            fs::write(
+                &path,
+                format!(
+                    r#"{{
+  "zones": [
+    {{
+      "name": "spawn",
+      "aabb": {{ "min": [0.0, 64.0, 0.0], "max": [32.0, 80.0, 32.0] }},
+      "spirit_qi": 0.2,
+      "danger_level": 0,
+      "qi_equilibrium": {bound},
+      "qi_inflow_per_min": 0.0
+    }}
+  ]
+}}"#
+                ),
+            )
+            .expect("fixture should be writable");
+            let registry = ZoneRegistry::load_from_path(&path);
+            assert_eq!(
+                registry.zones[0].qi_equilibrium, bound,
+                "qi_equilibrium boundary {bound} must be accepted, not rejected into fallback"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_qi_equilibrium_below_zero() {
+        let path = unique_temp_path("bong-zones-qi-equilibrium-negative", ".json");
+        fs::write(
+            &path,
+            r#"{
+  "zones": [
+    {
+      "name": "spawn",
+      "aabb": { "min": [0.0, 64.0, 0.0], "max": [32.0, 80.0, 32.0] },
+      "spirit_qi": 0.2,
+      "danger_level": 0,
+      "qi_equilibrium": -0.01,
+      "qi_inflow_per_min": 0.4
+    }
+  ]
+}"#,
+        )
+        .expect("fixture should be writable");
+        let registry = ZoneRegistry::load_from_path(&path);
+        // 校验失败 -> 整份 zones.json 被拒绝 -> 落回硬编码 fallback（既有 spirit_qi 校验失败
+        // 测试同款断言范式）。
+        assert_eq!(registry.zones.len(), 1);
+        assert_eq!(registry.zones[0].name, DEFAULT_SPAWN_ZONE_NAME);
+        assert_eq!(registry.zones[0].qi_equilibrium, 0.0);
+    }
+
+    #[test]
+    fn rejects_qi_equilibrium_above_one() {
+        let path = unique_temp_path("bong-zones-qi-equilibrium-above-one", ".json");
+        fs::write(
+            &path,
+            r#"{
+  "zones": [
+    {
+      "name": "spawn",
+      "aabb": { "min": [0.0, 64.0, 0.0], "max": [32.0, 80.0, 32.0] },
+      "spirit_qi": 0.2,
+      "danger_level": 0,
+      "qi_equilibrium": 1.01,
+      "qi_inflow_per_min": 0.4
+    }
+  ]
+}"#,
+        )
+        .expect("fixture should be writable");
+        let registry = ZoneRegistry::load_from_path(&path);
+        assert_eq!(registry.zones.len(), 1);
+        assert_eq!(registry.zones[0].name, DEFAULT_SPAWN_ZONE_NAME);
+    }
+
+    #[test]
+    fn rejects_qi_equilibrium_non_finite() {
+        for bad in ["NaN", "Infinity", "-Infinity"] {
+            let path = unique_temp_path("bong-zones-qi-equilibrium-non-finite", ".json");
+            fs::write(
+                &path,
+                format!(
+                    r#"{{
+  "zones": [
+    {{
+      "name": "spawn",
+      "aabb": {{ "min": [0.0, 64.0, 0.0], "max": [32.0, 80.0, 32.0] }},
+      "spirit_qi": 0.2,
+      "danger_level": 0,
+      "qi_equilibrium": {bad},
+      "qi_inflow_per_min": 0.4
+    }}
+  ]
+}}"#
+                ),
+            )
+            .expect("fixture should be writable");
+            // serde_json rejects non-finite float literals like `NaN`/`Infinity` as invalid
+            // JSON syntax before validate_zone even runs — confirm the whole file still falls
+            // back safely rather than panicking on a malformed zones.json.
+            let registry = ZoneRegistry::load_from_path(&path);
+            assert_eq!(registry.zones.len(), 1);
+            assert_eq!(registry.zones[0].name, DEFAULT_SPAWN_ZONE_NAME);
+        }
+    }
+
+    #[test]
+    fn rejects_qi_inflow_per_min_negative() {
+        let path = unique_temp_path("bong-zones-qi-inflow-negative", ".json");
+        fs::write(
+            &path,
+            r#"{
+  "zones": [
+    {
+      "name": "spawn",
+      "aabb": { "min": [0.0, 64.0, 0.0], "max": [32.0, 80.0, 32.0] },
+      "spirit_qi": 0.2,
+      "danger_level": 0,
+      "qi_equilibrium": 0.35,
+      "qi_inflow_per_min": -0.1
+    }
+  ]
+}"#,
+        )
+        .expect("fixture should be writable");
+        let registry = ZoneRegistry::load_from_path(&path);
+        assert_eq!(registry.zones.len(), 1);
+        assert_eq!(registry.zones[0].name, DEFAULT_SPAWN_ZONE_NAME);
+    }
+
+    #[test]
+    fn accepts_qi_inflow_per_min_zero_and_large_positive() {
+        for value in [0.0_f64, 1000.0_f64] {
+            let path = unique_temp_path("bong-zones-qi-inflow-positive", ".json");
+            fs::write(
+                &path,
+                format!(
+                    r#"{{
+  "zones": [
+    {{
+      "name": "spawn",
+      "aabb": {{ "min": [0.0, 64.0, 0.0], "max": [32.0, 80.0, 32.0] }},
+      "spirit_qi": 0.2,
+      "danger_level": 0,
+      "qi_equilibrium": 0.35,
+      "qi_inflow_per_min": {value}
+    }}
+  ]
+}}"#
+                ),
+            )
+            .expect("fixture should be writable");
+            let registry = ZoneRegistry::load_from_path(&path);
+            assert_eq!(
+                registry.zones[0].qi_inflow_per_min, value,
+                "qi_inflow_per_min has no configured upper bound — {value} must round-trip"
+            );
+        }
+    }
+
+    #[test]
+    fn spawn_zones_json_fixture_configures_equilibrium_above_meridian_open_threshold() {
+        // plan-zone-qi-economy-v1 §8.1 #2 — spawn 的 qi_equilibrium 必须 > MIN_ZONE_QI_TO_OPEN
+        // (0.3)，否则开脉门槛永远打不开。用真实的 server/zones.json（非临时 fixture）核验。
+        let registry = ZoneRegistry::load();
+        let spawn = registry
+            .zones
+            .iter()
+            .find(|zone| zone.name == DEFAULT_SPAWN_ZONE_NAME)
+            .expect("real zones.json must contain a spawn zone");
+        assert!(
+            spawn.qi_equilibrium > crate::cultivation::meridian_open::MIN_ZONE_QI_TO_OPEN,
+            "spawn qi_equilibrium ({}) must clear MIN_ZONE_QI_TO_OPEN ({}) or meridian-opening \
+             is permanently unreachable at spawn even after P1 inflow settles",
+            spawn.qi_equilibrium,
+            crate::cultivation::meridian_open::MIN_ZONE_QI_TO_OPEN,
+        );
+        assert!(
+            spawn.qi_inflow_per_min > 0.0,
+            "spawn must actually configure a positive inflow rate — otherwise qi_equilibrium \
+             is a dead config value"
+        );
+    }
+
     #[test]
     fn apply_runtime_records_overrides_only_known_zones() {
         let mut registry = ZoneRegistry::fallback();
@@ -1285,6 +1574,8 @@ mod zone_tests {
             active_events: Vec::new(),
             patrol_anchors: Vec::new(),
             blocked_tiles: Vec::new(),
+            qi_equilibrium: 0.0,
+            qi_inflow_per_min: 0.0,
         };
         let small = Zone {
             name: "small".to_string(),
@@ -1295,6 +1586,8 @@ mod zone_tests {
             active_events: Vec::new(),
             patrol_anchors: Vec::new(),
             blocked_tiles: Vec::new(),
+            qi_equilibrium: 0.0,
+            qi_inflow_per_min: 0.0,
         };
         // `big` is registered first; without smallest-AABB selection, find_zone
         // would return it for points inside the nested `small` zone.
@@ -1329,6 +1622,8 @@ mod zone_tests {
             active_events: Vec::new(),
             patrol_anchors: Vec::new(),
             blocked_tiles: Vec::new(),
+            qi_equilibrium: 0.0,
+            qi_inflow_per_min: 0.0,
         }
     }
 
@@ -1432,6 +1727,8 @@ mod zone_tests {
             active_events: Vec::new(),
             patrol_anchors: Vec::new(),
             blocked_tiles: Vec::new(),
+            qi_equilibrium: 0.0,
+            qi_inflow_per_min: 0.0,
         }
     }
 

@@ -836,6 +836,8 @@ mod tests {
                 active_events: Vec::new(),
                 patrol_anchors: vec![DVec3::new(10.0, 64.0, 10.0)],
                 blocked_tiles: Vec::new(),
+                qi_equilibrium: 0.0,
+                qi_inflow_per_min: 0.0,
             }],
         }
     }
@@ -1639,6 +1641,8 @@ mod tests {
                     active_events: Vec::new(),
                     patrol_anchors: vec![DVec3::new(4600.0, 128.0, 1600.0)],
                     blocked_tiles: Vec::new(),
+                    qi_equilibrium: 0.0,
+                    qi_inflow_per_min: 0.0,
                 },
                 Zone {
                     name: "zone_b".to_string(),
@@ -1652,6 +1656,8 @@ mod tests {
                     active_events: Vec::new(),
                     patrol_anchors: vec![DVec3::new(-2500.0, 64.0, -2500.0)],
                     blocked_tiles: Vec::new(),
+                    qi_equilibrium: 0.0,
+                    qi_inflow_per_min: 0.0,
                 },
             ],
         }
