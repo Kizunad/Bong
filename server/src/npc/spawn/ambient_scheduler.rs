@@ -1,4 +1,4 @@
-//! plan-ambient-threat-v1 P0 — 通用 ambient 调度核。
+//! plan-ambient-threat-v1 P0/P1 — 通用 ambient 调度核 + 物种池分层。
 //!
 //! fork 自 `heiwushi_natural_spawn_system`（`npc/heiwushi_spawn.rs:42-115`）的结构：
 //! state resource + `last_check_tick` 节流 + marker 活体计数 query + 玩家在场半径门 +
@@ -16,10 +16,13 @@
 //! 计入本 plan 的威胁预算计数（P0/P1 各自独立的 `AmbientSchedulerState<M>` / 活体 query
 //! 因泛型单态化天然互不干扰）。
 //!
-//! P0 本身**不提供**真实物种池——`threat_pool`（danger 分层表）是 `plan-ambient-threat-v1`
-//! P1 的交付物。本模块为 `AmbientThreatMarker` 注册的具体实例使用
-//! [`ambient_threat_pool_stub`] 占位（恒不刷），P1 落地后把 `pool_fn` 换成真实实现即可，
-//! 调度核本身不用改一行。
+//! **P1 收口**：[`threat_pool`] 提供 danger 1~7 分层物种表（§8.1 #2），
+//! [`ambient_threat_pool_fn`] 是 `AmbientThreatMarker` 的真实 `pool_fn` 实现——
+//! 唯一相对 P0 设想有出入的地方：`AmbientPoolFn` 签名从 `(u8, &str)` 改成了 `&Zone`
+//! （死域白名单过滤 `MobSpawnFilter::ban_in_dead_zone` 需要 `zone.spirit_qi`，仅
+//! `danger_level` 不够），调用点 `ambient_scheduler_system` 本就持有 `&Zone`，属零成本改动，
+//! 不影响"泛型调度核不关心具体物种"的设计初衷。TSY 自然涌现**不**接入本调度核/本表——
+//! 直调 `spawn_tsy_hostiles_for_family`（`npc/tsy_hostile.rs:561`），见 §8.1 #3。
 
 use std::marker::PhantomData;
 
@@ -32,10 +35,13 @@ use valence::prelude::{
 use crate::npc::dormant::{planar_distance, should_run_interval};
 use crate::npc::movement::GameTick;
 use crate::npc::spawn::PoissonSpawnSampler;
+use crate::npc::spawn_rat::spawn_rat_npc_at;
 use crate::world::dimension::{CurrentDimension, DimensionKind, DimensionLayers};
 use crate::world::era::WorldEraState;
-use crate::world::mob_spawn::era_beast_spawn_gate;
-use crate::world::zone::ZoneRegistry;
+use crate::world::mob_spawn::{
+    era_beast_spawn_gate, spawn_natural_mob_at, MobSpawnFilter, NaturalMobKind,
+};
+use crate::world::zone::{Zone, ZoneRegistry};
 
 /// 调度核每次巡检的粗节流步长（对齐 heiwushi 的 `last_check_tick` 早退模式）。
 /// 必须整除下方 [`threat_budget`] 表里所有 `spawn_interval_ticks`，否则粗节流会把
@@ -107,6 +113,171 @@ pub fn threat_budget(danger: u8) -> ThreatBudget {
             pack_size_range: (8, 10),
         },
     }
+}
+
+// ---------------------------------------------------------------------------
+// ThreatPool — P1 物种池分层（§8.1 #2 收口）
+// ---------------------------------------------------------------------------
+
+/// P1 物种池的两大类：`Rat`（danger1-2 中立袭扰档，走 [`spawn_rat_npc_at`]，`NaturalMobKind`
+/// 无 Rat 变体故独立枚举）与 `Mob`（danger3-7 通用 beast/AshSpider，走
+/// [`spawn_natural_mob_at`]）。**不新增任何变体、不加任何 buff 组件**（§8.1 #2/#3 拒绝
+/// "danger7 精英" buff 路线）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ThreatSpecies {
+    Rat,
+    Mob(NaturalMobKind),
+}
+
+/// 物种池单条目：物种 + 权重（同档内均权重 1，无"稀有度"分层——§8.1 #2 已订正
+/// "逐种可辨"假设不成立，权重差异化留给未来若真的接了 `kind` 透传参数再回填）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ThreatPoolEntry {
+    pub species: ThreatSpecies,
+    pub weight: u32,
+}
+
+/// danger 1~7 物种池终表（§8.1 #2 收口，已按 `spawn_natural_mob_at` 实际调度路径订正）：
+/// - danger 1~2 → `Rat` 小群（2~4 只，见 P2 袭扰行为）
+/// - danger 3~4 → 通用 beast 五变体（`Zombie/Skeleton/Creeper/Rogue/Daoxiang`，`mob_spawn.rs:77-91`
+///   统一走 `spawn_beast_npc_at`，落地实体外观由 `fauna_tag_for_beast_spawn` 按 zone 名 / seed
+///   派生，**不可逐种可辨**，靠 pack_size/interval/danger 梯度而非视觉表达强度差异）
+/// - danger 5~7 → 同上五变体 + `AshSpider`（死域白名单物种，danger7 只调
+///   [`ThreatBudget`] 的 pack/interval，不额外加物种/buff）
+///
+/// `weight_hook`：§8.1 #6 昼夜/天气权重占位钩子，默认 `None` 效果等价 1.0 倍率，当前
+/// **不接入任何实际昼夜/天气读取逻辑**——本 plan 明确拒绝首创昼夜系统，留空钩子只为不阻塞
+/// 未来独立 plan 回填。
+///
+/// `dimension != Overworld`（即 TSY）恒返回空池——TSY 自然涌现走独立直调
+/// `spawn_tsy_hostiles_for_family`（`npc/tsy_hostile.rs:561`）路径（§8.1 #3），不复用本表、
+/// 不进 `AmbientPoolFn` 泛型通用调度核。
+pub fn threat_pool(
+    danger: u8,
+    dimension: DimensionKind,
+    weight_hook: Option<f32>,
+) -> Vec<ThreatPoolEntry> {
+    let _ = weight_hook; // 占位钩子，见函数文档 §8.1 #6，当前恒无操作
+    if dimension != DimensionKind::Overworld {
+        return Vec::new();
+    }
+    match danger.clamp(1, 7) {
+        1 | 2 => vec![ThreatPoolEntry {
+            species: ThreatSpecies::Rat,
+            weight: 1,
+        }],
+        3 | 4 => generic_beast_entries(),
+        _ => {
+            // 5, 6, 7 — 同一份物种池，danger7 只在 ThreatBudget 层面加密 pack/interval。
+            let mut entries = generic_beast_entries();
+            entries.push(ThreatPoolEntry {
+                species: ThreatSpecies::Mob(NaturalMobKind::AshSpider),
+                weight: 1,
+            });
+            entries
+        }
+    }
+}
+
+fn generic_beast_entries() -> Vec<ThreatPoolEntry> {
+    [
+        NaturalMobKind::Zombie,
+        NaturalMobKind::Skeleton,
+        NaturalMobKind::Creeper,
+        NaturalMobKind::Rogue,
+        NaturalMobKind::Daoxiang,
+    ]
+    .into_iter()
+    .map(|kind| ThreatPoolEntry {
+        species: ThreatSpecies::Mob(kind),
+        weight: 1,
+    })
+    .collect()
+}
+
+/// 从物种池中按权重选取一个物种，先过滤死域禁入物种（`MobSpawnFilter::ban_in_dead_zone`，
+/// 复用既有判定不新写；`ThreatSpecies::Rat` 不受 `NaturalMobKind` 死域白名单约束，恒放行）。
+/// `seed % total_weight` 做确定性抽样（非密码学强度，同 [`sample_ambient_ring_position`]
+/// 的取舍）。过滤后池为空（如死域内 danger3-4 全部 5 变体皆非白名单成员且池恰好只有它们时）
+/// 或 `total_weight == 0`（理论不可能出现，池非空则每条目 weight>=1，双重防御）时返回
+/// `None`——调用方应把 `None` 当"本次不刷"处理，不能 panic。
+pub fn select_threat_species(
+    pool: &[ThreatPoolEntry],
+    zone: &Zone,
+    seed: u64,
+) -> Option<ThreatSpecies> {
+    let filtered: Vec<&ThreatPoolEntry> = pool
+        .iter()
+        .filter(|entry| match entry.species {
+            ThreatSpecies::Rat => true,
+            ThreatSpecies::Mob(kind) => !MobSpawnFilter::ban_in_dead_zone(zone, kind),
+        })
+        .collect();
+    let total_weight: u32 = filtered.iter().map(|entry| entry.weight).sum();
+    if total_weight == 0 {
+        return None;
+    }
+    let roll = (seed % total_weight as u64) as u32;
+    let mut cumulative = 0u32;
+    for entry in &filtered {
+        cumulative += entry.weight;
+        if roll < cumulative {
+            return Some(entry.species);
+        }
+    }
+    // 浮点/整数取整误差兜底：理论上循环必在 roll < total_weight 内命中，走到这里说明
+    // cumulative 求和有 bug——保守返回最后一个条目而非 panic，行为可观察便于测试抓回归。
+    filtered.last().map(|entry| entry.species)
+}
+
+/// 调度核真正物种池 `pool_fn`：接住 `AmbientPoolFn` 契约，从 [`threat_pool`] 选物种后调对应
+/// 生成函数。**不透传 `kind` 给 `spawn_natural_mob_at`**——已按 §8.1 #2 订正记录在案：该函数
+/// 落地实体外观不受 `kind` 影响（外观由 `fauna_tag_for_beast_spawn` 派生），故此处即便逐一
+/// match 枚举、传参数值也只是让调用点契约完整，不是"假装能控外观"。
+pub fn ambient_threat_pool_fn(
+    commands: &mut Commands,
+    layer: Entity,
+    zone: &Zone,
+    spawn_position: DVec3,
+    patrol_target: DVec3,
+) -> Option<Entity> {
+    let pool = threat_pool(zone.danger_level, zone.dimension, None);
+    let seed = threat_species_seed(&zone.name, spawn_position, zone.danger_level);
+    let species = select_threat_species(&pool, zone, seed)?;
+    match species {
+        ThreatSpecies::Rat => Some(spawn_rat_npc_at(
+            commands,
+            layer,
+            &zone.name,
+            spawn_position,
+            patrol_target,
+        )),
+        ThreatSpecies::Mob(kind) => spawn_natural_mob_at(
+            commands,
+            layer,
+            kind,
+            &zone.name,
+            spawn_position,
+            patrol_target,
+        ),
+    }
+}
+
+/// 确定性物种选取种子——混合 zone 名字节 + 生成点坐标位模式 + danger，与
+/// [`sample_ambient_ring_position`] 的种子混合手法一致（FNV-1a 起手 + `wrapping_mul`
+/// 雪崩常数），不追求密码学强度，只求"同输入同输出"可复现。
+fn threat_species_seed(zone_name: &str, spawn_position: DVec3, danger: u8) -> u64 {
+    let mut acc = zone_name
+        .bytes()
+        .fold(0xcbf2_9ce4_8422_2325u64, |acc, byte| {
+            (acc ^ byte as u64).wrapping_mul(0x0000_0100_0000_01B3)
+        });
+    acc ^= spawn_position.x.to_bits();
+    acc = acc.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    acc ^= spawn_position.z.to_bits();
+    acc = acc.wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    acc ^= danger as u64;
+    acc
 }
 
 // ---------------------------------------------------------------------------
@@ -275,12 +446,16 @@ impl<M> Default for AmbientSchedulerState<M> {
     }
 }
 
-/// `pool_fn` 签名对齐现有 `spawn_natural_mob_at`/`spawn_beast_npc_at` 一族函数——
-/// 接 `(commands, overworld layer, danger, home_zone, spawn_pos, patrol_target)`，
-/// 返回 `Some(实体)` 表示真的刷出了什么，`None` 表示本次物种池未命中（P0 阶段恒
-/// `None`，见 [`ambient_threat_pool_stub`]）。调度核负责在 pool_fn 产出实体后
-/// 追加挂载 marker 组件，pool_fn 自身不需要关心 marker 类型。
-pub type AmbientPoolFn = fn(&mut Commands, Entity, u8, &str, DVec3, DVec3) -> Option<Entity>;
+/// `pool_fn` 接 `(commands, overworld layer, zone, spawn_pos, patrol_target)`，返回
+/// `Some(实体)` 表示真的刷出了什么，`None` 表示本次物种池未命中（死域过滤后池为空等）。
+/// 调度核负责在 pool_fn 产出实体后追加挂载 marker 组件，pool_fn 自身不需要关心 marker 类型。
+///
+/// **P1 收口**：签名用 `&Zone`（而非 P0 初版的 `u8, &str`）——`AmbientThreatMarker` 的真实
+/// `pool_fn`（[`ambient_threat_pool_fn`]）需要 `zone.spirit_qi` 驱动
+/// `MobSpawnFilter::ban_in_dead_zone` 死域白名单过滤（§8.1 #2），仅 `danger_level` 不够；
+/// `Zone` 本就同时携带 `danger_level`/`name`/`spirit_qi`，改传引用比拆两个标量参数更干净，
+/// 调度核调用点（`ambient_scheduler_system`）本就持有 `&Zone`，改动零成本。
+pub type AmbientPoolFn = fn(&mut Commands, Entity, &Zone, DVec3, DVec3) -> Option<Entity>;
 
 /// 每 marker_type 独立注入的调度配置：`budget_fn` 决定"刷多少/多久"，`pool_fn` 决定
 /// "刷什么"，`counts_against_threat_budget` 决定该 marker 类型的活体数是否计入
@@ -309,20 +484,6 @@ impl<M> AmbientSchedulerConfig<M> {
     }
 }
 
-/// P0 占位 `pool_fn`——`threat_pool`（danger 分层物种表）是 P1 交付物，P0 尚不落地任何
-/// 具体物种，故恒返回 `None`（不刷）。P1 落地后把 `AmbientSchedulerConfig::<AmbientThreatMarker>`
-/// 里的 `pool_fn` 换成真实实现即可，调度核（本文件其余部分）零改。
-pub fn ambient_threat_pool_stub(
-    _commands: &mut Commands,
-    _layer: Entity,
-    _danger: u8,
-    _home_zone: &str,
-    _spawn_position: DVec3,
-    _patrol_target: DVec3,
-) -> Option<Entity> {
-    None
-}
-
 // ---------------------------------------------------------------------------
 // System: register
 // ---------------------------------------------------------------------------
@@ -331,7 +492,7 @@ pub fn register(app: &mut App) {
     app.insert_resource(AmbientSchedulerState::<AmbientThreatMarker>::default())
         .insert_resource(AmbientSchedulerConfig::<AmbientThreatMarker>::new(
             threat_budget,
-            ambient_threat_pool_stub,
+            ambient_threat_pool_fn,
             true,
         ))
         .add_systems(Update, ambient_scheduler_system::<AmbientThreatMarker>);
@@ -435,15 +596,12 @@ pub fn ambient_scheduler_system<M: AmbientMarkerData>(
             continue;
         };
 
-        let Some(spawned) = (config.pool_fn)(
-            &mut commands,
-            layers.overworld,
-            zone.danger_level,
-            &zone.name,
-            spawn_pos,
-            spawn_pos,
-        ) else {
-            // P0 占位 pool_fn 恒 None；budget.pack_size_range 在 P1 真正落地群体刷新时使用。
+        let Some(spawned) =
+            (config.pool_fn)(&mut commands, layers.overworld, zone, spawn_pos, spawn_pos)
+        else {
+            // 死域过滤后池为空 / 未来其它 pool_fn 实现判定本次不刷都会走这支——非 panic 分支。
+            // `budget.pack_size_range`（多只群体刷新）不在本 plan 范围内消费，留给后续若立项
+            // "群体刷新"再回填，当前调度核每次巡检命中只产 1 个实体。
             let _ = budget.pack_size_range;
             continue;
         };
@@ -456,6 +614,8 @@ pub fn ambient_scheduler_system<M: AmbientMarkerData>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::npc::spawn::common::NpcMarker;
+    use crate::npc::spawn_rat::RatBlackboard;
     use valence::prelude::App;
 
     // -----------------------------------------------------------------
@@ -542,6 +702,311 @@ mod tests {
                 AMBIENT_SCHEDULER_STRIDE_TICKS
             );
         }
+    }
+
+    // -----------------------------------------------------------------
+    // threat_pool —— danger 1~7 物种池分层（§8.1 #2）
+    // -----------------------------------------------------------------
+
+    fn zone_with(danger_level: u8, spirit_qi: f64, dimension: DimensionKind) -> Zone {
+        Zone {
+            name: "test_zone".to_string(),
+            dimension,
+            bounds: (
+                DVec3::new(-500.0, 0.0, -500.0),
+                DVec3::new(500.0, 200.0, 500.0),
+            ),
+            spirit_qi,
+            danger_level,
+            active_events: Vec::new(),
+            patrol_anchors: Vec::new(),
+            blocked_tiles: Vec::new(),
+            qi_equilibrium: 0.0,
+            qi_inflow_per_min: 0.0,
+        }
+    }
+
+    #[test]
+    fn threat_pool_danger_one_and_two_are_rat_only() {
+        for danger in [1u8, 2u8] {
+            let pool = threat_pool(danger, DimensionKind::Overworld, None);
+            assert_eq!(
+                pool,
+                vec![ThreatPoolEntry {
+                    species: ThreatSpecies::Rat,
+                    weight: 1
+                }],
+                "danger={danger} 应恰好是 Rat 单条目池（§8.1 #2 danger1-2 中立袭扰档）"
+            );
+        }
+    }
+
+    #[test]
+    fn threat_pool_danger_three_and_four_are_five_generic_beasts_no_ash_spider() {
+        for danger in [3u8, 4u8] {
+            let pool = threat_pool(danger, DimensionKind::Overworld, None);
+            assert_eq!(
+                pool.len(),
+                5,
+                "danger={danger} 应是 5 变体通用 beast 池（不含 AshSpider）"
+            );
+            assert!(
+                !pool
+                    .iter()
+                    .any(|e| e.species == ThreatSpecies::Mob(NaturalMobKind::AshSpider)),
+                "danger={danger} 不应包含 AshSpider（该物种只在 danger>=5 档加入）"
+            );
+            for kind in [
+                NaturalMobKind::Zombie,
+                NaturalMobKind::Skeleton,
+                NaturalMobKind::Creeper,
+                NaturalMobKind::Rogue,
+                NaturalMobKind::Daoxiang,
+            ] {
+                assert!(
+                    pool.iter().any(|e| e.species == ThreatSpecies::Mob(kind)),
+                    "danger={danger} 池应含 {kind:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn threat_pool_danger_five_six_seven_add_ash_spider_same_pool() {
+        let pools: Vec<_> = [5u8, 6u8, 7u8]
+            .into_iter()
+            .map(|danger| threat_pool(danger, DimensionKind::Overworld, None))
+            .collect();
+        for (idx, pool) in pools.iter().enumerate() {
+            assert_eq!(
+                pool.len(),
+                6,
+                "danger={} 应是 5 通用 beast + AshSpider = 6 条目",
+                idx + 5
+            );
+            assert!(
+                pool.iter()
+                    .any(|e| e.species == ThreatSpecies::Mob(NaturalMobKind::AshSpider)),
+                "danger={} 应含 AshSpider（死域白名单物种）",
+                idx + 5
+            );
+        }
+        assert_eq!(
+            pools[0], pools[1],
+            "danger5 与 danger6 必须是同一份池（§8.1 #2 未区分 5/6）"
+        );
+        assert_eq!(
+            pools[1], pools[2],
+            "danger7 必须与 5~6 档同一份池——§8.1 #2/#3 明令 danger7 只调 pack/interval，\
+             不新增变体/buff，本测试锁死禁止悄悄给 danger7 加新物种"
+        );
+    }
+
+    #[test]
+    fn threat_pool_danger_zero_clamps_to_one_matches_budget_clamp_semantics() {
+        // 与 threat_budget 的 danger=0 兜底钳位口径对齐（Zone::spawn() fallback）。
+        assert_eq!(
+            threat_pool(0, DimensionKind::Overworld, None),
+            threat_pool(1, DimensionKind::Overworld, None),
+            "danger=0 应钳到 danger=1 同档物种池，不能 panic 或返回空池"
+        );
+    }
+
+    #[test]
+    fn threat_pool_danger_above_seven_clamps_to_seven() {
+        assert_eq!(
+            threat_pool(200, DimensionKind::Overworld, None),
+            threat_pool(7, DimensionKind::Overworld, None),
+            "danger>7 的脏数据/未来扩展应钳到 danger=7 同档物种池"
+        );
+    }
+
+    #[test]
+    fn threat_pool_non_overworld_dimension_is_always_empty() {
+        // TSY 自然涌现走独立直调 spawn_tsy_hostiles_for_family 路径（§8.1 #3），
+        // 不复用本表——任何 danger 档在非 Overworld 维度都必须返回空池。
+        for danger in 1..=7u8 {
+            assert_eq!(
+                threat_pool(danger, DimensionKind::Tsy, None),
+                Vec::new(),
+                "danger={danger} 在 DimensionKind::Tsy 下必须是空池（TSY 不走本表）"
+            );
+        }
+    }
+
+    #[test]
+    fn threat_pool_weight_hook_is_inert_placeholder() {
+        // §8.1 #6：weight_hook 当前恒无操作，任意取值不应改变产出池。
+        for hook in [None, Some(0.0f32), Some(0.5), Some(2.0), Some(-1.0)] {
+            assert_eq!(
+                threat_pool(4, DimensionKind::Overworld, hook),
+                threat_pool(4, DimensionKind::Overworld, None),
+                "weight_hook={hook:?} 不应影响 danger=4 池内容（§8.1 #6 昼夜/天气权重占位钩子）"
+            );
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // select_threat_species —— 权重抽样 + 死域过滤
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn select_threat_species_pins_rat_regardless_of_seed() {
+        let pool = threat_pool(1, DimensionKind::Overworld, None);
+        let zone = zone_with(1, 0.5, DimensionKind::Overworld);
+        for seed in [0u64, 1, 999, u64::MAX] {
+            assert_eq!(
+                select_threat_species(&pool, &zone, seed),
+                Some(ThreatSpecies::Rat),
+                "seed={seed} 单条目 Rat 池应恒选中 Rat"
+            );
+        }
+    }
+
+    #[test]
+    fn select_threat_species_exhaustive_weight_distribution_pin() {
+        // danger3-4 池 5 条目均权重 1，total_weight=5——seed 0..5 应恰好遍历全部 5 个物种
+        // 各一次（roll = seed % 5），锁死"权重抽样按 cumulative 累加正确落位"这条契约。
+        let pool = threat_pool(3, DimensionKind::Overworld, None);
+        let zone = zone_with(3, 0.5, DimensionKind::Overworld);
+        let mut hit: Vec<ThreatSpecies> = (0u64..5)
+            .map(|seed| select_threat_species(&pool, &zone, seed).expect("非死域池非空必命中"))
+            .collect();
+        hit.sort_by_key(|s| format!("{s:?}"));
+        let mut expected: Vec<ThreatSpecies> = pool.iter().map(|entry| entry.species).collect();
+        expected.sort_by_key(|s| format!("{s:?}"));
+        assert_eq!(
+            hit, expected,
+            "seed 0..5 遍历 5 权重相等条目应恰好各命中一次，缺失/重复说明 cumulative 累加有 off-by-one"
+        );
+    }
+
+    #[test]
+    fn select_threat_species_dead_zone_filters_non_whitelisted_generic_beasts() {
+        // is_dead_zone 阈值是 spirit_qi < 0.01（cultivation::dead_zone::DEAD_ZONE_QI_THRESHOLD）。
+        let dead_zone = zone_with(5, 0.0, DimensionKind::Overworld);
+        let pool = threat_pool(5, DimensionKind::Overworld, None);
+        for seed in 0u64..6 {
+            let species = select_threat_species(&pool, &dead_zone, seed);
+            assert!(
+                matches!(
+                    species,
+                    Some(ThreatSpecies::Mob(NaturalMobKind::AshSpider))
+                        | Some(ThreatSpecies::Mob(NaturalMobKind::Daoxiang))
+                ),
+                "seed={seed} 死域(spirit_qi=0.0)只应选中 AshSpider/Daoxiang（死域白名单），\
+                 实际选中 {species:?}——Zombie/Skeleton/Creeper/Rogue 必须被 ban_in_dead_zone 挡下"
+            );
+        }
+    }
+
+    #[test]
+    fn select_threat_species_non_dead_zone_allows_all_generic_beasts() {
+        let live_zone = zone_with(5, 0.5, DimensionKind::Overworld);
+        let pool = threat_pool(5, DimensionKind::Overworld, None);
+        // 6 条目全权重 1，seed 0..6 应恰好遍历全部（非死域不过滤任何条目）。
+        let mut hit: Vec<ThreatSpecies> = (0u64..6)
+            .map(|seed| select_threat_species(&pool, &live_zone, seed).expect("非死域必命中"))
+            .collect();
+        hit.sort_by_key(|s| format!("{s:?}"));
+        let mut expected: Vec<ThreatSpecies> = pool.iter().map(|e| e.species).collect();
+        expected.sort_by_key(|s| format!("{s:?}"));
+        assert_eq!(hit, expected, "非死域 zone 不应过滤任何 danger=5 池条目");
+    }
+
+    #[test]
+    fn select_threat_species_returns_none_when_pool_empty() {
+        let zone = zone_with(1, 0.5, DimensionKind::Overworld);
+        assert_eq!(
+            select_threat_species(&[], &zone, 42),
+            None,
+            "空池应返回 None，不能 panic 或凭空造一个物种"
+        );
+    }
+
+    #[test]
+    fn select_threat_species_deterministic_for_same_seed() {
+        let pool = threat_pool(6, DimensionKind::Overworld, None);
+        let zone = zone_with(6, 0.5, DimensionKind::Overworld);
+        let a = select_threat_species(&pool, &zone, 777);
+        let b = select_threat_species(&pool, &zone, 777);
+        assert_eq!(a, b, "同一 seed 必须产出同一物种（可复现，非真随机）");
+    }
+
+    // -----------------------------------------------------------------
+    // ambient_threat_pool_fn —— 真实 pool_fn 端到端（替换 P0 stub）
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn ambient_threat_pool_fn_spawns_rat_marker_in_danger_one_zone() {
+        let mut app = App::new();
+        let layer = app.world_mut().spawn_empty().id();
+        let zone = zone_with(1, 0.5, DimensionKind::Overworld);
+        let spawned = {
+            let mut commands = app.world_mut().commands();
+            ambient_threat_pool_fn(
+                &mut commands,
+                layer,
+                &zone,
+                DVec3::new(10.0, 64.0, 10.0),
+                DVec3::new(10.0, 64.0, 10.0),
+            )
+        };
+        app.world_mut().flush();
+        let entity = spawned.expect("danger=1 非死域池非空，必须刷出实体");
+        assert!(
+            app.world().get::<RatBlackboard>(entity).is_some(),
+            "danger=1 物种池只有 Rat，产出实体必须带 RatBlackboard（spawn_rat_npc_at 契约）"
+        );
+    }
+
+    #[test]
+    fn ambient_threat_pool_fn_spawns_beast_marker_in_danger_four_zone() {
+        let mut app = App::new();
+        let layer = app.world_mut().spawn_empty().id();
+        let zone = zone_with(4, 0.5, DimensionKind::Overworld);
+        let spawned = {
+            let mut commands = app.world_mut().commands();
+            ambient_threat_pool_fn(
+                &mut commands,
+                layer,
+                &zone,
+                DVec3::new(10.0, 64.0, 10.0),
+                DVec3::new(10.0, 64.0, 10.0),
+            )
+        };
+        app.world_mut().flush();
+        let entity = spawned.expect("danger=4 通用 beast 池非空，必须刷出实体");
+        assert!(
+            app.world().get::<RatBlackboard>(entity).is_none(),
+            "danger=4 通用 beast 路径不应带 RatBlackboard（会误判成 rat 分支）"
+        );
+        assert!(
+            app.world().get::<NpcMarker>(entity).is_some(),
+            "danger=4 spawn_beast_npc_at 产出实体必须带通用 NpcMarker"
+        );
+    }
+
+    #[test]
+    fn ambient_threat_pool_fn_returns_none_for_tsy_dimension() {
+        let mut app = App::new();
+        let layer = app.world_mut().spawn_empty().id();
+        let zone = zone_with(5, 0.5, DimensionKind::Tsy);
+        let spawned = {
+            let mut commands = app.world_mut().commands();
+            ambient_threat_pool_fn(
+                &mut commands,
+                layer,
+                &zone,
+                DVec3::new(10.0, 64.0, 10.0),
+                DVec3::new(10.0, 64.0, 10.0),
+            )
+        };
+        assert_eq!(
+            spawned, None,
+            "TSY 维度必须走独立直调 spawn_tsy_hostiles_for_family 路径（§8.1 #3），\
+             本通用 pool_fn 对 TSY zone 必须恒 None，不能顺手刷出主世界物种"
+        );
     }
 
     // -----------------------------------------------------------------
@@ -745,8 +1210,7 @@ mod tests {
     fn test_pool_fn(
         commands: &mut Commands,
         _layer: Entity,
-        _danger: u8,
-        _home_zone: &str,
+        _zone: &Zone,
         spawn_position: DVec3,
         _patrol_target: DVec3,
     ) -> Option<Entity> {
@@ -780,7 +1244,6 @@ mod tests {
     }
 
     fn install_zone_registry(app: &mut App, danger_level: u8) {
-        use crate::world::zone::{Zone, ZoneRegistry};
         app.insert_resource(ZoneRegistry {
             zones: vec![Zone {
                 name: "test_zone".to_string(),
