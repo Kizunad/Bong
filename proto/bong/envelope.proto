@@ -1498,6 +1498,8 @@ enum CastOutcome {
   CAST_OUTCOME_REJECT_IN_RECOVERY     = 12;
   CAST_OUTCOME_REJECT_REALM_TOO_LOW   = 13;
   CAST_OUTCOME_REJECT_NO_WEAPON       = 14;
+  // 招式未习得或未激活（KnownTechniques 缺失 / active=false）——此前冒用 INVALID_TARGET。
+  CAST_OUTCOME_REJECT_TECHNIQUE_INACTIVE = 15;
 }
 
 // 与 Rust CastSyncV1 精确对应。

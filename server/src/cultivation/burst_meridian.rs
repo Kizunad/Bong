@@ -157,15 +157,26 @@ fn flat_qi_cost(skill_id: &str) -> Option<f64> {
     technique_definition(skill_id).map(|def| f64::from(def.qi_cost))
 }
 
+/// 空挥（无锁定目标）时的 AV 朝向点：沿施法者视线前推一臂；无 Look 组件时
+/// 退化为正前方 +Z（只影响粒子方向，无任何战斗判定）。
+fn whiff_focus_point(
+    world: &bevy_ecs::world::World,
+    caster: Entity,
+    caster_position: valence::prelude::DVec3,
+) -> valence::prelude::DVec3 {
+    let dir = world
+        .get::<Look>(caster)
+        .map(|look| look.vec().as_dvec3())
+        .unwrap_or(valence::prelude::DVec3::Z);
+    caster_position + dir * f64::from(FIST_REACH.max)
+}
+
 pub fn resolve_beng_quan(
     world: &mut bevy_ecs::world::World,
     caster: Entity,
     slot: u8,
     target: Option<Entity>,
 ) -> CastResult {
-    let Some(target) = target else {
-        return rejected(CastRejectReason::InvalidTarget);
-    };
     let Some(clock) = world.get_resource::<CombatClock>() else {
         return rejected(CastRejectReason::InvalidTarget);
     };
@@ -181,12 +192,24 @@ pub fn resolve_beng_quan(
     let Some(caster_position) = world.get::<Position>(caster).map(|position| position.get()) else {
         return rejected(CastRejectReason::InvalidTarget);
     };
-    let Some(target_position) = world.get::<Position>(target).map(|position| position.get()) else {
-        return rejected(CastRejectReason::InvalidTarget);
+    // Option B 去目标门禁（对齐 sword_basics 劈/刺）：崩拳是近战直拳，准星没对准
+    // 实体也照常轰出（动画/粒子/扣费/撕脉/冷却照走），无目标 = 空挥。
+    // 有目标时仍校验存在与射程——锁着超距目标硬轰属"目标无效"的正确语义。
+    let target_position = match target {
+        Some(target) => {
+            let Some(target_position) =
+                world.get::<Position>(target).map(|position| position.get())
+            else {
+                return rejected(CastRejectReason::InvalidTarget);
+            };
+            if caster_position.distance(target_position) > f64::from(FIST_REACH.max) + f64::EPSILON
+            {
+                return rejected(CastRejectReason::InvalidTarget);
+            }
+            Some(target_position)
+        }
+        None => None,
     };
-    if caster_position.distance(target_position) > f64::from(FIST_REACH.max) + f64::EPSILON {
-        return rejected(CastRejectReason::InvalidTarget);
-    }
 
     let Some(cultivation) = world.get::<Cultivation>(caster) else {
         return rejected(CastRejectReason::RealmTooLow);
@@ -244,7 +267,8 @@ pub fn resolve_beng_quan(
 
     world.send_event(AttackIntent {
         attacker: caster,
-        target: Some(target),
+        // Option 透传：Some 命中结算，None 时 resolver 跳过 = 空挥。
+        target,
         issued_at_tick: now_tick,
         reach: FIST_REACH,
         qi_invest: (cost * BENG_QUAN_OVERLOAD_RATIO) as f32,
@@ -255,12 +279,14 @@ pub fn resolve_beng_quan(
     world.send_event(BurstMeridianEvent {
         skill: BENG_QUAN_EVENT_SKILL,
         caster,
-        target: Some(target),
+        target,
         tick: now_tick,
         overload_ratio: BENG_QUAN_OVERLOAD_RATIO,
         integrity_snapshot,
     });
-    emit_beng_quan_vfx(world, caster, caster_position, target_position);
+    let vfx_toward =
+        target_position.unwrap_or_else(|| whiff_focus_point(world, caster, caster_position));
+    emit_beng_quan_vfx(world, caster, caster_position, vfx_toward);
 
     CastResult::Started {
         cooldown_ticks: BENG_QUAN_COOLDOWN_TICKS,
@@ -316,9 +342,6 @@ pub fn resolve_tie_shan_kao(
     slot: u8,
     target: Option<Entity>,
 ) -> CastResult {
-    let Some(target) = target else {
-        return rejected(CastRejectReason::InvalidTarget);
-    };
     let Some(now_tick) = combat_now_tick(world) else {
         return rejected(CastRejectReason::InvalidTarget);
     };
@@ -328,13 +351,21 @@ pub fn resolve_tie_shan_kao(
     let Some(caster_position) = world.get::<Position>(caster).map(|p| p.get()) else {
         return rejected(CastRejectReason::InvalidTarget);
     };
-    let Some(target_position) = world.get::<Position>(target).map(|p| p.get()) else {
-        return rejected(CastRejectReason::InvalidTarget);
+    // Option B 去目标门禁（与崩拳同批）：肩撞照常撞出，无目标 = 空撞。
+    let target_position = match target {
+        Some(target) => {
+            let Some(target_position) = world.get::<Position>(target).map(|p| p.get()) else {
+                return rejected(CastRejectReason::InvalidTarget);
+            };
+            if caster_position.distance(target_position)
+                > f64::from(TIE_SHAN_KAO_REACH.max) + f64::EPSILON
+            {
+                return rejected(CastRejectReason::InvalidTarget);
+            }
+            Some(target_position)
+        }
+        None => None,
     };
-    if caster_position.distance(target_position) > f64::from(TIE_SHAN_KAO_REACH.max) + f64::EPSILON
-    {
-        return rejected(CastRejectReason::InvalidTarget);
-    }
 
     if let Some(reason) = check_realm_gate(world, caster, Realm::Condense) {
         return rejected(reason);
@@ -378,7 +409,8 @@ pub fn resolve_tie_shan_kao(
 
     world.send_event(AttackIntent {
         attacker: caster,
-        target: Some(target),
+        // Option 透传：Some 命中结算，None 时 resolver 跳过 = 空撞。
+        target,
         issued_at_tick: now_tick,
         reach: TIE_SHAN_KAO_REACH,
         qi_invest: (cost * TIE_SHAN_KAO_OVERLOAD_RATIO) as f32,
@@ -389,16 +421,18 @@ pub fn resolve_tie_shan_kao(
     world.send_event(BurstMeridianEvent {
         skill: TIE_SHAN_KAO_EVENT_SKILL,
         caster,
-        target: Some(target),
+        target,
         tick: now_tick,
         overload_ratio: TIE_SHAN_KAO_OVERLOAD_RATIO,
         integrity_snapshot,
     });
+    let av_toward =
+        target_position.unwrap_or_else(|| whiff_focus_point(world, caster, caster_position));
     emit_burst_av(
         world,
         caster,
         caster_position,
-        Some(target_position - caster_position),
+        Some(av_toward - caster_position),
         BurstAv {
             anim_id: Some(TIE_SHAN_KAO_ANIM_ID),
             particle_id: TIE_SHAN_KAO_PARTICLE_ID,
@@ -1198,7 +1232,7 @@ mod tests {
     }
 
     #[test]
-    fn beng_quan_rejects_missing_or_out_of_range_target() {
+    fn beng_quan_rejects_out_of_range_target_without_mutation() {
         let mut app = app();
         let caster = spawn_caster(&mut app, Realm::Induce, 100.0, DVec3::ZERO);
         let target = spawn_target(
@@ -1206,15 +1240,52 @@ mod tests {
             DVec3::new(f64::from(FIST_REACH.max) + 0.01, 0.0, 0.0),
         );
 
-        assert_eq!(
-            resolve_beng_quan(app.world_mut(), caster, 0, None),
-            rejected(CastRejectReason::InvalidTarget)
-        );
+        // 锁定超距目标硬轰仍是"目标无效"的正确语义（有目标时距离门保留）。
         assert_eq!(
             resolve_beng_quan(app.world_mut(), caster, 0, Some(target)),
             rejected(CastRejectReason::InvalidTarget)
         );
         assert_no_mutation(&app, caster, 100.0, 1.0);
+    }
+
+    #[test]
+    fn beng_quan_whiffs_without_target_spending_cost() {
+        // Option B 去目标门禁（对齐 sword_basics 劈/刺）：无目标 = 空挥，
+        // Started + 照常扣真元撕脉 + AttackIntent/BurstMeridianEvent target=None。
+        let mut app = app();
+        let caster = spawn_caster(&mut app, Realm::Induce, 100.0, DVec3::ZERO);
+
+        let result = resolve_beng_quan(app.world_mut(), caster, 0, None);
+        assert!(
+            matches!(result, CastResult::Started { .. }),
+            "无目标崩拳应空挥 Started（不再报 InvalidTarget），实际 {result:?}"
+        );
+        let qi = app.world().get::<Cultivation>(caster).unwrap().qi_current;
+        assert!(
+            qi < 100.0,
+            "空挥必须照常扣真元（防无目标白嫖挥拳），实际 qi={qi}"
+        );
+        let attack_events = app.world().resource::<Events<AttackIntent>>();
+        let attack = attack_events
+            .iter_current_update_events()
+            .next()
+            .expect("空挥仍应发 AttackIntent（target=None 由 combat resolver 跳过命中）");
+        assert_eq!(attack.target, None);
+        assert_eq!(attack.source, AttackSource::BurstMeridian);
+        let burst_events = app.world().resource::<Events<BurstMeridianEvent>>();
+        assert_eq!(
+            burst_events
+                .iter_current_update_events()
+                .next()
+                .expect("空挥仍应发 BurstMeridianEvent（AV/proto 桥照走）")
+                .target,
+            None
+        );
+        let vfx_events = app.world().resource::<Events<VfxEventRequest>>();
+        assert!(
+            vfx_events.iter_current_update_events().count() > 0,
+            "空挥应照常出动画/粒子（whiff_focus_point 沿朝向兜底）"
+        );
     }
 
     #[test]
@@ -1445,24 +1516,37 @@ mod tests {
     }
 
     #[test]
-    fn tie_shan_kao_rejects_out_of_range_and_missing_target() {
+    fn tie_shan_kao_rejects_out_of_range_and_whiffs_without_target() {
         let mut app = full_app();
         let caster = spawn_caster(&mut app, Realm::Condense, 100.0, DVec3::ZERO);
-        // 超 reach.max (1.5) → InvalidTarget。
+        // 超 reach.max (1.5) → InvalidTarget（有目标时距离门保留）。
         let far = spawn_target(
             &mut app,
             DVec3::new(f64::from(TIE_SHAN_KAO_REACH.max) + 0.5, 0.0, 0.0),
-        );
-
-        assert_eq!(
-            resolve_tie_shan_kao(app.world_mut(), caster, 0, None),
-            rejected(CastRejectReason::InvalidTarget)
         );
         assert_eq!(
             resolve_tie_shan_kao(app.world_mut(), caster, 0, Some(far)),
             rejected(CastRejectReason::InvalidTarget)
         );
         assert_single_meridian_untouched(&app, caster, MeridianId::Stomach, 100.0);
+
+        // Option B：无目标 = 空撞，Started + 扣费撕脉 + 事件 target=None。
+        let result = resolve_tie_shan_kao(app.world_mut(), caster, 0, None);
+        assert!(
+            matches!(result, CastResult::Started { .. }),
+            "无目标贴山靠应空撞 Started（不再报 InvalidTarget），实际 {result:?}"
+        );
+        let qi = app.world().get::<Cultivation>(caster).unwrap().qi_current;
+        assert!(qi < 100.0, "空撞必须照常扣真元，实际 qi={qi}");
+        let attack_events = app.world().resource::<Events<AttackIntent>>();
+        assert_eq!(
+            attack_events
+                .iter_current_update_events()
+                .next()
+                .expect("空撞仍应发 AttackIntent（target=None）")
+                .target,
+            None
+        );
     }
 
     #[test]

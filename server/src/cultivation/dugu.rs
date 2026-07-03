@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use valence::prelude::{
-    bevy_ecs, Commands, Component, Entity, Event, EventReader, EventWriter, Events, ParamSet,
+    bevy_ecs, Commands, Component, Entity, Event, EventReader, EventWriter, Events, Look, ParamSet,
     Position, Query, Res, ResMut, UniqueId, With,
 };
 
@@ -662,9 +662,6 @@ fn resolve_shoot_needle_skill(
     {
         return rejected(CastRejectReason::OnCooldown);
     }
-    let Some(target) = target else {
-        return rejected(CastRejectReason::InvalidTarget);
-    };
     let Some(cultivation) = world.get::<Cultivation>(caster) else {
         return rejected(CastRejectReason::RealmTooLow);
     };
@@ -675,10 +672,17 @@ fn resolve_shoot_needle_skill(
     if !crate::combat::needle::can_shoot_needle(cultivation, stamina, lifecycle) {
         return rejected(CastRejectReason::QiInsufficient);
     }
+    // Option B 去目标门禁：凝针是投射物，intent 消费端本就支持无目标沿 dir_unit
+    // 直飞（resolve_shoot_needle_intents 只在 Some 时补 AttackIntent）。dir_unit
+    // 取施法者视线——此前写死 [0,0,1]，针永远朝正南飞、完全无视准星，顺带修掉。
+    let dir = world
+        .get::<Look>(caster)
+        .map(|look| look.vec().as_dvec3())
+        .unwrap_or(valence::prelude::DVec3::Z);
     world.send_event(ShootNeedleIntent {
         shooter: caster,
-        target: Some(target),
-        dir_unit: [0.0, 0.0, 1.0],
+        target,
+        dir_unit: [dir.x, dir.y, dir.z],
         source: IntentSource::SkillBar,
     });
     insert_instant_cast(
@@ -1603,7 +1607,9 @@ mod tests {
     }
 
     #[test]
-    fn shoot_needle_skill_rejects_missing_target_without_casting() {
+    fn shoot_needle_skill_whiffs_without_target_along_z_fallback() {
+        // Option B 去目标门禁：凝针是投射物，无锁定目标照样沿视线发射
+        // （intent 消费端本就支持 target=None 直飞）。无 Look 组件时方向兜底 +Z。
         let mut app = App::new();
         app.insert_resource(CombatClock { tick: 100 });
         app.add_event::<ShootNeedleIntent>();
@@ -1623,18 +1629,89 @@ mod tests {
 
         let result = resolve_shoot_needle_skill(app.world_mut(), caster, 0, None);
 
-        assert_eq!(
-            result,
-            CastResult::Rejected {
-                reason: CastRejectReason::InvalidTarget
-            }
+        assert!(
+            matches!(result, CastResult::Started { .. }),
+            "无目标凝针应照常发射（不再报 InvalidTarget），实际 {result:?}"
         );
-        assert!(app
-            .world()
-            .get::<crate::combat::components::Casting>(caster)
-            .is_none());
         let events = app.world().resource::<Events<ShootNeedleIntent>>();
-        assert_eq!(events.get_reader().read(events).count(), 0);
+        let mut reader = events.get_reader();
+        let intents: Vec<_> = reader.read(events).collect();
+        assert_eq!(intents.len(), 1, "应恰好发出一条 ShootNeedleIntent");
+        assert_eq!(
+            intents[0].target, None,
+            "无锁定目标时 intent.target 应为 None"
+        );
+        assert_eq!(
+            intents[0].dir_unit,
+            [0.0, 0.0, 1.0],
+            "无 Look 组件时发射方向应兜底 +Z"
+        );
+    }
+
+    #[test]
+    fn shoot_needle_skill_uses_caster_look_direction() {
+        // 修复回归锁：dir_unit 此前写死 [0,0,1]（针永远朝正南飞、无视准星）——
+        // 现在必须取施法者 Look 视线方向。yaw=-90 => 朝东（+X）。
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 100 });
+        app.add_event::<ShootNeedleIntent>();
+        let caster = app
+            .world_mut()
+            .spawn((
+                Cultivation {
+                    realm: Realm::Induce,
+                    qi_current: 10.0,
+                    qi_max: 20.0,
+                    ..Cultivation::default()
+                },
+                crate::combat::components::Stamina::default(),
+                Lifecycle::default(),
+                Look::new(-90.0, 0.0),
+            ))
+            .id();
+
+        let result = resolve_shoot_needle_skill(app.world_mut(), caster, 0, None);
+        assert!(matches!(result, CastResult::Started { .. }));
+
+        let events = app.world().resource::<Events<ShootNeedleIntent>>();
+        let mut reader = events.get_reader();
+        let intent = reader.read(events).next().expect("intent should exist");
+        assert!(
+            (intent.dir_unit[0] - 1.0).abs() < 1e-4
+                && intent.dir_unit[1].abs() < 1e-4
+                && intent.dir_unit[2].abs() < 1e-4,
+            "yaw=-90 应朝 +X 发射（Look::vec 语义），实际 dir_unit={:?}",
+            intent.dir_unit
+        );
+    }
+
+    #[test]
+    fn shoot_needle_skill_keeps_locked_target_passthrough() {
+        // 有锁定目标时 intent.target 透传 Some——命中结算（AttackIntent）仍由
+        // resolve_shoot_needle_intents 在 Some 分支补发，语义与改动前一致。
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 100 });
+        app.add_event::<ShootNeedleIntent>();
+        let caster = app
+            .world_mut()
+            .spawn((
+                Cultivation {
+                    realm: Realm::Induce,
+                    qi_current: 10.0,
+                    qi_max: 20.0,
+                    ..Cultivation::default()
+                },
+                crate::combat::components::Stamina::default(),
+                Lifecycle::default(),
+            ))
+            .id();
+        let victim = app.world_mut().spawn_empty().id();
+
+        let result = resolve_shoot_needle_skill(app.world_mut(), caster, 0, Some(victim));
+        assert!(matches!(result, CastResult::Started { .. }));
+        let events = app.world().resource::<Events<ShootNeedleIntent>>();
+        let mut reader = events.get_reader();
+        assert_eq!(reader.read(events).next().unwrap().target, Some(victim));
     }
 
     #[test]

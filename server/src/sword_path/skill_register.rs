@@ -830,12 +830,14 @@ fn build_cast_context(
         return Err(CastRejectReason::OnCooldown);
     }
 
-    // 持剑（必须 WeaponKind::Sword）
+    // 持剑（必须 WeaponKind::Sword）——报 NoWeapon 而非 InvalidTarget：
+    // 剑道招式全是方向技/自身 AoE，从不读锁定目标，"目标无效"是误导文案
+    // （一剑开天门贴脸锁妖兽连刷"目标无效"实证；sword_basics 已是此做法）。
     let Some(weapon) = world.get::<Weapon>(caster) else {
-        return Err(CastRejectReason::InvalidTarget);
+        return Err(CastRejectReason::NoWeapon);
     };
     if weapon.weapon_kind != WeaponKind::Sword {
-        return Err(CastRejectReason::InvalidTarget);
+        return Err(CastRejectReason::NoWeapon);
     }
 
     // 体力前置校验（review fix）：除了 Exhausted/≤0 之外，还要保证当前体力够支付
@@ -849,12 +851,12 @@ fn build_cast_context(
         }
     }
 
-    // 招式拥有 + active
+    // 招式拥有 + active——同理拆出专用原因，client 显示"招式未激活"。
     let Some(known) = world.get::<KnownTechniques>(caster) else {
-        return Err(CastRejectReason::InvalidTarget);
+        return Err(CastRejectReason::TechniqueInactive);
     };
     if !known.entries.iter().any(|e| e.id == skill_id && e.active) {
-        return Err(CastRejectReason::InvalidTarget);
+        return Err(CastRejectReason::TechniqueInactive);
     }
 
     // 境界（plan §techniques::required_realm）
@@ -1358,6 +1360,82 @@ mod tests {
             release_avs,
             vec![SwordPathSkillId::HeavenGateRelease],
             "phase_system elapsed=140 应 emit 恰好一个 release AV"
+        );
+    }
+
+    /// 缺武器 → NoWeapon（专用原因）而非 InvalidTarget——剑道招式全是方向技/
+    /// 自身 AoE 从不读锁定目标，"目标无效"是误导文案（一剑开天门贴脸锁妖兽
+    /// 连刷"目标无效"实证；对齐 sword_basics 既有做法）。
+    #[test]
+    fn bare_handed_cast_rejects_no_weapon_not_invalid_target() {
+        let (mut app, caster) = setup_app();
+        app.world_mut().entity_mut(caster).remove::<Weapon>();
+        for cast in [
+            cast_condense_edge,
+            cast_qi_slash,
+            cast_resonance,
+            cast_manifest,
+            cast_heaven_gate,
+        ] {
+            let result = cast(app.world_mut(), caster, 0, None);
+            assert_eq!(
+                result,
+                CastResult::Rejected {
+                    reason: CastRejectReason::NoWeapon
+                },
+                "空手施放剑道招式应报 NoWeapon（客户端显示「缺少武器」），\
+                 不应再冒用 InvalidTarget 误导玩家去找目标"
+            );
+        }
+    }
+
+    /// 武器不是剑（weapon_kind 不合规）同样报 NoWeapon。
+    #[test]
+    fn non_sword_weapon_rejects_no_weapon() {
+        let (mut app, caster) = setup_app();
+        if let Some(mut weapon) = app.world_mut().get_mut::<Weapon>(caster) {
+            weapon.weapon_kind = WeaponKind::Saber;
+        }
+        let result = cast_heaven_gate(app.world_mut(), caster, 0, None);
+        assert_eq!(
+            result,
+            CastResult::Rejected {
+                reason: CastRejectReason::NoWeapon
+            },
+            "持非剑武器施放天门应报 NoWeapon"
+        );
+    }
+
+    /// 招式未激活 / 未习得 → TechniqueInactive（客户端「招式未激活」）——
+    /// 同为此前冒用 InvalidTarget 的第二类拒绝原因。
+    #[test]
+    fn inactive_technique_rejects_technique_inactive() {
+        let (mut app, caster) = setup_app();
+        if let Some(mut known) = app.world_mut().get_mut::<KnownTechniques>(caster) {
+            for entry in known.entries.iter_mut() {
+                if entry.id == SWORD_PATH_HEAVEN_GATE_ID {
+                    entry.active = false;
+                }
+            }
+        }
+        assert_eq!(
+            cast_heaven_gate(app.world_mut(), caster, 0, None),
+            CastResult::Rejected {
+                reason: CastRejectReason::TechniqueInactive
+            },
+            "active=false 应报 TechniqueInactive 而非「目标无效」"
+        );
+
+        // 完全没有 KnownTechniques 组件（未习得任何招式）同理。
+        app.world_mut()
+            .entity_mut(caster)
+            .remove::<KnownTechniques>();
+        assert_eq!(
+            cast_heaven_gate(app.world_mut(), caster, 0, None),
+            CastResult::Rejected {
+                reason: CastRejectReason::TechniqueInactive
+            },
+            "无 KnownTechniques 组件应报 TechniqueInactive"
         );
     }
 
