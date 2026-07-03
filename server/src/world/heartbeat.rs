@@ -13,6 +13,11 @@ use crate::cultivation::tick::CultivationClock;
 use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::npc::lifecycle::NpcRegistry;
 use crate::player::state::canonical_player_id;
+use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
+use crate::qi_physics::{
+    pending_inflow_account, zone_equilibrium_inflow, QiAccountId, QiTransfer, QiTransferReason,
+    WorldQiAccount,
+};
 use crate::schema::agent_command::Command;
 use crate::schema::common::{CommandType, GameEventType};
 use crate::schema::vfx_event::VfxEventPayloadV1;
@@ -448,6 +453,7 @@ impl WorldHeartbeat {
 pub fn register(app: &mut App) {
     tracing::info!("[bong][world] registering world heartbeat scheduler");
     app.insert_resource(WorldHeartbeat::default());
+    app.init_resource::<ZoneQiInflowClock>();
     app.add_event::<EventChainTrigger>();
     app.add_systems(
         Update,
@@ -456,6 +462,7 @@ pub fn register(app: &mut App) {
             forward_realm_collapse_chain_triggers,
             heartbeat_tick,
             chain_reaction_tick.after(heartbeat_tick),
+            zone_qi_inflow_tick,
         ),
     );
 }
@@ -2020,6 +2027,121 @@ fn value_to_f64(value: &Value) -> Option<f64> {
         .or_else(|| value.as_i64().map(|value| value as f64))
 }
 
+/// plan-zone-qi-economy-v1 P1 — `zone_qi_inflow_tick` 自己的时钟锚点。
+///
+/// 不复用 `WorldHeartbeat.last_eval_tick`（那是全事件调度器共享的窗口），独立追踪
+/// 上次观测到的 `CultivationClock.tick`，换算成本次评估窗口经过的游戏内分钟数
+/// （`dt_minutes`）。`/time advance` 直接跳变 `CultivationClock.tick`
+/// （`cmd::dev::time::handle_time`）时，下一次评估会自然按跳变的 delta 补齐窗口，
+/// 不会因为"没有被间隔打中"而丢失这段时间该有的回流。
+#[derive(Debug, Default)]
+pub struct ZoneQiInflowClock {
+    last_tick: u64,
+}
+
+impl Resource for ZoneQiInflowClock {}
+
+/// plan-zone-qi-economy-v1 P1 §8.1 决议 #1/#5 — 平衡回流：独立待分配池按各 zone 的
+/// `qi_equilibrium` / `qi_inflow_per_min` 配置滴灌回 `zone.spirit_qi`。
+///
+/// 记账范本照抄 `npc::dormant::apply_dormant_regen_with_multiplier`（先用
+/// `set_balance` 把 zone ledger 镜像同步到真实 `zone.spirit_qi`，再走
+/// `WorldQiAccount::transfer` 做原子记账，最后把转账后余额写回真实字段）——
+/// **不是** audit-only 记账，待分配池与 zone 之间是真实的 `WorldQiAccount::transfer`。
+///
+/// 跳过条件（§8.1 #5）：
+/// - `zone.qi_equilibrium <= 0.0` 或 `zone.qi_inflow_per_min <= 0.0`（未配置 / 显式不回流）；
+/// - `zone.spirit_qi < 0.0`（负灵域，本 plan 不负责回正）；
+/// - `active_events` 含 `EVENT_REALM_COLLAPSE`（坍缩事件期间不回流，`heartbeat.rs` 既有
+///   `maybe_queue_realm_collapse` 同款判断范式）。
+///
+/// 待分配池余额不足时按 `ledger.balance(&pool)` 缩量，绝不透支（§8.1 #1 红线）。
+pub fn zone_qi_inflow_tick(
+    mut clock_state: ResMut<ZoneQiInflowClock>,
+    clock: Option<Res<CultivationClock>>,
+    mut zone_registry: Option<ResMut<ZoneRegistry>>,
+    active_events: Option<Res<ActiveEventsResource>>,
+    mut ledger: Option<ResMut<WorldQiAccount>>,
+) {
+    let Some(current_tick) = clock.as_deref().map(|clock| clock.tick) else {
+        return;
+    };
+    let Some(zone_registry) = zone_registry.as_deref_mut() else {
+        return;
+    };
+    let Some(ledger) = ledger.as_deref_mut() else {
+        return;
+    };
+
+    let elapsed_ticks = current_tick.saturating_sub(clock_state.last_tick);
+    clock_state.last_tick = current_tick;
+    if elapsed_ticks == 0 {
+        return;
+    }
+    let dt_minutes = elapsed_ticks as f64 / TICKS_PER_MINUTE as f64;
+
+    for zone in zone_registry.zones.iter_mut() {
+        if zone.qi_equilibrium <= 0.0 || zone.qi_inflow_per_min <= 0.0 {
+            continue;
+        }
+        if zone.spirit_qi < 0.0 {
+            continue;
+        }
+        if let Some(active_events) = active_events.as_deref() {
+            if active_events.contains(zone.name.as_str(), EVENT_REALM_COLLAPSE) {
+                continue;
+            }
+        }
+
+        let desired_absolute = zone_equilibrium_inflow(
+            zone.spirit_qi,
+            zone.qi_equilibrium,
+            zone.qi_inflow_per_min,
+            dt_minutes,
+        );
+        if desired_absolute <= 0.0 {
+            continue;
+        }
+
+        let pool = pending_inflow_account();
+        let available = ledger.balance(&pool);
+        let actual_absolute = desired_absolute.min(available.max(0.0));
+        if actual_absolute <= 0.0 {
+            continue;
+        }
+
+        let zone_account = QiAccountId::zone(zone.name.clone());
+        // 先把 zone 的 ledger 镜像同步到真实值（apply_dormant_regen_with_multiplier 范本），
+        // 让 transfer() 的 insufficient 检查针对的是真实容量，而不是陈旧的镜像余额。
+        if ledger
+            .set_balance(
+                zone_account.clone(),
+                (zone.spirit_qi.max(0.0)) * QI_ZONE_UNIT_CAPACITY,
+            )
+            .is_err()
+        {
+            continue;
+        }
+
+        let Ok(transfer) = QiTransfer::new(
+            pool.clone(),
+            zone_account.clone(),
+            actual_absolute,
+            QiTransferReason::ZoneInflow,
+        ) else {
+            continue;
+        };
+        if ledger.transfer(transfer).is_err() {
+            continue;
+        }
+
+        let updated_fraction = ledger.balance(&zone_account) / QI_ZONE_UNIT_CAPACITY;
+        // 再夹一层浮点安全网：数学上 actual_absolute <= needed_absolute 已保证不过冲，
+        // 这里防的是累计误差，绝不允许 spirit_qi 越过 equilibrium。
+        zone.spirit_qi = updated_fraction.min(zone.qi_equilibrium);
+    }
+}
+
 #[cfg(test)]
 pub fn simulate_unattended_world(hours: u64, player_count: usize) -> HeartbeatSimulationReport {
     let mut report = HeartbeatSimulationReport::default();
@@ -2697,5 +2819,310 @@ mod tests {
         assert!(report.chain_reaction_count >= 10);
         assert!(report.qi_total_delta_ratio < 0.05);
         assert!(report.max_same_zone_stack <= 3);
+    }
+
+    // ───────────────────── plan-zone-qi-economy-v1 P1 — zone_qi_inflow_tick ─────────────────────
+
+    fn inflow_test_app(zones: Vec<Zone>, pending_pool_balance: f64, start_tick: u64) -> App {
+        let mut app = App::new();
+        app.insert_resource(ZoneQiInflowClock::default());
+        app.insert_resource(CultivationClock { tick: start_tick });
+        app.insert_resource(ZoneRegistry { zones });
+        app.insert_resource(ActiveEventsResource::default());
+        let mut ledger = WorldQiAccount::default();
+        if pending_pool_balance > 0.0 {
+            ledger
+                .set_balance(pending_inflow_account(), pending_pool_balance)
+                .expect("seeding the pending pool balance must succeed");
+        }
+        app.insert_resource(ledger);
+        app.add_systems(Update, zone_qi_inflow_tick);
+        app
+    }
+
+    fn advance_ticks(app: &mut App, ticks: u64) {
+        let mut clock = app.world_mut().resource_mut::<CultivationClock>();
+        clock.tick = clock.tick.saturating_add(ticks);
+        app.update();
+    }
+
+    #[test]
+    fn zero_elapsed_ticks_on_first_run_is_a_noop() {
+        // 首次 run：ZoneQiInflowClock::default() 的 last_tick=0，若 CultivationClock 也从 0
+        // 起步，elapsed_ticks==0，不应该做任何事（也不应该 panic）。
+        let mut z = zone("spawn", 0.0, 0.0, 0.1);
+        z.qi_equilibrium = 0.5;
+        z.qi_inflow_per_min = 1.0;
+        let mut app = inflow_test_app(vec![z], 1000.0, 0);
+        app.update();
+
+        let zones = app.world().resource::<ZoneRegistry>();
+        assert_eq!(
+            zones.zones[0].spirit_qi, 0.1,
+            "tick delta of zero (both clocks start at 0) must not inject any qi"
+        );
+    }
+
+    #[test]
+    fn injects_from_pending_pool_and_debits_it_by_the_same_amount() {
+        let mut z = zone("spawn", 0.0, 0.0, 0.1);
+        z.qi_equilibrium = 0.5;
+        z.qi_inflow_per_min = 1.0; // 1.0 绝对点/分钟
+        let mut app = inflow_test_app(vec![z], 1000.0, 0);
+
+        // 1 分钟 = TICKS_PER_MINUTE ticks
+        advance_ticks(&mut app, TICKS_PER_MINUTE);
+
+        let zones = app.world().resource::<ZoneRegistry>();
+        let expected_fraction_gain = 1.0 / QI_ZONE_UNIT_CAPACITY; // 1.0 absolute / 50.0 capacity
+        assert!(
+            (zones.zones[0].spirit_qi - (0.1 + expected_fraction_gain)).abs() < 1e-9,
+            "after 1 minute at 1.0/min, spirit_qi should rise by 1.0/QI_ZONE_UNIT_CAPACITY \
+             ({expected_fraction_gain}), got {}",
+            zones.zones[0].spirit_qi
+        );
+
+        let ledger = app.world().resource::<WorldQiAccount>();
+        assert!(
+            (ledger.balance(&pending_inflow_account()) - (1000.0 - 1.0)).abs() < 1e-9,
+            "pending pool must be debited by exactly the absolute amount credited to the zone \
+             (conservation: pool loses 1.0, zone gains 1.0/CAPACITY fraction == 1.0 absolute), \
+             got pool balance {}",
+            ledger.balance(&pending_inflow_account())
+        );
+    }
+
+    #[test]
+    fn clamps_at_equilibrium_and_never_overshoots_across_many_ticks() {
+        let mut z = zone("spawn", 0.0, 0.0, 0.3);
+        z.qi_equilibrium = 0.35;
+        z.qi_inflow_per_min = 5.0; // deliberately fast so it would overshoot without the clamp
+        let mut app = inflow_test_app(vec![z], 100_000.0, 0);
+
+        // Run many minutes' worth of ticks — should settle at equilibrium and stop.
+        advance_ticks(&mut app, TICKS_PER_MINUTE * 50);
+
+        let zones = app.world().resource::<ZoneRegistry>();
+        assert!(
+            zones.zones[0].spirit_qi <= 0.35 + 1e-9,
+            "spirit_qi ({}) must never exceed qi_equilibrium (0.35), even after many ticks of \
+             a fast inflow rate that would overshoot without clamping",
+            zones.zones[0].spirit_qi
+        );
+        assert!(
+            zones.zones[0].spirit_qi >= 0.35 - 1e-6,
+            "spirit_qi ({}) should have converged to equilibrium (0.35) given ample pool and \
+             many ticks",
+            zones.zones[0].spirit_qi
+        );
+
+        // Run further — must remain pinned, not creep past equilibrium.
+        advance_ticks(&mut app, TICKS_PER_MINUTE * 50);
+        let zones = app.world().resource::<ZoneRegistry>();
+        assert!(
+            zones.zones[0].spirit_qi <= 0.35 + 1e-9,
+            "continuing to tick after reaching equilibrium must not push spirit_qi past it \
+             (got {})",
+            zones.zones[0].spirit_qi
+        );
+    }
+
+    #[test]
+    fn insufficient_pending_pool_scales_down_and_never_overdraws() {
+        let mut z = zone("spawn", 0.0, 0.0, 0.1);
+        z.qi_equilibrium = 0.9;
+        z.qi_inflow_per_min = 10.0;
+        // Pool only has 2.0 absolute points — far less than what 1 minute at 10.0/min would need.
+        let mut app = inflow_test_app(vec![z], 2.0, 0);
+
+        advance_ticks(&mut app, TICKS_PER_MINUTE);
+
+        let ledger = app.world().resource::<WorldQiAccount>();
+        let pool_balance = ledger.balance(&pending_inflow_account());
+        assert!(
+            pool_balance >= -1e-9,
+            "pending pool balance must never go negative (no overdraw), got {pool_balance}"
+        );
+        assert!(
+            pool_balance.abs() < 1e-9,
+            "with only 2.0 available and 10.0 desired, the pool should be drained to exactly \
+             zero (scaled down), not partially retained or overdrawn — got {pool_balance}"
+        );
+
+        let zones = app.world().resource::<ZoneRegistry>();
+        let expected_fraction_gain = 2.0 / QI_ZONE_UNIT_CAPACITY;
+        assert!(
+            (zones.zones[0].spirit_qi - (0.1 + expected_fraction_gain)).abs() < 1e-9,
+            "the zone must only receive the amount the pool could actually afford (2.0 \
+             absolute -> {expected_fraction_gain} fraction), got {}",
+            zones.zones[0].spirit_qi
+        );
+    }
+
+    #[test]
+    fn empty_pending_pool_yields_zero_inflow_and_zone_is_untouched() {
+        let mut z = zone("spawn", 0.0, 0.0, 0.1);
+        z.qi_equilibrium = 0.5;
+        z.qi_inflow_per_min = 1.0;
+        let mut app = inflow_test_app(vec![z], 0.0, 0);
+
+        advance_ticks(&mut app, TICKS_PER_MINUTE * 10);
+
+        let zones = app.world().resource::<ZoneRegistry>();
+        assert_eq!(
+            zones.zones[0].spirit_qi, 0.1,
+            "an empty pending pool must leave the zone completely untouched, not partially \
+             credit it or panic"
+        );
+    }
+
+    #[test]
+    fn negative_zone_qi_is_skipped_entirely() {
+        let mut z = zone("dead_zone", 0.0, 0.0, -0.2);
+        z.qi_equilibrium = 0.5;
+        z.qi_inflow_per_min = 1.0;
+        let mut app = inflow_test_app(vec![z], 1000.0, 0);
+
+        advance_ticks(&mut app, TICKS_PER_MINUTE * 10);
+
+        let zones = app.world().resource::<ZoneRegistry>();
+        assert_eq!(
+            zones.zones[0].spirit_qi, -0.2,
+            "negative-qi (负灵域) zones must never be inflowed by this P1 system — recovery \
+             out of negative territory is explicitly out of scope (§8.1 #5)"
+        );
+        let ledger = app.world().resource::<WorldQiAccount>();
+        assert_eq!(
+            ledger.balance(&pending_inflow_account()),
+            1000.0,
+            "the pending pool must not be touched at all for a skipped negative-qi zone"
+        );
+    }
+
+    #[test]
+    fn realm_collapse_zone_is_skipped_even_when_below_equilibrium() {
+        let mut z = zone("collapsing", 0.0, 0.0, 0.1);
+        z.qi_equilibrium = 0.5;
+        z.qi_inflow_per_min = 1.0;
+        let mut app = inflow_test_app(vec![z], 1000.0, 0);
+        {
+            let command =
+                spawn_event_command("collapsing", EVENT_REALM_COLLAPSE, 1.0, 20_000, None);
+            let mut zones_for_lookup = app.world().resource::<ZoneRegistry>().clone();
+            let mut active_events = app.world_mut().resource_mut::<ActiveEventsResource>();
+            assert!(
+                active_events.enqueue_from_spawn_command(&command, Some(&mut zones_for_lookup)),
+                "test setup: enqueueing the REALM_COLLAPSE active event must succeed"
+            );
+        }
+
+        advance_ticks(&mut app, TICKS_PER_MINUTE * 10);
+
+        let zones = app.world().resource::<ZoneRegistry>();
+        assert_eq!(
+            zones.zones[0].spirit_qi, 0.1,
+            "a zone with an active EVENT_REALM_COLLAPSE must be skipped by inflow even though \
+             it is far below equilibrium (§8.1 #5, mirrors maybe_queue_realm_collapse's own \
+             active_events.contains(..., EVENT_REALM_COLLAPSE) gate)"
+        );
+    }
+
+    #[test]
+    fn zero_equilibrium_zone_is_never_touched_back_compat() {
+        // 默认值 0.0（没配置 qi_equilibrium/qi_inflow_per_min 的旧 zone）必须完全不受影响。
+        let z = zone("legacy_zone", 0.0, 0.0, 0.05);
+        assert_eq!(z.qi_equilibrium, 0.0);
+        assert_eq!(z.qi_inflow_per_min, 0.0);
+        let mut app = inflow_test_app(vec![z], 1000.0, 0);
+
+        advance_ticks(&mut app, TICKS_PER_MINUTE * 100);
+
+        let zones = app.world().resource::<ZoneRegistry>();
+        assert_eq!(
+            zones.zones[0].spirit_qi, 0.05,
+            "a zone with qi_equilibrium == 0.0 (back-compat default) must never receive any \
+             inflow, no matter how many ticks pass"
+        );
+        let ledger = app.world().resource::<WorldQiAccount>();
+        assert_eq!(
+            ledger.balance(&pending_inflow_account()),
+            1000.0,
+            "the pending pool must be completely untouched for an opted-out zone"
+        );
+    }
+
+    #[test]
+    fn multi_zone_conservation_holds_across_a_long_run() {
+        // 回流↔（模拟）吸收长跑总量守恒：多个 zone 分别从同一个待分配池取用，
+        // 待分配池减少量之和必须精确等于所有 zone 累计增加量之和（换算到绝对单位）。
+        let mut zone_a = zone("zone_a", 0.0, 0.0, 0.05);
+        zone_a.qi_equilibrium = 0.3;
+        zone_a.qi_inflow_per_min = 0.6;
+        let mut zone_b = zone("zone_b", 500.0, 0.0, 0.1);
+        zone_b.qi_equilibrium = 0.4;
+        zone_b.qi_inflow_per_min = 0.3;
+        let mut zone_c_no_inflow = zone("zone_c", 1000.0, 0.0, 0.05);
+        zone_c_no_inflow.qi_equilibrium = 0.0; // opted out, must stay untouched
+
+        let initial_pool = 500.0;
+        let mut app = inflow_test_app(vec![zone_a, zone_b, zone_c_no_inflow], initial_pool, 0);
+
+        for _ in 0..200 {
+            advance_ticks(&mut app, TICKS_PER_MINUTE);
+        }
+
+        let zones = app.world().resource::<ZoneRegistry>();
+        let ledger = app.world().resource::<WorldQiAccount>();
+        let pool_balance = ledger.balance(&pending_inflow_account());
+
+        let zone_a_absolute = zones.zones[0].spirit_qi * QI_ZONE_UNIT_CAPACITY;
+        let zone_b_absolute = zones.zones[1].spirit_qi * QI_ZONE_UNIT_CAPACITY;
+        let zone_a_initial_absolute = 0.05 * QI_ZONE_UNIT_CAPACITY;
+        let zone_b_initial_absolute = 0.1 * QI_ZONE_UNIT_CAPACITY;
+        let total_credited = (zone_a_absolute - zone_a_initial_absolute)
+            + (zone_b_absolute - zone_b_initial_absolute);
+        let total_debited = initial_pool - pool_balance;
+
+        assert!(
+            (total_credited - total_debited).abs() < 1e-6,
+            "sum of absolute qi credited to all zones ({total_credited}) must exactly equal \
+             the amount debited from the shared pending pool ({total_debited}) — any mismatch \
+             is qi being created or destroyed out of thin air"
+        );
+        assert_eq!(
+            zones.zones[2].spirit_qi, 0.05,
+            "the opted-out zone_c (qi_equilibrium == 0.0) must never participate and must \
+             stay completely untouched even while its siblings draw from the shared pool"
+        );
+        assert!(
+            zones.zones[0].spirit_qi <= 0.3 + 1e-9 && zones.zones[1].spirit_qi <= 0.4 + 1e-9,
+            "neither zone may overshoot its own equilibrium after a long multi-zone run \
+             (zone_a={}, zone_b={})",
+            zones.zones[0].spirit_qi,
+            zones.zones[1].spirit_qi
+        );
+    }
+
+    #[test]
+    fn time_advance_style_large_tick_jump_is_caught_up_in_one_evaluation() {
+        // `/time advance` 直接 saturating_add 到 CultivationClock.tick（不是逐 tick 递增），
+        // 下一次 zone_qi_inflow_tick 必须按整段 delta 一次性补上，而不是只补 1 tick 的量。
+        let mut z = zone("spawn", 0.0, 0.0, 0.1);
+        z.qi_equilibrium = 0.9;
+        z.qi_inflow_per_min = 1.0;
+        let mut app = inflow_test_app(vec![z], 100_000.0, 0);
+
+        // Jump 30 minutes' worth of ticks all at once, like `/time advance` would.
+        advance_ticks(&mut app, TICKS_PER_MINUTE * 30);
+
+        let zones = app.world().resource::<ZoneRegistry>();
+        let expected_fraction_gain = (1.0 * 30.0) / QI_ZONE_UNIT_CAPACITY;
+        assert!(
+            (zones.zones[0].spirit_qi - (0.1 + expected_fraction_gain)).abs() < 1e-9,
+            "a single large tick jump (simulating /time advance) must be caught up as one \
+             30-minute window (gain={expected_fraction_gain}), not truncated to a single \
+             per-tick increment — got {}",
+            zones.zones[0].spirit_qi
+        );
     }
 }
