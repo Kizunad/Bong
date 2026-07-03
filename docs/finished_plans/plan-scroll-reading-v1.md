@@ -6,9 +6,9 @@
 
 | 阶段 | 主题 | 状态 |
 |------|------|------|
-| P0 | server 底盘——物品模板 / C2S 读取 / S2C scroll_open 契约 / 首入发放 | ⬜ |
-| P1 | client 阅读屏——bridge 接缝 + Store/Opener/Screen（可复用壳） | ⬜ |
-| P2 | 视听——阅读循环动画 / 手持模型 / 展开微光 / SFX / 图标 | ⬜ |
+| P0 | server 底盘——物品模板 / C2S 读取 / S2C scroll_open 契约 / 首入发放 | ✅ 2026-07-03 |
+| P1 | client 阅读屏——bridge 接缝 + Store/Opener/Screen（可复用壳） | ✅ 2026-07-03 |
+| P2 | 视听——阅读循环动画 / 手持模型 / 展开微光 / SFX / 图标 | ✅ 2026-07-03 |
 
 ---
 
@@ -35,16 +35,16 @@
 
 ---
 
-## P0 server 底盘 ⬜
+## P0 server 底盘 ✅ 2026-07-03
 
 - `ItemTemplate` 加 `readable_scroll_spec: Option<ReadableScrollSpec>`（`inventory/mod.rs:140` 现有 `*_scroll_spec` 族旁）：`{ title: String, body_pages: Vec<String>, anim_id: Option<String> }`。**读不消耗**（区别于 technique_scroll 消耗式）。
-- 新物品 `scroll_meridian_primer`《经脉浅述·残卷》进 `onboarding_scrolls.toml`（`category="scroll"`, grid 1×2, max_stack=1），正文从 `经脉浅述.json` 摘编 3~5 页（每页 ≤ 500 字，具体分页见 §8 #3）。
+- 新物品 `scroll_meridian_primer`《经脉浅述·残卷》进 `onboarding_scrolls.toml`（`category="scroll"`, grid 1×2, max_stack=1），正文 **3 页（每页 ≤150 字）**，见 §8.1 #3 代拟正文（consume 已按 §8.1 收口值，草案 3~5页/≤500字 作废）。
 - C2S `ClientRequestV1::ScrollReadRequest { v, instance_id }`：handler 查实例模板有 `readable_scroll_spec` → emit S2C `ScrollOpen { scroll_id, title, body_pages }` + `play_anim`；无 spec / 非本人物品 → 静默拒绝 + warn。
 - S2C `ServerDataPayloadV1::ScrollOpen`（proto/serde/TS/samples 四件套，落点清单照 `reference_server_data_payload_field` 模式扩到新 variant）。
 - **首入发放（原子性硬要求）**：join 时判定 → 发放 → 打 hook 必须在**同一 system 同一 tick**内完成，且 inventory 与 `TutorialState` 落进同一次持久化 flush。幂等用**双重判定**兜崩溃窗口：`TutorialState.has(TutorialHook::MeridianPrimerGranted)` **或** 背包已存在 `scroll_meridian_primer` 模板实例，任一命中即跳过补发——覆盖"物品已落 hook 未落"与"hook 已落物品未落"两个中断顺序（后者不该出现：实现顺序固定为先加物品后打 hook）。存量老玩家也补发；发放静默，无 narration，对齐沉默引导。发放方式最终拍板见 §8 #1。
 - **测试**：spec 解析正反 sample；ScrollReadRequest happy/无 spec/伪 instance_id/重复请求；发放幂等（重连不重发、老玩家补发一次、**模拟"物品已发 hook 未持久化"的崩溃窗口重登不重发**）；payload roundtrip 对拍。
 
-## P1 client 阅读屏（可复用壳）⬜
+## P1 client 阅读屏（可复用壳）✅ 2026-07-03
 
 范式 A 全套（仿 DeathScreen 链）：
 
@@ -54,7 +54,7 @@
 - **可复用性验收**：屏的输入只依赖 `ScrollOpen` payload 字段（title/pages），不 hardcode 经脉内容——第二卷任意 readable scroll 零 client 改动可读。
 - **测试**：Handler 缺字段丢弃分支；Store 生命周期（open→close→再 open）；分页边界（1 页 / 最大页 / 空页拒绝）。
 
-## P2 视听 ⬜
+## P2 视听 ✅ 2026-07-03
 
 - **阅读动画**（`client/tools/gen_read_scroll.py` → `read_scroll.json`，loop）：双手持卷展开——`rightArm/leftArm pitch≈-75°, bend≈90°, axis=180°`（前折约定 `anim_common.py:31`），`head.pitch +12°` 低头，`torso.pitch +10°` 前倾 + **鞠躬补偿**（`body.y -0.04` 下沉、双腿 `pitch -8° bend +12°` 微屈，照抄 `gen_bow_salute.py:52-58`）；呼吸感微摆 ±2°，周期 40 tick，easeInOutSine；**loop 首尾帧全轴对齐**（`_check_loop_closure` 断言，防淡回 T-pose）。`render_animation.py` 出预览网格核姿态后再进游戏。server 在 ScrollOpen 时 emit `play_anim bong:read_scroll`（loop、中低 priority、fadeIn 4 tick），client 关屏发 close 请求或 server 收 `ScrollReadClosed` 后 `stop_anim`（关停机制见 §8 #4）。
 - **手持模型**：白嫖原版 `minecraft:paper`——新 `ScrollVanillaIconMap.createStackFor()` 仿 `HoeVanillaIconMap`，纳入 `HeldItemStackResolver.resolveMainHand()` fallback 链（FPV+TPV 双入口自动同步）。不做 OBJ。
@@ -140,7 +140,7 @@ S2C `scroll_open` 原定 tag 137，2026-07-03 复核发现 **#825 `InventoryMove
 // C2S，oneof payload tag = 100
 message ScrollReadRequest {
   uint32 v           = 1;   // 版本，恒 1
-  string instance_id = 2;   // 背包内物品实例 id
+  uint64 instance_id = 2;   // 背包内物品实例 id（consume 落地为 u64，对齐全仓 20+ 处 instance_id 惯例，非草案 string；§9「回写本节」已执行）
 }
 
 // S2C，oneof payload tag = 138（原定 137 被 #825 InventoryMoveRejected 抢占，顺延，见上方说明）
@@ -171,3 +171,37 @@ scope ~3 PR，单 plan 内序列化（`docs/CLAUDE.md` §六）。
 
 - 收口调研（2026-07-03，Explore agent 实地核查）：§9 tag 137→138 冲突定位（#825 InventoryMoveRejected 抢占）；六条 §8 决议 file:line（发放仿 `grant_coffin_reward_once`/关停仿 `shield_block`/正文内联 TOML）；残卷正文代拟（摘 `经脉浅述.json`）；接入面 file:line 清单（server 物品模板/C2S/S2C/proto/client 桥接/UI/动画）。
 - 相关先例：`plan-spawn-tutorial-v1`（沉默引导 + TutorialHook）/ `plan-onboarding-loop-v1`（招式残卷）/ `plan-shield-block-v1`（loop 动画启停 + 死亡兜底）。
+
+---
+
+## Finish Evidence
+
+**验收日期**：2026-07-03（`/consume-plan` 全自动：Design→Implement P0-P2→博弈 Verify，round-1 needs_fix(发起端孤岛)→补发起端→round-2 ready，15 commit + 全绿）
+
+### 落地清单
+- **P0 server 底盘**：`ItemTemplate.readable_scroll_spec`（`inventory/mod.rs`，读不消耗，区别 technique_scroll）+ `parse_readable_scroll_spec` + `scroll_meridian_primer`《经脉浅述·残卷》3 页正文入 `onboarding_scrolls.toml`；C2S `ScrollReadRequest`(tag 100) handler(`client_request_handler.rs` 查 spec → emit ScrollOpen + play_anim)；S2C `ScrollOpen`(tag 138) 四件套双端(`envelope.proto`+`server_data.rs`+`proto_convert.rs`+`agent_bridge.rs` label+TS `server-data.ts`+samples)；首入 `TutorialHook::MeridianPrimerGranted` + `grant_meridian_primer_once` + tick-poll 补发系统（仿 `send_tutorial_coffin_pos_on_join`，双重判定幂等，老玩家也补）。
+- **P1 client 阅读屏**：`ProtoServerDataBridge` 两处(CASE_TO_TYPE + extractInner) + `ScrollOpenHandler`→`ScrollReadStore`→`ScrollReadScreenBootstrap`→`ScrollReadScreen`(viewport `Sizing.fixed` 防顶飞、翻页 diff 原地更新防回弹、可复用只依赖 payload 不 hardcode 经脉)；C2S `ScrollReadClosed`(**tag 101**，§9 顺延) 关屏。
+- **P2 视听**：`gen_read_scroll.py` 阅读循环动画(40 tick loop 闭合断言)；`ScrollVanillaIconMap` 白嫖 paper 接 `HeldItemStackResolver` 第五级(惰性 Supplier 避 headless panic)；`ScrollOpenGlowPlayer` VFX(注册进 `VfxBootstrap` 防孤岛)；SFX audio_recipe；gen-image 图标 + `resourcepack.rs` sha1 同步。
+- **发起端(round-2 补,73c8d65b6)**：`InspectScreen` 右键残卷 → `[阅读]` context menu action(`ActionKind.READ_SCROLL`，与 `[研读功法]` 同范式、与 TECHNIQUE_SCROLL_USE 互斥) → `dispatchScrollReadRequest` → `ClientRequestSender.sendScrollReadRequest` → `ClientRequestProtocol.encodeScrollReadRequest`(instance_id u64)。三重守卫(null/instanceId==0/未注册 template 拒绝)。**打通读卷全链路(此前收端全套是死代码)。**
+
+### 关键 commit（分支 `auto/plan-scroll-reading-v1`，15 个）
+P0 `e7dfce563`/`94a1e19a1`/`0a6a33bcb`/`3f495af9a` · P1 `21a38e3c4`(ScrollReadClosed tag101)/`64d30a4df`/`9eddc9765` · P2 `edea43356`(三路径止动画)/`846f61261`/`e0feb7876`/`401e3df2c` 等 · fix `73c8d65b6`(发起端)
+
+### 测试结果
+- **server**：`cargo fmt+clippy -D warnings+test` = **10967 passed**
+- **client**：`./gradlew test build` = **3517 passed / 0 failed**（含 `InspectScreenScrollReadTest` 8 例 + 发起端 pin）
+- **agent/schema**：`npm test` drift gate 绿
+
+### 跨仓库核验
+- **server**：`readable_scroll_spec`/`ScrollReadRequest`/`ScrollOpen`/`ScrollReadClosed`/`TutorialHook::MeridianPrimerGranted`/`emit_scroll_open`/`grant_meridian_primer_once`
+- **agent**：`server-data.ts` ScrollOpen TypeBox + samples
+- **client**：`ProtoServerDataBridge`(scroll_open)/`ScrollOpenHandler`/`ScrollReadStore`/`ScrollReadScreen`/`ScrollVanillaIconMap`/`ScrollOpenGlowPlayer`/`InspectScreen` READ_SCROLL/`ClientRequestSender.sendScrollReadRequest`
+
+### 博弈自检
+- Verify round-1：opus needs_fix，唯一 blocker = **读卷链路对玩家不可达**（收端全套建了、发起端缺失=死代码孤岛，`feedback_spawn_chain_wiring` 经典）→ 补 `InspectScreen [阅读]` 触发端(`73c8d65b6`)。
+- round-2：控方 charges=[]、端到端 consumable=true，opus 复核发起端真接线端到端通(右键→C2S→handler→ScrollOpen→Screen 无断点) → **verdict=ready，defenseWins=true**。
+
+### 遗留 / 后续
+- §9 契约草案 `instance_id: string` → 实际落地 `u64`（对齐全仓惯例，已回写 §9）。
+- 残卷正文（§8.1 #3 代拟）供用户过目；worldview↔`topology.rs` 经脉邻接有 pre-existing 漂移（肺经代码邻接大肠+肝、worldview 文本大肠+心，非本 plan 引入）。
+- §6 复用清单登记的候选（丹方预览/黑武士遗书/图书馆残页）未实施，未来挂同一 `readable_scroll_spec` 链路。
