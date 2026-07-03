@@ -35,3 +35,7 @@
 > plan-shield-block-v1 的 3 条措辞修正（PR #470 Pi review）与 plan-economy-zombie-cleanup-v1 的 5 条勘误（PR #472 Pi review）均已于 2026-06-10 填充 workflow 并入对应 plan（plan 头部有声明），已按约定删除。
 
 - **camouflage_net 驻地遮蔽待办**（§8.1 #5 收口决议产物）：本 plan 仅把 camouflage_net 接成 Fan 档伪皮材料，未做差异化「驻地遮蔽」效果（需放置形态，依赖 `plan-workbench-place-runtime-v1` 的 `block_item_to_state` 或新 ECS Component）。将来做驻地遮蔽时另立 plan 或并入放置类族，届时可从 Fan 档升级。
+
+## plan-npc-realm-distribution-v1 → plan-zone-qi-economy-v1（§8.1 #4 收口决议产物，2026-07-03）
+
+- **NPC 让灵地板/inflow 需按新境界结构重估**：`plan-npc-realm-distribution-v1` P1 落地后，NPC 群体不再全员醒灵（按 §8.1 #1 分布表长尾到通灵），高境界 NPC 吸灵路径（`dormant/mod.rs:1435` 起 `release_dormant_qi_to_zone`/absorption，消费 `plan-zone-qi-economy-v1` owns 的 `QI_NPC_ABSORB_FLOOR=0.3`/equilibrium/inflow 数值）会因这批高境界 NPC 数量上升而产生更高频次/更大额的吸收请求。`plan-npc-realm-distribution-v1` 本身不改这些常数（数值 owner 是 `plan-zone-qi-economy-v1`，跨 plan 数值协调必须由该 plan 自己的 PR 完成）。**待办**：`plan-npc-realm-distribution-v1` P1 merge 后，`plan-zone-qi-economy-v1` 用 `account:npc:*` 账本 dump 重新核算 `QI_NPC_ABSORB_FLOOR`/equilibrium/inflow 是否还匹配新的境界结构人口分布，不匹配则在自己 PR 内调整。
