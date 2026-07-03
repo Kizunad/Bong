@@ -28,11 +28,21 @@ const STANDING_HALF_WIDTH: f64 = 0.3;
 const STANDING_HEIGHT: f64 = 1.8;
 const CHEST_AIM_HEIGHT: f64 = 1.2;
 
-/// P0 起始 σ 值（决议 §8.1 #1）：非最终校准值，P1 用固定 seed 直方图实测校准。
-/// melee ~2m 几何推算：够头需抬 pitch ~11°、够臂需偏 yaw ~5°、够腿需压 pitch ~16°，
-/// 此组 σ 定性给出"胸多、头腹臂腿有尾巴"的分布形状。
-pub const AIM_JITTER_PITCH_SIGMA_DEG: f64 = 9.0;
-pub const AIM_JITTER_YAW_SIGMA_DEG: f64 = 7.0;
+/// P1 校准值（决议 §8.1 #1，plan-combat-hit-location-v1 P1）：替换 P0 起始值 9.0/7.0。
+///
+/// P0 的几何估算把"够头需抬 pitch ~11°"当成与"够腿需压 pitch ~16°"同量级的对称偏移，
+/// 但 `ATTACKER_EYE_HEIGHT=1.62` 已经贴近头部阈值（`rel_y>0.88` 对应 y>1.584），命中头部
+/// 几乎不需要额外上仰；命中腿部（`rel_y<=leg 阈值`，y 更接近脚底）则需要大得多的下压角。
+/// 固定 seed 直方图实测（3000 次 NPC 攻击，origin=(0,1.62,-2) target=(0,0,0)，fist 缩放）显示：
+/// 纯调 σ 无法同时满足"头 8-12% 且腿 15-20%"——σ 越大头部命中率越先突破上限。
+/// 因此 P1 校准同时下调 yaw_sigma（收窄横向散布，抑制臂命中率飙升）、
+/// 小幅上调 pitch_sigma，并配合下方 `classify_body_part` 阈值调整（见该函数注释）
+/// 把原本被 Abdomen 吞掉的中低段命中重新分给 Leg，最终校准分布（seed
+/// `npc_aim_seed("npc:combat_dist_p1", 0..3000)`）：胸 48.9% / 腹 2.6%（窄带，见下方阈值调整
+/// 说明）/ 头 11.6% / 臂 19.3%(左右各半) / 腿 17.5%(左右各半)，见
+/// `npc_aim_direction_batch_distribution_hits_target_ranges_p1` pin 测试。
+pub const AIM_JITTER_PITCH_SIGMA_DEG: f64 = 10.0;
+pub const AIM_JITTER_YAW_SIGMA_DEG: f64 = 6.0;
 
 /// 武器 reach → σ 缩放系数（决议 §8.1 #1）：reach 越长散布越松，近身武器更精准。
 /// 武器只分拳/近战刃/长杆三档（`events.rs:26-32`），无独立"枪"类；spear 与 staff 同归长杆档。
@@ -83,7 +93,10 @@ fn uniform_01(bits: u64) -> f64 {
 }
 
 /// Box-Muller 变换：从种子确定性生成一对独立标准正态样本（均值 0、标准差 1）。
-fn gaussian_pair(seed: u64) -> (f64, f64) {
+///
+/// `pub(crate)`：plan-combat-hit-location-v1 P1 起 `combat::needle` 复用同一套确定性
+/// PRNG 给气针发射方向加散布抖动（决议 §8.1 #2），避免重复实现 Box-Muller/splitmix64。
+pub(crate) fn gaussian_pair(seed: u64) -> (f64, f64) {
     let mut state = seed;
     // u1 钳位避开 ln(0)（seed=0 时 splitmix64 首个输出理论上可能极端接近 0）。
     let u1 = uniform_01(splitmix64_next(&mut state)).max(1e-12);
@@ -162,6 +175,21 @@ pub fn standing_humanoid_aabb(feet_position: DVec3) -> Aabb {
     }
 }
 
+/// 臂命中横向阈值（决议 §8.1 #4，plan-combat-hit-location-v1 P1 校准）。
+/// P0 起始值 0.18 → P1 实测微调至 0.19（略收窄 Chest 命中带，把边缘让给 Arm，
+/// 配合下方 `LEG_ABDOMEN_BOUNDARY` 一起把分布推向目标区间）。
+const ARM_LATERAL_THRESHOLD: f64 = 0.19;
+
+/// 躯干/腿部高度分界（决议 §8.1 #4，plan-combat-hit-location-v1 P1 校准）。
+/// P0 起始值 0.35 → P1 实测**大幅上调**至 0.53（决议文本原文猜测方向是"如需可略降"，
+/// 但直方图数据显示的是相反方向：`ATTACKER_EYE_HEIGHT=1.62` 已经贴近 Head 阈值，
+/// 命中 Leg 需要的下压角远大于命中 Head 需要的上仰角，纯调 σ 会让 Head 提前撞
+/// 8-12% 上限而 Leg 仍不到 15% 下限。上调本阈值把原本被 Abdomen 吞掉的中低段命中
+/// 重新划给 Leg，使 Leg 落入 15-20% 目标区间，Abdomen 相应收窄为一个窄带（~3%，
+/// 无强制区间，plan 只给了单值"15%"作参考，本次以数据为准接受偏差，见
+/// `AIM_JITTER_PITCH_SIGMA_DEG` 注释的完整校准说明）。
+const LEG_ABDOMEN_BOUNDARY: f64 = 0.53;
+
 pub fn classify_body_part(
     hit_point: DVec3,
     target_feet_position: DVec3,
@@ -189,7 +217,7 @@ pub fn classify_body_part(
     if rel_y > 0.88 {
         BodyPart::Head
     } else if rel_y > 0.55 {
-        if lateral.abs() > 0.18 {
+        if lateral.abs() > ARM_LATERAL_THRESHOLD {
             if lateral > 0.0 {
                 BodyPart::ArmR
             } else {
@@ -198,7 +226,7 @@ pub fn classify_body_part(
         } else {
             BodyPart::Chest
         }
-    } else if rel_y > 0.35 {
+    } else if rel_y > LEG_ABDOMEN_BOUNDARY {
         BodyPart::Abdomen
     } else if lateral > 0.0 {
         BodyPart::LegR
@@ -545,9 +573,21 @@ mod tests {
             classify_body_part(DVec3::new(0.0, 1.2, -0.25), feet, origin),
             BodyPart::ArmL
         );
+        // P1 校准（决议 §8.1 #4）把 LEG_ABDOMEN_BOUNDARY 从 0.35 上调到 0.53——
+        // rel_y=0.7/1.8≈0.389 曾经落在旧 Abdomen 区间 (0.35,0.55]，但在新阈值下
+        // 已经跌破 0.53，改判 Leg。这里改用 rel_y=0.97/1.8≈0.539，落在新的
+        // 窄 Abdomen 区间 (0.53,0.55] 内，继续钉住 Abdomen 分支存活。
+        assert_eq!(
+            classify_body_part(DVec3::new(0.0, 0.97, 0.0), feet, origin),
+            BodyPart::Abdomen,
+            "rel_y≈0.539 应落在 P1 校准后的窄 Abdomen 区间 (0.53,0.55] 内"
+        );
+        // 旧阈值下会判 Abdomen 的 rel_y=0.389 现在必须落入 Leg（P1 校准的核心目的：
+        // 把原本被 Abdomen 吞掉的中低段命中让给 Leg，冲高 Leg 命中率到目标区间）。
         assert_eq!(
             classify_body_part(DVec3::new(0.0, 0.7, 0.0), feet, origin),
-            BodyPart::Abdomen
+            BodyPart::LegL,
+            "rel_y≈0.389 应在 P1 校准后的 LEG_ABDOMEN_BOUNDARY=0.53 之下改判 Leg（旧阈值 0.35 下曾是 Abdomen）"
         );
         assert_eq!(
             classify_body_part(DVec3::new(0.0, 0.2, 0.2), feet, origin),
@@ -556,6 +596,79 @@ mod tests {
         assert_eq!(
             classify_body_part(DVec3::new(0.0, 0.2, -0.2), feet, origin),
             BodyPart::LegL
+        );
+    }
+
+    #[test]
+    fn classify_body_part_arm_lateral_threshold_boundary_p1() {
+        // P1 校准（决议 §8.1 #4）：ARM_LATERAL_THRESHOLD 从 0.18 微调到 0.19。
+        // 专属边界 case：lateral 恰好落在新旧阈值之间（0.185）必须判 Chest（未超过新阈值），
+        // 而 lateral=0.20（超过新阈值）必须判 ArmR——钉住新阈值本身生效，不是残留旧值。
+        let feet = DVec3::new(0.0, 0.0, 0.0);
+        let origin = DVec3::new(-2.0, 1.2, 0.0);
+        // rel_y = 1.2/1.8 = 0.667，落在 Chest/Arm 判定带内（不受 leg 边界影响）。
+        // 攻击方向沿 +x（origin z=0 == feet z=0）时 lateral 恰等于 hit.z。
+        assert_eq!(
+            classify_body_part(DVec3::new(0.0, 1.2, 0.185), feet, origin),
+            BodyPart::Chest,
+            "lateral=0.185 未超过 P1 阈值 0.19，应仍判 Chest"
+        );
+        assert_eq!(
+            classify_body_part(DVec3::new(0.0, 1.2, 0.20), feet, origin),
+            BodyPart::ArmR,
+            "lateral=0.20 超过 P1 阈值 0.19，应判 ArmR"
+        );
+    }
+
+    #[test]
+    fn npc_aim_direction_batch_distribution_hits_target_ranges_p1() {
+        // P1 直方图校准 pin（决议 §8.1 #1/#4，plan-combat-hit-location-v1 P1）：
+        // 固定 seed 批量 NPC 攻击（3000 次，fist 缩放，正面平视基线）落入目标分布区间——
+        // 胸 40-50% / 头 8-12% / 臂(合计) 15-20% / 腿(合计) 15-20%。
+        // Abdomen 无强制区间（plan 只给单值"15%"参考，AIM_JITTER_PITCH_SIGMA_DEG 注释
+        // 解释了为何数据驱动校准接受 Abdomen 显著低于该参考值）——仅断言其 >0（分支存活）。
+        let origin = DVec3::new(0.0, 1.62, -2.0);
+        let target = DVec3::new(0.0, 0.0, 0.0);
+        let mut counts: std::collections::HashMap<BodyPart, u32> = std::collections::HashMap::new();
+
+        for tick in 0..3000u64 {
+            let seed = npc_aim_seed("npc:combat_dist_p1", tick);
+            let aim_direction = npc_aim_direction(origin, target, seed, 1.0);
+            if let Some(probe) = raycast_humanoid(origin, target, 5.0, aim_direction) {
+                *counts.entry(probe.body_part).or_insert(0) += 1;
+            }
+        }
+
+        let total: u32 = counts.values().sum();
+        assert!(total > 0, "批量攻击必须产生命中样本才能校验分布");
+        let pct = |part: BodyPart| -> f64 {
+            f64::from(counts.get(&part).copied().unwrap_or(0)) / f64::from(total) * 100.0
+        };
+        let chest_pct = pct(BodyPart::Chest);
+        let head_pct = pct(BodyPart::Head);
+        let arms_pct = pct(BodyPart::ArmL) + pct(BodyPart::ArmR);
+        let legs_pct = pct(BodyPart::LegL) + pct(BodyPart::LegR);
+        let abdomen_pct = pct(BodyPart::Abdomen);
+
+        assert!(
+            (40.0..=50.0).contains(&chest_pct),
+            "胸部命中率应落在目标区间 40-50%，实际 {chest_pct:.1}%（校准依据见 AIM_JITTER_PITCH_SIGMA_DEG 注释）"
+        );
+        assert!(
+            (8.0..=12.0).contains(&head_pct),
+            "头部命中率应落在目标区间 8-12%，实际 {head_pct:.1}%"
+        );
+        assert!(
+            (15.0..=20.0).contains(&arms_pct),
+            "双臂合计命中率应落在目标区间 15-20%，实际 {arms_pct:.1}%"
+        );
+        assert!(
+            (15.0..=20.0).contains(&legs_pct),
+            "双腿合计命中率应落在目标区间 15-20%，实际 {legs_pct:.1}%"
+        );
+        assert!(
+            abdomen_pct > 0.0,
+            "腹部命中分支必须存活（>0），实际 {abdomen_pct:.1}%（无强制区间，见校准说明）"
         );
     }
 }

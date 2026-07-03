@@ -7,6 +7,7 @@ use valence::prelude::{
 };
 
 use crate::combat::anticheat::AntiCheatCounter;
+use crate::combat::arm_wound;
 use crate::combat::armor::{ArmorProfileRegistry, ARMOR_MITIGATION_CAP};
 use crate::combat::baomai_v4::dead_armor::{should_block_contamination, DeadMeridianArmor};
 use crate::combat::body_mass::{BodyMass, Stance};
@@ -151,6 +152,9 @@ type CombatAttackerItem<'a> = (
     Option<&'a CombatState>,
     Option<&'a KnownTechniques>,
     Option<&'a Lifecycle>,
+    // plan-combat-hit-location-v1 P1 — 攻方自身臂伤（主手臂伤势）削减自身攻击伤害。
+    // 只读，与 CombatTargetItem 的 `&mut Wounds` 同处一个 ParamSet（p0/p1），Bevy 允许。
+    Option<&'a Wounds>,
 );
 type DefenseResponderItem<'a> = (
     &'a mut CombatState,
@@ -356,6 +360,7 @@ pub fn resolve_attack_intents(
                 attacker_combat_state,
                 _,
                 attacker_lifecycle,
+                _,
             )) = attacker_query.get_mut(intent.attacker)
             else {
                 continue;
@@ -451,7 +456,7 @@ pub fn resolve_attack_intents(
         ) else {
             if intent.debug_command.is_none() {
                 let mut attacker_query = combatants.p0();
-                if let Ok((_, _, _, mut anticheat_counter, _, _, _)) =
+                if let Ok((_, _, _, mut anticheat_counter, _, _, _, _)) =
                     attacker_query.get_mut(intent.attacker)
                 {
                     record_anticheat_violation(
@@ -479,10 +484,15 @@ pub fn resolve_attack_intents(
                 _,
                 attacker_known_techniques,
                 _,
+                attacker_wounds,
             )) = attacker_query.get_mut(intent.attacker)
             else {
                 continue;
             };
+            // plan-combat-hit-location-v1 P1（决议 §8.1 #2）— 攻方主手臂伤势削减自身攻击伤害。
+            // Bruise×0.95/Abrasion×0.90/Laceration×0.80/Fracture×0.60/Severed×0.40。
+            let attacker_arm_wound_damage_multiplier =
+                arm_wound::combined_factor_from_optional(attacker_wounds).attack_damage_multiplier;
 
             if qi_invest > f64::EPSILON && !source_uses_prepaid_qi(intent.source) {
                 attacker_cultivation.qi_current = (attacker_cultivation.qi_current - qi_invest)
@@ -500,7 +510,8 @@ pub fn resolve_attack_intents(
             (
                 attacker_attrs
                     .map(|attrs| attrs.attack_power)
-                    .unwrap_or(1.0),
+                    .unwrap_or(1.0)
+                    * attacker_arm_wound_damage_multiplier,
                 body_masses.get(intent.attacker).ok().copied(),
                 sword_basics::source_to_technique(intent.source)
                     .and_then(|technique| {
@@ -540,6 +551,11 @@ pub fn resolve_attack_intents(
         else {
             continue;
         };
+        // plan-combat-hit-location-v1 P1（决议 §8.1 #2）— 防御方副手臂（持盾侧）伤势削减
+        // 格挡/招架减伤效果：Laceration ×0.80(-20%)/Fracture·Severed ×0.60(-40%)。
+        // 读取本次命中造成的伤口写入 wounds.entries 之前的既有伤势状态。
+        let defender_off_arm_block_multiplier =
+            arm_wound::combined_factor(&wounds).block_multiplier;
         let decay = ((intent.reach.max - distance) / intent.reach.max.max(0.001)).clamp(0.0, 1.0);
         let hit_qi = (intent.qi_invest * decay).max(0.0);
         let is_physical_hit = intent.qi_invest <= f32::EPSILON;
@@ -994,7 +1010,8 @@ pub fn resolve_attack_intents(
         if let Some(block_ratio) =
             active_status_magnitude(defender_status_effects, StatusEffectKind::SwordParrying)
         {
-            let block_ratio = block_ratio.clamp(0.0, 0.95);
+            // plan-combat-hit-location-v1 P1 — 副手臂伤势打折招架减伤效果（决议 §8.1 #2）。
+            let block_ratio = (block_ratio * defender_off_arm_block_multiplier).clamp(0.0, 0.95);
             let before_severity = wound.severity;
             let before_contam = emitted_contam_delta;
             wound.severity *= 1.0 - block_ratio;
@@ -1079,7 +1096,8 @@ pub fn resolve_attack_intents(
                 .unwrap_or_else(|| ("wooden_shield".to_string(), 0.0));
             let profile =
                 shield_block_mod::shield_block_profile(&shield_template_id, shield_proficiency);
-            let ratio = profile.block_ratio.clamp(0.0, 0.95);
+            // plan-combat-hit-location-v1 P1 — 副手臂伤势打折盾牌格挡减伤效果（决议 §8.1 #2）。
+            let ratio = (profile.block_ratio * defender_off_arm_block_multiplier).clamp(0.0, 0.95);
             // 正面 FOV 判定（±120°，dot ≥ -0.5）
             let fov_ok = shield_fov_check(
                 attacker_position,
@@ -7186,6 +7204,449 @@ mod tests {
         );
     }
 
+    // ══════════════════════════════════════════════════════════════════════════
+    // plan-combat-hit-location-v1 P1（决议 §8.1 #2）— 臂伤消费端集成测试
+    // ══════════════════════════════════════════════════════════════════════════
+
+    fn make_arm_wound_app() -> App {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 9000 });
+        app.add_event::<AttackIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<CombatEvent>();
+        app.add_event::<DeathEvent>();
+        app.add_event::<WeaponBroken>();
+        app.add_event::<ShieldBroken>();
+        app.add_event::<ShieldBlockHit>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
+        app.add_systems(Update, resolve_attack_intents);
+        app
+    }
+
+    fn wound(location: BodyPart, severity: f32) -> Wound {
+        Wound {
+            location,
+            kind: WoundKind::Blunt,
+            severity,
+            bleeding_per_sec: 0.0,
+            created_at_tick: 0,
+            inflicted_by: None,
+        }
+    }
+
+    fn attacker_weapon() -> Weapon {
+        use crate::combat::weapon::{EquipSlot, WeaponKind};
+        Weapon {
+            slot: EquipSlot::MainHand,
+            instance_id: 7001,
+            template_id: "iron_sword".to_string(),
+            weapon_kind: WeaponKind::Sword,
+            base_attack: 20.0,
+            quality_tier: 0,
+            durability: 200.0,
+            durability_max: 200.0,
+        }
+    }
+
+    /// 决议 §8.1 #2：攻方主手臂（ArmR）Fracture 伤势应把自身物理攻击伤害削减到
+    /// 健康臂的 0.60 倍（`arm_wound::attack_damage_multiplier(Fracture)`）。
+    /// 用 fist 攻击（base=1.0）会撞 `damage.max(1.0)` 下限而看不出差异，
+    /// 因此用高基础伤害武器（base_attack=20.0）跑两遍攻击对比比例。
+    #[test]
+    fn main_arm_fracture_reduces_attacker_physical_damage_by_decision_table_ratio() {
+        let mut app = make_arm_wound_app();
+
+        let healthy_attacker = spawn_player(
+            &mut app,
+            "ArmHealthyAtk",
+            [0.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        app.world_mut()
+            .entity_mut(healthy_attacker)
+            .insert(attacker_weapon());
+        let healthy_target = spawn_player(
+            &mut app,
+            "ArmHealthyTarget",
+            [1.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+
+        app.world_mut().send_event(AttackIntent {
+            attacker: healthy_attacker,
+            target: Some(healthy_target),
+            issued_at_tick: 8999,
+            reach: AttackReach::new(3.0, 0.0),
+            qi_invest: 0.0,
+            wound_kind: WoundKind::Cut,
+            source: AttackSource::Melee,
+            debug_command: None,
+        });
+        app.update();
+
+        let healthy_damage = app
+            .world()
+            .resource::<Events<CombatEvent>>()
+            .iter_current_update_events()
+            .next()
+            .expect("healthy attacker hit should resolve")
+            .physical_damage;
+        assert!(
+            healthy_damage > 1.0,
+            "测试前提：健康臂伤害必须高于 damage.max(1.0) 下限才能观测到削减比例，实际 {healthy_damage}"
+        );
+
+        let mut app2 = make_arm_wound_app();
+        let wounded_attacker = spawn_player(
+            &mut app2,
+            "ArmFracturedAtk",
+            [0.0, 64.0, 0.0],
+            Wounds {
+                entries: vec![wound(arm_wound::MAIN_ARM, 40.0)], // Fracture
+                ..Default::default()
+            },
+            Stamina::default(),
+        );
+        app2.world_mut()
+            .entity_mut(wounded_attacker)
+            .insert(attacker_weapon());
+        let wounded_target = spawn_player(
+            &mut app2,
+            "ArmFracturedTarget",
+            [1.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+
+        app2.world_mut().send_event(AttackIntent {
+            attacker: wounded_attacker,
+            target: Some(wounded_target),
+            issued_at_tick: 8999,
+            reach: AttackReach::new(3.0, 0.0),
+            qi_invest: 0.0,
+            wound_kind: WoundKind::Cut,
+            source: AttackSource::Melee,
+            debug_command: None,
+        });
+        app2.update();
+
+        let wounded_damage = app2
+            .world()
+            .resource::<Events<CombatEvent>>()
+            .iter_current_update_events()
+            .next()
+            .expect("wounded attacker hit should resolve")
+            .physical_damage;
+
+        let ratio = wounded_damage / healthy_damage;
+        assert!(
+            (ratio - 0.60).abs() < 0.01,
+            "主手臂 Fracture 应把攻击伤害削减到健康臂的 0.60 倍，实际比例 {ratio:.4}\
+             （healthy={healthy_damage}, wounded={wounded_damage}）"
+        );
+    }
+
+    /// 决议 §8.1 #2：攻方副手臂（ArmL）受伤不应影响自身攻击伤害（该维度只读主手臂）。
+    #[test]
+    fn off_arm_wound_does_not_affect_attacker_physical_damage() {
+        let mut app = make_arm_wound_app();
+        let attacker = spawn_player(
+            &mut app,
+            "OffArmWoundedAtk",
+            [0.0, 64.0, 0.0],
+            Wounds {
+                entries: vec![wound(arm_wound::OFF_ARM, 80.0)], // Severed on OFF_ARM
+                ..Default::default()
+            },
+            Stamina::default(),
+        );
+        app.world_mut()
+            .entity_mut(attacker)
+            .insert(attacker_weapon());
+        let target = spawn_player(
+            &mut app,
+            "OffArmWoundedTarget",
+            [1.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+
+        app.world_mut().send_event(AttackIntent {
+            attacker,
+            target: Some(target),
+            issued_at_tick: 8999,
+            reach: AttackReach::new(3.0, 0.0),
+            qi_invest: 0.0,
+            wound_kind: WoundKind::Cut,
+            source: AttackSource::Melee,
+            debug_command: None,
+        });
+        app.update();
+
+        let damage = app
+            .world()
+            .resource::<Events<CombatEvent>>()
+            .iter_current_update_events()
+            .next()
+            .expect("attack should resolve")
+            .physical_damage;
+        // 副手臂 Severed 不应削减攻击伤害：20.0(base) * 1.0(chest) * 1.0(attacker attrs,
+        // 无 arm 惩罚) * 1.0(defender) * weapon.damage_multiplier() * 1.0(wound_profile) * 1.0(sword)。
+        let expected = 20.0 * attacker_weapon().damage_multiplier();
+        assert!(
+            (damage - expected).abs() < 0.01,
+            "副手臂受伤不应影响攻击伤害维度，期望≈{expected}，实际 {damage}"
+        );
+    }
+
+    /// 决议 §8.1 #2：防御方副手臂（ArmL，持盾侧）Fracture 伤势应把招架（SwordParrying）
+    /// 减伤效果打到 0.60 倍（`arm_wound::block_multiplier(Fracture)`）——
+    /// base block_ratio=0.5 → 实际生效 0.5*0.60=0.30。
+    #[test]
+    fn sword_parry_off_arm_fracture_reduces_defense_effectiveness() {
+        let mut app = make_arm_wound_app();
+
+        let attacker = spawn_player(
+            &mut app,
+            "ParryAtkP1",
+            [0.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        let defender = spawn_player(
+            &mut app,
+            "ParryDefP1",
+            [1.0, 64.0, 0.0],
+            Wounds {
+                entries: vec![wound(arm_wound::OFF_ARM, 40.0)], // Fracture on OFF_ARM
+                ..Default::default()
+            },
+            Stamina::default(),
+        );
+        app.world_mut().entity_mut(defender).insert((
+            StatusEffects {
+                active: vec![ActiveStatusEffect {
+                    kind: StatusEffectKind::SwordParrying,
+                    magnitude: 0.5,
+                    remaining_ticks: 4,
+                    source_pill: None,
+                }],
+            },
+            KnownTechniques {
+                entries: vec![KnownTechnique {
+                    id: sword_basics::SWORD_PARRY_SKILL_ID.to_string(),
+                    proficiency: 0.0,
+                    active: true,
+                }],
+            },
+        ));
+
+        app.world_mut().send_event(AttackIntent {
+            attacker,
+            target: Some(defender),
+            issued_at_tick: 8999,
+            reach: FIST_REACH,
+            qi_invest: 0.0,
+            wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
+            debug_command: None,
+        });
+        app.update();
+
+        let events: Vec<_> = app
+            .world()
+            .resource::<Events<CombatEvent>>()
+            .iter_current_update_events()
+            .collect();
+        assert_eq!(events.len(), 1);
+        assert!(
+            events[0]
+                .defense_effectiveness
+                .is_some_and(|e| (e - 0.30).abs() < 0.001),
+            "副手臂 Fracture 应把 0.5 base block_ratio 打到 0.30（×0.60），实际 {:?}",
+            events[0].defense_effectiveness
+        );
+        assert!(
+            (events[0].physical_damage - 0.70).abs() < 0.01,
+            "1.0 unarmed hit 经打折后的招架（0.30 减伤）应剩 0.70，实际 {}",
+            events[0].physical_damage
+        );
+    }
+
+    /// 决议 §8.1 #2：防御方副手臂（ArmL，持盾侧）Fracture 伤势应把盾牌格挡减伤效果
+    /// 打到 0.60 倍——bone_shield base block_ratio=0.65 → 实际生效 0.65*0.60=0.39。
+    #[test]
+    fn shield_block_off_arm_fracture_reduces_defense_effectiveness() {
+        let mut app = make_arm_wound_app();
+
+        let attacker = spawn_player(
+            &mut app,
+            "ShieldAtkP1",
+            [0.0, 64.0, 3.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        let defender = spawn_player(
+            &mut app,
+            "ShieldDefP1",
+            [0.0, 64.0, 1.0],
+            Wounds {
+                entries: vec![wound(arm_wound::OFF_ARM, 40.0)], // Fracture on OFF_ARM
+                ..Default::default()
+            },
+            Stamina::default(),
+        );
+        app.world_mut().entity_mut(defender).insert((
+            StatusEffects {
+                active: vec![ActiveStatusEffect {
+                    kind: StatusEffectKind::ShieldBlocking,
+                    magnitude: 0.65,
+                    remaining_ticks: crate::combat::shield_block::SHIELD_BLOCKING_DURATION_TICKS,
+                    source_pill: None,
+                }],
+            },
+            crate::combat::shield_block::ShieldBlock {
+                template_id: "bone_shield".to_string(),
+            },
+            Look {
+                yaw: 0.0,
+                pitch: 0.0,
+            },
+            PlayerInventory {
+                triggered_treasures: Vec::new(),
+                revision: InventoryRevision(1),
+                containers: vec![],
+                equipped: std::collections::HashMap::from([(
+                    EQUIP_SLOT_OFF_HAND.to_string(),
+                    crate::inventory::SlotContents::held_single(ItemInstance {
+                        instance_id: 9101,
+                        template_id: "bone_shield".to_string(),
+                        display_name: "骨盾".to_string(),
+                        grid_w: 1,
+                        grid_h: 2,
+                        weight: 2.5,
+                        rarity: ItemRarity::Common,
+                        description: String::new(),
+                        stack_count: 1,
+                        spirit_quality: 0.0,
+                        durability: 1.0,
+                        freshness: None,
+                        mineral_id: None,
+                        charges: None,
+                        forge_quality: None,
+                        forge_color: None,
+                        forge_side_effects: Vec::new(),
+                        forge_achieved_tier: None,
+                        alchemy: None,
+                        lingering_owner_qi: None,
+                    }),
+                )]),
+                hotbar: Default::default(),
+                bone_coins: 0,
+                max_weight: 100.0,
+            },
+        ));
+
+        app.world_mut().send_event(AttackIntent {
+            attacker,
+            target: Some(defender),
+            issued_at_tick: 8999,
+            reach: FIST_REACH,
+            qi_invest: 0.0,
+            wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
+            debug_command: None,
+        });
+        app.update();
+
+        let events: Vec<_> = app
+            .world()
+            .resource::<Events<CombatEvent>>()
+            .iter_current_update_events()
+            .collect();
+        assert_eq!(events.len(), 1);
+        assert!(
+            events[0]
+                .defense_effectiveness
+                .is_some_and(|e| (e - 0.39).abs() < 0.001),
+            "副手臂 Fracture 应把 bone_shield 0.65 base block_ratio 打到 0.39（×0.60），实际 {:?}",
+            events[0].defense_effectiveness
+        );
+    }
+
+    /// 决议 §8.1 #2：双臂皆伤时格挡惩罚只读副手臂，不因主手臂也受伤而叠乘更狠
+    /// （与攻击伤害维度只读主手臂互相独立，二者不交叉污染）。
+    #[test]
+    fn both_arms_wounded_block_penalty_reads_only_off_arm_not_multiplied() {
+        let mut app = make_arm_wound_app();
+        let attacker = spawn_player(
+            &mut app,
+            "BothArmsAtk",
+            [0.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        let defender = spawn_player(
+            &mut app,
+            "BothArmsDef",
+            [1.0, 64.0, 0.0],
+            Wounds {
+                entries: vec![
+                    wound(arm_wound::MAIN_ARM, 40.0), // Fracture on MAIN_ARM
+                    wound(arm_wound::OFF_ARM, 40.0),  // Fracture on OFF_ARM
+                ],
+                ..Default::default()
+            },
+            Stamina::default(),
+        );
+        app.world_mut().entity_mut(defender).insert((
+            StatusEffects {
+                active: vec![ActiveStatusEffect {
+                    kind: StatusEffectKind::SwordParrying,
+                    magnitude: 0.5,
+                    remaining_ticks: 4,
+                    source_pill: None,
+                }],
+            },
+            KnownTechniques {
+                entries: vec![KnownTechnique {
+                    id: sword_basics::SWORD_PARRY_SKILL_ID.to_string(),
+                    proficiency: 0.0,
+                    active: true,
+                }],
+            },
+        ));
+
+        app.world_mut().send_event(AttackIntent {
+            attacker,
+            target: Some(defender),
+            issued_at_tick: 8999,
+            reach: FIST_REACH,
+            qi_invest: 0.0,
+            wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
+            debug_command: None,
+        });
+        app.update();
+
+        let events: Vec<_> = app
+            .world()
+            .resource::<Events<CombatEvent>>()
+            .iter_current_update_events()
+            .collect();
+        assert_eq!(events.len(), 1);
+        assert!(
+            events[0]
+                .defense_effectiveness
+                .is_some_and(|e| (e - 0.30).abs() < 0.001),
+            "双臂皆 Fracture 时格挡效果应仍是 0.5*0.60=0.30（只读副手臂），不应叠乘为 0.5*0.60*0.60=0.18，\
+             实际 {:?}",
+            events[0].defense_effectiveness
+        );
+    }
+
     #[test]
     fn burst_meridian_attack_source_uses_prepaid_qi_without_second_spend() {
         let mut app = App::new();
@@ -9137,11 +9598,15 @@ mod tests {
         {
             let mut app = setup_dead_armor_app(2070);
 
-            // 攻方低于目标（y=62.0），raycast 向上命中 Abdomen（rel_y≈0.40）。
+            // 攻方低于目标（y=62.8），raycast 向上命中 Abdomen。
+            // plan-combat-hit-location-v1 P1 校准把 LEG_ABDOMEN_BOUNDARY 从 0.35 上调到
+            // 0.53（见 raycast.rs 该常量注释），把 Abdomen 命中带收窄成 rel_y∈(0.53,0.55]
+            // 的窄带——原 y=62.0（rel_y≈0.40）在新阈值下已跌入 Leg，实测扫描 y∈[62.76,62.88]
+            // 仍稳定落在新 Abdomen 窄带内，取中间值 62.8 留出双向余量。
             let attacker = spawn_player(
                 &mut app,
                 "AttackerAbd",
-                [0.0, 62.0, 0.0],
+                [0.0, 62.8, 0.0],
                 Wounds::default(),
                 Stamina::default(),
             );
@@ -9183,7 +9648,7 @@ mod tests {
             assert_eq!(
                 abd_events[0].body_part,
                 BodyPart::Abdomen,
-                "期望 Abdomen 弱点子用例实际命中 Abdomen（攻方 y=62.0 低于目标 y=64.0，向上命中中低部）；\
+                "期望 Abdomen 弱点子用例实际命中 Abdomen（攻方 y=62.8 低于目标 y=64.0，向上命中中低部）；\
                  实际命中 {:?} — 若此断言失败说明 classify_body_part 阈值变更，需同步调整攻方位置",
                 abd_events[0].body_part
             );
