@@ -86,6 +86,12 @@ pub const QI_REGION_STARVATION_THRESHOLD: f64 = 0.1;
 pub const QI_CULTIVATION_REGEN_RATE: f64 = 0.003;
 /// plan-cultivation-v1：1.0 zone 浓度可支撑的玩家真元点数。
 pub const QI_ZONE_UNIT_CAPACITY: f64 = 50.0;
+/// plan-zone-qi-economy-v1 P2：NPC 吸取地板——与 `cultivation::meridian_open::MIN_ZONE_QI_TO_OPEN`
+/// 同值但独立声明（语义不同：NPC 只喝地板以上的"溢出层"，玩家开脉/修炼吸取永远有底仓不受此约束）。
+/// 落点：`npc::dormant::apply_dormant_regen_with_multiplier`、
+/// `cultivation::tick::qi_regen_and_zone_drain_tick`（NpcMarker 分支）、
+/// `world::tiandao_hunt::apply_watch_zone_qi_drain`、`lingtian::systems::ReplenishSource::Zone`。
+pub const QI_NPC_ABSORB_FLOOR: f64 = 0.3;
 /// player gather：采集动作默认真元奖励，以 zone qi 对冲供给。
 pub const QI_GATHER_REWARD: f64 = 14.0;
 /// plan-lingtian-v1：偷灵注入操作者比例。

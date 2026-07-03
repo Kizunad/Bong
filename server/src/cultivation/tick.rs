@@ -19,7 +19,8 @@ use crate::combat::woliu_v2::state::TurbulenceExposure;
 use crate::network::{gameplay_vfx, vfx_event_emit::VfxEventRequest};
 use crate::npc::spawn::NpcMarker;
 use crate::qi_physics::{
-    regen_from_zone, QiAccountId, QiTransfer, QiTransferReason, WorldQiAccount,
+    constants::QI_NPC_ABSORB_FLOOR, regen_from_zone, QiAccountId, QiTransfer, QiTransferReason,
+    WorldQiAccount,
 };
 use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::events::EVENT_REALM_COLLAPSE;
@@ -226,8 +227,16 @@ pub fn qi_regen_and_zone_drain_tick(
             .as_deref()
             .map(|s| s.multiplier_for(&zone_name))
             .unwrap_or(1.0);
+        // plan-zone-qi-economy-v1 P2：NPC 只喝地板（QI_NPC_ABSORB_FLOOR）以上的溢出层；
+        // 玩家不受此约束（保留 zone.spirit_qi 全量作为吸取输入）。用地板以上的余量
+        // 驱动公式而非事后钳位，保证 drain <= zone.spirit_qi - FLOOR，写回天然守地板。
+        let npc_absorbable_zone_qi = if npc_marker.is_some() {
+            (zone.spirit_qi - QI_NPC_ABSORB_FLOOR).max(0.0)
+        } else {
+            zone.spirit_qi
+        };
         let (gain, drain) = compute_regen(
-            zone.spirit_qi,
+            npc_absorbable_zone_qi,
             rate * wind_candle_multiplier
                 * humility_multiplier
                 * qi_regen_pause_multiplier
@@ -646,6 +655,134 @@ mod tests {
             .last()
             .expect("npc qi regen must leave a QiTransfer audit trail");
         assert_eq!(transfer.to, QiAccountId::npc(npc_id));
+    }
+
+    fn zone_with_spirit_qi(spirit_qi: f64) -> ZoneRegistry {
+        let mut registry = ZoneRegistry::fallback();
+        registry.zones[0].spirit_qi = spirit_qi;
+        registry
+    }
+
+    /// plan-zone-qi-economy-v1 P2：NPC 地板红线——zone_qi 在 (0, QI_NPC_ABSORB_FLOOR] 时
+    /// NPC（NpcMarker）必须完全放弃吸取，zone 与 NPC qi_current 都不应变化。
+    #[test]
+    fn qi_regen_npc_stops_at_or_below_absorb_floor() {
+        let floor = crate::qi_physics::constants::QI_NPC_ABSORB_FLOOR;
+        for zone_qi in [floor, 0.2, 0.05, 0.0] {
+            let mut app = App::new();
+            app.insert_resource(CultivationClock::default());
+            app.insert_resource(zone_with_spirit_qi(zone_qi));
+            add_qi_regen_system(&mut app);
+
+            let mut meridians = MeridianSystem::default();
+            meridians.get_mut(MeridianId::Lung).opened = true;
+            let entity = app
+                .world_mut()
+                .spawn((
+                    Position::new([8.0, 66.0, 8.0]),
+                    meridians,
+                    Cultivation::default(),
+                    LifeRecord::new("npc_floor_test".to_string()),
+                    NpcMarker,
+                ))
+                .id();
+
+            app.update();
+
+            let cultivation = app.world().entity(entity).get::<Cultivation>().unwrap();
+            assert_eq!(
+                cultivation.qi_current, 0.0,
+                "zone_qi={zone_qi} 时 NPC 不应吸到任何 qi（地板 {floor}）"
+            );
+            let zone_after = app
+                .world()
+                .resource::<ZoneRegistry>()
+                .find_zone_by_name("spawn")
+                .unwrap()
+                .spirit_qi;
+            assert_eq!(
+                zone_after, zone_qi,
+                "zone_qi={zone_qi} 时 zone.spirit_qi 不应被 NPC regen 触碰"
+            );
+        }
+    }
+
+    /// 玩家（无 NpcMarker）不受 NPC 地板约束——zone_qi 低于地板时玩家仍可继续吸取
+    /// 直到 zone_qi 真正见底（0.0），验证"玩家吸取不受地板"红线。
+    #[test]
+    fn qi_regen_player_not_limited_by_npc_absorb_floor() {
+        let floor = crate::qi_physics::constants::QI_NPC_ABSORB_FLOOR;
+        let mut app = App::new();
+        app.insert_resource(CultivationClock::default());
+        // zone_qi 故意设在地板以下（NPC 会被完全挡住的区间）。
+        app.insert_resource(zone_with_spirit_qi(floor - 0.1));
+        add_qi_regen_system(&mut app);
+
+        let mut meridians = MeridianSystem::default();
+        meridians.get_mut(MeridianId::Lung).opened = true;
+        let entity = app
+            .world_mut()
+            .spawn((
+                Position::new([8.0, 66.0, 8.0]),
+                meridians,
+                Cultivation::default(),
+                LifeRecord::new(canonical_player_id("FloorImmunePlayer")),
+            ))
+            .id();
+
+        app.update();
+
+        let cultivation = app.world().entity(entity).get::<Cultivation>().unwrap();
+        assert!(
+            cultivation.qi_current > 0.0,
+            "玩家吸取不受 NPC 地板约束，zone_qi={} (< floor {floor}) 时仍应吸到正 qi，实际 {}",
+            floor - 0.1,
+            cultivation.qi_current
+        );
+        let zone_after = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name("spawn")
+            .unwrap()
+            .spirit_qi;
+        assert!(
+            zone_after < floor - 0.1,
+            "玩家吸取必须真实扣减 zone_qi，即便已低于 NPC 地板；zone_after={zone_after}"
+        );
+    }
+
+    /// 边界回归：zone_qi 略高于地板时 NPC 仍可吸取，但写回后必须 >= 地板——单 tick 的
+    /// 微量 drain 远小于 0.31-0.3 的余量，不会把 zone 拉穿地板。
+    #[test]
+    fn qi_regen_npc_never_dips_zone_below_absorb_floor() {
+        let floor = crate::qi_physics::constants::QI_NPC_ABSORB_FLOOR;
+        let mut app = App::new();
+        app.insert_resource(CultivationClock::default());
+        app.insert_resource(zone_with_spirit_qi(floor + 0.01));
+        add_qi_regen_system(&mut app);
+
+        let mut meridians = MeridianSystem::default();
+        meridians.get_mut(MeridianId::Lung).opened = true;
+        app.world_mut().spawn((
+            Position::new([8.0, 66.0, 8.0]),
+            meridians,
+            Cultivation::default(),
+            LifeRecord::new("npc_boundary_test".to_string()),
+            NpcMarker,
+        ));
+
+        app.update();
+
+        let zone_after = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name("spawn")
+            .unwrap()
+            .spirit_qi;
+        assert!(
+            zone_after >= floor,
+            "zone_qi 写回后 {zone_after} 不应低于地板 {floor}"
+        );
     }
 
     fn zone_unit_qi() -> f64 {
