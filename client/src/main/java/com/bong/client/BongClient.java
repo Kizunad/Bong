@@ -25,6 +25,7 @@ import com.bong.client.fauna.FaunaRenderBootstrap;
 import com.bong.client.insight.ClientRequestInsightDispatcher;
 import com.bong.client.insight.InsightOfferScreenBootstrap;
 import com.bong.client.insight.InsightOfferStore;
+import com.bong.client.scroll.ScrollReadScreenBootstrap;
 import com.bong.client.alchemy.AlchemyScreenBootstrap;
 import com.bong.client.forge.ForgeScreenBootstrap;
 import com.bong.client.iris.IrisBootstrap;
@@ -102,6 +103,7 @@ public class BongClient implements ClientModInitializer {
         VoidActionScreenBootstrap.register();
         InsightOfferScreenBootstrap.register();
         InsightOfferStore.setDispatcher(new ClientRequestInsightDispatcher());
+        ScrollReadScreenBootstrap.register();
         BongVfxCommand.register();
         // 粒子事件通过 client.execute 派发到主线程（BongNetworkHandler 里），在第一次 tick 之前
         // 注册完 VfxRegistry 即可；放在这里不依赖 channel register 的时序。

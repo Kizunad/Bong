@@ -268,6 +268,8 @@ public final class ServerDataRouter {
         handlers.put("inventory_move_rejected", new InventoryMoveRejectedHandler());
         // plan-exploration-probe-return-v1 P2：修炼顿悟邀约（InsightOfferStore → InsightOfferScreen）
         handlers.put("insight_offer", new InsightOfferHandler());
+        // plan-scroll-reading-v1 P1：可阅读残卷阅读屏（ScrollReadStore → ScrollReadScreen）
+        handlers.put("scroll_open", new ScrollOpenHandler());
         // plan-agent-ui-data-v1 P1 — 天道动态 UI 面板
         // NOTE: AgentUiRequest/AgentUiClose 已迁移到专属 JSON channel，
         // 不再经 bong:server_data / proto 路径（proto_convert.rs 对这两个 variant 是 unreachable!()，
