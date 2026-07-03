@@ -1120,7 +1120,9 @@ fn sync_named_faction_census_system(
     }
 }
 
-fn leader_realm_for(faction: NamedFactionId) -> Realm {
+/// `pub(crate)`（原模块私有）：plan-npc-realm-distribution-v1 P3 §8.1 #3 存量 dormant
+/// 快照迁移需要跨模块调用它给 faction leader 快照直写身份 realm，不新造第二套映射。
+pub(crate) fn leader_realm_for(faction: NamedFactionId) -> Realm {
     match faction {
         NamedFactionId::QingyunHunters => Realm::Solidify,
         NamedFactionId::CangyuanMerchants => Realm::Spirit,
@@ -1133,6 +1135,19 @@ pub fn legacy_faction_id_for_named_faction(faction: NamedFactionId) -> FactionId
         NamedFactionId::QingyunHunters => FactionId::Attack,
         NamedFactionId::CangyuanMerchants => FactionId::Defend,
         NamedFactionId::NorthWasteDrifters => FactionId::Neutral,
+    }
+}
+
+/// `legacy_faction_id_for_named_faction` 的逆映射（三档一一对应）。
+///
+/// plan-npc-realm-distribution-v1 P3 §8.1 #3：既有 dormant 快照的 `FactionMembership`
+/// 只持有 legacy 三态 `FactionId`（Attack/Defend/Neutral），迁移器要给 faction Leader
+/// 快照直写身份 realm 就得先反查具名宗门才能喂 [`leader_realm_for`]。
+pub(crate) fn named_faction_id_for_legacy(faction_id: FactionId) -> NamedFactionId {
+    match faction_id {
+        FactionId::Attack => NamedFactionId::QingyunHunters,
+        FactionId::Defend => NamedFactionId::CangyuanMerchants,
+        FactionId::Neutral => NamedFactionId::NorthWasteDrifters,
     }
 }
 
@@ -1544,6 +1559,39 @@ mod tests {
     use serde_json::json;
     use valence::prelude::Events;
     use valence::testing::create_mock_client;
+
+    // === plan-npc-realm-distribution-v1 P3 §8.1 #3：`named_faction_id_for_legacy` 是
+    // `legacy_faction_id_for_named_faction` 的逆映射，dormant 迁移器靠这个往返关系从
+    // 快照持有的 legacy `FactionId` 反查具名宗门再喂 `leader_realm_for`。穷举三档正反双向，
+    // 防止未来任一侧改了映射却漏改另一侧，导致迁移把 leader 快照错配成别的宗门境界。
+
+    #[test]
+    fn named_faction_id_for_legacy_round_trips_all_three_variants() {
+        for named in NamedFactionId::all() {
+            let legacy = legacy_faction_id_for_named_faction(named);
+            let recovered = named_faction_id_for_legacy(legacy);
+            assert_eq!(
+                recovered, named,
+                "named={named:?} -> legacy={legacy:?} -> recovered={recovered:?} 应往返一致"
+            );
+        }
+    }
+
+    #[test]
+    fn named_faction_id_for_legacy_pinned_per_variant() {
+        assert_eq!(
+            named_faction_id_for_legacy(FactionId::Attack),
+            NamedFactionId::QingyunHunters
+        );
+        assert_eq!(
+            named_faction_id_for_legacy(FactionId::Defend),
+            NamedFactionId::CangyuanMerchants
+        );
+        assert_eq!(
+            named_faction_id_for_legacy(FactionId::Neutral),
+            NamedFactionId::NorthWasteDrifters
+        );
+    }
 
     #[test]
     fn default_store_bootstraps_exactly_three_stable_factions() {
