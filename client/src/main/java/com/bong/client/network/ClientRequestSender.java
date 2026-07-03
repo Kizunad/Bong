@@ -554,6 +554,11 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodeLowerShield());
     }
 
+    /** plan-scroll-reading-v1 P1 — 通知 server 玩家关闭阅读屏（对应 ClientRequestV1::ScrollReadClosed）。 */
+    public static void sendScrollReadClosed() {
+        dispatch(ClientRequestProtocol.encodeScrollReadClosed());
+    }
+
     // ─── plan-worldgen-v4 P5 §8.1#5：画廊审阅 owo 方块面板 dev-only give-block C2S ──
 
     /**

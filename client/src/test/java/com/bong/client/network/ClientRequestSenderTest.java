@@ -584,4 +584,20 @@ public class ClientRequestSenderTest {
         assertEquals(0, sent.size(),
             "no client_request should be sent when arguments are invalid, actual sent=" + sent);
     }
+
+    // ─── plan-scroll-reading-v1 P1 §8.1#4：sendScrollReadClosed ───────────────
+
+    @Test
+    void sendScrollReadClosedUsesCorrectChannelAndJson() {
+        install();
+        ClientRequestSender.sendScrollReadClosed();
+        assertEquals(1, sent.size(),
+            "sendScrollReadClosed must produce exactly one client_request, actual sent=" + sent);
+        assertEquals(new Identifier("bong", "client_request"), sent.get(0).channel());
+        assertEquals(
+            "{\"type\":\"scroll_read_closed\",\"v\":1}",
+            sent.get(0).body(),
+            "wire payload must match Rust ClientRequestV1::ScrollReadClosed, actual=" + sent.get(0).body()
+        );
+    }
 }

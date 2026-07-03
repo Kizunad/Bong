@@ -1209,6 +1209,51 @@ public class ClientRequestProtocolTest {
             "encodeRaiseShield and encodeLowerShield must produce different payloads — raise=" + raise + " lower=" + lower);
     }
 
+    // ─── plan-scroll-reading-v1 P1 §8.1#4：encodeScrollReadClosed encode tests ───
+
+    @Test
+    void encodesScrollReadClosedTypeField() {
+        String json = ClientRequestProtocol.encodeScrollReadClosed();
+        com.google.gson.JsonObject obj = com.google.gson.JsonParser.parseString(json).getAsJsonObject();
+        assertEquals(
+            "scroll_read_closed",
+            obj.get("type").getAsString(),
+            "encodeScrollReadClosed type field must be 'scroll_read_closed' to match server ClientRequestV1::ScrollReadClosed serde tag, actual=" + obj.get("type")
+        );
+    }
+
+    @Test
+    void encodesScrollReadClosedVersionField() {
+        String json = ClientRequestProtocol.encodeScrollReadClosed();
+        com.google.gson.JsonObject obj = com.google.gson.JsonParser.parseString(json).getAsJsonObject();
+        assertEquals(
+            1,
+            obj.get("v").getAsInt(),
+            "encodeScrollReadClosed must include v=1 for server serde, actual=" + obj.get("v")
+        );
+    }
+
+    @Test
+    void encodesScrollReadClosedExactPayload() {
+        String json = ClientRequestProtocol.encodeScrollReadClosed();
+        assertEquals(
+            "{\"type\":\"scroll_read_closed\",\"v\":1}",
+            json,
+            "encodeScrollReadClosed must produce minimal two-field payload matching server ScrollReadClosed schema, actual=" + json
+        );
+    }
+
+    @Test
+    void encodesScrollReadClosedNoExtraFields() {
+        String json = ClientRequestProtocol.encodeScrollReadClosed();
+        com.google.gson.JsonObject obj = com.google.gson.JsonParser.parseString(json).getAsJsonObject();
+        assertEquals(
+            2,
+            obj.size(),
+            "encodeScrollReadClosed must contain exactly 2 fields (type + v); server serde uses additionalProperties:false, actual size=" + obj.size() + " json=" + json
+        );
+    }
+
     // ─── plan-worldgen-v4 P5 §8.1#5：encodeBlockPickerGive 双端契约 encode 测试 ───
 
     @Test

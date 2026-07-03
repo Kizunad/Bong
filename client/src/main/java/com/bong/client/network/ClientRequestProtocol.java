@@ -1347,6 +1347,17 @@ public final class ClientRequestProtocol {
         return envelope("lower_shield").toString();
     }
 
+    // ─── plan-scroll-reading-v1 P1 §8.1#4：关闭阅读屏 C2S ────────────────
+
+    /**
+     * plan-scroll-reading-v1 P1 — 玩家关闭阅读屏（ESC / 关闭按钮）时发送。
+     *
+     * <p>对应 server {@code ClientRequestV1::ScrollReadClosed}（proto tag 101）。</p>
+     */
+    public static String encodeScrollReadClosed() {
+        return envelope("scroll_read_closed").toString();
+    }
+
     // ─── plan-worldgen-v4 P5 §8.1#5：画廊审阅 owo 方块面板 dev-only give-block C2S ──
 
     /** give-block 数量上限（与 schema BlockPickerActionV1 count Integer(1..64) 对齐）。 */
