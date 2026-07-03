@@ -26,8 +26,9 @@ use valence::prelude::{
 };
 
 use crate::cultivation::breakthrough::{
-    breakthrough_qi_cost, next_realm, try_breakthrough, BreakthroughError, BreakthroughSuccess,
-    RollSource, XorshiftRoll, MIN_ZONE_QI_TO_BREAKTHROUGH, MIN_ZONE_QI_TO_GUYUAN,
+    breakthrough_qi_cost, next_realm, qi_max_for_realm, try_breakthrough, BreakthroughError,
+    BreakthroughSuccess, RollSource, XorshiftRoll, MIN_ZONE_QI_TO_BREAKTHROUGH,
+    MIN_ZONE_QI_TO_GUYUAN,
 };
 use crate::cultivation::components::{
     Contamination, Cultivation, MeridianId, MeridianSystem, Realm,
@@ -1155,13 +1156,20 @@ fn seed_initial_dormant_population_on_startup(
     // instead of piling onto shared patrol anchors (the old ±2 block jitter).
     let mut zone_local_counts: HashMap<String, u32> = HashMap::new();
     for index in 0..target_count {
-        let zone_candidates = if index < resource_target && !resource_zones.is_empty() {
-            &resource_zones
-        } else if !background_zones.is_empty() {
-            &background_zones
-        } else {
-            &resource_zones
-        };
+        // plan-npc-realm-distribution-v1 P1: track which list this NPC's zone came
+        // from — `is_resource` drives which §8.1 #1 realm distribution table
+        // `dormant_rogue_seed_snapshot` samples from. Must match the same
+        // resource/background split `classify_zones_by_qi` produced above (this
+        // *is* that split, not a re-derivation), otherwise realm weighting would
+        // silently diverge from the zone bucket the NPC is actually seeded into.
+        let (zone_candidates, is_resource) =
+            if index < resource_target && !resource_zones.is_empty() {
+                (&resource_zones, true)
+            } else if !background_zones.is_empty() {
+                (&background_zones, false)
+            } else {
+                (&resource_zones, true)
+            };
         if zone_candidates.is_empty() {
             break;
         }
@@ -1179,6 +1187,7 @@ fn seed_initial_dormant_population_on_startup(
             zone_local_index,
             tick,
             seed_config.max_initial_age_ratio,
+            is_resource,
         );
         store.snapshots.insert(snapshot.char_id.clone(), snapshot);
     }
@@ -1277,12 +1286,24 @@ fn dormant_rogue_seed_snapshot(
     zone_local_index: u32,
     tick: u64,
     max_initial_age_ratio: f64,
+    is_resource_zone: bool,
 ) -> NpcDormantSnapshot {
     let archetype = NpcArchetype::Rogue;
     let position = dormant_seed_scatter_position(zone, zone_local_index);
     let patrol_target = zone.center();
     let char_id = format!("dormant:rogue:{index}");
-    let cultivation = Cultivation::default();
+    // plan-npc-realm-distribution-v1 P1 §8.1 #1: sample realm from the zone-weighted
+    // distribution table instead of the P0-era `Cultivation::default()` (which always
+    // seeded 醒灵). `qi_current` stays 0.0 — `qi_max_for_realm` only sets the capacity
+    // ceiling; real qi accrues later via `apply_dormant_regen_with_multiplier` pulling
+    // from zone.spirit_qi, so spawning full would fabricate qi and break conservation.
+    let realm = sample_rogue_seed_realm(char_id.as_str(), is_resource_zone);
+    let cultivation = Cultivation {
+        realm,
+        qi_current: 0.0,
+        qi_max: qi_max_for_realm(realm),
+        ..Cultivation::default()
+    };
     let mut meridian_system = MeridianSystem::default();
     meridian_system.get_mut(MeridianId::Lung).opened = true;
     let lifespan = NpcLifespan::new(
@@ -1397,13 +1418,72 @@ fn deterministic_unit(char_id: &str, salt: u64) -> f64 {
     (hash & 0xffff) as f64 / 65_535.0
 }
 
-fn deterministic_hash(char_id: &str, salt: u64) -> u64 {
+/// plan-npc-realm-distribution-v1 P1 前置：跨模块共享哈希。`npc::spawn::rogue` 的活体种群
+/// 入口（`seed_initial_rogue_population_on_startup`）需要与 dormant 快照 seeder 用同一份
+/// 确定性哈希做境界抽样，保证两条种群生产线同源同规则（不新造第二套抽样逻辑，见接入面红线）。
+pub(crate) fn deterministic_hash(char_id: &str, salt: u64) -> u64 {
     let mut hash = salt ^ 0x9E37_79B9_7F4A_7C15;
     for byte in char_id.as_bytes() {
         hash ^= u64::from(*byte);
         hash = hash.wrapping_mul(0xbf58_476d_1ce4_e5b9);
     }
     hash
+}
+
+/// `deterministic_hash` 的固定 salt，专属境界抽样（plan-npc-realm-distribution-v1 P1 §8.1
+/// #1）。与 `seed_rogue_faction`（salt=0）/ `seed_emergent_group`（salt=`GROUP_SALT`）错开，
+/// 避免境界与派系/涌现群体在同一哈希值下强相关（比如同一 salt 下醒灵总是分到 Attack）。
+const REALM_SEED_SALT: u64 = 0x5245_414C_4D5F_5254; // "REALM_RT" 字面，具名常量避免裸 magic
+
+/// plan-npc-realm-distribution-v1 §8.1 #1 决议分布表 —— background zone（`spirit_qi` 低于
+/// `resource_spirit_qi_threshold` 的区域）。权重单位为千分比（避免浮点比例误差），六境界严格
+/// 按 worldview §三:195 顺序排列（醒灵→化虚），总和恒 1000。化虚恒 0（正典稀有，不自然刷，
+/// 仅垂死大能一类特殊实体走非分布表路径）。
+const REALM_DISTRIBUTION_BACKGROUND: [(Realm, u32); 6] = [
+    (Realm::Awaken, 570),
+    (Realm::Induce, 300),
+    (Realm::Condense, 120),
+    (Realm::Solidify, 10),
+    (Realm::Spirit, 0),
+    (Realm::Void, 0),
+];
+
+/// 同上，resource zone（`spirit_qi` ≥ 阈值的灵气富集区）分布表，高境界占比更高但仍长尾。
+const REALM_DISTRIBUTION_RESOURCE: [(Realm, u32); 6] = [
+    (Realm::Awaken, 425),
+    (Realm::Induce, 350),
+    (Realm::Condense, 200),
+    (Realm::Solidify, 20),
+    (Realm::Spirit, 5),
+    (Realm::Void, 0),
+];
+
+/// plan-npc-realm-distribution-v1 P1：按 zone 灵气档从 §8.1 #1 分布表确定性抽样境界。
+///
+/// 用与 `seed_rogue_faction`/`seed_emergent_group` 同源的 [`deterministic_hash`]（固定
+/// salt=[`REALM_SEED_SALT`]），保证同 `char_id` 跨重启抽到同一境界。`is_resource_zone` 选表，
+/// 不接受调用方传入非法/超界权重表以外的境界——六境界穷举分支覆盖整个 0..1000 区间，
+/// 循环兜底 `Realm::Awaken` 仅用于防浮点/整数舍入漂移导致权重和略小于 1000 时的越界，
+/// 正常路径权重和恒为 1000 不会触发。
+///
+/// 身份 realm（派系首领 / TSY / GuardianRelic 等）优先级高于本函数——这些站点不调用本函数，
+/// 直接写入身份值，见 `lifecycle.rs` 的 `npc_runtime_bundle`/`npc_runtime_bundle_with_age`
+/// 调用站点。本函数只服务无身份的自然散修种群 seeder。
+pub(crate) fn sample_rogue_seed_realm(char_id: &str, is_resource_zone: bool) -> Realm {
+    let table = if is_resource_zone {
+        &REALM_DISTRIBUTION_RESOURCE
+    } else {
+        &REALM_DISTRIBUTION_BACKGROUND
+    };
+    let roll = (deterministic_hash(char_id, REALM_SEED_SALT) % 1000) as u32;
+    let mut cumulative: u32 = 0;
+    for (realm, weight) in table.iter() {
+        cumulative += weight;
+        if roll < cumulative {
+            return *realm;
+        }
+    }
+    Realm::Awaken
 }
 
 /// plan-offscreen-war-v1 P9：战事 zone regen 倍率（由调用方从 ZoneSpiritBonusStore 查询）。
@@ -2838,7 +2918,7 @@ mod tests {
         // 防回归：seed 出来的 dormant rogue 的 faction 字段必须非 None
         // （否则 e2e HGETALL 看到 faction=null，所有后续阶段空转）。
         let zone = zone();
-        let snapshot = dormant_rogue_seed_snapshot(&zone, 0, 0, 0, 0.8);
+        let snapshot = dormant_rogue_seed_snapshot(&zone, 0, 0, 0, 0.8, true);
         let membership = snapshot
             .faction
             .as_ref()
@@ -2890,7 +2970,7 @@ mod tests {
         // 防回归：seed 出来的 dormant rogue 必须带显式 emergent_group（非 None），
         // 否则离屏战斗回退 faction 派生、退化成 2 群体上限。
         let zone = zone();
-        let snapshot = dormant_rogue_seed_snapshot(&zone, 0, 0, 0, 0.8);
+        let snapshot = dormant_rogue_seed_snapshot(&zone, 0, 0, 0, 0.8, true);
         let group = snapshot
             .emergent_group
             .expect("seeded dormant rogue 必须带显式 emergent_group，不能是 None");
@@ -2898,6 +2978,255 @@ mod tests {
             group.0 < EMERGENT_GROUP_COUNT,
             "seed emergent group id {} must be < EMERGENT_GROUP_COUNT {EMERGENT_GROUP_COUNT}",
             group.0
+        );
+    }
+
+    // ── plan-npc-realm-distribution-v1 P1：种群 seeder 境界分布（饱和单测） ────────
+
+    fn realm_weight(table: &[(Realm, u32); 6], realm: Realm) -> u32 {
+        table
+            .iter()
+            .find(|(r, _)| *r == realm)
+            .map(|(_, w)| *w)
+            .unwrap_or(0)
+    }
+
+    #[test]
+    fn realm_distribution_tables_sum_to_exactly_1000_per_mille() {
+        // 防漂移：任何一次手改分布表数值（微调长尾）如果算错导致总和不再是 1000‰，
+        // `sample_rogue_seed_realm` 的累积权重循环会在权重和 < 1000 时对部分 roll
+        // 值静默兜底成 Realm::Awaken（人为压低非醒灵占比），必须显式撞红而非静默偏移。
+        let background_sum: u32 = REALM_DISTRIBUTION_BACKGROUND.iter().map(|(_, w)| w).sum();
+        let resource_sum: u32 = REALM_DISTRIBUTION_RESOURCE.iter().map(|(_, w)| w).sum();
+        assert_eq!(
+            background_sum, 1000,
+            "background 分布表权重和必须恰为 1000‰，实际 {background_sum}"
+        );
+        assert_eq!(
+            resource_sum, 1000,
+            "resource 分布表权重和必须恰为 1000‰，实际 {resource_sum}"
+        );
+    }
+
+    #[test]
+    fn realm_distribution_tables_never_seed_void_naturally() {
+        // §8.1 #1 决议：化虚不自然刷，正典稀有仅垂死大能一类特殊实体。
+        assert_eq!(
+            realm_weight(&REALM_DISTRIBUTION_BACKGROUND, Realm::Void),
+            0,
+            "background 分布表化虚权重必须为 0"
+        );
+        assert_eq!(
+            realm_weight(&REALM_DISTRIBUTION_RESOURCE, Realm::Void),
+            0,
+            "resource 分布表化虚权重必须为 0"
+        );
+    }
+
+    #[test]
+    fn sample_rogue_seed_realm_is_deterministic_per_char_id_and_zone_kind() {
+        // 同 char_id + 同 zone 档，跨调用必须抽到同一境界（否则重启后境界分布漂移）。
+        for char_id in ["dormant:rogue:0", "dormant:rogue:1", "rogue-seed:zone:42"] {
+            for is_resource in [true, false] {
+                let a = sample_rogue_seed_realm(char_id, is_resource);
+                let b = sample_rogue_seed_realm(char_id, is_resource);
+                assert_eq!(
+                    a, b,
+                    "char_id={char_id} is_resource={is_resource}: 同输入必须抽到同一境界，\
+                     实际两次调用分别得到 {a:?} 和 {b:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn sample_rogue_seed_realm_differs_by_zone_kind_salt_not_faction_or_group_salt() {
+        // 境界抽样必须用专属 REALM_SEED_SALT，与 seed_rogue_faction（salt=0）/
+        // seed_emergent_group（salt=GROUP_SALT）错开——否则境界会和派系/群体强相关
+        // （比如同一 salt 下醒灵总是分到 Attack）。用同一 char_id 三个 salt 的哈希两两
+        // 不相等来证明三者独立（char_id 选一个非退化样本，避免巧合碰撞误判）。
+        let char_id = "dormant:rogue:7";
+        let realm_hash = deterministic_hash(char_id, REALM_SEED_SALT);
+        let faction_hash = deterministic_hash(char_id, 0);
+        let group_hash = deterministic_hash(char_id, GROUP_SALT);
+        assert_ne!(
+            realm_hash, faction_hash,
+            "REALM_SEED_SALT 必须与派系 salt=0 产生不同哈希"
+        );
+        assert_ne!(
+            realm_hash, group_hash,
+            "REALM_SEED_SALT 必须与 GROUP_SALT 产生不同哈希"
+        );
+    }
+
+    #[test]
+    fn sample_rogue_seed_realm_background_distribution_matches_table_within_tolerance() {
+        // 统计 pin（非精确计数）：2000 个不同 char_id 在 background 档下的境界直方图，
+        // 逐境界占比须落在 §8.1 #1 background 表（57/30/12/1/0/0%）±8 个百分点内。
+        let n = 2000;
+        let mut counts: HashMap<&'static str, u32> = HashMap::new();
+        for i in 0..n {
+            let realm = sample_rogue_seed_realm(&format!("tolerance:background:{i}"), false);
+            let key = match realm {
+                Realm::Awaken => "awaken",
+                Realm::Induce => "induce",
+                Realm::Condense => "condense",
+                Realm::Solidify => "solidify",
+                Realm::Spirit => "spirit",
+                Realm::Void => "void",
+            };
+            *counts.entry(key).or_insert(0) += 1;
+        }
+        let ratio = |key: &str| *counts.get(key).unwrap_or(&0) as f64 / n as f64;
+        let assert_within = |label: &str, actual: f64, expected_pct: f64| {
+            let tolerance = 0.08;
+            assert!(
+                (actual - expected_pct / 100.0).abs() <= tolerance,
+                "background {label} 占比 {actual:.3} 偏离 §8.1 #1 预期 {expected_pct}% 超过容差 \
+                 ±{tolerance}（N={n} 样本 counts={counts:?}）"
+            );
+        };
+        assert_within("醒灵", ratio("awaken"), 57.0);
+        assert_within("引气", ratio("induce"), 30.0);
+        assert_within("凝脉", ratio("condense"), 12.0);
+        assert_within("固元", ratio("solidify"), 1.0);
+        assert_eq!(
+            counts.get("spirit").copied().unwrap_or(0),
+            0,
+            "background 档通灵权重为 0，绝不应抽到"
+        );
+        assert_eq!(counts.get("void").copied().unwrap_or(0), 0, "化虚不自然刷");
+    }
+
+    #[test]
+    fn sample_rogue_seed_realm_resource_distribution_matches_table_within_tolerance() {
+        // 统计 pin：resource 档（42.5/35/20/2/0.5/0%）——通灵样本稀少（0.5%），
+        // 用更大样本量 4000 降低小概率分支的统计噪声，容差同样 ±8 个百分点
+        // （通灵/固元档额外用绝对宽松上界防止偶发 0 样本导致误判）。
+        let n = 4000;
+        let mut counts: HashMap<&'static str, u32> = HashMap::new();
+        for i in 0..n {
+            let realm = sample_rogue_seed_realm(&format!("tolerance:resource:{i}"), true);
+            let key = match realm {
+                Realm::Awaken => "awaken",
+                Realm::Induce => "induce",
+                Realm::Condense => "condense",
+                Realm::Solidify => "solidify",
+                Realm::Spirit => "spirit",
+                Realm::Void => "void",
+            };
+            *counts.entry(key).or_insert(0) += 1;
+        }
+        let ratio = |key: &str| *counts.get(key).unwrap_or(&0) as f64 / n as f64;
+        let assert_within = |label: &str, actual: f64, expected_pct: f64, tolerance: f64| {
+            assert!(
+                (actual - expected_pct / 100.0).abs() <= tolerance,
+                "resource {label} 占比 {actual:.3} 偏离 §8.1 #1 预期 {expected_pct}% 超过容差 \
+                 ±{tolerance}（N={n} 样本 counts={counts:?}）"
+            );
+        };
+        assert_within("醒灵", ratio("awaken"), 42.5, 0.08);
+        assert_within("引气", ratio("induce"), 35.0, 0.08);
+        assert_within("凝脉", ratio("condense"), 20.0, 0.08);
+        assert_within("固元", ratio("solidify"), 2.0, 0.03);
+        assert_within("通灵", ratio("spirit"), 0.5, 0.02);
+        assert_eq!(counts.get("void").copied().unwrap_or(0), 0, "化虚不自然刷");
+        // resource 档整体高境界（凝脉+固元+通灵）占比必须明显高于 background 档，
+        // 证明两张表确实不同（不是同一张表被误接了两次）。
+        let resource_high = ratio("condense") + ratio("solidify") + ratio("spirit");
+        assert!(
+            resource_high > 0.15,
+            "resource 档凝脉+固元+通灵合计占比 {resource_high:.3} 偏低，\
+             §8.1 #1 预期约 22.5%，可能误接了 background 表"
+        );
+    }
+
+    #[test]
+    fn dormant_rogue_seed_snapshot_realm_distribution_not_always_awaken() {
+        // 端到端契约：seed 出来的 dormant snapshot 的 Cultivation.realm 不能恒为醒灵
+        // （否则 P0 choke-point 修复对 dormant seeder 完全没有生效）。
+        let zone = zone();
+        let realms: Vec<Realm> = (0..500u32)
+            .map(|i| {
+                dormant_rogue_seed_snapshot(&zone, i, i, 0, 0.8, true)
+                    .cultivation
+                    .realm
+            })
+            .collect();
+        let non_awaken = realms.iter().filter(|r| **r != Realm::Awaken).count();
+        assert!(
+            non_awaken > 0,
+            "500 个 dormant rogue snapshot 全部落在醒灵，期望按 §8.1 #1 分布表抽到非醒灵境界；\
+             这意味着 dormant_rogue_seed_snapshot 回退成了 Cultivation::default()"
+        );
+        assert!(
+            !realms.contains(&Realm::Void),
+            "dormant seeder 绝不应抽到化虚（正典稀有，不自然刷）"
+        );
+    }
+
+    #[test]
+    fn dormant_rogue_seed_snapshot_qi_current_stays_zero_regardless_of_sampled_realm() {
+        // 守恒红线：无论抽到哪个境界，qi_current 必须保持 0.0（不满灵）——qi_max_for_realm
+        // 只设容量上限，真元靠既有 apply_dormant_regen_with_multiplier 从 zone 逐步吸收；
+        // spawn 时满灵会凭空产生真元，撞 qi_physics 守恒红线。qi_max 必须等于
+        // qi_max_for_realm(抽到的 realm)，不能停留在 Cultivation::default() 的 10.0。
+        let zone = zone();
+        for i in 0..200u32 {
+            let snapshot = dormant_rogue_seed_snapshot(&zone, i, i, 0, 0.8, true);
+            assert_eq!(
+                snapshot.cultivation.qi_current, 0.0,
+                "index={i} realm={:?}: qi_current 必须恒 0.0（不满灵）",
+                snapshot.cultivation.realm
+            );
+            assert_eq!(
+                snapshot.cultivation.qi_max,
+                qi_max_for_realm(snapshot.cultivation.realm),
+                "index={i} realm={:?}: qi_max 必须等于 qi_max_for_realm(realm)，不能是 \
+                 Cultivation::default() 的醒灵默认值",
+                snapshot.cultivation.realm
+            );
+        }
+    }
+
+    #[test]
+    fn dormant_rogue_seed_snapshot_same_seed_twice_produces_identical_realm() {
+        // 确定性 pin：同 seed（同 zone/index）两次 genesis 必须逐 NPC realm 一致。
+        let zone = zone();
+        for i in 0..50u32 {
+            let a = dormant_rogue_seed_snapshot(&zone, i, i, 0, 0.8, true);
+            let b = dormant_rogue_seed_snapshot(&zone, i, i, 0, 0.8, true);
+            assert_eq!(
+                a.cultivation.realm, b.cultivation.realm,
+                "index={i}: 同 seed 两次调用 dormant_rogue_seed_snapshot 必须得到相同 realm，\
+                 实际 {:?} vs {:?}",
+                a.cultivation.realm, b.cultivation.realm
+            );
+        }
+    }
+
+    #[test]
+    fn dormant_rogue_seed_snapshot_resource_vs_background_flag_changes_distribution() {
+        // is_resource_zone 标志必须真正切换分布表：同一批 index 在 resource=true 下
+        // 高境界（凝脉起）占比必须明显高于 resource=false（否则该参数被忽略/接反）。
+        let zone = zone();
+        let n = 1000u32;
+        let count_high = |is_resource: bool| {
+            (0..n)
+                .filter(|&i| {
+                    let realm = dormant_rogue_seed_snapshot(&zone, i, i, 0, 0.8, is_resource)
+                        .cultivation
+                        .realm;
+                    matches!(realm, Realm::Condense | Realm::Solidify | Realm::Spirit)
+                })
+                .count()
+        };
+        let resource_high = count_high(true);
+        let background_high = count_high(false);
+        assert!(
+            resource_high > background_high,
+            "resource 档凝脉+固元+通灵计数 {resource_high} 必须明显高于 background 档 \
+             {background_high}（N={n}），否则 is_resource_zone 参数未真正接线"
         );
     }
 
