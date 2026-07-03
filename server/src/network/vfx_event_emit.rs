@@ -139,18 +139,63 @@ pub enum VfxPriority {
     /// 保留为未来 ambient 粒子(灵田脉动、区域灵气涌动等)使用,当前 gameplay 路径暂未触达。
     #[allow(dead_code)]
     Verbose = 0,
-    /// P2 normal：普通命中、合批后的常规战斗事件（`sword_qi_slash` / `formation_activate`）。
+    /// P2 normal：普通命中、环境/杂项粒子（`combat_hit` / `formation_activate`）。
     Normal = 1,
-    /// P1 important：顿悟 / 大招 / buff 施加（`enlightenment_aura`）。
+    /// P1 important：顿悟 / buff 施加 / 玩家技能施放粒子（`enlightenment_aura` / `sword_qi_slash`）。
     Important = 2,
     /// P0 critical：死亡 / 击杀 / 渡劫 / 境界突破（`tribulation_lightning` / `breakthrough_pillar` / `death_soul_dissipate`）。
     Critical = 3,
 }
 
+/// 玩家主动施放的流派技能粒子——按功法家族前缀识别。
+/// 同族新技能自动继承 Important 档,不需要逐 id 登记(防"忘登记掉回 Normal"回归)。
+const PLAYER_SKILL_VFX_PREFIXES: &[&str] = &[
+    "bong:woliu_",
+    "bong:vortex_",
+    "bong:sword_",
+    "bong:heaven_gate_",
+    "bong:anqi_",
+    "bong:dugu_",
+    "bong:tuike_",
+    "bong:baomai_",
+    "bong:yidao_",
+    "bong:zhenmai_",
+    "bong:jiemai_",
+    "bong:palm_",
+];
+
+/// 无家族前缀的玩家技能粒子散号(爆脉/蜕壳的分招粒子、盾格挡、毒雾)。
+const PLAYER_SKILL_VFX_IDS: &[&str] = &[
+    "bong:beng_quan",
+    "bong:windup_charge",
+    "bong:release_burst",
+    "bong:blood_burn_crimson",
+    "bong:body_transcendence_pillar",
+    "bong:ground_wave_dust",
+    "bong:meridian_ripple_scar",
+    "bong:false_skin_don_dust",
+    "bong:false_skin_shed_burst",
+    "bong:ancient_skin_glow",
+    "bong:poison_mist",
+    "bong:guard_raise",
+    "bong:shield_raise",
+];
+
+/// 玩家主动施放技能的粒子 → Important:拥挤 chunk 触 cap 时后于普通命中/环境粒子被丢。
+/// 背景:技能粒子全归 Normal 时,混战中 per-chunk cap=8 会优先牺牲技能特效,
+/// 玩家放招看不到任何反馈——技能反馈价值高于通用命中火花。
+fn is_player_skill_vfx(event_id: &str) -> bool {
+    PLAYER_SKILL_VFX_PREFIXES
+        .iter()
+        .any(|p| event_id.starts_with(p))
+        || PLAYER_SKILL_VFX_IDS.contains(&event_id)
+}
+
 /// 按 event_id 推导默认优先级。匿名/未知 event 归 Normal。
 ///
 /// 策略性选择——plan §6.3 分级原本面向事件流,粒子 VFX 此处映射粗分：
-/// critical 事件(渡劫/突破/死亡) 全服可见,永不丢;normal 战斗事件可在拥挤 chunk 时牺牲。
+/// critical 事件(渡劫/突破/死亡) 全服可见,永不丢;玩家技能施放归 Important;
+/// 通用命中(`combat_hit`)/环境粒子归 Normal,拥挤 chunk 时先被牺牲。
 pub fn vfx_default_priority(event_id: &str) -> VfxPriority {
     match event_id {
         "bong:tribulation_lightning"
@@ -164,6 +209,7 @@ pub fn vfx_default_priority(event_id: &str) -> VfxPriority {
         | "bong:npc_rank_aura_elder"
         | "bong:npc_rank_aura_master"
         | "bong:npc_qi_aura_ripple" => VfxPriority::Important,
+        _ if is_player_skill_vfx(event_id) => VfxPriority::Important,
         _ => VfxPriority::Normal,
     }
 }
@@ -707,13 +753,68 @@ mod tests {
             VfxPriority::Important
         );
         assert_eq!(
-            vfx_default_priority("bong:sword_qi_slash"),
-            VfxPriority::Normal
-        );
-        assert_eq!(
             vfx_default_priority("bong:unknown_event"),
             VfxPriority::Normal
         );
+    }
+
+    #[test]
+    fn player_skill_vfx_families_promote_to_important() {
+        // 每个功法家族至少一个代表 id:前缀命中 → Important
+        for id in [
+            "bong:sword_qi_slash",
+            "bong:sword_qi_slash_path",
+            "bong:heaven_gate_release",
+            "bong:woliu_vacuum_palm_spiral",
+            "bong:vortex_spiral",
+            "bong:anqi_snipe_bolt",
+            "bong:dugu_taint_pulse",
+            "bong:tuike_shed_burst",
+            "bong:baomai_blood_burn",
+            "bong:yidao_meridian_repair",
+            "bong:zhenmai_sever_chain",
+            "bong:jiemai_burst_blood",
+            "bong:palm_strike",
+        ] {
+            assert_eq!(
+                vfx_default_priority(id),
+                VfxPriority::Important,
+                "技能家族粒子 {id} 应为 Important(拥挤 chunk 后于普通命中被丢),实际 {:?}",
+                vfx_default_priority(id)
+            );
+        }
+        // 无前缀散号也要命中
+        for id in [
+            "bong:beng_quan",
+            "bong:release_burst",
+            "bong:false_skin_shed_burst",
+            "bong:poison_mist",
+            "bong:shield_raise",
+        ] {
+            assert_eq!(
+                vfx_default_priority(id),
+                VfxPriority::Important,
+                "技能散号粒子 {id} 应为 Important,实际 {:?}",
+                vfx_default_priority(id)
+            );
+        }
+        // 通用命中/环境粒子留 Normal,仍是拥挤时的牺牲品
+        for id in [
+            "bong:combat_hit",
+            "bong:combat_parry",
+            "bong:movement_dash",
+            "bong:lingtian_till",
+            "bong:cultivation_absorb",
+        ] {
+            assert_eq!(
+                vfx_default_priority(id),
+                VfxPriority::Normal,
+                "非技能粒子 {id} 应保持 Normal,实际 {:?}",
+                vfx_default_priority(id)
+            );
+        }
+        // 技能档不越级:仍低于渡劫/死亡 Critical
+        assert!(VfxPriority::Critical > vfx_default_priority("bong:sword_qi_slash"));
     }
 
     #[test]
@@ -747,21 +848,50 @@ mod tests {
             })
             .collect();
         reqs.extend(
-            (0..12).map(|i| {
-                make_particle_request("bong:sword_qi_slash", [i as f64 * 0.1, 64.0, 0.1], 1)
-            }),
+            (0..12)
+                .map(|i| make_particle_request("bong:combat_hit", [i as f64 * 0.1, 64.0, 0.1], 1)),
         );
         let out = enforce_per_chunk_cap(reqs);
         // 合批前 20 个,8 critical 全过,normal 全丢(cap=8 已被 critical 占满)
         // 但合批在 cap 前执行——这里我们没 coalesce,所以 8 critical 不合批(因为不同 bin 但 same chunk)
         // 实际上 chunk 是 16x16,8 个 [0.x, 0.x] 都在同 chunk (0,0)
-        // 12 个 sword_qi_slash 也在 chunk (0,0),但前面 8 个 critical 已占满 cap
+        // 12 个 combat_hit 也在 chunk (0,0),但前面 8 个 critical 已占满 cap
         assert_eq!(out.len(), 8);
         for r in &out {
             if let VfxEventPayloadV1::SpawnParticle { event_id, .. } = &r.payload {
                 assert_eq!(event_id, "bong:breakthrough_pillar");
             }
         }
+    }
+
+    #[test]
+    fn per_chunk_cap_skill_particles_survive_over_generic_hits() {
+        // 混战场景:同 chunk 12 个通用命中 + 4 个技能粒子,cap=8
+        // → 4 个技能粒子(Important)全存活,通用命中(Normal)只留 4 个
+        let mut reqs: Vec<VfxEventRequest> = (0..12)
+            .map(|i| make_particle_request("bong:combat_hit", [i as f64 * 0.1, 64.0, 0.0], 1))
+            .collect();
+        reqs.extend(
+            (0..4).map(|i| {
+                make_particle_request("bong:vortex_spiral", [i as f64 * 0.1, 64.0, 0.1], 1)
+            }),
+        );
+        let out = enforce_per_chunk_cap(reqs);
+        assert_eq!(out.len(), 8, "cap=8 应保留恰好 8 条,实际 {}", out.len());
+        let skill_survivors = out
+            .iter()
+            .filter(|r| {
+                matches!(
+                    &r.payload,
+                    VfxEventPayloadV1::SpawnParticle { event_id, .. }
+                        if event_id == "bong:vortex_spiral"
+                )
+            })
+            .count();
+        assert_eq!(
+            skill_survivors, 4,
+            "技能粒子(Important)应在拥挤 chunk 全存活,因为排序先于 Normal 通用命中;实际存活 {skill_survivors}/4"
+        );
     }
 
     #[test]
