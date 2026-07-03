@@ -14,13 +14,46 @@
 ## 接入面（docs/CLAUDE.md §二）
 
 - **进料**：`npc_runtime_bundle_with_age`（`npc/lifecycle.rs:596-619`，现恒 `Cultivation::default()`=醒灵，且 `:608 LifespanComponent::for_realm(Cultivation::default().realm)` 同源醒灵化，二者必须一并修）**及其 2-arg 姐妹函数 `npc_runtime_bundle`（`lifecycle.rs:592`，转调 `_with_age(entity, archetype, 0.0)`，同样恒醒灵，2026-07-03 第二轮博弈复核补充——P0 必须同时给两个函数加 `realm: Realm` 形参，遗漏后者会让走此包装的全部身份 realm 站点继续被吞）**
-  - `npc_runtime_bundle_with_age` 侧 spawn 调用点：`rogue.rs:236-291`（`spawn_rogue_npc_at`，insert 调用点 `:290`）/ `disciple.rs:94-160`（`spawn_disciple_npc_at`，insert 调用点 `:159`）/ `commoner.rs:51-87`（insert 调用点 `:86`）/ `rogue.rs:298-343`（`spawn_scattered_cultivator_at`，已持 `realm: Realm` 形参 `:306`，insert 调用点 `:340`）——四处的 `realm` 参数现全部只喂视觉/功法，最终 insert 调用点均不透传给 `Cultivation`
-  - `npc_runtime_bundle`（2-arg）侧调用点：全仓 `grep -rn "npc_runtime_bundle(" server/src --include=*.rs`（排除 `_with_age`/其定义行）现命中 **28 处**（含测试）——**完整性方法论**：不锁定"三处/四处"这类会随博弈轮次递增的静态计数，P0 实施与验收各跑一次上述 grep（配对 `npc_runtime_bundle_with_age(` 的等价 grep，当前 7 处）逐条核对新增 `realm` 实参是否透传真实身份境界。已核实**必须透传真实身份 realm（非默认）**的站点：
-    - `disciple.rs:233`（`spawn_relic_guard_npc_at`，`guard_realm = Realm::Spirit` 定义于 `:217`）——GuardianRelic 守护者
-    - `world/tsy_lifecycle.rs:837`（`spawn_daoxiang_from_corpse`，`corpse.origin_realm` 已在 `:831` 喂给 `DaoZhangBehaviorBlackboard`，须同源喂进 bundle，不可只喂 blackboard 不喂 `Cultivation`）——尸体激活的道伥，worldview §七:739「道伥保留生前本能」的境界前提
-    - `tsy_hostile.rs:795`（`spawn_tsy_daoxiang_at`，`daoxiang_realm = Realm::Induce` 定义于 `:778`）——TSY 道乡
-    - `tsy_hostile.rs:939`（`spawn_tsy_zhinian_at`，`zhinian_realm = Realm::Condense` 定义于 `:922`）——TSY 执念
-    其余约 20 处调用点（`fauna`/`Beast` 类通用生物、`combat/resolve.rs`/`brain/mod.rs` 测试 fixture、`scenario.rs`/`spawn_pillar.rs`/`spawn_rat.rs`/`spawn_whale.rs`/`heiwushi.rs`/`spawn_spider.rs`/`hybrid_beast.rs`/`dandao/boss_spawn.rs` 等）无身份 realm 信号，P0 实施时在各调用处显式写字面量 `Realm::Awaken`（每处自己写清楚，不是让 wrapper 内部默认兜底）——干净代码无兼容层，不留隐式 Awaken 吞没
+  - **完整性方法论（2026-07-03 第三轮博弈复核根治）**：前两轮反复漏站点（先漏 `spawn_scattered_cultivator_at`，再漏 `beast.rs:110`/`tsy_hostile.rs:1086`），根因是用"四处/N处"静态断言而非穷举 grep。**本轮改为强制流程**：P0 实施与验收**各跑一次**下方两条 grep，逐条比对下表——不再允许"约 N 处"这类会随博弈轮次漂移的近似计数：
+    ```bash
+    grep -rn "npc_runtime_bundle_with_age(" server/src
+    grep -rn "npc_runtime_bundle(" server/src
+    ```
+  - **`npc_runtime_bundle_with_age` 全仓生产站点穷举（5 处，2026-07-03 grep 核实）**——排除定义行 `lifecycle.rs:596`（函数体）、内部转调行 `lifecycle.rs:593`（2-arg wrapper 内部调用，随 wrapper 签名联动即可非独立站点）、测试 fixture `lifecycle.rs:1067`（`#[cfg(test)] mod tests`，2026-07-03 复核确认自 `:829` 起持续到文件尾，此调用在其内）：
+
+    | file:line | 函数 | archetype | realm 处置 |
+    |-----------|------|-----------|-----------|
+    | `rogue.rs:290` | `spawn_rogue_npc_at`（`:229-291`） | Rogue | 透传已持有的 `realm` 形参（`:236`） |
+    | `rogue.rs:340` | `spawn_scattered_cultivator_at`（`:298-343`） | Rogue | 透传已持有的 `realm` 形参（`:306`） |
+    | `disciple.rs:159` | `spawn_disciple_npc_at`（`:85-160`） | Disciple | 透传已持有的 `realm` 形参（`:94`） |
+    | `commoner.rs:86` | `spawn_commoner_npc_at`（`:44-88`） | Commoner | 透传已持有的 `realm` 形参（`:37`附近） |
+    | `beast.rs:110` | `spawn_beast_npc_at`（`:51-…`） | Beast | 无 `realm` 形参，显式字面量 `Realm::Awaken` |
+
+  - **`npc_runtime_bundle`（2-arg）全仓生产站点穷举（19 处，2026-07-03 grep 核实）**——排除定义行 `lifecycle.rs:592`、及 9 处测试 fixture（`lifecycle.rs:1192`/`:1201`、`brain/mod.rs:794`/`:915`、`network/mod.rs:3935`、`combat/resolve.rs:3725`/`:7241`/`:7256`、`spawn_whale.rs:353`——均逐一核实位于各自文件 `#[cfg(test)] mod tests` 块内，非生产路径）：
+
+    | file:line | 函数 | archetype | realm 处置 |
+    |-----------|------|-----------|-----------|
+    | `disciple.rs:233` | `spawn_relic_guard_npc_at` | GuardianRelic | 透传 `guard_realm = Realm::Spirit`（定义于 `:217`） |
+    | `world/tsy_lifecycle.rs:837` | `spawn_daoxiang_from_corpse` | Daoxiang | 透传 `corpse.origin_realm`（已在 `:831` 喂 `DaoZhangBehaviorBlackboard`，须同源喂 `Cultivation`，不可只喂 blackboard） |
+    | `tsy_hostile.rs:795` | `spawn_tsy_daoxiang_at` | Daoxiang | 透传 `daoxiang_realm = Realm::Induce`（定义于 `:778`） |
+    | `tsy_hostile.rs:939` | `spawn_tsy_zhinian_at` | Zhinian | 透传 `zhinian_realm = Realm::Condense`（定义于 `:922`） |
+    | `tsy_hostile.rs:1086` | `spawn_tsy_sentinel_at` | GuardianRelic（复用 tag） | **透传 `Realm::Spirit`（2026-07-03 第三轮新收口）**——`finished_plans/plan-tsy-hostile-v1.md` 定性此为上古宗门遗迹守护 boss，对齐 `disciple.rs:233` 的 GuardianRelic 处置，非无身份通用怪；补 R1 pin 测试（见下） |
+    | `tsy_hostile.rs:977` | `spawn_tsy_fuya_at` | Fuya | 无局部 realm 变量，显式字面量 `Realm::Awaken` |
+    | `tsy_hostile.rs:1020` | `spawn_tsy_skull_fiend_at` | SkullFiend | 无局部 realm 变量，显式字面量 `Realm::Awaken` |
+    | `spawn_pillar.rs:95` | `spawn_pillar_npc_at` | Beast | 无身份信号，显式字面量 `Realm::Awaken` |
+    | `spawn/zombie.rs:81` | `spawn_zombie_npc_at` | Zombie | 无身份信号，显式字面量 `Realm::Awaken` |
+    | `spawn_whale.rs:211` | `spawn_whale_npc_at` | Beast | 无身份信号，显式字面量 `Realm::Awaken` |
+    | `spawn_rat.rs:125` | `spawn_rat_npc_at` | Beast | 无身份信号，显式字面量 `Realm::Awaken` |
+    | `spawn_spider.rs:105` | `spawn_ash_spider_npc_at` | Beast | 无身份信号，显式字面量 `Realm::Awaken` |
+    | `scenario.rs:153` | `process_pending_scenarios`（`/npc_scenario` dev 命令，非测试文件） | Zombie | 无身份信号，显式字面量 `Realm::Awaken` |
+    | `heiwushi.rs:406` | `spawn_heiwushi_at`（黑武士 boss） | Beast | 无身份信号，显式字面量 `Realm::Awaken`（**已知设计不一致**：boss 强度与醒灵境界不匹配，本 plan 不改设计，仅如实记录，交后续 boss-realm 专项） |
+    | `dandao/boss_spawn.rs:181` | `spawn_baolongwang_at`（暴龙王 boss） | Beast | 无身份信号，显式字面量 `Realm::Awaken`（同上，已知设计不一致，本 plan 范围外） |
+    | `world/events.rs:2610` | `spawn_beast_tide_zombie`（兽潮临时 mob，2026-07-03 新收口） | Beast | 无身份信号，显式字面量 `Realm::Awaken` |
+    | `world/events.rs:2791` | `spawn_targeted_daoxiang`（beast tide 定向道伥，2026-07-03 新收口） | Daoxiang | 无身份信号，显式字面量 `Realm::Awaken`（与 `tsy_lifecycle.rs:837`/`tsy_hostile.rs:795` 同 archetype 但此处无 origin_realm 上下文，不可套用） |
+    | `fauna/hybrid_beast.rs:415` | `hybrid_beast_formation_system` | Beast | 无身份信号，显式字面量 `Realm::Awaken`；注意此处随后 `runtime.cultivation.qi_current = hybrid_qi`（融合兽真元）单独覆盖 `qi_current`，不覆盖 `realm` 字段，二者独立不冲突 |
+    | `fauna/dying_elder.rs:429` | `apply_spawn`（大能 spawn system） | DyingElder | 传入的 realm 实参不影响最终结果——本行两句之后 `runtime.cultivation = cultivation`（`:391-394` 构造的化虚 `Realm::Void` 字面量）整体覆盖，字面量随便写 `Realm::Awaken` 占位即可，**回归锁见下方 P0 末尾**，不可因改签名误删这层覆盖 |
+
+    **总计 24 处外部生产调用站点**（5 + 19，均已逐一 grep + Read 核实存在，非静态估算）。
   - **活体种群入口（独立于 dormant 快照，P0/P1 均须覆盖）**：`seed_initial_rogue_population_on_startup`（`rogue.rs:353`）是与 `dormant_rogue_seed_snapshot`（下条）**完全独立**的第二条种群生产线——它在 `mod.rs:199` 注册于 `Update`（生产系统，非测试专属），`RoguePopulationSeedConfig::default().target_count` 默认 `20`（`rogue.rs:62`，可用 `BONG_ROGUE_SEED_COUNT` 覆盖但生产默认非 0，必跑），逐 tick 调用 `spawn_scattered_cultivator_at`（调用点 `rogue.rs:517-527`）产出**真实 entity**、把 `Realm::Awaken` 硬编在调用处（`rogue.rs:525`）。此路径**不产出 dormant snapshot**、**不经过** `dormant_rogue_seed_snapshot`/hydrate 往返——P0 R2 pin 测试（hydrate round-trip）和 P1 的 `classify_zones_by_qi` 分布表若只接到 `dormant_rogue_seed_snapshot`，这条活体路径会永久锁死醒灵，直接推翻 P1"末法长尾分布"目标。P0/P1 均须显式把此路径纳入交付物（见下方 P0/P1 正文）
 - 种群 seeder `dormant_rogue_seed_snapshot`（`npc/dormant/mod.rs:1274-1285`，:1285 恒 `Cultivation::default()`，其注册入口 `seed_initial_dormant_population_on_startup` 在 `dormant/mod.rs:1111`）；zone 灵气分档 `classify_zones_by_qi`（**真定义 `npc/spawn/rogue.rs:99`**，`dormant/mod.rs:1145-1148` 只是调用点，非定义）；确定性哈希 `deterministic_hash(char_id, salt)`（**真定义 `npc/dormant/mod.rs:1400`**；`seed_rogue_faction :1228` 是用例之一 salt=0，`GROUP_SALT` 具名常量在 `:1245`，用于 `:1252` 的分组哈希）
 - **出料**：正确的 `Cultivation.realm` → 下游**零改动自动生效**：战力 `compute_combat_power`（`combat_power.rs:22-46`，realm_ordinal×20；**其内 `default_cultivation` 测试专用 qi_max 表 `combat_power.rs:61-65`（10/30/60/120/200/400）是 test-only fixture，非正典，P0 严禁复用/参照**）、离屏战争结算（`dormant/combat.rs:57`）、死亡遗物门槛（`combat.rs:245`，固元起）、AI 威胁评估（`brain/threat.rs:134-249`，realm_delta 权重 0.4）、全部招式境界门控、寿元 `LifespanComponent::for_realm`
@@ -41,18 +74,19 @@
 ## P0 choke point 修复 ⬜
 
 - `npc_runtime_bundle_with_age`（`lifecycle.rs:596`）加 `realm: Realm` 入参：`Cultivation` 不再恒 `::default()`，改为 `realm` + `qi_max_for_realm(realm)`（新函数，见 §8.1 #2）算出的 `qi_max`/`qi_current`；同一处 `:608 LifespanComponent::for_realm(...)` 同步吃 `realm` 而非 `Cultivation::default().realm`；四处 spawn 调用点透传各自已持有的 `realm` 参数——`rogue.rs:290`（`spawn_rogue_npc_at`）/ `disciple.rs:159` / `commoner.rs:86` / `rogue.rs:340`（`spawn_scattered_cultivator_at`，函数签名 `:298` 已持 `realm` 形参 `:306`，本条只需把该形参透传进 bundle 调用，函数签名不用改）
-- **`npc_runtime_bundle`（2-arg 姐妹函数，`lifecycle.rs:592`）同步加 `realm: Realm` 入参**（转调 `_with_age(entity, archetype, realm, 0.0)`，禁止签名不改、内部继续悄悄塞 `Realm::Awaken`）——**优先方案：给 wrapper 加 realm 形参全透传**，不做"编译期强逼但默认吞没"的折中。全仓 28 个调用点（grep 方法论见接入面）逐一改传：
-  - 身份站点透传已持有的局部变量：`disciple.rs:233` 传 `guard_realm`（`:217` 定义）/ `world/tsy_lifecycle.rs:837` 传 `corpse.origin_realm.unwrap_or(Realm::Awaken)`（`spawn_daoxiang_from_corpse` 入参已保证走到此行时 `origin_realm` 通常为 `Some`，见调用侧 `:619`/`:737` 的 `None` 分支已提前 despawn 不会到达此处，但函数签名允许 `Option`，兜底值仅为类型安全非业务默认）/ `tsy_hostile.rs:795` 传 `daoxiang_realm`（`:778` 定义）/ `tsy_hostile.rs:939` 传 `zhinian_realm`（`:922` 定义）
-  - 其余约 20 处非身份调用点在调用处显式写字面量 `Realm::Awaken`（逐处显式，非 wrapper 内建默认）
+- **`npc_runtime_bundle`（2-arg 姐妹函数，`lifecycle.rs:592`）同步加 `realm: Realm` 入参**（转调 `_with_age(entity, archetype, realm, 0.0)`，禁止签名不改、内部继续悄悄塞 `Realm::Awaken`）——**优先方案：给 wrapper 加 realm 形参全透传**，不做"编译期强逼但默认吞没"的折中。全仓 **19 个生产调用点**（穷举清单见接入面「`npc_runtime_bundle` 全仓生产站点穷举」表，非"约 20 处"估算，2026-07-03 第三轮博弈复核逐条 grep+Read 核实）逐一改传：
+  - **身份站点（5 处）**透传已持有的局部变量：`disciple.rs:233` 传 `guard_realm`（`:217` 定义）/ `world/tsy_lifecycle.rs:837` 传 `corpse.origin_realm.unwrap_or(Realm::Awaken)`（`spawn_daoxiang_from_corpse` 入参已保证走到此行时 `origin_realm` 通常为 `Some`，见调用侧 `:619`/`:737` 的 `None` 分支已提前 despawn 不会到达此处，但函数签名允许 `Option`，兜底值仅为类型安全非业务默认）/ `tsy_hostile.rs:795` 传 `daoxiang_realm`（`:778` 定义）/ `tsy_hostile.rs:939` 传 `zhinian_realm`（`:922` 定义）/ **`tsy_hostile.rs:1086` 传字面量 `Realm::Spirit`**（`spawn_tsy_sentinel_at`，秘境守灵，复用 `GuardianRelic` tag，对齐 `disciple.rs:233`，`finished_plans/plan-tsy-hostile-v1.md` 定性为上古宗门遗迹守护 boss——2026-07-03 第三轮新收口，此前两轮遗漏）
+  - 其余 **13 处**非身份调用点（`spawn_pillar.rs:95`/`spawn/zombie.rs:81`/`spawn_whale.rs:211`/`spawn_rat.rs:125`/`spawn_spider.rs:105`/`scenario.rs:153`/`heiwushi.rs:406`/`dandao/boss_spawn.rs:181`/`tsy_hostile.rs:977`/`tsy_hostile.rs:1020`/**`world/events.rs:2610`/`world/events.rs:2791`（2026-07-03 第三轮新收口，此前两轮遗漏）**/`fauna/hybrid_beast.rs:415`）在调用处显式写字面量 `Realm::Awaken`（逐处显式，非 wrapper 内建默认）；`fauna/dying_elder.rs:429` 单独处理（见下方回归锁——传入的 realm 实参会被随后的 `Cultivation` 字面量整体覆盖，不属于「非身份 Awaken」也不属于「身份透传」，是第三类"结果不受影响"站点，占位传 `Realm::Awaken` 即可）
 - 新增 `qi_max_for_realm(realm: Realm) -> f64`，落 `cultivation/breakthrough.rs`（紧挨 `qi_max_multiplier:91`），组合既有原语（`qi_max_multiplier` × `MERIDIAN_CAPACITY_ON_OPEN=10.0` × `Realm::required_meridians()`，具体组合公式见 §8.1 #2）；输出必须对拍 worldview §三:195-203 六个数值（10/40/150/540/2100/10700）
 - 修完自动生效面 pin 测试：
   - 派系首领 spawn 后 `Cultivation.realm == leader_realm_for(faction)`（三档全覆盖：Qingyun→Solidify、Cangyuan→Spirit、NorthWaste→Awaken）
-  - **R1**（2026-07-03 第二轮博弈复核核实：四站点均实测走 **2-arg `npc_runtime_bundle`**，非 `_with_age`——上一版误记为 `_with_age`，本轮已订正）：
+  - **R1**（2026-07-03 第二轮博弈复核核实：站点均实测走 **2-arg `npc_runtime_bundle`**，非 `_with_age`——上一版误记为 `_with_age`，本轮已订正；**第三轮新增 `tsy_hostile.rs:1086` 第 5 项**，此前两轮遗漏）：
     - TSY 道乡 `Cultivation.realm == Realm::Induce`（`tsy_hostile.rs:795`，`daoxiang_realm` 定义于 `:778`）
     - TSY 执念 `Cultivation.realm == Realm::Condense`（`tsy_hostile.rs:939`，`zhinian_realm` 定义于 `:922`）
     - GuardianRelic 守护者 `Cultivation.realm == Realm::Spirit`（`disciple.rs:233`，`guard_realm` 定义于 `:217`，经 `spawn_relic_guard_npc_at`）
     - 尸体激活道伥 `Cultivation.realm == corpse.origin_realm`（`world/tsy_lifecycle.rs:837`，经 `spawn_daoxiang_from_corpse`；`origin_realm` 已在 `:831` 喂 `DaoZhangBehaviorBlackboard`，本测试断言同一份值也落进 `Cultivation`，覆盖至少一个非默认 `Some(Realm::Solidify)` 等取值，不用 `None` 分支——`None` 分支在 `:737-743`/`:619-629` 已提前 despawn 干尸，不会 spawn 道伥）
-    四处均须显式把各自局部变量传进 2-arg `npc_runtime_bundle` 调用（不能假设"改完 `_with_age` 自动生效"，因为它们根本不走 `_with_age`），测试直接断言 `Cultivation.realm`，不是断言功法门槛
+    - **秘境守灵 `Cultivation.realm == Realm::Spirit`**（`tsy_hostile.rs:1086`，经 `spawn_tsy_sentinel_at`；2026-07-03 第三轮新收口——此前两轮均漏此站点，误当作"无身份 Beast 类"处理，实为复用 `GuardianRelic` archetype tag 的上古遗迹守护 boss，应与 `disciple.rs:233` 同档）
+    五处均须显式把各自局部变量/字面量传进 2-arg `npc_runtime_bundle` 调用（不能假设"改完 `_with_age` 自动生效"，因为它们根本不走 `_with_age`），测试直接断言 `Cultivation.realm`，不是断言功法门槛
   - **R2**：hydrate 往返 `snapshot.cultivation.realm` 不丢——此测试成立的前提是 seed 阶段（P1）已把非默认 `realm` 写进快照；在 P0 阶段（seeder 仍产出 `Cultivation::default()`）该 pin 测试恒真无意义，**必须等 P1 落地后才补齐真实断言**（P0 阶段先写 hydrate round-trip 骨架 + `Realm::Solidify` 等非默认值的手工构造快照做覆盖，不依赖 seeder 产出）
   - dev 命令显式 realm 直达组件（`/realm set` 路径不受影响）
 - 回归锁：`dying_elder`（`fauna/dying_elder.rs:391-394`）化虚路径直接构造 `Cultivation` 字面量、不经 `npc_runtime_bundle_with_age`，不受本阶段 bundle 签名变更影响，加专属回归测试锁 `Realm::Void` 不被误改
