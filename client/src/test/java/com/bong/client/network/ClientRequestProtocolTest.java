@@ -1209,6 +1209,96 @@ public class ClientRequestProtocolTest {
             "encodeRaiseShield and encodeLowerShield must produce different payloads — raise=" + raise + " lower=" + lower);
     }
 
+    // ─── plan-scroll-reading-v1 P0：encodeScrollReadRequest encode tests（发起端孤岛修复）───
+
+    @Test
+    void encodesScrollReadRequestTypeField() {
+        String json = ClientRequestProtocol.encodeScrollReadRequest(42L);
+        com.google.gson.JsonObject obj = com.google.gson.JsonParser.parseString(json).getAsJsonObject();
+        assertEquals(
+            "scroll_read_request",
+            obj.get("type").getAsString(),
+            "encodeScrollReadRequest type field must be 'scroll_read_request' to match server ClientRequestV1::ScrollReadRequest serde tag, actual=" + obj.get("type")
+        );
+    }
+
+    @Test
+    void encodesScrollReadRequestVersionField() {
+        String json = ClientRequestProtocol.encodeScrollReadRequest(42L);
+        com.google.gson.JsonObject obj = com.google.gson.JsonParser.parseString(json).getAsJsonObject();
+        assertEquals(
+            1,
+            obj.get("v").getAsInt(),
+            "encodeScrollReadRequest must include v=1 for server serde, actual=" + obj.get("v")
+        );
+    }
+
+    @Test
+    void encodesScrollReadRequestInstanceIdAsNumber() {
+        String json = ClientRequestProtocol.encodeScrollReadRequest(42L);
+        com.google.gson.JsonObject obj = com.google.gson.JsonParser.parseString(json).getAsJsonObject();
+        assertEquals(
+            42L,
+            obj.get("instance_id").getAsLong(),
+            "encodeScrollReadRequest instance_id must round-trip as JSON number (server ClientRequestV1::ScrollReadRequest{instance_id:u64}, not string — §9 draft's 'string instance_id' was a plan authoring slip per client_request.rs comment), actual=" + obj.get("instance_id")
+        );
+    }
+
+    @Test
+    void encodesScrollReadRequestExactPayload() {
+        String json = ClientRequestProtocol.encodeScrollReadRequest(42L);
+        assertEquals(
+            "{\"type\":\"scroll_read_request\",\"v\":1,\"instance_id\":42}",
+            json,
+            "encodeScrollReadRequest must produce exact three-field payload matching server ScrollReadRequest schema, actual=" + json
+        );
+    }
+
+    @Test
+    void encodesScrollReadRequestNoExtraFields() {
+        String json = ClientRequestProtocol.encodeScrollReadRequest(42L);
+        com.google.gson.JsonObject obj = com.google.gson.JsonParser.parseString(json).getAsJsonObject();
+        assertEquals(
+            3,
+            obj.size(),
+            "encodeScrollReadRequest must contain exactly 3 fields (type + v + instance_id); server serde uses additionalProperties:false, actual size=" + obj.size() + " json=" + json
+        );
+    }
+
+    @Test
+    void encodesScrollReadRequestZeroInstanceIdBoundary() {
+        // instance_id=0 边界：encode 层不做业务校验（0 是否合法由 server 侧 resolve_scroll_read_request 判定），
+        // 但 wire 形状仍必须正确——encode 不该因 0 值特殊分支产出不同结构。
+        String json = ClientRequestProtocol.encodeScrollReadRequest(0L);
+        assertEquals(
+            "{\"type\":\"scroll_read_request\",\"v\":1,\"instance_id\":0}",
+            json,
+            "encodeScrollReadRequest must encode instance_id=0 verbatim (no silent omission/clamping), actual=" + json
+        );
+    }
+
+    @Test
+    void encodesScrollReadRequestLargeInstanceIdPreservesPrecision() {
+        // 边界：接近 u64 上限（在 Java long 正数范围内）不能因精度丢失被 gson 转成科学计数法/丢位。
+        long large = 9_007_199_254_740_993L; // > 2^53，超出 double 精确整数表示范围
+        String json = ClientRequestProtocol.encodeScrollReadRequest(large);
+        com.google.gson.JsonObject obj = com.google.gson.JsonParser.parseString(json).getAsJsonObject();
+        assertEquals(
+            large,
+            obj.get("instance_id").getAsLong(),
+            "encodeScrollReadRequest must preserve full long precision for instance_id, actual=" + obj.get("instance_id")
+        );
+    }
+
+    @Test
+    void scrollReadRequestAndScrollReadClosedPayloadsAreDistinctTypes() {
+        // 边界：两个变体是独立 type 字面量，互不混用（同款 plan-shield-block-v1 raise/lower 校验模式）。
+        String request = ClientRequestProtocol.encodeScrollReadRequest(7L);
+        String closed = ClientRequestProtocol.encodeScrollReadClosed();
+        assertEquals(false, request.equals(closed),
+            "encodeScrollReadRequest and encodeScrollReadClosed must produce different payloads — request=" + request + " closed=" + closed);
+    }
+
     // ─── plan-scroll-reading-v1 P1 §8.1#4：encodeScrollReadClosed encode tests ───
 
     @Test

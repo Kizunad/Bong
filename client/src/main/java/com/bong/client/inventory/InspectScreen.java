@@ -188,7 +188,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     private final LabelComponent[] filterLabels = new LabelComponent[4];
 
     record PillMenuAction(String label, ActionKind kind) {}
-    enum ActionKind { SELF_USE, MERIDIAN_TARGET, PLACE_FORGE_STATION, PLACE_SPIRIT_NICHE, REPAIR_SPIRIT_NICHE, TECHNIQUE_SCROLL_USE }
+    enum ActionKind { SELF_USE, MERIDIAN_TARGET, PLACE_FORGE_STATION, PLACE_SPIRIT_NICHE, REPAIR_SPIRIT_NICHE, TECHNIQUE_SCROLL_USE, READ_SCROLL }
     record PillContextMenuState(InventoryItem item, int x, int y, List<PillMenuAction> actions) {}
     record PendingMeridianUse(InventoryItem item) {}
     record WeaponMenuAction(String label, WeaponActionKind kind) {}
@@ -2951,6 +2951,12 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         if (item.isTechniqueScroll() && isKnownTechniqueScroll(item) && !isKnownTechnique(item)) {
             actions.add(new PillMenuAction("研读功法", ActionKind.TECHNIQUE_SCROLL_USE));
         }
+        // plan-scroll-reading-v1 P0 — 可阅读残卷（如《经脉浅述·残卷》）右键菜单 [阅读]。
+        // 与 TECHNIQUE_SCROLL_USE 互斥：readable_scroll_spec 挂载的物品不带 scrollKind，
+        // 不会命中上面的 isTechniqueScroll() 分支，故不需要额外互斥判断。
+        if (com.bong.client.scroll.ScrollVanillaIconMap.isReadableScroll(item.itemId())) {
+            actions.add(new PillMenuAction("阅读", ActionKind.READ_SCROLL));
+        }
         return actions;
     }
 
@@ -3011,6 +3017,10 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             case TECHNIQUE_SCROLL_USE -> {
                 pendingMeridianUse = null;
                 dispatchTechniqueScrollUse(item);
+            }
+            case READ_SCROLL -> {
+                pendingMeridianUse = null;
+                dispatchScrollReadRequest(item);
             }
         }
     }
@@ -3515,6 +3525,25 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             System.currentTimeMillis()
         );
         com.bong.client.network.ClientRequestSender.sendTechniqueScrollUse(item.instanceId());
+        return true;
+    }
+
+    /**
+     * plan-scroll-reading-v1 P0 — 右键可阅读残卷菜单 [阅读] 触发，向 server 发送
+     * {@code ScrollReadRequest}。server 校验模板挂了 {@code readable_scroll_spec} 后 emit
+     * {@code ScrollOpen}（{@link com.bong.client.network.ScrollOpenHandler} 接住并弹出
+     * {@link com.bong.client.scroll.ScrollReadScreen}），本方法不直接开屏——阅读不消耗物品，
+     * 也无需像 {@link #dispatchTechniqueScrollUse} 那样先本地占位（round-trip 由 server 权威驱动）。
+     */
+    boolean dispatchScrollReadRequest(InventoryItem item) {
+        if (item == null || item.instanceId() == 0L
+                || !com.bong.client.scroll.ScrollVanillaIconMap.isReadableScroll(item.itemId())) {
+            return false;
+        }
+        com.bong.client.BongClient.LOGGER.info(
+            "[bong][inspect] dispatchScrollReadRequest instance={} item={}",
+            item.instanceId(), item.itemId());
+        com.bong.client.network.ClientRequestSender.sendScrollReadRequest(item.instanceId());
         return true;
     }
 
