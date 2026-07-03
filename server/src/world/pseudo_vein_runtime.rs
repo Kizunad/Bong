@@ -8,7 +8,12 @@ use valence::prelude::{
 use crate::cultivation::components::Cultivation;
 use crate::cultivation::tick::CultivationClock;
 use crate::network::vfx_event_emit::VfxEventRequest;
-use crate::qi_physics::ledger::{QiAccountId, QiTransfer, QiTransferReason};
+use crate::player::gameplay::PendingGameplayNarrations;
+use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
+use crate::qi_physics::ledger::{
+    pending_inflow_account, QiAccountId, QiTransfer, QiTransferReason, WorldQiAccount,
+};
+use crate::schema::common::NarrationStyle;
 use crate::schema::pseudo_vein::PseudoVeinSeasonV1;
 use crate::schema::vfx_event::VfxEventPayloadV1;
 use crate::world::dimension::DimensionKind;
@@ -21,7 +26,11 @@ use crate::worldgen::pseudo_vein::{
 pub const PSEUDO_VEIN_RISING_TICKS: u64 = 600;
 pub const PSEUDO_VEIN_DISSIPATING_TICKS: u64 = 600;
 pub const PSEUDO_VEIN_BASE_DURATION_TICKS: u64 = 36_000;
-pub const PSEUDO_VEIN_MAX_QI: f64 = 0.6;
+/// plan-zone-qi-economy-v1 P3 §8.1 决议 #3 — 0.6 → 0.85（提升前已 grep 确认仅本文件 +
+/// `network::command_executor` 引用该常量符号，无硬编码下游依赖该具体数值）。灵潮窗口目标
+/// 必须显著高于 `MIN_ZONE_QI_TO_GUYUAN`（0.80，`cultivation::breakthrough`），否则灵潮窗口
+/// 期内固元突破仍会被环境门槛拒绝，整个"灵潮补足固元窗口"机制形同虚设。
+pub const PSEUDO_VEIN_MAX_QI: f64 = 0.85;
 pub const PSEUDO_VEIN_WARNING_QI: f64 = 0.3;
 #[allow(dead_code)]
 pub const PSEUDO_VEIN_CRITICAL_DRAIN_RATE: f64 = 0.02;
@@ -74,13 +83,24 @@ pub struct PseudoVeinTickOutcome {
     pub aftermath_hotspots: Vec<PseudoVeinStormHotspot>,
 }
 
+/// plan-zone-qi-economy-v1 P3 §8.1 决议 #3 — 灵潮借还款结算。
+///
+/// 借款模型：`inject_zone_for_pseudo_vein` 已从独立待分配池（`pending_inflow_account`）真实
+/// 借出 `injected_qi`（绝对单位，与 `QI_ZONE_UNIT_CAPACITY` 同量纲）；dissipate 时本结算把
+/// **能还多少还多少**（`min(injected_qi, zone 当前绝对余额)`）转回待分配池——不是旧版本固定
+/// 30% 比例，借款期间被玩家/NPC 正常吸收的部分已经通过既有 `regen_from_zone` 路径守恒记账，
+/// 不需要（也无法）重复归还。
 #[derive(Debug, Clone, PartialEq)]
 pub struct PseudoVeinQiSettlement {
-    pub initial_injected: f64,
-    pub released_to_zones: f64,
-    pub collected_by_tiandao: f64,
-    pub injection_transfer: QiTransfer,
-    pub collection_transfer: QiTransfer,
+    /// 原始借款额（绝对单位），即注入时实际借出的量。
+    pub injected_qi: f64,
+    /// 期望归还额，等于 `injected_qi`（round3 后）——实际能否足额归还取决于
+    /// zone 当前余额，由 `apply_pseudo_vein_settlement` 在应用时按 `min` 缩量。
+    pub returned_to_pool: f64,
+    /// 期望的归还 transfer（`from=zone`, `to=pending_inflow_account`,
+    /// `reason=PseudoVeinSettle`），`amount` 为 `returned_to_pool`——应用时若 zone 余额不足会
+    /// 被 `apply_pseudo_vein_settlement` 缩量后另建一份实际 transfer，本字段只是"期望值"。
+    pub return_transfer: QiTransfer,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -227,14 +247,17 @@ pub fn register(app: &mut App) {
     );
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn pseudo_vein_runtime_tick_system(
     clock: Option<Res<CultivationClock>>,
     mut commands: Commands,
     mut runtimes: Query<(Entity, &mut PseudoVeinRuntime)>,
     cultivators: Query<&Position, With<Cultivation>>,
     mut zones: Option<ResMut<ZoneRegistry>>,
+    mut ledger: Option<ResMut<WorldQiAccount>>,
     mut vfx_events: EventWriter<VfxEventRequest>,
     mut qi_transfers: EventWriter<QiTransfer>,
+    mut pending_narrations: Option<ResMut<PendingGameplayNarrations>>,
 ) {
     let now = clock.as_deref().map(|clock| clock.tick).unwrap_or_default();
     for (entity, mut runtime) in &mut runtimes {
@@ -243,7 +266,12 @@ pub fn pseudo_vein_runtime_tick_system(
             count_cultivators_near(runtime.center_pos, cultivators.iter().map(|pos| pos.get()));
         let outcome = runtime.advance(now, cultivator_count);
         if let Some(settlement) = outcome.settlement.as_ref() {
-            apply_pseudo_vein_settlement(zones.as_deref_mut(), settlement, &mut qi_transfers);
+            apply_pseudo_vein_settlement(
+                zones.as_deref_mut(),
+                ledger.as_deref_mut(),
+                settlement,
+                &mut qi_transfers,
+            );
         }
         if matches!(runtime.phase, PseudoVeinPhase::StormAftermath)
             && now.saturating_sub(runtime.phase_started_at_tick) >= PSEUDO_VEIN_AFTERMATH_TICKS
@@ -254,14 +282,42 @@ pub fn pseudo_vein_runtime_tick_system(
         if should_emit_visual(&mut runtime, previous_phase, now, outcome.warning_crossed) {
             vfx_events.send(pseudo_vein_vfx_request(&runtime, outcome.phase));
         }
+        if previous_phase != runtime.phase {
+            if let Some(text) = pseudo_vein_phase_narration(runtime.phase) {
+                if let Some(narrations) = pending_narrations.as_deref_mut() {
+                    narrations.push_zone(
+                        runtime.zone_id.as_str(),
+                        text,
+                        NarrationStyle::Perception,
+                    );
+                }
+            }
+        }
     }
 }
 
+/// plan-zone-qi-economy-v1 P3 §8.1 决议 #3 — 灵潮阶段切换的天道 zone-scope narration。
+///
+/// 仅在"窗口开启"（Active，固元环境门槛可用）与"窗口关闭"（Dissipating，灵潮开始消散）两个
+/// 对玩家决策有意义的阶段边界发声；Rising/Warning/StormAftermath 不产生文案（避免刷屏，
+/// 且这些阶段没有新的可玩信息——已有 VFX 承担视觉提示）。
+fn pseudo_vein_phase_narration(phase: PseudoVeinPhase) -> Option<&'static str> {
+    match phase {
+        PseudoVeinPhase::Active => Some("灵潮涌动，此地灵气一时丰沛，正是冲击固元的良机。"),
+        PseudoVeinPhase::Dissipating => Some("灵潮渐渐消散，天地灵气归于平淡。"),
+        PseudoVeinPhase::Rising | PseudoVeinPhase::Warning | PseudoVeinPhase::StormAftermath => {
+            None
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 pub fn pseudo_vein_fallback_spawn_system(
     clock: Option<Res<CultivationClock>>,
     mut state: ResMut<PseudoVeinFallbackState>,
     mut commands: Commands,
     mut zones: Option<ResMut<ZoneRegistry>>,
+    mut ledger: Option<ResMut<WorldQiAccount>>,
     cultivators: Query<&Position, With<Cultivation>>,
     runtimes: Query<&PseudoVeinRuntime>,
     mut qi_transfers: EventWriter<QiTransfer>,
@@ -291,6 +347,7 @@ pub fn pseudo_vein_fallback_spawn_system(
         spawn_fallback_pseudo_vein(
             &mut commands,
             zones,
+            ledger.as_deref_mut(),
             &runtimes,
             &mut qi_transfers,
             intent,
@@ -332,9 +389,11 @@ impl PseudoVeinFallbackState {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn spawn_fallback_pseudo_vein(
     commands: &mut Commands,
     zones: &mut ZoneRegistry,
+    ledger: Option<&mut WorldQiAccount>,
     runtimes: &Query<&PseudoVeinRuntime>,
     qi_transfers: &mut EventWriter<QiTransfer>,
     intent: PseudoVeinSpawnIntent,
@@ -351,12 +410,17 @@ fn spawn_fallback_pseudo_vein(
     let Some(zone) = zones.find_zone_mut(intent.zone_id.as_str()) else {
         return;
     };
-    let injected_qi = if let Some(transfer) = inject_zone_for_pseudo_vein(zone) {
-        let amount = transfer.amount;
-        qi_transfers.send(transfer);
-        amount
-    } else {
-        0.0
+    let injected_qi = match ledger {
+        Some(ledger) => {
+            if let Some(transfer) = inject_zone_for_pseudo_vein(zone, ledger) {
+                let amount = transfer.amount;
+                qi_transfers.send(transfer);
+                amount
+            } else {
+                0.0
+            }
+        }
+        None => 0.0,
     };
     let center = zone.center();
     let mut runtime = PseudoVeinRuntime::new(
@@ -388,37 +452,106 @@ fn player_density_by_zone(
     density_by_zone
 }
 
-pub fn inject_zone_for_pseudo_vein(zone: &mut Zone) -> Option<QiTransfer> {
+/// plan-zone-qi-economy-v1 P3 §8.1 决议 #3 — 灵潮注入从独立待分配池**真实借出**，绝不凭空
+/// 创生。借出额被待分配池当前余额钳制（`min(desired, available)`）——池子余额不足时灵潮只能
+/// 把 zone 顶到"能负担"的高度，绝不透支（§8.1 #1 红线）。
+///
+/// 记账范本照抄 `world::heartbeat::zone_qi_inflow_tick`：调用前先用 `set_balance` 把 zone
+/// ledger 镜像同步到 `zone.spirit_qi * QI_ZONE_UNIT_CAPACITY` 真实值，转账后再把结果写回
+/// `zone.spirit_qi`。
+pub fn inject_zone_for_pseudo_vein(
+    zone: &mut Zone,
+    ledger: &mut WorldQiAccount,
+) -> Option<QiTransfer> {
     let before = zone.spirit_qi;
-    zone.spirit_qi = zone
+    let target = zone
         .spirit_qi
         .max(PSEUDO_VEIN_MAX_QI)
         .clamp(ZONE_SPIRIT_QI_MIN, ZONE_SPIRIT_QI_MAX);
-    let injected = round3((zone.spirit_qi - before).max(0.0));
-    if injected <= f64::EPSILON {
+    let desired_fraction = (target - before).max(0.0);
+    if desired_fraction <= f64::EPSILON {
         return None;
     }
-    QiTransfer::new(
-        QiAccountId::tiandao(),
-        QiAccountId::zone(zone.name.as_str()),
-        injected,
+    let desired_absolute = round3(desired_fraction * QI_ZONE_UNIT_CAPACITY);
+    if desired_absolute <= f64::EPSILON {
+        return None;
+    }
+
+    let pool = pending_inflow_account();
+    let available = ledger.balance(&pool).max(0.0);
+    let actual_absolute = round3(desired_absolute.min(available));
+    if actual_absolute <= f64::EPSILON {
+        return None;
+    }
+
+    let zone_account = QiAccountId::zone(zone.name.as_str());
+    if ledger
+        .set_balance(
+            zone_account.clone(),
+            before.max(0.0) * QI_ZONE_UNIT_CAPACITY,
+        )
+        .is_err()
+    {
+        return None;
+    }
+    let transfer = QiTransfer::new(
+        pool,
+        zone_account.clone(),
+        actual_absolute,
         QiTransferReason::ReleaseToZone,
     )
-    .ok()
+    .ok()?;
+    if ledger.transfer(transfer.clone()).is_err() {
+        return None;
+    }
+    let updated_fraction = ledger.balance(&zone_account) / QI_ZONE_UNIT_CAPACITY;
+    zone.spirit_qi = updated_fraction.clamp(ZONE_SPIRIT_QI_MIN, ZONE_SPIRIT_QI_MAX);
+    Some(transfer)
 }
 
+/// plan-zone-qi-economy-v1 P3 §8.1 决议 #3 — 灵潮借款归还：能还多少还多少
+/// （`min(settlement.returned_to_pool, zone 当前绝对余额)`），修复旧版本"仅收回 30%、70%
+/// 永久留 zone 凭空创生"缺陷。`ledger` 缺失（如 headless 测试未插入该资源）时静默跳过，
+/// zone 保留全部借款、不产生 transfer——这与"绝不透支"同一保守方向：宁可不结算，不可让
+/// zone 凭空变化。
 fn apply_pseudo_vein_settlement(
     zones: Option<&mut ZoneRegistry>,
+    ledger: Option<&mut WorldQiAccount>,
     settlement: &PseudoVeinQiSettlement,
     qi_transfers: &mut EventWriter<QiTransfer>,
 ) {
-    if let Some(zones) = zones {
-        if let Some(zone) = zones.find_zone_mut(settlement.collection_transfer.from.id.as_str()) {
-            zone.spirit_qi = (zone.spirit_qi - settlement.collected_by_tiandao)
-                .clamp(ZONE_SPIRIT_QI_MIN, ZONE_SPIRIT_QI_MAX);
-        }
+    let (Some(zones), Some(ledger)) = (zones, ledger) else {
+        return;
+    };
+    let Some(zone) = zones.find_zone_mut(settlement.return_transfer.from.id.as_str()) else {
+        return;
+    };
+    let zone_account = QiAccountId::zone(zone.name.as_str());
+    let current_absolute = zone.spirit_qi.max(0.0) * QI_ZONE_UNIT_CAPACITY;
+    if ledger
+        .set_balance(zone_account.clone(), current_absolute)
+        .is_err()
+    {
+        return;
     }
-    qi_transfers.send(settlement.collection_transfer.clone());
+    let actual_absolute = round3(settlement.returned_to_pool.min(current_absolute).max(0.0));
+    if actual_absolute <= f64::EPSILON {
+        return;
+    }
+    let Ok(transfer) = QiTransfer::new(
+        zone_account.clone(),
+        pending_inflow_account(),
+        actual_absolute,
+        QiTransferReason::PseudoVeinSettle,
+    ) else {
+        return;
+    };
+    if ledger.transfer(transfer.clone()).is_err() {
+        return;
+    }
+    zone.spirit_qi = (ledger.balance(&zone_account) / QI_ZONE_UNIT_CAPACITY)
+        .clamp(ZONE_SPIRIT_QI_MIN, ZONE_SPIRIT_QI_MAX);
+    qi_transfers.send(transfer);
 }
 
 fn pseudo_vein_season_from_world(season: Season) -> PseudoVeinSeasonV1 {
@@ -553,27 +686,17 @@ pub fn effective_duration_ticks(base_duration_ticks: u64, season: PseudoVeinSeas
 }
 
 pub fn settle_pseudo_vein_qi(zone_id: &str, injected_qi: f64) -> PseudoVeinQiSettlement {
-    let initial_injected = round3(injected_qi.max(0.0));
-    let collected_by_tiandao = round3(initial_injected * 0.3);
-    let released_to_zones = round3(initial_injected - collected_by_tiandao);
+    let injected_qi = round3(injected_qi.max(0.0));
     PseudoVeinQiSettlement {
-        initial_injected,
-        released_to_zones,
-        collected_by_tiandao,
-        injection_transfer: QiTransfer::new(
-            QiAccountId::tiandao(),
+        injected_qi,
+        returned_to_pool: injected_qi,
+        return_transfer: QiTransfer::new(
             QiAccountId::zone(zone_id),
-            initial_injected,
-            QiTransferReason::ReleaseToZone,
+            pending_inflow_account(),
+            injected_qi,
+            QiTransferReason::PseudoVeinSettle,
         )
-        .expect("pseudo vein injected qi is finite and non-negative"),
-        collection_transfer: QiTransfer::new(
-            QiAccountId::zone(zone_id),
-            QiAccountId::tiandao(),
-            collected_by_tiandao,
-            QiTransferReason::EraDecay,
-        )
-        .expect("pseudo vein tiandao collection is finite and non-negative"),
+        .expect("pseudo vein settlement return amount is finite and non-negative"),
     }
 }
 
@@ -640,20 +763,21 @@ fn round3(value: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::schema::common::NarrationScope;
     use crate::world::dimension::DimensionKind;
     use crate::world::zone::Zone;
     use valence::prelude::{DVec3, Events};
 
     #[test]
-    fn rising_reaches_0_6_in_600_ticks() {
+    fn rising_reaches_max_qi_in_600_ticks() {
         let mut runtime = runtime(PseudoVeinSeasonV1::Summer);
 
         let midway = runtime.advance(300, 0);
-        assert_eq!(midway.current_qi, 0.3);
+        assert_eq!(midway.current_qi, PSEUDO_VEIN_MAX_QI / 2.0);
         assert_eq!(midway.phase, PseudoVeinPhase::Rising);
 
         let risen = runtime.advance(600, 0);
-        assert_eq!(risen.current_qi, 0.6);
+        assert_eq!(risen.current_qi, PSEUDO_VEIN_MAX_QI);
         assert_eq!(risen.phase, PseudoVeinPhase::Active);
     }
 
@@ -676,22 +800,37 @@ mod tests {
 
     #[test]
     fn qi_conservation() {
-        let settlement = settle_pseudo_vein_qi("lingquan_marsh", PSEUDO_VEIN_MAX_QI);
+        // plan-zone-qi-economy-v1 P3 §8.1 决议 #3 — 借多少还多少（100% 归还），不是旧版本
+        // 固定 30% 比例（那条路 70% 会永久留在 zone，凭空创生）。
+        let settlement = settle_pseudo_vein_qi("lingquan_marsh", 37.5);
 
         assert_eq!(
-            settlement.initial_injected,
-            round3(settlement.released_to_zones + settlement.collected_by_tiandao)
-        );
-        assert_eq!(settlement.injection_transfer.from, QiAccountId::tiandao());
-        assert_eq!(
-            settlement.injection_transfer.to,
-            QiAccountId::zone("lingquan_marsh")
+            settlement.returned_to_pool, settlement.injected_qi,
+            "settlement must plan to return exactly what was borrowed (100%), not a partial \
+             ratio — got injected_qi={} returned_to_pool={}",
+            settlement.injected_qi, settlement.returned_to_pool
         );
         assert_eq!(
-            settlement.collection_transfer.from,
+            settlement.return_transfer.from,
             QiAccountId::zone("lingquan_marsh")
         );
-        assert_eq!(settlement.collection_transfer.to, QiAccountId::tiandao());
+        assert_eq!(settlement.return_transfer.to, pending_inflow_account());
+        assert_eq!(settlement.return_transfer.amount, settlement.injected_qi);
+        assert_eq!(
+            settlement.return_transfer.reason,
+            QiTransferReason::PseudoVeinSettle
+        );
+    }
+
+    #[test]
+    fn settle_pseudo_vein_qi_rejects_negative_injected_as_zero() {
+        let settlement = settle_pseudo_vein_qi("lingquan_marsh", -5.0);
+        assert_eq!(
+            settlement.injected_qi, 0.0,
+            "a negative injected_qi (should never happen, but defensive) must clamp to a \
+             zero-amount settlement, not underflow or panic"
+        );
+        assert_eq!(settlement.returned_to_pool, 0.0);
     }
 
     #[test]
@@ -747,21 +886,101 @@ mod tests {
     }
 
     #[test]
-    fn inject_zone_for_pseudo_vein_records_actual_zone_delta() {
+    fn inject_zone_for_pseudo_vein_borrows_from_pending_pool_and_debits_it() {
         let mut zone = zone("fast", 0.1, 0.0);
+        let mut ledger = WorldQiAccount::default();
+        ledger
+            .set_balance(pending_inflow_account(), 1000.0)
+            .expect("seeding pool balance must succeed");
 
-        let transfer = super::inject_zone_for_pseudo_vein(&mut zone)
-            .expect("low-qi zone should receive tiandao injection");
+        let transfer = super::inject_zone_for_pseudo_vein(&mut zone, &mut ledger)
+            .expect("a well-funded pending pool should fund the injection");
 
-        assert_eq!(zone.spirit_qi, PSEUDO_VEIN_MAX_QI);
-        assert_eq!(transfer.from, QiAccountId::tiandao());
+        let expected_absolute = round3((PSEUDO_VEIN_MAX_QI - 0.1) * QI_ZONE_UNIT_CAPACITY);
+        assert_eq!(
+            zone.spirit_qi, PSEUDO_VEIN_MAX_QI,
+            "a well-funded pool must let the zone reach the full pseudo-vein target"
+        );
+        assert_eq!(transfer.from, pending_inflow_account());
         assert_eq!(transfer.to, QiAccountId::zone("fast"));
-        assert_eq!(transfer.amount, 0.5);
+        assert_eq!(transfer.amount, expected_absolute);
         assert_eq!(transfer.reason, QiTransferReason::ReleaseToZone);
+        assert_eq!(
+            ledger.balance(&pending_inflow_account()),
+            round3(1000.0 - expected_absolute),
+            "pending pool must be debited by exactly the amount credited to the zone \
+             (conservation: no qi created out of thin air)"
+        );
     }
 
     #[test]
-    fn runtime_tick_emits_collection_transfer_on_settlement() {
+    fn inject_zone_for_pseudo_vein_scales_down_when_pool_is_underfunded() {
+        let mut zone = zone("fast", 0.1, 0.0);
+        let mut ledger = WorldQiAccount::default();
+        // Only 5.0 available — far less than the ~37.5 a full injection to PSEUDO_VEIN_MAX_QI
+        // would need.
+        ledger
+            .set_balance(pending_inflow_account(), 5.0)
+            .expect("seeding pool balance must succeed");
+
+        let transfer = super::inject_zone_for_pseudo_vein(&mut zone, &mut ledger)
+            .expect("a partially-funded pool should still fund a partial injection");
+
+        assert_eq!(transfer.amount, 5.0);
+        assert!(
+            zone.spirit_qi < PSEUDO_VEIN_MAX_QI,
+            "an underfunded pool must not let the zone reach the full pseudo-vein target \
+             (would be an overdraw), got {}",
+            zone.spirit_qi
+        );
+        assert_eq!(
+            ledger.balance(&pending_inflow_account()),
+            0.0,
+            "the pool must be drained to exactly zero (scaled down), never left negative or \
+             partially untouched"
+        );
+    }
+
+    #[test]
+    fn inject_zone_for_pseudo_vein_is_a_noop_when_pool_is_empty() {
+        let mut zone = zone("fast", 0.1, 0.0);
+        let mut ledger = WorldQiAccount::default();
+
+        let outcome = super::inject_zone_for_pseudo_vein(&mut zone, &mut ledger);
+
+        assert!(
+            outcome.is_none(),
+            "an empty pending pool must yield no injection at all, not a zero-amount transfer"
+        );
+        assert_eq!(
+            zone.spirit_qi, 0.1,
+            "the zone must be left completely untouched when the pool cannot afford anything"
+        );
+    }
+
+    #[test]
+    fn inject_zone_for_pseudo_vein_is_a_noop_when_zone_already_above_target() {
+        let mut zone = zone("fast", PSEUDO_VEIN_MAX_QI + 0.05, 0.0);
+        let mut ledger = WorldQiAccount::default();
+        ledger
+            .set_balance(pending_inflow_account(), 1000.0)
+            .expect("seeding pool balance must succeed");
+
+        let outcome = super::inject_zone_for_pseudo_vein(&mut zone, &mut ledger);
+
+        assert!(
+            outcome.is_none(),
+            "a zone already above the pseudo-vein target must not receive (or drain) any qi"
+        );
+        assert_eq!(
+            ledger.balance(&pending_inflow_account()),
+            1000.0,
+            "the pool must be left untouched when the zone doesn't need topping up"
+        );
+    }
+
+    #[test]
+    fn runtime_tick_settlement_fully_repays_pending_pool_when_zone_still_holds_it() {
         let mut app = App::new();
         app.insert_resource(CultivationClock {
             tick: PSEUDO_VEIN_DISSIPATING_TICKS,
@@ -769,15 +988,17 @@ mod tests {
         app.insert_resource(ZoneRegistry {
             zones: vec![zone("lingquan_marsh", PSEUDO_VEIN_MAX_QI, 0.0)],
         });
+        app.insert_resource(WorldQiAccount::default());
         app.add_event::<VfxEventRequest>();
         app.add_event::<QiTransfer>();
         app.add_systems(Update, pseudo_vein_runtime_tick_system);
 
+        let injected_absolute = round3(PSEUDO_VEIN_MAX_QI * QI_ZONE_UNIT_CAPACITY);
         let mut runtime = runtime(PseudoVeinSeasonV1::Summer);
         runtime.phase = PseudoVeinPhase::Dissipating;
         runtime.phase_started_at_tick = 0;
         runtime.current_qi = 0.0;
-        runtime.injected_qi = PSEUDO_VEIN_MAX_QI;
+        runtime.injected_qi = injected_absolute;
         runtime.last_tick = 0;
         app.world_mut().spawn(runtime);
 
@@ -789,7 +1010,11 @@ mod tests {
             .find_zone_by_name("lingquan_marsh")
             .expect("test zone should exist")
             .spirit_qi;
-        assert_eq!(zone_qi, 0.42);
+        assert!(
+            zone_qi.abs() < 1e-9,
+            "when nobody consumed the pseudo-vein boost, settlement must return 100% of the \
+             borrowed amount (not the old fixed 30%), draining the zone back to ~0, got {zone_qi}"
+        );
         let transfers = app
             .world()
             .resource::<Events<QiTransfer>>()
@@ -797,9 +1022,70 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(transfers.len(), 1);
         assert_eq!(transfers[0].from, QiAccountId::zone("lingquan_marsh"));
-        assert_eq!(transfers[0].to, QiAccountId::tiandao());
-        assert_eq!(transfers[0].amount, 0.18);
-        assert_eq!(transfers[0].reason, QiTransferReason::EraDecay);
+        assert_eq!(transfers[0].to, pending_inflow_account());
+        assert_eq!(transfers[0].amount, injected_absolute);
+        assert_eq!(transfers[0].reason, QiTransferReason::PseudoVeinSettle);
+        assert_eq!(
+            app.world()
+                .resource::<WorldQiAccount>()
+                .balance(&pending_inflow_account()),
+            injected_absolute,
+            "the pending pool must receive back exactly what was originally borrowed"
+        );
+    }
+
+    #[test]
+    fn runtime_tick_settlement_caps_repay_at_whatever_the_zone_still_holds() {
+        // 借款期间部分被玩家/NPC 正常吸收（已通过既有 regen_from_zone 路径守恒记账）——
+        // 结算时只能"能还多少还多少"，不能把 zone 打成负数去凑足全额归还。
+        let mut app = App::new();
+        app.insert_resource(CultivationClock {
+            tick: PSEUDO_VEIN_DISSIPATING_TICKS,
+        });
+        // zone only holds 0.2 fraction (10.0 absolute) worth of qi at settlement time, far less
+        // than the 42.5 absolute that was originally borrowed.
+        app.insert_resource(ZoneRegistry {
+            zones: vec![zone("lingquan_marsh", 0.2, 0.0)],
+        });
+        app.insert_resource(WorldQiAccount::default());
+        app.add_event::<VfxEventRequest>();
+        app.add_event::<QiTransfer>();
+        app.add_systems(Update, pseudo_vein_runtime_tick_system);
+
+        let injected_absolute = round3(PSEUDO_VEIN_MAX_QI * QI_ZONE_UNIT_CAPACITY);
+        let mut runtime = runtime(PseudoVeinSeasonV1::Summer);
+        runtime.phase = PseudoVeinPhase::Dissipating;
+        runtime.phase_started_at_tick = 0;
+        runtime.current_qi = 0.0;
+        runtime.injected_qi = injected_absolute;
+        runtime.last_tick = 0;
+        app.world_mut().spawn(runtime);
+
+        app.update();
+
+        let zone_qi = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name("lingquan_marsh")
+            .expect("test zone should exist")
+            .spirit_qi;
+        assert!(
+            zone_qi.abs() < 1e-9,
+            "the zone must be drained to exactly zero (everything it still held), not left \
+             negative, got {zone_qi}"
+        );
+        let transfers = app
+            .world()
+            .resource::<Events<QiTransfer>>()
+            .iter_current_update_events()
+            .collect::<Vec<_>>();
+        assert_eq!(transfers.len(), 1);
+        assert_eq!(
+            transfers[0].amount, 10.0,
+            "repay must be capped at what the zone actually held (10.0 absolute), not the \
+             originally-borrowed 42.5 — the difference was already legitimately consumed \
+             elsewhere and cannot be conjured back"
+        );
     }
 
     #[test]
@@ -826,8 +1112,122 @@ mod tests {
         assert_eq!(query.iter(app.world()).count(), 0);
     }
 
+    // ── plan-zone-qi-economy-v1 P3 §8.1 决议 #3 — 灵潮 narration pin ──
+
+    #[test]
+    fn phase_narration_covers_all_variants() {
+        assert!(
+            pseudo_vein_phase_narration(PseudoVeinPhase::Active).is_some(),
+            "entering Active (窗口开启，固元门槛可用) must produce a narration cue"
+        );
+        assert!(
+            pseudo_vein_phase_narration(PseudoVeinPhase::Dissipating).is_some(),
+            "entering Dissipating (窗口关闭) must produce a narration cue"
+        );
+        assert_ne!(
+            pseudo_vein_phase_narration(PseudoVeinPhase::Active),
+            pseudo_vein_phase_narration(PseudoVeinPhase::Dissipating),
+            "the two narration cues must be textually distinct, not a copy-paste placeholder"
+        );
+        assert!(pseudo_vein_phase_narration(PseudoVeinPhase::Rising).is_none());
+        assert!(pseudo_vein_phase_narration(PseudoVeinPhase::Warning).is_none());
+        assert!(pseudo_vein_phase_narration(PseudoVeinPhase::StormAftermath).is_none());
+    }
+
+    #[test]
+    fn runtime_tick_pushes_zone_scope_narration_on_entering_active() {
+        let mut app = App::new();
+        app.insert_resource(CultivationClock {
+            tick: PSEUDO_VEIN_RISING_TICKS,
+        });
+        app.insert_resource(ZoneRegistry {
+            zones: vec![zone("lingquan_marsh", 0.1, 0.0)],
+        });
+        app.insert_resource(WorldQiAccount::default());
+        app.insert_resource(PendingGameplayNarrations::default());
+        app.add_event::<VfxEventRequest>();
+        app.add_event::<QiTransfer>();
+        app.add_systems(Update, pseudo_vein_runtime_tick_system);
+
+        let runtime = runtime(PseudoVeinSeasonV1::Summer);
+        app.world_mut().spawn(runtime);
+
+        app.update();
+
+        let mut narrations = app
+            .world_mut()
+            .resource_mut::<PendingGameplayNarrations>()
+            .drain();
+        assert_eq!(
+            narrations.len(),
+            1,
+            "crossing Rising -> Active must push exactly one zone-scope narration"
+        );
+        let narration = narrations.remove(0);
+        assert_eq!(narration.scope, NarrationScope::Zone);
+        assert_eq!(narration.target.as_deref(), Some("lingquan_marsh"));
+        assert_eq!(narration.style, NarrationStyle::Perception);
+        assert_eq!(
+            narration.text,
+            pseudo_vein_phase_narration(PseudoVeinPhase::Active).unwrap()
+        );
+    }
+
     #[test]
     fn fallback_system_spawns_runtime_on_high_density() {
+        let mut app = App::new();
+        app.insert_resource(CultivationClock {
+            tick: PSEUDO_VEIN_FALLBACK_EVAL_PERIOD_TICKS,
+        });
+        app.insert_resource(ZoneRegistry {
+            zones: vec![zone("fast", 0.1, 0.0)],
+        });
+        app.insert_resource(PseudoVeinFallbackState {
+            last_eval_tick: Some(0),
+            last_qi_by_zone: HashMap::from([("fast".to_string(), 0.1)]),
+        });
+        let mut ledger = WorldQiAccount::default();
+        ledger
+            .set_balance(pending_inflow_account(), 1000.0)
+            .expect("seeding pool balance must succeed");
+        app.insert_resource(ledger);
+        app.add_event::<QiTransfer>();
+        app.add_systems(Update, pseudo_vein_fallback_spawn_system);
+        for _ in 0..PSEUDO_VEIN_CRITICAL_PLAYER_DENSITY {
+            app.world_mut()
+                .spawn((Cultivation::default(), Position::new([8.0, 66.0, 8.0])));
+        }
+
+        app.update();
+
+        let mut query = app.world_mut().query::<&PseudoVeinRuntime>();
+        let runtimes = query.iter(app.world()).collect::<Vec<_>>();
+        assert_eq!(runtimes.len(), 1);
+        assert_eq!(runtimes[0].zone_id, "fast");
+        let expected_absolute = round3((PSEUDO_VEIN_MAX_QI - 0.1) * QI_ZONE_UNIT_CAPACITY);
+        assert_eq!(runtimes[0].injected_qi, expected_absolute);
+        assert_eq!(
+            app.world()
+                .resource::<ZoneRegistry>()
+                .find_zone_by_name("fast")
+                .expect("test zone should exist")
+                .spirit_qi,
+            PSEUDO_VEIN_MAX_QI
+        );
+        assert_eq!(
+            app.world()
+                .resource::<WorldQiAccount>()
+                .balance(&pending_inflow_account()),
+            round3(1000.0 - expected_absolute),
+            "the fallback-spawn path must debit the pending pool by exactly the amount \
+             credited to the zone, same conservation invariant as the agent-command path"
+        );
+    }
+
+    #[test]
+    fn fallback_system_spawns_runtime_with_zero_injection_when_pool_is_missing() {
+        // ledger resource 缺失（例如某些 headless 测试场景没插入 WorldQiAccount）时，
+        // spawn_fallback_pseudo_vein 必须优雅降级为零注入，而不是 panic 或凭空创生。
         let mut app = App::new();
         app.insert_resource(CultivationClock {
             tick: PSEUDO_VEIN_FALLBACK_EVAL_PERIOD_TICKS,
@@ -850,16 +1250,19 @@ mod tests {
 
         let mut query = app.world_mut().query::<&PseudoVeinRuntime>();
         let runtimes = query.iter(app.world()).collect::<Vec<_>>();
-        assert_eq!(runtimes.len(), 1);
-        assert_eq!(runtimes[0].zone_id, "fast");
-        assert_eq!(runtimes[0].injected_qi, 0.5);
+        assert_eq!(runtimes.len(), 1, "the runtime should still spawn");
+        assert_eq!(
+            runtimes[0].injected_qi, 0.0,
+            "with no ledger resource available, injection must be a no-op zero, not a crash"
+        );
         assert_eq!(
             app.world()
                 .resource::<ZoneRegistry>()
                 .find_zone_by_name("fast")
                 .expect("test zone should exist")
                 .spirit_qi,
-            PSEUDO_VEIN_MAX_QI
+            0.1,
+            "the zone must be left completely untouched when the ledger is unavailable"
         );
     }
 

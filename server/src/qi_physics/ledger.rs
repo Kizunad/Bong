@@ -323,6 +323,22 @@ pub enum QiTransferReason {
     ///     范本先用 `set_balance` 把 zone 镜像同步到 `zone.spirit_qi * QI_ZONE_UNIT_CAPACITY`
     ///     真实值，转账后再把结果写回 `zone.spirit_qi`。
     ZoneInflow,
+    /// plan-zone-qi-economy-v1 P3 §8.1 决议 #3 — 灵潮（伪灵脉）dissipate 时把注入借款如数
+    /// 归还独立待分配池。
+    ///
+    /// 修复旧版本缺陷：`settle_pseudo_vein_qi` 曾经只收回 30%、70% 永久留在 zone（凭空创生，
+    /// 因为注入侧的 `from` 是不存在真实余额的 `QiAccountId::tiandao()`）。P3 改为
+    /// `inject_zone_for_pseudo_vein` 从 `pending_inflow_account` 真实借出（`ReleaseToZone`），
+    /// dissipate 时用本 reason 把**能还多少还多少**（`min(injected_qi, zone 当前绝对余额)`，
+    /// 不是固定比例）转回 `pending_inflow_account`——借款期间被玩家/NPC 正常吸收的部分已经
+    /// 通过既有 `regen_from_zone` 路径守恒记账，剩余未被吸收的部分才需要"还款"。
+    ///
+    /// 守恒约束：
+    ///   - `zone.spirit_qi` 减少量 == `pending_inflow_account` 增加量（换算系数
+    ///     `QI_ZONE_UNIT_CAPACITY`），二者必须精确相等，不凭空增减；
+    ///   - 这是真实 `WorldQiAccount::transfer`（非 audit-only），调用前需按
+    ///     `apply_dormant_regen_with_multiplier` 范本同步 zone ledger 镜像。
+    PseudoVeinSettle,
 }
 
 /// plan-qi-handling-attrition-v1 P0 — 搬运磨损操作类型，对应不同基础磨损率。
@@ -1627,6 +1643,98 @@ mod tests {
             ledger.balance(&pool),
             1.0,
             "a rejected transfer must leave the pool balance completely untouched"
+        );
+    }
+
+    // ── plan-zone-qi-economy-v1 P3 §8.1 决议 #3 — PseudoVeinSettle 变体 pin 测试 ──
+
+    #[test]
+    fn pseudo_vein_settle_reason_is_distinct_from_other_variants() {
+        let settle = QiTransferReason::PseudoVeinSettle;
+        assert_ne!(settle, QiTransferReason::ZoneInflow);
+        assert_ne!(settle, QiTransferReason::ReleaseToZone);
+        assert_ne!(settle, QiTransferReason::EraDecay);
+        assert_eq!(
+            settle,
+            QiTransferReason::PseudoVeinSettle,
+            "PseudoVeinSettle 与自身应相等"
+        );
+    }
+
+    #[test]
+    fn pseudo_vein_settle_is_not_audit_only_and_actually_moves_balance() {
+        // PseudoVeinSettle 是真实 WorldQiAccount::transfer（非 audit-only）：zone 镜像账户 ->
+        // 待分配池之间必须发生真实的余额搬运（借款归还），而不是像 HalfStepBuff 那样被拒。
+        let pool = pending_inflow_account();
+        let zone_account = QiAccountId::zone("lingquan_marsh");
+
+        let mut ledger = WorldQiAccount::default();
+        ledger
+            .set_balance(pool.clone(), 10.0)
+            .expect("seeding pool balance must succeed");
+        ledger
+            .set_balance(zone_account.clone(), 8.0)
+            .expect("seeding zone mirror balance must succeed");
+
+        let transfer = QiTransfer::new(
+            zone_account.clone(),
+            pool.clone(),
+            8.0,
+            QiTransferReason::PseudoVeinSettle,
+        )
+        .expect("PseudoVeinSettle QiTransfer::new must succeed (not audit-only)");
+        ledger.transfer(transfer).expect(
+            "PseudoVeinSettle must be accepted by WorldQiAccount::transfer, not rejected as \
+             audit-only",
+        );
+
+        assert_eq!(
+            ledger.balance(&zone_account),
+            0.0,
+            "zone mirror balance must actually decrease by the repaid amount (full repayment, \
+             not the old 30% partial collection)"
+        );
+        assert_eq!(
+            ledger.balance(&pool),
+            18.0,
+            "pending pool balance must actually increase by the repaid amount"
+        );
+    }
+
+    #[test]
+    fn pseudo_vein_settle_transfer_rejects_repaying_more_than_zone_holds() {
+        // zone 镜像余额不足以覆盖借款额时（例如借款期间被玩家/NPC 正常吸收殆尽）transfer()
+        // 必须拒绝，而不是让 zone 变负——调用方（apply_pseudo_vein_settlement）必须先用
+        // `min(injected_qi, zone 当前绝对余额)` 缩量，但 ledger 本身的兜底检查也必须存在。
+        let pool = pending_inflow_account();
+        let zone_account = QiAccountId::zone("lingquan_marsh");
+
+        let mut ledger = WorldQiAccount::default();
+        ledger
+            .set_balance(pool.clone(), 0.0)
+            .expect("seeding pool balance must succeed");
+        ledger
+            .set_balance(zone_account.clone(), 2.0)
+            .expect("seeding zone mirror balance must succeed");
+
+        let transfer = QiTransfer::new(
+            zone_account.clone(),
+            pool.clone(),
+            8.0,
+            QiTransferReason::PseudoVeinSettle,
+        )
+        .expect("QiTransfer::new only validates amount shape, not balance sufficiency");
+        let err = ledger
+            .transfer(transfer)
+            .expect_err("repaying more than the zone holds must be rejected, never go negative");
+        assert!(
+            matches!(err, QiPhysicsError::InsufficientQi { .. }),
+            "expected InsufficientQi, got {err:?}"
+        );
+        assert_eq!(
+            ledger.balance(&zone_account),
+            2.0,
+            "a rejected transfer must leave the zone mirror balance completely untouched"
         );
     }
 
