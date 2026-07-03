@@ -33,7 +33,7 @@
 
 - **进料**：`Zone.danger_level`（`world/zone.rs:25-36`，zones.json，已被 heartbeat/movement 4 处消费——见背景诊断 #2）；调度器模板 `heiwushi_natural_spawn_system`（`npc/heiwushi_spawn.rs:42`，state resource + 节流 + marker 活体计数 + 冷却 + 玩家在场半径门 + 维度过滤全套骨架，fork 而非从零写）；距离环采样器 `PoissonSpawnSampler::adaptive_for_zone`（`npc/spawn/mod.rs:73`）；节流 helper `should_run_interval`（`npc/dormant/mod.rs:712`）；现成 spawn 函数 `spawn_beast_npc_at`（`npc/spawn/beast.rs:51`）/ `spawn_rat_npc_at`（`spawn_rat.rs:63`）/ `spawn_natural_mob_at`（`world/mob_spawn.rs:54`）/ `spawn_tsy_hostiles_for_family`（`tsy_hostile.rs:561`，**直调，不经 `TsySpawnRequested` 事件**，见 §8.1 #3）；时代密度门 `era_beast_spawn_gate`（`mob_spawn.rs:117`）；`CultivationClock`；玩家 Position 查询。
 - **出料**：真实 ECS beast/rat/tsy 实体（走现有 thinker/掉落/骨币链，fauna-v1 正典）；死亡→`plan-fauna-v1` 掉落表；agent `world_state` 的 npc_count 自然反映威胁密度；P2 咬击走 `QiTransfer`。
-- **共享类型 / event**：复用 `BeastKind` / `FaunaVisualKind` / `NaturalMobKind`（`world/mob_spawn.rs:12-27`，6 变体已完备）——**P0/P1 不新增任何实体种类**，只造调度器。**不**复用 `TsySpawnRequested` 事件链——该事件是 TSY 子域**创世**事件（注册 subzone + portal + LootContainer，带幂等锁），周期性 re-emit 会触发首次重建整座地牢/后续被幂等锁拒绝一只不刷（R2，见 §8.1 #3），TSY 接活改为直调 `spawn_tsy_hostiles_for_family`。新建调度核模块命名为 **`server/src/npc/spawn/ambient_scheduler.rs`**（非 `ambient_threat.rs`）——参数化为通用调度核（`pool_fn` / `budget_fn` / `marker_type` / `counts_against_threat_budget: bool`），供 `plan-mundane-fauna-v1` 复用同一套"距离环 24~64 + 密度上限 + 超 96 格 `insert(Despawned)` 回收"基建（该 plan 挂被动 fauna pool，不占威胁预算，见 §8.1 #1/#2 跨 plan 共享基建归属）。
+- **共享类型 / event**：复用 `NaturalMobKind`（`world/mob_spawn.rs:12-19`，6 变体已完备，P1 物种池分层按此枚举取子集）/ `BeastKind`（`fauna/components.rs:9-33`，17 变体，覆盖醒灵~化虚战力分层）/ `FaunaVisualKind`（`fauna/visual.rs:34-55`，20 变体，client 视觉 shell 映射）——三类型定义位置各自独立，非同一枚举的三个别名。**P0/P1 不新增任何实体种类**，只造调度器。**不**复用 `TsySpawnRequested` 事件链——该事件是 TSY 子域**创世**事件（注册 subzone + portal + LootContainer，带幂等锁），周期性 re-emit 会触发首次重建整座地牢/后续被幂等锁拒绝一只不刷（R2，见 §8.1 #3），TSY 接活改为直调 `spawn_tsy_hostiles_for_family`。新建调度核模块命名为 **`server/src/npc/spawn/ambient_scheduler.rs`**（非 `ambient_threat.rs`）——参数化为通用调度核（`pool_fn` / `budget_fn` / `marker_type` / `counts_against_threat_budget: bool`），供 `plan-mundane-fauna-v1` 复用同一套"距离环 24~64 + 密度上限 + 超 96 格 `insert(Despawned)` 回收"基建（该 plan 挂被动 fauna pool，不占威胁预算，见 §8.1 #1/#2 跨 plan 共享基建归属）。
 - **跨仓库契约**：纯 server plan。无新 payload/schema/Redis key（threat 实体走既有 NPC 下发链路，client 零改动）。
 - **worldview 锚点**：worldview §四 战力分层（妖兽/经脉损伤体系）+ `plan-fauna-v1` / `plan-tsy-hostile-v1`（finished，正典物种与掉落）+ worldview §一:22（"死域连野兽都活不了"）+ §七:759（负灵域野兽材质枯萎化飞灰）覆盖「灵气枯竭生异变」语义，**本 plan 不新开 worldview 条目**（§8.1 #4 已收口，倾向复用不触红线；若后续判定仍需补「危险度地理分布」明文，单独起 PR 人工 review）。
 - **qi_physics 锚点**：spawner 本身不动灵气。P2 rat 咬击偷 qi **复用兽潮咬击同款守恒实现**——`combat/rat_bite.rs:25-73` 的 `RatBiteEvent` + `apply_rat_bite_qi_drain` 已是完整 `QiTransfer`（`QiTransferReason::RatBiteDrain`）路径，P2 只需 emit `RatBiteEvent{target=player}` 复用全链，不自拍新常数、不新写扣减公式。
@@ -57,12 +57,14 @@
 
 `fn threat_pool(danger: u8, dimension: DimensionKind) -> &[ThreatEntry]`（entry = 物种 + 权重 + 群体大小），全部复用现有物种，**不新增变体、不加 buff**（§8.1 #2）：
 
-| danger | 池（终表，§8.1 #2 收口） |
+| danger | 池（终表，§8.1 #2 收口，已按 `spawn_natural_mob_at` 实际调度路径订正） |
 |---|---|
 | 1~2 | rat 小群（2~4 只，中立袭扰档，见 P2） |
-| 3~4 | rat 群 + Spider/Zombie（`NaturalMobKind::{Skeleton,Creeper,Rogue}` 走 `spawn_natural_mob_at`，`mob_spawn.rs:54`，主动） |
-| 5~6 | 主动 beast 组 + AshSpider（死域白名单物种，`DEAD_ZONE_MOB_WHITELIST`，`mob_spawn.rs:30`；死域过滤走既有 `MobSpawnFilter::ban_in_dead_zone`，不新写判定） |
-| 7 | 精英 beast 群——**只调 pack_size 与 spawn_interval，不造新怪、不加 buff 修饰**（拒绝"精英" modifier 组件路线，见 §8.1 #2 边界） |
+| 3~4 | 通用 beast（`NaturalMobKind::{Zombie,Skeleton,Creeper,Rogue,Daoxiang}` 走 `spawn_natural_mob_at`，`mob_spawn.rs:54,77-91`；主动） |
+| 5~6 | 通用 beast（同上）+ AshSpider（死域白名单物种，`DEAD_ZONE_MOB_WHITELIST`，`mob_spawn.rs:30`；死域过滤走既有 `MobSpawnFilter::ban_in_dead_zone`，不新写判定） |
+| 7 | 同 5~6 档物种池——**只调 pack_size 与 spawn_interval，不造新怪、不加 buff 修饰**（拒绝"精英" modifier 组件路线，见 §8.1 #2 边界） |
+
+- **物种差异化边界订正（第二轮 Explore 核验，撤销原"逐种可辨"假设）**：`spawn_natural_mob_at`（`mob_spawn.rs:54`，match 分支 `:77-91`）对 `Zombie|Skeleton|Creeper|Rogue|Daoxiang` 五个变体统一走 `spawn_beast_npc_at`（`npc/spawn/beast.rs:51`），该函数签名不接收 `kind` 参数；落地实体的 `BeastKind`（进而其 `EntityKind`/视觉表现）由 `fauna_tag_for_beast_spawn(home_zone, fauna_seed)`（`fauna/components.rs:125` → `beast_kind_for_spawn_context`，`components.rs:301-340`）按 `home_zone` 字符串匹配 / zone qi 分档 + seed 内部派生，与调用方传入的 `NaturalMobKind` 完全无关。因此除 `AshSpider`（唯一走独立 `spawn_ash_spider_npc_at` 分支的例外）外，上表所有档位产出的实体**视觉/种类不可逐种可辨**——物种池分层实际只体现为 rat（danger 1~2）vs 通用 beast（danger 3~7，靠 pack_size/spawn_interval/danger 数值梯度而非逐种表达强度差异）vs AshSpider（死域白名单）三档。**不承诺** `Skeleton`/`Creeper`/`Rogue` 在游戏内呈现为可区分的骷髅/苦力怕/游荡者外观；若后续判定确需视觉逐种分层，须先把"让 `spawn_beast_npc_at`/`spawn_natural_mob_at` 接收并落实 `kind` 参数（取代当前纯 zone-name 派生的 `fauna_tag_for_beast_spawn`）"列为 P1 前置改造工作项，本 plan 现状不做该项、不复用现成物种池即得分层的措辞。
 
 - **TSY 接活**（P1 内独立小节，设计已按 §8.1 #3 修正——建议实施时拆为 P1.5 独立小 PR，见 §10）：TSY dimension 内检测到已初始化 subzone（`TsyZoneInitialized` 已消费过）后，**直调 `spawn_tsy_hostiles_for_family`**（`npc/tsy_hostile.rs:561`），**禁止** 周期 re-emit `TsySpawnRequested`（该事件是创世事件带幂等锁，见 §8.1 #3）；限定只在 TSY 维度生效；持有独立 respawn 预算，与主世界 `threat_budget` 表分离（`counts_against_threat_budget=false` 挂在 P0 通用调度核上）。tsy_hostile dev-only 是**刻意**的（`plan-tsy-hostile-v1.md:789` Finish Evidence 遗留节明文"道伥喷出主世界行为归独立 plan"），ambient 直调是合法填缺，不改变该 plan 边界。
 - **测试**：每 danger 档池命中专属 case；TSY 维度隔离（主世界不出道伥，直调路径只在 `DimensionKind::Tsy` 触发）；权重抽样分布 pin；TSY 路径**不 emit** `TsySpawnRequested` 的负向断言（防回归成 re-emit）。
@@ -117,10 +119,11 @@ rat 现有的 `SeekQiSourceAction`（`brain_rat.rs:37-48` `QiSourceTargetQuery` 
 
 **决议**：
 1. 全部复用现有 `NaturalMobKind` 6 变体（`Zombie/Skeleton/Creeper/Rogue/AshSpider/Daoxiang`），不新增任何变体、不加任何 buff 组件。
-2. `threat_pool(danger)` 按危险度选取 `NaturalMobKind` 子集 + pack_size + 权重：1~2 档 rat 为主；3~4 档加 `Skeleton/Creeper/Rogue`（`spawn_natural_mob_at`）；5~6 档主动 beast + `AshSpider`（死域白名单 `DEAD_ZONE_MOB_WHITELIST`，死域过滤直接调用既有 `MobSpawnFilter::ban_in_dead_zone`，不新写判定）；7 档只放大 pack_size / 缩短 spawn_interval，物种不变。与 `plan-mundane-fauna-v1` 的 `MundaneFaunaKind` 是独立 enum，零重叠；唯一交叉点是 T2+ 掠食者（狼/狐）是否计入 ambient 威胁密度——两 plan 需共用同一张 `max_hydrated_count` 峰值预算表（引用 #1），交叉点在两 plan 各自 P0 落地时对账。
+2. **物种差异化边界（第二轮 Explore 核验订正，撤销原「逐种可辨」假设）**：`spawn_natural_mob_at`（`mob_spawn.rs:54`，match 分支 `:77-91`）对 `Zombie|Skeleton|Creeper|Rogue|Daoxiang` 统一走 `spawn_beast_npc_at`（`npc/spawn/beast.rs:51`）——该函数不接收 `kind` 参数，落地实体的 `BeastKind` 由 `fauna_tag_for_beast_spawn(home_zone, fauna_seed)`（`fauna/components.rs:125` → `beast_kind_for_spawn_context` `:301-340`）按 zone 名称/qi 内部派生，与调用方传入的 `NaturalMobKind` 无关。因此实际物种池只有三档：1~2 档 rat；3~7 档「通用 beast」（`spawn_natural_mob_at` 五个非-AshSpider 变体产出实体不可逐种可辨，靠 pack_size/spawn_interval/danger 数值梯度表达强度差异）；5~7 档另加 `AshSpider`（唯一走独立分支的例外，死域白名单 `DEAD_ZONE_MOB_WHITELIST`，死域过滤直接调用既有 `MobSpawnFilter::ban_in_dead_zone`，不新写判定）。**不承诺** Skeleton/Creeper/Rogue 呈现为可区分的实体外观——撤销"复用现成物种池即得分层"措辞。与 `plan-mundane-fauna-v1` 的 `MundaneFaunaKind` 是独立 enum，零重叠；唯一交叉点是 T2+ 掠食者（狼/狐）是否计入 ambient 威胁密度——两 plan 需共用同一张 `max_hydrated_count` 峰值预算表（引用 #1），交叉点在两 plan 各自 P0 落地时对账。
 3. 拒绝"danger 7 精英需要新 buff 修饰"路线——违反 §8/#2 已定的"不造新怪"红线；"精英感"完全通过 pack_size + spawn_interval 参数化表达，不引入新组件/modifier。
+4. 若后续判定确需视觉逐种分层（如 Skeleton 呈现为骷髅、Creeper 呈现为苦力怕），须先把"让 `spawn_beast_npc_at`/`spawn_natural_mob_at` 接收并落实 `kind` 参数（取代当前纯 zone-name 派生的 `fauna_tag_for_beast_spawn`）"列为 P1 前置改造工作项——本 plan 现状不做该项，只如实收口为 rat（danger1-2）vs 通用 beast（danger3-7）vs AshSpider（死域白名单）三档。
 
-**落点**：`server/src/world/mob_spawn.rs:12-30`（`NaturalMobKind` 枚举 + `DEAD_ZONE_MOB_WHITELIST`）+ `mob_spawn.rs:54`（`spawn_natural_mob_at`）+ plan §P1「物种池分层」表格 / §8.1 #2
+**落点**：`server/src/world/mob_spawn.rs:12-19`（`NaturalMobKind` 枚举）+ `mob_spawn.rs:30`（`DEAD_ZONE_MOB_WHITELIST`）+ `mob_spawn.rs:54,77-91`（`spawn_natural_mob_at` 及其无 `kind` 透传的 match 分支）+ `npc/spawn/beast.rs:51`（`spawn_beast_npc_at` 签名不含 `kind`）+ `fauna/components.rs:125,301-340`（`fauna_tag_for_beast_spawn` → `beast_kind_for_spawn_context` 派生逻辑）+ plan §P1「物种池分层」表格 / §8.1 #2
 
 ### #3 tsy_hostile dev-only 是否有意 + P1 TSY 接活设计
 
