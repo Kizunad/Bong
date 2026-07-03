@@ -39,7 +39,7 @@ use crate::combat::{
         ApplyStatusEffectIntent, AttackIntent, AttackSource, CombatEvent, DeathEvent,
         DefenseIntent, DefenseKind, StatusEffectKind,
     },
-    raycast::raycast_humanoid,
+    raycast::{self, raycast_humanoid},
 };
 use crate::cultivation::color::{record_style_practice, PracticeLog};
 use crate::cultivation::components::{
@@ -410,13 +410,44 @@ pub fn resolve_attack_intents(
             }
         }
 
+        let attacker_eye_position = attacker_position + DVec3::new(0.0, ATTACKER_EYE_HEIGHT, 0.0);
+        // §8.1 #1/#3 决议 — 攻方瞄准方向：废除 raycast_humanoid 内置恒定胸心 fallback。
+        // NPC 恒定走"指向目标几何中心 + 确定性高斯 jitter"（不使用其自身 Look 组件，
+        // 不做物种战术瞄准，见 §8.1 #3）；玩家走真实 Look 方向，不叠加人工 jitter
+        // （Look 本身已含真实瞄准误差）。`Look::default()`（yaw=0/pitch=0）在 server 端
+        // 等价于"刚出生、从未上报过任何 rotation 包的玩家"——与缺失 Look 组件同等对待，
+        // 退化为几何中心瞄准：真实玩家一进入游戏就持续上报视角，精确撞上这一哨兵值的
+        // 概率可忽略不计，这也是保留既有测试 fixture（未显式设置 Look）行为不变的现实路径。
+        let aim_direction = if npc_markers.get(intent.attacker).is_ok() {
+            let seed = raycast::npc_aim_seed(&attacker_id, intent.issued_at_tick);
+            let sigma_scale = raycast::weapon_aim_jitter_scale(intent.reach);
+            raycast::npc_aim_direction(attacker_eye_position, target_position, seed, sigma_scale)
+        } else {
+            let attacker_look = positions
+                .get(intent.attacker)
+                .ok()
+                .and_then(|(_, look)| look.copied());
+            match attacker_look.filter(|look| *look != Look::default()) {
+                Some(look) => {
+                    let look_vec = look.vec();
+                    DVec3::new(
+                        f64::from(look_vec.x),
+                        f64::from(look_vec.y),
+                        f64::from(look_vec.z),
+                    )
+                }
+                None => raycast::chest_aim_direction(attacker_eye_position, target_position),
+            }
+        };
+
         let Some(hit_probe) = raycast_humanoid(
-            attacker_position + DVec3::new(0.0, ATTACKER_EYE_HEIGHT, 0.0),
+            attacker_eye_position,
             target_position,
             f64::from(
                 intent.reach.max
                     / (juebi_law_env.law_disruption_distance_multiplier() as f32).max(1.0),
             ),
+            aim_direction,
         ) else {
             if intent.debug_command.is_none() {
                 let mut attacker_query = combatants.p0();
@@ -2500,6 +2531,32 @@ mod tests {
         entity
     }
 
+    /// 独立复算 NPC 攻方本次 `AttackIntent` 应该命中的真实部位——用于把"恒 Chest"断言
+    /// 替换为"由 raycast::npc_aim_direction 的确定性 jitter 决定"的断言（决议 §8.1 #1/#3）。
+    /// 直接调用与 `resolve_attack_intents` 相同的 `raycast` 公开函数（同一 seed 来源：
+    /// `attacker_id` + `intent.issued_at_tick`），验证的是"确实接了真实瞄准链路"而非重新
+    /// 拍脑袋断言一个固定枚举值。
+    fn expected_npc_hit_body_part(
+        attacker_feet: [f64; 3],
+        attacker_canonical_id: &str,
+        target_feet: [f64; 3],
+        issued_at_tick: u64,
+        reach: AttackReach,
+    ) -> BodyPart {
+        let origin = DVec3::new(
+            attacker_feet[0],
+            attacker_feet[1] + ATTACKER_EYE_HEIGHT,
+            attacker_feet[2],
+        );
+        let target = DVec3::new(target_feet[0], target_feet[1], target_feet[2]);
+        let seed = raycast::npc_aim_seed(attacker_canonical_id, issued_at_tick);
+        let sigma_scale = raycast::weapon_aim_jitter_scale(reach);
+        let aim_direction = raycast::npc_aim_direction(origin, target, seed, sigma_scale);
+        raycast_humanoid(origin, target, f64::from(reach.max), aim_direction)
+            .expect("expected npc aim direction to stay within reach and hit target AABB")
+            .body_part
+    }
+
     #[test]
     fn hit_emits_direction_vfx() {
         let mut app = App::new();
@@ -3502,7 +3559,20 @@ mod tests {
             1,
             "resolver should append exactly one wound"
         );
-        assert_eq!(wounds.entries[0].location, BodyPart::Chest);
+        // §8.1 #1/#3 决议：NPC 攻方走"目标几何中心 + 确定性 jitter"，不再恒为 Chest——
+        // 用同一套 raycast 公开函数独立复算期望部位，验证真实接了瞄准链路（而非硬编枚举）。
+        let expected_body_part = expected_npc_hit_body_part(
+            [0.0, 64.0, 0.0],
+            &canonical_npc_id(npc_attacker),
+            [1.0, 64.0, 0.0],
+            43,
+            NpcMeleeProfile::spear().reach,
+        );
+        assert_eq!(
+            wounds.entries[0].location, expected_body_part,
+            "npc 攻击命中部位应由 raycast::npc_aim_direction 的确定性 jitter 决定，\
+             不再恒为 Chest（§8.1 #1）"
+        );
         assert_eq!(wounds.entries[0].kind, WoundKind::Pierce);
         assert_eq!(
             contamination.entries[0].attacker_id.as_deref(),
@@ -3670,8 +3740,23 @@ mod tests {
             1,
             "npc->player should resolve exactly one wound"
         );
-        assert_eq!(player_wounds.entries[0].location, BodyPart::Chest);
+        // §8.1 #1/#3 决议：NPC 攻方(npc->player)走"目标几何中心 + 确定性 jitter"，
+        // 不再恒为 Chest——用同一套 raycast 公开函数独立复算期望部位。
+        let expected_npc_to_player_body_part = expected_npc_hit_body_part(
+            [1.0, 64.0, 0.0],
+            &canonical_npc_id(npc),
+            [0.0, 64.0, 0.0],
+            90,
+            NpcMeleeProfile::spear().reach,
+        );
+        assert_eq!(
+            player_wounds.entries[0].location, expected_npc_to_player_body_part,
+            "npc 攻击命中部位应由 raycast::npc_aim_direction 的确定性 jitter 决定，\
+             不再恒为 Chest（§8.1 #1）"
+        );
         assert_eq!(player_wounds.entries[0].kind, WoundKind::Pierce);
+        // player->npc：玩家攻手 Look 未显式设置(默认哨兵值)，走几何中心 fallback，
+        // 与旧实现的恒定 Chest 结果一致（§P0 决议：默认 Look 视同缺失瞄准数据）。
         assert_eq!(
             npc_wounds.entries.len(),
             1,
@@ -3855,6 +3940,13 @@ mod tests {
             Wounds::default(),
             Stamina::default(),
         );
+        // §8.1 #1 决议 + §8.1 #4 "玩家垂直视角自然涌现"：显式给玩家设置真实 Look
+        // （非默认哨兵值），证明命中部位由真实瞄准方向决定，而非恒定 fallback 胸口。
+        // 玩家眼高(66+1.62=67.62)贴近僵尸头部阈值(rel_y>0.88≈67.584)，水平看向僵尸
+        // (yaw=-90 正东，与 x+1 的僵尸位置同向) 即会命中 Head。
+        app.world_mut()
+            .entity_mut(attacker)
+            .insert(Look::new(-90.0, 0.0));
 
         app.world_mut().send_event(AttackIntent {
             attacker,
@@ -3882,7 +3974,12 @@ mod tests {
             1,
             "player->runtime-zombie intent should apply one wound"
         );
-        assert_eq!(npc_wounds.entries[0].location, BodyPart::Chest);
+        assert_eq!(
+            npc_wounds.entries[0].location,
+            BodyPart::Head,
+            "玩家显式设置真实 Look 水平看向僵尸，眼高贴近头部阈值应命中 Head，\
+             而非旧实现恒定 fallback 的 Chest（§8.1 #1/#4）"
+        );
         assert_eq!(npc_wounds.entries[0].kind, WoundKind::Blunt);
         assert_eq!(
             npc_contamination.entries[0].attacker_id.as_deref(),
@@ -8810,10 +8907,14 @@ mod tests {
 
     /// 多免疫区集合包含 Chest 的拦截验证（端到端集成）。
     ///
-    /// 注意：`raycast_humanoid` 始终瞄准 target 中心（CHEST_AIM_HEIGHT），lateral 恒为 0
-    /// → 正面攻击只能产出 Chest/Head/Abdomen/Leg，**无法可靠命中 ArmL/ArmR**。
-    /// 因此本测试端到端验证"Chest 在多免疫区集合中 → DROP"，
-    /// ArmL 的集合成员有效性通过 `dead_armor_arml_immune_in_multi_region_set` 单元测试覆盖。
+    /// 注意（plan-combat-hit-location-v1 §P0 更新，2026-07）：`raycast_humanoid` 已不再内置
+    /// 恒定胸心 fallback——命中部位现由调用方传入的瞄准方向决定。本测试的攻方是玩家且未
+    /// 显式设置 `Look`（等同缺失瞄准数据，见 resolve_attack_intents 的 fallback 分支），
+    /// 因此仍会退化为几何中心瞄准、稳定命中 Chest；这是该 fallback 分支的既定行为，
+    /// 不再是"raycast 无法命中其他部位"的系统性限制。
+    /// 本测试端到端验证"Chest 在多免疫区集合中 → DROP"，
+    /// ArmL 的集合成员有效性通过 `dead_armor_arml_immune_in_multi_region_set` 单元测试覆盖
+    /// （该测试不经过 raycast，直接验证 `should_block_contamination` 的集合查询逻辑）。
     #[test]
     fn dead_armor_multi_region_set_chest_is_blocked() {
         use crate::combat::baomai_v4::dead_armor::DeadMeridianArmor;
@@ -8878,8 +8979,9 @@ mod tests {
 
     /// ArmL 在多免疫区集合中的成员有效性（单元级验证）。
     ///
-    /// `should_block_contamination` 直接验证 ArmL 集合查询逻辑——
-    /// 无需经过 raycast（因端到端几何无法可靠命中 ArmL）。
+    /// `should_block_contamination` 直接验证 ArmL 集合查询逻辑——不经过 raycast，
+    /// 只做集合成员判定，与命中概率/瞄准机制无关（plan-combat-hit-location-v1 §P0 后，
+    /// ArmL 已可经真实瞄准/NPC jitter 命中，见 combat::raycast::tests 分布 pin 测试）。
     #[test]
     fn dead_armor_arml_immune_in_multi_region_set() {
         use crate::combat::baomai_v4::dead_armor::{should_block_contamination, DeadMeridianArmor};
