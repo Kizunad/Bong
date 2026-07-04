@@ -589,6 +589,9 @@ mod tests {
             morphology_percent: 22.0,
             self_revealed: true,
             tick: 300,
+            visual: crate::combat::dugu_v2::skills::visual_for(
+                crate::combat::dugu_v2::events::DuguSkillId::SelfCure,
+            ),
         });
         app.update();
         flush_all_client_packets(&mut app);

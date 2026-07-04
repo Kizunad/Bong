@@ -3,8 +3,9 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use valence::prelude::{bevy_ecs, App, Entity, Event, Events, Position, Resource};
 
+use crate::combat::arm_wound;
 use crate::combat::carrier::{BondKind, CarrierKind, CarrierStore, InjectionKind};
-use crate::combat::components::SkillBarBindings;
+use crate::combat::components::{SkillBarBindings, Wounds};
 use crate::combat::CombatClock;
 use crate::cultivation::components::{Cultivation, MeridianId, QiColor, Realm};
 use crate::cultivation::meridian::severed::{MeridianSeveredPermanent, SkillMeridianDependencies};
@@ -26,6 +27,13 @@ pub const ANQI_SOUL_INJECT_SKILL_ID: &str = "anqi.soul_inject";
 pub const ANQI_ARMOR_PIERCE_SKILL_ID: &str = "anqi.armor_pierce";
 pub const ANQI_ECHO_FRACTAL_SKILL_ID: &str = "anqi.echo_fractal";
 pub const CONTAINER_SWITCH_EXPOSURE_TICKS: u64 = 10;
+
+/// plan-combat-hit-location-v1 P1（决议 §8.1 #2）— MultiShot 散布锥角基准值
+/// （原为 `cone_dispersion` 调用点内联字面量 `60.0`，无命名散布角字段可复用，
+/// 决议原文"anqi_v2.rs 当前无现成散布角字段，需新增而非复用既有系数"即指此处）。
+/// 施放者主手臂受伤（Fracture/Severed）时按 `arm_wound::spread_multiplier` 放大该锥角
+/// （+50%），见 `multi_shot_cone_degrees`。
+pub const MULTI_SHOT_BASE_CONE_DEGREES: f64 = 60.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -552,6 +560,14 @@ fn draw_payload_after_abrasion(
     outcome.after_qi
 }
 
+/// plan-combat-hit-location-v1 P1（决议 §8.1 #2）— MultiShot 散布锥角，按施放者主手臂
+/// 伤势缩放 `MULTI_SHOT_BASE_CONE_DEGREES`（Fracture/Severed 时 +50%）。
+fn multi_shot_cone_degrees(world: &bevy_ecs::world::World, caster: Entity) -> f64 {
+    let spread_multiplier =
+        arm_wound::combined_factor_from_optional(world.get::<Wounds>(caster)).spread_multiplier;
+    MULTI_SHOT_BASE_CONE_DEGREES * f64::from(spread_multiplier)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn emit_skill_event(
     world: &mut bevy_ecs::world::World,
@@ -586,10 +602,11 @@ fn emit_skill_event(
             }
         }
         AnqiSkillId::MultiShot => {
+            let cone_degrees = multi_shot_cone_degrees(world, caster);
             if let Some(mut events) =
                 world.get_resource_mut::<bevy_ecs::event::Events<MultiShotEvent>>()
             {
-                if let Ok(shots) = cone_dispersion(5, 60.0, 30.0, mastery) {
+                if let Ok(shots) = cone_dispersion(5, cone_degrees, 30.0, mastery) {
                     events.send(MultiShotEvent {
                         caster,
                         projectile_count: 5,
@@ -901,6 +918,7 @@ fn realm_rank(realm: Realm) -> u8 {
 mod tests {
     use super::*;
     use crate::combat::carrier::CarrierImprint;
+    use crate::combat::components::{BodyPart, Wound};
     use crate::cultivation::meridian::severed::{MeridianSeveredPermanent, SeveredSource};
     use crate::inventory::{InventoryRevision, ItemInstance, ItemRarity};
     use std::collections::HashMap;
@@ -1616,6 +1634,65 @@ mod tests {
             (overflow_transfer.amount - 25.0).abs() <= f64::EPSILON,
             "overflow QiTransfer.amount 期望=25.0（qi_cost），实际={}",
             overflow_transfer.amount
+        );
+    }
+
+    // ── plan-combat-hit-location-v1 P1（决议 §8.1 #2）— MultiShot 散布锥角臂伤缩放 ──
+
+    fn wound_on(location: BodyPart, severity: f32) -> Wound {
+        Wound {
+            location,
+            kind: crate::combat::components::WoundKind::Cut,
+            severity,
+            bleeding_per_sec: 0.0,
+            created_at_tick: 0,
+            inflicted_by: None,
+        }
+    }
+
+    #[test]
+    fn multi_shot_cone_degrees_is_base_value_when_caster_has_no_wounds() {
+        let mut world = bevy_ecs::world::World::new();
+        let caster = world.spawn_empty().id();
+        assert_eq!(
+            multi_shot_cone_degrees(&world, caster),
+            MULTI_SHOT_BASE_CONE_DEGREES,
+            "无伤 caster 的散布锥角应等于基准值 60.0（spread_multiplier=1.0）"
+        );
+    }
+
+    #[test]
+    fn multi_shot_cone_degrees_widens_50_percent_when_main_arm_fractured() {
+        use crate::combat::arm_wound::MAIN_ARM;
+        let mut world = bevy_ecs::world::World::new();
+        let caster = world
+            .spawn(Wounds {
+                entries: vec![wound_on(MAIN_ARM, 40.0)], // Fracture severity
+                ..Default::default()
+            })
+            .id();
+        let cone = multi_shot_cone_degrees(&world, caster);
+        assert!(
+            (cone - MULTI_SHOT_BASE_CONE_DEGREES * 1.5).abs() < 1e-9,
+            "主手臂 Fracture 应使散布锥角变为基准值的 1.5 倍（90.0），实际 {cone}"
+        );
+    }
+
+    #[test]
+    fn multi_shot_cone_degrees_unaffected_by_off_arm_wound() {
+        // 决议 §8.1 #2：散布惩罚只读主手臂；副手臂受伤不应影响散布锥角。
+        use crate::combat::arm_wound::OFF_ARM;
+        let mut world = bevy_ecs::world::World::new();
+        let caster = world
+            .spawn(Wounds {
+                entries: vec![wound_on(OFF_ARM, 80.0)], // Severed on OFF_ARM
+                ..Default::default()
+            })
+            .id();
+        assert_eq!(
+            multi_shot_cone_degrees(&world, caster),
+            MULTI_SHOT_BASE_CONE_DEGREES,
+            "副手臂断裂不应影响散布锥角（该维度只读主手臂）"
         );
     }
 }

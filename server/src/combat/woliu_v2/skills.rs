@@ -649,6 +649,9 @@ fn apply_turbulence_burst_target_effects(
         let was_alive = wounds.health_current > 0.0;
         wounds.health_current = (wounds.health_current - damage).clamp(0.0, wounds.health_max);
         wounds.entries.push(Wound {
+            // plan-combat-hit-location-v1 P2（决议 §8.1 旁路桶 #3，保留）——涡流冲击是
+            // `collect_targets_in_radius` 半径覆盖式 AoE，命中判定不依赖攻方朝向/弹道，
+            // "部位"概念在这里本就弱化：Chest 只是代表部位，不是"漏改的 melee 分支"。
             location: BodyPart::Chest,
             kind: WoundKind::Concussion,
             severity: damage,
@@ -2221,5 +2224,63 @@ mod tests {
             "VoidCore erosion_amount 应使用 TICKS_PER_SECOND 常量，而非硬编码 20.0"
         );
         let _ = hardcoded_20; // 保留供未来对比参考
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // plan-combat-hit-location-v1 P2（决议 §8.1 旁路桶 #3，保留）— 涡流 AoE 恒 Chest pin
+    // ══════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn turbulence_burst_target_effects_hit_chest_regardless_of_relative_position() {
+        // 涡流冲击是半径覆盖式 AoE（`collect_targets_in_radius`），命中判定看目标是否在
+        // `center` 半径内，不依赖攻方朝向或弹道——"部位"概念本就弱化，本 plan P2 决议
+        // 保留 Chest 作代表部位（见 `apply_turbulence_burst_target_effects` 内注释）。
+        // pin 两种目标相对位置（目标在 caster 正上方 vs 侧后方）都应恒命中 Chest，
+        // 证明这不是"漏改的方向性分支"，而是设计上就与朝向无关。
+        for target_offset in [DVec3::new(0.0, 3.0, 0.0), DVec3::new(-2.0, 0.0, 1.5)] {
+            let mut world = bevy_ecs::world::World::new();
+            world.insert_resource(Events::<CombatEvent>::default());
+            world.insert_resource(Events::<DeathEvent>::default());
+            let caster = world.spawn(Position::new([0.0, 64.0, 0.0])).id();
+            let target = world
+                .spawn((Position::new([0.0, 64.0, 0.0]), Wounds::default()))
+                .id();
+
+            let center = DVec3::new(0.0, 64.0, 0.0) + target_offset;
+            apply_turbulence_burst_target_effects(
+                &mut world,
+                caster,
+                target,
+                center,
+                turbulence_burst_spec(),
+                42,
+            );
+
+            let wounds = world.get::<Wounds>(target).unwrap();
+            assert_eq!(
+                wounds.entries.len(),
+                1,
+                "target_offset={target_offset:?} 应恰好产生一条 Wound"
+            );
+            assert_eq!(
+                wounds.entries[0].location,
+                BodyPart::Chest,
+                "涡流 AoE 冲击（target_offset={target_offset:?}）应恒命中 Chest（代表部位，\
+                 AoE 无方向性），实测 {:?}",
+                wounds.entries[0].location
+            );
+
+            let events = world.resource::<Events<CombatEvent>>();
+            let combat_event = events
+                .iter_current_update_events()
+                .next()
+                .expect("应发出恰好一条 CombatEvent");
+            assert_eq!(
+                combat_event.body_part,
+                BodyPart::Chest,
+                "CombatEvent.body_part（target_offset={target_offset:?}）应恒为 Chest，\
+                 与 Wound.location 保持一致"
+            );
+        }
     }
 }

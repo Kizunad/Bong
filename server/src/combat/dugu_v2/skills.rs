@@ -328,6 +328,7 @@ fn apply_self_cure(
             morphology_percent: state.morphology_percent,
             self_revealed: state.self_revealed,
             tick: now_tick,
+            visual: visual_for(DuguSkillId::SelfCure),
         },
     );
     if let Some(pos) = world.get::<Position>(caster).map(|p| p.get()) {
@@ -595,6 +596,10 @@ fn apply_damage(
         let severity = (hp_loss / wounds.health_max.max(1.0)).clamp(0.0, 1.0);
         wounds.health_current = (wounds.health_current - hp_loss).max(0.0);
         wounds.entries.push(Wound {
+            // plan-combat-hit-location-v1 P2（决议 §8.1 旁路桶 #4，保留）——独孤流派
+            // Eclipse/Penetrate/Reverse 三招（本函数三处调用点）是浊气/真元层面的内功
+            // 侵蚀伤害，无实体弹道或碰撞几何可依：浊气蚀体从真元枢纽向外蔓延，Chest
+            // 代表真元枢纽受创，比"随机部位"更贴合语义，不是遗漏的方向性判定。
             location: BodyPart::Chest,
             kind: WoundKind::Pierce,
             severity,

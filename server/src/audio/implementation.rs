@@ -4,6 +4,7 @@ use std::collections::HashMap;
 
 use valence::prelude::{bevy_ecs, Entity, Resource};
 
+use crate::combat::components::BodyPart;
 use crate::cultivation::components::Realm;
 
 pub const AUDIO_DEDUP_WINDOW_TICKS: u64 = 2;
@@ -57,6 +58,22 @@ pub fn combat_hit_recipe(damage: f32, critical: bool) -> &'static str {
         "hit_heavy"
     } else {
         "hit_light"
+    }
+}
+
+/// plan-combat-hit-location-v1 P3 — 部位差异视听反馈：头部命中叠加暴击音效层，四肢命中
+/// 换成更闷的 attack.weak 音色；胸/腹/背命中维持既有伤害分级 recipe（`combat_hit_recipe`）
+/// 不变。头部/四肢的部位差异**优先于**伤害分级——即便一拳打头伤害很轻，也要有"打中要害"
+/// 的音效反馈，而不是被 damage 阈值判成 hit_light。
+pub fn combat_hit_recipe_for_body_part(
+    body_part: BodyPart,
+    damage: f32,
+    critical: bool,
+) -> &'static str {
+    match body_part {
+        BodyPart::Head => "combat_hit_head_crit",
+        BodyPart::ArmL | BodyPart::ArmR | BodyPart::LegL | BodyPart::LegR => "combat_hit_limb",
+        BodyPart::Chest | BodyPart::Abdomen | BodyPart::Back => combat_hit_recipe(damage, critical),
     }
 }
 
@@ -151,6 +168,51 @@ mod tests {
         assert_eq!(combat_hit_recipe(12.0, false), "hit_heavy");
         assert_eq!(combat_hit_recipe(24.0, false), "hit_critical");
         assert_eq!(combat_hit_recipe(5.0, true), "hit_critical");
+    }
+
+    #[test]
+    fn combat_hit_recipe_for_body_part_routes_head_and_limb_before_damage_tier() {
+        // 头部：即便是轻伤（damage=3, critical=false 未传入前该分支已忽略 tier），
+        // 也要走专属 combat_hit_head_crit，而不是 hit_light。
+        assert_eq!(
+            combat_hit_recipe_for_body_part(BodyPart::Head, 3.0, false),
+            "combat_hit_head_crit",
+            "头部命中应优先于伤害分级选中专属暴击 recipe，而非退化成 hit_light"
+        );
+        assert_eq!(
+            combat_hit_recipe_for_body_part(BodyPart::Head, 30.0, true),
+            "combat_hit_head_crit",
+            "重伤头部命中同样应走专属 recipe（不因高伤害/critical=true 落回 hit_critical）"
+        );
+        // 四肢四个变体全部命中同一专属 recipe。
+        for limb in [
+            BodyPart::ArmL,
+            BodyPart::ArmR,
+            BodyPart::LegL,
+            BodyPart::LegR,
+        ] {
+            assert_eq!(
+                combat_hit_recipe_for_body_part(limb, 15.0, false),
+                "combat_hit_limb",
+                "四肢部位 {limb:?} 命中应统一走 combat_hit_limb 专属 recipe"
+            );
+        }
+        // 胸/腹/背仍走既有伤害分级 recipe，不受本次改动影响。
+        assert_eq!(
+            combat_hit_recipe_for_body_part(BodyPart::Chest, 3.0, false),
+            combat_hit_recipe(3.0, false),
+            "胸部命中应维持既有 combat_hit_recipe 伤害分级不变"
+        );
+        assert_eq!(
+            combat_hit_recipe_for_body_part(BodyPart::Abdomen, 12.0, false),
+            combat_hit_recipe(12.0, false),
+            "腹部命中应维持既有 combat_hit_recipe 伤害分级不变"
+        );
+        assert_eq!(
+            combat_hit_recipe_for_body_part(BodyPart::Back, 24.0, false),
+            combat_hit_recipe(24.0, false),
+            "背部命中应维持既有 combat_hit_recipe 伤害分级不变"
+        );
     }
 
     #[test]

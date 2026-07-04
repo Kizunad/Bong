@@ -11,6 +11,13 @@ pub const BREAKTHROUGH_PILLAR: &str = "bong:breakthrough_pillar";
 pub const BREAKTHROUGH_FAIL: &str = "bong:breakthrough_fail";
 pub const COMBAT_HIT: &str = "bong:combat_hit";
 pub const COMBAT_PARRY: &str = "bong:combat_parry";
+// plan-combat-hit-location-v1 P3 — 部位差异视听反馈。头部/四肢命中各自独立 event_id，
+// client CombatHitDirectionPlayer(Kind::HEAD_CRIT) / (LIMB 复用 HIT 分支) 按 event_id 差异化
+// 播放；胸/腹/背命中仍走既有 COMBAT_HIT，不改变现状。
+pub const COMBAT_HIT_HEAD_CRIT: &str = "bong:combat_hit_head_crit";
+pub const COMBAT_HIT_LIMB: &str = "bong:combat_hit_limb";
+// 腿伤减速触发时目标脚下血渍 decal（复用 client BongGroundDecalParticle 基类，无新贴图）。
+pub const COMBAT_LEG_WOUND_DECAL: &str = "bong:combat_leg_wound_decal";
 pub const FORGE_HAMMER_STRIKE: &str = "bong:forge_hammer_strike";
 pub const FORGE_INSCRIPTION: &str = "bong:forge_inscription";
 pub const FORGE_CONSECRATION: &str = "bong:forge_consecration";

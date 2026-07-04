@@ -7,7 +7,7 @@ use valence::prelude::{
 };
 
 use crate::combat::components::{
-    BodyPart, Lifecycle, LifecycleState, Stamina, Wound, WoundKind, Wounds, TICKS_PER_SECOND,
+    Lifecycle, LifecycleState, Stamina, Wound, WoundKind, Wounds, TICKS_PER_SECOND,
 };
 use crate::combat::decay::{hit_qi_ratio, CarrierGrade};
 use crate::combat::events::CombatEvent;
@@ -940,11 +940,31 @@ fn projectile_tick_system(
                 );
                 continue;
             }
-            let Ok((_, _, mut wounds, mut contamination, life_record)) =
+            let Ok((_, target_pos, mut wounds, mut contamination, life_record)) =
                 targets.get_mut(target_entity)
             else {
                 continue;
             };
+            // plan-combat-hit-location-v1 P2（决议 §8.1 旁路桶 #2）—— 暗器/凝气弹投射命中
+            // 部位应按弹道终点几何算，而非硬编 Chest：复用 `classify_body_part` 同一套
+            // 几何分类（与近战 `raycast_humanoid` 共享阈值/语义），以本 tick 飞行段
+            // （`current` → `next`）上离目标中心最近的点作为命中点、`flight.spawn_pos`
+            // 作为攻方几何原点（弹道起点，决定 lateral 判定的参照方向）。
+            let target_feet = target_pos.get();
+            let target_center = target_feet + DVec3::new(0.0, 1.0, 0.0);
+            let segment = next - current;
+            let segment_len_sq = segment.length_squared();
+            let t = if segment_len_sq <= f64::EPSILON {
+                0.0
+            } else {
+                ((target_center - current).dot(segment) / segment_len_sq).clamp(0.0, 1.0)
+            };
+            let projectile_hit_point = current + segment * t;
+            let body_part = crate::combat::raycast::classify_body_part(
+                projectile_hit_point,
+                target_feet,
+                flight.spawn_pos,
+            );
             let ratio = hit_qi_ratio(hit_distance, flight.qi_color, flight.carrier_grade);
             let hit_qi = projectile.qi_payload * ratio;
             if hit_qi <= f32::EPSILON {
@@ -972,7 +992,7 @@ fn projectile_tick_system(
             wounds.health_current =
                 (wounds.health_current - wound_damage).clamp(0.0, wounds.health_max);
             wounds.entries.push(Wound {
-                location: BodyPart::Chest,
+                location: body_part,
                 kind: WoundKind::Pierce,
                 severity: wound_damage,
                 bleeding_per_sec: wound_damage * 0.05,
@@ -1000,7 +1020,7 @@ fn projectile_tick_system(
                 attacker,
                 target: target_entity,
                 resolved_at_tick: clock.tick,
-                body_part: BodyPart::Chest,
+                body_part,
                 wound_kind: WoundKind::Pierce,
                 source: crate::combat::events::AttackSource::Melee,
                 debug_command: false,
@@ -1248,6 +1268,7 @@ fn release_account_to_zone(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::combat::components::BodyPart;
     use crate::inventory::{InventoryRevision, ItemCategory, ItemRarity, ItemTemplate, WeaponSpec};
     use valence::prelude::{App, Events, Position, Update};
 
@@ -1543,6 +1564,112 @@ mod tests {
                 .resource::<Events<ProjectileDespawnedEvent>>()
                 .len(),
             1
+        );
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // plan-combat-hit-location-v1 P2（决议 §8.1 旁路桶 #2）— 投射命中部位几何化 pin
+    // ══════════════════════════════════════════════════════════════════════════
+
+    /// 构造一发沿 X 轴飞行、经过给定绝对 Y 高度的暗器投射，命中站在原点的目标。
+    /// `flight_y` 决定投射穿过目标 hitbox 时的高度，从而驱动 `classify_body_part`
+    /// 落到不同部位——用来证明命中部位不再恒为 `BodyPart::Chest`。
+    fn projectile_hit_body_part_at_height(flight_y: f64) -> BodyPart {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 10 });
+        app.add_event::<CombatEvent>();
+        app.add_event::<CarrierImpactEvent>();
+        app.add_event::<ProjectileDespawnedEvent>();
+        app.add_systems(Update, projectile_tick_system);
+
+        app.world_mut().spawn((
+            Position::new([-1.0, flight_y, 0.0]),
+            QiProjectile {
+                owner: None,
+                qi_payload: 20.0,
+            },
+            AnqiProjectileFlight {
+                carrier_kind: CarrierKind::BoneChip,
+                qi_color: ColorKind::Sharp,
+                carrier_grade: CarrierKind::BoneChip.grade(),
+                spawn_pos: DVec3::new(-1.0, flight_y, 0.0),
+                prev_pos: DVec3::new(-1.0, flight_y, 0.0),
+                velocity: DVec3::new(20.0, 0.0, 0.0),
+                max_distance: ANQI_PROJECTILE_MAX_DISTANCE,
+                hitbox_inflation: ANQI_HITBOX_INFLATION,
+            },
+        ));
+        // 目标 `Position` 是脚底坐标（`classify_body_part` 的 `target_feet_position`
+        // 约定，见 `raycast.rs::standing_humanoid_aabb`）；无 `GameMode` 组件即视为
+        // 可被伤害（`is_damageable` 默认 true）。
+        let target = app
+            .world_mut()
+            .spawn((
+                Position::new([0.0, 0.0, 0.0]),
+                Wounds::default(),
+                Contamination::default(),
+            ))
+            .id();
+
+        app.update();
+
+        let wounds = app.world().entity(target).get::<Wounds>().unwrap();
+        assert_eq!(
+            wounds.entries.len(),
+            1,
+            "flight_y={flight_y} 应命中目标产生恰好一条 Wound，实测 {} 条 —— \
+             若为 0 说明本次高度没有几何相交，测试几何参数需要调整",
+            wounds.entries.len()
+        );
+        let combat_events: Vec<_> = app
+            .world()
+            .resource::<Events<CombatEvent>>()
+            .iter_current_update_events()
+            .collect();
+        assert_eq!(combat_events.len(), 1);
+        assert_eq!(
+            wounds.entries[0].location, combat_events[0].body_part,
+            "Wound.location 与 CombatEvent.body_part 必须是同一个 classify_body_part \
+             调用结果，实测 Wound={:?} CombatEvent={:?} 不一致",
+            wounds.entries[0].location, combat_events[0].body_part
+        );
+        wounds.entries[0].location
+    }
+
+    #[test]
+    fn projectile_hit_at_head_height_classifies_head_not_chest() {
+        // 目标脚底 y=0，头部阈值 rel_y>0.88 → y>1.584；投射沿 y=1.65 平飞穿过目标中心线
+        // （命中判定半径 0.3+0.4=0.7，|1.65-1.0|=0.65 留够浮点误差余量）。
+        let part = projectile_hit_body_part_at_height(1.65);
+        assert_eq!(
+            part,
+            BodyPart::Head,
+            "投射沿头部高度（y=1.65，脚底 y=0）飞行应命中 Head，实测 {part:?} —— \
+             若又是 Chest 说明 P2 旁路清理被回退成硬编胸口了"
+        );
+    }
+
+    #[test]
+    fn projectile_hit_at_leg_height_classifies_leg_not_chest() {
+        // 腿部阈值 rel_y<=0.53 → y<=0.954；投射沿 y=0.5 平飞穿过目标中心线
+        // （|0.5-1.0|=0.5，同样留够命中半径 0.7 的浮点误差余量）。
+        let part = projectile_hit_body_part_at_height(0.5);
+        assert!(
+            matches!(part, BodyPart::LegL | BodyPart::LegR),
+            "投射沿腿部高度（y=0.5，脚底 y=0）飞行应命中 LegL/LegR，实测 {part:?} —— \
+             若是 Chest 说明命中部位仍是恒定胸口而非按弹道几何算出"
+        );
+    }
+
+    #[test]
+    fn projectile_hit_at_chest_height_still_classifies_chest() {
+        // 对照组：胸口高度（rel_y≈0.556，在 0.55~0.88 之间且 lateral 落在阈值内）仍应判 Chest，
+        // 证明这不是"再也不会出现 Chest"而是"部位随几何真实变化，胸口只是其中一种可能"。
+        let part = projectile_hit_body_part_at_height(1.0);
+        assert_eq!(
+            part,
+            BodyPart::Chest,
+            "投射沿胸口高度（y=1.0，脚底 y=0）飞行应命中 Chest，实测 {part:?}"
         );
     }
 

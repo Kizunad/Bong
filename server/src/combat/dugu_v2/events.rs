@@ -78,6 +78,7 @@ pub struct SelfCureProgressEvent {
     pub morphology_percent: f32,
     pub self_revealed: bool,
     pub tick: u64,
+    pub visual: DuguSkillVisual,
 }
 
 #[derive(Debug, Clone, Event, PartialEq)]

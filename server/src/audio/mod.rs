@@ -176,7 +176,7 @@ mod tests {
             SoundRecipeRegistry::load_default().expect("default audio recipes should load");
         assert_eq!(
             registry.len(),
-            264,
+            266,
             "audio registry should exclude removed slide and double-jump movement recipes \
              plus include 7 supply_coffin recipes (break + open common/rare/precious + emerge) \
              plus 1 ambient_dan_zong recipe \
@@ -210,8 +210,18 @@ mod tests {
              heiwushi_dark_vortex / heiwushi_transform / heiwushi_death — plan-sword-path-complete §B \
              黑武士 boss action server 端 AV emit 接线，全部复用 vanilla 音色分层，无新音频文件) \
              plus 1 rat_bite_nip recipe (plan-ambient-threat-v1 P2 鼠患骚扰咬击 SFX，\
-             entity.silverfish.ambient pitch 0.7 vol 0.5，无新音频文件)"
+             entity.silverfish.ambient pitch 0.7 vol 0.5，无新音频文件) \
+             plus 2 combat-hit-location-v1 P3 部位差异 recipes (combat_hit_head_crit / combat_hit_limb \
+             — 头部命中叠加 attack.crit+arrow.hit_player 双层、四肢命中换成更闷的 attack.weak，\
+             全部复用 vanilla 音色分层，无新音频文件)"
         );
+        for body_part_recipe in ["combat_hit_head_crit", "combat_hit_limb"] {
+            assert!(
+                registry.get(body_part_recipe).is_some(),
+                "plan-combat-hit-location-v1 P3 部位差异音效 recipe `{body_part_recipe}` 必须加载\
+                 （server emit_combat_audio_triggers 经 combat_hit_recipe_for_body_part 引用）"
+            );
+        }
         for heiwushi_recipe in [
             "heiwushi_melee_slash",
             "heiwushi_dark_barrage",
