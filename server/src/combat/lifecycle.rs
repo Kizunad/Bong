@@ -395,9 +395,14 @@ pub fn death_arbiter_tick(
                 pos: [p.x, p.y, p.z],
             });
         }
+        // 已经在死亡屏（AwaitingRevival）等待玩家决策的实体不接受新死亡事件重入——
+        // 否则濒死窗口每 tick 被新死亡事件拍回 NearDeath，AwaitingRevival 窗口实际只活 1 tick，
+        // 玩家永远点不中重生按钮（bughunt 实证：污染溢出持续触发死亡导致死循环）。
         if matches!(
             lifecycle.state,
-            LifecycleState::NearDeath | LifecycleState::Terminated
+            LifecycleState::NearDeath
+                | LifecycleState::AwaitingRevival
+                | LifecycleState::Terminated
         ) {
             continue;
         }
@@ -548,9 +553,12 @@ pub fn death_arbiter_tick(
                 pos: [p.x, p.y, p.z],
             });
         }
+        // 同上：AwaitingRevival 期间不接受新的 cultivation 死亡事件重入。
         if matches!(
             lifecycle.state,
-            LifecycleState::NearDeath | LifecycleState::Terminated
+            LifecycleState::NearDeath
+                | LifecycleState::AwaitingRevival
+                | LifecycleState::Terminated
         ) {
             continue;
         }
@@ -2951,6 +2959,303 @@ mod tests {
             Some(RevivalDecision::Tribulation { chance }) if (chance - 0.80).abs() < 1e-9
         ));
         assert_eq!(terminated_events.len(), 0);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn death_arbiter_skips_death_event_reentry_while_awaiting_revival() {
+        // bughunt 实证：污染溢出持续触发 DeathEvent，AwaitingRevival（死亡屏，60s 确认窗口）
+        // 期间如果被新死亡事件拍回 NearDeath，窗口实际只活 1 tick，玩家永远点不中重生。
+        // pin 住：死亡屏等待决策期间的死亡事件必须被 continue 跳过，不触碰任何状态。
+        let mut app = App::new();
+        let (settings, root) = persistence_settings("awaiting-revival-skip-death-event");
+        app.insert_resource(settings);
+        app.insert_resource(CombatClock { tick: 900 });
+        app.add_event::<DeathEvent>();
+        app.add_event::<CultivationDeathTrigger>();
+        app.add_event::<DeathInsightRequested>();
+        app.add_event::<PlayerTerminated>();
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(Update, death_arbiter_tick);
+
+        let mut life_record = LifeRecord::default();
+        life_record.push(BiographyEntry::NearDeath {
+            cause: "prior".to_string(),
+            tick: 100,
+        });
+        let biography_len_before = life_record.biography.len();
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                Wounds {
+                    health_current: 0.0,
+                    health_max: 30.0,
+                    entries: Vec::new(),
+                },
+                Stamina::default(),
+                CombatState::default(),
+                life_record,
+                Lifecycle {
+                    state: LifecycleState::AwaitingRevival,
+                    awaiting_decision: Some(RevivalDecision::Fortune { chance: 1.0 }),
+                    near_death_deadline_tick: None,
+                    revival_decision_deadline_tick: Some(999),
+                    death_count: 1,
+                    ..Default::default()
+                },
+            ))
+            .id();
+
+        app.world_mut().send_event(DeathEvent {
+            target: entity,
+            cause: "contamination_overflow".to_string(),
+            attacker: None,
+            attacker_player_id: None,
+            at_tick: 900,
+        });
+        app.update();
+
+        let lifecycle = app.world().entity(entity).get::<Lifecycle>().unwrap();
+        assert_eq!(
+            lifecycle.state,
+            LifecycleState::AwaitingRevival,
+            "期望仍是 AwaitingRevival 因为死亡屏等待决策期间不应接受新死亡事件重入把状态拍回 NearDeath；实际 {:?}",
+            lifecycle.state
+        );
+        assert_eq!(
+            lifecycle.near_death_deadline_tick, None,
+            "期望 near_death_deadline_tick 保持 None 因为守卫应在触碰任何字段前 continue，不应被 enter_near_death 重新设置；实际 {:?}",
+            lifecycle.near_death_deadline_tick
+        );
+        assert_eq!(
+            lifecycle.revival_decision_deadline_tick,
+            Some(999),
+            "期望死亡屏 60s 确认窗口 deadline 保持不变（不被新死亡事件打断/重置）；实际 {:?}",
+            lifecycle.revival_decision_deadline_tick
+        );
+        assert_eq!(
+            lifecycle.death_count, 1,
+            "期望 death_count 不因重入死亡事件而递增；实际 {}",
+            lifecycle.death_count
+        );
+
+        let life_record = app.world().entity(entity).get::<LifeRecord>().unwrap();
+        assert_eq!(
+            life_record.biography.len(),
+            biography_len_before,
+            "期望 biography 不新增 NearDeath 条目因为守卫应在 push 之前 continue；实际长度 {}",
+            life_record.biography.len()
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn death_arbiter_skips_cultivation_death_trigger_reentry_while_awaiting_revival() {
+        // 同上，覆盖 cultivation_deaths 事件循环的守卫（第二处跳过点，独立于 DeathEvent 路径）。
+        let mut app = App::new();
+        let (settings, root) = persistence_settings("awaiting-revival-skip-cultivation-trigger");
+        app.insert_resource(settings);
+        app.insert_resource(CombatClock { tick: 900 });
+        app.add_event::<DeathEvent>();
+        app.add_event::<CultivationDeathTrigger>();
+        app.add_event::<DeathInsightRequested>();
+        app.add_event::<PlayerTerminated>();
+        app.add_event::<VfxEventRequest>();
+        app.add_systems(Update, death_arbiter_tick);
+
+        let mut life_record = LifeRecord::default();
+        life_record.push(BiographyEntry::NearDeath {
+            cause: "prior".to_string(),
+            tick: 100,
+        });
+        let biography_len_before = life_record.biography.len();
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                Wounds {
+                    health_current: 0.0,
+                    health_max: 30.0,
+                    entries: Vec::new(),
+                },
+                Stamina::default(),
+                CombatState::default(),
+                life_record,
+                Lifecycle {
+                    state: LifecycleState::AwaitingRevival,
+                    awaiting_decision: Some(RevivalDecision::Tribulation { chance: 0.5 }),
+                    near_death_deadline_tick: None,
+                    revival_decision_deadline_tick: Some(1500),
+                    death_count: 2,
+                    ..Default::default()
+                },
+            ))
+            .id();
+
+        app.world_mut().send_event(CultivationDeathTrigger {
+            entity,
+            cause: CultivationDeathCause::NegativeZoneDrain,
+            context: serde_json::json!({"zone": "rift_valley"}),
+        });
+        app.update();
+
+        let lifecycle = app.world().entity(entity).get::<Lifecycle>().unwrap();
+        assert_eq!(
+            lifecycle.state,
+            LifecycleState::AwaitingRevival,
+            "期望仍是 AwaitingRevival 因为死亡屏等待决策期间不应接受新 cultivation 死亡事件重入；实际 {:?}",
+            lifecycle.state
+        );
+        assert_eq!(
+            lifecycle.near_death_deadline_tick, None,
+            "期望 near_death_deadline_tick 保持 None，守卫应在 enter_near_death 之前 continue；实际 {:?}",
+            lifecycle.near_death_deadline_tick
+        );
+        assert_eq!(
+            lifecycle.revival_decision_deadline_tick,
+            Some(1500),
+            "期望死亡屏确认窗口 deadline 不被新 cultivation 死亡事件重置；实际 {:?}",
+            lifecycle.revival_decision_deadline_tick
+        );
+        assert_eq!(
+            lifecycle.death_count, 2,
+            "期望 death_count 不因重入 cultivation 死亡事件而递增；实际 {}",
+            lifecycle.death_count
+        );
+
+        let life_record = app.world().entity(entity).get::<LifeRecord>().unwrap();
+        assert_eq!(
+            life_record.biography.len(),
+            biography_len_before,
+            "期望 biography 不新增 NearDeath 条目因为守卫应在 push 之前 continue；实际长度 {}",
+            life_record.biography.len()
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn death_loop_full_cycle_reentrant_death_event_does_not_block_reincarnate() {
+        // 回归场景：进入 NearDeath → 快进过 deadline 让 near_death_tick 判定出 AwaitingRevival →
+        // 再灌一条同 cause 死亡事件（模拟污染溢出持续触发）→ 状态不应被拍回 NearDeath →
+        // 玩家送 Reincarnate 决策 → 必须能正常复活（state == Alive）。
+        // 这是 Bug 1 的整链路回归：修复前，重入死亡事件会把状态踢回 NearDeath，
+        // Reincarnate intent 因 `lifecycle.state != AwaitingRevival` 被静默丢弃，玩家永远点不中重生。
+        let mut app = App::new();
+        let (settings, root) = persistence_settings("death-loop-full-cycle");
+        app.insert_resource(settings);
+        app.insert_resource(CombatClock { tick: 100 });
+        app.add_event::<DeathEvent>();
+        app.add_event::<CultivationDeathTrigger>();
+        app.add_event::<DeathInsightRequested>();
+        app.add_event::<DeathCinematicPublished>();
+        app.add_event::<PlayerRevived>();
+        app.add_event::<PlayerTerminated>();
+        app.add_event::<RevivalActionIntent>();
+        app.add_event::<AscensionQuotaOpened>();
+        app.add_event::<VfxEventRequest>();
+        app.add_event::<crate::coffin::CoffinStateChanged>();
+        app.add_systems(
+            Update,
+            (
+                death_arbiter_tick,
+                near_death_tick.after(death_arbiter_tick),
+                handle_revival_action_intents.after(near_death_tick),
+            ),
+        );
+
+        let (entity, _helper) = spawn_client_actor(
+            &mut app,
+            "Loopy",
+            Wounds {
+                health_current: 0.0,
+                health_max: 30.0,
+                entries: Vec::new(),
+            },
+            Stamina::default(),
+            Lifecycle {
+                fortune_remaining: 1,
+                ..Default::default()
+            },
+        );
+
+        // 首次死亡事件：Alive → NearDeath。
+        app.world_mut().send_event(DeathEvent {
+            target: entity,
+            cause: "contamination_overflow".to_string(),
+            attacker: None,
+            attacker_player_id: None,
+            at_tick: 100,
+        });
+        app.update();
+        {
+            let lifecycle = app.world().entity(entity).get::<Lifecycle>().unwrap();
+            assert_eq!(
+                lifecycle.state,
+                LifecycleState::NearDeath,
+                "期望首次死亡事件后进入 NearDeath；实际 {:?}",
+                lifecycle.state
+            );
+        }
+
+        // 快进过 NEAR_DEATH_WINDOW（600 ticks）→ near_death_tick 应判定出 AwaitingRevival。
+        app.world_mut().resource_mut::<CombatClock>().tick = 701;
+        app.update();
+        {
+            let lifecycle = app.world().entity(entity).get::<Lifecycle>().unwrap();
+            assert_eq!(
+                lifecycle.state,
+                LifecycleState::AwaitingRevival,
+                "期望濒死窗口期满后进入 AwaitingRevival（死亡屏）；实际 {:?}",
+                lifecycle.state
+            );
+        }
+
+        // 实证场景：污染溢出在死亡屏挂起期间又触发一条同 cause 死亡事件（下一 tick，601 之后每 601 tick 重入）。
+        app.world_mut().send_event(DeathEvent {
+            target: entity,
+            cause: "contamination_overflow".to_string(),
+            attacker: None,
+            attacker_player_id: None,
+            at_tick: 702,
+        });
+        app.update();
+        {
+            let lifecycle = app.world().entity(entity).get::<Lifecycle>().unwrap();
+            assert_eq!(
+                lifecycle.state,
+                LifecycleState::AwaitingRevival,
+                "期望重入死亡事件后状态仍是 AwaitingRevival（未被拍回 NearDeath）——这是 Bug 1 的核心断言；实际 {:?}",
+                lifecycle.state
+            );
+        }
+
+        // 玩家送出 Reincarnate 决策：必须成功复活，而不是因状态已被重入死亡事件破坏而被
+        // `lifecycle.state != AwaitingRevival` 静默丢弃。
+        app.world_mut().send_event(RevivalActionIntent {
+            entity,
+            action: RevivalActionKind::Reincarnate,
+            issued_at_tick: 703,
+        });
+        app.update();
+
+        let lifecycle = app.world().entity(entity).get::<Lifecycle>().unwrap();
+        assert_eq!(
+            lifecycle.state,
+            LifecycleState::Alive,
+            "期望 Reincarnate 决策后成功复活为 Alive 因为死亡屏窗口本应完整存活直到玩家决策；实际 {:?}",
+            lifecycle.state
+        );
+        let revived_events = app.world().resource::<Events<PlayerRevived>>();
+        assert_eq!(
+            revived_events.len(),
+            1,
+            "期望恰好一次 PlayerRevived 事件；实际 {}",
+            revived_events.len()
+        );
 
         let _ = fs::remove_dir_all(root);
     }
