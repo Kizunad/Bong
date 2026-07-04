@@ -190,3 +190,29 @@
 3. **边界 / 拒绝理由**：不新增 VFX 基类调用（`BongRibbonParticle` 等）、不新增 `bong:vfx_event`；若未来确有"可选氛围粒子"需求，需另立 plan 明确其与"藏拙"基调、伪装机制的取舍关系，本 plan 范围内不做。
 
 **落点**：`server/src/cultivation/spiritual_sense/scanner.rs:11`（既有通道，无需改动）/ plan §P3（气息粒子项已删除，标注"不做"理由）。
+
+## Finish Evidence
+
+> 全部 P0-P3 ✅（2026-07-04 验收，consume workflow + 3 轮 Verify 博弈 `ready`/`defenseWins=True`：meridian 双源/dormant seeder/DyingElder）。promote 经 5 轮博弈。
+
+### 落地清单
+- **P0 choke-point**：`lifecycle.rs` `npc_runtime_bundle(_with_age)` 加 realm 形参写 `Cultivation.realm` + `meridian_system`(`npc_meridian_system_for_realm`) + `qi_max`(`qi_max_for_realm`) + `LifespanComponent::for_realm`；`qi_current` 保持 0.0 不满灵（不撞守恒）；24 站点透传/Awaken；`qi_max_for_realm`(`breakthrough.rs`)对拍 worldview §三:199 六值(10/40/150/540/2100/10700)
+- **P1 seeder 分布**：`dormant_rogue_seed_snapshot` + 活体 `seed_initial_rogue_population_on_startup` 都接 `deterministic_hash`(pub(crate))分布，基数 1000 末法稀有(固元~18/通灵~4)；meridian_system 同步派生
+- **P2 一致性**：`spawn_paths` audit(technique required_realm≤realm / visual profile 对拍)，横跨 4 spawn × 6 境界从落地态回读
+- **P3 感知面**：视觉档接修复 realm / narration / 一次性确定性迁移(marker 幂等 + **尊重 meridian_severed 永久断脉**)
+- **meridian 双源全消灭**：choke-point bundle + dormant seeder + 迁移器 + DyingElder(传真 Void→20 经脉)四路径同源
+
+### 关键 commit（2026-07-04）
+`355e3c32b` choke-point · `d5bedd205` qi_max_for_realm · `f9b322fa4` dormant meridian · `6da6ba34d` DyingElder+severed · `d9d87464a` P2 audit
+
+### 测试结果
+server `cargo test` **10386 passed / 0 failed**（含 meridian 对拍/分布直方图/迁移 severed/spawn_paths audit pin）。纯 server 无 wire。
+
+### 跨仓库核验
+server(npc/lifecycle·dormant·spawn·technique·faction + cultivation/breakthrough + fauna/dying_elder)。无 wire/client 改动。
+
+### 遗留 / 后续
+- **⚠️ qi_max_multiplier 分歧（活体突破偏离正典，需独立 plan）**：本 plan `qi_max_for_realm`(查表正典 10/40/150/540/2100/10700)只覆盖 spawn/迁移入口；活体自然突破 `cultivation/breakthrough.rs try_breakthrough` 仍走既有 `qi_max *= qi_max_multiplier(next)` 递推乘链(10/20/50/150/525/2625)，同 realm 差最高 4 倍(Void 10700 vs 2625)。dormant NPC `advance_dormant_breakthrough` 走此路径自然突破后 qi_max 偏离 worldview §三。**根治需统一 qi_max 曲线(改 qi_max_multiplier 突破逻辑对拍正典)，影响玩家突破+所有境界容量+触 worldview §三数值一致性，超本 plan scope，留独立 qi_max-curve-unify plan（可能需 worldview review）**。本 plan 只保证 spawn/迁移侧容量对拍正典。
+- 迁移器 qi_current 未钳到新 qi_max（minor，仅"迁移前已自然突破"边缘态可能倒挂，同上 qi_max 曲线 plan 处理）
+- §8.1#4 zone-qi↔realm 联动 TODO 已挂 reminder.md
+- 24 站点中 heiwushi/boss 已知设计不一致(醒灵)保留（本 plan 范围外）
