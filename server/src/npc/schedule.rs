@@ -101,6 +101,11 @@ impl NpcDailySchedule {
             NpcArchetype::Rogue | NpcArchetype::Disciple => rogue_schedule_weights(),
             NpcArchetype::Commoner => commoner_schedule_weights(),
             NpcArchetype::Beast => beast_schedule_weights(),
+            // plan-mundane-fauna-v1 P0：`fallback_schedule_weights` 只有 Wander/Rest，
+            // 不含 Forage——HungerScorer 的 `schedule_multiplier(.., ScheduleActivity::Forage)`
+            // 会被乘 0，FarmAction 永远算不出非零分（编译期不报错的静默行为孤岛，
+            // §8.1 #10 点名的"需人工确认 fallback 语义"缺口，本 P0 补一份专属日程）。
+            NpcArchetype::Mundane => mundane_schedule_weights(),
             _ => fallback_schedule_weights(),
         };
         Self {
@@ -562,6 +567,46 @@ fn beast_schedule_weights() -> HashMap<DayPhase, Vec<(ScheduleActivity, f32)>> {
                 (ScheduleActivity::Patrol, 0.5),
             ],
         ),
+    ])
+}
+
+/// plan-mundane-fauna-v1 P0：凡兽整日以觅食/游荡为主，夜间歇息（无 Patrol/Trade——
+/// 那些是妖兽/散修专属活动）。Forage 权重贯穿白天各阶段，保证 `HungerScorer` 的
+/// `schedule_multiplier` 不会被日程表清零。
+///
+/// **Wander 权重下限 0.7（非任意值）**：`scheduled_wander_score`
+/// （`npc/schedule.rs::scheduled_wander_score`）在 `activity_for` 选中 Wander 的 tick
+/// 返回 `baseline(0.08) * weight`，而 `mundane_fauna_thinker` picker 阈值是 0.05
+/// （`FirstToScore { threshold: 0.05 }`）——需要 `weight >= 0.625` 才能让 WanderScorer
+/// 真正越过阈值触发 `GoToPoiAction`。首版曾各分 0.4/0.5/0.3（都 <0.625），
+/// 导致 WanderScorer 即便被日程选中也恒低于阈值、`GoToPoiAction` 永远选不中——
+/// 无威胁/不饥饿的凡兽会静止不动，而非"游荡兜底"（`thinker_branch_wander_when_no_threat_and_not_hungry`
+/// pin 测试撞出的真实回归，非测试环境噪音）。0.7 留出安全余量（0.7*0.08=0.056>0.05）。
+fn mundane_schedule_weights() -> HashMap<DayPhase, Vec<(ScheduleActivity, f32)>> {
+    HashMap::from([
+        (
+            DayPhase::Dawn,
+            vec![
+                (ScheduleActivity::Forage, 0.3),
+                (ScheduleActivity::Wander, 0.7),
+            ],
+        ),
+        (
+            DayPhase::Day,
+            vec![
+                (ScheduleActivity::Forage, 0.3),
+                (ScheduleActivity::Wander, 0.7),
+            ],
+        ),
+        (
+            DayPhase::Dusk,
+            vec![
+                (ScheduleActivity::Forage, 0.15),
+                (ScheduleActivity::Wander, 0.7),
+                (ScheduleActivity::Rest, 0.15),
+            ],
+        ),
+        (DayPhase::Night, vec![(ScheduleActivity::Rest, 1.0)]),
     ])
 }
 

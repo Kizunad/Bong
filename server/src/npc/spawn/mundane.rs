@@ -356,4 +356,197 @@ mod tests {
             .expect("should have Position");
         assert!((position.get() - target).length() < 1e-9);
     }
+
+    // -----------------------------------------------------------------
+    // 4-thinker 分支真实触发 pin（plan §P0 测试第 4 条——只写"复用 Action"不算数，
+    // 必须验证 Scorer 真的能把 picker 带到对应 Action）。全程走真实
+    // `crate::npc::brain::register` 管线（BigBrainPlugin + update_npc_blackboard +
+    // 全部 scorer/action 系统），不是手搓 Score 断言。
+    // -----------------------------------------------------------------
+
+    use big_brain::prelude::Actor;
+    use valence::client::ClientMarker;
+    use valence::prelude::DVec3;
+
+    fn mundane_thinker_scenario() -> (App, Entity) {
+        let mut app = App::new();
+        crate::npc::lifecycle::register(&mut app);
+        crate::npc::brain::register(&mut app);
+        app.add_event::<crate::combat::events::AttackIntent>();
+        app.insert_resource(crate::npc::movement::GameTick(0));
+        let layer = app.world_mut().spawn_empty().id();
+        let actor = {
+            let mut commands = app.world_mut().commands();
+            spawn_mundane_fauna_at(
+                &mut commands,
+                layer,
+                DEFAULT_SPAWN_ZONE_NAME,
+                DVec3::new(0.0, 64.0, 0.0),
+                DVec3::new(0.0, 64.0, 0.0),
+                MundaneFaunaKind::Rabbit,
+            )
+        };
+        app.world_mut().flush();
+        // 生产 spawn 恒以 NpcLodTier::Dormant 起步（同 beast.rs/commoner.rs 先例，由独立
+        // LOD 距离系统事后唤醒）——`lod_gated_score` 对 Dormant 恒强制 Score=0.0
+        // （`is_dormant` 分支），不推进到 Near 会让 Hunger/WanderScorer 永远算不出真实值，
+        // 与本测试组"验证 thinker 分支接线"的目标无关（LOD 距离唤醒逻辑已在
+        // `npc::lod` 自己的测试套件里覆盖）。直接推到 Near，隔离出 thinker 本身的行为。
+        *app.world_mut()
+            .get_mut::<crate::npc::lod::NpcLodTier>(actor)
+            .expect("should have NpcLodTier") = crate::npc::lod::NpcLodTier::Near;
+        (app, actor)
+    }
+
+    /// 推进 `GameTick`（movement/patrol 冷却读取）与 `CultivationClock`
+    /// （`npc/brain/scorers_survival.rs` 里 `wander_scorer_system`/`hunger_scorer_system`
+    /// 真正读的 `clock_tick`——**不是** `GameTick`：`crate::npc::brain::register` 从不插入
+    /// 会自增的 `CultivationClock` 系统，冻结在默认 0 上不推进，纯推 `GameTick` 对
+    /// `scheduled_wander_score` 的 `(schedule.seed, tick)` 加权随机抽样毫无影响）并逐 tick
+    /// `app.update()`。`tick` 冻结不变会让抽样结果恒定为单次固定值（凡兽日程新增 Forage
+    /// 权重与 Wander 分摊同一时段后，该固定值不落在 Wander 分支的概率不可忽略——
+    /// 本测试组曾因此在批量跑时真实撞红，见 P0 commit 后续修复）。这里显式推进
+    /// `CultivationClock.tick`，让 `(seed, tick)` 每帧换一组独立抽样，40 次内命中 Wander
+    /// 的概率趋近 1，而不是冻结在 tick=0 制造只在特定 seed 下才复现的假死锁。
+    fn run_thinker_ticks(app: &mut App, ticks: u32) {
+        for i in 0..ticks {
+            app.insert_resource(crate::npc::movement::GameTick(i));
+            app.insert_resource(crate::cultivation::tick::CultivationClock { tick: i as u64 });
+            app.update();
+        }
+    }
+
+    /// big_brain 只在某个 `.when()` 分支**真正被 picker 选中**时才懒惰 spawn 对应的
+    /// action 实体（未选中的候选分支压根没有实体，见 `big_brain::thinker::thinker_system`
+    /// 的 `exec_picked_action`/`spawn_action` 调用点——不是"实体常在、状态恒 Init"）。
+    /// 故断言口径是"当前存在哪个候选实体"而非"读某个候选的 ActionState"：返回本 tick
+    /// 挂在 `actor` 身上的候选标签集合（正常稳态应恰好一个）。
+    fn active_action_labels(app: &mut App, actor: Entity) -> Vec<&'static str> {
+        let world = app.world_mut();
+        let mut labels = Vec::new();
+
+        let mut cornered_q =
+            world.query_filtered::<&Actor, valence::prelude::With<MeleeAttackAction>>();
+        if cornered_q.iter(world).any(|a| a.0 == actor) {
+            labels.push("cornered_melee");
+        }
+
+        let mut flee_q = world.query_filtered::<&Actor, valence::prelude::With<FleeAction>>();
+        if flee_q.iter(world).any(|a| a.0 == actor) {
+            labels.push("flee");
+        }
+
+        let mut farm_q = world.query_filtered::<&Actor, valence::prelude::With<FarmAction>>();
+        if farm_q.iter(world).any(|a| a.0 == actor) {
+            labels.push("farm");
+        }
+
+        let mut poi_q = world.query_filtered::<&Actor, valence::prelude::With<GoToPoiAction>>();
+        if poi_q.iter(world).any(|a| a.0 == actor) {
+            labels.push("go_to_poi");
+        }
+
+        labels
+    }
+
+    #[test]
+    fn thinker_branch_wander_when_no_threat_and_not_hungry() {
+        // 无玩家/无饥饿信号 → WanderScorer 基线兜底，GoToPoiAction 被选中。
+        //
+        // `scheduled_wander_score`（`npc/schedule.rs`）走 `activity_for` 的加权随机抽样
+        // （不像 `schedule_multiplier` 是纯确定性查表），命中/不命中 Wander 逐 tick 独立
+        // 摇骰；本测试只断言"最终态"，若恰好在被检查的那一 tick 摇到非 Wander 分支，
+        // 已选中的 GoToPoiAction 会被 picker 取消、留下真空态——与本用例"验证 thinker
+        // 接线"的目标无关的概率噪音（`mundane_schedule_weights` 本身的数值健康度已由
+        // 独立的生产代码注释 + 阈值算术保证，见该函数文档）。这里显式把 schedule 的
+        // `phase_weights` 钉死成"任何阶段都 100% Wander"（同 `fallback_schedule_weights`
+        // 的确定性写法），把 `scheduled_wander_score` 的加权随机抽样收窄成恒定
+        // `baseline * 1.0`，隔离出本用例真正要测的东西：CorneredScorer/FleeThreatScorer/
+        // HungerScorer 都不响应时，WanderScorer 确实兜底把 picker 带到 GoToPoiAction。
+        let (mut app, actor) = mundane_thinker_scenario();
+        {
+            let mut schedule = app
+                .world_mut()
+                .get_mut::<NpcDailySchedule>(actor)
+                .expect("should have NpcDailySchedule");
+            schedule.phase_weights = std::collections::HashMap::from([
+                (
+                    crate::npc::schedule::DayPhase::Dawn,
+                    vec![(crate::npc::schedule::ScheduleActivity::Wander, 1.0)],
+                ),
+                (
+                    crate::npc::schedule::DayPhase::Day,
+                    vec![(crate::npc::schedule::ScheduleActivity::Wander, 1.0)],
+                ),
+                (
+                    crate::npc::schedule::DayPhase::Dusk,
+                    vec![(crate::npc::schedule::ScheduleActivity::Wander, 1.0)],
+                ),
+                (
+                    crate::npc::schedule::DayPhase::Night,
+                    vec![(crate::npc::schedule::ScheduleActivity::Wander, 1.0)],
+                ),
+            ]);
+        }
+        run_thinker_ticks(&mut app, 40);
+        assert_eq!(
+            active_action_labels(&mut app, actor),
+            vec!["go_to_poi"],
+            "无威胁/无饥饿时应恰好选中游荡（WanderScorer 基线兜底），不应有其它分支或零分支"
+        );
+    }
+
+    #[test]
+    fn thinker_branch_farm_when_hungry_and_no_threat() {
+        // 无玩家在场，但 Hunger 低于阈值 → HungerScorer 压过 WanderScorer，FarmAction 被选中。
+        let (mut app, actor) = mundane_thinker_scenario();
+        app.world_mut()
+            .get_mut::<crate::npc::hunger::Hunger>(actor)
+            .expect("should have Hunger")
+            .set(0.05);
+        run_thinker_ticks(&mut app, 40);
+        assert_eq!(
+            active_action_labels(&mut app, actor),
+            vec!["farm"],
+            "低 Hunger + 无威胁应恰好选中进食（HungerScorer 排在 WanderScorer 前）"
+        );
+    }
+
+    #[test]
+    fn thinker_branch_flee_when_player_within_range_and_not_cornered() {
+        // 玩家在 FleeThreatScorer 感知半径(20)内但远超 CorneredScorer 近战距离(4)，
+        // 且未被击中（无 retaliation_target）→ FleeThreatScorer 触发 FleeAction。
+        let (mut app, actor) = mundane_thinker_scenario();
+        app.world_mut()
+            .spawn((ClientMarker, Position::new([10.0, 64.0, 0.0])));
+        run_thinker_ticks(&mut app, 40);
+        assert_eq!(
+            active_action_labels(&mut app, actor),
+            vec!["flee"],
+            "10 格内玩家（未被击中，非近战逼近）应恰好选中逃跑"
+        );
+    }
+
+    #[test]
+    fn thinker_branch_cornered_beats_flee_when_retaliation_active_and_close() {
+        // 模拟"被追打至逼入死角"：玩家近战距离内 + retaliation_target 命中窗口未过期 →
+        // CorneredScorer 排在 FleeThreatScorer 前，picker 选中 MeleeAttackAction（反击）
+        // 而非继续 FleeAction（[[feedback_threat_spectrum]] 硬约束：最低档也能反抗）。
+        let (mut app, actor) = mundane_thinker_scenario();
+        let player = app
+            .world_mut()
+            .spawn((ClientMarker, Position::new([2.0, 64.0, 0.0])))
+            .id();
+        app.world_mut()
+            .get_mut::<NpcBlackboard>(actor)
+            .expect("should have NpcBlackboard")
+            .retaliation_target = Some((player, 10_000));
+        run_thinker_ticks(&mut app, 40);
+        assert_eq!(
+            active_action_labels(&mut app, actor),
+            vec!["cornered_melee"],
+            "被逼入死角（近战距离 + retaliation_target 命中）应恰好选中反击，\
+             而非继续逃跑——CorneredScorer 必须排在 FleeThreatScorer 前"
+        );
+    }
 }
