@@ -1,6 +1,6 @@
 # plan-surface-stash-runtime-scatter-gap-v1
 
-> **Active**（骨架 → active 升级 2026-07-04，来源 PR #852 骨架，opus 已核过真问题+防孤岛）。一句话主题：修复 `SurfaceStash` 新手地表遗缴的**零生成**断链。当前代码把 `SurfaceStash` 的 enum/schema/搜索/VFX/respawn/loot pool 都接好了，但**主线没有任何 runtime 生产路径**，导致 spawn 区玩家正常探索时根本遇不到散修遗缴，也拿不到这条引导链承诺的入门资源。
+> **Active**（骨架 → active 升级 2026-07-04，来源 PR #852 骨架，opus 已核过真问题+防孤岛）。一句话主题：修复 `SurfaceStash` 新手地表遗缴的**零生成**断链。当前代码把 `SurfaceStash` 的 enum/schema/搜索/respawn/loot pool/服务端通用视觉映射（`container_visual_kind` → `BongVisualKind::DryCorpse`）都接好了，但**主线没有任何 runtime 生产路径**，导致 spawn 区玩家正常探索时根本遇不到散修遗缴，也拿不到这条引导链承诺的入门资源。
 >
 > **玩家影响**：`docs/finished_plans/plan-onboarding-loop-v1.md:620-622` 明确把 `ling_shui` 标成**入门阶段唯一获取路径**，来源就是 `surface_stash_craft`；一旦 `SurfaceStash` 零生成，新手探索、手搓引导、配方碎片/灵水掉落链都会直接断掉。
 
@@ -22,7 +22,10 @@
   - `PoiNoviceRegistry`（`server/src/world/poi_novice.rs`）新增站点 → `PoiSpawned` event（既有 event，`network/poi_novice_bridge.rs` / `network/redis_bridge.rs` 已消费，天道 agent 可感知新 POI）。
   - `LootContainer{ kind: SurfaceStash }` 实体（既有组件，`world/tsy_container.rs`）→ 既有 `sync_tsy_container_visuals`（`world/entity_model.rs:502`）自动渲染 `BongVisualKind::DryCorpse` 外观；既有 `PoiRespawnStore`（`world/poi_respawn_tick.rs`）自动纳管 respawn 计时。
 - **共享类型 / event**：全部复用既有类型，**不新增**任何 component / event / schema —— `PoiNoviceKind::SurfaceStash`、`ContainerKind::SurfaceStash`、`ContainerKindV1::SurfaceStash`、`PoiSpawned`、`LootContainer`、`PoiRespawnStore` 均已在 `plan-onboarding-loop-v1` 落地，本 plan 只补运行时生产调用点。
-- **跨仓库契约**：**无新增**。client 的 `ContainerKindV1::SurfaceStash` 分支（搜索动画/toast）、agent 的 `ContainerKindV1` TypeBox variant、VFX `SurfaceStashOpen` 均已在 `plan-onboarding-loop-v1` P0.1/P0.2 完成并验收（消费侧完整，见 P0 证据）。本 plan 属于纯 server 模块补丁——只是把已存在的 server 端纯函数接进 `App` 调度，不改跨仓库 wire 格式，符合 `docs/CLAUDE.md` §四“跨仓库契约缺一面”例外条款（确实是纯服务端收口，非新玩法）。
+- **跨仓库契约**：**无新增**。agent 的 `ContainerKindV1`/`PoiNoviceKind` TypeBox `"surface_stash"` variant（`agent/packages/schema/src/container-interaction.ts:20`、`agent/packages/schema/src/poi-novice.ts:17`）已落地并双端序列化对齐；server 侧视觉走 `container_visual_kind`（`server/src/world/entity_model.rs:592-593`）的通用 `SurfaceStash → BongVisualKind::DryCorpse` 映射，`sync_tsy_container_visuals`（`entity_model.rs:502`）对任何 `LootContainer` 实体一视同仁地生效，不依赖任何专属 VFX 事件。
+  - **更正一处历史误报（pre-P0 复核时发现）**：`docs/finished_plans/plan-onboarding-loop-v1.md` Finish Evidence 落地清单里把 `server/src/schema/vfx_event.rs`（标注 `SurfaceStashOpen`）列为 P0 已落地文件，本 plan 早期草稿也照抄写过"client 的 `ContainerKindV1::SurfaceStash` 分支（搜索动画/toast）… 均已完成并验收（消费侧完整）"——**两处均为误报**。实地核验：`VfxEventType`（`server/src/schema/vfx_event.rs:95-101`）只有 `PlayAnim`/`PlayAnimInline`/`StopAnim`/`SpawnParticle`/`PlayEntityAnim` 5 个变体，从未存在过 `SurfaceStashOpen`；client `TsyContainerView.kindLabelZh()`（`client/src/main/java/com/bong/client/tsy/TsyContainerView.java:25-34`）的 `switch` 没有 `"surface_stash"` 分支，命中 `default -> "容器"`。`SurfaceStash` 的视觉呈现走的是上面那条**通用** `DryCorpse` 外观映射，不需要、也从未有过专属 `SurfaceStashOpen` VFX 事件——不是"消费侧完整"，是"复用通用兜底、专属标签缺失"。
+  - **已知遗留（非本 plan 范围，登记备查）**：client `kindLabelZh()` 缺 `"surface_stash"` case，玩家开出散修遗缴容器时标题栏显示通用"容器"而非"散修遗缴"专属标签——纯 UI 文案缺口，不影响搜索计时/loot pool/respawn 功能链路。本 plan 是纯 server runtime 生产补丁，不顺手修 client；留给未来的 client 侧 PR（或下一次touch `TsyContainerView.java` 的 plan）一并补上。
+  - 本 plan 属于纯 server 模块补丁——只是把已存在的 server 端纯函数接进 `App` 调度，不改跨仓库 wire 格式，符合 `docs/CLAUDE.md` §四"跨仓库契约缺一面"例外条款（确实是纯服务端收口，非新玩法）。
 - **worldview 锚点**：`docs/worldview.md` §十「资源与匮乏」→「"搜打撤"循环」（地表可见容器、无需钥匙、低搜索门槛的入门资源点）；`ling_shui` 的入门期唯一来源属于 §九「经济与交易」资源匮乏设计的落地一环。
 - **qi_physics 锚点**：不适用。`SurfaceStash` 是纯物资容器（loot pool 掉落），不涉及真元 / 灵气数值、衰减或守恒变更，本 plan 不引入任何 `qi_physics` 相关常数或公式。
 
@@ -53,12 +56,17 @@
 - `server/src/world/poi_novice.rs:452-479` 移除全部 `#[allow(dead_code)]`（scatter 系统真实接线后这些常数不再是死代码）。
 - `server/src/world/poi_novice.rs:491` `scatter_surface_stashes` 签名扩展为：
   ```rust
-  pub fn scatter_surface_stashes(seed: u64, existing_poi_xz: &[(f64, f64)]) -> Vec<ScatteredStash>
+  pub fn scatter_surface_stashes(
+      seed: u64,
+      existing_poi_xz: &[(f64, f64)],
+      is_passable: &dyn Fn(f64, f64) -> bool,
+  ) -> Vec<ScatteredStash>
   ```
-  拒绝采样循环新增两条判据（与既有 `too_close` 判据同级并列）：
+  新增 `is_passable` 闭包参数——**避水/避岩浆判据必须在这个纯函数内部的拒绝采样 while-loop 里完成，不能留给调用方拿到返回的 `Vec` 之后再事后过滤**：`scatter_surface_stashes` 的 while-loop 只会在凑满 `SURFACE_STASH_COUNT`（12）个点时退出，若把 `!passable` 判据挪到外层调用方对返回值做二次筛选，被过滤掉的点没有任何补采机制，产出会 < 12，直接击穿 §8.1 #3 决议 / 交付物 4 determinism 测试 / P2 首刷回归共同锁定的核心不变量 `by_kind(SurfaceStash).count() == 12`。拒绝采样循环新增三条判据（与既有 `too_close` 判据同级并列，任一命中即 `continue` 重采样）：
   1. 候选点与 `existing_poi_xz` 中任一点的距离 `< SURFACE_STASH_MIN_POI_DIST`（100.0）→ 拒绝重采样。
   2. 候选点 `x.abs() > 700.0 || z.abs() > 700.0`（`spawn` zone AABB 半径 750 减 50 安全边距）→ 拒绝重采样。
-  既有 3 个 test（`poi_novice.rs:751`/`790`/`811`/`818`/`872`）同步改调用签名传 `&[]`（无既有 POI 场景下行为不变，用于回归既有 12 点/最小间距/quota 断言）。
+  3. `!is_passable(x, z)`（水域/岩浆列）→ 拒绝重采样——**这是避水/避岩浆判据唯一的落点**（取代此前"函数只吃 seed，避水留给外层事后过滤"的错误设计，详见 §8.1 #2 决议）。
+  既有 3 个 test（`poi_novice.rs:751`/`790`/`811`/`818`/`872`）同步改调用签名传 `&[]` + `&|_, _| true`（无既有 POI、地形恒可通行场景下行为不变，用于回归既有 12 点/最小间距/quota 断言）。
 
 **交付物 3：新增 Startup 一次性生产系统**
 
@@ -80,8 +88,8 @@
   行为：
   1. `providers`/`layers` 任一 `None` 时直接 `return`（与 `PoiNoviceLoader::load` 同一容错模式，测试 App 不装载完整世界插件时不 panic）。
   2. `existing_poi_xz` 取自 **`providers.overworld.pois()` 原始 manifest**（不是 `registry.sites()`）——因为 `spawn_tutorial_coffin`/`tutorial_chest`/`tutorial_rogue_anchor`/`tutorial_lingquan` 不带 `poi_novice` tag（`poi_novice.rs:349` `site_from_manifest_poi` 的 tag 门禁），不会进入 `PoiNoviceRegistry`；只用 registry 会漏挡教程 POI，遗缴会刷到棺材/教程锚点脸上（见 §8.1 #2 决议）。
-  3. 对 `scatter_surface_stashes(SURFACE_STASH_SCATTER_SEED, &existing_poi_xz)` 返回的每个 `ScatteredStash`：
-     - 调 `providers.overworld.query_surface(x.floor(), z.floor())`（`SurfaceProvider` trait，`terrain/mod.rs:82`）；若 `!info.passable`（水域/岩浆列）**跳过该点并在 seed 序列里取下一个候选**（不是接受错误 y，而是继续拒绝采样，直到凑满 12 点——复用现有 while-loop 结构，只是把"避水"也变成一个拒绝判据，而非事后调用 `snap_spawn_y_to_surface` 被动接受）。
+  3. 构造闭包 `let is_passable = |x: f64, z: f64| providers.overworld.query_surface(x.floor(), z.floor()).passable;`，调用 `scatter_surface_stashes(SURFACE_STASH_SCATTER_SEED, &existing_poi_xz, &is_passable)`。**避水/避岩浆的拒绝判据已经在 `scatter_surface_stashes` 内部的拒绝采样 while-loop 里跑完**（交付物 2），这里拿到的返回值保证恰好 12 个、且全部落在可通行列——wrapper **不需要**再对返回值做任何跳过/事后过滤。对每个 `ScatteredStash`：
+     - 再调一次 `providers.overworld.query_surface(x.floor(), z.floor())`（`SurfaceProvider` trait，`terrain/mod.rs:82`）取 `info.y` 定 Y 轴高度（此时 `info.passable` 已由 `is_passable` 保证为 `true`，只是取值，不需要再判断/跳过）。
      - `pos = DVec3::new(x, f64::from(info.y + 1), z)`。
      - 构造 `PoiNoviceSite { id: format!("{}:surface_stash:{}", DEFAULT_SPAWN_ZONE_NAME, position_id_token([x as f32, (info.y+1) as f32, z as f32])), kind: PoiNoviceKind::SurfaceStash, zone: DEFAULT_SPAWN_ZONE_NAME.to_string(), name: "散修遗缴".to_string(), pos_xyz: [x as f32, (info.y+1) as f32, z as f32], selection_strategy: pool_id.clone(), qi_affinity: 0.0, danger_bias: 0, tags: vec!["poi_novice".to_string(), "poi_type:surface_stash".to_string()] }`，`registry.extend(vec![site.clone()])`，`spawned.send(PoiSpawned { site })`。
      - `commands.spawn((LootContainer::new(ContainerKind::SurfaceStash, DEFAULT_SPAWN_ZONE_NAME.to_string(), TsyDepth::Shallow, pool_id, 0), Position(pos), EntityLayerId(layers.overworld)))`（与 `spawn_tutorial.rs:495-507` 的 `tutorial_chest` 分支同模式；**不新增任何方块摆放函数**——`sync_tsy_container_visuals`（`entity_model.rs:502`）已通用处理任何 `LootContainer`+`Position`+`EntityLayerId` 实体的外观，`container_visual_kind`（`entity_model.rs:586-594`）已把 `SurfaceStash` 映射到 `BongVisualKind::DryCorpse`）。
@@ -124,7 +132,7 @@
 ### #2 是否复用 `spawn_tutorial` 现有 surface snap / blocked tile 约束
 
 **决议**：
-1. **部分复用、部分加强**。`snap_spawn_y_to_surface`（`npc/spawn/common.rs:219-228`）在目标列不可通行（深水/岩浆）时**不会**改变传入的 y，只是原样放行——这是既有 rogue anchor 调用点（`spawn_tutorial.rs:501`）已存在的行为，直接照抄会让不可通行列的遗缴仍然刷出来（只是 y 坐标错误）。因此本 plan **不直接调用 `snap_spawn_y_to_surface`**，而是在 scatter 拒绝采样循环里内联同等语义：调 `SurfaceProvider::query_surface`（`terrain/mod.rs:82-99`，`TerrainProvider` 已实现）拿到 `passable`，`!passable` 时视为"太靠近"直接重采样，而不是事后被动接受。
+1. **部分复用、部分加强**。`snap_spawn_y_to_surface`（`npc/spawn/common.rs:219-228`）在目标列不可通行（深水/岩浆）时**不会**改变传入的 y，只是原样放行——这是既有 rogue anchor 调用点（`spawn_tutorial.rs:501`）已存在的行为，直接照抄会让不可通行列的遗缴仍然刷出来（只是 y 坐标错误）。因此本 plan **不直接调用 `snap_spawn_y_to_surface`**，而是把避水判据做成 `scatter_surface_stashes` 签名上新增的 `is_passable: &dyn Fn(f64, f64) -> bool` 闭包参数，在**纯函数内部**的拒绝采样 while-loop 里与 `too_close`/AABB 判据同级并列：`!is_passable(x, z)` 时视为"太靠近"直接重采样，而不是等函数返回固定 12 个点之后由外层调用方事后过滤/被动接受。这一点是 P1 交付物 2/3 的强制口径，两处描述必须一致——**签名不带地形访问能力**和**避水判据要求接线到拒绝采样循环**这两句话如果分别落到"纯函数签名"和"外层 wrapper 事后过滤"两个不同的地方，会互相矛盾并撞坏"恰好 12 个"的不变量（该矛盾已在 pre-P0 复核中发现并收口，签名与循环归属统一到交付物 2）。
 2. `blocked_tiles`（`Zone` 字段）在生产环境几乎恒为空数组（grep 全仓所有非 test 赋值点均为 `vec![]`/`Vec::new()`），不是真实生效的约束面，**不纳入**本次避让判据，避免引入一个从未被写入过数据的死检查。
 3. "石棺上或教程 POI 脸上"的真正风险点是 `spawn_tutorial_coffin`/`tutorial_chest`/`tutorial_rogue_anchor`/`tutorial_lingquan`——这些**不带** `poi_novice` tag（`poi_novice.rs:349` 的门禁），因此从不出现在 `PoiNoviceRegistry` 里；只查 registry 挡不住它们。正确做法是把 `existing_poi_xz` 判据的数据源定为 **`providers.overworld.pois()` 原始 manifest 全集**（不区分 tag），一次性同时覆盖"novice POI 互相避让"与"教程 POI 避让"两个子问题，不需要维护两条平行的避让逻辑。
 4. 同时发现并顺手修正一个真实几何 bug：`CRAFT_RADIUS = 1000.0`（`poi_novice.rs:472`）+ 修正后的 spawn 中心 `(0,0)` 意味着采样点可能落在 `x`/`z` ∈ `[-1000, 1000]`，而 `spawn` zone AABB 半径只有 750（`zones.json:675`）——即坐标轴方向上的采样点会系统性越界超出 zone。加一条 `x.abs() > 700.0 || z.abs() > 700.0` 拒绝判据（750 减 50 安全边距）与上面两条判据同级并列。
