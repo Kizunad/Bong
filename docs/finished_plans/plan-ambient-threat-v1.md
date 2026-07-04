@@ -176,3 +176,28 @@ scope 预估 5 PR（P0 / P1a 主世界物种池 / P1b TSY 接活独立小 PR，�
 5. **PR-5（P3）**：兽潮双因子改造（需 `plan-zone-qi-economy-v1` P1 先落地，§8.1 #5）+ 负灵域加成对齐 `movement_zone_kind`（§8.1 #4）+ horde 衔接声明。
 
 各 PR 走 docs/CLAUDE.md §六.4 独立 subagent 实施 + §六.5 CodeRabbit ScheduleWakeup 等待协议；P2 含视听但全复用既有原语（`combat/rat_bite.rs` 现成 VfxPlayer/SFX 表现），无 §六.1 建筑三轮 PROMISE 要求。全部 PR merge 且 Finish Evidence 补齐后按根 CLAUDE.md 流转规则归档。
+
+## Finish Evidence
+
+> 全部 P0-P3 ✅（2026-07-04 验收，consume workflow + Verify 博弈 `ready`/`defenseWins=True`，含 3 blocker 修复轮：stride 对齐/超距回收 qi 守恒/并发预算）。
+
+### 落地清单
+- **P0 通用调度核**：`npc/spawn/ambient_scheduler.rs`（fork heiwushi 结构 + PoissonSpawnSampler 距离环 24-64 + should_run_interval；`AmbientMarkerData` trait + `AmbientSchedulerState<M>` 泛型可注入 pool_fn/budget_fn/counts_against_threat_budget 供 mundane-fauna 复用；接活 danger_level 驱动密度；回收 insert(Despawned)）；register `npc/mod.rs`
+- **P1 物种池分层**：danger1-2→Rat / danger3-4→NaturalMobKind 5 变体通用兽 / danger5-7→+AshSpider（死域白名单 `MobSpawnFilter::ban_in_dead_zone`）；峰值闸门 max_hydrated_count=200；TSY 直调 `spawn_tsy_hostiles_for_family`（非 re-emit）
+- **P2 rat 袭扰**：`PlayerHarassScorer`/`HarassBiteAction`（收编既有 SeekQiSource）→ `RatBiteEvent` 守恒（player→npc:rat，复用 `apply_rat_bite_qi_drain`）；灰白尘粒 SFX + client VFX `bong:rat_bite_nip`
+- **P3 生态联动**：兽潮双因子（qi 骤降/collapse × danger 加权，接 `maybe_queue_beast_tide` 主入口）；负灵域威胁对齐 `movement:851` 死域口径；beast_horde 迁徙衔接
+- **3 blocker 修**：`round_to_stride`（interval 对齐 50 防混叠）/ 超距回收 `return_rat/spider_drained_qi_to_zone`（qi 守恒归还非蒸发）/ `pending_spawns_by_zone`（并发预算不越 max_alive）
+
+### 关键 commit（2026-07-04）
+`8de4d1c15` P0 调度核 · `2d7cc0465` P1 物种池 · `5ed969c2c`/`836acf14a`/`cbe8dd817` P2 rat harass · `3dff615fe` P3 兽潮 · `155fc22f1` 3 blocker 修
+
+### 测试结果
+server `cargo test` **10422 passed / 0 failed** + client `./gradlew test build`。
+
+### 跨仓库核验
+server(npc/spawn/ambient_scheduler + fauna/rat_phase·mimic_spider + brain_rat + world/heartbeat·mob_spawn + tsy_hostile) / client(VfxBootstrap `bong:rat_bite_nip`)。无 wire 变更。
+
+### 遗留 / 后续
+- `ambient_scheduler` 泛型核供 `mundane-fauna-v1` 复用（passive pool）
+- 超距回收 qi 归还依赖 `find_zone` 命中；entity 飘出所有 zone AABB 时随既有死亡归还同款语义（drained_qi 无 zone 可归）——既有全局缺口，后续统一 wilderness sink（主审判非阻塞）
+- TSY 自然涌现接活可拆独立小 PR / #6 昼夜权重仅 weight_hook 占位

@@ -1,0 +1,10 @@
+{
+  "id": "rat_bite_nip",
+  "layers": [
+    { "sound": "minecraft:entity.silverfish.ambient", "volume": 0.5, "pitch": 0.7, "delay_ticks": 0 }
+  ],
+  "priority": 50,
+  "attenuation": "MELEE",
+  "category": "HOSTILE",
+  "bus": "COMBAT"
+}

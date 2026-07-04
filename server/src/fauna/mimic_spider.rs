@@ -29,7 +29,7 @@ use crate::qi_physics::constants::{QI_ZONE_UNIT_CAPACITY, SPIDER_DISGUISE_REGEN_
 use crate::qi_physics::excretion::regen_from_zone;
 use crate::qi_physics::ledger::{QiAccountId, QiTransfer, QiTransferReason, WorldQiAccount};
 use crate::world::dimension::CurrentDimension;
-use crate::world::zone::ZoneRegistry;
+use crate::world::zone::{Zone, ZoneRegistry};
 
 // ── 几何 / 感知阈值常数（归本模块；qi 速率常数归 qi_physics::constants）────────────
 
@@ -43,7 +43,9 @@ pub const SPIDER_SENSE_RADIUS: f64 = 8.0;
 /// 撤退判定半径（方块数）：退出此距离视为完成撤退。
 pub const SPIDER_RETREAT_RADIUS: f64 = 32.0;
 
-const SPIDER_DRAINED_QI_DEATH_RETURN_RATIO: f64 = 0.01;
+// pub(crate)：ambient 调度核超距回收路径（§ambient-threat-v1 Verify blocker②）需要与
+// `spider_release_qi_on_death_system` 共用同一条归还系数，跨模块测试才能精确对拍。
+pub(crate) const SPIDER_DRAINED_QI_DEATH_RETURN_RATIO: f64 = 0.01;
 
 // ── P3 陷阱常数 ───────────────────────────────────────────────────────────────
 
@@ -299,11 +301,21 @@ pub fn spider_release_qi_on_death_system(
             continue;
         };
         if let Some(zone) = zones.find_zone_mut(zone_name.as_str()) {
-            let returned_qi = blackboard.drained_qi * SPIDER_DRAINED_QI_DEATH_RETURN_RATIO;
-            zone.spirit_qi =
-                (zone.spirit_qi + returned_qi / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
+            return_spider_drained_qi_to_zone(zone, blackboard.drained_qi);
         }
     }
+}
+
+/// 归还 `drained_qi` 给 zone 的守恒计算——从 [`spider_release_qi_on_death_system`] 抽出
+/// 独立函数，供 ambient 调度核的超距回收路径共用（§ambient-threat-v1 Verify blocker②
+/// 收口：回收前必须先走这条既有"死亡归还"路径，残余 qi 才不会在软删除
+/// `insert(Despawned)` 时蒸发）。`drained_qi <= 0.0` 时无操作。
+pub fn return_spider_drained_qi_to_zone(zone: &mut Zone, drained_qi: f64) {
+    if drained_qi <= 0.0 {
+        return;
+    }
+    let returned_qi = drained_qi * SPIDER_DRAINED_QI_DEATH_RETURN_RATIO;
+    zone.spirit_qi = (zone.spirit_qi + returned_qi / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
 }
 
 /// P0 内部：判断某位置玩家真元是否超过感知阈值（用于 P1 SpiderAmbushScorer）。

@@ -10,8 +10,8 @@ use valence::prelude::{
 
 use crate::alchemy::{AlchemyOutcomeEvent, ResolvedOutcome, StartAlchemyRequest};
 use crate::audio::implementation::{
-    breakthrough_recipe, combat_hit_recipe, forge_hammer_recipe, parry_recipe, school_hit_recipe,
-    AudioImplementationDedup,
+    breakthrough_recipe, combat_hit_recipe_for_body_part, forge_hammer_recipe, parry_recipe,
+    school_hit_recipe, AudioImplementationDedup,
 };
 use crate::audio::SoundRecipeRegistry;
 use crate::botany::components::HarvestTerminalEvent;
@@ -24,6 +24,7 @@ use crate::combat::components::{Lifecycle, Wounds};
 use crate::combat::events::{AttackSource, CombatEvent, DeathEvent, DefenseKind};
 use crate::combat::needle::QiNeedleChargedEvent;
 use crate::combat::tuike_v2::{ContamTransferredEvent, DonFalseSkinEvent, FalseSkinSheddedEvent};
+use crate::combat::woliu::{VortexBackfireEvent, VortexField};
 use crate::combat::woliu_v2::VortexCastEvent;
 use crate::cultivation::breakthrough::BreakthroughOutcome;
 use crate::cultivation::components::Cultivation;
@@ -154,7 +155,7 @@ pub fn emit_combat_audio_triggers(
                 AttackSource::SwordPathManifest => "sword_cleave",
                 AttackSource::SwordPathHeavenGate => "sword_cleave",
                 AttackSource::Melee | AttackSource::NpcMelee => {
-                    combat_hit_recipe(total_damage, critical)
+                    combat_hit_recipe_for_body_part(event.body_part, total_damage, critical)
                 }
             }
         } else if npc_markers.get(event.target).is_ok() && total_damage > 0.0 {
@@ -594,6 +595,58 @@ pub fn emit_woliu_v2_audio_triggers(
             Some(event.skill.as_str().to_string()),
             1.0,
             0.0,
+        );
+    }
+}
+
+/// 绝灵涡流（woliu v1 `woliu.vortex`）→ 音效（纯 cosmetic）。
+///
+/// v1 是长驻领域（`VortexField` component）无 cast 事件，开涡走 lifecycle 检测
+/// （与 vfx 侧 `emit_woliu_v1_vortex_visual_triggers` 同模式、状态各自独立）：
+/// - field 出现 → `woliu_cast`（复用现有 recipe，零新资产）
+/// - 反噬 `VortexBackfireEvent` → `woliu_burst_pop`（爆裂声，断经反噬语义）
+pub fn emit_woliu_v1_vortex_audio_triggers(
+    mut active_fields: bevy_ecs::prelude::Local<std::collections::HashSet<Entity>>,
+    fields: Query<(Entity, &VortexField)>,
+    mut backfires: EventReader<VortexBackfireEvent>,
+    positions: Query<&Position>,
+    mut audio: AudioEmitWriter,
+) {
+    let mut audio = audio.context();
+    let mut seen = std::collections::HashSet::new();
+    for (entity, field) in &fields {
+        seen.insert(entity);
+        if !active_fields.contains(&entity) {
+            emit_play(
+                &mut audio,
+                "woliu_cast",
+                field.caster,
+                field.center,
+                Some("woliu.vortex".to_string()),
+                1.0,
+                0.0,
+            );
+        }
+    }
+    *active_fields = seen;
+
+    for event in backfires.read() {
+        // caster 断 Position（断线瞬间）时兜底到领域中心——反噬是重要负反馈，不能静默丢。
+        let Ok(origin) = positions
+            .get(event.caster)
+            .map(|p| p.get())
+            .or_else(|_| fields.get(event.caster).map(|(_, field)| field.center))
+        else {
+            continue;
+        };
+        emit_play(
+            &mut audio,
+            "woliu_burst_pop",
+            event.caster,
+            origin,
+            Some("woliu.vortex.backfire".to_string()),
+            1.0,
+            -0.2,
         );
     }
 }
@@ -1277,6 +1330,152 @@ mod tests {
             .collect();
         let recipes: Vec<_> = emitted.into_iter().map(|event| event.recipe_id).collect();
         assert_eq!(recipes, vec!["hit_heavy", "wound_inflict"]);
+    }
+
+    /// plan-combat-hit-location-v1 P3 — 部位差异视听反馈：头部命中即便伤害轻微（低于
+    /// hit_heavy 的 10.0 分级线）也要走专属 combat_hit_head_crit，而非退化成 hit_light。
+    #[test]
+    fn head_hit_event_emits_head_crit_recipe_regardless_of_damage_tier() {
+        let mut app = App::new();
+        app.init_resource::<AudioImplementationDedup>();
+        app.add_event::<CombatEvent>();
+        app.add_event::<PlaySoundRecipeRequest>();
+        app.add_systems(Update, emit_combat_audio_triggers);
+        let attacker = app.world_mut().spawn(Position::new([0.0, 64.0, 0.0])).id();
+        let target = app.world_mut().spawn(Position::new([1.0, 64.0, 0.0])).id();
+        app.world_mut().send_event(CombatEvent {
+            attacker,
+            target,
+            resolved_at_tick: 5,
+            body_part: BodyPart::Head,
+            wound_kind: WoundKind::Blunt,
+            source: crate::combat::events::AttackSource::Melee,
+            debug_command: false,
+            physical_damage: 0.0,
+            // 故意选一个低于 hit_heavy(10.0)/hit_critical(24.0) 分级线的伤害，
+            // 证明部位路由优先于伤害分级——不这样测就无法区分"恰好碰上高伤害"的假阳性。
+            damage: 2.0,
+            contam_delta: 0.0,
+            description: "test head crit routes before damage tier".to_string(),
+            defense_kind: None,
+            defense_effectiveness: None,
+            defense_contam_reduced: None,
+            defense_wound_severity: None,
+        });
+
+        app.update();
+
+        let emitted: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<PlaySoundRecipeRequest>>()
+            .drain()
+            .collect();
+        let recipes: Vec<_> = emitted.into_iter().map(|event| event.recipe_id).collect();
+        assert_eq!(
+            recipes,
+            vec!["combat_hit_head_crit"],
+            "轻伤头部命中应仍走专属 combat_hit_head_crit，而不是按伤害分级落回 hit_light \
+             （命中要害的反馈不该被伤害数值淹没）"
+        );
+    }
+
+    /// plan-combat-hit-location-v1 P3 — 四肢命中应统一走更闷的 combat_hit_limb，
+    /// 四个部位变体（ArmL/ArmR/LegL/LegR）都要命中同一条 recipe。
+    #[test]
+    fn limb_hit_events_emit_limb_recipe_for_all_four_variants() {
+        for limb in [
+            BodyPart::ArmL,
+            BodyPart::ArmR,
+            BodyPart::LegL,
+            BodyPart::LegR,
+        ] {
+            let mut app = App::new();
+            app.init_resource::<AudioImplementationDedup>();
+            app.add_event::<CombatEvent>();
+            app.add_event::<PlaySoundRecipeRequest>();
+            app.add_systems(Update, emit_combat_audio_triggers);
+            let attacker = app.world_mut().spawn(Position::new([0.0, 64.0, 0.0])).id();
+            let target = app.world_mut().spawn(Position::new([1.0, 64.0, 0.0])).id();
+            app.world_mut().send_event(CombatEvent {
+                attacker,
+                target,
+                resolved_at_tick: 5,
+                body_part: limb,
+                wound_kind: WoundKind::Blunt,
+                source: crate::combat::events::AttackSource::Melee,
+                debug_command: false,
+                physical_damage: 0.0,
+                damage: 12.0,
+                contam_delta: 0.0,
+                description: format!("test limb hit routes to combat_hit_limb for {limb:?}"),
+                defense_kind: None,
+                defense_effectiveness: None,
+                defense_contam_reduced: None,
+                defense_wound_severity: None,
+            });
+
+            app.update();
+
+            let emitted: Vec<_> = app
+                .world_mut()
+                .resource_mut::<Events<PlaySoundRecipeRequest>>()
+                .drain()
+                .collect();
+            let recipes: Vec<_> = emitted.into_iter().map(|event| event.recipe_id).collect();
+            assert_eq!(
+                recipes,
+                vec!["combat_hit_limb", "wound_inflict"],
+                "四肢部位 {limb:?} 命中应路由到 combat_hit_limb（damage=12.0 仍越过 \
+                 wound_inflict 的 8.0 阈值，两条 recipe 都应出现）"
+            );
+        }
+    }
+
+    /// 胸/腹/背命中不应受本次部位差异改动影响，维持既有伤害分级 recipe 选择。
+    #[test]
+    fn torso_hits_still_use_damage_tier_recipe_unaffected_by_body_part_routing() {
+        for (part, damage, expected) in [
+            (BodyPart::Chest, 3.0, "hit_light"),
+            (BodyPart::Abdomen, 12.0, "hit_heavy"),
+            (BodyPart::Back, 30.0, "hit_critical"),
+        ] {
+            let mut app = App::new();
+            app.init_resource::<AudioImplementationDedup>();
+            app.add_event::<CombatEvent>();
+            app.add_event::<PlaySoundRecipeRequest>();
+            app.add_systems(Update, emit_combat_audio_triggers);
+            let attacker = app.world_mut().spawn(Position::new([0.0, 64.0, 0.0])).id();
+            let target = app.world_mut().spawn(Position::new([1.0, 64.0, 0.0])).id();
+            app.world_mut().send_event(CombatEvent {
+                attacker,
+                target,
+                resolved_at_tick: 5,
+                body_part: part,
+                wound_kind: WoundKind::Blunt,
+                source: crate::combat::events::AttackSource::Melee,
+                debug_command: false,
+                physical_damage: 0.0,
+                damage,
+                contam_delta: 0.0,
+                description: format!("test torso hit {part:?} keeps damage tier recipe"),
+                defense_kind: None,
+                defense_effectiveness: None,
+                defense_contam_reduced: None,
+                defense_wound_severity: None,
+            });
+
+            app.update();
+
+            let emitted: Vec<_> = app
+                .world_mut()
+                .resource_mut::<Events<PlaySoundRecipeRequest>>()
+                .drain()
+                .collect();
+            assert_eq!(
+                emitted[0].recipe_id, expected,
+                "{part:?} 命中 damage={damage} 应维持既有分级 recipe {expected}，不受部位差异改动影响"
+            );
+        }
     }
 
     #[test]
@@ -2266,6 +2465,136 @@ mod tests {
             emitted.is_empty(),
             "QiInjectionEvent 的非 Snipe/Soul 分支不应在 audio 系统发声（走 MultiShot/ArmorPierce 专属 EventReader），实际 {} 条",
             emitted.len()
+        );
+    }
+
+    // ========== 绝灵涡流 woliu v1（emit_woliu_v1_vortex_audio_triggers） ==========
+
+    fn setup_woliu_v1_audio_app() -> App {
+        let mut app = App::new();
+        app.add_event::<VortexBackfireEvent>();
+        app.add_event::<PlaySoundRecipeRequest>();
+        app.add_systems(Update, emit_woliu_v1_vortex_audio_triggers);
+        app
+    }
+
+    fn drain_audio(app: &mut App) -> Vec<PlaySoundRecipeRequest> {
+        app.world_mut()
+            .resource_mut::<Events<PlaySoundRecipeRequest>>()
+            .drain()
+            .collect()
+    }
+
+    /// field 出现 → woliu_cast 一次；存续 tick 不重复发声。
+    #[test]
+    fn woliu_v1_field_appear_plays_cast_recipe_once() {
+        use crate::combat::woliu::VortexField;
+        use valence::prelude::DVec3;
+        let mut app = setup_woliu_v1_audio_app();
+        let caster = app.world_mut().spawn(Position::new([0.0, 64.0, 0.0])).id();
+        app.world_mut().entity_mut(caster).insert(VortexField {
+            center: DVec3::new(0.0, 64.0, 0.0),
+            radius: 8.0,
+            delta: 4.0,
+            cast_at_tick: 100,
+            maintain_max_ticks: 1200,
+            caster,
+            env_qi_at_cast: 50.0,
+            last_maintain_tick: 100,
+        });
+
+        app.update();
+        let emitted = drain_audio(&mut app);
+        assert_eq!(
+            emitted.len(),
+            1,
+            "开涡应发 1 条音效，实际 {} 条",
+            emitted.len()
+        );
+        assert_eq!(
+            emitted[0].recipe_id, "woliu_cast",
+            "开涡应复用 woliu_cast recipe（零新资产），实际 {}",
+            emitted[0].recipe_id
+        );
+
+        app.update();
+        assert!(
+            drain_audio(&mut app).is_empty(),
+            "field 存续期间不应重复发开涡音效"
+        );
+    }
+
+    /// 反噬 → woliu_burst_pop 爆裂声。
+    #[test]
+    fn woliu_v1_backfire_plays_burst_pop() {
+        use crate::combat::woliu::{BackfireCause, VortexBackfireEvent};
+        let mut app = setup_woliu_v1_audio_app();
+        let caster = app.world_mut().spawn(Position::new([2.0, 64.0, 2.0])).id();
+        app.world_mut().send_event(VortexBackfireEvent {
+            caster,
+            cause: BackfireCause::EnvQiTooLow,
+            meridian_severed: crate::cultivation::components::MeridianId::Lung,
+            tick: 300,
+            env_qi: 1.0,
+            delta: 4.0,
+            resisted: false,
+        });
+        app.update();
+        let emitted = drain_audio(&mut app);
+        assert_eq!(
+            emitted.len(),
+            1,
+            "反噬应发 1 条爆裂声，实际 {} 条",
+            emitted.len()
+        );
+        assert_eq!(
+            emitted[0].recipe_id, "woliu_burst_pop",
+            "反噬应发爆裂声 recipe，实际 {}",
+            emitted[0].recipe_id
+        );
+    }
+
+    /// 反噬 caster 断 Position 但领域仍在 → 回落 field.center 仍发声（重要负反馈不静默丢）。
+    #[test]
+    fn woliu_v1_backfire_falls_back_to_field_center_when_caster_positionless() {
+        use crate::combat::woliu::{BackfireCause, VortexBackfireEvent, VortexField};
+        use valence::prelude::DVec3;
+        let mut app = setup_woliu_v1_audio_app();
+        let caster = app.world_mut().spawn_empty().id();
+        app.world_mut().entity_mut(caster).insert(VortexField {
+            center: DVec3::new(4.0, 64.0, -2.0),
+            radius: 8.0,
+            delta: 4.0,
+            cast_at_tick: 100,
+            maintain_max_ticks: 1200,
+            caster,
+            env_qi_at_cast: 50.0,
+            last_maintain_tick: 100,
+        });
+        app.update();
+        drain_audio(&mut app); // 吃掉开涡音效
+
+        app.world_mut().send_event(VortexBackfireEvent {
+            caster,
+            cause: BackfireCause::ExceedMaintainMax,
+            meridian_severed: crate::cultivation::components::MeridianId::Lung,
+            tick: 120,
+            env_qi: 10.0,
+            delta: 4.0,
+            resisted: false,
+        });
+        app.update();
+        let emitted = drain_audio(&mut app);
+        assert_eq!(
+            emitted.len(),
+            1,
+            "caster 无 Position 但领域仍在时，反噬音效应回落 field.center 发出，实际 {} 条",
+            emitted.len()
+        );
+        assert_eq!(
+            emitted[0].recipe_id, "woliu_burst_pop",
+            "回落路径也必须是爆裂声 recipe，实际 {}",
+            emitted[0].recipe_id
         );
     }
 }

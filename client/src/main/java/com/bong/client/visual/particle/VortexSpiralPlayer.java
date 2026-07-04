@@ -28,6 +28,13 @@ public final class VortexSpiralPlayer implements VfxPlayer {
     public static final Identifier SWALLOWING_SPIRAL = new Identifier("bong", "woliu_swallowing_spiral");
     public static final Identifier ECHO_RIPPLE = new Identifier("bong", "woliu_echo_ripple");
     public static final Identifier VOID_CORE_COLLAPSE = new Identifier("bong", "woliu_void_core_collapse");
+    // 绝灵涡流（woliu v1 长驻负灵域）三态 — 与 server vfx_animation_trigger
+    // VFX_WOLIU_V1_FIELD_OPEN / _FIELD_AMBIENT / _BACKFIRE 逐字对齐。
+    // 复用现有渲染路线，靠 server 下发的青碧/暗红色相与参数差异化：
+    //   开涡=吞噬螺旋（吸入感）、存续=低频环境涡、反噬=湍流爆裂（断经暗红）。
+    public static final Identifier WOLIU_V1_FIELD_OPEN = new Identifier("bong", "woliu_vortex_field");
+    public static final Identifier WOLIU_V1_FIELD_AMBIENT = new Identifier("bong", "woliu_vortex_field_ambient");
+    public static final Identifier WOLIU_V1_BACKFIRE = new Identifier("bong", "woliu_vortex_backfire");
 
     private static final int DEFAULT_COUNT = 10;
     private static final int FALLBACK_RGB = 0x201832;
@@ -783,6 +790,49 @@ public final class VortexSpiralPlayer implements VfxPlayer {
                 Math.min(0.92, 0.52 + strength * 0.34),
                 0.12 + strength * 0.05,
                 0.018
+            );
+        }
+        // 绝灵涡流（woliu v1）三态：复用既有路线，形态参数与 v2 拉开。
+        // 开涡：中半径吞噬螺旋，吸入感强但小于 v2 吞噬涡（那是大招）。
+        if (WOLIU_V1_FIELD_OPEN.equals(payload.eventId())) {
+            double strength = clamp01(payload.strength().orElse(0.9));
+            return new EffectSpec(
+                Route.SWALLOWING_SPIRAL,
+                clamp(payload.count().orElse(24), 12, 56),
+                clamp(payload.durationTicks().orElse(30), 15, 70),
+                strength,
+                2.2 + strength * 1.8,
+                Math.min(0.88, 0.48 + strength * 0.32),
+                0.11 + strength * 0.04,
+                0.017
+            );
+        }
+        // 存续：低频低密度环境涡，只标示领域仍在，不抢戏。
+        if (WOLIU_V1_FIELD_AMBIENT.equals(payload.eventId())) {
+            double strength = clamp01(payload.strength().orElse(0.6));
+            return new EffectSpec(
+                Route.VORTEX_AMBIENT,
+                clamp(payload.count().orElse(12), 6, 32),
+                clamp(payload.durationTicks().orElse(24), 12, 60),
+                strength,
+                0.0,
+                Math.min(0.62, 0.30 + strength * 0.28),
+                0.0,
+                0.0
+            );
+        }
+        // 反噬：湍流爆裂（server 下发断经暗红 #B84A3F），短促高密度。
+        if (WOLIU_V1_BACKFIRE.equals(payload.eventId())) {
+            double strength = clamp01(payload.strength().orElse(1.0));
+            return new EffectSpec(
+                Route.TURBULENCE_BURST,
+                clamp(payload.count().orElse(30), 16, 64),
+                clamp(payload.durationTicks().orElse(20), 10, 44),
+                strength,
+                0.7 + strength * 0.6,
+                Math.min(0.95, 0.58 + strength * 0.32),
+                0.15 + strength * 0.04,
+                0.021
             );
         }
         double strength = clamp01(payload.strength().orElse(0.75));

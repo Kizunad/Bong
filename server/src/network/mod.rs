@@ -727,6 +727,11 @@ pub fn register(app: &mut App) {
             vfx_animation_trigger::emit_anqi_visual_triggers,
             // 蛊道两招（凝针 / 灌毒蛊）cast → 动画 + 粒子（纯 cosmetic，复用现有资产）。
             vfx_animation_trigger::emit_dugu_needle_visual_triggers,
+            // 蛊道 v2 五招 cast → 粒子（anim/audio 已在 skills.rs 内联 emit；此处补
+            // visual.particle_id → SpawnParticle 落地，三张 dugu_* 贴图首次可见）。
+            vfx_animation_trigger::emit_dugu_v2_visual_triggers,
+            // 绝灵涡流（woliu v1）长驻领域 → 起手动画 + 开涡/存续/反噬粒子（lifecycle 驱动）。
+            vfx_animation_trigger::emit_woliu_v1_vortex_visual_triggers,
             // 广播体操练习完成 → guard_raise 伸展姿态 + happy_villager 正反馈粒子
             //（纯 cosmetic，复用现有 anim + vanilla 粒子，无净新资产）。
             vfx_animation_trigger::emit_guangbo_ticao_visual_triggers,
@@ -765,6 +770,14 @@ pub fn register(app: &mut App) {
             heiwushi_av_trigger::emit_heiwushi_audio_triggers,
             npc_metadata::emit_npc_metadata_payloads,
         )
+            .after(audio_trigger::tick_audio_dedup_clock)
+            .before(audio_event_emit::emit_audio_play_payloads),
+    );
+    // 绝灵涡流（woliu v1）开涡 / 反噬 → 音效（lifecycle 驱动，复用现有 recipe）。
+    // 单独一个 add_systems：上面的 audio tuple 已满 20 系统（Bevy 元组上限）。
+    app.add_systems(
+        Update,
+        audio_trigger::emit_woliu_v1_vortex_audio_triggers
             .after(audio_trigger::tick_audio_dedup_clock)
             .before(audio_event_emit::emit_audio_play_payloads),
     );

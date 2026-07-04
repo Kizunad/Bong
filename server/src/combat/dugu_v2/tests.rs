@@ -211,6 +211,120 @@ fn eclipse_applies_taint_mark_to_spirit_target() {
     assert!(app.world().resource::<Events<DeathEvent>>().is_empty());
 }
 
+/// plan-combat-hit-location-v1 P2（决议 §8.1 旁路桶 #4，保留）—— 独孤流派 Eclipse/
+/// Penetrate/Reverse 三招内功侵蚀伤害是浊气/真元层面的伤害，无实体弹道或碰撞几何可依，
+/// `apply_damage`（`skills.rs:580`，三处调用点 `197`/`359`/`482`）保留恒 Chest 作代表
+/// 部位（浊气蚀体从真元枢纽向外蔓延）。本 pin 覆盖三招各自的 `apply_damage` 调用点，
+/// 证明"保留 Chest"是三招统一的设计决策，而非某一招漏改的方向性判定。
+#[test]
+fn eclipse_penetrate_reverse_all_wound_location_stay_chest() {
+    use crate::combat::components::BodyPart;
+
+    // Eclipse
+    {
+        let mut app = setup_app();
+        let caster = actor(&mut app, Realm::Spirit, 100.0, 100.0, 0.0);
+        let target = actor(&mut app, Realm::Spirit, 200.0, 200.0, 1.0);
+        let result = resolve_dugu_v2_skill(
+            app.world_mut(),
+            caster,
+            0,
+            Some(target),
+            DuguSkillId::Eclipse,
+        );
+        assert!(matches!(result, CastResult::Started { .. }));
+        let wounds = app.world().get::<Wounds>(target).unwrap();
+        assert_eq!(
+            wounds.entries.len(),
+            1,
+            "Eclipse 应产生恰好一条 Wound，实测 {} 条",
+            wounds.entries.len()
+        );
+        assert_eq!(
+            wounds.entries[0].location,
+            BodyPart::Chest,
+            "Eclipse 内功侵蚀应恒命中 Chest（代表真元枢纽），实测 {:?}",
+            wounds.entries[0].location
+        );
+    }
+
+    // Penetrate（需先有 TaintMark 才能命中）
+    {
+        let mut app = setup_app();
+        let caster = actor(&mut app, Realm::Spirit, 100.0, 100.0, 0.0);
+        let target = actor(&mut app, Realm::Spirit, 200.0, 200.0, 1.0);
+        app.world_mut().entity_mut(target).insert(TaintMark {
+            caster,
+            intensity: 10.0,
+            since_tick: 1,
+            expires_at_tick: None,
+            tier: TaintTier::Permanent,
+            temporary_qi_max_loss: 0.0,
+            permanent_decay_rate_per_min: 0.001,
+            returned_zone_qi: 9.9,
+        });
+        let result = resolve_dugu_v2_skill(
+            app.world_mut(),
+            caster,
+            0,
+            Some(target),
+            DuguSkillId::Penetrate,
+        );
+        assert!(matches!(result, CastResult::Started { .. }));
+        let wounds = app.world().get::<Wounds>(target).unwrap();
+        assert_eq!(
+            wounds.entries.len(),
+            1,
+            "Penetrate 应产生恰好一条 Wound，实测 {} 条",
+            wounds.entries.len()
+        );
+        assert_eq!(
+            wounds.entries[0].location,
+            BodyPart::Chest,
+            "Penetrate 内功侵蚀应恒命中 Chest（代表真元枢纽），实测 {:?}",
+            wounds.entries[0].location
+        );
+    }
+
+    // Reverse（Void 境 + 目标有 TaintMark 才能命中）
+    {
+        let mut app = setup_app();
+        let caster = actor(&mut app, Realm::Void, 500.0, 500.0, 0.0);
+        let victim = actor(&mut app, Realm::Spirit, 200.0, 200.0, 1.0);
+        app.world_mut().entity_mut(victim).insert(TaintMark {
+            caster,
+            intensity: 5.0,
+            since_tick: 1,
+            expires_at_tick: None,
+            tier: TaintTier::Permanent,
+            temporary_qi_max_loss: 0.0,
+            permanent_decay_rate_per_min: 0.001,
+            returned_zone_qi: 4.95,
+        });
+        let result = resolve_dugu_v2_skill(
+            app.world_mut(),
+            caster,
+            0,
+            Some(victim),
+            DuguSkillId::Reverse,
+        );
+        assert!(matches!(result, CastResult::Started { .. }));
+        let wounds = app.world().get::<Wounds>(victim).unwrap();
+        assert_eq!(
+            wounds.entries.len(),
+            1,
+            "Reverse 应产生恰好一条 Wound，实测 {} 条",
+            wounds.entries.len()
+        );
+        assert_eq!(
+            wounds.entries[0].location,
+            BodyPart::Chest,
+            "Reverse 内功侵蚀应恒命中 Chest（代表真元枢纽），实测 {:?}",
+            wounds.entries[0].location
+        );
+    }
+}
+
 #[test]
 fn eclipse_lethal_damage_emits_death_event() {
     let mut app = setup_app();

@@ -38,6 +38,12 @@ public final class VfxBootstrap {
         for (net.minecraft.util.Identifier eventId : DuguNeedleVfxPlayer.EVENT_IDS) {
             registry.register(eventId, duguNeedle);
         }
+        // 蛊道 v2 五招粒子（蚀针毒渍/深绿雾罩/倒蚀爆发）—— server emit_dugu_v2_visual_triggers 引用。
+        // 三张专属贴图 #173 起就位、#838 进图集白名单，此处首次接通 event_id → player。
+        DuguV2VfxPlayer duguV2 = new DuguV2VfxPlayer();
+        for (net.minecraft.util.Identifier eventId : DuguV2VfxPlayer.EVENT_IDS) {
+            registry.register(eventId, duguV2);
+        }
         registry.register(BreakthroughPillarPlayer.EVENT_ID,     new BreakthroughPillarPlayer());
         registry.register(EnlightenmentAuraPlayer.EVENT_ID,      new EnlightenmentAuraPlayer());
         registry.register(BedRestAuraPlayer.EVENT_ID,            new BedRestAuraPlayer());
@@ -114,6 +120,13 @@ public final class VfxBootstrap {
         registry.register(LingtianPlotRunePlayer.DRAIN,          lingtianPlotRunes);
         registry.register(RatSwarmAuraPlayer.EVENT_ID,           new RatSwarmAuraPlayer());
         registry.register(FaunaSpawnDustPlayer.EVENT_ID,         new FaunaSpawnDustPlayer());
+        // plan-ambient-threat-v1 P2 — rat 袭扰咬击瞬间灰白尘粒反馈。复用
+        // FaunaSpawnDustPlayer（payload 驱动 color/count/duration 的通用 sprite burst），
+        // 无新 Java 类：server RAT_BITE_NIP 已带灰白 #9B9B8C / count 4 / duration 8t。
+        registry.register(
+            new net.minecraft.util.Identifier("bong", "rat_bite_nip"),
+            new FaunaSpawnDustPlayer()
+        );
         registry.register(MigrationVisualPlayer.EVENT_ID,        new MigrationVisualPlayer());
         PseudoVeinVisualPlayer pseudoVein = new PseudoVeinVisualPlayer();
         registry.register(PseudoVeinVisualPlayer.RISING,         pseudoVein);
@@ -187,11 +200,23 @@ public final class VfxBootstrap {
         registry.register(VortexSpiralPlayer.SWALLOWING_SPIRAL,  woliuVortex);
         registry.register(VortexSpiralPlayer.ECHO_RIPPLE,        woliuVortex);
         registry.register(VortexSpiralPlayer.VOID_CORE_COLLAPSE, woliuVortex);
+        // 绝灵涡流（woliu v1 长驻负灵域）三态 —— server emit_woliu_v1_vortex_visual_triggers 引用。
+        registry.register(VortexSpiralPlayer.WOLIU_V1_FIELD_OPEN,    woliuVortex);
+        registry.register(VortexSpiralPlayer.WOLIU_V1_FIELD_AMBIENT, woliuVortex);
+        registry.register(VortexSpiralPlayer.WOLIU_V1_BACKFIRE,      woliuVortex);
         registry.register(CultivationAbsorbPlayer.EVENT_ID,      new CultivationAbsorbPlayer());
         registry.register(MeridianOpenFlashPlayer.EVENT_ID,      new MeridianOpenFlashPlayer());
         registry.register(BreakthroughFailPlayer.EVENT_ID,       new BreakthroughFailPlayer());
         registry.register(CombatHitDirectionPlayer.HIT,          new CombatHitDirectionPlayer(false));
         registry.register(CombatHitDirectionPlayer.PARRY,        new CombatHitDirectionPlayer(true));
+        // plan-combat-hit-location-v1 P3 — 部位差异视听反馈：四肢命中复用 HIT 分支
+        // （血色三线，颜色/lifetime 由 server payload 差异化），头部命中走专属暴击星形 burst。
+        registry.register(CombatHitDirectionPlayer.LIMB,
+            new CombatHitDirectionPlayer(false));
+        registry.register(CombatHitDirectionPlayer.HEAD_CRIT,
+            new CombatHitDirectionPlayer(CombatHitDirectionPlayer.Kind.HEAD_CRIT));
+        // 腿伤减速触发时目标脚下血渍 decal（复用 lingqi_ripple 环形贴图，无新资产）。
+        registry.register(LegWoundBloodDecalPlayer.EVENT_ID, new LegWoundBloodDecalPlayer());
         registry.register(ForgeHammerStrikePlayer.HAMMER,
             new ForgeHammerStrikePlayer(ForgeHammerStrikePlayer.Kind.HAMMER));
         registry.register(ForgeHammerStrikePlayer.INSCRIPTION,

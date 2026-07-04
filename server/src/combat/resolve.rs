@@ -7,6 +7,7 @@ use valence::prelude::{
 };
 
 use crate::combat::anticheat::AntiCheatCounter;
+use crate::combat::arm_wound;
 use crate::combat::armor::{ArmorProfileRegistry, ARMOR_MITIGATION_CAP};
 use crate::combat::baomai_v4::dead_armor::{should_block_contamination, DeadMeridianArmor};
 use crate::combat::body_mass::{BodyMass, Stance};
@@ -24,7 +25,7 @@ use crate::combat::sword_basics;
 use crate::combat::tuike::{tuike_filter_contam, FalseSkin, ShedEvent};
 use crate::combat::tuike_v2::physics::naked_defense_damage_multiplier;
 use crate::combat::tuike_v2::StackedFalseSkins;
-use crate::combat::weapon::{ShieldBlockHit, ShieldBroken, Weapon, WeaponBroken};
+use crate::combat::weapon::{EquipSlot, ShieldBlockHit, ShieldBroken, Weapon, WeaponBroken};
 use crate::combat::zhenmai_v2::{
     self, BackfireAmplification, MeridianHardenActive, MultiPointActive,
 };
@@ -39,7 +40,7 @@ use crate::combat::{
         ApplyStatusEffectIntent, AttackIntent, AttackSource, CombatEvent, DeathEvent,
         DefenseIntent, DefenseKind, StatusEffectKind,
     },
-    raycast::raycast_humanoid,
+    raycast::{self, raycast_humanoid},
 };
 use crate::cultivation::color::{record_style_practice, PracticeLog};
 use crate::cultivation::components::{
@@ -151,6 +152,9 @@ type CombatAttackerItem<'a> = (
     Option<&'a CombatState>,
     Option<&'a KnownTechniques>,
     Option<&'a Lifecycle>,
+    // plan-combat-hit-location-v1 P1 — 攻方自身臂伤（主手臂伤势）削减自身攻击伤害。
+    // 只读，与 CombatTargetItem 的 `&mut Wounds` 同处一个 ParamSet（p0/p1），Bevy 允许。
+    Option<&'a Wounds>,
 );
 type DefenseResponderItem<'a> = (
     &'a mut CombatState,
@@ -356,6 +360,7 @@ pub fn resolve_attack_intents(
                 attacker_combat_state,
                 _,
                 attacker_lifecycle,
+                _,
             )) = attacker_query.get_mut(intent.attacker)
             else {
                 continue;
@@ -410,17 +415,48 @@ pub fn resolve_attack_intents(
             }
         }
 
+        let attacker_eye_position = attacker_position + DVec3::new(0.0, ATTACKER_EYE_HEIGHT, 0.0);
+        // §8.1 #1/#3 决议 — 攻方瞄准方向：废除 raycast_humanoid 内置恒定胸心 fallback。
+        // NPC 恒定走"指向目标几何中心 + 确定性高斯 jitter"（不使用其自身 Look 组件，
+        // 不做物种战术瞄准，见 §8.1 #3）；玩家走真实 Look 方向，不叠加人工 jitter
+        // （Look 本身已含真实瞄准误差）。`Look::default()`（yaw=0/pitch=0）在 server 端
+        // 等价于"刚出生、从未上报过任何 rotation 包的玩家"——与缺失 Look 组件同等对待，
+        // 退化为几何中心瞄准：真实玩家一进入游戏就持续上报视角，精确撞上这一哨兵值的
+        // 概率可忽略不计，这也是保留既有测试 fixture（未显式设置 Look）行为不变的现实路径。
+        let aim_direction = if npc_markers.get(intent.attacker).is_ok() {
+            let seed = raycast::npc_aim_seed(&attacker_id, intent.issued_at_tick);
+            let sigma_scale = raycast::weapon_aim_jitter_scale(intent.reach);
+            raycast::npc_aim_direction(attacker_eye_position, target_position, seed, sigma_scale)
+        } else {
+            let attacker_look = positions
+                .get(intent.attacker)
+                .ok()
+                .and_then(|(_, look)| look.copied());
+            match attacker_look.filter(|look| *look != Look::default()) {
+                Some(look) => {
+                    let look_vec = look.vec();
+                    DVec3::new(
+                        f64::from(look_vec.x),
+                        f64::from(look_vec.y),
+                        f64::from(look_vec.z),
+                    )
+                }
+                None => raycast::chest_aim_direction(attacker_eye_position, target_position),
+            }
+        };
+
         let Some(hit_probe) = raycast_humanoid(
-            attacker_position + DVec3::new(0.0, ATTACKER_EYE_HEIGHT, 0.0),
+            attacker_eye_position,
             target_position,
             f64::from(
                 intent.reach.max
                     / (juebi_law_env.law_disruption_distance_multiplier() as f32).max(1.0),
             ),
+            aim_direction,
         ) else {
             if intent.debug_command.is_none() {
                 let mut attacker_query = combatants.p0();
-                if let Ok((_, _, _, mut anticheat_counter, _, _, _)) =
+                if let Ok((_, _, _, mut anticheat_counter, _, _, _, _)) =
                     attacker_query.get_mut(intent.attacker)
                 {
                     record_anticheat_violation(
@@ -448,10 +484,15 @@ pub fn resolve_attack_intents(
                 _,
                 attacker_known_techniques,
                 _,
+                attacker_wounds,
             )) = attacker_query.get_mut(intent.attacker)
             else {
                 continue;
             };
+            // plan-combat-hit-location-v1 P1（决议 §8.1 #2）— 攻方主手臂伤势削减自身攻击伤害。
+            // Bruise×0.95/Abrasion×0.90/Laceration×0.80/Fracture×0.60/Severed×0.40。
+            let attacker_arm_wound_damage_multiplier =
+                arm_wound::combined_factor_from_optional(attacker_wounds).attack_damage_multiplier;
 
             if qi_invest > f64::EPSILON && !source_uses_prepaid_qi(intent.source) {
                 attacker_cultivation.qi_current = (attacker_cultivation.qi_current - qi_invest)
@@ -469,7 +510,8 @@ pub fn resolve_attack_intents(
             (
                 attacker_attrs
                     .map(|attrs| attrs.attack_power)
-                    .unwrap_or(1.0),
+                    .unwrap_or(1.0)
+                    * attacker_arm_wound_damage_multiplier,
                 body_masses.get(intent.attacker).ok().copied(),
                 sword_basics::source_to_technique(intent.source)
                     .and_then(|technique| {
@@ -509,6 +551,11 @@ pub fn resolve_attack_intents(
         else {
             continue;
         };
+        // plan-combat-hit-location-v1 P1（决议 §8.1 #2）— 防御方副手臂（持盾侧）伤势削减
+        // 格挡/招架减伤效果：Laceration ×0.80(-20%)/Fracture·Severed ×0.60(-40%)。
+        // 读取本次命中造成的伤口写入 wounds.entries 之前的既有伤势状态。
+        let defender_off_arm_block_multiplier =
+            arm_wound::combined_factor(&wounds).block_multiplier;
         let decay = ((intent.reach.max - distance) / intent.reach.max.max(0.001)).clamp(0.0, 1.0);
         let hit_qi = (intent.qi_invest * decay).max(0.0);
         let is_physical_hit = intent.qi_invest <= f32::EPSILON;
@@ -963,7 +1010,8 @@ pub fn resolve_attack_intents(
         if let Some(block_ratio) =
             active_status_magnitude(defender_status_effects, StatusEffectKind::SwordParrying)
         {
-            let block_ratio = block_ratio.clamp(0.0, 0.95);
+            // plan-combat-hit-location-v1 P1 — 副手臂伤势打折招架减伤效果（决议 §8.1 #2）。
+            let block_ratio = (block_ratio * defender_off_arm_block_multiplier).clamp(0.0, 0.95);
             let before_severity = wound.severity;
             let before_contam = emitted_contam_delta;
             wound.severity *= 1.0 - block_ratio;
@@ -986,7 +1034,10 @@ pub fn resolve_attack_intents(
                                 - reflected_damage)
                                 .clamp(0.0, attacker_wounds.health_max);
                             attacker_wounds.entries.push(Wound {
-                                location: BodyPart::Chest,
+                                // plan-combat-hit-location-v1 P2（决议 §8.1 旁路桶 #1）——
+                                // 剑招招架反伤打的是攻方持械的那只手：格挡时兵刃互击的
+                                // 冲击沿武器传回持械臂，物理上不该落在恒定的胸口。
+                                location: crate::combat::arm_wound::MAIN_ARM,
                                 kind: crate::combat::components::WoundKind::Blunt,
                                 severity: reflected_damage,
                                 bleeding_per_sec: 0.0,
@@ -1048,7 +1099,8 @@ pub fn resolve_attack_intents(
                 .unwrap_or_else(|| ("wooden_shield".to_string(), 0.0));
             let profile =
                 shield_block_mod::shield_block_profile(&shield_template_id, shield_proficiency);
-            let ratio = profile.block_ratio.clamp(0.0, 0.95);
+            // plan-combat-hit-location-v1 P1 — 副手臂伤势打折盾牌格挡减伤效果（决议 §8.1 #2）。
+            let ratio = (profile.block_ratio * defender_off_arm_block_multiplier).clamp(0.0, 0.95);
             // 正面 FOV 判定（±120°，dot ≥ -0.5）
             let fov_ok = shield_fov_check(
                 attacker_position,
@@ -1401,6 +1453,58 @@ pub fn resolve_attack_intents(
         let wound_severity = wound.severity;
         wounds.entries.push(wound);
 
+        // plan-combat-hit-location-v1 P4（决议 §8.1 #2 Severed 行为级后果 #1 —
+        // 消除 arm_wound::ArmWoundFactors.main_arm_severed 零消费孤岛）——
+        // 主手臂(MAIN_ARM)本次命中直接判定为 Severed 分级 → 该侧持械立即脱手落地。
+        // 与"武器耐久归零脱手"（本文件上方 broken_weapon 分支）刻意不同：耐久归零时
+        // 武器仍完整，优先塞回随身容器；断臂时持械的手已经不在了，没有"塞回背包"
+        // 这个物理动作可言，直接走 dropped_loot 世界掉落（既有链路，`discard_
+        // inventory_item_to_dropped_loot` + `DroppedLootRegistry`，与 §4664 剑招/耐久
+        // 脱手同一套 API，见 inventory::discard_inventory_item_to_dropped_loot）。
+        // 只处理 `EquipSlot::MainHand`：`sync_weapon_component_from_equipped`
+        // 的选择顺序是 main_hand.held > off_hand.held，若目标此刻的 `Weapon` component
+        // 追踪的其实是副手武器（主手空手/主手非武器），断主手臂不应误删副手件。
+        if hit_probe.body_part == arm_wound::MAIN_ARM
+            && arm_wound::is_severed(arm_wound::wound_severity_to_grade(wound_severity))
+        {
+            if let Ok(severed_weapon) = weapons.get(target_entity) {
+                if severed_weapon.slot == EquipSlot::MainHand {
+                    let dropped_instance_id = severed_weapon.instance_id;
+                    if let Ok(mut target_inventory) = inventories.get_mut(target_entity) {
+                        if let Some(dropped_loot_registry) = dropped_loot_registry.as_mut() {
+                            match discard_inventory_item_to_dropped_loot(
+                                &mut target_inventory,
+                                dropped_loot_registry,
+                                [target_position.x, target_position.y, target_position.z],
+                                crate::world::dimension::DimensionKind::Overworld,
+                                dropped_instance_id,
+                                &InventoryLocationV1::Equip {
+                                    slot: EquipSlotV1::MainHand,
+                                    state: EquipStateV1::Held,
+                                },
+                            ) {
+                                Ok(_) => {
+                                    commands.entity(target_entity).remove::<Weapon>();
+                                }
+                                Err(drop_error) => {
+                                    tracing::warn!(
+                                        "[bong][combat][arm_wound] main arm severed but failed to drop weapon instance {} for target: {}",
+                                        dropped_instance_id,
+                                        drop_error
+                                    );
+                                }
+                            }
+                        } else {
+                            tracing::warn!(
+                                "[bong][combat][arm_wound] main arm severed weapon instance {} cannot fall back to dropped loot because DroppedLootRegistry is unavailable",
+                                dropped_instance_id
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
         if wound_bleeding > 0.0 {
             event_writers
                 .status_effect_intents
@@ -1425,6 +1529,22 @@ pub fn resolve_attack_intents(
                     duration_ticks: LEG_SLOWED_DURATION_TICKS,
                     issued_at_tick: clock.tick,
                 });
+            // plan-combat-hit-location-v1 P3 — 腿伤减速触发时目标脚下血渍 decal
+            // （复用 client BongGroundDecalParticle 基类，lifetime 100t，无新贴图）。
+            if let Some(events) = event_writers.vfx_events.as_deref_mut() {
+                gameplay_vfx::send_spawn(
+                    events,
+                    gameplay_vfx::spawn_request(
+                        gameplay_vfx::COMBAT_LEG_WOUND_DECAL,
+                        target_position,
+                        None,
+                        "#8C1F1F",
+                        (wound_severity / 20.0).clamp(0.3, 1.0),
+                        1,
+                        100,
+                    ),
+                );
+            }
         }
 
         if hit_probe.body_part == BodyPart::Head && wound_severity >= HEAD_STUN_SEVERITY_THRESHOLD {
@@ -1543,18 +1663,52 @@ pub fn resolve_attack_intents(
             } else {
                 [0.0, 0.0, 0.0]
             };
-            gameplay_vfx::send_spawn(
-                events,
-                gameplay_vfx::spawn_request(
-                    gameplay_vfx::COMBAT_HIT,
-                    hit_origin,
-                    Some(hit_dir),
-                    "#FF3344",
-                    (wound_severity / 20.0).clamp(0.25, 1.0),
-                    6,
-                    12,
-                ),
-            );
+            // plan-combat-hit-location-v1 P3 — 部位差异视听反馈：头部命中暴击星形 burst，
+            // 四肢命中血色三线沿命中法线；胸/腹/背命中维持既有 COMBAT_HIT 不变。
+            match hit_probe.body_part {
+                BodyPart::Head => {
+                    gameplay_vfx::send_spawn(
+                        events,
+                        gameplay_vfx::spawn_request(
+                            gameplay_vfx::COMBAT_HIT_HEAD_CRIT,
+                            hit_origin,
+                            Some(hit_dir),
+                            "#FFE9A0",
+                            (wound_severity / 20.0).clamp(0.25, 1.0),
+                            6,
+                            8,
+                        ),
+                    );
+                }
+                BodyPart::ArmL | BodyPart::ArmR | BodyPart::LegL | BodyPart::LegR => {
+                    gameplay_vfx::send_spawn(
+                        events,
+                        gameplay_vfx::spawn_request(
+                            gameplay_vfx::COMBAT_HIT_LIMB,
+                            hit_origin,
+                            Some(hit_dir),
+                            "#8C1F1F",
+                            (wound_severity / 20.0).clamp(0.25, 1.0),
+                            3,
+                            6,
+                        ),
+                    );
+                }
+                BodyPart::Chest | BodyPart::Abdomen | BodyPart::Back => {
+                    gameplay_vfx::send_spawn(
+                        events,
+                        gameplay_vfx::spawn_request(
+                            gameplay_vfx::COMBAT_HIT,
+                            hit_origin,
+                            Some(hit_dir),
+                            "#FF3344",
+                            (wound_severity / 20.0).clamp(0.25, 1.0),
+                            6,
+                            12,
+                        ),
+                    );
+                }
+            }
             if jiemai_success || sword_parry_success || shield_block_success {
                 gameplay_vfx::send_spawn(
                     events,
@@ -2015,7 +2169,7 @@ mod tests {
     };
     use crate::combat::events::{
         ApplyStatusEffectIntent, AttackIntent, AttackReach, AttackSource, DefenseKind,
-        StatusEffectKind, FIST_REACH,
+        StatusEffectKind, FIST_REACH, SPEAR_REACH,
     };
     use crate::combat::jiemai::jiemai_contam_multiplier_for_effectiveness;
     use crate::cultivation::components::{
@@ -2500,6 +2654,32 @@ mod tests {
         entity
     }
 
+    /// 独立复算 NPC 攻方本次 `AttackIntent` 应该命中的真实部位——用于把"恒 Chest"断言
+    /// 替换为"由 raycast::npc_aim_direction 的确定性 jitter 决定"的断言（决议 §8.1 #1/#3）。
+    /// 直接调用与 `resolve_attack_intents` 相同的 `raycast` 公开函数（同一 seed 来源：
+    /// `attacker_id` + `intent.issued_at_tick`），验证的是"确实接了真实瞄准链路"而非重新
+    /// 拍脑袋断言一个固定枚举值。
+    fn expected_npc_hit_body_part(
+        attacker_feet: [f64; 3],
+        attacker_canonical_id: &str,
+        target_feet: [f64; 3],
+        issued_at_tick: u64,
+        reach: AttackReach,
+    ) -> BodyPart {
+        let origin = DVec3::new(
+            attacker_feet[0],
+            attacker_feet[1] + ATTACKER_EYE_HEIGHT,
+            attacker_feet[2],
+        );
+        let target = DVec3::new(target_feet[0], target_feet[1], target_feet[2]);
+        let seed = raycast::npc_aim_seed(attacker_canonical_id, issued_at_tick);
+        let sigma_scale = raycast::weapon_aim_jitter_scale(reach);
+        let aim_direction = raycast::npc_aim_direction(origin, target, seed, sigma_scale);
+        raycast_humanoid(origin, target, f64::from(reach.max), aim_direction)
+            .expect("expected npc aim direction to stay within reach and hit target AABB")
+            .body_part
+    }
+
     #[test]
     fn hit_emits_direction_vfx() {
         let mut app = App::new();
@@ -2561,6 +2741,362 @@ mod tests {
             } => {
                 assert_eq!(event_id, gameplay_vfx::COMBAT_HIT);
                 assert!(direction.is_some(), "combat_hit should carry hit direction");
+            }
+            other => panic!("expected SpawnParticle, got {other:?}"),
+        }
+    }
+
+    /// 在固定攻防几何下，扫描确定性 NPC jitter tick，找到第一个命中 `wanted` 部位的
+    /// `issued_at_tick`——不硬编魔数 tick，而是用生产同款 `expected_npc_hit_body_part`
+    /// 复算，保证测试与实现共用同一套确定性瞄准公式（plan-combat-hit-location-v1 P3）。
+    fn find_npc_tick_hitting(
+        attacker_feet: [f64; 3],
+        attacker_canonical_id: &str,
+        target_feet: [f64; 3],
+        reach: AttackReach,
+        wanted: BodyPart,
+    ) -> u64 {
+        (0..2000u64)
+            .find(|&tick| {
+                expected_npc_hit_body_part(
+                    attacker_feet,
+                    attacker_canonical_id,
+                    target_feet,
+                    tick,
+                    reach,
+                ) == wanted
+            })
+            .unwrap_or_else(|| {
+                panic!("未能在 0..2000 tick 内为部位 {wanted:?} 找到确定性 jitter 命中样本")
+            })
+    }
+
+    #[test]
+    fn head_hit_emits_head_crit_vfx_not_generic_combat_hit() {
+        let mut app = App::new();
+        app.add_event::<AttackIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<CombatEvent>();
+        app.add_event::<DeathEvent>();
+        app.add_event::<VfxEventRequest>();
+        app.add_event::<crate::combat::weapon::WeaponBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
+        app.add_systems(Update, resolve_attack_intents);
+
+        let attacker_feet = [0.0, 64.0, 0.0];
+        let target_feet = [1.0, 64.0, 0.0];
+        let npc_attacker = spawn_npc(
+            &mut app,
+            attacker_feet,
+            Wounds::default(),
+            Stamina::default(),
+        );
+        let target = spawn_player(
+            &mut app,
+            "HeadTarget",
+            target_feet,
+            Wounds::default(),
+            Stamina::default(),
+        );
+        let canonical = canonical_npc_id(npc_attacker);
+        let tick = find_npc_tick_hitting(
+            attacker_feet,
+            &canonical,
+            target_feet,
+            FIST_REACH,
+            BodyPart::Head,
+        );
+        app.insert_resource(CombatClock { tick });
+
+        app.world_mut().send_event(AttackIntent {
+            attacker: npc_attacker,
+            target: Some(target),
+            issued_at_tick: tick,
+            reach: FIST_REACH,
+            qi_invest: 10.0,
+            wound_kind: WoundKind::Blunt,
+            source: AttackSource::NpcMelee,
+            debug_command: None,
+        });
+        app.update();
+
+        let target_ref = app.world().entity(target);
+        let wounds = target_ref
+            .get::<Wounds>()
+            .expect("target should keep wounds");
+        assert_eq!(
+            wounds.entries[0].location,
+            BodyPart::Head,
+            "找到的 tick 应确实产出 Head 命中（否则测试自身校准漂移）"
+        );
+
+        let vfx_events = app.world().resource::<Events<VfxEventRequest>>();
+        let payloads: Vec<_> = vfx_events.iter_current_update_events().collect();
+        let head_event = payloads
+            .iter()
+            .find(|event| {
+                matches!(
+                    &event.payload,
+                    crate::schema::vfx_event::VfxEventPayloadV1::SpawnParticle { event_id, .. }
+                        if event_id == gameplay_vfx::COMBAT_HIT_HEAD_CRIT
+                )
+            })
+            .expect(
+                "头部命中应 emit bong:combat_hit_head_crit（暴击星形 burst），而非通用 combat_hit",
+            );
+        match &head_event.payload {
+            crate::schema::vfx_event::VfxEventPayloadV1::SpawnParticle {
+                color,
+                count,
+                duration_ticks,
+                ..
+            } => {
+                assert_eq!(
+                    color.as_deref(),
+                    Some("#FFE9A0"),
+                    "头部暴击 burst 应为白金色 #FFE9A0"
+                );
+                assert_eq!(*count, Some(6), "头部暴击 burst 应为 ×6");
+                assert_eq!(*duration_ticks, Some(8), "头部暴击 burst lifetime 应为 8t");
+            }
+            other => panic!("expected SpawnParticle, got {other:?}"),
+        }
+        assert!(
+            !payloads.iter().any(|event| matches!(
+                &event.payload,
+                crate::schema::vfx_event::VfxEventPayloadV1::SpawnParticle { event_id, .. }
+                    if event_id == gameplay_vfx::COMBAT_HIT
+            )),
+            "头部命中不应再退化 emit 通用 bong:combat_hit（应二选一，不叠加旧事件）"
+        );
+    }
+
+    #[test]
+    fn limb_hit_emits_limb_vfx_distinct_from_head_and_torso() {
+        let mut app = App::new();
+        app.add_event::<AttackIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<CombatEvent>();
+        app.add_event::<DeathEvent>();
+        app.add_event::<VfxEventRequest>();
+        app.add_event::<crate::combat::weapon::WeaponBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
+        app.add_systems(Update, resolve_attack_intents);
+
+        let attacker_feet = [0.0, 64.0, 0.0];
+        let target_feet = [1.0, 64.0, 0.0];
+        let npc_attacker = spawn_npc(
+            &mut app,
+            attacker_feet,
+            Wounds::default(),
+            Stamina::default(),
+        );
+        let target = spawn_player(
+            &mut app,
+            "LimbTarget",
+            target_feet,
+            Wounds::default(),
+            Stamina::default(),
+        );
+        let canonical = canonical_npc_id(npc_attacker);
+        // ArmL/ArmR/LegL/LegR 均应路由到同一个 COMBAT_HIT_LIMB——扫第一个命中任意四肢的 tick。
+        let tick = (0..2000u64)
+            .find(|&tick| {
+                matches!(
+                    expected_npc_hit_body_part(
+                        attacker_feet,
+                        &canonical,
+                        target_feet,
+                        tick,
+                        FIST_REACH,
+                    ),
+                    BodyPart::ArmL | BodyPart::ArmR | BodyPart::LegL | BodyPart::LegR
+                )
+            })
+            .expect("未能在 0..2000 tick 内找到任意四肢命中样本");
+        app.insert_resource(CombatClock { tick });
+
+        app.world_mut().send_event(AttackIntent {
+            attacker: npc_attacker,
+            target: Some(target),
+            issued_at_tick: tick,
+            reach: FIST_REACH,
+            qi_invest: 10.0,
+            wound_kind: WoundKind::Blunt,
+            source: AttackSource::NpcMelee,
+            debug_command: None,
+        });
+        app.update();
+
+        let target_ref = app.world().entity(target);
+        let wounds = target_ref
+            .get::<Wounds>()
+            .expect("target should keep wounds");
+        assert!(
+            matches!(
+                wounds.entries[0].location,
+                BodyPart::ArmL | BodyPart::ArmR | BodyPart::LegL | BodyPart::LegR
+            ),
+            "找到的 tick 应确实产出四肢命中，实际 {:?}",
+            wounds.entries[0].location
+        );
+
+        let vfx_events = app.world().resource::<Events<VfxEventRequest>>();
+        let payloads: Vec<_> = vfx_events.iter_current_update_events().collect();
+        let limb_event = payloads
+            .iter()
+            .find(|event| {
+                matches!(
+                    &event.payload,
+                    crate::schema::vfx_event::VfxEventPayloadV1::SpawnParticle { event_id, .. }
+                        if event_id == gameplay_vfx::COMBAT_HIT_LIMB
+                )
+            })
+            .expect("四肢命中应 emit bong:combat_hit_limb（血色三线），而非通用 combat_hit");
+        match &limb_event.payload {
+            crate::schema::vfx_event::VfxEventPayloadV1::SpawnParticle {
+                color,
+                count,
+                duration_ticks,
+                direction,
+                ..
+            } => {
+                assert_eq!(
+                    color.as_deref(),
+                    Some("#8C1F1F"),
+                    "四肢命中血色应为 #8C1F1F"
+                );
+                assert_eq!(*count, Some(3), "四肢命中应为 ×3（沿命中法线三线）");
+                assert_eq!(*duration_ticks, Some(6), "四肢命中 lifetime 应为 6t");
+                assert!(direction.is_some(), "四肢命中应携带命中法线方向");
+            }
+            other => panic!("expected SpawnParticle, got {other:?}"),
+        }
+        assert!(
+            !payloads.iter().any(|event| matches!(
+                &event.payload,
+                crate::schema::vfx_event::VfxEventPayloadV1::SpawnParticle { event_id, .. }
+                    if event_id == gameplay_vfx::COMBAT_HIT_HEAD_CRIT
+                        || event_id == gameplay_vfx::COMBAT_HIT
+            )),
+            "四肢命中不应叠加 emit 头部或通用 combat_hit 事件"
+        );
+    }
+
+    #[test]
+    fn leg_wound_slowdown_emits_ground_blood_decal() {
+        let mut app = App::new();
+        app.add_event::<AttackIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<CombatEvent>();
+        app.add_event::<DeathEvent>();
+        app.add_event::<VfxEventRequest>();
+        app.add_event::<crate::combat::weapon::WeaponBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBroken>();
+        app.add_event::<crate::combat::weapon::ShieldBlockHit>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
+        app.add_systems(Update, resolve_attack_intents);
+
+        let attacker_feet = [0.0, 64.0, 0.0];
+        let target_feet = [1.0, 64.0, 0.0];
+        let npc_attacker = spawn_npc(
+            &mut app,
+            attacker_feet,
+            Wounds::default(),
+            Stamina::default(),
+        );
+        let target = spawn_player(
+            &mut app,
+            "LegTarget",
+            target_feet,
+            Wounds::default(),
+            Stamina::default(),
+        );
+        let canonical = canonical_npc_id(npc_attacker);
+        // 用 SPEAR_REACH（伤害衰减系数更宽松）+ 更高 qi_invest，方便稳定越过
+        // LEG_SLOWED_SEVERITY_THRESHOLD 触发减速与血渍 decal。
+        let tick = (0..2000u64)
+            .find(|&tick| {
+                matches!(
+                    expected_npc_hit_body_part(
+                        attacker_feet,
+                        &canonical,
+                        target_feet,
+                        tick,
+                        SPEAR_REACH,
+                    ),
+                    BodyPart::LegL | BodyPart::LegR
+                )
+            })
+            .expect("未能在 0..2000 tick 内找到腿部命中样本");
+        app.insert_resource(CombatClock { tick });
+
+        app.world_mut().send_event(AttackIntent {
+            attacker: npc_attacker,
+            target: Some(target),
+            issued_at_tick: tick,
+            reach: SPEAR_REACH,
+            qi_invest: 60.0,
+            wound_kind: WoundKind::Pierce,
+            source: AttackSource::NpcMelee,
+            debug_command: None,
+        });
+        app.update();
+
+        let target_ref = app.world().entity(target);
+        let wounds = target_ref
+            .get::<Wounds>()
+            .expect("target should keep wounds");
+        let wound_severity = wounds.entries[0].severity;
+        assert!(
+            matches!(wounds.entries[0].location, BodyPart::LegL | BodyPart::LegR),
+            "找到的 tick 应确实产出腿部命中，实际 {:?}",
+            wounds.entries[0].location
+        );
+        assert!(
+            wound_severity >= LEG_SLOWED_SEVERITY_THRESHOLD,
+            "本测试要求腿伤严重度 {wound_severity} 越过减速阈值 {LEG_SLOWED_SEVERITY_THRESHOLD}\
+             才能触发血渍 decal，否则测试自身前置条件不成立"
+        );
+
+        let status_events = app.world().resource::<Events<ApplyStatusEffectIntent>>();
+        assert!(
+            status_events
+                .iter_current_update_events()
+                .any(|event| event.kind == StatusEffectKind::Slowed),
+            "腿伤越过阈值应确实触发 Slowed 减速（本测试的前置条件）"
+        );
+
+        let vfx_events = app.world().resource::<Events<VfxEventRequest>>();
+        let decal_event = vfx_events
+            .iter_current_update_events()
+            .find(|event| {
+                matches!(
+                    &event.payload,
+                    crate::schema::vfx_event::VfxEventPayloadV1::SpawnParticle { event_id, .. }
+                        if event_id == gameplay_vfx::COMBAT_LEG_WOUND_DECAL
+                )
+            })
+            .expect("腿伤减速触发时应 emit bong:combat_leg_wound_decal 血渍 decal");
+        match &decal_event.payload {
+            crate::schema::vfx_event::VfxEventPayloadV1::SpawnParticle {
+                duration_ticks,
+                direction,
+                ..
+            } => {
+                assert_eq!(
+                    *duration_ticks,
+                    Some(100),
+                    "血渍 decal lifetime 应为 100t（区别于命中粒子的 6-12t）"
+                );
+                assert!(
+                    direction.is_none(),
+                    "地面 decal 不携带命中方向（水平贴地，无需法线）"
+                );
             }
             other => panic!("expected SpawnParticle, got {other:?}"),
         }
@@ -3502,7 +4038,20 @@ mod tests {
             1,
             "resolver should append exactly one wound"
         );
-        assert_eq!(wounds.entries[0].location, BodyPart::Chest);
+        // §8.1 #1/#3 决议：NPC 攻方走"目标几何中心 + 确定性 jitter"，不再恒为 Chest——
+        // 用同一套 raycast 公开函数独立复算期望部位，验证真实接了瞄准链路（而非硬编枚举）。
+        let expected_body_part = expected_npc_hit_body_part(
+            [0.0, 64.0, 0.0],
+            &canonical_npc_id(npc_attacker),
+            [1.0, 64.0, 0.0],
+            43,
+            NpcMeleeProfile::spear().reach,
+        );
+        assert_eq!(
+            wounds.entries[0].location, expected_body_part,
+            "npc 攻击命中部位应由 raycast::npc_aim_direction 的确定性 jitter 决定，\
+             不再恒为 Chest（§8.1 #1）"
+        );
         assert_eq!(wounds.entries[0].kind, WoundKind::Pierce);
         assert_eq!(
             contamination.entries[0].attacker_id.as_deref(),
@@ -3670,8 +4219,23 @@ mod tests {
             1,
             "npc->player should resolve exactly one wound"
         );
-        assert_eq!(player_wounds.entries[0].location, BodyPart::Chest);
+        // §8.1 #1/#3 决议：NPC 攻方(npc->player)走"目标几何中心 + 确定性 jitter"，
+        // 不再恒为 Chest——用同一套 raycast 公开函数独立复算期望部位。
+        let expected_npc_to_player_body_part = expected_npc_hit_body_part(
+            [1.0, 64.0, 0.0],
+            &canonical_npc_id(npc),
+            [0.0, 64.0, 0.0],
+            90,
+            NpcMeleeProfile::spear().reach,
+        );
+        assert_eq!(
+            player_wounds.entries[0].location, expected_npc_to_player_body_part,
+            "npc 攻击命中部位应由 raycast::npc_aim_direction 的确定性 jitter 决定，\
+             不再恒为 Chest（§8.1 #1）"
+        );
         assert_eq!(player_wounds.entries[0].kind, WoundKind::Pierce);
+        // player->npc：玩家攻手 Look 未显式设置(默认哨兵值)，走几何中心 fallback，
+        // 与旧实现的恒定 Chest 结果一致（§P0 决议：默认 Look 视同缺失瞄准数据）。
         assert_eq!(
             npc_wounds.entries.len(),
             1,
@@ -3855,6 +4419,13 @@ mod tests {
             Wounds::default(),
             Stamina::default(),
         );
+        // §8.1 #1 决议 + §8.1 #4 "玩家垂直视角自然涌现"：显式给玩家设置真实 Look
+        // （非默认哨兵值），证明命中部位由真实瞄准方向决定，而非恒定 fallback 胸口。
+        // 玩家眼高(66+1.62=67.62)贴近僵尸头部阈值(rel_y>0.88≈67.584)，水平看向僵尸
+        // (yaw=-90 正东，与 x+1 的僵尸位置同向) 即会命中 Head。
+        app.world_mut()
+            .entity_mut(attacker)
+            .insert(Look::new(-90.0, 0.0));
 
         app.world_mut().send_event(AttackIntent {
             attacker,
@@ -3882,7 +4453,12 @@ mod tests {
             1,
             "player->runtime-zombie intent should apply one wound"
         );
-        assert_eq!(npc_wounds.entries[0].location, BodyPart::Chest);
+        assert_eq!(
+            npc_wounds.entries[0].location,
+            BodyPart::Head,
+            "玩家显式设置真实 Look 水平看向僵尸，眼高贴近头部阈值应命中 Head，\
+             而非旧实现恒定 fallback 的 Chest（§8.1 #1/#4）"
+        );
         assert_eq!(npc_wounds.entries[0].kind, WoundKind::Blunt);
         assert_eq!(
             npc_contamination.entries[0].attacker_id.as_deref(),
@@ -7077,6 +7653,15 @@ mod tests {
             (attacker_wounds.entries[0].severity - 0.075).abs() < 0.001,
             "reflected physical damage should be 15% of blocked damage"
         );
+        // plan-combat-hit-location-v1 P2（决议 §8.1 旁路桶 #1）—— 剑招招架反伤应命中
+        // 攻方持械臂（MAIN_ARM = ArmR），而非旧实现里硬编的恒定 Chest。
+        assert_eq!(
+            attacker_wounds.entries[0].location,
+            crate::combat::arm_wound::MAIN_ARM,
+            "招架反伤应命中攻方持械臂（ArmR），实测 {:?}；若这里变回 Chest 说明 P2 \
+             反伤旁路清理被回退了",
+            attacker_wounds.entries[0].location
+        );
 
         let known = app
             .world()
@@ -7086,6 +7671,825 @@ mod tests {
         assert!(
             known.entries[0].proficiency > 0.0,
             "successful parry should raise sword.parry proficiency"
+        );
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // plan-combat-hit-location-v1 P1（决议 §8.1 #2）— 臂伤消费端集成测试
+    // ══════════════════════════════════════════════════════════════════════════
+
+    fn make_arm_wound_app() -> App {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 9000 });
+        app.add_event::<AttackIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<CombatEvent>();
+        app.add_event::<DeathEvent>();
+        app.add_event::<WeaponBroken>();
+        app.add_event::<ShieldBroken>();
+        app.add_event::<ShieldBlockHit>();
+        app.add_event::<InventoryDurabilityChangedEvent>();
+        app.add_systems(Update, resolve_attack_intents);
+        app
+    }
+
+    fn wound(location: BodyPart, severity: f32) -> Wound {
+        Wound {
+            location,
+            kind: WoundKind::Blunt,
+            severity,
+            bleeding_per_sec: 0.0,
+            created_at_tick: 0,
+            inflicted_by: None,
+        }
+    }
+
+    fn attacker_weapon() -> Weapon {
+        use crate::combat::weapon::{EquipSlot, WeaponKind};
+        Weapon {
+            slot: EquipSlot::MainHand,
+            instance_id: 7001,
+            template_id: "iron_sword".to_string(),
+            weapon_kind: WeaponKind::Sword,
+            base_attack: 20.0,
+            quality_tier: 0,
+            durability: 200.0,
+            durability_max: 200.0,
+        }
+    }
+
+    // ── 断臂脱手落地：命中几何 helper ────────────────────────────────────────────
+    //
+    // `resolve_attack_intents` 的命中部位完全由 `raycast_humanoid` + 攻方真实瞄准
+    // 方向决定（决议 §8.1 #1，无恒瞄 fallback），要在集成测试里稳定命中 ArmL/ArmR
+    // 就必须真算一条精确打在目标 AABB 侧面臂区（`classify_body_part`：
+    // rel_y ∈ (0.55, 0.88]、|lateral| > 0.19）的射线，而非依赖概率 jitter。
+    // 下面两个 helper 把这条射线的目标点固定在 target_feet=(0,64,2.0) 正前方
+    // AABB 的 z_min 侧面（半宽 0.3，取 x=±0.29 贴近边缘换取最大 lateral 裕度，
+    // y=65.3 → rel_y=1.3/1.8≈0.72 落在臂/胸带正中），再用 `Look::set_vec` 精确
+    // 反推攻方 yaw/pitch——不经手工 yaw/pitch 三角函数换算，规避 `Look` 与内部
+    // `direction_to_yaw_pitch` 约定不一致的坑（见 raycast.rs 该函数注释）。
+    fn arm_hit_target_feet() -> DVec3 {
+        DVec3::new(0.0, 64.0, 2.0)
+    }
+
+    /// `is_main_arm_side`：`true` 对应 `arm_wound::MAIN_ARM`(ArmR，lateral>0，
+    /// x 取负号，见 `classify_body_part` 叉乘推导)；`false` 对应 `arm_wound::OFF_ARM`
+    /// (ArmL，lateral<0，x 取正号)。两侧共享同一 y/z，只有 x 符号相反。
+    fn arm_hit_point(is_main_arm_side: bool) -> DVec3 {
+        let x = if is_main_arm_side { -0.29 } else { 0.29 };
+        DVec3::new(x, 65.3, 1.7)
+    }
+
+    /// 攻方脚下坐标固定在 `(0,64,0)`，与 `arm_hit_target_feet()` 沿 +Z 相距 2 格
+    /// （在任意 reach≥2 的攻击类型下都能命中，含 FIST_REACH=2.6）。
+    fn arm_hit_attacker_feet() -> [f64; 3] {
+        [0.0, 64.0, 0.0]
+    }
+
+    /// 由攻方脚下坐标 + 目标命中点反推一个恰好瞄准该点的 `Look`（yaw/pitch 由
+    /// `Look::set_vec` 从归一化方向向量反解，非手工三角函数）。
+    fn aim_look_at_point(attacker_feet: DVec3, hit_point: DVec3) -> Look {
+        let eye = attacker_feet + DVec3::new(0.0, ATTACKER_EYE_HEIGHT, 0.0);
+        let dir = (hit_point - eye).normalize();
+        let mut look = Look::default();
+        look.set_vec(
+            valence::prelude::Vec3::new(dir.x as f32, dir.y as f32, dir.z as f32).normalize(),
+        );
+        look
+    }
+
+    /// 决议 §8.1 #2：攻方主手臂（ArmR）Fracture 伤势应把自身物理攻击伤害削减到
+    /// 健康臂的 0.60 倍（`arm_wound::attack_damage_multiplier(Fracture)`）。
+    /// 用 fist 攻击（base=1.0）会撞 `damage.max(1.0)` 下限而看不出差异，
+    /// 因此用高基础伤害武器（base_attack=20.0）跑两遍攻击对比比例。
+    #[test]
+    fn main_arm_fracture_reduces_attacker_physical_damage_by_decision_table_ratio() {
+        let mut app = make_arm_wound_app();
+
+        let healthy_attacker = spawn_player(
+            &mut app,
+            "ArmHealthyAtk",
+            [0.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        app.world_mut()
+            .entity_mut(healthy_attacker)
+            .insert(attacker_weapon());
+        let healthy_target = spawn_player(
+            &mut app,
+            "ArmHealthyTarget",
+            [1.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+
+        app.world_mut().send_event(AttackIntent {
+            attacker: healthy_attacker,
+            target: Some(healthy_target),
+            issued_at_tick: 8999,
+            reach: AttackReach::new(3.0, 0.0),
+            qi_invest: 0.0,
+            wound_kind: WoundKind::Cut,
+            source: AttackSource::Melee,
+            debug_command: None,
+        });
+        app.update();
+
+        let healthy_damage = app
+            .world()
+            .resource::<Events<CombatEvent>>()
+            .iter_current_update_events()
+            .next()
+            .expect("healthy attacker hit should resolve")
+            .physical_damage;
+        assert!(
+            healthy_damage > 1.0,
+            "测试前提：健康臂伤害必须高于 damage.max(1.0) 下限才能观测到削减比例，实际 {healthy_damage}"
+        );
+
+        let mut app2 = make_arm_wound_app();
+        let wounded_attacker = spawn_player(
+            &mut app2,
+            "ArmFracturedAtk",
+            [0.0, 64.0, 0.0],
+            Wounds {
+                entries: vec![wound(arm_wound::MAIN_ARM, 40.0)], // Fracture
+                ..Default::default()
+            },
+            Stamina::default(),
+        );
+        app2.world_mut()
+            .entity_mut(wounded_attacker)
+            .insert(attacker_weapon());
+        let wounded_target = spawn_player(
+            &mut app2,
+            "ArmFracturedTarget",
+            [1.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+
+        app2.world_mut().send_event(AttackIntent {
+            attacker: wounded_attacker,
+            target: Some(wounded_target),
+            issued_at_tick: 8999,
+            reach: AttackReach::new(3.0, 0.0),
+            qi_invest: 0.0,
+            wound_kind: WoundKind::Cut,
+            source: AttackSource::Melee,
+            debug_command: None,
+        });
+        app2.update();
+
+        let wounded_damage = app2
+            .world()
+            .resource::<Events<CombatEvent>>()
+            .iter_current_update_events()
+            .next()
+            .expect("wounded attacker hit should resolve")
+            .physical_damage;
+
+        let ratio = wounded_damage / healthy_damage;
+        assert!(
+            (ratio - 0.60).abs() < 0.01,
+            "主手臂 Fracture 应把攻击伤害削减到健康臂的 0.60 倍，实际比例 {ratio:.4}\
+             （healthy={healthy_damage}, wounded={wounded_damage}）"
+        );
+    }
+
+    /// 决议 §8.1 #2：攻方副手臂（ArmL）受伤不应影响自身攻击伤害（该维度只读主手臂）。
+    #[test]
+    fn off_arm_wound_does_not_affect_attacker_physical_damage() {
+        let mut app = make_arm_wound_app();
+        let attacker = spawn_player(
+            &mut app,
+            "OffArmWoundedAtk",
+            [0.0, 64.0, 0.0],
+            Wounds {
+                entries: vec![wound(arm_wound::OFF_ARM, 80.0)], // Severed on OFF_ARM
+                ..Default::default()
+            },
+            Stamina::default(),
+        );
+        app.world_mut()
+            .entity_mut(attacker)
+            .insert(attacker_weapon());
+        let target = spawn_player(
+            &mut app,
+            "OffArmWoundedTarget",
+            [1.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+
+        app.world_mut().send_event(AttackIntent {
+            attacker,
+            target: Some(target),
+            issued_at_tick: 8999,
+            reach: AttackReach::new(3.0, 0.0),
+            qi_invest: 0.0,
+            wound_kind: WoundKind::Cut,
+            source: AttackSource::Melee,
+            debug_command: None,
+        });
+        app.update();
+
+        let damage = app
+            .world()
+            .resource::<Events<CombatEvent>>()
+            .iter_current_update_events()
+            .next()
+            .expect("attack should resolve")
+            .physical_damage;
+        // 副手臂 Severed 不应削减攻击伤害：20.0(base) * 1.0(chest) * 1.0(attacker attrs,
+        // 无 arm 惩罚) * 1.0(defender) * weapon.damage_multiplier() * 1.0(wound_profile) * 1.0(sword)。
+        let expected = 20.0 * attacker_weapon().damage_multiplier();
+        assert!(
+            (damage - expected).abs() < 0.01,
+            "副手臂受伤不应影响攻击伤害维度，期望≈{expected}，实际 {damage}"
+        );
+    }
+
+    /// 决议 §8.1 #2：防御方副手臂（ArmL，持盾侧）Fracture 伤势应把招架（SwordParrying）
+    /// 减伤效果打到 0.60 倍（`arm_wound::block_multiplier(Fracture)`）——
+    /// base block_ratio=0.5 → 实际生效 0.5*0.60=0.30。
+    #[test]
+    fn sword_parry_off_arm_fracture_reduces_defense_effectiveness() {
+        let mut app = make_arm_wound_app();
+
+        let attacker = spawn_player(
+            &mut app,
+            "ParryAtkP1",
+            [0.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        let defender = spawn_player(
+            &mut app,
+            "ParryDefP1",
+            [1.0, 64.0, 0.0],
+            Wounds {
+                entries: vec![wound(arm_wound::OFF_ARM, 40.0)], // Fracture on OFF_ARM
+                ..Default::default()
+            },
+            Stamina::default(),
+        );
+        app.world_mut().entity_mut(defender).insert((
+            StatusEffects {
+                active: vec![ActiveStatusEffect {
+                    kind: StatusEffectKind::SwordParrying,
+                    magnitude: 0.5,
+                    remaining_ticks: 4,
+                    source_pill: None,
+                }],
+            },
+            KnownTechniques {
+                entries: vec![KnownTechnique {
+                    id: sword_basics::SWORD_PARRY_SKILL_ID.to_string(),
+                    proficiency: 0.0,
+                    active: true,
+                }],
+            },
+        ));
+
+        app.world_mut().send_event(AttackIntent {
+            attacker,
+            target: Some(defender),
+            issued_at_tick: 8999,
+            reach: FIST_REACH,
+            qi_invest: 0.0,
+            wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
+            debug_command: None,
+        });
+        app.update();
+
+        let events: Vec<_> = app
+            .world()
+            .resource::<Events<CombatEvent>>()
+            .iter_current_update_events()
+            .collect();
+        assert_eq!(events.len(), 1);
+        assert!(
+            events[0]
+                .defense_effectiveness
+                .is_some_and(|e| (e - 0.30).abs() < 0.001),
+            "副手臂 Fracture 应把 0.5 base block_ratio 打到 0.30（×0.60），实际 {:?}",
+            events[0].defense_effectiveness
+        );
+        assert!(
+            (events[0].physical_damage - 0.70).abs() < 0.01,
+            "1.0 unarmed hit 经打折后的招架（0.30 减伤）应剩 0.70，实际 {}",
+            events[0].physical_damage
+        );
+    }
+
+    /// 决议 §8.1 #2：防御方副手臂（ArmL，持盾侧）Fracture 伤势应把盾牌格挡减伤效果
+    /// 打到 0.60 倍——bone_shield base block_ratio=0.65 → 实际生效 0.65*0.60=0.39。
+    #[test]
+    fn shield_block_off_arm_fracture_reduces_defense_effectiveness() {
+        let mut app = make_arm_wound_app();
+
+        let attacker = spawn_player(
+            &mut app,
+            "ShieldAtkP1",
+            [0.0, 64.0, 3.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        let defender = spawn_player(
+            &mut app,
+            "ShieldDefP1",
+            [0.0, 64.0, 1.0],
+            Wounds {
+                entries: vec![wound(arm_wound::OFF_ARM, 40.0)], // Fracture on OFF_ARM
+                ..Default::default()
+            },
+            Stamina::default(),
+        );
+        app.world_mut().entity_mut(defender).insert((
+            StatusEffects {
+                active: vec![ActiveStatusEffect {
+                    kind: StatusEffectKind::ShieldBlocking,
+                    magnitude: 0.65,
+                    remaining_ticks: crate::combat::shield_block::SHIELD_BLOCKING_DURATION_TICKS,
+                    source_pill: None,
+                }],
+            },
+            crate::combat::shield_block::ShieldBlock {
+                template_id: "bone_shield".to_string(),
+            },
+            Look {
+                yaw: 0.0,
+                pitch: 0.0,
+            },
+            PlayerInventory {
+                triggered_treasures: Vec::new(),
+                revision: InventoryRevision(1),
+                containers: vec![],
+                equipped: std::collections::HashMap::from([(
+                    EQUIP_SLOT_OFF_HAND.to_string(),
+                    crate::inventory::SlotContents::held_single(ItemInstance {
+                        instance_id: 9101,
+                        template_id: "bone_shield".to_string(),
+                        display_name: "骨盾".to_string(),
+                        grid_w: 1,
+                        grid_h: 2,
+                        weight: 2.5,
+                        rarity: ItemRarity::Common,
+                        description: String::new(),
+                        stack_count: 1,
+                        spirit_quality: 0.0,
+                        durability: 1.0,
+                        freshness: None,
+                        mineral_id: None,
+                        charges: None,
+                        forge_quality: None,
+                        forge_color: None,
+                        forge_side_effects: Vec::new(),
+                        forge_achieved_tier: None,
+                        alchemy: None,
+                        lingering_owner_qi: None,
+                    }),
+                )]),
+                hotbar: Default::default(),
+                bone_coins: 0,
+                max_weight: 100.0,
+            },
+        ));
+
+        app.world_mut().send_event(AttackIntent {
+            attacker,
+            target: Some(defender),
+            issued_at_tick: 8999,
+            reach: FIST_REACH,
+            qi_invest: 0.0,
+            wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
+            debug_command: None,
+        });
+        app.update();
+
+        let events: Vec<_> = app
+            .world()
+            .resource::<Events<CombatEvent>>()
+            .iter_current_update_events()
+            .collect();
+        assert_eq!(events.len(), 1);
+        assert!(
+            events[0]
+                .defense_effectiveness
+                .is_some_and(|e| (e - 0.39).abs() < 0.001),
+            "副手臂 Fracture 应把 bone_shield 0.65 base block_ratio 打到 0.39（×0.60），实际 {:?}",
+            events[0].defense_effectiveness
+        );
+    }
+
+    /// 决议 §8.1 #2：双臂皆伤时格挡惩罚只读副手臂，不因主手臂也受伤而叠乘更狠
+    /// （与攻击伤害维度只读主手臂互相独立，二者不交叉污染）。
+    #[test]
+    fn both_arms_wounded_block_penalty_reads_only_off_arm_not_multiplied() {
+        let mut app = make_arm_wound_app();
+        let attacker = spawn_player(
+            &mut app,
+            "BothArmsAtk",
+            [0.0, 64.0, 0.0],
+            Wounds::default(),
+            Stamina::default(),
+        );
+        let defender = spawn_player(
+            &mut app,
+            "BothArmsDef",
+            [1.0, 64.0, 0.0],
+            Wounds {
+                entries: vec![
+                    wound(arm_wound::MAIN_ARM, 40.0), // Fracture on MAIN_ARM
+                    wound(arm_wound::OFF_ARM, 40.0),  // Fracture on OFF_ARM
+                ],
+                ..Default::default()
+            },
+            Stamina::default(),
+        );
+        app.world_mut().entity_mut(defender).insert((
+            StatusEffects {
+                active: vec![ActiveStatusEffect {
+                    kind: StatusEffectKind::SwordParrying,
+                    magnitude: 0.5,
+                    remaining_ticks: 4,
+                    source_pill: None,
+                }],
+            },
+            KnownTechniques {
+                entries: vec![KnownTechnique {
+                    id: sword_basics::SWORD_PARRY_SKILL_ID.to_string(),
+                    proficiency: 0.0,
+                    active: true,
+                }],
+            },
+        ));
+
+        app.world_mut().send_event(AttackIntent {
+            attacker,
+            target: Some(defender),
+            issued_at_tick: 8999,
+            reach: FIST_REACH,
+            qi_invest: 0.0,
+            wound_kind: WoundKind::Blunt,
+            source: AttackSource::Melee,
+            debug_command: None,
+        });
+        app.update();
+
+        let events: Vec<_> = app
+            .world()
+            .resource::<Events<CombatEvent>>()
+            .iter_current_update_events()
+            .collect();
+        assert_eq!(events.len(), 1);
+        assert!(
+            events[0]
+                .defense_effectiveness
+                .is_some_and(|e| (e - 0.30).abs() < 0.001),
+            "双臂皆 Fracture 时格挡效果应仍是 0.5*0.60=0.30（只读副手臂），不应叠乘为 0.5*0.60*0.60=0.18，\
+             实际 {:?}",
+            events[0].defense_effectiveness
+        );
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // plan-combat-hit-location-v1 P4（决议 §8.1 #2 Severed 行为级后果 #1）——
+    // 断臂脱手落地 pin 测试：消除 `ArmWoundFactors.main_arm_severed` 零消费孤岛。
+    // ══════════════════════════════════════════════════════════════════════════
+
+    /// 造一把挂在 `target` main_hand 槽（inventory 侧 + `Weapon` runtime component
+    /// 双侧一致）的武器，供断臂脱手测试断言"武器消失于持械槽、出现于世界掉落"。
+    fn equip_main_hand_weapon(app: &mut App, target: Entity, instance_id: u64) {
+        use crate::combat::weapon::{EquipSlot, WeaponKind};
+        app.world_mut().entity_mut(target).insert((
+            PlayerInventory {
+                triggered_treasures: Vec::new(),
+                revision: InventoryRevision(1),
+                containers: vec![],
+                equipped: std::collections::HashMap::from([(
+                    crate::inventory::EQUIP_SLOT_MAIN_HAND.to_string(),
+                    crate::inventory::SlotContents::held_single(ItemInstance {
+                        instance_id,
+                        template_id: "iron_sword".to_string(),
+                        display_name: "铁剑".to_string(),
+                        grid_w: 1,
+                        grid_h: 2,
+                        weight: 1.2,
+                        rarity: ItemRarity::Common,
+                        description: String::new(),
+                        stack_count: 1,
+                        spirit_quality: 1.0,
+                        durability: 1.0,
+                        freshness: None,
+                        mineral_id: None,
+                        charges: None,
+                        forge_quality: None,
+                        forge_color: None,
+                        forge_side_effects: Vec::new(),
+                        forge_achieved_tier: None,
+                        alchemy: None,
+                        lingering_owner_qi: None,
+                    }),
+                )]),
+                hotbar: Default::default(),
+                bone_coins: 0,
+                max_weight: 50.0,
+            },
+            Weapon {
+                slot: EquipSlot::MainHand,
+                instance_id,
+                template_id: "iron_sword".to_string(),
+                weapon_kind: WeaponKind::Sword,
+                base_attack: 20.0,
+                quality_tier: 0,
+                durability: 200.0,
+                durability_max: 200.0,
+            },
+        ));
+    }
+
+    /// 决议 §8.1 #2 行为级后果 ①：主手臂(MAIN_ARM=ArmR)单次命中直接判定 Severed
+    /// （severity>=70）→ 该侧持械立即脱手，走 `DroppedLootRegistry` 世界掉落。
+    /// 三重断言对应任务书原文三点：脱手落地事件（registry 新增条目）/ 持械槽清空 /
+    /// 掉落物守恒（instance_id 与武器本体完整进入世界，不丢失也不复制）。
+    #[test]
+    fn main_arm_severed_hit_drops_weapon_into_world_and_clears_equip_slot() {
+        let mut app = make_arm_wound_app();
+        app.insert_resource(weapon_test_registry());
+        app.insert_resource(DroppedLootRegistry::default());
+
+        let attacker = spawn_player(
+            &mut app,
+            "SeveredAtk",
+            arm_hit_attacker_feet(),
+            Wounds::default(),
+            Stamina::default(),
+        );
+        // attack_power=150 * body_part_multiplier(ArmR)=0.7 → base_damage=105，
+        // 稳超 Severed 阈值 70.0（留足浮点/geometry 裕度）。
+        app.world_mut().entity_mut(attacker).insert(DerivedAttrs {
+            attack_power: 150.0,
+            ..DerivedAttrs::default()
+        });
+        let target_feet = arm_hit_target_feet();
+        let target = spawn_player(
+            &mut app,
+            "SeveredDef",
+            [target_feet.x, target_feet.y, target_feet.z],
+            Wounds {
+                health_current: 1000.0,
+                health_max: 1000.0,
+                ..Wounds::default()
+            },
+            Stamina::default(),
+        );
+        equip_main_hand_weapon(&mut app, target, 9301);
+
+        let look = aim_look_at_point(
+            DVec3::new(
+                arm_hit_attacker_feet()[0],
+                arm_hit_attacker_feet()[1],
+                arm_hit_attacker_feet()[2],
+            ),
+            arm_hit_point(true),
+        );
+        app.world_mut().entity_mut(attacker).insert(look);
+
+        app.world_mut().send_event(AttackIntent {
+            attacker,
+            target: Some(target),
+            issued_at_tick: 9000,
+            reach: AttackReach::new(4.0, 0.0),
+            qi_invest: 0.0, // physical path：伤害不经 qi 闸门/距离 decay，只看武器/属性
+            wound_kind: WoundKind::Cut,
+            source: AttackSource::Melee,
+            debug_command: None,
+        });
+        app.update();
+
+        let target_wounds = app.world().entity(target).get::<Wounds>().unwrap();
+        assert_eq!(
+            target_wounds.entries.last().map(|w| w.location),
+            Some(arm_wound::MAIN_ARM),
+            "geometry helper 应命中 MAIN_ARM(ArmR)，实际 {:?}；若此断言先撞红说明射线\
+             geometry 算错了，后续脱手断言无意义",
+            target_wounds.entries.last().map(|w| w.location)
+        );
+        assert_eq!(
+            arm_wound::worst_wound_grade(target_wounds, arm_wound::MAIN_ARM),
+            arm_wound::ArmWoundGrade::Severed,
+            "本次命中伤势应达到 Severed 分级，实际最重分级 {:?}（severity={:?}）；\
+             断臂脱手的前置条件未达成",
+            arm_wound::worst_wound_grade(target_wounds, arm_wound::MAIN_ARM),
+            target_wounds.entries.last().map(|w| w.severity)
+        );
+
+        // ① 持械槽清空：Weapon runtime component 已移除。
+        assert!(
+            app.world().entity(target).get::<Weapon>().is_none(),
+            "主手臂 Severed 后 target 的 Weapon component 应被 remove（脱手）"
+        );
+        // ① 持械槽清空：inventory 侧 main_hand.held 同步清空（不是只删 runtime 影子）。
+        let inventory = app.world().entity(target).get::<PlayerInventory>().unwrap();
+        assert!(
+            inventory
+                .equipped
+                .get(crate::inventory::EQUIP_SLOT_MAIN_HAND)
+                .and_then(|s| s.held.as_ref())
+                .is_none(),
+            "断臂脱手应清空 inventory 侧 main_hand 持握槽，而不仅仅移除 runtime Weapon component"
+        );
+        // ① 掉落物守恒：武器整体（instance_id 不变）进入世界 DroppedLootRegistry，
+        // 既不凭空消失也不复制。
+        let dropped_registry = app.world().resource::<DroppedLootRegistry>();
+        let dropped = dropped_registry.entries.get(&9301).expect(
+            "断臂脱手的武器 instance 应出现在 DroppedLootRegistry（世界掉落），\
+                     而不是被静默丢弃",
+        );
+        assert_eq!(dropped.instance_id, 9301);
+        assert_eq!(
+            dropped.item.template_id, "iron_sword",
+            "掉落物应是原封不动的同一把剑，template_id 不应在脱手过程中被篡改"
+        );
+    }
+
+    /// 决议 §8.1 #2：副手臂(OFF_ARM=ArmL) Severed **不**触发脱手——脱手落地只针对
+    /// 持械侧（主手臂）。若这条误连到 OFF_ARM，副手完好的持械手会被无理由缴械。
+    #[test]
+    fn off_arm_severed_hit_does_not_drop_main_hand_weapon() {
+        let mut app = make_arm_wound_app();
+        app.insert_resource(weapon_test_registry());
+        app.insert_resource(DroppedLootRegistry::default());
+
+        let attacker = spawn_player(
+            &mut app,
+            "OffSeveredAtk",
+            arm_hit_attacker_feet(),
+            Wounds::default(),
+            Stamina::default(),
+        );
+        app.world_mut().entity_mut(attacker).insert(DerivedAttrs {
+            attack_power: 150.0,
+            ..DerivedAttrs::default()
+        });
+        let target_feet = arm_hit_target_feet();
+        let target = spawn_player(
+            &mut app,
+            "OffSeveredDef",
+            [target_feet.x, target_feet.y, target_feet.z],
+            Wounds {
+                health_current: 1000.0,
+                health_max: 1000.0,
+                ..Wounds::default()
+            },
+            Stamina::default(),
+        );
+        equip_main_hand_weapon(&mut app, target, 9302);
+
+        let look = aim_look_at_point(
+            DVec3::new(
+                arm_hit_attacker_feet()[0],
+                arm_hit_attacker_feet()[1],
+                arm_hit_attacker_feet()[2],
+            ),
+            arm_hit_point(false), // false = OFF_ARM(ArmL) 侧
+        );
+        app.world_mut().entity_mut(attacker).insert(look);
+
+        app.world_mut().send_event(AttackIntent {
+            attacker,
+            target: Some(target),
+            issued_at_tick: 9001,
+            reach: AttackReach::new(4.0, 0.0),
+            qi_invest: 0.0,
+            wound_kind: WoundKind::Cut,
+            source: AttackSource::Melee,
+            debug_command: None,
+        });
+        app.update();
+
+        let target_wounds = app.world().entity(target).get::<Wounds>().unwrap();
+        assert_eq!(
+            target_wounds.entries.last().map(|w| w.location),
+            Some(arm_wound::OFF_ARM),
+            "geometry helper 应命中 OFF_ARM(ArmL)，实际 {:?}",
+            target_wounds.entries.last().map(|w| w.location)
+        );
+        assert_eq!(
+            arm_wound::worst_wound_grade(target_wounds, arm_wound::OFF_ARM),
+            arm_wound::ArmWoundGrade::Severed,
+            "本次命中应达到 Severed 分级才能验证副手断裂不触发脱手这件事，实际 {:?}",
+            arm_wound::worst_wound_grade(target_wounds, arm_wound::OFF_ARM)
+        );
+
+        assert!(
+            app.world().entity(target).get::<Weapon>().is_some(),
+            "副手臂(OFF_ARM) Severed 不应移除主手武器 Weapon component"
+        );
+        let inventory = app.world().entity(target).get::<PlayerInventory>().unwrap();
+        assert!(
+            inventory
+                .equipped
+                .get(crate::inventory::EQUIP_SLOT_MAIN_HAND)
+                .and_then(|s| s.held.as_ref())
+                .is_some(),
+            "副手臂 Severed 时主手武器应仍留在装备槽（脱手只认主手臂）"
+        );
+        assert!(
+            !app.world()
+                .resource::<DroppedLootRegistry>()
+                .entries
+                .contains_key(&9302),
+            "副手臂断裂不应把主手武器送进世界掉落"
+        );
+    }
+
+    /// 边界：主手臂命中但伤势只到 Fracture（未达 Severed 阈值 70.0）不应触发脱手——
+    /// 锁住"只有 Severed 才脱手"这条边界，防止阈值判定被误改成 `>=` Fracture 起就掉。
+    #[test]
+    fn main_arm_fracture_grade_hit_does_not_trigger_weapon_drop() {
+        let mut app = make_arm_wound_app();
+        app.insert_resource(weapon_test_registry());
+        app.insert_resource(DroppedLootRegistry::default());
+
+        let attacker = spawn_player(
+            &mut app,
+            "FractureAtk",
+            arm_hit_attacker_feet(),
+            Wounds::default(),
+            Stamina::default(),
+        );
+        // attack_power=20 * body_part_multiplier(ArmR)=0.7 → base_damage=14.0，
+        // 落在 Fracture 区间 [35,70) 之外偏低（Laceration 区间 [15,35)），
+        // 无论如何都远低于 Severed 阈值 70.0，且不会意外撞进 Severed。
+        app.world_mut().entity_mut(attacker).insert(DerivedAttrs {
+            attack_power: 20.0,
+            ..DerivedAttrs::default()
+        });
+        let target_feet = arm_hit_target_feet();
+        let target = spawn_player(
+            &mut app,
+            "FractureDef",
+            [target_feet.x, target_feet.y, target_feet.z],
+            Wounds {
+                health_current: 1000.0,
+                health_max: 1000.0,
+                ..Wounds::default()
+            },
+            Stamina::default(),
+        );
+        equip_main_hand_weapon(&mut app, target, 9303);
+
+        let look = aim_look_at_point(
+            DVec3::new(
+                arm_hit_attacker_feet()[0],
+                arm_hit_attacker_feet()[1],
+                arm_hit_attacker_feet()[2],
+            ),
+            arm_hit_point(true),
+        );
+        app.world_mut().entity_mut(attacker).insert(look);
+
+        app.world_mut().send_event(AttackIntent {
+            attacker,
+            target: Some(target),
+            issued_at_tick: 9002,
+            reach: AttackReach::new(4.0, 0.0),
+            qi_invest: 0.0,
+            wound_kind: WoundKind::Cut,
+            source: AttackSource::Melee,
+            debug_command: None,
+        });
+        app.update();
+
+        let target_wounds = app.world().entity(target).get::<Wounds>().unwrap();
+        assert_eq!(
+            target_wounds.entries.last().map(|w| w.location),
+            Some(arm_wound::MAIN_ARM)
+        );
+        assert_ne!(
+            arm_wound::worst_wound_grade(target_wounds, arm_wound::MAIN_ARM),
+            arm_wound::ArmWoundGrade::Severed,
+            "本测试要验证的是 Severed 以下分级不脱手，前置条件要求本次命中不能是 Severed；\
+             实际却是 Severed，说明伤害计算改动了，该测试需要重新校准 attack_power"
+        );
+
+        assert!(
+            app.world().entity(target).get::<Weapon>().is_some(),
+            "未达 Severed 分级不应移除 Weapon component"
+        );
+        assert!(
+            !app.world()
+                .resource::<DroppedLootRegistry>()
+                .entries
+                .contains_key(&9303),
+            "未达 Severed 分级不应把武器送进世界掉落"
         );
     }
 
@@ -8810,10 +10214,14 @@ mod tests {
 
     /// 多免疫区集合包含 Chest 的拦截验证（端到端集成）。
     ///
-    /// 注意：`raycast_humanoid` 始终瞄准 target 中心（CHEST_AIM_HEIGHT），lateral 恒为 0
-    /// → 正面攻击只能产出 Chest/Head/Abdomen/Leg，**无法可靠命中 ArmL/ArmR**。
-    /// 因此本测试端到端验证"Chest 在多免疫区集合中 → DROP"，
-    /// ArmL 的集合成员有效性通过 `dead_armor_arml_immune_in_multi_region_set` 单元测试覆盖。
+    /// 注意（plan-combat-hit-location-v1 §P0 更新，2026-07）：`raycast_humanoid` 已不再内置
+    /// 恒定胸心 fallback——命中部位现由调用方传入的瞄准方向决定。本测试的攻方是玩家且未
+    /// 显式设置 `Look`（等同缺失瞄准数据，见 resolve_attack_intents 的 fallback 分支），
+    /// 因此仍会退化为几何中心瞄准、稳定命中 Chest；这是该 fallback 分支的既定行为，
+    /// 不再是"raycast 无法命中其他部位"的系统性限制。
+    /// 本测试端到端验证"Chest 在多免疫区集合中 → DROP"，
+    /// ArmL 的集合成员有效性通过 `dead_armor_arml_immune_in_multi_region_set` 单元测试覆盖
+    /// （该测试不经过 raycast，直接验证 `should_block_contamination` 的集合查询逻辑）。
     #[test]
     fn dead_armor_multi_region_set_chest_is_blocked() {
         use crate::combat::baomai_v4::dead_armor::DeadMeridianArmor;
@@ -8878,8 +10286,9 @@ mod tests {
 
     /// ArmL 在多免疫区集合中的成员有效性（单元级验证）。
     ///
-    /// `should_block_contamination` 直接验证 ArmL 集合查询逻辑——
-    /// 无需经过 raycast（因端到端几何无法可靠命中 ArmL）。
+    /// `should_block_contamination` 直接验证 ArmL 集合查询逻辑——不经过 raycast，
+    /// 只做集合成员判定，与命中概率/瞄准机制无关（plan-combat-hit-location-v1 §P0 后，
+    /// ArmL 已可经真实瞄准/NPC jitter 命中，见 combat::raycast::tests 分布 pin 测试）。
     #[test]
     fn dead_armor_arml_immune_in_multi_region_set() {
         use crate::combat::baomai_v4::dead_armor::{should_block_contamination, DeadMeridianArmor};
@@ -9035,11 +10444,15 @@ mod tests {
         {
             let mut app = setup_dead_armor_app(2070);
 
-            // 攻方低于目标（y=62.0），raycast 向上命中 Abdomen（rel_y≈0.40）。
+            // 攻方低于目标（y=62.8），raycast 向上命中 Abdomen。
+            // plan-combat-hit-location-v1 P1 校准把 LEG_ABDOMEN_BOUNDARY 从 0.35 上调到
+            // 0.53（见 raycast.rs 该常量注释），把 Abdomen 命中带收窄成 rel_y∈(0.53,0.55]
+            // 的窄带——原 y=62.0（rel_y≈0.40）在新阈值下已跌入 Leg，实测扫描 y∈[62.76,62.88]
+            // 仍稳定落在新 Abdomen 窄带内，取中间值 62.8 留出双向余量。
             let attacker = spawn_player(
                 &mut app,
                 "AttackerAbd",
-                [0.0, 62.0, 0.0],
+                [0.0, 62.8, 0.0],
                 Wounds::default(),
                 Stamina::default(),
             );
@@ -9081,7 +10494,7 @@ mod tests {
             assert_eq!(
                 abd_events[0].body_part,
                 BodyPart::Abdomen,
-                "期望 Abdomen 弱点子用例实际命中 Abdomen（攻方 y=62.0 低于目标 y=64.0，向上命中中低部）；\
+                "期望 Abdomen 弱点子用例实际命中 Abdomen（攻方 y=62.8 低于目标 y=64.0，向上命中中低部）；\
                  实际命中 {:?} — 若此断言失败说明 classify_body_part 阈值变更，需同步调整攻方位置",
                 abd_events[0].body_part
             );

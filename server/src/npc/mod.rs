@@ -83,6 +83,7 @@ pub fn register(app: &mut App) {
     brain_whale::register(app);
     heiwushi::register(app);
     heiwushi_spawn::register(app);
+    spawn::ambient_scheduler::register(app);
     whale_narration::register(app);
     dormant::register(app);
     farming_brain::register(app);

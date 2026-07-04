@@ -623,11 +623,16 @@ fn movement_ability_tick_system(
                     if let Some(collision) = collision {
                         if collision.entity_damage > f64::EPSILON {
                             if let Some(wounds) = wounds.as_deref_mut() {
+                                // plan-combat-hit-location-v1 P2（决议 §8.1 旁路桶 #5，撞墙
+                                // 分支保留）——撞静态方块没有另一实体可提供 dx/dz/dy 相对
+                                // 坐标（决议引用的数据来自 first_entity_collision 的实体
+                                // 碰撞分支），此分支继续用 Chest 作代表部位。
                                 apply_collision_wound(
                                     wounds,
                                     collision.entity_damage as f32,
                                     u64::from(tick),
                                     kb.attacker.unwrap_or(entity),
+                                    BodyPart::Chest,
                                 );
                             }
                         }
@@ -662,6 +667,12 @@ fn movement_ability_tick_system(
                 {
                     if kb.chain_depth > 0 {
                         let moving_mass = body_mass.copied().unwrap_or_default().total_mass();
+                        // plan-combat-hit-location-v1 P2（决议 §8.1 旁路桶 #5）—— 复用
+                        // first_entity_collision 已算出的相对坐标（`hit.position` 是对方
+                        // 脚底、`motion.position` 是本体本 tick 落点）做简化部位判定。
+                        let dx = hit.position.x - motion.position.x;
+                        let dz = hit.position.z - motion.position.z;
+                        let dy = hit.position.y - motion.position.y;
                         if let Ok(collision) = entity_collision(EntityCollisionInput {
                             moving_mass,
                             hit_mass: hit.mass,
@@ -670,21 +681,26 @@ fn movement_ability_tick_system(
                         }) {
                             if collision.incoming_damage > f64::EPSILON {
                                 if let Some(wounds) = wounds.as_deref_mut() {
+                                    // 本体（moving）挨的钝伤：对方相对本体的方位决定撞上哪。
                                     apply_collision_wound(
                                         wounds,
                                         collision.incoming_damage as f32,
                                         u64::from(tick),
                                         kb.attacker.unwrap_or(hit.entity),
+                                        classify_collision_body_part(dx, dz, dy),
                                     );
                                 }
                             }
                             if collision.hit_damage > f64::EPSILON {
+                                // 对方（hit.entity）挨的钝伤：从对方视角看，本体相对方位
+                                // 是上面这组坐标的镜像（取负）。
                                 queue_collision_wound(
                                     &mut commands,
                                     hit.entity,
                                     collision.hit_damage as f32,
                                     u64::from(tick),
                                     entity,
+                                    classify_collision_body_part(-dx, -dz, -dy),
                                 );
                             }
                             if collision.transferred_distance >= 0.05 {
@@ -875,14 +891,49 @@ fn collision_armor_mitigation(body_mass: BodyMass) -> f64 {
     (body_mass.armor_mass / 60.0).clamp(0.0, 0.85)
 }
 
-fn apply_collision_wound(wounds: &mut Wounds, damage: f32, tick: u64, inflicted_by: Entity) {
+/// plan-combat-hit-location-v1 P2（决议 §8.1 旁路桶 #5）—— 复用 `first_entity_collision`
+/// （见上方 `:856-871`）已经算出的 dx/dz/dy 相对坐标做简化部位判定（非完整散布/几何
+/// 模型，纯高度 + 侧向分档）：dy 主导头/胸/腿三段（碰撞双方体型接近，直接用绝对米制
+/// 阈值，不做 `classify_body_part` 那种 `STANDING_HEIGHT` 归一化）；dx/dz 中绝对值
+/// 较大的一维决定命中落左侧还是右侧（`ArmL`/`ArmR`/`LegL`/`LegR`）。
+fn classify_collision_body_part(dx: f64, dz: f64, dy: f64) -> BodyPart {
+    const HEAD_DY: f64 = 0.5;
+    const LEG_DY: f64 = -0.5;
+    const LATERAL_THRESHOLD: f64 = 0.35;
+    let lateral = if dx.abs() >= dz.abs() { dx } else { dz };
+    if dy > HEAD_DY {
+        BodyPart::Head
+    } else if dy < LEG_DY {
+        if lateral >= 0.0 {
+            BodyPart::LegR
+        } else {
+            BodyPart::LegL
+        }
+    } else if lateral.abs() > LATERAL_THRESHOLD {
+        if lateral >= 0.0 {
+            BodyPart::ArmR
+        } else {
+            BodyPart::ArmL
+        }
+    } else {
+        BodyPart::Chest
+    }
+}
+
+fn apply_collision_wound(
+    wounds: &mut Wounds,
+    damage: f32,
+    tick: u64,
+    inflicted_by: Entity,
+    location: BodyPart,
+) {
     let damage = damage.max(0.0);
     if damage <= f32::EPSILON {
         return;
     }
     wounds.health_current = (wounds.health_current - damage).clamp(0.0, wounds.health_max);
     wounds.entries.push(Wound {
-        location: BodyPart::Chest,
+        location,
         kind: WoundKind::Blunt,
         severity: damage,
         bleeding_per_sec: damage * 0.02,
@@ -891,12 +942,14 @@ fn apply_collision_wound(wounds: &mut Wounds, damage: f32, tick: u64, inflicted_
     });
 }
 
+#[allow(clippy::too_many_arguments)]
 fn queue_collision_wound(
     commands: &mut Commands,
     target: Entity,
     damage: f32,
     tick: u64,
     inflicted_by: Entity,
+    location: BodyPart,
 ) {
     commands.add(
         move |world: &mut valence::prelude::bevy_ecs::world::World| {
@@ -907,7 +960,7 @@ fn queue_collision_wound(
                 return;
             }
             if let Some(mut wounds) = world.get_mut::<Wounds>(target) {
-                apply_collision_wound(&mut wounds, damage, tick, inflicted_by);
+                apply_collision_wound(&mut wounds, damage, tick, inflicted_by, location);
             }
         },
     );
@@ -1187,12 +1240,27 @@ mod tests {
         let mut wounds = Wounds::default();
         let before = wounds.health_current;
 
-        apply_collision_wound(&mut wounds, 12.0, 7, Entity::from_raw(1));
+        apply_collision_wound(&mut wounds, 12.0, 7, Entity::from_raw(1), BodyPart::Chest);
 
         assert_eq!(wounds.health_current, before - 12.0);
         assert_eq!(wounds.entries.len(), 1);
         assert_eq!(wounds.entries[0].kind, WoundKind::Blunt);
         assert_eq!(wounds.entries[0].location, BodyPart::Chest);
+    }
+
+    #[test]
+    fn collision_wound_records_caller_supplied_location() {
+        // 非 Chest 场景锁定：调用方传入的 location 必须原样落到 Wound.location，
+        // 证明 apply_collision_wound 不再内部硬编胸口。
+        let mut wounds = Wounds::default();
+
+        apply_collision_wound(&mut wounds, 8.0, 3, Entity::from_raw(1), BodyPart::LegR);
+
+        assert_eq!(
+            wounds.entries[0].location,
+            BodyPart::LegR,
+            "调用方传入 BodyPart::LegR，Wound.location 必须是 LegR 而非硬编 Chest"
+        );
     }
 
     #[test]
@@ -1209,7 +1277,14 @@ mod tests {
             .unwrap()
             .health_current;
         app.add_systems(Update, move |mut commands: Commands| {
-            queue_collision_wound(&mut commands, target, 12.0, 7, Entity::from_raw(1));
+            queue_collision_wound(
+                &mut commands,
+                target,
+                12.0,
+                7,
+                Entity::from_raw(1),
+                BodyPart::Chest,
+            );
         });
 
         app.update();
@@ -1217,6 +1292,81 @@ mod tests {
         let wounds = app.world().entity(target).get::<Wounds>().unwrap();
         assert_eq!(wounds.health_current, before);
         assert!(wounds.entries.is_empty());
+    }
+
+    #[test]
+    fn queued_collision_wound_records_caller_supplied_location() {
+        let mut app = App::new();
+        let target = app.world_mut().spawn(Wounds::default()).id();
+        app.add_systems(Update, move |mut commands: Commands| {
+            queue_collision_wound(
+                &mut commands,
+                target,
+                9.0,
+                11,
+                Entity::from_raw(2),
+                BodyPart::ArmL,
+            );
+        });
+
+        app.update();
+
+        let wounds = app.world().entity(target).get::<Wounds>().unwrap();
+        assert_eq!(
+            wounds.entries[0].location,
+            BodyPart::ArmL,
+            "queue_collision_wound 应把调用方传入的 ArmL 原样带到 Wound.location"
+        );
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // plan-combat-hit-location-v1 P2（决议 §8.1 旁路桶 #5）— 碰撞钝伤部位几何化 pin
+    // ══════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn classify_collision_body_part_high_dy_is_head() {
+        assert_eq!(
+            classify_collision_body_part(0.0, 0.0, 0.8),
+            BodyPart::Head,
+            "dy=0.8 高于 HEAD_DY 阈值应判 Head"
+        );
+    }
+
+    #[test]
+    fn classify_collision_body_part_low_dy_is_leg() {
+        assert_eq!(
+            classify_collision_body_part(0.6, 0.0, -0.8),
+            BodyPart::LegR,
+            "dy=-0.8 低于 LEG_DY 阈值、dx>0 应判 LegR"
+        );
+        assert_eq!(
+            classify_collision_body_part(-0.6, 0.0, -0.8),
+            BodyPart::LegL,
+            "dy=-0.8、dx<0 应判 LegL"
+        );
+    }
+
+    #[test]
+    fn classify_collision_body_part_mid_dy_lateral_is_arm() {
+        assert_eq!(
+            classify_collision_body_part(0.6, 0.0, 0.0),
+            BodyPart::ArmR,
+            "dy=0（胸段）且 dx=0.6 超出侧向阈值应判 ArmR，而非恒 Chest"
+        );
+        assert_eq!(
+            classify_collision_body_part(-0.6, 0.0, 0.0),
+            BodyPart::ArmL,
+            "dy=0、dx=-0.6 应判 ArmL"
+        );
+    }
+
+    #[test]
+    fn classify_collision_body_part_mid_dy_centered_is_chest() {
+        assert_eq!(
+            classify_collision_body_part(0.05, 0.05, 0.0),
+            BodyPart::Chest,
+            "dy=0 且侧向偏移在阈值内应判 Chest（对照组：并非再也不会出现 Chest）"
+        );
     }
 
     #[test]

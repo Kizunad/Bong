@@ -16,14 +16,16 @@ use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
 use crate::schema::vfx_event::VfxEventPayloadV1;
 use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::karma::{QiDensityHeatmap, QI_DENSITY_CELL_SIZE};
-use crate::world::zone::ZoneRegistry;
+use crate::world::zone::{Zone, ZoneRegistry};
 
 pub const RAT_PHASE_DENSITY_THRESHOLD: f32 = 8.0;
 pub const RAT_PHASE_QI_GRADIENT_THRESHOLD: f32 = 0.20;
 pub const SURGE_TRIGGER_THRESHOLD: f32 = 1.0;
 pub const TRANSITION_DURATION_TICKS: u16 = 600;
 pub const RAT_DRAINED_CHUNK_WINDOW: usize = 8;
-const RAT_DRAINED_QI_DEATH_RETURN_RATIO: f64 = 0.01;
+// pub(crate)：ambient 调度核超距回收路径（§ambient-threat-v1 Verify blocker②）需要与
+// `release_drained_qi_on_death_system` 共用同一条归还系数，跨模块测试才能精确对拍。
+pub(crate) const RAT_DRAINED_QI_DEATH_RETURN_RATIO: f64 = 0.01;
 
 type RatPhaseReadQuery<'w, 's> = Query<
     'w,
@@ -370,11 +372,21 @@ pub fn release_drained_qi_on_death_system(
             continue;
         };
         if let Some(zone) = zones.find_zone_mut(zone_name.as_str()) {
-            let returned_qi = rat.drained_qi * RAT_DRAINED_QI_DEATH_RETURN_RATIO;
-            zone.spirit_qi =
-                (zone.spirit_qi + returned_qi / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
+            return_rat_drained_qi_to_zone(zone, rat.drained_qi);
         }
     }
+}
+
+/// 归还 `drained_qi` 给 zone 的守恒计算——从 [`release_drained_qi_on_death_system`] 抽出
+/// 独立函数，供 ambient 调度核的超距回收路径共用（§ambient-threat-v1 Verify blocker②
+/// 收口：回收前必须先走这条既有"死亡归还"路径，残余 qi 才不会在软删除
+/// `insert(Despawned)` 时蒸发）。`drained_qi <= 0.0` 时无操作。
+pub fn return_rat_drained_qi_to_zone(zone: &mut Zone, drained_qi: f64) {
+    if drained_qi <= 0.0 {
+        return;
+    }
+    let returned_qi = drained_qi * RAT_DRAINED_QI_DEATH_RETURN_RATIO;
+    zone.spirit_qi = (zone.spirit_qi + returned_qi / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
 }
 
 pub fn collect_rat_density_heatmap<'a, I>(rats: I) -> RatDensityHeatmapV1
@@ -449,6 +461,7 @@ mod tests {
             last_pressure_target: None,
             recently_drained: Vec::new(),
             drained_qi: 0.0,
+            harass_cooldown_until_tick: 0,
         }
     }
 

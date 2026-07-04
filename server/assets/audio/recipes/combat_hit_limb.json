@@ -1,0 +1,15 @@
+{
+  "id": "combat_hit_limb",
+  "layers": [
+    {
+      "sound": "minecraft:entity.player.attack.weak",
+      "volume": 0.45,
+      "pitch": 0.9,
+      "delay_ticks": 0
+    }
+  ],
+  "priority": 50,
+  "attenuation": "MELEE",
+  "category": "PLAYERS",
+  "bus": "COMBAT"
+}

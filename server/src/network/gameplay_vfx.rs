@@ -11,6 +11,13 @@ pub const BREAKTHROUGH_PILLAR: &str = "bong:breakthrough_pillar";
 pub const BREAKTHROUGH_FAIL: &str = "bong:breakthrough_fail";
 pub const COMBAT_HIT: &str = "bong:combat_hit";
 pub const COMBAT_PARRY: &str = "bong:combat_parry";
+// plan-combat-hit-location-v1 P3 — 部位差异视听反馈。头部/四肢命中各自独立 event_id，
+// client CombatHitDirectionPlayer(Kind::HEAD_CRIT) / (LIMB 复用 HIT 分支) 按 event_id 差异化
+// 播放；胸/腹/背命中仍走既有 COMBAT_HIT，不改变现状。
+pub const COMBAT_HIT_HEAD_CRIT: &str = "bong:combat_hit_head_crit";
+pub const COMBAT_HIT_LIMB: &str = "bong:combat_hit_limb";
+// 腿伤减速触发时目标脚下血渍 decal（复用 client BongGroundDecalParticle 基类，无新贴图）。
+pub const COMBAT_LEG_WOUND_DECAL: &str = "bong:combat_leg_wound_decal";
 pub const FORGE_HAMMER_STRIKE: &str = "bong:forge_hammer_strike";
 pub const FORGE_INSCRIPTION: &str = "bong:forge_inscription";
 pub const FORGE_CONSECRATION: &str = "bong:forge_consecration";
@@ -39,6 +46,10 @@ pub const SOCIAL_FEUD_MARK: &str = "bong:social_feud_mark";
 pub const POISON_MIST: &str = "bong:poison_mist";
 pub const MOVEMENT_DASH: &str = "bong:movement_dash";
 pub const DEAD_DROP_WARD_BREAK: &str = "bong:dead_drop_ward_break";
+
+// plan-ambient-threat-v1 P2 —— rat 袭扰咬击瞬间的灰白尘粒反馈（无既有"咬击" VFX 可复用，
+// 兽潮/SeekQiSourceAction 现有咬击路径均未挂 VFX，此为新增最小反馈）。
+pub const RAT_BITE_NIP: &str = "bong:rat_bite_nip";
 
 // plan-tarkov-backpack-v1 P5 — 套包操作差异化视听反馈。三类操作各自独立 event_id，
 // client `PackOperationVfxPlayer` 按 event_id 派发到差异化粒子 + 内联 audio recipe
