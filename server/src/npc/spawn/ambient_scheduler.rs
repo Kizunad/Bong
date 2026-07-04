@@ -53,6 +53,7 @@ use crate::world::era::WorldEraState;
 use crate::world::mob_spawn::{
     era_beast_spawn_gate, spawn_natural_mob_at, MobSpawnFilter, NaturalMobKind,
 };
+use crate::world::season::{Season, WorldSeasonState};
 use crate::world::zone::{Zone, ZoneRegistry};
 
 /// 调度核每次巡检的粗节流步长（对齐 heiwushi 的 `last_check_tick` 早退模式）。
@@ -335,6 +336,7 @@ pub fn ambient_threat_pool_fn(
     zone: &Zone,
     spawn_position: DVec3,
     patrol_target: DVec3,
+    _season: Season,
 ) -> Option<Entity> {
     let pool = threat_pool(zone.danger_level, zone.dimension, None);
     let seed = threat_species_seed(&zone.name, spawn_position, zone.danger_level);
@@ -554,7 +556,14 @@ impl<M> Default for AmbientSchedulerState<M> {
 /// `MobSpawnFilter::ban_in_dead_zone` 死域白名单过滤（§8.1 #2），仅 `danger_level` 不够；
 /// `Zone` 本就同时携带 `danger_level`/`name`/`spirit_qi`，改传引用比拆两个标量参数更干净，
 /// 调度核调用点（`ambient_scheduler_system`）本就持有 `&Zone`，改动零成本。
-pub type AmbientPoolFn = fn(&mut Commands, Entity, &Zone, DVec3, DVec3) -> Option<Entity>;
+///
+/// **P2 追加尾参 `Season`**（plan-mundane-fauna-v1 P2「季节权重」）：`mundane_pool_fn`
+/// 需要当前季节去偏权物种池；调度核本就在 `ambient_scheduler_system` 里读
+/// `Res<WorldSeasonState>`（新增，`Option` 缺省 `Season::default()`），随调用一并透传。
+/// 同 `threat_pool` 的 `weight_hook: Option<f32>` 占位钩子先例——`ambient_threat_pool_fn`
+/// 直接忽略此参数（`_season`），不产生任何行为变化，避免跨 plan 共享 `AmbientPoolFn`
+/// 类型时牵连另一侧实现。
+pub type AmbientPoolFn = fn(&mut Commands, Entity, &Zone, DVec3, DVec3, Season) -> Option<Entity>;
 
 /// 每 marker_type 独立注入的调度配置：`budget_fn` 决定"刷多少/多久"，`pool_fn` 决定
 /// "刷什么"，`counts_against_threat_budget` 决定该 marker 类型的活体数是否计入
@@ -619,9 +628,16 @@ pub fn ambient_scheduler_system<M: AmbientMarkerData>(
     zone_registry: Option<ResMut<ZoneRegistry>>,
     dimension_layers: Option<Res<DimensionLayers>>,
     era_state: Option<Res<WorldEraState>>,
+    world_season: Option<Res<WorldSeasonState>>,
     mut commands: Commands,
 ) {
     let now = tick.map(|t| u64::from(t.0)).unwrap_or(0);
+    // plan-mundane-fauna-v1 P2 — 季节权重：缺资源时退回 `Season::default()`
+    // （`Season::Summer`，同 `WorldSeasonState::default()` 的隐含基线）。
+    let season = world_season
+        .as_deref()
+        .map(|s| s.current.season)
+        .unwrap_or_default();
 
     // 粗节流：与 heiwushi 一致，避免每 tick 都做全量 zone/query 扫描。
     // `now == 0` 时必须放行（对齐 `should_run_interval` 的 tick==0 分支）——否则
@@ -739,9 +755,14 @@ pub fn ambient_scheduler_system<M: AmbientMarkerData>(
             continue;
         };
 
-        let Some(spawned) =
-            (config.pool_fn)(&mut commands, layers.overworld, zone, spawn_pos, spawn_pos)
-        else {
+        let Some(spawned) = (config.pool_fn)(
+            &mut commands,
+            layers.overworld,
+            zone,
+            spawn_pos,
+            spawn_pos,
+            season,
+        ) else {
             // 死域过滤后池为空 / 未来其它 pool_fn 实现判定本次不刷都会走这支——非 panic 分支。
             // `budget.pack_size_range`（多只群体刷新）不在本 plan 范围内消费，留给后续若立项
             // "群体刷新"再回填，当前调度核每次巡检命中只产 1 个实体。
@@ -1093,6 +1114,7 @@ mod tests {
                 &zone,
                 DVec3::new(10.0, 64.0, 10.0),
                 DVec3::new(10.0, 64.0, 10.0),
+                Season::Summer,
             )
         };
         app.world_mut().flush();
@@ -1116,6 +1138,7 @@ mod tests {
                 &zone,
                 DVec3::new(10.0, 64.0, 10.0),
                 DVec3::new(10.0, 64.0, 10.0),
+                Season::Summer,
             )
         };
         app.world_mut().flush();
@@ -1143,6 +1166,7 @@ mod tests {
                 &zone,
                 DVec3::new(10.0, 64.0, 10.0),
                 DVec3::new(10.0, 64.0, 10.0),
+                Season::Summer,
             )
         };
         assert_eq!(
@@ -1599,6 +1623,7 @@ mod tests {
         _zone: &Zone,
         spawn_position: DVec3,
         _patrol_target: DVec3,
+        _season: Season,
     ) -> Option<Entity> {
         Some(
             commands

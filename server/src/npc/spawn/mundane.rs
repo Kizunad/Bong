@@ -18,7 +18,8 @@ use valence::prelude::{Commands, DVec3, Entity, EntityLayerId, Position};
 use crate::fauna::mundane::{entity_kind_for_mundane, MundaneFaunaKind, MundaneFaunaSpecies};
 use crate::npc::brain::{
     CorneredScorer, FarmAction, FleeAction, FleeThreatScorer, GoToPoiAction, GoToPoiState,
-    HungerScorer, MeleeAttackAction, WanderScorer,
+    HungerScorer, MeleeAttackAction, MundaneHuntAction, MundaneHuntScorer, MundaneHuntState,
+    WanderScorer,
 };
 use crate::npc::hunger::Hunger;
 use crate::npc::lifecycle::{npc_runtime_bundle_with_age, NpcArchetype};
@@ -36,10 +37,22 @@ use super::common::{schedule_seed_for_entity, NpcBlackboard, NpcCombatLoadout, N
 
 /// `FirstToScore` 按注册顺序取第一个过阈值的分支——`CorneredScorer` 必须排在
 /// `FleeThreatScorer` 前，否则"被逼急了咬一口"永远轮不到（picker 顺序即优先级）。
-pub(crate) fn mundane_fauna_thinker() -> ThinkerBuilder {
-    Thinker::build()
+///
+/// **P2 追加**：`kind.is_predator()`（狐/狼）额外挂 `MundaneHuntScorer → MundaneHuntAction`
+/// 分支，排在 `CorneredScorer` 之后、`FleeThreatScorer` 之前——预掠者发现猎物时优先追猎，
+/// 不因附近有玩家/修士就放弃（T2/T2.5"掠食骚扰/群体掠食"语义：狼狐不是易惊的猎物动物）。
+/// **v1 范围限定**（诚实记录，非阉割）：本 thinker 不含"主动猎杀低境界玩家"
+/// （T2.5 完整语义的一部分）与"群体协同（≥3 成型）"——两者都需要区分"威胁感知"与
+/// "猎物感知"两套独立信号 + 群体计数基建，超出本次 P2 实现预算，留作后续 tuning 向小 PR；
+/// 本次交付的是可测、可验证的"凡兽内部食物链"核心（狼/狐猎 T0/T1/鼠）。
+pub(crate) fn mundane_fauna_thinker(kind: MundaneFaunaKind) -> ThinkerBuilder {
+    let mut builder = Thinker::build()
         .picker(FirstToScore { threshold: 0.05 })
-        .when(CorneredScorer, MeleeAttackAction)
+        .when(CorneredScorer, MeleeAttackAction);
+    if kind.is_predator() {
+        builder = builder.when(MundaneHuntScorer, MundaneHuntAction);
+    }
+    builder
         .when(FleeThreatScorer, FleeAction)
         .when(HungerScorer, FarmAction)
         .when(WanderScorer, GoToPoiAction::default())
@@ -174,8 +187,14 @@ pub fn spawn_mundane_fauna_at(
         GoToPoiState::default(),
         NpcLodTier::Dormant,
         Hunger::default(),
-        mundane_fauna_thinker(),
+        mundane_fauna_thinker(kind),
     ));
+
+    // P2 — 狼/狐掠食者专属运行态（`MundaneHuntAction` 硬性读 `&mut MundaneHuntState`，
+    // 非 predator 不挂——thinker 本就不含 Hunt 分支，挂了也是死组件，不挂更干净）。
+    if kind.is_predator() {
+        commands.entity(entity).insert(MundaneHuntState::default());
+    }
 
     let mut runtime = npc_runtime_bundle_with_age(entity, NpcArchetype::Mundane, 0.0);
     let hp = kind.health_max();
@@ -369,6 +388,10 @@ mod tests {
     use valence::prelude::DVec3;
 
     fn mundane_thinker_scenario() -> (App, Entity) {
+        mundane_thinker_scenario_with_kind(MundaneFaunaKind::Rabbit)
+    }
+
+    fn mundane_thinker_scenario_with_kind(kind: MundaneFaunaKind) -> (App, Entity) {
         let mut app = App::new();
         crate::npc::lifecycle::register(&mut app);
         crate::npc::brain::register(&mut app);
@@ -383,7 +406,7 @@ mod tests {
                 DEFAULT_SPAWN_ZONE_NAME,
                 DVec3::new(0.0, 64.0, 0.0),
                 DVec3::new(0.0, 64.0, 0.0),
-                MundaneFaunaKind::Rabbit,
+                kind,
             )
         };
         app.world_mut().flush();
@@ -444,6 +467,12 @@ mod tests {
         let mut poi_q = world.query_filtered::<&Actor, valence::prelude::With<GoToPoiAction>>();
         if poi_q.iter(world).any(|a| a.0 == actor) {
             labels.push("go_to_poi");
+        }
+
+        let mut hunt_q =
+            world.query_filtered::<&Actor, valence::prelude::With<MundaneHuntAction>>();
+        if hunt_q.iter(world).any(|a| a.0 == actor) {
+            labels.push("hunt");
         }
 
         labels
@@ -547,6 +576,98 @@ mod tests {
             vec!["cornered_melee"],
             "被逼入死角（近战距离 + retaliation_target 命中）应恰好选中反击，\
              而非继续逃跑——CorneredScorer 必须排在 FleeThreatScorer 前"
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // P2 — 狼/狐 Hunt 分支组件清单 + thinker 接线 pin
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn predator_species_carry_mundane_hunt_state_non_predators_do_not() {
+        for (kind, expect_hunt_state) in [
+            (MundaneFaunaKind::Wolf, true),
+            (MundaneFaunaKind::Fox, true),
+            (MundaneFaunaKind::Chicken, false),
+            (MundaneFaunaKind::Cow, false),
+        ] {
+            let (mut app, layer) = make_app_with_layer();
+            let entity = {
+                let mut commands = app.world_mut().commands();
+                spawn_mundane_fauna_at(
+                    &mut commands,
+                    layer,
+                    DEFAULT_SPAWN_ZONE_NAME,
+                    DVec3::new(0.0, 64.0, 0.0),
+                    DVec3::new(0.0, 64.0, 0.0),
+                    kind,
+                )
+            };
+            app.world_mut().flush();
+            assert_eq!(
+                app.world().get::<MundaneHuntState>(entity).is_some(),
+                expect_hunt_state,
+                "{kind:?} 的 MundaneHuntState 挂载状态应为 {expect_hunt_state}\
+                 （非 predator 挂了也是死组件，故不挂更干净）"
+            );
+        }
+    }
+
+    #[test]
+    fn thinker_branch_hunt_when_predator_finds_prey_even_with_player_nearby() {
+        // 狼发现猎物时优先追猎，即便附近有玩家（FleeThreatScorer 会响应）——Hunt 分支
+        // 排在 FleeThreatScorer 前，狼不是易惊的猎物动物（T2.5"群体掠食"语义）。
+        let (mut app, actor) = mundane_thinker_scenario_with_kind(MundaneFaunaKind::Wolf);
+        // 猎物：一只兔子在狼的 Hunt 搜索半径内。
+        app.world_mut().spawn((
+            Position::new([3.0, 64.0, 0.0]),
+            MundaneFaunaSpecies(MundaneFaunaKind::Rabbit),
+        ));
+        // 附近玩家（会让 FleeThreatScorer 打分，验证 Hunt 排序压过它）。
+        app.world_mut()
+            .spawn((ClientMarker, Position::new([10.0, 64.0, 0.0])));
+        run_thinker_ticks(&mut app, 40);
+        assert_eq!(
+            active_action_labels(&mut app, actor),
+            vec!["hunt"],
+            "狼在猎物+玩家同时在场时应选中 Hunt（排在 FleeThreatScorer 前），\
+             而非逃跑"
+        );
+    }
+
+    #[test]
+    fn thinker_branch_wander_when_predator_has_no_prey_in_range() {
+        // 狼周围没有合法猎物时，Hunt 分支评分应为 0，thinker 正常兜底到 Wander。
+        let (mut app, actor) = mundane_thinker_scenario_with_kind(MundaneFaunaKind::Wolf);
+        {
+            let mut schedule = app
+                .world_mut()
+                .get_mut::<NpcDailySchedule>(actor)
+                .expect("should have NpcDailySchedule");
+            schedule.phase_weights = std::collections::HashMap::from([
+                (
+                    crate::npc::schedule::DayPhase::Dawn,
+                    vec![(crate::npc::schedule::ScheduleActivity::Wander, 1.0)],
+                ),
+                (
+                    crate::npc::schedule::DayPhase::Day,
+                    vec![(crate::npc::schedule::ScheduleActivity::Wander, 1.0)],
+                ),
+                (
+                    crate::npc::schedule::DayPhase::Dusk,
+                    vec![(crate::npc::schedule::ScheduleActivity::Wander, 1.0)],
+                ),
+                (
+                    crate::npc::schedule::DayPhase::Night,
+                    vec![(crate::npc::schedule::ScheduleActivity::Wander, 1.0)],
+                ),
+            ]);
+        }
+        run_thinker_ticks(&mut app, 40);
+        assert_eq!(
+            active_action_labels(&mut app, actor),
+            vec!["go_to_poi"],
+            "无猎物在场时狼应兜底走游荡，不应恒卡在 Hunt（pick 返回 None → score 0）"
         );
     }
 }
