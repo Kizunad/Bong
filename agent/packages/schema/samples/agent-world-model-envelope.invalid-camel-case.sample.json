@@ -1,0 +1,38 @@
+{
+  "v": 1,
+  "id": "world_model_t84000_arbiter_1712345678000",
+  "source": "arbiter",
+  "snapshot": {
+    "currentEra": {
+      "name": "calamity",
+      "sinceTick": 80000,
+      "globalEffect": "era_type:calamity|intensity:0.65"
+    },
+    "zoneHistory": {
+      "blood_valley": [
+        {
+          "name": "blood_valley",
+          "spirit_qi": 0.4,
+          "danger_level": 3,
+          "active_events": ["tribulation"],
+          "player_count": 2
+        }
+      ]
+    },
+    "lastDecisions": {},
+    "playerFirstSeenTick": {
+      "offline:Elder": 82000
+    },
+    "negDomainPendingTribulations": {},
+    "negDomainEscapeTelemetry": {
+      "escapeEntryCount": 0,
+      "postEscapeRealmDropCount": 0,
+      "successfulTribulationAvoidanceCount": 0,
+      "activeEscapeSessionCount": 0,
+      "postEscapeRealmDropRate": 0
+    },
+    "negDomainEscapeSessions": {},
+    "lastTick": 84000,
+    "lastStateTs": 1712345678
+  }
+}

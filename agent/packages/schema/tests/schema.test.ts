@@ -7,6 +7,11 @@ import {
   AgentCommandV1,
   validateAgentCommandV1Contract,
 } from "../src/agent-command.js";
+import {
+  AgentWorldModelEnvelopeV1,
+  AgentWorldModelSnapshotV1,
+  validateAgentWorldModelEnvelopeV1Contract,
+} from "../src/agent-world-model.js";
 import { AntiCheatReportV1 } from "../src/anticheat.js";
 import { AudioEventV1 } from "../src/audio-event.js";
 import { ChatMessageV1 } from "../src/chat-message.js";
@@ -515,6 +520,74 @@ describe("sample files pass schema validation", () => {
     const data = loadSample("world-state.sample.json");
     const result = validate(WorldStateV1, data);
     expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  // fix/world-model-schema-drift：bong:agent_world_model wire 通道全字段
+  // snake_case pin — 该通道自诞生 commit 起因 TS camelCase / Rust snake_case
+  // 不一致丢弃所有 agent 发布，这份 sample 锁死 wire 形状防止再漂移。
+  it("agent-world-model-envelope.sample.json validates against AgentWorldModelEnvelopeV1", () => {
+    const data = loadSample("agent-world-model-envelope.sample.json");
+    const result = validateAgentWorldModelEnvelopeV1Contract(data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("agent-world-model-envelope.sample.json snapshot uses snake_case keys throughout", () => {
+    const data = loadObjectSample("agent-world-model-envelope.sample.json");
+    const snapshot = data.snapshot as Record<string, unknown>;
+
+    // 顶层 9 个字段必须是 snake_case（历史 bug：TS 全 camelCase 被 server deny_unknown_fields 拒收）。
+    expect(Object.keys(snapshot).sort()).toEqual(
+      [
+        "current_era",
+        "zone_history",
+        "last_decisions",
+        "player_first_seen_tick",
+        "neg_domain_pending_tribulations",
+        "neg_domain_escape_telemetry",
+        "neg_domain_escape_sessions",
+        "last_tick",
+        "last_state_ts",
+      ].sort(),
+    );
+
+    const currentEra = snapshot.current_era as Record<string, unknown>;
+    expect(Object.keys(currentEra).sort()).toEqual(["name", "since_tick", "global_effect"].sort());
+
+    const pendingTribulation = (
+      snapshot.neg_domain_pending_tribulations as Record<string, Record<string, unknown>>
+    )["offline:Elder"];
+    expect(Object.keys(pendingTribulation).sort()).toEqual(
+      ["player_uuid", "player_name", "zone", "entered_at_tick", "last_suppressed_tick", "reason"].sort(),
+    );
+
+    const escapeTelemetry = snapshot.neg_domain_escape_telemetry as Record<string, unknown>;
+    expect(Object.keys(escapeTelemetry).sort()).toEqual(
+      [
+        "escape_entry_count",
+        "post_escape_realm_drop_count",
+        "successful_tribulation_avoidance_count",
+        "active_escape_session_count",
+        "post_escape_realm_drop_rate",
+      ].sort(),
+    );
+
+    const escapeSession = (
+      snapshot.neg_domain_escape_sessions as Record<string, Record<string, unknown>>
+    )["offline:Elder"];
+    expect(Object.keys(escapeSession).sort()).toEqual(
+      ["player_uuid", "player_name", "zone", "entered_at_tick", "entry_realm_rank"].sort(),
+    );
+  });
+
+  it("AgentWorldModelSnapshotV1 rejects a snapshot missing a required snake_case field", () => {
+    const data = loadObjectSample("agent-world-model-envelope.sample.json");
+    const snapshot = { ...(data.snapshot as Record<string, unknown>) };
+    delete snapshot.neg_domain_escape_telemetry;
+    const result = validate(AgentWorldModelSnapshotV1, snapshot);
+    expect(
+      result.ok,
+      "snapshot missing neg_domain_escape_telemetry must fail validation",
+    ).toBe(false);
   });
 
   // ── plan-era-state-v1 P2：EraStateV1 TypeBox 正反 sample 对拍 ────────────
@@ -2797,6 +2870,17 @@ describe("negative sample files fail schema validation", () => {
     const data = loadSample("world-state.invalid-extra-player-field.sample.json");
     const result = validate(WorldStateV1, data);
     expect(result.ok).toBe(false);
+  });
+
+  // fix/world-model-schema-drift：复现出生即坏的历史 bug——TS 若再退化回
+  // camelCase（currentEra/zoneHistory/...），wire schema 必须原地拒收，
+  // 不允许静默降级为"两种大小写都收"的兼容层。
+  it("agent-world-model-envelope.invalid-camel-case.sample.json", () => {
+    const data = loadSample("agent-world-model-envelope.invalid-camel-case.sample.json");
+    const result = validateAgentWorldModelEnvelopeV1Contract(data);
+    expect(result.ok, "camelCase world-model snapshot must be rejected by the snake_case wire schema").toBe(
+      false,
+    );
   });
 
   it("agent-command.invalid-extra-command-field.sample.json", () => {

@@ -152,7 +152,9 @@ use crate::persistence::{
     bootstrap_agent_world_model_mirror, persist_agent_world_model_authority_state,
     persist_life_record_death_insight, world_model_snapshot_to_mirror_fields,
     AgentWorldModelCommandRecord, AgentWorldModelDecisionRecord, AgentWorldModelNarrationRecord,
-    AgentWorldModelSnapshotRecord, PersistenceSettings, WORLD_MODEL_STATE_KEY,
+    AgentWorldModelNegDomainEscapeSessionRecord, AgentWorldModelNegDomainEscapeTelemetryRecord,
+    AgentWorldModelNegDomainPendingTribulationRecord, AgentWorldModelSnapshotRecord,
+    PersistenceSettings, WORLD_MODEL_STATE_KEY,
 };
 use crate::player::gameplay::PendingGameplayNarrations;
 use crate::player::state::{canonical_player_id, PlayerState};
@@ -2709,11 +2711,65 @@ fn agent_world_model_snapshot_from_wire(
         .as_ref()
         .and_then(|era| serde_json::to_value(era).ok());
 
+    let neg_domain_pending_tribulations = snapshot
+        .neg_domain_pending_tribulations
+        .iter()
+        .map(|(player_id, pending)| {
+            (
+                player_id.clone(),
+                AgentWorldModelNegDomainPendingTribulationRecord {
+                    player_uuid: pending.player_uuid.clone(),
+                    player_name: pending.player_name.clone(),
+                    zone: pending.zone.clone(),
+                    entered_at_tick: pending.entered_at_tick,
+                    last_suppressed_tick: pending.last_suppressed_tick,
+                    reason: pending.reason.clone(),
+                },
+            )
+        })
+        .collect::<std::collections::BTreeMap<_, _>>();
+
+    let neg_domain_escape_telemetry = AgentWorldModelNegDomainEscapeTelemetryRecord {
+        escape_entry_count: snapshot.neg_domain_escape_telemetry.escape_entry_count,
+        post_escape_realm_drop_count: snapshot
+            .neg_domain_escape_telemetry
+            .post_escape_realm_drop_count,
+        successful_tribulation_avoidance_count: snapshot
+            .neg_domain_escape_telemetry
+            .successful_tribulation_avoidance_count,
+        active_escape_session_count: snapshot
+            .neg_domain_escape_telemetry
+            .active_escape_session_count,
+        post_escape_realm_drop_rate: snapshot
+            .neg_domain_escape_telemetry
+            .post_escape_realm_drop_rate,
+    };
+
+    let neg_domain_escape_sessions = snapshot
+        .neg_domain_escape_sessions
+        .iter()
+        .map(|(player_id, session)| {
+            (
+                player_id.clone(),
+                AgentWorldModelNegDomainEscapeSessionRecord {
+                    player_uuid: session.player_uuid.clone(),
+                    player_name: session.player_name.clone(),
+                    zone: session.zone.clone(),
+                    entered_at_tick: session.entered_at_tick,
+                    entry_realm_rank: session.entry_realm_rank,
+                },
+            )
+        })
+        .collect::<std::collections::BTreeMap<_, _>>();
+
     AgentWorldModelSnapshotRecord {
         current_era,
         zone_history,
         last_decisions,
         player_first_seen_tick: snapshot.player_first_seen_tick.clone(),
+        neg_domain_pending_tribulations,
+        neg_domain_escape_telemetry,
+        neg_domain_escape_sessions,
         last_tick: snapshot.last_tick,
         last_state_ts: snapshot.last_state_ts,
     }
@@ -5502,8 +5558,11 @@ mod tests {
             load_agent_world_model_snapshot, persist_agent_world_model_snapshot,
             PersistenceSettings, WORLD_MODEL_STATE_FIELD_CURRENT_ERA,
             WORLD_MODEL_STATE_FIELD_LAST_DECISIONS, WORLD_MODEL_STATE_FIELD_LAST_STATE_TS,
-            WORLD_MODEL_STATE_FIELD_LAST_TICK, WORLD_MODEL_STATE_FIELD_PLAYER_FIRST_SEEN_TICK,
-            WORLD_MODEL_STATE_FIELD_ZONE_HISTORY, WORLD_MODEL_STATE_KEY,
+            WORLD_MODEL_STATE_FIELD_LAST_TICK, WORLD_MODEL_STATE_FIELD_NEG_DOMAIN_ESCAPE_SESSIONS,
+            WORLD_MODEL_STATE_FIELD_NEG_DOMAIN_ESCAPE_TELEMETRY,
+            WORLD_MODEL_STATE_FIELD_NEG_DOMAIN_PENDING_TRIBULATIONS,
+            WORLD_MODEL_STATE_FIELD_PLAYER_FIRST_SEEN_TICK, WORLD_MODEL_STATE_FIELD_ZONE_HISTORY,
+            WORLD_MODEL_STATE_KEY,
         };
         use crate::player::gameplay::{
             CombatAction, GameplayAction, GameplayActionQueue, GameplayTick, GatherAction,
@@ -5778,6 +5837,7 @@ mod tests {
                 player_first_seen_tick: BTreeMap::from([("offline:test-player".to_string(), 188)]),
                 last_tick: Some(188),
                 last_state_ts: Some(1_711_111_188),
+                ..Default::default()
             };
 
             persist_agent_world_model_snapshot(&settings, &snapshot)
@@ -5804,6 +5864,9 @@ mod tests {
                 WORLD_MODEL_STATE_FIELD_ZONE_HISTORY,
                 WORLD_MODEL_STATE_FIELD_LAST_DECISIONS,
                 WORLD_MODEL_STATE_FIELD_PLAYER_FIRST_SEEN_TICK,
+                WORLD_MODEL_STATE_FIELD_NEG_DOMAIN_PENDING_TRIBULATIONS,
+                WORLD_MODEL_STATE_FIELD_NEG_DOMAIN_ESCAPE_TELEMETRY,
+                WORLD_MODEL_STATE_FIELD_NEG_DOMAIN_ESCAPE_SESSIONS,
                 WORLD_MODEL_STATE_FIELD_LAST_TICK,
                 WORLD_MODEL_STATE_FIELD_LAST_STATE_TS,
             ];
@@ -5852,6 +5915,7 @@ mod tests {
                 player_first_seen_tick: BTreeMap::from([("offline:azure".to_string(), 256)]),
                 last_tick: Some(256),
                 last_state_ts: Some(1_711_333_256),
+                ..Default::default()
             };
 
             persist_agent_world_model_snapshot(&settings, &snapshot)
@@ -5913,6 +5977,38 @@ mod tests {
                     )]),
                     last_decisions: BTreeMap::new(),
                     player_first_seen_tick: BTreeMap::from([("offline:azure".to_string(), 512)]),
+                    // fix/world-model-schema-drift：neg_domain 三字段自诞生 commit
+                    // 起就没有 Rust 侧持久化链路，这里用非空数据驱动
+                    // ingress -> sqlite -> load 全链路验证不再被静默丢弃。
+                    neg_domain_pending_tribulations: BTreeMap::from([(
+                        "offline:azure".to_string(),
+                        crate::schema::agent_world_model::NegDomainPendingTribulationV1 {
+                            player_uuid: "offline:azure".to_string(),
+                            player_name: "Azure".to_string(),
+                            zone: "red_marsh".to_string(),
+                            entered_at_tick: 500,
+                            last_suppressed_tick: 510,
+                            reason: "negative_domain_tribulation_exempt".to_string(),
+                        },
+                    )]),
+                    neg_domain_escape_telemetry:
+                        crate::schema::agent_world_model::NegDomainEscapeTelemetryV1 {
+                            escape_entry_count: 3,
+                            post_escape_realm_drop_count: 1,
+                            successful_tribulation_avoidance_count: 2,
+                            active_escape_session_count: 1,
+                            post_escape_realm_drop_rate: 1.0 / 3.0,
+                        },
+                    neg_domain_escape_sessions: BTreeMap::from([(
+                        "offline:azure".to_string(),
+                        crate::schema::agent_world_model::NegDomainEscapeSessionV1 {
+                            player_uuid: "offline:azure".to_string(),
+                            player_name: "Azure".to_string(),
+                            zone: "red_marsh".to_string(),
+                            entered_at_tick: 500,
+                            entry_realm_rank: 3.0,
+                        },
+                    )]),
                     last_tick: Some(512),
                     last_state_ts: Some(1_711_444_512),
                 },
@@ -5940,6 +6036,47 @@ mod tests {
                 loaded.zone_history.get("red_marsh").map(Vec::len),
                 Some(1),
                 "zone history should persist through ingress without runtime mirror config"
+            );
+
+            let pending = loaded
+                .neg_domain_pending_tribulations
+                .get("offline:azure")
+                .expect("neg_domain_pending_tribulations should survive sqlite ingress roundtrip");
+            assert_eq!(pending.zone, "red_marsh");
+            assert_eq!(pending.entered_at_tick, 500);
+            assert_eq!(pending.reason, "negative_domain_tribulation_exempt");
+
+            assert_eq!(loaded.neg_domain_escape_telemetry.escape_entry_count, 3);
+            assert_eq!(
+                loaded
+                    .neg_domain_escape_telemetry
+                    .post_escape_realm_drop_count,
+                1
+            );
+
+            let session = loaded
+                .neg_domain_escape_sessions
+                .get("offline:azure")
+                .expect("neg_domain_escape_sessions should survive sqlite ingress roundtrip");
+            assert_eq!(session.entry_realm_rank, 3.0);
+
+            let mirror_fields = crate::persistence::world_model_snapshot_to_mirror_fields(&loaded)
+                .expect("mirror field projection should succeed for neg_domain fields");
+            for field in [
+                crate::persistence::WORLD_MODEL_STATE_FIELD_NEG_DOMAIN_PENDING_TRIBULATIONS,
+                crate::persistence::WORLD_MODEL_STATE_FIELD_NEG_DOMAIN_ESCAPE_TELEMETRY,
+                crate::persistence::WORLD_MODEL_STATE_FIELD_NEG_DOMAIN_ESCAPE_SESSIONS,
+            ] {
+                assert!(
+                    mirror_fields.contains_key(field),
+                    "runtime mirror should include neg_domain field {field}"
+                );
+            }
+            assert!(
+                mirror_fields
+                    [crate::persistence::WORLD_MODEL_STATE_FIELD_NEG_DOMAIN_PENDING_TRIBULATIONS]
+                    .contains("offline:azure"),
+                "mirror neg_domain_pending_tribulations JSON should contain the persisted player"
             );
 
             let _ = fs::remove_dir_all(root);
@@ -5989,6 +6126,10 @@ mod tests {
                         },
                     )]),
                     player_first_seen_tick: BTreeMap::from([("offline:azure".to_string(), 640)]),
+                    neg_domain_pending_tribulations: BTreeMap::new(),
+                    neg_domain_escape_telemetry:
+                        crate::schema::agent_world_model::NegDomainEscapeTelemetryV1::default(),
+                    neg_domain_escape_sessions: BTreeMap::new(),
                     last_tick: Some(640),
                     last_state_ts: Some(1_711_555_640),
                 },
@@ -6047,6 +6188,7 @@ mod tests {
                 player_first_seen_tick: BTreeMap::from([("offline:alpha".to_string(), 200)]),
                 last_tick: Some(200),
                 last_state_ts: Some(1_711_222_200),
+                ..Default::default()
             };
 
             persist_agent_world_model_snapshot(&settings, &snapshot)
@@ -6124,6 +6266,7 @@ mod tests {
                 player_first_seen_tick: BTreeMap::from([("offline:azure".to_string(), 640)]),
                 last_tick: Some(640),
                 last_state_ts: Some(1_711_555_640),
+                ..Default::default()
             };
             persist_agent_world_model_snapshot(&settings, &snapshot)
                 .expect("sqlite authority persist should succeed before reconcile");
