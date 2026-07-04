@@ -1154,11 +1154,6 @@ mod tests {
                 "期望 join tick（第 1 次 update）不发 center 包，因为 fire 必须等到\
                  GameJoin 之后的下一 tick；实际收到 {centers_tick1:?}"
             );
-            assert!(
-                app.world().get::<JoinViewResyncPending>(client).is_some(),
-                "期望第 1 次 update 结束后 marker 已由 arm 相挂上（Commands 在 tick 末\
-                 应用）；实际 client 上没有 JoinViewResyncPending"
-            );
 
             // tick 2：fire。center 包坐标必须是玩家真实所在 chunk (11,6)。
             app.update();
@@ -1170,13 +1165,10 @@ mod tests {
                 "期望第 2 次 update 恰好补发一个 center 包且坐标为玩家所在 chunk (11,6)\
                  （客户端据此把缓存中心从默认 (0,0) 挪过来）；实际收到 {centers_tick2:?}"
             );
-            assert!(
-                app.world().get::<JoinViewResyncPending>(client).is_none(),
-                "期望 fire 后 marker 被移除（一次性补发）；实际 JoinViewResyncPending 仍在"
-            );
             // 重灌走 remove+insert，chunk 必须仍留在 layer 里（丢了就等于把地形删了）。
             // 包内容（chunk 数据先后于 center 的字节序）由协议探针实测覆盖，这里只
-            // 断言服务端侧可观察的契约：chunk 未丢失 + marker 生命周期正确。
+            // 断言服务端侧可观察的契约：chunk 未丢失 + center 包「不发→恰发一次→
+            // 不复发」的三拍时序（内部 marker 的挂/摘属实现细节，不直接断言）。
             assert!(
                 app.world()
                     .get::<ChunkLayer>(layer)
