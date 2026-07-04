@@ -31,10 +31,14 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use valence::prelude::{
-    ident, App, BiomeRegistry, BlockState, Chunk, ChunkLayer, ChunkPos, ChunkView, Client,
-    Commands, DimensionTypeRegistry, Entity, IntoSystemConfigs, Local, Position, Query, Res,
-    ResMut, Resource, Server, UnloadedChunk, Update, Username, View, VisibleChunkLayer, With,
+    bevy_ecs, ident, Added, App, BiomeRegistry, BlockState, Chunk, ChunkLayer, ChunkPos, ChunkView,
+    Client, Commands, Component, DimensionTypeRegistry, Entity, IntoSystemConfigs, Local, Position,
+    Query, Res, ResMut, Resource, Server, UnloadedChunk, Update, Username, View, ViewDistance,
+    VisibleChunkLayer, With, Without,
 };
+use valence::protocol::encode::WritePacket;
+use valence::protocol::packets::play::ChunkRenderDistanceCenterS2c;
+use valence::protocol::VarInt;
 
 use crate::mineral::{MineralOreIndex, MineralOreNode};
 use crate::world::dimension::{DimensionKind, DimensionLayers, OverworldLayer};
@@ -142,7 +146,14 @@ pub fn register(app: &mut App) {
         // 修复"非 spawn 位置穿地坠落"：会话中途 ViewDistance 变化让原版客户端重建
         // 区块存储、丢掉已加载 chunk，而 Valence 只补发视野差集 → 客户端缺脚下 chunk
         // 的碰撞 → 穿地。本系统检测并恢复（重发 chunk + 弹回地表，真虚空则回 spawn）。
-        .add_systems(Update, recover_fall_through);
+        .add_systems(Update, recover_fall_through)
+        // 修复"join 后世界全虚空"：valence 在 join tick 永远不发
+        // ChunkRenderDistanceCenterS2c（OldPosition 被拍成当前 Position，diff 恒空），
+        // 原版客户端 chunk 缓存中心停留在默认 (0,0)，出生点 (11,6) 附近的 chunk
+        // 全部在接收瞬间被静默丢弃。本系统在 join 的下一 tick 补发 center 包并重灌
+        // 已被客户端丢弃的 chunk。无需 ordering 约束：Update 相写入的包总是先于本
+        // tick PostUpdate 的 chunk LOAD 数据进入发送缓冲。
+        .add_systems(Update, resync_view_after_join);
 }
 
 /// 玩家穿过自己脚下方块（即客户端丢失了服务端仍持有的 chunk 碰撞）时低于地板多少
@@ -282,6 +293,106 @@ fn recover_fall_through(
                 }
             }
         }
+    }
+}
+
+/// 修复"join 后世界全虚空"——已连接但尚未补发视野中心包的 client 标记。
+///
+/// valence 的 `update_view_and_layers` 只在 `old_view.pos != view.pos` 时发
+/// `ChunkRenderDistanceCenterS2c`；而 join tick `init_entities` 先把 `OldPosition`
+/// 拍成当前 `Position`，该包在 join tick **永远不发**。原版客户端 chunk 缓存中心
+/// 默认 (0,0)、保留半径=登录视距+3，收到范围外的 chunk 在接收瞬间被静默丢弃 →
+/// 出生点在 chunk (11,6) 的本世界，首连/重连全部落进虚空，直到跨 chunk 传送
+/// （如 /spawn）才偶然触发 center 补发。
+///
+/// arm（join tick 打标记）→ fire（下一 tick 补发）分两拍是刻意的：join tick 由
+/// valence `initial_join` 发 GameJoin，play 包若写在 GameJoin 之前会让客户端 NPE，
+/// 必须等下一 tick 再写。
+#[derive(Debug, Clone, Copy, Component)]
+struct JoinViewResyncPending;
+
+/// 纯决策（便于饱和单测）：view 内哪些 chunk 位置"原版客户端已经丢弃、需要重灌"。
+///
+/// 客户端 chunk 缓存默认中心 (0,0)、保留半径约为登录视距+3（方形判定
+/// `|x|<=r && |z|<=r`）。这里保守地按 `r = login_view_distance`（不加 3）判定：
+/// 宁可把客户端其实还留着的外圈多重发一遍，也绝不能漏掉真被丢弃的 chunk——
+/// 漏发即虚空，多发只是几个 chunk 的带宽。玩家 join 在原点附近时列表基本为空
+/// （客户端没丢，不必白重发几 MB）；出生点 (11,6) 这种场景则基本全量。
+///
+/// 注意：`ChunkView::iter()` 覆盖到 `dist + EXTRA_VIEW_RADIUS(=2)` 的圆盘，比 r
+/// 大一圈，所以即便 view 中心就在原点，超出 r 的外环仍会被列入（客户端其实留着
+/// 半径 vd+3，重发它们是冗余但无害的保守行为）。
+fn chunk_positions_needing_resend(view: ChunkView, login_view_distance: u8) -> Vec<ChunkPos> {
+    let r = i32::from(login_view_distance);
+    view.iter()
+        .filter(|cp| !(cp.x.abs() <= r && cp.z.abs() <= r))
+        .collect()
+}
+
+/// 修复"join 后世界全虚空"（根因见 [`JoinViewResyncPending`]）。
+///
+/// arm 相：对本 tick 新连接的 client 打 [`JoinViewResyncPending`] 标记（Commands
+/// 在 tick 末应用，fire 自然落到下一 tick）。
+///
+/// fire 相：对每个 pending client
+/// 1. 补发 `ChunkRenderDistanceCenterS2c`（客户端据此把 chunk 缓存中心从默认 (0,0)
+///    挪到玩家真实所在 chunk）。**Update 相里写的包会先于本 tick PostUpdate 的
+///    chunk LOAD 数据进入发送缓冲——center 必须先于 chunk 数据到达客户端，否则
+///    重灌的 chunk 又会被丢弃，这个顺序是本修复正确性的关键。**
+/// 2. 对 [`chunk_positions_needing_resend`] 给出的每个位置 `remove_chunk`+
+///    `insert_chunk` 重新插入（与 [`recover_fall_through`] 的 ResendAndBounce 分支
+///    同款手法），产生 LOAD layer-message，本 tick 的 `handle_layer_messages` 会把
+///    整块重发给该客户端（此时 OldView 已正确，消息不会被过滤）。尚未生成的
+///    chunk 不用管——它们之后生成时 center 已正确。
+#[allow(clippy::type_complexity)]
+fn resync_view_after_join(
+    mut commands: Commands,
+    new_clients: Query<Entity, (Added<Client>, Without<JoinViewResyncPending>)>,
+    mut pending_clients: Query<
+        (
+            Entity,
+            &mut Client,
+            &Position,
+            &ViewDistance,
+            &VisibleChunkLayer,
+        ),
+        With<JoinViewResyncPending>,
+    >,
+    mut layers: Query<&mut ChunkLayer>,
+) {
+    // arm 相：join tick 只打标记，不写包（GameJoin 之前写 play 包会让客户端 NPE）。
+    for entity in &new_clients {
+        commands.entity(entity).insert(JoinViewResyncPending);
+    }
+
+    // fire 相：join 的下一 tick 补发 center + 重灌客户端已丢弃的 chunk。
+    for (entity, mut client, position, view_distance, visible_chunk_layer) in &mut pending_clients {
+        let view = ChunkView::new(ChunkPos::from(position.get()), view_distance.get());
+        client.write_packet(&ChunkRenderDistanceCenterS2c {
+            chunk_x: VarInt(view.pos.x),
+            chunk_z: VarInt(view.pos.z),
+        });
+
+        // layer 拿不到（如维度 layer 尚未就绪）就只发 center 不重灌——center 正确后
+        // 后续生成/插入的 chunk 都能正常被客户端接收，不会永久虚空。
+        let mut resent = 0usize;
+        if let Ok(mut layer) = layers.get_mut(visible_chunk_layer.0) {
+            for cp in chunk_positions_needing_resend(view, view_distance.get()) {
+                if let Some(chunk) = layer.remove_chunk(cp) {
+                    layer.insert_chunk(cp, chunk);
+                    resent += 1;
+                }
+            }
+        }
+
+        commands.entity(entity).remove::<JoinViewResyncPending>();
+        tracing::debug!(
+            "[bong][world] {:?} joined → re-sent chunk render distance center ({},{}) + re-inserted {} chunks the client had silently discarded",
+            entity,
+            view.pos.x,
+            view.pos.z,
+            resent
+        );
     }
 }
 
@@ -818,6 +929,274 @@ mod tests {
 
     fn heightmap_bits_for_dimension(height: u32) -> u32 {
         u32::BITS - height.leading_zeros()
+    }
+
+    // join 视野中心补发 —— chunk_positions_needing_resend 纯函数饱和测试 +
+    // resync_view_after_join 系统级测试（marker 生命周期 + center 包 + chunk 重灌）。
+    mod join_view_resync {
+        use super::*;
+        use std::collections::BTreeSet;
+        use valence::prelude::OldPosition;
+        use valence::protocol::Packet;
+        use valence::testing::ScenarioSingleClient;
+
+        /// 方形保留判定的参考实现，测试独立推导（不复用被测函数内部逻辑）。
+        fn retained_by_client(cp: ChunkPos, r: i32) -> bool {
+            cp.x.abs() <= r && cp.z.abs() <= r
+        }
+
+        #[test]
+        fn far_from_origin_view_needs_full_resend() {
+            // 出生点 chunk (11,6)、vd=4：view 圆盘（半径 vd+2=6）内没有任何位置落在
+            // 客户端默认保留方形 |x|<=4 && |z|<=4 里（距中心最近的 (5,6) 也有 |z|=6>4），
+            // 客户端把收到的 chunk 全丢了 → 必须全量重灌。
+            let view = ChunkView::new(ChunkPos::new(11, 6), 4);
+            let all: BTreeSet<ChunkPos> = view.iter().collect();
+            let resend: BTreeSet<ChunkPos> = chunk_positions_needing_resend(view, 4)
+                .into_iter()
+                .collect();
+            assert_eq!(
+                resend,
+                all,
+                "期望出生点 (11,6) vd=4 的 view 全部 {} 个位置都要重灌，因为它们全在客户端\
+                 默认保留方形 r=4 之外（接收瞬间已被丢弃）；实际重灌集合与 view 全集不一致",
+                all.len()
+            );
+        }
+
+        #[test]
+        fn origin_join_keeps_client_retained_square() {
+            // 原点 join：客户端保留方形 r=4 覆盖 view 的主体，这部分绝不能重发。
+            // 注意 `ChunkView::iter()` 覆盖到 dist+EXTRA_VIEW_RADIUS(=2) 的圆盘，
+            // 超出 r=4 的外环（max(|x|,|z|) ∈ 5..=6）仍会被保守地列入——客户端其实
+            // 留着半径 vd+3，重发外环是冗余但无害（宁可多发不可漏发）。
+            let view = ChunkView::new(ChunkPos::new(0, 0), 4);
+            let resend: BTreeSet<ChunkPos> = chunk_positions_needing_resend(view, 4)
+                .into_iter()
+                .collect();
+            for cp in view.iter() {
+                if retained_by_client(cp, 4) {
+                    assert!(
+                        !resend.contains(&cp),
+                        "期望 {cp:?} 不被重发，因为它在客户端保留方形 r=4 内（客户端没丢，\
+                         重发纯属浪费带宽）；实际它出现在重灌列表里"
+                    );
+                }
+            }
+            for cp in &resend {
+                let ring = cp.x.abs().max(cp.z.abs());
+                assert!(
+                    (5..=6).contains(&ring),
+                    "期望原点 join 被列入重灌的只可能是 EXTRA_VIEW_RADIUS 外环\
+                     （max(|x|,|z|) ∈ 5..=6），因为方形 r=4 内全部保留、view 圆盘半径只有 6；\
+                     实际出现了 {cp:?}（ring={ring}）"
+                );
+            }
+        }
+
+        #[test]
+        fn boundary_off_by_one_at_retained_square_edge() {
+            // 跨界 case：view 中心 (5,0)、vd=4，r=4 → 恰好 |x|<=4 && |z|<=4 的保留、
+            // 出界一格的重发。逐一验证 off-by-one。
+            let view = ChunkView::new(ChunkPos::new(5, 0), 4);
+            let resend: BTreeSet<ChunkPos> = chunk_positions_needing_resend(view, 4)
+                .into_iter()
+                .collect();
+
+            // x=4 保留（|4|<=4 且 |0|<=4）
+            assert!(
+                !resend.contains(&ChunkPos::new(4, 0)),
+                "期望 (4,0) 保留，因为 |4|<=r=4 客户端没丢；实际它被列入重灌"
+            );
+            // x=5 重发（|5|>4）
+            assert!(
+                resend.contains(&ChunkPos::new(5, 0)),
+                "期望 (5,0) 重发，因为 |5|>r=4 客户端接收瞬间已丢弃；实际它不在重灌列表"
+            );
+            // z 轴同样的 off-by-one：(4,4) 保留、(4,5) 重发（两者都在 view 圆盘内）。
+            assert!(view.contains(ChunkPos::new(4, 4)) && view.contains(ChunkPos::new(4, 5)));
+            assert!(
+                !resend.contains(&ChunkPos::new(4, 4)),
+                "期望 (4,4) 保留，因为 |x|、|z| 均 <=4；实际它被列入重灌"
+            );
+            assert!(
+                resend.contains(&ChunkPos::new(4, 5)),
+                "期望 (4,5) 重发，因为 |z|=5>4（方形判定是 && 的取反，任一轴出界即丢）；\
+                 实际它不在重灌列表"
+            );
+
+            // 全集逐一核验：重灌列表 == view 内所有出方形的位置，无遗漏无多余。
+            for cp in view.iter() {
+                assert_eq!(
+                    resend.contains(&cp),
+                    !retained_by_client(cp, 4),
+                    "期望 {cp:?} 的重灌判定与「不在保留方形 r=4 内」严格一致，\
+                     实际两者相反",
+                );
+            }
+        }
+
+        #[test]
+        fn vd_zero_extreme_no_panic_and_correct() {
+            // vd=0（ChunkView 允许 0，ViewDistance 组件才 clamp 到 2）：保留方形只剩
+            // (0,0) 一格，view 圆盘（半径 0+2=2）里其余全部重发。
+            let view = ChunkView::new(ChunkPos::new(0, 0), 0);
+            let resend: BTreeSet<ChunkPos> = chunk_positions_needing_resend(view, 0)
+                .into_iter()
+                .collect();
+            assert!(
+                !resend.contains(&ChunkPos::new(0, 0)),
+                "期望 vd=0 时 (0,0) 保留，因为 r=0 的方形恰含原点一格；实际它被列入重灌"
+            );
+            let expected: BTreeSet<ChunkPos> = view
+                .iter()
+                .filter(|cp| !retained_by_client(*cp, 0))
+                .collect();
+            assert_eq!(
+                resend, expected,
+                "期望 vd=0 时重灌集合 == view 内除 (0,0) 外的全部位置（r=0 只保原点），\
+                 实际集合不一致"
+            );
+        }
+
+        #[test]
+        fn vd_max_extreme_no_panic_and_correct() {
+            // vd=32（MAX_VIEW_DIST）：不 panic，且 off-by-one 语义在极端值下仍然成立。
+            let view = ChunkView::new(ChunkPos::new(0, 0), 32);
+            let resend: BTreeSet<ChunkPos> = chunk_positions_needing_resend(view, 32)
+                .into_iter()
+                .collect();
+            assert!(
+                !resend.contains(&ChunkPos::new(32, 0)),
+                "期望 (32,0) 保留，因为 |32|<=r=32；实际它被列入重灌"
+            );
+            assert!(
+                view.contains(ChunkPos::new(33, 0)),
+                "前置：(33,0) 应在 vd=32 的 view 圆盘（半径 34）内，否则下一条断言无意义"
+            );
+            assert!(
+                resend.contains(&ChunkPos::new(33, 0)),
+                "期望 (33,0) 重发，因为 |33|>r=32（EXTRA_VIEW_RADIUS 外环）；\
+                 实际它不在重灌列表"
+            );
+            for cp in view.iter() {
+                assert_eq!(
+                    resend.contains(&cp),
+                    !retained_by_client(cp, 32),
+                    "期望 {cp:?} 在 vd=32 极端值下的重灌判定与保留方形 r=32 严格互补，\
+                     实际两者相反",
+                );
+            }
+        }
+
+        /// 把所有 mock client 的发送缓冲刷进连接，确保 `collect_received` 能拿到
+        /// 本 tick 写入的包（valence 的 flush 在 PostUpdate，这里显式再刷一次防抖）。
+        fn flush_all_client_packets(app: &mut App) {
+            let world = app.world_mut();
+            let mut query = world.query::<&mut Client>();
+            for mut client in query.iter_mut(world) {
+                client
+                    .flush_packets()
+                    .expect("mock client packets should flush");
+            }
+        }
+
+        /// 系统级：join → 第 1 tick 只 arm 不 fire；第 2 tick fire（center 包 + chunk
+        /// 重灌 + marker 移除）；第 3 tick 不再重复 fire。
+        ///
+        /// Position 与 OldPosition 一起写死为出生点，精确复现 join tick
+        /// `old_view.pos == view.pos` → valence 自己永远不发 center 包的前置条件，
+        /// 因此收到的所有 ChunkRenderDistanceCenterS2c 都必然来自被测系统。
+        #[test]
+        fn join_resync_fires_exactly_once_on_second_tick() {
+            let scenario = ScenarioSingleClient::new();
+            let mut app = scenario.app;
+            let client = scenario.client;
+            let layer = scenario.layer;
+            let mut helper = scenario.helper;
+
+            app.add_systems(Update, resync_view_after_join);
+
+            // 出生点 chunk (11,6)（block x=190,z=111）——真实 bug 的复现坐标。
+            app.world_mut().entity_mut(client).insert((
+                Position::new([190.0, 64.0, 111.0]),
+                OldPosition::new([190.0, 64.0, 111.0]),
+                ViewDistance::new(4),
+            ));
+            // 服务端已持有 view 中心 chunk（客户端因 center 停在 (0,0) 而丢弃了它）。
+            app.world_mut()
+                .get_mut::<ChunkLayer>(layer)
+                .expect("scenario layer should carry a ChunkLayer")
+                .insert_chunk(ChunkPos::new(11, 6), UnloadedChunk::new());
+
+            let count_center_packets = |helper: &mut valence::testing::MockClientHelper| {
+                helper
+                    .collect_received()
+                    .0
+                    .iter()
+                    .filter(|frame| frame.id == ChunkRenderDistanceCenterS2c::ID)
+                    .map(|frame| {
+                        frame
+                            .decode::<ChunkRenderDistanceCenterS2c>()
+                            .expect("center packet frame should decode")
+                    })
+                    .map(|packet| (packet.chunk_x.0, packet.chunk_z.0))
+                    .collect::<Vec<_>>()
+            };
+
+            // tick 1：arm。marker 在 tick 末挂上，但绝不能在 join tick 写 play 包
+            // （GameJoin 之前的 play 包会让客户端 NPE）。
+            app.update();
+            flush_all_client_packets(&mut app);
+            let centers_tick1 = count_center_packets(&mut helper);
+            assert!(
+                centers_tick1.is_empty(),
+                "期望 join tick（第 1 次 update）不发 center 包，因为 fire 必须等到\
+                 GameJoin 之后的下一 tick；实际收到 {centers_tick1:?}"
+            );
+            assert!(
+                app.world().get::<JoinViewResyncPending>(client).is_some(),
+                "期望第 1 次 update 结束后 marker 已由 arm 相挂上（Commands 在 tick 末\
+                 应用）；实际 client 上没有 JoinViewResyncPending"
+            );
+
+            // tick 2：fire。center 包坐标必须是玩家真实所在 chunk (11,6)。
+            app.update();
+            flush_all_client_packets(&mut app);
+            let centers_tick2 = count_center_packets(&mut helper);
+            assert_eq!(
+                centers_tick2,
+                vec![(11, 6)],
+                "期望第 2 次 update 恰好补发一个 center 包且坐标为玩家所在 chunk (11,6)\
+                 （客户端据此把缓存中心从默认 (0,0) 挪过来）；实际收到 {centers_tick2:?}"
+            );
+            assert!(
+                app.world().get::<JoinViewResyncPending>(client).is_none(),
+                "期望 fire 后 marker 被移除（一次性补发）；实际 JoinViewResyncPending 仍在"
+            );
+            // 重灌走 remove+insert，chunk 必须仍留在 layer 里（丢了就等于把地形删了）。
+            // 包内容（chunk 数据先后于 center 的字节序）由协议探针实测覆盖，这里只
+            // 断言服务端侧可观察的契约：chunk 未丢失 + marker 生命周期正确。
+            assert!(
+                app.world()
+                    .get::<ChunkLayer>(layer)
+                    .expect("scenario layer should still carry a ChunkLayer")
+                    .chunk(ChunkPos::new(11, 6))
+                    .is_some(),
+                "期望重灌（remove+insert）后 chunk (11,6) 仍在 layer 中，因为重灌只是为了\
+                 触发 LOAD layer-message 而非真正卸载；实际该 chunk 从 layer 消失了"
+            );
+
+            // tick 3：marker 已摘，绝不能重复 fire（否则每 tick 白重发整个 view）。
+            app.update();
+            flush_all_client_packets(&mut app);
+            let centers_tick3 = count_center_packets(&mut helper);
+            assert!(
+                centers_tick3.is_empty(),
+                "期望第 3 次 update 不再发 center 包，因为 marker 已在 fire 时移除、\
+                 Added<Client> 也早已消费；实际收到 {centers_tick3:?}"
+            );
+        }
     }
 
     // F12 — TSY chunk routing pin 测试。用 `valence::testing::ScenarioSingleClient`
