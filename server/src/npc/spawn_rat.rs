@@ -13,8 +13,8 @@ use crate::fauna::rat_phase::{
 use crate::fauna::visual::{FaunaVisualKind, DEVOUR_RAT_ENTITY_KIND};
 use crate::npc::brain::{WanderAction, WanderScorer, WanderState};
 use crate::npc::brain_rat::{
-    DrainedChunkAvoidScorer, GroupCohesionScorer, QiSourceProximityScorer, RegroupAction,
-    SeekQiSourceAction,
+    DrainedChunkAvoidScorer, GroupCohesionScorer, HarassBiteAction, PlayerHarassScorer,
+    QiSourceProximityScorer, RegroupAction, SeekQiSourceAction,
 };
 use crate::npc::hunger::Hunger;
 use crate::npc::lifecycle::{npc_runtime_bundle, NpcArchetype};
@@ -34,6 +34,9 @@ pub struct RatBlackboard {
     pub last_pressure_target: Option<DVec3>,
     pub recently_drained: Vec<ChunkPos>,
     pub drained_qi: f64,
+    /// plan-ambient-threat-v1 P2：`PlayerHarassScorer` 就绪门槛——冷却到期前该 rat
+    /// 不会重新起评"骚扰玩家"，与 `QiSourceProximityScorer` 互斥编排的关键状态。
+    pub harass_cooldown_until_tick: u64,
 }
 
 impl RatBlackboard {
@@ -45,6 +48,7 @@ impl RatBlackboard {
             last_pressure_target: None,
             recently_drained: Vec::new(),
             drained_qi: 0.0,
+            harass_cooldown_until_tick: 0,
         }
     }
 }
@@ -56,6 +60,11 @@ pub fn rat_npc_thinker() -> ThinkerBuilder {
         })
         .when(DrainedChunkAvoidScorer, WanderAction)
         .when(GroupCohesionScorer, RegroupAction)
+        // plan-ambient-threat-v1 P2：`PlayerHarassScorer` 必须排在
+        // `QiSourceProximityScorer` 之前——`FirstToScore` 按声明顺序取第一个越过阈值的
+        // scorer，这样玩家近距骚扰咬击与既有的通用 qi 源索敌互斥，同一 tick 不会双开
+        // 两条分支各自 emit `RatBiteEvent`（见 brain_rat.rs 模块注释）。
+        .when(PlayerHarassScorer, HarassBiteAction)
         .when(QiSourceProximityScorer, SeekQiSourceAction)
         .when(WanderScorer, WanderAction)
 }

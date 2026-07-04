@@ -344,6 +344,13 @@ pub fn register(app: &mut App) {
             .in_set(CombatSystemSet::Resolve)
             .after(resolve::resolve_attack_intents),
     );
+    // plan-ambient-threat-v1 P2: 鼠咬打断打坐（对齐兽潮咬击既有语义），独立于守恒扣减。
+    app.add_systems(
+        Update,
+        rat_bite::interrupt_meditation_on_rat_bite
+            .in_set(CombatSystemSet::Resolve)
+            .after(resolve::resolve_attack_intents),
+    );
     // plan-onboarding-loop-v1 P1.2: 首次受击自学闪身步。
     app.add_systems(
         Update,

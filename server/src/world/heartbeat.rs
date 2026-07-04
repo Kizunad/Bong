@@ -12,6 +12,7 @@ use crate::cultivation::components::{Cultivation, Realm};
 use crate::cultivation::tick::CultivationClock;
 use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::npc::lifecycle::NpcRegistry;
+use crate::npc::spawn::ambient_scheduler::{danger_tide_required_ticks_scale, danger_tide_weight};
 use crate::player::state::canonical_player_id;
 use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
 use crate::qi_physics::{
@@ -737,7 +738,13 @@ pub fn chain_reaction_tick(
                     let npc_count = npc_counts
                         .and_then(|counts| counts.get(neighbor.name.as_str()).copied())
                         .unwrap_or_default();
-                    if neighbor.spirit_qi >= BEAST_TIDE_LOW_QI_THRESHOLD || npc_count <= 3 {
+                    // P3 §8.1 #5 — 次入口 danger 加权：`BEAST_TIDE_LOW_QI_THRESHOLD` 常数
+                    // 本身不动，只在此处按 neighbor.danger_level 放宽"有效低灵气窗口"——
+                    // danger 越高，即便邻域灵气回升得更多一点也仍判定为触发条件成立。
+                    // danger<=1 时权重=1.0，effective_threshold == 原始常数，行为不变。
+                    let effective_low_qi_threshold =
+                        BEAST_TIDE_LOW_QI_THRESHOLD * danger_tide_weight(neighbor.danger_level);
+                    if neighbor.spirit_qi >= effective_low_qi_threshold || npc_count <= 3 {
                         continue;
                     }
                     if heartbeat.is_suppressed(
@@ -747,10 +754,12 @@ pub fn chain_reaction_tick(
                     ) {
                         continue;
                     }
+                    let intensity = (0.3 + (*redistributed_qi).clamp(0.0, 0.4))
+                        * danger_tide_weight(neighbor.danger_level);
                     let command = spawn_event_command(
                         neighbor.name.as_str(),
                         EVENT_BEAST_TIDE,
-                        0.3 + (*redistributed_qi).clamp(0.0, 0.4),
+                        intensity,
                         20 * TICKS_PER_MINUTE,
                         None,
                     );
@@ -1385,7 +1394,14 @@ fn maybe_queue_beast_tide(
             .get(zone.name.as_str())
             .copied()
             .unwrap_or_default();
-        if low_ticks < BEAST_TIDE_LOW_QI_REQUIRED_TICKS {
+        // P3 §8.1 #5 — danger 加权：`BEAST_TIDE_LOW_QI_REQUIRED_TICKS` 常数本身不动，
+        // 只在此处按 zone.danger_level 缩放出"有效所需时长"——danger 越高该 zone 越容易
+        // 满足触发条件（危险度地理对应生态失衡越剧烈）。danger<=1 时 scale=1.0，行为与
+        // P3 落地前完全一致。
+        let required_ticks = (BEAST_TIDE_LOW_QI_REQUIRED_TICKS as f64
+            * danger_tide_required_ticks_scale(zone.danger_level))
+        .round() as u64;
+        if low_ticks < required_ticks {
             continue;
         }
         let npc_count = npc_registry
@@ -1422,7 +1438,9 @@ fn maybe_queue_beast_tide(
                 context.current_tick,
             )
             .unwrap_or_else(|| {
-                (0.25 + npc_count as f64 * 0.04).min(1.0) * context.modifiers.beast_tide_scale
+                (0.25 + npc_count as f64 * 0.04).min(1.0)
+                    * context.modifiers.beast_tide_scale
+                    * danger_tide_weight(zone.danger_level)
             });
         if queue_omen(
             heartbeat,
@@ -2211,6 +2229,15 @@ mod tests {
         }
     }
 
+    /// P3 §8.1 #5 — 与 [`zone`] 同款 fixture，但可配置 `danger_level`（`zone()` 恒
+    /// 硬编码 `danger_level: 0`，测不出 danger 加权效果）。
+    fn zone_with_danger(name: &str, x: f64, z: f64, spirit_qi: f64, danger_level: u8) -> Zone {
+        Zone {
+            danger_level,
+            ..zone(name, x, z, spirit_qi)
+        }
+    }
+
     fn rhythm_context(loop_phase: PlayerLoopPhase, current_tick: u64) -> HeartbeatRhythmContext {
         HeartbeatRhythmContext {
             modifiers: season_event_modifiers(Season::Summer),
@@ -2483,6 +2510,244 @@ mod tests {
         assert_eq!(
             heartbeat.pending_omens[0].intensity, 0.42,
             "accelerate intensity_override should drive queued beast tide strength"
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // P3 §8.1 #5 —— 兽潮双因子 danger 加权门槛矩阵
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn beast_tide_primary_entry_danger_weight_shortens_required_duration() {
+        // 三态矩阵「qi 骤降速率单独触发」态：只走主入口 `maybe_queue_beast_tide`，全程
+        // 不发 PseudoVeinDissipated（次入口/塌缩因子完全缺席）。danger=7 权重(1.6)把
+        // required_ticks 从 6000 缩到约 3750；用同一个 low_ticks=4200（+eval_interval 200
+        // 后约 4400）验证：danger=7 应触发、danger=1（权重=1.0，仍需完整 6000）不应触发。
+        let low_ticks = 4200;
+        let npc_registry = NpcRegistry {
+            counts_by_zone: HashMap::from([("scorch".to_string(), 6), ("spawn".to_string(), 6)]),
+            ..Default::default()
+        };
+
+        let mut heartbeat_high_danger = WorldHeartbeat::default();
+        heartbeat_high_danger
+            .low_qi_ticks_by_zone
+            .insert("scorch".to_string(), low_ticks);
+        let zones_high_danger = ZoneRegistry {
+            zones: vec![zone_with_danger("scorch", 0.0, 0.0, 0.05, 7)],
+        };
+        maybe_queue_beast_tide(
+            &mut heartbeat_high_danger,
+            &zones_high_danger,
+            Some(&npc_registry),
+            &ActiveEventsResource::default(),
+            rhythm_context(PlayerLoopPhase::DeepGathering, 100_000),
+            None,
+        );
+        assert_eq!(
+            heartbeat_high_danger.pending_omens.len(),
+            1,
+            "danger=7 的 zone 在 low_ticks={low_ticks} 时应已越过缩短后的有效阈值\
+             （约 3750，权重 1.6）触发兽潮预警，实际未触发——danger 加权可能没接上主入口"
+        );
+
+        let mut heartbeat_low_danger = WorldHeartbeat::default();
+        heartbeat_low_danger
+            .low_qi_ticks_by_zone
+            .insert("spawn".to_string(), low_ticks);
+        let zones_low_danger = ZoneRegistry {
+            zones: vec![zone_with_danger("spawn", 0.0, 0.0, 0.05, 1)],
+        };
+        maybe_queue_beast_tide(
+            &mut heartbeat_low_danger,
+            &zones_low_danger,
+            Some(&npc_registry),
+            &ActiveEventsResource::default(),
+            rhythm_context(PlayerLoopPhase::DeepGathering, 100_000),
+            None,
+        );
+        assert!(
+            heartbeat_low_danger.pending_omens.is_empty(),
+            "danger=1 权重=1.0，同样 low_ticks={low_ticks} 未达完整 6000 阈值不应触发——\
+             若触发说明 danger 加权错误地放宽了低危 zone 的门槛"
+        );
+    }
+
+    #[test]
+    fn beast_tide_primary_entry_danger_weight_scales_intensity() {
+        // danger 权重同时放大兽潮强度：同样的 npc_count，danger=7 队列出的 intensity
+        // 应严格高于 danger=1（两者都走默认强度公式，未设 override）。
+        let npc_registry = NpcRegistry {
+            counts_by_zone: HashMap::from([("scorch".to_string(), 6), ("spawn".to_string(), 6)]),
+            ..Default::default()
+        };
+
+        let mut heartbeat_high = WorldHeartbeat::default();
+        heartbeat_high
+            .low_qi_ticks_by_zone
+            .insert("scorch".to_string(), BEAST_TIDE_LOW_QI_REQUIRED_TICKS);
+        maybe_queue_beast_tide(
+            &mut heartbeat_high,
+            &ZoneRegistry {
+                zones: vec![zone_with_danger("scorch", 0.0, 0.0, 0.05, 7)],
+            },
+            Some(&npc_registry),
+            &ActiveEventsResource::default(),
+            rhythm_context(PlayerLoopPhase::DeepGathering, 100_000),
+            None,
+        );
+
+        let mut heartbeat_low = WorldHeartbeat::default();
+        heartbeat_low
+            .low_qi_ticks_by_zone
+            .insert("spawn".to_string(), BEAST_TIDE_LOW_QI_REQUIRED_TICKS);
+        maybe_queue_beast_tide(
+            &mut heartbeat_low,
+            &ZoneRegistry {
+                zones: vec![zone_with_danger("spawn", 0.0, 0.0, 0.05, 1)],
+            },
+            Some(&npc_registry),
+            &ActiveEventsResource::default(),
+            rhythm_context(PlayerLoopPhase::DeepGathering, 100_000),
+            None,
+        );
+
+        assert_eq!(heartbeat_high.pending_omens.len(), 1);
+        assert_eq!(heartbeat_low.pending_omens.len(), 1);
+        assert!(
+            heartbeat_high.pending_omens[0].intensity > heartbeat_low.pending_omens[0].intensity,
+            "danger=7 intensity({}) 应严格高于 danger=1 intensity({})——danger 加权\
+             应放大兽潮强度而非只影响触发时长",
+            heartbeat_high.pending_omens[0].intensity,
+            heartbeat_low.pending_omens[0].intensity
+        );
+    }
+
+    #[test]
+    fn beast_tide_secondary_entry_danger_weight_widens_effective_qi_threshold() {
+        // 三态矩阵「collapse/邻域塌缩扩散事件单独触发」态：只走次入口
+        // `PseudoVeinDissipated`，全程 `low_qi_ticks_by_zone` 为空（主入口/qi 骤降因子
+        // 完全缺席，heartbeat 用全新默认值）。spirit_qi=0.2 位于 base 阈值(0.15)之上、
+        // danger=7 加权阈值(0.15*1.6=0.24)之下——只有 danger 权重放宽窗口后才会触发，
+        // 验证次入口确实吃到了 danger 加权。
+        let mut app = App::new();
+        app.insert_resource(WorldHeartbeat::default());
+        app.insert_resource(ActiveEventsResource::default());
+        app.insert_resource(ZoneRegistry {
+            zones: vec![
+                zone("pseudo_vein_done", 0.0, 0.0, 0.0),
+                zone_with_danger("scorch_neighbor", 300.0, 0.0, 0.2, 7),
+            ],
+        });
+        app.insert_resource(NpcRegistry {
+            counts_by_zone: HashMap::from([("scorch_neighbor".to_string(), 4)]),
+            ..Default::default()
+        });
+        app.add_event::<EventChainTrigger>();
+        app.add_systems(Update, chain_reaction_tick);
+        app.world_mut()
+            .send_event(EventChainTrigger::PseudoVeinDissipated {
+                zone_name: "pseudo_vein_done".to_string(),
+                redistributed_qi: 0.7,
+            });
+        app.update();
+
+        let active = app.world().resource::<ActiveEventsResource>();
+        assert!(
+            active.contains("scorch_neighbor", EVENT_BEAST_TIDE),
+            "danger=7 邻域 spirit_qi=0.2 高于 base 阈值 0.15 但低于加权阈值 0.24，\
+             danger 加权应放宽次入口的有效窗口使其仍触发兽潮——若未触发说明加权没接次入口"
+        );
+    }
+
+    #[test]
+    fn beast_tide_secondary_entry_low_danger_zone_at_same_qi_does_not_trigger() {
+        // 同样 spirit_qi=0.2，邻域改成 danger=1（权重=1.0，有效阈值仍是原始 0.15）——
+        // 不该触发，证明"加权放宽"只在真的高危 zone 生效，不是无脑放行所有邻域。
+        let mut app = App::new();
+        app.insert_resource(WorldHeartbeat::default());
+        app.insert_resource(ActiveEventsResource::default());
+        app.insert_resource(ZoneRegistry {
+            zones: vec![
+                zone("pseudo_vein_done", 0.0, 0.0, 0.0),
+                zone_with_danger("calm_neighbor", 300.0, 0.0, 0.2, 1),
+            ],
+        });
+        app.insert_resource(NpcRegistry {
+            counts_by_zone: HashMap::from([("calm_neighbor".to_string(), 4)]),
+            ..Default::default()
+        });
+        app.add_event::<EventChainTrigger>();
+        app.add_systems(Update, chain_reaction_tick);
+        app.world_mut()
+            .send_event(EventChainTrigger::PseudoVeinDissipated {
+                zone_name: "pseudo_vein_done".to_string(),
+                redistributed_qi: 0.7,
+            });
+        app.update();
+
+        let active = app.world().resource::<ActiveEventsResource>();
+        assert!(
+            !active.contains("calm_neighbor", EVENT_BEAST_TIDE),
+            "danger=1 权重=1.0，effective_threshold 仍是原始 0.15；spirit_qi=0.2 >= 0.15 \
+             应被判定为灵气已回升而跳过，不应触发"
+        );
+    }
+
+    #[test]
+    fn beast_tide_neither_factor_met_yields_no_trigger_on_either_entry() {
+        // 三态矩阵第三态：primary（低灵气持续时长）与 secondary（邻域塌缩扩散）都不满足——
+        // 两条入口都不应触发，即便 zone 本身 danger 很高（danger 加权只放宽门槛，不能
+        // 无中生有制造触发条件）。
+        let npc_registry = NpcRegistry {
+            counts_by_zone: HashMap::from([("scorch".to_string(), 6)]),
+            ..Default::default()
+        };
+        let mut heartbeat = WorldHeartbeat::default();
+        heartbeat
+            .low_qi_ticks_by_zone
+            .insert("scorch".to_string(), 100); // 远低于 danger=7 缩放后阈值(≈3750)
+        maybe_queue_beast_tide(
+            &mut heartbeat,
+            &ZoneRegistry {
+                zones: vec![zone_with_danger("scorch", 0.0, 0.0, 0.05, 7)],
+            },
+            Some(&npc_registry),
+            &ActiveEventsResource::default(),
+            rhythm_context(PlayerLoopPhase::DeepGathering, 100_000),
+            None,
+        );
+        assert!(
+            heartbeat.pending_omens.is_empty(),
+            "primary 入口 low_ticks 远未达标（100 << ~3750）不应排队兽潮预警"
+        );
+
+        let mut app = App::new();
+        app.insert_resource(WorldHeartbeat::default());
+        app.insert_resource(ActiveEventsResource::default());
+        app.insert_resource(ZoneRegistry {
+            zones: vec![
+                zone("pseudo_vein_done", 0.0, 0.0, 0.0),
+                zone_with_danger("healthy_neighbor", 300.0, 0.0, 0.5, 7),
+            ],
+        });
+        app.insert_resource(NpcRegistry {
+            counts_by_zone: HashMap::from([("healthy_neighbor".to_string(), 4)]),
+            ..Default::default()
+        });
+        app.add_event::<EventChainTrigger>();
+        app.add_systems(Update, chain_reaction_tick);
+        app.world_mut()
+            .send_event(EventChainTrigger::PseudoVeinDissipated {
+                zone_name: "pseudo_vein_done".to_string(),
+                redistributed_qi: 0.7,
+            });
+        app.update();
+        let active = app.world().resource::<ActiveEventsResource>();
+        assert!(
+            !active.contains("healthy_neighbor", EVENT_BEAST_TIDE),
+            "邻域 spirit_qi=0.5 远高于任何 danger 加权后的阈值上限(0.15*1.6=0.24)，\
+             次入口也不该触发——两条入口都不满足才是正确的第三态"
         );
     }
 

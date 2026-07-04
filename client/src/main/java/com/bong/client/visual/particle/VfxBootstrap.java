@@ -120,6 +120,13 @@ public final class VfxBootstrap {
         registry.register(LingtianPlotRunePlayer.DRAIN,          lingtianPlotRunes);
         registry.register(RatSwarmAuraPlayer.EVENT_ID,           new RatSwarmAuraPlayer());
         registry.register(FaunaSpawnDustPlayer.EVENT_ID,         new FaunaSpawnDustPlayer());
+        // plan-ambient-threat-v1 P2 — rat 袭扰咬击瞬间灰白尘粒反馈。复用
+        // FaunaSpawnDustPlayer（payload 驱动 color/count/duration 的通用 sprite burst），
+        // 无新 Java 类：server RAT_BITE_NIP 已带灰白 #9B9B8C / count 4 / duration 8t。
+        registry.register(
+            new net.minecraft.util.Identifier("bong", "rat_bite_nip"),
+            new FaunaSpawnDustPlayer()
+        );
         registry.register(MigrationVisualPlayer.EVENT_ID,        new MigrationVisualPlayer());
         PseudoVeinVisualPlayer pseudoVein = new PseudoVeinVisualPlayer();
         registry.register(PseudoVeinVisualPlayer.RISING,         pseudoVein);
