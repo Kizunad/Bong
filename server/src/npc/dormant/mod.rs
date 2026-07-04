@@ -31,9 +31,7 @@ use crate::cultivation::breakthrough::{
     BreakthroughSuccess, RollSource, XorshiftRoll, MIN_ZONE_QI_TO_BREAKTHROUGH,
     MIN_ZONE_QI_TO_GUYUAN,
 };
-use crate::cultivation::components::{
-    Contamination, Cultivation, MeridianId, MeridianSystem, Realm,
-};
+use crate::cultivation::components::{Contamination, Cultivation, MeridianSystem, Realm};
 use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
 use crate::cultivation::lifespan::{
     DeathRegistry, LifespanCapTable, LifespanComponent, LifespanExtensionLedger,
@@ -1258,6 +1256,13 @@ fn migrate_dormant_realm_distribution_v1(
             snapshot.cultivation.realm = new_realm;
             snapshot.cultivation.qi_max = qi_max_for_realm(new_realm);
             snapshot.shared_lifespan = LifespanComponent::for_realm(new_realm);
+            // Verify blocker fix: re-rolling realm without re-deriving meridian_system
+            // leaves the migrated snapshot's opened-meridian count pinned to whatever
+            // it was seeded with (often the P0-era 1-meridian default), disagreeing
+            // with new_realm.required_meridians() — same double-source bug as the
+            // seeder, just on the migration path.
+            snapshot.meridian_system =
+                crate::npc::technique::npc_meridian_system_for_realm(new_realm);
             changed = true;
             if matches!(new_realm, Realm::Condense | Realm::Solidify) {
                 let entry = zone_highlights
@@ -1481,8 +1486,14 @@ fn dormant_rogue_seed_snapshot(
         qi_max: qi_max_for_realm(realm),
         ..Cultivation::default()
     };
-    let mut meridian_system = MeridianSystem::default();
-    meridian_system.get_mut(MeridianId::Lung).opened = true;
+    // plan-npc-realm-distribution-v1 Verify blocker fix: dormant seeder must derive
+    // meridian_system from the *sampled* realm via the same
+    // `npc_meridian_system_for_realm` all live spawn paths use (rogue.rs/disciple.rs/
+    // lifecycle.rs/tsy_hostile.rs), otherwise a Condense/Solidify/Spirit dormant rogue
+    // ends up with realm.required_meridians()==6/12/16 but a frozen single-meridian
+    // (Lung-only) MeridianSystem — a realm↔经脉 double-source split visible on ~1000
+    // seeded dormant snapshots.
+    let meridian_system = crate::npc::technique::npc_meridian_system_for_realm(realm);
     let lifespan = NpcLifespan::new(
         initial_age_for_index(
             index,
@@ -3343,6 +3354,48 @@ mod tests {
     }
 
     #[test]
+    fn dormant_rogue_seed_snapshot_meridian_system_matches_sampled_realm_required_meridians() {
+        // Verify blocker pin：dormant seeder 曾恒开 1 条肺经（MeridianSystem::default()
+        // + 手动开 Lung），与抽样出的 realm 脱钩——凝脉/固元/通灵抽样命中却只有 1 条脉，
+        // 撞 realm↔经脉双源矛盾。500 个样本里筛出每个非醒灵境界至少一例，核对
+        // meridian_system.opened_count() 恰等于 realm.required_meridians()（用生产
+        // 侧的 npc_meridian_system_for_realm 派生规则，不是重新定义一套开脉逻辑）。
+        let zone = zone();
+        let mut seen_realms: std::collections::HashSet<Realm> = std::collections::HashSet::new();
+        for i in 0..500u32 {
+            let snapshot = dormant_rogue_seed_snapshot(&zone, i, i, 0, 0.8, true);
+            let realm = snapshot.cultivation.realm;
+            let expected = realm.required_meridians();
+            let actual = snapshot.meridian_system.opened_count();
+            assert_eq!(
+                actual, expected,
+                "i={i} realm={realm:?}: dormant seeder 落地的 meridian_system 应开 \
+                 {expected} 条经脉（realm.required_meridians()），实得 {actual} 条 \
+                 ——若恒为 1 说明退回了 P0-era 恒开肺经的 bug"
+            );
+            let expected_system = crate::npc::technique::npc_meridian_system_for_realm(realm);
+            let opened_mismatch = snapshot
+                .meridian_system
+                .iter()
+                .zip(expected_system.iter())
+                .enumerate()
+                .find(|(_, (actual, expected))| actual.opened != expected.opened);
+            assert!(
+                opened_mismatch.is_none(),
+                "i={i} realm={realm:?}: dormant seeder 的 meridian_system 必须与生产侧 \
+                 npc_meridian_system_for_realm(realm) 逐脉一致（同一份派生规则的单一来源），\
+                 首个不一致的经脉 index={opened_mismatch:?}"
+            );
+            seen_realms.insert(realm);
+        }
+        assert!(
+            seen_realms.contains(&Realm::Condense) || seen_realms.contains(&Realm::Solidify),
+            "500 个 resource 档样本应至少抽到一例凝脉或固元，否则本测试没有真正覆盖 \
+             required_meridians()>1 的分支（fixture 完整性）；实抽到 {seen_realms:?}"
+        );
+    }
+
+    #[test]
     fn dormant_rogue_seed_snapshot_qi_current_stays_zero_regardless_of_sampled_realm() {
         // 守恒红线：无论抽到哪个境界，qi_current 必须保持 0.0（不满灵）——qi_max_for_realm
         // 只设容量上限，真元靠既有 apply_dormant_regen_with_multiplier 从 zone 逐步吸收；
@@ -4858,6 +4911,66 @@ mod tests {
             saw_non_awaken,
             "40 条 legacy 快照跑一遍 §8.1 #1 分布表重抽样，至少应有一条不再是醒灵 \
              （分布表醒灵权重远小于 100%），否则说明重 roll 根本没生效"
+        );
+    }
+
+    #[test]
+    fn migration_reroll_resyncs_meridian_system_to_new_realm_required_meridians() {
+        // Verify blocker pin：迁移器此前只重算 realm/qi_max/shared_lifespan，从不重派
+        // meridian_system——重 roll 到凝脉/固元/通灵后仍停在迁移前的开脉数，与新 realm
+        // 脱钩。legacy_rogue_snapshot 起点固定 Realm::Awaken + snapshot() 默认全闭经脉
+        // （P0-era 状态），迁移后必须让 meridian_system.opened_count() 追上新 realm。
+        let marker_path = unique_marker_path("meridian-resync");
+        let _env = ScopedMarkerEnvVar::set(&marker_path);
+
+        let mut store = NpcDormantStore::default();
+        for i in 0..40u32 {
+            let mut snap = legacy_rogue_snapshot(&format!("legacy:meridian:{i}"));
+            // 复刻真实 P0-era 生产快照的形状：修 dormant_rogue_seed_snapshot 之前恒开
+            // 1 条肺经（而非 legacy_rogue_snapshot 继承的通用 test helper 全闭默认值）
+            // ——否则本测试会在「重抽样恰好落回 Awaken（未改变）」的分支上，把「legacy
+            // fixture 本身形状失真」误判成「迁移器没有同步重派」的假阳性。
+            snap.meridian_system = MeridianSystem::default();
+            snap.meridian_system
+                .get_mut(crate::cultivation::components::MeridianId::Lung)
+                .opened = true;
+            store.snapshots.insert(snap.char_id.clone(), snap);
+        }
+        store.rebuild_indexes();
+
+        let mut z = zone();
+        z.spirit_qi = 0.9; // 高于阈值 -> resource zone，拉高凝脉/固元/通灵命中率
+        let registry = ZoneRegistry { zones: vec![z] };
+
+        let mut app = migration_test_app(registry, store);
+        app.update();
+
+        let migrated_store = app.world().resource::<NpcDormantStore>();
+        let mut saw_multi_meridian_realm = false;
+        for i in 0..40u32 {
+            let char_id = format!("legacy:meridian:{i}");
+            let snap = migrated_store
+                .snapshots
+                .get(&char_id)
+                .unwrap_or_else(|| panic!("snapshot {char_id} should still exist after migration"));
+            let expected_count = snap.cultivation.realm.required_meridians();
+            let actual_count = snap.meridian_system.opened_count();
+            assert_eq!(
+                actual_count, expected_count,
+                "char_id={char_id}: 迁移重 roll 后 realm={:?} 要求开 {expected_count} 条经脉，\
+                 但 meridian_system 实开 {actual_count} 条——meridian_system 没有随 realm 重 roll \
+                 同步重派（迁移器只改了 realm/qi_max/shared_lifespan）",
+                snap.cultivation.realm
+            );
+            if expected_count > 1 {
+                saw_multi_meridian_realm = true;
+            }
+        }
+        assert!(
+            saw_multi_meridian_realm,
+            "40 条 legacy 快照在 resource zone 下重抽样，至少应有一条落在 required_meridians()>1 \
+             的境界（凝脉=6/固元=12/通灵=16），否则本测试没有真正覆盖迁移器重派 \
+             meridian_system 的分支（fixture 完整性）"
         );
     }
 
