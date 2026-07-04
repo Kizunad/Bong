@@ -294,6 +294,70 @@ mod tests {
             .expect_err("unknown field on neg_domain_escape_telemetry should be rejected");
     }
 
+    #[test]
+    fn rejects_neg_domain_pending_tribulation_with_unknown_field() {
+        // 与 telemetry 同一契约的对等变体：pending 条目的 deny_unknown_fields 也要有
+        // 专属错误分支用例，否则未来某端字段漂移不会在此撞红（CR #860）。
+        let json = r#"{
+            "v": 1,
+            "id": "wm-bad-pending",
+            "source": "arbiter",
+            "snapshot": {
+                "current_era": null,
+                "zone_history": {},
+                "last_decisions": {},
+                "player_first_seen_tick": {},
+                "neg_domain_pending_tribulations": {
+                    "player-1": {
+                        "player_uuid": "uuid-1",
+                        "player_name": "Foo",
+                        "zone": "blood_valley",
+                        "entered_at_tick": 100,
+                        "last_suppressed_tick": 200,
+                        "reason": "negative_domain_tribulation_exempt",
+                        "unexpected_field": true
+                    }
+                },
+                "last_tick": 100,
+                "last_state_ts": 1700000000
+            }
+        }"#;
+
+        serde_json::from_str::<AgentWorldModelEnvelopeV1>(json).expect_err(
+            "unknown field on neg_domain_pending_tribulations entry should be rejected",
+        );
+    }
+
+    #[test]
+    fn rejects_neg_domain_escape_session_with_unknown_field() {
+        let json = r#"{
+            "v": 1,
+            "id": "wm-bad-session",
+            "source": "arbiter",
+            "snapshot": {
+                "current_era": null,
+                "zone_history": {},
+                "last_decisions": {},
+                "player_first_seen_tick": {},
+                "neg_domain_escape_sessions": {
+                    "player-1": {
+                        "player_uuid": "uuid-1",
+                        "player_name": "Foo",
+                        "zone": "blood_valley",
+                        "entered_at_tick": 100,
+                        "entry_realm_rank": 2.0,
+                        "unexpected_field": true
+                    }
+                },
+                "last_tick": 100,
+                "last_state_ts": 1700000000
+            }
+        }"#;
+
+        serde_json::from_str::<AgentWorldModelEnvelopeV1>(json)
+            .expect_err("unknown field on neg_domain_escape_sessions entry should be rejected");
+    }
+
     // ── 共享 sample 双端对拍（agent 侧 TypeBox 也校验同一份文件）───────────────
     // wire 通道自诞生 commit 起因 camelCase/snake_case 不一致丢弃了 agent 的全部
     // 发布；这份 sample 锁死 snake_case 全字段形状，任何一端回退都会在这里撞红。
