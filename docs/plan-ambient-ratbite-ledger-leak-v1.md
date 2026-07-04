@@ -1,12 +1,12 @@
 # plan-ambient-ratbite-ledger-leak-v1 — ambient Rat 鼠咬真元漏账修复
 
-> **一句话主题**：`plan-ambient-threat-v1` 接入的 ambient Rat 通过 `RatBite` 真实扣掉玩家 `Cultivation.qi_current`，但被偷真元只 emit `QiTransfer(RatBiteDrain)` 事件、从无 system 消费落账，鼠死亡/超距回收又只把 `drained_qi` 的 1% 写回 `zone.spirit_qi`——被偷真元 99% 长期蒸发，`summarize_world_qi` 守恒审计持续失真。本 plan 把 `RatBiteDrain` 从"半接线的 audit event"改成"真实 `WorldQiAccount` 双腿记账"：咬击瞬间落入 `npc:rat:<id>` ledger 账户（不再蒸发），鼠死亡/超距回收时把该账户 100% 转入 `zone:<name>` ledger 账户（不再是 1% 直写字段）。
+> **一句话主题**：`plan-ambient-threat-v1` 接入的 ambient Rat 通过 `RatBite` 真实扣掉玩家 `Cultivation.qi_current`，但被偷真元只 emit `QiTransfer(RatBiteDrain)` 事件、从无 system 消费落账，鼠死亡/超距回收又只把 `drained_qi` 的 1% 写回 `zone.spirit_qi`——被偷真元 99% 长期蒸发，`summarize_world_qi` 守恒审计持续失真。本 plan 把 `RatBiteDrain` 从"半接线的 audit event"改成"真实 `WorldQiAccount` 双腿记账"：咬击瞬间落入 `npc:rat:<id>` ledger 账户（不再蒸发），鼠死亡/超距回收时把该账户 100%（不再是 1%）转入 `zone:<name>` ledger 账户**并同步写回 `zone.spirit_qi` 字段**（field-authority 三段式，见 §8.1 #3——仓库正典是"字段权威、ledger 账户为镜像"，只改账户不写回字段会被生产常驻的 `zone_qi_inflow_tick` 覆盖式重同步二次抹掉）。
 
 **状态**：active（§8 已收口，见 §8.1）。升 active 日期：2026-07-04。
 
 | 阶段 | 主题 | 状态 |
 |------|------|------|
-| P0 | 鼠咬真元漏账修复——咬击落账 + 死亡/超距回收全额转账（§8.1#1/#2） | ⬜ |
+| P0 | 鼠咬真元漏账修复——咬击落账 + 死亡/超距回收全额转账 + 写回 `zone.spirit_qi` 字段（§8.1#1/#2/#3） | ⬜ |
 
 ---
 
@@ -20,11 +20,11 @@
 ## 接入面（docs/CLAUDE.md §二 checklist）
 
 - **进料**：`combat::rat_bite::RatBiteEvent`（既有，`brain_rat.rs` emit）；`cultivation::components::Cultivation`（既有扣减路径，不改）；`npc::spawn_rat::RatBlackboard`（既有 `drained_qi` 字段，改为镜像 ledger 余额）；`world::zone::ZoneRegistry`（死亡/超距回收路径已有的 zone 名解析，不改）。
-- **出料**：`qi_physics::ledger::WorldQiAccount` 新增/更新两个账户——咬击时 `QiAccountId::npc("rat:<entity_index>")` 余额增加（`ledger_qi` 桶）；死亡/回收时该账户 100% 转入 `QiAccountId::zone("<zone_name>")` 余额（仍是 `ledger_qi` 桶，不写 `ZoneRegistry.spirit_qi` 字段）。`summarize_world_qi` 的 `ledger_qi` 桶因此在鼠咬瞬间就等量吸收被偷真元，链路头尾总量不变。`bong:qi/ledger` Redis telemetry（`ledger.rs:584-620`）自动多出 `account:npc:rat:<id>` 字段行，供外部 e2e 精确断言，无需改 schema。
-- **共享类型 / event**：复用既有 `QiTransferReason::RatBiteDrain`（`ledger.rs:225-230`，doc-comment 早已声明 `to=npc:rat:<id>` 语义，本 plan 只是把代码补齐到文档声明的行为）、`QiAccountId::npc` / `QiAccountId::zone` 构造函数、`WorldQiAccount::push_transfer_audit` / `WorldQiAccount::transfer` / `WorldQiAccount::balance` / `WorldQiAccount::set_balance`（全部已存在，无需新增 ledger API）。不新增 `QiTransferReason` 变体，不新增账户 kind。
+- **出料**：`qi_physics::ledger::WorldQiAccount` 新增/更新两个账户——咬击时 `QiAccountId::npc("rat:<entity_index>")` 余额增加（`ledger_qi` 桶）；死亡/回收时该账户 100% 转入 `QiAccountId::zone("<zone_name>")` 余额，**并按 §8.1 #3 field-authority 三段式把结果同步写回 `ZoneRegistry` 对应 `Zone.spirit_qi` 字段**（不是"仍留在 ledger_qi 桶不动字段"——真元从 `ledger_qi` 桶回落进 `zone_qi` 桶，与仓库既有 `cultivation/tick.rs` / `world::pseudo_vein_runtime` 范式一致，且避免被生产常驻 `world::heartbeat::zone_qi_inflow_tick` 的覆盖式 `set_balance` 二次抹掉）。`summarize_world_qi` 的 `ledger_qi` 桶在鼠咬瞬间等量吸收被偷真元、死亡/回收时该增量转移到 `zone_qi` 桶，链路头尾总量不变。`bong:qi/ledger` Redis telemetry（`ledger.rs:584-620`）自动多出 `account:npc:rat:<id>` 字段行，供外部 e2e 精确断言，无需改 schema。
+- **共享类型 / event**：复用既有 `QiTransferReason::RatBiteDrain`（`ledger.rs:225-230`，doc-comment 早已声明 `to=npc:rat:<id>` 语义，本 plan 只是把代码补齐到文档声明的行为）、`QiAccountId::npc` / `QiAccountId::zone` 构造函数、`WorldQiAccount::push_transfer_audit` / `WorldQiAccount::transfer` / `WorldQiAccount::balance` / `WorldQiAccount::set_balance`（全部已存在，无需新增 ledger API）、`qi_physics::constants::QI_ZONE_UNIT_CAPACITY`（字段↔账户换算单位，`world::pseudo_vein_runtime` 同款用法）。不新增 `QiTransferReason` 变体，不新增账户 kind。
 - **跨仓库契约**：纯 server-side 修复。无 agent / client symbol 变更；`bong:qi/ledger` 是 server 内部 Redis telemetry（非 TypeBox IPC schema），字段集变化不影响双端 schema 对齐。
-- **worldview 锚点**：worldview §二"真元极易挥发但守恒律不可破——全服灵气总量恒定，修炼消耗 = 别人少掉"；本 plan 修复的正是这条正典在 ambient Rat 路径上的违反（99% 无去向）。
-- **qi_physics 锚点**（红旗强约束）：只调用 `qi_physics::ledger` 既有 API（`WorldQiAccount::{balance,set_balance,push_transfer_audit,transfer}`、`QiTransfer::new`、`QiAccountId::{npc,zone}`），不新增衰减/吸取常数或公式，不需要扩 `qi_physics` 模块本身。
+- **worldview 锚点**：worldview §二"真元极易挥发但守恒律不可破——全服灵气总量恒定，修炼消耗 = 别人少掉"；本 plan 修复的正是这条正典在 ambient Rat 路径上的违反（99% 无去向，且 §8.1 #3 修正了"改账户不写回字段"这一潜在二次蒸发形态）。
+- **qi_physics 锚点**（红旗强约束）：只调用 `qi_physics::ledger` 既有 API（`WorldQiAccount::{balance,set_balance,push_transfer_audit,transfer}`、`QiTransfer::new`、`QiAccountId::{npc,zone}`）与 `qi_physics::constants::QI_ZONE_UNIT_CAPACITY`，不新增衰减/吸取常数或公式，不需要扩 `qi_physics` 模块本身。「鼠 → zone」腿的 field-authority 三段式（同步→transfer→写回）照抄 `world::pseudo_vein_runtime::inject_zone_for_pseudo_vein` 既有范本，不是本 plan 自创的新公式。
 
 ## P0 — 鼠咬真元漏账修复（§8.1 决议为准）
 
@@ -32,18 +32,23 @@
 
 1. **`server/src/combat/rat_bite.rs:45-98` `apply_rat_bite_qi_drain`**：新增 `mut ledger: Option<ResMut<WorldQiAccount>>` 参数（对齐 `npc/skull_fiend.rs:269-270` 的降级写法：无资源时 `tracing::debug!` 跳过落账，不 panic、不阻断既有 HP/事件流）。在现有 `drained > 0.0` 分支（:74-86）内，除保留 `qi_transfers.send(transfer.clone())`（审计事件广播不变）外，新增 helper `fn credit_rat_bite_drain(account: &mut WorldQiAccount, rat_account: &QiAccountId, amount: f64, transfer: QiTransfer)`（同文件新增函数，逻辑照抄 `npc/skull_fiend.rs:747-766` `credit_skull_fiend_drain`：`set_balance(rat_account, balance(rat_account) + amount)` 后 `push_transfer_audit(transfer)`）。
 2. **`RatBlackboard.drained_qi` 镜像 ledger 余额**：同一分支内，`rat.drained_qi` 从"独立累加"改为 `ledger.as_deref().map(|a| a.balance(&rat_account)).unwrap_or(rat.drained_qi + drained)`（照抄 `fauna/mimic_spider.rs:270-271` `blackboard.drained_qi = ledger.balance(&spider_account)` 的镜像模式；`ledger` 缺席时保留原地累加 fallback，无 ledger 资源的 headless 测试行为不退化）。
-3. **`server/src/fauna/rat_phase.rs:28` `RAT_DRAINED_QI_DEATH_RETURN_RATIO`**：常量与其唯一消费者 `rat_phase.rs:384-389` `return_rat_drained_qi_to_zone`（1% 直写 `zone.spirit_qi` 字段）整体删除，替换为 `pub fn transfer_rat_drained_qi_to_zone(account: &mut WorldQiAccount, rat_account: &QiAccountId, zone_account: &QiAccountId) -> Result<f64, QiPhysicsError>`：读 `account.balance(rat_account)` 为 `amount`，`amount <= 0.0` 时 no-op 返回 `Ok(0.0)`；否则 `account.transfer(QiTransfer::new(rat_account.clone(), zone_account.clone(), amount, QiTransferReason::RatBiteDrain)?)?` 后返回 `amount`（100% 落账；`RatBiteDrain` 不在 `ledger.rs:414-431` `transfer()` 的 audit-only 拒绝名单里，可合法走真实双账户转账，天然获得 insufficient 检查 + from/to 同步扣加 + 审计追加）。
-4. **调用点改造**：
-   - `fauna/rat_phase.rs:350-376` `release_drained_qi_on_death_system` 新增 `mut ledger: Option<ResMut<WorldQiAccount>>` 参数，把原 `return_rat_drained_qi_to_zone(zone, rat.drained_qi)` 调用替换为 `transfer_rat_drained_qi_to_zone(&mut ledger, &QiAccountId::npc(format!("rat:{}", death.target.index())), &QiAccountId::zone(zone_name.clone()))`（`ledger` 缺席时跳过，对齐既有降级写法）。
-   - `npc/spawn/ambient_scheduler.rs:604-624` `ambient_scheduler_system` 签名新增 `mut qi_account: Option<ResMut<WorldQiAccount>>`；`:660-684` 超距回收循环里 `return_rat_drained_qi_to_zone(zone, rat.drained_qi)` 调用同样替换为上面的转账调用（`entity` 已在循环作用域内可用于构造 `rat_account`）。
+3. **`server/src/fauna/rat_phase.rs:28` `RAT_DRAINED_QI_DEATH_RETURN_RATIO`**：常量与其唯一消费者 `rat_phase.rs:384-389` `return_rat_drained_qi_to_zone`（1% 直写 `zone.spirit_qi` 字段）整体删除，替换为 **§8.1 #3（blocker 修正）field-authority 三段式**：`pub fn transfer_rat_drained_qi_to_zone(ledger: &mut WorldQiAccount, zone: &mut Zone, rat_account: &QiAccountId) -> Result<f64, QiPhysicsError>`（`zone_account` 由 `zone.name` 内部派生，不再由调用方单独传入，防止字段/账户对错 zone）：
+   - 读 `ledger.balance(rat_account)` 为 `amount`；`amount <= 0.0` 时 no-op 返回 `Ok(0.0)`。
+   - 转账前：`ledger.set_balance(zone_account.clone(), zone.spirit_qi.max(0.0) * QI_ZONE_UNIT_CAPACITY)?`，把 zone 账户镜像同步到字段真实值（照抄 `world::pseudo_vein_runtime::inject_zone_for_pseudo_vein`：459-489，与 `world::heartbeat::zone_qi_inflow_tick`：2131-2138 同款范式），避免用陈旧镜像余额做后续 insufficient 检查。
+   - 执行 `ledger.transfer(QiTransfer::new(rat_account.clone(), zone_account.clone(), amount, QiTransferReason::RatBiteDrain)?)?`（100% 落账；`RatBiteDrain` 不在 `ledger.rs:414-431` `transfer()` 的 audit-only 拒绝名单里，可合法走真实双账户转账，天然获得 insufficient 检查 + from/to 同步扣加 + 审计追加）。
+   - 转账后：把结果写回字段——`zone.spirit_qi = (ledger.balance(&zone_account) / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0)`（clamp 边界照抄旧 `return_rat_drained_qi_to_zone` 既有写法）。**这一步是 blocker 修正的核心**：缺了这行，下一次生产 `zone_qi_inflow_tick`（Update schedule 常驻系统）会用未变的 `zone.spirit_qi` 覆盖式 `set_balance` 把刚转入账户的余额清零，造成二次蒸发（详见 §8.1 #3）。
+   - 返回 `Ok(amount)`。
+4. **调用点改造**（均需额外传入调用点已持有的 `&mut Zone` 借用，不再单独构造 `zone_account`）：
+   - `fauna/rat_phase.rs:350-376` `release_drained_qi_on_death_system` 新增 `mut ledger: Option<ResMut<WorldQiAccount>>` 参数，把原 `return_rat_drained_qi_to_zone(zone, rat.drained_qi)` 调用替换为 `transfer_rat_drained_qi_to_zone(&mut ledger, zone, &QiAccountId::npc(format!("rat:{}", death.target.index())))`（`ledger` 缺席时跳过，对齐既有降级写法；`zone` 沿用既有 `ZoneRegistry` 查表得到的可变借用）。
+   - `npc/spawn/ambient_scheduler.rs:604-624` `ambient_scheduler_system` 签名新增 `mut qi_account: Option<ResMut<WorldQiAccount>>`；`:660-684` 超距回收循环里 `return_rat_drained_qi_to_zone(zone, rat.drained_qi)` 调用同样替换为 `transfer_rat_drained_qi_to_zone(&mut qi_account, zone, &QiAccountId::npc(format!("rat:{}", entity.index())))`（`entity`/`zone` 均已在循环作用域内可用）。
 5. **MimicSpider 不在本 P0 scope**（§8.1#2 决议）：`fauna/mimic_spider.rs` 保持现状不改，另立 follow-up 候选（见 §8.1#2 落点）。
 
 ### 验收抓手（4 组 pin，覆盖骨架 §P0 原验收清单）
 
 1. `server/src/combat/rat_bite.rs` 测试模块（现 `mod tests`，:190 起）新增 `rat_bite_conserves_total_qi_end_to_end`：起 `App` 插入 `WorldQiAccount::default()`，咬击前后分别求 `player_qi + ledger_qi`（测试 app 无 zone/container 可省略后两项但需断言其恒为 0），断言严格相等——failure message 写清"drained qi 应转入 npc:rat 账户而非消失，实际 before=X after=Y"。
-2. `server/src/fauna/rat_phase.rs` 测试模块新增 `rat_death_transfers_full_drained_qi_to_zone_account`（替换现有 1% 归还的同名旧 pin）：鼠死亡前 `npc:rat:<id>` 账户设为 `drained_qi=100.0`，死亡后断言该账户余额 `== 0.0` 且 `zone:<name>` 账户余额 `+= 100.0`（100%，非 1%）。
-3. `server/src/npc/spawn/ambient_scheduler.rs` 测试模块新增 `recycle_transfers_full_rat_drained_qi_before_despawn`（替换现有 `recycle_returns_rat_drained_qi_to_zone_instead_of_evaporating` 断言的 1% 公式）：超距回收前 `npc:rat:<id>` 设为 `drained_qi=100.0`，回收后断言 `zone` 账户 `+=100.0`、`npc:rat` 账户归零。
-4. 集成 pin `rat_bite_and_death_cycle_preserves_world_qi_total`（新增 `server/src/qi_physics/ledger.rs` 测试模块或 `combat` 集成测试）：模拟"咬 3 次 qi_steal=2 + 鼠死亡"完整链路（复用 `apply_rat_bite_qi_drain` + `release_drained_qi_on_death_system` 两系统跑同一个 `App`），断言链路头尾 `summarize_world_qi(...)` 的 `player_qi + zone_qi + ledger_qi` 总和严格相等（float epsilon 容差），failure message 引用 worldview §二守恒律。
+2. `server/src/fauna/rat_phase.rs` 测试模块新增 `rat_death_transfers_full_drained_qi_to_zone_account`（替换现有 1% 归还的同名旧 pin）：鼠死亡前 `npc:rat:<id>` 账户设为 `drained_qi=100.0`，死亡后断言该账户余额 `== 0.0` 且 `zone:<name>` 账户余额 `+= 100.0`（100%，非 1%），**并额外断言 `zone.spirit_qi` 字段本身同步变化**（`+= 100.0 / QI_ZONE_UNIT_CAPACITY`，clamp 后）——只断言账户余额、不断言字段，会漏放过"只改账户不写回字段"的回归（§8.1 #3 blocker 修正点）。
+3. `server/src/npc/spawn/ambient_scheduler.rs` 测试模块新增 `recycle_transfers_full_rat_drained_qi_before_despawn`（替换现有 `recycle_returns_rat_drained_qi_to_zone_instead_of_evaporating` 断言的 1% 公式）：超距回收前 `npc:rat:<id>` 设为 `drained_qi=100.0`，回收后断言 `zone` 账户 `+=100.0`、`npc:rat` 账户归零，**同样额外断言 `zone.spirit_qi` 字段同步变化**（同上理由）。
+4. 集成 pin `rat_bite_and_death_cycle_preserves_world_qi_total`（新增 `server/src/qi_physics/ledger.rs` 测试模块或 `combat` 集成测试）：模拟"咬 3 次 qi_steal=2 + 鼠死亡"完整链路（复用 `apply_rat_bite_qi_drain` + `release_drained_qi_on_death_system` 两系统跑同一个 `App`），断言链路头尾 `summarize_world_qi(...)` 的 `player_qi + zone_qi + ledger_qi` 总和严格相等（float epsilon 容差），failure message 引用 worldview §二守恒律。**本 pin 必须把 `world::heartbeat::zone_qi_inflow_tick`（生产 `register()` 里注册进 `Update` 的常驻系统，heartbeat.rs:454-468）一并注册进测试 `App` 并在鼠死亡结算后额外推进至少一个 tick**（例：`app.add_systems(Update, (apply_rat_bite_qi_drain, release_drained_qi_on_death_system, zone_qi_inflow_tick).chain())`）——如果 `transfer_rat_drained_qi_to_zone` 只改了 `zone:<name>` 账户余额、没有同步写回 `zone.spirit_qi` 字段，`zone_qi_inflow_tick` 的覆盖式 `set_balance`（heartbeat.rs:2131-2138）会把刚转入的账户余额用未变的字段值重新覆写清零，本 pin 必须能撞红这一二次蒸发回归；此前版本的 pin 不含 `zone_qi_inflow_tick` 视角，看不到这层碰撞，是本次 promote 博弈 blocker 指出的核心风险点。
 
 ### 测试声明
 
@@ -60,6 +65,7 @@
 2. Round 2 在补入 `qi_physics::register` 仅注册 event、无全局消费器，以及 `ambient_threat_pool_fn -> spawn_rat_npc_at` 与 `HarassPlayerQuery(With<ClientMarker>)` 这两条后，仍未给出新的代码级反证；可达性怀疑被排除，只剩模型输出质量不足。
 3. 人工复核进一步确认：仓库内 audit-only 真实范式都是调用点自己 `push_transfer_audit` / `set_balance` / `transfer`，`RatBite` 三者全缺；因此该候选在两轮对抗后继续存活。
 4. **本次升 active 收口复核（2026-07-04）**：origin/main HEAD `30666096` 上重新 grep 确认现象仍在（`rat_bite.rs:78-81` 仍只 `qi_transfers.send`，`rat_phase.rs:28` `RAT_DRAINED_QI_DEATH_RETURN_RATIO` 仍是 `0.01`），未被 `plan-ambient-threat-v1` 或后续 PR 提前修复。
+5. **promote 博弈守恒 blocker 二次收口（2026-07-04）**：反方指出 §8.1 #1 point 3 原定「鼠 → zone 腿只调 `transfer()` 不写回 `zone.spirit_qi` 字段」会被生产常驻 `world::heartbeat::zone_qi_inflow_tick` 的覆盖式 `set_balance`（`heartbeat.rs:2131-2138`）二次抹掉，"100% 转入 zone 守恒"实际不成立。人工复核 grep `world::heartbeat` / `world::pseudo_vein_runtime` / `cultivation::tick` 确认仓库正典是"字段权威、ledger 账户为镜像"（`pseudo_vein_runtime.rs:459-461` doc-comment 与 `inject_zone_for_pseudo_vein` 实现即是该范本），采纳方案 A：`transfer_rat_drained_qi_to_zone` 改为同步→transfer→写回字段的三段式，见 §8.1 #3。
 
 ## §8 开放问题（升 active / P0 决策门前收口）
 
@@ -68,7 +74,7 @@
 
 > 全部已在 §8.1 收口。原表保留以备追溯，**实施时以 §8.1 决议为准**。
 
-## §8.1 决议（pre-P0 收口，2026-07-04，实地 grep `qi_physics::ledger` / `npc::skull_fiend` / `fauna::mimic_spider` / `fauna::rat_phase` / `npc::spawn::ambient_scheduler` 全量核实）
+## §8.1 决议（pre-P0 收口，2026-07-04，实地 grep `qi_physics::ledger` / `npc::skull_fiend` / `fauna::mimic_spider` / `fauna::rat_phase` / `npc::spawn::ambient_scheduler` / `world::heartbeat::zone_qi_inflow_tick` / `world::pseudo_vein_runtime` / `cultivation::tick` 全量核实；#3 为 promote 博弈 blocker 二次收口新增，扩大 grep 范围至后三者）
 
 ### #1 audit-only 留痕 vs 真实 ledger 账户
 
@@ -89,6 +95,26 @@
 
 **落点**：`server/src/fauna/rat_phase.rs:28,384-389`（决议 1 的删除范围）/ `server/src/fauna/mimic_spider.rs:188-272`（决议 2 复核确认，不改）/ `server/src/fauna/mimic_spider.rs:277-318`（决议 3 新发现的独立缺口，留作 follow-up，不改）/ plan §P0（scope 边界声明）。
 
+### #3 `zone:<name>` ledger 账户与 `zone.spirit_qi` 字段权威冲突（promote 博弈 blocker 修正，2026-07-04 二次决议）
+
+**背景（blocker 复核实证，grep 全量核实）**：决议 #1 point 3 原定"鼠 → zone"腿单纯调 `WorldQiAccount::transfer()` 把 `npc:rat:<id>` 账户余额转入 `zone:<name>` 账户，未写回 `zone.spirit_qi` 字段。但 `world::heartbeat::zone_qi_inflow_tick`（`heartbeat.rs:2077` 定义、`heartbeat.rs:454-468` `register()` 里注册进生产常驻 `Update` schedule）每次 tick 都先执行 `ledger.set_balance(zone_account, zone.spirit_qi.max(0.0) * QI_ZONE_UNIT_CAPACITY)`（`heartbeat.rs:2131-2138`）——**用字段值覆盖账户余额**，这正是仓库既有的"以字段为权威、ledger 账户只是同步镜像"范式：
+- `world::pseudo_vein_runtime.rs:459-461` `inject_zone_for_pseudo_vein` doc-comment 明写"记账范本照抄 `zone_qi_inflow_tick`：调用前先用 `set_balance` 把 zone ledger 镜像同步到 `zone.spirit_qi * QI_ZONE_UNIT_CAPACITY` 真实值，转账后再把结果写回 `zone.spirit_qi`"（该函数 :487-508 完整实现了"同步→transfer→写回"三段式，`round3` 定点数精度抹平）。
+- `cultivation/tick.rs:263-273` 同样是"`push_transfer_audit` 留痕 + 直写 `zone.spirit_qi -= drain` 字段"，从不单独调 `transfer()` 改 zone 账户余额而不写回字段。
+
+若鼠死亡/超距回收只调 `transfer()` 把 qi 转入 `zone:<name>` 账户却不写回字段，下一次 `zone_qi_inflow_tick`（生产环境每 tick 都跑）会用未变的 `zone.spirit_qi` 重新 `set_balance` 覆盖掉刚转入的余额——被偷真元在两次 inflow tick 之间**第二次蒸发**，"100% 转入 zone 守恒"不成立。
+
+**决议（覆盖 #1 point 3，采纳方案 A 字段权威）**：
+1. `transfer_rat_drained_qi_to_zone` 不再是"account-only"转账，改为**field-authority 三段式**（照抄 `pseudo_vein_runtime::inject_zone_for_pseudo_vein` 的同步→transfer→写回结构）：
+   - **转账前**：`ledger.set_balance(zone_account.clone(), zone.spirit_qi.max(0.0) * QI_ZONE_UNIT_CAPACITY)`，把 zone 账户镜像同步到字段真实值（防止用陈旧镜像余额做 insufficient 检查，与 `zone_qi_inflow_tick`/`inject_zone_for_pseudo_vein` 同款开场动作）。
+   - **执行转账**：`ledger.transfer(QiTransfer::new(rat_account, zone_account, amount, QiTransferReason::RatBiteDrain))`——`npc:rat` 账户全额清零，`zone` 账户增加 `amount`。
+   - **转账后写回字段**：`zone.spirit_qi = (ledger.balance(&zone_account) / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0)`（clamp 边界照抄旧 `return_rat_drained_qi_to_zone` 既有写法）——**这是 blocker 修正的核心一步**，缺了它就会被下一次 `zone_qi_inflow_tick` 覆盖清零。
+   - 函数签名因此从「`(account: &mut WorldQiAccount, rat_account: &QiAccountId, zone_account: &QiAccountId)`」改为「`transfer_rat_drained_qi_to_zone(ledger: &mut WorldQiAccount, zone: &mut Zone, rat_account: &QiAccountId) -> Result<f64, QiPhysicsError>`」——`zone_account` 改由 `zone.name` 内部派生，不再由调用方单独传入一个 `QiAccountId::zone(...)`，防止 caller 传错 zone 导致"字段属于 zone A、账户却写进 zone B"的对不上问题。
+2. **`npc:rat:<id>` 账户（决议 #1 point 1-2 的"玩家 → 鼠"腿）不受本次修正影响**——那一腿本来就不镜像回任何字段（玩家真元活在 ECS `Cultivation` 组件，鼠账户是纯 ledger 记账，决议 #1 point 2 已排除 `transfer()`），blocker 只影响"鼠 → zone"这一腿的收尾写法，不动决议 #1 point 1-2。
+3. **`RatBlackboard.drained_qi` 镜像语义不变**（决议 #1 point 4）——它镜像的是 `npc:rat:<id>` 账户余额，不是 zone 账户，字段权威冲突与它无关。
+4. **P0 验收抓手同步扩项**（详见 §P0 验收抓手 #2/#3/#4）：#2/#3 断言从"只断言账户余额"扩为"账户余额 + `zone.spirit_qi` 字段同步变化"双断言；#4 集成 pin 必须把 `zone_qi_inflow_tick` 一并注册进测试 `App` 并多推进至少一个 tick，让"账户改了、字段没写回→下一 tick 被覆盖清零"这条回归路径对测试可见，否则该 pin 无法暴露本条 blocker 指出的碰撞。
+
+**落点**：`server/src/fauna/rat_phase.rs:28,350-389`（`transfer_rat_drained_qi_to_zone` 签名与实现改为 field-authority 三段式）/ `server/src/npc/spawn/ambient_scheduler.rs:604-624,660-684`（调用点同步传入 `&mut Zone`）/ `server/src/world/heartbeat.rs:454-468,2077-2145`（`zone_qi_inflow_tick` 覆盖行为只读引用确认，不改，P0 验收 pin #4 需注册该系统）/ `server/src/world/pseudo_vein_runtime.rs:459-510`（`inject_zone_for_pseudo_vein` field-authority 范本引用，不改）/ `server/src/cultivation/tick.rs:263-273`（字段权威范本引用，不改）/ plan §P0 交付物 3-4（已同步改写为本决议签名）/ §P0 验收抓手 #2-#4（已同步扩项）。
+
 ## 审计来源
 
-bug-hunt 定点轮（仅收窄 `plan-ambient-threat-v1` / 当前 `HEAD` 附近 server-side gameplay 代码）。路线限定为环境威胁、spawn、AI、守恒、生命周期；候选经主代理人工复核 + 本机反方子代理两轮默认怀疑裁决后保留（PR #847 merged）。升 active 时经 §8.1 决议收口（实地 grep `qi_physics::ledger` / `npc::skull_fiend` / `fauna::mimic_spider` / `fauna::rat_phase` / `npc::spawn::ambient_scheduler` 全量核实决议数据，非拍脑袋）。
+bug-hunt 定点轮（仅收窄 `plan-ambient-threat-v1` / 当前 `HEAD` 附近 server-side gameplay 代码）。路线限定为环境威胁、spawn、AI、守恒、生命周期；候选经主代理人工复核 + 本机反方子代理两轮默认怀疑裁决后保留（PR #847 merged）。升 active 时经 §8.1 决议收口（实地 grep `qi_physics::ledger` / `npc::skull_fiend` / `fauna::mimic_spider` / `fauna::rat_phase` / `npc::spawn::ambient_scheduler` 全量核实决议数据，非拍脑袋）。promote 阶段博弈守恒 blocker 二次收口（§8.1 #3）追加 grep `world::heartbeat::zone_qi_inflow_tick` / `world::pseudo_vein_runtime` / `cultivation::tick`，实地核实"字段权威、ledger 账户为镜像"范式后定案方案 A。
