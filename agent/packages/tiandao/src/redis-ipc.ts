@@ -47,6 +47,7 @@ import type {
 } from "@bong/schema";
 import { parseChatMessages } from "./chat-processor.js";
 import type { CommandPublishRequest, NarrationPublishRequest } from "./runtime.js";
+import type { WorldModelSnapshot } from "./world-model.js";
 
 const {
   WORLD_STATE,
@@ -918,7 +919,7 @@ export class RedisIpc {
     );
   }
 
-  async loadWorldModelState(options: { logger?: Pick<typeof console, "warn"> } = {}): Promise<AgentWorldModelEnvelopeV1["snapshot"] | null> {
+  async loadWorldModelState(options: { logger?: Pick<typeof console, "warn"> } = {}): Promise<WorldModelSnapshot | null> {
     if (!this.pub.hgetall) {
       return null;
     }
@@ -984,13 +985,16 @@ export class RedisIpc {
 function parseWorldModelStateMirror(
   mirror: Record<string, string>,
   logger: Pick<typeof console, "warn">,
-): AgentWorldModelEnvelopeV1["snapshot"] | null {
+): WorldModelSnapshot | null {
   const missingFields = REQUIRED_WORLD_MODEL_STATE_FIELDS.filter((field) => !(field in mirror));
   if (missingFields.length > 0) {
     logger.warn(`[redis-ipc] missing world model mirror fields: ${missingFields.join(", ")}`);
     return null;
   }
 
+  // NOTE: server 写入 bong:tiandao:state 的 value 是 serde snake_case JSON
+  // （对齐 AgentWorldModelSnapshotV1 wire 形状），所以这里先按 wire 形状解析校验，
+  // 再映射回 agent 内部 camelCase 的 WorldModelSnapshot。
   const currentEra = parseJsonField(
     mirror[WORLD_MODEL_STATE_FIELDS.currentEra],
     WORLD_MODEL_STATE_FIELDS.currentEra,
@@ -1023,7 +1027,7 @@ function parseWorldModelStateMirror(
   );
   const negDomainEscapeTelemetry = parseJsonField(
     mirror[WORLD_MODEL_STATE_FIELDS.negDomainEscapeTelemetry] ??
-      '{"escapeEntryCount":0,"postEscapeRealmDropCount":0,"successfulTribulationAvoidanceCount":0,"activeEscapeSessionCount":0,"postEscapeRealmDropRate":0}',
+      '{"escape_entry_count":0,"post_escape_realm_drop_count":0,"successful_tribulation_avoidance_count":0,"active_escape_session_count":0,"post_escape_realm_drop_rate":0}',
     WORLD_MODEL_STATE_FIELDS.negDomainEscapeTelemetry,
     logger,
     isNegDomainEscapeTelemetry,
@@ -1060,13 +1064,48 @@ function parseWorldModelStateMirror(
   }
 
   return {
-    currentEra,
+    currentEra: currentEra
+      ? {
+          name: currentEra.name,
+          sinceTick: currentEra.since_tick,
+          globalEffect: currentEra.global_effect,
+        }
+      : null,
     zoneHistory,
     lastDecisions,
     playerFirstSeenTick,
-    negDomainPendingTribulations,
-    negDomainEscapeTelemetry,
-    negDomainEscapeSessions,
+    negDomainPendingTribulations: Object.fromEntries(
+      Object.entries(negDomainPendingTribulations).map(([playerId, pending]) => [
+        playerId,
+        {
+          playerUuid: pending.player_uuid,
+          playerName: pending.player_name,
+          zone: pending.zone,
+          enteredAtTick: pending.entered_at_tick,
+          lastSuppressedTick: pending.last_suppressed_tick,
+          reason: pending.reason,
+        },
+      ]),
+    ),
+    negDomainEscapeTelemetry: {
+      escapeEntryCount: negDomainEscapeTelemetry.escape_entry_count,
+      postEscapeRealmDropCount: negDomainEscapeTelemetry.post_escape_realm_drop_count,
+      successfulTribulationAvoidanceCount: negDomainEscapeTelemetry.successful_tribulation_avoidance_count,
+      activeEscapeSessionCount: negDomainEscapeTelemetry.active_escape_session_count,
+      postEscapeRealmDropRate: negDomainEscapeTelemetry.post_escape_realm_drop_rate,
+    },
+    negDomainEscapeSessions: Object.fromEntries(
+      Object.entries(negDomainEscapeSessions).map(([playerId, session]) => [
+        playerId,
+        {
+          playerUuid: session.player_uuid,
+          playerName: session.player_name,
+          zone: session.zone,
+          enteredAtTick: session.entered_at_tick,
+          entryRealmRank: session.entry_realm_rank,
+        },
+      ]),
+    ),
     lastTick,
     lastStateTs,
   };
@@ -1127,7 +1166,7 @@ function parseOptionalIntegerField(
   return parsed;
 }
 
-function isCurrentEra(value: unknown): value is AgentWorldModelSnapshotV1["currentEra"] {
+function isCurrentEra(value: unknown): value is AgentWorldModelSnapshotV1["current_era"] {
   if (value === null) {
     return true;
   }
@@ -1138,13 +1177,13 @@ function isCurrentEra(value: unknown): value is AgentWorldModelSnapshotV1["curre
 
   return (
     typeof value.name === "string" &&
-    typeof value.sinceTick === "number" &&
-    Number.isFinite(value.sinceTick) &&
-    typeof value.globalEffect === "string"
+    typeof value.since_tick === "number" &&
+    Number.isFinite(value.since_tick) &&
+    typeof value.global_effect === "string"
   );
 }
 
-function isZoneHistory(value: unknown): value is AgentWorldModelSnapshotV1["zoneHistory"] {
+function isZoneHistory(value: unknown): value is AgentWorldModelSnapshotV1["zone_history"] {
   if (!isObjectRecord(value)) {
     return false;
   }
@@ -1170,7 +1209,7 @@ function isZoneHistory(value: unknown): value is AgentWorldModelSnapshotV1["zone
   });
 }
 
-function isLastDecisions(value: unknown): value is AgentWorldModelSnapshotV1["lastDecisions"] {
+function isLastDecisions(value: unknown): value is AgentWorldModelSnapshotV1["last_decisions"] {
   if (!isObjectRecord(value)) {
     return false;
   }
@@ -1202,7 +1241,7 @@ function isLastDecisions(value: unknown): value is AgentWorldModelSnapshotV1["la
   });
 }
 
-function isPlayerFirstSeenTick(value: unknown): value is AgentWorldModelSnapshotV1["playerFirstSeenTick"] {
+function isPlayerFirstSeenTick(value: unknown): value is AgentWorldModelSnapshotV1["player_first_seen_tick"] {
   if (!isObjectRecord(value)) {
     return false;
   }
@@ -1214,7 +1253,7 @@ function isPlayerFirstSeenTick(value: unknown): value is AgentWorldModelSnapshot
 
 function isNegDomainPendingTribulations(
   value: unknown,
-): value is AgentWorldModelSnapshotV1["negDomainPendingTribulations"] {
+): value is AgentWorldModelSnapshotV1["neg_domain_pending_tribulations"] {
   if (!isObjectRecord(value)) {
     return false;
   }
@@ -1222,13 +1261,13 @@ function isNegDomainPendingTribulations(
   return Object.values(value).every((pending) => {
     return (
       isObjectRecord(pending) &&
-      typeof pending.playerUuid === "string" &&
-      typeof pending.playerName === "string" &&
+      typeof pending.player_uuid === "string" &&
+      typeof pending.player_name === "string" &&
       typeof pending.zone === "string" &&
-      typeof pending.enteredAtTick === "number" &&
-      Number.isFinite(pending.enteredAtTick) &&
-      typeof pending.lastSuppressedTick === "number" &&
-      Number.isFinite(pending.lastSuppressedTick) &&
+      typeof pending.entered_at_tick === "number" &&
+      Number.isFinite(pending.entered_at_tick) &&
+      typeof pending.last_suppressed_tick === "number" &&
+      Number.isFinite(pending.last_suppressed_tick) &&
       pending.reason === "negative_domain_tribulation_exempt"
     );
   });
@@ -1236,24 +1275,24 @@ function isNegDomainPendingTribulations(
 
 function isNegDomainEscapeTelemetry(
   value: unknown,
-): value is AgentWorldModelSnapshotV1["negDomainEscapeTelemetry"] {
+): value is AgentWorldModelSnapshotV1["neg_domain_escape_telemetry"] {
   return (
     isObjectRecord(value) &&
-    isNonNegativeFiniteNumber(value.escapeEntryCount) &&
-    Number.isInteger(value.escapeEntryCount) &&
-    isNonNegativeFiniteNumber(value.postEscapeRealmDropCount) &&
-    Number.isInteger(value.postEscapeRealmDropCount) &&
-    isNonNegativeFiniteNumber(value.successfulTribulationAvoidanceCount) &&
-    Number.isInteger(value.successfulTribulationAvoidanceCount) &&
-    isNonNegativeFiniteNumber(value.activeEscapeSessionCount) &&
-    Number.isInteger(value.activeEscapeSessionCount) &&
-    isNonNegativeFiniteNumber(value.postEscapeRealmDropRate)
+    isNonNegativeFiniteNumber(value.escape_entry_count) &&
+    Number.isInteger(value.escape_entry_count) &&
+    isNonNegativeFiniteNumber(value.post_escape_realm_drop_count) &&
+    Number.isInteger(value.post_escape_realm_drop_count) &&
+    isNonNegativeFiniteNumber(value.successful_tribulation_avoidance_count) &&
+    Number.isInteger(value.successful_tribulation_avoidance_count) &&
+    isNonNegativeFiniteNumber(value.active_escape_session_count) &&
+    Number.isInteger(value.active_escape_session_count) &&
+    isNonNegativeFiniteNumber(value.post_escape_realm_drop_rate)
   );
 }
 
 function isNegDomainEscapeSessions(
   value: unknown,
-): value is AgentWorldModelSnapshotV1["negDomainEscapeSessions"] {
+): value is AgentWorldModelSnapshotV1["neg_domain_escape_sessions"] {
   if (!isObjectRecord(value)) {
     return false;
   }
@@ -1261,13 +1300,13 @@ function isNegDomainEscapeSessions(
   return Object.values(value).every((session) => {
     return (
       isObjectRecord(session) &&
-      typeof session.playerUuid === "string" &&
-      typeof session.playerName === "string" &&
+      typeof session.player_uuid === "string" &&
+      typeof session.player_name === "string" &&
       typeof session.zone === "string" &&
-      typeof session.enteredAtTick === "number" &&
-      Number.isInteger(session.enteredAtTick) &&
-      typeof session.entryRealmRank === "number" &&
-      Number.isFinite(session.entryRealmRank)
+      typeof session.entered_at_tick === "number" &&
+      Number.isInteger(session.entered_at_tick) &&
+      typeof session.entry_realm_rank === "number" &&
+      Number.isFinite(session.entry_realm_rank)
     );
   });
 }
