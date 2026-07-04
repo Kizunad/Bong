@@ -426,12 +426,17 @@ pub(crate) fn dying_elder_apply_spawn_system(
         };
 
         // ── 覆盖 npc_runtime_bundle 中的 Cultivation（化虚级 qi）
-        // realm 实参不影响最终结果——下方 `runtime.cultivation = cultivation`
-        // 会用 Realm::Void 化虚字面量整体覆盖（P0 回归锁见 lifecycle.rs 测试）。
+        // realm 实参必须是真实 Realm::Void——npc_runtime_bundle 内部用它经
+        // npc_meridian_system_for_realm(realm) 派生 meridian_system（20 条经脉），
+        // 这个字段不受下方 `runtime.cultivation = cultivation` 覆盖（cultivation 和
+        // meridian_system 是 NpcRuntimeBundle 两个独立字段）。此前误传占位
+        // Realm::Awaken 导致 meridian_system 只开 1 脉，与落地 cultivation.realm=Void
+        // （required_meridians=20）双源矛盾（realm↔经脉双源 bug，P0 回归锁见
+        // lifecycle.rs + 下方 apply_spawn_system_keeps_void_realm_and_full_qi_regression_lock）。
         let mut runtime = npc_runtime_bundle(
             entity,
             NpcArchetype::DyingElder,
-            crate::cultivation::components::Realm::Awaken,
+            crate::cultivation::components::Realm::Void,
         );
         runtime.cultivation = cultivation;
         commands.entity(entity).insert(runtime);
@@ -2598,12 +2603,14 @@ mod tests {
         });
         app.update();
 
-        let mut query = app
-            .world_mut()
-            .query::<(&crate::cultivation::components::Cultivation, &NpcMarker)>();
+        let mut query = app.world_mut().query::<(
+            &crate::cultivation::components::Cultivation,
+            &crate::cultivation::components::MeridianSystem,
+            &NpcMarker,
+        )>();
         let results: Vec<_> = query.iter(app.world()).collect();
         assert_eq!(results.len(), 1, "应恰好创建 1 个大能 entity");
-        let (cultivation, _) = results[0];
+        let (cultivation, meridian_system, _) = results[0];
         assert_eq!(
             cultivation.realm,
             crate::cultivation::components::Realm::Void,
@@ -2620,6 +2627,17 @@ mod tests {
             (cultivation.qi_max - DYING_ELDER_INITIAL_QI).abs() < f64::EPSILON,
             "大能 qi_max 必须等于 DYING_ELDER_INITIAL_QI，实际 = {}",
             cultivation.qi_max
+        );
+        // realm↔经脉双源回归锁：meridian_system 必须由真实 Realm::Void 派生
+        // （required_meridians=20），不能停留在占位 Realm::Awaken 派生出的 1 脉。
+        assert_eq!(
+            meridian_system.opened_count(),
+            crate::cultivation::components::Realm::Void.required_meridians(),
+            "大能 MeridianSystem.opened_count() 必须等于 Realm::Void.required_meridians()\
+             （20），实际 = {}——若传入 npc_runtime_bundle 的 realm 实参退回占位值\
+             （如 Realm::Awaken），meridian_system 会按错误 realm 派生，与落地\
+             cultivation.realm=Void 形成 realm↔经脉双源",
+            meridian_system.opened_count()
         );
     }
 

@@ -1263,6 +1263,13 @@ fn migrate_dormant_realm_distribution_v1(
             // seeder, just on the migration path.
             snapshot.meridian_system =
                 crate::npc::technique::npc_meridian_system_for_realm(new_realm);
+            // minor fix：重新派生的 meridian_system 会把所有经脉按 new_realm 全量
+            // 重开（opened=true），却没核对 meridian_severed（永久断脉登记）——一条
+            // 已被记录 SEVERED 的经脉会在迁移后被"复活"，与 MeridianSeveredPermanent
+            // 记录矛盾。永久断脉是跨周目才重置的长期状态，realm 迁移不应抹掉它。
+            for severed_id in &snapshot.meridian_severed.severed_meridians {
+                snapshot.meridian_system.get_mut(*severed_id).opened = false;
+            }
             changed = true;
             if matches!(new_realm, Realm::Condense | Realm::Solidify) {
                 let entry = zone_highlights
@@ -4971,6 +4978,76 @@ mod tests {
             "40 条 legacy 快照在 resource zone 下重抽样，至少应有一条落在 required_meridians()>1 \
              的境界（凝脉=6/固元=12/通灵=16），否则本测试没有真正覆盖迁移器重派 \
              meridian_system 的分支（fixture 完整性）"
+        );
+    }
+
+    #[test]
+    fn migration_reroll_respects_permanently_severed_meridians() {
+        // minor fix pin：迁移器重派 meridian_system 时用 npc_meridian_system_for_realm
+        // 整段覆盖，会把「已被 MeridianSeveredPermanent 永久记录断绝」的经脉也一并
+        // 按新 realm 重新打开——这与"永久断脉"语义矛盾（断脉只应在跨周目重置，
+        // realm 迁移这种同一角色的境界重 roll 不该复活它）。用 Lung（MeridianId::ALL[0]，
+        // 任何 realm 的 required_meridians() >= 1 都会覆盖到它）作为永久断脉标的，
+        // 断言迁移后依旧 opened=false。
+        let marker_path = unique_marker_path("meridian-severed-respect");
+        let _env = ScopedMarkerEnvVar::set(&marker_path);
+
+        let mut store = NpcDormantStore::default();
+        for i in 0..40u32 {
+            let mut snap = legacy_rogue_snapshot(&format!("legacy:severed:{i}"));
+            snap.meridian_system = MeridianSystem::default();
+            snap.meridian_severed
+                .severed_meridians
+                .insert(crate::cultivation::components::MeridianId::Lung);
+            snap.meridian_severed.severed_at.insert(
+                crate::cultivation::components::MeridianId::Lung,
+                crate::cultivation::meridian::severed::SeveredRecord {
+                    at_tick: 0,
+                    source: crate::cultivation::meridian::severed::SeveredSource::CombatWound,
+                },
+            );
+            store.snapshots.insert(snap.char_id.clone(), snap);
+        }
+        store.rebuild_indexes();
+
+        let mut z = zone();
+        z.spirit_qi = 0.9; // 高于阈值 -> resource zone，拉高高境界命中率，确保有 realm 变化分支被覆盖
+        let registry = ZoneRegistry { zones: vec![z] };
+
+        let mut app = migration_test_app(registry, store);
+        app.update();
+
+        let migrated_store = app.world().resource::<NpcDormantStore>();
+        let mut saw_changed_realm = false;
+        for i in 0..40u32 {
+            let char_id = format!("legacy:severed:{i}");
+            let snap = migrated_store
+                .snapshots
+                .get(&char_id)
+                .unwrap_or_else(|| panic!("snapshot {char_id} should still exist after migration"));
+            if snap.cultivation.realm != Realm::Awaken {
+                saw_changed_realm = true;
+            }
+            let lung = snap
+                .meridian_system
+                .get(crate::cultivation::components::MeridianId::Lung);
+            assert!(
+                !lung.opened,
+                "char_id={char_id}: Lung 经脉在 meridian_severed 中被永久记录断绝，\
+                 迁移重派 meridian_system 后仍必须保持 opened=false（实际 opened=true），\
+                 否则永久断脉被 realm 迁移悄悄复活，与 MeridianSeveredPermanent 记录矛盾"
+            );
+            assert!(
+                snap.meridian_severed
+                    .severed_meridians
+                    .contains(&crate::cultivation::components::MeridianId::Lung),
+                "char_id={char_id}: 迁移不应改动 meridian_severed 记录本身"
+            );
+        }
+        assert!(
+            saw_changed_realm,
+            "40 条 legacy 快照在 resource zone 下重抽样，至少应有一条 realm 发生变化，\
+             否则本测试没有真正覆盖迁移器重派 meridian_system 的分支（fixture 完整性）"
         );
     }
 
