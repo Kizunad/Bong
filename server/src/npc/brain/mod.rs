@@ -21,7 +21,8 @@ pub use scorers_cultivation::{
 pub use scorers_social::TradeStallScorer;
 #[allow(unused_imports)]
 pub use scorers_survival::{
-    AgeingScorer, FearCultivatorScorer, HungerScorer, ReturnHomeScorer, WanderScorer,
+    AgeingScorer, CorneredScorer, FearCultivatorScorer, FleeThreatScorer, HungerScorer,
+    ReturnHomeScorer, WanderScorer,
 };
 
 // ---- Re-exports: action types (pub) ----
@@ -52,7 +53,8 @@ pub(crate) use scorers_cultivation::{
 pub(crate) use scorers_social::trade_stall_scorer_system;
 #[allow(unused_imports)]
 pub(crate) use scorers_survival::{
-    ageing_scorer_system, fear_cultivator_score, fear_cultivator_scorer_system,
+    ageing_scorer_system, cornered_score, cornered_scorer_system, fear_cultivator_score,
+    fear_cultivator_scorer_system, flee_threat_score, flee_threat_scorer_system,
     hunger_scorer_system, return_home_score, return_home_scorer_system, wander_scorer_system,
 };
 
@@ -161,6 +163,15 @@ pub(crate) const NPC_TRIBULATION_WAVES_DEFAULT: u32 = 3;
 pub(super) const TRIBULATION_MIN_QI_RATIO: f64 = 0.8;
 /// SeclusionAction 长休眠 tick 数；到期后回 Success 以免 picker 死锁。
 pub(super) const SECLUSION_CYCLE_TICKS: u32 = 400;
+
+/// plan-mundane-fauna-v1 P0 — 凡兽 `FleeThreatScorer` 感知半径。比
+/// `FEAR_CULTIVATOR_RANGE`（50，修士专属）更近——凡兽体型小、感知有限，
+/// 且 P0 范围限定只对玩家/修士生效（`update_npc_blackboard.nearest_player`
+/// 尚不扫描非玩家捕食者，见 fauna/mundane.rs 模块文档）。
+pub(super) const FLEE_THREAT_RANGE: f32 = 20.0;
+/// plan-mundane-fauna-v1 P0 — 凡兽 `CorneredScorer` 反击距离门槛："逼入死角"
+/// 判定为近战距离内仍被追打（配合 `NpcBlackboard.retaliation_target` 命中窗口）。
+pub(super) const CORNERED_MELEE_DISTANCE: f32 = 4.0;
 
 // ---------------------------------------------------------------------------
 // Shared types (used by multiple sub-modules)
@@ -447,6 +458,9 @@ pub fn register(app: &mut App) {
                 wander_scorer_system,
                 trade_stall_scorer_system,
                 return_home_scorer_system,
+                // plan-mundane-fauna-v1 P0 — 凡兽威胁谱系反抗链（4-thinker 中的两支）。
+                flee_threat_scorer_system,
+                cornered_scorer_system,
             )
                 .in_set(BigBrainSet::Scorers),
         )

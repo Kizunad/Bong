@@ -12,6 +12,8 @@ pub mod ghost_narration;
 pub mod hybrid_beast;
 pub mod migration;
 pub mod mimic_spider;
+// plan-mundane-fauna-v1 P0 — 凡兽底盘（9 种原版被动生物 Rail A bundle + 被动 AI）
+pub mod mundane;
 pub mod rat_phase;
 pub mod visual;
 
@@ -114,4 +116,6 @@ pub fn register(app: &mut App) {
     dying_elder::register_p2(app);
     // plan-dying-elder-v1 P3：Redis 叙事事件（appear/death/dan_received broadcast）+ Renown 接入
     dying_elder::register_p3(app);
+    // plan-mundane-fauna-v1 P0：凡兽 ambient_scheduler 纯复用接入（3 步，§8.1 #2）
+    mundane::register(app);
 }

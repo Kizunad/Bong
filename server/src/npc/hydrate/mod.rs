@@ -38,8 +38,9 @@ use crate::npc::schedule::{
     home_base_for_archetype, hydrate_position_for, schedule_seed_from_char_id, NpcDailySchedule,
 };
 use crate::npc::spawn::{
-    spawn_beast_npc_at, spawn_commoner_npc_at, spawn_disciple_npc_at, spawn_relic_guard_npc_at,
-    spawn_rogue_npc_at, spawn_zombie_npc_at, NpcMarker, NpcSkinSpawnContext,
+    spawn_beast_npc_at, spawn_commoner_npc_at, spawn_disciple_npc_at, spawn_mundane_fauna_at,
+    spawn_relic_guard_npc_at, spawn_rogue_npc_at, spawn_zombie_npc_at, NpcMarker,
+    NpcSkinSpawnContext,
 };
 use crate::npc::territory::Territory;
 use crate::npc::tsy_hostile::{
@@ -715,6 +716,19 @@ fn spawn_from_snapshot(
         NpcArchetype::DyingElder => {
             spawn_zombie_npc_at(commands, layer, home_zone, pos, patrol_target)
         }
+        // plan-mundane-fauna-v1 P0：凡兽不持久化 `MundaneFaunaKind`——同 `spawn_beast_npc_at`
+        // 用 `fauna_tag_for_beast_spawn(home_zone, seed)` 从 home_zone+位置重新派生
+        // `BeastKind` 而不持久化的先例，复活时用 `mundane_species_for_position` 从
+        // (home_zone, pos) 确定性重新派生同一物种（biome 池 + 位置种子，与首次 ambient
+        // spawn 走同一口径）。
+        NpcArchetype::Mundane => spawn_mundane_fauna_at(
+            commands,
+            layer,
+            home_zone,
+            pos,
+            patrol_target,
+            crate::fauna::mundane::mundane_species_for_position(home_zone, pos),
+        ),
     };
 
     let mut entity_commands = commands.entity(entity);

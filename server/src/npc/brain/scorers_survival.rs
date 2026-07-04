@@ -348,6 +348,91 @@ pub(crate) fn fear_cultivator_scorer_system(
 
 use crate::npc::spawn::NpcBlackboard;
 
+// ---------------------------------------------------------------------------
+// FleeThreatScorer / CorneredScorer — plan-mundane-fauna-v1 P0 威胁谱系反抗链
+// ---------------------------------------------------------------------------
+
+use super::{CORNERED_MELEE_DISTANCE, FLEE_THREAT_RANGE};
+
+/// 凡兽泛化避险 scorer（对齐 [`FearCultivatorScorer`] 但不按境界加权、不区分修士/玩家——
+/// 凡兽对"一切威胁"无差别保持距离，T0~T2.5 全档共用）。**P0 范围限定**：
+/// `update_npc_blackboard` 的 `nearest_player` 只扫描 `With<ClientMarker>` 玩家（+
+/// decoy/retaliation/duel 覆盖），不扫描非玩家的捕食者 NPC——本 scorer 在 P0 实际只对
+/// 玩家/修士生效，对妖兽的泛化避险留给 P2 `preys_on` 表接入时扩展感知源
+/// （plan §8.1 #3 已定案 P0 是最小反抗档，不算孤岛，是范围内已知限定）。
+#[derive(Clone, Copy, Debug, Component)]
+pub struct FleeThreatScorer;
+
+impl ScorerBuilder for FleeThreatScorer {
+    fn build(&self, cmd: &mut Commands, scorer: Entity, _actor: Entity) {
+        cmd.entity(scorer).insert(*self);
+    }
+
+    fn label(&self) -> Option<&str> {
+        Some("FleeThreatScorer")
+    }
+}
+
+/// 距离衰减复用 [`fear_distance_falloff`] 曲线，但威胁权重恒 `1.0`（不按境界打折扣——
+/// 凡兽避一切威胁，不像 [`FearCultivatorScorer`] 那样醒灵境界玩家=0 权重）。
+pub(crate) fn flee_threat_score(distance: f32) -> f32 {
+    fear_distance_falloff(distance, FLEE_THREAT_RANGE)
+}
+
+pub(crate) fn flee_threat_scorer_system(
+    npcs: Query<&NpcBlackboard, With<NpcMarker>>,
+    mut scorers: Query<(&Actor, &mut Score), With<FleeThreatScorer>>,
+) {
+    for (Actor(actor), mut score) in &mut scorers {
+        let value = match npcs.get(*actor) {
+            Ok(bb) => flee_threat_score(bb.player_distance),
+            Err(_) => 0.0,
+        };
+        score.set(value);
+    }
+}
+
+/// 凡兽"被逼反击"scorer（T0 惊扰反抗最低档，[[feedback_threat_spectrum]] 硬约束：即便
+/// 最低威胁档也不是纯逃背景板）。触发条件：`NpcBlackboard.retaliation_target` 命中
+/// （近期被玩家击中，`interaction_memory::record_attack_memories` 回填，200 tick 窗口）
+/// **且**当前仍在近战距离内（逼入死角，未能逃脱）——二者同时满足才反击一次，脱险或窗口
+/// 过期后评分归零、picker 回落到 [`FleeThreatScorer`]。二值评分（0.0/1.0）足够：
+/// `FirstToScore` picker 只需要它在窗口内压过 `FleeThreatScorer`（`fear_distance_falloff`
+/// 上限恰为 1.0，`CorneredScorer` 需要严格排在其前面才能保证胜出，见 thinker 注册顺序）。
+#[derive(Clone, Copy, Debug, Component)]
+pub struct CorneredScorer;
+
+impl ScorerBuilder for CorneredScorer {
+    fn build(&self, cmd: &mut Commands, scorer: Entity, _actor: Entity) {
+        cmd.entity(scorer).insert(*self);
+    }
+
+    fn label(&self) -> Option<&str> {
+        Some("CorneredScorer")
+    }
+}
+
+pub(crate) fn cornered_score(retaliation_target: Option<(Entity, u64)>, distance: f32) -> f32 {
+    if retaliation_target.is_some() && distance <= CORNERED_MELEE_DISTANCE {
+        1.0
+    } else {
+        0.0
+    }
+}
+
+pub(crate) fn cornered_scorer_system(
+    npcs: Query<&NpcBlackboard, With<NpcMarker>>,
+    mut scorers: Query<(&Actor, &mut Score), With<CorneredScorer>>,
+) {
+    for (Actor(actor), mut score) in &mut scorers {
+        let value = match npcs.get(*actor) {
+            Ok(bb) => cornered_score(bb.retaliation_target, bb.player_distance),
+            Err(_) => 0.0,
+        };
+        score.set(value);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

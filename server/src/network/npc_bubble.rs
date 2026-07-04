@@ -225,6 +225,9 @@ pub fn bubble_text_by_archetype(
             // plan-dying-elder-v1：垂死大能向玩家乞求，显示求助气泡
             NpcArchetype::DyingElder => "还请施主……留步……",
             NpcArchetype::Beast => "它警惕地盯着你。",
+            // plan-mundane-fauna-v1 P0：凡兽无灵无言语，只留一句警惕性描述（照 Beast 范式，
+            // 不引入"动物说话"的怪异台词）。
+            NpcArchetype::Mundane => "它警惕地嗅了嗅风向。",
             NpcArchetype::Zombie => "...",
         },
     }
