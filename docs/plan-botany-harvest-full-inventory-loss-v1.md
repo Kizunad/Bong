@@ -96,7 +96,7 @@
 1. **`server/src/network/event_stream_emit.rs`**：
    - `push_to_client_priority`（现 L95-131）新增 `channel: EventChannelV1` 参数（原硬编码 `EventChannelV1::Combat`，L108，改为使用传入的 `channel`），可见性从私有改为 `pub(crate)`（供新系统跨函数复用）；`push_to_client`（L78-93）保持默认 `EventChannelV1::Combat` 行为，内部转发时显式传 `EventChannelV1::Combat`，**不改变现有战斗调用方行为**。
    - 新增 `pub fn emit_botany_harvest_overflow_to_event_stream(mut terminal: EventReader<HarvestTerminalEvent>, mut clients: Query<(&Username, &mut Client)>)`：遍历 `HarvestTerminalEvent`，仅当 `event.overflow_to_ground && event.completed && !event.interrupted` 时调用 `push_to_client_priority(&mut clients, event.client_entity, "botany-overflow", &event.detail, EventChannelV1::World, EventPriorityV1::P2Normal, now_ms)`——非满包的正常收获不推送（呼应 `feedback_hud_immersive_minimal` 记忆：事件流不为 happy path 刷屏）。
-2. **`server/src/network/mod.rs`**（`event_stream_emit::emit_combat_events_to_event_stream` 所在 add_systems 块，L920-926）：追加 `event_stream_emit::emit_botany_harvest_overflow_to_event_stream.after(crate::botany::harvest::tick_harvest_sessions)`。
+2. **`server/src/network/mod.rs`**：`event_stream_emit::emit_combat_events_to_event_stream` 所在的 20 元素 `add_systems` 元组（L895-932）已达 Bevy 0.14.2 `IntoSystemConfigs` tuple impl 上限（1..=20），**不得**向该元组追加第 21 个系统——仿照紧邻其后的 `// plan-shield-block-v1 P3：盾牌破损推送（独立 add_systems 避免 Bevy 20元素 tuple 上限）`（L934）先例，新增一段独立调用：`app.add_systems(Update, event_stream_emit::emit_botany_harvest_overflow_to_event_stream.after(crate::botany::harvest::tick_harvest_sessions));`，紧跟在该注释所在独立 `add_systems` 调用之后。
 
 ### 测试
 
@@ -160,7 +160,7 @@
 2. 实施：`HarvestTerminalEvent` 新增 `overflow_to_ground: bool` 字段（见 `## P0` 交付物 3），新增 `network::event_stream_emit::emit_botany_harvest_overflow_to_event_stream` 系统只在 `overflow_to_ground=true` 时推送，`channel=EventChannelV1::World`、`priority=EventPriorityV1::P2Normal`（见 `## P1`）。
 3. 拒绝裸聊天文本方案：`coffin/mod.rs:1012` 的注释已经明确写"真·地面掉落待 P4 或 item-entity 机制就位（`DroppedLootRegistry` 路径）后升级"——即 coffin 模块当年选聊天文本是因为 `DroppedLootRegistry` 尚未验证适合这个场景；现在 botany 这边恰恰是把"待升级"的目标（真正走 `DroppedLootRegistry`）落地的场景，理应同步把反馈也升级到结构化 `event_stream`（`docs/CLAUDE.md` 记忆 `feedback_hud_immersive_minimal`：事件流是通用非战斗专用的既有 HUD 承载面，不需要再造一个聊天刷屏）。`event_stream` payload 结构化（`channel`/`priority`/`text`），client 侧已有通用消费方，不需要新增 wire schema。
 
-**落点**：`server/src/botany/components.rs:251-266`（`HarvestTerminalEvent` 加字段）/ `server/src/network/event_stream_emit.rs:95-131`（`push_to_client_priority` 泛化 channel 参数）/ `server/src/network/mod.rs:920-926`（新系统注册）/ 本 plan `## P1`。
+**落点**：`server/src/botany/components.rs:251-266`（`HarvestTerminalEvent` 加字段）/ `server/src/network/event_stream_emit.rs:95-131`（`push_to_client_priority` 泛化 channel 参数）/ `server/src/network/mod.rs:934` 附近（新系统注册——**不追加进 L895-932 已满 20 元素的 add_systems 元组**，仿 `plan-shield-block-v1` P3 先例另起独立 `app.add_systems`，见 `## P1` 交付物 2）/ 本 plan `## P1`。
 
 ---
 
