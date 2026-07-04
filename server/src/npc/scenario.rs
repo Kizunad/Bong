@@ -6,6 +6,7 @@ use valence::prelude::{
     Position, Query, ResMut, Resource, Update, With,
 };
 
+use crate::cultivation::components::Realm;
 use crate::npc::brain::{
     ChaseAction, ChaseTargetScorer, DashAction, DashScorer, FleeAction, MeleeAttackAction,
     MeleeRangeScorer, PlayerProximityScorer, PROXIMITY_THRESHOLD,
@@ -150,7 +151,11 @@ fn process_pending_scenarios(
                 ),
                 thinker,
             ))
-            .insert(npc_runtime_bundle(entity, NpcArchetype::Zombie));
+            .insert(npc_runtime_bundle(
+                entity,
+                NpcArchetype::Zombie,
+                Realm::Awaken,
+            ));
 
         spawned_entities.push(entity);
     }

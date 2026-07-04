@@ -6,6 +6,7 @@ use valence::prelude::{
     bevy_ecs, ChunkPos, Commands, Component, DVec3, Entity, EntityLayerId, Position,
 };
 
+use crate::cultivation::components::Realm;
 use crate::fauna::components::{BeastKind, FaunaTag};
 use crate::fauna::rat_phase::{
     chunk_pos_from_world, rat_phase_display_name, PressureSensor, RatGroupId, RatPhase,
@@ -131,7 +132,7 @@ pub fn spawn_rat_npc_at(
         Hunger::default(),
         WanderState::default(),
         rat_npc_thinker(),
-        npc_runtime_bundle(entity, NpcArchetype::Beast),
+        npc_runtime_bundle(entity, NpcArchetype::Beast, Realm::Awaken),
     ));
 
     entity

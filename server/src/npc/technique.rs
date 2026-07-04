@@ -122,6 +122,17 @@ pub fn npc_meridian_system_for_realm(realm: Realm) -> MeridianSystem {
 
 // ─── assign_npc_techniques ───────────────────────────────────────────────────
 
+/// 判断一条 technique definition 的 `required_realm` 是否被给定 `realm` 满足
+/// （`required_realm` 解析失败视为不满足）。`assign_npc_techniques` 内部筛选与
+/// 跨模块 audit 测试（验证任意 spawn 路径产出的 NPC 不持有超出自身
+/// `Cultivation.realm` 的功法）共用同一比较口径，避免两处各写一份、日后跑偏。
+pub(crate) fn technique_realm_satisfied(def: &TechniqueDefinition, realm: Realm) -> bool {
+    let Some(required) = parse_realm(def.required_realm) else {
+        return false;
+    };
+    realm_rank(required) <= realm_rank(realm)
+}
+
 /// 检查 technique definition 的经脉依赖在 NPC 的 MeridianSystem 中是否满足（已开）。
 fn meridian_deps_satisfied(
     definition: &TechniqueDefinition,
@@ -165,19 +176,12 @@ pub fn assign_npc_techniques(
     _qi_color_hint: Option<&str>,
     entity_seed: u64,
 ) -> KnownTechniques {
-    let npc_rank = realm_rank(realm);
-
     // 收集所有 realm + 经脉可用的功法
     let available: Vec<&TechniqueDefinition> = TECHNIQUE_DEFINITIONS
         .iter()
         .filter(|def| {
-            let Some(required) = parse_realm(def.required_realm) else {
-                return false;
-            };
-            if realm_rank(required) > npc_rank {
-                return false;
-            }
-            meridian_deps_satisfied(def, meridian_sys, meridian_deps)
+            technique_realm_satisfied(def, realm)
+                && meridian_deps_satisfied(def, meridian_sys, meridian_deps)
         })
         .collect();
 

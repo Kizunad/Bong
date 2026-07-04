@@ -33,6 +33,7 @@ pub mod patrol;
 pub mod perf;
 pub mod poi_rogue_village;
 pub mod possession;
+pub mod realm_perception_narration;
 pub mod relic;
 pub mod scattered_cultivator;
 pub mod scenario;

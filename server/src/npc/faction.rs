@@ -1120,7 +1120,9 @@ fn sync_named_faction_census_system(
     }
 }
 
-fn leader_realm_for(faction: NamedFactionId) -> Realm {
+/// `pub(crate)`（原模块私有）：plan-npc-realm-distribution-v1 P3 §8.1 #3 存量 dormant
+/// 快照迁移需要跨模块调用它给 faction leader 快照直写身份 realm，不新造第二套映射。
+pub(crate) fn leader_realm_for(faction: NamedFactionId) -> Realm {
     match faction {
         NamedFactionId::QingyunHunters => Realm::Solidify,
         NamedFactionId::CangyuanMerchants => Realm::Spirit,
@@ -1133,6 +1135,19 @@ pub fn legacy_faction_id_for_named_faction(faction: NamedFactionId) -> FactionId
         NamedFactionId::QingyunHunters => FactionId::Attack,
         NamedFactionId::CangyuanMerchants => FactionId::Defend,
         NamedFactionId::NorthWasteDrifters => FactionId::Neutral,
+    }
+}
+
+/// `legacy_faction_id_for_named_faction` 的逆映射（三档一一对应）。
+///
+/// plan-npc-realm-distribution-v1 P3 §8.1 #3：既有 dormant 快照的 `FactionMembership`
+/// 只持有 legacy 三态 `FactionId`（Attack/Defend/Neutral），迁移器要给 faction Leader
+/// 快照直写身份 realm 就得先反查具名宗门才能喂 [`leader_realm_for`]。
+pub(crate) fn named_faction_id_for_legacy(faction_id: FactionId) -> NamedFactionId {
+    match faction_id {
+        FactionId::Attack => NamedFactionId::QingyunHunters,
+        FactionId::Defend => NamedFactionId::CangyuanMerchants,
+        FactionId::Neutral => NamedFactionId::NorthWasteDrifters,
     }
 }
 
@@ -1540,9 +1555,43 @@ fn planar_distance_sq(left: DVec3, right: DVec3) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cultivation::components::Cultivation;
     use serde_json::json;
     use valence::prelude::Events;
     use valence::testing::create_mock_client;
+
+    // === plan-npc-realm-distribution-v1 P3 §8.1 #3：`named_faction_id_for_legacy` 是
+    // `legacy_faction_id_for_named_faction` 的逆映射，dormant 迁移器靠这个往返关系从
+    // 快照持有的 legacy `FactionId` 反查具名宗门再喂 `leader_realm_for`。穷举三档正反双向，
+    // 防止未来任一侧改了映射却漏改另一侧，导致迁移把 leader 快照错配成别的宗门境界。
+
+    #[test]
+    fn named_faction_id_for_legacy_round_trips_all_three_variants() {
+        for named in NamedFactionId::all() {
+            let legacy = legacy_faction_id_for_named_faction(named);
+            let recovered = named_faction_id_for_legacy(legacy);
+            assert_eq!(
+                recovered, named,
+                "named={named:?} -> legacy={legacy:?} -> recovered={recovered:?} 应往返一致"
+            );
+        }
+    }
+
+    #[test]
+    fn named_faction_id_for_legacy_pinned_per_variant() {
+        assert_eq!(
+            named_faction_id_for_legacy(FactionId::Attack),
+            NamedFactionId::QingyunHunters
+        );
+        assert_eq!(
+            named_faction_id_for_legacy(FactionId::Defend),
+            NamedFactionId::CangyuanMerchants
+        );
+        assert_eq!(
+            named_faction_id_for_legacy(FactionId::Neutral),
+            NamedFactionId::NorthWasteDrifters
+        );
+    }
 
     #[test]
     fn default_store_bootstraps_exactly_three_stable_factions() {
@@ -2845,6 +2894,53 @@ mod tests {
                 .all(|(leader, _, _, _, _)| *leader != NamedFactionId::NorthWasteDrifters),
             "NorthWasteDrifters 初始 Headless，P2 不应刷新领袖"
         );
+    }
+
+    #[test]
+    fn leader_spawn_writes_leader_realm_into_cultivation_component() {
+        // plan-npc-realm-distribution-v1 P0 choke-point pin: 派系首领 spawn 后
+        // Cultivation.realm 必须等于 leader_realm_for(faction)（三档全覆盖），
+        // 而不是被 npc_runtime_bundle 恒吞成 Realm::Awaken（修复前的 bug）。
+        let mut app = App::new();
+        app.insert_resource(NamedFactionRegistry::startup_default());
+        let claims =
+            FactionZoneClaims::from_registry(app.world().resource::<NamedFactionRegistry>());
+        app.insert_resource(claims);
+        app.insert_resource(p2_zone_registry());
+        app.world_mut().spawn(OverworldLayer);
+        app.add_systems(Update, spawn_named_faction_leaders_on_startup);
+        app.update();
+
+        let mut leaders = app
+            .world_mut()
+            .query::<(&NamedFactionLeader, &Cultivation)>();
+        let rows = leaders
+            .iter(app.world())
+            .map(|(leader, cultivation)| (leader.faction, cultivation.realm))
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            rows.len(),
+            2,
+            "P2 只应为 Active 势力刷新 2 名领袖，实际 {:?}",
+            rows
+        );
+        assert!(
+            rows.contains(&(NamedFactionId::QingyunHunters, Realm::Solidify)),
+            "青云猎盟盟主 Cultivation.realm 期望 Solidify（leader_realm_for 定义），实际 {:?}——\
+             若仍是 Awaken 说明 npc_runtime_bundle choke point 未修复",
+            rows
+        );
+        assert!(
+            rows.contains(&(NamedFactionId::CangyuanMerchants, Realm::Spirit)),
+            "沧渊商会会首 Cultivation.realm 期望 Spirit（leader_realm_for 定义），实际 {:?}——\
+             若仍是 Awaken 说明 npc_runtime_bundle choke point 未修复",
+            rows
+        );
+        // NorthWasteDrifters 是 Headless，本轮不刷新，故不在 rows 内；
+        // 但 leader_realm_for 本身对三档全覆盖已由既有 pin 测试
+        // （leader_realm_matches_plan_table）单独锁定 Realm::Awaken 一档，
+        // 此测试不重复断言纯函数，只锁"写进组件"这一步。
     }
 
     #[test]

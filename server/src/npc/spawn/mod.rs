@@ -403,7 +403,7 @@ mod tests {
 
     use crate::combat::components::WoundKind;
     use crate::combat::events::FIST_REACH;
-    use crate::cultivation::components::Realm;
+    use crate::cultivation::components::{Cultivation, Realm};
     use crate::npc::faction::{FactionId, FactionMembership, FactionRank, MissionExecuteState};
     use crate::npc::movement::MovementCapabilities;
     use crate::npc::patrol::NpcPatrol;
@@ -1125,6 +1125,31 @@ mod tests {
             .expect("relic guard should carry the live guardian thinker");
     }
 
+    #[test]
+    fn spawn_relic_guard_npc_at_writes_spirit_realm_into_cultivation() {
+        // plan-npc-realm-distribution-v1 P0 R1 pin：GuardianRelic 守护者的 `guard_realm`
+        // 局部变量（disciple.rs:217 定义为 Realm::Spirit）此前只喂 npc_meridian_system_for_realm/
+        // assign_npc_techniques，最后 npc_runtime_bundle 恒吞成 Realm::Awaken。
+        let mut app = App::new();
+        app.add_systems(
+            valence::prelude::Startup,
+            (
+                setup_test_layer,
+                spawn_test_relic_guard.after(setup_test_layer),
+            ),
+        );
+        app.update();
+        app.update();
+
+        let guard = only_spawned_npc(&mut app);
+
+        assert_eq!(
+            app.world().get::<Cultivation>(guard).map(|c| c.realm),
+            Some(Realm::Spirit),
+            "GuardianRelic 守护者 Cultivation.realm 期望 Spirit（guard_realm 定义于 disciple.rs:217）"
+        );
+    }
+
     fn only_spawned_npc(app: &mut App) -> Entity {
         let world = app.world_mut();
         let mut query = world.query_filtered::<Entity, With<NpcMarker>>();
@@ -1533,6 +1558,129 @@ mod tests {
             query.iter(world).next().unwrap().home_zone.clone()
         };
         assert_eq!(home_zone, DEFAULT_SPAWN_ZONE_NAME);
+    }
+
+    /// plan-npc-realm-distribution-v1 P1: 活体种群产出实体 pin 测试（专属，不可用 dormant
+    /// hydrate 往返代替 —— `seed_initial_rogue_population_on_startup` 产出真实 entity 且不进
+    /// dormant 快照，是与 `dormant_rogue_seed_snapshot` 完全独立的第二条种群生产线）。
+    ///
+    /// 起 App 跑该 system 到 `progress.done`，直接 query 产出实体的 `Cultivation.realm`：
+    /// ① 不再恒为 `Realm::Awaken`（推翻 P1 目标的最直接回归信号）
+    /// ② 分布落在 §8.1 #1 分布表容差区间内（醒灵占比，statistical pin 非精确计数）
+    /// ③ 化虚不自然刷
+    /// ④ 同 seed 两次跑该 system 逐实体 realm 一致（确定性）
+    /// Deliberately large bounds (2000-block half-extent, area far above the
+    /// PoissonSpawnSampler's `>= 500x500` adaptive tier) so a few hundred rogues
+    /// can be seeded without tripping zone-saturation skips — this test cares
+    /// about the *realm* distribution, not exercising Poisson packing limits.
+    fn mk_big_zone(name: &str, spirit_qi: f64, center: [f64; 3]) -> Zone {
+        Zone {
+            name: name.to_string(),
+            dimension: crate::world::dimension::DimensionKind::Overworld,
+            bounds: (
+                DVec3::new(center[0] - 2000.0, -64.0, center[2] - 2000.0),
+                DVec3::new(center[0] + 2000.0, 320.0, center[2] + 2000.0),
+            ),
+            spirit_qi,
+            danger_level: 1,
+            active_events: Vec::new(),
+            patrol_anchors: vec![DVec3::new(center[0], center[1], center[2])],
+            blocked_tiles: Vec::new(),
+            qi_equilibrium: 0.0,
+            qi_inflow_per_min: 0.0,
+        }
+    }
+
+    fn seed_rogue_population_realm_test_zones() -> ZoneRegistry {
+        ZoneRegistry {
+            zones: vec![
+                // background bucket: spirit_qi < 0.4 threshold.
+                mk_big_zone("background_big", 0.3, [0.0, 66.0, 0.0]),
+                // resource bucket: spirit_qi >= 0.4 threshold.
+                mk_big_zone("resource_big", 0.7, [10_000.0, 66.0, 0.0]),
+            ],
+        }
+    }
+
+    fn run_rogue_seed_to_completion(target_count: u32) -> Vec<Realm> {
+        let scenario = valence::testing::ScenarioSingleClient::new();
+        let mut app = scenario.app;
+        crate::world::dimension::mark_test_layer_as_overworld(&mut app);
+        app.insert_resource(seed_rogue_population_realm_test_zones());
+        let mut registry = NpcRegistry {
+            max_npc_count: 2000,
+            resume_npc_count: 1980,
+            ..Default::default()
+        };
+        registry.per_zone_caps.clear();
+        app.insert_resource(registry);
+        app.insert_resource(RoguePopulationSeedConfig {
+            target_count,
+            ..RoguePopulationSeedConfig::default()
+        });
+        app.add_event::<NpcSpawnNotice>();
+        app.add_systems(Update, rogue::seed_initial_rogue_population_on_startup);
+
+        let rogue_seed_batch_size = 5u32;
+        for _ in 0..(target_count / rogue_seed_batch_size + 1) {
+            app.update();
+        }
+
+        let world = app.world_mut();
+        let mut query = world.query_filtered::<&Cultivation, With<NpcMarker>>();
+        query.iter(world).map(|c| c.realm).collect()
+    }
+
+    #[test]
+    fn seed_initial_rogue_population_produces_realm_distribution_not_all_awaken() {
+        let target_count = 300u32;
+        let realms = run_rogue_seed_to_completion(target_count);
+        assert_eq!(
+            realms.len(),
+            target_count as usize,
+            "must have spawned target_count rogues before sampling their realm distribution"
+        );
+
+        // ① Not all Awaken — this is the direct regression signal for the bug this
+        // plan fixes (`Realm::Awaken` hardcoded at the spawn_scattered_cultivator_at
+        // call site instead of sampling from the §8.1 #1 distribution table).
+        let non_awaken = realms.iter().filter(|r| **r != Realm::Awaken).count();
+        assert!(
+            non_awaken > 0,
+            "expected at least some non-Awaken realms among {} seeded live rogues, got 0 — \
+             this means seed_initial_rogue_population_on_startup regressed back to hardcoding \
+             Realm::Awaken instead of sampling crate::npc::dormant::sample_rogue_seed_realm",
+            realms.len()
+        );
+
+        // ② statistical pin against §8.1 #1: default resource_fraction=0.8 blends
+        // 80% resource-zone table (醒灵 42.5%) with 20% background-zone table
+        // (醒灵 57%) => blended 醒灵 expectation ≈ 45.4%. Generous tolerance band
+        // because this is a statistical (not exact-count) pin over N=300 samples.
+        let awaken_count = realms.iter().filter(|r| **r == Realm::Awaken).count();
+        let awaken_ratio = awaken_count as f64 / realms.len() as f64;
+        assert!(
+            (0.25..=0.65).contains(&awaken_ratio),
+            "醒灵占比 {awaken_ratio:.3}（{awaken_count}/{}）偏离 §8.1 #1 长尾分布预期 \
+             （0.8×42.5% + 0.2×57% ≈ 45.4%），容差区间 [0.25, 0.65] —— 分布表或 salt 可能被误改",
+            realms.len()
+        );
+
+        // ③ 化虚不自然刷（正典稀有，仅垂死大能一类特殊实体走非分布表路径）。
+        assert!(
+            !realms.contains(&Realm::Void),
+            "化虚是正典稀有实体，绝不应出现在自然散修种群 seeder 抽样结果里"
+        );
+
+        // ④ determinism: an independent App run with identical config must
+        // reproduce the exact same per-slot realm sequence, otherwise realm
+        // distribution silently drifts across server restarts.
+        let realms_rerun = run_rogue_seed_to_completion(target_count);
+        assert_eq!(
+            realms, realms_rerun,
+            "同 seed 两次跑 seed_initial_rogue_population_on_startup 必须逐 NPC 境界一致（确定性），\
+             否则重启后境界分布漂移"
+        );
     }
 
     #[test]
@@ -2089,6 +2237,211 @@ mod tests {
             count_after_2, 10,
             "after 2 ticks with target=10, batch_size=5 should total 10; got {}",
             count_after_2
+        );
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // plan-npc-realm-distribution-v1 P2 — 境界-功法-视觉单一来源一致性 audit
+    //
+    // P0 之前的 bug 形态是「意图 realm（喂进 assign_npc_techniques /
+    // select_npc_visual_profile 的局部变量）≠ 组件 realm（npc_runtime_bundle_with_age
+    // 恒吞成的 Cultivation::default()）」。P0 修完 choke point 后两者理论上已收敛到
+    // 同一个函数参数，但那只是「输入端不再分叉」——本审计从真实 spawn 出的 entity
+    // 上*读回* Cultivation.realm，再拿它去核对同一个 entity 上落地的 KnownTechniques /
+    // NpcVisualProfile，验证的是「组件落地结果」的一致性而非「调用参数」的一致性，
+    // 两者不是同一件事：只审计参数传递不会抓到「entity 落地后又被别的 system 悄悄
+    // 改写 Cultivation.realm 但没有联动重算功法/视觉」这类漂移。
+    //
+    // 覆盖：spawn_rogue_npc_at / spawn_scattered_cultivator_at / spawn_disciple_npc_at
+    // / spawn_commoner_npc_at，全 6 境界。GuardianRelic（spawn_relic_guard_npc_at）
+    // 走固定 Realm::Spirit 单点，已有专属 pin
+    // (spawn_relic_guard_npc_at_writes_spirit_realm_into_cultivation)，本审计不重复。
+
+    fn spawn_test_realm_audit_population(mut commands: Commands, layer: Res<TestLayer>) {
+        let realms = [
+            Realm::Awaken,
+            Realm::Induce,
+            Realm::Condense,
+            Realm::Solidify,
+            Realm::Spirit,
+            Realm::Void,
+        ];
+        for (i, realm) in realms.into_iter().enumerate() {
+            let x = 200.0 + i as f64 * 10.0;
+            rogue::spawn_rogue_npc_at(
+                &mut commands,
+                NpcSkinSpawnContext::new(None, NpcSkinFallbackPolicy::AllowFallback),
+                layer.0,
+                DEFAULT_SPAWN_ZONE_NAME,
+                DVec3::new(x, 66.0, 200.0),
+                DVec3::new(x, 66.0, 200.0),
+                realm,
+                0.0,
+            );
+            rogue::spawn_scattered_cultivator_at(
+                &mut commands,
+                NpcSkinSpawnContext::new(None, NpcSkinFallbackPolicy::AllowFallback),
+                layer.0,
+                DEFAULT_SPAWN_ZONE_NAME,
+                DVec3::new(x, 66.0, 210.0),
+                DVec3::new(x, 66.0, 210.0),
+                0.5,
+                realm,
+                0.0,
+            );
+            disciple::spawn_disciple_npc_at(
+                &mut commands,
+                NpcSkinSpawnContext::new(None, NpcSkinFallbackPolicy::AllowFallback),
+                layer.0,
+                DEFAULT_SPAWN_ZONE_NAME,
+                DVec3::new(x, 66.0, 220.0),
+                DVec3::new(x, 66.0, 220.0),
+                FactionId::Attack,
+                FactionRank::Disciple,
+                realm,
+                None,
+                0.0,
+            );
+            commoner::spawn_commoner_npc_at(
+                &mut commands,
+                NpcSkinSpawnContext::new(None, NpcSkinFallbackPolicy::AllowFallback),
+                layer.0,
+                DEFAULT_SPAWN_ZONE_NAME,
+                DVec3::new(x, 66.0, 230.0),
+                DVec3::new(x, 66.0, 230.0),
+                realm,
+                0.0,
+            );
+        }
+    }
+
+    #[test]
+    fn spawn_paths_technique_realm_never_exceeds_persisted_cultivation_realm() {
+        use crate::cultivation::known_techniques::technique_definition;
+        use crate::cultivation::known_techniques::KnownTechniques;
+        use crate::npc::technique::technique_realm_satisfied;
+
+        let mut app = App::new();
+        app.add_systems(
+            valence::prelude::Startup,
+            (
+                setup_test_layer,
+                spawn_test_realm_audit_population.after(setup_test_layer),
+            ),
+        );
+        app.update();
+        app.update();
+
+        let world = app.world_mut();
+        let mut query = world.query_filtered::<(
+            Entity,
+            &Cultivation,
+            Option<&KnownTechniques>,
+            &NpcArchetype,
+        ), With<NpcMarker>>();
+        let mut checked_entities = 0usize;
+        let mut checked_techniques = 0usize;
+        for (entity, cultivation, known, archetype) in query.iter(world) {
+            checked_entities += 1;
+            let Some(known) = known else { continue };
+            for entry in &known.entries {
+                checked_techniques += 1;
+                let def = technique_definition(&entry.id).unwrap_or_else(|| {
+                    panic!(
+                        "entity={entity:?} archetype={archetype:?} realm={:?}: technique {} \
+                         not found in TECHNIQUE_DEFINITIONS",
+                        cultivation.realm, entry.id
+                    )
+                });
+                assert!(
+                    technique_realm_satisfied(def, cultivation.realm),
+                    "entity={entity:?} archetype={archetype:?}: persisted Cultivation.realm={:?} \
+                     does not satisfy technique {} (required_realm={}) — 意图 realm 与组件落地 \
+                     realm 出现双源漂移",
+                    cultivation.realm,
+                    entry.id,
+                    def.required_realm
+                );
+            }
+        }
+
+        // 防止 query 因 filter 打偏而恒真（entities=0 或 techniques=0 都会让上面的
+        // assert 循环体一次不跑，测试看似通过实则没测到任何东西）。
+        assert_eq!(
+            checked_entities, 24,
+            "expected 4 spawn fns x 6 realms = 24 NpcMarker entities, got {checked_entities} — \
+             spawn population fixture 本身跑偏，下面的 realm 断言可能从未真正执行"
+        );
+        assert!(
+            checked_techniques > 0,
+            "expected at least one KnownTechniques entry across the 24 spawned entities — got 0, \
+             the audit loop body never actually ran an assertion"
+        );
+    }
+
+    #[test]
+    fn spawn_paths_visual_profile_matches_persisted_cultivation_realm() {
+        use crate::skin::{select_npc_visual_profile, NpcVisualProfile};
+
+        let mut app = App::new();
+        app.add_systems(
+            valence::prelude::Startup,
+            (
+                setup_test_layer,
+                spawn_test_realm_audit_population.after(setup_test_layer),
+            ),
+        );
+        app.update();
+        app.update();
+
+        let world = app.world_mut();
+        let mut query = world.query_filtered::<(
+            Entity,
+            &Cultivation,
+            &NpcArchetype,
+            Option<&NpcVisualProfile>,
+            Option<&FactionMembership>,
+        ), With<NpcMarker>>();
+        let mut checked_profiles = 0usize;
+        for (entity, cultivation, archetype, profile, membership) in query.iter(world) {
+            let Some(profile) = profile else { continue };
+            checked_profiles += 1;
+            let faction_id = membership.map(|m| m.faction_id);
+            let faction_rank = membership.map(|m| m.rank);
+            // age_ratio 不影响 skin_tier/high_realm，只影响 age_band——用一个固定值
+            // 重算，只比对 realm 派生的两个字段，不比对完整 struct。
+            let recomputed = select_npc_visual_profile(
+                *archetype,
+                cultivation.realm,
+                faction_id,
+                faction_rank,
+                0.5,
+            );
+            assert_eq!(
+                profile.skin_tier, recomputed.skin_tier,
+                "entity={entity:?} archetype={archetype:?}: NpcVisualProfile.skin_tier 落地值 {:?} \
+                 与「用 entity 上实际 Cultivation.realm={:?} 重算」得到的 {:?} 不一致 — \
+                 视觉档位吃的 realm 与组件最终落地的 realm 出现双源漂移",
+                profile.skin_tier,
+                cultivation.realm,
+                recomputed.skin_tier
+            );
+            assert_eq!(
+                profile.has_high_realm_aura(),
+                recomputed.has_high_realm_aura(),
+                "entity={entity:?} archetype={archetype:?}: NpcVisualProfile.high_realm 落地值 {} \
+                 与用实际 Cultivation.realm={:?} 重算的 {} 不一致",
+                profile.has_high_realm_aura(),
+                cultivation.realm,
+                recomputed.has_high_realm_aura()
+            );
+        }
+
+        assert_eq!(
+            checked_profiles, 24,
+            "expected all 24 spawned entities (Rogue/ScatteredCultivator/Disciple/Commoner all \
+             carry NpcVisualProfile) to be checked, got {checked_profiles} — fixture 跑偏或 \
+             NpcVisualProfile 未落地，下面的 realm 一致性断言可能从未真正执行"
         );
     }
 }

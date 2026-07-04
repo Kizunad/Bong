@@ -83,7 +83,8 @@ pub fn spawn_commoner_npc_at(
         NpcPlayerReputation::default(),
     ));
 
-    let runtime = npc_runtime_bundle_with_age(entity, NpcArchetype::Commoner, initial_age_ticks);
+    let runtime =
+        npc_runtime_bundle_with_age(entity, NpcArchetype::Commoner, realm, initial_age_ticks);
     commands.entity(entity).insert(runtime);
 
     entity

@@ -255,4 +255,89 @@ mod tests {
             1.0
         );
     }
+
+    // === plan-npc-realm-distribution-v1 P2：realm→视觉档位映射穷举 pin ===
+    //
+    // 此前 `selector_returns_correct_pool` / `high_realm_aura_uses_realm_not_rank_skin_tier`
+    // 只覆盖了 6 境界中的 3-4 个取样点。P0 修复「realm 被吞成醒灵」之后，视觉档位
+    // 才第一次吃到真实境界；本测试穷举全部 6 境界 × {Rogue, Disciple(无 Leader rank)}，
+    // 锁死 realm→tier 映射不被日后重构悄悄改动边界（Awaken/Induce→Low，
+    // Condense/Solidify→Mid，Spirit/Void→High）。
+
+    #[test]
+    fn rogue_skin_tier_all_six_realms_pinned() {
+        let expected = [
+            (Realm::Awaken, NpcSkinTier::RogueLow),
+            (Realm::Induce, NpcSkinTier::RogueLow),
+            (Realm::Condense, NpcSkinTier::RogueMid),
+            (Realm::Solidify, NpcSkinTier::RogueMid),
+            (Realm::Spirit, NpcSkinTier::RogueHigh),
+            (Realm::Void, NpcSkinTier::RogueHigh),
+        ];
+        for (realm, tier) in expected {
+            let profile = select_npc_visual_profile(NpcArchetype::Rogue, realm, None, None, 0.5);
+            assert_eq!(
+                profile.skin_tier, tier,
+                "Rogue realm={realm:?} 期望 skin_tier={tier:?}，实得 {:?}",
+                profile.skin_tier
+            );
+        }
+    }
+
+    #[test]
+    fn disciple_skin_tier_all_six_realms_pinned_without_leader_rank() {
+        // rank=None（非 Leader）时，disciple_skin_tier 完全由 realm 决定；
+        // Leader rank 会短路成 DiscipleHigh，另有专属测试覆盖（selector_returns_correct_pool）。
+        let expected = [
+            (Realm::Awaken, NpcSkinTier::DiscipleLow),
+            (Realm::Induce, NpcSkinTier::DiscipleLow),
+            (Realm::Condense, NpcSkinTier::DiscipleMid),
+            (Realm::Solidify, NpcSkinTier::DiscipleMid),
+            (Realm::Spirit, NpcSkinTier::DiscipleHigh),
+            (Realm::Void, NpcSkinTier::DiscipleHigh),
+        ];
+        for (realm, tier) in expected {
+            let profile = select_npc_visual_profile(NpcArchetype::Disciple, realm, None, None, 0.5);
+            assert_eq!(
+                profile.skin_tier, tier,
+                "Disciple(no rank) realm={realm:?} 期望 skin_tier={tier:?}，实得 {:?}",
+                profile.skin_tier
+            );
+        }
+    }
+
+    #[test]
+    fn high_realm_aura_all_six_realms_pinned() {
+        // is_high_realm 边界：Spirit/Void → true，其余四档 → false。
+        let expected = [
+            (Realm::Awaken, false),
+            (Realm::Induce, false),
+            (Realm::Condense, false),
+            (Realm::Solidify, false),
+            (Realm::Spirit, true),
+            (Realm::Void, true),
+        ];
+        for (realm, has_aura) in expected {
+            let profile = select_npc_visual_profile(NpcArchetype::Rogue, realm, None, None, 0.5);
+            assert_eq!(
+                profile.has_high_realm_aura(),
+                has_aura,
+                "realm={realm:?} 期望 has_high_realm_aura={has_aura}，实得 {}",
+                profile.has_high_realm_aura()
+            );
+        }
+    }
+
+    #[test]
+    fn commoner_and_other_archetypes_ignore_realm_but_still_carry_realm_derived_aura() {
+        // Commoner 恒 skin_tier=Commoner（不随 realm 变化），但 high_realm aura 字段
+        // 仍必须忠实反映传入 realm——防止「意图 realm≠视觉判定 realm」的另一种双源
+        // （skin_tier 忽略 realm 是设计使然，aura 忽略 realm 则是 bug）。
+        let low = select_npc_visual_profile(NpcArchetype::Commoner, Realm::Awaken, None, None, 0.5);
+        let high = select_npc_visual_profile(NpcArchetype::Commoner, Realm::Void, None, None, 0.5);
+        assert_eq!(low.skin_tier, NpcSkinTier::Commoner);
+        assert_eq!(high.skin_tier, NpcSkinTier::Commoner);
+        assert!(!low.has_high_realm_aura());
+        assert!(high.has_high_realm_aura());
+    }
 }

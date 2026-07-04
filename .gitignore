@@ -60,6 +60,11 @@ world/
 data/players/
 litematics/
 
+# Server runtime data dir (bong.db, one-time migration markers, etc.) — generated at
+# runtime, never a committed artifact. plan-npc-realm-distribution-v1 P3 adds
+# server/data/npc/realm_migration_v1.marker here.
+server/data/
+
 # Node.js (Agent)
 node_modules/
 dist/

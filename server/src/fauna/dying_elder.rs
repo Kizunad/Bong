@@ -426,7 +426,18 @@ pub(crate) fn dying_elder_apply_spawn_system(
         };
 
         // ── 覆盖 npc_runtime_bundle 中的 Cultivation（化虚级 qi）
-        let mut runtime = npc_runtime_bundle(entity, NpcArchetype::DyingElder);
+        // realm 实参必须是真实 Realm::Void——npc_runtime_bundle 内部用它经
+        // npc_meridian_system_for_realm(realm) 派生 meridian_system（20 条经脉），
+        // 这个字段不受下方 `runtime.cultivation = cultivation` 覆盖（cultivation 和
+        // meridian_system 是 NpcRuntimeBundle 两个独立字段）。此前误传占位
+        // Realm::Awaken 导致 meridian_system 只开 1 脉，与落地 cultivation.realm=Void
+        // （required_meridians=20）双源矛盾（realm↔经脉双源 bug，P0 回归锁见
+        // lifecycle.rs + 下方 apply_spawn_system_keeps_void_realm_and_full_qi_regression_lock）。
+        let mut runtime = npc_runtime_bundle(
+            entity,
+            NpcArchetype::DyingElder,
+            crate::cultivation::components::Realm::Void,
+        );
         runtime.cultivation = cultivation;
         commands.entity(entity).insert(runtime);
 
@@ -2566,6 +2577,67 @@ mod tests {
             spawned_bb.home_zone, "tsy_deep",
             "spawn entity home_zone 应为 'tsy_deep'（来自 spawn request），实际 = '{}'",
             spawned_bb.home_zone
+        );
+    }
+
+    /// plan-npc-realm-distribution-v1 P0 回归锁：dying_elder 的化虚 `Cultivation`
+    /// 字面量构造（:391-394）经 `:429-430` 整体覆盖 `npc_runtime_bundle` 产出的
+    /// Cultivation，不受 P0 choke-point 修复影响——realm 必须仍是 `Realm::Void`，
+    /// qi_current/qi_max 必须仍是 `DYING_ELDER_INITIAL_QI`（满灵，大能特例，
+    /// 不适用"NPC spawn 不满灵"的通用红线，因为它走的是覆盖分支非通用 bundle 输出）。
+    #[test]
+    fn apply_spawn_system_keeps_void_realm_and_full_qi_regression_lock() {
+        use valence::prelude::App;
+        let mut app = App::new();
+        app.add_event::<DyingElderSpawnRequest>();
+        app.add_event::<DyingElderAppearedEvent>();
+        app.add_systems(valence::prelude::Update, dying_elder_apply_spawn_system);
+
+        let pos = DVec3::new(5.0, 64.0, 5.0);
+        let bb = DyingElderBlackboard::new("tsy_deep", pos, 7, 50);
+        app.world_mut().send_event(DyingElderSpawnRequest {
+            zone_name: "tsy_deep".to_string(),
+            spawn_pos: pos,
+            blackboard: bb,
+            tick: 50,
+        });
+        app.update();
+
+        let mut query = app.world_mut().query::<(
+            &crate::cultivation::components::Cultivation,
+            &crate::cultivation::components::MeridianSystem,
+            &NpcMarker,
+        )>();
+        let results: Vec<_> = query.iter(app.world()).collect();
+        assert_eq!(results.len(), 1, "应恰好创建 1 个大能 entity");
+        let (cultivation, meridian_system, _) = results[0];
+        assert_eq!(
+            cultivation.realm,
+            crate::cultivation::components::Realm::Void,
+            "大能 Cultivation.realm 必须是 Void（化虚），实际 = {:?}——\
+             若被 P0 choke-point 修复误伤，说明 :429-430 的覆盖顺序被破坏",
+            cultivation.realm
+        );
+        assert!(
+            (cultivation.qi_current - DYING_ELDER_INITIAL_QI).abs() < f64::EPSILON,
+            "大能 qi_current 必须等于 DYING_ELDER_INITIAL_QI（满灵特例），实际 = {}",
+            cultivation.qi_current
+        );
+        assert!(
+            (cultivation.qi_max - DYING_ELDER_INITIAL_QI).abs() < f64::EPSILON,
+            "大能 qi_max 必须等于 DYING_ELDER_INITIAL_QI，实际 = {}",
+            cultivation.qi_max
+        );
+        // realm↔经脉双源回归锁：meridian_system 必须由真实 Realm::Void 派生
+        // （required_meridians=20），不能停留在占位 Realm::Awaken 派生出的 1 脉。
+        assert_eq!(
+            meridian_system.opened_count(),
+            crate::cultivation::components::Realm::Void.required_meridians(),
+            "大能 MeridianSystem.opened_count() 必须等于 Realm::Void.required_meridians()\
+             （20），实际 = {}——若传入 npc_runtime_bundle 的 realm 实参退回占位值\
+             （如 Realm::Awaken），meridian_system 会按错误 realm 派生，与落地\
+             cultivation.realm=Void 形成 realm↔经脉双源",
+            meridian_system.opened_count()
         );
     }
 

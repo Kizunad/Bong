@@ -790,9 +790,11 @@ pub fn spawn_tsy_daoxiang_at(
         known_techniques,
         crate::npc::technique::NpcLastTechniqueTick::default(),
     ));
-    commands
-        .entity(entity)
-        .insert(npc_runtime_bundle(entity, NpcArchetype::Daoxiang));
+    commands.entity(entity).insert(npc_runtime_bundle(
+        entity,
+        NpcArchetype::Daoxiang,
+        daoxiang_realm,
+    ));
     entity
 }
 
@@ -934,9 +936,11 @@ pub fn spawn_tsy_zhinian_at(
         known_techniques,
         crate::npc::technique::NpcLastTechniqueTick::default(),
     ));
-    commands
-        .entity(entity)
-        .insert(npc_runtime_bundle(entity, NpcArchetype::Zhinian));
+    commands.entity(entity).insert(npc_runtime_bundle(
+        entity,
+        NpcArchetype::Zhinian,
+        zhinian_realm,
+    ));
     entity
 }
 
@@ -972,9 +976,11 @@ pub fn spawn_tsy_fuya_at(
         crate::npc::brain::WanderState::default(),
         fuya_thinker(),
     ));
-    commands
-        .entity(entity)
-        .insert(npc_runtime_bundle(entity, NpcArchetype::Fuya));
+    commands.entity(entity).insert(npc_runtime_bundle(
+        entity,
+        NpcArchetype::Fuya,
+        Realm::Awaken,
+    ));
     entity
 }
 
@@ -1017,7 +1023,7 @@ pub fn spawn_tsy_skull_fiend_at(
         },
         skull_fiend_thinker(),
     ));
-    let mut runtime = npc_runtime_bundle(entity, NpcArchetype::SkullFiend);
+    let mut runtime = npc_runtime_bundle(entity, NpcArchetype::SkullFiend, Realm::Awaken);
     runtime.wounds = Wounds {
         entries: Vec::new(),
         health_current: 40.0,
@@ -1081,9 +1087,11 @@ pub fn spawn_tsy_sentinel_at(
         },
         sentinel_thinker(),
     ));
-    commands
-        .entity(entity)
-        .insert(npc_runtime_bundle(entity, NpcArchetype::GuardianRelic));
+    commands.entity(entity).insert(npc_runtime_bundle(
+        entity,
+        NpcArchetype::GuardianRelic,
+        Realm::Spirit,
+    ));
     entity
 }
 
@@ -2287,6 +2295,59 @@ mod tests {
         assert_eq!(
             app.world().get::<FaunaVisualKind>(sentinel),
             Some(&FaunaVisualKind::TsySentinel)
+        );
+    }
+
+    #[test]
+    fn tsy_hostile_spawns_write_expected_realm_into_cultivation() {
+        // plan-npc-realm-distribution-v1 P0 R1 pin：这 5 处身份站点均实测走
+        // 2-arg `npc_runtime_bundle`（非 `_with_age`），修复前 Cultivation.realm
+        // 恒被吞成 Realm::Awaken，即使各自局部变量/字面量已定义了非默认境界。
+        let scenario = valence::testing::ScenarioSingleClient::new();
+        let layer = scenario.layer;
+        let mut app = scenario.app;
+
+        let daoxiang = spawn_tsy_daoxiang_at(
+            &mut app.world_mut().commands(),
+            layer,
+            "tsy_zongmen_01",
+            "tsy_zongmen_01_shallow",
+            DVec3::new(1.0, 64.0, 1.0),
+            DVec3::new(2.0, 64.0, 2.0),
+        );
+        let zhinian = spawn_tsy_zhinian_at(
+            &mut app.world_mut().commands(),
+            layer,
+            "tsy_zongmen_01",
+            "tsy_zongmen_01_mid",
+            DVec3::new(3.0, 64.0, 3.0),
+            DVec3::new(4.0, 64.0, 4.0),
+        );
+        let container = app.world_mut().spawn_empty().id();
+        let sentinel = spawn_tsy_sentinel_at(
+            &mut app.world_mut().commands(),
+            layer,
+            "tsy_zongmen_01",
+            "tsy_zongmen_01_deep",
+            DVec3::new(7.0, 64.0, 7.0),
+            container,
+        );
+        app.world_mut().flush();
+
+        assert_eq!(
+            app.world().get::<Cultivation>(daoxiang).map(|c| c.realm),
+            Some(Realm::Induce),
+            "道乡 spawn_tsy_daoxiang_at 期望 Cultivation.realm == Induce（daoxiang_realm 定义于 :778）"
+        );
+        assert_eq!(
+            app.world().get::<Cultivation>(zhinian).map(|c| c.realm),
+            Some(Realm::Condense),
+            "执念 spawn_tsy_zhinian_at 期望 Cultivation.realm == Condense（zhinian_realm 定义于 :922）"
+        );
+        assert_eq!(
+            app.world().get::<Cultivation>(sentinel).map(|c| c.realm),
+            Some(Realm::Spirit),
+            "秘境守灵 spawn_tsy_sentinel_at 期望 Cultivation.realm == Spirit（对齐 GuardianRelic 档位）"
         );
     }
 

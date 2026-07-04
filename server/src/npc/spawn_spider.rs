@@ -11,6 +11,7 @@ use valence::entity::entity::NameVisible;
 use valence::entity::marker::MarkerEntityBundle;
 use valence::prelude::{Commands, DVec3, Entity, EntityLayerId, Position};
 
+use crate::cultivation::components::Realm;
 use crate::fauna::components::{BeastKind, FaunaTag};
 use crate::fauna::mimic_spider::{MimicSpiderBlackboard, SpiderDisguiseState};
 use crate::fauna::visual::{FaunaVisualKind, ASH_SPIDER_ENTITY_KIND};
@@ -102,7 +103,7 @@ pub fn spawn_ash_spider_npc_at(
         Hunger::default(),
         WanderState::default(),
         spider_thinker(),
-        npc_runtime_bundle(entity, NpcArchetype::Beast),
+        npc_runtime_bundle(entity, NpcArchetype::Beast, Realm::Awaken),
     ));
 
     entity

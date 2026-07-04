@@ -25,6 +25,7 @@ use valence::prelude::{
 };
 
 use crate::combat::events::DeathEvent;
+use crate::cultivation::components::Realm;
 use crate::dandao::boss::{compute_loot, BaolongwangBoss, BossPhase};
 use crate::dandao::boss_ai::{
     pick_best_action, score_avoid_player, score_berserk_attack, score_horn_charge,
@@ -178,7 +179,7 @@ pub fn spawn_baolongwang_at(
         baolongwang_thinker(),
     ));
 
-    let mut runtime = npc_runtime_bundle(entity, NpcArchetype::Beast);
+    let mut runtime = npc_runtime_bundle(entity, NpcArchetype::Beast, Realm::Awaken);
     // 暴龙王 HP：600（boss 级，化虚 ~5 击致命）。
     runtime.wounds.health_current = 600.0;
     runtime.wounds.health_max = 600.0;
