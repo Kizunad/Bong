@@ -174,6 +174,10 @@ pub fn register_production_profiles(registry: &mut DecayProfileRegistry) {
         processing_exp_profile("drying_v1", 14),
         processing_exp_profile("grinding_v1", 7),
         processing_exp_profile("extraction_v1", 3),
+        // plan-mundane-fauna-v1 P1：凡兽生肉/生血 Spoil profile——生肉先于熟肉
+        // （food_spoil_mundane_meat_v1，3 游戏日）腐败，生血比生肉更快腐败。
+        raw_beast_meat_profile(),
+        raw_beast_blood_profile(),
     ] {
         registry
             .insert(profile)
@@ -210,6 +214,30 @@ fn fresh_herb_profile() -> DecayProfile {
         id: DecayProfileId::new("fresh_herb_v1"),
         formula: DecayFormula::Linear {
             decay_per_tick: 1.0 / (GAME_DAY_TICKS as f32 * 3.0),
+        },
+        spoil_threshold: 0.01,
+    }
+}
+
+/// plan-mundane-fauna-v1 P1：生异兽肉 Spoil（~1 游戏日腐败——生肉先于熟肉
+/// `food_spoil_mundane_meat_v1`（3 游戏日）腐败，符合"生肉比熟肉先坏"的生活常识）。
+fn raw_beast_meat_profile() -> DecayProfile {
+    DecayProfile::Spoil {
+        id: DecayProfileId::new("raw_beast_meat_v1"),
+        formula: DecayFormula::Linear {
+            decay_per_tick: 1.0 / (GAME_DAY_TICKS as f32),
+        },
+        spoil_threshold: 0.01,
+    }
+}
+
+/// plan-mundane-fauna-v1 P1：生凡兽血 Spoil（~12 小时=半游戏日腐败，全仓腐败最快的
+/// 生鲜资源——血液离体后最不耐放）。
+fn raw_beast_blood_profile() -> DecayProfile {
+    DecayProfile::Spoil {
+        id: DecayProfileId::new("raw_beast_blood_v1"),
+        formula: DecayFormula::Linear {
+            decay_per_tick: 1.0 / (GAME_DAY_TICKS as f32 * 0.5),
         },
         spoil_threshold: 0.01,
     }
@@ -362,22 +390,94 @@ mod tests {
             "food_spoil_mundane_meat_v1",
             "food_spoil_ling_guo_v1",
             "food_spoil_mundane_dry_v1",
+            // plan-mundane-fauna-v1 P1 — 凡兽生肉/生血 Spoil profiles
+            "raw_beast_meat_v1",
+            "raw_beast_blood_v1",
         ] {
             assert!(r.contains(&DecayProfileId::new(id)), "missing {id}");
         }
-        assert_eq!(r.len(), 23, "expected 23 profiles: 20 existing + 3 food spoil profiles (food_spoil_mundane_meat_v1, food_spoil_ling_guo_v1, food_spoil_mundane_dry_v1)");
+        assert_eq!(r.len(), 25, "expected 25 profiles: 20 existing + 3 food spoil profiles (food_spoil_mundane_meat_v1, food_spoil_ling_guo_v1, food_spoil_mundane_dry_v1) + 2 plan-mundane-fauna-v1 P1 raw fauna spoil profiles (raw_beast_meat_v1, raw_beast_blood_v1)");
     }
 
     #[test]
     fn register_production_profiles_registers_ling_shi_spiritwood_and_processing_profiles() {
         let mut r = DecayProfileRegistry::new();
         register_production_profiles(&mut r);
-        assert_eq!(r.len(), 10);
+        assert_eq!(r.len(), 12);
         assert!(r.contains(&DecayProfileId::new("ling_shi_fan_v1")));
         assert!(r.contains(&DecayProfileId::new("ling_shi_yi_v1")));
         assert!(r.contains(&DecayProfileId::new("ling_mu_gun_v1")));
         assert!(r.contains(&DecayProfileId::new("drying_v1")));
         assert!(r.contains(&DecayProfileId::new("extraction_v1")));
+        assert!(
+            r.contains(&DecayProfileId::new("raw_beast_meat_v1")),
+            "plan-mundane-fauna-v1 P1: raw_beast_meat_v1 must be registered in register_production_profiles"
+        );
+        assert!(
+            r.contains(&DecayProfileId::new("raw_beast_blood_v1")),
+            "plan-mundane-fauna-v1 P1: raw_beast_blood_v1 must be registered in register_production_profiles"
+        );
+    }
+
+    // plan-mundane-fauna-v1 P1 — 生肉/生血腐败曲线 pin：生肉腐败快于熟肉，生血腐败快于生肉。
+    #[test]
+    fn raw_beast_meat_decays_faster_than_cooked_meat() {
+        let r = build_default_registry();
+        let raw_meat = r
+            .get(&DecayProfileId::new("raw_beast_meat_v1"))
+            .expect("raw_beast_meat_v1 must be registered");
+        let cooked_meat = r
+            .get(&DecayProfileId::new("food_spoil_mundane_meat_v1"))
+            .expect("food_spoil_mundane_meat_v1 must be registered");
+        let raw_rate = match raw_meat {
+            DecayProfile::Spoil {
+                formula: DecayFormula::Linear { decay_per_tick },
+                ..
+            } => *decay_per_tick,
+            other => panic!("expected Spoil+Linear for raw_beast_meat_v1, got {other:?}"),
+        };
+        let cooked_rate = match cooked_meat {
+            DecayProfile::Spoil {
+                formula: DecayFormula::Linear { decay_per_tick },
+                ..
+            } => *decay_per_tick,
+            other => panic!("expected Spoil+Linear for food_spoil_mundane_meat_v1, got {other:?}"),
+        };
+        assert!(
+            raw_rate > cooked_rate,
+            "raw meat decay_per_tick={raw_rate} must be greater than cooked meat \
+             decay_per_tick={cooked_rate} (raw spoils faster — 1 game day vs 3 game days)"
+        );
+    }
+
+    #[test]
+    fn raw_beast_blood_decays_faster_than_raw_beast_meat() {
+        let r = build_default_registry();
+        let blood = r
+            .get(&DecayProfileId::new("raw_beast_blood_v1"))
+            .expect("raw_beast_blood_v1 must be registered");
+        let meat = r
+            .get(&DecayProfileId::new("raw_beast_meat_v1"))
+            .expect("raw_beast_meat_v1 must be registered");
+        let blood_rate = match blood {
+            DecayProfile::Spoil {
+                formula: DecayFormula::Linear { decay_per_tick },
+                ..
+            } => *decay_per_tick,
+            other => panic!("expected Spoil+Linear for raw_beast_blood_v1, got {other:?}"),
+        };
+        let meat_rate = match meat {
+            DecayProfile::Spoil {
+                formula: DecayFormula::Linear { decay_per_tick },
+                ..
+            } => *decay_per_tick,
+            other => panic!("expected Spoil+Linear for raw_beast_meat_v1, got {other:?}"),
+        };
+        assert!(
+            blood_rate > meat_rate,
+            "blood decay_per_tick={blood_rate} must be greater than meat \
+             decay_per_tick={meat_rate} (blood spoils faster — 0.5 game day vs 1 game day)"
+        );
     }
 
     #[test]
