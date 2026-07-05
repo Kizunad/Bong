@@ -3668,11 +3668,14 @@ impl From<&super::client_request::ClientRequestV1> for bong::client_request_enve
                 instance_id,
                 from,
                 to,
+                rotated,
                 ..
             } => Payload::InventoryMoveIntent(bong::InventoryMoveIntent {
                 instance_id: *instance_id,
                 from: Some(inventory_location_to_proto(from)),
                 to: Some(inventory_location_to_proto(to)),
+                // plan-rotate-v1 — 旋转落位标志随 wire 透传。
+                rotated: *rotated,
             }),
             ClientRequestV1::EquipFalseSkin {
                 slot,
@@ -7539,6 +7542,7 @@ mod tests {
                     row: 1,
                     col: 0,
                 },
+                rotated: true,
             }),
             build(ClientRequestV1::EquipFalseSkin {
                 v: 1,

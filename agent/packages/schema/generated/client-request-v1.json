@@ -775,6 +775,9 @@
               }
             }
           ]
+        },
+        "rotated": {
+          "type": "boolean"
         }
       }
     },

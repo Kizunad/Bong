@@ -104,12 +104,17 @@ public final class ClientRequestSender {
 
     // ─── Inventory move intent ──────────────────────────────────────────────
 
+    /**
+     * plan-rotate-v1 — {@code rotated} 透传拖拽中的 R 键旋转状态；
+     * 非网格目标（装备槽 / hotbar / 丢弃等）恒传 false。
+     */
     public static void sendInventoryMove(
         long instanceId,
         ClientRequestProtocol.InvLocation from,
-        ClientRequestProtocol.InvLocation to
+        ClientRequestProtocol.InvLocation to,
+        boolean rotated
     ) {
-        dispatch(ClientRequestProtocol.encodeInventoryMove(instanceId, from, to));
+        dispatch(ClientRequestProtocol.encodeInventoryMove(instanceId, from, to, rotated));
     }
 
     public static void sendEquipFalseSkin(long itemInstanceId) {

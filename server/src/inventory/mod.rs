@@ -3439,6 +3439,14 @@ pub struct InventoryDiscardOutcome {
 /// reason; the caller is responsible for resyncing the client (e.g. via a
 /// fresh `inventory_snapshot`) since the client UI optimistically updated.
 ///
+/// plan-rotate-v1 — `rotated=true` 表示落位前先把该 instance 的 `grid_w`/`grid_h`
+/// 互换（拖拽中按 R 旋转，2x1 ↔ 1x2）。旋转只对容器网格目标生效：
+/// - 目标是 Equip / Hotbar（非网格落位）时忽略旋转标志，保持原朝向——这些槽位
+///   不感知 footprint 方向，静默旋转只会在物品回到网格时造成意外形状。
+/// - 正方形物品（含 1x1，`grid_w == grid_h`）互换是恒等操作，直接 no-op。
+/// - 所有校验（越界 / 碰撞 / swap footprint）均以旋转后的尺寸进行；任何拒绝路径
+///   返回前 inventory 均未被写入（校验用的是 clone），不会留下已互换的脏状态。
+///
 /// Rejection paths:
 /// - source location does not actually hold the named instance
 /// - target out of bounds / unknown container
@@ -3449,13 +3457,27 @@ pub fn apply_inventory_move(
     instance_id: u64,
     from: &crate::schema::inventory::InventoryLocationV1,
     to: &crate::schema::inventory::InventoryLocationV1,
+    rotated: bool,
 ) -> Result<InventoryMoveOutcome, InventoryMoveRejectReason> {
     if !location_holds_instance(inventory, instance_id, from) {
         return Err(InventoryMoveRejectReason::FromLocationMismatch);
     }
 
-    let item =
+    let original_item =
         clone_item_at(inventory, instance_id).ok_or(InventoryMoveRejectReason::InstanceNotFound)?;
+
+    // plan-rotate-v1 — 只在网格目标 + 非正方形 footprint 时真正互换；克隆件上互换，
+    // 校验全部通过、真正 attach 时才写回 inventory，拒绝路径不产生脏状态。
+    let apply_rotation = rotated
+        && matches!(
+            to,
+            crate::schema::inventory::InventoryLocationV1::Container { .. }
+        )
+        && original_item.grid_w != original_item.grid_h;
+    let mut item = original_item.clone();
+    if apply_rotation {
+        std::mem::swap(&mut item.grid_w, &mut item.grid_h);
+    }
 
     validate_move_semantics(registry, inventory, &item, from, to)?;
 
@@ -3484,7 +3506,9 @@ pub fn apply_inventory_move(
             // Validate occupant fits at `from` (excluding both — both detached).
             if let Err(reason) = validate_attach_fits(inventory, &occupant, from) {
                 // Restore originals to keep server state coherent on rare rejection.
-                attach_at_location(inventory, item, from)
+                // plan-rotate-v1 — 回滚必须放回「原朝向」的件（original_item）：
+                // 旋转后的 footprint 在原锚点可能与邻居重叠，原朝向则必然合法。
+                attach_at_location(inventory, original_item, from)
                     .expect("restoring original from is always valid (just detached)");
                 attach_at_location(inventory, occupant, to)
                     .expect("restoring original to is always valid (just detached)");
@@ -8358,6 +8382,7 @@ cols = 4
                 col: 0,
             },
             &InventoryLocationV1::Hotbar { index: 3 },
+            false,
         )
         .expect("move should succeed");
 
@@ -8387,6 +8412,7 @@ cols = 4
                 col: 1,
             },
             &InventoryLocationV1::Hotbar { index: 3 },
+            false,
         );
 
         assert!(result.is_err());
@@ -8435,6 +8461,7 @@ cols = 4
                 col: 0,
             },
             &InventoryLocationV1::Hotbar { index: 3 },
+            false,
         )
         .expect("swap should succeed");
 
@@ -8501,6 +8528,7 @@ cols = 4
                 row: 2,
                 col: 2,
             },
+            false,
         );
 
         assert!(result.is_err());
@@ -8528,6 +8556,7 @@ cols = 4
                 row: 2,
                 col: 3,
             },
+            false,
         )
         .expect("intra-grid move should succeed");
 
@@ -8536,6 +8565,399 @@ cols = 4
         assert_eq!(placed.instance.instance_id, 42);
         assert_eq!(placed.row, 2);
         assert_eq!(placed.col, 3);
+    }
+
+    // ─── plan-rotate-v1 — apply_inventory_move rotated 落位 ────────────────
+
+    /// 测试辅助：把 helper 库存里的 #42 改成 2x1 footprint（旋转测试主角）。
+    fn make_test_inventory_with_2x1_item() -> PlayerInventory {
+        let mut inv = make_test_inventory_with_one_item();
+        inv.containers[0].items[0].instance.grid_w = 2;
+        inv.containers[0].items[0].instance.grid_h = 1;
+        inv
+    }
+
+    /// 测试辅助：构造一个占位 ItemInstance（占位物不过 registry 校验，模板可为假）。
+    fn blocker_instance(instance_id: u64, grid_w: u8, grid_h: u8) -> ItemInstance {
+        ItemInstance {
+            instance_id,
+            template_id: "blocker".to_string(),
+            display_name: "占位物".to_string(),
+            grid_w,
+            grid_h,
+            weight: 0.1,
+            rarity: ItemRarity::Common,
+            description: String::new(),
+            stack_count: 1,
+            spirit_quality: 1.0,
+            durability: 1.0,
+            freshness: None,
+            mineral_id: None,
+            charges: None,
+            forge_quality: None,
+            forge_color: None,
+            forge_side_effects: Vec::new(),
+            forge_achieved_tier: None,
+            alchemy: None,
+            lingering_owner_qi: None,
+        }
+    }
+
+    fn main_pack_loc(row: u64, col: u64) -> crate::schema::inventory::InventoryLocationV1 {
+        crate::schema::inventory::InventoryLocationV1::Container {
+            container_id: "main_pack".to_string(),
+            row,
+            col,
+        }
+    }
+
+    /// 2x1 旋转落位成 1x2：dims 互换写回，再旋转移回恢复 2x1（奇偶往返）。
+    #[test]
+    fn apply_move_rotated_2x1_lands_as_1x2_then_rotates_back() {
+        let registry = load_item_registry().expect("item registry should load");
+        let mut inv = make_test_inventory_with_2x1_item();
+
+        let outcome = apply_inventory_move(
+            &mut inv,
+            &registry,
+            42,
+            &main_pack_loc(0, 0),
+            &main_pack_loc(2, 3),
+            true,
+        )
+        .expect("rotated move should succeed");
+        assert_eq!(
+            outcome,
+            InventoryMoveOutcome::Moved {
+                revision: InventoryRevision(8)
+            }
+        );
+        let placed = &inv.containers[0].items[0];
+        assert_eq!((placed.row, placed.col), (2, 3));
+        assert_eq!(
+            (placed.instance.grid_w, placed.instance.grid_h),
+            (1, 2),
+            "旋转落位后 grid_w/grid_h 应互换为 1x2，实际 {}x{}",
+            placed.instance.grid_w,
+            placed.instance.grid_h
+        );
+
+        // 再次旋转移回原位 → 恢复原朝向 2x1（连按两次 R 的服务端等价）。
+        apply_inventory_move(
+            &mut inv,
+            &registry,
+            42,
+            &main_pack_loc(2, 3),
+            &main_pack_loc(0, 0),
+            true,
+        )
+        .expect("second rotated move should succeed");
+        let placed = &inv.containers[0].items[0];
+        assert_eq!(
+            (placed.instance.grid_w, placed.instance.grid_h),
+            (2, 1),
+            "二次旋转应恢复原朝向 2x1"
+        );
+    }
+
+    /// 2x1 转成 1x2 后撞容器底边（行溢出）→ TargetOutOfBounds；原件朝向/位置无脏状态。
+    /// 不旋转时同一目标 (4,0) 是合法的（2x1 在最底行放得下），拒绝完全由旋转引起。
+    #[test]
+    fn apply_move_rotated_rejects_row_overflow_and_leaves_state_clean() {
+        let registry = load_item_registry().expect("item registry should load");
+        let mut inv = make_test_inventory_with_2x1_item();
+
+        let error = apply_inventory_move(
+            &mut inv,
+            &registry,
+            42,
+            &main_pack_loc(0, 0),
+            &main_pack_loc(4, 0),
+            true,
+        )
+        .expect_err("rotated 1x2 at bottom row must overflow 5-row container");
+        assert!(
+            matches!(error, InventoryMoveRejectReason::TargetOutOfBounds),
+            "expected TargetOutOfBounds（行 4 + 高 2 > 5 行），got: {error:?}"
+        );
+        assert_eq!(
+            inv.revision,
+            InventoryRevision(7),
+            "拒绝后 revision 不得变化"
+        );
+        let placed = &inv.containers[0].items[0];
+        assert_eq!((placed.row, placed.col), (0, 0), "拒绝后物品必须留在原位");
+        assert_eq!(
+            (placed.instance.grid_w, placed.instance.grid_h),
+            (2, 1),
+            "拒绝后必须保持原朝向 2x1（不得留下已互换的脏状态）"
+        );
+    }
+
+    /// 1x2 转成 2x1 后撞容器右边（列溢出）→ TargetOutOfBounds（镜像方向的越界分支）。
+    #[test]
+    fn apply_move_rotated_rejects_col_overflow() {
+        let registry = load_item_registry().expect("item registry should load");
+        let mut inv = make_test_inventory_with_one_item();
+        inv.containers[0].items[0].instance.grid_w = 1;
+        inv.containers[0].items[0].instance.grid_h = 2;
+
+        let error = apply_inventory_move(
+            &mut inv,
+            &registry,
+            42,
+            &main_pack_loc(0, 0),
+            &main_pack_loc(0, 6),
+            true,
+        )
+        .expect_err("rotated 2x1 at rightmost col must overflow 7-col container");
+        assert!(
+            matches!(error, InventoryMoveRejectReason::TargetOutOfBounds),
+            "expected TargetOutOfBounds（列 6 + 宽 2 > 7 列），got: {error:?}"
+        );
+        let placed = &inv.containers[0].items[0];
+        assert_eq!(
+            (placed.instance.grid_w, placed.instance.grid_h),
+            (1, 2),
+            "拒绝后必须保持原朝向 1x2"
+        );
+    }
+
+    /// 旋转后的 footprint 撞到别人（非锚点重叠）→ TargetOccupied；无脏状态。
+    /// 不旋转时同一目标 (2,3) 合法（2x1 横放不碰 (3,3) 的占位物），拒绝完全由旋转引起。
+    #[test]
+    fn apply_move_rotated_rejects_collision_and_leaves_state_clean() {
+        let registry = load_item_registry().expect("item registry should load");
+        let mut inv = make_test_inventory_with_2x1_item();
+        inv.containers[0].items.push(PlacedItemState {
+            row: 3,
+            col: 3,
+            instance: blocker_instance(300, 1, 1),
+        });
+
+        let error = apply_inventory_move(
+            &mut inv,
+            &registry,
+            42,
+            &main_pack_loc(0, 0),
+            &main_pack_loc(2, 3),
+            true,
+        )
+        .expect_err("rotated 1x2 at (2,3) overlaps blocker at (3,3)");
+        assert!(
+            matches!(
+                error,
+                InventoryMoveRejectReason::TargetOccupied { instance_id: 300 }
+            ),
+            "expected TargetOccupied by #300, got: {error:?}"
+        );
+        assert_eq!(inv.revision, InventoryRevision(7));
+        let placed = inv.containers[0]
+            .items
+            .iter()
+            .find(|p| p.instance.instance_id == 42)
+            .expect("item #42 must remain in container");
+        assert_eq!((placed.row, placed.col), (0, 0));
+        assert_eq!(
+            (placed.instance.grid_w, placed.instance.grid_h),
+            (2, 1),
+            "拒绝后必须保持原朝向 2x1"
+        );
+    }
+
+    /// 旋转后 footprint 与目标位占用者一致 → 走 swap；占用者弹回原位，旋转件落新位。
+    #[test]
+    fn apply_move_rotated_swap_succeeds_when_rotated_footprint_matches() {
+        let registry = load_item_registry().expect("item registry should load");
+        let mut inv = make_test_inventory_with_2x1_item();
+        inv.containers[0].items.push(PlacedItemState {
+            row: 2,
+            col: 2,
+            instance: blocker_instance(200, 1, 2),
+        });
+
+        let outcome = apply_inventory_move(
+            &mut inv,
+            &registry,
+            42,
+            &main_pack_loc(0, 0),
+            &main_pack_loc(2, 2),
+            true,
+        )
+        .expect("rotated swap should succeed（旋转后 1x2 与占用者 footprint 相同）");
+        assert_eq!(
+            outcome,
+            InventoryMoveOutcome::Swapped {
+                revision: InventoryRevision(8),
+                displaced_instance_id: 200,
+            }
+        );
+        let moved = inv.containers[0]
+            .items
+            .iter()
+            .find(|p| p.instance.instance_id == 42)
+            .expect("#42 present");
+        assert_eq!((moved.row, moved.col), (2, 2));
+        assert_eq!((moved.instance.grid_w, moved.instance.grid_h), (1, 2));
+        let displaced = inv.containers[0]
+            .items
+            .iter()
+            .find(|p| p.instance.instance_id == 200)
+            .expect("#200 present");
+        assert_eq!((displaced.row, displaced.col), (0, 0));
+    }
+
+    /// 旋转 swap 中占用者放不回原位 → 拒绝，且回滚必须恢复「原朝向」的件
+    /// （若错误回滚旋转后的件，1x2 在 (0,0) 会与 (1,0) 的占位物重叠 = 脏状态）。
+    #[test]
+    fn apply_move_rotated_swap_restore_keeps_original_orientation() {
+        let registry = load_item_registry().expect("item registry should load");
+        let mut inv = make_test_inventory_with_2x1_item();
+        // 目标位占用者：1x2（与旋转后的 #42 footprint 相同 → 触发 swap 分支）。
+        inv.containers[0].items.push(PlacedItemState {
+            row: 2,
+            col: 2,
+            instance: blocker_instance(200, 1, 2),
+        });
+        // (1,0) 占位物：让 1x2 的 #200 放不回 (0,0)（rows 0-1 col 0 与其重叠）。
+        // 原朝向 2x1 的 #42（row 0, cols 0-1）与它不重叠。
+        inv.containers[0].items.push(PlacedItemState {
+            row: 1,
+            col: 0,
+            instance: blocker_instance(300, 1, 1),
+        });
+
+        let error = apply_inventory_move(
+            &mut inv,
+            &registry,
+            42,
+            &main_pack_loc(0, 0),
+            &main_pack_loc(2, 2),
+            true,
+        )
+        .expect_err("swap must reject：#200 (1x2) 放不回 (0,0)");
+        assert!(
+            matches!(
+                error,
+                InventoryMoveRejectReason::TargetOccupied { instance_id: 300 }
+            ),
+            "expected TargetOccupied by #300, got: {error:?}"
+        );
+        assert_eq!(inv.revision, InventoryRevision(7));
+        assert_eq!(inv.containers[0].items.len(), 3, "三件必须全部原样保留");
+        let restored = inv.containers[0]
+            .items
+            .iter()
+            .find(|p| p.instance.instance_id == 42)
+            .expect("#42 must be restored");
+        assert_eq!((restored.row, restored.col), (0, 0));
+        assert_eq!(
+            (restored.instance.grid_w, restored.instance.grid_h),
+            (2, 1),
+            "swap 回滚必须放回原朝向 2x1（回滚旋转件会与 #300 重叠）"
+        );
+        let occupant = inv.containers[0]
+            .items
+            .iter()
+            .find(|p| p.instance.instance_id == 200)
+            .expect("#200 must be restored");
+        assert_eq!((occupant.row, occupant.col), (2, 2));
+    }
+
+    /// 1x1 物品 rotated=true 是 no-op：移动照常成功，dims 不变。
+    #[test]
+    fn apply_move_rotated_1x1_is_noop() {
+        let registry = load_item_registry().expect("item registry should load");
+        let mut inv = make_test_inventory_with_one_item();
+
+        apply_inventory_move(
+            &mut inv,
+            &registry,
+            42,
+            &main_pack_loc(0, 0),
+            &main_pack_loc(2, 3),
+            true,
+        )
+        .expect("1x1 rotated move should succeed as plain move");
+        let placed = &inv.containers[0].items[0];
+        assert_eq!((placed.row, placed.col), (2, 3));
+        assert_eq!(
+            (placed.instance.grid_w, placed.instance.grid_h),
+            (1, 1),
+            "1x1 物品旋转是 no-op，dims 不得变化"
+        );
+    }
+
+    /// 2x2 正方形物品 rotated=true 同样 no-op（互换恒等，直接跳过）。
+    #[test]
+    fn apply_move_rotated_square_2x2_is_noop() {
+        let registry = load_item_registry().expect("item registry should load");
+        let mut inv = make_test_inventory_with_one_item();
+        inv.containers[0].items[0].instance.grid_w = 2;
+        inv.containers[0].items[0].instance.grid_h = 2;
+
+        apply_inventory_move(
+            &mut inv,
+            &registry,
+            42,
+            &main_pack_loc(0, 0),
+            &main_pack_loc(2, 3),
+            true,
+        )
+        .expect("2x2 rotated move should succeed as plain move");
+        let placed = &inv.containers[0].items[0];
+        assert_eq!(
+            (placed.instance.grid_w, placed.instance.grid_h),
+            (2, 2),
+            "正方形物品旋转是 no-op，dims 不得变化"
+        );
+    }
+
+    /// 非网格目标（hotbar）rotated=true 被忽略：落位成功且保持原朝向。
+    #[test]
+    fn apply_move_rotated_ignored_for_hotbar_target() {
+        use crate::schema::inventory::InventoryLocationV1;
+        let registry = load_item_registry().expect("item registry should load");
+        let mut inv = make_test_inventory_with_2x1_item();
+
+        apply_inventory_move(
+            &mut inv,
+            &registry,
+            42,
+            &main_pack_loc(0, 0),
+            &InventoryLocationV1::Hotbar { index: 3 },
+            true,
+        )
+        .expect("hotbar move with rotated flag should succeed");
+        let item = inv.hotbar[3].as_ref().expect("#42 in hotbar");
+        assert_eq!(
+            (item.grid_w, item.grid_h),
+            (2, 1),
+            "非网格目标必须忽略旋转标志，保持原朝向 2x1"
+        );
+    }
+
+    /// rotated=false 全兼容旧行为：2x1 移动后仍是 2x1。
+    #[test]
+    fn apply_move_rotated_false_keeps_orientation() {
+        let registry = load_item_registry().expect("item registry should load");
+        let mut inv = make_test_inventory_with_2x1_item();
+
+        apply_inventory_move(
+            &mut inv,
+            &registry,
+            42,
+            &main_pack_loc(0, 0),
+            &main_pack_loc(2, 3),
+            false,
+        )
+        .expect("plain move should succeed");
+        let placed = &inv.containers[0].items[0];
+        assert_eq!(
+            (placed.instance.grid_w, placed.instance.grid_h),
+            (2, 1),
+            "rotated=false 必须保持原朝向（旧行为兼容）"
+        );
     }
 
     #[test]
@@ -8561,6 +8983,7 @@ cols = 4
                 slot: EquipSlotV1::MainHand,
                 state: crate::schema::inventory::EquipStateV1::Held,
             },
+            false,
         )
         .expect("weapon should equip to main_hand");
 
@@ -8601,6 +9024,7 @@ cols = 4
                 slot: EquipSlotV1::MainHand,
                 state: crate::schema::inventory::EquipStateV1::Held,
             },
+            false,
         )
         .expect("tool should equip to main_hand");
 
@@ -8643,6 +9067,7 @@ cols = 4
                 slot: EquipSlotV1::OffHand,
                 state: crate::schema::inventory::EquipStateV1::Held,
             },
+            false,
         )
         .expect("tool should equip to off_hand");
 
@@ -8683,6 +9108,7 @@ cols = 4
                 slot: EquipSlotV1::MainHand,
                 state: crate::schema::inventory::EquipStateV1::Held,
             },
+            false,
         )
         .expect_err("block items must not equip to main_hand");
 
@@ -8745,6 +9171,7 @@ cols = 4
                 slot: EquipSlotV1::Chest,
                 state: crate::schema::inventory::EquipStateV1::Worn,
             },
+            false,
         )
         .expect("chestplate should equip to chest");
 
@@ -8785,6 +9212,7 @@ cols = 4
                 slot: EquipSlotV1::Head,
                 state: crate::schema::inventory::EquipStateV1::Worn,
             },
+            false,
         )
         .expect_err("chestplate should not equip to head");
 
@@ -8841,6 +9269,7 @@ cols = 4
                 slot: EquipSlotV1::Chest,
                 state: crate::schema::inventory::EquipStateV1::Worn,
             },
+            false,
         )
         .expect_err("armor with unresolvable equip slot should be rejected");
 
@@ -8884,6 +9313,7 @@ cols = 4
                 slot: EquipSlotV1::Chest,
                 state: crate::schema::inventory::EquipStateV1::Worn,
             },
+            false,
         )
         .expect_err("broken armor should be rejected");
 
@@ -8946,6 +9376,7 @@ cols = 4
                 slot: EquipSlotV1::OffHand,
                 state: crate::schema::inventory::EquipStateV1::Held,
             },
+            false,
         )
         .expect_err("off_hand should be locked by two-handed weapon in main_hand");
 
@@ -8975,6 +9406,7 @@ cols = 4
                 col: 0,
             },
             &InventoryLocationV1::Hotbar { index: 0 },
+            false,
         )
         .expect_err("weapon should be rejected from hotbar");
 
@@ -9005,6 +9437,7 @@ cols = 4
                 col: 0,
             },
             &InventoryLocationV1::Hotbar { index: 0 },
+            false,
         )
         .expect_err("tool should be rejected from hotbar");
 
@@ -9035,6 +9468,7 @@ cols = 4
                 col: 0,
             },
             &InventoryLocationV1::Hotbar { index: 0 },
+            false,
         )
         .expect_err("armor should be rejected from hotbar");
 
@@ -9067,6 +9501,7 @@ cols = 4
                 col: 0,
             },
             &InventoryLocationV1::Hotbar { index: 0 },
+            false,
         )
         .expect_err("shield should be rejected from hotbar");
 
@@ -9104,6 +9539,7 @@ cols = 4
                 slot: EquipSlotV1::OffHand,
                 state: crate::schema::inventory::EquipStateV1::Held,
             },
+            false,
         )
         .expect_err("sword should be rejected from off_hand");
 
@@ -9141,6 +9577,7 @@ cols = 4
                 slot: EquipSlotV1::OffHand,
                 state: crate::schema::inventory::EquipStateV1::Held,
             },
+            false,
         )
         .expect_err("armor should be rejected from off_hand (no weapon_spec, not treasure/shield)");
 
@@ -9204,6 +9641,7 @@ cols = 4
                 slot: EquipSlotV1::MainHand,
                 state: crate::schema::inventory::EquipStateV1::Held,
             },
+            false,
         )
         .expect_err("two-handed weapon should conflict with occupied opposite hand");
 
@@ -13851,7 +14289,7 @@ cols = 4
             row: 0,
             col: 0,
         };
-        apply_inventory_move(&mut inv, &registry, 55, &from, &to).expect("跨包移动应成功");
+        apply_inventory_move(&mut inv, &registry, 55, &from, &to, false).expect("跨包移动应成功");
 
         // 移动后 instance 55 应在 pack_1002，且 lingering_owner_qi 不变（守恒）。
         let pack2 = inv
@@ -13947,7 +14385,7 @@ cols = 4
             row: 0,
             col: 0,
         };
-        apply_inventory_move(&mut inv, &registry, 70, &from, &to)
+        apply_inventory_move(&mut inv, &registry, 70, &from, &to, false)
             .expect("拖入穿戴中的 pack_2001 应成功（owner 在 chest worn 层）");
 
         let pack = inv
@@ -14013,7 +14451,7 @@ cols = 4
         };
         // §3 放宽后：携带面 = worn+held+hotbar+body_pocket。pack 3001 卸在 main_pack（grid 货物，
         // 非携带面）→ 仍被门控拒绝；文案改为「背包已不在身上」（统一新语义）。
-        let err = apply_inventory_move(&mut inv, &registry, 71, &from, &to)
+        let err = apply_inventory_move(&mut inv, &registry, 71, &from, &to, false)
             .expect_err("拖入卸在 grid 内（非携带面）的 pack_3001 应被门控拒绝");
         assert!(
             matches!(
@@ -14067,7 +14505,7 @@ cols = 4
             row: 0,
             col: 0,
         };
-        let err = apply_inventory_move(&mut inv, &registry, 72, &from, &to)
+        let err = apply_inventory_move(&mut inv, &registry, 72, &from, &to, false)
             .expect_err("拖入不存在/不在携带面的 pack_9999 应被拒绝");
         assert!(
             matches!(
@@ -14118,7 +14556,7 @@ cols = 4
             row: 0,
             col: 0,
         };
-        apply_inventory_move(&mut inv, &registry, 73, &from, &to)
+        apply_inventory_move(&mut inv, &registry, 73, &from, &to, false)
             .expect("两个穿戴中的 pack 之间移动应成功");
 
         let pack2 = inv
@@ -14180,7 +14618,7 @@ cols = 4
             row: 0,
             col: 0,
         };
-        apply_inventory_move(&mut inv, &registry, 74, &from, &to).expect(
+        apply_inventory_move(&mut inv, &registry, 74, &from, &to, false).expect(
             "决议 #5 软门控：超载态下拖入穿戴中的 pack 仍应成功；move 路径不做重量硬拒绝（仅 OverloadedMarker debuff）",
         );
         let pack = inv
@@ -14241,7 +14679,7 @@ cols = 4
             row: 0,
             col: 1,
         };
-        let err = apply_inventory_move(&mut inv, &registry, 81, &from, &to).expect_err(
+        let err = apply_inventory_move(&mut inv, &registry, 81, &from, &to, false).expect_err(
             "穿戴态门控放行后，落位层应因 1×1 容器越界（无空位）拒绝；门控放行 ≠ 一定能放下",
         );
         assert!(
@@ -16023,6 +16461,7 @@ cols = 4
                 slot: EquipSlotV1::OffHand,
                 state: crate::schema::inventory::EquipStateV1::Held,
             },
+            false,
         );
         assert!(
             result.is_ok(),
@@ -16095,6 +16534,7 @@ cols = 4
                 slot: EquipSlotV1::OffHand,
                 state: crate::schema::inventory::EquipStateV1::Held,
             },
+            false,
         )
         .expect_err(
             "期望主手双手兵器锁住 off_hand 时装盾被拒绝，\
@@ -16132,6 +16572,7 @@ cols = 4
                 slot: EquipSlotV1::OffHand,
                 state: crate::schema::inventory::EquipStateV1::Held,
             },
+            false,
         )
         .expect_err(
             "期望 iron_sword 装 off_hand 被拒绝（非盾非 treasure 非 dagger），\
