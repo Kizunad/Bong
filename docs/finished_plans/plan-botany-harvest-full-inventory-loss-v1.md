@@ -8,11 +8,11 @@
 
 | 阶段 | 主题 | 状态 |
 |---|---|---|
-| P0 | 核心修复：满包不丢产出（原子 grant-or-ground + 重排验证顺序 + 停止吞错误） | ⬜ |
-| P1 | 玩家可感知反馈：event_stream 满包提示 | ⬜ |
-| P2 | 回归饱和测试：满包/非满包/结构性失败/自动+手动全覆盖 | ⬜ |
+| P0 | 核心修复：满包不丢产出（原子 grant-or-ground + 重排验证顺序 + 停止吞错误） | ✅ 2026-07-05 |
+| P1 | 玩家可感知反馈：event_stream 满包提示 | ✅ 2026-07-05 |
+| P2 | 回归饱和测试：满包/非满包/结构性失败/自动+手动全覆盖 | ✅ 2026-07-05 |
 
-验收日期：全部 P ✅ 后填 `YYYY-MM-DD`（当前升 active：2026-07-04）。
+验收日期：2026-07-05（全部 P ✅；升 active：2026-07-04）。
 
 ## 接入面（docs/CLAUDE §二 六要素）
 
@@ -168,3 +168,37 @@
 
 - 证伪 round 1：`plan-botany-v1` 只定义"drop 走背包"，没有授权"满包直接吞掉产出"；`plan-lingtian-v1` 反而明确写了满包 `warn`，说明本仓对同类问题通常不会默认静默吞。
 - 证伪 round 2：`botany/harvest.rs` 没找到任何失败补偿、地面掉落或回填 session 的旁路，`tick_harvest_sessions()` 还把错误吞掉；因此这个候选 survive，且玩家正常游玩可达。
+
+## Finish Evidence
+
+**验收日期**：2026-07-05（P0-P2 ✅）。经 §8.1 pre-P0 收口（3 决议：掉地面保产出 / 重排验证 + warn 不吞 / event_stream World channel）+ pre-merge 博弈 gate（`ready=true`，抓 2 major=grant 调用仍晚于 `plant.harvested`（残留 latent 静默丢产出，生产不可达但违背 §8.1#2 承诺）+ warn 文案失实 → 已修 `5121802ed`：grant 前移至不可逆副作用之前）。
+
+### 落地清单
+
+| 阶段 | 交付物 | 真实落点 |
+|------|--------|----------|
+| P0 原子入包/掉地 | `add_item_to_player_inventory_or_ground` + `GrantOrGroundOutcome` | `server/src/inventory/mod.rs`（原子先走既有私有 `add_item_to_player_inventory_inner`，`"inventory full:"` 前缀 fallback `DroppedLootRegistry`，`source_container_id: "overflow:{template_id}"`；结构性 Err 透传；无 registry 返回可观测 Err） |
+| P0 重排验证 + grant 前移 | `complete_harvest_for_player` 顺序 = remove_session → kind/inventory 校验 → plant 只读数据 → grant → **成功后**才 `plant.harvested=true` + static_point 解绑 | `server/src/botany/harvest.rs`（§8.1#2 彻底兑现：任何 `?` 失败均在 `plant.harvested` 之前返回，植物可重收）；`tick_harvest_sessions` `let _` → `if let Err { tracing::warn! }` |
+| P0 event | `HarvestTerminalEvent.overflow_to_ground` | `server/src/botany/components.rs` |
+| P1 玩家反馈 | event_stream 满包提示（World channel） | `server/src/network/event_stream_emit.rs`（`push_to_client_priority` 加 `channel` 参数 + `emit_botany_harvest_overflow_to_event_stream` 仅满包推）；`server/src/network/mod.rs`（**独立 `add_systems`**，未撑爆 Bevy 0.14.2 20-tuple） |
+| P2 饱和测试 | 17 新测试（含 major tripwire） | `botany/harvest.rs` + `inventory/mod.rs` + `event_stream_emit.rs` tests |
+
+### 关键 commit
+
+- `8cf059c56`（2026-07-05）—— P0+P1+P2 主体：原子入包或掉地 + 重排验证 + 停止吞错误 + event_stream 提示 + 16 测试。
+- `5121802ed`（2026-07-05）—— 博弈 gate major：grant 前移至 `plant.harvested=true` 之前（彻底兑现 §8.1#2 先验证后动作）+ warn 文案随之成立 + tripwire pin `harvest_completion_grant_structural_failure_leaves_plant_unharvested`。
+
+### 测试结果
+
+- `cargo fmt --check` 干净 / `cargo clippy --all-targets -- -D warnings` 零警告 / `cargo test` 全量 **10728 passed，0 failed**（1 无关 doc-test ignored；persistence SQLite 高并发偶发 flake 隔离复跑绿、非本 diff）。
+- 关键 pin：`harvest_completion_overflow_drops_to_ground_when_inventory_full`（满包落地）/ `_grant_structural_failure_leaves_plant_unharvested`（major tripwire，重排前会红）/ `_missing_kind_registry_/_missing_player_inventory_leaves_plant_unharvested`（前置校验）/ `_variant_and_quality_modifiers_survive_overflow` / `_overflow_triggers_for_both_manual_and_auto_modes` / event_stream 三态（满包推/非满包不推/interrupted 不推）。
+
+### 跨仓库核验
+
+- **server**：`add_item_to_player_inventory_or_ground` / `GrantOrGroundOutcome` / `HarvestTerminalEvent.overflow_to_ground` / `emit_botany_harvest_overflow_to_event_stream`。
+- **agent / client**：零改动（复用既有 `DroppedLootSync` / `EventStreamPush` schema，client 已有通用拾取渲染 + 事件流 HUD 消费方；纯 server gameplay 正确性修复，无新 wire）。
+
+### 遗留 / 后续
+
+- **P2 手动 smoke 未做**（无游戏环境，plan §P2 标注可选非阻塞）：三层自动化 + tripwire 已锁行为；建议 `/clearinv all`+`/give` 塞满 → 采集 → 目视 event_stream 提示 + 地面掉落。
+- **博弈 minor 已随 major 修复自然闭合**：§8.1#2 原措辞"两个 ? 失败 plant 保持 false"只覆盖 kind/inventory；grant 前移后 grant 结构性失败也保持 plant false，承诺已完整兑现。`.after(tick_harvest_sessions)` ordering 非必需（HarvestTerminalEvent 跨帧存活）但保留为同帧提示，无害。

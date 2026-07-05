@@ -263,6 +263,10 @@ pub struct HarvestTerminalEvent {
     pub duration_ticks: u64,
     pub gathering_quality: Option<GatheringQuality>,
     pub tool_used: Option<String>,
+    /// plan-botany-harvest-full-inventory-loss-v1 §8.1 决议 #1/#3：本次收获的产物是否
+    /// 因为背包已满而 fallback 到地面掉落（`DroppedLootRegistry`）。仅在 `completed=true`
+    /// 时可能为 true；`interrupted=true` 的终结事件恒为 false。
+    pub overflow_to_ground: bool,
 }
 
 /// botany-v2 `AttractsMobs` 真 spawn 请求。
