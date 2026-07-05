@@ -59,8 +59,7 @@ def _max_horizontal_distance(spec: LayoutSpec, zone: BlueprintZone, nbt_base_dir
             dx = block.world_pos[0] - cx
             dz = block.world_pos[2] - cz
             dist = math.hypot(dx, dz)
-            if dist > max_dist:
-                max_dist = dist
+            max_dist = max(max_dist, dist)
     return max_dist
 
 
