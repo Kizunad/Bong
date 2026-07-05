@@ -111,7 +111,7 @@ pub fn complete_harvest_for_player(
     // plan-botany-harvest-full-inventory-loss-v1 §8.1 决议 #2：结构性校验必须挪到
     // `plant.harvested = true` 这段不可逆副作用之前——否则 kind/inventory 缺失时植物已被
     // 标记收获，随后 lifecycle tick 把它当 wither 回收，玩家却什么都没拿到。两个 `?`
-    // 只要有一个失败，下面的 plant 查找块就不会执行，plant.harvested 保持 false 可重收。
+    // 只要有一个失败，下面的 grant 调用就不会执行，plant.harvested 保持 false 可重收。
     let kind = kind_registry
         .get(session.target_plant)
         .ok_or_else(|| format!("missing kind for `{}`", session.target_plant.as_str()))?;
@@ -125,21 +125,21 @@ pub fn complete_harvest_for_player(
             )
         })?;
 
+    // 博弈 gate major 修复（同根因彻底兑现）：这里只读取 grant / 品质计算需要的字段
+    // （position / zone_name / variant），**不**在此处做任何不可逆写入。旧实现在这里就把
+    // `plant.harvested = true` 且解绑 static_point——一旦下面的 grant 调用对结构性错误
+    // （non-"inventory full:" 的 unknown template / stack_count 0 / no containers /
+    // allocator 耗尽 / 无 DroppedLootRegistry 兜底等）`?` 提前返回，植物已被标记收获却什么
+    // 都没拿到，与本 PR 要修的原 bug 同形状地静默丢产出。不可逆副作用现在推迟到 grant
+    // 成功（`Ok`，含 `DroppedToGround`）之后才执行，见下方对应块。
     let mut target_pos: Option<[f64; 3]> = None;
     let mut target_zone_name: Option<String> = None;
     let mut variant = PlantVariant::None;
     if let Some(target_entity) = session.target_entity {
-        if let Ok(mut plant) = plant_query.get_mut(target_entity) {
+        if let Ok(plant) = plant_query.get(target_entity) {
             target_pos = Some(plant.position);
             target_zone_name = Some(plant.zone_name.clone());
             variant = plant.variant;
-            if let Some(source_point) = plant.source_point {
-                if let Some(point) = static_points.get_mut(source_point) {
-                    point.bound_entity = None;
-                    point.last_spawn_tick = Some(now_tick);
-                }
-            }
-            plant.harvested = true;
         }
     }
 
@@ -198,6 +198,22 @@ pub fn complete_harvest_for_player(
         ),
     )?;
     let overflow_to_ground = matches!(outcome, GrantOrGroundOutcome::DroppedToGround(_));
+
+    // grant 已成功（上面的 `?` 已经通过，含 `DroppedToGround` 兜底）——现在才执行不可逆
+    // 副作用：static_point 解绑 + `plant.harvested = true`。任何结构性 `?` 提前返回都不会
+    // 走到这里，植物保持 harvested = false，可重收（tripwire 见
+    // harvest_completion_grant_structural_failure_leaves_plant_unharvested）。
+    if let Some(target_entity) = session.target_entity {
+        if let Ok(mut plant) = plant_query.get_mut(target_entity) {
+            if let Some(source_point) = plant.source_point {
+                if let Some(point) = static_points.get_mut(source_point) {
+                    point.bound_entity = None;
+                    point.last_spawn_tick = Some(now_tick);
+                }
+            }
+            plant.harvested = true;
+        }
+    }
 
     if let Some(required_tool) = required_tool_for(session.target_plant, kind_registry) {
         if actual_tool == Some(required_tool) && gathering_tool.is_none() {
@@ -1207,6 +1223,71 @@ mod tests {
         assert!(
             store.session_for("offline:Azure").is_none(),
             "session should still be cleared even on structural failure"
+        );
+    }
+
+    /// 博弈 gate major 的 tripwire：满包 + 故意不 insert `DroppedLootRegistry`（让
+    /// `tick_harvest_sessions` 的 `Option<ResMut<DroppedLootRegistry>>` 解析为
+    /// `None`）让 `add_item_to_player_inventory_or_ground` 走"背包已满但无
+    /// `DroppedLootRegistry` 可兜底"的结构性 `Err` 分支（见 inventory/mod.rs：
+    /// `dropped_loot` 为 `None` 时把 `"inventory full:"` 错误原样 wrap 成
+    /// `Err("inventory full and no DroppedLootRegistry available to fall back: ...")`，
+    /// 而不是吸收成 `Ok(DroppedToGround)`）。
+    ///
+    /// 重排前（§8.1 决议 #2 落地前），`plant.harvested = true` 发生在这次 grant 调用**之前**，
+    /// 所以这条路径会在植物已被标记收获之后才失败——产物没给玩家，植物却已注定被
+    /// lifecycle 当已收获回收，是与本 PR 修的原 bug 同形状的静默丢产出。重排后 grant 在
+    /// `plant.harvested` 写入之前执行，这条测试断言它必须仍是 `false`。
+    #[test]
+    fn harvest_completion_grant_structural_failure_leaves_plant_unharvested() {
+        let mut app = make_app_with_combat_events();
+        app.insert_resource(load_item_registry().expect("item registry should load"));
+        app.insert_resource(InventoryInstanceIdAllocator::default());
+        // 故意不 app.insert_resource(DroppedLootRegistry::default()) —— 这是本测试制造
+        // 结构性失败的关键：满包 + 无 DroppedLootRegistry 兜底 = grant 结构性 Err。
+        app.add_systems(Update, tick_harvest_sessions);
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let client_entity = app
+            .world_mut()
+            .spawn(client_bundle)
+            .insert(full_1x1_inventory_blocking("filler"))
+            .insert(Cultivation::default())
+            .insert(Contamination::default())
+            .insert(Wounds::default())
+            .id();
+        let target = plant_entity(&mut app, "spawn");
+        queue_completed_ci_she_harvest(&mut app, client_entity, target);
+
+        app.update();
+
+        let plant = app
+            .world()
+            .entity(target)
+            .get::<Plant>()
+            .expect("plant entity should still exist");
+        assert!(
+            !plant.harvested,
+            "grant hit a structural Err (full pack, no DroppedLootRegistry to fall back to) — \
+             plant.harvested must still be false so the plant stays re-harvestable. Before the \
+             §8.1 #2 reorder this assertion would fail (harvested was flipped to true before the \
+             grant call ran) — that regression is exactly what this tripwire pins."
+        );
+
+        let store = app.world().resource::<HarvestSessionStore>();
+        assert!(
+            store.session_for("offline:Azure").is_none(),
+            "session should still be cleared even on structural failure (light rollback, not data loss)"
+        );
+
+        let frames: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<HarvestTerminalEvent>>()
+            .drain()
+            .collect();
+        assert!(
+            frames.is_empty(),
+            "no terminal event should fire when the grant itself failed structurally, got {frames:?}"
         );
     }
 
