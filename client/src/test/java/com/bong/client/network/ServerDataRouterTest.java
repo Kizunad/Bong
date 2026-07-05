@@ -31,6 +31,8 @@ public class ServerDataRouterTest {
             "inventory_snapshot",
             "inventory_event",
             "dropped_loot_sync",
+            // plan-remains-suite P0 — 遗骸容器世界同步。
+            "remains_sync",
             // Botany handlers (plan-botany-v1 §4).
             "botany_harvest_progress",
             "gathering_session",

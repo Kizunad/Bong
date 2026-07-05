@@ -373,6 +373,13 @@ pub enum ClientRequestV1 {
         v: u8,
         instance_id: u64,
     },
+    /// plan-remains-suite P0 — 遗骸 G 键统一交互（对应右键 `InteractEntityEvent` 路径）。
+    /// `remains_id` 是遗骸实体的 `UniqueId`（标准 UUID 字符串形式），来自
+    /// client `remains_sync` 缓存（[`crate::schema::server_data::RemainsEntryV1`]）。
+    RemainsLoot {
+        v: u8,
+        remains_id: String,
+    },
     /// plan-mineral-v1 §3 — 凝脉+ 右键矿块，server 反查 MineralOreIndex。
     MineralProbe {
         v: u8,
@@ -1464,6 +1471,37 @@ mod tests {
                 assert_eq!(instance_id, 3003);
             }
             other => panic!("expected PickupDroppedItem, got {other:?}"),
+        }
+    }
+
+    /// plan-remains-suite P0 — remains_loot 双端 sample 对拍（与 TS 侧
+    /// client-request.remains-loot.sample.json 同一份文件）。
+    #[test]
+    fn remains_loot_sample_deserializes() {
+        let json = include_str!(
+            "../../../agent/packages/schema/samples/client-request.remains-loot.sample.json"
+        );
+        let req: ClientRequestV1 = serde_json::from_str(json).expect("sample should deserialize");
+        match req {
+            ClientRequestV1::RemainsLoot { v, remains_id } => {
+                assert_eq!(v, 1);
+                assert_eq!(remains_id, "3fa85f64-5717-4562-b3fc-2c963f66afa6");
+            }
+            other => panic!("expected RemainsLoot, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn remains_loot_roundtrip() {
+        let json =
+            r#"{"type":"remains_loot","v":1,"remains_id":"3fa85f64-5717-4562-b3fc-2c963f66afa6"}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+        match req {
+            ClientRequestV1::RemainsLoot { v, remains_id } => {
+                assert_eq!(v, 1);
+                assert_eq!(remains_id, "3fa85f64-5717-4562-b3fc-2c963f66afa6");
+            }
+            other => panic!("expected RemainsLoot, got {other:?}"),
         }
     }
 

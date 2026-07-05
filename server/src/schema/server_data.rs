@@ -152,6 +152,7 @@ pub enum ServerDataType {
     InventorySnapshot,
     InventoryEvent,
     DroppedLootSync,
+    RemainsSync,
     BotanyHarvestProgress,
     BotanyPlantV2RenderProfiles,
     MiningProgress,
@@ -373,6 +374,9 @@ pub enum ServerDataPayloadV1 {
     InventorySnapshot(Box<InventorySnapshotV1>),
     InventoryEvent(Box<InventoryEventV1>),
     DroppedLootSync(Vec<DroppedLootEntryV1>),
+    /// plan-remains-suite P0 — 世界内遗骸容器快照（join 时 + 内容变化时广播，照
+    /// `DroppedLootSync` 的内容 diff 节流套路，见 `network::remains_sync_emit`）。
+    RemainsSync(Vec<RemainsEntryV1>),
     BotanyHarvestProgress {
         session_id: String,
         target_id: String,
@@ -1292,6 +1296,9 @@ enum ServerDataPayloadWireV1 {
     DroppedLootSync {
         drops: Vec<DroppedLootEntryV1>,
     },
+    RemainsSync {
+        remains: Vec<RemainsEntryV1>,
+    },
     BotanyHarvestProgress {
         session_id: String,
         target_id: String,
@@ -1895,6 +1902,22 @@ pub struct DroppedLootEntryV1 {
     pub item: InventoryItemViewV1,
 }
 
+/// plan-remains-suite P0 — 世界内遗骸容器的轻量摘要快照（照 [`DroppedLootEntryV1`] 的
+/// 形状；不像 dropped_loot 那样带完整 `item` 列表，只给"有没有东西/东西有多少"的摘要，
+/// 详细内容由拾取动作在 server 权威结算，不需要 client 提前知道）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct RemainsEntryV1 {
+    /// 遗骸实体的稳定 id（复用 valence `UniqueId`，标准 UUID 字符串形式）。
+    pub remains_id: String,
+    pub world_pos: [f64; 3],
+    /// `DimensionKind::ident_str()`（如 `minecraft:overworld` / `bong:tsy`）。
+    pub dimension: String,
+    pub display_name: String,
+    pub item_count: u64,
+    pub bone_coins: u64,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum RiftPortalKindV1 {
@@ -2279,6 +2302,7 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 Ok(Self::InventoryEvent(Box::new(event.try_into()?)))
             }
             ServerDataPayloadWireV1::DroppedLootSync { drops } => Ok(Self::DroppedLootSync(drops)),
+            ServerDataPayloadWireV1::RemainsSync { remains } => Ok(Self::RemainsSync(remains)),
             ServerDataPayloadWireV1::BotanyHarvestProgress {
                 session_id,
                 target_id,
@@ -2873,6 +2897,9 @@ impl From<&ServerDataPayloadV1> for ServerDataPayloadWireV1 {
             },
             ServerDataPayloadV1::DroppedLootSync(drops) => Self::DroppedLootSync {
                 drops: drops.clone(),
+            },
+            ServerDataPayloadV1::RemainsSync(remains) => Self::RemainsSync {
+                remains: remains.clone(),
             },
             ServerDataPayloadV1::BotanyHarvestProgress {
                 session_id,
@@ -3570,6 +3597,7 @@ impl ServerDataPayloadV1 {
             Self::InventorySnapshot(..) => ServerDataType::InventorySnapshot,
             Self::InventoryEvent(..) => ServerDataType::InventoryEvent,
             Self::DroppedLootSync(..) => ServerDataType::DroppedLootSync,
+            Self::RemainsSync(..) => ServerDataType::RemainsSync,
             Self::BotanyHarvestProgress { .. } => ServerDataType::BotanyHarvestProgress,
             Self::BotanyPlantV2RenderProfiles(..) => ServerDataType::BotanyPlantV2RenderProfiles,
             Self::MiningProgress { .. } => ServerDataType::MiningProgress,
@@ -3732,6 +3760,7 @@ impl ServerDataPayloadV1 {
             Self::InventorySnapshot(..) => false,
             Self::InventoryEvent(..) => false,
             Self::DroppedLootSync(..) => false,
+            Self::RemainsSync(..) => false,
             Self::BotanyHarvestProgress { .. } => false,
             Self::BotanyPlantV2RenderProfiles(..) => false,
             Self::MiningProgress { .. } => false,
@@ -4637,6 +4666,31 @@ mod tests {
         }
     }
 
+    /// plan-remains-suite P0 — remains_sync 双端 sample 对拍：字段值必须与
+    /// agent/packages/schema/samples/server-data.remains-sync.sample.json 完全一致，
+    /// 改 schema 必须连同 sample 一起改。
+    #[test]
+    fn remains_sync_sample_pins_wire_shape() {
+        let json = include_str!(
+            "../../../agent/packages/schema/samples/server-data.remains-sync.sample.json"
+        );
+        let payload: ServerDataV1 =
+            serde_json::from_str(json).expect("remains-sync sample should deserialize");
+        match payload.payload {
+            ServerDataPayloadV1::RemainsSync(remains) => {
+                assert_eq!(remains.len(), 1, "sample 固定 1 条 entry");
+                let entry = &remains[0];
+                assert_eq!(entry.remains_id, "3fa85f64-5717-4562-b3fc-2c963f66afa6");
+                assert_eq!(entry.world_pos, [8.5, 66.0, 8.5]);
+                assert_eq!(entry.dimension, "minecraft:overworld");
+                assert_eq!(entry.display_name, "遗骸");
+                assert_eq!(entry.item_count, 3);
+                assert_eq!(entry.bone_coins, 12);
+            }
+            other => panic!("expected RemainsSync, got {other:?}"),
+        }
+    }
+
     #[test]
     fn deserialize_server_data_samples() {
         let samples = [
@@ -4665,6 +4719,9 @@ mod tests {
             ),
             include_str!(
                 "../../../agent/packages/schema/samples/server-data.dropped-loot-sync.sample.json"
+            ),
+            include_str!(
+                "../../../agent/packages/schema/samples/server-data.remains-sync.sample.json"
             ),
             include_str!(
                 "../../../agent/packages/schema/samples/server-data.botany-harvest-progress.sample.json"

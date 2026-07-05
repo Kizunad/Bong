@@ -124,6 +124,11 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodePickupDroppedItem(instanceId));
     }
 
+    /** plan-remains-suite P0 — 遗骸 G 键统一交互。 */
+    public static void sendRemainsLoot(String remainsId) {
+        dispatch(ClientRequestProtocol.encodeRemainsLoot(remainsId));
+    }
+
     public static void sendMineralProbe(int x, int y, int z) {
         dispatch(ClientRequestProtocol.encodeMineralProbe(x, y, z));
     }

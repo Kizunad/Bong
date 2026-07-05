@@ -809,12 +809,15 @@ pub fn register(app: &mut App) {
     poi_loot::log_novice_poi_loot_tables();
     app.add_event::<DroppedItemEvent>();
     app.add_event::<InventoryDurabilityChangedEvent>();
+    // plan-remains-suite P0 — 遗骸 G 键统一交互 intent（与右键 InteractEntityEvent 并行）。
+    app.add_event::<RemainsLootIntent>();
     app.add_systems(
         Update,
         (
             apply_death_drop_on_revive,
             apply_termination_drop_on_terminate,
             handle_remains_interactions,
+            handle_remains_loot_intents,
             freshness::freshness_tick_system,
             sync_overloaded_marker,
             spirit_treasure::sync_spirit_treasures,
@@ -844,6 +847,7 @@ pub fn apply_termination_drop_on_terminate(
     anchors: Query<&DeathDropAnchor>,
     layer_ids: Query<&EntityLayerId>,
     dimensions: Query<&CurrentDimension>,
+    terrain_providers: Option<valence::prelude::Res<crate::world::terrain::TerrainProviders>>,
     mut dropped_registry: bevy_ecs::system::ResMut<DroppedLootRegistry>,
 ) {
     for ev in terminated.read() {
@@ -928,8 +932,21 @@ pub fn apply_termination_drop_on_terminate(
                 continue;
             };
 
-            let (remains_entity, entry_entity) =
-                spawn_player_remains_entity(&mut commands, layer_id.0, base);
+            // 死亡点若在半空（如高台战斗/浮空秘境），遗骸不应悬空——贴地才像"尸体"。
+            let surface_provider = terrain_providers
+                .as_deref()
+                .and_then(|providers| providers.for_dimension(entity_dimension));
+            let snapped = crate::npc::spawn::common::snap_spawn_y_to_surface(
+                valence::prelude::DVec3::new(base[0], base[1], base[2]),
+                surface_provider,
+            );
+            let remains_pos = [snapped.x, snapped.y, snapped.z];
+            let (remains_entity, entry_entity) = spawn_player_remains_entity(
+                &mut commands,
+                layer_id.0,
+                remains_pos,
+                entity_dimension,
+            );
             let items = drained
                 .into_iter()
                 .map(
@@ -973,10 +990,15 @@ pub fn apply_termination_drop_on_terminate(
     }
 }
 
+/// 遗骸容器人称——worldview §十二「终结后」用的是「遗骸容器」而不是"遗蜕"，
+/// 遗蜕是最初的占位英文名 "Remains" 的直译误用，这里统一成正典词。
+pub const REMAINS_DISPLAY_NAME: &str = "遗骸";
+
 fn spawn_player_remains_entity(
     commands: &mut Commands,
     layer: Entity,
     pos: [f64; 3],
+    dimension: DimensionKind,
 ) -> (Entity, Entity) {
     use valence::entity::entity::{CustomName, NameVisible, NoGravity, Pose as PoseComponent};
     use valence::entity::player::PlayerEntityBundle;
@@ -995,11 +1017,15 @@ fn spawn_player_remains_entity(
             position: Position::new(pos),
             // Keep it in-place and visibly "dead".
             entity_no_gravity: NoGravity(true),
-            entity_pose: PoseComponent(valence::entity::Pose::Dying),
-            entity_custom_name: CustomName(Some(Text::text("Remains"))),
+            // `Pose::Dying` 只驱动 vanilla LivingEntityRenderer 的死亡旋转动画（deathTime
+            // 插值），不会让实体整体躺平——玩家看到的其实是"站着扭曲"，不像尸体。
+            // `Pose::Sleeping` 才是唯一让 player 实体客户端整体躺平渲染的 pose。
+            entity_pose: PoseComponent(valence::entity::Pose::Sleeping),
+            entity_custom_name: CustomName(Some(Text::text(REMAINS_DISPLAY_NAME))),
             entity_name_visible: NameVisible(true),
             ..Default::default()
         })
+        .insert(CurrentDimension(dimension))
         .id();
 
     // In order for the player entity to be visible to other players, there must
@@ -1008,7 +1034,7 @@ fn spawn_player_remains_entity(
         .spawn(PlayerListEntryBundle {
             uuid,
             username: Username(username),
-            display_name: DisplayName(Some(Text::text("Remains"))),
+            display_name: DisplayName(Some(Text::text(REMAINS_DISPLAY_NAME))),
             listed: Listed(false),
             ..Default::default()
         })
@@ -1017,14 +1043,92 @@ fn spawn_player_remains_entity(
     (remains_entity, entry_entity)
 }
 
+/// 遗骸拾取范围（右键交互与 G 键 C2S 两条路径共用同一个常量）。
+pub const REMAINS_PICKUP_RANGE_SQ: f64 = 2.5 * 2.5;
+
+/// 遗骸拾取核心：把 bone_coins + items 转移进拾取者背包，装不下的留在遗骸里；
+/// 全部转移完毕后 despawn 遗骸实体（**valence 层实体必须 `insert(Despawned)`，
+/// 不许裸 `despawn()`**——否则 `send_entity_update_messages` 会因为找不到已裸删的
+/// 实体而 panic 崩服，见 `feedback_valence_despawn_layer_entity` 血泪教训）。
+///
+/// 右键交互（[`handle_remains_interactions`]）与 G 键统一交互（[`RemainsLootIntent`]）
+/// 两条路径共用本函数；范围 / 同 layer / 同 dimension 校验由各自调用方负责——两条路径的
+/// 校验数据来源不同（一条来自 vanilla `InteractEntityEvent`，一条来自 client 上报的
+/// `remains_id` 反查），收敛在这里反而会模糊两边各自的拒绝语义。
+///
+/// 返回值：本次是否至少转移了一件物品 / 一点骨币（`moved_any`）。
+pub fn transfer_remains_to_looter(
+    commands: &mut Commands,
+    remains_entity: Entity,
+    remains: &mut RemainsContainer,
+    inventory: &mut PlayerInventory,
+) -> bool {
+    let mut moved_any = false;
+
+    // Transfer wallet bone coins first (no slot requirements).
+    if remains.bone_coins > 0 && inventory.bone_coins < JS_SAFE_INTEGER_MAX {
+        let available = JS_SAFE_INTEGER_MAX.saturating_sub(inventory.bone_coins);
+        let transfer = remains.bone_coins.min(available);
+        if transfer > 0 {
+            inventory.bone_coins = inventory.bone_coins.saturating_add(transfer);
+            remains.bone_coins = remains.bone_coins.saturating_sub(transfer);
+            moved_any = true;
+        }
+    }
+
+    // Transfer item instances into the looter's containers.
+    if !remains.items.is_empty() {
+        let mut leftover = Vec::with_capacity(remains.items.len());
+        for record in remains.items.drain(..) {
+            let RemainsItemRecord {
+                source_container_id,
+                source_row,
+                source_col,
+                item,
+            } = record;
+
+            let Some(location) = find_first_fit_container_location(inventory, &item) else {
+                leftover.push(RemainsItemRecord {
+                    source_container_id,
+                    source_row,
+                    source_col,
+                    item,
+                });
+                continue;
+            };
+            if let Err(reason) = attach_at_location(inventory, item.clone(), &location) {
+                tracing::warn!("[bong][inventory] remains loot attach rejected: {reason}");
+                leftover.push(RemainsItemRecord {
+                    source_container_id,
+                    source_row,
+                    source_col,
+                    item,
+                });
+                continue;
+            }
+            moved_any = true;
+        }
+        remains.items = leftover;
+    }
+
+    if moved_any {
+        bump_revision(inventory);
+    }
+
+    if remains.items.is_empty() && remains.bone_coins == 0 {
+        commands.entity(remains_entity).insert(Despawned);
+        commands.entity(remains.player_list_entry).insert(Despawned);
+    }
+
+    moved_any
+}
+
 pub fn handle_remains_interactions(
     mut interactions: bevy_ecs::event::EventReader<InteractEntityEvent>,
     mut commands: Commands,
     mut remains_q: Query<(Entity, &mut RemainsContainer, &Position, &EntityLayerId)>,
     mut inventories: Query<(&mut PlayerInventory, &Position, &EntityLayerId)>,
 ) {
-    const PICKUP_RANGE_SQ: f64 = 2.5 * 2.5;
-
     for ev in interactions.read() {
         match ev.interact {
             EntityInteraction::Interact(Hand::Main)
@@ -1051,65 +1155,145 @@ pub fn handle_remains_interactions(
         let dx = rp.x - pp.x;
         let dy = rp.y - pp.y;
         let dz = rp.z - pp.z;
-        if dx * dx + dy * dy + dz * dz > PICKUP_RANGE_SQ {
+        if dx * dx + dy * dy + dz * dz > REMAINS_PICKUP_RANGE_SQ {
             continue;
         }
 
-        let mut moved_any = false;
+        transfer_remains_to_looter(&mut commands, remains_entity, &mut remains, &mut inventory);
+    }
+}
 
-        // Transfer wallet bone coins first (no slot requirements).
-        if remains.bone_coins > 0 && inventory.bone_coins < JS_SAFE_INTEGER_MAX {
-            let available = JS_SAFE_INTEGER_MAX.saturating_sub(inventory.bone_coins);
-            let transfer = remains.bone_coins.min(available);
-            if transfer > 0 {
-                inventory.bone_coins = inventory.bone_coins.saturating_add(transfer);
-                remains.bone_coins = remains.bone_coins.saturating_sub(transfer);
-                moved_any = true;
-            }
+/// plan-remains-suite P0：遗骸 G 键统一交互 intent（`ClientRequestV1::RemainsLoot` 落地后
+/// 由 `network::client_request_handler` 发出，本模块的 [`handle_remains_loot_intents`] 消费）。
+/// 之所以走 event 中转而不是直接塞进 `handle_client_request_payloads`：那个巨型 match 函数
+/// 已经持有形状不同的 `Query<&mut PlayerInventory>` 等，本 intent 需要的
+/// `(Entity, &UniqueId, &mut RemainsContainer, ...)` 组合查询与之在同一 system 内会产生
+/// query 别名冲突；拆成独立 system 与 `handle_remains_interactions`（右键路径）对称。
+#[derive(Debug, Clone, bevy_ecs::event::Event)]
+pub struct RemainsLootIntent {
+    pub entity: Entity,
+    pub remains_id: String,
+}
+
+fn notify_remains_loot(
+    pending_narrations: Option<&mut crate::player::gameplay::PendingGameplayNarrations>,
+    usernames: &Query<&Username>,
+    entity: Entity,
+    text: &str,
+    style: crate::schema::common::NarrationStyle,
+) {
+    let (Some(pending_narrations), Ok(username)) = (pending_narrations, usernames.get(entity))
+    else {
+        return;
+    };
+    pending_narrations.push_player(username.0.as_str(), text, style);
+}
+
+/// G 键统一交互路径的遗骸拾取：候选/派发在 client 侧（[`RemainsLootIntentHandler`] 的 Java
+/// 对应实现）已经用 [`RemainsStore`]（client 缓存的 remains_sync 快照）挑出目标，这里只做
+/// server 端权威校验（同 layer + 同 dimension + 2.5m 范围），不信任 client 的候选判断。
+type RemainsLootQueryItem<'a> = (
+    Entity,
+    &'a valence::prelude::UniqueId,
+    &'a mut RemainsContainer,
+    &'a Position,
+    &'a EntityLayerId,
+    Option<&'a CurrentDimension>,
+);
+type RemainsLooterQueryItem<'a> = (
+    &'a mut PlayerInventory,
+    &'a Position,
+    &'a EntityLayerId,
+    Option<&'a CurrentDimension>,
+);
+
+#[allow(clippy::type_complexity)]
+pub fn handle_remains_loot_intents(
+    mut intents: bevy_ecs::event::EventReader<RemainsLootIntent>,
+    mut commands: Commands,
+    mut remains_q: Query<RemainsLootQueryItem<'_>>,
+    mut inventories: Query<RemainsLooterQueryItem<'_>>,
+    usernames: Query<&Username>,
+    mut pending_narrations: Option<
+        valence::prelude::ResMut<crate::player::gameplay::PendingGameplayNarrations>,
+    >,
+) {
+    use crate::schema::common::NarrationStyle;
+
+    for intent in intents.read() {
+        let Ok((mut inventory, player_pos, player_layer, player_dimension)) =
+            inventories.get_mut(intent.entity)
+        else {
+            continue;
+        };
+
+        let target = remains_q
+            .iter_mut()
+            .find(|(_, uuid, ..)| uuid.0.to_string() == intent.remains_id);
+        let Some((
+            remains_entity,
+            _uuid,
+            mut remains,
+            remains_pos,
+            remains_layer,
+            remains_dimension,
+        )) = target
+        else {
+            // 遗骸已被他人搬空 despawn，或 client 缓存过期——无操作即可，属于良性竞态。
+            tracing::debug!(
+                "[bong][inventory] remains_loot rejected: unknown remains_id `{}`",
+                intent.remains_id
+            );
+            continue;
+        };
+
+        if remains_layer.0 != player_layer.0
+            || remains_dimension.map(|d| d.0) != player_dimension.map(|d| d.0)
+        {
+            notify_remains_loot(
+                pending_narrations.as_deref_mut(),
+                &usernames,
+                intent.entity,
+                "那具遗骸不在此界，够不着。",
+                NarrationStyle::SystemWarning,
+            );
+            continue;
         }
 
-        // Transfer item instances into the looter's containers.
-        if !remains.items.is_empty() {
-            let mut leftover = Vec::with_capacity(remains.items.len());
-            for record in remains.items.drain(..) {
-                let RemainsItemRecord {
-                    source_container_id,
-                    source_row,
-                    source_col,
-                    item,
-                } = record;
-
-                let Some(location) = find_first_fit_container_location(&inventory, &item) else {
-                    leftover.push(RemainsItemRecord {
-                        source_container_id,
-                        source_row,
-                        source_col,
-                        item,
-                    });
-                    continue;
-                };
-                if let Err(reason) = attach_at_location(&mut inventory, item.clone(), &location) {
-                    tracing::warn!("[bong][inventory] remains loot attach rejected: {reason}");
-                    leftover.push(RemainsItemRecord {
-                        source_container_id,
-                        source_row,
-                        source_col,
-                        item,
-                    });
-                    continue;
-                }
-                moved_any = true;
-            }
-            remains.items = leftover;
+        let rp = remains_pos.get();
+        let pp = player_pos.get();
+        let dx = rp.x - pp.x;
+        let dy = rp.y - pp.y;
+        let dz = rp.z - pp.z;
+        if dx * dx + dy * dy + dz * dz > REMAINS_PICKUP_RANGE_SQ {
+            notify_remains_loot(
+                pending_narrations.as_deref_mut(),
+                &usernames,
+                intent.entity,
+                "离遗骸太远，够不着。",
+                NarrationStyle::SystemWarning,
+            );
+            continue;
         }
 
+        let moved_any =
+            transfer_remains_to_looter(&mut commands, remains_entity, &mut remains, &mut inventory);
         if moved_any {
-            bump_revision(&mut inventory);
-        }
-
-        if remains.items.is_empty() && remains.bone_coins == 0 {
-            commands.entity(remains_entity).insert(Despawned);
-            commands.entity(remains.player_list_entry).insert(Despawned);
+            notify_remains_loot(
+                pending_narrations.as_deref_mut(),
+                &usernames,
+                intent.entity,
+                "你搜过了那具遗骸。",
+                NarrationStyle::Narration,
+            );
+        } else {
+            notify_remains_loot(
+                pending_narrations.as_deref_mut(),
+                &usernames,
+                intent.entity,
+                "包裹已经装不下了。",
+                NarrationStyle::SystemWarning,
+            );
         }
     }
 }
@@ -10339,6 +10523,488 @@ cols = 4
                 .get::<Despawned>(remains_player_list_entry)
                 .is_some(),
             "remains player_list entry should be marked Despawned after looting"
+        );
+    }
+
+    /// plan-remains-suite P1 — 遗骸外观 pin：pose 必须是 Sleeping（Dying 对 player
+    /// 实体客户端不渲染躺姿），名字必须是正典中文「遗骸」（实体 CustomName 与
+    /// player list DisplayName 双处一致）。
+    #[test]
+    fn remains_entity_uses_sleeping_pose_and_chinese_display_name() {
+        use valence::entity::entity::{CustomName, Pose as PoseComponent};
+        use valence::player_list::DisplayName;
+        use valence::prelude::{App, InteractEntityEvent, Position, Text, Update};
+
+        let mut app = App::new();
+        app.add_event::<PlayerTerminated>();
+        app.add_event::<InteractEntityEvent>();
+        app.insert_resource(DroppedLootRegistry::default());
+        app.add_systems(Update, apply_termination_drop_on_terminate);
+
+        let terminated = app
+            .world_mut()
+            .spawn((
+                make_test_inventory_with_one_item(),
+                Position::new([10.0, 66.0, 10.0]),
+                EntityLayerId(Entity::PLACEHOLDER),
+                LifeRecord {
+                    character_id: "offline:OldOne".to_string(),
+                    created_at: 0,
+                    biography: vec![BiographyEntry::Terminated {
+                        cause: "natural_end".to_string(),
+                        tick: 1,
+                    }],
+                    ..LifeRecord::default()
+                },
+            ))
+            .id();
+        app.world_mut()
+            .send_event(PlayerTerminated { entity: terminated });
+        app.update();
+
+        let (pose, custom_name, player_list_entry) = {
+            let mut q = app
+                .world_mut()
+                .query::<(&RemainsContainer, &PoseComponent, &CustomName)>();
+            let mut iter = q.iter(app.world());
+            let (remains, pose, custom_name) =
+                iter.next().expect("expected exactly one remains entity");
+            assert!(iter.next().is_none(), "expected exactly one remains entity");
+            (pose.0, custom_name.0.clone(), remains.player_list_entry)
+        };
+        assert_eq!(
+            pose,
+            valence::entity::Pose::Sleeping,
+            "遗骸 pose 必须是 Sleeping（player 实体只有 Sleeping 会整体躺平渲染；\
+             Dying 只驱动 deathTime 死亡旋转，看起来是站着扭曲不像尸体）"
+        );
+        assert_eq!(
+            custom_name,
+            Some(Text::text(REMAINS_DISPLAY_NAME)),
+            "遗骸实体 CustomName 必须是正典中文「遗骸」"
+        );
+        let display_name = app
+            .world()
+            .get::<DisplayName>(player_list_entry)
+            .expect("remains player list entry should have DisplayName");
+        assert_eq!(
+            display_name.0,
+            Some(Text::text(REMAINS_DISPLAY_NAME)),
+            "player list DisplayName 必须与实体 CustomName 同为「遗骸」"
+        );
+    }
+
+    /// plan-remains-suite P2 — G 键统一交互 happy path：RemainsLootIntent 把物品 +
+    /// 骨币全数转进拾取者背包，遗骸与 player list entry 双双 insert(Despawned)，
+    /// 且给玩家一条成功 narration。
+    #[test]
+    fn remains_loot_intent_happy_path_transfers_all_and_despawns() {
+        use valence::prelude::{App, Despawned, Position, UniqueId, Update};
+
+        let mut app = App::new();
+        app.add_event::<PlayerTerminated>();
+        app.add_event::<RemainsLootIntent>();
+        app.insert_resource(DroppedLootRegistry::default());
+        app.insert_resource(crate::player::gameplay::PendingGameplayNarrations::default());
+        app.add_systems(
+            Update,
+            (
+                apply_termination_drop_on_terminate,
+                handle_remains_loot_intents,
+            ),
+        );
+
+        let terminated = app
+            .world_mut()
+            .spawn((
+                make_test_inventory_with_one_item(),
+                Position::new([10.0, 66.0, 10.0]),
+                EntityLayerId(Entity::PLACEHOLDER),
+                CurrentDimension(DimensionKind::Overworld),
+                LifeRecord {
+                    character_id: "offline:OldOne".to_string(),
+                    created_at: 0,
+                    biography: vec![BiographyEntry::Terminated {
+                        cause: "natural_end".to_string(),
+                        tick: 1,
+                    }],
+                    ..LifeRecord::default()
+                },
+            ))
+            .id();
+        {
+            let mut inv = app
+                .world_mut()
+                .get_mut::<PlayerInventory>(terminated)
+                .expect("terminated player should have inventory");
+            inv.bone_coins = 9;
+        }
+
+        let mut looter_inv = make_test_inventory_with_one_item();
+        for container in &mut looter_inv.containers {
+            container.items.clear();
+        }
+        looter_inv.equipped.clear();
+        looter_inv.hotbar = Default::default();
+        looter_inv.bone_coins = 0;
+        let looter = app
+            .world_mut()
+            .spawn((
+                looter_inv,
+                Position::new([10.5, 66.0, 10.0]),
+                EntityLayerId(Entity::PLACEHOLDER),
+                CurrentDimension(DimensionKind::Overworld),
+                Username("Looter".to_string()),
+            ))
+            .id();
+
+        app.world_mut()
+            .send_event(PlayerTerminated { entity: terminated });
+        app.update();
+
+        let (remains_entity, remains_id, player_list_entry) = {
+            let mut q = app
+                .world_mut()
+                .query::<(Entity, &UniqueId, &RemainsContainer)>();
+            let (e, uuid, remains) = q
+                .iter(app.world())
+                .next()
+                .expect("expected one remains entity");
+            (e, uuid.0.to_string(), remains.player_list_entry)
+        };
+
+        app.world_mut().send_event(RemainsLootIntent {
+            entity: looter,
+            remains_id,
+        });
+        app.update();
+
+        let looter_inv = app.world().get::<PlayerInventory>(looter).unwrap();
+        let has_item = looter_inv
+            .containers
+            .iter()
+            .flat_map(|c| c.items.iter())
+            .any(|placed| placed.instance.instance_id == 42);
+        assert!(has_item, "G 键路径应把遗骸物品转进拾取者背包");
+        assert_eq!(looter_inv.bone_coins, 9, "G 键路径应把骨币转给拾取者");
+        assert!(
+            app.world().get::<Despawned>(remains_entity).is_some(),
+            "搬空后遗骸实体必须 insert(Despawned)（不许裸 despawn——层实体裸删崩服）"
+        );
+        assert!(
+            app.world().get::<Despawned>(player_list_entry).is_some(),
+            "搬空后 player list entry 也必须 insert(Despawned)"
+        );
+        let narrations = app
+            .world_mut()
+            .resource_mut::<crate::player::gameplay::PendingGameplayNarrations>()
+            .drain();
+        assert_eq!(narrations.len(), 1, "成功搬运应有恰好一条成功 narration");
+        assert_eq!(narrations[0].target.as_deref(), Some("Looter"));
+    }
+
+    /// plan-remains-suite P2 — 超出 2.5m 拒绝：不转移、不 despawn，且给玩家一条
+    /// 拒绝提示。
+    #[test]
+    fn remains_loot_intent_rejects_out_of_range() {
+        use valence::prelude::{App, Despawned, Position, UniqueId, Update};
+
+        let mut app = App::new();
+        app.add_event::<PlayerTerminated>();
+        app.add_event::<RemainsLootIntent>();
+        app.insert_resource(DroppedLootRegistry::default());
+        app.insert_resource(crate::player::gameplay::PendingGameplayNarrations::default());
+        app.add_systems(
+            Update,
+            (
+                apply_termination_drop_on_terminate,
+                handle_remains_loot_intents,
+            ),
+        );
+
+        let terminated = app
+            .world_mut()
+            .spawn((
+                make_test_inventory_with_one_item(),
+                Position::new([10.0, 66.0, 10.0]),
+                EntityLayerId(Entity::PLACEHOLDER),
+                CurrentDimension(DimensionKind::Overworld),
+                LifeRecord {
+                    character_id: "offline:OldOne".to_string(),
+                    created_at: 0,
+                    biography: vec![BiographyEntry::Terminated {
+                        cause: "natural_end".to_string(),
+                        tick: 1,
+                    }],
+                    ..LifeRecord::default()
+                },
+            ))
+            .id();
+        let looter = app
+            .world_mut()
+            .spawn((
+                make_test_inventory_with_one_item(),
+                // 遗骸在 (10,66,10)，拾取者站 10m 外——2.5m 上限必须拒绝。
+                Position::new([20.0, 66.0, 10.0]),
+                EntityLayerId(Entity::PLACEHOLDER),
+                CurrentDimension(DimensionKind::Overworld),
+                Username("FarAway".to_string()),
+            ))
+            .id();
+
+        app.world_mut()
+            .send_event(PlayerTerminated { entity: terminated });
+        app.update();
+
+        let (remains_entity, remains_id) = {
+            let mut q = app
+                .world_mut()
+                .query::<(Entity, &UniqueId, &RemainsContainer)>();
+            let (e, uuid, _) = q
+                .iter(app.world())
+                .next()
+                .expect("expected one remains entity");
+            (e, uuid.0.to_string())
+        };
+
+        app.world_mut().send_event(RemainsLootIntent {
+            entity: looter,
+            remains_id,
+        });
+        app.update();
+
+        let remains = app
+            .world()
+            .get::<RemainsContainer>(remains_entity)
+            .expect("out-of-range attempt should leave remains intact");
+        assert_eq!(remains.items.len(), 1, "超距请求不得转移任何物品");
+        assert!(
+            app.world().get::<Despawned>(remains_entity).is_none(),
+            "超距请求不得 despawn 遗骸"
+        );
+        let narrations = app
+            .world_mut()
+            .resource_mut::<crate::player::gameplay::PendingGameplayNarrations>()
+            .drain();
+        assert_eq!(narrations.len(), 1, "超距拒绝应有一条提示 narration");
+    }
+
+    /// plan-remains-suite P2 — 跨 dimension 拒绝（Overworld 遗骸 vs TSY 拾取者）。
+    #[test]
+    fn remains_loot_intent_rejects_cross_dimension() {
+        use valence::prelude::{App, Despawned, Position, UniqueId, Update};
+
+        let mut app = App::new();
+        app.add_event::<PlayerTerminated>();
+        app.add_event::<RemainsLootIntent>();
+        app.insert_resource(DroppedLootRegistry::default());
+        app.add_systems(
+            Update,
+            (
+                apply_termination_drop_on_terminate,
+                handle_remains_loot_intents,
+            ),
+        );
+
+        let terminated = app
+            .world_mut()
+            .spawn((
+                make_test_inventory_with_one_item(),
+                Position::new([10.0, 66.0, 10.0]),
+                EntityLayerId(Entity::PLACEHOLDER),
+                CurrentDimension(DimensionKind::Overworld),
+                LifeRecord {
+                    character_id: "offline:OldOne".to_string(),
+                    created_at: 0,
+                    biography: vec![BiographyEntry::Terminated {
+                        cause: "natural_end".to_string(),
+                        tick: 1,
+                    }],
+                    ..LifeRecord::default()
+                },
+            ))
+            .id();
+        let looter = app
+            .world_mut()
+            .spawn((
+                make_test_inventory_with_one_item(),
+                Position::new([10.0, 66.0, 10.0]),
+                EntityLayerId(Entity::PLACEHOLDER),
+                // 同坐标同 layer，但人在 TSY——跨界必须拒绝。
+                CurrentDimension(DimensionKind::Tsy),
+                Username("TsyDiver".to_string()),
+            ))
+            .id();
+
+        app.world_mut()
+            .send_event(PlayerTerminated { entity: terminated });
+        app.update();
+
+        let (remains_entity, remains_id) = {
+            let mut q = app
+                .world_mut()
+                .query::<(Entity, &UniqueId, &RemainsContainer)>();
+            let (e, uuid, _) = q
+                .iter(app.world())
+                .next()
+                .expect("expected one remains entity");
+            (e, uuid.0.to_string())
+        };
+
+        app.world_mut().send_event(RemainsLootIntent {
+            entity: looter,
+            remains_id,
+        });
+        app.update();
+
+        let remains = app
+            .world()
+            .get::<RemainsContainer>(remains_entity)
+            .expect("cross-dimension attempt should leave remains intact");
+        assert_eq!(remains.items.len(), 1, "跨 dimension 请求不得转移任何物品");
+        assert!(
+            app.world().get::<Despawned>(remains_entity).is_none(),
+            "跨 dimension 请求不得 despawn 遗骸"
+        );
+    }
+
+    /// plan-remains-suite P2 — unknown remains_id：无操作（良性竞态：遗骸可能刚被
+    /// 他人搬空 despawn，client 缓存过期）。
+    #[test]
+    fn remains_loot_intent_unknown_remains_id_is_noop() {
+        use valence::prelude::{App, Position, Update};
+
+        let mut app = App::new();
+        app.add_event::<RemainsLootIntent>();
+        app.add_systems(Update, handle_remains_loot_intents);
+
+        let looter = app
+            .world_mut()
+            .spawn((
+                make_test_inventory_with_one_item(),
+                Position::new([10.0, 66.0, 10.0]),
+                EntityLayerId(Entity::PLACEHOLDER),
+                CurrentDimension(DimensionKind::Overworld),
+                Username("Looter".to_string()),
+            ))
+            .id();
+        let inv_before = app.world().get::<PlayerInventory>(looter).unwrap().revision;
+
+        app.world_mut().send_event(RemainsLootIntent {
+            entity: looter,
+            remains_id: "00000000-0000-0000-0000-000000000000".to_string(),
+        });
+        app.update();
+
+        let inv_after = app.world().get::<PlayerInventory>(looter).unwrap();
+        assert_eq!(
+            inv_after.revision, inv_before,
+            "unknown remains_id 必须是纯 no-op，不得触碰拾取者背包 revision"
+        );
+    }
+
+    /// plan-remains-suite P2 — 包满部分拾取：G 键路径与右键路径共用
+    /// transfer_remains_to_looter，行为必须一致——骨币照收、装不下的物品留在
+    /// 遗骸里、遗骸不 despawn。
+    #[test]
+    fn remains_loot_intent_full_inventory_partial_pickup_matches_interact_path() {
+        use valence::prelude::{App, Despawned, Position, UniqueId, Update};
+
+        let mut app = App::new();
+        app.add_event::<PlayerTerminated>();
+        app.add_event::<RemainsLootIntent>();
+        app.insert_resource(DroppedLootRegistry::default());
+        app.insert_resource(crate::player::gameplay::PendingGameplayNarrations::default());
+        app.add_systems(
+            Update,
+            (
+                apply_termination_drop_on_terminate,
+                handle_remains_loot_intents,
+            ),
+        );
+
+        let terminated = app
+            .world_mut()
+            .spawn((
+                make_test_inventory_with_one_item(),
+                Position::new([10.0, 66.0, 10.0]),
+                EntityLayerId(Entity::PLACEHOLDER),
+                CurrentDimension(DimensionKind::Overworld),
+                LifeRecord {
+                    character_id: "offline:OldOne".to_string(),
+                    created_at: 0,
+                    biography: vec![BiographyEntry::Terminated {
+                        cause: "natural_end".to_string(),
+                        tick: 1,
+                    }],
+                    ..LifeRecord::default()
+                },
+            ))
+            .id();
+        {
+            let mut inv = app
+                .world_mut()
+                .get_mut::<PlayerInventory>(terminated)
+                .expect("terminated player should have inventory");
+            inv.bone_coins = 5;
+        }
+
+        // 拾取者背包：完全没有容器 → 任何物品都装不下，但骨币仍能收。
+        let mut looter_inv = make_test_inventory_with_one_item();
+        looter_inv.containers.clear();
+        looter_inv.equipped.clear();
+        looter_inv.hotbar = Default::default();
+        looter_inv.bone_coins = 0;
+        let looter = app
+            .world_mut()
+            .spawn((
+                looter_inv,
+                Position::new([10.0, 66.0, 10.0]),
+                EntityLayerId(Entity::PLACEHOLDER),
+                CurrentDimension(DimensionKind::Overworld),
+                Username("FullPack".to_string()),
+            ))
+            .id();
+
+        app.world_mut()
+            .send_event(PlayerTerminated { entity: terminated });
+        app.update();
+
+        let (remains_entity, remains_id) = {
+            let mut q = app
+                .world_mut()
+                .query::<(Entity, &UniqueId, &RemainsContainer)>();
+            let (e, uuid, _) = q
+                .iter(app.world())
+                .next()
+                .expect("expected one remains entity");
+            (e, uuid.0.to_string())
+        };
+
+        app.world_mut().send_event(RemainsLootIntent {
+            entity: looter,
+            remains_id,
+        });
+        app.update();
+
+        let looter_inv = app.world().get::<PlayerInventory>(looter).unwrap();
+        assert_eq!(
+            looter_inv.bone_coins, 5,
+            "包满时骨币仍应转移（与右键路径一致）"
+        );
+        let remains = app
+            .world()
+            .get::<RemainsContainer>(remains_entity)
+            .expect("partially looted remains should survive");
+        assert_eq!(
+            remains.items.len(),
+            1,
+            "装不下的物品必须留在遗骸里（与右键路径一致）"
+        );
+        assert_eq!(remains.bone_coins, 0, "骨币应已被取走");
+        assert!(
+            app.world().get::<Despawned>(remains_entity).is_none(),
+            "遗骸尚有剩余物品时不得 despawn（与右键路径一致）"
         );
     }
 

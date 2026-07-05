@@ -1878,6 +1878,56 @@ describe("sample files pass schema validation", () => {
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
 
+  // plan-remains-suite P0 — 遗骸 G 键统一交互 C2S schema pin
+  it("client-request.remains-loot.sample.json 正样本通过", () => {
+    const data = loadSample("client-request.remains-loot.sample.json");
+    const result = validate(ClientRequestV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("RemainsLootRequestV1 负样本：remains_id 缺失应拒绝", () => {
+    const bad = { type: "remains_loot", v: 1 };
+    const result = validate(ClientRequestV1, bad);
+    expect(result.ok).toBe(false);
+  });
+
+  it("RemainsLootRequestV1 负样本：remains_id 空字符串应拒绝", () => {
+    const bad = { type: "remains_loot", v: 1, remains_id: "" };
+    const result = validate(ClientRequestV1, bad);
+    expect(result.ok).toBe(false);
+  });
+
+  // plan-remains-suite P0 — 遗骸世界同步 S2C schema pin
+  it("server-data.remains-sync.sample.json 正样本通过", () => {
+    const data = loadSample("server-data.remains-sync.sample.json");
+    const result = validate(ServerDataV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("remains_sync 负样本：entry 缺 dimension 应拒绝", () => {
+    const bad = {
+      v: 1,
+      type: "remains_sync",
+      remains: [
+        {
+          remains_id: "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+          world_pos: [1, 64, 1],
+          display_name: "遗骸",
+          item_count: 1,
+          bone_coins: 0,
+        },
+      ],
+    };
+    const result = validate(ServerDataV1, bad);
+    expect(result.ok).toBe(false);
+  });
+
+  it("remains_sync 空列表也是合法快照（遗骸全被搬空后广播空快照清屏）", () => {
+    const empty = { v: 1, type: "remains_sync", remains: [] };
+    const result = validate(ServerDataV1, empty);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
   it("client-request.mineral-probe.sample.json", () => {
     const data = loadSample("client-request.mineral-probe.sample.json");
     const result = validate(ClientRequestV1, data);

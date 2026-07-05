@@ -254,6 +254,11 @@ pub struct CombatRequestParams<'w, 's> {
 pub struct DroppedLootRequestParams<'w, 's> {
     pub registry: ResMut<'w, DroppedLootRegistry>,
     pub positions: Query<'w, 's, &'static valence::prelude::Position>,
+    /// plan-remains-suite P0 — 遗骸 G 键统一交互，转发给 `inventory::handle_remains_loot_intents`
+    /// 独立 system（该 system 需要的 `(Entity, &UniqueId, &mut RemainsContainer, ...)` 查询
+    /// 形状与本巨型 match 函数已有的 `Query<&mut PlayerInventory>` 放在同一 system 里会
+    /// 产生 query 别名冲突，故走 event 中转，与 `pickup_dropped_item` 的直接处理不同）。
+    pub remains_loot_tx: EventWriter<'w, crate::inventory::RemainsLootIntent>,
 }
 
 /// plan-lingtian-v1 §1.2-§1.7 — 6 类 intent 共享 EventWriter 包，避开
@@ -572,6 +577,7 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::DropWeaponIntent { v, .. }
             | ClientRequestV1::RepairWeaponIntent { v, .. }
             | ClientRequestV1::PickupDroppedItem { v, .. }
+            | ClientRequestV1::RemainsLoot { v, .. }
             | ClientRequestV1::MineralProbe { v, .. }
             | ClientRequestV1::FreshnessProbe { v, .. }
             | ClientRequestV1::ApplyPill { v, .. }
@@ -1858,6 +1864,24 @@ pub fn handle_client_request_payloads(
                     alchemy_params.attrition_applied_events.as_deref_mut(),
                     alchemy_params.tsy_lifecycle.as_deref(),
                 );
+            }
+            ClientRequestV1::RemainsLoot { remains_id, .. } => {
+                // 权威校验（同 layer/dimension + 2.5m 范围 + 内容转移）全部在
+                // `inventory::handle_remains_loot_intents` 里做；这里只做最基本的
+                // 空字符串防御，真正的"遗骸存不存在/够不够得着"交给那个 system 判定。
+                if remains_id.trim().is_empty() {
+                    tracing::warn!(
+                        "[bong][network] client_request remains_loot rejected: empty remains_id from {:?}",
+                        ev.client
+                    );
+                } else {
+                    dropped_loot_params
+                        .remains_loot_tx
+                        .send(crate::inventory::RemainsLootIntent {
+                            entity: ev.client,
+                            remains_id,
+                        });
+                }
             }
             ClientRequestV1::MineralProbe { x, y, z, .. } => {
                 let position = valence::prelude::BlockPos::new(x, y, z);
@@ -4067,6 +4091,8 @@ mod tests {
         app.insert_resource(GameplayActionQueue::default());
         app.insert_resource(AlchemyMockState::default());
         app.insert_resource(DroppedLootRegistry::default());
+        // plan-remains-suite P0 — DroppedLootRequestParams 新增 EventWriter<RemainsLootIntent>。
+        app.add_event::<crate::inventory::RemainsLootIntent>();
         app.insert_resource(ItemRegistry::default());
         app.insert_resource(RecipeRegistry::default());
         app.insert_resource(ZoneRegistry::fallback());
@@ -5270,6 +5296,8 @@ mod tests {
         app.insert_resource(GameplayActionQueue::default());
         app.insert_resource(AlchemyMockState::default());
         app.insert_resource(DroppedLootRegistry::default());
+        // plan-remains-suite P0 — DroppedLootRequestParams 新增 EventWriter<RemainsLootIntent>。
+        app.add_event::<crate::inventory::RemainsLootIntent>();
         app.insert_resource(ItemRegistry::default());
         app.insert_resource(RecipeRegistry::default());
         app.add_event::<CustomPayloadEvent>();
@@ -5886,6 +5914,8 @@ mod tests {
         app.insert_resource(GameplayActionQueue::default());
         app.insert_resource(AlchemyMockState::default());
         app.insert_resource(DroppedLootRegistry::default());
+        // plan-remains-suite P0 — DroppedLootRequestParams 新增 EventWriter<RemainsLootIntent>。
+        app.add_event::<crate::inventory::RemainsLootIntent>();
         app.insert_resource(ItemRegistry::default());
         app.insert_resource(RecipeRegistry::default());
         app.add_event::<CustomPayloadEvent>();
@@ -5951,6 +5981,8 @@ mod tests {
         app.insert_resource(GameplayActionQueue::default());
         app.insert_resource(AlchemyMockState::default());
         app.insert_resource(DroppedLootRegistry::default());
+        // plan-remains-suite P0 — DroppedLootRequestParams 新增 EventWriter<RemainsLootIntent>。
+        app.add_event::<crate::inventory::RemainsLootIntent>();
         app.insert_resource(ItemRegistry::default());
         app.insert_resource(RecipeRegistry::default());
         app.add_event::<CustomPayloadEvent>();
@@ -6181,6 +6213,8 @@ mod tests {
         app.insert_resource(GameplayActionQueue::default());
         app.insert_resource(AlchemyMockState::default());
         app.insert_resource(DroppedLootRegistry::default());
+        // plan-remains-suite P0 — DroppedLootRequestParams 新增 EventWriter<RemainsLootIntent>。
+        app.add_event::<crate::inventory::RemainsLootIntent>();
         app.insert_resource(ItemRegistry::default());
         app.insert_resource(RecipeRegistry::default());
         app.add_event::<CustomPayloadEvent>();
@@ -6264,6 +6298,8 @@ mod tests {
         app.insert_resource(GameplayActionQueue::default());
         app.insert_resource(AlchemyMockState::default());
         app.insert_resource(DroppedLootRegistry::default());
+        // plan-remains-suite P0 — DroppedLootRequestParams 新增 EventWriter<RemainsLootIntent>。
+        app.add_event::<crate::inventory::RemainsLootIntent>();
         app.insert_resource(ItemRegistry::default());
         app.insert_resource(RecipeRegistry::default());
         app.add_event::<CustomPayloadEvent>();
@@ -6323,6 +6359,8 @@ mod tests {
         app.insert_resource(GameplayActionQueue::default());
         app.insert_resource(AlchemyMockState::default());
         app.insert_resource(DroppedLootRegistry::default());
+        // plan-remains-suite P0 — DroppedLootRequestParams 新增 EventWriter<RemainsLootIntent>。
+        app.add_event::<crate::inventory::RemainsLootIntent>();
         app.insert_resource(ItemRegistry::default());
         app.insert_resource(RecipeRegistry::default());
         app.add_event::<CustomPayloadEvent>();
@@ -6447,6 +6485,8 @@ mod tests {
         app.insert_resource(GameplayActionQueue::default());
         app.insert_resource(AlchemyMockState::default());
         app.insert_resource(DroppedLootRegistry::default());
+        // plan-remains-suite P0 — DroppedLootRequestParams 新增 EventWriter<RemainsLootIntent>。
+        app.add_event::<crate::inventory::RemainsLootIntent>();
         app.insert_resource(ItemRegistry::default());
         app.insert_resource(RecipeRegistry::default());
         app.add_event::<CustomPayloadEvent>();
@@ -6534,6 +6574,8 @@ mod tests {
         app.insert_resource(GameplayActionQueue::default());
         app.insert_resource(AlchemyMockState::default());
         app.insert_resource(DroppedLootRegistry::default());
+        // plan-remains-suite P0 — DroppedLootRequestParams 新增 EventWriter<RemainsLootIntent>。
+        app.add_event::<crate::inventory::RemainsLootIntent>();
         app.insert_resource(ItemRegistry::default());
         app.insert_resource(RecipeRegistry::default());
         app.add_event::<CustomPayloadEvent>();
@@ -6623,6 +6665,8 @@ mod tests {
         app.insert_resource(GameplayActionQueue::default());
         app.insert_resource(AlchemyMockState::default());
         app.insert_resource(DroppedLootRegistry::default());
+        // plan-remains-suite P0 — DroppedLootRequestParams 新增 EventWriter<RemainsLootIntent>。
+        app.add_event::<crate::inventory::RemainsLootIntent>();
         app.insert_resource(test_forge_template_registry());
         app.insert_resource(RecipeRegistry::default());
         app.add_event::<CustomPayloadEvent>();
@@ -6690,6 +6734,8 @@ mod tests {
         app.insert_resource(GameplayActionQueue::default());
         app.insert_resource(AlchemyMockState::default());
         app.insert_resource(DroppedLootRegistry::default());
+        // plan-remains-suite P0 — DroppedLootRequestParams 新增 EventWriter<RemainsLootIntent>。
+        app.add_event::<crate::inventory::RemainsLootIntent>();
         app.insert_resource(test_forge_template_registry());
         app.insert_resource(RecipeRegistry::default());
         app.add_event::<CustomPayloadEvent>();
@@ -6762,6 +6808,8 @@ mod tests {
         app.insert_resource(GameplayActionQueue::default());
         app.insert_resource(AlchemyMockState::default());
         app.insert_resource(DroppedLootRegistry::default());
+        // plan-remains-suite P0 — DroppedLootRequestParams 新增 EventWriter<RemainsLootIntent>。
+        app.add_event::<crate::inventory::RemainsLootIntent>();
         app.insert_resource(test_forge_template_registry());
         app.insert_resource(RecipeRegistry::default());
         app.add_event::<CustomPayloadEvent>();
@@ -6832,6 +6880,8 @@ mod tests {
         app.insert_resource(GameplayActionQueue::default());
         app.insert_resource(AlchemyMockState::default());
         app.insert_resource(DroppedLootRegistry::default());
+        // plan-remains-suite P0 — DroppedLootRequestParams 新增 EventWriter<RemainsLootIntent>。
+        app.add_event::<crate::inventory::RemainsLootIntent>();
         app.insert_resource(ItemRegistry::default());
         app.insert_resource(RecipeRegistry::default());
         app.add_event::<CustomPayloadEvent>();
@@ -6893,6 +6943,8 @@ mod tests {
         app.insert_resource(GameplayActionQueue::default());
         app.insert_resource(AlchemyMockState::default());
         app.insert_resource(DroppedLootRegistry::default());
+        // plan-remains-suite P0 — DroppedLootRequestParams 新增 EventWriter<RemainsLootIntent>。
+        app.add_event::<crate::inventory::RemainsLootIntent>();
         app.insert_resource(ItemRegistry::default());
         app.insert_resource(RecipeRegistry::default());
         app.add_event::<CustomPayloadEvent>();
@@ -6950,6 +7002,8 @@ mod tests {
         app.insert_resource(GameplayActionQueue::default());
         app.insert_resource(AlchemyMockState::default());
         app.insert_resource(DroppedLootRegistry::default());
+        // plan-remains-suite P0 — DroppedLootRequestParams 新增 EventWriter<RemainsLootIntent>。
+        app.add_event::<crate::inventory::RemainsLootIntent>();
         app.insert_resource(ItemRegistry::default());
         app.insert_resource(RecipeRegistry::default());
         app.add_event::<CustomPayloadEvent>();
@@ -7011,6 +7065,8 @@ mod tests {
         app.insert_resource(GameplayActionQueue::default());
         app.insert_resource(AlchemyMockState::default());
         app.insert_resource(DroppedLootRegistry::default());
+        // plan-remains-suite P0 — DroppedLootRequestParams 新增 EventWriter<RemainsLootIntent>。
+        app.add_event::<crate::inventory::RemainsLootIntent>();
         app.insert_resource(ItemRegistry::default());
         app.insert_resource(RecipeRegistry::default());
         app.add_event::<CustomPayloadEvent>();
@@ -7068,6 +7124,8 @@ mod tests {
         app.insert_resource(GameplayActionQueue::default());
         app.insert_resource(AlchemyMockState::default());
         app.insert_resource(DroppedLootRegistry::default());
+        // plan-remains-suite P0 — DroppedLootRequestParams 新增 EventWriter<RemainsLootIntent>。
+        app.add_event::<crate::inventory::RemainsLootIntent>();
         app.insert_resource(ItemRegistry::default());
         app.insert_resource(RecipeRegistry::default());
         app.add_event::<CustomPayloadEvent>();
@@ -7129,6 +7187,8 @@ mod tests {
         app.insert_resource(GameplayActionQueue::default());
         app.insert_resource(AlchemyMockState::default());
         app.insert_resource(DroppedLootRegistry::default());
+        // plan-remains-suite P0 — DroppedLootRequestParams 新增 EventWriter<RemainsLootIntent>。
+        app.add_event::<crate::inventory::RemainsLootIntent>();
         app.insert_resource(ItemRegistry::default());
         app.insert_resource(RecipeRegistry::default());
         app.add_event::<CustomPayloadEvent>();
@@ -14628,6 +14688,8 @@ mod freshness_probe_handler_tests {
         app.insert_resource(GameplayActionQueue::default());
         app.insert_resource(AlchemyMockState::default());
         app.insert_resource(DroppedLootRegistry::default());
+        // plan-remains-suite P0 — DroppedLootRequestParams 新增 EventWriter<RemainsLootIntent>。
+        app.add_event::<crate::inventory::RemainsLootIntent>();
         app.insert_resource(ItemRegistry::default());
         app.insert_resource(RecipeRegistry::default());
         app.add_event::<CustomPayloadEvent>();
@@ -14979,6 +15041,8 @@ mod freshness_probe_handler_tests {
         app.insert_resource(GameplayActionQueue::default());
         app.insert_resource(AlchemyMockState::default());
         app.insert_resource(DroppedLootRegistry::default());
+        // plan-remains-suite P0 — DroppedLootRequestParams 新增 EventWriter<RemainsLootIntent>。
+        app.add_event::<crate::inventory::RemainsLootIntent>();
         app.insert_resource(ItemRegistry::default());
         app.insert_resource(RecipeRegistry::default());
         app.add_event::<CustomPayloadEvent>();

@@ -264,6 +264,18 @@ export const PickupDroppedItemRequestV1 = Type.Object(
 );
 export type PickupDroppedItemRequestV1 = Static<typeof PickupDroppedItemRequestV1>;
 
+// plan-remains-suite P0 — 遗骸 G 键统一交互（对应右键 InteractEntityEvent 路径）。
+// remains_id = 遗骸实体的 UniqueId（标准 UUID 字符串），来自 remains_sync 缓存。
+export const RemainsLootRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("remains_loot"),
+    remains_id: Type.String({ minLength: 1 }),
+  },
+  { additionalProperties: false },
+);
+export type RemainsLootRequestV1 = Static<typeof RemainsLootRequestV1>;
+
 export const MineralProbeRequestV1 = Type.Object(
   {
     v: Type.Literal(1),
@@ -1132,6 +1144,7 @@ export const ClientRequestV1 = Type.Union([
   QiColorInspectRequestV1,
   UseLifeCoreRequestV1,
   PickupDroppedItemRequestV1,
+  RemainsLootRequestV1,
   MineralProbeRequestV1,
   FreshnessProbeRequestV1,
   InventoryDiscardItemRequestV1,
