@@ -443,6 +443,56 @@ mod tests {
     use crate::npc::lifecycle::NpcArchetype;
     use crate::npc::schedule::NpcDailySchedule;
     use big_brain::prelude::BigBrainSet;
+
+    // plan-mundane-fauna-v1 P0 —— 威胁谱系两个纯评分函数的边界 pin（off-by-one 锁死）。
+
+    #[test]
+    fn flee_threat_score_boundaries() {
+        // 距离 0 → 满分逃跑；随距离线性衰减；恰到感知半径边界即归零（falloff 用 `>=`）。
+        assert_eq!(flee_threat_score(0.0), 1.0, "贴脸威胁应满分逃");
+        assert!(
+            (flee_threat_score(FLEE_THREAT_RANGE / 2.0) - 0.5).abs() < 1e-6,
+            "半程距离应 ~0.5（线性衰减）"
+        );
+        assert_eq!(
+            flee_threat_score(FLEE_THREAT_RANGE),
+            0.0,
+            "距离 == FLEE_THREAT_RANGE(20.0) 边界即归零（falloff `>=` 边界不含）"
+        );
+        assert!(
+            flee_threat_score(FLEE_THREAT_RANGE - 0.01) > 0.0,
+            "距离刚好在半径内 (19.99) 仍应有非零逃跑分"
+        );
+        assert_eq!(
+            flee_threat_score(FLEE_THREAT_RANGE + 5.0),
+            0.0,
+            "超出感知半径无逃跑分"
+        );
+        assert_eq!(flee_threat_score(f32::INFINITY), 0.0, "非有限距离安全归零");
+    }
+
+    #[test]
+    fn cornered_score_boundaries() {
+        let target = Some((Entity::from_raw(1), 100));
+        // retaliation 命中 + 距离 <= 死角门槛 → 反击（边界 == 4.0 含）。
+        assert_eq!(cornered_score(target, 0.0), 1.0, "贴脸被追打→反击");
+        assert_eq!(
+            cornered_score(target, CORNERED_MELEE_DISTANCE),
+            1.0,
+            "距离 == CORNERED_MELEE_DISTANCE(4.0) 边界含（`<=`）→ 反击"
+        );
+        assert_eq!(
+            cornered_score(target, CORNERED_MELEE_DISTANCE + 0.01),
+            0.0,
+            "距离刚超死角门槛 (4.01) → 不反击（已能拉开=改逃）"
+        );
+        // 无 retaliation_target（未被玩家近期击中）→ 恒不反击，无论多近。
+        assert_eq!(
+            cornered_score(None, 0.0),
+            0.0,
+            "没有 retaliation_target 时贴脸也不主动反击（避免凡兽无端攻击）"
+        );
+    }
     use valence::prelude::{App, DVec3, IntoSystemConfigs, Position, PreUpdate};
 
     #[test]

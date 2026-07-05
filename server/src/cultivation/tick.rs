@@ -16,6 +16,7 @@ use valence::prelude::{
 use crate::combat::components::{DerivedAttrs, StatusEffects};
 use crate::combat::events::StatusEffectKind;
 use crate::combat::woliu_v2::state::TurbulenceExposure;
+use crate::fauna::mundane::MundaneFaunaSpecies;
 use crate::network::{gameplay_vfx, vfx_event_emit::VfxEventRequest};
 use crate::npc::spawn::NpcMarker;
 use crate::qi_physics::{
@@ -101,21 +102,30 @@ pub fn qi_regen_and_zone_drain_tick(
     mut practice_events: Option<ResMut<Events<CultivationSessionPracticeEvent>>>,
     mut practice_accumulator: Option<ResMut<CultivationSessionPracticeAccumulator>>,
     mut vfx_events: Option<ResMut<Events<VfxEventRequest>>>,
-    mut players: Query<(
-        Entity,
-        &Position,
-        Option<&CurrentDimension>,
-        &MeridianSystem,
-        &mut Cultivation,
-        Option<&QiColor>,
-        Option<&LifespanComponent>,
-        Option<&StatusEffects>,
-        Option<&TurbulenceExposure>,
-        Option<&JueBiAftershockDebuff>,
-        Option<&DerivedAttrs>,
-        Option<&LifeRecord>,
-        Option<&NpcMarker>,
-    )>,
+    mut players: Query<
+        (
+            Entity,
+            &Position,
+            Option<&CurrentDimension>,
+            &MeridianSystem,
+            &mut Cultivation,
+            Option<&QiColor>,
+            Option<&LifespanComponent>,
+            Option<&StatusEffects>,
+            Option<&TurbulenceExposure>,
+            Option<&JueBiAftershockDebuff>,
+            Option<&DerivedAttrs>,
+            Option<&LifeRecord>,
+            Option<&NpcMarker>,
+            // plan-mundane-fauna-v1：凡兽无灵——`Without<MundaneFaunaSpecies>` 把凡兽整体排除出
+            // 真元吐纳。凡兽经 `npc_runtime_bundle_with_age` 拿到 live Cultivation+MeridianSystem
+            // （满足 hunt 猎物契约的 realm 门），但绝不吸/放 zone 灵气：不加此过滤，凡兽会逐 tick
+            // 抽 zone.spirit_qi 进 qi_current，死亡/超距回收时（凡兽无 Rat/MimicSpider 归还路径、
+            // 裸 insert(Despawned)）100% 蒸发，破守恒（plan §59 qi_physics 锚点 + mundane.rs 模块 doc）。
+            // spawn 与 hydrate 两路均挂 MundaneFaunaSpecies（hydrate 走 spawn_mundane_fauna_at），过滤稳。
+        ),
+        Without<MundaneFaunaSpecies>,
+    >,
 ) {
     clock.tick = clock.tick.wrapping_add(1);
 
@@ -705,6 +715,59 @@ mod tests {
                 "zone_qi={zone_qi} 时 zone.spirit_qi 不应被 NPC regen 触碰"
             );
         }
+    }
+
+    /// plan-mundane-fauna-v1 守恒红线：凡兽（`MundaneFaunaSpecies`）无灵，即便携带 live
+    /// `Cultivation`（qi_max>0 满足 hunt 猎物契约）+ 已开经脉，在**富灵区**（远高于 NPC 地板，
+    /// 普通 NPC 必吸）也**绝不**吸 zone 灵气：`qi_regen_and_zone_drain_tick` 的
+    /// `Without<MundaneFaunaSpecies>` 把凡兽整体挡在真元吐纳外。否则凡兽只进不出地抽 zone、
+    /// 死亡/回收时 qi_current 蒸发破守恒（plan §59 + mundane.rs 模块 doc 承诺）。
+    #[test]
+    fn qi_regen_excludes_mundane_fauna_even_in_rich_zone() {
+        use crate::fauna::mundane::{MundaneFaunaKind, MundaneFaunaSpecies};
+
+        let mut app = App::new();
+        app.insert_resource(CultivationClock::default());
+        // 0.8 富灵区，远高于 QI_NPC_ABSORB_FLOOR——普通 NPC 在此必吸。
+        app.insert_resource(zone_with_spirit_qi(0.8));
+        add_qi_regen_system(&mut app);
+
+        let mut meridians = MeridianSystem::default();
+        meridians.get_mut(MeridianId::Lung).opened = true;
+        // 凡兽携带非零 qi_max（复刻 npc_runtime_bundle_with_age(Awaken) 产出）+ NpcMarker +
+        // MundaneFaunaSpecies，唯一区别于普通 NPC 的就是这枚物种标记。
+        let fauna = app
+            .world_mut()
+            .spawn((
+                Position::new([8.0, 66.0, 8.0]),
+                meridians,
+                Cultivation {
+                    qi_max: 10.0,
+                    ..Cultivation::default()
+                },
+                LifeRecord::new("mundane_rabbit_test".to_string()),
+                NpcMarker,
+                MundaneFaunaSpecies(MundaneFaunaKind::Rabbit),
+            ))
+            .id();
+
+        app.update();
+
+        let cultivation = app.world().entity(fauna).get::<Cultivation>().unwrap();
+        assert_eq!(
+            cultivation.qi_current, 0.0,
+            "凡兽无灵：富灵区 qi_regen 后 qi_current 仍应为 0（Without<MundaneFaunaSpecies> 排除）"
+        );
+        let zone_after = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name("spawn")
+            .unwrap()
+            .spirit_qi;
+        assert_eq!(
+            zone_after, 0.8,
+            "凡兽不吸灵气：zone.spirit_qi 必须原样保持 0.8，一分都不被凡兽抽走（守恒）"
+        );
     }
 
     /// 玩家（无 NpcMarker）不受 NPC 地板约束——zone_qi 低于地板时玩家仍可继续吸取

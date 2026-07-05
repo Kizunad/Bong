@@ -1352,6 +1352,52 @@ mod tests {
     }
 
     #[test]
+    fn hydrate_mundane_snapshot_produces_entity_with_species_marker() {
+        // plan-mundane-fauna-v1：dormant→hydrate round-trip 走 spawn_from_snapshot 的
+        // NpcArchetype::Mundane 分支（hydrate/mod.rs:724 → spawn_mundane_fauna_at）——复活的
+        // 凡兽必须重新挂上 `MundaneFaunaSpecies`，否则 qi_regen 的 `Without<MundaneFaunaSpecies>`
+        // 豁免在复活后失效，凡兽会重新开始抽 zone 灵气破守恒。此测试锁死新 enum 变体状态转换。
+        let mut app = App::new();
+        app.add_event::<InitiateXuhuaTribulation>();
+
+        let overworld = app.world_mut().spawn_empty().id();
+        let tsy = app.world_mut().spawn_empty().id();
+        app.insert_resource(DimensionLayers { overworld, tsy });
+        app.insert_resource(NpcVirtualizationConfig::default());
+
+        let mut snap = snapshot("mundane_rabbit_dormant", DVec3::new(20.0, 64.0, 20.0));
+        snap.archetype = NpcArchetype::Mundane;
+        snap.cultivation.realm = Realm::Awaken;
+        snap.shared_lifespan = LifespanComponent::for_realm(Realm::Awaken);
+        let mut store = NpcDormantStore::default();
+        store.insert(snap);
+        app.insert_resource(store);
+
+        app.world_mut()
+            .spawn((ClientMarker, Position(DVec3::new(20.0, 64.0, 20.0))));
+
+        app.add_systems(Update, hydrate_dormant_near_players_system);
+        app.update();
+
+        let world = app.world_mut();
+        let mut query = world.query::<(
+            &NpcArchetype,
+            Option<&crate::fauna::mundane::MundaneFaunaSpecies>,
+        )>();
+        let mundane = query
+            .iter(world)
+            .find(|(archetype, _)| **archetype == NpcArchetype::Mundane);
+        assert!(
+            mundane.is_some(),
+            "hydrate 必须产出一个 NpcArchetype::Mundane 实体"
+        );
+        assert!(
+            mundane.unwrap().1.is_some(),
+            "复活的凡兽必须重新携带 MundaneFaunaSpecies——否则 qi_regen 豁免在 hydrate 后失效"
+        );
+    }
+
+    #[test]
     fn home_base_uses_scatter_position_not_zone_center() {
         const ARRIVAL_DISTANCE: f64 = 1.8;
 

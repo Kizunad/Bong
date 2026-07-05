@@ -7,7 +7,11 @@
 //! `npc/spawn/mundane.rs` 的 4-thinker 组合（`CorneredScorer` 排在 `FleeThreatScorer` 前）。
 //!
 //! **qi_physics 锚点**：凡兽无灵——不吸灵气、不放灵气、死亡无 qi 释放（本模块引入零个
-//! qi 常数）。
+//! qi 常数）。**豁免机制**：凡兽经 `npc_runtime_bundle_with_age` 拿到 live
+//! `Cultivation`（qi_max>0，仅为满足 hunt 猎物契约的 realm 门）+ `MeridianSystem`，
+//! 但 `cultivation::tick::qi_regen_and_zone_drain_tick` 用 `Without<MundaneFaunaSpecies>`
+//! 把凡兽整体挡在真元吐纳外（spawn 与 hydrate 两路均挂此标记）——凡兽 `qi_current`
+//! 恒 0，绝不抽 zone 灵气，死亡/超距回收裸 `insert(Despawned)` 无 qi 蒸发，守恒安全。
 
 use valence::prelude::{
     bevy_ecs, App, Commands, Component, DVec3, Despawned, Entity, EntityKind, EventWriter,
