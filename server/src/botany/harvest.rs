@@ -9,7 +9,7 @@ use crate::cultivation::components::{Contamination, Cultivation, Realm};
 use crate::gathering::quality::roll_quality;
 use crate::gathering::tools::{equipped_gathering_tool, GatheringTargetKind};
 use crate::inventory::{
-    add_customized_item_to_player_inventory, add_item_to_player_inventory,
+    add_item_to_player_inventory_or_ground, DroppedLootRegistry, GrantOrGroundOutcome,
     InventoryDurabilityChangedEvent, InventoryInstanceIdAllocator, ItemInstance, ItemRegistry,
     PlayerInventory,
 };
@@ -17,6 +17,7 @@ use crate::player::state::canonical_player_id;
 use crate::skill::components::{SkillId, SkillSet};
 use crate::skill::curve::effective_lv;
 use crate::skill::events::{SkillXpGain, XpGainSource};
+use crate::world::dimension::DimensionKind;
 
 use super::components::{
     BotanyAttractsMobsEvent, BotanyHarvestMode, BotanyPhase, BotanySkillChangedEvent,
@@ -101,10 +102,28 @@ pub fn complete_harvest_for_player(
     durability_events: &mut EventWriter<InventoryDurabilityChangedEvent>,
     mob_attraction_events: &mut EventWriter<BotanyAttractsMobsEvent>,
     now_tick: u64,
+    dropped_loot: Option<&mut DroppedLootRegistry>,
 ) -> Result<(), String> {
     let session = store
         .remove_session(player_id)
         .ok_or_else(|| format!("missing harvest session for `{player_id}`"))?;
+
+    // plan-botany-harvest-full-inventory-loss-v1 §8.1 决议 #2：结构性校验必须挪到
+    // `plant.harvested = true` 这段不可逆副作用之前——否则 kind/inventory 缺失时植物已被
+    // 标记收获，随后 lifecycle tick 把它当 wither 回收，玩家却什么都没拿到。两个 `?`
+    // 只要有一个失败，下面的 plant 查找块就不会执行，plant.harvested 保持 false 可重收。
+    let kind = kind_registry
+        .get(session.target_plant)
+        .ok_or_else(|| format!("missing kind for `{}`", session.target_plant.as_str()))?;
+
+    let mut inventory = inventory_query
+        .get_mut(session.client_entity)
+        .map_err(|_| {
+            format!(
+                "player inventory missing on entity {:?}",
+                session.client_entity
+            )
+        })?;
 
     let mut target_pos: Option<[f64; 3]> = None;
     let mut target_zone_name: Option<String> = None;
@@ -123,19 +142,6 @@ pub fn complete_harvest_for_player(
             plant.harvested = true;
         }
     }
-
-    let kind = kind_registry
-        .get(session.target_plant)
-        .ok_or_else(|| format!("missing kind for `{}`", session.target_plant.as_str()))?;
-
-    let mut inventory = inventory_query
-        .get_mut(session.client_entity)
-        .map_err(|_| {
-            format!(
-                "player inventory missing on entity {:?}",
-                session.client_entity
-            )
-        })?;
 
     let actual_tool = crate::tools::main_hand_tool_in_inventory(&inventory);
     let gathering_tool = equipped_gathering_tool(&inventory)
@@ -172,26 +178,26 @@ pub fn complete_harvest_for_player(
         .unwrap_or(herbalism_quality_bonus + variant.quality_modifier())
         .clamp(0.0, 1.0) as f32;
     let has_instance_modifier = variant != PlantVariant::None || herbalism_quality_bonus > 0.0;
-    let _receipt = if has_instance_modifier {
-        add_customized_item_to_player_inventory(
-            &mut inventory,
-            item_registry,
-            allocator,
-            kind.item_id,
-            1,
-            now_tick,
-            |instance| apply_harvest_modifiers_to_item(instance, variant, herbalism_quality_bonus),
-        )?
-    } else {
-        add_item_to_player_inventory(
-            &mut inventory,
-            item_registry,
-            allocator,
-            kind.item_id,
-            1,
-            now_tick,
-        )?
-    };
+    // plan-botany-harvest-full-inventory-loss-v1 §8.1 决议 #1：原子"入包或掉地"——
+    // 满包不再是这个函数的 Err 来源，产物要么进背包要么落地面，永不静默消失。
+    let ground_pos = target_pos.unwrap_or(session.origin_position);
+    let outcome = add_item_to_player_inventory_or_ground(
+        &mut inventory,
+        item_registry,
+        allocator,
+        dropped_loot,
+        kind.item_id,
+        1,
+        now_tick,
+        ground_pos,
+        DimensionKind::Overworld,
+        has_instance_modifier.then_some(
+            &(|instance: &mut ItemInstance| {
+                apply_harvest_modifiers_to_item(instance, variant, herbalism_quality_bonus)
+            }) as &dyn Fn(&mut ItemInstance),
+        ),
+    )?;
+    let overflow_to_ground = matches!(outcome, GrantOrGroundOutcome::DroppedToGround(_));
 
     if let Some(required_tool) = required_tool_for(session.target_plant, kind_registry) {
         if actual_tool == Some(required_tool) && gathering_tool.is_none() {
@@ -271,6 +277,14 @@ pub fn complete_harvest_for_player(
         .display_prefix()
         .map(|p| format!("{} · {}", p, session.target_plant.as_str()))
         .unwrap_or_else(|| session.target_plant.as_str().to_string());
+    let detail = if overflow_to_ground {
+        format!(
+            "采得 1 株 · 背包已满，已放置于地面 · 灵气流出 {:.3}",
+            kind.growth_cost
+        )
+    } else {
+        format!("采得 1 株 · 灵气流出 {:.3}", kind.growth_cost)
+    };
     terminal_events.send(HarvestTerminalEvent {
         client_entity: session.client_entity,
         session_id: session.player_id.clone(),
@@ -280,12 +294,13 @@ pub fn complete_harvest_for_player(
         mode: session.mode,
         interrupted: false,
         completed: true,
-        detail: format!("采得 1 株 · 灵气流出 {:.3}", kind.growth_cost),
+        detail,
         target_pos,
         spirit_quality: harvest_spirit_quality,
         duration_ticks: session.duration_ticks,
         gathering_quality: Some(gathering_quality),
         tool_used: gathering_tool.map(|tool| tool.item_id.to_string()),
+        overflow_to_ground,
     });
     Ok(())
 }
@@ -447,6 +462,7 @@ pub fn enforce_harvest_session_constraints(
             duration_ticks: target.duration_ticks,
             gathering_quality: None,
             tool_used: None,
+            overflow_to_ground: false,
         });
     }
 }
@@ -502,6 +518,7 @@ pub fn tick_harvest_sessions(
     mut skill_xp_events: EventWriter<SkillXpGain>,
     mut durability_events: EventWriter<InventoryDurabilityChangedEvent>,
     mut mob_attraction_events: EventWriter<BotanyAttractsMobsEvent>,
+    mut dropped_loot: Option<ResMut<DroppedLootRegistry>>,
 ) {
     let Some(gameplay_tick) = gameplay_tick else {
         return;
@@ -515,7 +532,7 @@ pub fn tick_harvest_sessions(
         .collect::<Vec<_>>();
 
     for player_id in completed {
-        let _ = complete_harvest_for_player(
+        if let Err(err) = complete_harvest_for_player(
             &mut store,
             player_id.as_str(),
             &mut plants,
@@ -532,7 +549,13 @@ pub fn tick_harvest_sessions(
             &mut durability_events,
             &mut mob_attraction_events,
             now,
-        );
+            dropped_loot.as_deref_mut(),
+        ) {
+            tracing::warn!(
+                "[bong][botany] harvest completion failed for `{player_id}`: {err} — \
+                 session cleared, plant left un-harvested for retry"
+            );
+        }
     }
 }
 
@@ -620,8 +643,9 @@ mod tests {
     use crate::combat::components::{BodyPart, WoundKind, Wounds};
     use crate::cultivation::components::{Contamination, Cultivation, Realm};
     use crate::inventory::{
-        load_item_registry, ContainerState, InventoryInstanceIdAllocator, InventoryRevision,
-        ItemInstance, ItemRarity, PlayerInventory, EQUIP_SLOT_MAIN_HAND, MAIN_PACK_CONTAINER_ID,
+        add_item_to_player_inventory, dropped_loot_snapshot, load_item_registry, ContainerState,
+        InventoryInstanceIdAllocator, InventoryRevision, ItemInstance, ItemRarity, PlacedItemState,
+        PlayerInventory, EQUIP_SLOT_MAIN_HAND, MAIN_PACK_CONTAINER_ID,
     };
     use crate::player::gameplay::GameplayTick;
     use crate::skill::components::{SkillEntry, SkillSet};
@@ -706,6 +730,33 @@ mod tests {
         }
     }
 
+    /// plan-botany-harvest-full-inventory-loss-v1 P0 测试专用：1x1 容器，唯一格已被
+    /// 别的物品占满，保证后续任何 grant 都会走
+    /// `add_item_to_player_inventory_or_ground` 的地面 fallback 分支。
+    fn full_1x1_inventory_blocking(occupant_template_id: &str) -> PlayerInventory {
+        PlayerInventory {
+            triggered_treasures: Vec::new(),
+            revision: InventoryRevision(0),
+            containers: vec![ContainerState {
+                quick_access: false,
+                id: MAIN_PACK_CONTAINER_ID.into(),
+                name: "main".into(),
+                rows: 1,
+                cols: 1,
+                items: vec![PlacedItemState {
+                    row: 0,
+                    col: 0,
+                    instance: tool_item(occupant_template_id, 1.0),
+                }],
+                owner_instance_id: None,
+            }],
+            equipped: HashMap::new(),
+            hotbar: Default::default(),
+            bone_coins: 0,
+            max_weight: 999.0,
+        }
+    }
+
     fn inventory_with_main_hand_tool(template_id: Option<&str>) -> PlayerInventory {
         inventory_with_main_hand_tool_durability(template_id, 1.0)
     }
@@ -745,6 +796,21 @@ mod tests {
     }
 
     fn queue_completed_ci_she_harvest(app: &mut App, client_entity: Entity, target: Entity) {
+        queue_completed_ci_she_harvest_with_mode(
+            app,
+            client_entity,
+            target,
+            BotanyHarvestMode::Manual,
+        );
+    }
+
+    /// plan-botany-harvest-full-inventory-loss-v1 P2：Auto/Manual 各自触发满包 fallback 对照。
+    fn queue_completed_ci_she_harvest_with_mode(
+        app: &mut App,
+        client_entity: Entity,
+        target: Entity,
+        mode: BotanyHarvestMode,
+    ) {
         app.world_mut()
             .resource_mut::<HarvestSessionStore>()
             .upsert_session(HarvestSession {
@@ -752,7 +818,7 @@ mod tests {
                 client_entity,
                 target_entity: Some(target),
                 target_plant: BotanyPlantId::CiSheHao,
-                mode: BotanyHarvestMode::Manual,
+                mode,
                 started_at_tick: 0,
                 duration_ticks: 0,
                 phase: BotanyPhase::InProgress,
@@ -930,6 +996,495 @@ mod tests {
             (tainted.instance.spirit_quality - (base_quality - 0.15).clamp(0.0, 1.0)).abs() < 1e-6,
             "tainted stack quality should apply its modifier once"
         );
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // plan-botany-harvest-full-inventory-loss-v1 §P0/§P2 — 满包不丢产出
+    // ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn harvest_completion_overflow_drops_to_ground_when_inventory_full() {
+        let mut app = make_app_with_combat_events();
+        app.insert_resource(load_item_registry().expect("item registry should load"));
+        app.insert_resource(InventoryInstanceIdAllocator::default());
+        app.insert_resource(DroppedLootRegistry::default());
+        app.add_systems(Update, tick_harvest_sessions);
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let client_entity = app
+            .world_mut()
+            .spawn(client_bundle)
+            .insert(full_1x1_inventory_blocking("filler"))
+            .insert(Cultivation::default())
+            .insert(Contamination::default())
+            .insert(Wounds::default())
+            .id();
+        let target = plant_entity(&mut app, "spawn");
+        queue_completed_ci_she_harvest(&mut app, client_entity, target);
+
+        app.update();
+
+        let dropped = app.world().resource::<DroppedLootRegistry>();
+        assert_eq!(
+            dropped.entries.len(),
+            1,
+            "overflow product must land in DroppedLootRegistry instead of vanishing when the pack is full"
+        );
+        let entry = dropped.entries.values().next().expect("one overflow entry");
+        assert_eq!(entry.item.template_id, "ci_she_hao");
+
+        let frames: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<HarvestTerminalEvent>>()
+            .drain()
+            .collect();
+        assert_eq!(
+            frames.len(),
+            1,
+            "exactly one terminal event for the completed harvest"
+        );
+        assert!(
+            frames[0].overflow_to_ground,
+            "terminal event should flag overflow_to_ground when the grant fell back to ground"
+        );
+        assert!(
+            frames[0].detail.contains("背包已满"),
+            "detail text should mention 背包已满 so the player understands why nothing landed in the pack, got {:?}",
+            frames[0].detail
+        );
+
+        let plant = app
+            .world()
+            .entity(target)
+            .get::<Plant>()
+            .expect("plant entity should still exist");
+        assert!(
+            plant.harvested,
+            "plant is consumed even though the product went to ground — §8.1 决议 #1: full-but-successful grant still counts as a completed harvest, unlike a structural failure"
+        );
+    }
+
+    #[test]
+    fn harvest_completion_non_full_inventory_grants_normally_no_overflow() {
+        let mut app = make_app_with_combat_events();
+        app.insert_resource(load_item_registry().expect("item registry should load"));
+        app.insert_resource(InventoryInstanceIdAllocator::default());
+        app.insert_resource(DroppedLootRegistry::default());
+        app.add_systems(Update, tick_harvest_sessions);
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let client_entity = app
+            .world_mut()
+            .spawn(client_bundle)
+            .insert(empty_inventory_8x8())
+            .insert(Cultivation::default())
+            .insert(Contamination::default())
+            .insert(Wounds::default())
+            .id();
+        let target = plant_entity(&mut app, "spawn");
+        queue_completed_ci_she_harvest(&mut app, client_entity, target);
+
+        app.update();
+
+        let dropped = app.world().resource::<DroppedLootRegistry>();
+        assert!(
+            dropped.entries.is_empty(),
+            "control group: a non-full inventory must never spill to ground"
+        );
+
+        let frames: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<HarvestTerminalEvent>>()
+            .drain()
+            .collect();
+        assert_eq!(frames.len(), 1);
+        assert!(
+            !frames[0].overflow_to_ground,
+            "control group terminal event must not flag overflow_to_ground"
+        );
+        assert!(
+            !frames[0].detail.contains("背包已满"),
+            "non-overflow detail text must not mention 背包已满, got {:?}",
+            frames[0].detail
+        );
+
+        let inventory = app
+            .world()
+            .get::<PlayerInventory>(client_entity)
+            .expect("client should have inventory");
+        let has_item = inventory.containers.iter().any(|c| {
+            c.items
+                .iter()
+                .any(|p| p.instance.template_id == "ci_she_hao")
+        });
+        assert!(
+            has_item,
+            "product should land in the player's inventory as usual"
+        );
+    }
+
+    #[test]
+    fn harvest_completion_missing_kind_registry_leaves_plant_unharvested() {
+        let mut app = make_app_with_combat_events();
+        // 覆盖 make_app_with_combat_events 里的默认注册表——制造 kind_registry.get 失败分支。
+        app.insert_resource(BotanyKindRegistry::empty());
+        app.insert_resource(load_item_registry().expect("item registry should load"));
+        app.insert_resource(InventoryInstanceIdAllocator::default());
+        app.insert_resource(DroppedLootRegistry::default());
+        app.add_systems(Update, tick_harvest_sessions);
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let client_entity = app
+            .world_mut()
+            .spawn(client_bundle)
+            .insert(empty_inventory_8x8())
+            .insert(Cultivation::default())
+            .insert(Contamination::default())
+            .insert(Wounds::default())
+            .id();
+        let target = plant_entity(&mut app, "spawn");
+        queue_completed_ci_she_harvest(&mut app, client_entity, target);
+
+        app.update();
+
+        let plant = app
+            .world()
+            .entity(target)
+            .get::<Plant>()
+            .expect("plant entity should still exist");
+        assert!(
+            !plant.harvested,
+            "structural failure (missing kind) must happen before plant.harvested is set, \
+             so the plant stays re-harvestable — §8.1 决议 #2"
+        );
+
+        let store = app.world().resource::<HarvestSessionStore>();
+        assert!(
+            store.session_for("offline:Azure").is_none(),
+            "session should still be cleared even on structural failure (light rollback, not data loss)"
+        );
+
+        let dropped = app.world().resource::<DroppedLootRegistry>();
+        assert!(
+            dropped.entries.is_empty(),
+            "no product should ever be created when kind lookup fails before any grant is attempted"
+        );
+    }
+
+    #[test]
+    fn harvest_completion_missing_player_inventory_leaves_plant_unharvested() {
+        let mut app = make_app_with_combat_events();
+        app.insert_resource(load_item_registry().expect("item registry should load"));
+        app.insert_resource(InventoryInstanceIdAllocator::default());
+        app.insert_resource(DroppedLootRegistry::default());
+        app.add_systems(Update, tick_harvest_sessions);
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        // 故意不 insert PlayerInventory —— 模拟系统装配缺陷 / 实体生命周期竞态。
+        let client_entity = app
+            .world_mut()
+            .spawn(client_bundle)
+            .insert(Cultivation::default())
+            .insert(Contamination::default())
+            .insert(Wounds::default())
+            .id();
+        let target = plant_entity(&mut app, "spawn");
+        queue_completed_ci_she_harvest(&mut app, client_entity, target);
+
+        app.update();
+
+        let plant = app
+            .world()
+            .entity(target)
+            .get::<Plant>()
+            .expect("plant entity should still exist");
+        assert!(
+            !plant.harvested,
+            "structural failure (missing inventory) must happen before plant.harvested is set"
+        );
+
+        let store = app.world().resource::<HarvestSessionStore>();
+        assert!(
+            store.session_for("offline:Azure").is_none(),
+            "session should still be cleared even on structural failure"
+        );
+    }
+
+    #[test]
+    fn harvest_completion_variant_and_quality_modifiers_survive_overflow() {
+        let mut app = make_app_with_combat_events();
+        app.insert_resource(load_item_registry().expect("item registry should load"));
+        app.insert_resource(InventoryInstanceIdAllocator::default());
+        app.insert_resource(DroppedLootRegistry::default());
+        app.add_systems(Update, tick_harvest_sessions);
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let mut skill_set = SkillSet::default();
+        skill_set.skills.insert(
+            SkillId::Herbalism,
+            SkillEntry {
+                lv: 7,
+                ..Default::default()
+            },
+        );
+        let client_entity = app
+            .world_mut()
+            .spawn(client_bundle)
+            .insert(full_1x1_inventory_blocking("filler"))
+            .insert(Cultivation {
+                realm: Realm::Awaken,
+                ..Default::default()
+            })
+            .insert(Contamination::default())
+            .insert(Wounds::default())
+            .insert(skill_set)
+            .id();
+        let target = plant_entity_with_variant(&mut app, "spawn", PlantVariant::Thunder);
+        queue_completed_ci_she_harvest(&mut app, client_entity, target);
+
+        app.update();
+
+        let base_quality = app
+            .world()
+            .resource::<ItemRegistry>()
+            .get("ci_she_hao")
+            .expect("ci_she_hao template should exist")
+            .spirit_quality_initial;
+        // 与 completed_harvest_applies_herbalism_quality_bonus_using_effective_level 相同锚点：
+        // 原始 Lv.7 → effective Lv.3。
+        let herbalism_bonus = crate::botany::skill_hook::spirit_quality_bonus(3);
+        let expected_quality =
+            (base_quality + herbalism_bonus + PlantVariant::Thunder.quality_modifier())
+                .clamp(0.0, 1.0);
+
+        let dropped = app.world().resource::<DroppedLootRegistry>();
+        assert_eq!(dropped.entries.len(), 1);
+        let entry = dropped.entries.values().next().expect("one overflow entry");
+        assert!(
+            (entry.item.spirit_quality - expected_quality).abs() < 1e-6,
+            "overflow ground drop should carry the same variant+skill quality bonus as a normal grant, got {} expected {}",
+            entry.item.spirit_quality,
+            expected_quality
+        );
+        assert!(
+            entry.item.display_name.starts_with("雷 · "),
+            "overflow drop should keep the variant display prefix, got {:?}",
+            entry.item.display_name
+        );
+    }
+
+    #[test]
+    fn harvest_completion_stack_boundary_max_stack_count_still_overflows_correctly() {
+        let mut app = make_app_with_combat_events();
+        let item_registry = load_item_registry().expect("item registry should load");
+        let max_stack = item_registry
+            .get("ci_she_hao")
+            .expect("ci_she_hao template should exist")
+            .max_stack_count;
+        app.insert_resource(item_registry);
+        app.insert_resource(InventoryInstanceIdAllocator::default());
+        app.insert_resource(DroppedLootRegistry::default());
+        app.add_systems(Update, tick_harvest_sessions);
+
+        // 1x1 容器：先用公开 API 把唯一格子塞满同模板 max_stack_count 堆叠——这条路径
+        // 与正常收获走同一套 add_item_to_player_inventory_inner，保证 merge 字段完全对齐,
+        // 从而真正测的是"已满且无法再合并"而不是"模板不同没法合并"。
+        let mut inventory = PlayerInventory {
+            triggered_treasures: Vec::new(),
+            revision: InventoryRevision(0),
+            containers: vec![ContainerState {
+                quick_access: false,
+                id: MAIN_PACK_CONTAINER_ID.into(),
+                name: "main".into(),
+                rows: 1,
+                cols: 1,
+                items: Vec::new(),
+                owner_instance_id: None,
+            }],
+            equipped: HashMap::new(),
+            hotbar: Default::default(),
+            bone_coins: 0,
+            max_weight: 999.0,
+        };
+        {
+            let registry = app.world().resource::<ItemRegistry>();
+            let mut allocator = InventoryInstanceIdAllocator::new(500);
+            add_item_to_player_inventory(
+                &mut inventory,
+                registry,
+                &mut allocator,
+                "ci_she_hao",
+                max_stack,
+                0,
+            )
+            .expect("filling the single 1x1 cell to max_stack_count should succeed");
+        }
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let client_entity = app
+            .world_mut()
+            .spawn(client_bundle)
+            .insert(inventory)
+            .insert(Cultivation::default())
+            .insert(Contamination::default())
+            .insert(Wounds::default())
+            .id();
+        let target = plant_entity(&mut app, "spawn");
+        queue_completed_ci_she_harvest(&mut app, client_entity, target);
+
+        app.update();
+
+        let dropped = app.world().resource::<DroppedLootRegistry>();
+        assert_eq!(
+            dropped.entries.len(),
+            1,
+            "a matching stack already at max_stack_count with no other free cell must still overflow to ground, not silently discard"
+        );
+
+        let inv = app
+            .world()
+            .get::<PlayerInventory>(client_entity)
+            .expect("client should have inventory");
+        let main = inv
+            .containers
+            .iter()
+            .find(|c| c.id == MAIN_PACK_CONTAINER_ID)
+            .expect("main pack should exist");
+        assert_eq!(
+            main.items.len(),
+            1,
+            "pre-existing maxed stack must be untouched, not duplicated"
+        );
+        assert_eq!(
+            main.items[0].instance.stack_count, max_stack,
+            "existing stack count must stay at max_stack_count, overflow must not silently bump it past the limit"
+        );
+    }
+
+    #[test]
+    fn harvest_completion_overflow_triggers_for_both_manual_and_auto_modes() {
+        for mode in [BotanyHarvestMode::Manual, BotanyHarvestMode::Auto] {
+            let mut app = make_app_with_combat_events();
+            app.insert_resource(load_item_registry().expect("item registry should load"));
+            app.insert_resource(InventoryInstanceIdAllocator::default());
+            app.insert_resource(DroppedLootRegistry::default());
+            app.add_systems(Update, tick_harvest_sessions);
+
+            let (client_bundle, _helper) = create_mock_client("Azure");
+            let client_entity = app
+                .world_mut()
+                .spawn(client_bundle)
+                .insert(full_1x1_inventory_blocking("filler"))
+                .insert(Cultivation::default())
+                .insert(Contamination::default())
+                .insert(Wounds::default())
+                .id();
+            let target = plant_entity(&mut app, "spawn");
+            queue_completed_ci_she_harvest_with_mode(&mut app, client_entity, target, mode);
+
+            app.update();
+
+            let dropped = app.world().resource::<DroppedLootRegistry>();
+            assert_eq!(
+                dropped.entries.len(),
+                1,
+                "{mode:?} mode should also overflow to ground when the inventory is full"
+            );
+
+            let frames: Vec<_> = app
+                .world_mut()
+                .resource_mut::<Events<HarvestTerminalEvent>>()
+                .drain()
+                .collect();
+            assert_eq!(
+                frames.len(),
+                1,
+                "{mode:?} should send exactly one terminal event"
+            );
+            assert!(
+                frames[0].overflow_to_ground,
+                "{mode:?} terminal event should flag overflow_to_ground"
+            );
+            assert_eq!(frames[0].mode, mode);
+        }
+    }
+
+    #[test]
+    fn harvest_completion_reharvesting_already_harvested_plant_keeps_harvested_true_not_confused_with_structural_failure(
+    ) {
+        let mut app = make_app_with_combat_events();
+        app.insert_resource(load_item_registry().expect("item registry should load"));
+        app.insert_resource(InventoryInstanceIdAllocator::default());
+        app.insert_resource(DroppedLootRegistry::default());
+        app.add_systems(Update, tick_harvest_sessions);
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let client_entity = app
+            .world_mut()
+            .spawn(client_bundle)
+            .insert(empty_inventory_8x8())
+            .insert(Cultivation::default())
+            .insert(Contamination::default())
+            .insert(Wounds::default())
+            .id();
+        let target = plant_entity(&mut app, "spawn");
+
+        queue_completed_ci_she_harvest(&mut app, client_entity, target);
+        app.update();
+        {
+            let plant = app.world().entity(target).get::<Plant>().unwrap();
+            assert!(
+                plant.harvested,
+                "first harvest should mark the plant harvested (success path)"
+            );
+        }
+
+        // 模拟异常重入（正常游戏流程会在 session 创建前拒绝已收获植物；这里直接绕过，
+        // 验证 complete_harvest_for_player 自身在这种误用下也不会把"已收获"误判回
+        // "结构性失败"——那条状态专属于 kind/inventory 缺失,不该被复用）。
+        queue_completed_ci_she_harvest(&mut app, client_entity, target);
+        app.update();
+
+        let plant = app.world().entity(target).get::<Plant>().unwrap();
+        assert!(
+            plant.harvested,
+            "re-harvesting an already-harvested plant must not flip harvested back to false — \
+             that state is reserved for structural failures (missing kind/inventory), not for \
+             'already consumed'"
+        );
+    }
+
+    #[test]
+    fn harvest_completion_overflow_entry_is_visible_via_dropped_loot_snapshot() {
+        let mut app = make_app_with_combat_events();
+        app.insert_resource(load_item_registry().expect("item registry should load"));
+        app.insert_resource(InventoryInstanceIdAllocator::default());
+        app.insert_resource(DroppedLootRegistry::default());
+        app.add_systems(Update, tick_harvest_sessions);
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let client_entity = app
+            .world_mut()
+            .spawn(client_bundle)
+            .insert(full_1x1_inventory_blocking("filler"))
+            .insert(Cultivation::default())
+            .insert(Contamination::default())
+            .insert(Wounds::default())
+            .id();
+        let target = plant_entity(&mut app, "spawn");
+        queue_completed_ci_she_harvest(&mut app, client_entity, target);
+
+        app.update();
+
+        let registry = app.world().resource::<DroppedLootRegistry>();
+        let snapshot = dropped_loot_snapshot(registry);
+        assert_eq!(
+            snapshot.len(),
+            1,
+            "overflow drop must be discoverable through the same snapshot fn the sync broadcast \
+             pipeline uses (dropped_loot_sync_emit), not just the internal entries HashMap"
+        );
+        assert_eq!(snapshot[0].item.template_id, "ci_she_hao");
     }
 
     #[test]
