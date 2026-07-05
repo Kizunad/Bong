@@ -60,7 +60,15 @@ public final class InventoryEquipRules {
         "stone_axe",
         "axe_bone",
         "axe_iron",
-        "axe_copper"
+        "axe_copper",
+        // plan-zhenfa-trap-client-equip-gate-v1 P0 — zhenfa 阵法工具（server assets/items/zhenfa.toml，
+        // 均 category="tool"，由 register_zhenfa_content_recipes/register_zhenfa_v2_recipes 正常 craft 产出）。
+        // 此前漏收录 → isTool()=false → 装不进手槽 → 右键布置链路（MixinClientPlayerInteractionManagerAlchemy）
+        // 永远读不到已装备的 mainHand，内容做出来后不可用。
+        "warning_trap",
+        "blast_trap",
+        "slow_trap",
+        "array_flag"
     );
 
     private static final Set<String> TREASURE_TEMPLATE_IDS = Set.of(

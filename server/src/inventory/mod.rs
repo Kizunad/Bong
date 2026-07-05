@@ -6635,6 +6635,12 @@ mod tests {
             "gua_dao",
             "gu_hai_qian",
             "bing_jia_shou_tao",
+            // plan-zhenfa-trap-client-equip-gate-v1 P2 — zhenfa.toml 阵法工具（此前漏收进本 pin，
+            // 是导致 client TOOL_TEMPLATE_IDS 白名单漂移未被察觉的同一契约缺口）。
+            "warning_trap",
+            "blast_trap",
+            "slow_trap",
+            "array_flag",
         ] {
             let template = registry
                 .get(required_tool)
