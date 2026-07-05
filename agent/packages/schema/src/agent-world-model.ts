@@ -7,19 +7,19 @@ import { WorldStateV1 } from "./world-state.js";
 
 export const AgentWorldModelSnapshotV1 = Type.Object(
   {
-    currentEra: Type.Union([
+    current_era: Type.Union([
       Type.Object(
         {
           name: Type.String(),
-          sinceTick: Type.Integer(),
-          globalEffect: Type.String(),
+          since_tick: Type.Integer(),
+          global_effect: Type.String(),
         },
         { additionalProperties: false },
       ),
       Type.Null(),
     ]),
-    zoneHistory: Type.Record(Type.String(), Type.Array(WorldStateV1.properties.zones.items)),
-    lastDecisions: Type.Record(
+    zone_history: Type.Record(Type.String(), Type.Array(WorldStateV1.properties.zones.items)),
+    last_decisions: Type.Record(
       Type.String(),
       Type.Object(
         {
@@ -30,46 +30,46 @@ export const AgentWorldModelSnapshotV1 = Type.Object(
         { additionalProperties: false },
       ),
     ),
-    playerFirstSeenTick: Type.Record(Type.String(), Type.Integer()),
-    negDomainPendingTribulations: Type.Record(
+    player_first_seen_tick: Type.Record(Type.String(), Type.Integer()),
+    neg_domain_pending_tribulations: Type.Record(
       Type.String(),
       Type.Object(
         {
-          playerUuid: Type.String(),
-          playerName: Type.String(),
+          player_uuid: Type.String(),
+          player_name: Type.String(),
           zone: Type.String(),
-          enteredAtTick: Type.Integer(),
-          lastSuppressedTick: Type.Integer(),
+          entered_at_tick: Type.Integer(),
+          last_suppressed_tick: Type.Integer(),
           reason: Type.Literal("negative_domain_tribulation_exempt"),
         },
         { additionalProperties: false },
       ),
     ),
-    negDomainEscapeTelemetry: Type.Object(
+    neg_domain_escape_telemetry: Type.Object(
       {
-        escapeEntryCount: Type.Integer({ minimum: 0 }),
-        postEscapeRealmDropCount: Type.Integer({ minimum: 0 }),
-        successfulTribulationAvoidanceCount: Type.Integer({ minimum: 0 }),
-        activeEscapeSessionCount: Type.Integer({ minimum: 0 }),
-        postEscapeRealmDropRate: Type.Number({ minimum: 0 }),
+        escape_entry_count: Type.Integer({ minimum: 0 }),
+        post_escape_realm_drop_count: Type.Integer({ minimum: 0 }),
+        successful_tribulation_avoidance_count: Type.Integer({ minimum: 0 }),
+        active_escape_session_count: Type.Integer({ minimum: 0 }),
+        post_escape_realm_drop_rate: Type.Number({ minimum: 0 }),
       },
       { additionalProperties: false },
     ),
-    negDomainEscapeSessions: Type.Record(
+    neg_domain_escape_sessions: Type.Record(
       Type.String(),
       Type.Object(
         {
-          playerUuid: Type.String(),
-          playerName: Type.String(),
+          player_uuid: Type.String(),
+          player_name: Type.String(),
           zone: Type.String(),
-          enteredAtTick: Type.Integer(),
-          entryRealmRank: Type.Number(),
+          entered_at_tick: Type.Integer(),
+          entry_realm_rank: Type.Number(),
         },
         { additionalProperties: false },
       ),
     ),
-    lastTick: Type.Union([Type.Integer(), Type.Null()]),
-    lastStateTs: Type.Union([Type.Integer(), Type.Null()]),
+    last_tick: Type.Union([Type.Integer(), Type.Null()]),
+    last_state_ts: Type.Union([Type.Integer(), Type.Null()]),
   },
   { additionalProperties: false },
 );

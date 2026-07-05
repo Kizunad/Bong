@@ -49,6 +49,12 @@ pub const WORLD_MODEL_STATE_FIELD_CURRENT_ERA: &str = "current_era";
 pub const WORLD_MODEL_STATE_FIELD_ZONE_HISTORY: &str = "zone_history";
 pub const WORLD_MODEL_STATE_FIELD_LAST_DECISIONS: &str = "last_decisions";
 pub const WORLD_MODEL_STATE_FIELD_PLAYER_FIRST_SEEN_TICK: &str = "player_first_seen_tick";
+// fix/world-model-schema-drift：这三个字段名必须与 agent 侧
+// WORLD_MODEL_STATE_FIELDS（redis-ipc.ts）逐字对齐，否则 mirror 回读又会静默丢字段。
+pub const WORLD_MODEL_STATE_FIELD_NEG_DOMAIN_PENDING_TRIBULATIONS: &str =
+    "neg_domain_pending_tribulations";
+pub const WORLD_MODEL_STATE_FIELD_NEG_DOMAIN_ESCAPE_TELEMETRY: &str = "neg_domain_escape_telemetry";
+pub const WORLD_MODEL_STATE_FIELD_NEG_DOMAIN_ESCAPE_SESSIONS: &str = "neg_domain_escape_sessions";
 pub const WORLD_MODEL_STATE_FIELD_LAST_TICK: &str = "last_tick";
 pub const WORLD_MODEL_STATE_FIELD_LAST_STATE_TS: &str = "last_state_ts";
 const CURRENT_SCHEMA_VERSION: i32 = 1;
@@ -358,7 +364,7 @@ pub struct AgentWorldModelDecisionRecord {
     pub reasoning: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct AgentWorldModelSnapshotRecord {
     #[serde(default)]
     pub current_era: Option<serde_json::Value>,
@@ -368,10 +374,47 @@ pub struct AgentWorldModelSnapshotRecord {
     pub last_decisions: BTreeMap<String, AgentWorldModelDecisionRecord>,
     #[serde(default)]
     pub player_first_seen_tick: BTreeMap<String, i64>,
+    // fix/world-model-schema-drift：#[serde(default)] 用于容忍升级前（无这三个
+    // 字段）的旧 SQLite snapshot_json blob；新写入的快照必须携带完整数据。
+    #[serde(default)]
+    pub neg_domain_pending_tribulations:
+        BTreeMap<String, AgentWorldModelNegDomainPendingTribulationRecord>,
+    #[serde(default)]
+    pub neg_domain_escape_telemetry: AgentWorldModelNegDomainEscapeTelemetryRecord,
+    #[serde(default)]
+    pub neg_domain_escape_sessions: BTreeMap<String, AgentWorldModelNegDomainEscapeSessionRecord>,
     #[serde(default)]
     pub last_tick: Option<i64>,
     #[serde(default)]
     pub last_state_ts: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AgentWorldModelNegDomainPendingTribulationRecord {
+    pub player_uuid: String,
+    pub player_name: String,
+    pub zone: String,
+    pub entered_at_tick: i64,
+    pub last_suppressed_tick: i64,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct AgentWorldModelNegDomainEscapeTelemetryRecord {
+    pub escape_entry_count: i64,
+    pub post_escape_realm_drop_count: i64,
+    pub successful_tribulation_avoidance_count: i64,
+    pub active_escape_session_count: i64,
+    pub post_escape_realm_drop_rate: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AgentWorldModelNegDomainEscapeSessionRecord {
+    pub player_uuid: String,
+    pub player_name: String,
+    pub zone: String,
+    pub entered_at_tick: i64,
+    pub entry_realm_rank: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -838,6 +881,21 @@ pub fn world_model_snapshot_to_mirror_fields(
     fields.insert(
         WORLD_MODEL_STATE_FIELD_PLAYER_FIRST_SEEN_TICK.to_string(),
         serde_json::to_string(&snapshot.player_first_seen_tick)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?,
+    );
+    fields.insert(
+        WORLD_MODEL_STATE_FIELD_NEG_DOMAIN_PENDING_TRIBULATIONS.to_string(),
+        serde_json::to_string(&snapshot.neg_domain_pending_tribulations)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?,
+    );
+    fields.insert(
+        WORLD_MODEL_STATE_FIELD_NEG_DOMAIN_ESCAPE_TELEMETRY.to_string(),
+        serde_json::to_string(&snapshot.neg_domain_escape_telemetry)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?,
+    );
+    fields.insert(
+        WORLD_MODEL_STATE_FIELD_NEG_DOMAIN_ESCAPE_SESSIONS.to_string(),
+        serde_json::to_string(&snapshot.neg_domain_escape_sessions)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?,
     );
     fields.insert(
@@ -8658,6 +8716,9 @@ mod persistence_tests {
         bootstrap_sqlite(settings.db_path(), settings.server_run_id())
             .expect("bootstrap should succeed");
 
+        // fix/world-model-schema-drift：neg_domain 三字段是本次修复新增的
+        // persistence 字段，roundtrip 必须带上非空数据，否则回归会被
+        // #[serde(default)] 的"缺字段容忍"悄悄吞掉而测不出来。
         let snapshot = AgentWorldModelSnapshotRecord {
             current_era: Some(serde_json::json!({
                 "name": "blood_moon",
@@ -8683,6 +8744,34 @@ mod persistence_tests {
                 },
             )]),
             player_first_seen_tick: BTreeMap::from([("Azure".to_string(), 128_i64)]),
+            neg_domain_pending_tribulations: BTreeMap::from([(
+                "Azure".to_string(),
+                AgentWorldModelNegDomainPendingTribulationRecord {
+                    player_uuid: "Azure".to_string(),
+                    player_name: "Azure".to_string(),
+                    zone: "rift_valley".to_string(),
+                    entered_at_tick: 4_000,
+                    last_suppressed_tick: 4_100,
+                    reason: "negative_domain_tribulation_exempt".to_string(),
+                },
+            )]),
+            neg_domain_escape_telemetry: AgentWorldModelNegDomainEscapeTelemetryRecord {
+                escape_entry_count: 6,
+                post_escape_realm_drop_count: 2,
+                successful_tribulation_avoidance_count: 4,
+                active_escape_session_count: 1,
+                post_escape_realm_drop_rate: 1.0 / 3.0,
+            },
+            neg_domain_escape_sessions: BTreeMap::from([(
+                "Azure".to_string(),
+                AgentWorldModelNegDomainEscapeSessionRecord {
+                    player_uuid: "Azure".to_string(),
+                    player_name: "Azure".to_string(),
+                    zone: "rift_valley".to_string(),
+                    entered_at_tick: 4_000,
+                    entry_realm_rank: 2.5,
+                },
+            )]),
             last_tick: Some(4_200),
             last_state_ts: Some(1_704_067_200),
         };
@@ -8693,7 +8782,25 @@ mod persistence_tests {
             .expect("agent world model snapshot should load")
             .expect("agent world model snapshot should exist");
 
-        assert_eq!(loaded, snapshot);
+        assert_eq!(
+            loaded, snapshot,
+            "full snapshot (incl. neg_domain fields) should roundtrip byte-for-byte through sqlite"
+        );
+
+        let pending = loaded
+            .neg_domain_pending_tribulations
+            .get("Azure")
+            .expect("neg_domain_pending_tribulations should roundtrip through sqlite");
+        assert_eq!(pending.zone, "rift_valley");
+        assert_eq!(pending.reason, "negative_domain_tribulation_exempt");
+        assert_eq!(loaded.neg_domain_escape_telemetry.escape_entry_count, 6);
+        assert_eq!(
+            loaded
+                .neg_domain_escape_sessions
+                .get("Azure")
+                .map(|s| s.entry_realm_rank),
+            Some(2.5)
+        );
 
         let connection = Connection::open(settings.db_path()).expect("sqlite db should open");
         let schema_version: i32 = connection
@@ -8704,6 +8811,51 @@ mod persistence_tests {
             )
             .expect("agent_world_model schema_version should exist");
         assert_eq!(schema_version, CURRENT_SCHEMA_VERSION);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    // fix/world-model-schema-drift：老 SQLite blob（升级前写入，没有 neg_domain
+    // 三字段的 JSON）必须仍能 load 成功，#[serde(default)] 负责补零值/空表。
+    #[test]
+    fn agent_world_model_snapshot_load_tolerates_legacy_json_missing_neg_domain_fields() {
+        let (settings, root) = persistence_settings("agent-world-model-legacy-missing-fields");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+
+        let legacy_snapshot_json = serde_json::json!({
+            "current_era": null,
+            "zone_history": {},
+            "last_decisions": {},
+            "player_first_seen_tick": {},
+            "last_tick": 100,
+            "last_state_ts": 1_700_000_000
+        })
+        .to_string();
+
+        let mut connection = open_persistence_connection(&settings).expect("db should open");
+        let transaction = connection.transaction().expect("transaction should open");
+        transaction
+            .execute(
+                "
+                INSERT INTO agent_world_model (row_id, snapshot_json, schema_version, last_updated_wall)
+                VALUES (?1, ?2, ?3, ?4)
+                ",
+                params![AGENT_WORLD_MODEL_ROW_ID, legacy_snapshot_json, CURRENT_SCHEMA_VERSION, 1_700_000_000_i64],
+            )
+            .expect("legacy snapshot_json row should insert");
+        transaction.commit().expect("transaction should commit");
+
+        let loaded = load_agent_world_model_snapshot(&settings)
+            .expect("legacy snapshot missing neg_domain fields should still load")
+            .expect("legacy snapshot row should exist");
+
+        assert!(loaded.neg_domain_pending_tribulations.is_empty());
+        assert_eq!(
+            loaded.neg_domain_escape_telemetry,
+            AgentWorldModelNegDomainEscapeTelemetryRecord::default()
+        );
+        assert!(loaded.neg_domain_escape_sessions.is_empty());
 
         let _ = fs::remove_dir_all(root);
     }
@@ -8741,6 +8893,7 @@ mod persistence_tests {
             player_first_seen_tick: BTreeMap::from([("Azure".to_string(), 128_i64)]),
             last_tick: Some(4_200),
             last_state_ts: Some(1_704_067_200),
+            ..Default::default()
         };
 
         persist_agent_world_model_authority_state(
@@ -8788,6 +8941,7 @@ mod persistence_tests {
             player_first_seen_tick: BTreeMap::from([("Azure".to_string(), 128_i64)]),
             last_tick: Some(5_100),
             last_state_ts: Some(1_704_067_500),
+            ..Default::default()
         };
 
         persist_agent_world_model_authority_state(
@@ -8852,6 +9006,7 @@ mod persistence_tests {
             player_first_seen_tick: BTreeMap::new(),
             last_tick: Some(4_200),
             last_state_ts: Some(1_704_067_200),
+            ..Default::default()
         };
 
         persist_agent_world_model_authority_state(&settings, "wm-old", "arbiter", &snapshot)

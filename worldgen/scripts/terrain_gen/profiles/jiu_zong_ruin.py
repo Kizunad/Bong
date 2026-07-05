@@ -27,7 +27,7 @@ JIU_ZONG_RUIN_DECORATIONS_COMMON = (
         kind="boulder",
         blocks=("stone_bricks", "mossy_stone_bricks", "cobblestone"),
         size_range=(3, 6),
-        rarity=0.35,
+        rarity=0.18,
         notes="苔石废堆：断柱/钟楼等语义结构改走 authored placement，此处只放低风险瓦砾。",
     ),
     DecorationSpec(
@@ -35,7 +35,7 @@ JIU_ZONG_RUIN_DECORATIONS_COMMON = (
         kind="boulder",
         blocks=("mossy_cobblestone", "cracked_stone_bricks", "andesite"),
         size_range=(2, 4),
-        rarity=0.25,
+        rarity=0.13,
         notes="裂座石：雕像/armor_stand 不走 density flora，只保留基座碎石。",
     ),
     DecorationSpec(
@@ -51,7 +51,7 @@ JIU_ZONG_RUIN_DECORATIONS_COMMON = (
         kind="boulder",
         blocks=("andesite", "polished_blackstone", "mossy_stone_bricks"),
         size_range=(2, 5),
-        rarity=0.16,
+        rarity=0.11,
         notes="风化铺石：碑林/叙事锚改走 authored placement，此处只保留铺地碎片。",
     ),
 )
@@ -63,7 +63,7 @@ JIU_ZONG_ORIGIN_SPECIFIC = {
         kind="boulder",
         blocks=("red_concrete", "blackstone", "redstone_lamp"),
         size_range=(3, 5),
-        rarity=0.20,
+        rarity=0.10,
         notes="万血祭坛：血溪宗体修流派祭坛，近之心悸。",
     ),
     2: DecorationSpec(
@@ -79,7 +79,7 @@ JIU_ZONG_ORIGIN_SPECIFIC = {
         kind="boulder",
         blocks=("warped_planks", "sculk", "verdant_froglight"),
         size_range=(3, 4),
-        rarity=0.15,
+        rarity=0.11,
         notes="蛊池残皿：南渊宗炼蛊废池。",
     ),
     4: DecorationSpec(
@@ -87,7 +87,7 @@ JIU_ZONG_ORIGIN_SPECIFIC = {
         kind="tree",
         blocks=("copper_block", "weathered_copper", "lightning_rod"),
         size_range=(6, 9),
-        rarity=0.12,
+        rarity=0.08,
         notes="引雷塔残：赤霞雷法宗的雷电吸引塔残基。",
     ),
     5: DecorationSpec(
@@ -95,7 +95,7 @@ JIU_ZONG_ORIGIN_SPECIFIC = {
         kind="boulder",
         blocks=("snow_block", "iron_block", "stone_bricks"),
         size_range=(2, 4),
-        rarity=0.22,
+        rarity=0.11,
         notes="试剑碑：玄水剑宗弟子比试遗碑。",
     ),
     6: DecorationSpec(
@@ -103,7 +103,7 @@ JIU_ZONG_ORIGIN_SPECIFIC = {
         kind="boulder",
         blocks=("smooth_quartz", "polished_blackstone", "amethyst_block"),
         size_range=(4, 6),
-        rarity=0.10,
+        rarity=0.07,
         notes="太极阵盘：太初宗任督全能流派标志。",
     ),
     7: DecorationSpec(
@@ -111,7 +111,7 @@ JIU_ZONG_ORIGIN_SPECIFIC = {
         kind="boulder",
         blocks=("cobbled_deepslate", "soul_soil", "soul_lantern"),
         size_range=(3, 5),
-        rarity=0.20,
+        rarity=0.10,
         notes="影壁残基：幽暗宗暗器流隐遁训练场。",
     ),
 }

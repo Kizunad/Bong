@@ -87,7 +87,7 @@ WILDERNESS_GROUND_COVER: tuple[DecorationSpec, ...] = (
         kind="flower",
         blocks=("grass",),
         size_range=(1, 1),
-        rarity=0.65,
+        rarity=0.46,
         notes="野草：荒野最常见的地表覆盖。",
     ),
     DecorationSpec(
@@ -95,7 +95,7 @@ WILDERNESS_GROUND_COVER: tuple[DecorationSpec, ...] = (
         kind="flower",
         blocks=("fern",),
         size_range=(1, 1),
-        rarity=0.45,
+        rarity=0.32,
         notes="野蕨：林下与潮湿洼地常见。",
     ),
     DecorationSpec(
@@ -103,7 +103,7 @@ WILDERNESS_GROUND_COVER: tuple[DecorationSpec, ...] = (
         kind="flower",
         blocks=("dandelion",),
         size_range=(1, 1),
-        rarity=0.20,
+        rarity=0.14,
         notes="野蒲公英：开阔草地点缀。",
     ),
 )

@@ -297,7 +297,9 @@ pub fn assign_npc_equipment(
         | NpcArchetype::SkullFiend
         | NpcArchetype::Zombie
         // plan-dying-elder-v1：垂死大能无装备（修士本体，无武器 / 甲）
-        | NpcArchetype::DyingElder => NpcEquipment::default(),
+        | NpcArchetype::DyingElder
+        // plan-mundane-fauna-v1 P0：凡兽无灵无装备（原生 MC 动物天生武器/无甲）
+        | NpcArchetype::Mundane => NpcEquipment::default(),
     }
 }
 

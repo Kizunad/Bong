@@ -32,7 +32,7 @@ DAN_ZONG_YI_YUAN_DECORATIONS = (
         kind="shrub",
         blocks=("crimson_roots", "warped_roots", "twisting_vines"),
         size_range=(1, 3),
-        rarity=0.85,
+        rarity=0.43,
         notes=(
             "野生变异灵草丛：在 layout 半径 96 外的自然区域散布。"
             "layout 内的药圃格子另有种植规则，不靠这条。"
@@ -43,7 +43,7 @@ DAN_ZONG_YI_YUAN_DECORATIONS = (
         kind="shrub",
         blocks=("bone_block",),
         size_range=(1, 1),
-        rarity=0.40,
+        rarity=0.20,
         notes=(
             "散落骨片：1x1 bone_block，没有 loot——纯氛围，"
             "对应「弟子尸体被千年风蚀，连完整骸骨都难找」。"
@@ -54,7 +54,7 @@ DAN_ZONG_YI_YUAN_DECORATIONS = (
         kind="shrub",
         blocks=("cobblestone", "mossy_cobblestone", "andesite"),
         size_range=(1, 2),
-        rarity=0.60,
+        rarity=0.30,
         notes="小石堆：宗门外缘建筑物风化残砾，1-2 格高小堆。",
     ),
 )

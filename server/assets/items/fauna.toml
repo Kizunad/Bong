@@ -103,6 +103,8 @@ grid_h = 1
 base_weight = 0.5
 rarity = "common"
 spirit_quality_initial = 0.35
+shelflife_profile = "raw_beast_meat_v1"
+shelflife_track = "spoil"
 description = "刚割下的异兽肉，未经处理时污染风险很高。"
 
 [[item]]
@@ -115,6 +117,31 @@ base_weight = 0.8
 rarity = "common"
 spirit_quality_initial = 0.4
 description = "带着余温的异兽皮，可作粗陋护具和伪装材料。"
+
+# plan-mundane-fauna-v1 P1 —— 凡兽资源链（生肉/生血先于熟肉腐败，凡骨天然拒绝封灵）
+[[item]]
+id = "raw_beast_blood"
+name = "生凡兽血"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.2
+rarity = "common"
+spirit_quality_initial = 0.3
+shelflife_profile = "raw_beast_blood_v1"
+shelflife_track = "spoil"
+description = "凡兽尸体渗出的血水，比生肉腐败更快，半日不处理便不能用。"
+
+[[item]]
+id = "fan_gu"
+name = "凡骨"
+category = "misc"
+grid_w = 1
+grid_h = 1
+base_weight = 0.3
+rarity = "common"
+spirit_quality_initial = 0.0
+description = "凡兽骨骼，无灵无息，磨粉削片可入手搓台料链——封灵骨币铸造拒收此骨。"
 
 # 飞行鲸（神兽级）专属掉落 —— 仅化虚境界以上击杀飞鲸可得
 [[item]]

@@ -2,35 +2,35 @@
   "additionalProperties": false,
   "type": "object",
   "required": [
-    "currentEra",
-    "zoneHistory",
-    "lastDecisions",
-    "playerFirstSeenTick",
-    "negDomainPendingTribulations",
-    "negDomainEscapeTelemetry",
-    "negDomainEscapeSessions",
-    "lastTick",
-    "lastStateTs"
+    "current_era",
+    "zone_history",
+    "last_decisions",
+    "player_first_seen_tick",
+    "neg_domain_pending_tribulations",
+    "neg_domain_escape_telemetry",
+    "neg_domain_escape_sessions",
+    "last_tick",
+    "last_state_ts"
   ],
   "properties": {
-    "currentEra": {
+    "current_era": {
       "anyOf": [
         {
           "additionalProperties": false,
           "type": "object",
           "required": [
             "name",
-            "sinceTick",
-            "globalEffect"
+            "since_tick",
+            "global_effect"
           ],
           "properties": {
             "name": {
               "type": "string"
             },
-            "sinceTick": {
+            "since_tick": {
               "type": "integer"
             },
-            "globalEffect": {
+            "global_effect": {
               "type": "string"
             }
           }
@@ -40,7 +40,7 @@
         }
       ]
     },
-    "zoneHistory": {
+    "zone_history": {
       "type": "object",
       "patternProperties": {
         "^(.*)$": {
@@ -100,7 +100,7 @@
         }
       }
     },
-    "lastDecisions": {
+    "last_decisions": {
       "type": "object",
       "patternProperties": {
         "^(.*)$": {
@@ -290,7 +290,7 @@
         }
       }
     },
-    "playerFirstSeenTick": {
+    "player_first_seen_tick": {
       "type": "object",
       "patternProperties": {
         "^(.*)$": {
@@ -298,34 +298,34 @@
         }
       }
     },
-    "negDomainPendingTribulations": {
+    "neg_domain_pending_tribulations": {
       "type": "object",
       "patternProperties": {
         "^(.*)$": {
           "additionalProperties": false,
           "type": "object",
           "required": [
-            "playerUuid",
-            "playerName",
+            "player_uuid",
+            "player_name",
             "zone",
-            "enteredAtTick",
-            "lastSuppressedTick",
+            "entered_at_tick",
+            "last_suppressed_tick",
             "reason"
           ],
           "properties": {
-            "playerUuid": {
+            "player_uuid": {
               "type": "string"
             },
-            "playerName": {
+            "player_name": {
               "type": "string"
             },
             "zone": {
               "type": "string"
             },
-            "enteredAtTick": {
+            "entered_at_tick": {
               "type": "integer"
             },
-            "lastSuppressedTick": {
+            "last_suppressed_tick": {
               "type": "integer"
             },
             "reason": {
@@ -336,73 +336,73 @@
         }
       }
     },
-    "negDomainEscapeTelemetry": {
+    "neg_domain_escape_telemetry": {
       "additionalProperties": false,
       "type": "object",
       "required": [
-        "escapeEntryCount",
-        "postEscapeRealmDropCount",
-        "successfulTribulationAvoidanceCount",
-        "activeEscapeSessionCount",
-        "postEscapeRealmDropRate"
+        "escape_entry_count",
+        "post_escape_realm_drop_count",
+        "successful_tribulation_avoidance_count",
+        "active_escape_session_count",
+        "post_escape_realm_drop_rate"
       ],
       "properties": {
-        "escapeEntryCount": {
+        "escape_entry_count": {
           "minimum": 0,
           "type": "integer"
         },
-        "postEscapeRealmDropCount": {
+        "post_escape_realm_drop_count": {
           "minimum": 0,
           "type": "integer"
         },
-        "successfulTribulationAvoidanceCount": {
+        "successful_tribulation_avoidance_count": {
           "minimum": 0,
           "type": "integer"
         },
-        "activeEscapeSessionCount": {
+        "active_escape_session_count": {
           "minimum": 0,
           "type": "integer"
         },
-        "postEscapeRealmDropRate": {
+        "post_escape_realm_drop_rate": {
           "minimum": 0,
           "type": "number"
         }
       }
     },
-    "negDomainEscapeSessions": {
+    "neg_domain_escape_sessions": {
       "type": "object",
       "patternProperties": {
         "^(.*)$": {
           "additionalProperties": false,
           "type": "object",
           "required": [
-            "playerUuid",
-            "playerName",
+            "player_uuid",
+            "player_name",
             "zone",
-            "enteredAtTick",
-            "entryRealmRank"
+            "entered_at_tick",
+            "entry_realm_rank"
           ],
           "properties": {
-            "playerUuid": {
+            "player_uuid": {
               "type": "string"
             },
-            "playerName": {
+            "player_name": {
               "type": "string"
             },
             "zone": {
               "type": "string"
             },
-            "enteredAtTick": {
+            "entered_at_tick": {
               "type": "integer"
             },
-            "entryRealmRank": {
+            "entry_realm_rank": {
               "type": "number"
             }
           }
         }
       }
     },
-    "lastTick": {
+    "last_tick": {
       "anyOf": [
         {
           "type": "integer"
@@ -412,7 +412,7 @@
         }
       ]
     },
-    "lastStateTs": {
+    "last_state_ts": {
       "anyOf": [
         {
           "type": "integer"

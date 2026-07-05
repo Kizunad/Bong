@@ -2,6 +2,7 @@ import type {
   AgentUiResponsePayloadV1,
   AgentWorldModelEnvelopeV1,
   BotanyEcologySnapshotV1,
+  FaunaEcologySnapshotV1,
   ChatMessageV1,
   ChatSignal,
   Command,
@@ -152,6 +153,7 @@ export interface RuntimeRedis {
   drainPriceIndexEvents?(): PriceIndexV1[];
   drainWeatherEventUpdates?(): WeatherEventUpdateV1[];
   drainBotanyEcologyEvents?(): BotanyEcologySnapshotV1[];
+  drainFaunaEcologyEvents?(): FaunaEcologySnapshotV1[];
   drainZonePressureCrossedEvents?(): ZonePressureCrossedV1[];
   drainPlayerChat(options?: { maxItems?: number; logger?: Pick<typeof console, "warn"> }): Promise<ChatMessageV1[]>;
   publishCommands(request: CommandPublishRequest): Promise<void>;
@@ -804,6 +806,7 @@ async function processEcologyEvents(args: {
 }): Promise<void> {
   const { redis, worldModel, ecologyAnalyzer, logger } = args;
   const ecologyEvents = redis.drainBotanyEcologyEvents?.() ?? [];
+  const faunaEcologyEvents = redis.drainFaunaEcologyEvents?.() ?? [];
   const pressureEvents = redis.drainZonePressureCrossedEvents?.() ?? [];
   const narrations: Narration[] = [];
   let sourceTick: number | null = null;
@@ -811,6 +814,11 @@ async function processEcologyEvents(args: {
   for (const event of ecologyEvents) {
     sourceTick = Math.max(sourceTick ?? event.tick, event.tick);
     narrations.push(...ecologyAnalyzer.ingestBotanyEcology(worldModel, event));
+  }
+
+  for (const event of faunaEcologyEvents) {
+    sourceTick = Math.max(sourceTick ?? event.tick, event.tick);
+    narrations.push(...ecologyAnalyzer.ingestFaunaEcology(worldModel, event));
   }
 
   for (const event of pressureEvents) {
@@ -1573,19 +1581,57 @@ async function persistWorldModelAfterFreshTick(args: {
   }
 }
 
+// wire 上的 bong:agent_world_model 通道统一走 snake_case（对齐 server serde 结构体 + 其余 IPC
+// 通道），agent 内部 WorldModel/WorldModelSnapshot 仍保持 camelCase——这里是唯一的边界映射点。
 function worldModelSnapshotToEnvelopeSnapshot(
   snapshot: WorldModelSnapshot,
 ): AgentWorldModelEnvelopeV1["snapshot"] {
   return {
-    currentEra: snapshot.currentEra,
-    zoneHistory: snapshot.zoneHistory,
-    lastDecisions: snapshot.lastDecisions,
-    playerFirstSeenTick: snapshot.playerFirstSeenTick,
-    negDomainPendingTribulations: snapshot.negDomainPendingTribulations,
-    negDomainEscapeTelemetry: snapshot.negDomainEscapeTelemetry,
-    negDomainEscapeSessions: snapshot.negDomainEscapeSessions,
-    lastTick: snapshot.lastTick,
-    lastStateTs: snapshot.lastStateTs,
+    current_era: snapshot.currentEra
+      ? {
+          name: snapshot.currentEra.name,
+          since_tick: snapshot.currentEra.sinceTick,
+          global_effect: snapshot.currentEra.globalEffect,
+        }
+      : null,
+    zone_history: snapshot.zoneHistory,
+    last_decisions: snapshot.lastDecisions,
+    player_first_seen_tick: snapshot.playerFirstSeenTick,
+    neg_domain_pending_tribulations: Object.fromEntries(
+      Object.entries(snapshot.negDomainPendingTribulations).map(([playerId, pending]) => [
+        playerId,
+        {
+          player_uuid: pending.playerUuid,
+          player_name: pending.playerName,
+          zone: pending.zone,
+          entered_at_tick: pending.enteredAtTick,
+          last_suppressed_tick: pending.lastSuppressedTick,
+          reason: pending.reason,
+        },
+      ]),
+    ),
+    neg_domain_escape_telemetry: {
+      escape_entry_count: snapshot.negDomainEscapeTelemetry.escapeEntryCount,
+      post_escape_realm_drop_count: snapshot.negDomainEscapeTelemetry.postEscapeRealmDropCount,
+      successful_tribulation_avoidance_count:
+        snapshot.negDomainEscapeTelemetry.successfulTribulationAvoidanceCount,
+      active_escape_session_count: snapshot.negDomainEscapeTelemetry.activeEscapeSessionCount,
+      post_escape_realm_drop_rate: snapshot.negDomainEscapeTelemetry.postEscapeRealmDropRate,
+    },
+    neg_domain_escape_sessions: Object.fromEntries(
+      Object.entries(snapshot.negDomainEscapeSessions).map(([playerId, session]) => [
+        playerId,
+        {
+          player_uuid: session.playerUuid,
+          player_name: session.playerName,
+          zone: session.zone,
+          entered_at_tick: session.enteredAtTick,
+          entry_realm_rank: session.entryRealmRank,
+        },
+      ]),
+    ),
+    last_tick: snapshot.lastTick,
+    last_state_ts: snapshot.lastStateTs,
   };
 }
 

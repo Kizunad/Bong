@@ -1,0 +1,27 @@
+{
+  "v": 1,
+  "tick": 1200,
+  "zones": [
+    {
+      "zone": "spawn",
+      "spirit_qi": 0.45,
+      "species_counts": [
+        { "kind": "chicken", "count": 4 },
+        { "kind": "rabbit", "count": 3 },
+        { "kind": "pig", "count": 2 }
+      ]
+    },
+    {
+      "zone": "north_wastes",
+      "spirit_qi": 0.08,
+      "species_counts": [
+        { "kind": "fox", "count": 1 }
+      ]
+    },
+    {
+      "zone": "blood_valley",
+      "spirit_qi": -0.2,
+      "species_counts": []
+    }
+  ]
+}

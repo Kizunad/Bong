@@ -30,6 +30,7 @@ import {
   AlchemyStageHintV1,
 } from "./alchemy.js";
 import { BotanyEcologySnapshotV1 } from "./botany.js";
+import { FaunaEcologySnapshotV1 } from "./fauna.js";
 import { BiographyEntryV1, HeartDemonOutcomeV1 } from "./biography.js";
 import { BreakthroughEventV1 } from "./breakthrough-event.js";
 import { BreakthroughCinematicEventV1 } from "./breakthrough-cinematic.js";
@@ -787,6 +788,7 @@ export const SCHEMA_REGISTRY = {
   coffinStateV1: CoffinStateV1,
   serverDataCoffinStateV1: ServerDataCoffinStateV1,
   botanyEcologySnapshotV1: BotanyEcologySnapshotV1,
+  faunaEcologySnapshotV1: FaunaEcologySnapshotV1,
   vfxEventV1: VfxEventV1,
   // plan-social-v1 §7
   exposureKindV1: ExposureKindV1,
@@ -1296,6 +1298,7 @@ export const GENERATED_SCHEMA_FILES = {
   "coffin-state-v1.json": SCHEMA_REGISTRY.coffinStateV1,
   "server-data-coffin-state-v1.json": SCHEMA_REGISTRY.serverDataCoffinStateV1,
   "botany-ecology-snapshot-v1.json": SCHEMA_REGISTRY.botanyEcologySnapshotV1,
+  "fauna-ecology-snapshot-v1.json": SCHEMA_REGISTRY.faunaEcologySnapshotV1,
   "vfx-event-v1.json": SCHEMA_REGISTRY.vfxEventV1,
   // plan-social-v1 §7
   "exposure-kind-v1.json": SCHEMA_REGISTRY.exposureKindV1,

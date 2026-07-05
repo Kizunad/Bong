@@ -26,7 +26,7 @@ CAVE_NETWORK_DECORATIONS = (
         kind="shrub",
         blocks=("glow_lichen", "dripstone_block", "pointed_dripstone"),
         size_range=(3, 6),
-        rarity=0.60,
+        rarity=0.30,
         notes="光苔钟柱：洞顶垂下的钟乳石群，表面覆夜光苔藓。",
     ),
     DecorationSpec(
@@ -34,7 +34,7 @@ CAVE_NETWORK_DECORATIONS = (
         kind="shrub",
         blocks=("weeping_vines", "crimson_roots"),
         size_range=(4, 8),
-        rarity=0.50,
+        rarity=0.25,
         notes="血藤帘：从入口垂下的红藤，遮盖洞口不可轻入。",
     ),
     DecorationSpec(
@@ -42,7 +42,7 @@ CAVE_NETWORK_DECORATIONS = (
         kind="boulder",
         blocks=("deepslate", "tuff", "cobbled_deepslate"),
         size_range=(3, 5),
-        rarity=0.45,
+        rarity=0.23,
         notes="陷穴石：陷落井周边堆积的深板岩块。",
     ),
     DecorationSpec(
@@ -50,7 +50,7 @@ CAVE_NETWORK_DECORATIONS = (
         kind="crystal",
         blocks=("chiseled_deepslate", "amethyst_cluster", "soul_lantern"),
         size_range=(5, 8),
-        rarity=0.18,
+        rarity=0.13,
         notes="禁制柱：古修士封印时立下的石柱，表面镌刻符纹。",
     ),
 )

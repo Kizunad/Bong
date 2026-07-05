@@ -33,7 +33,7 @@ WANGYINTAI_DECORATIONS = (
         kind="boulder",
         blocks=("smooth_basalt", "deepslate", "calcite"),
         size_range=(1, 3),
-        rarity=0.60,
+        rarity=0.30,
         notes=(
             "沉默碎石：layout 半径 48 外的自然区域散布。"
             "千年虚蚀将石头磨成玻璃质表面。"
@@ -44,7 +44,7 @@ WANGYINTAI_DECORATIONS = (
         kind="shrub",
         blocks=("smooth_basalt",),
         size_range=(1, 1),
-        rarity=0.30,
+        rarity=0.15,
         notes=(
             "碎裂涡旋盘残片：1x1 smooth_basalt，纯叙事氛围物件，"
             "对应「弟子法器散落，千年风蚀后只剩残片」。"

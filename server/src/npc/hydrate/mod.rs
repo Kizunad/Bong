@@ -38,8 +38,9 @@ use crate::npc::schedule::{
     home_base_for_archetype, hydrate_position_for, schedule_seed_from_char_id, NpcDailySchedule,
 };
 use crate::npc::spawn::{
-    spawn_beast_npc_at, spawn_commoner_npc_at, spawn_disciple_npc_at, spawn_relic_guard_npc_at,
-    spawn_rogue_npc_at, spawn_zombie_npc_at, NpcMarker, NpcSkinSpawnContext,
+    spawn_beast_npc_at, spawn_commoner_npc_at, spawn_disciple_npc_at, spawn_mundane_fauna_at,
+    spawn_relic_guard_npc_at, spawn_rogue_npc_at, spawn_zombie_npc_at, NpcMarker,
+    NpcSkinSpawnContext,
 };
 use crate::npc::territory::Territory;
 use crate::npc::tsy_hostile::{
@@ -715,6 +716,19 @@ fn spawn_from_snapshot(
         NpcArchetype::DyingElder => {
             spawn_zombie_npc_at(commands, layer, home_zone, pos, patrol_target)
         }
+        // plan-mundane-fauna-v1 P0：凡兽不持久化 `MundaneFaunaKind`——同 `spawn_beast_npc_at`
+        // 用 `fauna_tag_for_beast_spawn(home_zone, seed)` 从 home_zone+位置重新派生
+        // `BeastKind` 而不持久化的先例，复活时用 `mundane_species_for_position` 从
+        // (home_zone, pos) 确定性重新派生同一物种（biome 池 + 位置种子，与首次 ambient
+        // spawn 走同一口径）。
+        NpcArchetype::Mundane => spawn_mundane_fauna_at(
+            commands,
+            layer,
+            home_zone,
+            pos,
+            patrol_target,
+            crate::fauna::mundane::mundane_species_for_position(home_zone, pos),
+        ),
     };
 
     let mut entity_commands = commands.entity(entity);
@@ -1334,6 +1348,52 @@ mod tests {
             Some(Realm::Solidify),
             "hydrate 必须原样保留快照 realm(Solidify)，不受 spawn_disciple_npc_at \
              内部 bundle 默认值影响"
+        );
+    }
+
+    #[test]
+    fn hydrate_mundane_snapshot_produces_entity_with_species_marker() {
+        // plan-mundane-fauna-v1：dormant→hydrate round-trip 走 spawn_from_snapshot 的
+        // NpcArchetype::Mundane 分支（hydrate/mod.rs:724 → spawn_mundane_fauna_at）——复活的
+        // 凡兽必须重新挂上 `MundaneFaunaSpecies`，否则 qi_regen 的 `Without<MundaneFaunaSpecies>`
+        // 豁免在复活后失效，凡兽会重新开始抽 zone 灵气破守恒。此测试锁死新 enum 变体状态转换。
+        let mut app = App::new();
+        app.add_event::<InitiateXuhuaTribulation>();
+
+        let overworld = app.world_mut().spawn_empty().id();
+        let tsy = app.world_mut().spawn_empty().id();
+        app.insert_resource(DimensionLayers { overworld, tsy });
+        app.insert_resource(NpcVirtualizationConfig::default());
+
+        let mut snap = snapshot("mundane_rabbit_dormant", DVec3::new(20.0, 64.0, 20.0));
+        snap.archetype = NpcArchetype::Mundane;
+        snap.cultivation.realm = Realm::Awaken;
+        snap.shared_lifespan = LifespanComponent::for_realm(Realm::Awaken);
+        let mut store = NpcDormantStore::default();
+        store.insert(snap);
+        app.insert_resource(store);
+
+        app.world_mut()
+            .spawn((ClientMarker, Position(DVec3::new(20.0, 64.0, 20.0))));
+
+        app.add_systems(Update, hydrate_dormant_near_players_system);
+        app.update();
+
+        let world = app.world_mut();
+        let mut query = world.query::<(
+            &NpcArchetype,
+            Option<&crate::fauna::mundane::MundaneFaunaSpecies>,
+        )>();
+        let mundane = query
+            .iter(world)
+            .find(|(archetype, _)| **archetype == NpcArchetype::Mundane);
+        assert!(
+            mundane.is_some(),
+            "hydrate 必须产出一个 NpcArchetype::Mundane 实体"
+        );
+        assert!(
+            mundane.unwrap().1.is_some(),
+            "复活的凡兽必须重新携带 MundaneFaunaSpecies——否则 qi_regen 豁免在 hydrate 后失效"
         );
     }
 

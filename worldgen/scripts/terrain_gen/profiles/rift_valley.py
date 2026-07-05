@@ -29,7 +29,7 @@ RIFT_VALLEY_DECORATIONS = (
         kind="tree",
         blocks=("crimson_stem", "bone_block", "nether_wart_block"),
         size_range=(5, 10),
-        rarity=0.30,
+        rarity=0.15,
         notes="赤骨树：绯红菌柄与骨块穿插，树冠如凝血。血谷独有。",
     ),
     DecorationSpec(
@@ -37,7 +37,7 @@ RIFT_VALLEY_DECORATIONS = (
         kind="shrub",
         blocks=("magma_block", "blackstone", "red_concrete"),
         size_range=(2, 4),
-        rarity=0.55,
+        rarity=0.28,
         notes="火脉仙人掌：裂隙旁丛生，通体发烫，吸附裂缝火气。",
     ),
     DecorationSpec(
@@ -45,7 +45,7 @@ RIFT_VALLEY_DECORATIONS = (
         kind="boulder",
         blocks=("red_sandstone", "chiseled_red_sandstone", "terracotta"),
         size_range=(3, 6),
-        rarity=0.40,
+        rarity=0.20,
         notes="血碑：独立矗立的红砂岩碑，表面似被血染。古战纪录。",
     ),
     DecorationSpec(
@@ -53,7 +53,7 @@ RIFT_VALLEY_DECORATIONS = (
         kind="shrub",
         blocks=("crimson_nylium", "crimson_roots", "weeping_vines"),
         size_range=(1, 2),
-        rarity=0.65,
+        rarity=0.33,
         notes="绯血苔藓：成片覆盖石缝，根须下探灵脉。",
     ),
 )

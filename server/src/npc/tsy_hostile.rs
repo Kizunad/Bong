@@ -1197,7 +1197,9 @@ fn entity_kind_for_tsy_archetype(archetype: NpcArchetype) -> valence::prelude::E
         | NpcArchetype::Disciple
         | NpcArchetype::GuardianRelic
         // plan-dying-elder-v1：DyingElder 有独立 spawn 路径，不走 tsy_hostile entity_kind
-        | NpcArchetype::DyingElder => {
+        | NpcArchetype::DyingElder
+        // plan-mundane-fauna-v1 P0：凡兽有独立 Rail A spawn 路径，不走 tsy_hostile entity_kind
+        | NpcArchetype::Mundane => {
             unreachable!("entity_kind_for_tsy_archetype only supports TSY hostile archetypes")
         }
     }
@@ -1216,7 +1218,9 @@ fn visual_kind_for_tsy_archetype(archetype: NpcArchetype) -> FaunaVisualKind {
         | NpcArchetype::Disciple
         | NpcArchetype::GuardianRelic
         // plan-dying-elder-v1：DyingElder 有独立 visual（P1），不走 tsy_hostile visual_kind
-        | NpcArchetype::DyingElder => {
+        | NpcArchetype::DyingElder
+        // plan-mundane-fauna-v1 P0：凡兽 Rail A 走原生 EntityKind，无 FaunaVisualKind
+        | NpcArchetype::Mundane => {
             unreachable!("visual_kind_for_tsy_archetype only supports TSY hostile archetypes")
         }
     }
