@@ -104,6 +104,9 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     private StatusBarsPanel statusBars;
     private ItemTooltipPanel tooltipPanel;
     private BottomInfoBar bottomBar;
+    // buff/状态效果条 —— 所有 tab 常驻（挂在 mainPanel，非某个 tab 专属内容），
+    // 无 buff 时自行收起为 0 高度不占位。
+    private BuffBarPanel buffBarPanel;
 
     // Tabs (left panel)
     private int activeTab = TAB_EQUIP;
@@ -285,6 +288,11 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         mainPanel.surface(Surface.flat(0xFF1A1A1A));
         mainPanel.padding(Insets.of(4));
         mainPanel.gap(2);
+
+        // buff/状态效果条 —— 挂在所有 tab 内容之前，横条常驻不随 tab 切换消失；
+        // 无 buff 时面板自行收起为 0 高度（BuffBarPanel 内部 sizing），不留灰色空壳。
+        buffBarPanel = new BuffBarPanel();
+        mainPanel.child(buffBarPanel);
 
         FlowLayout middle = Containers.horizontalFlow(Sizing.content(), Sizing.content());
         middle.gap(4);
@@ -3728,6 +3736,15 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             matrices.push();
             matrices.translate(0, 0, 400);
             bodyInspect.drawTooltip(context, mouseX, mouseY);
+            matrices.pop();
+        }
+
+        // Buff bar tooltip — 同理逃出 owo 组件裁剪区；buff 条所有 tab 常驻，此处不按 activeTab 过滤。
+        if (buffBarPanel != null) {
+            var matrices = context.getMatrices();
+            matrices.push();
+            matrices.translate(0, 0, 400);
+            buffBarPanel.drawTooltip(context, mouseX, mouseY);
             matrices.pop();
         }
 
