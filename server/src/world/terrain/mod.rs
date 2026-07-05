@@ -160,6 +160,43 @@ pub fn register(app: &mut App) {
 /// 才判定为"掉出世界"、传回 spawn。方块最低只能落在 `min_y`（基岩），低于它必为虚空。
 const VOID_RESCUE_MARGIN: i32 = 16;
 
+/// [`scan_real_surface_y`] 向上取的扫描窗口上界相对玩家当前 y 的偏移。玩家本身就
+/// 陷在某个固体方块里（否则走不到 ResendAndBounce 分支），窗口只需要覆盖到"万一
+/// 头顶还叠着别的固体（比如楼梯/半砖组合）"这种紧凑场景，8 格足够、也远小于会
+/// 扫到无关高空结构的程度。
+const FALL_RECOVERY_SCAN_UP: i32 = 8;
+
+/// 在当前 `ChunkLayer` 里从 `from_y`（含）向下扫到 `to_y`（含），返回该列第一个
+/// （最高的那个）"服务端仍持有真实碰撞箱"的方块 y —— 语义与
+/// [`TerrainProvider::query_surface`](raster::TerrainProvider) 的 `y` 字段一致
+/// （顶部实心方块自身的 y，不是 y+1）。整段窗口都没有固体方块时返回 `None`。
+///
+/// 为什么弹回目标不能只信 raster：raster 是烘焙时的荒野本底，不认后来叠加的
+/// 结构物、玩家建筑、装饰物 stamp——它们都真实写进了 `ChunkLayer`。玩家踩在这些
+/// 方块顶上触发穿地误判时，如果只按 raster 弹回，会被瞬移到"荒野本底"高度，和
+/// 玩家实际站立处（比如二楼地板）毫不相干。因此优先扫描当前 chunk 的真实方块，
+/// raster 只在这一列彻底没有方块（scan 窗口整段落在维度地板之外等边角情况）时
+/// 才兜底。
+fn scan_real_surface_y(
+    layer: &ChunkLayer,
+    bx: i32,
+    bz: i32,
+    from_y: i32,
+    to_y: i32,
+) -> Option<i32> {
+    let mut y = from_y;
+    while y >= to_y {
+        let obstructed = layer
+            .block([bx, y, bz])
+            .is_some_and(|b| collision_top_y(b.state).is_some());
+        if obstructed {
+            return Some(y);
+        }
+        y -= 1;
+    }
+    None
+}
+
 /// [`recover_fall_through`] 的恢复决策（纯函数，便于饱和单测）。
 #[derive(Debug, PartialEq, Eq)]
 enum FallRecovery {
@@ -170,6 +207,49 @@ enum FallRecovery {
     ResendAndBounce,
     /// 真·掉出世界底（脚下无碰撞且已低于地板 - margin）—— 传回 spawn 兜底。
     Spawn,
+}
+
+/// [`feet_stuck_in_block`] 的浮点容差：玩家站在非完整方块顶面（下半砖 0.5、
+/// 耕地/小径 0.9375、雪层 n/8 等）时，`p.y - p.y.floor()` 理论上应精确等于顶面
+/// 高度，但移动/物理引擎的浮点累积误差可能让它矮上 1e-4 量级。容差太小会把
+/// 完全合法的站立姿势判成"陷进方块"；容差太大则会漏判真正的穿地。
+const FEET_SURFACE_EPSILON: f64 = 1e-3;
+
+/// 该方块体素碰撞箱里最高的那个顶面（方块本地坐标 0.0..=1.0；多个碰撞箱——如
+/// 楼梯、栅栏——取其中最大的 y）。方块没有碰撞箱（空气、水、大多数植物）时
+/// 返回 `None`。
+fn collision_top_y(state: BlockState) -> Option<f64> {
+    state
+        .collision_shapes()
+        .map(|aabb| aabb.max().y)
+        .fold(None, |top: Option<f64>, y| {
+            Some(top.map_or(y, |t: f64| t.max(y)))
+        })
+}
+
+/// 纯函数：玩家脚部是否真的"陷进"了方块的碰撞体内部，而不是稳稳站在它的顶面上。
+///
+/// # 为什么不能只看"该体素碰撞箱是否非空"
+///
+/// 下半砖（顶面 0.5）、耕地/小径（0.9375）、雪层（n/8）、楼梯低台等非完整方块的
+/// 碰撞箱顶面低于 1.0——玩家正常站在它们上面时，`floor(player.y)` 落的正是这个
+/// 方块本体（而不是它上方的空气格），脚部小数偏移 `fract_y` 恰好等于顶面高度。
+/// 旧实现只判"该体素碰撞箱非空"，把这类完全合法的站立姿势也当成"穿地"，弹回
+/// 目标又是与玩家实际站立处毫不相干的荒野本底（raster 烘焙值），表现为站在下
+/// 半砖/耕地/雪地上莫名被瞬移（PR #343 遗留 bug，勿再退回"体素非空即穿地"）。
+///
+/// # 判定
+///
+/// 比较 `fract_y`（= `p.y - p.y.floor()`）与该体素碰撞箱里最高的顶面：`fract_y`
+/// 落在顶面之上（含 [`FEET_SURFACE_EPSILON`] 浮点容差）就是合法站立，只有真正
+/// 陷进顶面以下才算穿地。完整方块（顶面 = 1.0）行为完全不变——玩家站在其上方
+/// 的空气格里，`floor(player.y)` 根本不会指向这个方块，走不到这条判断；只有当
+/// 玩家的身体真的陷入某个完整方块内部（`fract_y < 1.0 - 容差`）才会命中。
+fn feet_stuck_in_block(collision_top_y: Option<f64>, fract_y: f64) -> bool {
+    match collision_top_y {
+        Some(top) => fract_y < top - FEET_SURFACE_EPSILON,
+        None => false,
+    }
 }
 
 /// 纯决策：合法的挖矿/洞穴/游泳玩家所在处是无碰撞空间（air/water/植物碰撞箱为空），
@@ -238,11 +318,16 @@ fn recover_fall_through(
             let bx = p.x.floor() as i32;
             let by = p.y.floor() as i32;
             let bz = p.z.floor() as i32;
-            // 玩家身体所在方块在服务端有碰撞箱 = 重叠固体 = 客户端缺这块 chunk、正穿过它。
-            let feet_obstructed = layer
-                .block([bx, by, bz])
-                .map(|b| b.state.collision_shapes().len() > 0)
-                .unwrap_or(false);
+            let fract_y = p.y - p.y.floor();
+            // 玩家身体所在方块在服务端有碰撞箱、且脚部小数偏移陷进了碰撞箱顶面以下
+            // （见 feet_stuck_in_block 文档）= 客户端缺这块 chunk、正穿过它。
+            // 站在下半砖/耕地/雪层等非完整方块顶面时不会命中。
+            let feet_obstructed = feet_stuck_in_block(
+                layer
+                    .block([bx, by, bz])
+                    .and_then(|b| collision_top_y(b.state)),
+                fract_y,
+            );
             match decide_fall_recovery(feet_obstructed, p.y, floor_y) {
                 FallRecovery::None => {
                     last_resend_tick.remove(&entity);
@@ -278,7 +363,15 @@ fn recover_fall_through(
                     if let Some(chunk) = layer.remove_chunk(cp) {
                         layer.insert_chunk(cp, chunk);
                     }
-                    let surface = terrain.query_surface(bx, bz).y;
+                    // 弹回目标优先取当前 ChunkLayer 里这一列"真实"的地表——它认得
+                    // 结构物/玩家建筑/装饰物 stamp，而 raster 只是烘焙时的荒野本底。
+                    // 只有这一列在 ChunkLayer 里彻底找不到固体方块（scan 窗口内，
+                    // 通常发生在玩家已深陷 floor-margin 以下、窗口整段落在维度地板
+                    // 之外）才退回 raster 兜底，保底不至于把人留在半空。
+                    let scan_top =
+                        (by + FALL_RECOVERY_SCAN_UP).min(floor_y + layer.height() as i32 - 1);
+                    let surface = scan_real_surface_y(&layer, bx, bz, scan_top, floor_y)
+                        .unwrap_or_else(|| terrain.query_surface(bx, bz).y);
                     position.set([p.x, f64::from(surface + 2), p.z]);
                     last_resend_tick.insert(entity, tick);
                     tracing::debug!(
@@ -913,6 +1006,119 @@ mod tests {
         );
     }
 
+    // collision_top_y / feet_stuck_in_block —— 穿地判定的核心纯函数。用真实
+    // BlockState 而非手造数字，锁住"非完整方块顶面绝不能被误判成穿地"这条 PR
+    // #343 遗留 bug 的回归钉子（旧实现只看"碰撞箱是否非空"，恒判穿地）。
+
+    use valence::prelude::{PropName, PropValue};
+
+    #[test]
+    fn collision_top_y_matches_real_block_shapes() {
+        assert_eq!(
+            collision_top_y(BlockState::STONE),
+            Some(1.0),
+            "完整方块的碰撞箱顶面必须是满格 1.0"
+        );
+        assert_eq!(
+            collision_top_y(BlockState::AIR),
+            None,
+            "空气没有碰撞箱，必须是 None（不能编出一个假顶面，否则 feet_stuck_in_block \
+             会把空中/水中的合法玩家判成陷进方块）"
+        );
+        assert_eq!(
+            collision_top_y(BlockState::OAK_SLAB.set(PropName::Type, PropValue::Bottom)),
+            Some(0.5),
+            "下半砖顶面在 0.5，不是满格 1.0——这正是旧实现会把它误判成穿地的地方"
+        );
+        assert_eq!(
+            collision_top_y(BlockState::OAK_SLAB.set(PropName::Type, PropValue::Top)),
+            Some(1.0),
+            "上半砖的碰撞箱只是把 min_y 抬高到 0.5，顶面本来就贴着满格 1.0"
+        );
+        assert_eq!(
+            collision_top_y(BlockState::FARMLAND),
+            Some(0.9375),
+            "耕地顶面是 15/16=0.9375，玩家站在耕地上脚部小数偏移应为 0.9375 而非 1.0"
+        );
+        assert_eq!(
+            collision_top_y(BlockState::SNOW.set(PropName::Layers, PropValue::_1)),
+            None,
+            "单层雪没有碰撞箱（原版碰撞高度=(层数-1)/8，1 层=0，玩家陷进视觉层踩在\
+             下方方块上）——必须是 None，否则会把站在雪地上的玩家当成陷进方块"
+        );
+        assert_eq!(
+            collision_top_y(BlockState::SNOW.set(PropName::Layers, PropValue::_2)),
+            Some(0.125),
+            "2 层雪的碰撞箱顶面是 (2-1)/8=0.125——玩家站在 2 层雪上脚部小数偏移 0.125，\
+             不能被误判成穿地"
+        );
+    }
+
+    #[test]
+    fn feet_stuck_in_block_distinguishes_standing_from_embedded() {
+        // 完整方块：站在它上方的空气格里（collision_top_y=None，来自查询 by 处的
+        // 空气）——不触发；真的陷进方块内部（collision_top_y=Some(1.0)）——触发。
+        assert!(
+            !feet_stuck_in_block(None, 0.0),
+            "站在完整方块上方的空气格里，fract_y=0.0 时不应判穿地（by 指向空气，\
+             collision_top_y 本就是 None）"
+        );
+        assert!(
+            feet_stuck_in_block(Some(1.0), 0.3),
+            "身体陷进完整方块内部（fract_y=0.3 远低于顶面 1.0）必须判穿地"
+        );
+
+        // 下半砖：顶面站立（回归钉子——旧实现在这里恒误判）不触发；陷入内部触发。
+        assert!(
+            !feet_stuck_in_block(Some(0.5), 0.5),
+            "回归钉子：站在下半砖顶面（fract_y==顶面 0.5）绝不能判穿地，否则玩家会被\
+             反复弹去荒野本底"
+        );
+        assert!(
+            feet_stuck_in_block(Some(0.5), 0.2),
+            "fract_y=0.2 低于下半砖顶面 0.5，身体确实陷进砖里，应判穿地"
+        );
+
+        // 耕地/小径 0.9375 顶面：站立不触发，陷入内部触发。
+        assert!(
+            !feet_stuck_in_block(Some(0.9375), 0.9375),
+            "站在耕地顶面（0.9375）不应判穿地"
+        );
+        assert!(
+            feet_stuck_in_block(Some(0.9375), 0.5),
+            "fract_y=0.5 陷进耕地方块本体内部，应判穿地"
+        );
+
+        // 雪层 0.125 顶面：站立不触发。
+        assert!(
+            !feet_stuck_in_block(Some(0.125), 0.125),
+            "站在单层雪顶面（0.125）不应判穿地"
+        );
+
+        // 上半砖顶面（贴着满格 1.0）：紧贴顶面（浮点误差内）不触发。
+        assert!(
+            !feet_stuck_in_block(Some(1.0), 1.0 - FEET_SURFACE_EPSILON / 2.0),
+            "站在上半砖/完整方块顶面，哪怕有亚 epsilon 级浮点误差也不应判穿地"
+        );
+
+        // 空气：任何 fract_y 都不触发。
+        assert!(
+            !feet_stuck_in_block(None, 0.5),
+            "collision_top_y=None（空气/水/无碰撞植物）任何 fract_y 都不应判穿地"
+        );
+
+        // 容差边界：恰好等于 top - epsilon 视为"仍站在顶面"（用 < 而非 <=，与
+        // decide_fall_recovery 的边界哲学一致）；再往下哪怕一点点就必须判穿地。
+        assert!(
+            !feet_stuck_in_block(Some(1.0), 1.0 - FEET_SURFACE_EPSILON),
+            "fract_y 恰好等于 top-epsilon 的边界不应判穿地（< 而非 <=）"
+        );
+        assert!(
+            feet_stuck_in_block(Some(1.0), 1.0 - FEET_SURFACE_EPSILON - 1e-6),
+            "fract_y 只要低于 top-epsilon 哪怕一点点，就必须判穿地"
+        );
+    }
+
     #[test]
     fn overworld_height_matches_valence_heightmap_encoding_budget() {
         const VALENCE_HEIGHTMAP_BITS_PER_ENTRY: u32 = 9;
@@ -1492,6 +1698,138 @@ mod tests {
             assert_eq!(
                 y_after, -500.0,
                 "legacy behaviour must hold when TSY has no provider: no rescue, no panic"
+            );
+        }
+    }
+
+    // scan_real_surface_y —— ResendAndBounce 弹回目标必须认得当前 ChunkLayer 里
+    // 真实存在的方块（结构物/玩家建筑/装饰物 stamp），而不是只信 raster 烘焙的
+    // 荒野本底。有真实方块列弹真实顶面；scan 窗口内彻底没有固体方块才退 raster。
+    mod bounce_target_scan {
+        use super::*;
+        use valence::testing::ScenarioSingleClient;
+
+        #[test]
+        fn finds_real_block_top_within_window() {
+            let scenario = ScenarioSingleClient::new();
+            let mut app = scenario.app;
+            let layer_entity = scenario.layer;
+
+            let min_y = app
+                .world()
+                .get::<ChunkLayer>(layer_entity)
+                .expect("scenario layer should carry a ChunkLayer")
+                .min_y();
+            let stone_y = min_y + 50;
+
+            let mut chunk = UnloadedChunk::with_height(384);
+            chunk.set_block_state(8, (stone_y - min_y) as u32, 8, BlockState::STONE);
+            app.world_mut()
+                .get_mut::<ChunkLayer>(layer_entity)
+                .expect("scenario layer should carry a ChunkLayer")
+                .insert_chunk(ChunkPos::new(0, 0), chunk);
+
+            let layer = app
+                .world()
+                .get::<ChunkLayer>(layer_entity)
+                .expect("layer must exist after insert_chunk");
+
+            let found = scan_real_surface_y(layer, 8, 8, stone_y + FALL_RECOVERY_SCAN_UP, min_y);
+            assert_eq!(
+                found,
+                Some(stone_y),
+                "扫描窗口内唯一的固体方块在 y={stone_y}，必须精确命中它本身（而不是随便一个\
+                 更高/更低的 y，也不是 None 落到 raster 兜底）"
+            );
+        }
+
+        #[test]
+        fn returns_none_when_column_has_no_solid_block_in_window() {
+            let scenario = ScenarioSingleClient::new();
+            let mut app = scenario.app;
+            let layer_entity = scenario.layer;
+
+            let min_y = app
+                .world()
+                .get::<ChunkLayer>(layer_entity)
+                .expect("scenario layer should carry a ChunkLayer")
+                .min_y();
+
+            // chunk 存在但整列都是默认 AIR——扫描窗口内彻底没有固体方块。
+            let chunk = UnloadedChunk::with_height(384);
+            app.world_mut()
+                .get_mut::<ChunkLayer>(layer_entity)
+                .expect("scenario layer should carry a ChunkLayer")
+                .insert_chunk(ChunkPos::new(0, 0), chunk);
+
+            let layer = app
+                .world()
+                .get::<ChunkLayer>(layer_entity)
+                .expect("layer must exist after insert_chunk");
+
+            let found = scan_real_surface_y(layer, 8, 8, min_y + 50 + FALL_RECOVERY_SCAN_UP, min_y);
+            assert_eq!(
+                found, None,
+                "整列都是空气时必须返回 None，交给调用方回退到 raster query_surface 兜底，\
+                 而不是编出一个假的 y"
+            );
+        }
+
+        /// 系统级回归钉子：玩家所在列真的有一块服务端固体方块（比如二楼地板/结构
+        /// 物），和 raster 烘焙的荒野本底完全不是一回事——弹回逻辑如果退化回只信
+        /// raster（旧实现），会把玩家瞬移到与实际站立处毫不相干的高度。
+        #[test]
+        fn recover_fall_through_bounces_to_real_column_surface_not_raster_wilderness() {
+            let scenario = ScenarioSingleClient::new();
+            let mut app = scenario.app;
+            let client = scenario.client;
+            let layer_entity = scenario.layer;
+
+            let min_y = app
+                .world()
+                .get::<ChunkLayer>(layer_entity)
+                .expect("scenario layer should carry a ChunkLayer")
+                .min_y();
+            let stone_y = min_y + 50;
+
+            let mut chunk = UnloadedChunk::with_height(384);
+            chunk.set_block_state(8, (stone_y - min_y) as u32, 8, BlockState::STONE);
+            app.world_mut()
+                .get_mut::<ChunkLayer>(layer_entity)
+                .expect("scenario layer should carry a ChunkLayer")
+                .insert_chunk(ChunkPos::new(0, 0), chunk);
+
+            // 玩家陷进这块石头内部（fract_y=0.3）——触发 ResendAndBounce。
+            app.world_mut().entity_mut(client).insert(Position::new([
+                8.5,
+                f64::from(stone_y) + 0.3,
+                8.5,
+            ]));
+
+            app.insert_resource(TerrainProviders {
+                overworld: TerrainProvider::empty_for_tests(),
+                tsy: None,
+            });
+            app.insert_resource(DimensionLayers {
+                overworld: layer_entity,
+                tsy: layer_entity,
+            });
+            app.add_systems(Update, recover_fall_through);
+
+            app.update();
+
+            let rescued_y = app
+                .world()
+                .get::<Position>(client)
+                .expect("client should still have Position")
+                .get()
+                .y;
+
+            assert_eq!(
+                rescued_y,
+                f64::from(stone_y + 2),
+                "必须弹到真实结构顶面(y={stone_y})+2，而不是 raster 荒野本底——弹回目标必须\
+                 优先认当前 ChunkLayer 里的真实方块，而不是只信烘焙时的荒野高度"
             );
         }
     }
