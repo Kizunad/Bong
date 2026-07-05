@@ -29,7 +29,7 @@ SPAWN_PLAIN_DECORATIONS = (
         kind="tree",
         blocks=("oak_log", "oak_leaves", "moss_block"),
         size_range=(5, 9),
-        rarity=0.45,
+        rarity=0.23,
         notes="苍灵古橡：最常见的庇护木，树根蔓生苔藓。",
     ),
     DecorationSpec(
@@ -37,7 +37,7 @@ SPAWN_PLAIN_DECORATIONS = (
         kind="tree",
         blocks=("birch_log", "birch_leaves"),
         size_range=(6, 10),
-        rarity=0.30,
+        rarity=0.15,
         notes="忆白桦：树皮如残碑纹路，初醒修士的路标。",
     ),
     DecorationSpec(
@@ -54,7 +54,7 @@ SPAWN_PLAIN_DECORATIONS = (
         kind="boulder",
         blocks=("mossy_cobblestone", "cobblestone", "stone"),
         size_range=(2, 4),
-        rarity=0.40,
+        rarity=0.20,
         notes="行者石：长满苔藓的路边巨石，曾被旅人坐过。",
     ),
     # Ground cover specs（kind="flower"，由 ground_cover_id 引用而非 flora_variant_id）
@@ -63,7 +63,7 @@ SPAWN_PLAIN_DECORATIONS = (
         kind="flower",
         blocks=("grass",),
         size_range=(1, 1),
-        rarity=0.20,
+        rarity=0.10,
         notes="草甸短草：末法新手平原零星点缀（rarity 从 0.75 → 0.20，原值"
               "vanilla 草甸般密集，违和）。",
     ),
