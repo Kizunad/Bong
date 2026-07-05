@@ -1861,6 +1861,12 @@ mod tests {
         // §P0 验收抓手 #3（替换旧 1% 归还 pin）：超距回收持有 drained_qi>0 的鼠患（咬玩家
         // 偷来的 qi）必须把 `npc:rat:<id>` 账户 100% 转入 zone 账户（不再是 1%），并同步
         // 写回 `zone.spirit_qi` 字段（§8.1 决议 #3），再 insert(Despawned)。
+        //
+        // ★promote 博弈 blocker v2 修正后的调值说明：drained_qi 从旧版 100.0 降到 10.0——
+        // `QI_ZONE_UNIT_CAPACITY`=50 是 zone 账户绝对上限，旧版 100.0 在 spirit_qi=0.5
+        // （room=25）下必然溢出 75，这正是 blocker 要修的"无条件全额转账不截断"缺陷；调小
+        // 到 room 充足的量级后，本 pin 专测"非满 zone 全额落袋、无 overflow"场景（满 zone/
+        // overflow 场景见 `fauna::rat_phase::tests::rat_death_near_cap_zone_routes_overflow_conserving`）。
         use valence::prelude::ChunkPos;
 
         let mut app = make_app();
@@ -1871,7 +1877,7 @@ mod tests {
             .spawn((ClientMarker, Position::new([10_000.0, 64.0, 10_000.0])));
 
         let mut rat_blackboard = RatBlackboard::new("test_zone", ChunkPos::new(0, 0));
-        rat_blackboard.drained_qi = 100.0;
+        rat_blackboard.drained_qi = 10.0;
         let stray = app
             .world_mut()
             .spawn((
@@ -1887,7 +1893,7 @@ mod tests {
         let rat_account = QiAccountId::npc(format!("rat:{}", stray.index()));
         let mut ledger = WorldQiAccount::default();
         ledger
-            .set_balance(rat_account.clone(), 100.0)
+            .set_balance(rat_account.clone(), 10.0)
             .expect("seeding the rat ledger balance must succeed");
         app.insert_resource(ledger);
 
@@ -1907,12 +1913,20 @@ mod tests {
 
         let zone_account = QiAccountId::zone("test_zone");
         let expected_zone_account_balance =
-            0.5_f64 * crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY + 100.0;
+            0.5_f64 * crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY + 10.0;
         assert!(
             (ledger_after.balance(&zone_account) - expected_zone_account_balance).abs() < 1e-9,
-            "超距回收 drained_qi=100 的鼠患必须 100% 转入 zone 账户，期望 {expected_zone_account_balance}，\
-             实际 {}",
+            "超距回收 drained_qi=10 的鼠患必须 100% 转入 zone 账户（room 充足，无 overflow），\
+             期望 {expected_zone_account_balance}，实际 {}",
             ledger_after.balance(&zone_account)
+        );
+
+        // room 充足场景不应产生 overflow，overflow 账户必须为空。
+        let overflow_account = QiAccountId::overflow(format!("rat_bite_drain:{}", rat_account.id));
+        assert_eq!(
+            ledger_after.balance(&overflow_account),
+            0.0,
+            "room 充足（25 > drained 10.0）时超距回收不应产生 overflow，overflow 账户应保持空账"
         );
 
         let zone_after = app
@@ -1928,8 +1942,7 @@ mod tests {
             (zone_after - expected_spirit_qi).abs() < 1e-9,
             "§8.1 #3 blocker 修正：zone.spirit_qi 字段必须与超距回收账户转账同步写回，\
              期望 zone.spirit_qi={expected_spirit_qi}，实际={zone_after}（回收前 \
-             zone.spirit_qi=0.5）——相等于旧值说明字段被漏写，会被下一次 zone_qi_inflow_tick \
-             覆盖式二次抹掉"
+             zone.spirit_qi=0.5）——相等于旧值说明字段被漏写，会被下一次覆盖式重同步二次抹掉"
         );
     }
 
