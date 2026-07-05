@@ -1287,12 +1287,12 @@ describe("redis-ipc", () => {
       source: "arbiter",
       metadata: { sourceTick: 123, correlationId: "tiandao-tick-123" },
       snapshot: {
-        currentEra: {
+        current_era: {
           name: "末法纪",
-          sinceTick: 120,
-          globalEffect: "灵机渐枯",
+          since_tick: 120,
+          global_effect: "灵机渐枯",
         },
-        zoneHistory: {
+        zone_history: {
           blood_valley: [
             {
               name: "blood_valley",
@@ -1303,27 +1303,27 @@ describe("redis-ipc", () => {
             },
           ],
         },
-        lastDecisions: {
+        last_decisions: {
           mutation: {
             commands: [],
             narrations: [],
             reasoning: "ok",
           },
         },
-        playerFirstSeenTick: {
+        player_first_seen_tick: {
           "offline:Elder": 88,
         },
-        negDomainPendingTribulations: {},
-        negDomainEscapeTelemetry: {
-          escapeEntryCount: 0,
-          postEscapeRealmDropCount: 0,
-          successfulTribulationAvoidanceCount: 0,
-          activeEscapeSessionCount: 0,
-          postEscapeRealmDropRate: 0,
+        neg_domain_pending_tribulations: {},
+        neg_domain_escape_telemetry: {
+          escape_entry_count: 0,
+          post_escape_realm_drop_count: 0,
+          successful_tribulation_avoidance_count: 0,
+          active_escape_session_count: 0,
+          post_escape_realm_drop_rate: 0,
         },
-        negDomainEscapeSessions: {},
-        lastTick: 123,
-        lastStateTs: 1710000100,
+        neg_domain_escape_sessions: {},
+        last_tick: 123,
+        last_state_ts: 1710000100,
       },
     });
 
@@ -1336,13 +1336,95 @@ describe("redis-ipc", () => {
       v: number;
       id: string;
       source: string;
-      snapshot: { lastTick: number | null; lastStateTs: number | null };
+      snapshot: { last_tick: number | null; last_state_ts: number | null };
     };
     expect(envelope.v).toBe(1);
     expect(envelope.source).toBe("arbiter");
     expect(envelope.id).toContain("world_model_t123_arbiter_");
-    expect(envelope.snapshot.lastTick).toBe(123);
-    expect(envelope.snapshot.lastStateTs).toBe(1710000100);
+    expect(envelope.snapshot.last_tick).toBe(123);
+    expect(envelope.snapshot.last_state_ts).toBe(1710000100);
+  });
+
+  // fix/world-model-schema-drift：wire 发布必须是 snake_case（对齐 server serde
+  // deny_unknown_fields），camelCase 键一律不得出现在 published JSON 里——否则就是
+  // 出生 commit 4a81146b6 那个"server 全丢弃 agent 发布"的 bug 复发。
+  it("published world model JSON snapshot has no camelCase keys (wire shape pin)", async () => {
+    const pub = new FakeRedisListClient();
+    const sub = new FakeRedisListClient();
+
+    const createClient = vi
+      .fn<(url: string) => FakeRedisListClient>()
+      .mockReturnValueOnce(sub)
+      .mockReturnValueOnce(pub);
+
+    const ipc = new RedisIpc(
+      { url: "redis://fake" },
+      {
+        createClient,
+      },
+    );
+
+    await ipc.publishAgentWorldModel({
+      source: "arbiter",
+      metadata: { sourceTick: 200, correlationId: "tiandao-tick-200" },
+      snapshot: {
+        current_era: null,
+        zone_history: {},
+        last_decisions: {},
+        player_first_seen_tick: {},
+        neg_domain_pending_tribulations: {
+          "offline:Elder": {
+            player_uuid: "offline:Elder",
+            player_name: "Elder",
+            zone: "rift_valley",
+            entered_at_tick: 100,
+            last_suppressed_tick: 150,
+            reason: "negative_domain_tribulation_exempt",
+          },
+        },
+        neg_domain_escape_telemetry: {
+          escape_entry_count: 1,
+          post_escape_realm_drop_count: 0,
+          successful_tribulation_avoidance_count: 1,
+          active_escape_session_count: 0,
+          post_escape_realm_drop_rate: 0,
+        },
+        neg_domain_escape_sessions: {
+          "offline:Elder": {
+            player_uuid: "offline:Elder",
+            player_name: "Elder",
+            zone: "rift_valley",
+            entered_at_tick: 100,
+            entry_realm_rank: 2,
+          },
+        },
+        last_tick: 200,
+        last_state_ts: 1710000200,
+      },
+    });
+
+    const published = pub.getPublished(AGENT_WORLD_MODEL);
+    const rawJson = published[0]?.message ?? "{}";
+    const camelKeyPattern = /"[a-z]+[A-Z][a-zA-Z]*":/;
+    expect(
+      camelKeyPattern.test(rawJson),
+      `published world model JSON must contain no camelCase keys, got: ${rawJson}`,
+    ).toBe(false);
+
+    const envelope = JSON.parse(rawJson);
+    expect(Object.keys(envelope.snapshot).sort()).toEqual(
+      [
+        "current_era",
+        "zone_history",
+        "last_decisions",
+        "player_first_seen_tick",
+        "neg_domain_pending_tribulations",
+        "neg_domain_escape_telemetry",
+        "neg_domain_escape_sessions",
+        "last_tick",
+        "last_state_ts",
+      ].sort(),
+    );
   });
 
   it("loads world model snapshot from redis mirror hash", async () => {
@@ -1350,11 +1432,14 @@ describe("redis-ipc", () => {
     const sub = new FakeRedisListClient();
     const logger = { warn: vi.fn() };
 
+    // NOTE: server 写 bong:tiandao:state 的 hash value 是 serde snake_case
+    // JSON（对齐 AgentWorldModelSnapshotV1 wire 形状）；loadWorldModelState 要把
+    // 这些 snake value 映射回 agent 内部 camelCase 的 WorldModelSnapshot。
     pub.setHash(WORLD_MODEL_STATE_KEY, {
       [WORLD_MODEL_STATE_FIELDS.currentEra]: JSON.stringify({
         name: "末法纪",
-        sinceTick: 188,
-        globalEffect: "灵机渐枯",
+        since_tick: 188,
+        global_effect: "灵机渐枯",
       }),
       [WORLD_MODEL_STATE_FIELDS.zoneHistory]: JSON.stringify({
         blood_valley: [
@@ -1376,6 +1461,32 @@ describe("redis-ipc", () => {
       }),
       [WORLD_MODEL_STATE_FIELDS.playerFirstSeenTick]: JSON.stringify({
         "offline:test-player": 188,
+      }),
+      [WORLD_MODEL_STATE_FIELDS.negDomainPendingTribulations]: JSON.stringify({
+        "offline:Elder": {
+          player_uuid: "offline:Elder",
+          player_name: "Elder",
+          zone: "rift_valley",
+          entered_at_tick: 100,
+          last_suppressed_tick: 150,
+          reason: "negative_domain_tribulation_exempt",
+        },
+      }),
+      [WORLD_MODEL_STATE_FIELDS.negDomainEscapeTelemetry]: JSON.stringify({
+        escape_entry_count: 2,
+        post_escape_realm_drop_count: 1,
+        successful_tribulation_avoidance_count: 1,
+        active_escape_session_count: 1,
+        post_escape_realm_drop_rate: 0.5,
+      }),
+      [WORLD_MODEL_STATE_FIELDS.negDomainEscapeSessions]: JSON.stringify({
+        "offline:Elder": {
+          player_uuid: "offline:Elder",
+          player_name: "Elder",
+          zone: "rift_valley",
+          entered_at_tick: 100,
+          entry_realm_rank: 2,
+        },
       }),
       [WORLD_MODEL_STATE_FIELDS.lastTick]: "188",
       [WORLD_MODEL_STATE_FIELDS.lastStateTs]: "",
@@ -1422,17 +1533,110 @@ describe("redis-ipc", () => {
       playerFirstSeenTick: {
         "offline:test-player": 188,
       },
-      negDomainPendingTribulations: {},
-      negDomainEscapeTelemetry: {
-        escapeEntryCount: 0,
-        postEscapeRealmDropCount: 0,
-        successfulTribulationAvoidanceCount: 0,
-        activeEscapeSessionCount: 0,
-        postEscapeRealmDropRate: 0,
+      negDomainPendingTribulations: {
+        "offline:Elder": {
+          playerUuid: "offline:Elder",
+          playerName: "Elder",
+          zone: "rift_valley",
+          enteredAtTick: 100,
+          lastSuppressedTick: 150,
+          reason: "negative_domain_tribulation_exempt",
+        },
       },
-      negDomainEscapeSessions: {},
+      negDomainEscapeTelemetry: {
+        escapeEntryCount: 2,
+        postEscapeRealmDropCount: 1,
+        successfulTribulationAvoidanceCount: 1,
+        activeEscapeSessionCount: 1,
+        postEscapeRealmDropRate: 0.5,
+      },
+      negDomainEscapeSessions: {
+        "offline:Elder": {
+          playerUuid: "offline:Elder",
+          playerName: "Elder",
+          zone: "rift_valley",
+          enteredAtTick: 100,
+          entryRealmRank: 2,
+        },
+      },
       lastTick: 188,
       lastStateTs: null,
+    });
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
+  it("round-trips negDomain camelCase fields through publish (snake) -> mirror (snake) -> load (camel)", async () => {
+    const pub = new FakeRedisListClient();
+    const sub = new FakeRedisListClient();
+    const logger = { warn: vi.fn() };
+
+    // publish 侧写入的是 wire snake_case JSON——这里直接把 published envelope 的
+    // snapshot 字段抄进 mirror hash，模拟 server persistence 层原样落地 mirror，
+    // 验证 load 侧能把它精确映射回内部 camelCase 形状（防止往返丢字段/大小写漂移）。
+    pub.setHash(WORLD_MODEL_STATE_KEY, {
+      [WORLD_MODEL_STATE_FIELDS.currentEra]: JSON.stringify(null),
+      [WORLD_MODEL_STATE_FIELDS.zoneHistory]: JSON.stringify({}),
+      [WORLD_MODEL_STATE_FIELDS.lastDecisions]: JSON.stringify({}),
+      [WORLD_MODEL_STATE_FIELDS.playerFirstSeenTick]: JSON.stringify({}),
+      [WORLD_MODEL_STATE_FIELDS.negDomainPendingTribulations]: JSON.stringify({
+        "offline:Wanderer": {
+          player_uuid: "offline:Wanderer",
+          player_name: "Wanderer",
+          zone: "north_wastes",
+          entered_at_tick: 300,
+          last_suppressed_tick: 320,
+          reason: "negative_domain_tribulation_exempt",
+        },
+      }),
+      [WORLD_MODEL_STATE_FIELDS.negDomainEscapeTelemetry]: JSON.stringify({
+        escape_entry_count: 5,
+        post_escape_realm_drop_count: 2,
+        successful_tribulation_avoidance_count: 3,
+        active_escape_session_count: 1,
+        post_escape_realm_drop_rate: 0.4,
+      }),
+      [WORLD_MODEL_STATE_FIELDS.negDomainEscapeSessions]: JSON.stringify({
+        "offline:Wanderer": {
+          player_uuid: "offline:Wanderer",
+          player_name: "Wanderer",
+          zone: "north_wastes",
+          entered_at_tick: 300,
+          entry_realm_rank: 1.5,
+        },
+      }),
+      [WORLD_MODEL_STATE_FIELDS.lastTick]: "300",
+      [WORLD_MODEL_STATE_FIELDS.lastStateTs]: "1711111300",
+    });
+
+    const createClient = vi
+      .fn<(url: string) => FakeRedisListClient>()
+      .mockReturnValueOnce(sub)
+      .mockReturnValueOnce(pub);
+
+    const ipc = new RedisIpc({ url: "redis://fake" }, { createClient });
+    const snapshot = await ipc.loadWorldModelState({ logger });
+
+    expect(snapshot?.negDomainPendingTribulations["offline:Wanderer"]).toEqual({
+      playerUuid: "offline:Wanderer",
+      playerName: "Wanderer",
+      zone: "north_wastes",
+      enteredAtTick: 300,
+      lastSuppressedTick: 320,
+      reason: "negative_domain_tribulation_exempt",
+    });
+    expect(snapshot?.negDomainEscapeTelemetry).toEqual({
+      escapeEntryCount: 5,
+      postEscapeRealmDropCount: 2,
+      successfulTribulationAvoidanceCount: 3,
+      activeEscapeSessionCount: 1,
+      postEscapeRealmDropRate: 0.4,
+    });
+    expect(snapshot?.negDomainEscapeSessions["offline:Wanderer"]).toEqual({
+      playerUuid: "offline:Wanderer",
+      playerName: "Wanderer",
+      zone: "north_wastes",
+      enteredAtTick: 300,
+      entryRealmRank: 1.5,
     });
     expect(logger.warn).not.toHaveBeenCalled();
   });

@@ -6,6 +6,7 @@ use big_brain::prelude::{FirstToScore, Thinker, ThinkerBuilder};
 use valence::entity::marker::MarkerEntityBundle;
 use valence::prelude::{bevy_ecs, Commands, Component, DVec3, Entity, EntityLayerId, Position};
 
+use crate::cultivation::components::Realm;
 use crate::fauna::components::{BeastKind, FaunaTag};
 use crate::fauna::visual::{entity_kind_for_beast, visual_kind_for_beast};
 use crate::npc::brain::{
@@ -92,7 +93,7 @@ pub fn spawn_pillar_npc_at(
         commands.entity(entity).insert(visual);
     }
 
-    let mut runtime = npc_runtime_bundle(entity, NpcArchetype::Beast);
+    let mut runtime = npc_runtime_bundle(entity, NpcArchetype::Beast, Realm::Awaken);
     let hp = BeastKind::LivingPillar.health_max();
     runtime.wounds.health_current = hp;
     runtime.wounds.health_max = hp;

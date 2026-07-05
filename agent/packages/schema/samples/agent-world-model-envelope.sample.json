@@ -1,0 +1,77 @@
+{
+  "v": 1,
+  "id": "world_model_t84000_arbiter_1712345678000",
+  "source": "arbiter",
+  "snapshot": {
+    "current_era": {
+      "name": "calamity",
+      "since_tick": 80000,
+      "global_effect": "era_type:calamity|intensity:0.65"
+    },
+    "zone_history": {
+      "blood_valley": [
+        {
+          "name": "blood_valley",
+          "spirit_qi": 0.4,
+          "danger_level": 3,
+          "active_events": ["tribulation"],
+          "player_count": 2
+        }
+      ]
+    },
+    "last_decisions": {
+      "mutation": {
+        "commands": [
+          {
+            "type": "modify_zone",
+            "target": "blood_valley",
+            "params": {
+              "spirit_qi_delta": -0.05,
+              "danger_level_delta": 1
+            }
+          }
+        ],
+        "narrations": [
+          {
+            "scope": "zone",
+            "target": "blood_valley",
+            "text": "血谷灵机骤减，杀机渐涌。",
+            "style": "narration"
+          }
+        ],
+        "reasoning": "血谷灵气持续走低，配合天劫征兆调高危险等级。"
+      }
+    },
+    "player_first_seen_tick": {
+      "offline:Elder": 82000
+    },
+    "neg_domain_pending_tribulations": {
+      "offline:Elder": {
+        "player_uuid": "offline:Elder",
+        "player_name": "Elder",
+        "zone": "rift_valley",
+        "entered_at_tick": 83000,
+        "last_suppressed_tick": 83800,
+        "reason": "negative_domain_tribulation_exempt"
+      }
+    },
+    "neg_domain_escape_telemetry": {
+      "escape_entry_count": 4,
+      "post_escape_realm_drop_count": 1,
+      "successful_tribulation_avoidance_count": 3,
+      "active_escape_session_count": 1,
+      "post_escape_realm_drop_rate": 0.25
+    },
+    "neg_domain_escape_sessions": {
+      "offline:Elder": {
+        "player_uuid": "offline:Elder",
+        "player_name": "Elder",
+        "zone": "rift_valley",
+        "entered_at_tick": 83000,
+        "entry_realm_rank": 4.0
+      }
+    },
+    "last_tick": 84000,
+    "last_state_ts": 1712345678
+  }
+}

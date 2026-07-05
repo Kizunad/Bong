@@ -18,6 +18,7 @@ use crate::combat::components::{DerivedAttrs, Lifecycle, LifecycleState, WoundKi
 use crate::combat::events::{
     ApplyStatusEffectIntent, AttackIntent, AttackReach, AttackSource, StatusEffectKind,
 };
+use crate::cultivation::components::Realm;
 use crate::fauna::components::{BeastKind, FaunaTag};
 use crate::fauna::visual::{FaunaVisualKind, HEIWUSHI_ENTITY_KIND};
 use crate::npc::lifecycle::{npc_runtime_bundle, NpcArchetype};
@@ -403,7 +404,7 @@ pub fn spawn_heiwushi_at(
         ))
         .id();
 
-    let mut runtime = npc_runtime_bundle(entity, NpcArchetype::Beast);
+    let mut runtime = npc_runtime_bundle(entity, NpcArchetype::Beast, Realm::Awaken);
     runtime.wounds.health_current = HEIWUSHI_HEALTH_MAX;
     runtime.wounds.health_max = HEIWUSHI_HEALTH_MAX;
     // 黑武士近战走物理命中路径（qi_invest=0），伤害靠 DerivedAttrs.attack_power 传递；

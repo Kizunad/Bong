@@ -20,7 +20,7 @@ use super::calamity::{
 use super::zone::ZoneRegistry;
 use crate::combat::events::DeathEvent;
 use crate::combat::rat_bite::RatBiteEvent;
-use crate::cultivation::components::Cultivation;
+use crate::cultivation::components::{Cultivation, Realm};
 use crate::fauna::components::{fauna_spawn_seed, fauna_tag_for_beast_spawn, BeastKind, FaunaTag};
 use crate::fauna::rat_phase::{chunk_pos_from_world, LocustSwarmCooldownStore, RatPhase};
 use crate::inventory::DroppedLootRegistry;
@@ -2605,9 +2605,11 @@ fn spawn_beast_tide_zombie(
         ))
         .id();
 
-    commands
-        .entity(entity)
-        .insert(npc_runtime_bundle(entity, NpcArchetype::Beast));
+    commands.entity(entity).insert(npc_runtime_bundle(
+        entity,
+        NpcArchetype::Beast,
+        Realm::Awaken,
+    ));
 
     entity
 }
@@ -2786,9 +2788,11 @@ fn spawn_targeted_daoxiang(
         ))
         .id();
 
-    commands
-        .entity(entity)
-        .insert(npc_runtime_bundle(entity, NpcArchetype::Daoxiang));
+    commands.entity(entity).insert(npc_runtime_bundle(
+        entity,
+        NpcArchetype::Daoxiang,
+        Realm::Awaken,
+    ));
 
     entity
 }

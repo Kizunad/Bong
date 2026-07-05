@@ -20,6 +20,7 @@ use valence::prelude::{
     bevy_ecs, Commands, Component, DVec3, Entity, EntityKind, EntityLayerId, Look, Position,
 };
 
+use crate::cultivation::components::Realm;
 use crate::fauna::components::{BeastKind, FaunaTag};
 use crate::npc::brain_whale::{WhaleDriftAction, WhaleDriftScorer};
 use crate::npc::lifecycle::{npc_runtime_bundle, NpcArchetype};
@@ -208,7 +209,7 @@ pub fn spawn_whale_npc_at(
         ))
         .id();
 
-    let mut runtime = npc_runtime_bundle(entity, NpcArchetype::Beast);
+    let mut runtime = npc_runtime_bundle(entity, NpcArchetype::Beast, Realm::Awaken);
     // 神兽级数值覆写：放在 npc_runtime_bundle 之后、insert 之前修改，避免 ECS 后处理覆写。
     runtime.wounds.health_current = WHALE_HP_MAX;
     runtime.wounds.health_max = WHALE_HP_MAX;
@@ -350,7 +351,7 @@ mod tests {
         use bevy_ecs::entity::Entity;
         // 拿一个 placeholder entity id；npc_runtime_bundle 只读 entity_bits，不索引 ECS
         let ph = Entity::from_raw(99);
-        let bundle = npc_runtime_bundle(ph, NpcArchetype::Beast);
+        let bundle = npc_runtime_bundle(ph, NpcArchetype::Beast, Realm::Awaken);
         assert_eq!(
             bundle.wounds.health_max, 100.0,
             "默认 Beast HP 必须 100（whale override 是局部的）"

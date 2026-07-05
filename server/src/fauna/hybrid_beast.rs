@@ -45,7 +45,7 @@ use valence::prelude::{
 };
 
 use crate::combat::components::Wounds;
-use crate::cultivation::components::Cultivation;
+use crate::cultivation::components::{Cultivation, Realm};
 use crate::cultivation::tick::CultivationClock;
 use crate::fauna::components::{BeastKind, FaunaTag};
 use crate::fauna::rat_phase::{PressureSensor, RatPhase, RatPhaseChangeEvent};
@@ -412,7 +412,7 @@ pub fn hybrid_beast_formation_system(
                 can_dash: false,
             },
         );
-        let mut runtime = npc_runtime_bundle(hybrid_entity, NpcArchetype::Beast);
+        let mut runtime = npc_runtime_bundle(hybrid_entity, NpcArchetype::Beast, Realm::Awaken);
         let hp = BeastKind::HybridBeast.health_max();
         runtime.wounds.health_current = hp;
         runtime.wounds.health_max = hp;

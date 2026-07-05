@@ -19,6 +19,7 @@ pub mod relic_hydrate;
 pub mod census;
 
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use valence::prelude::{
@@ -26,27 +27,28 @@ use valence::prelude::{
 };
 
 use crate::cultivation::breakthrough::{
-    breakthrough_qi_cost, next_realm, try_breakthrough, BreakthroughError, BreakthroughSuccess,
-    RollSource, XorshiftRoll, MIN_ZONE_QI_TO_BREAKTHROUGH, MIN_ZONE_QI_TO_GUYUAN,
+    breakthrough_qi_cost, next_realm, qi_max_for_realm, try_breakthrough, BreakthroughError,
+    BreakthroughSuccess, RollSource, XorshiftRoll, MIN_ZONE_QI_TO_BREAKTHROUGH,
+    MIN_ZONE_QI_TO_GUYUAN,
 };
-use crate::cultivation::components::{
-    Contamination, Cultivation, MeridianId, MeridianSystem, Realm,
-};
+use crate::cultivation::components::{Contamination, Cultivation, MeridianSystem, Realm};
 use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
 use crate::cultivation::lifespan::{
     DeathRegistry, LifespanCapTable, LifespanComponent, LifespanExtensionLedger,
 };
 use crate::cultivation::meridian::severed::MeridianSeveredPermanent;
 use crate::npc::faction::{
-    EmergentGroupId, FactionId, FactionMembership, FactionRank, FactionStore, MissionQueue,
-    Reputation, EMERGENT_GROUP_COUNT,
+    leader_realm_for, named_faction_id_for_legacy, EmergentGroupId, FactionId, FactionMembership,
+    FactionRank, FactionStore, MissionQueue, Reputation, EMERGENT_GROUP_COUNT,
 };
 use crate::npc::lifecycle::{NpcArchetype, NpcDeathNotice, NpcDeathReason, NpcLifespan};
 use crate::npc::loot::default_loot_for_archetype;
 use crate::npc::loot::NpcLootTable;
 use crate::npc::movement::GameTick;
+use crate::npc::realm_perception_narration::push_realm_perception_narration;
 use crate::npc::schedule::schedule_seed_from_char_id;
 use crate::npc::spawn::{classify_zones_by_qi, initial_age_for_index};
+use crate::player::gameplay::PendingGameplayNarrations;
 use crate::qi_physics::{
     constants::{QI_EPSILON, QI_NPC_ABSORB_FLOOR, QI_ZONE_UNIT_CAPACITY},
     qi_release_to_zone, regen_from_zone, QiAccountId, QiTransfer, QiTransferReason, WorldQiAccount,
@@ -563,6 +565,10 @@ pub fn register(app: &mut App) {
         .add_systems(
             Update,
             (
+                // plan-npc-realm-distribution-v1 P3 §8.1 #3：存量迁移必须先于新种群 seed
+                // 判定跑一次——两者互斥（迁移只动非空 store，seed 只在空 store 触发），
+                // 排序本身不影响正确性，但让迁移先落地更符合"先修旧账再论新账"的直觉。
+                migrate_dormant_realm_distribution_v1,
                 seed_initial_dormant_population_on_startup,
                 dormant_global_tick_system,
             ),
@@ -1108,6 +1114,190 @@ fn finalize_released_combat_death(
     store.snapshots.remove(loser_id);
 }
 
+/// plan-npc-realm-distribution-v1 P3 §8.1 #3：一次性迁移 marker 文件路径。
+///
+/// `data/npc/realm_migration_v1.marker`（相对 server 进程 cwd，与 `persistence::DEFAULT_DATABASE_PATH`
+/// = `data/bong.db` 同一约定）。运行时生成、不是提交产物——见 `.gitignore` 的 `server/data/` 规则。
+/// 测试用 [`NPC_REALM_MIGRATION_MARKER_ENV_VAR`] 覆盖到临时目录，绝不能让 `cargo test`
+/// 在真实 checkout 里写这个文件。
+pub(crate) const NPC_REALM_MIGRATION_MARKER_DEFAULT_PATH: &str =
+    "data/npc/realm_migration_v1.marker";
+
+/// 覆盖 marker 路径的 env var（仅测试隔离用，生产恒走默认路径）。
+const NPC_REALM_MIGRATION_MARKER_ENV_VAR: &str = "BONG_NPC_REALM_MIGRATION_MARKER_PATH";
+
+fn npc_realm_migration_marker_path() -> PathBuf {
+    std::env::var_os(NPC_REALM_MIGRATION_MARKER_ENV_VAR)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(NPC_REALM_MIGRATION_MARKER_DEFAULT_PATH))
+}
+
+/// 写迁移完成 marker。**失败不允许静默吞错**——`tracing::error!` 落痕迹，调用方仍会把
+/// `Local<bool>` 标记本次进程运行已处理（避免同一 server 会话内每 tick 反复重 roll），
+/// 但下次重启因 marker 文件仍缺失会再次尝试迁移——这是刻意的 best-effort 降级，而不是
+/// "写失败就假装成功、从此再也不重试"的静默吞错。
+fn write_realm_migration_marker(marker_path: &Path) -> bool {
+    if let Some(parent) = marker_path.parent() {
+        if !parent.as_os_str().is_empty() {
+            if let Err(error) = std::fs::create_dir_all(parent) {
+                tracing::error!(
+                    "[bong][npc] failed to create dormant realm migration marker directory {}: {error}",
+                    parent.display()
+                );
+                return false;
+            }
+        }
+    }
+    if let Err(error) = std::fs::write(marker_path, b"v1\n") {
+        tracing::error!(
+            "[bong][npc] failed to write dormant realm migration marker {}: {error}",
+            marker_path.display()
+        );
+        return false;
+    }
+    true
+}
+
+/// plan-npc-realm-distribution-v1 P3 §8.1 #3：既有（存量）dormant 快照的迁移目标 realm。
+///
+/// 身份 archetype 直写身份值，不抽样（与 P0 `npc_runtime_bundle`/`npc_runtime_bundle_with_age`
+/// 调用站点的身份判定同源）：
+/// - `GuardianRelic` → `Spirit`（`disciple.rs:233` 与 `tsy_hostile.rs:1086` 均如此）
+/// - `Zhinian` → `Condense`（`tsy_hostile.rs:922`）
+/// - `Daoxiang` → `Induce`（TSY 默认值，`tsy_hostile.rs:778`；单个尸体激活道伥的真实
+///   `origin_realm` 未持久化进 `NpcDormantSnapshot`——只有 `cultivation.realm` 本身携带这份信息，
+///   而这正是被迁移覆盖的字段，故无法精确复原，退化取 TSY 默认值近似，好过维持 bug 时代的醒灵）
+/// - `DyingElder` → `Void`（`fauna/dying_elder.rs:391-394` 字面量；实践中 dormant store 不会持有
+///   `DyingElder` 快照——`hydrate/mod.rs` 该分支退化为 zombie 占位——此处仅防御性覆盖，不会被命中）
+///
+/// 恒定字面量 archetype（`Beast`/`Zombie`/`Fuya`/`SkullFiend`，P0 穷举表归类"无身份信号"）
+/// 保持 `Realm::Awaken`——它们设计上就该恒是这个值，**不**参与 §8.1 #1 分布抽样（那张表只服务
+/// "自然散修种群"，不是要把环境威胁怪也拉进境界长尾）。
+///
+/// 其余（`Rogue`/`Disciple`/`Commoner` 且非 faction Leader）视为无身份信号的自然种群，走
+/// §8.1 #1 分布表重抽样——与 `dormant_rogue_seed_snapshot` 用同一个 [`sample_rogue_seed_realm`]
+/// 函数、同 `char_id`、同 `is_resource_zone` 判定规则，不新造第二套抽样逻辑。
+fn dormant_snapshot_migrated_realm(snapshot: &NpcDormantSnapshot, is_resource_zone: bool) -> Realm {
+    match snapshot.archetype {
+        NpcArchetype::GuardianRelic => Realm::Spirit,
+        NpcArchetype::Zhinian => Realm::Condense,
+        NpcArchetype::Daoxiang => Realm::Induce,
+        NpcArchetype::DyingElder => Realm::Void,
+        NpcArchetype::Beast
+        | NpcArchetype::Zombie
+        | NpcArchetype::Fuya
+        | NpcArchetype::SkullFiend => Realm::Awaken,
+        NpcArchetype::Rogue | NpcArchetype::Disciple | NpcArchetype::Commoner => snapshot
+            .faction
+            .as_ref()
+            .filter(|membership| membership.rank == FactionRank::Leader)
+            .map(|membership| leader_realm_for(named_faction_id_for_legacy(membership.faction_id)))
+            .unwrap_or_else(|| {
+                sample_rogue_seed_realm(snapshot.char_id.as_str(), is_resource_zone)
+            }),
+    }
+}
+
+/// plan-npc-realm-distribution-v1 P3 §8.1 #3：一次性确定性重 roll 存量 dormant 快照的 realm。
+///
+/// marker 文件（[`npc_realm_migration_marker_path`]）存在 → 幂等跳过；不存在 → 对
+/// `store.snapshots` 里每一条既有快照按 [`dormant_snapshot_migrated_realm`] 重算 realm
+/// （身份站点直写、无身份站点走 §8.1 #1 分布表重抽样），完成后写 marker。
+///
+/// 挂 `Update`（不是 `Startup`）：需要等 `load_dormant_store_from_redis_system`（`Startup`）
+/// 先把存量 Redis 数据灌进 store，且需要 `ZoneRegistry` 就绪才能判定 zone 灵气档——两者都
+/// 可能晚于 `Startup` 完成，故沿用 `seed_initial_dormant_population_on_startup` 的
+/// `Local<bool>` 自旋等待模式而非假设 `Startup` 内部两个系统间的隐式排序。
+fn migrate_dormant_realm_distribution_v1(
+    mut store: ResMut<NpcDormantStore>,
+    zone_registry: Option<Res<ZoneRegistry>>,
+    seed_config: Res<DormantRoguePopulationSeedConfig>,
+    mut narrations: Option<ResMut<PendingGameplayNarrations>>,
+    mut migrated: valence::prelude::Local<bool>,
+) {
+    if *migrated {
+        return;
+    }
+    let marker_path = npc_realm_migration_marker_path();
+    if marker_path.exists() {
+        *migrated = true;
+        return;
+    }
+    if store.restore_failed() {
+        // Redis 恢复失败：这个进程生命周期内没有可信存量数据可迁移。**不写 marker**——
+        // 让下次 Redis 恢复正常的重启重新尝试，而不是把这次的失败误判成"没有存量"从而
+        // 永久跳过真正需要的迁移。只在本次运行内不再重复判定。
+        *migrated = true;
+        return;
+    }
+    if store.is_empty() {
+        // 新世界没有存量可迁移；直接写 marker，避免每次 Startup 都重新判定一遍空 store。
+        write_realm_migration_marker(&marker_path);
+        *migrated = true;
+        return;
+    }
+    let Some(zone_registry) = zone_registry.as_deref() else {
+        // ZoneRegistry 还没就绪；不设 *migrated，下个 tick 再试。
+        return;
+    };
+
+    let threshold = seed_config.resource_spirit_qi_threshold;
+    let mut changed = false;
+    // zone -> 该 zone 内本轮迁移新产生的最高境界（用于 narration 高亮，避免同一 zone
+    // 因多个快照命中同一档而重复推送同一条文案刷屏）。
+    let mut zone_highlights: HashMap<String, Realm> = HashMap::new();
+    for snapshot in store.snapshots.values_mut() {
+        let is_resource = zone_registry
+            .find_zone_by_name(snapshot.zone_name.as_str())
+            .map(|zone| zone.spirit_qi >= threshold)
+            .unwrap_or(false);
+        let new_realm = dormant_snapshot_migrated_realm(snapshot, is_resource);
+        if snapshot.cultivation.realm != new_realm {
+            snapshot.cultivation.realm = new_realm;
+            snapshot.cultivation.qi_max = qi_max_for_realm(new_realm);
+            snapshot.shared_lifespan = LifespanComponent::for_realm(new_realm);
+            // Verify blocker fix: re-rolling realm without re-deriving meridian_system
+            // leaves the migrated snapshot's opened-meridian count pinned to whatever
+            // it was seeded with (often the P0-era 1-meridian default), disagreeing
+            // with new_realm.required_meridians() — same double-source bug as the
+            // seeder, just on the migration path.
+            snapshot.meridian_system =
+                crate::npc::technique::npc_meridian_system_for_realm(new_realm);
+            // minor fix：重新派生的 meridian_system 会把所有经脉按 new_realm 全量
+            // 重开（opened=true），却没核对 meridian_severed（永久断脉登记）——一条
+            // 已被记录 SEVERED 的经脉会在迁移后被"复活"，与 MeridianSeveredPermanent
+            // 记录矛盾。永久断脉是跨周目才重置的长期状态，realm 迁移不应抹掉它。
+            for severed_id in &snapshot.meridian_severed.severed_meridians {
+                snapshot.meridian_system.get_mut(*severed_id).opened = false;
+            }
+            changed = true;
+            if matches!(new_realm, Realm::Condense | Realm::Solidify) {
+                let entry = zone_highlights
+                    .entry(snapshot.zone_name.clone())
+                    .or_insert(new_realm);
+                if matches!(new_realm, Realm::Solidify) {
+                    *entry = new_realm;
+                }
+            }
+        }
+    }
+    if changed {
+        store.mark_dirty();
+    }
+    if let Some(narrations) = narrations.as_deref_mut() {
+        for (zone, realm) in &zone_highlights {
+            push_realm_perception_narration(narrations, zone.as_str(), *realm);
+        }
+    }
+    write_realm_migration_marker(&marker_path);
+    *migrated = true;
+    tracing::info!(
+        "[bong][npc] realm_migration_v1: {} dormant snapshot(s) realm-migrated (marker={})",
+        store.len(),
+        marker_path.display()
+    );
+}
+
 fn seed_initial_dormant_population_on_startup(
     game_tick: Option<Res<GameTick>>,
     config: Res<NpcVirtualizationConfig>,
@@ -1155,13 +1345,20 @@ fn seed_initial_dormant_population_on_startup(
     // instead of piling onto shared patrol anchors (the old ±2 block jitter).
     let mut zone_local_counts: HashMap<String, u32> = HashMap::new();
     for index in 0..target_count {
-        let zone_candidates = if index < resource_target && !resource_zones.is_empty() {
-            &resource_zones
-        } else if !background_zones.is_empty() {
-            &background_zones
-        } else {
-            &resource_zones
-        };
+        // plan-npc-realm-distribution-v1 P1: track which list this NPC's zone came
+        // from — `is_resource` drives which §8.1 #1 realm distribution table
+        // `dormant_rogue_seed_snapshot` samples from. Must match the same
+        // resource/background split `classify_zones_by_qi` produced above (this
+        // *is* that split, not a re-derivation), otherwise realm weighting would
+        // silently diverge from the zone bucket the NPC is actually seeded into.
+        let (zone_candidates, is_resource) =
+            if index < resource_target && !resource_zones.is_empty() {
+                (&resource_zones, true)
+            } else if !background_zones.is_empty() {
+                (&background_zones, false)
+            } else {
+                (&resource_zones, true)
+            };
         if zone_candidates.is_empty() {
             break;
         }
@@ -1179,6 +1376,7 @@ fn seed_initial_dormant_population_on_startup(
             zone_local_index,
             tick,
             seed_config.max_initial_age_ratio,
+            is_resource,
         );
         store.snapshots.insert(snapshot.char_id.clone(), snapshot);
     }
@@ -1277,14 +1475,32 @@ fn dormant_rogue_seed_snapshot(
     zone_local_index: u32,
     tick: u64,
     max_initial_age_ratio: f64,
+    is_resource_zone: bool,
 ) -> NpcDormantSnapshot {
     let archetype = NpcArchetype::Rogue;
     let position = dormant_seed_scatter_position(zone, zone_local_index);
     let patrol_target = zone.center();
     let char_id = format!("dormant:rogue:{index}");
-    let cultivation = Cultivation::default();
-    let mut meridian_system = MeridianSystem::default();
-    meridian_system.get_mut(MeridianId::Lung).opened = true;
+    // plan-npc-realm-distribution-v1 P1 §8.1 #1: sample realm from the zone-weighted
+    // distribution table instead of the P0-era `Cultivation::default()` (which always
+    // seeded 醒灵). `qi_current` stays 0.0 — `qi_max_for_realm` only sets the capacity
+    // ceiling; real qi accrues later via `apply_dormant_regen_with_multiplier` pulling
+    // from zone.spirit_qi, so spawning full would fabricate qi and break conservation.
+    let realm = sample_rogue_seed_realm(char_id.as_str(), is_resource_zone);
+    let cultivation = Cultivation {
+        realm,
+        qi_current: 0.0,
+        qi_max: qi_max_for_realm(realm),
+        ..Cultivation::default()
+    };
+    // plan-npc-realm-distribution-v1 Verify blocker fix: dormant seeder must derive
+    // meridian_system from the *sampled* realm via the same
+    // `npc_meridian_system_for_realm` all live spawn paths use (rogue.rs/disciple.rs/
+    // lifecycle.rs/tsy_hostile.rs), otherwise a Condense/Solidify/Spirit dormant rogue
+    // ends up with realm.required_meridians()==6/12/16 but a frozen single-meridian
+    // (Lung-only) MeridianSystem — a realm↔经脉 double-source split visible on ~1000
+    // seeded dormant snapshots.
+    let meridian_system = crate::npc::technique::npc_meridian_system_for_realm(realm);
     let lifespan = NpcLifespan::new(
         initial_age_for_index(
             index,
@@ -1397,13 +1613,72 @@ fn deterministic_unit(char_id: &str, salt: u64) -> f64 {
     (hash & 0xffff) as f64 / 65_535.0
 }
 
-fn deterministic_hash(char_id: &str, salt: u64) -> u64 {
+/// plan-npc-realm-distribution-v1 P1 前置：跨模块共享哈希。`npc::spawn::rogue` 的活体种群
+/// 入口（`seed_initial_rogue_population_on_startup`）需要与 dormant 快照 seeder 用同一份
+/// 确定性哈希做境界抽样，保证两条种群生产线同源同规则（不新造第二套抽样逻辑，见接入面红线）。
+pub(crate) fn deterministic_hash(char_id: &str, salt: u64) -> u64 {
     let mut hash = salt ^ 0x9E37_79B9_7F4A_7C15;
     for byte in char_id.as_bytes() {
         hash ^= u64::from(*byte);
         hash = hash.wrapping_mul(0xbf58_476d_1ce4_e5b9);
     }
     hash
+}
+
+/// `deterministic_hash` 的固定 salt，专属境界抽样（plan-npc-realm-distribution-v1 P1 §8.1
+/// #1）。与 `seed_rogue_faction`（salt=0）/ `seed_emergent_group`（salt=`GROUP_SALT`）错开，
+/// 避免境界与派系/涌现群体在同一哈希值下强相关（比如同一 salt 下醒灵总是分到 Attack）。
+const REALM_SEED_SALT: u64 = 0x5245_414C_4D5F_5254; // "REALM_RT" 字面，具名常量避免裸 magic
+
+/// plan-npc-realm-distribution-v1 §8.1 #1 决议分布表 —— background zone（`spirit_qi` 低于
+/// `resource_spirit_qi_threshold` 的区域）。权重单位为千分比（避免浮点比例误差），六境界严格
+/// 按 worldview §三:195 顺序排列（醒灵→化虚），总和恒 1000。化虚恒 0（正典稀有，不自然刷，
+/// 仅垂死大能一类特殊实体走非分布表路径）。
+const REALM_DISTRIBUTION_BACKGROUND: [(Realm, u32); 6] = [
+    (Realm::Awaken, 570),
+    (Realm::Induce, 300),
+    (Realm::Condense, 120),
+    (Realm::Solidify, 10),
+    (Realm::Spirit, 0),
+    (Realm::Void, 0),
+];
+
+/// 同上，resource zone（`spirit_qi` ≥ 阈值的灵气富集区）分布表，高境界占比更高但仍长尾。
+const REALM_DISTRIBUTION_RESOURCE: [(Realm, u32); 6] = [
+    (Realm::Awaken, 425),
+    (Realm::Induce, 350),
+    (Realm::Condense, 200),
+    (Realm::Solidify, 20),
+    (Realm::Spirit, 5),
+    (Realm::Void, 0),
+];
+
+/// plan-npc-realm-distribution-v1 P1：按 zone 灵气档从 §8.1 #1 分布表确定性抽样境界。
+///
+/// 用与 `seed_rogue_faction`/`seed_emergent_group` 同源的 [`deterministic_hash`]（固定
+/// salt=[`REALM_SEED_SALT`]），保证同 `char_id` 跨重启抽到同一境界。`is_resource_zone` 选表，
+/// 不接受调用方传入非法/超界权重表以外的境界——六境界穷举分支覆盖整个 0..1000 区间，
+/// 循环兜底 `Realm::Awaken` 仅用于防浮点/整数舍入漂移导致权重和略小于 1000 时的越界，
+/// 正常路径权重和恒为 1000 不会触发。
+///
+/// 身份 realm（派系首领 / TSY / GuardianRelic 等）优先级高于本函数——这些站点不调用本函数，
+/// 直接写入身份值，见 `lifecycle.rs` 的 `npc_runtime_bundle`/`npc_runtime_bundle_with_age`
+/// 调用站点。本函数只服务无身份的自然散修种群 seeder。
+pub(crate) fn sample_rogue_seed_realm(char_id: &str, is_resource_zone: bool) -> Realm {
+    let table = if is_resource_zone {
+        &REALM_DISTRIBUTION_RESOURCE
+    } else {
+        &REALM_DISTRIBUTION_BACKGROUND
+    };
+    let roll = (deterministic_hash(char_id, REALM_SEED_SALT) % 1000) as u32;
+    let mut cumulative: u32 = 0;
+    for (realm, weight) in table.iter() {
+        cumulative += weight;
+        if roll < cumulative {
+            return *realm;
+        }
+    }
+    Realm::Awaken
 }
 
 /// plan-offscreen-war-v1 P9：战事 zone regen 倍率（由调用方从 ZoneSpiritBonusStore 查询）。
@@ -2838,7 +3113,7 @@ mod tests {
         // 防回归：seed 出来的 dormant rogue 的 faction 字段必须非 None
         // （否则 e2e HGETALL 看到 faction=null，所有后续阶段空转）。
         let zone = zone();
-        let snapshot = dormant_rogue_seed_snapshot(&zone, 0, 0, 0, 0.8);
+        let snapshot = dormant_rogue_seed_snapshot(&zone, 0, 0, 0, 0.8, true);
         let membership = snapshot
             .faction
             .as_ref()
@@ -2890,7 +3165,7 @@ mod tests {
         // 防回归：seed 出来的 dormant rogue 必须带显式 emergent_group（非 None），
         // 否则离屏战斗回退 faction 派生、退化成 2 群体上限。
         let zone = zone();
-        let snapshot = dormant_rogue_seed_snapshot(&zone, 0, 0, 0, 0.8);
+        let snapshot = dormant_rogue_seed_snapshot(&zone, 0, 0, 0, 0.8, true);
         let group = snapshot
             .emergent_group
             .expect("seeded dormant rogue 必须带显式 emergent_group，不能是 None");
@@ -2898,6 +3173,297 @@ mod tests {
             group.0 < EMERGENT_GROUP_COUNT,
             "seed emergent group id {} must be < EMERGENT_GROUP_COUNT {EMERGENT_GROUP_COUNT}",
             group.0
+        );
+    }
+
+    // ── plan-npc-realm-distribution-v1 P1：种群 seeder 境界分布（饱和单测） ────────
+
+    fn realm_weight(table: &[(Realm, u32); 6], realm: Realm) -> u32 {
+        table
+            .iter()
+            .find(|(r, _)| *r == realm)
+            .map(|(_, w)| *w)
+            .unwrap_or(0)
+    }
+
+    #[test]
+    fn realm_distribution_tables_sum_to_exactly_1000_per_mille() {
+        // 防漂移：任何一次手改分布表数值（微调长尾）如果算错导致总和不再是 1000‰，
+        // `sample_rogue_seed_realm` 的累积权重循环会在权重和 < 1000 时对部分 roll
+        // 值静默兜底成 Realm::Awaken（人为压低非醒灵占比），必须显式撞红而非静默偏移。
+        let background_sum: u32 = REALM_DISTRIBUTION_BACKGROUND.iter().map(|(_, w)| w).sum();
+        let resource_sum: u32 = REALM_DISTRIBUTION_RESOURCE.iter().map(|(_, w)| w).sum();
+        assert_eq!(
+            background_sum, 1000,
+            "background 分布表权重和必须恰为 1000‰，实际 {background_sum}"
+        );
+        assert_eq!(
+            resource_sum, 1000,
+            "resource 分布表权重和必须恰为 1000‰，实际 {resource_sum}"
+        );
+    }
+
+    #[test]
+    fn realm_distribution_tables_never_seed_void_naturally() {
+        // §8.1 #1 决议：化虚不自然刷，正典稀有仅垂死大能一类特殊实体。
+        assert_eq!(
+            realm_weight(&REALM_DISTRIBUTION_BACKGROUND, Realm::Void),
+            0,
+            "background 分布表化虚权重必须为 0"
+        );
+        assert_eq!(
+            realm_weight(&REALM_DISTRIBUTION_RESOURCE, Realm::Void),
+            0,
+            "resource 分布表化虚权重必须为 0"
+        );
+    }
+
+    #[test]
+    fn sample_rogue_seed_realm_is_deterministic_per_char_id_and_zone_kind() {
+        // 同 char_id + 同 zone 档，跨调用必须抽到同一境界（否则重启后境界分布漂移）。
+        for char_id in ["dormant:rogue:0", "dormant:rogue:1", "rogue-seed:zone:42"] {
+            for is_resource in [true, false] {
+                let a = sample_rogue_seed_realm(char_id, is_resource);
+                let b = sample_rogue_seed_realm(char_id, is_resource);
+                assert_eq!(
+                    a, b,
+                    "char_id={char_id} is_resource={is_resource}: 同输入必须抽到同一境界，\
+                     实际两次调用分别得到 {a:?} 和 {b:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn sample_rogue_seed_realm_differs_by_zone_kind_salt_not_faction_or_group_salt() {
+        // 境界抽样必须用专属 REALM_SEED_SALT，与 seed_rogue_faction（salt=0）/
+        // seed_emergent_group（salt=GROUP_SALT）错开——否则境界会和派系/群体强相关
+        // （比如同一 salt 下醒灵总是分到 Attack）。用同一 char_id 三个 salt 的哈希两两
+        // 不相等来证明三者独立（char_id 选一个非退化样本，避免巧合碰撞误判）。
+        let char_id = "dormant:rogue:7";
+        let realm_hash = deterministic_hash(char_id, REALM_SEED_SALT);
+        let faction_hash = deterministic_hash(char_id, 0);
+        let group_hash = deterministic_hash(char_id, GROUP_SALT);
+        assert_ne!(
+            realm_hash, faction_hash,
+            "REALM_SEED_SALT 必须与派系 salt=0 产生不同哈希"
+        );
+        assert_ne!(
+            realm_hash, group_hash,
+            "REALM_SEED_SALT 必须与 GROUP_SALT 产生不同哈希"
+        );
+    }
+
+    #[test]
+    fn sample_rogue_seed_realm_background_distribution_matches_table_within_tolerance() {
+        // 统计 pin（非精确计数）：2000 个不同 char_id 在 background 档下的境界直方图，
+        // 逐境界占比须落在 §8.1 #1 background 表（57/30/12/1/0/0%）±8 个百分点内。
+        let n = 2000;
+        let mut counts: HashMap<&'static str, u32> = HashMap::new();
+        for i in 0..n {
+            let realm = sample_rogue_seed_realm(&format!("tolerance:background:{i}"), false);
+            let key = match realm {
+                Realm::Awaken => "awaken",
+                Realm::Induce => "induce",
+                Realm::Condense => "condense",
+                Realm::Solidify => "solidify",
+                Realm::Spirit => "spirit",
+                Realm::Void => "void",
+            };
+            *counts.entry(key).or_insert(0) += 1;
+        }
+        let ratio = |key: &str| *counts.get(key).unwrap_or(&0) as f64 / n as f64;
+        let assert_within = |label: &str, actual: f64, expected_pct: f64| {
+            let tolerance = 0.08;
+            assert!(
+                (actual - expected_pct / 100.0).abs() <= tolerance,
+                "background {label} 占比 {actual:.3} 偏离 §8.1 #1 预期 {expected_pct}% 超过容差 \
+                 ±{tolerance}（N={n} 样本 counts={counts:?}）"
+            );
+        };
+        assert_within("醒灵", ratio("awaken"), 57.0);
+        assert_within("引气", ratio("induce"), 30.0);
+        assert_within("凝脉", ratio("condense"), 12.0);
+        assert_within("固元", ratio("solidify"), 1.0);
+        assert_eq!(
+            counts.get("spirit").copied().unwrap_or(0),
+            0,
+            "background 档通灵权重为 0，绝不应抽到"
+        );
+        assert_eq!(counts.get("void").copied().unwrap_or(0), 0, "化虚不自然刷");
+    }
+
+    #[test]
+    fn sample_rogue_seed_realm_resource_distribution_matches_table_within_tolerance() {
+        // 统计 pin：resource 档（42.5/35/20/2/0.5/0%）——通灵样本稀少（0.5%），
+        // 用更大样本量 4000 降低小概率分支的统计噪声，容差同样 ±8 个百分点
+        // （通灵/固元档额外用绝对宽松上界防止偶发 0 样本导致误判）。
+        let n = 4000;
+        let mut counts: HashMap<&'static str, u32> = HashMap::new();
+        for i in 0..n {
+            let realm = sample_rogue_seed_realm(&format!("tolerance:resource:{i}"), true);
+            let key = match realm {
+                Realm::Awaken => "awaken",
+                Realm::Induce => "induce",
+                Realm::Condense => "condense",
+                Realm::Solidify => "solidify",
+                Realm::Spirit => "spirit",
+                Realm::Void => "void",
+            };
+            *counts.entry(key).or_insert(0) += 1;
+        }
+        let ratio = |key: &str| *counts.get(key).unwrap_or(&0) as f64 / n as f64;
+        let assert_within = |label: &str, actual: f64, expected_pct: f64, tolerance: f64| {
+            assert!(
+                (actual - expected_pct / 100.0).abs() <= tolerance,
+                "resource {label} 占比 {actual:.3} 偏离 §8.1 #1 预期 {expected_pct}% 超过容差 \
+                 ±{tolerance}（N={n} 样本 counts={counts:?}）"
+            );
+        };
+        assert_within("醒灵", ratio("awaken"), 42.5, 0.08);
+        assert_within("引气", ratio("induce"), 35.0, 0.08);
+        assert_within("凝脉", ratio("condense"), 20.0, 0.08);
+        assert_within("固元", ratio("solidify"), 2.0, 0.03);
+        assert_within("通灵", ratio("spirit"), 0.5, 0.02);
+        assert_eq!(counts.get("void").copied().unwrap_or(0), 0, "化虚不自然刷");
+        // resource 档整体高境界（凝脉+固元+通灵）占比必须明显高于 background 档，
+        // 证明两张表确实不同（不是同一张表被误接了两次）。
+        let resource_high = ratio("condense") + ratio("solidify") + ratio("spirit");
+        assert!(
+            resource_high > 0.15,
+            "resource 档凝脉+固元+通灵合计占比 {resource_high:.3} 偏低，\
+             §8.1 #1 预期约 22.5%，可能误接了 background 表"
+        );
+    }
+
+    #[test]
+    fn dormant_rogue_seed_snapshot_realm_distribution_not_always_awaken() {
+        // 端到端契约：seed 出来的 dormant snapshot 的 Cultivation.realm 不能恒为醒灵
+        // （否则 P0 choke-point 修复对 dormant seeder 完全没有生效）。
+        let zone = zone();
+        let realms: Vec<Realm> = (0..500u32)
+            .map(|i| {
+                dormant_rogue_seed_snapshot(&zone, i, i, 0, 0.8, true)
+                    .cultivation
+                    .realm
+            })
+            .collect();
+        let non_awaken = realms.iter().filter(|r| **r != Realm::Awaken).count();
+        assert!(
+            non_awaken > 0,
+            "500 个 dormant rogue snapshot 全部落在醒灵，期望按 §8.1 #1 分布表抽到非醒灵境界；\
+             这意味着 dormant_rogue_seed_snapshot 回退成了 Cultivation::default()"
+        );
+        assert!(
+            !realms.contains(&Realm::Void),
+            "dormant seeder 绝不应抽到化虚（正典稀有，不自然刷）"
+        );
+    }
+
+    #[test]
+    fn dormant_rogue_seed_snapshot_meridian_system_matches_sampled_realm_required_meridians() {
+        // Verify blocker pin：dormant seeder 曾恒开 1 条肺经（MeridianSystem::default()
+        // + 手动开 Lung），与抽样出的 realm 脱钩——凝脉/固元/通灵抽样命中却只有 1 条脉，
+        // 撞 realm↔经脉双源矛盾。500 个样本里筛出每个非醒灵境界至少一例，核对
+        // meridian_system.opened_count() 恰等于 realm.required_meridians()（用生产
+        // 侧的 npc_meridian_system_for_realm 派生规则，不是重新定义一套开脉逻辑）。
+        let zone = zone();
+        let mut seen_realms: std::collections::HashSet<Realm> = std::collections::HashSet::new();
+        for i in 0..500u32 {
+            let snapshot = dormant_rogue_seed_snapshot(&zone, i, i, 0, 0.8, true);
+            let realm = snapshot.cultivation.realm;
+            let expected = realm.required_meridians();
+            let actual = snapshot.meridian_system.opened_count();
+            assert_eq!(
+                actual, expected,
+                "i={i} realm={realm:?}: dormant seeder 落地的 meridian_system 应开 \
+                 {expected} 条经脉（realm.required_meridians()），实得 {actual} 条 \
+                 ——若恒为 1 说明退回了 P0-era 恒开肺经的 bug"
+            );
+            let expected_system = crate::npc::technique::npc_meridian_system_for_realm(realm);
+            let opened_mismatch = snapshot
+                .meridian_system
+                .iter()
+                .zip(expected_system.iter())
+                .enumerate()
+                .find(|(_, (actual, expected))| actual.opened != expected.opened);
+            assert!(
+                opened_mismatch.is_none(),
+                "i={i} realm={realm:?}: dormant seeder 的 meridian_system 必须与生产侧 \
+                 npc_meridian_system_for_realm(realm) 逐脉一致（同一份派生规则的单一来源），\
+                 首个不一致的经脉 index={opened_mismatch:?}"
+            );
+            seen_realms.insert(realm);
+        }
+        assert!(
+            seen_realms.contains(&Realm::Condense) || seen_realms.contains(&Realm::Solidify),
+            "500 个 resource 档样本应至少抽到一例凝脉或固元，否则本测试没有真正覆盖 \
+             required_meridians()>1 的分支（fixture 完整性）；实抽到 {seen_realms:?}"
+        );
+    }
+
+    #[test]
+    fn dormant_rogue_seed_snapshot_qi_current_stays_zero_regardless_of_sampled_realm() {
+        // 守恒红线：无论抽到哪个境界，qi_current 必须保持 0.0（不满灵）——qi_max_for_realm
+        // 只设容量上限，真元靠既有 apply_dormant_regen_with_multiplier 从 zone 逐步吸收；
+        // spawn 时满灵会凭空产生真元，撞 qi_physics 守恒红线。qi_max 必须等于
+        // qi_max_for_realm(抽到的 realm)，不能停留在 Cultivation::default() 的 10.0。
+        let zone = zone();
+        for i in 0..200u32 {
+            let snapshot = dormant_rogue_seed_snapshot(&zone, i, i, 0, 0.8, true);
+            assert_eq!(
+                snapshot.cultivation.qi_current, 0.0,
+                "index={i} realm={:?}: qi_current 必须恒 0.0（不满灵）",
+                snapshot.cultivation.realm
+            );
+            assert_eq!(
+                snapshot.cultivation.qi_max,
+                qi_max_for_realm(snapshot.cultivation.realm),
+                "index={i} realm={:?}: qi_max 必须等于 qi_max_for_realm(realm)，不能是 \
+                 Cultivation::default() 的醒灵默认值",
+                snapshot.cultivation.realm
+            );
+        }
+    }
+
+    #[test]
+    fn dormant_rogue_seed_snapshot_same_seed_twice_produces_identical_realm() {
+        // 确定性 pin：同 seed（同 zone/index）两次 genesis 必须逐 NPC realm 一致。
+        let zone = zone();
+        for i in 0..50u32 {
+            let a = dormant_rogue_seed_snapshot(&zone, i, i, 0, 0.8, true);
+            let b = dormant_rogue_seed_snapshot(&zone, i, i, 0, 0.8, true);
+            assert_eq!(
+                a.cultivation.realm, b.cultivation.realm,
+                "index={i}: 同 seed 两次调用 dormant_rogue_seed_snapshot 必须得到相同 realm，\
+                 实际 {:?} vs {:?}",
+                a.cultivation.realm, b.cultivation.realm
+            );
+        }
+    }
+
+    #[test]
+    fn dormant_rogue_seed_snapshot_resource_vs_background_flag_changes_distribution() {
+        // is_resource_zone 标志必须真正切换分布表：同一批 index 在 resource=true 下
+        // 高境界（凝脉起）占比必须明显高于 resource=false（否则该参数被忽略/接反）。
+        let zone = zone();
+        let n = 1000u32;
+        let count_high = |is_resource: bool| {
+            (0..n)
+                .filter(|&i| {
+                    let realm = dormant_rogue_seed_snapshot(&zone, i, i, 0, 0.8, is_resource)
+                        .cultivation
+                        .realm;
+                    matches!(realm, Realm::Condense | Realm::Solidify | Realm::Spirit)
+                })
+                .count()
+        };
+        let resource_high = count_high(true);
+        let background_high = count_high(false);
+        assert!(
+            resource_high > background_high,
+            "resource 档凝脉+固元+通灵计数 {resource_high} 必须明显高于 background 档 \
+             {background_high}（N={n}），否则 is_resource_zone 参数未真正接线"
         );
     }
 
@@ -4196,5 +4762,537 @@ mod tests {
             budget_initial_total: crate::qi_physics::constants::DEFAULT_SPIRIT_QI_TOTAL,
             budget_current_total: crate::qi_physics::constants::DEFAULT_SPIRIT_QI_TOTAL,
         }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // plan-npc-realm-distribution-v1 P3 §8.1 #3 — 存量 dormant 快照迁移 + marker 幂等
+    // ─────────────────────────────────────────────────────────────────────────
+    //
+    // 每个测试都用 `BONG_NPC_REALM_MIGRATION_MARKER_PATH` 把 marker 路径钉到临时目录，
+    // 绝不能碰真实 checkout 里的 `server/data/npc/realm_migration_v1.marker`
+    // （那是运行时生成的非提交产物，见 .gitignore）。`ENV_LOCK` 序列化对该 env var 的
+    // 读写，防止并行跑的测试互相踩脚（`cargo test` 默认多线程跑同进程内的测试）。
+
+    // `cargo test` 默认多线程并发跑同进程内的测试，而 `std::env::set_var` 是进程级全局
+    // 状态——若锁只在 `set`/`drop` 内瞬时持有，两个测试仍可能交错（A 设置 env var 后、
+    // 在 A 的 `app.update()` 读取它之前，B 的 `set()` 把它改成另一个路径），A 就会读到
+    // 错误的 marker 路径而误判"marker 不存在"。必须让 guard 存活到整个测试结束（挂在
+    // `ScopedMarkerEnvVar` 实例上，随其 Drop 才释放），而不是只在设置那一刻短暂加锁。
+    struct ScopedMarkerEnvVar {
+        _guard: std::sync::MutexGuard<'static, ()>,
+        previous: Option<std::ffi::OsString>,
+    }
+
+    static MARKER_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    impl ScopedMarkerEnvVar {
+        fn set(path: &std::path::Path) -> Self {
+            let guard = MARKER_ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+            let previous = std::env::var_os(NPC_REALM_MIGRATION_MARKER_ENV_VAR);
+            std::env::set_var(NPC_REALM_MIGRATION_MARKER_ENV_VAR, path);
+            Self {
+                _guard: guard,
+                previous,
+            }
+        }
+    }
+
+    impl Drop for ScopedMarkerEnvVar {
+        fn drop(&mut self) {
+            if let Some(previous) = self.previous.take() {
+                std::env::set_var(NPC_REALM_MIGRATION_MARKER_ENV_VAR, previous);
+            } else {
+                std::env::remove_var(NPC_REALM_MIGRATION_MARKER_ENV_VAR);
+            }
+        }
+    }
+
+    fn unique_marker_path(label: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("current time should be after unix epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!("bong-realm-migration-{label}-{nanos}.marker"))
+    }
+
+    fn legacy_rogue_snapshot(char_id: &str) -> NpcDormantSnapshot {
+        let mut snap = snapshot(char_id, DVec3::new(5.0, 64.0, 5.0));
+        // P0-era bug state: realm 恒醒灵，qi_max 恒 Cultivation::default() 的 10.0。
+        snap.cultivation.realm = Realm::Awaken;
+        snap.cultivation.qi_max = 10.0;
+        snap.shared_lifespan = LifespanComponent::for_realm(Realm::Awaken);
+        snap
+    }
+
+    fn migration_test_app(zone_registry: ZoneRegistry, store: NpcDormantStore) -> App {
+        let mut app = App::new();
+        app.insert_resource(zone_registry);
+        app.insert_resource(store);
+        app.insert_resource(DormantRoguePopulationSeedConfig::default());
+        app.insert_resource(PendingGameplayNarrations::default());
+        app.add_systems(Update, migrate_dormant_realm_distribution_v1);
+        app
+    }
+
+    #[test]
+    fn migration_marker_path_pinned_to_spec() {
+        // §8.1 #3 落点原文：`data/npc/realm_migration_v1.marker`。防止路径漂移。
+        assert_eq!(
+            NPC_REALM_MIGRATION_MARKER_DEFAULT_PATH, "data/npc/realm_migration_v1.marker",
+            "marker 默认路径必须逐字对拍 plan §8.1 #3 落点原文，不允许漂移"
+        );
+    }
+
+    #[test]
+    fn no_marker_triggers_reroll_and_writes_marker_file() {
+        let marker_path = unique_marker_path("reroll");
+        let _env = ScopedMarkerEnvVar::set(&marker_path);
+        assert!(
+            !marker_path.exists(),
+            "precondition: 临时 marker 路径不应预先存在"
+        );
+
+        let mut store = NpcDormantStore::default();
+        for i in 0..40u32 {
+            let snap = legacy_rogue_snapshot(&format!("legacy:rogue:{i}"));
+            store.snapshots.insert(snap.char_id.clone(), snap);
+        }
+        store.rebuild_indexes();
+
+        let mut z = zone();
+        z.spirit_qi = 0.1; // 低于 default threshold 0.4 -> background zone
+        let registry = ZoneRegistry { zones: vec![z] };
+
+        let mut app = migration_test_app(registry, store);
+        app.update();
+
+        assert!(
+            marker_path.exists(),
+            "迁移完成后应写出 marker 文件到 {}",
+            marker_path.display()
+        );
+
+        let migrated_store = app.world().resource::<NpcDormantStore>();
+        assert!(
+            migrated_store.is_dirty(),
+            "至少一条快照 realm 变化应把 store 标脏，否则重 roll 结果不会持久化"
+        );
+
+        // 逐条对拍：迁移结果必须与「直接调用同一份 §8.1 #1 抽样函数」完全一致——
+        // 测契约（"迁移是否正确委托给规范抽样函数"），不是重新验证分布算法本身
+        // （分布算法已由 sample_rogue_seed_realm 的专属测试饱和覆盖）。
+        let mut saw_non_awaken = false;
+        for i in 0..40u32 {
+            let char_id = format!("legacy:rogue:{i}");
+            let expected = sample_rogue_seed_realm(char_id.as_str(), false);
+            let actual = migrated_store
+                .snapshots
+                .get(&char_id)
+                .unwrap_or_else(|| panic!("snapshot {char_id} should still exist after migration"))
+                .cultivation
+                .realm;
+            assert_eq!(
+                actual, expected,
+                "char_id={char_id}: 迁移后的 realm 应等于 sample_rogue_seed_realm 对同一 \
+                 char_id/is_resource_zone 的确定性抽样结果，实得 {actual:?} 期望 {expected:?}"
+            );
+            if actual != Realm::Awaken {
+                saw_non_awaken = true;
+            }
+            // qi_max 必须随新 realm 同步重算，不能停在 bug 时代的 10.0（除非新 realm 恰好
+            // 仍是 Awaken，此时 10.0 本就是对的）。
+            let expected_qi_max = qi_max_for_realm(expected);
+            let actual_qi_max = migrated_store
+                .snapshots
+                .get(&char_id)
+                .unwrap()
+                .cultivation
+                .qi_max;
+            assert!(
+                (actual_qi_max - expected_qi_max).abs() < 1e-9,
+                "char_id={char_id}: qi_max 应随迁移后的 realm={expected:?} 重算为 \
+                 {expected_qi_max}，实得 {actual_qi_max}"
+            );
+        }
+        assert!(
+            saw_non_awaken,
+            "40 条 legacy 快照跑一遍 §8.1 #1 分布表重抽样，至少应有一条不再是醒灵 \
+             （分布表醒灵权重远小于 100%），否则说明重 roll 根本没生效"
+        );
+    }
+
+    #[test]
+    fn migration_reroll_resyncs_meridian_system_to_new_realm_required_meridians() {
+        // Verify blocker pin：迁移器此前只重算 realm/qi_max/shared_lifespan，从不重派
+        // meridian_system——重 roll 到凝脉/固元/通灵后仍停在迁移前的开脉数，与新 realm
+        // 脱钩。legacy_rogue_snapshot 起点固定 Realm::Awaken + snapshot() 默认全闭经脉
+        // （P0-era 状态），迁移后必须让 meridian_system.opened_count() 追上新 realm。
+        let marker_path = unique_marker_path("meridian-resync");
+        let _env = ScopedMarkerEnvVar::set(&marker_path);
+
+        let mut store = NpcDormantStore::default();
+        for i in 0..40u32 {
+            let mut snap = legacy_rogue_snapshot(&format!("legacy:meridian:{i}"));
+            // 复刻真实 P0-era 生产快照的形状：修 dormant_rogue_seed_snapshot 之前恒开
+            // 1 条肺经（而非 legacy_rogue_snapshot 继承的通用 test helper 全闭默认值）
+            // ——否则本测试会在「重抽样恰好落回 Awaken（未改变）」的分支上，把「legacy
+            // fixture 本身形状失真」误判成「迁移器没有同步重派」的假阳性。
+            snap.meridian_system = MeridianSystem::default();
+            snap.meridian_system
+                .get_mut(crate::cultivation::components::MeridianId::Lung)
+                .opened = true;
+            store.snapshots.insert(snap.char_id.clone(), snap);
+        }
+        store.rebuild_indexes();
+
+        let mut z = zone();
+        z.spirit_qi = 0.9; // 高于阈值 -> resource zone，拉高凝脉/固元/通灵命中率
+        let registry = ZoneRegistry { zones: vec![z] };
+
+        let mut app = migration_test_app(registry, store);
+        app.update();
+
+        let migrated_store = app.world().resource::<NpcDormantStore>();
+        let mut saw_multi_meridian_realm = false;
+        for i in 0..40u32 {
+            let char_id = format!("legacy:meridian:{i}");
+            let snap = migrated_store
+                .snapshots
+                .get(&char_id)
+                .unwrap_or_else(|| panic!("snapshot {char_id} should still exist after migration"));
+            let expected_count = snap.cultivation.realm.required_meridians();
+            let actual_count = snap.meridian_system.opened_count();
+            assert_eq!(
+                actual_count, expected_count,
+                "char_id={char_id}: 迁移重 roll 后 realm={:?} 要求开 {expected_count} 条经脉，\
+                 但 meridian_system 实开 {actual_count} 条——meridian_system 没有随 realm 重 roll \
+                 同步重派（迁移器只改了 realm/qi_max/shared_lifespan）",
+                snap.cultivation.realm
+            );
+            if expected_count > 1 {
+                saw_multi_meridian_realm = true;
+            }
+        }
+        assert!(
+            saw_multi_meridian_realm,
+            "40 条 legacy 快照在 resource zone 下重抽样，至少应有一条落在 required_meridians()>1 \
+             的境界（凝脉=6/固元=12/通灵=16），否则本测试没有真正覆盖迁移器重派 \
+             meridian_system 的分支（fixture 完整性）"
+        );
+    }
+
+    #[test]
+    fn migration_reroll_respects_permanently_severed_meridians() {
+        // minor fix pin：迁移器重派 meridian_system 时用 npc_meridian_system_for_realm
+        // 整段覆盖，会把「已被 MeridianSeveredPermanent 永久记录断绝」的经脉也一并
+        // 按新 realm 重新打开——这与"永久断脉"语义矛盾（断脉只应在跨周目重置，
+        // realm 迁移这种同一角色的境界重 roll 不该复活它）。用 Lung（MeridianId::ALL[0]，
+        // 任何 realm 的 required_meridians() >= 1 都会覆盖到它）作为永久断脉标的，
+        // 断言迁移后依旧 opened=false。
+        let marker_path = unique_marker_path("meridian-severed-respect");
+        let _env = ScopedMarkerEnvVar::set(&marker_path);
+
+        let mut store = NpcDormantStore::default();
+        for i in 0..40u32 {
+            let mut snap = legacy_rogue_snapshot(&format!("legacy:severed:{i}"));
+            snap.meridian_system = MeridianSystem::default();
+            snap.meridian_severed
+                .severed_meridians
+                .insert(crate::cultivation::components::MeridianId::Lung);
+            snap.meridian_severed.severed_at.insert(
+                crate::cultivation::components::MeridianId::Lung,
+                crate::cultivation::meridian::severed::SeveredRecord {
+                    at_tick: 0,
+                    source: crate::cultivation::meridian::severed::SeveredSource::CombatWound,
+                },
+            );
+            store.snapshots.insert(snap.char_id.clone(), snap);
+        }
+        store.rebuild_indexes();
+
+        let mut z = zone();
+        z.spirit_qi = 0.9; // 高于阈值 -> resource zone，拉高高境界命中率，确保有 realm 变化分支被覆盖
+        let registry = ZoneRegistry { zones: vec![z] };
+
+        let mut app = migration_test_app(registry, store);
+        app.update();
+
+        let migrated_store = app.world().resource::<NpcDormantStore>();
+        let mut saw_changed_realm = false;
+        for i in 0..40u32 {
+            let char_id = format!("legacy:severed:{i}");
+            let snap = migrated_store
+                .snapshots
+                .get(&char_id)
+                .unwrap_or_else(|| panic!("snapshot {char_id} should still exist after migration"));
+            if snap.cultivation.realm != Realm::Awaken {
+                saw_changed_realm = true;
+            }
+            let lung = snap
+                .meridian_system
+                .get(crate::cultivation::components::MeridianId::Lung);
+            assert!(
+                !lung.opened,
+                "char_id={char_id}: Lung 经脉在 meridian_severed 中被永久记录断绝，\
+                 迁移重派 meridian_system 后仍必须保持 opened=false（实际 opened=true），\
+                 否则永久断脉被 realm 迁移悄悄复活，与 MeridianSeveredPermanent 记录矛盾"
+            );
+            assert!(
+                snap.meridian_severed
+                    .severed_meridians
+                    .contains(&crate::cultivation::components::MeridianId::Lung),
+                "char_id={char_id}: 迁移不应改动 meridian_severed 记录本身"
+            );
+        }
+        assert!(
+            saw_changed_realm,
+            "40 条 legacy 快照在 resource zone 下重抽样，至少应有一条 realm 发生变化，\
+             否则本测试没有真正覆盖迁移器重派 meridian_system 的分支（fixture 完整性）"
+        );
+    }
+
+    #[test]
+    fn marker_already_exists_skips_reroll_idempotently() {
+        let marker_path = unique_marker_path("skip");
+        let _env = ScopedMarkerEnvVar::set(&marker_path);
+        // 预先写好 marker——模拟"上次已经迁移过"。
+        if let Some(parent) = marker_path.parent() {
+            std::fs::create_dir_all(parent).expect("temp dir must be creatable");
+        }
+        std::fs::write(&marker_path, b"v1\n").expect("precondition marker write must succeed");
+
+        let mut store = NpcDormantStore::default();
+        for i in 0..10u32 {
+            let snap = legacy_rogue_snapshot(&format!("legacy:skip:{i}"));
+            store.snapshots.insert(snap.char_id.clone(), snap);
+        }
+        store.rebuild_indexes();
+        // 显式确认起点是 clean（构造过程没有调用任何 mark_dirty 路径）。
+        assert!(!store.is_dirty());
+
+        let registry = ZoneRegistry {
+            zones: vec![zone()],
+        };
+        let mut app = migration_test_app(registry, store);
+        app.update();
+
+        let after = app.world().resource::<NpcDormantStore>();
+        assert!(
+            !after.is_dirty(),
+            "marker 已存在时不应做任何重 roll，store 不该被标脏"
+        );
+        for i in 0..10u32 {
+            let char_id = format!("legacy:skip:{i}");
+            let realm = after.snapshots.get(&char_id).unwrap().cultivation.realm;
+            assert_eq!(
+                realm,
+                Realm::Awaken,
+                "char_id={char_id}: marker 已存在应跳过重 roll，realm 应保持迁移前的 \
+                 Realm::Awaken（bug 时代遗留值），实得 {realm:?}"
+            );
+        }
+
+        // 内容也保持不变（同一份写入的 marker 内容原样保留，未被二次改写）。
+        let content = std::fs::read_to_string(&marker_path).expect("marker should still exist");
+        assert_eq!(content, "v1\n");
+    }
+
+    #[test]
+    fn identity_archetypes_write_identity_realm_not_sampled() {
+        let marker_path = unique_marker_path("identity");
+        let _env = ScopedMarkerEnvVar::set(&marker_path);
+
+        let mut store = NpcDormantStore::default();
+
+        let mut guardian = legacy_rogue_snapshot("legacy:guardian");
+        guardian.archetype = NpcArchetype::GuardianRelic;
+        store.snapshots.insert(guardian.char_id.clone(), guardian);
+
+        let mut zhinian = legacy_rogue_snapshot("legacy:zhinian");
+        zhinian.archetype = NpcArchetype::Zhinian;
+        store.snapshots.insert(zhinian.char_id.clone(), zhinian);
+
+        let mut daoxiang = legacy_rogue_snapshot("legacy:daoxiang");
+        daoxiang.archetype = NpcArchetype::Daoxiang;
+        store.snapshots.insert(daoxiang.char_id.clone(), daoxiang);
+
+        let mut beast = legacy_rogue_snapshot("legacy:beast");
+        beast.archetype = NpcArchetype::Beast;
+        store.snapshots.insert(beast.char_id.clone(), beast);
+
+        let mut leader = legacy_rogue_snapshot("legacy:leader");
+        leader.archetype = NpcArchetype::Disciple;
+        leader.faction = Some(FactionMembership {
+            faction_id: FactionId::Defend, // CangyuanMerchants -> Spirit
+            rank: FactionRank::Leader,
+            reputation: Reputation::default(),
+            lineage: None,
+            mission_queue: MissionQueue::default(),
+        });
+        store
+            .snapshots
+            .insert(leader.char_id.clone(), leader.clone());
+
+        store.rebuild_indexes();
+
+        let registry = ZoneRegistry {
+            zones: vec![zone()],
+        };
+        let mut app = migration_test_app(registry, store);
+        app.update();
+
+        let after = app.world().resource::<NpcDormantStore>();
+        let realm_of = |id: &str| after.snapshots.get(id).unwrap().cultivation.realm;
+
+        assert_eq!(
+            realm_of("legacy:guardian"),
+            Realm::Spirit,
+            "GuardianRelic 身份 realm 应直写 Spirit，不参与分布抽样"
+        );
+        assert_eq!(
+            realm_of("legacy:zhinian"),
+            Realm::Condense,
+            "Zhinian 身份 realm 应直写 Condense"
+        );
+        assert_eq!(
+            realm_of("legacy:daoxiang"),
+            Realm::Induce,
+            "Daoxiang 身份 realm 应直写 TSY 默认值 Induce"
+        );
+        assert_eq!(
+            realm_of("legacy:beast"),
+            Realm::Awaken,
+            "Beast 恒字面量 Awaken，迁移不应把它拉进分布抽样（保持设计上的恒低威胁）"
+        );
+        assert_eq!(
+            realm_of("legacy:leader"),
+            Realm::Spirit,
+            "faction Leader（Defend/CangyuanMerchants）应直写 leader_realm_for 对应的 Spirit，\
+             不受分布表影响"
+        );
+    }
+
+    #[test]
+    fn marker_write_failure_does_not_silently_swallow_error() {
+        // 制造一个必然写失败的路径：父目录的父目录其实是个*文件*，create_dir_all 会报错。
+        let blocked_parent = unique_marker_path("blocked-parent-file");
+        std::fs::write(&blocked_parent, b"i am a file, not a directory")
+            .expect("setup: create the blocking regular file");
+        let marker_path = blocked_parent.join("sub").join("realm_migration_v1.marker");
+        let _env = ScopedMarkerEnvVar::set(&marker_path);
+
+        let mut store = NpcDormantStore::default();
+        let snap = legacy_rogue_snapshot("legacy:writefail");
+        store.snapshots.insert(snap.char_id.clone(), snap);
+        store.rebuild_indexes();
+
+        // 显式钉 zone 灵气档为 background（低于 default threshold 0.4），让下面的
+        // `sample_rogue_seed_realm(..., false)` 探测与迁移器内部真实算出的 is_resource
+        // 保持一致，不依赖 `zone()` helper 默认值今后是否变动。
+        let mut z = zone();
+        z.spirit_qi = 0.1;
+        let registry = ZoneRegistry { zones: vec![z] };
+        let mut app = migration_test_app(registry, store);
+
+        // 直接调用底层写函数验证返回值语义（true=成功/false=失败），不靠系统副作用间接推断。
+        assert!(
+            !write_realm_migration_marker(&marker_path),
+            "父目录路径被文件挡住时，写 marker 必须返回失败而不是假装成功"
+        );
+        assert!(
+            !marker_path.exists(),
+            "写失败后 marker 文件不应该神奇地出现"
+        );
+
+        // 即使 marker 落盘失败，system 跑一遍仍必须完成本次的 realm 重 roll（降级只影响
+        // "下次重启是否会重复重 roll"这个幂等信号，不能连本次的迁移本体都吞掉）。
+        app.update();
+        let after = app.world().resource::<NpcDormantStore>();
+        let realm = after
+            .snapshots
+            .get("legacy:writefail")
+            .unwrap()
+            .cultivation
+            .realm;
+        let expected = sample_rogue_seed_realm("legacy:writefail", false);
+        assert_eq!(
+            realm, expected,
+            "marker 写失败不该连带吞掉本次 reroll 本身——快照 realm 仍应等于确定性抽样结果"
+        );
+
+        let _ = std::fs::remove_file(&blocked_parent);
+    }
+
+    #[test]
+    fn empty_store_writes_marker_without_touching_anything() {
+        let marker_path = unique_marker_path("empty-store");
+        let _env = ScopedMarkerEnvVar::set(&marker_path);
+
+        let store = NpcDormantStore::default();
+        assert!(store.is_empty());
+        let registry = ZoneRegistry {
+            zones: vec![zone()],
+        };
+        let mut app = migration_test_app(registry, store);
+        app.update();
+
+        assert!(
+            marker_path.exists(),
+            "空 store（新世界，无存量）也应该写 marker，避免每次 Startup 重复判定空 store"
+        );
+        assert!(
+            !app.world().resource::<NpcDormantStore>().is_dirty(),
+            "空 store 没有任何快照可改，不应被标脏"
+        );
+    }
+
+    #[test]
+    fn migration_pushes_zone_perception_narration_for_upgraded_realms() {
+        let marker_path = unique_marker_path("narration");
+        let _env = ScopedMarkerEnvVar::set(&marker_path);
+
+        // 显式钉 zone 灵气档为 background（低于 default threshold 0.4），让下面的
+        // `sample_rogue_seed_realm(..., false)` 探测与迁移器内部真实算出的 is_resource
+        // 保持一致，不依赖 `zone()` helper 默认值今后是否变动。
+        //
+        // 固定挑一个 char_id，其分布抽样结果已知会命中 Condense 或更高（用同一份抽样函数
+        // 先探测，避免测试跟迁移函数各自实现一套判定逻辑）。
+        let mut store = NpcDormantStore::default();
+        let mut hit_condense_or_above = None;
+        for i in 0..200u32 {
+            let char_id = format!("legacy:narration:{i}");
+            let realm = sample_rogue_seed_realm(char_id.as_str(), false);
+            if matches!(realm, Realm::Condense | Realm::Solidify) {
+                hit_condense_or_above = Some((char_id.clone(), realm));
+            }
+            let snap = legacy_rogue_snapshot(&char_id);
+            store.snapshots.insert(snap.char_id.clone(), snap);
+        }
+        store.rebuild_indexes();
+        let (hit_char_id, hit_realm) = hit_condense_or_above.expect(
+            "200 条随机 char_id 里按分布表理应至少命中一条 Condense/Solidify，\
+             否则下面的 narration 断言无法验证任何真实行为",
+        );
+
+        let mut z = zone();
+        z.spirit_qi = 0.1;
+        let registry = ZoneRegistry { zones: vec![z] };
+        let mut app = migration_test_app(registry, store);
+        app.update();
+
+        let mut narrations = app.world_mut().resource_mut::<PendingGameplayNarrations>();
+        let drained = narrations.drain();
+        assert!(
+            !drained.is_empty(),
+            "命中 char_id={hit_char_id} 应重 roll 出 {hit_realm:?}，理应推送至少一条 \
+             zone-scope 境界识破 narration，实得 0 条"
+        );
+        assert!(
+            drained
+                .iter()
+                .all(|n| n.scope == crate::schema::common::NarrationScope::Zone
+                    && n.style == crate::schema::common::NarrationStyle::Perception),
+            "迁移触发的境界识破 narration 必须是 Zone scope + Perception style，实得 {drained:?}"
+        );
     }
 }

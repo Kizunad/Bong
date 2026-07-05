@@ -287,7 +287,8 @@ pub fn spawn_rogue_npc_at(
         NpcPlayerReputation::default(),
     ));
 
-    let runtime = npc_runtime_bundle_with_age(entity, NpcArchetype::Rogue, initial_age_ticks);
+    let runtime =
+        npc_runtime_bundle_with_age(entity, NpcArchetype::Rogue, realm, initial_age_ticks);
     commands.entity(entity).insert(runtime);
 
     entity
@@ -337,7 +338,8 @@ pub fn spawn_scattered_cultivator_at(
         .entity(entity)
         .insert(ScatteredCultivatorBundle::new(temperament));
 
-    let runtime = npc_runtime_bundle_with_age(entity, NpcArchetype::Rogue, initial_age_ticks);
+    let runtime =
+        npc_runtime_bundle_with_age(entity, NpcArchetype::Rogue, realm, initial_age_ticks);
     commands.entity(entity).insert(runtime);
 
     entity
@@ -514,6 +516,16 @@ pub(crate) fn seed_initial_rogue_population_on_startup(
         );
 
         let age = initial_age_for_index(global_index, max_age, cfg.max_initial_age_ratio);
+        // plan-npc-realm-distribution-v1 P1: this is the *second*, independent rogue
+        // production line (live entities, not dormant snapshots) — it must sample
+        // from the same §8.1 #1 distribution table + same `deterministic_hash` as
+        // `dormant_rogue_seed_snapshot`, not just inherit a hardcoded Realm::Awaken.
+        // No persisted char_id exists yet at this point, so derive a stable
+        // equivalent from the zone name + this NPC's global spawn index (mirrors
+        // the `dormant:rogue:{index}` char_id shape used by the dormant seeder).
+        let is_resource_zone = zone_spirit_qi >= cfg.resource_spirit_qi_threshold;
+        let realm_seed_id = format!("rogue-seed:{zone_name}:{global_index}");
+        let realm = crate::npc::dormant::sample_rogue_seed_realm(&realm_seed_id, is_resource_zone);
         let entity = spawn_scattered_cultivator_at(
             &mut commands,
             NpcSkinSpawnContext::new(skin_pool.as_deref_mut(), skin_policy),
@@ -522,7 +534,7 @@ pub(crate) fn seed_initial_rogue_population_on_startup(
             pos,
             patrol_center,
             zone_spirit_qi,
-            Realm::Awaken,
+            realm,
             age,
         );
         commands

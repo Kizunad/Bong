@@ -829,7 +829,7 @@ mod tests {
             .world_mut()
             .spawn((NpcMarker, Position::new([0.0, 66.0, 0.0])))
             .id();
-        let mut bundle = npc_runtime_bundle(rogue, NpcArchetype::Rogue);
+        let mut bundle = npc_runtime_bundle(rogue, NpcArchetype::Rogue, Realm::Awaken);
         bundle.cultivation.qi_max = 400.0;
         bundle.cultivation.qi_current = 400.0;
         bundle.cultivation.composure_recover_rate = 0.01;
@@ -955,7 +955,7 @@ mod tests {
             .world_mut()
             .spawn((NpcMarker, Position::new([0.0, 66.0, 0.0])))
             .id();
-        let mut bundle = npc_runtime_bundle(rogue, NpcArchetype::Rogue);
+        let mut bundle = npc_runtime_bundle(rogue, NpcArchetype::Rogue, Realm::Awaken);
         bundle.cultivation.realm = Realm::Spirit;
         bundle.cultivation.qi_max = 1000.0;
         bundle.cultivation.qi_current = 900.0;

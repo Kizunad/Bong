@@ -38,6 +38,7 @@ use valence::prelude::{
 };
 
 use crate::combat::CombatClock;
+use crate::cultivation::components::Realm;
 use crate::fauna::daozhan::{daozhan_spawn_roll, DaoZhangBehaviorBlackboard, DaoZhangState};
 use crate::inventory::ancient_relics::AncientRelicSource;
 use crate::inventory::corpse::CorpseEmbalmed;
@@ -832,9 +833,11 @@ pub fn spawn_daoxiang_from_corpse(
     commands
         .entity(entity)
         .insert((DaoZhangState::Mimicry, daozhan_bb));
-    commands
-        .entity(entity)
-        .insert(npc_runtime_bundle(entity, NpcArchetype::Daoxiang));
+    commands.entity(entity).insert(npc_runtime_bundle(
+        entity,
+        NpcArchetype::Daoxiang,
+        corpse.origin_realm.unwrap_or(Realm::Awaken),
+    ));
     entity
 }
 
@@ -1000,6 +1003,7 @@ fn log_relic_extracted_hook(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cultivation::components::Cultivation;
     use crate::world::dimension::DimensionKind;
     use crate::world::zone::Zone;
 
@@ -1247,6 +1251,42 @@ mod tests {
         assert_eq!(
             daoxiang_home_zone(&zones, "tsy_lingxu_01", DVec3::new(999.0, 999.0, 999.0)),
             "tsy_lingxu_01_deep"
+        );
+    }
+
+    #[test]
+    fn spawn_daoxiang_from_corpse_writes_origin_realm_into_cultivation() {
+        // plan-npc-realm-distribution-v1 P0 R1 pin：尸体激活道伥必须把
+        // corpse.origin_realm（已在 :831 喂 DaoZhangBehaviorBlackboard）同源写进
+        // Cultivation.realm，不能只喂 blackboard 让 npc_runtime_bundle 把组件吞成
+        // Realm::Awaken。覆盖至少一个非默认取值（Solidify），None 分支不适用
+        // ——调用侧在 :619/:737 已提前 despawn 干尸，不会走到本函数。
+        let mut app = App::new();
+        let layer = app.world_mut().spawn_empty().id();
+        let zones = ZoneRegistry::fallback();
+        let corpse = CorpseEmbalmed {
+            family_id: "tsy_lingxu_01".to_string(),
+            died_at_tick: 0,
+            death_cause: "test".to_string(),
+            drops: vec![],
+            activated_to_daoxiang: false,
+            origin_realm: Some(Realm::Solidify),
+        };
+
+        let entity = spawn_daoxiang_from_corpse(
+            &mut app.world_mut().commands(),
+            layer,
+            &zones,
+            &corpse,
+            DVec3::new(0.0, 65.0, 0.0),
+            100,
+        );
+        app.world_mut().flush();
+
+        assert_eq!(
+            app.world().get::<Cultivation>(entity).map(|c| c.realm),
+            Some(Realm::Solidify),
+            "spawn_daoxiang_from_corpse 期望 Cultivation.realm 等于 corpse.origin_realm(Solidify)"
         );
     }
 

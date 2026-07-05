@@ -4286,7 +4286,7 @@ mod tests {
             .world_mut()
             .spawn((NpcMarker, Position::new([0.0, 64.0, 0.0])))
             .id();
-        let runtime = npc_runtime_bundle(npc, NpcArchetype::Zombie);
+        let runtime = npc_runtime_bundle(npc, NpcArchetype::Zombie, Realm::Awaken);
         assert_eq!(runtime.cultivation.qi_current, 0.0);
         app.world_mut().entity_mut(npc).insert(runtime);
 
@@ -8642,7 +8642,7 @@ mod tests {
             .world_mut()
             .spawn((NpcMarker, Position::new([0.0, 64.0, 0.0])))
             .id();
-        let mut bundle_a = npc_runtime_bundle(npc_a, NpcArchetype::Rogue);
+        let mut bundle_a = npc_runtime_bundle(npc_a, NpcArchetype::Rogue, Realm::Awaken);
         // 让 A 血量濒死以便单击致命；qi 注满以过 resolver 的 qi_invest 检查。
         bundle_a.wounds = Wounds {
             health_current: 3.0,
@@ -8657,7 +8657,7 @@ mod tests {
             .world_mut()
             .spawn((NpcMarker, Position::new([1.0, 64.0, 0.0])))
             .id();
-        let mut bundle_b = npc_runtime_bundle(npc_b, NpcArchetype::Zombie);
+        let mut bundle_b = npc_runtime_bundle(npc_b, NpcArchetype::Zombie, Realm::Awaken);
         bundle_b.cultivation.qi_current = 80.0;
         bundle_b.cultivation.qi_max = 100.0;
         app.world_mut().entity_mut(npc_b).insert(bundle_b);

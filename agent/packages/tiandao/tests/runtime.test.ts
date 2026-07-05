@@ -1509,9 +1509,9 @@ describe("runRuntime", () => {
     expect(worldModel.lastTick).toBe(200);
     expect(logger.log).not.toHaveBeenCalledWith("[tiandao] restored state from tick 188, era: 末法纪");
     expect(redis.publishAgentWorldModel).toHaveBeenCalledTimes(2);
-    expect(redis.publishAgentWorldModel.mock.calls[0]?.[0]?.snapshot.lastTick).toBe(188);
-    expect(redis.publishAgentWorldModel.mock.calls[1]?.[0]?.snapshot.lastTick).toBe(200);
-    expect(redis.publishAgentWorldModel.mock.calls[1]?.[0]?.snapshot.lastStateTs).toBe(freshState.ts);
+    expect(redis.publishAgentWorldModel.mock.calls[0]?.[0]?.snapshot.last_tick).toBe(188);
+    expect(redis.publishAgentWorldModel.mock.calls[1]?.[0]?.snapshot.last_tick).toBe(200);
+    expect(redis.publishAgentWorldModel.mock.calls[1]?.[0]?.snapshot.last_state_ts).toBe(freshState.ts);
   });
 
   it("restores world model from redis mirror on startup without using local snapshot files", async () => {
@@ -1705,9 +1705,9 @@ describe("runRuntime", () => {
         }),
       );
       expect(redis.publishAgentWorldModel).toHaveBeenCalledTimes(2);
-      expect(redis.publishAgentWorldModel.mock.calls[0]?.[0]?.snapshot.lastTick).toBe(188);
-      expect(redis.publishAgentWorldModel.mock.calls[1]?.[0]?.snapshot.lastTick).toBe(200);
-      expect(redis.publishAgentWorldModel.mock.calls[1]?.[0]?.snapshot.lastStateTs).toBe(freshState.ts);
+      expect(redis.publishAgentWorldModel.mock.calls[0]?.[0]?.snapshot.last_tick).toBe(188);
+      expect(redis.publishAgentWorldModel.mock.calls[1]?.[0]?.snapshot.last_tick).toBe(200);
+      expect(redis.publishAgentWorldModel.mock.calls[1]?.[0]?.snapshot.last_state_ts).toBe(freshState.ts);
     } finally {
       process.chdir(previousCwd);
       await rm(tempDir, { recursive: true, force: true });
@@ -2011,8 +2011,8 @@ describe("runRuntime", () => {
     });
 
     expect(redis.publishAgentWorldModel).toHaveBeenCalledTimes(2);
-    expect(redis.publishAgentWorldModel.mock.calls[0]?.[0]?.snapshot.lastTick).toBe(300);
-    expect(redis.publishAgentWorldModel.mock.calls[1]?.[0]?.snapshot.lastTick).toBe(301);
+    expect(redis.publishAgentWorldModel.mock.calls[0]?.[0]?.snapshot.last_tick).toBe(300);
+    expect(redis.publishAgentWorldModel.mock.calls[1]?.[0]?.snapshot.last_tick).toBe(301);
   });
 
   it("periodically reconciles newer redis mirror state after prolonged stale-state idle", async () => {
@@ -2117,7 +2117,7 @@ describe("runRuntime", () => {
       );
       expect(redis.publishCommands).toHaveBeenCalledTimes(0);
       expect(redis.publishAgentWorldModel).toHaveBeenCalledTimes(1);
-      expect(redis.publishAgentWorldModel.mock.calls[0]?.[0]?.snapshot.lastTick).toBe(400);
+      expect(redis.publishAgentWorldModel.mock.calls[0]?.[0]?.snapshot.last_tick).toBe(400);
     } finally {
       process.chdir(previousCwd);
       await rm(tempDir, { recursive: true, force: true });
@@ -2176,7 +2176,7 @@ describe("runRuntime", () => {
 
       expect(redis.publishCommands).toHaveBeenCalledTimes(0);
       expect(redis.publishAgentWorldModel).toHaveBeenCalledTimes(1);
-      expect(redis.publishAgentWorldModel.mock.calls[0]?.[0]?.snapshot.lastTick).toBe(410);
+      expect(redis.publishAgentWorldModel.mock.calls[0]?.[0]?.snapshot.last_tick).toBe(410);
     });
   });
 
