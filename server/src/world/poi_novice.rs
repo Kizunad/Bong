@@ -486,6 +486,19 @@ const CRAFT_COUNT: usize = 3;
 /// 同一构建每次重启散布结果完全一致（§8.1 #1 决议）。
 pub(crate) const SURFACE_STASH_SCATTER_SEED: u64 = 0x5343_4159_5F31_3200;
 
+/// 拒绝采样 while-loop 的 max-attempts 兜底（博弈 gate major 修复）。
+///
+/// self-spacing（`current_min_dist`）每 10_000 次尝试减半，从 `SURFACE_STASH_MIN_DIST`
+/// (200.0) 衰减到工程上可忽略的量级（<1e-6，log2(200/1e-6)≈28 轮）需要约
+/// 28 * 10_000 = 280_000 次尝试；这是循环里唯一会随尝试次数变化收紧的判据——
+/// POI 距离 / zone AABB / 可通行性判据全程不随尝试次数松动。取
+/// 500_000（显著高于 280_000 衰减 schedule + shipping spawn_plain 地形实测
+/// ~22 次的收敛裕量），保证：
+/// - 正常可通行地形下这个上限永远打不到（determinism / 恒产 12 的既有测试不受影响）；
+/// - 若未来地形改动让"可通行 ∩ zone AABB 内 ∩ 远离既有 POI"可行域清空，循环在有界
+///   时间内退出而不是让 Startup 挂死（见 `scatter_surface_stashes` 尾部的优雅降级）。
+pub(crate) const SURFACE_STASH_MAX_SCATTER_ATTEMPTS: u64 = 500_000;
+
 /// 运行时 Poisson-disk 采样 12 个散修遗缴点。
 ///
 /// 使用 seed × index 做 PRNG seed 保证 determinism。
@@ -493,9 +506,14 @@ pub(crate) const SURFACE_STASH_SCATTER_SEED: u64 = 0x5343_4159_5F31_3200;
 /// 最后 3 个 = craft（deterministic quota slice）。
 ///
 /// 若 10000 次尝试未凑满 12 点，自动将 min_dist 减半继续尝试，保证最终
-/// 产出恰好 12 个点。避水 / 避岩浆 / 避让既有 POI / zone AABB 判据全部在本函数
-/// 内部的拒绝采样循环里完成——不能留给调用方对返回值事后过滤，否则被拒点没有
-/// 补采机制，产出会 < 12（§8.1 #2 决议 1）。
+/// 产出恰好 12 个点（正常可通行地形下）。避水 / 避岩浆 / 避让既有 POI / zone AABB
+/// 判据全部在本函数内部的拒绝采样循环里完成——不能留给调用方对返回值事后过滤，
+/// 否则被拒点没有补采机制，产出会 < 12（§8.1 #2 决议 1）。
+///
+/// 循环有 `SURFACE_STASH_MAX_SCATTER_ATTEMPTS` 兜底：若"可通行 ∩ zone AABB 内 ∩
+/// 远离既有 POI"可行域为空（地形改动导致），耗尽后**优雅降级**——`tracing::warn!`
+/// 打警告后返回已累积的点（可能 < 12），而不是无限挂死（博弈 gate major：Startup
+/// 调度上挂死会让服务器起不来）。
 pub fn scatter_surface_stashes(
     seed: u64,
     existing_poi_xz: &[(f64, f64)],
@@ -510,7 +528,7 @@ pub fn scatter_surface_stashes(
     let mut current_min_dist = SURFACE_STASH_MIN_DIST;
     let mut attempt = 0u64;
 
-    while points.len() < SURFACE_STASH_COUNT {
+    while points.len() < SURFACE_STASH_COUNT && attempt < SURFACE_STASH_MAX_SCATTER_ATTEMPTS {
         if attempt > 0 && attempt % 10000 == 0 {
             // 放宽 min_dist 继续尝试
             current_min_dist *= 0.5;
@@ -558,6 +576,18 @@ pub fn scatter_surface_stashes(
             pool_id: String::new(), // 后面分配
             index: points.len(),
         });
+    }
+
+    if points.len() < SURFACE_STASH_COUNT {
+        tracing::warn!(
+            "[bong][poi-novice] scatter_surface_stashes exhausted {} attempts, only placed {}/{} \
+             surface_stash point(s); likely cause: passable ∩ zone-AABB ∩ far-from-existing-POI \
+             feasible region is too small or empty (terrain changed?) — degrading gracefully \
+             instead of hanging Startup",
+            SURFACE_STASH_MAX_SCATTER_ATTEMPTS,
+            points.len(),
+            SURFACE_STASH_COUNT
+        );
     }
 
     // 按距 spawn 中心距离排序
@@ -614,8 +644,11 @@ pub fn scatter_and_spawn_surface_stashes(
             .passable
     };
     // 避水/避岩浆/避让既有 POI/zone AABB 全部已在 scatter_surface_stashes 内部
-    // 的拒绝采样循环里跑完——这里拿到的返回值保证恰好 12 个、且全部落在可通行
-    // 列，wrapper 不需要再对返回值做任何跳过/事后过滤（§8.1 #2 决议 1）。
+    // 的拒绝采样循环里跑完——正常可通行地形下返回值恰好 12 个、且全部落在可通行
+    // 列，wrapper 不需要再对返回值做任何跳过/事后过滤（§8.1 #2 决议 1）。若可行域
+    // 清空触发 SURFACE_STASH_MAX_SCATTER_ATTEMPTS 兜底，返回值可能 < 12（已在
+    // scatter_surface_stashes 内部 tracing::warn! 打过日志）——这里按实际长度
+    // 逐个生产，不假设固定 12。
     let stashes =
         scatter_surface_stashes(SURFACE_STASH_SCATTER_SEED, &existing_poi_xz, &is_passable);
 
@@ -1082,6 +1115,136 @@ mod tests {
                 s.x
             );
         }
+    }
+
+    // ——— 博弈 gate major：拒绝采样 while-loop max-attempts 兜底回归测试 ———
+
+    #[test]
+    fn scatter_surface_stashes_terminates_under_fully_blocked_terrain() {
+        // is_passable 恒 false 模拟"可行域为空"的极端地形（全水域/全岩浆）。
+        // 在加 SURFACE_STASH_MAX_SCATTER_ATTEMPTS 兜底之前，这个 while-loop 没有
+        // 任何随尝试次数收紧的终止条件能应对这种输入——会无限循环，若这段代码跑在
+        // Startup 调度里，服务器永远起不来。这条测试是该挂起路径唯一的 CI 覆盖。
+        let start = std::time::Instant::now();
+        let stashes = super::scatter_surface_stashes(42, &[], &|_, _| false);
+        let elapsed = start.elapsed();
+
+        assert!(
+            elapsed < std::time::Duration::from_secs(10),
+            "scatter_surface_stashes 在全不可通行地形下耗时 {elapsed:?} 才返回——\
+             max-attempts 兜底未生效或上限设得过大，Startup 调度上等价于挂死"
+        );
+        assert!(
+            stashes.len() < super::SURFACE_STASH_COUNT,
+            "全不可通行地形下可行域为空，scatter_surface_stashes 应耗尽 \
+             SURFACE_STASH_MAX_SCATTER_ATTEMPTS 后优雅降级、返回 <{} 个点，实际 {} 个\
+             （如果仍是 {}，说明 max-attempts 兜底没有真正介入循环终止条件）",
+            super::SURFACE_STASH_COUNT,
+            stashes.len(),
+            super::SURFACE_STASH_COUNT
+        );
+    }
+
+    #[test]
+    fn scatter_surface_stashes_terminates_when_existing_poi_blankets_the_aabb() {
+        // 另一种可行域清空场景：既有 POI 密集铺满 ±700 AABB，使网格内任意点都
+        // < SURFACE_STASH_MIN_POI_DIST(100) 远离一个既有 POI。50 格步长的密铺
+        // 保证网格内任一点到最近 POI 距离 <= 50*sqrt(2)/2 ≈ 35.4 < 100，可行域为空。
+        let mut existing = Vec::new();
+        let mut coord = -700i32;
+        while coord <= 700 {
+            let mut other = -700i32;
+            while other <= 700 {
+                existing.push((f64::from(coord), f64::from(other)));
+                other += 50;
+            }
+            coord += 50;
+        }
+
+        let start = std::time::Instant::now();
+        let stashes = super::scatter_surface_stashes(7, &existing, &|_, _| true);
+        let elapsed = start.elapsed();
+
+        assert!(
+            elapsed < std::time::Duration::from_secs(10),
+            "既有 POI 铺满可行域时 scatter_surface_stashes 耗时 {elapsed:?} 才返回——\
+             max-attempts 兜底未生效"
+        );
+        assert!(
+            stashes.len() < super::SURFACE_STASH_COUNT,
+            "既有 POI 密铺 AABB 使可行域清空，应优雅降级返回 <{} 个点，实际 {} 个",
+            super::SURFACE_STASH_COUNT,
+            stashes.len()
+        );
+    }
+
+    // ——— minor pin：extend 不应清空 loader 已加载的既有 novice site ———
+
+    #[test]
+    fn scatter_and_spawn_surface_stashes_extends_without_clearing_existing_novice_sites() {
+        use crate::world::terrain::TerrainProvider;
+
+        let mut app = App::new();
+        app.init_resource::<PoiNoviceRegistry>();
+        app.add_event::<PoiSpawned>();
+        let overworld = app.world_mut().spawn_empty().id();
+        let tsy = app.world_mut().spawn_empty().id();
+        app.insert_resource(DimensionLayers { overworld, tsy });
+        app.insert_resource(TerrainProviders {
+            overworld: TerrainProvider::empty_for_tests(),
+            tsy: None,
+        });
+
+        // 模拟 PoiNoviceLoader::load 已经先跑过、从 manifest 加载了既有 novice site
+        // （forge_station 等 11 种）——这一步必须发生在 scatter_and_spawn_surface_stashes
+        // 之前，且此时 registry 非空，才能真正锁住"extend 不清空既有站点"这条契约。
+        // 若未来有人把 registry.extend(...) 静默重构回 replace_all(...)，这条既有
+        // 站点会在 scatter 跑完后消失，下面的 by_id 断言会撞红。
+        app.world_mut()
+            .resource_mut::<PoiNoviceRegistry>()
+            .extend(vec![PoiNoviceSite {
+                id: "spawn:forge_station:x304_y71_z208".to_string(),
+                kind: PoiNoviceKind::ForgeStation,
+                zone: "spawn".to_string(),
+                name: "破败炼器台".to_string(),
+                pos_xyz: [304.0, 71.0, 208.0],
+                selection_strategy: "strict_radius_1500".to_string(),
+                qi_affinity: 0.15,
+                danger_bias: 0,
+                tags: vec![
+                    "poi_novice".to_string(),
+                    "poi_type:forge_station".to_string(),
+                ],
+            }]);
+
+        app.add_systems(Startup, scatter_and_spawn_surface_stashes);
+        app.update();
+
+        let registry = app.world().resource::<PoiNoviceRegistry>();
+        assert!(
+            registry
+                .by_id("spawn:forge_station:x304_y71_z208")
+                .is_some(),
+            "既有 loader 加载的 forge_station novice site 在 scatter_and_spawn_surface_stashes \
+             跑完后必须依旧存在——如果 registry.extend 被重构回 replace_all，这条既有站点会被\
+             静默抹掉且没有任何测试能发现"
+        );
+        let surface_stash_count = registry.by_kind(PoiNoviceKind::SurfaceStash).count();
+        assert_eq!(
+            surface_stash_count, SURFACE_STASH_COUNT,
+            "scatter 仍应产出 {} 个 SurfaceStash 站点，实际 {}",
+            SURFACE_STASH_COUNT, surface_stash_count
+        );
+        assert_eq!(
+            registry.sites().len(),
+            1 + SURFACE_STASH_COUNT,
+            "registry 总数应 = 既有 1 个 + 新增 {} 个 = {}，实际 {}\
+             （如果 extend 被换成 replace_all，这里会只剩 {} 个，说明既有站点被清空了）",
+            SURFACE_STASH_COUNT,
+            1 + SURFACE_STASH_COUNT,
+            registry.sites().len(),
+            SURFACE_STASH_COUNT
+        );
     }
 
     #[test]
