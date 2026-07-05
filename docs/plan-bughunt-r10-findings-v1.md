@@ -1,6 +1,6 @@
-# plan-bughunt-r10-findings-v1（骨架）
+# plan-bughunt-r10-findings-v1（active）
 
-> **骨架（草案）**。一句话主题：代码库自检 bug-hunt **round10（末轮）**（fresh origin/main worktree ROOT，角度：HUD 数据喂给完整性 · persistence 往返 · schema sample 对拍 · 最近合并 plan 深挖 · e2e 玩法链）确认的 **6 个新真 bug**——含 **critical：盾牌破盾后 ShieldBlock/ShieldBlocking 状态不清理（破碎盾仍 50% 减伤 + 持续扣体力 + Exhausted 反受硬直惩罚）** + body.guangbo_ticao 熟练度闭环断裂（揭示 r8 jump_height 失效根因）+ 两处关服刷盘盲区 + 2 处 schema source-of-truth 漂移。已对 r1-r9 去重，全部 real-on-main。
+> **Active（已从 skeleton 升级，待逐项消费）**。一句话主题：代码库自检 bug-hunt **round10（末轮）**（fresh origin/main worktree ROOT，角度：HUD 数据喂给完整性 · persistence 往返 · schema sample 对拍 · 最近合并 plan 深挖 · e2e 玩法链）确认的 **6 个新真 bug**——含 **critical：盾牌破盾后 ShieldBlock/ShieldBlocking 状态不清理（破碎盾仍 50% 减伤 + 持续扣体力 + Exhausted 反受硬直惩罚）** + body.guangbo_ticao 熟练度闭环断裂（揭示 r8 jump_height 失效根因）+ 两处关服刷盘盲区 + 2 处 schema source-of-truth 漂移。已对 r1-r9 去重，全部 real-on-main。
 
 > 立项动机：round10 系统性完整性角度（HUD payload / persistence 往返 / schema sample / 最近 plan / e2e 链）。7 候选 → **6 REAL / 1 NOT_REAL**（dismiss：throughput_peak_norm 恒 0 是 schema-first 未实装占位）。**这是本夜 bug-hunt 循环的最后一轮**（用户指令 round10 结束即停）。
 

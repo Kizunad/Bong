@@ -1,6 +1,6 @@
-# plan-ambient-ratbite-ledger-leak-v1（骨架）
+# plan-ambient-ratbite-ledger-leak-v1（active）
 
-> **骨架（草案）**。一句话主题：`plan-ambient-threat-v1` 接入的 ambient Rat 在正常玩家路径上会通过 `RatBite` 真实扣掉 `Cultivation.qi_current`，但只 emit `QiTransfer(RatBiteDrain)` 事件、没有任何账本落账；rat 死亡/超距回收又只把 `drained_qi` 的 1% 回写 zone，导致大部分被咬走的真元在守恒口径上长期蒸发。影响是：**新手/低 danger 区正常游玩就会被鼠患稳定偷真元，恢复压力被放大，且全服 qi 守恒审计会持续失真**。
+> **Active（已从 skeleton 升级，待逐项消费）**。一句话主题：`plan-ambient-threat-v1` 接入的 ambient Rat 在正常玩家路径上会通过 `RatBite` 真实扣掉 `Cultivation.qi_current`，但只 emit `QiTransfer(RatBiteDrain)` 事件、没有任何账本落账；rat 死亡/超距回收又只把 `drained_qi` 的 1% 回写 zone，导致大部分被咬走的真元在守恒口径上长期蒸发。影响是：**新手/低 danger 区正常游玩就会被鼠患稳定偷真元，恢复压力被放大，且全服 qi 守恒审计会持续失真**。
 
 > 立项动机：当前 `origin/main` 的 `plan-ambient-threat-v1` 文档把“emit `QiTransfer` event”误判成“已完成守恒落账”，但 `qi_physics::register` 并没有消费该事件写入 `WorldQiAccount` 的通用系统。该缺口位于最近合入、玩家高频可达的环境威胁主链，值得先立 skeleton plan 收口证据、修复面与验收抓手，再单独出 fix PR。
 

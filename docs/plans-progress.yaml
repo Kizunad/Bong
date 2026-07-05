@@ -1464,6 +1464,16 @@ plans:
   - 581
   blocking_on: []
   summary: P0 污染接线已落地;P1 需人工追加 §N.1 决议到 baomai-v4 再补 Finish Evidence
+- file: plan-ambient-ratbite-ledger-leak-v1.md
+  group: gameplay-npc
+  title: ambient Rat 鼠咬真元漏账
+  state: active-design
+  percent: 8
+  last_updated: '2026-07-05'
+  pr_refs:
+  - 847
+  blocking_on: []
+  summary: P0 未落地;需定 RatBiteDrain 记账语义并补死亡/超距回灌与守恒 pin
 - file: plan-gathering-tool-bind-v1.md
   group: gameplay-npc
   title: 草药捆保鲜+草镰采集
@@ -1568,15 +1578,16 @@ plans:
   pr_refs: []
   blocking_on: []
   summary: 骨架草案,等待升级 active 消费
-- file: plans-skeleton/plan-bughunt-r10-findings-v1.md
-  group: skeleton
-  title: 自检 round10 骨架
-  state: skeleton
-  percent: 5
-  last_updated: 2026-06
-  pr_refs: []
+- file: plan-bughunt-r10-findings-v1.md
+  group: infrastructure
+  title: 自检 round10 findings
+  state: active-design
+  percent: 8
+  last_updated: '2026-07-05'
+  pr_refs:
+  - 579
   blocking_on: []
-  summary: 骨架草案,等待升级 active 消费
+  summary: P0 破盾状态泄漏/P1 广播体操熟练度/P2 关服刷盘/P3 schema 漂移均待消费
 - file: plans-skeleton/plan-inventory-hint-panel-v1.md
   group: skeleton
   title: 库存提示面板骨架
