@@ -2,11 +2,11 @@
 
 > **一句话主题**：`plan-ambient-threat-v1` 接入的 ambient Rat 通过 `RatBite` 真实扣掉玩家 `Cultivation.qi_current`，但被偷真元只 emit `QiTransfer(RatBiteDrain)` 事件、从无 system 消费落账，鼠死亡/超距回收又只把 `drained_qi` 的 1% 写回 `zone.spirit_qi`——被偷真元 99% 长期蒸发，`summarize_world_qi` 守恒审计持续失真。本 plan 把 `RatBiteDrain` 从"半接线的 audit event"改成"真实 `WorldQiAccount` 双腿记账"：咬击瞬间落入 `npc:rat:<id>` ledger 账户（不再蒸发），鼠死亡/超距回收时把该账户 100%（不再是 1%）转入 `zone:<name>` ledger 账户**并同步写回 `zone.spirit_qi` 字段**（field-authority 三段式，见 §8.1 #3——仓库正典是"字段权威、ledger 账户为镜像"，只改账户不写回字段会被生产常驻的 `zone_qi_inflow_tick` 覆盖式重同步二次抹掉）。
 
-**状态**：active（§8 已收口，见 §8.1）。升 active 日期：2026-07-04。
+**状态**：✅ P0 实施完成（2026-07-06，见 §8.1#3 v2 收尾 + Finish Evidence）。升 active 日期：2026-07-04。
 
 | 阶段 | 主题 | 状态 |
 |------|------|------|
-| P0 | 鼠咬真元漏账修复——咬击落账 + 死亡/超距回收全额转账 + 写回 `zone.spirit_qi` 字段（§8.1#1/#2/#3） | ⬜ |
+| P0 | 鼠咬真元漏账修复——咬击落账 + 死亡/超距回收全额转账 + 写回 `zone.spirit_qi` 字段（§8.1#1/#2/#3） | ✅ 2026-07-06 |
 
 ---
 
@@ -127,4 +127,44 @@
 
 ## 审计来源
 
-bug-hunt 定点轮（仅收窄 `plan-ambient-threat-v1` / 当前 `HEAD` 附近 server-side gameplay 代码）。路线限定为环境威胁、spawn、AI、守恒、生命周期；候选经主代理人工复核 + 本机反方子代理两轮默认怀疑裁决后保留（PR #847 merged）。升 active 时经 §8.1 决议收口（实地 grep `qi_physics::ledger` / `npc::skull_fiend` / `fauna::mimic_spider` / `fauna::rat_phase` / `npc::spawn::ambient_scheduler` 全量核实决议数据，非拍脑袋）。promote 阶段博弈守恒 blocker 二次收口（§8.1 #3）追加 grep `world::heartbeat::zone_qi_inflow_tick` / `world::pseudo_vein_runtime` / `cultivation::tick`，实地核实"字段权威、ledger 账户为镜像"范式后定案方案 A。
+bug-hunt 定点轮（仅收窄 `plan-ambient-threat-v1` / 当前 `HEAD` 附近 server-side gameplay 代码）。路线限定为环境威胁、spawn、AI、守恒、生命周期；候选经主代理人工复核 + 本机反方子代理两轮默认怀疑裁决后保留（PR #847 merged）。升 active 时经 §8.1 决议收口（实地 grep `qi_physics::ledger` / `npc::skull_fiend` / `fauna::mimic_spider` / `fauna::rat_phase` / `npc::spawn::ambient_scheduler` 全量核实决议数据，非拍脑袋）。promote 阶段博弈守恒 blocker 二次收口（§8.1 #3）追加 grep `world::heartbeat::zone_qi_inflow_tick` / `world::pseudo_vein_runtime` / `cultivation::tick`，实地核实"字段权威、ledger 账户为镜像"范式后定案方案 A。消费实施阶段 pre-merge 博弈 gate 又抓出 §8.1#3 v1 写法的 overflow-clamp 守恒泄漏 blocker，见下方 §8.1 #3 v2 更正。
+
+## §8.1 #3 v2 更正（消费实施 pre-merge 博弈 gate 抓出，2026-07-06）
+
+**背景（blocker）**：§8.1#3（promote 期定案）规定 `transfer_rat_drained_qi_to_zone` 的写回为逐字 `zone.spirit_qi = (ledger.balance(&zone_account) / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0)`，且转账腿是**无条件全额** `transfer(rat → zone, amount)`。消费实施 pre-merge 博弈 gate（3 sonnet 对抗 + opus 主审，两方均编译 PoC）证明：该写法把 `amount` 100% 无条件转进 zone 账户、**不按剩余容量截断**，随后只 clamp **字段**、不 clamp **账户**。zone 逼近 cap（`spirit_qi≈ZONE_SPIRIT_QI_MAX`，账户≈`QI_ZONE_UNIT_CAPACITY`）时账户越过 cap，字段被 clamp 后账户/字段失配；下一次任何覆盖式重同步（本函数为下一只鼠调用时开场的 `set_balance`，或**生产常驻** `npc::dormant::apply_dormant_regen_with_multiplier` / `world::heartbeat::zone_qi_inflow_tick` 门 `spirit_qi > QI_NPC_ABSORB_FLOOR` 时的 `set_balance(zone_account, spirit_qi.max(0)*CAP)`）会把账户覆写回 `field.clamp * CAP`，**无对偿地销毁溢出**——`ledger_qi` 净减、`player_qi` 无对应增，恰恰违反本 plan 要守的守恒律。且本 plan 把归还比例从旧 1% 升到 100%，才让这条溢出首次具备现实杀伤（旧 1% 代码从不建 zone 镜像账户、直接钳字段，无账户/字段偏差）。
+
+**决议（v2，覆盖 §8.1#3 逐字写回一步）**：转账腿从"无条件全额"改为 **accepted/overflow 分流**——复用 `qi_physics::release::qi_release_to_zone` 算出 `accepted = amount.min(room)`（`room = (zone_cap - zone_current).max(0)`）/ `overflow = amount - accepted`：accepted 腿用其返回的 `ZoneReleaseOutcome::transfer`（reason=`ReleaseToZone`，语义比 `RatBiteDrain` 更准）真实入账、**截到 zone 剩余容量为止绝不越 cap**；overflow 腿另建一条 `rat_account -> QiAccountId::overflow("rat_bite_drain:<id>")`（命名/reason 照抄 `cultivation::death_hooks::release_qi_overflow_from`）进**可审计 overflow 账户而非蒸发**。两腿相加 == `amount`，`rat_account` 必然全额抽干；zone 账户 ≤ cap，字段写回不再需要 clamp"救火"（clamp 保留作防御）。**落点**：`server/src/fauna/rat_phase.rs::transfer_rat_drained_qi_to_zone`（accepted/overflow 分流重写）+ 新增 max-boundary pin `rat_death_near_cap_zone_routes_overflow_conserving`（zone 近 cap，断言 rat 抽干 / zone 停 cap / overflow 记账 / 三账户合计守恒 + 第二只鼠重同步不销毁 overflow，红→绿两态实测）+ 两条既有 pin 调值（`drained_qi` 100→10 使其专测非满 zone，满 zone/overflow 归新 pin）。博弈亦独立核实并确认：集成 pin 断言 `(player+ledger)` 而非字面 `(player+zone+ledger)` 是**正确**的（`summarize_world_qi` 的 `zone_qi` 桶是裸分数、`ledger_qi` 桶含 zone 镜像账户×CAP，三桶相加会 double-count 同一份 zone 真元），非弱化 pin；MimicSpider 排除（§8.1#2 另立 follow-up）核实无误。
+
+## Finish Evidence
+
+**验收日期**：2026-07-06（P0 ✅）。经 promote 期 3 轮博弈收口（§8.1 #1/#2/#3）+ 消费实施期 pre-merge 博弈 gate（`ready=false` 抓 overflow-clamp 守恒 blocker → 修复 → 聚焦 opus re-verify 守恒闭合）。
+
+### 落地清单
+
+| 阶段 | 交付物 | 真实落点 |
+|------|--------|----------|
+| P0-1 咬击落账 | `RatBiteDrain` 真实 ledger 记账（不再 audit-only 蒸发） | `server/src/combat/rat_bite.rs`（`apply_rat_bite_qi_drain` 加 `Option<ResMut<WorldQiAccount>>` + `credit_rat_bite_drain` helper 照 `npc::skull_fiend::credit_skull_fiend_drain`，咬击 credit `npc:rat:<id>` 账户） |
+| P0-2 镜像 | `RatBlackboard.drained_qi` 改镜像 ledger 余额 | `server/src/combat/rat_bite.rs`（镜像 `npc:rat` 账户余额，缺 ledger 时 fallback 原地累加） |
+| P0-3 死亡/回收转账 | 删 1% 常量 + field-authority accepted/overflow 分流 | `server/src/fauna/rat_phase.rs`（删 `RAT_DRAINED_QI_DEATH_RETURN_RATIO`；`transfer_rat_drained_qi_to_zone` = 同步→`qi_release_to_zone` accepted/overflow 分流→写回字段；overflow 进 `QiAccountId::overflow`） |
+| P0-4 调用点 | 两处调用点接新签名 | `server/src/fauna/rat_phase.rs`（`release_drained_qi_on_death_system`）/ `server/src/npc/spawn/ambient_scheduler.rs`（超距回收路径） |
+| P0-5 scope | MimicSpider 不并入 | `server/src/fauna/mimic_spider.rs`（不改，§8.1#2 另立 `plan-mimic-spider-ledger-orphan-v1` follow-up 候选） |
+
+### 关键 commit
+
+- `0f1863503`（2026-07-05）—— P0 主体：`RatBiteDrain` 真实 ledger 记账 + 死亡/回收 100% 转账 + 写回字段 + 4 pin（红→绿两态）。
+- `b4c260b22`（2026-07-06）—— §8.1#3 v2：overflow-clamp 守恒泄漏修复（accepted/overflow 分流 + overflow 账户 + max-boundary pin）。
+
+### 测试结果
+
+- `cargo fmt --check` 干净 / `cargo clippy --all-targets -- -D warnings` 零警告 / `cargo test` 全量 **10679 passed，0 failed**（1 无关 doc-test ignored）。
+- 守恒 pin：`rat_bite_conserves_total_qi_end_to_end`（咬击 player+ledger 守恒）/ `rat_death_transfers_full_drained_qi_to_zone_account`（死亡 100% 转账 + 字段同步）/ `recycle_transfers_full_rat_drained_qi_before_despawn`（超距回收同上）/ `rat_bite_and_death_cycle_preserves_world_qi_total`（集成，注册 `zone_qi_inflow_tick` + 显式点名 4 道门 + 红→绿）/ `rat_death_near_cap_zone_routes_overflow_conserving`（满 zone overflow 路由 + 三账户守恒 + 重同步不销毁 overflow，红→绿）。
+
+### 跨仓库核验
+
+- **server**：`transfer_rat_drained_qi_to_zone` / `credit_rat_bite_drain` / `QiTransferReason::RatBiteDrain`（真实入账）/ `qi_release_to_zone`（accepted/overflow）/ `QiAccountId::overflow("rat_bite_drain:<id>")`。
+- **agent / client**：零改动（纯 server-side 守恒修复；`bong:qi/ledger` 是 server 内部 Redis telemetry，非 TypeBox IPC schema）。
+
+### 遗留 / 后续
+
+- **MimicSpider ledger 孤儿**（§8.1#2 决议 3）：`spider_release_qi_on_death_system` 死亡仍 1% 直写字段、从不 debit `spider_account` → 僵尸余额污染 `ledger_qi` telemetry（非蒸发，形状与 rat 不同）。另立 `plan-mimic-spider-ledger-orphan-v1` 处理，不在本 plan scope。
+- **overflow 账户消费**：`overflow:rat_bite_drain:<id>` 账户目前是"不蒸发的可审计终点"，其后续消费（是否周期性回灌 zone / 计入天道衰减）未定，属独立 tuning，本 plan 只保证不蒸发。
