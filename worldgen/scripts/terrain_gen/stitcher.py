@@ -485,13 +485,22 @@ def _compute_circular_mask(
     poi_center_xz: tuple[int, int],
     radius: int,
 ) -> np.ndarray:
-    """Return a 1-D boolean mask marking columns within *radius* of a POI."""
+    """Return a 1-D boolean mask marking columns within *radius* of a POI.
+
+    Uses ``<=`` (not strict ``<``) so a placement sitting exactly on the
+    radius boundary (e.g. a point placement offset whose distance from the
+    POI center equals ``radius`` on the nose) is still counted as "inside"
+    and gets flattened/density-masked (fix-danzong: dan_zong's main poison
+    spring sat at offset z=96 with radius=96 — dist==radius exactly, and the
+    old strict ``<`` silently excluded it from both flatten and density
+    masking).
+    """
     tile = buffer.tile
     tile_size = buffer.tile_size
     wx, wz = _tile_coords(tile.min_x, tile.min_z, tile_size)
     cx, cz = poi_center_xz
     dist_sq = (wx - cx) ** 2 + (wz - cz) ** 2
-    return (dist_sq < radius * radius).ravel()
+    return (dist_sq <= radius * radius).ravel()
 
 
 def apply_compound_flatten(
