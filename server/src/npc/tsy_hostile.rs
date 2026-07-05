@@ -626,7 +626,7 @@ pub fn spawn_tsy_hostiles_for_family(
             family_id,
             &format!("{family_id}_deep"),
             guard.pos + DVec3::new(2.0, 0.0, 0.0),
-            guard.entity,
+            Some(guard.entity),
         );
         tracing::debug!(?entity, family = %family_id, "[bong][tsy-hostile] spawned TSY sentinel");
         summary.sentinel = summary.sentinel.saturating_add(1);
@@ -1039,7 +1039,10 @@ pub fn spawn_tsy_sentinel_at(
     family_id: &str,
     _home_zone: &str,
     spawn_position: DVec3,
-    guarding_container: Entity,
+    // plan-tsy-sentinel-dormant-regression-v1 §P2：收紧为 `Option<Entity>`——hydrate 重绑
+    // 时容器可能在 family 内找不到坐标匹配（§8.1 #1 补漏的容错分支），sentinel 仍应按
+    // 守灵身份 spawn（退化为纯 aggro，不阻塞外观/HUD/掉落），而非强行要求一个容器 Entity。
+    guarding_container: Option<Entity>,
 ) -> Entity {
     let loadout = NpcCombatLoadout::new(
         NpcMeleeArchetype::Sword,
@@ -1081,7 +1084,7 @@ pub fn spawn_tsy_sentinel_at(
         },
         TsySentinelMarker {
             family_id: family_id.to_string(),
-            guarding_container: Some(guarding_container),
+            guarding_container,
             phase: 0,
             max_phase: 3,
         },
@@ -1836,7 +1839,11 @@ pub fn handle_npc_death_drop(
     }
 }
 
-fn drop_key_for_npc(
+// plan-tsy-sentinel-dormant-regression-v1 §P3 pin：`pub(crate)`（原为私有）——
+// `sentinel_survives_full_dehydrate_hydrate_cycle_with_container_still_present`
+// 端到端测试（`server/src/npc/hydrate/mod.rs`）需要跨模块直接断言 hydrate 后的实体
+// 掉落键精确走 `tsy_sentinel` 分支，而非 `handle_npc_death_drop` 整条 event/资源链路。
+pub(crate) fn drop_key_for_npc(
     archetype: NpcArchetype,
     sentinel: Option<&TsySentinelMarker>,
 ) -> Option<&'static str> {
@@ -2252,7 +2259,7 @@ mod tests {
             "tsy_zongmen_01",
             "tsy_zongmen_01_deep",
             DVec3::new(7.0, 64.0, 7.0),
-            container,
+            Some(container),
         );
         app.world_mut().flush();
 
@@ -2334,7 +2341,7 @@ mod tests {
             "tsy_zongmen_01",
             "tsy_zongmen_01_deep",
             DVec3::new(7.0, 64.0, 7.0),
-            container,
+            Some(container),
         );
         app.world_mut().flush();
 
