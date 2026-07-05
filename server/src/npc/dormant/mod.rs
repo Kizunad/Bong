@@ -791,16 +791,24 @@ fn dormant_global_tick_system(
         snapshot.lifespan.age_ticks +=
             elapsed_ticks as f64 * config.dormant_aging_rate_multiplier.max(0.0);
 
-        if let (Some(zones), Some(ledger)) = (zones.as_deref_mut(), ledger.as_deref_mut()) {
-            // plan-offscreen-war-v1 P9：从 ZoneSpiritBonusStore 查 zone 倍率（默认 1.0）
-            let war_multiplier = war_bonus
-                .as_deref()
-                .map(|s| s.multiplier_for(&snapshot.zone_name))
-                .unwrap_or(1.0);
-            apply_dormant_regen_with_multiplier(snapshot, zones, ledger, war_multiplier);
-        }
-        if let (Some(zones), Some(ledger)) = (zones.as_deref_mut(), ledger.as_deref_mut()) {
-            let _ = advance_dormant_breakthrough(snapshot, zones, ledger, tick);
+        // plan-mundane-fauna-v1 守恒豁免：凡兽无灵——脱水期同样不吸/放 zone 灵气，对齐 live 侧
+        // qi_regen_and_zone_drain_tick 的 `Without<MundaneFaunaSpecies>`。凡兽脱水快照
+        // sum_rate()=1.0（Awaken 开 1 脉，默认 flow_rate=1.0），若不豁免会逐 tick 把
+        // zone.spirit_qi 抽进 snapshot.qi_current，hydrate 用 snapshot.cultivation 覆盖回 live
+        // 后死亡（负灵域枯萎/LOD 超距回收裸 insert(Despawned)、无 CurrentDimension 走 overflow）
+        // 100% 蒸发，破守恒。跳过 regen + breakthrough（两者都从 zone 拉真元），保留位置/寿命推进。
+        if snapshot.archetype != NpcArchetype::Mundane {
+            if let (Some(zones), Some(ledger)) = (zones.as_deref_mut(), ledger.as_deref_mut()) {
+                // plan-offscreen-war-v1 P9：从 ZoneSpiritBonusStore 查 zone 倍率（默认 1.0）
+                let war_multiplier = war_bonus
+                    .as_deref()
+                    .map(|s| s.multiplier_for(&snapshot.zone_name))
+                    .unwrap_or(1.0);
+                apply_dormant_regen_with_multiplier(snapshot, zones, ledger, war_multiplier);
+            }
+            if let (Some(zones), Some(ledger)) = (zones.as_deref_mut(), ledger.as_deref_mut()) {
+                let _ = advance_dormant_breakthrough(snapshot, zones, ledger, tick);
+            }
         }
 
         if snapshot.lifespan.is_expired() {
@@ -1704,6 +1712,12 @@ pub fn apply_dormant_regen_with_multiplier(
     ledger: &mut WorldQiAccount,
     war_multiplier: f64,
 ) -> Option<QiTransfer> {
+    // plan-mundane-fauna-v1 守恒豁免（函数级 + 调用侧 dormant_global_tick_system 双重护栏）：
+    // 凡兽无灵，脱水期也绝不从 zone 吸真元。凡兽脱水快照 sum_rate()=1.0 会通过下方 rate 门，
+    // 必须在此提前返回 None，否则 snapshot.qi_current 被从 zone 抽高、hydrate 带回 live 后死亡蒸发。
+    if snapshot.archetype == NpcArchetype::Mundane {
+        return None;
+    }
     let pos = snapshot.position_vec();
     let zone_name = zones
         .find_zone(snapshot.dimension, pos)
@@ -2442,6 +2456,42 @@ mod tests {
                 .abs()
                 < 1e-9,
             "ledger zone balance must use absolute qi units matching normalized zone drain"
+        );
+    }
+
+    #[test]
+    fn dormant_regen_exempts_mundane_fauna_even_with_open_meridian_in_rich_zone() {
+        // plan-mundane-fauna-v1 守恒红线（对称于 live 侧 qi_regen_excludes_mundane_fauna）：
+        // 脱水凡兽即便开脉（sum_rate>0）、身处富灵区（普通 NPC 必吸），也**绝不**从 zone 吸真元。
+        // 否则 snapshot.qi_current 被抽高、hydrate 带回 live 后死亡蒸发，破守恒。
+        let mut snapshot = snapshot("npc_mundane_rabbit", DVec3::new(10.0, 64.0, 10.0));
+        snapshot.archetype = NpcArchetype::Mundane;
+        open_regular_meridians(&mut snapshot, 1); // sum_rate>0，普通 NPC 在此会吸
+        let qi_before = snapshot.cultivation.qi_current;
+        let mut zones = ZoneRegistry {
+            zones: vec![zone()],
+        };
+        let zone_qi_before = zones
+            .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
+            .unwrap()
+            .spirit_qi;
+        let mut ledger = WorldQiAccount::default();
+
+        assert!(
+            apply_dormant_regen(&mut snapshot, &mut zones, &mut ledger).is_none(),
+            "凡兽脱水快照必须被 dormant regen 豁免（返回 None，无 QiTransfer）"
+        );
+        assert_eq!(
+            snapshot.cultivation.qi_current, qi_before,
+            "凡兽 qi_current 不得因 dormant regen 增长（无灵不吸气）"
+        );
+        assert_eq!(
+            zones
+                .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
+                .unwrap()
+                .spirit_qi,
+            zone_qi_before,
+            "凡兽豁免后 zone.spirit_qi 必须一分不动（守恒）"
         );
     }
 
