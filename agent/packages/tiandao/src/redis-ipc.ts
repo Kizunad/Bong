@@ -7,6 +7,7 @@ import {
   validateAlchemySessionEndV1Contract,
   validateBoneCoinTickV1Contract,
   validateBotanyEcologySnapshotV1Contract,
+  validateFaunaEcologySnapshotV1Contract,
   validateDeathCinematicS2cV1Contract,
   validateFactionEventV1Contract,
   validateNpcDeathV1Contract,
@@ -29,6 +30,7 @@ import type {
   AlchemyInsightV1,
   BoneCoinTickV1,
   BotanyEcologySnapshotV1,
+  FaunaEcologySnapshotV1,
   FactionEventV1,
   NarrationV1,
   NpcDeathV1,
@@ -63,6 +65,7 @@ const {
   ALCHEMY_SESSION_END,
   ALCHEMY_INSIGHT,
   BOTANY_ECOLOGY,
+  FAUNA_ECOLOGY,
   ZONE_PRESSURE_CROSSED,
   ZONE_ENVIRONMENT_UPDATE,
   RAT_PHASE_EVENT,
@@ -151,6 +154,7 @@ export interface CrossSystemRuntimeEventV1 {
 
 const CROSS_SYSTEM_EVENT_CHANNELS: readonly ChannelName[] = [
   BOTANY_ECOLOGY,
+  FAUNA_ECOLOGY,
   ZONE_PRESSURE_CROSSED,
   ZONE_ENVIRONMENT_UPDATE,
   AGING,
@@ -252,6 +256,7 @@ export class RedisIpc {
   private latestWeatherEventUpdates: WeatherEventUpdateV1[] = [];
   private latestCrossSystemEvents: CrossSystemRuntimeEventV1[] = [];
   private latestBotanyEcologyEvents: BotanyEcologySnapshotV1[] = [];
+  private latestFaunaEcologyEvents: FaunaEcologySnapshotV1[] = [];
   private latestZonePressureCrossedEvents: ZonePressureCrossedV1[] = [];
   private stateCallbacks: Array<(state: WorldStateV1) => void> = [];
   private tsyHostileCallbacks: Array<(event: TsyHostileEventV1) => void> = [];
@@ -264,6 +269,7 @@ export class RedisIpc {
   private weatherEventCallbacks: Array<(event: WeatherEventUpdateV1) => void> = [];
   private crossSystemEventCallbacks: Array<(event: CrossSystemRuntimeEventV1) => void> = [];
   private botanyEcologyCallbacks: Array<(event: BotanyEcologySnapshotV1) => void> = [];
+  private faunaEcologyCallbacks: Array<(event: FaunaEcologySnapshotV1) => void> = [];
   private zonePressureCrossedCallbacks: Array<(event: ZonePressureCrossedV1) => void> = [];
   private connected = false;
   private readonly onMessage = (channel: string, message: string): void => {
@@ -294,6 +300,11 @@ export class RedisIpc {
 
     if (channel === BOTANY_ECOLOGY) {
       this.handleBotanyEcologyMessage(message);
+      return;
+    }
+
+    if (channel === FAUNA_ECOLOGY) {
+      this.handleFaunaEcologyMessage(message);
       return;
     }
 
@@ -523,6 +534,32 @@ export class RedisIpc {
       this.recordCrossSystemEvent({ channel: BOTANY_ECOLOGY, payload: data });
     } catch (e) {
       console.warn("[redis-ipc] failed to parse botany ecology snapshot:", e);
+    }
+  }
+
+  private handleFaunaEcologyMessage(message: string): void {
+    try {
+      const data = JSON.parse(message) as unknown;
+      const result = validateFaunaEcologySnapshotV1Contract(data);
+      if (!result.ok) {
+        console.warn("[redis-ipc] invalid fauna ecology snapshot:", result.errors.join("; "));
+        return;
+      }
+      this.recordFaunaEcologyEvent(data as FaunaEcologySnapshotV1);
+      this.recordCrossSystemEvent({ channel: FAUNA_ECOLOGY, payload: data });
+    } catch (e) {
+      console.warn("[redis-ipc] failed to parse fauna ecology snapshot:", e);
+    }
+  }
+
+  private recordFaunaEcologyEvent(event: FaunaEcologySnapshotV1): void {
+    this.latestFaunaEcologyEvents.push(event);
+    if (this.latestFaunaEcologyEvents.length > CROSS_SYSTEM_EVENT_BUFFER_LIMIT) {
+      this.latestFaunaEcologyEvents =
+        this.latestFaunaEcologyEvents.slice(-CROSS_SYSTEM_EVENT_BUFFER_LIMIT);
+    }
+    for (const cb of this.faunaEcologyCallbacks) {
+      cb(event);
     }
   }
 
@@ -846,6 +883,16 @@ export class RedisIpc {
 
   onBotanyEcology(cb: (event: BotanyEcologySnapshotV1) => void): void {
     this.botanyEcologyCallbacks.push(cb);
+  }
+
+  drainFaunaEcologyEvents(): FaunaEcologySnapshotV1[] {
+    const events = [...this.latestFaunaEcologyEvents];
+    this.latestFaunaEcologyEvents = [];
+    return events;
+  }
+
+  onFaunaEcology(cb: (event: FaunaEcologySnapshotV1) => void): void {
+    this.faunaEcologyCallbacks.push(cb);
   }
 
   drainZonePressureCrossedEvents(): ZonePressureCrossedV1[] {

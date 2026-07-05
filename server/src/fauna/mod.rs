@@ -6,6 +6,7 @@ pub mod daozhan;
 // plan-dying-elder-v1 P0 — 垂死大能核心数据结构与 spawn 触发逻辑
 pub mod drop;
 pub mod dying_elder;
+pub mod ecology;
 pub mod experience;
 pub mod ghost;
 pub mod ghost_narration;
@@ -118,4 +119,9 @@ pub fn register(app: &mut App) {
     dying_elder::register_p3(app);
     // plan-mundane-fauna-v1 P0：凡兽 ambient_scheduler 纯复用接入（3 步，§8.1 #2）
     mundane::register(app);
+    // plan-mundane-fauna-v1 P3：凡兽生态快照定时聚合 → bong:fauna/ecology（narration 信号）
+    app.add_systems(
+        valence::prelude::Update,
+        ecology::emit_fauna_ecology_snapshot,
+    );
 }
