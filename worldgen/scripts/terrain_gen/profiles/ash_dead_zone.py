@@ -20,7 +20,7 @@ ASH_DEAD_ZONE_DECORATIONS = (
         kind="shrub",
         blocks=("coarse_dirt", "gravel", "sand"),
         size_range=(1, 2),
-        rarity=0.85,
+        rarity=0.43,
         notes="残灰堆：粗土 + 沙砾 + 沙的灰白颗粒基底；server 层负责脚印。",
     ),
     DecorationSpec(
@@ -28,7 +28,7 @@ ASH_DEAD_ZONE_DECORATIONS = (
         kind="boulder",
         blocks=("bone_block", "dirt", "dead_bush"),
         size_range=(2, 3),
-        rarity=0.20,
+        rarity=0.10,
         notes="干尸堆：历代过路者残骸；loot 锚为凡铁 / 退活骨币 / 干灵草。",
     ),
     DecorationSpec(
@@ -36,7 +36,7 @@ ASH_DEAD_ZONE_DECORATIONS = (
         kind="tree",
         blocks=("polished_diorite", "stripped_oak_log", "dead_bush"),
         size_range=(2, 4),
-        rarity=0.30,
+        rarity=0.15,
         notes="石化枯桩：旧馈赠区植物被抽干后留下的硬化残迹。",
     ),
     DecorationSpec(
@@ -44,7 +44,7 @@ ASH_DEAD_ZONE_DECORATIONS = (
         kind="boulder",
         blocks=("coarse_dirt", "cobweb", "gray_concrete_powder"),
         size_range=(1, 2),
-        rarity=0.10,
+        rarity=0.07,
         notes="灰烬蛛巢：与残灰堆近似，仅有极淡蛛丝；server 在边缘放大伏击权重。",
     ),
     DecorationSpec(

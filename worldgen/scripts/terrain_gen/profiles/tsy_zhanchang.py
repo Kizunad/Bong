@@ -33,7 +33,7 @@ ZHANCHANG_DECORATIONS = (
         kind="boulder",
         blocks=("bone_block", "dirt", "coarse_dirt"),
         size_range=(3, 6),
-        rarity=0.35,
+        rarity=0.18,
         notes="骨砾丘：骨山改走 authored placement，此处只保留低矮骨砾堆。",
     ),
     DecorationSpec(
@@ -41,7 +41,7 @@ ZHANCHANG_DECORATIONS = (
         kind="shrub",
         blocks=("iron_bars", "copper_block", "cobweb"),
         size_range=(1, 3),
-        rarity=0.40,
+        rarity=0.20,
         notes="锈网灌丛：兵器林语义不走 density flora，只保留低矮铁栏和蛛网。",
     ),
     DecorationSpec(
@@ -49,7 +49,7 @@ ZHANCHANG_DECORATIONS = (
         kind="shrub",
         blocks=("red_concrete", "red_sand", "magma_block"),
         size_range=(2, 4),
-        rarity=0.35,
+        rarity=0.18,
         notes="血色地脉：地下血色矿脉因怨念聚集浮现地表，似干涸血河。",
     ),
     DecorationSpec(
@@ -57,7 +57,7 @@ ZHANCHANG_DECORATIONS = (
         kind="tree",
         blocks=("red_wool", "black_wool", "stripped_oak_log"),
         size_range=(4, 7),
-        rarity=0.20,
+        rarity=0.10,
         notes="战旗残骸：红黑两色破旗，旗杆断裂半倒。",
     ),
 )
