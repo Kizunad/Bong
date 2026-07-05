@@ -1,6 +1,8 @@
 import type {
   BotanyEcologySnapshotV1,
   BotanyZoneEcologyV1,
+  FaunaEcologySnapshotV1,
+  FaunaZoneEcologyV1,
   NpcSnapshot,
   PlayerProfile,
   WorldStateV1,
@@ -13,6 +15,7 @@ import { summarizeBalance, type BalanceSummary } from "./balance.js";
 
 const MAX_ZONE_HISTORY = 10;
 const MAX_BOTANY_ECOLOGY_SNAPSHOTS = 5;
+const MAX_FAUNA_ECOLOGY_SNAPSHOTS = 5;
 const MAX_ZONE_ANOMALY_HISTORY = 5;
 const TREND_WINDOW = 3;
 const TREND_EPSILON = 0.02;
@@ -161,6 +164,9 @@ export class WorldModel {
   private botanyEcologyValue: BotanyEcologySnapshotV1 | null = null;
   private readonly botanyEcologySnapshots: BotanyEcologySnapshotV1[] = [];
   readonly botanyEcologyHistory = new Map<string, BotanyZoneEcologyV1[]>();
+  private faunaEcologyValue: FaunaEcologySnapshotV1 | null = null;
+  private readonly faunaEcologySnapshots: FaunaEcologySnapshotV1[] = [];
+  readonly faunaEcologyHistory = new Map<string, FaunaZoneEcologyV1[]>();
   readonly zoneStressFlags = new Map<string, ZoneStressFlag>();
   readonly zoneAnomalyHistory = new Map<string, ZoneAnomalyLog[]>();
   readonly latestZonePressureCrossed = new Map<string, ZonePressureCrossedV1>();
@@ -201,6 +207,10 @@ export class WorldModel {
 
   get botany_ecology(): BotanyEcologySnapshotV1 | null {
     return this.botanyEcologyValue ? cloneBotanyEcologySnapshot(this.botanyEcologyValue) : null;
+  }
+
+  get fauna_ecology(): FaunaEcologySnapshotV1 | null {
+    return this.faunaEcologyValue ? cloneFaunaEcologySnapshot(this.faunaEcologyValue) : null;
   }
 
   toJSON(): WorldModelSnapshot {
@@ -310,6 +320,35 @@ export class WorldModel {
 
   getBotanyEcologyHistory(zoneName: string): BotanyZoneEcologyV1[] {
     return (this.botanyEcologyHistory.get(zoneName) ?? []).map(cloneBotanyZoneEcology);
+  }
+
+  // plan-mundane-fauna-v1 P3：凡兽生态快照存量 + 每 zone 历史（narration 信号，非决策输入）。
+  // 只做 value/snapshots/history 三存量，不复用 botany 的 zoneStressFlag/zoneAnomaly 机制
+  // （那是 botany variant tainted/thunder 专属）。
+  ingestFaunaEcology(snapshot: FaunaEcologySnapshotV1): void {
+    const clonedSnapshot = cloneFaunaEcologySnapshot(snapshot);
+    this.faunaEcologyValue = clonedSnapshot;
+    this.faunaEcologySnapshots.push(cloneFaunaEcologySnapshot(clonedSnapshot));
+    if (this.faunaEcologySnapshots.length > MAX_FAUNA_ECOLOGY_SNAPSHOTS) {
+      this.faunaEcologySnapshots.shift();
+    }
+
+    for (const zone of clonedSnapshot.zones) {
+      const history = this.faunaEcologyHistory.get(zone.zone) ?? [];
+      history.push(cloneFaunaZoneEcology(zone));
+      if (history.length > MAX_FAUNA_ECOLOGY_SNAPSHOTS) {
+        history.shift();
+      }
+      this.faunaEcologyHistory.set(zone.zone, history);
+    }
+  }
+
+  getRecentFaunaEcologySnapshots(): FaunaEcologySnapshotV1[] {
+    return this.faunaEcologySnapshots.map(cloneFaunaEcologySnapshot);
+  }
+
+  getFaunaEcologyHistory(zoneName: string): FaunaZoneEcologyV1[] {
+    return (this.faunaEcologyHistory.get(zoneName) ?? []).map(cloneFaunaZoneEcology);
   }
 
   getZoneStressFlags(): ZoneStressFlag[] {
@@ -1013,6 +1052,22 @@ function cloneBotanyZoneEcology(zone: BotanyZoneEcologyV1): BotanyZoneEcologyV1 
     spirit_qi: zone.spirit_qi,
     plant_counts: zone.plant_counts.map((entry) => ({ ...entry })),
     variant_counts: zone.variant_counts.map((entry) => ({ ...entry })),
+  };
+}
+
+function cloneFaunaEcologySnapshot(snapshot: FaunaEcologySnapshotV1): FaunaEcologySnapshotV1 {
+  return {
+    v: snapshot.v,
+    tick: snapshot.tick,
+    zones: snapshot.zones.map(cloneFaunaZoneEcology),
+  };
+}
+
+function cloneFaunaZoneEcology(zone: FaunaZoneEcologyV1): FaunaZoneEcologyV1 {
+  return {
+    zone: zone.zone,
+    spirit_qi: zone.spirit_qi,
+    species_counts: zone.species_counts.map((entry) => ({ ...entry })),
   };
 }
 

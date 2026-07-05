@@ -391,6 +391,23 @@ mod tests {
         );
     }
 
+    // plan-mundane-fauna-v1 P1 — §8.1 正典硬约束：骨币料仅限异变兽骨，凡骨（fan_gu）
+    // 天然被 bone_grade_for_template 拒绝（未加档，match 落 `_ => None`），沿用
+    // craft_rejects_non_bone_or_invalid_qi 的测试模式。
+    #[test]
+    fn fan_gu_has_no_bone_grade_and_is_rejected_by_bone_coin_craft() {
+        assert_eq!(
+            bone_grade_for_template("fan_gu"),
+            None,
+            "凡骨（fan_gu）必须没有 BoneGrade 档——bone_coin_v1 制作链只收异变兽骨"
+        );
+        assert_eq!(
+            plan_bone_coin_craft("fan_gu", 5.0, true),
+            Err(BoneCoinCraftError::NotFaunaBone),
+            "喂凡骨进封灵骨币制作必须被拒绝并给出 NotFaunaBone 原因"
+        );
+    }
+
     #[test]
     fn craft_session_consumes_bone_catalyst_and_adds_fresh_bone_coin() {
         let item_registry = registry();

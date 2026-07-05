@@ -123,6 +123,11 @@ pub fn default_loot_for_archetype(archetype: NpcArchetype) -> NpcLootTable {
         // plan-dying-elder-v1：垂死大能死亡 loot 由 DyingElderDeathSystem（P2）专门处理
         // （地阶功法残卷 + 破碎法宝，按 dead_by_betrayal 分档），此处返回空表占位。
         NpcArchetype::DyingElder => vec![],
+        // plan-mundane-fauna-v1：凡兽死亡资源链走 `fauna::drop::fauna_drop_system` 新增的
+        // mundane 分支（平行于 `drop_table_for(BeastKind)` 的 `drop_table_for_mundane`，
+        // P1 落地）——本模块是尚未接入死亡管线的 scaffolding（见文件头注释），此处返回空表
+        // 占位，不是凡兽的真实资源产出路径。
+        NpcArchetype::Mundane => vec![],
     };
     NpcLootTable::new(archetype, entries)
 }

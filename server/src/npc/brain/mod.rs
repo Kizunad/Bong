@@ -1,5 +1,7 @@
 mod actions_combat;
 mod actions_life;
+// plan-mundane-fauna-v1 P2 — 狼/狐 Hunt 分支（凡兽内食物链，preys_on 关系表驱动）
+mod predation;
 mod scorers_combat;
 mod scorers_cultivation;
 mod scorers_social;
@@ -9,6 +11,11 @@ pub mod threat;
 // ---- Re-exports: scorer types (pub) ----
 // Allow unused: these are the full API surface matching original brain.rs;
 // not all types are imported externally yet but must remain accessible.
+#[allow(unused_imports)]
+pub use predation::{
+    pick_mundane_hunt_target, MundaneHuntAction, MundaneHuntScorer, MundaneHuntState,
+    MundanePreyQuery, RatPreyQuery,
+};
 #[allow(unused_imports)]
 pub use scorers_combat::{
     ChaseTargetScorer, DashScorer, MeleeRangeScorer, NpcDefenseScorer, PlayerProximityScorer,
@@ -21,7 +28,8 @@ pub use scorers_cultivation::{
 pub use scorers_social::TradeStallScorer;
 #[allow(unused_imports)]
 pub use scorers_survival::{
-    AgeingScorer, FearCultivatorScorer, HungerScorer, ReturnHomeScorer, WanderScorer,
+    AgeingScorer, CorneredScorer, FearCultivatorScorer, FleeThreatScorer, HungerScorer,
+    ReturnHomeScorer, WanderScorer,
 };
 
 // ---- Re-exports: action types (pub) ----
@@ -36,6 +44,11 @@ pub use actions_life::{
 };
 
 // ---- Re-exports: pub(crate) systems and helpers ----
+#[allow(unused_imports)]
+pub(crate) use predation::{
+    mundane_hunt_action_system, mundane_hunt_scorer_system,
+    mundane_predator_kill_hunger_reward_system,
+};
 #[allow(unused_imports)]
 pub(crate) use scorers_combat::{
     chase_score, chase_target_scorer_system, dash_scorer_system, melee_range_scorer_system,
@@ -52,7 +65,8 @@ pub(crate) use scorers_cultivation::{
 pub(crate) use scorers_social::trade_stall_scorer_system;
 #[allow(unused_imports)]
 pub(crate) use scorers_survival::{
-    ageing_scorer_system, fear_cultivator_score, fear_cultivator_scorer_system,
+    ageing_scorer_system, cornered_score, cornered_scorer_system, fear_cultivator_score,
+    fear_cultivator_scorer_system, flee_threat_score, flee_threat_scorer_system,
     hunger_scorer_system, return_home_score, return_home_scorer_system, wander_scorer_system,
 };
 
@@ -79,6 +93,7 @@ use valence::prelude::{
     Query, Res, ResMut, Resource, Update, With,
 };
 
+use crate::combat::events::DeathEvent;
 use crate::cultivation::tribulation::InitiateXuhuaTribulation;
 use crate::npc::lod::NpcLodTier;
 use crate::npc::movement::GameTick;
@@ -161,6 +176,15 @@ pub(crate) const NPC_TRIBULATION_WAVES_DEFAULT: u32 = 3;
 pub(super) const TRIBULATION_MIN_QI_RATIO: f64 = 0.8;
 /// SeclusionAction 长休眠 tick 数；到期后回 Success 以免 picker 死锁。
 pub(super) const SECLUSION_CYCLE_TICKS: u32 = 400;
+
+/// plan-mundane-fauna-v1 P0 — 凡兽 `FleeThreatScorer` 感知半径。比
+/// `FEAR_CULTIVATOR_RANGE`（50，修士专属）更近——凡兽体型小、感知有限，
+/// 且 P0 范围限定只对玩家/修士生效（`update_npc_blackboard.nearest_player`
+/// 尚不扫描非玩家捕食者，见 fauna/mundane.rs 模块文档）。
+pub(super) const FLEE_THREAT_RANGE: f32 = 20.0;
+/// plan-mundane-fauna-v1 P0 — 凡兽 `CorneredScorer` 反击距离门槛："逼入死角"
+/// 判定为近战距离内仍被追打（配合 `NpcBlackboard.retaliation_target` 命中窗口）。
+pub(super) const CORNERED_MELEE_DISTANCE: f32 = 4.0;
 
 // ---------------------------------------------------------------------------
 // Shared types (used by multiple sub-modules)
@@ -427,6 +451,10 @@ pub fn register(app: &mut App) {
     // tests that only register brain but not cultivation.
     app.add_event::<InitiateXuhuaTribulation>();
     app.add_event::<crate::combat::events::DefenseIntent>();
+    // plan-mundane-fauna-v1 P2 — `mundane_predator_kill_hunger_reward_system` 监听
+    // `DeathEvent`；防御性注册（可能已由 combat 模块全局注册，Bevy 允许重复调用，
+    // 同本文件其它 add_event 先例），确保仅注册 brain 模块的隔离测试不会 panic。
+    app.add_event::<DeathEvent>();
     app.insert_resource(NpcBehaviorConfig::default())
         .insert_resource(NpcCooldownMap::default())
         .add_plugins(BigBrainPlugin::new(PreUpdate))
@@ -447,6 +475,11 @@ pub fn register(app: &mut App) {
                 wander_scorer_system,
                 trade_stall_scorer_system,
                 return_home_scorer_system,
+                // plan-mundane-fauna-v1 P0 — 凡兽威胁谱系反抗链（4-thinker 中的两支）。
+                flee_threat_scorer_system,
+                cornered_scorer_system,
+                // plan-mundane-fauna-v1 P2 — 狼/狐 Hunt 分支（凡兽内食物链）。
+                mundane_hunt_scorer_system,
             )
                 .in_set(BigBrainSet::Scorers),
         )
@@ -481,6 +514,8 @@ pub fn register(app: &mut App) {
                 stall_action_system,
                 return_home_action_system,
                 rest_action_system,
+                // plan-mundane-fauna-v1 P2 — 狼/狐 Hunt 分支（凡兽内食物链）。
+                mundane_hunt_action_system,
             )
                 .in_set(BigBrainSet::Actions),
         )
@@ -511,7 +546,10 @@ pub fn register(app: &mut App) {
             Update,
             emit_retire_request_on_pending_added
                 .before(crate::npc::lifecycle::process_npc_retire_requests),
-        );
+        )
+        // plan-mundane-fauna-v1 P2 — 捕食闭环：猎杀成功回补狼/狐 Hunger（监听
+        // `DeathEvent`，唯一权威死亡信号，不与超距回收等非战斗消失混淆）。
+        .add_systems(Update, mundane_predator_kill_hunger_reward_system);
 }
 
 // ---------------------------------------------------------------------------

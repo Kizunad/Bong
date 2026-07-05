@@ -277,6 +277,9 @@ export const CHANNELS = {
   /** Server → Agent: botany 生态快照 (plan-botany-v1 §7 · 定时聚合 zone spirit_qi + 植物密度 + variant 分布) */
   BOTANY_ECOLOGY: "bong:botany/ecology",
 
+  /** Server → Agent: 凡兽生态快照 (plan-mundane-fauna-v1 P3 · 定时聚合 zone × 物种 count · narration 信号) */
+  FAUNA_ECOLOGY: "bong:fauna/ecology",
+
   /** Server → Client/Agent: 灵木伐木进度（plan-spiritwood-v1 §3） */
   LUMBER_PROGRESS: "bong:lumber_progress",
 
@@ -472,6 +475,7 @@ export const REDIS_V1_CHANNELS = [
   CHANNELS.ZONG_CORE_ACTIVATED,
   CHANNELS.BOTANY_HARVEST_PROGRESS,
   CHANNELS.BOTANY_ECOLOGY,
+  CHANNELS.FAUNA_ECOLOGY,
   CHANNELS.LUMBER_PROGRESS,
   CHANNELS.SKILL_XP_GAIN,
   CHANNELS.SKILL_LV_UP,

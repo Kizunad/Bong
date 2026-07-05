@@ -193,6 +193,8 @@ pub const CH_ZONG_CORE_ACTIVATED: &str = "bong:zong_core_activated";
 // 可扩 ecology snapshot 加 delta 字段或新增 alert 专用 channel。
 pub const CH_BOTANY_HARVEST_PROGRESS: &str = "bong:botany/harvest_progress";
 pub const CH_BOTANY_ECOLOGY: &str = "bong:botany/ecology";
+// plan-mundane-fauna-v1 P3 凡兽生态快照（server→agent，narration 信号）
+pub const CH_FAUNA_ECOLOGY: &str = "bong:fauna/ecology";
 pub const CH_LUMBER_PROGRESS: &str = "bong:lumber_progress";
 
 // 子技能 (plan-skill-v1 §8)：server → agent，agent 消费生成升级 narration / NPC skill 画像
@@ -414,6 +416,7 @@ mod tests {
         assert_eq!(CH_ZONG_CORE_ACTIVATED, "bong:zong_core_activated");
         assert_eq!(CH_BOTANY_HARVEST_PROGRESS, "bong:botany/harvest_progress");
         assert_eq!(CH_BOTANY_ECOLOGY, "bong:botany/ecology");
+        assert_eq!(CH_FAUNA_ECOLOGY, "bong:fauna/ecology");
         assert_eq!(CH_LUMBER_PROGRESS, "bong:lumber_progress");
         assert_eq!(CH_SKILL_XP_GAIN, "bong:skill/xp_gain");
         assert_eq!(CH_SKILL_LV_UP, "bong:skill/lv_up");
