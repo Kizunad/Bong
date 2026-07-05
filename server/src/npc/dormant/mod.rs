@@ -240,6 +240,27 @@ pub struct DormantTsyHostileSnapshot {
     pub daoxiang_origin: Option<DormantDaoxiangOriginSnapshot>,
 }
 
+/// plan-tsy-sentinel-dormant-regression-v1 §P1：TSY 秘境守灵（`TsySentinelMarker`）身份载荷。
+///
+/// 不另开 `family_id` 字段——`spawn_tsy_sentinel_at` 为同一实体同时插入
+/// `TsyHostileMarker{family_id}` 与 `TsySentinelMarker{family_id}`（两值恒相等），且
+/// `dormant_tsy_hostile_snapshot` 只在 `TsyHostileMarker` 存在时才返回 `Some`——因此任意
+/// 实体只要 `snapshot.tsy_sentinel.is_some()`，`snapshot.tsy_hostile` 必为 `Some`。hydrate
+/// 重绑直接读 `snapshot.tsy_hostile.family_id` 做 family 过滤键（见 §8.1 #1 决议）。
+///
+/// `guarding_container_pos` 是重绑的稳定键（`family_id` + 坐标复合键，§8.1 #1）——不存
+/// `Entity`（不可 serde + Redis 长期持久化下 generation 复用风险）。容器一旦放置永不移动，
+/// 坐标 epsilon 匹配足够可靠。`None` 表示原 sentinel 无守护容器（不常见，仍需支持）。
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct DormantTsySentinelSnapshot {
+    pub guarding_container_pos: Option<[f64; 3]>,
+    /// `max_phase`（设计常量，恒为 3）精确回填，稳定值无成本无风险。
+    pub max_phase: u8,
+    /// best-effort 展示值：hydrate 后 `update_sentinel_phase_system` 会在下一次运行按
+    /// *当前*（满血）`Wounds` 重算并纠正，不存在持久错位（§8.1 #2 决议）。
+    pub phase: u8,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum DormantBehaviorIntent {
@@ -308,6 +329,12 @@ pub struct NpcDormantSnapshot {
     pub guardian_relic: Option<DormantGuardianRelicSnapshot>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub tsy_hostile: Option<DormantTsyHostileSnapshot>,
+    /// plan-tsy-sentinel-dormant-regression-v1 P1：TSY 秘境守灵身份载荷，`Some` 时 hydrate
+    /// 路由必须走 `spawn_tsy_sentinel_at`（不得洗成普通 `spawn_relic_guard_npc_at`）。
+    /// `#[serde(default)]` 非破坏迁移——旧快照反序列化为 `None`（退化为普通
+    /// overworld `GuardianRelic`，这是修复前的既有行为，不引入新回归）。
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub tsy_sentinel: Option<DormantTsySentinelSnapshot>,
     pub intent: DormantBehaviorIntent,
     pub dormant_since_tick: u64,
     pub last_dormant_tick_processed: u64,
@@ -1553,6 +1580,7 @@ fn dormant_rogue_seed_snapshot(
         loot_table: Some(default_loot_for_archetype(archetype)),
         guardian_relic: None,
         tsy_hostile: None,
+        tsy_sentinel: None,
         intent,
         dormant_since_tick: tick,
         last_dormant_tick_processed: tick,
@@ -2089,6 +2117,7 @@ mod tests {
             loot_table: None,
             guardian_relic: None,
             tsy_hostile: None,
+            tsy_sentinel: None,
             intent: DormantBehaviorIntent::Cultivate {
                 zone: DEFAULT_SPAWN_ZONE_NAME.to_string(),
             },
@@ -2960,6 +2989,30 @@ mod tests {
     }
 
     #[test]
+    fn legacy_redis_snapshot_without_tsy_sentinel_field_defaults_to_none() {
+        // plan-tsy-sentinel-dormant-regression-v1 §P1：非破坏迁移——升级前写入 Redis 的旧
+        // 快照没有 `tsy_sentinel` 字段（该字段是本 plan 新加的），`#[serde(default)]` 必须
+        // 把它解码成 `None`（不 panic、不报错），即"退化为修复前的既有行为"（普通
+        // overworld GuardianRelic），而不是升级即丢全部 dormant 快照。
+        let source = snapshot("legacy_npc_no_sentinel", DVec3::new(5.0, 64.0, 5.0));
+        let legacy_payload = serde_json::to_string(&source).expect("serialize");
+        assert!(
+            !legacy_payload.contains("tsy_sentinel"),
+            "precondition: the synthesized legacy payload must lack the tsy_sentinel field \
+             (skip_serializing_if omits None), got: {legacy_payload}"
+        );
+        let decoded: NpcDormantSnapshot = serde_json::from_str(&legacy_payload)
+            .expect("legacy snapshot (no tsy_sentinel field) must deserialize via serde default");
+        assert!(
+            decoded.tsy_sentinel.is_none(),
+            "a legacy Redis snapshot missing tsy_sentinel must default to None (serde default), \
+             so upgrading the server binary never fails to load pre-existing dormant TSY sentinel \
+             snapshots (they just degrade to the pre-fix plain-GuardianRelic hydrate path until \
+             the next dehydrate cycle re-captures the field); got Some(..)"
+        );
+    }
+
+    #[test]
     fn loads_dormant_snapshots_from_redis_hash_entries() {
         let source = snapshot("npc_a", DVec3::new(10.0, 64.0, 10.0));
         let payload = serde_json::to_string(&source).expect("serialize dormant snapshot");
@@ -3581,6 +3634,7 @@ mod tests {
             loot_table: None,
             guardian_relic: None,
             tsy_hostile: None,
+            tsy_sentinel: None,
             intent: DormantBehaviorIntent::Cultivate {
                 zone: DEFAULT_SPAWN_ZONE_NAME.to_string(),
             },

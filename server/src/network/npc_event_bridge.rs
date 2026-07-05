@@ -673,6 +673,7 @@ mod tests {
             loot_table: None,
             guardian_relic: None,
             tsy_hostile: None,
+            tsy_sentinel: None,
             intent: DormantBehaviorIntent::Cultivate {
                 zone: zone.to_string(),
             },
