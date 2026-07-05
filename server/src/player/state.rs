@@ -4000,7 +4000,7 @@ mod player_state_tests {
             row: 1,
             col: 2,
         };
-        apply_inventory_move(&mut inventory, &registry, 8_802, &from, &to)
+        apply_inventory_move(&mut inventory, &registry, 8_802, &from, &to, false)
             .expect("拖入穿戴中的 pack_8801 应成功");
 
         // 落盘。

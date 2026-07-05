@@ -10706,6 +10706,7 @@ mod tests {
                     instance_id: 1,
                     from: None,
                     to: None,
+                    rotated: false,
                 }),
                 "InventoryMoveIntent",
             ),
