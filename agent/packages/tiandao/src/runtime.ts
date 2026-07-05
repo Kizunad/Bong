@@ -2,6 +2,7 @@ import type {
   AgentUiResponsePayloadV1,
   AgentWorldModelEnvelopeV1,
   BotanyEcologySnapshotV1,
+  FaunaEcologySnapshotV1,
   ChatMessageV1,
   ChatSignal,
   Command,
@@ -152,6 +153,7 @@ export interface RuntimeRedis {
   drainPriceIndexEvents?(): PriceIndexV1[];
   drainWeatherEventUpdates?(): WeatherEventUpdateV1[];
   drainBotanyEcologyEvents?(): BotanyEcologySnapshotV1[];
+  drainFaunaEcologyEvents?(): FaunaEcologySnapshotV1[];
   drainZonePressureCrossedEvents?(): ZonePressureCrossedV1[];
   drainPlayerChat(options?: { maxItems?: number; logger?: Pick<typeof console, "warn"> }): Promise<ChatMessageV1[]>;
   publishCommands(request: CommandPublishRequest): Promise<void>;
@@ -804,6 +806,7 @@ async function processEcologyEvents(args: {
 }): Promise<void> {
   const { redis, worldModel, ecologyAnalyzer, logger } = args;
   const ecologyEvents = redis.drainBotanyEcologyEvents?.() ?? [];
+  const faunaEcologyEvents = redis.drainFaunaEcologyEvents?.() ?? [];
   const pressureEvents = redis.drainZonePressureCrossedEvents?.() ?? [];
   const narrations: Narration[] = [];
   let sourceTick: number | null = null;
@@ -811,6 +814,11 @@ async function processEcologyEvents(args: {
   for (const event of ecologyEvents) {
     sourceTick = Math.max(sourceTick ?? event.tick, event.tick);
     narrations.push(...ecologyAnalyzer.ingestBotanyEcology(worldModel, event));
+  }
+
+  for (const event of faunaEcologyEvents) {
+    sourceTick = Math.max(sourceTick ?? event.tick, event.tick);
+    narrations.push(...ecologyAnalyzer.ingestFaunaEcology(worldModel, event));
   }
 
   for (const event of pressureEvents) {

@@ -1,0 +1,15 @@
+{
+  "id": "fauna_mundane_wither",
+  "layers": [
+    {
+      "sound": "minecraft:entity.wither.hurt",
+      "volume": 0.4,
+      "pitch": 1.6,
+      "delay_ticks": 0
+    }
+  ],
+  "priority": 40,
+  "attenuation": "world_3d",
+  "category": "AMBIENT",
+  "bus": "ENVIRONMENT"
+}

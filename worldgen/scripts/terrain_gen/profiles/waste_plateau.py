@@ -25,7 +25,7 @@ WASTE_PLATEAU_DECORATIONS = (
         kind="boulder",
         blocks=("bone_block", "calcite", "gravel"),
         size_range=(3, 6),
-        rarity=0.12,
+        rarity=0.08,
         notes="白骨碎丘：鲸骨地标改走 authored fossil mask，此处只放低矮骨砾。",
     ),
     DecorationSpec(
@@ -33,7 +33,7 @@ WASTE_PLATEAU_DECORATIONS = (
         kind="shrub",
         blocks=("dead_bush",),
         size_range=(1, 2),
-        rarity=0.50,
+        rarity=0.25,
         notes="尘棘：半埋沙中的枯枝。accent 删掉（曾用 sand/sandstone 实体方块导致地表凸起一圈）；改靠周围的 wastes_dead_bush ground cover 自然铺就。",
     ),
     DecorationSpec(
@@ -41,7 +41,7 @@ WASTE_PLATEAU_DECORATIONS = (
         kind="boulder",
         blocks=("soul_sand", "soul_soil", "basalt"),
         size_range=(3, 7),
-        rarity=0.30,
+        rarity=0.15,
         notes="虚压岩：灵魂沙与玄武岩堆成的巨石，近之有压迫感。",
     ),
     DecorationSpec(
@@ -49,7 +49,7 @@ WASTE_PLATEAU_DECORATIONS = (
         kind="boulder",
         blocks=("chiseled_stone_bricks", "cracked_stone_bricks", "mossy_stone_bricks"),
         size_range=(2, 5),
-        rarity=0.25,
+        rarity=0.13,
         notes="古废片：雕刻石砖的断柱残基，诉说消逝的王朝。",
     ),
     # Ground cover spec
@@ -58,7 +58,7 @@ WASTE_PLATEAU_DECORATIONS = (
         kind="flower",
         blocks=("dead_bush",),
         size_range=(1, 1),
-        rarity=0.30,
+        rarity=0.15,
         notes="枯灌：北荒标志地表植被，几无生机。",
     ),
 )

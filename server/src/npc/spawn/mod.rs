@@ -3,6 +3,7 @@ mod beast;
 pub(crate) mod common;
 mod commoner;
 mod disciple;
+mod mundane;
 mod rogue;
 mod zombie;
 
@@ -51,6 +52,9 @@ pub(crate) use self::commoner::spawn_commoner_npc_at;
 
 #[allow(unused_imports)]
 pub(crate) use self::beast::spawn_beast_npc_at;
+
+#[allow(unused_imports)]
+pub(crate) use self::mundane::spawn_mundane_fauna_at;
 
 #[allow(unused_imports)]
 pub(crate) use self::disciple::{spawn_disciple_npc_at, spawn_relic_guard_npc_at};

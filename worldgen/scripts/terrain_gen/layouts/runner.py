@@ -228,6 +228,20 @@ def _paste_nbt(
     *nbt_base_dir* — optional directory prepended to bare filenames so that
     payloads like ``"dan_zong_great_hall.nbt"`` resolve to
     ``<nbt_base_dir>/dan_zong_great_hall.nbt``.
+
+    Deliberately CORNER-anchored, unlike ``_block_grid`` (fixed to a center
+    anchor below).  Each ``.nbt`` file's local (0,0,0) is a *design* choice
+    baked in at authoring time (see e.g. ``scripts/nbt/structures/great_hall.py``,
+    which documents its own internal axes such as ``x: 0 ── 100 (中轴) ── 200``
+    relative to local (0,0,0), not the paste anchor).  The 50 placement offsets
+    in ``dan_zong_compound.py`` were hand-tuned against that per-structure corner
+    convention — switching this function to a center/footprint anchor would
+    silently shift every one of those 50 world positions and require
+    re-deriving every offset (and re-verifying the resulting visual layout).
+    That is out of scope for the flatten-radius fix (plan fix-danzong): here we
+    only make ``apply_compound_flatten`` cover the true footprint that this
+    corner-anchor semantics already produces (see LayoutSpec.radius in
+    dan_zong_compound.py).
     """
     resolved_path = _resolve_nbt_path(nbt_path, nbt_base_dir)
     raw_blocks = _load_nbt_blocks(resolved_path)
@@ -320,9 +334,16 @@ def _block_grid(
 
     *payload* encodes ``"<name>_<width>x<length>"`` (e.g.
     ``"central_path_6x152"``).  The path is built from
-    ``minecraft:mossy_cobblestone`` blocks, centred in width on *world_pos*,
-    extending along the Z axis (before rotation) for *length* blocks.  Y
-    offset 0 (same level as world_pos).
+    ``minecraft:mossy_cobblestone`` blocks, CENTRED on *world_pos* along
+    both the X (width) and Z (length) axes (before rotation).  Y offset 0
+    (same level as world_pos).
+
+    Centering fix (fix-danzong): this used to anchor *length* at *world_pos*
+    as a corner (``lz in range(length)`` => local z in [0, length)), which
+    put the placement's ``offset`` far from the actual midpoint of the paved
+    strip — e.g. ``central_path_6x152`` at offset z=64 painted world z in
+    [64, 215] instead of straddling z=64. Mirrors how *width* was already
+    centred via ``half_w``.
 
     After stamping, blocks are already in world orientation — no server
     rotation (M3 contract).
@@ -339,9 +360,10 @@ def _block_grid(
         logger.warning("block_grid: could not parse dimensions from '%s', using %dx%d", payload, width, length)
 
     half_w = width // 2
+    half_len = length // 2
     placements: list[BlockPlacement] = []
 
-    for lz in range(length):
+    for lz in range(-half_len, length - half_len):
         for lx in range(-half_w, half_w):
             rdx, _, rdz = _rotate_offset(lx, 0, lz, rotation)
             pos = (world_pos[0] + rdx, world_pos[1], world_pos[2] + rdz)

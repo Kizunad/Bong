@@ -93,7 +93,7 @@ def _make_dan_zong_zone(
             terrain_profile="dan_zong_yi_yuan",
             shape="ellipse",
             boundary=BoundarySpec(mode="soft", width=96),
-            height_model={"base": [62, 78], "peak": 92, "compound_flatten_radius": 96},
+            height_model={"base": [62, 78], "peak": 92, "compound_flatten_radius": 244},
             surface_palette=(
                 "podzol", "coarse_dirt", "mud",
                 "purple_terracotta", "mossy_cobblestone",
@@ -407,9 +407,14 @@ class LayoutDefinitionTests(unittest.TestCase):
         self.assertEqual(DAN_ZONG_COMPOUND_LAYOUT.poi_kind, "ruin")
 
     def test_layout_radius(self):
+        # fix-danzong: radius must cover the true footprint-inclusive max
+        # placement distance (227.59, dominated by the corner-anchored
+        # 200x50x120 dan_zong_great_hall.nbt) + 16 margin, not the old 96
+        # which left most of the compound floating over unflattened terrain.
         self.assertEqual(
-            DAN_ZONG_COMPOUND_LAYOUT.radius, 96,
-            "Layout radius should be 96, matching compound_flatten_radius",
+            DAN_ZONG_COMPOUND_LAYOUT.radius, 244,
+            "Layout radius should be 244 (ceil(227.59 max placement dist) + 16 "
+            "margin), matching compound_flatten_radius in zones.worldview.example.json",
         )
 
     def test_total_placement_count(self):
