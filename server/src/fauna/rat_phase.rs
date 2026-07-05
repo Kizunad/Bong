@@ -13,6 +13,9 @@ use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::npc::spawn::NpcMarker;
 use crate::npc::spawn_rat::RatBlackboard;
 use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
+use crate::qi_physics::{
+    QiAccountId, QiPhysicsError, QiTransfer, QiTransferReason, WorldQiAccount,
+};
 use crate::schema::vfx_event::VfxEventPayloadV1;
 use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::karma::{QiDensityHeatmap, QI_DENSITY_CELL_SIZE};
@@ -23,9 +26,6 @@ pub const RAT_PHASE_QI_GRADIENT_THRESHOLD: f32 = 0.20;
 pub const SURGE_TRIGGER_THRESHOLD: f32 = 1.0;
 pub const TRANSITION_DURATION_TICKS: u16 = 600;
 pub const RAT_DRAINED_CHUNK_WINDOW: usize = 8;
-// pub(crate)：ambient 调度核超距回收路径（§ambient-threat-v1 Verify blocker②）需要与
-// `release_drained_qi_on_death_system` 共用同一条归还系数，跨模块测试才能精确对拍。
-pub(crate) const RAT_DRAINED_QI_DEATH_RETURN_RATIO: f64 = 0.01;
 
 type RatPhaseReadQuery<'w, 's> = Query<
     'w,
@@ -351,8 +351,9 @@ pub fn release_drained_qi_on_death_system(
     mut deaths: EventReader<DeathEvent>,
     rats: Query<(&Position, Option<&CurrentDimension>, &RatBlackboard), With<NpcMarker>>,
     mut zones: Option<ResMut<ZoneRegistry>>,
+    mut ledger: Option<ResMut<WorldQiAccount>>,
 ) {
-    let Some(zones) = zones.as_deref_mut() else {
+    let (Some(zones), Some(ledger)) = (zones.as_deref_mut(), ledger.as_deref_mut()) else {
         for _ in deaths.read() {}
         return;
     };
@@ -372,21 +373,58 @@ pub fn release_drained_qi_on_death_system(
             continue;
         };
         if let Some(zone) = zones.find_zone_mut(zone_name.as_str()) {
-            return_rat_drained_qi_to_zone(zone, rat.drained_qi);
+            let rat_account = QiAccountId::npc(format!("rat:{}", death.target.index()));
+            if let Err(error) = transfer_rat_drained_qi_to_zone(ledger, zone, &rat_account) {
+                tracing::debug!(
+                    "[bong][fauna] rat death qi transfer to zone failed for {:?}: {:?}",
+                    death.target,
+                    error
+                );
+            }
         }
     }
 }
 
-/// 归还 `drained_qi` 给 zone 的守恒计算——从 [`release_drained_qi_on_death_system`] 抽出
-/// 独立函数，供 ambient 调度核的超距回收路径共用（§ambient-threat-v1 Verify blocker②
-/// 收口：回收前必须先走这条既有"死亡归还"路径，残余 qi 才不会在软删除
-/// `insert(Despawned)` 时蒸发）。`drained_qi <= 0.0` 时无操作。
-pub fn return_rat_drained_qi_to_zone(zone: &mut Zone, drained_qi: f64) {
-    if drained_qi <= 0.0 {
-        return;
+/// §8.1 决议 #3（promote 博弈 blocker 修正）—— field-authority 三段式："鼠 -> zone" 这一腿
+/// 从"account-only 转账"改为"同步→transfer→写回字段"，照抄
+/// `world::pseudo_vein_runtime::inject_zone_for_pseudo_vein` 既有范本。仓库正典是
+/// "字段权威、ledger 账户为镜像"——只改账户余额、不写回 `zone.spirit_qi` 字段的话，下一次
+/// 生产常驻的 `world::heartbeat::zone_qi_inflow_tick` 会用未变的字段覆盖式 `set_balance`
+/// 把刚转入的账户余额清零，造成二次蒸发。
+///
+/// `zone_account` 由 `zone.name` 内部派生，不再由调用方单独传入，防止字段/账户对错 zone。
+/// `ledger.balance(rat_account) <= 0.0` 时 no-op，返回 `Ok(0.0)`。
+pub fn transfer_rat_drained_qi_to_zone(
+    ledger: &mut WorldQiAccount,
+    zone: &mut Zone,
+    rat_account: &QiAccountId,
+) -> Result<f64, QiPhysicsError> {
+    let amount = ledger.balance(rat_account);
+    if amount <= 0.0 {
+        return Ok(0.0);
     }
-    let returned_qi = drained_qi * RAT_DRAINED_QI_DEATH_RETURN_RATIO;
-    zone.spirit_qi = (zone.spirit_qi + returned_qi / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
+
+    let zone_account = QiAccountId::zone(zone.name.clone());
+    // 转账前：把 zone 账户镜像同步到字段真实值，insufficient 检查针对的是真实容量，
+    // 而不是陈旧的镜像余额（同 `zone_qi_inflow_tick` / `inject_zone_for_pseudo_vein` 范式）。
+    ledger.set_balance(
+        zone_account.clone(),
+        zone.spirit_qi.max(0.0) * QI_ZONE_UNIT_CAPACITY,
+    )?;
+
+    ledger.transfer(QiTransfer::new(
+        rat_account.clone(),
+        zone_account.clone(),
+        amount,
+        QiTransferReason::RatBiteDrain,
+    )?)?;
+
+    // 转账后写回字段——blocker 修正的核心一步：缺了这行，下一次生产常驻
+    // `zone_qi_inflow_tick` 会用未变的 `zone.spirit_qi` 覆盖式 `set_balance` 把刚转入的
+    // 余额清零，造成二次蒸发（详见 §8.1 #3）。
+    zone.spirit_qi = (ledger.balance(&zone_account) / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
+
+    Ok(amount)
 }
 
 pub fn collect_rat_density_heatmap<'a, I>(rats: I) -> RatDensityHeatmapV1
@@ -768,7 +806,11 @@ mod tests {
     }
 
     #[test]
-    fn rat_death_returns_one_percent_drained_qi_as_zone_units() {
+    fn rat_death_transfers_full_drained_qi_to_zone_account() {
+        // §P0 验收抓手 #2（替换旧 1% 归还 pin）——鼠死亡必须把 `npc:rat:<id>` 账户
+        // 100% 转入 `zone:<name>` 账户（不再是 1%），并同步写回 `zone.spirit_qi` 字段
+        // （§8.1 决议 #3 blocker 修正核心：漏写字段会被下一次 `zone_qi_inflow_tick`
+        // 覆盖式 clobber 二次抹掉）。
         let mut app = App::new();
         app.add_event::<DeathEvent>();
         app.add_systems(Update, release_drained_qi_on_death_system);
@@ -793,6 +835,13 @@ mod tests {
             ))
             .id();
 
+        let rat_account = QiAccountId::npc(format!("rat:{}", rat.index()));
+        let mut ledger = WorldQiAccount::default();
+        ledger
+            .set_balance(rat_account.clone(), 100.0)
+            .expect("seeding the rat ledger balance must succeed");
+        app.insert_resource(ledger);
+
         app.world_mut().send_event(DeathEvent {
             target: rat,
             cause: "test".to_string(),
@@ -802,18 +851,38 @@ mod tests {
         });
         app.update();
 
+        let ledger_after = app.world().resource::<WorldQiAccount>();
+        assert_eq!(
+            ledger_after.balance(&rat_account),
+            0.0,
+            "鼠死亡后 npc:rat 账户必须清零（100% 转账，不再是只归还 1% 留 99% 僵尸余额）"
+        );
+
+        // 转账前，zone 账户先按 field-authority 三段式同步到 `spirit_qi * CAPACITY`
+        // 真实值，再吸收 rat 账户全额 100.0——最终账户余额 = 同步基线 + 100.0。
+        let zone_account = QiAccountId::zone("spawn");
+        let expected_zone_account_balance =
+            initial_spirit_qi.max(0.0) * QI_ZONE_UNIT_CAPACITY + 100.0;
+        assert!(
+            (ledger_after.balance(&zone_account) - expected_zone_account_balance).abs() < 1e-9,
+            "鼠死亡必须把 drained_qi 100% 转入 zone:<name> 账户（§8.1 决议 #1/#3），\
+             期望 {expected_zone_account_balance}，实际 {}",
+            ledger_after.balance(&zone_account)
+        );
+
         let zone_after = app
             .world()
             .resource::<ZoneRegistry>()
             .find_zone_by_name("spawn")
             .expect("spawn zone must still exist")
             .spirit_qi;
-        let expected = (initial_spirit_qi
-            + (100.0 * RAT_DRAINED_QI_DEATH_RETURN_RATIO) / QI_ZONE_UNIT_CAPACITY)
-            .clamp(-1.0, 1.0);
+        let expected_spirit_qi =
+            (expected_zone_account_balance / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
         assert!(
-            (zone_after - expected).abs() < 1e-9,
-            "鼠死亡回灌应按绝对真元换算：drained_qi × ratio / QI_ZONE_UNIT_CAPACITY，期望 {expected}，实际 {zone_after}"
+            (zone_after - expected_spirit_qi).abs() < 1e-9,
+            "§8.1 #3 blocker 修正：zone.spirit_qi 字段必须与账户转账同步写回（不能只改账户\
+             不改字段），期望 {expected_spirit_qi}，实际 {zone_after}——相等于旧值说明字段被\
+             漏写，下一次 zone_qi_inflow_tick 会覆盖式二次抹掉刚转入的账户余额"
         );
     }
 
