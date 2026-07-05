@@ -238,18 +238,33 @@ fn collision_top_y(state: BlockState) -> Option<f64> {
 /// 目标又是与玩家实际站立处毫不相干的荒野本底（raster 烘焙值），表现为站在下
 /// 半砖/耕地/雪地上莫名被瞬移（PR #343 遗留 bug，勿再退回"体素非空即穿地"）。
 ///
+/// # 为什么不能只比"体素内最高顶面"
+///
+/// 楼梯这类方块在同一体素里有**多个**碰撞箱（矮台 y∈[0,0.5] 铺满一半 XZ +
+/// 高台 y∈[0,1] 占另一半）。只取全体素最大顶面（1.0）会把站在矮台上
+/// （fract_y=0.5、脚点 XZ 在矮台一侧）的玩家误判成陷进方块。必须按脚点的
+/// `fract_x`/`fract_z` 选中**实际落脚的那个子碰撞箱**做点包含测试。
+///
 /// # 判定
 ///
-/// 比较 `fract_y`（= `p.y - p.y.floor()`）与该体素碰撞箱里最高的顶面：`fract_y`
-/// 落在顶面之上（含 [`FEET_SURFACE_EPSILON`] 浮点容差）就是合法站立，只有真正
-/// 陷进顶面以下才算穿地。完整方块（顶面 = 1.0）行为完全不变——玩家站在其上方
-/// 的空气格里，`floor(player.y)` 根本不会指向这个方块，走不到这条判断；只有当
-/// 玩家的身体真的陷入某个完整方块内部（`fract_y < 1.0 - 容差`）才会命中。
-fn feet_stuck_in_block(collision_top_y: Option<f64>, fract_y: f64) -> bool {
-    match collision_top_y {
-        Some(top) => fract_y < top - FEET_SURFACE_EPSILON,
-        None => false,
-    }
+/// 对脚点 `(fract_x, fract_y, fract_z)` 做逐碰撞箱的点包含测试：存在某个碰撞箱
+/// 在 XZ 上罩住脚点、且 `fract_y` 落在 `[min_y, max_y - 容差)` 区间内（真正
+/// 位于箱体内部）才算穿地。站在任何子箱顶面（fract_y == 该箱 max_y，含
+/// [`FEET_SURFACE_EPSILON`] 浮点容差）都是合法站立。完整方块行为完全不变——
+/// 玩家站在其上方的空气格里，`floor(player.y)` 根本不会指向这个方块；只有身体
+/// 真的陷入方块内部才会命中。脚点在箱体 min_y 之下（如站在同体素上半砖下方的
+/// 底面）也不算穿地——身体没有与该箱重叠的证据，宁可漏救不误弹。
+fn feet_stuck_in_block(state: BlockState, fract_x: f64, fract_y: f64, fract_z: f64) -> bool {
+    state.collision_shapes().any(|aabb| {
+        let min = aabb.min();
+        let max = aabb.max();
+        fract_x >= min.x
+            && fract_x < max.x
+            && fract_z >= min.z
+            && fract_z < max.z
+            && fract_y >= min.y
+            && fract_y < max.y - FEET_SURFACE_EPSILON
+    })
 }
 
 /// 纯决策：合法的挖矿/洞穴/游泳玩家所在处是无碰撞空间（air/water/植物碰撞箱为空），
@@ -318,16 +333,17 @@ fn recover_fall_through(
             let bx = p.x.floor() as i32;
             let by = p.y.floor() as i32;
             let bz = p.z.floor() as i32;
-            let fract_y = p.y - p.y.floor();
-            // 玩家身体所在方块在服务端有碰撞箱、且脚部小数偏移陷进了碰撞箱顶面以下
-            // （见 feet_stuck_in_block 文档）= 客户端缺这块 chunk、正穿过它。
-            // 站在下半砖/耕地/雪层等非完整方块顶面时不会命中。
-            let feet_obstructed = feet_stuck_in_block(
-                layer
-                    .block([bx, by, bz])
-                    .and_then(|b| collision_top_y(b.state)),
-                fract_y,
-            );
+            // 玩家脚点真的陷进该体素某个子碰撞箱内部（见 feet_stuck_in_block 文档）
+            // = 客户端缺这块 chunk、正穿过它。站在下半砖/耕地/雪层顶面、楼梯矮台
+            // 等非完整方块上时不会命中。
+            let feet_obstructed = layer.block([bx, by, bz]).is_some_and(|b| {
+                feet_stuck_in_block(
+                    b.state,
+                    p.x - p.x.floor(),
+                    p.y - p.y.floor(),
+                    p.z - p.z.floor(),
+                )
+            });
             match decide_fall_recovery(feet_obstructed, p.y, floor_y) {
                 FallRecovery::None => {
                     last_resend_tick.remove(&entity);
@@ -1056,66 +1072,131 @@ mod tests {
 
     #[test]
     fn feet_stuck_in_block_distinguishes_standing_from_embedded() {
-        // 完整方块：站在它上方的空气格里（collision_top_y=None，来自查询 by 处的
-        // 空气）——不触发；真的陷进方块内部（collision_top_y=Some(1.0)）——触发。
+        // 完整方块：真的陷进方块内部——触发；站在其上方时 floor(y) 指向空气格，
+        // 见下一条空气用例。
         assert!(
-            !feet_stuck_in_block(None, 0.0),
-            "站在完整方块上方的空气格里，fract_y=0.0 时不应判穿地（by 指向空气，\
-             collision_top_y 本就是 None）"
+            feet_stuck_in_block(BlockState::STONE, 0.5, 0.3, 0.5),
+            "身体陷进完整方块内部（fract_y=0.3 位于石头碰撞箱 [0,1) 内）必须判穿地"
         );
         assert!(
-            feet_stuck_in_block(Some(1.0), 0.3),
-            "身体陷进完整方块内部（fract_y=0.3 远低于顶面 1.0）必须判穿地"
+            !feet_stuck_in_block(BlockState::AIR, 0.5, 0.0, 0.5),
+            "空气（无碰撞箱）任何脚点都不应判穿地——站完整方块顶面时 floor(y) 指向的\
+             正是这个空气格"
+        );
+        assert!(
+            !feet_stuck_in_block(BlockState::WATER, 0.5, 0.5, 0.5),
+            "水（无碰撞箱）里游泳不应判穿地"
         );
 
         // 下半砖：顶面站立（回归钉子——旧实现在这里恒误判）不触发；陷入内部触发。
+        let bottom_slab = BlockState::OAK_SLAB.set(PropName::Type, PropValue::Bottom);
         assert!(
-            !feet_stuck_in_block(Some(0.5), 0.5),
+            !feet_stuck_in_block(bottom_slab, 0.5, 0.5, 0.5),
             "回归钉子：站在下半砖顶面（fract_y==顶面 0.5）绝不能判穿地，否则玩家会被\
              反复弹去荒野本底"
         );
         assert!(
-            feet_stuck_in_block(Some(0.5), 0.2),
+            feet_stuck_in_block(bottom_slab, 0.5, 0.2, 0.5),
             "fract_y=0.2 低于下半砖顶面 0.5，身体确实陷进砖里，应判穿地"
+        );
+
+        // 上半砖：脚点贴其底面之下（站在同体素下半空间）不触发——身体没有与
+        // 箱体重叠的证据，宁可漏救不误弹；陷进箱体内部触发。
+        let top_slab = BlockState::OAK_SLAB.set(PropName::Type, PropValue::Top);
+        assert!(
+            !feet_stuck_in_block(top_slab, 0.5, 0.2, 0.5),
+            "脚点在上半砖箱体（y∈[0.5,1]）之下不应判穿地（fract_y < 箱 min_y）"
+        );
+        assert!(
+            feet_stuck_in_block(top_slab, 0.5, 0.7, 0.5),
+            "fract_y=0.7 位于上半砖箱体内部，应判穿地"
         );
 
         // 耕地/小径 0.9375 顶面：站立不触发，陷入内部触发。
         assert!(
-            !feet_stuck_in_block(Some(0.9375), 0.9375),
+            !feet_stuck_in_block(BlockState::FARMLAND, 0.5, 0.9375, 0.5),
             "站在耕地顶面（0.9375）不应判穿地"
         );
         assert!(
-            feet_stuck_in_block(Some(0.9375), 0.5),
+            feet_stuck_in_block(BlockState::FARMLAND, 0.5, 0.5, 0.5),
             "fract_y=0.5 陷进耕地方块本体内部，应判穿地"
         );
 
-        // 雪层 0.125 顶面：站立不触发。
+        // 雪层：1 层无碰撞箱不触发；2 层顶面 0.125 站立不触发。
         assert!(
-            !feet_stuck_in_block(Some(0.125), 0.125),
-            "站在单层雪顶面（0.125）不应判穿地"
+            !feet_stuck_in_block(
+                BlockState::SNOW.set(PropName::Layers, PropValue::_1),
+                0.5,
+                0.0,
+                0.5
+            ),
+            "1 层雪无碰撞箱，站在其中（脚陷视觉层踩下方方块）不应判穿地"
         );
-
-        // 上半砖顶面（贴着满格 1.0）：紧贴顶面（浮点误差内）不触发。
         assert!(
-            !feet_stuck_in_block(Some(1.0), 1.0 - FEET_SURFACE_EPSILON / 2.0),
-            "站在上半砖/完整方块顶面，哪怕有亚 epsilon 级浮点误差也不应判穿地"
-        );
-
-        // 空气：任何 fract_y 都不触发。
-        assert!(
-            !feet_stuck_in_block(None, 0.5),
-            "collision_top_y=None（空气/水/无碰撞植物）任何 fract_y 都不应判穿地"
+            !feet_stuck_in_block(
+                BlockState::SNOW.set(PropName::Layers, PropValue::_2),
+                0.5,
+                0.125,
+                0.5
+            ),
+            "站在 2 层雪碰撞顶面（0.125）不应判穿地"
         );
 
         // 容差边界：恰好等于 top - epsilon 视为"仍站在顶面"（用 < 而非 <=，与
         // decide_fall_recovery 的边界哲学一致）；再往下哪怕一点点就必须判穿地。
         assert!(
-            !feet_stuck_in_block(Some(1.0), 1.0 - FEET_SURFACE_EPSILON),
+            !feet_stuck_in_block(BlockState::STONE, 0.5, 1.0 - FEET_SURFACE_EPSILON, 0.5),
             "fract_y 恰好等于 top-epsilon 的边界不应判穿地（< 而非 <=）"
         );
         assert!(
-            feet_stuck_in_block(Some(1.0), 1.0 - FEET_SURFACE_EPSILON - 1e-6),
+            feet_stuck_in_block(
+                BlockState::STONE,
+                0.5,
+                1.0 - FEET_SURFACE_EPSILON - 1e-6,
+                0.5
+            ),
             "fract_y 只要低于 top-epsilon 哪怕一点点，就必须判穿地"
+        );
+    }
+
+    /// CR #906 回归钉子：楼梯在同一体素里有多个碰撞箱（矮台半格 + 高台整格），
+    /// 判定若只取全体素最大顶面（1.0），站矮台（fract_y=0.5）会被误判穿地——
+    /// 必须按脚点 XZ 选中实际落脚的子碰撞箱。
+    #[test]
+    fn feet_stuck_in_block_respects_stairs_sub_shapes() {
+        // 默认朝向的橡木楼梯。先从真实碰撞箱里找出矮台（max_y==0.5）与高台
+        // （max_y==1.0）的 XZ 中心，避免对朝向属性做脆弱假设。
+        let stairs = BlockState::OAK_STAIRS;
+        let mut low_center: Option<(f64, f64)> = None;
+        let mut high_center: Option<(f64, f64)> = None;
+        for aabb in stairs.collision_shapes() {
+            let (min, max) = (aabb.min(), aabb.max());
+            let center = ((min.x + max.x) / 2.0, (min.z + max.z) / 2.0);
+            if (max.y - 0.5).abs() < 1e-9 {
+                low_center = Some(center);
+            } else if (max.y - 1.0).abs() < 1e-9 {
+                high_center = Some(center);
+            }
+        }
+        let (lx, lz) = low_center.expect("楼梯必须有 max_y=0.5 的矮台碰撞箱");
+        let (hx, hz) = high_center.expect("楼梯必须有 max_y=1.0 的高台碰撞箱");
+
+        assert!(
+            !feet_stuck_in_block(stairs, lx, 0.5, lz),
+            "回归钉子（CR #906）：站在楼梯矮台顶面（fract_y=0.5、脚点在矮台 XZ 内）\
+             绝不能因高台箱 max_y=1.0 被误判穿地"
+        );
+        assert!(
+            feet_stuck_in_block(stairs, hx, 0.5, hz),
+            "脚点在高台 XZ 内且 fract_y=0.5 位于高台箱内部，是真穿地，应触发"
+        );
+        assert!(
+            !feet_stuck_in_block(stairs, hx, 1.0 - FEET_SURFACE_EPSILON, hz),
+            "站在楼梯高台顶面（fract_y≈1.0）不应判穿地"
+        );
+        assert!(
+            feet_stuck_in_block(stairs, lx, 0.2, lz),
+            "脚点陷进矮台箱体内部（fract_y=0.2 < 0.5）应判穿地"
         );
     }
 
