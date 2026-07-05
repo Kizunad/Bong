@@ -11,6 +11,7 @@ const {
   FACTION_EVENT,
   AGING,
   BOTANY_ECOLOGY,
+  FAUNA_ECOLOGY,
   BREAKTHROUGH_EVENT,
   COMBAT_REALTIME,
   DEATH_CINEMATIC,
@@ -610,6 +611,57 @@ describe("redis-ipc", () => {
     expect(ipc.drainBotanyEcologyEvents()).toEqual([]);
     expect(warn).toHaveBeenCalledWith(
       "[redis-ipc] invalid botany ecology snapshot:",
+      expect.stringContaining("spirit_qi"),
+    );
+
+    warn.mockRestore();
+  });
+
+  it("observes valid fauna ecology snapshots and skips invalid payloads", async () => {
+    const pub = new FakeRedisListClient();
+    const sub = new FakeRedisListClient();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    const createClient = vi
+      .fn<(url: string) => FakeRedisListClient>()
+      .mockReturnValueOnce(sub)
+      .mockReturnValueOnce(pub);
+
+    const ipc = new RedisIpc({ url: "redis://fake" }, { createClient });
+    const callback = vi.fn();
+    ipc.onFaunaEcology(callback);
+
+    await ipc.connect();
+    await sub.publish(
+      FAUNA_ECOLOGY,
+      JSON.stringify({
+        v: 1,
+        tick: 84,
+        zones: [
+          {
+            zone: "starter_zone",
+            spirit_qi: 0.12,
+            species_counts: [{ kind: "rabbit", count: 5 }],
+          },
+        ],
+      }),
+    );
+    // spirit_qi=2 越界 → 校验失败，不进队列、不触 callback。
+    await sub.publish(
+      FAUNA_ECOLOGY,
+      JSON.stringify({ v: 1, tick: 85, zones: [{ zone: "bad", spirit_qi: 2, species_counts: [] }] }),
+    );
+
+    expect(callback).toHaveBeenCalledTimes(1);
+    expect(ipc.drainFaunaEcologyEvents()).toEqual([
+      expect.objectContaining({
+        tick: 84,
+        zones: [expect.objectContaining({ zone: "starter_zone" })],
+      }),
+    ]);
+    expect(ipc.drainFaunaEcologyEvents()).toEqual([]);
+    expect(warn).toHaveBeenCalledWith(
+      "[redis-ipc] invalid fauna ecology snapshot:",
       expect.stringContaining("spirit_qi"),
     );
 

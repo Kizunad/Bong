@@ -15,6 +15,7 @@ use valence::entity::sheep::SheepEntityBundle;
 use valence::entity::wolf::WolfEntityBundle;
 use valence::prelude::{Commands, DVec3, Entity, EntityLayerId, Position};
 
+use crate::cultivation::components::Realm;
 use crate::fauna::mundane::{entity_kind_for_mundane, MundaneFaunaKind, MundaneFaunaSpecies};
 use crate::npc::brain::{
     CorneredScorer, FarmAction, FleeAction, FleeThreatScorer, GoToPoiAction, GoToPoiState,
@@ -196,7 +197,11 @@ pub fn spawn_mundane_fauna_at(
         commands.entity(entity).insert(MundaneHuntState::default());
     }
 
-    let mut runtime = npc_runtime_bundle_with_age(entity, NpcArchetype::Mundane, 0.0);
+    // 凡兽无灵、不修炼——`Realm::Awaken`（醒灵，境界地板）作为惰性占位值传入。
+    // 共享的 `NpcRuntimeBundle` 自 #857 起强制携带 `Realm`，但凡兽从不参与修炼系统，
+    // 此值只为满足类型约束，与旧 `Cultivation::default().realm`（同为 Awaken）行为一致。
+    let mut runtime =
+        npc_runtime_bundle_with_age(entity, NpcArchetype::Mundane, Realm::Awaken, 0.0);
     let hp = kind.health_max();
     runtime.wounds.health_current = hp;
     runtime.wounds.health_max = hp;

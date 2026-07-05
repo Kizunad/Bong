@@ -355,11 +355,15 @@ use crate::npc::spawn::NpcBlackboard;
 use super::{CORNERED_MELEE_DISTANCE, FLEE_THREAT_RANGE};
 
 /// 凡兽泛化避险 scorer（对齐 [`FearCultivatorScorer`] 但不按境界加权、不区分修士/玩家——
-/// 凡兽对"一切威胁"无差别保持距离，T0~T2.5 全档共用）。**P0 范围限定**：
+/// 凡兽对"一切威胁"无差别保持距离，T0~T2.5 全档共用）。**已知 v1 限定（诚实记录，非孤岛）**：
 /// `update_npc_blackboard` 的 `nearest_player` 只扫描 `With<ClientMarker>` 玩家（+
-/// decoy/retaliation/duel 覆盖），不扫描非玩家的捕食者 NPC——本 scorer 在 P0 实际只对
-/// 玩家/修士生效，对妖兽的泛化避险留给 P2 `preys_on` 表接入时扩展感知源
-/// （plan §8.1 #3 已定案 P0 是最小反抗档，不算孤岛，是范围内已知限定）。
+/// decoy/retaliation/duel 覆盖），**从不扫描非玩家的捕食者 NPC**——故本 scorer 对**玩家**
+/// 威胁完整生效（玩家逼近→逃、近战追打→ `CorneredScorer` 反击），但对"妖兽/狼狐捕食者"
+/// 不感知：被妖兽猎杀的凡兽不会因此避险（掠食侧 `MundaneHuntScorer` 在 P2 已落地，猎物侧
+/// 感知未落地）。这是 plan §8.1 #3 定案的**面向玩家最小反抗档已达成**、跨物种猎物感知刻意
+/// 后置的范围外项——需要给 `NpcBlackboard` 加 `nearest_predator` 扫描源，属独立后续
+/// PR（见 plan Finish Evidence 遗留）。面向玩家的威胁谱系（逃 + 反击）在本 plan 内已完整，
+/// 不违反 [[feedback_threat_spectrum]]（该原则约束"对玩家无害背景板"，玩家侧已满足）。
 #[derive(Clone, Copy, Debug, Component)]
 pub struct FleeThreatScorer;
 

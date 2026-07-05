@@ -400,8 +400,9 @@ pub enum FaunaPreyId {
 ///   本就无差别放行（只对 Beast-vs-Beast 目标才查 `is_prey_of`），凡兽自 P0 起就带
 ///   `Cultivation::default()`（`npc_runtime_bundle_with_age` 一并插入，满足
 ///   `HuntCandidateQuery` 契约）——这条边已是**既有生产代码的自然结果**，此处仅做关系
-///   总账的文档化 + 测试断言，非新增运行时门控点（见模块测试
-///   `beast_hunt_action_targets_mundane_fauna_via_existing_territory_pipeline`）。
+///   总账的文档化 + 测试断言，非新增运行时门控点（运行时回归护栏见
+///   `npc::territory::tests::beast_hunt_action_targets_mundane_fauna_via_existing_territory_pipeline`，
+///   纯函数真值表见本模块 `preys_on` 及 `npc::brain::predation::tests`）。
 /// - T0（鸡/兔/蛙）──避──→ 一切（永不作为 predator 出现，走 `_ => false` 兜底）。
 /// - **反向关闭**（§8.1 #8 定案）：`Rat` 不腐食/不捕食凡兽尸体或活体——鼠患的"吃"
 ///   （噬元，吃灵气）与凡兽的"死"（无灵）不构成边。
@@ -1244,5 +1245,33 @@ mod tests {
             );
             assert_eq!(kind.is_t0(), expected, "{kind:?} is_t0 不符预期");
         }
+    }
+
+    // §8.1 #2.3 / #3 —— 真实生产类型 MundaneFaunaMarker 的调度预算独立性回归护栏。
+    // ambient_scheduler.rs 的 `generic_marker_type_is_independent_from_threat_marker` 用测试替身
+    // TestFaunaMarker 验证了泛型机制；这里用**真实 register() + 真实 MundaneFaunaMarker + 真实
+    // config**（mundane_passive_budget_fn / mundane_pool_fn）锁死：凡兽调度实例
+    // counts_against_threat_budget=false，绝不与 AmbientThreatMarker 威胁预算耦合。
+    #[test]
+    fn register_wires_mundane_scheduler_independent_of_threat_budget() {
+        let mut app = App::new();
+        register(&mut app);
+
+        let config = app
+            .world()
+            .resource::<AmbientSchedulerConfig<MundaneFaunaMarker>>();
+        assert!(
+            !config.counts_against_threat_budget,
+            "MundaneFaunaMarker 调度必须 counts_against_threat_budget=false（§8.1 #3）——\
+             否则凡兽活体会污染 plan-ambient-threat-v1 的 zone 威胁密度统计，两套 marker \
+             预算必须完全独立。若有人把它翻成 true 请改 §8.1 #3 决议而非本测试"
+        );
+        assert!(
+            app.world()
+                .get_resource::<AmbientSchedulerState<MundaneFaunaMarker>>()
+                .is_some(),
+            "register 必须安装 MundaneFaunaMarker 专属调度状态资源（按 M 单态化，\
+             与 AmbientThreatMarker 的 AmbientSchedulerState 结构隔离）"
+        );
     }
 }

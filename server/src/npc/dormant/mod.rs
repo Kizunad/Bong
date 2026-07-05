@@ -1186,7 +1186,10 @@ fn dormant_snapshot_migrated_realm(snapshot: &NpcDormantSnapshot, is_resource_zo
         NpcArchetype::Beast
         | NpcArchetype::Zombie
         | NpcArchetype::Fuya
-        | NpcArchetype::SkullFiend => Realm::Awaken,
+        | NpcArchetype::SkullFiend
+        // 凡兽（plan-mundane-fauna-v1）无灵、不修炼——恒 `Realm::Awaken` 地板，
+        // 与其它"无身份信号"背景生物同组，不参与 §8.1 #1 散修境界分布抽样。
+        | NpcArchetype::Mundane => Realm::Awaken,
         NpcArchetype::Rogue | NpcArchetype::Disciple | NpcArchetype::Commoner => snapshot
             .faction
             .as_ref()

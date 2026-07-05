@@ -7,7 +7,7 @@
 
 use std::collections::BTreeMap;
 
-use valence::prelude::{Query, Res};
+use valence::prelude::{Despawned, Query, Res, Without};
 
 use crate::fauna::mundane::{MundaneFaunaKind, MundaneFaunaMarker, MundaneFaunaSpecies};
 use crate::network::redis_bridge::RedisOutbound;
@@ -25,7 +25,9 @@ pub fn emit_fauna_ecology_snapshot(
     gameplay_tick: Option<Res<GameplayTick>>,
     zone_registry: Option<Res<ZoneRegistry>>,
     redis: Option<Res<RedisBridgeResource>>,
-    fauna: Query<(&MundaneFaunaSpecies, &MundaneFaunaMarker)>,
+    // `Without<Despawned>`：负灵域枯萎系统 `insert(Despawned)` 后实体到下一 tick 才真正移除；
+    // 排除该过渡态，避免正被回收的凡兽在恰逢 600-tick emit 时被多算进当期 species_counts。
+    fauna: Query<(&MundaneFaunaSpecies, &MundaneFaunaMarker), Without<Despawned>>,
 ) {
     let Some(gameplay_tick) = gameplay_tick else {
         return;
