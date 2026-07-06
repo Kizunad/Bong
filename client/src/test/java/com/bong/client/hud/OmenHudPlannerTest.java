@@ -63,6 +63,27 @@ class OmenHudPlannerTest {
     }
 
     @Test
+    void tideSkyOmenProducesSubtleTintAndVignette() {
+        OmenStateStore.note(payload("world_omen_tide_sky", 0.6), 1_000L);
+
+        List<HudRenderCommand> commands = OmenHudPlanner.buildCommands(
+            OmenStateStore.snapshot(1_200L),
+            1_200L,
+            320,
+            180
+        );
+
+        assertEquals(2, commands.size(),
+            "TIDE_SKY should produce a restrained tint plus edge vignette");
+        assertTrue(commands.stream().anyMatch(HudRenderCommand::isScreenTint),
+            "TIDE_SKY should include a non-textual sky tint cue");
+        assertTrue(commands.stream().anyMatch(HudRenderCommand::isEdgeVignette),
+            "TIDE_SKY should include a peripheral omen cue");
+        assertTrue(commands.stream().allMatch(cmd -> !cmd.isText() && !cmd.isScaledText()),
+            "tide sky omen HUD should remain non-textual");
+    }
+
+    @Test
     void realmCollapseOmenProducesVignetteAndScreenTint() {
         OmenStateStore.note(payload("world_omen_realm_collapse", 0.5), 1_000L);
 

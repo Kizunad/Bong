@@ -32,12 +32,26 @@ class OmenStateStoreTest {
         assertEquals(OmenStateStore.Kind.BEAST_TIDE,
             OmenStateStore.kindFromEventId(new Identifier("bong", "world_omen_beast_tide")),
             "beast tide omen id should map to BEAST_TIDE");
+        assertEquals(OmenStateStore.Kind.TIDE_SKY,
+            OmenStateStore.kindFromEventId(new Identifier("bong", "world_omen_tide_sky")),
+            "tide sky omen id should map to TIDE_SKY");
         assertEquals(OmenStateStore.Kind.REALM_COLLAPSE,
             OmenStateStore.kindFromEventId(new Identifier("bong", "world_omen_realm_collapse")),
             "realm collapse omen id should map to REALM_COLLAPSE");
         assertEquals(OmenStateStore.Kind.KARMA_BACKLASH,
             OmenStateStore.kindFromEventId(new Identifier("bong", "world_omen_karma_backlash")),
             "karma backlash omen id should map to KARMA_BACKLASH");
+    }
+
+    @Test
+    void noteRecordsTideSkyOmen() {
+        OmenStateStore.note(payload("world_omen_tide_sky", 0.75, 200), 1_000L);
+
+        OmenStateStore.Entry entry = OmenStateStore.snapshot(1_000L).entries().get(0);
+        assertEquals(OmenStateStore.Kind.TIDE_SKY, entry.kind(),
+            "tide sky omen payload should be retained as a visible omen entry");
+        assertEquals(0.75, entry.strength(),
+            "tide sky omen should preserve payload strength inside the 0..1 range");
     }
 
     @Test
