@@ -3,6 +3,7 @@ package com.bong.client.network;
 import bong.Envelope;
 import com.bong.client.inventory.state.RemainsStore;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
@@ -21,6 +22,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * （单测吃数组 JSON 假路径掩盖），remains_sync 不允许复发。</p>
  */
 public class RemainsSyncHandlerTest {
+
+    @BeforeEach
+    void setUp() {
+        RemainsStore.resetForTests();
+    }
 
     @AfterEach
     void tearDown() {
