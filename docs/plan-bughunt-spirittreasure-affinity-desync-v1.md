@@ -1,6 +1,6 @@
-# plan-bughunt-spirittreasure-affinity-desync-v1（骨架）
+# plan-bughunt-spirittreasure-affinity-desync-v1
 
-> **骨架（草案）**。一句话主题：`spirit_treasure_dialogue` 正常回包会立刻改掉 server 侧 `SpiritTreasureRegistry.active.affinity/sleeping`，但被动重算、`spirit_treasure_state` 推送、client `SpiritTreasureStateStore` 刷新全都只挂在 `Changed<PlayerInventory>` / `Changed<ActiveSpiritTreasures>` 上，导致**器灵已经沉睡或好感已变化，玩家身上的灵宝被动和灵宝面板仍长期停留在旧值**。这不是纯 UI 小毛刺，而是 server 实际数值、聊天交互门控、client 展示三条链同时分叉。
+> 一句话主题：`spirit_treasure_dialogue` 正常回包会立刻改掉 server 侧 `SpiritTreasureRegistry.active.affinity/sleeping`，但被动重算、`spirit_treasure_state` 推送、client `SpiritTreasureStateStore` 刷新全都只挂在 `Changed<PlayerInventory>` / `Changed<ActiveSpiritTreasures>` 上，导致**器灵已经沉睡或好感已变化，玩家身上的灵宝被动和灵宝面板仍长期停留在旧值**。这不是纯 UI 小毛刺，而是 server 实际数值、聊天交互门控、client 展示三条链同时分叉。
 
 > 立项动机：本轮 bughunt 聚焦 `server/src/spiritwood` / `artifact|spirit_treasure` / 相关 client 展示与交互链路；该问题落在灵宝主链、玩家可正常触发、且不与近期 craft/social renown/tribulation/botany/dying elder/pseudo vein restart loss 题重复。
 
