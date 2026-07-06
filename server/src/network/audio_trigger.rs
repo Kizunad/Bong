@@ -2163,6 +2163,7 @@ mod tests {
         });
         app.world_mut().send_event(SocialRenownDeltaEvent {
             char_id: "offline:Azure".to_string(),
+            identity_id: None,
             fame_delta: 2,
             notoriety_delta: 0,
             tags_added: vec![],
