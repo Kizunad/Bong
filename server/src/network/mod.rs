@@ -131,7 +131,9 @@ use valence::prelude::{
 
 use crate::combat::components::Lifecycle;
 use crate::combat::CombatClock;
-use crate::cultivation::components::{Cultivation, MeridianSystem, QiColor};
+use crate::cultivation::color::PracticeLog;
+use crate::cultivation::components::{Cultivation, MeridianSystem, QiColor, Realm};
+use crate::cultivation::insight::InsightQuota;
 use crate::cultivation::insight_apply::UnlockedPerceptions;
 use crate::cultivation::life_record::LifeRecord;
 use crate::cultivation::possession::DuoSheWarningEvent;
@@ -188,9 +190,6 @@ use crate::world::season::{query_season, SeasonChangedEvent, WorldSeasonState};
 use crate::world::terrain::TerrainProviders;
 use crate::world::tsy_lifecycle::EVENT_TSY_RACE_OUT;
 use crate::world::zone::{Zone, ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
-
-#[cfg(test)]
-use crate::cultivation::components::Realm;
 
 #[cfg(test)]
 use crate::persistence::{load_agent_decisions, load_agent_eras};
@@ -2358,6 +2357,7 @@ fn process_redis_inbound(
     redis: Res<RedisBridgeResource>,
     zone_registry: Option<Res<ZoneRegistry>>,
     mut clients: Query<(Entity, &mut Client, &Username, &Position), With<Client>>,
+    insight_contexts: Query<(&QiColor, &PracticeLog, &InsightQuota, &Cultivation)>,
     mut command_executor: valence::prelude::ResMut<CommandExecutorResource>,
     mut narration_dedupe: valence::prelude::ResMut<NarrationDedupeResource>,
     mut spirit_treasure_registry: Option<ResMut<SpiritTreasureRegistry>>,
@@ -2442,9 +2442,32 @@ fn process_redis_inbound(
                     );
                     continue;
                 };
+                let fallback_color;
+                let fallback_log;
+                let fallback_quota;
+                let (qi_color, practice_log, quota, realm) =
+                    if let Ok((qi_color, practice_log, quota, cultivation)) =
+                        insight_contexts.get(entity)
+                    {
+                        (qi_color, practice_log, quota, cultivation.realm)
+                    } else {
+                        fallback_color = QiColor::default();
+                        fallback_log = PracticeLog::default();
+                        fallback_quota = InsightQuota::default();
+                        (
+                            &fallback_color,
+                            &fallback_log,
+                            &fallback_quota,
+                            Realm::Induce,
+                        )
+                    };
                 let Some(choices) = crate::cultivation::insight_flow::ingest_agent_insight_offer(
                     &offer.trigger_id,
                     &offer.choices,
+                    qi_color,
+                    practice_log,
+                    quota,
+                    realm,
                 ) else {
                     continue;
                 };
