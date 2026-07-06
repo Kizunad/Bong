@@ -1,6 +1,6 @@
-# plan-social-renown-identity-bridge-v1（骨架）
+# plan-social-renown-identity-bridge-v1
 
-> **骨架（草案）**。一句话主题：`SocialRenownDeltaEvent` 现在只写 live `Renown` + SQLite `social_renown`，**不回写 `PlayerIdentities.active.renown` 与 `player_identities`**；结果是 `player_state.social` / `social_renown_delta` / CultivationScreen 看到的是**新名声**，但 `identity_panel_state` / `IdentityReactionChangedEvent` / `bong:wanted_player` / `npc_metadata` / 交易门禁继续读**旧身份名声**。这是 server→schema→client-state/social-hud 主路径上的一条高置信断链，且重连后不会自愈。
+> 一句话主题：`SocialRenownDeltaEvent` 现在只写 live `Renown` + SQLite `social_renown`，**不回写 `PlayerIdentities.active.renown` 与 `player_identities`**；结果是 `player_state.social` / `social_renown_delta` / CultivationScreen 看到的是**新名声**，但 `identity_panel_state` / `IdentityReactionChangedEvent` / `bong:wanted_player` / `npc_metadata` / 交易门禁继续读**旧身份名声**。这是 server→schema→client-state/social-hud 主路径上的一条高置信断链，且重连后不会自愈。
 
 > **这个 bug 对实际游玩体验的影响**：玩家在背盟、宗门背叛、越级全力击杀、战争胜利后，修炼面板里的 fame/notoriety 会立刻变化，但 NPC 仍按旧身份分数交易/追杀，Wanted 不触发，身份面板继续停留在旧 reputation；下线重连后依然分裂，因为 `social_renown` 与 `player_identities` 是两张独立持久化表。
 
