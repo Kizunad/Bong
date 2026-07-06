@@ -1,0 +1,15 @@
+{
+  "id": "sword_cleave_swing",
+  "layers": [
+    {
+      "sound": "minecraft:entity.player.attack.nodamage",
+      "volume": 0.5,
+      "pitch": 0.85,
+      "delay_ticks": 0
+    }
+  ],
+  "priority": 50,
+  "attenuation": "MELEE",
+  "category": "PLAYERS",
+  "bus": "COMBAT"
+}

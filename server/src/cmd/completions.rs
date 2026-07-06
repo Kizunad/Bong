@@ -237,10 +237,20 @@ pub fn filter_candidates(mut candidates: Vec<Candidate>, partial: &str) -> Vec<C
 pub fn mark_ask_server_arguments(mut registry: ResMut<CommandRegistry>) {
     let marked = mark_routes_ask_server(&mut registry);
     if marked < ROUTES.len() {
+        // 打出具体失败路径——只报数量没法定位是哪条 ROUTES 与哪个
+        // assemble_graph 漂移（2026-07-06 排障实证：3/9 查无可查）。
+        let unresolved: Vec<String> = ROUTES
+            .iter()
+            .filter(|(path, _, _)| {
+                argument_suggestion(&registry.graph, path) != Some(Some(Suggestion::AskServer))
+            })
+            .map(|(path, _, _)| path.join(" "))
+            .collect();
         tracing::warn!(
             "[bong][cmd] tab completion: only {marked}/{} routes resolved in command graph — \
-             a ROUTES path is out of sync with its assemble_graph literals",
-            ROUTES.len()
+             unresolved: [{}] (ROUTES path out of sync with its assemble_graph literals)",
+            ROUTES.len(),
+            unresolved.join(", ")
         );
     } else {
         tracing::info!("[bong][cmd] tab completion armed on {marked} argument nodes");

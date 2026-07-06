@@ -2248,7 +2248,9 @@ fn send_player_state_payload_to_client(
     };
 
     send_server_data_payload(client, payload_bytes.as_slice());
-    tracing::info!(
+    // trace：player_state 周期推送 ~每 tick/玩家，INFO 会把整份 server log 刷成
+    // 噪声墙（2026-07-06 playtest：10s 挂机 258 行，取证全靠 grep -v）。
+    tracing::trace!(
         "[bong][network] sent {} {} payload to client entity {entity:?} for `{}` ({reason})",
         SERVER_DATA_CHANNEL,
         payload_type,

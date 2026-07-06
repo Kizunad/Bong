@@ -147,6 +147,16 @@ pub fn collect_player_chat(
                 outbound,
                 collected,
             } => {
+                // 同 zone 玩家可见（含发送者 echo）。此前聊天只进 Redis 喂天道，
+                // 发送者和周围玩家全看不见——发言如喊进虚空（2026-07-06 playtest）。
+                // 广播格局与 SpiritTreasureDialogue 一致：zone 为界。
+                let line = format!("<{}> {}", collected.username, collected.raw);
+                broadcast_to_zone(
+                    &mut player_sets.p1(),
+                    &zone_registry,
+                    &collected.zone,
+                    &line,
+                );
                 collected_chats.send(collected);
                 let _ = redis.tx_outbound.send(outbound);
             }
@@ -155,12 +165,12 @@ pub fn collect_player_chat(
                 zone,
                 public_message,
             } => {
-                let mut clients = player_sets.p1();
-                for (mut target_client, position) in &mut clients {
-                    if zone_name_for_position(&zone_registry, position.get()) == zone {
-                        target_client.send_chat_message(public_message.clone());
-                    }
-                }
+                broadcast_to_zone(
+                    &mut player_sets.p1(),
+                    &zone_registry,
+                    &zone,
+                    &public_message,
+                );
                 let _ = redis.tx_outbound.send(outbound);
             }
             ClassifiedChat::PromptSelf(text) => {
@@ -169,6 +179,21 @@ pub fn collect_player_chat(
                     target_client.send_chat_message(text);
                 }
             }
+        }
+    }
+}
+
+/// 向 `zone` 内所有 client 发一条聊天行（含发送者本人）。
+/// PlayerChat 与 SpiritTreasureDialogue 共用的 zone 广播格局。
+fn broadcast_to_zone(
+    clients: &mut Query<(&mut Client, &Position), With<Client>>,
+    zone_registry: &ZoneRegistry,
+    zone: &str,
+    text: &str,
+) {
+    for (mut target_client, position) in clients.iter_mut() {
+        if zone_name_for_position(zone_registry, position.get()) == zone {
+            target_client.send_chat_message(text.to_string());
         }
     }
 }

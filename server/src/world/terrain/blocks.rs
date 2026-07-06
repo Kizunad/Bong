@@ -137,6 +137,9 @@ pub fn block_from_name(name: &str) -> Option<BlockState> {
         "black_concrete" => BlockState::BLACK_CONCRETE,
         "red_concrete" => BlockState::RED_CONCRETE,
         "light_blue_concrete" => BlockState::LIGHT_BLUE_CONCRETE,
+        // wangyintai 负灵域漂白地表（void resonance bleached surface）
+        "gray_concrete" => BlockState::GRAY_CONCRETE,
+        "light_gray_concrete" => BlockState::LIGHT_GRAY_CONCRETE,
         "soul_lantern" => BlockState::SOUL_LANTERN,
         "redstone_lamp" => BlockState::REDSTONE_LAMP,
         "verdant_froglight" => BlockState::VERDANT_FROGLIGHT,

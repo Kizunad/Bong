@@ -36,6 +36,17 @@ pub fn zone_names(registry: Option<&ZoneRegistry>) -> String {
         .join(", ")
 }
 
+/// 30+ zone 挤一行在聊天栏不可读（2026-07-06 playtest）——按每行 4 个分批。
+/// 首行为 `Zones (N):` 总数头，随后每行至多 4 个名字。
+pub fn zone_chat_lines(names: &str) -> Vec<String> {
+    let all: Vec<&str> = names.split(", ").filter(|name| !name.is_empty()).collect();
+    let mut lines = vec![format!("Zones ({}):", all.len())];
+    for chunk in all.chunks(4) {
+        lines.push(format!("  {}", chunk.join(", ")));
+    }
+    lines
+}
+
 pub fn handle_zones(
     mut events: EventReader<CommandResultEvent<ZonesCmd>>,
     zone_registry: Option<Res<ZoneRegistry>>,
@@ -45,7 +56,9 @@ pub fn handle_zones(
         let Ok(mut client) = clients.get_mut(event.executor) else {
             continue;
         };
-        client.send_chat_message(format!("Zones: {}", zone_names(zone_registry.as_deref())));
+        for line in zone_chat_lines(&zone_names(zone_registry.as_deref())) {
+            client.send_chat_message(line);
+        }
     }
 }
 
@@ -60,6 +73,42 @@ mod tests {
         assert_eq!(
             zone_names(None),
             crate::world::zone::DEFAULT_SPAWN_ZONE_NAME
+        );
+    }
+
+    #[test]
+    fn zone_chat_lines_boundaries_empty_exact_chunk_and_off_by_one() {
+        // 空输入：只有总数头（0），不产出空名字行。
+        assert_eq!(
+            zone_chat_lines(""),
+            vec!["Zones (0):".to_string()],
+            "空 zone 列表应只有 `Zones (0):` 头行（split 产生的空串必须被过滤）"
+        );
+
+        // 恰好 4 个 = 单块：头 + 1 行。
+        let four = zone_chat_lines("a, b, c, d");
+        assert_eq!(
+            four,
+            vec!["Zones (4):".to_string(), "  a, b, c, d".to_string()],
+            "4 个 zone 应恰好占 1 个分块行（每行 4 个的边界）"
+        );
+
+        // 5 个 = off-by-one 跨块：头 + 2 行，第二行只有溢出的 1 个。
+        let five = zone_chat_lines("a, b, c, d, e");
+        assert_eq!(
+            five,
+            vec![
+                "Zones (5):".to_string(),
+                "  a, b, c, d".to_string(),
+                "  e".to_string(),
+            ],
+            "5 个 zone 应跨 2 个分块行（4+1），off-by-one 不得丢名字"
+        );
+
+        // 单个：头 + 1 行。
+        assert_eq!(
+            zone_chat_lines("solo"),
+            vec!["Zones (1):".to_string(), "  solo".to_string()]
         );
     }
 
