@@ -272,9 +272,35 @@ impl Resource for QiLedgerTimer {}
 #[derive(Default)]
 struct ZoneTransitionTracker {
     last_zone_by_entity: HashMap<Entity, String>,
+    last_snapshot_by_entity: HashMap<Entity, ZoneInfoRuntimeSnapshot>,
 }
 
 impl Resource for ZoneTransitionTracker {}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ZoneInfoRuntimeSnapshot {
+    zone: String,
+    spirit_qi_bits: u64,
+    danger_level: u8,
+    status: ZoneStatusV1,
+    active_events: Vec<String>,
+}
+
+impl ZoneInfoRuntimeSnapshot {
+    fn from_zone(zone: &Zone) -> Self {
+        Self {
+            zone: zone.name.clone(),
+            spirit_qi_bits: zone.spirit_qi.to_bits(),
+            danger_level: zone.danger_level,
+            status: zone_status(zone),
+            active_events: zone.active_events.clone(),
+        }
+    }
+
+    fn spirit_qi(&self) -> f64 {
+        f64::from_bits(self.spirit_qi_bits)
+    }
+}
 
 #[derive(Default)]
 struct NarrationDedupeResource {
@@ -2280,35 +2306,51 @@ fn emit_zone_info_on_zone_transition(
             .map(|last_zone| !last_zone.eq_ignore_ascii_case(zone_name.as_str()))
             .unwrap_or(true);
 
-        if !transitioned {
-            continue;
-        }
-
         let Some(zone) = zone_registry.find_zone_by_name(zone_name.as_str()) else {
             tracing::warn!(
                 "[bong][network] zone transition for entity {entity:?} resolved unknown zone `{}`",
                 zone_name
             );
             tracker.last_zone_by_entity.insert(entity, zone_name);
+            tracker.last_snapshot_by_entity.remove(&entity);
             continue;
         };
-        let previous_qi = previous_zone
-            .as_deref()
-            .and_then(|name| zone_registry.find_zone_by_name(name))
-            .map(|zone| zone.spirit_qi as f32)
+
+        let current_snapshot = ZoneInfoRuntimeSnapshot::from_zone(zone);
+        let runtime_changed = tracker
+            .last_snapshot_by_entity
+            .get(&entity)
+            .map(|previous_snapshot| previous_snapshot != &current_snapshot)
+            .unwrap_or(true);
+        if !transitioned && !runtime_changed {
+            continue;
+        }
+
+        let previous_qi = tracker
+            .last_snapshot_by_entity
+            .get(&entity)
+            .map(|snapshot| snapshot.spirit_qi() as f32)
+            .or_else(|| {
+                previous_zone
+                    .as_deref()
+                    .and_then(|name| zone_registry.find_zone_by_name(name))
+                    .map(|zone| zone.spirit_qi as f32)
+            })
             .unwrap_or(zone.spirit_qi as f32);
         let perception_text = crate::combat::woliu::ambient_qi_perception(
             previous_qi,
-            zone.spirit_qi as f32,
+            current_snapshot.spirit_qi() as f32,
             has_zone_qi_inspect(cultivation, perceptions),
         );
 
+        let active_events = (!current_snapshot.active_events.is_empty())
+            .then(|| current_snapshot.active_events.clone());
         let payload = ServerDataV1::new(ServerDataPayloadV1::ZoneInfo {
-            zone: zone.name.clone(),
-            spirit_qi: zone.spirit_qi,
-            danger_level: zone.danger_level,
-            status: zone_status(zone),
-            active_events: (!zone.active_events.is_empty()).then(|| zone.active_events.clone()),
+            zone: current_snapshot.zone.clone(),
+            spirit_qi: current_snapshot.spirit_qi(),
+            danger_level: current_snapshot.danger_level,
+            status: current_snapshot.status,
+            active_events,
             perception_text,
         });
         let payload_type = payload_type_label(payload.payload_type());
@@ -2322,10 +2364,16 @@ fn emit_zone_info_on_zone_transition(
 
         send_server_data_payload(&mut client, payload_bytes.as_slice());
         tracker.last_zone_by_entity.insert(entity, zone_name);
+        tracker
+            .last_snapshot_by_entity
+            .insert(entity, current_snapshot);
     }
 
     tracker
         .last_zone_by_entity
+        .retain(|entity, _| live_entities.contains(entity));
+    tracker
+        .last_snapshot_by_entity
         .retain(|entity, _| live_entities.contains(entity));
 }
 
@@ -5146,6 +5194,88 @@ mod tests {
             assert!(
                 third_payloads.is_empty(),
                 "no additional payload should be emitted without a new transition"
+            );
+        }
+
+        #[test]
+        fn emits_zone_info_when_runtime_state_changes_without_transition() {
+            let zone_registry = ZoneRegistry {
+                zones: vec![Zone {
+                    name: DEFAULT_SPAWN_ZONE_NAME.to_string(),
+                    dimension: crate::world::dimension::DimensionKind::Overworld,
+                    bounds: (DVec3::new(0.0, 64.0, 0.0), DVec3::new(128.0, 128.0, 128.0)),
+                    spirit_qi: 0.9,
+                    danger_level: 0,
+                    active_events: vec![],
+                    patrol_anchors: vec![DVec3::new(14.0, 66.0, 14.0)],
+                    blocked_tiles: vec![],
+                    qi_equilibrium: 0.0,
+                    qi_inflow_per_min: 0.0,
+                }],
+            };
+
+            let mut app = setup_zone_transition_app(zone_registry);
+            let (_entity, mut helper) =
+                spawn_test_client_with_helper(&mut app, "Alice", [8.0, 66.0, 8.0]);
+
+            app.update();
+            flush_all_client_packets(&mut app);
+            let first_payloads = collect_zone_info_payloads(&mut helper);
+            assert_eq!(
+                first_payloads.len(),
+                1,
+                "initial zone snapshot should be sent"
+            );
+
+            {
+                let mut zone_registry = app.world_mut().resource_mut::<ZoneRegistry>();
+                let zone = zone_registry
+                    .zones
+                    .iter_mut()
+                    .find(|zone| zone.name == DEFAULT_SPAWN_ZONE_NAME)
+                    .expect("spawn zone should exist in test registry");
+                zone.spirit_qi = 0.0;
+                zone.danger_level = 5;
+                zone.active_events = vec![EVENT_REALM_COLLAPSE.to_string()];
+            }
+
+            app.update();
+            flush_all_client_packets(&mut app);
+            let refreshed_payloads = collect_zone_info_payloads(&mut helper);
+            assert_eq!(
+                refreshed_payloads.len(),
+                1,
+                "runtime zone state change should emit one zone_info payload without movement"
+            );
+
+            match &refreshed_payloads[0].payload {
+                ServerDataPayloadV1::ZoneInfo {
+                    zone,
+                    spirit_qi,
+                    danger_level,
+                    status,
+                    active_events,
+                    perception_text,
+                } => {
+                    assert_eq!(zone, DEFAULT_SPAWN_ZONE_NAME);
+                    assert_eq!(*spirit_qi, 0.0);
+                    assert_eq!(*danger_level, 5);
+                    assert_eq!(*status, ZoneStatusV1::Collapsed);
+                    assert_eq!(active_events, &Some(vec![EVENT_REALM_COLLAPSE.to_string()]));
+                    assert_eq!(
+                        perception_text.as_deref(),
+                        Some("灵气几近断绝，此地有不祥预感")
+                    );
+                }
+                other => panic!("expected zone_info payload, got {other:?}"),
+            }
+
+            app.update();
+            flush_all_client_packets(&mut app);
+            let stable_payloads = collect_zone_info_payloads(&mut helper);
+            assert!(
+                stable_payloads.is_empty(),
+                "unchanged runtime state should not spam zone_info payloads"
             );
         }
 
