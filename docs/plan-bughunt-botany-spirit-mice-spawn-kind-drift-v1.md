@@ -1,6 +1,6 @@
-# plan-bughunt-botany-spirit-mice-spawn-kind-drift-v1（骨架）
+# plan-bughunt-botany-spirit-mice-spawn-kind-drift-v1
 
-> **骨架（草案）**。一句话主题：`BaiYanPeng` 的 `AttractsMobs(SpiritMice)` 支路并不会直接生成鼠群，而是先走 `spawn_beast_npc_at` 按通用 fauna 规则抽一只妖兽，再在返回后只把 `FaunaTag` 覆盖成 `Rat`。结果是：**外观 / raw entity kind / 血量沿用原抽中的蜘蛛或蝎蛇，掉落却按 Rat 结算，形成“看起来不是鼠、打起来也不是鼠、死了却掉鼠骨”的错配**。
+> **Active plan**。一句话主题：`BaiYanPeng` 的 `AttractsMobs(SpiritMice)` 支路并不会直接生成鼠群，而是先走 `spawn_beast_npc_at` 按通用 fauna 规则抽一只妖兽，再在返回后只把 `FaunaTag` 覆盖成 `Rat`。结果是：**外观 / raw entity kind / 血量沿用原抽中的蜘蛛或蝎蛇，掉落却按 Rat 结算，形成“看起来不是鼠、打起来也不是鼠、死了却掉鼠骨”的错配**。
 
 > 立项动机：这是 botany 完成采集后的 fauna/mob 侧支路，玩家可达、现有测试只验 `FaunaTag` 因而会漏掉，且问题不属于刚出的灰烬蛛伪装名牌泄漏、`fauna audio fade stop ignored` 两题的重复变体。
 
