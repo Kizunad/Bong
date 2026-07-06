@@ -1,6 +1,6 @@
-# plan-bughunt-zone-info-inplace-stale-ui-v1（骨架）
+# plan-bughunt-zone-info-inplace-stale-ui-v1
 
-> **骨架（草案）**。一句话主题：`server` 端 `zone_info` 只在**跨 zone 边界**时发一次，导致玩家停留在同一区域时发生的 `realm_collapse` / `tsy_race_out` / `pseudo_vein` / `zone_inflow` 等运行态变化不会刷新 `client` 的 `ZoneState`，进而让 HUD、氛围渲染、环境判定长期停留旧值，直到玩家离区重进或重连。
+> **活跃 plan**。一句话主题：`server` 端 `zone_info` 只在**跨 zone 边界**时发一次，导致玩家停留在同一区域时发生的 `realm_collapse` / `tsy_race_out` / `pseudo_vein` / `zone_inflow` 等运行态变化不会刷新 `client` 的 `ZoneState`，进而让 HUD、氛围渲染、环境判定长期停留旧值，直到玩家离区重进或重连。
 
 > 立项动机：这条链路直接落在 `server world state -> server_data.zone_info -> client ZoneState -> HUD/atmosphere` 主干上，影响范围横跨 `server` / `schema` / `client`。它不同于已知的 season stale、preview pause/config、weather overlay collapse、zone atmosphere mismatch；这里的根因不是某个 UI 子模块局部错算，而是**同一区内世界态变化根本没有再次下发到 UI 输入源**。
 
