@@ -5,6 +5,7 @@ import com.bong.client.fauna.FaunaActionBridge;
 import com.bong.client.daozhan.DaoZhanDisguiseHandler;
 import com.bong.client.spider.SpiderDisguiseHandler;
 import com.bong.client.audio.SoundRecipePlayer;
+import com.bong.client.craft.CraftStore;
 import com.bong.client.dandao.MutationPayloadHandler;
 import com.bong.client.dandao.MutationVisualState;
 import com.bong.client.environment.EnvironmentEffectController;
@@ -129,45 +130,7 @@ public class BongNetworkHandler {
         // 不会在断线 / 切服 / 重连时自清。Disconnect 时强制清掉，避免上一 server
         // 的 "域崩撤离 48s" 倒计时跨 session 续命。
         ClientPlayConnectionEvents.DISCONNECT.register(
-            (handler, client) -> client.execute(() -> {
-                RealmCollapseHudStateStore.clearOnDisconnect();
-                NpcMetadataStore.clearAll();
-                NpcLodStore.clearAll();
-                NpcMoodStore.clearAll();
-                NpcDialogueBubbleRenderer.clear();
-                TsyBossHealthStore.reset();
-                TsyDeathVfxStore.reset();
-                com.bong.client.hud.CoffinStateStore.clear();
-                com.bong.client.gathering.GatheringSessionStore.clearOnDisconnect();
-                ClientConnectionStatusStore.markDisconnected(Util.getMeasuringTimeMs());
-                com.bong.client.audio.MusicStateMachine.instance().clear();
-                MutationVisualState.reset();
-                com.bong.client.combat.baomai.v4.CrackReadingHudStateStore.clear();
-                com.bong.client.combat.baomai.v4.ResonanceLockHudStateStore.clear();
-                // plan-combat-skill-feedback-bridges-v1 P3 — 断线时清理虚蚀视觉状态
-                com.bong.client.visual.VoidErosionVisualStore.reset();
-                // plan-fauna-mimic-spider-v1 P2 — 断线时清理伪装蛛列表
-                SpiderDisguiseHandler.clearOnDisconnect();
-                // plan-daozhan-v1 P1 — 断线时清理道伥伪装列表
-                DaoZhanDisguiseHandler.clearOnDisconnect();
-                // plan-fauna-stitched-beast-v1 P3 — 断线时清理幻觉层状态
-                com.bong.client.fauna.HallucinationLayerStore.clearOnDisconnect();
-                // plan-dying-elder-v1 P3 — 断线时清理垂死大能遭遇状态
-                com.bong.client.dying_elder.DyingElderEncounterStore.clearOnDisconnect();
-                // F19 fix — 断线时清理天道临在状态；此前十余个 store 都在这里清理，唯独
-                // TiandaoPresenceStore 漏掉，导致断线重连后旧 presence（watch/pressure/
-                // tribulation/annihilate vignette）继续渲染/播放。
-                com.bong.client.tiandao.TiandaoPresenceStore.clear();
-                // plan-era-state-v1 P3 — 断线时重置时代天象状态
-                com.bong.client.era.EraAmbianceState.reset();
-                // plan-agent-ui-data-v1 P1 — 断线时清理天道 UI 面板状态
-                com.bong.client.agentui.AgentUiStore.clear();
-                // plan-halfstep-rechallenge-integration-v1 P0 — 断线时清理半步重渡触发状态
-                com.bong.client.combat.store.HalfStepRechallengeStore.clear();
-                // F9 跨层修复 — 断线时清理出生引导棺坐标缓存；不同 server 的棺位置不同，
-                // 留着旧坐标会让 reconnect 后短暂窗口内用错误坐标误判/漏判引导棺。
-                com.bong.client.coffin.TutorialCoffinPosStore.clearOnDisconnect();
-            })
+            (handler, client) -> client.execute(BongNetworkHandler::clearClientStateOnDisconnect)
         );
         ClientPlayConnectionEvents.JOIN.register(
             (handler, sender, client) -> client.execute(() -> {
@@ -889,6 +852,49 @@ public class BongNetworkHandler {
             currentSnapshot.narrationState(),
             nextVisualEffectState
         ));
+    }
+
+    static void clearClientStateOnDisconnect() {
+        RealmCollapseHudStateStore.clearOnDisconnect();
+        NpcMetadataStore.clearAll();
+        NpcLodStore.clearAll();
+        NpcMoodStore.clearAll();
+        NpcDialogueBubbleRenderer.clear();
+        TsyBossHealthStore.reset();
+        TsyDeathVfxStore.reset();
+        com.bong.client.hud.CoffinStateStore.clear();
+        com.bong.client.gathering.GatheringSessionStore.clearOnDisconnect();
+        ClientConnectionStatusStore.markDisconnected(Util.getMeasuringTimeMs());
+        com.bong.client.audio.MusicStateMachine.instance().clear();
+        MutationVisualState.reset();
+        com.bong.client.combat.baomai.v4.CrackReadingHudStateStore.clear();
+        com.bong.client.combat.baomai.v4.ResonanceLockHudStateStore.clear();
+        // plan-combat-skill-feedback-bridges-v1 P3 — 断线时清理虚蚀视觉状态
+        com.bong.client.visual.VoidErosionVisualStore.reset();
+        // plan-fauna-mimic-spider-v1 P2 — 断线时清理伪装蛛列表
+        SpiderDisguiseHandler.clearOnDisconnect();
+        // plan-daozhan-v1 P1 — 断线时清理道伥伪装列表
+        DaoZhanDisguiseHandler.clearOnDisconnect();
+        // plan-fauna-stitched-beast-v1 P3 — 断线时清理幻觉层状态
+        com.bong.client.fauna.HallucinationLayerStore.clearOnDisconnect();
+        // plan-dying-elder-v1 P3 — 断线时清理垂死大能遭遇状态
+        com.bong.client.dying_elder.DyingElderEncounterStore.clearOnDisconnect();
+        // F19 fix — 断线时清理天道临在状态；此前十余个 store 都在这里清理，唯独
+        // TiandaoPresenceStore 漏掉，导致断线重连后旧 presence（watch/pressure/
+        // tribulation/annihilate vignette）继续渲染/播放。
+        com.bong.client.tiandao.TiandaoPresenceStore.clear();
+        // plan-era-state-v1 P3 — 断线时重置时代天象状态
+        com.bong.client.era.EraAmbianceState.reset();
+        // plan-agent-ui-data-v1 P1 — 断线时清理天道 UI 面板状态
+        com.bong.client.agentui.AgentUiStore.clear();
+        // plan-halfstep-rechallenge-integration-v1 P0 — 断线时清理半步重渡触发状态
+        com.bong.client.combat.store.HalfStepRechallengeStore.clear();
+        // F9 跨层修复 — 断线时清理出生引导棺坐标缓存；不同 server 的棺位置不同，
+        // 留着旧坐标会让 reconnect 后短暂窗口内用错误坐标误判/漏判引导棺。
+        com.bong.client.coffin.TutorialCoffinPosStore.clearOnDisconnect();
+        // plan-craft-session-reconnect-lock-v1 P0 — craft store 是静态跨屏状态；
+        // 断线不清会把旧 active session 带进新连接，导致手搓/制作台主操作永久灰掉。
+        CraftStore.clear();
     }
 
     private static void logNoOp(ServerDataRouter.RouteResult result) {

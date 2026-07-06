@@ -424,7 +424,7 @@ pub fn tick_craft_sessions(
                 .entity(entity)
                 .remove::<CraftSession>()
                 .insert(CraftSessionStateDirty);
-        } else if clock.tick % SESSION_STATE_PUSH_INTERVAL_TICKS == 0 {
+        } else if clock.tick.is_multiple_of(SESSION_STATE_PUSH_INTERVAL_TICKS) {
             // 每秒标脏一次让 emit 系统下一帧推 progress
             commands.entity(entity).insert(CraftSessionStateDirty);
         }
@@ -559,10 +559,10 @@ pub fn emit_recipe_list_on_join(
     registry: Res<CraftRegistry>,
     unlock_state: Res<RecipeUnlockState>,
     mut sent: Local<HashMap<Entity, String>>,
-    mut clients: Query<(Entity, &Username, &mut Client), With<Client>>,
+    mut clients: Query<(Entity, &Username, &mut Client, Option<&CraftSession>), With<Client>>,
 ) {
     let mut active_clients = HashSet::new();
-    for (entity, username, mut client) in clients.iter_mut() {
+    for (entity, username, mut client, session) in clients.iter_mut() {
         active_clients.insert(entity);
         let player_id = canonical_player_id(username.0.as_str());
         if sent
@@ -576,6 +576,12 @@ pub fn emit_recipe_list_on_join(
             &mut client,
             ServerDataPayloadV1::CraftRecipeList(Box::new(payload)),
             "recipe_list::join",
+        ) && send_payload(
+            &mut client,
+            ServerDataPayloadV1::CraftSessionState(build_session_state_payload(
+                &player_id, session,
+            )),
+            "session_state::join",
         ) {
             sent.insert(entity, player_id);
         }
@@ -893,6 +899,30 @@ mod tests {
         out
     }
 
+    fn collect_craft_session_states(helper: &mut MockClientHelper) -> Vec<CraftSessionStateV1> {
+        let mut out = Vec::new();
+        for frame in helper.collect_received().0 {
+            let Ok(packet) = frame.decode::<CustomPayloadS2c>() else {
+                continue;
+            };
+            if packet.channel.as_str() != SERVER_DATA_CHANNEL {
+                continue;
+            }
+            let payload = serde_json::from_slice::<serde_json::Value>(packet.data.0 .0)
+                .expect("server_data payload should decode as JSON");
+            if payload.get("type").and_then(|v| v.as_str()) == Some("craft_session_state") {
+                let mut state_payload = payload;
+                if let Some(object) = state_payload.as_object_mut() {
+                    object.remove("type");
+                }
+                let state = serde_json::from_value::<CraftSessionStateV1>(state_payload)
+                    .expect("craft_session_state payload should decode");
+                out.push(state);
+            }
+        }
+        out
+    }
+
     #[test]
     fn build_session_state_inactive() {
         let state = build_session_state_payload("offline:Alice", None);
@@ -1103,6 +1133,91 @@ mod tests {
         app.update();
         flush_client_packets(&mut app);
         assert!(collect_recipe_lists(&mut helper).is_empty());
+    }
+
+    #[test]
+    fn emit_recipe_list_on_join_also_sends_idle_session_state_without_active_session() {
+        let mut app = App::new();
+        let mut registry = CraftRegistry::new();
+        register_basic_processing_recipes(&mut registry).unwrap();
+        let unlock_state = RecipeUnlockState::new();
+        app.insert_resource(registry);
+        app.insert_resource(unlock_state);
+        app.add_systems(Update, emit_recipe_list_on_join);
+
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        app.world_mut().spawn(client_bundle);
+        app.update();
+        flush_client_packets(&mut app);
+
+        let states = collect_craft_session_states(&mut helper);
+        assert_eq!(
+            states.len(),
+            1,
+            "玩家 join 首包必须包含 idle craft_session_state；否则客户端 stale active session 只能靠自身断线清理自愈"
+        );
+        let state = &states[0];
+        assert_eq!(state.player_id, canonical_player_id("Azure"));
+        assert!(
+            !state.active,
+            "无 CraftSession 的新连接必须收到 active=false，实际 state={state:?}"
+        );
+        assert!(
+            state.recipe_id.is_none(),
+            "idle session state 不应携带 recipe_id，实际 state={state:?}"
+        );
+        assert_eq!(state.elapsed_ticks, 0);
+        assert_eq!(state.total_ticks, 0);
+
+        app.update();
+        flush_client_packets(&mut app);
+        assert!(
+            collect_craft_session_states(&mut helper).is_empty(),
+            "join hydration 已完成后不应每 tick 重复推 idle session state"
+        );
+    }
+
+    #[test]
+    fn emit_recipe_list_on_join_sends_active_session_state_when_session_exists() {
+        let mut app = App::new();
+        let mut registry = CraftRegistry::new();
+        register_basic_processing_recipes(&mut registry).unwrap();
+        let unlock_state = RecipeUnlockState::new();
+        app.insert_resource(registry);
+        app.insert_resource(unlock_state);
+        app.add_systems(Update, emit_recipe_list_on_join);
+
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut().entity_mut(entity).insert(CraftSession {
+            recipe_id: RecipeId::new("basic.wood_handle"),
+            started_at_tick: 0,
+            remaining_ticks: 20,
+            total_ticks: 60,
+            owner_player_id: canonical_player_id("Azure"),
+            qi_paid: 0.0,
+            quantity_total: 3,
+            completed_count: 1,
+        });
+        app.update();
+        flush_client_packets(&mut app);
+
+        let states = collect_craft_session_states(&mut helper);
+        assert_eq!(
+            states.len(),
+            1,
+            "玩家 join 首包必须携带当前 active craft session，避免 client 等待下一次 dirty/progress tick"
+        );
+        let state = &states[0];
+        assert!(
+            state.active,
+            "已有 CraftSession 时 join hydration 必须 active=true"
+        );
+        assert_eq!(state.recipe_id.as_deref(), Some("basic.wood_handle"));
+        assert_eq!(state.elapsed_ticks, 40);
+        assert_eq!(state.total_ticks, 60);
+        assert_eq!(state.completed_count, 1);
+        assert_eq!(state.total_count, 3);
     }
 
     #[test]
