@@ -1,6 +1,6 @@
-# plan-botany-harvest-mode-request-misroute-v1（骨架）
+# plan-botany-harvest-mode-request-misroute-v1
 
-> **骨架（草案）**。一句话主题：`botany_harvest_request` 当前没有按“切换采集模式 / 消费既有 session”落地，而是把 `session_id` 错接进旧的 `GameplayAction::Gather.resource` 通道；结果是 **E/R 手动/自动按钮不会真正切换 server 侧采集 session，且每次按钮请求还可能白拿一笔 gather 真元/karma/叙事奖励**。影响是：玩家在 botany 主路径里看到“手动采集 / 自动采集”浮窗，却既切不了模式，也能凭空触发一次伪采集收益，直接破坏采集节奏与真元经济。
+> 一句话主题：`botany_harvest_request` 当前没有按“切换采集模式 / 消费既有 session”落地，而是把 `session_id` 错接进旧的 `GameplayAction::Gather.resource` 通道；结果是 **E/R 手动/自动按钮不会真正切换 server 侧采集 session，且每次按钮请求还可能白拿一笔 gather 真元/karma/叙事奖励**。影响是：玩家在 botany 主路径里看到“手动采集 / 自动采集”浮窗，却既切不了模式，也能凭空触发一次伪采集收益，直接破坏采集节奏与真元经济。
 
 > 立项动机：这是 `botany` 当前 client→server 主交互链上的高频可达问题，不是边角 case。玩家只要进入采集浮窗、按一次 `E` 或 `R`，就会命中这条错误接线；它既让 UI 承诺失效，又把本应“只切模式”的请求错误地走成了旧 gather 奖励路径，值得先立 skeleton 固化证据、玩家影响、修复面与验收抓手，再由后续 fix PR 单独落地。
 
