@@ -131,7 +131,9 @@ use valence::prelude::{
 
 use crate::combat::components::Lifecycle;
 use crate::combat::CombatClock;
+use crate::cultivation::color::PracticeLog;
 use crate::cultivation::components::{Cultivation, MeridianSystem, QiColor};
+use crate::cultivation::insight::InsightQuota;
 use crate::cultivation::insight_apply::UnlockedPerceptions;
 use crate::cultivation::life_record::LifeRecord;
 use crate::cultivation::possession::DuoSheWarningEvent;
@@ -212,6 +214,12 @@ type ClientLifeRecordQueryItem<'a> = (
     &'a mut LifeRecord,
 );
 type ClientLifeRecordQueryFilter = With<Client>;
+type InsightContextQueryItem<'a> = (
+    &'a QiColor,
+    &'a PracticeLog,
+    &'a InsightQuota,
+    &'a Cultivation,
+);
 
 /// Resource holding the Redis bridge channels
 pub struct RedisBridgeResource {
@@ -2358,6 +2366,7 @@ fn process_redis_inbound(
     redis: Res<RedisBridgeResource>,
     zone_registry: Option<Res<ZoneRegistry>>,
     mut clients: Query<(Entity, &mut Client, &Username, &Position), With<Client>>,
+    insight_context: Query<InsightContextQueryItem<'_>>,
     mut command_executor: valence::prelude::ResMut<CommandExecutorResource>,
     mut narration_dedupe: valence::prelude::ResMut<NarrationDedupeResource>,
     mut spirit_treasure_registry: Option<ResMut<SpiritTreasureRegistry>>,
@@ -2442,9 +2451,22 @@ fn process_redis_inbound(
                     );
                     continue;
                 };
+                let context = insight_context.get(entity).ok().map(
+                    |(qi_color, practice_log, quota, cultivation)| {
+                        (qi_color, practice_log, quota, cultivation.realm)
+                    },
+                );
+                if context.is_none() {
+                    tracing::warn!(
+                        "[bong][network] insight offer character_id={} trigger_id={} has no cultivation context; using default fallback context",
+                        offer.character_id,
+                        offer.trigger_id
+                    );
+                }
                 let Some(choices) = crate::cultivation::insight_flow::ingest_agent_insight_offer(
                     &offer.trigger_id,
                     &offer.choices,
+                    context,
                 ) else {
                     continue;
                 };
@@ -3260,6 +3282,9 @@ pub(crate) fn log_payload_build_error(payload_type: &str, error: &PayloadBuildEr
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cultivation::components::{ColorKind, Realm};
+    use crate::cultivation::insight::{InsightAlignment, InsightEffect};
+    use crate::schema::cultivation::{InsightChoiceV1, InsightOfferV1};
     use crate::schema::server_data::{HeartDemonOfferChoiceV1, HeartDemonOfferV1};
     use crossbeam_channel::{bounded, unbounded, Receiver};
     use std::time::Duration;
@@ -3312,6 +3337,44 @@ mod tests {
             redact_redis_url_for_log("not-a-redis-url"),
             "[redacted redis endpoint]"
         );
+    }
+
+    fn agent_insight_choices() -> Vec<InsightChoiceV1> {
+        vec![
+            InsightChoiceV1 {
+                category: "qi".to_string(),
+                effect_kind: "qi_regen_factor".to_string(),
+                magnitude: 0.1,
+                flavor_text: "agent converge".to_string(),
+                narrator_voice: None,
+                alignment: Some("converge".to_string()),
+                cost_kind: Some("opposite_color_penalty".to_string()),
+                cost_magnitude: Some(0.05),
+                cost_flavor: Some("agent cost".to_string()),
+            },
+            InsightChoiceV1 {
+                category: "composure".to_string(),
+                effect_kind: "composure_recover".to_string(),
+                magnitude: 0.1,
+                flavor_text: "agent neutral".to_string(),
+                narrator_voice: None,
+                alignment: Some("neutral".to_string()),
+                cost_kind: Some("shock_sensitivity".to_string()),
+                cost_magnitude: Some(0.03),
+                cost_flavor: Some("agent cost".to_string()),
+            },
+            InsightChoiceV1 {
+                category: "color".to_string(),
+                effect_kind: "color_cap_add".to_string(),
+                magnitude: 0.04,
+                flavor_text: "agent diverge".to_string(),
+                narrator_voice: None,
+                alignment: Some("diverge".to_string()),
+                cost_kind: Some("main_color_penalty".to_string()),
+                cost_magnitude: Some(0.1),
+                cost_flavor: Some("agent cost".to_string()),
+            },
+        ]
     }
 
     #[test]
@@ -3395,6 +3458,83 @@ mod tests {
             .expect("matching heart demon offer should be cached on client entity");
         assert_eq!(cached.trigger_id, offer.trigger_id);
         assert_eq!(cached.payload.choices[0].choice_id, "heart_demon_choice_0");
+    }
+
+    #[test]
+    fn process_redis_inbound_keeps_contextual_insight_offer_when_agent_overwrites_pending() {
+        let (tx_outbound, _rx_outbound) = unbounded();
+        let (tx_inbound, rx_inbound) = unbounded();
+        let mut app = App::new();
+        app.insert_resource(RedisBridgeResource {
+            tx_outbound,
+            rx_inbound,
+        });
+        app.insert_resource(CommandExecutorResource::default());
+        app.insert_resource(NarrationDedupeResource::default());
+        app.add_event::<crate::cultivation::insight::InsightOffer>();
+        app.add_event::<agent_ui::AgentUiCmdEvent>();
+        app.add_systems(Update, process_redis_inbound);
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        let trigger_id = "first_breakthrough_to_Induce";
+        let qi_color = QiColor {
+            main: ColorKind::Sharp,
+            ..QiColor::default()
+        };
+        let mut practice_log = PracticeLog::default();
+        practice_log.add(ColorKind::Sharp, 10.0);
+        app.world_mut().entity_mut(entity).insert((
+            Cultivation {
+                realm: Realm::Solidify,
+                ..Cultivation::default()
+            },
+            qi_color,
+            practice_log,
+            InsightQuota::default(),
+            crate::cultivation::insight_flow::PendingInsightOffer {
+                trigger_id: trigger_id.to_string(),
+                choices: crate::cultivation::insight_fallback::fallback_for(trigger_id),
+            },
+        ));
+
+        tx_inbound
+            .send(RedisInbound::InsightOffer(InsightOfferV1 {
+                offer_id: "offer-agent-1".to_string(),
+                trigger_id: trigger_id.to_string(),
+                character_id: "Azure".to_string(),
+                choices: agent_insight_choices(),
+            }))
+            .expect("agent insight offer should enqueue");
+        app.update();
+
+        let pending = app
+            .world()
+            .get::<crate::cultivation::insight_flow::PendingInsightOffer>(entity)
+            .expect("agent insight offer should overwrite PendingInsightOffer");
+        assert_eq!(pending.trigger_id, trigger_id);
+        assert!(
+            pending
+                .choices
+                .iter()
+                .any(|choice| choice.flavor.contains("锋锐")),
+            "agent-fed PendingInsightOffer 不应退化成默认 Mellow 文案，实际 choices={:?}",
+            pending.choices
+        );
+        assert!(
+            pending.choices.iter().any(|choice| {
+                choice.alignment == InsightAlignment::Diverge
+                    && matches!(
+                        choice.effect,
+                        InsightEffect::ColorCapAdd {
+                            color: ColorKind::Heavy,
+                            ..
+                        }
+                    )
+            }),
+            "Diverge 槽应基于当前 Sharp 上下文选出最陌生色 Heavy，实际 choices={:?}",
+            pending.choices
+        );
     }
 
     mod world_state_tests {
