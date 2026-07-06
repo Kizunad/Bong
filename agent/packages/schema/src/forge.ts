@@ -7,7 +7,7 @@
  */
 import { Type, type Static } from "@sinclair/typebox";
 
-import { ColorKind } from "./cultivation.js";
+import { ColorKind, Realm } from "./cultivation.js";
 
 /** plan §1.3 四步串行（与服务端 ForgeStep 对齐）。 */
 export const ForgeStep = Type.Union(
@@ -103,6 +103,7 @@ export const ForgeStepConsecrationState = Type.Object(
     qi_injected: Type.Number({ minimum: 0 }),
     qi_required: Type.Number({ minimum: 0 }),
     color_imprint: Type.Optional(ColorKind),
+    min_realm: Type.Optional(Realm),
   },
   { additionalProperties: false },
 );
