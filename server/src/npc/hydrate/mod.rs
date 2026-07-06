@@ -28,6 +28,7 @@ use crate::npc::dormant::{
     NpcDormantStore, NpcVirtualizationConfig,
 };
 use crate::npc::faction::{FactionMembership, FactionRank};
+use crate::npc::interaction_memory::NpcMemoryComponent;
 use crate::npc::lifecycle::{NpcArchetype, NpcLifespan, NpcRegistry};
 use crate::npc::lod::NpcLodTier;
 use crate::npc::loot::{default_loot_for_archetype, NpcLootTable};
@@ -42,6 +43,7 @@ use crate::npc::spawn::{
     spawn_rogue_npc_at, spawn_zombie_npc_at, NpcMarker, NpcSkinSpawnContext,
 };
 use crate::npc::territory::Territory;
+use crate::npc::trade::NpcPlayerReputation;
 use crate::npc::tsy_hostile::{
     spawn_tsy_daoxiang_at, spawn_tsy_fuya_at, spawn_tsy_skull_fiend_at, spawn_tsy_zhinian_at,
     FuyaAura, TsyHostileMarker, ZhinianMind, ZhinianPhase,
@@ -299,6 +301,8 @@ pub fn dehydrate_far_npcs_system(
     death_registry: Query<Option<&DeathRegistry>, With<NpcMarker>>,
     life_record: Query<Option<&LifeRecord>, With<NpcMarker>>,
     loot_tables: Query<Option<&NpcLootTable>, With<NpcMarker>>,
+    memories: Query<Option<&NpcMemoryComponent>, With<NpcMarker>>,
+    player_reputations: Query<Option<&NpcPlayerReputation>, With<NpcMarker>>,
     extras: DormantExtraComponentQueries,
 ) {
     let tick = crate::npc::dormant::current_tick(game_tick.as_deref());
@@ -406,6 +410,18 @@ pub fn dehydrate_far_npcs_system(
                     .flatten()
                     .cloned()
                     .unwrap_or_else(|| LifeRecord::new(lifecycle.character_id.clone())),
+                memory: memories
+                    .get(entity)
+                    .ok()
+                    .flatten()
+                    .filter(|memory| !memory.interactions.is_empty())
+                    .cloned(),
+                player_reputation: player_reputations
+                    .get(entity)
+                    .ok()
+                    .flatten()
+                    .filter(|reputation| !reputation.is_empty())
+                    .cloned(),
                 faction: faction.cloned(),
                 // plan-offscreen-war-v1 P5 reframe b：dehydration 暂不携带显式群体——离屏
                 // 战斗用 effective_group 回退 faction 派生（commit 1 范围）。ECS 层的群体身份
@@ -738,6 +754,12 @@ fn spawn_from_snapshot(
         },
         CurrentDimension(snapshot.dimension),
     ));
+    if let Some(memory) = snapshot.memory {
+        entity_commands.insert(memory);
+    }
+    if let Some(player_reputation) = snapshot.player_reputation {
+        entity_commands.insert(player_reputation);
+    }
     if let Some(faction) = snapshot.faction {
         entity_commands.insert(faction);
     }
@@ -823,6 +845,10 @@ mod tests {
     use crate::cultivation::components::Realm;
     use crate::npc::brain::return_home_action_system;
     use crate::npc::dormant::{DEHYDRATE_RADIUS_BLOCKS, HYDRATE_RADIUS_BLOCKS};
+    use crate::npc::interaction_memory::{
+        NpcInteractionOutcome, NpcInteractionType, NpcMemoryEntry,
+    };
+    use crate::npc::trade::RepTier;
     use crate::world::zone::{Zone, DEFAULT_SPAWN_ZONE_NAME};
 
     fn zone_registry() -> ZoneRegistry {
@@ -865,6 +891,8 @@ mod tests {
             lifespan_extension_ledger: LifespanExtensionLedger::default(),
             death_registry: DeathRegistry::new(char_id),
             life_record: LifeRecord::new(char_id),
+            memory: None,
+            player_reputation: None,
             faction: None,
             emergent_group: None,
             patrol: None,
@@ -886,6 +914,23 @@ mod tests {
         for meridian in snapshot.meridian_system.iter_mut() {
             meridian.opened = true;
         }
+    }
+
+    fn attack_memory_for(player_uuid: &str, timestamp: u64) -> NpcMemoryComponent {
+        let mut memory = NpcMemoryComponent::default();
+        memory.remember(NpcMemoryEntry {
+            player_uuid: player_uuid.to_string(),
+            interaction_type: NpcInteractionType::Attack,
+            timestamp,
+            outcome: NpcInteractionOutcome::Harmed,
+        });
+        memory
+    }
+
+    fn high_reputation_for(player_uuid: &str) -> NpcPlayerReputation {
+        let mut reputation = NpcPlayerReputation::default();
+        reputation.adjust(player_uuid, 0.3);
+        reputation
     }
 
     #[test]
@@ -1024,6 +1069,153 @@ mod tests {
     }
 
     #[test]
+    fn dehydrate_snapshot_carries_npc_memory_and_player_reputation() {
+        const PLAYER_ID: &str = "player-memory-1";
+
+        let mut app = App::new();
+        app.insert_resource(NpcDormantStore::default());
+        app.insert_resource(NpcVirtualizationConfig {
+            transition_interval_ticks: 1,
+            dehydrate_without_players: true,
+            ..Default::default()
+        });
+        app.add_systems(Update, dehydrate_far_npcs_system);
+
+        let memory = attack_memory_for(PLAYER_ID, 77);
+        let reputation = high_reputation_for(PLAYER_ID);
+        app.world_mut().spawn((
+            NpcMarker,
+            Position(DVec3::new(10.0, 64.0, 10.0)),
+            Lifecycle {
+                character_id: "npc_memory_rep".to_string(),
+                ..Default::default()
+            },
+            NpcArchetype::Rogue,
+            NpcDailySchedule::for_archetype(NpcArchetype::Rogue, 42),
+            NpcLifespan::new(0.0, 1_000.0),
+            Cultivation {
+                realm: Realm::Awaken,
+                qi_current: 10.0,
+                qi_max: 100.0,
+                ..Default::default()
+            },
+            MeridianSystem::default(),
+            Contamination::default(),
+            memory.clone(),
+            reputation,
+        ));
+
+        app.update();
+
+        let snapshot = app
+            .world()
+            .resource::<NpcDormantStore>()
+            .snapshots
+            .get("npc_memory_rep")
+            .expect("dehydrated NPC should have a dormant snapshot");
+        assert_eq!(
+            snapshot
+                .memory
+                .as_ref()
+                .expect("non-empty memory should be carried")
+                .interactions,
+            memory.interactions
+        );
+        assert_eq!(
+            snapshot
+                .player_reputation
+                .as_ref()
+                .expect("non-empty reputation should be carried")
+                .tier(PLAYER_ID),
+            RepTier::High
+        );
+    }
+
+    #[test]
+    fn hydrate_roundtrip_preserves_attack_memory_for_same_char_id() {
+        const PLAYER_ID: &str = "player-attacker-1";
+
+        let mut app = App::new();
+        app.add_event::<InitiateXuhuaTribulation>();
+
+        let overworld = app.world_mut().spawn_empty().id();
+        let tsy = app.world_mut().spawn_empty().id();
+        app.insert_resource(DimensionLayers { overworld, tsy });
+        app.insert_resource(NpcVirtualizationConfig::default());
+
+        let mut snap = snapshot("npc_remembers_attack", DVec3::new(10.0, 64.0, 10.0));
+        snap.memory = Some(attack_memory_for(PLAYER_ID, 99));
+        let mut store = NpcDormantStore::default();
+        store.insert(snap);
+        app.insert_resource(store);
+        app.world_mut()
+            .spawn((ClientMarker, Position(DVec3::new(10.0, 64.0, 10.0))));
+
+        app.add_systems(Update, hydrate_dormant_near_players_system);
+        app.update();
+
+        let (char_id, remembers_attack) = {
+            let world = app.world_mut();
+            let mut query =
+                world.query_filtered::<(&Lifecycle, &NpcMemoryComponent), With<NpcMarker>>();
+            query
+                .iter(world)
+                .map(|(lifecycle, memory)| {
+                    (
+                        lifecycle.character_id.clone(),
+                        memory.has_been_attacked_by(PLAYER_ID),
+                    )
+                })
+                .next()
+                .expect("hydrated NPC should carry memory component")
+        };
+        assert_eq!(char_id, "npc_remembers_attack");
+        assert!(
+            remembers_attack,
+            "hydrated NPC with the same char_id must still remember the attacker"
+        );
+    }
+
+    #[test]
+    fn hydrate_roundtrip_preserves_trade_reputation_tier() {
+        const PLAYER_ID: &str = "player-trader-1";
+
+        let mut app = App::new();
+        app.add_event::<InitiateXuhuaTribulation>();
+
+        let overworld = app.world_mut().spawn_empty().id();
+        let tsy = app.world_mut().spawn_empty().id();
+        app.insert_resource(DimensionLayers { overworld, tsy });
+        app.insert_resource(NpcVirtualizationConfig::default());
+
+        let mut snap = snapshot("npc_remembers_trade_rep", DVec3::new(10.0, 64.0, 10.0));
+        snap.player_reputation = Some(high_reputation_for(PLAYER_ID));
+        let mut store = NpcDormantStore::default();
+        store.insert(snap);
+        app.insert_resource(store);
+        app.world_mut()
+            .spawn((ClientMarker, Position(DVec3::new(10.0, 64.0, 10.0))));
+
+        app.add_systems(Update, hydrate_dormant_near_players_system);
+        app.update();
+
+        let tier = {
+            let world = app.world_mut();
+            let mut query = world.query_filtered::<&NpcPlayerReputation, With<NpcMarker>>();
+            query
+                .iter(world)
+                .map(|reputation| reputation.tier(PLAYER_ID))
+                .next()
+                .expect("hydrated NPC should carry reputation component")
+        };
+        assert_eq!(
+            tier,
+            RepTier::High,
+            "hydrated NPC must preserve per-player trade reputation tier"
+        );
+    }
+
+    #[test]
     fn player_proximity_ignores_other_dimensions() {
         let players = vec![(DimensionKind::Tsy, DVec3::new(10.0, 64.0, 10.0))];
 
@@ -1119,6 +1311,8 @@ mod tests {
             lifespan_extension_ledger: LifespanExtensionLedger::default(),
             death_registry: DeathRegistry::new(char_id),
             life_record: LifeRecord::new(char_id),
+            memory: None,
+            player_reputation: None,
             faction: Some(crate::npc::faction::FactionMembership {
                 faction_id: crate::npc::faction::FactionId::Attack,
                 rank: FactionRank::Disciple,
@@ -1839,6 +2033,8 @@ mod tests {
                 crate::cultivation::lifespan::LifespanExtensionLedger::default(),
             death_registry: crate::cultivation::lifespan::DeathRegistry::new(char_id),
             life_record: crate::cultivation::life_record::LifeRecord::new(char_id),
+            memory: None,
+            player_reputation: None,
             faction: None,
             emergent_group: None,
             patrol: None,

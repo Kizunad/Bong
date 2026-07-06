@@ -3476,6 +3476,8 @@ mod tests {
                     crate::cultivation::lifespan::LifespanExtensionLedger::default(),
                 death_registry: crate::cultivation::lifespan::DeathRegistry::new(char_id),
                 life_record: LifeRecord::new(char_id),
+                memory: None,
+                player_reputation: None,
                 faction: None,
                 emergent_group: None,
                 patrol: None,
