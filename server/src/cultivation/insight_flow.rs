@@ -21,7 +21,7 @@ use super::insight::{
     InsightRequest,
 };
 use super::insight_apply::{apply_choice, InsightModifiers, UnlockedPerceptions};
-use super::insight_fallback::{fallback_for, fallback_for_context};
+use super::insight_fallback::fallback_for_context;
 use super::life_record::LifeRecord;
 use super::lifespan::{LifespanComponent, LifespanExtensionIntent};
 use super::tick::CultivationClock;
@@ -369,7 +369,7 @@ mod tests {
 
     #[test]
     fn fallback_for_first_induce_nonempty() {
-        let v = fallback_for("first_breakthrough_to_Induce");
+        let v = super::super::insight_fallback::fallback_for("first_breakthrough_to_Induce");
         assert!(!v.is_empty());
     }
 

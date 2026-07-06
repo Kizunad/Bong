@@ -3283,6 +3283,12 @@ pub(crate) fn log_payload_build_error(payload_type: &str, error: &PayloadBuildEr
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cultivation::components::ColorKind;
+    use crate::cultivation::insight::{
+        InsightAlignment, InsightChoice, InsightCost, InsightOffer, InsightRequest,
+    };
+    use crate::cultivation::insight_flow::PendingInsightOffer;
+    use crate::schema::cultivation::{InsightChoiceV1, InsightOfferV1};
     use crate::schema::server_data::{HeartDemonOfferChoiceV1, HeartDemonOfferV1};
     use crossbeam_channel::{bounded, unbounded, Receiver};
     use std::time::Duration;
@@ -3292,6 +3298,49 @@ mod tests {
         assert!(
             (left - right).abs() < 1e-9,
             "expected {left} to be approximately equal to {right}"
+        );
+    }
+
+    fn agent_insight_choice(alignment: &str, idx: usize) -> InsightChoiceV1 {
+        InsightChoiceV1 {
+            category: "Qi".to_string(),
+            effect_kind: "QiMaxAdd".to_string(),
+            magnitude: 0.01 + idx as f64 * 0.001,
+            flavor_text: format!("agent contextual placeholder {idx}"),
+            narrator_voice: None,
+            alignment: Some(alignment.to_string()),
+            cost_kind: Some("qi_volatility".to_string()),
+            cost_magnitude: Some(0.01),
+            cost_flavor: Some("agent cost placeholder".to_string()),
+        }
+    }
+
+    fn assert_sharp_contextual_choices(choices: &[InsightChoice]) {
+        assert_eq!(choices.len(), 3, "contextual fallback 应保持三轨 choices");
+        assert!(
+            choices.iter().any(|choice| choice.flavor.contains("锋锐")),
+            "agent-fed offer 必须保留玩家 Sharp 主色文案，不能回退默认 Mellow；choices={choices:?}"
+        );
+
+        let diverge = choices
+            .iter()
+            .find(|choice| choice.alignment == InsightAlignment::Diverge)
+            .expect("contextual fallback 必须保留 diverge 槽");
+        assert_eq!(
+            diverge.target_color,
+            Some(ColorKind::Mellow),
+            "非空 PracticeLog 应把 diverge 目标导向最低权重色，而不是默认空日志目标"
+        );
+        assert!(
+            matches!(
+                diverge.cost,
+                InsightCost::MainColorPenalty {
+                    color: ColorKind::Sharp,
+                    ..
+                }
+            ),
+            "diverge cost 必须惩罚玩家当前主色 Sharp，而不是默认 Mellow；cost={:?}",
+            diverge.cost
         );
     }
 
@@ -3418,6 +3467,96 @@ mod tests {
             .expect("matching heart demon offer should be cached on client entity");
         assert_eq!(cached.trigger_id, offer.trigger_id);
         assert_eq!(cached.payload.choices[0].choice_id, "heart_demon_choice_0");
+    }
+
+    #[test]
+    fn redis_inbound_insight_offer_keeps_contextual_pending_after_dual_producer() {
+        let (tx_outbound, _rx_outbound) = unbounded();
+        let (tx_inbound, rx_inbound) = unbounded();
+        let mut app = App::new();
+        app.insert_resource(RedisBridgeResource {
+            tx_outbound,
+            rx_inbound,
+        });
+        app.insert_resource(CommandExecutorResource::default());
+        app.insert_resource(NarrationDedupeResource::default());
+        app.add_event::<InsightRequest>();
+        app.add_event::<InsightOffer>();
+        app.add_event::<agent_ui::AgentUiCmdEvent>();
+        app.add_systems(
+            Update,
+            (
+                crate::cultivation::insight_flow::process_insight_request,
+                process_redis_inbound,
+            )
+                .chain(),
+        );
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        let mut practice_log = PracticeLog::default();
+        practice_log.add(ColorKind::Heavy, 80.0);
+        practice_log.add(ColorKind::Solid, 12.0);
+        practice_log.add(ColorKind::Light, 4.0);
+        app.world_mut().entity_mut(entity).insert((
+            QiColor {
+                main: ColorKind::Sharp,
+                ..QiColor::default()
+            },
+            practice_log,
+            InsightQuota {
+                used_this_realm: 2,
+                cumulative: std::collections::HashMap::new(),
+                fired_triggers: vec!["practice_dedication_milestone".to_string()],
+            },
+            Cultivation {
+                realm: Realm::Solidify,
+                ..Cultivation::default()
+            },
+        ));
+
+        let trigger_id = "first_breakthrough_to_Solidify";
+        app.world_mut().send_event(InsightRequest {
+            entity,
+            trigger_id: trigger_id.to_string(),
+            realm: Realm::Solidify,
+        });
+        tx_inbound
+            .send(RedisInbound::InsightOffer(InsightOfferV1 {
+                offer_id: "agent-offer-ctx".to_string(),
+                trigger_id: trigger_id.to_string(),
+                character_id: "Azure".to_string(),
+                choices: vec![
+                    agent_insight_choice("converge", 0),
+                    agent_insight_choice("neutral", 1),
+                    agent_insight_choice("diverge", 2),
+                ],
+            }))
+            .expect("agent insight offer should enqueue");
+
+        app.update();
+
+        let pending = app
+            .world()
+            .get::<PendingInsightOffer>(entity)
+            .expect("agent-fed InsightOffer 应写回 PendingInsightOffer");
+        assert_eq!(pending.trigger_id, trigger_id);
+        assert_sharp_contextual_choices(&pending.choices);
+
+        let events = app.world().resource::<Events<InsightOffer>>();
+        let mut reader = bevy_ecs::event::ManualEventReader::default();
+        let offers: Vec<_> = reader.read(events).cloned().collect();
+        assert_eq!(
+            offers.len(),
+            2,
+            "双 producer 同帧应产生本地 fallback + Redis agent-fed 两条 InsightOffer"
+        );
+        let agent_fed_offer = offers
+            .last()
+            .expect("Redis agent-fed offer 应作为本帧最后一次覆盖发出");
+        assert_eq!(agent_fed_offer.entity, entity);
+        assert_eq!(agent_fed_offer.trigger_id, trigger_id);
+        assert_sharp_contextual_choices(&agent_fed_offer.choices);
     }
 
     mod world_state_tests {
