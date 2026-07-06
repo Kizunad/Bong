@@ -60,6 +60,7 @@ pub mod qi_color_observed_emit;
 pub mod quickslot_config_emit;
 pub mod rat_phase_bridge;
 pub mod redis_bridge;
+pub mod remains_sync_emit;
 pub mod resourcepack;
 // plan-scroll-reading-v1 P0 — 可阅读残卷阅读屏 S2C `ScrollOpen` 回执发送。
 pub mod scroll_open_emit;
@@ -932,6 +933,14 @@ pub fn register(app: &mut App) {
             weapon_equipped_emit::emit_weapon_equipped_payloads,
             weapon_equipped_emit::emit_weapon_broken_payloads,
             treasure_equipped_emit::emit_treasure_equipped_payloads,
+        ),
+    );
+    // plan-remains-suite P0：遗骸容器世界同步（独立 add_systems 避免 Bevy 20 元素 tuple 上限）。
+    app.add_systems(
+        Update,
+        (
+            remains_sync_emit::emit_join_remains_syncs,
+            remains_sync_emit::emit_changed_remains_syncs,
         ),
     );
     // plan-shield-block-v1 P3：盾牌破损推送（独立 add_systems 避免 Bevy 20元素 tuple 上限）。

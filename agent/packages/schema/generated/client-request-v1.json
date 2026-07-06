@@ -1105,6 +1105,29 @@
       "required": [
         "v",
         "type",
+        "remains_id"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "remains_loot",
+          "type": "string"
+        },
+        "remains_id": {
+          "minLength": 1,
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
         "x",
         "y",
         "z"

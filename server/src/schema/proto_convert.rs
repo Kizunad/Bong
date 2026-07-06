@@ -730,6 +730,21 @@ impl From<&ServerDataPayloadV1> for Payload {
                         .collect(),
                 })
             }
+            ServerDataPayloadV1::RemainsSync(remains) => Payload::RemainsSync(bong::RemainsSync {
+                remains: remains
+                    .iter()
+                    .map(|r| bong::RemainsEntry {
+                        remains_id: r.remains_id.clone(),
+                        world_pos_x: r.world_pos[0],
+                        world_pos_y: r.world_pos[1],
+                        world_pos_z: r.world_pos[2],
+                        dimension: r.dimension.clone(),
+                        display_name: r.display_name.clone(),
+                        item_count: r.item_count,
+                        bone_coins: r.bone_coins,
+                    })
+                    .collect(),
+            }),
             ServerDataPayloadV1::BotanyHarvestProgress {
                 session_id,
                 target_id,
@@ -3723,6 +3738,11 @@ impl From<&super::client_request::ClientRequestV1> for bong::client_request_enve
                     instance_id: *instance_id,
                 })
             }
+            ClientRequestV1::RemainsLoot { remains_id, .. } => {
+                Payload::RemainsLoot(bong::RemainsLoot {
+                    remains_id: remains_id.clone(),
+                })
+            }
             // ─── 矿石 C2S ────────────────────────────────────────
             ClientRequestV1::MineralProbe { x, y, z, .. } => {
                 Payload::MineralProbe(bong::MineralProbe {
@@ -6061,6 +6081,16 @@ mod tests {
                 }
             ))),
             fix!(ServerDataPayloadV1::DroppedLootSync(vec![])),
+            fix!(ServerDataPayloadV1::RemainsSync(vec![
+                super::super::server_data::RemainsEntryV1 {
+                    remains_id: "3fa85f64-5717-4562-b3fc-2c963f66afa6".to_string(),
+                    world_pos: [1.0, 64.0, 1.0],
+                    dimension: "minecraft:overworld".to_string(),
+                    display_name: "遗骸".to_string(),
+                    item_count: 3,
+                    bone_coins: 12,
+                }
+            ])),
             fix!(ServerDataPayloadV1::BotanyHarvestProgress {
                 session_id: "ses:1".to_string(),
                 target_id: "entity:1".to_string(),
@@ -7023,6 +7053,7 @@ mod tests {
             ServerDataType::InventorySnapshot,
             ServerDataType::InventoryEvent,
             ServerDataType::DroppedLootSync,
+            ServerDataType::RemainsSync,
             ServerDataType::BotanyHarvestProgress,
             ServerDataType::BotanyPlantV2RenderProfiles,
             ServerDataType::MiningProgress,
@@ -7246,8 +7277,8 @@ mod tests {
         }
 
         assert_eq!(
-            proto_count, 126,
-            "Expected 126 proto-encodable S2C variants, got {proto_count}. \
+            proto_count, 127,
+            "Expected 127 proto-encodable S2C variants, got {proto_count}. \
              The fixture list or is_json_bypass classification may have changed."
         );
         assert_eq!(
@@ -7583,6 +7614,10 @@ mod tests {
                 v: 1,
                 instance_id: 1,
             }),
+            build(ClientRequestV1::RemainsLoot {
+                v: 1,
+                remains_id: "3fa85f64-5717-4562-b3fc-2c963f66afa6".to_string(),
+            }),
             build(ClientRequestV1::MineralProbe {
                 v: 1,
                 x: 0,
@@ -7806,8 +7841,8 @@ mod tests {
         let proto_count = fixtures.iter().filter(|(_, b)| !*b).count();
         assert_eq!(
             fixtures.len(),
-            102,
-            "C2S fixture list has {} entries but ClientRequestV1 has 102 variants. \
+            103,
+            "C2S fixture list has {} entries but ClientRequestV1 has 103 variants. \
              Add a fixture for every new variant in c2s_all_fixtures().",
             fixtures.len()
         );
@@ -7817,8 +7852,8 @@ mod tests {
              If a new bypass variant is added, update c2s_all_fixtures() and this assertion."
         );
         assert_eq!(
-            proto_count, 101,
-            "Expected 101 proto-encodable C2S variants, got {proto_count}."
+            proto_count, 102,
+            "Expected 102 proto-encodable C2S variants, got {proto_count}."
         );
 
         // Set-intersection coverage (mirrors the S2C `payload_type()` HashSet check, but keyed
@@ -7832,8 +7867,8 @@ mod tests {
             fixtures.iter().map(|(v, _)| discriminant(v)).collect();
         assert_eq!(
             distinct.len(),
-            102,
-            "C2S fixtures cover only {} DISTINCT ClientRequestV1 variants but there are 102. \
+            103,
+            "C2S fixtures cover only {} DISTINCT ClientRequestV1 variants but there are 103. \
              A variant's fixture was likely deleted and another duplicated — every variant must \
              have its OWN fixture or the proto guard silently skips it.",
             distinct.len()
@@ -7910,8 +7945,8 @@ mod tests {
         }
 
         assert_eq!(
-            proto_count, 101,
-            "Expected 101 proto-encodable C2S variants, got {proto_count}."
+            proto_count, 102,
+            "Expected 102 proto-encodable C2S variants, got {proto_count}."
         );
         assert_eq!(
             bypass_count, 1,

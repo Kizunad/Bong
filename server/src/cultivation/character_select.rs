@@ -39,6 +39,45 @@ pub fn next_character_spec() -> NewCharacterSpec {
     next_character_spec_for_seed("new-character")
 }
 
+/// 转世 bundle：轮换后的新角色 id + 对应的新角色 spec（plan-remains-suite P0）。
+///
+/// 供两条"开新角色"入口共用，避免"新角色长什么样"的取值逻辑在两处漂移：
+/// - `combat::lifecycle::reset_for_new_character`（终结屏点"开启新生"按钮）
+/// - `cultivation::attach_cultivation_to_joined_clients`（join 时发现 life_record
+///   已终结，自动转世——玩家从未点过终结屏时的兜底门）
+#[derive(Debug, Clone)]
+pub struct ReincarnationBundle {
+    pub next_character_id: String,
+    pub spec: NewCharacterSpec,
+}
+
+/// 执行"轮换到新角色"的持久化副作用（`player_core.current_char_id` 自增 UUID +
+/// 清空灵龛归属），并返回新角色的完整 spec。
+///
+/// 只负责 player_core / shrine 两张表的写入 + spec 派生；cultivation / inventory /
+/// lifespan 等 ECS 组件重置由调用方按各自的组件访问方式（Mut 引用 vs
+/// `Commands::insert`）自行应用——两条入口的组件访问形状不同，无法在此收敛。
+pub fn rotate_to_new_character(
+    persistence: &crate::player::state::PlayerStatePersistence,
+    username: &str,
+) -> std::io::Result<ReincarnationBundle> {
+    let raw_char_id = crate::player::state::rotate_current_character_id(persistence, username)?;
+    let next_character_id = crate::player::state::player_character_id(username, &raw_char_id);
+    // 新角色与前角色无机制关联；灵龛归属同样不继承（与 reset_for_new_character 对齐）。
+    if let Err(error) =
+        crate::player::state::save_player_shrine_anchor_slice(persistence, username, None)
+    {
+        tracing::warn!(
+            "[bong][cultivation] failed to clear persisted shrine anchor for `{username}` during reincarnation: {error}",
+        );
+    }
+    let spec = next_character_spec_for_seed(&next_character_id);
+    Ok(ReincarnationBundle {
+        next_character_id,
+        spec,
+    })
+}
+
 pub fn next_character_spec_for_seed(seed: &str) -> NewCharacterSpec {
     NewCharacterSpec {
         spawn_pos: crate::player::spawn_position_for_seed(
