@@ -1,6 +1,6 @@
-# plan-season-phase-stale-client-v1（骨架）
+# plan-season-phase-stale-client-v1
 
-> **骨架（草案）**。一句话主题：服务端的 `WorldSeasonState` 会按时推进并在跨相位时发出 `SeasonChangedEvent`，但客户端 `SeasonStateStore` 只依赖 `player_state` 增量包更新；生产环境里的 `emit_player_state_payloads` 又只在 `PlayerState/Cultivation/social` 这些组件发生变更时才发包，`SeasonChangedEvent` 本身只被转发到 Redis/world_state、没有任何面向客户端的同步路径。结果是：**玩家一旦处于“满 qi、满心境、原地等待跨季”这类静止状态，client 的 season/hud/atmosphere 会长期卡在旧相位，直到下一次无关的 player_state 变化才突然跳变。**
+> 一句话主题：服务端的 `WorldSeasonState` 会按时推进并在跨相位时发出 `SeasonChangedEvent`，但客户端 `SeasonStateStore` 只依赖 `player_state` 增量包更新；生产环境里的 `emit_player_state_payloads` 又只在 `PlayerState/Cultivation/social` 这些组件发生变更时才发包，`SeasonChangedEvent` 本身只被转发到 Redis/world_state、没有任何面向客户端的同步路径。结果是：**玩家一旦处于“满 qi、满心境、原地等待跨季”这类静止状态，client 的 season/hud/atmosphere 会长期卡在旧相位，直到下一次无关的 player_state 变化才突然跳变。**
 
 > 立项动机：这不是纯视觉小瑕疵，而是季节主路径上的状态断链。`plan-season-full-experience-v1` 把季节提示、粒子、突破叠层、音乐/atmosphere 联动都收敛到了 `SeasonStateStore` 上；一旦 store 卡旧值，玩家会直接被错误的季节反馈误导，尤其是在等汐转做突破、看灵田/灵草季节提示、靠 HUD 判断天地节律时最明显。
 
