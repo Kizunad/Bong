@@ -591,11 +591,24 @@ public final class ClientRequestProtocol {
         }
     }
 
-    public static String encodeInventoryMove(long instanceId, InvLocation from, InvLocation to) {
+    /**
+     * plan-rotate-v1 — {@code rotated=true} 表示本次落位前先把该 instance 的
+     * grid_w/grid_h 互换（拖拽中按 R 旋转，2x1 ↔ 1x2）。false 时字段省略，
+     * server 侧 {@code #[serde(default)]} 视为未旋转（与旧 payload 形状一致）。
+     */
+    public static String encodeInventoryMove(
+        long instanceId,
+        InvLocation from,
+        InvLocation to,
+        boolean rotated
+    ) {
         JsonObject obj = envelope("inventory_move_intent");
         obj.addProperty("instance_id", instanceId);
         obj.add("from", from.toJson());
         obj.add("to", to.toJson());
+        if (rotated) {
+            obj.addProperty("rotated", true);
+        }
         return obj.toString();
     }
 
@@ -621,6 +634,20 @@ public final class ClientRequestProtocol {
     public static String encodePickupDroppedItem(long instanceId) {
         JsonObject obj = envelope("pickup_dropped_item");
         obj.addProperty("instance_id", instanceId);
+        return obj.toString();
+    }
+
+    /**
+     * plan-remains-suite P0 — 遗骸 G 键统一交互（对应右键 InteractEntityEvent 路径）。
+     *
+     * @param remainsId 遗骸实体的稳定 id（来自 {@link com.bong.client.inventory.state.RemainsStore}）
+     */
+    public static String encodeRemainsLoot(String remainsId) {
+        if (remainsId == null || remainsId.isBlank()) {
+            throw new IllegalArgumentException("remainsId must not be null/blank");
+        }
+        JsonObject obj = envelope("remains_loot");
+        obj.addProperty("remains_id", remainsId);
         return obj.toString();
     }
 

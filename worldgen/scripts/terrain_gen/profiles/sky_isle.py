@@ -44,7 +44,7 @@ SKY_ISLE_DECORATIONS = (
         kind="tree",
         blocks=("stripped_birch_log", "flowering_azalea_leaves", "glow_lichen"),
         size_range=(7, 12),
-        rarity=0.18,
+        rarity=0.13,
         notes="灵玉树：浅木树干与带光花叶，夜间似有星光。生于浮岛顶面。",
     ),
     DecorationSpec(
@@ -52,7 +52,7 @@ SKY_ISLE_DECORATIONS = (
         kind="shrub",
         blocks=("azalea_leaves", "flowering_azalea_leaves", "glow_lichen"),
         size_range=(1, 2),
-        rarity=0.35,
+        rarity=0.18,
         notes="云兰：低矮花叶丛，附发光地衣。稀疏生长于地面。",
     ),
     DecorationSpec(
@@ -60,7 +60,7 @@ SKY_ISLE_DECORATIONS = (
         kind="boulder",
         blocks=("calcite", "moss_block", "smooth_quartz"),
         size_range=(2, 4),
-        rarity=0.18,
+        rarity=0.13,
         notes="玉璞石：方解石-石英混合巨石，偶尔开裂露出内部灵晶。",
     ),
     DecorationSpec(
@@ -68,7 +68,7 @@ SKY_ISLE_DECORATIONS = (
         kind="crystal",
         blocks=("amethyst_cluster", "amethyst_block", "budding_amethyst"),
         size_range=(3, 6),
-        rarity=0.22,
+        rarity=0.11,
         notes="天脉水晶：浮岛底面垂挂的紫晶簇，与 qi_vein_flow 对齐生长。",
     ),
     DecorationSpec(
@@ -76,7 +76,7 @@ SKY_ISLE_DECORATIONS = (
         kind="tree",
         blocks=("bamboo_block", "stripped_bamboo_block", "azalea_leaves"),
         size_range=(5, 9),
-        rarity=0.30,
+        rarity=0.15,
         notes="飞羽竹：翠绿竹段间嵌翡翠节点，风中轻响。喜生浮岛边缘。",
     ),
 )

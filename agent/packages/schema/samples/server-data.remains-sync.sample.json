@@ -1,0 +1,14 @@
+{
+  "v": 1,
+  "type": "remains_sync",
+  "remains": [
+    {
+      "remains_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+      "world_pos": [8.5, 66.0, 8.5],
+      "dimension": "minecraft:overworld",
+      "display_name": "遗骸",
+      "item_count": 3,
+      "bone_coins": 12
+    }
+  ]
+}

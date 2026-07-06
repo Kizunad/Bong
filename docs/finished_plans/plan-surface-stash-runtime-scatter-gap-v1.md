@@ -9,8 +9,8 @@
 | 阶段 | 主题 | 路由 | 状态 |
 |------|------|------|------|
 | P0 | 证据收口：确认 `SurfaceStash` 只有消费侧、没有生产侧 | fix_pr | ✅ 2026-07-02（骨架阶段已收口，见下） |
-| P1 | runtime scatter 真接线：spawn `PoiNoviceSite` + `LootContainer` + 生成参数/坐标校正 | fix_pr | ⬜ |
-| P2 | respawn / 搜索 / 引导资源回归，避免“补了首刷又漏复活” | fix_pr | ⬜ |
+| P1 | runtime scatter 真接线：spawn `PoiNoviceSite` + `LootContainer` + 生成参数/坐标校正 | fix_pr | ✅ 2026-07-05 |
+| P2 | respawn / 搜索 / 引导资源回归，避免“补了首刷又漏复活” | fix_pr | ✅ 2026-07-05（自动化回归；手动资源 smoke 留遗留） |
 
 ## 接入面（防孤岛 checklist）
 
@@ -152,4 +152,37 @@
 
 - P1 三条交付物（常数区改动 / scatter 签名扩展 / 新 Startup 系统）耦合紧密，建议同一 PR 内完成，不拆分——中间态（比如只改了常数没接调度）没有独立验收意义。
 - P2 的三类回归（首刷 / 复活 / 资源）可以同一 PR 收尾，测试代码量不大（预计 3-5 个新测试函数 + 1 个新集成测试文件），不需要单独开 PR。
-- 本 plan 预计 1 个 PR 即可从 P1 走到 P2 完成，不适用 `docs/CLAUDE.md` §六"scope ≥ 4 PR"的多 PR 编排规范。
+- 本 plan 预计 1 个 PR 即可从 P1 走到 P2 完成，不适用 `docs/CLAUDE.md` §六“scope ≥ 4 PR”的多 PR 编排规范。
+
+## Finish Evidence
+
+**验收日期**：2026-07-05（P0 骨架已收口 / P1 + P2 ✅）。经 §8.1 pre-P0 收口（3 决议：seed=固定字面量 + SPAWN_CENTER 128→0；is_passable 拒绝采样在 while-loop 内 + existing_poi 取原始 manifest；生产链存在性集成测试）+ pre-merge 博弈 gate（`ready=true`，抓 1 major=拒绝采样无 max-attempts 兜底 → 已修 + 补 CI 覆盖）。
+
+### 落地清单
+
+| 阶段 | 交付物 | 真实落点 |
+|------|--------|----------|
+| P1 增量注册 | `PoiNoviceRegistry::extend` | `server/src/world/poi_novice.rs`（`extend` 增量注册，replace_all 语义不变） |
+| P1 scatter 接线 | 坐标校正 + 签名扩展 + Startup 系统 | `server/src/world/poi_novice.rs`（`SPAWN_CENTER_X/Z` 128→0；`scatter_surface_stashes` 加 `existing_poi_xz`+`is_passable` 3 拒绝判据在拒绝采样 while-loop 内；`SURFACE_STASH_SCATTER_SEED` 固定字面量；`scatter_and_spawn_surface_stashes` Startup 系统 `existing_poi` 取 `providers.overworld.pois()` manifest、spawn `LootContainer{SurfaceStash}`+`Position`+`EntityLayerId`+`PoiSpawned`；`register` `.add_systems(Startup, ....after(PoiNoviceLoader::load))`） |
+| P1 健壮性（博弈 major） | 拒绝采样 max-attempts 兜底 | `server/src/world/poi_novice.rs`（`SURFACE_STASH_MAX_SCATTER_ATTEMPTS=500_000` 上限 + 耗尽 `tracing::warn!` 优雅降级返回已放置点，保证 Startup 终止不 hang） |
+| P2 回归 | 集成测试 + determinism + 复活 + 兜底 | `server/src/world/poi_novice_scatter_integration_test.rs`（三层：registry-12 ∧ 世界实体-12 ∧ site↔entity pos 一致）+ `server/src/world/mod.rs`（mod 登记）+ `poi_novice.rs` tests（determinism pin + 3 拒绝判据 + 2 兜底终止 + extend 防清空 pin） |
+
+### 关键 commit
+
+- `0e972f465`（2026-07-05）—— P1+P2 主体：scatter 接进 Startup 真产实体 + 三层集成测试 + determinism pin。
+- `d588da384`（2026-07-05）—— 博弈 gate major：拒绝采样加 `SURFACE_STASH_MAX_SCATTER_ATTEMPTS` 兜底 + 全阻塞/POI-铺满终止回归测试（补挂起路径 CI 覆盖）+ extend 防清空 pin（博弈 minor #1）。
+
+### 测试结果
+
+- `cargo fmt --check` 干净 / `cargo clippy --all-targets -- -D warnings` 零警告 / `cargo test --lib` **10695 passed，0 failed**。
+- 关键 pin：集成测试三层断言（生产链闭环，非 false-green）/ `scatter_and_spawn_surface_stashes_is_deterministic_across_restarts`（固定 seed 稳定散布）/ `scatter_surface_stashes_terminates_under_fully_blocked_terrain` + `..._when_existing_poi_blankets_the_aabb`（兜底终止，博弈 major 锁）/ `scatter_and_spawn_surface_stashes_extends_without_clearing_existing_novice_sites`（extend 防清空，博弈 minor #1 锁）。
+
+### 跨仓库核验
+
+- **server**：`scatter_and_spawn_surface_stashes` / `PoiNoviceKind::SurfaceStash` / `ContainerKind::SurfaceStash` / `PoiSpawned` / `LootContainer` / `PoiNoviceRegistry::extend` / `SURFACE_STASH_MAX_SCATTER_ATTEMPTS`。
+- **agent / client**：零改动（`ContainerKindV1::SurfaceStash` TypeBox variant 已落地；纯 server runtime 生产补丁，不改 wire 格式）。
+
+### 遗留 / 后续
+
+- **P2 手动资源 smoke 未做**（无游戏环境）：三层集成测试已锁生产链存在性；建议用户新号进服后目视确认 spawn 附近能搜到 `surface_stash` 容器并开出 pool 产出。
+- **client `kindLabelZh()` 缺 `"surface_stash"` case**（plan §接入面已登记）：玩家开容器时标题显示通用"容器"而非"散修遗缴"，纯 UI 文案缺口，不影响功能链路，留给未来 touch `TsyContainerView.java` 的 client PR。

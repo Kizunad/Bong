@@ -2,6 +2,7 @@ import type {
   AgentUiResponsePayloadV1,
   AgentWorldModelEnvelopeV1,
   BotanyEcologySnapshotV1,
+  FaunaEcologySnapshotV1,
   ChatMessageV1,
   ChatSignal,
   Command,
@@ -13,6 +14,7 @@ import type {
   WeatherEventUpdateV1,
   WorldStateV1,
   ZonePressureCrossedV1,
+  ZoneSnapshot,
 } from "@bong/schema";
 import type { AgentUiRuntime } from "./ui/agentUiRuntime.js";
 import dotenv from "dotenv";
@@ -152,6 +154,7 @@ export interface RuntimeRedis {
   drainPriceIndexEvents?(): PriceIndexV1[];
   drainWeatherEventUpdates?(): WeatherEventUpdateV1[];
   drainBotanyEcologyEvents?(): BotanyEcologySnapshotV1[];
+  drainFaunaEcologyEvents?(): FaunaEcologySnapshotV1[];
   drainZonePressureCrossedEvents?(): ZonePressureCrossedV1[];
   drainPlayerChat(options?: { maxItems?: number; logger?: Pick<typeof console, "warn"> }): Promise<ChatMessageV1[]>;
   publishCommands(request: CommandPublishRequest): Promise<void>;
@@ -804,6 +807,7 @@ async function processEcologyEvents(args: {
 }): Promise<void> {
   const { redis, worldModel, ecologyAnalyzer, logger } = args;
   const ecologyEvents = redis.drainBotanyEcologyEvents?.() ?? [];
+  const faunaEcologyEvents = redis.drainFaunaEcologyEvents?.() ?? [];
   const pressureEvents = redis.drainZonePressureCrossedEvents?.() ?? [];
   const narrations: Narration[] = [];
   let sourceTick: number | null = null;
@@ -811,6 +815,11 @@ async function processEcologyEvents(args: {
   for (const event of ecologyEvents) {
     sourceTick = Math.max(sourceTick ?? event.tick, event.tick);
     narrations.push(...ecologyAnalyzer.ingestBotanyEcology(worldModel, event));
+  }
+
+  for (const event of faunaEcologyEvents) {
+    sourceTick = Math.max(sourceTick ?? event.tick, event.tick);
+    narrations.push(...ecologyAnalyzer.ingestFaunaEcology(worldModel, event));
   }
 
   for (const event of pressureEvents) {
@@ -1056,8 +1065,9 @@ export async function processTsyZoneActivatedForUi(args: {
       continue;
     }
 
-    // 从 zone snapshot 推算展示信息
-    const zoneSnap = state.zones.find((z) => z.name === event.family_id);
+    // 从 zone snapshot 推算展示信息（family_id 本身不是真实 zone 名，需按
+    // _shallow→_mid→_deep 优先级解析出真实子 zone，见 resolveTsyFamilyZoneSnapshot）
+    const zoneSnap = resolveTsyFamilyZoneSnapshot(state, event.family_id);
     const spiritQiDisplay = zoneSnap
       ? zoneSnap.spirit_qi.toFixed(2)
       : "0.50";
@@ -1089,6 +1099,35 @@ export async function processTsyZoneActivatedForUi(args: {
       );
     }
   }
+}
+
+/** TSY family → 真实 zone 名的 suffix 优先级，须与 server 端顺序保持一致 */
+const TSY_FAMILY_ZONE_SUFFIXES = ["_shallow", "_mid", "_deep"] as const;
+
+/**
+ * plan-bughunt-tsy-agent-ui-display-values-v1 P1 — family → subzone 展示口径收口。
+ *
+ * `TsyZoneActivatedV1.family_id` 不带 `_shallow/_mid/_deep` 后缀，但
+ * `WorldStateV1.zones` 里真实注册的 TSY zone 名恒为 `<family_id>_shallow/_mid/_deep`
+ * （`server/src/world/tsy_lifecycle.rs`）；`z.name === family_id` 的直接匹配永远 miss。
+ *
+ * 决议（plan §8.1 #1/#2）：优先取 `_shallow`（entry portal 恒把玩家传送到
+ * shallow_center，见 `server/src/world/tsy_dev_command.rs:261-271`，事件触发瞬间玩家
+ * 物理上必然站在这层），缺失时依次兜底 `_mid`→`_deep`；suffix 顺序与 server 端
+ * `server/src/world/tsy_lifecycle.rs:884 collect_family_aabbs` 的
+ * `["_shallow", "_mid", "_deep"]` 保持一致，不发明新约定。三层皆缺（如 lifecycle
+ * 刚注册、下一次 world_state publish 还没追上）返回 undefined，调用方回退占位值。
+ */
+function resolveTsyFamilyZoneSnapshot(
+  state: WorldStateV1,
+  familyId: string,
+): ZoneSnapshot | undefined {
+  for (const suffix of TSY_FAMILY_ZONE_SUFFIXES) {
+    const zoneName = `${familyId}${suffix}`;
+    const match = state.zones.find((z) => z.name === zoneName);
+    if (match) return match;
+  }
+  return undefined;
 }
 
 /**

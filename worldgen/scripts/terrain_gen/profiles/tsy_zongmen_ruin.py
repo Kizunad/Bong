@@ -33,7 +33,7 @@ ZONGMEN_RUIN_DECORATIONS = (
         kind="boulder",
         blocks=("cracked_stone_bricks", "deepslate_bricks", "andesite"),
         size_range=(3, 6),
-        rarity=0.45,
+        rarity=0.23,
         notes="柱础残段：宗门殿宇倒塌后的石柱半埋。",
     ),
     DecorationSpec(
@@ -41,7 +41,7 @@ ZONGMEN_RUIN_DECORATIONS = (
         kind="crystal",
         blocks=("lodestone", "amethyst_block", "chiseled_deepslate"),
         size_range=(2, 4),
-        rarity=0.18,
+        rarity=0.13,
         notes="阵盘残片：曾经的引气阵法核心，紫晶尚有微光。",
     ),
     DecorationSpec(
@@ -49,7 +49,7 @@ ZONGMEN_RUIN_DECORATIONS = (
         kind="shrub",
         blocks=("dirt", "podzol", "soul_sand"),
         size_range=(1, 3),
-        rarity=0.30,
+        rarity=0.15,
         notes="黑腐土斑：藏经/器物语义不走 density flora，只保留土壤痕迹。",
     ),
     DecorationSpec(
@@ -57,7 +57,7 @@ ZONGMEN_RUIN_DECORATIONS = (
         kind="boulder",
         blocks=("deepslate_bricks", "chiseled_deepslate", "cobbled_deepslate"),
         size_range=(2, 4),
-        rarity=0.18,
+        rarity=0.13,
         notes="深岩碎标：界碑叙事改走 authored placement，此处只保留碎石标记。",
     ),
 )

@@ -457,6 +457,8 @@ mod tests {
         app.insert_resource(CombatClock::default());
         app.insert_resource(AlchemyMockState::default());
         app.insert_resource(DroppedLootRegistry::default());
+        // plan-remains-suite P0 — DroppedLootRequestParams 新增 EventWriter<RemainsLootIntent>。
+        app.add_event::<crate::inventory::RemainsLootIntent>();
         app.insert_resource(ItemRegistry::default());
         app.insert_resource(RecipeRegistry::default());
 

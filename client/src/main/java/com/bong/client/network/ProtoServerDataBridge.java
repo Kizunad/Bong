@@ -131,6 +131,8 @@ public final class ProtoServerDataBridge {
         m.put(Envelope.ServerDataEnvelope.PayloadCase.UI_OPEN, "ui_open");
         m.put(Envelope.ServerDataEnvelope.PayloadCase.INVENTORY_EVENT, "inventory_event");
         m.put(Envelope.ServerDataEnvelope.PayloadCase.DROPPED_LOOT_SYNC, "dropped_loot_sync");
+        // plan-remains-suite P0 — 遗骸容器世界同步。
+        m.put(Envelope.ServerDataEnvelope.PayloadCase.REMAINS_SYNC, "remains_sync");
         m.put(Envelope.ServerDataEnvelope.PayloadCase.RIFT_PORTAL_STATE, "rift_portal_state");
         m.put(Envelope.ServerDataEnvelope.PayloadCase.RIFT_PORTAL_REMOVED, "rift_portal_removed");
         m.put(Envelope.ServerDataEnvelope.PayloadCase.EXTRACT_STARTED, "extract_started");
@@ -531,6 +533,8 @@ public final class ProtoServerDataBridge {
             case UI_OPEN: return envelope.getUiOpen();
             case INVENTORY_EVENT: return envelope.getInventoryEvent();
             case DROPPED_LOOT_SYNC: return envelope.getDroppedLootSync();
+            // plan-remains-suite P0 — 遗骸容器世界同步。
+            case REMAINS_SYNC: return envelope.getRemainsSync();
             case RIFT_PORTAL_STATE: return envelope.getRiftPortalState();
             case RIFT_PORTAL_REMOVED: return envelope.getRiftPortalRemoved();
             case EXTRACT_STARTED: return envelope.getExtractStarted();

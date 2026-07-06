@@ -101,7 +101,8 @@ public class InspectScreenWornContainerTest {
         screen.dispatchMoveIntent(
             dragged,
             new ClientRequestProtocol.ContainerLoc("main_pack", 2, 3),
-            new ClientRequestProtocol.ContainerLoc("pack_1007", 0, 1)
+            new ClientRequestProtocol.ContainerLoc("pack_1007", 0, 1),
+            false
         );
 
         assertEquals(1, sent.size(), "应发出且仅发出一条 move intent");
@@ -135,7 +136,8 @@ public class InspectScreenWornContainerTest {
         screen.dispatchMoveIntent(
             dragged,
             new ClientRequestProtocol.ContainerLoc("pack_1007", 0, 0),
-            new ClientRequestProtocol.ContainerLoc("main_pack", 1, 1)
+            new ClientRequestProtocol.ContainerLoc("main_pack", 1, 1),
+            false
         );
 
         assertEquals(1, sent.size());

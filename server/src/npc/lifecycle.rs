@@ -106,6 +106,8 @@ pub enum NpcArchetype {
     SkullFiend,
     /// plan-dying-elder-v1 P0 — 垂死大能（困于坍缩渊濒死化虚修士，欺骗性遭遇，可能翻脸夺舍）。
     DyingElder,
+    /// plan-mundane-fauna-v1 P0 — 凡兽（无灵 MC 原版被动生物：牛/猪/羊/鸡/兔/山羊/蛙/狐/狼）。
+    Mundane,
 }
 
 /// plan-npc-overhaul-v1 §P1.1 — 三桶预算系统，按 NPC 类型族群分组限额。
@@ -140,7 +142,7 @@ impl NpcBudgetBucket {
 impl NpcArchetype {
     /// 所有变体，用于遍历和 exhaustiveness 测试。
     #[allow(dead_code)]
-    pub const ALL: [NpcArchetype; 11] = [
+    pub const ALL: [NpcArchetype; 12] = [
         NpcArchetype::Zombie,
         NpcArchetype::Commoner,
         NpcArchetype::Rogue,
@@ -152,6 +154,7 @@ impl NpcArchetype {
         NpcArchetype::Fuya,
         NpcArchetype::SkullFiend,
         NpcArchetype::DyingElder,
+        NpcArchetype::Mundane,
     ];
 
     pub const fn as_str(self) -> &'static str {
@@ -167,6 +170,7 @@ impl NpcArchetype {
             Self::Fuya => "fuya",
             Self::SkullFiend => "skull_fiend",
             Self::DyingElder => "dying_elder",
+            Self::Mundane => "mundane",
         }
     }
 
@@ -190,6 +194,7 @@ impl NpcArchetype {
             "fuya" => Self::Fuya,
             "skull_fiend" => Self::SkullFiend,
             "dying_elder" => Self::DyingElder,
+            "mundane" => Self::Mundane,
             _ => return None,
         })
     }
@@ -203,7 +208,11 @@ impl NpcArchetype {
             | Self::Disciple
             | Self::Daoxiang
             | Self::Zhinian => NpcBudgetBucket::Humanoid,
-            Self::Beast | Self::Fuya => NpcBudgetBucket::Beast,
+            // 凡兽归 Beast 桶（"野生生物"预算池语义一致）——真正的密度控制入口是
+            // plan-mundane-fauna-v1 §8.1 #4 的 `mundane_passive_budget_fn.max_alive`（独立
+            // AmbientSchedulerState<MundaneFaunaMarker> passive pool），NpcBudgetBucket 只是
+            // NpcRegistry 全局计数副产物，不新开第四桶（§8.1 #10 决议）。
+            Self::Beast | Self::Fuya | Self::Mundane => NpcBudgetBucket::Beast,
             Self::GuardianRelic | Self::SkullFiend | Self::DyingElder => NpcBudgetBucket::Special,
         }
     }
@@ -223,6 +232,9 @@ impl NpcArchetype {
             Self::SkullFiend => 260_000.0,
             // 垂死大能由 DyingElderDrainSystem 驱动自然消亡（真元耗尽），不走年龄 aging
             Self::DyingElder => 1_000_000.0,
+            // 凡兽短寿（对齐 Beast 80_000 但更短——v1 种群靠 spawner 补充维持而非繁殖，
+            // §8.1 #6），老死走标准 AgeingScorer→RetireAction 链，不需要专属处理。
+            Self::Mundane => 60_000.0,
         }
     }
 
@@ -1428,8 +1440,8 @@ mod tests {
         // Verify count matches known variant count.
         assert_eq!(
             NpcArchetype::ALL.len(),
-            11,
-            "NpcArchetype::ALL should contain exactly 11 variants (update if enum grows)"
+            12,
+            "NpcArchetype::ALL should contain exactly 12 variants (update if enum grows)"
         );
     }
 

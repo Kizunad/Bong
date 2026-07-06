@@ -170,6 +170,8 @@ message ServerDataEnvelope {
     InventoryMoveRejected inventory_move_rejected = 137;
     // ─── plan-scroll-reading-v1 P0：可阅读残卷阅读屏 S2C（原定 137 被 #825 抢占，顺延取 138，见 §9） ───
     ScrollOpen scroll_open = 138;
+    // plan-remains-suite P0 — 遗骸容器世界同步（G 键统一交互链路，对齐 dropped_loot_sync 形状）。
+    RemainsSync remains_sync = 139;
     // 字段编号一旦分配永不复用（buf breaking 检测保证）。
   }
 }
@@ -305,6 +307,8 @@ message ClientRequestEnvelope {
     // plan-scroll-reading-v1 P1 §8.1#4 — 关闭阅读屏，通知 server 阅读会话结束
     // （P2 落地 emit_scroll_read_stop_for_entity 真正停止循环阅读动画）。
     ScrollReadClosed            scroll_read_closed            = 101;
+    // plan-remains-suite P0 — 遗骸 G 键统一交互（对应右键 InteractEntityEvent 路径）。
+    RemainsLoot                 remains_loot                  = 102;
   }
 }
 
@@ -2740,6 +2744,24 @@ message DroppedLootSync {
   repeated DroppedLootEntry drops = 1;
 }
 
+// ─── RemainsSync ─────────────────────────────────────────────────
+// 与 Rust RemainsEntryV1 / Vec<RemainsEntryV1> 精确对应。
+
+message RemainsEntry {
+  string remains_id   = 1;
+  double world_pos_x  = 2; // Rust [f64;3] 拆三字段
+  double world_pos_y  = 3;
+  double world_pos_z  = 4;
+  string dimension    = 5;
+  string display_name = 6;
+  uint64 item_count   = 7;
+  uint64 bone_coins   = 8;
+}
+
+message RemainsSync {
+  repeated RemainsEntry remains = 1;
+}
+
 // ─── Rift Portal ─────────────────────────────────────────────────
 // 与 Rust RiftPortalKindV1 / RiftPortalDirectionV1 / RiftPortalStateV1 / RiftPortalRemovedV1 精确对应。
 
@@ -2878,6 +2900,7 @@ message ContainerStateProto {
   optional KeyKind locked             = 7;
   bool               depleted              = 8;
   optional string    searched_by_player_id = 9;
+  optional int32     visual_entity_id      = 10; // MC protocol entity_id of attached visual marker
 }
 
 message SearchStarted {
@@ -3695,6 +3718,9 @@ message InventoryMoveIntent {
   uint64            instance_id = 1;
   InventoryLocation from        = 2;
   InventoryLocation to          = 3;
+  // plan-rotate-v1 — 落位前先互换该 instance 的 grid_w/grid_h（拖拽中按 R 旋转）。
+  // proto3 缺省 false = 未旋转，与 Rust `#[serde(default)]` 语义一致。
+  bool              rotated     = 4;
 }
 
 // 与 Rust ClientRequestV1::EquipFalseSkin 精确对应。
@@ -3738,6 +3764,11 @@ message RepairWeaponIntent {
 // 与 Rust ClientRequestV1::PickupDroppedItem 精确对应。
 message PickupDroppedItem {
   uint64 instance_id = 1;
+}
+
+// 与 Rust ClientRequestV1::RemainsLoot 精确对应。
+message RemainsLoot {
+  string remains_id = 1;
 }
 
 // 与 Rust ClientRequestV1::ApplyPill 精确对应。

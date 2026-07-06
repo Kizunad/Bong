@@ -60,6 +60,7 @@ pub mod qi_color_observed_emit;
 pub mod quickslot_config_emit;
 pub mod rat_phase_bridge;
 pub mod redis_bridge;
+pub mod remains_sync_emit;
 pub mod resourcepack;
 // plan-scroll-reading-v1 P0 — 可阅读残卷阅读屏 S2C `ScrollOpen` 回执发送。
 pub mod scroll_open_emit;
@@ -380,7 +381,8 @@ pub fn register(app: &mut App) {
             emit_gameplay_narrations.after(crate::player::gameplay::apply_queued_gameplay_actions),
             emit_player_state_payloads
                 .after(crate::player::attach_player_state_to_joined_clients)
-                .after(crate::player::gameplay::apply_queued_gameplay_actions),
+                .after(crate::player::gameplay::apply_queued_gameplay_actions)
+                .after(crate::social::apply_social_renown_deltas),
             inventory_snapshot_emit::emit_join_inventory_snapshots
                 .after(crate::inventory::attach_inventory_to_joined_clients),
             alchemy_snapshot_emit::emit_join_alchemy_snapshots
@@ -499,7 +501,8 @@ pub fn register(app: &mut App) {
     app.add_systems(
         Update,
         identity_panel_emit::emit_identity_panel_state_payloads
-            .after(crate::identity::command::handle_identity_command),
+            .after(crate::identity::command::handle_identity_command)
+            .after(crate::social::apply_social_renown_deltas),
     );
     app.add_systems(
         Update,
@@ -933,8 +936,24 @@ pub fn register(app: &mut App) {
             treasure_equipped_emit::emit_treasure_equipped_payloads,
         ),
     );
+    // plan-remains-suite P0：遗骸容器世界同步（独立 add_systems 避免 Bevy 20 元素 tuple 上限）。
+    app.add_systems(
+        Update,
+        (
+            remains_sync_emit::emit_join_remains_syncs,
+            remains_sync_emit::emit_changed_remains_syncs,
+        ),
+    );
     // plan-shield-block-v1 P3：盾牌破损推送（独立 add_systems 避免 Bevy 20元素 tuple 上限）。
     app.add_systems(Update, weapon_equipped_emit::emit_shield_broken_payloads);
+    // plan-botany-harvest-full-inventory-loss-v1 P1：满包掉地面 event_stream 提示
+    // （同样独立 add_systems，紧邻上面 shield-block-v1 P3 先例——L895-932 的 20 元素
+    // add_systems 元组已达 Bevy 0.14.2 IntoSystemConfigs tuple 上限，不得再追加）。
+    app.add_systems(
+        Update,
+        event_stream_emit::emit_botany_harvest_overflow_to_event_stream
+            .after(crate::botany::harvest::tick_harvest_sessions),
+    );
     // plan-shield-block-v1 P4：盾格挡命中推送（材质差异化粒子+音效）。
     app.add_systems(
         Update,
@@ -3484,6 +3503,7 @@ mod tests {
                 loot_table: None,
                 guardian_relic: None,
                 tsy_hostile: None,
+                tsy_sentinel: None,
                 intent: crate::npc::dormant::DormantBehaviorIntent::Wander { drift_radius: 12.0 },
                 dormant_since_tick: 0,
                 last_dormant_tick_processed: 0,

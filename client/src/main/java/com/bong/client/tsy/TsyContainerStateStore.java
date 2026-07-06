@@ -25,6 +25,13 @@ public final class TsyContainerStateStore {
         return containers.get(entityId);
     }
 
+    public static synchronized TsyContainerView getByVisualEntityId(int visualEntityId) {
+        return containers.values().stream()
+            .filter(view -> view.visualEntityId() != null && view.visualEntityId() == visualEntityId)
+            .findFirst()
+            .orElse(null);
+    }
+
     public static synchronized List<TsyContainerView> snapshot() {
         return List.copyOf(new ArrayList<>(containers.values()));
     }

@@ -587,7 +587,9 @@ pub fn assign_npc_trade_inventory(
         | NpcArchetype::SkullFiend
         | NpcArchetype::Fuya
         | NpcArchetype::Zombie
-        | NpcArchetype::DyingElder => {
+        | NpcArchetype::DyingElder
+        // plan-mundane-fauna-v1 P0：凡兽不可交易（动物无交易行为）。
+        | NpcArchetype::Mundane => {
             return NpcTradeInventory { offers: Vec::new() };
         }
     };

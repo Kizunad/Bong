@@ -42,10 +42,7 @@ use crate::persistence::{
     persist_termination_transition_with_death_context, release_ascension_quota_slot,
     LifespanEventRecord, PersistenceSettings,
 };
-use crate::player::state::{
-    player_character_id, rotate_current_character_id, save_player_shrine_anchor_slice,
-    save_player_slices, PlayerState, PlayerStatePersistence,
-};
+use crate::player::state::{save_player_slices, PlayerState, PlayerStatePersistence};
 use crate::schema::cultivation::realm_to_string;
 use crate::schema::death_cinematic::DeathCinematicS2cV1;
 use crate::schema::death_insight::{
@@ -1711,31 +1708,32 @@ fn reset_for_new_character(
     coffin_registry: Option<&mut crate::coffin::CoffinRegistry>,
     coffin_state_events: &mut EventWriter<crate::coffin::CoffinStateChanged>,
 ) {
-    let mut next_character_id = None;
+    // plan-remains-suite：轮换 char_id + 派生新角色 spec 的逻辑抽到
+    // `cultivation::character_select::rotate_to_new_character`，与 join 转世门
+    // （`cultivation::attach_cultivation_to_joined_clients`）共用同一份取值，
+    // 避免"新角色长什么样"在两处漂移。
+    let mut rotated_spec = None;
     if let (Some(username), Some(player_persistence)) = (username, player_persistence) {
-        if let Ok(next_char_id) =
-            rotate_current_character_id(player_persistence, username.0.as_str())
-        {
-            tracing::info!(
-                "[bong][combat] rotated current_char_id for `{}` to {next_char_id}",
-                username.0
-            );
-            next_character_id = Some(player_character_id(username.0.as_str(), &next_char_id));
+        match crate::cultivation::character_select::rotate_to_new_character(
+            player_persistence,
+            username.0.as_str(),
+        ) {
+            Ok(bundle) => {
+                tracing::info!(
+                    "[bong][combat] rotated current_char_id for `{}` to {}",
+                    username.0,
+                    bundle.next_character_id
+                );
+                lifecycle.character_id = bundle.next_character_id;
+                rotated_spec = Some(bundle.spec);
+            }
+            Err(error) => {
+                tracing::warn!(
+                    "[bong][combat] failed to rotate current_char_id for `{}`: {error}",
+                    username.0
+                );
+            }
         }
-
-        // 新角色与前角色无机制关联；灵龛归属同样不继承。
-        if let Err(error) =
-            save_player_shrine_anchor_slice(player_persistence, username.0.as_str(), None)
-        {
-            tracing::warn!(
-                "[bong][combat] failed to clear persisted shrine anchor for `{}`: {error}",
-                username.0
-            );
-        }
-    }
-
-    if let Some(next_character_id) = next_character_id {
-        lifecycle.character_id = next_character_id;
     }
 
     // plan-multi-life-v1 §0 O.4: per-life 运数。luck_pool::reset_for_new_life 同时
@@ -1760,9 +1758,11 @@ fn reset_for_new_character(
     // plan-multi-life-v1 §2 / §3：新角色 spec 由 cultivation::character_select 唯一管理
     // （spawn_pos = spawn_plain，realm = Awaken，lifespan = AWAKEN cap）。这里曾硬编
     // MORTAL=80，与 attach_cultivation_to_joined_clients 路径用的 AWAKEN=120 数值漂移；
-    // 现统一从 spec 读，单一数据源。
-    let new_char_spec =
-        crate::cultivation::character_select::next_character_spec_for_seed(&lifecycle.character_id);
+    // 现统一从 spec 读，单一数据源。rotate_to_new_character 已经算过一份（用轮换后的新
+    // char_id 做 seed）；轮换失败（无 username/persistence）时才退回旧的直接派生。
+    let new_char_spec = rotated_spec.unwrap_or_else(|| {
+        crate::cultivation::character_select::next_character_spec_for_seed(&lifecycle.character_id)
+    });
     let spawn_position = new_char_spec.spawn_pos;
     let fresh_lifespan = LifespanComponent::new(new_char_spec.lifespan_cap);
 

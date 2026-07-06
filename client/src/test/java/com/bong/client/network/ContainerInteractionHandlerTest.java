@@ -58,10 +58,11 @@ public class ContainerInteractionHandlerTest {
         // containerStateAppliesFlatWorldPosThroughRealProtoWire below) — the handler no
         // longer accepts a "world_pos":[x,y,z] array.
         route("""
-            {"type":"container_state","v":1,"entity_id":42,"kind":"storage_pouch","family_id":"tsy","world_pos_x":1.0,"world_pos_y":2.0,"world_pos_z":3.0,"depleted":false}
+            {"type":"container_state","v":1,"entity_id":42,"visual_entity_id":2048,"kind":"storage_pouch","family_id":"tsy","world_pos_x":1.0,"world_pos_y":2.0,"world_pos_z":3.0,"depleted":false}
             """);
 
         assertEquals(42L, TsyContainerStateStore.get(42L).entityId());
+        assertEquals(2048, TsyContainerStateStore.get(42L).visualEntityId());
         assertEquals("储物袋残骸", TsyContainerStateStore.get(42L).kindLabelZh());
         assertEquals(1.0, TsyContainerStateStore.get(42L).x());
         assertEquals(2.0, TsyContainerStateStore.get(42L).y());
@@ -96,6 +97,7 @@ public class ContainerInteractionHandlerTest {
                 .setWorldPosX(11.5)
                 .setWorldPosY(64.0)
                 .setWorldPosZ(-200.25)
+                .setVisualEntityId(4096)
                 .setDepleted(false)
                 .build();
 
@@ -132,6 +134,8 @@ public class ContainerInteractionHandlerTest {
                 "world_pos_z=-200.25 须经 proto wire（flat 字段）正确落进 store.z，实际 " + view.z());
         assertEquals("tsy", view.familyId(),
                 "family_id 应随 world_pos 一起正常存活（非本次回归目标，但顺带验证整条 container_state 未被破坏）");
+        assertEquals(4096, view.visualEntityId(),
+                "visual_entity_id 须经 proto wire 正确落进 store，供 G 键准星 visual 反查 gameplay 容器");
     }
 
     // ── container_state: ContainerKind / KeyKind 枚举前缀在 proto wire 上被剥除 ──
@@ -180,6 +184,25 @@ public class ContainerInteractionHandlerTest {
                 "\"storage_pouch\"→\"储物袋残骸\"，实际 \"" + view.kindLabelZh() + "\"");
         assertNull(view.locked(),
                 "未 set 的 optional locked 应缺省为 null（未上锁），不应出现带前缀的字符串，实际 \"" + view.locked() + "\"");
+    }
+
+    @Test
+    void containerKindSurfaceStashResolvesLabelThroughProtoWire() {
+        // fix/surface-stash-label：surface_stash（散修遗缴，plan-onboarding-loop-v1 P0.1 地表容器）
+        // 此前 kindLabelZh() 无对应 case → 即便枚举前缀已剥仍落 default「容器」。补上后应显示专属名。
+        TsyContainerView view = viewThroughProtoWire(Envelope.ContainerStateProto.newBuilder()
+                .setEntityId(90L)
+                .setKind(Envelope.ContainerKind.CONTAINER_KIND_SURFACE_STASH)
+                .setFamilyId("surface")
+                .setWorldPosX(5.0).setWorldPosY(64.0).setWorldPosZ(5.0)
+                .setDepleted(false));
+
+        assertNotNull(view, "store 里应有 entity_id=90 的容器视图");
+        assertEquals("surface_stash", view.kind(),
+                "CONTAINER_KIND_SURFACE_STASH 应剥成 \"surface_stash\"，实际 \"" + view.kind() + "\"");
+        assertEquals("散修遗缴", view.kindLabelZh(),
+                "\"surface_stash\"→\"散修遗缴\"（server ContainerKind::SurfaceStash 注释的正典名），"
+                + "实际 \"" + view.kindLabelZh() + "\"；若为「容器」说明 kindLabelZh() 仍缺 surface_stash 分支");
     }
 
     /** 过真机生产链解析一个 ContainerStateProto，返回落进 store 的 view。 */

@@ -1805,6 +1805,39 @@ describe("sample files pass schema validation", () => {
     expect(data.to.container_id).toBe("pack_1007");
   });
 
+  // plan-rotate-v1：拖拽中按 R 旋转后的落位正样本——rotated:true 合法且透传。
+  it("client-request.inventory-move-intent.rotated.sample.json", () => {
+    const data = loadSample(
+      "client-request.inventory-move-intent.rotated.sample.json",
+    );
+    const result = validate(ClientRequestV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+    expect(data.rotated).toBe(true);
+    expect(data.to.kind).toBe("container");
+  });
+
+  // plan-rotate-v1：rotated 是可选字段——不带时仍合法（旧客户端向后兼容 pin，
+  // server 侧 serde(default) 视为 false）。基础 sample 本身就不带 rotated。
+  it("move intent without rotated field stays valid (legacy compat)", () => {
+    const data = loadSample("client-request.inventory-move-intent.sample.json");
+    expect(data.rotated).toBeUndefined();
+    const result = validate(ClientRequestV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  // plan-rotate-v1：rotated 非布尔（如字符串 "true"）被拒（反样本）。
+  it("move intent with non-boolean rotated is rejected", () => {
+    const result = validate(ClientRequestV1, {
+      v: 1,
+      type: "inventory_move_intent",
+      instance_id: 2051,
+      rotated: "true",
+      from: { kind: "container", container_id: "main_pack", row: 0, col: 0 },
+      to: { kind: "container", container_id: "main_pack", row: 1, col: 0 },
+    });
+    expect(result.ok).toBe(false);
+  });
+
   // plan-tarkov-backpack-v1 P2：pack_<数字> container_id 被 ContainerIdV1 pattern 接受（正）。
   it("move intent into pack_<n> container is accepted", () => {
     const result = validate(ClientRequestV1, {
@@ -1875,6 +1908,97 @@ describe("sample files pass schema validation", () => {
   it("client-request.pickup-dropped-item.sample.json", () => {
     const data = loadSample("client-request.pickup-dropped-item.sample.json");
     const result = validate(ClientRequestV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  // plan-remains-suite P0 — 遗骸 G 键统一交互 C2S schema pin
+  it("client-request.remains-loot.sample.json 正样本通过", () => {
+    const data = loadSample("client-request.remains-loot.sample.json");
+    const result = validate(ClientRequestV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("RemainsLootRequestV1 负样本：remains_id 缺失应拒绝", () => {
+    const bad = { type: "remains_loot", v: 1 };
+    const result = validate(ClientRequestV1, bad);
+    expect(result.ok).toBe(false);
+  });
+
+  it("RemainsLootRequestV1 负样本：remains_id 空字符串应拒绝", () => {
+    const bad = { type: "remains_loot", v: 1, remains_id: "" };
+    const result = validate(ClientRequestV1, bad);
+    expect(result.ok).toBe(false);
+  });
+
+  it("RemainsLootRequestV1 负样本：额外字段应拒绝", () => {
+    const bad = {
+      type: "remains_loot",
+      v: 1,
+      remains_id: "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+      unexpected: true,
+    };
+    const result = validate(ClientRequestV1, bad);
+    expect(result.ok).toBe(false);
+  });
+
+  // plan-remains-suite P0 — 遗骸世界同步 S2C schema pin
+  it("server-data.remains-sync.sample.json 正样本通过", () => {
+    const data = loadSample("server-data.remains-sync.sample.json");
+    const result = validate(ServerDataV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  const validRemainsEntry = () => ({
+    remains_id: "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+    world_pos: [1, 64, 1],
+    dimension: "minecraft:overworld",
+    display_name: "遗骸",
+    item_count: 1,
+    bone_coins: 0,
+  });
+
+  it("remains_sync 负样本：entry 缺 dimension 应拒绝", () => {
+    const bad = {
+      v: 1,
+      type: "remains_sync",
+      remains: [
+        {
+          remains_id: "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+          world_pos: [1, 64, 1],
+          display_name: "遗骸",
+          item_count: 1,
+          bone_coins: 0,
+        },
+      ],
+    };
+    const result = validate(ServerDataV1, bad);
+    expect(result.ok).toBe(false);
+  });
+
+  it.each([
+    ["item_count 为负数", { ...validRemainsEntry(), item_count: -1 }],
+    ["bone_coins 为负数", { ...validRemainsEntry(), bone_coins: -1 }],
+    ["world_pos 缺失", (() => {
+      const entry = validRemainsEntry() as Record<string, unknown>;
+      delete entry.world_pos;
+      return entry;
+    })()],
+    ["world_pos 维度不足", { ...validRemainsEntry(), world_pos: [1, 64] }],
+    ["world_pos 维度过多", { ...validRemainsEntry(), world_pos: [1, 64, 1, 2] }],
+    ["display_name 缺失", (() => {
+      const entry = validRemainsEntry() as Record<string, unknown>;
+      delete entry.display_name;
+      return entry;
+    })()],
+  ])("remains_sync 负样本：%s 应拒绝", (_name, entry) => {
+    const bad = { v: 1, type: "remains_sync", remains: [entry] };
+    const result = validate(ServerDataV1, bad);
+    expect(result.ok).toBe(false);
+  });
+
+  it("remains_sync 空列表也是合法快照（遗骸全被搬空后广播空快照清屏）", () => {
+    const empty = { v: 1, type: "remains_sync", remains: [] };
+    const result = validate(ServerDataV1, empty);
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
 

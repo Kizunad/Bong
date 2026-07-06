@@ -33,7 +33,7 @@ DANENG_CRATER_DECORATIONS = (
         kind="crystal",
         blocks=("amethyst_block", "calcite", "end_rod"),
         size_range=(4, 8),
-        rarity=0.30,
+        rarity=0.15,
         notes="灵气结晶柱：陨落大能体内灵气溢出凝成的紫晶柱，向上发散辉光。",
     ),
     DecorationSpec(
@@ -41,7 +41,7 @@ DANENG_CRATER_DECORATIONS = (
         kind="boulder",
         blocks=("black_concrete", "obsidian", "blackstone"),
         size_range=(5, 9),
-        rarity=0.18,
+        rarity=0.13,
         notes="中心残骸：陨星撞击中心未完全瓦解的黑色晶状残块。",
     ),
     DecorationSpec(
@@ -49,7 +49,7 @@ DANENG_CRATER_DECORATIONS = (
         kind="shrub",
         blocks=("blackstone", "magma_block", "basalt"),
         size_range=(2, 4),
-        rarity=0.45,
+        rarity=0.23,
         notes="焦土环：陨击后高温灼烧形成的环形焦黑带。",
     ),
     DecorationSpec(
@@ -57,7 +57,7 @@ DANENG_CRATER_DECORATIONS = (
         kind="crystal",
         blocks=("small_amethyst_bud", "amethyst_cluster", "calcite"),
         size_range=(1, 3),
-        rarity=0.35,
+        rarity=0.18,
         notes="灵晶碎簇：散布在主柱周边的小型紫晶簇。",
     ),
 )

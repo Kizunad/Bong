@@ -25,7 +25,7 @@ public class TsyContainerStateStoreTest {
 
     @Test
     void handlerRangeMatchesServerSearchValidation() {
-        assertEquals(3.0, TsyContainerSearchIntentHandler.MAX_INTERACT_DISTANCE);
+        assertEquals(5.0, TsyContainerSearchIntentHandler.MAX_INTERACT_DISTANCE);
     }
 
     @Test

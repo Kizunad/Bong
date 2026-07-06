@@ -1325,6 +1325,17 @@ impl BotanyKindRegistry {
     pub fn canonicalize(&self, raw: &str) -> Result<BotanyPlantId, String> {
         canonicalize_herb_id(raw)
     }
+
+    /// plan-botany-harvest-full-inventory-loss-v1 P0 测试专用：构造一个不含任何
+    /// `BotanyPlantKind` 的空注册表，用于单测 `complete_harvest_for_player` 里
+    /// `kind_registry.get(...)` 的结构性失败分支（生产环境 `default()` 始终覆盖全部
+    /// `BotanyPlantId` 变体，这条分支正常游玩不可达，只能靠人造空注册表命中）。
+    #[cfg(test)]
+    pub(crate) fn empty() -> Self {
+        Self {
+            by_id: HashMap::new(),
+        }
+    }
 }
 
 fn botany_v2_kind(

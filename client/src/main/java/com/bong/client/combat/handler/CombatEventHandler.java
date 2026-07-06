@@ -90,6 +90,8 @@ public final class CombatEventHandler implements ServerDataHandler {
         return switch (wire.trim().toLowerCase(java.util.Locale.ROOT)) {
             case "crit" -> DamageFloaterStore.Kind.CRIT;
             case "block" -> DamageFloaterStore.Kind.BLOCK;
+            // plan-shield-block-combat-event-feedback-v1 §8.1 #1 — 复用既有 BLOCK 枚举，不新增变体。
+            case "shield_block" -> DamageFloaterStore.Kind.BLOCK;
             case "heal" -> DamageFloaterStore.Kind.HEAL;
             case "qi_damage" -> DamageFloaterStore.Kind.QI_DAMAGE;
             default -> DamageFloaterStore.Kind.HIT;
@@ -104,6 +106,8 @@ public final class CombatEventHandler implements ServerDataHandler {
         return switch (wire == null ? "" : wire.toLowerCase(java.util.Locale.ROOT)) {
             case "crit" -> 0xFFFFC040;
             case "block" -> 0xFFA0A0A0;
+            // plan-shield-block-combat-event-feedback-v1 §8.1 #1 — 专属"盾蓝"，区别于 block 灰 / 默认 HIT 红。
+            case "shield_block" -> 0xFF6FA8DC;
             case "heal" -> 0xFF60E060;
             case "qi_damage" -> 0xFF80A0FF;
             default -> 0xFFE04040;

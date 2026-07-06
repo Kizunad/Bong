@@ -10,6 +10,7 @@ use super::TEST_AREA_BLOCK_EXTENT;
 use crate::persistence::{ZoneOverlayRecord, ZoneRuntimeRecord, ZONE_OVERLAY_PAYLOAD_VERSION};
 
 pub const DEFAULT_ZONES_PATH: &str = "zones.json";
+pub const DEFAULT_TSY_ZONES_PATH: &str = "zones.tsy.json";
 pub const DEFAULT_SPAWN_ZONE_NAME: &str = "spawn";
 
 const DEFAULT_SPAWN_BOUNDS_MIN: [f64; 3] = [-128.0, 64.0, -128.0];
@@ -217,8 +218,27 @@ impl ZoneRegistry {
     }
 
     pub fn load() -> Self {
-        let manifest_dir_path = Path::new(env!("CARGO_MANIFEST_DIR")).join(DEFAULT_ZONES_PATH);
-        Self::load_from_path(manifest_dir_path)
+        let manifest_dir_path = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let mut registry = Self::load_from_path(manifest_dir_path.join(DEFAULT_ZONES_PATH));
+
+        let tsy_path = manifest_dir_path.join(DEFAULT_TSY_ZONES_PATH);
+        match registry.merge_tsy_blueprint_from_path(&tsy_path) {
+            Ok(loaded) if loaded > 0 => {
+                tracing::info!(
+                    "[bong][world] merged {loaded} TSY blueprint zone(s) from {}",
+                    tsy_path.display()
+                );
+            }
+            Ok(_) => {}
+            Err(error) => {
+                tracing::warn!(
+                    "[bong][world] failed to merge TSY blueprint zones from {}: {error}",
+                    tsy_path.display()
+                );
+            }
+        }
+
+        registry
     }
 
     pub fn load_from_path(path: impl AsRef<Path>) -> Self {
@@ -371,6 +391,62 @@ impl ZoneRegistry {
         }
         self.zones.push(zone);
         Ok(())
+    }
+
+    fn merge_tsy_blueprint_from_path(&mut self, path: impl AsRef<Path>) -> Result<usize, String> {
+        let path = path.as_ref();
+        let contents = match fs::read_to_string(path) {
+            Ok(contents) => contents,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                tracing::info!(
+                    "[bong][world] no TSY blueprint zones config at {}, skipping TSY zone merge",
+                    path.display()
+                );
+                return Ok(0);
+            }
+            Err(error) => {
+                return Err(format!(
+                    "failed to read TSY blueprint zones config: {error}"
+                ));
+            }
+        };
+
+        let config: ZonesFileConfig = serde_json::from_str(&contents)
+            .map_err(|error| format!("failed to parse TSY blueprint zones config: {error}"))?;
+        let supplemental = ZoneRegistry::try_from_config(
+            config,
+            ZoneConfigPolicy {
+                require_spawn: false,
+                spirit_qi_floor: SpiritQiFloor::TsyBlueprint,
+            },
+        )?;
+        let loaded = supplemental.zones.len();
+
+        if let Some(zone) = supplemental
+            .zones
+            .iter()
+            .find(|zone| !zone.is_tsy() || zone.dimension != DimensionKind::Tsy)
+        {
+            return Err(format!(
+                "zone `{}` is not a TSY blueprint zone; supplemental merge rejected",
+                zone.name
+            ));
+        }
+
+        if let Some(zone) = supplemental
+            .zones
+            .iter()
+            .find(|zone| self.zones.iter().any(|existing| existing.name == zone.name))
+        {
+            return Err(format!(
+                "zone `{}` already registered; TSY blueprint merge rejected",
+                zone.name
+            ));
+        }
+
+        self.zones.extend(supplemental.zones);
+
+        Ok(loaded)
     }
 
     pub fn apply_runtime_records(&mut self, runtime_records: &[ZoneRuntimeRecord]) {
@@ -551,6 +627,30 @@ impl TryFrom<ZonesFileConfig> for ZoneRegistry {
     type Error = String;
 
     fn try_from(config: ZonesFileConfig) -> Result<Self, Self::Error> {
+        Self::try_from_config(
+            config,
+            ZoneConfigPolicy {
+                require_spawn: true,
+                spirit_qi_floor: SpiritQiFloor::RuntimeBounded,
+            },
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ZoneConfigPolicy {
+    require_spawn: bool,
+    spirit_qi_floor: SpiritQiFloor,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum SpiritQiFloor {
+    RuntimeBounded,
+    TsyBlueprint,
+}
+
+impl ZoneRegistry {
+    fn try_from_config(config: ZonesFileConfig, policy: ZoneConfigPolicy) -> Result<Self, String> {
         if config.zones.is_empty() {
             return Err("zones list cannot be empty".to_string());
         }
@@ -560,14 +660,14 @@ impl TryFrom<ZonesFileConfig> for ZoneRegistry {
         let mut zones = Vec::with_capacity(config.zones.len());
 
         for zone_config in config.zones {
-            let zone = validate_zone(zone_config, &mut seen_names)?;
+            let zone = validate_zone(zone_config, &mut seen_names, policy.spirit_qi_floor)?;
             if zone.name == DEFAULT_SPAWN_ZONE_NAME {
                 saw_spawn = true;
             }
             zones.push(zone);
         }
 
-        if !saw_spawn {
+        if policy.require_spawn && !saw_spawn {
             return Err(format!(
                 "zones config must include a `{DEFAULT_SPAWN_ZONE_NAME}` zone to preserve spawn fallback semantics"
             ));
@@ -577,7 +677,11 @@ impl TryFrom<ZonesFileConfig> for ZoneRegistry {
     }
 }
 
-fn validate_zone(zone: ZoneConfig, seen_names: &mut HashSet<String>) -> Result<Zone, String> {
+fn validate_zone(
+    zone: ZoneConfig,
+    seen_names: &mut HashSet<String>,
+    spirit_qi_floor: SpiritQiFloor,
+) -> Result<Zone, String> {
     let name = zone.name.trim();
     if name.is_empty() {
         return Err("zone name cannot be empty".to_string());
@@ -587,11 +691,21 @@ fn validate_zone(zone: ZoneConfig, seen_names: &mut HashSet<String>) -> Result<Z
         return Err(format!("duplicate zone name `{name}`"));
     }
 
-    if !zone.spirit_qi.is_finite()
-        || !(MIN_ZONE_SPIRIT_QI..=MAX_ZONE_SPIRIT_QI).contains(&zone.spirit_qi)
-    {
+    let below_floor = match spirit_qi_floor {
+        SpiritQiFloor::RuntimeBounded => zone.spirit_qi < MIN_ZONE_SPIRIT_QI,
+        // `zones.tsy.json` is a TSY worldgen/dev blueprint, not the overworld runtime
+        // `zones.json` authority. Existing TSY drain design uses values like -1.1/-1.15
+        // as collapse pressure inputs, so this supplemental loader only requires finite
+        // values and the shared upper bound.
+        SpiritQiFloor::TsyBlueprint => false,
+    };
+    if !zone.spirit_qi.is_finite() || below_floor || zone.spirit_qi > MAX_ZONE_SPIRIT_QI {
+        let floor_label = match spirit_qi_floor {
+            SpiritQiFloor::RuntimeBounded => MIN_ZONE_SPIRIT_QI.to_string(),
+            SpiritQiFloor::TsyBlueprint => "-inf".to_string(),
+        };
         return Err(format!(
-            "zone `{name}` spirit_qi must be a finite value within [{MIN_ZONE_SPIRIT_QI}, {MAX_ZONE_SPIRIT_QI}]"
+            "zone `{name}` spirit_qi must be a finite value within [{floor_label}, {MAX_ZONE_SPIRIT_QI}]"
         ));
     }
 
@@ -1264,6 +1378,136 @@ mod zone_tests {
             spawn.qi_inflow_per_min > 0.0,
             "spawn must actually configure a positive inflow rate — otherwise qi_equilibrium \
              is a dead config value"
+        );
+    }
+
+    #[test]
+    fn default_load_merges_tsy_blueprint_zones() {
+        let registry = ZoneRegistry::load();
+
+        let spawn = registry
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .expect("default load must keep the overworld spawn zone");
+        assert_eq!(
+            spawn.dimension,
+            crate::world::dimension::DimensionKind::Overworld,
+            "spawn zone must remain in overworld after TSY supplement merge"
+        );
+
+        let daneng = registry
+            .find_zone_by_name("tsy_daneng_01_shallow")
+            .expect("default load must merge TSY blueprint zones from zones.tsy.json");
+        assert_eq!(
+            daneng.dimension,
+            crate::world::dimension::DimensionKind::Tsy,
+            "TSY blueprint zone must retain dimension=tsy"
+        );
+        assert!(
+            daneng.is_tsy(),
+            "tsy_daneng_01_shallow must be recognised by the TSY prefix gate"
+        );
+        assert!(
+            daneng.spirit_qi < -0.4,
+            "tsy_daneng_01_shallow must stay below the dying elder spawn threshold; got {}",
+            daneng.spirit_qi
+        );
+
+        assert!(
+            registry
+                .zones
+                .iter()
+                .any(|zone| zone.name == "tsy_lingxu_01_deep" && zone.spirit_qi < -1.0),
+            "TSY blueprint merge must preserve deep-layer collapse pressure values used by tsy_drain"
+        );
+    }
+
+    #[test]
+    fn tsy_blueprint_merge_rejects_conflicts_without_partial_state() {
+        let path = unique_temp_path("bong-zones-tsy-conflict", ".json");
+        fs::write(
+            &path,
+            r#"{
+  "zones": [
+    {
+      "name": "tsy_partial_01_shallow",
+      "dimension": "tsy",
+      "aabb": { "min": [0.0, 20.0, 0.0], "max": [16.0, 40.0, 16.0] },
+      "spirit_qi": -0.5,
+      "danger_level": 2
+    },
+    {
+      "name": "spawn",
+      "dimension": "tsy",
+      "aabb": { "min": [32.0, 20.0, 32.0], "max": [48.0, 40.0, 48.0] },
+      "spirit_qi": -0.5,
+      "danger_level": 2
+    }
+  ]
+}"#,
+        )
+        .expect("fixture should be writable");
+
+        let mut registry = ZoneRegistry::fallback();
+        let result = registry.merge_tsy_blueprint_from_path(&path);
+
+        assert!(
+            result.is_err(),
+            "TSY supplemental merge must reject names already present in the base registry"
+        );
+        assert_eq!(
+            registry.zones.len(),
+            1,
+            "conflicting supplemental merge must be atomic and keep the base registry unchanged"
+        );
+        assert!(
+            registry
+                .find_zone_by_name("tsy_partial_01_shallow")
+                .is_none(),
+            "no earlier supplemental zone should be left behind after a later name conflict"
+        );
+    }
+
+    #[test]
+    fn tsy_blueprint_merge_rejects_non_tsy_zones_without_partial_state() {
+        let path = unique_temp_path("bong-zones-tsy-non-tsy", ".json");
+        fs::write(
+            &path,
+            r#"{
+  "zones": [
+    {
+      "name": "tsy_valid_01_shallow",
+      "dimension": "tsy",
+      "aabb": { "min": [0.0, 20.0, 0.0], "max": [16.0, 40.0, 16.0] },
+      "spirit_qi": -1.2,
+      "danger_level": 2
+    },
+    {
+      "name": "overworld_leak",
+      "dimension": "overworld",
+      "aabb": { "min": [32.0, 20.0, 32.0], "max": [48.0, 40.0, 48.0] },
+      "spirit_qi": -0.5,
+      "danger_level": 2
+    }
+  ]
+}"#,
+        )
+        .expect("fixture should be writable");
+
+        let mut registry = ZoneRegistry::fallback();
+        let result = registry.merge_tsy_blueprint_from_path(&path);
+
+        assert!(
+            result.is_err(),
+            "TSY supplemental merge must reject non-TSY zones instead of widening the runtime registry"
+        );
+        assert_eq!(
+            registry.zones.len(),
+            1,
+            "invalid supplemental merge must be atomic and keep the base registry unchanged"
+        );
+        assert!(
+            registry.find_zone_by_name("tsy_valid_01_shallow").is_none(),
+            "no earlier valid supplemental zone should be left behind after a later non-TSY zone"
         );
     }
 

@@ -21,6 +21,7 @@ describe("plan-tsy-container-v1 §5.1 — ContainerStateV1", () => {
   const valid = {
     v: 1 as const,
     entity_id: 42,
+    visual_entity_id: 2048,
     kind: "stone_casket" as const,
     family_id: "tsy_lingxu_01",
     world_pos: [10.5, 64.0, -3.5],
@@ -65,6 +66,12 @@ describe("plan-tsy-container-v1 §5.1 — ContainerStateV1", () => {
   it("rejects extra fields (additionalProperties)", () => {
     const bad = { ...valid, extra: "nope" };
     expect(validateContainerStateV1Contract(bad).ok).toBe(false);
+  });
+
+  it("rejects invalid visual entity id", () => {
+    expect(
+      validateContainerStateV1Contract({ ...valid, visual_entity_id: -1 }).ok,
+    ).toBe(false);
   });
 
   it("rejects missing v / family_id", () => {
