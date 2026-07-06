@@ -5,7 +5,7 @@
 //! Wanted` 时下发；从 Wanted 退出（如切身份）不下发，由 agent 用退出语义自己处理。
 
 use uuid::Uuid;
-use valence::prelude::{App, EventReader, Query, Res, Update, Username, With};
+use valence::prelude::{App, EventReader, IntoSystemConfigs, Query, Res, Update, Username, With};
 
 use super::events::IdentityReactionChangedEvent;
 use super::reaction::ReactionTier;
@@ -17,7 +17,10 @@ use crate::schema::identity::{RevealedTagKindV1, WantedPlayerEventTag, WantedPla
 
 /// 注册 wanted-player emit 系统。
 pub fn register(app: &mut App) {
-    app.add_systems(Update, emit_wanted_player_to_redis);
+    app.add_systems(
+        Update,
+        emit_wanted_player_to_redis.after(super::reaction::update_identity_reaction_state),
+    );
 }
 
 /// 根据玩家 active identity 数据 + IdentityReactionChangedEvent 构造 IPC payload。

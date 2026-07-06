@@ -3,6 +3,7 @@ package com.bong.client.combat.handler;
 import com.bong.client.combat.CombatHudState;
 import com.bong.client.combat.CombatHudStateStore;
 import com.bong.client.combat.DerivedAttrFlags;
+import com.bong.client.combat.juice.CombatJuiceSystem;
 import com.bong.client.combat.store.AscensionQuotaStore;
 import com.bong.client.combat.store.DamageFloaterStore;
 import com.bong.client.combat.store.DeathStateStore;
@@ -29,6 +30,10 @@ class CombatHandlersTest {
     @AfterEach
     void tearDown() {
         DamageFloaterStore.resetForTests();
+        // CombatEventHandler.handle() 对 block/shield_block 会经 CombatJuiceSystem.accept() 设置
+        // 一个用真实 System.currentTimeMillis() 起始的静态 activeOverlay；若不清理，会以极负的
+        // (fakeNow - realNow) 差值"永不过期"，泄漏成 BongHudOrchestratorTest 里多出的 VISUAL 命令。
+        CombatJuiceSystem.resetForTests();
         CombatHudStateStore.resetForTests();
         StatusEffectStore.resetForTests();
         DerivedAttrsStore.resetForTests();
@@ -59,6 +64,66 @@ class CombatHandlersTest {
             "{\"v\":1,\"type\":\"combat_event\"}"
         ));
         assertFalse(dispatch.handled());
+    }
+
+    @Test
+    void combatEventHandlerShieldBlockKindNotDefaultHit() {
+        // plan-shield-block-combat-event-feedback-v1 §P0 — server wire_kind() 发 "shield_block"，
+        // 但 CombatEventHandler.parseKind()/defaultColorFor() 曾经没有专属分支，落入 default
+        // 变成普通 HIT 红字。这条测试锁住 "shield_block" 必须归类到 BLOCK 且拿到专属盾蓝色，
+        // 而不是 default 分支的 HIT / HIT 红。
+        String shieldBlockJson = """
+            {"v":1,"type":"combat_event","events":[
+              {"kind":"shield_block","amount":8}
+            ]}""";
+        ServerDataDispatch dispatch = new CombatEventHandler().handle(parse(shieldBlockJson));
+        assertTrue(dispatch.handled(), "combat_event with shield_block kind should be accepted");
+
+        List<DamageFloaterStore.Floater> snapshot = DamageFloaterStore.snapshot(System.currentTimeMillis());
+        assertEquals(1, snapshot.size(), "expected exactly one floater from the single shield_block event");
+        DamageFloaterStore.Floater floater = snapshot.get(0);
+
+        assertEquals(
+            DamageFloaterStore.Kind.BLOCK,
+            floater.kind(),
+            "shield_block must parse to Kind.BLOCK (plan §8.1 #1 reuses BLOCK); "
+                + "回归 default 分支会导致 shield_block 落到 Kind.HIT，此断言会失败"
+        );
+        assertEquals(
+            0xFF6FA8DC,
+            floater.color(),
+            "shield_block must use the dedicated shield-blue 0xFF6FA8DC color from defaultColorFor(); "
+                + "回归 default 分支会导致颜色变成 0xFFE04040（HIT 红），此断言会失败"
+        );
+        assertNotEquals(
+            0xFFE04040,
+            floater.color(),
+            "shield_block color must not equal the default HIT red 0xFFE04040 "
+                + "(that would mean it fell through to the default branch)"
+        );
+        assertNotEquals(
+            0xFFA0A0A0,
+            floater.color(),
+            "shield_block color must not equal plain block's grey 0xFFA0A0A0 "
+                + "(that would mean it was miscoded to reuse block's color instead of its own dedicated shield-blue)"
+        );
+
+        // 对照锚点：普通 "block" 仍然是灰色 0xFFA0A0A0，与 shield_block 的盾蓝 0xFF6FA8DC 形成显式对比，
+        // 防止未来重构把两者配色改混。
+        String plainBlockJson = """
+            {"v":1,"type":"combat_event","events":[
+              {"kind":"block","amount":5}
+            ]}""";
+        DamageFloaterStore.resetForTests();
+        new CombatEventHandler().handle(parse(plainBlockJson));
+        List<DamageFloaterStore.Floater> blockSnapshot = DamageFloaterStore.snapshot(System.currentTimeMillis());
+        assertEquals(1, blockSnapshot.size(), "expected exactly one floater from the single block event");
+        assertEquals(
+            0xFFA0A0A0,
+            blockSnapshot.get(0).color(),
+            "plain 'block' kind must keep its existing grey color 0xFFA0A0A0, "
+                + "distinct from shield_block's dedicated shield-blue 0xFF6FA8DC"
+        );
     }
 
     @Test
@@ -263,6 +328,29 @@ class CombatHandlersTest {
     }
 
     @Test
+    void tribulationBroadcastHandlerKeepsConcurrentEntriesAndClearsOnlyTarget() {
+        new TribulationBroadcastHandler().handle(parse("""
+            {"v":1,"type":"tribulation_broadcast","active":true,
+             "actor_name":"甲","stage":"warn","world_x":0,"world_z":0,
+             "expires_at_ms":9999999999,"spectate_invite":true,"spectate_distance":30}"""));
+        new TribulationBroadcastHandler().handle(parse("""
+            {"v":1,"type":"tribulation_broadcast","active":true,
+             "actor_name":"乙","stage":"warn","world_x":400,"world_z":0,
+             "expires_at_ms":9999999999,"spectate_invite":false,"spectate_distance":400}"""));
+
+        assertEquals(2, TribulationBroadcastStore.all().size());
+        assertEquals("甲", TribulationBroadcastStore.snapshot().actorName());
+
+        new TribulationBroadcastHandler().handle(parse("""
+            {"v":1,"type":"tribulation_broadcast","active":false,
+             "actor_name":"甲","stage":"done","world_x":0,"world_z":0,
+             "expires_at_ms":0,"spectate_invite":false,"spectate_distance":0}"""));
+
+        assertEquals(1, TribulationBroadcastStore.all().size());
+        assertEquals("乙", TribulationBroadcastStore.snapshot().actorName());
+    }
+
+    @Test
     void tribulationStatePopulatesStoreAndKeepsResultOnClear() {
         String activeJson = """
             {"v":1,"type":"tribulation_state","active":true,
@@ -296,6 +384,38 @@ class CombatHandlersTest {
         assertEquals("settle", cleared.phase());
         assertEquals("ascended", cleared.result());
         assertEquals(5, cleared.waveCurrent());
+    }
+
+    @Test
+    void tribulationStateHandlerClearsOnlyMatchingCharId() {
+        new TribulationStateHandler().handle(parse("""
+            {"v":1,"type":"tribulation_state","active":true,
+             "char_id":"offline:Azure","actor_name":"Azure","kind":"du_xu","phase":"wave",
+             "world_x":0,"world_z":0,"wave_current":2,"wave_total":5,
+             "started_tick":100,"phase_started_tick":200,"next_wave_tick":300,
+             "failed":false,"half_step_on_success":false,
+             "participants":["offline:Azure"],"result":null}"""));
+        new TribulationStateHandler().handle(parse("""
+            {"v":1,"type":"tribulation_state","active":true,
+             "char_id":"offline:Beryl","actor_name":"Beryl","kind":"du_xu","phase":"wave",
+             "world_x":400,"world_z":0,"wave_current":1,"wave_total":5,
+             "started_tick":100,"phase_started_tick":200,"next_wave_tick":300,
+             "failed":false,"half_step_on_success":false,
+             "participants":["offline:Beryl"],"result":null}"""));
+
+        assertEquals(2, TribulationStateStore.all().size());
+
+        new TribulationStateHandler().handle(parse("""
+            {"v":1,"type":"tribulation_state","active":false,
+             "char_id":"offline:Azure","actor_name":"Azure","kind":"du_xu","phase":"settle",
+             "world_x":0,"world_z":0,"wave_current":5,"wave_total":0,
+             "started_tick":0,"phase_started_tick":0,"next_wave_tick":0,
+             "failed":false,"half_step_on_success":false,
+             "participants":[],"result":"ascended"}"""));
+
+        assertEquals(1, TribulationStateStore.all().size());
+        assertEquals("offline:Beryl", TribulationStateStore.snapshot().charId());
+        assertTrue(TribulationStateStore.snapshot().active());
     }
 
     @Test

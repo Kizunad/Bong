@@ -2320,6 +2320,7 @@ mod tests {
                         qi_injected: 50.0,
                         qi_required: 100.0,
                         color_imprint: Some(ColorKind::Sharp as i32),
+                        min_realm: Some(Realm::Spirit as i32),
                     },
                 )),
             }),
@@ -2331,6 +2332,7 @@ mod tests {
             forge_step_state::State::Consecration(c) => {
                 assert!((c.qi_injected - 50.0).abs() < 1e-9);
                 assert_eq!(c.color_imprint, Some(ColorKind::Sharp as i32));
+                assert_eq!(c.min_realm, Some(Realm::Spirit as i32));
             }
             other => panic!("期望 Consecration state，实际 {other:?}"),
         }
@@ -8762,6 +8764,7 @@ mod tests {
                     locked: Some(KeyKind::JadeCoffinSeal.into()),
                     depleted: false,
                     searched_by_player_id: None,
+                    visual_entity_id: None,
                 },
             )),
         };
@@ -9911,6 +9914,8 @@ mod tests {
                             },
                         )),
                     }),
+                    // plan-rotate-v1 — 旋转标志随 wire roundtrip。
+                    rotated: true,
                 },
             )),
         };
@@ -9920,6 +9925,10 @@ mod tests {
         match decoded.payload {
             Some(client_request_envelope::Payload::InventoryMoveIntent(m)) => {
                 assert_eq!(m.instance_id, 42);
+                assert!(
+                    m.rotated,
+                    "InventoryMoveIntent.rotated 应随 proto roundtrip 保留 true（plan-rotate-v1 字段 4）"
+                );
             }
             other => panic!("expected InventoryMoveIntent, got {other:?}"),
         }
@@ -10275,6 +10284,7 @@ mod tests {
                     locked: None,
                     depleted: false,
                     searched_by_player_id: None,
+                    visual_entity_id: None,
                 }),
                 "ContainerState",
             ),
@@ -10700,6 +10710,7 @@ mod tests {
                     instance_id: 1,
                     from: None,
                     to: None,
+                    rotated: false,
                 }),
                 "InventoryMoveIntent",
             ),

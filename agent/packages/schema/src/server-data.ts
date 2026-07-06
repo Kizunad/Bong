@@ -177,6 +177,7 @@ export const ServerDataType = Type.Union([
   Type.Literal("inventory_event"),
   Type.Literal("inventory_snapshot"),
   Type.Literal("dropped_loot_sync"),
+  Type.Literal("remains_sync"),
   Type.Literal("botany_harvest_progress"),
   Type.Literal("gathering_session"),
   Type.Literal("botany_plant_v2_render_profiles"),
@@ -441,6 +442,31 @@ export const ServerDataDroppedLootSyncV1 = Type.Object(
   { additionalProperties: false },
 );
 export type ServerDataDroppedLootSyncV1 = Static<typeof ServerDataDroppedLootSyncV1>;
+
+// plan-remains-suite P0 — 世界内遗骸容器轻量摘要（照 DroppedLootEntryV1 的形状；
+// 不携带完整 item 列表，只给"有没有东西/东西有多少"的摘要）。
+export const RemainsEntryV1 = Type.Object(
+  {
+    remains_id: Type.String({ minLength: 1 }),
+    world_pos: Vec3,
+    dimension: Type.String(),
+    display_name: Type.String(),
+    item_count: Type.Integer({ minimum: 0 }),
+    bone_coins: Type.Integer({ minimum: 0 }),
+  },
+  { additionalProperties: false },
+);
+export type RemainsEntryV1 = Static<typeof RemainsEntryV1>;
+
+export const ServerDataRemainsSyncV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("remains_sync"),
+    remains: Type.Array(RemainsEntryV1),
+  },
+  { additionalProperties: false },
+);
+export type ServerDataRemainsSyncV1 = Static<typeof ServerDataRemainsSyncV1>;
 
 const ServerDataInventoryEventMovedV1 = Type.Object(
   {
@@ -1790,6 +1816,7 @@ export const ServerDataV1 = Type.Union([
   ServerDataInventorySnapshotV1,
   ServerDataInventoryEventV1,
   ServerDataDroppedLootSyncV1,
+  ServerDataRemainsSyncV1,
   ServerDataBotanyHarvestProgressV1,
   ServerDataBotanyPlantV2RenderProfilesV1,
   ServerDataLumberProgressV1,

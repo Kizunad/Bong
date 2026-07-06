@@ -7,8 +7,8 @@
 | 阶段 | 主题 | 路由 | 状态 |
 |---|---|---|---|
 | P0 | family → subzone 展示口径收口（决议见 §8.1） | plan_skeleton | ✅ 2026-07-04 |
-| P1 | `processTsyZoneActivatedForUi` 接线改为按 `_shallow→_mid→_deep` 优先级读取真实 family 子 zone，而非 `z.name===family_id` | fix_pr | ⬜ |
-| P2 | agent 侧回归测试：suffix 优先级、真实值优先于占位值、仅真缺失时才回退占位 | fix_pr | ⬜ |
+| P1 | `processTsyZoneActivatedForUi` 接线改为按 `_shallow→_mid→_deep` 优先级读取真实 family 子 zone，而非 `z.name===family_id` | fix_pr | ✅ 2026-07-06 |
+| P2 | agent 侧回归测试：suffix 优先级、真实值优先于占位值、仅真缺失时才回退占位 | fix_pr | ✅ 2026-07-06 |
 
 ## 接入面
 
@@ -89,3 +89,24 @@
 ## 审计来源
 
 bughunt 第二轮线程 D，限定 scope：`agent/packages/tiandao` + `agent/packages/schema` + `server/src/network/agent_ui.rs` 相关 UI-as-data 链路。已排除现有 `docs/plan-bughunt-r*.md` / `docs/plans-skeleton/plan-bughunt-r*.md` 题目；本题未被现有 bughunt plan 收录。PR #850（骨架）已 merge，opus 已核过真问题 + 防孤岛。
+
+## Finish Evidence
+
+### 落地清单
+- **P0（设计收口）**：§8.1 #1/#2/#3 决议（取 `_shallow` 优先、`_mid`→`_deep` 兜底、不做 family 聚合；player_id fallback 已在既有代码修好、不属本 plan）。
+- **P1（helper + 改输入源）**：`agent/packages/tiandao/src/runtime.ts` 新增 `const TSY_FAMILY_ZONE_SUFFIXES = ["_shallow","_mid","_deep"]` + 私有 helper `resolveTsyFamilyZoneSnapshot(state, familyId): ZoneSnapshot | undefined`（精确匹配 `${familyId}${suffix}`，命中短路，三层皆缺返回 `undefined`）；`processTsyZoneActivatedForUi` 把 `state.zones.find((z) => z.name === event.family_id)` 改为调该 helper，`spiritQiDisplay`/`dangerTier` 的真实值优先 / 占位兜底结构未动。suffix 顺序与 `server/src/world/tsy_lifecycle.rs:884 collect_family_aabbs` 逐字对齐。未改 `zone_name` / `player_id`。
+- **P2（回归测试）**：`agent/packages/tiandao/tests/runtime.test.ts` 的 `processTsyZoneActivatedForUi (Fix①…)` 块新增/改写 6 条：`_shallow` 命中→真实值、`_shallow` 缺→`_mid` 兜底、仅 `_deep`→`_deep`、优先级 pin（`_shallow`+`_deep` 同在取 `_shallow`）、三层皆缺→占位（`"0.50"`/`"中危"`）、把原 `toBeTruthy()` 弱断言升级为具体值断言。均内联构造 `state.zones`，不改共享 `tests/support/fakes.ts`。
+
+### 关键 commit
+- `eeffb60f`（2026-07-06）fix(tsy): 天道 TSY 发现面板展示值结构性 miss — family_id 按 _shallow→_mid→_deep 优先级解析真实子 zone（PR #965）。
+
+### 测试结果
+- `cd agent/packages/tiandao && npm test`（`tsc -p tsconfig.test.json --noEmit` + `vitest run`）→ 72 test files / **825 tests passed**，0 failed（`runtime.test.ts` 70/70）。主线独立重跑复核同样 825/825。
+
+### 跨仓库核验
+- **agent**：`resolveTsyFamilyZoneSnapshot`（新）、`processTsyZoneActivatedForUi`（改输入源）、`resolveTsyDangerTier`（复用，danger_level→tier 映射）、`ZoneSnapshot`/`WorldStateV1`/`TsyZoneActivatedV1`（复用 schema 类型，未改 schema）。
+- **server**：`tsy_lifecycle.rs` zone 命名 `<family>_shallow/_mid/_deep` + `collect_family_aabbs` suffix 顺序（agent 对齐同序）、`network/mod.rs collect_zone_snapshots`（原样发布 zone.name，验证端到端可达）。
+- **client**：无改动（本 plan 只改 params 值，不动 template 结构 / payload 字段）。
+
+### 遗留 / 后续
+- 博弈 gate 记录 3 处 minor（非阻塞、未修）：① `processTsyZoneActivatedForUi` 头部 docstring（1039 行）仍描述已弃用的按 zone 名选人逻辑（陈旧文档，非本 plan 引入，且 §8.1 #3 明确 player_id 不属本 plan 范围）；② `TSY_FAMILY_ZONE_SUFFIXES` 与 server suffix 数组是两份独立字面量、无跨仓库编译期联结（§8.1 #2 已明确选择对齐 server 顺序而非引入共享 const/codegen，属既有模式）；③ helper docstring 引用的 `tsy_dev_command.rs` 是 dead_code 调试命令，作为 shallow-first 佐证说服力偏弱（纯文档）。均可留作独立清理，不阻塞本 plan。

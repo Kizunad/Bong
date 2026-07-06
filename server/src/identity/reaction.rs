@@ -16,7 +16,8 @@
 
 use serde::{Deserialize, Serialize};
 use valence::prelude::{
-    bevy_ecs, App, Commands, Component, Entity, EventWriter, Query, Res, Update, With,
+    bevy_ecs, App, Commands, Component, Entity, EventWriter, IntoSystemConfigs, Query, Res, Update,
+    With,
 };
 
 use super::events::IdentityReactionChangedEvent;
@@ -105,8 +106,10 @@ impl Default for IdentityReactionState {
 
 /// 注册反应分级系统。
 pub fn register(app: &mut App) {
-    app.add_event::<IdentityReactionChangedEvent>()
-        .add_systems(Update, update_identity_reaction_state);
+    app.add_event::<IdentityReactionChangedEvent>().add_systems(
+        Update,
+        update_identity_reaction_state.after(crate::social::apply_social_renown_deltas),
+    );
 }
 
 /// 玩家 tick 维护反应分级 + 边界发射。

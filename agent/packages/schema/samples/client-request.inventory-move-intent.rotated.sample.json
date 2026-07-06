@@ -1,0 +1,18 @@
+{
+  "v": 1,
+  "type": "inventory_move_intent",
+  "instance_id": 1009,
+  "rotated": true,
+  "from": {
+    "kind": "container",
+    "container_id": "main_pack",
+    "row": 0,
+    "col": 0
+  },
+  "to": {
+    "kind": "container",
+    "container_id": "main_pack",
+    "row": 2,
+    "col": 3
+  }
+}

@@ -6,7 +6,7 @@
 
 | 阶段 | 主题 | 状态 | 验收日期 |
 |------|------|------|----------|
-| P0 | client 新增 `tsy_search_cancel` 按键 → 发 `cancel_search`；server 侧 `handle_cancel_search` 补回归测试锁行为 | ⬜ | — |
+| P0 | client 新增 `tsy_search_cancel` 按键 → 发 `cancel_search`；server 侧 `handle_cancel_search` 补回归测试锁行为 | ✅ 2026-07-06 | 2026-07-06 |
 
 ## 接入面
 
@@ -82,3 +82,27 @@
 3. 不新增端到端 e2e（client 真实发包 → server 真实收包）测试——`ClientRequestProtocolTest.java:534-539` 已经 pin 了 `encodeCancelSearch()` 的 envelope 形状，`client_request.rs:2207-2209` 已经 pin 了 server 侧 decode，两端协议格式已有专属测试；本 plan 新增的 3+5 条测试补的是"协议之外、两端各自状态机内部"的行为覆盖，两者互不重叠、合起来才是完整链路。
 
 **落点**：`server/src/world/tsy_container_search.rs:758`（`mod tests`，新增 3 个 `#[test] fn handle_cancel_search_*`）/ 新文件 `client/src/test/java/com/bong/client/hud/SearchHudStateStoreTest.java` / plan §P0 交付物 #4-#5。
+
+## Finish Evidence
+
+### 落地清单（P0）
+- **client 取消输入**：新文件 `client/src/main/java/com/bong/client/tsy/SearchCancelInteractionBootstrap.java`（`GLFW_KEY_H` 专属按键，`onTick` 门控 `SearchHudStateStore.snapshot().phase()==SEARCHING` 时调 `ClientRequestSender.sendCancelSearch()`，镜像 `ExtractInteractionBootstrap`；绕过 `InteractKeyRouter`，理由见 §8.1 #1）+ `client/src/main/java/com/bong/client/BongClient.java`（`register()` 接线）。
+- **lang**：`client/src/main/resources/assets/bong-client/lang/en_us.json`（`key.bong-client.tsy_search_cancel`）+ `zh_cn.json`（`tsy_search_cancel` + 回填历史缺失的 `tsy_extract`/`tsy_extract_cancel`，弥补 §P0 #3 的 zh_cn 债）。
+- **server 回归测试**：`server/src/world/tsy_container_search.rs` `mod tests` 新增 3 条 `handle_cancel_search_*`（happy path 释放锁 / 无 `SearchProgress` 幂等 noop / owner 守卫防误清他人锁——该条经变异测试验证：破坏守卫为无条件清锁则撞红）。未改动 `handle_cancel_search` 生产逻辑（协议/system/HUD 分支本就落地，本 plan 只补断掉的 client 输入线 + 测试）。
+- **client 回归测试**：新文件 `client/src/test/java/com/bong/client/hud/SearchHudStateStoreTest.java`（`markAborted` 全 `AbortReason` 分支 pin：cancelled/moved/combat/damaged + 未知→NONE + null→NONE + 空标签兜底）。
+
+### 关键 commit
+- `d6ae5bf2`（2026-07-06）feat(tsy): 补 TSY 搜刮主动取消输入路径（H 键）+ 两端回归测试（PR #963）。
+
+### 测试结果
+- server：`cargo test handle_cancel_search` → 3 passed；`cargo test tsy_container_search` → 27 passed / 0 failed。owner 守卫测试经变异验证（破坏守卫 → `actual=None, expected Some(other_player)` 撞红）。
+- client：`./gradlew test build` → BUILD SUCCESSFUL（`SearchHudStateStoreTest` 7 条通过）。
+- lang JSON 合法性校验通过；确认 `bong-client/lang` 不在 `scripts/build-resourcepack.sh` 的 `INCLUDE_PREFIXES`，改 lang 不影响资源包 sha1。
+
+### 跨仓库核验
+- **client**：`SearchCancelInteractionBootstrap`（新）、`ClientRequestSender.sendCancelSearch()`、`SearchHudStateStore.snapshot().phase()` / `SearchHudState.Phase.SEARCHING` / `AbortReason.CANCELLED`（复用，未新建）。
+- **server**：`handle_cancel_search`、`CancelSearchRequest`、`SearchAborted{reason: SearchAbortReason::Cancelled}`、`ClientRequestV1::CancelSearch`（复用，未新建 component/event/schema）。
+- 协议契约（`encodeCancelSearch` / `ClientRequestV1::CancelSearch` decode）此前已有专属 pin，本 plan 未改 schema 包。
+
+### 遗留 / 后续
+- **`extract_system.rs` 的 `AlreadyBusy` 不覆盖 `IsSearching`**（§8.1 #2 审计发现）：玩家 SEARCHING 中启动撤离时 `ExtractRejectionReason::AlreadyBusy` 不触发，`SearchProgress` + `ExtractProgress` 可能并发共存，是独立 bug，**明确排除本 plan 范围**，留待独立 skeleton（建议 `plan-tsy-search-extract-concurrent-busy-v1`）。本 plan 未动 `extract_system.rs`。

@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
@@ -207,7 +208,8 @@ public class ClientRequestProtocolTest {
         String json = ClientRequestProtocol.encodeInventoryMove(
             1001L,
             new ClientRequestProtocol.ContainerLoc("main_pack", 0, 0),
-            new ClientRequestProtocol.HotbarLoc(3)
+            new ClientRequestProtocol.HotbarLoc(3),
+            false
         );
         assertEquals(
             "{\"type\":\"inventory_move_intent\",\"v\":1,\"instance_id\":1001,\"from\":{\"kind\":\"container\",\"container_id\":\"main_pack\",\"row\":0,\"col\":0},\"to\":{\"kind\":\"hotbar\",\"index\":3}}",
@@ -220,12 +222,45 @@ public class ClientRequestProtocolTest {
         String json = ClientRequestProtocol.encodeInventoryMove(
             2002L,
             new ClientRequestProtocol.EquipLoc("main_hand", "held"),
-            new ClientRequestProtocol.ContainerLoc("small_pouch", 1, 2)
+            new ClientRequestProtocol.ContainerLoc("small_pouch", 1, 2),
+            false
         );
         assertEquals(
             "{\"type\":\"inventory_move_intent\",\"v\":1,\"instance_id\":2002,\"from\":{\"kind\":\"equip\",\"slot\":\"main_hand\",\"state\":\"held\"},\"to\":{\"kind\":\"container\",\"container_id\":\"small_pouch\",\"row\":1,\"col\":2}}",
             json
         );
+    }
+
+    // ─── plan-rotate-v1：encodeInventoryMove 带 rotated 的 JSON 形状 pin ───
+
+    @Test
+    void encodesInventoryMoveWithRotatedTrue() {
+        String json = ClientRequestProtocol.encodeInventoryMove(
+            3003L,
+            new ClientRequestProtocol.ContainerLoc("main_pack", 0, 0),
+            new ClientRequestProtocol.ContainerLoc("main_pack", 2, 3),
+            true
+        );
+        assertEquals(
+            "{\"type\":\"inventory_move_intent\",\"v\":1,\"instance_id\":3003,"
+                + "\"from\":{\"kind\":\"container\",\"container_id\":\"main_pack\",\"row\":0,\"col\":0},"
+                + "\"to\":{\"kind\":\"container\",\"container_id\":\"main_pack\",\"row\":2,\"col\":3},"
+                + "\"rotated\":true}",
+            json,
+            "rotated=true 时 payload 必须携带 rotated:true（server 侧据此互换 grid_w/grid_h）"
+        );
+    }
+
+    @Test
+    void encodesInventoryMoveWithRotatedFalseOmitsField() {
+        String json = ClientRequestProtocol.encodeInventoryMove(
+            3004L,
+            new ClientRequestProtocol.ContainerLoc("main_pack", 0, 0),
+            new ClientRequestProtocol.ContainerLoc("main_pack", 2, 3),
+            false
+        );
+        assertFalse(json.contains("rotated"),
+            "rotated=false 时字段应省略（与旧 payload 形状一致，server serde(default) 补 false），实际 = " + json);
     }
 
     @Test
@@ -849,7 +884,8 @@ public class ClientRequestProtocolTest {
         String json = ClientRequestProtocol.encodeInventoryMove(
             7007L,
             new ClientRequestProtocol.ContainerLoc("main_pack", 0, 0),
-            new ClientRequestProtocol.EquipLoc("chest", "worn")
+            new ClientRequestProtocol.EquipLoc("chest", "worn"),
+            false
         );
         com.google.gson.JsonObject to = com.google.gson.JsonParser.parseString(json)
             .getAsJsonObject().getAsJsonObject("to");
@@ -863,7 +899,8 @@ public class ClientRequestProtocolTest {
         String json = ClientRequestProtocol.encodeInventoryMove(
             7008L,
             new ClientRequestProtocol.ContainerLoc("main_pack", 0, 0),
-            new ClientRequestProtocol.EquipLoc("main_hand", "held")
+            new ClientRequestProtocol.EquipLoc("main_hand", "held"),
+            false
         );
         com.google.gson.JsonObject to = com.google.gson.JsonParser.parseString(json)
             .getAsJsonObject().getAsJsonObject("to");

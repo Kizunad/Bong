@@ -9,8 +9,23 @@ public record TsyContainerView(
     double z,
     String locked,
     boolean depleted,
-    String searchedByPlayerId
+    String searchedByPlayerId,
+    Integer visualEntityId
 ) {
+    public TsyContainerView(
+        long entityId,
+        String kind,
+        String familyId,
+        double x,
+        double y,
+        double z,
+        String locked,
+        boolean depleted,
+        String searchedByPlayerId
+    ) {
+        this(entityId, kind, familyId, x, y, z, locked, depleted, searchedByPlayerId, null);
+    }
+
     public boolean interactable() {
         return !depleted && (searchedByPlayerId == null || searchedByPlayerId.isBlank());
     }
@@ -29,6 +44,7 @@ public record TsyContainerView(
             case "storage_pouch" -> "储物袋残骸";
             case "stone_casket" -> "石匣";
             case "relic_core" -> "法阵核心";
+            case "surface_stash" -> "散修遗缴";
             default -> "容器";
         };
     }

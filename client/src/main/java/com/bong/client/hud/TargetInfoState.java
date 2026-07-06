@@ -3,6 +3,7 @@ package com.bong.client.hud;
 import com.bong.client.state.PlayerStateViewModel;
 import com.bong.client.npc.NpcMetadata;
 import com.bong.client.npc.NpcMetadataStore;
+import com.bong.client.social.SocialStateStore;
 import com.bong.client.util.RealmLabel;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.LivingEntity;
@@ -14,6 +15,7 @@ import java.util.Objects;
 public final class TargetInfoState {
     public static final long HOLD_MILLIS = 5_000L;
     public static final long FADE_MILLIS = 1_000L;
+    public static final String ANONYMOUS_PLAYER_DISPLAY_NAME = "某修士";
 
     public enum Kind {
         NPC,
@@ -77,10 +79,16 @@ public final class TargetInfoState {
         if (!(entity instanceof LivingEntity living)) {
             return empty();
         }
-        Kind kind = living instanceof PlayerEntity ? Kind.PLAYER : Kind.MOB;
+        boolean playerTarget = living instanceof PlayerEntity;
+        Kind kind = playerTarget ? Kind.PLAYER : Kind.MOB;
         String name = living.getDisplayName() == null
             ? living.getType().getName().getString()
             : living.getDisplayName().getString();
+        if (playerTarget) {
+            PlayerEntity player = (PlayerEntity) living;
+            String playerName = player.getGameProfile() == null ? player.getName().getString() : player.getGameProfile().getName();
+            name = playerDisplayNameForTargetInfo(player.getUuidAsString(), playerName, name);
+        }
         float maxHealth = Math.max(1.0f, living.getMaxHealth());
         return create(
             kind,
@@ -91,6 +99,15 @@ public final class TargetInfoState {
             0.0,
             observedAtMillis
         );
+    }
+
+    static String playerDisplayNameForTargetInfo(String playerUuid, String playerName, String fallbackDisplayName) {
+        String normalizedName = normalize(playerName);
+        String visibleName = normalizedName.isEmpty() ? normalize(fallbackDisplayName) : normalizedName;
+        if (!SocialStateStore.shouldShowRemoteNameTag(playerUuid, visibleName)) {
+            return ANONYMOUS_PLAYER_DISPLAY_NAME;
+        }
+        return visibleName.isEmpty() ? ANONYMOUS_PLAYER_DISPLAY_NAME : visibleName;
     }
 
     static TargetInfoState fromNpcMetadata(NpcMetadata metadata, long observedAtMillis) {

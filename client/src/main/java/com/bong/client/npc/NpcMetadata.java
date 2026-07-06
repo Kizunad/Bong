@@ -11,6 +11,7 @@ public record NpcMetadata(
     String factionRank,
     int reputationToPlayer,
     String displayName,
+    boolean nametagVisible,
     String ageBand,
     String greetingText,
     String qiHint,
@@ -41,6 +42,7 @@ public record NpcMetadata(
             factionRank,
             reputationToPlayer,
             displayName,
+            true,
             ageBand,
             greetingText,
             qiHint,
@@ -75,6 +77,7 @@ public record NpcMetadata(
             factionRank,
             reputationToPlayer,
             displayName,
+            true,
             ageBand,
             greetingText,
             qiHint,
@@ -83,6 +86,44 @@ public record NpcMetadata(
             Map.of(),
             List.of(),
             List.of()
+        );
+    }
+
+    /** Backward-compatible constructor (old server without nametag_visible). */
+    public NpcMetadata(
+        int entityId,
+        String archetype,
+        String realm,
+        String factionName,
+        String factionRank,
+        int reputationToPlayer,
+        String displayName,
+        String ageBand,
+        String greetingText,
+        String qiHint,
+        double hpRatio,
+        double qiRatio,
+        Map<String, NpcEquipSlotData> equipment,
+        List<NpcTechniqueData> techniques,
+        List<NpcTradeOffer> tradeOffers
+    ) {
+        this(
+            entityId,
+            archetype,
+            realm,
+            factionName,
+            factionRank,
+            reputationToPlayer,
+            displayName,
+            true,
+            ageBand,
+            greetingText,
+            qiHint,
+            hpRatio,
+            qiRatio,
+            equipment,
+            techniques,
+            tradeOffers
         );
     }
 

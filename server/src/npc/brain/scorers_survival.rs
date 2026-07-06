@@ -348,12 +348,151 @@ pub(crate) fn fear_cultivator_scorer_system(
 
 use crate::npc::spawn::NpcBlackboard;
 
+// ---------------------------------------------------------------------------
+// FleeThreatScorer / CorneredScorer — plan-mundane-fauna-v1 P0 威胁谱系反抗链
+// ---------------------------------------------------------------------------
+
+use super::{CORNERED_MELEE_DISTANCE, FLEE_THREAT_RANGE};
+
+/// 凡兽泛化避险 scorer（对齐 [`FearCultivatorScorer`] 但不按境界加权、不区分修士/玩家——
+/// 凡兽对"一切威胁"无差别保持距离，T0~T2.5 全档共用）。**已知 v1 限定（诚实记录，非孤岛）**：
+/// `update_npc_blackboard` 的 `nearest_player` 只扫描 `With<ClientMarker>` 玩家（+
+/// decoy/retaliation/duel 覆盖），**从不扫描非玩家的捕食者 NPC**——故本 scorer 对**玩家**
+/// 威胁完整生效（玩家逼近→逃、近战追打→ `CorneredScorer` 反击），但对"妖兽/狼狐捕食者"
+/// 不感知：被妖兽猎杀的凡兽不会因此避险（掠食侧 `MundaneHuntScorer` 在 P2 已落地，猎物侧
+/// 感知未落地）。这是 plan §8.1 #3 定案的**面向玩家最小反抗档已达成**、跨物种猎物感知刻意
+/// 后置的范围外项——需要给 `NpcBlackboard` 加 `nearest_predator` 扫描源，属独立后续
+/// PR（见 plan Finish Evidence 遗留）。面向玩家的威胁谱系（逃 + 反击）在本 plan 内已完整，
+/// 不违反 [[feedback_threat_spectrum]]（该原则约束"对玩家无害背景板"，玩家侧已满足）。
+#[derive(Clone, Copy, Debug, Component)]
+pub struct FleeThreatScorer;
+
+impl ScorerBuilder for FleeThreatScorer {
+    fn build(&self, cmd: &mut Commands, scorer: Entity, _actor: Entity) {
+        cmd.entity(scorer).insert(*self);
+    }
+
+    fn label(&self) -> Option<&str> {
+        Some("FleeThreatScorer")
+    }
+}
+
+/// 距离衰减复用 [`fear_distance_falloff`] 曲线，但威胁权重恒 `1.0`（不按境界打折扣——
+/// 凡兽避一切威胁，不像 [`FearCultivatorScorer`] 那样醒灵境界玩家=0 权重）。
+pub(crate) fn flee_threat_score(distance: f32) -> f32 {
+    fear_distance_falloff(distance, FLEE_THREAT_RANGE)
+}
+
+pub(crate) fn flee_threat_scorer_system(
+    npcs: Query<&NpcBlackboard, With<NpcMarker>>,
+    mut scorers: Query<(&Actor, &mut Score), With<FleeThreatScorer>>,
+) {
+    for (Actor(actor), mut score) in &mut scorers {
+        let value = match npcs.get(*actor) {
+            Ok(bb) => flee_threat_score(bb.player_distance),
+            Err(_) => 0.0,
+        };
+        score.set(value);
+    }
+}
+
+/// 凡兽"被逼反击"scorer（T0 惊扰反抗最低档，[[feedback_threat_spectrum]] 硬约束：即便
+/// 最低威胁档也不是纯逃背景板）。触发条件：`NpcBlackboard.retaliation_target` 命中
+/// （近期被玩家击中，`interaction_memory::record_attack_memories` 回填，200 tick 窗口）
+/// **且**当前仍在近战距离内（逼入死角，未能逃脱）——二者同时满足才反击一次，脱险或窗口
+/// 过期后评分归零、picker 回落到 [`FleeThreatScorer`]。二值评分（0.0/1.0）足够：
+/// `FirstToScore` picker 只需要它在窗口内压过 `FleeThreatScorer`（`fear_distance_falloff`
+/// 上限恰为 1.0，`CorneredScorer` 需要严格排在其前面才能保证胜出，见 thinker 注册顺序）。
+#[derive(Clone, Copy, Debug, Component)]
+pub struct CorneredScorer;
+
+impl ScorerBuilder for CorneredScorer {
+    fn build(&self, cmd: &mut Commands, scorer: Entity, _actor: Entity) {
+        cmd.entity(scorer).insert(*self);
+    }
+
+    fn label(&self) -> Option<&str> {
+        Some("CorneredScorer")
+    }
+}
+
+pub(crate) fn cornered_score(retaliation_target: Option<(Entity, u64)>, distance: f32) -> f32 {
+    if retaliation_target.is_some() && distance <= CORNERED_MELEE_DISTANCE {
+        1.0
+    } else {
+        0.0
+    }
+}
+
+pub(crate) fn cornered_scorer_system(
+    npcs: Query<&NpcBlackboard, With<NpcMarker>>,
+    mut scorers: Query<(&Actor, &mut Score), With<CorneredScorer>>,
+) {
+    for (Actor(actor), mut score) in &mut scorers {
+        let value = match npcs.get(*actor) {
+            Ok(bb) => cornered_score(bb.retaliation_target, bb.player_distance),
+            Err(_) => 0.0,
+        };
+        score.set(value);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::npc::lifecycle::NpcArchetype;
     use crate::npc::schedule::NpcDailySchedule;
     use big_brain::prelude::BigBrainSet;
+
+    // plan-mundane-fauna-v1 P0 —— 威胁谱系两个纯评分函数的边界 pin（off-by-one 锁死）。
+
+    #[test]
+    fn flee_threat_score_boundaries() {
+        // 距离 0 → 满分逃跑；随距离线性衰减；恰到感知半径边界即归零（falloff 用 `>=`）。
+        assert_eq!(flee_threat_score(0.0), 1.0, "贴脸威胁应满分逃");
+        assert!(
+            (flee_threat_score(FLEE_THREAT_RANGE / 2.0) - 0.5).abs() < 1e-6,
+            "半程距离应 ~0.5（线性衰减）"
+        );
+        assert_eq!(
+            flee_threat_score(FLEE_THREAT_RANGE),
+            0.0,
+            "距离 == FLEE_THREAT_RANGE(20.0) 边界即归零（falloff `>=` 边界不含）"
+        );
+        assert!(
+            flee_threat_score(FLEE_THREAT_RANGE - 0.01) > 0.0,
+            "距离刚好在半径内 (19.99) 仍应有非零逃跑分"
+        );
+        assert_eq!(
+            flee_threat_score(FLEE_THREAT_RANGE + 5.0),
+            0.0,
+            "超出感知半径无逃跑分"
+        );
+        assert_eq!(flee_threat_score(f32::INFINITY), 0.0, "非有限距离安全归零");
+    }
+
+    #[test]
+    fn cornered_score_boundaries() {
+        let target = Some((Entity::from_raw(1), 100));
+        // retaliation 命中 + 距离 <= 死角门槛 → 反击（边界 == 4.0 含）。
+        assert_eq!(cornered_score(target, 0.0), 1.0, "贴脸被追打→反击");
+        assert_eq!(
+            cornered_score(target, CORNERED_MELEE_DISTANCE),
+            1.0,
+            "距离 == CORNERED_MELEE_DISTANCE(4.0) 边界含（`<=`）→ 反击"
+        );
+        assert_eq!(
+            cornered_score(target, CORNERED_MELEE_DISTANCE + 0.01),
+            0.0,
+            "距离刚超死角门槛 (4.01) → 不反击（已能拉开=改逃）"
+        );
+        // 无 retaliation_target（未被玩家近期击中）→ 恒不反击，无论多近。
+        assert_eq!(
+            cornered_score(None, 0.0),
+            0.0,
+            "没有 retaliation_target 时贴脸也不主动反击（避免凡兽无端攻击）"
+        );
+    }
     use valence::prelude::{App, DVec3, IntoSystemConfigs, Position, PreUpdate};
 
     #[test]

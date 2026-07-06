@@ -2139,15 +2139,17 @@ fn targeted_lightning_vfx(position: DVec3, effective_probability: f32) -> VfxEve
 }
 
 fn average_zone_qi(zone_registry: &ZoneRegistry) -> f64 {
-    if zone_registry.zones.is_empty() {
-        return 0.4;
-    }
-    zone_registry
+    let (count, total) = zone_registry
         .zones
         .iter()
-        .map(|zone| zone.spirit_qi)
-        .sum::<f64>()
-        / zone_registry.zones.len() as f64
+        .filter(|zone| zone.dimension == DimensionKind::Overworld)
+        .fold((0_usize, 0.0_f64), |(count, total), zone| {
+            (count + 1, total + zone.spirit_qi)
+        });
+    if count == 0 {
+        return 0.4;
+    }
+    total / count as f64
 }
 
 fn calamity_alert_message(kind: CalamityKind, zone_name: &str, duration_ticks: u64) -> String {
@@ -2863,11 +2865,12 @@ mod events_tests {
     use valence::testing::{create_mock_client, ScenarioSingleClient};
 
     use super::{
-        beast_kind_from_command, daoxiang_count_for_intensity, maybe_nullify_targeted_zone_qi,
-        persist_zone_collapsed_overlays, redistribute_zone_qi_before_collapse, tick_active_events,
-        ActiveEventsResource, CalamityTargetRecord, RealmCollapseLowQiMonitor, ZoneCollapsedEvent,
-        ZoneOccupantPosition, COLLAPSED_ZONE_DANGER_LEVEL, EVENT_BEAST_TIDE, EVENT_DAOXIANG_WAVE,
-        EVENT_KARMA_BACKLASH, EVENT_POISON_MIASMA, EVENT_REALM_COLLAPSE, EVENT_THUNDER_TRIBULATION,
+        average_zone_qi, beast_kind_from_command, daoxiang_count_for_intensity,
+        maybe_nullify_targeted_zone_qi, persist_zone_collapsed_overlays,
+        redistribute_zone_qi_before_collapse, tick_active_events, ActiveEventsResource,
+        CalamityTargetRecord, RealmCollapseLowQiMonitor, ZoneCollapsedEvent, ZoneOccupantPosition,
+        COLLAPSED_ZONE_DANGER_LEVEL, EVENT_BEAST_TIDE, EVENT_DAOXIANG_WAVE, EVENT_KARMA_BACKLASH,
+        EVENT_POISON_MIASMA, EVENT_REALM_COLLAPSE, EVENT_THUNDER_TRIBULATION,
         LOCUST_SWARM_DISBAND_THRESHOLD, REALM_COLLAPSE_BOUNDARY_VFX_EVENT_ID,
         REALM_COLLAPSE_EVACUATION_REMINDER_INTERVAL_TICKS, REALM_COLLAPSE_EVACUATION_WINDOW_TICKS,
         REALM_COLLAPSE_LOW_QI_REQUIRED_TICKS, REALM_COLLAPSE_LOW_QI_THRESHOLD,
@@ -2901,6 +2904,21 @@ mod events_tests {
     use crate::world::zone::ZoneRegistry;
     use crate::world::zone::DEFAULT_SPAWN_ZONE_NAME;
 
+    fn test_zone(name: &str, dimension: DimensionKind, spirit_qi: f64, x: f64) -> Zone {
+        Zone {
+            name: name.to_string(),
+            dimension,
+            bounds: (DVec3::new(x, 64.0, 0.0), DVec3::new(x + 16.0, 80.0, 16.0)),
+            spirit_qi,
+            danger_level: 0,
+            active_events: Vec::new(),
+            patrol_anchors: Vec::new(),
+            blocked_tiles: Vec::new(),
+            qi_equilibrium: 0.0,
+            qi_inflow_per_min: 0.0,
+        }
+    }
+
     fn spawn_event_command(target: &str, event: &str, duration_ticks: u64) -> Command {
         let mut params = HashMap::new();
         params.insert("event".to_string(), json!(event));
@@ -2911,6 +2929,37 @@ mod events_tests {
             target: target.to_string(),
             params,
         }
+    }
+
+    #[test]
+    fn average_zone_qi_ignores_tsy_blueprint_zones() {
+        let registry = ZoneRegistry {
+            zones: vec![
+                test_zone("spawn", DimensionKind::Overworld, 0.8, 0.0),
+                test_zone("blood_valley", DimensionKind::Overworld, 0.2, 32.0),
+                test_zone("tsy_daneng_01_deep", DimensionKind::Tsy, -1.2, 64.0),
+            ],
+        };
+
+        assert_eq!(
+            average_zone_qi(&registry),
+            0.5,
+            "主世界天道灾厄 power 均值不能被 TSY blueprint 负压拉低"
+        );
+    }
+
+    #[test]
+    fn average_zone_qi_uses_fallback_when_no_overworld_zones_exist() {
+        let registry = ZoneRegistry {
+            zones: vec![test_zone(
+                "tsy_daneng_01_deep",
+                DimensionKind::Tsy,
+                -1.2,
+                64.0,
+            )],
+        };
+
+        assert_eq!(average_zone_qi(&registry), 0.4);
     }
 
     /// 回归 PR-177 codex P1：beast_tide 路径不能 spawn whale，否则掉落 exploit。

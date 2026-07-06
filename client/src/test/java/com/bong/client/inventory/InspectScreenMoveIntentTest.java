@@ -54,7 +54,8 @@ public class InspectScreenMoveIntentTest {
         screen.dispatchMoveIntent(
             item,
             new ClientRequestProtocol.ContainerLoc("main_pack", 0, 0),
-            new ClientRequestProtocol.HotbarLoc(3)
+            new ClientRequestProtocol.HotbarLoc(3),
+            false
         );
 
         assertEquals(1, sent.size());
@@ -62,6 +63,32 @@ public class InspectScreenMoveIntentTest {
         assertEquals(
             "{\"type\":\"inventory_move_intent\",\"v\":1,\"instance_id\":1001,\"from\":{\"kind\":\"container\",\"container_id\":\"main_pack\",\"row\":0,\"col\":0},\"to\":{\"kind\":\"hotbar\",\"index\":3}}",
             sent.get(0).body()
+        );
+    }
+
+    // plan-rotate-v1 — dispatchMoveIntent 透传 rotated=true 时 payload 携带 rotated 字段。
+    @Test
+    void dispatchMoveIntentPassesRotatedFlagThrough() {
+        install();
+        InspectScreen screen = new InspectScreen(InventoryModel.empty());
+        InventoryItem item = InventoryItem.createFull(
+            1002L, "long_rod", "长杆", 2, 1, 0.5, "common", "旋转测试物", 1, 1.0, 1.0);
+
+        screen.dispatchMoveIntent(
+            item,
+            new ClientRequestProtocol.ContainerLoc("main_pack", 0, 0),
+            new ClientRequestProtocol.ContainerLoc("main_pack", 2, 3),
+            true
+        );
+
+        assertEquals(1, sent.size());
+        assertEquals(
+            "{\"type\":\"inventory_move_intent\",\"v\":1,\"instance_id\":1002,"
+                + "\"from\":{\"kind\":\"container\",\"container_id\":\"main_pack\",\"row\":0,\"col\":0},"
+                + "\"to\":{\"kind\":\"container\",\"container_id\":\"main_pack\",\"row\":2,\"col\":3},"
+                + "\"rotated\":true}",
+            sent.get(0).body(),
+            "旋转落位必须把 rotated:true 发给 server（否则 server 不会互换 grid_w/grid_h）"
         );
     }
 
@@ -79,7 +106,8 @@ public class InspectScreenMoveIntentTest {
         screen.dispatchMoveIntent(
             item,
             new ClientRequestProtocol.ContainerLoc("pack_500", 0, 0),
-            new ClientRequestProtocol.ContainerLoc("pack_900", 1, 2)
+            new ClientRequestProtocol.ContainerLoc("pack_900", 1, 2),
+            false
         );
 
         assertEquals(1, sent.size(), "应发出一条 move intent");
@@ -114,7 +142,7 @@ public class InspectScreenMoveIntentTest {
             0.93
         );
 
-        screen.dispatchMoveIntent(item, null, new ClientRequestProtocol.HotbarLoc(3));
+        screen.dispatchMoveIntent(item, null, new ClientRequestProtocol.HotbarLoc(3), false);
 
         assertTrue(sent.isEmpty());
     }
@@ -136,7 +164,8 @@ public class InspectScreenMoveIntentTest {
         screen.dispatchMoveIntent(
             item,
             new ClientRequestProtocol.ContainerLoc("main_pack", 0, 0),
-            new ClientRequestProtocol.HotbarLoc(3)
+            new ClientRequestProtocol.HotbarLoc(3),
+            false
         );
 
         assertTrue(sent.isEmpty());

@@ -104,6 +104,9 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     private StatusBarsPanel statusBars;
     private ItemTooltipPanel tooltipPanel;
     private BottomInfoBar bottomBar;
+    // buff/状态效果条 —— 所有 tab 常驻（挂在 mainPanel，非某个 tab 专属内容），
+    // 无 buff 时自行收起为 0 高度不占位。
+    private BuffBarPanel buffBarPanel;
 
     // Tabs (left panel)
     private int activeTab = TAB_EQUIP;
@@ -285,6 +288,11 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         mainPanel.surface(Surface.flat(0xFF1A1A1A));
         mainPanel.padding(Insets.of(4));
         mainPanel.gap(2);
+
+        // buff/状态效果条 —— 挂在所有 tab 内容之前，横条常驻不随 tab 切换消失；
+        // 无 buff 时面板自行收起为 0 高度（BuffBarPanel 内部 sizing），不留灰色空壳。
+        buffBarPanel = new BuffBarPanel();
+        mainPanel.child(buffBarPanel);
 
         FlowLayout middle = Containers.horizontalFlow(Sizing.content(), Sizing.content());
         middle.gap(4);
@@ -2534,6 +2542,15 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
 
     @Override
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+        // plan-rotate-v1 — 拖拽中按 R 旋转拖拽物（2x1 ↔ 1x2）。旋转后 draggedItem
+        // 换成宽高互换的副本，高亮 / canPlace / 拖拽 ghost 每帧重读宽高即自动生效；
+        // 落位时 dispatchMoveIntent 透传 dragState.draggedRotated() 让 server 权威互换。
+        if (keyCode == GLFW.GLFW_KEY_R && dragState.isDragging()) {
+            if (dragState.rotateDraggedItem()) {
+                updateHighlights(mouseX(), mouseY());
+            }
+            return true;
+        }
         if (keyCode == GLFW.GLFW_KEY_Q && activeTab == TAB_EQUIP && !dragState.isDragging()) {
             var eq = equipPanel.slotAtScreen(mouseX(), mouseY());
             InventoryItem top = eq == null ? null : eq.representative();
@@ -2615,6 +2632,9 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
 
         // Capture source before drop() resets dragState; needed for the C2S move intent.
         com.bong.client.network.ClientRequestProtocol.InvLocation fromLoc = snapshotSourceLocation();
+        // plan-rotate-v1 — 同样要在 drop() 复位前捕获旋转奇偶标志；仅网格落位出口透传，
+        // 非网格目标（装备槽 / hotbar / 快捷栏 / 丢弃 / loot 外部容器）恒发 false。
+        boolean dropRotated = dragState.draggedRotated();
 
         // Discard
         if (isOverDiscard(mouseX, mouseY)) {
@@ -2641,12 +2661,18 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         if (lootPanel != null && !lootPanel.isClosed()) {
             boolean fromLoot = lootPanel.extContainerId().equals(dragState.sourceContainerId());
 
+            // plan-rotate-v1 — loot 面板走 external_container_move 协议（无 rotated 字段），
+            // 旋转态落位一律还原原朝向：与 server 权威状态一致，避免快照回来时形状跳变。
+            InventoryItem lootDropItem = dropRotated && dragState.originalDraggedItem() != null
+                ? dragState.originalDraggedItem()
+                : dragged;
+
             // Drop onto loot grid (from player container)
             BackpackGridPanel lg = lootPanel.lootGrid();
             if (lg.containsPoint(mouseX, mouseY)) {
                 var pos = lg.screenToGrid(mouseX, mouseY);
-                if (pos != null && lg.canPlace(dragged, pos.row(), pos.col())) {
-                    lg.place(dragged, pos.row(), pos.col());
+                if (pos != null && lg.canPlace(lootDropItem, pos.row(), pos.col())) {
+                    lg.place(lootDropItem, pos.row(), pos.col());
                     String srcCid = dragState.sourceContainerId();
                     int srcRow = dragState.sourceRow();
                     int srcCol = dragState.sourceCol();
@@ -2664,8 +2690,8 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 BackpackGridPanel destGrid = activeGrid();
                 if (destGrid != null && destGrid.containsPoint(mouseX, mouseY)) {
                     var pos = destGrid.screenToGrid(mouseX, mouseY);
-                    if (pos != null && destGrid.canPlace(dragged, pos.row(), pos.col())) {
-                        destGrid.place(dragged, pos.row(), pos.col());
+                    if (pos != null && destGrid.canPlace(lootDropItem, pos.row(), pos.col())) {
+                        destGrid.place(lootDropItem, pos.row(), pos.col());
                         String srcCid = dragState.sourceContainerId();
                         int srcRow = dragState.sourceRow();
                         int srcCol = dragState.sourceCol();
@@ -2709,7 +2735,8 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             dragState.drop();
             dispatchMoveIntent(dragged, fromLoc,
                 new com.bong.client.network.ClientRequestProtocol.ContainerLoc(
-                    wg.containerId(), pos.row(), pos.col()));
+                    wg.containerId(), pos.row(), pos.col()),
+                dropRotated);
             clearAllHighlights();
             return;
         }
@@ -2734,7 +2761,8 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 dragState.drop();
                 dispatchMoveIntent(dragged, fromLoc,
                     new com.bong.client.network.ClientRequestProtocol.ContainerLoc(
-                        grid.containerId(), pos.row(), pos.col()));
+                        grid.containerId(), pos.row(), pos.col()),
+                    dropRotated);
                 clearAllHighlights();
                 return;
             }
@@ -2762,9 +2790,12 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                     eq.setContents(new com.bong.client.inventory.model.SlotContents(stack, eq.held()));
                 }
                 dragState.drop();
+                // plan-rotate-v1 — 装备槽是非网格落位：旋转标志不适用，恒发 false
+                //（server 侧对 Equip 目标同样忽略 rotated，保持原朝向）。
                 dispatchMoveIntent(dragged, fromLoc,
                     new com.bong.client.network.ClientRequestProtocol.EquipLoc(
-                        slot.name().toLowerCase(java.util.Locale.ROOT), slot.wireState()));
+                        slot.name().toLowerCase(java.util.Locale.ROOT), slot.wireState()),
+                    false);
                 clearAllHighlights();
                 return;
             }
@@ -2810,8 +2841,10 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 dragState.drop();
                 placeItemAnywhere(old);
             }
+            // plan-rotate-v1 — hotbar 仅收 1x1（不可旋转形状），非网格落位恒发 false。
             dispatchMoveIntent(dragged, fromLoc,
-                new com.bong.client.network.ClientRequestProtocol.HotbarLoc(hIdx));
+                new com.bong.client.network.ClientRequestProtocol.HotbarLoc(hIdx),
+                false);
             clearAllHighlights();
             return;
         }
@@ -3200,7 +3233,8 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     void dispatchMoveIntent(
         InventoryItem item,
         com.bong.client.network.ClientRequestProtocol.InvLocation from,
-        com.bong.client.network.ClientRequestProtocol.InvLocation to
+        com.bong.client.network.ClientRequestProtocol.InvLocation to,
+        boolean rotated
     ) {
         if (item == null) {
             com.bong.client.BongClient.LOGGER.warn(
@@ -3221,9 +3255,10 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             return;
         }
         com.bong.client.BongClient.LOGGER.info(
-            "[bong][inspect] dispatchMoveIntent instance={} from={} to={} item={}",
-            item.instanceId(), from, to, item.itemId());
-        com.bong.client.network.ClientRequestSender.sendInventoryMove(item.instanceId(), from, to);
+            "[bong][inspect] dispatchMoveIntent instance={} from={} to={} rotated={} item={}",
+            item.instanceId(), from, to, rotated, item.itemId());
+        com.bong.client.network.ClientRequestSender.sendInventoryMove(
+            item.instanceId(), from, to, rotated);
     }
 
     boolean dispatchDiscardIntent(
@@ -3648,7 +3683,9 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             ),
             new com.bong.client.network.ClientRequestProtocol.EquipLoc(
                 targetSlot.name().toLowerCase(java.util.Locale.ROOT), targetSlot.wireState()
-            )
+            ),
+            // plan-rotate-v1 — shift 快捷穿戴不经拖拽，无旋转语义。
+            false
         );
     }
 
@@ -3669,7 +3706,9 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                     grid.containerId(),
                     pos.row(),
                     pos.col()
-                )
+                ),
+                // plan-rotate-v1 — 快捷卸下不经拖拽，无旋转语义。
+                false
             );
         }
     }
@@ -3691,7 +3730,9 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                     grid.containerId(),
                     pos.row(),
                     pos.col()
-                )
+                ),
+                // plan-rotate-v1 — hotbar 快捷收纳不经拖拽，无旋转语义。
+                false
             );
         }
     }
@@ -3728,6 +3769,15 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             matrices.push();
             matrices.translate(0, 0, 400);
             bodyInspect.drawTooltip(context, mouseX, mouseY);
+            matrices.pop();
+        }
+
+        // Buff bar tooltip — 同理逃出 owo 组件裁剪区；buff 条所有 tab 常驻，此处不按 activeTab 过滤。
+        if (buffBarPanel != null) {
+            var matrices = context.getMatrices();
+            matrices.push();
+            matrices.translate(0, 0, 400);
+            buffBarPanel.drawTooltip(context, mouseX, mouseY);
             matrices.pop();
         }
 

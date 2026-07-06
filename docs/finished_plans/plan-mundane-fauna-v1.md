@@ -6,10 +6,10 @@
 
 | 阶段 | 主题 | 状态 |
 |------|------|------|
-| P0 | 凡兽底盘——原生 bundle spawn + 被动 AI 三件套 + ambient_scheduler 复用（升 active 2026-07-04） | ⬜ |
-| P1 | 资源链——凡兽掉落分支（fauna_drop_system） / shelflife raw 肉血 profile 新建注册（升 active 2026-07-04） | ⬜ |
-| P2 | 生态响应——qi 栖息门槛 / 负灵域灭杀 / preys_on 跨层捕食表 / 季节权重（升 active 2026-07-04） | ⬜ |
-| P3 | 天道信号——FaunaEcologySnapshot 进 EcologyAnalyzer（narration 级，升 active 2026-07-04） | ⬜ |
+| P0 | 凡兽底盘——原生 bundle spawn + 被动 AI 三件套 + ambient_scheduler 复用 | ✅ 2026-07-05 |
+| P1 | 资源链——凡兽掉落分支（fauna_drop_system） / shelflife raw 肉血 profile 新建注册 | ✅ 2026-07-05 |
+| P2 | 生态响应——qi 栖息门槛 / 负灵域灭杀 / preys_on 跨层捕食表 / 季节权重 | ✅ 2026-07-05 |
+| P3 | 天道信号——FaunaEcologySnapshot 进 EcologyAnalyzer（narration 级） | ✅ 2026-07-05 |
 
 **显式不做（scope 外）**：驯化 / 骑乘 / 圈养 / 繁殖配对 / 挤奶——畜牧是 worldview 纯空白（§862 无定居田园经济、§808 聚集触天道注视），做则先补正典（单独人工 PR），另立 plan（§8.1 #5 登记）。
 
@@ -60,7 +60,7 @@ T0 ──避──→ 上表一切（含捕食者/妖兽/修士/敌对 NPC）
 
 ---
 
-## P0 凡兽底盘 ⬜
+## P0 凡兽底盘 ✅ 2026-07-05
 
 新模块 `server/src/fauna/mundane.rs`（+`npc/spawn/mundane.rs`），`register` 挂进 `fauna::register`（`fauna/mod.rs:20`）。**数值/接线细节见 §8.1（#1/#2/#3/#4）**，此处只列交付物：
 
@@ -99,7 +99,7 @@ T0 ──避──→ 上表一切（含捕食者/妖兽/修士/敌对 NPC）
   3. **进食**：无玩家/威胁在场且 `Hunger` 低于阈值时，`HungerScorer` 评分超过 `WanderScorer`，thinker 选中 `FarmAction`；
   4. **游荡**：无玩家/威胁/饥饿信号时，`WanderScorer` 基线分兜底，thinker 选中 `GoToPoiAction`（`GoToPoiState` 从 `default()` 正确推进，非因缺组件而恒 `Failure`）。
 
-## P1 资源链 ⬜
+## P1 资源链 ✅ 2026-07-05
 
 **修正（Explore 核验，2026-07-04）**：skeleton 原文误称 `beast_meat_v1`/`beast_blood_v1` shelflife profile "已定义未注册"——全仓 grep 零命中，从未存在；`ButcherRequest` 链也无生产触发（仅测试 `send_event`）。本节按实际代码现状重写。
 
@@ -109,7 +109,7 @@ T0 ──避──→ 上表一切（含捕食者/妖兽/修士/敌对 NPC）
 - **新建并注册 shelflife profile**（`shelflife/registry.rs`）：新定义 `raw_beast_meat_v1`（Spoil，half_life≈1 游戏日，仿 `food_spoil_mundane_meat_v1` 的 `Linear` 公式档次但更快腐败——生肉先于熟肉腐败是正典生活常识）/ `raw_beast_blood_v1`（Spoil，half_life≈12 小时，若血液作为独立可掉落资源则同步产出该 item），两者写进 `register_production_profiles`（`registry.rs:164`）；`fauna.toml:98` 的 `raw_beast_meat` item 定义**新增 `shelflife_profile = "raw_beast_meat_v1"` 字段**（当前无此字段）。熟肉沿用现有 `food.mundane.cooked_meat` + `food_spoil_mundane_meat_v1`（`registry.rs:107`），不改动。
 - **测试**：凡兽掉落矩阵（9 物种 × 掉落表专属 case）；凡骨喂 bone_coin 制作被拒 + 原因文案（沿用 `craft_rejects_non_bone_or_invalid_qi` 模式）；两份新 shelflife profile 正反 sample + 腐败曲线 pin（生肉腐败快于熟肉）；`register_production_profiles` 计数断言同步 +2（比照 `registry.rs:368` 现有 "expected N profiles" 断言模式）。
 
-## P2 生态响应 ⬜
+## P2 生态响应 ✅ 2026-07-05
 
 - **栖息门槛**：`zone.spirit_qi <= 0`（死域）不刷凡兽、存量迁离或消亡（§一:22），接线点是 P0 占位的 `mundane_pool_fn`（`&Zone` 第 3 参直接读 `zone.spirit_qi`）；`REALM_COLLAPSE` zone 跳过。
 - **负灵域灭杀**（§七:759 正典明文）：凡兽进入 `spirit_qi < -0.2` 负灵域 → 3s 枯萎 → despawn。**视听**：枯萎期复用灰烬色 `BongSpriteParticle`（burst 8 粒 + continuous 1 粒/4tick，lifetime 12 tick，色 `#6E6A5E` 残灰，自实体身躯向下沉降 0.02 b/t），消亡瞬间 `entity.wither.hurt` pitch 1.6 vol 0.4；经 `VfxBootstrap.registerDefaults()` 注册核对。narration 不出（低优先事件）。
@@ -122,7 +122,7 @@ T0 ──避──→ 上表一切（含捕食者/妖兽/修士/敌对 NPC）
 - **季节权重**：接 §十七 季节生态——夏耐热物种权重升、冬耐寒（兔/山羊）升，读现有季节源（`season_success_modifier` 同源）。
 - **测试**：死域/负灵域/塌缩 zone 三门槛；枯萎计时→despawn；`preys_on` 表全边 pin（含跨层：妖兽→凡兽、狼狐→T0/T1、狼狐→噬元鼠）+ 反向断言"`preys_on` 表内不存在噬元鼠→凡兽尸体的腐食边"（锁定 §8.1 #8 决议只关闭这一个方向、不误伤"狼狐猎鼠"边，回归测试同时验证两者共存）；捕食闭环（猎杀回补 Hunger、mundane 掉落分支产出）；Scorer 优先级（逃跑压过觅食、反抗压过逃跑的触发边界）；季节权重分布 pin。
 
-## P3 天道信号（narration 级）⬜
+## P3 天道信号（narration 级）✅ 2026-07-05
 
 - 新 `FaunaEcologySnapshotV1`（zone→物种 count，TypeBox + samples，仿 `BotanyEcologySnapshotV1`）；server 周期发布，agent `EcologyAnalyzer` ingest。
 - **定位为 narration 信号源，非天道决策输入**：凡兽绝迹/兽群奔逃=灵气恶化的可感征兆（与既有「兽鸣偏向=伪灵脉信号」定位一致，`agent/packages/tiandao/src/skills/ecology.md`）。narration 示例（≥2，zone scope，perception style）：「近来林间鸟兽声稀，连野兔都不见踪影——这片地的灵气怕是伤了根本。」／「山羊群弃了北坡，成群往南迁——兽比人先知道哪里活不下去。」
@@ -248,4 +248,45 @@ T0 ──避──→ 上表一切（含捕食者/妖兽/修士/敌对 NPC）
 
 ## §10（升 active 时补）
 
-scope 预估 4 PR（P0~P3 各一）。P2 含视听但全复用既有粒子/音效原语，无新资产；P3 跨 server+agent 契约，samples 随 PR 同出。按 docs/CLAUDE.md §六补完整工作流。
+scope 预估 4 PR（P0~P3 各一）。实际以单 PR 序列化 6 feature commit + merge + 3 fix commit 消费（P2 视听全复用既有粒子/音效原语无新资产；P3 跨 server+agent 契约 samples 随附）。
+
+## Finish Evidence
+
+**验收日期**：2026-07-05（P0~P3 全部 ✅）。经三轮 sonnet/opus 博弈自检：round-1 抓 stale-branch 集成 blocker、round-2 抓 qi_regen live 守恒泄漏 blocker、round-3 定向复检抓 dormant-regen 残留守恒泄漏，逐一修复后守恒闭合。
+
+### 落地清单
+
+| 阶段 | 交付物 | 真实落点 |
+|------|--------|----------|
+| P0 | 凡兽底盘：9 物种原版 Rail A bundle + 4-thinker 威胁谱系反抗链 | `server/src/fauna/mundane.rs`（`MundaneFaunaKind` 9 variant / `MundaneFaunaSpecies` / `MundaneFaunaMarker` impl `AmbientMarkerData`）；`server/src/npc/spawn/mundane.rs`（`spawn_mundane_fauna_at` + `mundane_fauna_thinker`）；`server/src/npc/brain/scorers_survival.rs`（`FleeThreatScorer`/`CorneredScorer`）；3 步复用 `ambient_scheduler`（`fauna/mundane.rs::register`） |
+| P1 | 资源链：凡兽掉落分支 + shelflife raw 肉/血 profile 新建 | `server/src/fauna/drop.rs`（`drop_table_for_mundane` + `fauna_drop_system` mundane 分支）；`server/src/shelflife/registry.rs`（`raw_beast_meat_v1`/`raw_beast_blood_v1` profile + register 计数 +2）；`server/assets/items/fauna.toml`；`server/src/fauna/bone_coin.rs`（凡骨拒绝封灵） |
+| P2 | 生态响应：栖息门槛 / 负灵域灭杀 / preys_on 跨层表 / 季节权重 | `server/src/fauna/mundane.rs`（`mundane_pool_fn` 复用 `is_dead_zone` / `mundane_fauna_negative_zone_wither_system` `insert(Despawned)` / `FaunaPredatorId`·`FaunaPreyId`·`preys_on` / `select_mundane_species_weighted`）；`server/src/npc/brain/predation.rs`（`MundaneHuntScorer`→`MundaneHuntAction`）；`server/src/npc/spawn/ambient_scheduler.rs`（`AmbientPoolFn` 加 `Season` 尾参） |
+| P3 | 天道信号：FaunaEcologySnapshotV1 → EcologyAnalyzer narration | server：`schema/fauna_ecology.rs` / `schema/channels.rs`（`CH_FAUNA_ECOLOGY`）/ `fauna/ecology.rs`（`emit_fauna_ecology_snapshot`+`aggregate`）/ `network/redis_bridge.rs`（`RedisOutbound::FaunaEcology`）。schema：`fauna.ts`+`channels.ts`(`FAUNA_ECOLOGY`)+generated `fauna-ecology-snapshot-v1.json`。agent：`redis-ipc.ts`+`world-model.ts`+`ecology-analyzer.ts`(`ingestFaunaEcology`→绝迹/迁徙)+`runtime.ts` |
+| 守恒 | 凡兽无灵 qi 豁免（博弈 round-2/3） | `server/src/cultivation/tick.rs`（`qi_regen_and_zone_drain_tick` 加 `Without<MundaneFaunaSpecies>`）；`server/src/npc/dormant/mod.rs`（`apply_dormant_regen_with_multiplier` 函数级 + `dormant_global_tick_system` 调用级双护栏，跳过 regen+breakthrough） |
+
+### 关键 commit
+
+- `9f8da0063`+`f867c0012`（P0）/ `03a458bff`+`3a2836f39`（P1）/ `79313d10c`（P2）/ `d2ba5edc9`（P3）
+- `aedc60339`（merge origin/main #857/#859/#860）/ `48aa682ec`（merge 集成 realm 参数 + Mundane match + 博弈 minors）
+- `c57db1d1f`（守恒：live qi_regen 豁免 + minors）/ `5c2e618a4`（守恒：dormant-regen 豁免）
+
+### 测试结果
+
+- server：`cargo fmt --check && cargo clippy --all-targets -D warnings && cargo test` 全绿（0 failed，doctest 通过）
+- agent schema：`npm test -w @bong/schema` 768 passed（含 `fauna.test.ts` 正反 sample + generated freshness）
+- agent tiandao：`npm test` 820 passed（含 analyzer 绝迹/迁徙/空/冷却 + redis-ipc FAUNA_ECOLOGY dispatch pin）
+- 守恒 pin：`qi_regen_excludes_mundane_fauna_even_in_rich_zone`（live）+ `dormant_regen_exempts_mundane_fauna_even_with_open_meridian_in_rich_zone`（dormant）——凡兽 qi_current 全生命周期恒 0、zone.spirit_qi 不被抽
+- 其它 pin：`preys_on` 全边 + `beast_hunt_action_targets_mundane_fauna_via_existing_territory_pipeline`（妖兽猎凡兽运行时护栏）+ `register_wires_mundane_scheduler_independent_of_threat_budget`（§8.1 #2.3）+ scorer 边界 + hydrate Mundane round-trip
+
+### 跨仓库核验
+
+- **server**：`FaunaEcologySnapshotV1` / `emit_fauna_ecology_snapshot` / `CH_FAUNA_ECOLOGY` / `RedisOutbound::FaunaEcology` / `MundaneFaunaKind` / `preys_on`
+- **agent**：`FaunaEcologySnapshotV1`(TypeBox) / `CHANNELS.FAUNA_ECOLOGY` / `EcologyAnalyzer.ingestFaunaEcology` / `drainFaunaEcologyEvents`
+- **client**：零改动（P0~P2 Rail A vanilla 渲染；P3 纯 server→agent narration）
+
+### 遗留 / 后续
+
+- **猎物侧捕食者感知**（跨物种）：`FleeThreatScorer`/`CorneredScorer` 经 `update_npc_blackboard` 只感知玩家（`With<ClientMarker>`），不感知 NPC 捕食者——被妖兽/狼狐猎杀的凡兽当前不因此避险（掠食侧 `MundaneHuntScorer` 已落地，猎物侧未落地）。面向玩家威胁谱系（逃+反击）在本 plan 内完整，不违反 [[feedback_threat_spectrum]]。补齐需给 `NpcBlackboard` 加 `nearest_predator` 扫描源，属独立后续 PR（`scorers_survival.rs` 已诚实注释）。
+- **狼群 T2.5 完整语义**（主动猎杀低境界玩家 + ≥3 群体协同）：需两套独立感知信号 + 群体计数基建，本 plan 交付凡兽内部食物链核心（狼/狐猎 T0/T1/鼠），完整狼群留后续 tuning 小 PR。
+- **畜牧/驯化/繁殖**（§8.1 #5/#6）：worldview 空白，另立 `plan-husbandry-v1`（需先补 §808 聚集触天道正典）。
+- **library 凡兽志书**（§8 #7）：归独立 `/write-book ecology` 小 PR。

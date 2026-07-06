@@ -4,7 +4,7 @@ use valence::entity::marker::MarkerEntityBundle;
 use valence::prelude::{Commands, DVec3, Entity, EntityLayerId, Position};
 
 use crate::cultivation::components::Realm;
-use crate::fauna::components::{fauna_spawn_seed, fauna_tag_for_beast_spawn};
+use crate::fauna::components::{fauna_spawn_seed, fauna_tag_for_beast_spawn, BeastKind, FaunaTag};
 use crate::fauna::visual::{entity_kind_for_beast, visual_kind_for_beast};
 use crate::npc::brain::{
     AgeingScorer, ChaseAction, ChaseTargetScorer, GoToPoiState, MeleeAttackAction,
@@ -57,9 +57,51 @@ pub fn spawn_beast_npc_at(
     territory: Territory,
     initial_age_ticks: f64,
 ) -> Entity {
-    let loadout = NpcCombatLoadout::fighter(NpcMeleeArchetype::Brawler);
     let fauna_seed = fauna_spawn_seed(home_zone, spawn_position.x, spawn_position.z);
     let fauna_tag = fauna_tag_for_beast_spawn(home_zone, fauna_seed);
+    spawn_beast_npc_with_tag_at(
+        commands,
+        layer,
+        home_zone,
+        spawn_position,
+        territory,
+        initial_age_ticks,
+        fauna_tag,
+    )
+}
+
+/// Spawn a Beast NPC with an explicit species. Use this for gameplay paths whose contract already
+/// names the species before spawning; do not spawn randomly and patch `FaunaTag` after the fact.
+pub fn spawn_beast_npc_of_kind_at(
+    commands: &mut Commands,
+    layer: Entity,
+    home_zone: &str,
+    spawn_position: DVec3,
+    territory: Territory,
+    initial_age_ticks: f64,
+    beast_kind: BeastKind,
+) -> Entity {
+    spawn_beast_npc_with_tag_at(
+        commands,
+        layer,
+        home_zone,
+        spawn_position,
+        territory,
+        initial_age_ticks,
+        FaunaTag::new(beast_kind),
+    )
+}
+
+fn spawn_beast_npc_with_tag_at(
+    commands: &mut Commands,
+    layer: Entity,
+    home_zone: &str,
+    spawn_position: DVec3,
+    territory: Territory,
+    initial_age_ticks: f64,
+    fauna_tag: FaunaTag,
+) -> Entity {
+    let loadout = NpcCombatLoadout::fighter(NpcMeleeArchetype::Brawler);
     let visual_kind = visual_kind_for_beast(fauna_tag.beast_kind);
     let entity = commands
         .spawn(MarkerEntityBundle {

@@ -26,7 +26,7 @@ PSEUDO_VEIN_DECORATIONS = (
         kind="flower",
         blocks=("pink_petals", "warped_wart_block", "amethyst_cluster"),
         size_range=(1, 2),
-        rarity=0.70,
+        rarity=0.35,
         notes="伪灵莲：粉花瓣 + 扭曲菌块基底 + 紫晶花蕊。看似灵草，实则一摘即化粉。",
     ),
     DecorationSpec(
@@ -34,7 +34,7 @@ PSEUDO_VEIN_DECORATIONS = (
         kind="crystal",
         blocks=("amethyst_cluster", "purple_stained_glass", "soul_lantern"),
         size_range=(4, 7),
-        rarity=0.30,
+        rarity=0.15,
         notes="幻灵柱：紫晶 + 紫玻 + 灵魂提灯，中心区域缓慢呼吸式发光。",
     ),
     DecorationSpec(
@@ -42,7 +42,7 @@ PSEUDO_VEIN_DECORATIONS = (
         kind="shrub",
         blocks=("flowering_azalea_leaves", "pink_tulip", "lily_of_the_valley"),
         size_range=(1, 2),
-        rarity=0.85,
+        rarity=0.43,
         notes="异常茂盛草：荒野中突现的花海，是伪灵脉最显眼识别。",
     ),
     DecorationSpec(
@@ -50,7 +50,7 @@ PSEUDO_VEIN_DECORATIONS = (
         kind="boulder",
         blocks=("sculk", "sculk_vein", "soul_sand"),
         size_range=(2, 3),
-        rarity=0.15,
+        rarity=0.11,
         notes="幽纹土斑：封印碑/文字警示改走 authored placement，此处只保留幽纹土壤。",
     ),
     DecorationSpec(
@@ -58,7 +58,7 @@ PSEUDO_VEIN_DECORATIONS = (
         kind="boulder",
         blocks=("prismarine", "sea_lantern", "tube_coral_block"),
         size_range=(2, 4),
-        rarity=0.20,
+        rarity=0.10,
         notes="伪泉眼：蓝绿光小水洼，看似真灵眼，是凝脉突破诱饵。",
     ),
 )

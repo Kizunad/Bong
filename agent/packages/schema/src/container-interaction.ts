@@ -40,6 +40,7 @@ export const ContainerStateV1 = Type.Object(
   {
     v: Type.Literal(1),
     entity_id: Type.Integer({ minimum: 0 }),
+    visual_entity_id: Type.Optional(Type.Integer({ minimum: 0 })),
     kind: ContainerKindV1,
     family_id: Type.String({ minLength: 1 }),
     world_pos: Type.Tuple([Type.Number(), Type.Number(), Type.Number()]),

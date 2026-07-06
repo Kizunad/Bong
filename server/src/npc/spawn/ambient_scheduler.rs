@@ -42,17 +42,19 @@ use valence::prelude::{
 };
 
 use crate::fauna::mimic_spider::{return_spider_drained_qi_to_zone, MimicSpiderBlackboard};
-use crate::fauna::rat_phase::return_rat_drained_qi_to_zone;
+use crate::fauna::rat_phase::transfer_rat_drained_qi_to_zone;
 use crate::movement::{movement_zone_kind, MovementZoneKind};
 use crate::npc::dormant::{planar_distance, should_run_interval};
 use crate::npc::movement::GameTick;
 use crate::npc::spawn::PoissonSpawnSampler;
 use crate::npc::spawn_rat::{spawn_rat_npc_at, RatBlackboard};
+use crate::qi_physics::{QiAccountId, WorldQiAccount};
 use crate::world::dimension::{CurrentDimension, DimensionKind, DimensionLayers};
 use crate::world::era::WorldEraState;
 use crate::world::mob_spawn::{
     era_beast_spawn_gate, spawn_natural_mob_at, MobSpawnFilter, NaturalMobKind,
 };
+use crate::world::season::{Season, WorldSeasonState};
 use crate::world::zone::{Zone, ZoneRegistry};
 
 /// 调度核每次巡检的粗节流步长（对齐 heiwushi 的 `last_check_tick` 早退模式）。
@@ -335,6 +337,7 @@ pub fn ambient_threat_pool_fn(
     zone: &Zone,
     spawn_position: DVec3,
     patrol_target: DVec3,
+    _season: Season,
 ) -> Option<Entity> {
     let pool = threat_pool(zone.danger_level, zone.dimension, None);
     let seed = threat_species_seed(&zone.name, spawn_position, zone.danger_level);
@@ -554,7 +557,14 @@ impl<M> Default for AmbientSchedulerState<M> {
 /// `MobSpawnFilter::ban_in_dead_zone` 死域白名单过滤（§8.1 #2），仅 `danger_level` 不够；
 /// `Zone` 本就同时携带 `danger_level`/`name`/`spirit_qi`，改传引用比拆两个标量参数更干净，
 /// 调度核调用点（`ambient_scheduler_system`）本就持有 `&Zone`，改动零成本。
-pub type AmbientPoolFn = fn(&mut Commands, Entity, &Zone, DVec3, DVec3) -> Option<Entity>;
+///
+/// **P2 追加尾参 `Season`**（plan-mundane-fauna-v1 P2「季节权重」）：`mundane_pool_fn`
+/// 需要当前季节去偏权物种池；调度核本就在 `ambient_scheduler_system` 里读
+/// `Res<WorldSeasonState>`（新增，`Option` 缺省 `Season::default()`），随调用一并透传。
+/// 同 `threat_pool` 的 `weight_hook: Option<f32>` 占位钩子先例——`ambient_threat_pool_fn`
+/// 直接忽略此参数（`_season`），不产生任何行为变化，避免跨 plan 共享 `AmbientPoolFn`
+/// 类型时牵连另一侧实现。
+pub type AmbientPoolFn = fn(&mut Commands, Entity, &Zone, DVec3, DVec3, Season) -> Option<Entity>;
 
 /// 每 marker_type 独立注入的调度配置：`budget_fn` 决定"刷多少/多久"，`pool_fn` 决定
 /// "刷什么"，`counts_against_threat_budget` 决定该 marker 类型的活体数是否计入
@@ -619,9 +629,17 @@ pub fn ambient_scheduler_system<M: AmbientMarkerData>(
     zone_registry: Option<ResMut<ZoneRegistry>>,
     dimension_layers: Option<Res<DimensionLayers>>,
     era_state: Option<Res<WorldEraState>>,
+    world_season: Option<Res<WorldSeasonState>>,
+    mut qi_account: Option<ResMut<WorldQiAccount>>,
     mut commands: Commands,
 ) {
     let now = tick.map(|t| u64::from(t.0)).unwrap_or(0);
+    // plan-mundane-fauna-v1 P2 — 季节权重：缺资源时退回 `Season::default()`
+    // （`Season::Summer`，同 `WorldSeasonState::default()` 的隐含基线）。
+    let season = world_season
+        .as_deref()
+        .map(|s| s.current.season)
+        .unwrap_or_default();
 
     // 粗节流：与 heiwushi 一致，避免每 tick 都做全量 zone/query 扫描。
     // `now == 0` 时必须放行（对齐 `should_run_interval` 的 tick==0 分支）——否则
@@ -674,8 +692,32 @@ pub fn ambient_scheduler_system<M: AmbientMarkerData>(
                     .map(|zone| zone.name.clone())
                 {
                     if let Some(zone) = registry.find_zone_mut(zone_name.as_str()) {
-                        if let Some(rat) = rat_blackboard {
-                            return_rat_drained_qi_to_zone(zone, rat.drained_qi);
+                        if rat_blackboard.is_some() {
+                            // §8.1 决议 #1/#3 —— 100% 转账 + field-authority 写回，
+                            // 替换旧的 1% 直写字段路径（`return_rat_drained_qi_to_zone`）。
+                            match qi_account.as_deref_mut() {
+                                Some(account) => {
+                                    let rat_account =
+                                        QiAccountId::npc(format!("rat:{}", entity.index()));
+                                    if let Err(error) =
+                                        transfer_rat_drained_qi_to_zone(account, zone, &rat_account)
+                                    {
+                                        tracing::debug!(
+                                            "[bong][npc] ambient recycle rat qi transfer to \
+                                             zone failed for {:?}: {:?}",
+                                            entity,
+                                            error
+                                        );
+                                    }
+                                }
+                                None => {
+                                    tracing::debug!(
+                                        "[bong][npc] ambient recycle qi ledger unavailable, \
+                                         skipping rat qi transfer for {:?}",
+                                        entity
+                                    );
+                                }
+                            }
                         }
                         if let Some(spider) = spider_blackboard {
                             return_spider_drained_qi_to_zone(zone, spider.drained_qi);
@@ -739,9 +781,14 @@ pub fn ambient_scheduler_system<M: AmbientMarkerData>(
             continue;
         };
 
-        let Some(spawned) =
-            (config.pool_fn)(&mut commands, layers.overworld, zone, spawn_pos, spawn_pos)
-        else {
+        let Some(spawned) = (config.pool_fn)(
+            &mut commands,
+            layers.overworld,
+            zone,
+            spawn_pos,
+            spawn_pos,
+            season,
+        ) else {
             // 死域过滤后池为空 / 未来其它 pool_fn 实现判定本次不刷都会走这支——非 panic 分支。
             // `budget.pack_size_range`（多只群体刷新）不在本 plan 范围内消费，留给后续若立项
             // "群体刷新"再回填，当前调度核每次巡检命中只产 1 个实体。
@@ -1093,6 +1140,7 @@ mod tests {
                 &zone,
                 DVec3::new(10.0, 64.0, 10.0),
                 DVec3::new(10.0, 64.0, 10.0),
+                Season::Summer,
             )
         };
         app.world_mut().flush();
@@ -1116,6 +1164,7 @@ mod tests {
                 &zone,
                 DVec3::new(10.0, 64.0, 10.0),
                 DVec3::new(10.0, 64.0, 10.0),
+                Season::Summer,
             )
         };
         app.world_mut().flush();
@@ -1143,6 +1192,7 @@ mod tests {
                 &zone,
                 DVec3::new(10.0, 64.0, 10.0),
                 DVec3::new(10.0, 64.0, 10.0),
+                Season::Summer,
             )
         };
         assert_eq!(
@@ -1599,6 +1649,7 @@ mod tests {
         _zone: &Zone,
         spawn_position: DVec3,
         _patrol_target: DVec3,
+        _season: Season,
     ) -> Option<Entity> {
         Some(
             commands
@@ -1806,10 +1857,16 @@ mod tests {
     }
 
     #[test]
-    fn recycle_returns_rat_drained_qi_to_zone_instead_of_evaporating() {
-        // §Verify blocker②(守恒蒸发红线)：超距回收持有 drained_qi>0 的鼠患（咬玩家偷来的
-        // qi）必须先走与 `release_drained_qi_on_death_system` 一致的公式把残余 qi 还给
-        // zone，再 insert(Despawned)——否则这部分 qi 会在软删除时 100% 蒸发。
+    fn recycle_transfers_full_rat_drained_qi_before_despawn() {
+        // §P0 验收抓手 #3（替换旧 1% 归还 pin）：超距回收持有 drained_qi>0 的鼠患（咬玩家
+        // 偷来的 qi）必须把 `npc:rat:<id>` 账户 100% 转入 zone 账户（不再是 1%），并同步
+        // 写回 `zone.spirit_qi` 字段（§8.1 决议 #3），再 insert(Despawned)。
+        //
+        // ★promote 博弈 blocker v2 修正后的调值说明：drained_qi 从旧版 100.0 降到 10.0——
+        // `QI_ZONE_UNIT_CAPACITY`=50 是 zone 账户绝对上限，旧版 100.0 在 spirit_qi=0.5
+        // （room=25）下必然溢出 75，这正是 blocker 要修的"无条件全额转账不截断"缺陷；调小
+        // 到 room 充足的量级后，本 pin 专测"非满 zone 全额落袋、无 overflow"场景（满 zone/
+        // overflow 场景见 `fauna::rat_phase::tests::rat_death_near_cap_zone_routes_overflow_conserving`）。
         use valence::prelude::ChunkPos;
 
         let mut app = make_app();
@@ -1820,7 +1877,7 @@ mod tests {
             .spawn((ClientMarker, Position::new([10_000.0, 64.0, 10_000.0])));
 
         let mut rat_blackboard = RatBlackboard::new("test_zone", ChunkPos::new(0, 0));
-        rat_blackboard.drained_qi = 100.0;
+        rat_blackboard.drained_qi = 10.0;
         let stray = app
             .world_mut()
             .spawn((
@@ -1832,27 +1889,60 @@ mod tests {
                 rat_blackboard,
             ))
             .id();
+
+        let rat_account = QiAccountId::npc(format!("rat:{}", stray.index()));
+        let mut ledger = WorldQiAccount::default();
+        ledger
+            .set_balance(rat_account.clone(), 10.0)
+            .expect("seeding the rat ledger balance must succeed");
+        app.insert_resource(ledger);
+
         app.update();
 
         assert!(
             app.world().get::<Despawned>(stray).is_some(),
             "守恒修复不应影响回收本身——超距鼠患仍应被 insert(Despawned)"
         );
+
+        let ledger_after = app.world().resource::<WorldQiAccount>();
+        assert_eq!(
+            ledger_after.balance(&rat_account),
+            0.0,
+            "超距回收必须把 npc:rat 账户清零（100% 转账，不再是只归还 1% 留 99% 僵尸余额）"
+        );
+
+        let zone_account = QiAccountId::zone("test_zone");
+        let expected_zone_account_balance =
+            0.5_f64 * crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY + 10.0;
+        assert!(
+            (ledger_after.balance(&zone_account) - expected_zone_account_balance).abs() < 1e-9,
+            "超距回收 drained_qi=10 的鼠患必须 100% 转入 zone 账户（room 充足，无 overflow），\
+             期望 {expected_zone_account_balance}，实际 {}",
+            ledger_after.balance(&zone_account)
+        );
+
+        // room 充足场景不应产生 overflow，overflow 账户必须为空。
+        let overflow_account = QiAccountId::overflow(format!("rat_bite_drain:{}", rat_account.id));
+        assert_eq!(
+            ledger_after.balance(&overflow_account),
+            0.0,
+            "room 充足（25 > drained 10.0）时超距回收不应产生 overflow，overflow 账户应保持空账"
+        );
+
         let zone_after = app
             .world()
             .resource::<ZoneRegistry>()
             .find_zone_by_name("test_zone")
             .expect("test_zone 必须仍存在")
             .spirit_qi;
-        let expected = (0.5
-            + (100.0 * crate::fauna::rat_phase::RAT_DRAINED_QI_DEATH_RETURN_RATIO)
-                / crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY)
+        let expected_spirit_qi = (expected_zone_account_balance
+            / crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY)
             .clamp(-1.0, 1.0);
         assert!(
-            (zone_after - expected).abs() < 1e-9,
-            "超距回收 drained_qi=100 的鼠患必须按 drained_qi × ratio / QI_ZONE_UNIT_CAPACITY \
-             把残余 qi 还给 zone（与死亡归还同一条公式），期望 zone.spirit_qi={expected}，\
-             实际={zone_after}（回收前 zone.spirit_qi=0.5）——相等说明蒸发未修复"
+            (zone_after - expected_spirit_qi).abs() < 1e-9,
+            "§8.1 #3 blocker 修正：zone.spirit_qi 字段必须与超距回收账户转账同步写回，\
+             期望 zone.spirit_qi={expected_spirit_qi}，实际={zone_after}（回收前 \
+             zone.spirit_qi=0.5）——相等于旧值说明字段被漏写，会被下一次覆盖式重同步二次抹掉"
         );
     }
 

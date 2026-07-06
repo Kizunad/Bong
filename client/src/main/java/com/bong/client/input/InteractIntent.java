@@ -7,6 +7,7 @@ public enum InteractIntent {
     ActivateShrine,
     OpenContainer,
     PickupDroppedItem,
+    LootRemains,
     HarvestResource,
     None
 }

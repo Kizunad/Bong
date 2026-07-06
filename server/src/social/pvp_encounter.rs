@@ -5,14 +5,12 @@
 
 use serde::{Deserialize, Serialize};
 use valence::prelude::{
-    bevy_ecs, App, Client, Event, EventReader, EventWriter, IntoSystemConfigs, Query, Res, Update,
-    With,
+    bevy_ecs, App, Client, Event, EventReader, EventWriter, IntoSystemConfigs, Query, Update, With,
 };
 
 use crate::combat::components::Lifecycle;
 use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
-use crate::identity::PlayerIdentities;
-use crate::persistence::{identity as identity_db, PersistenceSettings};
+use crate::identity::{IdentityId, PlayerIdentities};
 use crate::schema::social::{RelationshipKindV1, RenownTagV1};
 use crate::social::events::{SocialRelationshipEvent, SocialRenownDeltaEvent};
 
@@ -24,7 +22,7 @@ type EncounterPlayerQuery<'w, 's> = Query<
     (
         &'static Lifecycle,
         Option<&'static mut LifeRecord>,
-        Option<&'static mut PlayerIdentities>,
+        Option<&'static PlayerIdentities>,
     ),
     With<Client>,
 >;
@@ -185,7 +183,6 @@ pub fn register(app: &mut App) {
 pub fn handle_pvp_encounter_events(
     mut events: EventReader<PvpEncounterEvent>,
     mut players: EncounterPlayerQuery<'_, '_>,
-    persistence: Option<Res<PersistenceSettings>>,
     mut relationships: EventWriter<SocialRelationshipEvent>,
     mut renown_deltas: EventWriter<SocialRenownDeltaEvent>,
 ) {
@@ -194,16 +191,14 @@ pub fn handle_pvp_encounter_events(
             continue;
         }
         let validated_betrayer = validated_betrayer(event);
+        let betrayer_identity_id = validated_betrayer
+            .and_then(|betrayer| active_identity_id_for_char(betrayer, &mut players));
 
-        record_life_entries(
-            event,
-            validated_betrayer,
-            &mut players,
-            persistence.as_deref(),
-        );
+        record_life_entries(event, validated_betrayer, &mut players);
         emit_social_edges(
             event,
             validated_betrayer,
+            betrayer_identity_id,
             &mut relationships,
             &mut renown_deltas,
         );
@@ -214,9 +209,8 @@ fn record_life_entries(
     event: &PvpEncounterEvent,
     validated_betrayer: Option<&str>,
     players: &mut EncounterPlayerQuery<'_, '_>,
-    persistence: Option<&PersistenceSettings>,
 ) {
-    for (lifecycle, life_record, identities) in players.iter_mut() {
+    for (lifecycle, life_record, _) in players.iter_mut() {
         let Some(counterparty_id) = counterparty(event, lifecycle.character_id.as_str()) else {
             continue;
         };
@@ -235,28 +229,19 @@ fn record_life_entries(
                 }
             }
         }
-
-        if event.npc_witnessed
-            && validated_betrayer.is_some_and(|betrayer| betrayer == lifecycle.character_id)
-        {
-            if let Some(mut identities) = identities {
-                apply_betrayal_reputation_to_active_identity(&mut identities, event.tick);
-                if let Some(persistence) = persistence {
-                    if let Err(error) = identity_db::save_player_identities(
-                        persistence,
-                        lifecycle.character_id.as_str(),
-                        &identities,
-                    ) {
-                        tracing::warn!(
-                            ?error,
-                            char_id = lifecycle.character_id.as_str(),
-                            "[bong][pvp-encounter] failed to persist betrayal reputation"
-                        );
-                    }
-                }
-            }
-        }
     }
+}
+
+fn active_identity_id_for_char(
+    char_id: &str,
+    players: &mut EncounterPlayerQuery<'_, '_>,
+) -> Option<IdentityId> {
+    players
+        .iter_mut()
+        .find(|(lifecycle, _, _)| lifecycle.character_id == char_id)
+        .and_then(|(_, _, identities)| {
+            identities.and_then(|ids| ids.active().map(|active| active.id))
+        })
 }
 
 fn encounter_entry(event: &PvpEncounterEvent, counterparty_id: &str) -> BiographyEntry {
@@ -272,18 +257,10 @@ fn encounter_entry(event: &PvpEncounterEvent, counterparty_id: &str) -> Biograph
     }
 }
 
-fn apply_betrayal_reputation_to_active_identity(identities: &mut PlayerIdentities, tick: u64) {
-    let Some(active) = identities.active_mut() else {
-        return;
-    };
-    active
-        .renown
-        .apply_delta(0, BETRAYAL_REPUTATION_DELTA, vec![betrayal_tag(tick)]);
-}
-
 fn emit_social_edges(
     event: &PvpEncounterEvent,
     validated_betrayer: Option<&str>,
+    betrayer_identity_id: Option<IdentityId>,
     relationships: &mut EventWriter<SocialRelationshipEvent>,
     renown_deltas: &mut EventWriter<SocialRenownDeltaEvent>,
 ) {
@@ -309,6 +286,7 @@ fn emit_social_edges(
         if let Some(betrayer) = validated_betrayer {
             renown_deltas.send(SocialRenownDeltaEvent {
                 char_id: betrayer.to_string(),
+                identity_id: betrayer_identity_id,
                 fame_delta: 0,
                 notoriety_delta: BETRAYAL_REPUTATION_DELTA,
                 tags_added: vec![betrayal_tag(event.tick)],
@@ -501,7 +479,7 @@ mod tests {
     }
 
     #[test]
-    fn betrayal_reputation_impact() {
+    fn betrayal_emits_renown_delta_without_direct_identity_write() {
         let mut app = app_with_pvp_encounter_system();
         spawn_player(&mut app, "Alice", "char:alice");
         let bob = spawn_player(&mut app, "Bob", "char:bob");
@@ -511,8 +489,14 @@ mod tests {
 
         let identities = app.world().get::<PlayerIdentities>(bob).unwrap();
         let active = identities.active().unwrap();
-        assert_eq!(active.renown.notoriety, BETRAYAL_REPUTATION_DELTA);
-        assert_eq!(active.renown.tags[0].tag, "背信者");
+        assert_eq!(
+            active.renown.notoriety, 0,
+            "pvp producer must emit SocialRenownDeltaEvent only; identity bridge is downstream"
+        );
+        assert!(
+            active.renown.tags.is_empty(),
+            "pvp producer must not write identity tags directly"
+        );
 
         let renown_events = app.world().resource::<Events<SocialRenownDeltaEvent>>();
         let emitted = renown_events
@@ -521,6 +505,7 @@ mod tests {
             .expect("betrayal should emit a social renown delta");
         assert_eq!(emitted.reason, "pvp_betrayal");
         assert_eq!(emitted.char_id, "char:bob");
+        assert_eq!(emitted.identity_id, Some(IdentityId::DEFAULT));
     }
 
     #[test]
@@ -721,7 +706,7 @@ mod tests {
         assert_eq!(
             identities.active().unwrap().renown.notoriety,
             BETRAYAL_REPUTATION_DELTA,
-            "identity notoriety should be applied once by the pvp encounter handler"
+            "identity notoriety should be applied once by the downstream renown bridge"
         );
         let social_renown = app.world().get::<Renown>(bob).unwrap();
         assert_eq!(
@@ -731,9 +716,47 @@ mod tests {
     }
 
     #[test]
+    fn witnessed_betrayal_full_frame_marks_active_alias_only() {
+        let mut app = app_with_pvp_and_social_renown_systems();
+        spawn_player(&mut app, "Alice", "char:alice");
+        let bob = spawn_player(&mut app, "Bob", "char:bob");
+        {
+            let mut identities = app.world_mut().get_mut::<PlayerIdentities>(bob).unwrap();
+            identities
+                .identities
+                .push(IdentityProfile::new(IdentityId(1), "碎影", 20));
+            identities.active_identity_id = IdentityId(1);
+        }
+
+        app.world_mut().send_event(betrayal_event());
+        app.update();
+
+        let identities = app.world().get::<PlayerIdentities>(bob).unwrap();
+        let active = identities.active().unwrap();
+        assert_eq!(active.id, IdentityId(1));
+        assert_eq!(
+            active.renown.notoriety, BETRAYAL_REPUTATION_DELTA,
+            "witnessed betrayal should attach notoriety to the current alias"
+        );
+        assert_eq!(active.renown.tags[0].tag, "背信者");
+        let inactive = identities.get(IdentityId::DEFAULT).unwrap();
+        assert_eq!(
+            inactive.renown.notoriety, 0,
+            "witnessed betrayal must not leak active alias reputation into the default identity"
+        );
+        assert!(inactive.renown.tags.is_empty());
+        let social_renown = app.world().get::<Renown>(bob).unwrap();
+        assert_eq!(social_renown.notoriety, BETRAYAL_REPUTATION_DELTA);
+    }
+
+    #[test]
     fn identity_switch_clears_betrayal() {
         let mut identities = PlayerIdentities::with_default("Bob", 0);
-        apply_betrayal_reputation_to_active_identity(&mut identities, 10);
+        identities.active_mut().unwrap().renown.apply_delta(
+            0,
+            BETRAYAL_REPUTATION_DELTA,
+            vec![betrayal_tag(10)],
+        );
         identities
             .identities
             .push(IdentityProfile::new(IdentityId(1), "Bob-alt", 20));

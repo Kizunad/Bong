@@ -16,6 +16,7 @@
 
 use std::collections::HashMap;
 
+use serde::{Deserialize, Serialize};
 use valence::prelude::{bevy_ecs, App, Component, Entity, Resource, Update};
 
 use crate::cultivation::components::Realm;
@@ -74,7 +75,7 @@ pub struct NpcTradeInventory {
 /// - 被攻击: -0.3
 /// - 传话（gossip）: -0.05
 /// - 帮助: +0.1
-#[derive(Component, Default, Clone, Debug)]
+#[derive(Component, Default, Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct NpcPlayerReputation {
     scores: HashMap<String, f32>,
 }
@@ -94,6 +95,11 @@ impl NpcPlayerReputation {
     /// 返回某玩家对应的信誉等级。
     pub fn tier(&self, player_id: &str) -> RepTier {
         RepTier::from_score(self.get(player_id))
+    }
+
+    /// Returns true when this component still only represents implicit neutral defaults.
+    pub fn is_empty(&self) -> bool {
+        self.scores.is_empty()
     }
 }
 
@@ -581,7 +587,9 @@ pub fn assign_npc_trade_inventory(
         | NpcArchetype::SkullFiend
         | NpcArchetype::Fuya
         | NpcArchetype::Zombie
-        | NpcArchetype::DyingElder => {
+        | NpcArchetype::DyingElder
+        // plan-mundane-fauna-v1 P0：凡兽不可交易（动物无交易行为）。
+        | NpcArchetype::Mundane => {
             return NpcTradeInventory { offers: Vec::new() };
         }
     };

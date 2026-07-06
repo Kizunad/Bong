@@ -3,6 +3,7 @@ package com.bong.client.hud;
 import com.bong.client.npc.NpcMoodStore;
 import com.bong.client.npc.NpcMetadata;
 import com.bong.client.npc.NpcMetadataStore;
+import com.bong.client.social.SocialStateStore;
 import com.bong.client.state.PlayerStateStore;
 import com.bong.client.state.PlayerStateViewModel;
 import org.junit.jupiter.api.AfterEach;
@@ -22,6 +23,7 @@ class TargetInfoHudPlannerTest {
         PlayerStateStore.resetForTests();
         NpcMoodStore.clearAll();
         NpcMetadataStore.clearAll();
+        SocialStateStore.resetForTests();
     }
 
     @Test
@@ -144,5 +146,75 @@ class TargetInfoHudPlannerTest {
             state.qiRatio(),
             "expected qi ratio 0.22 because metadata supplies it, actual: " + state.qiRatio()
         );
+    }
+
+    @Test
+    void anonymousPlayerTargetInfoUsesSocialAnonymityPlaceholder() {
+        SocialStateStore.replaceAnonymity("char:viewer", List.of(
+            new SocialStateStore.SocialRemoteIdentity(
+                "offline:LeakedName:char-uuid",
+                true,
+                "LeakedName",
+                "Awaken",
+                "",
+                List.of()
+            )
+        ));
+
+        String displayName = TargetInfoState.playerDisplayNameForTargetInfo(
+            "offline:LeakedName:char-uuid",
+            "LeakedName",
+            "LeakedName"
+        );
+        TargetInfoState state = TargetInfoState.create(
+            TargetInfoState.Kind.PLAYER,
+            "entity:7",
+            displayName,
+            "",
+            0.8,
+            0.0,
+            1_000L
+        );
+
+        List<HudRenderCommand> commands = TargetInfoHudPlanner.buildCommands(state, 1_500L, FIXED_WIDTH, 320, 180);
+
+        assertEquals(TargetInfoState.ANONYMOUS_PLAYER_DISPLAY_NAME, state.displayName());
+        assertTrue(commands.stream().anyMatch(cmd -> cmd.text().contains(TargetInfoState.ANONYMOUS_PLAYER_DISPLAY_NAME)));
+        assertTrue(commands.stream().noneMatch(cmd -> cmd.text().contains("LeakedName")));
+    }
+
+    @Test
+    void exposedPlayerTargetInfoKeepsKnownName() {
+        SocialStateStore.replaceAnonymity("char:viewer", List.of(
+            new SocialStateStore.SocialRemoteIdentity(
+                "offline:KnownAlly:char-uuid",
+                false,
+                "KnownAlly",
+                "Awaken",
+                "",
+                List.of()
+            )
+        ));
+
+        String displayName = TargetInfoState.playerDisplayNameForTargetInfo(
+            "offline:KnownAlly:char-uuid",
+            "KnownAlly",
+            "KnownAlly"
+        );
+        TargetInfoState state = TargetInfoState.create(
+            TargetInfoState.Kind.PLAYER,
+            "entity:8",
+            displayName,
+            "",
+            0.8,
+            0.0,
+            1_000L
+        );
+
+        List<HudRenderCommand> commands = TargetInfoHudPlanner.buildCommands(state, 1_500L, FIXED_WIDTH, 320, 180);
+
+        assertEquals("KnownAlly", state.displayName());
+        assertTrue(commands.stream().anyMatch(cmd -> cmd.text().contains("KnownAlly")));
+        assertTrue(commands.stream().noneMatch(cmd -> cmd.text().contains(TargetInfoState.ANONYMOUS_PLAYER_DISPLAY_NAME)));
     }
 }

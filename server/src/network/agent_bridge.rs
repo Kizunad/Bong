@@ -105,6 +105,7 @@ pub fn payload_type_label(payload_type: ServerDataType) -> &'static str {
         ServerDataType::InventorySnapshot => "inventory_snapshot",
         ServerDataType::InventoryEvent => "inventory_event",
         ServerDataType::DroppedLootSync => "dropped_loot_sync",
+        ServerDataType::RemainsSync => "remains_sync",
         ServerDataType::BotanyHarvestProgress => "botany_harvest_progress",
         ServerDataType::BotanyPlantV2RenderProfiles => "botany_plant_v2_render_profiles",
         ServerDataType::MiningProgress => "mining_progress",

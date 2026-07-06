@@ -256,6 +256,9 @@ pub fn register(app: &mut App) {
         (
             attach_combat_bundle_to_joined_clients
                 .after(crate::player::attach_player_state_to_joined_clients)
+                // plan-remains-suite：cultivation join attach 可能把已终结角色轮换成
+                // 新 current_char_id；combat 的 Lifecycle 必须读取轮换后的持久化状态。
+                .after(crate::cultivation::attach_cultivation_to_joined_clients)
                 .in_set(CombatSystemSet::Intent),
             attach_combat_bundle_to_joined_npcs.in_set(CombatSystemSet::Intent),
             debug::tick_combat_clock.in_set(CombatSystemSet::Intent),
