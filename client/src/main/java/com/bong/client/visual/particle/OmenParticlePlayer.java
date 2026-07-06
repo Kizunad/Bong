@@ -11,6 +11,8 @@ public final class OmenParticlePlayer implements VfxPlayer {
         new Identifier("bong", "world_omen_pseudo_vein");
     public static final Identifier BEAST_TIDE =
         new Identifier("bong", "world_omen_beast_tide");
+    public static final Identifier TIDE_SKY =
+        new Identifier("bong", "world_omen_tide_sky");
     public static final Identifier REALM_COLLAPSE =
         new Identifier("bong", "world_omen_realm_collapse");
     public static final Identifier KARMA_BACKLASH =
@@ -18,11 +20,11 @@ public final class OmenParticlePlayer implements VfxPlayer {
 
     @Override
     public void play(MinecraftClient client, VfxEventPayload.SpawnParticle payload) {
+        OmenStateStore.note(payload, System.currentTimeMillis());
         ClientWorld world = GameplayVfxUtil.world(client);
         if (world == null) {
             return;
         }
-        OmenStateStore.note(payload, System.currentTimeMillis());
 
         double[] origin = payload.origin();
         float[] rgb = GameplayVfxUtil.rgb(payload, fallbackColor(payload.eventId()));
@@ -57,6 +59,7 @@ public final class OmenParticlePlayer implements VfxPlayer {
 
     private static int fallbackColor(Identifier eventId) {
         if (BEAST_TIDE.equals(eventId)) return 0xB8864A;
+        if (TIDE_SKY.equals(eventId)) return 0x9E8C6A;
         if (REALM_COLLAPSE.equals(eventId)) return 0x7A1E24;
         if (KARMA_BACKLASH.equals(eventId)) return 0xA01830;
         return 0x66D8C8;

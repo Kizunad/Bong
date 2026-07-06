@@ -12,6 +12,7 @@ public final class OmenStateStore {
     public enum Kind {
         PSEUDO_VEIN,
         BEAST_TIDE,
+        TIDE_SKY,
         REALM_COLLAPSE,
         KARMA_BACKLASH
     }
@@ -87,6 +88,7 @@ public final class OmenStateStore {
         return switch (value) {
             case "bong:world_omen_pseudo_vein" -> Kind.PSEUDO_VEIN;
             case "bong:world_omen_beast_tide" -> Kind.BEAST_TIDE;
+            case "bong:world_omen_tide_sky" -> Kind.TIDE_SKY;
             case "bong:world_omen_realm_collapse" -> Kind.REALM_COLLAPSE;
             case "bong:world_omen_karma_backlash" -> Kind.KARMA_BACKLASH;
             default -> null;
