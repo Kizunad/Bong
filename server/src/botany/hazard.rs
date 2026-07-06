@@ -8,8 +8,8 @@ use crate::combat::components::{BodyPart, Wound, WoundKind, Wounds};
 use crate::cultivation::components::{ColorKind, ContamSource, Contamination, Cultivation};
 use crate::cultivation::death_hooks::release_qi_amount_to_zone;
 use crate::cultivation::life_record::LifeRecord;
-use crate::fauna::components::{BeastKind, FaunaTag};
-use crate::npc::spawn::spawn_beast_npc_at;
+use crate::fauna::components::BeastKind;
+use crate::npc::spawn::spawn_beast_npc_of_kind_at;
 use crate::npc::territory::Territory;
 use crate::qi_physics::constants::QI_EPSILON;
 use crate::qi_physics::ledger::QiTransfer;
@@ -276,7 +276,8 @@ pub fn spawn_attracted_mobs_from_harvest(
             let spawn_pos = attracted_mob_position(event.target_pos, event_seed(event), idx);
             // 拟态灰烬蛛（FaunaKind::MimicSpider）走 spawn_natural_mob_at，
             // 附带完整 MimicSpiderBlackboard / SpiderDisguiseState 组件。
-            // 其他 FaunaKind 回退到通用 spawn_beast_npc_at 路径。
+            // 其他 FaunaKind 在 botany 合约里已经指定物种，spawn 时直接锁定种类，
+            // 避免先按通用 fauna 池随机，再只覆盖 FaunaTag 造成视觉/血量漂移。
             if event.mob_kind == FaunaKind::MimicSpider {
                 spawn_natural_mob_at(
                     &mut commands,
@@ -287,17 +288,15 @@ pub fn spawn_attracted_mobs_from_harvest(
                     patrol_center,
                 );
             } else {
-                let entity = spawn_beast_npc_at(
+                spawn_beast_npc_of_kind_at(
                     &mut commands,
                     layer,
                     event.zone_name.as_str(),
                     spawn_pos,
                     Territory::new(patrol_center, 12.0),
                     0.0,
+                    beast_kind_for_botany(event.mob_kind),
                 );
-                commands
-                    .entity(entity)
-                    .insert(FaunaTag::new(beast_kind_for_botany(event.mob_kind)));
             }
         }
     }
@@ -432,12 +431,18 @@ mod tests {
     use crate::botany::components::{BotanyHarvestMode, BotanyPhase, HarvestSession};
     use crate::botany::registry::{BotanyPlantId, PlantVariant};
     use crate::cultivation::life_record::LifeRecord;
+    use crate::fauna::components::FaunaTag;
+    use crate::fauna::drop::{drop_table_for, SHU_GU};
+    use crate::fauna::visual::{entity_kind_for_beast, visual_kind_for_beast, FaunaVisualKind};
+    use crate::npc::lifecycle::NpcArchetype;
+    use crate::npc::spawn::NpcMarker;
     use crate::player::gameplay::GameplayTick;
     use crate::player::state::canonical_player_id;
     use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
     use crate::qi_physics::ledger::QiTransferReason;
     use crate::world::dimension::{CurrentDimension, DimensionKind};
-    use valence::prelude::{App, Update};
+    use crate::world::zone::{Zone, ZoneRegistry};
+    use valence::prelude::{App, EntityKind, Update, With};
     use valence::testing::create_mock_client;
 
     fn make_hazard_plant(pos: [f64; 3]) -> Plant {
@@ -678,40 +683,150 @@ mod tests {
         assert!(hazards.is_empty());
     }
 
-    #[test]
-    fn attracts_mobs_event_spawns_fauna_tagged_beasts() {
-        use crate::npc::lifecycle::NpcArchetype;
-        use crate::npc::spawn::NpcMarker;
-        use crate::world::zone::ZoneRegistry;
-        use valence::prelude::{App, Update, With};
+    fn single_zone_registry(zone_name: &str) -> ZoneRegistry {
+        ZoneRegistry {
+            zones: vec![Zone {
+                name: zone_name.to_string(),
+                dimension: DimensionKind::Overworld,
+                bounds: (
+                    DVec3::new(-128.0, 64.0, -128.0),
+                    DVec3::new(128.0, 80.0, 128.0),
+                ),
+                spirit_qi: 0.3,
+                danger_level: 0,
+                active_events: Vec::new(),
+                patrol_anchors: Vec::new(),
+                blocked_tiles: Vec::new(),
+                qi_equilibrium: 0.0,
+                qi_inflow_per_min: 0.0,
+            }],
+        }
+    }
+
+    fn generic_spawn_kind_for_attract_event(event: &BotanyAttractsMobsEvent) -> BeastKind {
+        let seed = event_seed(event);
+        let spawn_pos = attracted_mob_position(event.target_pos, seed, 0);
+        let fauna_seed = crate::fauna::components::fauna_spawn_seed(
+            event.zone_name.as_str(),
+            spawn_pos.x,
+            spawn_pos.z,
+        );
+        crate::fauna::components::fauna_tag_for_beast_spawn(event.zone_name.as_str(), fauna_seed)
+            .beast_kind
+    }
+
+    fn first_tick_where_generic_spawn_would_not_be_rat(
+        client: Entity,
+        zone_name: &str,
+        target_pos: [f64; 3],
+    ) -> (u64, BeastKind) {
+        for issued_at_tick in 0..10_000 {
+            let event = BotanyAttractsMobsEvent {
+                client_entity: client,
+                plant_kind: BotanyPlantId::BaiYanPeng,
+                zone_name: zone_name.to_string(),
+                target_pos,
+                mob_kind: FaunaKind::SpiritMice,
+                min_count: 2,
+                max_count: 2,
+                issued_at_tick,
+            };
+            let old_generic_kind = generic_spawn_kind_for_attract_event(&event);
+            if old_generic_kind != BeastKind::Rat {
+                return (issued_at_tick, old_generic_kind);
+            }
+        }
+        panic!("test fixture should find a tick where generic beast spawn is not Rat");
+    }
+
+    fn assert_spirit_mice_event_spawns_rat_contract(zone_name: &str) {
+        let target_pos = [12.0, 66.0, 12.0];
 
         let mut app = App::new();
         app.add_event::<BotanyAttractsMobsEvent>();
         app.add_systems(Update, spawn_attracted_mobs_from_harvest);
-        app.insert_resource(ZoneRegistry::fallback());
+        app.insert_resource(single_zone_registry(zone_name));
         app.world_mut().spawn(OverworldLayer);
         let client = app.world_mut().spawn_empty().id();
+        let (issued_at_tick, old_generic_kind) =
+            first_tick_where_generic_spawn_would_not_be_rat(client, zone_name, target_pos);
 
         app.world_mut().send_event(BotanyAttractsMobsEvent {
             client_entity: client,
             plant_kind: BotanyPlantId::BaiYanPeng,
-            zone_name: "spawn".to_string(),
-            target_pos: [12.0, 66.0, 12.0],
+            zone_name: zone_name.to_string(),
+            target_pos,
             mob_kind: FaunaKind::SpiritMice,
             min_count: 2,
             max_count: 2,
-            issued_at_tick: 99,
+            issued_at_tick,
         });
         app.update();
 
         let world = app.world_mut();
-        let mut query = world.query_filtered::<(&FaunaTag, &NpcArchetype), With<NpcMarker>>();
+        let mut query = world.query_filtered::<Entity, With<NpcMarker>>();
         let spawned = query.iter(world).collect::<Vec<_>>();
-        assert_eq!(spawned.len(), 2);
-        assert!(spawned
-            .iter()
-            .all(|(tag, archetype)| tag.beast_kind == BeastKind::Rat
-                && **archetype == NpcArchetype::Beast));
+        assert_eq!(
+            spawned.len(),
+            2,
+            "BaiYanPeng SpiritMice hazard should spawn exactly two Rat-contract NPCs in zone `{zone_name}`"
+        );
+        for entity in spawned {
+            let tag = world
+                .get::<FaunaTag>(entity)
+                .expect("attracted SpiritMice spawn should carry FaunaTag");
+            assert_eq!(
+                tag.beast_kind,
+                BeastKind::Rat,
+                "SpiritMice must route loot/tag as Rat; old generic spawn fixture would have chosen {old_generic_kind:?}"
+            );
+            assert_eq!(
+                world.get::<NpcArchetype>(entity),
+                Some(&NpcArchetype::Beast),
+                "SpiritMice spawn should remain a Beast NPC"
+            );
+            assert_eq!(
+                world.get::<EntityKind>(entity),
+                Some(&entity_kind_for_beast(BeastKind::Rat)),
+                "SpiritMice raw EntityKind must match Rat, not the generic spawn pool species"
+            );
+            assert_eq!(
+                world.get::<FaunaVisualKind>(entity).copied(),
+                visual_kind_for_beast(BeastKind::Rat),
+                "SpiritMice visual shell must match Rat"
+            );
+            let wounds = world
+                .get::<Wounds>(entity)
+                .expect("attracted SpiritMice spawn should carry Wounds");
+            assert_eq!(
+                wounds.health_max,
+                BeastKind::Rat.health_max(),
+                "SpiritMice health_max must use Rat stats, not old generic {old_generic_kind:?} stats"
+            );
+            assert_eq!(
+                wounds.health_current,
+                BeastKind::Rat.health_max(),
+                "SpiritMice health_current should start at Rat health_max"
+            );
+            assert_eq!(
+                drop_table_for(tag.beast_kind)
+                    .first()
+                    .expect("Rat drop table should not be empty")
+                    .item_id,
+                SHU_GU,
+                "SpiritMice loot route should be Rat drops because visual/entity/hp are all Rat"
+            );
+        }
+    }
+
+    #[test]
+    fn attracts_mobs_event_spawns_rat_contract_in_spawn_zone() {
+        assert_spirit_mice_event_spawns_rat_contract("spawn");
+    }
+
+    #[test]
+    fn attracts_mobs_event_spawns_rat_contract_in_generic_zone() {
+        assert_spirit_mice_event_spawns_rat_contract("plain_field");
     }
 
     #[test]

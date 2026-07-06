@@ -51,7 +51,7 @@ pub(crate) use self::rogue::{
 pub(crate) use self::commoner::spawn_commoner_npc_at;
 
 #[allow(unused_imports)]
-pub(crate) use self::beast::spawn_beast_npc_at;
+pub(crate) use self::beast::{spawn_beast_npc_at, spawn_beast_npc_of_kind_at};
 
 #[allow(unused_imports)]
 pub(crate) use self::mundane::spawn_mundane_fauna_at;
