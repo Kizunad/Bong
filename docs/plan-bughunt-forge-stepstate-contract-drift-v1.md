@@ -1,4 +1,4 @@
-# plan-bughunt-forge-stepstate-contract-drift-v1（骨架）
+# plan-bughunt-forge-stepstate-contract-drift-v1
 
 > 结论一句话：`forge_session.step_state` 的 server→schema→client 契约把 **tempering pattern / inscription 槽位上限 / consecration min_realm** 这三类步骤元数据丢掉或写错，导致炼器 UI 在已实现链路里出现“淬炼空轨道、双槽铭文自锁、低境界误导注入烧真元”的复合真 bug。主题明确避开已知 `forge/lingtian processing deadpath`。
 
