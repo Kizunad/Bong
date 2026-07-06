@@ -14,6 +14,10 @@ public final class DragState {
 
     private Phase phase = Phase.IDLE;
     private InventoryItem draggedItem;
+    /** plan-rotate-v1 — 拾起时的原朝向物品（取消拖拽 / 非网格落位回退用）。 */
+    private InventoryItem originalDraggedItem;
+    /** plan-rotate-v1 — 累计旋转奇偶：连按两次 R = 恢复原朝向 = false。 */
+    private boolean draggedRotated;
     private SourceKind sourceKind;
     private int sourceRow = -1;
     private int sourceCol = -1;
@@ -34,6 +38,8 @@ public final class DragState {
         Objects.requireNonNull(item, "item");
         this.phase = Phase.DRAGGING;
         this.draggedItem = item;
+        this.originalDraggedItem = item;
+        this.draggedRotated = false;
         this.sourceKind = SourceKind.GRID;
         this.sourceRow = gridRow;
         this.sourceCol = gridCol;
@@ -47,6 +53,8 @@ public final class DragState {
         Objects.requireNonNull(slot, "slot");
         this.phase = Phase.DRAGGING;
         this.draggedItem = item;
+        this.originalDraggedItem = item;
+        this.draggedRotated = false;
         this.sourceKind = SourceKind.EQUIP;
         this.sourceEquipSlot = slot;
         this.sourceRow = -1;
@@ -58,6 +66,8 @@ public final class DragState {
         Objects.requireNonNull(item, "item");
         this.phase = Phase.DRAGGING;
         this.draggedItem = item;
+        this.originalDraggedItem = item;
+        this.draggedRotated = false;
         this.sourceKind = SourceKind.HOTBAR;
         this.sourceHotbarIndex = index;
         this.sourceQuickUseIndex = -1;
@@ -71,6 +81,8 @@ public final class DragState {
         Objects.requireNonNull(item, "item");
         this.phase = Phase.DRAGGING;
         this.draggedItem = item;
+        this.originalDraggedItem = item;
+        this.draggedRotated = false;
         this.sourceKind = SourceKind.QUICK_USE;
         this.sourceQuickUseIndex = index;
         this.sourceHotbarIndex = -1;
@@ -86,6 +98,8 @@ public final class DragState {
         Objects.requireNonNull(channel, "channel");
         this.phase = Phase.DRAGGING;
         this.draggedItem = item;
+        this.originalDraggedItem = item;
+        this.draggedRotated = false;
         this.sourceKind = SourceKind.MERIDIAN;
         this.sourceMeridianChannel = channel;
         this.sourceBodyPart = null;
@@ -100,6 +114,8 @@ public final class DragState {
         Objects.requireNonNull(part, "part");
         this.phase = Phase.DRAGGING;
         this.draggedItem = item;
+        this.originalDraggedItem = item;
+        this.draggedRotated = false;
         this.sourceKind = SourceKind.BODY_PART;
         this.sourceBodyPart = part;
         this.sourceMeridianChannel = null;
@@ -116,8 +132,11 @@ public final class DragState {
     }
 
     public CancelResult cancel() {
+        // plan-rotate-v1 — 取消拖拽必须还原「原朝向」的件：旋转只在成功落位时生效，
+        // 放回来源位置若带着旋转后的 footprint 可能与邻居重叠。
+        InventoryItem restore = originalDraggedItem != null ? originalDraggedItem : draggedItem;
         CancelResult result = new CancelResult(
-            draggedItem, sourceKind, sourceContainerId, sourceRow, sourceCol, sourceEquipSlot, sourceHotbarIndex, sourceQuickUseIndex, sourceMeridianChannel, sourceBodyPart
+            restore, sourceKind, sourceContainerId, sourceRow, sourceCol, sourceEquipSlot, sourceHotbarIndex, sourceQuickUseIndex, sourceMeridianChannel, sourceBodyPart
         );
         reset();
         return result;
@@ -126,6 +145,34 @@ public final class DragState {
     public void updateMouse(double x, double y) {
         this.mouseX = x;
         this.mouseY = y;
+    }
+
+    /**
+     * plan-rotate-v1 — 拖拽中按 R 旋转当前拖拽物（宽高互换）。
+     * 仅 DRAGGING 阶段生效；正方形（含 1x1）footprint 旋转无意义，no-op 且不翻转奇偶标志。
+     *
+     * @return 是否真的发生了旋转
+     */
+    public boolean rotateDraggedItem() {
+        if (phase != Phase.DRAGGING || draggedItem == null) {
+            return false;
+        }
+        if (draggedItem.gridWidth() == draggedItem.gridHeight()) {
+            return false;
+        }
+        draggedItem = draggedItem.withRotatedFootprint();
+        draggedRotated = !draggedRotated;
+        return true;
+    }
+
+    /** plan-rotate-v1 — 当前拖拽物相对拾起时是否处于旋转朝向（发 move intent 时透传）。 */
+    public boolean draggedRotated() {
+        return draggedRotated;
+    }
+
+    /** plan-rotate-v1 — 拾起时的原朝向物品；非拖拽阶段为 null。 */
+    public InventoryItem originalDraggedItem() {
+        return originalDraggedItem;
     }
 
     public boolean isDragging() {
@@ -149,6 +196,8 @@ public final class DragState {
     private void reset() {
         this.phase = Phase.IDLE;
         this.draggedItem = null;
+        this.originalDraggedItem = null;
+        this.draggedRotated = false;
         this.sourceKind = null;
         this.sourceRow = -1;
         this.sourceCol = -1;

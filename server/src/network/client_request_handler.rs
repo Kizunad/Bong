@@ -1719,6 +1719,7 @@ pub fn handle_client_request_payloads(
                 instance_id,
                 from,
                 to,
+                rotated,
                 ..
             } => {
                 handle_inventory_move(
@@ -1726,6 +1727,7 @@ pub fn handle_client_request_payloads(
                     instance_id,
                     from,
                     to,
+                    rotated,
                     &combat_params.item_registry,
                     &mut inventories,
                     &mut clients,
@@ -1769,6 +1771,8 @@ pub fn handle_client_request_payloads(
                         slot: EquipSlotV1::Chest,
                         state: EquipStateV1::Worn,
                     },
+                    // 伪皮装备走 equip 目标，非网格落位，旋转标志天然不适用。
+                    false,
                     &combat_params.item_registry,
                     &mut inventories,
                     &mut clients,
@@ -6144,6 +6148,211 @@ mod tests {
         assert!(
             has_inventory_durability_payload(&mut helper, 77),
             "targeted wear should reuse durability incremental payload"
+        );
+    }
+
+    /// plan-rotate-v1 e2e — 客户端 JSON wire 带 rotated:true 的 inventory_move_intent
+    /// 走完整 handler 链路后，instance 的 grid_w/grid_h 在 PlayerInventory 中互换。
+    #[test]
+    fn inventory_move_intent_with_rotated_true_swaps_dims_end_to_end() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        app.insert_resource(ItemRegistry::from_map(HashMap::from([(
+            "long_rod".to_string(),
+            ItemTemplate {
+                id: "long_rod".to_string(),
+                display_name: "长杆".to_string(),
+                category: ItemCategory::Misc,
+                placeable: None,
+                max_stack_count: 1,
+                grid_w: 2,
+                grid_h: 1,
+                base_weight: 1.0,
+                rarity: ItemRarity::Common,
+                spirit_quality_initial: 1.0,
+                description: String::new(),
+                effect: None,
+                cast_duration_ms: crate::inventory::DEFAULT_CAST_DURATION_MS,
+                cooldown_ms: crate::inventory::DEFAULT_COOLDOWN_MS,
+                weapon_spec: None,
+                forge_station_spec: None,
+                blueprint_scroll_spec: None,
+                inscription_scroll_spec: None,
+                technique_scroll_spec: None,
+                readable_scroll_spec: None,
+                recipe_fragment_spec: None,
+                container_spec: None,
+                shelflife_profile: None,
+                shield_spec: None,
+                shelflife_track: None,
+            },
+        )])));
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                inventory_with_item(ItemInstance {
+                    instance_id: 77,
+                    template_id: "long_rod".to_string(),
+                    display_name: "长杆".to_string(),
+                    grid_w: 2,
+                    grid_h: 1,
+                    weight: 1.0,
+                    rarity: ItemRarity::Common,
+                    description: String::new(),
+                    stack_count: 1,
+                    spirit_quality: 1.0,
+                    durability: 1.0,
+                    freshness: None,
+                    mineral_id: None,
+                    charges: None,
+                    forge_quality: None,
+                    forge_color: None,
+                    forge_side_effects: Vec::new(),
+                    forge_achieved_tier: None,
+                    alchemy: None,
+                    lingering_owner_qi: None,
+                }),
+                Cultivation::default(),
+                PlayerState::default(),
+                QuickSlotBindings::default(),
+                UnlockedStyles::default(),
+            ))
+            .id();
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"inventory_move_intent","v":1,"instance_id":77,"rotated":true,"from":{"kind":"container","container_id":"main_pack","row":0,"col":0},"to":{"kind":"container","container_id":"main_pack","row":2,"col":3}}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let inventory = app.world().get::<PlayerInventory>(entity).unwrap();
+        let placed = inventory.containers[0]
+            .items
+            .iter()
+            .find(|p| p.instance.instance_id == 77)
+            .expect("item should remain in main_pack");
+        assert_eq!(
+            (placed.row, placed.col),
+            (2, 3),
+            "rotated move 应落到目标格 (2,3)"
+        );
+        assert_eq!(
+            (placed.instance.grid_w, placed.instance.grid_h),
+            (1, 2),
+            "e2e：rotated:true 落位后 grid_w/grid_h 应互换为 1x2，实际 {}x{}",
+            placed.instance.grid_w,
+            placed.instance.grid_h
+        );
+    }
+
+    /// plan-rotate-v1 e2e — rotated 落位越界（2x1 转 1x2 撞底）被拒后，
+    /// 原物品位置与朝向均未变（无脏状态），且不 panic。
+    #[test]
+    fn inventory_move_intent_rotated_rejection_leaves_inventory_clean_end_to_end() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        app.insert_resource(ItemRegistry::from_map(HashMap::from([(
+            "long_rod".to_string(),
+            ItemTemplate {
+                id: "long_rod".to_string(),
+                display_name: "长杆".to_string(),
+                category: ItemCategory::Misc,
+                placeable: None,
+                max_stack_count: 1,
+                grid_w: 2,
+                grid_h: 1,
+                base_weight: 1.0,
+                rarity: ItemRarity::Common,
+                spirit_quality_initial: 1.0,
+                description: String::new(),
+                effect: None,
+                cast_duration_ms: crate::inventory::DEFAULT_CAST_DURATION_MS,
+                cooldown_ms: crate::inventory::DEFAULT_COOLDOWN_MS,
+                weapon_spec: None,
+                forge_station_spec: None,
+                blueprint_scroll_spec: None,
+                inscription_scroll_spec: None,
+                technique_scroll_spec: None,
+                readable_scroll_spec: None,
+                recipe_fragment_spec: None,
+                container_spec: None,
+                shelflife_profile: None,
+                shield_spec: None,
+                shelflife_track: None,
+            },
+        )])));
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                inventory_with_item(ItemInstance {
+                    instance_id: 77,
+                    template_id: "long_rod".to_string(),
+                    display_name: "长杆".to_string(),
+                    grid_w: 2,
+                    grid_h: 1,
+                    weight: 1.0,
+                    rarity: ItemRarity::Common,
+                    description: String::new(),
+                    stack_count: 1,
+                    spirit_quality: 1.0,
+                    durability: 1.0,
+                    freshness: None,
+                    mineral_id: None,
+                    charges: None,
+                    forge_quality: None,
+                    forge_color: None,
+                    forge_side_effects: Vec::new(),
+                    forge_achieved_tier: None,
+                    alchemy: None,
+                    lingering_owner_qi: None,
+                }),
+                Cultivation::default(),
+                PlayerState::default(),
+                QuickSlotBindings::default(),
+                UnlockedStyles::default(),
+            ))
+            .id();
+        // 目标 (4,0)：不旋转时 2x1 在最底行放得下；旋转成 1x2 后行溢出 → 拒绝。
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"inventory_move_intent","v":1,"instance_id":77,"rotated":true,"from":{"kind":"container","container_id":"main_pack","row":0,"col":0},"to":{"kind":"container","container_id":"main_pack","row":4,"col":0}}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let inventory = app.world().get::<PlayerInventory>(entity).unwrap();
+        let placed = inventory.containers[0]
+            .items
+            .iter()
+            .find(|p| p.instance.instance_id == 77)
+            .expect("item should remain in main_pack");
+        assert_eq!(
+            (placed.row, placed.col),
+            (0, 0),
+            "旋转越界拒绝后物品必须留在原位"
+        );
+        assert_eq!(
+            (placed.instance.grid_w, placed.instance.grid_h),
+            (2, 1),
+            "旋转越界拒绝后必须保持原朝向 2x1（无脏状态）"
         );
     }
 
@@ -10844,6 +11053,8 @@ fn handle_inventory_move(
     instance_id: u64,
     from: InventoryLocationV1,
     to: InventoryLocationV1,
+    // plan-rotate-v1 — 拖拽落位前是否先旋转该 instance（互换 grid_w/grid_h）。
+    rotated: bool,
     item_registry: &ItemRegistry,
     inventories: &mut Query<&mut PlayerInventory>,
     clients: &mut Query<(&Username, &mut Client)>,
@@ -10920,7 +11131,14 @@ fn handle_inventory_move(
         }
     }
 
-    match apply_inventory_move(&mut inventory, item_registry, instance_id, &from, &to) {
+    match apply_inventory_move(
+        &mut inventory,
+        item_registry,
+        instance_id,
+        &from,
+        &to,
+        rotated,
+    ) {
         Ok(InventoryMoveOutcome::Moved { revision }) => {
             let wear_update = maybe_apply_targeted_item_wear(
                 entity,

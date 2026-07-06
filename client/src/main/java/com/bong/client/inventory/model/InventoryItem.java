@@ -338,6 +338,38 @@ public final class InventoryItem {
         return create(itemId, displayName, 1, 1, 0.5, "common", "");
     }
 
+    /**
+     * plan-rotate-v1 — 返回 footprint 旋转（宽高互换）后的副本，其余字段逐一原样保留。
+     * 拖拽中按 R 旋转（2x1 ↔ 1x2）用；正方形（含 1x1）互换是恒等操作，直接返回自身。
+     */
+    public InventoryItem withRotatedFootprint() {
+        if (gridWidth == gridHeight) {
+            return this;
+        }
+        return createFullWithVisualMeta(
+            instanceId,
+            itemId,
+            displayName,
+            gridHeight,
+            gridWidth,
+            weight,
+            rarity,
+            description,
+            stackCount,
+            spiritQuality,
+            durability,
+            charges,
+            scrollKind,
+            scrollSkillId,
+            scrollXpGrant,
+            forgeQuality,
+            forgeColor,
+            forgeSideEffects,
+            forgeAchievedTier,
+            alchemyLines
+        );
+    }
+
     public long instanceId() {
         return instanceId;
     }

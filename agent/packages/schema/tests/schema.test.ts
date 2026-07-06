@@ -1805,6 +1805,39 @@ describe("sample files pass schema validation", () => {
     expect(data.to.container_id).toBe("pack_1007");
   });
 
+  // plan-rotate-v1：拖拽中按 R 旋转后的落位正样本——rotated:true 合法且透传。
+  it("client-request.inventory-move-intent.rotated.sample.json", () => {
+    const data = loadSample(
+      "client-request.inventory-move-intent.rotated.sample.json",
+    );
+    const result = validate(ClientRequestV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+    expect(data.rotated).toBe(true);
+    expect(data.to.kind).toBe("container");
+  });
+
+  // plan-rotate-v1：rotated 是可选字段——不带时仍合法（旧客户端向后兼容 pin，
+  // server 侧 serde(default) 视为 false）。基础 sample 本身就不带 rotated。
+  it("move intent without rotated field stays valid (legacy compat)", () => {
+    const data = loadSample("client-request.inventory-move-intent.sample.json");
+    expect(data.rotated).toBeUndefined();
+    const result = validate(ClientRequestV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  // plan-rotate-v1：rotated 非布尔（如字符串 "true"）被拒（反样本）。
+  it("move intent with non-boolean rotated is rejected", () => {
+    const result = validate(ClientRequestV1, {
+      v: 1,
+      type: "inventory_move_intent",
+      instance_id: 2051,
+      rotated: "true",
+      from: { kind: "container", container_id: "main_pack", row: 0, col: 0 },
+      to: { kind: "container", container_id: "main_pack", row: 1, col: 0 },
+    });
+    expect(result.ok).toBe(false);
+  });
+
   // plan-tarkov-backpack-v1 P2：pack_<数字> container_id 被 ContainerIdV1 pattern 接受（正）。
   it("move intent into pack_<n> container is accepted", () => {
     const result = validate(ClientRequestV1, {

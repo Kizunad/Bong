@@ -3718,6 +3718,9 @@ message InventoryMoveIntent {
   uint64            instance_id = 1;
   InventoryLocation from        = 2;
   InventoryLocation to          = 3;
+  // plan-rotate-v1 — 落位前先互换该 instance 的 grid_w/grid_h（拖拽中按 R 旋转）。
+  // proto3 缺省 false = 未旋转，与 Rust `#[serde(default)]` 语义一致。
+  bool              rotated     = 4;
 }
 
 // 与 Rust ClientRequestV1::EquipFalseSkin 精确对应。

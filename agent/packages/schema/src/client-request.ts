@@ -177,6 +177,9 @@ export const InventoryMoveIntentRequestV1 = Type.Object(
     instance_id: Type.Integer({ minimum: 0, maximum: JS_SAFE_INTEGER_MAX }),
     from: InventoryLocationV1,
     to: InventoryLocationV1,
+    // plan-rotate-v1 — 落位前先互换该 instance 的 grid_w/grid_h（拖拽中按 R 旋转）。
+    // 可选字段：旧客户端不带时 server 侧 `#[serde(default)]` 视为 false（未旋转）。
+    rotated: Type.Optional(Type.Boolean()),
   },
   { additionalProperties: false },
 );
