@@ -1,6 +1,6 @@
-# plan-bughunt-locust-warning-duration-contract-drift-v1（骨架）
+# plan-bughunt-locust-warning-duration-contract-drift-v1
 
-> **骨架（草案）**。一句话主题：`locust_swarm_warning` 已在 `agent/packages/schema` 与 server 下发链路中约定 `duration_ticks`，但客户端 `LocustSwarmWarningHandler` 完全不消费该字段，统一把 HUD 警示与震动特效硬编码成 **6.5 秒**。结果是：**灵蝗潮预警持续时间与协议承诺脱节，长时蝗潮只闪一下就消失**。
+> **Active plan**。一句话主题：`locust_swarm_warning` 已在 `agent/packages/schema` 与 server 下发链路中约定 `duration_ticks`，但客户端 `LocustSwarmWarningHandler` 完全不消费该字段，统一把 HUD 警示与震动特效硬编码成 **6.5 秒**。结果是：**灵蝗潮预警持续时间与协议承诺脱节，长时蝗潮只闪一下就消失**。
 
 > 立项动机：这条问题位于 **agent/schema/协议契约链路**，不是纯客户端表现瑕疵。TypeBox 合同、sample、server 实际 payload 都把 `duration_ticks` 当成有效字段；唯独客户端消费端丢弃，说明契约已分叉，而且当前分支的共享 Rust `client_payload.rs` 也没把 `locust_swarm_warning` 纳入枚举，导致跨端样例对拍没有覆盖到这条链路。
 
