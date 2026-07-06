@@ -17,7 +17,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * plan-layered-equip-v1 P4（决议 #12/#17）：EquipmentPanel 新布局 + worn 栈渲染数据契约饱和测试。
  *
  * <p>验证：8 槽全 addSlot（中列 HEAD/CHEST/LEGS/FEET + 左右手 + 多臂，含 EXTRA_HAND_0/1）；
- * slotAtScreen 命中正确槽；populateFromModel 填分层 SlotContents；背包件骑身体槽 worn；双手锁对侧手。
+ * slotAtScreen 命中正确槽；populateFromModel 填分层 SlotContents；背包件骑身体槽 worn；双手只锁副手。
  */
 class EquipmentPanelTest {
 
@@ -127,8 +127,8 @@ class EquipmentPanelTest {
     }
 
     @Test
-    void twoHandWeaponLocksOpposingHands() {
-        // 决议 #12：主手持双手武器 → 空闲的副手/多臂槽 disable。
+    void twoHandWeaponLocksOnlyOffHand() {
+        // plan-extra-hand-client-equip-gate-v1：主手持双手武器 → 只 disable 空闲副手；多臂槽不锁。
         EquipmentPanel panel = new EquipmentPanel();
         InventoryModel model = InventoryModel.builder()
             .equip(EquipSlotType.MAIN_HAND, item(1L, "wooden_staff"))
@@ -136,9 +136,26 @@ class EquipmentPanelTest {
         panel.populateFromModel(model);
 
         assertTrue(panel.slotFor(EquipSlotType.OFF_HAND).isDisabledByTwoHand(), "双手武器应锁副手");
-        assertTrue(panel.slotFor(EquipSlotType.EXTRA_HAND_0).isDisabledByTwoHand(), "双手武器应锁多臂三");
-        assertTrue(panel.slotFor(EquipSlotType.EXTRA_HAND_1).isDisabledByTwoHand(), "双手武器应锁多臂四");
+        assertFalse(panel.slotFor(EquipSlotType.EXTRA_HAND_0).isDisabledByTwoHand(),
+            "双手武器不应锁多臂三，extra_hand 是独立 held 槽");
+        assertFalse(panel.slotFor(EquipSlotType.EXTRA_HAND_1).isDisabledByTwoHand(),
+            "双手武器不应锁多臂四，extra_hand 是独立 held 槽");
         assertFalse(panel.slotFor(EquipSlotType.MAIN_HAND).isDisabledByTwoHand(), "主手自身不 disable");
+    }
+
+    @Test
+    void extraHandsRemainInteractiveWhenMainHandHoldsTwoHandWeapon() {
+        EquipmentPanel panel = new EquipmentPanel();
+        panel.populateFromModel(InventoryModel.builder()
+            .equip(EquipSlotType.MAIN_HAND, item(1L, "wooden_staff"))
+            .build());
+
+        assertTrue(panel.slotFor(EquipSlotType.EXTRA_HAND_0).isEmpty(), "EXTRA_HAND_0 初始应为空");
+        assertTrue(panel.slotFor(EquipSlotType.EXTRA_HAND_1).isEmpty(), "EXTRA_HAND_1 初始应为空");
+        assertFalse(panel.slotFor(EquipSlotType.EXTRA_HAND_0).isDisabledByTwoHand(),
+            "空闲 EXTRA_HAND_0 仍应可作为拖拽落点");
+        assertFalse(panel.slotFor(EquipSlotType.EXTRA_HAND_1).isDisabledByTwoHand(),
+            "空闲 EXTRA_HAND_1 仍应可作为拖拽落点");
     }
 
     @Test

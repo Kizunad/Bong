@@ -19,10 +19,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class InventoryEquipRulesTest {
 
     @Test
-    void swordCanEquipMainHandButNotOffHandOrHotbar() {
+    void swordCanEquipMainAndExtraHandButNotOffHandOrHotbar() {
         InventoryItem sword = item(1001L, "iron_sword", 1, 2);
 
         assertTrue(InventoryEquipRules.canEquip(sword, EquipSlotType.MAIN_HAND, null, equipped()));
+        assertTrue(InventoryEquipRules.canEquip(sword, EquipSlotType.EXTRA_HAND_0, null, equipped()),
+            "期望一般武器可装 EXTRA_HAND_0，与 server ExtraHand0 held 契约一致");
+        assertTrue(InventoryEquipRules.canEquip(sword, EquipSlotType.EXTRA_HAND_1, null, equipped()),
+            "期望一般武器可装 EXTRA_HAND_1，与 server ExtraHand1 held 契约一致");
         assertFalse(InventoryEquipRules.canEquip(sword, EquipSlotType.OFF_HAND, null, equipped()));
         assertFalse(InventoryEquipRules.canPlaceIntoHotbar(item(1002L, "bone_dagger", 1, 1)));
     }
@@ -78,9 +82,12 @@ class InventoryEquipRulesTest {
         assertFalse(InventoryEquipRules.canEquip(item(7001L, "wooden_shield", 1, 2),
                 EquipSlotType.OFF_HAND, null, equipped),
             "期望主手持双手武器时副手被锁、盾不可装入，实际放行——检查 mainHandHoldsTwoHand");
-        assertFalse(InventoryEquipRules.canEquip(item(2002L, "bone_dagger", 1, 1),
+        assertTrue(InventoryEquipRules.canEquip(item(2002L, "bone_dagger", 1, 1),
                 EquipSlotType.EXTRA_HAND_0, null, equipped),
-            "期望主手持双手武器时多臂槽同被锁，实际放行");
+            "期望主手持双手武器时多臂槽不被锁，实际被拒——extra_hand 不参与 main/off 双手锁");
+        assertTrue(InventoryEquipRules.canEquip(item(2003L, "iron_sword", 1, 2),
+                EquipSlotType.EXTRA_HAND_1, null, equipped),
+            "期望一般武器在主手双手杖存在时仍可入 extra hand，实际被拒");
     }
 
     @Test
@@ -107,12 +114,21 @@ class InventoryEquipRulesTest {
     }
 
     @Test
-    void extraHandAcceptsDaggerWhenFree() {
-        InventoryItem dagger = item(2002L, "bone_dagger", 1, 1);
-        assertTrue(InventoryEquipRules.canEquip(dagger, EquipSlotType.EXTRA_HAND_0, null, equipped()),
-            "期望匕首可入空闲多臂槽，实际被拒");
-        assertTrue(InventoryEquipRules.canEquip(dagger, EquipSlotType.EXTRA_HAND_1, null, equipped()),
-            "期望匕首可入第二多臂槽，实际被拒");
+    void extraHandAcceptsGeneralWeaponsWhenFree() {
+        InventoryItem[] weapons = {
+            item(2002L, "bone_dagger", 1, 1),
+            item(2003L, "iron_sword", 1, 2),
+            item(2004L, "bronze_saber", 1, 2),
+            item(2005L, "wooden_staff", 1, 3),
+            item(2006L, "short_bow", 2, 2)
+        };
+
+        for (InventoryItem weapon : weapons) {
+            assertTrue(InventoryEquipRules.canEquip(weapon, EquipSlotType.EXTRA_HAND_0, null, equipped()),
+                "期望武器 `" + weapon.itemId() + "` 可入 EXTRA_HAND_0，实际被拒");
+            assertTrue(InventoryEquipRules.canEquip(weapon, EquipSlotType.EXTRA_HAND_1, null, equipped()),
+                "期望武器 `" + weapon.itemId() + "` 可入 EXTRA_HAND_1，实际被拒");
+        }
     }
 
     @Test
@@ -136,7 +152,7 @@ class InventoryEquipRulesTest {
     }
 
     @Test
-    void stonePickaxeCanEquipBothHands() {
+    void stonePickaxeCanEquipAllHeldHands() {
         InventoryItem pickaxe = item(6006L, "stone_pickaxe", 1, 2);
 
         assertTrue(InventoryEquipRules.isTool(pickaxe), "石镐应被识别为工具(白名单已补全)");
@@ -144,6 +160,10 @@ class InventoryEquipRulesTest {
             "石镐应能装主手");
         assertTrue(InventoryEquipRules.canEquip(pickaxe, EquipSlotType.OFF_HAND, null, equipped()),
             "石镐应能装副手(工具双手可用)");
+        assertTrue(InventoryEquipRules.canEquip(pickaxe, EquipSlotType.EXTRA_HAND_0, null, equipped()),
+            "石镐应能装 EXTRA_HAND_0");
+        assertTrue(InventoryEquipRules.canEquip(pickaxe, EquipSlotType.EXTRA_HAND_1, null, equipped()),
+            "石镐应能装 EXTRA_HAND_1");
         assertFalse(InventoryEquipRules.canPlaceIntoHotbar(pickaxe), "工具不进 hotbar");
     }
 
@@ -254,6 +274,10 @@ class InventoryEquipRulesTest {
         InventoryItem treasure = item(4004L, "starter_talisman", 1, 1);
 
         assertTrue(InventoryEquipRules.canEquip(treasure, EquipSlotType.OFF_HAND, null, equipped()));
+        assertFalse(InventoryEquipRules.canEquip(treasure, EquipSlotType.EXTRA_HAND_0, null, equipped()),
+            "期望法宝只保留 OFF_HAND 特权，不可进入 EXTRA_HAND_0");
+        assertFalse(InventoryEquipRules.canEquip(treasure, EquipSlotType.EXTRA_HAND_1, null, equipped()),
+            "期望法宝只保留 OFF_HAND 特权，不可进入 EXTRA_HAND_1");
         assertFalse(InventoryEquipRules.canPlaceIntoHotbar(treasure));
     }
 
@@ -363,6 +387,10 @@ class InventoryEquipRulesTest {
         InventoryItem shield = item(7001L, "wooden_shield", 1, 2);
         assertTrue(InventoryEquipRules.canEquip(shield, EquipSlotType.OFF_HAND, null, equipped()),
             "期望 wooden_shield 可装入 OFF_HAND，实际被拒");
+        assertFalse(InventoryEquipRules.canEquip(shield, EquipSlotType.EXTRA_HAND_0, null, equipped()),
+            "期望 shield 只保留 OFF_HAND 特权，不可进入 EXTRA_HAND_0");
+        assertFalse(InventoryEquipRules.canEquip(shield, EquipSlotType.EXTRA_HAND_1, null, equipped()),
+            "期望 shield 只保留 OFF_HAND 特权，不可进入 EXTRA_HAND_1");
     }
 
     @Test
@@ -411,49 +439,75 @@ class InventoryEquipRulesTest {
             "期望 1×1 wooden_shield 仍不进 hotbar：唯一拦截必须是 !isShield");
     }
 
-    // ── fix CR major: 双手武器入主手须检查副手 + 全部多臂槽均空闲 ──
+    // ── plan-extra-hand-client-equip-gate-v1：extra_hand 独立，不参与 main/off 双手锁 ──
 
     @Test
-    void twoHandWeaponRejectedFromMainHandWhenExtraHand0Occupied() {
-        // extra_hand_0 已占（held dagger）→ 双手杖入主手被拒（与 OFF_HAND 同等约束）。
+    void twoHandWeaponAllowedFromMainHandWhenExtraHand0Occupied() {
+        // extra_hand_0 已占（held dagger）→ 双手杖仍可入主手；只要求 OFF_HAND 空。
         InventoryItem staff = item(1001L, "wooden_staff", 1, 3);
         EnumMap<EquipSlotType, SlotContents> equipped = equipped();
         equipped.put(EquipSlotType.EXTRA_HAND_0, SlotContents.ofHeld(item(2002L, "bone_dagger", 1, 1)));
 
-        assertFalse(InventoryEquipRules.canEquip(staff, EquipSlotType.MAIN_HAND, null, equipped),
-            "期望双手杖在 EXTRA_HAND_0 已占时入主手被拒（双手需锁全部多臂槽），实际放行——检查 EXTRA_HAND_0 held 检查");
+        assertTrue(InventoryEquipRules.canEquip(staff, EquipSlotType.MAIN_HAND, null, equipped),
+            "期望双手杖在 OFF_HAND 空、EXTRA_HAND_0 已占时仍可入主手，实际被拒");
     }
 
     @Test
-    void twoHandWeaponRejectedFromMainHandWhenExtraHand1Occupied() {
-        // extra_hand_1 已占（held dagger）→ 双手杖入主手被拒。
+    void twoHandWeaponAllowedFromMainHandWhenExtraHand1Occupied() {
+        // extra_hand_1 已占（held dagger）→ 双手杖仍可入主手。
         InventoryItem staff = item(1001L, "wooden_staff", 1, 3);
         EnumMap<EquipSlotType, SlotContents> equipped = equipped();
         equipped.put(EquipSlotType.EXTRA_HAND_1, SlotContents.ofHeld(item(2002L, "bone_dagger", 1, 1)));
 
-        assertFalse(InventoryEquipRules.canEquip(staff, EquipSlotType.MAIN_HAND, null, equipped),
-            "期望双手杖在 EXTRA_HAND_1 已占时入主手被拒（双手需锁全部多臂槽），实际放行——检查 EXTRA_HAND_1 held 检查");
+        assertTrue(InventoryEquipRules.canEquip(staff, EquipSlotType.MAIN_HAND, null, equipped),
+            "期望双手杖在 OFF_HAND 空、EXTRA_HAND_1 已占时仍可入主手，实际被拒");
     }
 
     @Test
     void twoHandWeaponAllowedWhenAllOffHandSlotsAreFree() {
-        // 副手 + EXTRA_HAND_0 + EXTRA_HAND_1 全空 → 双手杖可入主手（回归）。
+        // 副手空闲 → 双手杖可入主手（extra hand 空闲与否不参与该锁）。
         InventoryItem staff = item(1001L, "wooden_staff", 1, 3);
 
         assertTrue(InventoryEquipRules.canEquip(staff, EquipSlotType.MAIN_HAND, null, equipped()),
-            "期望副手及多臂槽全空时双手杖可入主手，实际被拒");
+            "期望副手空闲时双手杖可入主手，实际被拒");
     }
 
     @Test
-    void twoHandWeaponRejectedWhenExtraHand0OccupiedButOffHandFree() {
-        // 精确边界：OFF_HAND 空但 EXTRA_HAND_0 有物 → 仍拒（任一已 held 即拒绝）。
+    void twoHandWeaponAllowedWhenExtraHandsOccupiedButOffHandFree() {
+        // 精确边界：OFF_HAND 空但 EXTRA_HAND_0/1 有物 → 仍放行。
         InventoryItem staff = item(1001L, "wooden_staff", 1, 3);
         EnumMap<EquipSlotType, SlotContents> equipped = equipped();
-        // OFF_HAND 保持空；只占 EXTRA_HAND_0
-        equipped.put(EquipSlotType.EXTRA_HAND_0, SlotContents.ofHeld(item(3003L, "starter_talisman", 1, 1)));
+        equipped.put(EquipSlotType.EXTRA_HAND_0, SlotContents.ofHeld(item(3003L, "bone_dagger", 1, 1)));
+        equipped.put(EquipSlotType.EXTRA_HAND_1, SlotContents.ofHeld(item(3004L, "iron_sword", 1, 2)));
 
-        assertFalse(InventoryEquipRules.canEquip(staff, EquipSlotType.MAIN_HAND, null, equipped),
-            "期望 OFF_HAND 空但 EXTRA_HAND_0 占时双手杖入主手被拒，实际放行——任一多臂槽有物即锁");
+        assertTrue(InventoryEquipRules.canEquip(staff, EquipSlotType.MAIN_HAND, null, equipped),
+            "期望 OFF_HAND 空但 extra hand 已占时双手杖仍可入主手，实际被拒");
+    }
+
+    @Test
+    void quickEquipRoutesGeneralWeaponToExtraHandWhenMainOccupiedAndOffHandRejects() {
+        InventoryItem sword = item(1001L, "iron_sword", 1, 2);
+        EnumMap<EquipSlotType, SlotContents> equipped = equipped();
+        equipped.put(EquipSlotType.MAIN_HAND, SlotContents.ofHeld(item(2001L, "bronze_saber", 1, 2)));
+
+        assertEquals(
+            EquipSlotType.EXTRA_HAND_0,
+            InventoryEquipRules.preferredWeaponQuickEquipSlot(sword, equipped, slot -> true),
+            "期望主手已占且 OFF_HAND 不收一般武器时，quick-equip 路由到 EXTRA_HAND_0"
+        );
+    }
+
+    @Test
+    void quickEquipRoutesGeneralWeaponToExtraHandWhenMainHoldsTwoHandWeapon() {
+        InventoryItem sword = item(1001L, "iron_sword", 1, 2);
+        EnumMap<EquipSlotType, SlotContents> equipped = equipped();
+        equipped.put(EquipSlotType.MAIN_HAND, SlotContents.ofHeld(item(2001L, "wooden_staff", 1, 3)));
+
+        assertEquals(
+            EquipSlotType.EXTRA_HAND_0,
+            InventoryEquipRules.preferredWeaponQuickEquipSlot(sword, equipped, slot -> true),
+            "期望主手双手武器只锁 OFF_HAND，quick-equip 仍可把一般武器路由到 EXTRA_HAND_0"
+        );
     }
 
     private static EnumMap<EquipSlotType, SlotContents> equipped() {
