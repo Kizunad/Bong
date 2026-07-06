@@ -31,9 +31,9 @@
 
 > 当前会话**没有可用 subagent / delegate 工具**可再开外部怀疑者，以下两轮为主代理退化处理，但都给出明确反方论点与驳回理由，而不是口头“感觉像 bug”。
 
-1. **Round 1 反方论点**：“也许 Minecraft/Fabric 对同一物理键只会让一个 `KeyBinding` 变成 pressed，后注册的监听器未必还能看到事件。”  
+1. **Round 1 反方论点**：“也许 Minecraft/Fabric 对同一物理键只会让一个 `KeyBinding` 变成 pressed，后注册的监听器未必还能看到事件。”
    **驳回理由**：仓库现成证据已否定这点。`CombatKeybindings.java:57-61` 白纸黑字记录旧版 `V` 冲突时“单次按 V 两个 `KeyBinding.wasPressed()` 都触发”，说明同键双绑在本项目里不是假设，而是历史真事故。
-2. **Round 2 反方论点**：“就算 `O/U` 重复，可能也因为额外门禁而无害，例如其中一条路径会检测当前模式/当前 screen，从而自然退化成 no-op。”  
+2. **Round 2 反方论点**：“就算 `O/U` 重复，可能也因为额外门禁而无害，例如其中一条路径会检测当前模式/当前 screen，从而自然退化成 no-op。”
    **驳回理由**：我逐条核了门禁。`IdentityPanelScreenBootstrap` 与 `VoidActionScreenBootstrap` 都只排除“自己已经是当前 screen”，没有互斥对方；`ForgeScreenBootstrap` 只排除“当前已经是 ForgeScreen”，`ExtractInteractionBootstrap.cancelKey` 只看 `extracting()`。这与 `BotanyHudBootstrap.shouldCaptureSpellVolumeKey()` 那种**显式仲裁**完全不同，所以 `O/U` 不是“有保护的复用键”，而是无仲裁双派发。
 
 ## 开放问题
