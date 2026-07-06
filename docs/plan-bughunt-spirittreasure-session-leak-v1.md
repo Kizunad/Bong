@@ -25,7 +25,7 @@
 - `client/src/main/java/com/bong/client/spirittreasure/SpiritTreasureScreen.java:254`：panel 按 `templateId` 从 `SpiritTreasureDialogueStore` 取 recent dialogue，state 更新不会自动清掉旧对话。
 - `client/src/main/java/com/bong/client/BongNetworkHandler.java:131`：全局 disconnect 清理了大量 static client store，但没有清理灵宝 state/dialogue store。
 - `client/src/main/java/com/bong/client/network/ServerDataRouter.java:197`：只注册 `spirit_treasure_state` / `spirit_treasure_dialogue` handler，没有 reset 入口。
-- 开放 PR 查重：#905 是“灵宝对话后好感与被动状态不同步”，只新增 `docs/plans-skeleton/plan-bughunt-spirittreasure-affinity-desync-v1.md`，主题是 affinity/passive 同步，不覆盖本 session leak。
+- 相关历史查重：#905 已合并，主题是“灵宝对话后好感与被动状态不同步”，涉及 affinity/passive 同步与服务端广播补齐，不覆盖本 session leak。
 
 ## 触发路径
 
