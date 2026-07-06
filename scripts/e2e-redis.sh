@@ -828,19 +828,31 @@ ensure_redis() {
   finalize_failure "redis" "Redis provider '$REDIS_PROVIDER' did not become healthy within 30s"
 }
 
+# 递归杀整棵进程树。SERVER_PID 是子 shell，直接 kill 只杀 shell 本身，
+# cargo run / bong-server 会变孤儿继续占 25565（实测 bash 不向子进程转发 SIGTERM），
+# 拖垮后续需要该端口的 stage（如 bot-e2e）。
+kill_tree() {
+  local pid="$1"
+  local child
+  for child in $(pgrep -P "$pid" 2>/dev/null); do
+    kill_tree "$child"
+  done
+  kill "$pid" 2>/dev/null || true
+}
+
 cleanup() {
   if [ -n "$REDIS_SUB_PID" ] && kill -0 "$REDIS_SUB_PID" 2>/dev/null; then
-    kill "$REDIS_SUB_PID" 2>/dev/null || true
+    kill_tree "$REDIS_SUB_PID"
     wait "$REDIS_SUB_PID" 2>/dev/null || true
   fi
 
   if [ -n "$SERVER_PID" ] && kill -0 "$SERVER_PID" 2>/dev/null; then
-    kill "$SERVER_PID" 2>/dev/null || true
+    kill_tree "$SERVER_PID"
     wait "$SERVER_PID" 2>/dev/null || true
   fi
 
   if [ -n "$REDIS_PID" ] && kill -0 "$REDIS_PID" 2>/dev/null; then
-    kill "$REDIS_PID" 2>/dev/null || true
+    kill_tree "$REDIS_PID"
     wait "$REDIS_PID" 2>/dev/null || true
   fi
 
