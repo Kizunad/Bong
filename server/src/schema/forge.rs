@@ -5,7 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::cultivation::components::ColorKind;
+use crate::cultivation::components::{ColorKind, Realm};
 
 /// plan §1.3 四步串行（与 `ForgeSession::current_step` 对齐）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -131,6 +131,8 @@ pub enum ForgeStepStateDataV1 {
         qi_injected: f64,
         qi_required: f64,
         color_imprint: Option<ColorKind>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        min_realm: Option<Realm>,
     },
     None,
 }
@@ -218,6 +220,23 @@ mod tests {
             qi_spent: 0.0,
         };
         let s = serde_json::to_string(&state).unwrap();
+        let back: ForgeStepStateDataV1 = serde_json::from_str(&s).unwrap();
+        assert_eq!(back, state);
+    }
+
+    #[test]
+    fn forge_step_state_consecration_roundtrip_includes_min_realm() {
+        let state = ForgeStepStateDataV1::Consecration {
+            qi_injected: 10.0,
+            qi_required: 80.0,
+            color_imprint: None,
+            min_realm: Some(Realm::Spirit),
+        };
+        let s = serde_json::to_string(&state).unwrap();
+        assert!(
+            s.contains("\"min_realm\":\"Spirit\""),
+            "serialized consecration state should include min_realm: {s}"
+        );
         let back: ForgeStepStateDataV1 = serde_json::from_str(&s).unwrap();
         assert_eq!(back, state);
     }

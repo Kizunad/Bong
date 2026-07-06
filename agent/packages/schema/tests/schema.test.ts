@@ -129,6 +129,7 @@ import {
   ForgeOutcomePayloadV1,
   ForgeStartPayloadV1,
 } from "../src/forge-bridge.js";
+import { ForgeSessionDataV1 } from "../src/forge.js";
 import {
   SkillCapChangedPayloadV1,
   SkillLvUpPayloadV1,
@@ -1458,6 +1459,28 @@ describe("sample files pass schema validation", () => {
       expect(result.ok, result.errors.join("; ")).toBe(true);
     });
   }
+
+  it("forge session consecration state carries min_realm contract", () => {
+    const data = {
+      session_id: 7,
+      blueprint_id: "ling_feng_v0",
+      blueprint_name: "灵锋（测试）",
+      active: true,
+      current_step: "consecration",
+      step_index: 3,
+      achieved_tier: 3,
+      step_state: {
+        step: "consecration",
+        qi_injected: 12.5,
+        qi_required: 80,
+        color_imprint: "Sharp",
+        min_realm: "Spirit",
+      },
+    };
+
+    const result = validate(ForgeSessionDataV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
 
   for (const sample of [
     "server-data.social-anonymity.sample.json",

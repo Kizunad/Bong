@@ -2320,6 +2320,7 @@ mod tests {
                         qi_injected: 50.0,
                         qi_required: 100.0,
                         color_imprint: Some(ColorKind::Sharp as i32),
+                        min_realm: Some(Realm::Spirit as i32),
                     },
                 )),
             }),
@@ -2331,6 +2332,7 @@ mod tests {
             forge_step_state::State::Consecration(c) => {
                 assert!((c.qi_injected - 50.0).abs() < 1e-9);
                 assert_eq!(c.color_imprint, Some(ColorKind::Sharp as i32));
+                assert_eq!(c.min_realm, Some(Realm::Spirit as i32));
             }
             other => panic!("期望 Consecration state，实际 {other:?}"),
         }

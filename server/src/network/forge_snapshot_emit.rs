@@ -7,7 +7,7 @@
 
 use valence::prelude::{Added, Client, Entity, Query, Res, Username, With};
 
-use crate::forge::blueprint::BlueprintRegistry;
+use crate::forge::blueprint::{Blueprint, BlueprintRegistry, StepSpec};
 use crate::forge::learned::LearnedBlueprints;
 use crate::forge::session::{ForgeSession, ForgeSessions, ForgeStep, StepState};
 use crate::forge::station::WeaponForgeStation;
@@ -60,8 +60,9 @@ pub fn send_forge_snapshots_to_player(
 
     // ── session ──
     if let Some((session, bp_name)) = session {
+        let blueprint = learned.and_then(|(_, registry)| registry.get(session.blueprint.as_str()));
         let payload = ServerDataV1::new(ServerDataPayloadV1::ForgeSession(Box::new(
-            build_session_data(session, bp_name),
+            build_session_data(session, bp_name, blueprint),
         )));
         let Ok(bytes) = crate::network::agent_bridge::serialize_server_data_payload(&payload)
         else {
@@ -118,7 +119,11 @@ fn build_station_data(station: &WeaponForgeStation, owner_name: &str) -> WeaponF
     }
 }
 
-fn build_session_data(session: &ForgeSession, bp_name: &str) -> ForgeSessionDataV1 {
+fn build_session_data(
+    session: &ForgeSession,
+    bp_name: &str,
+    blueprint: Option<&Blueprint>,
+) -> ForgeSessionDataV1 {
     ForgeSessionDataV1 {
         session_id: session.id.0,
         blueprint_id: session.blueprint.clone(),
@@ -127,7 +132,7 @@ fn build_session_data(session: &ForgeSession, bp_name: &str) -> ForgeSessionData
         current_step: forge_step_to_v1(session.current_step),
         step_index: session.step_index as u32,
         achieved_tier: session.achieved_tier as u32,
-        step_state: build_step_state(session),
+        step_state: build_step_state(session, blueprint),
     }
 }
 
@@ -141,7 +146,8 @@ fn forge_step_to_v1(step: ForgeStep) -> ForgeStepV1 {
     }
 }
 
-fn build_step_state(session: &ForgeSession) -> ForgeStepStateDataV1 {
+fn build_step_state(session: &ForgeSession, blueprint: Option<&Blueprint>) -> ForgeStepStateDataV1 {
+    let step_spec = blueprint.and_then(|bp| bp.steps.get(session.step_index));
     match &session.step_state {
         StepState::Billet(state) => ForgeStepStateDataV1::Billet {
             materials_in: state
@@ -152,26 +158,38 @@ fn build_step_state(session: &ForgeSession) -> ForgeStepStateDataV1 {
             active_carrier: state.active_carrier.clone(),
             resolved_tier_cap: state.resolved_tier_cap as u32,
         },
-        StepState::Tempering(state) => {
-            // Pattern is not stored in session state; filled by incremental updates.
-            ForgeStepStateDataV1::Tempering {
-                pattern: vec![],
-                beat_cursor: state.beat_cursor as u32,
-                hits: state.hits,
-                misses: state.misses,
-                deviation: state.deviation,
-                qi_spent: state.qi_spent,
-            }
-        }
+        StepState::Tempering(state) => ForgeStepStateDataV1::Tempering {
+            pattern: match step_spec {
+                Some(StepSpec::Tempering { profile }) => profile
+                    .pattern
+                    .iter()
+                    .copied()
+                    .map(crate::schema::forge::TemperBeatV1::from)
+                    .collect(),
+                _ => vec![],
+            },
+            beat_cursor: state.beat_cursor as u32,
+            hits: state.hits,
+            misses: state.misses,
+            deviation: state.deviation,
+            qi_spent: state.qi_spent,
+        },
         StepState::Inscription(state) => ForgeStepStateDataV1::Inscription {
             filled_slots: state.filled_slots as u32,
-            max_slots: state.filled_slots as u32,
+            max_slots: match step_spec {
+                Some(StepSpec::Inscription { profile }) => profile.slots as u32,
+                _ => state.filled_slots as u32,
+            },
             failed: state.failed,
         },
         StepState::Consecration(state) => ForgeStepStateDataV1::Consecration {
             qi_injected: state.qi_injected,
             qi_required: state.qi_required,
             color_imprint: state.color_imprint,
+            min_realm: match step_spec {
+                Some(StepSpec::Consecration { profile }) => Some(profile.min_realm),
+                _ => None,
+            },
         },
         StepState::None => ForgeStepStateDataV1::None,
     }
@@ -196,5 +214,141 @@ fn build_blueprint_book(
     ForgeBlueprintBookDataV1 {
         learned: entries,
         current_index: learned.current_index as u32,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cultivation::components::Realm;
+    use crate::forge::blueprint::StepKind;
+    use crate::forge::session::{
+        ConsecrationState, ForgeSessionId, InscriptionState, TemperingState,
+    };
+    use valence::prelude::Entity;
+
+    fn qing_feng() -> Blueprint {
+        serde_json::from_str(include_str!(
+            "../../assets/forge/blueprints/qing_feng_v0.json"
+        ))
+        .expect("qing_feng_v0 blueprint should parse")
+    }
+
+    fn ling_feng() -> Blueprint {
+        serde_json::from_str(include_str!(
+            "../../assets/forge/blueprints/ling_feng_v0.json"
+        ))
+        .expect("ling_feng_v0 blueprint should parse")
+    }
+
+    fn session_at(blueprint: &Blueprint, kind: StepKind, state: StepState) -> ForgeSession {
+        let step_index = blueprint
+            .step_index(kind)
+            .expect("blueprint should contain requested step");
+        let mut session = ForgeSession::new(
+            ForgeSessionId(7),
+            blueprint.id.clone(),
+            Entity::from_raw(1),
+            Entity::from_raw(2),
+        );
+        session.step_index = step_index;
+        session.current_step = ForgeStep::from_kind(kind);
+        session.step_state = state;
+        session
+    }
+
+    #[test]
+    fn tempering_snapshot_includes_blueprint_pattern() {
+        let blueprint = qing_feng();
+        let session = session_at(
+            &blueprint,
+            StepKind::Tempering,
+            StepState::Tempering(TemperingState {
+                beat_cursor: 1,
+                hits: 1,
+                ..Default::default()
+            }),
+        );
+
+        let data = build_session_data(&session, blueprint.name.as_str(), Some(&blueprint));
+
+        match data.step_state {
+            ForgeStepStateDataV1::Tempering {
+                pattern,
+                beat_cursor,
+                ..
+            } => {
+                assert_eq!(beat_cursor, 1);
+                assert_eq!(pattern.len(), 10);
+                assert_eq!(
+                    &pattern[0..3],
+                    &[
+                        crate::schema::forge::TemperBeatV1::Light,
+                        crate::schema::forge::TemperBeatV1::Light,
+                        crate::schema::forge::TemperBeatV1::Heavy,
+                    ]
+                );
+            }
+            other => panic!("expected tempering state, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn inscription_snapshot_uses_blueprint_max_slots() {
+        let blueprint = ling_feng();
+        let session = session_at(
+            &blueprint,
+            StepKind::Inscription,
+            StepState::Inscription(InscriptionState {
+                scrolls_in: vec!["frost_edge".to_string()],
+                filled_slots: 1,
+                failed: false,
+            }),
+        );
+
+        let data = build_session_data(&session, blueprint.name.as_str(), Some(&blueprint));
+
+        match data.step_state {
+            ForgeStepStateDataV1::Inscription {
+                filled_slots,
+                max_slots,
+                failed,
+            } => {
+                assert_eq!(filled_slots, 1);
+                assert_eq!(max_slots, 2);
+                assert!(!failed);
+            }
+            other => panic!("expected inscription state, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn consecration_snapshot_includes_blueprint_min_realm() {
+        let blueprint = ling_feng();
+        let session = session_at(
+            &blueprint,
+            StepKind::Consecration,
+            StepState::Consecration(ConsecrationState {
+                qi_injected: 12.5,
+                qi_required: 80.0,
+                color_imprint: None,
+            }),
+        );
+
+        let data = build_session_data(&session, blueprint.name.as_str(), Some(&blueprint));
+
+        match data.step_state {
+            ForgeStepStateDataV1::Consecration {
+                qi_injected,
+                qi_required,
+                min_realm,
+                ..
+            } => {
+                assert!((qi_injected - 12.5).abs() < f64::EPSILON);
+                assert!((qi_required - 80.0).abs() < f64::EPSILON);
+                assert_eq!(min_realm, Some(Realm::Spirit));
+            }
+            other => panic!("expected consecration state, got {other:?}"),
+        }
     }
 }
