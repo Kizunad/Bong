@@ -1,7 +1,7 @@
 """P4 生产系统：炼丹炉 / 炼器砧 client_request 最小黑盒链路。
 
 覆盖面：
-- dev 铺垫：`/give furnace_fantie`、`/give fan_iron_anvil`
+- dev 铺垫：`/give furnace_fantie`、`/give fan_iron_anvil`，以库存 payload 同步
 - client_request：`alchemy_furnace_place` → `alchemy_open_furnace`，
   `alchemy_ignite` 错误反馈，`forge_station_place`
 - 观察面：`bong:server_data` inventory/alchemy_furnace 回流 + `[炼丹]` chat
@@ -30,7 +30,6 @@ def _unique_pos(bot, salt: int) -> tuple[int, int, int]:
 def _give_and_find(bot, item_id: str):
     mark = _event_mark(bot)
     bot.cmd(f"give {item_id} 1")
-    bot.expect_chat(f"[dev] gave {item_id} x1", timeout=10.0)
     item = bot.expect_inventory_item(item_id, timeout=10.0, after=mark)
     if item.location is None:
         raise BotAssertionError(

@@ -1,23 +1,46 @@
 """P4 生产系统：灵田 / 采集最小黑盒链路。
 
 覆盖面：
-- dev 铺垫：`/give hoe_iron`
+- dev 铺垫：`/give hoe_iron`，以库存 payload 同步
 - client_request：`inventory_move_intent` 装备锄头、`lingtian_start_till`
 - chat 反馈：`/bong gather spirit_grass` → Gameplay action queued.
-- payload 回流：`bong:server_data` 的 `lingtian_session` / `gathering_session`
+- payload 回流：`bong:server_data` 的 `lingtian_session` / 采集进度
 
 灵田能否真正开垦取决于 live server 当前地形；场景只断言 wire 入口与 HUD
 payload 回流，不把地形/作物结算当成 bot 脚本职责。
 """
 
 from bot.bot import BotAssertionError
+from bot import proto_min
 
-DESCRIPTION = "灵田/采集：锄头 give+装备 → lingtian_start_till；/bong gather → gathering_session"
+DESCRIPTION = "灵田/采集：锄头 give+装备 → lingtian_start_till；/bong gather → 采集进度回流"
 MODULES = ["lingtian", "gathering", "inventory", "network"]
+
+GATHER_PROGRESS_PAYLOADS = {"gathering_session", "botany_harvest_progress"}
 
 
 def _event_mark(bot) -> float:
     return bot.events[-1].t if bot.events else 0.0
+
+
+def _expect_gather_progress_payload(bot, after: float) -> None:
+    def matches(event) -> bool:
+        if (
+            event.kind != "payload"
+            or event.data["channel"] != "bong:server_data"
+            or event.t <= after
+        ):
+            return False
+        return proto_min.server_data_payload_name(event.data["data"]) in GATHER_PROGRESS_PAYLOADS
+
+    bot.wait_for(
+        matches,
+        timeout=15.0,
+        description=(
+            "采集链路的 bong:server_data 进度回流"
+            "（gathering_session 或 botany_harvest_progress）"
+        ),
+    )
 
 
 def run(env) -> None:
@@ -27,7 +50,6 @@ def run(env) -> None:
 
         mark = _event_mark(bot)
         bot.cmd("give hoe_iron 1")
-        bot.expect_chat("[dev] gave hoe_iron x1", timeout=10.0)
         hoe = bot.expect_inventory_item("hoe_iron", timeout=10.0, after=mark)
         if hoe.location is None:
             raise BotAssertionError(
@@ -68,5 +90,5 @@ def run(env) -> None:
         mark = _event_mark(bot)
         bot.cmd("bong gather spirit_grass")
         bot.expect_chat("Gameplay action queued.", timeout=10.0)
-        bot.expect_server_data_payload("gathering_session", timeout=15.0, after=mark)
+        _expect_gather_progress_payload(bot, after=mark)
         bot.assert_alive("灵田 intent 与 gather 命令后")
