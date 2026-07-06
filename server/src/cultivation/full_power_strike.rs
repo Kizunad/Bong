@@ -20,6 +20,7 @@ use crate::combat::status::has_active_status;
 use crate::combat::{CombatClock, CombatSystemSet};
 use crate::cultivation::components::{Cultivation, Realm};
 use crate::cultivation::skill_registry::{CastRejectReason, CastResult};
+use crate::identity::PlayerIdentities;
 use crate::qi_physics::constants::{QI_EPSILON, QI_ZONE_UNIT_CAPACITY};
 use crate::qi_physics::{qi_release_to_zone, QiAccountId, QiTransfer, QiTransferReason};
 use crate::schema::social::RenownTagV1;
@@ -530,6 +531,7 @@ pub fn full_power_kill_detection_system(
     wounds_q: Query<&Wounds>,
     cultivations: Query<&Cultivation>,
     lifecycles: Query<&Lifecycle>,
+    identities: Query<&PlayerIdentities>,
     mut killed: EventWriter<FullPowerStrikeKilledEvent>,
     mut renown_deltas: EventWriter<SocialRenownDeltaEvent>,
 ) {
@@ -559,6 +561,10 @@ pub fn full_power_kill_detection_system(
         if let Ok(lifecycle) = lifecycles.get(event.attacker) {
             renown_deltas.send(SocialRenownDeltaEvent {
                 char_id: lifecycle.character_id.clone(),
+                identity_id: identities
+                    .get(event.attacker)
+                    .ok()
+                    .and_then(|identities| identities.active().map(|active| active.id)),
                 fame_delta: FULL_POWER_HIGH_REALM_FAME_DELTA,
                 notoriety_delta: 0,
                 tags_added: vec![RenownTagV1 {

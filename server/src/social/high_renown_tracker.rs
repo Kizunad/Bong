@@ -5,7 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use rusqlite::{params, Connection};
 use uuid::Uuid;
 use valence::prelude::{
-    bevy_ecs, App, Client, Position, Query, Res, ResMut, Resource, Update, With,
+    bevy_ecs, App, Client, IntoSystemConfigs, Position, Query, Res, ResMut, Resource, Update, With,
 };
 
 use crate::combat::components::{Lifecycle, LifecycleState};
@@ -37,7 +37,10 @@ pub struct HighRenownMilestoneTracker {
 
 pub fn register(app: &mut App) {
     app.init_resource::<HighRenownMilestoneTracker>();
-    app.add_systems(Update, emit_high_renown_milestone_system);
+    app.add_systems(
+        Update,
+        emit_high_renown_milestone_system.after(super::apply_social_renown_deltas),
+    );
 }
 
 #[allow(clippy::type_complexity)]
@@ -334,7 +337,7 @@ mod tests {
 
     #[test]
     fn build_event_uses_active_identity_display_name_and_deterministic_uuid() {
-        let mut identities = PlayerIdentities::with_default("玄锋", 0);
+        let mut identities = PlayerIdentities::with_default("锈锋", 0);
         let active = identities.active_mut().expect("default identity");
         active.renown.fame = 1000;
 
@@ -351,7 +354,7 @@ mod tests {
             payload.event,
             HighRenownMilestoneEventTag::HighRenownMilestone
         );
-        assert_eq!(payload.identity_display_name, "玄锋");
+        assert_eq!(payload.identity_display_name, "锈锋");
         assert_eq!(payload.fame, 1000);
         assert_eq!(payload.milestone, 1000);
         assert!(payload.identity_exposed);

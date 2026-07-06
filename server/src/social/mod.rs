@@ -40,7 +40,7 @@ use crate::cultivation::components::{Cultivation, Karma, Realm};
 use crate::cultivation::death_hooks::release_qi_amount_to_zone;
 use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
 use crate::cultivation::lifespan::LifespanComponent;
-use crate::identity::{reaction::npc_should_decline_trade, PlayerIdentities};
+use crate::identity::{reaction::npc_should_decline_trade, IdentityId, PlayerIdentities};
 use crate::inventory::{
     consume_item_instance_once, exchange_inventory_items, inventory_item_by_instance, ItemInstance,
     PlayerInventory,
@@ -52,7 +52,7 @@ use crate::network::redis_bridge::RedisOutbound;
 use crate::network::{gameplay_vfx, vfx_event_emit::VfxEventRequest};
 use crate::network::{send_server_data_payload, RedisBridgeResource};
 use crate::npc::faction::{FactionId, FactionStatus, NamedFactionRegistry};
-use crate::persistence::PersistenceSettings;
+use crate::persistence::{identity as identity_db, PersistenceSettings};
 use crate::player::gameplay::PendingGameplayNarrations;
 use crate::player::state::{
     player_username_from_character_id, save_player_shrine_anchor_slice, PlayerState,
@@ -233,7 +233,10 @@ pub fn register(app: &mut App) {
                 .after(handle_death_social_effects)
                 .after(pvp_encounter::handle_pvp_encounter_events)
                 .after(handle_social_pacts)
-                .after(apply_faction_membership_decisions),
+                .after(apply_faction_membership_decisions)
+                .after(crate::cultivation::full_power_strike::full_power_kill_detection_system)
+                .after(crate::npc::war::settle::award_war_winner_renown)
+                .before(crate::identity::command::handle_identity_command),
             emit_niche_defense_server_data,
             publish_social_events
                 .after(apply_social_exposures)
@@ -443,7 +446,16 @@ fn expose_chat_speakers(
 #[allow(clippy::type_complexity)]
 fn handle_death_social_effects(
     mut deaths: EventReader<DeathEvent>,
-    players: Query<(Entity, &Lifecycle, &Position, Option<&Renown>), With<Client>>,
+    players: Query<
+        (
+            Entity,
+            &Lifecycle,
+            &Position,
+            Option<&Renown>,
+            Option<&PlayerIdentities>,
+        ),
+        With<Client>,
+    >,
     witness_players: Query<(Entity, &Lifecycle, &Position), With<Client>>,
     zone_registry: Option<Res<ZoneRegistry>>,
     mut exposures: EventWriter<SocialExposureEvent>,
@@ -455,7 +467,7 @@ fn handle_death_social_effects(
         .cloned()
         .unwrap_or_else(ZoneRegistry::fallback);
     for death in deaths.read() {
-        let Ok((victim_entity, victim_lifecycle, victim_pos, victim_renown)) =
+        let Ok((victim_entity, victim_lifecycle, victim_pos, victim_renown, _)) =
             players.get(death.target)
         else {
             continue;
@@ -463,7 +475,9 @@ fn handle_death_social_effects(
         let victim_char = victim_lifecycle.character_id.clone();
         let mut witnesses = HashSet::new();
         if let Some(attacker_entity) = death.attacker {
-            if let Ok((_, attacker_lifecycle, _, attacker_renown)) = players.get(attacker_entity) {
+            if let Ok((_, attacker_lifecycle, _, attacker_renown, attacker_identities)) =
+                players.get(attacker_entity)
+            {
                 witnesses.insert(attacker_lifecycle.character_id.clone());
                 if attacker_lifecycle.character_id != victim_char {
                     relationships.send(SocialRelationshipEvent {
@@ -484,6 +498,8 @@ fn handle_death_social_effects(
                     {
                         renown_deltas.send(SocialRenownDeltaEvent {
                             char_id: attacker_lifecycle.character_id.clone(),
+                            identity_id: attacker_identities
+                                .and_then(|identities| identities.active().map(|active| active.id)),
                             fame_delta: 0,
                             notoriety_delta: 10,
                             tags_added: Vec::new(),
@@ -731,6 +747,7 @@ fn guardian_kind_to_schema(kind: self::components::GuardianKind) -> GuardianKind
 
 fn handle_social_pacts(
     mut pacts: EventReader<SocialPactEvent>,
+    players: Query<(&Lifecycle, &PlayerIdentities), With<Client>>,
     mut exposures: EventWriter<SocialExposureEvent>,
     mut relationships: EventWriter<SocialRelationshipEvent>,
     mut renown_deltas: EventWriter<SocialRenownDeltaEvent>,
@@ -793,6 +810,7 @@ fn handle_social_pacts(
         }
         renown_deltas.send(SocialRenownDeltaEvent {
             char_id: breaker.clone(),
+            identity_id: active_identity_id_for_char(breaker, &players),
             fame_delta: 0,
             notoriety_delta: 50,
             tags_added: vec![RenownTagV1 {
@@ -805,6 +823,16 @@ fn handle_social_pacts(
             reason: "pact_broken".to_string(),
         });
     }
+}
+
+fn active_identity_id_for_char(
+    char_id: &str,
+    players: &Query<(&Lifecycle, &PlayerIdentities), With<Client>>,
+) -> Option<IdentityId> {
+    players
+        .iter()
+        .find(|(lifecycle, _)| lifecycle.character_id == char_id)
+        .and_then(|(_, identities)| identities.active().map(|active| active.id))
 }
 
 fn handle_social_mentorships(
@@ -1413,10 +1441,10 @@ fn emit_social_relationship_vfx(
     }
 }
 
-fn apply_social_renown_deltas(
+pub(crate) fn apply_social_renown_deltas(
     persistence: Option<Res<PersistenceSettings>>,
     mut events: EventReader<SocialRenownDeltaEvent>,
-    mut players: Query<(&Lifecycle, &mut Renown), With<Client>>,
+    mut players: Query<(&Lifecycle, &mut Renown, Option<&mut PlayerIdentities>), With<Client>>,
 ) {
     for event in events.read() {
         let mut persisted_renown = None;
@@ -1447,12 +1475,13 @@ fn apply_social_renown_deltas(
             }
         }
 
-        if let Some((_, mut renown)) = players
+        let mut identity_synced = false;
+        if let Some((_, mut renown, identities)) = players
             .iter_mut()
-            .find(|(lifecycle, _)| lifecycle.character_id == event.char_id)
+            .find(|(lifecycle, _, _)| lifecycle.character_id == event.char_id)
         {
-            if let Some(persisted_renown) = persisted_renown {
-                *renown = persisted_renown;
+            if let Some(persisted_renown) = persisted_renown.as_ref() {
+                *renown = persisted_renown.clone();
             } else {
                 renown.apply_delta(
                     event.fame_delta,
@@ -1460,6 +1489,102 @@ fn apply_social_renown_deltas(
                     event.tags_added.clone(),
                 );
             }
+
+            if let Some(mut identities) = identities {
+                identity_synced =
+                    apply_social_renown_delta_to_identity(event, &mut identities, "online");
+                if identity_synced {
+                    if let Some(persistence) = persistence.as_deref() {
+                        if let Err(error) = identity_db::save_player_identities(
+                            persistence,
+                            event.char_id.as_str(),
+                            &identities,
+                        ) {
+                            tracing::warn!(
+                                "[bong][social] failed to persist identity renown for `{}`: {error}",
+                                event.char_id
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        if let (false, Some(persistence)) = (identity_synced, persistence.as_deref()) {
+            apply_social_renown_delta_to_persisted_identity(persistence, event);
+        }
+    }
+}
+
+fn apply_social_renown_delta_to_identity(
+    event: &SocialRenownDeltaEvent,
+    identities: &mut PlayerIdentities,
+    source: &str,
+) -> bool {
+    let target = match event.identity_id {
+        Some(identity_id) => {
+            let Some(target) = identities.get_mut(identity_id) else {
+                tracing::warn!(
+                    "[bong][social] cannot bridge renown delta `{}` for `{}` from {source}: identity id {} missing",
+                    event.reason,
+                    event.char_id,
+                    identity_id.0
+                );
+                return false;
+            };
+            target
+        }
+        None => {
+            let Some(active) = identities.active_mut() else {
+                tracing::warn!(
+                    "[bong][social] cannot bridge renown delta `{}` for `{}` from {source}: active identity missing",
+                    event.reason,
+                    event.char_id
+                );
+                return false;
+            };
+            active
+        }
+    };
+    target.renown.apply_delta(
+        event.fame_delta,
+        event.notoriety_delta,
+        event.tags_added.clone(),
+    );
+    true
+}
+
+fn apply_social_renown_delta_to_persisted_identity(
+    persistence: &PersistenceSettings,
+    event: &SocialRenownDeltaEvent,
+) {
+    match identity_db::load_player_identities(persistence, event.char_id.as_str()) {
+        Ok(Some(mut identities)) => {
+            if apply_social_renown_delta_to_identity(event, &mut identities, "persistence") {
+                if let Err(error) = identity_db::save_player_identities(
+                    persistence,
+                    event.char_id.as_str(),
+                    &identities,
+                ) {
+                    tracing::warn!(
+                        "[bong][social] failed to persist offline identity renown for `{}`: {error}",
+                        event.char_id
+                    );
+                }
+            }
+        }
+        Ok(None) => {
+            tracing::warn!(
+                "[bong][social] social renown delta `{}` for `{}` has no player_identities row; persisted only in social_renown",
+                event.reason,
+                event.char_id
+            );
+        }
+        Err(error) => {
+            tracing::warn!(
+                "[bong][social] failed to load player identities for `{}` before renown bridge: {error}",
+                event.char_id
+            );
         }
     }
 }
@@ -1531,11 +1656,13 @@ fn apply_faction_membership_decisions(
         &Lifecycle,
         Option<&mut FactionMembership>,
         Option<&mut Karma>,
+        Option<&PlayerIdentities>,
     )>,
     mut renown_deltas: EventWriter<SocialRenownDeltaEvent>,
 ) {
     for event in events.read() {
-        let Ok((entity, lifecycle, membership, karma)) = players.get_mut(event.player) else {
+        let Ok((entity, lifecycle, membership, karma, identities)) = players.get_mut(event.player)
+        else {
             continue;
         };
         if entity != event.player || lifecycle.state == LifecycleState::Terminated {
@@ -1608,6 +1735,8 @@ fn apply_faction_membership_decisions(
                 }
                 renown_deltas.send(SocialRenownDeltaEvent {
                     char_id: lifecycle.character_id.clone(),
+                    identity_id: identities
+                        .and_then(|identities| identities.active().map(|active| active.id)),
                     fame_delta: 0,
                     notoriety_delta: 50,
                     tags_added: faction_betrayal_tags(&next_membership, event.tick),
@@ -3365,12 +3494,16 @@ mod tests {
     use super::*;
     use crate::combat::components::Lifecycle;
     use crate::combat::CombatClock;
-    use crate::identity::{RevealedTag, RevealedTagKind};
+    use crate::identity::events::IdentityReactionChangedEvent;
+    use crate::identity::reaction::{IdentityReactionState, ReactionTier};
+    use crate::identity::wanted_player_emit::build_wanted_player_event;
+    use crate::identity::{IdentityId, IdentityProfile, RevealedTag, RevealedTagKind};
     use crate::inventory::{
         ContainerState, InventoryRevision, ItemInstance, ItemRarity, PlacedItemState, SlotContents,
         EQUIP_SLOT_MAIN_HAND,
     };
-    use crate::persistence::bootstrap_sqlite;
+    use crate::network::identity_panel_emit::build_identity_panel_state;
+    use crate::persistence::{bootstrap_sqlite, identity as identity_db};
     use crate::schema::server_data::ServerDataType;
     use crate::schema::social::RenownTagV1;
     use crate::social::events::PlayerChatCollected;
@@ -3852,6 +3985,7 @@ mod tests {
         });
         app.world_mut().send_event(SocialRenownDeltaEvent {
             char_id: "char:azure".to_string(),
+            identity_id: None,
             fame_delta: 3,
             notoriety_delta: 5,
             tags_added: vec![RenownTagV1 {
@@ -4143,6 +4277,145 @@ mod tests {
         assert!(bob.renown.tags[0].permanent);
 
         let _ = std::fs::remove_dir_all(data_dir);
+    }
+
+    #[test]
+    fn pact_broken_producer_bridges_to_active_identity_and_panel_score() {
+        let mut app = App::new();
+        app.add_event::<SocialPactEvent>();
+        app.add_event::<SocialExposureEvent>();
+        app.add_event::<SocialRelationshipEvent>();
+        app.add_event::<SocialRenownDeltaEvent>();
+        app.add_systems(
+            Update,
+            (
+                handle_social_pacts,
+                apply_social_renown_deltas.after(handle_social_pacts),
+            ),
+        );
+
+        let (client_bundle, _helper) = create_mock_client("Breaker");
+        let player = app.world_mut().spawn(client_bundle).id();
+        let mut identities = PlayerIdentities::with_default("锈锋", 0);
+        identities
+            .identities
+            .push(IdentityProfile::new(IdentityId(1), "碎影", 20));
+        identities.active_identity_id = IdentityId(1);
+        app.world_mut().entity_mut(player).insert((
+            Lifecycle {
+                character_id: "char:breaker".to_string(),
+                ..Default::default()
+            },
+            Renown::default(),
+            identities,
+        ));
+
+        app.world_mut().send_event(SocialPactEvent {
+            left: "char:alice".to_string(),
+            right: "char:breaker".to_string(),
+            terms: "同渡此劫".to_string(),
+            tick: 99,
+            broken: true,
+            breaker: Some("char:breaker".to_string()),
+            witnesses: Vec::new(),
+        });
+
+        app.update();
+
+        let social_renown = app.world().get::<Renown>(player).unwrap();
+        assert_eq!((social_renown.fame, social_renown.notoriety), (0, 50));
+        assert_eq!(social_renown.tags[0].tag, "背盟者");
+
+        let identities = app.world().get::<PlayerIdentities>(player).unwrap();
+        let active = identities.active().unwrap();
+        assert_eq!(active.id, IdentityId(1));
+        assert_eq!((active.renown.fame, active.renown.notoriety), (0, 50));
+        assert_eq!(active.reputation_score(), -50);
+        assert_eq!(active.renown.tags[0].tag, "背盟者");
+        let inactive = identities.get(IdentityId::DEFAULT).unwrap();
+        assert_eq!((inactive.renown.fame, inactive.renown.notoriety), (0, 0));
+        assert!(inactive.renown.tags.is_empty());
+
+        let panel = build_identity_panel_state(identities, 99);
+        let active_panel_entry = panel
+            .identities
+            .iter()
+            .find(|entry| entry.identity_id == 1)
+            .expect("active identity panel entry");
+        assert_eq!(
+            active_panel_entry.reputation_score, -50,
+            "identity_panel_state must read the same active identity renown as social delta bridge"
+        );
+    }
+
+    #[test]
+    fn renown_delta_crosses_wanted_reaction_from_active_identity_bridge() {
+        let mut app = App::new();
+        app.insert_resource(crate::npc::movement::GameTick(120));
+        app.add_event::<SocialRenownDeltaEvent>();
+        app.add_event::<IdentityReactionChangedEvent>();
+        app.add_systems(
+            Update,
+            (
+                apply_social_renown_deltas,
+                crate::identity::reaction::update_identity_reaction_state
+                    .after(apply_social_renown_deltas),
+            ),
+        );
+
+        let (client_bundle, _helper) = create_mock_client("Wanted");
+        let player = app.world_mut().spawn(client_bundle).id();
+        app.world_mut().entity_mut(player).insert((
+            Lifecycle {
+                character_id: "char:wanted".to_string(),
+                ..Default::default()
+            },
+            Renown::default(),
+            PlayerIdentities::with_default("锈名", 0),
+            IdentityReactionState {
+                tier: ReactionTier::Normal,
+            },
+        ));
+
+        app.world_mut().send_event(SocialRenownDeltaEvent {
+            char_id: "char:wanted".to_string(),
+            identity_id: None,
+            fame_delta: 0,
+            notoriety_delta: 80,
+            tags_added: vec![RenownTagV1 {
+                tag: "背盟者".to_string(),
+                weight: 80.0,
+                last_seen_tick: 120,
+                permanent: true,
+            }],
+            tick: 120,
+            reason: "test_wanted_identity_bridge".to_string(),
+        });
+
+        app.update();
+
+        let identities = app.world().get::<PlayerIdentities>(player).unwrap();
+        let active = identities.active().unwrap();
+        assert_eq!(active.reputation_score(), -80);
+
+        let reaction_state = app.world().get::<IdentityReactionState>(player).unwrap();
+        assert_eq!(reaction_state.tier, ReactionTier::Wanted);
+
+        let events = app
+            .world()
+            .resource::<Events<IdentityReactionChangedEvent>>();
+        let changed = events
+            .iter_current_update_events()
+            .next()
+            .expect("renown bridge should drive identity reaction boundary");
+        assert_eq!(changed.from_tier, ReactionTier::Normal);
+        assert_eq!(changed.to_tier, ReactionTier::Wanted);
+        assert_eq!(changed.identity_id, IdentityId::DEFAULT);
+
+        let wanted_payload = build_wanted_player_event("char:wanted", identities, changed)
+            .expect("wanted payload should build from active identity");
+        assert_eq!(wanted_payload.identity_display_name, "锈名");
+        assert_eq!(wanted_payload.reputation_score, -80);
     }
 
     #[test]
@@ -5265,6 +5538,7 @@ mod tests {
 
         app.world_mut().send_event(SocialRenownDeltaEvent {
             char_id: "char:offline".to_string(),
+            identity_id: None,
             fame_delta: 2,
             notoriety_delta: 7,
             tags_added: vec![RenownTagV1 {
@@ -5286,6 +5560,249 @@ mod tests {
         assert_eq!(loaded.renown.tags.len(), 1);
         assert_eq!(loaded.renown.tags[0].tag, "背盟者");
         assert!(loaded.renown.tags[0].permanent);
+
+        let _ = std::fs::remove_dir_all(data_dir);
+    }
+
+    #[test]
+    fn renown_delta_bridges_to_active_identity_only() {
+        let mut app = App::new();
+        app.add_event::<SocialRenownDeltaEvent>();
+        app.add_systems(Update, apply_social_renown_deltas);
+
+        let (client_bundle, _helper) = create_mock_client("Bob");
+        let player = app.world_mut().spawn(client_bundle).id();
+        let mut identities = PlayerIdentities::with_default("锈锋", 0);
+        identities
+            .identities
+            .push(IdentityProfile::new(IdentityId(1), "碎影", 20));
+        identities.active_identity_id = IdentityId(1);
+        app.world_mut().entity_mut(player).insert((
+            Lifecycle {
+                character_id: "char:bob".to_string(),
+                ..Default::default()
+            },
+            Renown::default(),
+            identities,
+        ));
+
+        app.world_mut().send_event(SocialRenownDeltaEvent {
+            char_id: "char:bob".to_string(),
+            identity_id: None,
+            fame_delta: 4,
+            notoriety_delta: 9,
+            tags_added: vec![RenownTagV1 {
+                tag: "背信者".to_string(),
+                weight: 9.0,
+                last_seen_tick: 88,
+                permanent: false,
+            }],
+            tick: 88,
+            reason: "test_identity_bridge".to_string(),
+        });
+
+        app.update();
+
+        let social_renown = app.world().get::<Renown>(player).unwrap();
+        assert_eq!((social_renown.fame, social_renown.notoriety), (4, 9));
+        let identities = app.world().get::<PlayerIdentities>(player).unwrap();
+        let active = identities.active().unwrap();
+        assert_eq!(active.id, IdentityId(1));
+        assert_eq!((active.renown.fame, active.renown.notoriety), (4, 9));
+        assert_eq!(active.renown.tags[0].tag, "背信者");
+        let inactive = identities.get(IdentityId::DEFAULT).unwrap();
+        assert_eq!(
+            (inactive.renown.fame, inactive.renown.notoriety),
+            (0, 0),
+            "renown bridge must not leak anonymous identity reputation into inactive identities"
+        );
+        assert!(inactive.renown.tags.is_empty());
+    }
+
+    #[test]
+    fn renown_delta_with_identity_id_does_not_follow_later_active_switch() {
+        let mut app = App::new();
+        app.add_event::<SocialRenownDeltaEvent>();
+        app.add_systems(Update, apply_social_renown_deltas);
+
+        let (client_bundle, _helper) = create_mock_client("AliasRace");
+        let player = app.world_mut().spawn(client_bundle).id();
+        let mut identities = PlayerIdentities::with_default("锈锋", 0);
+        identities
+            .identities
+            .push(IdentityProfile::new(IdentityId(1), "碎影", 20));
+        identities.active_identity_id = IdentityId(1);
+        app.world_mut().entity_mut(player).insert((
+            Lifecycle {
+                character_id: "char:alias-race".to_string(),
+                ..Default::default()
+            },
+            Renown::default(),
+            identities,
+        ));
+
+        app.world_mut().send_event(SocialRenownDeltaEvent {
+            char_id: "char:alias-race".to_string(),
+            identity_id: Some(IdentityId::DEFAULT),
+            fame_delta: 0,
+            notoriety_delta: 11,
+            tags_added: vec![RenownTagV1 {
+                tag: "背信者".to_string(),
+                weight: 11.0,
+                last_seen_tick: 90,
+                permanent: false,
+            }],
+            tick: 90,
+            reason: "test_identity_id_pins_alias".to_string(),
+        });
+
+        app.update();
+
+        let identities = app.world().get::<PlayerIdentities>(player).unwrap();
+        let current_active = identities.active().unwrap();
+        assert_eq!(current_active.id, IdentityId(1));
+        assert_eq!(
+            (current_active.renown.fame, current_active.renown.notoriety),
+            (0, 0),
+            "delta carrying identity_id=0 must not follow the later active alias"
+        );
+        let original_alias = identities.get(IdentityId::DEFAULT).unwrap();
+        assert_eq!(
+            (original_alias.renown.fame, original_alias.renown.notoriety),
+            (0, 11)
+        );
+        assert_eq!(original_alias.renown.tags[0].tag, "背信者");
+    }
+
+    #[test]
+    fn online_renown_delta_persists_active_identity_bridge() {
+        let (persistence, data_dir) = social_persistence("online-identity-renown-delta");
+        let mut identities = PlayerIdentities::with_default("锈锋", 0);
+        identities
+            .identities
+            .push(IdentityProfile::new(IdentityId(1), "碎影", 20));
+        identities.active_identity_id = IdentityId(1);
+        identity_db::save_player_identities(&persistence, "char:online", &identities)
+            .expect("identity row should persist before online renown event");
+
+        let mut app = App::new();
+        app.insert_resource(persistence.clone());
+        app.add_event::<SocialRenownDeltaEvent>();
+        app.add_systems(Update, apply_social_renown_deltas);
+
+        let (client_bundle, _helper) = create_mock_client("Online");
+        let player = app.world_mut().spawn(client_bundle).id();
+        app.world_mut().entity_mut(player).insert((
+            Lifecycle {
+                character_id: "char:online".to_string(),
+                ..Default::default()
+            },
+            Renown::default(),
+            identities,
+        ));
+
+        app.world_mut().send_event(SocialRenownDeltaEvent {
+            char_id: "char:online".to_string(),
+            identity_id: None,
+            fame_delta: 5,
+            notoriety_delta: 8,
+            tags_added: vec![RenownTagV1 {
+                tag: "背盟者".to_string(),
+                weight: 10.0,
+                last_seen_tick: 66,
+                permanent: true,
+            }],
+            tick: 66,
+            reason: "test_online_identity_bridge".to_string(),
+        });
+
+        app.update();
+
+        let identities = app.world().get::<PlayerIdentities>(player).unwrap();
+        let active = identities.active().unwrap();
+        assert_eq!(active.id, IdentityId(1));
+        assert_eq!((active.renown.fame, active.renown.notoriety), (5, 8));
+        assert_eq!(active.renown.tags[0].tag, "背盟者");
+        let inactive = identities.get(IdentityId::DEFAULT).unwrap();
+        assert_eq!((inactive.renown.fame, inactive.renown.notoriety), (0, 0));
+        assert!(inactive.renown.tags.is_empty());
+
+        let loaded_identities = identity_db::load_player_identities(&persistence, "char:online")
+            .expect("online identity row should load")
+            .expect("online identity row should remain");
+        let persisted_active = loaded_identities.active().unwrap();
+        assert_eq!(persisted_active.id, IdentityId(1));
+        assert_eq!(
+            (
+                persisted_active.renown.fame,
+                persisted_active.renown.notoriety
+            ),
+            (5, 8)
+        );
+        assert_eq!(persisted_active.renown.tags[0].tag, "背盟者");
+        let persisted_inactive = loaded_identities.get(IdentityId::DEFAULT).unwrap();
+        assert_eq!(
+            (
+                persisted_inactive.renown.fame,
+                persisted_inactive.renown.notoriety
+            ),
+            (0, 0)
+        );
+        assert!(persisted_inactive.renown.tags.is_empty());
+
+        let _ = std::fs::remove_dir_all(data_dir);
+    }
+
+    #[test]
+    fn renown_delta_bridges_to_offline_persisted_active_identity() {
+        let (persistence, data_dir) = social_persistence("offline-identity-renown-delta");
+        let mut identities = PlayerIdentities::with_default("锈锋", 0);
+        identities
+            .identities
+            .push(IdentityProfile::new(IdentityId(1), "碎影", 20));
+        identities.active_identity_id = IdentityId(1);
+        identity_db::save_player_identities(&persistence, "char:offline", &identities)
+            .expect("identity row should persist before offline renown event");
+
+        let mut app = App::new();
+        app.insert_resource(persistence.clone());
+        app.add_event::<SocialRenownDeltaEvent>();
+        app.add_systems(Update, apply_social_renown_deltas);
+
+        app.world_mut().send_event(SocialRenownDeltaEvent {
+            char_id: "char:offline".to_string(),
+            identity_id: None,
+            fame_delta: 2,
+            notoriety_delta: 7,
+            tags_added: vec![RenownTagV1 {
+                tag: "背盟者".to_string(),
+                weight: 10.0,
+                last_seen_tick: 55,
+                permanent: true,
+            }],
+            tick: 55,
+            reason: "test_offline_identity_bridge".to_string(),
+        });
+
+        app.update();
+
+        let loaded_social = load_social_components(&persistence, "char:offline")
+            .expect("offline social renown should persist");
+        assert_eq!(
+            (loaded_social.renown.fame, loaded_social.renown.notoriety),
+            (2, 7)
+        );
+
+        let loaded_identities = identity_db::load_player_identities(&persistence, "char:offline")
+            .expect("offline identities should load")
+            .expect("offline identity row should remain");
+        let active = loaded_identities.active().unwrap();
+        assert_eq!(active.id, IdentityId(1));
+        assert_eq!((active.renown.fame, active.renown.notoriety), (2, 7));
+        assert_eq!(active.renown.tags[0].tag, "背盟者");
+        let inactive = loaded_identities.get(IdentityId::DEFAULT).unwrap();
+        assert_eq!((inactive.renown.fame, inactive.renown.notoriety), (0, 0));
+        assert!(inactive.renown.tags.is_empty());
 
         let _ = std::fs::remove_dir_all(data_dir);
     }

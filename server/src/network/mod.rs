@@ -379,7 +379,8 @@ pub fn register(app: &mut App) {
             emit_gameplay_narrations.after(crate::player::gameplay::apply_queued_gameplay_actions),
             emit_player_state_payloads
                 .after(crate::player::attach_player_state_to_joined_clients)
-                .after(crate::player::gameplay::apply_queued_gameplay_actions),
+                .after(crate::player::gameplay::apply_queued_gameplay_actions)
+                .after(crate::social::apply_social_renown_deltas),
             inventory_snapshot_emit::emit_join_inventory_snapshots
                 .after(crate::inventory::attach_inventory_to_joined_clients),
             alchemy_snapshot_emit::emit_join_alchemy_snapshots
@@ -498,7 +499,8 @@ pub fn register(app: &mut App) {
     app.add_systems(
         Update,
         identity_panel_emit::emit_identity_panel_state_payloads
-            .after(crate::identity::command::handle_identity_command),
+            .after(crate::identity::command::handle_identity_command)
+            .after(crate::social::apply_social_renown_deltas),
     );
     app.add_systems(
         Update,
