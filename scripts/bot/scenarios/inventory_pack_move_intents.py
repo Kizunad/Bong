@@ -7,6 +7,8 @@
   且 pack move 触发全量 `inventory_snapshot` resync。
 """
 
+from bot.bot import BotAssertionError
+
 from ._inventory_helpers import (
     container_location,
     equip_location,
@@ -59,19 +61,32 @@ def run(env) -> None:
             talisman["item"]["instance_id"],
             "拖入穿戴背包容器应触发 stow VFX 或 inventory_event::moved",
         )
+        snapshot = wait_inventory_revision_after(bot, snapshot["revision"], timeout=10.0)
+        after_stow_revision = snapshot["revision"]
+        pack = require_item(snapshot, "worn_grass_pouch")
+        pack_container = require_pack_container(snapshot, pack_id)
+        talisman = require_item(snapshot, "starter_talisman")
+        if pack["location"] != equip_location("chest", "worn"):
+            raise BotAssertionError(
+                f"stow 后背包件应仍穿在 chest/worn，实际 location={pack['location']}"
+            )
+        if talisman["location"].get("container_id") != pack_container["id"]:
+            raise BotAssertionError(
+                "stow 后 starter_talisman 应位于穿戴背包容器 "
+                f"{pack_container['id']}，实际 location={talisman['location']}"
+            )
 
-        before_unequip_revision = snapshot["revision"]
         send_move(
             bot,
             pack_id,
-            equip_location("chest", "worn"),
+            pack["location"],
             container_location("body_pocket", 0, 0),
         )
         bot.expect_vfx_event("bong:inventory_pack_unequip", timeout=10.0)
-        snapshot = wait_inventory_revision_after(bot, before_unequip_revision, timeout=10.0)
+        snapshot = wait_inventory_revision_after(bot, after_stow_revision, timeout=10.0)
         unequipped = require_item(snapshot, "worn_grass_pouch")
 
-        before_equip_revision = snapshot["revision"]
+        unequip_revision = snapshot["revision"]
         send_move(
             bot,
             pack_id,
@@ -79,7 +94,12 @@ def run(env) -> None:
             equip_location("chest", "worn"),
         )
         bot.expect_vfx_event("bong:inventory_pack_equip", timeout=10.0)
-        wait_inventory_revision_after(bot, before_equip_revision, timeout=10.0)
+        snapshot = wait_inventory_revision_after(bot, unequip_revision, timeout=10.0)
+        equipped = require_item(snapshot, "worn_grass_pouch")
+        if equipped["location"] != equip_location("chest", "worn"):
+            raise BotAssertionError(
+                f"穿回后背包件应回到 chest/worn，实际 location={equipped['location']}"
+            )
 
         bot.assert_alive("背包拖入/脱下/穿回 intent 后")
 

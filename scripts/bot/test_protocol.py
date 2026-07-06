@@ -24,6 +24,7 @@ from bot.bot import Bot, _signed_12, _signed_26  # noqa: E402
 from bot.server_data import _load_envelope_pb2, decode_server_data_payload  # noqa: E402
 from bot.scenarios._inventory_helpers import (  # noqa: E402
     latest_inventory_snapshot,
+    wait_inventory_revision_after,
     wait_inventory_snapshot_after,
 )
 from bot.run_scenarios import (  # noqa: E402
@@ -153,6 +154,24 @@ class InventoryHelperTest(unittest.TestCase):
 
         self.assertEqual(snapshot["revision"], 2)
         self.assertEqual(snapshot["marker"], "after_unequip")
+
+    def test_inventory_move_watermarks_skip_stow_snapshot_before_unequip(self):
+        bot = _FakeBot(
+            [
+                _snapshot_event(2.0, 2, "after_give"),
+                _snapshot_event(3.0, 3, "after_stow"),
+                _snapshot_event(4.0, 4, "after_unequip"),
+            ]
+        )
+
+        after_give_revision = 2
+        stow_snapshot = wait_inventory_revision_after(bot, after_give_revision)
+        unequip_snapshot = wait_inventory_revision_after(bot, stow_snapshot["revision"])
+
+        self.assertEqual(stow_snapshot["revision"], 3)
+        self.assertEqual(stow_snapshot["marker"], "after_stow")
+        self.assertEqual(unequip_snapshot["revision"], 4)
+        self.assertEqual(unequip_snapshot["marker"], "after_unequip")
 
 
 class _FakeEvent:
