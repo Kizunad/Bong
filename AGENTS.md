@@ -179,3 +179,28 @@ sisyphus 自动流水线以 `scripts/plan-finish.sh` 归档收尾、不开 PR；
 - **gate 只看 `/review` + CodeRabbit，绝不等 Codex**。`chatgpt-codex-connector`("Codex usage limits reached") 是与本仓库无关的噪音，忽略。
 - **Review 不再自动跑，且已合并为单一 `/review`**：旧的 `/review pi` `/review hive` `/review claude` 三入口合一，在 PR 评论 `/review` 触发即可。引擎=对峙(claude finder swarm 跑 proxy 上 deepseek/sensenova 小模型) + 怀疑投票审判 + 裁决(codex 跑 gpt-5.5)，全走自家代理 proxy.kizun4.uk。触发词用 `/review` 而非 `@x`——`@pi`/`@hive`/`@claude` 会 mention 到 GitHub 上的真实陌生用户。CodeRabbit 仍自动（但额度耗尽会限流失败，那是计费问题不是代码问题）。
 - 等待用轮询节奏（~20min/回合，最多 3 回合），别 busy-poll。修完 review 意见要重新等 re-review，不自判"应该过了"。
+
+## 15. Bot 客户端最大化宽容 + 每模块 Bot e2e 场景（2026-07-06 用户拍板，硬约束）
+
+Bong 有协议级黑盒测试 bot（`scripts/bot/`，纯 stdlib Python，MC 1.20.1 / protocol 763 offline 客户端）。它是 CI 里没有真人客户端时的"第四个客户端"，专抓"server 日志干净但玩家体验坏"类 bug（join 虚空 PR#846 即此类）。
+
+### 15.1 最大化宽容（server 侧红线）
+
+server 的任何功能**不得硬依赖 Fabric 客户端存在**。headless bot 天然缺失以下行为，server 必须全部容忍——**不许踢连接、不许 panic、不许让功能路径卡死**：
+
+- 不发 `ClientSettings`、不注册任何 plugin channel、不接资源包
+- 向 `bong:client_request` 发送非 UTF-8 / 坏 JSON / 未知 `type` / 未知版本 payload → **log + 忽略**，连接保持
+- 只发 KeepAlive 响应和 TeleportConfirm、其余包一概不发的"哑客户端"可以无限挂机
+
+新增 C2S 输入面时自问："一个只会发字节的 bot 乱发这个包，server 会不会死？"——会死就是 bug。
+
+### 15.2 每模块必配 Bot e2e 场景
+
+**每更新一个 gameplay/网络模块，PR 必须同步新增或更新对应模块的场景**：`scripts/bot/scenarios/<module>_*.py`。CI gate = e2e workflow 的 **Bot e2e stage**（`bash scripts/bot-e2e.sh`，复用同 job 已构建的 release 二进制）。review 时"改了模块没配 bot 场景"按红旗提出。
+
+场景要求（对齐 root CLAUDE.md 饱和化测试）：
+- 只允许黑盒手段：dev 命令（`0x04 CommandExecution`）+ `bong:client_request` JSON intent（`0x0D CustomPayload`）驱动；vanilla 包 + `bong:*` payload 通道 + chat 反馈观察。**禁止**直读 server 内部状态。
+- 断言消息写清"期望 X 因为 Y，实际 Z"。
+- 新功能若在协议层"不可驱动或不可观察"（没有 dev 命令入口、没有任何 payload/chat 反馈）= 设计红旗，先补可观察性再合。
+
+本地跑法：`bash scripts/bot-e2e.sh`（自动起 server + redis）或对已起的 server 直接 `python3 scripts/bot/run_scenarios.py --all`。模块覆盖路线图：`docs/plans-skeleton/plan-bot-e2e-coverage-v1.md`。
