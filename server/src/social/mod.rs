@@ -328,19 +328,36 @@ fn emit_anonymity_payloads_for_joined_clients(
     all_clients: Query<(Entity, &Lifecycle, Option<&Anonymity>, Option<&Renown>), With<Client>>,
 ) {
     for (viewer_entity, mut client, viewer_lifecycle) in &mut joined_clients {
-        let remotes = build_remote_identity_payloads(viewer_entity, viewer_lifecycle, &all_clients);
-        let payload = ServerDataV1::new(ServerDataPayloadV1::SocialAnonymity(
-            SocialAnonymityPayloadV1 {
-                viewer: viewer_lifecycle.character_id.clone(),
-                remotes,
-            },
-        ));
-        let payload_type = payload_type_label(payload.payload_type());
-        let Ok(bytes) = serialize_server_data_payload(&payload) else {
+        if let Some(bytes) = serialize_social_anonymity_payload_for_viewer(
+            viewer_entity,
+            viewer_lifecycle,
+            &all_clients,
+        ) {
+            send_server_data_payload(&mut client, bytes.as_slice());
+        }
+    }
+}
+
+#[allow(clippy::type_complexity)]
+fn serialize_social_anonymity_payload_for_viewer(
+    viewer_entity: Entity,
+    viewer_lifecycle: &Lifecycle,
+    all_clients: &Query<(Entity, &Lifecycle, Option<&Anonymity>, Option<&Renown>), With<Client>>,
+) -> Option<Vec<u8>> {
+    let remotes = build_remote_identity_payloads(viewer_entity, viewer_lifecycle, all_clients);
+    let payload = ServerDataV1::new(ServerDataPayloadV1::SocialAnonymity(
+        SocialAnonymityPayloadV1 {
+            viewer: viewer_lifecycle.character_id.clone(),
+            remotes,
+        },
+    ));
+    let payload_type = payload_type_label(payload.payload_type());
+    match serialize_server_data_payload(&payload) {
+        Ok(bytes) => Some(bytes),
+        Err(_) => {
             tracing::warn!("[bong][social] failed to serialize {payload_type} payload");
-            continue;
-        };
-        send_server_data_payload(&mut client, bytes.as_slice());
+            None
+        }
     }
 }
 
@@ -521,39 +538,47 @@ fn handle_death_social_effects(
     }
 }
 
+#[allow(clippy::type_complexity)]
 fn apply_social_exposures(
     persistence: Option<Res<PersistenceSettings>>,
     mut exposures: EventReader<SocialExposureEvent>,
-    mut players: Query<(&Lifecycle, &mut Anonymity, &mut ExposureLog), With<Client>>,
-    mut clients: Query<(&Lifecycle, &mut Client), With<Client>>,
+    mut social_sets: ParamSet<(
+        Query<(&Lifecycle, &mut Anonymity, &mut ExposureLog), With<Client>>,
+        Query<(Entity, &Lifecycle, Option<&Anonymity>, Option<&Renown>), With<Client>>,
+        Query<(Entity, &Lifecycle, &mut Client), With<Client>>,
+    )>,
 ) {
     for exposure in exposures.read() {
+        let recipient_char_ids = social_exposure_recipient_char_ids(exposure);
         let mut actor_was_online = false;
-        if let Some((_, mut anonymity, mut log)) = players
-            .iter_mut()
-            .find(|(lifecycle, _, _)| lifecycle.character_id == exposure.actor)
         {
-            actor_was_online = true;
-            anonymity.expose_to(exposure.witnesses.clone());
-            log.0.push(ExposureEvent {
-                tick: exposure.tick,
-                kind: exposure.kind,
-                witnesses: exposure.witnesses.clone(),
-            });
-            if let Some(persistence) = persistence.as_deref() {
-                if let Err(error) =
-                    persist_social_anonymity(persistence, exposure.actor.as_str(), &anonymity)
-                {
-                    tracing::warn!(
-                        "[bong][social] failed to persist anonymity for `{}`: {error}",
-                        exposure.actor
-                    );
-                }
-                if let Err(error) = persist_social_exposure(persistence, exposure) {
-                    tracing::warn!(
-                        "[bong][social] failed to persist exposure for `{}`: {error}",
-                        exposure.actor
-                    );
+            let mut players = social_sets.p0();
+            if let Some((_, mut anonymity, mut log)) = players
+                .iter_mut()
+                .find(|(lifecycle, _, _)| lifecycle.character_id == exposure.actor)
+            {
+                actor_was_online = true;
+                anonymity.expose_to(exposure.witnesses.clone());
+                log.0.push(ExposureEvent {
+                    tick: exposure.tick,
+                    kind: exposure.kind,
+                    witnesses: exposure.witnesses.clone(),
+                });
+                if let Some(persistence) = persistence.as_deref() {
+                    if let Err(error) =
+                        persist_social_anonymity(persistence, exposure.actor.as_str(), &anonymity)
+                    {
+                        tracing::warn!(
+                            "[bong][social] failed to persist anonymity for `{}`: {error}",
+                            exposure.actor
+                        );
+                    }
+                    if let Err(error) = persist_social_exposure(persistence, exposure) {
+                        tracing::warn!(
+                            "[bong][social] failed to persist exposure for `{}`: {error}",
+                            exposure.actor
+                        );
+                    }
                 }
             }
         }
@@ -603,17 +628,55 @@ fn apply_social_exposures(
             tracing::warn!("[bong][social] failed to serialize social_exposure payload");
             continue;
         };
-        for (lifecycle, mut client) in &mut clients {
-            if lifecycle.character_id == exposure.actor
-                || exposure
-                    .witnesses
-                    .iter()
-                    .any(|witness| witness == &lifecycle.character_id)
-            {
+
+        let refresh_targets = {
+            let clients = social_sets.p1();
+            clients
+                .iter()
+                .filter_map(|(entity, lifecycle, _, _)| {
+                    recipient_char_ids
+                        .contains(&lifecycle.character_id)
+                        .then_some(entity)
+                })
+                .collect::<Vec<_>>()
+        };
+        let anonymity_refreshes = {
+            let clients = social_sets.p1();
+            refresh_targets
+                .into_iter()
+                .filter_map(|viewer_entity| {
+                    let Ok((viewer_entity, viewer_lifecycle, _, _)) = clients.get(viewer_entity)
+                    else {
+                        return None;
+                    };
+                    serialize_social_anonymity_payload_for_viewer(
+                        viewer_entity,
+                        viewer_lifecycle,
+                        &clients,
+                    )
+                    .map(|bytes| (viewer_entity, bytes))
+                })
+                .collect::<Vec<_>>()
+        };
+        for (entity, lifecycle, mut client) in &mut social_sets.p2() {
+            if recipient_char_ids.contains(&lifecycle.character_id) {
                 send_server_data_payload(&mut client, bytes.as_slice());
+            }
+            if let Some((_, refresh_bytes)) = anonymity_refreshes
+                .iter()
+                .find(|(target_entity, _)| *target_entity == entity)
+            {
+                send_server_data_payload(&mut client, refresh_bytes.as_slice());
             }
         }
     }
+}
+
+fn social_exposure_recipient_char_ids(exposure: &SocialExposureEvent) -> HashSet<String> {
+    let mut recipients = HashSet::with_capacity(exposure.witnesses.len() + 1);
+    recipients.insert(exposure.actor.clone());
+    recipients.extend(exposure.witnesses.iter().cloned());
+    recipients
 }
 
 fn emit_niche_defense_server_data(
@@ -3684,6 +3747,27 @@ mod tests {
         payloads
     }
 
+    fn spawn_social_payload_client(
+        app: &mut App,
+        name: &str,
+        character_id: &str,
+        x: f64,
+    ) -> (Entity, MockClientHelper) {
+        let (mut bundle, helper) = create_mock_client(name);
+        bundle.player.position = Position::new([x, 64.0, 0.0]);
+        let entity = app.world_mut().spawn(bundle).id();
+        app.world_mut().entity_mut(entity).insert((
+            Lifecycle {
+                character_id: character_id.to_string(),
+                ..Default::default()
+            },
+            Anonymity::default(),
+            Renown::default(),
+            ExposureLog::default(),
+        ));
+        (entity, helper)
+    }
+
     #[test]
     fn joined_client_gets_default_social_bundle() {
         let mut app = App::new();
@@ -3865,6 +3949,90 @@ mod tests {
         assert_eq!(loaded.renown.tags[0].tag, "戮道者");
 
         let _ = std::fs::remove_dir_all(data_dir);
+    }
+
+    #[test]
+    fn social_exposure_live_refreshes_anonymity_for_actor_and_witnesses_only() {
+        for kind in [
+            ExposureKindV1::Chat,
+            ExposureKindV1::Trade,
+            ExposureKindV1::Death,
+        ] {
+            let mut app = App::new();
+            app.add_event::<SocialExposureEvent>();
+            app.add_systems(Update, apply_social_exposures);
+            let (_actor, mut actor_helper) =
+                spawn_social_payload_client(&mut app, "Actor", "char:actor", 0.0);
+            let (_witness, mut witness_helper) =
+                spawn_social_payload_client(&mut app, "Witness", "char:witness", 10.0);
+            let (_bystander, mut bystander_helper) =
+                spawn_social_payload_client(&mut app, "Bystander", "char:bystander", 20.0);
+
+            app.world_mut().send_event(SocialExposureEvent {
+                actor: "char:actor".to_string(),
+                kind,
+                witnesses: vec!["char:witness".to_string()],
+                tick: 42,
+                zone: Some("spawn".to_string()),
+            });
+
+            app.update();
+            flush_all_client_packets(&mut app);
+
+            let actor_payloads = collect_server_data_payloads(&mut actor_helper);
+            assert_eq!(
+                actor_payloads
+                    .iter()
+                    .filter(|payload| payload.payload_type() == ServerDataType::SocialExposure)
+                    .count(),
+                1,
+                "actor should still receive social_exposure event for {kind:?}"
+            );
+            assert_eq!(
+                actor_payloads
+                    .iter()
+                    .filter(|payload| payload.payload_type() == ServerDataType::SocialAnonymity)
+                    .count(),
+                1,
+                "actor should receive one live anonymity refresh for {kind:?}"
+            );
+
+            let witness_payloads = collect_server_data_payloads(&mut witness_helper);
+            assert_eq!(
+                witness_payloads
+                    .iter()
+                    .filter(|payload| payload.payload_type() == ServerDataType::SocialExposure)
+                    .count(),
+                1,
+                "witness should receive social_exposure event for {kind:?}"
+            );
+            let witness_anonymity = witness_payloads
+                .iter()
+                .find_map(|payload| match &payload.payload {
+                    ServerDataPayloadV1::SocialAnonymity(anonymity) => Some(anonymity),
+                    _ => None,
+                })
+                .unwrap_or_else(|| {
+                    panic!("witness should receive live SocialAnonymity refresh for {kind:?}")
+                });
+            assert_eq!(witness_anonymity.viewer, "char:witness");
+            let actor_remote = witness_anonymity
+                .remotes
+                .iter()
+                .find(|remote| remote.player_uuid == "char:actor")
+                .expect("witness anonymity refresh should contain exposed actor remote");
+            assert!(
+                !actor_remote.anonymous,
+                "witness should see actor name tag immediately after {kind:?} exposure"
+            );
+            assert_eq!(actor_remote.display_name.as_deref(), Some("char:actor"));
+
+            let bystander_payloads = collect_server_data_payloads(&mut bystander_helper);
+            assert!(
+                bystander_payloads.is_empty(),
+                "non-witness must not receive exposure or anonymity refresh for {kind:?}"
+            );
+        }
     }
 
     #[test]
