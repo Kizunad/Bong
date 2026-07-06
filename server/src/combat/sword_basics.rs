@@ -17,7 +17,7 @@ use crate::cultivation::life_record::LifeRecord;
 use crate::cultivation::meridian::severed::SkillMeridianDependencies;
 use crate::cultivation::skill_registry::{CastRejectReason, CastResult, SkillRegistry};
 use crate::network::audio_event_emit::{
-    AudioRecipient, PlaySoundRecipeRequest, AUDIO_BROADCAST_RADIUS,
+    AudioRecipient, PlaySoundRecipeRequest, AUDIO_BROADCAST_RADIUS, AUDIO_MELEE_RADIUS,
 };
 use crate::network::cast_emit::current_unix_millis;
 use crate::network::vfx_event_emit::VfxEventRequest;
@@ -548,9 +548,11 @@ fn emit_swing_audio(world: &mut bevy_ecs::world::World, caster: Entity, techniqu
         flag: None,
         volume_mul: 1.0,
         pitch_shift: 0.0,
+        // 与 recipe 声明的 attenuation "MELEE" 对齐：挥剑破空是近战音，
+        // 广播半径只会徒增网络扇出。
         recipient: AudioRecipient::Radius {
             origin,
-            radius: AUDIO_BROADCAST_RADIUS,
+            radius: AUDIO_MELEE_RADIUS,
         },
     });
 }
@@ -1738,6 +1740,75 @@ mod tests {
             .read(events)
             .map(|request| request.payload.clone())
             .collect()
+    }
+
+    fn emitted_sounds(app: &App) -> Vec<PlaySoundRecipeRequest> {
+        let events = app.world().resource::<Events<PlaySoundRecipeRequest>>();
+        let mut reader = events.get_reader();
+        reader.read(events).cloned().collect()
+    }
+
+    #[test]
+    fn emit_swing_audio_cleave_thrust_each_send_melee_radius_recipe() {
+        // 挥动破空声契约：劈/刺各 emit 恰 1 条专属 recipe，收件半径 = MELEE
+        // （与 recipe JSON 声明的 attenuation 对齐，防回归成全域广播扇出）。
+        for (technique, expected_recipe) in [
+            (SwordTechnique::Cleave, "sword_cleave_swing"),
+            (SwordTechnique::Thrust, "sword_thrust_swing"),
+        ] {
+            let mut app = App::new();
+            app.add_event::<PlaySoundRecipeRequest>();
+            let origin = DVec3::new(10.0, 64.0, -3.0);
+            let caster = app.world_mut().spawn(Position::new(origin)).id();
+
+            emit_swing_audio(app.world_mut(), caster, technique);
+
+            let sounds = emitted_sounds(&app);
+            assert_eq!(
+                sounds.len(),
+                1,
+                "{technique:?} 应只发 1 条挥动音效（命中冲击音另走 CombatEvent 层），实际 {}",
+                sounds.len()
+            );
+            assert_eq!(
+                sounds[0].recipe_id, expected_recipe,
+                "{technique:?} 的挥动 recipe 必须差异化（各招专属 SFX 硬约束）"
+            );
+            match sounds[0].recipient {
+                AudioRecipient::Radius { origin: o, radius } => {
+                    assert_eq!(o, origin, "音效原点应为施放者位置");
+                    assert_eq!(
+                        radius, AUDIO_MELEE_RADIUS,
+                        "半径必须与 recipe attenuation=MELEE 一致，实际 {radius}"
+                    );
+                }
+                ref other => panic!("期望 Radius 收件人（近战范围可闻），实际 {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn emit_swing_audio_parry_infuse_and_missing_position_stay_silent() {
+        // Parry/Infuse 不走挥动音（各有专属 AV 路径）；缺 Position 静默跳过不 panic。
+        for technique in [SwordTechnique::Parry, SwordTechnique::Infuse] {
+            let mut app = App::new();
+            app.add_event::<PlaySoundRecipeRequest>();
+            let caster = app.world_mut().spawn(Position::new(DVec3::ZERO)).id();
+            emit_swing_audio(app.world_mut(), caster, technique);
+            assert!(
+                emitted_sounds(&app).is_empty(),
+                "{technique:?} 不应发挥动音效（有各自专属 AV 路径）"
+            );
+        }
+
+        let mut app = App::new();
+        app.add_event::<PlaySoundRecipeRequest>();
+        let no_position = app.world_mut().spawn_empty().id();
+        emit_swing_audio(app.world_mut(), no_position, SwordTechnique::Cleave);
+        assert!(
+            emitted_sounds(&app).is_empty(),
+            "缺 Position 时应静默跳过（不发无原点音效、不 panic）"
+        );
     }
 
     #[test]
