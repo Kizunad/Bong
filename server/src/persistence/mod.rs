@@ -12,8 +12,9 @@ use uuid::Uuid;
 use valence::prelude::bevy_ecs;
 use valence::prelude::bevy_ecs::schedule::SystemSet;
 use valence::prelude::{
-    App, Client, Commands, Component, DVec3, Entity, EntityKind, EventReader, IntoSystemConfigs,
-    Position, Query, Res, ResMut, Resource, Startup, Update, Username, With,
+    App, AppExit, Client, Commands, Component, DVec3, Entity, EntityKind, EventReader,
+    IntoSystemConfigs, Last, Position, Query, Res, ResMut, Resource, Startup, Update, Username,
+    With,
 };
 
 use crate::combat::components::{Lifecycle, LifecycleState};
@@ -26,10 +27,13 @@ use crate::npc::patrol::NpcPatrol;
 use crate::npc::spawn::{NpcBlackboard, NpcCombatLoadout, NpcMarker, NpcMeleeArchetype};
 use crate::player::state::canonical_player_id;
 use crate::schema::common::NpcStateKind;
+use crate::schema::pseudo_vein::PseudoVeinSeasonV1;
 use crate::schema::social::{
     ExposureKindV1, FactionMembershipSnapshotV1, RelationshipKindV1, RelationshipSnapshotV1,
     RenownTagV1,
 };
+use crate::world::dimension::DimensionKind;
+use crate::world::heartbeat::WorldHeartbeat;
 
 #[allow(dead_code)]
 pub mod identity;
@@ -37,8 +41,8 @@ pub mod identity;
 pub const DEFAULT_DATABASE_PATH: &str = "data/bong.db";
 pub const SQLITE_BUSY_TIMEOUT_MS: u64 = 15_000;
 const DEFAULT_DECEASED_PUBLIC_DIR: &str = "../library-web/public/deceased";
-/// plan-faction-expansion-v1 P3：v32 新增玩家具名势力声望表。
-const CURRENT_USER_VERSION: i32 = 32;
+/// plan-bughunt-ao-worldgen-state-pseudo-vein-restart-loss-v1：v33 新增伪灵脉 heartbeat runtime 表。
+const CURRENT_USER_VERSION: i32 = 33;
 const AGENT_WORLD_MODEL_ROW_ID: i64 = 1;
 const ASCENSION_QUOTA_ROW_ID: i64 = 1;
 const TRIBULATION_KIND_DU_XU: &str = "du_xu";
@@ -474,6 +478,25 @@ pub struct ZoneRuntimeRecord {
     pub danger_level: u8,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct HeartbeatPseudoVeinRecord {
+    pub zone_id: String,
+    pub dimension: DimensionKind,
+    pub bounds_min: [f64; 3],
+    pub bounds_max: [f64; 3],
+    pub danger_level: u8,
+    pub active_events: Vec<String>,
+    pub patrol_anchors: Vec<[f64; 3]>,
+    pub center_xz: [f64; 2],
+    pub spawned_at_tick: u64,
+    pub last_tick: u64,
+    pub qi_current: f64,
+    pub total_qi_consumed: f64,
+    pub warning_sent: bool,
+    pub dissipated: bool,
+    pub season_at_spawn: PseudoVeinSeasonV1,
+}
+
 /// plan-territory-v1 P0：区域影响力持久化记录（zone_influence 表一行）。
 #[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -658,13 +681,15 @@ pub fn register(app: &mut App) {
                 persist_zone_runtime_system,
                 persist_zone_influence_system,
             ),
-        );
+        )
+        .add_systems(Last, persist_zone_runtime_on_shutdown_system);
 }
 
 fn bootstrap_persistence_system(
     settings: valence::prelude::Res<PersistenceSettings>,
     mut daily_backup_state: valence::prelude::ResMut<DailyBackupState>,
     mut zones: Option<ResMut<crate::world::zone::ZoneRegistry>>,
+    mut heartbeat: Option<ResMut<WorldHeartbeat>>,
     mut void_action_cooldowns: Option<ResMut<VoidActionCooldowns>>,
     mut zone_influence_map: Option<ResMut<crate::world::territory::ZoneInfluenceMap>>,
 ) {
@@ -723,6 +748,18 @@ fn bootstrap_persistence_system(
     }
 
     if let Some(zone_registry) = zones.as_deref_mut() {
+        if let Some(heartbeat) = heartbeat.as_deref_mut() {
+            match hydrate_heartbeat_pseudo_veins(&settings, heartbeat, zone_registry) {
+                Ok(count) if count > 0 => tracing::info!(
+                    "[bong][persistence] hydrated {count} heartbeat pseudo-vein runtime record(s) from sqlite"
+                ),
+                Ok(_) => {}
+                Err(error) => tracing::warn!(
+                    "[bong][persistence] failed to hydrate heartbeat pseudo-veins from sqlite at {}: {error}",
+                    settings.db_path().display()
+                ),
+            }
+        }
         if let Err(error) = hydrate_zone_runtime(&settings, zone_registry) {
             tracing::warn!(
                 "[bong][persistence] failed to hydrate zone runtime from sqlite at {}: {error}",
@@ -785,6 +822,7 @@ fn persist_zone_runtime_system(
     settings: Res<PersistenceSettings>,
     mut snapshot_state: ResMut<ZoneRuntimeSnapshotState>,
     zones: Option<Res<crate::world::zone::ZoneRegistry>>,
+    heartbeat: Option<Res<WorldHeartbeat>>,
 ) {
     let Some(zone_registry) = zones else {
         return;
@@ -798,7 +836,11 @@ fn persist_zone_runtime_system(
         return;
     }
 
-    match persist_zone_runtime_snapshot(&settings, &zone_registry) {
+    match persist_zone_runtime_snapshot_with_heartbeat(
+        &settings,
+        &zone_registry,
+        heartbeat.as_deref(),
+    ) {
         Ok(_) => {
             snapshot_state.last_snapshot_wall = wall_clock;
         }
@@ -806,6 +848,31 @@ fn persist_zone_runtime_system(
             "[bong][persistence] failed to persist zone runtime snapshot at {}: {error}",
             settings.db_path().display()
         ),
+    }
+}
+
+fn persist_zone_runtime_on_shutdown_system(
+    settings: Res<PersistenceSettings>,
+    mut app_exit: EventReader<AppExit>,
+    zones: Option<Res<crate::world::zone::ZoneRegistry>>,
+    heartbeat: Option<Res<WorldHeartbeat>>,
+) {
+    if app_exit.read().next().is_none() {
+        return;
+    }
+    let Some(zone_registry) = zones else {
+        return;
+    };
+
+    if let Err(error) = persist_zone_runtime_snapshot_with_heartbeat(
+        &settings,
+        &zone_registry,
+        heartbeat.as_deref(),
+    ) {
+        tracing::warn!(
+            "[bong][persistence] failed to flush zone runtime on shutdown at {}: {error}",
+            settings.db_path().display()
+        );
     }
 }
 
@@ -2003,6 +2070,51 @@ fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<()> {
         transaction.commit()?;
     }
 
+    let current_version: i32 =
+        connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
+    if current_version < 33 {
+        // plan-bughunt-ao-worldgen-state-pseudo-vein-restart-loss-v1：
+        // heartbeat 生成的伪灵脉是动态 zone + lifecycle 双状态，不能只靠 zones_runtime 三列恢复。
+        let transaction = connection.transaction()?;
+        transaction.execute_batch(
+            "
+            CREATE TABLE IF NOT EXISTS heartbeat_pseudo_veins (
+                zone_id             TEXT PRIMARY KEY,
+                dimension           TEXT NOT NULL CHECK (dimension IN ('overworld', 'tsy')),
+                min_x               REAL NOT NULL,
+                min_y               REAL NOT NULL,
+                min_z               REAL NOT NULL,
+                max_x               REAL NOT NULL,
+                max_y               REAL NOT NULL,
+                max_z               REAL NOT NULL,
+                danger_level        INTEGER NOT NULL CHECK (danger_level >= 0),
+                active_events_json  TEXT NOT NULL,
+                patrol_anchors_json TEXT NOT NULL,
+                center_x            REAL NOT NULL,
+                center_z            REAL NOT NULL,
+                spawned_at_tick     INTEGER NOT NULL CHECK (spawned_at_tick >= 0),
+                last_tick           INTEGER NOT NULL CHECK (last_tick >= 0),
+                qi_current          REAL NOT NULL,
+                total_qi_consumed   REAL NOT NULL,
+                warning_sent        INTEGER NOT NULL CHECK (warning_sent IN (0, 1)),
+                dissipated          INTEGER NOT NULL CHECK (dissipated IN (0, 1)),
+                season_at_spawn     TEXT NOT NULL CHECK (
+                    season_at_spawn IN (
+                        'summer',
+                        'summer_to_winter',
+                        'winter',
+                        'winter_to_summer'
+                    )
+                ),
+                schema_version      INTEGER NOT NULL CHECK (schema_version >= 1),
+                last_updated_wall   INTEGER NOT NULL CHECK (last_updated_wall >= 0)
+            );
+            PRAGMA user_version = 33;
+            ",
+        )?;
+        transaction.commit()?;
+    }
+
     let final_version: i32 = connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
     if final_version != CURRENT_USER_VERSION {
         return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
@@ -2987,9 +3099,34 @@ pub fn persist_zone_runtime_snapshot(
     let wall_clock = current_unix_seconds();
     let mut connection = open_persistence_connection(settings)?;
     let transaction = connection.transaction().map_err(io::Error::other)?;
+    persist_zone_runtime_records(&transaction, zones, wall_clock)?;
+    transaction.commit().map_err(io::Error::other)
+}
+
+fn persist_zone_runtime_snapshot_with_heartbeat(
+    settings: &PersistenceSettings,
+    zones: &crate::world::zone::ZoneRegistry,
+    heartbeat: Option<&WorldHeartbeat>,
+) -> io::Result<()> {
+    let wall_clock = current_unix_seconds();
+    let mut connection = open_persistence_connection(settings)?;
+    let transaction = connection.transaction().map_err(io::Error::other)?;
+    persist_zone_runtime_records(&transaction, zones, wall_clock)?;
+    if let Some(heartbeat) = heartbeat {
+        let pseudo_veins = heartbeat.active_pseudo_vein_records(zones);
+        replace_heartbeat_pseudo_vein_records(&transaction, &pseudo_veins, wall_clock)?;
+    }
+    transaction.commit().map_err(io::Error::other)
+}
+
+fn persist_zone_runtime_records(
+    transaction: &rusqlite::Transaction<'_>,
+    zones: &crate::world::zone::ZoneRegistry,
+    wall_clock: i64,
+) -> io::Result<()> {
     for zone in &zones.zones {
         upsert_zone_runtime(
-            &transaction,
+            transaction,
             &ZoneRuntimeRecord {
                 zone_id: zone.name.clone(),
                 spirit_qi: zone.spirit_qi,
@@ -2998,7 +3135,7 @@ pub fn persist_zone_runtime_snapshot(
             wall_clock,
         )?;
     }
-    transaction.commit().map_err(io::Error::other)
+    Ok(())
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -3007,6 +3144,28 @@ pub fn load_zone_runtime_snapshot(
 ) -> io::Result<Vec<ZoneRuntimeRecord>> {
     let connection = open_persistence_connection(settings)?;
     load_zone_runtime_snapshot_from_connection(&connection)
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn persist_heartbeat_pseudo_veins_snapshot(
+    settings: &PersistenceSettings,
+    heartbeat: &WorldHeartbeat,
+    zones: &crate::world::zone::ZoneRegistry,
+) -> io::Result<()> {
+    let wall_clock = current_unix_seconds();
+    let mut connection = open_persistence_connection(settings)?;
+    let transaction = connection.transaction().map_err(io::Error::other)?;
+    let records = heartbeat.active_pseudo_vein_records(zones);
+    replace_heartbeat_pseudo_vein_records(&transaction, &records, wall_clock)?;
+    transaction.commit().map_err(io::Error::other)
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn load_heartbeat_pseudo_veins_snapshot(
+    settings: &PersistenceSettings,
+) -> io::Result<Vec<HeartbeatPseudoVeinRecord>> {
+    let connection = open_persistence_connection(settings)?;
+    load_heartbeat_pseudo_veins_from_connection(&connection)
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -3090,6 +3249,15 @@ fn hydrate_zone_runtime(
     let runtime_rows = load_zone_runtime_snapshot(settings)?;
     zones.apply_runtime_records(&runtime_rows);
     Ok(())
+}
+
+fn hydrate_heartbeat_pseudo_veins(
+    settings: &PersistenceSettings,
+    heartbeat: &mut WorldHeartbeat,
+    zones: &mut crate::world::zone::ZoneRegistry,
+) -> io::Result<usize> {
+    let pseudo_veins = load_heartbeat_pseudo_veins_snapshot(settings)?;
+    Ok(heartbeat.restore_pseudo_vein_records(zones, &pseudo_veins))
 }
 
 fn hydrate_zone_overlays(
@@ -4925,6 +5093,111 @@ fn upsert_zone_runtime(
     Ok(())
 }
 
+fn replace_heartbeat_pseudo_vein_records(
+    transaction: &rusqlite::Transaction<'_>,
+    records: &[HeartbeatPseudoVeinRecord],
+    wall_clock: i64,
+) -> io::Result<()> {
+    transaction
+        .execute("DELETE FROM heartbeat_pseudo_veins", [])
+        .map_err(io::Error::other)?;
+    for record in records {
+        upsert_heartbeat_pseudo_vein(transaction, record, wall_clock)?;
+    }
+    Ok(())
+}
+
+fn upsert_heartbeat_pseudo_vein(
+    transaction: &rusqlite::Transaction<'_>,
+    record: &HeartbeatPseudoVeinRecord,
+    wall_clock: i64,
+) -> io::Result<()> {
+    let active_events_json = serde_json::to_string(&record.active_events)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    let patrol_anchors_json = serde_json::to_string(&record.patrol_anchors)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    transaction
+        .execute(
+            "
+            INSERT INTO heartbeat_pseudo_veins (
+                zone_id,
+                dimension,
+                min_x,
+                min_y,
+                min_z,
+                max_x,
+                max_y,
+                max_z,
+                danger_level,
+                active_events_json,
+                patrol_anchors_json,
+                center_x,
+                center_z,
+                spawned_at_tick,
+                last_tick,
+                qi_current,
+                total_qi_consumed,
+                warning_sent,
+                dissipated,
+                season_at_spawn,
+                schema_version,
+                last_updated_wall
+            ) VALUES (
+                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11,
+                ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22
+            )
+            ON CONFLICT(zone_id) DO UPDATE SET
+                dimension = excluded.dimension,
+                min_x = excluded.min_x,
+                min_y = excluded.min_y,
+                min_z = excluded.min_z,
+                max_x = excluded.max_x,
+                max_y = excluded.max_y,
+                max_z = excluded.max_z,
+                danger_level = excluded.danger_level,
+                active_events_json = excluded.active_events_json,
+                patrol_anchors_json = excluded.patrol_anchors_json,
+                center_x = excluded.center_x,
+                center_z = excluded.center_z,
+                spawned_at_tick = excluded.spawned_at_tick,
+                last_tick = excluded.last_tick,
+                qi_current = excluded.qi_current,
+                total_qi_consumed = excluded.total_qi_consumed,
+                warning_sent = excluded.warning_sent,
+                dissipated = excluded.dissipated,
+                season_at_spawn = excluded.season_at_spawn,
+                schema_version = excluded.schema_version,
+                last_updated_wall = excluded.last_updated_wall
+            ",
+            params![
+                record.zone_id.as_str(),
+                dimension_kind_to_sql(record.dimension),
+                record.bounds_min[0],
+                record.bounds_min[1],
+                record.bounds_min[2],
+                record.bounds_max[0],
+                record.bounds_max[1],
+                record.bounds_max[2],
+                i64::from(record.danger_level),
+                active_events_json,
+                patrol_anchors_json,
+                record.center_xz[0],
+                record.center_xz[1],
+                tick_to_sql(record.spawned_at_tick)?,
+                tick_to_sql(record.last_tick)?,
+                record.qi_current,
+                record.total_qi_consumed,
+                bool_to_sql(record.warning_sent),
+                bool_to_sql(record.dissipated),
+                pseudo_vein_season_to_sql(record.season_at_spawn),
+                CURRENT_SCHEMA_VERSION,
+                wall_clock,
+            ],
+        )
+        .map_err(io::Error::other)?;
+    Ok(())
+}
+
 /// plan-territory-v1 P0：upsert zone_influence 行（照 upsert_zone_runtime 范本）。
 #[cfg_attr(not(test), allow(dead_code))]
 fn upsert_zone_influence(
@@ -5388,6 +5661,73 @@ fn load_zone_runtime_snapshot_from_connection(
             zone_id,
             spirit_qi,
             danger_level: sql_to_u8(danger_level)?,
+        });
+    }
+    Ok(records)
+}
+
+fn load_heartbeat_pseudo_veins_from_connection(
+    connection: &Connection,
+) -> io::Result<Vec<HeartbeatPseudoVeinRecord>> {
+    let mut statement = connection
+        .prepare(
+            "
+            SELECT zone_id, dimension,
+                   min_x, min_y, min_z,
+                   max_x, max_y, max_z,
+                   danger_level,
+                   active_events_json,
+                   patrol_anchors_json,
+                   center_x, center_z,
+                   spawned_at_tick,
+                   last_tick,
+                   qi_current,
+                   total_qi_consumed,
+                   warning_sent,
+                   dissipated,
+                   season_at_spawn
+            FROM heartbeat_pseudo_veins
+            ORDER BY zone_id ASC
+            ",
+        )
+        .map_err(io::Error::other)?;
+    let mut rows = statement.query([]).map_err(io::Error::other)?;
+
+    let mut records = Vec::new();
+    while let Some(row) = rows.next().map_err(io::Error::other)? {
+        let dimension: String = row.get(1).map_err(io::Error::other)?;
+        let active_events_json: String = row.get(9).map_err(io::Error::other)?;
+        let patrol_anchors_json: String = row.get(10).map_err(io::Error::other)?;
+        let season_at_spawn: String = row.get(19).map_err(io::Error::other)?;
+        records.push(HeartbeatPseudoVeinRecord {
+            zone_id: row.get(0).map_err(io::Error::other)?,
+            dimension: sql_to_dimension_kind(dimension.as_str())?,
+            bounds_min: [
+                row.get(2).map_err(io::Error::other)?,
+                row.get(3).map_err(io::Error::other)?,
+                row.get(4).map_err(io::Error::other)?,
+            ],
+            bounds_max: [
+                row.get(5).map_err(io::Error::other)?,
+                row.get(6).map_err(io::Error::other)?,
+                row.get(7).map_err(io::Error::other)?,
+            ],
+            danger_level: sql_to_u8(row.get(8).map_err(io::Error::other)?)?,
+            active_events: serde_json::from_str(&active_events_json)
+                .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?,
+            patrol_anchors: serde_json::from_str(&patrol_anchors_json)
+                .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?,
+            center_xz: [
+                row.get(11).map_err(io::Error::other)?,
+                row.get(12).map_err(io::Error::other)?,
+            ],
+            spawned_at_tick: sql_to_tick(row.get(13).map_err(io::Error::other)?)?,
+            last_tick: sql_to_tick(row.get(14).map_err(io::Error::other)?)?,
+            qi_current: row.get(15).map_err(io::Error::other)?,
+            total_qi_consumed: row.get(16).map_err(io::Error::other)?,
+            warning_sent: sql_to_bool(row.get(17).map_err(io::Error::other)?),
+            dissipated: sql_to_bool(row.get(18).map_err(io::Error::other)?),
+            season_at_spawn: sql_to_pseudo_vein_season(season_at_spawn.as_str())?,
         });
     }
     Ok(records)
@@ -6650,6 +6990,46 @@ fn sql_to_bool(value: i64) -> bool {
     value != 0
 }
 
+fn dimension_kind_to_sql(dimension: DimensionKind) -> &'static str {
+    match dimension {
+        DimensionKind::Overworld => "overworld",
+        DimensionKind::Tsy => "tsy",
+    }
+}
+
+fn sql_to_dimension_kind(value: &str) -> io::Result<DimensionKind> {
+    match value {
+        "overworld" => Ok(DimensionKind::Overworld),
+        "tsy" => Ok(DimensionKind::Tsy),
+        other => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("unknown dimension kind `{other}`"),
+        )),
+    }
+}
+
+fn pseudo_vein_season_to_sql(season: PseudoVeinSeasonV1) -> &'static str {
+    match season {
+        PseudoVeinSeasonV1::Summer => "summer",
+        PseudoVeinSeasonV1::SummerToWinter => "summer_to_winter",
+        PseudoVeinSeasonV1::Winter => "winter",
+        PseudoVeinSeasonV1::WinterToSummer => "winter_to_summer",
+    }
+}
+
+fn sql_to_pseudo_vein_season(value: &str) -> io::Result<PseudoVeinSeasonV1> {
+    match value {
+        "summer" => Ok(PseudoVeinSeasonV1::Summer),
+        "summer_to_winter" => Ok(PseudoVeinSeasonV1::SummerToWinter),
+        "winter" => Ok(PseudoVeinSeasonV1::Winter),
+        "winter_to_summer" => Ok(PseudoVeinSeasonV1::WinterToSummer),
+        other => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("unknown pseudo-vein season `{other}`"),
+        )),
+    }
+}
+
 #[cfg_attr(not(test), allow(dead_code))]
 fn sql_to_tick(value: i64) -> io::Result<u64> {
     u64::try_from(value).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
@@ -7121,6 +7501,26 @@ mod persistence_tests {
             PersistenceSettings::with_paths(&db_path, &deceased_dir, format!("task3-{test_name}")),
             root,
         )
+    }
+
+    fn heartbeat_pseudo_vein_record(zone_id: &str) -> HeartbeatPseudoVeinRecord {
+        HeartbeatPseudoVeinRecord {
+            zone_id: zone_id.to_string(),
+            dimension: DimensionKind::Overworld,
+            bounds_min: [-140.0, 60.0, -240.0],
+            bounds_max: [160.0, 90.0, 60.0],
+            danger_level: 4,
+            active_events: vec![crate::world::heartbeat::EVENT_PSEUDO_VEIN.to_string()],
+            patrol_anchors: vec![[10.0, 65.0, -90.0]],
+            center_xz: [10.0, -90.0],
+            spawned_at_tick: 1_000,
+            last_tick: 1_800,
+            qi_current: 0.37,
+            total_qi_consumed: 0.23,
+            warning_sent: true,
+            dissipated: false,
+            season_at_spawn: PseudoVeinSeasonV1::SummerToWinter,
+        }
     }
 
     #[test]
@@ -9534,6 +9934,36 @@ mod persistence_tests {
     }
 
     #[test]
+    fn heartbeat_pseudo_veins_roundtrip_preserves_dynamic_zone_lifecycle() {
+        let (settings, root) = persistence_settings("heartbeat-pseudo-vein-roundtrip");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+
+        let record = heartbeat_pseudo_vein_record("pseudo_vein_heartbeat_7");
+        let mut heartbeat = WorldHeartbeat::default();
+        let mut zones = crate::world::zone::ZoneRegistry::fallback();
+        let restored =
+            heartbeat.restore_pseudo_vein_records(&mut zones, std::slice::from_ref(&record));
+        assert_eq!(
+            restored, 1,
+            "fixture record must restore into heartbeat before persistence roundtrip"
+        );
+
+        persist_heartbeat_pseudo_veins_snapshot(&settings, &heartbeat, &zones)
+            .expect("heartbeat pseudo-vein snapshot should persist");
+        let records = load_heartbeat_pseudo_veins_snapshot(&settings)
+            .expect("heartbeat pseudo-vein snapshot should load");
+
+        assert_eq!(
+            records,
+            vec![record],
+            "伪灵脉 heartbeat runtime 必须完整保留 bounds/dimension/lifecycle/warning/season"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn zone_overlays_roundtrip_preserves_ordered_records() {
         let (settings, root) = persistence_settings("zone-overlays-roundtrip");
         bootstrap_sqlite(settings.db_path(), settings.server_run_id())
@@ -10047,6 +10477,62 @@ mod persistence_tests {
             .expect("zone runtime hydration should succeed");
         assert_eq!(registry.zones[0].spirit_qi, -0.15);
         assert_eq!(registry.zones[0].danger_level, 4);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn bootstrap_hydrates_heartbeat_pseudo_vein_before_zone_runtime_overlay() {
+        let (settings, root) = persistence_settings("heartbeat-pseudo-vein-hydrate");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+
+        let mut record = heartbeat_pseudo_vein_record("pseudo_vein_heartbeat_7");
+        record.qi_current = 0.41;
+        let mut seed_heartbeat = WorldHeartbeat::default();
+        let mut seed_zones = crate::world::zone::ZoneRegistry::fallback();
+        assert_eq!(
+            seed_heartbeat
+                .restore_pseudo_vein_records(&mut seed_zones, std::slice::from_ref(&record)),
+            1
+        );
+        persist_heartbeat_pseudo_veins_snapshot(&settings, &seed_heartbeat, &seed_zones)
+            .expect("heartbeat pseudo-vein snapshot should persist");
+
+        let mut runtime_zones = seed_zones.clone();
+        runtime_zones
+            .find_zone_mut("pseudo_vein_heartbeat_7")
+            .expect("seed pseudo-vein zone must exist")
+            .spirit_qi = 0.33;
+        persist_zone_runtime_snapshot(&settings, &runtime_zones)
+            .expect("zone runtime snapshot should persist pseudo-vein row");
+
+        let mut restored_heartbeat = WorldHeartbeat::default();
+        let mut restored_zones = crate::world::zone::ZoneRegistry::fallback();
+        let restored_count =
+            hydrate_heartbeat_pseudo_veins(&settings, &mut restored_heartbeat, &mut restored_zones)
+                .expect("heartbeat pseudo-vein hydration should succeed");
+        hydrate_zone_runtime(&settings, &mut restored_zones)
+            .expect("zone runtime hydration should succeed after pseudo-vein zone rebuild");
+
+        assert_eq!(restored_count, 1);
+        assert_eq!(restored_heartbeat.active_pseudo_vein_count(), 1);
+        let restored_zone = restored_zones
+            .find_zone_by_name("pseudo_vein_heartbeat_7")
+            .expect("hydrate must recreate missing dynamic pseudo-vein zone before runtime rows");
+        assert_eq!(restored_zone.dimension, DimensionKind::Overworld);
+        assert_eq!(restored_zone.bounds.0, DVec3::new(-140.0, 60.0, -240.0));
+        assert_eq!(
+            restored_zone.spirit_qi, 0.33,
+            "zones_runtime 三列表应在动态 zone 重建后照常覆盖最新 spirit_qi"
+        );
+        assert!(
+            restored_zone
+                .active_events
+                .iter()
+                .any(|event| event == crate::world::heartbeat::EVENT_PSEUDO_VEIN),
+            "恢复出的动态 zone 必须继续带 pseudo_vein active_event"
+        );
 
         let _ = fs::remove_dir_all(root);
     }
@@ -13907,6 +14393,151 @@ mod persistence_tests {
         assert_eq!(
             user_version, 31,
             "nullable v32 schema must not advance user_version, actual {user_version}"
+        );
+    }
+
+    #[test]
+    fn v33_migration_creates_heartbeat_pseudo_veins_table_with_runtime_columns() {
+        let db_path = database_path("v33-heartbeat-pseudo-veins");
+        fs::create_dir_all(db_path.parent().expect("db path parent"))
+            .expect("temp db dir should create");
+        let mut connection = Connection::open(&db_path).expect("db should open");
+        connection
+            .execute_batch("PRAGMA user_version = 32;")
+            .expect("v32 fixture should set user_version");
+
+        apply_migrations(&mut connection).expect("v33 migration should succeed");
+
+        let mut statement = connection
+            .prepare("PRAGMA table_info(heartbeat_pseudo_veins)")
+            .expect("heartbeat_pseudo_veins table_info should prepare");
+        let columns = statement
+            .query_map([], |row| Ok(row.get::<_, String>(1)?))
+            .expect("heartbeat_pseudo_veins table_info should query")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("heartbeat_pseudo_veins columns should collect");
+        assert_eq!(
+            columns,
+            vec![
+                "zone_id",
+                "dimension",
+                "min_x",
+                "min_y",
+                "min_z",
+                "max_x",
+                "max_y",
+                "max_z",
+                "danger_level",
+                "active_events_json",
+                "patrol_anchors_json",
+                "center_x",
+                "center_z",
+                "spawned_at_tick",
+                "last_tick",
+                "qi_current",
+                "total_qi_consumed",
+                "warning_sent",
+                "dissipated",
+                "season_at_spawn",
+                "schema_version",
+                "last_updated_wall",
+            ],
+            "v33 migration 必须保存动态 zone 本体和 heartbeat lifecycle，实际 columns={columns:?}"
+        );
+
+        connection
+            .execute(
+                "
+                INSERT INTO heartbeat_pseudo_veins (
+                    zone_id, dimension,
+                    min_x, min_y, min_z,
+                    max_x, max_y, max_z,
+                    danger_level,
+                    active_events_json,
+                    patrol_anchors_json,
+                    center_x, center_z,
+                    spawned_at_tick,
+                    last_tick,
+                    qi_current,
+                    total_qi_consumed,
+                    warning_sent,
+                    dissipated,
+                    season_at_spawn,
+                    schema_version,
+                    last_updated_wall
+                ) VALUES (
+                    ?1, 'overworld',
+                    -1.0, 60.0, -1.0,
+                    1.0, 90.0, 1.0,
+                    4,
+                    '[\"pseudo_vein\"]',
+                    '[[0.0,65.0,0.0]]',
+                    0.0, 0.0,
+                    10,
+                    20,
+                    0.4,
+                    0.2,
+                    1,
+                    0,
+                    'summer_to_winter',
+                    1,
+                    0
+                )
+                ",
+                params!["pseudo_vein_heartbeat_0"],
+            )
+            .expect("合法 heartbeat_pseudo_veins runtime 行应可写入");
+        let bad_dimension = connection.execute(
+            "
+            INSERT INTO heartbeat_pseudo_veins (
+                zone_id, dimension,
+                min_x, min_y, min_z,
+                max_x, max_y, max_z,
+                danger_level,
+                active_events_json,
+                patrol_anchors_json,
+                center_x, center_z,
+                spawned_at_tick,
+                last_tick,
+                qi_current,
+                total_qi_consumed,
+                warning_sent,
+                dissipated,
+                season_at_spawn,
+                schema_version,
+                last_updated_wall
+            ) VALUES (
+                ?1, 'bad_dim',
+                -1.0, 60.0, -1.0,
+                1.0, 90.0, 1.0,
+                4,
+                '[\"pseudo_vein\"]',
+                '[[0.0,65.0,0.0]]',
+                0.0, 0.0,
+                10,
+                20,
+                0.4,
+                0.2,
+                0,
+                0,
+                'summer',
+                1,
+                0
+            )
+            ",
+            params!["pseudo_vein_bad_dim"],
+        );
+        assert!(
+            bad_dimension.is_err(),
+            "v33 heartbeat_pseudo_veins.dimension CHECK 必须拒绝未知维度"
+        );
+
+        let user_version: i32 = connection
+            .query_row("PRAGMA user_version;", [], |row| row.get(0))
+            .expect("user_version should be readable");
+        assert_eq!(
+            user_version, CURRENT_USER_VERSION,
+            "v33 迁移完成后 user_version 必须是 CURRENT_USER_VERSION={CURRENT_USER_VERSION}，实际 {user_version}"
         );
     }
 }
