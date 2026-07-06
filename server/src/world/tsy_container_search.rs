@@ -1457,4 +1457,234 @@ mod tests {
             "初始无记录时 can_search 应返回 true，但返回了 false"
         );
     }
+
+    // ——— plan-tsy-search-cancel-v1 P0 §8.1 #3 — handle_cancel_search 回归测试 ———
+
+    fn collect_search_aborted(app: &App) -> Vec<SearchAborted> {
+        let events = app.world().resource::<Events<SearchAborted>>();
+        let mut reader = events.get_reader();
+        reader.read(events).cloned().collect()
+    }
+
+    #[test]
+    fn handle_cancel_search_removes_progress_and_releases_lock() {
+        // 玩家挂 SearchProgress + 容器 searched_by = Some(player)，发一条
+        // CancelSearchRequest；期望：进度组件被摘、容器锁被释放、SearchAborted
+        // 恰好 1 条且 reason == Cancelled，因为这是主动取消的 happy path。
+        let mut app = App::new();
+        app.add_event::<CancelSearchRequest>();
+        app.add_event::<SearchAborted>();
+        app.add_systems(Update, handle_cancel_search);
+
+        let container = app
+            .world_mut()
+            .spawn(LootContainer::new(
+                ContainerKind::StoneCasket,
+                "tsy_cancel_test".to_string(),
+                crate::world::zone::TsyDepth::Shallow,
+                "single_key".to_string(),
+                0,
+            ))
+            .id();
+
+        let player = app
+            .world_mut()
+            .spawn((
+                SearchProgress {
+                    container,
+                    required_ticks: 100,
+                    elapsed_ticks: 10,
+                    started_at_tick: 0,
+                    started_pos: [0.0, 64.0, 0.0],
+                    key_item_instance_id: None,
+                },
+                IsSearching,
+            ))
+            .id();
+
+        app.world_mut()
+            .entity_mut(container)
+            .get_mut::<LootContainer>()
+            .expect("container should exist")
+            .searched_by = Some(player);
+
+        app.world_mut().send_event(CancelSearchRequest { player });
+        app.update();
+
+        assert!(
+            app.world().get::<SearchProgress>(player).is_none(),
+            "expected SearchProgress to be removed from player after cancel, because \
+             handle_cancel_search must free the player to search again; actual=present"
+        );
+        assert!(
+            app.world().get::<IsSearching>(player).is_none(),
+            "expected IsSearching marker to be removed from player after cancel, because \
+             downstream qi-accel query filters on With<IsSearching>; actual=present"
+        );
+
+        let container_state = app
+            .world()
+            .get::<LootContainer>(container)
+            .expect("container should remain attached");
+        assert_eq!(
+            container_state.searched_by, None,
+            "expected container searched_by lock to be released after cancel, because a \
+             cancelled search must not keep other players locked out; actual={:?}",
+            container_state.searched_by
+        );
+
+        let emitted = collect_search_aborted(&app);
+        assert_eq!(
+            emitted.len(),
+            1,
+            "expected exactly one SearchAborted event for one CancelSearchRequest; actual={emitted:?}"
+        );
+        assert_eq!(
+            emitted[0].player, player,
+            "expected SearchAborted.player to match the cancelling player; actual={:?}",
+            emitted[0]
+        );
+        assert_eq!(
+            emitted[0].container, container,
+            "expected SearchAborted.container to match the searched container; actual={:?}",
+            emitted[0]
+        );
+        assert_eq!(
+            emitted[0].reason,
+            SearchAbortReason::Cancelled,
+            "expected SearchAborted.reason to be Cancelled for a player-initiated cancel, \
+             not Moved/Combat/Damaged; actual={:?}",
+            emitted[0].reason
+        );
+    }
+
+    #[test]
+    fn handle_cancel_search_is_noop_without_search_progress() {
+        // 玩家没有 SearchProgress（例如客户端竞态下重复按取消键，或搜刮早已
+        // 结束）时发 CancelSearchRequest；期望 system 不 panic 且不发
+        // SearchAborted——这是幂等/误按分支，不应产生任何可观察副作用。
+        let mut app = App::new();
+        app.add_event::<CancelSearchRequest>();
+        app.add_event::<SearchAborted>();
+        app.add_systems(Update, handle_cancel_search);
+
+        let player = app.world_mut().spawn_empty().id();
+
+        app.world_mut().send_event(CancelSearchRequest { player });
+        app.update();
+
+        assert!(
+            app.world().get::<SearchProgress>(player).is_none(),
+            "player never had SearchProgress; expected it to remain absent, not spuriously \
+             inserted by handle_cancel_search"
+        );
+
+        let emitted = collect_search_aborted(&app);
+        assert_eq!(
+            emitted.len(),
+            0,
+            "expected zero SearchAborted events when player has no SearchProgress, because \
+             handle_cancel_search should `continue` on the missing-progress early-out; actual={emitted:?}"
+        );
+    }
+
+    #[test]
+    fn handle_cancel_search_leaves_other_players_container_lock_untouched() {
+        // player 持有指向 container 的 SearchProgress，但该 container 的锁实际被
+        // other_player 占着（desync/竞态：player 的 progress 已过期，或指向的容器
+        // 已被他人抢占）。取消时必须摘掉 player 自己的进度组件，但 handle_cancel_search
+        // 的 owner 守卫（`if c.searched_by == Some(req.player)`）必须阻止 player 释放
+        // other_player 的锁——这正是该守卫存在的意义。注意 player 必须真的挂着
+        // SearchProgress，否则会在 `progress_q.get` 早退处 `continue`、根本走不到守卫，
+        // 那样就退化成 is_noop_without_search_progress 的重复覆盖了。
+        let mut app = App::new();
+        app.add_event::<CancelSearchRequest>();
+        app.add_event::<SearchAborted>();
+        app.add_systems(Update, handle_cancel_search);
+
+        let other_player = app.world_mut().spawn_empty().id();
+
+        let container = app
+            .world_mut()
+            .spawn(LootContainer::new(
+                ContainerKind::StoneCasket,
+                "tsy_cancel_test_other".to_string(),
+                crate::world::zone::TsyDepth::Shallow,
+                "single_key".to_string(),
+                0,
+            ))
+            .id();
+        app.world_mut()
+            .entity_mut(container)
+            .get_mut::<LootContainer>()
+            .expect("container should exist")
+            .searched_by = Some(other_player);
+
+        // player 的 SearchProgress 指向那个被 other_player 锁住的容器。
+        let player = app
+            .world_mut()
+            .spawn((
+                SearchProgress {
+                    container,
+                    required_ticks: 100,
+                    elapsed_ticks: 10,
+                    started_at_tick: 0,
+                    started_pos: [0.0, 64.0, 0.0],
+                    key_item_instance_id: None,
+                },
+                IsSearching,
+            ))
+            .id();
+
+        app.world_mut().send_event(CancelSearchRequest { player });
+        app.update();
+
+        // 守卫命中（container.searched_by != Some(player)）：锁不能被误清。
+        // 这条断言就是回归探针——若未来把守卫改成无条件 `c.searched_by = None`，
+        // 这里会立刻从 Some(other_player) 变成 None 而撞红。
+        let container_state = app
+            .world()
+            .get::<LootContainer>(container)
+            .expect("container should remain attached");
+        assert_eq!(
+            container_state.searched_by,
+            Some(other_player),
+            "expected other_player's container lock to survive because the owner guard \
+             `c.searched_by == Some(req.player)` is false for the cancelling player; \
+             a regression to unconditional release would clear it; actual={:?}",
+            container_state.searched_by
+        );
+
+        // player 自己的进度仍应被摘除（移除不受 owner 守卫门控，先于容器检查执行）。
+        assert!(
+            app.world().get::<SearchProgress>(player).is_none(),
+            "expected the cancelling player's own SearchProgress to be removed even when the \
+             container lock is held by someone else; actual=present"
+        );
+        assert!(
+            app.world().get::<IsSearching>(player).is_none(),
+            "expected the cancelling player's own IsSearching marker to be removed even when the \
+             container lock is held by someone else; actual=present"
+        );
+
+        // player 发起了一次真实取消（有 progress），故应恰好 emit 1 条 Cancelled。
+        let emitted = collect_search_aborted(&app);
+        assert_eq!(
+            emitted.len(),
+            1,
+            "expected exactly one SearchAborted for the cancelling player who held a SearchProgress; \
+             actual={emitted:?}"
+        );
+        assert_eq!(
+            emitted[0].player, player,
+            "expected SearchAborted.player to be the cancelling player, not the lock owner; actual={:?}",
+            emitted[0]
+        );
+        assert_eq!(
+            emitted[0].reason,
+            SearchAbortReason::Cancelled,
+            "expected reason Cancelled for a player-initiated cancel; actual={:?}",
+            emitted[0].reason
+        );
+    }
 }
