@@ -1,6 +1,6 @@
 # plan-bughunt-craft-outcome-network-thread-sound-v1
 
-> **活跃 plan skeleton**。一句话主题：`craft_outcome kind=completed` 经 `bong:server_data` 到达时，`CraftOutcomeHandler` 在 Fabric network thread 同步写 `CraftStore`，当前打开的 `CraftScreen` / `WorkbenchScreen` outcome listener 会在切回 client 主线程前直接改 screen 字段并调用 `client.player.playSound(...)`，违反 Fabric client networking 线程契约。
+> **骨架（草案）**。一句话主题：`craft_outcome kind=completed` 经 `bong:server_data` 到达时，`CraftOutcomeHandler` 在 Fabric network thread 同步写 `CraftStore`，当前打开的 `CraftScreen` / `WorkbenchScreen` outcome listener 会在切回 client 主线程前直接改 screen 字段并调用 `client.player.playSound(...)`，违反 Fabric client networking 线程契约。
 
 > 排重说明：这不是 #1016 的 `cast_sync -> SkillConfigPanelManager` 配置窗入口；本案落点是 `craft_outcome -> CraftStore -> Craft/Workbench 完成反馈`。但两者共享 `server_data` route 在 network thread 执行 handler side effect 的根因，后续修复可以合并覆盖。
 
