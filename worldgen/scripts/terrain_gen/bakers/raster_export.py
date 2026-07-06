@@ -300,7 +300,12 @@ def export_rasters(
         # worldgen-v4 P4 §8.1 #3 — 导出期灵气预算配平报表（zone 份额 + wilderness
         # 余量 + qi_grade 六档直方图）。total == BONG_SPIRIT_QI_TOTAL 预算口径。
         "qi_budget_report": qi_budget_report,
-        "qi_density_source": "qi_field",
+        # qi_density 层现状由各 terrain profile 手搓（20+ 个 profile 各自公式，
+        # 含 wangyintai 负灵域 [-0.25,0] 这类有意设计），尚未从 build_qi_field
+        # 统一场烘焙——如实声明 "profile"，让 raster_check 的同源派生断言按其
+        # 设计（"profile 迁移到统一场后由导出端置位"）保持休眠。迁移完成后
+        # （plan-qi-density-same-source-v1）置回 "qi_field" 激活断言。
+        "qi_density_source": "profile",
         "semantic_layers": [
             name
             for name in (

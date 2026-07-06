@@ -6,11 +6,14 @@ Catches known data integrity issues before they reach the Rust server:
 - rift_axis_sdf defaulting to 0 (causes false rift carving everywhere)
 - water level above surrounding terrain (floating water)
 - missing layers in tiles
-- qi_density / mofa_decay outside [0, 1]
+- qi_density outside [-1, 1] (negative = 负灵域 canon), mofa_decay outside [0, 1]
 - qi_density vs zone.spirit_qi same-source derivation (worldgen-v4 P4 §8.1 #8):
   when manifest declares qi_density_source == "qi_field", each tile's per-zone
   qi_density mean must match clamp01((spirit_qi+1)/2) within QI_DENSITY_TOLERANCE
-  (a HARD ERROR — replaces the never-implemented "gross mismatch" warning)
+  (a HARD ERROR — replaces the never-implemented "gross mismatch" warning).
+  Dormant while qi_density_source == "profile" (the current honest state: the
+  layer is hand-built per terrain profile, not yet baked from the unified
+  field — migration tracked in plan-qi-density-same-source-v1)
 - underground_tier outside {0,1,2,3}
 - anomaly_kind outside {0..5} or present without anomaly_intensity
 - fossil_bbox outside {0,1,2} or manifest fossil_bboxes with no raster cells
@@ -164,10 +167,17 @@ def validate_rasters(raster_dir: str | Path) -> tuple[bool, str]:
                     )
                 fossil_cell_count += sum(1 for value in raw if value > 0)
 
-        # Validate semantic layers: qi_density / mofa_decay must stay in [0, 1],
-        # qi_vein_flow likewise. These are narrative-facing so out-of-range
+        # Validate semantic layers. These are narrative-facing so out-of-range
         # values will confuse downstream agent / HUD consumers.
-        for semantic_layer in ("qi_density", "mofa_decay", "qi_vein_flow"):
+        #   qi_density ∈ [-1, 1] — 负值是负灵域正典（wangyintai 涡流宗
+        #   qi_density∈[-0.25,0] 有意设计；server 侧 karma heat 消费自带
+        #   clamp(0,·)，负值安全），下界与统一场 [-1,1] 域对齐。
+        #   mofa_decay / qi_vein_flow ∈ [0, 1] 不变。
+        for semantic_layer, lower_bound in (
+            ("qi_density", -1.0),
+            ("mofa_decay", 0.0),
+            ("qi_vein_flow", 0.0),
+        ):
             sem_file = tile_dir / f"{semantic_layer}.bin"
             if not sem_file.exists():
                 continue
@@ -175,10 +185,10 @@ def validate_rasters(raster_dir: str | Path) -> tuple[bool, str]:
             if sem_data is None:
                 continue
             s_min, s_max = min(sem_data), max(sem_data)
-            if s_min < -0.01 or s_max > 1.01:
+            if s_min < lower_bound - 0.01 or s_max > 1.01:
                 errors.append(
                     f"{tile_id}: {semantic_layer} range=[{s_min:.3f},{s_max:.3f}] "
-                    f"outside [0,1] (zones={zones})"
+                    f"outside [{lower_bound:g},1] (zones={zones})"
                 )
 
         # worldgen-v4 P4 §8.1 #8 — qi_density vs zone.spirit_qi 同源派生硬断言.
