@@ -39,9 +39,27 @@ public class NpcMetadataHandlerTest {
         assertEquals("rogue", metadata.archetype());
         assertEquals("散修·凝脉", metadata.displayName());
         assertEquals("道友，可有灵草出让？", metadata.greetingText());
+        assertTrue(metadata.nametagVisible(), "missing nametag_visible should default to visible");
         // No trade_offers in payload -> tradeCandidate() is false (data-driven)
         assertFalse(metadata.tradeCandidate(),
             "tradeCandidate should be false when no trade_offers are present");
+    }
+
+    @Test
+    void parsesNametagVisibleFalseFromServerContract() {
+        String payload = """
+            {"type":"npc_metadata","v":1,"entity_id":44,"archetype":"beast","realm":"醒灵",\
+            "reputation_to_player":0,"display_name":"妖兽·醒灵","nametag_visible":false}
+            """.trim();
+
+        assertTrue(NpcMetadataHandler.handle(payload, payload.getBytes(StandardCharsets.UTF_8).length));
+
+        NpcMetadata metadata = NpcMetadataStore.get(44);
+        assertNotNull(metadata, "metadata should be stored for hidden nametag entity");
+        assertFalse(
+            metadata.nametagVisible(),
+            "server nametag_visible=false 必须被保留，防止 client 自定义名牌绕过 NameVisible(false)"
+        );
     }
 
     @Test

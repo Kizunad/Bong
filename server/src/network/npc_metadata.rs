@@ -3,6 +3,7 @@
 use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
+use valence::entity::entity::NameVisible;
 use valence::entity::EntityId;
 use valence::prelude::{
     bevy_ecs, ident, Client, DVec3, Entity, EventWriter, Position, Query, ResMut, Resource, With,
@@ -12,6 +13,7 @@ use valence::prelude::{
 use crate::combat::components::{Lifecycle, LifecycleState, Wounds};
 use crate::cultivation::components::{Cultivation, Realm};
 use crate::cultivation::known_techniques::KnownTechniques;
+use crate::fauna::mimic_spider::SpiderDisguiseState;
 use crate::identity::PlayerIdentities;
 use crate::network::audio_event_emit::{AudioRecipient, PlaySoundRecipeRequest};
 use crate::npc::equipment::NpcEquipment;
@@ -39,6 +41,7 @@ pub struct NpcMetadataS2c {
     pub faction_rank: Option<String>,
     pub reputation_to_player: i32,
     pub display_name: String,
+    pub nametag_visible: bool,
     pub age_band: String,
     pub greeting_text: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -110,6 +113,8 @@ type NpcMetadataItem<'a> = (
     &'a EntityId,
     &'a Position,
     &'a NpcArchetype,
+    Option<&'a NameVisible>,
+    Option<&'a SpiderDisguiseState>,
     Option<&'a Cultivation>,
     Option<&'a FactionMembership>,
     Option<&'a NpcLifespan>,
@@ -142,6 +147,8 @@ pub fn emit_npc_metadata_payloads(
             entity_id,
             npc_position,
             archetype,
+            name_visible,
+            spider_disguise_state,
             npc_cultivation,
             membership,
             lifespan,
@@ -171,6 +178,8 @@ pub fn emit_npc_metadata_payloads(
                 equipment: npc_equipment,
                 techniques: npc_techniques,
                 trade_inventory: npc_trade_inv,
+                name_visible,
+                spider_disguise_state,
             });
             let bytes = match metadata.to_json_bytes_checked() {
                 Ok(bytes) => bytes,
@@ -218,6 +227,8 @@ pub struct NpcMetadataBuildInput<'a> {
     pub equipment: Option<&'a NpcEquipment>,
     pub techniques: Option<&'a KnownTechniques>,
     pub trade_inventory: Option<&'a NpcTradeInventory>,
+    pub name_visible: Option<&'a NameVisible>,
+    pub spider_disguise_state: Option<&'a SpiderDisguiseState>,
 }
 
 pub fn build_npc_metadata(input: NpcMetadataBuildInput<'_>) -> NpcMetadataS2c {
@@ -233,6 +244,8 @@ pub fn build_npc_metadata(input: NpcMetadataBuildInput<'_>) -> NpcMetadataS2c {
         equipment,
         techniques,
         trade_inventory,
+        name_visible,
+        spider_disguise_state,
     } = input;
     let realm = cultivation
         .map(|cultivation| cultivation.realm)
@@ -326,6 +339,7 @@ pub fn build_npc_metadata(input: NpcMetadataBuildInput<'_>) -> NpcMetadataS2c {
         faction_rank,
         reputation_to_player,
         display_name,
+        nametag_visible: !should_hide_nametag(name_visible, spider_disguise_state),
         age_band: lifespan
             .map(age_band_for_lifespan)
             .unwrap_or("正值壮年")
@@ -338,6 +352,14 @@ pub fn build_npc_metadata(input: NpcMetadataBuildInput<'_>) -> NpcMetadataS2c {
         techniques: tech_vec,
         trade_offers: trade_vec,
     }
+}
+
+fn should_hide_nametag(
+    name_visible: Option<&NameVisible>,
+    spider_disguise_state: Option<&SpiderDisguiseState>,
+) -> bool {
+    matches!(name_visible, Some(NameVisible(false)))
+        && matches!(spider_disguise_state, Some(SpiderDisguiseState::Disguised))
 }
 
 pub fn display_name(
@@ -519,6 +541,8 @@ mod tests {
             equipment: None,
             techniques: None,
             trade_inventory: None,
+            name_visible: None,
+            spider_disguise_state: None,
         });
 
         let json = String::from_utf8(payload.to_json_bytes_checked().expect("serialize"))
@@ -572,6 +596,8 @@ mod tests {
                     equipment: None,
                     techniques: None,
                     trade_inventory: None,
+                    name_visible: None,
+                    spider_disguise_state: None,
                 });
                 let json = String::from_utf8(payload.to_json_bytes_checked().expect("serialize"))
                     .expect("metadata payload should be utf8 json");
@@ -615,7 +641,66 @@ mod tests {
             equipment: None,
             techniques: None,
             trade_inventory: None,
+            name_visible: None,
+            spider_disguise_state: None,
         })
+    }
+
+    #[test]
+    fn npc_metadata_carries_name_visible_false_contract() {
+        let hidden = NameVisible(false);
+        let state = SpiderDisguiseState::Disguised;
+        let payload = build_npc_metadata(NpcMetadataBuildInput {
+            entity_id: 42,
+            archetype: NpcArchetype::Beast,
+            cultivation: None,
+            membership: None,
+            lifespan: None,
+            player_cultivation: None,
+            player_identities: None,
+            wounds: None,
+            equipment: None,
+            techniques: None,
+            trade_inventory: None,
+            name_visible: Some(&hidden),
+            spider_disguise_state: Some(&state),
+        });
+
+        assert!(
+            !payload.nametag_visible,
+            "NameVisible(false) 必须透传给 client，防止自定义 NpcNametagRenderer 重新暴露伪装实体"
+        );
+        let json = String::from_utf8(payload.to_json_bytes_checked().expect("serialize"))
+            .expect("metadata payload should be utf8 json");
+        assert!(
+            json.contains(r#""nametag_visible":false"#),
+            "metadata JSON 必须包含 nametag_visible=false，实际 {json}"
+        );
+    }
+
+    #[test]
+    fn npc_metadata_does_not_hide_non_disguised_entities_by_default() {
+        let hidden = NameVisible(false);
+        let payload = build_npc_metadata(NpcMetadataBuildInput {
+            entity_id: 43,
+            archetype: NpcArchetype::Beast,
+            cultivation: None,
+            membership: None,
+            lifespan: None,
+            player_cultivation: None,
+            player_identities: None,
+            wounds: None,
+            equipment: None,
+            techniques: None,
+            trade_inventory: None,
+            name_visible: Some(&hidden),
+            spider_disguise_state: None,
+        });
+
+        assert!(
+            payload.nametag_visible,
+            "缺少 Disguised 蛛状态时维持既有 metadata 标签行为，避免普通 NPC/野兽被默认 NameVisible(false) 误隐藏"
+        );
     }
 
     #[test]
@@ -712,6 +797,8 @@ mod tests {
             equipment: None,
             techniques: None,
             trade_inventory: None,
+            name_visible: None,
+            spider_disguise_state: None,
         });
 
         assert_eq!(payload.reputation_to_player, -80);
@@ -769,6 +856,8 @@ mod tests {
             equipment: Some(&equipment),
             techniques: None,
             trade_inventory: None,
+            name_visible: None,
+            spider_disguise_state: None,
         });
 
         assert_eq!(payload.equipment.len(), 2, "expected 2 equipment slots");
@@ -812,6 +901,8 @@ mod tests {
             equipment: None,
             techniques: Some(&techniques),
             trade_inventory: None,
+            name_visible: None,
+            spider_disguise_state: None,
         });
 
         assert_eq!(
@@ -848,6 +939,8 @@ mod tests {
             equipment: None,
             techniques: None,
             trade_inventory: Some(&trade),
+            name_visible: None,
+            spider_disguise_state: None,
         });
 
         assert_eq!(payload.trade_offers.len(), 1);
@@ -869,6 +962,8 @@ mod tests {
             equipment: None,
             techniques: None,
             trade_inventory: None,
+            name_visible: None,
+            spider_disguise_state: None,
         });
 
         let json = String::from_utf8(payload.to_json_bytes_checked().expect("serialize"))

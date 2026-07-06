@@ -48,6 +48,7 @@ public final class NpcMetadataHandler {
             nullableString(root, "faction_rank"),
             intField(root, "reputation_to_player", 0),
             stringField(root, "display_name", ""),
+            booleanField(root, "nametag_visible", true),
             stringField(root, "age_band", "正值壮年"),
             stringField(root, "greeting_text", "对方沉默地看着你。"),
             nullableString(root, "qi_hint"),
@@ -177,6 +178,17 @@ public final class NpcMetadataHandler {
         try {
             double value = root.get(fieldName).getAsDouble();
             return Double.isFinite(value) ? value : fallback;
+        } catch (RuntimeException exception) {
+            return fallback;
+        }
+    }
+
+    private static boolean booleanField(JsonObject root, String fieldName, boolean fallback) {
+        if (!root.has(fieldName) || root.get(fieldName).isJsonNull()) {
+            return fallback;
+        }
+        try {
+            return root.get(fieldName).getAsBoolean();
         } catch (RuntimeException exception) {
             return fallback;
         }
