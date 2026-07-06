@@ -41,9 +41,9 @@
 
 > **退化说明**：本会话没有可用 subagent/委派工具，无法按理想流程再开两轮外部子代理对抗；这里如实退化为主代理本地两轮反方裁决，并在 PR 正文同步记录这一点。
 
-1. **Round 1 反方论点**：也许 `social_exposure` 本来就只是 HUD 日志，“被识破后的具名显示”是故意设计成下次登录才刷新。  
+1. **Round 1 反方论点**：也许 `social_exposure` 本来就只是 HUD 日志，“被识破后的具名显示”是故意设计成下次登录才刷新。
    **驳回理由**：`plan-social-v1` 明文要求 server 权威维护 `exposed_to`，并下发 `AnonymityPayload` 让 client 直接显示/隐藏 name tag；`apply_social_exposures` 也已经把日志精准推给 actor+witnesses，而不是全服归档型广播，语义明显是在线即时反馈，不是离线结算。
-2. **Round 2 反方论点**：也许 client 收到 `social_exposure` 后已经能自己推导出名牌应当显示，所以不需要 server 重发 `social_anonymity`。  
+2. **Round 2 反方论点**：也许 client 收到 `social_exposure` 后已经能自己推导出名牌应当显示，所以不需要 server 重发 `social_anonymity`。
    **驳回理由**：`SocialServerDataHandler.handleExposure()` 只 `recordExposure()`；`SocialStateStore.shouldShowRemoteNameTag()` 只读取 `anonymity.remotesByUuid`；`MixinEntityRenderer` 又只看这个布尔值决定是否 cancel 名牌渲染。当前代码链不存在任何“从 exposure 事件回写 anonymity cache”的路径，因此 live nametag 绝不会翻转。
 3. **人工复核结论**：这是完整的三段断链而非单点疏漏：server 权威状态已变、bridge 未刷新、client 视觉继续读旧快照。两轮反方都没能提供代码级反证，候选保留。
 
