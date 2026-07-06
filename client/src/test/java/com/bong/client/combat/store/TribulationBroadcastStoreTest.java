@@ -30,4 +30,34 @@ class TribulationBroadcastStoreTest {
         );
         assertFalse(s.expired(Long.MAX_VALUE));
     }
+
+    @Test void keepsConcurrentBroadcastsAndClearsTargetOnly() {
+        TribulationBroadcastStore.upsert(new TribulationBroadcastStore.State(
+            true, "近处", "warn", 0, 0, 10_000L, true, 30
+        ));
+        TribulationBroadcastStore.upsert(new TribulationBroadcastStore.State(
+            true, "远处", "warn", 400, 0, 10_000L, false, 400
+        ));
+
+        assertEquals(2, TribulationBroadcastStore.all().size());
+        assertEquals("近处", TribulationBroadcastStore.snapshot(1_000L).actorName());
+
+        TribulationBroadcastStore.clear(new TribulationBroadcastStore.State(
+            false, "近处", "done", 0, 0, 0L, false, 0
+        ));
+
+        assertEquals(1, TribulationBroadcastStore.all().size());
+        assertEquals("远处", TribulationBroadcastStore.snapshot(1_000L).actorName());
+    }
+
+    @Test void expiredEntriesAreNotSelectedAsPrimary() {
+        TribulationBroadcastStore.upsert(new TribulationBroadcastStore.State(
+            true, "旧劫", "striking", 0, 0, 500L, true, 10
+        ));
+        TribulationBroadcastStore.upsert(new TribulationBroadcastStore.State(
+            true, "新劫", "warn", 400, 0, 10_000L, false, 400
+        ));
+
+        assertEquals("新劫", TribulationBroadcastStore.snapshot(1_000L).actorName());
+    }
 }

@@ -328,6 +328,29 @@ class CombatHandlersTest {
     }
 
     @Test
+    void tribulationBroadcastHandlerKeepsConcurrentEntriesAndClearsOnlyTarget() {
+        new TribulationBroadcastHandler().handle(parse("""
+            {"v":1,"type":"tribulation_broadcast","active":true,
+             "actor_name":"甲","stage":"warn","world_x":0,"world_z":0,
+             "expires_at_ms":9999999999,"spectate_invite":true,"spectate_distance":30}"""));
+        new TribulationBroadcastHandler().handle(parse("""
+            {"v":1,"type":"tribulation_broadcast","active":true,
+             "actor_name":"乙","stage":"warn","world_x":400,"world_z":0,
+             "expires_at_ms":9999999999,"spectate_invite":false,"spectate_distance":400}"""));
+
+        assertEquals(2, TribulationBroadcastStore.all().size());
+        assertEquals("甲", TribulationBroadcastStore.snapshot().actorName());
+
+        new TribulationBroadcastHandler().handle(parse("""
+            {"v":1,"type":"tribulation_broadcast","active":false,
+             "actor_name":"甲","stage":"done","world_x":0,"world_z":0,
+             "expires_at_ms":0,"spectate_invite":false,"spectate_distance":0}"""));
+
+        assertEquals(1, TribulationBroadcastStore.all().size());
+        assertEquals("乙", TribulationBroadcastStore.snapshot().actorName());
+    }
+
+    @Test
     void tribulationStatePopulatesStoreAndKeepsResultOnClear() {
         String activeJson = """
             {"v":1,"type":"tribulation_state","active":true,
@@ -361,6 +384,38 @@ class CombatHandlersTest {
         assertEquals("settle", cleared.phase());
         assertEquals("ascended", cleared.result());
         assertEquals(5, cleared.waveCurrent());
+    }
+
+    @Test
+    void tribulationStateHandlerClearsOnlyMatchingCharId() {
+        new TribulationStateHandler().handle(parse("""
+            {"v":1,"type":"tribulation_state","active":true,
+             "char_id":"offline:Azure","actor_name":"Azure","kind":"du_xu","phase":"wave",
+             "world_x":0,"world_z":0,"wave_current":2,"wave_total":5,
+             "started_tick":100,"phase_started_tick":200,"next_wave_tick":300,
+             "failed":false,"half_step_on_success":false,
+             "participants":["offline:Azure"],"result":null}"""));
+        new TribulationStateHandler().handle(parse("""
+            {"v":1,"type":"tribulation_state","active":true,
+             "char_id":"offline:Beryl","actor_name":"Beryl","kind":"du_xu","phase":"wave",
+             "world_x":400,"world_z":0,"wave_current":1,"wave_total":5,
+             "started_tick":100,"phase_started_tick":200,"next_wave_tick":300,
+             "failed":false,"half_step_on_success":false,
+             "participants":["offline:Beryl"],"result":null}"""));
+
+        assertEquals(2, TribulationStateStore.all().size());
+
+        new TribulationStateHandler().handle(parse("""
+            {"v":1,"type":"tribulation_state","active":false,
+             "char_id":"offline:Azure","actor_name":"Azure","kind":"du_xu","phase":"settle",
+             "world_x":0,"world_z":0,"wave_current":5,"wave_total":0,
+             "started_tick":0,"phase_started_tick":0,"next_wave_tick":0,
+             "failed":false,"half_step_on_success":false,
+             "participants":[],"result":"ascended"}"""));
+
+        assertEquals(1, TribulationStateStore.all().size());
+        assertEquals("offline:Beryl", TribulationStateStore.snapshot().charId());
+        assertTrue(TribulationStateStore.snapshot().active());
     }
 
     @Test
