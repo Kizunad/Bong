@@ -1,6 +1,6 @@
 # plan-bughunt-npc-daily-life-qi-mint-v1
 
-> Skeleton Plan / BugHunt server-qi r02 / 2026-07-07
+> Active Plan / BugHunt server-qi r02 / 2026-07-07
 
 ## 0. 接入面
 
@@ -39,7 +39,7 @@
 - `docs/finished_plans/plan-npc-daily-life-v1.md:37` 写明 daily-life “不涉及 qi_physics（NPC 修炼吸收灵气已在 CultivateAction 中走 qi_physics）”，但实现里 P2/P3 日程层新增了直接回气旁路。
 - `server/src/npc/lod.rs:262` / `server/src/npc/lod.rs:357` 已有 Mid/Drowsy NPC 用 ledger transfer + zone 写回的范本，说明背景 NPC 回气没有设计豁免。
 
-## 4. 修复计划骨架
+## 4. 修复计划
 
 ### P0：统一 NPC 日程回气 helper
 
