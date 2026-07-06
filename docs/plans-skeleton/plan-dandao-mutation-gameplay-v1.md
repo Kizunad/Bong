@@ -37,9 +37,9 @@
 
 ## 两轮反方裁决摘要
 
-1. **反方第 1 轮**：这些 `MutationEffect` 可能只是未来占位，不算 bug。  
+1. **反方第 1 轮**：这些 `MutationEffect` 可能只是未来占位，不算 bug。
    **裁决**：不成立。`mutation.rs` 把它们写成带明确数值的功能效果，`visual_sync.rs:126-133` 还把 `effect_desc` 直接展示给玩家；这已经不是纯注释占位，而是“产品面对玩家声称存在某效果”。玩家侧承诺存在、runtime 却没有 consumer，属于高置信 gameplay bug。
-2. **反方第 2 轮**：部分效果也许被别处隐式消费了，例如多臂已经有 extra hand 槽、角冲撞已经在代码里。  
+2. **反方第 2 轮**：部分效果也许被别处隐式消费了，例如多臂已经有 extra hand 槽、角冲撞已经在代码里。
    **裁决**：仍不成立。extra hand 槽是库存系统的通用能力，仓库里找不到任何“由 `MutationState::ExtraArms` 触发授予”的接线；`dandao.horn_charge` 只被 BOSS AI 当成动作名使用，`bone_slam` / `tail_strike` 更是零消费。`contamination_tick` 也完全不读 `MutationState`，直接证伪了糙皮排毒加成的“隐式生效”假说。
 
 ## 开放问题
