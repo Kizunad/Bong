@@ -18,8 +18,8 @@ use std::path::Path;
 
 use serde::Deserialize;
 use valence::prelude::{
-    bevy_ecs, App, Commands, DVec3, Entity, Event, EventReader, EventWriter, Position, Query, Res,
-    ResMut, Update,
+    bevy_ecs, App, Commands, DVec3, Entity, EntityLayerId, Event, EventReader, EventWriter,
+    Position, Query, Res, ResMut, Update,
 };
 
 use crate::combat::CombatClock;
@@ -294,9 +294,19 @@ pub fn apply_tsy_spawn_requests(
 
         // plan-tsy-container-v1 §4.1 — portal 就位后撒容器（如果配置 + clock 都在）
         let mut spawned_containers = SpawnedTsyContainers::default();
-        if let (Some(specs), Some(clk)) = (container_specs.as_ref(), clock.as_ref()) {
-            spawned_containers =
-                spawn_containers_for_family(&req.family_id, specs, &zones, clk.tick, &mut commands);
+        if let (Some(specs), Some(clk), Some(layers)) = (
+            container_specs.as_ref(),
+            clock.as_ref(),
+            dimension_layers.as_ref(),
+        ) {
+            spawned_containers = spawn_containers_for_family(
+                &req.family_id,
+                specs,
+                &zones,
+                clk.tick,
+                layers.tsy,
+                &mut commands,
+            );
             zone_init.send(TsyZoneInitialized {
                 family_id: req.family_id.clone(),
                 relic_count: spawned_containers.relic_count,
@@ -356,6 +366,7 @@ fn spawn_containers_for_family(
     specs: &TsyContainerSpawnRegistry,
     zones: &ZoneRegistry,
     tick: u64,
+    tsy_layer: Entity,
     commands: &mut Commands,
 ) -> SpawnedTsyContainers {
     let Some(family_specs) = specs.get(family_id) else {
@@ -394,6 +405,7 @@ fn spawn_containers_for_family(
                 let entity = commands
                     .spawn((
                         Position::new([pos.x, pos.y, pos.z]),
+                        EntityLayerId(tsy_layer),
                         LootContainer::new(
                             spec.kind,
                             family_id.to_string(),
@@ -443,7 +455,9 @@ pub fn register(app: &mut App) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::world::entity_model::{BongVisualAttachment, BongVisualEntity, BongVisualKind};
     use crate::world::tsy::PortalDirection;
+    use valence::entity::EntityId;
     use valence::prelude::{App, Events};
 
     fn run_with_world(family_id: &str) -> App {
@@ -696,6 +710,9 @@ mod tests {
         let mut app = App::new();
         app.insert_resource(ZoneRegistry::fallback());
         app.insert_resource(CombatClock { tick: 100 });
+        let overworld = app.world_mut().spawn_empty().id();
+        let tsy = app.world_mut().spawn_empty().id();
+        app.insert_resource(DimensionLayers { overworld, tsy });
         let spawn_reg =
             load_tsy_container_spawn_registry().expect("default tsy_containers.json loads");
         app.insert_resource(spawn_reg);
@@ -703,6 +720,7 @@ mod tests {
         app.add_event::<TsySpawnResult>();
         app.add_event::<TsyZoneInitialized>();
         app.add_event::<TsyHostileSpawnedSummary>();
+        crate::world::entity_model::register(&mut app);
         app.add_systems(Update, apply_tsy_spawn_requests);
 
         let player = app.world_mut().spawn(()).id();
@@ -718,8 +736,11 @@ mod tests {
 
         // 1) 应 spawn LootContainer 实体；按 lingxu_01 配置（origin = neutral）：
         //    shallow=22 + mid=12 + deep=7 = 41 个
-        let mut q = app.world_mut().query::<&LootContainer>();
-        let containers: Vec<_> = q.iter(app.world()).cloned().collect();
+        let mut q = app.world_mut().query::<(&LootContainer, &EntityLayerId)>();
+        let containers: Vec<_> = q
+            .iter(app.world())
+            .map(|(c, layer)| (c.clone(), *layer))
+            .collect();
         let total: u32 = containers.len() as u32;
         assert_eq!(
             total, 41,
@@ -729,9 +750,15 @@ mod tests {
         // 2) RelicCore 数量恰为 3，与 P2 lifecycle 对齐
         let relic_count = containers
             .iter()
-            .filter(|c| c.kind == ContainerKind::RelicCore)
+            .filter(|(c, _)| c.kind == ContainerKind::RelicCore)
             .count() as u32;
         assert_eq!(relic_count, 3);
+        assert!(
+            containers.iter().all(|(_, layer)| layer.0 == tsy),
+            "/tsy_spawn 主路径生成的 LootContainer 必须带 TSY EntityLayerId，\
+             否则自定义 visual marker 桥不会为它创建 BongVisualAttachment，\
+             container_state.visual_entity_id 会变成 null"
+        );
 
         // 3) TsyZoneInitialized 事件发出，relic_count = 3
         let inits = app.world().resource::<Events<TsyZoneInitialized>>();
@@ -740,5 +767,56 @@ mod tests {
         assert_eq!(inits_collected[0].family_id, "tsy_lingxu_01");
         assert_eq!(inits_collected[0].relic_count, 3);
         assert_eq!(inits_collected[0].at_tick, 100);
+
+        // 4) 下一 tick 生产视觉桥应为主路径容器补齐 visual marker。
+        //    container_state.visual_entity_id 依赖这个 attachment 指向的 marker EntityId；
+        //    只 spawn 裸 LootContainer 会让 G 键准星反查永远没有 visual 映射。
+        app.update();
+        let mut q = app.world_mut().query::<(
+            Entity,
+            &LootContainer,
+            &EntityLayerId,
+            &BongVisualAttachment,
+        )>();
+        let attached: Vec<_> = q
+            .iter(app.world())
+            .map(|(entity, container, source_layer, attachment)| {
+                (entity, container.kind, *source_layer, *attachment)
+            })
+            .collect();
+        assert_eq!(
+            attached.len(),
+            41,
+            "/tsy_spawn 主路径生成的每个 LootContainer 都必须被 entity_model 视觉桥 attach"
+        );
+        for (source, kind, source_layer, attachment) in attached {
+            assert_eq!(source_layer.0, tsy);
+            let visual = app
+                .world()
+                .get::<BongVisualEntity>(attachment.visual)
+                .expect("TSY 容器 attachment 应指向 BongVisualEntity marker");
+            assert_eq!(visual.source, Some(source));
+            assert_eq!(visual.kind, expected_container_visual_kind(kind));
+            assert_eq!(
+                app.world()
+                    .get::<EntityLayerId>(attachment.visual)
+                    .expect("visual marker 应带 TSY EntityLayerId")
+                    .0,
+                tsy
+            );
+            assert!(
+                app.world().get::<EntityId>(attachment.visual).is_some(),
+                "visual marker 必须带 Valence EntityId，container_state 才能填 visual_entity_id"
+            );
+        }
+    }
+
+    fn expected_container_visual_kind(kind: ContainerKind) -> BongVisualKind {
+        match kind {
+            ContainerKind::DryCorpse | ContainerKind::SurfaceStash => BongVisualKind::DryCorpse,
+            ContainerKind::Skeleton => BongVisualKind::BoneSkeleton,
+            ContainerKind::StoragePouch => BongVisualKind::StoragePouch,
+            ContainerKind::StoneCasket | ContainerKind::RelicCore => BongVisualKind::StoneCasket,
+        }
     }
 }
