@@ -4506,6 +4506,65 @@ mod tests {
         );
     }
 
+    fn dispatch_remains_loot(
+        json: &[u8],
+    ) -> (
+        valence::prelude::Entity,
+        Vec<crate::inventory::RemainsLootIntent>,
+    ) {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: json.to_vec().into_boxed_slice(),
+            });
+        app.update();
+        let events = app
+            .world()
+            .resource::<valence::prelude::Events<crate::inventory::RemainsLootIntent>>();
+        let collected = events
+            .iter_current_update_events()
+            .cloned()
+            .collect::<Vec<_>>();
+        (entity, collected)
+    }
+
+    #[test]
+    fn remains_loot_request_dispatches_intent_with_fields() {
+        let (entity, intents) = dispatch_remains_loot(
+            br#"{"type":"remains_loot","v":1,"remains_id":"3fa85f64-5717-4562-b3fc-2c963f66afa6"}"#,
+        );
+
+        assert_eq!(
+            intents.len(),
+            1,
+            "合法 remains_loot payload 应 emit 恰好 1 次 RemainsLootIntent，实为 {}",
+            intents.len()
+        );
+        assert_eq!(intents[0].entity, entity, "intent 必须带回发起玩家 entity");
+        assert_eq!(
+            intents[0].remains_id, "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+            "remains_id 必须从 wire payload 原样透传"
+        );
+    }
+
+    #[test]
+    fn remains_loot_request_with_blank_id_is_dropped() {
+        let (_entity, intents) =
+            dispatch_remains_loot(br#"{"type":"remains_loot","v":1,"remains_id":"   "}"#);
+
+        assert!(
+            intents.is_empty(),
+            "空白 remains_id 应被 handler 拦截，不应 emit RemainsLootIntent；实际 {} 条",
+            intents.len()
+        );
+    }
+
     /// 边界透传：count=1（下界）与 count=64（上界）合法值都能派发并保值。
     #[test]
     fn block_picker_give_boundary_counts_dispatch() {

@@ -201,7 +201,24 @@ mod tests {
         item_count: usize,
         bone_coins: u64,
     ) -> ValenceEntity {
-        let uuid = UniqueId::default();
+        spawn_remains_with_uuid(
+            world,
+            layer,
+            UniqueId::default(),
+            pos,
+            item_count,
+            bone_coins,
+        )
+    }
+
+    fn spawn_remains_with_uuid(
+        world: &mut World,
+        layer: ValenceEntity,
+        uuid: UniqueId,
+        pos: [f64; 3],
+        item_count: usize,
+        bone_coins: u64,
+    ) -> ValenceEntity {
         let items = (0..item_count)
             .map(|idx| RemainsItemRecord {
                 source_container_id: "test_fixture".to_string(),
@@ -347,5 +364,120 @@ mod tests {
             "期望 despawn 后广播的快照不含任何 entry；实际 {:?}",
             after_despawn[0]
         );
+    }
+
+    #[test]
+    fn partial_loot_broadcasts_updated_snapshot() {
+        let mut app = setup_app();
+        let (_entity, mut helper) = spawn_client_actor(&mut app, "PartialWatcher");
+        let layer = app.world_mut().spawn_empty().id();
+        let remains_entity = spawn_remains(app.world_mut(), layer, [1.0, 64.0, 1.0], 2, 7);
+
+        app.update();
+        flush_client_packets(&mut app);
+        let _ = helper.collect_received();
+
+        {
+            let mut remains = app
+                .world_mut()
+                .get_mut::<RemainsContainer>(remains_entity)
+                .expect("fixture remains should exist");
+            remains.items.pop();
+            remains.bone_coins = 3;
+        }
+        app.update();
+        flush_client_packets(&mut app);
+
+        let syncs = collect_remains_syncs(&mut helper);
+        assert_eq!(
+            syncs.len(),
+            1,
+            "部分拾取后 RemainsContainer 仍存活但内容已变，应恰好广播一次；实际 {} 次",
+            syncs.len()
+        );
+        assert_eq!(
+            syncs[0][0].item_count, 1,
+            "部分拾取后 item_count 应更新为 1"
+        );
+        assert_eq!(
+            syncs[0][0].bone_coins, 3,
+            "部分拾取后 bone_coins 应更新为 3"
+        );
+    }
+
+    #[test]
+    fn snapshot_orders_multiple_remains_by_id() {
+        let mut app = setup_app();
+        let (_entity, mut helper) = spawn_client_actor(&mut app, "SortWatcher");
+        let layer = app.world_mut().spawn_empty().id();
+        let later = uuid::Uuid::parse_str("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb").unwrap();
+        let earlier = uuid::Uuid::parse_str("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa").unwrap();
+        spawn_remains_with_uuid(
+            app.world_mut(),
+            layer,
+            UniqueId(later),
+            [4.0, 64.0, 4.0],
+            1,
+            0,
+        );
+        spawn_remains_with_uuid(
+            app.world_mut(),
+            layer,
+            UniqueId(earlier),
+            [1.0, 64.0, 1.0],
+            1,
+            0,
+        );
+
+        app.update();
+        flush_client_packets(&mut app);
+
+        let syncs = collect_remains_syncs(&mut helper);
+        assert_eq!(syncs.len(), 1, "join 快照应只发送一次");
+        assert_eq!(
+            syncs[0]
+                .iter()
+                .map(|entry| entry.remains_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+                "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+            ],
+            "remains_snapshot 必须按 remains_id 字典序稳定排序，避免客户端抖动"
+        );
+    }
+
+    #[test]
+    fn content_change_broadcasts_to_all_connected_clients() {
+        let mut app = setup_app();
+        let (_first, mut first_helper) = spawn_client_actor(&mut app, "WatcherA");
+        let (_second, mut second_helper) = spawn_client_actor(&mut app, "WatcherB");
+        let layer = app.world_mut().spawn_empty().id();
+
+        app.update();
+        flush_client_packets(&mut app);
+        let _ = first_helper.collect_received();
+        let _ = second_helper.collect_received();
+
+        spawn_remains(app.world_mut(), layer, [1.0, 64.0, 1.0], 1, 0);
+        app.update();
+        flush_client_packets(&mut app);
+
+        let first_syncs = collect_remains_syncs(&mut first_helper);
+        let second_syncs = collect_remains_syncs(&mut second_helper);
+        assert_eq!(
+            first_syncs.len(),
+            1,
+            "内容变化后第一个在线 client 应收到一次 remains_sync；实际 {} 次",
+            first_syncs.len()
+        );
+        assert_eq!(
+            second_syncs.len(),
+            1,
+            "内容变化后第二个在线 client 应收到一次 remains_sync；实际 {} 次",
+            second_syncs.len()
+        );
+        assert_eq!(first_syncs[0].len(), 1);
+        assert_eq!(second_syncs[0].len(), 1);
     }
 }

@@ -543,7 +543,7 @@ fn parse_persisted_tribulation_dimension(value: &str) -> Option<DimensionKind> {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn attach_cultivation_to_joined_clients(
+pub(crate) fn attach_cultivation_to_joined_clients(
     mut commands: Commands,
     settings: Res<PersistenceSettings>,
     player_persistence: Option<Res<PlayerStatePersistence>>,

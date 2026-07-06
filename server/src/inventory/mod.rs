@@ -10703,6 +10703,97 @@ cols = 4
         assert_eq!(narrations[0].target.as_deref(), Some("Looter"));
     }
 
+    /// plan-remains-suite P2 — 距离恰好等于 2.5m 上限时允许拾取，锁住
+    /// `distance_sq > REMAINS_PICKUP_RANGE_SQ` 的边界语义。
+    #[test]
+    fn remains_loot_intent_allows_exact_pickup_range_boundary() {
+        use valence::prelude::{App, Despawned, Position, UniqueId, Update};
+
+        let mut app = App::new();
+        app.add_event::<PlayerTerminated>();
+        app.add_event::<RemainsLootIntent>();
+        app.insert_resource(DroppedLootRegistry::default());
+        app.add_systems(
+            Update,
+            (
+                apply_termination_drop_on_terminate,
+                handle_remains_loot_intents,
+            ),
+        );
+
+        let terminated = app
+            .world_mut()
+            .spawn((
+                make_test_inventory_with_one_item(),
+                Position::new([10.0, 66.0, 10.0]),
+                EntityLayerId(Entity::PLACEHOLDER),
+                CurrentDimension(DimensionKind::Overworld),
+                LifeRecord {
+                    character_id: "offline:OldOne".to_string(),
+                    created_at: 0,
+                    biography: vec![BiographyEntry::Terminated {
+                        cause: "natural_end".to_string(),
+                        tick: 1,
+                    }],
+                    ..LifeRecord::default()
+                },
+            ))
+            .id();
+
+        let mut looter_inv = make_test_inventory_with_one_item();
+        for container in &mut looter_inv.containers {
+            container.items.clear();
+        }
+        looter_inv.equipped.clear();
+        looter_inv.hotbar = Default::default();
+        let looter = app
+            .world_mut()
+            .spawn((
+                looter_inv,
+                Position::new([12.5, 66.0, 10.0]),
+                EntityLayerId(Entity::PLACEHOLDER),
+                CurrentDimension(DimensionKind::Overworld),
+                Username("Boundary".to_string()),
+            ))
+            .id();
+
+        app.world_mut()
+            .send_event(PlayerTerminated { entity: terminated });
+        app.update();
+
+        let (remains_entity, remains_id) = {
+            let mut q = app
+                .world_mut()
+                .query::<(Entity, &UniqueId, &RemainsContainer)>();
+            let (e, uuid, _) = q
+                .iter(app.world())
+                .next()
+                .expect("expected one remains entity");
+            (e, uuid.0.to_string())
+        };
+
+        app.world_mut().send_event(RemainsLootIntent {
+            entity: looter,
+            remains_id,
+        });
+        app.update();
+
+        let looter_inv = app.world().get::<PlayerInventory>(looter).unwrap();
+        let has_item = looter_inv
+            .containers
+            .iter()
+            .flat_map(|c| c.items.iter())
+            .any(|placed| placed.instance.instance_id == 42);
+        assert!(
+            has_item,
+            "距离正好 2.5m 时应允许拾取；若这里失败，说明边界从 `>` 误改成了 `>=`"
+        );
+        assert!(
+            app.world().get::<Despawned>(remains_entity).is_some(),
+            "边界距离成功搬空后遗骸应 insert(Despawned)"
+        );
+    }
+
     /// plan-remains-suite P2 — 超出 2.5m 拒绝：不转移、不 despawn，且给玩家一条
     /// 拒绝提示。
     #[test]

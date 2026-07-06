@@ -1506,6 +1506,36 @@ mod tests {
     }
 
     #[test]
+    fn remains_loot_rejects_missing_remains_id() {
+        let json = r#"{"type":"remains_loot","v":1}"#;
+
+        assert!(
+            serde_json::from_str::<ClientRequestV1>(json).is_err(),
+            "remains_loot 缺 remains_id 应反序列化失败，避免空目标进入 dispatch"
+        );
+    }
+
+    #[test]
+    fn remains_loot_rejects_missing_version() {
+        let json = r#"{"type":"remains_loot","remains_id":"3fa85f64-5717-4562-b3fc-2c963f66afa6"}"#;
+
+        assert!(
+            serde_json::from_str::<ClientRequestV1>(json).is_err(),
+            "remains_loot 缺 v 应反序列化失败，保持 ClientRequestV1 wire 版本字段必填"
+        );
+    }
+
+    #[test]
+    fn remains_loot_rejects_unknown_field() {
+        let json = r#"{"type":"remains_loot","v":1,"remains_id":"x","unexpected":true}"#;
+
+        assert!(
+            serde_json::from_str::<ClientRequestV1>(json).is_err(),
+            "remains_loot 额外字段应被 deny_unknown_fields 拒绝"
+        );
+    }
+
+    #[test]
     fn mineral_probe_roundtrip() {
         let json = r#"{"type":"mineral_probe","v":1,"x":8,"y":32,"z":8}"#;
         let req: ClientRequestV1 = serde_json::from_str(json).unwrap();

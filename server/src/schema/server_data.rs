@@ -4692,6 +4692,48 @@ mod tests {
     }
 
     #[test]
+    fn remains_sync_rejects_entry_unknown_field() {
+        let json = serde_json::json!({
+            "v": SERVER_DATA_VERSION,
+            "type": "remains_sync",
+            "remains": [{
+                "remains_id": "x",
+                "world_pos": [0.0, 64.0, 0.0],
+                "dimension": "minecraft:overworld",
+                "display_name": "遗骸",
+                "item_count": 1,
+                "bone_coins": 0,
+                "unexpected": true
+            }]
+        });
+
+        assert!(
+            serde_json::from_value::<ServerDataV1>(json).is_err(),
+            "RemainsEntryV1 额外字段应被 deny_unknown_fields 拒绝"
+        );
+    }
+
+    #[test]
+    fn remains_sync_rejects_entry_missing_remains_id() {
+        let json = serde_json::json!({
+            "v": SERVER_DATA_VERSION,
+            "type": "remains_sync",
+            "remains": [{
+                "world_pos": [0.0, 64.0, 0.0],
+                "dimension": "minecraft:overworld",
+                "display_name": "遗骸",
+                "item_count": 1,
+                "bone_coins": 0
+            }]
+        });
+
+        assert!(
+            serde_json::from_value::<ServerDataV1>(json).is_err(),
+            "RemainsEntryV1 缺 remains_id 应反序列化失败"
+        );
+    }
+
+    #[test]
     fn deserialize_server_data_samples() {
         let samples = [
             include_str!("../../../agent/packages/schema/samples/server-data.welcome.sample.json"),
