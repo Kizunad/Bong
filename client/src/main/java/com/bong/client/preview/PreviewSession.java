@@ -1,5 +1,6 @@
 package com.bong.client.preview;
 
+import com.bong.client.ui.ScreenTransitionController;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.texture.NativeImage;
 import net.minecraft.client.util.ScreenshotRecorder;
@@ -66,10 +67,11 @@ public final class PreviewSession {
         totalTicks++;
         phaseTicks++;
 
-        // 防 WSLg / xvfb 焦点切换弹 GameMenuScreen 遮住截图
+        // 防 WSLg / xvfb 焦点切换弹 GameMenuScreen 遮住截图。
+        // preview harness 是截图/CI 场景，必须在本 tick 内绕过 UI 过渡并回到世界画面。
         client.options.pauseOnLostFocus = false;
         if (client.currentScreen != null && phase != Phase.WAIT_WORLD) {
-            client.setScreen(null);
+            ScreenTransitionController.cancelAndClose(client);
         }
 
         try {
