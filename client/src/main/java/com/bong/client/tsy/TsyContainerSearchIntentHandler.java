@@ -14,7 +14,7 @@ import net.minecraft.util.hit.EntityHitResult;
 import java.util.Optional;
 
 public final class TsyContainerSearchIntentHandler implements IntentHandler {
-    public static final double MAX_INTERACT_DISTANCE = 3.0;
+    public static final double MAX_INTERACT_DISTANCE = 5.0;
     private static final String DEBUG_PREFIX = "tsy_container:";
 
     @Override

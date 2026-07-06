@@ -74,15 +74,29 @@ class TsyContainerSearchIntentHandlerTest {
     }
 
     @Test
+    void crosshairContainerWithinFiveBlocksCreatesCandidate() {
+        TsyContainerStateStore.upsert(view(42L, 1001, 4.75, 0.0, 0.0));
+
+        Optional<InteractCandidate> candidate =
+            TsyContainerSearchIntentHandler.candidateForVisualHit(1001, 0.0, 0.0, 0.0);
+
+        assertTrue(
+            candidate.isPresent(),
+            "准星命中 4-5 格内的 TSY 容器应产出 SearchContainer candidate"
+        );
+        assertEquals("tsy_container:42", candidate.orElseThrow().debugLabel());
+    }
+
+    @Test
     void outOfServerSearchRangeDoesNotCreateCandidate() {
-        TsyContainerStateStore.upsert(view(42L, 1001, 3.01, 0.0, 0.0));
+        TsyContainerStateStore.upsert(view(42L, 1001, 5.01, 0.0, 0.0));
 
         Optional<InteractCandidate> candidate =
             TsyContainerSearchIntentHandler.candidateForVisualHit(1001, 0.0, 0.0, 0.0);
 
         assertFalse(
             candidate.isPresent(),
-            "server SEARCH_INTERACT_RANGE_M 当前为 3.0；超过 3 格即使准星命中也不应发 start_search"
+            "server SEARCH_INTERACT_RANGE_M 当前为 5.0；超过 5 格即使准星命中也不应发 start_search"
         );
     }
 
