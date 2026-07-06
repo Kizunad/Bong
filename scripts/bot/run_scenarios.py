@@ -43,6 +43,15 @@ class ScenarioEnv:
         return Bot(username, host=self.host, port=self.port)
 
 
+def validate_scenario_module(name: str, module: object) -> None:
+    """校验场景模块契约（DESCRIPTION/MODULES/run），缺失抛 RuntimeError。"""
+    for attr in ("DESCRIPTION", "MODULES", "run"):
+        if not hasattr(module, attr):
+            raise RuntimeError(
+                f"场景 {name} 缺少 {attr} —— 见 scripts/bot/scenarios/__init__.py 的模块契约"
+            )
+
+
 def discover_scenarios() -> dict[str, object]:
     import bot.scenarios as scenarios_pkg
 
@@ -51,11 +60,7 @@ def discover_scenarios() -> dict[str, object]:
         if info.name.startswith("_"):
             continue
         module = importlib.import_module(f"bot.scenarios.{info.name}")
-        for attr in ("DESCRIPTION", "MODULES", "run"):
-            if not hasattr(module, attr):
-                raise RuntimeError(
-                    f"场景 {info.name} 缺少 {attr} —— 见 scripts/bot/scenarios/__init__.py 的模块契约"
-                )
+        validate_scenario_module(info.name, module)
         found[info.name] = module
     return found
 

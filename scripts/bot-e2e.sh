@@ -38,12 +38,25 @@ except OSError:
 EOF
 }
 
+# 递归杀整棵进程树（与 e2e-redis.sh 同模式）：先子孙后父防 reparent 孤儿，
+# SIGTERM 后短等 + SIGKILL 兜底，保证 25565 真正释放。
+kill_tree() {
+  local pid="$1"
+  local child
+  for child in $(pgrep -P "$pid" 2>/dev/null); do
+    kill_tree "$child"
+  done
+  kill "$pid" 2>/dev/null || true
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    kill -0 "$pid" 2>/dev/null || return 0
+    sleep 0.2
+  done
+  kill -9 "$pid" 2>/dev/null || true
+}
+
 cleanup() {
   if [ -n "$SERVER_PID" ] && kill -0 "$SERVER_PID" 2>/dev/null; then
-    # SERVER_PID 是 cargo run（bash exec 继承 PID）；bong-server 是它的子进程，
-    # 先杀子再杀 cargo，防止 bong-server 被 reparent 成孤儿继续占 25565
-    pkill -TERM -P "$SERVER_PID" 2>/dev/null || true
-    kill -TERM "$SERVER_PID" 2>/dev/null || true
+    kill_tree "$SERVER_PID"
     wait "$SERVER_PID" 2>/dev/null || true
   fi
   if [ "$STARTED_REDIS" = "1" ]; then
@@ -51,6 +64,9 @@ cleanup() {
   fi
 }
 trap cleanup EXIT
+
+# ---- 编解码单测（无需 server；坏了没必要浪费一次 server 启动）----
+python3 "$ROOT/scripts/bot/test_protocol.py"
 
 # ---- redis（server 启动依赖）----
 if ! port_open 127.0.0.1 6379; then
@@ -86,12 +102,13 @@ else
     PROFILE_FLAG="--release"
   fi
   echo "[bot-e2e] 启动 server（cargo run $PROFILE_FLAG，log: $SERVER_LOG）"
-  bash -c "
-    cd '$ROOT/server'
-    export BONG_SKIP_SKIN_PREFETCH=\"\${BONG_SKIP_SKIN_PREFETCH:-1}\"
-    export BONG_ROGUE_SEED_COUNT=\"\${BONG_ROGUE_SEED_COUNT:-0}\"
+  # 子 shell 继承外层变量无需字符串插值；exec 让 SERVER_PID 直接等于 cargo run
+  (
+    cd "$ROOT/server"
+    export BONG_SKIP_SKIN_PREFETCH="${BONG_SKIP_SKIN_PREFETCH:-1}"
+    export BONG_ROGUE_SEED_COUNT="${BONG_ROGUE_SEED_COUNT:-0}"
     exec cargo run $PROFILE_FLAG
-  " >"$SERVER_LOG" 2>&1 &
+  ) >"$SERVER_LOG" 2>&1 &
   SERVER_PID=$!
 
   # 就绪 = 我们自己的 server 日志出现 world bootstrap 锚点 **且** 端口可连。
