@@ -1,6 +1,6 @@
-# plan-bughunt-aa-tide-sky-omen-client-gap-v1（骨架）
+# plan-bughunt-aa-tide-sky-omen-client-gap-v1
 
-> **骨架（草案）**。一句话主题：`server/src/world/heartbeat.rs` 已正式定义并发出 `bong:world_omen_tide_sky`（汐转期天象预兆），但 client 侧 `VfxBootstrap` / `OmenParticlePlayer` / `OmenStateStore` / `OmenHudPlanner` 只接了另外 4 类 omen，导致 **汐转天象这一路在客户端粒子与 HUD 两条主反馈链上完全静默**。影响是：玩家在“回家整理、准备下一趟 run”的关键窗口里收不到这条 30 秒预兆，路线规避与风险判断少一整层直接反馈。
+> **Active**（骨架 → active 升级 2026-07-06，来源 bughunt AA 骨架）。一句话主题：`server/src/world/heartbeat.rs` 已正式定义并发出 `bong:world_omen_tide_sky`（汐转期天象预兆），但 client 侧 `VfxBootstrap` / `OmenParticlePlayer` / `OmenStateStore` / `OmenHudPlanner` 只接了另外 4 类 omen，导致 **汐转天象这一路在客户端粒子与 HUD 两条主反馈链上完全静默**。影响是：玩家在“回家整理、准备下一趟 run”的关键窗口里收不到这条 30 秒预兆，路线规避与风险判断少一整层直接反馈。
 
 > 立项动机：这是 `spiritwood/scroll/inspect/omen` 扫描里最稳的一处“server 已接好、client 单类漏接”的主路径 bug。它不依赖测试桩或 dev-only 入口；`heartbeat` 正常运行就会在汐转边界排程并触发 `tide_sky_omen`，但本地客户端不会显示对应 omen 粒子，也不会进入 `OmenHudPlanner` 的视觉层。
 
@@ -8,7 +8,7 @@
 
 | 阶段 | 主题 | 路由 | 状态 |
 |------|------|------|------|
-| P0 | 汐转天象 omen 客户端漏接 | fix_pr | ⬜ |
+| P0 | 汐转天象 omen 客户端漏接 | fix_pr | ✅ 2026-07-06 |
 
 ## P0 — 汐转天象 omen 客户端漏接
 
@@ -21,6 +21,16 @@
 - **为什么这是实际游玩 bug**：`server/src/world/event_rhythm.rs` 和 `server/src/world/mod.rs` 都把 `TideSkyOmen` 的首选插入点钉在 `HomeOrganizing`，语义是“玩家在灵龛整理时收到预兆，影响下一趟路线”。`docs/plan-sou-da-che-v1.md` 也把它写成“天空颜色渐变 / NPC 提醒 / 影响下一次 run 的路线规划”。现在 server 仍会排程并记 recent event，但客户端专门负责“天象预兆 HUD 层”的这条链对该 event 完全静默，玩家只能错过这层设计好的 30 秒前兆。
 - **建议修复范围**：优先收口 `client/src/main/java/com/bong/client/visual/particle/OmenParticlePlayer.java`、`client/src/main/java/com/bong/client/visual/particle/VfxBootstrap.java`、`client/src/main/java/com/bong/client/omen/OmenStateStore.java`、`client/src/main/java/com/bong/client/hud/OmenHudPlanner.java`。修复时要同时补三件事：`event_id -> VfxPlayer` 注册、`OmenStateStore.Kind` 映射、`HUD` 渲染分支；只补其中一处会继续留下半截孤岛。
 - **验收抓手**：至少补 4 组 pin。1) `VfxBootstrap` 已注册 `world_omen_tide_sky`。2) `OmenStateStore.kindFromEventId("bong:world_omen_tide_sky")` 能落到专属 `Kind`。3) `OmenParticlePlayer.play()` 命中该 id 时会写入 store。4) `OmenHudPlanner` 对该 `Kind` 产出非空渲染命令，证明玩家端能看见预兆。
+
+## 完成证据（2026-07-06）
+
+- `OmenParticlePlayer.TIDE_SKY` 新增 `bong:world_omen_tide_sky` 常量，并在 `VfxBootstrap.registerDefaults()` 注册到通用 `OmenParticlePlayer`。
+- `OmenStateStore.Kind.TIDE_SKY` 与 `kindFromEventId("bong:world_omen_tide_sky")` 已接通；`OmenParticlePlayer.play()` 先写入 store，再按可用 world 播放粒子。
+- `OmenHudPlanner` 对 `TIDE_SKY` 产出非文本化、克制强度的 screen tint + edge vignette，保留“汐转不做硬文本提示”的边界。
+- Pin 测试覆盖四条验收抓手：`VfxRegistryTest` / `OmenStateStoreTest` / `OmenParticlePlayerTest` / `OmenHudPlannerTest`。
+- 验证命令：
+  - `cd client && JAVA_HOME=/home/serverkizuna/java/jdk-17.0.19+10 ./gradlew test --tests com.bong.client.omen.OmenStateStoreTest --tests com.bong.client.hud.OmenHudPlannerTest --tests com.bong.client.visual.particle.OmenParticlePlayerTest --tests com.bong.client.visual.particle.VfxRegistryTest`
+  - `cd client && JAVA_HOME=/home/serverkizuna/java/jdk-17.0.19+10 ./gradlew test build`
 
 ## 反方裁决摘要
 
@@ -36,4 +46,4 @@
 
 ## 审计来源
 
-bughunt 线程 AA，范围限定 `omen` 主路径，人工复核 `server/src/world/heartbeat.rs`、`server/src/world/event_rhythm.rs`、`client/src/main/java/com/bong/client/visual/particle/`、`client/src/main/java/com/bong/client/omen/`、`client/src/main/java/com/bong/client/hud/` 后确认。结论为 **report-only**：先提交 skeleton PR 固化 bug、玩家影响、反方裁决与修复面；本轮不改源码。
+bughunt 线程 AA，范围限定 `omen` 主路径，人工复核 `server/src/world/heartbeat.rs`、`server/src/world/event_rhythm.rs`、`client/src/main/java/com/bong/client/visual/particle/`、`client/src/main/java/com/bong/client/omen/`、`client/src/main/java/com/bong/client/hud/` 后确认。原 skeleton 结论为 **report-only**；本分支已完成 P0 修复并通过 client 栈验证。
