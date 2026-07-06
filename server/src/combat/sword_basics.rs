@@ -522,10 +522,37 @@ fn cast_sword_attack(
     // emit）。动画仍走 AttackIntent → `emit_attack_animation_triggers`，故此处只发粒子，
     // 避免与基础剑斩动画双重触发。
     emit_attack_particle(world, caster, technique);
+    // 挥动破空声（cast 即响，不依赖命中）：命中冲击音走 CombatEvent →
+    // emit_combat_audio_triggers，空挥此前完全无声（2026-07-06 playtest）。
+    // 各流派 cast 均有专属音（baomai_cast/woliu_cast/…），劈/刺各自差异化。
+    emit_swing_audio(world, caster, technique);
     CastResult::Started {
         cooldown_ticks: profile.cooldown_ticks,
         anim_duration_ticks: profile.cast_ticks,
     }
+}
+
+fn emit_swing_audio(world: &mut bevy_ecs::world::World, caster: Entity, technique: SwordTechnique) {
+    let recipe_id = match technique {
+        SwordTechnique::Cleave => "sword_cleave_swing",
+        SwordTechnique::Thrust => "sword_thrust_swing",
+        SwordTechnique::Parry | SwordTechnique::Infuse => return,
+    };
+    let Some(origin) = world.get::<Position>(caster).map(|position| position.get()) else {
+        return;
+    };
+    world.send_event(PlaySoundRecipeRequest {
+        recipe_id: recipe_id.to_string(),
+        instance_id: 0,
+        pos: None,
+        flag: None,
+        volume_mul: 1.0,
+        pitch_shift: 0.0,
+        recipient: AudioRecipient::Radius {
+            origin,
+            radius: AUDIO_BROADCAST_RADIUS,
+        },
+    });
 }
 
 /// 劈 / 刺各自的客户端已注册粒子 event_id —— 与 `SwordBasicsVfxPlayer` 逐字符对齐。

@@ -147,6 +147,19 @@ pub fn collect_player_chat(
                 outbound,
                 collected,
             } => {
+                // 同 zone 玩家可见（含发送者 echo）。此前聊天只进 Redis 喂天道，
+                // 发送者和周围玩家全看不见——发言如喊进虚空（2026-07-06 playtest）。
+                // 广播格局与 SpiritTreasureDialogue 一致：zone 为界。
+                let line = format!("<{}> {}", collected.username, collected.raw);
+                {
+                    let mut clients = player_sets.p1();
+                    for (mut target_client, position) in &mut clients {
+                        if zone_name_for_position(&zone_registry, position.get()) == collected.zone
+                        {
+                            target_client.send_chat_message(line.clone());
+                        }
+                    }
+                }
                 collected_chats.send(collected);
                 let _ = redis.tx_outbound.send(outbound);
             }

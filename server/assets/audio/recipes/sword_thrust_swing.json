@@ -1,0 +1,15 @@
+{
+  "id": "sword_thrust_swing",
+  "layers": [
+    {
+      "sound": "minecraft:entity.player.attack.nodamage",
+      "volume": 0.4,
+      "pitch": 1.35,
+      "delay_ticks": 0
+    }
+  ],
+  "priority": 50,
+  "attenuation": "MELEE",
+  "category": "PLAYERS",
+  "bus": "COMBAT"
+}

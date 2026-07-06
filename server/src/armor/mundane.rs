@@ -247,10 +247,28 @@ pub fn equip_slot_for_item_id(item_id: &str) -> Option<EquipSlotV1> {
 }
 
 pub fn register_mundane_armors(registry: &mut ArmorProfileRegistry) -> Result<(), String> {
+    // armor_profiles/*.json 的手调 profile（分 WoundKind 数值、broken_multiplier）
+    // 优先于本函数的程序生成粗值：已注册的 template 跳过而非报错。历史 bug：
+    // 撞 armor_bone_helmet 时 `?` 直接中断整批 → Bone 之后全部材质（24 件甲）
+    // 无 profile 静默零减伤（2026-07-06 bot playtest 发现）。
+    let mut errors = Vec::new();
     for item in all_mundane_armor_items() {
-        registry.register_template(item.item_id(), item.armor_profile())?;
+        let template_id = item.item_id();
+        if registry.get(&template_id).is_some() {
+            tracing::debug!(
+                "[bong][combat][armor] mundane profile for {template_id} superseded by hand-tuned armor_profiles/*.json"
+            );
+            continue;
+        }
+        if let Err(error) = registry.register_template(template_id, item.armor_profile()) {
+            errors.push(error);
+        }
     }
-    Ok(())
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("; "))
+    }
 }
 
 pub fn register_mundane_armor_recipes(registry: &mut CraftRegistry) -> Result<(), RegistryError> {
@@ -292,6 +310,46 @@ pub fn craft_recipe_for(item: &MundaneArmorItem) -> CraftRecipe {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn register_mundane_skips_hand_tuned_and_registers_rest() {
+        // 手调 json（armor_profiles/*.json 先加载）与程序生成撞 template_id 时：
+        // 手调赢、不中断整批。历史 bug：第一个 duplicate 让 Bone 之后 24 件甲
+        // 全部静默无 profile。
+        let mut registry = ArmorProfileRegistry::new();
+        let hand_tuned = ArmorProfile {
+            broken_multiplier: 0.3, // 程序生成恒 0.0 —— 用作"手调值存活"指纹
+            ..MundaneArmorItem {
+                material: MundaneArmorMaterial::Bone,
+                slot: MundaneArmorSlot::Helmet,
+            }
+            .armor_profile()
+        };
+        registry
+            .register_template("armor_bone_helmet", hand_tuned)
+            .expect("pre-registering the hand-tuned profile must succeed");
+
+        register_mundane_armors(&mut registry)
+            .expect("duplicates must be skipped, not abort the whole batch");
+
+        let total = all_mundane_armor_items().len();
+        assert_eq!(
+            registry.len(),
+            total,
+            "期望全部 {total} 件 mundane 甲都有 profile（重复项跳过而非中断批次），\
+             实际注册 {} 件",
+            registry.len()
+        );
+        let kept = registry
+            .get("armor_bone_helmet")
+            .expect("bone helmet profile must exist");
+        assert_eq!(
+            kept.broken_multiplier, 0.3,
+            "期望手调 profile 优先于程序生成（broken_multiplier 0.3 应存活），\
+             实际被覆盖为 {}",
+            kept.broken_multiplier
+        );
+    }
 
     #[test]
     fn mundane_bone_defense_3() {

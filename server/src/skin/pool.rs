@@ -98,6 +98,13 @@ impl SkinPool {
                 .all(|key| self.len_for_key(key) > 0)
     }
 
+    /// `BONG_SKIP_SKIN_PREFETCH=1` — 池永不填充，`ready_for_spawn` 永 false。
+    /// 以 ready 为前置的 spawn gate（如 rogue 播种）必须改看本标志放行走
+    /// villager fallback，否则 headless/CI 环境整个种群静默不播（零日志空世界）。
+    pub fn prefetch_disabled(&self) -> bool {
+        self.skip_prefetch
+    }
+
     pub fn next_for_profile(&mut self, profile: NpcVisualProfile, salt: u64) -> SignedSkin {
         self.next_for_key(profile.skin_pool_key(), salt)
     }
@@ -443,6 +450,31 @@ mod tests {
         assert!(
             !pool.ready_for_spawn(),
             "pool should not be ready when prefetch is skipped"
+        );
+    }
+
+    #[test]
+    fn prefetch_disabled_mirrors_skip_flag_for_spawn_gates() {
+        // rogue 播种 gate 靠 `ready_for_spawn() || prefetch_disabled()` 放行：
+        // skip 模式池永不 ready（上一测试锁死，保 draw_npc_skin 走 villager
+        // fallback 不触空池 panic），prefetch_disabled 必须如实镜像 skip 标志，
+        // 否则 headless/CI 世界回归到零 NPC 静默空世界（2026-07-06 实证）。
+        let skip = SkinPool {
+            skip_prefetch: true,
+            ..Default::default()
+        };
+        assert!(
+            skip.prefetch_disabled(),
+            "skip_prefetch=true must report prefetch_disabled so spawn gates fall back"
+        );
+
+        let normal = SkinPool {
+            skip_prefetch: false,
+            ..Default::default()
+        };
+        assert!(
+            !normal.prefetch_disabled(),
+            "prefetch enabled must NOT bypass the ready gate (real skins should be awaited)"
         );
     }
 

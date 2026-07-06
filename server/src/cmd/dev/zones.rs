@@ -45,7 +45,13 @@ pub fn handle_zones(
         let Ok(mut client) = clients.get_mut(event.executor) else {
             continue;
         };
-        client.send_chat_message(format!("Zones: {}", zone_names(zone_registry.as_deref())));
+        // 30+ zone 挤一行在聊天栏不可读（2026-07-06 playtest）——按每行 4 个分批。
+        let names = zone_names(zone_registry.as_deref());
+        let all: Vec<&str> = names.split(", ").collect();
+        client.send_chat_message(format!("Zones ({}):", all.len()));
+        for chunk in all.chunks(4) {
+            client.send_chat_message(format!("  {}", chunk.join(", ")));
+        }
     }
 }
 
