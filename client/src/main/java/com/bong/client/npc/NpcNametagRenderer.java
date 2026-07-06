@@ -1,5 +1,6 @@
 package com.bong.client.npc;
 
+import com.bong.client.spider.SpiderDisguiseHandler;
 import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderContext;
 import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderEvents;
 import net.minecraft.client.MinecraftClient;
@@ -37,7 +38,19 @@ public final class NpcNametagRenderer {
     }
 
     public static String labelForDistance(NpcMetadata metadata, double distance, String playerRealm) {
+        return labelForDistance(metadata, distance, playerRealm, false);
+    }
+
+    private static String labelForDistance(
+        NpcMetadata metadata,
+        double distance,
+        String playerRealm,
+        boolean forceVisible
+    ) {
         if (metadata == null || distance >= ICON_LABEL_DISTANCE) {
+            return "";
+        }
+        if (!metadata.nametagVisible() && !forceVisible) {
             return "";
         }
         String dangerPrefix = shouldShowDangerWarning(metadata.realm(), playerRealm) ? "⚠ " : "";
@@ -45,6 +58,43 @@ public final class NpcNametagRenderer {
             return dangerPrefix + archetypeIcon(metadata.archetype());
         }
         return dangerPrefix + "[" + metadata.displayName() + "]";
+    }
+
+    public static String labelForEntity(
+        NpcMetadata metadata,
+        double distance,
+        String playerRealm,
+        boolean spiderDisguised
+    ) {
+        return labelForEntity(metadata, distance, playerRealm, spiderDisguised, false);
+    }
+
+    public static String labelForEntity(
+        NpcMetadata metadata,
+        double distance,
+        String playerRealm,
+        boolean spiderDisguised,
+        boolean spiderRevealed
+    ) {
+        if (spiderDisguised) {
+            return "";
+        }
+        return labelForDistance(metadata, distance, playerRealm, spiderRevealed);
+    }
+
+    public static String labelForEntity(
+        NpcMetadata metadata,
+        double distance,
+        String playerRealm,
+        int entityId
+    ) {
+        return labelForEntity(
+            metadata,
+            distance,
+            playerRealm,
+            SpiderDisguiseHandler.isDisguised(entityId),
+            SpiderDisguiseHandler.isRevealed(entityId)
+        );
     }
 
     public static boolean shouldShowDangerWarning(String npcRealm, String playerRealm) {
@@ -71,7 +121,12 @@ public final class NpcNametagRenderer {
                 continue;
             }
             double distance = client.player.distanceTo(entity);
-            String label = labelForDistance(metadata, distance, playerRealm);
+            String label = labelForEntity(
+                metadata,
+                distance,
+                playerRealm,
+                entity.getId()
+            );
             if (label.isEmpty()) {
                 continue;
             }

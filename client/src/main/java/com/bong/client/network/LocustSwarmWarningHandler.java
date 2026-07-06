@@ -6,6 +6,8 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.google.gson.JsonPrimitive;
 
+import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.util.Objects;
 import java.util.function.LongSupplier;
 
@@ -13,6 +15,9 @@ public final class LocustSwarmWarningHandler {
     static final int WARNING_COLOR = 0xAA2222;
     private static final String ROUTE_TYPE = "locust_swarm_warning";
     private static final long DEFAULT_DURATION_MILLIS = 6_500L;
+    private static final long MILLIS_PER_TICK = 50L;
+    private static final BigInteger MAX_DURATION_TICKS =
+        BigInteger.valueOf(Long.MAX_VALUE / MILLIS_PER_TICK);
 
     private final LongSupplier nowMillisSupplier;
 
@@ -47,15 +52,16 @@ public final class LocustSwarmWarningHandler {
             return ServerDataDispatch.noOp(ROUTE_TYPE, "Ignoring locust_swarm_warning payload: missing zone or message");
         }
 
+        long durationMillis = readDurationMillis(payload);
         ServerDataDispatch.ToastSpec toast = new ServerDataDispatch.ToastSpec(
             "灵蝗潮逼近：" + message,
             WARNING_COLOR,
-            DEFAULT_DURATION_MILLIS
+            durationMillis
         );
         VisualEffectState effect = VisualEffectState.create(
             "pressure_jitter",
             0.65,
-            DEFAULT_DURATION_MILLIS,
+            durationMillis,
             nowMillisSupplier.getAsLong()
         );
 
@@ -85,6 +91,34 @@ public final class LocustSwarmWarningHandler {
             return null;
         }
         return primitive.getAsInt();
+    }
+
+    private static long readDurationMillis(JsonObject payload) {
+        BigInteger durationTicks = readOptionalNonNegativeInteger(payload, "duration_ticks");
+        if (durationTicks == null) {
+            return DEFAULT_DURATION_MILLIS;
+        }
+        if (durationTicks.compareTo(MAX_DURATION_TICKS) > 0) {
+            return Long.MAX_VALUE;
+        }
+        return durationTicks.longValue() * MILLIS_PER_TICK;
+    }
+
+    private static BigInteger readOptionalNonNegativeInteger(JsonObject object, String fieldName) {
+        JsonPrimitive primitive = readPrimitive(object, fieldName);
+        if (primitive == null || !primitive.isNumber()) {
+            return null;
+        }
+
+        try {
+            BigDecimal value = primitive.getAsBigDecimal();
+            if (value.signum() < 0 || value.stripTrailingZeros().scale() > 0) {
+                return null;
+            }
+            return value.toBigIntegerExact();
+        } catch (ArithmeticException | NumberFormatException ignored) {
+            return null;
+        }
     }
 
     private static JsonPrimitive readPrimitive(JsonObject object, String fieldName) {

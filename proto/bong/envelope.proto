@@ -969,6 +969,7 @@ message ForgeStepStateConsecration {
   double           qi_injected    = 1;
   double           qi_required    = 2;
   optional ColorKind color_imprint = 3;
+  optional Realm  min_realm       = 4;
 }
 
 message ForgeStepState {

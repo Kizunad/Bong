@@ -2591,12 +2591,14 @@ fn forge_step_state_to_proto(s: &super::forge::ForgeStepStateDataV1) -> bong::Fo
             qi_injected,
             qi_required,
             color_imprint,
+            min_realm,
         } => bong::ForgeStepState {
             state: Some(bong::forge_step_state::State::Consecration(
                 bong::ForgeStepStateConsecration {
                     qi_injected: *qi_injected,
                     qi_required: *qi_required,
                     color_imprint: color_imprint.as_ref().map(color_kind_to_proto),
+                    min_realm: min_realm.as_ref().map(realm_enum_to_proto),
                 },
             )),
         },

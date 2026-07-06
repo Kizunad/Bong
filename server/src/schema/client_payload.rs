@@ -10,6 +10,7 @@ pub enum ClientPayloadType {
     Narration,
     ZoneInfo,
     EventAlert,
+    LocustSwarmWarning,
     PlayerState,
 }
 
@@ -73,6 +74,15 @@ pub enum ClientPayloadV1 {
         v: u8,
         event_alert: EventAlertPayload,
     },
+    LocustSwarmWarning {
+        v: u8,
+        zone: String,
+        message: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        duration_ticks: Option<u64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        direction: Option<String>,
+    },
     PlayerState {
         v: u8,
         player_state: PlayerStatePayload,
@@ -93,6 +103,9 @@ mod tests {
         include_str!("../../../agent/packages/schema/samples/client-payload-zone-info.sample.json");
     const EVENT_ALERT_SAMPLE: &str = include_str!(
         "../../../agent/packages/schema/samples/client-payload-event-alert.sample.json"
+    );
+    const LOCUST_SWARM_WARNING_SAMPLE: &str = include_str!(
+        "../../../agent/packages/schema/samples/client-payload-locust-swarm-warning.sample.json"
     );
     const PLAYER_STATE_SAMPLE: &str = include_str!(
         "../../../agent/packages/schema/samples/client-payload-player-state.sample.json"
@@ -178,6 +191,30 @@ mod tests {
     }
 
     #[test]
+    fn deserialize_locust_swarm_warning_sample() {
+        let payload: ClientPayloadV1 = serde_json::from_str(LOCUST_SWARM_WARNING_SAMPLE).expect(
+            "client-payload-locust-swarm-warning.sample.json should deserialize into ClientPayloadV1",
+        );
+
+        match payload {
+            ClientPayloadV1::LocustSwarmWarning {
+                v,
+                zone,
+                message,
+                duration_ticks,
+                direction,
+            } => {
+                assert_eq!(v, 1);
+                assert_eq!(zone, "spirit_marsh");
+                assert!(message.contains("灵蝗潮"));
+                assert_eq!(duration_ticks, Some(24_000));
+                assert_eq!(direction.as_deref(), Some("east"));
+            }
+            other => panic!("expected locust_swarm_warning payload, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn deserialize_player_state_sample() {
         let payload: ClientPayloadV1 = serde_json::from_str(PLAYER_STATE_SAMPLE).expect(
             "client-payload-player-state.sample.json should deserialize into ClientPayloadV1",
@@ -203,6 +240,7 @@ mod tests {
             NARRATION_SAMPLE,
             ZONE_INFO_SAMPLE,
             EVENT_ALERT_SAMPLE,
+            LOCUST_SWARM_WARNING_SAMPLE,
             PLAYER_STATE_SAMPLE,
         ];
 
@@ -220,6 +258,8 @@ mod tests {
         let narration: ClientPayloadType = serde_json::from_str("\"narration\"").unwrap();
         let zone_info: ClientPayloadType = serde_json::from_str("\"zone_info\"").unwrap();
         let event_alert: ClientPayloadType = serde_json::from_str("\"event_alert\"").unwrap();
+        let locust_swarm_warning: ClientPayloadType =
+            serde_json::from_str("\"locust_swarm_warning\"").unwrap();
         let player_state: ClientPayloadType = serde_json::from_str("\"player_state\"").unwrap();
 
         assert_eq!(welcome, ClientPayloadType::Welcome);
@@ -227,6 +267,7 @@ mod tests {
         assert_eq!(narration, ClientPayloadType::Narration);
         assert_eq!(zone_info, ClientPayloadType::ZoneInfo);
         assert_eq!(event_alert, ClientPayloadType::EventAlert);
+        assert_eq!(locust_swarm_warning, ClientPayloadType::LocustSwarmWarning);
         assert_eq!(player_state, ClientPayloadType::PlayerState);
     }
 }

@@ -13,6 +13,7 @@ use crate::cultivation::tick::CultivationClock;
 use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::npc::lifecycle::NpcRegistry;
 use crate::npc::spawn::ambient_scheduler::{danger_tide_required_ticks_scale, danger_tide_weight};
+use crate::persistence::HeartbeatPseudoVeinRecord;
 use crate::player::state::canonical_player_id;
 use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
 use crate::qi_physics::{
@@ -373,8 +374,139 @@ impl WorldHeartbeat {
     }
 
     #[cfg(test)]
-    fn active_pseudo_vein_count(&self) -> usize {
+    pub(crate) fn active_pseudo_vein_count(&self) -> usize {
         self.active_pseudo_veins.len()
+    }
+
+    pub(crate) fn active_pseudo_vein_records(
+        &self,
+        zone_registry: &ZoneRegistry,
+    ) -> Vec<HeartbeatPseudoVeinRecord> {
+        let mut records = self
+            .active_pseudo_veins
+            .iter()
+            .filter_map(|(zone_id, state)| {
+                if state.dissipated {
+                    return None;
+                }
+                let zone = zone_registry.find_zone_by_name(zone_id.as_str())?;
+                let (min, max) = zone.bounds;
+                Some(HeartbeatPseudoVeinRecord {
+                    zone_id: zone_id.clone(),
+                    dimension: zone.dimension,
+                    bounds_min: dvec3_to_array(min),
+                    bounds_max: dvec3_to_array(max),
+                    danger_level: zone.danger_level,
+                    active_events: zone.active_events.clone(),
+                    patrol_anchors: zone
+                        .patrol_anchors
+                        .iter()
+                        .copied()
+                        .map(dvec3_to_array)
+                        .collect(),
+                    center_xz: state.center_xz,
+                    spawned_at_tick: state.lifecycle.spawned_at,
+                    last_tick: state.last_tick,
+                    qi_current: state.qi_current,
+                    total_qi_consumed: state.total_qi_consumed,
+                    warning_sent: state.warning_sent,
+                    dissipated: state.dissipated,
+                    season_at_spawn: state.season_at_spawn,
+                })
+            })
+            .collect::<Vec<_>>();
+        records.sort_by(|left, right| left.zone_id.cmp(&right.zone_id));
+        records
+    }
+
+    pub(crate) fn restore_pseudo_vein_records(
+        &mut self,
+        zone_registry: &mut ZoneRegistry,
+        records: &[HeartbeatPseudoVeinRecord],
+    ) -> usize {
+        let mut restored = 0;
+        for record in records {
+            if record.dissipated
+                || !record.zone_id.starts_with("pseudo_vein_")
+                || !finite_array3(record.bounds_min)
+                || !finite_array3(record.bounds_max)
+                || !finite_array2(record.center_xz)
+                || record.bounds_min[0] > record.bounds_max[0]
+                || record.bounds_min[1] > record.bounds_max[1]
+                || record.bounds_min[2] > record.bounds_max[2]
+                || !record.qi_current.is_finite()
+                || !record.total_qi_consumed.is_finite()
+            {
+                continue;
+            }
+
+            let mut active_events = record.active_events.clone();
+            if !active_events
+                .iter()
+                .any(|event| event.as_str() == EVENT_PSEUDO_VEIN)
+            {
+                active_events.push(EVENT_PSEUDO_VEIN.to_string());
+            }
+            let bounds = (
+                dvec3_from_array(record.bounds_min),
+                dvec3_from_array(record.bounds_max),
+            );
+            let patrol_anchors = if record.patrol_anchors.is_empty() {
+                vec![DVec3::new(
+                    record.center_xz[0],
+                    (record.bounds_min[1] + record.bounds_max[1]) * 0.5,
+                    record.center_xz[1],
+                )]
+            } else {
+                record
+                    .patrol_anchors
+                    .iter()
+                    .copied()
+                    .filter(|anchor| finite_array3(*anchor))
+                    .map(dvec3_from_array)
+                    .collect::<Vec<_>>()
+            };
+
+            if zone_registry
+                .find_zone_by_name(record.zone_id.as_str())
+                .is_none()
+            {
+                let zone = Zone {
+                    name: record.zone_id.clone(),
+                    dimension: record.dimension,
+                    bounds,
+                    spirit_qi: record.qi_current,
+                    danger_level: record.danger_level,
+                    active_events,
+                    patrol_anchors,
+                    blocked_tiles: Vec::new(),
+                    qi_equilibrium: 0.0,
+                    qi_inflow_per_min: 0.0,
+                };
+                if zone_registry.register_runtime_zone(zone).is_err() {
+                    continue;
+                }
+            }
+
+            let mut state = PseudoVeinRuntimeState::new(
+                record.zone_id.clone(),
+                record.center_xz,
+                record.spawned_at_tick,
+                record.season_at_spawn,
+            );
+            state.last_tick = record.last_tick;
+            state.qi_current = record.qi_current.clamp(0.0, 1.0);
+            state.total_qi_consumed = record.total_qi_consumed.max(0.0);
+            state.warning_sent = record.warning_sent;
+            state.dissipated = false;
+            self.active_pseudo_veins
+                .insert(record.zone_id.clone(), state);
+            if let Some(index) = heartbeat_pseudo_vein_index(record.zone_id.as_str()) {
+                self.next_pseudo_vein_index = self.next_pseudo_vein_index.max(index + 1);
+            }
+            restored += 1;
+        }
+        restored
     }
 
     fn note_event(&mut self, kind: HeartbeatEventKind) {
@@ -449,6 +581,28 @@ impl WorldHeartbeat {
             .rev()
             .find(|override_| override_.event_kind == kind && override_.target_zone == target_zone)
     }
+}
+
+fn dvec3_to_array(value: DVec3) -> [f64; 3] {
+    [value.x, value.y, value.z]
+}
+
+fn dvec3_from_array(value: [f64; 3]) -> DVec3 {
+    DVec3::new(value[0], value[1], value[2])
+}
+
+fn finite_array2(value: [f64; 2]) -> bool {
+    value.into_iter().all(f64::is_finite)
+}
+
+fn finite_array3(value: [f64; 3]) -> bool {
+    value.into_iter().all(f64::is_finite)
+}
+
+fn heartbeat_pseudo_vein_index(zone_id: &str) -> Option<u64> {
+    zone_id
+        .strip_prefix("pseudo_vein_heartbeat_")
+        .and_then(|suffix| suffix.parse::<u64>().ok())
 }
 
 pub fn register(app: &mut App) {
@@ -2399,6 +2553,71 @@ mod tests {
         assert_eq!(heartbeat.active_pseudo_vein_count(), 1);
         assert!(zones.find_zone_by_name("pseudo_vein_heartbeat_0").is_some());
         assert_eq!(zones.find_zone_by_name("waste").unwrap().spirit_qi, 0.1);
+    }
+
+    #[test]
+    fn restored_pseudo_vein_records_rebuild_zone_and_advance_next_index() {
+        let mut heartbeat = WorldHeartbeat::default();
+        let mut zones = ZoneRegistry {
+            zones: vec![zone("waste", 0.0, 0.0, 0.1)],
+        };
+        let restored = heartbeat.restore_pseudo_vein_records(
+            &mut zones,
+            &[HeartbeatPseudoVeinRecord {
+                zone_id: "pseudo_vein_heartbeat_7".to_string(),
+                dimension: DimensionKind::Overworld,
+                bounds_min: [-140.0, 60.0, -140.0],
+                bounds_max: [160.0, 90.0, 160.0],
+                danger_level: PSEUDO_VEIN_DANGER_LEVEL,
+                active_events: Vec::new(),
+                patrol_anchors: Vec::new(),
+                center_xz: [10.0, 10.0],
+                spawned_at_tick: 1_000,
+                last_tick: 1_200,
+                qi_current: 0.42,
+                total_qi_consumed: 0.18,
+                warning_sent: true,
+                dissipated: false,
+                season_at_spawn: crate::schema::pseudo_vein::PseudoVeinSeasonV1::Summer,
+            }],
+        );
+        assert_eq!(restored, 1);
+        assert_eq!(heartbeat.active_pseudo_vein_count(), 1);
+        let restored_zone = zones
+            .find_zone_by_name("pseudo_vein_heartbeat_7")
+            .expect("hydrate must recreate runtime pseudo-vein zone");
+        assert!(
+            restored_zone
+                .active_events
+                .iter()
+                .any(|event| event == EVENT_PSEUDO_VEIN),
+            "restored zone must regain pseudo_vein active event even if old record omitted it"
+        );
+        assert_eq!(restored_zone.spirit_qi, 0.42);
+
+        let mut active_events = ActiveEventsResource::default();
+        let omen = WorldEventOmen {
+            kind: OmenKind::PseudoVeinForming,
+            zone_name: "waste".to_string(),
+            target_player: None,
+            origin: DVec3::new(500.0, 65.0, 500.0),
+            intensity: 0.6,
+            scheduled_at_tick: 2_000,
+            fires_at_tick: 2_000,
+            expires_at_tick: 2_200,
+        };
+        assert!(spawn_pseudo_vein_from_omen(
+            &mut heartbeat,
+            &mut zones,
+            &mut active_events,
+            &omen,
+            Season::Summer,
+            2_000
+        ));
+        assert!(
+            zones.find_zone_by_name("pseudo_vein_heartbeat_8").is_some(),
+            "restore must advance next_pseudo_vein_index past restored heartbeat suffixes"
+        );
     }
 
     #[test]

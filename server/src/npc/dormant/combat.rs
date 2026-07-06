@@ -304,6 +304,8 @@ mod tests {
             lifespan_extension_ledger: Default::default(),
             death_registry: crate::cultivation::lifespan::DeathRegistry::new(char_id.to_string()),
             life_record: crate::cultivation::life_record::LifeRecord::new(char_id.to_string()),
+            memory: None,
+            player_reputation: None,
             faction: faction.map(membership),
             // 默认无显式群体：走 effective_group 的 faction 派生回退（Attack→0/Defend→1/
             // Neutral→None），让既有配对测试零改动通过；显式群体测试单独 set 该字段。

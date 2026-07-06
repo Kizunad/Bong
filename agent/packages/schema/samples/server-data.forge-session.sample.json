@@ -2,19 +2,17 @@
   "v": 1,
   "type": "forge_session",
   "session_id": 7,
-  "blueprint_id": "qing_feng_v0",
-  "blueprint_name": "清锋剑谱",
+  "blueprint_id": "ling_feng_v0",
+  "blueprint_name": "灵锋（测试）",
   "active": true,
-  "current_step": "tempering",
-  "step_index": 1,
-  "achieved_tier": 2,
+  "current_step": "consecration",
+  "step_index": 3,
+  "achieved_tier": 3,
   "step_state": {
-    "step": "tempering",
-    "pattern": ["L", "H", "F"],
-    "beat_cursor": 1,
-    "hits": 1,
-    "misses": 0,
-    "deviation": 0,
-    "qi_spent": 8.5
+    "step": "consecration",
+    "qi_injected": 12.5,
+    "qi_required": 80.0,
+    "color_imprint": "Sharp",
+    "min_realm": "Spirit"
   }
 }

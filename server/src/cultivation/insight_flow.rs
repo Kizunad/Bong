@@ -21,7 +21,7 @@ use super::insight::{
     InsightRequest,
 };
 use super::insight_apply::{apply_choice, InsightModifiers, UnlockedPerceptions};
-use super::insight_fallback::{fallback_for, fallback_for_context};
+use super::insight_fallback::fallback_for_context;
 use super::life_record::LifeRecord;
 use super::lifespan::{LifespanComponent, LifespanExtensionIntent};
 use super::tick::CultivationClock;
@@ -34,6 +34,9 @@ pub struct PendingInsightOffer {
     pub trigger_id: String,
     pub choices: Vec<InsightChoice>,
 }
+
+/// Agent offer 落地时可用的玩家上下文。
+pub type InsightOfferContext<'a> = (&'a QiColor, &'a PracticeLog, &'a InsightQuota, Realm);
 
 /// 突破成功/失败 → InsightRequest。
 ///
@@ -148,14 +151,32 @@ pub fn insight_trigger_on_wind_candle(
 ///
 /// 当前 DTO (`InsightChoiceV1`) 仅携带 `effect_kind` + `magnitude`，而服务器
 /// `InsightEffect` 变体大多还需要 `id` / `color` / `material` 等上下文，无法
-/// 从 DTO 无损重建。本函数采取务实策略：**用 `fallback_for(trigger_id)` 作为
-/// 实际效果来源**，agent 的产出仅作日志便于后续调试 prompt 质量。待 schema
-/// 扩充 `effect_params` 后，可在此处真正解析 agent 决策并落地。
+/// 从 DTO 无损重建。本函数采取务实策略：**用当前玩家上下文驱动的
+/// `fallback_for_context` 作为实际效果来源**，agent 的产出仅作日志便于后续调试
+/// prompt 质量。待 schema 扩充 `effect_params` 后，可在此处真正解析 agent 决策
+/// 并落地。
 pub fn ingest_agent_insight_offer(
     trigger_id: &str,
     agent_choices: &[crate::schema::cultivation::InsightChoiceV1],
+    context: Option<InsightOfferContext<'_>>,
 ) -> Option<Vec<InsightChoice>> {
-    let fallback = fallback_for(trigger_id);
+    let has_context = context.is_some();
+    let (fallback_color, fallback_log, fallback_quota);
+    let (qi_color, practice_log, quota, realm) = match context {
+        Some(context) => context,
+        None => {
+            fallback_color = QiColor::default();
+            fallback_log = PracticeLog::default();
+            fallback_quota = InsightQuota::default();
+            (
+                &fallback_color,
+                &fallback_log,
+                &fallback_quota,
+                Realm::Induce,
+            )
+        }
+    };
+    let fallback = fallback_for_context(trigger_id, qi_color, practice_log, quota, realm);
     if fallback.is_empty() {
         tracing::warn!(
             "[bong][cultivation] agent offer for trigger {:?} has no local fallback; dropping ({} agent choices ignored)",
@@ -165,9 +186,12 @@ pub fn ingest_agent_insight_offer(
         return None;
     }
     tracing::debug!(
-        "[bong][cultivation] agent offer trigger={:?} agent_choices={} -> using fallback ({} choices)",
+        "[bong][cultivation] agent offer trigger={:?} agent_choices={} context={} main_color={:?} realm={:?} -> using contextual fallback ({} choices)",
         trigger_id,
         agent_choices.len(),
+        if has_context { "entity" } else { "default" },
+        qi_color.main,
+        realm,
         fallback.len()
     );
     Some(fallback)
@@ -340,6 +364,48 @@ fn realm_tag(r: Realm) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cultivation::components::ColorKind;
+    use crate::cultivation::insight::{InsightAlignment, InsightEffect};
+    use crate::cultivation::insight_fallback::fallback_for;
+    use crate::schema::cultivation::InsightChoiceV1;
+
+    fn agent_choices() -> Vec<InsightChoiceV1> {
+        vec![
+            InsightChoiceV1 {
+                category: "qi".to_string(),
+                effect_kind: "qi_regen_factor".to_string(),
+                magnitude: 0.1,
+                flavor_text: "agent choice should not decide local effect params yet".to_string(),
+                narrator_voice: None,
+                alignment: Some("converge".to_string()),
+                cost_kind: Some("opposite_color_penalty".to_string()),
+                cost_magnitude: Some(0.05),
+                cost_flavor: Some("agent cost".to_string()),
+            },
+            InsightChoiceV1 {
+                category: "composure".to_string(),
+                effect_kind: "composure_recover".to_string(),
+                magnitude: 0.1,
+                flavor_text: "agent neutral".to_string(),
+                narrator_voice: None,
+                alignment: Some("neutral".to_string()),
+                cost_kind: Some("shock_sensitivity".to_string()),
+                cost_magnitude: Some(0.03),
+                cost_flavor: Some("agent cost".to_string()),
+            },
+            InsightChoiceV1 {
+                category: "color".to_string(),
+                effect_kind: "color_cap_add".to_string(),
+                magnitude: 0.04,
+                flavor_text: "agent diverge".to_string(),
+                narrator_voice: None,
+                alignment: Some("diverge".to_string()),
+                cost_kind: Some("main_color_penalty".to_string()),
+                cost_magnitude: Some(0.1),
+                cost_flavor: Some("agent cost".to_string()),
+            },
+        ]
+    }
 
     #[test]
     fn realm_tag_is_stable() {
@@ -351,5 +417,132 @@ mod tests {
     fn fallback_for_first_induce_nonempty() {
         let v = fallback_for("first_breakthrough_to_Induce");
         assert!(!v.is_empty());
+    }
+
+    #[test]
+    fn agent_offer_uses_same_contextual_fallback_as_local_request() {
+        let qi = QiColor {
+            main: ColorKind::Sharp,
+            ..QiColor::default()
+        };
+        let mut log = PracticeLog::default();
+        log.add(ColorKind::Sharp, 10.0);
+        let quota = InsightQuota::default();
+        let expected = fallback_for_context(
+            "first_breakthrough_to_Induce",
+            &qi,
+            &log,
+            &quota,
+            Realm::Induce,
+        );
+
+        let actual = ingest_agent_insight_offer(
+            "first_breakthrough_to_Induce",
+            &agent_choices(),
+            Some((&qi, &log, &quota, Realm::Induce)),
+        )
+        .expect("known trigger should map to contextual fallback");
+
+        assert_eq!(
+            actual
+                .iter()
+                .map(|choice| (choice.alignment, choice.target_color, choice.flavor.clone()))
+                .collect::<Vec<_>>(),
+            expected
+                .iter()
+                .map(|choice| (choice.alignment, choice.target_color, choice.flavor.clone()))
+                .collect::<Vec<_>>(),
+            "agent-fed fallback 必须与本地 InsightRequest 在同一上下文下的三轨语义一致"
+        );
+    }
+
+    #[test]
+    fn agent_offer_for_sharp_context_does_not_degrade_to_default_mellow() {
+        let qi = QiColor {
+            main: ColorKind::Sharp,
+            ..QiColor::default()
+        };
+        let quota = InsightQuota::default();
+
+        let choices = ingest_agent_insight_offer(
+            "first_breakthrough_to_Induce",
+            &agent_choices(),
+            Some((&qi, &PracticeLog::default(), &quota, Realm::Induce)),
+        )
+        .expect("known trigger should map to contextual fallback");
+
+        assert!(
+            choices.iter().any(|choice| choice.flavor.contains("锋锐")),
+            "Sharp 主色的 agent-fed offer 不应退化成默认 Mellow 文案，实际 choices={choices:?}"
+        );
+        assert!(
+            !choices.iter().all(|choice| choice.flavor.contains("醇")),
+            "agent-fed offer 不应全部呈现默认醇色模板，实际 choices={choices:?}"
+        );
+    }
+
+    #[test]
+    fn agent_offer_for_hunyuan_context_keeps_hunyuan_specific_choice() {
+        let qi = QiColor {
+            is_hunyuan: true,
+            ..QiColor::default()
+        };
+        let mut log = PracticeLog::default();
+        log.add(ColorKind::Turbid, 40.0);
+        let quota = InsightQuota::default();
+
+        let choices = ingest_agent_insight_offer(
+            "chaotic_to_hunyuan_pivot",
+            &agent_choices(),
+            Some((&qi, &log, &quota, Realm::Induce)),
+        )
+        .expect("known trigger should map to contextual fallback");
+
+        assert!(
+            choices
+                .iter()
+                .any(|choice| matches!(choice.effect, InsightEffect::HunyuanThreshold { .. })),
+            "混元上下文必须保留混元专属选项，不能退回默认 Mellow 三轨，实际 choices={choices:?}"
+        );
+        assert!(
+            choices.iter().any(|choice| {
+                choice.alignment == InsightAlignment::Diverge
+                    && choice.target_color == Some(ColorKind::Turbid)
+            }),
+            "混元 diverge 槽应根据 PracticeLog 选出最强色 Turbid，实际 choices={choices:?}"
+        );
+    }
+
+    #[test]
+    fn agent_offer_for_chaotic_context_keeps_chaotic_specific_choice() {
+        let qi = QiColor {
+            main: ColorKind::Violent,
+            is_chaotic: true,
+            ..QiColor::default()
+        };
+        let mut log = PracticeLog::default();
+        log.add(ColorKind::Violent, 30.0);
+        let quota = InsightQuota::default();
+
+        let choices = ingest_agent_insight_offer(
+            "first_breakthrough_to_Induce",
+            &agent_choices(),
+            Some((&qi, &log, &quota, Realm::Induce)),
+        )
+        .expect("known trigger should map to contextual fallback");
+
+        assert!(
+            choices
+                .iter()
+                .any(|choice| matches!(choice.effect, InsightEffect::ChaoticTolerance { .. })),
+            "杂色上下文必须保留杂色专属收束选项，不能退回默认 Mellow 三轨，实际 choices={choices:?}"
+        );
+        assert!(
+            choices.iter().any(|choice| {
+                choice.alignment == InsightAlignment::Diverge
+                    && choice.target_color == Some(ColorKind::Violent)
+            }),
+            "杂色 diverge 槽应根据 PracticeLog 选出最高权重主线 Violent，实际 choices={choices:?}"
+        );
     }
 }
