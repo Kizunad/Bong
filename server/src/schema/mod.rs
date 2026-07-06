@@ -31,6 +31,7 @@ pub mod dugu;
 pub mod dugu_v2;
 pub mod economy;
 pub mod elder_encounter;
+pub mod fauna_ecology;
 pub mod forge;
 pub mod forge_bridge;
 // plan-halfstep-rechallenge-integration-v1 P1：半步重渡 Redis → agent payload schema。

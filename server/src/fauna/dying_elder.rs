@@ -119,10 +119,11 @@ pub const EARTH_GRADE_TECHNIQUE_POOL: &[&str] = &[
 /// - `Recovering(n)` → `Betrayal` ：累计 ≥5 丹 + rand < betray_probability
 /// - `Recovering(n)` → `Dead` ：累计 ≥5 丹 + rand ≥ betray_probability（守信自裁）
 /// - `Betrayal` → `Dead` ：夺舍完成后大能力竭死亡
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Component)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Component, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum DyingElderState {
     /// 乞求态：求助玩家，等待给丹。负灵域 drain 持续消耗真元。
+    #[default]
     Plea,
     /// 恢复态：已收到 N 颗丹，inner 为累计丹数。真元有所恢复。
     /// 累计 ≥ DYING_ELDER_DAN_THRESHOLD 时触发结局判定。
@@ -139,12 +140,6 @@ pub enum DyingElderState {
         /// 是否死于背叛路线（夺舍力竭）。
         dead_by_betrayal: bool,
     },
-}
-
-impl Default for DyingElderState {
-    fn default() -> Self {
-        Self::Plea
-    }
 }
 
 // ── Blackboard ────────────────────────────────────────────────────────────────
@@ -1745,6 +1740,67 @@ mod tests {
         assert!(
             tsy && !qi,
             "spirit_qi=-0.4 等于阈值，应被拒绝（严格小于，qi_ok={qi}）"
+        );
+    }
+
+    #[test]
+    fn default_zone_registry_exposes_dying_elder_tsy_candidates() {
+        let registry = ZoneRegistry::load();
+        let candidate_names: Vec<_> = registry
+            .zones
+            .iter()
+            .filter(|zone| zone.is_tsy() && zone.spirit_qi < DYING_ELDER_SPIRIT_QI_THRESHOLD)
+            .map(|zone| zone.name.as_str())
+            .collect();
+
+        assert!(
+            !candidate_names.is_empty(),
+            "默认 ZoneRegistry 必须含至少 1 个满足垂死大能 gate 的 TSY zone"
+        );
+        assert!(
+            candidate_names.contains(&"tsy_daneng_01_shallow"),
+            "zones.tsy.json 的大能陨落浅层必须进入垂死大能候选集；实际候选={candidate_names:?}"
+        );
+    }
+
+    #[test]
+    fn spawn_system_emits_request_from_default_tsy_zones_after_interval() {
+        use valence::prelude::{Events, Update};
+
+        let mut app = App::new();
+        app.add_event::<DyingElderSpawnRequest>();
+        app.insert_resource(ZoneRegistry::load());
+        app.insert_resource(GameTick(DYING_ELDER_SPAWN_INTERVAL_TICKS as u32));
+        app.insert_resource(DyingElderSpawnTimer::default());
+        app.add_systems(Update, dying_elder_spawn_system);
+
+        app.update();
+
+        let events = app.world().resource::<Events<DyingElderSpawnRequest>>();
+        let requests: Vec<_> = events.get_reader().read(events).cloned().collect();
+        assert_eq!(
+            requests.len(),
+            1,
+            "到达 DYING_ELDER_SPAWN_INTERVAL_TICKS 后应真实 emit 1 个 spawn request"
+        );
+
+        let request = &requests[0];
+        let registry = app.world().resource::<ZoneRegistry>();
+        let zone = registry
+            .find_zone_by_name(&request.zone_name)
+            .expect("spawn request zone must exist in default ZoneRegistry");
+        assert!(
+            zone.is_tsy() && zone.spirit_qi < DYING_ELDER_SPIRIT_QI_THRESHOLD,
+            "spawn request 必须来自满足 gate 的 TSY zone；zone={} spirit_qi={}",
+            zone.name,
+            zone.spirit_qi
+        );
+
+        let timer = app.world().resource::<DyingElderSpawnTimer>();
+        assert_eq!(timer.total_spawned, 1);
+        assert_eq!(
+            timer.last_spawn_attempt_tick,
+            DYING_ELDER_SPAWN_INTERVAL_TICKS
         );
     }
 

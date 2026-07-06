@@ -160,7 +160,8 @@ _MASTER_SARCOPHAGUS = Placement(
     offset=(0, -4, 8), rotation=0, kind="nbt", payload="master_sarcophagus.nbt"
 )
 
-# Central path (6-wide, z from -8 to +144)
+# Central path (6-wide, 152-long, centered on offset z=64 -> world-relative
+# z from -12 to +139; see runner._block_grid center-anchor fix, fix-danzong)
 _CENTRAL_PATH = Placement(
     offset=(0, 0, 64), rotation=0, kind="block_grid", payload="central_path_6x152"
 )
@@ -185,7 +186,17 @@ _POISON_SPRINGS = (
 DAN_ZONG_COMPOUND_LAYOUT = LayoutSpec(
     name="dan_zong_compound",
     poi_kind="ruin",
-    radius=96,
+    # 244 = ceil(227.59) + 16 margin. 227.59 is the true max horizontal
+    # distance (incl. NBT footprint) from the POI center to any placed
+    # block, measured empirically via runner.run_layout() -- NOT 96. The
+    # dominant contributor is dan_zong_great_hall.nbt itself: it's a
+    # corner-anchored 200x50x120 "Forbidden City scale" structure (see
+    # scripts/nbt/structures/great_hall.py) pasted at offset (0,0,0), so its
+    # far corner sits at local (194, *, 119) -> dist=227.59 from the POI.
+    # (fix-danzong; old radius=96 covered barely the inner rings and left
+    # the entire hall + furnace row + path + bones + main spring floating
+    # over unflattened terrain.)
+    radius=244,
     placements=(
         # Central great hall
         _GREAT_HALL,

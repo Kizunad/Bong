@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 
+use valence::entity::EntityId;
 use valence::prelude::{
     bevy_ecs::query::QueryFilter, Added, Changed, Client, Entity, EventReader, Or, ParamSet,
     Position, Query, Res, Username, With,
@@ -16,16 +17,28 @@ use crate::schema::server_data::{
     SearchAbortedV1, SearchCompletedV1, SearchProgressV1, SearchStartedV1, ServerDataPayloadV1,
     ServerDataV1,
 };
+use crate::world::entity_model::BongVisualAttachment;
 use crate::world::tsy_container::{ContainerKind, KeyKind, LootContainer, SearchProgress};
 use crate::world::tsy_container_search::{
     SearchAbortReason, SearchAborted, SearchCompleted, StartSearchResult,
 };
 
-type ContainerStateQueryItem<'a> = (Entity, &'a LootContainer, &'a Position);
-type ChangedContainerFilter = Or<(Added<LootContainer>, Changed<LootContainer>)>;
+type ContainerStateQueryItem<'a> = (
+    Entity,
+    &'a LootContainer,
+    &'a Position,
+    Option<&'a BongVisualAttachment>,
+);
+type ChangedContainerFilter = Or<(
+    Added<LootContainer>,
+    Changed<LootContainer>,
+    Added<BongVisualAttachment>,
+    Changed<BongVisualAttachment>,
+)>;
 
 pub fn emit_container_state_payloads(
     containers: Query<ContainerStateQueryItem, ChangedContainerFilter>,
+    visual_ids: Query<&EntityId>,
     mut clients: Query<(Entity, &Username, &mut Client)>,
 ) {
     let player_ids = player_ids(
@@ -33,20 +46,25 @@ pub fn emit_container_state_payloads(
             .iter()
             .map(|(entity, username, _)| (entity, username)),
     );
-    let payloads = container_state_payloads(containers.iter(), &player_ids);
+    let payloads = container_state_payloads(containers.iter(), &player_ids, |visual| {
+        visual_ids.get(visual).ok().map(|entity_id| entity_id.get())
+    });
     broadcast(&mut clients, &payloads);
 }
 
 #[allow(clippy::type_complexity)]
 pub fn emit_container_state_payloads_to_joined_clients(
-    containers: Query<(Entity, &LootContainer, &Position)>,
+    containers: Query<ContainerStateQueryItem>,
+    visual_ids: Query<&EntityId>,
     mut clients: ParamSet<(
         Query<(Entity, &Username), With<Client>>,
         Query<(Entity, &Username, &mut Client), Added<Client>>,
     )>,
 ) {
     let player_ids = player_ids(clients.p0().iter());
-    let payloads = container_state_payloads(containers.iter(), &player_ids);
+    let payloads = container_state_payloads(containers.iter(), &player_ids, |visual| {
+        visual_ids.get(visual).ok().map(|entity_id| entity_id.get())
+    });
     let mut joined_clients = clients.p1();
     broadcast(&mut joined_clients, &payloads);
 }
@@ -161,13 +179,16 @@ pub fn emit_search_aborted_payloads(
 }
 
 fn container_state_payloads<'a>(
-    containers: impl Iterator<Item = (Entity, &'a LootContainer, &'a Position)>,
+    containers: impl Iterator<Item = ContainerStateQueryItem<'a>>,
     player_ids: &HashMap<Entity, String>,
+    visual_protocol_id: impl Fn(Entity) -> Option<i32>,
 ) -> Vec<Vec<u8>> {
     containers
-        .map(|(entity, container, position)| {
+        .map(|(entity, container, position, visual_attachment)| {
             ServerDataV1::new(ServerDataPayloadV1::ContainerState(ContainerStateV1 {
                 entity_id: entity.to_bits(),
+                visual_entity_id: visual_attachment
+                    .and_then(|attachment| visual_protocol_id(attachment.visual)),
                 kind: container_kind_wire(container.kind),
                 family_id: container.family_id.clone(),
                 world_pos: [position.0.x, position.0.y, position.0.z],
@@ -287,8 +308,9 @@ mod tests {
         let player_ids = HashMap::from([(player, "offline:Searcher".to_string())]);
 
         let payloads = container_state_payloads(
-            vec![(container_entity, &container, &position)].into_iter(),
+            vec![(container_entity, &container, &position, None)].into_iter(),
             &player_ids,
+            |_| None,
         );
 
         assert_eq!(payloads.len(), 1);
@@ -300,6 +322,39 @@ mod tests {
         assert_eq!(
             state.searched_by_player_id.as_deref(),
             Some("offline:Searcher")
+        );
+    }
+
+    #[test]
+    fn container_state_payload_includes_visual_protocol_id_when_attached() {
+        let container_entity = Entity::from_raw(42);
+        let visual_entity = Entity::from_raw(99);
+        let container = LootContainer::new(
+            ContainerKind::DryCorpse,
+            "tsy_lingxu_01".to_string(),
+            TsyDepth::Shallow,
+            "loot_pool".to_string(),
+            100,
+        );
+        let position = Position(DVec3::new(8.0, 64.0, -4.0));
+        let attachment = BongVisualAttachment {
+            visual: visual_entity,
+        };
+
+        let payloads = container_state_payloads(
+            vec![(container_entity, &container, &position, Some(&attachment))].into_iter(),
+            &HashMap::new(),
+            |visual| (visual == visual_entity).then_some(2048),
+        );
+
+        let decoded: ServerDataV1 = serde_json::from_slice(&payloads[0]).expect("payload decodes");
+        let ServerDataPayloadV1::ContainerState(state) = decoded.payload else {
+            panic!("expected container_state payload");
+        };
+        assert_eq!(
+            state.visual_entity_id,
+            Some(2048),
+            "container_state 必须带 visual protocol id，client 才能用准星 hit 反查 gameplay 容器"
         );
     }
 }

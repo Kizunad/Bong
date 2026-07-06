@@ -2269,7 +2269,20 @@ describe("processTsyZoneActivatedForUi (Fix①: triggerUi production path)", () 
 
   it("calls triggerUi with tsy_discovery scenario when a TSY zone activates with a player online", async () => {
     const uiRuntime = makeMockUiRuntime();
-    const state = createTestWorldState(); // has player with uuid "offline:test-player"
+    // 附加真实 _shallow 子 zone（plan §P1 修复后 zoneSnap 应命中它，而非结构性 miss）
+    const state = {
+      ...createTestWorldState(),
+      zones: [
+        ...createTestWorldState().zones,
+        {
+          name: "tsy_lingxu_01_shallow",
+          spirit_qi: 0.27,
+          danger_level: 4,
+          active_events: [],
+          player_count: 1,
+        },
+      ],
+    }; // has player with uuid "offline:test-player"
     // player_id 直接命中 state.players[0].uuid，无需 zone 名匹配
     const event = makeTsyZoneActivatedV1({ player_id: "offline:test-player" });
 
@@ -2288,8 +2301,185 @@ describe("processTsyZoneActivatedForUi (Fix①: triggerUi production path)", () 
     expect(target.uuid, "targetPlayer must be the player_id from the event").toBe("offline:test-player");
     const params = opts["params"] as Record<string, string>;
     expect(params["zone_name"], "zone_name must match family_id").toBe("tsy_lingxu_01");
-    expect(params["danger_tier"], "danger_tier must be resolved from zone snapshot").toBeTruthy();
+    // 具体值断言（而非 toBeTruthy）：danger_level=4 必须解析出 "高危"，锁定真实 zone 命中而非占位回退
+    expect(
+      params["danger_tier"],
+      `danger_tier must resolve to "高危" from the real _shallow zone (danger_level=4), got "${params["danger_tier"]}" — a toBeTruthy() assertion here would pass even on the placeholder "中危" fallback`,
+    ).toBe("高危");
+    expect(
+      params["spirit_qi_display"],
+      `spirit_qi_display must be "0.27" from the real _shallow zone snapshot, not the "0.50" placeholder, got "${params["spirit_qi_display"]}"`,
+    ).toBe("0.27");
     expect(params["agent_narrative"], "agent_narrative must contain family_id").toContain("tsy_lingxu_01");
+  });
+
+  it("_shallow 子 zone 命中 → 展示真实 spirit_qi/danger_tier（P1 修复主路径）", async () => {
+    // 回归：旧逻辑 state.zones.find(z => z.name === family_id) 结构性 miss（family_id 本身
+    // 不带 _shallow/_mid/_deep 后缀），永远回退占位值 "0.50"/"中危"。
+    const uiRuntime = makeMockUiRuntime();
+    const state = {
+      ...createTestWorldState(),
+      zones: [
+        {
+          name: "tsy_lingxu_01_shallow",
+          spirit_qi: -0.42,
+          danger_level: 6,
+          active_events: [],
+          player_count: 1,
+        },
+      ],
+    };
+    const event = makeTsyZoneActivatedV1({ family_id: "tsy_lingxu_01" });
+
+    await processTsyZoneActivatedForUi({
+      state,
+      events: [event],
+      agentUiRuntime: uiRuntime as never,
+      logger: { log: vi.fn(), warn: vi.fn() },
+    });
+
+    const params = (uiRuntime.triggerUi.mock.calls[0][0] as Record<string, unknown>)["params"] as Record<string, string>;
+    expect(
+      params["spirit_qi_display"],
+      `expected real _shallow spirit_qi -0.42 formatted as "-0.42", got "${params["spirit_qi_display"]}" (would be "0.50" if still hitting the placeholder fallback)`,
+    ).toBe("-0.42");
+    expect(
+      params["danger_tier"],
+      `expected danger_level=6 on _shallow to resolve to "极危", got "${params["danger_tier"]}" (would be "中危" if still hitting the placeholder fallback)`,
+    ).toBe("极危");
+  });
+
+  it("_shallow 缺失、_mid 命中 → 回退取 _mid 的真实值", async () => {
+    const uiRuntime = makeMockUiRuntime();
+    const state = {
+      ...createTestWorldState(),
+      zones: [
+        {
+          name: "tsy_lingxu_01_mid",
+          spirit_qi: 0.15,
+          danger_level: 3,
+          active_events: [],
+          player_count: 2,
+        },
+      ],
+    };
+    const event = makeTsyZoneActivatedV1({ family_id: "tsy_lingxu_01" });
+
+    await processTsyZoneActivatedForUi({
+      state,
+      events: [event],
+      agentUiRuntime: uiRuntime as never,
+      logger: { log: vi.fn(), warn: vi.fn() },
+    });
+
+    const params = (uiRuntime.triggerUi.mock.calls[0][0] as Record<string, unknown>)["params"] as Record<string, string>;
+    expect(
+      params["spirit_qi_display"],
+      `no _shallow zone exists, must fall back to _mid's spirit_qi 0.15, got "${params["spirit_qi_display"]}"`,
+    ).toBe("0.15");
+    expect(
+      params["danger_tier"],
+      `no _shallow zone exists, must fall back to _mid's danger_level=3 → "中危", got "${params["danger_tier"]}"`,
+    ).toBe("中危");
+  });
+
+  it("仅 _deep 存在 → 回退取 _deep 的真实值", async () => {
+    const uiRuntime = makeMockUiRuntime();
+    const state = {
+      ...createTestWorldState(),
+      zones: [
+        {
+          name: "tsy_lingxu_01_deep",
+          spirit_qi: -0.8,
+          danger_level: 7,
+          active_events: [],
+          player_count: 0,
+        },
+      ],
+    };
+    const event = makeTsyZoneActivatedV1({ family_id: "tsy_lingxu_01" });
+
+    await processTsyZoneActivatedForUi({
+      state,
+      events: [event],
+      agentUiRuntime: uiRuntime as never,
+      logger: { log: vi.fn(), warn: vi.fn() },
+    });
+
+    const params = (uiRuntime.triggerUi.mock.calls[0][0] as Record<string, unknown>)["params"] as Record<string, string>;
+    expect(
+      params["spirit_qi_display"],
+      `neither _shallow nor _mid exists, must fall back to _deep's spirit_qi -0.80, got "${params["spirit_qi_display"]}"`,
+    ).toBe("-0.80");
+    expect(
+      params["danger_tier"],
+      `neither _shallow nor _mid exists, must fall back to _deep's danger_level=7 → "极危", got "${params["danger_tier"]}"`,
+    ).toBe("极危");
+  });
+
+  it("优先级 pin：_shallow 与 _deep 同时存在（数值不同）→ 必须取 _shallow，不被未来重构颠倒", async () => {
+    const uiRuntime = makeMockUiRuntime();
+    const state = {
+      ...createTestWorldState(),
+      zones: [
+        {
+          name: "tsy_lingxu_01_deep",
+          spirit_qi: -0.99,
+          danger_level: 7,
+          active_events: [],
+          player_count: 0,
+        },
+        {
+          name: "tsy_lingxu_01_shallow",
+          spirit_qi: 0.1,
+          danger_level: 1,
+          active_events: [],
+          player_count: 1,
+        },
+      ],
+    };
+    const event = makeTsyZoneActivatedV1({ family_id: "tsy_lingxu_01" });
+
+    await processTsyZoneActivatedForUi({
+      state,
+      events: [event],
+      agentUiRuntime: uiRuntime as never,
+      logger: { log: vi.fn(), warn: vi.fn() },
+    });
+
+    const params = (uiRuntime.triggerUi.mock.calls[0][0] as Record<string, unknown>)["params"] as Record<string, string>;
+    expect(
+      params["spirit_qi_display"],
+      `_shallow (0.10) must win over _deep (-0.99) regardless of array order, got "${params["spirit_qi_display"]}"`,
+    ).toBe("0.10");
+    expect(
+      params["danger_tier"],
+      `_shallow's danger_level=1 → "低危" must win over _deep's danger_level=7 → "极危", got "${params["danger_tier"]}"`,
+    ).toBe("低危");
+  });
+
+  it("三层皆缺 → 回退占位值（真缺失场景，非结构性 miss）", async () => {
+    const uiRuntime = makeMockUiRuntime();
+    // createTestWorldState() 默认 zones 只有 "starter_zone"，不含任何 tsy_lingxu_01_* 子 zone
+    const state = createTestWorldState();
+    const event = makeTsyZoneActivatedV1({ family_id: "tsy_lingxu_01" });
+
+    await processTsyZoneActivatedForUi({
+      state,
+      events: [event],
+      agentUiRuntime: uiRuntime as never,
+      logger: { log: vi.fn(), warn: vi.fn() },
+    });
+
+    const params = (uiRuntime.triggerUi.mock.calls[0][0] as Record<string, unknown>)["params"] as Record<string, string>;
+    expect(
+      params["spirit_qi_display"],
+      `all three subzones genuinely absent from state.zones, must fall back to placeholder "0.50", got "${params["spirit_qi_display"]}"`,
+    ).toBe("0.50");
+    expect(
+      params["danger_tier"],
+      `all three subzones genuinely absent from state.zones, must fall back to placeholder "中危", got "${params["danger_tier"]}"`,
+    ).toBe("中危");
   });
 
   it("player_id 直接命中目标玩家（不靠 zone 名匹配）", async () => {

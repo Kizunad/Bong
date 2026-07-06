@@ -22,6 +22,8 @@ use crate::alchemy::{
     learned::LearnResult, AlchemyFurnace, AlchemySession, Intervention, LearnedRecipes,
     PlaceFurnaceRequest, RecipeRegistry, MIN_ZONE_QI_TO_ALCHEMY,
 };
+use crate::botany::components::HarvestSessionStore;
+use crate::botany::harvest::request_harvest_mode;
 use crate::coffin::{CoffinEnterRequest, CoffinLeaveRequest, CoffinPlaceRequest};
 use crate::combat::anqi_v2::{cycle_container_slot, switch_container_slot};
 use crate::combat::carrier::{CarrierSlot, ChargeCarrierIntent, ThrowCarrierIntent};
@@ -128,7 +130,7 @@ use crate::npc::interaction_memory::{
 use crate::npc::lifecycle::NpcArchetype;
 use crate::npc::spawn::NpcMarker;
 use crate::npc::trade::NpcPlayerReputation;
-use crate::player::gameplay::{GameplayAction, GameplayActionQueue, GatherAction};
+use crate::player::gameplay::{GameplayActionQueue, GameplayTick};
 use crate::player::state::{
     canonical_player_id, update_player_ui_prefs, PlayerState, PlayerStatePersistence,
 };
@@ -254,6 +256,11 @@ pub struct CombatRequestParams<'w, 's> {
 pub struct DroppedLootRequestParams<'w, 's> {
     pub registry: ResMut<'w, DroppedLootRegistry>,
     pub positions: Query<'w, 's, &'static valence::prelude::Position>,
+    /// plan-remains-suite P0 — 遗骸 G 键统一交互，转发给 `inventory::handle_remains_loot_intents`
+    /// 独立 system（该 system 需要的 `(Entity, &UniqueId, &mut RemainsContainer, ...)` 查询
+    /// 形状与本巨型 match 函数已有的 `Query<&mut PlayerInventory>` 放在同一 system 里会
+    /// 产生 query 别名冲突，故走 event 中转，与 `pickup_dropped_item` 的直接处理不同）。
+    pub remains_loot_tx: EventWriter<'w, crate::inventory::RemainsLootIntent>,
 }
 
 /// plan-lingtian-v1 §1.2-§1.7 — 6 类 intent 共享 EventWriter 包，避开
@@ -303,6 +310,8 @@ pub struct AlchemyRequestParams<'w, 's> {
 #[derive(SystemParam)]
 pub struct ClientRequestDispatchParams<'w> {
     pub gameplay_queue: Option<valence::prelude::ResMut<'w, GameplayActionQueue>>,
+    pub gameplay_tick: Option<Res<'w, GameplayTick>>,
+    pub harvest_sessions: Option<ResMut<'w, HarvestSessionStore>>,
     pub breakthrough_tx: EventWriter<'w, BreakthroughRequest>,
     pub start_du_xu_tx: Option<ResMut<'w, Events<StartDuXuRequest>>>,
     pub void_action_tx: Option<ResMut<'w, Events<VoidActionIntent>>>,
@@ -572,6 +581,7 @@ pub fn handle_client_request_payloads(
             | ClientRequestV1::DropWeaponIntent { v, .. }
             | ClientRequestV1::RepairWeaponIntent { v, .. }
             | ClientRequestV1::PickupDroppedItem { v, .. }
+            | ClientRequestV1::RemainsLoot { v, .. }
             | ClientRequestV1::MineralProbe { v, .. }
             | ClientRequestV1::FreshnessProbe { v, .. }
             | ClientRequestV1::ApplyPill { v, .. }
@@ -765,9 +775,9 @@ pub fn handle_client_request_payloads(
             ClientRequestV1::BotanyHarvestRequest {
                 session_id, mode, ..
             } => {
-                let Some(queue) = dispatch.gameplay_queue.as_deref_mut() else {
+                let Some(harvest_sessions) = dispatch.harvest_sessions.as_deref_mut() else {
                     tracing::warn!(
-                        "[bong][network] dropped botany_harvest_request because GameplayActionQueue is missing"
+                        "[bong][network] dropped botany_harvest_request because HarvestSessionStore is missing"
                     );
                     continue;
                 };
@@ -775,21 +785,34 @@ pub fn handle_client_request_payloads(
                     .get(ev.client)
                     .map(|(username, _)| canonical_player_id(username.0.as_str()))
                     .unwrap_or_else(|_| format!("offline:{:?}", ev.client));
-                queue.enqueue(
-                    player_key,
-                    GameplayAction::Gather(GatherAction {
-                        resource: session_id,
-                        target_entity: None,
-                        mode: Some(match mode {
-                            crate::schema::botany::BotanyHarvestModeV1::Manual => {
-                                crate::botany::components::BotanyHarvestMode::Manual
-                            }
-                            crate::schema::botany::BotanyHarvestModeV1::Auto => {
-                                crate::botany::components::BotanyHarvestMode::Auto
-                            }
-                        }),
-                    }),
-                );
+                let requested_mode = match mode {
+                    crate::schema::botany::BotanyHarvestModeV1::Manual => {
+                        crate::botany::components::BotanyHarvestMode::Manual
+                    }
+                    crate::schema::botany::BotanyHarvestModeV1::Auto => {
+                        crate::botany::components::BotanyHarvestMode::Auto
+                    }
+                };
+                let now_tick = dispatch
+                    .gameplay_tick
+                    .as_ref()
+                    .map(|tick| tick.current_tick())
+                    .unwrap_or(combat_clock.tick);
+                if let Err(err) = request_harvest_mode(
+                    harvest_sessions,
+                    session_id.as_str(),
+                    ev.client,
+                    requested_mode,
+                    now_tick,
+                ) {
+                    tracing::warn!(
+                        "[bong][network] rejected botany_harvest_request player={} session={} mode={:?}: {}",
+                        player_key,
+                        session_id,
+                        requested_mode,
+                        err
+                    );
+                }
             }
             // ── 炼丹请求 ECS dispatch (plan-alchemy-v1 §4) ──────────────────
             ClientRequestV1::AlchemyTurnPage { delta, .. } => {
@@ -1696,6 +1719,7 @@ pub fn handle_client_request_payloads(
                 instance_id,
                 from,
                 to,
+                rotated,
                 ..
             } => {
                 handle_inventory_move(
@@ -1703,6 +1727,7 @@ pub fn handle_client_request_payloads(
                     instance_id,
                     from,
                     to,
+                    rotated,
                     &combat_params.item_registry,
                     &mut inventories,
                     &mut clients,
@@ -1746,6 +1771,8 @@ pub fn handle_client_request_payloads(
                         slot: EquipSlotV1::Chest,
                         state: EquipStateV1::Worn,
                     },
+                    // 伪皮装备走 equip 目标，非网格落位，旋转标志天然不适用。
+                    false,
                     &combat_params.item_registry,
                     &mut inventories,
                     &mut clients,
@@ -1858,6 +1885,24 @@ pub fn handle_client_request_payloads(
                     alchemy_params.attrition_applied_events.as_deref_mut(),
                     alchemy_params.tsy_lifecycle.as_deref(),
                 );
+            }
+            ClientRequestV1::RemainsLoot { remains_id, .. } => {
+                // 权威校验（同 layer/dimension + 2.5m 范围 + 内容转移）全部在
+                // `inventory::handle_remains_loot_intents` 里做；这里只做最基本的
+                // 空字符串防御，真正的"遗骸存不存在/够不够得着"交给那个 system 判定。
+                if remains_id.trim().is_empty() {
+                    tracing::warn!(
+                        "[bong][network] client_request remains_loot rejected: empty remains_id from {:?}",
+                        ev.client
+                    );
+                } else {
+                    dropped_loot_params
+                        .remains_loot_tx
+                        .send(crate::inventory::RemainsLootIntent {
+                            entity: ev.client,
+                            remains_id,
+                        });
+                }
             }
             ClientRequestV1::MineralProbe { x, y, z, .. } => {
                 let position = valence::prelude::BlockPos::new(x, y, z);
@@ -3454,6 +3499,11 @@ fn skill_scroll_spec(template_id: &str) -> Option<(SkillId, u32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::botany::components::{
+        BotanyHarvestMode, BotanyPhase, HarvestSession, HarvestSessionStore,
+    };
+    use crate::botany::harvest::harvest_duration_ticks_for;
+    use crate::botany::registry::BotanyPlantId;
     use crate::combat::components::{UnlockedStyles, WoundKind, Wounds};
     use crate::cultivation::components::{MeridianSystem, Realm};
     use crate::cultivation::tribulation::TribulationState;
@@ -4067,6 +4117,8 @@ mod tests {
         app.insert_resource(GameplayActionQueue::default());
         app.insert_resource(AlchemyMockState::default());
         app.insert_resource(DroppedLootRegistry::default());
+        // plan-remains-suite P0 — DroppedLootRequestParams 新增 EventWriter<RemainsLootIntent>。
+        app.add_event::<crate::inventory::RemainsLootIntent>();
         app.insert_resource(ItemRegistry::default());
         app.insert_resource(RecipeRegistry::default());
         app.insert_resource(ZoneRegistry::fallback());
@@ -4142,6 +4194,46 @@ mod tests {
             Update,
             crate::alchemy::apply_alchemy_explode_outcomes.after(handle_client_request_payloads),
         );
+    }
+
+    fn upsert_test_harvest_session(
+        app: &mut App,
+        player_id: &str,
+        client_entity: Entity,
+        mode: BotanyHarvestMode,
+        started_at_tick: u64,
+        last_progress: f32,
+    ) -> Entity {
+        let plant = app.world_mut().spawn_empty().id();
+        app.world_mut()
+            .resource_mut::<HarvestSessionStore>()
+            .upsert_session(HarvestSession {
+                player_id: player_id.to_string(),
+                client_entity,
+                target_entity: Some(plant),
+                target_plant: BotanyPlantId::CiSheHao,
+                mode,
+                started_at_tick,
+                duration_ticks: harvest_duration_ticks_for(mode),
+                phase: BotanyPhase::InProgress,
+                last_progress,
+                origin_position: [1.0, 64.0, 1.0],
+            });
+        plant
+    }
+
+    fn send_botany_harvest_request(app: &mut App, client: Entity, session_id: &str, mode: &str) {
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client,
+                channel: ident!("bong:client_request").into(),
+                data: format!(
+                    r#"{{"type":"botany_harvest_request","v":1,"session_id":"{session_id}","mode":"{mode}"}}"#
+                )
+                .into_bytes()
+                .into_boxed_slice(),
+            });
     }
 
     fn neutral_faction_membership() -> FactionMembership {
@@ -4477,6 +4569,65 @@ mod tests {
             intents[0].count, 16,
             "count 必须透传，实为 {}",
             intents[0].count
+        );
+    }
+
+    fn dispatch_remains_loot(
+        json: &[u8],
+    ) -> (
+        valence::prelude::Entity,
+        Vec<crate::inventory::RemainsLootIntent>,
+    ) {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: json.to_vec().into_boxed_slice(),
+            });
+        app.update();
+        let events = app
+            .world()
+            .resource::<valence::prelude::Events<crate::inventory::RemainsLootIntent>>();
+        let collected = events
+            .iter_current_update_events()
+            .cloned()
+            .collect::<Vec<_>>();
+        (entity, collected)
+    }
+
+    #[test]
+    fn remains_loot_request_dispatches_intent_with_fields() {
+        let (entity, intents) = dispatch_remains_loot(
+            br#"{"type":"remains_loot","v":1,"remains_id":"3fa85f64-5717-4562-b3fc-2c963f66afa6"}"#,
+        );
+
+        assert_eq!(
+            intents.len(),
+            1,
+            "合法 remains_loot payload 应 emit 恰好 1 次 RemainsLootIntent，实为 {}",
+            intents.len()
+        );
+        assert_eq!(intents[0].entity, entity, "intent 必须带回发起玩家 entity");
+        assert_eq!(
+            intents[0].remains_id, "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+            "remains_id 必须从 wire payload 原样透传"
+        );
+    }
+
+    #[test]
+    fn remains_loot_request_with_blank_id_is_dropped() {
+        let (_entity, intents) =
+            dispatch_remains_loot(br#"{"type":"remains_loot","v":1,"remains_id":"   "}"#);
+
+        assert!(
+            intents.is_empty(),
+            "空白 remains_id 应被 handler 拦截，不应 emit RemainsLootIntent；实际 {} 条",
+            intents.len()
         );
     }
 
@@ -5270,6 +5421,8 @@ mod tests {
         app.insert_resource(GameplayActionQueue::default());
         app.insert_resource(AlchemyMockState::default());
         app.insert_resource(DroppedLootRegistry::default());
+        // plan-remains-suite P0 — DroppedLootRequestParams 新增 EventWriter<RemainsLootIntent>。
+        app.add_event::<crate::inventory::RemainsLootIntent>();
         app.insert_resource(ItemRegistry::default());
         app.insert_resource(RecipeRegistry::default());
         app.add_event::<CustomPayloadEvent>();
@@ -5342,6 +5495,222 @@ mod tests {
                 .0
                 .is_empty(),
             "unsupported request version should not emit InsightChosen"
+        );
+    }
+
+    #[test]
+    fn botany_harvest_request_updates_existing_session_without_gather_enqueue() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        app.insert_resource(HarvestSessionStore::default());
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        upsert_test_harvest_session(
+            &mut app,
+            "offline:Azure",
+            entity,
+            BotanyHarvestMode::Manual,
+            10,
+            0.5,
+        );
+        app.world_mut()
+            .resource_mut::<GameplayActionQueue>()
+            .enqueue(
+                "offline:Other",
+                crate::player::gameplay::GameplayAction::AttemptBreakthrough,
+            );
+
+        send_botany_harvest_request(&mut app, entity, "offline:Azure", "auto");
+
+        app.update();
+
+        let store = app.world().resource::<HarvestSessionStore>();
+        let session = store.session_for("offline:Azure").unwrap();
+        assert_eq!(session.mode, BotanyHarvestMode::Auto);
+        assert_eq!(
+            session.duration_ticks,
+            harvest_duration_ticks_for(BotanyHarvestMode::Auto)
+        );
+        assert_eq!(session.started_at_tick, 0);
+        assert_eq!(session.last_progress, 0.0);
+        assert_eq!(session.phase, BotanyPhase::InProgress);
+
+        let pending = app
+            .world()
+            .resource::<GameplayActionQueue>()
+            .pending_actions_snapshot();
+        assert_eq!(
+            pending.len(),
+            1,
+            "botany_harvest_request must not enqueue a legacy Gather action"
+        );
+        assert!(matches!(
+            pending[0].action,
+            crate::player::gameplay::GameplayAction::AttemptBreakthrough
+        ));
+    }
+
+    #[test]
+    fn botany_harvest_request_rejects_missing_session_without_gather_enqueue() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        app.insert_resource(HarvestSessionStore::default());
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+
+        send_botany_harvest_request(&mut app, entity, "expired-session-token", "auto");
+
+        app.update();
+
+        assert!(
+            app.world()
+                .resource::<HarvestSessionStore>()
+                .session_for("expired-session-token")
+                .is_none(),
+            "invalid botany session_id must not create a harvest session"
+        );
+        assert!(
+            app.world()
+                .resource::<GameplayActionQueue>()
+                .pending_actions_snapshot()
+                .is_empty(),
+            "invalid botany session_id must not be rerouted into legacy Gather"
+        );
+    }
+
+    #[test]
+    fn botany_harvest_request_rejects_different_client_session_without_mutation() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        app.insert_resource(HarvestSessionStore::default());
+
+        let (azure_bundle, _azure_helper) = create_mock_client("Azure");
+        let azure = app.world_mut().spawn(azure_bundle).id();
+        let (crimson_bundle, _crimson_helper) = create_mock_client("Crimson");
+        let crimson = app.world_mut().spawn(crimson_bundle).id();
+        upsert_test_harvest_session(
+            &mut app,
+            "offline:Azure",
+            azure,
+            BotanyHarvestMode::Manual,
+            10,
+            0.5,
+        );
+
+        send_botany_harvest_request(&mut app, crimson, "offline:Azure", "auto");
+
+        app.update();
+
+        let store = app.world().resource::<HarvestSessionStore>();
+        let session = store.session_for("offline:Azure").unwrap();
+        assert_eq!(
+            session.mode,
+            BotanyHarvestMode::Manual,
+            "cross-client mode request must not mutate another player's session"
+        );
+        assert_eq!(session.started_at_tick, 10);
+        assert_eq!(
+            session.duration_ticks,
+            harvest_duration_ticks_for(BotanyHarvestMode::Manual)
+        );
+        assert_eq!(session.last_progress, 0.5);
+        assert!(
+            app.world()
+                .resource::<GameplayActionQueue>()
+                .pending_actions_snapshot()
+                .is_empty(),
+            "rejected cross-client request must not enqueue legacy Gather"
+        );
+    }
+
+    #[test]
+    fn botany_harvest_request_invalid_session_does_not_grant_gather_rewards() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        app.insert_resource(HarvestSessionStore::default());
+        app.insert_resource(GameplayTick::default());
+        app.insert_resource(crate::player::gameplay::PendingGameplayNarrations::default());
+        app.insert_resource(crate::qi_physics::WorldQiAccount::default());
+        app.add_systems(
+            Update,
+            crate::player::gameplay::apply_queued_gameplay_actions
+                .after(handle_client_request_payloads),
+        );
+
+        let initial_state = PlayerState {
+            karma: 0.12,
+            inventory_score: 0.34,
+        };
+        let initial_qi = 20.0;
+        let (mut client_bundle, _helper) = create_mock_client("Azure");
+        client_bundle.player.position = Position::new([8.0, 66.0, 8.0]);
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                initial_state.clone(),
+                Cultivation {
+                    qi_current: initial_qi,
+                    qi_max: 100.0,
+                    ..Cultivation::default()
+                },
+            ))
+            .id();
+        let zone_qi_before = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .expect("fallback spawn zone should exist")
+            .spirit_qi;
+
+        send_botany_harvest_request(&mut app, entity, "expired-session-token", "auto");
+
+        app.update();
+
+        let player_state = app
+            .world()
+            .entity(entity)
+            .get::<PlayerState>()
+            .expect("player state should remain attached");
+        assert_eq!(
+            player_state, &initial_state,
+            "invalid mode request must not mutate karma or inventory_score via Gather"
+        );
+        let cultivation = app
+            .world()
+            .entity(entity)
+            .get::<Cultivation>()
+            .expect("cultivation should remain attached");
+        assert_eq!(
+            cultivation.qi_current, initial_qi,
+            "invalid mode request must not drain zone qi into the player"
+        );
+        let zone_qi_after = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .expect("fallback spawn zone should still exist")
+            .spirit_qi;
+        assert_eq!(
+            zone_qi_after, zone_qi_before,
+            "invalid mode request must not mutate zone spirit_qi"
+        );
+        assert!(
+            app.world()
+                .resource::<crate::qi_physics::WorldQiAccount>()
+                .transfers()
+                .is_empty(),
+            "invalid mode request must not append gather qi audit transfers"
+        );
+        let narrations = app
+            .world_mut()
+            .resource_mut::<crate::player::gameplay::PendingGameplayNarrations>()
+            .drain();
+        assert!(
+            narrations.is_empty(),
+            "invalid mode request must not emit legacy gather narration"
         );
     }
 
@@ -5782,6 +6151,211 @@ mod tests {
         );
     }
 
+    /// plan-rotate-v1 e2e — 客户端 JSON wire 带 rotated:true 的 inventory_move_intent
+    /// 走完整 handler 链路后，instance 的 grid_w/grid_h 在 PlayerInventory 中互换。
+    #[test]
+    fn inventory_move_intent_with_rotated_true_swaps_dims_end_to_end() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        app.insert_resource(ItemRegistry::from_map(HashMap::from([(
+            "long_rod".to_string(),
+            ItemTemplate {
+                id: "long_rod".to_string(),
+                display_name: "长杆".to_string(),
+                category: ItemCategory::Misc,
+                placeable: None,
+                max_stack_count: 1,
+                grid_w: 2,
+                grid_h: 1,
+                base_weight: 1.0,
+                rarity: ItemRarity::Common,
+                spirit_quality_initial: 1.0,
+                description: String::new(),
+                effect: None,
+                cast_duration_ms: crate::inventory::DEFAULT_CAST_DURATION_MS,
+                cooldown_ms: crate::inventory::DEFAULT_COOLDOWN_MS,
+                weapon_spec: None,
+                forge_station_spec: None,
+                blueprint_scroll_spec: None,
+                inscription_scroll_spec: None,
+                technique_scroll_spec: None,
+                readable_scroll_spec: None,
+                recipe_fragment_spec: None,
+                container_spec: None,
+                shelflife_profile: None,
+                shield_spec: None,
+                shelflife_track: None,
+            },
+        )])));
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                inventory_with_item(ItemInstance {
+                    instance_id: 77,
+                    template_id: "long_rod".to_string(),
+                    display_name: "长杆".to_string(),
+                    grid_w: 2,
+                    grid_h: 1,
+                    weight: 1.0,
+                    rarity: ItemRarity::Common,
+                    description: String::new(),
+                    stack_count: 1,
+                    spirit_quality: 1.0,
+                    durability: 1.0,
+                    freshness: None,
+                    mineral_id: None,
+                    charges: None,
+                    forge_quality: None,
+                    forge_color: None,
+                    forge_side_effects: Vec::new(),
+                    forge_achieved_tier: None,
+                    alchemy: None,
+                    lingering_owner_qi: None,
+                }),
+                Cultivation::default(),
+                PlayerState::default(),
+                QuickSlotBindings::default(),
+                UnlockedStyles::default(),
+            ))
+            .id();
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"inventory_move_intent","v":1,"instance_id":77,"rotated":true,"from":{"kind":"container","container_id":"main_pack","row":0,"col":0},"to":{"kind":"container","container_id":"main_pack","row":2,"col":3}}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let inventory = app.world().get::<PlayerInventory>(entity).unwrap();
+        let placed = inventory.containers[0]
+            .items
+            .iter()
+            .find(|p| p.instance.instance_id == 77)
+            .expect("item should remain in main_pack");
+        assert_eq!(
+            (placed.row, placed.col),
+            (2, 3),
+            "rotated move 应落到目标格 (2,3)"
+        );
+        assert_eq!(
+            (placed.instance.grid_w, placed.instance.grid_h),
+            (1, 2),
+            "e2e：rotated:true 落位后 grid_w/grid_h 应互换为 1x2，实际 {}x{}",
+            placed.instance.grid_w,
+            placed.instance.grid_h
+        );
+    }
+
+    /// plan-rotate-v1 e2e — rotated 落位越界（2x1 转 1x2 撞底）被拒后，
+    /// 原物品位置与朝向均未变（无脏状态），且不 panic。
+    #[test]
+    fn inventory_move_intent_rotated_rejection_leaves_inventory_clean_end_to_end() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        app.insert_resource(ItemRegistry::from_map(HashMap::from([(
+            "long_rod".to_string(),
+            ItemTemplate {
+                id: "long_rod".to_string(),
+                display_name: "长杆".to_string(),
+                category: ItemCategory::Misc,
+                placeable: None,
+                max_stack_count: 1,
+                grid_w: 2,
+                grid_h: 1,
+                base_weight: 1.0,
+                rarity: ItemRarity::Common,
+                spirit_quality_initial: 1.0,
+                description: String::new(),
+                effect: None,
+                cast_duration_ms: crate::inventory::DEFAULT_CAST_DURATION_MS,
+                cooldown_ms: crate::inventory::DEFAULT_COOLDOWN_MS,
+                weapon_spec: None,
+                forge_station_spec: None,
+                blueprint_scroll_spec: None,
+                inscription_scroll_spec: None,
+                technique_scroll_spec: None,
+                readable_scroll_spec: None,
+                recipe_fragment_spec: None,
+                container_spec: None,
+                shelflife_profile: None,
+                shield_spec: None,
+                shelflife_track: None,
+            },
+        )])));
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                inventory_with_item(ItemInstance {
+                    instance_id: 77,
+                    template_id: "long_rod".to_string(),
+                    display_name: "长杆".to_string(),
+                    grid_w: 2,
+                    grid_h: 1,
+                    weight: 1.0,
+                    rarity: ItemRarity::Common,
+                    description: String::new(),
+                    stack_count: 1,
+                    spirit_quality: 1.0,
+                    durability: 1.0,
+                    freshness: None,
+                    mineral_id: None,
+                    charges: None,
+                    forge_quality: None,
+                    forge_color: None,
+                    forge_side_effects: Vec::new(),
+                    forge_achieved_tier: None,
+                    alchemy: None,
+                    lingering_owner_qi: None,
+                }),
+                Cultivation::default(),
+                PlayerState::default(),
+                QuickSlotBindings::default(),
+                UnlockedStyles::default(),
+            ))
+            .id();
+        // 目标 (4,0)：不旋转时 2x1 在最底行放得下；旋转成 1x2 后行溢出 → 拒绝。
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"inventory_move_intent","v":1,"instance_id":77,"rotated":true,"from":{"kind":"container","container_id":"main_pack","row":0,"col":0},"to":{"kind":"container","container_id":"main_pack","row":4,"col":0}}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let inventory = app.world().get::<PlayerInventory>(entity).unwrap();
+        let placed = inventory.containers[0]
+            .items
+            .iter()
+            .find(|p| p.instance.instance_id == 77)
+            .expect("item should remain in main_pack");
+        assert_eq!(
+            (placed.row, placed.col),
+            (0, 0),
+            "旋转越界拒绝后物品必须留在原位"
+        );
+        assert_eq!(
+            (placed.instance.grid_w, placed.instance.grid_h),
+            (2, 1),
+            "旋转越界拒绝后必须保持原朝向 2x1（无脏状态）"
+        );
+    }
+
     #[test]
     fn apply_pill_during_tribulation_recovers_current_qi_only() {
         let mut app = App::new();
@@ -5886,6 +6460,8 @@ mod tests {
         app.insert_resource(GameplayActionQueue::default());
         app.insert_resource(AlchemyMockState::default());
         app.insert_resource(DroppedLootRegistry::default());
+        // plan-remains-suite P0 — DroppedLootRequestParams 新增 EventWriter<RemainsLootIntent>。
+        app.add_event::<crate::inventory::RemainsLootIntent>();
         app.insert_resource(ItemRegistry::default());
         app.insert_resource(RecipeRegistry::default());
         app.add_event::<CustomPayloadEvent>();
@@ -5951,6 +6527,8 @@ mod tests {
         app.insert_resource(GameplayActionQueue::default());
         app.insert_resource(AlchemyMockState::default());
         app.insert_resource(DroppedLootRegistry::default());
+        // plan-remains-suite P0 — DroppedLootRequestParams 新增 EventWriter<RemainsLootIntent>。
+        app.add_event::<crate::inventory::RemainsLootIntent>();
         app.insert_resource(ItemRegistry::default());
         app.insert_resource(RecipeRegistry::default());
         app.add_event::<CustomPayloadEvent>();
@@ -6181,6 +6759,8 @@ mod tests {
         app.insert_resource(GameplayActionQueue::default());
         app.insert_resource(AlchemyMockState::default());
         app.insert_resource(DroppedLootRegistry::default());
+        // plan-remains-suite P0 — DroppedLootRequestParams 新增 EventWriter<RemainsLootIntent>。
+        app.add_event::<crate::inventory::RemainsLootIntent>();
         app.insert_resource(ItemRegistry::default());
         app.insert_resource(RecipeRegistry::default());
         app.add_event::<CustomPayloadEvent>();
@@ -6264,6 +6844,8 @@ mod tests {
         app.insert_resource(GameplayActionQueue::default());
         app.insert_resource(AlchemyMockState::default());
         app.insert_resource(DroppedLootRegistry::default());
+        // plan-remains-suite P0 — DroppedLootRequestParams 新增 EventWriter<RemainsLootIntent>。
+        app.add_event::<crate::inventory::RemainsLootIntent>();
         app.insert_resource(ItemRegistry::default());
         app.insert_resource(RecipeRegistry::default());
         app.add_event::<CustomPayloadEvent>();
@@ -6323,6 +6905,8 @@ mod tests {
         app.insert_resource(GameplayActionQueue::default());
         app.insert_resource(AlchemyMockState::default());
         app.insert_resource(DroppedLootRegistry::default());
+        // plan-remains-suite P0 — DroppedLootRequestParams 新增 EventWriter<RemainsLootIntent>。
+        app.add_event::<crate::inventory::RemainsLootIntent>();
         app.insert_resource(ItemRegistry::default());
         app.insert_resource(RecipeRegistry::default());
         app.add_event::<CustomPayloadEvent>();
@@ -6447,6 +7031,8 @@ mod tests {
         app.insert_resource(GameplayActionQueue::default());
         app.insert_resource(AlchemyMockState::default());
         app.insert_resource(DroppedLootRegistry::default());
+        // plan-remains-suite P0 — DroppedLootRequestParams 新增 EventWriter<RemainsLootIntent>。
+        app.add_event::<crate::inventory::RemainsLootIntent>();
         app.insert_resource(ItemRegistry::default());
         app.insert_resource(RecipeRegistry::default());
         app.add_event::<CustomPayloadEvent>();
@@ -6534,6 +7120,8 @@ mod tests {
         app.insert_resource(GameplayActionQueue::default());
         app.insert_resource(AlchemyMockState::default());
         app.insert_resource(DroppedLootRegistry::default());
+        // plan-remains-suite P0 — DroppedLootRequestParams 新增 EventWriter<RemainsLootIntent>。
+        app.add_event::<crate::inventory::RemainsLootIntent>();
         app.insert_resource(ItemRegistry::default());
         app.insert_resource(RecipeRegistry::default());
         app.add_event::<CustomPayloadEvent>();
@@ -6623,6 +7211,8 @@ mod tests {
         app.insert_resource(GameplayActionQueue::default());
         app.insert_resource(AlchemyMockState::default());
         app.insert_resource(DroppedLootRegistry::default());
+        // plan-remains-suite P0 — DroppedLootRequestParams 新增 EventWriter<RemainsLootIntent>。
+        app.add_event::<crate::inventory::RemainsLootIntent>();
         app.insert_resource(test_forge_template_registry());
         app.insert_resource(RecipeRegistry::default());
         app.add_event::<CustomPayloadEvent>();
@@ -6690,6 +7280,8 @@ mod tests {
         app.insert_resource(GameplayActionQueue::default());
         app.insert_resource(AlchemyMockState::default());
         app.insert_resource(DroppedLootRegistry::default());
+        // plan-remains-suite P0 — DroppedLootRequestParams 新增 EventWriter<RemainsLootIntent>。
+        app.add_event::<crate::inventory::RemainsLootIntent>();
         app.insert_resource(test_forge_template_registry());
         app.insert_resource(RecipeRegistry::default());
         app.add_event::<CustomPayloadEvent>();
@@ -6762,6 +7354,8 @@ mod tests {
         app.insert_resource(GameplayActionQueue::default());
         app.insert_resource(AlchemyMockState::default());
         app.insert_resource(DroppedLootRegistry::default());
+        // plan-remains-suite P0 — DroppedLootRequestParams 新增 EventWriter<RemainsLootIntent>。
+        app.add_event::<crate::inventory::RemainsLootIntent>();
         app.insert_resource(test_forge_template_registry());
         app.insert_resource(RecipeRegistry::default());
         app.add_event::<CustomPayloadEvent>();
@@ -6832,6 +7426,8 @@ mod tests {
         app.insert_resource(GameplayActionQueue::default());
         app.insert_resource(AlchemyMockState::default());
         app.insert_resource(DroppedLootRegistry::default());
+        // plan-remains-suite P0 — DroppedLootRequestParams 新增 EventWriter<RemainsLootIntent>。
+        app.add_event::<crate::inventory::RemainsLootIntent>();
         app.insert_resource(ItemRegistry::default());
         app.insert_resource(RecipeRegistry::default());
         app.add_event::<CustomPayloadEvent>();
@@ -6893,6 +7489,8 @@ mod tests {
         app.insert_resource(GameplayActionQueue::default());
         app.insert_resource(AlchemyMockState::default());
         app.insert_resource(DroppedLootRegistry::default());
+        // plan-remains-suite P0 — DroppedLootRequestParams 新增 EventWriter<RemainsLootIntent>。
+        app.add_event::<crate::inventory::RemainsLootIntent>();
         app.insert_resource(ItemRegistry::default());
         app.insert_resource(RecipeRegistry::default());
         app.add_event::<CustomPayloadEvent>();
@@ -6950,6 +7548,8 @@ mod tests {
         app.insert_resource(GameplayActionQueue::default());
         app.insert_resource(AlchemyMockState::default());
         app.insert_resource(DroppedLootRegistry::default());
+        // plan-remains-suite P0 — DroppedLootRequestParams 新增 EventWriter<RemainsLootIntent>。
+        app.add_event::<crate::inventory::RemainsLootIntent>();
         app.insert_resource(ItemRegistry::default());
         app.insert_resource(RecipeRegistry::default());
         app.add_event::<CustomPayloadEvent>();
@@ -7011,6 +7611,8 @@ mod tests {
         app.insert_resource(GameplayActionQueue::default());
         app.insert_resource(AlchemyMockState::default());
         app.insert_resource(DroppedLootRegistry::default());
+        // plan-remains-suite P0 — DroppedLootRequestParams 新增 EventWriter<RemainsLootIntent>。
+        app.add_event::<crate::inventory::RemainsLootIntent>();
         app.insert_resource(ItemRegistry::default());
         app.insert_resource(RecipeRegistry::default());
         app.add_event::<CustomPayloadEvent>();
@@ -7068,6 +7670,8 @@ mod tests {
         app.insert_resource(GameplayActionQueue::default());
         app.insert_resource(AlchemyMockState::default());
         app.insert_resource(DroppedLootRegistry::default());
+        // plan-remains-suite P0 — DroppedLootRequestParams 新增 EventWriter<RemainsLootIntent>。
+        app.add_event::<crate::inventory::RemainsLootIntent>();
         app.insert_resource(ItemRegistry::default());
         app.insert_resource(RecipeRegistry::default());
         app.add_event::<CustomPayloadEvent>();
@@ -7129,6 +7733,8 @@ mod tests {
         app.insert_resource(GameplayActionQueue::default());
         app.insert_resource(AlchemyMockState::default());
         app.insert_resource(DroppedLootRegistry::default());
+        // plan-remains-suite P0 — DroppedLootRequestParams 新增 EventWriter<RemainsLootIntent>。
+        app.add_event::<crate::inventory::RemainsLootIntent>();
         app.insert_resource(ItemRegistry::default());
         app.insert_resource(RecipeRegistry::default());
         app.add_event::<CustomPayloadEvent>();
@@ -10447,6 +11053,8 @@ fn handle_inventory_move(
     instance_id: u64,
     from: InventoryLocationV1,
     to: InventoryLocationV1,
+    // plan-rotate-v1 — 拖拽落位前是否先旋转该 instance（互换 grid_w/grid_h）。
+    rotated: bool,
     item_registry: &ItemRegistry,
     inventories: &mut Query<&mut PlayerInventory>,
     clients: &mut Query<(&Username, &mut Client)>,
@@ -10523,7 +11131,14 @@ fn handle_inventory_move(
         }
     }
 
-    match apply_inventory_move(&mut inventory, item_registry, instance_id, &from, &to) {
+    match apply_inventory_move(
+        &mut inventory,
+        item_registry,
+        instance_id,
+        &from,
+        &to,
+        rotated,
+    ) {
         Ok(InventoryMoveOutcome::Moved { revision }) => {
             let wear_update = maybe_apply_targeted_item_wear(
                 entity,
@@ -14628,6 +15243,8 @@ mod freshness_probe_handler_tests {
         app.insert_resource(GameplayActionQueue::default());
         app.insert_resource(AlchemyMockState::default());
         app.insert_resource(DroppedLootRegistry::default());
+        // plan-remains-suite P0 — DroppedLootRequestParams 新增 EventWriter<RemainsLootIntent>。
+        app.add_event::<crate::inventory::RemainsLootIntent>();
         app.insert_resource(ItemRegistry::default());
         app.insert_resource(RecipeRegistry::default());
         app.add_event::<CustomPayloadEvent>();
@@ -14979,6 +15596,8 @@ mod freshness_probe_handler_tests {
         app.insert_resource(GameplayActionQueue::default());
         app.insert_resource(AlchemyMockState::default());
         app.insert_resource(DroppedLootRegistry::default());
+        // plan-remains-suite P0 — DroppedLootRequestParams 新增 EventWriter<RemainsLootIntent>。
+        app.add_event::<crate::inventory::RemainsLootIntent>();
         app.insert_resource(ItemRegistry::default());
         app.insert_resource(RecipeRegistry::default());
         app.add_event::<CustomPayloadEvent>();

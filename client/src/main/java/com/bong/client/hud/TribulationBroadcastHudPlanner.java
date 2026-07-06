@@ -36,7 +36,7 @@ public final class TribulationBroadcastHudPlanner {
         ViewerPosition viewerPosition
     ) {
         List<HudRenderCommand> out = new ArrayList<>();
-        TribulationBroadcastStore.State state = TribulationBroadcastStore.snapshot();
+        TribulationBroadcastStore.State state = TribulationBroadcastStore.snapshot(nowMs);
         if (!state.active() || state.expired(nowMs)) return out;
         if (screenWidth <= 0 || screenHeight <= 0) return out;
 
@@ -50,7 +50,11 @@ public final class TribulationBroadcastHudPlanner {
         String line = "\u26a1 " + stageLabel
             + " \u00b7 " + (state.actorName().isEmpty() ? "\u65e0\u540d\u4fee\u58eb" : state.actorName())
             + " \u00b7 \u5750\u6807 (" + Math.round(state.worldX()) + ", " + Math.round(state.worldZ()) + ")";
-        TribulationStateStore.State tribulationState = TribulationStateStore.snapshot();
+        TribulationStateStore.State tribulationState = TribulationStateStore.snapshotFor(
+            state.actorName(),
+            state.worldX(),
+            state.worldZ()
+        );
         String progress = progressLabel(tribulationState);
         if (!progress.isEmpty()) {
             line += " \u00b7 " + progress;

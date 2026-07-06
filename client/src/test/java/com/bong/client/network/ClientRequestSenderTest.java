@@ -139,7 +139,8 @@ public class ClientRequestSenderTest {
         ClientRequestSender.sendInventoryMove(
             1001L,
             new ClientRequestProtocol.ContainerLoc("main_pack", 0, 0),
-            new ClientRequestProtocol.HotbarLoc(3)
+            new ClientRequestProtocol.HotbarLoc(3),
+            false
         );
         assertEquals(1, sent.size());
         assertEquals(new Identifier("bong", "client_request"), sent.get(0).channel());

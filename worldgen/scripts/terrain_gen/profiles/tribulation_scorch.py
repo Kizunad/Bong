@@ -21,7 +21,7 @@ TRIBULATION_SCORCH_DECORATIONS = (
         kind="crystal",
         blocks=("sand", "light_blue_stained_glass", "calcite"),
         size_range=(2, 5),
-        rarity=0.30,
+        rarity=0.15,
         notes="短熔砂晶：只放低矮雷熔碎片，避免大块玻璃柱团。",
     ),
     DecorationSpec(
@@ -29,7 +29,7 @@ TRIBULATION_SCORCH_DECORATIONS = (
         kind="tree",
         blocks=("coal_block", "stripped_oak_log", "blackstone"),
         size_range=(5, 10),
-        rarity=0.35,
+        rarity=0.18,
         notes="焦炭枯木：煤块树干与剥皮原木残躯，树冠完全烧空。",
     ),
     DecorationSpec(
@@ -37,7 +37,7 @@ TRIBULATION_SCORCH_DECORATIONS = (
         kind="boulder",
         blocks=("basalt", "obsidian", "magma_block"),
         size_range=(4, 8),
-        rarity=0.28,
+        rarity=0.14,
         notes="劫雷玄武坑：雷击穿地表后冷却的玄武岩与黑曜石坑。",
     ),
     DecorationSpec(
@@ -45,7 +45,7 @@ TRIBULATION_SCORCH_DECORATIONS = (
         kind="crystal",
         blocks=("lodestone", "copper_block", "weathered_copper"),
         size_range=(3, 6),
-        rarity=0.18,
+        rarity=0.13,
         notes="雷磁旋柱：天然极化磁石柱，雷雨天主动招雷。",
     ),
     DecorationSpec(
@@ -53,7 +53,7 @@ TRIBULATION_SCORCH_DECORATIONS = (
         kind="shrub",
         blocks=("iron_block", "raw_iron_block", "deepslate"),
         size_range=(2, 4),
-        rarity=0.22,
+        rarity=0.11,
         notes="铁渣矩阵：雷劈后熔合的铁矿渣块。",
     ),
     DecorationSpec(
@@ -61,7 +61,7 @@ TRIBULATION_SCORCH_DECORATIONS = (
         kind="crystal",
         blocks=("blue_stained_glass", "light_blue_concrete", "sea_lantern"),
         size_range=(3, 5),
-        rarity=0.10,
+        rarity=0.07,
         notes="蓝雷晶：间歇雷击结晶产物，夜间发蓝光。",
     ),
     DecorationSpec(
@@ -69,7 +69,7 @@ TRIBULATION_SCORCH_DECORATIONS = (
         kind="shrub",
         blocks=("copper_block", "cut_copper", "raw_copper_block"),
         size_range=(2, 4),
-        rarity=0.16,
+        rarity=0.11,
         notes="雷磁铜渣：铜矿被劫雷烧结后的地表露头。",
     ),
 )

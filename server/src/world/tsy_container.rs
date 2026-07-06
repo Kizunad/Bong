@@ -177,8 +177,8 @@ pub struct SearchProgress {
 /// 搜刮中断的位移阈值（米）。plan §2.2 — 玩家位置偏移超过此值即中断。
 pub const SEARCH_MOVE_INTERRUPT_THRESHOLD_M: f64 = 0.5;
 
-/// 玩家与容器交互的最大距离（米）。plan §2.1 — 距离 > 3 block 拒绝开搜。
-pub const SEARCH_INTERACT_RANGE_M: f64 = 3.0;
+/// 玩家与容器交互的最大距离（米）。G 键准星搜刮允许 5 block 内命中。
+pub const SEARCH_INTERACT_RANGE_M: f64 = 5.0;
 
 /// 给 `ItemInstance` 加 `as_container_key` 识别 helper（仅 server 内部；
 /// 不上 inventory schema，因为钥匙是 template_id 约定，不是新字段）。

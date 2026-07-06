@@ -193,6 +193,9 @@ public class VfxRegistryTest {
             "bootstrap should register tribulation_boundary");
         assertTrue(VfxRegistry.instance().contains(TribulationOmenCloudPlayer.EVENT_ID),
             "bootstrap should register tribulation_omen_cloud");
+        assertTrue(VfxRegistry.instance().lookup(OmenParticlePlayer.TIDE_SKY).orElseThrow()
+                instanceof OmenParticlePlayer,
+            "bootstrap should register world_omen_tide_sky to OmenParticlePlayer");
         assertTrue(VfxRegistry.instance().contains(RealmCollapseBoundaryPlayer.EVENT_ID),
             "bootstrap should register realm_collapse_boundary");
         assertTiandaoHuntRoute(TiandaoHuntVfxPlayer.BEAST_SPAWN);

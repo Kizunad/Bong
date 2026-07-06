@@ -9,7 +9,7 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonPrimitive;
 
 /**
- * Handles {@code tribulation_broadcast} payloads (plan §U6). Last-write-wins.
+ * Handles {@code tribulation_broadcast} payloads (plan §U6).
  * <pre>{@code
  * { "active": true,
  *   "actor_name": "某某", "stage": "warn",
@@ -23,12 +23,8 @@ public final class TribulationBroadcastHandler implements ServerDataHandler {
     public ServerDataDispatch handle(ServerDataEnvelope envelope) {
         JsonObject payload = envelope.payload();
         boolean active = readBoolean(payload, "active", true);
-        if (!active) {
-            TribulationBroadcastStore.clear();
-            return ServerDataDispatch.handled(envelope.type(), "tribulation cleared");
-        }
-        TribulationBroadcastStore.replace(new TribulationBroadcastStore.State(
-            true,
+        TribulationBroadcastStore.State state = new TribulationBroadcastStore.State(
+            active,
             readString(payload, "actor_name"),
             readString(payload, "stage"),
             readDouble(payload, "world_x", 0d),
@@ -36,7 +32,12 @@ public final class TribulationBroadcastHandler implements ServerDataHandler {
             (long) readDouble(payload, "expires_at_ms", 0d),
             readBoolean(payload, "spectate_invite", false),
             readDouble(payload, "spectate_distance", 0d)
-        ));
+        );
+        if (!active) {
+            TribulationBroadcastStore.clear(state);
+            return ServerDataDispatch.handled(envelope.type(), "tribulation target cleared");
+        }
+        TribulationBroadcastStore.upsert(state);
         return ServerDataDispatch.handled(envelope.type(), "tribulation active");
     }
 

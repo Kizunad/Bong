@@ -1,0 +1,144 @@
+#!/usr/bin/env python3
+"""Bot e2e 场景 runner —— CI 由 scripts/bot-e2e.sh 调用，本地也可直连已起的 server。
+
+用法：
+    python3 scripts/bot/run_scenarios.py --list
+    python3 scripts/bot/run_scenarios.py --all                 # 默认
+    python3 scripts/bot/run_scenarios.py --scenario cmd_dev_give_feedback
+    python3 scripts/bot/run_scenarios.py --host 192.168.0.108 --port 25565
+
+退出码：0 = 全绿；1 = 有失败/错误；2 = 用法/环境错误（连不上 server 等）。
+"""
+
+from __future__ import annotations
+
+import argparse
+import importlib
+import os
+import pkgutil
+import socket
+import sys
+import time
+import traceback
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from bot.bot import Bot, BotAssertionError  # noqa: E402
+
+
+class ScenarioEnv:
+    """传给场景 run(env) 的句柄：负责造唯一用户名的 bot。"""
+
+    def __init__(self, host: str, port: int, run_tag: str):
+        self.host = host
+        self.port = port
+        self.run_tag = run_tag
+
+    def new_bot(self, tag: str) -> Bot:
+        username = f"B{self.run_tag}{tag}"
+        if len(username) > 16:
+            raise ValueError(
+                f"用户名 {username!r} 超 16 字符上限——run_tag({self.run_tag!r}) 或场景 tag({tag!r}) 太长"
+            )
+        return Bot(username, host=self.host, port=self.port)
+
+
+def validate_scenario_module(name: str, module: object) -> None:
+    """校验场景模块契约（DESCRIPTION/MODULES/run），缺失抛 RuntimeError。"""
+    for attr in ("DESCRIPTION", "MODULES", "run"):
+        if not hasattr(module, attr):
+            raise RuntimeError(
+                f"场景 {name} 缺少 {attr} —— 见 scripts/bot/scenarios/__init__.py 的模块契约"
+            )
+
+
+def discover_scenarios() -> dict[str, object]:
+    import bot.scenarios as scenarios_pkg
+
+    found = {}
+    for info in sorted(pkgutil.iter_modules(scenarios_pkg.__path__), key=lambda m: m.name):
+        if info.name.startswith("_"):
+            continue
+        module = importlib.import_module(f"bot.scenarios.{info.name}")
+        validate_scenario_module(info.name, module)
+        found[info.name] = module
+    return found
+
+
+def check_server_reachable(host: str, port: int, timeout: float) -> bool:
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--host", default=os.environ.get("BOT_E2E_HOST", "127.0.0.1"))
+    parser.add_argument("--port", type=int, default=int(os.environ.get("BOT_E2E_PORT", "25565")))
+    parser.add_argument("--list", action="store_true", help="只列出场景不执行")
+    parser.add_argument(
+        "--scenario",
+        action="append",
+        default=None,
+        help="只跑指定场景（可重复传）；缺省跑全部",
+    )
+    parser.add_argument("--all", action="store_true", help="跑全部场景（默认行为，显式起见）")
+    parser.add_argument(
+        "--run-tag",
+        default=os.environ.get("BOT_E2E_RUN_TAG", str(os.getpid() % 100000)),
+        help="用户名区分段（同一 server 反复跑时避免脏状态叠加），≤5 字符",
+    )
+    args = parser.parse_args()
+
+    scenarios = discover_scenarios()
+
+    if args.list:
+        for name, module in scenarios.items():
+            print(f"{name:44} modules={','.join(module.MODULES):20} {module.DESCRIPTION}")
+        return 0
+
+    selected = args.scenario or list(scenarios)
+    unknown = [name for name in selected if name not in scenarios]
+    if unknown:
+        print(f"未知场景: {unknown}；可用: {list(scenarios)}", file=sys.stderr)
+        return 2
+
+    if not check_server_reachable(args.host, args.port, timeout=5.0):
+        print(
+            f"server {args.host}:{args.port} 不可达——先起 server"
+            "（bash scripts/bot-e2e.sh 会自动起，或手动 cd server && cargo run）",
+            file=sys.stderr,
+        )
+        return 2
+
+    env = ScenarioEnv(args.host, args.port, args.run_tag)
+    results: list[tuple[str, str, str]] = []
+    for name in selected:
+        module = scenarios[name]
+        print(f"\n=== scenario: {name} ===\n    {module.DESCRIPTION}")
+        started = time.monotonic()
+        try:
+            module.run(env)
+        except BotAssertionError as failure:
+            results.append((name, "FAIL", str(failure)))
+            print(f"    FAIL ({time.monotonic() - started:.1f}s): {failure}")
+        except Exception:
+            trace = traceback.format_exc()
+            results.append((name, "ERROR", trace))
+            print(f"    ERROR ({time.monotonic() - started:.1f}s):\n{trace}")
+        else:
+            results.append((name, "PASS", ""))
+            print(f"    PASS ({time.monotonic() - started:.1f}s)")
+
+    print("\n===== bot e2e summary =====")
+    for name, status, _ in results:
+        print(f"  {status:5}  {name}")
+    failed = [r for r in results if r[1] != "PASS"]
+    print(f"  total={len(results)} pass={len(results) - len(failed)} fail={len(failed)}")
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

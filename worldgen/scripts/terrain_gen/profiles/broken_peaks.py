@@ -29,7 +29,7 @@ BROKEN_PEAKS_DECORATIONS = (
         kind="tree",
         blocks=("spruce_log", "spruce_leaves", "mossy_cobblestone"),
         size_range=(8, 14),
-        rarity=0.28,
+        rarity=0.14,
         notes="青云松：挺立山脊，松针四季不凋。曾是青云宗标志。",
     ),
     DecorationSpec(
@@ -37,7 +37,7 @@ BROKEN_PEAKS_DECORATIONS = (
         kind="tree",
         blocks=("stripped_birch_log", "packed_ice", "blue_ice"),
         size_range=(6, 10),
-        rarity=0.22,
+        rarity=0.11,
         notes="霜银树：银白树干顶着冰晶树冠，仅高处雪线上下生长。",
     ),
     DecorationSpec(
@@ -45,7 +45,7 @@ BROKEN_PEAKS_DECORATIONS = (
         kind="boulder",
         blocks=("deepslate", "andesite", "cobbled_deepslate"),
         size_range=(4, 10),
-        rarity=0.38,
+        rarity=0.19,
         notes="断脊碑：山脊上的黑灰巨石，有些刻有残缺符文。",
     ),
     DecorationSpec(
@@ -53,7 +53,7 @@ BROKEN_PEAKS_DECORATIONS = (
         kind="shrub",
         blocks=("packed_ice", "snow_block", "pointed_dripstone"),
         size_range=(2, 4),
-        rarity=0.50,
+        rarity=0.25,
         notes="冰棘：密集的冰刺灌丛，划手而含灵气。",
     ),
     # Ground cover specs
@@ -62,7 +62,7 @@ BROKEN_PEAKS_DECORATIONS = (
         kind="flower",
         blocks=("fern",),
         size_range=(1, 1),
-        rarity=0.55,
+        rarity=0.28,
         notes="高山蕨：山腰针叶林下的稀疏蕨叶。",
     ),
     DecorationSpec(
@@ -70,7 +70,7 @@ BROKEN_PEAKS_DECORATIONS = (
         kind="flower",
         blocks=("grass",),
         size_range=(1, 1),
-        rarity=0.40,
+        rarity=0.20,
         notes="峰野草：低海拔山坡覆盖。",
     ),
 )

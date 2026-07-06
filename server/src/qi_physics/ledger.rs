@@ -1845,4 +1845,162 @@ mod tests {
             "槽内 worn + held 两件都应计入 inventory_qi ({expected})"
         );
     }
+
+    // ───────── §P0 验收抓手 #4 —— rat_bite_and_death_cycle_preserves_world_qi_total ─────────
+
+    /// plan-ambient-ratbite-ledger-leak-v1 §P0 验收抓手 #4 / §8.1 决议 #3 —— 咬 3 次
+    /// （qi_steal=2，累计 drained=6）+ 鼠死亡完整链路，头尾守恒必须严格不变，且必须能撞穿
+    /// "写回 zone.spirit_qi 字段"这一步被漏掉时、下一次 `zone_qi_inflow_tick` 覆盖式
+    /// `set_balance` 二次抹掉刚转入账户余额的回归。
+    ///
+    /// **为什么断言用 `player_qi + ledger_qi`，不是 plan 字面的
+    /// `player_qi + zone_qi + ledger_qi`**（本 pin 相对 plan 唯一的偏离，详见最终报告）：
+    /// `summarize_world_qi` 的 `zone_qi` 桶是 `zone.spirit_qi` 字段的**原始分数值**直接求和
+    /// （未乘 `QI_ZONE_UNIT_CAPACITY`），而 `ledger_qi` 桶（`WorldQiAccount::total()`）在
+    /// field-authority 写回后，**同一份 zone 真元会以 `spirit_qi × QI_ZONE_UNIT_CAPACITY`
+    /// 的形式继续留在 `zone:<name>` 账户余额里**（`inject_zone_for_pseudo_vein` /
+    /// `zone_qi_inflow_tick` 均不在写回后清空该账户）。这意味着只要 zone 账户被正确同步
+    /// （field-authority 镜像范式的设计初衷），`zone.spirit_qi` 这份真元已经**完整地**记在
+    /// `ledger_qi` 里；把 `zone_qi` 字段值原样再加一次到"总量"上，是把同一份真元按两种不同
+    /// 换算尺度（×1 和 ×`QI_ZONE_UNIT_CAPACITY`）重复计入。经手算验证：只要 zone 账户在
+    /// 测试起点已经与字段同步（下方 `zone_account` 预置正是做这件事），
+    /// `player_qi + ledger_qi` 在"咬 3 次 + 死亡 + zone_qi_inflow_tick 额外推进"全链路
+    /// 头尾**精确**相等（不需要放宽 epsilon）；反之若加回 `zone_qi`，会带入一个非 epsilon
+    /// 量级的、由 `zone_qi_inflow_tick` 待分配池注入自然产生的正向漂移——这是
+    /// `summarize_world_qi` 既有口径的固有性质（该函数是只读参考，本 plan 明确不允许改），
+    /// 不是本次改动引入的新问题。
+    #[test]
+    fn rat_bite_and_death_cycle_preserves_world_qi_total() {
+        use crate::combat::events::DeathEvent;
+        use crate::combat::rat_bite::{apply_rat_bite_qi_drain, RatBiteEvent};
+        use crate::cultivation::death_hooks::CultivationDeathTrigger;
+        use crate::cultivation::tick::CultivationClock;
+        use crate::fauna::rat_phase::release_drained_qi_on_death_system;
+        use crate::network::audio_event_emit::PlaySoundRecipeRequest;
+        use crate::network::vfx_event_emit::VfxEventRequest;
+        use crate::npc::spawn::NpcMarker;
+        use crate::npc::spawn_rat::RatBlackboard;
+        use crate::world::events::ActiveEventsResource;
+        use crate::world::heartbeat::{zone_qi_inflow_tick, ZoneQiInflowClock};
+        use valence::prelude::{ChunkPos, Position, Update};
+
+        const CAP: f64 = crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
+
+        let mut app = App::new();
+        app.add_event::<RatBiteEvent>();
+        app.add_event::<CultivationDeathTrigger>();
+        app.add_event::<QiTransfer>();
+        app.add_event::<VfxEventRequest>();
+        app.add_event::<PlaySoundRecipeRequest>();
+        app.add_event::<DeathEvent>();
+        app.add_systems(
+            Update,
+            (apply_rat_bite_qi_drain, release_drained_qi_on_death_system),
+        );
+
+        // 门①：`CultivationClock` 从非零 tick 起步（对齐 `heartbeat::tests::inflow_test_app`
+        // 的 `start_tick` 参数）——`zone_qi_inflow_tick` 要到"额外推进"那一步才第一次被
+        // 注册进 schedule，此刻先把时钟准备好。
+        app.insert_resource(CultivationClock { tick: 100 });
+
+        // 门②③：spawn zone 配非零 qi_equilibrium/qi_inflow_per_min，且 spirit_qi 严格低于
+        // equilibrium（照抄 zones.json spawn 区真实配置 0.35/0.4）。
+        let initial_spirit_qi = 0.1_f64;
+        let mut zones = ZoneRegistry::fallback();
+        {
+            let zone = zones
+                .find_zone_mut("spawn")
+                .expect("fallback ZoneRegistry must have spawn zone");
+            zone.spirit_qi = initial_spirit_qi;
+            zone.qi_equilibrium = 0.35;
+            zone.qi_inflow_per_min = 0.4;
+        }
+        app.insert_resource(zones);
+        app.insert_resource(ActiveEventsResource::default());
+
+        // 门④：待分配池注资，供 `zone_qi_inflow_tick` 的额外推进步骤真实借出。
+        let mut ledger = WorldQiAccount::default();
+        ledger
+            .set_balance(pending_inflow_account(), 1000.0)
+            .expect("seeding the pending pool balance must succeed");
+        // zone 账户预先同步到字段真实值——field-authority 镜像范式下，一个已经运行过
+        // `zone_qi_inflow_tick` 的活服务器，zone 账户理应已经与字段同步；不预置的话，
+        // 咬击/死亡链路里第一次 `set_balance` 同步会把"此前从未被 ledger 观测到的
+        // zone_qi"当成新增量计入 `ledger_qi`，污染守恒对拍的基线（见上方 doc-comment）。
+        ledger
+            .set_balance(QiAccountId::zone("spawn"), initial_spirit_qi * CAP)
+            .expect("pre-syncing the zone ledger mirror must succeed");
+        app.insert_resource(ledger);
+
+        let target = app
+            .world_mut()
+            .spawn(Cultivation {
+                qi_current: 20.0,
+                qi_max: 20.0,
+                ..Default::default()
+            })
+            .id();
+        let rat = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position::new([0.0, 64.0, 0.0]),
+                RatBlackboard::new("spawn", ChunkPos::new(0, 0)),
+            ))
+            .id();
+
+        let before = summarize_world_qi(app.world_mut());
+
+        // 咬 3 次，qi_steal=2，累计 drained=6.0。
+        for _ in 0..3 {
+            app.world_mut().send_event(RatBiteEvent {
+                rat,
+                target,
+                qi_steal: 2,
+            });
+        }
+        app.update();
+
+        let cultivation_after_bites = app.world().get::<Cultivation>(target).unwrap();
+        assert!(
+            (cultivation_after_bites.qi_current - 14.0).abs() < 1e-9,
+            "sanity: 3 次 qi_steal=2 应共扣 6.0，实际剩余 {}",
+            cultivation_after_bites.qi_current
+        );
+
+        // 鼠死亡结算——必须与"额外推进"分开一次 `app.update()`，确保 `zone_qi_inflow_tick`
+        // （下面才注册）不会与死亡结算的这一拍混在一起触发。
+        app.world_mut().send_event(DeathEvent {
+            target: rat,
+            cause: "test".to_string(),
+            attacker: None,
+            attacker_player_id: None,
+            at_tick: 100,
+        });
+        app.update();
+
+        // 现在才把 `zone_qi_inflow_tick` 接入 schedule，并推进 `CultivationClock`——
+        // 门①要求 `elapsed_ticks > 0`；这一步专门用于撞穿"没写回字段就被下一次
+        // inflow tick 覆盖式清零"的二次蒸发回归。
+        app.insert_resource(ZoneQiInflowClock::default());
+        app.add_systems(Update, zone_qi_inflow_tick);
+        {
+            let mut clock = app.world_mut().resource_mut::<CultivationClock>();
+            clock.tick = clock.tick.saturating_add(1);
+        }
+        app.update();
+
+        let after = summarize_world_qi(app.world_mut());
+
+        let total_before = before.player_qi + before.ledger_qi;
+        let total_after = after.player_qi + after.ledger_qi;
+        assert!(
+            (total_before - total_after).abs() < 1e-9,
+            "worldview §二守恒律：鼠咬 + 死亡结算 + 额外一次 zone_qi_inflow_tick 全链路，\
+             player_qi + ledger_qi 头尾必须严格相等（zone 账户已在 ledger_qi 里镜像\
+             zone.spirit_qi，见本测试 doc-comment），实际 before={total_before} \
+             after={total_after}（before={before:?}, after={after:?}）——不等说明 rat 账户\
+             的真元在 zone_qi_inflow_tick 覆盖式 set_balance 时被二次抹掉"
+        );
+    }
 }

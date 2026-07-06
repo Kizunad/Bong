@@ -1,5 +1,6 @@
 package com.bong.client.inventory.component;
 
+import com.bong.client.PlayerStateState;
 import com.bong.client.inventory.model.InventoryModel;
 import com.bong.client.util.RealmLabel;
 import io.wispforest.owo.ui.base.BaseComponent;
@@ -33,20 +34,44 @@ public class StatusBarsPanel extends BaseComponent {
         this.bodyLevel = Math.max(0.0, Math.min(1.0, model.bodyLevel()));
     }
 
+    /**
+     * 境界/真元优先读 player_state 活通道（变更即发 + 周期兜底），inventory_snapshot
+     * 里的 cultivation 块只在背包内容变化时才重发——若只用后者，开包期间境界突破 /
+     * /realm set / 真元涨落全都不会刷新（背包 UI 境界卡旧值的根因）。体魄不在
+     * player_state payload 里，仍用快照值。
+     */
+    static String resolveRealm(String snapshotRealm, PlayerStateState.PlayerStateSnapshot live) {
+        if (live == null || live.realmKey().isEmpty()) {
+            return snapshotRealm;
+        }
+        return live.realmKey();
+    }
+
+    /** 同 {@link #resolveRealm}：真元比例优先活通道，无活数据回退快照值。 */
+    static double resolveQiRatio(double snapshotRatio, PlayerStateState.PlayerStateSnapshot live) {
+        if (live == null || live.spiritQiMax() <= 0.0) {
+            return snapshotRatio;
+        }
+        return Math.max(0.0, Math.min(1.0, live.spiritQi() / live.spiritQiMax()));
+    }
+
     @Override
     public void draw(OwoUIDrawContext context, int mouseX, int mouseY, float partialTicks, float delta) {
         var textRenderer = MinecraftClient.getInstance().textRenderer;
         int cy = y;
 
-        // Realm label
-        context.drawTextWithShadow(textRenderer, Text.literal("境界: " + RealmLabel.displayName(realm)), x + 2, cy, TEXT_COLOR);
+        var live = PlayerStateState.getCurrentPlayerState();
+
+        // Realm label（活通道优先，见 resolveRealm 注释）
+        String realmNow = resolveRealm(realm, live);
+        context.drawTextWithShadow(textRenderer, Text.literal("境界: " + RealmLabel.displayName(realmNow)), x + 2, cy, TEXT_COLOR);
         cy += textRenderer.fontHeight + 2;
 
-        // Qi bar
+        // Qi bar（活通道优先）
         context.drawTextWithShadow(textRenderer, Text.literal("真元"), x + 2, cy, TEXT_COLOR);
         int barX = x + 30;
         int barW = PANEL_WIDTH - 34;
-        drawBar(context, barX, cy, barW, BAR_HEIGHT, qiFillRatio, QI_BAR_FULL, QI_BAR_EMPTY);
+        drawBar(context, barX, cy, barW, BAR_HEIGHT, resolveQiRatio(qiFillRatio, live), QI_BAR_FULL, QI_BAR_EMPTY);
         cy += BAR_HEIGHT + BAR_MARGIN;
 
         // Body bar

@@ -892,6 +892,9 @@ public class BongNetworkHandler {
         // F9 跨层修复 — 断线时清理出生引导棺坐标缓存；不同 server 的棺位置不同，
         // 留着旧坐标会让 reconnect 后短暂窗口内用错误坐标误判/漏判引导棺。
         com.bong.client.coffin.TutorialCoffinPosStore.clearOnDisconnect();
+        // plan-remains-suite P0 — 断线时清理遗骸缓存；不同 server 的遗骸完全无关，
+        // 留着旧快照会让 reconnect 后 G 键短暂命中一具已经不存在的遗骸。
+        com.bong.client.inventory.state.RemainsStore.clearOnDisconnect();
         // plan-craft-session-reconnect-lock-v1 P0 — craft store 是静态跨屏状态；
         // 断线不清会把旧 active session 带进新连接，导致手搓/制作台主操作永久灰掉。
         CraftStore.clear();

@@ -288,9 +288,11 @@ pub struct PendingJueBiTriggers {
     pending: Vec<PendingJueBiTrigger>,
 }
 
-#[derive(Debug, Clone, Copy, Event)]
+#[derive(Debug, Clone, Event)]
 pub struct JueBiTriggeredEvent {
     pub entity: Entity,
+    pub char_id: String,
+    pub actor_name: String,
     pub source: JueBiTriggerSource,
     pub epicenter: [f64; 3],
     pub dimension: DimensionKind,
@@ -1217,11 +1219,13 @@ pub fn start_due_juebi_triggers_system(
             TribulationOriginDimension(dimension),
             runtime,
         ));
-        let _actor_name = username
+        let actor_name = username
             .map(|username| username.0.clone())
             .unwrap_or_else(|| lifecycle.character_id.clone());
         triggered.send(JueBiTriggeredEvent {
             entity: item.entity,
+            char_id: lifecycle.character_id.clone(),
+            actor_name,
             source: item.source,
             epicenter: p,
             dimension,
@@ -3234,6 +3238,8 @@ pub fn tribulation_wave_system(
                     commands.entity(ev.entity).insert(next_runtime);
                     juebi_triggered.send(JueBiTriggeredEvent {
                         entity: ev.entity,
+                        char_id: lifecycle.character_id.clone(),
+                        actor_name: lifecycle.character_id.clone(),
                         source: JueBiTriggerSource::VoidQuotaExceeded,
                         epicenter,
                         dimension,
@@ -3777,7 +3783,7 @@ pub fn publish_tribulation_events(
                     .or_else(|| char_id.clone());
                 (char_id, actor_name)
             })
-            .unwrap_or((None, None));
+            .unwrap_or((Some(ev.char_id.clone()), Some(ev.actor_name.clone())));
         let payload = TribulationEventV1::jue_bi(
             TribulationPhaseV1::Omen,
             char_id,

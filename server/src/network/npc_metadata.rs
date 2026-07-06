@@ -362,6 +362,8 @@ pub fn archetype_label(archetype: NpcArchetype) -> &'static str {
         NpcArchetype::SkullFiend => "骨煞",
         // plan-dying-elder-v1：垂死大能显示"老修士"（伪装化虚修士身份）
         NpcArchetype::DyingElder => "老修士",
+        // plan-mundane-fauna-v1 P0：凡兽（无灵 MC 原版被动生物，worldview §十七命名法）
+        NpcArchetype::Mundane => "凡兽",
     }
 }
 
@@ -444,6 +446,8 @@ pub fn greeting_text_for_archetype(archetype: NpcArchetype) -> &'static str {
         // plan-dying-elder-v1：垂死大能发出求助，inspect 显示乞求之语
         NpcArchetype::DyingElder => "老者气息奄奄，却有真元波动残留……",
         NpcArchetype::Zombie => "游尸没有回应。",
+        // plan-mundane-fauna-v1 P0：凡兽无言语，只留警惕性描述（同 Beast 范式，不让动物"说话"）。
+        NpcArchetype::Mundane => "它警惕地竖起耳朵，随时准备逃开。",
     }
 }
 

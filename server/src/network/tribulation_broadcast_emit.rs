@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use valence::prelude::{Client, Entity, EventReader, Local, Position, Query, Res, With};
 
@@ -55,7 +55,7 @@ impl ActiveTribulationBroadcast {
 
 #[allow(clippy::too_many_arguments)]
 pub fn emit_tribulation_broadcast_payloads(
-    mut clients: Query<(&mut Client, Option<&Position>), With<Client>>,
+    mut clients: Query<(Entity, &mut Client, Option<&Position>), With<Client>>,
     heartbeat: Option<Res<WorldHeartbeat>>,
     mut active_broadcasts: Local<HashMap<Entity, ActiveTribulationBroadcast>>,
     mut announce: EventReader<TribulationAnnounce>,
@@ -63,7 +63,16 @@ pub fn emit_tribulation_broadcast_payloads(
     mut locked: EventReader<TribulationLocked>,
     mut cleared: EventReader<TribulationWaveCleared>,
     mut settled: EventReader<TribulationSettled>,
+    mut known_clients: Local<Option<HashSet<Entity>>>,
 ) {
+    let current_clients: HashSet<Entity> =
+        clients.iter_mut().map(|(entity, _, _)| entity).collect();
+    let joined_clients: HashSet<Entity> = known_clients.as_ref().map_or_else(
+        || current_clients.clone(),
+        |previous| current_clients.difference(previous).copied().collect(),
+    );
+    *known_clients = Some(current_clients);
+    let mut emitted_entities = HashSet::new();
     let loop_phase = heartbeat
         .as_deref()
         .map(|heartbeat| heartbeat.loop_phase)
@@ -80,6 +89,7 @@ pub fn emit_tribulation_broadcast_payloads(
         );
         active_broadcasts.insert(ev.entity, data.clone());
         broadcast(&mut clients, data);
+        emitted_entities.insert(ev.entity);
     }
     for ev in juebi_triggered.read() {
         let data = ActiveTribulationBroadcast::active(
@@ -91,6 +101,7 @@ pub fn emit_tribulation_broadcast_payloads(
         );
         active_broadcasts.insert(ev.entity, data.clone());
         broadcast(&mut clients, data);
+        emitted_entities.insert(ev.entity);
     }
     for ev in locked.read() {
         let data = active_broadcasts.entry(ev.entity).or_insert_with(|| {
@@ -105,6 +116,7 @@ pub fn emit_tribulation_broadcast_payloads(
         data.data.stage = "locked".to_string();
         data.refresh(ttl_ms);
         broadcast(&mut clients, data.clone());
+        emitted_entities.insert(ev.entity);
     }
     for ev in cleared.read() {
         let stage = if ev.wave == 0 { "warn" } else { "striking" };
@@ -114,10 +126,29 @@ pub fn emit_tribulation_broadcast_payloads(
         data.data.stage = stage.to_string();
         data.refresh(ttl_ms);
         broadcast(&mut clients, data.clone());
+        emitted_entities.insert(ev.entity);
     }
     for ev in settled.read() {
-        active_broadcasts.remove(&ev.entity);
-        broadcast(&mut clients, TribulationBroadcastV1::clear());
+        if let Some(mut data) = active_broadcasts.remove(&ev.entity) {
+            data.data.active = false;
+            data.data.stage = "done".to_string();
+            data.data.expires_at_ms = 0;
+            data.data.spectate_invite = false;
+            data.data.spectate_distance = 0.0;
+            broadcast(&mut clients, data);
+            emitted_entities.insert(ev.entity);
+        } else if active_broadcasts.is_empty() {
+            broadcast(&mut clients, TribulationBroadcastV1::clear());
+        }
+    }
+
+    if !joined_clients.is_empty() {
+        for (entity, data) in active_broadcasts.iter() {
+            if emitted_entities.contains(entity) {
+                continue;
+            }
+            broadcast_to_clients(&mut clients, &joined_clients, data.clone());
+        }
     }
 }
 
@@ -145,10 +176,29 @@ fn tribulation_broadcast_ttl_ms_from_config(
 }
 
 fn broadcast(
-    clients: &mut Query<(&mut Client, Option<&Position>), With<Client>>,
+    clients: &mut Query<(Entity, &mut Client, Option<&Position>), With<Client>>,
     data: impl TribulationBroadcastClientView,
 ) {
-    for (mut client, position) in clients.iter_mut() {
+    broadcast_filtered(clients, None, data);
+}
+
+fn broadcast_to_clients(
+    clients: &mut Query<(Entity, &mut Client, Option<&Position>), With<Client>>,
+    target_clients: &HashSet<Entity>,
+    data: impl TribulationBroadcastClientView,
+) {
+    broadcast_filtered(clients, Some(target_clients), data);
+}
+
+fn broadcast_filtered(
+    clients: &mut Query<(Entity, &mut Client, Option<&Position>), With<Client>>,
+    target_clients: Option<&HashSet<Entity>>,
+    data: impl TribulationBroadcastClientView,
+) {
+    for (entity, mut client, position) in clients.iter_mut() {
+        if target_clients.is_some_and(|targets| !targets.contains(&entity)) {
+            continue;
+        }
         let payload = ServerDataV1::new(ServerDataPayloadV1::TribulationBroadcast(
             data.for_client(position),
         ));
@@ -203,18 +253,27 @@ fn public_tribulation_coordinate(value: f64) -> f64 {
 mod tests {
     use super::*;
 
-    use crate::cultivation::tribulation::TribulationAnnounce;
+    use crate::cultivation::tribulation::{TribulationAnnounce, TribulationKind};
     use crate::network::agent_bridge::SERVER_DATA_CHANNEL;
+    use crate::schema::tribulation::{DuXuOutcomeV1, DuXuResultV1};
     use std::time::{SystemTime, UNIX_EPOCH};
     use valence::prelude::{App, Update};
     use valence::protocol::packets::play::CustomPayloadS2c;
     use valence::testing::{create_mock_client, MockClientHelper};
 
-    fn spawn_mock_client_at(app: &mut App, name: &str, pos: [f64; 3]) -> MockClientHelper {
+    fn spawn_mock_client_entity_at(
+        app: &mut App,
+        name: &str,
+        pos: [f64; 3],
+    ) -> (Entity, MockClientHelper) {
         let (mut bundle, helper) = create_mock_client(name);
         bundle.player.position = Position::new(pos);
-        app.world_mut().spawn(bundle);
-        helper
+        let entity = app.world_mut().spawn(bundle).id();
+        (entity, helper)
+    }
+
+    fn spawn_mock_client_at(app: &mut App, name: &str, pos: [f64; 3]) -> MockClientHelper {
+        spawn_mock_client_entity_at(app, name, pos).1
     }
 
     fn flush_all_client_packets(app: &mut App) {
@@ -332,6 +391,252 @@ mod tests {
         assert_eq!(payloads.len(), 1);
         assert_eq!(payloads[0].world_x, 400.0);
         assert_eq!(payloads[0].world_z, -400.0);
+    }
+
+    #[test]
+    fn settled_broadcast_targets_finished_tribulation_and_preserves_others() {
+        let mut app = App::new();
+        app.add_event::<TribulationAnnounce>();
+        app.add_event::<TribulationLocked>();
+        app.add_event::<TribulationWaveCleared>();
+        app.add_event::<TribulationSettled>();
+        app.add_event::<JueBiTriggeredEvent>();
+        app.add_systems(Update, emit_tribulation_broadcast_payloads);
+
+        let mut helper = spawn_mock_client_at(&mut app, "Watcher", [0.0, 66.0, 0.0]);
+        let first = app.world_mut().spawn_empty().id();
+        let second = app.world_mut().spawn_empty().id();
+        app.world_mut().send_event(TribulationAnnounce {
+            entity: first,
+            char_id: "offline:Azure".to_string(),
+            actor_name: "Azure".to_string(),
+            epicenter: [0.0, 66.0, 0.0],
+            waves_total: 3,
+            started_tick: 0,
+        });
+        app.world_mut().send_event(TribulationAnnounce {
+            entity: second,
+            char_id: "offline:Beryl".to_string(),
+            actor_name: "Beryl".to_string(),
+            epicenter: [400.0, 66.0, 0.0],
+            waves_total: 3,
+            started_tick: 0,
+        });
+
+        app.update();
+        flush_all_client_packets(&mut app);
+        let initial = collect_tribulation_broadcasts(&mut helper);
+        assert_eq!(
+            initial.len(),
+            2,
+            "并发起劫应向 client 连发两条活跃 broadcast"
+        );
+
+        app.world_mut().send_event(TribulationSettled {
+            entity: first,
+            kind: TribulationKind::DuXu,
+            source: None,
+            result: DuXuResultV1 {
+                char_id: "offline:Azure".to_string(),
+                outcome: DuXuOutcomeV1::Ascended,
+                killer: None,
+                waves_survived: 3,
+                reason: None,
+            },
+        });
+
+        app.update();
+        flush_all_client_packets(&mut app);
+        let settled = collect_tribulation_broadcasts(&mut helper);
+        assert_eq!(settled.len(), 1);
+        assert!(!settled[0].active);
+        assert_eq!(settled[0].actor_name, "Azure");
+        assert_eq!(settled[0].world_x, 0.0);
+        assert_eq!(settled[0].world_z, 0.0);
+
+        app.world_mut().send_event(TribulationWaveCleared {
+            entity: second,
+            wave: 1,
+        });
+
+        app.update();
+        flush_all_client_packets(&mut app);
+        let remaining = collect_tribulation_broadcasts(&mut helper);
+        assert_eq!(remaining.len(), 1);
+        assert!(
+            remaining[0].active,
+            "另一场仍活跃时不应被 settled clear 抹掉"
+        );
+        assert_eq!(remaining[0].actor_name, "Beryl");
+        assert_eq!(remaining[0].stage, "striking");
+    }
+
+    #[test]
+    fn new_client_join_replays_all_active_broadcasts() {
+        let mut app = App::new();
+        app.add_event::<TribulationAnnounce>();
+        app.add_event::<TribulationLocked>();
+        app.add_event::<TribulationWaveCleared>();
+        app.add_event::<TribulationSettled>();
+        app.add_event::<JueBiTriggeredEvent>();
+        app.add_systems(Update, emit_tribulation_broadcast_payloads);
+
+        let mut first_client = spawn_mock_client_at(&mut app, "First", [0.0, 66.0, 0.0]);
+        let first = app.world_mut().spawn_empty().id();
+        let second = app.world_mut().spawn_empty().id();
+        app.world_mut().send_event(TribulationAnnounce {
+            entity: first,
+            char_id: "offline:Azure".to_string(),
+            actor_name: "Azure".to_string(),
+            epicenter: [0.0, 66.0, 0.0],
+            waves_total: 3,
+            started_tick: 0,
+        });
+        app.world_mut().send_event(TribulationAnnounce {
+            entity: second,
+            char_id: "offline:Beryl".to_string(),
+            actor_name: "Beryl".to_string(),
+            epicenter: [400.0, 66.0, 0.0],
+            waves_total: 3,
+            started_tick: 0,
+        });
+
+        app.update();
+        flush_all_client_packets(&mut app);
+        assert_eq!(collect_tribulation_broadcasts(&mut first_client).len(), 2);
+
+        let mut late_client = spawn_mock_client_at(&mut app, "Late", [100.0, 66.0, 0.0]);
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let replayed = collect_tribulation_broadcasts(&mut late_client);
+        assert_eq!(
+            replayed.len(),
+            2,
+            "中途加入的 client 应收到每一场仍活跃的 tribulation broadcast"
+        );
+        let mut actor_names = replayed
+            .iter()
+            .map(|payload| payload.actor_name.clone())
+            .collect::<Vec<_>>();
+        actor_names.sort();
+        assert_eq!(actor_names, vec!["Azure".to_string(), "Beryl".to_string()]);
+        assert!(replayed.iter().all(|payload| payload.active));
+    }
+
+    #[test]
+    fn same_count_client_replacement_replays_active_broadcasts_to_new_entity() {
+        let mut app = App::new();
+        app.add_event::<TribulationAnnounce>();
+        app.add_event::<TribulationLocked>();
+        app.add_event::<TribulationWaveCleared>();
+        app.add_event::<TribulationSettled>();
+        app.add_event::<JueBiTriggeredEvent>();
+        app.add_systems(Update, emit_tribulation_broadcast_payloads);
+
+        let mut stable_client = spawn_mock_client_at(&mut app, "Stable", [0.0, 66.0, 0.0]);
+        let (departing_entity, mut departing_client) =
+            spawn_mock_client_entity_at(&mut app, "Departing", [0.0, 66.0, 0.0]);
+        let tribulation = app.world_mut().spawn_empty().id();
+        app.world_mut().send_event(TribulationAnnounce {
+            entity: tribulation,
+            char_id: "offline:Azure".to_string(),
+            actor_name: "Azure".to_string(),
+            epicenter: [0.0, 66.0, 0.0],
+            waves_total: 3,
+            started_tick: 0,
+        });
+
+        app.update();
+        flush_all_client_packets(&mut app);
+        assert_eq!(collect_tribulation_broadcasts(&mut stable_client).len(), 1);
+        assert_eq!(
+            collect_tribulation_broadcasts(&mut departing_client).len(),
+            1
+        );
+
+        app.world_mut().entity_mut(departing_entity).despawn();
+        let mut late_client = spawn_mock_client_at(&mut app, "Late", [100.0, 66.0, 0.0]);
+
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let stable_replayed = collect_tribulation_broadcasts(&mut stable_client);
+        assert!(
+            stable_replayed.is_empty(),
+            "active broadcast replay 应只补给新 client，不应刷屏既有 client"
+        );
+        let replayed = collect_tribulation_broadcasts(&mut late_client);
+        assert_eq!(
+            replayed.len(),
+            1,
+            "即使总 client 数不变，新 Entity client 也必须收到 active broadcast replay"
+        );
+        assert!(replayed[0].active);
+        assert_eq!(replayed[0].actor_name, "Azure");
+    }
+
+    #[test]
+    fn new_client_join_replays_all_active_broadcasts_even_when_same_tick_emits_one() {
+        let mut app = App::new();
+        app.add_event::<TribulationAnnounce>();
+        app.add_event::<TribulationLocked>();
+        app.add_event::<TribulationWaveCleared>();
+        app.add_event::<TribulationSettled>();
+        app.add_event::<JueBiTriggeredEvent>();
+        app.add_systems(Update, emit_tribulation_broadcast_payloads);
+
+        let mut first_client = spawn_mock_client_at(&mut app, "First", [0.0, 66.0, 0.0]);
+        let first = app.world_mut().spawn_empty().id();
+        let second = app.world_mut().spawn_empty().id();
+        app.world_mut().send_event(TribulationAnnounce {
+            entity: first,
+            char_id: "offline:Azure".to_string(),
+            actor_name: "Azure".to_string(),
+            epicenter: [0.0, 66.0, 0.0],
+            waves_total: 3,
+            started_tick: 0,
+        });
+        app.world_mut().send_event(TribulationAnnounce {
+            entity: second,
+            char_id: "offline:Beryl".to_string(),
+            actor_name: "Beryl".to_string(),
+            epicenter: [400.0, 66.0, 0.0],
+            waves_total: 3,
+            started_tick: 0,
+        });
+
+        app.update();
+        flush_all_client_packets(&mut app);
+        assert_eq!(collect_tribulation_broadcasts(&mut first_client).len(), 2);
+
+        let mut late_client = spawn_mock_client_at(&mut app, "Late", [100.0, 66.0, 0.0]);
+        app.world_mut().send_event(TribulationWaveCleared {
+            entity: second,
+            wave: 1,
+        });
+
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let replayed = collect_tribulation_broadcasts(&mut late_client);
+        assert_eq!(
+            replayed.len(),
+            2,
+            "同 tick 增量 + join replay 后，新 client 应收敛到完整 active broadcast 集且不重复"
+        );
+        assert!(
+            replayed
+                .iter()
+                .any(|payload| payload.active && payload.actor_name == "Azure"),
+            "同 tick 有 Beryl wave emit 时，新 client 仍必须补收既有 Azure active broadcast"
+        );
+        assert!(
+            replayed
+                .iter()
+                .any(|payload| payload.active && payload.actor_name == "Beryl"),
+            "新 client 应同时收到本 tick emit 的 Beryl broadcast"
+        );
     }
 
     #[test]

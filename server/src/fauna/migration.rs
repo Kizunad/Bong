@@ -18,6 +18,7 @@ use crate::npc::spawn::NpcMarker;
 use crate::schema::agent_command::Command;
 use crate::schema::common::CommandType;
 use crate::schema::vfx_event::VfxEventPayloadV1;
+use crate::world::dimension::DimensionKind;
 use crate::world::events::{ActiveEventsResource, EVENT_BEAST_TIDE};
 use crate::world::zone::{Zone, ZoneRegistry};
 
@@ -311,7 +312,11 @@ pub fn fauna_migration_system(
     let now = clock.as_deref().map(|clock| clock.tick).unwrap_or_default();
     let elapsed = state.elapsed_ticks(now);
 
-    for zone in &zones.zones {
+    for zone in zones
+        .zones
+        .iter()
+        .filter(|zone| zone.dimension == DimensionKind::Overworld)
+    {
         let previous_spirit_qi = state
             .last_spirit_qi_by_zone
             .insert(zone.name.clone(), zone.spirit_qi);
@@ -536,13 +541,24 @@ pub fn horde_migration_system(
     let Some(zones) = zones else {
         return;
     };
+    let mut target_bounds_by_zone: HashMap<&str, Option<(DVec3, DVec3)>> = HashMap::new();
 
     for (entity, mut position, horde, target, lod_tier, navigator) in &mut migrating {
-        let Some(target_zone) = zones.find_zone_by_name(horde.target_zone.as_str()) else {
+        let target_bounds = match target_bounds_by_zone.get(horde.target_zone.as_str()) {
+            Some(bounds) => *bounds,
+            None => {
+                let bounds = zones
+                    .find_zone_by_name(horde.target_zone.as_str())
+                    .map(|zone| zone.bounds);
+                target_bounds_by_zone.insert(horde.target_zone.as_str(), bounds);
+                bounds
+            }
+        };
+        let Some(target_bounds) = target_bounds else {
             continue;
         };
         let current = position.get();
-        if target_zone.contains(current)
+        if zone_bounds_contain(target_bounds, current)
             || current.distance(target.target_pos) <= MIGRATION_REACH_DISTANCE
         {
             commands
@@ -552,19 +568,13 @@ pub fn horde_migration_system(
             continue;
         }
 
-        let direction = horde
-            .assigned_flow_field
-            .as_deref()
-            .and_then(|field_id| flow_fields.get(field_id))
-            .map(|field| field.direction_at(current))
-            .unwrap_or_else(|| direction_toward_xz(current, target.target_pos));
-
         match lod_tier.copied().unwrap_or_default() {
             NpcLodTier::Dormant => {
                 position.set(target.target_pos);
             }
             NpcLodTier::Far => {
                 if now % 1_200 == 0 {
+                    let direction = horde_migration_direction(horde, &flow_fields, current, target);
                     position.set(step_by_direction_preserving_y(
                         current,
                         direction,
@@ -574,6 +584,7 @@ pub fn horde_migration_system(
             }
             NpcLodTier::Mid => {
                 if now % 600 == 0 {
+                    let direction = horde_migration_direction(horde, &flow_fields, current, target);
                     position.set(step_by_direction_preserving_y(
                         current,
                         direction,
@@ -583,6 +594,7 @@ pub fn horde_migration_system(
             }
             NpcLodTier::Near => {
                 if let Some(mut navigator) = navigator {
+                    let direction = horde_migration_direction(horde, &flow_fields, current, target);
                     let next_waypoint = step_by_direction_preserving_y(
                         current,
                         direction,
@@ -757,6 +769,31 @@ fn count_horde_beasts_in_zone(source_zone: &Zone, npcs: &BeastHordeNpcQuery<'_, 
         .unwrap_or(u32::MAX)
 }
 
+fn horde_migration_direction(
+    horde: &HordeMigrationComponent,
+    flow_fields: &FlowFields,
+    current: DVec3,
+    target: &MigrationTarget,
+) -> [f64; 3] {
+    horde
+        .assigned_flow_field
+        .as_deref()
+        .and_then(|field_id| flow_fields.get(field_id))
+        .map(|field| field.direction_at(current))
+        .unwrap_or_else(|| direction_toward_xz(current, target.target_pos))
+}
+
+fn zone_bounds_contain(bounds: (DVec3, DVec3), pos: DVec3) -> bool {
+    let (min, max) = bounds;
+
+    pos.x >= min.x
+        && pos.x <= max.x
+        && pos.y >= min.y
+        && pos.y <= max.y
+        && pos.z >= min.z
+        && pos.z <= max.z
+}
+
 fn migration_beast_tide_command(target_zone: &str, beast_count: usize) -> Command {
     Command {
         command_type: CommandType::SpawnEvent,
@@ -845,7 +882,11 @@ fn select_migration_target_zone<'a>(
     candidates
         .iter()
         .copied()
-        .filter(|zone| zone.name != source.name && zone.spirit_qi > source.spirit_qi)
+        .filter(|zone| {
+            zone.dimension == source.dimension
+                && zone.name != source.name
+                && zone.spirit_qi > source.spirit_qi
+        })
         .max_by(|left, right| left.spirit_qi.total_cmp(&right.spirit_qi))
 }
 
@@ -872,7 +913,7 @@ fn migration_neighbors(
     candidates
         .iter()
         .copied()
-        .filter(|zone| zone.name != source.name)
+        .filter(|zone| zone.dimension == source.dimension && zone.name != source.name)
         .map(|zone| (zone.name.clone(), zone.spirit_qi))
         .collect()
 }
@@ -1286,6 +1327,58 @@ mod tests {
             .expect("migration should find richest neighboring zone");
 
         assert_eq!(target.name, "rich");
+    }
+
+    #[test]
+    fn fauna_migration_system_ignores_tsy_blueprint_zones() {
+        let mut tsy_source = zone("tsy_daneng_01_shallow", -0.45, 0.0);
+        tsy_source.dimension = DimensionKind::Tsy;
+
+        let mut app = App::new();
+        app.insert_resource(CultivationClock { tick: 0 });
+        app.insert_resource(FaunaMigrationState::default());
+        app.insert_resource(ZoneRegistry {
+            zones: vec![tsy_source, zone("spawn", 0.90, 64.0)],
+        });
+        app.add_event::<ZoneDepletionEvent>();
+        app.add_event::<ZoneQiCriticalEvent>();
+        app.add_event::<MigrationEvent>();
+        app.add_event::<VfxEventRequest>();
+        app.add_event::<PlaySoundRecipeRequest>();
+        app.add_systems(Update, fauna_migration_system);
+
+        app.update();
+        app.world_mut().resource_mut::<CultivationClock>().tick = MIGRATION_SUSTAIN_TICKS;
+        app.update();
+
+        assert!(
+            drain_events::<ZoneDepletionEvent>(&app).is_empty(),
+            "TSY blueprint 负灵域不属于主世界 fauna migration source"
+        );
+        assert!(
+            drain_events::<MigrationEvent>(&app).is_empty(),
+            "TSY blueprint 负灵域不能迁徙到主世界 refuge zone"
+        );
+        assert!(drain_events::<VfxEventRequest>(&app).is_empty());
+        assert!(drain_events::<PlaySoundRecipeRequest>(&app).is_empty());
+    }
+
+    #[test]
+    fn migration_target_selection_stays_in_source_dimension() {
+        let mut source = zone("tsy_source", -0.80, 0.0);
+        source.dimension = DimensionKind::Tsy;
+        let mut tsy_refuge = zone("tsy_refuge", -0.20, 32.0);
+        tsy_refuge.dimension = DimensionKind::Tsy;
+
+        let zones = vec![source, zone("overworld_rich", 0.95, 64.0), tsy_refuge];
+
+        let target = select_migration_target_zone(&zones[0], &zones, None)
+            .expect("TSY source should only see same-dimension fallback candidates");
+
+        assert_eq!(
+            target.name, "tsy_refuge",
+            "fallback target selection must not cross from TSY into Overworld"
+        );
     }
 
     #[test]

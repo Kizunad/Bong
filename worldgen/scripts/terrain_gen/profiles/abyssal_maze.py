@@ -43,7 +43,7 @@ ABYSSAL_DECORATIONS = (
         kind="crystal",
         blocks=("obsidian", "amethyst_block", "crying_obsidian"),
         size_range=(6, 14),
-        rarity=0.25,
+        rarity=0.13,
         notes="玄晶柱：黑曜石骨架 + 紫晶节点，偶嵌哭泣石滴。tier 3 专属。",
     ),
     DecorationSpec(
@@ -51,7 +51,7 @@ ABYSSAL_DECORATIONS = (
         kind="tree",
         blocks=("bone_block", "quartz_stairs", "white_concrete"),
         size_range=(4, 8),
-        rarity=0.35,
+        rarity=0.18,
         notes="骨骸树：骨头块主干，树冠由石英阶如帆展开。战场遗骸化生。",
     ),
     DecorationSpec(
@@ -59,7 +59,7 @@ ABYSSAL_DECORATIONS = (
         kind="mushroom",
         blocks=("shroomlight", "crimson_hyphae", "red_mushroom_block"),
         size_range=(2, 4),
-        rarity=0.60,
+        rarity=0.30,
         notes="熏光蘑：发光菌盖 + 绯红菌丝，tier 1/2 成片生长，照明区域。",
     ),
     DecorationSpec(
@@ -67,7 +67,7 @@ ABYSSAL_DECORATIONS = (
         kind="tree",
         blocks=("blackstone", "basalt", "polished_basalt"),
         size_range=(9, 15),
-        rarity=0.18,
+        rarity=0.13,
         notes="渊泥黑檀：黑石躯干+玄武岩枝冠，巨型伞状。最深处的守望者。",
     ),
     DecorationSpec(
@@ -75,7 +75,7 @@ ABYSSAL_DECORATIONS = (
         kind="shrub",
         blocks=("weeping_vines", "crimson_hyphae", "warped_wart_block"),
         size_range=(3, 7),
-        rarity=0.50,
+        rarity=0.25,
         notes="咕藤：自顶而下的悬挂藤蔓群，在洞顶自然垂落。",
     ),
     DecorationSpec(
@@ -83,7 +83,7 @@ ABYSSAL_DECORATIONS = (
         kind="boulder",
         blocks=("cobbled_deepslate", "tuff", "deepslate"),
         size_range=(3, 6),
-        rarity=0.45,
+        rarity=0.23,
         notes="堕岩：深板岩巨石团，散布三层地板，风化有裂纹。",
     ),
 )

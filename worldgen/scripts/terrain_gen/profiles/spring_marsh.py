@@ -25,7 +25,7 @@ SPRING_MARSH_DECORATIONS = (
         kind="tree",
         blocks=("mangrove_log", "mangrove_leaves", "mangrove_roots", "muddy_mangrove_roots"),
         size_range=(7, 11),
-        rarity=0.40,
+        rarity=0.20,
         notes="灵云红树：盘根错节立于浅水，根部聚灵气。水乡地标。",
     ),
     DecorationSpec(
@@ -33,7 +33,7 @@ SPRING_MARSH_DECORATIONS = (
         kind="tree",
         blocks=("jungle_log", "moss_block", "azalea_leaves", "flowering_azalea_leaves"),
         size_range=(8, 13),
-        rarity=0.25,
+        rarity=0.13,
         notes="灵垂柳：绿意浓密的长枝柳，花叶茂盛于灵泉眼周边。",
     ),
     DecorationSpec(
@@ -41,7 +41,7 @@ SPRING_MARSH_DECORATIONS = (
         kind="flower",
         blocks=("lily_pad", "pink_tulip", "peony"),
         size_range=(1, 1),
-        rarity=0.65,
+        rarity=0.33,
         notes="灵莲丛：水面浮满莲叶与粉花，修士静坐处。",
     ),
     DecorationSpec(
@@ -49,7 +49,7 @@ SPRING_MARSH_DECORATIONS = (
         kind="shrub",
         blocks=("sugar_cane", "tall_grass", "fern"),
         size_range=(2, 4),
-        rarity=0.70,
+        rarity=0.35,
         notes="灵苇：成片高苇将水道分隔成迷宫，藏鱼与小灵兽。",
     ),
     DecorationSpec(
@@ -57,7 +57,7 @@ SPRING_MARSH_DECORATIONS = (
         kind="boulder",
         blocks=("moss_block", "mossy_cobblestone", "prismarine"),
         size_range=(2, 4),
-        rarity=0.35,
+        rarity=0.18,
         notes="翠苔石：水边苔石，偶含微弱夜光。",
     ),
     # Ground cover specs
@@ -66,7 +66,7 @@ SPRING_MARSH_DECORATIONS = (
         kind="flower",
         blocks=("grass",),
         size_range=(1, 1),
-        rarity=0.65,
+        rarity=0.33,
         notes="湿地草：岛上常见地表覆盖。",
     ),
     DecorationSpec(
@@ -74,7 +74,7 @@ SPRING_MARSH_DECORATIONS = (
         kind="flower",
         blocks=("fern",),
         size_range=(1, 1),
-        rarity=0.50,
+        rarity=0.25,
         notes="水边蕨：阴湿地表覆盖。",
     ),
 )
