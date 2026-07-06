@@ -328,11 +328,17 @@ pub enum ClientRequestV1 {
     },
     /// 客户端拖拽完成后通知 server 把 instance_id 从 from 移动到 to。
     /// server 校验后改 PlayerInventory，回推 inventory_event::moved。
+    ///
+    /// plan-rotate-v1 — `rotated=true` 表示本次落位前先把该 instance 的
+    /// `grid_w`/`grid_h` 互换（2x1 ↔ 1x2 等）。`#[serde(default)]` 保证旧客户端
+    /// 不带该字段的请求仍按 `false`（未旋转）解析，向后兼容。
     InventoryMoveIntent {
         v: u8,
         instance_id: u64,
         from: InventoryLocationV1,
         to: InventoryLocationV1,
+        #[serde(default)]
+        rotated: bool,
     },
     /// plan-tuike-v1 — 装备伪皮的专用 C2S 包；服务端落到 false_skin 装备槽。
     EquipFalseSkin {
@@ -810,6 +816,64 @@ mod tests {
         let json = r#"{"type":"breakthrough_request","v":1}"#;
         let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
         assert!(matches!(req, ClientRequestV1::BreakthroughRequest { v: 1 }));
+    }
+
+    // ─── plan-rotate-v1 — InventoryMoveIntent.rotated serde pin ────────────
+
+    /// 旧客户端 payload 不带 rotated 字段必须照常解析且缺省为 false
+    /// （`#[serde(default)]` 向后兼容 pin，防止未来误改成必填字段炸旧端）。
+    #[test]
+    fn inventory_move_intent_without_rotated_defaults_to_false() {
+        let json = r#"{"type":"inventory_move_intent","v":1,"instance_id":42,
+            "from":{"kind":"container","container_id":"main_pack","row":0,"col":0},
+            "to":{"kind":"container","container_id":"main_pack","row":0,"col":1}}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+        match req {
+            ClientRequestV1::InventoryMoveIntent {
+                v,
+                instance_id,
+                rotated,
+                ..
+            } => {
+                assert_eq!(v, 1);
+                assert_eq!(instance_id, 42);
+                assert!(
+                    !rotated,
+                    "缺省 rotated 应为 false（未旋转），旧 payload 兼容被破坏"
+                );
+            }
+            other => panic!("expected InventoryMoveIntent, got {other:?}"),
+        }
+    }
+
+    /// rotated=true 显式携带时必须解析为 true（新客户端旋转落位路径）。
+    #[test]
+    fn inventory_move_intent_with_rotated_true_parses() {
+        let json = r#"{"type":"inventory_move_intent","v":1,"instance_id":7,"rotated":true,
+            "from":{"kind":"container","container_id":"main_pack","row":0,"col":0},
+            "to":{"kind":"container","container_id":"main_pack","row":2,"col":3}}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+        match req {
+            ClientRequestV1::InventoryMoveIntent { rotated, .. } => {
+                assert!(rotated, "显式 rotated=true 应解析为 true");
+            }
+            other => panic!("expected InventoryMoveIntent, got {other:?}"),
+        }
+    }
+
+    /// rotated=false 显式携带时保持 false（新客户端未旋转落位路径）。
+    #[test]
+    fn inventory_move_intent_with_rotated_false_parses() {
+        let json = r#"{"type":"inventory_move_intent","v":1,"instance_id":7,"rotated":false,
+            "from":{"kind":"hotbar","index":0},
+            "to":{"kind":"container","container_id":"main_pack","row":2,"col":3}}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+        match req {
+            ClientRequestV1::InventoryMoveIntent { rotated, .. } => {
+                assert!(!rotated, "显式 rotated=false 应解析为 false");
+            }
+            other => panic!("expected InventoryMoveIntent, got {other:?}"),
+        }
     }
 
     #[test]

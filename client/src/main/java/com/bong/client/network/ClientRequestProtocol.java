@@ -591,11 +591,24 @@ public final class ClientRequestProtocol {
         }
     }
 
-    public static String encodeInventoryMove(long instanceId, InvLocation from, InvLocation to) {
+    /**
+     * plan-rotate-v1 — {@code rotated=true} 表示本次落位前先把该 instance 的
+     * grid_w/grid_h 互换（拖拽中按 R 旋转，2x1 ↔ 1x2）。false 时字段省略，
+     * server 侧 {@code #[serde(default)]} 视为未旋转（与旧 payload 形状一致）。
+     */
+    public static String encodeInventoryMove(
+        long instanceId,
+        InvLocation from,
+        InvLocation to,
+        boolean rotated
+    ) {
         JsonObject obj = envelope("inventory_move_intent");
         obj.addProperty("instance_id", instanceId);
         obj.add("from", from.toJson());
         obj.add("to", to.toJson());
+        if (rotated) {
+            obj.addProperty("rotated", true);
+        }
         return obj.toString();
     }
 

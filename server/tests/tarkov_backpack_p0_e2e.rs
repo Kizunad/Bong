@@ -196,7 +196,7 @@ fn e2e_unequip_nonempty_pack_drops_overflow_not_lost() {
         row: 0,
         col: 0,
     };
-    apply_inventory_move(&mut inventory, &registry, 4242, &from, &to).expect(
+    apply_inventory_move(&mut inventory, &registry, 4242, &from, &to, false).expect(
         "apply_inventory_move 卸下非空 worn 背包件到 stash 容器应成功（非空拒卸硬门已移除）",
     );
 
@@ -339,7 +339,7 @@ fn setup_worn_pack_e2e(contents: &[u64]) -> (PlayerInventory, ItemRegistry, u64)
     (inventory, registry, pack_id)
 }
 
-/// e2e #16 — 卸包到 body_pocket：apply_inventory_move(worn→body_pocket) → rebuild → 容器 +
+/// e2e #16 — 卸包到 body_pocket：apply_inventory_move(worn→body_pocket, false) → rebuild → 容器 +
 /// 内含物保留、无掉落物。锁住「卸到身上不掉地」核心修复。
 #[test]
 fn e2e_unequip_pack_to_body_pocket_keeps_container_no_drop() {
@@ -354,7 +354,7 @@ fn e2e_unequip_pack_to_body_pocket_keeps_container_no_drop() {
         row: 0,
         col: 0,
     };
-    apply_inventory_move(&mut inventory, &registry, pack_id, &from, &to)
+    apply_inventory_move(&mut inventory, &registry, pack_id, &from, &to, false)
         .expect("卸 worn 背包到 body_pocket 应成功");
 
     let mut dropped = DroppedLootRegistry::default();
@@ -406,6 +406,7 @@ fn e2e_move_contents_out_of_pack_in_body_pocket_succeeds() {
             row: 0,
             col: 0,
         },
+        false,
     )
     .expect("卸背包到 body_pocket 应成功");
     let mut dropped = DroppedLootRegistry::default();
@@ -436,6 +437,7 @@ fn e2e_move_contents_out_of_pack_in_body_pocket_succeeds() {
             row: 2,
             col: 2,
         },
+        false,
     );
     assert!(
         res.is_ok(),

@@ -9912,6 +9912,8 @@ mod tests {
                             },
                         )),
                     }),
+                    // plan-rotate-v1 — 旋转标志随 wire roundtrip。
+                    rotated: true,
                 },
             )),
         };
@@ -9921,6 +9923,10 @@ mod tests {
         match decoded.payload {
             Some(client_request_envelope::Payload::InventoryMoveIntent(m)) => {
                 assert_eq!(m.instance_id, 42);
+                assert!(
+                    m.rotated,
+                    "InventoryMoveIntent.rotated 应随 proto roundtrip 保留 true（plan-rotate-v1 字段 4）"
+                );
             }
             other => panic!("expected InventoryMoveIntent, got {other:?}"),
         }
@@ -10702,6 +10708,7 @@ mod tests {
                     instance_id: 1,
                     from: None,
                     to: None,
+                    rotated: false,
                 }),
                 "InventoryMoveIntent",
             ),
