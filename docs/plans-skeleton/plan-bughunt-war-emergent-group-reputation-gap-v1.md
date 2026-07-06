@@ -55,10 +55,10 @@
 
 > **退化处理说明**：本会话当前无法再开 subagent；以下两轮改为主代理手工做“反方论点 → 证据复核 → 驳回理由”的对抗裁决，保持记录诚实。
 
-1. **Round 1 反方论点**：`group_id=3` 也许只存在于测试，生产仍然只会落到 0/1/2，所以桥接表少一项不构成真实 bug。  
+1. **Round 1 反方论点**：`group_id=3` 也许只存在于测试，生产仍然只会落到 0/1/2，所以桥接表少一项不构成真实 bug。
    **驳回理由**：`EMERGENT_GROUP_COUNT = 4` 是生产常量；`seed_emergent_group()` 直接对 4 取模；而且 `seed_emergent_group_distribution_covers_at_least_three_groups` 与 `dormant_rogue_seed_snapshot_assigns_explicit_emergent_group` 两个现有测试都在锁“生产 seed 必须覆盖 >2 群体、并写入显式 emergent_group”。这不是 test-only 输入。
 
-2. **Round 2 反方论点**：也许“unknown emergent group 不写 faction reputation”是刻意设计，因为匿名 war 本就不该影响 named faction 信誉。  
+2. **Round 2 反方论点**：也许“unknown emergent group 不写 faction reputation”是刻意设计，因为匿名 war 本就不该影响 named faction 信誉。
    **驳回理由**：如果这是设计，当前实现就不该让 `0/1/2` 三个匿名群体继续写 `FactionReputationDeltaEvent`。现状是只有第 4 个合法群体被排除，形成非对称行为；同时 NPC 交互与交易真实消费 `FactionReputation`，说明这条链在产品层面本来就是要让玩家感知到的。故“匿名 war 一律不写 faction reputation”不能解释为什么只有 group 3 掉桥，只能说明桥接实现不完整。
 
 ## 开放问题
