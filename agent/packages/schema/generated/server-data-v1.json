@@ -17370,6 +17370,10 @@
           "minimum": 0,
           "type": "integer"
         },
+        "visual_entity_id": {
+          "minimum": 0,
+          "type": "integer"
+        },
         "kind": {
           "anyOf": [
             {
