@@ -1937,6 +1937,7 @@ mod tests {
             duration_ticks: 40,
             gathering_quality: Some(crate::gathering::quality::GatheringQuality::Perfect),
             tool_used: Some("bao_chu".to_string()),
+            overflow_to_ground: false,
         });
 
         app.update();

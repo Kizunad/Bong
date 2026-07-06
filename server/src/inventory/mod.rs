@@ -1533,6 +1533,79 @@ pub fn add_customized_item_to_player_inventory(
     )
 }
 
+/// plan-botany-harvest-full-inventory-loss-v1 §8.1 决议 #1 — 原子"入包或掉地" grant。
+/// `DroppedToGround` 装箱：`DroppedLootEntry`（含内嵌 `ItemInstance`）比
+/// `InventoryGrantReceipt` 大得多，不装箱会让整个 enum 按最大变体膨胀
+/// （clippy::large_enum_variant）。
+#[derive(Debug, Clone, PartialEq)]
+pub enum GrantOrGroundOutcome {
+    Granted(InventoryGrantReceipt),
+    DroppedToGround(Box<DroppedLootEntry>),
+}
+
+/// plan-botany-harvest-full-inventory-loss-v1 §8.1 决议 #1 — 先原子尝试走既有
+/// `add_item_to_player_inventory_inner`；仅当失败原因是背包已满（`"inventory full:"`
+/// 前缀）时才 fallback 到 `DroppedLootRegistry`（地面掉落，复用
+/// `fauna::drop::fauna_drop_system` 已验证的直插模式）。其它结构性错误（unknown
+/// template / stack_count 0 / no containers）原样透传——这些是配置错误，不该被
+/// 静默转成"地面掉落"掩盖。拒绝了 pre-check 方案：容器判定逻辑已内嵌在
+/// `add_item_to_player_inventory_inner` 内部，重新实现一份等价判定必然与真正的插入
+/// 逻辑产生"两处判定各自维护、迟早漂移"的技术债。
+#[allow(clippy::too_many_arguments)]
+pub fn add_item_to_player_inventory_or_ground(
+    inventory: &mut PlayerInventory,
+    registry: &ItemRegistry,
+    allocator: &mut InventoryInstanceIdAllocator,
+    dropped_loot: Option<&mut DroppedLootRegistry>,
+    template_id: &str,
+    stack_count: u32,
+    current_tick: u64,
+    ground_pos: [f64; 3],
+    ground_dimension: DimensionKind,
+    customize_instance: Option<&dyn Fn(&mut ItemInstance)>,
+) -> Result<GrantOrGroundOutcome, String> {
+    match add_item_to_player_inventory_inner(
+        inventory,
+        registry,
+        allocator,
+        template_id,
+        stack_count,
+        true,
+        customize_instance,
+        current_tick,
+    ) {
+        Ok(receipt) => Ok(GrantOrGroundOutcome::Granted(receipt)),
+        Err(err) if err.starts_with("inventory full:") => {
+            let Some(dropped_loot) = dropped_loot else {
+                return Err(format!(
+                    "inventory full and no DroppedLootRegistry available to fall back: {err}"
+                ));
+            };
+            let template = registry
+                .get(template_id)
+                .ok_or_else(|| format!("unknown item template id `{template_id}`"))?;
+            let instance_id = allocator.next_id()?;
+            let mut item =
+                runtime_instance_from_template(template, instance_id, stack_count, current_tick);
+            if let Some(customize_instance) = customize_instance {
+                customize_instance(&mut item);
+            }
+            let entry = DroppedLootEntry {
+                instance_id,
+                source_container_id: format!("overflow:{template_id}"),
+                source_row: 0,
+                source_col: 0,
+                world_pos: ground_pos,
+                dimension: ground_dimension,
+                item,
+            };
+            dropped_loot.entries.insert(instance_id, entry.clone());
+            Ok(GrantOrGroundOutcome::DroppedToGround(Box::new(entry)))
+        }
+        Err(other) => Err(other),
+    }
+}
+
 pub fn add_item_to_player_inventory_with_alchemy(
     inventory: &mut PlayerInventory,
     registry: &ItemRegistry,
@@ -6562,6 +6635,12 @@ mod tests {
             "gua_dao",
             "gu_hai_qian",
             "bing_jia_shou_tao",
+            // plan-zhenfa-trap-client-equip-gate-v1 P2 — zhenfa.toml 阵法工具（此前漏收进本 pin，
+            // 是导致 client TOOL_TEMPLATE_IDS 白名单漂移未被察觉的同一契约缺口）。
+            "warning_trap",
+            "blast_trap",
+            "slow_trap",
+            "array_flag",
         ] {
             let template = registry
                 .get(required_tool)
@@ -7991,6 +8070,182 @@ cols = 4
             add_item_to_player_inventory(&mut inventory, &registry, &mut allocator, "stone", 1, 0)
                 .expect_err("full pack should reject another non-stack item");
         assert!(error.contains("inventory full: stone"));
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // plan-botany-harvest-full-inventory-loss-v1 §P0 — add_item_to_player_inventory_or_ground
+    // ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn grant_or_ground_grants_normally_when_space_available() {
+        let registry =
+            registry_from_templates(vec![test_template("stone", ItemCategory::Misc, 1, 1, 1)]);
+        let mut inventory = empty_inventory(2, 2);
+        let mut allocator = InventoryInstanceIdAllocator::new(1);
+        let mut dropped_loot = DroppedLootRegistry::default();
+
+        let outcome = add_item_to_player_inventory_or_ground(
+            &mut inventory,
+            &registry,
+            &mut allocator,
+            Some(&mut dropped_loot),
+            "stone",
+            1,
+            0,
+            [1.0, 2.0, 3.0],
+            DimensionKind::Overworld,
+            None,
+        )
+        .expect("space available should grant normally, not fall back to ground");
+
+        match outcome {
+            GrantOrGroundOutcome::Granted(receipt) => {
+                assert_eq!(
+                    receipt.revision,
+                    InventoryRevision(1),
+                    "successful grant should bump inventory revision to 1"
+                );
+            }
+            GrantOrGroundOutcome::DroppedToGround(entry) => {
+                panic!("expected Granted with free space available, got DroppedToGround({entry:?})")
+            }
+        }
+        assert!(
+            dropped_loot.entries.is_empty(),
+            "no overflow entry should be created when a normal grant succeeds"
+        );
+    }
+
+    #[test]
+    fn grant_or_ground_drops_to_ground_when_inventory_full() {
+        let registry = registry_from_templates(vec![test_template(
+            "ci_she_hao",
+            ItemCategory::Herb,
+            1,
+            1,
+            64,
+        )]);
+        let mut inventory = empty_inventory(1, 1);
+        inventory.containers[0].items.push(PlacedItemState {
+            row: 0,
+            col: 0,
+            instance: make_test_item_instance(1, "occupant"),
+        });
+        let mut allocator = InventoryInstanceIdAllocator::new(2);
+        let mut dropped_loot = DroppedLootRegistry::default();
+        let ground_pos = [5.0, 64.0, 5.0];
+
+        let outcome = add_item_to_player_inventory_or_ground(
+            &mut inventory,
+            &registry,
+            &mut allocator,
+            Some(&mut dropped_loot),
+            "ci_she_hao",
+            1,
+            0,
+            ground_pos,
+            DimensionKind::Overworld,
+            None,
+        )
+        .expect("full inventory with a DroppedLootRegistry available should fall back to ground, not error");
+
+        match outcome {
+            GrantOrGroundOutcome::DroppedToGround(entry) => {
+                assert_eq!(
+                    entry.world_pos, ground_pos,
+                    "dropped entry world_pos should equal the caller-provided ground_pos"
+                );
+                assert_eq!(entry.item.template_id, "ci_she_hao");
+            }
+            GrantOrGroundOutcome::Granted(receipt) => panic!(
+                "expected DroppedToGround when the only cell is occupied, got Granted({receipt:?})"
+            ),
+        }
+        assert_eq!(
+            dropped_loot.entries.len(),
+            1,
+            "overflow item should be recorded exactly once in DroppedLootRegistry"
+        );
+        assert!(
+            inventory.containers[0]
+                .items
+                .iter()
+                .all(|placed| placed.instance.template_id != "ci_she_hao"),
+            "ci_she_hao must not silently appear in the full container"
+        );
+    }
+
+    #[test]
+    fn grant_or_ground_errors_when_full_and_no_registry_available() {
+        let registry = registry_from_templates(vec![test_template(
+            "ci_she_hao",
+            ItemCategory::Herb,
+            1,
+            1,
+            64,
+        )]);
+        let mut inventory = empty_inventory(1, 1);
+        inventory.containers[0].items.push(PlacedItemState {
+            row: 0,
+            col: 0,
+            instance: make_test_item_instance(1, "occupant"),
+        });
+        let mut allocator = InventoryInstanceIdAllocator::new(2);
+
+        let error = add_item_to_player_inventory_or_ground(
+            &mut inventory,
+            &registry,
+            &mut allocator,
+            None,
+            "ci_she_hao",
+            1,
+            0,
+            [0.0, 0.0, 0.0],
+            DimensionKind::Overworld,
+            None,
+        )
+        .expect_err(
+            "full inventory with no DroppedLootRegistry must surface an observable error, not panic",
+        );
+
+        assert!(
+            error.contains("no DroppedLootRegistry"),
+            "error should explain the missing ground fallback, got {error:?}"
+        );
+    }
+
+    #[test]
+    fn grant_or_ground_passes_through_unknown_template_error_without_dropping() {
+        let registry =
+            registry_from_templates(vec![test_template("stone", ItemCategory::Misc, 1, 1, 1)]);
+        let mut inventory = empty_inventory(2, 2);
+        let mut allocator = InventoryInstanceIdAllocator::new(1);
+        let mut dropped_loot = DroppedLootRegistry::default();
+
+        let error = add_item_to_player_inventory_or_ground(
+            &mut inventory,
+            &registry,
+            &mut allocator,
+            Some(&mut dropped_loot),
+            "nonexistent_item",
+            1,
+            0,
+            [0.0, 0.0, 0.0],
+            DimensionKind::Overworld,
+            None,
+        )
+        .expect_err(
+            "unknown template id is a structural error and must not be masked as ground overflow",
+        );
+
+        assert!(
+            error.contains("unknown item template id"),
+            "structural error should mention unknown template id, got {error:?}"
+        );
+        assert!(
+            dropped_loot.entries.is_empty(),
+            "structural errors must not create a ground drop entry"
+        );
     }
 
     #[test]

@@ -147,6 +147,81 @@ class InventoryEquipRulesTest {
         assertFalse(InventoryEquipRules.canPlaceIntoHotbar(pickaxe), "工具不进 hotbar");
     }
 
+    // ── plan-zhenfa-trap-client-equip-gate-v1 P0 — zhenfa 阵法工具白名单补录回归 ──
+    // warning_trap/blast_trap/slow_trap/array_flag（server assets/items/zhenfa.toml，均 category="tool"）
+    // 此前漏收录进 TOOL_TEMPLATE_IDS，导致 isTool()=false → canEquip(MAIN_HAND) 被拒、装不进手槽。
+    // 每条锁住 isTool + 主手放行 + hotbar 拒绝，与 server ItemCategory::Tool forbidden_in_hotbar 契约对齐。
+
+    @Test
+    void warningTrapCanEquipMainHandNotHotbar() {
+        InventoryItem trap = item(9101L, "warning_trap", 1, 1);
+
+        assertTrue(InventoryEquipRules.isTool(trap),
+            "期望 warning_trap 被识别为工具（zhenfa.toml category=tool），实际未识别——检查 TOOL_TEMPLATE_IDS 是否漏收");
+        assertTrue(InventoryEquipRules.canEquip(trap, EquipSlotType.MAIN_HAND, null, equipped()),
+            "期望 warning_trap 可装主手，实际被拒——isTool=false 会导致 canEquip(MAIN_HAND) 分支不放行");
+        assertFalse(InventoryEquipRules.canPlaceIntoHotbar(trap),
+            "期望 warning_trap 不能放入 hotbar（与 server ItemCategory::Tool forbidden_in_hotbar 契约对齐），实际放行");
+    }
+
+    @Test
+    void blastTrapCanEquipMainHandNotHotbar() {
+        InventoryItem trap = item(9102L, "blast_trap", 1, 1);
+
+        assertTrue(InventoryEquipRules.isTool(trap),
+            "期望 blast_trap 被识别为工具（zhenfa.toml category=tool），实际未识别——检查 TOOL_TEMPLATE_IDS 是否漏收");
+        assertTrue(InventoryEquipRules.canEquip(trap, EquipSlotType.MAIN_HAND, null, equipped()),
+            "期望 blast_trap 可装主手，实际被拒——isTool=false 会导致 canEquip(MAIN_HAND) 分支不放行");
+        assertFalse(InventoryEquipRules.canPlaceIntoHotbar(trap),
+            "期望 blast_trap 不能放入 hotbar（与 server ItemCategory::Tool forbidden_in_hotbar 契约对齐），实际放行");
+    }
+
+    @Test
+    void slowTrapCanEquipMainHandNotHotbar() {
+        InventoryItem trap = item(9103L, "slow_trap", 1, 1);
+
+        assertTrue(InventoryEquipRules.isTool(trap),
+            "期望 slow_trap 被识别为工具（zhenfa.toml category=tool），实际未识别——检查 TOOL_TEMPLATE_IDS 是否漏收");
+        assertTrue(InventoryEquipRules.canEquip(trap, EquipSlotType.MAIN_HAND, null, equipped()),
+            "期望 slow_trap 可装主手，实际被拒——isTool=false 会导致 canEquip(MAIN_HAND) 分支不放行");
+        assertFalse(InventoryEquipRules.canPlaceIntoHotbar(trap),
+            "期望 slow_trap 不能放入 hotbar（与 server ItemCategory::Tool forbidden_in_hotbar 契约对齐），实际放行");
+    }
+
+    @Test
+    void arrayFlagCanEquipMainHandNotHotbar() {
+        // array_flag 是 zhenfa.toml 里 grid_w=1/grid_h=2 的非单格物件——isSingleCell 已为 false，
+        // 这里仍显式断言 isTool + canEquip + !canPlaceIntoHotbar 三件套，覆盖 §8.1 #2 决议并入的漏项。
+        InventoryItem flag = item(9104L, "array_flag", 1, 2);
+
+        assertTrue(InventoryEquipRules.isTool(flag),
+            "期望 array_flag 被识别为工具（zhenfa.toml category=tool，§8.1 #2 并入本 plan），实际未识别");
+        assertTrue(InventoryEquipRules.canEquip(flag, EquipSlotType.MAIN_HAND, null, equipped()),
+            "期望 array_flag 可装主手，实际被拒——isTool=false 会导致 canEquip(MAIN_HAND) 分支不放行");
+        assertFalse(InventoryEquipRules.canPlaceIntoHotbar(flag),
+            "期望 array_flag 不能放入 hotbar，实际放行");
+    }
+
+    @Test
+    void zhenfaToolsQuickEquipRouteToMainHand() {
+        // plan §P0 验收抓手："preferredWeaponQuickEquipSlot() 能为四种物品选出手槽"。
+        // 仿 quickEquipRoutesToolToMainHand(dun_qi_jia) 先例，锁住四个 zhenfa 工具的 quick-equip 选槽。
+        record Case(long id, String name, int w, int h) {}
+        for (Case c : new Case[] {
+            new Case(9201L, "warning_trap", 1, 1),
+            new Case(9202L, "blast_trap", 1, 1),
+            new Case(9203L, "slow_trap", 1, 1),
+            new Case(9204L, "array_flag", 1, 2),
+        }) {
+            assertEquals(
+                EquipSlotType.MAIN_HAND,
+                InventoryEquipRules.preferredWeaponQuickEquipSlot(
+                    item(c.id(), c.name(), c.w(), c.h()), equipped(), slot -> true),
+                "期望 " + c.name() + " quick-equip 选主手槽（isTool 后 canEquip(MAIN_HAND) 放行），"
+                    + "实际未选中——检查 TOOL_TEMPLATE_IDS 补录是否让 preferredWeaponQuickEquipSlot 生效");
+        }
+    }
+
     @Test
     void toolAndHoeCanEquipOffHand() {
         assertTrue(InventoryEquipRules.canEquip(item(5005L, "dun_qi_jia", 1, 1),

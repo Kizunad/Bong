@@ -20,6 +20,8 @@ pub mod loot_pool;
 pub mod mob_spawn;
 pub mod poi_mutant_nest;
 pub mod poi_novice;
+#[cfg(test)]
+mod poi_novice_scatter_integration_test;
 pub mod poi_respawn_tick;
 pub mod pseudo_vein_runtime;
 pub mod rift_portal;

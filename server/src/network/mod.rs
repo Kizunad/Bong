@@ -935,6 +935,14 @@ pub fn register(app: &mut App) {
     );
     // plan-shield-block-v1 P3：盾牌破损推送（独立 add_systems 避免 Bevy 20元素 tuple 上限）。
     app.add_systems(Update, weapon_equipped_emit::emit_shield_broken_payloads);
+    // plan-botany-harvest-full-inventory-loss-v1 P1：满包掉地面 event_stream 提示
+    // （同样独立 add_systems，紧邻上面 shield-block-v1 P3 先例——L895-932 的 20 元素
+    // add_systems 元组已达 Bevy 0.14.2 IntoSystemConfigs tuple 上限，不得再追加）。
+    app.add_systems(
+        Update,
+        event_stream_emit::emit_botany_harvest_overflow_to_event_stream
+            .after(crate::botany::harvest::tick_harvest_sessions),
+    );
     // plan-shield-block-v1 P4：盾格挡命中推送（材质差异化粒子+音效）。
     app.add_systems(
         Update,
@@ -3482,6 +3490,7 @@ mod tests {
                 loot_table: None,
                 guardian_relic: None,
                 tsy_hostile: None,
+                tsy_sentinel: None,
                 intent: crate::npc::dormant::DormantBehaviorIntent::Wander { drift_radius: 12.0 },
                 dormant_since_tick: 0,
                 last_dormant_tick_processed: 0,

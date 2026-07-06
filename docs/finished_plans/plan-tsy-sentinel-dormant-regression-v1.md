@@ -6,10 +6,10 @@
 
 | 阶段 | 主题 | 路由 | 状态 |
 |---|---|---|---|
-| P0 | 复现链路 + 回归 pin：sentinel 脱水/回水后仍保持守灵身份 | fix_pr | ⬜ 升 active 2026-07-04 |
-| P1 | dormant snapshot 补齐 sentinel 身份载荷（不再只记 `TsyHostileMarker`） | fix_pr | ⬜ |
-| P2 | hydrate 按 sentinel 专属 spawn 路径重建 AI/外观/HUD/掉落语义 | fix_pr | ⬜ |
-| P3 | 玩家可见回归：离开 TSY/回头后二次遭遇仍是同一类 boss | fix_pr | ⬜ |
+| P0 | 复现链路 + 回归 pin：sentinel 脱水/回水后仍保持守灵身份 | fix_pr | ✅ 2026-07-05 |
+| P1 | dormant snapshot 补齐 sentinel 身份载荷（不再只记 `TsyHostileMarker`） | fix_pr | ✅ 2026-07-05 |
+| P2 | hydrate 按 sentinel 专属 spawn 路径重建 AI/外观/HUD/掉落语义 | fix_pr | ✅ 2026-07-05 |
+| P3 | 玩家可见回归：离开 TSY/回头后二次遭遇仍是同一类 boss | fix_pr | ✅ 2026-07-05（自动化端到端 pin；人工视觉核对留遗留） |
 
 ## 接入面
 
@@ -134,3 +134,37 @@
 3. 测试直接放进 P0 pin 测试清单（不单独起新阶段），因为它锁的正是本 plan 要修的那条分流逻辑本身，属于同一批回归测试的自然收尾，拆开只会增加交叉引用成本。
 
 **落点**：`server/src/npc/hydrate/mod.rs:641-656`（新路由分支落点）/ plan §P0（pin 测试清单第 4 条）
+
+## Finish Evidence
+
+**验收日期**：2026-07-05（P0-P3 ✅）。经 §8.1 pre-P0 收口（3 决议 + 博弈 blocker 补漏 family_id+坐标复合重绑键）+ pre-merge 博弈 gate（3 sonnet 对抗 + opus 主审独立核实，`ready=true` 无 blocker；主审对 blocker-锁 pin 做了 mutation testing——删 family `.filter` 即撞红误绑 tutorial_chest——证实其为活 tripwire）。
+
+### 落地清单
+
+| 阶段 | 交付物 | 真实落点 |
+|------|--------|----------|
+| P1 snapshot | `DormantTsySentinelSnapshot` + `NpcDormantSnapshot.tsy_sentinel` 非破坏 serde 迁移 | `server/src/npc/dormant/mod.rs`（新 `DormantTsySentinelSnapshot{guarding_container_pos,phase,max_phase}` + `tsy_sentinel: Option<...>` `#[serde(skip_serializing_if="Option::is_none",default)]`；复用同实体必存的 `snapshot.tsy_hostile.family_id`，不另开 family 字段） |
+| P1 dehydrate | 脱水侧 query + 写快照 | `server/src/npc/hydrate/mod.rs`（`DormantExtraComponentQueries` 补 `tsy_sentinel_markers`/`containers` query；`dormant_tsy_sentinel_snapshot(...)` 在 `dehydrate_far_npcs_system` candidate 构造处接入） |
+| P2 hydrate 路由 | 按 `snapshot.tsy_sentinel.is_some()` 二选一 + 两段式 family+坐标重绑 | `server/src/npc/hydrate/mod.rs`（`spawn_from_snapshot` GuardianRelic 分支 `resolve_sentinel_guarding_container`：先 `family_id==tsy_hostile.family_id` 过滤 relic_containers、再子集内坐标 epsilon≤0.5 匹配；无匹配→None+`tracing::warn!`，仍按守灵 spawn；hydrate tail 补 max_phase 精确回填） |
+| P2 签名 | `spawn_tsy_sentinel_at` 收紧 `Entity`→`Option<Entity>` + 4 调用点 | `server/src/npc/tsy_hostile.rs`（签名 + `spawn_tsy_hostiles_for_family` 调用点 + 2 测试调用；`drop_key_for_npc` 提 `pub(crate)`） |
+| P0/P3 pin | 6 回归 pin + 1 serde 迁移 pin | `server/src/npc/hydrate/mod.rs`（6 pin）+ `server/src/npc/dormant/mod.rs`（serde pin） |
+
+### 关键 commit
+
+- `5fbf84cc3`（2026-07-05）—— P0-P3 单 commit：P1 snapshot 补身份载荷 + P2 hydrate 两段式重绑 + 6 pin + 1 serde 迁移 pin。
+
+### 测试结果
+
+- `cargo fmt --check` 干净 / `cargo clippy --all-targets -- -D warnings` 零警告 / `cargo test` 全量 **10702 passed，0 failed**。
+- 6 回归 pin：`tsy_sentinel_dehydrates_with_sentinel_identity_payload` / `hydrated_tsy_sentinel_uses_spawn_tsy_sentinel_path_not_spawn_relic_guard` / `rehydrated_tsy_sentinel_keeps_marker_visual_and_phase_state` / `guardian_relic_dual_identity_invariant_partitioned_by_sentinel_marker`（§8.1#3 互斥）/ `hydrated_tsy_sentinel_container_rebind_ignores_same_position_different_family`（§8.1#1 blocker 锁，mutation-tested 有效）/ `sentinel_survives_full_dehydrate_hydrate_cycle_with_container_still_present`（P3 端到端 + `drop_key_for_npc` 断言产 `tsy_sentinel` 键）。
+- serde 迁移 pin：`legacy_redis_snapshot_without_tsy_sentinel_field_defaults_to_none`。
+
+### 跨仓库核验
+
+- **server**：`DormantTsySentinelSnapshot` / `NpcDormantSnapshot.tsy_sentinel` / `dormant_tsy_sentinel_snapshot` / `spawn_tsy_sentinel_at`(`Option<Entity>`) / `TsySentinelMarker` 往返。
+- **agent / client**：零改动（纯 server-side dormant/hydrate ECS snapshot 往返修复；无 IPC schema / payload 变更）。
+
+### 遗留 / 后续
+
+- **P3 人工视觉核对未做**（无游戏环境）：自动化端到端 pin `sentinel_survives_full_dehydrate_hydrate_cycle_with_container_still_present` 已锁回归；建议用户下次 `cargo run` 二刷 TSY 时顺手目视确认守灵外观/血条/掉落。
+- **同 family 多容器坐标碰撞**（博弈 minor #1，非本 PR 引入、非阻塞）：`resolve_sentinel_guarding_container` family 过滤后若同一 family 有多个容器落进同一 0.5 格 epsilon，`.find()` 取迭代序第一个，可能非原守护容器。§8.1#1 决议范围只覆盖跨 family 偶合，同 family 碰撞出范围；生产拓扑每 sentinel 绑独立 RelicCore、两容器落半格内不现实；即便命中也是同 family 同 kind 合法 RelicCore，身份 marker/visual/HUD/drop_key 全恢复，仅影响 `TsySentinelPhaseChanged.container_entity_id`（同 family VFX）。值得未来补一条 pin，不阻塞。

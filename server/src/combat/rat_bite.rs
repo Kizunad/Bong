@@ -1,6 +1,6 @@
 use valence::prelude::{
     bevy_ecs, Client, Commands, DVec3, Entity, Event, EventReader, EventWriter, Position, Query,
-    With,
+    ResMut, With,
 };
 use valence::protocol::encode::WritePacket;
 use valence::protocol::packets::play::DamageTiltS2c;
@@ -19,7 +19,7 @@ use crate::network::gameplay_vfx;
 use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::network::{log_payload_build_error, send_server_data_payload};
 use crate::npc::spawn_rat::RatBlackboard;
-use crate::qi_physics::ledger::{QiAccountId, QiTransfer, QiTransferReason};
+use crate::qi_physics::ledger::{QiAccountId, QiTransfer, QiTransferReason, WorldQiAccount};
 use crate::schema::server_data::{
     CombatEventFloaterEntryV1, CombatEventFloaterV1, ServerDataPayloadV1, ServerDataV1,
 };
@@ -48,6 +48,7 @@ pub fn apply_rat_bite_qi_drain(
     mut rats: Query<&mut RatBlackboard>,
     mut deaths: EventWriter<CultivationDeathTrigger>,
     mut qi_transfers: EventWriter<QiTransfer>,
+    mut ledger: Option<ResMut<WorldQiAccount>>,
     mut clients: Query<&mut Client>,
     positions: Query<&Position>,
     mut vfx_events: EventWriter<VfxEventRequest>,
@@ -72,13 +73,35 @@ pub fn apply_rat_bite_qi_drain(
             (cultivation.qi_current - f64::from(bite.qi_steal)).clamp(0.0, cultivation.qi_max);
         let drained = (before - cultivation.qi_current).max(0.0);
         if drained > 0.0 {
-            rat.drained_qi += drained;
             let from = QiAccountId::player(bite.target.index().to_string());
-            let to = QiAccountId::npc(format!("rat:{}", bite.rat.index()));
-            if let Ok(transfer) = QiTransfer::new(from, to, drained, QiTransferReason::RatBiteDrain)
-            {
+            let rat_account = QiAccountId::npc(format!("rat:{}", bite.rat.index()));
+            if let Ok(transfer) = QiTransfer::new(
+                from,
+                rat_account.clone(),
+                drained,
+                QiTransferReason::RatBiteDrain,
+            ) {
+                match ledger.as_deref_mut() {
+                    Some(account) => {
+                        credit_rat_bite_drain(account, &rat_account, drained, transfer.clone());
+                    }
+                    None => {
+                        tracing::debug!(
+                            "[bong][combat] rat bite qi ledger unavailable, skipping credit for {:?}",
+                            rat_account
+                        );
+                    }
+                }
                 qi_transfers.send(transfer);
             }
+            // §8.1 决议 #1 point 4 —— `drained_qi` 从"独立累加"改为镜像 `npc:rat:<id>`
+            // 账户余额（照抄 `fauna::mimic_spider` 的 `blackboard.drained_qi =
+            // ledger.balance(&spider_account)` 镜像模式）；`ledger` 缺席时保留原地累加
+            // fallback，无 ledger 资源的 headless 测试行为不退化。
+            rat.drained_qi = ledger
+                .as_deref()
+                .map(|account| account.balance(&rat_account))
+                .unwrap_or(rat.drained_qi + drained);
             send_bite_feedback(&mut clients, bite.target, drained as f32);
             if let Ok(position) = positions.get(bite.target) {
                 emit_rat_bite_nip_av(position.get(), &mut vfx_events, &mut audio_events);
@@ -95,6 +118,32 @@ pub fn apply_rat_bite_qi_drain(
             });
         }
     }
+}
+
+/// §8.1 决议 #1 point 1 —— 鼠咬吸取的真元落入 `npc:rat:<id>` 账户，逻辑照抄
+/// `npc::skull_fiend::credit_skull_fiend_drain`：`set_balance` 累加余额后
+/// `push_transfer_audit` 留下审计轨迹（`transfer` 复用 caller 已构造好的
+/// `QiTransfer`，不重复构造）。`set_balance` 失败（理论上不会发生，`amount` 恒为
+/// 非负有限值）时只记 debug 日志、跳过审计追加，不 panic。
+fn credit_rat_bite_drain(
+    account: &mut WorldQiAccount,
+    rat_account: &QiAccountId,
+    amount: f64,
+    transfer: QiTransfer,
+) {
+    let balance = account.balance(rat_account);
+    if account
+        .set_balance(rat_account.clone(), balance + amount)
+        .is_err()
+    {
+        tracing::debug!(
+            "[bong][combat] rat bite qi ledger credit failed for {:?}, amount={}",
+            rat_account,
+            amount
+        );
+        return;
+    }
+    account.push_transfer_audit(transfer);
 }
 
 /// plan-ambient-threat-v1 P2 —— 咬中瞬间的粒子 + SFX（全复用既有原语：`SpawnParticle`
@@ -247,6 +296,7 @@ mod tests {
     #[test]
     fn rat_bite_records_qi_transfer_to_rat_account() {
         let mut app = rat_bite_app();
+        app.insert_resource(WorldQiAccount::default());
         let rat = app.world_mut().spawn(rat_blackboard()).id();
         let target = app.world_mut().spawn(cultivation(5.0)).id();
 
@@ -260,6 +310,15 @@ mod tests {
         let rat_bb = app.world().get::<RatBlackboard>(rat).unwrap();
         assert_eq!(rat_bb.drained_qi, 2.0, "鼠储量应同步累计实际吸取量");
 
+        let rat_account = QiAccountId::npc(format!("rat:{}", rat.index()));
+        let ledger = app.world().resource::<WorldQiAccount>();
+        assert_eq!(
+            ledger.balance(&rat_account),
+            2.0,
+            "§8.1 决议 #1 —— 鼠咬吸取的真元必须真实落入 npc:rat ledger 账户，而不是只 \
+             emit QiTransfer 审计事件却从无 system 消费落账"
+        );
+
         let transfers = app.world().resource::<Events<QiTransfer>>();
         let mut reader = transfers.get_reader();
         let transfer = reader
@@ -271,11 +330,57 @@ mod tests {
             transfer.from,
             QiAccountId::player(target.index().to_string())
         );
-        assert_eq!(
-            transfer.to,
-            QiAccountId::npc(format!("rat:{}", rat.index()))
-        );
+        assert_eq!(transfer.to, rat_account);
         assert_eq!(transfer.amount, 2.0);
+    }
+
+    #[test]
+    fn rat_bite_conserves_total_qi_end_to_end() {
+        // §P0 验收抓手 #1 —— 咬前后 player_qi + ledger_qi 严格相等：被偷真元必须转入
+        // npc:rat 账户，而不是从 Cultivation.qi_current 扣掉后凭空消失。测试 app 无
+        // ZoneRegistry / PlayerInventory，故 zone_qi / container_qi 桶恒为 0，可省略。
+        let mut app = rat_bite_app();
+        app.insert_resource(WorldQiAccount::default());
+        let rat = app.world_mut().spawn(rat_blackboard()).id();
+        let target = app.world_mut().spawn(cultivation(5.0)).id();
+
+        let player_qi_before: f64 = app
+            .world_mut()
+            .query::<&Cultivation>()
+            .iter(app.world())
+            .map(|cultivation| cultivation.qi_current)
+            .sum();
+        let ledger_qi_before = app.world().resource::<WorldQiAccount>().total();
+        assert_eq!(
+            ledger_qi_before, 0.0,
+            "sanity: 咬击前 ledger 应为空账本（无预置余额）"
+        );
+        let total_before = player_qi_before + ledger_qi_before;
+
+        app.world_mut().send_event(RatBiteEvent {
+            rat,
+            target,
+            qi_steal: 2,
+        });
+        app.update();
+
+        let player_qi_after: f64 = app
+            .world_mut()
+            .query::<&Cultivation>()
+            .iter(app.world())
+            .map(|cultivation| cultivation.qi_current)
+            .sum();
+        let ledger_qi_after = app.world().resource::<WorldQiAccount>().total();
+        let total_after = player_qi_after + ledger_qi_after;
+
+        assert!(
+            player_qi_after < player_qi_before,
+            "sanity: 鼠咬必须实际扣减玩家真元，否则本守恒对拍无意义"
+        );
+        assert!(
+            (total_before - total_after).abs() < 1e-9,
+            "drained qi 应转入 npc:rat 账户而非消失，实际 before={total_before} after={total_after}"
+        );
     }
 
     #[test]

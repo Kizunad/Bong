@@ -193,7 +193,10 @@ pub fn assign_npc_techniques(
         | NpcArchetype::SkullFiend
         | NpcArchetype::Fuya
         | NpcArchetype::Zombie
-        | NpcArchetype::DyingElder => {
+        | NpcArchetype::DyingElder
+        // plan-mundane-fauna-v1 P0：凡兽无灵，不修炼功法（qi_physics 锚点：无灵生物不接触
+        // 功法/qi 系统）。
+        | NpcArchetype::Mundane => {
             return KnownTechniques {
                 entries: Vec::new(),
             };

@@ -34,7 +34,7 @@ GAOSHOU_DECORATIONS = (
         kind="shrub",
         blocks=("farmland", "wheat", "dead_bush"),
         size_range=(1, 2),
-        rarity=0.20,
+        rarity=0.10,
         notes="废弃田垄：只保留低矮作物和枯枝，茅屋改走 authored layout/NBT。",
     ),
     DecorationSpec(
@@ -50,7 +50,7 @@ GAOSHOU_DECORATIONS = (
         kind="shrub",
         blocks=("dead_bush", "fern", "moss_block"),
         size_range=(1, 2),
-        rarity=0.45,
+        rarity=0.23,
         notes="茶草残茬：日常器物不走 density flora，保留低矮自然痕迹。",
     ),
     DecorationSpec(
@@ -58,7 +58,7 @@ GAOSHOU_DECORATIONS = (
         kind="shrub",
         blocks=("bamboo", "grass", "fern"),
         size_range=(1, 2),
-        rarity=0.15,
+        rarity=0.11,
         notes="竹芽斑：棋盘器物不走 density flora，只保留竹草低矮点缀。",
     ),
 )
