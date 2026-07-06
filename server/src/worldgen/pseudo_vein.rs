@@ -1,6 +1,8 @@
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
+use serde::{Deserialize, Serialize};
+
 use crate::schema::pseudo_vein::{
     PseudoVeinDissipateEventV1, PseudoVeinQiRedistributionV1, PseudoVeinSeasonV1,
     PseudoVeinSnapshotV1,
@@ -21,14 +23,14 @@ pub const PSEUDO_VEIN_QI_TURBULENCE_KIND: u8 = 2;
 pub const PSEUDO_VEIN_NEG_PRESSURE_MIN: f64 = 0.4;
 pub const PSEUDO_VEIN_NEG_PRESSURE_MAX: f64 = 0.6;
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct PseudoVeinLifecycle {
     pub spawned_at: u64,
     pub decay_rate: f64,
     pub occupant_count: usize,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PseudoVeinRuntimeState {
     pub id: String,
     pub center_xz: [f64; 2],
@@ -93,6 +95,12 @@ impl PseudoVeinRuntimeState {
             warning_sent: false,
             dissipated: false,
         }
+    }
+
+    pub fn rebase_ticks_for_restore(&mut self, current_tick: u64) {
+        let observed_age = self.last_tick.saturating_sub(self.lifecycle.spawned_at);
+        self.lifecycle.spawned_at = current_tick.saturating_sub(observed_age);
+        self.last_tick = current_tick;
     }
 
     pub fn advance(&mut self, current_tick: u64, occupants: Vec<String>) -> PseudoVeinAdvance {

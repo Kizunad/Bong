@@ -19,6 +19,7 @@ use valence::prelude::{
 use crate::combat::components::{Lifecycle, LifecycleState};
 use crate::cultivation::components::{Cultivation, Realm};
 use crate::cultivation::life_record::{BiographyEntry, DeathInsightRecord, LifeRecord};
+use crate::cultivation::tick::CultivationClock;
 use crate::cultivation::void::components::{VoidActionCooldowns, VoidActionKind};
 use crate::npc::brain::{canonical_npc_id, ChaseAction, DashAction, FleeAction, MeleeAttackAction};
 use crate::npc::movement::{MovementController, MovementCooldowns, MovementMode};
@@ -30,6 +31,7 @@ use crate::schema::social::{
     ExposureKindV1, FactionMembershipSnapshotV1, RelationshipKindV1, RelationshipSnapshotV1,
     RenownTagV1,
 };
+use crate::world::heartbeat::{HeartbeatPseudoVeinSnapshot, WorldHeartbeat};
 
 #[allow(dead_code)]
 pub mod identity;
@@ -37,8 +39,8 @@ pub mod identity;
 pub const DEFAULT_DATABASE_PATH: &str = "data/bong.db";
 pub const SQLITE_BUSY_TIMEOUT_MS: u64 = 15_000;
 const DEFAULT_DECEASED_PUBLIC_DIR: &str = "../library-web/public/deceased";
-/// plan-faction-expansion-v1 P3：v32 新增玩家具名势力声望表。
-const CURRENT_USER_VERSION: i32 = 32;
+/// v33：心跳伪灵脉 runtime zone + lifecycle 专用快照表。
+const CURRENT_USER_VERSION: i32 = 33;
 const AGENT_WORLD_MODEL_ROW_ID: i64 = 1;
 const ASCENSION_QUOTA_ROW_ID: i64 = 1;
 const TRIBULATION_KIND_DU_XU: &str = "du_xu";
@@ -665,6 +667,8 @@ fn bootstrap_persistence_system(
     settings: valence::prelude::Res<PersistenceSettings>,
     mut daily_backup_state: valence::prelude::ResMut<DailyBackupState>,
     mut zones: Option<ResMut<crate::world::zone::ZoneRegistry>>,
+    mut heartbeat: Option<ResMut<WorldHeartbeat>>,
+    clock: Option<Res<CultivationClock>>,
     mut void_action_cooldowns: Option<ResMut<VoidActionCooldowns>>,
     mut zone_influence_map: Option<ResMut<crate::world::territory::ZoneInfluenceMap>>,
 ) {
@@ -729,6 +733,20 @@ fn bootstrap_persistence_system(
                 settings.db_path().display()
             );
         }
+        if let Some(heartbeat) = heartbeat.as_deref_mut() {
+            let current_tick = clock.as_deref().map(|clock| clock.tick).unwrap_or_default();
+            match hydrate_heartbeat_pseudo_veins(&settings, zone_registry, heartbeat, current_tick)
+            {
+                Ok(restored) if restored > 0 => tracing::info!(
+                    "[bong][persistence] restored {restored} heartbeat pseudo-vein runtime zone(s)"
+                ),
+                Ok(_) => {}
+                Err(error) => tracing::warn!(
+                    "[bong][persistence] failed to hydrate heartbeat pseudo-veins from sqlite at {}: {error}",
+                    settings.db_path().display()
+                ),
+            }
+        }
         if let Err(error) = hydrate_zone_overlays(&settings, zone_registry) {
             tracing::warn!(
                 "[bong][persistence] failed to hydrate zone overlays from sqlite at {}: {error}",
@@ -785,6 +803,7 @@ fn persist_zone_runtime_system(
     settings: Res<PersistenceSettings>,
     mut snapshot_state: ResMut<ZoneRuntimeSnapshotState>,
     zones: Option<Res<crate::world::zone::ZoneRegistry>>,
+    heartbeat: Option<Res<WorldHeartbeat>>,
 ) {
     let Some(zone_registry) = zones else {
         return;
@@ -798,15 +817,26 @@ fn persist_zone_runtime_system(
         return;
     }
 
-    match persist_zone_runtime_snapshot(&settings, &zone_registry) {
-        Ok(_) => {
-            snapshot_state.last_snapshot_wall = wall_clock;
-        }
-        Err(error) => tracing::warn!(
+    if let Err(error) = persist_zone_runtime_snapshot(&settings, &zone_registry) {
+        tracing::warn!(
             "[bong][persistence] failed to persist zone runtime snapshot at {}: {error}",
             settings.db_path().display()
-        ),
+        );
+        return;
     }
+
+    if let Some(heartbeat) = heartbeat.as_deref() {
+        let snapshots = heartbeat.active_pseudo_vein_snapshots(&zone_registry);
+        if let Err(error) = persist_heartbeat_pseudo_vein_snapshot(&settings, &snapshots) {
+            tracing::warn!(
+                "[bong][persistence] failed to persist heartbeat pseudo-vein snapshot at {}: {error}",
+                settings.db_path().display()
+            );
+            return;
+        }
+    }
+
+    snapshot_state.last_snapshot_wall = wall_clock;
 }
 
 /// plan-territory-v1 P0：zone_influence 快照 system（节流 ZONE_RUNTIME_SNAPSHOT_INTERVAL_SECS）。
@@ -2003,6 +2033,24 @@ fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<()> {
         transaction.commit()?;
     }
 
+    let current_version: i32 =
+        connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
+    if current_version < 33 {
+        let transaction = connection.transaction()?;
+        transaction.execute_batch(
+            "
+            CREATE TABLE IF NOT EXISTS heartbeat_pseudo_veins (
+                zone_id             TEXT PRIMARY KEY,
+                snapshot_json       TEXT NOT NULL,
+                schema_version      INTEGER NOT NULL CHECK (schema_version >= 1),
+                last_updated_wall   INTEGER NOT NULL CHECK (last_updated_wall >= 0)
+            );
+            PRAGMA user_version = 33;
+            ",
+        )?;
+        transaction.commit()?;
+    }
+
     let final_version: i32 = connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
     if final_version != CURRENT_USER_VERSION {
         return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
@@ -3007,6 +3055,39 @@ pub fn load_zone_runtime_snapshot(
 ) -> io::Result<Vec<ZoneRuntimeRecord>> {
     let connection = open_persistence_connection(settings)?;
     load_zone_runtime_snapshot_from_connection(&connection)
+}
+
+fn persist_heartbeat_pseudo_vein_snapshot(
+    settings: &PersistenceSettings,
+    snapshots: &[HeartbeatPseudoVeinSnapshot],
+) -> io::Result<()> {
+    let wall_clock = current_unix_seconds();
+    let mut connection = open_persistence_connection(settings)?;
+    let transaction = connection.transaction().map_err(io::Error::other)?;
+    transaction
+        .execute("DELETE FROM heartbeat_pseudo_veins", [])
+        .map_err(io::Error::other)?;
+    for snapshot in snapshots {
+        upsert_heartbeat_pseudo_vein(&transaction, snapshot, wall_clock)?;
+    }
+    transaction.commit().map_err(io::Error::other)
+}
+
+fn load_heartbeat_pseudo_vein_snapshot(
+    settings: &PersistenceSettings,
+) -> io::Result<Vec<HeartbeatPseudoVeinSnapshot>> {
+    let connection = open_persistence_connection(settings)?;
+    load_heartbeat_pseudo_vein_snapshot_from_connection(&connection)
+}
+
+fn hydrate_heartbeat_pseudo_veins(
+    settings: &PersistenceSettings,
+    zones: &mut crate::world::zone::ZoneRegistry,
+    heartbeat: &mut WorldHeartbeat,
+    current_tick: u64,
+) -> io::Result<usize> {
+    let snapshots = load_heartbeat_pseudo_vein_snapshot(settings)?;
+    Ok(heartbeat.restore_pseudo_vein_snapshots(zones, snapshots, current_tick))
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -4925,6 +5006,38 @@ fn upsert_zone_runtime(
     Ok(())
 }
 
+fn upsert_heartbeat_pseudo_vein(
+    transaction: &rusqlite::Transaction<'_>,
+    snapshot: &HeartbeatPseudoVeinSnapshot,
+    wall_clock: i64,
+) -> io::Result<()> {
+    let snapshot_json = serde_json::to_string(snapshot)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    transaction
+        .execute(
+            "
+            INSERT INTO heartbeat_pseudo_veins (
+                zone_id,
+                snapshot_json,
+                schema_version,
+                last_updated_wall
+            ) VALUES (?1, ?2, ?3, ?4)
+            ON CONFLICT(zone_id) DO UPDATE SET
+                snapshot_json = excluded.snapshot_json,
+                schema_version = excluded.schema_version,
+                last_updated_wall = excluded.last_updated_wall
+            ",
+            params![
+                snapshot.zone_name.as_str(),
+                snapshot_json,
+                CURRENT_SCHEMA_VERSION,
+                wall_clock,
+            ],
+        )
+        .map_err(io::Error::other)?;
+    Ok(())
+}
+
 /// plan-territory-v1 P0：upsert zone_influence 行（照 upsert_zone_runtime 范本）。
 #[cfg_attr(not(test), allow(dead_code))]
 fn upsert_zone_influence(
@@ -5391,6 +5504,32 @@ fn load_zone_runtime_snapshot_from_connection(
         });
     }
     Ok(records)
+}
+
+fn load_heartbeat_pseudo_vein_snapshot_from_connection(
+    connection: &Connection,
+) -> io::Result<Vec<HeartbeatPseudoVeinSnapshot>> {
+    let mut statement = connection
+        .prepare(
+            "
+            SELECT snapshot_json
+            FROM heartbeat_pseudo_veins
+            ORDER BY zone_id ASC
+            ",
+        )
+        .map_err(io::Error::other)?;
+    let rows = statement
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(io::Error::other)?;
+
+    let mut snapshots = Vec::new();
+    for row in rows {
+        let snapshot_json = row.map_err(io::Error::other)?;
+        let snapshot = serde_json::from_str::<HeartbeatPseudoVeinSnapshot>(&snapshot_json)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        snapshots.push(snapshot);
+    }
+    Ok(snapshots)
 }
 
 fn load_ascension_quota_from_transaction(
@@ -8210,6 +8349,24 @@ mod persistence_tests {
     }
 
     #[test]
+    fn task33_migrations_create_heartbeat_pseudo_veins_table() {
+        let db_path = database_path("task33-heartbeat-pseudo-veins");
+        bootstrap_sqlite(&db_path, "task33-heartbeat-pseudo-veins")
+            .expect("bootstrap should succeed");
+
+        let connection = Connection::open(&db_path).expect("db should open");
+        let exists: Option<String> = connection
+            .query_row(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'heartbeat_pseudo_veins'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()
+            .expect("sqlite_master heartbeat_pseudo_veins query should succeed");
+        assert_eq!(exists.as_deref(), Some("heartbeat_pseudo_veins"));
+    }
+
+    #[test]
     fn task9_migrations_create_zone_overlays_table() {
         let db_path = database_path("task9-zone-overlays");
         bootstrap_sqlite(&db_path, "task9-zone-overlays").expect("bootstrap should succeed");
@@ -10047,6 +10204,72 @@ mod persistence_tests {
             .expect("zone runtime hydration should succeed");
         assert_eq!(registry.zones[0].spirit_qi, -0.15);
         assert_eq!(registry.zones[0].danger_level, 4);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn heartbeat_pseudo_vein_snapshot_hydrates_runtime_zone_and_heartbeat_state() {
+        let (settings, root) = persistence_settings("heartbeat-pseudo-vein-hydrate");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+
+        let mut state = crate::worldgen::pseudo_vein::PseudoVeinRuntimeState::new(
+            "pseudo_vein_heartbeat_7",
+            [32.0, -16.0],
+            1_200,
+            crate::schema::pseudo_vein::PseudoVeinSeasonV1::Winter,
+        );
+        state.qi_current = 0.42;
+        state.last_tick = 1_400;
+        state.warning_sent = true;
+        let snapshot = HeartbeatPseudoVeinSnapshot {
+            zone_name: "pseudo_vein_heartbeat_7".to_string(),
+            dimension: crate::world::dimension::DimensionKind::Overworld,
+            bounds_min: [24.0, 64.0, -24.0],
+            bounds_max: [40.0, 84.0, -8.0],
+            spirit_qi: 0.99,
+            danger_level: 4,
+            active_events: vec![crate::world::heartbeat::EVENT_PSEUDO_VEIN.to_string()],
+            patrol_anchors: vec![[32.0, 70.0, -16.0]],
+            blocked_tiles: vec![(1, 2)],
+            qi_equilibrium: 0.0,
+            qi_inflow_per_min: 0.0,
+            state,
+        };
+
+        persist_heartbeat_pseudo_vein_snapshot(&settings, std::slice::from_ref(&snapshot))
+            .expect("heartbeat pseudo-vein snapshot should persist");
+        let loaded = load_heartbeat_pseudo_vein_snapshot(&settings)
+            .expect("heartbeat pseudo-vein snapshot should load");
+        assert_eq!(loaded, vec![snapshot]);
+
+        let mut registry = crate::world::zone::ZoneRegistry::fallback();
+        let mut heartbeat = WorldHeartbeat::default();
+        let restored = hydrate_heartbeat_pseudo_veins(&settings, &mut registry, &mut heartbeat, 0)
+            .expect("heartbeat pseudo-vein hydrate should succeed");
+        assert_eq!(restored, 1);
+        assert_eq!(heartbeat.active_pseudo_vein_count(), 1);
+        assert_eq!(heartbeat.next_pseudo_vein_index(), 8);
+        let restored_zone = registry
+            .find_zone_by_name("pseudo_vein_heartbeat_7")
+            .expect("pseudo-vein runtime zone should be recreated before gameplay tick");
+        assert_eq!(
+            restored_zone.spirit_qi, 0.42,
+            "restored zone qi must follow lifecycle state, not stale zone_json field"
+        );
+        assert_eq!(
+            restored_zone.dimension,
+            crate::world::dimension::DimensionKind::Overworld
+        );
+        assert_eq!(restored_zone.bounds.0, DVec3::new(24.0, 64.0, -24.0));
+        assert_eq!(restored_zone.bounds.1, DVec3::new(40.0, 84.0, -8.0));
+
+        persist_heartbeat_pseudo_vein_snapshot(&settings, &[])
+            .expect("empty heartbeat pseudo-vein snapshot should delete stale rows");
+        let empty = load_heartbeat_pseudo_vein_snapshot(&settings)
+            .expect("empty heartbeat pseudo-vein snapshot should load");
+        assert!(empty.is_empty());
 
         let _ = fs::remove_dir_all(root);
     }

@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use valence::prelude::{
     bevy_ecs, App, Client, Component, DVec3, Event, EventReader, EventWriter, Events,
@@ -23,7 +24,7 @@ use crate::schema::agent_command::Command;
 use crate::schema::common::{CommandType, GameEventType};
 use crate::schema::vfx_event::VfxEventPayloadV1;
 use crate::schema::world_state::GameEvent;
-use crate::world::dimension::CurrentDimension;
+use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::event_rhythm::{
     default_event_rhythm, event_trigger_timing_by_player_loop_phase, infer_player_loop_phase,
     PlayerLoopPhase, PlayerLoopPhaseEvidence, RhythmEventKind,
@@ -283,6 +284,76 @@ type PlayerSampleQueryItem = (
     Option<&'static Username>,
 );
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub(crate) struct HeartbeatPseudoVeinSnapshot {
+    pub zone_name: String,
+    pub dimension: DimensionKind,
+    pub bounds_min: [f64; 3],
+    pub bounds_max: [f64; 3],
+    pub spirit_qi: f64,
+    pub danger_level: u8,
+    pub active_events: Vec<String>,
+    pub patrol_anchors: Vec<[f64; 3]>,
+    pub blocked_tiles: Vec<(i32, i32)>,
+    pub qi_equilibrium: f64,
+    pub qi_inflow_per_min: f64,
+    pub state: PseudoVeinRuntimeState,
+}
+
+impl HeartbeatPseudoVeinSnapshot {
+    fn from_zone_state(zone: &Zone, state: &PseudoVeinRuntimeState) -> Self {
+        Self {
+            zone_name: zone.name.clone(),
+            dimension: zone.dimension,
+            bounds_min: dvec3_to_array(zone.bounds.0),
+            bounds_max: dvec3_to_array(zone.bounds.1),
+            spirit_qi: zone.spirit_qi,
+            danger_level: zone.danger_level,
+            active_events: zone.active_events.clone(),
+            patrol_anchors: zone
+                .patrol_anchors
+                .iter()
+                .copied()
+                .map(dvec3_to_array)
+                .collect(),
+            blocked_tiles: zone.blocked_tiles.clone(),
+            qi_equilibrium: zone.qi_equilibrium,
+            qi_inflow_per_min: zone.qi_inflow_per_min,
+            state: state.clone(),
+        }
+    }
+
+    fn into_zone(self) -> Zone {
+        Zone {
+            name: self.zone_name,
+            dimension: self.dimension,
+            bounds: (
+                dvec3_from_array(self.bounds_min),
+                dvec3_from_array(self.bounds_max),
+            ),
+            spirit_qi: self.spirit_qi,
+            danger_level: self.danger_level,
+            active_events: self.active_events,
+            patrol_anchors: self
+                .patrol_anchors
+                .into_iter()
+                .map(dvec3_from_array)
+                .collect(),
+            blocked_tiles: self.blocked_tiles,
+            qi_equilibrium: self.qi_equilibrium,
+            qi_inflow_per_min: self.qi_inflow_per_min,
+        }
+    }
+}
+
+fn dvec3_to_array(vec: DVec3) -> [f64; 3] {
+    [vec.x, vec.y, vec.z]
+}
+
+fn dvec3_from_array(raw: [f64; 3]) -> DVec3 {
+    DVec3::new(raw[0], raw[1], raw[2])
+}
+
 #[derive(Debug, Clone, Copy)]
 struct HeartbeatEventSources<'a> {
     karma_weights: Option<&'a KarmaWeightStore>,
@@ -372,9 +443,72 @@ impl WorldHeartbeat {
         });
     }
 
+    pub(crate) fn active_pseudo_vein_snapshots(
+        &self,
+        zone_registry: &ZoneRegistry,
+    ) -> Vec<HeartbeatPseudoVeinSnapshot> {
+        self.active_pseudo_veins
+            .iter()
+            .filter_map(|(zone_name, state)| {
+                zone_registry
+                    .find_zone_by_name(zone_name.as_str())
+                    .map(|zone| HeartbeatPseudoVeinSnapshot::from_zone_state(zone, state))
+            })
+            .collect()
+    }
+
+    pub(crate) fn restore_pseudo_vein_snapshots(
+        &mut self,
+        zone_registry: &mut ZoneRegistry,
+        snapshots: Vec<HeartbeatPseudoVeinSnapshot>,
+        current_tick: u64,
+    ) -> usize {
+        let mut restored = 0;
+        for snapshot in snapshots {
+            let zone_name = snapshot.zone_name.clone();
+            if !zone_name.starts_with("pseudo_vein_")
+                || snapshot.state.id != zone_name
+                || snapshot.state.dissipated
+            {
+                continue;
+            }
+
+            let mut state = snapshot.state.clone();
+            state.rebase_ticks_for_restore(current_tick);
+            let mut zone = snapshot.into_zone();
+            zone.spirit_qi = state.qi_current;
+            if !zone
+                .active_events
+                .iter()
+                .any(|event| event == EVENT_PSEUDO_VEIN)
+            {
+                zone.active_events.push(EVENT_PSEUDO_VEIN.to_string());
+            }
+
+            if let Some(existing) = zone_registry.find_zone_mut(zone_name.as_str()) {
+                *existing = zone;
+            } else if zone_registry.register_runtime_zone(zone).is_err() {
+                continue;
+            }
+
+            self.active_pseudo_veins.insert(zone_name.clone(), state);
+            if let Some(index) = heartbeat_pseudo_vein_index(zone_name.as_str()) {
+                self.next_pseudo_vein_index =
+                    self.next_pseudo_vein_index.max(index.saturating_add(1));
+            }
+            restored += 1;
+        }
+        restored
+    }
+
     #[cfg(test)]
-    fn active_pseudo_vein_count(&self) -> usize {
+    pub(crate) fn active_pseudo_vein_count(&self) -> usize {
         self.active_pseudo_veins.len()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn next_pseudo_vein_index(&self) -> u64 {
+        self.next_pseudo_vein_index
     }
 
     fn note_event(&mut self, kind: HeartbeatEventKind) {
@@ -1898,6 +2032,12 @@ fn remove_runtime_pseudo_vein_zone(zone_registry: &mut ZoneRegistry, zone_name: 
     before != zone_registry.zones.len()
 }
 
+fn heartbeat_pseudo_vein_index(zone_name: &str) -> Option<u64> {
+    zone_name
+        .strip_prefix("pseudo_vein_heartbeat_")
+        .and_then(|raw| raw.parse::<u64>().ok())
+}
+
 fn adjacent_zone_names(
     zone_registry: &ZoneRegistry,
     source: &Zone,
@@ -2399,6 +2539,150 @@ mod tests {
         assert_eq!(heartbeat.active_pseudo_vein_count(), 1);
         assert!(zones.find_zone_by_name("pseudo_vein_heartbeat_0").is_some());
         assert_eq!(zones.find_zone_by_name("waste").unwrap().spirit_qi, 0.1);
+    }
+
+    #[test]
+    fn pseudo_vein_snapshot_restore_rebuilds_runtime_zone_and_heartbeat_state() {
+        let mut heartbeat = WorldHeartbeat::default();
+        let mut zones = ZoneRegistry {
+            zones: vec![zone("waste", 0.0, 0.0, 0.1)],
+        };
+        let mut active_events = ActiveEventsResource::default();
+        let omen = WorldEventOmen {
+            kind: OmenKind::PseudoVeinForming,
+            zone_name: "waste".to_string(),
+            target_player: None,
+            origin: DVec3::new(10.0, 65.0, 10.0),
+            intensity: 0.6,
+            scheduled_at_tick: 0,
+            fires_at_tick: 0,
+            expires_at_tick: 200,
+        };
+        assert!(spawn_pseudo_vein_from_omen(
+            &mut heartbeat,
+            &mut zones,
+            &mut active_events,
+            &omen,
+            Season::Summer,
+            200
+        ));
+
+        let snapshots = heartbeat.active_pseudo_vein_snapshots(&zones);
+        assert_eq!(snapshots.len(), 1);
+
+        let mut restored_heartbeat = WorldHeartbeat::default();
+        let mut restored_zones = ZoneRegistry {
+            zones: vec![zone("waste", 0.0, 0.0, 0.1)],
+        };
+        let restored_count =
+            restored_heartbeat.restore_pseudo_vein_snapshots(&mut restored_zones, snapshots, 0);
+
+        assert_eq!(restored_count, 1);
+        assert_eq!(restored_heartbeat.active_pseudo_vein_count(), 1);
+        assert_eq!(restored_heartbeat.next_pseudo_vein_index(), 1);
+        let restored_zone = restored_zones
+            .find_zone_by_name("pseudo_vein_heartbeat_0")
+            .expect("restored pseudo-vein runtime zone should exist");
+        assert_eq!(restored_zone.spirit_qi, 0.6);
+        assert!(
+            restored_zone
+                .active_events
+                .iter()
+                .any(|event| event == EVENT_PSEUDO_VEIN),
+            "restored zone must keep pseudo_vein active event"
+        );
+    }
+
+    #[test]
+    fn pseudo_vein_restore_rebases_ticks_so_restart_advance_decays_and_cleans_up() {
+        let mut state = PseudoVeinRuntimeState::new(
+            "pseudo_vein_heartbeat_9",
+            [10.0, 10.0],
+            1_000,
+            crate::schema::pseudo_vein::PseudoVeinSeasonV1::Summer,
+        );
+        state.last_tick = 1_400;
+        state.qi_current = 0.003;
+        let snapshot = HeartbeatPseudoVeinSnapshot {
+            zone_name: "pseudo_vein_heartbeat_9".to_string(),
+            dimension: DimensionKind::Overworld,
+            bounds_min: [0.0, 60.0, 0.0],
+            bounds_max: [20.0, 90.0, 20.0],
+            spirit_qi: 0.99,
+            danger_level: PSEUDO_VEIN_DANGER_LEVEL,
+            active_events: vec![EVENT_PSEUDO_VEIN.to_string()],
+            patrol_anchors: vec![[10.0, 65.0, 10.0]],
+            blocked_tiles: Vec::new(),
+            qi_equilibrium: 0.0,
+            qi_inflow_per_min: 0.0,
+            state,
+        };
+
+        let mut heartbeat = WorldHeartbeat::default();
+        let mut zones = ZoneRegistry {
+            zones: vec![zone("waste", 0.0, 0.0, 0.1)],
+        };
+        let restored = heartbeat.restore_pseudo_vein_snapshots(&mut zones, vec![snapshot], 0);
+        assert_eq!(restored, 1);
+        let restored_state = heartbeat
+            .active_pseudo_veins
+            .get("pseudo_vein_heartbeat_9")
+            .expect("restored pseudo-vein should be active");
+        assert_eq!(restored_state.last_tick, 0);
+        assert_eq!(restored_state.lifecycle.spawned_at, 0);
+
+        let mut app = App::new();
+        app.insert_resource(heartbeat);
+        app.insert_resource(zones);
+        app.insert_resource(ActiveEventsResource::default());
+        app.insert_resource(CultivationClock {
+            tick: HEARTBEAT_EVAL_INTERVAL_TICKS,
+        });
+        app.add_event::<EventChainTrigger>();
+        app.add_systems(
+            Update,
+            (heartbeat_tick, chain_reaction_tick.after(heartbeat_tick)),
+        );
+
+        app.update();
+        let zones = app.world().resource::<ZoneRegistry>();
+        let zone = zones
+            .find_zone_by_name("pseudo_vein_heartbeat_9")
+            .expect("first post-restart heartbeat should keep the runtime zone");
+        assert!(
+            zone.spirit_qi < 0.003,
+            "first post-restart heartbeat must decay even when current_tick is below old last_tick"
+        );
+        assert_eq!(
+            app.world()
+                .resource::<WorldHeartbeat>()
+                .active_pseudo_vein_count(),
+            1,
+            "test fixture should survive the first decay step before final cleanup"
+        );
+
+        app.world_mut().resource_mut::<CultivationClock>().tick = HEARTBEAT_EVAL_INTERVAL_TICKS * 4;
+        app.update();
+
+        let zones = app.world().resource::<ZoneRegistry>();
+        assert!(
+            zones.find_zone_by_name("pseudo_vein_heartbeat_9").is_none(),
+            "depleted pseudo-vein runtime zone should be removed by chain reaction cleanup"
+        );
+        assert_eq!(
+            app.world()
+                .resource::<WorldHeartbeat>()
+                .active_pseudo_vein_count(),
+            0
+        );
+        let active_events = app.world().resource::<ActiveEventsResource>();
+        assert!(
+            active_events
+                .recent_events_snapshot()
+                .iter()
+                .any(|event| event.target.as_deref() == Some("pseudo_vein_dissipated")),
+            "dissipation should emit the existing release/cleanup event path"
+        );
     }
 
     #[test]
