@@ -21,6 +21,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from bot import mc_protocol as mc  # noqa: E402
 from bot.bot import Bot, _signed_12, _signed_26  # noqa: E402
+from bot.server_data import _load_envelope_pb2, decode_server_data_payload  # noqa: E402
 from bot.run_scenarios import (  # noqa: E402
     ScenarioEnv,
     check_server_reachable,
@@ -85,6 +86,41 @@ class ChatTextTest(unittest.TestCase):
         ]
         for raw, expected in cases:
             self.assertEqual(mc.chat_text_to_plain(raw), expected, f"raw={raw!r}")
+
+
+class ServerDataDecodeTest(unittest.TestCase):
+    def test_json_inventory_snapshot_payload_decodes(self):
+        payload = b'{"v":1,"type":"inventory_snapshot","revision":7}'
+        decoded = decode_server_data_payload(payload)
+        self.assertEqual(decoded["type"], "inventory_snapshot")
+        self.assertEqual(decoded["revision"], 7)
+
+    def test_malformed_server_data_returns_none(self):
+        self.assertIsNone(decode_server_data_payload(b"\xff\x00not protobuf"))
+
+    def test_proto_inventory_snapshot_payload_decodes(self):
+        pb = _load_envelope_pb2()
+        envelope = pb.ServerDataEnvelope()
+        envelope.inventory_snapshot.revision = 12
+        envelope.inventory_snapshot.containers.add(
+            id="body_pocket",
+            name="贴身口袋",
+            rows=2,
+            cols=3,
+        )
+        envelope.inventory_snapshot.equipped.chest_worn.add(
+            instance_id=9,
+            item_id="worn_grass_pouch",
+        )
+        envelope.inventory_snapshot.weight.current = 1.0
+        envelope.inventory_snapshot.weight.max = 23.0
+
+        decoded = decode_server_data_payload(envelope.SerializeToString())
+
+        self.assertEqual(decoded["type"], "inventory_snapshot")
+        self.assertEqual(decoded["revision"], 12)
+        self.assertEqual(decoded["containers"][0]["id"], "body_pocket")
+        self.assertEqual(decoded["equipped"]["chest_worn"][0]["item_id"], "worn_grass_pouch")
 
 
 def _bare_connection(threshold: int = -1) -> mc.Connection:
