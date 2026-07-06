@@ -41,6 +41,7 @@ use crate::npc::faction::{
     leader_realm_for, named_faction_id_for_legacy, EmergentGroupId, FactionId, FactionMembership,
     FactionRank, FactionStore, MissionQueue, Reputation, EMERGENT_GROUP_COUNT,
 };
+use crate::npc::interaction_memory::NpcMemoryComponent;
 use crate::npc::lifecycle::{NpcArchetype, NpcDeathNotice, NpcDeathReason, NpcLifespan};
 use crate::npc::loot::default_loot_for_archetype;
 use crate::npc::loot::NpcLootTable;
@@ -48,6 +49,7 @@ use crate::npc::movement::GameTick;
 use crate::npc::realm_perception_narration::push_realm_perception_narration;
 use crate::npc::schedule::schedule_seed_from_char_id;
 use crate::npc::spawn::{classify_zones_by_qi, initial_age_for_index};
+use crate::npc::trade::NpcPlayerReputation;
 use crate::player::gameplay::PendingGameplayNarrations;
 use crate::qi_physics::{
     constants::{QI_EPSILON, QI_NPC_ABSORB_FLOOR, QI_ZONE_UNIT_CAPACITY},
@@ -311,6 +313,10 @@ pub struct NpcDormantSnapshot {
     pub lifespan_extension_ledger: LifespanExtensionLedger,
     pub death_registry: DeathRegistry,
     pub life_record: LifeRecord,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub memory: Option<NpcMemoryComponent>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub player_reputation: Option<NpcPlayerReputation>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub faction: Option<FactionMembership>,
     /// plan-offscreen-war-v1 P5 reframe b：该 dormant 散修所属的涌现群体（匿名稳定 id）。
@@ -1570,6 +1576,8 @@ fn dormant_rogue_seed_snapshot(
         lifespan_extension_ledger: LifespanExtensionLedger::default(),
         death_registry: DeathRegistry::new(char_id.clone()),
         life_record: LifeRecord::new(char_id.clone()),
+        memory: None,
+        player_reputation: None,
         // plan-offscreen-war-v1 P0 #1：赋派系（Attack/Defend 二分），保证 is_hostile_pair
         // 在 P1/P2 能配出敌对对。
         faction: Some(seed_rogue_faction(char_id.as_str())),
@@ -2109,6 +2117,8 @@ mod tests {
             lifespan_extension_ledger: LifespanExtensionLedger::default(),
             death_registry: DeathRegistry::new(char_id),
             life_record: LifeRecord::new(char_id),
+            memory: None,
+            player_reputation: None,
             faction: None,
             // 显式群体留空：走 effective_group 的 faction 派生回退路径（这里 faction=None ⇒
             // 群体 None ⇒ 不参战），顺带覆盖非破坏迁移分支。
@@ -3620,6 +3630,8 @@ mod tests {
             lifespan_extension_ledger: LifespanExtensionLedger::default(),
             death_registry: DeathRegistry::new(char_id),
             life_record: LifeRecord::new(char_id),
+            memory: None,
+            player_reputation: None,
             faction: Some(FactionMembership {
                 faction_id: faction,
                 rank: FactionRank::Disciple,

@@ -221,6 +221,8 @@ mod tests {
             lifespan_extension_ledger: Default::default(),
             death_registry: crate::cultivation::lifespan::DeathRegistry::new(char_id.to_string()),
             life_record: crate::cultivation::life_record::LifeRecord::new(char_id.to_string()),
+            memory: None,
+            player_reputation: None,
             faction: None,
             emergent_group: group,
             patrol: None,
