@@ -1,6 +1,6 @@
-# plan-bughunt-ao-worldgen-state-pseudo-vein-restart-loss-v1（骨架）
+# plan-bughunt-ao-worldgen-state-pseudo-vein-restart-loss-v1
 
-> **骨架（草案）**。一句话主题：`worldgen/state` 主路径确认 1 个高置信真 bug：**心跳生成的伪灵脉 runtime zone 在重启后整体丢失**。`WorldHeartbeat` 只在内存里持有 `active_pseudo_veins`，持久化层只落 `zone_id/spirit_qi/danger_level`，hydrate 也只会回填到已存在静态 zone，导致 `pseudo_vein_*` 这种动态 zone 在关服/崩溃后直接蒸发。对实际游玩体验的影响明确：玩家眼前的伪灵脉、高灵气修炼窗口、预警/消散/余波链和后续兽潮诱发都会被重启硬切断。
+> 一句话主题：`worldgen/state` 主路径确认 1 个高置信真 bug：**心跳生成的伪灵脉 runtime zone 在重启后整体丢失**。`WorldHeartbeat` 只在内存里持有 `active_pseudo_veins`，持久化层只落 `zone_id/spirit_qi/danger_level`，hydrate 也只会回填到已存在静态 zone，导致 `pseudo_vein_*` 这种动态 zone 在关服/崩溃后直接蒸发。对实际游玩体验的影响明确：玩家眼前的伪灵脉、高灵气修炼窗口、预警/消散/余波链和后续兽潮诱发都会被重启硬切断。
 
 > 立项动机：按用户限定只扫 `worldgen/state` 主路径，并避开已禁重主题（zone atmosphere mismatch / world environment resync / ambient audio stale anchor）。本条落点集中在 `server/src/world/heartbeat.rs`、`server/src/world/zone.rs`、`server/src/persistence/mod.rs`，是可达、可复现、能直连实际游玩链路的 runtime-state 缺口。
 
