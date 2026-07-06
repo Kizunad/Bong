@@ -32,7 +32,7 @@
 - 第二轮反方结论：通过。`docs/plans-skeleton/plan-bughunt-r10-findings-v1.md` 曾在 P2 #2 记录同类 finding，但这是不可消费骨架，PR #579 只是 merged skeleton，不是 active plan 或开放修复 PR；本 plan 可作为独立 active bughunt plan 推进。
 - 严重性复核：维持 minor/medium 合理，因窗口限定在关服前最多 300 秒，但玩家可直接感知领地成果、NPC 态度、传闻和加成回退。
 
-## Skeleton Fix Plan
+## 修复计划
 
 1. 在 `server/src/persistence/mod.rs` 新增 `persist_zone_influence_on_shutdown_system`。
 2. 将该 system 挂到 `Last`，与 `persist_zone_runtime_on_shutdown_system` 同级监听 `AppExit`。
