@@ -461,6 +461,7 @@ impl WorldHeartbeat {
         &mut self,
         zone_registry: &mut ZoneRegistry,
         snapshots: Vec<HeartbeatPseudoVeinSnapshot>,
+        current_tick: u64,
     ) -> usize {
         let mut restored = 0;
         for snapshot in snapshots {
@@ -472,7 +473,8 @@ impl WorldHeartbeat {
                 continue;
             }
 
-            let state = snapshot.state.clone();
+            let mut state = snapshot.state.clone();
+            state.rebase_ticks_for_restore(current_tick);
             let mut zone = snapshot.into_zone();
             zone.spirit_qi = state.qi_current;
             if !zone
@@ -2573,7 +2575,7 @@ mod tests {
             zones: vec![zone("waste", 0.0, 0.0, 0.1)],
         };
         let restored_count =
-            restored_heartbeat.restore_pseudo_vein_snapshots(&mut restored_zones, snapshots);
+            restored_heartbeat.restore_pseudo_vein_snapshots(&mut restored_zones, snapshots, 0);
 
         assert_eq!(restored_count, 1);
         assert_eq!(restored_heartbeat.active_pseudo_vein_count(), 1);
@@ -2588,6 +2590,98 @@ mod tests {
                 .iter()
                 .any(|event| event == EVENT_PSEUDO_VEIN),
             "restored zone must keep pseudo_vein active event"
+        );
+    }
+
+    #[test]
+    fn pseudo_vein_restore_rebases_ticks_so_restart_advance_decays_and_cleans_up() {
+        let mut state = PseudoVeinRuntimeState::new(
+            "pseudo_vein_heartbeat_9",
+            [10.0, 10.0],
+            1_000,
+            crate::schema::pseudo_vein::PseudoVeinSeasonV1::Summer,
+        );
+        state.last_tick = 1_400;
+        state.qi_current = 0.003;
+        let snapshot = HeartbeatPseudoVeinSnapshot {
+            zone_name: "pseudo_vein_heartbeat_9".to_string(),
+            dimension: DimensionKind::Overworld,
+            bounds_min: [0.0, 60.0, 0.0],
+            bounds_max: [20.0, 90.0, 20.0],
+            spirit_qi: 0.99,
+            danger_level: PSEUDO_VEIN_DANGER_LEVEL,
+            active_events: vec![EVENT_PSEUDO_VEIN.to_string()],
+            patrol_anchors: vec![[10.0, 65.0, 10.0]],
+            blocked_tiles: Vec::new(),
+            qi_equilibrium: 0.0,
+            qi_inflow_per_min: 0.0,
+            state,
+        };
+
+        let mut heartbeat = WorldHeartbeat::default();
+        let mut zones = ZoneRegistry {
+            zones: vec![zone("waste", 0.0, 0.0, 0.1)],
+        };
+        let restored = heartbeat.restore_pseudo_vein_snapshots(&mut zones, vec![snapshot], 0);
+        assert_eq!(restored, 1);
+        let restored_state = heartbeat
+            .active_pseudo_veins
+            .get("pseudo_vein_heartbeat_9")
+            .expect("restored pseudo-vein should be active");
+        assert_eq!(restored_state.last_tick, 0);
+        assert_eq!(restored_state.lifecycle.spawned_at, 0);
+
+        let mut app = App::new();
+        app.insert_resource(heartbeat);
+        app.insert_resource(zones);
+        app.insert_resource(ActiveEventsResource::default());
+        app.insert_resource(CultivationClock {
+            tick: HEARTBEAT_EVAL_INTERVAL_TICKS,
+        });
+        app.add_event::<EventChainTrigger>();
+        app.add_systems(
+            Update,
+            (heartbeat_tick, chain_reaction_tick.after(heartbeat_tick)),
+        );
+
+        app.update();
+        let zones = app.world().resource::<ZoneRegistry>();
+        let zone = zones
+            .find_zone_by_name("pseudo_vein_heartbeat_9")
+            .expect("first post-restart heartbeat should keep the runtime zone");
+        assert!(
+            zone.spirit_qi < 0.003,
+            "first post-restart heartbeat must decay even when current_tick is below old last_tick"
+        );
+        assert_eq!(
+            app.world()
+                .resource::<WorldHeartbeat>()
+                .active_pseudo_vein_count(),
+            1,
+            "test fixture should survive the first decay step before final cleanup"
+        );
+
+        app.world_mut().resource_mut::<CultivationClock>().tick = HEARTBEAT_EVAL_INTERVAL_TICKS * 4;
+        app.update();
+
+        let zones = app.world().resource::<ZoneRegistry>();
+        assert!(
+            zones.find_zone_by_name("pseudo_vein_heartbeat_9").is_none(),
+            "depleted pseudo-vein runtime zone should be removed by chain reaction cleanup"
+        );
+        assert_eq!(
+            app.world()
+                .resource::<WorldHeartbeat>()
+                .active_pseudo_vein_count(),
+            0
+        );
+        let active_events = app.world().resource::<ActiveEventsResource>();
+        assert!(
+            active_events
+                .recent_events_snapshot()
+                .iter()
+                .any(|event| event.target.as_deref() == Some("pseudo_vein_dissipated")),
+            "dissipation should emit the existing release/cleanup event path"
         );
     }
 

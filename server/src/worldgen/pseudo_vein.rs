@@ -97,6 +97,12 @@ impl PseudoVeinRuntimeState {
         }
     }
 
+    pub fn rebase_ticks_for_restore(&mut self, current_tick: u64) {
+        let observed_age = self.last_tick.saturating_sub(self.lifecycle.spawned_at);
+        self.lifecycle.spawned_at = current_tick.saturating_sub(observed_age);
+        self.last_tick = current_tick;
+    }
+
     pub fn advance(&mut self, current_tick: u64, occupants: Vec<String>) -> PseudoVeinAdvance {
         let occupant_count = occupants.len();
         let elapsed = current_tick.saturating_sub(self.last_tick);

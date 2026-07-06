@@ -19,6 +19,7 @@ use valence::prelude::{
 use crate::combat::components::{Lifecycle, LifecycleState};
 use crate::cultivation::components::{Cultivation, Realm};
 use crate::cultivation::life_record::{BiographyEntry, DeathInsightRecord, LifeRecord};
+use crate::cultivation::tick::CultivationClock;
 use crate::cultivation::void::components::{VoidActionCooldowns, VoidActionKind};
 use crate::npc::brain::{canonical_npc_id, ChaseAction, DashAction, FleeAction, MeleeAttackAction};
 use crate::npc::movement::{MovementController, MovementCooldowns, MovementMode};
@@ -667,6 +668,7 @@ fn bootstrap_persistence_system(
     mut daily_backup_state: valence::prelude::ResMut<DailyBackupState>,
     mut zones: Option<ResMut<crate::world::zone::ZoneRegistry>>,
     mut heartbeat: Option<ResMut<WorldHeartbeat>>,
+    clock: Option<Res<CultivationClock>>,
     mut void_action_cooldowns: Option<ResMut<VoidActionCooldowns>>,
     mut zone_influence_map: Option<ResMut<crate::world::territory::ZoneInfluenceMap>>,
 ) {
@@ -732,7 +734,9 @@ fn bootstrap_persistence_system(
             );
         }
         if let Some(heartbeat) = heartbeat.as_deref_mut() {
-            match hydrate_heartbeat_pseudo_veins(&settings, zone_registry, heartbeat) {
+            let current_tick = clock.as_deref().map(|clock| clock.tick).unwrap_or_default();
+            match hydrate_heartbeat_pseudo_veins(&settings, zone_registry, heartbeat, current_tick)
+            {
                 Ok(restored) if restored > 0 => tracing::info!(
                     "[bong][persistence] restored {restored} heartbeat pseudo-vein runtime zone(s)"
                 ),
@@ -3080,9 +3084,10 @@ fn hydrate_heartbeat_pseudo_veins(
     settings: &PersistenceSettings,
     zones: &mut crate::world::zone::ZoneRegistry,
     heartbeat: &mut WorldHeartbeat,
+    current_tick: u64,
 ) -> io::Result<usize> {
     let snapshots = load_heartbeat_pseudo_vein_snapshot(settings)?;
-    Ok(heartbeat.restore_pseudo_vein_snapshots(zones, snapshots))
+    Ok(heartbeat.restore_pseudo_vein_snapshots(zones, snapshots, current_tick))
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -10241,7 +10246,7 @@ mod persistence_tests {
 
         let mut registry = crate::world::zone::ZoneRegistry::fallback();
         let mut heartbeat = WorldHeartbeat::default();
-        let restored = hydrate_heartbeat_pseudo_veins(&settings, &mut registry, &mut heartbeat)
+        let restored = hydrate_heartbeat_pseudo_veins(&settings, &mut registry, &mut heartbeat, 0)
             .expect("heartbeat pseudo-vein hydrate should succeed");
         assert_eq!(restored, 1);
         assert_eq!(heartbeat.active_pseudo_vein_count(), 1);
