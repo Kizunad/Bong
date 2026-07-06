@@ -17,6 +17,7 @@ import threading
 import time
 
 from . import mc_protocol as mc
+from . import proto_min
 from .mc_protocol import Connection, Reader, login, mc_string, write_varint
 
 
@@ -332,6 +333,66 @@ class Bot:
             timeout,
             f"channel={channel} 的 payload（server 应 emit 该通道，检查 emit system 是否接线）",
         )
+
+    def expect_payload_after(self, channel: str, after: float, timeout: float = 5.0) -> Event:
+        return self.wait_for(
+            lambda e: e.kind == "payload" and e.data["channel"] == channel and e.t > after,
+            timeout,
+            f"t>{after:.3f}s 后 channel={channel} 的 payload",
+        )
+
+    def expect_server_data_payload(
+        self,
+        payload_name: str | None = None,
+        timeout: float = 5.0,
+        after: float = 0.0,
+    ) -> Event:
+        def matches(event: Event) -> bool:
+            if (
+                event.kind != "payload"
+                or event.data["channel"] != "bong:server_data"
+                or event.t <= after
+            ):
+                return False
+            if payload_name is None:
+                return True
+            return proto_min.server_data_payload_name(event.data["data"]) == payload_name
+
+        detail = "任意 bong:server_data payload"
+        if payload_name is not None:
+            detail = f"payload_type={payload_name} 的 bong:server_data payload"
+        return self.wait_for(matches, timeout, f"t>{after:.3f}s 后 {detail}")
+
+    def expect_inventory_item(
+        self,
+        item_id: str,
+        timeout: float = 5.0,
+        after: float = 0.0,
+    ) -> proto_min.InventoryItemRef:
+        found: dict[str, proto_min.InventoryItemRef] = {}
+
+        def matches(event: Event) -> bool:
+            if (
+                event.kind != "payload"
+                or event.data["channel"] != "bong:server_data"
+                or event.t <= after
+            ):
+                return False
+            for item in proto_min.inventory_item_refs(event.data["data"]):
+                if item.item_id == item_id:
+                    found["item"] = item
+                    return True
+            return False
+
+        self.wait_for(
+            matches,
+            timeout,
+            (
+                f"inventory_snapshot 内出现 item_id={item_id}"
+                "（bot 只做 protobuf 浅扫描以取得 instance_id，P6 再决定深断言方案）"
+            ),
+        )
+        return found["item"]
 
     def expect_chat(self, substring: str, timeout: float = 5.0) -> Event:
         return self.wait_for(

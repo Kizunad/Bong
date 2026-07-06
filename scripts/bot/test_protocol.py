@@ -20,6 +20,7 @@ import zlib
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from bot import mc_protocol as mc  # noqa: E402
+from bot import proto_min  # noqa: E402
 from bot.bot import Bot, _signed_12, _signed_26  # noqa: E402
 from bot.run_scenarios import (  # noqa: E402
     ScenarioEnv,
@@ -85,6 +86,53 @@ class ChatTextTest(unittest.TestCase):
         ]
         for raw, expected in cases:
             self.assertEqual(mc.chat_text_to_plain(raw), expected, f"raw={raw!r}")
+
+
+def _pb_varint_field(number: int, value: int) -> bytes:
+    return mc.write_varint(number << 3) + mc.write_varint(value)
+
+
+def _pb_len_field(number: int, value: bytes) -> bytes:
+    return mc.write_varint((number << 3) | 2) + mc.write_varint(len(value)) + value
+
+
+class ProtoMinTest(unittest.TestCase):
+    def test_server_data_payload_name_reads_oneof_field(self):
+        envelope = _pb_len_field(31, b"\x08\x01")
+        self.assertEqual(proto_min.server_data_payload_name(envelope), "lingtian_session")
+
+    def test_inventory_snapshot_extracts_placed_item_location(self):
+        item = (
+            _pb_varint_field(1, 4242)
+            + _pb_len_field(2, b"furnace_fantie")
+            + _pb_len_field(3, "凡铁炉".encode("utf-8"))
+        )
+        placed = (
+            _pb_len_field(1, b"main_pack")
+            + _pb_varint_field(2, 1)
+            + _pb_varint_field(3, 2)
+            + _pb_len_field(4, item)
+        )
+        inventory = _pb_len_field(3, placed)
+        envelope = _pb_len_field(8, inventory)
+
+        refs = proto_min.inventory_item_refs(envelope)
+        self.assertEqual(len(refs), 1)
+        self.assertEqual(refs[0].instance_id, 4242)
+        self.assertEqual(refs[0].item_id, "furnace_fantie")
+        self.assertEqual(
+            refs[0].location,
+            {"kind": "container", "container_id": "main_pack", "row": 1, "col": 2},
+        )
+
+    def test_inventory_snapshot_extracts_equipped_item_location(self):
+        item = _pb_varint_field(1, 77) + _pb_len_field(2, b"hoe_iron")
+        equipped = _pb_len_field(10, item)
+        inventory = _pb_len_field(4, equipped)
+        envelope = _pb_len_field(8, inventory)
+
+        refs = proto_min.inventory_item_refs(envelope)
+        self.assertEqual(refs[0].location, {"kind": "equip", "slot": "main_hand", "state": "held"})
 
 
 def _bare_connection(threshold: int = -1) -> mc.Connection:
