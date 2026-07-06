@@ -8,7 +8,7 @@
 
 | 阶段 | 主题 | 路由 | 状态 |
 |------|------|------|------|
-| P0 | `shield_block` 飘字分类断链（client `parseKind`/`defaultColorFor` 加 `shield_block` 分支） | fix_pr | ⬜（决议见 §8.1，2026-07-04 收口，待 `/consume-plan` 实施） |
+| P0 | `shield_block` 飘字分类断链（client `parseKind`/`defaultColorFor` 加 `shield_block` 分支） | fix_pr | ✅ 2026-07-06 |
 
 ## 接入面（docs/CLAUDE.md §二 六要素）
 
@@ -90,3 +90,24 @@ bughunt loop 20260704-i。两轮怀疑式证伪后保留：
 
 1. 反证一：这不是"已有 `shield_block_hit` 专用通道，所以 `combat_event` 怎么分都无所谓"——专用通道只补视听，不补数值飘字。
 2. 反证二：这不是不可达死码——`resolve.rs` happy-path 测试已锁住正常前方举盾会真实产出 `DefenseKind::ShieldBlock`，且仍可能存在残余 `physical_damage`，因此玩家常规战斗可见。
+
+## Finish Evidence
+
+### 落地清单（P0）
+- `client/src/main/java/com/bong/client/combat/handler/CombatEventHandler.java`：`parseKind()`（line 94）新增 `case "shield_block" -> DamageFloaterStore.Kind.BLOCK;`（复用既有 BLOCK 枚举，不新增变体，§8.1 #1）；`defaultColorFor()`（line 110）新增 `case "shield_block" -> 0xFF6FA8DC;`（专属盾蓝，区别于 block 灰 `0xFFA0A0A0` / HIT 红 `0xFFE04040`）。既有 case、函数签名、`toJuiceEvent()`/`juiceKind()`（line 173 `shield_block -> CombatJuiceEvent.Kind.SHIELD_BLOCK`）均未动。
+- `client/src/test/java/com/bong/client/combat/handler/CombatHandlersTest.java`：新增 `combatEventHandlerShieldBlockKindNotDefaultHit()` —— 以 `{"kind":"shield_block","amount":8}` 走 `handle()` → `DamageFloaterStore.snapshot()`，断言 `.kind()==BLOCK`（非 HIT）+ `.color()==0xFF6FA8DC`（`!=0xFFE04040` HIT 红、`!=0xFFA0A0A0` block 灰）；追加 `{"kind":"block"}` 对照锚点断言其色 `==0xFFA0A0A0`。`@AfterEach` 补 `CombatJuiceSystem.resetForTests()` 清理本类经 `handle()`→juice 分支设置的静态 `activeOverlay`（否则泄漏使 `BongHudOrchestratorTest` 撞红；纯测试隔离，沿 `CombatJuiceTest` 既有约定，不改生产逻辑）。
+
+### 关键 commit
+- `273fef30`（2026-07-06）fix(client): shield_block 飘字分类断链 — parseKind/defaultColorFor 补 shield_block 分支（PR #966）。
+
+### 测试结果
+- `cd client && ./gradlew test build` → BUILD SUCCESSFUL；`CombatHandlersTest` 16/16、`BongHudOrchestratorTest` 12/12 通过。临时还原 `default` 分支后新用例在 `CombatHandlersTest.java:86` 撞红（`expected BLOCK but was HIT`），证明测试真锁住行为，再还原修复。
+
+### 跨仓库核验
+- **client**：`CombatEventHandler.parseKind/defaultColorFor`（改）、`DamageFloaterStore.Kind.BLOCK`/`Floater`/`snapshot`（复用）、`CombatJuiceSystem.resetForTests`（测试隔离，复用）。
+- **server**：`combat_event_emit.rs::wire_kind()` 发 `"shield_block"`（未改，仅作可达性/契约核验：博弈确认经 `resolve.rs` `DefenseKind::ShieldBlock` 正常游玩可达）。
+- **无** schema / IPC / wire 格式改动；**无** agent 改动。
+
+### 遗留 / 后续
+- §8.1 #2 的"server `wire_kind()` 输出全集 ↔ client `parseKind/defaultColorFor` 覆盖全集"跨端对拍护栏未做（超本 plan P0 体量，登记供未来同类断链的 plan/bughunt 处理）。
+- 博弈 gate 3 处 minor（非阻塞、未修）：① 盾蓝 `0xFF6FA8DC` 与 qi_damage 蓝 `0xFF80A0FF` 在蓝色带较近（§8.1 有意选定、核心目标"非 HIT 红"已达成，可选未来微调更偏青）；② `ShieldBlockHitHandler` 的 HUD 盾弧蓝 `0xFF4DA6FF` 与本飘字盾蓝 `0xFF6FA8DC` 略不同（不同 UI 面、不混淆，可选统一为单一常量）；③ `CombatHandlersTest` 的 `@AfterEach` 注释措辞略不准（`resetForTests()` 本身正确必要）。
