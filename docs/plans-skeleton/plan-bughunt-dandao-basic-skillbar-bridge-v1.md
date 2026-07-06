@@ -1,4 +1,6 @@
-# BugHunt: 丹道三基础招玩家技能栏接入断链
+# plan-bughunt-dandao-basic-skillbar-bridge-v1（骨架）
+
+> **骨架（草案）**。一句话主题：丹道三基础招 `dandao.pill_rush` / `dandao.pill_bomb` / `dandao.pill_mist` 已进生产 `SkillRegistry`，但玩家技能栏依赖的 `KnownTechniques` 定义源与客户端 A/V/HUD/icon 链路未闭环，导致正常玩家 UI 不能绑定和施放。
 
 ## Bug 摘要
 
