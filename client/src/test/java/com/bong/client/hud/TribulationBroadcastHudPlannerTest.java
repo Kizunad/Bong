@@ -94,6 +94,40 @@ class TribulationBroadcastHudPlannerTest {
         assertTrue(hasProgress);
     }
 
+    @Test void drawsWaveProgressForBroadcastMatchedState() {
+        TribulationBroadcastStore.replace(new TribulationBroadcastStore.State(
+            true, "Beryl", "striking", 400, 0, 10_000L, false, 400
+        ));
+        TribulationStateStore.upsert(new TribulationStateStore.State(
+            true, "offline:Azure", "Azure", "du_xu", "wave", 0, 0,
+            5, 5, 100, 200, 300, false, false, List.of("offline:Azure"), ""
+        ));
+        TribulationStateStore.upsert(new TribulationStateStore.State(
+            true, "offline:Beryl", "Beryl", "du_xu", "wave", 400, 0,
+            1, 5, 100, 200, 300, false, false, List.of("offline:Beryl"), ""
+        ));
+
+        List<HudRenderCommand> cmds = TribulationBroadcastHudPlanner.buildCommands(800, 600, 1_000L);
+
+        assertTrue(cmds.stream().anyMatch(c -> c.isText() && c.text().contains("劫波 1/5")));
+        assertFalse(cmds.stream().anyMatch(c -> c.isText() && c.text().contains("劫波 5/5")));
+    }
+
+    @Test void omitsWaveProgressWhenBroadcastDoesNotMatchAnyState() {
+        TribulationBroadcastStore.replace(new TribulationBroadcastStore.State(
+            true, "Beryl", "striking", 400, 0, 10_000L, false, 400
+        ));
+        TribulationStateStore.upsert(new TribulationStateStore.State(
+            true, "offline:Azure", "Azure", "du_xu", "wave", 0, 0,
+            5, 5, 100, 200, 300, false, false, List.of("offline:Azure"), ""
+        ));
+
+        List<HudRenderCommand> cmds = TribulationBroadcastHudPlanner.buildCommands(800, 600, 1_000L);
+
+        assertTrue(cmds.stream().anyMatch(c -> c.isText() && c.text().contains("Beryl")));
+        assertFalse(cmds.stream().anyMatch(c -> c.isText() && c.text().contains("劫波 5/5")));
+    }
+
     @Test void progressLabelCoversHeartDemonPhase() {
         TribulationStateStore.State state = new TribulationStateStore.State(
             true, "offline:Azure", "Azure", "du_xu", "heart_demon", 0, 0,
