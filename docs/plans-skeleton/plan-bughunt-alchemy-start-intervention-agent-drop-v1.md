@@ -1,47 +1,63 @@
 # plan-bughunt-alchemy-start-intervention-agent-drop-v1（骨架）
 
-> **骨架（草案）**。一句话主题：炼丹起炉与中途干预事件已经由 server 发布、由 schema 声明为 Server -> Agent channel，但 Tiandao `RedisIpc` 未订阅这两类 channel，导致过程事件在 agent runtime 侧静默丢失。
+> **骨架（草案）**。一句话主题：炼丹过程事件已发出但 Tiandao 未接入，起炉与干预结果在 agent runtime 侧缺失。
 
-> 立项动机：本 PR 只记录 BugHunt E7 发现，不修业务代码；后续 fix PR 需要把 alchemy runtime bridge 的订阅、校验、缓存和测试补齐。
+> 立项动机：BugHunt E7 发现 agent-schema/runtime bridge 缺口；本 PR 只放占位，不修代码。
 
 ## 阶段总览
 
 | 阶段 | 主题 | 路由 | 状态 |
 |------|------|------|------|
-| P0 | 起炉与干预结果未进入 Tiandao runtime | fix_pr | ⬜ |
-| P1 | 是否对过程事件触发叙事介入 | design | ⬜ |
+| P0 | 补齐起炉与干预结果接入 | fix_pr | ⬜ |
+| P1 | 定义过程事件消费语义 | design | ⬜ |
+| P2 | 恢复过程事件回归覆盖 | coverage | ⬜ |
 
-## P0 — 起炉与干预结果未进入 Tiandao runtime
+## P0 - 补齐起炉与干预结果接入
 
-- **#1 major（fix_pr）**：`agent/packages/tiandao/src/redis-ipc.ts` 目前只消费 `bong:alchemy/session_end` 与 `bong:alchemy_insight`，没有订阅或解析 `bong:alchemy/session_start` / `bong:alchemy/intervention_result`。
-- contract 侧已经有对应 channel 与 payload：`agent/packages/schema/src/channels.ts`、`agent/packages/schema/src/alchemy.ts`。
-- server 侧玩家起炉成功、调火/注气干预成功后均有 Redis publish 路径。
-- Tiandao 侧缺口会让 `onAlchemyRuntimeEvent` 与 `getLatestAlchemyEvents` 看不到炼丹过程事件。
-- 本题不重复 #995：#995 关注 `alchemy_insight` payload `ts` 漂移；本题关注两个独立 channel 根本未进入 Tiandao。
+- 现象：Tiandao 只能稳定看到炼丹结算点，过程事件缺席。
+- 起炉事件：需要进入 agent runtime 观测流。
+- 干预结果：需要进入 agent runtime 观测流。
+- 异常消息：后续 fix 中只应记录并丢弃。
+- 范围：agent runtime bridge，不在本骨架 PR 内实现。
 
-## 玩家可见影响
+## P1 - 定义过程事件消费语义
 
-- 玩家点燃炼丹炉后，天道只能在结算点附近观察结果，无法感知“某玩家已经起炉炼某丹”。
-- 玩家中途成功调火或注气后，当前温度、注气量等过程状态不会进入 agent runtime。
-- 后续若要做过程性天道介入、调试观测或炼丹节奏反馈，这条 bridge 断链会让 server 已发事件但 Tiandao 无反应。
+- 起炉：记录玩家、炉、配方的过程开始。
+- 干预：记录已被 server 接受的调火或注气结果。
+- 叙事：是否立即播报留给后续设计裁决。
+- 节流：干预类事件可能高频，需要后续明确。
+- 兼容：历史异常消息不应拖垮 Tiandao。
 
-## 建议修法
+## P2 - 恢复过程事件回归覆盖
 
-- `RedisIpc` import `validateAlchemySessionStartV1Contract` 与 `validateAlchemyInterventionResultV1Contract`。
-- 扩展 `AlchemyRuntimeEventV1` union，并在 `connect()` 订阅两个缺失 channel。
-- `handleAlchemyRuntimeEventMessage` 按 channel 分派 validator，非法 payload 只 warn 后丢弃。
-- 最小修复先保证四类炼丹 runtime event 都进入 callback 与 latest buffer。
-- 若后续要直接叙事，需对 `intervention_result` 做节流，避免频繁调火刷屏。
+- 覆盖起炉事件进入观测入口。
+- 覆盖干预结果进入观测入口。
+- 覆盖近期缓存可查询过程事件。
+- 覆盖非法消息不进入观测流。
+- 覆盖订阅清单包含过程事件。
 
-## 测试抓手
+## 玩家影响占位
 
-- `agent/packages/tiandao/tests/redis-ipc.test.ts` 增加 `session_start` 可观测测试。
-- 同文件增加 `intervention_result` 可观测测试。
-- 增加非法 payload 不进入 callback / buffer 的负向测试。
-- 若 schema export 或 dist 发生变化，同步跑 schema tests 与 agent build。
+- 起炉后，天道应知道炼丹已经开始。
+- 干预后，天道应知道过程状态已变化。
+- 当前缺口会造成 server 已发事件但 Tiandao 无感。
+
+## 待展开问题
+
+- 过程事件是否只记录上下文。
+- 过程事件是否触发即时 narration。
+- 干预事件的最小节流窗口。
+- 失败干预是否需要独立事件。
+- 与已有洞察事件的边界。
+
+## 验收占位
+
+- agent runtime 可观测炼丹过程事件。
+- 无效消息不污染观测流。
+- 不引入新的契约漂移。
 
 ## 审计来源
 
-- 来源：BugHunt E7，范围为 agent-schema / runtime bridge。
-- 结论：**real-on-main，player-facing，局部明确，可 fix_pr**。
-- 本骨架只立项，不在该 PR 内改 agent/server/client 代码。
+- 来源：BugHunt E7。
+- 结论：real-on-main，player-facing，局部明确，可 fix_pr。
+- 本文件只是 skeleton 占位。
