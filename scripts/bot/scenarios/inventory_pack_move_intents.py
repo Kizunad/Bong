@@ -11,7 +11,6 @@ from ._inventory_helpers import (
     container_location,
     equip_location,
     first_free_cell,
-    latest_inventory_snapshot,
     require_item,
     require_pack_container,
     send_move,
@@ -61,6 +60,7 @@ def run(env) -> None:
             "拖入穿戴背包容器应触发 stow VFX 或 inventory_event::moved",
         )
 
+        before_unequip_revision = snapshot["revision"]
         send_move(
             bot,
             pack_id,
@@ -68,9 +68,10 @@ def run(env) -> None:
             container_location("body_pocket", 0, 0),
         )
         bot.expect_vfx_event("bong:inventory_pack_unequip", timeout=10.0)
-        snapshot = latest_inventory_snapshot(bot, timeout=10.0)
+        snapshot = wait_inventory_revision_after(bot, before_unequip_revision, timeout=10.0)
         unequipped = require_item(snapshot, "worn_grass_pouch")
 
+        before_equip_revision = snapshot["revision"]
         send_move(
             bot,
             pack_id,
@@ -78,7 +79,7 @@ def run(env) -> None:
             equip_location("chest", "worn"),
         )
         bot.expect_vfx_event("bong:inventory_pack_equip", timeout=10.0)
-        latest_inventory_snapshot(bot, timeout=10.0)
+        wait_inventory_revision_after(bot, before_equip_revision, timeout=10.0)
 
         bot.assert_alive("背包拖入/脱下/穿回 intent 后")
 

@@ -14,7 +14,21 @@ def wait_join_and_inventory(bot, timeout: float = 15.0) -> dict[str, Any]:
 
 
 def latest_inventory_snapshot(bot, timeout: float = 10.0) -> dict[str, Any]:
+    events = _inventory_snapshot_events(bot)
+    if events:
+        return events[-1].data["payload"]
     event = bot.expect_server_data("inventory_snapshot", timeout=timeout)
+    return event.data["payload"]
+
+
+def wait_inventory_snapshot_after(bot, after_t: float, timeout: float = 10.0) -> dict[str, Any]:
+    event = bot.wait_for(
+        lambda e: e.kind == "server_data"
+        and e.data["payload_type"] == "inventory_snapshot"
+        and e.t > after_t,
+        timeout=timeout,
+        description=f"t > {after_t:.3f}s 的 inventory_snapshot",
+    )
     return event.data["payload"]
 
 
@@ -27,6 +41,18 @@ def wait_inventory_revision_after(bot, previous_revision: int, timeout: float = 
         description=f"revision > {previous_revision} 的 inventory_snapshot",
     )
     return event.data["payload"]
+
+
+def _inventory_snapshot_events(bot) -> list[Any]:
+    if hasattr(bot, "events_of"):
+        events = bot.events_of("server_data")
+    else:
+        events = [event for event in getattr(bot, "events", []) if event.kind == "server_data"]
+    return [
+        event
+        for event in events
+        if event.data.get("payload_type") == "inventory_snapshot"
+    ]
 
 
 def wait_inventory_contains(bot, item_id: str, timeout: float = 10.0) -> dict[str, Any]:

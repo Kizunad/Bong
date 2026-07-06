@@ -22,6 +22,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from bot import mc_protocol as mc  # noqa: E402
 from bot.bot import Bot, _signed_12, _signed_26  # noqa: E402
 from bot.server_data import _load_envelope_pb2, decode_server_data_payload  # noqa: E402
+from bot.scenarios._inventory_helpers import (  # noqa: E402
+    latest_inventory_snapshot,
+    wait_inventory_snapshot_after,
+)
 from bot.run_scenarios import (  # noqa: E402
     ScenarioEnv,
     check_server_reachable,
@@ -121,6 +125,82 @@ class ServerDataDecodeTest(unittest.TestCase):
         self.assertEqual(decoded["revision"], 12)
         self.assertEqual(decoded["containers"][0]["id"], "body_pocket")
         self.assertEqual(decoded["equipped"]["chest_worn"][0]["item_id"], "worn_grass_pouch")
+
+
+class InventoryHelperTest(unittest.TestCase):
+    def test_latest_inventory_snapshot_uses_newest_history(self):
+        bot = _FakeBot(
+            [
+                _snapshot_event(1.0, 1, "old_pack"),
+                _snapshot_event(2.0, 2, "new_pack"),
+            ]
+        )
+
+        snapshot = latest_inventory_snapshot(bot)
+
+        self.assertEqual(snapshot["revision"], 2)
+        self.assertEqual(snapshot["marker"], "new_pack")
+
+    def test_wait_inventory_snapshot_after_ignores_old_history(self):
+        bot = _FakeBot(
+            [
+                _snapshot_event(1.0, 1, "old_pack"),
+                _snapshot_event(3.0, 2, "after_unequip"),
+            ]
+        )
+
+        snapshot = wait_inventory_snapshot_after(bot, after_t=2.0)
+
+        self.assertEqual(snapshot["revision"], 2)
+        self.assertEqual(snapshot["marker"], "after_unequip")
+
+
+class _FakeEvent:
+    def __init__(self, t: float, kind: str, data: dict):
+        self.t = t
+        self.kind = kind
+        self.data = data
+
+    def __repr__(self) -> str:
+        return f"_FakeEvent({self.t} {self.kind} {self.data})"
+
+
+class _FakeBot:
+    username = "Fake"
+
+    def __init__(self, events: list[_FakeEvent]):
+        self.events = events
+
+    def events_of(self, kind: str) -> list[_FakeEvent]:
+        return [event for event in self.events if event.kind == kind]
+
+    def expect_server_data(self, payload_type: str, timeout: float = 5.0) -> _FakeEvent:
+        return self.wait_for(
+            lambda e: e.kind == "server_data" and e.data["payload_type"] == payload_type,
+            timeout,
+            f"server_data/{payload_type}",
+        )
+
+    def wait_for(self, predicate, timeout: float, description: str) -> _FakeEvent:
+        for event in self.events:
+            if predicate(event):
+                return event
+        raise AssertionError(f"未找到 {description}; events={self.events}")
+
+
+def _snapshot_event(t: float, revision: int, marker: str) -> _FakeEvent:
+    return _FakeEvent(
+        t,
+        "server_data",
+        {
+            "payload_type": "inventory_snapshot",
+            "payload": {
+                "type": "inventory_snapshot",
+                "revision": revision,
+                "marker": marker,
+            },
+        },
+    )
 
 
 def _bare_connection(threshold: int = -1) -> mc.Connection:
