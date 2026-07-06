@@ -32,6 +32,7 @@ SERVER_DATA_PAYLOAD_NAMES = {
     18: "forge_session",
     19: "forge_outcome",
     20: "forge_blueprint_book",
+    25: "botany_harvest_progress",
     30: "gathering_session",
     31: "lingtian_session",
 }

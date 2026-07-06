@@ -4,15 +4,15 @@
 - dev 铺垫：`/give hoe_iron`
 - client_request：`inventory_move_intent` 装备锄头、`lingtian_start_till`
 - chat 反馈：`/bong gather spirit_grass` → Gameplay action queued.
-- payload 回流：`bong:server_data` 的 `lingtian_session`
+- payload 回流：`bong:server_data` 的 `lingtian_session` / `gathering_session`
 
 灵田能否真正开垦取决于 live server 当前地形；场景只断言 wire 入口与 HUD
-payload 回流，不把地形/作物状态当成 bot 脚本职责。
+payload 回流，不把地形/作物结算当成 bot 脚本职责。
 """
 
 from bot.bot import BotAssertionError
 
-DESCRIPTION = "灵田/采集：锄头 give+装备 → lingtian_start_till payload；/bong gather chat 反馈"
+DESCRIPTION = "灵田/采集：锄头 give+装备 → lingtian_start_till；/bong gather → gathering_session"
 MODULES = ["lingtian", "gathering", "inventory", "network"]
 
 
@@ -65,6 +65,8 @@ def run(env) -> None:
         )
         bot.expect_server_data_payload("lingtian_session", timeout=10.0, after=mark)
 
+        mark = _event_mark(bot)
         bot.cmd("bong gather spirit_grass")
         bot.expect_chat("Gameplay action queued.", timeout=10.0)
+        bot.expect_server_data_payload("gathering_session", timeout=15.0, after=mark)
         bot.assert_alive("灵田 intent 与 gather 命令后")
