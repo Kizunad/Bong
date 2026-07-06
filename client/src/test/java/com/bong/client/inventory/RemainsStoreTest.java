@@ -39,6 +39,17 @@ public class RemainsStoreTest {
     }
 
     @Test
+    void removeMissingIdIsNoOp() {
+        RemainsStore.putOrReplace(entry("kept", 8.0, 66.0, 8.0));
+
+        RemainsStore.remove("missing");
+        RemainsStore.remove(null);
+
+        assertEquals(1, RemainsStore.snapshot().size(), "删除不存在 id 不应影响已有遗骸缓存");
+        assertEquals("kept", RemainsStore.get("kept").remainsId());
+    }
+
+    @Test
     void nearestToReturnsClosestEntry() {
         RemainsStore.putOrReplace(entry("near", 2.0, 0.0, 2.0));
         RemainsStore.putOrReplace(entry("far", 8.0, 0.0, 8.0));
@@ -62,6 +73,19 @@ public class RemainsStoreTest {
         for (int i = 0; i < 10; i++) {
             assertEquals("second", RemainsStore.nearestTo(0.0, 0.0, 0.0).remainsId());
         }
+    }
+
+    @Test
+    void nearestToUsesLatestInsertionAcrossThreeWayTie() {
+        RemainsStore.putOrReplace(entry("first", 3.0, 0.0, 4.0));
+        RemainsStore.putOrReplace(entry("second", 4.0, 0.0, 3.0));
+        RemainsStore.putOrReplace(entry("third", 0.0, 0.0, 5.0));
+
+        assertEquals(
+            "third",
+            RemainsStore.nearestTo(0.0, 0.0, 0.0).remainsId(),
+            "三具遗骸严格等距时应由最后插入者胜出"
+        );
     }
 
     /** replace（同 id 重新 put）不应更新 insertionOrder——server 每次全量推送不得洗掉 latest 语义。 */
@@ -88,6 +112,20 @@ public class RemainsStoreTest {
 
         assertEquals("tail", RemainsStore.nearestTo(0.0, 0.0, 0.0).remainsId(),
             "list-tail entry should win the tie (treated as latest)");
+    }
+
+    @Test
+    void replaceAllDeduplicatesByRemainsIdUsingLastEntryValue() {
+        RemainsStore.replaceAll(java.util.List.of(
+            entry("dup", 1.0, 0.0, 0.0),
+            new RemainsStore.Entry("dup", 9.0, 70.0, 9.0, "minecraft:overworld", "新遗骸", 5, 8L)
+        ));
+
+        assertEquals(1, RemainsStore.snapshot().size(), "重复 remains_id 应只保留一条缓存记录");
+        RemainsStore.Entry entry = RemainsStore.get("dup");
+        assertEquals("新遗骸", entry.displayName(), "重复 id 的后续条目应覆盖可见字段");
+        assertEquals(5, entry.itemCount());
+        assertEquals(8L, entry.boneCoins());
     }
 
     @Test

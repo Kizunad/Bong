@@ -106,6 +106,44 @@ public class RemainsSyncHandlerTest {
     }
 
     @Test
+    void negativeCountsAreRejectedWithoutTruncation() {
+        for (String field : new String[] {"item_count", "bone_coins"}) {
+            RemainsStore.resetForTests();
+            String payload = """
+                {"v":1,"type":"remains_sync","remains":[
+                  {"remains_id":"uuid-x","world_pos_x":1.0,"world_pos_y":64.0,"world_pos_z":1.0,
+                   "dimension":"minecraft:overworld","display_name":"遗骸",
+                   "item_count":1,"bone_coins":0}]}
+                """.replace("\"" + field + "\":1", "\"" + field + "\":-1")
+                   .replace("\"" + field + "\":0", "\"" + field + "\":-1");
+
+            ServerDataRouter.RouteResult result = ServerDataRouter.createDefault().route(payload, 0);
+
+            assertFalse(result.isHandled(),
+                    field + " 为负数应被拒绝，避免违反 schema minimum:0；actual log=" + result.logMessage());
+            assertTrue(RemainsStore.snapshot().isEmpty(),
+                    field + " 为负数时 store 不应被污染");
+        }
+    }
+
+    @Test
+    void extremeNegativeItemCountIsRejectedWithoutIntWraparound() {
+        String payload = """
+            {"v":1,"type":"remains_sync","remains":[
+              {"remains_id":"uuid-x","world_pos_x":1.0,"world_pos_y":64.0,"world_pos_z":1.0,
+               "dimension":"minecraft:overworld","display_name":"遗骸",
+               "item_count":-9223372036854775808,"bone_coins":0}]}
+            """;
+
+        ServerDataRouter.RouteResult result = ServerDataRouter.createDefault().route(payload, 0);
+
+        assertFalse(result.isHandled(),
+                "item_count 下界溢出值应被拒绝，不能 intValue() 截断后进入 store；actual log=" + result.logMessage());
+        assertTrue(RemainsStore.snapshot().isEmpty(),
+                "item_count 下界溢出时 store 不应被污染");
+    }
+
+    @Test
     void missingRemainsArrayIsNoOp() {
         String payload = """
             {"v":1,"type":"remains_sync"}

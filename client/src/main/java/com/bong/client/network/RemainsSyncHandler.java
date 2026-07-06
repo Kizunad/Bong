@@ -48,8 +48,8 @@ public final class RemainsSyncHandler implements ServerDataHandler {
         Double z = readRequiredDouble(object, "world_pos_z");
         String dimension = readRequiredString(object, "dimension");
         String displayName = readRequiredString(object, "display_name");
-        Integer itemCount = readRequiredInt(object, "item_count");
-        Long boneCoins = readRequiredLong(object, "bone_coins");
+        Integer itemCount = readRequiredNonNegativeInt(object, "item_count");
+        Long boneCoins = readRequiredNonNegativeLong(object, "bone_coins");
         if (remainsId == null || x == null || y == null || z == null || dimension == null
             || displayName == null || itemCount == null || boneCoins == null) {
             return null;
@@ -78,9 +78,14 @@ public final class RemainsSyncHandler implements ServerDataHandler {
         }
     }
 
-    private static Integer readRequiredInt(JsonObject object, String fieldName) {
+    private static Long readRequiredNonNegativeLong(JsonObject object, String fieldName) {
         Long value = readRequiredLong(object, fieldName);
-        return value == null || value > Integer.MAX_VALUE ? null : value.intValue();
+        return value == null || value < 0L ? null : value;
+    }
+
+    private static Integer readRequiredNonNegativeInt(JsonObject object, String fieldName) {
+        Long value = readRequiredLong(object, fieldName);
+        return value == null || value < 0L || value > Integer.MAX_VALUE ? null : value.intValue();
     }
 
     private static Double readRequiredDouble(JsonObject object, String fieldName) {

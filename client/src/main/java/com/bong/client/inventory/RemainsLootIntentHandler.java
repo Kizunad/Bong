@@ -17,46 +17,56 @@ import java.util.Optional;
  * 真正的距离/layer/dimension 权威校验在 server 端 `handle_remains_loot_intents` 做）。
  */
 public final class RemainsLootIntentHandler implements IntentHandler {
+    static final String DEBUG_LABEL_PREFIX = "remains:";
+
     @Override
     public Optional<InteractCandidate> candidate(MinecraftClient client) {
-        RemainsStore.Entry nearest = nearest(client);
+        if (client == null || client.player == null) {
+            return Optional.empty();
+        }
+        return candidateAt(client.player.getX(), client.player.getY(), client.player.getZ());
+    }
+
+    static Optional<InteractCandidate> candidateAt(double x, double y, double z) {
+        RemainsStore.Entry nearest = RemainsStore.nearestTo(x, y, z);
         if (nearest == null) {
             return Optional.empty();
         }
-        double distanceSq = distanceSq(client, nearest);
+        double distanceSq = distanceSq(x, y, z, nearest);
         return Optional.of(InteractCandidate.of(
             InteractIntent.LootRemains,
             ReservedInteractionIntents.LOOT_REMAINS_PRIORITY,
             distanceSq,
-            "remains:" + nearest.remainsId()
+            DEBUG_LABEL_PREFIX + nearest.remainsId()
         ));
     }
 
     @Override
     public boolean dispatch(MinecraftClient client, InteractCandidate candidate) {
-        RemainsStore.Entry nearest = nearest(client);
-        if (nearest == null) {
+        String remainsId = remainsIdFromCandidate(candidate);
+        if (remainsId == null) {
             return false;
         }
-        ClientRequestSender.sendRemainsLoot(nearest.remainsId());
+        ClientRequestSender.sendRemainsLoot(remainsId);
         return true;
     }
 
-    private static RemainsStore.Entry nearest(MinecraftClient client) {
-        if (client == null || client.player == null) {
+    static String remainsIdFromCandidate(InteractCandidate candidate) {
+        if (candidate == null || candidate.intent() != InteractIntent.LootRemains) {
             return null;
         }
-        return RemainsStore.nearestTo(
-            client.player.getX(),
-            client.player.getY(),
-            client.player.getZ()
-        );
+        String label = candidate.debugLabel();
+        if (!label.startsWith(DEBUG_LABEL_PREFIX)) {
+            return null;
+        }
+        String remainsId = label.substring(DEBUG_LABEL_PREFIX.length());
+        return remainsId.isBlank() ? null : remainsId;
     }
 
-    private static double distanceSq(MinecraftClient client, RemainsStore.Entry entry) {
-        double dx = client.player.getX() - entry.worldPosX();
-        double dy = client.player.getY() - entry.worldPosY();
-        double dz = client.player.getZ() - entry.worldPosZ();
+    private static double distanceSq(double x, double y, double z, RemainsStore.Entry entry) {
+        double dx = x - entry.worldPosX();
+        double dy = y - entry.worldPosY();
+        double dz = z - entry.worldPosZ();
         return dx * dx + dy * dy + dz * dz;
     }
 }
