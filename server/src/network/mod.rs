@@ -130,7 +130,7 @@ use valence::prelude::{
     Update, Username, With,
 };
 
-use crate::combat::components::Lifecycle;
+use crate::combat::components::{Lifecycle, StatusEffects};
 use crate::combat::CombatClock;
 use crate::cultivation::color::PracticeLog;
 use crate::cultivation::components::{Cultivation, MeridianSystem, QiColor};
@@ -139,7 +139,7 @@ use crate::cultivation::insight_apply::UnlockedPerceptions;
 use crate::cultivation::life_record::LifeRecord;
 use crate::cultivation::possession::DuoSheWarningEvent;
 use crate::fauna::rat_phase::{collect_rat_density_heatmap, RatDensityHeatmapV1, RatPhase};
-use crate::inventory::spirit_treasure::SpiritTreasureRegistry;
+use crate::inventory::spirit_treasure::{ActiveSpiritTreasures, SpiritTreasureRegistry};
 use crate::npc::brain::{canonical_npc_id, ChaseAction, DashAction, FleeAction, MeleeAttackAction};
 use crate::npc::dormant::NpcDormantStore;
 use crate::npc::faction::{FactionMembership, FactionStore, Lineage, MissionQueue};
@@ -2511,6 +2511,10 @@ fn process_redis_inbound(
     redis: Res<RedisBridgeResource>,
     zone_registry: Option<Res<ZoneRegistry>>,
     mut clients: Query<(Entity, &mut Client, &Username, &Position), With<Client>>,
+    mut spirit_treasure_holders: Query<
+        (&ActiveSpiritTreasures, Option<&mut StatusEffects>),
+        With<Client>,
+    >,
     insight_context: Query<InsightContextQueryItem<'_>>,
     mut command_executor: valence::prelude::ResMut<CommandExecutorResource>,
     mut narration_dedupe: valence::prelude::ResMut<NarrationDedupeResource>,
@@ -2663,6 +2667,7 @@ fn process_redis_inbound(
                         zone_registry.as_deref(),
                         registry,
                         &mut clients,
+                        &mut spirit_treasure_holders,
                     );
                 }
             }
