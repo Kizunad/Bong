@@ -47,12 +47,12 @@
 
 ## 反方裁决摘要
 
-1. **Round 1（退化处理：本会话无可用 subagent 工具，改由主代理手工反方裁决）**  
-   反方论点：fallback 是刻意的产品决策，目的是“至少保证有人看到提示”，不算 bug。  
+1. **Round 1（退化处理：本会话无可用 subagent 工具，改由主代理手工反方裁决）**
+   反方论点：fallback 是刻意的产品决策，目的是“至少保证有人看到提示”，不算 bug。
    驳回理由：`TsyZoneActivatedV1.player_id` 与 `server/src/world/tsy_lifecycle.rs:222-227` 都把语义写成“该发给谁”，不是“任意在线玩家都可代收”。这条链路讨论的是 ownership，不是送达率；把别人的 discover prompt 投给第一个在线玩家，本质上是在伪造触发者。
 
-2. **Round 2（退化处理：继续由主代理做代码级反方裁决）**  
-   反方论点：即便发错，server 也会靠 `target_player` / realm gate / `allowed_button_ids` 把误投递挡住，最多只是 harmless 提示。  
+2. **Round 2（退化处理：继续由主代理做代码级反方裁决）**
+   反方论点：即便发错，server 也会靠 `target_player` / realm gate / `allowed_button_ids` 把误投递挡住，最多只是 harmless 提示。
    驳回理由：`server/src/network/agent_ui.rs:364-387` 只校验该 `target_player` 是否在线；只要 B 在线，误投递就会落成真实 session。`server/src/network/agent_ui.rs:442-490` 还会替换 B 的旧 session。再加上 `agent/packages/tiandao/src/ui/xmlTemplates.ts:90-101` 与 button_click 注入测试，说明误投递后的点击会继续影响后续推演，不是 harmless no-op。
 
 ## 开放问题
