@@ -1,14 +1,16 @@
-# plan-bughunt-world-social-anonymity-live-sync-v1（骨架）
+# plan-bughunt-world-social-anonymity-live-sync-v1
 
-> **骨架（草案）**。一句话主题：`social_anonymity` 只在玩家进服时下发一次；后续聊天 / 交易 / 死亡把 `Anonymity.exposed_to` 真正写到了 server 权威状态与持久化，但**没有任何 live 重发链路**把新的“此人已对我暴露”同步给见证者客户端，导致 witness 在当前会话里仍看不到对方名牌，往往要重连才恢复。影响是：**玩家明明当场见证了对方发言、交易或死亡暴露，头顶名牌却继续匿名，现场追踪、复仇、临时结盟与信息确认都会卡成“服务器知道，客户端不知道”**。
+> 一句话主题：`social_anonymity` 只在玩家进服时下发一次；后续聊天 / 交易 / 死亡把 `Anonymity.exposed_to` 真正写到了 server 权威状态与持久化，但**没有任何 live 重发链路**把新的“此人已对我暴露”同步给见证者客户端，导致 witness 在当前会话里仍看不到对方名牌，往往要重连才恢复。影响是：**玩家明明当场见证了对方发言、交易或死亡暴露，头顶名牌却继续匿名，现场追踪、复仇、临时结盟与信息确认都会卡成“服务器知道，客户端不知道”**。
 
 > 立项动机：这条断链位于 `server/src/social/` 与 client social state 主路径，且对匿名博弈的实际手感有直接影响。它不是“season stale client”旧问题：这里卡住的是 **social exposure → anonymity live refresh** 这条独立同步链。
 
 ## 阶段总览
 
-| 阶段 | 主题 | 路由 | 状态 |
-|------|------|------|------|
-| P0 | social 暴露后匿名可见性不 live 刷新 | fix_pr | ⬜ |
+| 阶段 | 主题 | 状态 |
+|------|------|------|
+| P0 | social 暴露后匿名可见性不 live 刷新 | ⬜ |
+
+验收日期：P0 验收后填 `YYYY-MM-DD`（当前升 active：2026-07-06）。
 
 ## P0 — social 暴露后匿名可见性不 live 刷新
 
@@ -20,6 +22,18 @@
 - **对实际游玩体验的影响**：匿名博弈里最关键的“我刚刚看见你是谁”没有即时落到画面上。玩家会遇到：对面刚在附近说话或完成交易，HUD 已提示暴露，但战斗/追踪现场仍是一堆无名人影；死亡见证者知道有人暴露，却不能立刻从人群里确认是谁。对 PvP 追击、报复、现场结盟、灵龛线索核对都是真实手感损伤。
 - **建议修复范围 / 模块**：优先收口 `server/src/social/mod.rs` 与 client social state 路径。主修方向应是：暴露事件落地后，server 立刻向 actor+witnesses 定向补发新的 `SocialAnonymity` snapshot；client 端可选加一层 pin，防止未来再出现“只收 exposure、不刷新 anonymity cache”的回归。
 - **验收抓手**：至少补 4 组回归。1) chat exposure 后 witness 无需重连即可看到 actor 名牌。2) trade / death 两条暴露链同样 live 生效。3) 非见证者仍保持匿名，不出现过度暴露。4) server/client pin 测要能明确区分 `social_exposure` 与 `social_anonymity` 的职责，防止未来再次只发前者。
+
+### 交付物
+
+1. **`server/src/social/mod.rs`**：验证 `apply_social_exposures` 的实际权威写入和 payload 发射路径；若 bug 属实，在暴露落地后向 actor 与 witnesses 定向补发新的 `ServerDataPayloadV1::SocialAnonymity` snapshot，复用既有 `build_remote_identity_payloads` 可见性口径，避免另写一套匿名判定。
+2. **`server/src/social/mod.rs` 测试**：新增或扩展 server 回归，锁住 chat / trade / death 任一 social exposure 触发后 witness 同 tick 收到新的 `SocialAnonymity`，同时非 witness 不收到过度暴露。
+3. **`client/src/main/java/com/bong/client/social/` 测试或 pin**：确认 `SocialExposure` 仍只承担 HUD/事件记录职责，名牌显隐继续由 `SocialAnonymity` snapshot 更新；若现有 client 测试框架不足，至少用 server 端 payload 序列测试锁住跨端契约。
+
+### 验收标准
+
+- server social 相关单测通过，并能明确断言 `SocialExposure` 与 `SocialAnonymity` 都发出且职责不同。
+- 涉及 client Java 改动时，使用 JDK 17 跑 `cd client && ./gradlew test`；若未改 client，可不跨栈运行。
+- 最终由无上下文只读 validator 复核：bug 属实性、修复最小性、非见证者不过度暴露、测试覆盖是否足够。
 
 ## 反方裁决摘要
 
@@ -34,4 +48,4 @@
 
 ## 审计来源
 
-bughunt 线程 AM，范围限定 `server/src/world/`、`server/src/social/`、`client/src/main/java/com/bong/client/social/`、`client/src/main/java/com/bong/client/state/` 与相邻网络接线。结论为 **report-only**：本 PR 只提交 skeleton，后续 fix PR 再单独落地代码修复与回归测试。
+bughunt 线程 AM，范围限定 `server/src/world/`、`server/src/social/`、`client/src/main/java/com/bong/client/social/`、`client/src/main/java/com/bong/client/state/` 与相邻网络接线。原 bughunt PR 只提交 skeleton；本 active plan 负责验证候选并完成最小正确修复或提交不属实结论。
