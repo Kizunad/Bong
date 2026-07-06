@@ -127,13 +127,11 @@ public final class InventoryEquipRules {
         return switch (targetSlot) {
             case MAIN_HAND -> (weaponKind != null || hoe || tool)
                 && handHeldFree(equipped, targetSlot, sourceSlot)
-                // 双手武器入主手要求副手及全部多臂槽均空闲（双手锁对侧手，取代旧 TWO_HAND 专槽）。
-                && (!twoHandWeapon || (handHeldFree(equipped, EquipSlotType.OFF_HAND, sourceSlot)
-                    && handHeldFree(equipped, EquipSlotType.EXTRA_HAND_0, sourceSlot)
-                    && handHeldFree(equipped, EquipSlotType.EXTRA_HAND_1, sourceSlot)));
+                // 双手武器只锁 main_hand <-> off_hand；extra_hand 是独立多臂 held 槽。
+                && (!twoHandWeapon || handHeldFree(equipped, EquipSlotType.OFF_HAND, sourceSlot));
             // 工具/锄头双手可用：off_hand 放行 tool/hoe（与 server mod.rs OffHand 同步）。
             // 副手不收双手武器（spear/staff 只走主手 held + 锁副手）。
-            case OFF_HAND, EXTRA_HAND_0, EXTRA_HAND_1 -> ((weaponKind == WeaponKind.DAGGER || weaponKind == WeaponKind.FIST)
+            case OFF_HAND -> ((weaponKind == WeaponKind.DAGGER || weaponKind == WeaponKind.FIST)
                 || isTreasure(item)
                 || isShield(item)
                 || tool
@@ -141,6 +139,8 @@ public final class InventoryEquipRules {
                 && handHeldFree(equipped, targetSlot, sourceSlot)
                 // 对侧主手持双手武器时，副手被锁，不可装入。
                 && !mainHandHoldsTwoHand(equipped);
+            case EXTRA_HAND_0, EXTRA_HAND_1 -> (weaponKind != null || tool || hoe)
+                && handHeldFree(equipped, targetSlot, sourceSlot);
             // 身体槽 worn 栈：护甲（按部位）/ 伪皮 / 背包件，worn 未满才放行（决议 #17）。
             case HEAD, CHEST, LEGS, FEET ->
                 (isArmorForSlot(item, targetSlot) || isFalseSkin(item) || isContainer(item))
@@ -157,7 +157,7 @@ public final class InventoryEquipRules {
         return contents == null || contents.held() == null;
     }
 
-    /** 主手是否持双手武器（spear/staff）→ 锁副手/多臂。 */
+    /** 主手是否持双手武器（spear/staff）→ 只锁副手。 */
     private static boolean mainHandHoldsTwoHand(Map<EquipSlotType, SlotContents> equipped) {
         SlotContents main = equipped == null ? null : equipped.get(EquipSlotType.MAIN_HAND);
         if (main == null || main.held() == null) return false;
