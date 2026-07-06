@@ -36,6 +36,13 @@ const TRAMPLE_RADIUS_SQ: f64 = 0.7 * 0.7;
 /// 垂直距离 > 2 块认为跟植物不在同一层（平台/洞穴分层），不触发踩踏。
 const TRAMPLE_VERTICAL_MAX: f64 = 2.0;
 
+pub(crate) fn harvest_duration_ticks_for(mode: BotanyHarvestMode) -> u64 {
+    match mode {
+        BotanyHarvestMode::Manual => MANUAL_DURATION_TICKS,
+        BotanyHarvestMode::Auto => AUTO_DURATION_TICKS,
+    }
+}
+
 type HarvestHazardQuery<'w, 's> = Query<
     'w,
     's,
@@ -64,11 +71,6 @@ pub fn start_or_resume_harvest(
         return;
     }
 
-    let duration_ticks = match mode {
-        BotanyHarvestMode::Manual => MANUAL_DURATION_TICKS,
-        BotanyHarvestMode::Auto => AUTO_DURATION_TICKS,
-    };
-
     store.upsert_session(HarvestSession {
         player_id,
         client_entity,
@@ -76,11 +78,36 @@ pub fn start_or_resume_harvest(
         target_plant,
         mode,
         started_at_tick: now_tick,
-        duration_ticks,
+        duration_ticks: harvest_duration_ticks_for(mode),
         phase: BotanyPhase::InProgress,
         last_progress: 0.0,
         origin_position,
     });
+}
+
+pub(crate) fn request_harvest_mode(
+    store: &mut HarvestSessionStore,
+    session_id: &str,
+    client_entity: Entity,
+    mode: BotanyHarvestMode,
+    now_tick: u64,
+) -> Result<(), String> {
+    let session = store
+        .session_for_mut(session_id)
+        .ok_or_else(|| format!("missing harvest session `{session_id}`"))?;
+    if session.client_entity != client_entity {
+        return Err(format!(
+            "harvest session `{session_id}` belongs to {:?}, not {:?}",
+            session.client_entity, client_entity
+        ));
+    }
+
+    session.mode = mode;
+    session.started_at_tick = now_tick;
+    session.duration_ticks = harvest_duration_ticks_for(mode);
+    session.phase = BotanyPhase::InProgress;
+    session.last_progress = 0.0;
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -777,6 +804,98 @@ mod tests {
 
         let session = store.session_for("offline:Azure").unwrap();
         assert!(session.progress_at(51) >= 1.0);
+    }
+
+    #[test]
+    fn mode_request_updates_existing_session_duration_and_progress_origin() {
+        let mut store = HarvestSessionStore::default();
+        start_or_resume_harvest(
+            &mut store,
+            "Azure",
+            Entity::from_raw(1),
+            Some(Entity::from_raw(2)),
+            BotanyPlantId::CiSheHao,
+            BotanyHarvestMode::Manual,
+            [0.0, 0.0, 0.0],
+            10,
+        );
+
+        request_harvest_mode(
+            &mut store,
+            "offline:Azure",
+            Entity::from_raw(1),
+            BotanyHarvestMode::Auto,
+            25,
+        )
+        .expect("existing session should accept mode request");
+
+        let session = store.session_for("offline:Azure").unwrap();
+        assert_eq!(session.mode, BotanyHarvestMode::Auto);
+        assert_eq!(
+            session.duration_ticks,
+            harvest_duration_ticks_for(BotanyHarvestMode::Auto)
+        );
+        assert_eq!(session.started_at_tick, 25);
+        assert_eq!(session.last_progress, 0.0);
+        assert_eq!(session.phase, BotanyPhase::InProgress);
+    }
+
+    #[test]
+    fn mode_request_rejects_session_from_different_client_entity() {
+        let mut store = HarvestSessionStore::default();
+        start_or_resume_harvest(
+            &mut store,
+            "Azure",
+            Entity::from_raw(1),
+            Some(Entity::from_raw(2)),
+            BotanyPlantId::CiSheHao,
+            BotanyHarvestMode::Manual,
+            [0.0, 0.0, 0.0],
+            10,
+        );
+
+        let err = request_harvest_mode(
+            &mut store,
+            "offline:Azure",
+            Entity::from_raw(99),
+            BotanyHarvestMode::Auto,
+            25,
+        )
+        .expect_err("session_id from another client must be rejected");
+
+        assert!(err.contains("belongs to"));
+        let session = store.session_for("offline:Azure").unwrap();
+        assert_eq!(session.mode, BotanyHarvestMode::Manual);
+        assert_eq!(
+            session.duration_ticks,
+            harvest_duration_ticks_for(BotanyHarvestMode::Manual)
+        );
+        assert_eq!(session.started_at_tick, 10);
+    }
+
+    #[test]
+    fn mode_request_rejects_missing_session_without_creating_one() {
+        let mut store = HarvestSessionStore::default();
+
+        let err = request_harvest_mode(
+            &mut store,
+            "offline:Azure",
+            Entity::from_raw(1),
+            BotanyHarvestMode::Auto,
+            25,
+        )
+        .expect_err("missing session_id must be rejected");
+
+        assert!(err.contains("missing harvest session"));
+        assert!(
+            store.session_for("offline:Azure").is_none(),
+            "mode request must not create a new harvest session"
+        );
+        assert_eq!(
+            store.iter().count(),
+            0,
+            "missing mode request must leave the session store empty"
+        );
     }
 
     #[test]
