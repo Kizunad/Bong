@@ -29,7 +29,7 @@
       "recent_deaths": 1,
       "life_record": {
         "recent_biography_summary": "t83200:reach:Spirit | t83800:alchemy:ningmai_powder:exact:凝脉散:-",
-        "recent_skill_milestones_summary": "t82000:skill:herbalism:lv3 | t83000:skill:alchemy:lv2",
+        "recent_skill_milestones_summary": "t82000:skill:herbalism:lv3 | t83000:skill:alchemy:lv2 | t83400:skill:forging:lv1 | t83600:skill:combat:lv3 | t83800:skill:mineral:lv2 | t83900:skill:cultivation:lv4",
         "skill_milestones": [
           {
             "skill": "herbalism",
@@ -44,6 +44,34 @@
             "achieved_at": 83000,
             "narration": "炉火识性稍深，丹道已至Lv.2。",
             "total_xp_at": 240
+          },
+          {
+            "skill": "forging",
+            "new_lv": 1,
+            "achieved_at": 83400,
+            "narration": "锤火初识粗坯，炼器已至Lv.1。",
+            "total_xp_at": 90
+          },
+          {
+            "skill": "combat",
+            "new_lv": 3,
+            "achieved_at": 83600,
+            "narration": "血战里识得进退，战斗已至Lv.3。",
+            "total_xp_at": 610
+          },
+          {
+            "skill": "mineral",
+            "new_lv": 2,
+            "achieved_at": 83800,
+            "narration": "碎脉石纹渐明，采矿已至Lv.2。",
+            "total_xp_at": 280
+          },
+          {
+            "skill": "cultivation",
+            "new_lv": 4,
+            "achieved_at": 83900,
+            "narration": "气息沉入旧脉，修行已至Lv.4。",
+            "total_xp_at": 900
           }
         ]
       },

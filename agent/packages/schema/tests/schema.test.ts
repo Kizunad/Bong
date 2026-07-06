@@ -3233,10 +3233,34 @@ describe("schema rejects invalid data", () => {
     const firstPlayer = (data.players as Array<Record<string, unknown>>)[0];
     const lifeRecord = firstPlayer.life_record as Record<string, unknown>;
     expect(Array.isArray(lifeRecord.skill_milestones)).toBe(true);
-    expect((lifeRecord.skill_milestones as unknown[]).length).toBe(2);
+    const milestoneSkills = (lifeRecord.skill_milestones as Array<Record<string, unknown>>).map(
+      (milestone) => milestone.skill,
+    );
+    expect(milestoneSkills).toEqual([
+      "herbalism",
+      "alchemy",
+      "forging",
+      "combat",
+      "mineral",
+      "cultivation",
+    ]);
 
     expectContractAccepts(
       "WorldStateV1 life record skill milestone snapshots",
+      validateWorldStateV1Contract,
+      data,
+    );
+  });
+
+  it("rejects unknown life record skill milestone ids in world state", () => {
+    const data = loadObjectSample("world-state.sample.json");
+    const firstPlayer = (data.players as Array<Record<string, unknown>>)[0];
+    const lifeRecord = firstPlayer.life_record as Record<string, unknown>;
+    const milestones = lifeRecord.skill_milestones as Array<Record<string, unknown>>;
+    milestones[0].skill = "unknown";
+
+    expectContractRejects(
+      "WorldStateV1 unknown life record skill milestone id",
       validateWorldStateV1Contract,
       data,
     );
