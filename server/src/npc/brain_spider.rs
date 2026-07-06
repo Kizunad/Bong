@@ -7,7 +7,7 @@
 //!     emit 音效（`entity_spider_step` recipe，pitch_shift+1.8 → 实际 pitch≈1.8，vol=0.6）+
 //!     通过 NPC blackboard.target_position 驱动导航追击（复用 ChaseAction 逻辑）。
 //!   - [`SpiderRetreatAction`]：Ambush 期受威胁时转入 Retreat，向低 spirit_qi 方向逃离，
-//!     超过 `SPIDER_RETREAT_RADIUS` 后回 Disguised。
+//!     超过 `SPIDER_RETREAT_RADIUS` 后回 Disguised，并 emit SpiderDisguiseEnterEvent。
 //!
 //! P1 独立于 P2 神识识破 / P3 陷阱，所有新逻辑在本模块。
 
@@ -79,6 +79,20 @@ const SPIDER_VFX_ORIGIN_Y_OFFSET: f64 = 0.5;
 /// `trigger_pos` 为暴起世界坐标（供 P2 CustomPayload 广播）。
 #[derive(Debug, Clone, Event)]
 pub struct SpiderAmbushTriggerEvent {
+    /// P2 CustomPayload 广播使用：蛛 Entity raw index。
+    #[allow(dead_code)]
+    pub spider: u32,
+    /// P2 client 端渲染切换时的世界坐标原点。
+    #[allow(dead_code)]
+    pub trigger_pos: DVec3,
+}
+
+/// Bevy 事件：灰烬蛛重新进入 Disguised。
+///
+/// P2 渲染同步层监听此事件，立即向附近玩家发送增量 `spider_disguise_enter`，
+/// 避免等 40 tick 周期同步期间泄漏 NPC 自定义名牌。
+#[derive(Debug, Clone, Event)]
+pub struct SpiderDisguiseEnterEvent {
     /// P2 CustomPayload 广播使用：蛛 Entity raw index。
     #[allow(dead_code)]
     pub spider: u32,
@@ -204,6 +218,7 @@ pub(crate) fn spider_ambush_action_system(
     mut vfx_events: EventWriter<VfxEventRequest>,
     mut audio_events: EventWriter<PlaySoundRecipeRequest>,
     mut ambush_events: EventWriter<SpiderAmbushTriggerEvent>,
+    mut disguise_enter_events: EventWriter<SpiderDisguiseEnterEvent>,
 ) {
     for (Actor(actor), mut state) in &mut actions {
         let Ok((position, mut disguise_state, blackboard, mut navigator)) = spiders.get_mut(*actor)
@@ -277,6 +292,10 @@ pub(crate) fn spider_ambush_action_system(
                     // 无目标 → Ambush 完成（转回 Disguised 由外部 scorer 决定）
                     navigator.stop();
                     *disguise_state = SpiderDisguiseState::Disguised;
+                    disguise_enter_events.send(SpiderDisguiseEnterEvent {
+                        spider: actor.index(),
+                        trigger_pos: pos,
+                    });
                     *state = ActionState::Success;
                     continue;
                 };
@@ -396,6 +415,7 @@ pub(crate) fn spider_retreat_action_system(
     players: PlayerCultivationQuery<'_, '_>,
     mut actions: Query<(&Actor, &mut ActionState), With<SpiderRetreatAction>>,
     zone_registry: Option<Res<ZoneRegistry>>,
+    mut disguise_enter_events: EventWriter<SpiderDisguiseEnterEvent>,
 ) {
     for (Actor(actor), mut state) in &mut actions {
         let Ok((position, dim, mut disguise_state, blackboard, mut navigator)) =
@@ -432,6 +452,10 @@ pub(crate) fn spider_retreat_action_system(
                 if retreat_done || pos.distance(blackboard.home_pos) <= 2.0 {
                     navigator.stop();
                     *disguise_state = SpiderDisguiseState::Disguised;
+                    disguise_enter_events.send(SpiderDisguiseEnterEvent {
+                        spider: actor.index(),
+                        trigger_pos: pos,
+                    });
                     *state = ActionState::Success;
                     continue;
                 }
@@ -535,6 +559,7 @@ pub fn spider_thinker() -> big_brain::prelude::ThinkerBuilder {
 
 pub fn register(app: &mut App) {
     app.add_event::<SpiderAmbushTriggerEvent>();
+    app.add_event::<SpiderDisguiseEnterEvent>();
     app.add_systems(
         PreUpdate,
         (spider_ambush_scorer_system, spider_retreat_scorer_system).in_set(BigBrainSet::Scorers),
@@ -730,6 +755,7 @@ mod tests {
         app.add_event::<VfxEventRequest>();
         app.add_event::<PlaySoundRecipeRequest>();
         app.add_event::<SpiderAmbushTriggerEvent>();
+        app.add_event::<SpiderDisguiseEnterEvent>();
         app.add_systems(
             Update,
             (
@@ -1101,6 +1127,15 @@ mod tests {
             *new_state,
             SpiderDisguiseState::Disguised,
             "无玩家时 Executing 应回 Disguised（实际 {new_state:?}）"
+        );
+        let enter_count = app
+            .world()
+            .resource::<Events<SpiderDisguiseEnterEvent>>()
+            .iter_current_update_events()
+            .count();
+        assert_eq!(
+            enter_count, 1,
+            "回到 Disguised 时应 emit SpiderDisguiseEnterEvent，避免 client 等周期同步"
         );
         let action_state = app.world().get::<ActionState>(action).unwrap();
         assert_eq!(

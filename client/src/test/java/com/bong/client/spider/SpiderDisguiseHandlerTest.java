@@ -54,6 +54,7 @@ class SpiderDisguiseHandlerTest {
         boolean handled = SpiderDisguiseHandler.handleAmbush(ambush, ambush.getBytes().length);
         assertTrue(handled, "有效 ambush payload 应返回 true");
         assertFalse(SpiderDisguiseHandler.isDisguised(42), "暴起后 entity 42 不应再是 Disguised");
+        assertTrue(SpiderDisguiseHandler.isRevealed(42), "暴起后 entity 42 应标记为 revealed");
         assertTrue(SpiderDisguiseHandler.isDisguised(77), "未暴起的 entity 77 仍应为 Disguised");
         assertTrue(SpiderDisguiseHandler.isDisguised(88), "未暴起的 entity 88 仍应为 Disguised");
     }
@@ -75,6 +76,28 @@ class SpiderDisguiseHandlerTest {
         assertFalse(SpiderDisguiseHandler.isDisguised(42), "全量替换后 42 不应再 Disguised（旧状态清除）");
         assertFalse(SpiderDisguiseHandler.isDisguised(77), "全量替换后 77 不应再 Disguised");
         assertTrue(SpiderDisguiseHandler.isDisguised(99), "全量替换后 99 应为 Disguised");
+    }
+
+    @Test
+    void incremental_enter_adds_without_replacing_and_clears_revealed() {
+        String full = """
+                {"v":1,"type":"spider_disguise_enter","entity_ids":[77]}
+                """;
+        SpiderDisguiseHandler.handleEnter(full, full.getBytes().length);
+        String ambush = """
+                {"v":1,"type":"spider_ambush_trigger","entity_ids":[42]}
+                """;
+        SpiderDisguiseHandler.handleAmbush(ambush, ambush.getBytes().length);
+
+        String delta = """
+                {"v":1,"type":"spider_disguise_enter","entity_ids":[42],"full_sync":false}
+                """;
+        boolean handled = SpiderDisguiseHandler.handleEnter(delta, delta.getBytes().length);
+
+        assertTrue(handled, "full_sync=false enter 应作为有效增量处理");
+        assertTrue(SpiderDisguiseHandler.isDisguised(42), "增量 enter 应立即把 42 标回 Disguised");
+        assertTrue(SpiderDisguiseHandler.isDisguised(77), "增量 enter 不能清空其它仍伪装的蛛");
+        assertFalse(SpiderDisguiseHandler.isRevealed(42), "重新伪装后 42 不应继续保持 revealed");
     }
 
     // ── 边界 ───────────────────────────────────────────────────────────────
@@ -213,6 +236,10 @@ class SpiderDisguiseHandlerTest {
         assertTrue(
             SpiderDisguiseHandler.disguisedEntityIdsSnapshot().isEmpty(),
             "断线后 disguised 集合应清空"
+        );
+        assertTrue(
+            SpiderDisguiseHandler.revealedEntityIdsSnapshot().isEmpty(),
+            "断线后 revealed 集合应清空"
         );
         assertFalse(SpiderDisguiseHandler.isDisguised(1), "断线后 entity 1 不应为 Disguised");
     }

@@ -488,6 +488,8 @@ mod tests {
             equipment: Some(&equipment),
             techniques: Some(&techniques),
             trade_inventory: Some(&trade),
+            name_visible: None,
+            spider_disguise_state: None,
         });
 
         // Verify all fields present
@@ -560,6 +562,8 @@ mod tests {
             equipment: None,
             techniques: None,
             trade_inventory: None,
+            name_visible: None,
+            spider_disguise_state: None,
         });
 
         let json = String::from_utf8(
@@ -606,6 +610,8 @@ mod tests {
             equipment: None,       // old server doesn't send these
             techniques: None,      // old server doesn't send these
             trade_inventory: None, // old server doesn't send these
+            name_visible: None,
+            spider_disguise_state: None,
         });
 
         assert!(
@@ -644,6 +650,8 @@ mod tests {
             equipment: Some(&empty_eq),
             techniques: None,
             trade_inventory: None,
+            name_visible: None,
+            spider_disguise_state: None,
         });
 
         assert!(
@@ -1053,6 +1061,8 @@ mod tests {
             equipment: Some(&equipment),
             techniques: Some(&techniques),
             trade_inventory: None,
+            name_visible: None,
+            spider_disguise_state: None,
         });
 
         assert!(
@@ -1134,6 +1144,8 @@ mod tests {
             equipment: Some(&equipment),
             techniques: Some(&techniques),
             trade_inventory: Some(&trade),
+            name_visible: None,
+            spider_disguise_state: None,
         });
 
         let bytes = metadata.to_json_bytes_checked();

@@ -17,11 +17,10 @@ import java.util.concurrent.CopyOnWriteArraySet;
  *
  * <p>处理两个 CustomPayload channel：
  * <ul>
- *   <li>{@code bong:spider_disguise_enter}：接收当前所有 Disguised 蛛的 MC entity_id 列表，
- *       将其记录到 {@link #DISGUISED_ENTITY_IDS}，供渲染层（如 GeckoLib 覆盖 / Mixin）
- *       切换为 ash_block 贴图覆盖。
+ *   <li>{@code bong:spider_disguise_enter}：默认接收当前所有 Disguised 蛛的 MC entity_id
+ *       列表并全量替换；当 {@code full_sync=false} 时按增量加入。
  *   <li>{@code bong:spider_ambush_trigger}：蛛暴起时，从列表移除对应 entity_id，
- *       client 恢复正常蜘蛛渲染。
+ *       client 恢复正常蜘蛛渲染，并记录为 revealed，供旧 metadata 窗口恢复名牌。
  * </ul>
  *
  * <p>wire payload 格式（两 channel 共用，仅 {@code type} 字段区分）：
@@ -29,7 +28,8 @@ import java.util.concurrent.CopyOnWriteArraySet;
  * {
  *   "v": 1,
  *   "type": "spider_disguise_enter" | "spider_ambush_trigger",
- *   "entity_ids": [42, 77, ...]
+ *   "entity_ids": [42, 77, ...],
+ *   "full_sync": false // 可选，仅 spider_disguise_enter 增量同步使用
  * }
  * }</pre>
  *
@@ -48,6 +48,7 @@ public final class SpiderDisguiseHandler {
      * 渲染层通过 {@link #isDisguised(int)} 查询是否需要切换贴图。
      */
     private static final Set<Integer> DISGUISED_ENTITY_IDS = new CopyOnWriteArraySet<>();
+    private static final Set<Integer> REVEALED_ENTITY_IDS = new CopyOnWriteArraySet<>();
 
     private SpiderDisguiseHandler() {
     }
@@ -86,10 +87,24 @@ public final class SpiderDisguiseHandler {
     }
 
     /**
+     * 查询指定 MC entity id 是否已收到过 ambush 暴露事件。
+     *
+     * <p>该状态用于覆盖旧的 {@code nametag_visible=false} metadata：蛛已经暴起时，
+     * 即使下一帧 metadata 还没刷新，也不应继续按伪装期隐藏自定义名牌。
+     */
+    public static boolean isRevealed(int entityId) {
+        return REVEALED_ENTITY_IDS.contains(entityId);
+    }
+
+    /**
      * 返回当前处于 Disguised 状态的所有 entity id 的只读快照（测试用）。
      */
     public static List<Integer> disguisedEntityIdsSnapshot() {
         return Collections.unmodifiableList(new ArrayList<>(DISGUISED_ENTITY_IDS));
+    }
+
+    public static List<Integer> revealedEntityIdsSnapshot() {
+        return Collections.unmodifiableList(new ArrayList<>(REVEALED_ENTITY_IDS));
     }
 
     /**
@@ -97,6 +112,7 @@ public final class SpiderDisguiseHandler {
      */
     public static void clearOnDisconnect() {
         DISGUISED_ENTITY_IDS.clear();
+        REVEALED_ENTITY_IDS.clear();
     }
 
     // ── 内部 ─────────────────────────────────────────────────────────────────
@@ -122,13 +138,17 @@ public final class SpiderDisguiseHandler {
 
         List<Integer> ids = parseEntityIds(root);
         if (add) {
-            // spider_disguise_enter：全量替换（服务端周期性全量 sync）
-            // 策略：先清空再加入，确保 client 状态与 server 完全一致
-            DISGUISED_ENTITY_IDS.clear();
+            boolean fullSync = booleanField(root, "full_sync", true);
+            if (fullSync) {
+                // 周期/进服 full sync：服务端给出完整 Disguised 列表。
+                DISGUISED_ENTITY_IDS.clear();
+            }
             DISGUISED_ENTITY_IDS.addAll(ids);
+            REVEALED_ENTITY_IDS.removeAll(ids);
         } else {
             // spider_ambush_trigger：只移除触发暴起的蛛（增量）
             DISGUISED_ENTITY_IDS.removeAll(ids);
+            REVEALED_ENTITY_IDS.addAll(ids);
         }
         return true;
     }
@@ -174,6 +194,17 @@ public final class SpiderDisguiseHandler {
         try {
             String value = root.get(fieldName).getAsString();
             return value == null || value.isBlank() ? fallback : value.trim();
+        } catch (RuntimeException e) {
+            return fallback;
+        }
+    }
+
+    private static boolean booleanField(JsonObject root, String fieldName, boolean fallback) {
+        if (!root.has(fieldName) || root.get(fieldName).isJsonNull()) {
+            return fallback;
+        }
+        try {
+            return root.get(fieldName).getAsBoolean();
         } catch (RuntimeException e) {
             return fallback;
         }

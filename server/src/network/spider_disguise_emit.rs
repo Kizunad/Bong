@@ -25,7 +25,7 @@ use valence::prelude::{
 
 use crate::cultivation::tick::CultivationClock;
 use crate::fauna::mimic_spider::SpiderDisguiseState;
-use crate::npc::brain_spider::SpiderAmbushTriggerEvent;
+use crate::npc::brain_spider::{SpiderAmbushTriggerEvent, SpiderDisguiseEnterEvent};
 use crate::npc::spawn::NpcMarker;
 use crate::schema::common::MAX_PAYLOAD_BYTES;
 use crate::schema::server_data::ServerDataBuildError;
@@ -46,6 +46,9 @@ pub struct SpiderDisguiseS2c {
     pub ty: String,
     /// Valence 实体 ID（client 侧用于定位 MC entity）
     pub entity_ids: Vec<i32>,
+    /// `spider_disguise_enter` 默认为全量同步；`Some(false)` 表示增量进入伪装。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub full_sync: Option<bool>,
 }
 
 impl SpiderDisguiseS2c {
@@ -54,6 +57,16 @@ impl SpiderDisguiseS2c {
             v: 1,
             ty: "spider_disguise_enter".to_string(),
             entity_ids,
+            full_sync: None,
+        }
+    }
+
+    pub fn disguise_enter_delta(entity_ids: Vec<i32>) -> Self {
+        Self {
+            v: 1,
+            ty: "spider_disguise_enter".to_string(),
+            entity_ids,
+            full_sync: Some(false),
         }
     }
 
@@ -62,6 +75,7 @@ impl SpiderDisguiseS2c {
             v: 1,
             ty: "spider_ambush_trigger".to_string(),
             entity_ids,
+            full_sync: None,
         }
     }
 
@@ -202,6 +216,49 @@ pub fn on_spider_ambush_broadcast_system(
     }
 }
 
+/// 监听 `SpiderDisguiseEnterEvent`，向附近玩家广播增量 `spider_disguise_enter`。
+///
+/// 周期性 full sync 保留全量替换语义；本系统只处理 Ambush/Retreat → Disguised 的即时
+/// 增量，防止 client 在 40 tick 同步窗口内继续显示暴起后的旧名牌状态。
+pub fn on_spider_disguise_enter_broadcast_system(
+    mut enter_events: EventReader<SpiderDisguiseEnterEvent>,
+    spiders: AmbushSpiderQuery<'_, '_>,
+    mut clients: AmbushClientQuery<'_, '_>,
+) {
+    let events: Vec<SpiderDisguiseEnterEvent> = enter_events.read().cloned().collect();
+    if events.is_empty() {
+        return;
+    }
+
+    for event in &events {
+        let trigger_pos = event.trigger_pos;
+        let trigger_pos_arr = [trigger_pos.x, trigger_pos.y, trigger_pos.z];
+
+        let Some((_, spider_eid, _)) = spiders
+            .iter()
+            .find(|(entity, _, _)| entity.index() == event.spider)
+        else {
+            continue;
+        };
+
+        let payload = SpiderDisguiseS2c::disguise_enter_delta(vec![spider_eid.get()]);
+        let Ok(bytes) = payload.to_json_bytes_checked() else {
+            tracing::warn!("[bong][spider_disguise] disguise_enter delta oversize, skip");
+            continue;
+        };
+
+        for (mut client, client_pos) in &mut clients {
+            let client_pos_arr = {
+                let p = client_pos.get();
+                [p.x, p.y, p.z]
+            };
+            if dist3(trigger_pos_arr, client_pos_arr) <= SPIDER_AMBUSH_BROADCAST_RADIUS {
+                client.send_custom_payload(ident!("bong:spider_disguise_enter"), &bytes);
+            }
+        }
+    }
+}
+
 #[inline]
 fn dist3(a: [f64; 3], b: [f64; 3]) -> f64 {
     let dx = a[0] - b[0];
@@ -220,6 +277,7 @@ pub fn register(app: &mut valence::prelude::App) {
             on_player_join_send_spider_disguise_list,
             periodic_spider_disguise_sync_system,
             on_spider_ambush_broadcast_system,
+            on_spider_disguise_enter_broadcast_system,
         ),
     );
 }
@@ -272,10 +330,24 @@ mod tests {
             v: 1,
             ty: "spider_disguise_enter".to_string(),
             entity_ids: vec![1, 2, 3],
+            full_sync: None,
         };
         let json = serde_json::to_string(&original).unwrap();
         let decoded: SpiderDisguiseS2c = serde_json::from_str(&json).unwrap();
         assert_eq!(original, decoded, "SpiderDisguiseS2c 序列化往返必须等价");
+    }
+
+    #[test]
+    fn spider_disguise_enter_delta_marks_full_sync_false() {
+        let payload = SpiderDisguiseS2c::disguise_enter_delta(vec![42]);
+        let json = serde_json::to_string(&payload).expect("serialize must succeed");
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["type"], "spider_disguise_enter");
+        assert_eq!(v["entity_ids"], serde_json::json!([42]));
+        assert_eq!(
+            v["full_sync"], false,
+            "增量重新伪装 payload 必须带 full_sync=false，避免 client 清空其它 disguised 蛛"
+        );
     }
 
     #[test]
