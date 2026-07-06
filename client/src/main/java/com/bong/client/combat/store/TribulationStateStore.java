@@ -9,6 +9,9 @@ import java.util.Map;
  * Client-side mirror of the active tribulation phase and wave progress.
  */
 public final class TribulationStateStore {
+    private static final double PUBLIC_COORDINATE_GRID_BLOCKS = 200.0d;
+    private static final String JUE_BI_PUBLIC_ACTOR = "\u7edd\u58c1\u52ab";
+
     public record State(
         boolean active,
         String charId,
@@ -194,12 +197,32 @@ public final class TribulationStateStore {
     }
 
     private static boolean broadcastMatches(State state, String actorName, double worldX, double worldZ) {
-        return actorMatches(state, actorName) || coordinateMatches(state, worldX, worldZ);
+        return actorMatches(state, actorName)
+            || coordinateMatches(state, worldX, worldZ)
+            || jueBiPublicBroadcastMatches(state, actorName, worldX, worldZ);
+    }
+
+    private static boolean jueBiPublicBroadcastMatches(State state, String actorName, double worldX, double worldZ) {
+        return JUE_BI_PUBLIC_ACTOR.equals(actorName)
+            && "jue_bi".equals(state.kind())
+            && publicCoordinateMatches(state.worldX(), worldX)
+            && publicCoordinateMatches(state.worldZ(), worldZ);
     }
 
     private static boolean coordinateMatches(State state, double worldX, double worldZ) {
         if (!Double.isFinite(worldX) || !Double.isFinite(worldZ)) return false;
         return nearlyEqual(state.worldX(), worldX) && nearlyEqual(state.worldZ(), worldZ);
+    }
+
+    private static boolean publicCoordinateMatches(double exactValue, double publicValue) {
+        if (!Double.isFinite(exactValue) || !Double.isFinite(publicValue)) return false;
+        return nearlyEqual(publicTribulationCoordinate(exactValue), publicValue);
+    }
+
+    private static double publicTribulationCoordinate(double value) {
+        double scaled = value / PUBLIC_COORDINATE_GRID_BLOCKS;
+        double rounded = scaled >= 0d ? Math.floor(scaled + 0.5d) : Math.ceil(scaled - 0.5d);
+        return rounded * PUBLIC_COORDINATE_GRID_BLOCKS;
     }
 
     private static boolean nearlyEqual(double a, double b) {
