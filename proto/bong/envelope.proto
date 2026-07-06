@@ -2878,6 +2878,7 @@ message ContainerStateProto {
   optional KeyKind locked             = 7;
   bool               depleted              = 8;
   optional string    searched_by_player_id = 9;
+  optional int32     visual_entity_id      = 10; // MC protocol entity_id of attached visual marker
 }
 
 message SearchStarted {

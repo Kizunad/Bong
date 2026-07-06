@@ -58,10 +58,11 @@ public class ContainerInteractionHandlerTest {
         // containerStateAppliesFlatWorldPosThroughRealProtoWire below) — the handler no
         // longer accepts a "world_pos":[x,y,z] array.
         route("""
-            {"type":"container_state","v":1,"entity_id":42,"kind":"storage_pouch","family_id":"tsy","world_pos_x":1.0,"world_pos_y":2.0,"world_pos_z":3.0,"depleted":false}
+            {"type":"container_state","v":1,"entity_id":42,"visual_entity_id":2048,"kind":"storage_pouch","family_id":"tsy","world_pos_x":1.0,"world_pos_y":2.0,"world_pos_z":3.0,"depleted":false}
             """);
 
         assertEquals(42L, TsyContainerStateStore.get(42L).entityId());
+        assertEquals(2048, TsyContainerStateStore.get(42L).visualEntityId());
         assertEquals("储物袋残骸", TsyContainerStateStore.get(42L).kindLabelZh());
         assertEquals(1.0, TsyContainerStateStore.get(42L).x());
         assertEquals(2.0, TsyContainerStateStore.get(42L).y());
@@ -96,6 +97,7 @@ public class ContainerInteractionHandlerTest {
                 .setWorldPosX(11.5)
                 .setWorldPosY(64.0)
                 .setWorldPosZ(-200.25)
+                .setVisualEntityId(4096)
                 .setDepleted(false)
                 .build();
 
@@ -132,6 +134,8 @@ public class ContainerInteractionHandlerTest {
                 "world_pos_z=-200.25 须经 proto wire（flat 字段）正确落进 store.z，实际 " + view.z());
         assertEquals("tsy", view.familyId(),
                 "family_id 应随 world_pos 一起正常存活（非本次回归目标，但顺带验证整条 container_state 未被破坏）");
+        assertEquals(4096, view.visualEntityId(),
+                "visual_entity_id 须经 proto wire 正确落进 store，供 G 键准星 visual 反查 gameplay 容器");
     }
 
     // ── container_state: ContainerKind / KeyKind 枚举前缀在 proto wire 上被剥除 ──

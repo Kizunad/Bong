@@ -8762,6 +8762,7 @@ mod tests {
                     locked: Some(KeyKind::JadeCoffinSeal.into()),
                     depleted: false,
                     searched_by_player_id: None,
+                    visual_entity_id: None,
                 },
             )),
         };
@@ -10275,6 +10276,7 @@ mod tests {
                     locked: None,
                     depleted: false,
                     searched_by_player_id: None,
+                    visual_entity_id: None,
                 }),
                 "ContainerState",
             ),

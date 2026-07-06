@@ -45,7 +45,8 @@ public final class ContainerInteractionHandler implements ServerDataHandler {
             pos[2],
             readNullableString(payload, "locked"),
             readBoolean(payload, "depleted", false),
-            readNullableString(payload, "searched_by_player_id")
+            readNullableString(payload, "searched_by_player_id"),
+            readInteger(payload, "visual_entity_id")
         ));
         return ServerDataDispatch.handled(type, "Applied container state " + entityId);
     }
@@ -88,7 +89,8 @@ public final class ContainerInteractionHandler implements ServerDataHandler {
                 existing.z(),
                 existing.locked(),
                 true,
-                null
+                null,
+                existing.visualEntityId()
             ));
         }
         SearchHudStateStore.markCompleted(kindLabel(entityId));
@@ -127,6 +129,11 @@ public final class ContainerInteractionHandler implements ServerDataHandler {
     private static Long readLong(JsonObject object, String fieldName) {
         JsonPrimitive primitive = readPrimitive(object, fieldName);
         return primitive != null && primitive.isNumber() ? primitive.getAsLong() : null;
+    }
+
+    private static Integer readInteger(JsonObject object, String fieldName) {
+        JsonPrimitive primitive = readPrimitive(object, fieldName);
+        return primitive != null && primitive.isNumber() ? primitive.getAsInt() : null;
     }
 
     private static boolean readBoolean(JsonObject object, String fieldName, boolean fallback) {

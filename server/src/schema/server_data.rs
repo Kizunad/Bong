@@ -2035,6 +2035,8 @@ pub enum SearchAbortReasonV1 {
 #[serde(deny_unknown_fields)]
 pub struct ContainerStateV1 {
     pub entity_id: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub visual_entity_id: Option<i32>,
     pub kind: ContainerKindV1,
     pub family_id: String,
     pub world_pos: [f64; 3],
@@ -3994,6 +3996,7 @@ mod tests {
             }),
             ServerDataPayloadV1::ContainerState(ContainerStateV1 {
                 entity_id: 42,
+                visual_entity_id: Some(2048),
                 kind: ContainerKindV1::StoragePouch,
                 family_id: "tsy_lingxu_01".to_string(),
                 world_pos: [8.0, 64.0, -4.0],
