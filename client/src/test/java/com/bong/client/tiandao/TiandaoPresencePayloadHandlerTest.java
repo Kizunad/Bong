@@ -133,10 +133,28 @@ class TiandaoPresencePayloadHandlerTest {
         String disconnectBlock = src.substring(disconnectBlockStart, disconnectBlockEnd);
 
         assertTrue(
-            disconnectBlock.contains("TiandaoPresenceStore.clear()"),
-            "expected the DISCONNECT block to call TiandaoPresenceStore.clear() because without it a stale "
-                + "presence vignette/shake survives across disconnect/reconnect (F19 fix), actual: call not found "
-                + "inside the DISCONNECT block"
+            disconnectBlock.contains("clearClientStateOnDisconnect"),
+            "expected the DISCONNECT block to route through BongNetworkHandler.clearClientStateOnDisconnect() "
+                + "so every cross-session store is cleared from one audited helper, actual: helper call not found"
+        );
+        int clearHelperStart = src.indexOf("static void clearClientStateOnDisconnect()");
+        assertTrue(
+            clearHelperStart >= 0,
+            "expected BongNetworkHandler.clearClientStateOnDisconnect() helper to exist after disconnect cleanup "
+                + "was extracted from the Fabric callback"
+        );
+        int clearHelperEnd = src.indexOf("private static void logNoOp", clearHelperStart);
+        assertTrue(
+            clearHelperEnd > clearHelperStart,
+            "expected logNoOp(...) after clearClientStateOnDisconnect() to bound the disconnect cleanup helper"
+        );
+        String clearHelper = src.substring(clearHelperStart, clearHelperEnd);
+
+        assertTrue(
+            clearHelper.contains("TiandaoPresenceStore.clear()"),
+            "expected clearClientStateOnDisconnect() to call TiandaoPresenceStore.clear() because without it "
+                + "a stale presence vignette/shake survives across disconnect/reconnect (F19 fix), actual: call "
+                + "not found inside the disconnect cleanup helper"
         );
     }
 }
