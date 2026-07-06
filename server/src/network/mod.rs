@@ -409,7 +409,9 @@ pub fn register(app: &mut App) {
     );
     app.add_systems(
         Update,
-        publish_season_changed_events.after(crate::world::season::season_tick),
+        publish_season_changed_events
+            .after(crate::world::season::season_tick)
+            .after(emit_player_state_payloads),
     );
     // plan-offscreen-war-v1 P0：守恒 telemetry exclusive system，与 world_state 同节奏。
     app.add_systems(Update, publish_qi_ledger_to_redis);
@@ -1317,7 +1319,15 @@ fn publish_season_changed_events(
     redis: Res<RedisBridgeResource>,
     mut events: EventReader<SeasonChangedEvent>,
     season_state: Option<Res<WorldSeasonState>>,
+    zone_registry: Option<Res<ZoneRegistry>>,
+    clock: Option<Res<CombatClock>>,
+    terrain_providers: Option<Res<TerrainProviders>>,
+    mut clients: Query<PlayerStateEmitQueryItem<'_>, With<Client>>,
 ) {
+    let zone_registry = effective_zone_registry(zone_registry.as_deref());
+    let tick = clock.as_deref().map(|clock| clock.tick).unwrap_or_default();
+    let terrain_providers = terrain_providers.as_deref();
+
     for event in events.read() {
         let state = season_state
             .as_deref()
@@ -1328,6 +1338,41 @@ fn publish_season_changed_events(
             .send(RedisOutbound::SeasonChanged(SeasonChangedV1::new(
                 *event, state,
             )));
+
+        let season_state_for_client: SeasonStateV1 = state.into();
+        for (
+            entity,
+            mut client,
+            username,
+            position,
+            current_dimension,
+            player_state,
+            cultivation,
+            anonymity,
+            renown,
+            relationships,
+            faction_membership,
+        ) in &mut clients
+        {
+            send_player_state_payload_to_client(
+                entity,
+                &mut client,
+                username,
+                position,
+                current_dimension,
+                player_state,
+                cultivation,
+                anonymity,
+                renown,
+                relationships,
+                faction_membership,
+                &zone_registry,
+                terrain_providers,
+                tick,
+                season_state_for_client,
+                "season_changed",
+            );
+        }
     }
 }
 
@@ -2099,49 +2144,82 @@ fn emit_player_state_payloads(
         faction_membership,
     ) in &mut clients
     {
-        let zone_name = zone_name_for_position(&zone_registry, position.get());
-        let social = build_player_social_snapshot(
-            tick,
+        send_player_state_payload_to_client(
+            entity,
+            &mut client,
+            username,
+            position,
+            current_dimension,
+            player_state,
+            cultivation,
             anonymity,
             renown,
             relationships,
             faction_membership,
-        );
-        let local_neg_pressure =
-            local_neg_pressure_at(terrain_providers, current_dimension, position);
-        // plan-wire-format-bridge-v1 P3/RC6：此前 zone_spirit_qi 在 proto 里根本不存在，
-        // client PlayerStateViewModel.zoneSpiritQiNormalized() 恒为 NaN 归一化默认值。
-        let zone_spirit_qi = zone_registry
-            .find_zone_by_name(zone_name.as_str())
-            .map(|zone| zone.spirit_qi);
-        let mut payload = player_state.server_payload_with_social_and_local_pressure(
-            cultivation,
-            Some(canonical_player_id(username.0.as_str())),
-            zone_name,
-            social,
-            local_neg_pressure,
-            zone_spirit_qi,
-        );
-        if let ServerDataPayloadV1::PlayerState { season_state, .. } = &mut payload.payload {
-            *season_state = Some(season_state_for_client);
-        }
-        let payload_type = payload_type_label(payload.payload_type());
-        let payload_bytes = match serialize_server_data_payload(&payload) {
-            Ok(payload) => payload,
-            Err(error) => {
-                log_payload_build_error(payload_type, &error);
-                continue;
-            }
-        };
-
-        send_server_data_payload(&mut client, payload_bytes.as_slice());
-        tracing::info!(
-            "[bong][network] sent {} {} payload to client entity {entity:?} for `{}`",
-            SERVER_DATA_CHANNEL,
-            payload_type,
-            username.0,
+            &zone_registry,
+            terrain_providers,
+            tick,
+            season_state_for_client,
+            "component_changed",
         );
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn send_player_state_payload_to_client(
+    entity: Entity,
+    client: &mut Client,
+    username: &Username,
+    position: &Position,
+    current_dimension: Option<&CurrentDimension>,
+    player_state: &PlayerState,
+    cultivation: &Cultivation,
+    anonymity: Option<&Anonymity>,
+    renown: Option<&Renown>,
+    relationships: Option<&Relationships>,
+    faction_membership: Option<&PlayerFactionMembership>,
+    zone_registry: &ZoneRegistry,
+    terrain_providers: Option<&TerrainProviders>,
+    tick: u64,
+    season_state_for_client: SeasonStateV1,
+    reason: &'static str,
+) {
+    let zone_name = zone_name_for_position(zone_registry, position.get());
+    let social =
+        build_player_social_snapshot(tick, anonymity, renown, relationships, faction_membership);
+    let local_neg_pressure = local_neg_pressure_at(terrain_providers, current_dimension, position);
+    // plan-wire-format-bridge-v1 P3/RC6：此前 zone_spirit_qi 在 proto 里根本不存在，
+    // client PlayerStateViewModel.zoneSpiritQiNormalized() 恒为 NaN 归一化默认值。
+    let zone_spirit_qi = zone_registry
+        .find_zone_by_name(zone_name.as_str())
+        .map(|zone| zone.spirit_qi);
+    let mut payload = player_state.server_payload_with_social_and_local_pressure(
+        cultivation,
+        Some(canonical_player_id(username.0.as_str())),
+        zone_name,
+        social,
+        local_neg_pressure,
+        zone_spirit_qi,
+    );
+    if let ServerDataPayloadV1::PlayerState { season_state, .. } = &mut payload.payload {
+        *season_state = Some(season_state_for_client);
+    }
+    let payload_type = payload_type_label(payload.payload_type());
+    let payload_bytes = match serialize_server_data_payload(&payload) {
+        Ok(payload) => payload,
+        Err(error) => {
+            log_payload_build_error(payload_type, &error);
+            return;
+        }
+    };
+
+    send_server_data_payload(client, payload_bytes.as_slice());
+    tracing::info!(
+        "[bong][network] sent {} {} payload to client entity {entity:?} for `{}` ({reason})",
+        SERVER_DATA_CHANNEL,
+        payload_type,
+        username.0,
+    );
 }
 
 fn local_neg_pressure_at(
@@ -5014,7 +5092,9 @@ mod tests {
         use super::*;
         use crate::player::state::PlayerState;
         use crate::schema::social::RenownTagV1;
+        use crate::schema::world_state::SeasonV1;
         use crate::social::components::{FactionMembership as PlayerFactionMembership, Renown};
+        use crate::world::season::{Season, SUMMER_TICKS};
         use crate::world::zone::ZoneRegistry;
         use valence::protocol::packets::play::CustomPayloadS2c;
         use valence::testing::MockClientHelper;
@@ -5086,6 +5166,22 @@ mod tests {
             let mut app = App::new();
             app.insert_resource(ZoneRegistry::fallback());
             app.add_systems(Update, emit_player_state_payloads);
+            app
+        }
+
+        fn setup_season_changed_player_state_app() -> App {
+            let mut app = App::new();
+            let (tx_outbound, _rx_outbound) = crossbeam_channel::unbounded();
+            let (_tx_inbound, rx_inbound) = crossbeam_channel::unbounded();
+
+            app.insert_resource(ZoneRegistry::fallback());
+            app.insert_resource(WorldSeasonState::default());
+            app.insert_resource(RedisBridgeResource {
+                tx_outbound,
+                rx_inbound,
+            });
+            app.add_event::<SeasonChangedEvent>();
+            app.add_systems(Update, publish_season_changed_events);
             app
         }
 
@@ -5375,6 +5471,75 @@ mod tests {
                 1,
                 "periodic cadence should emit one player_state payload without Changed<PlayerState>"
             );
+        }
+
+        #[test]
+        fn season_changed_event_emits_player_state_without_component_change() {
+            let mut app = setup_season_changed_player_state_app();
+            let (entity, mut helper) =
+                spawn_test_client_with_helper(&mut app, "Azure", [8.0, 66.0, 8.0]);
+            app.world_mut().entity_mut(entity).insert((
+                PlayerState {
+                    karma: 0.0,
+                    inventory_score: 0.0,
+                },
+                Cultivation {
+                    realm: Realm::Condense,
+                    qi_current: 100.0,
+                    qi_max: 100.0,
+                    composure: 1.0,
+                    ..Cultivation::default()
+                },
+            ));
+
+            app.update();
+            flush_all_client_packets(&mut app);
+            assert!(
+                collect_player_state_payloads(&mut helper).is_empty(),
+                "idle clients should not receive player_state packets without a season event"
+            );
+
+            {
+                let mut season_state = app.world_mut().resource_mut::<WorldSeasonState>();
+                season_state.current = query_season("", SUMMER_TICKS);
+                season_state.last_phase_change_tick = 42;
+            }
+            app.world_mut().send_event(SeasonChangedEvent {
+                from: Season::Summer,
+                to: Season::SummerToWinter,
+                tick: 42,
+            });
+
+            app.update();
+            flush_all_client_packets(&mut app);
+
+            let payloads = collect_player_state_payloads(&mut helper);
+            assert_eq!(
+                payloads.len(),
+                1,
+                "season boundary should push one player_state payload even without component changes"
+            );
+            match &payloads[0].payload {
+                ServerDataPayloadV1::PlayerState {
+                    season_state,
+                    spirit_qi,
+                    spirit_qi_max,
+                    ..
+                } => {
+                    let season_state = season_state
+                        .as_ref()
+                        .expect("season change payload should carry SeasonState");
+                    assert_eq!(season_state.season, SeasonV1::SummerToWinter);
+                    assert_eq!(season_state.tick_into_phase, 0);
+                    assert_eq!(
+                        season_state.phase_total_ticks,
+                        Season::SummerToWinter.phase_total_ticks()
+                    );
+                    assert_eq!(*spirit_qi, 100.0);
+                    assert_eq!(*spirit_qi_max, 100.0);
+                }
+                other => panic!("expected player_state payload, got {other:?}"),
+            }
         }
     }
 
