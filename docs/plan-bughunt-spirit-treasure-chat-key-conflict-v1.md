@@ -41,7 +41,7 @@
 
 反方进一步攻击“这是否只是 #929 的轻重复”。结论：通过候选。反方认为 #929 是 `docs/plans-skeleton` 且只覆盖 Bong 内部双派发；本 bug 是 vanilla chatKey 被 Bong 面板默认键压掉，机制、体验入口、修复验收都不同，适合单独 active plan。
 
-## Skeleton Fix Plan
+## 修复计划
 
 - P0：把灵宝面板默认键从 `T` 挪走，优先考虑默认 `UNKNOWN` 或一个明确不占 vanilla 基础操作的键。
 - P1：新增默认键位冲突回归测试，至少 pin 住 Bong 默认 keybinding 不得覆盖 vanilla `chatKey` / `commandKey`。
@@ -59,4 +59,3 @@
 - 改默认键会影响已形成 `T` 肌肉记忆的玩家，需要在控制设置/提示文本中明确迁移。
 - 若选择 `UNKNOWN`，新玩家需要主动绑定灵宝面板键；但这优于抢占 vanilla chatKey。
 - 若选择另一个字母键，必须和 #929 记录的 O/U 以及现有 G/H/Y 等输入入口一起做冲突扫描，避免把问题平移。
-
