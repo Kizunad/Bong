@@ -13187,6 +13187,77 @@
       "required": [
         "v",
         "type",
+        "remains"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "remains_sync",
+          "type": "string"
+        },
+        "remains": {
+          "type": "array",
+          "items": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "remains_id",
+              "world_pos",
+              "dimension",
+              "display_name",
+              "item_count",
+              "bone_coins"
+            ],
+            "properties": {
+              "remains_id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "world_pos": {
+                "type": "array",
+                "items": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ],
+                "additionalItems": false,
+                "minItems": 3,
+                "maxItems": 3
+              },
+              "dimension": {
+                "type": "string"
+              },
+              "display_name": {
+                "type": "string"
+              },
+              "item_count": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "bone_coins": {
+                "minimum": 0,
+                "type": "integer"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
         "session_id",
         "target_id",
         "target_name",

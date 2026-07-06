@@ -24,6 +24,7 @@ public final class ServerDataRouter {
         InventorySnapshotHandler inventorySnapshotHandler = new InventorySnapshotHandler();
         InventoryEventHandler inventoryEventHandler = new InventoryEventHandler();
         DroppedLootSyncHandler droppedLootSyncHandler = new DroppedLootSyncHandler();
+        RemainsSyncHandler remainsSyncHandler = new RemainsSyncHandler();
         BotanyHarvestProgressHandler botanyHarvestProgressHandler = new BotanyHarvestProgressHandler();
         GatheringSessionHandler gatheringSessionHandler = new GatheringSessionHandler();
         MiningProgressHandler miningProgressHandler = new MiningProgressHandler();
@@ -120,6 +121,7 @@ public final class ServerDataRouter {
         handlers.put("inventory_snapshot", inventorySnapshotHandler);
         handlers.put("inventory_event", inventoryEventHandler);
         handlers.put("dropped_loot_sync", droppedLootSyncHandler);
+        handlers.put("remains_sync", remainsSyncHandler);
         handlers.put("botany_harvest_progress", botanyHarvestProgressHandler);
         handlers.put("gathering_session", gatheringSessionHandler);
         handlers.put("mining_progress", miningProgressHandler);

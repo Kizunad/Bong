@@ -85,8 +85,8 @@ pub mod tribulation_balance;
 pub mod void;
 
 use valence::prelude::{
-    Added, App, Client, Commands, Entity, EventReader, EventWriter, IntoSystemConfigs, Or, Query,
-    Res, Update, Username, Without,
+    Added, App, Client, Commands, Entity, EventReader, EventWriter, IntoSystemConfigs, Or,
+    Position, Query, Res, ResMut, Update, Username, Without,
 };
 
 use self::breakthrough::{
@@ -126,7 +126,7 @@ use self::insight_flow::{
     insight_trigger_on_wind_candle, process_insight_request,
 };
 use self::karma::karma_decay_tick;
-use self::life_record::LifeRecord;
+use self::life_record::{BiographyEntry, LifeRecord};
 use self::lifespan::{
     lifespan_aging_tick, process_lifespan_extension_intents, sync_frailty_status_effects,
     AgingEventEmitted, DeathRegistry, LifespanCapTable, LifespanComponent, LifespanEventEmitted,
@@ -193,8 +193,8 @@ use crate::persistence::{
     PersistenceSettings,
 };
 use crate::player::state::{
-    canonical_player_id, load_current_character_id, player_character_id, PlayerState,
-    PlayerStatePersistence,
+    canonical_player_id, load_current_character_id, player_character_id, save_player_slices,
+    PlayerState, PlayerStatePersistence,
 };
 use crate::skill::events::SkillCapChanged;
 use crate::tribulation::scorch_record::{
@@ -320,7 +320,13 @@ pub fn register(app: &mut App) {
         Update,
         (
             attach_cultivation_to_joined_clients
-                .after(crate::player::attach_player_state_to_joined_clients),
+                .after(crate::player::attach_player_state_to_joined_clients)
+                // plan-remains-suite：转世门在本系统内会强制覆写 PlayerInventory
+                // （新角色发默认 loadout），必须排在 inventory 的 join-attach 之后，
+                // 否则两个系统对同一 tick 内 Commands 的插入顺序不确定，可能被
+                // `attach_inventory_to_joined_clients` 的默认背包在同一 sync point
+                // 后再次覆盖回去。
+                .after(crate::inventory::attach_inventory_to_joined_clients),
             // 核心 tick：回气/扣 zone → 打通 → 事务
             qi_regen_and_zone_drain_tick,
             lifespan_aging_tick.after(qi_regen_and_zone_drain_tick),
@@ -536,10 +542,15 @@ fn parse_persisted_tribulation_dimension(value: &str) -> Option<DimensionKind> {
     }
 }
 
-fn attach_cultivation_to_joined_clients(
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn attach_cultivation_to_joined_clients(
     mut commands: Commands,
     settings: Res<PersistenceSettings>,
     player_persistence: Option<Res<PlayerStatePersistence>>,
+    default_loadout: Option<Res<crate::inventory::DefaultLoadout>>,
+    item_registry: Option<Res<crate::inventory::ItemRegistry>>,
+    mut inventory_allocator: Option<ResMut<crate::inventory::InventoryInstanceIdAllocator>>,
+    mut pending_narrations: Option<ResMut<crate::player::gameplay::PendingGameplayNarrations>>,
     joined_clients: Query<CultivationAttachQueryItem<'_>, CultivationAttachFilter>,
 ) {
     for (entity, username, player_state, restored_lifespan) in &joined_clients {
@@ -561,7 +572,7 @@ fn attach_cultivation_to_joined_clients(
         let mut karma = Karma::default();
         let mut practice_log = PracticeLog::default();
         let mut contamination = Contamination::default();
-        let canonical_id = player_persistence
+        let mut canonical_id = player_persistence
             .as_deref()
             .and_then(|persistence| {
                 load_current_character_id(persistence, username.0.as_str())
@@ -657,6 +668,71 @@ fn attach_cultivation_to_joined_clients(
                 username.0,
             );
         }
+
+        // plan-remains-suite P0：join 转世门。
+        //
+        // 根因：唯一的角色轮换入口是终结屏点「开启新生」→ `reset_for_new_character`，
+        // 但玩家从未成功点到过——于是每次 join 都用同一个已终结的 `current_char_id`
+        // 把 Terminated 状态的 life_record 原样水合上线，`combat::attach_combat_bundle_to_joined_clients`
+        // 又把 `Lifecycle.state` 无条件重置成 Alive（该组件从不持久化），寿元表继续按老角色算，
+        // 第一次 lifespan tick 就把玩家重新判定死亡 → natural_end 重放整条终结链
+        // → 每 join 一次世界里多一具假人（Remains_xxxx）。
+        //
+        // 判定源 = 水合完成后 life_record 的最后一条生平是否为 `Terminated`
+        // （不能用 `Lifecycle.state`：它每次 join 都被重置为 Alive，永远看不出"已终结"）。
+        // 命中后立即在本系统内完成转世：换 char_id + 按
+        // `character_select::rotate_to_new_character` 生成全新 cultivation / 寿元 /
+        // 库存 / 出生点，且**不重放死亡链**（不发 `PlayerTerminated`、不 spawn 遗骸、
+        // 不弹终结屏）。
+        let reincarnation = if matches!(
+            life_record.biography.last(),
+            Some(BiographyEntry::Terminated { .. })
+        ) {
+            match player_persistence.as_deref() {
+                Some(player_persistence) => {
+                    match self::character_select::rotate_to_new_character(
+                        player_persistence,
+                        username.0.as_str(),
+                    ) {
+                        Ok(bundle) => {
+                            tracing::info!(
+                                "[bong][cultivation] `{}` joined with a terminated character; reincarnating as {}",
+                                username.0,
+                                bundle.next_character_id,
+                            );
+                            canonical_id = bundle.next_character_id.clone();
+                            cultivation = Cultivation::default();
+                            meridians = MeridianSystem::default();
+                            qi_color = QiColor::default();
+                            karma = Karma::default();
+                            practice_log = PracticeLog::default();
+                            contamination = Contamination::default();
+                            life_record = LifeRecord::new(canonical_id.clone());
+                            insight_quota = InsightQuota::default();
+                            unlocked_perceptions = UnlockedPerceptions::default();
+                            insight_modifiers = InsightModifiers::new();
+                            Some(bundle.spec)
+                        }
+                        Err(error) => {
+                            tracing::warn!(
+                                "[bong][cultivation] failed to rotate current_char_id for terminated `{}`: {error}; joining with the stale terminated record",
+                                username.0,
+                            );
+                            None
+                        }
+                    }
+                }
+                None => {
+                    tracing::warn!(
+                        "[bong][cultivation] `{}` joined with a terminated character but PlayerStatePersistence is unavailable; skipping the reincarnation gate",
+                        username.0,
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        };
 
         let active_tribulation = match load_active_tribulation(&settings, canonical_id.as_str()) {
             Ok(record) => record,
@@ -765,6 +841,45 @@ fn attach_cultivation_to_joined_clients(
                 }
             }
         }
+
+        if reincarnation.is_some() {
+            // `severed_permanent` / `poison_toxicity` / `digestion_load` 三个 hydration 块
+            // 上面已经无条件从（终结前那具旧角色的）`persisted_bundle` 读过一轮——转世必须
+            // 把它们也清成新角色的默认值，否则旧身体的经脉永久损伤 / 中毒进度会原样附体
+            // 到新生命上。
+            severed_permanent = MeridianSeveredPermanent::default();
+            poison_toxicity = PoisonToxicity::default();
+            digestion_load = DigestionLoad::for_realm(cultivation.realm);
+
+            // 立即落盘新的 cultivation bundle：`player_cultivation` 表按 username（非
+            // char_id）整行覆盖，不马上写回的话，玩家下一次 join 仍会读到刚才这份
+            // Terminated life_record，陷入"每次 join 都判定终结 → 重复转世"的抖动
+            // （幂等性依赖这一步）。
+            if let Err(error) = crate::persistence::persist_player_cultivation_bundle(
+                &settings,
+                username.0.as_str(),
+                &cultivation,
+                &meridians,
+                &qi_color,
+                &karma,
+                &contamination,
+                &life_record,
+                &practice_log,
+                &insight_quota,
+                &unlocked_perceptions,
+                &insight_modifiers,
+                None,
+                &severed_permanent,
+                Some(&poison_toxicity),
+                Some(&digestion_load),
+            ) {
+                tracing::warn!(
+                    "[bong][cultivation] failed to persist reincarnated cultivation bundle for `{}`: {error}",
+                    username.0,
+                );
+            }
+        }
+
         let mut entity_commands = commands.entity(entity);
         entity_commands.insert((
             cultivation,
@@ -783,8 +898,12 @@ fn attach_cultivation_to_joined_clients(
             severed_permanent,
         ));
         entity_commands.insert((poison_toxicity, digestion_load));
-        if restored_lifespan.is_none() {
-            entity_commands.insert(default_lifespan);
+        // 转世必须无条件换掉寿元组件——`restored_lifespan` 里躺着的是刚才那个已终结角色
+        // 耗尽的 120/120，`restored_lifespan.is_none()` 在这条分支恒为 false（attach_player_state
+        // 已经把它挂上了），若不加 `|| reincarnation.is_some()` 这份 exhausted 值会原样留在
+        // ECS 上，下一次 lifespan tick 立刻把刚转世的新角色又判定老死——死循环重现。
+        if restored_lifespan.is_none() || reincarnation.is_some() {
+            entity_commands.insert(default_lifespan.clone());
         }
         if let Some(restored_tribulation) = restored_tribulation {
             entity_commands.insert(restored_tribulation);
@@ -795,7 +914,72 @@ fn attach_cultivation_to_joined_clients(
         if let Some(restored_juebi_runtime) = restored_juebi_runtime {
             entity_commands.insert(restored_juebi_runtime);
         }
-        tracing::info!("[bong][cultivation] attached full cultivation bundle to {entity:?}");
+
+        if let Some(spec) = reincarnation {
+            // 新角色 = 新出生：库存回默认 loadout、技能栏清空、出生点用 spec.spawn_pos。
+            let fresh_inventory = match (
+                default_loadout.as_deref(),
+                item_registry.as_deref(),
+                inventory_allocator.as_deref_mut(),
+            ) {
+                (Some(default_loadout), Some(item_registry), Some(inventory_allocator)) => {
+                    match crate::inventory::instantiate_inventory_from_loadout(
+                        &default_loadout.0,
+                        inventory_allocator,
+                        item_registry,
+                    ) {
+                        Ok(inventory) => Some(inventory),
+                        Err(error) => {
+                            tracing::warn!(
+                                "[bong][cultivation] failed to instantiate fresh loadout for reincarnated `{}`: {error}",
+                                username.0,
+                            );
+                            None
+                        }
+                    }
+                }
+                _ => None,
+            };
+            let fresh_skill_set = crate::skill::components::SkillSet::default();
+            if let Some(fresh_inventory) = fresh_inventory.clone() {
+                entity_commands.insert(fresh_inventory);
+            }
+            entity_commands.insert(fresh_skill_set.clone());
+            entity_commands.insert(Position::new(spec.spawn_pos));
+
+            if let Some(player_persistence) = player_persistence.as_deref() {
+                if let Err(error) = save_player_slices(
+                    player_persistence,
+                    username.0.as_str(),
+                    &PlayerState::default(),
+                    spec.spawn_pos,
+                    DimensionKind::default(),
+                    fresh_inventory.as_ref(),
+                    Some(&default_lifespan),
+                    &fresh_skill_set,
+                ) {
+                    tracing::warn!(
+                        "[bong][cultivation] failed to persist fresh player slices for reincarnated `{}`: {error}",
+                        username.0,
+                    );
+                }
+            }
+
+            if let Some(pending_narrations) = pending_narrations.as_deref_mut() {
+                pending_narrations.push_player(
+                    username.0.as_str(),
+                    "前尘已尽，一缕残魂自醒灵境重新苏醒——今生与前身再无瓜葛。",
+                    crate::schema::common::NarrationStyle::Narration,
+                );
+            }
+
+            tracing::info!(
+                "[bong][cultivation] reincarnated `{}` and attached fresh cultivation bundle to {entity:?}",
+                username.0,
+            );
+        } else {
+            tracing::info!("[bong][cultivation] attached full cultivation bundle to {entity:?}");
+        }
     }
 }
 
@@ -966,6 +1150,414 @@ mod tests {
             .expect("joined client should keep a LifespanComponent");
 
         assert_eq!(lifespan, &restored_lifespan);
+    }
+
+    // ─── plan-remains-suite P0：join 转世门 ──────────────────────────────────
+
+    fn player_state_persistence_for(
+        settings: &PersistenceSettings,
+        temp_root: &std::path::Path,
+    ) -> crate::player::state::PlayerStatePersistence {
+        crate::player::state::PlayerStatePersistence::with_db_path(
+            temp_root.join("data"),
+            settings.db_path(),
+        )
+    }
+
+    fn inventory_test_resources() -> (
+        crate::inventory::DefaultLoadout,
+        crate::inventory::ItemRegistry,
+        crate::inventory::InventoryInstanceIdAllocator,
+    ) {
+        let item_registry =
+            crate::inventory::load_item_registry().expect("item registry should load");
+        let default_loadout = crate::inventory::load_default_loadout(&item_registry)
+            .expect("default loadout should load");
+        (
+            crate::inventory::DefaultLoadout(default_loadout),
+            item_registry,
+            crate::inventory::InventoryInstanceIdAllocator::default(),
+        )
+    }
+
+    fn terminated_life_record(character_id: &str) -> LifeRecord {
+        let mut record = LifeRecord::new(character_id.to_string());
+        record.push(BiographyEntry::NearDeath {
+            cause: "old_test_wound".to_string(),
+            tick: 40,
+        });
+        record.push(BiographyEntry::Terminated {
+            cause: "natural_end".to_string(),
+            tick: 50,
+        });
+        record
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn seed_cultivation_bundle(
+        settings: &PersistenceSettings,
+        username: &str,
+        realm: Realm,
+        life_record: &LifeRecord,
+    ) {
+        crate::persistence::persist_player_cultivation_bundle(
+            settings,
+            username,
+            &Cultivation {
+                realm,
+                ..Default::default()
+            },
+            &MeridianSystem::default(),
+            &QiColor::default(),
+            &Karma::default(),
+            &Contamination::default(),
+            life_record,
+            &PracticeLog::default(),
+            &InsightQuota::default(),
+            &UnlockedPerceptions::default(),
+            &InsightModifiers::new(),
+            None,
+            &MeridianSeveredPermanent::default(),
+            None,
+            None,
+        )
+        .expect("seeding cultivation bundle should succeed");
+    }
+
+    #[test]
+    fn join_with_terminated_character_reincarnates_exactly_once() {
+        let (settings, root) = temp_persistence_settings("reincarnate-join");
+        let player_persistence = player_state_persistence_for(&settings, &root);
+
+        // 预置：「Azure」的当前角色已终结——唯一轮换入口（终结屏「开启新生」）从未被点过。
+        let old_raw_id =
+            crate::player::state::rotate_current_character_id(&player_persistence, "Azure")
+                .expect("seeding current_char_id should succeed");
+        let old_canonical_id = crate::player::state::player_character_id("Azure", &old_raw_id);
+        seed_cultivation_bundle(
+            &settings,
+            "Azure",
+            Realm::Spirit,
+            &terminated_life_record(&old_canonical_id),
+        );
+        // 老角色寿元耗尽（Spirit cap 满）——复现"ECS 本 session 挂着旧值又立刻老死"的坑：
+        // 转世门必须无条件覆写它，不能指望这份 exhausted 值自然被替换掉。
+        let exhausted_lifespan = LifespanComponent {
+            born_at_tick: 0,
+            years_lived: LifespanCapTable::SPIRIT as f64,
+            cap_by_realm: LifespanCapTable::SPIRIT,
+            offline_pause_tick: None,
+        };
+        crate::player::state::save_player_lifespan_slice(
+            &player_persistence,
+            "Azure",
+            &exhausted_lifespan,
+        )
+        .expect("seeding exhausted lifespan should succeed");
+
+        let mut app = App::new();
+        app.insert_resource(settings.clone());
+        app.insert_resource(player_persistence.clone());
+        let (default_loadout, item_registry, allocator) = inventory_test_resources();
+        app.insert_resource(default_loadout);
+        app.insert_resource(item_registry);
+        app.insert_resource(allocator);
+        app.insert_resource(crate::player::gameplay::PendingGameplayNarrations::default());
+        app.add_systems(Update, attach_cultivation_to_joined_clients);
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                PlayerState {
+                    karma: 0.0,
+                    inventory_score: 0.0,
+                },
+                // 生产链路里 `attach_player_state_to_joined_clients` 会先把这份 exhausted
+                // lifespan 挂上；这里手动模拟那一步，复现"restored_lifespan 已经 Some"
+                // 的真实时序，而不是让测试绕过这条风险路径。
+                exhausted_lifespan.clone(),
+            ))
+            .id();
+
+        app.update();
+
+        let cultivation = app
+            .world()
+            .get::<Cultivation>(entity)
+            .expect("reincarnated client should have Cultivation");
+        assert_eq!(
+            cultivation.realm,
+            Realm::Awaken,
+            "转世后应回到醒灵境，不能继承终结前的 Spirit 境界"
+        );
+
+        let life_record = app
+            .world()
+            .get::<LifeRecord>(entity)
+            .expect("reincarnated client should have LifeRecord");
+        assert_ne!(
+            life_record.character_id, old_canonical_id,
+            "转世必须换发新的 character_id"
+        );
+        assert!(
+            life_record.biography.is_empty(),
+            "新角色的生平卷应从空白开始，不应带着旧角色的 Terminated 记录；实际={:?}",
+            life_record.biography
+        );
+
+        let death_registry = app
+            .world()
+            .get::<DeathRegistry>(entity)
+            .expect("reincarnated client should have DeathRegistry");
+        assert_eq!(
+            death_registry.char_id, life_record.character_id,
+            "DeathRegistry 必须绑定新 char_id，不能停留在旧角色上"
+        );
+
+        let lifespan = app
+            .world()
+            .get::<LifespanComponent>(entity)
+            .expect("reincarnated client should have LifespanComponent");
+        assert_eq!(
+            lifespan.cap_by_realm,
+            LifespanCapTable::AWAKEN,
+            "转世后寿元 cap 必须回到 AWAKEN"
+        );
+        assert_eq!(
+            lifespan.years_lived, 0.0,
+            "转世后寿元必须清零——不能带着旧角色耗尽的 years_lived 上线，\
+             否则下一次 lifespan tick 会立刻把刚转世的新角色又判定老死（死循环复现）"
+        );
+
+        let new_raw_id =
+            crate::player::state::load_current_character_id(&player_persistence, "Azure")
+                .expect("load current_char_id should succeed")
+                .expect("current_char_id should be set after reincarnation");
+        assert_ne!(
+            new_raw_id, old_raw_id,
+            "player_core.current_char_id 必须完成一次轮换"
+        );
+
+        assert!(
+            app.world()
+                .get::<crate::inventory::PlayerInventory>(entity)
+                .is_some(),
+            "转世应发一份全新默认 loadout 背包"
+        );
+
+        assert!(
+            app.world_mut()
+                .query::<&crate::inventory::RemainsContainer>()
+                .iter(app.world())
+                .next()
+                .is_none(),
+            "join 转世门不应重放死亡链——不该生成任何遗骸容器"
+        );
+
+        let narrations = app
+            .world_mut()
+            .resource_mut::<crate::player::gameplay::PendingGameplayNarrations>()
+            .drain();
+        assert_eq!(narrations.len(), 1, "转世应给玩家恰好一条提示 narration");
+        assert_eq!(narrations[0].target.as_deref(), Some("Azure"));
+
+        // 幂等性前提：落盘的 cultivation bundle 也必须是新的（不是 Terminated），
+        // 否则玩家断线重连时"下一次 join"仍会再次误判终结。
+        let persisted = crate::persistence::load_player_cultivation_bundle(&settings, "Azure")
+            .expect("reload should succeed")
+            .expect("bundle should exist after reincarnation");
+        let persisted_life_record: LifeRecord =
+            serde_json::from_value(persisted["life_record"].clone())
+                .expect("persisted life_record should decode");
+        assert!(
+            persisted_life_record.biography.is_empty(),
+            "落盘的 life_record 也必须是新角色的空白生平，否则重连会再次触发转世"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn join_after_reincarnation_does_not_rotate_again() {
+        let (settings, root) = temp_persistence_settings("reincarnate-idempotent");
+        let player_persistence = player_state_persistence_for(&settings, &root);
+
+        let old_raw_id =
+            crate::player::state::rotate_current_character_id(&player_persistence, "Azure")
+                .expect("seed rotate should succeed");
+        let old_canonical_id = crate::player::state::player_character_id("Azure", &old_raw_id);
+        seed_cultivation_bundle(
+            &settings,
+            "Azure",
+            Realm::Awaken,
+            &terminated_life_record(&old_canonical_id),
+        );
+
+        // 第一次 join：应触发转世。
+        let mut app1 = App::new();
+        app1.insert_resource(settings.clone());
+        app1.insert_resource(player_persistence.clone());
+        {
+            let (default_loadout, item_registry, allocator) = inventory_test_resources();
+            app1.insert_resource(default_loadout);
+            app1.insert_resource(item_registry);
+            app1.insert_resource(allocator);
+        }
+        app1.add_systems(Update, attach_cultivation_to_joined_clients);
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        app1.world_mut().spawn(client_bundle);
+        app1.update();
+
+        let raw_id_after_first_join =
+            crate::player::state::load_current_character_id(&player_persistence, "Azure")
+                .expect("load should succeed")
+                .expect("current_char_id should exist");
+        assert_ne!(
+            raw_id_after_first_join, old_raw_id,
+            "第一次 join 应完成一次轮换"
+        );
+
+        // 第二次 join（模拟重连）：全新 App / 全新 entity，复用同一份持久化文件。
+        let mut app2 = App::new();
+        app2.insert_resource(settings.clone());
+        app2.insert_resource(player_persistence.clone());
+        {
+            let (default_loadout, item_registry, allocator) = inventory_test_resources();
+            app2.insert_resource(default_loadout);
+            app2.insert_resource(item_registry);
+            app2.insert_resource(allocator);
+        }
+        app2.add_systems(Update, attach_cultivation_to_joined_clients);
+        let (client_bundle2, _helper2) = create_mock_client("Azure");
+        let entity2 = app2.world_mut().spawn(client_bundle2).id();
+        app2.update();
+
+        let raw_id_after_second_join =
+            crate::player::state::load_current_character_id(&player_persistence, "Azure")
+                .expect("load should succeed")
+                .expect("current_char_id should exist");
+        assert_eq!(
+            raw_id_after_second_join, raw_id_after_first_join,
+            "已经转世过的角色再次 join 不应再次轮换 current_char_id（幂等）"
+        );
+
+        let life_record2 = app2
+            .world()
+            .get::<LifeRecord>(entity2)
+            .expect("second join should still attach a LifeRecord");
+        assert!(
+            life_record2.biography.is_empty(),
+            "第二次 join 读到的应仍是转世后的空白生平，不应再被判定终结"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn join_with_non_terminated_character_is_unaffected_by_reincarnation_gate() {
+        let (settings, root) = temp_persistence_settings("reincarnate-not-terminated");
+        let player_persistence = player_state_persistence_for(&settings, &root);
+
+        let raw_id =
+            crate::player::state::rotate_current_character_id(&player_persistence, "Azure")
+                .expect("seed rotate should succeed");
+        let canonical_id = crate::player::state::player_character_id("Azure", &raw_id);
+
+        let mut life_record = LifeRecord::new(canonical_id.clone());
+        // 关键：只有 NearDeath，没有 Terminated —— 角色仍然"活着"。
+        life_record.push(BiographyEntry::NearDeath {
+            cause: "close_call".to_string(),
+            tick: 10,
+        });
+        seed_cultivation_bundle(&settings, "Azure", Realm::Spirit, &life_record);
+
+        let mut app = App::new();
+        app.insert_resource(settings.clone());
+        app.insert_resource(player_persistence.clone());
+        let (default_loadout, item_registry, allocator) = inventory_test_resources();
+        app.insert_resource(default_loadout);
+        app.insert_resource(item_registry);
+        app.insert_resource(allocator);
+        app.add_systems(Update, attach_cultivation_to_joined_clients);
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.update();
+
+        let cultivation = app
+            .world()
+            .get::<Cultivation>(entity)
+            .expect("client should have Cultivation");
+        assert_eq!(
+            cultivation.realm,
+            Realm::Spirit,
+            "未终结角色 join 不应触发转世门，境界应保持持久化的原值"
+        );
+
+        let life_record_after = app
+            .world()
+            .get::<LifeRecord>(entity)
+            .expect("client should have LifeRecord");
+        assert_eq!(
+            life_record_after.character_id, canonical_id,
+            "未终结角色的 character_id 不应被轮换"
+        );
+        assert_eq!(
+            life_record_after.biography.len(),
+            1,
+            "未终结角色的生平卷应原样水合，不应被清空"
+        );
+
+        let new_raw_id =
+            crate::player::state::load_current_character_id(&player_persistence, "Azure")
+                .expect("load should succeed")
+                .expect("current_char_id should exist");
+        assert_eq!(
+            new_raw_id, raw_id,
+            "未终结角色 join 不应触碰 player_core.current_char_id"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn join_with_terminated_character_and_no_player_persistence_skips_gate_gracefully() {
+        let (settings, root) = temp_persistence_settings("reincarnate-no-persistence");
+
+        seed_cultivation_bundle(
+            &settings,
+            "Ghost",
+            Realm::Awaken,
+            &terminated_life_record("offline:Ghost"),
+        );
+
+        let mut app = App::new();
+        app.insert_resource(settings.clone());
+        // 故意不插入 PlayerStatePersistence —— 复现"无 persistence 资源"场景
+        // （轮换需要写 player_core，没有这个资源就没法安全轮换）。
+        app.add_systems(Update, attach_cultivation_to_joined_clients);
+
+        let (client_bundle, _helper) = create_mock_client("Ghost");
+        let entity = app.world_mut().spawn(client_bundle).id();
+
+        // 不应 panic：既没有 PlayerStatePersistence 可写，也不能就地丢弃玩家数据。
+        app.update();
+
+        let life_record = app
+            .world()
+            .get::<LifeRecord>(entity)
+            .expect("client should still receive a LifeRecord even without PlayerStatePersistence");
+        assert!(
+            matches!(
+                life_record.biography.last(),
+                Some(BiographyEntry::Terminated { .. })
+            ),
+            "无 PlayerStatePersistence 时应优雅跳过转世门（沿用旧记录），而不是 panic 或静默丢数据"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

@@ -624,6 +624,20 @@ public final class ClientRequestProtocol {
         return obj.toString();
     }
 
+    /**
+     * plan-remains-suite P0 — 遗骸 G 键统一交互（对应右键 InteractEntityEvent 路径）。
+     *
+     * @param remainsId 遗骸实体的稳定 id（来自 {@link com.bong.client.inventory.state.RemainsStore}）
+     */
+    public static String encodeRemainsLoot(String remainsId) {
+        if (remainsId == null || remainsId.isBlank()) {
+            throw new IllegalArgumentException("remainsId must not be null/blank");
+        }
+        JsonObject obj = envelope("remains_loot");
+        obj.addProperty("remains_id", remainsId);
+        return obj.toString();
+    }
+
     public static String encodeMineralProbe(int x, int y, int z) {
         JsonObject obj = envelope("mineral_probe");
         obj.addProperty("x", x);
