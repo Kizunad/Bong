@@ -62,6 +62,7 @@ public final class VfxBootstrap {
         OmenParticlePlayer omen = new OmenParticlePlayer();
         registry.register(OmenParticlePlayer.PSEUDO_VEIN,        omen);
         registry.register(OmenParticlePlayer.BEAST_TIDE,         omen);
+        registry.register(OmenParticlePlayer.TIDE_SKY,           omen);
         registry.register(OmenParticlePlayer.REALM_COLLAPSE,     omen);
         registry.register(OmenParticlePlayer.KARMA_BACKLASH,     omen);
         JueBiTribulationPlayer jueBi = new JueBiTribulationPlayer();
