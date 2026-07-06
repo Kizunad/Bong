@@ -25,6 +25,7 @@ from bot.server_data import decode_server_data_payload  # noqa: E402
 from bot.scenarios._inventory_helpers import (  # noqa: E402
     latest_inventory_snapshot,
     wait_inventory_revision_after,
+    wait_inventory_revision_after_matching,
     wait_inventory_snapshot_after,
 )
 from bot.run_scenarios import (  # noqa: E402
@@ -175,6 +176,24 @@ class InventoryHelperTest(unittest.TestCase):
         self.assertEqual(stow_snapshot["marker"], "after_stow")
         self.assertEqual(unequip_snapshot["revision"], 4)
         self.assertEqual(unequip_snapshot["marker"], "after_unequip")
+
+    def test_wait_inventory_revision_after_matching_skips_intermediate_snapshot(self):
+        bot = _FakeBot(
+            [
+                _snapshot_event(2.0, 2, "command_intermediate"),
+                _snapshot_event(3.0, 3, "command_final"),
+            ]
+        )
+
+        snapshot = wait_inventory_revision_after_matching(
+            bot,
+            1,
+            lambda payload: payload["marker"] == "command_final",
+            "command_final marker",
+        )
+
+        self.assertEqual(snapshot["revision"], 3)
+        self.assertEqual(snapshot["marker"], "command_final")
 
 
 class _FakeEvent:
