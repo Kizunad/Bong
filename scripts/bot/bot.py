@@ -19,6 +19,7 @@ import time
 from . import mc_protocol as mc
 from . import proto_min
 from .mc_protocol import Connection, Reader, login, mc_string, write_varint
+from .server_data import decode_server_data_payload
 
 
 class BotAssertionError(AssertionError):
@@ -152,7 +153,30 @@ class Bot:
             self._emit("chunk_load_distance", {"distance": reader.varint()})
         elif packet_id == mc.S2C_CUSTOM_PAYLOAD:
             channel = reader.string()
-            self._emit("payload", {"channel": channel, "data": reader.rest()})
+            data = reader.rest()
+            self._emit("payload", {"channel": channel, "data": data})
+            if channel == "bong:server_data":
+                try:
+                    payload = decode_server_data_payload(data)
+                except Exception as error:
+                    self._emit(
+                        "server_data_decode_error",
+                        {"error": repr(error), "size": len(data)},
+                    )
+                else:
+                    if payload is not None:
+                        self._emit(
+                            "server_data",
+                            {"payload_type": payload.get("type"), "payload": payload},
+                        )
+            elif channel == "bong:vfx_event":
+                try:
+                    payload = json.loads(data.decode("utf-8"))
+                except (UnicodeDecodeError, json.JSONDecodeError) as error:
+                    self._emit("vfx_decode_error", {"error": repr(error), "size": len(data)})
+                else:
+                    if isinstance(payload, dict):
+                        self._emit("vfx_event", payload)
         elif packet_id == mc.S2C_GAME_MESSAGE:
             raw = reader.string()
             overlay = reader.boolean()
@@ -332,6 +356,20 @@ class Bot:
             lambda e: e.kind == "payload" and e.data["channel"] == channel,
             timeout,
             f"channel={channel} 的 payload（server 应 emit 该通道，检查 emit system 是否接线）",
+        )
+
+    def expect_server_data(self, payload_type: str, timeout: float = 5.0) -> Event:
+        return self.wait_for(
+            lambda e: e.kind == "server_data" and e.data["payload_type"] == payload_type,
+            timeout,
+            f"bong:server_data/{payload_type} payload（server 应推送该玩法数据）",
+        )
+
+    def expect_vfx_event(self, event_id: str, timeout: float = 5.0) -> Event:
+        return self.wait_for(
+            lambda e: e.kind == "vfx_event" and e.data.get("event_id") == event_id,
+            timeout,
+            f"bong:vfx_event event_id={event_id}（玩法反馈 VFX 不应失联）",
         )
 
     def expect_payload_after(self, channel: str, after: float, timeout: float = 5.0) -> Event:
