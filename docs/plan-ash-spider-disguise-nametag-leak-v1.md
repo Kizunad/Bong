@@ -1,6 +1,6 @@
-# plan-ash-spider-disguise-nametag-leak-v1（骨架）
+# plan-ash-spider-disguise-nametag-leak-v1
 
-> **骨架（草案）**。一句话主题：**拟态灰烬蛛伪装态名牌泄漏**。server 已明确把蛛设成 `NameVisible(false)` 以保证“伪装为灰烬方块”，但 client 的 `NpcNametagRenderer` 仍会基于 `bong:npc_metadata` 给它画出 `[妖兽·醒灵]` / `兽` 浮空标签，直接破坏伏击与留活追兵玩法。该题与已出的“拟态灰烬蛛缺伪装贴图”不同：那是**资源缺失**，本题是**渲染/反馈链绕过隐藏契约**。
+> **Active bughunt plan**。一句话主题：**拟态灰烬蛛伪装态名牌泄漏**。server 已明确把蛛设成 `NameVisible(false)` 以保证“伪装为灰烬方块”，但 client 的 `NpcNametagRenderer` 仍会基于 `bong:npc_metadata` 给它画出 `[妖兽·醒灵]` / `兽` 浮空标签，直接破坏伏击与留活追兵玩法。该题与已出的“拟态灰烬蛛缺伪装贴图”不同：那是**资源缺失**，本题是**渲染/反馈链绕过隐藏契约**。
 
 ## 复现路径
 
