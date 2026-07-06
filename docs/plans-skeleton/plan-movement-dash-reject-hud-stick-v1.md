@@ -22,9 +22,9 @@
 
 ## 反方裁决摘要
 
-1. **Round 1 反方怀疑**：也许 `rejected_action` 虽然留在 `MovementState` 里，但后续没有新的 movement_state payload，因此 client 实际只会看到一次红 flash。  
+1. **Round 1 反方怀疑**：也许 `rejected_action` 虽然留在 `MovementState` 里，但后续没有新的 movement_state payload，因此 client 实际只会看到一次红 flash。
    **裁决**：不成立。`emit_movement_state_payloads` 明确把 `Changed<Stamina>` 也算进发送条件（`server/src/movement/mod.rs:475-486`），而 `stamina_tick` 每 4 tick 会更新 `stamina.current`（`server/src/combat/lifecycle.rs:279-306`），恢复窗口天然会持续重发 payload。
-2. **Round 2 反方怀疑**：也许 client 已经对重复 reject 做了去重，或 `rejectedRecently(300ms)` 足以吞掉重复包。  
+2. **Round 2 反方怀疑**：也许 client 已经对重复 reject 做了去重，或 `rejectedRecently(300ms)` 足以吞掉重复包。
    **裁决**：不成立。`MovementStateStore.replace()` 只要看到非空 `rejectedAction` 就直接把 `rejectedAtMs = nowMs`（`client/.../MovementStateStore.java:21-34`），没有比较“是否同一 reject”；而服务器重发间隔 0.2s 小于 `REJECT_FLASH_MS = 300ms`（`MovementHudPlanner.java:10-13,65-74`），因此重复包会持续把闪红窗口往后推。
 
 ## 审计来源
