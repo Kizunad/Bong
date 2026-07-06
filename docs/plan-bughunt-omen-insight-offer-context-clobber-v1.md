@@ -1,6 +1,6 @@
-# plan-bughunt-omen-insight-offer-context-clobber-v1（骨架）
+# plan-bughunt-omen-insight-offer-context-clobber-v1（Active）
 
-> **骨架（草案）**。一句话主题：`insight` 主路径当前同时跑着“本地 contextual fallback”与“agent 回包覆盖”两条 offer 生产链；后者在 `server/src/cultivation/insight_flow.rs:147-173` / `server/src/network/mod.rs:2430-2461` 中把 agent 已经裁好的三轨选项**一律降级为 `fallback_for(trigger_id)` 的无上下文版本**，并重新覆盖 `PendingInsightOffer` 与 S2C `InsightOffer`。影响是：**玩家正常触发顿悟时，先拿到按自身真元色谱/PracticeLog/Quota 生成的机缘，随后又被覆盖成“默认 Mellow + 空 PracticeLog + Realm::Induce”模板；顿悟从“看你是谁”退化成“大家都看同一套默认稿”**。
+> **Active（已从 skeleton 升级，待修复验证）**。一句话主题：`insight` 主路径当前同时跑着“本地 contextual fallback”与“agent 回包覆盖”两条 offer 生产链；后者在 `server/src/cultivation/insight_flow.rs:147-173` / `server/src/network/mod.rs:2430-2461` 中把 agent 已经裁好的三轨选项**一律降级为 `fallback_for(trigger_id)` 的无上下文版本**，并重新覆盖 `PendingInsightOffer` 与 S2C `InsightOffer`。影响是：**玩家正常触发顿悟时，先拿到按自身真元色谱/PracticeLog/Quota 生成的机缘，随后又被覆盖成“默认 Mellow + 空 PracticeLog + Realm::Induce”模板；顿悟从“看你是谁”退化成“大家都看同一套默认稿”**。
 
 > 立项动机：这不是 r7 的 `InsightModifiers` 消费断链，也不是 client `InsightOfferScreen` 生命周期问题；它发生在**选项生成阶段**，直接破坏 `plan-insight-alignment-v1` 已定下的“按玩家当前真元向量动态生成三轨选项”主承诺（`docs/finished_plans/plan-insight-alignment-v1.md:1-3`）。因为顿悟是玩家长期 build 分岔口，错误选项会实质影响成长路线与代价判断，值得先立 skeleton-only plan 固化证据和修复边界。
 
