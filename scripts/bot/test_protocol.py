@@ -21,7 +21,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from bot import mc_protocol as mc  # noqa: E402
 from bot.bot import Bot, _signed_12, _signed_26  # noqa: E402
-from bot.server_data import _load_envelope_pb2, decode_server_data_payload  # noqa: E402
+from bot.server_data import decode_server_data_payload  # noqa: E402
 from bot.scenarios._inventory_helpers import (  # noqa: E402
     latest_inventory_snapshot,
     wait_inventory_revision_after,
@@ -104,28 +104,31 @@ class ServerDataDecodeTest(unittest.TestCase):
         self.assertIsNone(decode_server_data_payload(b"\xff\x00not protobuf"))
 
     def test_proto_inventory_snapshot_payload_decodes(self):
-        pb = _load_envelope_pb2()
-        envelope = pb.ServerDataEnvelope()
-        envelope.inventory_snapshot.revision = 12
-        envelope.inventory_snapshot.containers.add(
-            id="body_pocket",
-            name="贴身口袋",
-            rows=2,
-            cols=3,
-        )
-        envelope.inventory_snapshot.equipped.chest_worn.add(
-            instance_id=9,
-            item_id="worn_grass_pouch",
-        )
-        envelope.inventory_snapshot.weight.current = 1.0
-        envelope.inventory_snapshot.weight.max = 23.0
-
-        decoded = decode_server_data_payload(envelope.SerializeToString())
+        decoded = decode_server_data_payload(_server_data_inventory_snapshot_bytes())
 
         self.assertEqual(decoded["type"], "inventory_snapshot")
         self.assertEqual(decoded["revision"], 12)
         self.assertEqual(decoded["containers"][0]["id"], "body_pocket")
         self.assertEqual(decoded["equipped"]["chest_worn"][0]["item_id"], "worn_grass_pouch")
+
+    def test_proto_inventory_event_moved_payload_decodes(self):
+        decoded = decode_server_data_payload(_server_data_inventory_event_moved_bytes())
+
+        self.assertEqual(decoded["type"], "inventory_event")
+        self.assertEqual(decoded["kind"], "moved")
+        self.assertEqual(decoded["revision"], 13)
+        self.assertEqual(decoded["instance_id"], 99)
+        self.assertEqual(decoded["from"]["container_id"], "body_pocket")
+        self.assertEqual(decoded["to"]["slot"], "chest")
+        self.assertEqual(decoded["to"]["state"], "worn")
+
+    def test_proto_loot_container_open_payload_decodes(self):
+        decoded = decode_server_data_payload(_server_data_loot_container_open_bytes())
+
+        self.assertEqual(decoded["type"], "loot_container_open")
+        self.assertEqual(decoded["session_id"], 7)
+        self.assertEqual(decoded["rows"], 3)
+        self.assertEqual(decoded["cols"], 4)
 
 
 class InventoryHelperTest(unittest.TestCase):
@@ -220,6 +223,98 @@ def _snapshot_event(t: float, revision: int, marker: str) -> _FakeEvent:
             },
         },
     )
+
+
+def _server_data_inventory_snapshot_bytes() -> bytes:
+    item = (
+        _pb_varint(1, 9)
+        + _pb_string(2, "worn_grass_pouch")
+        + _pb_string(3, "破草包")
+        + _pb_varint(4, 2)
+        + _pb_varint(5, 2)
+        + _pb_fixed64(6, 0.25)
+        + _pb_string(7, "common")
+        + _pb_string(8, "test")
+        + _pb_varint(9, 1)
+        + _pb_fixed64(10, 0.0)
+        + _pb_fixed64(11, 0.3)
+    )
+    container = (
+        _pb_string(1, "body_pocket")
+        + _pb_string(2, "贴身口袋")
+        + _pb_varint(3, 2)
+        + _pb_varint(4, 3)
+    )
+    equipped = _pb_message(3, item)
+    weight = _pb_fixed64(1, 1.0) + _pb_fixed64(2, 23.0)
+    snapshot = (
+        _pb_varint(1, 12)
+        + _pb_message(2, container)
+        + _pb_message(4, equipped)
+        + _pb_message(7, weight)
+    )
+    return _pb_message(8, snapshot)
+
+
+def _server_data_inventory_event_moved_bytes() -> bytes:
+    from_location = _pb_message(
+        1,
+        _pb_string(1, "body_pocket") + _pb_varint(2, 0) + _pb_varint(3, 1),
+    )
+    to_location = _pb_message(2, _pb_varint(1, 2) + _pb_varint(2, 1))
+    moved = (
+        _pb_varint(1, 13)
+        + _pb_varint(2, 99)
+        + _pb_message(3, from_location)
+        + _pb_message(4, to_location)
+    )
+    return _pb_message(80, _pb_message(1, moved))
+
+
+def _server_data_loot_container_open_bytes() -> bytes:
+    open_payload = (
+        _pb_varint(1, 7)
+        + _pb_string(2, '{"kind":"storage_crate","is_herb":false}')
+        + _pb_varint(3, 3)
+        + _pb_varint(4, 4)
+    )
+    return _pb_message(119, open_payload)
+
+
+def _pb_key(field: int, wire: int) -> bytes:
+    return _pb_raw_varint((field << 3) | wire)
+
+
+def _pb_raw_varint(value: int) -> bytes:
+    out = bytearray()
+    while True:
+        byte = value & 0x7F
+        value >>= 7
+        if value:
+            out.append(byte | 0x80)
+        else:
+            out.append(byte)
+            return bytes(out)
+
+
+def _pb_varint(field: int, value: int) -> bytes:
+    return _pb_key(field, 0) + _pb_raw_varint(value)
+
+
+def _pb_fixed64(field: int, value: float) -> bytes:
+    return _pb_key(field, 1) + struct.pack("<d", value)
+
+
+def _pb_bytes(field: int, value: bytes) -> bytes:
+    return _pb_key(field, 2) + _pb_raw_varint(len(value)) + value
+
+
+def _pb_string(field: int, value: str) -> bytes:
+    return _pb_bytes(field, value.encode("utf-8"))
+
+
+def _pb_message(field: int, value: bytes) -> bytes:
+    return _pb_bytes(field, value)
 
 
 def _bare_connection(threshold: int = -1) -> mc.Connection:
