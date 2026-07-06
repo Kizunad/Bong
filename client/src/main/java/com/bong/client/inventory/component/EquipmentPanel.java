@@ -94,7 +94,7 @@ public class EquipmentPanel {
 
     /**
      * 从 model 填充各槽分层内容。multi-arm 槽（extra_hand）默认隐藏（无内容则不渲染图标，仅空槽标签）。
-     * 双手武器在主手 held 时，对侧手槽置 disable。
+     * 双手武器在主手 held 时，只将副手槽置 disable；extra_hand 是独立多臂 held 槽。
      */
     public void populateFromModel(InventoryModel model) {
         Map<EquipSlotType, SlotContents> slots = model.equippedSlots();
@@ -106,18 +106,14 @@ public class EquipmentPanel {
         applyTwoHandLock(slots);
     }
 
-    /** 双手武器（spear/staff）在主手 held → 锁副手 + 多臂手槽（disable tint）。 */
+    /** 双手武器（spear/staff）在主手 held → 只锁副手（disable tint）。 */
     private void applyTwoHandLock(Map<EquipSlotType, SlotContents> slots) {
         SlotContents main = slots.get(EquipSlotType.MAIN_HAND);
         if (main == null || main.held() == null) return;
         if (!isTwoHandWeapon(main.held())) return;
-        for (EquipSlotType hand : new EquipSlotType[]{
-            EquipSlotType.OFF_HAND, EquipSlotType.EXTRA_HAND_0, EquipSlotType.EXTRA_HAND_1
-        }) {
-            EquipSlotComponent comp = slotComponents.get(hand);
-            if (comp != null && comp.isEmpty()) {
-                comp.setDisabledByTwoHand(true);
-            }
+        EquipSlotComponent offHand = slotComponents.get(EquipSlotType.OFF_HAND);
+        if (offHand != null && offHand.isEmpty()) {
+            offHand.setDisabledByTwoHand(true);
         }
     }
 
