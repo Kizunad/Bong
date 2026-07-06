@@ -1,6 +1,6 @@
-# plan-bughunt-npc-dormant-engagement-amnesia-v1（骨架）
+# plan-bughunt-npc-dormant-engagement-amnesia-v1
 
-> **骨架（bughunt）**。一句话主题：`server/src/npc` 的 **dormant → hydrate 往返不会持久化 NPC 的玩家交互记忆与 per-player 信誉**，导致同一 `char_id` 的 NPC 只要被拉远脱水再回来，就会把“你打过我 / 交易过我 / 我对你有折扣或敌意”全部洗回首次见面的默认态。
+> **active bughunt plan**。一句话主题：`server/src/npc` 的 **dormant → hydrate 往返不会持久化 NPC 的玩家交互记忆与 per-player 信誉**，导致同一 `char_id` 的 NPC 只要被拉远脱水再回来，就会把“你打过我 / 交易过我 / 我对你有折扣或敌意”全部洗回首次见面的默认态。
 
 ## 结论
 
