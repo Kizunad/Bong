@@ -1064,6 +1064,7 @@ impl From<&ServerDataPayloadV1> for Payload {
                     locked: s.locked.as_ref().map(key_kind_to_proto),
                     depleted: s.depleted,
                     searched_by_player_id: s.searched_by_player_id.clone(),
+                    visual_entity_id: s.visual_entity_id,
                 })
             }
             ServerDataPayloadV1::SearchStarted(s) => Payload::SearchStarted(bong::SearchStarted {
@@ -6444,6 +6445,7 @@ mod tests {
                 kind: ContainerKindV1::StoragePouch,
                 family_id: "tsy_01".to_string(),
                 world_pos: [0.0, 64.0, 0.0],
+                visual_entity_id: Some(1001),
                 locked: None,
                 depleted: false,
                 searched_by_player_id: None,

@@ -9,8 +9,23 @@ public record TsyContainerView(
     double z,
     String locked,
     boolean depleted,
-    String searchedByPlayerId
+    String searchedByPlayerId,
+    Integer visualEntityId
 ) {
+    public TsyContainerView(
+        long entityId,
+        String kind,
+        String familyId,
+        double x,
+        double y,
+        double z,
+        String locked,
+        boolean depleted,
+        String searchedByPlayerId
+    ) {
+        this(entityId, kind, familyId, x, y, z, locked, depleted, searchedByPlayerId, null);
+    }
+
     public boolean interactable() {
         return !depleted && (searchedByPlayerId == null || searchedByPlayerId.isBlank());
     }

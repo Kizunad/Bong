@@ -844,6 +844,74 @@ mod tests {
         }
     }
 
+    fn run_start_search_at_distance(distance: f64) -> StartSearchResult {
+        let scenario = ScenarioSingleClient::new();
+        let mut app = scenario.app;
+        let player = scenario.client;
+        app.add_event::<StartSearchRequest>();
+        app.add_event::<StartSearchResult>();
+        app.add_event::<VfxEventRequest>();
+        app.add_event::<PlaySoundRecipeRequest>();
+        app.insert_resource(CombatClock { tick: 11 });
+        app.insert_resource(SurfaceStashPlayerLimit::default());
+        app.add_systems(Update, start_search_container);
+
+        let container = app
+            .world_mut()
+            .spawn((
+                LootContainer::new(
+                    ContainerKind::DryCorpse,
+                    "tsy_range_test".to_string(),
+                    crate::world::zone::TsyDepth::Shallow,
+                    "range_pool".to_string(),
+                    0,
+                ),
+                Position::new([distance, 64.0, 0.0]),
+            ))
+            .id();
+        app.world_mut().entity_mut(player).insert((
+            Username("Azure".to_string()),
+            Position::new([0.0, 64.0, 0.0]),
+            CombatState::default(),
+            make_inv(),
+        ));
+        app.world_mut()
+            .resource_mut::<Events<StartSearchRequest>>()
+            .send(StartSearchRequest { player, container });
+
+        app.update();
+
+        let events = app.world().resource::<Events<StartSearchResult>>();
+        let mut reader = events.get_reader();
+        let mut emitted: Vec<_> = reader.read(events).cloned().collect();
+        assert_eq!(
+            emitted.len(),
+            1,
+            "start_search_container should emit exactly one result at distance {distance}; actual={emitted:?}"
+        );
+        emitted.remove(0)
+    }
+
+    #[test]
+    fn start_search_allows_crosshair_range_within_five_blocks() {
+        match run_start_search_at_distance(4.75) {
+            StartSearchResult::Started { required_ticks, .. } => {
+                assert_eq!(required_ticks, ContainerKind::DryCorpse.base_search_ticks());
+            }
+            other => panic!("expected Started for 4.75 block search range, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn start_search_rejects_distance_beyond_five_blocks() {
+        match run_start_search_at_distance(5.01) {
+            StartSearchResult::Rejected { reason, .. } => {
+                assert_eq!(reason, SearchRejectionReason::OutOfRange);
+            }
+            other => panic!("expected OutOfRange rejection beyond 5 blocks, got {other:?}"),
+        }
+    }
+
     #[test]
     fn find_key_in_inventory_main_pack() {
         let mut inv = make_inv();
