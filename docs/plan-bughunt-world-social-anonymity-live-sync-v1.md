@@ -1,6 +1,6 @@
-# plan-bughunt-world-social-anonymity-live-sync-v1（骨架）
+# plan-bughunt-world-social-anonymity-live-sync-v1
 
-> **骨架（草案）**。一句话主题：`social_anonymity` 只在玩家进服时下发一次；后续聊天 / 交易 / 死亡把 `Anonymity.exposed_to` 真正写到了 server 权威状态与持久化，但**没有任何 live 重发链路**把新的“此人已对我暴露”同步给见证者客户端，导致 witness 在当前会话里仍看不到对方名牌，往往要重连才恢复。影响是：**玩家明明当场见证了对方发言、交易或死亡暴露，头顶名牌却继续匿名，现场追踪、复仇、临时结盟与信息确认都会卡成“服务器知道，客户端不知道”**。
+> 一句话主题：`social_anonymity` 只在玩家进服时下发一次；后续聊天 / 交易 / 死亡把 `Anonymity.exposed_to` 真正写到了 server 权威状态与持久化，但**没有任何 live 重发链路**把新的“此人已对我暴露”同步给见证者客户端，导致 witness 在当前会话里仍看不到对方名牌，往往要重连才恢复。影响是：**玩家明明当场见证了对方发言、交易或死亡暴露，头顶名牌却继续匿名，现场追踪、复仇、临时结盟与信息确认都会卡成“服务器知道，客户端不知道”**。
 
 > 立项动机：这条断链位于 `server/src/social/` 与 client social state 主路径，且对匿名博弈的实际手感有直接影响。它不是“season stale client”旧问题：这里卡住的是 **social exposure → anonymity live refresh** 这条独立同步链。
 
