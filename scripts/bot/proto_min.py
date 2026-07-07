@@ -26,6 +26,20 @@ def decode_server_data_envelope(data: bytes) -> dict[str, Any] | None:
             continue
         if field == 8:
             return _inventory_snapshot(value)
+        if field == 11:
+            return _alchemy_furnace(value)
+        if field == 12:
+            return _alchemy_session(value)
+        if field == 14:
+            return _alchemy_outcome_resolved(value)
+        if field == 22:
+            return _craft_session_state(value)
+        if field == 23:
+            return _craft_outcome(value)
+        if field == 34:
+            return _cast_sync(value)
+        if field == 51:
+            return _combat_event_floater(value)
         if field == 80:
             return _inventory_event(value)
         if field == 90:
@@ -322,6 +336,143 @@ def _message(fields: list[tuple[int, int, Any]], field: int) -> list[tuple[int, 
 
 def _messages(fields: list[tuple[int, int, Any]], field: int) -> list[bytes]:
     return [value for value in _values(fields, field) if isinstance(value, bytes)]
+
+
+def _float32(fields: list[tuple[int, int, Any]], field: int, default: float = 0.0) -> float:
+    for existing, wire, value in reversed(fields):
+        if existing == field and wire == 5:
+            return struct.unpack("<f", value)[0]
+    return default
+
+
+# ── 生产 / 消费玩法 payload（envelope.proto oneof tag 见 proto/bong/envelope.proto）──
+
+CAST_OUTCOME_NAMES = {
+    0: "unspecified",
+    1: "none",
+    2: "completed",
+    3: "interrupt_movement",
+    4: "interrupt_contam",
+    5: "interrupt_control",
+    6: "user_cancel",
+    7: "death",
+    8: "meridian_gated",
+    9: "reject_qi_insufficient",
+    10: "reject_on_cooldown",
+    11: "reject_invalid_target",
+    12: "reject_in_recovery",
+    13: "reject_realm_too_low",
+    14: "reject_no_weapon",
+    15: "reject_technique_inactive",
+}
+
+CAST_PHASE_NAMES = {0: "unspecified", 1: "idle", 2: "casting", 3: "complete", 4: "interrupt"}
+
+
+def _craft_session_state(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    return {
+        "v": 1,
+        "type": "craft_session_state",
+        "active": bool(_varint(fields, 3)),
+        "recipe_id": _string(fields, 4),
+        "elapsed_ticks": _varint(fields, 5),
+        "total_ticks": _varint(fields, 6),
+        "completed_count": _varint(fields, 7),
+        "total_count": _varint(fields, 8),
+    }
+
+
+def _craft_outcome(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    for field, wire, value in fields:
+        if wire != 2:
+            continue
+        inner = _fields(value)
+        if field == 1:
+            return {
+                "v": 1,
+                "type": "craft_outcome",
+                "outcome": "completed",
+                "recipe_id": _string(inner, 3),
+                "output_template": _string(inner, 4),
+                "output_count": _varint(inner, 5),
+            }
+        if field == 2:
+            return {
+                "v": 1,
+                "type": "craft_outcome",
+                "outcome": "failed",
+                "recipe_id": _string(inner, 3),
+                "reason": _varint(inner, 4),
+                "material_returned": _varint(inner, 5),
+            }
+    return {"v": 1, "type": "craft_outcome", "outcome": "unknown"}
+
+
+def _alchemy_furnace(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    return {
+        "v": 1,
+        "type": "alchemy_furnace",
+        "pos": [
+            _optional_varint(fields, 1),
+            _optional_varint(fields, 2),
+            _optional_varint(fields, 3),
+        ],
+        "tier": _varint(fields, 4),
+    }
+
+
+def _alchemy_session(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    return {
+        "v": 1,
+        "type": "alchemy_session",
+        "recipe_id": _string(fields, 1),
+        "active": bool(_varint(fields, 2)),
+        "elapsed_ticks": _varint(fields, 3),
+        "target_ticks": _varint(fields, 4),
+    }
+
+
+def _alchemy_outcome_resolved(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    return {
+        "v": 1,
+        "type": "alchemy_outcome_resolved",
+        "bucket": _varint(fields, 1),
+        "recipe_id": _string(fields, 2),
+        "pill": _string(fields, 3),
+        "quality": _double(fields, 4),
+    }
+
+
+def _cast_sync(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    return {
+        "v": 1,
+        "type": "cast_sync",
+        "phase": CAST_PHASE_NAMES.get(_varint(fields, 1), "unspecified"),
+        "slot": _varint(fields, 2),
+        "duration_ms": _varint(fields, 3),
+        "outcome": CAST_OUTCOME_NAMES.get(_varint(fields, 5), "unspecified"),
+    }
+
+
+def _combat_event_floater(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    events = []
+    for raw in _messages(fields, 1):
+        entry = _fields(raw)
+        events.append(
+            {
+                "kind": _string(entry, 1),
+                "amount": _float32(entry, 2),
+                "text": _string(entry, 3),
+            }
+        )
+    return {"v": 1, "type": "combat_event", "events": events}
 
 
 def _equip_slot(value: int) -> str:

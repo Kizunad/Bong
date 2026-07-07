@@ -484,5 +484,95 @@ class RunnerLogicTest(unittest.TestCase):
         self.assertEqual(json.loads(reader.rest()), {"v": 1, "type": "breakthrough"})
 
 
+def _pb_float32_field(number: int, value: float) -> bytes:
+    import struct as _struct
+
+    return mc.write_varint((number << 3) | 5) + _struct.pack("<f", value)
+
+
+class ProdConsumeDecodeTest(unittest.TestCase):
+    """三产三用 payload 解码 pin：envelope oneof tag 与字段号对齐 proto/bong/envelope.proto.
+
+    这些解码器是 production_*/combat_*/cultivation_pill 场景的观察面地基——
+    tag 或字段号漂移会让场景从「锁契约」退化成「永远超时」。
+    """
+
+    def test_craft_session_state_tag22(self):
+        msg = (
+            _pb_varint_field(3, 1)
+            + _pb_len_field(4, b"workbench.weapon.stone_knife")
+            + _pb_varint_field(5, 10)
+            + _pb_varint_field(6, 400)
+        )
+        decoded = proto_min.decode_server_data_envelope(_pb_len_field(22, msg))
+        self.assertEqual(decoded["type"], "craft_session_state")
+        self.assertTrue(decoded["active"], "field3=1 应解为 active=True")
+        self.assertEqual(decoded["recipe_id"], "workbench.weapon.stone_knife")
+        self.assertEqual(decoded["total_ticks"], 400)
+
+    def test_craft_outcome_completed_tag23(self):
+        completed = (
+            _pb_len_field(3, b"workbench.weapon.stone_knife")
+            + _pb_len_field(4, b"stone_knife")
+            + _pb_varint_field(5, 1)
+        )
+        decoded = proto_min.decode_server_data_envelope(
+            _pb_len_field(23, _pb_len_field(1, completed))
+        )
+        self.assertEqual(decoded["type"], "craft_outcome")
+        self.assertEqual(decoded["outcome"], "completed")
+        self.assertEqual(decoded["output_template"], "stone_knife")
+        self.assertEqual(decoded["output_count"], 1)
+
+    def test_craft_outcome_failed_branch(self):
+        failed = _pb_len_field(3, b"r") + _pb_varint_field(4, 2)
+        decoded = proto_min.decode_server_data_envelope(
+            _pb_len_field(23, _pb_len_field(2, failed))
+        )
+        self.assertEqual(decoded["outcome"], "failed")
+        self.assertEqual(decoded["reason"], 2)
+
+    def test_alchemy_furnace_tag11_and_session_tag12(self):
+        furnace = _pb_varint_field(4, 1)
+        decoded = proto_min.decode_server_data_envelope(_pb_len_field(11, furnace))
+        self.assertEqual(decoded["type"], "alchemy_furnace")
+        self.assertEqual(decoded["tier"], 1)
+
+        session = _pb_len_field(1, b"ling_xi_wan_v1") + _pb_varint_field(2, 1)
+        decoded = proto_min.decode_server_data_envelope(_pb_len_field(12, session))
+        self.assertEqual(decoded["type"], "alchemy_session")
+        self.assertEqual(decoded["recipe_id"], "ling_xi_wan_v1")
+        self.assertTrue(decoded["active"])
+
+    def test_alchemy_outcome_resolved_tag14(self):
+        outcome = _pb_varint_field(1, 1) + _pb_len_field(3, b"ling_xi_wan")
+        decoded = proto_min.decode_server_data_envelope(_pb_len_field(14, outcome))
+        self.assertEqual(decoded["type"], "alchemy_outcome_resolved")
+        self.assertEqual(decoded["pill"], "ling_xi_wan")
+
+    def test_cast_sync_tag34_outcome_names(self):
+        # outcome=8 → meridian_gated（经脉门拒因，场景负分支断言依赖此命名）
+        msg = _pb_varint_field(1, 3) + _pb_varint_field(2, 1) + _pb_varint_field(5, 8)
+        decoded = proto_min.decode_server_data_envelope(_pb_len_field(34, msg))
+        self.assertEqual(decoded["type"], "cast_sync")
+        self.assertEqual(decoded["phase"], "complete")
+        self.assertEqual(decoded["slot"], 1)
+        self.assertEqual(decoded["outcome"], "meridian_gated")
+
+    def test_combat_event_floater_tag51_amount_float32(self):
+        entry = (
+            _pb_len_field(1, b"damage")
+            + _pb_float32_field(2, 12.5)
+            + _pb_len_field(3, b"-12")
+        )
+        decoded = proto_min.decode_server_data_envelope(
+            _pb_len_field(51, _pb_len_field(1, entry))
+        )
+        self.assertEqual(decoded["type"], "combat_event")
+        self.assertEqual(len(decoded["events"]), 1)
+        self.assertEqual(decoded["events"][0]["kind"], "damage")
+        self.assertAlmostEqual(decoded["events"][0]["amount"], 12.5, places=4)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)
