@@ -13,10 +13,10 @@
   升级为 bare-vs-armed 伤害对照断言。
 """
 
-import json
 import time
 
 from bot.scenarios._combat_helpers import (
+    extract_floater_amounts,
     last_event_time,
     move_to_melee_range,
     queue_fight_target,
@@ -25,7 +25,6 @@ from bot.scenarios._combat_helpers import (
 )
 from bot.scenarios._inventory_helpers import (
     equip_location,
-    latest_inventory_snapshot,
     require_item,
     send_move,
     wait_inventory_contains,
@@ -46,27 +45,12 @@ def _hit_amount(bot, target_id: int, anchor: float, label: str) -> float:
         timeout=10.0,
         description=f"{label} 攻击后应收到 combat_event（伤害浮字可观察）",
     )
-    blob = event.data["payload"]
-    amounts = _collect_amounts(blob)
+    payload = event.data["payload"]
+    amounts = extract_floater_amounts(payload)
     assert amounts, (
-        f"{label} 的 combat_event 应携带数值 amount（伤害浮字），实际 payload="
-        f"{json.dumps(blob, ensure_ascii=True)[:300]}"
+        f"{label} 的 combat_event 应携带数值 amount（伤害浮字），实际 payload={payload!r}"
     )
     return max(amounts)
-
-
-def _collect_amounts(node) -> list[float]:
-    found = []
-    if isinstance(node, dict):
-        for key, value in node.items():
-            if key == "amount" and isinstance(value, (int, float)):
-                found.append(float(value))
-            else:
-                found.extend(_collect_amounts(value))
-    elif isinstance(node, list):
-        for value in node:
-            found.extend(_collect_amounts(value))
-    return found
 
 
 def run(env) -> None:
@@ -77,8 +61,7 @@ def run(env) -> None:
 
         # 给剑并装备到 main_hand held
         bot.cmd(f"give {WEAPON_ID} 1")
-        wait_inventory_contains(bot, WEAPON_ID)
-        snapshot = latest_inventory_snapshot(bot)
+        snapshot = wait_inventory_contains(bot, WEAPON_ID)
         sword = require_item(snapshot, WEAPON_ID)
         anchor = last_event_time(bot)
         send_move(

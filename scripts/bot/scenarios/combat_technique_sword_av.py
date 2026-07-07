@@ -102,9 +102,10 @@ def run(env) -> None:
                 "AGENTS.md §15.2 不可观察红旗"
             ),
         )
-        outcome_blob = str(gated.data["payload"])
-        assert "eridian" in outcome_blob or "gated" in outcome_blob.lower(), (
-            f"崩拳未开脉的 cast_sync 应携带经脉门拒因（MeridianGated 家族），"
-            f"实际 payload={outcome_blob[:300]}"
+        outcome = gated.data["payload"].get("outcome")
+        assert outcome == "meridian_gated", (
+            f"崩拳未开脉的 cast_sync.outcome 应为 meridian_gated（经脉门拒因，"
+            f"CAST_OUTCOME_MERIDIAN_GATED=8），实际 {outcome!r}——拒因丢失则玩家"
+            f"只见技能无响应"
         )
         bot.assert_alive("功法正负分支之后")

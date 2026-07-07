@@ -65,10 +65,14 @@ def run(env) -> None:
                 "或完工结算断链"
             ),
         )
-        outcome_blob = str(outcome.data["payload"])
-        assert OUTPUT_ID in outcome_blob and "ailed" not in outcome_blob, (
-            f"craft_outcome 应为 Completed 且产物={OUTPUT_ID}（材料齐全的手搓配方"
-            f"不应失败），实际 payload={outcome_blob[:300]}"
+        result = outcome.data["payload"]
+        assert result.get("outcome") == "completed", (
+            f"材料齐全的手搓配方 craft_outcome 应为 completed，实际 "
+            f"{result.get('outcome')!r}（reason={result.get('reason')!r}）"
+        )
+        assert result.get("output_template") == OUTPUT_ID, (
+            f"craft_outcome.output_template 应为 {OUTPUT_ID}，实际 "
+            f"{result.get('output_template')!r}"
         )
 
         wait_inventory_contains(bot, OUTPUT_ID, timeout=10.0)

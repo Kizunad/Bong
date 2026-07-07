@@ -40,7 +40,9 @@ def run(env) -> None:
         snapshot = latest_inventory_snapshot(bot)
         anvil = require_item(snapshot, ANVIL_ID)
 
-        assert bot.position is not None
+        assert bot.position is not None, (
+            "需要 pos_look 后的 bot.position 来定砧位（wait_for_ready 应已保证）"
+        )
         px, py, pz = (int(v) for v in bot.position)
 
         anchor = last_event_time(bot)

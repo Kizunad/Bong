@@ -125,3 +125,12 @@ def _json_payload_type(data: bytes) -> str | None:
         if isinstance(value, str):
             return value
     return None
+
+
+def extract_floater_amounts(payload) -> list[float]:
+    """从解码后的 combat_event payload 提取全部伤害浮字 amount（正数才算命中）。"""
+    return [
+        float(entry.get("amount", 0.0))
+        for entry in payload.get("events", [])
+        if isinstance(entry, dict) and isinstance(entry.get("amount"), (int, float))
+    ]

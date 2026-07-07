@@ -105,6 +105,27 @@ def run(env) -> None:
             description="open_furnace 后应收到 alchemy_furnace 快照（炉阶/完整度可观察）",
         )
 
+        # 负分支：无会话投料 → chat「尚未起炉」
+        anchor = last_event_time(bot)
+        bot.intent(
+            {
+                "type": "alchemy_feed_slot",
+                "v": 1,
+                "furnace_pos": list(fpos),
+                "slot_idx": 0,
+                "material": "spirit_grass",
+                "count": 3,
+            }
+        )
+        bot.wait_for(
+            lambda e: e.kind == "chat" and e.t > anchor and "尚未起炉" in e.data["text"],
+            timeout=10.0,
+            description=(
+                "无丹火会话时投料应回 chat「尚未起炉」——会话前置校验丢失"
+                "会让投料静默吞材料"
+            ),
+        )
+
         # 点火（先于投料）
         anchor = last_event_time(bot)
         bot.intent(
@@ -156,10 +177,17 @@ def run(env) -> None:
                 "count": 3,
             }
         )
-        time.sleep(1.0)
+        bot.wait_for(
+            lambda e: e.kind == "server_data"
+            and e.data["payload_type"] == "alchemy_session"
+            and e.t > anchor,
+            timeout=10.0,
+            description="正确投料后应收到 alchemy_session 更新（投料已受理）",
+        )
 
         # 火候干预：调温到目标带 + 注真元付 qi_cost——不干预 = 温度 0/无真元，
         # resolver 判 Waste 出渣（实测 bucket=Waste）
+        anchor = last_event_time(bot)
         bot.intent(
             {
                 "type": "alchemy_intervention",
@@ -176,7 +204,13 @@ def run(env) -> None:
                 "intervention": {"kind": "inject_qi", "qi": 8.0},
             }
         )
-        time.sleep(0.5)
+        bot.wait_for(
+            lambda e: e.kind == "server_data"
+            and e.data["payload_type"] == "alchemy_session"
+            and e.t > anchor,
+            timeout=10.0,
+            description="干预后应收到 alchemy_session 更新（temp/qi 已写入）",
+        )
 
         # 收丹 = 结算触发：handle_alchemy_take_back 快进剩余 fire tick、
         # end_session 并 resolve（丹成不靠墙钟等待）

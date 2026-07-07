@@ -505,10 +505,18 @@ class ProdConsumeDecodeTest(unittest.TestCase):
             + _pb_varint_field(6, 400)
         )
         decoded = proto_min.decode_server_data_envelope(_pb_len_field(22, msg))
-        self.assertEqual(decoded["type"], "craft_session_state")
+        self.assertEqual(
+            decoded["type"], "craft_session_state",
+            "envelope tag 22 应分发到 craft_session_state（envelope.proto oneof）",
+        )
         self.assertTrue(decoded["active"], "field3=1 应解为 active=True")
-        self.assertEqual(decoded["recipe_id"], "workbench.weapon.stone_knife")
-        self.assertEqual(decoded["total_ticks"], 400)
+        self.assertEqual(
+            decoded["recipe_id"], "workbench.weapon.stone_knife",
+            "CraftSessionState.recipe_id 是 field 4（optional string）",
+        )
+        self.assertEqual(
+            decoded["total_ticks"], 400, "CraftSessionState.total_ticks 是 field 6"
+        )
 
     def test_craft_outcome_completed_tag23(self):
         completed = (
@@ -519,45 +527,74 @@ class ProdConsumeDecodeTest(unittest.TestCase):
         decoded = proto_min.decode_server_data_envelope(
             _pb_len_field(23, _pb_len_field(1, completed))
         )
-        self.assertEqual(decoded["type"], "craft_outcome")
-        self.assertEqual(decoded["outcome"], "completed")
-        self.assertEqual(decoded["output_template"], "stone_knife")
-        self.assertEqual(decoded["output_count"], 1)
+        self.assertEqual(
+            decoded["type"], "craft_outcome", "envelope tag 23 应分发到 craft_outcome"
+        )
+        self.assertEqual(
+            decoded["outcome"], "completed", "oneof field 1 = CraftOutcomeCompleted"
+        )
+        self.assertEqual(
+            decoded["output_template"], "stone_knife",
+            "CraftOutcomeCompleted.output_template 是 field 4",
+        )
+        self.assertEqual(decoded["output_count"], 1, "output_count 是 field 5")
 
     def test_craft_outcome_failed_branch(self):
         failed = _pb_len_field(3, b"r") + _pb_varint_field(4, 2)
         decoded = proto_min.decode_server_data_envelope(
             _pb_len_field(23, _pb_len_field(2, failed))
         )
-        self.assertEqual(decoded["outcome"], "failed")
-        self.assertEqual(decoded["reason"], 2)
+        self.assertEqual(decoded["outcome"], "failed", "oneof field 2 = CraftOutcomeFailed")
+        self.assertEqual(decoded["reason"], 2, "CraftOutcomeFailed.reason 是 field 4（enum）")
+
+    def test_craft_outcome_unknown_fallback(self):
+        # 空 CraftOutcome（无 oneof 分支）→ 解码器兜底 unknown，不 crash
+        decoded = proto_min.decode_server_data_envelope(_pb_len_field(23, b""))
+        self.assertEqual(
+            decoded["outcome"], "unknown",
+            "无 completed/failed 分支的 CraftOutcome 应兜底 outcome=unknown（防解码 crash）",
+        )
 
     def test_alchemy_furnace_tag11_and_session_tag12(self):
         furnace = _pb_varint_field(4, 1)
         decoded = proto_min.decode_server_data_envelope(_pb_len_field(11, furnace))
-        self.assertEqual(decoded["type"], "alchemy_furnace")
-        self.assertEqual(decoded["tier"], 1)
+        self.assertEqual(
+            decoded["type"], "alchemy_furnace", "envelope tag 11 应分发到 alchemy_furnace"
+        )
+        self.assertEqual(decoded["tier"], 1, "AlchemyFurnace.tier 是 field 4")
 
         session = _pb_len_field(1, b"ling_xi_wan_v1") + _pb_varint_field(2, 1)
         decoded = proto_min.decode_server_data_envelope(_pb_len_field(12, session))
-        self.assertEqual(decoded["type"], "alchemy_session")
-        self.assertEqual(decoded["recipe_id"], "ling_xi_wan_v1")
-        self.assertTrue(decoded["active"])
+        self.assertEqual(
+            decoded["type"], "alchemy_session", "envelope tag 12 应分发到 alchemy_session"
+        )
+        self.assertEqual(
+            decoded["recipe_id"], "ling_xi_wan_v1", "AlchemySession.recipe_id 是 field 1"
+        )
+        self.assertTrue(decoded["active"], "AlchemySession.active 是 field 2")
 
     def test_alchemy_outcome_resolved_tag14(self):
         outcome = _pb_varint_field(1, 1) + _pb_len_field(3, b"ling_xi_wan")
         decoded = proto_min.decode_server_data_envelope(_pb_len_field(14, outcome))
-        self.assertEqual(decoded["type"], "alchemy_outcome_resolved")
-        self.assertEqual(decoded["pill"], "ling_xi_wan")
+        self.assertEqual(
+            decoded["type"], "alchemy_outcome_resolved",
+            "envelope tag 14 应分发到 alchemy_outcome_resolved",
+        )
+        self.assertEqual(
+            decoded["pill"], "ling_xi_wan", "AlchemyOutcomeResolved.pill 是 field 3"
+        )
 
     def test_cast_sync_tag34_outcome_names(self):
         # outcome=8 → meridian_gated（经脉门拒因，场景负分支断言依赖此命名）
         msg = _pb_varint_field(1, 3) + _pb_varint_field(2, 1) + _pb_varint_field(5, 8)
         decoded = proto_min.decode_server_data_envelope(_pb_len_field(34, msg))
-        self.assertEqual(decoded["type"], "cast_sync")
-        self.assertEqual(decoded["phase"], "complete")
-        self.assertEqual(decoded["slot"], 1)
-        self.assertEqual(decoded["outcome"], "meridian_gated")
+        self.assertEqual(decoded["type"], "cast_sync", "envelope tag 34 应分发到 cast_sync")
+        self.assertEqual(decoded["phase"], "complete", "CastPhase=3 → complete")
+        self.assertEqual(decoded["slot"], 1, "CastSync.slot 是 field 2")
+        self.assertEqual(
+            decoded["outcome"], "meridian_gated",
+            "CastOutcome=8 → meridian_gated（场景负分支断言依赖此命名）",
+        )
 
     def test_combat_event_floater_tag51_amount_float32(self):
         entry = (
@@ -568,10 +605,15 @@ class ProdConsumeDecodeTest(unittest.TestCase):
         decoded = proto_min.decode_server_data_envelope(
             _pb_len_field(51, _pb_len_field(1, entry))
         )
-        self.assertEqual(decoded["type"], "combat_event")
-        self.assertEqual(len(decoded["events"]), 1)
-        self.assertEqual(decoded["events"][0]["kind"], "damage")
-        self.assertAlmostEqual(decoded["events"][0]["amount"], 12.5, places=4)
+        self.assertEqual(
+            decoded["type"], "combat_event", "envelope tag 51 应分发到 combat_event"
+        )
+        self.assertEqual(len(decoded["events"]), 1, "repeated entries 应逐条解出")
+        self.assertEqual(decoded["events"][0]["kind"], "damage", "entry.kind 是 field 1")
+        self.assertAlmostEqual(
+            decoded["events"][0]["amount"], 12.5, places=4,
+            msg="entry.amount 是 field 2（float32 wire type 5，非 double）",
+        )
 
 
 if __name__ == "__main__":
