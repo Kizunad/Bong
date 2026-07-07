@@ -700,6 +700,60 @@ class BakeZoneQiE2ETest(unittest.TestCase):
         )
 
 
+class BudgetScaleInvarianceTest(unittest.TestCase):
+    """预算尺度不变性：budget 只缩放份额报表，zones.json 的 spirit_qi 与其无关.
+
+    #840 把 Rust ``DEFAULT_SPIRIT_QI_TOTAL`` 从 100 抬到 20000（运行时经济体量），
+    Python 锚同步跟进。此测试锁死「同步锚不改产物」：派生 spirit_qi 在任意
+    budget 下逐值相等；份额按 budget 比例线性缩放（守恒归一的定义）。若此测试
+    撞红，说明有人把 budget 掺进了浓度派生——那是两个量纲，必须分开。
+    """
+
+    def test_derived_spirit_qi_invariant_and_shares_scale_linearly(self) -> None:
+        zones = [
+            _zone("a", cx=0, cz=0, half=100, grade=QiGrade.FONT),
+            _zone("b", cx=1000, cz=0, half=100, grade=QiGrade.COMMON),
+            _zone("c", cx=2000, cz=0, half=100, grade=QiGrade.NEGATIVE),
+        ]
+        derived = derive_zone_spirit_qi(zones, enable_veins=False)
+        world_area = 10_000_000.0
+
+        report_100 = balance_qi_budget(zones, derived, world_area=world_area, budget=100.0)
+        report_20k = balance_qi_budget(zones, derived, world_area=world_area, budget=20000.0)
+
+        # derived 映射是 balance 的输入且不被改写——zones.json 写出的就是它
+        derived_after = derive_zone_spirit_qi(zones, enable_veins=False)
+        for name in derived:
+            self.assertAlmostEqual(
+                derived[name], derived_after[name], places=12,
+                msg=f"zone {name} 的派生 spirit_qi 不得依赖 budget（浓度 vs 预算是两个量纲）",
+            )
+
+        # 份额线性缩放：share_20k == share_100 * 200（k = budget/M 的直接推论）
+        scale = 20000.0 / 100.0
+        for name in report_100.zone_shares:
+            self.assertAlmostEqual(
+                report_20k.zone_shares[name],
+                report_100.zone_shares[name] * scale,
+                places=6,
+                msg=(
+                    f"zone {name} 份额应随 budget 严格线性缩放 ×{scale}，"
+                    f"否则配平归一被引入了非线性项"
+                ),
+            )
+        self.assertAlmostEqual(
+            report_20k.wilderness_share, report_100.wilderness_share * scale, places=6,
+            msg="wilderness 份额同样应严格线性缩放",
+        )
+
+    def test_default_anchor_is_20000_matching_rust_840(self) -> None:
+        self.assertEqual(
+            ze._RUST_DEFAULT_SPIRIT_QI_TOTAL, 20000.0,
+            "Python 默认锚必须 = Rust DEFAULT_SPIRIT_QI_TOTAL（#840 起 20000）；"
+            "改动任一侧必须两边同步（assert_const_matches_rust 会在 CI 撞红）",
+        )
+
+
 class SpawnBreakthroughContractTest(unittest.TestCase):
     """出生区可突破契约：蓝图 spawn spirit_qi 必须给 server 突破门槛留足余量.
 

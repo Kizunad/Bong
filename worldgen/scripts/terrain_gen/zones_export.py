@@ -78,11 +78,16 @@ from .qi_field import (
 # ---------------------------------------------------------------------------
 SPIRIT_QI_TOTAL_ENV = "BONG_SPIRIT_QI_TOTAL"
 
-# Rust ``DEFAULT_SPIRIT_QI_TOTAL`` 数值锚（constants.rs:64）。单列为模块常量而非
-# 散落字面量，便于 CI 对拍（grep constants.rs 验证未漂移，见
+# Rust ``DEFAULT_SPIRIT_QI_TOTAL`` 数值锚（qi_physics/constants.rs）。单列为模块
+# 常量而非散落字面量，便于 CI 对拍（grep constants.rs 验证未漂移，见
 # ``assert_const_matches_rust``）。命名刻意区别于 ``SPIRIT_QI_TOTAL``：这是
 # "Rust 默认值的 Python 镜像锚"，env var 未设时由它兜底。
-_RUST_DEFAULT_SPIRIT_QI_TOTAL = 100.0
+#
+# PR #840（plan-zone-qi-economy-v1）把 Rust 侧从 100 抬到 20000（运行时经济
+# 体量：储备池/虚空配额等 gameplay 尺度），本锚同步跟进。注意 budget 只影响
+# 份额**报表**的绝对尺度——zones.json 的 spirit_qi 是浓度标量，与 budget
+# 无关（尺度不变性由 ``BudgetScaleInvarianceTest`` 锁定）。
+_RUST_DEFAULT_SPIRIT_QI_TOTAL = 20000.0
 
 
 def resolve_spirit_qi_total() -> float:
