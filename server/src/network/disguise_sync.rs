@@ -20,17 +20,17 @@
 
 /// 视距外加的保险 margin（chunk）：实体所在 chunk 边缘与 client 所在
 /// chunk 中心的取整偏差最多各占 1 chunk。
-pub const SYNC_MARGIN_CHUNKS: f64 = 2.0;
+pub(crate) const SYNC_MARGIN_CHUNKS: f64 = 2.0;
 
 /// client 视距（chunk）→ 伪装名单同步半径（block，XZ Chebyshev）。
-pub fn sync_radius_blocks(view_distance_chunks: u8) -> f64 {
+pub(crate) fn sync_radius_blocks(view_distance_chunks: u8) -> f64 {
     (f64::from(view_distance_chunks) + SYNC_MARGIN_CHUNKS) * 16.0
 }
 
 /// 返回 `candidates` 中落在 `center` 周围 XZ Chebyshev `radius` 内的
 /// entity id（保持输入顺序）。Y 轴不参与——chunk 可见性只按水平距离判定，
 /// 按 Y 过滤会把头顶悬崖上可见的伪装实体错误剔除。
-pub fn ids_within_radius(
+pub(crate) fn ids_within_radius(
     candidates: &[(i32, [f64; 3])],
     center: [f64; 3],
     radius: f64,
@@ -47,7 +47,7 @@ pub fn ids_within_radius(
 /// per-client 过滤入口：解构 `Position`/`ViewDistance` 后走
 /// [`sync_radius_blocks`] + [`ids_within_radius`]。spider/daozhan 的
 /// join/periodic 四个调用点共用，防组合逻辑漂移。
-pub fn ids_visible_to_client(
+pub(crate) fn ids_visible_to_client(
     candidates: &[(i32, [f64; 3])],
     client_pos: &valence::prelude::Position,
     view_distance: &valence::prelude::ViewDistance,

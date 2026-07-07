@@ -106,16 +106,23 @@ type SpiderStateQuery<'w, 's> = Query<
     With<NpcMarker>,
 >;
 
+/// 纯逻辑核：从 (entity_id, 坐标, 状态) 流中筛出 Disguised 蛛。
+/// 与 ECS 解耦以便单测锁状态过滤分支（Ambush/Retreat 不得进名单）。
+fn disguised_entries(
+    entries: impl Iterator<Item = (i32, [f64; 3], SpiderDisguiseState)>,
+) -> Vec<(i32, [f64; 3])> {
+    entries
+        .filter(|(_, _, state)| *state == SpiderDisguiseState::Disguised)
+        .map(|(id, pos, _)| (id, pos))
+        .collect()
+}
+
 /// 收集所有 Disguised 蛛的 (entity_id, 坐标)，供逐 client 视距过滤。
 fn collect_disguised_spiders(spiders: &SpiderStateQuery<'_, '_>) -> Vec<(i32, [f64; 3])> {
-    spiders
-        .iter()
-        .filter(|(_, _, state)| **state == SpiderDisguiseState::Disguised)
-        .map(|(eid, pos, _)| {
-            let p = pos.get();
-            (eid.get(), [p.x, p.y, p.z])
-        })
-        .collect()
+    disguised_entries(spiders.iter().map(|(eid, pos, state)| {
+        let p = pos.get();
+        (eid.get(), [p.x, p.y, p.z], *state)
+    }))
 }
 
 /// 新玩家连接时推送其视野内的 Disguised 蛛 entity id 列表。
@@ -455,6 +462,45 @@ mod tests {
             found_mc_id, nearest_by_dist,
             "event.spider 策略与距离策略在多蛛场景应给出不同结果（若相同说明测试场景设置错误）"
         );
+    }
+
+    // ── disguised_entries 状态过滤（CodeRabbit r2：锁 Disguised-only 分支）──
+
+    /// 三态混合：只有 Disguised 进名单，Ambush/Retreat 全部剔除。
+    #[test]
+    fn disguised_entries_keeps_only_disguised_state() {
+        let entries = vec![
+            (1, [0.0, 64.0, 0.0], SpiderDisguiseState::Disguised),
+            (2, [1.0, 64.0, 0.0], SpiderDisguiseState::Ambush),
+            (3, [2.0, 64.0, 0.0], SpiderDisguiseState::Retreat),
+            (4, [3.0, 64.0, 0.0], SpiderDisguiseState::Disguised),
+        ];
+        let got = disguised_entries(entries.into_iter());
+        assert_eq!(
+            got,
+            vec![(1, [0.0, 64.0, 0.0]), (4, [3.0, 64.0, 0.0])],
+            "只有 Disguised 态可进伪装名单——Ambush（已暴起）/Retreat（撤退中）\
+             进名单会让 client 把现形蛛渲染回灰烬块"
+        );
+    }
+
+    /// 全部非 Disguised → 空名单（空表 keepalive 语义的上游输入）。
+    #[test]
+    fn disguised_entries_all_non_disguised_yield_empty() {
+        let entries = vec![
+            (1, [0.0, 64.0, 0.0], SpiderDisguiseState::Ambush),
+            (2, [1.0, 64.0, 0.0], SpiderDisguiseState::Retreat),
+        ];
+        assert!(
+            disguised_entries(entries.into_iter()).is_empty(),
+            "无 Disguised 蛛时应得空名单"
+        );
+    }
+
+    /// 空输入 → 空名单。
+    #[test]
+    fn disguised_entries_empty_input_yields_empty() {
+        assert!(disguised_entries(std::iter::empty()).is_empty());
     }
 
     /// 当 event.spider 指向已 despawn 的蛛（找不到匹配项）时，行为应是跳过（不 panic）。

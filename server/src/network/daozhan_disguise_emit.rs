@@ -111,16 +111,23 @@ type DaoZhanStateQuery<'w, 's> = Query<
     (With<NpcMarker>, Without<Client>),
 >;
 
+/// 纯逻辑核：从 (entity_id, 坐标, 状态) 流中筛出 Mimicry 道伥。
+/// 与 ECS 解耦以便单测锁状态过滤分支（Ambush 不得进名单）。
+fn mimicry_entries(
+    entries: impl Iterator<Item = (i32, [f64; 3], DaoZhangState)>,
+) -> Vec<(i32, [f64; 3])> {
+    entries
+        .filter(|(_, _, state)| *state == DaoZhangState::Mimicry)
+        .map(|(id, pos, _)| (id, pos))
+        .collect()
+}
+
 /// 收集所有 Mimicry 道伥的 (entity_id, 坐标)，供逐 client 视距过滤。
 fn collect_mimicry(daozhan_q: &DaoZhanStateQuery<'_, '_>) -> Vec<(i32, [f64; 3])> {
-    daozhan_q
-        .iter()
-        .filter(|(_, _, state)| **state == DaoZhangState::Mimicry)
-        .map(|(eid, pos, _)| {
-            let p = pos.get();
-            (eid.get(), [p.x, p.y, p.z])
-        })
-        .collect()
+    mimicry_entries(daozhan_q.iter().map(|(eid, pos, state)| {
+        let p = pos.get();
+        (eid.get(), [p.x, p.y, p.z], *state)
+    }))
 }
 
 // ── 系统：玩家首次连接时广播 Mimicry 道伥列表 ────────────────────────────────
@@ -378,6 +385,36 @@ mod tests {
             found.is_none(),
             "已 despawn 的道伥（index=99）查找应返回 None，系统应安静跳过"
         );
+    }
+
+    // ── mimicry_entries 状态过滤（与 spider disguised_entries 对称）─────────
+
+    /// 两态混合：只有 Mimicry 进名单，Ambush（已暴起吸取）剔除。
+    #[test]
+    fn mimicry_entries_keeps_only_mimicry_state() {
+        let entries = vec![
+            (1, [0.0, 64.0, 0.0], DaoZhangState::Mimicry),
+            (2, [1.0, 64.0, 0.0], DaoZhangState::Ambush),
+            (3, [2.0, 64.0, 0.0], DaoZhangState::Mimicry),
+        ];
+        let got = mimicry_entries(entries.into_iter());
+        assert_eq!(
+            got,
+            vec![(1, [0.0, 64.0, 0.0]), (3, [2.0, 64.0, 0.0])],
+            "只有 Mimicry 态可进伪装名单——Ambush 态进名单会让 client 把\
+             现形道伥渲染回假玩家"
+        );
+    }
+
+    /// 全部 Ambush / 空输入 → 空名单。
+    #[test]
+    fn mimicry_entries_boundary_empty_cases() {
+        let all_ambush = vec![(1, [0.0, 64.0, 0.0], DaoZhangState::Ambush)];
+        assert!(
+            mimicry_entries(all_ambush.into_iter()).is_empty(),
+            "无 Mimicry 道伥时应得空名单"
+        );
+        assert!(mimicry_entries(std::iter::empty()).is_empty());
     }
 
     /// 验证 DaoZhangRevealEvent 字段存在（P2 emit 路径静态检查）。
