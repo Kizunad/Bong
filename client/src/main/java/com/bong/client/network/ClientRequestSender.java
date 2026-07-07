@@ -272,6 +272,25 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodeNpcTradeRequest(npcEntityId, offeredItems, requestedItemId));
     }
 
+    // ─── plan-forge-session-entry-wiring-v1 §4.1#2/#3：起炉 / 图谱翻页 C2S ────────────
+
+    /**
+     * plan-forge-session-entry-wiring-v1 §4.1#3 —— 起炉请求。station 用坐标寻址
+     * （对齐 {@code sendAlchemyOpenFurnace(BlockPos)} 的 BlockPos 参数形状）。
+     */
+    public static void sendForgeStartSession(
+        BlockPos stationPos,
+        String blueprintId,
+        List<ClientRequestProtocol.ForgeMaterial> materials
+    ) {
+        dispatch(ClientRequestProtocol.encodeForgeStartSession(stationPos, blueprintId, materials));
+    }
+
+    /** plan-forge-session-entry-wiring-v1 §4.1#2 —— 图谱书翻页请求，server 权威页码。 */
+    public static void sendForgeBlueprintTurnPage(int delta) {
+        dispatch(ClientRequestProtocol.encodeForgeBlueprintTurnPage(delta));
+    }
+
     public static void sendForgeTemperingHit(
         long sessionId,
         ClientRequestProtocol.TemperBeat beat,
