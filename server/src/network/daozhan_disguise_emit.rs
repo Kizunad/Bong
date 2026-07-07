@@ -1,8 +1,9 @@
 //! plan-daozhan-v1 P1 — 道伥伪装状态 S2C CustomPayload
 //!
 //! 两个 channel：
-//!   - `bong:daozhan_disguise_enter`：玩家连接或进入区域时，下发当前所有 Mimicry 态道伥的
-//!     entity_id 列表，供 client 端 DaoZhanDisguiseHandler.java 切换为 FakePlayerEntity 渲染。
+//!   - `bong:daozhan_disguise_enter`：玩家连接或周期 sync 时，下发该玩家**视距内**的
+//!     Mimicry 态道伥 entity_id 列表（`disguise_sync` 半径过滤，反作弊信息面收敛），
+//!     供 client 端 DaoZhanDisguiseHandler.java 切换为 FakePlayerEntity 渲染。
 //!   - `bong:daozhan_reveal`：道伥从 Mimicry → Ambush 转换时（P2 DaoZhangRevealEvent），
 //!     向范围内玩家广播，client 端切回正常 Daoxiang 渲染。
 //!
@@ -28,11 +29,12 @@ use serde::{Deserialize, Serialize};
 use valence::entity::EntityId;
 use valence::prelude::{
     bevy_ecs, ident, Added, App, Client, DVec3, Entity, Event, EventReader, Position, Query, Res,
-    Update, With, Without,
+    Update, ViewDistance, With, Without,
 };
 
 use crate::cultivation::tick::CultivationClock;
 use crate::fauna::daozhan::DaoZhangState;
+use crate::network::disguise_sync::{ids_within_radius, sync_radius_blocks};
 use crate::npc::spawn::NpcMarker;
 use crate::schema::common::MAX_PAYLOAD_BYTES;
 use crate::schema::server_data::ServerDataBuildError;
@@ -102,60 +104,83 @@ pub struct DaoZhangRevealEvent {
 
 // ── 系统共用 Query 类型别名 ───────────────────────────────────────────────────
 
-type DaoZhanStateQuery<'w, 's> =
-    Query<'w, 's, (&'static EntityId, &'static DaoZhangState), (With<NpcMarker>, Without<Client>)>;
+type DaoZhanStateQuery<'w, 's> = Query<
+    'w,
+    's,
+    (&'static EntityId, &'static Position, &'static DaoZhangState),
+    (With<NpcMarker>, Without<Client>),
+>;
+
+/// 收集所有 Mimicry 道伥的 (entity_id, 坐标)，供逐 client 视距过滤。
+fn collect_mimicry(daozhan_q: &DaoZhanStateQuery<'_, '_>) -> Vec<(i32, [f64; 3])> {
+    daozhan_q
+        .iter()
+        .filter(|(_, _, state)| **state == DaoZhangState::Mimicry)
+        .map(|(eid, pos, _)| {
+            let p = pos.get();
+            (eid.get(), [p.x, p.y, p.z])
+        })
+        .collect()
+}
 
 // ── 系统：玩家首次连接时广播 Mimicry 道伥列表 ────────────────────────────────
 
-/// 新玩家连接时推送当前所有 Mimicry 道伥 entity id 列表。
+/// 新玩家连接时推送其视野内的 Mimicry 道伥 entity id 列表。
+///
+/// 名单按 client 视距过滤（见 `disguise_sync`）——全图伪装名单不进 wire。
 pub fn on_player_join_send_daozhan_disguise_list(
-    mut new_clients: Query<&mut Client, Added<Client>>,
+    mut new_clients: Query<(&mut Client, &Position, &ViewDistance), Added<Client>>,
     daozhan_q: DaoZhanStateQuery<'_, '_>,
 ) {
     if new_clients.is_empty() {
         return;
     }
 
-    let disguised_ids: Vec<i32> = daozhan_q
-        .iter()
-        .filter(|(_, state)| **state == DaoZhangState::Mimicry)
-        .map(|(eid, _)| eid.get())
-        .collect();
+    let disguised = collect_mimicry(&daozhan_q);
 
-    let payload = DaoZhanDisguiseS2c::disguise_enter(disguised_ids);
-    let Ok(bytes) = payload.to_json_bytes_checked() else {
-        tracing::warn!("[bong][daozhan_disguise] disguise_enter payload oversize, skip");
-        return;
-    };
-
-    for mut client in &mut new_clients {
+    for (mut client, client_pos, view_distance) in &mut new_clients {
+        let cp = client_pos.get();
+        let ids = ids_within_radius(
+            &disguised,
+            [cp.x, cp.y, cp.z],
+            sync_radius_blocks(view_distance.get()),
+        );
+        let payload = DaoZhanDisguiseS2c::disguise_enter(ids);
+        let Ok(bytes) = payload.to_json_bytes_checked() else {
+            tracing::warn!("[bong][daozhan_disguise] disguise_enter payload oversize, skip");
+            continue;
+        };
         client.send_custom_payload(ident!("bong:daozhan_disguise_enter"), &bytes);
     }
 }
 
-/// 周期性全量同步 Mimicry 道伥列表（防止 client 状态漂移）。
+/// 周期性全量同步视野内 Mimicry 道伥列表（防止 client 状态漂移）。
+///
+/// 空表也照发——client 端是全量替换语义，空表 keepalive 负责清掉实体
+/// 离开视野后残留的 stale 条目。
 pub fn periodic_daozhan_disguise_sync_system(
     clock: Res<CultivationClock>,
-    mut clients: Query<&mut Client, With<Client>>,
+    mut clients: Query<(&mut Client, &Position, &ViewDistance)>,
     daozhan_q: DaoZhanStateQuery<'_, '_>,
 ) {
     if clock.tick % DAOZHAN_DISGUISE_SYNC_INTERVAL_TICKS != 0 {
         return;
     }
 
-    let disguised_ids: Vec<i32> = daozhan_q
-        .iter()
-        .filter(|(_, state)| **state == DaoZhangState::Mimicry)
-        .map(|(eid, _)| eid.get())
-        .collect();
+    let disguised = collect_mimicry(&daozhan_q);
 
-    let payload = DaoZhanDisguiseS2c::disguise_enter(disguised_ids);
-    let Ok(bytes) = payload.to_json_bytes_checked() else {
-        tracing::warn!("[bong][daozhan_disguise] periodic disguise_enter oversize, skip");
-        return;
-    };
-
-    for mut client in &mut clients {
+    for (mut client, client_pos, view_distance) in &mut clients {
+        let cp = client_pos.get();
+        let ids = ids_within_radius(
+            &disguised,
+            [cp.x, cp.y, cp.z],
+            sync_radius_blocks(view_distance.get()),
+        );
+        let payload = DaoZhanDisguiseS2c::disguise_enter(ids);
+        let Ok(bytes) = payload.to_json_bytes_checked() else {
+            tracing::warn!("[bong][daozhan_disguise] periodic disguise_enter oversize, skip");
+            continue;
+        };
         client.send_custom_payload(ident!("bong:daozhan_disguise_enter"), &bytes);
     }
 }

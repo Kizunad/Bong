@@ -1,8 +1,9 @@
 //! 拟态灰烬蛛伪装状态 S2C CustomPayload — plan-fauna-mimic-spider-v1 P2
 //!
 //! 两个 channel：
-//!   - `bong:spider_disguise_enter`：玩家连接或进入区域时，下发当前所有 Disguised 蛛的
-//!     entity_id 列表，供 client 端 SpiderDisguiseHandler.java 切换渲染（ash_block 贴图覆盖）。
+//!   - `bong:spider_disguise_enter`：玩家连接或周期 sync 时，下发该玩家**视距内**的
+//!     Disguised 蛛 entity_id 列表（`disguise_sync` 半径过滤，反作弊信息面收敛），
+//!     供 client 端 SpiderDisguiseHandler.java 切换渲染（ash_block 贴图覆盖）。
 //!   - `bong:spider_ambush_trigger`：蛛从 Disguised→Ambush 转换时（SpiderAmbushTriggerEvent），
 //!     向范围内玩家广播，client 端切回正常蜘蛛渲染。
 //!
@@ -20,11 +21,12 @@
 use serde::{Deserialize, Serialize};
 use valence::entity::EntityId;
 use valence::prelude::{
-    ident, Added, Client, Entity, EventReader, Position, Query, Res, With, Without,
+    ident, Added, Client, Entity, EventReader, Position, Query, Res, ViewDistance, With, Without,
 };
 
 use crate::cultivation::tick::CultivationClock;
 use crate::fauna::mimic_spider::SpiderDisguiseState;
+use crate::network::disguise_sync::{ids_within_radius, sync_radius_blocks};
 use crate::npc::brain_spider::{SpiderAmbushTriggerEvent, SpiderDisguiseEnterEvent};
 use crate::npc::spawn::NpcMarker;
 use crate::schema::common::MAX_PAYLOAD_BYTES;
@@ -93,12 +95,13 @@ impl SpiderDisguiseS2c {
 
 // ── 系统：玩家首次连接时广播 Disguised 蛛列表 ─────────────────────────────────
 
-/// 新玩家连接时推送当前所有 Disguised 蛛 entity id 列表。
+/// 新玩家连接时推送其视野内的 Disguised 蛛 entity id 列表。
 ///
 /// 走 `Added<Client>` 过滤，只对新连接玩家发送（`SPIDER_DISGUISE_SYNC_INTERVAL_TICKS`
-/// 节流由 `periodic_spider_disguise_sync_system` 处理）。
+/// 节流由 `periodic_spider_disguise_sync_system` 处理）。名单按 client 视距过滤
+/// （见 `disguise_sync`）——全图伪装名单不进 wire，改装客户端读不到视野外的答案。
 pub fn on_player_join_send_spider_disguise_list(
-    mut new_clients: Query<&mut Client, Added<Client>>,
+    mut new_clients: Query<(&mut Client, &Position, &ViewDistance), Added<Client>>,
     spiders: Query<(&EntityId, &Position, &SpiderDisguiseState), With<NpcMarker>>,
 ) {
     // 如无新玩家，fast-return
@@ -106,49 +109,67 @@ pub fn on_player_join_send_spider_disguise_list(
         return;
     }
 
-    // 收集所有 Disguised 蛛的 entity_id
-    let disguised_ids: Vec<i32> = spiders
+    // 收集所有 Disguised 蛛的 (entity_id, 坐标)，逐 client 按视距过滤
+    let disguised: Vec<(i32, [f64; 3])> = spiders
         .iter()
         .filter(|(_, _, state)| **state == SpiderDisguiseState::Disguised)
-        .map(|(eid, _, _)| eid.get())
+        .map(|(eid, pos, _)| {
+            let p = pos.get();
+            (eid.get(), [p.x, p.y, p.z])
+        })
         .collect();
 
-    let payload = SpiderDisguiseS2c::disguise_enter(disguised_ids);
-    let Ok(bytes) = payload.to_json_bytes_checked() else {
-        tracing::warn!("[bong][spider_disguise] disguise_enter payload oversize, skip");
-        return;
-    };
-
-    for mut client in &mut new_clients {
+    for (mut client, client_pos, view_distance) in &mut new_clients {
+        let cp = client_pos.get();
+        let ids = ids_within_radius(
+            &disguised,
+            [cp.x, cp.y, cp.z],
+            sync_radius_blocks(view_distance.get()),
+        );
+        let payload = SpiderDisguiseS2c::disguise_enter(ids);
+        let Ok(bytes) = payload.to_json_bytes_checked() else {
+            tracing::warn!("[bong][spider_disguise] disguise_enter payload oversize, skip");
+            continue;
+        };
         client.send_custom_payload(ident!("bong:spider_disguise_enter"), &bytes);
     }
 }
 
-/// 周期性全量同步 Disguised 蛛列表（防止 client 状态漂移）。
+/// 周期性全量同步视野内 Disguised 蛛列表（防止 client 状态漂移）。
 ///
-/// 每 `SPIDER_DISGUISE_SYNC_INTERVAL_TICKS` tick 向所有玩家重发当前 Disguised 蛛列表。
+/// 每 `SPIDER_DISGUISE_SYNC_INTERVAL_TICKS` tick 向每个玩家重发**其视距内**的
+/// Disguised 蛛列表。空表也照发——client 端是全量替换语义，空表 keepalive
+/// 负责清掉实体离开视野后残留的 stale 条目。
 pub fn periodic_spider_disguise_sync_system(
     clock: Res<CultivationClock>,
-    mut clients: Query<&mut Client, With<Client>>,
-    spiders: Query<(&EntityId, &SpiderDisguiseState), With<NpcMarker>>,
+    mut clients: Query<(&mut Client, &Position, &ViewDistance)>,
+    spiders: Query<(&EntityId, &Position, &SpiderDisguiseState), With<NpcMarker>>,
 ) {
     if clock.tick % SPIDER_DISGUISE_SYNC_INTERVAL_TICKS != 0 {
         return;
     }
 
-    let disguised_ids: Vec<i32> = spiders
+    let disguised: Vec<(i32, [f64; 3])> = spiders
         .iter()
-        .filter(|(_, state)| **state == SpiderDisguiseState::Disguised)
-        .map(|(eid, _)| eid.get())
+        .filter(|(_, _, state)| **state == SpiderDisguiseState::Disguised)
+        .map(|(eid, pos, _)| {
+            let p = pos.get();
+            (eid.get(), [p.x, p.y, p.z])
+        })
         .collect();
 
-    let payload = SpiderDisguiseS2c::disguise_enter(disguised_ids);
-    let Ok(bytes) = payload.to_json_bytes_checked() else {
-        tracing::warn!("[bong][spider_disguise] periodic disguise_enter oversize, skip");
-        return;
-    };
-
-    for mut client in &mut clients {
+    for (mut client, client_pos, view_distance) in &mut clients {
+        let cp = client_pos.get();
+        let ids = ids_within_radius(
+            &disguised,
+            [cp.x, cp.y, cp.z],
+            sync_radius_blocks(view_distance.get()),
+        );
+        let payload = SpiderDisguiseS2c::disguise_enter(ids);
+        let Ok(bytes) = payload.to_json_bytes_checked() else {
+            tracing::warn!("[bong][spider_disguise] periodic disguise_enter oversize, skip");
+            continue;
+        };
         client.send_custom_payload(ident!("bong:spider_disguise_enter"), &bytes);
     }
 }

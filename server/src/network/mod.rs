@@ -27,6 +27,7 @@ pub mod cultivation_detail_emit;
 pub mod cultivation_insight_offer_emit;
 pub mod defense_window_emit;
 pub mod derived_attrs_emit;
+pub mod disguise_sync;
 pub mod dropped_loot_sync_emit;
 pub mod dugu_event_bridge;
 pub mod dugu_state_emit;

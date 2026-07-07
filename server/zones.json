@@ -685,7 +685,7 @@
           750.0
         ]
       },
-      "spirit_qi": 0.313513,
+      "spirit_qi": 0.363067,
       "danger_level": 1,
       "ambient_recipe_id": "ambient_spawn_plain",
       "active_events": [],
@@ -990,5 +990,5 @@
       "blocked_tiles": []
     }
   ],
-  "generated_by": "worldgen-v4 5208843d1"
+  "generated_by": "worldgen-v4 e42092c1"
 }
