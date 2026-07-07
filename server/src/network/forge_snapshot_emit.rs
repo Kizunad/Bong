@@ -109,6 +109,23 @@ pub fn send_forge_outcome_to_player(
     send_server_data_payload(client, bytes.as_slice());
 }
 
+/// plan-forge-session-entry-wiring-v1 §4.1#2 — 翻页（server 权威）后把新页码回推给
+/// 发起翻页的 client。只推 blueprint book 这一个 payload（不像 `send_forge_snapshots_to_player`
+/// 那样一并推 station/session——翻页时未必站在砧前）。
+pub fn send_blueprint_book_to_player(
+    client: &mut Client,
+    learned: &LearnedBlueprints,
+    registry: &BlueprintRegistry,
+) {
+    let payload = ServerDataV1::new(ServerDataPayloadV1::ForgeBlueprintBook(Box::new(
+        build_blueprint_book(learned, registry),
+    )));
+    let Ok(bytes) = crate::network::agent_bridge::serialize_server_data_payload(&payload) else {
+        return;
+    };
+    send_server_data_payload(client, bytes.as_slice());
+}
+
 fn build_station_data(station: &WeaponForgeStation, owner_name: &str) -> WeaponForgeStationDataV1 {
     WeaponForgeStationDataV1 {
         station_id: format!("forge_station_{}", owner_name),
@@ -116,6 +133,10 @@ fn build_station_data(station: &WeaponForgeStation, owner_name: &str) -> WeaponF
         integrity: station.integrity,
         owner_name: owner_name.to_string(),
         has_session: station.session.is_some(),
+        // plan-forge-session-entry-wiring-v1 §4.1#3 — 正常放砧路径 pos 恒 Some
+        // （station::handle_place_station_request 经 `WeaponForgeStation::placed` 构造）；
+        // 无 pos 只可能出现在测试 fixture，defensive 落 (0,0,0)。
+        pos: station.pos.unwrap_or((0, 0, 0)),
     }
 }
 

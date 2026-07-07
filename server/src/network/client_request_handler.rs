@@ -61,13 +61,13 @@ use crate::cultivation::technique_scroll::{
 };
 use crate::cultivation::tribulation::{HeartDemonChoiceSubmitted, StartDuXuRequest};
 use crate::cultivation::void::actions::VoidActionIntent;
-use crate::forge::blueprint::TemperBeat;
+use crate::forge::blueprint::{BlueprintRegistry, TemperBeat};
 use crate::forge::events::{
-    ConsecrationInject, InscriptionScrollSubmit, StepAdvance, TemperingHit,
+    ConsecrationInject, InscriptionScrollSubmit, StartForgeRequest, StepAdvance, TemperingHit,
 };
 use crate::forge::learned::LearnedBlueprints;
 use crate::forge::session::{ForgeSessionId, ForgeSessions, ForgeStep};
-use crate::forge::station::PlaceForgeStationRequest;
+use crate::forge::station::{PlaceForgeStationRequest, WeaponForgeStation};
 use crate::inventory::{
     add_item_to_player_inventory, add_item_to_player_inventory_with_alchemy, apply_inventory_move,
     apply_item_spiritual_wear, consume_item_instance_once, discard_inventory_item_to_dropped_loot,
@@ -102,6 +102,7 @@ use crate::network::audio_event_emit::{AudioRecipient, PlaySoundRecipeRequest};
 use crate::network::cast_emit::{
     apply_item_effect, current_unix_millis, push_cast_sync, CAST_INTERRUPT_COOLDOWN_TICKS,
 };
+use crate::network::forge_snapshot_emit;
 use crate::shelflife::probe::FreshnessProbeIntent;
 // dropped_loot_sync is emitted by dropped_loot_sync_emit.
 use crate::combat::shield_block::{LowerShieldIntent, RaiseShieldIntent};
@@ -327,6 +328,8 @@ pub struct ClientRequestDispatchParams<'w> {
     pub defense_tx: Option<ResMut<'w, Events<DefenseIntent>>>,
     pub revival_tx: Option<ResMut<'w, Events<RevivalActionIntent>>>,
     pub place_forge_station_tx: Option<ResMut<'w, Events<PlaceForgeStationRequest>>>,
+    /// plan-forge-session-entry-wiring-v1 §4.1#3/#4 — 起炉入口分发（原为 debug-log 死分支）。
+    pub start_forge_tx: Option<ResMut<'w, Events<StartForgeRequest>>>,
     pub tempering_hit_tx: Option<ResMut<'w, Events<TemperingHit>>>,
     pub consecration_inject_tx: Option<ResMut<'w, Events<ConsecrationInject>>>,
     pub step_advance_tx: Option<ResMut<'w, Events<StepAdvance>>>,
@@ -397,6 +400,13 @@ pub struct SkillScrollRequestParams<'w, 's> {
     pub inscription_scroll_tx: Option<ResMut<'w, Events<InscriptionScrollSubmit>>>,
     pub forge_sessions: Option<Res<'w, ForgeSessions>>,
     pub item_registry: Res<'w, ItemRegistry>,
+    /// plan-forge-session-entry-wiring-v1 §4.1#3 — station_pos → Entity 寻址（对齐
+    /// `with_owned_furnace_mut` 的 BlockPos 寻址模式）。
+    pub forge_stations: Query<'w, 's, (Entity, &'static WeaponForgeStation)>,
+    /// plan-forge-session-entry-wiring-v1 §4.1#2 — 翻页后回推 `forge_blueprint_book` 需要
+    /// blueprint 的 display_name/tier_cap/step_count。`Option` 与 `forge_sessions` 同规则：
+    /// 资源缺失时优雅跳过 S2C 回推而不 panic（`forge::register` 正常路径下恒 Some）。
+    pub blueprint_registry: Option<Res<'w, BlueprintRegistry>>,
 }
 
 type NpcEngagementItem = (
@@ -2597,11 +2607,30 @@ pub fn handle_client_request_payloads(
                     &mut skill_scroll_params.learned_blueprints,
                 );
             }
-            // ─── 炼器（武器）（plan-forge-v1 §1.3-§1.4）── wait for wiring ───
-            ClientRequestV1::ForgeStartSession { .. }
-            | ClientRequestV1::ForgeBlueprintTurnPage { .. } => {
-                tracing::debug!(
-                    "[bong][forge][network] plan-forge-v1 client_request not yet wired"
+            // ─── 炼器（武器）起炉 / 图谱翻页（plan-forge-session-entry-wiring-v1 §4.1#2/#3）───
+            ClientRequestV1::ForgeStartSession {
+                station_pos,
+                blueprint_id,
+                materials,
+                ..
+            } => {
+                handle_forge_start_session(
+                    ev.client,
+                    station_pos,
+                    blueprint_id,
+                    materials,
+                    &mut clients,
+                    &skill_scroll_params.forge_stations,
+                    &mut dispatch.start_forge_tx,
+                );
+            }
+            ClientRequestV1::ForgeBlueprintTurnPage { delta, .. } => {
+                handle_forge_blueprint_turn_page(
+                    ev.client,
+                    delta,
+                    &mut clients,
+                    &mut skill_scroll_params.learned_blueprints,
+                    skill_scroll_params.blueprint_registry.as_deref(),
                 );
             }
             // ─── 通用手搓（plan-craft-v1 P2） ────────────────────
@@ -3121,6 +3150,143 @@ fn resync_technique_scroll_use(
     if let Ok(known) = skill_scroll_params.known_techniques.get(entity) {
         send_techniques_snapshot_to_client(entity, &mut client, username.0.as_str(), known);
     }
+}
+
+/// plan-forge-session-entry-wiring-v1 §4.1#3 — station_pos → 站台实体寻址结果。
+#[derive(Debug, PartialEq, Eq)]
+enum ForgeStationRouteError {
+    Missing,
+    Forbidden { owner: Option<Entity> },
+}
+
+/// 按 `station_pos` 在 `WeaponForgeStation` 里查实体，并校验 owner（对齐
+/// `with_owned_furnace_mut` 的 BlockPos 寻址 + owner 校验模式；`WeaponForgeStation.owner`
+/// 是 `Option<Entity>`，直接与 `player` 比对，无需像 furnace 那样转 canonical_player_id 字符串）。
+fn find_owned_forge_station(
+    player: Entity,
+    station_pos: (i32, i32, i32),
+    stations: &Query<(Entity, &WeaponForgeStation)>,
+) -> Result<Entity, ForgeStationRouteError> {
+    let Some((station_entity, station)) = stations
+        .iter()
+        .find(|(_, station)| station.pos == Some(station_pos))
+    else {
+        return Err(ForgeStationRouteError::Missing);
+    };
+    let owner_ok = match station.owner {
+        None => true,
+        Some(owner) => owner == player,
+    };
+    if owner_ok {
+        Ok(station_entity)
+    } else {
+        Err(ForgeStationRouteError::Forbidden {
+            owner: station.owner,
+        })
+    }
+}
+
+fn send_forge_error(client: &mut Client, player_id: &str, message: String) {
+    client.send_chat_message(format!("§c[炼器] {message}"));
+    tracing::warn!("[bong][network][forge] error for `{player_id}`: {message}");
+}
+
+/// plan-forge-session-entry-wiring-v1 §4.1#3 — `ForgeStartSession` C2S 真分发（原为
+/// debug-log 死分支）。station_pos 解析失败/非本人的砧走 chat 回执（对齐 alchemy
+/// `send_alchemy_error` 模式）；解析成功则 send `StartForgeRequest`，权威校验（已学/
+/// 砧 tier/材料/持有量）全部留给 `forge::handle_start_forge_requests`（引擎侧，异步下一拍）。
+#[allow(clippy::too_many_arguments)]
+fn handle_forge_start_session(
+    entity: Entity,
+    station_pos: (i32, i32, i32),
+    blueprint_id: String,
+    materials: Vec<(String, u32)>,
+    clients: &mut Query<(&Username, &mut Client)>,
+    stations: &Query<(Entity, &WeaponForgeStation)>,
+    start_forge_tx: &mut Option<ResMut<Events<StartForgeRequest>>>,
+) {
+    let Ok((username, mut client)) = clients.get_mut(entity) else {
+        return;
+    };
+    let player_id = canonical_player_id(username.0.as_str());
+    match find_owned_forge_station(entity, station_pos, stations) {
+        Ok(station_entity) => {
+            let Some(start_forge_tx) = start_forge_tx.as_deref_mut() else {
+                tracing::warn!(
+                    "[bong][network][forge] start_session dropped: StartForgeRequest events resource missing"
+                );
+                return;
+            };
+            tracing::info!(
+                "[bong][network][forge] start_session pos={station_pos:?} blueprint={blueprint_id} \
+                 materials={materials:?} for `{player_id}`"
+            );
+            start_forge_tx.send(StartForgeRequest {
+                station: station_entity,
+                caster: entity,
+                blueprint: blueprint_id,
+                materials,
+            });
+        }
+        Err(ForgeStationRouteError::Missing) => {
+            tracing::warn!(
+                "[bong][network][forge] `{player_id}` start_session rejected: missing station pos={station_pos:?}"
+            );
+            send_forge_error(
+                &mut client,
+                &player_id,
+                format!("锻炉不存在：{station_pos:?}"),
+            );
+        }
+        Err(ForgeStationRouteError::Forbidden { owner }) => {
+            tracing::warn!(
+                "[bong][network][forge] `{player_id}` tried to start_session at pos={station_pos:?} owned by {owner:?}"
+            );
+            send_forge_error(&mut client, &player_id, "这座炼器炉不是你的".to_string());
+        }
+    }
+}
+
+/// plan-forge-session-entry-wiring-v1 §4.1#2 — `ForgeBlueprintTurnPage` C2S 真分发。
+/// server 权威页码：按 delta 步进 `LearnedBlueprints::next_page`/`prev_page`
+/// （二者各步 1 页且 %len 循环，|delta|>1 时循环调用对应次数以保持语义一致），
+/// 翻页后把最新页码通过 `forge_blueprint_book` S2C 回推。玩家从未学过任何图谱
+/// （`LearnedBlueprints` 组件懒插入，未学时不存在）时无书可翻，直接返回。
+fn handle_forge_blueprint_turn_page(
+    entity: Entity,
+    delta: i32,
+    clients: &mut Query<(&Username, &mut Client)>,
+    learned_blueprints: &mut Query<&mut LearnedBlueprints>,
+    registry: Option<&BlueprintRegistry>,
+) {
+    let Ok(mut learned) = learned_blueprints.get_mut(entity) else {
+        return;
+    };
+    if delta == 0 || learned.ids.is_empty() {
+        return;
+    }
+    for _ in 0..delta.unsigned_abs() {
+        if delta > 0 {
+            learned.next_page();
+        } else {
+            learned.prev_page();
+        }
+    }
+
+    let Ok((_, mut client)) = clients.get_mut(entity) else {
+        return;
+    };
+    tracing::info!(
+        "[bong][network][forge] blueprint_turn_page delta={delta} entity={entity:?} new_index={}",
+        learned.current_index
+    );
+    let Some(registry) = registry else {
+        tracing::warn!(
+            "[bong][network][forge] blueprint_turn_page: BlueprintRegistry resource missing, S2C echo skipped"
+        );
+        return;
+    };
+    forge_snapshot_emit::send_blueprint_book_to_player(&mut client, &learned, registry);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -7270,6 +7436,409 @@ mod tests {
         assert!(inventory.containers[0].items.is_empty());
         let learned = app.world().get::<LearnedBlueprints>(entity).unwrap();
         assert!(learned.knows("ling_feng_v0"));
+    }
+
+    // ══════════ plan-forge-session-entry-wiring-v1 §4.1#2/#3 — 分发层饱和测试 ══════════
+
+    fn send_forge_start_session(
+        app: &mut App,
+        client: Entity,
+        station_pos: (i32, i32, i32),
+        blueprint_id: &str,
+        materials: &[(&str, u32)],
+    ) {
+        let materials_json: Vec<String> = materials
+            .iter()
+            .map(|(m, c)| format!("[\"{m}\",{c}]"))
+            .collect();
+        let body = format!(
+            "{{\"type\":\"forge_start_session\",\"v\":1,\"station_pos\":[{},{},{}],\"blueprint_id\":\"{blueprint_id}\",\"materials\":[{}]}}",
+            station_pos.0,
+            station_pos.1,
+            station_pos.2,
+            materials_json.join(",")
+        );
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client,
+                channel: ident!("bong:client_request").into(),
+                data: body.into_bytes().into_boxed_slice(),
+            });
+    }
+
+    fn send_forge_turn_page(app: &mut App, client: Entity, delta: i32) {
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client,
+                channel: ident!("bong:client_request").into(),
+                data: format!(r#"{{"type":"forge_blueprint_turn_page","v":1,"delta":{delta}}}"#)
+                    .into_bytes()
+                    .into_boxed_slice(),
+            });
+    }
+
+    fn collect_forge_blueprint_books(
+        helper: &mut MockClientHelper,
+    ) -> Vec<crate::schema::forge::ForgeBlueprintBookDataV1> {
+        helper
+            .collect_received()
+            .0
+            .into_iter()
+            .filter_map(|frame| {
+                let packet = frame.decode::<CustomPayloadS2c>().ok()?;
+                if packet.channel.as_str() != SERVER_DATA_CHANNEL {
+                    return None;
+                }
+                let payload = serde_json::from_slice::<ServerDataV1>(packet.data.0 .0).ok()?;
+                match payload.payload {
+                    ServerDataPayloadV1::ForgeBlueprintBook(data) => Some(*data),
+                    _ => None,
+                }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn forge_start_session_dispatches_start_forge_request_for_owned_station() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        app.add_event::<StartForgeRequest>();
+
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        let station = app
+            .world_mut()
+            .spawn(WeaponForgeStation::placed(
+                valence::prelude::BlockPos::new(8, 66, 8),
+                1,
+                entity,
+            ))
+            .id();
+
+        send_forge_start_session(
+            &mut app,
+            entity,
+            (8, 66, 8),
+            "iron_sword_v0",
+            &[("fan_tie", 3)],
+        );
+        app.update();
+
+        let events = app
+            .world()
+            .resource::<valence::prelude::Events<StartForgeRequest>>();
+        let sent: Vec<_> = events.iter_current_update_events().collect();
+        assert_eq!(
+            sent.len(),
+            1,
+            "本人拥有的砧 + 合法 pos 应恰好分发 1 条 StartForgeRequest"
+        );
+        assert_eq!(sent[0].station, station);
+        assert_eq!(sent[0].caster, entity);
+        assert_eq!(sent[0].blueprint, "iron_sword_v0");
+        assert_eq!(sent[0].materials, vec![("fan_tie".to_string(), 3)]);
+        flush_all_client_packets(&mut app);
+        assert!(
+            collect_game_messages(&mut helper)
+                .iter()
+                .all(|m| !m.contains("炼器")),
+            "受理路径不应发出炼器错误 chat"
+        );
+    }
+
+    #[test]
+    fn forge_start_session_dispatches_for_unclaimed_station_with_no_owner() {
+        // owner=None 的砧（系统/公用砧）应放行任何玩家起炉。
+        let mut app = App::new();
+        register_request_app(&mut app);
+        app.add_event::<StartForgeRequest>();
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut().spawn(WeaponForgeStation {
+            tier: 1,
+            owner: None,
+            session: None,
+            integrity: 1.0,
+            pos: Some((8, 66, 8)),
+        });
+
+        send_forge_start_session(
+            &mut app,
+            entity,
+            (8, 66, 8),
+            "iron_sword_v0",
+            &[("fan_tie", 3)],
+        );
+        app.update();
+
+        let events = app
+            .world()
+            .resource::<valence::prelude::Events<StartForgeRequest>>();
+        assert_eq!(events.iter_current_update_events().count(), 1);
+    }
+
+    #[test]
+    fn forge_start_session_rejects_missing_station_with_chat_error_and_no_dispatch() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        app.add_event::<StartForgeRequest>();
+
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        // 故意不 spawn 任何 WeaponForgeStation。
+
+        send_forge_start_session(
+            &mut app,
+            entity,
+            (8, 66, 8),
+            "iron_sword_v0",
+            &[("fan_tie", 3)],
+        );
+        app.update();
+
+        let events = app
+            .world()
+            .resource::<valence::prelude::Events<StartForgeRequest>>();
+        assert_eq!(
+            events.iter_current_update_events().count(),
+            0,
+            "砧不存在时不应分发 StartForgeRequest"
+        );
+        flush_all_client_packets(&mut app);
+        let messages = collect_game_messages(&mut helper);
+        assert!(
+            messages.iter().any(|m| m.contains("锻炉不存在")),
+            "应回执锻炉不存在，实际收到：{messages:?}"
+        );
+    }
+
+    #[test]
+    fn forge_start_session_rejects_station_owned_by_someone_else() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        app.add_event::<StartForgeRequest>();
+
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        let (other_bundle, _other_helper) = create_mock_client("Bob");
+        let other_owner = app.world_mut().spawn(other_bundle).id();
+        app.world_mut().spawn(WeaponForgeStation::placed(
+            valence::prelude::BlockPos::new(8, 66, 8),
+            1,
+            other_owner,
+        ));
+
+        send_forge_start_session(
+            &mut app,
+            entity,
+            (8, 66, 8),
+            "iron_sword_v0",
+            &[("fan_tie", 3)],
+        );
+        app.update();
+
+        let events = app
+            .world()
+            .resource::<valence::prelude::Events<StartForgeRequest>>();
+        assert_eq!(
+            events.iter_current_update_events().count(),
+            0,
+            "非本人的砧不应分发 StartForgeRequest"
+        );
+        flush_all_client_packets(&mut app);
+        let messages = collect_game_messages(&mut helper);
+        assert!(
+            messages.iter().any(|m| m.contains("不是你的")),
+            "应回执所有权错误，实际收到：{messages:?}"
+        );
+    }
+
+    fn forge_blueprint_registry_for_tests() -> BlueprintRegistry {
+        BlueprintRegistry::load_dir_with_minerals(
+            crate::forge::blueprint::DEFAULT_BLUEPRINTS_DIR,
+            None,
+        )
+        .expect("default forge blueprints should load for dispatch tests")
+    }
+
+    #[test]
+    fn forge_blueprint_turn_page_positive_delta_advances_and_echoes_s2c() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        app.insert_resource(forge_blueprint_registry_for_tests());
+
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                LearnedBlueprints {
+                    ids: vec![
+                        "iron_sword_v0".to_string(),
+                        "qing_feng_v0".to_string(),
+                        "ling_feng_v0".to_string(),
+                    ],
+                    current_index: 0,
+                },
+            ))
+            .id();
+
+        send_forge_turn_page(&mut app, entity, 1);
+        app.update();
+
+        let learned = app.world().get::<LearnedBlueprints>(entity).unwrap();
+        assert_eq!(learned.current_index, 1, "delta=1 应恰好前进 1 页");
+
+        flush_all_client_packets(&mut app);
+        let books = collect_forge_blueprint_books(&mut helper);
+        assert_eq!(books.len(), 1, "翻页应恰好回推 1 条 forge_blueprint_book");
+        assert_eq!(books[0].current_index, 1);
+    }
+
+    #[test]
+    fn forge_blueprint_turn_page_negative_delta_wraps_to_last_page() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        app.insert_resource(forge_blueprint_registry_for_tests());
+
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                LearnedBlueprints {
+                    ids: vec![
+                        "iron_sword_v0".to_string(),
+                        "qing_feng_v0".to_string(),
+                        "ling_feng_v0".to_string(),
+                    ],
+                    current_index: 0,
+                },
+            ))
+            .id();
+
+        send_forge_turn_page(&mut app, entity, -1);
+        app.update();
+
+        let learned = app.world().get::<LearnedBlueprints>(entity).unwrap();
+        assert_eq!(
+            learned.current_index, 2,
+            "从第 0 页向前翻应 wrap 到最后一页（索引 2）"
+        );
+        flush_all_client_packets(&mut app);
+        assert_eq!(collect_forge_blueprint_books(&mut helper).len(), 1);
+    }
+
+    #[test]
+    fn forge_blueprint_turn_page_multi_step_delta_advances_that_many_pages() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        app.insert_resource(forge_blueprint_registry_for_tests());
+
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                LearnedBlueprints {
+                    ids: vec![
+                        "iron_sword_v0".to_string(),
+                        "qing_feng_v0".to_string(),
+                        "ling_feng_v0".to_string(),
+                    ],
+                    current_index: 0,
+                },
+            ))
+            .id();
+
+        send_forge_turn_page(&mut app, entity, 2);
+        app.update();
+
+        let learned = app.world().get::<LearnedBlueprints>(entity).unwrap();
+        assert_eq!(learned.current_index, 2, "delta=2 应前进恰好 2 页");
+        flush_all_client_packets(&mut app);
+        assert_eq!(collect_forge_blueprint_books(&mut helper).len(), 1);
+    }
+
+    #[test]
+    fn forge_blueprint_turn_page_delta_zero_is_noop_no_s2c() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        app.insert_resource(forge_blueprint_registry_for_tests());
+
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                LearnedBlueprints {
+                    ids: vec!["iron_sword_v0".to_string()],
+                    current_index: 0,
+                },
+            ))
+            .id();
+
+        send_forge_turn_page(&mut app, entity, 0);
+        app.update();
+
+        let learned = app.world().get::<LearnedBlueprints>(entity).unwrap();
+        assert_eq!(learned.current_index, 0, "delta=0 不应改变页码");
+        flush_all_client_packets(&mut app);
+        assert!(
+            collect_forge_blueprint_books(&mut helper).is_empty(),
+            "delta=0 不应回推 S2C"
+        );
+    }
+
+    #[test]
+    fn forge_blueprint_turn_page_noop_when_never_learned_any_blueprint() {
+        // LearnedBlueprints 组件懒插入：从未学过图谱的玩家没有这个组件，无书可翻。
+        let mut app = App::new();
+        register_request_app(&mut app);
+        app.insert_resource(forge_blueprint_registry_for_tests());
+
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+
+        send_forge_turn_page(&mut app, entity, 1);
+        app.update();
+
+        assert!(
+            app.world().get::<LearnedBlueprints>(entity).is_none(),
+            "不应凭空创建 LearnedBlueprints 组件"
+        );
+        flush_all_client_packets(&mut app);
+        assert!(collect_forge_blueprint_books(&mut helper).is_empty());
+    }
+
+    #[test]
+    fn forge_blueprint_turn_page_noop_when_learned_list_empty() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        app.insert_resource(forge_blueprint_registry_for_tests());
+
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                LearnedBlueprints {
+                    ids: vec![],
+                    current_index: 0,
+                },
+            ))
+            .id();
+
+        send_forge_turn_page(&mut app, entity, 1);
+        app.update();
+
+        let learned = app.world().get::<LearnedBlueprints>(entity).unwrap();
+        assert_eq!(learned.current_index, 0, "空图谱列表翻页应无操作");
+        flush_all_client_packets(&mut app);
+        assert!(collect_forge_blueprint_books(&mut helper).is_empty());
     }
 
     #[test]
