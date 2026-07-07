@@ -217,4 +217,53 @@ class TargetInfoHudPlannerTest {
         assertTrue(commands.stream().anyMatch(cmd -> cmd.text().contains("KnownAlly")));
         assertTrue(commands.stream().noneMatch(cmd -> cmd.text().contains(TargetInfoState.ANONYMOUS_PLAYER_DISPLAY_NAME)));
     }
+
+    @Test
+    void pseudoPlayerEntityTargetInfoKeepsNonProfileDisplayName() {
+        String displayName = TargetInfoState.playerDisplayNameForTargetInfo(
+            "00000000-0000-0000-0000-000000000000",
+            "Remains_1234abcd",
+            "遗骸"
+        );
+        TargetInfoState state = TargetInfoState.create(
+            TargetInfoState.Kind.PLAYER,
+            "entity:9",
+            displayName,
+            "",
+            0.0,
+            0.0,
+            1_000L
+        );
+
+        List<HudRenderCommand> commands = TargetInfoHudPlanner.buildCommands(state, 1_500L, FIXED_WIDTH, 320, 180);
+
+        assertEquals("遗骸", state.displayName());
+        assertTrue(commands.stream().anyMatch(cmd -> cmd.text().contains("遗骸")));
+        assertTrue(commands.stream().noneMatch(cmd -> cmd.text().contains(TargetInfoState.ANONYMOUS_PLAYER_DISPLAY_NAME)));
+        assertTrue(commands.stream().noneMatch(cmd -> cmd.text().contains("Remains_1234abcd")));
+    }
+
+    @Test
+    void unknownPlayerDecoratedDisplayNameStillUsesAnonymousPlaceholder() {
+        String displayName = TargetInfoState.playerDisplayNameForTargetInfo(
+            "offline:LeakedName:char-uuid",
+            "LeakedName",
+            "[队伍] LeakedName"
+        );
+
+        TargetInfoState state = TargetInfoState.create(
+            TargetInfoState.Kind.PLAYER,
+            "entity:10",
+            displayName,
+            "",
+            0.8,
+            0.0,
+            1_000L
+        );
+        List<HudRenderCommand> commands = TargetInfoHudPlanner.buildCommands(state, 1_500L, FIXED_WIDTH, 320, 180);
+
+        assertEquals(TargetInfoState.ANONYMOUS_PLAYER_DISPLAY_NAME, state.displayName());
+        assertTrue(commands.stream().anyMatch(cmd -> cmd.text().contains(TargetInfoState.ANONYMOUS_PLAYER_DISPLAY_NAME)));
+        assertTrue(commands.stream().noneMatch(cmd -> cmd.text().contains("LeakedName")));
+    }
 }

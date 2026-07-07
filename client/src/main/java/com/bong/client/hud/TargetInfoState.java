@@ -103,11 +103,23 @@ public final class TargetInfoState {
 
     static String playerDisplayNameForTargetInfo(String playerUuid, String playerName, String fallbackDisplayName) {
         String normalizedName = normalize(playerName);
-        String visibleName = normalizedName.isEmpty() ? normalize(fallbackDisplayName) : normalizedName;
+        String normalizedFallback = normalize(fallbackDisplayName);
+        String visibleName = normalizedName.isEmpty() ? normalizedFallback : normalizedName;
         if (!SocialStateStore.shouldShowRemoteNameTag(playerUuid, visibleName)) {
+            if (isNonProfilePlayerLabel(normalizedName, normalizedFallback)) {
+                return normalizedFallback;
+            }
             return ANONYMOUS_PLAYER_DISPLAY_NAME;
         }
         return visibleName.isEmpty() ? ANONYMOUS_PLAYER_DISPLAY_NAME : visibleName;
+    }
+
+    private static boolean isNonProfilePlayerLabel(String playerName, String fallbackDisplayName) {
+        if (playerName.isEmpty() || fallbackDisplayName.isEmpty()) {
+            return false;
+        }
+        return !fallbackDisplayName.equalsIgnoreCase(playerName)
+            && !containsIgnoreCase(fallbackDisplayName, playerName);
     }
 
     static TargetInfoState fromNpcMetadata(NpcMetadata metadata, long observedAtMillis) {
@@ -184,6 +196,10 @@ public final class TargetInfoState {
 
     private static String normalize(String value) {
         return value == null ? "" : value.trim();
+    }
+
+    private static boolean containsIgnoreCase(String value, String needle) {
+        return value.toLowerCase(Locale.ROOT).contains(needle.toLowerCase(Locale.ROOT));
     }
 
     private static double clamp01(double value) {
