@@ -24,6 +24,15 @@ pub struct DeathDropAnchor {
     pub pos: [f64; 3],
 }
 
+/// TSY 死亡掉落窗口内的临时上下文。
+///
+/// Collapse completed 会立刻移除 `TsyPresence`，避免玩家继续被 gate 视作 TSY 内实体；
+/// 但复活掉落仍需要入场 snapshot 来执行 TSY 分流规则。
+#[derive(Debug, Clone, Component)]
+pub struct PendingTsyDeathDrop {
+    pub presence: crate::world::tsy::TsyPresence,
+}
+
 /// plan-death-lifecycle-v1 §4b：寿元耗尽（老死）后，不应把遗物散落为地面掉落点。
 /// 遗物应以“遗骸容器”的形式留在世界中供他人搜刮。
 ///
@@ -4102,6 +4111,7 @@ pub fn apply_death_drop_on_revive(
     anchors: Query<&DeathDropAnchor>,
     dimensions: Query<&CurrentDimension>,
     presences: Query<&crate::world::tsy::TsyPresence>,
+    pending_tsy_deaths: Query<&PendingTsyDeathDrop>,
     cultivations: Query<&crate::cultivation::components::Cultivation>,
     mut dropped_registry: bevy_ecs::system::ResMut<DroppedLootRegistry>,
     mut dropped_events: bevy_ecs::event::EventWriter<DroppedItemEvent>,
@@ -4122,7 +4132,12 @@ pub fn apply_death_drop_on_revive(
 
         // plan-tsy-loot-v1 §3.1：玩家在 TSY 内死亡 → 走分流（秘境所得 100% / 原带 50%）
         // + spawn 干尸 entity；否则走 §十二 主世界 50% 规则。
-        if let Ok(presence) = presences.get(ev.entity) {
+        let pending_tsy_presence = pending_tsy_deaths
+            .get(ev.entity)
+            .ok()
+            .map(|ctx| &ctx.presence);
+        let tsy_presence = pending_tsy_presence.or_else(|| presences.get(ev.entity).ok());
+        if let Some(presence) = tsy_presence {
             let tsy_outcome = tsy_death_drop::apply_tsy_death_drop(
                 &mut inventory,
                 &registry,
@@ -4130,6 +4145,7 @@ pub fn apply_death_drop_on_revive(
                 base,
                 seed,
             );
+            clear_death_drop_window_components(&mut commands, ev.entity);
             if tsy_outcome.total_dropped() == 0 {
                 continue;
             }
@@ -4229,6 +4245,14 @@ pub fn apply_death_drop_on_revive(
             dropped: outcome.dropped,
         });
     }
+}
+
+fn clear_death_drop_window_components(commands: &mut Commands, entity: Entity) {
+    commands.entity(entity).remove::<(
+        DeathDropAnchor,
+        PendingTsyDeathDrop,
+        crate::world::tsy::TsyPresence,
+    )>();
 }
 
 pub fn apply_death_drop_to_inventory(
@@ -10963,6 +10987,103 @@ cols = 4
         assert_eq!(events.len(), 1);
         assert_eq!(inv.revision, InventoryRevision(8));
         assert_eq!(inv.containers[0].items.len(), 1);
+    }
+
+    #[test]
+    fn apply_death_drop_on_revive_uses_pending_tsy_context_after_presence_is_cleared() {
+        use crate::world::tsy::{DimensionAnchor, TsyPresence};
+        use valence::prelude::{App, DVec3, Events, Position, Update};
+
+        let mut app = App::new();
+        app.add_event::<PlayerRevived>();
+        app.add_event::<DroppedItemEvent>();
+        app.insert_resource(ItemRegistry::default());
+        app.insert_resource(DroppedLootRegistry::default());
+        app.add_systems(Update, apply_death_drop_on_revive);
+
+        let mut inventory = make_test_inventory_with_one_item();
+        inventory.containers[0].items.push(PlacedItemState {
+            row: 0,
+            col: 1,
+            instance: ItemInstance {
+                instance_id: 43,
+                template_id: "ningmai_powder".to_string(),
+                display_name: "凝脉散".to_string(),
+                grid_w: 1,
+                grid_h: 1,
+                weight: 0.2,
+                rarity: ItemRarity::Uncommon,
+                description: String::new(),
+                stack_count: 1,
+                spirit_quality: 1.0,
+                durability: 1.0,
+                freshness: None,
+                mineral_id: None,
+                charges: None,
+                forge_quality: None,
+                forge_color: None,
+                forge_side_effects: Vec::new(),
+                forge_achieved_tier: None,
+                alchemy: None,
+                lingering_owner_qi: None,
+            },
+        });
+
+        let presence = TsyPresence {
+            family_id: "tsy_lingxu_01".to_string(),
+            entered_at_tick: 7,
+            entry_inventory_snapshot: vec![42],
+            return_to: DimensionAnchor {
+                dimension: DimensionKind::Overworld,
+                pos: DVec3::new(1.0, 64.0, 1.0),
+            },
+        };
+        let entity = app
+            .world_mut()
+            .spawn((
+                inventory,
+                Position::new([10.0, 64.0, 10.0]),
+                DeathDropAnchor {
+                    pos: [10.0, 64.0, 10.0],
+                },
+                PendingTsyDeathDrop { presence },
+            ))
+            .id();
+
+        app.world_mut().send_event(PlayerRevived { entity });
+        app.update();
+
+        assert!(
+            app.world().get::<PendingTsyDeathDrop>(entity).is_none(),
+            "复活掉落消费后应清除 pending TSY 上下文"
+        );
+        assert!(
+            app.world().get::<DeathDropAnchor>(entity).is_none(),
+            "复活掉落消费后应清除死亡点 anchor"
+        );
+        assert!(
+            app.world()
+                .get::<crate::world::tsy::TsyPresence>(entity)
+                .is_none(),
+            "pending 上下文不应重新引入 live TsyPresence"
+        );
+
+        let dropped_registry = app.world().resource::<DroppedLootRegistry>();
+        let entry = dropped_registry
+            .entries
+            .get(&43)
+            .expect("TSY acquired item should drop via pending context");
+        assert_eq!(entry.dimension, DimensionKind::Tsy);
+        assert!(
+            entry
+                .source_container_id
+                .starts_with("tsy_corpse:tsy_lingxu_01/"),
+            "pending TSY context 应保留 family 前缀，实际 {}",
+            entry.source_container_id
+        );
+
+        let events = app.world().resource::<Events<DroppedItemEvent>>();
+        assert_eq!(events.len(), 1);
     }
 
     #[test]
