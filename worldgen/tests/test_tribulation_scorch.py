@@ -74,7 +74,7 @@ class TribulationScorchProfileTest(unittest.TestCase):
         self.assertEqual(
             [deco.name for deco in TRIBULATION_SCORCH_DECORATIONS],
             [
-                "glass_fulgurite",
+                "short_fulgurite_shards",
                 "charred_husk_tree",
                 "lightning_basalt_pit",
                 "lodestone_vortex",
