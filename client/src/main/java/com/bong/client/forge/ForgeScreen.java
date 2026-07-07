@@ -4,6 +4,7 @@ import com.bong.client.forge.state.BlueprintScrollStore;
 import com.bong.client.forge.state.ForgeOutcomeStore;
 import com.bong.client.forge.state.ForgeSessionStore;
 import com.bong.client.forge.state.ForgeStationStore;
+import com.bong.client.forge.input.ForgeStartInputHandler;
 import com.bong.client.forge.input.TemperingInputHandler;
 import com.bong.client.forge.screen.ConsecrationPanelComponent;
 import com.bong.client.forge.screen.InscriptionPanelComponent;
@@ -13,13 +14,16 @@ import com.bong.client.inventory.model.InventoryItem;
 import com.bong.client.inventory.model.InventoryModel;
 import com.bong.client.inventory.state.DragState;
 import com.bong.client.inventory.state.InventoryStateStore;
+import com.bong.client.network.ClientRequestSender;
 import io.wispforest.owo.ui.core.OwoUIDrawContext;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.text.Text;
 import org.lwjgl.glfw.GLFW;
 
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * plan-forge-v1 §3.3 MVP 锻炉 UI。
@@ -38,6 +42,12 @@ public final class ForgeScreen extends Screen {
     private final DragState dragState = new DragState();
     private int forgeGridX = -1;
     private int forgeGridY = -1;
+
+    /**
+     * plan-forge-session-entry-wiring-v1 §4.1 P1 —— 起炉前点选的投料（instanceId → 物品快照）。
+     * 只在 {@link #isBilletSelectionMode()}（尚无在炉会话）时可点选；起炉发出或会话开始后清空。
+     */
+    private final LinkedHashMap<Long, InventoryItem> billetSelection = new LinkedHashMap<>();
 
     public ForgeScreen() {
         super(Text.literal("锻炉"));
@@ -91,6 +101,23 @@ public final class ForgeScreen extends Screen {
                     left, panelY, consecrationPanel.isOverInjectButton(mouseX, mouseY));
                 y += ConsecrationPanelComponent.PANEL_HEIGHT + 10;
             }
+        } else {
+            // plan-forge-session-entry-wiring-v1 §4.1 P1 —— 起炉入口：尚无在炉会话时，点选
+            // 背包网格里的坯料，按 I 起炉（对齐 AlchemyScreen I 键点燃范式，station pos 从
+            // ForgeStationStore 取，见 §4.1#3）。
+            context.drawText(textRenderer,
+                Text.literal("§l起炉: §7点击矿石/坯料选定投料后按 I 起炉"),
+                left, y, 0xAADDFF, true);
+            y += 14;
+            OwoUIDrawContext owoContext = OwoUIDrawContext.of(context);
+            drawForgeBackpack(context, owoContext, left, y + 4);
+            y += FORGE_GRID_ROWS * GridSlotComponent.CELL_SIZE + FORGE_GRID_PAD + 14;
+            if (!billetSelection.isEmpty()) {
+                context.drawText(textRenderer,
+                    Text.literal("§l已选投料: §r" + describeBilletSelection()),
+                    left, y, 0xFFE8D8F4, true);
+                y += 14;
+            }
         }
 
         BlueprintScrollStore.Entry current = BlueprintScrollStore.current();
@@ -115,7 +142,7 @@ public final class ForgeScreen extends Screen {
             y += 14;
         }
 
-        context.drawText(textRenderer, Text.literal("§7按 U 关闭 | 图谱翻页: ←/→"),
+        context.drawText(textRenderer, Text.literal("§7按 U 关闭 | 图谱翻页: ←/→ | 起炉: I"),
             left, y + 8, 0x888888, true);
 
         drawDraggedItem(context, OwoUIDrawContext.of(context));
@@ -152,6 +179,9 @@ public final class ForgeScreen extends Screen {
             int sy = forgeGridY + entry.row() * cell;
             GridSlotComponent.drawItemTexture(owoContext, item, sx + 2, sy + 2, cell - 4, cell - 4);
             GridSlotComponent.drawItemOverlays(context, item, sx, sy, cell, cell);
+            if (billetSelection.containsKey(item.instanceId())) {
+                drawSlotBorder(context, sx, sy, cell, cell, 0xFFFFD45A);
+            }
         }
     }
 
@@ -188,6 +218,13 @@ public final class ForgeScreen extends Screen {
             if (entry != null && entry.item() != null) {
                 dragState.pickup(entry.item(), entry.containerId(), entry.row(), entry.col());
                 dragState.updateMouse(mouseX, mouseY);
+                return true;
+            }
+        }
+        if (button == GLFW.GLFW_MOUSE_BUTTON_LEFT && isBilletSelectionMode()) {
+            InventoryModel.GridEntry entry = forgeGridEntryAt(mouseX, mouseY);
+            if (entry != null && entry.item() != null) {
+                toggleBilletSelection(entry.item());
                 return true;
             }
         }
@@ -232,11 +269,17 @@ public final class ForgeScreen extends Screen {
             return true;
         }
         if (keyCode == 263) { // ←
-            BlueprintScrollStore.turn(-1);
+            // plan-forge-session-entry-wiring-v1 §4.1#2 —— server 权威页码：不再本地直改
+            // BlueprintScrollStore，页码只由 ForgeBlueprintBookHandler 从 S2C 回推更新。
+            ClientRequestSender.sendForgeBlueprintTurnPage(-1);
             return true;
         }
         if (keyCode == 262) { // →
-            BlueprintScrollStore.turn(1);
+            ClientRequestSender.sendForgeBlueprintTurnPage(1);
+            return true;
+        }
+        if (keyCode == 73 && isBilletSelectionMode()) { // I —— 起炉
+            attemptStartForge();
             return true;
         }
         return super.keyPressed(keyCode, scanCode, modifiers);
@@ -248,6 +291,58 @@ public final class ForgeScreen extends Screen {
 
     private boolean isConsecrationStep() {
         return "consecration".equals(ForgeSessionStore.snapshot().currentStep());
+    }
+
+    /** plan-forge-session-entry-wiring-v1 §4.1 P1 —— 尚无在炉会话时可点选坯料准备起炉。 */
+    private boolean isBilletSelectionMode() {
+        return ForgeSessionStore.snapshot().sessionId() <= 0;
+    }
+
+    private void toggleBilletSelection(InventoryItem item) {
+        long instanceId = item.instanceId();
+        if (billetSelection.containsKey(instanceId)) {
+            billetSelection.remove(instanceId);
+        } else {
+            billetSelection.put(instanceId, item);
+        }
+    }
+
+    /** 已选投料按 {@link InventoryItem#itemId()} 聚合数量（同材料多个堆叠会合并）。 */
+    private Map<String, Integer> aggregateBilletMaterials() {
+        Map<String, Integer> materials = new LinkedHashMap<>();
+        for (InventoryItem item : billetSelection.values()) {
+            materials.merge(item.itemId(), item.stackCount(), Integer::sum);
+        }
+        return materials;
+    }
+
+    private String describeBilletSelection() {
+        StringBuilder sb = new StringBuilder();
+        for (Map.Entry<String, Integer> entry : aggregateBilletMaterials().entrySet()) {
+            if (sb.length() > 0) {
+                sb.append(", ");
+            }
+            sb.append(entry.getKey()).append('x').append(entry.getValue());
+        }
+        return sb.toString();
+    }
+
+    /**
+     * plan-forge-session-entry-wiring-v1 §4.1#3 —— 起炉入口：station pos 从
+     * {@link ForgeStationStore} 取（U 键全局打开的本屏没有交互上下文），图谱 id 从
+     * {@link BlueprintScrollStore} 取，材料从本屏点选状态聚合。任一前置条件缺失时
+     * {@link ForgeStartInputHandler} 静默不发送。
+     */
+    private void attemptStartForge() {
+        BlueprintScrollStore.Entry blueprint = BlueprintScrollStore.current();
+        ForgeStationStore.Snapshot station = ForgeStationStore.snapshot();
+        boolean started = ForgeStartInputHandler.tryStartForge(
+            station.pos(),
+            blueprint != null ? blueprint.id() : null,
+            aggregateBilletMaterials());
+        if (started) {
+            billetSelection.clear();
+        }
     }
 
     private List<InventoryModel.GridEntry> primaryGridItems() {
