@@ -24,6 +24,7 @@ class TargetInfoHudPlannerTest {
         NpcMoodStore.clearAll();
         NpcMetadataStore.clearAll();
         SocialStateStore.resetForTests();
+        TargetInfoStateStore.resetForTests();
     }
 
     @Test
@@ -199,7 +200,7 @@ class TargetInfoHudPlannerTest {
         String displayName = TargetInfoState.playerDisplayNameForTargetInfo(
             "offline:KnownAlly:char-uuid",
             "KnownAlly",
-            "KnownAlly"
+            "[队伍] KnownAlly"
         );
         TargetInfoState state = TargetInfoState.create(
             TargetInfoState.Kind.PLAYER,
@@ -213,8 +214,8 @@ class TargetInfoHudPlannerTest {
 
         List<HudRenderCommand> commands = TargetInfoHudPlanner.buildCommands(state, 1_500L, FIXED_WIDTH, 320, 180);
 
-        assertEquals("KnownAlly", state.displayName());
-        assertTrue(commands.stream().anyMatch(cmd -> cmd.text().contains("KnownAlly")));
+        assertEquals("[队伍] KnownAlly", state.displayName());
+        assertTrue(commands.stream().anyMatch(cmd -> cmd.text().contains("[队伍] KnownAlly")));
         assertTrue(commands.stream().noneMatch(cmd -> cmd.text().contains(TargetInfoState.ANONYMOUS_PLAYER_DISPLAY_NAME)));
     }
 
@@ -241,6 +242,58 @@ class TargetInfoHudPlannerTest {
         assertTrue(commands.stream().anyMatch(cmd -> cmd.text().contains("遗骸")));
         assertTrue(commands.stream().noneMatch(cmd -> cmd.text().contains(TargetInfoState.ANONYMOUS_PLAYER_DISPLAY_NAME)));
         assertTrue(commands.stream().noneMatch(cmd -> cmd.text().contains("Remains_1234abcd")));
+    }
+
+    @Test
+    void anonymousPlayerFallbackWithoutProfileNameStillUsesAnonymousPlaceholder() {
+        SocialStateStore.replaceAnonymity("char:viewer", List.of(
+            new SocialStateStore.SocialRemoteIdentity(
+                "offline:LeakedName:char-uuid",
+                true,
+                "LeakedName",
+                "Awaken",
+                "",
+                List.of()
+            )
+        ));
+
+        String displayName = TargetInfoState.playerDisplayNameForTargetInfo(
+            "offline:LeakedName:char-uuid",
+            "LeakedName",
+            "青衣修士"
+        );
+
+        assertEquals(TargetInfoState.ANONYMOUS_PLAYER_DISPLAY_NAME, displayName);
+    }
+
+    @Test
+    void playerEntitySnapshotBranchMasksAnonymousDisplayName() {
+        SocialStateStore.replaceAnonymity("char:viewer", List.of(
+            new SocialStateStore.SocialRemoteIdentity(
+                "offline:LeakedName:char-uuid",
+                true,
+                "LeakedName",
+                "Awaken",
+                "",
+                List.of()
+            )
+        ));
+        TargetInfoState state = TargetInfoState.fromPlayerTargetInfo(
+            77,
+            "offline:LeakedName:char-uuid",
+            "LeakedName",
+            "[队伍] LeakedName",
+            1_000L
+        );
+
+        List<HudRenderCommand> commands = TargetInfoHudPlanner.buildCommands(state, 1_500L, FIXED_WIDTH, 320, 180);
+
+        assertEquals(TargetInfoState.Kind.PLAYER, state.kind());
+        assertEquals("entity:77", state.targetId());
+        assertEquals(TargetInfoState.ANONYMOUS_PLAYER_DISPLAY_NAME, state.displayName());
+        assertEquals(0.0, state.hpRatio());
+        assertTrue(commands.stream().anyMatch(cmd -> cmd.text().contains(TargetInfoState.ANONYMOUS_PLAYER_DISPLAY_NAME)));
+        assertTrue(commands.stream().noneMatch(cmd -> cmd.text().contains("LeakedName")));
     }
 
     @Test
