@@ -26,7 +26,7 @@ use valence::prelude::{
 
 use crate::cultivation::tick::CultivationClock;
 use crate::fauna::mimic_spider::SpiderDisguiseState;
-use crate::network::disguise_sync::{ids_within_radius, sync_radius_blocks};
+use crate::network::disguise_sync::ids_visible_to_client;
 use crate::npc::brain_spider::{SpiderAmbushTriggerEvent, SpiderDisguiseEnterEvent};
 use crate::npc::spawn::NpcMarker;
 use crate::schema::common::MAX_PAYLOAD_BYTES;
@@ -95,6 +95,29 @@ impl SpiderDisguiseS2c {
 
 // ── 系统：玩家首次连接时广播 Disguised 蛛列表 ─────────────────────────────────
 
+type SpiderStateQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
+        &'static EntityId,
+        &'static Position,
+        &'static SpiderDisguiseState,
+    ),
+    With<NpcMarker>,
+>;
+
+/// 收集所有 Disguised 蛛的 (entity_id, 坐标)，供逐 client 视距过滤。
+fn collect_disguised_spiders(spiders: &SpiderStateQuery<'_, '_>) -> Vec<(i32, [f64; 3])> {
+    spiders
+        .iter()
+        .filter(|(_, _, state)| **state == SpiderDisguiseState::Disguised)
+        .map(|(eid, pos, _)| {
+            let p = pos.get();
+            (eid.get(), [p.x, p.y, p.z])
+        })
+        .collect()
+}
+
 /// 新玩家连接时推送其视野内的 Disguised 蛛 entity id 列表。
 ///
 /// 走 `Added<Client>` 过滤，只对新连接玩家发送（`SPIDER_DISGUISE_SYNC_INTERVAL_TICKS`
@@ -102,30 +125,17 @@ impl SpiderDisguiseS2c {
 /// （见 `disguise_sync`）——全图伪装名单不进 wire，改装客户端读不到视野外的答案。
 pub fn on_player_join_send_spider_disguise_list(
     mut new_clients: Query<(&mut Client, &Position, &ViewDistance), Added<Client>>,
-    spiders: Query<(&EntityId, &Position, &SpiderDisguiseState), With<NpcMarker>>,
+    spiders: SpiderStateQuery<'_, '_>,
 ) {
     // 如无新玩家，fast-return
     if new_clients.is_empty() {
         return;
     }
 
-    // 收集所有 Disguised 蛛的 (entity_id, 坐标)，逐 client 按视距过滤
-    let disguised: Vec<(i32, [f64; 3])> = spiders
-        .iter()
-        .filter(|(_, _, state)| **state == SpiderDisguiseState::Disguised)
-        .map(|(eid, pos, _)| {
-            let p = pos.get();
-            (eid.get(), [p.x, p.y, p.z])
-        })
-        .collect();
+    let disguised = collect_disguised_spiders(&spiders);
 
     for (mut client, client_pos, view_distance) in &mut new_clients {
-        let cp = client_pos.get();
-        let ids = ids_within_radius(
-            &disguised,
-            [cp.x, cp.y, cp.z],
-            sync_radius_blocks(view_distance.get()),
-        );
+        let ids = ids_visible_to_client(&disguised, client_pos, view_distance);
         let payload = SpiderDisguiseS2c::disguise_enter(ids);
         let Ok(bytes) = payload.to_json_bytes_checked() else {
             tracing::warn!("[bong][spider_disguise] disguise_enter payload oversize, skip");
@@ -143,28 +153,16 @@ pub fn on_player_join_send_spider_disguise_list(
 pub fn periodic_spider_disguise_sync_system(
     clock: Res<CultivationClock>,
     mut clients: Query<(&mut Client, &Position, &ViewDistance)>,
-    spiders: Query<(&EntityId, &Position, &SpiderDisguiseState), With<NpcMarker>>,
+    spiders: SpiderStateQuery<'_, '_>,
 ) {
     if clock.tick % SPIDER_DISGUISE_SYNC_INTERVAL_TICKS != 0 {
         return;
     }
 
-    let disguised: Vec<(i32, [f64; 3])> = spiders
-        .iter()
-        .filter(|(_, _, state)| **state == SpiderDisguiseState::Disguised)
-        .map(|(eid, pos, _)| {
-            let p = pos.get();
-            (eid.get(), [p.x, p.y, p.z])
-        })
-        .collect();
+    let disguised = collect_disguised_spiders(&spiders);
 
     for (mut client, client_pos, view_distance) in &mut clients {
-        let cp = client_pos.get();
-        let ids = ids_within_radius(
-            &disguised,
-            [cp.x, cp.y, cp.z],
-            sync_radius_blocks(view_distance.get()),
-        );
+        let ids = ids_visible_to_client(&disguised, client_pos, view_distance);
         let payload = SpiderDisguiseS2c::disguise_enter(ids);
         let Ok(bytes) = payload.to_json_bytes_checked() else {
             tracing::warn!("[bong][spider_disguise] periodic disguise_enter oversize, skip");

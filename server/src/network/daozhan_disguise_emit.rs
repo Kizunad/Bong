@@ -34,7 +34,7 @@ use valence::prelude::{
 
 use crate::cultivation::tick::CultivationClock;
 use crate::fauna::daozhan::DaoZhangState;
-use crate::network::disguise_sync::{ids_within_radius, sync_radius_blocks};
+use crate::network::disguise_sync::ids_visible_to_client;
 use crate::npc::spawn::NpcMarker;
 use crate::schema::common::MAX_PAYLOAD_BYTES;
 use crate::schema::server_data::ServerDataBuildError;
@@ -139,12 +139,7 @@ pub fn on_player_join_send_daozhan_disguise_list(
     let disguised = collect_mimicry(&daozhan_q);
 
     for (mut client, client_pos, view_distance) in &mut new_clients {
-        let cp = client_pos.get();
-        let ids = ids_within_radius(
-            &disguised,
-            [cp.x, cp.y, cp.z],
-            sync_radius_blocks(view_distance.get()),
-        );
+        let ids = ids_visible_to_client(&disguised, client_pos, view_distance);
         let payload = DaoZhanDisguiseS2c::disguise_enter(ids);
         let Ok(bytes) = payload.to_json_bytes_checked() else {
             tracing::warn!("[bong][daozhan_disguise] disguise_enter payload oversize, skip");
@@ -170,12 +165,7 @@ pub fn periodic_daozhan_disguise_sync_system(
     let disguised = collect_mimicry(&daozhan_q);
 
     for (mut client, client_pos, view_distance) in &mut clients {
-        let cp = client_pos.get();
-        let ids = ids_within_radius(
-            &disguised,
-            [cp.x, cp.y, cp.z],
-            sync_radius_blocks(view_distance.get()),
-        );
+        let ids = ids_visible_to_client(&disguised, client_pos, view_distance);
         let payload = DaoZhanDisguiseS2c::disguise_enter(ids);
         let Ok(bytes) = payload.to_json_bytes_checked() else {
             tracing::warn!("[bong][daozhan_disguise] periodic disguise_enter oversize, skip");

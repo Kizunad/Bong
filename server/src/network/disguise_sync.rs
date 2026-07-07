@@ -44,6 +44,22 @@ pub fn ids_within_radius(
         .collect()
 }
 
+/// per-client 过滤入口：解构 `Position`/`ViewDistance` 后走
+/// [`sync_radius_blocks`] + [`ids_within_radius`]。spider/daozhan 的
+/// join/periodic 四个调用点共用，防组合逻辑漂移。
+pub fn ids_visible_to_client(
+    candidates: &[(i32, [f64; 3])],
+    client_pos: &valence::prelude::Position,
+    view_distance: &valence::prelude::ViewDistance,
+) -> Vec<i32> {
+    let p = client_pos.get();
+    ids_within_radius(
+        candidates,
+        [p.x, p.y, p.z],
+        sync_radius_blocks(view_distance.get()),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -136,5 +152,23 @@ mod tests {
 
         let b = ids_within_radius(&spiders, [980.0, 64.0, 0.0], sync_radius_blocks(10));
         assert_eq!(b, vec![2], "client B（远处, 半径192）只应看到它附近的蛛 2");
+    }
+
+    #[test]
+    fn ids_visible_to_client_wrapper_matches_manual_composition() {
+        use valence::prelude::{Position, ViewDistance};
+
+        let spiders = vec![(1, [50.0, 64.0, 0.0]), (2, [1000.0, 64.0, 0.0])];
+        let pos = Position::new([0.0, 64.0, 0.0]);
+        let vd = ViewDistance::new(2);
+
+        let via_wrapper = ids_visible_to_client(&spiders, &pos, &vd);
+        let manual = ids_within_radius(&spiders, [0.0, 64.0, 0.0], sync_radius_blocks(2));
+        assert_eq!(
+            via_wrapper, manual,
+            "组合入口 ids_visible_to_client 必须与手工组合 sync_radius_blocks+\
+             ids_within_radius 完全等价（四个调用点靠它防漂移）"
+        );
+        assert_eq!(via_wrapper, vec![1], "vd=2 半径 64 应只见近处蛛 1");
     }
 }
