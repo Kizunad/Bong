@@ -23,7 +23,7 @@
       },
       "center_xz": [0.0, 0.0],
       "size_xz": [1500.0, 1500.0],
-      "spirit_qi": 0.3,
+      "spirit_qi": 0.35,
       "danger_level": 1,
       "active_events": [],
       "patrol_anchors": [

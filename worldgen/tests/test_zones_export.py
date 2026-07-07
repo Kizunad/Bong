@@ -700,5 +700,32 @@ class BakeZoneQiE2ETest(unittest.TestCase):
         )
 
 
+class SpawnBreakthroughContractTest(unittest.TestCase):
+    """出生区可突破契约：蓝图 spawn spirit_qi 必须给 server 突破门槛留足余量.
+
+    server 侧 ``MIN_ZONE_QI_TO_BREAKTHROUGH = 0.30``（cultivation/breakthrough.rs），
+    烘焙派生（面积加权均值）+ 运行时 qi 经济（NPC 吸取）都会往下漂——0.30 蓝图
+    实测被拉到 live 0.29，新手在出生区永远无法突破（2026-07-06 playtest，
+    2026-07-07 用户拍板抬到 0.35）。server/src/world/zone.rs 有对应的烘焙
+    工件 pin（spawn_zone_baked_qi_clears_breakthrough_threshold_with_headroom），
+    这里锁蓝图源头，防"改低蓝图但不重烘焙"绕过工件 pin。
+    """
+
+    # 与 server cultivation/breakthrough.rs MIN_ZONE_QI_TO_BREAKTHROUGH 对齐
+    SERVER_MIN_ZONE_QI_TO_BREAKTHROUGH = 0.30
+
+    def test_blueprint_spawn_spirit_qi_has_breakthrough_headroom(self):
+        from scripts.terrain_gen.blueprint import DEFAULT_BLUEPRINT_PATH
+
+        raw = json.loads(DEFAULT_BLUEPRINT_PATH.read_text())
+        spawn = next(z for z in raw["zones"] if z["name"] == "spawn")
+        self.assertGreaterEqual(
+            spawn["spirit_qi"], 0.35,
+            f"spawn 蓝图 spirit_qi={spawn['spirit_qi']} 不得低于 0.35：server 突破门槛"
+            f"={self.SERVER_MIN_ZONE_QI_TO_BREAKTHROUGH}，派生+运行时漂移需要余量，"
+            f"压低会让新手在出生区永远无法突破",
+        )
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
