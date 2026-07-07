@@ -208,6 +208,7 @@ fn send_bite_feedback(clients: &mut Query<&mut Client>, target: Entity, drained:
         x: 0.0,
         y: 0.0,
         z: 0.0,
+        outgoing: false, // 发给被咬玩家：承伤视角
     };
     let payload = ServerDataV1::new(ServerDataPayloadV1::CombatEventFloater(
         CombatEventFloaterV1 {

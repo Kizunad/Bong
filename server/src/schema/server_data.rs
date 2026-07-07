@@ -665,6 +665,9 @@ pub struct CombatEventFloaterEntryV1 {
     pub x: f64,
     pub y: f64,
     pub z: f64,
+    /// 攻守方向：true=接收方打出（己方输出），false=接收方承伤。
+    #[serde(default)]
+    pub outgoing: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -4359,6 +4362,7 @@ mod tests {
                     x: 0.0,
                     y: 0.0,
                     z: 0.0,
+                    outgoing: false,
                 }],
             }),
             ServerDataPayloadV1::KnockbackSync(KnockbackSyncV1 {

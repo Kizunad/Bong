@@ -1862,6 +1862,10 @@ message CombatEventFloaterEntry {
   double x      = 4;
   double y      = 5;
   double z      = 6;
+  // 攻守方向：true=接收方打出的（己方输出），false=接收方挨的（承伤）。
+  // 无此标识时双方收到同数值同 kind 浮字，玩家/bot 均无法区分（2026-07-07
+  // playtest 误判「普攻不吃武器倍率」的根源）。
+  bool   outgoing = 7;
 }
 
 // 与 Rust CombatEventFloaterV1 精确对应。

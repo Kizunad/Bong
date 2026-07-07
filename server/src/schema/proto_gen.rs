@@ -4895,6 +4895,7 @@ mod tests {
                     x: 100.0,
                     y: 65.0,
                     z: -50.0,
+                    outgoing: false,
                 },
                 CombatEventFloaterEntry {
                     kind: "heal".to_string(),
@@ -4903,6 +4904,7 @@ mod tests {
                     x: 101.0,
                     y: 66.0,
                     z: -49.0,
+                    outgoing: false,
                 },
             ],
         };

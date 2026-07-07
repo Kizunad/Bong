@@ -484,6 +484,98 @@ class RunnerLogicTest(unittest.TestCase):
         self.assertEqual(json.loads(reader.rest()), {"v": 1, "type": "breakthrough"})
 
 
+def _bare_bot() -> Bot:
+    """不开 socket 的 Bot——只测 _dispatch 解码与实体位置表状态机。"""
+    import threading as _threading
+
+    bot = Bot.__new__(Bot)
+    bot.t0 = 0.0
+    bot.events = []
+    bot.entities = {}
+    bot._lock = _threading.RLock()
+    bot._new_event = _threading.Condition(bot._lock)
+    bot.position = None
+    bot.health = None
+    bot.entity_id = None
+    bot.disconnect_reason = None
+    bot.chunk_count = 0
+    return bot
+
+
+class EntityTrackingTest(unittest.TestCase):
+    """实体位置表 pin：spawn 建 / rel-move 累积(Δ=i16/4096) / teleport 覆写 / destroy 删。
+
+    近战场景（combat_weapon_equip_damage 追击式采样）依赖 entity_pos 追活体
+    NPC——拿 spawn 坐标当靶在 CI 时序下必 whiff。"""
+
+    def _spawn(self, bot, eid=7, x=10.0, y=64.0, z=-3.0):
+        body = (
+            mc.write_varint(mc.S2C_ENTITY_SPAWN)
+            + mc.write_varint(eid)
+            + b"\x00" * 16
+            + mc.write_varint(1)
+            + struct.pack(">ddd", x, y, z)
+        )
+        bot._dispatch(body)
+
+    def test_spawn_registers_position(self):
+        bot = _bare_bot()
+        self._spawn(bot)
+        self.assertEqual(
+            bot.entity_pos(7), (10.0, 64.0, -3.0),
+            "entity_spawn 应把实体坐标登记进位置表（追击采样的起点）",
+        )
+
+    def test_rel_move_accumulates_quarter_4096(self):
+        bot = _bare_bot()
+        self._spawn(bot)
+        # Δ = 4096 → +1.0 block（wiki.vg：delta 编码为 (cur-prev)*4096 的 i16）
+        body = (
+            mc.write_varint(mc.S2C_ENTITY_POSITION)
+            + mc.write_varint(7)
+            + struct.pack(">hhh", 4096, -2048, 0)
+            + b"\x01"
+        )
+        bot._dispatch(body)
+        x, y, z = bot.entity_pos(7)
+        self.assertAlmostEqual(x, 11.0, places=6, msg="dx=4096/4096 应 +1.0")
+        self.assertAlmostEqual(y, 63.5, places=6, msg="dy=-2048/4096 应 -0.5")
+        self.assertAlmostEqual(z, -3.0, places=6)
+
+    def test_rel_move_unknown_entity_is_ignored(self):
+        bot = _bare_bot()
+        body = (
+            mc.write_varint(mc.S2C_ENTITY_POSITION)
+            + mc.write_varint(99)
+            + struct.pack(">hhh", 4096, 0, 0)
+            + b"\x01"
+        )
+        bot._dispatch(body)  # 未知实体的 rel-move 无锚点，不得 KeyError
+        self.assertIsNone(bot.entity_pos(99), "未 spawn 实体的 rel-move 应被忽略")
+
+    def test_teleport_overwrites_absolute(self):
+        bot = _bare_bot()
+        self._spawn(bot)
+        body = (
+            mc.write_varint(mc.S2C_ENTITY_TELEPORT)
+            + mc.write_varint(7)
+            + struct.pack(">ddd", -100.0, 70.0, 200.0)
+            + b"\x00\x00\x01"
+        )
+        bot._dispatch(body)
+        self.assertEqual(
+            bot.entity_pos(7), (-100.0, 70.0, 200.0),
+            "teleport 应绝对覆写位置（不叠加）",
+        )
+
+    def test_destroy_removes_entity(self):
+        bot = _bare_bot()
+        self._spawn(bot)
+        body = mc.write_varint(mc.S2C_ENTITIES_DESTROY) + mc.write_varint(1) + mc.write_varint(7)
+        bot._dispatch(body)
+        self.assertIsNone(bot.entity_pos(7), "destroy 后实体应从位置表移除（追击应停止）")
+
+
 def _pb_float32_field(number: int, value: float) -> bytes:
     import struct as _struct
 
@@ -601,6 +693,7 @@ class ProdConsumeDecodeTest(unittest.TestCase):
             _pb_len_field(1, b"damage")
             + _pb_float32_field(2, 12.5)
             + _pb_len_field(3, b"-12")
+            + _pb_varint_field(7, 1)
         )
         decoded = proto_min.decode_server_data_envelope(
             _pb_len_field(51, _pb_len_field(1, entry))
@@ -613,6 +706,21 @@ class ProdConsumeDecodeTest(unittest.TestCase):
         self.assertAlmostEqual(
             decoded["events"][0]["amount"], 12.5, places=4,
             msg="entry.amount 是 field 2（float32 wire type 5，非 double）",
+        )
+        self.assertTrue(
+            decoded["events"][0]["outgoing"],
+            "entry.outgoing 是 field 7（bool）——方向标识，场景据此区分己方输出/承伤",
+        )
+
+    def test_combat_event_floater_outgoing_defaults_false(self):
+        # 老 server 不发 field 7 → proto3 缺省 false（承伤视角），解码不得崩
+        entry = _pb_len_field(1, b"hit") + _pb_float32_field(2, 3.0)
+        decoded = proto_min.decode_server_data_envelope(
+            _pb_len_field(51, _pb_len_field(1, entry))
+        )
+        self.assertFalse(
+            decoded["events"][0]["outgoing"],
+            "缺 field 7 时 outgoing 应缺省 False（proto3 bool 缺省），不得 KeyError",
         )
 
 

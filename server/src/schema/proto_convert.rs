@@ -1374,6 +1374,7 @@ impl From<&ServerDataPayloadV1> for Payload {
                             x: e.x,
                             y: e.y,
                             z: e.z,
+                            outgoing: e.outgoing,
                         })
                         .collect(),
                 })

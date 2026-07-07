@@ -9,7 +9,9 @@
   S2C `craft_session_state{active:true,...}` → time_ticks 走完 →
   `craft_outcome`(Completed) + 产物进 inventory_snapshot。
 - 会话按服务器 Update 帧计 tick（**非** CultivationClock，`/time advance`
-  不加速）——400 tick 在 debug ~10 TPS 下约 40s，outcome 等待给足余量。
+  不加速）——400 tick 在 fresh debug server（~15 TPS）约 27s；长跑攒了
+  NPC 的脏 server TPS 会掉到 <4，故 outcome 超时取 180s（本地迭代请用
+  fresh server，CI 每次都是 fresh）。
 """
 
 import time
@@ -59,7 +61,7 @@ def run(env) -> None:
             lambda e: e.kind == "server_data"
             and e.data["payload_type"] == "craft_outcome"
             and e.t > anchor,
-            timeout=100.0,
+            timeout=180.0,
             description=(
                 "craft 会话走完后应收到 craft_outcome——收不到说明会话 tick "
                 "或完工结算断链"
