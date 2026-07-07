@@ -38,7 +38,27 @@ MODULES = ["combat", "inventory"]
 WEAPON_ID = "iron_sword"
 
 
-def _outgoing_hits(bot, target_id: int, swings: int = 4) -> list[float]:
+def _wait_in_melee(bot, timeout: float = 20.0) -> None:
+    """等到 NPC 打中我们（incoming 浮字）——这是「确实在近战圈内」的权威信号。
+
+    fight NPC 的 AI 会主动贴身；CI runner 时序下 move_to_melee_range 之后
+    双方仍可能相距 > 攻击距（实测 CI 空手 4 连挥全 whiff）。以挨打为锚再
+    出手，距离判定交给 server 而非 bot 猜。"""
+    anchor = last_event_time(bot)
+    bot.wait_for(
+        lambda e: e.kind == "server_data"
+        and e.data["payload_type"] == "combat_event"
+        and e.t > anchor
+        and any(
+            not entry.get("outgoing", True)
+            for entry in e.data["payload"].get("events", [])
+        ),
+        timeout=timeout,
+        description="fight NPC 应主动近身攻击（incoming 浮字=已在近战圈）",
+    )
+
+
+def _outgoing_hits(bot, target_id: int, swings: int = 6) -> list[float]:
     amounts: list[float] = []
     for _ in range(swings):
         anchor = last_event_time(bot)
@@ -83,6 +103,8 @@ def run(env) -> None:
         spawn = queue_fight_target(bot)
         target_id = spawn.data["entity_id"]
         move_to_melee_range(bot, spawn, 1.2)
+        bot.cmd("health set 100")
+        _wait_in_melee(bot)
 
         # 空手基线（outgoing 过滤：只统计己方输出）
         bare_hits = _outgoing_hits(bot, target_id)
@@ -134,6 +156,7 @@ def run(env) -> None:
         spawn = queue_fight_target(bot)
         target_id = spawn.data["entity_id"]
         move_to_melee_range(bot, spawn, 1.2)
+        _wait_in_melee(bot)
 
         # 持剑输出（outgoing 过滤）
         armed_hits = _outgoing_hits(bot, target_id)
