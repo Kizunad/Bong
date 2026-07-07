@@ -38,29 +38,17 @@ MODULES = ["combat", "inventory"]
 WEAPON_ID = "iron_sword"
 
 
-def _wait_in_melee(bot, timeout: float = 20.0) -> None:
-    """等到 NPC 打中我们（incoming 浮字）——这是「确实在近战圈内」的权威信号。
-
-    fight NPC 的 AI 会主动贴身；CI runner 时序下 move_to_melee_range 之后
-    双方仍可能相距 > 攻击距（实测 CI 空手 4 连挥全 whiff）。以挨打为锚再
-    出手，距离判定交给 server 而非 bot 猜。"""
-    anchor = last_event_time(bot)
-    bot.wait_for(
-        lambda e: e.kind == "server_data"
-        and e.data["payload_type"] == "combat_event"
-        and e.t > anchor
-        and any(
-            not entry.get("outgoing", True)
-            for entry in e.data["payload"].get("events", [])
-        ),
-        timeout=timeout,
-        description="fight NPC 应主动近身攻击（incoming 浮字=已在近战圈）",
-    )
-
-
 def _outgoing_hits(bot, target_id: int, swings: int = 6) -> list[float]:
+    """追击式输出采样：每刀前先走到 NPC 当前坐标 1.0 格内再挥。
+
+    NPC 会走位（wander/接战），拿 spawn 坐标当靶在 CI 时序下必 whiff
+    （bot 框架为此补了 0x2B/0x2C/0x68 实体位置跟踪）。"""
     amounts: list[float] = []
     for _ in range(swings):
+        pos = bot.entity_pos(target_id)
+        if pos is None:
+            break  # 目标已 despawn
+        move_to_melee_range_live(bot, pos)
         anchor = last_event_time(bot)
         bot.attack_entity(target_id)
         time.sleep(1.2)
@@ -74,6 +62,16 @@ def _outgoing_hits(bot, target_id: int, swings: int = 6) -> list[float]:
                     if entry.get("kind") == "hit" and entry.get("outgoing"):
                         amounts.append(float(entry["amount"]))
     return amounts
+
+
+def move_to_melee_range_live(bot, target_pos, distance: float = 1.0) -> None:
+    tx, ty, tz = target_pos
+    bx, by, bz = bot.position
+    dx, dz = bx - tx, bz - tz
+    length = max((dx * dx + dz * dz) ** 0.5, 0.001)
+    if length <= distance + 0.3:
+        return
+    bot.move_to(tx + dx / length * distance, ty, tz + dz / length * distance, speed=5.5)
 
 
 def run(env) -> None:
@@ -104,9 +102,8 @@ def run(env) -> None:
         target_id = spawn.data["entity_id"]
         move_to_melee_range(bot, spawn, 1.2)
         bot.cmd("health set 100")
-        _wait_in_melee(bot)
 
-        # 空手基线（outgoing 过滤：只统计己方输出）
+        # 空手基线（outgoing 过滤：只统计己方输出；追击式采样）
         bare_hits = _outgoing_hits(bot, target_id)
         assert bare_hits, (
             "空手攻击应产生 outgoing=true 的 hit 浮字（拳距 2.0 格内、伤害地板 "
@@ -156,9 +153,8 @@ def run(env) -> None:
         spawn = queue_fight_target(bot)
         target_id = spawn.data["entity_id"]
         move_to_melee_range(bot, spawn, 1.2)
-        _wait_in_melee(bot)
 
-        # 持剑输出（outgoing 过滤）
+        # 持剑输出（outgoing 过滤；追击式采样）
         armed_hits = _outgoing_hits(bot, target_id)
         assert armed_hits, "持剑攻击应产生 outgoing=true 的 hit 浮字"
         armed = max(armed_hits)
