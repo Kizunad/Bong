@@ -44,3 +44,47 @@
 1. **起炉是否需要先 learn blueprint**：`forge_learn_blueprint` 已接线；起炉校验是否强制已学（推荐强制，图谱书是玩法核心循环）还是 tier0 蓝图免学（新手 iron_sword_v0 白名单）。
 2. **TurnPage 的语义落点**：图谱书是纯 client 状态（翻页无需 server）还是 server 权威页码（防作弊翻到未学页）。推荐 server 权威（已有 `forge_blueprint_book` payload 通道）。
 3. **station_id 契约**：wire 字段是 `station_id: u64`，但砧实体用 BlockPos 定位（alchemy 用 furnace_pos）——接线时统一成哪种寻址（推荐对齐 alchemy 的 pos 寻址，wire 已定型则 station_id→pos 映射表）。
+
+> 全部已在 §4.1 收口。原表保留以备追溯，**实施时以 §4.1 决议为准**。
+
+## §4.1 决议（pre-P0 收口，2026-07-08）
+
+> 决议数据来自转 active 前 Explore agent 全接口面实测（只读核查 server/client/schema/bot 四面），非拍脑袋。
+
+### #1 起炉强制已学蓝图
+
+**决议**：
+1. 强制已学——起炉校验 `LearnedBlueprints::knows(blueprint_id)`，未学拒绝并回执。
+2. **引擎已经是这个语义**（`handle_start_forge_requests` 内已强制校验），接线层不改引擎、不加白名单。
+3. 拒绝 tier0 免学路线：白名单绕过图谱书核心循环，且需改引擎语义，改动面反而更大。e2e 场景先走已接线的 `forge_learn_blueprint`（give 残卷 → learn）再起炉。
+
+**落点**：`server/src/forge/mod.rs:158-163`（`learned.get(req.caster)` + `lb.knows(&bp.id)`，现状即决议）/ `server/src/network/client_request_handler.rs:3127-3207`（`handle_forge_learn_blueprint` 已接线，e2e 前置步骤）/ plan §3 P2（e2e 步骤含 learn_blueprint）。
+
+### #2 TurnPage server 权威页码
+
+**决议**：
+1. server 权威——`ForgeBlueprintTurnPage` 分发到 `LearnedBlueprints::next_page/prev_page`，翻页后回推 `forge_blueprint_book` S2C。
+2. client 翻页键改为发 `forge_blueprint_turn_page` C2S，页码状态由 `ForgeBlueprintBookHandler` 从 S2C 更新；**删除 `BlueprintScrollStore.turn` 的本地直改路径**（不做本地乐观+校正双路径）。
+3. 拒绝纯 client 状态路线：起炉请求需要 server 知道"当前选中蓝图"才能防作弊，且 `forge_blueprint_book` payload 通道已存在，成本为零。
+
+**落点**：`server/src/forge/learned.rs:45-58`（`next_page`/`prev_page` 已实现）/ `server/src/network/forge_snapshot_emit.rs:201-214`（`build_blueprint_book`）/ `client/src/main/java/com/bong/client/forge/state/BlueprintScrollStore.java:29-32`（本地 `turn` 改发包）/ `client/src/main/java/com/bong/client/network/ServerDataRouter.java:203-214`（handler 已注册）/ plan §3 P0+P1。
+
+### #3 寻址统一 pos，wire 直接改形状
+
+**决议**：
+1. `ForgeStartSession` 的 `station_id: String`（骨架误记 u64，实为 String）**改为 `station_pos: (i32,i32,i32)`**，全栈对齐 alchemy 的 `furnace_pos` 寻址模式；server 按 pos 查 `Query<&WeaponForgeStation>` 解析出 `StartForgeRequest.station: Entity`。
+2. **不做 station_id→pos 映射兼容层**：该 wire 字段从未有真实发送方（client 零 sender、server 分支丢弃），改形状零迁移成本；这是改对形状的最后窗口。
+3. 拒绝 String id 路线：唯一现成反向 id 是 `format!("forge_station_{}", entity.to_bits())`，entity bits 跨重启不稳定且暴露内部句柄；无 StationRegistry，凭空造注册表违反"复用已有寻址模式"。
+4. 同步面（schema 改动连同 sample 一起改）：TypeBox + sample + generated schema、proto message、proto_convert + fixtures、serde struct、bot 场景（现发 `station_id: 1` 整数，本就与 String schema 不符，一并修正）。
+
+**落点**：`agent/packages/schema/src/client-request.ts:940-951` / `agent/packages/schema/samples/client-request.forge-start.sample.json` / `proto/bong/envelope.proto:1028-1033`（`ForgeStartSession`）/ `server/src/schema/client_request.rs:605-610` / `server/src/schema/proto_convert.rs:3937-3952` + fixtures `:7752-7757` / 寻址助手对齐 `client_request_handler.rs:12603-12640`（`with_owned_furnace_mut` 模式，owner 校验一并对齐）/ `server/src/forge/station.rs:26-33`（`block_pos()`）/ `scripts/bot/scenarios/production_forge_station_real_place.py:75-85` / plan §3 P0。
+
+### #4（新发现缺口，收进 P0 范围）起炉必须原子扣输入料
+
+**决议**：
+1. 现状：`handle_start_forge_requests` 只写 `session.committed_materials`（记账），背包分文不扣；`inventory_bridge` 只发放产物——起炉是凭空造物，e2e「fan_tie×3 → iron_sword 入包」会把这个缺口锁成合法行为，必须先补。
+2. 扩 P0 交付物：全部校验（blueprint 存在/已学/砧 tier/材料/billet）通过后、会话建立的同一受理点原子扣除输入料；**任何拒绝路径（含 Waste billet）不得吞料**。扣料走既有 `consume_item_instance_once` 族 + `resync_snapshot`（对齐放砧扣料模式）。
+3. P2 e2e 终态断言同步扩：产物入包 +1 且输入料从背包消失；拒因路径（材料不足）断言背包原封不动。
+4. 材料是物品非真元，不涉 qi_physics ledger；开光注真元仍走既有 `forge_consecration_inject` 守恒链路，本 plan 不新增真元路径（与 §1 一致）。
+
+**落点**：`server/src/forge/mod.rs:252-268`（建会话点，`committed_materials` 只记账）/ `server/src/forge/inventory_bridge.rs:73-141`（只发产物的现状证据）/ 扣料范式 `server/src/forge/station.rs:151-157`（放砧 `consume_item_instance_once`）/ plan §3 P0+P2。
