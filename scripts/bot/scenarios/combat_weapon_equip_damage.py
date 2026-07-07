@@ -2,7 +2,7 @@
 
 黑盒契约面（2026-07-07 全链路澄清后重写）：
 - **出生 loadout 自带 main_hand 铁剑**（assets/inventory/loadouts/default.toml，
-  durability=0.5 破损起手剑）；`clearinv all` 只清 pack+hotbar **不清装备槽**，
+  历史上 durability=0.5，现满耐久）；`clearinv all` 只清 pack+hotbar **不清装备槽**，
   必须 `clearinv naked` 才能得到真空手——旧版场景的装备断言被出生剑假满足、
   give 剑的 equip 实际被 HandOccupied 拒绝。
 - Bong 的 `Weapon` component 从 `equipped["main_hand"].held` 派生
@@ -79,7 +79,7 @@ def run(env) -> None:
         wait_for_ready(bot)
 
         # 清场两连：naked 卸装备槽（出生剑会被卸进背包而非删除！），
-        # 再 all 清空背包+hotbar——只做 naked 会留一把 0.5 耐久旧剑在包里
+        # 再 all 清空背包+hotbar——只做 naked 会留一把出生旧剑在包里
         # 污染后续 require_item（实测坑）
         bot.cmd("clearinv naked")
         bot.expect_chat("[dev] clearinv", timeout=10.0)
@@ -112,7 +112,7 @@ def run(env) -> None:
         bare = max(bare_hits)
 
         # 给满耐久铁剑并装备（手已空，equip 必须成功）。
-        # 必须带时间锚：无锚扫描会命中清场前含出生剑(0.5 耐久)的旧快照（实测坑）
+        # 必须带时间锚：无锚扫描会命中清场前含出生剑的旧快照（实测坑）
         give_anchor = last_event_time(bot)
         bot.cmd(f"give {WEAPON_ID} 1")
         given_event = bot.wait_for(
