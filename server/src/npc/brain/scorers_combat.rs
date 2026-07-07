@@ -958,7 +958,7 @@ mod tests {
     // ─── Lifecycle guard tests for NpcDefenseScorer ────────────────────────
 
     #[test]
-    fn defense_scorer_alive_npc_scores_normally() {
+    fn npc_defense_scorer_alive_lifecycle_scores_normally() {
         use crate::cultivation::components::Cultivation;
         let mut app = App::new();
         app.add_systems(
@@ -1003,7 +1003,7 @@ mod tests {
     }
 
     #[test]
-    fn defense_scorer_near_death_npc_scores_zero() {
+    fn npc_defense_scorer_near_death_lifecycle_scores_zero() {
         use crate::cultivation::components::Cultivation;
         let mut app = App::new();
         app.add_systems(
@@ -1051,7 +1051,7 @@ mod tests {
     }
 
     #[test]
-    fn defense_scorer_terminated_state_npc_scores_zero() {
+    fn npc_defense_scorer_terminated_lifecycle_scores_zero() {
         use crate::cultivation::components::Cultivation;
         let mut app = App::new();
         app.add_systems(
@@ -1099,7 +1099,7 @@ mod tests {
     }
 
     #[test]
-    fn defense_scorer_awaiting_revival_npc_scores_zero() {
+    fn npc_defense_scorer_awaiting_revival_lifecycle_scores_zero() {
         // 补齐 LifecycleState::AwaitingRevival 变体覆盖（CodeRabbit #697 Major）：
         // 「非 Alive 一律抑制」契约对每个变体都成立，防回归。
         use crate::cultivation::components::Cultivation;
@@ -1149,7 +1149,7 @@ mod tests {
     }
 
     #[test]
-    fn defense_scorer_no_lifecycle_component_scores_normally() {
+    fn npc_defense_scorer_no_lifecycle_component_scores_normally() {
         use crate::cultivation::components::Cultivation;
         let mut app = App::new();
         app.add_systems(
