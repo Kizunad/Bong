@@ -5,5 +5,6 @@
   "tier": 2,
   "integrity": 0.92,
   "owner_name": "Azure",
-  "has_session": true
+  "has_session": true,
+  "pos": [12, 66, -8]
 }

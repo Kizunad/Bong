@@ -7,6 +7,7 @@
  */
 import { Type, type Static } from "@sinclair/typebox";
 
+import { BlockPosV1 } from "./alchemy.js";
 import { ColorKind, Realm } from "./cultivation.js";
 
 /** plan §1.3 四步串行（与服务端 ForgeStep 对齐）。 */
@@ -151,6 +152,10 @@ export const WeaponForgeStationDataV1 = Type.Object(
     integrity: Type.Number({ minimum: 0, maximum: 1 }),
     owner_name: Type.String(),
     has_session: Type.Boolean(),
+    // plan-forge-session-entry-wiring-v1 §4.1#3（新发现连带缺口）—— 砧方块坐标。
+    // U 键全局打开的 ForgeScreen 没有 station 上下文，client 必须从本 payload 拿到
+    // pos 才能在起炉时发出 ForgeStartSession.station_pos（与 alchemy furnace_pos 同模式）。
+    pos: BlockPosV1,
   },
   { additionalProperties: false },
 );

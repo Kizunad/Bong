@@ -900,12 +900,18 @@ message AlchemyTakePill {
 // ═══════════════════════════════════════════════════════════════
 
 // 与 Rust WeaponForgeStationDataV1 精确对应。
+// station_pos_x/y/z 与 Rust (i32,i32,i32) pos tuple 拆分对应
+// （plan-forge-session-entry-wiring-v1 §4.1#3 新增——U 键全局打开的 client 需要
+// 从本 payload 拿到寻址目标）。
 message ForgeStation {
-  string station_id  = 1;
-  uint32 tier        = 2; // Rust u8
-  float  integrity   = 3;
-  string owner_name  = 4;
-  bool   has_session = 5;
+  string station_id    = 1;
+  uint32 tier          = 2; // Rust u8
+  float  integrity     = 3;
+  string owner_name    = 4;
+  bool   has_session   = 5;
+  int32  station_pos_x = 6;
+  int32  station_pos_y = 7;
+  int32  station_pos_z = 8;
 }
 
 // 与 Rust ForgeStepV1 精确对应。
@@ -1026,10 +1032,15 @@ message ForgeBlueprintBook {
 // ═══════════════════════════════════════════════════════════════
 
 // 与 Rust ClientRequestV1::ForgeStartSession 精确对应。
+// station_pos_x/y/z 是 Rust (i32,i32,i32) tuple → 拆成三字段
+// （plan-forge-session-entry-wiring-v1 §4.1#3：station_id:String 改 station_pos，
+// 对齐 alchemy furnace_pos 的 BlockPos 寻址模式）。
 message ForgeStartSession {
-  string                   station_id   = 1;
-  string                   blueprint_id = 2;
-  repeated ForgeMaterialPair materials   = 3;
+  int32                     station_pos_x = 1;
+  int32                     station_pos_y = 2;
+  int32                     station_pos_z = 3;
+  string                    blueprint_id  = 4;
+  repeated ForgeMaterialPair materials    = 5;
 }
 
 // 与 Rust ClientRequestV1::ForgeTemperingHit 精确对应。

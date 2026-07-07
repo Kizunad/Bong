@@ -8,7 +8,8 @@
     "tier",
     "integrity",
     "owner_name",
-    "has_session"
+    "has_session",
+    "pos"
   ],
   "properties": {
     "v": {
@@ -37,6 +38,23 @@
     },
     "has_session": {
       "type": "boolean"
+    },
+    "pos": {
+      "type": "array",
+      "items": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "integer"
+        },
+        {
+          "type": "integer"
+        }
+      ],
+      "additionalItems": false,
+      "minItems": 3,
+      "maxItems": 3
     }
   }
 }
