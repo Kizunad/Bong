@@ -25,19 +25,27 @@ pub fn emit_combat_event_to_client(
         let kind = wire_kind(ev);
         let text = format_amount(amount);
 
-        let entry = CombatEventFloaterEntryV1 {
+        // 方向标识：target 收 outgoing=false（承伤），attacker 收 outgoing=true
+        // （己方输出）。无方向时双方浮字同值同 kind 不可区分——玩家会把 NPC
+        // 反击误读成自己的伤害（playtest 误判「武器不加伤」的根源）。
+        let incoming = CombatEventFloaterEntryV1 {
             kind: kind.clone(),
             amount,
-            text,
+            text: text.clone(),
             x: 0.0,
             y: 0.0,
             z: 0.0,
+            outgoing: false,
         };
 
-        send_floater(&mut clients, ev.target, &entry);
+        send_floater(&mut clients, ev.target, &incoming);
 
         if ev.attacker != ev.target {
-            send_floater(&mut clients, ev.attacker, &entry);
+            let outgoing = CombatEventFloaterEntryV1 {
+                outgoing: true,
+                ..incoming.clone()
+            };
+            send_floater(&mut clients, ev.attacker, &outgoing);
         }
 
         send_damage_tilt(&mut clients, ev.target);
@@ -189,15 +197,72 @@ mod tests {
                     x: 0.0,
                     y: 0.0,
                     z: 0.0,
+                    outgoing: false,
                 }],
             },
         ));
         let bytes = payload.to_json_bytes_checked().unwrap();
         let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(json["type"], "combat_event");
+        assert_eq!(
+            json["events"][0]["outgoing"], false,
+            "entry.outgoing 必须进 wire——方向标识缺失时双方浮字不可区分\
+             （playtest 误判「武器不加伤」的根源）"
+        );
         assert!(json["events"].is_array());
         assert_eq!(json["events"][0]["kind"], "hit");
         assert_eq!(json["events"][0]["amount"], 12.0);
+    }
+
+    /// 方向语义 pin：同一击 target 收 outgoing=false（承伤），attacker 收
+    /// outgoing=true（己方输出）——emit_combat_event_to_client 的双发规则。
+    #[test]
+    fn floater_direction_semantics_incoming_vs_outgoing() {
+        let incoming = CombatEventFloaterEntryV1 {
+            kind: "hit".to_string(),
+            amount: 10.0,
+            text: "10".to_string(),
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+            outgoing: false,
+        };
+        let outgoing = CombatEventFloaterEntryV1 {
+            outgoing: true,
+            ..incoming.clone()
+        };
+        assert!(
+            !incoming.outgoing,
+            "target 侧承伤浮字 outgoing 必须为 false"
+        );
+        assert!(
+            outgoing.outgoing,
+            "attacker 侧输出浮字 outgoing 必须为 true"
+        );
+        assert_eq!(
+            (
+                incoming.kind.clone(),
+                incoming.amount,
+                incoming.text.clone()
+            ),
+            (
+                outgoing.kind.clone(),
+                outgoing.amount,
+                outgoing.text.clone()
+            ),
+            "方向字段以外，双方浮字内容必须一致（同一击的两个视角）"
+        );
+    }
+
+    /// 兼容 pin：旧 JSON（无 outgoing 字段）反序列化应缺省 false 而非报错
+    /// （serde(default)——deny_unknown_fields 结构体加必填字段会炸旧样本）。
+    #[test]
+    fn floater_entry_json_without_outgoing_defaults_false() {
+        let entry: CombatEventFloaterEntryV1 = serde_json::from_str(
+            r#"{"kind":"hit","amount":3.0,"text":"3","x":0.0,"y":0.0,"z":0.0}"#,
+        )
+        .expect("缺 outgoing 的旧 JSON 应能反序列化（serde default）");
+        assert!(!entry.outgoing, "缺省方向应为 false（承伤视角）");
     }
 
     fn make_event(defense: Option<DefenseKind>) -> CombatEvent {

@@ -470,6 +470,7 @@ def _combat_event_floater(data: bytes) -> dict[str, Any]:
                 "kind": _string(entry, 1),
                 "amount": _float32(entry, 2),
                 "text": _string(entry, 3),
+                "outgoing": bool(_varint(entry, 7)),
             }
         )
     return {"v": 1, "type": "combat_event", "events": events}

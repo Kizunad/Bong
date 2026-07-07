@@ -601,6 +601,7 @@ class ProdConsumeDecodeTest(unittest.TestCase):
             _pb_len_field(1, b"damage")
             + _pb_float32_field(2, 12.5)
             + _pb_len_field(3, b"-12")
+            + _pb_varint_field(7, 1)
         )
         decoded = proto_min.decode_server_data_envelope(
             _pb_len_field(51, _pb_len_field(1, entry))
@@ -613,6 +614,21 @@ class ProdConsumeDecodeTest(unittest.TestCase):
         self.assertAlmostEqual(
             decoded["events"][0]["amount"], 12.5, places=4,
             msg="entry.amount 是 field 2（float32 wire type 5，非 double）",
+        )
+        self.assertTrue(
+            decoded["events"][0]["outgoing"],
+            "entry.outgoing 是 field 7（bool）——方向标识，场景据此区分己方输出/承伤",
+        )
+
+    def test_combat_event_floater_outgoing_defaults_false(self):
+        # 老 server 不发 field 7 → proto3 缺省 false（承伤视角），解码不得崩
+        entry = _pb_len_field(1, b"hit") + _pb_float32_field(2, 3.0)
+        decoded = proto_min.decode_server_data_envelope(
+            _pb_len_field(51, _pb_len_field(1, entry))
+        )
+        self.assertFalse(
+            decoded["events"][0]["outgoing"],
+            "缺 field 7 时 outgoing 应缺省 False（proto3 bool 缺省），不得 KeyError",
         )
 
 
