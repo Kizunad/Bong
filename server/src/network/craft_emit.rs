@@ -1,9 +1,10 @@
 //! plan-craft-v1 P2 — Craft IPC bridge（server → client + intent → session）。
 //!
 //! 5 个系统：
-//!   1. `apply_craft_intents` — 读 `CraftStartIntent` / `CraftCancelIntent`，
-//!      跑 `start_craft` / `cancel_craft`，产生 `CraftStartedEvent` /
-//!      `CraftFailedEvent`，并在 caster 上 insert/remove `CraftSession` component
+//!   1. `apply_craft_start_intents` / `apply_craft_cancel_intents` — 读
+//!      `CraftStartIntent` / `CraftCancelIntent`，跑 `start_craft` /
+//!      `cancel_craft`，产生 `CraftStartedEvent` / `CraftFailedEvent`，并在
+//!      caster 上 insert/remove `CraftSession` component
 //!   2. `tick_craft_sessions` — 每 tick 推进所有在线玩家的 session（worldview §九
 //!      "玩家在场是基本要求"，下线 Entity 自动清空，session 随之消失）
 //!   3. `emit_craft_session_state` — 定期把当前 session 进度推到 client（每 20 tick
@@ -40,7 +41,8 @@ use crate::craft::{
 };
 use crate::cultivation::components::{Cultivation, QiColor};
 use crate::inventory::{
-    add_item_to_player_inventory, InventoryInstanceIdAllocator, ItemRegistry, PlayerInventory,
+    add_item_to_player_inventory, add_item_to_player_inventory_or_ground, DroppedLootRegistry,
+    GrantOrGroundOutcome, InventoryInstanceIdAllocator, ItemRegistry, PlayerInventory,
 };
 use crate::network::agent_bridge::{
     payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
@@ -55,11 +57,14 @@ use crate::schema::craft::{
     CraftSessionStateV1, RecipeListV1, RecipeUnlockedV1, UnlockEventSourceV1,
 };
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
+use crate::world::dimension::{CurrentDimension, DimensionKind};
 
 /// inventory 内手搓默认绑定的 zone 账户（暂时统一用 "spawn"，与现有
 /// `cultivation` 守恒模型一致；后续 plan-zone-v2 可按 `Position → ZoneRegistry`
 /// 解析真实 zone）。
 const DEFAULT_CRAFT_ZONE_ID: &str = "spawn";
+
+const DEFAULT_REFUND_GROUND_POS: [f64; 3] = [0.0, 64.0, 0.0];
 
 /// 每隔 N tick 对在线 session 推一次进度（20 tick = 1 秒）。
 const SESSION_STATE_PUSH_INTERVAL_TICKS: u64 = 20;
@@ -131,26 +136,94 @@ fn send_payload(client: &mut Client, payload: ServerDataPayloadV1, debug_tag: &s
     true
 }
 
-/// §1 — 处理客户端发来的 Start/Cancel intent。
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+struct RefundGrantSummary {
+    material_returned: u32,
+    granted_count: u32,
+    dropped_count: u32,
+    errors: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct RefundGroundTarget {
+    pos: [f64; 3],
+    dimension: DimensionKind,
+}
+
+fn refund_ground_context(
+    player_context: Option<(&Position, Option<&CurrentDimension>)>,
+) -> RefundGroundTarget {
+    player_context
+        .map(|(pos, dimension)| RefundGroundTarget {
+            pos: [pos.0.x, pos.0.y, pos.0.z],
+            dimension: dimension.map(|dimension| dimension.0).unwrap_or_default(),
+        })
+        .unwrap_or(RefundGroundTarget {
+            pos: DEFAULT_REFUND_GROUND_POS,
+            dimension: DimensionKind::default(),
+        })
+}
+
+fn grant_refund_manifest_to_inventory_or_ground(
+    inventory: &mut PlayerInventory,
+    item_registry: &ItemRegistry,
+    allocator: &mut InventoryInstanceIdAllocator,
+    mut dropped_loot: Option<&mut DroppedLootRegistry>,
+    refund_manifest: impl IntoIterator<Item = (String, u32)>,
+    current_tick: u64,
+    ground_target: RefundGroundTarget,
+) -> RefundGrantSummary {
+    let mut summary = RefundGrantSummary::default();
+    for (template, count) in refund_manifest {
+        if count == 0 {
+            continue;
+        }
+        let outcome = add_item_to_player_inventory_or_ground(
+            inventory,
+            item_registry,
+            allocator,
+            dropped_loot.as_deref_mut(),
+            &template,
+            count,
+            current_tick,
+            ground_target.pos,
+            ground_target.dimension,
+            None,
+        );
+        match outcome {
+            Ok(GrantOrGroundOutcome::Granted(_)) => {
+                summary.material_returned = summary.material_returned.saturating_add(count);
+                summary.granted_count = summary.granted_count.saturating_add(count);
+            }
+            Ok(GrantOrGroundOutcome::DroppedToGround(_)) => {
+                summary.material_returned = summary.material_returned.saturating_add(count);
+                summary.dropped_count = summary.dropped_count.saturating_add(count);
+            }
+            Err(err) => {
+                summary.errors.push(format!("{template} x{count}: {err}"));
+            }
+        }
+    }
+    summary
+}
+
+/// §1a — 处理客户端发来的 Start intent。
 ///
 /// 命中失败时（材料不足 / qi 不足 / 已有 session / 配方未解锁等）→ emit
 /// `CraftFailedEvent { reason: InternalError }` 让 client 收到 Outcome::Failed
 /// 通知（client 可据此弹错误 toast）；P2 暂不实装更细分的失败 reason。
 #[allow(clippy::too_many_arguments)]
-pub fn apply_craft_intents(
+pub fn apply_craft_start_intents(
     mut start_intents: EventReader<CraftStartIntent>,
-    mut cancel_intents: EventReader<CraftCancelIntent>,
     mut started_tx: EventWriter<CraftStartedEvent>,
     mut failed_tx: EventWriter<CraftFailedEvent>,
     registry: Res<CraftRegistry>,
     unlock_state: Res<RecipeUnlockState>,
     mut ledger: ResMut<WorldQiAccount>,
-    item_registry: Res<ItemRegistry>,
-    mut allocator: ResMut<InventoryInstanceIdAllocator>,
     clock: Res<CombatClock>,
     mut commands: Commands,
     names: Query<&Username>,
-    player_positions: Query<&Position>,
+    player_contexts: Query<(&Position, Option<&CurrentDimension>)>,
     workbenches: Query<&Position, With<WorkbenchBlock>>,
     mut casters: Query<(
         &mut PlayerInventory,
@@ -184,9 +257,9 @@ pub fn apply_craft_intents(
             quantity: intent.quantity,
         };
         // §P2.4：检查玩家 Chebyshev 3 格内是否有 WorkbenchBlock entity。
-        let has_nearby_workbench = player_positions
+        let has_nearby_workbench = player_contexts
             .get(intent.caster)
-            .map(|pos| {
+            .map(|(pos, _dimension)| {
                 let player_pos = [pos.0.x, pos.0.y, pos.0.z];
                 workbenches.iter().any(|wb_pos| {
                     let block_pos = [
@@ -249,11 +322,24 @@ pub fn apply_craft_intents(
             }
         }
     }
+}
 
-    // ── cancel ──────────────────────────────────────────────
+/// §1b — 处理客户端发来的 Cancel intent。
+#[allow(clippy::too_many_arguments)]
+pub fn apply_craft_cancel_intents(
+    mut cancel_intents: EventReader<CraftCancelIntent>,
+    mut failed_tx: EventWriter<CraftFailedEvent>,
+    registry: Res<CraftRegistry>,
+    item_registry: Res<ItemRegistry>,
+    mut allocator: ResMut<InventoryInstanceIdAllocator>,
+    mut dropped_loot: Option<ResMut<DroppedLootRegistry>>,
+    clock: Res<CombatClock>,
+    mut commands: Commands,
+    player_contexts: Query<(&Position, Option<&CurrentDimension>)>,
+    mut casters: Query<(&mut PlayerInventory, Option<&CraftSession>)>,
+) {
     for intent in cancel_intents.read() {
-        let Ok((mut inventory, _cultivation, _qi_color, existing)) = casters.get_mut(intent.caster)
-        else {
+        let Ok((mut inventory, existing)) = casters.get_mut(intent.caster) else {
             continue;
         };
         let Some(session) = existing else {
@@ -282,7 +368,7 @@ pub fn apply_craft_intents(
             continue;
         };
         let CancelCraftOutcome {
-            event,
+            mut event,
             refund_manifest,
         } = cancel_craft(
             session,
@@ -290,26 +376,32 @@ pub fn apply_craft_intents(
             intent.caster,
             CraftFailureReason::PlayerCancelled,
         );
-        for (template, count) in refund_manifest {
-            if count == 0 {
-                continue;
-            }
-            if let Err(err) = add_item_to_player_inventory(
-                &mut inventory,
-                &item_registry,
-                &mut allocator,
-                &template,
-                count,
-                0,
-            ) {
-                tracing::warn!("[bong][craft] cancel refund failed for {template} x{count}: {err}");
-            }
+        let ground_target = refund_ground_context(player_contexts.get(intent.caster).ok());
+        let refund_summary = grant_refund_manifest_to_inventory_or_ground(
+            &mut inventory,
+            &item_registry,
+            &mut allocator,
+            dropped_loot.as_deref_mut(),
+            refund_manifest,
+            clock.tick,
+            ground_target,
+        );
+        if !refund_summary.errors.is_empty() {
+            tracing::warn!(
+                "[bong][craft] cancel refund had structural grant errors caster={:?} recipe={} errors={:?}",
+                intent.caster,
+                event.recipe_id,
+                refund_summary.errors
+            );
         }
+        event.material_returned = refund_summary.material_returned;
         tracing::info!(
-            "[bong][craft] cancel ok caster={:?} recipe={} returned={}",
+            "[bong][craft] cancel ok caster={:?} recipe={} returned={} granted={} dropped={}",
             intent.caster,
             event.recipe_id,
-            event.material_returned
+            event.material_returned,
+            refund_summary.granted_count,
+            refund_summary.dropped_count
         );
         failed_tx.send(event);
         commands
@@ -331,6 +423,8 @@ pub fn tick_craft_sessions(
     mut commands: Commands,
     mut completed_tx: EventWriter<CraftCompletedEvent>,
     mut failed_tx: EventWriter<CraftFailedEvent>,
+    mut dropped_loot: Option<ResMut<DroppedLootRegistry>>,
+    player_contexts: Query<(&Position, Option<&CurrentDimension>)>,
     mut sessions: Query<(Entity, &mut CraftSession, &mut PlayerInventory), With<Client>>,
 ) {
     for (entity, mut session, mut inventory) in sessions.iter_mut() {
@@ -395,28 +489,24 @@ pub fn tick_craft_sessions(
                         mut event,
                         refund_manifest,
                     } = cancel_craft(&session, recipe, entity, CraftFailureReason::InternalError);
-                    let mut material_returned = 0;
-                    for (refund_template, refund_count) in refund_manifest {
-                        match add_item_to_player_inventory(
-                            &mut inventory,
-                            &item_registry,
-                            &mut allocator,
-                            &refund_template,
-                            refund_count,
-                            0,
-                        ) {
-                            Ok(_) => {
-                                material_returned += refund_count;
-                            }
-                            Err(refund_err) => {
-                                tracing::error!(
-                                    "[bong][craft] refund FAILED after finalize failure: recipe={} refund={refund_template} x{refund_count} err={refund_err}",
-                                    event.recipe_id
-                                );
-                            }
-                        }
+                    let ground_target = refund_ground_context(player_contexts.get(entity).ok());
+                    let refund_summary = grant_refund_manifest_to_inventory_or_ground(
+                        &mut inventory,
+                        &item_registry,
+                        &mut allocator,
+                        dropped_loot.as_deref_mut(),
+                        refund_manifest,
+                        clock.tick,
+                        ground_target,
+                    );
+                    if !refund_summary.errors.is_empty() {
+                        tracing::error!(
+                            "[bong][craft] refund had structural grant errors after finalize failure: recipe={} errors={:?}",
+                            event.recipe_id,
+                            refund_summary.errors
+                        );
                     }
-                    event.material_returned = material_returned;
+                    event.material_returned = refund_summary.material_returned;
                     failed_tx.send(event);
                 }
             }
@@ -781,10 +871,11 @@ mod tests {
         CraftRequirements, CraftSession, RecipeId, RecipeUnlockState, UnlockSource,
     };
     use crate::inventory::{
-        ContainerState, InventoryRevision, ItemInstance, ItemRarity, PlacedItemState,
+        ContainerState, DroppedLootRegistry, InventoryInstanceIdAllocator, InventoryRevision,
+        ItemCategory, ItemInstance, ItemRarity, ItemRegistry, ItemTemplate, PlacedItemState,
     };
     use std::collections::HashMap;
-    use valence::prelude::{App, Update};
+    use valence::prelude::{App, Events, Update};
     use valence::protocol::packets::play::CustomPayloadS2c;
     use valence::testing::{create_mock_client, MockClientHelper};
 
@@ -837,6 +928,87 @@ mod tests {
             bone_coins: 0,
             max_weight: 100.0,
         }
+    }
+
+    fn registry_with_templates(templates: &[(&str, u32)]) -> ItemRegistry {
+        let templates = templates
+            .iter()
+            .map(|(id, max_stack_count)| {
+                let template = ItemTemplate {
+                    id: (*id).to_string(),
+                    display_name: (*id).to_string(),
+                    category: ItemCategory::Misc,
+                    placeable: None,
+                    max_stack_count: *max_stack_count,
+                    grid_w: 1,
+                    grid_h: 1,
+                    base_weight: 1.0,
+                    rarity: ItemRarity::Common,
+                    spirit_quality_initial: 0.0,
+                    description: String::new(),
+                    effect: None,
+                    cast_duration_ms: crate::inventory::DEFAULT_CAST_DURATION_MS,
+                    cooldown_ms: crate::inventory::DEFAULT_COOLDOWN_MS,
+                    weapon_spec: None,
+                    forge_station_spec: None,
+                    blueprint_scroll_spec: None,
+                    inscription_scroll_spec: None,
+                    technique_scroll_spec: None,
+                    readable_scroll_spec: None,
+                    recipe_fragment_spec: None,
+                    container_spec: None,
+                    shield_spec: None,
+                    shelflife_profile: None,
+                    shelflife_track: None,
+                };
+                ((*id).to_string(), template)
+            })
+            .collect();
+        ItemRegistry::from_map(templates)
+    }
+
+    fn clamp_main_pack_to_grid(inventory: &mut PlayerInventory, rows: u8, cols: u8) {
+        inventory.containers[0].rows = rows;
+        inventory.containers[0].cols = cols;
+    }
+
+    fn craft_refund_test_app(
+        recipe: CraftRecipe,
+        templates: &[(&str, u32)],
+        clock_tick: u64,
+    ) -> App {
+        let mut app = App::new();
+        let mut registry = CraftRegistry::new();
+        registry.register(recipe).unwrap();
+        app.insert_resource(registry);
+        app.insert_resource(RecipeUnlockState::new());
+        app.insert_resource(WorldQiAccount::default());
+        app.insert_resource(registry_with_templates(templates));
+        app.insert_resource(InventoryInstanceIdAllocator::new(100));
+        app.insert_resource(DroppedLootRegistry::default());
+        app.insert_resource(CombatClock { tick: clock_tick });
+        app.add_event::<CraftStartIntent>();
+        app.add_event::<CraftCancelIntent>();
+        app.add_event::<CraftStartedEvent>();
+        app.add_event::<CraftCompletedEvent>();
+        app.add_event::<CraftFailedEvent>();
+        app
+    }
+
+    fn current_failed_events(app: &App) -> Vec<CraftFailedEvent> {
+        app.world()
+            .resource::<Events<CraftFailedEvent>>()
+            .iter_current_update_events()
+            .cloned()
+            .collect()
+    }
+
+    fn current_completed_events(app: &App) -> Vec<CraftCompletedEvent> {
+        app.world()
+            .resource::<Events<CraftCompletedEvent>>()
+            .iter_current_update_events()
+            .cloned()
+            .collect()
     }
 
     /// 造一个 craft 配方，指定 id / 原料 / 解锁来源（空 vec = 材料发现路径）。
@@ -986,6 +1158,297 @@ mod tests {
             map_failure_reason(CraftFailureReason::InternalError),
             CraftFailureReasonV1::InternalError
         );
+    }
+
+    #[test]
+    fn refund_manifest_full_inventory_drops_to_ground() {
+        let registry = registry_with_templates(&[("fan_tie", 64)]);
+        let mut inventory = inv_with(&[("occupant", 1)]);
+        clamp_main_pack_to_grid(&mut inventory, 1, 1);
+        let mut allocator = InventoryInstanceIdAllocator::new(20);
+        let mut dropped_loot = DroppedLootRegistry::default();
+        let ground_pos = [7.0, 65.0, -3.0];
+
+        let summary = grant_refund_manifest_to_inventory_or_ground(
+            &mut inventory,
+            &registry,
+            &mut allocator,
+            Some(&mut dropped_loot),
+            vec![("fan_tie".to_string(), 1)],
+            123,
+            RefundGroundTarget {
+                pos: ground_pos,
+                dimension: DimensionKind::Tsy,
+            },
+        );
+
+        assert_eq!(summary.material_returned, 1);
+        assert_eq!(summary.granted_count, 0);
+        assert_eq!(summary.dropped_count, 1);
+        assert!(
+            summary.errors.is_empty(),
+            "满包但 DroppedLootRegistry 可用时不应出现结构性错误：{:?}",
+            summary.errors
+        );
+        assert_eq!(dropped_loot.entries.len(), 1);
+        let entry = dropped_loot.entries.values().next().unwrap();
+        assert_eq!(entry.item.template_id, "fan_tie");
+        assert_eq!(entry.item.stack_count, 1);
+        assert_eq!(entry.world_pos, ground_pos);
+        assert_eq!(entry.dimension, DimensionKind::Tsy);
+        assert!(
+            inventory.containers[0]
+                .items
+                .iter()
+                .all(|placed| placed.instance.template_id != "fan_tie"),
+            "满包退款应落地，不应写进已满容器"
+        );
+    }
+
+    #[test]
+    fn refund_manifest_mixed_grant_and_drop_counts_actual_returned() {
+        let registry = registry_with_templates(&[("fan_tie", 64), ("zhu_pi", 64)]);
+        let mut inventory = inv_with(&[("fan_tie", 63), ("occupant", 1)]);
+        clamp_main_pack_to_grid(&mut inventory, 2, 1);
+        let mut allocator = InventoryInstanceIdAllocator::new(30);
+        let mut dropped_loot = DroppedLootRegistry::default();
+
+        let summary = grant_refund_manifest_to_inventory_or_ground(
+            &mut inventory,
+            &registry,
+            &mut allocator,
+            Some(&mut dropped_loot),
+            vec![("fan_tie".to_string(), 1), ("zhu_pi".to_string(), 1)],
+            77,
+            RefundGroundTarget {
+                pos: [0.0, 70.0, 0.0],
+                dimension: DimensionKind::Overworld,
+            },
+        );
+
+        assert_eq!(
+            summary.material_returned, 2,
+            "实际返还数必须统计成功入包 + 成功落地"
+        );
+        assert_eq!(summary.granted_count, 1);
+        assert_eq!(summary.dropped_count, 1);
+        assert!(summary.errors.is_empty());
+        let fan_tie_stack = inventory.containers[0]
+            .items
+            .iter()
+            .find(|placed| placed.instance.template_id == "fan_tie")
+            .expect("fan_tie refund should merge into existing stack");
+        assert_eq!(fan_tie_stack.instance.stack_count, 64);
+        assert_eq!(dropped_loot.entries.len(), 1);
+        let dropped = dropped_loot.entries.values().next().unwrap();
+        assert_eq!(dropped.item.template_id, "zhu_pi");
+        assert_eq!(dropped.item.stack_count, 1);
+    }
+
+    #[test]
+    fn refund_manifest_full_inventory_without_registry_reports_error_without_counting_returned() {
+        let registry = registry_with_templates(&[("fan_tie", 64)]);
+        let mut inventory = inv_with(&[("occupant", 1)]);
+        clamp_main_pack_to_grid(&mut inventory, 1, 1);
+        let mut allocator = InventoryInstanceIdAllocator::new(40);
+
+        let summary = grant_refund_manifest_to_inventory_or_ground(
+            &mut inventory,
+            &registry,
+            &mut allocator,
+            None,
+            vec![("fan_tie".to_string(), 1)],
+            1,
+            RefundGroundTarget {
+                pos: [0.0, 64.0, 0.0],
+                dimension: DimensionKind::Overworld,
+            },
+        );
+
+        assert_eq!(
+            summary.material_returned, 0,
+            "无 DroppedLootRegistry 且背包满时不能虚报已返还"
+        );
+        assert_eq!(summary.granted_count, 0);
+        assert_eq!(summary.dropped_count, 0);
+        assert_eq!(summary.errors.len(), 1);
+        assert!(
+            summary.errors[0].contains("no DroppedLootRegistry"),
+            "错误必须暴露缺少落地兜底的结构问题，实际={:?}",
+            summary.errors
+        );
+    }
+
+    #[test]
+    fn refund_manifest_unknown_template_does_not_create_ground_drop() {
+        let registry = registry_with_templates(&[("fan_tie", 64)]);
+        let mut inventory = inv_with(&[]);
+        clamp_main_pack_to_grid(&mut inventory, 1, 1);
+        let mut allocator = InventoryInstanceIdAllocator::new(50);
+        let mut dropped_loot = DroppedLootRegistry::default();
+
+        let summary = grant_refund_manifest_to_inventory_or_ground(
+            &mut inventory,
+            &registry,
+            &mut allocator,
+            Some(&mut dropped_loot),
+            vec![("missing_template".to_string(), 1)],
+            1,
+            RefundGroundTarget {
+                pos: [0.0, 64.0, 0.0],
+                dimension: DimensionKind::Overworld,
+            },
+        );
+
+        assert_eq!(summary.material_returned, 0);
+        assert_eq!(summary.granted_count, 0);
+        assert_eq!(summary.dropped_count, 0);
+        assert_eq!(summary.errors.len(), 1);
+        assert!(
+            summary.errors[0].contains("unknown item template id"),
+            "unknown template 是配置错误，不应伪装成满包落地：{:?}",
+            summary.errors
+        );
+        assert!(
+            dropped_loot.entries.is_empty(),
+            "结构性错误不能产生 DroppedLootRegistry 条目"
+        );
+        assert!(inventory.containers[0].items.is_empty());
+    }
+
+    #[test]
+    fn cancel_refund_full_inventory_drops_to_ground_and_reports_actual_returned() {
+        let recipe = make_recipe("craft.test.refund_cancel", &[("fan_tie", 2)], vec![]);
+        let mut app = craft_refund_test_app(recipe, &[("fan_tie", 64)], 456);
+        app.add_systems(Update, apply_craft_cancel_intents);
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let mut inventory = inv_with(&[("occupant", 1)]);
+        clamp_main_pack_to_grid(&mut inventory, 1, 1);
+        inventory.bone_coins = 77;
+        let player = app
+            .world_mut()
+            .spawn(client_bundle)
+            .insert(inventory)
+            .insert(Cultivation::default())
+            .insert(QiColor::default())
+            .insert(Position::new([11.0, 65.0, -2.0]))
+            .insert(CurrentDimension(DimensionKind::Tsy))
+            .insert(CraftSession {
+                recipe_id: RecipeId::new("craft.test.refund_cancel"),
+                started_at_tick: 400,
+                remaining_ticks: 20,
+                total_ticks: 40,
+                owner_player_id: canonical_player_id("Azure"),
+                qi_paid: 0.0,
+                quantity_total: 1,
+                completed_count: 0,
+            })
+            .id();
+
+        app.world_mut()
+            .send_event(CraftCancelIntent { caster: player });
+        app.update();
+
+        let failed = current_failed_events(&app);
+        assert_eq!(failed.len(), 1);
+        assert_eq!(failed[0].reason, CraftFailureReason::PlayerCancelled);
+        assert_eq!(
+            failed[0].material_returned, 1,
+            "material_returned 必须按实际入包 + 落地成功数统计，不能沿用预估数虚报"
+        );
+        assert_eq!(failed[0].qi_refunded, 0.0, "craft 取消不退真元");
+        assert!(
+            app.world().get::<CraftSession>(player).is_none(),
+            "退款落地成功后 session 应正常结束"
+        );
+
+        let inventory = app.world().get::<PlayerInventory>(player).unwrap();
+        assert_eq!(inventory.bone_coins, 77, "退款材料不得改动骨币");
+        assert!(
+            inventory.containers[0]
+                .items
+                .iter()
+                .all(|placed| placed.instance.template_id != "fan_tie"),
+            "背包满时 fan_tie 不应被伪造进背包"
+        );
+
+        let dropped = app.world().resource::<DroppedLootRegistry>();
+        assert_eq!(dropped.entries.len(), 1);
+        let entry = dropped.entries.values().next().unwrap();
+        assert_eq!(entry.item.template_id, "fan_tie");
+        assert_eq!(entry.item.stack_count, 1);
+        assert_eq!(entry.world_pos, [11.0, 65.0, -2.0]);
+        assert_eq!(entry.dimension, DimensionKind::Tsy);
+    }
+
+    #[test]
+    fn finalize_failure_refund_full_inventory_drops_to_ground_without_bone_coin_drift() {
+        let recipe = make_recipe("craft.test.refund_finalize", &[("fan_tie", 2)], vec![]);
+        let mut app = craft_refund_test_app(recipe, &[("fan_tie", 64), ("out", 64)], 789);
+        app.add_systems(Update, tick_craft_sessions);
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let mut inventory = inv_with(&[("occupant", 1)]);
+        clamp_main_pack_to_grid(&mut inventory, 1, 1);
+        inventory.bone_coins = 88;
+        let player = app
+            .world_mut()
+            .spawn(client_bundle)
+            .insert(inventory)
+            .insert(Position::new([-4.0, 66.0, 9.0]))
+            .insert(CurrentDimension(DimensionKind::Overworld))
+            .insert(CraftSession {
+                recipe_id: RecipeId::new("craft.test.refund_finalize"),
+                started_at_tick: 700,
+                remaining_ticks: 1,
+                total_ticks: 1,
+                owner_player_id: canonical_player_id("Azure"),
+                qi_paid: 0.0,
+                quantity_total: 1,
+                completed_count: 0,
+            })
+            .id();
+
+        app.update();
+
+        assert!(
+            current_completed_events(&app).is_empty(),
+            "产物入包失败不能发 Completed"
+        );
+        let failed = current_failed_events(&app);
+        assert_eq!(failed.len(), 1);
+        assert_eq!(failed[0].reason, CraftFailureReason::InternalError);
+        assert_eq!(
+            failed[0].material_returned, 1,
+            "产物入包失败后的剩余批次退款也必须统计实际落地成功数"
+        );
+        assert!(
+            app.world().get::<CraftSession>(player).is_none(),
+            "finalize 失败退款落地后 session 应结束，不能保留僵尸状态"
+        );
+
+        let inventory = app.world().get::<PlayerInventory>(player).unwrap();
+        assert_eq!(inventory.bone_coins, 88, "材料退款不得增减骨币");
+        assert!(
+            inventory.containers[0]
+                .items
+                .iter()
+                .all(|placed| placed.instance.template_id != "fan_tie"
+                    && placed.instance.template_id != "out"),
+            "满包时产物和退款材料都不应被写进已满容器"
+        );
+
+        let dropped = app.world().resource::<DroppedLootRegistry>();
+        assert_eq!(dropped.entries.len(), 1);
+        let entry = dropped.entries.values().next().unwrap();
+        assert_eq!(
+            entry.item.template_id, "fan_tie",
+            "落地兜底只用于退款材料；产物 grant 失败仍按失败事件处理"
+        );
+        assert_eq!(entry.item.stack_count, 1);
+        assert_eq!(entry.world_pos, [-4.0, 66.0, 9.0]);
+        assert_eq!(entry.dimension, DimensionKind::Overworld);
     }
 
     #[test]

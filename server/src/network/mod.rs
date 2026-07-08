@@ -885,11 +885,12 @@ pub fn register(app: &mut App) {
     app.add_systems(
         Update,
         (
-            craft_emit::apply_craft_intents
+            craft_emit::apply_craft_start_intents
                 .after(client_request_handler::handle_client_request_payloads),
+            craft_emit::apply_craft_cancel_intents.after(craft_emit::apply_craft_start_intents),
             craft_emit::apply_unlock_intents
                 .after(client_request_handler::handle_client_request_payloads),
-            craft_emit::tick_craft_sessions.after(craft_emit::apply_craft_intents),
+            craft_emit::tick_craft_sessions.after(craft_emit::apply_craft_cancel_intents),
             craft_emit::emit_craft_session_state.after(craft_emit::tick_craft_sessions),
             craft_emit::emit_craft_outcome_payloads.after(craft_emit::tick_craft_sessions),
             craft_emit::emit_recipe_unlocked_payloads.after(craft_emit::apply_unlock_intents),
@@ -902,7 +903,7 @@ pub fn register(app: &mut App) {
             craft_event_bridge::publish_craft_completed_to_redis
                 .after(craft_emit::tick_craft_sessions),
             craft_event_bridge::publish_craft_failed_to_redis
-                .after(craft_emit::apply_craft_intents),
+                .after(craft_emit::apply_craft_cancel_intents),
             craft_event_bridge::publish_recipe_unlocked_to_redis
                 .after(craft_emit::apply_unlock_intents),
         ),
