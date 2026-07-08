@@ -86,7 +86,11 @@ pub struct WeaponForgeStationDataV1 {
     /// plan-forge-session-entry-wiring-v1 §4.1#3（新发现连带缺口）—— 砧方块坐标。
     /// U 键全局打开的 ForgeScreen 没有 station 上下文，client 必须从本 payload 拿到
     /// pos 才能在起炉时发出 `ForgeStartSession.station_pos`（与 alchemy furnace_pos 同模式）。
-    pub pos: (i32, i32, i32),
+    /// 坐标按 proto 铁律拍平成三个 flat 字段（proto ForgeStation.station_pos_x/y/z 同名同形），
+    /// 保证 JSON wire 与 proto-bridge wire 对 client handler 呈现同一形状。
+    pub station_pos_x: i32,
+    pub station_pos_y: i32,
+    pub station_pos_z: i32,
 }
 
 /// 锻造会话实时状态。
@@ -271,7 +275,9 @@ mod tests {
             integrity: 0.95,
             owner_name: "test".into(),
             has_session: false,
-            pos: (-12, 64, 38),
+            station_pos_x: -12,
+            station_pos_y: 64,
+            station_pos_z: 38,
         };
         let s = serde_json::to_string(&data).unwrap();
         let back: WeaponForgeStationDataV1 = serde_json::from_str(&s).unwrap();

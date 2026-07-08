@@ -7,7 +7,9 @@
     "integrity",
     "owner_name",
     "has_session",
-    "pos"
+    "station_pos_x",
+    "station_pos_y",
+    "station_pos_z"
   ],
   "properties": {
     "station_id": {
@@ -29,22 +31,14 @@
     "has_session": {
       "type": "boolean"
     },
-    "pos": {
-      "type": "array",
-      "items": [
-        {
-          "type": "integer"
-        },
-        {
-          "type": "integer"
-        },
-        {
-          "type": "integer"
-        }
-      ],
-      "additionalItems": false,
-      "minItems": 3,
-      "maxItems": 3
+    "station_pos_x": {
+      "type": "integer"
+    },
+    "station_pos_y": {
+      "type": "integer"
+    },
+    "station_pos_z": {
+      "type": "integer"
     }
   }
 }

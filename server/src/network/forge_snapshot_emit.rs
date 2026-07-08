@@ -300,7 +300,9 @@ fn build_station_data(station: &WeaponForgeStation, owner_name: &str) -> WeaponF
         // plan-forge-session-entry-wiring-v1 §4.1#3 — 正常放砧路径 pos 恒 Some
         // （station::handle_place_station_request 经 `WeaponForgeStation::placed` 构造）；
         // 无 pos 只可能出现在测试 fixture，defensive 落 (0,0,0)。
-        pos: station.pos.unwrap_or((0, 0, 0)),
+        station_pos_x: station.pos.map(|p| p.0).unwrap_or(0),
+        station_pos_y: station.pos.map(|p| p.1).unwrap_or(0),
+        station_pos_z: station.pos.map(|p| p.2).unwrap_or(0),
     }
 }
 

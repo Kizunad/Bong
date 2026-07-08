@@ -2511,9 +2511,9 @@ fn forge_station_to_proto(d: &super::forge::WeaponForgeStationDataV1) -> bong::F
         integrity: d.integrity,
         owner_name: d.owner_name.clone(),
         has_session: d.has_session,
-        station_pos_x: d.pos.0,
-        station_pos_y: d.pos.1,
-        station_pos_z: d.pos.2,
+        station_pos_x: d.station_pos_x,
+        station_pos_y: d.station_pos_y,
+        station_pos_z: d.station_pos_z,
     }
 }
 
@@ -6523,7 +6523,9 @@ mod tests {
                     integrity: 1.0,
                     owner_name: String::new(),
                     has_session: false,
-                    pos: (0, 64, 0),
+                    station_pos_x: 0,
+                    station_pos_y: 64,
+                    station_pos_z: 0,
                 }
             ))),
             fix!(ServerDataPayloadV1::ForgeSession(Box::new(
