@@ -188,6 +188,17 @@ fn handle_start_forge_requests(
             tracing::warn!("[bong][forge] station entity missing");
             continue;
         };
+        // 忙检查（对齐 alchemy is_busy）：砧上已有会话时拒绝，防止双扣料 + 第二会话
+        // 覆盖 station.session 把第一个变成永不回收的孤儿（sessions 只收 Done）。
+        if station.session.is_some() {
+            tracing::info!(
+                "[bong][forge] start session rejected: station busy caster={:?} existing={:?}",
+                req.caster,
+                station.session
+            );
+            feedback.send(MineralFeedbackEvent::forge_station_busy(req.caster));
+            continue;
+        }
         if !station.can_craft(bp.station_tier_min) {
             tracing::debug!(
                 "[bong][forge] station tier {} < required {}",
@@ -287,14 +298,22 @@ fn handle_start_forge_requests(
         };
         if let Err(deficits) = consume_forge_materials_atomic(&mut inventory, &materials_to_consume)
         {
-            let detail: Vec<(String, u32, u32)> = deficits
-                .into_iter()
-                .map(|d| (d.material, d.have, d.need))
-                .collect();
             tracing::info!(
-                "[bong][forge] start session rejected: insufficient materials caster={:?} deficits={detail:?}",
+                "[bong][forge] start session rejected: insufficient materials caster={:?} deficits={deficits:?}",
                 req.caster
             );
+            // 玩家回执用中文名（registry 可译则译，item 材料等译不到的保留原 id）；
+            // 上面的日志保留 canonical id 便于排查。
+            let detail: Vec<(String, u32, u32)> = deficits
+                .into_iter()
+                .map(|d| {
+                    let zh = minerals
+                        .get_by_str(d.material.as_str())
+                        .map(|entry| entry.display_name_zh.to_string())
+                        .unwrap_or_else(|| d.material.clone());
+                    (zh, d.have, d.need)
+                })
+                .collect();
             feedback.send(MineralFeedbackEvent::forge_materials_insufficient(
                 req.caster, &detail,
             ));
@@ -1888,6 +1907,80 @@ mod tests {
     }
 
     #[test]
+    fn start_forge_request_rejects_busy_station_without_double_consume() {
+        // 修复轮 major——缺忙检查时：持 ≥2× 材料连发两次起炉 → 双扣料 + 建两个会话，
+        // station.session 被第二个覆盖，第一个成永不回收的孤儿（sessions 只收 Done）。
+        // 守卫后：第二次必须被拒（busy 回执），不扣料、不建第二会话、不覆盖 session 指针。
+        let mut app = start_forge_app();
+        let caster = app
+            .world_mut()
+            .spawn((
+                inventory_with_items(vec![fan_tie_item(1, 6)]),
+                LearnedBlueprints {
+                    ids: vec!["iron_sword_v0".to_string()],
+                    current_index: 0,
+                },
+            ))
+            .id();
+        let station = app
+            .world_mut()
+            .spawn(WeaponForgeStation::placed(
+                BlockPos::new(8, 66, 8),
+                1,
+                caster,
+            ))
+            .id();
+
+        app.world_mut().send_event(StartForgeRequest {
+            station,
+            caster,
+            blueprint: "iron_sword_v0".to_string(),
+            materials: vec![("fan_tie".to_string(), 3)],
+        });
+        app.update();
+        let first_session = app
+            .world()
+            .get::<WeaponForgeStation>(station)
+            .unwrap()
+            .session
+            .expect("第一次起炉应受理并占住砧");
+
+        app.world_mut().send_event(StartForgeRequest {
+            station,
+            caster,
+            blueprint: "iron_sword_v0".to_string(),
+            materials: vec![("fan_tie".to_string(), 3)],
+        });
+        app.update();
+
+        let sessions = app.world().resource::<ForgeSessions>();
+        assert_eq!(
+            sessions.len(),
+            1,
+            "砧忙时第二次起炉不得建会话（否则第一个成孤儿泄漏）"
+        );
+        assert_eq!(
+            app.world()
+                .get::<WeaponForgeStation>(station)
+                .unwrap()
+                .session,
+            Some(first_session),
+            "station.session 不得被第二次请求覆盖"
+        );
+        let inventory = app.world().get::<PlayerInventory>(caster).unwrap();
+        assert_eq!(
+            inventory.containers[0].items[0].instance.stack_count, 3,
+            "busy 拒绝路径不得扣料——6 个凡铁只应被第一次消耗 3 个"
+        );
+        let feedback = app.world().resource::<Events<MineralFeedbackEvent>>();
+        let busy: Vec<_> = feedback
+            .iter_current_update_events()
+            .filter(|e| e.message_id == crate::mineral::events::MSG_FORGE_STATION_BUSY)
+            .collect();
+        assert_eq!(busy.len(), 1, "应发出恰好 1 条砧忙回执");
+    }
+
+    #[test]
     fn start_forge_request_rejects_unlearned_blueprint_with_feedback_and_no_session() {
         let mut app = start_forge_app();
         let caster = app
@@ -2031,7 +2124,10 @@ mod tests {
             events[0].message_id,
             crate::mineral::events::MSG_FORGE_MATERIALS_INSUFFICIENT
         );
-        assert_eq!(events[0].text, "材料不足：fan_tie 1/3，起炉失败");
+        assert_eq!(
+            events[0].text, "材料不足：凡铁 1/3，起炉失败",
+            "玩家回执应经 MineralRegistry 转译成中文名，不漏内部 canonical id"
+        );
 
         let inventory = app.world().get::<PlayerInventory>(caster).unwrap();
         assert_eq!(

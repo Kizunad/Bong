@@ -15,6 +15,8 @@ pub const MSG_MINERAL_PICKAXE_TIER_MISMATCH: &str = "mineral.pickaxe_tier_mismat
 pub const MSG_FORGE_BLUEPRINT_NOT_LEARNED: &str = "forge.blueprint_not_learned";
 /// plan-forge-session-entry-wiring-v1 §4.1#4 — 起炉时背包持有量核验未通过。
 pub const MSG_FORGE_MATERIALS_INSUFFICIENT: &str = "forge.materials_insufficient";
+/// plan-forge-session-entry-wiring-v1 修复轮 — 砧上已有进行中会话（对齐 alchemy is_busy）。
+pub const MSG_FORGE_STATION_BUSY: &str = "forge.station_busy";
 
 #[derive(Debug, Clone, PartialEq, Eq, Event)]
 pub struct MineralFeedbackEvent {
@@ -84,8 +86,8 @@ impl MineralFeedbackEvent {
     }
 
     /// plan-forge-session-entry-wiring-v1 §4.1#4 — 起炉时背包持有量不足以覆盖声明的投料。
-    /// `deficits` = (material, have, need) 列表，由 `consume_forge_materials_atomic` 的
-    /// `Err` 分支转译而来。
+    /// `deficits` = (display_name_zh, have, need) 列表，由 `consume_forge_materials_atomic`
+    /// 的 `Err` 分支经 MineralRegistry 转译成中文名后传入（玩家可读，不漏内部 id）。
     pub fn forge_materials_insufficient(player: Entity, deficits: &[(String, u32, u32)]) -> Self {
         let detail = deficits
             .iter()
@@ -96,6 +98,16 @@ impl MineralFeedbackEvent {
             player,
             message_id: MSG_FORGE_MATERIALS_INSUFFICIENT,
             text: format!("材料不足：{detail}，起炉失败"),
+        }
+    }
+
+    /// plan-forge-session-entry-wiring-v1 修复轮 — 砧上已有进行中会话时拒绝再次起炉，
+    /// 防止双扣料 + 孤儿会话（对齐 alchemy `is_busy()` 守卫）。
+    pub fn forge_station_busy(player: Entity) -> Self {
+        Self {
+            player,
+            message_id: MSG_FORGE_STATION_BUSY,
+            text: "这座砧上已有进行中的锻造，须先完成或收回".to_string(),
         }
     }
 
@@ -254,15 +266,14 @@ mod tests {
         assert_eq!(not_learned.message_id, MSG_FORGE_BLUEPRINT_NOT_LEARNED);
         assert_eq!(not_learned.text, "尚未习得图谱《青锋剑（测试）》，无法起炉");
 
+        // 契约：调用方（handle_start_forge_requests）经 MineralRegistry 转译后传入中文名，
+        // 玩家回执不得漏内部 canonical id。
         let insufficient = MineralFeedbackEvent::forge_materials_insufficient(
             player,
-            &[("fan_tie".to_string(), 2, 4), ("za_gang".to_string(), 0, 1)],
+            &[("凡铁".to_string(), 2, 4), ("杂钢".to_string(), 0, 1)],
         );
         assert_eq!(insufficient.message_id, MSG_FORGE_MATERIALS_INSUFFICIENT);
-        assert_eq!(
-            insufficient.text,
-            "材料不足：fan_tie 2/4、za_gang 0/1，起炉失败"
-        );
+        assert_eq!(insufficient.text, "材料不足：凡铁 2/4、杂钢 0/1，起炉失败");
     }
 
     #[test]
