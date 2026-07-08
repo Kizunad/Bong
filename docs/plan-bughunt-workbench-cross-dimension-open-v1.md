@@ -2,7 +2,7 @@
 
 一句话：制作台 Workbench 的服务端打开与制作门禁只按坐标距离判断，未绑定 `CurrentDimension`，伪造/复用另一维制作台 `entity_id` 时可跨维打开制作台 UI，并可能让工作台配方误判为“附近有制作台”。
 
-## 阶段概览（验证日：2026-07-09）
+## 阶段概览（计划验证日：2026-07-09）
 
 | 阶段 | 状态 | 验收抓手 |
 |---|---|---|
@@ -46,14 +46,14 @@
 
 - 将 `handle_workbench_interact` 的玩家查询扩展为 `(&Position, Option<&CurrentDimension>)`，制作台查询扩展为 `(&Position, &WorkbenchBlock, Option<&CurrentDimension>)`。
 - 在距离检查前比较维度；新放置实体必须有显式 `CurrentDimension`。
-- 旧实体缺失维度的 `Overworld` 兜底只允许存在于 P1 合入后的一个存档迁移窗口：启动/加载时补写或清理缺 `CurrentDimension` 的 `WorkbenchBlock`，命中兜底必须打 `warn!("[bong][workbench][dimension_migration] ...")` 并递增 missing-dimension 计数；迁移窗口结束后，缺维度制作台按非法实体拒绝打开。
+- 旧实体缺失维度的 `Overworld` 兜底只允许存在于 P1 合入后的一个存档迁移窗口：启动/加载时主路径一律为缺 `CurrentDimension` 的 `WorkbenchBlock` 补写 `CurrentDimension(DimensionKind::Overworld)`，命中兜底必须打 `warn!("[bong][workbench][dimension_migration] ...")` 并递增 missing-dimension 计数；只有实体缺 `Position`、组件不一致或补写失败时才进入 cleanup fallback 并标记/移除非法制作台。迁移窗口结束后，缺维度制作台按非法实体拒绝打开。
 - 跨维拒绝时只发明确聊天反馈，不下发 `WorkbenchOpen` payload，不播放打开音效。
 
 ### P2：制作台配方门禁同维过滤
 
 - 将 `server/src/network/craft_emit.rs::apply_craft_intents` 的 `player_positions` / `workbenches` 查询补上 `CurrentDimension`。
 - `has_nearby_workbench` 只允许同维且 3 格内的 `WorkbenchBlock` 命中。
-- 补回归：TSY 玩家与主世界制作台同坐标时，要求制作台的 recipe 必须失败；同维 3 格内仍成功。
+- 补充回归：TSY 玩家与主世界制作台同坐标时，要求制作台的 recipe 必须失败；同维 3 格内仍成功。
 
 ### P3：协议级 bot/e2e 覆盖
 
