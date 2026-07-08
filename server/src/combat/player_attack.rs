@@ -4,7 +4,7 @@ use valence::prelude::{
 };
 
 use crate::combat::components::{
-    Lifecycle, LifecycleState, Stamina, WoundKind, ATTACK_STAMINA_COST,
+    DerivedAttrs, Lifecycle, LifecycleState, Stamina, WoundKind, ATTACK_STAMINA_COST,
 };
 use crate::combat::events::{AttackIntent, AttackSource, FIST_REACH, SWORD_REACH};
 use crate::combat::weapon::Weapon;
@@ -29,6 +29,7 @@ type PlayerAttackClientItem<'a> = (
     &'a Position,
     &'a Stamina,
     Option<&'a Weapon>,
+    Option<&'a DerivedAttrs>,
     &'a mut PlayerAttackCooldown,
     Option<&'a ActivePlayerKnockback>,
 );
@@ -49,7 +50,7 @@ pub fn handle_player_attack(
             continue;
         }
 
-        let Ok((attacker_pos, stamina, weapon, mut cooldown, knockback)) =
+        let Ok((attacker_pos, stamina, weapon, attrs, mut cooldown, knockback)) =
             clients.get_mut(ev.client)
         else {
             continue;
@@ -79,7 +80,13 @@ pub fn handle_player_attack(
             continue;
         }
 
-        let reach = weapon.map(weapon_reach).unwrap_or(FIST_REACH);
+        let reach_bonus = attrs
+            .map(|attrs| attrs.reach_bonus.max(0.0) as f32)
+            .unwrap_or(0.0);
+        let reach = weapon
+            .map(weapon_reach)
+            .unwrap_or(FIST_REACH)
+            .with_bonus(reach_bonus);
         let dist = attacker_pos.0.distance(target_pos.0);
         if dist > reach.max as f64 + REACH_TOLERANCE {
             tracing::warn!(
@@ -170,6 +177,27 @@ mod tests {
             .id();
         *app.world_mut().get_mut::<Position>(entity).unwrap() = Position::new([0.0, 0.0, 0.0]);
         entity
+    }
+
+    fn add_reach_bonus(app: &mut App, entity: Entity, reach_bonus: f64) {
+        app.world_mut().entity_mut(entity).insert(DerivedAttrs {
+            reach_bonus,
+            ..DerivedAttrs::default()
+        });
+    }
+
+    fn test_weapon(kind: crate::combat::weapon::WeaponKind) -> Weapon {
+        use crate::combat::weapon::EquipSlot;
+        Weapon {
+            slot: EquipSlot::MainHand,
+            instance_id: 1,
+            template_id: "test_weapon".to_string(),
+            weapon_kind: kind,
+            base_attack: 10.0,
+            quality_tier: 0,
+            durability: 100.0,
+            durability_max: 100.0,
+        }
     }
 
     #[test]
@@ -326,6 +354,122 @@ mod tests {
             events.iter_current_update_events().next().is_none(),
             "target at distance 10 should be out of fist reach"
         );
+    }
+
+    #[test]
+    fn unarmed_attack_without_reach_bonus_rejects_extension_only_distance() {
+        let mut app = setup_app();
+        let attacker = spawn_attacker(&mut app, stamina_full(), PlayerAttackCooldown::default());
+        let target = app
+            .world_mut()
+            .spawn((NpcMarker, Position::new([3.25, 0.0, 0.0])))
+            .id();
+
+        app.world_mut().send_event(InteractEntityEvent {
+            client: attacker,
+            entity: target,
+            sneaking: false,
+            interact: EntityInteraction::Attack,
+        });
+        app.update();
+
+        let events = app.world().resource::<Events<AttackIntent>>();
+        assert!(
+            events.iter_current_update_events().next().is_none(),
+            "distance 3.25 is beyond fist reach+tolerance without DerivedAttrs.reach_bonus"
+        );
+    }
+
+    #[test]
+    fn reach_bonus_extends_unarmed_attack_and_intent_reach() {
+        let mut app = setup_app();
+        let attacker = spawn_attacker(&mut app, stamina_full(), PlayerAttackCooldown::default());
+        add_reach_bonus(&mut app, attacker, 0.3);
+        let target = app
+            .world_mut()
+            .spawn((NpcMarker, Position::new([3.25, 0.0, 0.0])))
+            .id();
+
+        app.world_mut().send_event(InteractEntityEvent {
+            client: attacker,
+            entity: target,
+            sneaking: false,
+            interact: EntityInteraction::Attack,
+        });
+        app.update();
+
+        let events = app.world().resource::<Events<AttackIntent>>();
+        let intent = events
+            .iter_current_update_events()
+            .next()
+            .expect("reach_bonus should extend fist reach to accept boundary attack");
+        assert_eq!(intent.attacker, attacker);
+        assert!(
+            (intent.reach.max - (FIST_REACH.max + 0.3)).abs() < f32::EPSILON,
+            "AttackIntent.reach.max must include DerivedAttrs.reach_bonus; got {}",
+            intent.reach.max
+        );
+    }
+
+    #[test]
+    fn reach_bonus_extends_weapon_attack_and_preserves_weapon_wound_kind() {
+        use crate::combat::weapon::WeaponKind;
+
+        let mut app = setup_app();
+        let attacker = spawn_attacker(&mut app, stamina_full(), PlayerAttackCooldown::default());
+        app.world_mut()
+            .entity_mut(attacker)
+            .insert(test_weapon(WeaponKind::Sword));
+        add_reach_bonus(&mut app, attacker, 0.3);
+        let target = app
+            .world_mut()
+            .spawn((NpcMarker, Position::new([3.25, 0.0, 0.0])))
+            .id();
+
+        app.world_mut().send_event(InteractEntityEvent {
+            client: attacker,
+            entity: target,
+            sneaking: false,
+            interact: EntityInteraction::Attack,
+        });
+        app.update();
+
+        let events = app.world().resource::<Events<AttackIntent>>();
+        let intent = events
+            .iter_current_update_events()
+            .next()
+            .expect("reach_bonus should extend sword reach without changing wound kind");
+        assert_eq!(intent.wound_kind, WoundKind::Cut);
+        assert!(
+            (intent.reach.max - (SWORD_REACH.max + 0.3)).abs() < f32::EPSILON,
+            "weapon AttackIntent.reach.max must include DerivedAttrs.reach_bonus; got {}",
+            intent.reach.max
+        );
+    }
+
+    #[test]
+    fn negative_reach_bonus_is_clamped_to_neutral() {
+        let mut app = setup_app();
+        let attacker = spawn_attacker(&mut app, stamina_full(), PlayerAttackCooldown::default());
+        add_reach_bonus(&mut app, attacker, -1.0);
+        let target = app
+            .world_mut()
+            .spawn((NpcMarker, Position::new([2.61, 0.0, 0.0])))
+            .id();
+
+        app.world_mut().send_event(InteractEntityEvent {
+            client: attacker,
+            entity: target,
+            sneaking: false,
+            interact: EntityInteraction::Attack,
+        });
+        app.update();
+
+        let events = app.world().resource::<Events<AttackIntent>>();
+        let intent = events.iter_current_update_events().next().expect(
+            "negative reach bonus should be neutral, preserving normal client melee tolerance",
+        );
+        assert_eq!(intent.reach, FIST_REACH);
     }
 
     #[test]

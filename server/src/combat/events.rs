@@ -21,6 +21,15 @@ impl AttackReach {
             max: base + step_bonus,
         }
     }
+
+    pub fn with_bonus(self, bonus: f32) -> Self {
+        let bonus = bonus.max(0.0);
+        Self {
+            base: self.base,
+            step_bonus: self.step_bonus + bonus,
+            max: self.max + bonus,
+        }
+    }
 }
 
 pub const FIST_REACH: AttackReach = AttackReach::new(2.0, 0.6);
