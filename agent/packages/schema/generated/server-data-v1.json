@@ -349,11 +349,10 @@
         },
         "spirit_qi": {
           "minimum": 0,
-          "maximum": 160,
           "type": "number"
         },
         "spirit_qi_max": {
-          "minimum": 0,
+          "exclusiveMinimum": 0,
           "type": "number"
         },
         "karma": {

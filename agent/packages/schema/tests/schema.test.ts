@@ -108,6 +108,7 @@ import { ClientRequestV1 } from "../src/client-request.js";
 import {
   SERVER_DATA_MAX_PAYLOAD_BYTES,
   ServerDataV1,
+  ServerDataPlayerStateV1,
   ServerDataMineralProbeResultV1,
   ServerDataInsightOfferV1,
   ShieldBrokenV1,
@@ -858,6 +859,40 @@ describe("sample files pass schema validation", () => {
   it("server-data.player-state.sample.json", () => {
     const data = loadSample("server-data.player-state.sample.json");
     const result = validate(ServerDataV1, data);
+    expect(result.ok, result.errors.join("; ")).toBe(true);
+  });
+
+  it("rejects player_state missing spirit_qi_max", () => {
+    const data = loadSample("server-data.player-state.sample.json") as Record<string, unknown>;
+    delete data.spirit_qi_max;
+
+    const playerStateResult = validate(ServerDataPlayerStateV1, data);
+    expect(playerStateResult.ok).toBe(false);
+    expect(playerStateResult.errors.join("; ")).toContain("spirit_qi_max");
+
+    const unionResult = validate(ServerDataV1, data);
+    expect(unionResult.ok).toBe(false);
+  });
+
+  it("rejects player_state zero spirit_qi_max", () => {
+    const data = loadSample("server-data.player-state.sample.json") as Record<string, unknown>;
+    data.spirit_qi_max = 0;
+
+    const playerStateResult = validate(ServerDataPlayerStateV1, data);
+    expect(playerStateResult.ok).toBe(false);
+    expect(playerStateResult.errors.join("; ")).toContain("spirit_qi_max");
+
+    const unionResult = validate(ServerDataV1, data);
+    expect(unionResult.ok).toBe(false);
+  });
+
+  it("accepts player_state current qi above the old 160 clamp", () => {
+    const data = loadSample("server-data.player-state.sample.json") as Record<string, unknown>;
+    data.realm = "Spirit";
+    data.spirit_qi = 210;
+    data.spirit_qi_max = 300;
+
+    const result = validate(ServerDataPlayerStateV1, data);
     expect(result.ok, result.errors.join("; ")).toBe(true);
   });
 
