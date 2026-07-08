@@ -73,7 +73,10 @@ public final class ForgeScreen extends Screen {
         y += 14;
 
         ForgeSessionStore.Snapshot session = ForgeSessionStore.snapshot();
-        if (session.sessionId() > 0) {
+        // 渲染与输入门禁同语义（review #1141 major）：只有**活跃**会话才进在炉面板；
+        // 已完成会话（sessionId 残留但 active=false）回到起炉入口，上次结果由下方
+        // ForgeOutcomeStore 块展示——否则打完一炉后 UI 显示在炉、输入被卡死。
+        if (session.sessionId() > 0 && session.active()) {
             context.drawText(textRenderer, Text.literal("§l会话: §r" + session.blueprintName()
                 + " 步骤=" + session.currentStep() + " tier=" + session.achievedTier()),
                 left, y, 0xFFFFFF, true);
@@ -293,9 +296,13 @@ public final class ForgeScreen extends Screen {
         return "consecration".equals(ForgeSessionStore.snapshot().currentStep());
     }
 
-    /** plan-forge-session-entry-wiring-v1 §4.1 P1 —— 尚无在炉会话时可点选坯料准备起炉。 */
+    /**
+     * plan-forge-session-entry-wiring-v1 §4.1 P1 —— 无活跃会话时可点选坯料准备起炉。
+     * 判定收在 {@link ForgeStartInputHandler#startModeAvailable} 供单测锁契约：
+     * 已完成会话（sessionId>0 但 active=false）必须放行再次起炉。
+     */
     private boolean isBilletSelectionMode() {
-        return ForgeSessionStore.snapshot().sessionId() <= 0;
+        return ForgeStartInputHandler.startModeAvailable(ForgeSessionStore.snapshot());
     }
 
     private void toggleBilletSelection(InventoryItem item) {

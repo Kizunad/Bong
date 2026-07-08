@@ -21,6 +21,16 @@ public final class ForgeStartInputHandler {
     private ForgeStartInputHandler() {}
 
     /**
+     * 起炉模式判定（渲染与输入门禁共用同一语义，review #1141 major 收口）：
+     * 无**活跃**会话即可起炉。会话结算后 server 最后一帧快照 active=false 但
+     * sessionId 残留 &gt;0——按 sessionId 判定会把入口永久卡死（打完一炉再也
+     * 点不动投料/I 键），必须按 active 判定。
+     */
+    public static boolean startModeAvailable(com.bong.client.forge.state.ForgeSessionStore.Snapshot session) {
+        return !session.active();
+    }
+
+    /**
      * 尝试发起 {@code forge_start_session} 请求。
      *
      * @param stationPos  当前已知的砧坐标（{@code ForgeStationStore.snapshot().pos()}），

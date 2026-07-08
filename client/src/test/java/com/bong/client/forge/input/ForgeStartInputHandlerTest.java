@@ -133,4 +133,37 @@ class ForgeStartInputHandlerTest {
         assertFalse(handled);
         assertTrue(sent.isEmpty());
     }
+
+    // ── startModeAvailable（review #1141 major：门禁按 active 不按 sessionId） ──
+
+    @Test
+    void startModeAvailableWhenNoSessionEverReceived() {
+        assertTrue(
+            ForgeStartInputHandler.startModeAvailable(
+                com.bong.client.forge.state.ForgeSessionStore.Snapshot.empty()),
+            "从未收到会话快照（empty，active=false）应可起炉"
+        );
+    }
+
+    @Test
+    void startModeBlockedWhileSessionActive() {
+        var active = new com.bong.client.forge.state.ForgeSessionStore.Snapshot(
+            7, "qing_feng_v0", "青锋剑", true, "tempering", 1, 1, "{}");
+        assertFalse(
+            ForgeStartInputHandler.startModeAvailable(active),
+            "活跃会话进行中不得再次起炉"
+        );
+    }
+
+    @Test
+    void startModeAvailableAfterSessionCompletesWithResidualSessionId() {
+        // 结算后最后一帧快照 active=false 但 sessionId 残留 >0——按 sessionId 判定
+        // 会把起炉入口永久卡死（打完一炉再也点不动投料/I 键），必须放行。
+        var done = new com.bong.client.forge.state.ForgeSessionStore.Snapshot(
+            7, "qing_feng_v0", "青锋剑", false, "done", 2, 2, "{}");
+        assertTrue(
+            ForgeStartInputHandler.startModeAvailable(done),
+            "已完成会话（sessionId>0 但 active=false）必须放行再次起炉"
+        );
+    }
 }
