@@ -25,6 +25,11 @@ public final class PlayerStateHandler implements ServerDataHandler {
             invalidFields.add("spirit_qi_current");
         }
 
+        Double spiritQiMax = readRequiredPositiveDouble(payload, "spirit_qi_max");
+        if (spiritQiMax == null) {
+            invalidFields.add("spirit_qi_max");
+        }
+
         Double karma = readRequiredDouble(payload, "karma");
         if (karma == null) {
             invalidFields.add("karma");
@@ -58,7 +63,7 @@ public final class PlayerStateHandler implements ServerDataHandler {
             realm,
             readOptionalString(payload, "player"),
             spiritQiCurrent,
-            readOptionalDouble(payload, "spirit_qi_max", Double.NaN),
+            spiritQiMax,
             karma,
             compositePower,
             breakdown,
@@ -194,6 +199,15 @@ public final class PlayerStateHandler implements ServerDataHandler {
         }
 
         return null;
+    }
+
+    private static Double readRequiredPositiveDouble(JsonObject payload, String fieldName) {
+        Double value = readRequiredDouble(payload, fieldName);
+        if (value == null || value <= 0.0) {
+            return null;
+        }
+
+        return value;
     }
 
     private static Double readOptionalDouble(JsonObject payload, String fieldName, Double defaultValue) {
