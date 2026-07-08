@@ -28,6 +28,9 @@ public final class InventoryItem {
     private final List<String> forgeSideEffects;
     private final Integer forgeAchievedTier;
     private final List<String> alchemyLines;
+    // plan-mineral-v1 canonical 矿物 id（wire `mineral_id`，如 "fan_tie"）；非矿物为 ""。
+    // 与 itemId（template_id，如 "mineral_fan_tie"）是两个命名空间——forge 引擎只认前者。
+    private final String mineralId;
 
     private InventoryItem(
         long instanceId,
@@ -49,7 +52,8 @@ public final class InventoryItem {
         String forgeColor,
         List<String> forgeSideEffects,
         Integer forgeAchievedTier,
-        List<String> alchemyLines
+        List<String> alchemyLines,
+        String mineralId
     ) {
         this.instanceId = instanceId;
         this.itemId = Objects.requireNonNull(itemId, "itemId");
@@ -83,6 +87,7 @@ public final class InventoryItem {
                 .map(String::trim)
                 .filter(value -> !value.isEmpty())
                 .toList());
+        this.mineralId = mineralId == null ? "" : mineralId.trim();
     }
 
     private static double clamp01(double v) {
@@ -330,7 +335,38 @@ public final class InventoryItem {
             forgeColor,
             forgeSideEffects,
             forgeAchievedTier,
-            alchemyLines
+            alchemyLines,
+            ""
+        );
+    }
+
+    /**
+     * plan-forge-session-entry-wiring-v1 修复轮 —— 附加 canonical 矿物 id 的副本
+     * （wire `mineral_id`，snapshot 解析后调用）。其余字段逐一原样保留。
+     */
+    public InventoryItem withMineralId(String mineralId) {
+        return new InventoryItem(
+            instanceId,
+            itemId,
+            displayName,
+            gridWidth,
+            gridHeight,
+            weight,
+            rarity,
+            description,
+            stackCount,
+            spiritQuality,
+            durability,
+            charges,
+            scrollKind,
+            scrollSkillId,
+            scrollXpGrant,
+            forgeQuality,
+            forgeColor,
+            forgeSideEffects,
+            forgeAchievedTier,
+            alchemyLines,
+            mineralId
         );
     }
 
@@ -346,7 +382,7 @@ public final class InventoryItem {
         if (gridWidth == gridHeight) {
             return this;
         }
-        return createFullWithVisualMeta(
+        return new InventoryItem(
             instanceId,
             itemId,
             displayName,
@@ -366,7 +402,8 @@ public final class InventoryItem {
             forgeColor,
             forgeSideEffects,
             forgeAchievedTier,
-            alchemyLines
+            alchemyLines,
+            mineralId
         );
     }
 
@@ -460,6 +497,20 @@ public final class InventoryItem {
         return alchemyLines;
     }
 
+    /** canonical 矿物 id（wire `mineral_id`）；非矿物为 ""。 */
+    public String mineralId() {
+        return mineralId;
+    }
+
+    /**
+     * 起炉投料的聚合 key：forge 引擎（`resolve_billet` / 扣料匹配）只认 canonical
+     * 矿物 id（"fan_tie"），不认 template_id（"mineral_fan_tie"）——矿物件用
+     * mineralId，非矿物件（图谱允许的 item 材料）退回 itemId。
+     */
+    public String forgeMaterialKey() {
+        return mineralId.isEmpty() ? itemId : mineralId;
+    }
+
     public boolean isSkillScroll() {
         return "skill_scroll".equals(scrollKind);
     }
@@ -531,7 +582,8 @@ public final class InventoryItem {
             && forgeColor.equals(other.forgeColor)
             && forgeSideEffects.equals(other.forgeSideEffects)
             && Objects.equals(forgeAchievedTier, other.forgeAchievedTier)
-            && alchemyLines.equals(other.alchemyLines);
+            && alchemyLines.equals(other.alchemyLines)
+            && mineralId.equals(other.mineralId);
     }
 
     @Override
@@ -540,7 +592,7 @@ public final class InventoryItem {
             instanceId, itemId, displayName, gridWidth, gridHeight, weight,
             rarity, description, stackCount, spiritQuality, durability,
             charges, scrollKind, scrollSkillId, scrollXpGrant, forgeQuality, forgeColor,
-            forgeSideEffects, forgeAchievedTier, alchemyLines
+            forgeSideEffects, forgeAchievedTier, alchemyLines, mineralId
         );
     }
 

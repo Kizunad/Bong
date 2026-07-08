@@ -307,11 +307,15 @@ public final class ForgeScreen extends Screen {
         }
     }
 
-    /** 已选投料按 {@link InventoryItem#itemId()} 聚合数量（同材料多个堆叠会合并）。 */
+    /**
+     * 已选投料按 {@link InventoryItem#forgeMaterialKey()} 聚合数量（同材料多个堆叠会合并）。
+     * 必须发 canonical 矿物 id（"fan_tie"）而非 template_id（"mineral_fan_tie"）——
+     * 引擎 resolve_billet/扣料匹配只认前者，发错 key 会被判 ShortMaterial→Waste。
+     */
     private Map<String, Integer> aggregateBilletMaterials() {
         Map<String, Integer> materials = new LinkedHashMap<>();
         for (InventoryItem item : billetSelection.values()) {
-            materials.merge(item.itemId(), item.stackCount(), Integer::sum);
+            materials.merge(item.forgeMaterialKey(), item.stackCount(), Integer::sum);
         }
         return materials;
     }
