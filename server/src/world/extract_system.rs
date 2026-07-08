@@ -10,6 +10,7 @@ use crate::combat::components::{CombatState, Wounds};
 use crate::combat::events::DeathEvent;
 use crate::combat::{CombatClock, CombatSystemSet};
 use crate::cultivation::components::Cultivation;
+use crate::inventory::PendingTsyDeathDrop;
 use crate::network::audio_event_emit::{AudioRecipient, PlaySoundRecipeRequest};
 use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::schema::vfx_event::VfxEventPayloadV1;
@@ -769,6 +770,12 @@ pub fn on_tsy_collapse_completed(
                     attacker_player_id: None,
                     at_tick: clock.tick,
                 });
+                commands
+                    .entity(player)
+                    .insert(PendingTsyDeathDrop {
+                        presence: presence.clone(),
+                    })
+                    .remove::<TsyPresence>();
             }
         }
     }
@@ -1289,7 +1296,7 @@ mod tests {
     }
 
     #[test]
-    fn collapse_completed_despawns_portals_and_kills_remaining_players() {
+    fn collapse_completed_despawns_portals_kills_players_and_clears_presence() {
         let mut app = app_with_extract_system(on_tsy_collapse_completed);
         let portal = app
             .world_mut()
@@ -1315,6 +1322,15 @@ mod tests {
         assert_eq!(collected.len(), 1);
         assert_eq!(collected[0].target, player);
         assert_eq!(collected[0].cause, "tsy_collapsed");
+        assert!(
+            app.world().get::<TsyPresence>(player).is_none(),
+            "collapse completed 后玩家不能继续残留 TsyPresence，否则复活/入场 gate 仍会把他视作 TSY 内实体"
+        );
+        let pending = app
+            .world()
+            .get::<PendingTsyDeathDrop>(player)
+            .expect("collapse death should keep TSY drop context after clearing gate presence");
+        assert_eq!(pending.presence.family_id, "tsy_lingxu_01");
     }
 
     /// plan-tsy-raceout-v1 §4 Q-RC4：CollapseTear 同时只许 1 人撤；
