@@ -4,7 +4,7 @@
   "required": [
     "v",
     "type",
-    "station_id",
+    "station_pos",
     "blueprint_id",
     "materials"
   ],
@@ -17,8 +17,22 @@
       "const": "forge_start_session",
       "type": "string"
     },
-    "station_id": {
-      "type": "string"
+    "station_pos": {
+      "type": "array",
+      "items": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "integer"
+        },
+        {
+          "type": "integer"
+        }
+      ],
+      "additionalItems": false,
+      "minItems": 3,
+      "maxItems": 3
     },
     "blueprint_id": {
       "type": "string"

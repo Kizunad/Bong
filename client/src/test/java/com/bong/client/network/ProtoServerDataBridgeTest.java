@@ -17,6 +17,7 @@ import com.bong.client.hud.PoisonTraitHudStateStore;
 import com.bong.client.hud.BongToast;
 import com.bong.client.social.NicheGuardianStore;
 import com.bong.client.social.SocialStateStore;
+import com.bong.client.state.PlayerStateViewModel;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
@@ -739,9 +740,13 @@ class ProtoServerDataBridgeTest {
                         .setPlayer("offline:Steve")
                         .setRealm(Common.Realm.REALM_INDUCE)
                         .setSpiritQi(78.0)
+                        .setSpiritQiMax(150.0)
                         .setKarma(0.2)
                         .setCompositePower(0.35)
-                        .setZone("blood_valley"))
+                        .setZone("blood_valley")
+                        .setBreakdown(Envelope.PlayerPowerBreakdown.newBuilder()
+                                .setCombat(0.2).setWealth(0.4).setSocial(0.65)
+                                .setKarma(0.2).setTerritory(0.1)))
                 .build();
 
         ProtoServerDataBridge.BridgeResult result = ProtoServerDataBridge.bridge(envelope.toByteArray());
@@ -751,6 +756,46 @@ class ProtoServerDataBridgeTest {
         assertEquals("player_state", json.get("type").getAsString());
         assertEquals("offline:Steve", json.get("player").getAsString());
         assertEquals("blood_valley", json.get("zone").getAsString());
+        assertEquals(150.0, json.get("spirit_qi_max").getAsDouble(), 1e-9,
+                "proto player_state 必须把 cultivation.qi_max 作为 HUD 真元条分母透传");
+
+        ServerDataRouter.RouteResult route = ServerDataRouter.createDefault()
+                .route(result.legacyJson(), result.legacyJson().getBytes(StandardCharsets.UTF_8).length);
+        assertTrue(route.isHandled(), "player_state proto bridge output should route: " + route.logMessage());
+        PlayerStateViewModel playerState = route.dispatch().playerStateViewModel().orElseThrow();
+        assertEquals(78.0, playerState.spiritQiCurrent(), 1e-9);
+        assertEquals(150.0, playerState.spiritQiMax(), 1e-9);
+        assertEquals(0.52, playerState.spiritQiFillRatio(), 1e-9,
+                "HUD fill ratio 必须使用 wire 的 spirit_qi_max，而不是 100 或 current 推导");
+    }
+
+    @Test
+    void bridgePlayerStateWithoutSpiritQiMaxRoutesToNoOp() {
+        Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                .setPlayerState(Envelope.PlayerState.newBuilder()
+                        .setPlayer("offline:Steve")
+                        .setRealm(Common.Realm.REALM_SOLIDIFY)
+                        .setSpiritQi(78.0)
+                        .setKarma(0.2)
+                        .setCompositePower(0.35)
+                        .setZone("blood_valley")
+                        .setBreakdown(Envelope.PlayerPowerBreakdown.newBuilder()
+                                .setCombat(0.2).setWealth(0.4).setSocial(0.65)
+                                .setKarma(0.2).setTerritory(0.1)))
+                .build();
+
+        ProtoServerDataBridge.BridgeResult result = ProtoServerDataBridge.bridge(envelope.toByteArray());
+        assertTrue(result.isSuccess(), "bridge should still decode proto bytes");
+
+        JsonObject json = JsonParser.parseString(result.legacyJson()).getAsJsonObject();
+        assertEquals(0.0, json.get("spirit_qi_max").getAsDouble(), 1e-9,
+                "proto3 missing scalar max materializes as 0 before handler validation");
+
+        ServerDataRouter.RouteResult route = ServerDataRouter.createDefault()
+                .route(result.legacyJson(), result.legacyJson().getBytes(StandardCharsets.UTF_8).length);
+        assertFalse(route.isHandled(), "missing proto spirit_qi_max must not enter HUD fallback path");
+        assertTrue(route.dispatch().playerStateViewModel().isEmpty());
+        assertTrue(route.logMessage().contains("spirit_qi_max"));
     }
 
     @Test

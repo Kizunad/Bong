@@ -67,10 +67,10 @@ class RiftMouthBarrensProfileTest(unittest.TestCase):
             [
                 "charred_obelisk_shard",
                 "frost_qi_cluster",
-                "ganshi_drift",
+                "bone_dust_drift",
                 "fresh_collapse_rubble",
-                "spacetime_scar",
-                "dao_zhuang_corpse_pose",
+                "endstone_scar_shard",
+                "bone_root_snarl",
                 "cracked_floor_seam",
             ],
         )

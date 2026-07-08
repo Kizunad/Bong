@@ -232,6 +232,60 @@ public class InventoryItemTest {
         assertEquals(item.alchemyLines(), rotated.alchemyLines(), "alchemyLines 不得丢失");
     }
 
+    // ── plan-forge-session-entry-wiring-v1 修复轮 —— canonical 矿物 id ──────────
+    // 起炉曾把 template_id（"mineral_fan_tie"）当材料 key 发给引擎，而 resolve_billet
+    // 只认 canonical（"fan_tie"）→ 真人客户端起炉恒 Waste。以下把 key 选择契约锁死。
+
+    @Test
+    void mineralIdDefaultsEmptyAndForgeKeyFallsBackToItemId() {
+        InventoryItem plain = InventoryItem.simple("iron_sword", "铁剑");
+        assertEquals("", plain.mineralId(), "工厂默认 mineralId 应为空串（非矿物）");
+        assertEquals(
+            "iron_sword",
+            plain.forgeMaterialKey(),
+            "非矿物件（图谱允许的 item 材料）投料 key 应退回 itemId"
+        );
+    }
+
+    @Test
+    void withMineralIdAttachesCanonicalKeyAndForgeKeyPrefersIt() {
+        InventoryItem ore = InventoryItem.simple("mineral_fan_tie", "凡铁")
+            .withMineralId("fan_tie");
+        assertEquals("fan_tie", ore.mineralId());
+        assertEquals(
+            "fan_tie",
+            ore.forgeMaterialKey(),
+            "矿物件投料 key 必须是 canonical mineral_id——发 template_id 会被引擎判 ShortMaterial→Waste"
+        );
+        assertEquals("mineral_fan_tie", ore.itemId(), "itemId 本身不得被改写");
+    }
+
+    @Test
+    void withMineralIdNormalizesNullAndBlankToEmpty() {
+        assertEquals("", InventoryItem.simple("a", "A").withMineralId(null).mineralId());
+        assertEquals("", InventoryItem.simple("a", "A").withMineralId("  ").mineralId());
+    }
+
+    @Test
+    void withRotatedFootprintPreservesMineralId() {
+        InventoryItem ore = InventoryItem.createFull(
+            79L, "mineral_fan_tie", "凡铁", 2, 1, 1.0, "common", "", 3, 1.0, 1.0)
+            .withMineralId("fan_tie");
+        assertEquals(
+            "fan_tie",
+            ore.withRotatedFootprint().mineralId(),
+            "旋转副本不得丢 mineralId——丢了会让已选投料退回 template_id key"
+        );
+    }
+
+    @Test
+    void equalsDistinguishesMineralId() {
+        InventoryItem bare = InventoryItem.simple("mineral_fan_tie", "凡铁");
+        InventoryItem tagged = bare.withMineralId("fan_tie");
+        assertTrue(!bare.equals(tagged), "mineralId 不同的两件不得判等（diff 刷新依赖 equals）");
+        assertEquals(tagged, bare.withMineralId("fan_tie"));
+    }
+
     /** 连转两次 = 恢复原朝向（equals 校验全字段一致）。 */
     @Test
     void withRotatedFootprintTwiceRestoresOriginal() {

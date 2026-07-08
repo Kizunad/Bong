@@ -386,6 +386,11 @@ impl RealmCollapseLowQiMonitor {
         let mut zones_to_collapse = Vec::new();
 
         for zone in &zone_registry.zones {
+            if zone.dimension != DimensionKind::Overworld {
+                self.low_qi_ticks_by_zone.remove(&zone.name);
+                continue;
+            }
+
             if zone
                 .active_events
                 .iter()
@@ -4846,6 +4851,34 @@ mod events_tests {
         );
 
         assert!(events.contains(DEFAULT_SPAWN_ZONE_NAME, EVENT_REALM_COLLAPSE));
+    }
+
+    #[test]
+    fn low_qi_monitor_ignores_tsy_blueprint_zones() {
+        let zone_name = "tsy_daneng_01_shallow";
+        let mut zones = ZoneRegistry {
+            zones: vec![test_zone(zone_name, DimensionKind::Tsy, -0.45, 0.0)],
+        };
+        let mut events = ActiveEventsResource::default();
+        let mut monitor = RealmCollapseLowQiMonitor::default();
+        let occupants = [ZoneOccupantPosition {
+            dimension: DimensionKind::Tsy,
+            position: DVec3::new(8.0, 66.0, 8.0),
+        }];
+
+        for _ in 0..REALM_COLLAPSE_LOW_QI_REQUIRED_TICKS + 1 {
+            monitor.tick(&mut zones, &mut events, occupants.as_slice());
+        }
+
+        assert!(
+            !events.contains(zone_name, EVENT_REALM_COLLAPSE),
+            "TSY blueprint 常态负灵气不能触发主世界 low-qi realm_collapse monitor"
+        );
+        assert_eq!(
+            monitor.low_qi_ticks_for_zone(zone_name),
+            None,
+            "monitor 应清理 TSY zone 计数，避免默认补载后残留状态误触发"
+        );
     }
 
     #[test]

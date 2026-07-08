@@ -94,7 +94,7 @@ durability = 0.7
 [[equip]]
 slot = "main_hand"
 template_id = "iron_sword"
-durability = 0.5
+durability = 1.0
 
 # ─── 战斗 hotbar ─────────────────────────────────────────────────────────
 [[hotbar]]

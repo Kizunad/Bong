@@ -319,6 +319,7 @@ public final class InventorySnapshotHandler implements ServerDataHandler {
         List<String> forgeSideEffects = readOptionalStringArray(itemObject, "forge_side_effects");
         Integer forgeAchievedTier = readOptionalInt(itemObject, "forge_achieved_tier");
         List<String> alchemyLines = readAlchemyLines(itemObject);
+        String mineralId = readOptionalString(itemObject, "mineral_id");
 
         if (instanceId == null || itemId == null || displayName == null
             || gridWidth == null || gridHeight == null || weight == null
@@ -357,7 +358,7 @@ public final class InventorySnapshotHandler implements ServerDataHandler {
             forgeSideEffects,
             forgeAchievedTier,
             alchemyLines
-        );
+        ).withMineralId(mineralId);
     }
 
     private static List<String> readAlchemyLines(JsonObject itemObject) {

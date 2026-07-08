@@ -2164,12 +2164,23 @@ mod tests {
             integrity: 0.95,
             owner_name: "test".to_string(),
             has_session: false,
+            station_pos_x: -12,
+            station_pos_y: 64,
+            station_pos_z: 38,
         };
         let bytes = msg.encode_to_vec();
         let decoded = ForgeStation::decode(bytes.as_slice()).expect("ForgeStation decode 失败");
         assert_eq!(decoded.station_id, "s1");
         assert_eq!(decoded.tier, 1);
         assert!(!decoded.has_session);
+        assert_eq!(
+            (
+                decoded.station_pos_x,
+                decoded.station_pos_y,
+                decoded.station_pos_z
+            ),
+            (-12, 64, 38)
+        );
     }
 
     #[test]
@@ -2463,7 +2474,9 @@ mod tests {
     #[test]
     fn forge_start_session_roundtrip() {
         let msg = ForgeStartSession {
-            station_id: "s1".to_string(),
+            station_pos_x: -12,
+            station_pos_y: 64,
+            station_pos_z: 38,
             blueprint_id: "iron_sword_v0".to_string(),
             materials: vec![ForgeMaterialPair {
                 material: "iron_ingot".to_string(),
@@ -2473,7 +2486,14 @@ mod tests {
         let bytes = msg.encode_to_vec();
         let decoded =
             ForgeStartSession::decode(bytes.as_slice()).expect("ForgeStartSession decode 失败");
-        assert_eq!(decoded.station_id, "s1");
+        assert_eq!(
+            (
+                decoded.station_pos_x,
+                decoded.station_pos_y,
+                decoded.station_pos_z
+            ),
+            (-12, 64, 38)
+        );
         assert_eq!(decoded.materials.len(), 1);
         assert_eq!(decoded.materials[0].material, "iron_ingot");
     }
@@ -3548,6 +3568,9 @@ mod tests {
                     integrity: 1.0,
                     owner_name: "t".to_string(),
                     has_session: false,
+                    station_pos_x: 0,
+                    station_pos_y: 64,
+                    station_pos_z: 0,
                 }),
             ),
             (
@@ -3810,7 +3833,9 @@ mod tests {
             (
                 "ForgeStartSession",
                 client_request_envelope::Payload::ForgeStartSession(ForgeStartSession {
-                    station_id: "s".to_string(),
+                    station_pos_x: 0,
+                    station_pos_y: 64,
+                    station_pos_z: 0,
                     blueprint_id: "b".to_string(),
                     materials: vec![],
                 }),
@@ -4895,6 +4920,7 @@ mod tests {
                     x: 100.0,
                     y: 65.0,
                     z: -50.0,
+                    outgoing: false,
                 },
                 CombatEventFloaterEntry {
                     kind: "heal".to_string(),
@@ -4903,6 +4929,7 @@ mod tests {
                     x: 101.0,
                     y: 66.0,
                     z: -49.0,
+                    outgoing: false,
                 },
             ],
         };

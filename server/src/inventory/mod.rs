@@ -24,6 +24,15 @@ pub struct DeathDropAnchor {
     pub pos: [f64; 3],
 }
 
+/// TSY 死亡掉落窗口内的临时上下文。
+///
+/// Collapse completed 会立刻移除 `TsyPresence`，避免玩家继续被 gate 视作 TSY 内实体；
+/// 但复活掉落仍需要入场 snapshot 来执行 TSY 分流规则。
+#[derive(Debug, Clone, Component)]
+pub struct PendingTsyDeathDrop {
+    pub presence: crate::world::tsy::TsyPresence,
+}
+
 /// plan-death-lifecycle-v1 §4b：寿元耗尽（老死）后，不应把遗物散落为地面掉落点。
 /// 遗物应以“遗骸容器”的形式留在世界中供他人搜刮。
 ///
@@ -4092,6 +4101,145 @@ pub fn consume_item_instance_once(
     Err(format!("instance {instance_id} not found in inventory"))
 }
 
+/// plan-forge-session-entry-wiring-v1 §4.1#4 — 起炉原子扣料的缺料清单条目。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ForgeMaterialDeficit {
+    /// 材料名——与调用方传入 `consume_forge_materials_atomic` 的 material 字符串一致
+    /// （矿物 canonical name，如 `"fan_tie"`，或非矿物锻造用料 template_id，如 `"ling_mu_gun"`）。
+    pub material: String,
+    pub have: u32,
+    pub need: u32,
+}
+
+/// 一件 item 是否算作某 forge 材料——按 `mineral_id == Some(material)`（矿物）或
+/// `template_id == material`（非矿物锻造用料，如 spirit wood 系）匹配，二者任一命中即可。
+fn item_matches_forge_material(item: &ItemInstance, material: &str) -> bool {
+    item.mineral_id.as_deref() == Some(material) || item.template_id == material
+}
+
+/// 服务端按 forge 材料名统计玩家 inventory 内某材料的总数（containers + hotbar；
+/// 不含 equipped —— 装备中的东西不该被当材料吃掉，与 `count_template_in_inventory` 同规则）。
+fn count_forge_material_in_inventory(inventory: &PlayerInventory, material: &str) -> u32 {
+    let from_containers: u32 = inventory
+        .containers
+        .iter()
+        .flat_map(|c: &ContainerState| c.items.iter())
+        .filter(|p| item_matches_forge_material(&p.instance, material))
+        .map(|p| p.instance.stack_count)
+        .sum();
+    let from_hotbar: u32 = inventory
+        .hotbar
+        .iter()
+        .filter_map(|s| s.as_ref())
+        .filter(|i: &&ItemInstance| item_matches_forge_material(i, material))
+        .map(|i| i.stack_count)
+        .sum();
+    from_containers + from_hotbar
+}
+
+/// plan-forge-session-entry-wiring-v1 §4.1#4（CRUX）—— 起炉原子扣料。
+///
+/// 与最终受理判定同层调用（`handle_start_forge_requests` 建会话前）：先对全部
+/// `(material, count)` 做只读盘点，任一材料背包持有量不足 → **整体零改动**，返回
+/// `Err(缺料清单)`（调用方据此拒绝起炉、不建会话、发 reject 回执）；全部足量才真正
+/// 扣除（containers 优先，hotbar 兜底，与 `consume_materials_from_inventory` 同扣除
+/// 顺序），扣除后 `bump_revision` 一次。
+///
+/// 这同时封堵了「引擎只记账 `committed_materials`、从不核验玩家是否真持有 `req.materials`
+/// 声明」的 anti-cheat 漏洞——任何拒绝路径（含 Waste billet，调用方在那之前就已
+/// `continue`，根本不会调用本函数）都不吞料。
+pub fn consume_forge_materials_atomic(
+    inventory: &mut PlayerInventory,
+    materials: &[(String, u32)],
+) -> Result<(), Vec<ForgeMaterialDeficit>> {
+    // 同一材料在 materials 中可能出现多次（调用方一般已 dedupe，但这里独立防御）。
+    let mut needed: Vec<(String, u32)> = Vec::new();
+    for (material, count) in materials {
+        if let Some(entry) = needed.iter_mut().find(|(m, _)| m == material) {
+            entry.1 += count;
+        } else {
+            needed.push((material.clone(), *count));
+        }
+    }
+
+    // 阶段一：只读盘点，任一不足则整体不改动。
+    let mut deficits = Vec::new();
+    for (material, need) in &needed {
+        let have = count_forge_material_in_inventory(inventory, material);
+        if have < *need {
+            deficits.push(ForgeMaterialDeficit {
+                material: material.clone(),
+                have,
+                need: *need,
+            });
+        }
+    }
+    if !deficits.is_empty() {
+        return Err(deficits);
+    }
+
+    // 阶段二：全部足量，真正扣除。
+    let mut consumed_any = false;
+    for (material, need) in &needed {
+        let mut remaining = *need;
+        if remaining == 0 {
+            continue;
+        }
+        'containers: for container in inventory.containers.iter_mut() {
+            let mut i = 0;
+            while i < container.items.len() {
+                if item_matches_forge_material(&container.items[i].instance, material) {
+                    let take = remaining.min(container.items[i].instance.stack_count);
+                    container.items[i].instance.stack_count -= take;
+                    remaining -= take;
+                    consumed_any |= take > 0;
+                    if container.items[i].instance.stack_count == 0 {
+                        container.items.remove(i);
+                        continue;
+                    }
+                }
+                i += 1;
+                if remaining == 0 {
+                    break 'containers;
+                }
+            }
+        }
+        if remaining > 0 {
+            for slot in inventory.hotbar.iter_mut() {
+                if remaining == 0 {
+                    break;
+                }
+                let drop_slot = if let Some(item) = slot.as_mut() {
+                    if item_matches_forge_material(item, material) {
+                        let take = remaining.min(item.stack_count);
+                        item.stack_count -= take;
+                        remaining -= take;
+                        consumed_any |= take > 0;
+                        item.stack_count == 0
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
+                if drop_slot {
+                    *slot = None;
+                }
+            }
+        }
+        debug_assert_eq!(
+            remaining, 0,
+            "consume_forge_materials_atomic: 缺料盘点已通过但 `{material}` 实扣仍缺 {remaining}\
+             （count_forge_material_in_inventory 与实扣逻辑的匹配规则失步）"
+        );
+    }
+
+    if consumed_any {
+        bump_revision(inventory);
+    }
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn apply_death_drop_on_revive(
     mut revived: bevy_ecs::event::EventReader<PlayerRevived>,
@@ -4102,6 +4250,7 @@ pub fn apply_death_drop_on_revive(
     anchors: Query<&DeathDropAnchor>,
     dimensions: Query<&CurrentDimension>,
     presences: Query<&crate::world::tsy::TsyPresence>,
+    pending_tsy_deaths: Query<&PendingTsyDeathDrop>,
     cultivations: Query<&crate::cultivation::components::Cultivation>,
     mut dropped_registry: bevy_ecs::system::ResMut<DroppedLootRegistry>,
     mut dropped_events: bevy_ecs::event::EventWriter<DroppedItemEvent>,
@@ -4122,7 +4271,12 @@ pub fn apply_death_drop_on_revive(
 
         // plan-tsy-loot-v1 §3.1：玩家在 TSY 内死亡 → 走分流（秘境所得 100% / 原带 50%）
         // + spawn 干尸 entity；否则走 §十二 主世界 50% 规则。
-        if let Ok(presence) = presences.get(ev.entity) {
+        let pending_tsy_presence = pending_tsy_deaths
+            .get(ev.entity)
+            .ok()
+            .map(|ctx| &ctx.presence);
+        let tsy_presence = pending_tsy_presence.or_else(|| presences.get(ev.entity).ok());
+        if let Some(presence) = tsy_presence {
             let tsy_outcome = tsy_death_drop::apply_tsy_death_drop(
                 &mut inventory,
                 &registry,
@@ -4130,6 +4284,7 @@ pub fn apply_death_drop_on_revive(
                 base,
                 seed,
             );
+            clear_death_drop_window_components(&mut commands, ev.entity);
             if tsy_outcome.total_dropped() == 0 {
                 continue;
             }
@@ -4229,6 +4384,14 @@ pub fn apply_death_drop_on_revive(
             dropped: outcome.dropped,
         });
     }
+}
+
+fn clear_death_drop_window_components(commands: &mut Commands, entity: Entity) {
+    commands.entity(entity).remove::<(
+        DeathDropAnchor,
+        PendingTsyDeathDrop,
+        crate::world::tsy::TsyPresence,
+    )>();
 }
 
 pub fn apply_death_drop_to_inventory(
@@ -10749,6 +10912,258 @@ cols = 4
         assert!(inv.containers[0].items.is_empty());
     }
 
+    // ── plan-forge-session-entry-wiring-v1 §4.1#4 — consume_forge_materials_atomic ──
+
+    fn mineral_item(instance_id: u64, mineral_id: &str, stack_count: u32) -> ItemInstance {
+        let mut item = make_test_item_instance(instance_id, &format!("mineral_{mineral_id}"));
+        item.mineral_id = Some(mineral_id.to_string());
+        item.stack_count = stack_count;
+        item
+    }
+
+    fn item_material_item(instance_id: u64, template_id: &str, stack_count: u32) -> ItemInstance {
+        let mut item = make_test_item_instance(instance_id, template_id);
+        item.stack_count = stack_count;
+        item
+    }
+
+    #[test]
+    fn consume_forge_materials_atomic_happy_path_deducts_by_mineral_id_and_bumps_revision() {
+        let mut inv = empty_inventory(5, 7);
+        inv.containers[0].items.push(PlacedItemState {
+            row: 0,
+            col: 0,
+            instance: mineral_item(1, "fan_tie", 5),
+        });
+
+        let out = consume_forge_materials_atomic(&mut inv, &[("fan_tie".to_string(), 4)]);
+
+        assert!(
+            out.is_ok(),
+            "期望持有 5 扣 4 成功，实际 Err={:?}",
+            out.err()
+        );
+        assert_eq!(
+            inv.containers[0].items[0].instance.stack_count, 1,
+            "扣除 4 后 fan_tie 栈应剩 1"
+        );
+        assert_eq!(
+            inv.revision,
+            InventoryRevision(1),
+            "扣料应 bump_revision 恰好一次"
+        );
+    }
+
+    #[test]
+    fn consume_forge_materials_atomic_matches_by_template_id_for_non_mineral_materials() {
+        // ling_mu_gun 是 blueprint::is_allowed_item_material 白名单里的非矿物锻造用料，
+        // 匹配键是 template_id 而非 mineral_id（对应物品本身没有 mineral_id）。
+        let mut inv = empty_inventory(5, 7);
+        inv.containers[0].items.push(PlacedItemState {
+            row: 0,
+            col: 0,
+            instance: item_material_item(1, "ling_mu_gun", 2),
+        });
+
+        let out = consume_forge_materials_atomic(&mut inv, &[("ling_mu_gun".to_string(), 2)]);
+
+        assert!(out.is_ok(), "期望按 template_id 精确匹配并扣光");
+        assert!(
+            inv.containers[0].items.is_empty(),
+            "扣光后栈应被移除，而非留 0 计数条目"
+        );
+    }
+
+    #[test]
+    fn consume_forge_materials_atomic_spans_multiple_stacks_containers_then_hotbar() {
+        let mut inv = empty_inventory(5, 7);
+        inv.containers[0].items.push(PlacedItemState {
+            row: 0,
+            col: 0,
+            instance: mineral_item(1, "fan_tie", 2),
+        });
+        inv.hotbar[0] = Some(mineral_item(2, "fan_tie", 3));
+
+        let out = consume_forge_materials_atomic(&mut inv, &[("fan_tie".to_string(), 4)]);
+
+        assert!(out.is_ok(), "跨 container+hotbar 累加应足量 2+3=5 >= 4");
+        assert!(
+            inv.containers[0].items.is_empty(),
+            "container 栈应先被吃光（container 优先于 hotbar）"
+        );
+        assert_eq!(
+            inv.hotbar[0].as_ref().map(|i| i.stack_count),
+            Some(1),
+            "hotbar 兜底吃剩余 2 个，应剩 3-2=1"
+        );
+    }
+
+    #[test]
+    fn consume_forge_materials_atomic_insufficient_leaves_inventory_untouched() {
+        let mut inv = empty_inventory(5, 7);
+        inv.containers[0].items.push(PlacedItemState {
+            row: 0,
+            col: 0,
+            instance: mineral_item(1, "fan_tie", 2),
+        });
+        let before_json = serde_json::to_string(&inv).unwrap();
+
+        let err = consume_forge_materials_atomic(&mut inv, &[("fan_tie".to_string(), 4)])
+            .expect_err("持有 2 < 需求 4 应该拒绝");
+
+        assert_eq!(
+            err,
+            vec![ForgeMaterialDeficit {
+                material: "fan_tie".to_string(),
+                have: 2,
+                need: 4,
+            }]
+        );
+        assert_eq!(
+            serde_json::to_string(&inv).unwrap(),
+            before_json,
+            "拒绝路径必须整体零改动（含 revision 不变），不能吞料"
+        );
+    }
+
+    #[test]
+    fn consume_forge_materials_atomic_partial_shortage_leaves_sufficient_material_untouched_too() {
+        // 原子性核心断言：即便第一个材料 fan_tie 足量，只要第二个材料 za_gang 不足，
+        // 整批（含已足量的 fan_tie）都不得被扣——否则引擎下一拍拒绝时吞掉 fan_tie。
+        let mut inv = empty_inventory(5, 7);
+        inv.containers[0].items.push(PlacedItemState {
+            row: 0,
+            col: 0,
+            instance: mineral_item(1, "fan_tie", 4),
+        });
+        inv.containers[0].items.push(PlacedItemState {
+            row: 1,
+            col: 0,
+            instance: mineral_item(2, "za_gang", 0),
+        });
+        let before_json = serde_json::to_string(&inv).unwrap();
+
+        let err = consume_forge_materials_atomic(
+            &mut inv,
+            &[("fan_tie".to_string(), 4), ("za_gang".to_string(), 1)],
+        )
+        .expect_err("za_gang 持有 0 < 需求 1 应该整体拒绝");
+
+        assert_eq!(
+            err,
+            vec![ForgeMaterialDeficit {
+                material: "za_gang".to_string(),
+                have: 0,
+                need: 1,
+            }]
+        );
+        assert_eq!(
+            serde_json::to_string(&inv).unwrap(),
+            before_json,
+            "fan_tie 已足量也不得被单独扣除——必须与 za_gang 同批要么全扣要么全不扣"
+        );
+    }
+
+    #[test]
+    fn consume_forge_materials_atomic_ignores_equipped_items() {
+        // equipped 槽里的东西不该被当材料吃掉：即使 held 位塞了一把 mineral_id=fan_tie
+        // 的道具，也不计入持有量、更不会被扣除。
+        let mut inv = empty_inventory(5, 7);
+        inv.equipped.insert(
+            EQUIP_SLOT_MAIN_HAND.to_string(),
+            SlotContents::held_single(mineral_item(9, "fan_tie", 5)),
+        );
+
+        let err = consume_forge_materials_atomic(&mut inv, &[("fan_tie".to_string(), 1)])
+            .expect_err("equipped 持有量不算数，应视为 have=0 拒绝");
+
+        assert_eq!(
+            err,
+            vec![ForgeMaterialDeficit {
+                material: "fan_tie".to_string(),
+                have: 0,
+                need: 1,
+            }]
+        );
+        assert_eq!(
+            inv.equipped[EQUIP_SLOT_MAIN_HAND]
+                .held
+                .as_ref()
+                .unwrap()
+                .stack_count,
+            5,
+            "equipped 物品不应被扣除"
+        );
+    }
+
+    #[test]
+    fn consume_forge_materials_atomic_zero_count_is_noop() {
+        let mut inv = empty_inventory(5, 7);
+        inv.containers[0].items.push(PlacedItemState {
+            row: 0,
+            col: 0,
+            instance: mineral_item(1, "fan_tie", 5),
+        });
+
+        let out = consume_forge_materials_atomic(&mut inv, &[("fan_tie".to_string(), 0)]);
+
+        assert!(out.is_ok(), "count=0 不应被判定为缺料");
+        assert_eq!(inv.containers[0].items[0].instance.stack_count, 5);
+        assert_eq!(
+            inv.revision,
+            InventoryRevision(0),
+            "count=0 不产生任何实际扣除，不应 bump_revision"
+        );
+    }
+
+    #[test]
+    fn consume_forge_materials_atomic_empty_materials_is_noop() {
+        let mut inv = empty_inventory(5, 7);
+        let before_json = serde_json::to_string(&inv).unwrap();
+
+        let out = consume_forge_materials_atomic(&mut inv, &[]);
+
+        assert!(out.is_ok(), "空 materials 列表应视为 vacuously 满足");
+        assert_eq!(serde_json::to_string(&inv).unwrap(), before_json);
+    }
+
+    #[test]
+    fn consume_forge_materials_atomic_dedupes_repeated_material_entries() {
+        // materials 里同一材料出现两次（例如 client 端未合并），应按总量核对+扣除。
+        let mut inv = empty_inventory(5, 7);
+        inv.containers[0].items.push(PlacedItemState {
+            row: 0,
+            col: 0,
+            instance: mineral_item(1, "fan_tie", 5),
+        });
+
+        let out = consume_forge_materials_atomic(
+            &mut inv,
+            &[("fan_tie".to_string(), 2), ("fan_tie".to_string(), 3)],
+        );
+
+        assert!(out.is_ok(), "2+3=5 应与持有量 5 恰好相抵");
+        assert!(
+            inv.containers[0].items.is_empty(),
+            "去重累加后总需求=5，应扣光整栈"
+        );
+    }
+
+    #[test]
+    fn consume_forge_materials_atomic_exact_have_equals_need_boundary() {
+        let mut inv = empty_inventory(5, 7);
+        inv.containers[0].items.push(PlacedItemState {
+            row: 0,
+            col: 0,
+            instance: mineral_item(1, "fan_tie", 3),
+        });
+
+        let out = consume_forge_materials_atomic(&mut inv, &[("fan_tie".to_string(), 3)]);
+
+        assert!(out.is_ok(), "have==need 边界应视为足量而非不足");
+        assert!(inv.containers[0].items.is_empty());
+    }
+
     #[test]
     fn exchange_inventory_items_swaps_items_and_bumps_both_revisions() {
         let mut left = make_test_inventory_with_one_item();
@@ -10963,6 +11378,103 @@ cols = 4
         assert_eq!(events.len(), 1);
         assert_eq!(inv.revision, InventoryRevision(8));
         assert_eq!(inv.containers[0].items.len(), 1);
+    }
+
+    #[test]
+    fn apply_death_drop_on_revive_uses_pending_tsy_context_after_presence_is_cleared() {
+        use crate::world::tsy::{DimensionAnchor, TsyPresence};
+        use valence::prelude::{App, DVec3, Events, Position, Update};
+
+        let mut app = App::new();
+        app.add_event::<PlayerRevived>();
+        app.add_event::<DroppedItemEvent>();
+        app.insert_resource(ItemRegistry::default());
+        app.insert_resource(DroppedLootRegistry::default());
+        app.add_systems(Update, apply_death_drop_on_revive);
+
+        let mut inventory = make_test_inventory_with_one_item();
+        inventory.containers[0].items.push(PlacedItemState {
+            row: 0,
+            col: 1,
+            instance: ItemInstance {
+                instance_id: 43,
+                template_id: "ningmai_powder".to_string(),
+                display_name: "凝脉散".to_string(),
+                grid_w: 1,
+                grid_h: 1,
+                weight: 0.2,
+                rarity: ItemRarity::Uncommon,
+                description: String::new(),
+                stack_count: 1,
+                spirit_quality: 1.0,
+                durability: 1.0,
+                freshness: None,
+                mineral_id: None,
+                charges: None,
+                forge_quality: None,
+                forge_color: None,
+                forge_side_effects: Vec::new(),
+                forge_achieved_tier: None,
+                alchemy: None,
+                lingering_owner_qi: None,
+            },
+        });
+
+        let presence = TsyPresence {
+            family_id: "tsy_lingxu_01".to_string(),
+            entered_at_tick: 7,
+            entry_inventory_snapshot: vec![42],
+            return_to: DimensionAnchor {
+                dimension: DimensionKind::Overworld,
+                pos: DVec3::new(1.0, 64.0, 1.0),
+            },
+        };
+        let entity = app
+            .world_mut()
+            .spawn((
+                inventory,
+                Position::new([10.0, 64.0, 10.0]),
+                DeathDropAnchor {
+                    pos: [10.0, 64.0, 10.0],
+                },
+                PendingTsyDeathDrop { presence },
+            ))
+            .id();
+
+        app.world_mut().send_event(PlayerRevived { entity });
+        app.update();
+
+        assert!(
+            app.world().get::<PendingTsyDeathDrop>(entity).is_none(),
+            "复活掉落消费后应清除 pending TSY 上下文"
+        );
+        assert!(
+            app.world().get::<DeathDropAnchor>(entity).is_none(),
+            "复活掉落消费后应清除死亡点 anchor"
+        );
+        assert!(
+            app.world()
+                .get::<crate::world::tsy::TsyPresence>(entity)
+                .is_none(),
+            "pending 上下文不应重新引入 live TsyPresence"
+        );
+
+        let dropped_registry = app.world().resource::<DroppedLootRegistry>();
+        let entry = dropped_registry
+            .entries
+            .get(&43)
+            .expect("TSY acquired item should drop via pending context");
+        assert_eq!(entry.dimension, DimensionKind::Tsy);
+        assert!(
+            entry
+                .source_container_id
+                .starts_with("tsy_corpse:tsy_lingxu_01/"),
+            "pending TSY context 应保留 family 前缀，实际 {}",
+            entry.source_container_id
+        );
+
+        let events = app.world().resource::<Events<DroppedItemEvent>>();
+        assert_eq!(events.len(), 1);
     }
 
     #[test]

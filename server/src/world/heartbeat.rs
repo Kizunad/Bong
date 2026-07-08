@@ -24,7 +24,7 @@ use crate::schema::agent_command::Command;
 use crate::schema::common::{CommandType, GameEventType};
 use crate::schema::vfx_event::VfxEventPayloadV1;
 use crate::schema::world_state::GameEvent;
-use crate::world::dimension::CurrentDimension;
+use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::event_rhythm::{
     default_event_rhythm, event_trigger_timing_by_player_loop_phase, infer_player_loop_phase,
     PlayerLoopPhase, PlayerLoopPhaseEvidence, RhythmEventKind,
@@ -883,6 +883,9 @@ pub fn chain_reaction_tick(
                     continue;
                 };
                 remove_runtime_pseudo_vein_zone(zone_registry, zone_name.as_str());
+                if source.dimension != DimensionKind::Overworld {
+                    continue;
+                }
                 let neighbor_names = adjacent_zone_names(zone_registry, &source, 900.0);
                 for neighbor_name in neighbor_names {
                     let Some(neighbor) = zone_registry.find_zone_by_name(neighbor_name.as_str())
@@ -950,6 +953,9 @@ pub fn chain_reaction_tick(
                 let Some(source) = zone_registry.find_zone_by_name(zone_name).cloned() else {
                     continue;
                 };
+                if source.dimension != DimensionKind::Overworld {
+                    continue;
+                }
                 for neighbor_name in adjacent_zone_names(zone_registry, &source, 700.0) {
                     let Some(neighbor) = zone_registry.find_zone_by_name(neighbor_name.as_str())
                     else {
@@ -997,6 +1003,7 @@ fn apply_season_modifiers(heartbeat: &mut WorldHeartbeat, modifiers: SeasonEvent
 #[derive(Debug, Clone)]
 struct PlayerSample {
     player_id: String,
+    dimension: DimensionKind,
     zone_name: Option<String>,
     position: DVec3,
     high_realm: bool,
@@ -1027,6 +1034,7 @@ fn player_samples(
                 .unwrap_or_else(|| format!("anonymous:{index}"));
             PlayerSample {
                 player_id,
+                dimension,
                 zone_name,
                 position,
                 high_realm: cultivation
@@ -1043,15 +1051,17 @@ fn compute_world_pressure(
     player_samples: &[PlayerSample],
     current_tick: u64,
 ) -> WorldPressure {
-    let avg_zone_qi = if zone_registry.zones.is_empty() {
+    let (overworld_zone_count, overworld_qi_total) = zone_registry
+        .zones
+        .iter()
+        .filter(|zone| zone.dimension == DimensionKind::Overworld)
+        .fold((0usize, 0.0), |(count, total), zone| {
+            (count + 1, total + zone.spirit_qi)
+        });
+    let avg_zone_qi = if overworld_zone_count == 0 {
         0.0
     } else {
-        zone_registry
-            .zones
-            .iter()
-            .map(|zone| zone.spirit_qi)
-            .sum::<f64>()
-            / zone_registry.zones.len() as f64
+        overworld_qi_total / overworld_zone_count as f64
     };
     let previous_avg = heartbeat.last_avg_zone_qi.replace(avg_zone_qi);
     let previous_tick = heartbeat.last_pressure_tick.replace(current_tick);
@@ -1069,6 +1079,9 @@ fn compute_world_pressure(
     };
     let mut players_by_zone: HashMap<&str, u32> = HashMap::new();
     for sample in player_samples {
+        if sample.dimension != DimensionKind::Overworld {
+            continue;
+        }
         if let Some(zone_name) = sample.zone_name.as_deref() {
             *players_by_zone.entry(zone_name).or_default() += 1;
         }
@@ -1080,7 +1093,7 @@ fn compute_world_pressure(
         player_density_peak: players_by_zone.values().copied().max().unwrap_or_default() as f64,
         high_realm_count: player_samples
             .iter()
-            .filter(|sample| sample.high_realm)
+            .filter(|sample| sample.dimension == DimensionKind::Overworld && sample.high_realm)
             .count() as u32,
         recent_breakthrough_count: heartbeat.recent_breakthrough_ticks.len() as u32,
     }
@@ -1090,12 +1103,19 @@ fn heartbeat_loop_phase(
     zone_registry: &ZoneRegistry,
     player_samples: &[PlayerSample],
 ) -> PlayerLoopPhase {
+    let overworld_player_count = player_samples
+        .iter()
+        .filter(|sample| sample.dimension == DimensionKind::Overworld)
+        .count();
     let mut evidence = PlayerLoopPhaseEvidence {
-        player_count: player_samples.len(),
+        player_count: overworld_player_count,
         ..Default::default()
     };
 
     for sample in player_samples {
+        if sample.dimension != DimensionKind::Overworld {
+            continue;
+        }
         let Some(zone_name) = sample.zone_name.as_deref() else {
             continue;
         };
@@ -1526,7 +1546,11 @@ fn maybe_queue_beast_tide(
     mut vfx_events: Option<&mut Events<VfxEventRequest>>,
 ) {
     let mut tracked_zones = Vec::new();
-    for zone in &zone_registry.zones {
+    for zone in zone_registry
+        .zones
+        .iter()
+        .filter(|zone| zone.dimension == DimensionKind::Overworld)
+    {
         if zone.spirit_qi < BEAST_TIDE_LOW_QI_THRESHOLD {
             let ticks = heartbeat
                 .low_qi_ticks_by_zone
@@ -1542,7 +1566,11 @@ fn maybe_queue_beast_tide(
         .low_qi_ticks_by_zone
         .retain(|zone_name, _| tracked_zones.iter().any(|tracked| tracked == zone_name));
 
-    for zone in &zone_registry.zones {
+    for zone in zone_registry
+        .zones
+        .iter()
+        .filter(|zone| zone.dimension == DimensionKind::Overworld)
+    {
         let low_ticks = heartbeat
             .low_qi_ticks_by_zone
             .get(zone.name.as_str())
@@ -1627,7 +1655,11 @@ fn maybe_queue_realm_collapse(
     mut vfx_events: Option<&mut Events<VfxEventRequest>>,
 ) {
     let mut tracked_zones = Vec::new();
-    for zone in &zone_registry.zones {
+    for zone in zone_registry
+        .zones
+        .iter()
+        .filter(|zone| zone.dimension == DimensionKind::Overworld)
+    {
         if zone.spirit_qi.abs() <= f64::EPSILON {
             let ticks = heartbeat
                 .dead_qi_ticks_by_zone
@@ -1643,7 +1675,11 @@ fn maybe_queue_realm_collapse(
         .dead_qi_ticks_by_zone
         .retain(|zone_name, _| tracked_zones.iter().any(|tracked| tracked == zone_name));
 
-    for zone in &zone_registry.zones {
+    for zone in zone_registry
+        .zones
+        .iter()
+        .filter(|zone| zone.dimension == DimensionKind::Overworld)
+    {
         let dead_ticks = heartbeat
             .dead_qi_ticks_by_zone
             .get(zone.name.as_str())
@@ -1857,6 +1893,9 @@ fn spawn_pseudo_vein_from_omen(
     else {
         return false;
     };
+    if anchor_zone.dimension != DimensionKind::Overworld {
+        return false;
+    }
     let id = format!("heartbeat_{}", heartbeat.next_pseudo_vein_index);
     heartbeat.next_pseudo_vein_index = heartbeat.next_pseudo_vein_index.saturating_add(1);
     let Ok(zone_name) = pseudo_vein_zone_name(id.as_str()) else {
@@ -1954,6 +1993,7 @@ fn select_pseudo_vein_anchor(
     zone_registry
         .zones
         .iter()
+        .filter(|zone| zone.dimension == DimensionKind::Overworld)
         .filter(|zone| !zone.name.starts_with("pseudo_vein_"))
         .filter(|zone| {
             heartbeat.active_pseudo_veins.values().all(|state| {
@@ -1979,10 +2019,12 @@ fn select_pseudo_vein_anchor(
 fn tide_sky_omen_anchor(zone_registry: &ZoneRegistry) -> Option<PseudoVeinAnchor> {
     zone_registry
         .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+        .filter(|zone| zone.dimension == DimensionKind::Overworld)
         .or_else(|| {
             zone_registry
                 .zones
                 .iter()
+                .filter(|zone| zone.dimension == DimensionKind::Overworld)
                 .min_by_key(|zone| (zone.danger_level, zone.name.as_str()))
         })
         .map(|zone| PseudoVeinAnchor {
@@ -2392,6 +2434,13 @@ mod tests {
         }
     }
 
+    fn tsy_zone(name: &str, x: f64, z: f64, spirit_qi: f64) -> Zone {
+        Zone {
+            dimension: DimensionKind::Tsy,
+            ..zone(name, x, z, spirit_qi)
+        }
+    }
+
     fn rhythm_context(loop_phase: PlayerLoopPhase, current_tick: u64) -> HeartbeatRhythmContext {
         HeartbeatRhythmContext {
             modifiers: season_event_modifiers(Season::Summer),
@@ -2556,6 +2605,61 @@ mod tests {
     }
 
     #[test]
+    fn pseudo_vein_anchor_ignores_tsy_blueprint_zones() {
+        let heartbeat = WorldHeartbeat::default();
+        let zones = ZoneRegistry {
+            zones: vec![
+                tsy_zone("tsy_daneng_01_deep", 0.0, 0.0, -0.95),
+                zone("overworld_waste", 300.0, 0.0, 0.08),
+            ],
+        };
+
+        let anchor = select_pseudo_vein_anchor(&zones, &heartbeat, 42)
+            .expect("overworld zone should remain eligible for pseudo-vein anchor");
+
+        assert_eq!(
+            anchor.name, "overworld_waste",
+            "TSY blueprint 常态负灵气不能抢走主世界伪灵脉锚点"
+        );
+    }
+
+    #[test]
+    fn pseudo_vein_spawn_rejects_tsy_anchor_without_runtime_state() {
+        let mut heartbeat = WorldHeartbeat::default();
+        let mut zones = ZoneRegistry {
+            zones: vec![tsy_zone("tsy_daneng_01_shallow", 0.0, 0.0, -0.45)],
+        };
+        let mut active_events = ActiveEventsResource::default();
+        let omen = WorldEventOmen {
+            kind: OmenKind::PseudoVeinForming,
+            zone_name: "tsy_daneng_01_shallow".to_string(),
+            target_player: None,
+            origin: DVec3::new(10.0, 65.0, 10.0),
+            intensity: 0.6,
+            scheduled_at_tick: 0,
+            fires_at_tick: 0,
+            expires_at_tick: 200,
+        };
+
+        assert!(
+            !spawn_pseudo_vein_from_omen(
+                &mut heartbeat,
+                &mut zones,
+                &mut active_events,
+                &omen,
+                Season::Summer,
+                200
+            ),
+            "主世界 heartbeat 不应在 TSY blueprint 上创建伪灵脉 runtime zone"
+        );
+        assert_eq!(heartbeat.active_pseudo_vein_count(), 0);
+        assert!(
+            zones.find_zone_by_name("pseudo_vein_heartbeat_0").is_none(),
+            "拒绝 TSY anchor 时不能泄漏 runtime pseudo-vein zone"
+        );
+    }
+
+    #[test]
     fn restored_pseudo_vein_records_rebuild_zone_and_advance_next_index() {
         let mut heartbeat = WorldHeartbeat::default();
         let mut zones = ZoneRegistry {
@@ -2646,6 +2750,42 @@ mod tests {
 
         let active = app.world().resource::<ActiveEventsResource>();
         assert!(active.contains("hungry", EVENT_BEAST_TIDE));
+    }
+
+    #[test]
+    fn chain_reaction_from_tsy_pseudo_vein_does_not_enqueue_beast_tide() {
+        let mut app = App::new();
+        app.insert_resource(WorldHeartbeat::default());
+        app.insert_resource(ActiveEventsResource::default());
+        app.insert_resource(ZoneRegistry {
+            zones: vec![
+                tsy_zone("pseudo_vein_tsy_done", 0.0, 0.0, 0.0),
+                tsy_zone("tsy_hungry", 300.0, 0.0, -0.30),
+            ],
+        });
+        app.insert_resource(NpcRegistry {
+            counts_by_zone: HashMap::from([("tsy_hungry".to_string(), 8)]),
+            ..Default::default()
+        });
+        app.add_event::<EventChainTrigger>();
+        app.add_systems(Update, chain_reaction_tick);
+        app.world_mut()
+            .send_event(EventChainTrigger::PseudoVeinDissipated {
+                zone_name: "pseudo_vein_tsy_done".to_string(),
+                redistributed_qi: 0.7,
+            });
+        app.update();
+
+        let active = app.world().resource::<ActiveEventsResource>();
+        assert!(
+            !active.contains("tsy_hungry", EVENT_BEAST_TIDE),
+            "TSY 遗留伪灵脉不应通过主世界 chain_reaction 触发兽潮"
+        );
+        let zones = app.world().resource::<ZoneRegistry>();
+        assert!(
+            zones.find_zone_by_name("pseudo_vein_tsy_done").is_none(),
+            "即使拒绝 TSY chain reaction，也应清理已完成的 runtime pseudo-vein zone"
+        );
     }
 
     #[test]
@@ -2843,6 +2983,42 @@ mod tests {
     }
 
     #[test]
+    fn beast_tide_primary_entry_ignores_tsy_blueprint_zones() {
+        let mut heartbeat = WorldHeartbeat::default();
+        heartbeat.low_qi_ticks_by_zone.insert(
+            "tsy_daneng_01_shallow".to_string(),
+            BEAST_TIDE_LOW_QI_REQUIRED_TICKS,
+        );
+        let zones = ZoneRegistry {
+            zones: vec![tsy_zone("tsy_daneng_01_shallow", 0.0, 0.0, -0.45)],
+        };
+        let npc_registry = NpcRegistry {
+            counts_by_zone: HashMap::from([("tsy_daneng_01_shallow".to_string(), 8)]),
+            ..Default::default()
+        };
+
+        maybe_queue_beast_tide(
+            &mut heartbeat,
+            &zones,
+            Some(&npc_registry),
+            &ActiveEventsResource::default(),
+            rhythm_context(PlayerLoopPhase::DeepGathering, 100_000),
+            None,
+        );
+
+        assert!(
+            heartbeat.pending_omens.is_empty(),
+            "TSY blueprint 负灵域不能被主世界兽潮 heartbeat 排队"
+        );
+        assert!(
+            !heartbeat
+                .low_qi_ticks_by_zone
+                .contains_key("tsy_daneng_01_shallow"),
+            "主世界 heartbeat 应清理既有 TSY low-qi 计数，避免补载后残留状态误触发"
+        );
+    }
+
+    #[test]
     fn beast_tide_secondary_entry_danger_weight_widens_effective_qi_threshold() {
         // 三态矩阵「collapse/邻域塌缩扩散事件单独触发」态：只走次入口
         // `PseudoVeinDissipated`，全程 `low_qi_ticks_by_zone` 为空（主入口/qi 骤降因子
@@ -2971,6 +3147,54 @@ mod tests {
     }
 
     #[test]
+    fn world_pressure_ignores_tsy_blueprint_zones() {
+        let mut heartbeat = WorldHeartbeat::default();
+        let zones = ZoneRegistry {
+            zones: vec![
+                zone("spawn", 0.0, 0.0, 0.8),
+                zone("waste", 300.0, 0.0, 0.2),
+                tsy_zone("tsy_daneng_01_deep", 600.0, 0.0, -0.95),
+            ],
+        };
+
+        let pressure = compute_world_pressure(
+            &mut heartbeat,
+            &zones,
+            &[
+                PlayerSample {
+                    player_id: "home".to_string(),
+                    dimension: DimensionKind::Overworld,
+                    zone_name: Some("spawn".to_string()),
+                    position: DVec3::ZERO,
+                    high_realm: false,
+                },
+                PlayerSample {
+                    player_id: "tsy_high".to_string(),
+                    dimension: DimensionKind::Tsy,
+                    zone_name: Some("tsy_daneng_01_deep".to_string()),
+                    position: DVec3::ZERO,
+                    high_realm: true,
+                },
+            ],
+            1_000,
+        );
+
+        assert!(
+            (pressure.avg_zone_qi - 0.5).abs() < 1e-9,
+            "主世界 heartbeat pressure 只能统计 Overworld zone；TSY 负灵气不应把平均值拖到 {}",
+            pressure.avg_zone_qi
+        );
+        assert_eq!(
+            pressure.player_density_peak, 1.0,
+            "TSY 玩家样本不能计入主世界 heartbeat 玩家密度"
+        );
+        assert_eq!(
+            pressure.high_realm_count, 0,
+            "TSY 高境界玩家不能抬高主世界 heartbeat high_realm_count"
+        );
+    }
+
+    #[test]
     fn heartbeat_loop_phase_uses_zone_risk_without_new_player_state() {
         let zones = ZoneRegistry {
             zones: vec![
@@ -2989,6 +3213,7 @@ mod tests {
                 &zones,
                 &[PlayerSample {
                     player_id: "home".to_string(),
+                    dimension: DimensionKind::Overworld,
                     zone_name: Some(DEFAULT_SPAWN_ZONE_NAME.to_string()),
                     position: DVec3::ZERO,
                     high_realm: false,
@@ -3001,6 +3226,7 @@ mod tests {
                 &zones,
                 &[PlayerSample {
                     player_id: "deep".to_string(),
+                    dimension: DimensionKind::Overworld,
                     zone_name: Some("deep_gift".to_string()),
                     position: DVec3::ZERO,
                     high_realm: false,
@@ -3013,12 +3239,37 @@ mod tests {
                 &zones,
                 &[PlayerSample {
                     player_id: "return".to_string(),
+                    dimension: DimensionKind::Overworld,
                     zone_name: Some("route_ash".to_string()),
                     position: DVec3::ZERO,
                     high_realm: false,
                 }]
             ),
             PlayerLoopPhase::ReturnTrip
+        );
+    }
+
+    #[test]
+    fn heartbeat_loop_phase_ignores_tsy_player_samples() {
+        let mut tsy_deep = tsy_zone("tsy_daneng_01_deep", 0.0, 0.0, -0.95);
+        tsy_deep.danger_level = DEEP_GATHERING_DANGER_LEVEL;
+        let zones = ZoneRegistry {
+            zones: vec![zone(DEFAULT_SPAWN_ZONE_NAME, 200.0, 0.0, 0.5), tsy_deep],
+        };
+
+        assert_eq!(
+            heartbeat_loop_phase(
+                &zones,
+                &[PlayerSample {
+                    player_id: "tsy_high".to_string(),
+                    dimension: DimensionKind::Tsy,
+                    zone_name: Some("tsy_daneng_01_deep".to_string()),
+                    position: DVec3::ZERO,
+                    high_realm: true,
+                }]
+            ),
+            PlayerLoopPhase::SafeShelter,
+            "TSY 深层玩家不能把主世界 heartbeat 节奏推成 DeepGathering/ReturnTrip"
         );
     }
 
@@ -3200,6 +3451,7 @@ mod tests {
             &zones,
             &[PlayerSample {
                 player_id: "stranded".to_string(),
+                dimension: DimensionKind::Overworld,
                 zone_name: Some("dead_zone".to_string()),
                 position: DVec3::ZERO,
                 high_realm: false,
@@ -3212,6 +3464,38 @@ mod tests {
         assert!(
             occupied.pending_omens.is_empty(),
             "有修士停留时不应按 P4 的无人停留域崩时机排队"
+        );
+    }
+
+    #[test]
+    fn realm_collapse_heartbeat_ignores_tsy_blueprint_zones() {
+        let zones = ZoneRegistry {
+            zones: vec![tsy_zone("tsy_daneng_01_deep", 0.0, 0.0, 0.0)],
+        };
+        let mut heartbeat = WorldHeartbeat::default();
+        heartbeat.dead_qi_ticks_by_zone.insert(
+            "tsy_daneng_01_deep".to_string(),
+            REALM_COLLAPSE_DEAD_QI_REQUIRED_TICKS,
+        );
+
+        maybe_queue_realm_collapse(
+            &mut heartbeat,
+            &zones,
+            &[],
+            &ActiveEventsResource::default(),
+            rhythm_context(PlayerLoopPhase::DeepGathering, TICKS_PER_HOUR),
+            None,
+        );
+
+        assert!(
+            heartbeat.pending_omens.is_empty(),
+            "TSY blueprint zone 不能被主世界无人域崩 heartbeat 排队"
+        );
+        assert!(
+            !heartbeat
+                .dead_qi_ticks_by_zone
+                .contains_key("tsy_daneng_01_deep"),
+            "主世界 heartbeat 应清理既有 TSY dead-qi 计数"
         );
     }
 

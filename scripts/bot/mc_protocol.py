@@ -30,10 +30,13 @@ S2C_UNLOAD_CHUNK = 0x1E
 S2C_KEEP_ALIVE = 0x23
 S2C_CHUNK_DATA = 0x24
 S2C_GAME_JOIN = 0x28
+S2C_ENTITY_POSITION = 0x2B
+S2C_ENTITY_POSITION_ROTATION = 0x2C
 S2C_PLAYER_CHAT = 0x35
 S2C_DEATH_MESSAGE = 0x38
 S2C_POS_LOOK = 0x3C
 S2C_ENTITIES_DESTROY = 0x3E
+S2C_ENTITY_TELEPORT = 0x68
 S2C_RESPAWN = 0x41
 S2C_CHUNK_CENTER = 0x4E
 S2C_CHUNK_LOAD_DISTANCE = 0x4F
@@ -101,6 +104,11 @@ class Reader:
             raise ValueError("varint 超过 5 字节 —— 流错位或包解析越界")
         if value >= 2**31:
             value -= 2**32
+        return value
+
+    def i16(self) -> int:
+        value = struct.unpack_from(">h", self.data, self.pos)[0]
+        self.pos += 2
         return value
 
     def i32(self) -> int:

@@ -13,9 +13,11 @@ use valence::prelude::{
     bevy_ecs, Despawned, Entity, Events, Position, Query, Res, ResMut, Resource, With, Without,
 };
 
+use crate::combat::baomai_v3::state::BloodBurnActive;
 use crate::combat::components::{DerivedAttrs, StatusEffects};
 use crate::combat::events::StatusEffectKind;
 use crate::combat::woliu_v2::state::TurbulenceExposure;
+use crate::combat::CombatClock;
 use crate::fauna::mundane::MundaneFaunaSpecies;
 use crate::network::{gameplay_vfx, vfx_event_emit::VfxEventRequest};
 use crate::npc::spawn::NpcMarker;
@@ -102,6 +104,7 @@ pub fn qi_regen_and_zone_drain_tick(
     mut practice_events: Option<ResMut<Events<CultivationSessionPracticeEvent>>>,
     mut practice_accumulator: Option<ResMut<CultivationSessionPracticeAccumulator>>,
     mut vfx_events: Option<ResMut<Events<VfxEventRequest>>>,
+    combat_clock: Option<Res<CombatClock>>,
     mut players: Query<
         (
             Entity,
@@ -115,6 +118,7 @@ pub fn qi_regen_and_zone_drain_tick(
             Option<&TurbulenceExposure>,
             Option<&JueBiAftershockDebuff>,
             Option<&DerivedAttrs>,
+            Option<&BloodBurnActive>,
             Option<&LifeRecord>,
             Option<&NpcMarker>,
             // plan-mundane-fauna-v1：凡兽无灵——`Without<MundaneFaunaSpecies>` 把凡兽整体排除出
@@ -124,10 +128,14 @@ pub fn qi_regen_and_zone_drain_tick(
             // 裸 insert(Despawned)）100% 蒸发，破守恒（plan §59 qi_physics 锚点 + mundane.rs 模块 doc）。
             // spawn 与 hydrate 两路均挂 MundaneFaunaSpecies（hydrate 走 spawn_mundane_fauna_at），过滤稳。
         ),
-        Without<MundaneFaunaSpecies>,
+        (Without<MundaneFaunaSpecies>, Without<Despawned>),
     >,
 ) {
     clock.tick = clock.tick.wrapping_add(1);
+    let effect_tick = combat_clock
+        .as_deref()
+        .map(|clock| clock.tick)
+        .unwrap_or(clock.tick);
 
     let Some(mut zones) = zone_registry else {
         return;
@@ -145,6 +153,7 @@ pub fn qi_regen_and_zone_drain_tick(
         turbulence,
         juebi_aftershock,
         derived_attrs,
+        blood_burn,
         life_record,
         npc_marker,
     ) in players.iter_mut()
@@ -228,6 +237,8 @@ pub fn qi_regen_and_zone_drain_tick(
             .filter(|debuff| clock.tick <= debuff.until_tick)
             .map(|debuff| debuff.rhythm_multiplier.clamp(0.0, 1.0))
             .unwrap_or(1.0);
+        let scar_circuit_qi_regen_multiplier =
+            baomai_scar_qi_regen_multiplier(derived_attrs, blood_burn, effect_tick);
         let war_zone_multiplier = war_bonus
             .as_deref()
             .map(|s| s.multiplier_for(&zone_name))
@@ -256,6 +267,7 @@ pub fn qi_regen_and_zone_drain_tick(
                 * exhausted_multiplier
                 * turbulence_multiplier
                 * juebi_aftershock_multiplier
+                * scar_circuit_qi_regen_multiplier
                 * war_zone_multiplier
                 * dominance_regen_multiplier,
             avg_integrity,
@@ -320,6 +332,19 @@ pub fn qi_regen_and_zone_drain_tick(
             );
         }
     }
+}
+
+fn baomai_scar_qi_regen_multiplier(
+    derived_attrs: Option<&DerivedAttrs>,
+    blood_burn: Option<&BloodBurnActive>,
+    now_tick: u64,
+) -> f64 {
+    if !blood_burn.is_some_and(|active| active.is_active_at(now_tick)) {
+        return 1.0;
+    }
+    derived_attrs
+        .map(|attrs| attrs.qi_regen_multiplier.max(0.0))
+        .unwrap_or(1.0)
 }
 
 fn cultivation_regen_account_id(
@@ -599,6 +624,216 @@ mod tests {
             0.0,
             "玩家与 zone 活余额已经在 ECS/ZoneRegistry 中，ledger 只能 audit-only，不能镜像双计"
         );
+    }
+
+    fn blood_burn_until(active_until_tick: u64) -> BloodBurnActive {
+        BloodBurnActive {
+            started_at_tick: 0,
+            active_until_tick,
+            hp_burned: 0.0,
+            qi_multiplier: 1.0,
+            cooldown_until_tick: 0,
+        }
+    }
+
+    fn run_qi_regen_once_with_scar_modifier(
+        attrs: Option<DerivedAttrs>,
+        blood_burn: Option<BloodBurnActive>,
+        despawned: bool,
+    ) -> (f64, f64, f64, usize) {
+        run_qi_regen_once_with_scar_modifier_at_combat_tick(attrs, blood_burn, despawned, None)
+    }
+
+    fn run_qi_regen_once_with_scar_modifier_at_combat_tick(
+        attrs: Option<DerivedAttrs>,
+        blood_burn: Option<BloodBurnActive>,
+        despawned: bool,
+        combat_tick: Option<u64>,
+    ) -> (f64, f64, f64, usize) {
+        let mut app = App::new();
+        app.insert_resource(CultivationClock::default());
+        app.insert_resource(zone_with_spirit_qi(0.8));
+        if let Some(tick) = combat_tick {
+            app.insert_resource(CombatClock { tick });
+        }
+        add_qi_regen_system(&mut app);
+
+        let mut meridians = MeridianSystem::default();
+        meridians.get_mut(MeridianId::Lung).opened = true;
+        let mut entity = app.world_mut().spawn((
+            Position::new([8.0, 66.0, 8.0]),
+            meridians,
+            Cultivation {
+                qi_current: 0.0,
+                qi_max: 100.0,
+                ..Cultivation::default()
+            },
+            LifeRecord::new("scar_qi_regen_test".to_string()),
+        ));
+        if let Some(attrs) = attrs {
+            entity.insert(attrs);
+        }
+        if let Some(blood_burn) = blood_burn {
+            entity.insert(blood_burn);
+        }
+        if despawned {
+            entity.insert(Despawned);
+        }
+        let entity = entity.id();
+
+        let zone_before = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name("spawn")
+            .unwrap()
+            .spirit_qi;
+
+        app.update();
+
+        let cultivation = app.world().entity(entity).get::<Cultivation>().unwrap();
+        let zone_after = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name("spawn")
+            .unwrap()
+            .spirit_qi;
+        let ledger = app.world().resource::<WorldQiAccount>();
+        let transfer_amount = ledger.transfers().last().map(|t| t.amount).unwrap_or(0.0);
+        (
+            cultivation.qi_current,
+            zone_before - zone_after,
+            transfer_amount,
+            ledger.transfers().len(),
+        )
+    }
+
+    #[test]
+    fn scar_qi_regen_multiplier_requires_active_blood_burn() {
+        let attrs = DerivedAttrs {
+            qi_regen_multiplier: 2.0,
+            ..DerivedAttrs::default()
+        };
+        assert_eq!(
+            baomai_scar_qi_regen_multiplier(Some(&attrs), None, 1),
+            1.0,
+            "无 BloodBurnActive 时心肺短路倍率不能生效"
+        );
+        assert_eq!(
+            baomai_scar_qi_regen_multiplier(Some(&attrs), Some(&blood_burn_until(1)), 1),
+            1.0,
+            "BloodBurnActive 到期后心肺短路倍率必须清理为中性"
+        );
+        assert_eq!(
+            baomai_scar_qi_regen_multiplier(Some(&attrs), Some(&blood_burn_until(10)), 1),
+            2.0,
+            "BloodBurnActive 有效期内才消费 DerivedAttrs.qi_regen_multiplier"
+        );
+    }
+
+    #[test]
+    fn scar_qi_regen_multiplier_increases_gain_and_preserves_ledger_conservation() {
+        let (base_gain, base_drain, base_transfer, _) =
+            run_qi_regen_once_with_scar_modifier(None, None, false);
+        let (boost_gain, boost_drain, boost_transfer, _) = run_qi_regen_once_with_scar_modifier(
+            Some(DerivedAttrs {
+                qi_regen_multiplier: 2.0,
+                ..DerivedAttrs::default()
+            }),
+            Some(blood_burn_until(10)),
+            false,
+        );
+
+        assert!(base_gain > 0.0, "baseline regen should produce positive qi");
+        assert!(
+            (boost_gain - base_gain * 2.0).abs() < 1e-9,
+            "心肺短路 + 焚血应只把 rate 放大 2 倍；base={base_gain}, boosted={boost_gain}"
+        );
+        assert!((boost_transfer - boost_gain).abs() < 1e-9);
+        assert!((base_transfer - base_gain).abs() < 1e-9);
+        assert!(
+            (boost_gain - boost_drain * zone_unit_qi()).abs() < 1e-9,
+            "boosted gain 必须等于 zone drain × QI_ZONE_UNIT_CAPACITY"
+        );
+        assert!(
+            (base_gain - base_drain * zone_unit_qi()).abs() < 1e-9,
+            "baseline gain 必须等于 zone drain × QI_ZONE_UNIT_CAPACITY"
+        );
+    }
+
+    #[test]
+    fn scar_qi_regen_uses_combat_clock_for_blood_burn_expiry() {
+        let (base_gain, _, _, _) = run_qi_regen_once_with_scar_modifier(None, None, false);
+        let (boost_gain, _, _, _) = run_qi_regen_once_with_scar_modifier_at_combat_tick(
+            Some(DerivedAttrs {
+                qi_regen_multiplier: 2.0,
+                ..DerivedAttrs::default()
+            }),
+            Some(blood_burn_until(10)),
+            false,
+            Some(5),
+        );
+        let (expired_gain, _, _, _) = run_qi_regen_once_with_scar_modifier_at_combat_tick(
+            Some(DerivedAttrs {
+                qi_regen_multiplier: 2.0,
+                ..DerivedAttrs::default()
+            }),
+            Some(blood_burn_until(10)),
+            false,
+            Some(10),
+        );
+
+        assert!(
+            (boost_gain - base_gain * 2.0).abs() < 1e-9,
+            "CombatClock.tick=5 < active_until_tick=10 时心肺短路倍率应生效"
+        );
+        assert!(
+            (expired_gain - base_gain).abs() < 1e-9,
+            "CombatClock.tick=10 到期时，即使 CultivationClock 刚推进到 1，也不能继续回气加成"
+        );
+    }
+
+    #[test]
+    fn scar_qi_regen_multiplier_is_neutral_after_blood_burn_expiry_or_relogin_default_attrs() {
+        let (base_gain, _, _, _) = run_qi_regen_once_with_scar_modifier(None, None, false);
+        let (expired_gain, _, _, _) = run_qi_regen_once_with_scar_modifier(
+            Some(DerivedAttrs {
+                qi_regen_multiplier: 2.0,
+                ..DerivedAttrs::default()
+            }),
+            Some(blood_burn_until(1)),
+            false,
+        );
+        let (relogin_default_gain, _, _, _) = run_qi_regen_once_with_scar_modifier(
+            Some(DerivedAttrs::default()),
+            Some(blood_burn_until(10)),
+            false,
+        );
+
+        assert!(
+            (expired_gain - base_gain).abs() < 1e-9,
+            "焚血到期后旧 DerivedAttrs.qi_regen_multiplier 不能继续影响回气"
+        );
+        assert!(
+            (relogin_default_gain - base_gain).abs() < 1e-9,
+            "重登/新挂载的默认 DerivedAttrs 必须保持中性回气"
+        );
+    }
+
+    #[test]
+    fn qi_regen_skips_despawned_offline_cultivators() {
+        let (gain, drain, transfer, transfer_count) = run_qi_regen_once_with_scar_modifier(
+            Some(DerivedAttrs {
+                qi_regen_multiplier: 2.0,
+                ..DerivedAttrs::default()
+            }),
+            Some(blood_burn_until(10)),
+            true,
+        );
+
+        assert_eq!(gain, 0.0, "离线 Despawned 修士不应继续吸收 zone 灵气");
+        assert_eq!(drain, 0.0, "离线 Despawned 修士不应扣减 zone.spirit_qi");
+        assert_eq!(transfer, 0.0, "离线 Despawned 修士不应留下回气 transfer");
+        assert_eq!(transfer_count, 0, "离线 Despawned 修士不应产生回气 audit");
     }
 
     #[test]

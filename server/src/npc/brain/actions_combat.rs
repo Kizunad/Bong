@@ -444,17 +444,21 @@ fn deterministic_interval(entity_index: u32, tick: u64, min: u64, max: u64) -> u
     min + (seed % range)
 }
 
+fn lifecycle_blocks_combat_action(lifecycle: Option<&Lifecycle>) -> bool {
+    lifecycle.is_some_and(|lc| lc.state != LifecycleState::Alive)
+}
+
 #[allow(clippy::type_complexity)]
 pub(crate) fn npc_defense_action_system(
     mut actions: Query<(&Actor, &mut ActionState, &mut NpcDefenseAction)>,
-    npcs: Query<(&Cultivation, Option<&StatusEffects>), With<NpcMarker>>,
+    npcs: Query<(&Cultivation, Option<&StatusEffects>, Option<&Lifecycle>), With<NpcMarker>>,
     mut defense_intents: EventWriter<DefenseIntent>,
     combat_clock: Option<Res<CombatClock>>,
 ) {
     let now_tick = combat_clock.as_deref().map(|c| c.tick).unwrap_or(0);
 
     for (Actor(actor), mut state, mut defense_action) in &mut actions {
-        let Ok((cultivation, statuses_opt)) = npcs.get(*actor) else {
+        let Ok((cultivation, statuses_opt, lifecycle)) = npcs.get(*actor) else {
             if matches!(*state, ActionState::Requested | ActionState::Executing) {
                 *state = ActionState::Failure;
             }
@@ -463,6 +467,10 @@ pub(crate) fn npc_defense_action_system(
 
         match *state {
             ActionState::Requested => {
+                if lifecycle_blocks_combat_action(lifecycle) {
+                    *state = ActionState::Failure;
+                    continue;
+                }
                 if realm_rank(cultivation.realm)
                     < realm_rank(crate::cultivation::components::Realm::Induce)
                 {
@@ -486,6 +494,10 @@ pub(crate) fn npc_defense_action_system(
                 *state = ActionState::Executing;
             }
             ActionState::Executing => {
+                if lifecycle_blocks_combat_action(lifecycle) {
+                    *state = ActionState::Failure;
+                    continue;
+                }
                 let (min, max) = defense_interval_range(cultivation.realm);
                 let interval = deterministic_interval(actor.index(), now_tick, min, max);
                 let can_fire = match defense_action.last_defense_tick {
@@ -1007,7 +1019,196 @@ mod tests {
     }
 
     #[test]
-    fn defense_action_emits_intent_on_first_fire() {
+    fn npc_defense_action_requested_non_alive_states_fail_before_executing() {
+        use crate::combat::components::{Lifecycle, LifecycleState};
+        use crate::cultivation::components::{Cultivation, Realm};
+
+        for non_alive_state in [
+            LifecycleState::NearDeath,
+            LifecycleState::AwaitingRevival,
+            LifecycleState::Terminated,
+        ] {
+            let mut app = App::new();
+            app.insert_resource(CombatClock { tick: 100 });
+            app.insert_resource(CapturedDefenseIntents::default());
+            app.add_event::<DefenseIntent>();
+            app.add_systems(
+                PreUpdate,
+                (
+                    npc_defense_action_system,
+                    capture_defense_intents.after(npc_defense_action_system),
+                ),
+            );
+
+            let npc = app
+                .world_mut()
+                .spawn((
+                    NpcMarker,
+                    Cultivation {
+                        realm: Realm::Condense,
+                        qi_current: 100.0,
+                        ..Default::default()
+                    },
+                    Lifecycle {
+                        character_id: format!("npc_defense_{non_alive_state:?}_requested"),
+                        state: non_alive_state,
+                        ..Default::default()
+                    },
+                ))
+                .id();
+
+            let action_entity = app
+                .world_mut()
+                .spawn((
+                    Actor(npc),
+                    NpcDefenseAction::default(),
+                    ActionState::Requested,
+                ))
+                .id();
+
+            app.update();
+
+            assert_eq!(
+                *app.world().get::<ActionState>(action_entity).unwrap(),
+                ActionState::Failure,
+                "{non_alive_state:?} NPC defense action must fail before entering Executing"
+            );
+            assert!(
+                app.world()
+                    .resource::<CapturedDefenseIntents>()
+                    .0
+                    .is_empty(),
+                "{non_alive_state:?} NPC must not emit DefenseIntent from Requested state"
+            );
+        }
+    }
+
+    #[test]
+    fn npc_defense_action_executing_non_alive_states_fail_without_intent() {
+        use crate::combat::components::{Lifecycle, LifecycleState};
+        use crate::cultivation::components::{Cultivation, Realm};
+
+        for non_alive_state in [
+            LifecycleState::NearDeath,
+            LifecycleState::AwaitingRevival,
+            LifecycleState::Terminated,
+        ] {
+            let mut app = App::new();
+            app.insert_resource(CombatClock { tick: 200 });
+            app.insert_resource(CapturedDefenseIntents::default());
+            app.add_event::<DefenseIntent>();
+            app.add_systems(
+                PreUpdate,
+                (
+                    npc_defense_action_system,
+                    capture_defense_intents.after(npc_defense_action_system),
+                ),
+            );
+
+            let npc = app
+                .world_mut()
+                .spawn((
+                    NpcMarker,
+                    Cultivation {
+                        realm: Realm::Solidify,
+                        qi_current: 100.0,
+                        ..Default::default()
+                    },
+                    Lifecycle {
+                        character_id: format!("npc_defense_{non_alive_state:?}_executing"),
+                        state: non_alive_state,
+                        ..Default::default()
+                    },
+                ))
+                .id();
+
+            let action_entity = app
+                .world_mut()
+                .spawn((
+                    Actor(npc),
+                    NpcDefenseAction::default(),
+                    ActionState::Executing,
+                ))
+                .id();
+
+            app.update();
+
+            assert_eq!(
+                *app.world().get::<ActionState>(action_entity).unwrap(),
+                ActionState::Failure,
+                "{non_alive_state:?} NPC defense action must fail even if it was already Executing"
+            );
+            assert!(
+                app.world()
+                    .resource::<CapturedDefenseIntents>()
+                    .0
+                    .is_empty(),
+                "{non_alive_state:?} NPC must not emit DefenseIntent from Executing state"
+            );
+        }
+    }
+
+    #[test]
+    fn npc_defense_action_executing_alive_lifecycle_emits_intent() {
+        use crate::combat::components::Lifecycle;
+        use crate::cultivation::components::{Cultivation, Realm};
+
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 200 });
+        app.insert_resource(CapturedDefenseIntents::default());
+        app.add_event::<DefenseIntent>();
+        app.add_systems(
+            PreUpdate,
+            (
+                npc_defense_action_system,
+                capture_defense_intents.after(npc_defense_action_system),
+            ),
+        );
+
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Cultivation {
+                    realm: Realm::Solidify,
+                    qi_current: 100.0,
+                    ..Default::default()
+                },
+                Lifecycle {
+                    character_id: "npc_defense_alive_executing".to_string(),
+                    ..Default::default()
+                },
+            ))
+            .id();
+
+        let action_entity = app
+            .world_mut()
+            .spawn((
+                Actor(npc),
+                NpcDefenseAction::default(),
+                ActionState::Executing,
+            ))
+            .id();
+
+        app.update();
+
+        assert_eq!(
+            *app.world().get::<ActionState>(action_entity).unwrap(),
+            ActionState::Success,
+            "Alive NPC defense action must keep the existing Executing happy path"
+        );
+        let captured = &app.world().resource::<CapturedDefenseIntents>().0;
+        assert_eq!(
+            captured.len(),
+            1,
+            "Alive NPC should emit exactly one DefenseIntent"
+        );
+        assert_eq!(captured[0].defender, npc);
+        assert_eq!(captured[0].issued_at_tick, 200);
+    }
+
+    #[test]
+    fn npc_defense_action_no_lifecycle_emits_intent_on_first_fire() {
         use crate::cultivation::components::Cultivation;
 
         let mut app = App::new();

@@ -4352,7 +4352,7 @@ mod player_state_tests {
         );
         assert_eq!(json.get("realm"), Some(&serde_json::json!("Induce")));
         assert_eq!(json.get("spirit_qi"), Some(&serde_json::json!(78.0)));
-        // P0 HUD fix：下发真元上限，client 才能算正确分母（缺失则回退 max(100,current) 显示恒满）。
+        // P0 HUD fix：下发真元上限，client 才能算正确分母；缺失 payload 会被拒收。
         assert_eq!(json.get("spirit_qi_max"), Some(&serde_json::json!(150.0)));
         assert_eq!(json.get("karma"), Some(&serde_json::json!(0.2)));
         assert_eq!(json.get("zone"), Some(&serde_json::json!("blood_valley")));
