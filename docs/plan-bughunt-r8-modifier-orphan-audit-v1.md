@@ -180,7 +180,7 @@
 > 本 plan 当前完成 P0 验证收口 + P1 低风险 server 修复；P2-P5 未完成，暂不归档。
 
 - **落地清单**：新增本文档；`server/src/combat/events.rs` 增加 `AttackReach::with_bonus`；`server/src/combat/player_attack.rs` 消费 `DerivedAttrs.reach_bonus`；`server/src/cultivation/tick.rs` 消费 `DerivedAttrs.qi_regen_multiplier` 并按 `BloodBurnActive` / `CombatClock` 限定；`server/src/cultivation/contamination.rs` 消费 `DerivedAttrs.contam_purge_multiplier`；`server/src/cultivation/mod.rs` 补生产调度顺序；未移动 `docs/plans-skeleton/plan-bughunt-r8-findings-v1.md`。
-- **关键 commit**：本 PR 当前提交 `修复 r8 modifier 派生属性孤岛消费`。
+- **关键 commit**：本 PR 拆为近战 reach 消费、回气/排异守恒消费、审计证据三个提交；最终提交列表以 PR git log 为准。
 - **测试结果**：
   - ✅ `cd server && CARGO_BUILD_JOBS=1 nice -n 10 cargo test player_attack`
   - ✅ `cd server && CARGO_BUILD_JOBS=1 nice -n 10 cargo test scar_qi_regen`
@@ -188,7 +188,7 @@
   - ✅ `cd server && CARGO_BUILD_JOBS=1 nice -n 10 cargo test qi_regen_skips_despawned_offline_cultivators`
   - ✅ `cd server && CARGO_BUILD_JOBS=1 nice -n 10 cargo test contamination_tick_skips_despawned_offline_players`
   - ✅ `cd server && CARGO_BUILD_JOBS=1 nice -n 10 cargo fmt --check`
-  - ✅ `cd server && CARGO_BUILD_JOBS=1 nice -n 10 cargo test`（10860 passed / 1 ignored；main 11 passed；full_app 1 passed；backpack e2e 4 passed；doctest 5 ignored）
+  - ✅ `cd server && CARGO_BUILD_JOBS=1 nice -n 10 cargo test`（10926 passed / 1 ignored；main 11 passed；full_app 1 passed；backpack e2e 4 passed；doctest 5 ignored）
   - ⚠️ `cd server && CARGO_BUILD_JOBS=1 nice -n 10 cargo clippy --all-targets -- -D warnings` 当前被仓库级 Rust 1.96.1 clippy 新 lint 债阻塞：69 个错误分布在 botany / fauna / inventory / network / npc / world 等未触碰模块，主要为 `manual_is_multiple_of`、`derivable_impls`、`manual_checked_ops`、`unnecessary_sort_by` 等；本 PR 修改文件未出现在失败列表中。
 - **grep/读码证据**：
   - `reach_bonus` / `qi_regen_multiplier` / `contam_purge_multiplier`：写入在 `server/src/combat/baomai_v4/scar_circuit.rs:213-228`；P0 时 `player_attack.rs` reach 判定只读 `weapon_reach()` / `FIST_REACH`，`cultivation/tick.rs` 只消费 `qi_max_multiplier`，`contamination.rs` query 不含 `DerivedAttrs`。P1 后三者分别由 `player_attack.rs`、`tick.rs`、`contamination.rs` 消费。
