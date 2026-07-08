@@ -9,9 +9,10 @@
 //!   * `amount <= 0` 的条目移除
 //!   * 所有条目都清空 + qi/经络全毁 → emit `CultivationDeathTrigger::ContaminationOverflow`
 
-use valence::prelude::{Entity, EventWriter, Events, Position, Query, ResMut};
+use valence::prelude::{Despawned, Entity, EventWriter, Events, Position, Query, ResMut, Without};
 
 use crate::alchemy::skill_hook::purge_rate_bonus;
+use crate::combat::components::DerivedAttrs;
 use crate::skill::components::{SkillId, SkillSet};
 use crate::skill::curve::effective_lv;
 
@@ -90,16 +91,20 @@ pub fn contamination_tick(
     mut deaths: EventWriter<CultivationDeathTrigger>,
     mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
     mut zones: Option<ResMut<ZoneRegistry>>,
-    mut players: Query<(
-        Entity,
-        Option<&Position>,
-        Option<&CurrentDimension>,
-        Option<&LifeRecord>,
-        &mut Cultivation,
-        &mut Contamination,
-        &mut MeridianSystem,
-        Option<&SkillSet>,
-    )>,
+    mut players: Query<
+        (
+            Entity,
+            Option<&Position>,
+            Option<&CurrentDimension>,
+            Option<&LifeRecord>,
+            &mut Cultivation,
+            &mut Contamination,
+            &mut MeridianSystem,
+            Option<&SkillSet>,
+            Option<&DerivedAttrs>,
+        ),
+        Without<Despawned>,
+    >,
 ) {
     let now = clock.tick;
     for (
@@ -111,6 +116,7 @@ pub fn contamination_tick(
         mut contam,
         mut meridians,
         skill_set,
+        derived_attrs,
     ) in players.iter_mut()
     {
         if contam.entries.is_empty() {
@@ -126,7 +132,9 @@ pub fn contamination_tick(
             .unwrap_or(0);
         let alchemy_effective_lv =
             effective_lv(alchemy_real_lv, skill_cap_for_realm(cultivation.realm));
-        let purge_rate = BASE_PURGE_RATE * (1.0 + purge_rate_bonus(alchemy_effective_lv) as f64);
+        let purge_rate = BASE_PURGE_RATE
+            * (1.0 + purge_rate_bonus(alchemy_effective_lv) as f64)
+            * baomai_scar_contam_purge_multiplier(derived_attrs);
         let mut any_qi_deficit = false;
         // 按 amount 从大到小处理
         contam.entries.sort_by(|a, b| {
@@ -185,6 +193,12 @@ pub fn contamination_tick(
             });
         }
     }
+}
+
+fn baomai_scar_contam_purge_multiplier(derived_attrs: Option<&DerivedAttrs>) -> f64 {
+    derived_attrs
+        .map(|attrs| attrs.contam_purge_multiplier.max(0.0))
+        .unwrap_or(1.0)
 }
 
 #[cfg(test)]
@@ -453,6 +467,197 @@ mod tests {
             QiAccountId::overflow(format!("contamination_purge:{entity:?}"))
         );
         assert_eq!(transfers[0].reason, QiTransferReason::ReleaseToZone);
+    }
+
+    fn spawn_contaminated_player(
+        app: &mut App,
+        attrs: Option<DerivedAttrs>,
+        despawned: bool,
+    ) -> Entity {
+        let mut entity = app.world_mut().spawn((
+            Position::new([8.0, 66.0, 8.0]),
+            CurrentDimension(DimensionKind::Overworld),
+            Cultivation {
+                realm: Realm::Spirit,
+                qi_current: 10.0,
+                qi_max: 10.0,
+                ..Default::default()
+            },
+            Contamination {
+                entries: vec![ContamSource {
+                    amount: 1.0,
+                    color: ColorKind::Mellow,
+                    meridian_id: None,
+                    attacker_id: None,
+                    introduced_at: 1,
+                }],
+            },
+            MeridianSystem::default(),
+        ));
+        if let Some(attrs) = attrs {
+            entity.insert(attrs);
+        }
+        if despawned {
+            entity.insert(Despawned);
+        }
+        entity.id()
+    }
+
+    #[test]
+    fn scar_contam_purge_multiplier_increases_purge_without_changing_release_ratio() {
+        let mut app = App::new();
+        app.insert_resource(CultivationClock { tick: 42 });
+        app.insert_resource(ZoneRegistry::fallback());
+        app.add_event::<CultivationDeathTrigger>();
+        app.add_event::<QiTransfer>();
+        app.add_systems(Update, contamination_tick);
+
+        let before = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .unwrap()
+            .spirit_qi;
+        let baseline = spawn_contaminated_player(&mut app, None, false);
+        let boosted = spawn_contaminated_player(
+            &mut app,
+            Some(DerivedAttrs {
+                contam_purge_multiplier: 2.0,
+                ..DerivedAttrs::default()
+            }),
+            false,
+        );
+
+        app.update();
+
+        let baseline_contam = app.world().get::<Contamination>(baseline).unwrap();
+        let boosted_contam = app.world().get::<Contamination>(boosted).unwrap();
+        let baseline_qi = app.world().get::<Cultivation>(baseline).unwrap().qi_current;
+        let boosted_qi = app.world().get::<Cultivation>(boosted).unwrap().qi_current;
+        assert!(
+            (baseline_contam.entries[0].amount - 0.9).abs() < 1e-9,
+            "baseline purge should remove BASE_PURGE_RATE contamination"
+        );
+        assert!(
+            (boosted_contam.entries[0].amount - 0.8).abs() < 1e-9,
+            "contam_purge_multiplier=2 should remove double BASE_PURGE_RATE contamination"
+        );
+        assert!(
+            (baseline_qi - (10.0 - BASE_PURGE_RATE * DRAIN_RATIO)).abs() < 1e-9,
+            "baseline qi cost must keep 10:15 ratio"
+        );
+        assert!(
+            (boosted_qi - (10.0 - BASE_PURGE_RATE * 2.0 * DRAIN_RATIO)).abs() < 1e-9,
+            "boosted qi cost must scale only because purge amount scaled"
+        );
+
+        let after = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .unwrap()
+            .spirit_qi;
+        let transfers: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<QiTransfer>>()
+            .drain()
+            .collect();
+        let total_released: f64 = transfers.iter().map(|transfer| transfer.amount).sum();
+        assert_eq!(transfers.len(), 2);
+        assert!(
+            (total_released - BASE_PURGE_RATE * DRAIN_RATIO * 3.0).abs() < 1e-9,
+            "baseline + boosted release amount should equal their accepted purge costs"
+        );
+        assert!(
+            ((after - before) * crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY
+                - total_released)
+                .abs()
+                < 1e-9,
+            "zone.spirit_qi increase must match QiTransfer release amount"
+        );
+    }
+
+    #[test]
+    fn scar_contam_purge_multiplier_clamps_negative_to_noop_rate() {
+        let mut app = App::new();
+        app.insert_resource(CultivationClock { tick: 42 });
+        app.insert_resource(ZoneRegistry::fallback());
+        app.add_event::<CultivationDeathTrigger>();
+        app.add_event::<QiTransfer>();
+        app.add_systems(Update, contamination_tick);
+        let entity = spawn_contaminated_player(
+            &mut app,
+            Some(DerivedAttrs {
+                contam_purge_multiplier: -1.0,
+                ..DerivedAttrs::default()
+            }),
+            false,
+        );
+
+        app.update();
+
+        let qi_current = app.world().get::<Cultivation>(entity).unwrap().qi_current;
+        let contamination_amount =
+            app.world().get::<Contamination>(entity).unwrap().entries[0].amount;
+        let transfers: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<QiTransfer>>()
+            .drain()
+            .collect();
+        assert_eq!(qi_current, 10.0);
+        assert_eq!(contamination_amount, 1.0);
+        assert!(
+            transfers.is_empty(),
+            "negative contam_purge_multiplier clamps to zero purge rate and emits no release"
+        );
+    }
+
+    #[test]
+    fn contamination_tick_skips_despawned_offline_players() {
+        let mut app = App::new();
+        app.insert_resource(CultivationClock { tick: 42 });
+        app.insert_resource(ZoneRegistry::fallback());
+        app.add_event::<CultivationDeathTrigger>();
+        app.add_event::<QiTransfer>();
+        app.add_systems(Update, contamination_tick);
+        let before = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .unwrap()
+            .spirit_qi;
+        let entity = spawn_contaminated_player(
+            &mut app,
+            Some(DerivedAttrs {
+                contam_purge_multiplier: 2.0,
+                ..DerivedAttrs::default()
+            }),
+            true,
+        );
+
+        app.update();
+
+        let qi_current = app.world().get::<Cultivation>(entity).unwrap().qi_current;
+        let contamination_amount =
+            app.world().get::<Contamination>(entity).unwrap().entries[0].amount;
+        let after = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .unwrap()
+            .spirit_qi;
+        let transfers: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<QiTransfer>>()
+            .drain()
+            .collect();
+        assert_eq!(qi_current, 10.0);
+        assert_eq!(contamination_amount, 1.0);
+        assert_eq!(after, before);
+        assert!(
+            transfers.is_empty(),
+            "离线 Despawned 玩家不应继续排异或释放真元"
+        );
     }
 
     // ── 定向裂痕路由测试（PR-1: contamination meridian_id routing）──

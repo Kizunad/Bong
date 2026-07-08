@@ -315,6 +315,13 @@ pub fn register(app: &mut App) {
     app.add_event::<DigestionOverloadEvent>();
     app.add_event::<PoisonPowderConsumedEvent>();
 
+    app.add_systems(
+        Update,
+        qi_regen_and_zone_drain_tick
+            .after(crate::combat::status::attribute_aggregate_tick)
+            .after(crate::combat::baomai_v4::scar_circuit::scar_circuit_derive_system)
+            .after(crate::combat::body_conditioning::body_conditioning_aggregate),
+    );
     // Bevy IntoSystemConfigs 最多 20 个元素；拆两组。
     app.add_systems(
         Update,
@@ -327,8 +334,7 @@ pub fn register(app: &mut App) {
                 // `attach_inventory_to_joined_clients` 的默认背包在同一 sync point
                 // 后再次覆盖回去。
                 .after(crate::inventory::attach_inventory_to_joined_clients),
-            // 核心 tick：回气/扣 zone → 打通 → 事务
-            qi_regen_and_zone_drain_tick,
+            // 核心 tick 后续：打通 → 事务；回气/扣 zone 已在上方单独注册。
             lifespan_aging_tick.after(qi_regen_and_zone_drain_tick),
             meridian_open_tick.after(qi_regen_and_zone_drain_tick),
             breakthrough_system.after(meridian_open_tick),
