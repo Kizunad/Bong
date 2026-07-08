@@ -322,8 +322,8 @@ pub enum ServerDataPayloadV1 {
         player: Option<String>,
         realm: String,
         spirit_qi: f64,
-        /// 真元上限（cultivation.qi_max）。client HUD 用作真元条分母；缺失时 client 回退
-        /// max(100, current) 致高境界（固元 150 ~ 化虚 2625）真元条分母恒 100 显示恒满。
+        /// 真元上限（cultivation.qi_max）。client HUD 用作真元条分母；wire 必填，
+        /// 避免高境界（固元 150 ~ 化虚 2625）真元条退回 100 或 current 推导。
         spirit_qi_max: f64,
         karma: f64,
         composite_power: f64,
@@ -1229,7 +1229,6 @@ enum ServerDataPayloadWireV1 {
         realm: String,
         spirit_qi: f64,
         /// 真元上限（cultivation.qi_max），client HUD 真元条分母。
-        #[serde(default)]
         spirit_qi_max: f64,
         karma: f64,
         composite_power: f64,
@@ -2241,20 +2240,25 @@ impl TryFrom<ServerDataPayloadWireV1> for ServerDataPayloadV1 {
                 season_state,
                 social,
                 zone_spirit_qi,
-            } => Ok(Self::PlayerState {
-                player,
-                realm,
-                spirit_qi,
-                spirit_qi_max,
-                karma,
-                composite_power,
-                breakdown,
-                zone,
-                local_neg_pressure,
-                season_state,
-                social,
-                zone_spirit_qi,
-            }),
+            } => {
+                if !spirit_qi_max.is_finite() || spirit_qi_max <= 0.0 {
+                    return Err("player_state.spirit_qi_max must be positive".to_string());
+                }
+                Ok(Self::PlayerState {
+                    player,
+                    realm,
+                    spirit_qi,
+                    spirit_qi_max,
+                    karma,
+                    composite_power,
+                    breakdown,
+                    zone,
+                    local_neg_pressure,
+                    season_state,
+                    social,
+                    zone_spirit_qi,
+                })
+            }
             ServerDataPayloadWireV1::CoffinState { state } => Ok(Self::CoffinState(state)),
             ServerDataPayloadWireV1::UiOpen { ui, xml } => Ok(Self::UiOpen { ui, xml }),
             ServerDataPayloadWireV1::CultivationDetail {
@@ -4964,6 +4968,57 @@ mod tests {
                 "roundtrip must preserve typed payload content"
             );
         }
+    }
+
+    #[test]
+    fn player_state_requires_spirit_qi_max() {
+        let json = serde_json::json!({
+            "v": SERVER_DATA_VERSION,
+            "type": "player_state",
+            "realm": "Solidify",
+            "spirit_qi": 78.0,
+            "karma": 0.2,
+            "composite_power": 0.35,
+            "breakdown": {
+                "combat": 0.2,
+                "wealth": 0.4,
+                "social": 0.65,
+                "karma": 0.2,
+                "territory": 0.1
+            },
+            "zone": "blood_valley"
+        });
+
+        assert!(
+            serde_json::from_value::<ServerDataV1>(json).is_err(),
+            "player_state 缺 spirit_qi_max 必须反序列化失败；否则 HUD 真元条会退回 100 分母"
+        );
+    }
+
+    #[test]
+    fn player_state_rejects_zero_spirit_qi_max() {
+        let json = serde_json::json!({
+            "v": SERVER_DATA_VERSION,
+            "type": "player_state",
+            "realm": "Solidify",
+            "spirit_qi": 78.0,
+            "spirit_qi_max": 0.0,
+            "karma": 0.2,
+            "composite_power": 0.35,
+            "breakdown": {
+                "combat": 0.2,
+                "wealth": 0.4,
+                "social": 0.65,
+                "karma": 0.2,
+                "territory": 0.1
+            },
+            "zone": "blood_valley"
+        });
+
+        assert!(
+            serde_json::from_value::<ServerDataV1>(json).is_err(),
+            "player_state spirit_qi_max=0 必须拒绝；proto3 缺 scalar tag 会退成 0，不能进 HUD fallback"
+        );
     }
 
     // ─── plan-coffin-tiers-v1 P0 charge #7：CoffinGradeV1/CoffinStateV1 serde pin ────
