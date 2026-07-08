@@ -3265,7 +3265,11 @@ fn handle_forge_blueprint_turn_page(
     if delta == 0 || learned.ids.is_empty() {
         return;
     }
-    for _ in 0..delta.unsigned_abs() {
+    // 恶意/巨量 delta 守卫（对齐 handle_alchemy_turn_page 同款）：i32::MIN.unsigned_abs()
+    // = 2.1B 次循环会冻结整个 ECS tick。next/prev 本身 %len 环回，|delta| mod len 步
+    // 落点与逐步等价，循环上界收敛到 len-1。
+    let steps = delta.unsigned_abs() % (learned.ids.len() as u32);
+    for _ in 0..steps {
         if delta > 0 {
             learned.next_page();
         } else {
@@ -7759,6 +7763,80 @@ mod tests {
 
         let learned = app.world().get::<LearnedBlueprints>(entity).unwrap();
         assert_eq!(learned.current_index, 2, "delta=2 应前进恰好 2 页");
+        flush_all_client_packets(&mut app);
+        assert_eq!(collect_forge_blueprint_books(&mut helper).len(), 1);
+    }
+
+    #[test]
+    fn forge_blueprint_turn_page_extreme_delta_is_bounded_by_len_modulo() {
+        // 修复轮 major——恶意单包 delta=i32::MIN（unsigned_abs=2.1B）曾按次循环，
+        // 一个包冻结整个 ECS tick 数秒（DoS）。守卫后按 |delta| % len 步进：
+        // 2_147_483_648 % 3 = 2，负方向 prev 2 页，0 → 2 → 1，落点必须与逐步等价。
+        let mut app = App::new();
+        register_request_app(&mut app);
+        app.insert_resource(forge_blueprint_registry_for_tests());
+
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                LearnedBlueprints {
+                    ids: vec![
+                        "iron_sword_v0".to_string(),
+                        "qing_feng_v0".to_string(),
+                        "ling_feng_v0".to_string(),
+                    ],
+                    current_index: 0,
+                },
+            ))
+            .id();
+
+        send_forge_turn_page(&mut app, entity, i32::MIN);
+        app.update();
+
+        let learned = app.world().get::<LearnedBlueprints>(entity).unwrap();
+        assert_eq!(
+            learned.current_index, 1,
+            "i32::MIN 应按 2.1B % 3 = 2 步 prev 处理（0→2→1），且不冻结 tick"
+        );
+        flush_all_client_packets(&mut app);
+        assert_eq!(
+            collect_forge_blueprint_books(&mut helper).len(),
+            1,
+            "极端 delta 仍应回推一次 S2C（server 权威页码）"
+        );
+    }
+
+    #[test]
+    fn forge_blueprint_turn_page_delta_multiple_of_len_is_identity_but_echoes() {
+        // 边界：|delta| 恰为 len 的整数倍 → %len 后 0 步，页码不动；但请求本身
+        // 合法，仍回推 S2C（与 delta=0 的静默 noop 区分——那是无意义输入）。
+        let mut app = App::new();
+        register_request_app(&mut app);
+        app.insert_resource(forge_blueprint_registry_for_tests());
+
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                LearnedBlueprints {
+                    ids: vec![
+                        "iron_sword_v0".to_string(),
+                        "qing_feng_v0".to_string(),
+                        "ling_feng_v0".to_string(),
+                    ],
+                    current_index: 1,
+                },
+            ))
+            .id();
+
+        send_forge_turn_page(&mut app, entity, 3);
+        app.update();
+
+        let learned = app.world().get::<LearnedBlueprints>(entity).unwrap();
+        assert_eq!(learned.current_index, 1, "delta=len(3) 环回原页");
         flush_all_client_packets(&mut app);
         assert_eq!(collect_forge_blueprint_books(&mut helper).len(), 1);
     }
