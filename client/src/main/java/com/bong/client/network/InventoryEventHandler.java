@@ -401,7 +401,7 @@ public final class InventoryEventHandler implements ServerDataHandler {
             item.forgeSideEffects(),
             item.forgeAchievedTier(),
             item.alchemyLines()
-        );
+        ).withMineralId(item.mineralId());
     }
 
     private static InventoryItem withDurability(InventoryItem item, double durability) {
@@ -419,7 +419,7 @@ public final class InventoryEventHandler implements ServerDataHandler {
             item.forgeSideEffects(),
             item.forgeAchievedTier(),
             item.alchemyLines()
-        );
+        ).withMineralId(item.mineralId());
     }
 
     private static InventoryItem parseInventoryItem(JsonObject itemObject) {
@@ -472,7 +472,7 @@ public final class InventoryEventHandler implements ServerDataHandler {
             java.util.List.of(),
             null,
             java.util.List.of()
-        );
+        ).withMineralId(readOptionalString(itemObject, "mineral_id"));
     }
 
     /**
@@ -663,5 +663,13 @@ public final class InventoryEventHandler implements ServerDataHandler {
             return null;
         }
         return readRequiredInt(object, fieldName);
+    }
+
+    private static String readOptionalString(JsonObject object, String fieldName) {
+        JsonElement element = object.get(fieldName);
+        if (element == null || element.isJsonNull() || !element.isJsonPrimitive()) {
+            return null;
+        }
+        return element.getAsString();
     }
 }

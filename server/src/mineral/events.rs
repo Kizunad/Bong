@@ -11,6 +11,12 @@ pub const MSG_MINERAL_INVALID_FOR_ALCHEMY: &str = "mineral.invalid_for_alchemy";
 pub const MSG_MINERAL_UNKNOWN_ID: &str = "mineral.unknown_id";
 pub const MSG_FORGE_TIER_MISMATCH: &str = "forge.tier_mismatch";
 pub const MSG_MINERAL_PICKAXE_TIER_MISMATCH: &str = "mineral.pickaxe_tier_mismatch";
+/// plan-forge-session-entry-wiring-v1 §4.1#1 — 起炉时未习得该图谱。
+pub const MSG_FORGE_BLUEPRINT_NOT_LEARNED: &str = "forge.blueprint_not_learned";
+/// plan-forge-session-entry-wiring-v1 §4.1#4 — 起炉时背包持有量核验未通过。
+pub const MSG_FORGE_MATERIALS_INSUFFICIENT: &str = "forge.materials_insufficient";
+/// plan-forge-session-entry-wiring-v1 修复轮 — 砧上已有进行中会话（对齐 alchemy is_busy）。
+pub const MSG_FORGE_STATION_BUSY: &str = "forge.station_busy";
 
 #[derive(Debug, Clone, PartialEq, Eq, Event)]
 pub struct MineralFeedbackEvent {
@@ -67,6 +73,41 @@ impl MineralFeedbackEvent {
                 material_name.as_ref(),
                 required_tier
             ),
+        }
+    }
+
+    /// plan-forge-session-entry-wiring-v1 §4.1#1 — 起炉时该图谱尚未习得。
+    pub fn forge_blueprint_not_learned(player: Entity, blueprint_name: impl AsRef<str>) -> Self {
+        Self {
+            player,
+            message_id: MSG_FORGE_BLUEPRINT_NOT_LEARNED,
+            text: format!("尚未习得图谱《{}》，无法起炉", blueprint_name.as_ref()),
+        }
+    }
+
+    /// plan-forge-session-entry-wiring-v1 §4.1#4 — 起炉时背包持有量不足以覆盖声明的投料。
+    /// `deficits` = (display_name_zh, have, need) 列表，由 `consume_forge_materials_atomic`
+    /// 的 `Err` 分支经 MineralRegistry 转译成中文名后传入（玩家可读，不漏内部 id）。
+    pub fn forge_materials_insufficient(player: Entity, deficits: &[(String, u32, u32)]) -> Self {
+        let detail = deficits
+            .iter()
+            .map(|(material, have, need)| format!("{material} {have}/{need}"))
+            .collect::<Vec<_>>()
+            .join("、");
+        Self {
+            player,
+            message_id: MSG_FORGE_MATERIALS_INSUFFICIENT,
+            text: format!("材料不足：{detail}，起炉失败"),
+        }
+    }
+
+    /// plan-forge-session-entry-wiring-v1 修复轮 — 砧上已有进行中会话时拒绝再次起炉，
+    /// 防止双扣料 + 孤儿会话（对齐 alchemy `is_busy()` 守卫）。
+    pub fn forge_station_busy(player: Entity) -> Self {
+        Self {
+            player,
+            message_id: MSG_FORGE_STATION_BUSY,
+            text: "这座砧上已有进行中的锻造，须待其结束".to_string(),
         }
     }
 
@@ -219,5 +260,28 @@ mod tests {
         let pickaxe = MineralFeedbackEvent::pickaxe_tier_mismatch(player, "凡镐", "灵铁", 2);
         assert_eq!(pickaxe.message_id, MSG_MINERAL_PICKAXE_TIER_MISMATCH);
         assert_eq!(pickaxe.text, "凡镐掘不动灵铁，需镐品至 2");
+
+        let not_learned =
+            MineralFeedbackEvent::forge_blueprint_not_learned(player, "青锋剑（测试）");
+        assert_eq!(not_learned.message_id, MSG_FORGE_BLUEPRINT_NOT_LEARNED);
+        assert_eq!(not_learned.text, "尚未习得图谱《青锋剑（测试）》，无法起炉");
+
+        // 契约：调用方（handle_start_forge_requests）经 MineralRegistry 转译后传入中文名，
+        // 玩家回执不得漏内部 canonical id。
+        let insufficient = MineralFeedbackEvent::forge_materials_insufficient(
+            player,
+            &[("凡铁".to_string(), 2, 4), ("杂钢".to_string(), 0, 1)],
+        );
+        assert_eq!(insufficient.message_id, MSG_FORGE_MATERIALS_INSUFFICIENT);
+        assert_eq!(insufficient.text, "材料不足：凡铁 2/4、杂钢 0/1，起炉失败");
+    }
+
+    #[test]
+    fn forge_materials_insufficient_empty_deficits_still_produces_message() {
+        // 边界：deficits 空切片（理论上不该被调用，但函数须对此输入保持总-空防御）。
+        let player = Entity::from_raw(1);
+        let empty = MineralFeedbackEvent::forge_materials_insufficient(player, &[]);
+        assert_eq!(empty.message_id, MSG_FORGE_MATERIALS_INSUFFICIENT);
+        assert_eq!(empty.text, "材料不足：，起炉失败");
     }
 }

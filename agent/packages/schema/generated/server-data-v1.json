@@ -17736,7 +17736,10 @@
         "tier",
         "integrity",
         "owner_name",
-        "has_session"
+        "has_session",
+        "station_pos_x",
+        "station_pos_y",
+        "station_pos_z"
       ],
       "properties": {
         "v": {
@@ -17765,6 +17768,15 @@
         },
         "has_session": {
           "type": "boolean"
+        },
+        "station_pos_x": {
+          "type": "integer"
+        },
+        "station_pos_y": {
+          "type": "integer"
+        },
+        "station_pos_z": {
+          "type": "integer"
         }
       }
     },
