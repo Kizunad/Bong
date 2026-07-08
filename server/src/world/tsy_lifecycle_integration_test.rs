@@ -20,7 +20,9 @@ mod tests {
     use crate::combat::CombatClock;
     use crate::inventory::ancient_relics::AncientRelicSource;
     use crate::inventory::corpse::CorpseEmbalmed;
-    use crate::inventory::{DroppedLootEntry, DroppedLootRegistry, ItemInstance, ItemRarity};
+    use crate::inventory::{
+        DroppedLootEntry, DroppedLootRegistry, ItemInstance, ItemRarity, PendingTsyDeathDrop,
+    };
     use crate::world::dimension::{
         CurrentDimension, DimensionKind, DimensionLayers, OverworldLayer, TsyLayer,
     };
@@ -334,11 +336,18 @@ mod tests {
 
         app.update();
 
-        // TsyPresence 留给 P1 死亡掉落路径读取，P5 handler 发 DeathEvent 化灰。
+        // Collapse completed 后已经发出化灰 DeathEvent；TsyPresence 必须清掉，
+        // 否则复活/入场 gate 会继续把玩家视作 TSY 内实体。
         assert!(
-            app.world().entity(player).get::<TsyPresence>().is_some(),
-            "Collapse death drop path still needs TsyPresence"
+            app.world().entity(player).get::<TsyPresence>().is_none(),
+            "Collapse completed 后不应残留 TsyPresence"
         );
+        let pending = app
+            .world()
+            .entity(player)
+            .get::<PendingTsyDeathDrop>()
+            .expect("Collapse completed 清 gate 后仍须保留 TSY 掉落上下文");
+        assert_eq!(pending.presence.family_id, "tsy_lingxu_01");
         let deaths = app.world().resource::<Events<DeathEvent>>();
         let collected: Vec<_> = deaths.get_reader().read(deaths).cloned().collect();
         assert_eq!(collected.len(), 1);

@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, HashSet};
 use valence::client::ClientMarker;
 use valence::prelude::bevy_ecs::system::SystemParam;
 use valence::prelude::{
-    bevy_ecs, App, Commands, Despawned, Entity, EventReader, EventWriter, IntoSystemConfigs,
+    bevy_ecs, App, Commands, DVec3, Despawned, Entity, EventReader, EventWriter, IntoSystemConfigs,
     Position, Query, Res, ResMut, Update, With, Without,
 };
 
@@ -24,10 +24,11 @@ use crate::npc::brain::NPC_TRIBULATION_WAVES_DEFAULT;
 use crate::npc::dormant::{
     dvec3_from_array, planar_distance, vec3_to_array, DormantBehaviorIntent,
     DormantDaoxiangOriginSnapshot, DormantFuyaAuraSnapshot, DormantGuardianRelicSnapshot,
-    DormantPatrolSnapshot, DormantTsyHostileSnapshot, DormantZhinianPhase, NpcDormantSnapshot,
-    NpcDormantStore, NpcVirtualizationConfig,
+    DormantPatrolSnapshot, DormantTsyHostileSnapshot, DormantTsySentinelSnapshot,
+    DormantZhinianPhase, NpcDormantSnapshot, NpcDormantStore, NpcVirtualizationConfig,
 };
 use crate::npc::faction::{FactionMembership, FactionRank};
+use crate::npc::interaction_memory::NpcMemoryComponent;
 use crate::npc::lifecycle::{NpcArchetype, NpcLifespan, NpcRegistry};
 use crate::npc::lod::NpcLodTier;
 use crate::npc::loot::{default_loot_for_archetype, NpcLootTable};
@@ -38,18 +39,21 @@ use crate::npc::schedule::{
     home_base_for_archetype, hydrate_position_for, schedule_seed_from_char_id, NpcDailySchedule,
 };
 use crate::npc::spawn::{
-    spawn_beast_npc_at, spawn_commoner_npc_at, spawn_disciple_npc_at, spawn_relic_guard_npc_at,
-    spawn_rogue_npc_at, spawn_zombie_npc_at, NpcMarker, NpcSkinSpawnContext,
+    spawn_beast_npc_at, spawn_commoner_npc_at, spawn_disciple_npc_at, spawn_mundane_fauna_at,
+    spawn_relic_guard_npc_at, spawn_rogue_npc_at, spawn_zombie_npc_at, NpcMarker,
+    NpcSkinSpawnContext,
 };
 use crate::npc::territory::Territory;
+use crate::npc::trade::NpcPlayerReputation;
 use crate::npc::tsy_hostile::{
-    spawn_tsy_daoxiang_at, spawn_tsy_fuya_at, spawn_tsy_skull_fiend_at, spawn_tsy_zhinian_at,
-    FuyaAura, TsyHostileMarker, ZhinianMind, ZhinianPhase,
+    spawn_tsy_daoxiang_at, spawn_tsy_fuya_at, spawn_tsy_sentinel_at, spawn_tsy_skull_fiend_at,
+    spawn_tsy_zhinian_at, FuyaAura, TsyHostileMarker, TsySentinelMarker, ZhinianMind, ZhinianPhase,
 };
 use crate::skin::{NpcSkinFallbackPolicy, SkinPool};
 use crate::world::dimension::{CurrentDimension, DimensionKind, DimensionLayers};
 use crate::world::era::WorldEraState;
 use crate::world::poi_novice::PoiNoviceRegistry;
+use crate::world::tsy_container::LootContainer;
 use crate::world::tsy_lifecycle::DaoxiangOrigin;
 use crate::world::zone::ZoneRegistry;
 
@@ -64,6 +68,12 @@ pub struct DormantExtraComponentQueries<'w, 's> {
     zhinian_minds: Query<'w, 's, Option<&'static ZhinianMind>, With<NpcMarker>>,
     fuya_auras: Query<'w, 's, Option<&'static FuyaAura>, With<NpcMarker>>,
     daoxiang_origins: Query<'w, 's, Option<&'static DaoxiangOrigin>, With<NpcMarker>>,
+    /// plan-tsy-sentinel-dormant-regression-v1 §P1：TSY 秘境守灵身份 marker（dehydrate 侧读取）。
+    tsy_sentinel_markers: Query<'w, 's, Option<&'static TsySentinelMarker>, With<NpcMarker>>,
+    /// dehydrate 侧 `guarding_container: Option<Entity>` 是精确已知的单个 `Entity`，
+    /// `.get(entity)` 直接拿 `Position` 写快照即可——此处不存在多容器歧义，无需过滤
+    /// family_id（family_id 过滤只在 P2 hydrate 反查阶段才需要，见 `resolve_sentinel_guarding_container`）。
+    containers: Query<'w, 's, &'static Position, (With<LootContainer>, Without<NpcMarker>)>,
 }
 
 pub fn register(app: &mut App) {
@@ -93,6 +103,9 @@ pub fn hydrate_dormant_near_players_system(
     mut tribulations: EventWriter<InitiateXuhuaTribulation>,
     zone_registry: Option<Res<ZoneRegistry>>,
     world_era: Option<Res<WorldEraState>>,
+    // plan-tsy-sentinel-dormant-regression-v1 §P2：现算 relic_containers，供
+    // `spawn_from_snapshot` 里 TSY 秘境守灵的两段式 family+坐标重绑使用。
+    relic_containers_query: Query<(Entity, &Position, &LootContainer), With<LootContainer>>,
 ) {
     let tick = crate::npc::dormant::current_tick(game_tick.as_deref());
     if !crate::npc::dormant::should_run_interval(tick, config.transition_interval_ticks) {
@@ -114,6 +127,7 @@ pub fn hydrate_dormant_near_players_system(
     };
 
     let player_zones = player_zone_names(zone_registry.as_deref(), &player_positions);
+    let relic_containers = collect_relic_containers(&relic_containers_query);
 
     let mut to_hydrate = BTreeMap::<String, bool>::new();
     for (char_id, snapshot) in &store.snapshots {
@@ -157,6 +171,7 @@ pub fn hydrate_dormant_near_players_system(
             tick,
             pois.as_deref(),
             skin_pool.as_deref_mut(),
+            &relic_containers,
         );
         if force_tribulation {
             tribulations.send(InitiateXuhuaTribulation {
@@ -196,6 +211,9 @@ pub fn hydrate_dormant_on_rechallenge_trigger(
     pois: Option<Res<PoiNoviceRegistry>>,
     mut skin_pool: Option<ResMut<SkinPool>>,
     mut tribulations: EventWriter<InitiateXuhuaTribulation>,
+    // plan-tsy-sentinel-dormant-regression-v1 §P2：同 `hydrate_dormant_near_players_system`，
+    // 现算 relic_containers 供 TSY 秘境守灵重绑使用。
+    relic_containers_query: Query<(Entity, &Position, &LootContainer), With<LootContainer>>,
 ) {
     let tick = crate::npc::dormant::current_tick(game_tick.as_deref());
     let Some(dimension_layers) = dimension_layers.as_deref() else {
@@ -211,6 +229,7 @@ pub fn hydrate_dormant_on_rechallenge_trigger(
         }
         return;
     };
+    let relic_containers = collect_relic_containers(&relic_containers_query);
 
     for event in events.read() {
         if !event.is_dormant {
@@ -252,6 +271,7 @@ pub fn hydrate_dormant_on_rechallenge_trigger(
             tick,
             pois.as_deref(),
             skin_pool.as_deref_mut(),
+            &relic_containers,
         );
 
         tribulations.send(InitiateXuhuaTribulation {
@@ -299,6 +319,8 @@ pub fn dehydrate_far_npcs_system(
     death_registry: Query<Option<&DeathRegistry>, With<NpcMarker>>,
     life_record: Query<Option<&LifeRecord>, With<NpcMarker>>,
     loot_tables: Query<Option<&NpcLootTable>, With<NpcMarker>>,
+    memories: Query<Option<&NpcMemoryComponent>, With<NpcMarker>>,
+    player_reputations: Query<Option<&NpcPlayerReputation>, With<NpcMarker>>,
     extras: DormantExtraComponentQueries,
 ) {
     let tick = crate::npc::dormant::current_tick(game_tick.as_deref());
@@ -406,6 +428,18 @@ pub fn dehydrate_far_npcs_system(
                     .flatten()
                     .cloned()
                     .unwrap_or_else(|| LifeRecord::new(lifecycle.character_id.clone())),
+                memory: memories
+                    .get(entity)
+                    .ok()
+                    .flatten()
+                    .filter(|memory| !memory.interactions.is_empty())
+                    .cloned(),
+                player_reputation: player_reputations
+                    .get(entity)
+                    .ok()
+                    .flatten()
+                    .filter(|reputation| !reputation.is_empty())
+                    .cloned(),
                 faction: faction.cloned(),
                 // plan-offscreen-war-v1 P5 reframe b：dehydration 暂不携带显式群体——离屏
                 // 战斗用 effective_group 回退 faction 派生（commit 1 范围）。ECS 层的群体身份
@@ -427,6 +461,10 @@ pub fn dehydrate_far_npcs_system(
                     extras.zhinian_minds.get(entity).ok().flatten(),
                     extras.fuya_auras.get(entity).ok().flatten(),
                     extras.daoxiang_origins.get(entity).ok().flatten(),
+                ),
+                tsy_sentinel: dormant_tsy_sentinel_snapshot(
+                    extras.tsy_sentinel_markers.get(entity).ok().flatten(),
+                    &extras.containers,
                 ),
                 intent,
                 dormant_since_tick: tick,
@@ -506,6 +544,29 @@ fn dormant_tsy_hostile_snapshot(
     })
 }
 
+/// plan-tsy-sentinel-dormant-regression-v1 §P1：dehydrate 侧 TSY 秘境守灵身份快照。
+///
+/// `marker` 存在才返回 `Some`——普通 overworld `GuardianRelic`（从不携带 `TsySentinelMarker`）
+/// 恒返回 `None`，路由天然落到 `spawn_relic_guard_npc_at` 分支（§P2 末条决议）。
+/// `guarding_container_pos` 用 `marker.guarding_container`（此刻是精确已知的单个 `Entity`，
+/// 无歧义）直接 `.get()` 查 `Position` 写入；容器不存在时优雅退化为 `None`（§8.1 #2：现状
+/// 验证容器从不 dehydrate/despawn，但仍写容错分支而非 `.unwrap()`）。
+fn dormant_tsy_sentinel_snapshot(
+    marker: Option<&TsySentinelMarker>,
+    containers: &Query<&Position, (With<LootContainer>, Without<NpcMarker>)>,
+) -> Option<DormantTsySentinelSnapshot> {
+    let marker = marker?;
+    let guarding_container_pos = marker
+        .guarding_container
+        .and_then(|entity| containers.get(entity).ok())
+        .map(|position| vec3_to_array(position.get()));
+    Some(DormantTsySentinelSnapshot {
+        guarding_container_pos,
+        phase: marker.phase,
+        max_phase: marker.max_phase,
+    })
+}
+
 fn dormant_zhinian_phase(phase: ZhinianPhase) -> DormantZhinianPhase {
     match phase {
         ZhinianPhase::Masquerade => DormantZhinianPhase::Masquerade,
@@ -550,6 +611,68 @@ fn player_zone_names(
         .collect()
 }
 
+/// plan-tsy-sentinel-dormant-regression-v1 §P2：把 `LootContainer` query 现算成
+/// `spawn_from_snapshot` 需要的三元组 Vec（entity / family_id / 世界坐标）。两个 hydrate
+/// 调用方各自持有独立的 `Query`，故各自调用一次（非共享 system param）。
+fn collect_relic_containers(
+    query: &Query<(Entity, &Position, &LootContainer), With<LootContainer>>,
+) -> Vec<(Entity, String, DVec3)> {
+    query
+        .iter()
+        .map(|(entity, position, container)| (entity, container.family_id.clone(), position.get()))
+        .collect()
+}
+
+/// plan-tsy-sentinel-dormant-regression-v1 §8.1 #1 补漏：容器重绑坐标 epsilon（格）。
+const SENTINEL_CONTAINER_REBIND_EPSILON_BLOCKS: f64 = 0.5;
+
+/// plan-tsy-sentinel-dormant-regression-v1 §P2：TSY 秘境守灵的 family_id 来源统一入口。
+///
+/// 复用 `snapshot.tsy_hostile.family_id`（§P1 已论证两者恒相等，不新增独立字段）；缺失时
+/// （理论不会发生的防御分支）回退一个基于 `home_zone` 的合成 id，与既有 `guardian_relic`
+/// 字段的 `unwrap_or_else(|| format!("relic:{home_zone}"))` 防御风格一致。
+fn sentinel_family_id_from_snapshot(snapshot: &NpcDormantSnapshot, home_zone: &str) -> String {
+    snapshot
+        .tsy_hostile
+        .as_ref()
+        .map(|tsy| tsy.family_id.clone())
+        .unwrap_or_else(|| format!("tsy_sentinel:{home_zone}"))
+}
+
+/// plan-tsy-sentinel-dormant-regression-v1 §8.1 #1 补漏（博弈 blocker）：两段式
+/// family+坐标重绑，防止跨 family 同坐标容器偶合误绑。
+///
+/// **绝不允许跨 family 对全体 `relic_containers` 裸坐标匹配**——`spawn_tutorial.rs` 的
+/// `tutorial_chest`（family_id 硬编码 `"spawn_tutorial"`）与真实 TSY 容器同为 Overworld
+/// layer，坐标理论上可能碰巧落入同一 epsilon。先按 `family_id` 精确相等过滤子集，再仅在
+/// 该子集内按坐标 epsilon（≤0.5 格）匹配。family 内确无匹配坐标（容器已消失，§8.1 #2
+/// 决议：现状验证这不会发生，但仍需容错而非 `.unwrap()`）→ 返回 `None` 并 `tracing::warn!`
+/// （sentinel 仍按守灵身份 spawn，只是不再绑定具体容器，退化为纯 aggro，不阻塞外观/HUD/掉落）。
+fn resolve_sentinel_guarding_container(
+    relic_containers: &[(Entity, String, DVec3)],
+    family_id: &str,
+    guarding_container_pos: Option<[f64; 3]>,
+) -> Option<Entity> {
+    let target = dvec3_from_array(guarding_container_pos?);
+    let found = relic_containers
+        .iter()
+        .filter(|(_, candidate_family, _)| candidate_family == family_id)
+        .find(|(_, _, candidate_pos)| {
+            candidate_pos.distance(target) <= SENTINEL_CONTAINER_REBIND_EPSILON_BLOCKS
+        })
+        .map(|(entity, _, _)| *entity);
+    if found.is_none() {
+        tracing::warn!(
+            family = %family_id,
+            target_pos = ?target,
+            candidate_count = relic_containers.len(),
+            "[bong][npc] tsy sentinel hydrate: no container matched family+position for rebind; \
+             guarding_container=None, sentinel degrades to pure aggro (no HUD/loot/phase impact)"
+        );
+    }
+    found
+}
+
 fn spawn_from_snapshot(
     commands: &mut Commands,
     snapshot: NpcDormantSnapshot,
@@ -557,6 +680,10 @@ fn spawn_from_snapshot(
     current_tick: u64,
     pois: Option<&PoiNoviceRegistry>,
     skin_pool: Option<&mut SkinPool>,
+    // plan-tsy-sentinel-dormant-regression-v1 §P2：三元组 = LootContainer entity / family_id /
+    // 世界坐标，由调用方各自的 `Query<(Entity, &Position, &LootContainer), With<LootContainer>>`
+    // 现算出的 Vec 传入。用于 TSY 秘境守灵 hydrate 时按 family+坐标重绑 `guarding_container`。
+    relic_containers: &[(Entity, String, DVec3)],
 ) -> Entity {
     let layer = match snapshot.dimension {
         DimensionKind::Tsy => dimension_layers.tsy,
@@ -583,6 +710,14 @@ fn spawn_from_snapshot(
     );
     let home_zone = snapshot.zone_name.as_str();
     let skin_policy = NpcSkinFallbackPolicy::AllowFallback;
+    // plan-tsy-sentinel-dormant-regression-v1 §P2：GuardianRelic 分支若路由到
+    // `spawn_tsy_sentinel_at`，两段式重绑解出的 `guarding_container` / `family_id` 存在这里，
+    // 供下面 tail-insert 处重建 `TsySentinelMarker` 时复用——**不能**在 tail-insert 处重新
+    // `&snapshot` 借用整个快照来重算（下面的 `entity_commands.insert((snapshot.cultivation, ...))`
+    // 已经把 `Cultivation`（非 `Copy`）等字段从 `snapshot` 里移出，整体借用会撞
+    // E0382 partial-move 借用检查；这里提前把需要的值拷进独立局部变量规避）。
+    let mut resolved_sentinel_guarding_container: Option<Entity> = None;
+    let mut resolved_sentinel_family_id: Option<String> = None;
     let entity = match snapshot.archetype {
         NpcArchetype::Zombie => spawn_zombie_npc_at(commands, layer, home_zone, pos, patrol_target),
         NpcArchetype::Commoner => spawn_commoner_npc_at(
@@ -638,22 +773,46 @@ fn spawn_from_snapshot(
                 .and_then(|lineage| lineage.master_id.clone()),
             snapshot.lifespan.age_ticks,
         ),
-        NpcArchetype::GuardianRelic => {
-            let relic = snapshot.guardian_relic.as_ref();
-            spawn_relic_guard_npc_at(
-                commands,
-                layer,
-                home_zone,
-                pos,
-                relic.map(|snapshot| snapshot.alarm_radius).unwrap_or(40.0),
-                relic
-                    .map(|snapshot| snapshot.relic_id.clone())
-                    .unwrap_or_else(|| format!("relic:{home_zone}")),
-                relic
-                    .map(|snapshot| snapshot.trial_template_id.clone())
-                    .unwrap_or_else(|| format!("trial:{home_zone}")),
-            )
-        }
+        // plan-tsy-sentinel-dormant-regression-v1 §P2（核心修复）：`GuardianRelic` 双身份
+        // 路由判据钉死在 snapshot 层——`snapshot.tsy_sentinel.is_some()` 是唯一判据（§8.1
+        // #3 决议）。`Some` → TSY 秘境守灵，必须走 `spawn_tsy_sentinel_at` 保留
+        // marker/外观/HUD/掉落身份；`None` → 纯 overworld relic guard，行为不变。
+        NpcArchetype::GuardianRelic => match snapshot.tsy_sentinel.as_ref() {
+            Some(sentinel_snapshot) => {
+                let sentinel_family_id = sentinel_family_id_from_snapshot(&snapshot, home_zone);
+                let guarding_container = resolve_sentinel_guarding_container(
+                    relic_containers,
+                    sentinel_family_id.as_str(),
+                    sentinel_snapshot.guarding_container_pos,
+                );
+                resolved_sentinel_guarding_container = guarding_container;
+                resolved_sentinel_family_id = Some(sentinel_family_id.clone());
+                spawn_tsy_sentinel_at(
+                    commands,
+                    layer,
+                    sentinel_family_id.as_str(),
+                    home_zone,
+                    pos,
+                    guarding_container,
+                )
+            }
+            None => {
+                let relic = snapshot.guardian_relic.as_ref();
+                spawn_relic_guard_npc_at(
+                    commands,
+                    layer,
+                    home_zone,
+                    pos,
+                    relic.map(|snapshot| snapshot.alarm_radius).unwrap_or(40.0),
+                    relic
+                        .map(|snapshot| snapshot.relic_id.clone())
+                        .unwrap_or_else(|| format!("relic:{home_zone}")),
+                    relic
+                        .map(|snapshot| snapshot.trial_template_id.clone())
+                        .unwrap_or_else(|| format!("trial:{home_zone}")),
+                )
+            }
+        },
         NpcArchetype::Daoxiang => snapshot
             .tsy_hostile
             .as_ref()
@@ -715,6 +874,19 @@ fn spawn_from_snapshot(
         NpcArchetype::DyingElder => {
             spawn_zombie_npc_at(commands, layer, home_zone, pos, patrol_target)
         }
+        // plan-mundane-fauna-v1 P0：凡兽不持久化 `MundaneFaunaKind`——同 `spawn_beast_npc_at`
+        // 用 `fauna_tag_for_beast_spawn(home_zone, seed)` 从 home_zone+位置重新派生
+        // `BeastKind` 而不持久化的先例，复活时用 `mundane_species_for_position` 从
+        // (home_zone, pos) 确定性重新派生同一物种（biome 池 + 位置种子，与首次 ambient
+        // spawn 走同一口径）。
+        NpcArchetype::Mundane => spawn_mundane_fauna_at(
+            commands,
+            layer,
+            home_zone,
+            pos,
+            patrol_target,
+            crate::fauna::mundane::mundane_species_for_position(home_zone, pos),
+        ),
     };
 
     let mut entity_commands = commands.entity(entity);
@@ -738,6 +910,12 @@ fn spawn_from_snapshot(
         },
         CurrentDimension(snapshot.dimension),
     ));
+    if let Some(memory) = snapshot.memory {
+        entity_commands.insert(memory);
+    }
+    if let Some(player_reputation) = snapshot.player_reputation {
+        entity_commands.insert(player_reputation);
+    }
     if let Some(faction) = snapshot.faction {
         entity_commands.insert(faction);
     }
@@ -760,6 +938,27 @@ fn spawn_from_snapshot(
                 offer_cooldown_ticks: relic.offer_cooldown_ticks,
             },
         ));
+    }
+    // plan-tsy-sentinel-dormant-regression-v1 §P2：重新接好 TSY 秘境守灵专属语义——
+    // `spawn_tsy_sentinel_at`（上面 match 分支）已经内部插入了默认 `phase=0/max_phase=3`
+    // 的 `TsySentinelMarker`；这里用 hydrate 快照精确回填 `max_phase`（design 常量，
+    // 恒定无风险）与 best-effort `phase`（下一次 `update_sentinel_phase_system` 会按
+    // *当前*满血 `Wounds` 重算纠正，§8.1 #2 决议，不产生持久错位），以及两段式重绑解出
+    // 的 `guarding_container`（覆盖 `spawn_tsy_sentinel_at` 内部默认的 `None`）。
+    // `FaunaVisualKind::TsySentinel` / `sentinel_thinker()` 已在 `spawn_tsy_sentinel_at`
+    // 内部插入，无需在此重复。`family_id` 复用上面 match 分支算好并存进
+    // `resolved_sentinel_family_id` 的值（不能在此重新 `&snapshot` 整体借用重算——
+    // `Cultivation` 等字段已在上面的 `entity_commands.insert((snapshot.cultivation, ...))`
+    // 移出，整体借用会撞 E0382）。
+    if let Some(sentinel) = snapshot.tsy_sentinel.as_ref() {
+        entity_commands.insert(TsySentinelMarker {
+            family_id: resolved_sentinel_family_id
+                .clone()
+                .unwrap_or_else(|| format!("tsy_sentinel:{home_zone}")),
+            guarding_container: resolved_sentinel_guarding_container,
+            phase: sentinel.phase,
+            max_phase: sentinel.max_phase,
+        });
     }
     if let Some(tsy) = snapshot.tsy_hostile {
         entity_commands.insert(TsyHostileMarker {
@@ -821,9 +1020,15 @@ mod tests {
     use valence::prelude::{DVec3, Events};
 
     use crate::cultivation::components::Realm;
+    use crate::fauna::visual::FaunaVisualKind;
     use crate::npc::brain::return_home_action_system;
     use crate::npc::dormant::{DEHYDRATE_RADIUS_BLOCKS, HYDRATE_RADIUS_BLOCKS};
-    use crate::world::zone::{Zone, DEFAULT_SPAWN_ZONE_NAME};
+    use crate::npc::interaction_memory::{
+        NpcInteractionOutcome, NpcInteractionType, NpcMemoryEntry,
+    };
+    use crate::npc::trade::RepTier;
+    use crate::world::tsy_container::ContainerKind;
+    use crate::world::zone::{TsyDepth, Zone, DEFAULT_SPAWN_ZONE_NAME};
 
     fn zone_registry() -> ZoneRegistry {
         ZoneRegistry {
@@ -865,12 +1070,15 @@ mod tests {
             lifespan_extension_ledger: LifespanExtensionLedger::default(),
             death_registry: DeathRegistry::new(char_id),
             life_record: LifeRecord::new(char_id),
+            memory: None,
+            player_reputation: None,
             faction: None,
             emergent_group: None,
             patrol: None,
             loot_table: None,
             guardian_relic: None,
             tsy_hostile: None,
+            tsy_sentinel: None,
             intent: DormantBehaviorIntent::Cultivate {
                 zone: DEFAULT_SPAWN_ZONE_NAME.to_string(),
             },
@@ -886,6 +1094,23 @@ mod tests {
         for meridian in snapshot.meridian_system.iter_mut() {
             meridian.opened = true;
         }
+    }
+
+    fn attack_memory_for(player_uuid: &str, timestamp: u64) -> NpcMemoryComponent {
+        let mut memory = NpcMemoryComponent::default();
+        memory.remember(NpcMemoryEntry {
+            player_uuid: player_uuid.to_string(),
+            interaction_type: NpcInteractionType::Attack,
+            timestamp,
+            outcome: NpcInteractionOutcome::Harmed,
+        });
+        memory
+    }
+
+    fn high_reputation_for(player_uuid: &str) -> NpcPlayerReputation {
+        let mut reputation = NpcPlayerReputation::default();
+        reputation.adjust(player_uuid, 0.3);
+        reputation
     }
 
     #[test]
@@ -1024,6 +1249,153 @@ mod tests {
     }
 
     #[test]
+    fn dehydrate_snapshot_carries_npc_memory_and_player_reputation() {
+        const PLAYER_ID: &str = "player-memory-1";
+
+        let mut app = App::new();
+        app.insert_resource(NpcDormantStore::default());
+        app.insert_resource(NpcVirtualizationConfig {
+            transition_interval_ticks: 1,
+            dehydrate_without_players: true,
+            ..Default::default()
+        });
+        app.add_systems(Update, dehydrate_far_npcs_system);
+
+        let memory = attack_memory_for(PLAYER_ID, 77);
+        let reputation = high_reputation_for(PLAYER_ID);
+        app.world_mut().spawn((
+            NpcMarker,
+            Position(DVec3::new(10.0, 64.0, 10.0)),
+            Lifecycle {
+                character_id: "npc_memory_rep".to_string(),
+                ..Default::default()
+            },
+            NpcArchetype::Rogue,
+            NpcDailySchedule::for_archetype(NpcArchetype::Rogue, 42),
+            NpcLifespan::new(0.0, 1_000.0),
+            Cultivation {
+                realm: Realm::Awaken,
+                qi_current: 10.0,
+                qi_max: 100.0,
+                ..Default::default()
+            },
+            MeridianSystem::default(),
+            Contamination::default(),
+            memory.clone(),
+            reputation,
+        ));
+
+        app.update();
+
+        let snapshot = app
+            .world()
+            .resource::<NpcDormantStore>()
+            .snapshots
+            .get("npc_memory_rep")
+            .expect("dehydrated NPC should have a dormant snapshot");
+        assert_eq!(
+            snapshot
+                .memory
+                .as_ref()
+                .expect("non-empty memory should be carried")
+                .interactions,
+            memory.interactions
+        );
+        assert_eq!(
+            snapshot
+                .player_reputation
+                .as_ref()
+                .expect("non-empty reputation should be carried")
+                .tier(PLAYER_ID),
+            RepTier::High
+        );
+    }
+
+    #[test]
+    fn hydrate_roundtrip_preserves_attack_memory_for_same_char_id() {
+        const PLAYER_ID: &str = "player-attacker-1";
+
+        let mut app = App::new();
+        app.add_event::<InitiateXuhuaTribulation>();
+
+        let overworld = app.world_mut().spawn_empty().id();
+        let tsy = app.world_mut().spawn_empty().id();
+        app.insert_resource(DimensionLayers { overworld, tsy });
+        app.insert_resource(NpcVirtualizationConfig::default());
+
+        let mut snap = snapshot("npc_remembers_attack", DVec3::new(10.0, 64.0, 10.0));
+        snap.memory = Some(attack_memory_for(PLAYER_ID, 99));
+        let mut store = NpcDormantStore::default();
+        store.insert(snap);
+        app.insert_resource(store);
+        app.world_mut()
+            .spawn((ClientMarker, Position(DVec3::new(10.0, 64.0, 10.0))));
+
+        app.add_systems(Update, hydrate_dormant_near_players_system);
+        app.update();
+
+        let (char_id, remembers_attack) = {
+            let world = app.world_mut();
+            let mut query =
+                world.query_filtered::<(&Lifecycle, &NpcMemoryComponent), With<NpcMarker>>();
+            query
+                .iter(world)
+                .map(|(lifecycle, memory)| {
+                    (
+                        lifecycle.character_id.clone(),
+                        memory.has_been_attacked_by(PLAYER_ID),
+                    )
+                })
+                .next()
+                .expect("hydrated NPC should carry memory component")
+        };
+        assert_eq!(char_id, "npc_remembers_attack");
+        assert!(
+            remembers_attack,
+            "hydrated NPC with the same char_id must still remember the attacker"
+        );
+    }
+
+    #[test]
+    fn hydrate_roundtrip_preserves_trade_reputation_tier() {
+        const PLAYER_ID: &str = "player-trader-1";
+
+        let mut app = App::new();
+        app.add_event::<InitiateXuhuaTribulation>();
+
+        let overworld = app.world_mut().spawn_empty().id();
+        let tsy = app.world_mut().spawn_empty().id();
+        app.insert_resource(DimensionLayers { overworld, tsy });
+        app.insert_resource(NpcVirtualizationConfig::default());
+
+        let mut snap = snapshot("npc_remembers_trade_rep", DVec3::new(10.0, 64.0, 10.0));
+        snap.player_reputation = Some(high_reputation_for(PLAYER_ID));
+        let mut store = NpcDormantStore::default();
+        store.insert(snap);
+        app.insert_resource(store);
+        app.world_mut()
+            .spawn((ClientMarker, Position(DVec3::new(10.0, 64.0, 10.0))));
+
+        app.add_systems(Update, hydrate_dormant_near_players_system);
+        app.update();
+
+        let tier = {
+            let world = app.world_mut();
+            let mut query = world.query_filtered::<&NpcPlayerReputation, With<NpcMarker>>();
+            query
+                .iter(world)
+                .map(|reputation| reputation.tier(PLAYER_ID))
+                .next()
+                .expect("hydrated NPC should carry reputation component")
+        };
+        assert_eq!(
+            tier,
+            RepTier::High,
+            "hydrated NPC must preserve per-player trade reputation tier"
+        );
+    }
+
+    #[test]
     fn player_proximity_ignores_other_dimensions() {
         let players = vec![(DimensionKind::Tsy, DVec3::new(10.0, 64.0, 10.0))];
 
@@ -1119,6 +1491,8 @@ mod tests {
             lifespan_extension_ledger: LifespanExtensionLedger::default(),
             death_registry: DeathRegistry::new(char_id),
             life_record: LifeRecord::new(char_id),
+            memory: None,
+            player_reputation: None,
             faction: Some(crate::npc::faction::FactionMembership {
                 faction_id: crate::npc::faction::FactionId::Attack,
                 rank: FactionRank::Disciple,
@@ -1131,6 +1505,7 @@ mod tests {
             loot_table: None,
             guardian_relic: None,
             tsy_hostile: None,
+            tsy_sentinel: None,
             intent: DormantBehaviorIntent::Cultivate {
                 zone: DEFAULT_SPAWN_ZONE_NAME.to_string(),
             },
@@ -1334,6 +1709,52 @@ mod tests {
             Some(Realm::Solidify),
             "hydrate 必须原样保留快照 realm(Solidify)，不受 spawn_disciple_npc_at \
              内部 bundle 默认值影响"
+        );
+    }
+
+    #[test]
+    fn hydrate_mundane_snapshot_produces_entity_with_species_marker() {
+        // plan-mundane-fauna-v1：dormant→hydrate round-trip 走 spawn_from_snapshot 的
+        // NpcArchetype::Mundane 分支（hydrate/mod.rs:724 → spawn_mundane_fauna_at）——复活的
+        // 凡兽必须重新挂上 `MundaneFaunaSpecies`，否则 qi_regen 的 `Without<MundaneFaunaSpecies>`
+        // 豁免在复活后失效，凡兽会重新开始抽 zone 灵气破守恒。此测试锁死新 enum 变体状态转换。
+        let mut app = App::new();
+        app.add_event::<InitiateXuhuaTribulation>();
+
+        let overworld = app.world_mut().spawn_empty().id();
+        let tsy = app.world_mut().spawn_empty().id();
+        app.insert_resource(DimensionLayers { overworld, tsy });
+        app.insert_resource(NpcVirtualizationConfig::default());
+
+        let mut snap = snapshot("mundane_rabbit_dormant", DVec3::new(20.0, 64.0, 20.0));
+        snap.archetype = NpcArchetype::Mundane;
+        snap.cultivation.realm = Realm::Awaken;
+        snap.shared_lifespan = LifespanComponent::for_realm(Realm::Awaken);
+        let mut store = NpcDormantStore::default();
+        store.insert(snap);
+        app.insert_resource(store);
+
+        app.world_mut()
+            .spawn((ClientMarker, Position(DVec3::new(20.0, 64.0, 20.0))));
+
+        app.add_systems(Update, hydrate_dormant_near_players_system);
+        app.update();
+
+        let world = app.world_mut();
+        let mut query = world.query::<(
+            &NpcArchetype,
+            Option<&crate::fauna::mundane::MundaneFaunaSpecies>,
+        )>();
+        let mundane = query
+            .iter(world)
+            .find(|(archetype, _)| **archetype == NpcArchetype::Mundane);
+        assert!(
+            mundane.is_some(),
+            "hydrate 必须产出一个 NpcArchetype::Mundane 实体"
+        );
+        assert!(
+            mundane.unwrap().1.is_some(),
+            "复活的凡兽必须重新携带 MundaneFaunaSpecies——否则 qi_regen 豁免在 hydrate 后失效"
         );
     }
 
@@ -1839,12 +2260,15 @@ mod tests {
                 crate::cultivation::lifespan::LifespanExtensionLedger::default(),
             death_registry: crate::cultivation::lifespan::DeathRegistry::new(char_id),
             life_record: crate::cultivation::life_record::LifeRecord::new(char_id),
+            memory: None,
+            player_reputation: None,
             faction: None,
             emergent_group: None,
             patrol: None,
             loot_table: None,
             guardian_relic: None,
             tsy_hostile: None,
+            tsy_sentinel: None,
             intent: crate::npc::dormant::DormantBehaviorIntent::Cultivate {
                 zone: DEFAULT_SPAWN_ZONE_NAME.to_string(),
             },
@@ -2398,6 +2822,531 @@ mod tests {
             "rechallenge 混合批次：应仅 1 个 InitiateXuhuaTribulation（来自正常快照）；\
              实际 {0}（0=正常快照未触发；2=combat_dead 被错误触发渡劫）",
             all.len()
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // plan-tsy-sentinel-dormant-regression-v1：TSY 秘境守灵 dormant↔hydrate 身份
+    // 回归 pin（P0/P3，§8.1 决议）。修复前：`dormant_tsy_hostile_snapshot` 完全不读
+    // `TsySentinelMarker`，hydrate 时 `NpcArchetype::GuardianRelic` 无条件走
+    // `spawn_relic_guard_npc_at`，秘境守灵被洗成普通 overworld relic guard（丢
+    // phase/Boss HUD/专属掉落/外观）。以下 6 条测试把「目标行为」锁死。
+    // -----------------------------------------------------------------------
+
+    /// 构造一个带 `family_id`/坐标匹配的 TSY 秘境守灵 dormant snapshot（archetype
+    /// 恒为 `GuardianRelic`，`tsy_hostile` 与 `tsy_sentinel` 同步携带同一 family_id，
+    /// 对齐 §P1 论证的"两者恒相等"不变量）。
+    fn tsy_sentinel_snapshot(
+        char_id: &str,
+        pos: DVec3,
+        family_id: &str,
+        guarding_container_pos: Option<[f64; 3]>,
+        phase: u8,
+        max_phase: u8,
+    ) -> NpcDormantSnapshot {
+        let mut snap = snapshot(char_id, pos);
+        snap.archetype = NpcArchetype::GuardianRelic;
+        snap.tsy_hostile = Some(DormantTsyHostileSnapshot {
+            family_id: family_id.to_string(),
+            zhinian_phase: None,
+            zhinian_phase_entered_at_tick: None,
+            fuya_aura: None,
+            daoxiang_origin: None,
+        });
+        snap.tsy_sentinel = Some(DormantTsySentinelSnapshot {
+            guarding_container_pos,
+            phase,
+            max_phase,
+        });
+        snap
+    }
+
+    fn spawn_loot_container(app: &mut App, family_id: &str, pos: DVec3) -> Entity {
+        app.world_mut()
+            .spawn((
+                LootContainer::new(
+                    ContainerKind::RelicCore,
+                    family_id.to_string(),
+                    TsyDepth::Deep,
+                    "relic_core_deep".to_string(),
+                    0,
+                ),
+                Position(pos),
+            ))
+            .id()
+    }
+
+    /// P0/P1 pin：dehydrate 一个带 `TsySentinelMarker` 的活体秘境守灵，断言写入
+    /// `NpcDormantStore` 的快照 `tsy_sentinel` 字段为 `Some`，且携带
+    /// `guarding_container_pos`/`phase`/`max_phase`——修复前 `dormant_tsy_hostile_snapshot`
+    /// 完全不读 `TsySentinelMarker`，这个字段恒为不存在（编译期都没有），身份从
+    /// dehydrate 这一步就已经丢失。
+    #[test]
+    fn tsy_sentinel_dehydrates_with_sentinel_identity_payload() {
+        let mut app = App::new();
+        app.insert_resource(NpcDormantStore::default());
+        app.insert_resource(NpcVirtualizationConfig {
+            transition_interval_ticks: 1,
+            dehydrate_without_players: true,
+            ..Default::default()
+        });
+        app.add_systems(Update, dehydrate_far_npcs_system);
+
+        let container =
+            spawn_loot_container(&mut app, "tsy_lingxu_01", DVec3::new(20.0, 64.0, 20.0));
+
+        let lifecycle = Lifecycle {
+            character_id: "npc_sentinel_far".to_string(),
+            ..Default::default()
+        };
+        let sentinel_entity = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position(DVec3::new(12.0, 64.0, 12.0)),
+                lifecycle,
+                NpcArchetype::GuardianRelic,
+                NpcDailySchedule::for_archetype(NpcArchetype::GuardianRelic, 7),
+                NpcLifespan::new(0.0, 1_000.0),
+                Cultivation {
+                    realm: Realm::Spirit,
+                    qi_current: 500.0,
+                    qi_max: 1000.0,
+                    ..Default::default()
+                },
+                MeridianSystem::default(),
+                Contamination::default(),
+                TsyHostileMarker {
+                    family_id: "tsy_lingxu_01".to_string(),
+                },
+                TsySentinelMarker {
+                    family_id: "tsy_lingxu_01".to_string(),
+                    guarding_container: Some(container),
+                    phase: 1,
+                    max_phase: 3,
+                },
+            ))
+            .id();
+
+        app.update();
+
+        let store = app.world().resource::<NpcDormantStore>();
+        let snap = store
+            .snapshots
+            .get("npc_sentinel_far")
+            .expect("sentinel snapshot must exist in NpcDormantStore after dehydrate");
+        let sentinel = snap.tsy_sentinel.as_ref().expect(
+            "dehydrated TSY sentinel must carry Some(tsy_sentinel) payload — regression: \
+             dormant_tsy_hostile_snapshot never read TsySentinelMarker, so this field would \
+             not exist pre-fix and the sentinel silently degrades to a plain GuardianRelic",
+        );
+        assert_eq!(
+            sentinel.guarding_container_pos,
+            Some([20.0, 64.0, 20.0]),
+            "guarding_container_pos must capture the guarded container's live Position at dehydrate time"
+        );
+        assert_eq!(
+            sentinel.phase, 1,
+            "phase must be copied verbatim from the live TsySentinelMarker (best-effort — \
+             update_sentinel_phase_system corrects it against real Wounds next tick, §8.1 #2)"
+        );
+        assert_eq!(
+            sentinel.max_phase, 3,
+            "max_phase (design constant) must be preserved exactly"
+        );
+        assert!(
+            app.world().get::<Despawned>(sentinel_entity).is_some(),
+            "dehydrated sentinel entity must be marked Despawned"
+        );
+    }
+
+    /// P0/P2 pin（核心修复）：hydrate 一个带 `tsy_sentinel` 载荷的 dormant snapshot，
+    /// 断言实体被 `spawn_tsy_sentinel_at` 路径重建——带 `TsySentinelMarker` +
+    /// `FaunaVisualKind::TsySentinel`，且**不带** `GuardianDuty`/`TrialEval`（那是
+    /// `spawn_relic_guard_npc_at` 专属组件），也不是 villager `EntityKind`。
+    #[test]
+    fn hydrated_tsy_sentinel_uses_spawn_tsy_sentinel_path_not_spawn_relic_guard() {
+        let mut store = NpcDormantStore::default();
+        store.insert(tsy_sentinel_snapshot(
+            "npc_sentinel_hydrate",
+            DVec3::new(10.0, 64.0, 10.0),
+            "tsy_lingxu_01",
+            None,
+            0,
+            3,
+        ));
+        let mut app = near_player_hydrate_app(store);
+        app.update();
+
+        assert!(
+            app.world().resource::<NpcDormantStore>().is_empty(),
+            "sentinel snapshot should have been consumed from the dormant store"
+        );
+
+        let results = {
+            let world = app.world_mut();
+            let mut query = world.query_filtered::<(
+                Option<&TsySentinelMarker>,
+                Option<&FaunaVisualKind>,
+                Option<&GuardianDuty>,
+                Option<&TrialEval>,
+                &valence::prelude::EntityKind,
+            ), With<NpcMarker>>();
+            query
+                .iter(world)
+                .map(|(s, v, d, t, k)| (s.cloned(), v.copied(), d.is_some(), t.is_some(), *k))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(results.len(), 1, "expected exactly one hydrated entity");
+        let (sentinel_marker, visual, has_guardian_duty, has_trial_eval, entity_kind) = &results[0];
+
+        assert!(
+            sentinel_marker.is_some(),
+            "hydrated TSY sentinel snapshot must produce a TsySentinelMarker component \
+             (regression this plan fixes: pre-fix hydrate silently routed to spawn_relic_guard_npc_at, \
+             never inserting this marker)"
+        );
+        assert_eq!(
+            *visual,
+            Some(FaunaVisualKind::TsySentinel),
+            "hydrated TSY sentinel must carry FaunaVisualKind::TsySentinel visual identity"
+        );
+        assert!(
+            !*has_guardian_duty,
+            "TSY sentinel hydrate path must NOT also carry GuardianDuty — that is exclusive \
+             to spawn_relic_guard_npc_at (dual-identity drift, §8.1 #3)"
+        );
+        assert!(
+            !*has_trial_eval,
+            "TSY sentinel hydrate path must NOT also carry TrialEval (§8.1 #3)"
+        );
+        assert_ne!(
+            *entity_kind,
+            valence::prelude::EntityKind::VILLAGER,
+            "TSY sentinel must not fall back to the villager-styled overworld relic guard EntityKind"
+        );
+    }
+
+    /// P0/P2 pin：容器仍存在时，hydrate 必须精确回填 `max_phase`，best-effort 回填
+    /// `phase`，并把 `guarding_container` 重绑到 family+坐标匹配的容器 entity。
+    #[test]
+    fn rehydrated_tsy_sentinel_keeps_marker_visual_and_phase_state() {
+        let mut store = NpcDormantStore::default();
+        store.insert(tsy_sentinel_snapshot(
+            "npc_sentinel_rebind",
+            DVec3::new(10.0, 64.0, 10.0),
+            "tsy_lingxu_01",
+            Some([20.0, 64.0, 20.0]),
+            2,
+            3,
+        ));
+        let mut app = near_player_hydrate_app(store);
+        let container =
+            spawn_loot_container(&mut app, "tsy_lingxu_01", DVec3::new(20.0, 64.0, 20.0));
+        app.update();
+
+        let markers = {
+            let world = app.world_mut();
+            let mut query = world.query_filtered::<&TsySentinelMarker, With<NpcMarker>>();
+            query.iter(world).cloned().collect::<Vec<_>>()
+        };
+        assert_eq!(
+            markers.len(),
+            1,
+            "expected exactly one hydrated TsySentinelMarker entity"
+        );
+        let marker = &markers[0];
+
+        assert_eq!(
+            marker.max_phase, 3,
+            "max_phase must be precisely refilled from the snapshot"
+        );
+        assert_eq!(
+            marker.phase, 2,
+            "phase must be best-effort refilled from the snapshot (§8.1 #2: corrected next tick \
+             by update_sentinel_phase_system against real, currently-full Wounds)"
+        );
+        assert_eq!(
+            marker.guarding_container,
+            Some(container),
+            "guarding_container must rebind to the container matching family_id + position \
+             within epsilon — the container is still present, so rebind must succeed 100%"
+        );
+    }
+
+    /// P0/§8.1 #3 pin：`GuardianRelic` 的两条 hydrate 分支必须互斥——
+    /// 有 `tsy_sentinel` 载荷 → 只产 `TsySentinelMarker`，不产 `GuardianDuty`/`TrialEval`；
+    /// 无 → 只产 `GuardianDuty`/`TrialEval`，不产 `TsySentinelMarker`。杜绝未来"两者都长"
+    /// 或"两者都没有"的漂移。
+    #[test]
+    fn guardian_relic_dual_identity_invariant_partitioned_by_sentinel_marker() {
+        // 分支 A：tsy_sentinel = Some。
+        let mut store_a = NpcDormantStore::default();
+        store_a.insert(tsy_sentinel_snapshot(
+            "npc_dual_sentinel",
+            DVec3::new(10.0, 64.0, 10.0),
+            "tsy_lingxu_01",
+            None,
+            0,
+            3,
+        ));
+        let mut app_a = near_player_hydrate_app(store_a);
+        app_a.update();
+        {
+            let world = app_a.world_mut();
+            let mut query = world.query_filtered::<(
+                Option<&TsySentinelMarker>,
+                Option<&GuardianDuty>,
+                Option<&TrialEval>,
+            ), With<NpcMarker>>();
+            let results = query.iter(world).collect::<Vec<_>>();
+            assert_eq!(
+                results.len(),
+                1,
+                "expected exactly one hydrated entity (branch A)"
+            );
+            let (sentinel, duty, trial) = results[0];
+            assert!(
+                sentinel.is_some(),
+                "Some(tsy_sentinel) branch must produce TsySentinelMarker"
+            );
+            assert!(
+                duty.is_none(),
+                "Some(tsy_sentinel) branch must NOT also produce GuardianDuty (dual-identity drift)"
+            );
+            assert!(
+                trial.is_none(),
+                "Some(tsy_sentinel) branch must NOT also produce TrialEval (dual-identity drift)"
+            );
+        }
+
+        // 分支 B：tsy_sentinel = None（纯 overworld GuardianRelic，行为不变）。
+        let mut store_b = NpcDormantStore::default();
+        let mut relic_snap = snapshot("npc_dual_relic", DVec3::new(10.0, 64.0, 10.0));
+        relic_snap.archetype = NpcArchetype::GuardianRelic;
+        relic_snap.guardian_relic = Some(DormantGuardianRelicSnapshot {
+            relic_id: "relic:test".to_string(),
+            alarm_center: [10.0, 64.0, 10.0],
+            alarm_radius: 32.0,
+            trial_template_id: "trial:test".to_string(),
+            last_offered_tick: None,
+            offer_cooldown_ticks: 900,
+        });
+        store_b.insert(relic_snap);
+        let mut app_b = near_player_hydrate_app(store_b);
+        app_b.update();
+        {
+            let world = app_b.world_mut();
+            let mut query = world.query_filtered::<(
+                Option<&TsySentinelMarker>,
+                Option<&GuardianDuty>,
+                Option<&TrialEval>,
+            ), With<NpcMarker>>();
+            let results = query.iter(world).collect::<Vec<_>>();
+            assert_eq!(
+                results.len(),
+                1,
+                "expected exactly one hydrated entity (branch B)"
+            );
+            let (sentinel, duty, trial) = results[0];
+            assert!(
+                sentinel.is_none(),
+                "None(tsy_sentinel) branch must NOT produce TsySentinelMarker"
+            );
+            assert!(
+                duty.is_some(),
+                "None(tsy_sentinel) branch must produce GuardianDuty (plain overworld relic \
+                 guard, unchanged pre-fix behavior)"
+            );
+            assert!(
+                trial.is_some(),
+                "None(tsy_sentinel) branch must produce TrialEval"
+            );
+        }
+    }
+
+    /// P0/§8.1 #1 补漏（博弈 blocker）pin：两段式 family+坐标重绑必须先按 `family_id`
+    /// 过滤，再在子集内按坐标匹配——**绝不**允许跨 family 裸坐标匹配，即使错误 family
+    /// 的候选坐标匹配得更精确、且更早出现在 `relic_containers` 切片里。
+    ///
+    /// 场景：两个 `LootContainer`——`tutorial_chest`（`family_id="spawn_tutorial"`，
+    /// 模拟 `spawn_tutorial.rs:497` 的教程箱子，同为 Overworld，坐标与 sentinel 记录的
+    /// `guarding_container_pos` **完全相同**，且先于真容器 spawn）与
+    /// `tsy_lingxu_01`（sentinel 真正所属，坐标落在 epsilon 内但不完全相同，spawn 更晚）。
+    /// 断言 sentinel 精确重绑到 `tsy_lingxu_01`，绝不误绑 `tutorial_chest`。
+    #[test]
+    fn hydrated_tsy_sentinel_container_rebind_ignores_same_position_different_family() {
+        let mut store = NpcDormantStore::default();
+        store.insert(tsy_sentinel_snapshot(
+            "npc_sentinel_blocker",
+            DVec3::new(10.0, 64.0, 10.0),
+            "tsy_lingxu_01",
+            Some([30.0, 64.0, 30.0]),
+            0,
+            3,
+        ));
+        let mut app = near_player_hydrate_app(store);
+
+        // 更早 spawn、family 错误、但坐标与记录值完全一致（比真容器"匹配得更好"）。
+        let tutorial_chest =
+            spawn_loot_container(&mut app, "spawn_tutorial", DVec3::new(30.0, 64.0, 30.0));
+        // 更晚 spawn、family 正确、坐标稍有偏移（仍在 epsilon<=0.5 内）。
+        let real_container =
+            spawn_loot_container(&mut app, "tsy_lingxu_01", DVec3::new(30.3, 64.0, 30.3));
+
+        app.update();
+
+        let markers = {
+            let world = app.world_mut();
+            let mut query = world.query_filtered::<&TsySentinelMarker, With<NpcMarker>>();
+            query.iter(world).cloned().collect::<Vec<_>>()
+        };
+        assert_eq!(
+            markers.len(),
+            1,
+            "expected exactly one hydrated sentinel entity"
+        );
+        let marker = &markers[0];
+
+        assert_ne!(
+            marker.guarding_container,
+            Some(tutorial_chest),
+            "sentinel must NOT rebind to the earlier-spawned, exact-position-match, \
+             wrong-family tutorial_chest container (§8.1 #1 blocker) — even a perfect \
+             positional match must lose to a correct-family match"
+        );
+        assert_eq!(
+            marker.guarding_container,
+            Some(real_container),
+            "sentinel must rebind to the family-matching tsy_lingxu_01 container despite \
+             tutorial_chest appearing earlier in the query and matching position more exactly"
+        );
+    }
+
+    /// P3 pin（端到端）：完整跑 dehydrate → snapshot → hydrate 一圈，容器全程未被触碰时
+    /// 重绑必须 100% 成功；同时验证死亡掉落键精确走 `tsy_sentinel` 分支（不是
+    /// daoxiang/zhinian/fuya/`None`）——身份没有在任何一步被洗平。
+    #[test]
+    fn sentinel_survives_full_dehydrate_hydrate_cycle_with_container_still_present() {
+        let mut app = App::new();
+        app.add_event::<InitiateXuhuaTribulation>();
+        let overworld = app.world_mut().spawn_empty().id();
+        let tsy = app.world_mut().spawn_empty().id();
+        app.insert_resource(DimensionLayers { overworld, tsy });
+        app.insert_resource(NpcDormantStore::default());
+        app.insert_resource(NpcVirtualizationConfig {
+            transition_interval_ticks: 1,
+            dehydrate_without_players: true,
+            ..Default::default()
+        });
+        app.add_systems(
+            Update,
+            (
+                hydrate_dormant_near_players_system,
+                dehydrate_far_npcs_system,
+            )
+                .chain(),
+        );
+
+        let container =
+            spawn_loot_container(&mut app, "tsy_lingxu_01", DVec3::new(30.0, 64.0, 30.0));
+
+        let lifecycle = Lifecycle {
+            character_id: "npc_sentinel_e2e".to_string(),
+            ..Default::default()
+        };
+        let live_entity = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position(DVec3::new(10.0, 64.0, 10.0)),
+                lifecycle,
+                NpcArchetype::GuardianRelic,
+                NpcDailySchedule::for_archetype(NpcArchetype::GuardianRelic, 3),
+                NpcLifespan::new(0.0, 1_000.0),
+                Cultivation {
+                    realm: Realm::Spirit,
+                    qi_current: 500.0,
+                    qi_max: 1000.0,
+                    ..Default::default()
+                },
+                MeridianSystem::default(),
+                Contamination::default(),
+                TsyHostileMarker {
+                    family_id: "tsy_lingxu_01".to_string(),
+                },
+                TsySentinelMarker {
+                    family_id: "tsy_lingxu_01".to_string(),
+                    guarding_container: Some(container),
+                    phase: 0,
+                    max_phase: 3,
+                },
+            ))
+            .id();
+
+        // Tick 0：无玩家（dehydrate_without_players=true 绕过近距守卫）——活体秘境守灵脱水进 store。
+        app.update();
+
+        assert!(
+            app.world().get::<Despawned>(live_entity).is_some(),
+            "sentinel entity must be marked Despawned after dehydrate"
+        );
+        assert!(
+            app.world()
+                .resource::<NpcDormantStore>()
+                .snapshots
+                .get("npc_sentinel_e2e")
+                .and_then(|s| s.tsy_sentinel.as_ref())
+                .is_some(),
+            "dehydrated snapshot must carry Some(tsy_sentinel) payload before hydrate can restore it"
+        );
+
+        // 玩家靠近原位置——tick 1：hydrate 重建。
+        app.world_mut().spawn((
+            valence::client::ClientMarker,
+            Position(DVec3::new(10.0, 64.0, 10.0)),
+        ));
+        app.update();
+
+        assert!(
+            app.world().resource::<NpcDormantStore>().is_empty(),
+            "sentinel snapshot should have been consumed from the dormant store after hydrate"
+        );
+
+        let rehydrated = {
+            let world = app.world_mut();
+            let mut query = world.query_filtered::<
+                (&NpcArchetype, &TsySentinelMarker, &FaunaVisualKind),
+                With<NpcMarker>,
+            >();
+            query
+                .iter(world)
+                .map(|(a, m, v)| (*a, m.clone(), *v))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            rehydrated.len(),
+            1,
+            "expected exactly one rehydrated sentinel entity"
+        );
+        let (archetype, marker, visual) = &rehydrated[0];
+
+        assert_eq!(*archetype, NpcArchetype::GuardianRelic);
+        assert_eq!(*visual, FaunaVisualKind::TsySentinel);
+        assert_eq!(
+            marker.guarding_container,
+            Some(container),
+            "容器全程未被触碰（§8.1 #2：现状验证容器从不 dehydrate/despawn）时，重绑必须 \
+             100% 成功指向同一容器 entity"
+        );
+        assert_eq!(marker.max_phase, 3);
+
+        let drop_key = crate::npc::tsy_hostile::drop_key_for_npc(*archetype, Some(marker));
+        assert_eq!(
+            drop_key,
+            Some("tsy_sentinel"),
+            "TSY 秘境守灵死亡掉落必须精确走 tsy_sentinel 分流键——身份没有在 dehydrate/hydrate \
+             任何一步被洗平成普通 GuardianRelic 或其它 archetype 的掉落表"
         );
     }
 }

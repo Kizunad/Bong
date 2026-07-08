@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
@@ -207,7 +208,8 @@ public class ClientRequestProtocolTest {
         String json = ClientRequestProtocol.encodeInventoryMove(
             1001L,
             new ClientRequestProtocol.ContainerLoc("main_pack", 0, 0),
-            new ClientRequestProtocol.HotbarLoc(3)
+            new ClientRequestProtocol.HotbarLoc(3),
+            false
         );
         assertEquals(
             "{\"type\":\"inventory_move_intent\",\"v\":1,\"instance_id\":1001,\"from\":{\"kind\":\"container\",\"container_id\":\"main_pack\",\"row\":0,\"col\":0},\"to\":{\"kind\":\"hotbar\",\"index\":3}}",
@@ -220,12 +222,45 @@ public class ClientRequestProtocolTest {
         String json = ClientRequestProtocol.encodeInventoryMove(
             2002L,
             new ClientRequestProtocol.EquipLoc("main_hand", "held"),
-            new ClientRequestProtocol.ContainerLoc("small_pouch", 1, 2)
+            new ClientRequestProtocol.ContainerLoc("small_pouch", 1, 2),
+            false
         );
         assertEquals(
             "{\"type\":\"inventory_move_intent\",\"v\":1,\"instance_id\":2002,\"from\":{\"kind\":\"equip\",\"slot\":\"main_hand\",\"state\":\"held\"},\"to\":{\"kind\":\"container\",\"container_id\":\"small_pouch\",\"row\":1,\"col\":2}}",
             json
         );
+    }
+
+    // ─── plan-rotate-v1：encodeInventoryMove 带 rotated 的 JSON 形状 pin ───
+
+    @Test
+    void encodesInventoryMoveWithRotatedTrue() {
+        String json = ClientRequestProtocol.encodeInventoryMove(
+            3003L,
+            new ClientRequestProtocol.ContainerLoc("main_pack", 0, 0),
+            new ClientRequestProtocol.ContainerLoc("main_pack", 2, 3),
+            true
+        );
+        assertEquals(
+            "{\"type\":\"inventory_move_intent\",\"v\":1,\"instance_id\":3003,"
+                + "\"from\":{\"kind\":\"container\",\"container_id\":\"main_pack\",\"row\":0,\"col\":0},"
+                + "\"to\":{\"kind\":\"container\",\"container_id\":\"main_pack\",\"row\":2,\"col\":3},"
+                + "\"rotated\":true}",
+            json,
+            "rotated=true 时 payload 必须携带 rotated:true（server 侧据此互换 grid_w/grid_h）"
+        );
+    }
+
+    @Test
+    void encodesInventoryMoveWithRotatedFalseOmitsField() {
+        String json = ClientRequestProtocol.encodeInventoryMove(
+            3004L,
+            new ClientRequestProtocol.ContainerLoc("main_pack", 0, 0),
+            new ClientRequestProtocol.ContainerLoc("main_pack", 2, 3),
+            false
+        );
+        assertFalse(json.contains("rotated"),
+            "rotated=false 时字段应省略（与旧 payload 形状一致，server serde(default) 补 false），实际 = " + json);
     }
 
     @Test
@@ -557,6 +592,158 @@ public class ClientRequestProtocolTest {
         );
     }
 
+    // ══════════ plan-forge-session-entry-wiring-v1 §4.1#2/#3 — 起炉 / 图谱翻页 ══════════
+
+    @Test
+    void encodesForgeStartSessionWithMultipleMaterials() {
+        String json = ClientRequestProtocol.encodeForgeStartSession(
+            new BlockPos(12, 66, -8),
+            "qing_feng_v0",
+            List.of(
+                new ClientRequestProtocol.ForgeMaterial("fan_tie", 4),
+                new ClientRequestProtocol.ForgeMaterial("za_gang", 1)
+            )
+        );
+        assertEquals(
+            "{\"type\":\"forge_start_session\",\"v\":1,\"station_pos\":[12,66,-8],"
+                + "\"blueprint_id\":\"qing_feng_v0\",\"materials\":[[\"fan_tie\",4],[\"za_gang\",1]]}",
+            json
+        );
+    }
+
+    @Test
+    void encodesForgeStartSessionWithSingleMaterial() {
+        String json = ClientRequestProtocol.encodeForgeStartSession(
+            new BlockPos(0, 64, 0),
+            "iron_sword_v0",
+            List.of(new ClientRequestProtocol.ForgeMaterial("fan_tie", 3))
+        );
+        assertEquals(
+            "{\"type\":\"forge_start_session\",\"v\":1,\"station_pos\":[0,64,0],"
+                + "\"blueprint_id\":\"iron_sword_v0\",\"materials\":[[\"fan_tie\",3]]}",
+            json
+        );
+    }
+
+    @Test
+    void encodesForgeStartSessionWithEmptyMaterialsList() {
+        String json = ClientRequestProtocol.encodeForgeStartSession(
+            new BlockPos(1, 2, 3), "iron_sword_v0", List.of()
+        );
+        assertEquals(
+            "{\"type\":\"forge_start_session\",\"v\":1,\"station_pos\":[1,2,3],"
+                + "\"blueprint_id\":\"iron_sword_v0\",\"materials\":[]}",
+            json
+        );
+    }
+
+    @Test
+    void encodesForgeStartSessionWithNullMaterialsAsEmptyArray() {
+        String json = ClientRequestProtocol.encodeForgeStartSession(
+            new BlockPos(1, 2, 3), "iron_sword_v0", null
+        );
+        assertEquals(
+            "{\"type\":\"forge_start_session\",\"v\":1,\"station_pos\":[1,2,3],"
+                + "\"blueprint_id\":\"iron_sword_v0\",\"materials\":[]}",
+            json
+        );
+    }
+
+    @Test
+    void encodesForgeStartSessionWithNegativeCoordinates() {
+        String json = ClientRequestProtocol.encodeForgeStartSession(
+            new BlockPos(-1_000_000, -64, 999_999), "iron_sword_v0",
+            List.of(new ClientRequestProtocol.ForgeMaterial("fan_tie", 1))
+        );
+        assertEquals(
+            "{\"type\":\"forge_start_session\",\"v\":1,\"station_pos\":[-1000000,-64,999999],"
+                + "\"blueprint_id\":\"iron_sword_v0\",\"materials\":[[\"fan_tie\",1]]}",
+            json
+        );
+    }
+
+    @Test
+    void encodeForgeStartSessionRejectsNullStationPos() {
+        assertThrows(IllegalArgumentException.class, () -> ClientRequestProtocol.encodeForgeStartSession(
+            null, "iron_sword_v0", List.of(new ClientRequestProtocol.ForgeMaterial("fan_tie", 1))
+        ));
+    }
+
+    @Test
+    void encodeForgeStartSessionRejectsBlankBlueprintId() {
+        assertThrows(IllegalArgumentException.class, () -> ClientRequestProtocol.encodeForgeStartSession(
+            new BlockPos(0, 0, 0), "  ", List.of(new ClientRequestProtocol.ForgeMaterial("fan_tie", 1))
+        ));
+        assertThrows(IllegalArgumentException.class, () -> ClientRequestProtocol.encodeForgeStartSession(
+            new BlockPos(0, 0, 0), null, List.of(new ClientRequestProtocol.ForgeMaterial("fan_tie", 1))
+        ));
+    }
+
+    @Test
+    void encodeForgeStartSessionRejectsNullMaterialEntry() {
+        List<ClientRequestProtocol.ForgeMaterial> materials = new java.util.ArrayList<>();
+        materials.add(null);
+        assertThrows(IllegalArgumentException.class, () -> ClientRequestProtocol.encodeForgeStartSession(
+            new BlockPos(0, 0, 0), "iron_sword_v0", materials
+        ));
+    }
+
+    @Test
+    void encodeForgeStartSessionRejectsBlankMaterialId() {
+        assertThrows(IllegalArgumentException.class, () -> ClientRequestProtocol.encodeForgeStartSession(
+            new BlockPos(0, 0, 0), "iron_sword_v0",
+            List.of(new ClientRequestProtocol.ForgeMaterial("  ", 1))
+        ));
+    }
+
+    @Test
+    void encodeForgeStartSessionRejectsZeroOrNegativeMaterialCount() {
+        assertThrows(IllegalArgumentException.class, () -> ClientRequestProtocol.encodeForgeStartSession(
+            new BlockPos(0, 0, 0), "iron_sword_v0",
+            List.of(new ClientRequestProtocol.ForgeMaterial("fan_tie", 0))
+        ));
+        assertThrows(IllegalArgumentException.class, () -> ClientRequestProtocol.encodeForgeStartSession(
+            new BlockPos(0, 0, 0), "iron_sword_v0",
+            List.of(new ClientRequestProtocol.ForgeMaterial("fan_tie", -1))
+        ));
+    }
+
+    @Test
+    void encodesForgeBlueprintTurnPageForward() {
+        assertEquals(
+            "{\"type\":\"forge_blueprint_turn_page\",\"v\":1,\"delta\":1}",
+            ClientRequestProtocol.encodeForgeBlueprintTurnPage(1)
+        );
+    }
+
+    @Test
+    void encodesForgeBlueprintTurnPageBackward() {
+        assertEquals(
+            "{\"type\":\"forge_blueprint_turn_page\",\"v\":1,\"delta\":-1}",
+            ClientRequestProtocol.encodeForgeBlueprintTurnPage(-1)
+        );
+    }
+
+    @Test
+    void encodesForgeBlueprintTurnPageZeroDelta() {
+        assertEquals(
+            "{\"type\":\"forge_blueprint_turn_page\",\"v\":1,\"delta\":0}",
+            ClientRequestProtocol.encodeForgeBlueprintTurnPage(0)
+        );
+    }
+
+    @Test
+    void encodesForgeBlueprintTurnPageMultiStepDelta() {
+        assertEquals(
+            "{\"type\":\"forge_blueprint_turn_page\",\"v\":1,\"delta\":5}",
+            ClientRequestProtocol.encodeForgeBlueprintTurnPage(5)
+        );
+        assertEquals(
+            "{\"type\":\"forge_blueprint_turn_page\",\"v\":1,\"delta\":-3}",
+            ClientRequestProtocol.encodeForgeBlueprintTurnPage(-3)
+        );
+    }
+
     @Test
     void encodesForgeConsecrationInject() {
         String json = ClientRequestProtocol.encodeForgeConsecrationInject(7L, 2.5);
@@ -849,7 +1036,8 @@ public class ClientRequestProtocolTest {
         String json = ClientRequestProtocol.encodeInventoryMove(
             7007L,
             new ClientRequestProtocol.ContainerLoc("main_pack", 0, 0),
-            new ClientRequestProtocol.EquipLoc("chest", "worn")
+            new ClientRequestProtocol.EquipLoc("chest", "worn"),
+            false
         );
         com.google.gson.JsonObject to = com.google.gson.JsonParser.parseString(json)
             .getAsJsonObject().getAsJsonObject("to");
@@ -863,7 +1051,8 @@ public class ClientRequestProtocolTest {
         String json = ClientRequestProtocol.encodeInventoryMove(
             7008L,
             new ClientRequestProtocol.ContainerLoc("main_pack", 0, 0),
-            new ClientRequestProtocol.EquipLoc("main_hand", "held")
+            new ClientRequestProtocol.EquipLoc("main_hand", "held"),
+            false
         );
         com.google.gson.JsonObject to = com.google.gson.JsonParser.parseString(json)
             .getAsJsonObject().getAsJsonObject("to");

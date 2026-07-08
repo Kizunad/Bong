@@ -5,7 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::cultivation::components::ColorKind;
+use crate::cultivation::components::{ColorKind, Realm};
 
 /// plan §1.3 四步串行（与 `ForgeSession::current_step` 对齐）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -83,6 +83,14 @@ pub struct WeaponForgeStationDataV1 {
     pub integrity: f32,
     pub owner_name: String,
     pub has_session: bool,
+    /// plan-forge-session-entry-wiring-v1 §4.1#3（新发现连带缺口）—— 砧方块坐标。
+    /// U 键全局打开的 ForgeScreen 没有 station 上下文，client 必须从本 payload 拿到
+    /// pos 才能在起炉时发出 `ForgeStartSession.station_pos`（与 alchemy furnace_pos 同模式）。
+    /// 坐标按 proto 铁律拍平成三个 flat 字段（proto ForgeStation.station_pos_x/y/z 同名同形），
+    /// 保证 JSON wire 与 proto-bridge wire 对 client handler 呈现同一形状。
+    pub station_pos_x: i32,
+    pub station_pos_y: i32,
+    pub station_pos_z: i32,
 }
 
 /// 锻造会话实时状态。
@@ -131,6 +139,8 @@ pub enum ForgeStepStateDataV1 {
         qi_injected: f64,
         qi_required: f64,
         color_imprint: Option<ColorKind>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        min_realm: Option<Realm>,
     },
     None,
 }
@@ -223,6 +233,23 @@ mod tests {
     }
 
     #[test]
+    fn forge_step_state_consecration_roundtrip_includes_min_realm() {
+        let state = ForgeStepStateDataV1::Consecration {
+            qi_injected: 10.0,
+            qi_required: 80.0,
+            color_imprint: None,
+            min_realm: Some(Realm::Spirit),
+        };
+        let s = serde_json::to_string(&state).unwrap();
+        assert!(
+            s.contains("\"min_realm\":\"Spirit\""),
+            "serialized consecration state should include min_realm: {s}"
+        );
+        let back: ForgeStepStateDataV1 = serde_json::from_str(&s).unwrap();
+        assert_eq!(back, state);
+    }
+
+    #[test]
     fn forge_outcome_data_roundtrip() {
         let outcome = ForgeOutcomeDataV1 {
             session_id: 1,
@@ -248,6 +275,9 @@ mod tests {
             integrity: 0.95,
             owner_name: "test".into(),
             has_session: false,
+            station_pos_x: -12,
+            station_pos_y: 64,
+            station_pos_z: 38,
         };
         let s = serde_json::to_string(&data).unwrap();
         let back: WeaponForgeStationDataV1 = serde_json::from_str(&s).unwrap();

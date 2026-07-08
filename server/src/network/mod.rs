@@ -27,6 +27,7 @@ pub mod cultivation_detail_emit;
 pub mod cultivation_insight_offer_emit;
 pub mod defense_window_emit;
 pub mod derived_attrs_emit;
+pub mod disguise_sync;
 pub mod dropped_loot_sync_emit;
 pub mod dugu_event_bridge;
 pub mod dugu_state_emit;
@@ -60,6 +61,7 @@ pub mod qi_color_observed_emit;
 pub mod quickslot_config_emit;
 pub mod rat_phase_bridge;
 pub mod redis_bridge;
+pub mod remains_sync_emit;
 pub mod resourcepack;
 // plan-scroll-reading-v1 P0 — 可阅读残卷阅读屏 S2C `ScrollOpen` 回执发送。
 pub mod scroll_open_emit;
@@ -129,14 +131,16 @@ use valence::prelude::{
     Update, Username, With,
 };
 
-use crate::combat::components::Lifecycle;
+use crate::combat::components::{Lifecycle, StatusEffects};
 use crate::combat::CombatClock;
+use crate::cultivation::color::PracticeLog;
 use crate::cultivation::components::{Cultivation, MeridianSystem, QiColor};
+use crate::cultivation::insight::InsightQuota;
 use crate::cultivation::insight_apply::UnlockedPerceptions;
 use crate::cultivation::life_record::LifeRecord;
 use crate::cultivation::possession::DuoSheWarningEvent;
 use crate::fauna::rat_phase::{collect_rat_density_heatmap, RatDensityHeatmapV1, RatPhase};
-use crate::inventory::spirit_treasure::SpiritTreasureRegistry;
+use crate::inventory::spirit_treasure::{ActiveSpiritTreasures, SpiritTreasureRegistry};
 use crate::npc::brain::{canonical_npc_id, ChaseAction, DashAction, FleeAction, MeleeAttackAction};
 use crate::npc::dormant::NpcDormantStore;
 use crate::npc::faction::{FactionMembership, FactionStore, Lineage, MissionQueue};
@@ -212,6 +216,12 @@ type ClientLifeRecordQueryItem<'a> = (
     &'a mut LifeRecord,
 );
 type ClientLifeRecordQueryFilter = With<Client>;
+type InsightContextQueryItem<'a> = (
+    &'a QiColor,
+    &'a PracticeLog,
+    &'a InsightQuota,
+    &'a Cultivation,
+);
 
 /// Resource holding the Redis bridge channels
 pub struct RedisBridgeResource {
@@ -263,9 +273,35 @@ impl Resource for QiLedgerTimer {}
 #[derive(Default)]
 struct ZoneTransitionTracker {
     last_zone_by_entity: HashMap<Entity, String>,
+    last_snapshot_by_entity: HashMap<Entity, ZoneInfoRuntimeSnapshot>,
 }
 
 impl Resource for ZoneTransitionTracker {}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ZoneInfoRuntimeSnapshot {
+    zone: String,
+    spirit_qi_bits: u64,
+    danger_level: u8,
+    status: ZoneStatusV1,
+    active_events: Vec<String>,
+}
+
+impl ZoneInfoRuntimeSnapshot {
+    fn from_zone(zone: &Zone) -> Self {
+        Self {
+            zone: zone.name.clone(),
+            spirit_qi_bits: zone.spirit_qi.to_bits(),
+            danger_level: zone.danger_level,
+            status: zone_status(zone),
+            active_events: zone.active_events.clone(),
+        }
+    }
+
+    fn spirit_qi(&self) -> f64 {
+        f64::from_bits(self.spirit_qi_bits)
+    }
+}
 
 #[derive(Default)]
 struct NarrationDedupeResource {
@@ -380,7 +416,8 @@ pub fn register(app: &mut App) {
             emit_gameplay_narrations.after(crate::player::gameplay::apply_queued_gameplay_actions),
             emit_player_state_payloads
                 .after(crate::player::attach_player_state_to_joined_clients)
-                .after(crate::player::gameplay::apply_queued_gameplay_actions),
+                .after(crate::player::gameplay::apply_queued_gameplay_actions)
+                .after(crate::social::apply_social_renown_deltas),
             inventory_snapshot_emit::emit_join_inventory_snapshots
                 .after(crate::inventory::attach_inventory_to_joined_clients),
             alchemy_snapshot_emit::emit_join_alchemy_snapshots
@@ -407,7 +444,9 @@ pub fn register(app: &mut App) {
     );
     app.add_systems(
         Update,
-        publish_season_changed_events.after(crate::world::season::season_tick),
+        publish_season_changed_events
+            .after(crate::world::season::season_tick)
+            .after(emit_player_state_payloads),
     );
     // plan-offscreen-war-v1 P0：守恒 telemetry exclusive system，与 world_state 同节奏。
     app.add_systems(Update, publish_qi_ledger_to_redis);
@@ -499,7 +538,8 @@ pub fn register(app: &mut App) {
     app.add_systems(
         Update,
         identity_panel_emit::emit_identity_panel_state_payloads
-            .after(crate::identity::command::handle_identity_command),
+            .after(crate::identity::command::handle_identity_command)
+            .after(crate::social::apply_social_renown_deltas),
     );
     app.add_systems(
         Update,
@@ -933,8 +973,24 @@ pub fn register(app: &mut App) {
             treasure_equipped_emit::emit_treasure_equipped_payloads,
         ),
     );
+    // plan-remains-suite P0：遗骸容器世界同步（独立 add_systems 避免 Bevy 20 元素 tuple 上限）。
+    app.add_systems(
+        Update,
+        (
+            remains_sync_emit::emit_join_remains_syncs,
+            remains_sync_emit::emit_changed_remains_syncs,
+        ),
+    );
     // plan-shield-block-v1 P3：盾牌破损推送（独立 add_systems 避免 Bevy 20元素 tuple 上限）。
     app.add_systems(Update, weapon_equipped_emit::emit_shield_broken_payloads);
+    // plan-botany-harvest-full-inventory-loss-v1 P1：满包掉地面 event_stream 提示
+    // （同样独立 add_systems，紧邻上面 shield-block-v1 P3 先例——L895-932 的 20 元素
+    // add_systems 元组已达 Bevy 0.14.2 IntoSystemConfigs tuple 上限，不得再追加）。
+    app.add_systems(
+        Update,
+        event_stream_emit::emit_botany_harvest_overflow_to_event_stream
+            .after(crate::botany::harvest::tick_harvest_sessions),
+    );
     // plan-shield-block-v1 P4：盾格挡命中推送（材质差异化粒子+音效）。
     app.add_systems(
         Update,
@@ -1298,7 +1354,15 @@ fn publish_season_changed_events(
     redis: Res<RedisBridgeResource>,
     mut events: EventReader<SeasonChangedEvent>,
     season_state: Option<Res<WorldSeasonState>>,
+    zone_registry: Option<Res<ZoneRegistry>>,
+    clock: Option<Res<CombatClock>>,
+    terrain_providers: Option<Res<TerrainProviders>>,
+    mut clients: Query<PlayerStateEmitQueryItem<'_>, With<Client>>,
 ) {
+    let zone_registry = effective_zone_registry(zone_registry.as_deref());
+    let tick = clock.as_deref().map(|clock| clock.tick).unwrap_or_default();
+    let terrain_providers = terrain_providers.as_deref();
+
     for event in events.read() {
         let state = season_state
             .as_deref()
@@ -1309,6 +1373,41 @@ fn publish_season_changed_events(
             .send(RedisOutbound::SeasonChanged(SeasonChangedV1::new(
                 *event, state,
             )));
+
+        let season_state_for_client: SeasonStateV1 = state.into();
+        for (
+            entity,
+            mut client,
+            username,
+            position,
+            current_dimension,
+            player_state,
+            cultivation,
+            anonymity,
+            renown,
+            relationships,
+            faction_membership,
+        ) in &mut clients
+        {
+            send_player_state_payload_to_client(
+                entity,
+                &mut client,
+                username,
+                position,
+                current_dimension,
+                player_state,
+                cultivation,
+                anonymity,
+                renown,
+                relationships,
+                faction_membership,
+                &zone_registry,
+                terrain_providers,
+                tick,
+                season_state_for_client,
+                "season_changed",
+            );
+        }
     }
 }
 
@@ -2080,49 +2179,84 @@ fn emit_player_state_payloads(
         faction_membership,
     ) in &mut clients
     {
-        let zone_name = zone_name_for_position(&zone_registry, position.get());
-        let social = build_player_social_snapshot(
-            tick,
+        send_player_state_payload_to_client(
+            entity,
+            &mut client,
+            username,
+            position,
+            current_dimension,
+            player_state,
+            cultivation,
             anonymity,
             renown,
             relationships,
             faction_membership,
-        );
-        let local_neg_pressure =
-            local_neg_pressure_at(terrain_providers, current_dimension, position);
-        // plan-wire-format-bridge-v1 P3/RC6：此前 zone_spirit_qi 在 proto 里根本不存在，
-        // client PlayerStateViewModel.zoneSpiritQiNormalized() 恒为 NaN 归一化默认值。
-        let zone_spirit_qi = zone_registry
-            .find_zone_by_name(zone_name.as_str())
-            .map(|zone| zone.spirit_qi);
-        let mut payload = player_state.server_payload_with_social_and_local_pressure(
-            cultivation,
-            Some(canonical_player_id(username.0.as_str())),
-            zone_name,
-            social,
-            local_neg_pressure,
-            zone_spirit_qi,
-        );
-        if let ServerDataPayloadV1::PlayerState { season_state, .. } = &mut payload.payload {
-            *season_state = Some(season_state_for_client);
-        }
-        let payload_type = payload_type_label(payload.payload_type());
-        let payload_bytes = match serialize_server_data_payload(&payload) {
-            Ok(payload) => payload,
-            Err(error) => {
-                log_payload_build_error(payload_type, &error);
-                continue;
-            }
-        };
-
-        send_server_data_payload(&mut client, payload_bytes.as_slice());
-        tracing::info!(
-            "[bong][network] sent {} {} payload to client entity {entity:?} for `{}`",
-            SERVER_DATA_CHANNEL,
-            payload_type,
-            username.0,
+            &zone_registry,
+            terrain_providers,
+            tick,
+            season_state_for_client,
+            "component_changed",
         );
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn send_player_state_payload_to_client(
+    entity: Entity,
+    client: &mut Client,
+    username: &Username,
+    position: &Position,
+    current_dimension: Option<&CurrentDimension>,
+    player_state: &PlayerState,
+    cultivation: &Cultivation,
+    anonymity: Option<&Anonymity>,
+    renown: Option<&Renown>,
+    relationships: Option<&Relationships>,
+    faction_membership: Option<&PlayerFactionMembership>,
+    zone_registry: &ZoneRegistry,
+    terrain_providers: Option<&TerrainProviders>,
+    tick: u64,
+    season_state_for_client: SeasonStateV1,
+    reason: &'static str,
+) {
+    let zone_name = zone_name_for_position(zone_registry, position.get());
+    let social =
+        build_player_social_snapshot(tick, anonymity, renown, relationships, faction_membership);
+    let local_neg_pressure = local_neg_pressure_at(terrain_providers, current_dimension, position);
+    // plan-wire-format-bridge-v1 P3/RC6：此前 zone_spirit_qi 在 proto 里根本不存在，
+    // client PlayerStateViewModel.zoneSpiritQiNormalized() 恒为 NaN 归一化默认值。
+    let zone_spirit_qi = zone_registry
+        .find_zone_by_name(zone_name.as_str())
+        .map(|zone| zone.spirit_qi);
+    let mut payload = player_state.server_payload_with_social_and_local_pressure(
+        cultivation,
+        Some(canonical_player_id(username.0.as_str())),
+        zone_name,
+        social,
+        local_neg_pressure,
+        zone_spirit_qi,
+    );
+    if let ServerDataPayloadV1::PlayerState { season_state, .. } = &mut payload.payload {
+        *season_state = Some(season_state_for_client);
+    }
+    let payload_type = payload_type_label(payload.payload_type());
+    let payload_bytes = match serialize_server_data_payload(&payload) {
+        Ok(payload) => payload,
+        Err(error) => {
+            log_payload_build_error(payload_type, &error);
+            return;
+        }
+    };
+
+    send_server_data_payload(client, payload_bytes.as_slice());
+    // trace：player_state 周期推送 ~每 tick/玩家，INFO 会把整份 server log 刷成
+    // 噪声墙（2026-07-06 playtest：10s 挂机 258 行，取证全靠 grep -v）。
+    tracing::trace!(
+        "[bong][network] sent {} {} payload to client entity {entity:?} for `{}` ({reason})",
+        SERVER_DATA_CHANNEL,
+        payload_type,
+        username.0,
+    );
 }
 
 fn local_neg_pressure_at(
@@ -2175,35 +2309,51 @@ fn emit_zone_info_on_zone_transition(
             .map(|last_zone| !last_zone.eq_ignore_ascii_case(zone_name.as_str()))
             .unwrap_or(true);
 
-        if !transitioned {
-            continue;
-        }
-
         let Some(zone) = zone_registry.find_zone_by_name(zone_name.as_str()) else {
             tracing::warn!(
                 "[bong][network] zone transition for entity {entity:?} resolved unknown zone `{}`",
                 zone_name
             );
             tracker.last_zone_by_entity.insert(entity, zone_name);
+            tracker.last_snapshot_by_entity.remove(&entity);
             continue;
         };
-        let previous_qi = previous_zone
-            .as_deref()
-            .and_then(|name| zone_registry.find_zone_by_name(name))
-            .map(|zone| zone.spirit_qi as f32)
+
+        let current_snapshot = ZoneInfoRuntimeSnapshot::from_zone(zone);
+        let runtime_changed = tracker
+            .last_snapshot_by_entity
+            .get(&entity)
+            .map(|previous_snapshot| previous_snapshot != &current_snapshot)
+            .unwrap_or(true);
+        if !transitioned && !runtime_changed {
+            continue;
+        }
+
+        let previous_qi = tracker
+            .last_snapshot_by_entity
+            .get(&entity)
+            .map(|snapshot| snapshot.spirit_qi() as f32)
+            .or_else(|| {
+                previous_zone
+                    .as_deref()
+                    .and_then(|name| zone_registry.find_zone_by_name(name))
+                    .map(|zone| zone.spirit_qi as f32)
+            })
             .unwrap_or(zone.spirit_qi as f32);
         let perception_text = crate::combat::woliu::ambient_qi_perception(
             previous_qi,
-            zone.spirit_qi as f32,
+            current_snapshot.spirit_qi() as f32,
             has_zone_qi_inspect(cultivation, perceptions),
         );
 
+        let active_events = (!current_snapshot.active_events.is_empty())
+            .then(|| current_snapshot.active_events.clone());
         let payload = ServerDataV1::new(ServerDataPayloadV1::ZoneInfo {
-            zone: zone.name.clone(),
-            spirit_qi: zone.spirit_qi,
-            danger_level: zone.danger_level,
-            status: zone_status(zone),
-            active_events: (!zone.active_events.is_empty()).then(|| zone.active_events.clone()),
+            zone: current_snapshot.zone.clone(),
+            spirit_qi: current_snapshot.spirit_qi(),
+            danger_level: current_snapshot.danger_level,
+            status: current_snapshot.status,
+            active_events,
             perception_text,
         });
         let payload_type = payload_type_label(payload.payload_type());
@@ -2217,10 +2367,16 @@ fn emit_zone_info_on_zone_transition(
 
         send_server_data_payload(&mut client, payload_bytes.as_slice());
         tracker.last_zone_by_entity.insert(entity, zone_name);
+        tracker
+            .last_snapshot_by_entity
+            .insert(entity, current_snapshot);
     }
 
     tracker
         .last_zone_by_entity
+        .retain(|entity, _| live_entities.contains(entity));
+    tracker
+        .last_snapshot_by_entity
         .retain(|entity, _| live_entities.contains(entity));
 }
 
@@ -2358,6 +2514,11 @@ fn process_redis_inbound(
     redis: Res<RedisBridgeResource>,
     zone_registry: Option<Res<ZoneRegistry>>,
     mut clients: Query<(Entity, &mut Client, &Username, &Position), With<Client>>,
+    mut spirit_treasure_holders: Query<
+        (&ActiveSpiritTreasures, Option<&mut StatusEffects>),
+        With<Client>,
+    >,
+    insight_context: Query<InsightContextQueryItem<'_>>,
     mut command_executor: valence::prelude::ResMut<CommandExecutorResource>,
     mut narration_dedupe: valence::prelude::ResMut<NarrationDedupeResource>,
     mut spirit_treasure_registry: Option<ResMut<SpiritTreasureRegistry>>,
@@ -2442,9 +2603,22 @@ fn process_redis_inbound(
                     );
                     continue;
                 };
+                let context = insight_context.get(entity).ok().map(
+                    |(qi_color, practice_log, quota, cultivation)| {
+                        (qi_color, practice_log, quota, cultivation.realm)
+                    },
+                );
+                if context.is_none() {
+                    tracing::warn!(
+                        "[bong][network] insight offer character_id={} trigger_id={} has no cultivation context; using default fallback context",
+                        offer.character_id,
+                        offer.trigger_id
+                    );
+                }
                 let Some(choices) = crate::cultivation::insight_flow::ingest_agent_insight_offer(
                     &offer.trigger_id,
                     &offer.choices,
+                    context,
                 ) else {
                     continue;
                 };
@@ -2496,6 +2670,7 @@ fn process_redis_inbound(
                         zone_registry.as_deref(),
                         registry,
                         &mut clients,
+                        &mut spirit_treasure_holders,
                     );
                 }
             }
@@ -3260,6 +3435,9 @@ pub(crate) fn log_payload_build_error(payload_type: &str, error: &PayloadBuildEr
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cultivation::components::{ColorKind, Realm};
+    use crate::cultivation::insight::{InsightAlignment, InsightEffect};
+    use crate::schema::cultivation::{InsightChoiceV1, InsightOfferV1};
     use crate::schema::server_data::{HeartDemonOfferChoiceV1, HeartDemonOfferV1};
     use crossbeam_channel::{bounded, unbounded, Receiver};
     use std::time::Duration;
@@ -3312,6 +3490,44 @@ mod tests {
             redact_redis_url_for_log("not-a-redis-url"),
             "[redacted redis endpoint]"
         );
+    }
+
+    fn agent_insight_choices() -> Vec<InsightChoiceV1> {
+        vec![
+            InsightChoiceV1 {
+                category: "qi".to_string(),
+                effect_kind: "qi_regen_factor".to_string(),
+                magnitude: 0.1,
+                flavor_text: "agent converge".to_string(),
+                narrator_voice: None,
+                alignment: Some("converge".to_string()),
+                cost_kind: Some("opposite_color_penalty".to_string()),
+                cost_magnitude: Some(0.05),
+                cost_flavor: Some("agent cost".to_string()),
+            },
+            InsightChoiceV1 {
+                category: "composure".to_string(),
+                effect_kind: "composure_recover".to_string(),
+                magnitude: 0.1,
+                flavor_text: "agent neutral".to_string(),
+                narrator_voice: None,
+                alignment: Some("neutral".to_string()),
+                cost_kind: Some("shock_sensitivity".to_string()),
+                cost_magnitude: Some(0.03),
+                cost_flavor: Some("agent cost".to_string()),
+            },
+            InsightChoiceV1 {
+                category: "color".to_string(),
+                effect_kind: "color_cap_add".to_string(),
+                magnitude: 0.04,
+                flavor_text: "agent diverge".to_string(),
+                narrator_voice: None,
+                alignment: Some("diverge".to_string()),
+                cost_kind: Some("main_color_penalty".to_string()),
+                cost_magnitude: Some(0.1),
+                cost_flavor: Some("agent cost".to_string()),
+            },
+        ]
     }
 
     #[test]
@@ -3397,6 +3613,83 @@ mod tests {
         assert_eq!(cached.payload.choices[0].choice_id, "heart_demon_choice_0");
     }
 
+    #[test]
+    fn process_redis_inbound_keeps_contextual_insight_offer_when_agent_overwrites_pending() {
+        let (tx_outbound, _rx_outbound) = unbounded();
+        let (tx_inbound, rx_inbound) = unbounded();
+        let mut app = App::new();
+        app.insert_resource(RedisBridgeResource {
+            tx_outbound,
+            rx_inbound,
+        });
+        app.insert_resource(CommandExecutorResource::default());
+        app.insert_resource(NarrationDedupeResource::default());
+        app.add_event::<crate::cultivation::insight::InsightOffer>();
+        app.add_event::<agent_ui::AgentUiCmdEvent>();
+        app.add_systems(Update, process_redis_inbound);
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        let trigger_id = "first_breakthrough_to_Induce";
+        let qi_color = QiColor {
+            main: ColorKind::Sharp,
+            ..QiColor::default()
+        };
+        let mut practice_log = PracticeLog::default();
+        practice_log.add(ColorKind::Sharp, 10.0);
+        app.world_mut().entity_mut(entity).insert((
+            Cultivation {
+                realm: Realm::Solidify,
+                ..Cultivation::default()
+            },
+            qi_color,
+            practice_log,
+            InsightQuota::default(),
+            crate::cultivation::insight_flow::PendingInsightOffer {
+                trigger_id: trigger_id.to_string(),
+                choices: crate::cultivation::insight_fallback::fallback_for(trigger_id),
+            },
+        ));
+
+        tx_inbound
+            .send(RedisInbound::InsightOffer(InsightOfferV1 {
+                offer_id: "offer-agent-1".to_string(),
+                trigger_id: trigger_id.to_string(),
+                character_id: "Azure".to_string(),
+                choices: agent_insight_choices(),
+            }))
+            .expect("agent insight offer should enqueue");
+        app.update();
+
+        let pending = app
+            .world()
+            .get::<crate::cultivation::insight_flow::PendingInsightOffer>(entity)
+            .expect("agent insight offer should overwrite PendingInsightOffer");
+        assert_eq!(pending.trigger_id, trigger_id);
+        assert!(
+            pending
+                .choices
+                .iter()
+                .any(|choice| choice.flavor.contains("锋锐")),
+            "agent-fed PendingInsightOffer 不应退化成默认 Mellow 文案，实际 choices={:?}",
+            pending.choices
+        );
+        assert!(
+            pending.choices.iter().any(|choice| {
+                choice.alignment == InsightAlignment::Diverge
+                    && matches!(
+                        choice.effect,
+                        InsightEffect::ColorCapAdd {
+                            color: ColorKind::Heavy,
+                            ..
+                        }
+                    )
+            }),
+            "Diverge 槽应基于当前 Sharp 上下文选出最陌生色 Heavy，实际 choices={:?}",
+            pending.choices
+        );
+    }
+
     mod world_state_tests {
         use super::*;
         use crate::npc::faction::{
@@ -3476,12 +3769,15 @@ mod tests {
                     crate::cultivation::lifespan::LifespanExtensionLedger::default(),
                 death_registry: crate::cultivation::lifespan::DeathRegistry::new(char_id),
                 life_record: LifeRecord::new(char_id),
+                memory: None,
+                player_reputation: None,
                 faction: None,
                 emergent_group: None,
                 patrol: None,
                 loot_table: None,
                 guardian_relic: None,
                 tsy_hostile: None,
+                tsy_sentinel: None,
                 intent: crate::npc::dormant::DormantBehaviorIntent::Wander { drift_radius: 12.0 },
                 dormant_since_tick: 0,
                 last_dormant_tick_processed: 0,
@@ -4910,6 +5206,88 @@ mod tests {
         }
 
         #[test]
+        fn emits_zone_info_when_runtime_state_changes_without_transition() {
+            let zone_registry = ZoneRegistry {
+                zones: vec![Zone {
+                    name: DEFAULT_SPAWN_ZONE_NAME.to_string(),
+                    dimension: crate::world::dimension::DimensionKind::Overworld,
+                    bounds: (DVec3::new(0.0, 64.0, 0.0), DVec3::new(128.0, 128.0, 128.0)),
+                    spirit_qi: 0.9,
+                    danger_level: 0,
+                    active_events: vec![],
+                    patrol_anchors: vec![DVec3::new(14.0, 66.0, 14.0)],
+                    blocked_tiles: vec![],
+                    qi_equilibrium: 0.0,
+                    qi_inflow_per_min: 0.0,
+                }],
+            };
+
+            let mut app = setup_zone_transition_app(zone_registry);
+            let (_entity, mut helper) =
+                spawn_test_client_with_helper(&mut app, "Alice", [8.0, 66.0, 8.0]);
+
+            app.update();
+            flush_all_client_packets(&mut app);
+            let first_payloads = collect_zone_info_payloads(&mut helper);
+            assert_eq!(
+                first_payloads.len(),
+                1,
+                "initial zone snapshot should be sent"
+            );
+
+            {
+                let mut zone_registry = app.world_mut().resource_mut::<ZoneRegistry>();
+                let zone = zone_registry
+                    .zones
+                    .iter_mut()
+                    .find(|zone| zone.name == DEFAULT_SPAWN_ZONE_NAME)
+                    .expect("spawn zone should exist in test registry");
+                zone.spirit_qi = 0.0;
+                zone.danger_level = 5;
+                zone.active_events = vec![EVENT_REALM_COLLAPSE.to_string()];
+            }
+
+            app.update();
+            flush_all_client_packets(&mut app);
+            let refreshed_payloads = collect_zone_info_payloads(&mut helper);
+            assert_eq!(
+                refreshed_payloads.len(),
+                1,
+                "runtime zone state change should emit one zone_info payload without movement"
+            );
+
+            match &refreshed_payloads[0].payload {
+                ServerDataPayloadV1::ZoneInfo {
+                    zone,
+                    spirit_qi,
+                    danger_level,
+                    status,
+                    active_events,
+                    perception_text,
+                } => {
+                    assert_eq!(zone, DEFAULT_SPAWN_ZONE_NAME);
+                    assert_eq!(*spirit_qi, 0.0);
+                    assert_eq!(*danger_level, 5);
+                    assert_eq!(*status, ZoneStatusV1::Collapsed);
+                    assert_eq!(active_events, &Some(vec![EVENT_REALM_COLLAPSE.to_string()]));
+                    assert_eq!(
+                        perception_text.as_deref(),
+                        Some("灵气几近断绝，此地有不祥预感")
+                    );
+                }
+                other => panic!("expected zone_info payload, got {other:?}"),
+            }
+
+            app.update();
+            flush_all_client_packets(&mut app);
+            let stable_payloads = collect_zone_info_payloads(&mut helper);
+            assert!(
+                stable_payloads.is_empty(),
+                "unchanged runtime state should not spam zone_info payloads"
+            );
+        }
+
+        #[test]
         fn zone_info_marks_realm_collapse_zone_collapsed() {
             let collapsed_zone = Zone {
                 name: DEFAULT_SPAWN_ZONE_NAME.to_string(),
@@ -4994,7 +5372,9 @@ mod tests {
         use super::*;
         use crate::player::state::PlayerState;
         use crate::schema::social::RenownTagV1;
+        use crate::schema::world_state::SeasonV1;
         use crate::social::components::{FactionMembership as PlayerFactionMembership, Renown};
+        use crate::world::season::{Season, SUMMER_TICKS};
         use crate::world::zone::ZoneRegistry;
         use valence::protocol::packets::play::CustomPayloadS2c;
         use valence::testing::MockClientHelper;
@@ -5066,6 +5446,22 @@ mod tests {
             let mut app = App::new();
             app.insert_resource(ZoneRegistry::fallback());
             app.add_systems(Update, emit_player_state_payloads);
+            app
+        }
+
+        fn setup_season_changed_player_state_app() -> App {
+            let mut app = App::new();
+            let (tx_outbound, _rx_outbound) = crossbeam_channel::unbounded();
+            let (_tx_inbound, rx_inbound) = crossbeam_channel::unbounded();
+
+            app.insert_resource(ZoneRegistry::fallback());
+            app.insert_resource(WorldSeasonState::default());
+            app.insert_resource(RedisBridgeResource {
+                tx_outbound,
+                rx_inbound,
+            });
+            app.add_event::<SeasonChangedEvent>();
+            app.add_systems(Update, publish_season_changed_events);
             app
         }
 
@@ -5355,6 +5751,75 @@ mod tests {
                 1,
                 "periodic cadence should emit one player_state payload without Changed<PlayerState>"
             );
+        }
+
+        #[test]
+        fn season_changed_event_emits_player_state_without_component_change() {
+            let mut app = setup_season_changed_player_state_app();
+            let (entity, mut helper) =
+                spawn_test_client_with_helper(&mut app, "Azure", [8.0, 66.0, 8.0]);
+            app.world_mut().entity_mut(entity).insert((
+                PlayerState {
+                    karma: 0.0,
+                    inventory_score: 0.0,
+                },
+                Cultivation {
+                    realm: Realm::Condense,
+                    qi_current: 100.0,
+                    qi_max: 100.0,
+                    composure: 1.0,
+                    ..Cultivation::default()
+                },
+            ));
+
+            app.update();
+            flush_all_client_packets(&mut app);
+            assert!(
+                collect_player_state_payloads(&mut helper).is_empty(),
+                "idle clients should not receive player_state packets without a season event"
+            );
+
+            {
+                let mut season_state = app.world_mut().resource_mut::<WorldSeasonState>();
+                season_state.current = query_season("", SUMMER_TICKS);
+                season_state.last_phase_change_tick = 42;
+            }
+            app.world_mut().send_event(SeasonChangedEvent {
+                from: Season::Summer,
+                to: Season::SummerToWinter,
+                tick: 42,
+            });
+
+            app.update();
+            flush_all_client_packets(&mut app);
+
+            let payloads = collect_player_state_payloads(&mut helper);
+            assert_eq!(
+                payloads.len(),
+                1,
+                "season boundary should push one player_state payload even without component changes"
+            );
+            match &payloads[0].payload {
+                ServerDataPayloadV1::PlayerState {
+                    season_state,
+                    spirit_qi,
+                    spirit_qi_max,
+                    ..
+                } => {
+                    let season_state = season_state
+                        .as_ref()
+                        .expect("season change payload should carry SeasonState");
+                    assert_eq!(season_state.season, SeasonV1::SummerToWinter);
+                    assert_eq!(season_state.tick_into_phase, 0);
+                    assert_eq!(
+                        season_state.phase_total_ticks,
+                        Season::SummerToWinter.phase_total_ticks()
+                    );
+                    assert_eq!(*spirit_qi, 100.0);
+                    assert_eq!(*spirit_qi_max, 100.0);
+                }
+                other => panic!("expected player_state payload, got {other:?}"),
+            }
         }
     }
 

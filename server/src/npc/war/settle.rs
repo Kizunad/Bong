@@ -16,8 +16,12 @@
 
 use std::collections::HashMap;
 
-use valence::prelude::{bevy_ecs, EventReader, EventWriter, Res, ResMut, Resource};
+use valence::prelude::{
+    bevy_ecs, Client, EventReader, EventWriter, Query, Res, ResMut, Resource, With,
+};
 
+use crate::combat::components::Lifecycle;
+use crate::identity::{IdentityId, PlayerIdentities};
 use crate::npc::faction::{EmergentGroupId, NamedFactionId};
 use crate::npc::movement::GameTick;
 use crate::npc::war::{FactionWarOutcome, WarPhase, WarPhaseChanged, WarRole};
@@ -110,6 +114,7 @@ pub fn award_war_winner_renown(
     mut renown_deltas: EventWriter<SocialRenownDeltaEvent>,
     mut faction_reputation_deltas: EventWriter<FactionReputationDeltaEvent>,
     game_tick: Option<Res<GameTick>>,
+    players: Query<(&Lifecycle, &PlayerIdentities), With<Client>>,
 ) {
     let now = current_game_tick(game_tick.as_deref());
 
@@ -135,6 +140,7 @@ pub fn award_war_winner_renown(
             };
             renown_deltas.send(SocialRenownDeltaEvent {
                 char_id: role_rec.player_id.clone(),
+                identity_id: active_identity_id_for_char(role_rec.player_id.as_str(), &players),
                 fame_delta,
                 notoriety_delta: 0,
                 tags_added: vec![],
@@ -157,6 +163,16 @@ pub fn award_war_winner_renown(
             });
         }
     }
+}
+
+fn active_identity_id_for_char(
+    char_id: &str,
+    players: &Query<(&Lifecycle, &PlayerIdentities), With<Client>>,
+) -> Option<IdentityId> {
+    players
+        .iter()
+        .find(|(lifecycle, _)| lifecycle.character_id == char_id)
+        .and_then(|(_, identities)| identities.active().map(|active| active.id))
 }
 
 fn named_faction_for_war_group(group: EmergentGroupId) -> Option<NamedFactionId> {

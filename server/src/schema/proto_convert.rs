@@ -730,6 +730,21 @@ impl From<&ServerDataPayloadV1> for Payload {
                         .collect(),
                 })
             }
+            ServerDataPayloadV1::RemainsSync(remains) => Payload::RemainsSync(bong::RemainsSync {
+                remains: remains
+                    .iter()
+                    .map(|r| bong::RemainsEntry {
+                        remains_id: r.remains_id.clone(),
+                        world_pos_x: r.world_pos[0],
+                        world_pos_y: r.world_pos[1],
+                        world_pos_z: r.world_pos[2],
+                        dimension: r.dimension.clone(),
+                        display_name: r.display_name.clone(),
+                        item_count: r.item_count,
+                        bone_coins: r.bone_coins,
+                    })
+                    .collect(),
+            }),
             ServerDataPayloadV1::BotanyHarvestProgress {
                 session_id,
                 target_id,
@@ -1049,6 +1064,7 @@ impl From<&ServerDataPayloadV1> for Payload {
                     locked: s.locked.as_ref().map(key_kind_to_proto),
                     depleted: s.depleted,
                     searched_by_player_id: s.searched_by_player_id.clone(),
+                    visual_entity_id: s.visual_entity_id,
                 })
             }
             ServerDataPayloadV1::SearchStarted(s) => Payload::SearchStarted(bong::SearchStarted {
@@ -1358,6 +1374,7 @@ impl From<&ServerDataPayloadV1> for Payload {
                             x: e.x,
                             y: e.y,
                             z: e.z,
+                            outgoing: e.outgoing,
                         })
                         .collect(),
                 })
@@ -2494,6 +2511,9 @@ fn forge_station_to_proto(d: &super::forge::WeaponForgeStationDataV1) -> bong::F
         integrity: d.integrity,
         owner_name: d.owner_name.clone(),
         has_session: d.has_session,
+        station_pos_x: d.station_pos_x,
+        station_pos_y: d.station_pos_y,
+        station_pos_z: d.station_pos_z,
     }
 }
 
@@ -2575,12 +2595,14 @@ fn forge_step_state_to_proto(s: &super::forge::ForgeStepStateDataV1) -> bong::Fo
             qi_injected,
             qi_required,
             color_imprint,
+            min_realm,
         } => bong::ForgeStepState {
             state: Some(bong::forge_step_state::State::Consecration(
                 bong::ForgeStepStateConsecration {
                     qi_injected: *qi_injected,
                     qi_required: *qi_required,
                     color_imprint: color_imprint.as_ref().map(color_kind_to_proto),
+                    min_realm: min_realm.as_ref().map(realm_enum_to_proto),
                 },
             )),
         },
@@ -3668,11 +3690,14 @@ impl From<&super::client_request::ClientRequestV1> for bong::client_request_enve
                 instance_id,
                 from,
                 to,
+                rotated,
                 ..
             } => Payload::InventoryMoveIntent(bong::InventoryMoveIntent {
                 instance_id: *instance_id,
                 from: Some(inventory_location_to_proto(from)),
                 to: Some(inventory_location_to_proto(to)),
+                // plan-rotate-v1 — 旋转落位标志随 wire 透传。
+                rotated: *rotated,
             }),
             ClientRequestV1::EquipFalseSkin {
                 slot,
@@ -3720,6 +3745,11 @@ impl From<&super::client_request::ClientRequestV1> for bong::client_request_enve
             ClientRequestV1::PickupDroppedItem { instance_id, .. } => {
                 Payload::PickupDroppedItem(bong::PickupDroppedItem {
                     instance_id: *instance_id,
+                })
+            }
+            ClientRequestV1::RemainsLoot { remains_id, .. } => {
+                Payload::RemainsLoot(bong::RemainsLoot {
+                    remains_id: remains_id.clone(),
                 })
             }
             // ─── 矿石 C2S ────────────────────────────────────────
@@ -3908,12 +3938,14 @@ impl From<&super::client_request::ClientRequestV1> for bong::client_request_enve
             }
             // ─── 锻造 C2S ────────────────────────────────────────
             ClientRequestV1::ForgeStartSession {
-                station_id,
+                station_pos,
                 blueprint_id,
                 materials,
                 ..
             } => Payload::ForgeStartSession(bong::ForgeStartSession {
-                station_id: station_id.clone(),
+                station_pos_x: station_pos.0,
+                station_pos_y: station_pos.1,
+                station_pos_z: station_pos.2,
                 blueprint_id: blueprint_id.clone(),
                 materials: materials
                     .iter()
@@ -6060,6 +6092,16 @@ mod tests {
                 }
             ))),
             fix!(ServerDataPayloadV1::DroppedLootSync(vec![])),
+            fix!(ServerDataPayloadV1::RemainsSync(vec![
+                super::super::server_data::RemainsEntryV1 {
+                    remains_id: "3fa85f64-5717-4562-b3fc-2c963f66afa6".to_string(),
+                    world_pos: [1.0, 64.0, 1.0],
+                    dimension: "minecraft:overworld".to_string(),
+                    display_name: "遗骸".to_string(),
+                    item_count: 3,
+                    bone_coins: 12,
+                }
+            ])),
             fix!(ServerDataPayloadV1::BotanyHarvestProgress {
                 session_id: "ses:1".to_string(),
                 target_id: "entity:1".to_string(),
@@ -6414,6 +6456,7 @@ mod tests {
                 kind: ContainerKindV1::StoragePouch,
                 family_id: "tsy_01".to_string(),
                 world_pos: [0.0, 64.0, 0.0],
+                visual_entity_id: Some(1001),
                 locked: None,
                 depleted: false,
                 searched_by_player_id: None,
@@ -6480,6 +6523,9 @@ mod tests {
                     integrity: 1.0,
                     owner_name: String::new(),
                     has_session: false,
+                    station_pos_x: 0,
+                    station_pos_y: 64,
+                    station_pos_z: 0,
                 }
             ))),
             fix!(ServerDataPayloadV1::ForgeSession(Box::new(
@@ -7021,6 +7067,7 @@ mod tests {
             ServerDataType::InventorySnapshot,
             ServerDataType::InventoryEvent,
             ServerDataType::DroppedLootSync,
+            ServerDataType::RemainsSync,
             ServerDataType::BotanyHarvestProgress,
             ServerDataType::BotanyPlantV2RenderProfiles,
             ServerDataType::MiningProgress,
@@ -7244,8 +7291,8 @@ mod tests {
         }
 
         assert_eq!(
-            proto_count, 126,
-            "Expected 126 proto-encodable S2C variants, got {proto_count}. \
+            proto_count, 127,
+            "Expected 127 proto-encodable S2C variants, got {proto_count}. \
              The fixture list or is_json_bypass classification may have changed."
         );
         assert_eq!(
@@ -7539,6 +7586,7 @@ mod tests {
                     row: 1,
                     col: 0,
                 },
+                rotated: true,
             }),
             build(ClientRequestV1::EquipFalseSkin {
                 v: 1,
@@ -7580,6 +7628,10 @@ mod tests {
             build(ClientRequestV1::PickupDroppedItem {
                 v: 1,
                 instance_id: 1,
+            }),
+            build(ClientRequestV1::RemainsLoot {
+                v: 1,
+                remains_id: "3fa85f64-5717-4562-b3fc-2c963f66afa6".to_string(),
             }),
             build(ClientRequestV1::MineralProbe {
                 v: 1,
@@ -7707,7 +7759,7 @@ mod tests {
             }),
             build(ClientRequestV1::ForgeStartSession {
                 v: 1,
-                station_id: "forge:1".to_string(),
+                station_pos: (0, 64, 0),
                 blueprint_id: "bp:sword".to_string(),
                 materials: vec![],
             }),
@@ -7804,8 +7856,8 @@ mod tests {
         let proto_count = fixtures.iter().filter(|(_, b)| !*b).count();
         assert_eq!(
             fixtures.len(),
-            102,
-            "C2S fixture list has {} entries but ClientRequestV1 has 102 variants. \
+            103,
+            "C2S fixture list has {} entries but ClientRequestV1 has 103 variants. \
              Add a fixture for every new variant in c2s_all_fixtures().",
             fixtures.len()
         );
@@ -7815,8 +7867,8 @@ mod tests {
              If a new bypass variant is added, update c2s_all_fixtures() and this assertion."
         );
         assert_eq!(
-            proto_count, 101,
-            "Expected 101 proto-encodable C2S variants, got {proto_count}."
+            proto_count, 102,
+            "Expected 102 proto-encodable C2S variants, got {proto_count}."
         );
 
         // Set-intersection coverage (mirrors the S2C `payload_type()` HashSet check, but keyed
@@ -7830,8 +7882,8 @@ mod tests {
             fixtures.iter().map(|(v, _)| discriminant(v)).collect();
         assert_eq!(
             distinct.len(),
-            102,
-            "C2S fixtures cover only {} DISTINCT ClientRequestV1 variants but there are 102. \
+            103,
+            "C2S fixtures cover only {} DISTINCT ClientRequestV1 variants but there are 103. \
              A variant's fixture was likely deleted and another duplicated — every variant must \
              have its OWN fixture or the proto guard silently skips it.",
             distinct.len()
@@ -7908,8 +7960,8 @@ mod tests {
         }
 
         assert_eq!(
-            proto_count, 101,
-            "Expected 101 proto-encodable C2S variants, got {proto_count}."
+            proto_count, 102,
+            "Expected 102 proto-encodable C2S variants, got {proto_count}."
         );
         assert_eq!(
             bypass_count, 1,

@@ -425,7 +425,7 @@ fn mark_removed_treasures_lost(
     }
 }
 
-fn sync_passive_status_effects(
+pub(crate) fn sync_passive_status_effects(
     registry: &SpiritTreasureRegistry,
     entries: &[ActiveTreasureEntry],
     statuses: &mut StatusEffects,
@@ -512,6 +512,14 @@ mod tests {
         }
     }
 
+    fn status_magnitude(statuses: &StatusEffects, kind: StatusEffectKind) -> Option<f32> {
+        statuses
+            .active
+            .iter()
+            .find(|effect| effect.kind == kind)
+            .map(|effect| effect.magnitude)
+    }
+
     #[test]
     fn scans_spirit_treasure_in_backpack_without_passive() {
         let registry = SpiritTreasureRegistry::default();
@@ -548,6 +556,39 @@ mod tests {
                 == StatusEffectKind::SpiritTreasurePerception
                 && (effect.magnitude - 0.30).abs() < f32::EPSILON),
             "触发位件应激活被动 SpiritTreasurePerception (magnitude 0.30 @ affinity 0.8)"
+        );
+    }
+
+    #[test]
+    fn affinity_delta_rescales_active_passives_without_inventory_rescan() {
+        let mut registry = SpiritTreasureRegistry::default();
+        let mut inventory = inventory_with_container_item(88);
+        let moved = inventory.containers[0].items.remove(0).instance;
+        inventory.triggered_treasures.push(moved);
+        let entries = scan_inventory_for_spirit_treasures(&registry, &inventory);
+        let player = Entity::from_raw(7);
+        registry.ensure_player_holder(JIZHAOJING_TEMPLATE_ID, 88, player, 0);
+        registry
+            .active
+            .get_mut(JIZHAOJING_TEMPLATE_ID)
+            .expect("state exists")
+            .affinity = 0.8;
+        let mut statuses = StatusEffects::default();
+        sync_passive_status_effects(&registry, entries.as_slice(), &mut statuses);
+        assert_eq!(
+            status_magnitude(&statuses, StatusEffectKind::SpiritTreasurePerception),
+            Some(0.30)
+        );
+
+        registry.apply_affinity_delta(JIZHAOJING_TEMPLATE_ID, -0.1);
+        sync_passive_status_effects(&registry, entries.as_slice(), &mut statuses);
+
+        let expected = 0.30 * affinity_scale(0.7);
+        let actual = status_magnitude(&statuses, StatusEffectKind::SpiritTreasurePerception)
+            .expect("active treasure should keep scaled perception passive");
+        assert!(
+            (actual - expected).abs() < f32::EPSILON,
+            "affinity_delta 后应按新 affinity 重算被动，actual={actual}, expected={expected}"
         );
     }
 

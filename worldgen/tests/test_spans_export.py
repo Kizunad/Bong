@@ -127,7 +127,9 @@ class SpansExportLayoutTest(unittest.TestCase):
         self.assertEqual(enc["sentinel"], SPAN_SENTINEL)
         self.assertEqual(enc["count_file"], SPANS_COUNT_FILE)
         self.assertEqual(enc["spans_file"], SPANS_FILE)
-        self.assertEqual(manifest["qi_density_source"], "qi_field")
+        # 如实声明：qi_density 现状由各 profile 手搓，尚未从统一场烘焙
+        # （迁移完成后置回 "qi_field"，见 plan-qi-density-same-source-v1）。
+        self.assertEqual(manifest["qi_density_source"], "profile")
         self.assertIn("qi_density", manifest["semantic_layers"])
 
     def test_vertical_layers_reflect_actually_written_per_profile(self) -> None:

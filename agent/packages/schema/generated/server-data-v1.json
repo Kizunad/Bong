@@ -773,6 +773,18 @@
                   {
                     "const": "forging",
                     "type": "string"
+                  },
+                  {
+                    "const": "combat",
+                    "type": "string"
+                  },
+                  {
+                    "const": "mineral",
+                    "type": "string"
+                  },
+                  {
+                    "const": "cultivation",
+                    "type": "string"
                   }
                 ]
               },
@@ -13187,6 +13199,77 @@
       "required": [
         "v",
         "type",
+        "remains"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "remains_sync",
+          "type": "string"
+        },
+        "remains": {
+          "type": "array",
+          "items": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "remains_id",
+              "world_pos",
+              "dimension",
+              "display_name",
+              "item_count",
+              "bone_coins"
+            ],
+            "properties": {
+              "remains_id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "world_pos": {
+                "type": "array",
+                "items": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ],
+                "additionalItems": false,
+                "minItems": 3,
+                "maxItems": 3
+              },
+              "dimension": {
+                "type": "string"
+              },
+              "display_name": {
+                "type": "string"
+              },
+              "item_count": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "bone_coins": {
+                "minimum": 0,
+                "type": "integer"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
         "session_id",
         "target_id",
         "target_name",
@@ -17370,6 +17453,10 @@
           "minimum": 0,
           "type": "integer"
         },
+        "visual_entity_id": {
+          "minimum": 0,
+          "type": "integer"
+        },
         "kind": {
           "anyOf": [
             {
@@ -17649,7 +17736,10 @@
         "tier",
         "integrity",
         "owner_name",
-        "has_session"
+        "has_session",
+        "station_pos_x",
+        "station_pos_y",
+        "station_pos_z"
       ],
       "properties": {
         "v": {
@@ -17678,6 +17768,15 @@
         },
         "has_session": {
           "type": "boolean"
+        },
+        "station_pos_x": {
+          "type": "integer"
+        },
+        "station_pos_y": {
+          "type": "integer"
+        },
+        "station_pos_z": {
+          "type": "integer"
         }
       }
     },
@@ -17943,6 +18042,35 @@
                     },
                     {
                       "const": "Turbid",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "min_realm": {
+                  "description": "6 境界：醒灵/引气/凝脉/固元/通灵/化虚",
+                  "anyOf": [
+                    {
+                      "const": "Awaken",
+                      "type": "string"
+                    },
+                    {
+                      "const": "Induce",
+                      "type": "string"
+                    },
+                    {
+                      "const": "Condense",
+                      "type": "string"
+                    },
+                    {
+                      "const": "Solidify",
+                      "type": "string"
+                    },
+                    {
+                      "const": "Spirit",
+                      "type": "string"
+                    },
+                    {
+                      "const": "Void",
                       "type": "string"
                     }
                   ]

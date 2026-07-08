@@ -60,7 +60,15 @@ public final class InventoryEquipRules {
         "stone_axe",
         "axe_bone",
         "axe_iron",
-        "axe_copper"
+        "axe_copper",
+        // plan-zhenfa-trap-client-equip-gate-v1 P0 — zhenfa 阵法工具（server assets/items/zhenfa.toml，
+        // 均 category="tool"，由 register_zhenfa_content_recipes/register_zhenfa_v2_recipes 正常 craft 产出）。
+        // 此前漏收录 → isTool()=false → 装不进手槽 → 右键布置链路（MixinClientPlayerInteractionManagerAlchemy）
+        // 永远读不到已装备的 mainHand，内容做出来后不可用。
+        "warning_trap",
+        "blast_trap",
+        "slow_trap",
+        "array_flag"
     );
 
     private static final Set<String> TREASURE_TEMPLATE_IDS = Set.of(
@@ -105,7 +113,7 @@ public final class InventoryEquipRules {
     /**
      * plan-layered-equip-v1 P4（决议 #3/#12/#16/#17）：分层校验某件能否落入目标槽。
      *
-     * <p>手槽（held）：武器/工具/盾/法宝按类型放行 + 双手武器（spear/staff）锁对侧手 + held 互斥（已占拒）。
+     * <p>手槽（held）：武器/工具/盾/法宝按类型放行 + 双手武器（spear/staff）只锁主/副手对侧 + held 互斥（已占拒）。
      * 身体槽（worn 栈）：护甲（按部位）/ 伪皮 / 背包件，worn 未满才放行（满 → 拒，决议 #3 不顶替）。
      * **仅校验「能否 push 栈顶」**——「能否拖动下层」由 drop 站点按 LIFO 仅栈顶可动单独拦（决议 #12）。
      *
@@ -127,13 +135,11 @@ public final class InventoryEquipRules {
         return switch (targetSlot) {
             case MAIN_HAND -> (weaponKind != null || hoe || tool)
                 && handHeldFree(equipped, targetSlot, sourceSlot)
-                // 双手武器入主手要求副手及全部多臂槽均空闲（双手锁对侧手，取代旧 TWO_HAND 专槽）。
-                && (!twoHandWeapon || (handHeldFree(equipped, EquipSlotType.OFF_HAND, sourceSlot)
-                    && handHeldFree(equipped, EquipSlotType.EXTRA_HAND_0, sourceSlot)
-                    && handHeldFree(equipped, EquipSlotType.EXTRA_HAND_1, sourceSlot)));
+                // 双手武器入主手只要求副手空闲；extra_hand 是独立 held 槽，不参与主/副手互锁。
+                && (!twoHandWeapon || handHeldFree(equipped, EquipSlotType.OFF_HAND, sourceSlot));
             // 工具/锄头双手可用：off_hand 放行 tool/hoe（与 server mod.rs OffHand 同步）。
             // 副手不收双手武器（spear/staff 只走主手 held + 锁副手）。
-            case OFF_HAND, EXTRA_HAND_0, EXTRA_HAND_1 -> ((weaponKind == WeaponKind.DAGGER || weaponKind == WeaponKind.FIST)
+            case OFF_HAND -> ((weaponKind == WeaponKind.DAGGER || weaponKind == WeaponKind.FIST)
                 || isTreasure(item)
                 || isShield(item)
                 || tool
@@ -141,6 +147,9 @@ public final class InventoryEquipRules {
                 && handHeldFree(equipped, targetSlot, sourceSlot)
                 // 对侧主手持双手武器时，副手被锁，不可装入。
                 && !mainHandHoldsTwoHand(equipped);
+            // extra_hand 与 server validate_equip_to 对齐：任意武器 / 工具 / 锄头；不继承 OFF_HAND 的盾/法宝特权。
+            case EXTRA_HAND_0, EXTRA_HAND_1 -> (weaponKind != null || tool || hoe)
+                && handHeldFree(equipped, targetSlot, sourceSlot);
             // 身体槽 worn 栈：护甲（按部位）/ 伪皮 / 背包件，worn 未满才放行（决议 #17）。
             case HEAD, CHEST, LEGS, FEET ->
                 (isArmorForSlot(item, targetSlot) || isFalseSkin(item) || isContainer(item))
@@ -157,7 +166,7 @@ public final class InventoryEquipRules {
         return contents == null || contents.held() == null;
     }
 
-    /** 主手是否持双手武器（spear/staff）→ 锁副手/多臂。 */
+    /** 主手是否持双手武器（spear/staff）→ 只锁副手。 */
     private static boolean mainHandHoldsTwoHand(Map<EquipSlotType, SlotContents> equipped) {
         SlotContents main = equipped == null ? null : equipped.get(EquipSlotType.MAIN_HAND);
         if (main == null || main.held() == null) return false;

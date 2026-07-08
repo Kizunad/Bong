@@ -75,6 +75,23 @@ const BEAST_CORE_ITEM_ID: &str = "mutant_beast_core";
 
 const MAIN_HAND_SLOT: &str = "main_hand";
 
+fn plot_zone_key(plot: &LingtianPlot) -> &str {
+    let zone = plot.zone.trim();
+    if zone.is_empty() {
+        DEFAULT_ZONE
+    } else {
+        zone
+    }
+}
+
+fn plot_zone_key_at(plots: &Query<&LingtianPlot>, pos: &valence::prelude::BlockPos) -> String {
+    plots
+        .iter()
+        .find(|plot| plot.pos == *pos)
+        .map(|plot| plot_zone_key(plot).to_string())
+        .unwrap_or_else(|| DEFAULT_ZONE.to_string())
+}
+
 #[derive(Debug)]
 pub enum ActiveSession {
     Till(TillSession),
@@ -521,7 +538,7 @@ pub fn handle_start_replenish(
             // plan-zone-qi-economy-v1 P2：地板红线——zone 抽吸来源必须留住
             // QI_NPC_ABSORB_FLOOR 以上的底仓，不能把 zone 抽穿地板。
             ReplenishSource::Zone => {
-                zone_qi.get(DEFAULT_ZONE)
+                zone_qi.get(plot_zone_key(plot))
                     >= req.source.plot_qi_amount() + QI_NPC_ABSORB_FLOOR as f32
             }
             ReplenishSource::BoneCoin => inventories
@@ -1105,11 +1122,12 @@ fn apply_drain_qi_completion(
     drain_completed: &mut EventWriter<DrainQiCompleted>,
     qi_transfers: &mut EventWriter<QiTransfer>,
 ) {
-    let (plot_owner, drained, to_player, to_zone) = {
+    let (plot_owner, drained, to_player, to_zone, zone_key) = {
         let Some((_e, mut plot)) = plots.iter_mut().find(|(_, p)| &p.pos == pos) else {
             tracing::warn!("[bong][lingtian] DrainQiSession finished but plot at {pos:?} vanished");
             return;
         };
+        let zone_key = plot_zone_key(&plot).to_string();
         let drained = plot.plot_qi;
         if drained <= 0.0 {
             tracing::warn!(
@@ -1121,7 +1139,7 @@ fn apply_drain_qi_completion(
         plot.plot_qi = 0.0;
         let to_player = drained * DRAIN_QI_TO_PLAYER_RATIO;
         let to_zone = drained * DRAIN_QI_TO_ZONE_RATIO;
-        (owner, drained, to_player, to_zone)
+        (owner, drained, to_player, to_zone, zone_key)
     };
 
     let player_account = qi_player_account_id(player, life_records);
@@ -1137,10 +1155,11 @@ fn apply_drain_qi_completion(
     let actual_to_zone = to_zone + (to_player - actual_to_player).max(0.0);
 
     // 散逸 zone qi
-    *zone_qi.get_mut(DEFAULT_ZONE) += actual_to_zone;
+    *zone_qi.get_mut(&zone_key) += actual_to_zone;
     emit_drain_qi_transfers(
         player_account,
         pos,
+        &zone_key,
         actual_to_player,
         actual_to_zone,
         qi_transfers,
@@ -1179,6 +1198,7 @@ fn apply_drain_qi_completion(
 fn emit_drain_qi_transfers(
     player_account: Option<QiAccountId>,
     pos: &valence::prelude::BlockPos,
+    zone: &str,
     to_player: f32,
     to_zone: f32,
     qi_transfers: &mut EventWriter<QiTransfer>,
@@ -1204,7 +1224,7 @@ fn emit_drain_qi_transfers(
         send_qi_transfer(
             qi_transfers,
             plot_account,
-            QiAccountId::zone(DEFAULT_ZONE),
+            QiAccountId::zone(zone),
             to_zone as f64,
             QiTransferReason::ReleaseToZone,
         );
@@ -1260,16 +1280,16 @@ fn apply_replenish_completion(
         tracing::warn!("[bong][lingtian] ReplenishSession finished but plot at {pos:?} vanished");
         return false;
     };
+    let zone_key = plot_zone_key(&plot).to_string();
 
     // 复验 / 扣材料：plan §1.4 来源材料**不退**，若 session 期间被消耗也照付
     let amount = source.plot_qi_amount();
-    let zone_key = DEFAULT_ZONE;
     let mut paid = true;
     match source {
         ReplenishSource::Zone => {
             // plan-zone-qi-economy-v1 P2：复验时同样要求地板以上余量覆盖 amount，
             // 防止 session 期间 zone 被其它路径抽到贴近地板后仍照付出穿地板。
-            let z = zone_qi.get_mut(zone_key);
+            let z = zone_qi.get_mut(&zone_key);
             if *z - amount >= QI_NPC_ABSORB_FLOOR as f32 {
                 *z -= amount;
             } else {
@@ -1332,7 +1352,7 @@ fn apply_replenish_completion(
     if overflow > 0.0 {
         // 溢出回馈：Zone source 自身的 overflow 也回馈（plan 没明说 zone 来源
         // 是否例外，本切片按"统一回馈环境"处理）
-        let z = zone_qi.get_mut(zone_key);
+        let z = zone_qi.get_mut(&zone_key);
         *z += overflow;
     }
     let had_dye_warning = plot.has_dye_contamination_warning();
@@ -1379,6 +1399,7 @@ pub fn record_dye_contamination_warning_recent_events(
     mut active_events: Option<ResMut<ActiveEventsResource>>,
     clock: Res<CombatClock>,
     usernames: Query<&Username>,
+    plots: Query<&LingtianPlot>,
 ) {
     let Some(active_events) = active_events.as_deref_mut() else {
         for _ in events.read() {}
@@ -1386,6 +1407,7 @@ pub fn record_dye_contamination_warning_recent_events(
     };
 
     for event in events.read() {
+        let zone = plot_zone_key_at(&plots, &event.pos);
         let mut details = HashMap::new();
         details.insert(
             "pos".to_string(),
@@ -1409,7 +1431,7 @@ pub fn record_dye_contamination_warning_recent_events(
                 .ok()
                 .map(|username| canonical_player_id(username.0.as_str())),
             target: Some("lingtian_plot_dye_contamination_warning".to_string()),
-            zone: Some(DEFAULT_ZONE.to_string()),
+            zone: Some(zone),
             details: Some(details),
         });
     }
@@ -1492,8 +1514,7 @@ pub fn cancel_actor_session(
 /// `botany::PlantKindRegistry` 查 PlantKind，调 `advance_one_lingtian_tick`
 /// 推进 growth + plot_qi + zone qi。
 ///
-/// zone 解析当前简化为 `DEFAULT_ZONE`（plan §1.3 注释：world::zone 真挂接
-/// 留 P3+，与 plan-zhenfa-v1 / WorldQiAccount 整合）；若当前 world zone 已域崩，
+/// zone 解析以 `plot.zone` 为准，空 zone 回退 `DEFAULT_ZONE`；若当前 world zone 已域崩，
 /// 仅阻断灵田自身灵气功能，不移除 plot 实体。
 pub fn lingtian_growth_tick(
     mut accumulator: ResMut<LingtianTickAccumulator>,
@@ -1532,16 +1553,17 @@ pub fn lingtian_growth_tick(
 
 /// plan §5.1 — 收到 `ReplenishCompleted` 就把 `plot_qi_added + overflow_to_zone`
 /// 记到 `ZonePressureTracker`（因为代价已付，全量计入"补灵贡献"）。
-/// 本系统单 zone 简化：全部 plot 算作 `DEFAULT_ZONE`。
 pub fn record_replenish_to_pressure(
     mut events: EventReader<ReplenishCompleted>,
     clock: Res<LingtianClock>,
     mut tracker: ResMut<ZonePressureTracker>,
+    plots: Query<&LingtianPlot>,
 ) {
     for e in events.read() {
+        let zone = plot_zone_key_at(&plots, &e.pos);
         let total = e.plot_qi_added + e.overflow_to_zone;
         tracker
-            .state_mut(DEFAULT_ZONE)
+            .state_mut(&zone)
             .record_replenish(clock.lingtian_tick, total);
     }
 }
@@ -1570,68 +1592,87 @@ pub fn compute_zone_pressure_system(
     if accumulator.raw() != 0 {
         return;
     }
-    let zone = DEFAULT_ZONE.to_string();
     let now = clock.lingtian_tick;
-    tracker.state_mut(&zone).prune(now);
 
     let season = season_state
         .as_deref()
         .map(|s| s.current.season)
         .unwrap_or_default();
-    // 汐转 jitter：用 (zone_hash, lingtian_tick / day_ticks) 派生稳定 unit float
-    // 避免每 tick 抖动；非汐转季节 amplitude=0 → 结果与 jitter 无关。
-    let jitter_unit = derive_supply_jitter(&zone, now);
-    let weather = active_weather.as_deref().and_then(|aw| aw.current(&zone));
 
-    // 借用拆分：读出 pressure 先丢作用域，再改 state
-    let pressure = {
-        let plots_iter = plots.iter().map(|m| -> &LingtianPlot { m });
-        compute_zone_pressure(
-            &zone,
-            plots_iter,
-            &registry,
-            &tracker,
-            season,
-            jitter_unit,
-            weather,
-        )
-    };
-    // plan-lingtian-weather-v1 §5 / worldview §七 — 阴霾期间天道注视减弱，
-    // 阈值降 1 档（HeavyHaze.pressure_threshold_relax_steps()=1）。其他事件返回 0。
-    let relax_steps = weather
-        .map(|w| w.pressure_threshold_relax_steps())
-        .unwrap_or(0);
-    let new_level = PressureLevel::classify_with_relax(pressure, relax_steps);
-    let old_level = tracker
-        .state(&zone)
-        .map(|s| s.last_level)
-        .unwrap_or(PressureLevel::None);
-
-    {
-        let state = tracker.state_mut(&zone);
-        state.last_pressure = pressure;
-        state.last_level = new_level;
+    let mut zones: Vec<String> = plots
+        .iter()
+        .map(|plot| plot_zone_key(&plot).to_string())
+        .collect();
+    zones.extend(tracker.zones().cloned());
+    if zones.is_empty() {
+        zones.push(DEFAULT_ZONE.to_string());
     }
+    zones.sort();
+    zones.dedup();
 
-    if new_level.is_higher_than(old_level) {
-        events.send(ZonePressureCrossed {
-            zone: zone.clone(),
-            level: new_level,
-            raw_pressure: pressure,
-        });
-        if matches!(new_level, PressureLevel::High) {
-            // plan §5.1 — HIGH 触发 zone plot_qi 瞬时清零
-            for mut plot in plots.iter_mut() {
-                plot.plot_qi = 0.0;
+    for zone in zones {
+        tracker.state_mut(&zone).prune(now);
+
+        // 汐转 jitter：用 (zone_hash, lingtian_tick / day_ticks) 派生稳定 unit float
+        // 避免每 tick 抖动；非汐转季节 amplitude=0 → 结果与 jitter 无关。
+        let jitter_unit = derive_supply_jitter(&zone, now);
+        let weather = active_weather.as_deref().and_then(|aw| aw.current(&zone));
+
+        // 借用拆分：读出 pressure 先丢作用域，再改 state
+        let pressure = {
+            let plots_iter = plots.iter().filter_map(|m| {
+                let plot: &LingtianPlot = &m;
+                (plot_zone_key(plot) == zone).then_some(plot)
+            });
+            compute_zone_pressure(
+                &zone,
+                plots_iter,
+                &registry,
+                &tracker,
+                season,
+                jitter_unit,
+                weather,
+            )
+        };
+        // plan-lingtian-weather-v1 §5 / worldview §七 — 阴霾期间天道注视减弱，
+        // 阈值降 1 档（HeavyHaze.pressure_threshold_relax_steps()=1）。其他事件返回 0。
+        let relax_steps = weather
+            .map(|w| w.pressure_threshold_relax_steps())
+            .unwrap_or(0);
+        let new_level = PressureLevel::classify_with_relax(pressure, relax_steps);
+        let old_level = tracker
+            .state(&zone)
+            .map(|s| s.last_level)
+            .unwrap_or(PressureLevel::None);
+
+        {
+            let state = tracker.state_mut(&zone);
+            state.last_pressure = pressure;
+            state.last_level = new_level;
+        }
+
+        if new_level.is_higher_than(old_level) {
+            events.send(ZonePressureCrossed {
+                zone: zone.clone(),
+                level: new_level,
+                raw_pressure: pressure,
+            });
+            if matches!(new_level, PressureLevel::High) {
+                // plan §5.1 — HIGH 触发该 zone plot_qi 瞬时清零
+                for mut plot in plots.iter_mut() {
+                    if plot_zone_key(&plot) == zone {
+                        plot.plot_qi = 0.0;
+                    }
+                }
+                tracing::warn!(
+                    "[bong][lingtian] zone `{zone}` pressure HIGH (raw={pressure:.3}); cleared plot_qi"
+                );
             }
-            tracing::warn!(
-                "[bong][lingtian] zone `{zone}` pressure HIGH (raw={pressure:.3}); cleared plot_qi"
-            );
         }
     }
 }
 
-/// 推一个 plot 一步：查 `PlantKind`、按 `DEFAULT_ZONE` 取 zone qi、调 growth 公式。
+/// 推一个 plot 一步：查 `PlantKind`、按 plot zone 取 zone qi、调 growth 公式。
 ///
 /// 把"找 kind / 找 zone / 调用 advance"封装在一处，便于：
 ///   * `lingtian_growth_tick` system 在 Query 迭代里调
@@ -1667,7 +1708,8 @@ fn advance_plot_one_lingtian_tick_in_zone(
         );
         return;
     };
-    let zone_qi_ref = zone_qi.get_mut(DEFAULT_ZONE);
+    let zone = plot_zone_key(plot).to_string();
+    let zone_qi_ref = zone_qi.get_mut(&zone);
     advance_one_lingtian_tick(plot, kind, zone_qi_ref);
 }
 
@@ -2231,7 +2273,12 @@ mod tests {
     }
 
     fn spawn_planted_plot(app: &mut App, plot_qi: f32) -> Entity {
+        spawn_planted_plot_in_zone(app, plot_qi, "")
+    }
+
+    fn spawn_planted_plot_in_zone(app: &mut App, plot_qi: f32, zone: &str) -> Entity {
         let mut p = LingtianPlot::new(BlockPos::new(0, 64, 0), None);
+        p.zone = zone.to_string();
         p.plot_qi = plot_qi;
         p.crop = Some(CropInstance::new("ci_she_hao".into()));
         app.world_mut().spawn(p).id()
@@ -2311,6 +2358,34 @@ mod tests {
             (zone_left - (2.0 - zone_consumed)).abs() < 1e-5,
             "zone_left = {zone_left}"
         );
+    }
+
+    #[test]
+    fn zone_leak_path_uses_plot_zone_when_non_default() {
+        let mut app = build_growth_app(0.0);
+        app.world_mut()
+            .resource_mut::<ZoneQiAccount>()
+            .set("blood_valley", 2.0);
+        let plot = spawn_planted_plot_in_zone(&mut app, 0.0, "blood_valley");
+
+        advance_n_lingtian_ticks_direct(&mut app, 10);
+
+        let p = app.world().get::<LingtianPlot>(plot).unwrap();
+        let g = p.crop.as_ref().unwrap().growth;
+        let expected = 10.0 * (1.0_f32 / 480.0) * 0.3;
+        assert!(
+            (g - expected).abs() < 1e-5,
+            "非默认区 plot 应从 blood_valley 漏吸生长，growth={g}, expected≈{expected}"
+        );
+        let accounts = app.world().resource::<ZoneQiAccount>();
+        let remote_left = accounts.get("blood_valley");
+        let default_left = accounts.get(DEFAULT_ZONE);
+        let zone_consumed = 10.0 * 0.002 * 0.2;
+        assert!(
+            (remote_left - (2.0 - zone_consumed)).abs() < 1e-5,
+            "blood_valley 应被扣漏吸量，实际 {remote_left}"
+        );
+        assert_eq!(default_left, 0.0, "非默认区生长不应触碰 default zone");
     }
 
     #[test]
@@ -3217,7 +3292,12 @@ mod tests {
     // ------------------------------------------------------------------------
 
     fn spawn_empty_plot(app: &mut App, pos: BlockPos) -> Entity {
+        spawn_empty_plot_in_zone(app, pos, "")
+    }
+
+    fn spawn_empty_plot_in_zone(app: &mut App, pos: BlockPos, zone: &str) -> Entity {
         let mut p = LingtianPlot::new(pos, None);
+        p.zone = zone.to_string();
         p.plot_qi = 0.0;
         // plot_qi_cap 默认 1.0
         app.world_mut().spawn(p).id()
@@ -3297,6 +3377,42 @@ mod tests {
         assert!((p.plot_qi - 0.5).abs() < 1e-6, "plot_qi 应 +0.5");
         let z = app.world().resource::<ZoneQiAccount>().get(DEFAULT_ZONE);
         assert!((z - 4.5).abs() < 1e-6, "zone qi 应 -0.5");
+    }
+
+    #[test]
+    fn replenish_zone_uses_non_default_plot_zone_for_precheck_and_debit() {
+        let mut app = build_app();
+        app.world_mut()
+            .resource_mut::<ZoneQiAccount>()
+            .set(DEFAULT_ZONE, 0.0);
+        app.world_mut()
+            .resource_mut::<ZoneQiAccount>()
+            .set("blood_valley", 5.0);
+        let player = app.world_mut().spawn(empty_inventory_8x8()).id();
+        let pos = BlockPos::new(8, 64, 8);
+        let plot = spawn_empty_plot_in_zone(&mut app, pos, "blood_valley");
+
+        app.world_mut().send_event(StartReplenishRequest {
+            player,
+            pos,
+            source: ReplenishSource::Zone,
+        });
+        for _ in 0..ReplenishSource::Zone.duration_ticks() {
+            app.update();
+        }
+
+        assert!(
+            app.world().resource::<ActiveLingtianSessions>().is_empty(),
+            "blood_valley 余额充足时应允许非默认区补灵，不能被 default=0 拦截"
+        );
+        let p = app.world().get::<LingtianPlot>(plot).unwrap();
+        assert!((p.plot_qi - 0.5).abs() < 1e-6, "plot_qi 应 +0.5");
+        let accounts = app.world().resource::<ZoneQiAccount>();
+        assert!(
+            (accounts.get("blood_valley") - 4.5).abs() < 1e-6,
+            "补灵应扣 blood_valley，而不是 default"
+        );
+        assert_eq!(accounts.get(DEFAULT_ZONE), 0.0, "default zone 不应被扣款");
     }
 
     /// plan-zone-qi-economy-v1 P2：地板红线——zone qi 不足以支付 `plot_qi_amount()`
@@ -3418,6 +3534,48 @@ mod tests {
     }
 
     #[test]
+    fn replenish_overflow_returns_to_non_default_plot_zone() {
+        let mut app = build_app();
+        app.world_mut()
+            .resource_mut::<ZoneQiAccount>()
+            .set(DEFAULT_ZONE, 0.0);
+        app.world_mut()
+            .resource_mut::<ZoneQiAccount>()
+            .set("north_wastes", 1.0);
+        let player = app
+            .world_mut()
+            .spawn(make_inventory_with_misc_stack("mutant_beast_core", 1))
+            .id();
+        let pos = BlockPos::new(9, 64, 9);
+        let plot = spawn_empty_plot_in_zone(&mut app, pos, "north_wastes");
+        app.world_mut()
+            .get_mut::<LingtianPlot>(plot)
+            .unwrap()
+            .plot_qi = 0.5;
+
+        app.world_mut().send_event(StartReplenishRequest {
+            player,
+            pos,
+            source: ReplenishSource::BeastCore,
+        });
+        for _ in 0..ReplenishSource::BeastCore.duration_ticks() {
+            app.update();
+        }
+
+        let accounts = app.world().resource::<ZoneQiAccount>();
+        assert!(
+            (accounts.get("north_wastes") - 2.5).abs() < 1e-6,
+            "1.5 overflow 应回流 north_wastes，实际 {}",
+            accounts.get("north_wastes")
+        );
+        assert_eq!(
+            accounts.get(DEFAULT_ZONE),
+            0.0,
+            "非默认区 overflow 不应串到 default"
+        );
+    }
+
+    #[test]
     fn replenish_ling_shui_consumes_one_bottle() {
         let mut app = build_app();
         let player = app
@@ -3496,7 +3654,7 @@ mod tests {
             ))
             .id();
         let pos = BlockPos::new(0, 64, 0);
-        let plot = spawn_empty_plot(&mut app, pos);
+        let plot = spawn_empty_plot_in_zone(&mut app, pos, "lingquan_marsh");
         app.world_mut()
             .get_mut::<LingtianPlot>(plot)
             .unwrap()
@@ -3522,7 +3680,7 @@ mod tests {
             events[0].target.as_deref(),
             Some("lingtian_plot_dye_contamination_warning")
         );
-        assert_eq!(events[0].zone.as_deref(), Some(DEFAULT_ZONE));
+        assert_eq!(events[0].zone.as_deref(), Some("lingquan_marsh"));
         assert_eq!(events[0].tick, 987);
         assert_eq!(events[0].player.as_deref(), Some("offline:Azure"));
         assert_eq!(
@@ -3820,8 +3978,22 @@ mod tests {
     }
 
     fn spawn_high_cost_planted_with_owner(app: &mut App, n: u32, owner: Option<Entity>) {
+        spawn_high_cost_planted_with_owner_in_zone(app, n, owner, "");
+    }
+
+    fn spawn_high_cost_planted_in_zone(app: &mut App, n: u32, zone: &str) {
+        spawn_high_cost_planted_with_owner_in_zone(app, n, None, zone);
+    }
+
+    fn spawn_high_cost_planted_with_owner_in_zone(
+        app: &mut App,
+        n: u32,
+        owner: Option<Entity>,
+        zone: &str,
+    ) {
         for i in 0..n {
             let mut p = LingtianPlot::new(BlockPos::new(i as i32, 64, 0), owner);
+            p.zone = zone.to_string();
             p.plot_qi = 1.0;
             p.crop = Some(CropInstance::new("ling_mu_miao".into()));
             app.world_mut().spawn(p);
@@ -3841,6 +4013,16 @@ mod tests {
         reader
             .read(events)
             .map(|e| (e.level, e.raw_pressure))
+            .collect()
+    }
+
+    fn collect_pressure_event_zones(app: &mut App) -> Vec<(String, PL, f32)> {
+        let world = app.world_mut();
+        let events = world.resource::<bevy_ecs::event::Events<ZonePressureCrossed>>();
+        let mut reader = events.get_reader();
+        reader
+            .read(events)
+            .map(|e| (e.zone.clone(), e.level, e.raw_pressure))
             .collect()
     }
 
@@ -3892,6 +4074,50 @@ mod tests {
             .iter(app.world())
             .any(|p| p.plot_qi > 0.0);
         assert!(!any_nonzero, "HIGH 应清掉所有 plot_qi");
+    }
+
+    #[test]
+    fn high_pressure_clears_only_matching_non_default_zone() {
+        let mut app = build_pressure_app(0.0);
+        spawn_high_cost_planted(&mut app, 1);
+        spawn_high_cost_planted_in_zone(&mut app, 100, "blood_valley");
+
+        step_one_lingtian_tick(&mut app);
+
+        let tracker = app.world().resource::<ZonePressureTracker>();
+        assert_eq!(
+            tracker.state("blood_valley").unwrap().last_level,
+            PL::High,
+            "blood_valley 自身 demand 应触发 HIGH"
+        );
+        assert_eq!(
+            tracker.state(DEFAULT_ZONE).unwrap().last_level,
+            PL::None,
+            "default 只有 1 个 plot，不应被 blood_valley 串账抬压"
+        );
+        let events = collect_pressure_event_zones(&mut app);
+        assert!(
+            events
+                .iter()
+                .any(|(zone, level, _)| zone == "blood_valley" && *level == PL::High),
+            "应发 blood_valley 的 HIGH 事件，实际 {events:?}"
+        );
+        let (default_nonzero, remote_nonzero) = {
+            let mut query = app.world_mut().query::<&LingtianPlot>();
+            let mut default_nonzero = false;
+            let mut remote_nonzero = false;
+            for plot in query.iter(app.world()) {
+                if plot_zone_key(plot) == DEFAULT_ZONE && plot.plot_qi > 0.0 {
+                    default_nonzero = true;
+                }
+                if plot_zone_key(plot) == "blood_valley" && plot.plot_qi > 0.0 {
+                    remote_nonzero = true;
+                }
+            }
+            (default_nonzero, remote_nonzero)
+        };
+        assert!(default_nonzero, "default plot_qi 不应被非默认区 HIGH 清掉");
+        assert!(!remote_nonzero, "blood_valley HIGH 应清掉本区 plot_qi");
     }
 
     #[test]
@@ -3979,6 +4205,41 @@ mod tests {
     }
 
     #[test]
+    fn non_default_zone_pressure_uses_its_own_weather() {
+        let mut app = build_pressure_app_with_season(0.0, Season::Winter);
+        let mut active_weather = crate::lingtian::weather::ActiveWeather::new();
+        active_weather.insert(
+            "blood_valley",
+            crate::lingtian::weather::WeatherEvent::HeavyHaze,
+            0,
+            10_000,
+        );
+        app.insert_resource(active_weather);
+
+        spawn_high_cost_planted_in_zone(&mut app, 100, "blood_valley");
+        step_one_lingtian_tick(&mut app);
+
+        let tracker = app.world().resource::<ZonePressureTracker>();
+        let s = tracker.state("blood_valley").unwrap();
+        assert!(
+            (s.last_pressure - 1.2).abs() < 1e-3,
+            "blood_valley raw pressure ≈1.2，实际 {}",
+            s.last_pressure
+        );
+        assert_eq!(
+            s.last_level,
+            PL::Mid,
+            "blood_valley 的 HeavyHaze 应把 raw HIGH 降为 Mid，实际 {:?}",
+            s.last_level
+        );
+        assert!(
+            tracker.state(DEFAULT_ZONE).is_none()
+                || tracker.state(DEFAULT_ZONE).unwrap().last_level == PL::None,
+            "非默认区压力不应写入 default"
+        );
+    }
+
+    #[test]
     fn no_haze_no_relax_pressure_classified_normally() {
         // 对照：相同 raw pressure 但无 haze → classified 仍为 High。
         let mut app = build_pressure_app_with_season(0.0, Season::Winter);
@@ -4006,6 +4267,45 @@ mod tests {
         step_one_lingtian_tick(&mut app);
         let tracker = app.world().resource::<ZonePressureTracker>();
         assert_eq!(tracker.state(DEFAULT_ZONE).unwrap().last_level, PL::None);
+    }
+
+    #[test]
+    fn replenish_pressure_record_uses_plot_zone() {
+        let mut app = build_pressure_app(0.0);
+        let pos = BlockPos::new(12, 64, 12);
+        spawn_empty_plot_in_zone(&mut app, pos, "lingquan_marsh");
+        let player = app.world_mut().spawn_empty().id();
+
+        app.world_mut().send_event(ReplenishCompleted {
+            player,
+            pos,
+            source: ReplenishSource::BoneCoin,
+            plot_qi_added: 0.8,
+            overflow_to_zone: 0.2,
+        });
+        app.update();
+
+        let tracker = app.world().resource::<ZonePressureTracker>();
+        assert!(
+            (tracker
+                .state("lingquan_marsh")
+                .unwrap()
+                .replenish_total_7d()
+                - 1.0)
+                .abs()
+                < 1e-6,
+            "补灵压力应记录到 lingquan_marsh"
+        );
+        assert!(
+            tracker.state(DEFAULT_ZONE).is_none()
+                || tracker
+                    .state(DEFAULT_ZONE)
+                    .unwrap()
+                    .replenish_total_7d()
+                    .abs()
+                    < 1e-6,
+            "非默认区补灵压力不应串到 default"
+        );
     }
 
     #[test]
@@ -4199,6 +4499,63 @@ mod tests {
             count_biography_matching(thief_lr, |e| matches!(e, BE::PlotQiDrainedFromOther { .. })),
             1
         );
+    }
+
+    #[test]
+    fn drain_qi_releases_to_non_default_plot_zone_and_ledger() {
+        use crate::cultivation::components::Cultivation;
+        use crate::lingtian::session::DRAIN_QI_TICKS;
+        let mut app = build_app();
+        app.world_mut()
+            .resource_mut::<ZoneQiAccount>()
+            .set(DEFAULT_ZONE, 0.0);
+        app.world_mut()
+            .resource_mut::<ZoneQiAccount>()
+            .set("north_wastes", 3.0);
+        let thief = app
+            .world_mut()
+            .spawn((
+                empty_inventory_8x8(),
+                LifeRecord::new("bob"),
+                Cultivation {
+                    qi_current: 0.0,
+                    qi_max: 100.0,
+                    ..Default::default()
+                },
+            ))
+            .id();
+        let pos = BlockPos::new(4, 64, 4);
+        let mut plot = LingtianPlot::new(pos, None).with_zone("north_wastes");
+        plot.plot_qi = 0.5;
+        app.world_mut().spawn(plot);
+
+        app.world_mut()
+            .send_event(StartDrainQiRequest { player: thief, pos });
+        for _ in 0..DRAIN_QI_TICKS {
+            app.update();
+        }
+
+        let accounts = app.world().resource::<ZoneQiAccount>();
+        assert!(
+            (accounts.get("north_wastes") - 3.1).abs() < 1e-5,
+            "偷灵 20% 散逸应回流 north_wastes，实际 {}",
+            accounts.get("north_wastes")
+        );
+        assert_eq!(accounts.get(DEFAULT_ZONE), 0.0, "default 不应收到散逸回流");
+
+        let qi_transfers: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<QiTransfer>>()
+            .drain()
+            .collect();
+        assert_eq!(
+            qi_transfers.len(),
+            2,
+            "应写 player + north_wastes 两笔 ledger"
+        );
+        assert_eq!(qi_transfers[1].to, QiAccountId::zone("north_wastes"));
+        assert_eq!(qi_transfers[1].reason, QiTransferReason::ReleaseToZone);
+        assert!((qi_transfers[1].amount - 0.1).abs() < 1e-6);
     }
 
     #[test]

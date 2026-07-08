@@ -448,7 +448,11 @@ pub(crate) fn seed_initial_rogue_population_on_startup(
     let skin_policy = match skin_pool.as_deref_mut() {
         Some(pool) => {
             pool.drain_ready();
-            if pool.ready_for_spawn() {
+            if pool.ready_for_spawn() || pool.prefetch_disabled() {
+                // prefetch_disabled（BONG_SKIP_SKIN_PREFETCH=1）时池永不 ready，
+                // 等待即永不播种（headless/CI 零 NPC 空世界，2026-07-06 bot
+                // playtest 实证）；直接放行，draw_npc_skin 会取 None 走
+                // villager fallback，不触 SkinPool 空池 panic。
                 NpcSkinFallbackPolicy::AllowFallback
             } else {
                 return;

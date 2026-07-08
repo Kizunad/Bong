@@ -483,6 +483,101 @@ public class InventorySnapshotHandlerTest {
         assertEquals(2, item.forgeAchievedTier());
     }
 
+    // plan-forge-session-entry-wiring-v1 修复轮 — wire `mineral_id` 含/缺两路：
+    // 矿物件必须带出 canonical id（起炉投料 key 的唯一来源），非矿物件保持空串退回 itemId。
+    @Test
+    void parsesMineralIdWhenPresentAndDefaultsEmptyWhenAbsent() {
+        String snapshotJson = """
+            {
+              "v": 1,
+              "type": "inventory_snapshot",
+              "revision": 44,
+              "containers": [
+                {"id":"main_pack","name":"主背包","rows":5,"cols":7}
+              ],
+              "placed_items": [
+                {
+                  "container_id": "main_pack",
+                  "row": 0,
+                  "col": 0,
+                  "item": {
+                    "instance_id": 3101,
+                    "item_id": "mineral_fan_tie",
+                    "display_name": "凡铁",
+                    "grid_width": 1,
+                    "grid_height": 1,
+                    "weight": 1.0,
+                    "rarity": "common",
+                    "description": "",
+                    "stack_count": 3,
+                    "spirit_quality": 1.0,
+                    "durability": 1.0,
+                    "mineral_id": "fan_tie"
+                  }
+                },
+                {
+                  "container_id": "main_pack",
+                  "row": 1,
+                  "col": 0,
+                  "item": {
+                    "instance_id": 3102,
+                    "item_id": "iron_sword",
+                    "display_name": "铁剑",
+                    "grid_width": 1,
+                    "grid_height": 2,
+                    "weight": 2.0,
+                    "rarity": "common",
+                    "description": "",
+                    "stack_count": 1,
+                    "spirit_quality": 1.0,
+                    "durability": 1.0
+                  }
+                }
+              ],
+              "equipped": {
+                "head": null,
+                "chest": null,
+                "legs": null,
+                "feet": null,
+                "main_hand": null,
+                "off_hand": null,
+                "two_hand": null,
+                "treasure_belt_0": null,
+                "treasure_belt_1": null,
+                "treasure_belt_2": null,
+                "treasure_belt_3": null
+              },
+              "hotbar": [null, null, null, null, null, null, null, null, null],
+              "bone_coins": 0,
+              "weight": {"current": 5.0, "max": 50.0},
+              "realm": "Awaken",
+              "qi_current": 24,
+              "qi_max": 100,
+              "body_level": 0.18
+            }
+            """;
+
+        ServerPayloadParseResult parseResult = ServerDataEnvelope.parse(
+            snapshotJson,
+            snapshotJson.getBytes(StandardCharsets.UTF_8).length
+        );
+        assertTrue(parseResult.isSuccess(), parseResult.errorMessage());
+
+        ServerDataDispatch dispatch = new InventorySnapshotHandler().handle(parseResult.envelope());
+        assertTrue(dispatch.handled(), dispatch.logMessage());
+
+        InventoryItem ore = InventoryStateStore.snapshot().gridItems().get(0).item();
+        assertEquals("fan_tie", ore.mineralId(), "wire mineral_id 必须被解析带出");
+        assertEquals(
+            "fan_tie",
+            ore.forgeMaterialKey(),
+            "矿物件起炉投料 key 应为 canonical id 而非 template_id（引擎只认前者）"
+        );
+        InventoryItem sword = InventoryStateStore.snapshot().gridItems().get(1).item();
+        assertEquals("", sword.mineralId(), "缺 mineral_id 字段应缺省空串");
+        assertEquals("iron_sword", sword.forgeMaterialKey(), "非矿物件退回 itemId");
+    }
+
     // plan-tarkov-backpack-v1 P3（决议 #4）— owner_instance_id 解析含/缺字段两路兼容。
     @Test
     void parsesOwnerInstanceIdWhenPresentAndDefaultsNullWhenAbsent() {

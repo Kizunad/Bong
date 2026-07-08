@@ -40,7 +40,7 @@ BATTLEFIELD_DECORATIONS = (
         kind="tree",
         blocks=("stripped_spruce_log", "iron_block", "copper_block"),
         size_range=(4, 8),
-        rarity=0.28,
+        rarity=0.14,
         notes="断矛树：插入地面的铁柄长矛化为枯木，铜锈如血。",
     ),
     DecorationSpec(
@@ -48,7 +48,7 @@ BATTLEFIELD_DECORATIONS = (
         kind="tree",
         blocks=("oak_log", "red_wool", "black_wool"),
         size_range=(6, 10),
-        rarity=0.18,
+        rarity=0.13,
         notes="残旗柱：旗杆+残破军旗布条，旗色红黑参半，曾属无名势力。",
     ),
     DecorationSpec(
@@ -56,7 +56,7 @@ BATTLEFIELD_DECORATIONS = (
         kind="boulder",
         blocks=("cracked_stone_bricks", "cobblestone", "tuff"),
         size_range=(4, 9),
-        rarity=0.40,
+        rarity=0.20,
         notes="坠击坑缘：大型法术冲击痕边缘的碎石堆，向心塌陷。",
     ),
     DecorationSpec(
@@ -64,7 +64,7 @@ BATTLEFIELD_DECORATIONS = (
         kind="shrub",
         blocks=("bone_block", "dirt", "coarse_dirt"),
         size_range=(2, 4),
-        rarity=0.55,
+        rarity=0.28,
         notes="枯骨堆：无名修士遗骨，半埋尘土。近之心悸。",
     ),
     DecorationSpec(
@@ -72,7 +72,7 @@ BATTLEFIELD_DECORATIONS = (
         kind="boulder",
         blocks=("deepslate_bricks", "chiseled_deepslate", "soul_lantern"),
         size_range=(3, 6),
-        rarity=0.22,
+        rarity=0.11,
         notes="咒碑：刻满咒文的深板岩碑，夜间有灵魂提灯微光。",
     ),
     DecorationSpec(

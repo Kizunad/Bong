@@ -1,0 +1,913 @@
+"""bot smoke 断言用的零依赖 protobuf wire 小工具。
+
+这里刻意不做生成式 protobuf binding。Bot 场景用它做三类检查：
+- 识别 `bong:server_data` payload 的 oneof 类型。
+- 从 inventory_snapshot 里取 item instance_id，用来驱动真实 client_request intent。
+- 解码 bot inventory/container 场景需要的 production `bong:server_data` payload。
+
+数值级、全 schema 的深断言留给后续 P6，在 Python binding/codegen 策略定下来后再做。
+"""
+
+from __future__ import annotations
+
+import struct
+from dataclasses import dataclass
+from typing import Any
+
+
+class ProtoDecodeError(ValueError):
+    pass
+
+
+def decode_server_data_envelope(data: bytes) -> dict[str, Any] | None:
+    fields = _fields(data)
+    for field, wire, value in fields:
+        if wire != 2:
+            continue
+        if field == 8:
+            return _inventory_snapshot(value)
+        if field == 11:
+            return _alchemy_furnace(value)
+        if field == 12:
+            return _alchemy_session(value)
+        if field == 14:
+            return _alchemy_outcome_resolved(value)
+        if field == 17:
+            return _forge_station(value)
+        if field == 18:
+            return _forge_session(value)
+        if field == 19:
+            return _forge_outcome(value)
+        if field == 20:
+            return _forge_blueprint_book(value)
+        if field == 22:
+            return _craft_session_state(value)
+        if field == 23:
+            return _craft_outcome(value)
+        if field == 34:
+            return _cast_sync(value)
+        if field == 51:
+            return _combat_event_floater(value)
+        if field == 80:
+            return _inventory_event(value)
+        if field == 90:
+            return _container_state(value)
+        if field == 119:
+            return _loot_container_open(value)
+    return None
+
+
+def _inventory_snapshot(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    equipped = _message(fields, 4)
+    return {
+        "v": 1,
+        "type": "inventory_snapshot",
+        "revision": _varint(fields, 1),
+        "containers": [_container_snapshot(raw) for raw in _messages(fields, 2)],
+        "placed_items": [_placed_inventory_item(raw) for raw in _messages(fields, 3)],
+        "equipped": _equipped_inventory_snapshot(equipped),
+        "hotbar": [_hotbar_slot(raw) for raw in _messages(fields, 5)],
+        "bone_coins": _varint(fields, 6),
+        "weight": _inventory_weight(_message(fields, 7)),
+        "realm": _string(fields, 8),
+        "qi_current": _double(fields, 9),
+        "qi_max": _double(fields, 10),
+        "body_level": _double(fields, 11),
+    }
+
+
+def _container_snapshot(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    return {
+        "id": _string(fields, 1),
+        "name": _string(fields, 2),
+        "rows": _varint(fields, 3),
+        "cols": _varint(fields, 4),
+        "owner_instance_id": _optional_varint(fields, 5),
+        "quick_access": bool(_varint(fields, 6)),
+    }
+
+
+def _placed_inventory_item(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    return {
+        "container_id": _string(fields, 1),
+        "row": _varint(fields, 2),
+        "col": _varint(fields, 3),
+        "item": _item_view(_message(fields, 4)),
+    }
+
+
+def _equipped_inventory_snapshot(fields: list[tuple[int, int, Any]]) -> dict[str, Any]:
+    return {
+        "head_worn": [_item_view(_fields(raw)) for raw in _messages(fields, 1)],
+        "head_held": _optional_item(fields, 2),
+        "chest_worn": [_item_view(_fields(raw)) for raw in _messages(fields, 3)],
+        "chest_held": _optional_item(fields, 4),
+        "legs_worn": [_item_view(_fields(raw)) for raw in _messages(fields, 5)],
+        "legs_held": _optional_item(fields, 6),
+        "feet_worn": [_item_view(_fields(raw)) for raw in _messages(fields, 7)],
+        "feet_held": _optional_item(fields, 8),
+        "main_hand_worn": [_item_view(_fields(raw)) for raw in _messages(fields, 9)],
+        "main_hand_held": _optional_item(fields, 10),
+        "off_hand_worn": [_item_view(_fields(raw)) for raw in _messages(fields, 11)],
+        "off_hand_held": _optional_item(fields, 12),
+        "extra_hand_0_worn": [_item_view(_fields(raw)) for raw in _messages(fields, 13)],
+        "extra_hand_0_held": _optional_item(fields, 14),
+        "extra_hand_1_worn": [_item_view(_fields(raw)) for raw in _messages(fields, 15)],
+        "extra_hand_1_held": _optional_item(fields, 16),
+    }
+
+
+def _hotbar_slot(data: bytes) -> dict[str, Any] | None:
+    fields = _fields(data)
+    if not _has(fields, 1):
+        return None
+    return _item_view(_message(fields, 1))
+
+
+def _inventory_weight(fields: list[tuple[int, int, Any]]) -> dict[str, float]:
+    return {"current": _double(fields, 1), "max": _double(fields, 2)}
+
+
+def _inventory_event(data: bytes) -> dict[str, Any] | None:
+    fields = _fields(data)
+    for field, wire, value in fields:
+        if wire != 2:
+            continue
+        if field == 1:
+            moved = _fields(value)
+            return {
+                "v": 1,
+                "type": "inventory_event",
+                "kind": "moved",
+                "revision": _varint(moved, 1),
+                "instance_id": _varint(moved, 2),
+                "from": _location(_message(moved, 3)),
+                "to": _location(_message(moved, 4)),
+            }
+        if field == 2:
+            dropped = _fields(value)
+            return {
+                "v": 1,
+                "type": "inventory_event",
+                "kind": "dropped",
+                "revision": _varint(dropped, 1),
+                "instance_id": _varint(dropped, 2),
+                "from": _location(_message(dropped, 3)),
+                "world_pos": [
+                    _double(dropped, 4),
+                    _double(dropped, 5),
+                    _double(dropped, 6),
+                ],
+                "item": _item_view(_message(dropped, 7)),
+            }
+        if field == 3:
+            stack = _fields(value)
+            return {
+                "v": 1,
+                "type": "inventory_event",
+                "kind": "stack_changed",
+                "revision": _varint(stack, 1),
+                "instance_id": _varint(stack, 2),
+                "stack_count": _varint(stack, 3),
+            }
+        if field == 4:
+            durability = _fields(value)
+            return {
+                "v": 1,
+                "type": "inventory_event",
+                "kind": "durability_changed",
+                "revision": _varint(durability, 1),
+                "instance_id": _varint(durability, 2),
+                "durability": _double(durability, 3),
+            }
+    return None
+
+
+def _loot_container_open(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    return {
+        "v": 1,
+        "type": "loot_container_open",
+        "session_id": _varint(fields, 1),
+        "source_kind": _string(fields, 2),
+        "rows": _varint(fields, 3),
+        "cols": _varint(fields, 4),
+        "placed_items": [_placed_inventory_item(raw) for raw in _messages(fields, 5)],
+        "timeout_wall_secs": _varint(fields, 6),
+    }
+
+
+def _container_state(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    return {
+        "v": 1,
+        "type": "container_state",
+        "entity_id": _varint(fields, 1),
+        "visual_entity_id": _optional_varint(fields, 10),
+    }
+
+
+def _item_view(fields: list[tuple[int, int, Any]]) -> dict[str, Any]:
+    return {
+        "instance_id": _varint(fields, 1),
+        "item_id": _string(fields, 2),
+        "display_name": _string(fields, 3),
+        "grid_width": _varint(fields, 4),
+        "grid_height": _varint(fields, 5),
+        "weight": _double(fields, 6),
+        "rarity": _string(fields, 7),
+        "description": _string(fields, 8),
+        "stack_count": _varint(fields, 9),
+        "spirit_quality": _double(fields, 10),
+        "durability": _double(fields, 11),
+    }
+
+
+def _optional_item(fields: list[tuple[int, int, Any]], field: int) -> dict[str, Any] | None:
+    if not _has(fields, field):
+        return None
+    return _item_view(_message(fields, field))
+
+
+def _location(fields: list[tuple[int, int, Any]]) -> dict[str, Any]:
+    if _has(fields, 1):
+        container = _message(fields, 1)
+        return {
+            "kind": "container",
+            "container_id": _string(container, 1),
+            "row": _varint(container, 2),
+            "col": _varint(container, 3),
+        }
+    if _has(fields, 2):
+        equip = _message(fields, 2)
+        return {
+            "kind": "equip",
+            "slot": _equip_slot(_varint(equip, 1)),
+            "state": _equip_state(_varint(equip, 2)),
+        }
+    if _has(fields, 3):
+        hotbar = _message(fields, 3)
+        return {"kind": "hotbar", "index": _varint(hotbar, 1)}
+    return {"kind": "unknown"}
+
+
+def _fields(data: bytes) -> list[tuple[int, int, Any]]:
+    pos = 0
+    out = []
+    while pos < len(data):
+        key, pos = _read_varint(data, pos)
+        field = key >> 3
+        wire = key & 0x07
+        if field <= 0:
+            raise ProtoDecodeError(f"bad field number {field}")
+        if wire == 0:
+            value, pos = _read_varint(data, pos)
+        elif wire == 1:
+            if pos + 8 > len(data):
+                raise ProtoDecodeError("truncated fixed64")
+            value = data[pos : pos + 8]
+            pos += 8
+        elif wire == 2:
+            size, pos = _read_varint(data, pos)
+            if pos + size > len(data):
+                raise ProtoDecodeError("truncated length-delimited field")
+            value = data[pos : pos + size]
+            pos += size
+        elif wire == 5:
+            if pos + 4 > len(data):
+                raise ProtoDecodeError("truncated fixed32")
+            value = data[pos : pos + 4]
+            pos += 4
+        else:
+            raise ProtoDecodeError(f"unsupported wire type {wire}")
+        out.append((field, wire, value))
+    return out
+
+
+def _read_varint(data: bytes, pos: int) -> tuple[int, int]:
+    result = 0
+    shift = 0
+    while pos < len(data):
+        byte = data[pos]
+        pos += 1
+        result |= (byte & 0x7F) << shift
+        if byte < 0x80:
+            return result, pos
+        shift += 7
+        if shift >= 70:
+            raise ProtoDecodeError("varint too long")
+    raise ProtoDecodeError("truncated varint")
+
+
+def _has(fields: list[tuple[int, int, Any]], field: int) -> bool:
+    return any(existing == field for existing, _wire, _value in fields)
+
+
+def _values(fields: list[tuple[int, int, Any]], field: int) -> list[Any]:
+    return [value for existing, _wire, value in fields if existing == field]
+
+
+def _varint(fields: list[tuple[int, int, Any]], field: int, default: int = 0) -> int:
+    for existing, wire, value in reversed(fields):
+        if existing == field and wire == 0:
+            return int(value)
+    return default
+
+
+def _optional_varint(fields: list[tuple[int, int, Any]], field: int) -> int | None:
+    return _varint(fields, field) if _has(fields, field) else None
+
+
+def _string(fields: list[tuple[int, int, Any]], field: int, default: str = "") -> str:
+    for existing, wire, value in reversed(fields):
+        if existing == field and wire == 2:
+            return value.decode("utf-8", errors="replace")
+    return default
+
+
+def _double(fields: list[tuple[int, int, Any]], field: int, default: float = 0.0) -> float:
+    for existing, wire, value in reversed(fields):
+        if existing == field and wire == 1:
+            return struct.unpack("<d", value)[0]
+    return default
+
+
+def _message(fields: list[tuple[int, int, Any]], field: int) -> list[tuple[int, int, Any]]:
+    for existing, wire, value in reversed(fields):
+        if existing == field and wire == 2:
+            return _fields(value)
+    return []
+
+
+def _messages(fields: list[tuple[int, int, Any]], field: int) -> list[bytes]:
+    return [value for value in _values(fields, field) if isinstance(value, bytes)]
+
+
+def _float32(fields: list[tuple[int, int, Any]], field: int, default: float = 0.0) -> float:
+    for existing, wire, value in reversed(fields):
+        if existing == field and wire == 5:
+            return struct.unpack("<f", value)[0]
+    return default
+
+
+# ── 生产 / 消费玩法 payload（envelope.proto oneof tag 见 proto/bong/envelope.proto）──
+
+CAST_OUTCOME_NAMES = {
+    0: "unspecified",
+    1: "none",
+    2: "completed",
+    3: "interrupt_movement",
+    4: "interrupt_contam",
+    5: "interrupt_control",
+    6: "user_cancel",
+    7: "death",
+    8: "meridian_gated",
+    9: "reject_qi_insufficient",
+    10: "reject_on_cooldown",
+    11: "reject_invalid_target",
+    12: "reject_in_recovery",
+    13: "reject_realm_too_low",
+    14: "reject_no_weapon",
+    15: "reject_technique_inactive",
+}
+
+CAST_PHASE_NAMES = {0: "unspecified", 1: "idle", 2: "casting", 3: "complete", 4: "interrupt"}
+
+
+def _craft_session_state(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    return {
+        "v": 1,
+        "type": "craft_session_state",
+        "active": bool(_varint(fields, 3)),
+        "recipe_id": _string(fields, 4),
+        "elapsed_ticks": _varint(fields, 5),
+        "total_ticks": _varint(fields, 6),
+        "completed_count": _varint(fields, 7),
+        "total_count": _varint(fields, 8),
+    }
+
+
+def _craft_outcome(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    for field, wire, value in fields:
+        if wire != 2:
+            continue
+        inner = _fields(value)
+        if field == 1:
+            return {
+                "v": 1,
+                "type": "craft_outcome",
+                "outcome": "completed",
+                "recipe_id": _string(inner, 3),
+                "output_template": _string(inner, 4),
+                "output_count": _varint(inner, 5),
+            }
+        if field == 2:
+            return {
+                "v": 1,
+                "type": "craft_outcome",
+                "outcome": "failed",
+                "recipe_id": _string(inner, 3),
+                "reason": _varint(inner, 4),
+                "material_returned": _varint(inner, 5),
+            }
+    return {"v": 1, "type": "craft_outcome", "outcome": "unknown"}
+
+
+def _alchemy_furnace(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    return {
+        "v": 1,
+        "type": "alchemy_furnace",
+        "pos": [
+            _optional_varint(fields, 1),
+            _optional_varint(fields, 2),
+            _optional_varint(fields, 3),
+        ],
+        "tier": _varint(fields, 4),
+    }
+
+
+def _alchemy_session(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    return {
+        "v": 1,
+        "type": "alchemy_session",
+        "recipe_id": _string(fields, 1),
+        "active": bool(_varint(fields, 2)),
+        "elapsed_ticks": _varint(fields, 3),
+        "target_ticks": _varint(fields, 4),
+    }
+
+
+def _alchemy_outcome_resolved(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    return {
+        "v": 1,
+        "type": "alchemy_outcome_resolved",
+        "bucket": _varint(fields, 1),
+        "recipe_id": _string(fields, 2),
+        "pill": _string(fields, 3),
+        "quality": _double(fields, 4),
+    }
+
+
+def _cast_sync(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    return {
+        "v": 1,
+        "type": "cast_sync",
+        "phase": CAST_PHASE_NAMES.get(_varint(fields, 1), "unspecified"),
+        "slot": _varint(fields, 2),
+        "duration_ms": _varint(fields, 3),
+        "outcome": CAST_OUTCOME_NAMES.get(_varint(fields, 5), "unspecified"),
+    }
+
+
+def _combat_event_floater(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    events = []
+    for raw in _messages(fields, 1):
+        entry = _fields(raw)
+        events.append(
+            {
+                "kind": _string(entry, 1),
+                "amount": _float32(entry, 2),
+                "text": _string(entry, 3),
+                "outgoing": bool(_varint(entry, 7)),
+            }
+        )
+    return {"v": 1, "type": "combat_event", "events": events}
+
+
+FORGE_STEP_NAMES = {
+    0: "unspecified",
+    1: "billet",
+    2: "tempering",
+    3: "inscription",
+    4: "consecration",
+    5: "done",
+}
+
+FORGE_OUTCOME_BUCKET_NAMES = {
+    0: "unspecified",
+    1: "perfect",
+    2: "good",
+    3: "flawed",
+    4: "waste",
+    5: "explode",
+}
+
+
+def _int32(fields: list[tuple[int, int, Any]], field: int, default: int = 0) -> int:
+    """protobuf `int32` 字段：负值在 wire 上按 64-bit 补码编码（并非 32-bit 掩码——
+    这与本文件里给实际 MC 协议 varint 用的 `mc.write_varint` 32-bit 掩码不同）。
+    读回后只取低 32 位再按补码转回带符号整数，供 station_pos_x/y/z 使用。"""
+    if not _has(fields, field):
+        return default
+    raw = _varint(fields, field) & 0xFFFFFFFF
+    if raw & 0x80000000:
+        raw -= 0x100000000
+    return raw
+
+
+def _forge_station(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    return {
+        "v": 1,
+        "type": "forge_station",
+        "station_id": _string(fields, 1),
+        "tier": _varint(fields, 2),
+        "integrity": _float32(fields, 3),
+        "owner_name": _string(fields, 4),
+        "has_session": bool(_varint(fields, 5)),
+        "pos": [_int32(fields, 6), _int32(fields, 7), _int32(fields, 8)],
+    }
+
+
+def _forge_step_state(fields: list[tuple[int, int, Any]]) -> dict[str, Any]:
+    if _has(fields, 2):
+        tempering = _message(fields, 2)
+        return {
+            "kind": "tempering",
+            "beat_cursor": _varint(tempering, 2),
+            "hits": _varint(tempering, 3),
+            "misses": _varint(tempering, 4),
+            "deviation": _varint(tempering, 5),
+            "qi_spent": _double(tempering, 6),
+        }
+    if _has(fields, 1):
+        billet = _message(fields, 1)
+        return {
+            "kind": "billet",
+            "resolved_tier_cap": _varint(billet, 3),
+        }
+    if _has(fields, 3):
+        inscription = _message(fields, 3)
+        return {
+            "kind": "inscription",
+            "filled_slots": _varint(inscription, 1),
+            "max_slots": _varint(inscription, 2),
+            "failed": bool(_varint(inscription, 3)),
+        }
+    if _has(fields, 4):
+        consecration = _message(fields, 4)
+        return {
+            "kind": "consecration",
+            "qi_injected": _double(consecration, 1),
+            "qi_required": _double(consecration, 2),
+        }
+    return {"kind": "none"}
+
+
+def _forge_session(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    return {
+        "v": 1,
+        "type": "forge_session",
+        "session_id": _varint(fields, 1),
+        "blueprint_id": _string(fields, 2),
+        "blueprint_name": _string(fields, 3),
+        "active": bool(_varint(fields, 4)),
+        "current_step": FORGE_STEP_NAMES.get(_varint(fields, 5), "unspecified"),
+        "step_index": _varint(fields, 6),
+        "achieved_tier": _varint(fields, 7),
+        "step_state": _forge_step_state(_message(fields, 8)),
+    }
+
+
+def _forge_outcome(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    return {
+        "v": 1,
+        "type": "forge_outcome",
+        "session_id": _varint(fields, 1),
+        "blueprint_id": _string(fields, 2),
+        "bucket": FORGE_OUTCOME_BUCKET_NAMES.get(_varint(fields, 3), "unspecified"),
+        "weapon_item": _string(fields, 4) if _has(fields, 4) else None,
+        "quality": _float32(fields, 5),
+        "side_effects": [
+            value.decode("utf-8", errors="replace") for value in _messages(fields, 7)
+        ],
+        "achieved_tier": _varint(fields, 8),
+        "flawed_path": bool(_varint(fields, 9)),
+    }
+
+
+def _forge_blueprint_book(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    entries = []
+    for raw in _messages(fields, 1):
+        entry = _fields(raw)
+        entries.append(
+            {
+                "id": _string(entry, 1),
+                "display_name": _string(entry, 2),
+                "tier_cap": _varint(entry, 3),
+                "step_count": _varint(entry, 4),
+            }
+        )
+    return {
+        "v": 1,
+        "type": "forge_blueprint_book",
+        "learned": entries,
+        "current_index": _varint(fields, 2),
+    }
+
+
+def _equip_slot(value: int) -> str:
+    return {
+        1: "head",
+        2: "chest",
+        3: "legs",
+        4: "feet",
+        6: "main_hand",
+        7: "off_hand",
+        16: "extra_hand_0",
+        17: "extra_hand_1",
+    }.get(value, "unspecified")
+
+
+def _equip_state(value: int) -> str:
+    return {1: "worn", 2: "held"}.get(value, "unspecified")
+
+
+WIRE_VARINT = 0
+WIRE_64BIT = 1
+WIRE_LEN = 2
+WIRE_32BIT = 5
+
+SERVER_DATA_PAYLOAD_NAMES = {
+    1: "welcome",
+    2: "heartbeat",
+    3: "narration",
+    4: "zone_info",
+    5: "player_state",
+    6: "cultivation_detail",
+    7: "skill_xp_gain",
+    8: "inventory_snapshot",
+    11: "alchemy_furnace",
+    12: "alchemy_session",
+    15: "alchemy_recipe_book",
+    17: "forge_station",
+    18: "forge_session",
+    19: "forge_outcome",
+    20: "forge_blueprint_book",
+    25: "botany_harvest_progress",
+    30: "gathering_session",
+    31: "lingtian_session",
+}
+
+EQUIPPED_ITEM_FIELDS = {
+    1: ("head", "worn"),
+    2: ("head", "held"),
+    3: ("chest", "worn"),
+    4: ("chest", "held"),
+    5: ("legs", "worn"),
+    6: ("legs", "held"),
+    7: ("feet", "worn"),
+    8: ("feet", "held"),
+    9: ("main_hand", "worn"),
+    10: ("main_hand", "held"),
+    11: ("off_hand", "worn"),
+    12: ("off_hand", "held"),
+    13: ("extra_hand_0", "worn"),
+    14: ("extra_hand_0", "held"),
+    15: ("extra_hand_1", "worn"),
+    16: ("extra_hand_1", "held"),
+}
+
+
+@dataclass(frozen=True)
+class ProtoField:
+    number: int
+    wire_type: int
+    value: int | bytes
+
+
+@dataclass(frozen=True)
+class InventoryItemRef:
+    instance_id: int
+    item_id: str
+    location: dict | None = None
+
+
+def read_varint(data: bytes, pos: int = 0) -> tuple[int, int]:
+    value = 0
+    shift = 0
+    start = pos
+    while pos < len(data):
+        byte = data[pos]
+        pos += 1
+        value |= (byte & 0x7F) << shift
+        if byte < 0x80:
+            return value, pos
+        shift += 7
+        if shift >= 70:
+            raise ValueError(f"protobuf varint too long at offset {start}")
+    raise ValueError(f"truncated protobuf varint at offset {start}")
+
+
+def iter_fields(data: bytes) -> list[ProtoField]:
+    fields: list[ProtoField] = []
+    pos = 0
+    while pos < len(data):
+        key, pos = read_varint(data, pos)
+        number = key >> 3
+        wire_type = key & 0x07
+        if number <= 0:
+            raise ValueError(f"invalid protobuf field number {number}")
+
+        if wire_type == WIRE_VARINT:
+            value, pos = read_varint(data, pos)
+        elif wire_type == WIRE_64BIT:
+            end = pos + 8
+            if end > len(data):
+                raise ValueError("truncated protobuf 64-bit field")
+            value = data[pos:end]
+            pos = end
+        elif wire_type == WIRE_LEN:
+            size, pos = read_varint(data, pos)
+            end = pos + size
+            if end > len(data):
+                raise ValueError("truncated protobuf length-delimited field")
+            value = data[pos:end]
+            pos = end
+        elif wire_type == WIRE_32BIT:
+            end = pos + 4
+            if end > len(data):
+                raise ValueError("truncated protobuf 32-bit field")
+            value = data[pos:end]
+            pos = end
+        else:
+            raise ValueError(f"unsupported protobuf wire type {wire_type}")
+
+        fields.append(ProtoField(number, wire_type, value))
+    return fields
+
+
+def _try_fields(data: bytes) -> list[ProtoField] | None:
+    try:
+        return iter_fields(data)
+    except ValueError:
+        return None
+
+
+def server_data_payload_field(data: bytes) -> int | None:
+    fields = _try_fields(data)
+    if not fields:
+        return None
+    return fields[0].number
+
+
+def server_data_payload_name(data: bytes) -> str | None:
+    field = server_data_payload_field(data)
+    if field is None:
+        return None
+    return SERVER_DATA_PAYLOAD_NAMES.get(field, f"field_{field}")
+
+
+def inventory_item_refs(data: bytes) -> list[InventoryItemRef]:
+    """从 ServerDataEnvelope inventory_snapshot 中提取 InventoryItemView 引用。
+
+    非 inventory payload 或畸形字节返回空列表。本解析器只服务 bot 场景铺垫，
+    因此有意忽略绝大多数字段。
+    """
+    envelope = _try_fields(data)
+    if not envelope:
+        return []
+    inventory_fields = [
+        field for field in envelope if field.number == 8 and field.wire_type == WIRE_LEN
+    ]
+    if not inventory_fields:
+        return []
+
+    refs: list[InventoryItemRef] = []
+    for inventory in inventory_fields:
+        assert isinstance(inventory.value, bytes)
+        refs.extend(_inventory_snapshot_refs(inventory.value))
+    return refs
+
+
+def _inventory_snapshot_refs(data: bytes) -> list[InventoryItemRef]:
+    fields = _try_fields(data)
+    if fields is None:
+        return []
+
+    refs: list[InventoryItemRef] = []
+    hotbar_index = 0
+    for field in fields:
+        if field.wire_type != WIRE_LEN:
+            continue
+        assert isinstance(field.value, bytes)
+        if field.number == 3:
+            ref = _placed_item_ref(field.value)
+            if ref is not None:
+                refs.append(ref)
+        elif field.number == 4:
+            refs.extend(_equipped_refs(field.value))
+        elif field.number == 5:
+            ref = _hotbar_ref(field.value, hotbar_index)
+            hotbar_index += 1
+            if ref is not None:
+                refs.append(ref)
+    return refs
+
+
+def _placed_item_ref(data: bytes) -> InventoryItemRef | None:
+    fields = _try_fields(data)
+    if fields is None:
+        return None
+    container_id: str | None = None
+    row: int | None = None
+    col: int | None = None
+    item: InventoryItemRef | None = None
+    for field in fields:
+        if field.number == 1 and field.wire_type == WIRE_LEN:
+            container_id = _decode_utf8(field.value)
+        elif field.number == 2 and field.wire_type == WIRE_VARINT:
+            assert isinstance(field.value, int)
+            row = field.value
+        elif field.number == 3 and field.wire_type == WIRE_VARINT:
+            assert isinstance(field.value, int)
+            col = field.value
+        elif field.number == 4 and field.wire_type == WIRE_LEN:
+            assert isinstance(field.value, bytes)
+            item = _item_view_ref(field.value)
+    if item is None:
+        return None
+    if container_id is None or row is None or col is None:
+        return item
+    return InventoryItemRef(
+        item.instance_id,
+        item.item_id,
+        {"kind": "container", "container_id": container_id, "row": row, "col": col},
+    )
+
+
+def _hotbar_ref(data: bytes, index: int) -> InventoryItemRef | None:
+    fields = _try_fields(data)
+    if fields is None:
+        return None
+    for field in fields:
+        if field.number == 1 and field.wire_type == WIRE_LEN:
+            assert isinstance(field.value, bytes)
+            item = _item_view_ref(field.value)
+            if item is not None:
+                return InventoryItemRef(
+                    item.instance_id, item.item_id, {"kind": "hotbar", "index": index}
+                )
+    return None
+
+
+def _equipped_refs(data: bytes) -> list[InventoryItemRef]:
+    fields = _try_fields(data)
+    if fields is None:
+        return []
+    refs: list[InventoryItemRef] = []
+    for field in fields:
+        if field.wire_type != WIRE_LEN or field.number not in EQUIPPED_ITEM_FIELDS:
+            continue
+        assert isinstance(field.value, bytes)
+        item = _item_view_ref(field.value)
+        if item is None:
+            continue
+        slot, state = EQUIPPED_ITEM_FIELDS[field.number]
+        refs.append(
+            InventoryItemRef(
+                item.instance_id,
+                item.item_id,
+                {"kind": "equip", "slot": slot, "state": state},
+            )
+        )
+    return refs
+
+
+def _item_view_ref(data: bytes) -> InventoryItemRef | None:
+    fields = _try_fields(data)
+    if fields is None:
+        return None
+    instance_id: int | None = None
+    item_id: str | None = None
+    for field in fields:
+        if field.number == 1 and field.wire_type == WIRE_VARINT:
+            assert isinstance(field.value, int)
+            instance_id = field.value
+        elif field.number == 2 and field.wire_type == WIRE_LEN:
+            item_id = _decode_utf8(field.value)
+    if instance_id is None or item_id is None:
+        return None
+    return InventoryItemRef(instance_id, item_id)
+
+
+def _decode_utf8(value: int | bytes) -> str | None:
+    if not isinstance(value, bytes):
+        return None
+    try:
+        return value.decode("utf-8")
+    except UnicodeDecodeError:
+        return None

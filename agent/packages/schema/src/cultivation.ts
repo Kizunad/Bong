@@ -2,14 +2,11 @@
  * 修炼相关共享原子（plan-cultivation-v1 §6）。
  */
 import { Type, type Static } from "@sinclair/typebox";
+import { SkillIdV1 } from "./skill.js";
 
 export const SkillMilestoneSnapshotV1 = Type.Object(
   {
-    skill: Type.Union([
-      Type.Literal("herbalism"),
-      Type.Literal("alchemy"),
-      Type.Literal("forging"),
-    ]),
+    skill: SkillIdV1,
     new_lv: Type.Integer({ minimum: 0, maximum: 10 }),
     achieved_at: Type.Integer({ minimum: 0 }),
     narration: Type.String({ maxLength: 500 }),

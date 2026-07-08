@@ -91,7 +91,7 @@ def _make_dan_zong_zone() -> BlueprintZone:
             terrain_profile="dan_zong_yi_yuan",
             shape="ellipse",
             boundary=BoundarySpec(mode="soft", width=96),
-            height_model={"base": [62, 78], "peak": 92, "compound_flatten_radius": 96},
+            height_model={"base": [62, 78], "peak": 92, "compound_flatten_radius": 244},
             surface_palette=(
                 "podzol", "coarse_dirt", "mud",
                 "purple_terracotta", "mossy_cobblestone",

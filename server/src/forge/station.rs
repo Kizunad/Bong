@@ -16,6 +16,7 @@ use valence::prelude::{
 use super::session::ForgeSessionId;
 use crate::cultivation::components::Cultivation;
 use crate::inventory::{consume_item_instance_once, ItemInstance, ItemRegistry, PlayerInventory};
+use crate::network::forge_snapshot_emit::send_station_snapshot_to_player;
 use crate::network::inventory_snapshot_emit::send_inventory_snapshot_to_client;
 use crate::player::state::PlayerState;
 
@@ -157,12 +158,15 @@ pub fn handle_place_station_request(
         }
 
         let station = WeaponForgeStation::placed(req.pos, station_spec.tier, req.player);
-        commands.spawn(station);
+        commands.spawn(station.clone());
         placed_this_tick.insert(pos_key);
         if let Ok(mut layer) = layers.get_single_mut() {
             layer.set_block(req.pos, BlockState::ANVIL);
         }
         if let Ok((username, mut client, player_state, cultivation)) = clients.get_mut(req.player) {
+            // plan-forge-session-entry-wiring-v1 P2 — 放砧成功专属回执（对齐 alchemy
+            // open_furnace：重要动作必有回执，此前只有 inventory 扣除能间接推断放砧成功）。
+            send_station_snapshot_to_player(&mut client, &station, username.0.as_str());
             send_inventory_snapshot_to_client(
                 req.player,
                 &mut client,

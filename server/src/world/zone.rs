@@ -1804,6 +1804,28 @@ mod zone_tests {
         );
     }
 
+    /// 新手出生区必须能突破：spawn 的烘焙 spirit_qi 要在突破门槛之上留出运行时
+    /// 余量——qi 经济（NPC 吸取等）会把 live 值拉到烘焙值以下，playtest 实测
+    /// 0.3135 基线被拉到 0.29 < 0.30，新手在出生区永远无法突破。
+    #[test]
+    fn spawn_zone_baked_qi_clears_breakthrough_threshold_with_headroom() {
+        use crate::cultivation::breakthrough::MIN_ZONE_QI_TO_BREAKTHROUGH;
+
+        let registry =
+            ZoneRegistry::load_from_path(Path::new(env!("CARGO_MANIFEST_DIR")).join("zones.json"));
+        let spawn = registry
+            .find_zone_by_name("spawn")
+            .expect("zones.json must contain the spawn zone");
+        let headroom = 0.03;
+        assert!(
+            spawn.spirit_qi >= MIN_ZONE_QI_TO_BREAKTHROUGH + headroom,
+            "spawn 烘焙 spirit_qi ({}) 必须 >= 突破门槛 ({MIN_ZONE_QI_TO_BREAKTHROUGH}) + \
+             运行时余量 ({headroom})，否则 qi 经济把 live 值拉下门槛后新手在出生区永远无法\
+             突破；蓝图 spawn spirit_qi=0.35 重跑 zones_export 应得 ~0.363",
+            spawn.spirit_qi
+        );
+    }
+
     /// find_zone 在嵌套 / 重叠 zone 命中时返回 AABB 体积最小（最具体）的 zone。
     #[test]
     fn find_zone_returns_smallest_containing_zone() {

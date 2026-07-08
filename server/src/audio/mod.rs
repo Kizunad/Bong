@@ -176,7 +176,7 @@ mod tests {
             SoundRecipeRegistry::load_default().expect("default audio recipes should load");
         assert_eq!(
             registry.len(),
-            266,
+            269,
             "audio registry should exclude removed slide and double-jump movement recipes \
              plus include 7 supply_coffin recipes (break + open common/rare/precious + emerge) \
              plus 1 ambient_dan_zong recipe \
@@ -213,7 +213,17 @@ mod tests {
              entity.silverfish.ambient pitch 0.7 vol 0.5，无新音频文件) \
              plus 2 combat-hit-location-v1 P3 部位差异 recipes (combat_hit_head_crit / combat_hit_limb \
              — 头部命中叠加 attack.crit+arrow.hit_player 双层、四肢命中换成更闷的 attack.weak，\
-             全部复用 vanilla 音色分层，无新音频文件)"
+             全部复用 vanilla 音色分层，无新音频文件) \
+             plus 1 fauna_mundane_wither recipe (plan-mundane-fauna-v1 P2 负灵域灭杀消亡音效，\
+             entity.wither.hurt pitch 1.6 vol 0.4，无新音频文件) \
+             plus 2 sword swing recipes (sword_cleave_swing / sword_thrust_swing — 基础剑技\
+             挥动破空声，空挥可闻；命中冲击音另走 CombatEvent 层。attack.nodamage 音源\
+             劈低频/刺高频差异化，无新音频文件)"
+        );
+        assert!(
+            registry.get("fauna_mundane_wither").is_some(),
+            "plan-mundane-fauna-v1 P2 负灵域灭杀 recipe `fauna_mundane_wither` 必须加载\
+             （server mundane_fauna_negative_zone_wither_system 引用）"
         );
         for body_part_recipe in ["combat_hit_head_crit", "combat_hit_limb"] {
             assert!(

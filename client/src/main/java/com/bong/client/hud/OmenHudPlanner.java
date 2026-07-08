@@ -50,6 +50,16 @@ public final class OmenHudPlanner {
                     withAlpha(0xB8864A, alpha)
                 ));
             }
+            case TIDE_SKY -> {
+                out.add(HudRenderCommand.screenTint(
+                    HudRenderLayer.VISUAL,
+                    withAlpha(0x2F2A22, 12 + (int) Math.round(26.0 * strength))
+                ));
+                out.add(HudRenderCommand.edgeVignette(
+                    HudRenderLayer.VISUAL,
+                    withAlpha(0x9E8C6A, 24 + (int) Math.round(54.0 * strength))
+                ));
+            }
             case REALM_COLLAPSE -> {
                 out.add(HudRenderCommand.edgeVignette(
                     HudRenderLayer.VISUAL,
@@ -71,6 +81,7 @@ public final class OmenHudPlanner {
         return switch (kind) {
             case PSEUDO_VEIN -> 900.0;
             case BEAST_TIDE -> 600.0;
+            case TIDE_SKY -> 1_200.0;
             case REALM_COLLAPSE -> 450.0;
             case KARMA_BACKLASH -> 240.0;
         };

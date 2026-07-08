@@ -177,6 +177,9 @@ export const InventoryMoveIntentRequestV1 = Type.Object(
     instance_id: Type.Integer({ minimum: 0, maximum: JS_SAFE_INTEGER_MAX }),
     from: InventoryLocationV1,
     to: InventoryLocationV1,
+    // plan-rotate-v1 — 落位前先互换该 instance 的 grid_w/grid_h（拖拽中按 R 旋转）。
+    // 可选字段：旧客户端不带时 server 侧 `#[serde(default)]` 视为 false（未旋转）。
+    rotated: Type.Optional(Type.Boolean()),
   },
   { additionalProperties: false },
 );
@@ -263,6 +266,18 @@ export const PickupDroppedItemRequestV1 = Type.Object(
   { additionalProperties: false },
 );
 export type PickupDroppedItemRequestV1 = Static<typeof PickupDroppedItemRequestV1>;
+
+// plan-remains-suite P0 — 遗骸 G 键统一交互（对应右键 InteractEntityEvent 路径）。
+// remains_id = 遗骸实体的 UniqueId（标准 UUID 字符串），来自 remains_sync 缓存。
+export const RemainsLootRequestV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("remains_loot"),
+    remains_id: Type.String({ minLength: 1 }),
+  },
+  { additionalProperties: false },
+);
+export type RemainsLootRequestV1 = Static<typeof RemainsLootRequestV1>;
 
 export const MineralProbeRequestV1 = Type.Object(
   {
@@ -922,11 +937,13 @@ export const CancelExtractRequestV1 = Type.Object(
 export type CancelExtractRequestV1 = Static<typeof CancelExtractRequestV1>;
 
 // ─── 炼器（武器）（plan-forge-v1 §4） ────────────────────
+// plan-forge-session-entry-wiring-v1 §4.1#3 — 寻址从 station_id: string 改为
+// station_pos（对齐 alchemy furnace_pos 的 BlockPos 寻址模式）。
 export const ForgeStartSessionRequestV1 = Type.Object(
   {
     v: Type.Literal(1),
     type: Type.Literal("forge_start_session"),
-    station_id: Type.String(),
+    station_pos: BlockPosV1,
     blueprint_id: Type.String(),
     materials: Type.Array(
       Type.Tuple([Type.String(), Type.Integer({ minimum: 1 })]),
@@ -1132,6 +1149,7 @@ export const ClientRequestV1 = Type.Union([
   QiColorInspectRequestV1,
   UseLifeCoreRequestV1,
   PickupDroppedItemRequestV1,
+  RemainsLootRequestV1,
   MineralProbeRequestV1,
   FreshnessProbeRequestV1,
   InventoryDiscardItemRequestV1,

@@ -41,7 +41,7 @@ class PseudoVeinOasisProfileTest(unittest.TestCase):
                     "flowering_azalea_leaves",
                     "warped_wart_block",
                 ),
-                landmarks=("phantom_qi_pillar", "tiandao_seal_stele"),
+                landmarks=("phantom_qi_pillar", "sculk_loam_patch"),
                 extras={"core_radius": 60, "rim_radius": 120},
             ),
         )
@@ -57,7 +57,7 @@ class PseudoVeinOasisProfileTest(unittest.TestCase):
                 "false_spirit_lotus",
                 "phantom_qi_pillar",
                 "lush_grass_overlay",
-                "tiandao_seal_stele",
+                "sculk_loam_patch",
                 "false_vein_well",
             ],
         )

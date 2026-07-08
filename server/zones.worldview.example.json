@@ -23,7 +23,7 @@
       },
       "center_xz": [0.0, 0.0],
       "size_xz": [1500.0, 1500.0],
-      "spirit_qi": 0.3,
+      "spirit_qi": 0.35,
       "danger_level": 1,
       "active_events": [],
       "patrol_anchors": [
@@ -1458,7 +1458,7 @@
         "terrain_profile": "dan_zong_yi_yuan",
         "shape": "ellipse",
         "boundary": { "mode": "soft", "width": 96 },
-        "height_model": { "base": [62, 78], "peak": 92, "compound_flatten_radius": 96 },
+        "height_model": { "base": [62, 78], "peak": 92, "compound_flatten_radius": 244 },
         "surface_palette": ["podzol", "coarse_dirt", "mud", "purple_terracotta", "mossy_cobblestone"],
         "biome_mix": ["mofa:dandao_ruins", "mofa:si_yu"],
         "landmarks": ["dan_zong_great_hall", "herb_garden_bagua", "furnace_row"],

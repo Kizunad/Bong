@@ -10,7 +10,7 @@ use crate::network::audio_event_emit::{AudioRecipient, PlaySoundRecipeRequest};
 use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::npc::patrol::NpcPatrol;
 use crate::qi_physics::constants::{QI_EPSILON, QI_ZONE_UNIT_CAPACITY};
-use crate::qi_physics::ledger::{QiAccountId, QiTransfer, QiTransferReason};
+use crate::qi_physics::ledger::{QiAccountId, QiTransfer, QiTransferReason, WorldQiAccount};
 use crate::qi_physics::release::qi_release_to_zone;
 use crate::schema::vfx_event::VfxEventPayloadV1;
 use crate::world::zone::ZoneRegistry;
@@ -49,6 +49,82 @@ pub const BUFF_DEFENSE_MAGNITUDE: f32 = 0.2;
 pub const BUFF_DURATION_TICKS: u64 = 200;
 pub const BUFF_COOLDOWN_TICKS: u64 = 400;
 
+fn npc_qi_account(caster: Entity) -> QiAccountId {
+    QiAccountId::npc(format!("npc_{}v{}", caster.index(), caster.generation()))
+}
+
+fn send_qi_transfer_event(world: &mut bevy_ecs::world::World, transfer: QiTransfer) {
+    if let Some(mut events) = world.get_resource_mut::<Events<QiTransfer>>() {
+        events.send(transfer);
+    }
+}
+
+fn send_qi_transfer_events(world: &mut bevy_ecs::world::World, transfers: Vec<QiTransfer>) {
+    if transfers.is_empty() {
+        return;
+    }
+
+    if let Some(mut events) = world.get_resource_mut::<Events<QiTransfer>>() {
+        for transfer in transfers {
+            events.send(transfer);
+        }
+    }
+}
+
+fn credit_spent_qi_to_ledger(world: &mut bevy_ecs::world::World, transfer: &QiTransfer) {
+    let Some(mut account) = world.get_resource_mut::<WorldQiAccount>() else {
+        tracing::warn!(
+            ?transfer,
+            "[bong][npc_skill] WorldQiAccount missing; spent NPC qi cannot be ledgered"
+        );
+        return;
+    };
+
+    let previous_from_balance = account.balance(&transfer.from);
+    if let Err(error) = account.set_balance(
+        transfer.from.clone(),
+        previous_from_balance + transfer.amount,
+    ) {
+        tracing::warn!(
+            ?error,
+            ?transfer,
+            "[bong][npc_skill] failed to stage NPC skill spent qi source balance"
+        );
+        return;
+    }
+
+    if let Err(error) = account.transfer(transfer.clone()) {
+        let _ = account.set_balance(transfer.from.clone(), previous_from_balance);
+        tracing::warn!(
+            ?error,
+            ?transfer,
+            "[bong][npc_skill] failed to ledger NPC skill spent qi"
+        );
+    }
+}
+
+fn route_spent_qi_to_overflow(
+    world: &mut bevy_ecs::world::World,
+    from: QiAccountId,
+    to: QiAccountId,
+    amount: f64,
+) {
+    if amount <= QI_EPSILON {
+        return;
+    }
+
+    let Ok(transfer) = QiTransfer::new(from, to, amount, QiTransferReason::ReleaseToZone) else {
+        tracing::warn!(
+            amount,
+            "[bong][npc_skill] invalid NPC skill overflow transfer amount"
+        );
+        return;
+    };
+
+    credit_spent_qi_to_ledger(world, &transfer);
+    send_qi_transfer_event(world, transfer);
+}
+
 /// Emit QiTransfer events to return spent qi to the NPC's home zone (qi conservation).
 /// Follows the same pattern as `tuike_v2::skills::release_spent_qi_to_zone`.
 fn release_npc_qi_to_zone(world: &mut bevy_ecs::world::World, caster: Entity, amount: f64) {
@@ -60,22 +136,18 @@ fn release_npc_qi_to_zone(world: &mut bevy_ecs::world::World, caster: Entity, am
         Some(patrol) => patrol.home_zone.clone(),
         None => {
             // No patrol component — route to overflow so qi is not lost.
-            let from = QiAccountId::npc(format!("npc_{}v{}", caster.index(), caster.generation()));
+            let from = npc_qi_account(caster);
             let to = QiAccountId::overflow(format!("npc_skill_no_zone:{}", caster.to_bits()));
-            if let Ok(transfer) = QiTransfer::new(from, to, amount, QiTransferReason::ReleaseToZone)
-            {
-                if let Some(mut events) = world.get_resource_mut::<Events<QiTransfer>>() {
-                    events.send(transfer);
-                }
-            }
+            route_spent_qi_to_overflow(world, from, to, amount);
             return;
         }
     };
 
-    let from = QiAccountId::npc(format!("npc_{}v{}", caster.index(), caster.generation()));
+    let from = npc_qi_account(caster);
     let to = QiAccountId::zone(home_zone.clone());
 
     let mut transfers = Vec::new();
+    let mut ledger_transfers = Vec::new();
 
     if let Some(mut zones) = world.get_resource_mut::<ZoneRegistry>() {
         if let Some(zone) = zones.find_zone_mut(&home_zone) {
@@ -105,6 +177,7 @@ fn release_npc_qi_to_zone(world: &mut bevy_ecs::world::World, caster: Entity, am
                             outcome.overflow,
                             QiTransferReason::ReleaseToZone,
                         ) {
+                            ledger_transfers.push(t.clone());
                             transfers.push(t);
                         }
                     }
@@ -123,6 +196,7 @@ fn release_npc_qi_to_zone(world: &mut bevy_ecs::world::World, caster: Entity, am
                         amount,
                         QiTransferReason::ReleaseToZone,
                     ) {
+                        ledger_transfers.push(t.clone());
                         transfers.push(t);
                     }
                 }
@@ -137,18 +211,27 @@ fn release_npc_qi_to_zone(world: &mut bevy_ecs::world::World, caster: Entity, am
                 amount,
                 QiTransferReason::ReleaseToZone,
             ) {
+                ledger_transfers.push(t.clone());
                 transfers.push(t);
             }
         }
-    }
-
-    if !transfers.is_empty() {
-        if let Some(mut events) = world.get_resource_mut::<Events<QiTransfer>>() {
-            for t in transfers {
-                events.send(t);
-            }
+    } else {
+        let overflow_to = QiAccountId::overflow(format!("npc_skill_no_zone:{}", caster.to_bits()));
+        if let Ok(t) = QiTransfer::new(
+            from.clone(),
+            overflow_to,
+            amount,
+            QiTransferReason::ReleaseToZone,
+        ) {
+            ledger_transfers.push(t.clone());
+            transfers.push(t);
         }
     }
+
+    for transfer in &ledger_transfers {
+        credit_spent_qi_to_ledger(world, transfer);
+    }
+    send_qi_transfer_events(world, transfers);
 }
 
 /// 复用既有 particle + audio recipe 发射招式 AV（纯加法 cosmetic，无净新资产）。
@@ -384,7 +467,9 @@ mod tests {
     use super::*;
     use crate::combat::components::{BodyPart, Wound, WoundKind, Wounds};
     use crate::cultivation::components::{Cultivation, Realm};
-    use crate::qi_physics::ledger::QiAccountKind;
+    use crate::qi_physics::ledger::{
+        assert_conservation, summarize_world_qi, QiAccountKind, WorldQiAccount,
+    };
     use valence::prelude::DVec3;
 
     fn world_with_events() -> bevy_ecs::world::World {
@@ -779,6 +864,14 @@ mod tests {
         world
     }
 
+    fn insert_qi_ledger(world: &mut bevy_ecs::world::World) {
+        world.insert_resource(WorldQiAccount::default());
+    }
+
+    fn ledger_balance(world: &bevy_ecs::world::World, account: &QiAccountId) -> f64 {
+        world.resource::<WorldQiAccount>().balance(account)
+    }
+
     #[test]
     fn heal_basic_emits_qi_transfer_to_zone() {
         let mut world = world_with_zone_registry();
@@ -917,7 +1010,10 @@ mod tests {
     #[test]
     fn skill_without_patrol_routes_to_overflow() {
         let mut world = world_with_zone_registry();
+        insert_qi_ledger(&mut world);
         let entity = world.spawn(make_cultivation(Realm::Condense, 50.0)).id();
+        let overflow_account =
+            QiAccountId::overflow(format!("npc_skill_no_zone:{}", entity.to_bits()));
 
         npc_buff_speed(&mut world, entity, 0, None);
 
@@ -933,6 +1029,157 @@ mod tests {
             QiAccountKind::Overflow,
             "should route to overflow account, got {:?}",
             transfers[0].to
+        );
+        assert!(
+            (ledger_balance(&world, &overflow_account) - BUFF_SPEED_QI_COST).abs() < QI_EPSILON,
+            "no-patrol overflow must be a real WorldQiAccount balance"
+        );
+        assert!(
+            ledger_balance(&world, &npc_qi_account(entity)).abs() < QI_EPSILON,
+            "temporary live NPC source balance must be drained back to zero"
+        );
+    }
+
+    #[test]
+    fn heal_full_home_zone_ledgers_overflow_and_preserves_snapshot_total() {
+        let mut world = world_with_zone_registry();
+        insert_qi_ledger(&mut world);
+        world
+            .resource_mut::<ZoneRegistry>()
+            .find_zone_mut("spawn")
+            .expect("default registry 必须含 spawn zone")
+            .spirit_qi = 1.0;
+
+        let wounds = make_wounds(50.0, 100.0, vec![]);
+        let entity = world
+            .spawn((
+                make_cultivation(Realm::Induce, 50.0),
+                wounds,
+                NpcPatrol::new("spawn", DVec3::new(14.0, 66.0, 14.0)),
+            ))
+            .id();
+        let overflow_account =
+            QiAccountId::overflow(format!("npc_skill_overflow:{}", entity.to_bits()));
+        let before = summarize_world_qi(&mut world);
+
+        npc_heal_basic(&mut world, entity, 0, None);
+
+        let zone_after = world
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name("spawn")
+            .expect("spawn zone")
+            .spirit_qi;
+        assert!(
+            (zone_after - 1.0).abs() < QI_EPSILON,
+            "满仓 zone 不应继续增加，实际 {zone_after}"
+        );
+        assert!(
+            (ledger_balance(&world, &overflow_account) - HEAL_QI_COST).abs() < QI_EPSILON,
+            "满仓 overflow 应完整落入 WorldQiAccount"
+        );
+        assert!(
+            ledger_balance(&world, &npc_qi_account(entity)).abs() < QI_EPSILON,
+            "活体 NPC source 只临时引燃，转账后必须归零"
+        );
+        let after = summarize_world_qi(&mut world);
+        assert_conservation(&before, &after, 0.0).expect("full-overflow path must conserve qi");
+    }
+
+    #[test]
+    fn buff_defense_near_cap_ledgers_only_overflow_remainder() {
+        let mut world = world_with_zone_registry();
+        insert_qi_ledger(&mut world);
+        world
+            .resource_mut::<ZoneRegistry>()
+            .find_zone_mut("spawn")
+            .expect("default registry 必须含 spawn zone")
+            .spirit_qi = 0.90;
+
+        let entity = world
+            .spawn((
+                make_cultivation(Realm::Condense, 50.0),
+                NpcPatrol::new("spawn", DVec3::new(14.0, 66.0, 14.0)),
+            ))
+            .id();
+        let overflow_account =
+            QiAccountId::overflow(format!("npc_skill_overflow:{}", entity.to_bits()));
+        let before_total = world.get::<Cultivation>(entity).unwrap().qi_current
+            + world
+                .resource::<ZoneRegistry>()
+                .find_zone_by_name("spawn")
+                .expect("spawn zone")
+                .spirit_qi
+                * QI_ZONE_UNIT_CAPACITY
+            + world.resource::<WorldQiAccount>().total();
+
+        npc_buff_defense(&mut world, entity, 0, None);
+
+        let zone_after = world
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name("spawn")
+            .expect("spawn zone")
+            .spirit_qi;
+        let expected_overflow = 1.0;
+        assert!(
+            (zone_after - 1.0).abs() < QI_EPSILON,
+            "0.90 zone 接收 5 点后应到满仓，实际 {zone_after}"
+        );
+        assert!(
+            (ledger_balance(&world, &overflow_account) - expected_overflow).abs() < QI_EPSILON,
+            "只有满仓剩余 1 点应落入 overflow ledger，accepted 部分不能双计"
+        );
+        assert!(
+            (world.resource::<WorldQiAccount>().total() - expected_overflow).abs() < QI_EPSILON,
+            "ledger total 只能包含 overflow remainder，不能包含 accepted zone 部分"
+        );
+        let after_total = world.get::<Cultivation>(entity).unwrap().qi_current
+            + zone_after * QI_ZONE_UNIT_CAPACITY
+            + world.resource::<WorldQiAccount>().total();
+        assert!(
+            (before_total - after_total).abs() < QI_EPSILON,
+            "部分回灌 zone + overflow 时必须守恒：before={before_total}, after={after_total}"
+        );
+    }
+
+    #[test]
+    fn missing_home_zone_ledgers_full_cost_to_overflow() {
+        let mut world = world_with_zone_registry();
+        insert_qi_ledger(&mut world);
+        let entity = world
+            .spawn((
+                make_cultivation(Realm::Condense, 50.0),
+                NpcPatrol::new("missing_zone", DVec3::new(14.0, 66.0, 14.0)),
+            ))
+            .id();
+        let overflow_account =
+            QiAccountId::overflow(format!("npc_skill_no_zone:{}", entity.to_bits()));
+
+        npc_buff_speed(&mut world, entity, 0, None);
+
+        assert!(
+            (ledger_balance(&world, &overflow_account) - BUFF_SPEED_QI_COST).abs() < QI_EPSILON,
+            "缺 home zone 时完整成本必须真实落入 overflow ledger"
+        );
+    }
+
+    #[test]
+    fn missing_zone_registry_ledgers_full_cost_to_overflow() {
+        let mut world = world_with_events();
+        insert_qi_ledger(&mut world);
+        let entity = world
+            .spawn((
+                make_cultivation(Realm::Condense, 50.0),
+                NpcPatrol::new("spawn", DVec3::new(14.0, 66.0, 14.0)),
+            ))
+            .id();
+        let overflow_account =
+            QiAccountId::overflow(format!("npc_skill_no_zone:{}", entity.to_bits()));
+
+        npc_buff_speed(&mut world, entity, 0, None);
+
+        assert!(
+            (ledger_balance(&world, &overflow_account) - BUFF_SPEED_QI_COST).abs() < QI_EPSILON,
+            "缺 ZoneRegistry 时完整成本必须真实落入 overflow ledger"
         );
     }
 

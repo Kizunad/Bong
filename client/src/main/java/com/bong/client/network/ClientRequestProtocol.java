@@ -53,6 +53,12 @@ public final class ClientRequestProtocol {
     /** 淬炼击键：J=Light, K=Heavy, L=Fold。 */
     public enum TemperBeat { L, H, F }
 
+    /**
+     * plan-forge-session-entry-wiring-v1 §4.1#3 —— 起炉投料条目：材料标识（对齐背包
+     * {@code InventoryItem#itemId()}，server 侧按 mineral_id||template_id 匹配）+ 数量。
+     */
+    public record ForgeMaterial(String materialId, int count) {}
+
     public enum AnqiContainerKind {
         HAND_SLOT("hand_slot"),
         QUIVER("quiver"),
@@ -591,11 +597,24 @@ public final class ClientRequestProtocol {
         }
     }
 
-    public static String encodeInventoryMove(long instanceId, InvLocation from, InvLocation to) {
+    /**
+     * plan-rotate-v1 — {@code rotated=true} 表示本次落位前先把该 instance 的
+     * grid_w/grid_h 互换（拖拽中按 R 旋转，2x1 ↔ 1x2）。false 时字段省略，
+     * server 侧 {@code #[serde(default)]} 视为未旋转（与旧 payload 形状一致）。
+     */
+    public static String encodeInventoryMove(
+        long instanceId,
+        InvLocation from,
+        InvLocation to,
+        boolean rotated
+    ) {
         JsonObject obj = envelope("inventory_move_intent");
         obj.addProperty("instance_id", instanceId);
         obj.add("from", from.toJson());
         obj.add("to", to.toJson());
+        if (rotated) {
+            obj.addProperty("rotated", true);
+        }
         return obj.toString();
     }
 
@@ -621,6 +640,20 @@ public final class ClientRequestProtocol {
     public static String encodePickupDroppedItem(long instanceId) {
         JsonObject obj = envelope("pickup_dropped_item");
         obj.addProperty("instance_id", instanceId);
+        return obj.toString();
+    }
+
+    /**
+     * plan-remains-suite P0 — 遗骸 G 键统一交互（对应右键 InteractEntityEvent 路径）。
+     *
+     * @param remainsId 遗骸实体的稳定 id（来自 {@link com.bong.client.inventory.state.RemainsStore}）
+     */
+    public static String encodeRemainsLoot(String remainsId) {
+        if (remainsId == null || remainsId.isBlank()) {
+            throw new IllegalArgumentException("remainsId must not be null/blank");
+        }
+        JsonObject obj = envelope("remains_loot");
+        obj.addProperty("remains_id", remainsId);
         return obj.toString();
     }
 
@@ -978,6 +1011,62 @@ public final class ClientRequestProtocol {
         JsonObject obj = envelope("forge_inscription_scroll");
         obj.addProperty("session_id", sessionId);
         obj.addProperty("inscription_id", inscriptionId.trim());
+        return obj.toString();
+    }
+
+    // ─── plan-forge-session-entry-wiring-v1 §4.1#2/#3：起炉 / 图谱翻页 C2S ────────────
+
+    /**
+     * plan-forge-session-entry-wiring-v1 §4.1#3 —— 起炉请求。station 寻址改用坐标
+     * （对齐 alchemy {@code furnace_pos} 的 BlockPos 寻址模式，替代此前从未有发送方的
+     * {@code station_id: String} 死字段）。
+     *
+     * @param stationPos  砧方块坐标（来自 {@code ForgeStationStore.snapshot().pos()}）
+     * @param blueprintId 起炉所用图谱 id
+     * @param materials   投料清单（material id → count），可为空列表
+     */
+    public static String encodeForgeStartSession(BlockPos stationPos, String blueprintId, List<ForgeMaterial> materials) {
+        if (stationPos == null) {
+            throw new IllegalArgumentException("stationPos must not be null");
+        }
+        String resolvedBlueprintId = requireNonBlank(blueprintId, "blueprintId");
+        JsonObject obj = envelope("forge_start_session");
+        JsonArray stationPosArr = new JsonArray();
+        stationPosArr.add(stationPos.getX());
+        stationPosArr.add(stationPos.getY());
+        stationPosArr.add(stationPos.getZ());
+        obj.add("station_pos", stationPosArr);
+        obj.addProperty("blueprint_id", resolvedBlueprintId);
+        JsonArray materialsArr = new JsonArray();
+        if (materials != null) {
+            for (ForgeMaterial material : materials) {
+                if (material == null) {
+                    throw new IllegalArgumentException("materials entries must not be null");
+                }
+                String materialId = requireNonBlank(material.materialId(), "materialId");
+                if (material.count() < 1) {
+                    throw new IllegalArgumentException(
+                        "materials entry count must be >= 1, got " + material.count());
+                }
+                JsonArray pair = new JsonArray();
+                pair.add(materialId);
+                pair.add(material.count());
+                materialsArr.add(pair);
+            }
+        }
+        obj.add("materials", materialsArr);
+        return obj.toString();
+    }
+
+    /**
+     * plan-forge-session-entry-wiring-v1 §4.1#2 —— 图谱书翻页请求。server 权威页码：
+     * 翻页后由 {@code forge_blueprint_book} S2C 回推真实页码，client 不再本地直改
+     * {@code BlueprintScrollStore}。{@code delta} 可正可负，也可 |delta| > 1（server
+     * 按 |delta| 步数循环调用 next/prev_page）。
+     */
+    public static String encodeForgeBlueprintTurnPage(int delta) {
+        JsonObject obj = envelope("forge_blueprint_turn_page");
+        obj.addProperty("delta", delta);
         return obj.toString();
     }
 

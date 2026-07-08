@@ -1710,6 +1710,51 @@ mod tests {
         );
     }
 
+    /// plan-mundane-fauna-v1 P2「妖兽=凡兽的口粮」跨层捕食边的运行时回归护栏：
+    /// `preys_on`（`fauna::mundane`）只 pin 纯函数真值表，这里锁死真实 territory 猎杀管线——
+    /// 一只妖兽（`NpcArchetype::Beast`）对上一只带 `NpcArchetype::Mundane` 的凡兽（realm 地板
+    /// `Awaken`）时，`consider_hunt_candidate` 的 archetype 门（只对 Beast 目标查 `is_prey_of`）
+    /// 让非 Beast 目标无差别放行，妖兽必须把凡兽选为猎物。若日后有人给该门加"目标须带
+    /// `FaunaTag`/`Beast`"之类的过滤，这条 P2 生态边会静默消失——此测试即为撞红点。
+    #[test]
+    fn beast_hunt_action_targets_mundane_fauna_via_existing_territory_pipeline() {
+        let mut app = build_hunt_app();
+        let territory = Territory::new(DVec3::new(0.0, 64.0, 0.0), 50.0);
+        let beast = spawn_beast_hunter(&mut app, DVec3::new(0.0, 64.0, 0.0), territory);
+        // 凡兽目标：显式 NpcArchetype::Mundane + realm 地板（复刻 spawn_mundane_fauna_at 的运行态）。
+        let mundane_prey = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                NpcArchetype::Mundane,
+                Position::new([10.0, 64.0, 10.0]),
+                Cultivation {
+                    realm: Realm::Awaken,
+                    ..Default::default()
+                },
+            ))
+            .id();
+
+        let action = app
+            .world_mut()
+            .spawn((Actor(beast), HuntAction, ActionState::Requested))
+            .id();
+        app.update();
+
+        let _ = action;
+        let hunt = *app.world().get::<HuntState>(beast).unwrap();
+        assert_eq!(
+            hunt.target,
+            Some(mundane_prey),
+            "妖兽必须把凡兽（NpcArchetype::Mundane）选为猎物——非 Beast 目标不走 is_prey_of 门，\
+             这条 P2『凡兽=妖兽口粮』生态边靠既有 territory 管线的无差别放行成立"
+        );
+        assert!(
+            !app.world().get::<Navigator>(beast).unwrap().is_idle(),
+            "选中凡兽猎物后妖兽应开始导航追猎（Navigator 非 idle）"
+        );
+    }
+
     // --- ProtectYoungAction ---
 
     fn build_protect_young_action_app() -> App {

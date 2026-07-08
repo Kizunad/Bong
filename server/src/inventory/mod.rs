@@ -24,6 +24,15 @@ pub struct DeathDropAnchor {
     pub pos: [f64; 3],
 }
 
+/// TSY 死亡掉落窗口内的临时上下文。
+///
+/// Collapse completed 会立刻移除 `TsyPresence`，避免玩家继续被 gate 视作 TSY 内实体；
+/// 但复活掉落仍需要入场 snapshot 来执行 TSY 分流规则。
+#[derive(Debug, Clone, Component)]
+pub struct PendingTsyDeathDrop {
+    pub presence: crate::world::tsy::TsyPresence,
+}
+
 /// plan-death-lifecycle-v1 §4b：寿元耗尽（老死）后，不应把遗物散落为地面掉落点。
 /// 遗物应以“遗骸容器”的形式留在世界中供他人搜刮。
 ///
@@ -809,12 +818,15 @@ pub fn register(app: &mut App) {
     poi_loot::log_novice_poi_loot_tables();
     app.add_event::<DroppedItemEvent>();
     app.add_event::<InventoryDurabilityChangedEvent>();
+    // plan-remains-suite P0 — 遗骸 G 键统一交互 intent（与右键 InteractEntityEvent 并行）。
+    app.add_event::<RemainsLootIntent>();
     app.add_systems(
         Update,
         (
             apply_death_drop_on_revive,
             apply_termination_drop_on_terminate,
             handle_remains_interactions,
+            handle_remains_loot_intents,
             freshness::freshness_tick_system,
             sync_overloaded_marker,
             spirit_treasure::sync_spirit_treasures,
@@ -844,6 +856,7 @@ pub fn apply_termination_drop_on_terminate(
     anchors: Query<&DeathDropAnchor>,
     layer_ids: Query<&EntityLayerId>,
     dimensions: Query<&CurrentDimension>,
+    terrain_providers: Option<valence::prelude::Res<crate::world::terrain::TerrainProviders>>,
     mut dropped_registry: bevy_ecs::system::ResMut<DroppedLootRegistry>,
 ) {
     for ev in terminated.read() {
@@ -928,8 +941,21 @@ pub fn apply_termination_drop_on_terminate(
                 continue;
             };
 
-            let (remains_entity, entry_entity) =
-                spawn_player_remains_entity(&mut commands, layer_id.0, base);
+            // 死亡点若在半空（如高台战斗/浮空秘境），遗骸不应悬空——贴地才像"尸体"。
+            let surface_provider = terrain_providers
+                .as_deref()
+                .and_then(|providers| providers.for_dimension(entity_dimension));
+            let snapped = crate::npc::spawn::common::snap_spawn_y_to_surface(
+                valence::prelude::DVec3::new(base[0], base[1], base[2]),
+                surface_provider,
+            );
+            let remains_pos = [snapped.x, snapped.y, snapped.z];
+            let (remains_entity, entry_entity) = spawn_player_remains_entity(
+                &mut commands,
+                layer_id.0,
+                remains_pos,
+                entity_dimension,
+            );
             let items = drained
                 .into_iter()
                 .map(
@@ -973,10 +999,15 @@ pub fn apply_termination_drop_on_terminate(
     }
 }
 
+/// 遗骸容器人称——worldview §十二「终结后」用的是「遗骸容器」而不是"遗蜕"，
+/// 遗蜕是最初的占位英文名 "Remains" 的直译误用，这里统一成正典词。
+pub const REMAINS_DISPLAY_NAME: &str = "遗骸";
+
 fn spawn_player_remains_entity(
     commands: &mut Commands,
     layer: Entity,
     pos: [f64; 3],
+    dimension: DimensionKind,
 ) -> (Entity, Entity) {
     use valence::entity::entity::{CustomName, NameVisible, NoGravity, Pose as PoseComponent};
     use valence::entity::player::PlayerEntityBundle;
@@ -995,11 +1026,15 @@ fn spawn_player_remains_entity(
             position: Position::new(pos),
             // Keep it in-place and visibly "dead".
             entity_no_gravity: NoGravity(true),
-            entity_pose: PoseComponent(valence::entity::Pose::Dying),
-            entity_custom_name: CustomName(Some(Text::text("Remains"))),
+            // `Pose::Dying` 只驱动 vanilla LivingEntityRenderer 的死亡旋转动画（deathTime
+            // 插值），不会让实体整体躺平——玩家看到的其实是"站着扭曲"，不像尸体。
+            // `Pose::Sleeping` 才是唯一让 player 实体客户端整体躺平渲染的 pose。
+            entity_pose: PoseComponent(valence::entity::Pose::Sleeping),
+            entity_custom_name: CustomName(Some(Text::text(REMAINS_DISPLAY_NAME))),
             entity_name_visible: NameVisible(true),
             ..Default::default()
         })
+        .insert(CurrentDimension(dimension))
         .id();
 
     // In order for the player entity to be visible to other players, there must
@@ -1008,7 +1043,7 @@ fn spawn_player_remains_entity(
         .spawn(PlayerListEntryBundle {
             uuid,
             username: Username(username),
-            display_name: DisplayName(Some(Text::text("Remains"))),
+            display_name: DisplayName(Some(Text::text(REMAINS_DISPLAY_NAME))),
             listed: Listed(false),
             ..Default::default()
         })
@@ -1017,14 +1052,92 @@ fn spawn_player_remains_entity(
     (remains_entity, entry_entity)
 }
 
+/// 遗骸拾取范围（右键交互与 G 键 C2S 两条路径共用同一个常量）。
+pub const REMAINS_PICKUP_RANGE_SQ: f64 = 2.5 * 2.5;
+
+/// 遗骸拾取核心：把 bone_coins + items 转移进拾取者背包，装不下的留在遗骸里；
+/// 全部转移完毕后 despawn 遗骸实体（**valence 层实体必须 `insert(Despawned)`，
+/// 不许裸 `despawn()`**——否则 `send_entity_update_messages` 会因为找不到已裸删的
+/// 实体而 panic 崩服，见 `feedback_valence_despawn_layer_entity` 血泪教训）。
+///
+/// 右键交互（[`handle_remains_interactions`]）与 G 键统一交互（[`RemainsLootIntent`]）
+/// 两条路径共用本函数；范围 / 同 layer / 同 dimension 校验由各自调用方负责——两条路径的
+/// 校验数据来源不同（一条来自 vanilla `InteractEntityEvent`，一条来自 client 上报的
+/// `remains_id` 反查），收敛在这里反而会模糊两边各自的拒绝语义。
+///
+/// 返回值：本次是否至少转移了一件物品 / 一点骨币（`moved_any`）。
+pub fn transfer_remains_to_looter(
+    commands: &mut Commands,
+    remains_entity: Entity,
+    remains: &mut RemainsContainer,
+    inventory: &mut PlayerInventory,
+) -> bool {
+    let mut moved_any = false;
+
+    // Transfer wallet bone coins first (no slot requirements).
+    if remains.bone_coins > 0 && inventory.bone_coins < JS_SAFE_INTEGER_MAX {
+        let available = JS_SAFE_INTEGER_MAX.saturating_sub(inventory.bone_coins);
+        let transfer = remains.bone_coins.min(available);
+        if transfer > 0 {
+            inventory.bone_coins = inventory.bone_coins.saturating_add(transfer);
+            remains.bone_coins = remains.bone_coins.saturating_sub(transfer);
+            moved_any = true;
+        }
+    }
+
+    // Transfer item instances into the looter's containers.
+    if !remains.items.is_empty() {
+        let mut leftover = Vec::with_capacity(remains.items.len());
+        for record in remains.items.drain(..) {
+            let RemainsItemRecord {
+                source_container_id,
+                source_row,
+                source_col,
+                item,
+            } = record;
+
+            let Some(location) = find_first_fit_container_location(inventory, &item) else {
+                leftover.push(RemainsItemRecord {
+                    source_container_id,
+                    source_row,
+                    source_col,
+                    item,
+                });
+                continue;
+            };
+            if let Err(reason) = attach_at_location(inventory, item.clone(), &location) {
+                tracing::warn!("[bong][inventory] remains loot attach rejected: {reason}");
+                leftover.push(RemainsItemRecord {
+                    source_container_id,
+                    source_row,
+                    source_col,
+                    item,
+                });
+                continue;
+            }
+            moved_any = true;
+        }
+        remains.items = leftover;
+    }
+
+    if moved_any {
+        bump_revision(inventory);
+    }
+
+    if remains.items.is_empty() && remains.bone_coins == 0 {
+        commands.entity(remains_entity).insert(Despawned);
+        commands.entity(remains.player_list_entry).insert(Despawned);
+    }
+
+    moved_any
+}
+
 pub fn handle_remains_interactions(
     mut interactions: bevy_ecs::event::EventReader<InteractEntityEvent>,
     mut commands: Commands,
     mut remains_q: Query<(Entity, &mut RemainsContainer, &Position, &EntityLayerId)>,
     mut inventories: Query<(&mut PlayerInventory, &Position, &EntityLayerId)>,
 ) {
-    const PICKUP_RANGE_SQ: f64 = 2.5 * 2.5;
-
     for ev in interactions.read() {
         match ev.interact {
             EntityInteraction::Interact(Hand::Main)
@@ -1051,65 +1164,145 @@ pub fn handle_remains_interactions(
         let dx = rp.x - pp.x;
         let dy = rp.y - pp.y;
         let dz = rp.z - pp.z;
-        if dx * dx + dy * dy + dz * dz > PICKUP_RANGE_SQ {
+        if dx * dx + dy * dy + dz * dz > REMAINS_PICKUP_RANGE_SQ {
             continue;
         }
 
-        let mut moved_any = false;
+        transfer_remains_to_looter(&mut commands, remains_entity, &mut remains, &mut inventory);
+    }
+}
 
-        // Transfer wallet bone coins first (no slot requirements).
-        if remains.bone_coins > 0 && inventory.bone_coins < JS_SAFE_INTEGER_MAX {
-            let available = JS_SAFE_INTEGER_MAX.saturating_sub(inventory.bone_coins);
-            let transfer = remains.bone_coins.min(available);
-            if transfer > 0 {
-                inventory.bone_coins = inventory.bone_coins.saturating_add(transfer);
-                remains.bone_coins = remains.bone_coins.saturating_sub(transfer);
-                moved_any = true;
-            }
+/// plan-remains-suite P0：遗骸 G 键统一交互 intent（`ClientRequestV1::RemainsLoot` 落地后
+/// 由 `network::client_request_handler` 发出，本模块的 [`handle_remains_loot_intents`] 消费）。
+/// 之所以走 event 中转而不是直接塞进 `handle_client_request_payloads`：那个巨型 match 函数
+/// 已经持有形状不同的 `Query<&mut PlayerInventory>` 等，本 intent 需要的
+/// `(Entity, &UniqueId, &mut RemainsContainer, ...)` 组合查询与之在同一 system 内会产生
+/// query 别名冲突；拆成独立 system 与 `handle_remains_interactions`（右键路径）对称。
+#[derive(Debug, Clone, bevy_ecs::event::Event)]
+pub struct RemainsLootIntent {
+    pub entity: Entity,
+    pub remains_id: String,
+}
+
+fn notify_remains_loot(
+    pending_narrations: Option<&mut crate::player::gameplay::PendingGameplayNarrations>,
+    usernames: &Query<&Username>,
+    entity: Entity,
+    text: &str,
+    style: crate::schema::common::NarrationStyle,
+) {
+    let (Some(pending_narrations), Ok(username)) = (pending_narrations, usernames.get(entity))
+    else {
+        return;
+    };
+    pending_narrations.push_player(username.0.as_str(), text, style);
+}
+
+/// G 键统一交互路径的遗骸拾取：候选/派发在 client 侧（[`RemainsLootIntentHandler`] 的 Java
+/// 对应实现）已经用 [`RemainsStore`]（client 缓存的 remains_sync 快照）挑出目标，这里只做
+/// server 端权威校验（同 layer + 同 dimension + 2.5m 范围），不信任 client 的候选判断。
+type RemainsLootQueryItem<'a> = (
+    Entity,
+    &'a valence::prelude::UniqueId,
+    &'a mut RemainsContainer,
+    &'a Position,
+    &'a EntityLayerId,
+    Option<&'a CurrentDimension>,
+);
+type RemainsLooterQueryItem<'a> = (
+    &'a mut PlayerInventory,
+    &'a Position,
+    &'a EntityLayerId,
+    Option<&'a CurrentDimension>,
+);
+
+#[allow(clippy::type_complexity)]
+pub fn handle_remains_loot_intents(
+    mut intents: bevy_ecs::event::EventReader<RemainsLootIntent>,
+    mut commands: Commands,
+    mut remains_q: Query<RemainsLootQueryItem<'_>>,
+    mut inventories: Query<RemainsLooterQueryItem<'_>>,
+    usernames: Query<&Username>,
+    mut pending_narrations: Option<
+        valence::prelude::ResMut<crate::player::gameplay::PendingGameplayNarrations>,
+    >,
+) {
+    use crate::schema::common::NarrationStyle;
+
+    for intent in intents.read() {
+        let Ok((mut inventory, player_pos, player_layer, player_dimension)) =
+            inventories.get_mut(intent.entity)
+        else {
+            continue;
+        };
+
+        let target = remains_q
+            .iter_mut()
+            .find(|(_, uuid, ..)| uuid.0.to_string() == intent.remains_id);
+        let Some((
+            remains_entity,
+            _uuid,
+            mut remains,
+            remains_pos,
+            remains_layer,
+            remains_dimension,
+        )) = target
+        else {
+            // 遗骸已被他人搬空 despawn，或 client 缓存过期——无操作即可，属于良性竞态。
+            tracing::debug!(
+                "[bong][inventory] remains_loot rejected: unknown remains_id `{}`",
+                intent.remains_id
+            );
+            continue;
+        };
+
+        if remains_layer.0 != player_layer.0
+            || remains_dimension.map(|d| d.0) != player_dimension.map(|d| d.0)
+        {
+            notify_remains_loot(
+                pending_narrations.as_deref_mut(),
+                &usernames,
+                intent.entity,
+                "那具遗骸不在此界，够不着。",
+                NarrationStyle::SystemWarning,
+            );
+            continue;
         }
 
-        // Transfer item instances into the looter's containers.
-        if !remains.items.is_empty() {
-            let mut leftover = Vec::with_capacity(remains.items.len());
-            for record in remains.items.drain(..) {
-                let RemainsItemRecord {
-                    source_container_id,
-                    source_row,
-                    source_col,
-                    item,
-                } = record;
-
-                let Some(location) = find_first_fit_container_location(&inventory, &item) else {
-                    leftover.push(RemainsItemRecord {
-                        source_container_id,
-                        source_row,
-                        source_col,
-                        item,
-                    });
-                    continue;
-                };
-                if let Err(reason) = attach_at_location(&mut inventory, item.clone(), &location) {
-                    tracing::warn!("[bong][inventory] remains loot attach rejected: {reason}");
-                    leftover.push(RemainsItemRecord {
-                        source_container_id,
-                        source_row,
-                        source_col,
-                        item,
-                    });
-                    continue;
-                }
-                moved_any = true;
-            }
-            remains.items = leftover;
+        let rp = remains_pos.get();
+        let pp = player_pos.get();
+        let dx = rp.x - pp.x;
+        let dy = rp.y - pp.y;
+        let dz = rp.z - pp.z;
+        if dx * dx + dy * dy + dz * dz > REMAINS_PICKUP_RANGE_SQ {
+            notify_remains_loot(
+                pending_narrations.as_deref_mut(),
+                &usernames,
+                intent.entity,
+                "离遗骸太远，够不着。",
+                NarrationStyle::SystemWarning,
+            );
+            continue;
         }
 
+        let moved_any =
+            transfer_remains_to_looter(&mut commands, remains_entity, &mut remains, &mut inventory);
         if moved_any {
-            bump_revision(&mut inventory);
-        }
-
-        if remains.items.is_empty() && remains.bone_coins == 0 {
-            commands.entity(remains_entity).insert(Despawned);
-            commands.entity(remains.player_list_entry).insert(Despawned);
+            notify_remains_loot(
+                pending_narrations.as_deref_mut(),
+                &usernames,
+                intent.entity,
+                "你搜过了那具遗骸。",
+                NarrationStyle::Narration,
+            );
+        } else {
+            notify_remains_loot(
+                pending_narrations.as_deref_mut(),
+                &usernames,
+                intent.entity,
+                "包裹已经装不下了。",
+                NarrationStyle::SystemWarning,
+            );
         }
     }
 }
@@ -1531,6 +1724,79 @@ pub fn add_customized_item_to_player_inventory(
         Some(&customize_instance),
         current_tick,
     )
+}
+
+/// plan-botany-harvest-full-inventory-loss-v1 §8.1 决议 #1 — 原子"入包或掉地" grant。
+/// `DroppedToGround` 装箱：`DroppedLootEntry`（含内嵌 `ItemInstance`）比
+/// `InventoryGrantReceipt` 大得多，不装箱会让整个 enum 按最大变体膨胀
+/// （clippy::large_enum_variant）。
+#[derive(Debug, Clone, PartialEq)]
+pub enum GrantOrGroundOutcome {
+    Granted(InventoryGrantReceipt),
+    DroppedToGround(Box<DroppedLootEntry>),
+}
+
+/// plan-botany-harvest-full-inventory-loss-v1 §8.1 决议 #1 — 先原子尝试走既有
+/// `add_item_to_player_inventory_inner`；仅当失败原因是背包已满（`"inventory full:"`
+/// 前缀）时才 fallback 到 `DroppedLootRegistry`（地面掉落，复用
+/// `fauna::drop::fauna_drop_system` 已验证的直插模式）。其它结构性错误（unknown
+/// template / stack_count 0 / no containers）原样透传——这些是配置错误，不该被
+/// 静默转成"地面掉落"掩盖。拒绝了 pre-check 方案：容器判定逻辑已内嵌在
+/// `add_item_to_player_inventory_inner` 内部，重新实现一份等价判定必然与真正的插入
+/// 逻辑产生"两处判定各自维护、迟早漂移"的技术债。
+#[allow(clippy::too_many_arguments)]
+pub fn add_item_to_player_inventory_or_ground(
+    inventory: &mut PlayerInventory,
+    registry: &ItemRegistry,
+    allocator: &mut InventoryInstanceIdAllocator,
+    dropped_loot: Option<&mut DroppedLootRegistry>,
+    template_id: &str,
+    stack_count: u32,
+    current_tick: u64,
+    ground_pos: [f64; 3],
+    ground_dimension: DimensionKind,
+    customize_instance: Option<&dyn Fn(&mut ItemInstance)>,
+) -> Result<GrantOrGroundOutcome, String> {
+    match add_item_to_player_inventory_inner(
+        inventory,
+        registry,
+        allocator,
+        template_id,
+        stack_count,
+        true,
+        customize_instance,
+        current_tick,
+    ) {
+        Ok(receipt) => Ok(GrantOrGroundOutcome::Granted(receipt)),
+        Err(err) if err.starts_with("inventory full:") => {
+            let Some(dropped_loot) = dropped_loot else {
+                return Err(format!(
+                    "inventory full and no DroppedLootRegistry available to fall back: {err}"
+                ));
+            };
+            let template = registry
+                .get(template_id)
+                .ok_or_else(|| format!("unknown item template id `{template_id}`"))?;
+            let instance_id = allocator.next_id()?;
+            let mut item =
+                runtime_instance_from_template(template, instance_id, stack_count, current_tick);
+            if let Some(customize_instance) = customize_instance {
+                customize_instance(&mut item);
+            }
+            let entry = DroppedLootEntry {
+                instance_id,
+                source_container_id: format!("overflow:{template_id}"),
+                source_row: 0,
+                source_col: 0,
+                world_pos: ground_pos,
+                dimension: ground_dimension,
+                item,
+            };
+            dropped_loot.entries.insert(instance_id, entry.clone());
+            Ok(GrantOrGroundOutcome::DroppedToGround(Box::new(entry)))
+        }
+        Err(other) => Err(other),
+    }
 }
 
 pub fn add_item_to_player_inventory_with_alchemy(
@@ -3439,6 +3705,14 @@ pub struct InventoryDiscardOutcome {
 /// reason; the caller is responsible for resyncing the client (e.g. via a
 /// fresh `inventory_snapshot`) since the client UI optimistically updated.
 ///
+/// plan-rotate-v1 — `rotated=true` 表示落位前先把该 instance 的 `grid_w`/`grid_h`
+/// 互换（拖拽中按 R 旋转，2x1 ↔ 1x2）。旋转只对容器网格目标生效：
+/// - 目标是 Equip / Hotbar（非网格落位）时忽略旋转标志，保持原朝向——这些槽位
+///   不感知 footprint 方向，静默旋转只会在物品回到网格时造成意外形状。
+/// - 正方形物品（含 1x1，`grid_w == grid_h`）互换是恒等操作，直接 no-op。
+/// - 所有校验（越界 / 碰撞 / swap footprint）均以旋转后的尺寸进行；任何拒绝路径
+///   返回前 inventory 均未被写入（校验用的是 clone），不会留下已互换的脏状态。
+///
 /// Rejection paths:
 /// - source location does not actually hold the named instance
 /// - target out of bounds / unknown container
@@ -3449,13 +3723,27 @@ pub fn apply_inventory_move(
     instance_id: u64,
     from: &crate::schema::inventory::InventoryLocationV1,
     to: &crate::schema::inventory::InventoryLocationV1,
+    rotated: bool,
 ) -> Result<InventoryMoveOutcome, InventoryMoveRejectReason> {
     if !location_holds_instance(inventory, instance_id, from) {
         return Err(InventoryMoveRejectReason::FromLocationMismatch);
     }
 
-    let item =
+    let original_item =
         clone_item_at(inventory, instance_id).ok_or(InventoryMoveRejectReason::InstanceNotFound)?;
+
+    // plan-rotate-v1 — 只在网格目标 + 非正方形 footprint 时真正互换；克隆件上互换，
+    // 校验全部通过、真正 attach 时才写回 inventory，拒绝路径不产生脏状态。
+    let apply_rotation = rotated
+        && matches!(
+            to,
+            crate::schema::inventory::InventoryLocationV1::Container { .. }
+        )
+        && original_item.grid_w != original_item.grid_h;
+    let mut item = original_item.clone();
+    if apply_rotation {
+        std::mem::swap(&mut item.grid_w, &mut item.grid_h);
+    }
 
     validate_move_semantics(registry, inventory, &item, from, to)?;
 
@@ -3484,7 +3772,9 @@ pub fn apply_inventory_move(
             // Validate occupant fits at `from` (excluding both — both detached).
             if let Err(reason) = validate_attach_fits(inventory, &occupant, from) {
                 // Restore originals to keep server state coherent on rare rejection.
-                attach_at_location(inventory, item, from)
+                // plan-rotate-v1 — 回滚必须放回「原朝向」的件（original_item）：
+                // 旋转后的 footprint 在原锚点可能与邻居重叠，原朝向则必然合法。
+                attach_at_location(inventory, original_item, from)
                     .expect("restoring original from is always valid (just detached)");
                 attach_at_location(inventory, occupant, to)
                     .expect("restoring original to is always valid (just detached)");
@@ -3811,6 +4101,145 @@ pub fn consume_item_instance_once(
     Err(format!("instance {instance_id} not found in inventory"))
 }
 
+/// plan-forge-session-entry-wiring-v1 §4.1#4 — 起炉原子扣料的缺料清单条目。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ForgeMaterialDeficit {
+    /// 材料名——与调用方传入 `consume_forge_materials_atomic` 的 material 字符串一致
+    /// （矿物 canonical name，如 `"fan_tie"`，或非矿物锻造用料 template_id，如 `"ling_mu_gun"`）。
+    pub material: String,
+    pub have: u32,
+    pub need: u32,
+}
+
+/// 一件 item 是否算作某 forge 材料——按 `mineral_id == Some(material)`（矿物）或
+/// `template_id == material`（非矿物锻造用料，如 spirit wood 系）匹配，二者任一命中即可。
+fn item_matches_forge_material(item: &ItemInstance, material: &str) -> bool {
+    item.mineral_id.as_deref() == Some(material) || item.template_id == material
+}
+
+/// 服务端按 forge 材料名统计玩家 inventory 内某材料的总数（containers + hotbar；
+/// 不含 equipped —— 装备中的东西不该被当材料吃掉，与 `count_template_in_inventory` 同规则）。
+fn count_forge_material_in_inventory(inventory: &PlayerInventory, material: &str) -> u32 {
+    let from_containers: u32 = inventory
+        .containers
+        .iter()
+        .flat_map(|c: &ContainerState| c.items.iter())
+        .filter(|p| item_matches_forge_material(&p.instance, material))
+        .map(|p| p.instance.stack_count)
+        .sum();
+    let from_hotbar: u32 = inventory
+        .hotbar
+        .iter()
+        .filter_map(|s| s.as_ref())
+        .filter(|i: &&ItemInstance| item_matches_forge_material(i, material))
+        .map(|i| i.stack_count)
+        .sum();
+    from_containers + from_hotbar
+}
+
+/// plan-forge-session-entry-wiring-v1 §4.1#4（CRUX）—— 起炉原子扣料。
+///
+/// 与最终受理判定同层调用（`handle_start_forge_requests` 建会话前）：先对全部
+/// `(material, count)` 做只读盘点，任一材料背包持有量不足 → **整体零改动**，返回
+/// `Err(缺料清单)`（调用方据此拒绝起炉、不建会话、发 reject 回执）；全部足量才真正
+/// 扣除（containers 优先，hotbar 兜底，与 `consume_materials_from_inventory` 同扣除
+/// 顺序），扣除后 `bump_revision` 一次。
+///
+/// 这同时封堵了「引擎只记账 `committed_materials`、从不核验玩家是否真持有 `req.materials`
+/// 声明」的 anti-cheat 漏洞——任何拒绝路径（含 Waste billet，调用方在那之前就已
+/// `continue`，根本不会调用本函数）都不吞料。
+pub fn consume_forge_materials_atomic(
+    inventory: &mut PlayerInventory,
+    materials: &[(String, u32)],
+) -> Result<(), Vec<ForgeMaterialDeficit>> {
+    // 同一材料在 materials 中可能出现多次（调用方一般已 dedupe，但这里独立防御）。
+    let mut needed: Vec<(String, u32)> = Vec::new();
+    for (material, count) in materials {
+        if let Some(entry) = needed.iter_mut().find(|(m, _)| m == material) {
+            entry.1 += count;
+        } else {
+            needed.push((material.clone(), *count));
+        }
+    }
+
+    // 阶段一：只读盘点，任一不足则整体不改动。
+    let mut deficits = Vec::new();
+    for (material, need) in &needed {
+        let have = count_forge_material_in_inventory(inventory, material);
+        if have < *need {
+            deficits.push(ForgeMaterialDeficit {
+                material: material.clone(),
+                have,
+                need: *need,
+            });
+        }
+    }
+    if !deficits.is_empty() {
+        return Err(deficits);
+    }
+
+    // 阶段二：全部足量，真正扣除。
+    let mut consumed_any = false;
+    for (material, need) in &needed {
+        let mut remaining = *need;
+        if remaining == 0 {
+            continue;
+        }
+        'containers: for container in inventory.containers.iter_mut() {
+            let mut i = 0;
+            while i < container.items.len() {
+                if item_matches_forge_material(&container.items[i].instance, material) {
+                    let take = remaining.min(container.items[i].instance.stack_count);
+                    container.items[i].instance.stack_count -= take;
+                    remaining -= take;
+                    consumed_any |= take > 0;
+                    if container.items[i].instance.stack_count == 0 {
+                        container.items.remove(i);
+                        continue;
+                    }
+                }
+                i += 1;
+                if remaining == 0 {
+                    break 'containers;
+                }
+            }
+        }
+        if remaining > 0 {
+            for slot in inventory.hotbar.iter_mut() {
+                if remaining == 0 {
+                    break;
+                }
+                let drop_slot = if let Some(item) = slot.as_mut() {
+                    if item_matches_forge_material(item, material) {
+                        let take = remaining.min(item.stack_count);
+                        item.stack_count -= take;
+                        remaining -= take;
+                        consumed_any |= take > 0;
+                        item.stack_count == 0
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
+                if drop_slot {
+                    *slot = None;
+                }
+            }
+        }
+        debug_assert_eq!(
+            remaining, 0,
+            "consume_forge_materials_atomic: 缺料盘点已通过但 `{material}` 实扣仍缺 {remaining}\
+             （count_forge_material_in_inventory 与实扣逻辑的匹配规则失步）"
+        );
+    }
+
+    if consumed_any {
+        bump_revision(inventory);
+    }
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn apply_death_drop_on_revive(
     mut revived: bevy_ecs::event::EventReader<PlayerRevived>,
@@ -3821,6 +4250,7 @@ pub fn apply_death_drop_on_revive(
     anchors: Query<&DeathDropAnchor>,
     dimensions: Query<&CurrentDimension>,
     presences: Query<&crate::world::tsy::TsyPresence>,
+    pending_tsy_deaths: Query<&PendingTsyDeathDrop>,
     cultivations: Query<&crate::cultivation::components::Cultivation>,
     mut dropped_registry: bevy_ecs::system::ResMut<DroppedLootRegistry>,
     mut dropped_events: bevy_ecs::event::EventWriter<DroppedItemEvent>,
@@ -3841,7 +4271,12 @@ pub fn apply_death_drop_on_revive(
 
         // plan-tsy-loot-v1 §3.1：玩家在 TSY 内死亡 → 走分流（秘境所得 100% / 原带 50%）
         // + spawn 干尸 entity；否则走 §十二 主世界 50% 规则。
-        if let Ok(presence) = presences.get(ev.entity) {
+        let pending_tsy_presence = pending_tsy_deaths
+            .get(ev.entity)
+            .ok()
+            .map(|ctx| &ctx.presence);
+        let tsy_presence = pending_tsy_presence.or_else(|| presences.get(ev.entity).ok());
+        if let Some(presence) = tsy_presence {
             let tsy_outcome = tsy_death_drop::apply_tsy_death_drop(
                 &mut inventory,
                 &registry,
@@ -3849,6 +4284,7 @@ pub fn apply_death_drop_on_revive(
                 base,
                 seed,
             );
+            clear_death_drop_window_components(&mut commands, ev.entity);
             if tsy_outcome.total_dropped() == 0 {
                 continue;
             }
@@ -3948,6 +4384,14 @@ pub fn apply_death_drop_on_revive(
             dropped: outcome.dropped,
         });
     }
+}
+
+fn clear_death_drop_window_components(commands: &mut Commands, entity: Entity) {
+    commands.entity(entity).remove::<(
+        DeathDropAnchor,
+        PendingTsyDeathDrop,
+        crate::world::tsy::TsyPresence,
+    )>();
 }
 
 pub fn apply_death_drop_to_inventory(
@@ -6562,6 +7006,12 @@ mod tests {
             "gua_dao",
             "gu_hai_qian",
             "bing_jia_shou_tao",
+            // plan-zhenfa-trap-client-equip-gate-v1 P2 — zhenfa.toml 阵法工具（此前漏收进本 pin，
+            // 是导致 client TOOL_TEMPLATE_IDS 白名单漂移未被察觉的同一契约缺口）。
+            "warning_trap",
+            "blast_trap",
+            "slow_trap",
+            "array_flag",
         ] {
             let template = registry
                 .get(required_tool)
@@ -7993,6 +8443,182 @@ cols = 4
         assert!(error.contains("inventory full: stone"));
     }
 
+    // ─────────────────────────────────────────────────────────────────
+    // plan-botany-harvest-full-inventory-loss-v1 §P0 — add_item_to_player_inventory_or_ground
+    // ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn grant_or_ground_grants_normally_when_space_available() {
+        let registry =
+            registry_from_templates(vec![test_template("stone", ItemCategory::Misc, 1, 1, 1)]);
+        let mut inventory = empty_inventory(2, 2);
+        let mut allocator = InventoryInstanceIdAllocator::new(1);
+        let mut dropped_loot = DroppedLootRegistry::default();
+
+        let outcome = add_item_to_player_inventory_or_ground(
+            &mut inventory,
+            &registry,
+            &mut allocator,
+            Some(&mut dropped_loot),
+            "stone",
+            1,
+            0,
+            [1.0, 2.0, 3.0],
+            DimensionKind::Overworld,
+            None,
+        )
+        .expect("space available should grant normally, not fall back to ground");
+
+        match outcome {
+            GrantOrGroundOutcome::Granted(receipt) => {
+                assert_eq!(
+                    receipt.revision,
+                    InventoryRevision(1),
+                    "successful grant should bump inventory revision to 1"
+                );
+            }
+            GrantOrGroundOutcome::DroppedToGround(entry) => {
+                panic!("expected Granted with free space available, got DroppedToGround({entry:?})")
+            }
+        }
+        assert!(
+            dropped_loot.entries.is_empty(),
+            "no overflow entry should be created when a normal grant succeeds"
+        );
+    }
+
+    #[test]
+    fn grant_or_ground_drops_to_ground_when_inventory_full() {
+        let registry = registry_from_templates(vec![test_template(
+            "ci_she_hao",
+            ItemCategory::Herb,
+            1,
+            1,
+            64,
+        )]);
+        let mut inventory = empty_inventory(1, 1);
+        inventory.containers[0].items.push(PlacedItemState {
+            row: 0,
+            col: 0,
+            instance: make_test_item_instance(1, "occupant"),
+        });
+        let mut allocator = InventoryInstanceIdAllocator::new(2);
+        let mut dropped_loot = DroppedLootRegistry::default();
+        let ground_pos = [5.0, 64.0, 5.0];
+
+        let outcome = add_item_to_player_inventory_or_ground(
+            &mut inventory,
+            &registry,
+            &mut allocator,
+            Some(&mut dropped_loot),
+            "ci_she_hao",
+            1,
+            0,
+            ground_pos,
+            DimensionKind::Overworld,
+            None,
+        )
+        .expect("full inventory with a DroppedLootRegistry available should fall back to ground, not error");
+
+        match outcome {
+            GrantOrGroundOutcome::DroppedToGround(entry) => {
+                assert_eq!(
+                    entry.world_pos, ground_pos,
+                    "dropped entry world_pos should equal the caller-provided ground_pos"
+                );
+                assert_eq!(entry.item.template_id, "ci_she_hao");
+            }
+            GrantOrGroundOutcome::Granted(receipt) => panic!(
+                "expected DroppedToGround when the only cell is occupied, got Granted({receipt:?})"
+            ),
+        }
+        assert_eq!(
+            dropped_loot.entries.len(),
+            1,
+            "overflow item should be recorded exactly once in DroppedLootRegistry"
+        );
+        assert!(
+            inventory.containers[0]
+                .items
+                .iter()
+                .all(|placed| placed.instance.template_id != "ci_she_hao"),
+            "ci_she_hao must not silently appear in the full container"
+        );
+    }
+
+    #[test]
+    fn grant_or_ground_errors_when_full_and_no_registry_available() {
+        let registry = registry_from_templates(vec![test_template(
+            "ci_she_hao",
+            ItemCategory::Herb,
+            1,
+            1,
+            64,
+        )]);
+        let mut inventory = empty_inventory(1, 1);
+        inventory.containers[0].items.push(PlacedItemState {
+            row: 0,
+            col: 0,
+            instance: make_test_item_instance(1, "occupant"),
+        });
+        let mut allocator = InventoryInstanceIdAllocator::new(2);
+
+        let error = add_item_to_player_inventory_or_ground(
+            &mut inventory,
+            &registry,
+            &mut allocator,
+            None,
+            "ci_she_hao",
+            1,
+            0,
+            [0.0, 0.0, 0.0],
+            DimensionKind::Overworld,
+            None,
+        )
+        .expect_err(
+            "full inventory with no DroppedLootRegistry must surface an observable error, not panic",
+        );
+
+        assert!(
+            error.contains("no DroppedLootRegistry"),
+            "error should explain the missing ground fallback, got {error:?}"
+        );
+    }
+
+    #[test]
+    fn grant_or_ground_passes_through_unknown_template_error_without_dropping() {
+        let registry =
+            registry_from_templates(vec![test_template("stone", ItemCategory::Misc, 1, 1, 1)]);
+        let mut inventory = empty_inventory(2, 2);
+        let mut allocator = InventoryInstanceIdAllocator::new(1);
+        let mut dropped_loot = DroppedLootRegistry::default();
+
+        let error = add_item_to_player_inventory_or_ground(
+            &mut inventory,
+            &registry,
+            &mut allocator,
+            Some(&mut dropped_loot),
+            "nonexistent_item",
+            1,
+            0,
+            [0.0, 0.0, 0.0],
+            DimensionKind::Overworld,
+            None,
+        )
+        .expect_err(
+            "unknown template id is a structural error and must not be masked as ground overflow",
+        );
+
+        assert!(
+            error.contains("unknown item template id"),
+            "structural error should mention unknown template id, got {error:?}"
+        );
+        assert!(
+            dropped_loot.entries.is_empty(),
+            "structural errors must not create a ground drop entry"
+        );
+    }
+
     #[test]
     fn runtime_grant_merges_existing_stack_before_allocating_new_slot() {
         let registry = registry_from_templates(vec![test_template(
@@ -8358,6 +8984,7 @@ cols = 4
                 col: 0,
             },
             &InventoryLocationV1::Hotbar { index: 3 },
+            false,
         )
         .expect("move should succeed");
 
@@ -8387,6 +9014,7 @@ cols = 4
                 col: 1,
             },
             &InventoryLocationV1::Hotbar { index: 3 },
+            false,
         );
 
         assert!(result.is_err());
@@ -8435,6 +9063,7 @@ cols = 4
                 col: 0,
             },
             &InventoryLocationV1::Hotbar { index: 3 },
+            false,
         )
         .expect("swap should succeed");
 
@@ -8501,6 +9130,7 @@ cols = 4
                 row: 2,
                 col: 2,
             },
+            false,
         );
 
         assert!(result.is_err());
@@ -8528,6 +9158,7 @@ cols = 4
                 row: 2,
                 col: 3,
             },
+            false,
         )
         .expect("intra-grid move should succeed");
 
@@ -8536,6 +9167,399 @@ cols = 4
         assert_eq!(placed.instance.instance_id, 42);
         assert_eq!(placed.row, 2);
         assert_eq!(placed.col, 3);
+    }
+
+    // ─── plan-rotate-v1 — apply_inventory_move rotated 落位 ────────────────
+
+    /// 测试辅助：把 helper 库存里的 #42 改成 2x1 footprint（旋转测试主角）。
+    fn make_test_inventory_with_2x1_item() -> PlayerInventory {
+        let mut inv = make_test_inventory_with_one_item();
+        inv.containers[0].items[0].instance.grid_w = 2;
+        inv.containers[0].items[0].instance.grid_h = 1;
+        inv
+    }
+
+    /// 测试辅助：构造一个占位 ItemInstance（占位物不过 registry 校验，模板可为假）。
+    fn blocker_instance(instance_id: u64, grid_w: u8, grid_h: u8) -> ItemInstance {
+        ItemInstance {
+            instance_id,
+            template_id: "blocker".to_string(),
+            display_name: "占位物".to_string(),
+            grid_w,
+            grid_h,
+            weight: 0.1,
+            rarity: ItemRarity::Common,
+            description: String::new(),
+            stack_count: 1,
+            spirit_quality: 1.0,
+            durability: 1.0,
+            freshness: None,
+            mineral_id: None,
+            charges: None,
+            forge_quality: None,
+            forge_color: None,
+            forge_side_effects: Vec::new(),
+            forge_achieved_tier: None,
+            alchemy: None,
+            lingering_owner_qi: None,
+        }
+    }
+
+    fn main_pack_loc(row: u64, col: u64) -> crate::schema::inventory::InventoryLocationV1 {
+        crate::schema::inventory::InventoryLocationV1::Container {
+            container_id: "main_pack".to_string(),
+            row,
+            col,
+        }
+    }
+
+    /// 2x1 旋转落位成 1x2：dims 互换写回，再旋转移回恢复 2x1（奇偶往返）。
+    #[test]
+    fn apply_move_rotated_2x1_lands_as_1x2_then_rotates_back() {
+        let registry = load_item_registry().expect("item registry should load");
+        let mut inv = make_test_inventory_with_2x1_item();
+
+        let outcome = apply_inventory_move(
+            &mut inv,
+            &registry,
+            42,
+            &main_pack_loc(0, 0),
+            &main_pack_loc(2, 3),
+            true,
+        )
+        .expect("rotated move should succeed");
+        assert_eq!(
+            outcome,
+            InventoryMoveOutcome::Moved {
+                revision: InventoryRevision(8)
+            }
+        );
+        let placed = &inv.containers[0].items[0];
+        assert_eq!((placed.row, placed.col), (2, 3));
+        assert_eq!(
+            (placed.instance.grid_w, placed.instance.grid_h),
+            (1, 2),
+            "旋转落位后 grid_w/grid_h 应互换为 1x2，实际 {}x{}",
+            placed.instance.grid_w,
+            placed.instance.grid_h
+        );
+
+        // 再次旋转移回原位 → 恢复原朝向 2x1（连按两次 R 的服务端等价）。
+        apply_inventory_move(
+            &mut inv,
+            &registry,
+            42,
+            &main_pack_loc(2, 3),
+            &main_pack_loc(0, 0),
+            true,
+        )
+        .expect("second rotated move should succeed");
+        let placed = &inv.containers[0].items[0];
+        assert_eq!(
+            (placed.instance.grid_w, placed.instance.grid_h),
+            (2, 1),
+            "二次旋转应恢复原朝向 2x1"
+        );
+    }
+
+    /// 2x1 转成 1x2 后撞容器底边（行溢出）→ TargetOutOfBounds；原件朝向/位置无脏状态。
+    /// 不旋转时同一目标 (4,0) 是合法的（2x1 在最底行放得下），拒绝完全由旋转引起。
+    #[test]
+    fn apply_move_rotated_rejects_row_overflow_and_leaves_state_clean() {
+        let registry = load_item_registry().expect("item registry should load");
+        let mut inv = make_test_inventory_with_2x1_item();
+
+        let error = apply_inventory_move(
+            &mut inv,
+            &registry,
+            42,
+            &main_pack_loc(0, 0),
+            &main_pack_loc(4, 0),
+            true,
+        )
+        .expect_err("rotated 1x2 at bottom row must overflow 5-row container");
+        assert!(
+            matches!(error, InventoryMoveRejectReason::TargetOutOfBounds),
+            "expected TargetOutOfBounds（行 4 + 高 2 > 5 行），got: {error:?}"
+        );
+        assert_eq!(
+            inv.revision,
+            InventoryRevision(7),
+            "拒绝后 revision 不得变化"
+        );
+        let placed = &inv.containers[0].items[0];
+        assert_eq!((placed.row, placed.col), (0, 0), "拒绝后物品必须留在原位");
+        assert_eq!(
+            (placed.instance.grid_w, placed.instance.grid_h),
+            (2, 1),
+            "拒绝后必须保持原朝向 2x1（不得留下已互换的脏状态）"
+        );
+    }
+
+    /// 1x2 转成 2x1 后撞容器右边（列溢出）→ TargetOutOfBounds（镜像方向的越界分支）。
+    #[test]
+    fn apply_move_rotated_rejects_col_overflow() {
+        let registry = load_item_registry().expect("item registry should load");
+        let mut inv = make_test_inventory_with_one_item();
+        inv.containers[0].items[0].instance.grid_w = 1;
+        inv.containers[0].items[0].instance.grid_h = 2;
+
+        let error = apply_inventory_move(
+            &mut inv,
+            &registry,
+            42,
+            &main_pack_loc(0, 0),
+            &main_pack_loc(0, 6),
+            true,
+        )
+        .expect_err("rotated 2x1 at rightmost col must overflow 7-col container");
+        assert!(
+            matches!(error, InventoryMoveRejectReason::TargetOutOfBounds),
+            "expected TargetOutOfBounds（列 6 + 宽 2 > 7 列），got: {error:?}"
+        );
+        let placed = &inv.containers[0].items[0];
+        assert_eq!(
+            (placed.instance.grid_w, placed.instance.grid_h),
+            (1, 2),
+            "拒绝后必须保持原朝向 1x2"
+        );
+    }
+
+    /// 旋转后的 footprint 撞到别人（非锚点重叠）→ TargetOccupied；无脏状态。
+    /// 不旋转时同一目标 (2,3) 合法（2x1 横放不碰 (3,3) 的占位物），拒绝完全由旋转引起。
+    #[test]
+    fn apply_move_rotated_rejects_collision_and_leaves_state_clean() {
+        let registry = load_item_registry().expect("item registry should load");
+        let mut inv = make_test_inventory_with_2x1_item();
+        inv.containers[0].items.push(PlacedItemState {
+            row: 3,
+            col: 3,
+            instance: blocker_instance(300, 1, 1),
+        });
+
+        let error = apply_inventory_move(
+            &mut inv,
+            &registry,
+            42,
+            &main_pack_loc(0, 0),
+            &main_pack_loc(2, 3),
+            true,
+        )
+        .expect_err("rotated 1x2 at (2,3) overlaps blocker at (3,3)");
+        assert!(
+            matches!(
+                error,
+                InventoryMoveRejectReason::TargetOccupied { instance_id: 300 }
+            ),
+            "expected TargetOccupied by #300, got: {error:?}"
+        );
+        assert_eq!(inv.revision, InventoryRevision(7));
+        let placed = inv.containers[0]
+            .items
+            .iter()
+            .find(|p| p.instance.instance_id == 42)
+            .expect("item #42 must remain in container");
+        assert_eq!((placed.row, placed.col), (0, 0));
+        assert_eq!(
+            (placed.instance.grid_w, placed.instance.grid_h),
+            (2, 1),
+            "拒绝后必须保持原朝向 2x1"
+        );
+    }
+
+    /// 旋转后 footprint 与目标位占用者一致 → 走 swap；占用者弹回原位，旋转件落新位。
+    #[test]
+    fn apply_move_rotated_swap_succeeds_when_rotated_footprint_matches() {
+        let registry = load_item_registry().expect("item registry should load");
+        let mut inv = make_test_inventory_with_2x1_item();
+        inv.containers[0].items.push(PlacedItemState {
+            row: 2,
+            col: 2,
+            instance: blocker_instance(200, 1, 2),
+        });
+
+        let outcome = apply_inventory_move(
+            &mut inv,
+            &registry,
+            42,
+            &main_pack_loc(0, 0),
+            &main_pack_loc(2, 2),
+            true,
+        )
+        .expect("rotated swap should succeed（旋转后 1x2 与占用者 footprint 相同）");
+        assert_eq!(
+            outcome,
+            InventoryMoveOutcome::Swapped {
+                revision: InventoryRevision(8),
+                displaced_instance_id: 200,
+            }
+        );
+        let moved = inv.containers[0]
+            .items
+            .iter()
+            .find(|p| p.instance.instance_id == 42)
+            .expect("#42 present");
+        assert_eq!((moved.row, moved.col), (2, 2));
+        assert_eq!((moved.instance.grid_w, moved.instance.grid_h), (1, 2));
+        let displaced = inv.containers[0]
+            .items
+            .iter()
+            .find(|p| p.instance.instance_id == 200)
+            .expect("#200 present");
+        assert_eq!((displaced.row, displaced.col), (0, 0));
+    }
+
+    /// 旋转 swap 中占用者放不回原位 → 拒绝，且回滚必须恢复「原朝向」的件
+    /// （若错误回滚旋转后的件，1x2 在 (0,0) 会与 (1,0) 的占位物重叠 = 脏状态）。
+    #[test]
+    fn apply_move_rotated_swap_restore_keeps_original_orientation() {
+        let registry = load_item_registry().expect("item registry should load");
+        let mut inv = make_test_inventory_with_2x1_item();
+        // 目标位占用者：1x2（与旋转后的 #42 footprint 相同 → 触发 swap 分支）。
+        inv.containers[0].items.push(PlacedItemState {
+            row: 2,
+            col: 2,
+            instance: blocker_instance(200, 1, 2),
+        });
+        // (1,0) 占位物：让 1x2 的 #200 放不回 (0,0)（rows 0-1 col 0 与其重叠）。
+        // 原朝向 2x1 的 #42（row 0, cols 0-1）与它不重叠。
+        inv.containers[0].items.push(PlacedItemState {
+            row: 1,
+            col: 0,
+            instance: blocker_instance(300, 1, 1),
+        });
+
+        let error = apply_inventory_move(
+            &mut inv,
+            &registry,
+            42,
+            &main_pack_loc(0, 0),
+            &main_pack_loc(2, 2),
+            true,
+        )
+        .expect_err("swap must reject：#200 (1x2) 放不回 (0,0)");
+        assert!(
+            matches!(
+                error,
+                InventoryMoveRejectReason::TargetOccupied { instance_id: 300 }
+            ),
+            "expected TargetOccupied by #300, got: {error:?}"
+        );
+        assert_eq!(inv.revision, InventoryRevision(7));
+        assert_eq!(inv.containers[0].items.len(), 3, "三件必须全部原样保留");
+        let restored = inv.containers[0]
+            .items
+            .iter()
+            .find(|p| p.instance.instance_id == 42)
+            .expect("#42 must be restored");
+        assert_eq!((restored.row, restored.col), (0, 0));
+        assert_eq!(
+            (restored.instance.grid_w, restored.instance.grid_h),
+            (2, 1),
+            "swap 回滚必须放回原朝向 2x1（回滚旋转件会与 #300 重叠）"
+        );
+        let occupant = inv.containers[0]
+            .items
+            .iter()
+            .find(|p| p.instance.instance_id == 200)
+            .expect("#200 must be restored");
+        assert_eq!((occupant.row, occupant.col), (2, 2));
+    }
+
+    /// 1x1 物品 rotated=true 是 no-op：移动照常成功，dims 不变。
+    #[test]
+    fn apply_move_rotated_1x1_is_noop() {
+        let registry = load_item_registry().expect("item registry should load");
+        let mut inv = make_test_inventory_with_one_item();
+
+        apply_inventory_move(
+            &mut inv,
+            &registry,
+            42,
+            &main_pack_loc(0, 0),
+            &main_pack_loc(2, 3),
+            true,
+        )
+        .expect("1x1 rotated move should succeed as plain move");
+        let placed = &inv.containers[0].items[0];
+        assert_eq!((placed.row, placed.col), (2, 3));
+        assert_eq!(
+            (placed.instance.grid_w, placed.instance.grid_h),
+            (1, 1),
+            "1x1 物品旋转是 no-op，dims 不得变化"
+        );
+    }
+
+    /// 2x2 正方形物品 rotated=true 同样 no-op（互换恒等，直接跳过）。
+    #[test]
+    fn apply_move_rotated_square_2x2_is_noop() {
+        let registry = load_item_registry().expect("item registry should load");
+        let mut inv = make_test_inventory_with_one_item();
+        inv.containers[0].items[0].instance.grid_w = 2;
+        inv.containers[0].items[0].instance.grid_h = 2;
+
+        apply_inventory_move(
+            &mut inv,
+            &registry,
+            42,
+            &main_pack_loc(0, 0),
+            &main_pack_loc(2, 3),
+            true,
+        )
+        .expect("2x2 rotated move should succeed as plain move");
+        let placed = &inv.containers[0].items[0];
+        assert_eq!(
+            (placed.instance.grid_w, placed.instance.grid_h),
+            (2, 2),
+            "正方形物品旋转是 no-op，dims 不得变化"
+        );
+    }
+
+    /// 非网格目标（hotbar）rotated=true 被忽略：落位成功且保持原朝向。
+    #[test]
+    fn apply_move_rotated_ignored_for_hotbar_target() {
+        use crate::schema::inventory::InventoryLocationV1;
+        let registry = load_item_registry().expect("item registry should load");
+        let mut inv = make_test_inventory_with_2x1_item();
+
+        apply_inventory_move(
+            &mut inv,
+            &registry,
+            42,
+            &main_pack_loc(0, 0),
+            &InventoryLocationV1::Hotbar { index: 3 },
+            true,
+        )
+        .expect("hotbar move with rotated flag should succeed");
+        let item = inv.hotbar[3].as_ref().expect("#42 in hotbar");
+        assert_eq!(
+            (item.grid_w, item.grid_h),
+            (2, 1),
+            "非网格目标必须忽略旋转标志，保持原朝向 2x1"
+        );
+    }
+
+    /// rotated=false 全兼容旧行为：2x1 移动后仍是 2x1。
+    #[test]
+    fn apply_move_rotated_false_keeps_orientation() {
+        let registry = load_item_registry().expect("item registry should load");
+        let mut inv = make_test_inventory_with_2x1_item();
+
+        apply_inventory_move(
+            &mut inv,
+            &registry,
+            42,
+            &main_pack_loc(0, 0),
+            &main_pack_loc(2, 3),
+            false,
+        )
+        .expect("plain move should succeed");
+        let placed = &inv.containers[0].items[0];
+        assert_eq!(
+            (placed.instance.grid_w, placed.instance.grid_h),
+            (2, 1),
+            "rotated=false 必须保持原朝向（旧行为兼容）"
+        );
     }
 
     #[test]
@@ -8561,6 +9585,7 @@ cols = 4
                 slot: EquipSlotV1::MainHand,
                 state: crate::schema::inventory::EquipStateV1::Held,
             },
+            false,
         )
         .expect("weapon should equip to main_hand");
 
@@ -8601,6 +9626,7 @@ cols = 4
                 slot: EquipSlotV1::MainHand,
                 state: crate::schema::inventory::EquipStateV1::Held,
             },
+            false,
         )
         .expect("tool should equip to main_hand");
 
@@ -8643,6 +9669,7 @@ cols = 4
                 slot: EquipSlotV1::OffHand,
                 state: crate::schema::inventory::EquipStateV1::Held,
             },
+            false,
         )
         .expect("tool should equip to off_hand");
 
@@ -8683,6 +9710,7 @@ cols = 4
                 slot: EquipSlotV1::MainHand,
                 state: crate::schema::inventory::EquipStateV1::Held,
             },
+            false,
         )
         .expect_err("block items must not equip to main_hand");
 
@@ -8745,6 +9773,7 @@ cols = 4
                 slot: EquipSlotV1::Chest,
                 state: crate::schema::inventory::EquipStateV1::Worn,
             },
+            false,
         )
         .expect("chestplate should equip to chest");
 
@@ -8785,6 +9814,7 @@ cols = 4
                 slot: EquipSlotV1::Head,
                 state: crate::schema::inventory::EquipStateV1::Worn,
             },
+            false,
         )
         .expect_err("chestplate should not equip to head");
 
@@ -8841,6 +9871,7 @@ cols = 4
                 slot: EquipSlotV1::Chest,
                 state: crate::schema::inventory::EquipStateV1::Worn,
             },
+            false,
         )
         .expect_err("armor with unresolvable equip slot should be rejected");
 
@@ -8884,6 +9915,7 @@ cols = 4
                 slot: EquipSlotV1::Chest,
                 state: crate::schema::inventory::EquipStateV1::Worn,
             },
+            false,
         )
         .expect_err("broken armor should be rejected");
 
@@ -8946,6 +9978,7 @@ cols = 4
                 slot: EquipSlotV1::OffHand,
                 state: crate::schema::inventory::EquipStateV1::Held,
             },
+            false,
         )
         .expect_err("off_hand should be locked by two-handed weapon in main_hand");
 
@@ -8975,6 +10008,7 @@ cols = 4
                 col: 0,
             },
             &InventoryLocationV1::Hotbar { index: 0 },
+            false,
         )
         .expect_err("weapon should be rejected from hotbar");
 
@@ -9005,6 +10039,7 @@ cols = 4
                 col: 0,
             },
             &InventoryLocationV1::Hotbar { index: 0 },
+            false,
         )
         .expect_err("tool should be rejected from hotbar");
 
@@ -9035,6 +10070,7 @@ cols = 4
                 col: 0,
             },
             &InventoryLocationV1::Hotbar { index: 0 },
+            false,
         )
         .expect_err("armor should be rejected from hotbar");
 
@@ -9067,6 +10103,7 @@ cols = 4
                 col: 0,
             },
             &InventoryLocationV1::Hotbar { index: 0 },
+            false,
         )
         .expect_err("shield should be rejected from hotbar");
 
@@ -9104,6 +10141,7 @@ cols = 4
                 slot: EquipSlotV1::OffHand,
                 state: crate::schema::inventory::EquipStateV1::Held,
             },
+            false,
         )
         .expect_err("sword should be rejected from off_hand");
 
@@ -9141,6 +10179,7 @@ cols = 4
                 slot: EquipSlotV1::OffHand,
                 state: crate::schema::inventory::EquipStateV1::Held,
             },
+            false,
         )
         .expect_err("armor should be rejected from off_hand (no weapon_spec, not treasure/shield)");
 
@@ -9204,6 +10243,7 @@ cols = 4
                 slot: EquipSlotV1::MainHand,
                 state: crate::schema::inventory::EquipStateV1::Held,
             },
+            false,
         )
         .expect_err("two-handed weapon should conflict with occupied opposite hand");
 
@@ -9872,6 +10912,258 @@ cols = 4
         assert!(inv.containers[0].items.is_empty());
     }
 
+    // ── plan-forge-session-entry-wiring-v1 §4.1#4 — consume_forge_materials_atomic ──
+
+    fn mineral_item(instance_id: u64, mineral_id: &str, stack_count: u32) -> ItemInstance {
+        let mut item = make_test_item_instance(instance_id, &format!("mineral_{mineral_id}"));
+        item.mineral_id = Some(mineral_id.to_string());
+        item.stack_count = stack_count;
+        item
+    }
+
+    fn item_material_item(instance_id: u64, template_id: &str, stack_count: u32) -> ItemInstance {
+        let mut item = make_test_item_instance(instance_id, template_id);
+        item.stack_count = stack_count;
+        item
+    }
+
+    #[test]
+    fn consume_forge_materials_atomic_happy_path_deducts_by_mineral_id_and_bumps_revision() {
+        let mut inv = empty_inventory(5, 7);
+        inv.containers[0].items.push(PlacedItemState {
+            row: 0,
+            col: 0,
+            instance: mineral_item(1, "fan_tie", 5),
+        });
+
+        let out = consume_forge_materials_atomic(&mut inv, &[("fan_tie".to_string(), 4)]);
+
+        assert!(
+            out.is_ok(),
+            "期望持有 5 扣 4 成功，实际 Err={:?}",
+            out.err()
+        );
+        assert_eq!(
+            inv.containers[0].items[0].instance.stack_count, 1,
+            "扣除 4 后 fan_tie 栈应剩 1"
+        );
+        assert_eq!(
+            inv.revision,
+            InventoryRevision(1),
+            "扣料应 bump_revision 恰好一次"
+        );
+    }
+
+    #[test]
+    fn consume_forge_materials_atomic_matches_by_template_id_for_non_mineral_materials() {
+        // ling_mu_gun 是 blueprint::is_allowed_item_material 白名单里的非矿物锻造用料，
+        // 匹配键是 template_id 而非 mineral_id（对应物品本身没有 mineral_id）。
+        let mut inv = empty_inventory(5, 7);
+        inv.containers[0].items.push(PlacedItemState {
+            row: 0,
+            col: 0,
+            instance: item_material_item(1, "ling_mu_gun", 2),
+        });
+
+        let out = consume_forge_materials_atomic(&mut inv, &[("ling_mu_gun".to_string(), 2)]);
+
+        assert!(out.is_ok(), "期望按 template_id 精确匹配并扣光");
+        assert!(
+            inv.containers[0].items.is_empty(),
+            "扣光后栈应被移除，而非留 0 计数条目"
+        );
+    }
+
+    #[test]
+    fn consume_forge_materials_atomic_spans_multiple_stacks_containers_then_hotbar() {
+        let mut inv = empty_inventory(5, 7);
+        inv.containers[0].items.push(PlacedItemState {
+            row: 0,
+            col: 0,
+            instance: mineral_item(1, "fan_tie", 2),
+        });
+        inv.hotbar[0] = Some(mineral_item(2, "fan_tie", 3));
+
+        let out = consume_forge_materials_atomic(&mut inv, &[("fan_tie".to_string(), 4)]);
+
+        assert!(out.is_ok(), "跨 container+hotbar 累加应足量 2+3=5 >= 4");
+        assert!(
+            inv.containers[0].items.is_empty(),
+            "container 栈应先被吃光（container 优先于 hotbar）"
+        );
+        assert_eq!(
+            inv.hotbar[0].as_ref().map(|i| i.stack_count),
+            Some(1),
+            "hotbar 兜底吃剩余 2 个，应剩 3-2=1"
+        );
+    }
+
+    #[test]
+    fn consume_forge_materials_atomic_insufficient_leaves_inventory_untouched() {
+        let mut inv = empty_inventory(5, 7);
+        inv.containers[0].items.push(PlacedItemState {
+            row: 0,
+            col: 0,
+            instance: mineral_item(1, "fan_tie", 2),
+        });
+        let before_json = serde_json::to_string(&inv).unwrap();
+
+        let err = consume_forge_materials_atomic(&mut inv, &[("fan_tie".to_string(), 4)])
+            .expect_err("持有 2 < 需求 4 应该拒绝");
+
+        assert_eq!(
+            err,
+            vec![ForgeMaterialDeficit {
+                material: "fan_tie".to_string(),
+                have: 2,
+                need: 4,
+            }]
+        );
+        assert_eq!(
+            serde_json::to_string(&inv).unwrap(),
+            before_json,
+            "拒绝路径必须整体零改动（含 revision 不变），不能吞料"
+        );
+    }
+
+    #[test]
+    fn consume_forge_materials_atomic_partial_shortage_leaves_sufficient_material_untouched_too() {
+        // 原子性核心断言：即便第一个材料 fan_tie 足量，只要第二个材料 za_gang 不足，
+        // 整批（含已足量的 fan_tie）都不得被扣——否则引擎下一拍拒绝时吞掉 fan_tie。
+        let mut inv = empty_inventory(5, 7);
+        inv.containers[0].items.push(PlacedItemState {
+            row: 0,
+            col: 0,
+            instance: mineral_item(1, "fan_tie", 4),
+        });
+        inv.containers[0].items.push(PlacedItemState {
+            row: 1,
+            col: 0,
+            instance: mineral_item(2, "za_gang", 0),
+        });
+        let before_json = serde_json::to_string(&inv).unwrap();
+
+        let err = consume_forge_materials_atomic(
+            &mut inv,
+            &[("fan_tie".to_string(), 4), ("za_gang".to_string(), 1)],
+        )
+        .expect_err("za_gang 持有 0 < 需求 1 应该整体拒绝");
+
+        assert_eq!(
+            err,
+            vec![ForgeMaterialDeficit {
+                material: "za_gang".to_string(),
+                have: 0,
+                need: 1,
+            }]
+        );
+        assert_eq!(
+            serde_json::to_string(&inv).unwrap(),
+            before_json,
+            "fan_tie 已足量也不得被单独扣除——必须与 za_gang 同批要么全扣要么全不扣"
+        );
+    }
+
+    #[test]
+    fn consume_forge_materials_atomic_ignores_equipped_items() {
+        // equipped 槽里的东西不该被当材料吃掉：即使 held 位塞了一把 mineral_id=fan_tie
+        // 的道具，也不计入持有量、更不会被扣除。
+        let mut inv = empty_inventory(5, 7);
+        inv.equipped.insert(
+            EQUIP_SLOT_MAIN_HAND.to_string(),
+            SlotContents::held_single(mineral_item(9, "fan_tie", 5)),
+        );
+
+        let err = consume_forge_materials_atomic(&mut inv, &[("fan_tie".to_string(), 1)])
+            .expect_err("equipped 持有量不算数，应视为 have=0 拒绝");
+
+        assert_eq!(
+            err,
+            vec![ForgeMaterialDeficit {
+                material: "fan_tie".to_string(),
+                have: 0,
+                need: 1,
+            }]
+        );
+        assert_eq!(
+            inv.equipped[EQUIP_SLOT_MAIN_HAND]
+                .held
+                .as_ref()
+                .unwrap()
+                .stack_count,
+            5,
+            "equipped 物品不应被扣除"
+        );
+    }
+
+    #[test]
+    fn consume_forge_materials_atomic_zero_count_is_noop() {
+        let mut inv = empty_inventory(5, 7);
+        inv.containers[0].items.push(PlacedItemState {
+            row: 0,
+            col: 0,
+            instance: mineral_item(1, "fan_tie", 5),
+        });
+
+        let out = consume_forge_materials_atomic(&mut inv, &[("fan_tie".to_string(), 0)]);
+
+        assert!(out.is_ok(), "count=0 不应被判定为缺料");
+        assert_eq!(inv.containers[0].items[0].instance.stack_count, 5);
+        assert_eq!(
+            inv.revision,
+            InventoryRevision(0),
+            "count=0 不产生任何实际扣除，不应 bump_revision"
+        );
+    }
+
+    #[test]
+    fn consume_forge_materials_atomic_empty_materials_is_noop() {
+        let mut inv = empty_inventory(5, 7);
+        let before_json = serde_json::to_string(&inv).unwrap();
+
+        let out = consume_forge_materials_atomic(&mut inv, &[]);
+
+        assert!(out.is_ok(), "空 materials 列表应视为 vacuously 满足");
+        assert_eq!(serde_json::to_string(&inv).unwrap(), before_json);
+    }
+
+    #[test]
+    fn consume_forge_materials_atomic_dedupes_repeated_material_entries() {
+        // materials 里同一材料出现两次（例如 client 端未合并），应按总量核对+扣除。
+        let mut inv = empty_inventory(5, 7);
+        inv.containers[0].items.push(PlacedItemState {
+            row: 0,
+            col: 0,
+            instance: mineral_item(1, "fan_tie", 5),
+        });
+
+        let out = consume_forge_materials_atomic(
+            &mut inv,
+            &[("fan_tie".to_string(), 2), ("fan_tie".to_string(), 3)],
+        );
+
+        assert!(out.is_ok(), "2+3=5 应与持有量 5 恰好相抵");
+        assert!(
+            inv.containers[0].items.is_empty(),
+            "去重累加后总需求=5，应扣光整栈"
+        );
+    }
+
+    #[test]
+    fn consume_forge_materials_atomic_exact_have_equals_need_boundary() {
+        let mut inv = empty_inventory(5, 7);
+        inv.containers[0].items.push(PlacedItemState {
+            row: 0,
+            col: 0,
+            instance: mineral_item(1, "fan_tie", 3),
+        });
+
+        let out = consume_forge_materials_atomic(&mut inv, &[("fan_tie".to_string(), 3)]);
+
+        assert!(out.is_ok(), "have==need 边界应视为足量而非不足");
+        assert!(inv.containers[0].items.is_empty());
+    }
+
     #[test]
     fn exchange_inventory_items_swaps_items_and_bumps_both_revisions() {
         let mut left = make_test_inventory_with_one_item();
@@ -10086,6 +11378,103 @@ cols = 4
         assert_eq!(events.len(), 1);
         assert_eq!(inv.revision, InventoryRevision(8));
         assert_eq!(inv.containers[0].items.len(), 1);
+    }
+
+    #[test]
+    fn apply_death_drop_on_revive_uses_pending_tsy_context_after_presence_is_cleared() {
+        use crate::world::tsy::{DimensionAnchor, TsyPresence};
+        use valence::prelude::{App, DVec3, Events, Position, Update};
+
+        let mut app = App::new();
+        app.add_event::<PlayerRevived>();
+        app.add_event::<DroppedItemEvent>();
+        app.insert_resource(ItemRegistry::default());
+        app.insert_resource(DroppedLootRegistry::default());
+        app.add_systems(Update, apply_death_drop_on_revive);
+
+        let mut inventory = make_test_inventory_with_one_item();
+        inventory.containers[0].items.push(PlacedItemState {
+            row: 0,
+            col: 1,
+            instance: ItemInstance {
+                instance_id: 43,
+                template_id: "ningmai_powder".to_string(),
+                display_name: "凝脉散".to_string(),
+                grid_w: 1,
+                grid_h: 1,
+                weight: 0.2,
+                rarity: ItemRarity::Uncommon,
+                description: String::new(),
+                stack_count: 1,
+                spirit_quality: 1.0,
+                durability: 1.0,
+                freshness: None,
+                mineral_id: None,
+                charges: None,
+                forge_quality: None,
+                forge_color: None,
+                forge_side_effects: Vec::new(),
+                forge_achieved_tier: None,
+                alchemy: None,
+                lingering_owner_qi: None,
+            },
+        });
+
+        let presence = TsyPresence {
+            family_id: "tsy_lingxu_01".to_string(),
+            entered_at_tick: 7,
+            entry_inventory_snapshot: vec![42],
+            return_to: DimensionAnchor {
+                dimension: DimensionKind::Overworld,
+                pos: DVec3::new(1.0, 64.0, 1.0),
+            },
+        };
+        let entity = app
+            .world_mut()
+            .spawn((
+                inventory,
+                Position::new([10.0, 64.0, 10.0]),
+                DeathDropAnchor {
+                    pos: [10.0, 64.0, 10.0],
+                },
+                PendingTsyDeathDrop { presence },
+            ))
+            .id();
+
+        app.world_mut().send_event(PlayerRevived { entity });
+        app.update();
+
+        assert!(
+            app.world().get::<PendingTsyDeathDrop>(entity).is_none(),
+            "复活掉落消费后应清除 pending TSY 上下文"
+        );
+        assert!(
+            app.world().get::<DeathDropAnchor>(entity).is_none(),
+            "复活掉落消费后应清除死亡点 anchor"
+        );
+        assert!(
+            app.world()
+                .get::<crate::world::tsy::TsyPresence>(entity)
+                .is_none(),
+            "pending 上下文不应重新引入 live TsyPresence"
+        );
+
+        let dropped_registry = app.world().resource::<DroppedLootRegistry>();
+        let entry = dropped_registry
+            .entries
+            .get(&43)
+            .expect("TSY acquired item should drop via pending context");
+        assert_eq!(entry.dimension, DimensionKind::Tsy);
+        assert!(
+            entry
+                .source_container_id
+                .starts_with("tsy_corpse:tsy_lingxu_01/"),
+            "pending TSY context 应保留 family 前缀，实际 {}",
+            entry.source_container_id
+        );
+
+        let events = app.world().resource::<Events<DroppedItemEvent>>();
+        assert_eq!(events.len(), 1);
     }
 
     #[test]
@@ -10339,6 +11728,579 @@ cols = 4
                 .get::<Despawned>(remains_player_list_entry)
                 .is_some(),
             "remains player_list entry should be marked Despawned after looting"
+        );
+    }
+
+    /// plan-remains-suite P1 — 遗骸外观 pin：pose 必须是 Sleeping（Dying 对 player
+    /// 实体客户端不渲染躺姿），名字必须是正典中文「遗骸」（实体 CustomName 与
+    /// player list DisplayName 双处一致）。
+    #[test]
+    fn remains_entity_uses_sleeping_pose_and_chinese_display_name() {
+        use valence::entity::entity::{CustomName, Pose as PoseComponent};
+        use valence::player_list::DisplayName;
+        use valence::prelude::{App, InteractEntityEvent, Position, Text, Update};
+
+        let mut app = App::new();
+        app.add_event::<PlayerTerminated>();
+        app.add_event::<InteractEntityEvent>();
+        app.insert_resource(DroppedLootRegistry::default());
+        app.add_systems(Update, apply_termination_drop_on_terminate);
+
+        let terminated = app
+            .world_mut()
+            .spawn((
+                make_test_inventory_with_one_item(),
+                Position::new([10.0, 66.0, 10.0]),
+                EntityLayerId(Entity::PLACEHOLDER),
+                LifeRecord {
+                    character_id: "offline:OldOne".to_string(),
+                    created_at: 0,
+                    biography: vec![BiographyEntry::Terminated {
+                        cause: "natural_end".to_string(),
+                        tick: 1,
+                    }],
+                    ..LifeRecord::default()
+                },
+            ))
+            .id();
+        app.world_mut()
+            .send_event(PlayerTerminated { entity: terminated });
+        app.update();
+
+        let (pose, custom_name, player_list_entry) = {
+            let mut q = app
+                .world_mut()
+                .query::<(&RemainsContainer, &PoseComponent, &CustomName)>();
+            let mut iter = q.iter(app.world());
+            let (remains, pose, custom_name) =
+                iter.next().expect("expected exactly one remains entity");
+            assert!(iter.next().is_none(), "expected exactly one remains entity");
+            (pose.0, custom_name.0.clone(), remains.player_list_entry)
+        };
+        assert_eq!(
+            pose,
+            valence::entity::Pose::Sleeping,
+            "遗骸 pose 必须是 Sleeping（player 实体只有 Sleeping 会整体躺平渲染；\
+             Dying 只驱动 deathTime 死亡旋转，看起来是站着扭曲不像尸体）"
+        );
+        assert_eq!(
+            custom_name,
+            Some(Text::text(REMAINS_DISPLAY_NAME)),
+            "遗骸实体 CustomName 必须是正典中文「遗骸」"
+        );
+        let display_name = app
+            .world()
+            .get::<DisplayName>(player_list_entry)
+            .expect("remains player list entry should have DisplayName");
+        assert_eq!(
+            display_name.0,
+            Some(Text::text(REMAINS_DISPLAY_NAME)),
+            "player list DisplayName 必须与实体 CustomName 同为「遗骸」"
+        );
+    }
+
+    /// plan-remains-suite P2 — G 键统一交互 happy path：RemainsLootIntent 把物品 +
+    /// 骨币全数转进拾取者背包，遗骸与 player list entry 双双 insert(Despawned)，
+    /// 且给玩家一条成功 narration。
+    #[test]
+    fn remains_loot_intent_happy_path_transfers_all_and_despawns() {
+        use valence::prelude::{App, Despawned, Position, UniqueId, Update};
+
+        let mut app = App::new();
+        app.add_event::<PlayerTerminated>();
+        app.add_event::<RemainsLootIntent>();
+        app.insert_resource(DroppedLootRegistry::default());
+        app.insert_resource(crate::player::gameplay::PendingGameplayNarrations::default());
+        app.add_systems(
+            Update,
+            (
+                apply_termination_drop_on_terminate,
+                handle_remains_loot_intents,
+            ),
+        );
+
+        let terminated = app
+            .world_mut()
+            .spawn((
+                make_test_inventory_with_one_item(),
+                Position::new([10.0, 66.0, 10.0]),
+                EntityLayerId(Entity::PLACEHOLDER),
+                CurrentDimension(DimensionKind::Overworld),
+                LifeRecord {
+                    character_id: "offline:OldOne".to_string(),
+                    created_at: 0,
+                    biography: vec![BiographyEntry::Terminated {
+                        cause: "natural_end".to_string(),
+                        tick: 1,
+                    }],
+                    ..LifeRecord::default()
+                },
+            ))
+            .id();
+        {
+            let mut inv = app
+                .world_mut()
+                .get_mut::<PlayerInventory>(terminated)
+                .expect("terminated player should have inventory");
+            inv.bone_coins = 9;
+        }
+
+        let mut looter_inv = make_test_inventory_with_one_item();
+        for container in &mut looter_inv.containers {
+            container.items.clear();
+        }
+        looter_inv.equipped.clear();
+        looter_inv.hotbar = Default::default();
+        looter_inv.bone_coins = 0;
+        let looter = app
+            .world_mut()
+            .spawn((
+                looter_inv,
+                Position::new([10.5, 66.0, 10.0]),
+                EntityLayerId(Entity::PLACEHOLDER),
+                CurrentDimension(DimensionKind::Overworld),
+                Username("Looter".to_string()),
+            ))
+            .id();
+
+        app.world_mut()
+            .send_event(PlayerTerminated { entity: terminated });
+        app.update();
+
+        let (remains_entity, remains_id, player_list_entry) = {
+            let mut q = app
+                .world_mut()
+                .query::<(Entity, &UniqueId, &RemainsContainer)>();
+            let (e, uuid, remains) = q
+                .iter(app.world())
+                .next()
+                .expect("expected one remains entity");
+            (e, uuid.0.to_string(), remains.player_list_entry)
+        };
+
+        app.world_mut().send_event(RemainsLootIntent {
+            entity: looter,
+            remains_id,
+        });
+        app.update();
+
+        let looter_inv = app.world().get::<PlayerInventory>(looter).unwrap();
+        let has_item = looter_inv
+            .containers
+            .iter()
+            .flat_map(|c| c.items.iter())
+            .any(|placed| placed.instance.instance_id == 42);
+        assert!(has_item, "G 键路径应把遗骸物品转进拾取者背包");
+        assert_eq!(looter_inv.bone_coins, 9, "G 键路径应把骨币转给拾取者");
+        assert!(
+            app.world().get::<Despawned>(remains_entity).is_some(),
+            "搬空后遗骸实体必须 insert(Despawned)（不许裸 despawn——层实体裸删崩服）"
+        );
+        assert!(
+            app.world().get::<Despawned>(player_list_entry).is_some(),
+            "搬空后 player list entry 也必须 insert(Despawned)"
+        );
+        let narrations = app
+            .world_mut()
+            .resource_mut::<crate::player::gameplay::PendingGameplayNarrations>()
+            .drain();
+        assert_eq!(narrations.len(), 1, "成功搬运应有恰好一条成功 narration");
+        assert_eq!(narrations[0].target.as_deref(), Some("Looter"));
+    }
+
+    /// plan-remains-suite P2 — 距离恰好等于 2.5m 上限时允许拾取，锁住
+    /// `distance_sq > REMAINS_PICKUP_RANGE_SQ` 的边界语义。
+    #[test]
+    fn remains_loot_intent_allows_exact_pickup_range_boundary() {
+        use valence::prelude::{App, Despawned, Position, UniqueId, Update};
+
+        let mut app = App::new();
+        app.add_event::<PlayerTerminated>();
+        app.add_event::<RemainsLootIntent>();
+        app.insert_resource(DroppedLootRegistry::default());
+        app.add_systems(
+            Update,
+            (
+                apply_termination_drop_on_terminate,
+                handle_remains_loot_intents,
+            ),
+        );
+
+        let terminated = app
+            .world_mut()
+            .spawn((
+                make_test_inventory_with_one_item(),
+                Position::new([10.0, 66.0, 10.0]),
+                EntityLayerId(Entity::PLACEHOLDER),
+                CurrentDimension(DimensionKind::Overworld),
+                LifeRecord {
+                    character_id: "offline:OldOne".to_string(),
+                    created_at: 0,
+                    biography: vec![BiographyEntry::Terminated {
+                        cause: "natural_end".to_string(),
+                        tick: 1,
+                    }],
+                    ..LifeRecord::default()
+                },
+            ))
+            .id();
+
+        let mut looter_inv = make_test_inventory_with_one_item();
+        for container in &mut looter_inv.containers {
+            container.items.clear();
+        }
+        looter_inv.equipped.clear();
+        looter_inv.hotbar = Default::default();
+        let looter = app
+            .world_mut()
+            .spawn((
+                looter_inv,
+                Position::new([12.5, 66.0, 10.0]),
+                EntityLayerId(Entity::PLACEHOLDER),
+                CurrentDimension(DimensionKind::Overworld),
+                Username("Boundary".to_string()),
+            ))
+            .id();
+
+        app.world_mut()
+            .send_event(PlayerTerminated { entity: terminated });
+        app.update();
+
+        let (remains_entity, remains_id) = {
+            let mut q = app
+                .world_mut()
+                .query::<(Entity, &UniqueId, &RemainsContainer)>();
+            let (e, uuid, _) = q
+                .iter(app.world())
+                .next()
+                .expect("expected one remains entity");
+            (e, uuid.0.to_string())
+        };
+
+        app.world_mut().send_event(RemainsLootIntent {
+            entity: looter,
+            remains_id,
+        });
+        app.update();
+
+        let looter_inv = app.world().get::<PlayerInventory>(looter).unwrap();
+        let has_item = looter_inv
+            .containers
+            .iter()
+            .flat_map(|c| c.items.iter())
+            .any(|placed| placed.instance.instance_id == 42);
+        assert!(
+            has_item,
+            "距离正好 2.5m 时应允许拾取；若这里失败，说明边界从 `>` 误改成了 `>=`"
+        );
+        assert!(
+            app.world().get::<Despawned>(remains_entity).is_some(),
+            "边界距离成功搬空后遗骸应 insert(Despawned)"
+        );
+    }
+
+    /// plan-remains-suite P2 — 超出 2.5m 拒绝：不转移、不 despawn，且给玩家一条
+    /// 拒绝提示。
+    #[test]
+    fn remains_loot_intent_rejects_out_of_range() {
+        use valence::prelude::{App, Despawned, Position, UniqueId, Update};
+
+        let mut app = App::new();
+        app.add_event::<PlayerTerminated>();
+        app.add_event::<RemainsLootIntent>();
+        app.insert_resource(DroppedLootRegistry::default());
+        app.insert_resource(crate::player::gameplay::PendingGameplayNarrations::default());
+        app.add_systems(
+            Update,
+            (
+                apply_termination_drop_on_terminate,
+                handle_remains_loot_intents,
+            ),
+        );
+
+        let terminated = app
+            .world_mut()
+            .spawn((
+                make_test_inventory_with_one_item(),
+                Position::new([10.0, 66.0, 10.0]),
+                EntityLayerId(Entity::PLACEHOLDER),
+                CurrentDimension(DimensionKind::Overworld),
+                LifeRecord {
+                    character_id: "offline:OldOne".to_string(),
+                    created_at: 0,
+                    biography: vec![BiographyEntry::Terminated {
+                        cause: "natural_end".to_string(),
+                        tick: 1,
+                    }],
+                    ..LifeRecord::default()
+                },
+            ))
+            .id();
+        let looter = app
+            .world_mut()
+            .spawn((
+                make_test_inventory_with_one_item(),
+                // 遗骸在 (10,66,10)，拾取者站 10m 外——2.5m 上限必须拒绝。
+                Position::new([20.0, 66.0, 10.0]),
+                EntityLayerId(Entity::PLACEHOLDER),
+                CurrentDimension(DimensionKind::Overworld),
+                Username("FarAway".to_string()),
+            ))
+            .id();
+
+        app.world_mut()
+            .send_event(PlayerTerminated { entity: terminated });
+        app.update();
+
+        let (remains_entity, remains_id) = {
+            let mut q = app
+                .world_mut()
+                .query::<(Entity, &UniqueId, &RemainsContainer)>();
+            let (e, uuid, _) = q
+                .iter(app.world())
+                .next()
+                .expect("expected one remains entity");
+            (e, uuid.0.to_string())
+        };
+
+        app.world_mut().send_event(RemainsLootIntent {
+            entity: looter,
+            remains_id,
+        });
+        app.update();
+
+        let remains = app
+            .world()
+            .get::<RemainsContainer>(remains_entity)
+            .expect("out-of-range attempt should leave remains intact");
+        assert_eq!(remains.items.len(), 1, "超距请求不得转移任何物品");
+        assert!(
+            app.world().get::<Despawned>(remains_entity).is_none(),
+            "超距请求不得 despawn 遗骸"
+        );
+        let narrations = app
+            .world_mut()
+            .resource_mut::<crate::player::gameplay::PendingGameplayNarrations>()
+            .drain();
+        assert_eq!(narrations.len(), 1, "超距拒绝应有一条提示 narration");
+    }
+
+    /// plan-remains-suite P2 — 跨 dimension 拒绝（Overworld 遗骸 vs TSY 拾取者）。
+    #[test]
+    fn remains_loot_intent_rejects_cross_dimension() {
+        use valence::prelude::{App, Despawned, Position, UniqueId, Update};
+
+        let mut app = App::new();
+        app.add_event::<PlayerTerminated>();
+        app.add_event::<RemainsLootIntent>();
+        app.insert_resource(DroppedLootRegistry::default());
+        app.add_systems(
+            Update,
+            (
+                apply_termination_drop_on_terminate,
+                handle_remains_loot_intents,
+            ),
+        );
+
+        let terminated = app
+            .world_mut()
+            .spawn((
+                make_test_inventory_with_one_item(),
+                Position::new([10.0, 66.0, 10.0]),
+                EntityLayerId(Entity::PLACEHOLDER),
+                CurrentDimension(DimensionKind::Overworld),
+                LifeRecord {
+                    character_id: "offline:OldOne".to_string(),
+                    created_at: 0,
+                    biography: vec![BiographyEntry::Terminated {
+                        cause: "natural_end".to_string(),
+                        tick: 1,
+                    }],
+                    ..LifeRecord::default()
+                },
+            ))
+            .id();
+        let looter = app
+            .world_mut()
+            .spawn((
+                make_test_inventory_with_one_item(),
+                Position::new([10.0, 66.0, 10.0]),
+                EntityLayerId(Entity::PLACEHOLDER),
+                // 同坐标同 layer，但人在 TSY——跨界必须拒绝。
+                CurrentDimension(DimensionKind::Tsy),
+                Username("TsyDiver".to_string()),
+            ))
+            .id();
+
+        app.world_mut()
+            .send_event(PlayerTerminated { entity: terminated });
+        app.update();
+
+        let (remains_entity, remains_id) = {
+            let mut q = app
+                .world_mut()
+                .query::<(Entity, &UniqueId, &RemainsContainer)>();
+            let (e, uuid, _) = q
+                .iter(app.world())
+                .next()
+                .expect("expected one remains entity");
+            (e, uuid.0.to_string())
+        };
+
+        app.world_mut().send_event(RemainsLootIntent {
+            entity: looter,
+            remains_id,
+        });
+        app.update();
+
+        let remains = app
+            .world()
+            .get::<RemainsContainer>(remains_entity)
+            .expect("cross-dimension attempt should leave remains intact");
+        assert_eq!(remains.items.len(), 1, "跨 dimension 请求不得转移任何物品");
+        assert!(
+            app.world().get::<Despawned>(remains_entity).is_none(),
+            "跨 dimension 请求不得 despawn 遗骸"
+        );
+    }
+
+    /// plan-remains-suite P2 — unknown remains_id：无操作（良性竞态：遗骸可能刚被
+    /// 他人搬空 despawn，client 缓存过期）。
+    #[test]
+    fn remains_loot_intent_unknown_remains_id_is_noop() {
+        use valence::prelude::{App, Position, Update};
+
+        let mut app = App::new();
+        app.add_event::<RemainsLootIntent>();
+        app.add_systems(Update, handle_remains_loot_intents);
+
+        let looter = app
+            .world_mut()
+            .spawn((
+                make_test_inventory_with_one_item(),
+                Position::new([10.0, 66.0, 10.0]),
+                EntityLayerId(Entity::PLACEHOLDER),
+                CurrentDimension(DimensionKind::Overworld),
+                Username("Looter".to_string()),
+            ))
+            .id();
+        let inv_before = app.world().get::<PlayerInventory>(looter).unwrap().revision;
+
+        app.world_mut().send_event(RemainsLootIntent {
+            entity: looter,
+            remains_id: "00000000-0000-0000-0000-000000000000".to_string(),
+        });
+        app.update();
+
+        let inv_after = app.world().get::<PlayerInventory>(looter).unwrap();
+        assert_eq!(
+            inv_after.revision, inv_before,
+            "unknown remains_id 必须是纯 no-op，不得触碰拾取者背包 revision"
+        );
+    }
+
+    /// plan-remains-suite P2 — 包满部分拾取：G 键路径与右键路径共用
+    /// transfer_remains_to_looter，行为必须一致——骨币照收、装不下的物品留在
+    /// 遗骸里、遗骸不 despawn。
+    #[test]
+    fn remains_loot_intent_full_inventory_partial_pickup_matches_interact_path() {
+        use valence::prelude::{App, Despawned, Position, UniqueId, Update};
+
+        let mut app = App::new();
+        app.add_event::<PlayerTerminated>();
+        app.add_event::<RemainsLootIntent>();
+        app.insert_resource(DroppedLootRegistry::default());
+        app.insert_resource(crate::player::gameplay::PendingGameplayNarrations::default());
+        app.add_systems(
+            Update,
+            (
+                apply_termination_drop_on_terminate,
+                handle_remains_loot_intents,
+            ),
+        );
+
+        let terminated = app
+            .world_mut()
+            .spawn((
+                make_test_inventory_with_one_item(),
+                Position::new([10.0, 66.0, 10.0]),
+                EntityLayerId(Entity::PLACEHOLDER),
+                CurrentDimension(DimensionKind::Overworld),
+                LifeRecord {
+                    character_id: "offline:OldOne".to_string(),
+                    created_at: 0,
+                    biography: vec![BiographyEntry::Terminated {
+                        cause: "natural_end".to_string(),
+                        tick: 1,
+                    }],
+                    ..LifeRecord::default()
+                },
+            ))
+            .id();
+        {
+            let mut inv = app
+                .world_mut()
+                .get_mut::<PlayerInventory>(terminated)
+                .expect("terminated player should have inventory");
+            inv.bone_coins = 5;
+        }
+
+        // 拾取者背包：完全没有容器 → 任何物品都装不下，但骨币仍能收。
+        let mut looter_inv = make_test_inventory_with_one_item();
+        looter_inv.containers.clear();
+        looter_inv.equipped.clear();
+        looter_inv.hotbar = Default::default();
+        looter_inv.bone_coins = 0;
+        let looter = app
+            .world_mut()
+            .spawn((
+                looter_inv,
+                Position::new([10.0, 66.0, 10.0]),
+                EntityLayerId(Entity::PLACEHOLDER),
+                CurrentDimension(DimensionKind::Overworld),
+                Username("FullPack".to_string()),
+            ))
+            .id();
+
+        app.world_mut()
+            .send_event(PlayerTerminated { entity: terminated });
+        app.update();
+
+        let (remains_entity, remains_id) = {
+            let mut q = app
+                .world_mut()
+                .query::<(Entity, &UniqueId, &RemainsContainer)>();
+            let (e, uuid, _) = q
+                .iter(app.world())
+                .next()
+                .expect("expected one remains entity");
+            (e, uuid.0.to_string())
+        };
+
+        app.world_mut().send_event(RemainsLootIntent {
+            entity: looter,
+            remains_id,
+        });
+        app.update();
+
+        let looter_inv = app.world().get::<PlayerInventory>(looter).unwrap();
+        assert_eq!(
+            looter_inv.bone_coins, 5,
+            "包满时骨币仍应转移（与右键路径一致）"
+        );
+        let remains = app
+            .world()
+            .get::<RemainsContainer>(remains_entity)
+            .expect("partially looted remains should survive");
+        assert_eq!(
+            remains.items.len(),
+            1,
+            "装不下的物品必须留在遗骸里（与右键路径一致）"
+        );
+        assert_eq!(remains.bone_coins, 0, "骨币应已被取走");
+        assert!(
+            app.world().get::<Despawned>(remains_entity).is_none(),
+            "遗骸尚有剩余物品时不得 despawn（与右键路径一致）"
         );
     }
 
@@ -13851,7 +15813,7 @@ cols = 4
             row: 0,
             col: 0,
         };
-        apply_inventory_move(&mut inv, &registry, 55, &from, &to).expect("跨包移动应成功");
+        apply_inventory_move(&mut inv, &registry, 55, &from, &to, false).expect("跨包移动应成功");
 
         // 移动后 instance 55 应在 pack_1002，且 lingering_owner_qi 不变（守恒）。
         let pack2 = inv
@@ -13947,7 +15909,7 @@ cols = 4
             row: 0,
             col: 0,
         };
-        apply_inventory_move(&mut inv, &registry, 70, &from, &to)
+        apply_inventory_move(&mut inv, &registry, 70, &from, &to, false)
             .expect("拖入穿戴中的 pack_2001 应成功（owner 在 chest worn 层）");
 
         let pack = inv
@@ -14013,7 +15975,7 @@ cols = 4
         };
         // §3 放宽后：携带面 = worn+held+hotbar+body_pocket。pack 3001 卸在 main_pack（grid 货物，
         // 非携带面）→ 仍被门控拒绝；文案改为「背包已不在身上」（统一新语义）。
-        let err = apply_inventory_move(&mut inv, &registry, 71, &from, &to)
+        let err = apply_inventory_move(&mut inv, &registry, 71, &from, &to, false)
             .expect_err("拖入卸在 grid 内（非携带面）的 pack_3001 应被门控拒绝");
         assert!(
             matches!(
@@ -14067,7 +16029,7 @@ cols = 4
             row: 0,
             col: 0,
         };
-        let err = apply_inventory_move(&mut inv, &registry, 72, &from, &to)
+        let err = apply_inventory_move(&mut inv, &registry, 72, &from, &to, false)
             .expect_err("拖入不存在/不在携带面的 pack_9999 应被拒绝");
         assert!(
             matches!(
@@ -14118,7 +16080,7 @@ cols = 4
             row: 0,
             col: 0,
         };
-        apply_inventory_move(&mut inv, &registry, 73, &from, &to)
+        apply_inventory_move(&mut inv, &registry, 73, &from, &to, false)
             .expect("两个穿戴中的 pack 之间移动应成功");
 
         let pack2 = inv
@@ -14180,7 +16142,7 @@ cols = 4
             row: 0,
             col: 0,
         };
-        apply_inventory_move(&mut inv, &registry, 74, &from, &to).expect(
+        apply_inventory_move(&mut inv, &registry, 74, &from, &to, false).expect(
             "决议 #5 软门控：超载态下拖入穿戴中的 pack 仍应成功；move 路径不做重量硬拒绝（仅 OverloadedMarker debuff）",
         );
         let pack = inv
@@ -14241,7 +16203,7 @@ cols = 4
             row: 0,
             col: 1,
         };
-        let err = apply_inventory_move(&mut inv, &registry, 81, &from, &to).expect_err(
+        let err = apply_inventory_move(&mut inv, &registry, 81, &from, &to, false).expect_err(
             "穿戴态门控放行后，落位层应因 1×1 容器越界（无空位）拒绝；门控放行 ≠ 一定能放下",
         );
         assert!(
@@ -16023,6 +17985,7 @@ cols = 4
                 slot: EquipSlotV1::OffHand,
                 state: crate::schema::inventory::EquipStateV1::Held,
             },
+            false,
         );
         assert!(
             result.is_ok(),
@@ -16095,6 +18058,7 @@ cols = 4
                 slot: EquipSlotV1::OffHand,
                 state: crate::schema::inventory::EquipStateV1::Held,
             },
+            false,
         )
         .expect_err(
             "期望主手双手兵器锁住 off_hand 时装盾被拒绝，\
@@ -16132,6 +18096,7 @@ cols = 4
                 slot: EquipSlotV1::OffHand,
                 state: crate::schema::inventory::EquipStateV1::Held,
             },
+            false,
         )
         .expect_err(
             "期望 iron_sword 装 off_hand 被拒绝（非盾非 treasure 非 dagger），\

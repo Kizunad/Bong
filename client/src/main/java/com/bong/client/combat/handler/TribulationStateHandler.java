@@ -37,7 +37,7 @@ public final class TribulationStateHandler implements ServerDataHandler {
             readString(payload, "result")
         );
         if (active) {
-            TribulationStateStore.replace(state);
+            TribulationStateStore.upsert(state);
             return ServerDataDispatch.handled(envelope.type(), "tribulation state updated");
         }
         TribulationStateStore.clear(state);

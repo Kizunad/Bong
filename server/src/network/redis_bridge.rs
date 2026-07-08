@@ -38,7 +38,7 @@ use crate::schema::channels::{
     CH_CULTIVATION_DEATH, CH_DEATH_CINEMATIC, CH_DEATH_INSIGHT, CH_DUGU_ANTIDOTE_RESULT,
     CH_DUGU_POISON_PROGRESS, CH_DUGU_V2_CAST, CH_DUGU_V2_REVERSE, CH_DUGU_V2_SELF_CURE,
     CH_DUO_SHE_EVENT, CH_ELDER_ENCOUNTER, CH_FACTION_EVENT, CH_FACTION_STATE, CH_FACTION_WAR,
-    CH_FORGE_EVENT, CH_FORGE_OUTCOME, CH_FORGE_START, CH_HALFSTEP_RECHALLENGE,
+    CH_FAUNA_ECOLOGY, CH_FORGE_EVENT, CH_FORGE_OUTCOME, CH_FORGE_START, CH_HALFSTEP_RECHALLENGE,
     CH_HEART_DEMON_OFFER, CH_HEART_DEMON_REQUEST, CH_HIGH_RENOWN_MILESTONE, CH_INSIGHT_OFFER,
     CH_INSIGHT_REQUEST, CH_LIFESPAN_EVENT, CH_MERIDIAN_SEVERED, CH_MUTATION_EVENT,
     CH_NAMED_FACTION_STATE, CH_NPC_COMBAT, CH_NPC_DEATH, CH_NPC_RELIC, CH_NPC_SPAWN,
@@ -80,6 +80,7 @@ use crate::schema::dugu::{AntidoteResultEventV1, DuguPoisonProgressEventV1};
 use crate::schema::dugu_v2::{DuguReverseTriggeredV1, DuguSelfCureProgressV1, DuguV2SkillCastV1};
 use crate::schema::economy::{BoneCoinTickV1, PriceIndexV1};
 use crate::schema::elder_encounter::ElderEncounterEventV1;
+use crate::schema::fauna_ecology::FaunaEcologySnapshotV1;
 use crate::schema::forge_bridge::{ForgeOutcomePayloadV1, ForgeStartPayloadV1};
 use crate::schema::identity::WantedPlayerEventV1;
 use crate::schema::lingtian_weather::WeatherEventUpdateV1;
@@ -210,6 +211,7 @@ pub enum RedisOutbound {
     ZonePressureCrossed(ZonePressureCrossedV1),
     RatPhaseEvent(RatPhaseChangeEvent),
     BotanyEcology(BotanyEcologySnapshotV1),
+    FaunaEcology(FaunaEcologySnapshotV1),
     TsyEnter(TsyEnterEventV1),
     TsyExit(TsyExitEventV1),
     TsyNpcSpawned(TsyNpcSpawnedV1),
@@ -1075,6 +1077,17 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
             })?;
             Ok(RedisIoCommand::Publish {
                 channel: CH_BOTANY_ECOLOGY,
+                payload,
+            })
+        }
+        RedisOutbound::FaunaEcology(snapshot) => {
+            let payload = serde_json::to_string(&snapshot).map_err(|error| {
+                ValidationError::new(format!(
+                    "failed to serialize FaunaEcologySnapshotV1: {error}"
+                ))
+            })?;
+            Ok(RedisIoCommand::Publish {
+                channel: CH_FAUNA_ECOLOGY,
                 payload,
             })
         }

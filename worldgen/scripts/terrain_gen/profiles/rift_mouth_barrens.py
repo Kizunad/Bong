@@ -25,7 +25,7 @@ RIFT_MOUTH_DECORATIONS = (
         kind="boulder",
         blocks=("blackstone", "obsidian", "crying_obsidian"),
         size_range=(3, 7),
-        rarity=0.45,
+        rarity=0.23,
         notes="焦黑碑碎：黑石 + 黑曜 + 哭泣黑曜。渊口周边炭化石柱碎片。",
     ),
     DecorationSpec(
@@ -33,7 +33,7 @@ RIFT_MOUTH_DECORATIONS = (
         kind="crystal",
         blocks=("packed_ice", "blue_ice", "amethyst_cluster"),
         size_range=(2, 5),
-        rarity=0.35,
+        rarity=0.18,
         notes="寒气晶簇：负压使残存真元过冷析出，地表渊口中等密度散布。",
     ),
     DecorationSpec(
@@ -41,7 +41,7 @@ RIFT_MOUTH_DECORATIONS = (
         kind="boulder",
         blocks=("bone_block", "white_concrete", "soul_soil"),
         size_range=(2, 3),
-        rarity=0.18,
+        rarity=0.13,
         notes="骨尘漂积：尸体语义不走 density flora，只保留白骨与魂土沉积。",
     ),
     DecorationSpec(
@@ -49,7 +49,7 @@ RIFT_MOUTH_DECORATIONS = (
         kind="boulder",
         blocks=("cobblestone", "tuff", "cobbled_deepslate"),
         size_range=(3, 5),
-        rarity=0.30,
+        rarity=0.15,
         notes="新鲜崩石：刚塌不久的碎石堆，表面苔藓覆盖率为 0。",
     ),
     DecorationSpec(
@@ -73,7 +73,7 @@ RIFT_MOUTH_DECORATIONS = (
         kind="boulder",
         blocks=("cobblestone", "stone", "tuff"),
         size_range=(1, 2),
-        rarity=0.40,
+        rarity=0.20,
         notes="裂缝石：与普通 wilderness 裂缝接近，portal 位置靠感知确认。",
     ),
 )

@@ -44,7 +44,7 @@ class JiuzongRuinProfileTest(unittest.TestCase):
                     "coarse_dirt",
                     "gravel",
                 ),
-                landmarks=("formation_core_stub", "forgotten_stele_garden"),
+                landmarks=("formation_core_stub", "weathered_flagstone_patch"),
                 extras={"zongmen_origin_id": origin_id},
             ),
         )
@@ -55,7 +55,7 @@ class JiuzongRuinProfileTest(unittest.TestCase):
         self.assertEqual(generator.__class__.__name__, "JiuzongRuinGenerator")
         self.assertIn("zongmen_origin_id", LAYER_REGISTRY)
         self.assertIn("zongmen_origin_id", generator.extra_layers)
-        self.assertEqual(len(JIU_ZONG_RUIN_DECORATIONS_COMMON), 5)
+        self.assertEqual(len(JIU_ZONG_RUIN_DECORATIONS_COMMON), 4)
         self.assertEqual(len(JIU_ZONG_ORIGIN_SPECIFIC), 7)
         self.assertEqual(JIU_ZONG_ORIGIN_SPECIFIC[1].name, "bloodstream_altar")
 

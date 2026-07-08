@@ -104,12 +104,17 @@ public final class ClientRequestSender {
 
     // ─── Inventory move intent ──────────────────────────────────────────────
 
+    /**
+     * plan-rotate-v1 — {@code rotated} 透传拖拽中的 R 键旋转状态；
+     * 非网格目标（装备槽 / hotbar / 丢弃等）恒传 false。
+     */
     public static void sendInventoryMove(
         long instanceId,
         ClientRequestProtocol.InvLocation from,
-        ClientRequestProtocol.InvLocation to
+        ClientRequestProtocol.InvLocation to,
+        boolean rotated
     ) {
-        dispatch(ClientRequestProtocol.encodeInventoryMove(instanceId, from, to));
+        dispatch(ClientRequestProtocol.encodeInventoryMove(instanceId, from, to, rotated));
     }
 
     public static void sendEquipFalseSkin(long itemInstanceId) {
@@ -122,6 +127,11 @@ public final class ClientRequestSender {
 
     public static void sendPickupDroppedItem(long instanceId) {
         dispatch(ClientRequestProtocol.encodePickupDroppedItem(instanceId));
+    }
+
+    /** plan-remains-suite P0 — 遗骸 G 键统一交互。 */
+    public static void sendRemainsLoot(String remainsId) {
+        dispatch(ClientRequestProtocol.encodeRemainsLoot(remainsId));
     }
 
     public static void sendMineralProbe(int x, int y, int z) {
@@ -260,6 +270,25 @@ public final class ClientRequestSender {
 
     public static void sendNpcTradeRequest(int npcEntityId, List<Long> offeredItems, String requestedItemId) {
         dispatch(ClientRequestProtocol.encodeNpcTradeRequest(npcEntityId, offeredItems, requestedItemId));
+    }
+
+    // ─── plan-forge-session-entry-wiring-v1 §4.1#2/#3：起炉 / 图谱翻页 C2S ────────────
+
+    /**
+     * plan-forge-session-entry-wiring-v1 §4.1#3 —— 起炉请求。station 用坐标寻址
+     * （对齐 {@code sendAlchemyOpenFurnace(BlockPos)} 的 BlockPos 参数形状）。
+     */
+    public static void sendForgeStartSession(
+        BlockPos stationPos,
+        String blueprintId,
+        List<ClientRequestProtocol.ForgeMaterial> materials
+    ) {
+        dispatch(ClientRequestProtocol.encodeForgeStartSession(stationPos, blueprintId, materials));
+    }
+
+    /** plan-forge-session-entry-wiring-v1 §4.1#2 —— 图谱书翻页请求，server 权威页码。 */
+    public static void sendForgeBlueprintTurnPage(int delta) {
+        dispatch(ClientRequestProtocol.encodeForgeBlueprintTurnPage(delta));
     }
 
     public static void sendForgeTemperingHit(

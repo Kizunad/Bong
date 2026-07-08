@@ -16,6 +16,7 @@ use crate::shelflife::{DecayProfileRegistry, Freshness};
 use crate::world::dimension::{CurrentDimension, DimensionKind};
 
 use super::components::{BeastKind, FaunaDropIssued, FaunaTag};
+use super::mundane::{MundaneFaunaKind, MundaneFaunaSpecies};
 
 type FaunaDropNpcQuery<'w, 's> = Query<
     'w,
@@ -23,6 +24,9 @@ type FaunaDropNpcQuery<'w, 's> = Query<
     (
         Option<&'static FaunaTag>,
         Option<&'static NpcArchetype>,
+        // plan-mundane-fauna-v1 P1：凡兽掉落分支查表依据——`MundaneFaunaSpecies` 挂在
+        // `spawn_mundane_fauna_at`（`npc/spawn/mundane.rs`），妖兽（FaunaTag）没有此组件。
+        Option<&'static MundaneFaunaSpecies>,
         &'static Position,
         Option<&'static CurrentDimension>,
         Option<&'static FaunaDropIssued>,
@@ -68,6 +72,14 @@ pub const GU_LONG_HUN_JING: &str = "gu_long_hun_jing";
 pub const ZHU_HE_SUIPIAN: &str = "zhu_he_suipian";
 pub const CHU_XU: &str = "chu_xu";
 pub const SHENYUAN_ZHI_YAN: &str = "shenyuan_zhi_yan";
+
+// ── plan-mundane-fauna-v1 P1：凡兽掉落物 ID ──
+pub const RAW_BEAST_MEAT: &str = "raw_beast_meat";
+pub const RAW_BEAST_HIDE: &str = "raw_beast_hide";
+pub const RAW_BEAST_BLOOD: &str = "raw_beast_blood";
+/// 凡骨——凡俗材料档，`bone_coin::bone_grade_for_template` 天然对未知 template_id 返回
+/// `None`（不加档），故凡骨永远无法喂进封灵骨币制作（§8.1 正典硬约束：骨币料仅限异变兽骨）。
+pub const FAN_GU: &str = "fan_gu";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct QuantityRange {
@@ -265,6 +277,109 @@ pub fn roll_fauna_drops(tag: FaunaTag, seed: u64) -> Vec<RolledFaunaDrop> {
     out
 }
 
+// ---------------------------------------------------------------------------
+// 凡兽掉落表（plan-mundane-fauna-v1 P1）——平行于 `drop_table_for(BeastKind)`，
+// 不复用 BeastKind 键。按物种微调掉落权重（鸡多肉少皮/牛皮厚/蛙无皮有腿肉→统一映射
+// meat 键），威胁谱系越高（狐/狼）凡骨与生血命中率越高（骨架更结实、体量更大）。
+// ---------------------------------------------------------------------------
+
+const COW_DROPS: [DropEntry; 4] = [
+    DropEntry::guaranteed(RAW_BEAST_MEAT, QuantityRange::between(2, 4)),
+    // 牛皮厚——唯一保底 quantity 上探到 2 的物种，与其余单张皮凡兽拉开差异。
+    DropEntry::guaranteed(RAW_BEAST_HIDE, QuantityRange::between(1, 2)),
+    DropEntry::rare(FAN_GU, QuantityRange::fixed(1), 0.18),
+    DropEntry::rare(RAW_BEAST_BLOOD, QuantityRange::fixed(1), 0.15),
+];
+
+const PIG_DROPS: [DropEntry; 4] = [
+    DropEntry::guaranteed(RAW_BEAST_MEAT, QuantityRange::between(2, 3)),
+    DropEntry::rare(RAW_BEAST_HIDE, QuantityRange::fixed(1), 0.30),
+    DropEntry::rare(FAN_GU, QuantityRange::fixed(1), 0.15),
+    DropEntry::rare(RAW_BEAST_BLOOD, QuantityRange::fixed(1), 0.12),
+];
+
+const SHEEP_DROPS: [DropEntry; 4] = [
+    DropEntry::guaranteed(RAW_BEAST_MEAT, QuantityRange::between(1, 2)),
+    DropEntry::guaranteed(RAW_BEAST_HIDE, QuantityRange::fixed(1)),
+    DropEntry::rare(FAN_GU, QuantityRange::fixed(1), 0.15),
+    DropEntry::rare(RAW_BEAST_BLOOD, QuantityRange::fixed(1), 0.12),
+];
+
+const GOAT_DROPS: [DropEntry; 4] = [
+    DropEntry::guaranteed(RAW_BEAST_MEAT, QuantityRange::between(1, 2)),
+    DropEntry::guaranteed(RAW_BEAST_HIDE, QuantityRange::fixed(1)),
+    DropEntry::rare(FAN_GU, QuantityRange::fixed(1), 0.15),
+    DropEntry::rare(RAW_BEAST_BLOOD, QuantityRange::fixed(1), 0.12),
+];
+
+const CHICKEN_DROPS: [DropEntry; 4] = [
+    // 鸡多肉少皮：meat 保底区间高，hide 降级成稀有小概率。
+    DropEntry::guaranteed(RAW_BEAST_MEAT, QuantityRange::between(1, 3)),
+    DropEntry::rare(RAW_BEAST_HIDE, QuantityRange::fixed(1), 0.10),
+    DropEntry::rare(FAN_GU, QuantityRange::fixed(1), 0.08),
+    DropEntry::rare(RAW_BEAST_BLOOD, QuantityRange::fixed(1), 0.10),
+];
+
+const RABBIT_DROPS: [DropEntry; 4] = [
+    DropEntry::guaranteed(RAW_BEAST_MEAT, QuantityRange::fixed(1)),
+    DropEntry::rare(RAW_BEAST_HIDE, QuantityRange::fixed(1), 0.15),
+    DropEntry::rare(FAN_GU, QuantityRange::fixed(1), 0.08),
+    DropEntry::rare(RAW_BEAST_BLOOD, QuantityRange::fixed(1), 0.08),
+];
+
+const FROG_DROPS: [DropEntry; 3] = [
+    // 蛙无皮有腿肉——统一映射 meat 键，不产 hide。
+    DropEntry::guaranteed(RAW_BEAST_MEAT, QuantityRange::fixed(1)),
+    DropEntry::rare(FAN_GU, QuantityRange::fixed(1), 0.05),
+    DropEntry::rare(RAW_BEAST_BLOOD, QuantityRange::fixed(1), 0.06),
+];
+
+const FOX_DROPS: [DropEntry; 4] = [
+    DropEntry::guaranteed(RAW_BEAST_MEAT, QuantityRange::between(1, 2)),
+    DropEntry::guaranteed(RAW_BEAST_HIDE, QuantityRange::fixed(1)),
+    DropEntry::rare(FAN_GU, QuantityRange::fixed(1), 0.20),
+    DropEntry::rare(RAW_BEAST_BLOOD, QuantityRange::fixed(1), 0.15),
+];
+
+const WOLF_DROPS: [DropEntry; 4] = [
+    DropEntry::guaranteed(RAW_BEAST_MEAT, QuantityRange::between(2, 3)),
+    DropEntry::guaranteed(RAW_BEAST_HIDE, QuantityRange::fixed(1)),
+    // T2.5 群体掠食——凡兽威胁谱系最高档，骨架最结实，凡骨命中率也最高。
+    DropEntry::rare(FAN_GU, QuantityRange::fixed(1), 0.25),
+    DropEntry::rare(RAW_BEAST_BLOOD, QuantityRange::fixed(1), 0.18),
+];
+
+pub fn drop_table_for_mundane(kind: MundaneFaunaKind) -> &'static [DropEntry] {
+    match kind {
+        MundaneFaunaKind::Cow => &COW_DROPS,
+        MundaneFaunaKind::Pig => &PIG_DROPS,
+        MundaneFaunaKind::Sheep => &SHEEP_DROPS,
+        MundaneFaunaKind::Goat => &GOAT_DROPS,
+        MundaneFaunaKind::Chicken => &CHICKEN_DROPS,
+        MundaneFaunaKind::Rabbit => &RABBIT_DROPS,
+        MundaneFaunaKind::Frog => &FROG_DROPS,
+        MundaneFaunaKind::Fox => &FOX_DROPS,
+        MundaneFaunaKind::Wolf => &WOLF_DROPS,
+    }
+}
+
+/// 凡兽版 `roll_fauna_drops`——凡兽无 `BeastVariant`（无变异档），概率直接取
+/// `DropEntry::probability`，不像妖兽那样乘 `rare_drop_multiplier`。
+pub fn roll_mundane_fauna_drops(kind: MundaneFaunaKind, seed: u64) -> Vec<RolledFaunaDrop> {
+    let mut out = Vec::new();
+    for (idx, entry) in drop_table_for_mundane(kind).iter().enumerate() {
+        let idx_seed = seed.wrapping_add((idx as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15));
+        if splitmix64_unit(idx_seed) > entry.probability.clamp(0.0, 1.0) {
+            continue;
+        }
+        out.push(RolledFaunaDrop {
+            item_id: entry.item_id,
+            quantity: entry.quantity.roll(idx_seed.rotate_left(17)),
+        });
+    }
+    out
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn fauna_drop_system(
     mut commands: Commands,
@@ -286,18 +401,29 @@ pub fn fauna_drop_system(
     let decay_profiles = decay_profiles.as_deref();
 
     for event in deaths.read() {
-        let Ok((tag, archetype, pos, dimension, issued)) = npcs.get(event.target) else {
+        let Ok((tag, archetype, species, pos, dimension, issued)) = npcs.get(event.target) else {
             continue;
         };
         if issued.is_some() {
             continue;
         }
-        let Some(tag) = tag.copied().or_else(|| fallback_tag(archetype.copied())) else {
-            continue;
-        };
-
         let seed = fauna_drop_seed(event.target, event.at_tick);
-        let drops = roll_fauna_drops(tag, seed);
+        // plan-mundane-fauna-v1 P1：凡兽（挂 MundaneFaunaSpecies）走独立掉落表，不复用
+        // BeastKind 键；否则回退到既有妖兽 FaunaTag / legacy archetype 分支。
+        let (drops, source_tag) = if let Some(species) = species {
+            (
+                roll_mundane_fauna_drops(species.0, seed),
+                format!("fauna_drop:mundane:{}", species.0.as_str()),
+            )
+        } else {
+            let Some(tag) = tag.copied().or_else(|| fallback_tag(archetype.copied())) else {
+                continue;
+            };
+            (
+                roll_fauna_drops(tag, seed),
+                format!("fauna_drop:{}", tag.beast_kind.as_str()),
+            )
+        };
         let mut dropped_core = false;
         for (idx, drop) in drops.into_iter().enumerate() {
             let Ok(item) = build_fauna_item_instance(
@@ -320,7 +446,7 @@ pub fn fauna_drop_system(
                 item.instance_id,
                 DroppedLootEntry {
                     instance_id: item.instance_id,
-                    source_container_id: format!("fauna_drop:{}", tag.beast_kind.as_str()),
+                    source_container_id: source_tag.clone(),
                     source_row: 0,
                     source_col: 0,
                     world_pos,
@@ -406,6 +532,10 @@ pub fn freshness_profile_for_template(template_id: &str) -> Option<(&'static str
         "bone_coin_15" => Some(("bone_coin_15_v1", 15.0)),
         "bone_coin_40" => Some(("bone_coin_40_v1", 40.0)),
         "fengling_bone_coin" => Some(("bone_coin_v1", 10.0)),
+        // plan-mundane-fauna-v1 P1：生肉/生血挂 Spoil freshness（腐败快于熟肉/生血快于生肉）。
+        // initial_qi 取 fauna.toml 里对应 item 的 spirit_quality_initial（0.35 / 0.30）。
+        RAW_BEAST_MEAT => Some(("raw_beast_meat_v1", 0.35)),
+        RAW_BEAST_BLOOD => Some(("raw_beast_blood_v1", 0.30)),
         _ => None,
     }
 }
@@ -540,6 +670,11 @@ mod tests {
             "bone_coin_5",
             "bone_coin_15",
             "bone_coin_40",
+            // plan-mundane-fauna-v1 P1
+            RAW_BEAST_MEAT,
+            RAW_BEAST_HIDE,
+            RAW_BEAST_BLOOD,
+            FAN_GU,
         ];
         ItemRegistry::from_map(
             ids.into_iter()
@@ -601,6 +736,250 @@ mod tests {
                 );
             }
         }
+    }
+
+    // ── plan-mundane-fauna-v1 P1：凡兽掉落矩阵（9 物种 × 掉落表专属 case）───────────────
+
+    #[test]
+    fn each_mundane_kind_rolls_at_least_one_guaranteed_meat_drop() {
+        for kind in MundaneFaunaKind::ALL {
+            for seed in [1, 42, 99, 12345] {
+                let drops = roll_mundane_fauna_drops(kind, seed);
+                assert!(
+                    drops.iter().any(|d| d.item_id == RAW_BEAST_MEAT),
+                    "{kind:?} must always drop raw_beast_meat (guaranteed) for seed {seed}, got {drops:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn mundane_drop_tables_never_leak_beast_exclusive_items() {
+        // 契约：凡兽掉落表与妖兽掉落表物品池互不相通——凡兽无灵，绝不产出骨材/变异核心。
+        let beast_only_items = [
+            SHU_GU,
+            ZHU_GU,
+            FENG_HE_GU,
+            YI_SHOU_GU,
+            BIAN_YI_HEXIN,
+            FU_YA_HESUI,
+            ZHEN_SHI_CHU,
+        ];
+        for kind in MundaneFaunaKind::ALL {
+            let table = drop_table_for_mundane(kind);
+            for entry in table {
+                assert!(
+                    !beast_only_items.contains(&entry.item_id),
+                    "{kind:?} drop table must not contain beast-exclusive item `{}`",
+                    entry.item_id
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn frog_drop_table_has_no_hide_entry_at_all() {
+        // 蛙无皮有腿肉——统一映射 meat 键，drop_table_for_mundane(Frog) 里不应出现
+        // RAW_BEAST_HIDE（不只是概率低，而是压根没有这一条目）。
+        let table = drop_table_for_mundane(MundaneFaunaKind::Frog);
+        assert!(
+            !table.iter().any(|e| e.item_id == RAW_BEAST_HIDE),
+            "Frog drop table must not contain raw_beast_hide entry, got {table:?}"
+        );
+    }
+
+    #[test]
+    fn chicken_hide_is_rare_not_guaranteed() {
+        // 鸡多肉少皮：hide 存在但概率 < 1.0（不是保底）。
+        let table = drop_table_for_mundane(MundaneFaunaKind::Chicken);
+        let hide = table
+            .iter()
+            .find(|e| e.item_id == RAW_BEAST_HIDE)
+            .expect("Chicken drop table should still contain a (rare) hide entry");
+        assert!(
+            hide.probability < 1.0,
+            "chicken hide probability={} must be < 1.0 (少皮, not guaranteed)",
+            hide.probability
+        );
+    }
+
+    #[test]
+    fn cow_hide_quantity_upper_bound_exceeds_single_hide_species() {
+        // 牛皮厚——cow 的保底 hide quantity 上界必须 > 1，拉开与羊/山羊/狐/狼的单张皮差异。
+        let cow_hide = drop_table_for_mundane(MundaneFaunaKind::Cow)
+            .iter()
+            .find(|e| e.item_id == RAW_BEAST_HIDE)
+            .expect("cow must have a guaranteed hide entry");
+        assert!(
+            cow_hide.probability >= 1.0,
+            "cow hide must be guaranteed (probability=1.0), got {}",
+            cow_hide.probability
+        );
+        assert!(
+            cow_hide.quantity.max > 1,
+            "cow hide quantity upper bound must exceed 1 (牛皮厚), got {:?}",
+            cow_hide.quantity
+        );
+
+        for (kind, item) in [
+            (MundaneFaunaKind::Sheep, RAW_BEAST_HIDE),
+            (MundaneFaunaKind::Goat, RAW_BEAST_HIDE),
+            (MundaneFaunaKind::Fox, RAW_BEAST_HIDE),
+            (MundaneFaunaKind::Wolf, RAW_BEAST_HIDE),
+        ] {
+            let entry = drop_table_for_mundane(kind)
+                .iter()
+                .find(|e| e.item_id == item)
+                .unwrap_or_else(|| panic!("{kind:?} must have a hide entry"));
+            assert_eq!(
+                entry.quantity,
+                QuantityRange::fixed(1),
+                "{kind:?} hide should be single-quantity, unlike cow's thick hide"
+            );
+        }
+    }
+
+    #[test]
+    fn wolf_has_the_highest_fan_gu_probability_across_all_mundane_species() {
+        // 威胁谱系：T2.5 狼骨架最结实，凡骨命中率必须是 9 物种里最高的一档。
+        let wolf_fan_gu = drop_table_for_mundane(MundaneFaunaKind::Wolf)
+            .iter()
+            .find(|e| e.item_id == FAN_GU)
+            .expect("wolf must drop fan_gu")
+            .probability;
+        for kind in MundaneFaunaKind::ALL {
+            if kind == MundaneFaunaKind::Wolf {
+                continue;
+            }
+            let other = drop_table_for_mundane(kind)
+                .iter()
+                .find(|e| e.item_id == FAN_GU)
+                .map(|e| e.probability)
+                .unwrap_or(0.0);
+            assert!(
+                wolf_fan_gu > other,
+                "wolf fan_gu probability {wolf_fan_gu} must exceed {kind:?}'s {other}"
+            );
+        }
+    }
+
+    #[test]
+    fn fauna_item_instance_attaches_raw_beast_meat_freshness_faster_than_bone() {
+        let registry = fauna_registry();
+        let profiles = crate::shelflife::build_default_registry();
+        let mut allocator = InventoryInstanceIdAllocator::new(100);
+        let item = build_fauna_item_instance(
+            RAW_BEAST_MEAT,
+            2,
+            10,
+            &registry,
+            Some(&profiles),
+            &mut allocator,
+        )
+        .expect("raw_beast_meat template and profile should exist");
+
+        let freshness = item
+            .freshness
+            .expect("mundane meat drop should carry freshness");
+        assert_eq!(freshness.profile.as_str(), "raw_beast_meat_v1");
+        assert_eq!(freshness.created_at_tick, 10);
+    }
+
+    #[test]
+    fn death_event_for_mundane_species_drops_from_mundane_table_with_mundane_source_tag() {
+        let mut app = App::new();
+        app.add_event::<DeathEvent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.insert_resource(fauna_registry());
+        app.insert_resource(crate::shelflife::build_default_registry());
+        app.insert_resource(InventoryInstanceIdAllocator::new(10));
+        app.insert_resource(DroppedLootRegistry::default());
+        app.add_systems(Update, fauna_drop_system);
+
+        let cow = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                MundaneFaunaSpecies(MundaneFaunaKind::Cow),
+                Position::new([3.0, 64.0, 4.0]),
+            ))
+            .id();
+        app.world_mut().send_event(DeathEvent {
+            target: cow,
+            cause: "test".to_string(),
+            attacker: None,
+            attacker_player_id: None,
+            at_tick: 200,
+        });
+
+        app.update();
+
+        let drops = app.world().resource::<DroppedLootRegistry>();
+        let meat_entry = drops
+            .entries
+            .values()
+            .find(|entry| entry.item.template_id == RAW_BEAST_MEAT)
+            .expect("cow death should drop raw_beast_meat via mundane branch");
+        assert_eq!(
+            meat_entry.source_container_id, "fauna_drop:mundane:cow",
+            "mundane drop source_container_id must be tagged distinctly from beast drops"
+        );
+        assert!(
+            app.world().get::<FaunaDropIssued>(cow).is_some(),
+            "processed mundane fauna should be marked to prevent duplicate drops"
+        );
+        assert!(
+            app.world().get::<Despawned>(cow).is_some(),
+            "processed mundane fauna should be marked despawned"
+        );
+    }
+
+    #[test]
+    fn mundane_species_never_falls_back_to_legacy_beast_table() {
+        // 回归防护：MundaneFaunaSpecies 分支必须优先于 tag/archetype fallback 判定，
+        // 否则若凡兽实体意外挂了 NpcArchetype::Beast 会被吞进老鼠表（悖离契约）。
+        let mut app = App::new();
+        app.add_event::<DeathEvent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.insert_resource(fauna_registry());
+        app.insert_resource(crate::shelflife::build_default_registry());
+        app.insert_resource(InventoryInstanceIdAllocator::new(10));
+        app.insert_resource(DroppedLootRegistry::default());
+        app.add_systems(Update, fauna_drop_system);
+
+        let chicken = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                NpcArchetype::Beast,
+                MundaneFaunaSpecies(MundaneFaunaKind::Chicken),
+                Position::new([0.0, 64.0, 0.0]),
+            ))
+            .id();
+        app.world_mut().send_event(DeathEvent {
+            target: chicken,
+            cause: "test".to_string(),
+            attacker: None,
+            attacker_player_id: None,
+            at_tick: 5,
+        });
+
+        app.update();
+
+        let drops = app.world().resource::<DroppedLootRegistry>();
+        let dropped_templates: Vec<&str> = drops
+            .entries
+            .values()
+            .map(|entry| entry.item.template_id.as_str())
+            .collect();
+        assert!(
+            !dropped_templates.contains(&SHU_GU),
+            "must not fall back to rat table when MundaneFaunaSpecies is present, got {dropped_templates:?}"
+        );
+        assert!(
+            dropped_templates.contains(&RAW_BEAST_MEAT),
+            "should drop mundane raw_beast_meat instead, got {dropped_templates:?}"
+        );
     }
 
     // ── HEIWUSHI_DROPS 饱和锁（plan-sword-path-v2 P3 review 补测）───────────────────────────

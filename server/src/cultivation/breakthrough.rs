@@ -662,6 +662,13 @@ pub fn breakthrough_system(
         let Ok((mut cultivation, mut meridians, mut life, npc_marker)) =
             players.get_mut(req.entity)
         else {
+            // §15.2 可观察性：静默丢请求 = 玩家永远不知道为什么没反应。
+            // 组件缺失属服务端接线问题，必须在 log 留痕。
+            tracing::warn!(
+                "[bong][cultivation] breakthrough request dropped: entity {:?} missing \
+                 Cultivation/MeridianSystem/LifeRecord (attach chain broken?)",
+                req.entity
+            );
             continue;
         };
         let from = cultivation.realm;
@@ -889,6 +896,14 @@ pub fn breakthrough_system(
         }
 
         if let Err(error) = &res {
+            // 拒绝原因必须可观察（§15.2）：narration 是玩家面反馈，log 是排障面。
+            // 此前 narration 资源/username 缺失时双双静默——留 log 兜底。
+            tracing::info!(
+                "[bong][cultivation] breakthrough rejected entity={:?} from={:?} error={:?}",
+                req.entity,
+                from,
+                error
+            );
             if let (Some(narrations), Some(username)) = (
                 resources.pending_narrations.as_deref_mut(),
                 username.as_deref(),
@@ -897,6 +912,14 @@ pub fn breakthrough_system(
                     username,
                     breakthrough_error_message(error),
                     NarrationStyle::SystemWarning,
+                );
+            } else {
+                tracing::warn!(
+                    "[bong][cultivation] breakthrough rejection feedback UNDELIVERABLE \
+                     entity={:?} narrations_present={} username_present={}",
+                    req.entity,
+                    resources.pending_narrations.is_some(),
+                    username.is_some()
                 );
             }
         }
