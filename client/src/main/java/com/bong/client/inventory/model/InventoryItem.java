@@ -162,7 +162,8 @@ public final class InventoryItem {
             "",
             List.of(),
             null,
-            List.of()
+            List.of(),
+            ""
         );
     }
 

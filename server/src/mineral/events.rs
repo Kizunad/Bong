@@ -107,7 +107,7 @@ impl MineralFeedbackEvent {
         Self {
             player,
             message_id: MSG_FORGE_STATION_BUSY,
-            text: "这座砧上已有进行中的锻造，须先完成或收回".to_string(),
+            text: "这座砧上已有进行中的锻造，须待其结束".to_string(),
         }
     }
 
