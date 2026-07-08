@@ -119,7 +119,7 @@ pub struct StartCraftSuccess {
 pub struct CancelCraftOutcome {
     pub event: CraftFailedEvent,
     /// 70% 返还材料：(template_id, refund_count)。0 数量不写入。
-    /// 调用方需要 `inventory::add_item_to_player_inventory` 真实加回 inventory。
+    /// 调用方需要负责真实返还（入包或落地兜底）。
     pub refund_manifest: Vec<(String, u32)>,
 }
 
@@ -128,7 +128,7 @@ pub struct CancelCraftOutcome {
 pub struct FinalizeCraftOutcome {
     pub event: CraftCompletedEvent,
     /// 产出：(template_id, count)。
-    /// 调用方需要 `inventory::add_item_to_player_inventory` 真实加进 inventory。
+    /// 调用方需要负责真实写入 inventory。
     pub output_manifest: (String, u32),
 }
 
@@ -444,7 +444,7 @@ pub fn tick_session(session: &mut CraftSession, amount: u64) -> bool {
 }
 
 /// 计算取消时的返还清单（材料 70% 向下取整）。
-/// 不动 inventory / 不扣 qi；调用方按返还清单执行 `add_item_to_player_inventory`。
+/// 不动 inventory / 不扣 qi；调用方按返还清单执行真实返还。
 pub fn cancel_craft(
     session: &CraftSession,
     recipe: &CraftRecipe,
@@ -484,7 +484,7 @@ pub fn cancel_craft(
 }
 
 /// 完成手搓 — 计算产出 manifest + 完成事件。
-/// 不动 inventory；调用方按 output_manifest 执行 `add_item_to_player_inventory`。
+/// 不动 inventory；调用方按 output_manifest 执行真实产出写入。
 pub fn finalize_craft(
     session: &CraftSession,
     recipe: &CraftRecipe,
