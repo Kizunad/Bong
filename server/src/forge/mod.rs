@@ -106,12 +106,27 @@ pub fn register(app: &mut App) {
             handle_start_forge_requests,
             crate::network::forge_bridge::publish_forge_start_on_session_create
                 .after(handle_start_forge_requests),
+            // plan-forge-session-entry-wiring-v1 P2 —— 起炉受理 S2C 回执
+            // （station+session+blueprint_book 三件套，send_forge_snapshots_to_player
+            // 真实生产调用点）。
+            crate::network::forge_snapshot_emit::push_forge_start_snapshot_on_accept
+                .after(handle_start_forge_requests),
             handle_tempering_hits.after(handle_start_forge_requests),
             handle_scroll_submits.after(handle_tempering_hits),
             handle_consecration_injects.after(handle_scroll_submits),
+            // 单步交互（淬炼击键/铭文投入/开光注真元）后回推 session 快照，供
+            // ForgeScreen 实时反映进度。
+            crate::network::forge_snapshot_emit::push_forge_session_snapshot_on_interaction
+                .after(handle_consecration_injects),
             handle_step_advance.after(handle_consecration_injects),
+            // step 推进后回推快照（第二个 send_forge_snapshots_to_player 真实调用点）。
+            crate::network::forge_snapshot_emit::push_forge_session_snapshot_on_step_advance
+                .after(handle_step_advance),
             inventory_bridge::forge_outcome_to_inventory.after(handle_step_advance),
             crate::network::forge_bridge::publish_forge_outcome.after(handle_step_advance),
+            // 结算 S2C 回执（send_forge_outcome_to_player 真实生产调用点）。
+            crate::network::forge_snapshot_emit::push_forge_outcome_on_event
+                .after(handle_step_advance),
             processing_mode::forge_processing_mode_handler,
             // 延迟清理：Done session 保留 DONE_SESSION_RETENTION_TICKS tick 后移除，
             // 避免 client_request_handler 在 finalize 瞬间后仍读 session 时出竞态。
