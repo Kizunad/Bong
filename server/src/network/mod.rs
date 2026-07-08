@@ -903,7 +903,8 @@ pub fn register(app: &mut App) {
             craft_event_bridge::publish_craft_completed_to_redis
                 .after(craft_emit::tick_craft_sessions),
             craft_event_bridge::publish_craft_failed_to_redis
-                .after(craft_emit::apply_craft_cancel_intents),
+                .after(craft_emit::apply_craft_cancel_intents)
+                .after(craft_emit::tick_craft_sessions),
             craft_event_bridge::publish_recipe_unlocked_to_redis
                 .after(craft_emit::apply_unlock_intents),
         ),
