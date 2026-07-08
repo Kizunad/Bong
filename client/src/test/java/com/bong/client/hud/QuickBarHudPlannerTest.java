@@ -125,6 +125,38 @@ class QuickBarHudPlannerTest {
     }
 
     @Test
+    void skillSlotWithMissingConfiguredIconFallsBackToTextWhenProbeIsProvided() {
+        SkillBarConfig skills = SkillBarConfig.of(
+            new SkillBarEntry[] {
+                SkillBarEntry.skill(
+                    "anqi.multi_shot",
+                    "多发齐射",
+                    50,
+                    500,
+                    "bong:textures/gui/skill/anqi_multi_shot.png"
+                )
+            },
+            new long[9]
+        );
+
+        List<HudRenderCommand> commands = QuickBarHudPlanner.buildCommands(
+            QuickSlotConfig.empty(),
+            skills,
+            0,
+            CastState.idle(),
+            List.of(),
+            1_000L,
+            960,
+            540,
+            path -> false
+        );
+
+        assertFalse(commands.stream().anyMatch(cmd -> cmd.isTexturedRect()
+            && cmd.texturePath().equals("bong:textures/gui/skill/anqi_multi_shot.png")));
+        assertTrue(commands.stream().anyMatch(cmd -> cmd.isText() && cmd.text().equals("多")));
+    }
+
+    @Test
     void itemSlotUsesEntryIconTexture() {
         SkillBarConfig skills = SkillBarConfig.of(
             new SkillBarEntry[] {
