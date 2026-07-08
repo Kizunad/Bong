@@ -2,14 +2,14 @@
 
 ## Bug 摘要
 
-炼丹客户端把炉体、活跃 session、预测概率、丹毒、试药史、背包重量等状态分别存在静态 store 里，但这些 store 只有 `resetForTests()`，没有生产态断线清理。`BongNetworkHandler.clearClientStateOnDisconnect()` 已清理多类跨 session UI store，却没有清理任何炼丹 store。
+炼丹客户端把炉体、活跃 session、预测概率、丹毒、试药史等服务器 payload 驱动状态分别存在静态 store 里，但这些 store 只有 `resetForTests()`，没有生产态断线清理。`BongNetworkHandler.clearClientStateOnDisconnect()` 已清理多类跨 session UI store，却没有清理任何炼丹 store。
 
 结果是玩家在 A 服炼丹进行中断线/切服后，B 服首个炼丹 payload 到达前，客户端仍可能在 HUD 和炼丹炉界面显示 A 服的炼制进度、炉坐标、配方、预测概率、丹毒和最近结算历史。
 
 ## 实际游玩体验影响
 
 - 玩家刚进新服或新存档时，屏幕下方仍显示上一局“炼制 xx%”和旧配方状态，误以为当前服务器有一炉丹正在跑。
-- 打开炼丹炉界面时，左/中/右栏会读旧炉体、旧 session、旧预测、旧丹毒、旧试药史和旧背包重量，玩家可能按旧上下文投料、点火或取回。
+- 打开炼丹炉界面时，左/中/右栏会读旧炉体、旧 session、旧预测、旧丹毒和旧试药史，玩家可能按旧上下文投料、点火或取回。
 - 如果上一局刚炸炉或刚成丹，`AlchemyAttemptHistoryStore` 的最近结果 toast 仍可能在新会话窗口内出现，造成“新服刚进来就炸炉/成丹”的错误反馈。
 
 ## 证据定位
@@ -20,6 +20,7 @@
 - `client/src/main/java/com/bong/client/alchemy/AlchemyScreen.java:471-498`：炼丹炉界面直接读取炉体、session 的坐标、温度、进度和真元目标。
 - `client/src/main/java/com/bong/client/alchemy/AlchemyScreen.java:516-532`：中途投料高亮完全由旧 session 的 `stages` 驱动。
 - `client/src/main/java/com/bong/client/alchemy/AlchemyScreen.java:549-613`：预测概率、试药史、丹毒面板分别读取静态 store。
+- `client/src/main/java/com/bong/client/alchemy/state/InventoryMetaStore.java:35-49`：背包元信息也是静态 store，但当前只见 `AlchemyScreen` 读取，未见生产 payload 写入；修复时应评估是否纳入统一 clear 边界，而不是作为本 bug 的核心串会话证据。
 - `client/src/main/java/com/bong/client/BongNetworkHandler.java:857-900`：统一断线清理覆盖 realm collapse、NPC、TSY、采集、棺、天道 UI、遗骸、craft 等，但没有任何炼丹 store。
 
 ## 触发路径
@@ -48,7 +49,7 @@
 
 ## Skeleton Fix Plan
 
-- [ ] 给炼丹客户端 store 增加生产态断线清理入口，至少覆盖 `AlchemySessionStore`、`AlchemyFurnaceStore`、`AlchemyOutcomeForecastStore`、`ContaminationWarningStore`、`AlchemyAttemptHistoryStore`、`InventoryMetaStore`；是否清 `RecipeScrollStore` 需按丹方书是否跨服可信单独定。
+- [ ] 给炼丹客户端 store 增加生产态断线清理入口，至少覆盖 `AlchemySessionStore`、`AlchemyFurnaceStore`、`AlchemyOutcomeForecastStore`、`ContaminationWarningStore`、`AlchemyAttemptHistoryStore`；`InventoryMetaStore` 当前未见生产写入，是否纳入 clear 边界需按实现时的实际生产来源确认；是否清 `RecipeScrollStore` 需按丹方书是否跨服可信单独定。
 - [ ] 在客户端断线回调中调用炼丹清理入口，保留测试专用 reset 与生产态 clear 的边界。
 - [ ] 若当前屏幕是 `AlchemyScreen`，断线清理后应关闭或刷新为无炉态，避免用户继续对旧 `furnacePos` 操作。
 - [ ] 明确 reconnect 首帧前的空态 UX：HUD 不显示炼制进度，炼丹炉界面不显示旧预测/旧丹毒/旧试药史。
@@ -57,7 +58,7 @@
 
 - [ ] client 单测：写入活跃 `AlchemySessionStore` + `AlchemyFurnaceStore` 后执行断线清理，HUD planner 不再产生炼制进度命令。
 - [ ] client 单测：写入 `AlchemyAttemptHistoryStore` 后执行断线清理，最近结果 toast 不再跨 session 渲染。
-- [ ] client 单测：写入预测、丹毒、背包重量后执行断线清理，`AlchemyScreen` 描述/刷新逻辑回到空态或关闭态。
+- [ ] client 单测：写入预测、丹毒后执行断线清理，`AlchemyScreen` 描述/刷新逻辑回到空态或关闭态；若实现时发现 `InventoryMetaStore` 有生产写入，再补背包元信息清理断言。
 - [ ] 回归：正常收到新的 `alchemy_*` payload 后，炼丹 HUD 和界面仍能重新显示新 session。
 - [ ] 回归命令：在 `client/` 跑 `./gradlew test build`。
 
