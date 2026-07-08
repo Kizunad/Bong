@@ -35,7 +35,7 @@ use valence::prelude::{
     App, DVec3, EventReader, EventWriter, Events, IntoSystemConfigs, Query, Res, ResMut, Update,
 };
 
-use self::blueprint::{BlueprintRegistry, StepKind, DEFAULT_BLUEPRINTS_DIR};
+use self::blueprint::{BlueprintRegistry, MaterialStack, StepKind, DEFAULT_BLUEPRINTS_DIR};
 use self::events::{
     ConsecrationInject, ForgeBucket, ForgeOutcomeEvent, ForgeStartAccepted,
     InscriptionScrollSubmit, StartForgeRequest, StepAdvance, TemperingHit,
@@ -171,17 +171,20 @@ fn handle_start_forge_requests(
             tracing::warn!("[bong][forge] unknown blueprint: {}", req.blueprint);
             continue;
         };
-        // 校验图谱已学习（plan-forge-session-entry-wiring-v1 §4.1#1：引擎既有语义不变，
-        // 仅补上此前缺失的玩家 reject 回执）。
-        if let Ok(lb) = learned.get(req.caster) {
-            if !lb.knows(&bp.id) {
-                tracing::debug!("[bong][forge] caster has not learned {}", bp.id);
-                feedback.send(MineralFeedbackEvent::forge_blueprint_not_learned(
-                    req.caster,
-                    bp.name.clone(),
-                ));
-                continue;
-            }
+        // 校验图谱已学习（plan-forge-session-entry-wiring-v1 §4.1#1 强制已学，fail-closed）：
+        // LearnedBlueprints 组件懒插入——从未学过任何图谱的玩家没有该组件，Query Err
+        // 必须按「未学」拒绝，否则空白玩家反而绕过校验（review #1141 blocker）。
+        let knows = learned
+            .get(req.caster)
+            .map(|lb| lb.knows(&bp.id))
+            .unwrap_or(false);
+        if !knows {
+            tracing::debug!("[bong][forge] caster has not learned {}", bp.id);
+            feedback.send(MineralFeedbackEvent::forge_blueprint_not_learned(
+                req.caster,
+                bp.name.clone(),
+            ));
+            continue;
         }
         // 校验砧 tier
         let Ok(mut station) = stations.get_mut(req.station) else {
@@ -260,6 +263,15 @@ fn handle_start_forge_requests(
         let mut inputs: HashMap<String, u32> = HashMap::new();
         for (m, c) in &req.materials {
             *inputs.entry(m.clone()).or_insert(0) += c;
+        }
+        // server 权威裁剪（review #1141 major）：真实 ForgeScreen 按整堆点选投料，堆叠量
+        // 常超配方需求（fan_tie×5 堆 vs 配方 ×3）——required 材料按配方需求量封顶，超出
+        // 部分留在背包不入炉不扣除。resolve_billet 只惩罚缺料不奖励超量，裁剪不改变
+        // billet 判定；非 required（optional carrier / 未知料走 flawed 分支）不裁剪。
+        for MaterialStack { material, count } in &billet_profile.required {
+            if let Some(claimed) = inputs.get_mut(material) {
+                *claimed = (*claimed).min(*count);
+            }
         }
         let billet_res = match resolve_billet(billet_profile, &inputs, bp.tier_cap) {
             Ok(r) => r,
@@ -1978,6 +1990,93 @@ mod tests {
             .filter(|e| e.message_id == crate::mineral::events::MSG_FORGE_STATION_BUSY)
             .collect();
         assert_eq!(busy.len(), 1, "应发出恰好 1 条砧忙回执");
+    }
+
+    #[test]
+    fn start_forge_request_without_learned_component_is_rejected_fail_closed() {
+        // review #1141 blocker——LearnedBlueprints 组件懒插入，从未学过任何图谱的
+        // 玩家没有该组件；曾经 `if let Ok` 包裹导致 Query Err 直接放行（fail-open），
+        // 空白玩家反而绕过强制已学。必须按「未学」拒绝：回执 + 不扣料 + 不建会话。
+        let mut app = start_forge_app();
+        let caster = app
+            .world_mut()
+            .spawn(inventory_with_items(vec![fan_tie_item(1, 3)]))
+            .id();
+        let station = app
+            .world_mut()
+            .spawn(WeaponForgeStation::placed(
+                BlockPos::new(8, 66, 8),
+                1,
+                caster,
+            ))
+            .id();
+
+        app.world_mut().send_event(StartForgeRequest {
+            station,
+            caster,
+            blueprint: "iron_sword_v0".to_string(),
+            materials: vec![("fan_tie".to_string(), 3)],
+        });
+        app.update();
+
+        let sessions = app.world().resource::<ForgeSessions>();
+        assert!(
+            sessions.is_empty(),
+            "无 LearnedBlueprints 组件必须按未学拒绝（fail-closed），不得建会话"
+        );
+        let inventory = app.world().get::<PlayerInventory>(caster).unwrap();
+        assert_eq!(
+            inventory.containers[0].items[0].instance.stack_count, 3,
+            "fail-closed 拒绝路径不得扣料"
+        );
+        let feedback = app.world().resource::<Events<MineralFeedbackEvent>>();
+        let rejected: Vec<_> = feedback
+            .iter_current_update_events()
+            .filter(|e| e.message_id == crate::mineral::events::MSG_FORGE_BLUEPRINT_NOT_LEARNED)
+            .collect();
+        assert_eq!(rejected.len(), 1, "应发出恰好 1 条未学图谱回执");
+    }
+
+    #[test]
+    fn start_forge_request_clamps_whole_stack_claim_to_recipe_requirement() {
+        // review #1141 major——真实 ForgeScreen 按整堆点选投料（fan_tie×5 堆 vs
+        // 配方 ×3）。server 权威裁剪：required 材料按配方需求封顶，超出留在背包；
+        // resolve_billet 只惩罚缺料不奖励超量，裁剪不改变 billet 判定。
+        let mut app = start_forge_app();
+        let caster = app
+            .world_mut()
+            .spawn((
+                inventory_with_items(vec![fan_tie_item(1, 5)]),
+                LearnedBlueprints {
+                    ids: vec!["iron_sword_v0".to_string()],
+                    current_index: 0,
+                },
+            ))
+            .id();
+        let station = app
+            .world_mut()
+            .spawn(WeaponForgeStation::placed(
+                BlockPos::new(8, 66, 8),
+                1,
+                caster,
+            ))
+            .id();
+
+        app.world_mut().send_event(StartForgeRequest {
+            station,
+            caster,
+            blueprint: "iron_sword_v0".to_string(),
+            materials: vec![("fan_tie".to_string(), 5)],
+        });
+        app.update();
+
+        let sessions = app.world().resource::<ForgeSessions>();
+        assert_eq!(sessions.len(), 1, "整堆投料应被受理（裁剪后满足配方）");
+        let inventory = app.world().get::<PlayerInventory>(caster).unwrap();
+        assert_eq!(
+            inventory.containers[0].items[0].instance.stack_count, 2,
+            "配方需 3、整堆投 5：应恰好扣 3、剩 2 留在背包（超量不得白扣）"
+        );
     }
 
     #[test]
