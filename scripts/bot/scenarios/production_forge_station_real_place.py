@@ -24,6 +24,10 @@ plan-forge-session-entry-wiring-v1 P0/P1/P2 全部接线完成后的验收场景
   Done 后推 `forge_outcome`（P2 新接线，`send_forge_outcome_to_player` 真实调用
   点）+ 产物自动入包（`inventory_bridge::forge_outcome_to_inventory` +
   `emit_changed_inventory_snapshots` 自动回推，不需要手动 resync）。
+
+超时口径：stage 等待统一 45s（非 10s）——CI e2e 串行连跑 ~20 场景到本场景时
+server TPS 已显著退化（长跑攒实体的已知类，参 craft 场景 180s 先例），10s 窗口
+在 fresh server 绿、CI 上边缘假红（两轮实测分别卡在相邻 stage）。断言本身不放宽。
 """
 
 import time
@@ -101,7 +105,7 @@ def run(env) -> None:
     with env.new_bot("Forge") as bot:
         wait_for_ready(bot)
         bot.cmd("clearinv all")
-        bot.expect_chat("[dev] clearinv", timeout=10.0)
+        bot.expect_chat("[dev] clearinv", timeout=30.0)
 
         # ── 放砧：真实 instance_id + 专属 forge_station 回执 ──────────────
         bot.cmd(f"give {ANVIL_ID} 1")
@@ -134,7 +138,7 @@ def run(env) -> None:
             lambda p: tuple(p["pos"]) == station_pos
             and p["tier"] == ANVIL_TIER
             and not p["has_session"],
-            timeout=10.0,
+            timeout=45.0,
             description=(
                 f"放砧成功应专属回推 forge_station（pos={station_pos}, tier={ANVIL_TIER}, "
                 "has_session=false）——P2 新接线，对齐 alchemy open_furnace 回执模式"
@@ -145,7 +149,7 @@ def run(env) -> None:
             and e.data["payload_type"] == "inventory_snapshot"
             and e.t > anchor
             and find_item(e.data["payload"], ANVIL_ID) is None,
-            timeout=10.0,
+            timeout=45.0,
             description="真实 instance_id 放砧后砧应从背包消耗（forge_station_place_consumed）",
         )
 
@@ -159,7 +163,7 @@ def run(env) -> None:
             and e.data["payload_type"] == "inventory_snapshot"
             and e.t > anchor
             and find_item(e.data["payload"], SCROLL_ID) is None,
-            timeout=10.0,
+            timeout=45.0,
             description=f"forge_learn_blueprint({BLUEPRINT_ID}) 后残卷应从背包消耗",
         )
 
@@ -175,7 +179,7 @@ def run(env) -> None:
         )
         bot.wait_for(
             lambda e: e.kind == "chat" and "材料不足" in e.data["text"] and e.t > anchor,
-            timeout=10.0,
+            timeout=45.0,
             description=(
                 "声明 materials 与图谱一致但背包只有 fan_tie x2（< 需求 4，za_gang 0 "
                 "< 需求 1）时应整体拒绝并回执「材料不足」，不得凭空建会话"
@@ -191,7 +195,7 @@ def run(env) -> None:
             and e.data["payload_type"] == "inventory_snapshot"
             and e.t > anchor
             and find_item(e.data["payload"], "mineral_za_gang") is not None,
-            timeout=10.0,
+            timeout=45.0,
             description="给 za_gang 后应出现含 mineral_za_gang 的 inventory_snapshot",
         ).data["payload"]
         assert post_reject_snapshot["revision"] == pre_reject_revision + 1, (
@@ -218,7 +222,7 @@ def run(env) -> None:
                 "stack_count"
             )
             == 4,
-            timeout=10.0,
+            timeout=45.0,
             description="补齐 fan_tie 到 4（2+2）后应出现 stack_count=4 的 inventory_snapshot",
         ).data["payload"]
         fan_tie_before_start = require_item(snapshot, "fan_tie")
@@ -235,7 +239,7 @@ def run(env) -> None:
             anchor,
             "forge_session",
             lambda p: p["blueprint_id"] == BLUEPRINT_ID and p["current_step"] == "billet",
-            timeout=10.0,
+            timeout=45.0,
             description=(
                 f"起炉受理应推 forge_session（blueprint_id={BLUEPRINT_ID}, "
                 "current_step=billet）——send_forge_snapshots_to_player 真实调用点"
@@ -247,7 +251,7 @@ def run(env) -> None:
             anchor,
             "forge_blueprint_book",
             lambda p: any(entry["id"] == BLUEPRINT_ID for entry in p["learned"]),
-            timeout=10.0,
+            timeout=45.0,
             description=f"起炉受理应一并推 forge_blueprint_book（含已学 {BLUEPRINT_ID}）",
         )
         bot.wait_for(
@@ -256,7 +260,7 @@ def run(env) -> None:
             and e.t > anchor
             and find_item(e.data["payload"], "fan_tie") is None
             and find_item(e.data["payload"], "mineral_za_gang") is None,
-            timeout=10.0,
+            timeout=45.0,
             description=(
                 "起炉受理原子扣料后 fan_tie/mineral_za_gang 应从背包彻底消失"
                 "（4 fan_tie + 1 za_gang 全额扣光）"
@@ -271,7 +275,7 @@ def run(env) -> None:
             anchor,
             "forge_session",
             lambda p: p["session_id"] == session_id and p["current_step"] == "tempering",
-            timeout=10.0,
+            timeout=45.0,
             description="step_advance 后应推 current_step=tempering 的 forge_session 快照",
         )
 
@@ -289,7 +293,7 @@ def run(env) -> None:
                 and p["step_state"].get("hits") == len(TEMPERING_PATTERN)
                 and p["step_state"].get("misses") == 0
             ),
-            timeout=10.0,
+            timeout=45.0,
             description=(
                 f"精确喂满 {len(TEMPERING_PATTERN)} 拍应使 tempering step_state "
                 f"hits={len(TEMPERING_PATTERN)} misses=0（Perfect 前置条件）"
@@ -304,7 +308,7 @@ def run(env) -> None:
             anchor,
             "forge_outcome",
             lambda p: p["session_id"] == session_id,
-            timeout=10.0,
+            timeout=45.0,
             description=(
                 "第二次 step_advance 应结算收尾并推 forge_outcome——"
                 "send_forge_outcome_to_player 真实调用点"
@@ -326,7 +330,7 @@ def run(env) -> None:
             and e.data["payload_type"] == "inventory_snapshot"
             and e.t > anchor
             and find_item(e.data["payload"], WEAPON_ID) is not None,
-            timeout=10.0,
+            timeout=45.0,
             description=(
                 f"结算后应自动回推含 {WEAPON_ID} 的 inventory_snapshot"
                 "（forge_outcome_to_inventory + emit_changed_inventory_snapshots 自动回推）"
