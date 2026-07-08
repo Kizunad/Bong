@@ -6,9 +6,9 @@
 
 | 阶段 | 主题 | 状态 |
 |------|------|------|
-| P0 | server 分发接线（ForgeStartSession → StartForgeRequest / TurnPage → 图谱书） | ⬜ |
-| P1 | client sender（ForgeScreen 起炉按钮 + 图谱书翻页发包） | ⬜ |
-| P2 | 放砧/起炉/结算回执补齐 + 全链路 bot e2e（fan_tie×3 → iron_sword 入包） | ⬜ |
+| P0 | server 分发接线（ForgeStartSession → StartForgeRequest / TurnPage → 图谱书） | ✅ 2026-07-08 |
+| P1 | client sender（ForgeScreen 起炉按钮 + 图谱书翻页发包） | ✅ 2026-07-08 |
+| P2 | 放砧/起炉/结算回执补齐 + 全链路 bot e2e（fan_tie×3 → iron_sword 入包） | ✅ 2026-07-08 |
 
 ---
 
@@ -88,3 +88,55 @@
 4. 材料是物品非真元，不涉 qi_physics ledger；开光注真元仍走既有 `forge_consecration_inject` 守恒链路，本 plan 不新增真元路径（与 §1 一致）。
 
 **落点**：`server/src/forge/mod.rs:252-268`（建会话点，`committed_materials` 只记账）/ `server/src/forge/inventory_bridge.rs:73-141`（只发产物的现状证据）/ 扣料范式 `server/src/forge/station.rs:151-157`（放砧 `consume_item_instance_once`）/ plan §3 P0+P2。
+
+## Finish Evidence
+
+消费方式：`/consume-plan` Workflow 编排（Design opus → P0/P1/P2 串行 sonnet 实施 → 3 lens 对峙 + opus 主审 → 2 轮修复 + opus 复审），2026-07-08。
+
+### 落地清单
+
+- **P0 server 分发 + schema 改形状 + 原子扣料**：
+  - `server/src/schema/client_request.rs`（ForgeStartSession `station_id:String`→`station_pos:(i32,i32,i32)` + 两变体 serde pin）
+  - `server/src/schema/forge.rs` + `proto/bong/envelope.proto` + `server/src/schema/proto_convert.rs`（C2S/S2C 双向 + fixtures；WeaponForgeStationDataV1/proto ForgeStation 补 pos——U 键全局开屏的 client 寻址来源）
+  - `agent/packages/schema/src/client-request.ts` + `src/forge.ts` + `samples/client-request.forge-start.sample.json` + `samples/server-data.forge-station.sample.json` + generated 全套
+  - `server/src/network/client_request_handler.rs`（:2601 死分支→真分发：pos→Entity 解析含 owner 校验对齐 `with_owned_furnace_mut` 模式、`send_forge_error` 拒因回执；`handle_forge_blueprint_turn_page` server 权威页码 + `%len` 守卫）
+  - `server/src/inventory/mod.rs`（`consume_forge_materials_atomic` + `ForgeMaterialDeficit`：verify-then-consume，`mineral_id||template_id` 匹配跨 container+hotbar 累加）
+  - `server/src/forge/mod.rs`（`handle_start_forge_requests` 受理点原子扣料 + 未学/缺料/砧忙拒因回执 + `station.session.is_some()` 忙守卫）
+  - `server/src/mineral/events.rs`（`forge_blueprint_not_learned` / `forge_materials_insufficient`（display_name_zh）/ `forge_station_busy` 构造器）
+- **P1 client sender**：
+  - `client/.../network/ClientRequestProtocol.java` + `ClientRequestSender.java`（`sendForgeStartSession(stationPos,blueprintId,materials)` / `sendForgeBlueprintTurnPage(delta)`）
+  - `client/.../forge/ForgeScreen.java`（起炉入口 + billet 点选聚合；←/→ 翻页改发包，删 `BlueprintScrollStore.turn` 本地直改）
+  - `client/.../forge/state/ForgeStationStore.java` + `network/forge/ForgeStationHandler.java`（station pos 存取）
+- **P2 回执 + bot e2e**：
+  - `server/src/forge/station.rs` + `network/forge_snapshot_emit.rs`（放砧推 forge_station；起炉受理/单步交互/step 推进接 `send_forge_snapshots_to_player`；结算接 `send_forge_outcome_to_player`——三个此前零调用的 emit 函数全部接活）
+  - `server/src/cmd/`（/give 裸矿物 mineral_id fallback，供 e2e 上料）
+  - `scripts/bot/proto_min.py`（forge S2C tag 17-20 解码）+ `scripts/bot/scenarios/production_forge_station_real_place.py`（全链路强断言：放砧回执→give 残卷→learn→拒因（缺料，背包原封）→受理→淬炼×10→结算→产物入包+输入料扣光；真机 fresh server 跑绿）
+- **对峙修复轮**（1 blocker + 2 major 全修）：
+  - `client/.../inventory/model/InventoryItem.java`（`mineralId` 字段 + `forgeMaterialKey()`——真机恒 Waste blocker：投料 key 曾发 template_id 而引擎只认 canonical）+ `InventorySnapshotHandler`/`InventoryEventHandler` 解析与复制路径保留
+  - turn_page `%len` 守卫（单包 i32::MIN 冻结 tick DoS，对齐 alchemy 同款）
+  - 砧忙守卫（双扣料 + 孤儿会话）+ 缺料回执中文化
+
+### 关键 commit（squash 前 worktree 序列，2026-07-08）
+
+f0e81dac schema pos 寻址 → e1eaeeca 原子扣料 helper → 445fabdb 拒因回执构造器 → 90de8bc0 引擎扣料接线 → ba108aeb C2S 真分发 → 5b6ccdbe client encode+sender → 7f5f4abb StationStore pos → b4a7977d ForgeScreen 起炉+翻页 → 3eaff7d1 S2C 回执全接线 → 9dd16056 /give 矿物 fallback → b983c5ba bot 解码 → 3797f540 bot 全链路场景 → 153ba6b4/fae95bda/32ee3e0a 对峙修复轮 → 4e811e15 复审第 2 轮（createFull 编译修复 + 文案）
+
+### 测试结果
+
+- `cargo test`（全量）：**10901 passed / 0 failed**（含 forge 系 284、turn_page 13、mineral::events 3）；`cargo fmt --check` 过；clippy 本地 69 错均为 rustc 1.96 存量噪声（全部位于本 plan 未触碰文件/行，以 CI 为准）
+- `./gradlew test build`：**BUILD SUCCESSFUL**（真实退出码 0 验证；含 InventoryItem mineralId 5 pin + snapshot mineral_id 含/缺两路 + sender/protocol 契约测试）
+- `agent packages/schema npm test`：schema/sample 对拍过（P0 实施内）
+- bot：`test_protocol.py` 全绿 + `production_forge_station_real_place.py` 真机 fresh server 全链路绿（P2 实施内）
+
+### 跨仓库核验
+
+- server：`ClientRequestV1::ForgeStartSession{station_pos}` / `StartForgeRequest`（send :2601 分支）/ `consume_forge_materials_atomic` / `MSG_FORGE_STATION_BUSY`
+- client：`sendForgeStartSession` / `forgeMaterialKey` / `ForgeBlueprintBookHandler`（页码 S2C 权威）
+- agent schema：`ForgeStartSessionRequestV1.station_pos` + forge-start sample
+- bot：`proto_min.py` tag 17/18/19/20 + 全链路场景
+
+### 遗留 / 后续
+
+1. **forge 会话无 abort/收回路径**（复审 medium）：玩家起炉后弃疗/掉线，砧被占住直到会话被推进到终态——忙守卫生效后无法靠"新起炉覆盖"救回。需 follow-up 立 ForgeCancel/断线清理语义（回执文案已改为不承诺"收回"）。
+2. **`emit_join_forge_snapshots` 仍空占位**：join-hydration（上线时已在砧边应即收快照）不在本 plan 接线范围，占位系统仍每 tick 空跑。
+3. proto `ForgeStartSession` 字段改号 nit：blueprint_id/materials 被无谓移位（2→4/3→5）——该 message 从无真实发送方，无迁移影响，纯纪律记录。
+4. client 投料 key 派生路径（ForgeScreen 聚合）仅单测覆盖：bot e2e 在协议层直发 canonical，不经 client UI 聚合。
