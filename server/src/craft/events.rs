@@ -106,7 +106,7 @@ pub enum UnlockEventSource {
 
 /// plan-craft-v1 P2 — client → server 起手搓 intent。
 /// `client_request_handler` 收到 `ClientRequestV1::CraftStart` 时 emit；
-/// craft 模块的 `apply_craft_intents` 系统读后跑 `start_craft`，
+/// craft bridge 的 `apply_craft_start_intents` 系统读后跑 `start_craft`，
 /// 成功则 emit `CraftStartedEvent`，失败 emit `CraftFailedEvent`。
 #[derive(Debug, Clone, Event, PartialEq, Eq)]
 pub struct CraftStartIntent {

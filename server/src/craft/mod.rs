@@ -140,7 +140,7 @@ pub fn register(app: &mut App) {
     app.add_event::<CraftCompletedEvent>();
     app.add_event::<CraftFailedEvent>();
     app.add_event::<RecipeUnlockedEvent>();
-    // P2 client → server intents（被 `network/craft_emit::apply_craft_intents` 系统消费）
+    // P2 client → server intents（被 `network/craft_emit::{apply_craft_start_intents, apply_craft_cancel_intents}` 消费）
     app.add_event::<CraftStartIntent>();
     app.add_event::<CraftCancelIntent>();
     workbench::register(app);
