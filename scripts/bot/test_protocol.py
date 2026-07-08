@@ -582,6 +582,14 @@ def _pb_float32_field(number: int, value: float) -> bytes:
     return mc.write_varint((number << 3) | 5) + _struct.pack("<f", value)
 
 
+def _pb_int32_field(number: int, value: int) -> bytes:
+    """protobuf `int32` 字段的正确 wire 编码——负值走 64-bit 补码变长编码（最长 10
+    字节），不是 `mc.write_varint` 那种给实际 MC 协议 varint 用的 32-bit 掩码。
+    forge station_pos_x/y/z 断言负坐标（末法残土常见）时必须用这个而非
+    `_pb_varint_field`。"""
+    return mc.write_varint(number << 3) + _pb_raw_varint(value & 0xFFFFFFFFFFFFFFFF)
+
+
 class ProdConsumeDecodeTest(unittest.TestCase):
     """三产三用 payload 解码 pin：envelope oneof tag 与字段号对齐 proto/bong/envelope.proto.
 
@@ -722,6 +730,159 @@ class ProdConsumeDecodeTest(unittest.TestCase):
             decoded["events"][0]["outgoing"],
             "缺 field 7 时 outgoing 应缺省 False（proto3 bool 缺省），不得 KeyError",
         )
+
+    def test_forge_station_tag17_decodes_pos_including_negative(self):
+        # plan-forge-session-entry-wiring-v1 P2：station_pos_x/y/z 是 int32，末法残土
+        # 常见负坐标——必须走 64-bit 补码 varint，不能用 32-bit 掩码的 _pb_varint_field。
+        station = (
+            _pb_string(1, "forge_station_Azure")
+            + _pb_varint_field(2, 1)
+            + _pb_float32_field(3, 0.75)
+            + _pb_string(4, "Azure")
+            + _pb_varint_field(5, 1)
+            + _pb_int32_field(6, -12)
+            + _pb_varint_field(7, 64)
+            + _pb_int32_field(8, -8)
+        )
+        decoded = proto_min.decode_server_data_envelope(_pb_len_field(17, station))
+        self.assertEqual(
+            decoded["type"], "forge_station", "envelope tag 17 应分发到 forge_station"
+        )
+        self.assertEqual(
+            decoded["station_id"], "forge_station_Azure",
+            "WeaponForgeStationDataV1.station_id 是 field 1",
+        )
+        self.assertEqual(decoded["tier"], 1, "field 2 是 tier")
+        self.assertAlmostEqual(
+            decoded["integrity"], 0.75, places=4,
+            msg="field 3 是 integrity（float32 wire type 5）",
+        )
+        self.assertTrue(decoded["has_session"], "field 5 是 has_session（bool）")
+        self.assertEqual(
+            decoded["pos"], [-12, 64, -8],
+            "station_pos_x/y/z 是 field 6/7/8；负坐标须按 int32 补码正确还原（不是 4294967284）",
+        )
+
+    def test_forge_session_tag18_decodes_tempering_step_state(self):
+        tempering = (
+            _pb_varint_field(2, 3)
+            + _pb_varint_field(3, 5)
+            + _pb_varint_field(4, 1)
+            + _pb_varint_field(5, 2)
+            + _pb_fixed64(6, 1.5)
+        )
+        step_state = _pb_message(2, tempering)  # ForgeStepState.tempering = field 2
+        session = (
+            _pb_varint_field(1, 7)
+            + _pb_string(2, "qing_feng_v0")
+            + _pb_string(3, "青锋剑（测试）")
+            + _pb_varint_field(4, 1)
+            + _pb_varint_field(5, 2)  # ForgeStep.TEMPERING
+            + _pb_varint_field(6, 1)
+            + _pb_varint_field(7, 1)
+            + _pb_message(8, step_state)
+        )
+        decoded = proto_min.decode_server_data_envelope(_pb_len_field(18, session))
+        self.assertEqual(
+            decoded["type"], "forge_session", "envelope tag 18 应分发到 forge_session"
+        )
+        self.assertEqual(decoded["session_id"], 7, "field 1 是 session_id（uint64）")
+        self.assertEqual(
+            decoded["blueprint_id"], "qing_feng_v0", "field 2 是 blueprint_id"
+        )
+        self.assertTrue(decoded["active"], "field 4 是 active（bool）")
+        self.assertEqual(
+            decoded["current_step"], "tempering",
+            "ForgeStep=2 应解为 tempering（枚举与 proto/bong/envelope.proto 对齐）",
+        )
+        self.assertEqual(decoded["step_index"], 1, "field 6 是 step_index")
+        self.assertEqual(decoded["achieved_tier"], 1, "field 7 是 achieved_tier")
+        self.assertEqual(
+            decoded["step_state"],
+            {
+                "kind": "tempering",
+                "beat_cursor": 3,
+                "hits": 5,
+                "misses": 1,
+                "deviation": 2,
+                "qi_spent": 1.5,
+            },
+            "oneof step_state 应分发到 tempering 分支（ForgeStepState.tempering=field 2）",
+        )
+
+    def test_forge_session_step_state_none_fallback(self):
+        # Done session 的 step_state 是 ForgeStepState.none_state（field 5，bool）——
+        # 解码器应兜底 kind=none，不得 crash。
+        session = _pb_varint_field(5, 5)  # ForgeStep.DONE
+        decoded = proto_min.decode_server_data_envelope(_pb_len_field(18, session))
+        self.assertEqual(decoded["current_step"], "done", "ForgeStep=5 应解为 done")
+        self.assertEqual(
+            decoded["step_state"], {"kind": "none"},
+            "无 billet/tempering/inscription/consecration 分支时应兜底 kind=none",
+        )
+
+    def test_forge_outcome_tag19_perfect_bucket(self):
+        outcome = (
+            _pb_varint_field(1, 9)
+            + _pb_string(2, "qing_feng_v0")
+            + _pb_varint_field(3, 1)  # ForgeOutcomeBucket.PERFECT
+            + _pb_string(4, "qing_feng_sword")
+            + _pb_float32_field(5, 1.0)
+            + _pb_string(7, "brittle_edge")
+            + _pb_varint_field(8, 2)
+            + _pb_varint_field(9, 0)
+        )
+        decoded = proto_min.decode_server_data_envelope(_pb_len_field(19, outcome))
+        self.assertEqual(
+            decoded["type"], "forge_outcome", "envelope tag 19 应分发到 forge_outcome"
+        )
+        self.assertEqual(decoded["bucket"], "perfect", "ForgeOutcomeBucket=1 应解为 perfect")
+        self.assertEqual(
+            decoded["weapon_item"], "qing_feng_sword",
+            "field 4 是 optional string weapon_item",
+        )
+        self.assertAlmostEqual(decoded["quality"], 1.0, places=4)
+        self.assertEqual(
+            decoded["side_effects"], ["brittle_edge"],
+            "field 7 是 repeated string side_effects",
+        )
+        self.assertEqual(decoded["achieved_tier"], 2, "field 8 是 achieved_tier")
+        self.assertFalse(decoded["flawed_path"], "field 9=0 → flawed_path=False")
+
+    def test_forge_outcome_flawed_path_true_and_missing_weapon_item(self):
+        # Waste bucket 无 weapon_item（proto optional 缺省不发 field 4）——不得 KeyError。
+        outcome = (
+            _pb_varint_field(1, 10)
+            + _pb_varint_field(3, 4)  # ForgeOutcomeBucket.WASTE
+            + _pb_varint_field(9, 1)  # flawed_path=True
+        )
+        decoded = proto_min.decode_server_data_envelope(_pb_len_field(19, outcome))
+        self.assertEqual(decoded["bucket"], "waste", "ForgeOutcomeBucket=4 应解为 waste")
+        self.assertIsNone(
+            decoded["weapon_item"], "缺 field 4 时 weapon_item 应为 None，不得 KeyError"
+        )
+        self.assertTrue(decoded["flawed_path"], "field 9=1 → flawed_path=True")
+        self.assertEqual(
+            decoded["side_effects"], [], "无 repeated 条目时应兜底空列表，不得 crash"
+        )
+
+    def test_forge_blueprint_book_tag20(self):
+        entry = (
+            _pb_string(1, "qing_feng_v0")
+            + _pb_string(2, "青锋剑（测试）")
+            + _pb_varint_field(3, 2)
+            + _pb_varint_field(4, 2)
+        )
+        book = _pb_message(1, entry) + _pb_varint_field(2, 0)
+        decoded = proto_min.decode_server_data_envelope(_pb_len_field(20, book))
+        self.assertEqual(
+            decoded["type"], "forge_blueprint_book",
+            "envelope tag 20 应分发到 forge_blueprint_book",
+        )
+        self.assertEqual(len(decoded["learned"]), 1, "repeated ForgeBlueprintEntry 应逐条解出")
+        self.assertEqual(decoded["learned"][0]["id"], "qing_feng_v0")
+        self.assertEqual(decoded["learned"][0]["step_count"], 2)
+        self.assertEqual(decoded["current_index"], 0)
 
 
 if __name__ == "__main__":
