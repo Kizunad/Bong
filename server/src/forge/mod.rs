@@ -35,7 +35,7 @@ use valence::prelude::{
     App, DVec3, EventReader, EventWriter, Events, IntoSystemConfigs, Query, Res, ResMut, Update,
 };
 
-use self::blueprint::{BlueprintRegistry, StepKind, DEFAULT_BLUEPRINTS_DIR};
+use self::blueprint::{BlueprintRegistry, MaterialStack, StepKind, DEFAULT_BLUEPRINTS_DIR};
 use self::events::{
     ConsecrationInject, ForgeBucket, ForgeOutcomeEvent, ForgeStartAccepted,
     InscriptionScrollSubmit, StartForgeRequest, StepAdvance, TemperingHit,
@@ -53,6 +53,7 @@ use self::steps::{
 };
 use crate::cultivation::breakthrough::skill_cap_for_realm;
 use crate::cultivation::components::{Cultivation, QiColor};
+use crate::inventory::{consume_forge_materials_atomic, PlayerInventory};
 use crate::mineral::MineralFeedbackEvent;
 use crate::mineral::{build_default_registry as build_default_mineral_registry, MineralRegistry};
 use crate::network::{gameplay_vfx, vfx_event_emit::VfxEventRequest};
@@ -105,12 +106,27 @@ pub fn register(app: &mut App) {
             handle_start_forge_requests,
             crate::network::forge_bridge::publish_forge_start_on_session_create
                 .after(handle_start_forge_requests),
+            // plan-forge-session-entry-wiring-v1 P2 —— 起炉受理 S2C 回执
+            // （station+session+blueprint_book 三件套，send_forge_snapshots_to_player
+            // 真实生产调用点）。
+            crate::network::forge_snapshot_emit::push_forge_start_snapshot_on_accept
+                .after(handle_start_forge_requests),
             handle_tempering_hits.after(handle_start_forge_requests),
             handle_scroll_submits.after(handle_tempering_hits),
             handle_consecration_injects.after(handle_scroll_submits),
+            // 单步交互（淬炼击键/铭文投入/开光注真元）后回推 session 快照，供
+            // ForgeScreen 实时反映进度。
+            crate::network::forge_snapshot_emit::push_forge_session_snapshot_on_interaction
+                .after(handle_consecration_injects),
             handle_step_advance.after(handle_consecration_injects),
+            // step 推进后回推快照（第二个 send_forge_snapshots_to_player 真实调用点）。
+            crate::network::forge_snapshot_emit::push_forge_session_snapshot_on_step_advance
+                .after(handle_step_advance),
             inventory_bridge::forge_outcome_to_inventory.after(handle_step_advance),
             crate::network::forge_bridge::publish_forge_outcome.after(handle_step_advance),
+            // 结算 S2C 回执（send_forge_outcome_to_player 真实生产调用点）。
+            crate::network::forge_snapshot_emit::push_forge_outcome_on_event
+                .after(handle_step_advance),
             processing_mode::forge_processing_mode_handler,
             // 延迟清理：Done session 保留 DONE_SESSION_RETENTION_TICKS tick 后移除，
             // 避免 client_request_handler 在 finalize 瞬间后仍读 session 时出竞态。
@@ -145,6 +161,7 @@ fn handle_start_forge_requests(
     mut sessions: ResMut<ForgeSessions>,
     mut stations: Query<&mut WeaponForgeStation>,
     learned: Query<&LearnedBlueprints>,
+    mut inventories: Query<&mut PlayerInventory>,
     mut accepted: EventWriter<ForgeStartAccepted>,
     mut outcomes: EventWriter<ForgeOutcomeEvent>,
     mut feedback: EventWriter<MineralFeedbackEvent>,
@@ -154,18 +171,37 @@ fn handle_start_forge_requests(
             tracing::warn!("[bong][forge] unknown blueprint: {}", req.blueprint);
             continue;
         };
-        // 校验图谱已学习
-        if let Ok(lb) = learned.get(req.caster) {
-            if !lb.knows(&bp.id) {
-                tracing::debug!("[bong][forge] caster has not learned {}", bp.id);
-                continue;
-            }
+        // 校验图谱已学习（plan-forge-session-entry-wiring-v1 §4.1#1 强制已学，fail-closed）：
+        // LearnedBlueprints 组件懒插入——从未学过任何图谱的玩家没有该组件，Query Err
+        // 必须按「未学」拒绝，否则空白玩家反而绕过校验（review #1141 blocker）。
+        let knows = learned
+            .get(req.caster)
+            .map(|lb| lb.knows(&bp.id))
+            .unwrap_or(false);
+        if !knows {
+            tracing::debug!("[bong][forge] caster has not learned {}", bp.id);
+            feedback.send(MineralFeedbackEvent::forge_blueprint_not_learned(
+                req.caster,
+                bp.name.clone(),
+            ));
+            continue;
         }
         // 校验砧 tier
         let Ok(mut station) = stations.get_mut(req.station) else {
             tracing::warn!("[bong][forge] station entity missing");
             continue;
         };
+        // 忙检查（对齐 alchemy is_busy）：砧上已有会话时拒绝，防止双扣料 + 第二会话
+        // 覆盖 station.session 把第一个变成永不回收的孤儿（sessions 只收 Done）。
+        if station.session.is_some() {
+            tracing::info!(
+                "[bong][forge] start session rejected: station busy caster={:?} existing={:?}",
+                req.caster,
+                station.session
+            );
+            feedback.send(MineralFeedbackEvent::forge_station_busy(req.caster));
+            continue;
+        }
         if !station.can_craft(bp.station_tier_min) {
             tracing::debug!(
                 "[bong][forge] station tier {} < required {}",
@@ -228,6 +264,15 @@ fn handle_start_forge_requests(
         for (m, c) in &req.materials {
             *inputs.entry(m.clone()).or_insert(0) += c;
         }
+        // server 权威裁剪（review #1141 major）：真实 ForgeScreen 按整堆点选投料，堆叠量
+        // 常超配方需求（fan_tie×5 堆 vs 配方 ×3）——required 材料按配方需求量封顶，超出
+        // 部分留在背包不入炉不扣除。resolve_billet 只惩罚缺料不奖励超量，裁剪不改变
+        // billet 判定；非 required（optional carrier / 未知料走 flawed 分支）不裁剪。
+        for MaterialStack { material, count } in &billet_profile.required {
+            if let Some(claimed) = inputs.get_mut(material) {
+                *claimed = (*claimed).min(*count);
+            }
+        }
         let billet_res = match resolve_billet(billet_profile, &inputs, bp.tier_cap) {
             Ok(r) => r,
             Err(e) => {
@@ -248,6 +293,44 @@ fn handle_start_forge_requests(
                 continue;
             }
         };
+
+        // plan-forge-session-entry-wiring-v1 §4.1#4（CRUX）—— 原子扣料：与最终受理判定
+        // 同层同拍，在全部校验通过、billet 非 Waste 之后、建会话之前，核验并扣除玩家
+        // 实际持有的输入料。不足则整体不改动、发 reject 回执、不建会话（不吞料）；这同时
+        // 封堵了"引擎只记账 committed_materials、从不核实玩家是否真持有 req.materials
+        // 声明"的 anti-cheat 漏洞。Waste 路径已在上面 continue，天然不会走到这里。
+        let materials_to_consume: Vec<(String, u32)> =
+            inputs.iter().map(|(m, c)| (m.clone(), *c)).collect();
+        let Ok(mut inventory) = inventories.get_mut(req.caster) else {
+            tracing::warn!(
+                "[bong][forge] start session rejected: caster={:?} has no PlayerInventory",
+                req.caster
+            );
+            continue;
+        };
+        if let Err(deficits) = consume_forge_materials_atomic(&mut inventory, &materials_to_consume)
+        {
+            tracing::info!(
+                "[bong][forge] start session rejected: insufficient materials caster={:?} deficits={deficits:?}",
+                req.caster
+            );
+            // 玩家回执用中文名（registry 可译则译，item 材料等译不到的保留原 id）；
+            // 上面的日志保留 canonical id 便于排查。
+            let detail: Vec<(String, u32, u32)> = deficits
+                .into_iter()
+                .map(|d| {
+                    let zh = minerals
+                        .get_by_str(d.material.as_str())
+                        .map(|entry| entry.display_name_zh.to_string())
+                        .unwrap_or_else(|| d.material.clone());
+                    (zh, d.have, d.need)
+                })
+                .collect();
+            feedback.send(MineralFeedbackEvent::forge_materials_insufficient(
+                req.caster, &detail,
+            ));
+            continue;
+        }
 
         let id = sessions.allocate_id();
         let mut session = ForgeSession::new(id, bp.id.clone(), req.station, req.caster);
@@ -1710,5 +1793,478 @@ mod tests {
             ticks, 1,
             "期望 done_retention_ticks=1（经过 1 tick），实际={ticks}（计数器逻辑异常）"
         );
+    }
+
+    // ══════════ plan-forge-session-entry-wiring-v1 §4.1#1/#4 ══════════
+    // handle_start_forge_requests：未学拒因回执 + 原子扣料（happy/anti-cheat/waste-不吞料）。
+
+    fn start_forge_app() -> App {
+        let mut app = App::new();
+        let minerals = build_default_mineral_registry();
+        let registry =
+            BlueprintRegistry::load_dir_with_minerals(DEFAULT_BLUEPRINTS_DIR, Some(&minerals))
+                .expect("default forge blueprints should load");
+        app.insert_resource(registry);
+        app.insert_resource(minerals);
+        app.insert_resource(ForgeSessions::new());
+        app.add_event::<StartForgeRequest>();
+        app.add_event::<ForgeStartAccepted>();
+        app.add_event::<ForgeOutcomeEvent>();
+        app.add_event::<MineralFeedbackEvent>();
+        app.add_systems(Update, handle_start_forge_requests);
+        app
+    }
+
+    fn fan_tie_item(instance_id: u64, count: u32) -> crate::inventory::ItemInstance {
+        crate::inventory::ItemInstance {
+            instance_id,
+            template_id: "mineral_fan_tie".to_string(),
+            display_name: "凡铁".to_string(),
+            grid_w: 1,
+            grid_h: 1,
+            weight: 1.0,
+            rarity: crate::inventory::ItemRarity::Common,
+            description: String::new(),
+            stack_count: count,
+            spirit_quality: 1.0,
+            durability: 1.0,
+            freshness: None,
+            mineral_id: Some("fan_tie".to_string()),
+            charges: None,
+            forge_quality: None,
+            forge_color: None,
+            forge_side_effects: Vec::new(),
+            forge_achieved_tier: None,
+            alchemy: None,
+            lingering_owner_qi: None,
+        }
+    }
+
+    fn inventory_with_items(items: Vec<crate::inventory::ItemInstance>) -> PlayerInventory {
+        PlayerInventory {
+            triggered_treasures: Vec::new(),
+            revision: crate::inventory::InventoryRevision(0),
+            containers: vec![crate::inventory::ContainerState {
+                quick_access: false,
+                id: crate::inventory::MAIN_PACK_CONTAINER_ID.to_string(),
+                name: "主背包".to_string(),
+                rows: 5,
+                cols: 7,
+                items: items
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, instance)| crate::inventory::PlacedItemState {
+                        row: 0,
+                        col: i as u8,
+                        instance,
+                    })
+                    .collect(),
+                owner_instance_id: None,
+            }],
+            equipped: Default::default(),
+            hotbar: Default::default(),
+            bone_coins: 0,
+            max_weight: 50.0,
+        }
+    }
+
+    #[test]
+    fn start_forge_request_happy_path_consumes_materials_and_creates_session() {
+        let mut app = start_forge_app();
+        let caster = app
+            .world_mut()
+            .spawn((
+                inventory_with_items(vec![fan_tie_item(1, 3)]),
+                LearnedBlueprints {
+                    ids: vec!["iron_sword_v0".to_string()],
+                    current_index: 0,
+                },
+            ))
+            .id();
+        let station = app
+            .world_mut()
+            .spawn(WeaponForgeStation::placed(
+                BlockPos::new(8, 66, 8),
+                1,
+                caster,
+            ))
+            .id();
+
+        app.world_mut().send_event(StartForgeRequest {
+            station,
+            caster,
+            blueprint: "iron_sword_v0".to_string(),
+            materials: vec![("fan_tie".to_string(), 3)],
+        });
+        app.update();
+
+        let sessions = app.world().resource::<ForgeSessions>();
+        assert_eq!(sessions.len(), 1, "校验+扣料全过应恰好建 1 个会话");
+
+        let accepted = app.world().resource::<Events<ForgeStartAccepted>>();
+        assert_eq!(
+            accepted.iter_current_update_events().count(),
+            1,
+            "应发出 1 条 ForgeStartAccepted"
+        );
+
+        let inventory = app
+            .world()
+            .get::<PlayerInventory>(caster)
+            .expect("caster 应仍持有 PlayerInventory 组件");
+        assert!(
+            inventory.containers[0].items.is_empty(),
+            "fan_tie x3 应被真实扣光（消耗 3/3），而非仅记账 committed_materials"
+        );
+    }
+
+    #[test]
+    fn start_forge_request_rejects_busy_station_without_double_consume() {
+        // 修复轮 major——缺忙检查时：持 ≥2× 材料连发两次起炉 → 双扣料 + 建两个会话，
+        // station.session 被第二个覆盖，第一个成永不回收的孤儿（sessions 只收 Done）。
+        // 守卫后：第二次必须被拒（busy 回执），不扣料、不建第二会话、不覆盖 session 指针。
+        let mut app = start_forge_app();
+        let caster = app
+            .world_mut()
+            .spawn((
+                inventory_with_items(vec![fan_tie_item(1, 6)]),
+                LearnedBlueprints {
+                    ids: vec!["iron_sword_v0".to_string()],
+                    current_index: 0,
+                },
+            ))
+            .id();
+        let station = app
+            .world_mut()
+            .spawn(WeaponForgeStation::placed(
+                BlockPos::new(8, 66, 8),
+                1,
+                caster,
+            ))
+            .id();
+
+        app.world_mut().send_event(StartForgeRequest {
+            station,
+            caster,
+            blueprint: "iron_sword_v0".to_string(),
+            materials: vec![("fan_tie".to_string(), 3)],
+        });
+        app.update();
+        let first_session = app
+            .world()
+            .get::<WeaponForgeStation>(station)
+            .unwrap()
+            .session
+            .expect("第一次起炉应受理并占住砧");
+
+        app.world_mut().send_event(StartForgeRequest {
+            station,
+            caster,
+            blueprint: "iron_sword_v0".to_string(),
+            materials: vec![("fan_tie".to_string(), 3)],
+        });
+        app.update();
+
+        let sessions = app.world().resource::<ForgeSessions>();
+        assert_eq!(
+            sessions.len(),
+            1,
+            "砧忙时第二次起炉不得建会话（否则第一个成孤儿泄漏）"
+        );
+        assert_eq!(
+            app.world()
+                .get::<WeaponForgeStation>(station)
+                .unwrap()
+                .session,
+            Some(first_session),
+            "station.session 不得被第二次请求覆盖"
+        );
+        let inventory = app.world().get::<PlayerInventory>(caster).unwrap();
+        assert_eq!(
+            inventory.containers[0].items[0].instance.stack_count, 3,
+            "busy 拒绝路径不得扣料——6 个凡铁只应被第一次消耗 3 个"
+        );
+        let feedback = app.world().resource::<Events<MineralFeedbackEvent>>();
+        let busy: Vec<_> = feedback
+            .iter_current_update_events()
+            .filter(|e| e.message_id == crate::mineral::events::MSG_FORGE_STATION_BUSY)
+            .collect();
+        assert_eq!(busy.len(), 1, "应发出恰好 1 条砧忙回执");
+    }
+
+    #[test]
+    fn start_forge_request_without_learned_component_is_rejected_fail_closed() {
+        // review #1141 blocker——LearnedBlueprints 组件懒插入，从未学过任何图谱的
+        // 玩家没有该组件；曾经 `if let Ok` 包裹导致 Query Err 直接放行（fail-open），
+        // 空白玩家反而绕过强制已学。必须按「未学」拒绝：回执 + 不扣料 + 不建会话。
+        let mut app = start_forge_app();
+        let caster = app
+            .world_mut()
+            .spawn(inventory_with_items(vec![fan_tie_item(1, 3)]))
+            .id();
+        let station = app
+            .world_mut()
+            .spawn(WeaponForgeStation::placed(
+                BlockPos::new(8, 66, 8),
+                1,
+                caster,
+            ))
+            .id();
+
+        app.world_mut().send_event(StartForgeRequest {
+            station,
+            caster,
+            blueprint: "iron_sword_v0".to_string(),
+            materials: vec![("fan_tie".to_string(), 3)],
+        });
+        app.update();
+
+        let sessions = app.world().resource::<ForgeSessions>();
+        assert!(
+            sessions.is_empty(),
+            "无 LearnedBlueprints 组件必须按未学拒绝（fail-closed），不得建会话"
+        );
+        let inventory = app.world().get::<PlayerInventory>(caster).unwrap();
+        assert_eq!(
+            inventory.containers[0].items[0].instance.stack_count, 3,
+            "fail-closed 拒绝路径不得扣料"
+        );
+        let feedback = app.world().resource::<Events<MineralFeedbackEvent>>();
+        let rejected: Vec<_> = feedback
+            .iter_current_update_events()
+            .filter(|e| e.message_id == crate::mineral::events::MSG_FORGE_BLUEPRINT_NOT_LEARNED)
+            .collect();
+        assert_eq!(rejected.len(), 1, "应发出恰好 1 条未学图谱回执");
+    }
+
+    #[test]
+    fn start_forge_request_clamps_whole_stack_claim_to_recipe_requirement() {
+        // review #1141 major——真实 ForgeScreen 按整堆点选投料（fan_tie×5 堆 vs
+        // 配方 ×3）。server 权威裁剪：required 材料按配方需求封顶，超出留在背包；
+        // resolve_billet 只惩罚缺料不奖励超量，裁剪不改变 billet 判定。
+        let mut app = start_forge_app();
+        let caster = app
+            .world_mut()
+            .spawn((
+                inventory_with_items(vec![fan_tie_item(1, 5)]),
+                LearnedBlueprints {
+                    ids: vec!["iron_sword_v0".to_string()],
+                    current_index: 0,
+                },
+            ))
+            .id();
+        let station = app
+            .world_mut()
+            .spawn(WeaponForgeStation::placed(
+                BlockPos::new(8, 66, 8),
+                1,
+                caster,
+            ))
+            .id();
+
+        app.world_mut().send_event(StartForgeRequest {
+            station,
+            caster,
+            blueprint: "iron_sword_v0".to_string(),
+            materials: vec![("fan_tie".to_string(), 5)],
+        });
+        app.update();
+
+        let sessions = app.world().resource::<ForgeSessions>();
+        assert_eq!(sessions.len(), 1, "整堆投料应被受理（裁剪后满足配方）");
+        let inventory = app.world().get::<PlayerInventory>(caster).unwrap();
+        assert_eq!(
+            inventory.containers[0].items[0].instance.stack_count, 2,
+            "配方需 3、整堆投 5：应恰好扣 3、剩 2 留在背包（超量不得白扣）"
+        );
+    }
+
+    #[test]
+    fn start_forge_request_rejects_unlearned_blueprint_with_feedback_and_no_session() {
+        let mut app = start_forge_app();
+        let caster = app
+            .world_mut()
+            .spawn((
+                inventory_with_items(vec![fan_tie_item(1, 3)]),
+                // 学过别的图谱，但没学 iron_sword_v0 —— 触发 `!lb.knows(&bp.id)` 分支
+                // （区别于「组件完全缺失」的旁路场景，那属于引擎既有语义，本 plan 不改）。
+                LearnedBlueprints {
+                    ids: vec!["qing_feng_v0".to_string()],
+                    current_index: 0,
+                },
+            ))
+            .id();
+        let station = app
+            .world_mut()
+            .spawn(WeaponForgeStation::placed(
+                BlockPos::new(8, 66, 8),
+                1,
+                caster,
+            ))
+            .id();
+
+        app.world_mut().send_event(StartForgeRequest {
+            station,
+            caster,
+            blueprint: "iron_sword_v0".to_string(),
+            materials: vec![("fan_tie".to_string(), 3)],
+        });
+        app.update();
+
+        let sessions = app.world().resource::<ForgeSessions>();
+        assert!(sessions.is_empty(), "未学图谱不应建会话");
+
+        let feedback = app.world().resource::<Events<MineralFeedbackEvent>>();
+        let events: Vec<_> = feedback.iter_current_update_events().collect();
+        assert_eq!(events.len(), 1, "应发出恰好 1 条 reject 回执");
+        assert_eq!(
+            events[0].message_id,
+            crate::mineral::events::MSG_FORGE_BLUEPRINT_NOT_LEARNED
+        );
+
+        let inventory = app.world().get::<PlayerInventory>(caster).unwrap();
+        assert_eq!(
+            inventory.containers[0].items[0].instance.stack_count, 3,
+            "拒绝路径不应扣料"
+        );
+    }
+
+    #[test]
+    fn start_forge_request_waste_billet_rejects_without_touching_inventory() {
+        // 客户端声明的 materials 只有 1 个 fan_tie（< 需求 3，超出 tolerance），
+        // resolve_billet 判定 Waste；即使真实背包里其实有 5 个 fan_tie，也不应被
+        // consume_forge_materials_atomic 碰到——Waste 路径在到达扣料代码之前就 continue。
+        let mut app = start_forge_app();
+        let caster = app
+            .world_mut()
+            .spawn((
+                inventory_with_items(vec![fan_tie_item(1, 5)]),
+                LearnedBlueprints {
+                    ids: vec!["iron_sword_v0".to_string()],
+                    current_index: 0,
+                },
+            ))
+            .id();
+        let station = app
+            .world_mut()
+            .spawn(WeaponForgeStation::placed(
+                BlockPos::new(8, 66, 8),
+                1,
+                caster,
+            ))
+            .id();
+
+        app.world_mut().send_event(StartForgeRequest {
+            station,
+            caster,
+            blueprint: "iron_sword_v0".to_string(),
+            materials: vec![("fan_tie".to_string(), 1)],
+        });
+        app.update();
+
+        let sessions = app.world().resource::<ForgeSessions>();
+        assert!(sessions.is_empty(), "Waste billet 不应建会话");
+
+        let outcomes = app.world().resource::<Events<ForgeOutcomeEvent>>();
+        let events: Vec<_> = outcomes.iter_current_update_events().collect();
+        assert_eq!(events.len(), 1, "应发出恰好 1 条 Waste outcome");
+        assert_eq!(events[0].bucket, ForgeBucket::Waste);
+
+        let inventory = app.world().get::<PlayerInventory>(caster).unwrap();
+        assert_eq!(
+            inventory.containers[0].items[0].instance.stack_count, 5,
+            "Waste 路径必须不吞料——真实持有的 5 个 fan_tie 应原封不动"
+        );
+    }
+
+    #[test]
+    fn start_forge_request_rejects_when_real_inventory_lacks_declared_materials() {
+        // anti-cheat：client 声明 materials=fan_tie×3（与 blueprint 要求精确吻合，
+        // resolve_billet 会判定 perfect），但真实背包只有 1 个 —— 必须被拒绝，
+        // 而不是被引擎盲信声明造出会话（凭空造物漏洞）。
+        let mut app = start_forge_app();
+        let caster = app
+            .world_mut()
+            .spawn((
+                inventory_with_items(vec![fan_tie_item(1, 1)]),
+                LearnedBlueprints {
+                    ids: vec!["iron_sword_v0".to_string()],
+                    current_index: 0,
+                },
+            ))
+            .id();
+        let station = app
+            .world_mut()
+            .spawn(WeaponForgeStation::placed(
+                BlockPos::new(8, 66, 8),
+                1,
+                caster,
+            ))
+            .id();
+
+        app.world_mut().send_event(StartForgeRequest {
+            station,
+            caster,
+            blueprint: "iron_sword_v0".to_string(),
+            materials: vec![("fan_tie".to_string(), 3)],
+        });
+        app.update();
+
+        let sessions = app.world().resource::<ForgeSessions>();
+        assert!(
+            sessions.is_empty(),
+            "声明材料与真实持有不符时不应建会话（anti-cheat）"
+        );
+
+        let feedback = app.world().resource::<Events<MineralFeedbackEvent>>();
+        let events: Vec<_> = feedback.iter_current_update_events().collect();
+        assert_eq!(events.len(), 1, "应发出恰好 1 条材料不足回执");
+        assert_eq!(
+            events[0].message_id,
+            crate::mineral::events::MSG_FORGE_MATERIALS_INSUFFICIENT
+        );
+        assert_eq!(
+            events[0].text, "材料不足：凡铁 1/3，起炉失败",
+            "玩家回执应经 MineralRegistry 转译成中文名，不漏内部 canonical id"
+        );
+
+        let inventory = app.world().get::<PlayerInventory>(caster).unwrap();
+        assert_eq!(
+            inventory.containers[0].items[0].instance.stack_count, 1,
+            "拒绝路径不吞料——真实持有的 1 个 fan_tie 应原封不动"
+        );
+    }
+
+    #[test]
+    fn start_forge_request_missing_inventory_component_is_noop_without_panic() {
+        // 防御性边界：caster 实体没有 PlayerInventory 组件（理论上不该发生在真玩家
+        // 身上，但 Query::get_mut 必须优雅失败而非 panic）。
+        let mut app = start_forge_app();
+        let caster = app
+            .world_mut()
+            .spawn(LearnedBlueprints {
+                ids: vec!["iron_sword_v0".to_string()],
+                current_index: 0,
+            })
+            .id();
+        let station = app
+            .world_mut()
+            .spawn(WeaponForgeStation::placed(
+                BlockPos::new(8, 66, 8),
+                1,
+                caster,
+            ))
+            .id();
+
+        app.world_mut().send_event(StartForgeRequest {
+            station,
+            caster,
+            blueprint: "iron_sword_v0".to_string(),
+            materials: vec![("fan_tie".to_string(), 3)],
+        });
+        app.update();
+
+        let sessions = app.world().resource::<ForgeSessions>();
+        assert!(sessions.is_empty(), "无 PlayerInventory 组件时不应建会话");
     }
 }

@@ -32,6 +32,14 @@ def decode_server_data_envelope(data: bytes) -> dict[str, Any] | None:
             return _alchemy_session(value)
         if field == 14:
             return _alchemy_outcome_resolved(value)
+        if field == 17:
+            return _forge_station(value)
+        if field == 18:
+            return _forge_session(value)
+        if field == 19:
+            return _forge_outcome(value)
+        if field == 20:
+            return _forge_blueprint_book(value)
         if field == 22:
             return _craft_session_state(value)
         if field == 23:
@@ -470,9 +478,145 @@ def _combat_event_floater(data: bytes) -> dict[str, Any]:
                 "kind": _string(entry, 1),
                 "amount": _float32(entry, 2),
                 "text": _string(entry, 3),
+                "outgoing": bool(_varint(entry, 7)),
             }
         )
     return {"v": 1, "type": "combat_event", "events": events}
+
+
+FORGE_STEP_NAMES = {
+    0: "unspecified",
+    1: "billet",
+    2: "tempering",
+    3: "inscription",
+    4: "consecration",
+    5: "done",
+}
+
+FORGE_OUTCOME_BUCKET_NAMES = {
+    0: "unspecified",
+    1: "perfect",
+    2: "good",
+    3: "flawed",
+    4: "waste",
+    5: "explode",
+}
+
+
+def _int32(fields: list[tuple[int, int, Any]], field: int, default: int = 0) -> int:
+    """protobuf `int32` 字段：负值在 wire 上按 64-bit 补码编码（并非 32-bit 掩码——
+    这与本文件里给实际 MC 协议 varint 用的 `mc.write_varint` 32-bit 掩码不同）。
+    读回后只取低 32 位再按补码转回带符号整数，供 station_pos_x/y/z 使用。"""
+    if not _has(fields, field):
+        return default
+    raw = _varint(fields, field) & 0xFFFFFFFF
+    if raw & 0x80000000:
+        raw -= 0x100000000
+    return raw
+
+
+def _forge_station(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    return {
+        "v": 1,
+        "type": "forge_station",
+        "station_id": _string(fields, 1),
+        "tier": _varint(fields, 2),
+        "integrity": _float32(fields, 3),
+        "owner_name": _string(fields, 4),
+        "has_session": bool(_varint(fields, 5)),
+        "pos": [_int32(fields, 6), _int32(fields, 7), _int32(fields, 8)],
+    }
+
+
+def _forge_step_state(fields: list[tuple[int, int, Any]]) -> dict[str, Any]:
+    if _has(fields, 2):
+        tempering = _message(fields, 2)
+        return {
+            "kind": "tempering",
+            "beat_cursor": _varint(tempering, 2),
+            "hits": _varint(tempering, 3),
+            "misses": _varint(tempering, 4),
+            "deviation": _varint(tempering, 5),
+            "qi_spent": _double(tempering, 6),
+        }
+    if _has(fields, 1):
+        billet = _message(fields, 1)
+        return {
+            "kind": "billet",
+            "resolved_tier_cap": _varint(billet, 3),
+        }
+    if _has(fields, 3):
+        inscription = _message(fields, 3)
+        return {
+            "kind": "inscription",
+            "filled_slots": _varint(inscription, 1),
+            "max_slots": _varint(inscription, 2),
+            "failed": bool(_varint(inscription, 3)),
+        }
+    if _has(fields, 4):
+        consecration = _message(fields, 4)
+        return {
+            "kind": "consecration",
+            "qi_injected": _double(consecration, 1),
+            "qi_required": _double(consecration, 2),
+        }
+    return {"kind": "none"}
+
+
+def _forge_session(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    return {
+        "v": 1,
+        "type": "forge_session",
+        "session_id": _varint(fields, 1),
+        "blueprint_id": _string(fields, 2),
+        "blueprint_name": _string(fields, 3),
+        "active": bool(_varint(fields, 4)),
+        "current_step": FORGE_STEP_NAMES.get(_varint(fields, 5), "unspecified"),
+        "step_index": _varint(fields, 6),
+        "achieved_tier": _varint(fields, 7),
+        "step_state": _forge_step_state(_message(fields, 8)),
+    }
+
+
+def _forge_outcome(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    return {
+        "v": 1,
+        "type": "forge_outcome",
+        "session_id": _varint(fields, 1),
+        "blueprint_id": _string(fields, 2),
+        "bucket": FORGE_OUTCOME_BUCKET_NAMES.get(_varint(fields, 3), "unspecified"),
+        "weapon_item": _string(fields, 4) if _has(fields, 4) else None,
+        "quality": _float32(fields, 5),
+        "side_effects": [
+            value.decode("utf-8", errors="replace") for value in _messages(fields, 7)
+        ],
+        "achieved_tier": _varint(fields, 8),
+        "flawed_path": bool(_varint(fields, 9)),
+    }
+
+
+def _forge_blueprint_book(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    entries = []
+    for raw in _messages(fields, 1):
+        entry = _fields(raw)
+        entries.append(
+            {
+                "id": _string(entry, 1),
+                "display_name": _string(entry, 2),
+                "tier_cap": _varint(entry, 3),
+                "step_count": _varint(entry, 4),
+            }
+        )
+    return {
+        "v": 1,
+        "type": "forge_blueprint_book",
+        "learned": entries,
+        "current_index": _varint(fields, 2),
+    }
 
 
 def _equip_slot(value: int) -> str:

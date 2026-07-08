@@ -484,10 +484,110 @@ class RunnerLogicTest(unittest.TestCase):
         self.assertEqual(json.loads(reader.rest()), {"v": 1, "type": "breakthrough"})
 
 
+def _bare_bot() -> Bot:
+    """不开 socket 的 Bot——只测 _dispatch 解码与实体位置表状态机。"""
+    import threading as _threading
+
+    bot = Bot.__new__(Bot)
+    bot.t0 = 0.0
+    bot.events = []
+    bot.entities = {}
+    bot._lock = _threading.RLock()
+    bot._new_event = _threading.Condition(bot._lock)
+    bot.position = None
+    bot.health = None
+    bot.entity_id = None
+    bot.disconnect_reason = None
+    bot.chunk_count = 0
+    return bot
+
+
+class EntityTrackingTest(unittest.TestCase):
+    """实体位置表 pin：spawn 建 / rel-move 累积(Δ=i16/4096) / teleport 覆写 / destroy 删。
+
+    近战场景（combat_weapon_equip_damage 追击式采样）依赖 entity_pos 追活体
+    NPC——拿 spawn 坐标当靶在 CI 时序下必 whiff。"""
+
+    def _spawn(self, bot, eid=7, x=10.0, y=64.0, z=-3.0):
+        body = (
+            mc.write_varint(mc.S2C_ENTITY_SPAWN)
+            + mc.write_varint(eid)
+            + b"\x00" * 16
+            + mc.write_varint(1)
+            + struct.pack(">ddd", x, y, z)
+        )
+        bot._dispatch(body)
+
+    def test_spawn_registers_position(self):
+        bot = _bare_bot()
+        self._spawn(bot)
+        self.assertEqual(
+            bot.entity_pos(7), (10.0, 64.0, -3.0),
+            "entity_spawn 应把实体坐标登记进位置表（追击采样的起点）",
+        )
+
+    def test_rel_move_accumulates_quarter_4096(self):
+        bot = _bare_bot()
+        self._spawn(bot)
+        # Δ = 4096 → +1.0 block（wiki.vg：delta 编码为 (cur-prev)*4096 的 i16）
+        body = (
+            mc.write_varint(mc.S2C_ENTITY_POSITION)
+            + mc.write_varint(7)
+            + struct.pack(">hhh", 4096, -2048, 0)
+            + b"\x01"
+        )
+        bot._dispatch(body)
+        x, y, z = bot.entity_pos(7)
+        self.assertAlmostEqual(x, 11.0, places=6, msg="dx=4096/4096 应 +1.0")
+        self.assertAlmostEqual(y, 63.5, places=6, msg="dy=-2048/4096 应 -0.5")
+        self.assertAlmostEqual(z, -3.0, places=6)
+
+    def test_rel_move_unknown_entity_is_ignored(self):
+        bot = _bare_bot()
+        body = (
+            mc.write_varint(mc.S2C_ENTITY_POSITION)
+            + mc.write_varint(99)
+            + struct.pack(">hhh", 4096, 0, 0)
+            + b"\x01"
+        )
+        bot._dispatch(body)  # 未知实体的 rel-move 无锚点，不得 KeyError
+        self.assertIsNone(bot.entity_pos(99), "未 spawn 实体的 rel-move 应被忽略")
+
+    def test_teleport_overwrites_absolute(self):
+        bot = _bare_bot()
+        self._spawn(bot)
+        body = (
+            mc.write_varint(mc.S2C_ENTITY_TELEPORT)
+            + mc.write_varint(7)
+            + struct.pack(">ddd", -100.0, 70.0, 200.0)
+            + b"\x00\x00\x01"
+        )
+        bot._dispatch(body)
+        self.assertEqual(
+            bot.entity_pos(7), (-100.0, 70.0, 200.0),
+            "teleport 应绝对覆写位置（不叠加）",
+        )
+
+    def test_destroy_removes_entity(self):
+        bot = _bare_bot()
+        self._spawn(bot)
+        body = mc.write_varint(mc.S2C_ENTITIES_DESTROY) + mc.write_varint(1) + mc.write_varint(7)
+        bot._dispatch(body)
+        self.assertIsNone(bot.entity_pos(7), "destroy 后实体应从位置表移除（追击应停止）")
+
+
 def _pb_float32_field(number: int, value: float) -> bytes:
     import struct as _struct
 
     return mc.write_varint((number << 3) | 5) + _struct.pack("<f", value)
+
+
+def _pb_int32_field(number: int, value: int) -> bytes:
+    """protobuf `int32` 字段的正确 wire 编码——负值走 64-bit 补码变长编码（最长 10
+    字节），不是 `mc.write_varint` 那种给实际 MC 协议 varint 用的 32-bit 掩码。
+    forge station_pos_x/y/z 断言负坐标（末法残土常见）时必须用这个而非
+    `_pb_varint_field`。"""
+    return mc.write_varint(number << 3) + _pb_raw_varint(value & 0xFFFFFFFFFFFFFFFF)
 
 
 class ProdConsumeDecodeTest(unittest.TestCase):
@@ -601,6 +701,7 @@ class ProdConsumeDecodeTest(unittest.TestCase):
             _pb_len_field(1, b"damage")
             + _pb_float32_field(2, 12.5)
             + _pb_len_field(3, b"-12")
+            + _pb_varint_field(7, 1)
         )
         decoded = proto_min.decode_server_data_envelope(
             _pb_len_field(51, _pb_len_field(1, entry))
@@ -614,6 +715,174 @@ class ProdConsumeDecodeTest(unittest.TestCase):
             decoded["events"][0]["amount"], 12.5, places=4,
             msg="entry.amount 是 field 2（float32 wire type 5，非 double）",
         )
+        self.assertTrue(
+            decoded["events"][0]["outgoing"],
+            "entry.outgoing 是 field 7（bool）——方向标识，场景据此区分己方输出/承伤",
+        )
+
+    def test_combat_event_floater_outgoing_defaults_false(self):
+        # 老 server 不发 field 7 → proto3 缺省 false（承伤视角），解码不得崩
+        entry = _pb_len_field(1, b"hit") + _pb_float32_field(2, 3.0)
+        decoded = proto_min.decode_server_data_envelope(
+            _pb_len_field(51, _pb_len_field(1, entry))
+        )
+        self.assertFalse(
+            decoded["events"][0]["outgoing"],
+            "缺 field 7 时 outgoing 应缺省 False（proto3 bool 缺省），不得 KeyError",
+        )
+
+    def test_forge_station_tag17_decodes_pos_including_negative(self):
+        # plan-forge-session-entry-wiring-v1 P2：station_pos_x/y/z 是 int32，末法残土
+        # 常见负坐标——必须走 64-bit 补码 varint，不能用 32-bit 掩码的 _pb_varint_field。
+        station = (
+            _pb_string(1, "forge_station_Azure")
+            + _pb_varint_field(2, 1)
+            + _pb_float32_field(3, 0.75)
+            + _pb_string(4, "Azure")
+            + _pb_varint_field(5, 1)
+            + _pb_int32_field(6, -12)
+            + _pb_varint_field(7, 64)
+            + _pb_int32_field(8, -8)
+        )
+        decoded = proto_min.decode_server_data_envelope(_pb_len_field(17, station))
+        self.assertEqual(
+            decoded["type"], "forge_station", "envelope tag 17 应分发到 forge_station"
+        )
+        self.assertEqual(
+            decoded["station_id"], "forge_station_Azure",
+            "WeaponForgeStationDataV1.station_id 是 field 1",
+        )
+        self.assertEqual(decoded["tier"], 1, "field 2 是 tier")
+        self.assertAlmostEqual(
+            decoded["integrity"], 0.75, places=4,
+            msg="field 3 是 integrity（float32 wire type 5）",
+        )
+        self.assertTrue(decoded["has_session"], "field 5 是 has_session（bool）")
+        self.assertEqual(
+            decoded["pos"], [-12, 64, -8],
+            "station_pos_x/y/z 是 field 6/7/8；负坐标须按 int32 补码正确还原（不是 4294967284）",
+        )
+
+    def test_forge_session_tag18_decodes_tempering_step_state(self):
+        tempering = (
+            _pb_varint_field(2, 3)
+            + _pb_varint_field(3, 5)
+            + _pb_varint_field(4, 1)
+            + _pb_varint_field(5, 2)
+            + _pb_fixed64(6, 1.5)
+        )
+        step_state = _pb_message(2, tempering)  # ForgeStepState.tempering = field 2
+        session = (
+            _pb_varint_field(1, 7)
+            + _pb_string(2, "qing_feng_v0")
+            + _pb_string(3, "青锋剑（测试）")
+            + _pb_varint_field(4, 1)
+            + _pb_varint_field(5, 2)  # ForgeStep.TEMPERING
+            + _pb_varint_field(6, 1)
+            + _pb_varint_field(7, 1)
+            + _pb_message(8, step_state)
+        )
+        decoded = proto_min.decode_server_data_envelope(_pb_len_field(18, session))
+        self.assertEqual(
+            decoded["type"], "forge_session", "envelope tag 18 应分发到 forge_session"
+        )
+        self.assertEqual(decoded["session_id"], 7, "field 1 是 session_id（uint64）")
+        self.assertEqual(
+            decoded["blueprint_id"], "qing_feng_v0", "field 2 是 blueprint_id"
+        )
+        self.assertTrue(decoded["active"], "field 4 是 active（bool）")
+        self.assertEqual(
+            decoded["current_step"], "tempering",
+            "ForgeStep=2 应解为 tempering（枚举与 proto/bong/envelope.proto 对齐）",
+        )
+        self.assertEqual(decoded["step_index"], 1, "field 6 是 step_index")
+        self.assertEqual(decoded["achieved_tier"], 1, "field 7 是 achieved_tier")
+        self.assertEqual(
+            decoded["step_state"],
+            {
+                "kind": "tempering",
+                "beat_cursor": 3,
+                "hits": 5,
+                "misses": 1,
+                "deviation": 2,
+                "qi_spent": 1.5,
+            },
+            "oneof step_state 应分发到 tempering 分支（ForgeStepState.tempering=field 2）",
+        )
+
+    def test_forge_session_step_state_none_fallback(self):
+        # Done session 的 step_state 是 ForgeStepState.none_state（field 5，bool）——
+        # 解码器应兜底 kind=none，不得 crash。
+        session = _pb_varint_field(5, 5)  # ForgeStep.DONE
+        decoded = proto_min.decode_server_data_envelope(_pb_len_field(18, session))
+        self.assertEqual(decoded["current_step"], "done", "ForgeStep=5 应解为 done")
+        self.assertEqual(
+            decoded["step_state"], {"kind": "none"},
+            "无 billet/tempering/inscription/consecration 分支时应兜底 kind=none",
+        )
+
+    def test_forge_outcome_tag19_perfect_bucket(self):
+        outcome = (
+            _pb_varint_field(1, 9)
+            + _pb_string(2, "qing_feng_v0")
+            + _pb_varint_field(3, 1)  # ForgeOutcomeBucket.PERFECT
+            + _pb_string(4, "qing_feng_sword")
+            + _pb_float32_field(5, 1.0)
+            + _pb_string(7, "brittle_edge")
+            + _pb_varint_field(8, 2)
+            + _pb_varint_field(9, 0)
+        )
+        decoded = proto_min.decode_server_data_envelope(_pb_len_field(19, outcome))
+        self.assertEqual(
+            decoded["type"], "forge_outcome", "envelope tag 19 应分发到 forge_outcome"
+        )
+        self.assertEqual(decoded["bucket"], "perfect", "ForgeOutcomeBucket=1 应解为 perfect")
+        self.assertEqual(
+            decoded["weapon_item"], "qing_feng_sword",
+            "field 4 是 optional string weapon_item",
+        )
+        self.assertAlmostEqual(decoded["quality"], 1.0, places=4)
+        self.assertEqual(
+            decoded["side_effects"], ["brittle_edge"],
+            "field 7 是 repeated string side_effects",
+        )
+        self.assertEqual(decoded["achieved_tier"], 2, "field 8 是 achieved_tier")
+        self.assertFalse(decoded["flawed_path"], "field 9=0 → flawed_path=False")
+
+    def test_forge_outcome_flawed_path_true_and_missing_weapon_item(self):
+        # Waste bucket 无 weapon_item（proto optional 缺省不发 field 4）——不得 KeyError。
+        outcome = (
+            _pb_varint_field(1, 10)
+            + _pb_varint_field(3, 4)  # ForgeOutcomeBucket.WASTE
+            + _pb_varint_field(9, 1)  # flawed_path=True
+        )
+        decoded = proto_min.decode_server_data_envelope(_pb_len_field(19, outcome))
+        self.assertEqual(decoded["bucket"], "waste", "ForgeOutcomeBucket=4 应解为 waste")
+        self.assertIsNone(
+            decoded["weapon_item"], "缺 field 4 时 weapon_item 应为 None，不得 KeyError"
+        )
+        self.assertTrue(decoded["flawed_path"], "field 9=1 → flawed_path=True")
+        self.assertEqual(
+            decoded["side_effects"], [], "无 repeated 条目时应兜底空列表，不得 crash"
+        )
+
+    def test_forge_blueprint_book_tag20(self):
+        entry = (
+            _pb_string(1, "qing_feng_v0")
+            + _pb_string(2, "青锋剑（测试）")
+            + _pb_varint_field(3, 2)
+            + _pb_varint_field(4, 2)
+        )
+        book = _pb_message(1, entry) + _pb_varint_field(2, 0)
+        decoded = proto_min.decode_server_data_envelope(_pb_len_field(20, book))
+        self.assertEqual(
+            decoded["type"], "forge_blueprint_book",
+            "envelope tag 20 应分发到 forge_blueprint_book",
+        )
+        self.assertEqual(len(decoded["learned"]), 1, "repeated ForgeBlueprintEntry 应逐条解出")
+        self.assertEqual(decoded["learned"][0]["id"], "qing_feng_v0")
+        self.assertEqual(decoded["learned"][0]["step_count"], 2)
+        self.assertEqual(decoded["current_index"], 0)
 
 
 if __name__ == "__main__":

@@ -937,11 +937,13 @@ export const CancelExtractRequestV1 = Type.Object(
 export type CancelExtractRequestV1 = Static<typeof CancelExtractRequestV1>;
 
 // ─── 炼器（武器）（plan-forge-v1 §4） ────────────────────
+// plan-forge-session-entry-wiring-v1 §4.1#3 — 寻址从 station_id: string 改为
+// station_pos（对齐 alchemy furnace_pos 的 BlockPos 寻址模式）。
 export const ForgeStartSessionRequestV1 = Type.Object(
   {
     v: Type.Literal(1),
     type: Type.Literal("forge_start_session"),
-    station_id: Type.String(),
+    station_pos: BlockPosV1,
     blueprint_id: Type.String(),
     materials: Type.Array(
       Type.Tuple([Type.String(), Type.Integer({ minimum: 1 })]),

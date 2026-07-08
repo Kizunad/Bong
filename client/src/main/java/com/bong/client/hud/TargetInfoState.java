@@ -16,6 +16,9 @@ public final class TargetInfoState {
     public static final long HOLD_MILLIS = 5_000L;
     public static final long FADE_MILLIS = 1_000L;
     public static final String ANONYMOUS_PLAYER_DISPLAY_NAME = "某修士";
+    private static final String ZERO_UUID_STRING = "00000000-0000-0000-0000-000000000000";
+    private static final String REMAINS_PSEUDO_PLAYER_PREFIX = "Remains_";
+    private static final String REMAINS_PSEUDO_PLAYER_DISPLAY_NAME = "遗骸";
 
     public enum Kind {
         NPC,
@@ -79,19 +82,16 @@ public final class TargetInfoState {
         if (!(entity instanceof LivingEntity living)) {
             return empty();
         }
-        boolean playerTarget = living instanceof PlayerEntity;
-        Kind kind = playerTarget ? Kind.PLAYER : Kind.MOB;
         String name = living.getDisplayName() == null
             ? living.getType().getName().getString()
             : living.getDisplayName().getString();
-        if (playerTarget) {
-            PlayerEntity player = (PlayerEntity) living;
+        if (living instanceof PlayerEntity player) {
             String playerName = player.getGameProfile() == null ? player.getName().getString() : player.getGameProfile().getName();
-            name = playerDisplayNameForTargetInfo(player.getUuidAsString(), playerName, name);
+            return fromPlayerTargetInfo(living.getId(), player.getUuidAsString(), playerName, name, observedAtMillis);
         }
         float maxHealth = Math.max(1.0f, living.getMaxHealth());
         return create(
-            kind,
+            Kind.MOB,
             "entity:" + living.getId(),
             name,
             "",
@@ -101,13 +101,42 @@ public final class TargetInfoState {
         );
     }
 
+    static TargetInfoState fromPlayerTargetInfo(
+        int entityId,
+        String playerUuid,
+        String playerName,
+        String fallbackDisplayName,
+        long observedAtMillis
+    ) {
+        return create(
+            Kind.PLAYER,
+            "entity:" + entityId,
+            playerDisplayNameForTargetInfo(playerUuid, playerName, fallbackDisplayName),
+            "",
+            0.0,
+            0.0,
+            observedAtMillis
+        );
+    }
+
     static String playerDisplayNameForTargetInfo(String playerUuid, String playerName, String fallbackDisplayName) {
         String normalizedName = normalize(playerName);
-        String visibleName = normalizedName.isEmpty() ? normalize(fallbackDisplayName) : normalizedName;
+        String normalizedFallback = normalize(fallbackDisplayName);
+        String visibleName = normalizedName.isEmpty() ? normalizedFallback : normalizedName;
         if (!SocialStateStore.shouldShowRemoteNameTag(playerUuid, visibleName)) {
+            if (isKnownPseudoPlayerLabel(playerUuid, normalizedName, normalizedFallback)) {
+                return normalizedFallback;
+            }
             return ANONYMOUS_PLAYER_DISPLAY_NAME;
         }
-        return visibleName.isEmpty() ? ANONYMOUS_PLAYER_DISPLAY_NAME : visibleName;
+        String allowedDisplayName = normalizedFallback.isEmpty() ? visibleName : normalizedFallback;
+        return allowedDisplayName.isEmpty() ? ANONYMOUS_PLAYER_DISPLAY_NAME : allowedDisplayName;
+    }
+
+    private static boolean isKnownPseudoPlayerLabel(String playerUuid, String playerName, String fallbackDisplayName) {
+        return ZERO_UUID_STRING.equalsIgnoreCase(normalize(playerUuid))
+            && playerName.startsWith(REMAINS_PSEUDO_PLAYER_PREFIX)
+            && REMAINS_PSEUDO_PLAYER_DISPLAY_NAME.equals(fallbackDisplayName);
     }
 
     static TargetInfoState fromNpcMetadata(NpcMetadata metadata, long observedAtMillis) {

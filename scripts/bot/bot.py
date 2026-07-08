@@ -59,6 +59,9 @@ class Bot:
 
         self.t0 = time.monotonic()
         self.events: list[Event] = []
+        # 实体位置表（entity_spawn 建、rel-move/teleport 更、destroy 删）——
+        # 近战场景要追活体 NPC，不能拿 spawn 坐标当靶（NPC 会走）。
+        self.entities: dict[int, tuple[float, float, float]] = {}
         # RLock：wait_for 的 predicate 在持锁状态下执行，场景里 predicate 常会
         # 回调 events_of()/chunk_count 等同样要锁的方法——非重入锁在这里会死锁。
         self._lock = threading.RLock()
@@ -193,13 +196,28 @@ class Bot:
             reader.pos += 16  # uuid
             entity_type = reader.varint()
             x, y, z = reader.f64(), reader.f64(), reader.f64()
+            self.entities[entity_id] = (x, y, z)
             self._emit(
                 "entity_spawn",
                 {"entity_id": entity_id, "type": entity_type, "x": x, "y": y, "z": z},
             )
+        elif packet_id in (mc.S2C_ENTITY_POSITION, mc.S2C_ENTITY_POSITION_ROTATION):
+            entity_id = reader.varint()
+            dx = reader.i16() / 4096.0
+            dy = reader.i16() / 4096.0
+            dz = reader.i16() / 4096.0
+            prev = self.entities.get(entity_id)
+            if prev is not None:
+                self.entities[entity_id] = (prev[0] + dx, prev[1] + dy, prev[2] + dz)
+        elif packet_id == mc.S2C_ENTITY_TELEPORT:
+            entity_id = reader.varint()
+            x, y, z = reader.f64(), reader.f64(), reader.f64()
+            self.entities[entity_id] = (x, y, z)
         elif packet_id == mc.S2C_ENTITIES_DESTROY:
             count = reader.varint()
             ids = [reader.varint() for _ in range(count)]
+            for eid in ids:
+                self.entities.pop(eid, None)
             self._emit("entities_destroy", {"entity_ids": ids})
         elif packet_id == mc.S2C_BLOCK_UPDATE:
             packed = struct.unpack_from(">Q", reader.data, reader.pos)[0]
@@ -290,6 +308,11 @@ class Bot:
             cz += dz / dist * step
             self.set_position(cx, cy, cz)
             time.sleep(1.0 / tick_hz)
+
+    def entity_pos(self, entity_id: int) -> tuple[float, float, float] | None:
+        """实体最近已知坐标（spawn+rel-move+teleport 累积）；已 destroy 返回 None。"""
+        with self._lock:
+            return self.entities.get(entity_id)
 
     def swing(self, hand: int = 0) -> None:
         self._send(mc.C2S_HAND_SWING, write_varint(hand))

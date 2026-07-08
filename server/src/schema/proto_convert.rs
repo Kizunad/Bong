@@ -1374,6 +1374,7 @@ impl From<&ServerDataPayloadV1> for Payload {
                             x: e.x,
                             y: e.y,
                             z: e.z,
+                            outgoing: e.outgoing,
                         })
                         .collect(),
                 })
@@ -2510,6 +2511,9 @@ fn forge_station_to_proto(d: &super::forge::WeaponForgeStationDataV1) -> bong::F
         integrity: d.integrity,
         owner_name: d.owner_name.clone(),
         has_session: d.has_session,
+        station_pos_x: d.station_pos_x,
+        station_pos_y: d.station_pos_y,
+        station_pos_z: d.station_pos_z,
     }
 }
 
@@ -3934,12 +3938,14 @@ impl From<&super::client_request::ClientRequestV1> for bong::client_request_enve
             }
             // ─── 锻造 C2S ────────────────────────────────────────
             ClientRequestV1::ForgeStartSession {
-                station_id,
+                station_pos,
                 blueprint_id,
                 materials,
                 ..
             } => Payload::ForgeStartSession(bong::ForgeStartSession {
-                station_id: station_id.clone(),
+                station_pos_x: station_pos.0,
+                station_pos_y: station_pos.1,
+                station_pos_z: station_pos.2,
                 blueprint_id: blueprint_id.clone(),
                 materials: materials
                     .iter()
@@ -6517,6 +6523,9 @@ mod tests {
                     integrity: 1.0,
                     owner_name: String::new(),
                     has_session: false,
+                    station_pos_x: 0,
+                    station_pos_y: 64,
+                    station_pos_z: 0,
                 }
             ))),
             fix!(ServerDataPayloadV1::ForgeSession(Box::new(
@@ -7750,7 +7759,7 @@ mod tests {
             }),
             build(ClientRequestV1::ForgeStartSession {
                 v: 1,
-                station_id: "forge:1".to_string(),
+                station_pos: (0, 64, 0),
                 blueprint_id: "bp:sword".to_string(),
                 materials: vec![],
             }),

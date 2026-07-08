@@ -602,9 +602,11 @@ pub enum ClientRequestV1 {
     },
     // ─── 炼器（武器）（plan-forge-v1 §4） ────────────────────────
     /// plan §1.3.1 — 起炉请求。client 拖齐坯料 + 选图谱后发起。
+    /// plan-forge-session-entry-wiring-v1 §4.1#3 — 寻址从 `station_id: String`
+    /// 改为 `station_pos`（对齐 alchemy `furnace_pos` 的 BlockPos 寻址模式）。
     ForgeStartSession {
         v: u8,
-        station_id: String,
+        station_pos: (i32, i32, i32),
         blueprint_id: String,
         materials: Vec<(String, u32)>,
     },
@@ -2217,6 +2219,85 @@ mod tests {
             serde_json::from_str::<ClientRequestV1>(negative).is_err(),
             "qi_scatter_bead_use item_instance_id is u64 and must reject negative JSON"
         );
+    }
+
+    #[test]
+    fn forge_start_session_roundtrip() {
+        let json = r#"{"type":"forge_start_session","v":1,"station_pos":[-12,64,38],"blueprint_id":"qing_feng_v0","materials":[["fan_tie",4],["za_gang",1]]}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+        match req {
+            ClientRequestV1::ForgeStartSession {
+                v,
+                station_pos,
+                blueprint_id,
+                materials,
+            } => {
+                assert_eq!(v, 1);
+                assert_eq!(station_pos, (-12, 64, 38));
+                assert_eq!(blueprint_id, "qing_feng_v0");
+                assert_eq!(
+                    materials,
+                    vec![("fan_tie".to_string(), 4), ("za_gang".to_string(), 1)]
+                );
+            }
+            other => panic!("expected ForgeStartSession, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn forge_start_session_accepts_empty_materials() {
+        let json = r#"{"type":"forge_start_session","v":1,"station_pos":[0,64,0],"blueprint_id":"iron_sword_v0","materials":[]}"#;
+        let req: ClientRequestV1 = serde_json::from_str(json).unwrap();
+        match req {
+            ClientRequestV1::ForgeStartSession { materials, .. } => {
+                assert!(materials.is_empty());
+            }
+            other => panic!("expected ForgeStartSession, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn forge_start_session_rejects_unknown_fields() {
+        let json = r#"{"type":"forge_start_session","v":1,"station_id":"forge:1","blueprint_id":"iron_sword_v0","materials":[]}"#;
+        assert!(
+            serde_json::from_str::<ClientRequestV1>(json).is_err(),
+            "旧 station_id 字段已废弃，deny_unknown_fields 应拒绝"
+        );
+    }
+
+    #[test]
+    fn forge_start_session_rejects_negative_material_count() {
+        let json = r#"{"type":"forge_start_session","v":1,"station_pos":[0,64,0],"blueprint_id":"iron_sword_v0","materials":[["fan_tie",-1]]}"#;
+        assert!(
+            serde_json::from_str::<ClientRequestV1>(json).is_err(),
+            "materials count 是 u32，负数 JSON 应被拒绝"
+        );
+    }
+
+    #[test]
+    fn forge_blueprint_turn_page_roundtrip_positive_and_negative_delta() {
+        let forward = r#"{"type":"forge_blueprint_turn_page","v":1,"delta":1}"#;
+        match serde_json::from_str::<ClientRequestV1>(forward).unwrap() {
+            ClientRequestV1::ForgeBlueprintTurnPage { v, delta } => {
+                assert_eq!(v, 1);
+                assert_eq!(delta, 1);
+            }
+            other => panic!("expected ForgeBlueprintTurnPage, got {other:?}"),
+        }
+
+        let backward = r#"{"type":"forge_blueprint_turn_page","v":1,"delta":-1}"#;
+        match serde_json::from_str::<ClientRequestV1>(backward).unwrap() {
+            ClientRequestV1::ForgeBlueprintTurnPage { delta, .. } => {
+                assert_eq!(delta, -1, "负 delta（上一页）应正确解析为负数");
+            }
+            other => panic!("expected ForgeBlueprintTurnPage, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn forge_blueprint_turn_page_rejects_unknown_fields() {
+        let json = r#"{"type":"forge_blueprint_turn_page","v":1,"delta":1,"bogus":true}"#;
+        assert!(serde_json::from_str::<ClientRequestV1>(json).is_err());
     }
 
     #[test]

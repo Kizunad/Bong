@@ -228,6 +228,73 @@ public class ClientRequestSenderTest {
         );
     }
 
+    // ══════════ plan-forge-session-entry-wiring-v1 §4.1#2/#3 — 起炉 / 图谱翻页 ══════════
+
+    @Test
+    void sendForgeStartSessionUsesCorrectChannelAndJson() {
+        install();
+        ClientRequestSender.sendForgeStartSession(
+            new BlockPos(12, 66, -8),
+            "qing_feng_v0",
+            List.of(
+                new ClientRequestProtocol.ForgeMaterial("fan_tie", 4),
+                new ClientRequestProtocol.ForgeMaterial("za_gang", 1)
+            )
+        );
+        assertEquals(1, sent.size());
+        assertEquals(new Identifier("bong", "client_request"), sent.get(0).channel());
+        assertEquals(
+            "{\"type\":\"forge_start_session\",\"v\":1,\"station_pos\":[12,66,-8],"
+                + "\"blueprint_id\":\"qing_feng_v0\",\"materials\":[[\"fan_tie\",4],[\"za_gang\",1]]}",
+            sent.get(0).body()
+        );
+    }
+
+    @Test
+    void sendForgeStartSessionWithEmptyMaterialsList() {
+        install();
+        ClientRequestSender.sendForgeStartSession(new BlockPos(0, 64, 0), "iron_sword_v0", List.of());
+        assertEquals(1, sent.size());
+        assertEquals(
+            "{\"type\":\"forge_start_session\",\"v\":1,\"station_pos\":[0,64,0],"
+                + "\"blueprint_id\":\"iron_sword_v0\",\"materials\":[]}",
+            sent.get(0).body()
+        );
+    }
+
+    @Test
+    void sendForgeStartSessionPropagatesInvalidArguments() {
+        install();
+        assertThrows(IllegalArgumentException.class, () ->
+            ClientRequestSender.sendForgeStartSession(null, "iron_sword_v0", List.of()));
+        assertThrows(IllegalArgumentException.class, () ->
+            ClientRequestSender.sendForgeStartSession(new BlockPos(0, 0, 0), "", List.of()));
+        assertEquals(0, sent.size(), "校验失败不应发出任何包");
+    }
+
+    @Test
+    void sendForgeBlueprintTurnPageForwardUsesCorrectChannelAndJson() {
+        install();
+        ClientRequestSender.sendForgeBlueprintTurnPage(1);
+        assertEquals(1, sent.size());
+        assertEquals(new Identifier("bong", "client_request"), sent.get(0).channel());
+        assertEquals(
+            "{\"type\":\"forge_blueprint_turn_page\",\"v\":1,\"delta\":1}",
+            sent.get(0).body()
+        );
+    }
+
+    @Test
+    void sendForgeBlueprintTurnPageBackwardUsesCorrectChannelAndJson() {
+        install();
+        ClientRequestSender.sendForgeBlueprintTurnPage(-1);
+        assertEquals(1, sent.size());
+        assertEquals(
+            "{\"type\":\"forge_blueprint_turn_page\",\"v\":1,\"delta\":-1}",
+            sent.get(0).body()
+        );
+    }
+
     @Test
     void sendBlockPlaceUsesCorrectChannelAndJson() {
         install();

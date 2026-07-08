@@ -592,6 +592,158 @@ public class ClientRequestProtocolTest {
         );
     }
 
+    // ══════════ plan-forge-session-entry-wiring-v1 §4.1#2/#3 — 起炉 / 图谱翻页 ══════════
+
+    @Test
+    void encodesForgeStartSessionWithMultipleMaterials() {
+        String json = ClientRequestProtocol.encodeForgeStartSession(
+            new BlockPos(12, 66, -8),
+            "qing_feng_v0",
+            List.of(
+                new ClientRequestProtocol.ForgeMaterial("fan_tie", 4),
+                new ClientRequestProtocol.ForgeMaterial("za_gang", 1)
+            )
+        );
+        assertEquals(
+            "{\"type\":\"forge_start_session\",\"v\":1,\"station_pos\":[12,66,-8],"
+                + "\"blueprint_id\":\"qing_feng_v0\",\"materials\":[[\"fan_tie\",4],[\"za_gang\",1]]}",
+            json
+        );
+    }
+
+    @Test
+    void encodesForgeStartSessionWithSingleMaterial() {
+        String json = ClientRequestProtocol.encodeForgeStartSession(
+            new BlockPos(0, 64, 0),
+            "iron_sword_v0",
+            List.of(new ClientRequestProtocol.ForgeMaterial("fan_tie", 3))
+        );
+        assertEquals(
+            "{\"type\":\"forge_start_session\",\"v\":1,\"station_pos\":[0,64,0],"
+                + "\"blueprint_id\":\"iron_sword_v0\",\"materials\":[[\"fan_tie\",3]]}",
+            json
+        );
+    }
+
+    @Test
+    void encodesForgeStartSessionWithEmptyMaterialsList() {
+        String json = ClientRequestProtocol.encodeForgeStartSession(
+            new BlockPos(1, 2, 3), "iron_sword_v0", List.of()
+        );
+        assertEquals(
+            "{\"type\":\"forge_start_session\",\"v\":1,\"station_pos\":[1,2,3],"
+                + "\"blueprint_id\":\"iron_sword_v0\",\"materials\":[]}",
+            json
+        );
+    }
+
+    @Test
+    void encodesForgeStartSessionWithNullMaterialsAsEmptyArray() {
+        String json = ClientRequestProtocol.encodeForgeStartSession(
+            new BlockPos(1, 2, 3), "iron_sword_v0", null
+        );
+        assertEquals(
+            "{\"type\":\"forge_start_session\",\"v\":1,\"station_pos\":[1,2,3],"
+                + "\"blueprint_id\":\"iron_sword_v0\",\"materials\":[]}",
+            json
+        );
+    }
+
+    @Test
+    void encodesForgeStartSessionWithNegativeCoordinates() {
+        String json = ClientRequestProtocol.encodeForgeStartSession(
+            new BlockPos(-1_000_000, -64, 999_999), "iron_sword_v0",
+            List.of(new ClientRequestProtocol.ForgeMaterial("fan_tie", 1))
+        );
+        assertEquals(
+            "{\"type\":\"forge_start_session\",\"v\":1,\"station_pos\":[-1000000,-64,999999],"
+                + "\"blueprint_id\":\"iron_sword_v0\",\"materials\":[[\"fan_tie\",1]]}",
+            json
+        );
+    }
+
+    @Test
+    void encodeForgeStartSessionRejectsNullStationPos() {
+        assertThrows(IllegalArgumentException.class, () -> ClientRequestProtocol.encodeForgeStartSession(
+            null, "iron_sword_v0", List.of(new ClientRequestProtocol.ForgeMaterial("fan_tie", 1))
+        ));
+    }
+
+    @Test
+    void encodeForgeStartSessionRejectsBlankBlueprintId() {
+        assertThrows(IllegalArgumentException.class, () -> ClientRequestProtocol.encodeForgeStartSession(
+            new BlockPos(0, 0, 0), "  ", List.of(new ClientRequestProtocol.ForgeMaterial("fan_tie", 1))
+        ));
+        assertThrows(IllegalArgumentException.class, () -> ClientRequestProtocol.encodeForgeStartSession(
+            new BlockPos(0, 0, 0), null, List.of(new ClientRequestProtocol.ForgeMaterial("fan_tie", 1))
+        ));
+    }
+
+    @Test
+    void encodeForgeStartSessionRejectsNullMaterialEntry() {
+        List<ClientRequestProtocol.ForgeMaterial> materials = new java.util.ArrayList<>();
+        materials.add(null);
+        assertThrows(IllegalArgumentException.class, () -> ClientRequestProtocol.encodeForgeStartSession(
+            new BlockPos(0, 0, 0), "iron_sword_v0", materials
+        ));
+    }
+
+    @Test
+    void encodeForgeStartSessionRejectsBlankMaterialId() {
+        assertThrows(IllegalArgumentException.class, () -> ClientRequestProtocol.encodeForgeStartSession(
+            new BlockPos(0, 0, 0), "iron_sword_v0",
+            List.of(new ClientRequestProtocol.ForgeMaterial("  ", 1))
+        ));
+    }
+
+    @Test
+    void encodeForgeStartSessionRejectsZeroOrNegativeMaterialCount() {
+        assertThrows(IllegalArgumentException.class, () -> ClientRequestProtocol.encodeForgeStartSession(
+            new BlockPos(0, 0, 0), "iron_sword_v0",
+            List.of(new ClientRequestProtocol.ForgeMaterial("fan_tie", 0))
+        ));
+        assertThrows(IllegalArgumentException.class, () -> ClientRequestProtocol.encodeForgeStartSession(
+            new BlockPos(0, 0, 0), "iron_sword_v0",
+            List.of(new ClientRequestProtocol.ForgeMaterial("fan_tie", -1))
+        ));
+    }
+
+    @Test
+    void encodesForgeBlueprintTurnPageForward() {
+        assertEquals(
+            "{\"type\":\"forge_blueprint_turn_page\",\"v\":1,\"delta\":1}",
+            ClientRequestProtocol.encodeForgeBlueprintTurnPage(1)
+        );
+    }
+
+    @Test
+    void encodesForgeBlueprintTurnPageBackward() {
+        assertEquals(
+            "{\"type\":\"forge_blueprint_turn_page\",\"v\":1,\"delta\":-1}",
+            ClientRequestProtocol.encodeForgeBlueprintTurnPage(-1)
+        );
+    }
+
+    @Test
+    void encodesForgeBlueprintTurnPageZeroDelta() {
+        assertEquals(
+            "{\"type\":\"forge_blueprint_turn_page\",\"v\":1,\"delta\":0}",
+            ClientRequestProtocol.encodeForgeBlueprintTurnPage(0)
+        );
+    }
+
+    @Test
+    void encodesForgeBlueprintTurnPageMultiStepDelta() {
+        assertEquals(
+            "{\"type\":\"forge_blueprint_turn_page\",\"v\":1,\"delta\":5}",
+            ClientRequestProtocol.encodeForgeBlueprintTurnPage(5)
+        );
+        assertEquals(
+            "{\"type\":\"forge_blueprint_turn_page\",\"v\":1,\"delta\":-3}",
+            ClientRequestProtocol.encodeForgeBlueprintTurnPage(-3)
+        );
+    }
+
     @Test
     void encodesForgeConsecrationInject() {
         String json = ClientRequestProtocol.encodeForgeConsecrationInject(7L, 2.5);

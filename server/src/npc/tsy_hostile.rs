@@ -30,7 +30,9 @@ use crate::inventory::ancient_relics::{AncientRelicPool, AncientRelicSource};
 use crate::inventory::{
     DroppedLootEntry, DroppedLootRegistry, InventoryInstanceIdAllocator, ItemInstance, ItemRegistry,
 };
-use crate::network::audio_event_emit::{PlaySoundRecipeRequest, StopSoundRecipeRequest};
+use crate::network::audio_event_emit::{
+    AudioRecipient, PlaySoundRecipeRequest, StopSoundRecipeRequest,
+};
 use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::npc::brain::{
     AgeingScorer, ChaseAction, ChaseTargetScorer, DashAction, MeleeAttackAction, MeleeRangeScorer,
@@ -65,6 +67,7 @@ const FUYA_DEFAULT_DRAIN_MULTIPLIER: f64 = 1.5;
 const TSY_FUYA_AURA_VFX: &str = "bong:tsy_fuya_aura";
 const FUYA_AURA_VFX_INTERVAL_TICKS: u64 = 20;
 const FUYA_PRESSURE_AUDIO_FLAG_PREFIX: &str = "fauna_fuya_pressure";
+const FUYA_PRESSURE_AUDIO_RADIUS: f64 = 64.0;
 pub const DAOXIANG_FAKE_FRIENDLY_FLIP_DELAY_TICKS: u32 = 6;
 pub const DAOXIANG_FAKE_FRIENDLY_RANGE_BLOCKS: f32 = 8.0;
 pub const OBSESSION_LURE_RELEASE_SECONDS: u32 = 5;
@@ -1115,9 +1118,9 @@ pub fn emit_fuya_pressure_hum_audio_system(
             flag: Some(fuya_pressure_audio_flag(fuya)),
             volume_mul: 1.0,
             pitch_shift: 0.0,
-            recipient: crate::network::audio_event_emit::AudioRecipient::Radius {
+            recipient: AudioRecipient::Radius {
                 origin: pos,
-                radius: 64.0,
+                radius: FUYA_PRESSURE_AUDIO_RADIUS,
             },
         });
     }
@@ -1125,13 +1128,21 @@ pub fn emit_fuya_pressure_hum_audio_system(
 
 pub fn stop_fuya_pressure_hum_audio_on_death_system(
     mut deaths: EventReader<crate::combat::events::DeathEvent>,
+    fuya_auras: Query<&Position, With<FuyaAura>>,
     mut audio_events: EventWriter<StopSoundRecipeRequest>,
 ) {
     for death in deaths.read() {
+        let Ok(position) = fuya_auras.get(death.target) else {
+            continue;
+        };
+        let pos = position.get();
         audio_events.send(StopSoundRecipeRequest {
             instance_id: fuya_pressure_audio_instance_id(death.target),
             fade_out_ticks: 20,
-            recipient: crate::network::audio_event_emit::AudioRecipient::All,
+            recipient: AudioRecipient::Radius {
+                origin: pos,
+                radius: FUYA_PRESSURE_AUDIO_RADIUS,
+            },
         });
     }
 }
@@ -2393,7 +2404,7 @@ mod tests {
     }
 
     #[test]
-    fn fuya_pressure_hum_stop_is_tied_to_death_event_even_after_component_removal() {
+    fn fuya_pressure_hum_stop_ignores_deaths_without_fuya_aura() {
         let mut app = valence::prelude::App::new();
         app.add_event::<crate::combat::events::DeathEvent>();
         app.add_event::<StopSoundRecipeRequest>();
@@ -2401,7 +2412,44 @@ mod tests {
             valence::prelude::Update,
             stop_fuya_pressure_hum_audio_on_death_system,
         );
-        let fuya = app.world_mut().spawn_empty().id();
+        let commoner = app
+            .world_mut()
+            .spawn((Position::new([0.0, 64.0, 0.0]), NpcArchetype::Commoner))
+            .id();
+        app.world_mut()
+            .send_event(crate::combat::events::DeathEvent {
+                target: commoner,
+                cause: "test".to_string(),
+                attacker: None,
+                attacker_player_id: None,
+                at_tick: 1,
+            });
+
+        app.update();
+
+        let events = app
+            .world()
+            .resource::<valence::prelude::Events<StopSoundRecipeRequest>>();
+        assert!(
+            events.iter_current_update_events().next().is_none(),
+            "未挂 FuyaAura 的死亡不应停止 Fuya 压力嗡鸣"
+        );
+    }
+
+    #[test]
+    fn fuya_pressure_hum_stop_is_tied_to_fuya_aura_death_and_radius_recipient() {
+        let mut app = valence::prelude::App::new();
+        app.add_event::<crate::combat::events::DeathEvent>();
+        app.add_event::<StopSoundRecipeRequest>();
+        app.add_systems(
+            valence::prelude::Update,
+            stop_fuya_pressure_hum_audio_on_death_system,
+        );
+        let fuya_pos = Position::new([2.0, 64.0, 3.0]);
+        let fuya = app
+            .world_mut()
+            .spawn((fuya_pos, NpcArchetype::Fuya, FuyaAura::default()))
+            .id();
         app.world_mut()
             .send_event(crate::combat::events::DeathEvent {
                 target: fuya,
@@ -2422,6 +2470,55 @@ mod tests {
             .expect("Fuya death should stop pressure hum loop");
         assert_eq!(event.instance_id, fuya_pressure_audio_instance_id(fuya));
         assert_eq!(event.fade_out_ticks, 20);
+        match event.recipient {
+            AudioRecipient::Radius { origin, radius } => {
+                assert_eq!(origin, fuya_pos.get());
+                assert_eq!(radius, FUYA_PRESSURE_AUDIO_RADIUS);
+            }
+            other => panic!("Fuya stop sound 应按局部半径发送，实际 {other:?}"),
+        }
+    }
+
+    #[test]
+    fn fuya_pressure_hum_stop_follows_aura_even_when_archetype_is_not_fuya() {
+        let mut app = valence::prelude::App::new();
+        app.add_event::<crate::combat::events::DeathEvent>();
+        app.add_event::<StopSoundRecipeRequest>();
+        app.add_systems(
+            valence::prelude::Update,
+            stop_fuya_pressure_hum_audio_on_death_system,
+        );
+        let aura_pos = Position::new([4.0, 64.0, 5.0]);
+        let entity = app
+            .world_mut()
+            .spawn((aura_pos, NpcArchetype::SkullFiend, FuyaAura::default()))
+            .id();
+        app.world_mut()
+            .send_event(crate::combat::events::DeathEvent {
+                target: entity,
+                cause: "test".to_string(),
+                attacker: None,
+                attacker_player_id: None,
+                at_tick: 1,
+            });
+
+        app.update();
+
+        let events = app
+            .world()
+            .resource::<valence::prelude::Events<StopSoundRecipeRequest>>();
+        let event = events
+            .iter_current_update_events()
+            .next()
+            .expect("任何播放过 FuyaAura hum 的实体死亡都应停止同一 instance");
+        assert_eq!(event.instance_id, fuya_pressure_audio_instance_id(entity));
+        match event.recipient {
+            AudioRecipient::Radius { origin, radius } => {
+                assert_eq!(origin, aura_pos.get());
+                assert_eq!(radius, FUYA_PRESSURE_AUDIO_RADIUS);
+            }
+            other => panic!("FuyaAura stop sound 应按局部半径发送，实际 {other:?}"),
+        }
     }
 
     #[test]
