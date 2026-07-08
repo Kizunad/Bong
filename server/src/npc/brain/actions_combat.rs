@@ -444,6 +444,10 @@ fn deterministic_interval(entity_index: u32, tick: u64, min: u64, max: u64) -> u
     min + (seed % range)
 }
 
+fn lifecycle_blocks_combat_action(lifecycle: Option<&Lifecycle>) -> bool {
+    lifecycle.is_some_and(|lc| lc.state != LifecycleState::Alive)
+}
+
 #[allow(clippy::type_complexity)]
 pub(crate) fn npc_defense_action_system(
     mut actions: Query<(&Actor, &mut ActionState, &mut NpcDefenseAction)>,
@@ -463,7 +467,7 @@ pub(crate) fn npc_defense_action_system(
 
         match *state {
             ActionState::Requested => {
-                if lifecycle.is_some_and(|lc| lc.state != LifecycleState::Alive) {
+                if lifecycle_blocks_combat_action(lifecycle) {
                     *state = ActionState::Failure;
                     continue;
                 }
@@ -490,7 +494,7 @@ pub(crate) fn npc_defense_action_system(
                 *state = ActionState::Executing;
             }
             ActionState::Executing => {
-                if lifecycle.is_some_and(|lc| lc.state != LifecycleState::Alive) {
+                if lifecycle_blocks_combat_action(lifecycle) {
                     *state = ActionState::Failure;
                     continue;
                 }
