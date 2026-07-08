@@ -64,7 +64,7 @@ pub struct CraftCompletedEvent {
 }
 
 /// 失败路径汇总：玩家取消 / 死亡清空 / 材料异常移除等。
-/// `material_returned` 是按 §5 决策门 #3 默认 70% 返还后实际写回 inventory 的份数；
+/// `material_returned` 是按 §5 决策门 #3 默认 70% 返还后实际入包或落地成功的份数；
 /// `qi_refunded` 当前固定 0（plan §5 决策门 #3 "qi 不退"）。
 #[derive(Debug, Clone, Event, PartialEq)]
 pub struct CraftFailedEvent {

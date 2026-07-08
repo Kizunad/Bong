@@ -1161,6 +1161,33 @@ mod tests {
     }
 
     #[test]
+    fn refund_ground_context_falls_back_without_position_or_dimension() {
+        let absent = refund_ground_context(None);
+        assert_eq!(
+            absent.pos, DEFAULT_REFUND_GROUND_POS,
+            "缺少 Position 时应使用固定退款落地点，不能依赖无效玩家坐标"
+        );
+        assert_eq!(
+            absent.dimension,
+            DimensionKind::default(),
+            "缺少 Position 时 dimension 也应回退到默认维度"
+        );
+
+        let pos = Position::new([12.0, 66.0, -9.0]);
+        let missing_dimension = refund_ground_context(Some((&pos, None)));
+        assert_eq!(
+            missing_dimension.pos,
+            [12.0, 66.0, -9.0],
+            "有 Position 时应保留玩家坐标作为退款落地点"
+        );
+        assert_eq!(
+            missing_dimension.dimension,
+            DimensionKind::default(),
+            "缺少 CurrentDimension 时应使用默认维度"
+        );
+    }
+
+    #[test]
     fn refund_manifest_full_inventory_drops_to_ground() {
         let registry = registry_with_templates(&[("fan_tie", 64)]);
         let mut inventory = inv_with(&[("occupant", 1)]);
@@ -1314,6 +1341,108 @@ mod tests {
             "结构性错误不能产生 DroppedLootRegistry 条目"
         );
         assert!(inventory.containers[0].items.is_empty());
+    }
+
+    #[test]
+    fn cancel_intent_missing_caster_is_noop_without_failed_event() {
+        let recipe = make_recipe(
+            "craft.test.cancel_missing_caster",
+            &[("fan_tie", 2)],
+            vec![],
+        );
+        let mut app = craft_refund_test_app(recipe, &[("fan_tie", 64)], 11);
+        app.add_systems(Update, apply_craft_cancel_intents);
+
+        let caster_without_inventory = app.world_mut().spawn_empty().id();
+        app.world_mut().send_event(CraftCancelIntent {
+            caster: caster_without_inventory,
+        });
+        app.update();
+
+        assert!(
+            current_failed_events(&app).is_empty(),
+            "caster 查找失败应只跳过本 intent，不能伪造 Failed 事件"
+        );
+        assert!(
+            app.world()
+                .get::<CraftSession>(caster_without_inventory)
+                .is_none(),
+            "缺少 inventory/session 的 caster 不应被 cancel 路径补写 CraftSession"
+        );
+    }
+
+    #[test]
+    fn cancel_intent_without_session_is_noop_without_failed_event() {
+        let recipe = make_recipe(
+            "craft.test.cancel_without_session",
+            &[("fan_tie", 2)],
+            vec![],
+        );
+        let mut app = craft_refund_test_app(recipe, &[("fan_tie", 64)], 12);
+        app.add_systems(Update, apply_craft_cancel_intents);
+
+        let player = app.world_mut().spawn(inv_with(&[("fan_tie", 1)])).id();
+        app.world_mut()
+            .send_event(CraftCancelIntent { caster: player });
+        app.update();
+
+        assert!(
+            current_failed_events(&app).is_empty(),
+            "无 CraftSession 的取消 intent 应 debug/noop，不应通知 client 失败"
+        );
+        let inventory = app.world().get::<PlayerInventory>(player).unwrap();
+        assert_eq!(
+            inventory.containers[0].items.len(),
+            1,
+            "无 session 的 cancel 不应改动玩家背包"
+        );
+        assert!(
+            app.world().get::<CraftSession>(player).is_none(),
+            "无 session 的 cancel 不应插入或保留 CraftSession"
+        );
+    }
+
+    #[test]
+    fn cancel_intent_unknown_recipe_emits_internal_error_and_removes_session() {
+        let recipe = make_recipe("craft.test.cancel_known_recipe", &[("fan_tie", 2)], vec![]);
+        let mut app = craft_refund_test_app(recipe, &[("fan_tie", 64)], 13);
+        app.add_systems(Update, apply_craft_cancel_intents);
+
+        let player = app
+            .world_mut()
+            .spawn(inv_with(&[("fan_tie", 1)]))
+            .insert(CraftSession {
+                recipe_id: RecipeId::new("craft.test.cancel_missing_recipe"),
+                started_at_tick: 10,
+                remaining_ticks: 20,
+                total_ticks: 40,
+                owner_player_id: "offline:Azure".into(),
+                qi_paid: 0.0,
+                quantity_total: 1,
+                completed_count: 0,
+            })
+            .id();
+
+        app.world_mut()
+            .send_event(CraftCancelIntent { caster: player });
+        app.update();
+
+        let failed = current_failed_events(&app);
+        assert_eq!(failed.len(), 1);
+        assert_eq!(failed[0].caster, player);
+        assert_eq!(
+            failed[0].recipe_id,
+            RecipeId::new("craft.test.cancel_missing_recipe")
+        );
+        assert_eq!(failed[0].reason, CraftFailureReason::InternalError);
+        assert_eq!(
+            failed[0].material_returned, 0,
+            "未知 recipe 无法计算退款 manifest，不能虚报返还数量"
+        );
+        assert!(
+            app.world().get::<CraftSession>(player).is_none(),
+            "未知 recipe 是不可恢复 session，必须移除避免下一帧重复报错"
+        );
     }
 
     #[test]
