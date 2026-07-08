@@ -40,7 +40,7 @@ from bot.scenarios._inventory_helpers import (
     wait_inventory_contains,
 )
 
-DESCRIPTION = "放砧→学图谱→起炉拒因/受理→淬炼×10→结算→qing_feng_sword 入包+输入料扣光"
+DESCRIPTION = "放砧→学图谱→起炉拒因/受理→淬炼×10→qing_feng 入包 + plan验收门 fan_tie×3→iron_sword"
 MODULES = ["forge", "inventory"]
 
 # qing_feng_v0 需要 za_gang（MineralId::ZaGang.forge_tier_min()==2，见
@@ -54,6 +54,10 @@ ANVIL_TIER = 2
 SCROLL_ID = "blueprint_scroll_qing_feng"
 BLUEPRINT_ID = "qing_feng_v0"
 WEAPON_ID = "qing_feng_sword"
+# plan P2 点名验收门：starter blueprint 最小链路（billet-only，fan_tie×3 → iron_sword）。
+IRON_SCROLL_ID = "blueprint_scroll_iron_sword"
+IRON_BLUEPRINT_ID = "iron_sword_v0"
+IRON_WEAPON_ID = "iron_sword"
 # qing_feng_v0.json 图谱正典 tempering pattern（server/assets/forge/blueprints）。
 TEMPERING_PATTERN = ["L", "L", "H", "L", "F", "H", "L", "F", "H", "H"]
 
@@ -345,4 +349,81 @@ def run(env) -> None:
         )
         assert find_item(final_snapshot, "mineral_za_gang") is None, (
             "结算后 za_gang 输入料应彻底从背包消失（起炉时已原子扣光，不应复现）"
+        )
+
+        # ── plan P2 点名验收门：fan_tie×3 → iron_sword 入包（starter 最小链路） ──
+        # iron_sword_v0 是 billet-only 单步图谱（无 tempering），qing_feng 分支覆盖
+        # 完整四步机；本分支按 plan 原文锁 starter blueprint 黑盒可达。同砧二次起炉
+        # 也顺带锁死「结算后 station.session 释放、忙守卫不再拦」的服务端语义。
+        bot.cmd(f"give {IRON_SCROLL_ID} 1")
+        wait_inventory_contains(bot, IRON_SCROLL_ID)
+        anchor = last_event_time(bot)
+        _forge_learn_blueprint(bot, IRON_BLUEPRINT_ID)
+        bot.wait_for(
+            lambda e: e.kind == "server_data"
+            and e.data["payload_type"] == "inventory_snapshot"
+            and e.t > anchor
+            and find_item(e.data["payload"], IRON_SCROLL_ID) is None,
+            timeout=45.0,
+            description=f"forge_learn_blueprint({IRON_BLUEPRINT_ID}) 后残卷应从背包消耗",
+        )
+
+        anchor = last_event_time(bot)
+        bot.cmd("give fan_tie 3")
+        bot.wait_for(
+            lambda e: e.kind == "server_data"
+            and e.data["payload_type"] == "inventory_snapshot"
+            and e.t > anchor
+            and (find_item(e.data["payload"], "fan_tie") or {}).get("item", {}).get(
+                "stack_count"
+            )
+            == 3,
+            timeout=45.0,
+            description="give fan_tie 3 后应出现 stack_count=3 的 inventory_snapshot",
+        )
+
+        anchor = last_event_time(bot)
+        _forge_start_session(bot, station_pos, IRON_BLUEPRINT_ID, [("fan_tie", 3)])
+        iron_session_payload = _wait_forge_payload_after(
+            bot,
+            anchor,
+            "forge_session",
+            lambda p: p["blueprint_id"] == IRON_BLUEPRINT_ID
+            and p["current_step"] == "billet",
+            timeout=45.0,
+            description=(
+                "同砧二次起炉（iron_sword_v0）应被受理——结算后 station.session "
+                "已释放，忙守卫不得再拦"
+            ),
+        ).data["payload"]
+        iron_session_id = iron_session_payload["session_id"]
+
+        anchor = last_event_time(bot)
+        _forge_step_advance(bot, iron_session_id)
+        iron_outcome = _wait_forge_payload_after(
+            bot,
+            anchor,
+            "forge_outcome",
+            lambda p: p["session_id"] == iron_session_id,
+            timeout=45.0,
+            description="billet-only 图谱一次 step_advance 即应结算并推 forge_outcome",
+        ).data["payload"]
+        assert iron_outcome["weapon_item"] == IRON_WEAPON_ID, (
+            f"plan P2 验收门：期望产出 {IRON_WEAPON_ID}，实际={iron_outcome['weapon_item']}"
+        )
+
+        iron_final = bot.wait_for(
+            lambda e: e.kind == "server_data"
+            and e.data["payload_type"] == "inventory_snapshot"
+            and e.t > anchor
+            and find_item(e.data["payload"], IRON_WEAPON_ID) is not None,
+            timeout=45.0,
+            description=f"结算后应自动回推含 {IRON_WEAPON_ID} 的 inventory_snapshot",
+        ).data["payload"]
+        iron_weapon = require_item(iron_final, IRON_WEAPON_ID)
+        assert int(iron_weapon["item"]["stack_count"]) == 1, (
+            f"iron_sword 应恰好入包 +1，实际 stack_count={iron_weapon['item']['stack_count']}"
+        )
+        assert find_item(iron_final, "fan_tie") is None, (
+            "plan P2 验收门：fan_tie×3 输入料应在结算后彻底扣光"
         )
