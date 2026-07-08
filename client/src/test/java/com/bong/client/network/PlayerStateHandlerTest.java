@@ -27,8 +27,8 @@ public class PlayerStateHandlerTest {
         assertEquals("", playerState.playerId());
         assertEquals("Induce", playerState.realm());
         assertEquals(78.0, playerState.spiritQiCurrent(), 0.0001);
-        assertEquals(100.0, playerState.spiritQiMax(), 0.0001);
-        assertEquals(0.78, playerState.spiritQiFillRatio(), 0.0001);
+        assertEquals(150.0, playerState.spiritQiMax(), 0.0001);
+        assertEquals(0.52, playerState.spiritQiFillRatio(), 0.0001);
         assertEquals(0.20, playerState.karma(), 0.0001);
         assertEquals(0.35, playerState.compositePower(), 0.0001);
         assertEquals(0.20, playerState.breakdown().combat(), 0.0001);
@@ -49,9 +49,10 @@ public class PlayerStateHandlerTest {
     }
 
     @Test
-    void acceptsLegacySpiritQiAliasAndViewModelClampRules() {
+    void acceptsLegacySpiritQiAliasAndUsesRequiredSpiritQiMax() {
         ServerDataDispatch dispatch = handler.handle(parseEnvelope("""
             {"v":1,"type":"player_state","player":" offline:Azure ","realm":" Condense ","spirit_qi":150.0,
+             "spirit_qi_max":300.0,
              "karma":2.0,"composite_power":-1.0,
               "breakdown":{"combat":1.4,"wealth":-0.5,"social":0.2,"territory":2.0},
               "zone":" azure_peak ","zone_spirit_qi":1.6}
@@ -62,8 +63,9 @@ public class PlayerStateHandlerTest {
         assertTrue(dispatch.handled());
         assertEquals("offline:Azure", playerState.playerId());
         assertEquals("Condense", playerState.realm());
-        assertEquals(150.0, playerState.spiritQiMax(), 0.0001);
         assertEquals(150.0, playerState.spiritQiCurrent(), 0.0001);
+        assertEquals(300.0, playerState.spiritQiMax(), 0.0001);
+        assertEquals(0.5, playerState.spiritQiFillRatio(), 0.0001);
         assertEquals(1.0, playerState.karma(), 0.0001);
         assertEquals(0.0, playerState.compositePower(), 0.0001);
         assertEquals(1.0, playerState.breakdown().combat(), 0.0001);
@@ -78,6 +80,7 @@ public class PlayerStateHandlerTest {
     void mapsLocalNegativePressureForRiftMouthHud() {
         ServerDataDispatch dispatch = handler.handle(parseEnvelope("""
             {"v":1,"type":"player_state","realm":"Solidify","spirit_qi":42.0,
+             "spirit_qi_max":150.0,
              "karma":0.0,"composite_power":0.5,
               "breakdown":{"combat":0.5,"wealth":0.2,"social":0.2,"territory":0.2},
               "zone":"rift_mouth_north_001","zone_label":"渊口荒丘","zone_spirit_qi":0.05,
@@ -94,6 +97,7 @@ public class PlayerStateHandlerTest {
     void mapsOptionalSeasonStateWithoutPlayerVisibleText() {
         ServerDataDispatch dispatch = handler.handle(parseEnvelope("""
             {"v":1,"type":"player_state","realm":"Solidify","spirit_qi":42.0,
+             "spirit_qi_max":150.0,
              "karma":0.0,"composite_power":0.5,
               "breakdown":{"combat":0.5,"wealth":0.2,"social":0.2,"territory":0.2},
               "zone":"spawn",
@@ -116,6 +120,7 @@ public class PlayerStateHandlerTest {
     void acceptsServerCompatiblePayloadWhenZoneSpiritQiIsOmitted() {
         ServerDataDispatch dispatch = handler.handle(parseEnvelope("""
             {"v":1,"type":"player_state","realm":"Induce","spirit_qi":78.0,
+             "spirit_qi_max":100.0,
              "karma":0.2,"composite_power":0.35,
               "breakdown":{"combat":0.2,"wealth":0.4,"social":0.65,"territory":0.1},
               "zone":"blood_valley"}
@@ -134,9 +139,39 @@ public class PlayerStateHandlerTest {
     }
 
     @Test
+    void missingSpiritQiMaxReturnsSafeNoOp() {
+        ServerDataDispatch dispatch = handler.handle(parseEnvelope("""
+            {"v":1,"type":"player_state","realm":"Solidify","spirit_qi":78.0,
+             "karma":0.2,"composite_power":0.35,
+              "breakdown":{"combat":0.2,"wealth":0.4,"social":0.65,"territory":0.1},
+              "zone":"blood_valley"}
+            """));
+
+        assertFalse(dispatch.handled());
+        assertTrue(dispatch.playerStateViewModel().isEmpty());
+        assertTrue(dispatch.logMessage().contains("spirit_qi_max"));
+    }
+
+    @Test
+    void zeroSpiritQiMaxReturnsSafeNoOpInsteadOfViewModelFallback() {
+        ServerDataDispatch dispatch = handler.handle(parseEnvelope("""
+            {"v":1,"type":"player_state","realm":"Solidify","spirit_qi":78.0,
+             "spirit_qi_max":0.0,
+             "karma":0.2,"composite_power":0.35,
+              "breakdown":{"combat":0.2,"wealth":0.4,"social":0.65,"territory":0.1},
+              "zone":"blood_valley"}
+            """));
+
+        assertFalse(dispatch.handled());
+        assertTrue(dispatch.playerStateViewModel().isEmpty());
+        assertTrue(dispatch.logMessage().contains("spirit_qi_max"));
+    }
+
+    @Test
     void mapsOptionalSocialSnapshotIntoViewModel() {
         ServerDataDispatch dispatch = handler.handle(parseEnvelope("""
             {"v":1,"type":"player_state","realm":"Induce","spirit_qi":78.0,
+             "spirit_qi_max":100.0,
              "karma":0.2,"composite_power":0.35,
               "breakdown":{"combat":0.2,"wealth":0.4,"social":0.65,"territory":0.1},
               "zone":"blood_valley",
