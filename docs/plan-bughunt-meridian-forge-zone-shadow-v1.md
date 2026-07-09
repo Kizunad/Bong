@@ -1,6 +1,13 @@
 # plan-bughunt-meridian-forge-zone-shadow-v1
 
-> Skeleton Plan / BugHunt server-qi r14 / 2026-07-07
+> Active Plan / BugHunt server-qi r14 / 2026-07-07
+
+## 接入面 checklist
+
+- 入口：`InspectScreen` 的经脉淬炼按钮 -> `ClientRequestSender.sendForgeRequest` -> `ClientRequestV1::ForgeRequest` -> `ForgeRequest` event -> `cultivation::forging_system`。
+- 出料：成功淬炼扣除的 `Cultivation.qi_current` 必须以 `QiTransferReason::MeridianForge` 写入 `pending_inflow_account()`，后续由 `zone_qi_inflow_tick` 按区域配置真实回流到 `Zone.spirit_qi`。
+- `qi_physics` 锚点：复用 `qi_physics::ledger::QiTransfer`、`credit_pending_inflow`、`pending_inflow_account`、`zone_qi_inflow_tick`，不新增衰减 / 逸散 / 半衰 / 回流公式或常数。
+- 世界观锚点：全服灵气总量不会凭空产生、修炼消耗来自同一总池（worldview.md §二 L18-L19、§十 L874）；本 plan 只修正消耗真元的 ledger 落点，不扩大经脉、境界或经济规则。
 
 ## 0. 一句话
 
@@ -41,6 +48,7 @@
 - 不重复 #1046 / #1102：二者是骨煞 / BossDrain 落入 zone 镜像账；本题是玩家 Inspect 面板可触发的经脉淬炼生产路径。
 - 不重复 #1056：#1056 是 NPC daily-life 回气凭空造真元；本题是玩家主动消耗真元后回充落点错误。
 - 不重复 #1066 / #1087：这些是锻造 UI / forge session 入口问题；本题不是武器炼器 session，而是 `cultivation::forging` 经脉淬炼。
+- 不重复 #625：#625 修的是经脉淬炼成功后没有 ledger 审计的问题，并把成本写入 `zone:<name>` mirror；本题修的是该旧落点会被 zone mirror 覆写，应迁到 `pending_inflow_account()`。
 
 ## 5. 修复计划
 
@@ -53,23 +61,28 @@
 ### P1：修正测试契约
 
 - 更新 `forge_system_credits_spent_qi_to_zone_ledger`，不再把 `zone:<name>` balance 增加视为正确结果。
-- 新增成功淬炼后 `pending_inflow` 的权威落点断言。
-- 新增一次 zone mirror 重同步/heartbeat 回流后的守恒回归，证明 `MeridianForge` 消耗不会被 `zone.spirit_qi` 覆写蒸发。
+- 新增成功淬炼后 `pending_inflow_account()` 的权威落点断言：玩家/NPC `qi_current` 减少 `cost`，经脉 tier 增加，`pending_inflow_account()` 增加 `cost`，`zone:<name>` mirror 不增加。
+- 新增 `QiTransferReason::MeridianForge` 审计断言：`from` 使用玩家 / NPC 稳定 id，`to == pending_inflow_account()`，`amount == cost`。
+- 新增一次 zone mirror 重同步 / heartbeat 回流后的守恒回归：测试夹具必须显式满足 `zone_qi_inflow_tick` 的门槛（clock elapsed、`qi_equilibrium` / `qi_inflow_per_min` 非零、`spirit_qi < qi_equilibrium`、`pending_inflow_account()` 有余额），证明 `MeridianForge` 消耗不会被 `zone.spirit_qi` 覆写蒸发。
 
 ### P2：覆盖边界
 
 - 缺 `WorldQiAccount`、找不到 zone、角色缺稳定 id 时，淬炼不得扣真元或改变经脉。
 - NPC 触发 `ForgeRequest` 时使用 `QiAccountId::npc`，玩家触发时使用 `QiAccountId::player`。
-- 负灵域 / 满区 / 零 cost / 非有限输入沿用 `credit_pending_inflow` 的既有守恒语义。
+- 负灵域 / 满区沿用 `zone_qi_inflow_tick` 既有跳过语义：成本仍留在 `pending_inflow_account()`，不得写入 `zone:<name>` mirror 或凭空丢失。
+- 零 cost / 负数 / 非有限输入沿用 `credit_pending_inflow` 的既有守恒语义：零 cost no-op；负数和非有限 amount 返回错误并触发调用方回滚，不得扣真元或改经脉。
+- 失败原子性必须覆盖两类状态：`Cultivation` 与 `MeridianSystem` 回到请求前，`WorldQiAccount` 不留下半写的 source shadow 或 pending inflow 残留。
 
 ## 6. 验证计划
 
-- server 单测：`cultivation::forging` happy path、缺 ledger、缺 zone、缺 stable id、mirror 覆写回归。
+- server 单测：`cultivation::forging` happy path、缺 ledger、缺 zone、缺 stable id、玩家 / NPC account 选择、零 cost、负数 / 非有限输入、失败原子性、mirror 覆写回归。
+- ledger pin 测试：`MeridianForge` 调用 `credit_pending_inflow` 后只增加 `pending_inflow_account()`，不增加同名 `zone:<name>` mirror；审计轨迹必须是 `QiTransfer(from=player/npc:<id>, to=overflow:pending_inflow, reason=MeridianForge)`。
+- bot e2e 场景：新增或更新 `scripts/bot/scenarios/cultivation_meridian_forge.py`，通过 dev 命令准备已开启经脉和足够真元，再用 `bong:client_request` 黑盒发送正常 `ForgeRequest`，断言玩家真元减少、经脉 tier 提升、`bong:qi/ledger` 快照里 `pending_inflow` 增加且总量守恒。
+- bot 负向场景：同一场景覆盖坏 payload / 缺 Fabric 客户端容忍，确保非法 `ForgeRequest` 不扣真元、不改经脉、不污染 ledger，并保留 `network_client_request_tolerance.py` 覆盖的协议容忍语义。
 - server gate：`cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`。
-- e2e 后续：经脉面板点击“淬炼·流速/容量”后，断言玩家真元减少、经脉 tier 提升、对应 `pending_inflow` 增加，且 `bong:qi/ledger` 守恒快照不掉量。
+- e2e gate：`bash scripts/bot-e2e.sh` 必须包含经脉淬炼场景；完整联调可再跑 `bash scripts/smoke-test-e2e.sh` 验证经脉面板点击“淬炼·流速/容量”后的可观察结果。
 
 ## 7. 对抗复核结论
 
 - Round 1：SURVIVES。反方未找到 `zone:<name>` ledger 反向同步；确认现有同步方向是 `zone.spirit_qi` 覆写 ledger mirror，`MeridianForge` 仍使用旧手写加账。
 - Round 2：SURVIVES_WITH_SCOPE_CHANGE。候选成立，但范围应收窄为 `server/src/cultivation/forging.rs::credit_forge_cost` 漏迁移到 `credit_pending_inflow(..., QiTransferReason::MeridianForge)`；不要扩大为所有 Boss / 骨煞 / Crafting zone-field 语义重定。反方确认玩家 Inspect 面板、C2S handler、`ForgeRequest` event、`forging_system` 注册均已接通，且 #1046/#1050/#1102 不覆盖 `MeridianForge`。
-
