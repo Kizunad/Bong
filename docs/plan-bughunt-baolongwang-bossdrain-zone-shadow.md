@@ -1,6 +1,6 @@
 # plan-bughunt-baolongwang-bossdrain-zone-shadow
 
-> BugHunt worker：server-qi r10  
+> BugHunt worker：server-qi r10
 > 主题：暴龙王 BossDrain 只落 WorldQiAccount zone 镜像，不写回 ZoneRegistry.spirit_qi，导致玩家被抽走的真元在真实环境层不可见，并可能被后续 field-authority 重同步抹掉。
 
 ## 结论
@@ -13,7 +13,7 @@
 
 ## 实际游玩体验影响
 
-玩家在暴龙王光环范围内会稳定掉真元，战斗压力是真实的；但这些被抽走的真元不会稳定回到暴龙王巢穴环境。玩家看到的是“自己被吸干了”，可区域灵压、负灵域强度、后续依赖 `ZoneRegistry.spirit_qi` 的感知/风险/回血/生态判断不会按这笔吸取变化，长期 Boss 战等同于把玩家真元蒸发掉，破坏 worldview §二/§十“灵气零和、修炼消耗就是别人少掉”的守恒体验。
+玩家在暴龙王光环范围内会稳定掉真元，战斗压力是真实的；但这些被抽走的真元不会稳定回到暴龙王巢穴环境。玩家看到的是“自己被吸干了”，可区域灵压、负灵域强度、后续依赖 `ZoneRegistry.spirit_qi` 的感知/风险/回血/生态判断不会按这笔吸取变化，长期 Boss 战等同于把玩家真元蒸发掉，破坏 `docs/worldview.md §二 L30-L46` 灵压环境与 `docs/worldview.md §十 L870-L879`“灵气零和、修炼消耗就是别人少掉”的守恒体验。
 
 ## 证据
 
