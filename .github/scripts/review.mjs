@@ -16,7 +16,8 @@ import { join } from "node:path";
 
 const PR = process.env.PR_NUMBER;
 const MODEL = process.env.REVIEW_CODEX_MODEL || "gpt-5.5";
-const MAX_DIFF = intEnv("REVIEW_MAX_DIFF", 120_000, 10_000);
+const MAX_DIFF = intEnv("REVIEW_MAX_DIFF", 40_000, 10_000);
+const MAX_PLAN = intEnv("REVIEW_MAX_PLAN", 20_000, 5_000);
 const CODEX_TIMEOUT_MS = intEnv("REVIEW_CODEX_TIMEOUT_MS", 900_000, 120_000);
 const CODEX_CONCURRENCY = intEnv("REVIEW_CODEX_CONCURRENCY", 2, 1);
 const DRY_RUN = /^(1|true|yes)$/i.test(String(process.env.REVIEW_DRY_RUN || "").trim());
@@ -242,9 +243,14 @@ async function main() {
   );
 
   const debateContext = firstRound.map(compactResultForPrompt);
-  const finalRoundRaw = await mapLimit(REVIEWERS, CODEX_CONCURRENCY, (reviewer) =>
-    runCodex(finalPrompt(context, reviewer, debateContext), `final-${reviewer.id}`).then((raw) => normalizeResult(raw, reviewer)),
-  );
+  const finalRoundRaw = firstRound.every(isCodexExecutionFailure)
+    ? firstRound
+    : await mapLimit(REVIEWERS, CODEX_CONCURRENCY, (reviewer) =>
+        runCodex(finalPrompt(context, reviewer, debateContext), `final-${reviewer.id}`).then((raw) => normalizeResult(raw, reviewer)),
+      );
+  if (finalRoundRaw === firstRound) {
+    console.error("首轮 Codex reviewer 全部执行失败，跳过复投以保留原始失败诊断。");
+  }
   const finalRound = applyPlanIntentGate(finalRoundRaw, Boolean(context.plan));
 
   const gate = decideGate(finalRound);
@@ -298,7 +304,7 @@ function findPlan(meta) {
   for (const dir of ["docs", "docs/finished_plans", "docs/plans-skeleton"]) {
     const path = `${dir}/${name}.md`;
     if (existsSync(path)) {
-      return { name, path, text: truncate(readFileSync(path, "utf8"), 40_000) };
+      return { name, path, text: truncate(readFileSync(path, "utf8"), MAX_PLAN) };
     }
   }
   return { name, path: null, text: "" };
@@ -357,7 +363,7 @@ ${GUIDELINES}
 ## 首轮意见
 ${JSON.stringify(peerResults, null, 2)}
 
-${contextBlock(context)}
+${contextBlock(context, { includeDiff: false })}
 
 只输出 JSON，不要 markdown，不要前言：
 {
@@ -384,12 +390,18 @@ ${contextBlock(context)}
 `.trim();
 }
 
-function contextBlock(context) {
+function contextBlock(context, { includeDiff = true } = {}) {
   const planBlock = context.plan
     ? context.plan.text
       ? `## 关联 Plan：${context.plan.name} (${context.plan.path})\n${context.plan.text}`
       : `## 关联 Plan：${context.plan.name}\n仓库内未找到 plan 文件，请按无法完整确认处理。`
     : "## 关联 Plan\n未检测到 plan 名称；plan 原意项标 not_plan。";
+  const diffBlock = includeDiff
+    ? `## Diff${context.diffTruncated ? `（已截断到 ${MAX_DIFF} 字符）` : ""}
+\`\`\`diff
+${context.diff}
+\`\`\``
+    : "## Diff\n复投阶段不重复粘贴完整 diff；请结合首轮意见、文件列表和只读工具核对真实仓库。";
 
   return `
 ## PR
@@ -403,10 +415,7 @@ ${context.fileList || "(无)"}
 
 ${planBlock}
 
-## Diff${context.diffTruncated ? `（已截断到 ${MAX_DIFF} 字符）` : ""}
-\`\`\`diff
-${context.diff}
-\`\`\`
+${diffBlock}
 `.trim();
 }
 
@@ -460,6 +469,7 @@ async function runCodex(prompt, label) {
 
     if (result.code !== 0 || !text.trim()) {
       const failure = codexFailureText(result);
+      console.error(`  codex ${label} failed: ${failure}`);
       return JSON.stringify({
         vote: "REQUEST_CHANGES",
         confidence: 0,
@@ -488,6 +498,7 @@ function spawnCodex(args, stdin, timeoutMs) {
     const env = {
       ...process.env,
       OPENAI_API_KEY: process.env.REVIEW_CODEX_API_KEY || process.env.OPENAI_API_KEY || "",
+      CODEX_API_KEY: process.env.REVIEW_CODEX_API_KEY || process.env.CODEX_API_KEY || process.env.OPENAI_API_KEY || "",
     };
     const child = spawn("codex", args, { env, stdio: ["pipe", "pipe", "pipe"] });
     let stdout = "";
@@ -525,9 +536,9 @@ async function mapLimit(items, limit, fn) {
   return out;
 }
 
-function codexFailureText(result) {
-  const stderr = truncate(result.stderr || "", 800);
-  const stdout = truncate(result.stdout || "", 800);
+export function codexFailureText(result) {
+  const stderr = excerptLog(redactCodexPromptEcho(result.stderr || ""), 2000);
+  const stdout = excerptLog(redactCodexPromptEcho(result.stdout || ""), 1200);
   return [
     `exit=${result.code}`,
     result.signal ? `signal=${result.signal}` : "",
@@ -536,6 +547,38 @@ function codexFailureText(result) {
   ]
     .filter(Boolean)
     .join(" | ");
+}
+
+export function redactCodexPromptEcho(value) {
+  const text = String(value || "");
+  const marker = "\n--------\nuser\n";
+  const markerAt = text.indexOf(marker);
+  if (markerAt < 0) return text;
+
+  const promptStart = markerAt + marker.length;
+  const rest = text.slice(promptStart);
+  const diagnosticAt = rest.search(
+    /\n(?:\d{4}-\d{2}-\d{2}T[^\n]*\b(?:ERROR|WARN)\b|ERROR:|error:|warning:|Turn failed|stream disconnected|OpenAI API error|status code:)/,
+  );
+  if (diagnosticAt < 0) {
+    return `${text.slice(0, promptStart)}[prompt echo omitted]\n`;
+  }
+  return `${text.slice(0, promptStart)}[prompt echo omitted]\n${rest.slice(diagnosticAt + 1)}`;
+}
+
+export function excerptLog(value, limit) {
+  const text = String(value || "").trim();
+  if (text.length <= limit) return text;
+  const head = Math.floor(limit * 0.45);
+  const tail = Math.max(200, limit - head - 80);
+  return `${text.slice(0, head)}\n...[truncated ${text.length - head - tail} chars]...\n${text.slice(text.length - tail)}`;
+}
+
+function isCodexExecutionFailure(result) {
+  return (
+    result?.confidence === 0 &&
+    result?.findings?.some((finding) => finding.file === ".github/scripts/review.mjs" && /Codex reviewer .*执行失败/.test(finding.title))
+  );
 }
 
 function renderComment(context, firstRound, finalRound, gate) {
@@ -649,7 +692,7 @@ function truncate(value, limit) {
   return s.length <= limit ? s : `${s.slice(0, Math.max(0, limit - 20))}\n...[truncated]`;
 }
 
-function appendCap(current, chunk, limit = 20_000) {
+function appendCap(current, chunk, limit = 200_000) {
   const next = current + chunk.toString("utf8");
   return next.length > limit ? next.slice(next.length - limit) : next;
 }

@@ -4,13 +4,16 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   applyPlanIntentGate,
+  codexFailureText,
   decideGate,
+  excerptLog,
   extractJSON,
   findPlanName,
   mergeFindings,
   normalizePlanStatus,
   normalizeResult,
   normalizeVote,
+  redactCodexPromptEcho,
 } from "./review.mjs";
 
 const reviewer = { id: "A", name: "Plan 原意核查" };
@@ -117,4 +120,37 @@ test("mergeFindings: 同 file/line/title 合并 reviewer，取更高严重度和
   assert.equal(out[0].severity, "blocker");
   assert.deepEqual(out[0].reviewers, ["A", "B"]);
   assert.equal(out[0].evidence, "更长的证据");
+});
+
+test("redactCodexPromptEcho: 删除 Codex stderr 里的用户 prompt echo，保留真实错误", () => {
+  const stderr = [
+    "Reading additional input from stdin...",
+    "OpenAI Codex v0.143.0",
+    "--------",
+    "user",
+    "很长的 diff",
+    "+ dangerous prompt echo",
+    "ERROR: stream disconnected before completion: status code 401",
+  ].join("\n");
+
+  const redacted = redactCodexPromptEcho(stderr);
+  assert.match(redacted, /\[prompt echo omitted\]/);
+  assert.doesNotMatch(redacted, /dangerous prompt echo/);
+  assert.match(redacted, /status code 401/);
+});
+
+test("codexFailureText: 失败摘要保留 exit 与 stderr 头尾", () => {
+  const long = `HEAD-${"x".repeat(2000)}-TAIL`;
+  const text = codexFailureText({ code: 1, signal: null, stderr: long, stdout: "" });
+  assert.match(text, /exit=1/);
+  assert.match(text, /HEAD-/);
+  assert.match(text, /-TAIL/);
+  assert.match(text, /truncated/);
+});
+
+test("excerptLog: 短文本不改，长文本保留头尾", () => {
+  assert.equal(excerptLog("abc", 10), "abc");
+  const out = excerptLog(`A${"b".repeat(100)}Z`, 40);
+  assert.match(out, /^A/);
+  assert.match(out, /Z$/);
 });
