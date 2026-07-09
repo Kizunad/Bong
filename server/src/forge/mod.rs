@@ -118,7 +118,9 @@ pub fn register(app: &mut App) {
             // ForgeScreen 实时反映进度。
             crate::network::forge_snapshot_emit::push_forge_session_snapshot_on_interaction
                 .after(handle_consecration_injects),
-            handle_step_advance.after(handle_consecration_injects),
+            handle_step_advance
+                .after(handle_consecration_injects)
+                .after(crate::network::client_request_handler::handle_client_request_payloads),
             // step 推进后回推快照（第二个 send_forge_snapshots_to_player 真实调用点）。
             crate::network::forge_snapshot_emit::push_forge_session_snapshot_on_step_advance
                 .after(handle_step_advance),
@@ -1021,12 +1023,207 @@ fn deterministic_step_roll(session_seed: u64, step_index: usize, salt: u64) -> f
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::alchemy::{PlaceFurnaceRequest, RecipeRegistry};
+    use crate::combat::events::{ApplyStatusEffectIntent, DefenseIntent};
+    use crate::combat::CombatClock;
+    use crate::cultivation::breakthrough::BreakthroughRequest;
+    use crate::cultivation::forging::ForgeRequest;
+    use crate::cultivation::insight::InsightChosen;
     use crate::forge::blueprint::{
         BilletProfile, BilletTolerance, CarrierSpec, MaterialStack, TemperBeat,
     };
+    use crate::forge::learned::LearnedBlueprints;
     use crate::forge::session::ForgeSessionId;
+    use crate::inventory::{DroppedLootRegistry, ItemRegistry};
+    use crate::lingtian::events::{
+        StartDrainQiRequest, StartHarvestRequest, StartPlantingRequest, StartRenewRequest,
+        StartReplenishRequest, StartTillRequest,
+    };
+    use crate::mineral::MineralProbeIntent;
+    use crate::network::agent_bridge::SERVER_DATA_CHANNEL;
+    use crate::network::client_request_handler::{
+        handle_client_request_payloads, AlchemyMockState,
+    };
+    use crate::player::gameplay::GameplayActionQueue;
+    use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
+    use crate::shelflife::probe::FreshnessProbeIntent;
+    use crate::skill::events::SkillScrollUsed;
+    use crate::world::extract_system::{
+        CancelExtractRequest as CancelExtractRequestEvent,
+        StartExtractRequest as StartExtractRequestEvent,
+    };
     use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
-    use valence::prelude::{App, BlockPos, Update};
+    use valence::custom_payload::CustomPayloadEvent;
+    use valence::prelude::{ident, App, BlockPos, Client, Entity, Events, Update};
+    use valence::protocol::packets::play::CustomPayloadS2c;
+    use valence::testing::{create_mock_client, MockClientHelper};
+
+    fn add_minimal_client_request_resources(app: &mut App) {
+        app.insert_resource(CombatClock::default());
+        app.insert_resource(GameplayActionQueue::default());
+        app.insert_resource(AlchemyMockState::default());
+        app.insert_resource(DroppedLootRegistry::default());
+        app.insert_resource(ItemRegistry::default());
+        app.insert_resource(RecipeRegistry::default());
+
+        app.add_event::<CustomPayloadEvent>();
+        app.add_event::<BreakthroughRequest>();
+        app.add_event::<ForgeRequest>();
+        app.add_event::<InsightChosen>();
+        app.add_event::<DefenseIntent>();
+        app.add_event::<ApplyStatusEffectIntent>();
+        app.add_event::<PlaceFurnaceRequest>();
+        app.add_event::<crate::alchemy::LearnRecipeFragmentIntent>();
+        app.add_event::<StartTillRequest>();
+        app.add_event::<StartRenewRequest>();
+        app.add_event::<StartPlantingRequest>();
+        app.add_event::<StartHarvestRequest>();
+        app.add_event::<StartReplenishRequest>();
+        app.add_event::<StartDrainQiRequest>();
+        app.add_event::<StartExtractRequestEvent>();
+        app.add_event::<CancelExtractRequestEvent>();
+        app.add_event::<MineralProbeIntent>();
+        app.add_event::<FreshnessProbeIntent>();
+        app.add_event::<SkillXpGain>();
+        app.add_event::<SkillScrollUsed>();
+        app.add_event::<crate::inventory::RemainsLootIntent>();
+        app.add_event::<crate::combat::shield_block::RaiseShieldIntent>();
+        app.add_event::<crate::combat::shield_block::LowerShieldIntent>();
+        app.add_event::<crate::network::agent_ui::AgentUiResponseEvent>();
+    }
+
+    fn flush_all_client_packets(app: &mut App) {
+        let world = app.world_mut();
+        let mut query = world.query::<&mut Client>();
+        for mut client in query.iter_mut(world) {
+            client
+                .flush_packets()
+                .expect("mock client packets should flush successfully");
+        }
+    }
+
+    fn collect_server_data_payloads(helper: &mut MockClientHelper) -> Vec<ServerDataPayloadV1> {
+        helper
+            .collect_received()
+            .0
+            .into_iter()
+            .filter_map(|frame| {
+                let packet = frame.decode::<CustomPayloadS2c>().ok()?;
+                if packet.channel.as_str() != SERVER_DATA_CHANNEL {
+                    return None;
+                }
+                let payload = serde_json::from_slice::<ServerDataV1>(packet.data.0 .0).ok()?;
+                Some(payload.payload)
+            })
+            .collect()
+    }
+
+    fn insert_qing_feng_billet_session(
+        app: &mut App,
+        session_id: u64,
+        station: Entity,
+        caster: Entity,
+    ) {
+        let mut sessions = ForgeSessions::new();
+        let mut session = ForgeSession::new(
+            ForgeSessionId(session_id),
+            "qing_feng_v0".to_string(),
+            station,
+            caster,
+        );
+        session.step_state = StepState::Billet(Default::default());
+        sessions.insert(session);
+        app.insert_resource(sessions);
+    }
+
+    fn registry_with_qing_feng() -> BlueprintRegistry {
+        let mut registry = BlueprintRegistry::new();
+        let blueprint: blueprint::Blueprint = serde_json::from_str(include_str!(
+            "../../assets/forge/blueprints/qing_feng_v0.json"
+        ))
+        .expect("qing_feng_v0 blueprint should parse");
+        registry
+            .insert(blueprint)
+            .expect("qing_feng_v0 should insert into fresh registry");
+        registry
+    }
+
+    #[test]
+    fn forge_step_advance_c2s_advances_and_pushes_tempering_session() {
+        let mut app = App::new();
+        add_minimal_client_request_resources(&mut app);
+        app.add_event::<StepAdvance>();
+        app.add_event::<ForgeOutcomeEvent>();
+        app.insert_resource(registry_with_qing_feng());
+
+        app.add_systems(
+            Update,
+            (
+                handle_step_advance,
+                crate::network::forge_snapshot_emit::push_forge_session_snapshot_on_step_advance
+                    .after(handle_step_advance),
+            ),
+        );
+        app.add_systems(Update, handle_client_request_payloads);
+
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let mut learned = LearnedBlueprints::new();
+        learned.learn("qing_feng_v0".into());
+        let caster = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                Cultivation::default(),
+                QiColor::default(),
+                SkillSet::default(),
+                learned,
+            ))
+            .id();
+        let station = app
+            .world_mut()
+            .spawn(WeaponForgeStation::placed(
+                BlockPos::new(4, 64, 4),
+                2,
+                caster,
+            ))
+            .id();
+        insert_qing_feng_billet_session(&mut app, 1, station, caster);
+
+        app.world_mut()
+            .resource_mut::<Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: caster,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"forge_step_advance","v":1,"session_id":1}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let sessions = app.world().resource::<ForgeSessions>();
+        assert_eq!(
+            sessions
+                .get(ForgeSessionId(1))
+                .map(|session| session.current_step),
+            Some(ForgeStep::Tempering),
+            "C2S forge_step_advance 应在同一 Update 内经 handle_step_advance 推进到 Tempering"
+        );
+
+        let payloads = collect_server_data_payloads(&mut helper);
+        assert!(
+            payloads.iter().any(|payload| {
+                matches!(
+                    payload,
+                    ServerDataPayloadV1::ForgeSession(session)
+                        if session.session_id == 1
+                            && session.current_step == crate::schema::forge::ForgeStepV1::Tempering
+                )
+            }),
+            "step_advance 推进后必须给 caster 回推 current_step=tempering 的 forge_session，实际={payloads:?}"
+        );
+    }
 
     #[test]
     fn runtime_required_material_accepts_forge_metal() {
