@@ -76,7 +76,7 @@
 ## 6. 验证计划
 
 - server 单测：`cultivation::forging` happy path、缺 ledger、缺 zone、缺 stable id、玩家 / NPC account 选择、零 cost、负数 / 非有限输入、失败原子性、mirror 覆写回归。
-- ledger pin 测试：`MeridianForge` 调用 `credit_pending_inflow` 后只增加 `pending_inflow_account()`，不增加同名 `zone:<name>` mirror；审计轨迹必须是 `QiTransfer(from=player/npc:<id>, to=overflow:pending_inflow, reason=MeridianForge)`。
+- ledger pin 测试：`MeridianForge` 调用 `credit_pending_inflow` 后只增加 `pending_inflow_account()`，不增加同名 `zone:<name>` mirror；审计轨迹必须是 `QiTransfer(from=player/npc:<id>, to=pending_inflow_account(), reason=MeridianForge)`。
 - bot e2e 场景：新增或更新 `scripts/bot/scenarios/cultivation_meridian_forge.py`，通过 dev 命令准备已开启经脉和足够真元，再用 `bong:client_request` 黑盒发送正常 `ForgeRequest`，断言玩家真元减少、经脉 tier 提升、`bong:qi/ledger` 快照里 `pending_inflow` 增加且总量守恒。
 - bot 负向场景：同一场景覆盖坏 payload / 缺 Fabric 客户端容忍，确保非法 `ForgeRequest` 不扣真元、不改经脉、不污染 ledger，并保留 `network_client_request_tolerance.py` 覆盖的协议容忍语义。
 - server gate：`cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`。
