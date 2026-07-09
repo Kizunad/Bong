@@ -19,7 +19,9 @@ const MODEL = process.env.REVIEW_CODEX_MODEL || "gpt-5.6-sol";
 const MAX_DIFF = intEnv("REVIEW_MAX_DIFF", 40_000, 10_000);
 const MAX_PLAN = intEnv("REVIEW_MAX_PLAN", 20_000, 5_000);
 const CODEX_TIMEOUT_MS = intEnv("REVIEW_CODEX_TIMEOUT_MS", 900_000, 120_000);
-const CODEX_CONCURRENCY = intEnv("REVIEW_CODEX_CONCURRENCY", 2, 1);
+const CODEX_CONCURRENCY = intEnv("REVIEW_CODEX_CONCURRENCY", 1, 1);
+const CODEX_RETRIES = intEnv("REVIEW_CODEX_RETRIES", 3, 1);
+const CODEX_RETRY_MS = intEnv("REVIEW_CODEX_RETRY_MS", 15_000, 1_000);
 const DRY_RUN = /^(1|true|yes)$/i.test(String(process.env.REVIEW_DRY_RUN || "").trim());
 const FAIL_ON_GATE = process.env.REVIEW_FAIL_ON_GATE !== "0";
 
@@ -458,17 +460,25 @@ async function runCodex(prompt, label) {
 
   console.error(`▶ codex ${label}`);
   try {
-    const result = await spawnCodex(args, prompt, CODEX_TIMEOUT_MS);
-    const text = existsSync(outputFile) ? readFileSync(outputFile, "utf8") : result.stdout;
-    if (text.trim()) {
-      if (result.code !== 0) {
-        console.error(`  codex ${label} exit=${result.code} signal=${result.signal || "-"}，但已产出 final message，继续解析`);
+    for (let attempt = 1; attempt <= CODEX_RETRIES; attempt += 1) {
+      rmSync(outputFile, { force: true });
+      const result = await spawnCodex(args, prompt, CODEX_TIMEOUT_MS);
+      const text = existsSync(outputFile) ? readFileSync(outputFile, "utf8") : result.stdout;
+      if (text.trim()) {
+        if (result.code !== 0) {
+          console.error(`  codex ${label} exit=${result.code} signal=${result.signal || "-"}，但已产出 final message，继续解析`);
+        }
+        return text;
       }
-      return text;
-    }
 
-    if (result.code !== 0 || !text.trim()) {
       const failure = codexFailureText(result);
+      if (attempt < CODEX_RETRIES && isRetryableCodexFailure(result)) {
+        const waitMs = CODEX_RETRY_MS * attempt;
+        console.error(`  codex ${label} 暂时失败，${waitMs}ms 后重试（${attempt + 1}/${CODEX_RETRIES}）: ${failure}`);
+        await delay(waitMs);
+        continue;
+      }
+
       console.error(`  codex ${label} failed: ${failure}`);
       return JSON.stringify({
         vote: "REQUEST_CHANGES",
@@ -487,10 +497,13 @@ async function runCodex(prompt, label) {
         ],
       });
     }
-    return text;
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
+}
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function spawnCodex(args, stdin, timeoutMs) {
@@ -547,6 +560,14 @@ export function codexFailureText(result) {
   ]
     .filter(Boolean)
     .join(" | ");
+}
+
+export function isRetryableCodexFailure(result) {
+  if (result?.code === 124) return true;
+  const log = `${result?.stderr || ""}\n${result?.stdout || ""}`;
+  return /(429|503|too many requests|service unavailable|temporarily unavailable|upstream_(?:error|400)|stream disconnected|connection (?:reset|closed)|timed? out|timeout)/i.test(
+    log,
+  );
 }
 
 export function redactCodexPromptEcho(value) {

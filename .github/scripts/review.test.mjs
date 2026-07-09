@@ -9,6 +9,7 @@ import {
   excerptLog,
   extractJSON,
   findPlanName,
+  isRetryableCodexFailure,
   mergeFindings,
   normalizePlanStatus,
   normalizeResult,
@@ -146,6 +147,14 @@ test("codexFailureText: 失败摘要保留 exit 与 stderr 头尾", () => {
   assert.match(text, /HEAD-/);
   assert.match(text, /-TAIL/);
   assert.match(text, /truncated/);
+});
+
+test("isRetryableCodexFailure: 仅重试限流、上游暂时失败和超时", () => {
+  assert.equal(isRetryableCodexFailure({ code: 1, stderr: "429 Too Many Requests" }), true);
+  assert.equal(isRetryableCodexFailure({ code: 1, stderr: "channel is temporarily unavailable; upstream_400" }), true);
+  assert.equal(isRetryableCodexFailure({ code: 1, stderr: "503 Service Unavailable" }), true);
+  assert.equal(isRetryableCodexFailure({ code: 124, stderr: "" }), true);
+  assert.equal(isRetryableCodexFailure({ code: 1, stderr: "invalid API key" }), false);
 });
 
 test("excerptLog: 短文本不改，长文本保留头尾", () => {
