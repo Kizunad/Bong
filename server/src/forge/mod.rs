@@ -111,7 +111,9 @@ pub fn register(app: &mut App) {
             // 真实生产调用点）。
             crate::network::forge_snapshot_emit::push_forge_start_snapshot_on_accept
                 .after(handle_start_forge_requests),
-            handle_tempering_hits.after(handle_start_forge_requests),
+            handle_tempering_hits
+                .after(handle_start_forge_requests)
+                .after(crate::network::client_request_handler::handle_client_request_payloads),
             handle_scroll_submits.after(handle_tempering_hits),
             handle_consecration_injects.after(handle_scroll_submits),
             // 单步交互（淬炼击键/铭文投入/开光注真元）后回推 session 快照，供
@@ -1136,6 +1138,26 @@ mod tests {
         app.insert_resource(sessions);
     }
 
+    fn insert_qing_feng_tempering_session(
+        app: &mut App,
+        session_id: u64,
+        station: Entity,
+        caster: Entity,
+    ) {
+        let mut sessions = ForgeSessions::new();
+        let mut session = ForgeSession::new(
+            ForgeSessionId(session_id),
+            "qing_feng_v0".to_string(),
+            station,
+            caster,
+        );
+        session.current_step = ForgeStep::Tempering;
+        session.step_index = 1;
+        session.step_state = StepState::Tempering(Default::default());
+        sessions.insert(session);
+        app.insert_resource(sessions);
+    }
+
     fn registry_with_qing_feng() -> BlueprintRegistry {
         let mut registry = BlueprintRegistry::new();
         let blueprint: blueprint::Blueprint = serde_json::from_str(include_str!(
@@ -1222,6 +1244,99 @@ mod tests {
                 )
             }),
             "step_advance 推进后必须给 caster 回推 current_step=tempering 的 forge_session，实际={payloads:?}"
+        );
+    }
+
+    #[test]
+    fn forge_tempering_hit_c2s_updates_hits_and_pushes_session_snapshot() {
+        let mut app = App::new();
+        add_minimal_client_request_resources(&mut app);
+        app.add_event::<TemperingHit>();
+        app.add_event::<InscriptionScrollSubmit>();
+        app.add_event::<ConsecrationInject>();
+        app.insert_resource(registry_with_qing_feng());
+
+        app.add_systems(
+            Update,
+            (
+                handle_client_request_payloads,
+                handle_tempering_hits.after(handle_client_request_payloads),
+                handle_scroll_submits.after(handle_tempering_hits),
+                handle_consecration_injects.after(handle_scroll_submits),
+                crate::network::forge_snapshot_emit::push_forge_session_snapshot_on_interaction
+                    .after(handle_consecration_injects),
+            ),
+        );
+
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let mut learned = LearnedBlueprints::new();
+        learned.learn("qing_feng_v0".into());
+        let caster = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                Cultivation::default(),
+                QiColor::default(),
+                SkillSet::default(),
+                learned,
+            ))
+            .id();
+        let station = app
+            .world_mut()
+            .spawn(WeaponForgeStation::placed(
+                BlockPos::new(4, 64, 4),
+                2,
+                caster,
+            ))
+            .id();
+        insert_qing_feng_tempering_session(&mut app, 1, station, caster);
+
+        app.world_mut()
+            .resource_mut::<Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: caster,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"forge_tempering_hit","v":1,"session_id":1,"beat":"L","ticks_remaining":1}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let sessions = app.world().resource::<ForgeSessions>();
+        let session = sessions
+            .get(ForgeSessionId(1))
+            .expect("tempering session should remain active");
+        match &session.step_state {
+            StepState::Tempering(state) => {
+                assert_eq!(state.beat_cursor, 1);
+                assert_eq!(state.hits, 1);
+                assert_eq!(state.misses, 0);
+            }
+            other => panic!("expected tempering state, got {other:?}"),
+        }
+
+        let payloads = collect_server_data_payloads(&mut helper);
+        assert!(
+            payloads.iter().any(|payload| {
+                matches!(
+                    payload,
+                    ServerDataPayloadV1::ForgeSession(session)
+                        if session.session_id == 1
+                            && session.current_step == crate::schema::forge::ForgeStepV1::Tempering
+                            && matches!(
+                                &session.step_state,
+                                crate::schema::forge::ForgeStepStateDataV1::Tempering {
+                                    beat_cursor: 1,
+                                    hits: 1,
+                                    misses: 0,
+                                    ..
+                                }
+                            )
+                )
+            }),
+            "tempering_hit 后必须给 caster 回推 hits=1 misses=0 的 forge_session，实际={payloads:?}"
         );
     }
 
