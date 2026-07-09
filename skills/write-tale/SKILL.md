@@ -460,4 +460,4 @@ allowed-tools: Read Write Edit Bash Glob Grep
 - `docs/worldview.md` — 世界观锚点（灵压值、境界条件、灵压规则、区域坐标）
 - `docs/library/` — 馆藏条目（功法、生物、药材、区域志）
 - `docs/library/templates/馆藏条目模板.json` — 如需要将故事转化为馆藏条目，另行调用 `write-book` skill
-- `.pi/skills/library-lore/SKILL.md` — 三层查书策略
+- `skills/library-lore/SKILL.md` — 三层查书策略
