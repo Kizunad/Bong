@@ -1,7 +1,7 @@
 # BugHunt: e2e Redis 命令锚点把拒绝也算执行闭环
 
-> 分区：e2e-protocol / r08  
-> 类型：测试覆盖实际断链  
+> 分区：e2e-protocol / r08
+> 类型：测试覆盖实际断链
 > 结论：高置信候选。当前 `scripts/e2e-redis.sh` 只证明 Tiandao 的 `agent_command` 到达 server 并被命令执行器处理到 `stage=end`，但没有证明命令成功生效；`result=rejected_*` 同样会让 e2e 绿。
 
 ## 一句话 bug
