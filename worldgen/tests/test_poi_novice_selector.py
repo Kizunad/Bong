@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 
 import numpy as np
+import pytest
 
 from scripts.poi_novice_selector import (
     PoiType,
@@ -106,6 +107,7 @@ def test_manifest_payload_exports_six_novice_pois_with_selection_tags() -> None:
 
     payload = build_novice_poi_manifest_payload(
         fields,
+        complete_selection_tile_ids={tile.tile_id},
         spawn_center=Vec3(-300.0, 70.0, -300.0),
         radius=1500,
         sample_stride=8,
@@ -120,4 +122,33 @@ def test_manifest_payload_exports_six_novice_pois_with_selection_tags() -> None:
         "novice_spirit_herb_valley",
     ]
     assert all("poi_novice" in entry["tags"] for entry in payload)
-    assert all(any(str(tag).startswith("selection:") for tag in entry["tags"]) for entry in payload)
+    assert all(
+        any(str(tag).startswith("selection:") for tag in entry["tags"])
+        for entry in payload
+    )
+
+
+def test_manifest_payload_rejects_incomplete_selection_tile_window() -> None:
+    tile_size = 32
+    tile = WorldTile(tile_x=0, tile_z=0, min_x=0, max_x=31, min_z=0, max_z=31)
+    buffer = TileFieldBuffer.create(
+        tile,
+        tile_size,
+        ("height", "water_level", "qi_density"),
+    )
+    buffer.layers["height"] = np.full(tile_size * tile_size, 70.0)
+    buffer.layers["water_level"] = np.full(tile_size * tile_size, -1.0)
+    buffer.layers["qi_density"] = np.full(tile_size * tile_size, 0.55)
+    fields = GeneratedFieldSet(
+        tile_size=tile_size,
+        surface_palette=SurfacePalette(),
+        layers=("height", "water_level", "qi_density"),
+        tiles=[buffer],
+    )
+
+    with pytest.raises(ValueError, match="complete novice POI selection window"):
+        build_novice_poi_manifest_payload(
+            fields,
+            complete_selection_tile_ids={tile.tile_id, "tile_1_0"},
+            sample_stride=8,
+        )

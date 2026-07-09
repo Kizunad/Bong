@@ -241,10 +241,38 @@ def select_poi_location_records(
 def build_novice_poi_manifest_payload(
     fields: "GeneratedFieldSet",
     *,
+    complete_selection_tile_ids: Iterable[str],
     spawn_center: Vec3 = Vec3(0.0, 70.0, 0.0),
     radius: int = 1500,
     sample_stride: int = 8,
 ) -> list[dict[str, object]]:
+    """Build the six global novice POIs from a complete selection field set.
+
+    ``complete_selection_tile_ids`` is the caller's authoritative tile window.
+    Full exports pass their complete synthesized tile set; incremental regen
+    passes the tile set from the already-baked manifest.  Requiring the caller
+    to name that window prevents a zone-filtered ``GeneratedFieldSet`` from
+    silently producing fixed fallbacks and replacing global spawn POIs.
+    """
+    required_tile_ids = set(complete_selection_tile_ids)
+    if not required_tile_ids:
+        raise ValueError(
+            "novice POI selection requires a non-empty complete tile window"
+        )
+    actual_tile_ids = {tile.tile.tile_id for tile in fields.tiles}
+    missing_tile_ids = sorted(required_tile_ids - actual_tile_ids)
+    if missing_tile_ids:
+        preview = ", ".join(missing_tile_ids[:8])
+        suffix = (
+            ""
+            if len(missing_tile_ids) <= 8
+            else f" (+{len(missing_tile_ids) - 8} more)"
+        )
+        raise ValueError(
+            "GeneratedFieldSet does not cover the complete novice POI selection "
+            f"window; missing tile(s): {preview}{suffix}"
+        )
+
     qi, terrain = _field_set_to_selector_inputs(fields, sample_stride=sample_stride)
     records = select_poi_location_records(
         spawn_center,
