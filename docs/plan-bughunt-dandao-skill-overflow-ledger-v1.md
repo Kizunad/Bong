@@ -1,6 +1,6 @@
 # plan-bughunt-dandao-skill-overflow-ledger-v1
 
-> BugHunt skeleton plan / server-qi / 2026-07-08 r01。本文只记录缺陷与修复骨架，本 PR 不消费 plan、不改代码、不归档。
+> BugHunt active plan / server-qi / 2026-07-08 r01。本文只记录缺陷与修复任务，本 PR 不消费 plan、不改代码、不归档。
 
 ## Bug 摘要
 
@@ -51,7 +51,7 @@ gh pr list --state all --limit 600 --json number,title,headRefName,url
 - #1050 / #1056 / #1076 / #1082 / #1089 / #1096 / #1102 / #1107 / #1122 均不是丹道三基础招 overflow/no-zone ledger。
 - #678 修的是丹道旧版硬编码 `current_zone` 导致正常 zone 主路径蒸发。当前代码已能写真实 zone，但 overflow/no-zone 分支仍只发事件不写 ledger，属于 #678 未覆盖的边界遗留。
 
-## 修复计划骨架
+## 修复计划
 
 - [ ] 为 `drain_dandao_qi` 增加 `WorldQiAccount` 写入能力，专门处理“玩家 ECS qi 已扣，accepted 写 zone field，overflow 写真实 ledger account”的模式。
 - [ ] accepted 部分继续以 `zone.spirit_qi` 作为真实落点，不额外写同名 zone ledger，避免 `summarize_world_qi()` 双计。
