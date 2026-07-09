@@ -26,6 +26,8 @@
 
 这些都不是 `agent/packages/schema` / `agent/packages/tiandao` 的伪灵脉 Redis 事件无人消费和生产发送断链；也不重复 #1054、#1061、#1075、#1081、#1093。
 
+另核对 `docs/plans-skeleton/plan-module-wiring-gaps-v2.md` T5：它是 report-only 决策菜单，按 AGENTS 规则不是可消费 active plan；且 T5 同时混合伪灵脉广播频率与宗核激活触发源，本计划只把“伪灵脉 agent 叙事链路已预留但生产/消费双端断开”提升成单一 BugHunt active plan，不处理宗核玩法设计。`docs/plan-bughunt-npc-combat-relic-schema-drift-v1.md` 曾记录放弃该候选，但该文件最终收窄为 offscreen-war schema parity，不消费或修复伪灵脉链路。
+
 ## 修复建议
 
 1. 在伪灵脉 Active/Warning/Dissipating/Dissipate 边沿构造 `PseudoVeinSnapshotV1` / `PseudoVeinDissipateEventV1` 并发送到 RedisBridge。
