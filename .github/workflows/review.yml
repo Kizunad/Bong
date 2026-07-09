@@ -104,5 +104,7 @@ jobs:
           REVIEW_MAX_DIFF: ${{ vars.REVIEW_MAX_DIFF || '40000' }}
           REVIEW_MAX_PLAN: ${{ vars.REVIEW_MAX_PLAN || '20000' }}
           REVIEW_CODEX_TIMEOUT_MS: ${{ vars.REVIEW_CODEX_TIMEOUT_MS || '900000' }}
-          REVIEW_CODEX_CONCURRENCY: ${{ vars.REVIEW_CODEX_CONCURRENCY || '2' }}
+          REVIEW_CODEX_CONCURRENCY: ${{ vars.REVIEW_CODEX_CONCURRENCY || '1' }}
+          REVIEW_CODEX_RETRIES: ${{ vars.REVIEW_CODEX_RETRIES || '3' }}
+          REVIEW_CODEX_RETRY_MS: ${{ vars.REVIEW_CODEX_RETRY_MS || '15000' }}
         run: node /tmp/rev/review.mjs
