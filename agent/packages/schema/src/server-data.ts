@@ -164,6 +164,32 @@ const DeathScreenZoneKindV1 = Type.Union([
   Type.Literal("negative"),
 ]);
 
+export const AnqiHudKindV1 = Type.Union([
+  Type.Literal("echo"),
+  Type.Literal("aim"),
+  Type.Literal("charge"),
+  Type.Literal("abrasion"),
+  Type.Literal("multishot"),
+]);
+export type AnqiHudKindV1 = Static<typeof AnqiHudKindV1>;
+
+/** Rust `AnqiHudV1` 的 TypeBox wire 镜像（不含 server_data wrapper）。 */
+export const AnqiHudV1 = Type.Object(
+  {
+    kind: AnqiHudKindV1,
+    echo_count: Type.Integer({ minimum: 0, maximum: 4294967295 }),
+    aim_progress: Type.Number({ minimum: 0, maximum: 1 }),
+    charge_progress: Type.Number({ minimum: 0, maximum: 1 }),
+    abrasion_container: Type.String({
+      maxLength: SERVER_DATA_MAX_PAYLOAD_BYTES,
+    }),
+    abrasion_qi_payload: Type.Number({ minimum: 0 }),
+    tick: Type.Integer({ minimum: 0 }),
+  },
+  { additionalProperties: false },
+);
+export type AnqiHudV1 = Static<typeof AnqiHudV1>;
+
 export const ServerDataType = Type.Union([
   Type.Literal("welcome"),
   Type.Literal("heartbeat"),
@@ -253,6 +279,7 @@ export const ServerDataType = Type.Union([
   Type.Literal("healer_npc_ai_state"),
   Type.Literal("yidao_hud_state"),
   Type.Literal("movement_state"),
+  Type.Literal("anqi_hud"),
   Type.Literal("spirit_treasure_state"),
   Type.Literal("spirit_treasure_dialogue"),
   Type.Literal("knockback_sync"),
@@ -1058,6 +1085,16 @@ export const ServerDataVortexStateV1 = Type.Object(
 );
 export type ServerDataVortexStateV1 = Static<typeof ServerDataVortexStateV1>;
 
+export const ServerDataAnqiHudV1 = Type.Object(
+  {
+    v: Type.Literal(1),
+    type: Type.Literal("anqi_hud"),
+    ...AnqiHudV1.properties,
+  },
+  { additionalProperties: false },
+);
+export type ServerDataAnqiHudV1 = Static<typeof ServerDataAnqiHudV1>;
+
 export const ServerDataDuguPoisonStateV1 = Type.Object(
   {
     v: Type.Literal(1),
@@ -1848,6 +1885,7 @@ export const ServerDataV1 = Type.Union([
   ServerDataTechniquesSnapshotV1,
   ServerDataSkillConfigSnapshotV1,
   ServerDataVortexStateV1,
+  ServerDataAnqiHudV1,
   ServerDataDuguPoisonStateV1,
   ServerDataPoisonDoseEventV1,
   ServerDataPoisonOverdoseEventV1,
