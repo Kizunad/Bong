@@ -1,6 +1,6 @@
 # BugHunt：全力一击蓄力 HUD 断线跨会话残留
 
-> 分区：client-combat / r08  
+> 分区：client-combat / r08
 > 结论：高置信真 bug。只记录 plan，不在本分支修复代码。
 
 ## 一句话
