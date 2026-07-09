@@ -1,6 +1,6 @@
 # plan-bughunt-anqi-hud-schema-drift-v1
 
-状态：Skeleton Plan
+状态：Active Plan
 分区：BugHunt worker / agent-schema / r12
 
 ## 1. 一句话 bug
