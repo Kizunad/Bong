@@ -1355,7 +1355,7 @@ mod tests {
                 .get(ForgeSessionId(1))
                 .map(|session| session.current_step),
             Some(ForgeStep::Tempering),
-            "C2S forge_step_advance 应在同一 Update 内经 handle_step_advance 推进到 Tempering"
+            "C2S forge_step_advance 应在同一 Update 内经 step advance 阶段推进到 Tempering"
         );
 
         let payloads = collect_server_data_payloads(&mut helper);
@@ -1373,25 +1373,101 @@ mod tests {
     }
 
     #[test]
+    fn forge_step_advance_then_tempering_hit_same_update_applies_hit_and_pushes_snapshot() {
+        let mut app = App::new();
+        add_minimal_client_request_resources(&mut app);
+        add_forge_c2s_events(&mut app);
+        app.insert_resource(registry_with_qing_feng());
+        add_production_forge_c2s_systems(&mut app);
+
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let mut learned = LearnedBlueprints::new();
+        learned.learn("qing_feng_v0".into());
+        let caster = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                Cultivation::default(),
+                QiColor::default(),
+                SkillSet::default(),
+                learned,
+            ))
+            .id();
+        let station = app
+            .world_mut()
+            .spawn(WeaponForgeStation::placed(
+                BlockPos::new(4, 64, 4),
+                2,
+                caster,
+            ))
+            .id();
+        insert_qing_feng_billet_session(&mut app, 1, station, caster);
+
+        {
+            let mut events = app.world_mut().resource_mut::<Events<CustomPayloadEvent>>();
+            events.send(CustomPayloadEvent {
+                client: caster,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"forge_step_advance","v":1,"session_id":1}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+            events.send(CustomPayloadEvent {
+                client: caster,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"forge_tempering_hit","v":1,"session_id":1,"beat":"L","ticks_remaining":1}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+        }
+
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let sessions = app.world().resource::<ForgeSessions>();
+        let session = sessions
+            .get(ForgeSessionId(1))
+            .expect("session should remain active after first tempering hit");
+        assert_eq!(session.current_step, ForgeStep::Tempering);
+        match &session.step_state {
+            StepState::Tempering(state) => {
+                assert_eq!(state.beat_cursor, 1);
+                assert_eq!(state.hits, 1);
+                assert_eq!(state.misses, 0);
+            }
+            other => panic!("expected tempering state, got {other:?}"),
+        }
+
+        let payloads = collect_server_data_payloads(&mut helper);
+        assert!(
+            payloads.iter().any(|payload| {
+                matches!(
+                    payload,
+                    ServerDataPayloadV1::ForgeSession(session)
+                        if session.session_id == 1
+                            && session.current_step == crate::schema::forge::ForgeStepV1::Tempering
+                            && matches!(
+                                &session.step_state,
+                                crate::schema::forge::ForgeStepStateDataV1::Tempering {
+                                    beat_cursor: 1,
+                                    hits: 1,
+                                    misses: 0,
+                                    ..
+                                }
+                            )
+                )
+            }),
+            "同帧 step_advance 后接 tempering_hit 必须回推 hits=1 的 forge_session，实际={payloads:?}"
+        );
+    }
+
+    #[test]
     fn forge_tempering_hit_c2s_updates_hits_and_pushes_session_snapshot() {
         let mut app = App::new();
         add_minimal_client_request_resources(&mut app);
-        app.add_event::<TemperingHit>();
-        app.add_event::<InscriptionScrollSubmit>();
-        app.add_event::<ConsecrationInject>();
+        add_forge_c2s_events(&mut app);
         app.insert_resource(registry_with_qing_feng());
-
-        app.add_systems(
-            Update,
-            (
-                handle_client_request_payloads,
-                handle_tempering_hits.after(handle_client_request_payloads),
-                handle_scroll_submits.after(handle_tempering_hits),
-                handle_consecration_injects.after(handle_scroll_submits),
-                crate::network::forge_snapshot_emit::push_forge_session_snapshot_on_interaction
-                    .after(handle_consecration_injects),
-            ),
-        );
+        add_production_forge_c2s_systems(&mut app);
 
         let (client_bundle, mut helper) = create_mock_client("Azure");
         let mut learned = LearnedBlueprints::new();
