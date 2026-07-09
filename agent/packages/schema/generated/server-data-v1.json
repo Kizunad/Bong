@@ -15870,6 +15870,82 @@
       "required": [
         "v",
         "type",
+        "kind",
+        "echo_count",
+        "aim_progress",
+        "charge_progress",
+        "abrasion_container",
+        "abrasion_qi_payload",
+        "tick"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "number"
+        },
+        "type": {
+          "const": "anqi_hud",
+          "type": "string"
+        },
+        "kind": {
+          "anyOf": [
+            {
+              "const": "echo",
+              "type": "string"
+            },
+            {
+              "const": "aim",
+              "type": "string"
+            },
+            {
+              "const": "charge",
+              "type": "string"
+            },
+            {
+              "const": "abrasion",
+              "type": "string"
+            },
+            {
+              "const": "multishot",
+              "type": "string"
+            }
+          ]
+        },
+        "echo_count": {
+          "minimum": 0,
+          "maximum": 4294967295,
+          "type": "integer"
+        },
+        "aim_progress": {
+          "minimum": 0,
+          "maximum": 1,
+          "type": "number"
+        },
+        "charge_progress": {
+          "minimum": 0,
+          "maximum": 1,
+          "type": "number"
+        },
+        "abrasion_container": {
+          "maxLength": 32768,
+          "type": "string"
+        },
+        "abrasion_qi_payload": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "tick": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "v",
+        "type",
         "target",
         "active",
         "meridian_id",
