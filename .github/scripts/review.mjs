@@ -18,6 +18,7 @@ const PR = process.env.PR_NUMBER;
 const MODEL = process.env.REVIEW_CODEX_MODEL || "gpt-5.5";
 const MAX_DIFF = intEnv("REVIEW_MAX_DIFF", 120_000, 10_000);
 const CODEX_TIMEOUT_MS = intEnv("REVIEW_CODEX_TIMEOUT_MS", 900_000, 120_000);
+const CODEX_CONCURRENCY = intEnv("REVIEW_CODEX_CONCURRENCY", 2, 1);
 const DRY_RUN = /^(1|true|yes)$/i.test(String(process.env.REVIEW_DRY_RUN || "").trim());
 const FAIL_ON_GATE = process.env.REVIEW_FAIL_ON_GATE !== "0";
 
@@ -176,6 +177,19 @@ export function applyPlanIntentGate(results, hasPlan) {
   });
 }
 
+export function findPlanName(meta) {
+  const haystack = `${meta.title || ""} ${meta.headRefName || ""} ${meta.body || ""}`;
+  const textMatch = haystack.match(/plan-[a-z0-9-]+-v\d+/i);
+  if (textMatch) return textMatch[0];
+
+  for (const file of meta.files || []) {
+    const path = String(file.path || "");
+    const pathMatch = path.match(/(?:^|\/)(plan-[a-z0-9-]+-v\d+)\.md$/i);
+    if (pathMatch) return pathMatch[1];
+  }
+  return null;
+}
+
 export function mergeFindings(results) {
   const byKey = new Map();
   for (const result of results) {
@@ -223,17 +237,13 @@ async function main() {
   const context = loadPrContext(PR);
   console.error(`Review v3: PR #${PR} · ${context.changedLines} 行/${context.changedFiles} 文件 · 4×${MODEL} high`);
 
-  const firstRound = await Promise.all(
-    REVIEWERS.map((reviewer) =>
-      runCodex(initialPrompt(context, reviewer), `initial-${reviewer.id}`).then((raw) => normalizeResult(raw, reviewer)),
-    ),
+  const firstRound = await mapLimit(REVIEWERS, CODEX_CONCURRENCY, (reviewer) =>
+    runCodex(initialPrompt(context, reviewer), `initial-${reviewer.id}`).then((raw) => normalizeResult(raw, reviewer)),
   );
 
   const debateContext = firstRound.map(compactResultForPrompt);
-  const finalRoundRaw = await Promise.all(
-    REVIEWERS.map((reviewer) =>
-      runCodex(finalPrompt(context, reviewer, debateContext), `final-${reviewer.id}`).then((raw) => normalizeResult(raw, reviewer)),
-    ),
+  const finalRoundRaw = await mapLimit(REVIEWERS, CODEX_CONCURRENCY, (reviewer) =>
+    runCodex(finalPrompt(context, reviewer, debateContext), `final-${reviewer.id}`).then((raw) => normalizeResult(raw, reviewer)),
   );
   const finalRound = applyPlanIntentGate(finalRoundRaw, Boolean(context.plan));
 
@@ -283,10 +293,8 @@ function loadPrContext(pr) {
 }
 
 function findPlan(meta) {
-  const haystack = `${meta.title || ""} ${meta.headRefName || ""} ${meta.body || ""}`;
-  const match = haystack.match(/plan-[a-z0-9-]+-v\d+/i);
-  if (!match) return null;
-  const name = match[0];
+  const name = findPlanName(meta);
+  if (!name) return null;
   for (const dir of ["docs", "docs/finished_plans", "docs/plans-skeleton"]) {
     const path = `${dir}/${name}.md`;
     if (existsSync(path)) {
@@ -431,6 +439,7 @@ async function runCodex(prompt, label) {
     process.cwd(),
     "-s",
     "read-only",
+    "--ephemeral",
     "--output-last-message",
     outputFile,
     "-c",
@@ -442,19 +451,27 @@ async function runCodex(prompt, label) {
   try {
     const result = await spawnCodex(args, prompt, CODEX_TIMEOUT_MS);
     const text = existsSync(outputFile) ? readFileSync(outputFile, "utf8") : result.stdout;
+    if (text.trim()) {
+      if (result.code !== 0) {
+        console.error(`  codex ${label} exit=${result.code} signal=${result.signal || "-"}，但已产出 final message，继续解析`);
+      }
+      return text;
+    }
+
     if (result.code !== 0 || !text.trim()) {
+      const failure = codexFailureText(result);
       return JSON.stringify({
         vote: "REQUEST_CHANGES",
         confidence: 0,
         plan_intent: { status: "unclear", reason: `Codex ${label} 执行失败`, missing: [] },
-        summary: `Codex ${label} 执行失败：${truncate(result.stderr || result.stdout, 1000)}`,
+        summary: `Codex ${label} 执行失败：${failure}`,
         findings: [
           {
             severity: "major",
             file: ".github/scripts/review.mjs",
             line: "0",
             title: `Codex reviewer ${label} 执行失败`,
-            evidence: truncate(result.stderr || result.stdout, 1000),
+            evidence: failure,
             recommendation: "检查 Codex CLI、模型端点和 API key 后重新触发 /review。",
           },
         ],
@@ -493,6 +510,32 @@ function spawnCodex(args, stdin, timeoutMs) {
     });
     child.stdin.end(stdin);
   });
+}
+
+async function mapLimit(items, limit, fn) {
+  const out = new Array(items.length);
+  let next = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const idx = next++;
+      out[idx] = await fn(items[idx], idx);
+    }
+  });
+  await Promise.all(workers);
+  return out;
+}
+
+function codexFailureText(result) {
+  const stderr = truncate(result.stderr || "", 800);
+  const stdout = truncate(result.stdout || "", 800);
+  return [
+    `exit=${result.code}`,
+    result.signal ? `signal=${result.signal}` : "",
+    stderr ? `stderr: ${stderr}` : "",
+    stdout ? `stdout: ${stdout}` : "",
+  ]
+    .filter(Boolean)
+    .join(" | ");
 }
 
 function renderComment(context, firstRound, finalRound, gate) {

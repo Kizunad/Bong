@@ -6,6 +6,7 @@ import {
   applyPlanIntentGate,
   decideGate,
   extractJSON,
+  findPlanName,
   mergeFindings,
   normalizePlanStatus,
   normalizeResult,
@@ -60,6 +61,17 @@ test("applyPlanIntentGate: 有关联 plan 时未 aligned 的票强制 REQUEST_CH
   assert.match(gated[1].summary, /Plan 原意未确认/);
   assert.equal(gated[2].vote, "REQUEST_CHANGES");
   assert.deepEqual(applyPlanIntentGate(rows, false), rows, "非 plan PR 不强制 plan gate");
+});
+
+test("findPlanName: 从标题/分支/body 或变更文件里识别 plan", () => {
+  assert.equal(findPlanName({ title: "实现 plan-foo-v1", files: [] }), "plan-foo-v1");
+  assert.equal(findPlanName({ headRefName: "fix/plan-bar-v2", files: [] }), "plan-bar-v2");
+  assert.equal(findPlanName({ body: "refs plan-baz-v3", files: [] }), "plan-baz-v3");
+  assert.equal(
+    findPlanName({ title: "修复制作退款", files: [{ path: "docs/plan-bughunt-craft-refund-full-inventory-loss-v1.md" }] }),
+    "plan-bughunt-craft-refund-full-inventory-loss-v1",
+  );
+  assert.equal(findPlanName({ title: "no plan", files: [{ path: "server/src/foo.rs" }] }), null);
 });
 
 test("normalizeResult: 合法 JSON 归一字段，非法输出按未通过处理", () => {
