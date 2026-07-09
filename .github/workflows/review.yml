@@ -114,4 +114,5 @@ jobs:
           REVIEW_CODEX_MODEL: ${{ vars.REVIEW_CODEX_MODEL || 'gpt-5.5' }}
           REVIEW_MAX_DIFF: ${{ vars.REVIEW_MAX_DIFF || '120000' }}
           REVIEW_CODEX_TIMEOUT_MS: ${{ vars.REVIEW_CODEX_TIMEOUT_MS || '900000' }}
+          REVIEW_CODEX_CONCURRENCY: ${{ vars.REVIEW_CODEX_CONCURRENCY || '2' }}
         run: node /tmp/rev/review.mjs
