@@ -12,6 +12,20 @@
 - 跨仓库契约：server official technique 定义 -> server_data techniques snapshot -> client 功法面板 / 技能栏绑定；残卷 `technique_scroll.skill_id` -> server 学习入口。
 - qi_physics 锚点：本 plan 不改变 Dugu v2 真元消耗、目标扣减或 zone 回流公式。修复时若只补 official technique 定义与入口测试，不得重写 `combat::dugu_v2` 既有 `release_cast_cost_to_zone`、`penetrate_zone_credit_tick`、`reverse_victim_qi_zone_credit_tick` 等守恒路径。
 
+## 客户端 A/V/SFX/HUD/icon 验收约束
+
+Skill / combat plan 不允许只接 server resolver 或 schema enum；五招成为 official technique 后，玩家必须能从动画、粒子、音效、HUD 与技能栏图标上区分每招。现有 `combat::dugu_v2::skills::visual_for()` 已声明的逐招 ID 必须被 official definition、schema snapshot 与 client skillbar/HUD 消费链保持一致：
+
+| skill_id | animation | particle / VFX | SFX | HUD 反馈 | SkillBar icon |
+|---|---|---|---|---|---|
+| `dugu.eclipse` | `bong:dugu_needle_throw` | `bong:dugu_taint_pulse` | `dugu_needle_hiss` | `蚀针` | `bong:textures/gui/skill/dugu_eclipse.png` |
+| `dugu.self_cure` | `bong:dugu_self_cure_pose` | `bong:dugu_dark_green_mist` | `dugu_self_cure_drink` | `自蕴` | `bong:textures/gui/skill/dugu_self_cure.png` |
+| `dugu.penetrate` | `bong:dugu_needle_throw` | `bong:dugu_taint_pulse` | `dugu_needle_hiss` | `侵染` | `bong:textures/gui/skill/dugu_penetrate.png` |
+| `dugu.shroud` | `bong:dugu_shroud_activate` | `bong:dugu_dark_green_mist` | `dugu_self_cure_drink` | `神识遮蔽` | `bong:textures/gui/skill/dugu_shroud.png` |
+| `dugu.reverse` | `bong:dugu_pointing_curse` | `bong:dugu_reverse_burst` | `dugu_curse_cackle` | `倒蚀` | `bong:textures/gui/skill/dugu_reverse.png` |
+
+截至本 plan 审查，仓库中已有三张 Dugu v2 particle PNG，但未找到五张 SkillBar icon PNG。Codex 执行实现时不能跑 `/gen-image`；若接通 official technique 后这些 icon 仍不存在，必须完成 server/schema/client 查图接线和占位引用，并在对应 TODO 标注 `[BLOCKED: 需 /gen-image 生成 dugu_eclipse.png, dugu_self_cure.png, dugu_penetrate.png, dugu_shroud.png, dugu_reverse.png]`，不能用手绘临时图糊弄验收。
+
 ## 实际游玩体验影响
 
 1. 玩家无法通过正式残卷 / 导师 / 学习入口学到毒蛊 v2 五招：`learn_technique_if_allowed()` 对缺少 definition 的 skill_id 直接返回 `InvalidScroll`。
@@ -78,7 +92,7 @@
 - [ ] P2：接通学习来源。补残卷 / 导师 / 掉落或其他权威来源，并保证 `parse_technique_scroll_spec()`、`read_combat_technique_scroll()`、`learn_technique_if_allowed()` 可学习这些 ID。
 - [ ] P3：补技能栏回归。`skill_bar_bind` 和 `skill_bar_cast` 对已学 Dugu v2 五招进入对应 resolver；未学、inactive、境界不足、经脉不满足、真元不足、冷却中仍按现有拒绝语义返回。
 - [ ] P4：补 NPC / bot 覆盖。若 NPC 应可使用毒蛊 v2，确认 `assign_npc_techniques()` 能按 realm/meridian 选择；若只玩家可用，补明确过滤和测试。
-- [ ] P5：补 client 可观察性。`TechniquesSnapshotV1` 下发五招 definition，客户端功法面板、技能栏 icon、HUD hint 与既有 Dugu v2 AV/HUD 链路一致。
+- [ ] P5：补 client 可观察性。`TechniquesSnapshotV1` 下发五招 definition，客户端功法面板、技能栏 icon、HUD hint 与既有 Dugu v2 AV/HUD 链路一致；逐招验收表见上方 A/V/SFX/HUD/icon 约束。
 
 ## 验证计划
 
@@ -87,6 +101,7 @@
 - server 单测：`send_techniques_snapshot_to_client()` 不过滤 Dugu v2 已学 entry，payload 含 display name、cooldown、range、category。
 - server 单测：`skill_bar_bind` 对已学 Dugu v2 五招成功，对未学 / inactive 拒绝；`skill_bar_cast` happy path 进入 resolver 并产生对应 event。
 - server 单测：NPC 路径按产品决议 pin 住：可用则能分配 / 选中 / lookup；不可用则有明确排除测试，不再靠缺 definition 偶然不可达。
+- client / 资源回归：五招 animation、particle/VFX、SFX、HUD hint 与 SkillBar icon 均逐招可辨；若缺 icon PNG，按上方规则标 `[BLOCKED: 需 /gen-image]` 而不是宣称完成。
 - 回归：跑 `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`；涉及 client snapshot/icon 时再跑 `cd client && ./gradlew test build`。
 
 ## 对抗复核
