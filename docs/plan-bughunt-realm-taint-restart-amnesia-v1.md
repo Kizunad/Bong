@@ -1,6 +1,6 @@
 # plan-bughunt-realm-taint-restart-amnesia-v1
 
-> Skeleton Plan（BugHunt persistence r13）。仅记录真实 bug 与修复计划，不做实际修复。
+> Active Plan（BugHunt persistence r13）。本文件位于 `docs/plan-*.md` 活跃消费路径，已定稿为可由 plan 流水线零交互执行的修复计划。
 
 ## Bug 摘要
 
@@ -39,23 +39,28 @@
 
 ### P0 - 玩家 cultivation bundle 持久化龛侵色
 
-- [ ] 在 `persist_player_cultivation_bundle` 参数与 JSON bundle 中加入可选 `RealmTaintState`。
-- [ ] 断线、关服、周期 cultivation flush 的 player query 纳入 `Option<&RealmTaintState>`。
-- [ ] `attach_cultivation_to_joined_clients` 从 persisted bundle 解码 `realm_taint`，只在未洗清且 severity > 0 时插回组件。
-- [ ] 转世分支必须清空旧角色龛侵色，避免旧抄家染色附到新生命上。
+- [ ] 不直接把运行时 `RealmTaintState` 原样序列化为持久格式；新增持久化 DTO，例如 `PersistedRealmTaintState { v, kind, qi_taint_severity, wash_remaining_ticks, tainted_elapsed_ticks }`。原因：`wash_available_at` / `last_tainted_at` 是本进程 uptime tick，重启后绝对 tick 失效。
+- [ ] `persist_player_cultivation_bundle` 增加 `now_tick: u64` 与 `realm_taint: Option<&RealmTaintState>` 参数；写 JSON bundle 的可选 `realm_taint` 字段时，`wash_remaining_ticks = state.wash_available_at.saturating_sub(now_tick)`，只保存 `kind == NicheIntrusion`、`qi_taint_severity > 0`、`wash_remaining_ticks > 0` 的状态。
+- [ ] 断线 cleanup、关服 flush、周期 cultivation flush 的 query 纳入 `Option<&RealmTaintState>`，并读取 `Res<CombatClock>` 传入当前 tick；测试 helper 调用显式传入固定 tick，避免隐藏依赖。
+- [ ] `attach_cultivation_to_joined_clients` 解码 persisted `realm_taint`，只在字段合法、未洗清且 severity > 0 时插回 `RealmTaintState`：`wash_available_at = now_tick + wash_remaining_ticks`，`last_tainted_at = now_tick.saturating_sub(tainted_elapsed_ticks)`。
+- [ ] 旧 bundle 缺少 `realm_taint` 时按 `None` 处理；`realm_taint` 字段类型错误、未知 `kind`、非数字/负数 severity、`wash_remaining_ticks == 0`、过大 tick 溢出等坏数据只 warn 并忽略该字段，不阻断玩家登录，也不影响 cultivation / meridian / life_record 等其它字段 hydrate。
+- [ ] 转世分支必须清空旧角色龛侵色：新生命上线不插回旧 `realm_taint`，并持久化 `realm_taint: null` 或省略该字段，避免旧抄家染色附到新生命上。
 
 ### P1 - 时间语义与洗清边界
 
-- [ ] 明确 `wash_available_at` 跨重启语义：至少保证重启不会提前清空；是否按停服墙钟流逝另行产品决策。
-- [ ] 若继续使用 game tick，hydrate 时保留剩余 tick 而不是旧 uptime 绝对 tick，避免重启后窗口异常变长或变短。
-- [ ] 若改为 wall-clock 到期，补迁移兼容旧 game tick 字段。
+- [ ] 定稿语义：龛侵色洗清窗口按游戏内 server tick 流逝，服务器停机期间不推进洗清；重启/重登不能提前清空，最多只让墙钟时间看起来变长。这与当前 `RealmTaintState::wash_if_ready(now_tick)` 的 tick 语义一致。
+- [ ] 持久化只保存剩余 tick，不保存旧 `wash_available_at` 绝对 uptime tick；hydrate 时以当前 `CombatClock.tick` 重新计算 `wash_available_at`。这是本 plan 的唯一 P0 口径，不再保留 wall-clock 二选一产品决策。
+- [ ] 如果后续产品要改成墙钟到期，必须另立 plan 做 schema v2 迁移；本 plan 不引入 wall-clock deadline，避免在修复重启遗忘 bug 时顺手改变 8h 游戏内窗口平衡。
 
 ### P2 - 回归覆盖
 
-- [ ] server 单测：构造玩家 `RealmTaintState`，保存 cultivation bundle，模拟新 App 重登，断言 `RealmTaintState` 恢复且 `spiritual_sense` 仍能生成 `NicheIntrusionTrace`。
+- [ ] server 单测：构造玩家 `RealmTaintState`，保存 cultivation bundle，模拟新 App 重登，断言 `RealmTaintState` 恢复为当前 tick + 剩余 tick，且 `spiritual_sense` 仍能生成 `NicheIntrusionTrace`。
+- [ ] server 单测：旧 bundle 缺少 `realm_taint` 字段时登录不崩，恢复结果为无龛侵色；坏 `realm_taint` 字段（类型错误、未知 kind、负 severity、零/溢出 remaining）只忽略该字段，不阻断其它 cultivation bundle 字段恢复。
+- [ ] server 单测：断线 cleanup、关服 flush、周期 cultivation flush 三条调用都把 `Option<&RealmTaintState>` 和当前 `CombatClock.tick` 传入 persistence，避免只修一条保存路径。
 - [ ] server 单测：转世后不恢复旧龛侵色。
 - [ ] server 单测：已过期或 severity=0 的龛侵色 hydrate 时不插回。
-- [ ] e2e：A 被抄家，B 重登或重启后，A/第三方固元+ 神识仍能在剩余窗口内追踪 B。
+- [ ] Bot e2e：新增 `scripts/bot/scenarios/realm_taint_persistence.py`。场景用两名 bot 或 dev-only 测试入口给 B 施加 `NicheIntrusion` 龛侵色，触发 B 重登或测试服重启，再由 A/第三方固元+ 发起神识扫描，黑盒断言仍能看到 B 的 `NicheIntrusionTrace` / 对应可观察反馈。
+- [ ] 根目录 e2e：`bash scripts/bot-e2e.sh realm_taint_persistence` 或等价 bot scenario runner 纳入验证说明；若 CI 不适合重启真服，至少覆盖 B 重登路径，并用 server 集成测试覆盖新 App 重启 hydrate 路径。
 
 ## Adversarial Review
 
