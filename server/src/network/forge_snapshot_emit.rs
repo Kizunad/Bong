@@ -229,7 +229,7 @@ pub fn push_forge_session_snapshot_on_interaction(
     }
 }
 
-/// `ForgeStepAdvance` 处理后（`handle_step_advance` 之后）回推最新快照：未完成则和
+/// `ForgeStepAdvance` 处理后（forge step advance 阶段之后）回推最新快照：未完成则和
 /// 起炉受理一样推 station+session+blueprint_book 三件套（`send_forge_snapshots_to_player`
 /// 的第二个真实调用点）；已到 Done 则只推 station（`has_session` 已被引擎清 false）+
 /// blueprint_book，不带 session（结算内容由 `push_forge_outcome_on_event` 的
@@ -882,6 +882,7 @@ mod tests {
 
         app.world_mut().send_event(StepAdvance {
             session: ForgeSessionId(9),
+            from_step: ForgeStep::Tempering,
         });
         app.update();
         flush_all_client_packets(&mut app);
@@ -919,6 +920,7 @@ mod tests {
 
         app.world_mut().send_event(StepAdvance {
             session: ForgeSessionId(10),
+            from_step: ForgeStep::Consecration,
         });
         app.update();
         flush_all_client_packets(&mut app);
@@ -955,6 +957,7 @@ mod tests {
 
         app.world_mut().send_event(StepAdvance {
             session: ForgeSessionId(11),
+            from_step: ForgeStep::Tempering,
         });
         app.update();
         flush_all_client_packets(&mut app);

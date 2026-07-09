@@ -111,30 +111,32 @@ pub fn register(app: &mut App) {
             // 真实生产调用点）。
             crate::network::forge_snapshot_emit::push_forge_start_snapshot_on_accept
                 .after(handle_start_forge_requests),
-            handle_tempering_hits
+            handle_billet_step_advance
                 .after(handle_start_forge_requests)
                 .after(crate::network::client_request_handler::handle_client_request_payloads),
-            handle_scroll_submits.after(handle_tempering_hits),
-            handle_consecration_injects.after(handle_scroll_submits),
+            handle_tempering_hits.after(handle_billet_step_advance),
+            handle_tempering_step_advance.after(handle_tempering_hits),
+            handle_scroll_submits.after(handle_tempering_step_advance),
+            handle_inscription_step_advance.after(handle_scroll_submits),
+            handle_consecration_injects.after(handle_inscription_step_advance),
             // 单步交互（淬炼击键/铭文投入/开光注真元）后回推 session 快照，供
             // ForgeScreen 实时反映进度。
             crate::network::forge_snapshot_emit::push_forge_session_snapshot_on_interaction
                 .after(handle_consecration_injects),
-            handle_step_advance
-                .after(handle_consecration_injects)
-                .after(crate::network::client_request_handler::handle_client_request_payloads),
+            handle_consecration_step_advance.after(handle_consecration_injects),
             // step 推进后回推快照（第二个 send_forge_snapshots_to_player 真实调用点）。
             crate::network::forge_snapshot_emit::push_forge_session_snapshot_on_step_advance
-                .after(handle_step_advance),
-            inventory_bridge::forge_outcome_to_inventory.after(handle_step_advance),
-            crate::network::forge_bridge::publish_forge_outcome.after(handle_step_advance),
+                .after(handle_consecration_step_advance),
+            inventory_bridge::forge_outcome_to_inventory.after(handle_consecration_step_advance),
+            crate::network::forge_bridge::publish_forge_outcome
+                .after(handle_consecration_step_advance),
             // 结算 S2C 回执（send_forge_outcome_to_player 真实生产调用点）。
             crate::network::forge_snapshot_emit::push_forge_outcome_on_event
-                .after(handle_step_advance),
+                .after(handle_consecration_step_advance),
             processing_mode::forge_processing_mode_handler,
             // 延迟清理：Done session 保留 DONE_SESSION_RETENTION_TICKS tick 后移除，
             // 避免 client_request_handler 在 finalize 瞬间后仍读 session 时出竞态。
-            cleanup_completed_sessions.after(handle_step_advance),
+            cleanup_completed_sessions.after(handle_consecration_step_advance),
         ),
     );
 
@@ -667,9 +669,108 @@ fn station_zone_is_collapsed(
         })
 }
 
-/// StepAdvance 统一收束：根据当前 step 结果推进，若到 Done → 派发 outcome。
+/// Billet 本身没有逐 tick 交互；先推进它，才能让同一 Update 内后续
+/// tempering_hit 按新进入的 Tempering step 生效。
 #[allow(clippy::too_many_arguments)]
-fn handle_step_advance(
+fn handle_billet_step_advance(
+    ev: EventReader<StepAdvance>,
+    registry: Res<BlueprintRegistry>,
+    sessions: ResMut<ForgeSessions>,
+    stations: Query<&mut WeaponForgeStation>,
+    caster_q: Query<ForgeCasterSkillQueryItem>,
+    history_q: Query<&mut ForgeHistory>,
+    outcomes: EventWriter<ForgeOutcomeEvent>,
+    skill_xp_events: EventWriter<SkillXpGain>,
+) {
+    handle_step_advance_for_step(
+        ForgeStep::Billet,
+        ev,
+        registry,
+        sessions,
+        stations,
+        caster_q,
+        history_q,
+        outcomes,
+        skill_xp_events,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn handle_tempering_step_advance(
+    ev: EventReader<StepAdvance>,
+    registry: Res<BlueprintRegistry>,
+    sessions: ResMut<ForgeSessions>,
+    stations: Query<&mut WeaponForgeStation>,
+    caster_q: Query<ForgeCasterSkillQueryItem>,
+    history_q: Query<&mut ForgeHistory>,
+    outcomes: EventWriter<ForgeOutcomeEvent>,
+    skill_xp_events: EventWriter<SkillXpGain>,
+) {
+    handle_step_advance_for_step(
+        ForgeStep::Tempering,
+        ev,
+        registry,
+        sessions,
+        stations,
+        caster_q,
+        history_q,
+        outcomes,
+        skill_xp_events,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn handle_inscription_step_advance(
+    ev: EventReader<StepAdvance>,
+    registry: Res<BlueprintRegistry>,
+    sessions: ResMut<ForgeSessions>,
+    stations: Query<&mut WeaponForgeStation>,
+    caster_q: Query<ForgeCasterSkillQueryItem>,
+    history_q: Query<&mut ForgeHistory>,
+    outcomes: EventWriter<ForgeOutcomeEvent>,
+    skill_xp_events: EventWriter<SkillXpGain>,
+) {
+    handle_step_advance_for_step(
+        ForgeStep::Inscription,
+        ev,
+        registry,
+        sessions,
+        stations,
+        caster_q,
+        history_q,
+        outcomes,
+        skill_xp_events,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn handle_consecration_step_advance(
+    ev: EventReader<StepAdvance>,
+    registry: Res<BlueprintRegistry>,
+    sessions: ResMut<ForgeSessions>,
+    stations: Query<&mut WeaponForgeStation>,
+    caster_q: Query<ForgeCasterSkillQueryItem>,
+    history_q: Query<&mut ForgeHistory>,
+    outcomes: EventWriter<ForgeOutcomeEvent>,
+    skill_xp_events: EventWriter<SkillXpGain>,
+) {
+    handle_step_advance_for_step(
+        ForgeStep::Consecration,
+        ev,
+        registry,
+        sessions,
+        stations,
+        caster_q,
+        history_q,
+        outcomes,
+        skill_xp_events,
+    );
+}
+
+/// StepAdvance 分阶段收束：根据发起时的 step 结果推进，若到 Done → 派发 outcome。
+#[allow(clippy::too_many_arguments)]
+fn handle_step_advance_for_step(
+    expected_from_step: ForgeStep,
     mut ev: EventReader<StepAdvance>,
     registry: Res<BlueprintRegistry>,
     mut sessions: ResMut<ForgeSessions>,
@@ -680,9 +781,15 @@ fn handle_step_advance(
     mut skill_xp_events: EventWriter<SkillXpGain>,
 ) {
     for advance in ev.read() {
+        if advance.from_step != expected_from_step {
+            continue;
+        }
         let Some(session) = sessions.get_mut(advance.session) else {
             continue;
         };
+        if session.current_step != advance.from_step {
+            continue;
+        }
         let Some(bp) = registry.get(&session.blueprint) else {
             continue;
         };
@@ -1170,23 +1277,41 @@ mod tests {
         registry
     }
 
+    fn add_forge_c2s_events(app: &mut App) {
+        app.add_event::<StepAdvance>();
+        app.add_event::<TemperingHit>();
+        app.add_event::<InscriptionScrollSubmit>();
+        app.add_event::<ConsecrationInject>();
+        app.add_event::<ForgeOutcomeEvent>();
+    }
+
+    fn add_production_forge_c2s_systems(app: &mut App) {
+        app.add_systems(
+            Update,
+            (
+                handle_client_request_payloads,
+                handle_billet_step_advance.after(handle_client_request_payloads),
+                handle_tempering_hits.after(handle_billet_step_advance),
+                handle_tempering_step_advance.after(handle_tempering_hits),
+                handle_scroll_submits.after(handle_tempering_step_advance),
+                handle_inscription_step_advance.after(handle_scroll_submits),
+                handle_consecration_injects.after(handle_inscription_step_advance),
+                crate::network::forge_snapshot_emit::push_forge_session_snapshot_on_interaction
+                    .after(handle_consecration_injects),
+                handle_consecration_step_advance.after(handle_consecration_injects),
+                crate::network::forge_snapshot_emit::push_forge_session_snapshot_on_step_advance
+                    .after(handle_consecration_step_advance),
+            ),
+        );
+    }
+
     #[test]
     fn forge_step_advance_c2s_advances_and_pushes_tempering_session() {
         let mut app = App::new();
         add_minimal_client_request_resources(&mut app);
-        app.add_event::<StepAdvance>();
-        app.add_event::<ForgeOutcomeEvent>();
+        add_forge_c2s_events(&mut app);
         app.insert_resource(registry_with_qing_feng());
-
-        app.add_systems(
-            Update,
-            (
-                handle_step_advance,
-                crate::network::forge_snapshot_emit::push_forge_session_snapshot_on_step_advance
-                    .after(handle_step_advance),
-            ),
-        );
-        app.add_systems(Update, handle_client_request_payloads);
+        add_production_forge_c2s_systems(&mut app);
 
         let (client_bundle, mut helper) = create_mock_client("Azure");
         let mut learned = LearnedBlueprints::new();

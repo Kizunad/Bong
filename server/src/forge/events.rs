@@ -3,7 +3,7 @@
 use valence::prelude::{bevy_ecs, Entity, Event};
 
 use super::blueprint::{BlueprintId, TemperBeat};
-use super::session::ForgeSessionId;
+use super::session::{ForgeSessionId, ForgeStep};
 use crate::cultivation::components::ColorKind;
 
 /// 客户端请求起炉 —— 需 station tier 达标且已学该图。
@@ -52,6 +52,7 @@ pub struct ConsecrationInject {
 #[derive(Debug, Clone, Event)]
 pub struct StepAdvance {
     pub session: ForgeSessionId,
+    pub from_step: ForgeStep,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
