@@ -184,7 +184,7 @@ export const AnqiHudV1 = Type.Object(
       maxLength: SERVER_DATA_MAX_PAYLOAD_BYTES,
     }),
     abrasion_qi_payload: Type.Number({ minimum: 0 }),
-    tick: Type.Integer({ minimum: 0 }),
+    tick: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
   },
   { additionalProperties: false },
 );

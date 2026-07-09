@@ -61,6 +61,7 @@ describe("anqi_hud ServerDataV1 contract", () => {
     "server-data.anqi-hud.invalid-extra-field.sample.json",
     "server-data.anqi-hud.invalid-numeric.sample.json",
     "server-data.anqi-hud.invalid-kind.sample.json",
+    "server-data.anqi-hud.invalid-tick-overflow.sample.json",
   ];
 
   it.each(validSamples)("accepts positive sample %s", (sampleName) => {
@@ -105,6 +106,29 @@ describe("anqi_hud ServerDataV1 contract", () => {
         `${kind} boundary payload should be accepted: ${result.errors.join("; ")}`,
       ).toBe(true);
     }
+  });
+
+  it("accepts the maximum safe tick and rejects the first unsafe integer in isolation", () => {
+    const base = loadSample("server-data.anqi-hud.echo.sample.json") as Record<string, unknown>;
+
+    expect(
+      validate(ServerDataAnqiHudV1, {
+        ...base,
+        tick: Number.MAX_SAFE_INTEGER,
+      }).ok,
+    ).toBe(true);
+    expect(
+      validate(ServerDataAnqiHudV1, {
+        ...base,
+        tick: Number.MAX_SAFE_INTEGER + 1,
+      }).ok,
+    ).toBe(false);
+    expect(
+      validate(ServerDataAnqiHudV1, {
+        ...base,
+        tick: 1e30,
+      }).ok,
+    ).toBe(false);
   });
 
   it("registers anqi_hud in ServerDataType and rejects unknown type", () => {
