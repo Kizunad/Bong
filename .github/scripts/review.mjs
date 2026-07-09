@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Review v3 —— 4 个 Codex gpt-5.5 high reviewer 对同一 PR 做博弈式审核。
+// Review v3 —— 4 个 Codex gpt-5.6 high reviewer 对同一 PR 做博弈式审核。
 //
 // 流程：
 // 1. 拉取 PR metadata / diff / 关联 plan。
@@ -15,7 +15,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const PR = process.env.PR_NUMBER;
-const MODEL = process.env.REVIEW_CODEX_MODEL || "gpt-5.5";
+const MODEL = process.env.REVIEW_CODEX_MODEL || "gpt-5.6";
 const MAX_DIFF = intEnv("REVIEW_MAX_DIFF", 40_000, 10_000);
 const MAX_PLAN = intEnv("REVIEW_MAX_PLAN", 20_000, 5_000);
 const CODEX_TIMEOUT_MS = intEnv("REVIEW_CODEX_TIMEOUT_MS", 900_000, 120_000);
