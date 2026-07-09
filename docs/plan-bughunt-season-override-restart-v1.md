@@ -1,6 +1,8 @@
 # BugHunt: /season 人工相位重启回滚
 
-> Skeleton Plan（report-only）。一句话主题：op/admin 通过 `/season set|advance` 建立的世界季节 override 只存在 `WorldSeasonState.tick_offset` 内存里；服务器重启后 `WorldSeasonState::default()` 重新从默认 tick 派生季节，人工切到冬季/汐转的事件相位会回滚。
+> **Active bughunt plan（可被流水线消费，待落地修复）**。一句话主题：op/admin 通过 `/season set|advance` 建立的世界季节 override 只存在 `WorldSeasonState.tick_offset` 内存里；服务器重启后 `WorldSeasonState::default()` 重新从默认 tick 派生季节，人工切到冬季/汐转的事件相位会回滚。
+>
+> 本文件位于 `docs/plan-*.md` 活跃白名单，应被 plan 流水线视为可消费的定稿 plan；不是 `docs/plans-skeleton/` 占位，也不是归档记录。
 
 ## Bug 摘要
 
@@ -38,7 +40,7 @@
 5. 启动时 `world::season::register` 重新插入默认 `WorldSeasonState`；`persistence::bootstrap_persistence_system` 没有 hydrate season override。
 6. 世界回到默认 tick 派生季节，人工设置的活动相位消失。
 
-## Skeleton Fix Plan
+## Fix Plan
 
 - [ ] 为世界季节 override 增加最小 snapshot：保存能恢复 `/season` 人工相位的 `tick_offset` 或等价 `effective_tick` / phase anchor；不要持久化全局墙钟时间。
 - [ ] 在 persistence migration 中新增 world season runtime 表或复用合适的 singleton runtime 表，明确 schema version。
@@ -46,12 +48,23 @@
 - [ ] 在 `/season set|advance` 后将 override 标脏，按节流或立即写入；shutdown `Last` 收到 `AppExit` 时强制 flush。
 - [ ] 提供清除/回归自然节律的策略，避免一次 admin override 永久卡死为不可取消状态。
 
+## 边界与不变量
+
+- 只持久化显式 admin override；缺行、清除后或旧存档没有该表时，启动必须保持 `WorldSeasonState::default()` 的自然时钟派生语义。
+- hydrate 必须先校验 snapshot 再写入 `WorldSeasonState`；坏 schema、非法 `effective_tick` / `tick_offset`、未知 phase anchor 不能 panic，也不能留下半恢复状态。
+- `/season set|advance` 后的最新人工相位必须覆盖旧 snapshot；`clear` 后必须删除或 tombstone 旧 snapshot，防止重启又恢复已取消的活动相位。
+- shutdown flush 是退出前的最后一致性边界；不允许只依赖节流 tick，否则正常关服仍会丢最近一次 admin override。
+- 旧存档兼容优先于“自动修正”：无法可靠迁移的历史记录应降级为缺行默认，而不是猜测一个可能错误的季节相位。
+
 ## 验收测试计划
 
 - [ ] `season_override_round_trips_through_sqlite`：设置 winter / 汐转后持久化，再 fresh app hydrate，断言 `effective_tick()` 和 `current.season` 与重启前一致。
 - [ ] `missing_season_override_keeps_default_startup_behavior`：空 DB 启动仍是 `WorldSeasonState::default()`，不引入自然季节墙钟流逝语义。
 - [ ] `season_advance_override_survives_shutdown_flush`：`/season advance` 后不等节流，发送 `AppExit`，fresh app hydrate 后相位不回滚。
 - [ ] `clear_override_returns_to_clock_derived_season`：若实现清除命令/状态，验证清除后重启不再恢复旧 override。
+- [ ] `invalid_season_override_snapshot_does_not_panic_or_partial_hydrate`：手工写入非法 tick / phase / schema version，启动应记录错误并保持默认季节态，不得 panic 或写入半恢复 Resource。
+- [ ] `legacy_save_without_season_override_migrates_cleanly`：旧 SQLite user_version / 缺表存档启动、迁移、关服均成功，且不会凭空生成人工 override。
+- [ ] `season_override_last_write_wins_across_restart`：连续执行 `set`、`advance`、再 `set`，重启后只恢复最后一次显式 admin 相位。
 - [ ] server 验证走 `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`。
 
 ## 反方审查记录
