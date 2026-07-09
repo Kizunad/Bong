@@ -1185,6 +1185,19 @@ mod tests {
             DimensionKind::default(),
             "缺少 CurrentDimension 时应使用默认维度"
         );
+
+        let dimension = CurrentDimension(DimensionKind::Tsy);
+        let populated = refund_ground_context(Some((&pos, Some(&dimension))));
+        assert_eq!(
+            populated.pos,
+            [12.0, 66.0, -9.0],
+            "Position 与 CurrentDimension 齐全时应原样使用玩家坐标作为退款落地点"
+        );
+        assert_eq!(
+            populated.dimension,
+            DimensionKind::Tsy,
+            "Position 与 CurrentDimension 齐全时应原样使用玩家所在维度"
+        );
     }
 
     #[test]
@@ -1428,13 +1441,24 @@ mod tests {
         app.update();
 
         let failed = current_failed_events(&app);
-        assert_eq!(failed.len(), 1);
-        assert_eq!(failed[0].caster, player);
+        assert_eq!(
+            failed.len(),
+            1,
+            "未知 recipe 的 cancel 应恰好发一条 CraftFailedEvent，实际={failed:?}"
+        );
+        assert_eq!(
+            failed[0].caster, player,
+            "CraftFailedEvent 应回填触发取消的 caster"
+        );
         assert_eq!(
             failed[0].recipe_id,
             RecipeId::new("craft.test.cancel_missing_recipe")
         );
-        assert_eq!(failed[0].reason, CraftFailureReason::InternalError);
+        assert_eq!(
+            failed[0].reason,
+            CraftFailureReason::InternalError,
+            "session.recipe_id 在 registry 缺失属 fail-safe 路径，应报 InternalError"
+        );
         assert_eq!(
             failed[0].material_returned, 0,
             "未知 recipe 无法计算退款 manifest，不能虚报返还数量"
