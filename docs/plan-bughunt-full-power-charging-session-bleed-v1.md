@@ -1,11 +1,57 @@
 # BugHunt：全力一击蓄力 HUD 断线跨会话残留
 
-> 分区：client-combat / r08
-> 结论：高置信真 bug。只记录 plan，不在本分支修复代码。
+> 一句话主题：全力一击蓄力 HUD 的 `FullPowerStateStore` charging 态缺少 disconnect session 边界，导致重连后 `ChargingProgressBarHud` 可能继续渲染上一会话蓄力条。
+> 分区：client-combat / r08。结论：高置信真 bug。只记录 plan，不在本分支修复代码。
 
 ## 一句话
 
 玩家在全力一击蓄力中断线时，客户端 `FullPowerStateStore` 的 charging 态不会被断线清理；下一次进入任意服务器前后，`ChargingProgressBarHud` 仍可能渲染旧会话的“蓄力中 X/Y 真元”进度条。
+
+## 阶段总览
+
+| 阶段 | 主题 | 状态 | 验收日期 | 可核验抓手 |
+|------|------|------|----------|------------|
+| P0 | 断线生命周期契约 | ⬜ | 待验收 | `FullPowerStateStore.clearOnDisconnect()`、`CombatHudBootstrap.resetOnDisconnect()` |
+| P1 | handler / HUD 清理边界测试 | ⬜ | 待验收 | `FullPowerStateHandlerTest`、`ChargingProgressBarHudTest`、disconnect reset 单测 |
+| P2 | 正常蓄力链路回归 | ⬜ | 待验收 | `active=true` 渲染、`active=false`/release/disconnect 三路清理 |
+| P3 | 手动重连验证 | ⬜ | 待验收 | 蓄力中断线重连后无旧“蓄力中 X/Y 真元”条 |
+| P4 | 低负载 client gate | ⬜ | 待验收 | `cd client && ./gradlew test build --max-workers=1` |
+| P5 | closeout / 归档证据 | ⬜ | 待验收 | `## Finish Evidence`、关键 commit、测试结果、已知限制 |
+
+## P0 — 断线生命周期契约
+
+- 在 `client/src/main/java/com/bong/client/combat/store/FullPowerStateStore.java` 增加生产用 `clearOnDisconnect()`，不得让生产路径复用 `resetForTests()` 命名。
+- 唯一断线挂点锁定为 `client/src/main/java/com/bong/client/combat/CombatHudBootstrap.java` 的 `ClientPlayConnectionEvents.DISCONNECT` 回调，即 `CombatHudBootstrap.resetOnDisconnect()`；它已经负责 combat HUD stores，`FullPowerStateStore` 归入这里清理。
+- `clearOnDisconnect()` 至少清掉 `charging`；若保留 `exhausted` / `lastRelease`，必须说明它们不会驱动跨会话 HUD，否则一并 reset 为 inactive / empty。
+- `client/src/main/java/com/bong/client/BongNetworkHandler.java` 的 `clearClientStateOnDisconnect()` 只作为“全局断线清理也未覆盖”的证据，不作为本修复的第二挂点，避免同一 store 生命周期分摊到两个入口。
+
+## P1 — handler / HUD 清理边界测试
+
+- 在 `client/src/test/java/com/bong/client/network/FullPowerStateHandlerTest.java` 覆盖 `active=false` 与 `full_power_release` 都会清掉 `FullPowerStateStore.charging()`。
+- 在 `client/src/test/java/com/bong/client/hud/ChargingProgressBarHudTest.java` 覆盖 active charging 后调用断线 reset，`ChargingProgressBarHud.buildCommands(...)` 必须为空。
+- 新增或扩展 disconnect reset 单测，直接驱动 `CombatHudBootstrap.resetOnDisconnect()`，断言 `FullPowerStateStore.charging().active()` 为 false。
+
+## P2 — 正常蓄力链路回归
+
+- `full_power_charging_state active=true` 仍能写入 `FullPowerStateStore.ChargingState`，HUD 仍显示进度条和“蓄力中 X/Y 真元”文本。
+- `full_power_charging_state active=false`、`full_power_release`、disconnect reset 三条路径都必须清掉 charging，且不互相依赖到达顺序。
+- `exhausted` 若继续依赖剩余 tick 显示，必须证明它不影响 `ChargingProgressBarHud`；若有跨会话风险，纳入 P0 同一 `clearOnDisconnect()`。
+
+## P3 — 手动重连验证
+
+- 同一 Minecraft 进程内，连接服务器 A，触发 `bao_mai.full_power_charge` 后在释放或打断前断线。
+- 连接服务器 B 或同服重连后，底部不得出现上一会话的“蓄力中 X/Y 真元”条。
+- 重新正常蓄力时，HUD 必须只按新连接收到的 `full_power_charging_state` 渲染。
+
+## P4 — 低负载 client gate
+
+- 按 client 栈约定使用 JDK 17。
+- 修复 PR 跑 `cd client && ./gradlew test build --max-workers=1`；若只改测试可先跑定向测试，但 closeout 前需有上述 gate 或明确阻塞原因。
+
+## P5 — closeout / 归档证据
+
+- 全部阶段完成后补 `## Finish Evidence`，列出关键 commit、测试命令、手动重连结果、未覆盖限制。
+- 归档时通过标准 plan 流程迁入 `docs/finished_plans/`，不在本 bughunt plan-only PR 中提前归档。
 
 ## 实际游玩体验影响
 
@@ -41,7 +87,7 @@
 
 ## 修复 TODO
 
-- [ ] 在生产断线清理路径中清理 `FullPowerStateStore`，优先接入 `CombatHudBootstrap.resetOnDisconnect()` 或 `BongNetworkHandler.clearClientStateOnDisconnect()` 的现有 store reset 队列。
+- [ ] 在 `CombatHudBootstrap.resetOnDisconnect()` 中调用 `FullPowerStateStore.clearOnDisconnect()`；`BongNetworkHandler.clearClientStateOnDisconnect()` 不作为本修复挂点。
 - [ ] 为 `FullPowerStateStore` 增加明确的 production clear API，避免继续依赖 `resetForTests()` 命名进入生产路径。
 - [ ] 补 client 单测：模拟 active charging payload 后调用断线清理，断言 `ChargingProgressBarHud.buildCommands(...)` 不再产生蓄力条。
 - [ ] 补 handler/HUD 边界测试：`active=false`、release payload、断线 reset 三条路径都必须清掉 charging；`exhausted` 若继续依赖剩余 tick 可单独保留，但不能影响 charging。
