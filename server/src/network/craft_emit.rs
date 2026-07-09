@@ -338,6 +338,7 @@ pub fn apply_craft_cancel_intents(
     player_contexts: Query<(&Position, Option<&CurrentDimension>)>,
     mut casters: Query<(&mut PlayerInventory, Option<&CraftSession>)>,
 ) {
+    let mut processed_cancel_casters = HashSet::new();
     for intent in cancel_intents.read() {
         let Ok((mut inventory, existing)) = casters.get_mut(intent.caster) else {
             continue;
@@ -349,6 +350,13 @@ pub fn apply_craft_cancel_intents(
             );
             continue;
         };
+        if !processed_cancel_casters.insert(intent.caster) {
+            tracing::debug!(
+                "[bong][craft] duplicate cancel intent on caster {:?} in same frame — noop",
+                intent.caster
+            );
+            continue;
+        }
         let Some(recipe) = registry.get(&session.recipe_id) else {
             tracing::warn!(
                 "[bong][craft] cancel intent recipe `{}` missing — emitting InternalError",
@@ -1185,6 +1193,19 @@ mod tests {
             DimensionKind::default(),
             "缺少 CurrentDimension 时应使用默认维度"
         );
+
+        let dimension = CurrentDimension(DimensionKind::Tsy);
+        let populated = refund_ground_context(Some((&pos, Some(&dimension))));
+        assert_eq!(
+            populated.pos,
+            [12.0, 66.0, -9.0],
+            "Position 与 CurrentDimension 齐全时应原样使用玩家坐标作为退款落地点"
+        );
+        assert_eq!(
+            populated.dimension,
+            DimensionKind::Tsy,
+            "Position 与 CurrentDimension 齐全时应原样使用玩家所在维度"
+        );
     }
 
     #[test]
@@ -1428,13 +1449,24 @@ mod tests {
         app.update();
 
         let failed = current_failed_events(&app);
-        assert_eq!(failed.len(), 1);
-        assert_eq!(failed[0].caster, player);
+        assert_eq!(
+            failed.len(),
+            1,
+            "未知 recipe 的 cancel 应恰好发一条 CraftFailedEvent，实际={failed:?}"
+        );
+        assert_eq!(
+            failed[0].caster, player,
+            "CraftFailedEvent 应回填触发取消的 caster"
+        );
         assert_eq!(
             failed[0].recipe_id,
             RecipeId::new("craft.test.cancel_missing_recipe")
         );
-        assert_eq!(failed[0].reason, CraftFailureReason::InternalError);
+        assert_eq!(
+            failed[0].reason,
+            CraftFailureReason::InternalError,
+            "session.recipe_id 在 registry 缺失属 fail-safe 路径，应报 InternalError"
+        );
         assert_eq!(
             failed[0].material_returned, 0,
             "未知 recipe 无法计算退款 manifest，不能虚报返还数量"
@@ -1509,6 +1541,69 @@ mod tests {
         assert_eq!(entry.item.stack_count, 1);
         assert_eq!(entry.world_pos, [11.0, 65.0, -2.0]);
         assert_eq!(entry.dimension, DimensionKind::Tsy);
+    }
+
+    #[test]
+    fn duplicate_cancel_intents_same_frame_refund_only_once() {
+        let recipe = make_recipe(
+            "craft.test.refund_cancel_duplicate",
+            &[("fan_tie", 2)],
+            vec![],
+        );
+        let mut app = craft_refund_test_app(recipe, &[("fan_tie", 64)], 457);
+        app.add_systems(Update, apply_craft_cancel_intents);
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let mut inventory = inv_with(&[("occupant", 1)]);
+        clamp_main_pack_to_grid(&mut inventory, 1, 1);
+        let player = app
+            .world_mut()
+            .spawn(client_bundle)
+            .insert(inventory)
+            .insert(Position::new([11.0, 65.0, -2.0]))
+            .insert(CurrentDimension(DimensionKind::Tsy))
+            .insert(CraftSession {
+                recipe_id: RecipeId::new("craft.test.refund_cancel_duplicate"),
+                started_at_tick: 400,
+                remaining_ticks: 20,
+                total_ticks: 40,
+                owner_player_id: canonical_player_id("Azure"),
+                qi_paid: 0.0,
+                quantity_total: 1,
+                completed_count: 0,
+            })
+            .id();
+
+        app.world_mut()
+            .send_event(CraftCancelIntent { caster: player });
+        app.world_mut()
+            .send_event(CraftCancelIntent { caster: player });
+        app.update();
+
+        let failed = current_failed_events(&app);
+        assert_eq!(
+            failed.len(),
+            1,
+            "同帧重复 cancel 只能产生一条失败事件，避免 deferred remove 前重复退款，实际={failed:?}"
+        );
+        assert_eq!(
+            failed[0].material_returned, 1,
+            "同帧重复 cancel 的 material_returned 只能统计第一次真实落地退款"
+        );
+        assert!(
+            app.world().get::<CraftSession>(player).is_none(),
+            "同帧重复 cancel 处理后 session 应结束"
+        );
+
+        let dropped = app.world().resource::<DroppedLootRegistry>();
+        assert_eq!(
+            dropped.entries.len(),
+            1,
+            "同帧重复 cancel 满包退款只能产生一个地面掉落，避免复制材料"
+        );
+        let entry = dropped.entries.values().next().unwrap();
+        assert_eq!(entry.item.template_id, "fan_tie");
+        assert_eq!(entry.item.stack_count, 1);
     }
 
     #[test]
