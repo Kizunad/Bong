@@ -240,6 +240,70 @@ def test_selection_window_includes_one_sample_gradient_halo() -> None:
         novice_poi_selection_tile_ids(plan, sample_stride=0)
 
 
+@pytest.mark.parametrize(
+    ("left_min_x", "right_min_x", "expected_x"),
+    (
+        (200, 210, 216.0),
+        (-220, -210, -204.0),
+    ),
+)
+def test_manifest_payload_keeps_one_sampling_phase_across_non_divisible_tile_seam(
+    left_min_x: int,
+    right_min_x: int,
+    expected_x: float,
+) -> None:
+    tile_size = 10
+    left = WorldTile(
+        tile_x=left_min_x // tile_size,
+        tile_z=0,
+        min_x=left_min_x,
+        max_x=left_min_x + tile_size - 1,
+        min_z=0,
+        max_z=tile_size - 1,
+    )
+    right = WorldTile(
+        tile_x=right_min_x // tile_size,
+        tile_z=0,
+        min_x=right_min_x,
+        max_x=right_min_x + tile_size - 1,
+        min_z=0,
+        max_z=tile_size - 1,
+    )
+
+    def _buffer(tile: WorldTile, *, height: float, qi: float) -> TileFieldBuffer:
+        buffer = TileFieldBuffer.create(
+            tile,
+            tile_size,
+            ("height", "water_level", "qi_density"),
+        )
+        buffer.layers["height"] = np.full(tile_size * tile_size, height)
+        buffer.layers["water_level"] = np.full(tile_size * tile_size, -1.0)
+        buffer.layers["qi_density"] = np.full(tile_size * tile_size, qi)
+        return buffer
+
+    fields = GeneratedFieldSet(
+        tile_size=tile_size,
+        surface_palette=SurfacePalette(),
+        layers=("height", "water_level", "qi_density"),
+        tiles=[
+            _buffer(left, height=70.0, qi=0.0),
+            _buffer(right, height=73.0, qi=0.5),
+        ],
+    )
+
+    payload = build_novice_poi_manifest_payload(
+        fields,
+        plan=_selection_plan(left, right),
+        sample_stride=8,
+    )
+    forge = next(entry for entry in payload if entry["kind"] == "novice_forge_station")
+
+    assert forge["pos_xyz"] == [expected_x, 74.0, 0.0], (
+        "adjacent non-divisible tiles must share one world-space sampling phase; "
+        "a right-tile sample cannot overwrite a left-tile grid coordinate"
+    )
+
+
 def test_manifest_payload_ignores_extra_fields_outside_fixed_selection_grid() -> None:
     tile_size = 32
     near = WorldTile(

@@ -492,30 +492,36 @@ def _field_set_to_selector_inputs(
         plan_tiles_by_id[tile_id] for tile_id in sorted(required_tile_ids)
     ]
 
-    def _last_sample(minimum: int, maximum: int) -> int:
-        return minimum + ((maximum - minimum) // sample_stride) * sample_stride
-
     # The grid depends only on the plan-derived required tiles.  A full-world
     # field set and a bounded field set therefore get identical origins, shapes,
-    # defaults and gradient edge semantics.  The one-cell default border keeps
-    # every real sample on the central-difference path; active neighbours needed
-    # by that gradient are already included by the required-tile halo above.
-    min_x = min(tile.min_x for tile in selection_tiles) - sample_stride
-    max_x = (
-        max(_last_sample(tile.min_x, tile.max_x) for tile in selection_tiles)
-        + sample_stride
-    )
-    min_z = min(tile.min_z for tile in selection_tiles) - sample_stride
-    max_z = (
-        max(_last_sample(tile.min_z, tile.max_z) for tile in selection_tiles)
-        + sample_stride
-    )
+    # defaults and gradient edge semantics.  Anchor one sampling phase at the
+    # selection bounds instead of restarting local=0 in every tile: otherwise
+    # adjacent tiles whose size is not divisible by sample_stride can collapse
+    # distinct world samples into the same grid cell.  The one-cell default
+    # border keeps every real sample on the central-difference path; active
+    # neighbours needed by that gradient are already included by the
+    # required-tile halo above.
+    sample_origin_x = min(tile.min_x for tile in selection_tiles)
+    sample_origin_z = min(tile.min_z for tile in selection_tiles)
+    last_sample_x = sample_origin_x + (
+        (max(tile.max_x for tile in selection_tiles) - sample_origin_x)
+        // sample_stride
+    ) * sample_stride
+    last_sample_z = sample_origin_z + (
+        (max(tile.max_z for tile in selection_tiles) - sample_origin_z)
+        // sample_stride
+    ) * sample_stride
+    min_x = sample_origin_x - sample_stride
+    max_x = last_sample_x + sample_stride
+    min_z = sample_origin_z - sample_stride
+    max_z = last_sample_z + sample_stride
     width = ((max_x - min_x) // sample_stride) + 1
     depth = ((max_z - min_z) // sample_stride) + 1
 
     qi = np.full((depth, width), np.nan, dtype=np.float64)
     height = np.full((depth, width), 70.0, dtype=np.float64)
     water_mask = np.ones((depth, width), dtype=bool)
+    populated = np.zeros((depth, width), dtype=bool)
 
     field_tiles_by_id = {
         tile.tile.tile_id: tile
@@ -529,17 +535,25 @@ def _field_set_to_selector_inputs(
         height_tile = tile.layers["height"].reshape((tile_size, tile_size))
         qi_tile = tile.layers["qi_density"].reshape((tile_size, tile_size))
         water_tile = tile.layers["water_level"].reshape((tile_size, tile_size))
-        for local_z in range(0, tile_size, sample_stride):
+        first_local_z = (sample_origin_z - tile.tile.min_z) % sample_stride
+        first_local_x = (sample_origin_x - tile.tile.min_x) % sample_stride
+        for local_z in range(first_local_z, tile_size, sample_stride):
             world_z = tile.tile.min_z + local_z
             row = (world_z - min_z) // sample_stride
-            for local_x in range(0, tile_size, sample_stride):
+            for local_x in range(first_local_x, tile_size, sample_stride):
                 world_x = tile.tile.min_x + local_x
                 col = (world_x - min_x) // sample_stride
+                if populated[row, col]:
+                    raise ValueError(
+                        "novice POI sampling grid collision at "
+                        f"({world_x}, {world_z}) while reading tile {tile_id}"
+                    )
                 h = float(height_tile[local_z, local_x])
                 water = float(water_tile[local_z, local_x])
                 qi[row, col] = float(qi_tile[local_z, local_x])
                 height[row, col] = h
                 water_mask[row, col] = water >= 0.0 and h < water + 0.75
+                populated[row, col] = True
 
     terrain = TerrainField.from_height(
         height,
