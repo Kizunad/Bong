@@ -87,17 +87,13 @@ export function renderHiddenMarker(name, payload) {
 export function parseHiddenMarkers(value, name = CIRCUIT_MARKER) {
   const bodies = Array.isArray(value) ? value : [value];
   const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const pattern = new RegExp(`<!--\\s*${escaped}\\s+(\\{[^]*?\\})\\s*-->`, "g");
+  const pattern = new RegExp(`<!--\\s*${escaped}\\s+([^]*?)-->`, "g");
   const parsed = [];
   for (const item of bodies) {
     const body = String(item?.body ?? item ?? "");
     for (const match of body.matchAll(pattern)) {
-      try {
-        const marker = JSON.parse(match[1]);
-        if (marker && typeof marker === "object") parsed.push(marker);
-      } catch {
-        // 普通评论或损坏 marker 不应阻断 review。
-      }
+      const marker = extractJSON(match[1]);
+      if (marker && typeof marker === "object" && !Array.isArray(marker)) parsed.push(marker);
     }
   }
   return parsed;
@@ -667,15 +663,19 @@ function spawnCodex(args, stdin, timeoutMs) {
     let stderr = "";
     let timedOut = false;
     let settled = false;
+    let killTimer = null;
+    let timer = null;
     const finish = (result) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      clearTimeout(killTimer);
       resolve(result);
     };
-    const timer = setTimeout(() => {
+    timer = setTimeout(() => {
       timedOut = true;
       child.kill("SIGTERM");
+      killTimer = setTimeout(() => child.kill("SIGKILL"), 5_000);
     }, timeoutMs);
 
     child.stdout.on("data", (chunk) => {

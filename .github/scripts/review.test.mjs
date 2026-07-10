@@ -39,12 +39,12 @@ const realRequestChanges = {
 };
 
 test("hidden marker: 可往返解析并忽略普通/损坏评论", () => {
-  const marker = { v: 1, kind: "infra_failure", at: "2026-07-10T00:00:00.000Z", reason: "429 -- upstream" };
+  const marker = { v: 1, kind: "infra_failure", at: "2026-07-10T00:00:00.000Z", reason: "429 } -- upstream" };
   const body = `说明\n${renderHiddenMarker("bong-review-circuit", marker)}`;
   const parsed = parseHiddenMarkers([{ body }, { body: "普通评论" }, { body: "<!-- bong-review-circuit {bad} -->" }]);
   assert.equal(parsed.length, 1);
   assert.equal(parsed[0].kind, "infra_failure");
-  assert.equal(parsed[0].reason, "429 —— upstream");
+  assert.equal(parsed[0].reason, "429 } —— upstream");
 });
 
 
