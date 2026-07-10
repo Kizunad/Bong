@@ -11207,4 +11207,345 @@ mod tests {
              baseline={baseline_severity} mismatched={mismatched_severity}"
         );
     }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // plan-race-system-v1 P0 review r2（BLOCKING-1 收口）—— PartBoxes 命中几何
+    // 生产集成测试：合成非人形构型（is_humanoid=false，hit_geometry=PartBoxes，
+    // 部位 id 均非 legacy 8 段字符串）走真实 resolve_attack_intents 全链路
+    // （AttackIntent → resolve_body_plan_for_target → raycast_humanoid 的
+    // PartBoxes 分支 → Wound 写入 → body_part_multipliers 伤害倍率），而非直接
+    // 单元调用几何函数——覆盖旋转（target Look yaw 90/180）、最近命中、无命中
+    // 三分支，外加"命中结果真的驱动了该 plan 的 BodyPartDef 伤害倍率"。
+    // 场景数值（攻方 feet=[-2,64,0]、目标 feet=[0,64,0]、瞄准点=目标胸高
+    // 回落 [0,64+1.2,0]、reach=FIST_REACH.max=2.0）已用独立 Python 复刻本文件
+    // 同款 slab/rotate 数学离线核验，见 commit 说明。
+    mod partboxes_production_integration_tests {
+        use super::*;
+        use crate::body_plan::race_registry::RaceEntry;
+        use crate::body_plan::types::{BodyPartDef, HitGeometry, PartBox, PartConsequence};
+        use crate::body_plan::BodyPartId;
+        use std::collections::HashMap;
+
+        /// 合成外星构型："左钳"/"右钳"/"尾鳍"三个局部盒沿目标局部系左/右/后分布，
+        /// 部位 id 全部是非 legacy 8 段字符串（不能反压 `combat::components::BodyPart`）。
+        /// `damage_mul` 刻意拉开 25 倍差距（5.0 vs 0.2），使"命中部位驱动伤害倍率"这条
+        /// 断言即便撞上 `damage.max(1.0)` 下限也仍能看出方向性差异。
+        fn alien_carrier_plan() -> crate::body_plan::BodyPlan {
+            crate::body_plan::BodyPlan {
+                id: "test_alien_carrier".into(),
+                display_name: "测试用外星载具构型".to_string(),
+                is_humanoid: false,
+                parts: vec![
+                    BodyPartDef {
+                        id: "left_pincer".into(),
+                        damage_mul: 5.0,
+                        contam_mul: 1.0,
+                        bleed_mul: 1.0,
+                        consequence: PartConsequence::Sensory,
+                    },
+                    BodyPartDef {
+                        id: "right_pincer".into(),
+                        damage_mul: 0.2,
+                        contam_mul: 1.0,
+                        bleed_mul: 1.0,
+                        consequence: PartConsequence::Core,
+                    },
+                    BodyPartDef {
+                        id: "tail_fin".into(),
+                        damage_mul: 1.0,
+                        contam_mul: 1.0,
+                        bleed_mul: 1.0,
+                        consequence: PartConsequence::Locomotion,
+                    },
+                ],
+                hit_geometry: HitGeometry::PartBoxes {
+                    boxes: vec![
+                        PartBox {
+                            part_id: "left_pincer".into(),
+                            offset: [-1.0, 1.2, 0.0],
+                            half_extents: [0.45, 0.45, 0.45],
+                            priority: 0,
+                        },
+                        PartBox {
+                            part_id: "right_pincer".into(),
+                            offset: [1.0, 1.2, 0.0],
+                            half_extents: [0.45, 0.45, 0.45],
+                            priority: 0,
+                        },
+                        PartBox {
+                            part_id: "tail_fin".into(),
+                            offset: [0.0, 1.2, -1.0],
+                            half_extents: [0.45, 0.45, 0.45],
+                            priority: 0,
+                        },
+                    ],
+                },
+                equip_slots: vec![],
+                meridian_profile: None,
+                mutation_slot_mapping: HashMap::new(),
+            }
+        }
+
+        /// 最近命中专用构型：两个局部盒同心轴线上前后排列（`far_shoulder` 更靠近攻方
+        /// 出发点、`near_edge` 更远——见下方 `near_edge`/`far_shoulder` 偏移量注释），
+        /// 用于证明 `PartBoxes` 求交在多个候选命中时选**距离更近**的那个。
+        fn alien_carrier_nearest_plan() -> crate::body_plan::BodyPlan {
+            crate::body_plan::BodyPlan {
+                id: "test_alien_carrier_nearest".into(),
+                display_name: "测试用最近命中构型".to_string(),
+                is_humanoid: false,
+                parts: vec![
+                    BodyPartDef {
+                        id: "far_shoulder".into(),
+                        damage_mul: 1.0,
+                        contam_mul: 1.0,
+                        bleed_mul: 1.0,
+                        consequence: PartConsequence::Core,
+                    },
+                    BodyPartDef {
+                        id: "near_edge".into(),
+                        damage_mul: 1.0,
+                        contam_mul: 1.0,
+                        bleed_mul: 1.0,
+                        consequence: PartConsequence::Core,
+                    },
+                ],
+                hit_geometry: HitGeometry::PartBoxes {
+                    boxes: vec![
+                        // 攻方沿局部 -X 方向逼近（见测试内攻方/目标坐标），此盒偏移量
+                        // 绝对值更小 → 局部系里离目标中心更近、但离攻方出发点更远，
+                        // 求交距离更大（1.12 blocks，独立 Python 核验）。
+                        PartBox {
+                            part_id: "far_shoulder".into(),
+                            offset: [-0.6, 1.2, 0.0],
+                            half_extents: [0.2, 0.4, 0.4],
+                            priority: 0,
+                        },
+                        // 偏移量绝对值更大 → 离攻方出发点更近，求交距离更小
+                        // （0.51 blocks）——必须是这个盒赢，而不是数组声明顺序在后的
+                        // `far_shoulder` 或先声明的顺序假象。
+                        PartBox {
+                            part_id: "near_edge".into(),
+                            offset: [-1.3, 1.2, 0.0],
+                            half_extents: [0.2, 0.4, 0.4],
+                            priority: 0,
+                        },
+                    ],
+                },
+                equip_slots: vec![],
+                meridian_profile: None,
+                mutation_slot_mapping: HashMap::new(),
+            }
+        }
+
+        /// races.json fixture：把 `HUMAN_RACE_ID`（`Cultivation::default().race` 恒指向
+        /// 此 id）改写指向传入的合成 `plan`——`spawn_player` 构造的目标实体因此在本测试
+        /// 范围内解析出该合成 `BodyPlan`，不需要额外的种族/组件改动。
+        fn alien_carrier_registries(
+            plan: crate::body_plan::BodyPlan,
+        ) -> (BodyPlanRegistry, RaceRegistry) {
+            let plan_id = plan.id.clone();
+            let body_plans =
+                BodyPlanRegistry::from_plans(vec![plan]).expect("alien carrier plan must validate");
+            let races = RaceRegistry::from_parts_for_test(
+                vec![RaceEntry {
+                    id: crate::body_plan::RaceId::new(crate::body_plan::HUMAN_RACE_ID),
+                    display_name: "外星人族测试替身".to_string(),
+                    body_plan_id: plan_id,
+                    beast_kinds: vec![],
+                }],
+                vec![],
+                &body_plans,
+            )
+            .expect("races fixture must validate");
+            (body_plans, races)
+        }
+
+        /// 攻方 feet=[-2,64,0]（无 Look，回落 chest_aim_direction）、目标 feet=[0,64,0]
+        /// （按 `target_look_yaw_degrees` 显式设置朝向）。`resolve_attack_intents` 用
+        /// `debug_command` 直接按用户名定向目标（跳过近战朝向锥搜索），但命中几何
+        /// 仍走真实 `raycast_humanoid` + `intent.reach`（`FIST_REACH.max=2.0`）。
+        fn setup_alien_carrier_app(
+            plan: crate::body_plan::BodyPlan,
+            target_look_yaw_degrees: f32,
+        ) -> (App, Entity) {
+            let (body_plans, races) = alien_carrier_registries(plan);
+            let mut app = App::new();
+            app.insert_resource(CombatClock { tick: 500 });
+            app.insert_resource(body_plans);
+            app.insert_resource(races);
+            app.add_event::<AttackIntent>();
+            app.add_event::<ApplyStatusEffectIntent>();
+            app.add_event::<CombatEvent>();
+            app.add_event::<DeathEvent>();
+            app.add_event::<crate::combat::weapon::WeaponBroken>();
+            app.add_event::<crate::combat::weapon::ShieldBroken>();
+            app.add_event::<crate::combat::weapon::ShieldBlockHit>();
+            app.add_event::<InventoryDurabilityChangedEvent>();
+            app.add_systems(Update, resolve_attack_intents);
+
+            let attacker = spawn_player(
+                &mut app,
+                "AlienAttacker",
+                [-2.0, 64.0, 0.0],
+                Wounds::default(),
+                Stamina::default(),
+            );
+            let target = spawn_player(
+                &mut app,
+                "AlienTarget",
+                [0.0, 64.0, 0.0],
+                Wounds::default(),
+                Stamina::default(),
+            );
+            app.world_mut().entity_mut(target).insert(Look {
+                yaw: target_look_yaw_degrees,
+                pitch: 0.0,
+            });
+
+            app.world_mut().send_event(AttackIntent {
+                attacker,
+                target: None,
+                issued_at_tick: 499,
+                reach: FIST_REACH,
+                qi_invest: 0.0,
+                wound_kind: WoundKind::Cut,
+                source: AttackSource::Melee,
+                debug_command: Some(crate::player::gameplay::CombatAction {
+                    target: "AlienTarget".to_string(),
+                    qi_invest: 0.0,
+                }),
+            });
+            app.update();
+
+            (app, target)
+        }
+
+        #[test]
+        fn partboxes_hit_at_target_yaw_zero_resolves_left_pincer_and_flows_into_damage() {
+            let (app, target) = setup_alien_carrier_app(alien_carrier_plan(), 0.0);
+            let wounds = app
+                .world()
+                .entity(target)
+                .get::<Wounds>()
+                .expect("target should keep wounds");
+            assert_eq!(
+                wounds.entries.len(),
+                1,
+                "PartBoxes 命中应写入恰好一条 Wound（生产入口未接线时这里会是 0 条）"
+            );
+            assert_eq!(
+                wounds.entries[0].location,
+                BodyPartId::new("left_pincer"),
+                "yaw=0 时攻方沿目标局部 -X 逼近应命中 left_pincer，实测 {:?}",
+                wounds.entries[0].location
+            );
+        }
+
+        #[test]
+        fn partboxes_hit_rotates_with_target_yaw_90_degrees() {
+            let (app, target) = setup_alien_carrier_app(alien_carrier_plan(), 90.0);
+            let wounds = app
+                .world()
+                .entity(target)
+                .get::<Wounds>()
+                .expect("target should keep wounds");
+            assert_eq!(wounds.entries.len(), 1);
+            assert_eq!(
+                wounds.entries[0].location,
+                BodyPartId::new("tail_fin"),
+                "目标转 yaw=90° 后，同一条世界系攻击射线应改命中 tail_fin（局部盒随目标\
+                 朝向旋转），实测 {:?}——若仍是 left_pincer 说明 target 朝向没有真正接入\
+                 PartBoxes 分派",
+                wounds.entries[0].location
+            );
+        }
+
+        #[test]
+        fn partboxes_hit_rotates_with_target_yaw_180_degrees() {
+            let (app, target) = setup_alien_carrier_app(alien_carrier_plan(), 180.0);
+            let wounds = app
+                .world()
+                .entity(target)
+                .get::<Wounds>()
+                .expect("target should keep wounds");
+            assert_eq!(wounds.entries.len(), 1);
+            assert_eq!(
+                wounds.entries[0].location,
+                BodyPartId::new("right_pincer"),
+                "目标转 yaw=180° 后应改命中 right_pincer（与 yaw=0 的 left_pincer 相对），\
+                 实测 {:?}",
+                wounds.entries[0].location
+            );
+        }
+
+        #[test]
+        fn partboxes_no_hit_when_target_yaw_rotates_all_boxes_off_the_ray() {
+            // yaw=45° 时三个盒相对本测试固定的攻击射线全部落空（独立 Python 核验）——
+            // 命中入口必须显式返回 None、不产生 Wound，而不是兜底命中任意部位。
+            let (app, target) = setup_alien_carrier_app(alien_carrier_plan(), 45.0);
+            let wounds = app
+                .world()
+                .entity(target)
+                .get::<Wounds>()
+                .expect("target should keep wounds");
+            assert!(
+                wounds.entries.is_empty(),
+                "yaw=45° 时三个 PartBox 均应落空，不应凭空产生 Wound，实测 {:?}",
+                wounds.entries
+            );
+        }
+
+        #[test]
+        fn partboxes_raycast_picks_nearest_of_two_candidate_boxes() {
+            let (app, target) = setup_alien_carrier_app(alien_carrier_nearest_plan(), 0.0);
+            let wounds = app
+                .world()
+                .entity(target)
+                .get::<Wounds>()
+                .expect("target should keep wounds");
+            assert_eq!(wounds.entries.len(), 1);
+            assert_eq!(
+                wounds.entries[0].location,
+                BodyPartId::new("near_edge"),
+                "两个候选盒都在攻击射线上时必须选距离更近的 near_edge，而非声明顺序\
+                 更靠前的 far_shoulder，实测 {:?}",
+                wounds.entries[0].location
+            );
+        }
+
+        #[test]
+        fn partboxes_hit_part_damage_multiplier_flows_from_target_plan_not_a_global_constant() {
+            // 同一套攻方/目标/reach/qi_invest 设置，唯一变量是"命中哪个部位"（靠
+            // target yaw 0° vs 180° 切换 left_pincer(damage_mul=5.0) / right_pincer
+            // (damage_mul=0.2)）——伤害应随命中部位的 BodyPartDef.damage_mul 变化，
+            // 而不是恒定倍率（25 倍差距刻意拉大，即便撞 `damage.max(1.0)` 下限也能
+            // 看出方向性：更高倍率部位的伤害必须严格更高）。
+            let (app_left, target_left) = setup_alien_carrier_app(alien_carrier_plan(), 0.0);
+            let severity_left = app_left
+                .world()
+                .entity(target_left)
+                .get::<Wounds>()
+                .expect("target should keep wounds")
+                .entries[0]
+                .severity;
+
+            let (app_right, target_right) = setup_alien_carrier_app(alien_carrier_plan(), 180.0);
+            let severity_right = app_right
+                .world()
+                .entity(target_right)
+                .get::<Wounds>()
+                .expect("target should keep wounds")
+                .entries[0]
+                .severity;
+
+            assert!(
+                severity_left > severity_right,
+                "left_pincer（damage_mul=5.0）命中的伤害应严格高于 right_pincer\
+                 （damage_mul=0.2）命中的伤害，实测 left={severity_left} right={severity_right}\
+                 —— 若两者相等说明命中部位没有真正驱动 body_part_multipliers 查询该\
+                 合成 plan 的 BodyPartDef 数据"
+            );
+        }
+    }
 }
