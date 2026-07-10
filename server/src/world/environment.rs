@@ -282,12 +282,6 @@ pub fn sync_zone_environment_effects(
     mut overlays: Option<valence::prelude::ResMut<EnvironmentOverlays>>,
     mut registry: valence::prelude::ResMut<ZoneEnvironmentRegistry>,
 ) {
-    if let Some(overlays) = overlays.as_mut() {
-        let expired = overlays.tick_expiry();
-        if !expired.is_empty() {
-            tracing::debug!("[bong][environment] fog banks expired: {expired:?}");
-        }
-    }
     let Some(zones) = zones else {
         return;
     };
@@ -311,6 +305,14 @@ pub fn sync_zone_environment_effects(
             effects.extend(overlays.fog_effects_for_zone(zone));
         }
         registry.replace_for_dimension(zone.name.clone(), zone.dimension.ident_str(), effects);
+    }
+    // TTL 在组装/广播**之后**递减：duration_ticks = 自首次组装起可观察的完整同步周期数。
+    // 先递减会让 duration=1 的雾堤在首次组装前就被摘除（review #1158 off-by-one）。
+    if let Some(overlays) = overlays.as_mut() {
+        let expired = overlays.tick_expiry();
+        if !expired.is_empty() {
+            tracing::debug!("[bong][environment] fog banks expired: {expired:?}");
+        }
     }
 }
 

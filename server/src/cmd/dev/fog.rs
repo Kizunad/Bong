@@ -246,7 +246,7 @@ mod tests {
     use super::*;
     use crate::cmd::dev::test_support::{run_update, spawn_test_client};
     use crate::world::environment::{EnvironmentEffect, ZoneEnvironmentRegistry};
-    use valence::prelude::{Events, IntoSystemConfigs};
+    use valence::prelude::{Entity, Events, IntoSystemConfigs, ViewDistance};
 
     fn setup_app() -> App {
         let mut app = App::new();
@@ -401,7 +401,35 @@ mod tests {
     }
 
     #[test]
-    fn fog_duration_expires_and_leaves_composition() {
+    fn fog_duration_one_is_observable_for_exactly_one_sync_cycle() {
+        let mut app = setup_app();
+        let center = fallback_zone_center(&app);
+        let player = spawn_test_client(&mut app, "Alice", center);
+        let zone_name = app.world().resource::<ZoneRegistry>().zones[0].name.clone();
+
+        send(&mut app, player, spawn_cmd(32.0, 0.95, Some(1)));
+        run_update(&mut app);
+        assert!(
+            registry_fog_densities(&app, &zone_name).contains(&0.95),
+            "duration=1 的雾堤必须完成至少一次可观察组装（TTL 在组装后递减，防 off-by-one 回归）"
+        );
+        assert!(
+            app.world()
+                .resource::<EnvironmentOverlays>()
+                .fog_banks()
+                .is_empty(),
+            "duration=1 在首次组装后的递减中到期摘除"
+        );
+
+        run_update(&mut app);
+        assert!(
+            !registry_fog_densities(&app, &zone_name).contains(&0.95),
+            "第 2 个周期组装不应再含该 FogVeil（移除经 diff 触发重播）"
+        );
+    }
+
+    #[test]
+    fn fog_duration_expires_after_exactly_n_sync_cycles() {
         let mut app = setup_app();
         let center = fallback_zone_center(&app);
         let player = spawn_test_client(&mut app, "Alice", center);
@@ -411,20 +439,24 @@ mod tests {
         run_update(&mut app);
         assert!(
             registry_fog_densities(&app, &zone_name).contains(&0.95),
-            "duration=2 的雾堤在第 1 tick 应仍在组装结果里"
+            "duration=2 第 1 个周期应在组装结果里"
         );
-
         run_update(&mut app);
+        assert!(
+            registry_fog_densities(&app, &zone_name).contains(&0.95),
+            "duration=2 第 2 个周期应仍在组装结果里（净存活 = N 个可观察周期）"
+        );
         assert!(
             app.world()
                 .resource::<EnvironmentOverlays>()
                 .fog_banks()
                 .is_empty(),
-            "第 2 tick 后雾堤应到期摘除"
+            "第 2 个周期组装后到期摘除"
         );
+        run_update(&mut app);
         assert!(
             !registry_fog_densities(&app, &zone_name).contains(&0.95),
-            "到期后 zone effects 不应再含该 FogVeil"
+            "第 3 个周期不应再含该 FogVeil"
         );
     }
 
@@ -492,5 +524,126 @@ mod tests {
             .resource::<EnvironmentOverlays>()
             .fog_banks()
             .is_empty());
+    }
+
+    // ---- 与 weather_vision_obscure_system 的运行接线（review #1158 要求锁定）----
+
+    const TEST_VIEW_DISTANCE: u8 = 10;
+
+    fn setup_app_with_vision() -> App {
+        let mut app = App::new();
+        app.insert_resource(ZoneRegistry::fallback());
+        app.insert_resource(EnvironmentOverlays::default());
+        app.insert_resource(ZoneEnvironmentRegistry::new());
+        app.add_event::<CommandResultEvent<FogCmd>>();
+        app.add_systems(
+            Update,
+            (
+                handle_fog,
+                crate::world::weather_to_environment::weather_environment_sync_system,
+                crate::world::weather_physics::vision::weather_vision_obscure_system,
+            )
+                .chain(),
+        );
+        app
+    }
+
+    fn spawn_client_with_vision(app: &mut App, name: &str, position: [f64; 3]) -> Entity {
+        let player = spawn_test_client(app, name, position);
+        app.world_mut()
+            .get_mut::<ViewDistance>(player)
+            .expect("mock client 应携带 ViewDistance 组件")
+            .set(TEST_VIEW_DISTANCE);
+        player
+    }
+
+    fn view_distance(app: &App, player: Entity) -> u8 {
+        app.world().get::<ViewDistance>(player).unwrap().get()
+    }
+
+    #[test]
+    fn fog_bank_at_threshold_compresses_view_distance_zone_scoped() {
+        let mut app = setup_app_with_vision();
+        let center = fallback_zone_center(&app);
+        let executor = spawn_client_with_vision(&mut app, "Alice", center);
+        // 同 zone 另一角、远在雾堤 AABB 之外的玩家——遮蔽是 zone-scoped 契约，同样被压
+        let (zone_min, _) = app.world().resource::<ZoneRegistry>().zones[0].bounds;
+        let bystander = spawn_client_with_vision(
+            &mut app,
+            "Bob",
+            [zone_min.x + 1.0, center[1], zone_min.z + 1.0],
+        );
+
+        send(&mut app, executor, spawn_cmd(8.0, 0.85, None));
+        run_update(&mut app);
+
+        assert!(
+            view_distance(&app, executor) < TEST_VIEW_DISTANCE,
+            "density 恰为 0.85（OPAQUE_FOG_DENSITY_THRESHOLD，>= 判定）应触发压缩，实际 vd={}",
+            view_distance(&app, executor)
+        );
+        assert!(
+            view_distance(&app, bystander) < TEST_VIEW_DISTANCE,
+            "遮蔽按 zone-scoped 判定：同 zone 但在雾堤 AABB 外的玩家也应被压，实际 vd={}",
+            view_distance(&app, bystander)
+        );
+    }
+
+    #[test]
+    fn fog_bank_below_threshold_does_not_compress_view_distance() {
+        let mut app = setup_app_with_vision();
+        let center = fallback_zone_center(&app);
+        let player = spawn_client_with_vision(&mut app, "Alice", center);
+
+        send(&mut app, player, spawn_cmd(8.0, 0.84, None));
+        run_update(&mut app);
+
+        assert_eq!(
+            view_distance(&app, player),
+            TEST_VIEW_DISTANCE,
+            "density 0.84 < 阈值 0.85，不应触发 ViewDistance 压缩"
+        );
+    }
+
+    #[test]
+    fn fog_clear_all_restores_view_distance() {
+        let mut app = setup_app_with_vision();
+        let center = fallback_zone_center(&app);
+        let player = spawn_client_with_vision(&mut app, "Alice", center);
+
+        send(&mut app, player, spawn_cmd(8.0, 0.95, None));
+        run_update(&mut app);
+        assert!(view_distance(&app, player) < TEST_VIEW_DISTANCE);
+
+        send(&mut app, player, FogCmd::ClearAll);
+        run_update(&mut app);
+        run_update(&mut app);
+        assert_eq!(
+            view_distance(&app, player),
+            TEST_VIEW_DISTANCE,
+            "clear_all 后（组装移除 FogVeil → 下一周期）ViewDistance 应恢复原值"
+        );
+    }
+
+    #[test]
+    fn fog_ttl_expiry_restores_view_distance() {
+        let mut app = setup_app_with_vision();
+        let center = fallback_zone_center(&app);
+        let player = spawn_client_with_vision(&mut app, "Alice", center);
+
+        send(&mut app, player, spawn_cmd(8.0, 1.0, Some(2)));
+        run_update(&mut app);
+        assert!(
+            view_distance(&app, player) < TEST_VIEW_DISTANCE,
+            "存活期内应被压缩"
+        );
+
+        run_update(&mut app);
+        run_update(&mut app);
+        assert_eq!(
+            view_distance(&app, player),
+            TEST_VIEW_DISTANCE,
+            "TTL 到期（2 周期）+ 移除重组装后 ViewDistance 应恢复原值"
+        );
     }
 }
