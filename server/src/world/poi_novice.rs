@@ -803,12 +803,12 @@ mod tests {
       "biome_palette": ["plains"],
       "tiles": [],
       "pois": [
-        {"zone":"spawn","kind":"novice_forge_station","name":"破败炼器台","pos_xyz":[224.0,71.0,-240.0],"tags":["poi_novice","poi_type:forge_station","selection:strict_radius_1500"]},
-        {"zone":"spawn","kind":"novice_alchemy_furnace","name":"凡铁丹炉","pos_xyz":[0.0,72.0,-200.0],"tags":["poi_novice","poi_type:alchemy_furnace","selection:strict_radius_1500"]},
-        {"zone":"spawn","kind":"novice_rogue_village","name":"散修聚居点","pos_xyz":[304.0,71.0,208.0],"tags":["poi_novice","poi_type:rogue_village","selection:strict_radius_1500"]},
-        {"zone":"spawn","kind":"novice_mutant_nest","name":"异变兽巢","pos_xyz":[800.0,70.0,800.0],"tags":["poi_novice","poi_type:mutant_nest","selection:relaxed_radius_2000"]},
-        {"zone":"spawn","kind":"novice_scroll_hidden","name":"残卷藏匿点","pos_xyz":[176.0,72.0,-96.0],"tags":["poi_novice","poi_type:scroll_hidden","selection:strict_radius_1500"]},
-        {"zone":"spawn","kind":"novice_spirit_herb_valley","name":"灵草谷","pos_xyz":[-300.0,70.0,600.0],"tags":["poi_novice","poi_type:spirit_herb_valley","selection:relaxed_radius_2000_qi_margin_0_1"]}
+        {"zone":"spawn","kind":"novice_forge_station","name":"破败炼器台","pos_xyz":[224.0,71.0,-240.0],"tags":["poi_novice","poi_type:forge_station","selection:strict_radius_1500","fixture:forge"],"unlock":"forge_unlock","qi_affinity":0.11,"danger_bias":1},
+        {"zone":"spawn","kind":"novice_alchemy_furnace","name":"凡铁丹炉","pos_xyz":[0.0,72.0,-200.0],"tags":["poi_novice","poi_type:alchemy_furnace","selection:strict_radius_1500","fixture:alchemy"],"unlock":"alchemy_unlock","qi_affinity":0.22,"danger_bias":2},
+        {"zone":"spawn","kind":"novice_rogue_village","name":"散修聚居点","pos_xyz":[304.0,71.0,208.0],"tags":["poi_novice","poi_type:rogue_village","selection:strict_radius_1500","fixture:village"],"unlock":"village_unlock","qi_affinity":0.33,"danger_bias":3},
+        {"zone":"spawn","kind":"novice_mutant_nest","name":"异变兽巢","pos_xyz":[800.0,70.0,800.0],"tags":["poi_novice","poi_type:mutant_nest","selection:relaxed_radius_2000","fixture:nest"],"unlock":"nest_unlock","qi_affinity":0.44,"danger_bias":4},
+        {"zone":"spawn","kind":"novice_scroll_hidden","name":"残卷藏匿点","pos_xyz":[176.0,72.0,-96.0],"tags":["poi_novice","poi_type:scroll_hidden","selection:strict_radius_1500","fixture:scroll"],"unlock":"scroll_unlock","qi_affinity":0.55,"danger_bias":5},
+        {"zone":"spawn","kind":"novice_spirit_herb_valley","name":"灵草谷","pos_xyz":[-300.0,70.0,600.0],"tags":["poi_novice","poi_type:spirit_herb_valley","selection:relaxed_radius_2000_qi_margin_0_1","fixture:herb"],"unlock":"herb_unlock","qi_affinity":0.66,"danger_bias":6}
       ]
     }"#;
 
@@ -834,63 +834,119 @@ mod tests {
         app.add_systems(Startup, capture_spawned_events.after(PoiNoviceLoader::load));
         app.update();
 
-        let expected = [
-            (
-                PoiNoviceKind::ForgeStation,
-                "spawn:forge_station:x224_y71_z-240",
-                [224.0, 71.0, -240.0],
-                "strict_radius_1500",
-                1500.0_f64,
-            ),
-            (
-                PoiNoviceKind::AlchemyFurnace,
-                "spawn:alchemy_furnace:x0_y72_z-200",
-                [0.0, 72.0, -200.0],
-                "strict_radius_1500",
-                1500.0,
-            ),
-            (
-                PoiNoviceKind::RogueVillage,
-                "spawn:rogue_village:x304_y71_z208",
-                [304.0, 71.0, 208.0],
-                "strict_radius_1500",
-                1500.0,
-            ),
-            (
-                PoiNoviceKind::MutantNest,
-                "spawn:mutant_nest:x800_y70_z800",
-                [800.0, 70.0, 800.0],
-                "relaxed_radius_2000",
-                2000.0,
-            ),
-            (
-                PoiNoviceKind::ScrollHidden,
-                "spawn:scroll_hidden:x176_y72_z-96",
-                [176.0, 72.0, -96.0],
-                "strict_radius_1500",
-                1500.0,
-            ),
-            (
-                PoiNoviceKind::SpiritHerbValley,
-                "spawn:spirit_herb_valley:x-300_y70_z600",
-                [-300.0, 70.0, 600.0],
-                "relaxed_radius_2000_qi_margin_0_1",
-                2000.0,
-            ),
+        let mut expected = vec![
+            PoiNoviceSite {
+                id: "spawn:forge_station:x224_y71_z-240".to_string(),
+                kind: PoiNoviceKind::ForgeStation,
+                zone: "spawn".to_string(),
+                name: "破败炼器台".to_string(),
+                pos_xyz: [224.0, 71.0, -240.0],
+                selection_strategy: "strict_radius_1500".to_string(),
+                qi_affinity: 0.11,
+                danger_bias: 1,
+                tags: vec![
+                    "poi_novice".to_string(),
+                    "poi_type:forge_station".to_string(),
+                    "selection:strict_radius_1500".to_string(),
+                    "fixture:forge".to_string(),
+                ],
+            },
+            PoiNoviceSite {
+                id: "spawn:alchemy_furnace:x0_y72_z-200".to_string(),
+                kind: PoiNoviceKind::AlchemyFurnace,
+                zone: "spawn".to_string(),
+                name: "凡铁丹炉".to_string(),
+                pos_xyz: [0.0, 72.0, -200.0],
+                selection_strategy: "strict_radius_1500".to_string(),
+                qi_affinity: 0.22,
+                danger_bias: 2,
+                tags: vec![
+                    "poi_novice".to_string(),
+                    "poi_type:alchemy_furnace".to_string(),
+                    "selection:strict_radius_1500".to_string(),
+                    "fixture:alchemy".to_string(),
+                ],
+            },
+            PoiNoviceSite {
+                id: "spawn:rogue_village:x304_y71_z208".to_string(),
+                kind: PoiNoviceKind::RogueVillage,
+                zone: "spawn".to_string(),
+                name: "散修聚居点".to_string(),
+                pos_xyz: [304.0, 71.0, 208.0],
+                selection_strategy: "strict_radius_1500".to_string(),
+                qi_affinity: 0.33,
+                danger_bias: 3,
+                tags: vec![
+                    "poi_novice".to_string(),
+                    "poi_type:rogue_village".to_string(),
+                    "selection:strict_radius_1500".to_string(),
+                    "fixture:village".to_string(),
+                ],
+            },
+            PoiNoviceSite {
+                id: "spawn:mutant_nest:x800_y70_z800".to_string(),
+                kind: PoiNoviceKind::MutantNest,
+                zone: "spawn".to_string(),
+                name: "异变兽巢".to_string(),
+                pos_xyz: [800.0, 70.0, 800.0],
+                selection_strategy: "relaxed_radius_2000".to_string(),
+                qi_affinity: 0.44,
+                danger_bias: 4,
+                tags: vec![
+                    "poi_novice".to_string(),
+                    "poi_type:mutant_nest".to_string(),
+                    "selection:relaxed_radius_2000".to_string(),
+                    "fixture:nest".to_string(),
+                ],
+            },
+            PoiNoviceSite {
+                id: "spawn:scroll_hidden:x176_y72_z-96".to_string(),
+                kind: PoiNoviceKind::ScrollHidden,
+                zone: "spawn".to_string(),
+                name: "残卷藏匿点".to_string(),
+                pos_xyz: [176.0, 72.0, -96.0],
+                selection_strategy: "strict_radius_1500".to_string(),
+                qi_affinity: 0.55,
+                danger_bias: 5,
+                tags: vec![
+                    "poi_novice".to_string(),
+                    "poi_type:scroll_hidden".to_string(),
+                    "selection:strict_radius_1500".to_string(),
+                    "fixture:scroll".to_string(),
+                ],
+            },
+            PoiNoviceSite {
+                id: "spawn:spirit_herb_valley:x-300_y70_z600".to_string(),
+                kind: PoiNoviceKind::SpiritHerbValley,
+                zone: "spawn".to_string(),
+                name: "灵草谷".to_string(),
+                pos_xyz: [-300.0, 70.0, 600.0],
+                selection_strategy: "relaxed_radius_2000_qi_margin_0_1".to_string(),
+                qi_affinity: 0.66,
+                danger_bias: 6,
+                tags: vec![
+                    "poi_novice".to_string(),
+                    "poi_type:spirit_herb_valley".to_string(),
+                    "selection:relaxed_radius_2000_qi_margin_0_1".to_string(),
+                    "fixture:herb".to_string(),
+                ],
+            },
         ];
         let registry = app.world().resource::<PoiNoviceRegistry>();
         assert_eq!(registry.sites().len(), expected.len());
-        for (kind, id, pos_xyz, strategy, max_radius) in expected {
-            let site = registry.by_kind(kind).next().expect("expected novice kind");
-            assert_eq!(site.id, id);
-            assert_eq!(site.pos_xyz, pos_xyz);
-            assert_eq!(site.selection_strategy, strategy);
-            assert!(
-                site.tags
-                    .iter()
-                    .any(|tag| tag == &format!("selection:{strategy}")),
-                "runtime site must preserve the exact manifest selection tag"
-            );
+        let mut registry_sites = registry.sites().to_vec();
+        registry_sites.sort_by(|left, right| left.id.cmp(&right.id));
+        expected.sort_by(|left, right| left.id.cmp(&right.id));
+        assert_eq!(
+            registry_sites, expected,
+            "production registry must match every independently expected manifest field"
+        );
+        for site in &registry_sites {
+            let max_radius = if site.selection_strategy == "strict_radius_1500" {
+                1500.0_f64
+            } else {
+                2000.0_f64
+            };
             let distance_sq =
                 f64::from(site.pos_xyz[0]).powi(2) + f64::from(site.pos_xyz[2]).powi(2);
             assert!(distance_sq >= 200.0_f64.powi(2));
@@ -899,13 +955,11 @@ mod tests {
 
         let captured = app.world().resource::<CapturedPoiSpawned>();
         assert_eq!(captured.0.len(), expected.len());
-        let mut registry_sites = registry.sites().to_vec();
-        registry_sites.sort_by(|left, right| left.id.cmp(&right.id));
         let mut event_sites = captured.0.clone();
         event_sites.sort_by(|left, right| left.id.cmp(&right.id));
         assert_eq!(
-            event_sites, registry_sites,
-            "PoiSpawned payloads must match the production registry entries field-for-field"
+            event_sites, expected,
+            "PoiSpawned payloads must match every independently expected manifest field"
         );
     }
 
