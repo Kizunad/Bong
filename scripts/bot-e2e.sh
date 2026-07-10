@@ -51,6 +51,38 @@ except OSError:
 EOF
 }
 
+# 端口可连还不够：cargo 编译窗口内可能有旧 server 抢先监听同一端口。只有 listener
+# PID 属于本次 `cargo run` 进程树，Bot 才能确信连到当前 checkout 的二进制。
+pid_belongs_to_tree() {
+  local candidate="$1"
+  local root_pid="$2"
+  while [[ "$candidate" =~ ^[0-9]+$ ]] && [ "$candidate" -gt 1 ]; do
+    [ "$candidate" = "$root_pid" ] && return 0
+    candidate="$(
+      awk '/^PPid:/ { print $2; exit }' "/proc/$candidate/status" 2>/dev/null || true
+    )"
+  done
+  return 1
+}
+
+port_owned_by_tree() {
+  local root_pid="$1"
+  local port="$2"
+  local listener_pid
+  while IFS= read -r listener_pid; do
+    if [ -n "$listener_pid" ] && pid_belongs_to_tree "$listener_pid" "$root_pid"; then
+      return 0
+    fi
+  done < <(
+    ss -H -ltnp "sport = :$port" 2>/dev/null \
+      | grep -oE 'pid=[0-9]+' \
+      | cut -d= -f2 \
+      | sort -u \
+      || true
+  )
+  return 1
+}
+
 # 递归杀整棵进程树（与 e2e-redis.sh 同模式）：先子孙后父防 reparent 孤儿，
 # SIGTERM 后短等 + SIGKILL 兜底，保证 25565 真正释放。
 kill_tree() {
@@ -137,13 +169,22 @@ else
       tail -n 40 "$SERVER_LOG" >&2
       exit 1
     fi
-    if grep -Fq "$BOOT_ANCHOR" "$SERVER_LOG" && port_open "$HOST" "$PORT"; then
+    if grep -Fq "failed to start TCP listener" "$SERVER_LOG"; then
+      echo "[bot-e2e] 当前 server TCP listener 启动失败，拒绝连接同端口的外部进程：" >&2
+      tail -n 40 "$SERVER_LOG" >&2
+      exit 1
+    fi
+    if grep -Fq "$BOOT_ANCHOR" "$SERVER_LOG" \
+      && port_open "$HOST" "$PORT" \
+      && port_owned_by_tree "$SERVER_PID" "$PORT"; then
       break
     fi
     sleep 2
   done
-  if ! grep -Fq "$BOOT_ANCHOR" "$SERVER_LOG" || ! port_open "$HOST" "$PORT"; then
-    echo "[bot-e2e] 600s 内未同时满足「日志锚点 $BOOT_ANCHOR + 端口 $PORT 可连」，log 尾部：" >&2
+  if ! grep -Fq "$BOOT_ANCHOR" "$SERVER_LOG" \
+    || ! port_open "$HOST" "$PORT" \
+    || ! port_owned_by_tree "$SERVER_PID" "$PORT"; then
+    echo "[bot-e2e] 600s 内未同时满足「日志锚点 $BOOT_ANCHOR + 当前 server 进程树持有端口 $PORT」，log 尾部：" >&2
     if grep -q "Blocking waiting for file lock" "$SERVER_LOG"; then
       echo "[bot-e2e] 提示：cargo 卡在 build directory 锁——共享 CARGO_TARGET_DIR 正被其他 cargo 进程占用" >&2
     fi
