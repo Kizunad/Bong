@@ -24,10 +24,12 @@ class AgentUiCloseFeedbackTest {
     }
 
     @Test
-    void messageForReason_emptyReasonMeansSilentReplacement() {
+    void messageForReason_onlyNullOrEmptyReasonMeansSilentReplacement() {
         assertNull(AgentUiCloseFeedback.messageForReason(null));
         assertNull(AgentUiCloseFeedback.messageForReason(""));
-        assertNull(AgentUiCloseFeedback.messageForReason("   "));
+        assertEquals("天道面板已失效，请重新尝试",
+            AgentUiCloseFeedback.messageForReason("   "),
+            "纯空白 reason 是非空未知值，应走可见兜底而非误判为 Replaced");
     }
 
     @Test

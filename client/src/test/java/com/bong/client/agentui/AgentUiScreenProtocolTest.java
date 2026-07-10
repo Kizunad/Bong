@@ -276,17 +276,20 @@ public class AgentUiScreenProtocolTest {
         String xml = "<owo-ui><components><flow-layout/></components></owo-ui>";
         AgentUiScreen screen = AgentUiScreen.create("req-expiring-pending", xml, 600, 0L);
         AgentUiStore.setActive(screen);
-        AgentUiStore.markAwaitingErrorCloseAt(screen, 1_000L);
+        long startedAtNanos = 1_000_000_000L;
+        AgentUiStore.markAwaitingErrorCloseAtNanos(screen, startedAtNanos);
         screen.receiveCloseSignal();
-        long expiryBoundary = 1_000L + AgentUiStore.PENDING_ERROR_CLOSE_TTL_MILLIS;
+        long expiryBoundaryNanos = startedAtNanos + AgentUiStore.PENDING_ERROR_CLOSE_TTL_NANOS;
+        long feedbackNowMillis = 11_000L;
 
-        AgentUiStore.receiveCloseAt(
+        AgentUiStore.receiveCloseAtNanos(
             "req-expiring-pending",
             "session_expired",
-            expiryBoundary
+            expiryBoundaryNanos,
+            feedbackNowMillis
         );
 
-        assertTrue(BongToast.current(expiryBoundary).isEmpty(),
+        assertTrue(BongToast.current(feedbackNowMillis).isEmpty(),
             "pending error close 在 TTL 精确边界应立即过期，边界时刻不得显示迟到 reason");
     }
 
@@ -295,15 +298,40 @@ public class AgentUiScreenProtocolTest {
         String xml = "<owo-ui><components><flow-layout/></components></owo-ui>";
         AgentUiScreen screen = AgentUiScreen.create("req-fresh-pending", xml, 600, 0L);
         AgentUiStore.setActive(screen);
-        AgentUiStore.markAwaitingErrorCloseAt(screen, 1_000L);
+        long startedAtNanos = 1_000_000_000L;
+        AgentUiStore.markAwaitingErrorCloseAtNanos(screen, startedAtNanos);
         screen.receiveCloseSignal();
 
-        long beforeExpiry = 1_000L + AgentUiStore.PENDING_ERROR_CLOSE_TTL_MILLIS - 1L;
-        AgentUiStore.receiveCloseAt("req-fresh-pending", "session_expired", beforeExpiry);
+        long beforeExpiryNanos = startedAtNanos
+            + AgentUiStore.PENDING_ERROR_CLOSE_TTL_NANOS - 1L;
+        long feedbackNowMillis = 10_999L;
+        AgentUiStore.receiveCloseAtNanos(
+            "req-fresh-pending", "session_expired", beforeExpiryNanos, feedbackNowMillis);
 
         assertEquals("这次天道面板已过期，请重新尝试",
-            BongToast.current(beforeExpiry).text().getString(),
+            BongToast.current(feedbackNowMillis).text().getString(),
             "pending error close 在 TTL 内且 request_id 匹配时应显示提示");
+    }
+
+    @Test
+    void agentUiStore_pendingErrorClose_clockRollbackExpiresFailClosed() {
+        String xml = "<owo-ui><components><flow-layout/></components></owo-ui>";
+        AgentUiScreen screen = AgentUiScreen.create("req-clock-rollback", xml, 600, 0L);
+        AgentUiStore.setActive(screen);
+        long startedAtNanos = 5_000_000_000L;
+        AgentUiStore.markAwaitingErrorCloseAtNanos(screen, startedAtNanos);
+        screen.receiveCloseSignal();
+
+        AgentUiStore.receiveCloseAtNanos(
+            "req-clock-rollback", "session_expired", startedAtNanos - 1L, 20_000L);
+
+        assertTrue(BongToast.current(20_000L).isEmpty(),
+            "单调时钟若异常回拨，pending 应 fail-closed 过期，不得延长窗口或显示提示");
+
+        AgentUiStore.receiveCloseAtNanos(
+            "req-clock-rollback", "session_expired", startedAtNanos + 1L, 20_001L);
+        assertTrue(BongToast.current(20_001L).isEmpty(),
+            "回拨已清除 pending；后续时钟恢复也不得让旧 request 重新有效");
     }
 
     // ─── 关闭语义四条状态转换 ────────────────────────────────────────────────
