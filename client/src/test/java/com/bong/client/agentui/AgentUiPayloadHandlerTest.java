@@ -2,8 +2,10 @@ package com.bong.client.agentui;
 
 import com.bong.client.hud.BongToast;
 import com.bong.client.network.AgentUiPayloadHandler;
+import com.bong.client.network.ClientRequestSender;
 import com.bong.client.network.ServerDataRouter;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -25,8 +27,14 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 public class AgentUiPayloadHandlerTest {
 
+    @BeforeEach
+    void setUp() {
+        ClientRequestSender.setBackendForTests((channel, payload) -> {});
+    }
+
     @AfterEach
     void tearDown() {
+        ClientRequestSender.resetBackendForTests();
         AgentUiStore.clear();
         BongToast.resetForTests();
     }
@@ -195,6 +203,16 @@ public class AgentUiPayloadHandlerTest {
 
     @Test
     void handleRawClose_reasonWithNoActiveScreen_stillShowsFeedback() {
+        AgentUiScreen screen = AgentUiScreen.create(
+            "req-after-local-close",
+            "<owo-ui><components><flow-layout/></components></owo-ui>",
+            600, 0L
+        );
+        AgentUiStore.setActive(screen);
+        screen.simulateButtonClickForTests("invalid-button");
+        assertNull(AgentUiStore.getActive(),
+            "按钮点击应先本地关闭 screen，为迟到 server close 构造真实前置状态");
+
         AgentUiPayloadHandler.handleRawClose(
             "{\"request_id\":\"req-after-local-close\",\"reason\":\"session_expired\"}"
         );
@@ -204,6 +222,81 @@ public class AgentUiPayloadHandlerTest {
         assertEquals("这次天道面板已过期，请重新尝试",
             BongToast.current(System.currentTimeMillis()).text().getString(),
             "按钮点击已先本地关屏时，迟到的错误 close 仍应给玩家反馈");
+    }
+
+    @Test
+    void handleRawClose_unknownRequestWithNoActiveScreen_isIgnored() {
+        AgentUiScreen screen = AgentUiScreen.create(
+            "req-pending",
+            "<owo-ui><components><flow-layout/></components></owo-ui>",
+            600, 0L
+        );
+        AgentUiStore.setActive(screen);
+        screen.simulateButtonClickForTests("confirm");
+
+        AgentUiPayloadHandler.handleRawClose(
+            "{\"request_id\":\"req-unrelated\",\"reason\":\"session_expired\"}"
+        );
+
+        assertTrue(BongToast.current(System.currentTimeMillis()).isEmpty(),
+            "无 active screen 时，非 pending request_id 的错误 close 必须忽略，不能误弹旧提示");
+
+        AgentUiPayloadHandler.handleRawClose(
+            "{\"request_id\":\"req-pending\",\"reason\":\"session_expired\"}"
+        );
+        assertEquals("这次天道面板已过期，请重新尝试",
+            BongToast.current(System.currentTimeMillis()).text().getString(),
+            "不匹配 close 不应消费 pending request，后续匹配 close 仍须显示提示");
+    }
+
+    @Test
+    void handleRawClose_duplicateMatchingReason_isConsumedOnlyOnce() {
+        AgentUiScreen screen = AgentUiScreen.create(
+            "req-once",
+            "<owo-ui><components><flow-layout/></components></owo-ui>",
+            600, 0L
+        );
+        AgentUiStore.setActive(screen);
+        screen.simulateButtonClickForTests("confirm");
+
+        String close = "{\"request_id\":\"req-once\",\"reason\":\"invalid_button_id\"}";
+        AgentUiPayloadHandler.handleRawClose(close);
+        assertEquals("天道拒绝了这次操作",
+            BongToast.current(System.currentTimeMillis()).text().getString(),
+            "首次匹配 close 应消费 pending request 并显示提示");
+
+        BongToast.resetForTests();
+        AgentUiPayloadHandler.handleRawClose(close);
+        assertTrue(BongToast.current(System.currentTimeMillis()).isEmpty(),
+            "pending request 已被首次 close 原子消费，重复 close 不应再次提示");
+    }
+
+    @Test
+    void handleRawClose_oldRequestAfterNewScreenLifecycleEnded_isIgnored() {
+        AgentUiScreen oldScreen = AgentUiScreen.create(
+            "req-old-pending",
+            "<owo-ui><components><flow-layout/></components></owo-ui>",
+            600, 0L
+        );
+        AgentUiStore.setActive(oldScreen);
+        oldScreen.simulateButtonClickForTests("confirm");
+
+        AgentUiScreen newScreen = AgentUiScreen.create(
+            "req-new-lifecycle",
+            "<owo-ui><components><flow-layout/></components></owo-ui>",
+            600, 0L
+        );
+        AgentUiStore.setActive(newScreen);
+        newScreen.receiveCloseSignal();
+        assertNull(AgentUiStore.getActive(),
+            "新 screen 的完整生命周期结束后应无 active screen");
+
+        AgentUiPayloadHandler.handleRawClose(
+            "{\"request_id\":\"req-old-pending\",\"reason\":\"session_expired\"}"
+        );
+
+        assertTrue(BongToast.current(System.currentTimeMillis()).isEmpty(),
+            "新 request 开始时必须清除旧 pending；即使新生命周期已结束，旧 close 也不得误弹");
     }
 
     // ─────────────────────────────────────────────────────────────────────────

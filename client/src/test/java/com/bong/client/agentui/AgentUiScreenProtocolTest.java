@@ -271,6 +271,40 @@ public class AgentUiScreenProtocolTest {
             "clear() 后 getActive() 应为 null");
     }
 
+    @Test
+    void agentUiStore_pendingErrorClose_expiresAtBoundary() {
+        String xml = "<owo-ui><components><flow-layout/></components></owo-ui>";
+        AgentUiScreen screen = AgentUiScreen.create("req-expiring-pending", xml, 600, 0L);
+        AgentUiStore.setActive(screen);
+        AgentUiStore.markAwaitingErrorCloseAt(screen, 1_000L);
+        screen.receiveCloseSignal();
+
+        AgentUiStore.receiveCloseAt(
+            "req-expiring-pending",
+            "session_expired",
+            1_000L + AgentUiStore.PENDING_ERROR_CLOSE_TTL_MILLIS
+        );
+
+        assertTrue(BongToast.current(20_000L).isEmpty(),
+            "pending error close 在 TTL 精确边界应过期，迟到 reason 不得显示");
+    }
+
+    @Test
+    void agentUiStore_pendingErrorClose_beforeExpiry_isAccepted() {
+        String xml = "<owo-ui><components><flow-layout/></components></owo-ui>";
+        AgentUiScreen screen = AgentUiScreen.create("req-fresh-pending", xml, 600, 0L);
+        AgentUiStore.setActive(screen);
+        AgentUiStore.markAwaitingErrorCloseAt(screen, 1_000L);
+        screen.receiveCloseSignal();
+
+        long beforeExpiry = 1_000L + AgentUiStore.PENDING_ERROR_CLOSE_TTL_MILLIS - 1L;
+        AgentUiStore.receiveCloseAt("req-fresh-pending", "session_expired", beforeExpiry);
+
+        assertEquals("这次天道面板已过期，请重新尝试",
+            BongToast.current(beforeExpiry).text().getString(),
+            "pending error close 在 TTL 内且 request_id 匹配时应显示提示");
+    }
+
     // ─── 关闭语义四条状态转换 ────────────────────────────────────────────────
 
     /**
