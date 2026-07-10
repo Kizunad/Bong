@@ -436,6 +436,55 @@ public class InspectScreenMoveIntentTest {
     }
 
     @Test
+    void quickUseReturnRetainsDragUntilRebindTransportRecovers() {
+        install();
+        InspectScreen screen = new InspectScreen(InventoryModel.empty());
+        EquipmentPanel panel = new EquipmentPanel();
+        InventoryItem tool = item(2292L, "stone_pickaxe");
+        screen.configureEquipInteractionForTests(null, panel);
+        assertTrue(
+            screen.beginQuickUseEquipDragForTests(tool, 4),
+            "expected accepted bind then unbind to start QUICK_USE drag, actual false"
+        );
+        sent.clear();
+        ClientRequestSender.setAttemptBackendForTests((channel, payload) -> false);
+
+        boolean committed = screen.commitCurrentDragToEquipForTests(EquipSlotType.EXTRA_HAND_0);
+
+        assertFalse(committed, "expected unsupported QUICK_USE move to fail, actual true");
+        assertEquals(
+            null,
+            screen.quickUseItemForTests(4),
+            "expected failed rebind transport to keep the server-aligned local slot unbound"
+        );
+        assertTrue(
+            screen.isDraggingForTests(),
+            "expected failed rebind to retain drag item/source for retry, actual idle"
+        );
+        assertTrue(
+            sent.isEmpty(),
+            "expected rejecting backend not to record the rebind request, actual " + sent
+        );
+
+        install();
+        screen.returnCurrentDragToSourceForTests();
+
+        assertEquals(
+            tool,
+            screen.quickUseItemForTests(4),
+            "expected recovered transport to restore the original QUICK_USE binding"
+        );
+        assertFalse(
+            screen.isDraggingForTests(),
+            "expected accepted rebind to finish the retained drag, actual still dragging"
+        );
+        assertTrue(
+            sent.stream().anyMatch(message -> message.body().contains("\"type\":\"quick_slot_bind\"")),
+            "expected retry to emit quick_slot_bind, actual " + sent
+        );
+    }
+
+    @Test
     void dragEquipCommitRejectsMockInstanceBeforeMutatingTarget() {
         install();
         InspectScreen screen = new InspectScreen(InventoryModel.empty());

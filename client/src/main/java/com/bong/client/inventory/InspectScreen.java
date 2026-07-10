@@ -1839,6 +1839,14 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         return beginQuickUseDrag(index);
     }
 
+    boolean isDraggingForTests() {
+        return dragState.isDragging();
+    }
+
+    void returnCurrentDragToSourceForTests() {
+        returnDragToSource();
+    }
+
     /** Headless 回归复用 attemptDrop 的装备提交/失败回源编排。 */
     boolean commitCurrentDragToEquipForTests(EquipSlotType targetSlot) {
         InventoryItem dragged = dragState.draggedItem();
@@ -3373,6 +3381,29 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     }
 
     private void returnDragToSource() {
+        // QUICK_USE 已在拾取时把解绑请求发给 server。回绑若被本地传输拒绝，不能先 cancel
+        // 再丢失 item/source；保留拖拽态供下一次取消/落位重试，直到回绑真正被接受。
+        if (dragState.sourceKind() == DragState.SourceKind.QUICK_USE) {
+            int index = dragState.sourceQuickUseIndex();
+            InventoryItem item = dragState.originalDraggedItem() != null
+                ? dragState.originalDraggedItem()
+                : dragState.draggedItem();
+            if (index >= 0 && index < HOTBAR_SLOTS && item != null) {
+                if (!publishQuickUseSlot(index, item)) {
+                    com.bong.client.BongClient.LOGGER.warn(
+                        "[bong][inspect] quick-use rebind rejected; retaining drag for retry slot={}",
+                        index);
+                    return;
+                }
+                dragState.drop();
+                return;
+            }
+            com.bong.client.BongClient.LOGGER.warn(
+                "[bong][inspect] invalid quick-use drag source; retaining drag index={} item={}",
+                index,
+                item == null ? null : item.itemId());
+            return;
+        }
         DragState.CancelResult r = dragState.cancel();
         if (!r.hasItem()) return;
         InventoryItem item = r.item();
@@ -3421,10 +3452,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 }
             }
             case QUICK_USE -> {
-                int idx = r.sourceQuickUseIndex();
-                if (idx >= 0 && idx < HOTBAR_SLOTS) {
-                    publishQuickUseSlot(idx, item);
-                }
+                // 已在 cancel() 之前单独处理；仅为 exhaustiveness 保留。
             }
             case MERIDIAN -> {
                 MeridianChannel ch = r.sourceMeridianChannel();
