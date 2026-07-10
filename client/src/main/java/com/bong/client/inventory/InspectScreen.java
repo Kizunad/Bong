@@ -909,7 +909,11 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         return null;
     }
 
-    private void publishQuickUseSlot(int index, InventoryItem item) {
+    private boolean publishQuickUseSlot(int index, InventoryItem item) {
+        if (!com.bong.client.network.ClientRequestSender.sendQuickSlotBind(
+                index, item == null ? null : item.itemId())) {
+            return false;
+        }
         QuickSlotConfig current = QuickUseSlotStore.snapshot();
         QuickSlotEntry entry = item == null ? null : new QuickSlotEntry(
             item.itemId(),
@@ -921,8 +925,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         QuickUseSlotStore.replace(current.withSlot(index, entry));
         quickUseItems[index] = item;
         setQuickUseSlotVisual(index, item);
-        com.bong.client.network.ClientRequestSender.sendQuickSlotBind(
-            index, item == null ? null : item.itemId());
+        return true;
     }
 
     /**
@@ -937,11 +940,14 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
      *
      * <p>非方块物品只走 quick_slot 一条路径，行为不变。
      */
-    void commitQuickUseDrop(int index, InventoryItem item) {
-        publishQuickUseSlot(index, item);
+    boolean commitQuickUseDrop(int index, InventoryItem item) {
+        if (!publishQuickUseSlot(index, item)) {
+            return false;
+        }
         if (isBlockQuickBarBindable(item)) {
             bindBlockItemToSkillBar(index, item);
         }
+        return true;
     }
 
     /**
@@ -1800,11 +1806,37 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         quickEquipFromGrid(item);
     }
 
+    boolean beginGridEquipDragForTests(BackpackGridPanel grid, InventoryItem item) {
+        return beginGridDrag(grid, item);
+    }
+
+    BackpackGridPanel openPackGridForTests(String containerId) {
+        return packWindows.open(containerId, model, 0, 0).grid();
+    }
+
+    boolean beginPackGridEquipDragForTests(String containerId, InventoryItem item) {
+        BackpackGridPanel grid = openPackGridForTests(containerId);
+        return beginGridDrag(grid, item);
+    }
+
+    InventoryItem packGridItemForTests(String containerId, int row, int col) {
+        var win = packWindows.get(containerId);
+        return win == null || win.isClosed() || win.grid() == null
+            ? null
+            : win.grid().itemAt(row, col);
+    }
+
     /** Headless 回归复用真实 QUICK_USE 拾起语义（解绑 → dragState 记录来源）。 */
-    void beginQuickUseEquipDragForTests(InventoryItem item, int index) {
-        publishQuickUseSlot(index, item);
-        publishQuickUseSlot(index, null);
-        dragState.pickupFromQuickUse(item, index);
+    boolean beginQuickUseEquipDragForTests(InventoryItem item, int index) {
+        return publishQuickUseSlot(index, item) && beginQuickUseDrag(index);
+    }
+
+    boolean bindQuickUseForTests(InventoryItem item, int index) {
+        return publishQuickUseSlot(index, item);
+    }
+
+    boolean beginQuickUseDragForTests(int index) {
+        return beginQuickUseDrag(index);
     }
 
     /** Headless 回归复用 attemptDrop 的装备提交/失败回源编排。 */
@@ -2274,13 +2306,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                             return true;
                         }
                         if (shift) quickEquipFromGrid(item);
-                        else {
-                            var anchor = grid.anchorOf(item);
-                            if (anchor != null) {
-                                grid.remove(item);
-                                dragState.pickup(item, grid.containerId(), anchor.row(), anchor.col());
-                            }
-                        }
+                        else beginGridDrag(grid, item);
                         return true;
                     }
                 }
@@ -2421,14 +2447,8 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             // Quick-use bar (F1-F9)
             int qIdx = quickUseSlotAtScreen(mouseX, mouseY);
             if (qIdx >= 0 && quickUseItems[qIdx] != null) {
-                InventoryItem item = quickUseItems[qIdx];
                 if (shift) quickMoveQuickUseToGrid(qIdx);
-                else {
-                    quickUseItems[qIdx] = null;
-                    setQuickUseSlotVisual(qIdx, null);
-                    publishQuickUseSlot(qIdx, null);
-                    dragState.pickupFromQuickUse(item, qIdx);
-                }
+                else beginQuickUseDrag(qIdx);
                 return true;
             }
 
@@ -2660,6 +2680,33 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
 
     // ==================== Drag ====================
 
+    /** 普通容器页与浮动 pack 共用的真实拾取边界：记录精确来源后再移除本地格子。 */
+    private boolean beginGridDrag(BackpackGridPanel grid, InventoryItem item) {
+        if (grid == null || item == null || dragState.phase() != DragState.Phase.IDLE) {
+            return false;
+        }
+        var anchor = grid.anchorOf(item);
+        if (anchor == null) {
+            return false;
+        }
+        dragState.pickup(item, grid.containerId(), anchor.row(), anchor.col());
+        grid.remove(item);
+        return true;
+    }
+
+    /** QUICK_USE 只有在解绑请求被本地传输接受后才清视觉并进入拖拽态。 */
+    private boolean beginQuickUseDrag(int index) {
+        if (index < 0 || index >= HOTBAR_SLOTS) {
+            return false;
+        }
+        InventoryItem item = quickUseItems[index];
+        if (item == null || !publishQuickUseSlot(index, null)) {
+            return false;
+        }
+        dragState.pickupFromQuickUse(item, index);
+        return true;
+    }
+
     private void attemptDrop(double mouseX, double mouseY) {
         InventoryItem dragged = dragState.draggedItem();
         if (dragged == null) { dragState.cancel(); clearAllHighlights(); return; }
@@ -2889,9 +2936,11 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 return;
             }
             InventoryItem old = quickUseItems[qIdx];
-            quickUseItems[qIdx] = dragged;
-            setQuickUseSlotVisual(qIdx, dragged);
-            commitQuickUseDrop(qIdx, dragged);
+            if (!commitQuickUseDrop(qIdx, dragged)) {
+                returnDragToSource();
+                clearAllHighlights();
+                return;
+            }
             dragState.drop();
             if (old != null) placeItemAnywhere(old);
             clearAllHighlights();
@@ -3285,9 +3334,14 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         com.bong.client.BongClient.LOGGER.info(
             "[bong][inspect] dispatchMoveIntent instance={} from={} to={} rotated={} item={}",
             item.instanceId(), from, to, rotated, item.itemId());
-        com.bong.client.network.ClientRequestSender.sendInventoryMove(
+        boolean accepted = com.bong.client.network.ClientRequestSender.sendInventoryMove(
             item.instanceId(), from, to, rotated);
-        return true;
+        if (!accepted) {
+            com.bong.client.BongClient.LOGGER.warn(
+                "[bong][inspect] dispatchMoveIntent rejected by local transport instance={} from={} to={}",
+                item.instanceId(), from, to);
+        }
+        return accepted;
     }
 
     boolean dispatchDiscardIntent(
@@ -3329,22 +3383,27 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 if (lootPanel != null && !lootPanel.isClosed()
                         && lootPanel.extContainerId().equals(r.sourceContainerId())) {
                     BackpackGridPanel lg = lootPanel.lootGrid();
-                    if (lg.canPlace(item, r.sourceRow(), r.sourceCol())) {
-                        lg.place(item, r.sourceRow(), r.sourceCol());
-                    } else {
-                        // loot grid position taken — find free space
-                        var freePos = lg.findFreeSpace(item);
-                        if (freePos != null) lg.place(item, freePos.row(), freePos.col());
-                        else placeItemAnywhere(item);
-                    }
+                    if (!restoreItemToGrid(lg, item, r.sourceRow(), r.sourceCol()))
+                        placeItemAnywhere(item);
                 } else {
-                    // 先切回来源容器页（用户可能已手动/drag-hover 切走），再放回原位 —— 否则会落到
-                    // 当前隐藏的网格，物品视觉上凭空消失（数据不丢、下次 snapshot 重同步，但体验差）。
-                    switchToGridContainer(r.sourceContainerId());
-                    BackpackGridPanel grid = activeGrid();
-                    if (grid != null && grid.canPlace(item, r.sourceRow(), r.sourceCol()))
-                        grid.place(item, r.sourceRow(), r.sourceCol());
-                    else placeItemAnywhere(item);
+                    var sourceWindow = packWindows.get(r.sourceContainerId());
+                    BackpackGridPanel sourcePackGrid = sourceWindow == null || sourceWindow.isClosed()
+                        ? null
+                        : sourceWindow.grid();
+                    if (sourcePackGrid != null) {
+                        // 浮动 pack 不属于 containerGrids[] 页签；必须按原 window/containerId
+                        // 直接回原 grid，不能误落当前普通容器。
+                        if (!restoreItemToGrid(
+                                sourcePackGrid, item, r.sourceRow(), r.sourceCol())) {
+                            placeItemAnywhere(item);
+                        }
+                    } else {
+                        // 先切回来源容器页（用户可能已手动/drag-hover 切走），再放回原位。
+                        switchToGridContainer(r.sourceContainerId());
+                        BackpackGridPanel grid = activeGrid();
+                        if (!restoreItemToGrid(grid, item, r.sourceRow(), r.sourceCol()))
+                            placeItemAnywhere(item);
+                    }
                 }
             }
             case EQUIP -> {
@@ -3364,8 +3423,6 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             case QUICK_USE -> {
                 int idx = r.sourceQuickUseIndex();
                 if (idx >= 0 && idx < HOTBAR_SLOTS) {
-                    quickUseItems[idx] = item;
-                    setQuickUseSlotVisual(idx, item);
                     publishQuickUseSlot(idx, item);
                 }
             }
@@ -3378,6 +3435,28 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 if (bp != null && bodyInspect != null) bodyInspect.applyPhysicalItem(bp, item);
             }
         }
+    }
+
+    /** 优先原锚点、其次同一来源 grid 空位；返回 false 才允许跨容器兜底。 */
+    private static boolean restoreItemToGrid(
+        BackpackGridPanel grid,
+        InventoryItem item,
+        int sourceRow,
+        int sourceCol
+    ) {
+        if (grid == null || item == null) {
+            return false;
+        }
+        if (grid.canPlace(item, sourceRow, sourceCol)) {
+            grid.place(item, sourceRow, sourceCol);
+            return true;
+        }
+        var freePos = grid.findFreeSpace(item);
+        if (freePos == null) {
+            return false;
+        }
+        grid.place(item, freePos.row(), freePos.col());
+        return true;
     }
 
     private void placeItemAnywhere(InventoryItem item) {
@@ -3824,9 +3903,9 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         if (grid == null) return;
         var pos = grid.findFreeSpace(item);
         if (pos != null) {
-            quickUseItems[index] = null;
-            setQuickUseSlotVisual(index, null);
-            publishQuickUseSlot(index, null);
+            if (!publishQuickUseSlot(index, null)) {
+                return;
+            }
             grid.place(item, pos.row(), pos.col());
         }
     }
@@ -4372,12 +4451,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                     if (pos != null) {
                         InventoryItem item = wg.itemAt(pos.row(), pos.col());
                         if (item != null && dragState.phase() == DragState.Phase.IDLE) {
-                            var anchor = wg.anchorOf(item);
-                            if (anchor != null) {
-                                dragState.pickup(item, wg.containerId(),
-                                    anchor.row(), anchor.col());
-                                wg.remove(item);
-                            }
+                            beginGridDrag(wg, item);
                         }
                     }
                     packWindows.raise(win);

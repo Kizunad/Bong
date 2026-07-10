@@ -10,6 +10,7 @@ import net.minecraft.util.math.BlockPos;
 
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Objects;
 
 /**
  * 向服务端 {@code bong:client_request} 通道发送 CustomPayload。
@@ -19,10 +20,19 @@ import java.util.List;
  */
 public final class ClientRequestSender {
 
-    /** 可测试的发送后端 seam。 */
+    /**
+     * 兼容既有 payload 捕获测试的发送 seam；正常返回即视为本地传输已接受，抛异常表示拒绝。
+     * 需要显式返回 false 的失败测试使用 {@link AttemptBackend}。
+     */
     @FunctionalInterface
     public interface Backend {
         void send(Identifier channel, byte[] payload);
+    }
+
+    /** 可显式报告本地传输是否接受请求的测试/生产 seam。 */
+    @FunctionalInterface
+    public interface AttemptBackend {
+        boolean trySend(Identifier channel, byte[] payload);
     }
 
     private static final Identifier CHANNEL = new Identifier(
@@ -30,18 +40,18 @@ public final class ClientRequestSender {
         ClientRequestProtocol.CHANNEL_PATH
     );
 
-    private static final Backend DEFAULT_BACKEND = (channel, payload) -> {
-        // 注意：不能用 ClientPlayNetworking.canSend() —— 它只对 Fabric 注册过通道的
-        // server 返 true，而 Bong server 是定制 Valence，没走 Fabric `minecraft:register`
-        // 协商。但 Valence 实际接收任何 channel 的 CustomPayload，所以 force send。
-        // canSend 失败时 vanilla MC 会丢包（unregistered_channel），不会崩，最差是
-        // server 端的 client_request_handler 没看到 packet —— 与 canSend 拒发等价。
+    private static final AttemptBackend DEFAULT_BACKEND = (channel, payload) -> {
+        // 不能用 ClientPlayNetworking.canSend()：Bong server 是 Valence，未走 Fabric
+        // minecraft:register 协商；Fabric 的 send() 会在已有 play network handler 时直接
+        // enqueue CustomPayload，未连接则抛 IllegalStateException。tryDispatch() 统一捕获异常，
+        // 因而 true 的精确定义是“本地 play transport 已接受”，不是伪造 server ACK。
         PacketByteBuf buf = new PacketByteBuf(Unpooled.buffer(payload.length));
         buf.writeBytes(payload);
         ClientPlayNetworking.send(channel, buf);
+        return true;
     };
 
-    private static volatile Backend backend = DEFAULT_BACKEND;
+    private static volatile AttemptBackend backend = DEFAULT_BACKEND;
 
     private ClientRequestSender() {}
 
@@ -108,13 +118,13 @@ public final class ClientRequestSender {
      * plan-rotate-v1 — {@code rotated} 透传拖拽中的 R 键旋转状态；
      * 非网格目标（装备槽 / hotbar / 丢弃等）恒传 false。
      */
-    public static void sendInventoryMove(
+    public static boolean sendInventoryMove(
         long instanceId,
         ClientRequestProtocol.InvLocation from,
         ClientRequestProtocol.InvLocation to,
         boolean rotated
     ) {
-        dispatch(ClientRequestProtocol.encodeInventoryMove(instanceId, from, to, rotated));
+        return tryDispatch(ClientRequestProtocol.encodeInventoryMove(instanceId, from, to, rotated));
     }
 
     public static void sendEquipFalseSkin(long itemInstanceId) {
@@ -317,8 +327,8 @@ public final class ClientRequestSender {
         dispatch(ClientRequestProtocol.encodeSelfAntidote(instanceId));
     }
 
-    public static void sendQuickSlotBind(int slot, String itemId) {
-        dispatch(ClientRequestProtocol.encodeQuickSlotBind(slot, itemId));
+    public static boolean sendQuickSlotBind(int slot, String itemId) {
+        return tryDispatch(ClientRequestProtocol.encodeQuickSlotBind(slot, itemId));
     }
 
     public static void sendSkillBarCast(int slot) {
@@ -631,11 +641,34 @@ public final class ClientRequestSender {
     }
 
     private static void dispatch(String json) {
-        backend.send(CHANNEL, json.getBytes(StandardCharsets.UTF_8));
+        if (!tryDispatch(json)) {
+            throw new IllegalStateException("client request transport rejected payload");
+        }
+    }
+
+    private static boolean tryDispatch(String json) {
+        try {
+            return backend.trySend(CHANNEL, json.getBytes(StandardCharsets.UTF_8));
+        } catch (RuntimeException error) {
+            BongClient.LOGGER.warn(
+                "[bong][client_request] local transport rejected payload: {}",
+                json,
+                error
+            );
+            return false;
+        }
     }
 
     public static void setBackendForTests(Backend b) {
-        backend = b;
+        Backend accepted = Objects.requireNonNull(b, "backend");
+        backend = (channel, payload) -> {
+            accepted.send(channel, payload);
+            return true;
+        };
+    }
+
+    public static void setAttemptBackendForTests(AttemptBackend b) {
+        backend = Objects.requireNonNull(b, "backend");
     }
 
     public static void resetBackendForTests() {

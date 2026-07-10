@@ -410,6 +410,32 @@ public class InspectScreenMoveIntentTest {
     }
 
     @Test
+    void quickUsePickupTransportRejectionKeepsBindingAndSkipsDrag() {
+        install();
+        InspectScreen screen = new InspectScreen(InventoryModel.empty());
+        InventoryItem tool = item(2291L, "stone_pickaxe");
+        assertTrue(
+            screen.bindQuickUseForTests(tool, 3),
+            "expected quick-use fixture bind to be accepted, actual false"
+        );
+        sent.clear();
+        ClientRequestSender.setAttemptBackendForTests((channel, payload) -> false);
+
+        boolean beganDrag = screen.beginQuickUseDragForTests(3);
+
+        assertFalse(beganDrag, "expected rejected quick-use unbind to skip drag, actual true");
+        assertEquals(
+            tool,
+            screen.quickUseItemForTests(3),
+            "expected rejected unbind to preserve the local quick-use binding"
+        );
+        assertTrue(
+            sent.isEmpty(),
+            "expected rejecting backend not to record a quick-slot request, actual " + sent
+        );
+    }
+
+    @Test
     void dragEquipCommitRejectsMockInstanceBeforeMutatingTarget() {
         install();
         InspectScreen screen = new InspectScreen(InventoryModel.empty());
@@ -439,6 +465,108 @@ public class InspectScreenMoveIntentTest {
         assertTrue(
             sent.isEmpty(),
             "expected rejected mock-instance drop to send no request, actual " + sent.size()
+        );
+    }
+
+    @Test
+    void dragEquipTransportRejectionRestoresRealGridSource() {
+        InspectScreen screen = new InspectScreen(InventoryModel.empty());
+        BackpackGridPanel grid = new BackpackGridPanel("main_pack", 3, 3);
+        EquipmentPanel panel = new EquipmentPanel();
+        InventoryItem tool = item(2295L, "stone_pickaxe");
+        grid.place(tool, 1, 1);
+        screen.configureEquipInteractionForTests(grid, panel);
+        assertTrue(
+            screen.beginGridEquipDragForTests(grid, tool),
+            "expected production grid pickup to start, actual false"
+        );
+        ClientRequestSender.setAttemptBackendForTests((channel, payload) -> false);
+
+        boolean committed = screen.commitCurrentDragToEquipForTests(EquipSlotType.EXTRA_HAND_0);
+
+        assertFalse(committed, "expected rejected local transport to abort equip commit, actual true");
+        assertEquals(
+            tool,
+            grid.itemAt(1, 1),
+            "expected transport rejection to restore the real source grid anchor"
+        );
+        assertTrue(
+            panel.slotFor(EquipSlotType.EXTRA_HAND_0).contents().isEmpty(),
+            "expected transport rejection to leave EXTRA_HAND_0 unchanged, actual non-empty"
+        );
+    }
+
+    @Test
+    void dragEquipTransportExceptionRestoresRealGridSource() {
+        InspectScreen screen = new InspectScreen(InventoryModel.empty());
+        BackpackGridPanel grid = new BackpackGridPanel("main_pack", 3, 3);
+        EquipmentPanel panel = new EquipmentPanel();
+        InventoryItem tool = item(2296L, "stone_pickaxe");
+        grid.place(tool, 0, 2);
+        screen.configureEquipInteractionForTests(grid, panel);
+        assertTrue(
+            screen.beginGridEquipDragForTests(grid, tool),
+            "expected production grid pickup to start, actual false"
+        );
+        ClientRequestSender.setAttemptBackendForTests((channel, payload) -> {
+            throw new IllegalStateException("simulated disconnect");
+        });
+
+        boolean committed = screen.commitCurrentDragToEquipForTests(EquipSlotType.EXTRA_HAND_1);
+
+        assertFalse(committed, "expected transport exception to abort equip commit, actual true");
+        assertEquals(
+            tool,
+            grid.itemAt(0, 2),
+            "expected transport exception to restore the real source grid anchor"
+        );
+        assertTrue(
+            panel.slotFor(EquipSlotType.EXTRA_HAND_1).contents().isEmpty(),
+            "expected transport exception to leave EXTRA_HAND_1 unchanged, actual non-empty"
+        );
+    }
+
+    @Test
+    void packWindowTransportRejectionRestoresExactFloatingSource() {
+        InventoryItem tool = item(2297L, "stone_pickaxe");
+        InventoryModel model = InventoryModel.builder()
+            .containers(List.of(
+                new InventoryModel.ContainerDef("body_pocket", "贴身口袋", 3, 3),
+                new InventoryModel.ContainerDef("pack_500", "测试背包", 3, 3, 500L)
+            ))
+            .gridItem(tool, "pack_500", 1, 2)
+            .build();
+        InspectScreen screen = new InspectScreen(model);
+        BackpackGridPanel ordinaryGrid = new BackpackGridPanel("body_pocket", 3, 3);
+        EquipmentPanel panel = new EquipmentPanel();
+        screen.configureEquipInteractionForTests(ordinaryGrid, panel);
+        assertTrue(
+            screen.beginPackGridEquipDragForTests("pack_500", tool),
+            "expected production floating-pack pickup to start, actual false"
+        );
+        assertEquals(
+            null,
+            screen.packGridItemForTests("pack_500", 1, 2),
+            "expected pickup to remove the item from its floating pack before drop"
+        );
+        ClientRequestSender.setAttemptBackendForTests((channel, payload) -> false);
+
+        boolean committed = screen.commitCurrentDragToEquipForTests(EquipSlotType.EXTRA_HAND_0);
+
+        assertFalse(committed, "expected rejected transport to abort floating-pack equip, actual true");
+        assertEquals(
+            tool,
+            screen.packGridItemForTests("pack_500", 1, 2),
+            "expected failure to restore the exact floating pack/container anchor"
+        );
+        assertEquals(
+            null,
+            ordinaryGrid.itemAt(0, 0),
+            "expected floating-pack failure not to leak the item into the active ordinary grid"
+        );
+        assertTrue(
+            panel.slotFor(EquipSlotType.EXTRA_HAND_0).contents().isEmpty(),
+            "expected rejected floating-pack move to leave target equipment unchanged"
         );
     }
 
