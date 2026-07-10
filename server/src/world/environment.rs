@@ -8,6 +8,7 @@ use valence::prelude::{
 use crate::lingtian::weather::{ActiveWeather, WeatherEvent};
 use crate::lingtian::ZoneWeatherProfileRegistry;
 use crate::world::dimension::DimensionKind;
+use crate::world::environment_overlay::EnvironmentOverlays;
 use crate::world::zone::{Zone, ZoneRegistry};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -249,6 +250,7 @@ pub trait EnvironmentPhysicsHook: Send + Sync {
 
 pub fn register(app: &mut App) {
     app.insert_resource(ZoneEnvironmentRegistry::new());
+    app.insert_resource(EnvironmentOverlays::default());
     app.add_event::<ZoneEnvironmentLifecycleEvent>();
     app.add_systems(
         Startup,
@@ -277,8 +279,15 @@ pub fn sync_zone_environment_effects(
     zones: Option<valence::prelude::Res<ZoneRegistry>>,
     weather: Option<valence::prelude::Res<ActiveWeather>>,
     profiles: Option<valence::prelude::Res<ZoneWeatherProfileRegistry>>,
+    mut overlays: Option<valence::prelude::ResMut<EnvironmentOverlays>>,
     mut registry: valence::prelude::ResMut<ZoneEnvironmentRegistry>,
 ) {
+    if let Some(overlays) = overlays.as_mut() {
+        let expired = overlays.tick_expiry();
+        if !expired.is_empty() {
+            tracing::debug!("[bong][environment] fog banks expired: {expired:?}");
+        }
+    }
     let Some(zones) = zones else {
         return;
     };
@@ -292,12 +301,15 @@ pub fn sync_zone_environment_effects(
         let active_weather = weather
             .as_ref()
             .and_then(|active| active.current(zone.name.as_str()));
-        let effects = if let Some(profiles) = profiles.as_ref() {
+        let mut effects = if let Some(profiles) = profiles.as_ref() {
             let profile = profiles.profile_for(zone.name.as_str());
             default_effects_for_zone_with_profile(zone, active_weather, &profile)
         } else {
             default_effects_for_zone(zone, active_weather)
         };
+        if let Some(overlays) = overlays.as_ref() {
+            effects.extend(overlays.fog_effects_for_zone(zone));
+        }
         registry.replace_for_dimension(zone.name.clone(), zone.dimension.ident_str(), effects);
     }
 }

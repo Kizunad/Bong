@@ -9,6 +9,7 @@ pub mod dimension;
 pub mod dimension_transfer;
 pub mod entity_model;
 pub mod environment;
+pub mod environment_overlay;
 pub mod era;
 pub mod event_rhythm;
 pub mod events;
