@@ -19,6 +19,7 @@ const MODEL = process.env.REVIEW_CODEX_MODEL || "gpt-5.6-sol";
 const MAX_DIFF = intEnv("REVIEW_MAX_DIFF", 40_000, 10_000);
 const MAX_PLAN = intEnv("REVIEW_MAX_PLAN", 20_000, 5_000);
 const CODEX_TIMEOUT_MS = intEnv("REVIEW_CODEX_TIMEOUT_MS", 900_000, 120_000);
+const REVIEW_TOTAL_TIMEOUT_MS = intEnv("REVIEW_TOTAL_TIMEOUT_MINUTES", 45, 5) * 60_000;
 const CODEX_CONCURRENCY = intEnv("REVIEW_CODEX_CONCURRENCY", 1, 1);
 const CODEX_RETRIES = intEnv("REVIEW_CODEX_RETRIES", 3, 1);
 const CODEX_RETRY_MS = intEnv("REVIEW_CODEX_RETRY_MS", 15_000, 1_000);
@@ -32,6 +33,7 @@ const CIRCUIT_THRESHOLD = intEnv("REVIEW_INFRA_FAILURE_THRESHOLD", 3, 1);
 const CIRCUIT_WINDOW_MS = intEnv("REVIEW_INFRA_FAILURE_WINDOW_MINUTES", 60, 1) * 60_000;
 const CIRCUIT_DURATION_MS = intEnv("REVIEW_CIRCUIT_MINUTES", 60, 1) * 60_000;
 const OUTCOME_FILE = process.env.REVIEW_OUTCOME_FILE || "/tmp/review-run-outcome.json";
+let reviewDeadlineMs = Number.POSITIVE_INFINITY;
 
 const REVIEWERS = [
   {
@@ -99,6 +101,40 @@ export function parseHiddenMarkers(value, name = CIRCUIT_MARKER) {
   return parsed;
 }
 
+export function parseTrustedCircuitEvents(comments, trustedLogin = "github-actions[bot]") {
+  const seenRuns = new Set();
+  const events = [];
+  for (const comment of comments || []) {
+    if (comment?.user?.login !== trustedLogin || comment?.user?.type !== "Bot") continue;
+    const marker = parseHiddenMarkers(comment.body)[0];
+    const runId = String(marker?.run_id || "");
+    if (
+      marker?.v !== 1 ||
+      marker?.kind !== "infra_failure" ||
+      !/^\d+$/.test(runId) ||
+      !Number.isFinite(new Date(marker.at).getTime()) ||
+      seenRuns.has(runId)
+    ) {
+      continue;
+    }
+    seenRuns.add(runId);
+    events.push(marker);
+  }
+  return events;
+}
+
+export function selectCircuitStateIssues(issues) {
+  return (issues || [])
+    .filter((issue) => issue?.title === CIRCUIT_STATE_TITLE && String(issue.body || "").includes(CIRCUIT_STATE_MARKER))
+    .map((issue) => String(issue.number))
+    .filter((number) => /^\d+$/.test(number))
+    .sort((a, b) => Number(a) - Number(b));
+}
+
+export function boundedAttemptTimeout(configuredMs, remainingMs, cleanupReserveMs = 15_000) {
+  return Math.max(0, Math.min(configuredMs, remainingMs - cleanupReserveMs));
+}
+
 export function evaluateCircuit(events, now, { threshold = 3, windowMs = 3_600_000, durationMs = 3_600_000 } = {}) {
   const nowMs = new Date(now).getTime();
   const failures = events
@@ -131,6 +167,30 @@ export function classifyReviewRun(firstRound, finalRound) {
   const results = [...(firstRound || []), ...(finalRound || [])];
   if (results.some(isCodexExecutionFailure)) return "infra_failure";
   return decideGate(finalRound || []).passed ? "passed" : "gate_failure";
+}
+
+export function classifyWorkflowFinalization({ install = "skipped", configure = "skipped", review = "skipped", outcomeKind = null }) {
+  if (install === "failure") {
+    return { kind: "infra_failure", phase: "cli_install", reason: "Codex CLI 安装或版本检查失败", shouldRecord: true };
+  }
+  if (configure === "failure" || (install === "success" && configure === "skipped")) {
+    return { kind: "infra_failure", phase: "provider_config", reason: "Codex provider 配置失败或被意外跳过", shouldRecord: true };
+  }
+  if (review === "failure" && outcomeKind === "gate_failure") {
+    return { kind: "gate_failure", shouldRecord: false };
+  }
+  if (review === "failure" && outcomeKind === "infra_failure") {
+    return { kind: "infra_failure", shouldRecord: false };
+  }
+  if (review === "failure" || (review === "skipped" && configure === "success")) {
+    return {
+      kind: "infra_failure",
+      phase: "review_process",
+      reason: review === "failure" ? "Review 脚本、CLI 或沙箱异常退出，且未产出可识别结果" : "Review 步骤被意外跳过，未执行 reviewer",
+      shouldRecord: true,
+    };
+  }
+  return { kind: "passed", shouldRecord: false };
 }
 
 export function extractJSON(text) {
@@ -302,6 +362,7 @@ async function main() {
 
 async function runReview() {
   requirePrNumber();
+  reviewDeadlineMs = Date.now() + REVIEW_TOTAL_TIMEOUT_MS;
   if (!process.env.REVIEW_CODEX_API_KEY && !process.env.OPENAI_API_KEY) {
     await recordInfrastructureFailure("provider_config", "缺 REVIEW_CODEX_API_KEY / OPENAI_API_KEY");
     writeOutcome("infra_failure");
@@ -388,35 +449,21 @@ async function circuitPreflight() {
 
 async function workflowFinalize() {
   requirePrNumber();
-  const install = process.env.REVIEW_INSTALL_OUTCOME || "skipped";
-  const configure = process.env.REVIEW_CONFIGURE_OUTCOME || "skipped";
-  const review = process.env.REVIEW_STEP_OUTCOME || "skipped";
+  const decision = classifyWorkflowFinalization({
+    install: process.env.REVIEW_INSTALL_OUTCOME || "skipped",
+    configure: process.env.REVIEW_CONFIGURE_OUTCOME || "skipped",
+    review: process.env.REVIEW_STEP_OUTCOME || "skipped",
+    outcomeKind: readOutcome()?.kind || null,
+  });
 
-  if (install === "failure") {
-    await recordInfrastructureFailure("cli_install", "Codex CLI 安装或版本检查失败");
-    writeOutcome("infra_failure");
-    return 0;
-  }
-  if (configure === "failure" || (install === "success" && configure === "skipped")) {
-    await recordInfrastructureFailure("provider_config", "Codex provider 配置失败或被意外跳过");
-    writeOutcome("infra_failure");
-    return 0;
-  }
-  if (review === "failure") {
-    const outcome = readOutcome();
-    if (outcome?.kind === "gate_failure") return 1;
-    if (outcome?.kind !== "infra_failure") {
-      await recordInfrastructureFailure("review_process", "Review 脚本、CLI 或沙箱异常退出，且未产出可识别结果");
-      writeOutcome("infra_failure");
-    }
-    return 0;
-  }
-  if (review === "skipped" && configure === "success") {
-    await recordInfrastructureFailure("review_process", "Review 步骤被意外跳过，未执行 reviewer");
+  if (decision.kind === "gate_failure") return 1;
+  if (decision.kind === "infra_failure" && decision.shouldRecord) {
+    await recordInfrastructureFailure(decision.phase, decision.reason);
     writeOutcome("infra_failure");
   }
   return 0;
 }
+
 function loadPrContext(pr) {
   const meta = JSON.parse(gh(["pr", "view", pr, "--json", "title,body,headRefName,files"]));
   let diff = gh(["pr", "diff", pr]);
@@ -606,8 +653,14 @@ async function runCodex(prompt, label) {
   console.error(`▶ codex ${label}`);
   try {
     for (let attempt = 1; attempt <= CODEX_RETRIES; attempt += 1) {
+      const remainingMs = reviewDeadlineMs - Date.now();
+      const attemptTimeoutMs = boundedAttemptTimeout(CODEX_TIMEOUT_MS, remainingMs);
+      if (attemptTimeoutMs <= 0) {
+        return codexExecutionFailureJson(label, "Review reviewer 总预算已耗尽，停止启动新的 Codex 进程");
+      }
+
       rmSync(outputFile, { force: true });
-      const result = await spawnCodex(args, prompt, CODEX_TIMEOUT_MS);
+      const result = await spawnCodex(args, prompt, attemptTimeoutMs);
       const text = existsSync(outputFile) ? readFileSync(outputFile, "utf8") : result.stdout;
       if (text.trim()) {
         if (result.code !== 0) {
@@ -619,32 +672,38 @@ async function runCodex(prompt, label) {
       const failure = codexFailureText(result);
       if (attempt < CODEX_RETRIES && isRetryableCodexFailure(result)) {
         const waitMs = CODEX_RETRY_MS * attempt;
-        console.error(`  codex ${label} 暂时失败，${waitMs}ms 后重试（${attempt + 1}/${CODEX_RETRIES}）: ${failure}`);
-        await delay(waitMs);
-        continue;
+        if (reviewDeadlineMs - Date.now() > waitMs + 15_000) {
+          console.error(`  codex ${label} 暂时失败，${waitMs}ms 后重试（${attempt + 1}/${CODEX_RETRIES}）: ${failure}`);
+          await delay(waitMs);
+          continue;
+        }
       }
 
       console.error(`  codex ${label} failed: ${failure}`);
-      return JSON.stringify({
-        vote: "REQUEST_CHANGES",
-        confidence: 0,
-        plan_intent: { status: "unclear", reason: `Codex ${label} 执行失败`, missing: [] },
-        summary: `Codex ${label} 执行失败：${failure}`,
-        findings: [
-          {
-            severity: "major",
-            file: ".github/scripts/review.mjs",
-            line: "0",
-            title: `Codex reviewer ${label} 执行失败`,
-            evidence: failure,
-            recommendation: "检查 Codex CLI、模型端点和 API key 后重新触发 /review。",
-          },
-        ],
-      });
+      return codexExecutionFailureJson(label, failure);
     }
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
+}
+
+function codexExecutionFailureJson(label, failure) {
+  return JSON.stringify({
+    vote: "REQUEST_CHANGES",
+    confidence: 0,
+    plan_intent: { status: "unclear", reason: `Codex ${label} 执行失败`, missing: [] },
+    summary: `Codex ${label} 执行失败：${failure}`,
+    findings: [
+      {
+        severity: "major",
+        file: ".github/scripts/review.mjs",
+        line: "0",
+        title: `Codex reviewer ${label} 执行失败`,
+        evidence: failure,
+        recommendation: "检查 Codex CLI、模型端点和 API key 后重新触发 /review。",
+      },
+    ],
+  });
 }
 
 function delay(ms) {
@@ -658,24 +717,34 @@ function spawnCodex(args, stdin, timeoutMs) {
       OPENAI_API_KEY: process.env.REVIEW_CODEX_API_KEY || process.env.OPENAI_API_KEY || "",
       CODEX_API_KEY: process.env.REVIEW_CODEX_API_KEY || process.env.CODEX_API_KEY || process.env.OPENAI_API_KEY || "",
     };
-    const child = spawn("codex", args, { env, stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawn("codex", args, {
+      env,
+      stdio: ["pipe", "pipe", "pipe"],
+      detached: process.platform !== "win32",
+    });
     let stdout = "";
     let stderr = "";
     let timedOut = false;
     let settled = false;
     let killTimer = null;
+    let forceResolveTimer = null;
     let timer = null;
     const finish = (result) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       clearTimeout(killTimer);
+      clearTimeout(forceResolveTimer);
       resolve(result);
     };
     timer = setTimeout(() => {
       timedOut = true;
-      child.kill("SIGTERM");
-      killTimer = setTimeout(() => child.kill("SIGKILL"), 5_000);
+      killCodexProcess(child, "SIGTERM");
+      killTimer = setTimeout(() => killCodexProcess(child, "SIGKILL"), 5_000);
+      forceResolveTimer = setTimeout(
+        () => finish({ code: 124, signal: "SIGKILL", stdout, stderr: `${stderr}\nCodex 进程组超时后未正常关闭` }),
+        10_000,
+      );
     }, timeoutMs);
 
     child.stdout.on("data", (chunk) => {
@@ -693,6 +762,19 @@ function spawnCodex(args, stdin, timeoutMs) {
     child.stdin.on("error", () => {});
     child.stdin.end(stdin);
   });
+}
+
+function killCodexProcess(child, signal) {
+  try {
+    if (process.platform !== "win32" && child.pid) process.kill(-child.pid, signal);
+    else child.kill(signal);
+  } catch {
+    try {
+      child.kill(signal);
+    } catch {
+      // 进程已退出。
+    }
+  }
 }
 
 async function mapLimit(items, limit, fn) {
@@ -849,18 +931,32 @@ function nowIso() {
 }
 
 function loadCircuitEvents() {
-  const issue = ensureCircuitStateIssue();
-  return parseHiddenMarkers(listIssueComments(issue));
+  return parseTrustedCircuitEvents(ensureCircuitStateIssues().flatMap(listIssueComments));
 }
 
-function ensureCircuitStateIssue() {
+function findCircuitStateIssues() {
   const configured = process.env.REVIEW_CIRCUIT_ISSUE_NUMBER;
-  if (configured && /^\d+$/.test(configured)) return configured;
+  if (configured && /^\d+$/.test(configured)) return [configured];
+  const issues = JSON.parse(
+    gh([
+      "issue",
+      "list",
+      "--state",
+      "all",
+      "--search",
+      `${CIRCUIT_STATE_TITLE} in:title`,
+      "--limit",
+      "100",
+      "--json",
+      "number,title,body",
+    ]),
+  );
+  return selectCircuitStateIssues(issues);
+}
 
-  const existing = JSON.parse(
-    gh(["issue", "list", "--state", "all", "--search", `${CIRCUIT_STATE_TITLE} in:title`, "--limit", "20", "--json", "number,title,body"]),
-  ).find((issue) => issue.title === CIRCUIT_STATE_TITLE && String(issue.body || "").includes(CIRCUIT_STATE_MARKER));
-  if (existing) return String(existing.number);
+function ensureCircuitStateIssues() {
+  const existing = findCircuitStateIssues();
+  if (existing.length) return existing;
 
   const repo = resolveRepository();
   const created = JSON.parse(
@@ -873,7 +969,7 @@ function ensureCircuitStateIssue() {
       `body=此 issue 由 Review Action 自动维护，用隐藏 marker 持久化 reviewer 基础设施失败；请勿手工编辑。\n\n${CIRCUIT_STATE_MARKER}`,
     ]),
   );
-  return String(created.number);
+  return [String(created.number)];
 }
 
 function listIssueComments(issue) {
@@ -896,14 +992,15 @@ async function recordInfrastructureFailure(phase, reason) {
 
   let events = [];
   try {
-    const issue = ensureCircuitStateIssue();
-    events = parseHiddenMarkers(listIssueComments(issue));
-    postIssueComment(issue, `Review infra failure · PR #${PR} · ${event.phase}\n\n${renderHiddenMarker(CIRCUIT_MARKER, event)}`);
+    const issues = ensureCircuitStateIssues();
+    events = parseTrustedCircuitEvents(issues.flatMap(listIssueComments));
+    postIssueComment(issues[0], `Review infra failure · PR #${PR} · ${event.phase}\n\n${renderHiddenMarker(CIRCUIT_MARKER, event)}`);
   } catch (error) {
     console.error(`::warning::持久化 Review infra failure 失败：${errorText(error)}`);
   }
 
-  const state = currentCircuitState([...events, event], event.at);
+  const combinedEvents = events.some((existing) => String(existing.run_id) === String(event.run_id)) ? events : [...events, event];
+  const state = currentCircuitState(combinedEvents, event.at);
   const body = renderInfrastructureHandoffComment(event, state);
   try {
     if (DRY_RUN) console.log(body);

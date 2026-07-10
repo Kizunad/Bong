@@ -5,7 +5,9 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
   applyPlanIntentGate,
+  boundedAttemptTimeout,
   classifyReviewRun,
+  classifyWorkflowFinalization,
   codexFailureText,
   decideGate,
   evaluateCircuit,
@@ -19,10 +21,12 @@ import {
   normalizeResult,
   normalizeVote,
   parseHiddenMarkers,
+  parseTrustedCircuitEvents,
   redactCodexPromptEcho,
   renderCircuitSkipComment,
   renderHiddenMarker,
   renderInfrastructureHandoffComment,
+  selectCircuitStateIssues,
 } from "./review.mjs";
 
 const reviewer = { id: "A", name: "Plan 原意核查" };
@@ -64,6 +68,44 @@ test("熔断跳过评论: 明示截止时间、成功退出和 /review 手动旁
   assert.match(body, /\/review/);
   assert.equal(parseHiddenMarkers(body, "bong-review-handoff")[0].kind, "circuit_skip");
 });
+
+test("trusted circuit events: 只接受 github-actions bot、单评论单 marker，并按 run_id 去重", () => {
+  const marker = (runId, at) => renderHiddenMarker("bong-review-circuit", {
+    v: 1,
+    kind: "infra_failure",
+    run_id: runId,
+    at,
+  });
+  const comments = [
+    { body: marker("100", "2026-07-10T00:00:00Z"), user: { login: "attacker", type: "User" } },
+    {
+      body: `${marker("101", "2026-07-10T00:01:00Z")}\n${marker("102", "2026-07-10T00:02:00Z")}`,
+      user: { login: "github-actions[bot]", type: "Bot" },
+    },
+    { body: marker("101", "2026-07-10T00:03:00Z"), user: { login: "github-actions[bot]", type: "Bot" } },
+    { body: marker("103", "2026-07-10T00:04:00Z"), user: { login: "github-actions[bot]", type: "User" } },
+    { body: marker("104", "2026-07-10T00:05:00Z"), user: { login: "github-actions[bot]", type: "Bot" } },
+  ];
+  assert.deepEqual(parseTrustedCircuitEvents(comments).map((event) => event.run_id), ["101", "104"]);
+});
+
+test("state issues: 重复初始化时聚合所有合法状态 issue，并确定性排序", () => {
+  const body = "<!-- bong-review-circuit-state:v1 -->";
+  assert.deepEqual(
+    selectCircuitStateIssues([
+      { number: 20, title: "[automation] Review infrastructure circuit state", body },
+      { number: 3, title: "[automation] Review infrastructure circuit state", body },
+      { number: 1, title: "其他", body },
+    ]),
+    ["3", "20"],
+  );
+});
+
+test("review 总预算: 单次 timeout 被剩余预算截断，并预留清理时间", () => {
+  assert.equal(boundedAttemptTimeout(900_000, 1_000_000), 900_000);
+  assert.equal(boundedAttemptTimeout(900_000, 60_000), 45_000);
+  assert.equal(boundedAttemptTimeout(900_000, 15_000), 0);
+});
 test("evaluateCircuit: 阈值前关闭，达到阈值后开启", () => {
   const events = ["00:00", "00:10", "00:20"].map((time) => ({
     kind: "infra_failure",
@@ -102,6 +144,20 @@ test("infra-only classification: 模型给出真实审查或不可解析内容�
   assert.equal(classifyReviewRun([malformed], [malformed]), "gate_failure");
 });
 
+
+test("workflow finalize: 真实 gate failure 原样失败，setup/reviewer 异常才记录 infra", () => {
+  assert.deepEqual(
+    classifyWorkflowFinalization({ install: "success", configure: "success", review: "failure", outcomeKind: "gate_failure" }),
+    { kind: "gate_failure", shouldRecord: false },
+  );
+  assert.equal(classifyWorkflowFinalization({ install: "failure" }).phase, "cli_install");
+  assert.equal(classifyWorkflowFinalization({ install: "success", configure: "failure" }).phase, "provider_config");
+  assert.equal(classifyWorkflowFinalization({ install: "success", configure: "success", review: "failure" }).phase, "review_process");
+  assert.equal(
+    classifyWorkflowFinalization({ install: "success", configure: "success", review: "failure", outcomeKind: "infra_failure" }).shouldRecord,
+    false,
+  );
+});
 test("workflow: 预检先于 CLI，自动失败统一降级，manual trigger 仍进入预检旁路", () => {
   const workflow = readFileSync(new URL("../workflows/review.yml", import.meta.url), "utf8");
   assert.ok(workflow.indexOf("Review 熔断预检") < workflow.indexOf("安装 Codex CLI"));
@@ -109,6 +165,9 @@ test("workflow: 预检先于 CLI，自动失败统一降级，manual trigger 仍
   assert.match(workflow, /continue-on-error: true/);
   assert.match(workflow, /workflow-finalize/);
   assert.match(workflow, /REVIEW_INFRA_FAILURE_THRESHOLD.*'3'/);
+  assert.match(workflow, /pull-requests: read/);
+  assert.doesNotMatch(workflow, /pull-requests: write/);
+  assert.match(workflow, /REVIEW_TOTAL_TIMEOUT_MINUTES.*'45'/);
 });
 
 test("extractJSON: 支持纯 JSON、围栏、前后废话、字符串内括号", () => {
