@@ -11,6 +11,8 @@ import org.jetbrains.annotations.Nullable;
 public final class AgentUiStore {
     /** 本地按钮响应等待 server 错误 close 的最长窗口。 */
     static final long PENDING_ERROR_CLOSE_TTL_MILLIS = 10_000L;
+    static final long PENDING_ERROR_CLOSE_TTL_NANOS =
+        PENDING_ERROR_CLOSE_TTL_MILLIS * 1_000_000L;
 
     private AgentUiStore() {}
 
@@ -48,11 +50,16 @@ public final class AgentUiStore {
      * @param reason    关闭原因（null / "" = Replaced；非空 = 错误）
      */
     public static void receiveClose(String requestId, @Nullable String reason) {
-        receiveCloseAt(requestId, reason, System.currentTimeMillis());
+        receiveCloseAtNanos(requestId, reason, System.nanoTime(), System.currentTimeMillis());
     }
 
-    static void receiveCloseAt(String requestId, @Nullable String reason, long nowMillis) {
-        expirePendingErrorClose(nowMillis);
+    static void receiveCloseAtNanos(
+        String requestId,
+        @Nullable String reason,
+        long nowNanos,
+        long feedbackNowMillis
+    ) {
+        expirePendingErrorClose(nowNanos);
         AgentUiScreen screen = activeScreen;
         if (screen != null && screen.requestId().equals(requestId)) {
             activeScreen = null;
@@ -65,31 +72,38 @@ public final class AgentUiStore {
             if (pending != null && pending.requestId().equals(requestId)) {
                 // 按钮点击会先本地关屏；只允许匹配且未过期的 server close 消费一次。
                 pendingErrorClose = null;
-                AgentUiCloseFeedback.showForReasonAt(reason, Math.max(0L, nowMillis));
+                AgentUiCloseFeedback.showForReasonAt(reason, Math.max(0L, feedbackNowMillis));
             }
         }
     }
 
     /** 按钮响应已发出且 screen 将本地关闭，登记仍待 server 错误终态确认的 request。 */
     static void markAwaitingErrorClose(AgentUiScreen screen) {
-        markAwaitingErrorCloseAt(screen, System.currentTimeMillis());
+        markAwaitingErrorCloseAtNanos(screen, System.nanoTime());
     }
 
-    static void markAwaitingErrorCloseAt(AgentUiScreen screen, long nowMillis) {
+    static void markAwaitingErrorCloseAtNanos(AgentUiScreen screen, long nowNanos) {
         if (activeScreen != screen) {
             return;
         }
-        long normalizedNow = Math.max(0L, nowMillis);
-        long expiresAt = normalizedNow > Long.MAX_VALUE - PENDING_ERROR_CLOSE_TTL_MILLIS
-            ? Long.MAX_VALUE
-            : normalizedNow + PENDING_ERROR_CLOSE_TTL_MILLIS;
-        pendingErrorClose = new PendingErrorClose(screen.requestId(), expiresAt);
+        pendingErrorClose = new PendingErrorClose(screen.requestId(), nowNanos, nowNanos);
     }
 
-    private static void expirePendingErrorClose(long nowMillis) {
+    private static void expirePendingErrorClose(long nowNanos) {
         PendingErrorClose pending = pendingErrorClose;
-        if (pending != null && Math.max(0L, nowMillis) >= pending.expiresAtMillis()) {
+        if (pending == null) {
+            return;
+        }
+        long elapsedNanos = nowNanos - pending.startedAtNanos();
+        if (nowNanos < pending.lastObservedNanos()
+            || elapsedNanos < 0L
+            || elapsedNanos >= PENDING_ERROR_CLOSE_TTL_NANOS) {
             pendingErrorClose = null;
+            return;
+        }
+        if (nowNanos != pending.lastObservedNanos()) {
+            pendingErrorClose = new PendingErrorClose(
+                pending.requestId(), pending.startedAtNanos(), nowNanos);
         }
     }
 
@@ -106,5 +120,9 @@ public final class AgentUiStore {
         pendingErrorClose = null;
     }
 
-    private record PendingErrorClose(String requestId, long expiresAtMillis) {}
+    private record PendingErrorClose(
+        String requestId,
+        long startedAtNanos,
+        long lastObservedNanos
+    ) {}
 }

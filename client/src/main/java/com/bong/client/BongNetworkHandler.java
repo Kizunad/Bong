@@ -1061,7 +1061,7 @@ public class BongNetworkHandler {
         );
         // bong:agent_ui_close — 裸 AgentUiClosePayloadV1 JSON
         ClientPlayNetworking.registerGlobalReceiver(
-            new Identifier("bong", "agent_ui_close"),
+            com.bong.client.network.AgentUiPayloadHandler.AGENT_UI_CLOSE_CHANNEL,
             (client, handler, buf, responseSender) -> {
                 int readableBytes = buf.readableBytes();
                 byte[] bytes = new byte[readableBytes];

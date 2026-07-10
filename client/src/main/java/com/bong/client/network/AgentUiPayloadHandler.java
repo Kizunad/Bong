@@ -6,6 +6,7 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.google.gson.JsonPrimitive;
 import net.minecraft.client.MinecraftClient;
+import net.minecraft.util.Identifier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -38,6 +39,8 @@ import java.util.function.Consumer;
  */
 public final class AgentUiPayloadHandler {
     private static final Logger LOGGER = LoggerFactory.getLogger(AgentUiPayloadHandler.class);
+    public static final Identifier AGENT_UI_CLOSE_CHANNEL =
+        new Identifier("bong", "agent_ui_close");
 
     static ServerDataDispatch openReadyRequestForTests(
         String payloadType,
@@ -240,6 +243,15 @@ public final class AgentUiPayloadHandler {
         String requestId = readString(payload, "request_id");
         if (requestId == null || requestId.isBlank()) {
             LOGGER.warn("[bong][agent_ui] bong:agent_ui_close: 'request_id' 缺失，payload 忽略");
+            return;
+        }
+
+        var reasonElement = payload.get("reason");
+        if (reasonElement != null
+            && !reasonElement.isJsonNull()
+            && (!reasonElement.isJsonPrimitive()
+                || !reasonElement.getAsJsonPrimitive().isString())) {
+            LOGGER.warn("[bong][agent_ui] bong:agent_ui_close: 'reason' 类型非法，payload 忽略");
             return;
         }
 

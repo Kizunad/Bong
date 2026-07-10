@@ -30,7 +30,7 @@ final class AgentUiCloseFeedback {
 
     @Nullable
     static String messageForReason(@Nullable String reason) {
-        if (reason == null || reason.isBlank()) {
+        if (reason == null || reason.isEmpty()) {
             return null;
         }
         return switch (reason.trim()) {
