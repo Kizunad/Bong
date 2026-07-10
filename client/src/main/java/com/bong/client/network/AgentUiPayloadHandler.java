@@ -123,6 +123,23 @@ public final class AgentUiPayloadHandler {
     // ─── 专属 channel 原始 JSON 解析（bong:agent_ui_request / bong:agent_ui_close）─────────
 
     /**
+     * 生产 close channel 的主线程调度入口。
+     *
+     * <p>Fabric receiver 先复制原始 payload bytes，再经此处 UTF-8 解码并提交到
+     * {@code MinecraftClient.execute}；测试可注入可控 executor，覆盖与生产相同的线程边界。
+     */
+    public static void dispatchRawClose(byte[] payloadBytes, Consumer<Runnable> mainThreadExecutor) {
+        String jsonPayload = ServerDataEnvelope.decodeUtf8(payloadBytes);
+        mainThreadExecutor.accept(() -> {
+            try {
+                handleRawClose(jsonPayload);
+            } catch (Exception e) {
+                LOGGER.error("[bong][agent_ui] bong:agent_ui_close dispatch failed: {}", e.getMessage());
+            }
+        });
+    }
+
+    /**
      * 解析来自 {@code bong:agent_ui_request} 专属 channel 的裸 JSON payload。
      *
      * <p>payload 格式（无 ServerDataV1 envelope）：
