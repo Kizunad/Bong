@@ -685,6 +685,7 @@ def _resolve_layout_target_height(zone: BlueprintZone) -> float:
 def synthesize_fields(
     plan: TerrainGenerationPlan,
     zone_filter: set[str] | None = None,
+    tile_filter: set[str] | None = None,
 ) -> GeneratedFieldSet:
     """Synthesize the blended field set for every active tile.
 
@@ -697,13 +698,18 @@ def synthesize_fields(
     only narrows *which tiles* get touched, never *which zones* contribute to a
     touched tile.
 
+    ``tile_filter`` independently restricts synthesis to exact plan tile IDs.
+    When both filters are supplied their intersection is synthesized.  This is
+    used by global metadata selectors that need a bounded spatial window rather
+    than every tile belonging to a named zone.
+
     A ``zone_filter`` naming a zone that does not exist in the blueprint is a
     caller error (typo on ``--zone-filter`` / a stale console request), not a
     silent no-op: it would otherwise select *zero* tiles and export an empty
     world that looks successful.  We fail fast with the unknown name(s) and the
     available zone names so the mistake is obvious.
     """
-    if zone_filter:
+    if zone_filter is not None:
         known_zones = {zone.name for zone in plan.blueprint_zones}
         unknown = sorted(zone_filter - known_zones)
         if unknown:
@@ -712,6 +718,19 @@ def synthesize_fields(
                 f"zone_filter names unknown zone(s) {unknown}; the blueprint "
                 f"defines no such zone, so they would select no tiles and "
                 f"silently export an empty world. Available zones: {available}"
+            )
+    if tile_filter is not None:
+        known_tile_ids = {tile.tile_id for tile in plan.tiles}
+        unknown_tile_ids = sorted(tile_filter - known_tile_ids)
+        if unknown_tile_ids:
+            preview = ", ".join(unknown_tile_ids[:8])
+            suffix = (
+                ""
+                if len(unknown_tile_ids) <= 8
+                else f" (+{len(unknown_tile_ids) - 8} more)"
+            )
+            raise ValueError(
+                f"tile_filter names unknown plan tile(s): {preview}{suffix}"
             )
     palette = SurfacePalette()
     palette.extend(("stone", "coarse_dirt", "gravel"))
@@ -731,6 +750,8 @@ def synthesize_fields(
         # A tile is synthesized when it intersects *any* zone.  With a
         # zone_filter, restrict to tiles intersecting one of the named zones —
         # but blending below still walks all blueprint_zones for that tile.
+        if tile_filter is not None and tile.tile_id not in tile_filter:
+            return False
         for zone in plan.blueprint_zones:
             if not _zone_intersects_tile(zone, tile):
                 continue
