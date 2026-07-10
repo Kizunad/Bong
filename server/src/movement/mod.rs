@@ -483,12 +483,15 @@ type MovementStateEmitFilter = (
 
 fn emit_movement_state_payloads(
     clock: Res<CombatClock>,
-    mut players: Query<(&mut Client, &MovementState, Option<&Stamina>), MovementStateEmitFilter>,
+    mut players: Query<
+        (&mut Client, &mut MovementState, Option<&Stamina>),
+        MovementStateEmitFilter,
+    >,
 ) {
-    for (mut client, movement, stamina) in &mut players {
-        let payload = ServerDataV1::new(ServerDataPayloadV1::MovementState(
-            movement.to_payload(clock.tick, stamina),
-        ));
+    for (mut client, mut movement, stamina) in &mut players {
+        let movement_payload = movement.to_payload(clock.tick, stamina);
+        let rejection_sent = movement_payload.rejected_action.is_some();
+        let payload = ServerDataV1::new(ServerDataPayloadV1::MovementState(movement_payload));
         let payload_type = payload_type_label(payload.payload_type());
         let payload_bytes = match serialize_server_data_payload(&payload) {
             Ok(bytes) => bytes,
@@ -498,6 +501,9 @@ fn emit_movement_state_payloads(
             }
         };
         send_server_data_payload(&mut client, payload_bytes.as_slice());
+        if rejection_sent {
+            movement.acknowledge_payload_sent();
+        }
         tracing::debug!(
             "[bong][movement] sent {} {} payload action={:?} speed={:.3}",
             SERVER_DATA_CHANNEL,
@@ -526,6 +532,10 @@ impl MovementState {
             last_action_tick: self.last_action_tick,
             rejected_action: self.rejected_action,
         }
+    }
+
+    fn acknowledge_payload_sent(&mut self) {
+        self.rejected_action = None;
     }
 }
 
