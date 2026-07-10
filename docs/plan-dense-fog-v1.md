@@ -1,6 +1,6 @@
 # Bong · plan-dense-fog-v1
 
-**区域浓雾（雾堤）**：把 `density ≥ 0.85` 定为跨端统一的「浓雾档入口」——client 渲染进入连续浓雾段（fogEnd 51.8 → 8.0），server 端它同时就是既有的遮蔽阈值（ViewDistance 压缩）；"勉强伸手不见五指"（fogEnd ≈ 8 格）对应 **density = 1.0 的雾堤**。server 提供不被天气 sync 冲掉的**动态雾堤注入源**（任意 AABB + TTL），天道 agent 获得下雾的命令入口。补齐 `plan-zone-environment-v1` 归档遗留第 5 项「Agent → server 注入 API」。
+**区域浓雾（雾堤）**：把 `density ≥ 0.85` 定为跨端统一的「浓雾档入口」——client 渲染进入连续浓雾段（fogEnd 51.8 → 8.0），server 端它同时就是既有的遮蔽阈值（ViewDistance 压缩）；"勉强伸手不见五指"（fogEnd ≈ 8 格）对应 **density = 1.0 的雾堤**。server 提供不被天气 sync 冲掉的**动态雾堤注入源**（**任意与至少一个已注册 zone 相交的 AABB** + TTL；纯 wilderness 盒 v1 明确不支持——广播/补发/遮蔽全部走 zone 索引，无 zone 相交的雾堤在入口层拒绝，dimension 级 wilderness overlay 留 v2 另立），天道 agent 获得下雾的命令入口。补齐 `plan-zone-environment-v1` 归档遗留第 5 项「Agent → server 注入 API」。
 
 **日期约定**：`YYYY-MM-DD` 均为 Pacific/Auckland 本地日期。
 
@@ -58,7 +58,7 @@
    - `d_eff < 0.85`：维持现行 `fogStart = 28 − 18d`，`fogEnd = 96 − 52d`
    - `d_eff ∈ [0.85, 1.0]`：`t = (d_eff − 0.85) / 0.15`；`fogStart = 12.7 − 11.2t`（→ 1.5），`fogEnd = 51.8 − 43.8t`（→ 8.0）。两段在 0.85 处连续；档位速查见 §0
    - 常量 `DENSE_FOG_TIER_START = 0.85`；浓雾段 `FogShape` 由 `CYLINDER` 切 `SPHERE`（头顶不漏光）
-2. **天空遮蔽**（`EnvironmentSkyController` + `MixinSkyPerZone`）：遮蔽因子 `o = clamp01((d_eff − 0.85) / 0.10)`——**与雾距同源用 `d_eff`**，边界羽化时天空与雾距一起渐变，不允许"雾距渐变天空瞬跳"；sky shader color 向雾色混合权重从现行 0.45 封顶改为 `max(现行值, o)` 直至全遮；**日月星/云可见度按 `1 − o` 连续衰减（alpha 乘因子），仅 `o = 1.0` 完全遮蔽后才跳过其渲染（纯优化，无视觉跳变）**；浓雾段雾色 = `tint_rgb` 全权重
+2. **天空遮蔽**（`EnvironmentSkyController` + `MixinSkyPerZone`）：遮蔽因子 `o = clamp01((d_eff − 0.85) / 0.10)`——**与雾距同源用 `d_eff`**，边界羽化时天空与雾距一起渐变，不允许"雾距渐变天空瞬跳"；sky shader color 向雾色混合权重从现行 0.45 封顶改为 `max(现行值, o)` 直至全遮；**日月星可见度按 `1 − o` 连续衰减（`renderSky` 内 celestial 段 `RenderSystem.setShaderColor` alpha 乘 `1 − o`），仅 `o = 1.0` 完全遮蔽后才跳过渲染（纯优化，无视觉跳变）**；浓雾段雾色 = `tint_rgb` 全权重。**云层具名消费入口**：新增 `MixinCloudsPerZone` 钩 `WorldRenderer.renderClouds` HEAD——`EnvironmentSkyController.currentOcclusion()` 暴露 o；`o = 1.0` cancel 渲染，`0 < o < 1` 以 `setShaderColor(1,1,1,1−o)` 衰减 + TAIL 恢复
 3. **自适应边界羽化**（`EnvironmentFogPlanner`）：替换二值 `contains()` 门——逐轴 `feather_axis = min(12.0, half_extent_axis)`，`edgeFactor = clamp01(min over axes(玩家到该轴两内侧面距离 / feather_axis))`。**任意尺寸 AABB 的中心恒有 edgeFactor = 1**（窄盒不再永远够不到浓雾档）；对既有 zone FogVeil 同样生效（zone AABB 大，羽化只影响边缘 12 格）
 4. **fog sink 仲裁**：`EnvironmentFogController` 与 `RealmVisionFogController` 同在 `applyFog` TAIL 且 mixin 优先级相同（注入顺序未定义，实测互覆）。收敛单一 GL sink：保留 `MixinFogPerZone` 一处写 `RenderSystem`，RealmVision 命令并入 min-combine 仲裁（同 `mergeFogCommands` 语义）
 5. **跨端阈值契约文件**：新增仓库根 `contracts/fog-thresholds.json`（`{"dense_fog_tier_start": 0.85}`）。Rust 测试 `include_str!` 对拍 `OPAQUE_FOG_DENSITY_THRESHOLD`；client Java 测试读同文件对拍 `DENSE_FOG_TIER_START`。**单边改常量 → 该端红；改 JSON 不同步两端 → 两端红**（真互锁，替代"两端各自 pin 字面值"的伪互锁）
@@ -69,13 +69,14 @@
 - 羽化：盒厚 1 / 8 / 16 / 24 / 96 格五档断言"中心恒达原始 density、羽化带线性、盒外 0"；退化 AABB（零厚/负翻转）不 NaN 不 panic
 - 既有雾回归基线：scorch(0.34) / tribulation(0.42) / tsy(0.58) 三 zone 各取 盒心 / 羽化带中点 / 盒外 三采样点 pin（盒心值与现行公式输出一致）
 - 天空：o 曲线 0.84 / 0.90 / 0.95 三点 + celestial `1 − o` 连续衰减（0.94/0.95/1.0 三点，相邻输出差有界）+ `o = 1.0` 跳过分支 + 与雾距同源（同一 d_eff 输入）
+- 云层：`currentOcclusion()` 在 o = 0 / 0.5 / 1.0 三点的 alpha 契约（0 → 不干预、0.5 → 半透、1.0 → cancel）
 - 退化盒防御：翻转/零厚/NaN 盒输入 → `edgeFactor = 0` 不渲染不 panic
 - 仲裁：四象限（env 浓 / RV 浓 / 双活 / 双空）
 - 契约：`contracts/fog-thresholds.json` 对拍（Rust + Java 各一条）
 
 ## P1 — server 动态雾堤 + dev 命令
 
-**目标**：在任意 AABB 上起一片有寿命的浓雾，不被 `weather_environment_sync_system` 每帧 `replace_for_dimension` 冲掉，且**跨 zone 正确分发**。
+**目标**：在**任意与至少一个已注册 zone 相交的 AABB** 上起一片有寿命的浓雾（能力边界见头部声明），不被 `weather_environment_sync_system` 每帧 `replace_for_dimension` 冲掉，且**跨 zone 正确分发**。
 
 > 主体已由 PR #1158 交付（`environment_overlay.rs` 9 单测 + `cmd/dev/fog.rs` 8 单测 + bot 场景），以下为完整契约描述 + 剩余交付。
 
@@ -95,8 +96,9 @@
 3. `/fog` dev 命令（已落地，`server/src/cmd/dev/fog.rs`）：`spawn <radius> <density> [duration_ticks]`（以执行者为中心，竖直跨度 −24/+48）、`clear <id>`、`clear_all`、`list`；registry_pin 5 条路径。~~CLAUDE.md dev 命令表~~——已由 PR #1158 **人工**交付；CLAUDE.md 不在 consume-plan 写权限内，**不列为本 plan 自动交付物**
 4. bot 场景（已落地）：`scripts/bot/scenarios/cmd_dev_fog_zone_environment.py`——spawn 后广播含 density=0.93 fog_veil、clear_all 后同 zone 重播不含
 5. **vision 遮蔽 AABB 包含判定**（PR #1158 第 2 commit 交付）：`weather_physics/vision.rs::opaque_fog_veil_contains`——density ≥ 0.85 且玩家在该 FogVeil AABB 内（三轴闭区间）才压 ViewDistance；集成测试：恰好 0.85 盒内触发 / 0.84 不触发 / 同 zone 盒外玩家不触发 / clear_all 恢复 / TTL 到期恢复 / 判定函数专属单测（贴边闭区间、y 超界、非 FogVeil 变体）
-6. **剩余交付**：
-   - dev 命令与 sync 的 schedule 顺序声明：两者无 `.before/.after` 约束，TTL 契约以**首次组装**为锚（同 tick spawn 用例已锁，异 tick 顺延一 tick 首播，语义不变）
+6. **TTL 无零广播不变式（代替 schedule 约束）**：`tick_expiry` 与组装在 `sync_zone_environment_effects` **同一次运行内原子耦合**——先组装（含 `remaining ≥ 1` 的所有雾堤）后递减，且 zones 缺失早退时两者都不执行。因此**不存在"递减先于包含该雾堤的组装"的执行序**：spawn 与 sync 的相对顺序（同 tick 先后、异 tick）只影响首播落在哪个 tick，不影响 duration=N ⇒ 恰好 N 次可观察组装。无需 `.before/.after` schedule 约束
+7. **剩余交付**：
+   - **最不利顺序集成测试**：sync 先于 spawn 的 tick 序（测试 app 以 `(sync, handle_fog).chain()` 反向排列），duration=1 仍恰好广播一次（首播顺延一 tick）
    - 新客户端 join 补发用例：`mark_all_dirty_for_snapshot` 快照含 overlay 产生的 FogVeil
    - 跨 zone 附着集成用例：跨两 zone / 中心在 wilderness 但边缘相交 / 多区重叠 / 两名玩家位于不同 zone 同一雾堤内各自收到含该雾堤的 state
 
@@ -122,7 +124,7 @@
 
 - HeavyHaze 是否从 0.85（档位入口，视觉与现状一致）上调至 0.90——按 §8.1 #1，默认不动；确需调整走单独 PR 注明跨 plan 数值变更
 - runClient 截图基线：雾堤内（d=1.0）/ 羽化带 / 仰视天空三视角；`/fog spawn 48 1.0` → 截图 → `/fog clear_all` 闭环
-- **实体可见性可重复验证**（替代截图印象，**block 距离显式断言**）：bot 场景在浓雾 AABB 内以 block 坐标摆放目标实体——阈值内（< `chunks_for_radius(16.0) × 16 = 16` block）应收到 spawn/更新包、阈值外（> 16 block，含边界 +1 采样）不应收到；disguise 路径沿用其 `(vd+2)×16` Chebyshev 公式单独断言（参照 `network_disguise_visibility_scoping.py` 先例）。**任何"AABB 外误裁"或"浓雾内位置包泄漏（nameplate/glow/实体包超阈值可见）"都阻塞 P3 完成——不得填写 Finish Evidence 或归档，修复后复验**（§8.1 #3 决议同步更新）
+- **实体可见性可重复验证**（替代截图印象，**以真实 chunk 订阅契约断言**）：先从生产实现提取实体 tracking 判定（valence chunk 订阅按玩家 chunk 与目标 chunk 的 **Chebyshev chunk 距离 ≤ ViewDistance** 决定 spawn/update/despawn 投递——以代码为准，禁止用固定 block 欧氏距离替代）。表驱动矩阵：同 chunk / 相邻 chunk / 订阅边界上 / 边界外一 chunk / 对角 chunk / 玩家跨 chunk 边界前后；disguise 路径按其 `(vd+2)×16` Chebyshev 公式**独立**断言（参照 `network_disguise_visibility_scoping.py` 先例）；浓雾 AABB 外的玩家不误裁。**任何"AABB 外误裁"或"浓雾内位置包泄漏（nameplate/glow/实体包超订阅范围可见）"都阻塞 P3 完成——不得填写 Finish Evidence 或归档，修复后复验**（§8.1 #3 决议同步更新）
 - **e2e 门禁 = `bash scripts/smoke-test-e2e.sh`**（CLAUDE.md 明示真集成 gate；`scripts/smoke-test.sh` 仅作附加回归）：server 起雾 → bot 收 `bong:zone_environment` payload → ViewDistance/实体包裁剪 → 到期恢复，同一真实链路走通
 - 性能：雾堤 + 天气雾 + zone 大气三源共存时 client tick 预算不劣化（沿用 `perfEightConcurrentEffectsInView` 口径加一条浓雾 case）
 
@@ -199,5 +201,6 @@
 
 - **2026-07-10**：骨架立项。调研结论：server 遮蔽机制（vision.rs 0.85 阈值 + ViewDistance 压缩）与 wire（FogVeil 任意 AABB）均已就绪，缺口 = client 渲染档（公式钳死 fogEnd≥44 / 天空穿帮 / 边界瞬跳 / 双 sink 互覆）+ server 动态注入面（sync 每帧全量覆盖）+ 天道命令入口（agent_cmd 7 类无环境类）。已查 finished_plans（zone-environment / zone-weather / zone-atmosphere / perception / woliu）、active、skeleton 与 reminder.md，无同主题重叠
 - **2026-07-10**：升 active（用户拍板）+ §8.1 六条决议收口（基于两路 Explore 实地调研，文件:行号双锚点齐）。P1 主体（`EnvironmentOverlays` + `/fog` dev 命令 + bot 场景 + 17 单测）由 PR #1158 先行交付，P1 置 ⏳；P0/P2/P3 待 consume
+- **2026-07-11**：按 PR #1156 第 3 轮 /review 修订：能力声明统一收窄为「任意与至少一个已注册 zone 相交的 AABB」（纯 wilderness 盒 v1 不支持，dimension 级 overlay 留 v2）；TTL 补「无零广播不变式」（递减与组装同 system 运行内原子耦合，先组装后递减 + zones 缺失双跳过 ⇒ 不存在零广播执行序，无需 schedule 约束）+ 最不利顺序（sync 先于 spawn）集成测试列入剩余交付；P3 实体可见性断言从固定 16 block 欧氏线改为真实 chunk 订阅契约（Chebyshev chunk 距离表驱动矩阵）；云层遮蔽补具名入口 `MixinCloudsPerZone`（`renderClouds` HEAD，`currentOcclusion()` alpha 契约三点测试）；PR 标题/摘要改为「立项并升 active」并注明授权依据（此前 gh pr edit 被 GraphQL 弃用错误静默中断，本轮改走 REST API 已核验生效）
 - **2026-07-10**：按 PR #1156 第 2 轮 /review 修订：**权威遮蔽从 zone-scoped 改为 FogVeil AABB 包含判定**（`opaque_fog_veil_contains`，天气雾 AABB=zone bounds 行为不变、局部雾堤不再致盲整 zone——已连同 TTL off-by-one 修复落进 PR #1158 第 2 commit）；§0 补非法/退化 AABB 跨端输入契约（入口拒绝 + overlay 防御归一化不是契约 + client edgeFactor=0）；celestial 改 `1−o` 连续衰减（o=1 才跳渲染）；P2 补 Rust serde variant + dispatcher match 具名交付物与入口级链路测试、narration 定向改"AABB 内玩家按实体去重一次性入队"；P3 门禁改 `smoke-test-e2e.sh`、实体可见性 block 距离显式断言、位置泄漏阻塞 P3（§8.1 #3 同步）
 - **2026-07-10**：按 PR #1156 首轮 /review（4 reviewer 全 REQUEST_CHANGES）修订：新增 §0 拆分「权威遮蔽（server，原始 density，zone-scoped 二值）vs 视觉渲染（client，effective density 连续）」双消费线契约；羽化改自适应 `feather_axis = min(12, half_extent_axis)`（窄盒中心恒达原始 density）并撤销"边界行为完全不变"承诺（改为盒心不变 + 三 zone 回归基线）；天空遮蔽与雾距同源用 `d_eff`；TTL 统一为 `remaining_ticks` 单模型 + 状态表；zone 附着从"中心命中"改为"AABB 相交集合"（与 PR #1158 实现一致）；跨端阈值互锁改 `contracts/fog-thresholds.json` 真对拍；narration 补 `PendingGameplayNarrations` 完整消费链；CLAUDE.md 行移出 consume 自动交付物；ViewDistance 单位改为 blocks→chunks ceil 精确表述
