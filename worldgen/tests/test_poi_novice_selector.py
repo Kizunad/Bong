@@ -210,3 +210,109 @@ def test_selection_window_excludes_active_tiles_beyond_relaxed_radius() -> None:
     plan = _selection_plan(near, remote)
 
     assert novice_poi_selection_tile_ids(plan) == {near.tile_id}
+
+
+def test_selection_window_includes_one_sample_gradient_halo() -> None:
+    edge = WorldTile(
+        tile_x=62,
+        tile_z=0,
+        min_x=1984,
+        max_x=2015,
+        min_z=0,
+        max_z=31,
+    )
+    halo = WorldTile(
+        tile_x=63,
+        tile_z=0,
+        min_x=2016,
+        max_x=2047,
+        min_z=0,
+        max_z=31,
+    )
+    plan = _selection_plan(edge, halo)
+
+    assert novice_poi_selection_tile_ids(plan, sample_stride=32) == {
+        edge.tile_id,
+        halo.tile_id,
+    }
+
+    with pytest.raises(ValueError, match="sample_stride must be positive"):
+        novice_poi_selection_tile_ids(plan, sample_stride=0)
+
+
+def test_manifest_payload_ignores_extra_fields_outside_fixed_selection_grid() -> None:
+    tile_size = 32
+    near = WorldTile(
+        tile_x=0,
+        tile_z=0,
+        min_x=0,
+        max_x=31,
+        min_z=0,
+        max_z=31,
+    )
+    remote = WorldTile(
+        tile_x=94,
+        tile_z=0,
+        min_x=3008,
+        max_x=3039,
+        min_z=0,
+        max_z=31,
+    )
+
+    near_buffer = TileFieldBuffer.create(
+        near,
+        tile_size,
+        ("height", "water_level", "qi_density"),
+    )
+    near_buffer.layers["height"] = np.full(tile_size * tile_size, 100.0)
+    near_buffer.layers["water_level"] = np.full(tile_size * tile_size, -1.0)
+    near_qi = np.zeros((tile_size, tile_size), dtype=np.float64)
+    near_qi[:, -1] = 0.5
+    near_buffer.layers["qi_density"] = near_qi.reshape(-1)
+
+    remote_buffer = TileFieldBuffer.create(
+        remote,
+        tile_size,
+        ("height", "water_level", "qi_density"),
+    )
+    remote_buffer.layers["height"] = np.full(tile_size * tile_size, 70.0)
+    remote_buffer.layers["water_level"] = np.full(tile_size * tile_size, -1.0)
+    remote_buffer.layers["qi_density"] = np.zeros(tile_size * tile_size)
+
+    plan = _selection_plan(near, remote)
+    spawn_center = Vec3(-300.0, 70.0, 0.0)
+    assert novice_poi_selection_tile_ids(
+        plan,
+        spawn_center=spawn_center,
+    ) == {near.tile_id}
+
+    bounded_fields = GeneratedFieldSet(
+        tile_size=tile_size,
+        surface_palette=SurfacePalette(),
+        layers=("height", "water_level", "qi_density"),
+        tiles=[near_buffer],
+    )
+    full_fields = GeneratedFieldSet(
+        tile_size=tile_size,
+        surface_palette=SurfacePalette(),
+        layers=("height", "water_level", "qi_density"),
+        tiles=[near_buffer, remote_buffer],
+    )
+
+    bounded_payload = build_novice_poi_manifest_payload(
+        bounded_fields,
+        plan=plan,
+        spawn_center=spawn_center,
+        sample_stride=1,
+    )
+    full_payload = build_novice_poi_manifest_payload(
+        full_fields,
+        plan=plan,
+        spawn_center=spawn_center,
+        sample_stride=1,
+    )
+
+    assert bounded_payload == full_payload, (
+        "novice selection must use one plan-derived grid: unrelated full-world "
+        "tiles cannot change gradient edge semantics or selected coordinates"
+    )
