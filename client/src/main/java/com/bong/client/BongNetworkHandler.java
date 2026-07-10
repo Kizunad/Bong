@@ -898,6 +898,10 @@ public class BongNetworkHandler {
         // plan-craft-session-reconnect-lock-v1 P0 — craft store 是静态跨屏状态；
         // 断线不清会把旧 active session 带进新连接，导致手搓/制作台主操作永久灰掉。
         CraftStore.clear();
+        // plan-bughunt-client-toast-cross-session-leak-v1 P0 — BongToast.activeToast
+        // 是静态单槽，只在自然过期后自清；断线不清会让上一 server 未过期的 warning/
+        // era/event/inventory toast 在 reconnect 后的首几秒继续渲染，串成跨 session 泄漏。
+        BongToast.clearOnDisconnect();
     }
 
     private static void logNoOp(ServerDataRouter.RouteResult result) {
