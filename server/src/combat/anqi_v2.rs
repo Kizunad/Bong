@@ -562,9 +562,28 @@ fn draw_payload_after_abrasion(
 
 /// plan-combat-hit-location-v1 P1（决议 §8.1 #2）— MultiShot 散布锥角，按施放者主手臂
 /// 伤势缩放 `MULTI_SHOT_BASE_CONE_DEGREES`（Fracture/Severed 时 +50%）。
+///
+/// plan-race-system-v1 P0 review 修复（BLOCKING-1）—— 直接持有 `&World`，按施放者
+/// 实体经 `resolve_body_plan_for_target` 解析出 `BodyPlan`（`BodyPlanPurpose::Intrinsic`）
+/// 再喂给 `arm_wound::combined_factor_from_optional`，不再固定读 `humanoid_plan_static()`。
+/// 资源缺失（既有单测未插入 `BodyPlanRegistry`/`RaceRegistry`）时内建退化到 humanoid，
+/// 行为 bit-for-bit 不变。`beast_kind: None`——`BeastKind` 不是 ECS `Component`（只是
+/// `fauna::components` 里另一个组件的数据字段），暗器技能施放者恒为玩家，走
+/// `Cultivation.race` Tier2 分支，与 `combat::resolve` 现有消费点同款简化。
 fn multi_shot_cone_degrees(world: &bevy_ecs::world::World, caster: Entity) -> f64 {
+    let plan = crate::body_plan::resolve_body_plan_for_target(
+        caster,
+        crate::body_plan::BodyPlanPurpose::Intrinsic,
+        crate::body_plan::BodyPlanResolveInputs {
+            cultivation: world.get::<Cultivation>(caster),
+            beast_kind: None,
+        },
+        world.get_resource::<crate::body_plan::BodyPlanRegistry>(),
+        world.get_resource::<crate::body_plan::RaceRegistry>(),
+    );
     let spread_multiplier =
-        arm_wound::combined_factor_from_optional(world.get::<Wounds>(caster)).spread_multiplier;
+        arm_wound::combined_factor_from_optional(world.get::<Wounds>(caster), plan)
+            .spread_multiplier;
     MULTI_SHOT_BASE_CONE_DEGREES * f64::from(spread_multiplier)
 }
 

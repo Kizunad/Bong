@@ -550,10 +550,27 @@ pub fn resolve_attack_intents(
             else {
                 continue;
             };
+            // plan-race-system-v1 P0 review 修复（BLOCKING-1）—— 攻方臂伤倍率查询改为
+            // 按攻方实体解析出的 BodyPlan 分发（`BodyPlanPurpose::Intrinsic`），不再固定
+            // 读 `humanoid_plan_static()`；资源缺失/未知 race 时 `resolve_body_plan_for_target`
+            // 自身已内建退化到 humanoid，行为 bit-for-bit 不变（同 `body_part_multipliers`/
+            // `target_body_plan` 消费点同款模式）。`beast_kind: None` 简化同上方 `target_body_plan`
+            // 注释的既有先例（races.json 现阶段所有 BeastKind 派生种族均落 humanoid）。
+            let attacker_body_plan = resolve_body_plan_for_target(
+                intent.attacker,
+                BodyPlanPurpose::Intrinsic,
+                BodyPlanResolveInputs {
+                    cultivation: Some(&*attacker_cultivation),
+                    beast_kind: None,
+                },
+                body_plan_registry.as_deref(),
+                race_registry.as_deref(),
+            );
             // plan-combat-hit-location-v1 P1（决议 §8.1 #2）— 攻方主手臂伤势削减自身攻击伤害。
             // Bruise×0.95/Abrasion×0.90/Laceration×0.80/Fracture×0.60/Severed×0.40。
             let attacker_arm_wound_damage_multiplier =
-                arm_wound::combined_factor_from_optional(attacker_wounds).attack_damage_multiplier;
+                arm_wound::combined_factor_from_optional(attacker_wounds, attacker_body_plan)
+                    .attack_damage_multiplier;
 
             if qi_invest > f64::EPSILON && !source_uses_prepaid_qi(intent.source) {
                 attacker_cultivation.qi_current = (attacker_cultivation.qi_current - qi_invest)
@@ -615,8 +632,10 @@ pub fn resolve_attack_intents(
         // plan-combat-hit-location-v1 P1（决议 §8.1 #2）— 防御方副手臂（持盾侧）伤势削减
         // 格挡/招架减伤效果：Laceration ×0.80(-20%)/Fracture·Severed ×0.60(-40%)。
         // 读取本次命中造成的伤口写入 wounds.entries 之前的既有伤势状态。
+        // plan-race-system-v1 P0 review 修复（BLOCKING-1）—— 复用上方已按目标实体解析
+        // 出的 `target_body_plan`（同一个 `target_entity`），不再固定读 humanoid_plan_static()。
         let defender_off_arm_block_multiplier =
-            arm_wound::combined_factor(&wounds).block_multiplier;
+            arm_wound::combined_factor(&wounds, target_body_plan).block_multiplier;
         let decay = ((intent.reach.max - distance) / intent.reach.max.max(0.001)).clamp(0.0, 1.0);
         let hit_qi = (intent.qi_invest * decay).max(0.0);
         let is_physical_hit = intent.qi_invest <= f32::EPSILON;
