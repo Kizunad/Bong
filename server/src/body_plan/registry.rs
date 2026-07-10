@@ -485,6 +485,37 @@ mod tests {
     }
 
     #[test]
+    fn humanoid_plan_static_declares_the_four_armor_equip_slots() {
+        // plan-race-system-v1 §P0 交付物 pin："humanoid.json 首个条目：8 部位 / 倍率表
+        // / 1.8m AABB 分段阈值 / 4 护甲槽，与现状硬编码值逐项 bit-for-bit 对齐"——
+        // 这条断言逐一核对 head/chest/legs/feet 四个装备槽集合（既不多也不少，用
+        // `HashSet` 对拍而非只查"contains"，防止悄悄多出第 5 个槽或漏掉一个仍然通过）。
+        use crate::schema::inventory::EquipSlotV1;
+        use std::collections::HashSet;
+
+        let plan = humanoid_plan_static();
+        let actual: HashSet<EquipSlotV1> = plan.equip_slots.iter().cloned().collect();
+        let expected: HashSet<EquipSlotV1> = [
+            EquipSlotV1::Head,
+            EquipSlotV1::Chest,
+            EquipSlotV1::Legs,
+            EquipSlotV1::Feet,
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(
+            actual, expected,
+            "humanoid.json equip_slots 必须恰好是 head/chest/legs/feet 四个护甲槽 \
+             （不多不少）——实际值 {actual:?}"
+        );
+        assert_eq!(
+            plan.equip_slots.len(),
+            4,
+            "humanoid.json equip_slots 必须没有重复条目（长度应与去重后的集合大小一致）"
+        );
+    }
+
+    #[test]
     fn humanoid_plan_static_declares_mutation_slot_mapping_for_all_five_body_slot_variants() {
         // 全变体饱和 pin（数据侧）：humanoid.json 的 `mutation_slot_mapping` 必须覆盖
         // `dandao::mutation::BodySlot` 全部 5 个变体——不是"覆盖率"这种笼统断言，是

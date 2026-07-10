@@ -34,10 +34,13 @@
 pub mod alchemy;
 pub mod armor;
 pub mod audio;
-// body_plan：plan-race-system-v1 P0a 底盘（BodyPlanRegistry / RaceRegistry /
-// resolve_body_plan）。combat::raycast 等实际消费点改造是后续阶段的工作，本阶段
-// 交付的部分 API（resolve_body_plan / body_part_for_mutation_slot）暂无生产调用点，
-// 仅被本模块自身测试覆盖，保留 allow 直到消费点接入。
+// body_plan：plan-race-system-v1 P0 底盘（BodyPlanRegistry / RaceRegistry /
+// resolve_body_plan）。resolve_body_plan 已接入真实生产消费点：
+// combat::resolve::body_part_multipliers / combat::resolve::resolve_attack_intents
+// （经 resolve_body_plan_for_target）/ combat::raycast（classify_body_part /
+// standing_humanoid_aabb / raycast_humanoid，按目标实体分派）/ combat::carrier
+// 投射物命中路径。body_part_for_mutation_slot（dandao BodySlot 映射查询 API）尚无
+// 生产调用点，仍只被本模块自身测试覆盖，保留 allow 直到 dandao 消费点接入。
 #[allow(dead_code)]
 pub mod body_plan;
 pub mod botany;
