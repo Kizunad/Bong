@@ -9498,7 +9498,7 @@ const MODULES = [
         "gaps": [
           {
             "severity": "info",
-            "note": "DroppedItemPickupBootstrap.register() 仅打 log，是空桩；但实际拾取功能并未缺失 —— DroppedItemPickupIntentHandler 已在 DefaultInteractionHandlers 注册进 G 键统一路由，且 ClientRequestSender.sendPickupDroppedItem 存在，链路完整。RemainsLootIntentHandler 同样走此路由（同优先级 70，按距离 tie-break，DefaultInteractionHandlers.java L29），全链路（RemainsSyncHandler 填充 → G 键候选 → sendRemainsLoot → 断线 RemainsStore.clearOnDisconnect）已验证闭环，无孤岛"
+            "note": "DroppedItemPickupBootstrap.register() 是只打 log 的空桩——真实拾取接线在 DefaultInteractionHandlers 的 G 键统一路由（DroppedItemPickup/RemainsLoot 两个 IntentHandler 同优先级 70 按距离 tie-break）。空桩留存易被误读为接线入口，宜删除或在类注释标明非生产路径"
           }
         ]
       },
@@ -9567,7 +9567,7 @@ const MODULES = [
         "gaps": [
           {
             "severity": "info",
-            "note": "本模块无遗骸世界渲染器的现状成因：遗骸由服务端 vanilla PlayerEntityBundle（Pose::Sleeping，server/src/inventory/mod.rs::spawn_player_remains_entity）生成、走原版实体协议渲染（remains_id 即实体 UUID，见 remains_sync_emit.rs）。注意该 vanilla 实体形态与「Marker + 自定义渲染」架构硬约束的张力已在 server/inventory 条目登记为 warn gap；本模块仅承接 G 键拾取 C2S 交互（合规），若后续迁移 Marker 则需在 client 补自定义遗骸渲染器"
+            "note": "本模块无遗骸世界渲染器的现状成因：遗骸由服务端 vanilla PlayerEntityBundle（Pose::Sleeping，server/src/inventory/mod.rs::spawn_player_remains_entity）生成、走原版实体协议渲染。两个独立事实：① G 键拾取 C2S 交互链已闭环（合规）② 实体承载方式用 vanilla EntityBundle 违反「禁止 vanilla entity hack / Marker + 自定义渲染」架构硬约束——违规事实已在 server/inventory 登记为 critical gap，迁移 Marker 后 client 需补自定义遗骸渲染器"
           }
         ]
       },
@@ -10796,7 +10796,7 @@ const MODULES = [
         "gaps": [
           {
             "severity": "info",
-            "note": "✅ RESOLVED #807(module-map triage 修复批次): CASE_TO_TYPE 映射表与 proto oneof 手动同步维护（已抽验确认为静态 Map 初始化），新增 proto 变体若忘记加入映射则 bridge 返回 error 丢包，无编译期保护——本轮核验（读代码到 line 193）确认新增的 REMAINS_SYNC / INVENTORY_MOVE_REJECTED / SCROLL_OPEN 三个 case 均已正确双登记（CASE_TO_TYPE + extractInner switch），未见漏注册"
+            "note": "CASE_TO_TYPE 映射表与 proto oneof 手动同步维护（静态 Map 初始化），新增 proto 变体若忘记加入映射则 bridge 返回 error 丢包，无编译期保护"
           },
           {
             "severity": "info",
@@ -11157,8 +11157,8 @@ const MODULES = [
             "note": "参见 MEMORY: pre-#249 老存档库存布局未迁移，重连卡旧布局；属 server 持久化层问题，非本 net 簇——此处仅链接登记"
           },
           {
-            "severity": "info",
-            "note": "InventoryMoveRejectedHandler.java 的 500ms 去重 map（lastShownAtMillis）以 reason 字符串为 key、无过期清理，但键空间被 InventoryMoveRejectReason 的 24 个字面量硬边界（messageFor switch，line 100-128）自然钳住，不构成真实内存泄漏——记录以防未来 reason 集合改为动态/带参数化 key 时复发"
+            "severity": "warn",
+            "note": "InventoryMoveRejectedHandler 的 500ms 去重 map（static lastShownAtMillis，ConcurrentHashMap）以 payload 原样 reason 字符串为 key：L47 readString 后仅挡 null/blank 即 L68 recordShown 写入，无白名单校验或归一化——messageFor 的 switch 只约束展示文案、不约束键空间，未知 reason（schema 漂移/异常 server）可无界扩张该 static map。宜按 reason 枚举白名单校验或统一归一 UNKNOWN 键后再写入，并补 unknown/空串/大量不同未知值的契约测试"
           }
         ]
       },
@@ -21890,8 +21890,8 @@ const MODULES = [
         "note": "DroppedLootRegistry 和 TsySpawnedFamilies 均无持久化，重启后世界掉落物和 TSY 遗物生成记录清零，属文档明确的 MVP 简化"
       },
       {
-        "severity": "warn",
-        "note": "遗骸实体用 vanilla PlayerEntityBundle（Pose::Sleeping + NoGravity + CustomName）+ PlayerListEntryBundle 充当尸体视觉与世界锚（mod.rs::spawn_player_remains_entity L1006-L1046）——与「禁止 vanilla MC entity hack / Bong 实体 = Marker + 自定义渲染」架构硬约束存在张力，仓库内未见明确豁免记录；交互侧已合规走 C2S（client RemainsLootIntentHandler → G 键 remains 拾取 intent）。待架构决策：迁移 Marker + 客户端自定义渲染，或正式登记豁免"
+        "severity": "critical",
+        "note": "遗骸实体承载方式违反架构硬约束：用 vanilla PlayerEntityBundle（Pose::Sleeping + NoGravity + CustomName）+ PlayerListEntryBundle 充当尸体视觉与交互载体（mod.rs::spawn_player_remains_entity L1006-L1046），而仓库硬约束明令「禁止 vanilla MC entity hack，Bong 实体 = Marker + 自定义渲染 + C2S 交互」且未见豁免记录。注意区分：交互链本身已合规走 C2S（G 键 → RemainsLootIntentHandler → sendRemainsLoot），违规的是实体承载。迁移目标：Marker entity + client 自定义遗骸渲染器；或人工评审后正式登记豁免"
       }
     ]
   },
