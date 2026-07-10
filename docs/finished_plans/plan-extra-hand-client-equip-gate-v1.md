@@ -103,8 +103,10 @@
   - `client/src/test/java/com/bong/client/inventory/component/EquipmentPanelTest.java`
     - 改写现有错误断言：双手武器只锁 `OFF_HAND`
     - 补多臂槽仍可交互/不灰显的 panel 状态测试
-  - `InspectScreen` 的拖拽/shift 快装主路径仍复用 `InventoryEquipRules.canEquip()` /
-    `preferredWeaponQuickEquipSlot()`；本次用规则契约测试锁住 quick-equip 选槽，未新增高成本 UI harness。
+  - `client/src/test/java/com/bong/client/inventory/InspectScreenMoveIntentTest.java`
+    - 通过生产路径共用的最薄 headless 编排 seam 覆盖拖拽落入 `EXTRA_HAND_1`
+    - 覆盖 shift 快装在主手占用、副手不合法时落入 `EXTRA_HAND_0`
+    - 断言最终发送的 `InventoryMoveIntent` 携带正确 `EquipLoc`；无合法槽位/目标已占时不发请求
 - 验收抓手：
   - client 单测能直接表达“server 接受的一般武器，client 也必须接受”
   - 不再把当前错误行为写进测试名称/断言文案
@@ -148,13 +150,14 @@
   - `client/src/main/java/com/bong/client/inventory/component/EquipmentPanel.java`：双手武器只 disable 空闲 `OFF_HAND`，不再灰显 `EXTRA_HAND_0/1`。
   - `client/src/test/java/com/bong/client/inventory/InventoryEquipRulesTest.java`：锁住一般武器可进 extra hand、主手双手武器不锁 extra hand、quick-equip 路由 extra hand、shield/treasure 不进 extra hand。
   - `client/src/test/java/com/bong/client/inventory/component/EquipmentPanelTest.java`：锁住双手武器只灰副手、多臂槽仍可交互。
+  - `client/src/main/java/com/bong/client/inventory/InspectScreen.java`：拖拽装备提交抽取为生产/headless 共用编排边界，shift 快装继续调用同一生产方法。
+  - `client/src/test/java/com/bong/client/inventory/InspectScreenMoveIntentTest.java`：锁住拖拽与 shift 快装从输入编排到 extra-hand `EquipLoc`、`InventoryMoveIntent` 的真实接入链路。
 - **关键 commit**：
   - `6921a924`（2026-07-06）：修复多臂额外手槽客户端装备门控。
   - `41b9a73c`（2026-07-06）：通过 PR #900 接入 `origin/main`。
 - **测试结果**：
-  - 2026-07-10 使用 JDK 17 离线重编译当前源码，并执行 `InventoryEquipRulesTest` 43 条 + `EquipmentPanelTest` 11 条：54/54 PASS。
-  - 标准 Gradle 入口在当前受限沙箱内因 Gradle 缓存锁需要本地 socket 而无法启动；该环境限制不影响上述 Java 17 测试执行结果。
+  - 2026-07-10 使用 JDK 17 运行 Gradle 定向测试：`InventoryEquipRulesTest` 43 条 + `EquipmentPanelTest` 11 条 + `InspectScreenMoveIntentTest` 12 条，66/66 PASS。
 - **跨仓库核验**：
   - server 已有 `validate_move_semantics_accepts_weapon_to_extra_hand_0/1` 与 `validate_two_handed_main_hand_does_not_lock_extra_hand` pin；本次未改 server/schema。
   - client `InspectScreen` 拖拽与 shift quick-equip 继续经 `InventoryEquipRules.canEquip()` / `preferredWeaponQuickEquipSlot()`，规则层已补 pin。
-- **遗留 / 后续**：无。
+- **遗留 / 后续**：无；owo 像素级 hit-test 仍由 client build/e2e 覆盖，输入到 intent 的生产编排边界已有 headless 回归。

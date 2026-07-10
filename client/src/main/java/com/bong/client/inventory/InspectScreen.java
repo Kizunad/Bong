@@ -1787,6 +1787,19 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         this.bodyInspect = bodyInspect;
     }
 
+    /** Headless 交互测试 seam：注入生产 quick-equip / equip-drop 共用的 grid 与装备面板。 */
+    void configureEquipInteractionForTests(BackpackGridPanel grid, EquipmentPanel panel) {
+        this.containerGrids = grid == null ? new BackpackGridPanel[0] : new BackpackGridPanel[] {grid};
+        this.activeContainer = grid == null ? -1 : 0;
+        this.equipPanel = panel;
+        this.activeTab = TAB_EQUIP;
+    }
+
+    /** 调用 mouseClicked 的 Shift 分支所用的同一生产方法。 */
+    void quickEquipFromGridForTests(InventoryItem item) {
+        quickEquipFromGrid(item);
+    }
+
     boolean dispatchSetMeridianTarget() {
         MeridianChannel selected = bodyInspect == null ? null : bodyInspect.selectedChannel();
         MeridianBody body = bodyInspect == null ? MeridianStateStore.snapshot() : bodyInspect.meridianBody();
@@ -2774,28 +2787,11 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         if (activeTab == TAB_EQUIP) {
             var eq = equipPanel.slotAtScreen(mouseX, mouseY);
             if (eq != null) {
-                if (eq.isDisabledByTwoHand() || !isEquipSlotDropValid(dragged, eq.slotType())) {
+                if (!commitEquipDrop(dragged, fromLoc, eq.slotType())) {
                     returnDragToSource();
                     clearAllHighlights();
                     return;
                 }
-                // 乐观本地落位：手槽 → held 单件；身体槽 → push worn 栈顶。
-                EquipSlotType slot = eq.slotType();
-                if (slot.isHand()) {
-                    eq.setContents(com.bong.client.inventory.model.SlotContents.ofHeld(dragged));
-                } else {
-                    java.util.List<InventoryItem> stack =
-                        new java.util.ArrayList<>(eq.contents().worn());
-                    stack.add(dragged); // push 到栈顶（尾）
-                    eq.setContents(new com.bong.client.inventory.model.SlotContents(stack, eq.held()));
-                }
-                dragState.drop();
-                // plan-rotate-v1 — 装备槽是非网格落位：旋转标志不适用，恒发 false
-                //（server 侧对 Equip 目标同样忽略 rotated，保持原朝向）。
-                dispatchMoveIntent(dragged, fromLoc,
-                    new com.bong.client.network.ClientRequestProtocol.EquipLoc(
-                        slot.name().toLowerCase(java.util.Locale.ROOT), slot.wireState()),
-                    false);
                 clearAllHighlights();
                 return;
             }
@@ -3627,6 +3623,41 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             sourceSlot,
             equippedStateForValidation(item, sourceSlot)
         );
+    }
+
+    /**
+     * 拖拽命中装备槽后的最薄编排边界：校验目标、乐观落位并发送权威 move intent。
+     * 生产 {@link #attemptDrop(double, double)} 与 headless 交互回归共用此路径，避免测试只锁
+     * {@link InventoryEquipRules} 而漏掉 {@code EquipLoc} 构造或 C2S dispatch。
+     */
+    boolean commitEquipDrop(
+        InventoryItem dragged,
+        com.bong.client.network.ClientRequestProtocol.InvLocation fromLoc,
+        EquipSlotType targetSlot
+    ) {
+        if (equipPanel == null || targetSlot == null) return false;
+        var eq = equipPanel.slotFor(targetSlot);
+        if (eq == null || eq.isDisabledByTwoHand() || !isEquipSlotDropValid(dragged, targetSlot)) {
+            return false;
+        }
+
+        if (targetSlot.isHand()) {
+            eq.setContents(com.bong.client.inventory.model.SlotContents.ofHeld(dragged));
+        } else {
+            java.util.List<InventoryItem> stack =
+                new java.util.ArrayList<>(eq.contents().worn());
+            stack.add(dragged);
+            eq.setContents(new com.bong.client.inventory.model.SlotContents(stack, eq.held()));
+        }
+        dragState.drop();
+        dispatchMoveIntent(
+            dragged,
+            fromLoc,
+            new com.bong.client.network.ClientRequestProtocol.EquipLoc(
+                targetSlot.name().toLowerCase(java.util.Locale.ROOT), targetSlot.wireState()),
+            false
+        );
+        return true;
     }
 
     /**

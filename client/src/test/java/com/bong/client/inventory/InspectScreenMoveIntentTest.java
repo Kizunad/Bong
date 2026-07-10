@@ -1,7 +1,11 @@
 package com.bong.client.inventory;
 
+import com.bong.client.inventory.component.BackpackGridPanel;
+import com.bong.client.inventory.component.EquipmentPanel;
+import com.bong.client.inventory.model.EquipSlotType;
 import com.bong.client.inventory.model.InventoryItem;
 import com.bong.client.inventory.model.InventoryModel;
+import com.bong.client.inventory.model.SlotContents;
 import com.bong.client.network.ClientRequestProtocol;
 import com.bong.client.network.ClientRequestSender;
 import net.minecraft.util.Identifier;
@@ -172,6 +176,127 @@ public class InspectScreenMoveIntentTest {
     }
 
     @Test
+    void shiftQuickEquipRoutesOccupiedMainHandSwordToExtraHandAndDispatchesIntent() {
+        install();
+        InspectScreen screen = new InspectScreen(InventoryModel.empty());
+        BackpackGridPanel grid = new BackpackGridPanel("main_pack", 3, 3);
+        EquipmentPanel panel = new EquipmentPanel();
+        InventoryItem equippedMain = item(2001L, "bone_dagger");
+        InventoryItem sword = item(2002L, "iron_sword");
+        panel.slotFor(EquipSlotType.MAIN_HAND).setContents(SlotContents.ofHeld(equippedMain));
+        grid.place(sword, 1, 1);
+        screen.configureEquipInteractionForTests(grid, panel);
+
+        screen.quickEquipFromGridForTests(sword);
+
+        assertEquals(
+            null,
+            grid.itemAt(1, 1),
+            "expected shift quick-equip to remove sword from source grid because dispatch succeeded"
+        );
+        assertEquals(
+            sword,
+            panel.slotFor(EquipSlotType.EXTRA_HAND_0).contents().held(),
+            "expected occupied main hand and ineligible off hand to route sword into EXTRA_HAND_0"
+        );
+        assertEquals(
+            1,
+            sent.size(),
+            "expected shift quick-equip to dispatch one InventoryMoveIntent, actual " + sent.size()
+        );
+        assertTrue(
+            sent.get(0).body().contains(
+                "\"to\":{\"kind\":\"equip\",\"slot\":\"extra_hand_0\",\"state\":\"held\"}"
+            ),
+            "expected quick-equip payload to target EXTRA_HAND_0 held, actual " + sent.get(0).body()
+        );
+    }
+
+    @Test
+    void shiftQuickEquipWithNoLegalHandLeavesGridAndSendsNothing() {
+        install();
+        InspectScreen screen = new InspectScreen(InventoryModel.empty());
+        BackpackGridPanel grid = new BackpackGridPanel("main_pack", 3, 3);
+        EquipmentPanel panel = new EquipmentPanel();
+        InventoryItem sword = item(2100L, "iron_sword");
+        panel.slotFor(EquipSlotType.MAIN_HAND)
+            .setContents(SlotContents.ofHeld(item(2101L, "bone_dagger")));
+        panel.slotFor(EquipSlotType.EXTRA_HAND_0)
+            .setContents(SlotContents.ofHeld(item(2102L, "bone_dagger")));
+        panel.slotFor(EquipSlotType.EXTRA_HAND_1)
+            .setContents(SlotContents.ofHeld(item(2103L, "bone_dagger")));
+        grid.place(sword, 0, 0);
+        screen.configureEquipInteractionForTests(grid, panel);
+
+        screen.quickEquipFromGridForTests(sword);
+
+        assertEquals(
+            sword,
+            grid.itemAt(0, 0),
+            "expected source item to remain because no legal held slot exists"
+        );
+        assertTrue(
+            sent.isEmpty(),
+            "expected no InventoryMoveIntent when all legal hand slots are occupied, actual " + sent.size()
+        );
+    }
+
+    @Test
+    void dragEquipCommitTargetsExtraHandOneAndDispatchesIntent() {
+        install();
+        InspectScreen screen = new InspectScreen(InventoryModel.empty());
+        EquipmentPanel panel = new EquipmentPanel();
+        screen.configureEquipInteractionForTests(null, panel);
+        InventoryItem tool = item(2200L, "stone_pickaxe");
+
+        boolean committed = screen.commitEquipDrop(
+            tool,
+            new ClientRequestProtocol.ContainerLoc("main_pack", 2, 0),
+            EquipSlotType.EXTRA_HAND_1
+        );
+
+        assertTrue(committed, "expected valid drag drop into EXTRA_HAND_1 to commit, actual false");
+        assertEquals(
+            tool,
+            panel.slotFor(EquipSlotType.EXTRA_HAND_1).contents().held(),
+            "expected drag drop to update EXTRA_HAND_1 held contents before authoritative refresh"
+        );
+        assertEquals(
+            1,
+            sent.size(),
+            "expected valid extra-hand drag to dispatch one InventoryMoveIntent, actual " + sent.size()
+        );
+        assertTrue(
+            sent.get(0).body().contains(
+                "\"to\":{\"kind\":\"equip\",\"slot\":\"extra_hand_1\",\"state\":\"held\"}"
+            ),
+            "expected drag payload to target EXTRA_HAND_1 held, actual " + sent.get(0).body()
+        );
+    }
+
+    @Test
+    void dragEquipCommitRejectsOccupiedExtraHandWithoutDispatch() {
+        install();
+        InspectScreen screen = new InspectScreen(InventoryModel.empty());
+        EquipmentPanel panel = new EquipmentPanel();
+        panel.slotFor(EquipSlotType.EXTRA_HAND_0)
+            .setContents(SlotContents.ofHeld(item(2301L, "bone_dagger")));
+        screen.configureEquipInteractionForTests(null, panel);
+
+        boolean committed = screen.commitEquipDrop(
+            item(2302L, "stone_pickaxe"),
+            new ClientRequestProtocol.ContainerLoc("main_pack", 0, 0),
+            EquipSlotType.EXTRA_HAND_0
+        );
+
+        assertFalse(committed, "expected occupied EXTRA_HAND_0 drag to be rejected, actual true");
+        assertTrue(
+            sent.isEmpty(),
+            "expected rejected extra-hand drag to send no InventoryMoveIntent, actual " + sent.size()
+        );
+    }
+
+    @Test
     void dispatchDiscardIntentSendsForInventoryBackedLocations() {
         install();
         InspectScreen screen = new InspectScreen(InventoryModel.empty());
@@ -245,5 +370,21 @@ public class InspectScreenMoveIntentTest {
         ));
 
         assertTrue(sent.isEmpty());
+    }
+
+    private static InventoryItem item(long instanceId, String itemId) {
+        return InventoryItem.createFull(
+            instanceId,
+            itemId,
+            itemId,
+            1,
+            1,
+            0.2,
+            "common",
+            "interaction fixture",
+            1,
+            1.0,
+            1.0
+        );
     }
 }
