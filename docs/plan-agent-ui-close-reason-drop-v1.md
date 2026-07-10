@@ -1,6 +1,6 @@
-# plan-agent-ui-close-reason-drop-v1（骨架）
+# plan-agent-ui-close-reason-drop-v1
 
-> **骨架（草案）**。一句话主题：`agent_ui_close` 的 `reason` 字段虽然由 server 专门下发给 client，用来区分 `Replaced` 与 `invalid_button_id/session_expired` 错误关闭，但在 `AgentUiPayloadHandler -> AgentUiStore -> AgentUiScreen` 链路里被完全吞掉，导致错误关闭与正常替换在玩家视角都变成“静默收屏”。
+> **活跃 BugFix plan**。一句话主题：`agent_ui_close` 的 `reason` 字段虽然由 server 专门下发给 client，用来区分 `Replaced` 与 `invalid_button_id/session_expired` 错误关闭，但在 `AgentUiPayloadHandler -> AgentUiStore -> AgentUiScreen` 链路里被完全吞掉，导致错误关闭与正常替换在玩家视角都变成“静默收屏”。
 
 > 立项动机：本轮只看 `agent-ui / client bridge / panel runtime`，重点筛 `screen open path / panel state / overlay scope / fallback route / payload 字段`。已避开已知重复题：realm gate 广播泄漏、`button_click` 回流天道推演丢 `player_uuid/scenario`、agent_ui 覆层被 screen gate 提前吞掉、`tiandao_revelation` VFX 语义位丢失；也未与 `#931`/`#927` 重复。
 
@@ -8,11 +8,11 @@
 
 | 阶段 | 主题 | 路由 | 状态 |
 |---|---|---|---|
-| P0 | `agent_ui_close.reason` 客户端分流丢失 | plan_skeleton | ⬜ |
+| P0 | `agent_ui_close.reason` 客户端分流丢失 | bugfix | ⬜ |
 
 ## P0 — `agent_ui_close.reason` 客户端分流丢失
 
-- **候选 bug（major，plan_skeleton）**：`server` 明确把 `agent_ui_close.reason` 设计成客户端 runtime 分流字段，但 `client` 收到后只按 `request_id` 关面板，**完全不消费 `reason`**，导致 `invalid_button_id` 与 `session_expired` 都退化成与 `Replaced` 完全同形的“静默关闭”。
+- **候选 bug（major，待第一性原理验证）**：`server` 明确把 `agent_ui_close.reason` 设计成客户端 runtime 分流字段，但 `client` 收到后只按 `request_id` 关面板，**完全不消费 `reason`**，导致 `invalid_button_id` 与 `session_expired` 都退化成与 `Replaced` 完全同形的“静默关闭”。
 
 ### 复现路径
 
@@ -79,7 +79,7 @@
 
 ## 反方裁决（退化记录）
 
-> 当前会话未启用额外 subagent 流程；本题按用户要求做 **两轮反方裁决**，由当前会话手工完成，并在 skeleton / PR 中如实记录退化处理。
+> 当前会话未启用额外 subagent 流程；本题按用户要求做 **两轮反方裁决**，由当前会话手工完成，并在 plan / PR 中如实记录退化处理。
 
 ### 第一轮反方
 
