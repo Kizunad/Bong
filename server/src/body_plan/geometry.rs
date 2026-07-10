@@ -472,16 +472,17 @@ mod tests {
         let target = DVec3::new(0.0, 0.0, 0.0);
         let bands = humanoid_bands();
         let mut compared = 0u32;
+        let plan = crate::body_plan::humanoid_plan_static();
 
         for tick in 0..3000u64 {
             let seed = npc_aim_seed("npc:body_plan_geometry_parity", tick);
             let aim_direction = npc_aim_direction(origin, target, seed, 1.0);
-            let Some(probe) = raycast_humanoid(origin, target, 5.0, aim_direction) else {
+            let Some(probe) = raycast_humanoid(plan, origin, target, 5.0, aim_direction) else {
                 continue;
             };
             // classify_body_part 内部对同一 hit point 独立重算，双方喂同一批
             // (hit_point, feet, origin) 三元组以保证严格 apples-to-apples。
-            let legacy = classify_body_part(probe.point, target, origin);
+            let legacy = classify_body_part(plan, probe.point, target, origin);
             let data_driven = classify_height_bands(
                 probe.point,
                 target,

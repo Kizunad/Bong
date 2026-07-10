@@ -2,9 +2,13 @@
 //!
 //! 所有需要"这个实体现在是什么身体构型"答案的消费点（命中几何 / 伤残后果 / 经脉 /
 //! 功法门 / 伤口面板 / 装备槽）都必须走本函数，禁止绕过直查 `BodyPlanRegistry`——
-//! plan §P0 决议原文："所有消费点只准走此入口并逐点标注 purpose"。P0a 阶段尚无实际
-//! 生产消费点接入调用（`combat::raycast` 等消费点改造是后续阶段的工作），本文件只锁定
-//! 入口签名 + 优先级语义 + 全解析矩阵测试。
+//! plan §P0 决议原文："所有消费点只准走此入口并逐点标注 purpose"。本函数已接入真实
+//! 生产消费点：`combat::resolve::body_part_multipliers`（部位倍率）、
+//! `combat::resolve::resolve_attack_intents`（近战 `raycast_humanoid` 分支，经
+//! [`resolve_body_plan_for_target`]）、`combat::carrier::projectile_tick_system`
+//! （投射物 `classify_body_part` 分支，同经 [`resolve_body_plan_for_target`]）——
+//! 三者均对目标实体走 `BodyPlanPurpose::Intrinsic` 解析，缺失 registry 资源时
+//! （大量既有单测未插入）优雅退化到 [`super::registry::humanoid_plan_static`]。
 //!
 //! 优先级（plan §P0 原文）：
 //! 1. 玩家（无 `BeastKind` 组件但携带 `Cultivation`）走 `Cultivation.race`——未知
@@ -118,6 +122,42 @@ pub fn resolve_body_plan<'a>(
 /// 文档——空映射对非人形构型是合法状态）。
 pub fn body_part_for_mutation_slot(plan: &BodyPlan, slot: BodySlot) -> Option<&BodyPartId> {
     plan.mutation_slot_mapping.get(&slot)
+}
+
+/// plan-race-system-v1 P0c —— 消费点通用封装：`combat::resolve::body_part_multipliers`
+/// 首创的"resource missing / unknown race → humanoid 兜底"约定在这里被抽成公共入口，
+/// 供 `combat::raycast`（`classify_body_part`/`standing_humanoid_aabb`/`raycast_humanoid`
+/// 的目标实体分派）与 `combat::carrier`（投射物命中路径）等新增消费点复用，避免同一条
+/// 退化逻辑散落三份。
+///
+/// `body_plans`/`races` 均存在时走 [`resolve_body_plan`]；解析失败（未知玩家 race，
+/// 理论上不会发生——`cultivation::attach_cultivation_to_joined_clients` 早已在持久化
+/// 加载路径拒绝未知 race 落地为组件）或任一资源缺失（大量既有单测未插入这两个资源）
+/// 时退化到 [`super::registry::humanoid_plan_static`]（与 registry 加载同一份
+/// `humanoid.json`，数值 bit-for-bit 相同，不是第二份硬编码表）——生产环境
+/// `body_plan::register()` 恒装载两资源，这条退化分支不会在真实部署触发。
+pub fn resolve_body_plan_for_target<'a>(
+    entity: Entity,
+    purpose: BodyPlanPurpose,
+    inputs: BodyPlanResolveInputs<'_>,
+    body_plans: Option<&'a BodyPlanRegistry>,
+    races: Option<&RaceRegistry>,
+) -> &'a BodyPlan {
+    match (body_plans, races) {
+        (Some(body_plans), Some(races)) => {
+            match resolve_body_plan(entity, purpose, inputs, body_plans, races) {
+                Ok(plan) => plan,
+                Err(error) => {
+                    tracing::error!(
+                        "[bong][body_plan] resolve_body_plan_for_target: {error} — falling \
+                         back to humanoid"
+                    );
+                    super::registry::humanoid_plan_static()
+                }
+            }
+        }
+        _ => super::registry::humanoid_plan_static(),
+    }
 }
 
 #[cfg(test)]

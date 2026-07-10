@@ -7,8 +7,8 @@ use valence::prelude::{
 };
 
 use crate::body_plan::{
-    humanoid_plan_static, legacy_body_part_to_id, resolve_body_plan, BodyPlanPurpose,
-    BodyPlanRegistry, BodyPlanResolveInputs, RaceRegistry,
+    humanoid_plan_static, legacy_body_part_to_id, resolve_body_plan, resolve_body_plan_for_target,
+    BodyPlanPurpose, BodyPlanRegistry, BodyPlanResolveInputs, RaceRegistry,
 };
 use crate::combat::anticheat::AntiCheatCounter;
 use crate::combat::arm_wound;
@@ -461,7 +461,52 @@ pub fn resolve_attack_intents(
             }
         };
 
+        // plan-race-system-v1 P0c —— raycast_humanoid 命中几何按**目标实体**分派：
+        // 借道 `combatants.p1()` 峰值读一次目标 `Cultivation.race`（只读即可，用完这个
+        // block 就释放这次借用——后面 549 行附近还会再借一次拿完整目标数据）。查询链
+        // 与 `body_part_multipliers`（本文件下方）同款：`resolve_body_plan_for_target`
+        // 资源齐全时走 `resolve_body_plan`（`BodyPlanPurpose::Intrinsic`），资源缺失或
+        // 解析失败（未知 race，理论上不会发生——持久化加载路径早已拒绝未知 race 落地为
+        // 组件）时退化到 `humanoid_plan_static()`。P0b 未在 `CombatTargetItem` 里查
+        // `BeastKind`（同 `body_part_multipliers` 注释：该 15 元素元组已逼近 Bevy
+        // `WorldQuery` 元组上限，且 `races.json` 现阶段所有 `BeastKind` 派生种族的
+        // `body_plan_id` 均为 "humanoid"）——`beast_kind: None` 落进 Tier2/Tier3 分支，
+        // 与"真的查了 BeastKind"得到完全相同的 humanoid 解析结果，bit-for-bit 不受影响。
+        let target_body_plan = {
+            let mut target_query = combatants.p1();
+            let defender_cultivation_for_plan = target_query.get_mut(target_entity).ok().and_then(
+                |(
+                    _wounds,
+                    _stamina,
+                    _contamination,
+                    _meridians,
+                    _life_record,
+                    _lifecycle,
+                    _combat_state,
+                    defender_cultivation,
+                    _false_skin,
+                    _tuike_v2_stack,
+                    _defender_attrs,
+                    _defender_practice_log,
+                    _multipoint_active,
+                    _harden_active,
+                    _backfire_amplification,
+                )| defender_cultivation,
+            );
+            resolve_body_plan_for_target(
+                target_entity,
+                BodyPlanPurpose::Intrinsic,
+                BodyPlanResolveInputs {
+                    cultivation: defender_cultivation_for_plan.as_deref(),
+                    beast_kind: None,
+                },
+                body_plan_registry.as_deref(),
+                race_registry.as_deref(),
+            )
+        };
+
         let Some(hit_probe) = raycast_humanoid(
+            target_body_plan,
             attacker_eye_position,
             target_position,
             f64::from(
@@ -3009,9 +3054,17 @@ mod tests {
         let seed = raycast::npc_aim_seed(attacker_canonical_id, issued_at_tick);
         let sigma_scale = raycast::weapon_aim_jitter_scale(reach);
         let aim_direction = raycast::npc_aim_direction(origin, target, seed, sigma_scale);
-        raycast_humanoid(origin, target, f64::from(reach.max), aim_direction)
-            .expect("expected npc aim direction to stay within reach and hit target AABB")
-            .body_part
+        // `resolve_attack_intents` 的目标是 humanoid（本文件测试全用人形 fixture），
+        // 显式传入 `humanoid_plan_static()` 与生产资源齐全时的解析结果 bit-for-bit 一致。
+        raycast_humanoid(
+            humanoid_plan_static(),
+            origin,
+            target,
+            f64::from(reach.max),
+            aim_direction,
+        )
+        .expect("expected npc aim direction to stay within reach and hit target AABB")
+        .body_part
     }
 
     #[test]

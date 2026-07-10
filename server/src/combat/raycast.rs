@@ -3,7 +3,7 @@
 use valence::prelude::DVec3;
 
 use crate::body_plan::geometry::classify_height_bands;
-use crate::body_plan::{humanoid_plan_static, id_to_legacy_body_part, HitGeometry};
+use crate::body_plan::{id_to_legacy_body_part, BodyPlan, HitGeometry};
 
 use super::components::BodyPart;
 use super::events::{AttackReach, DAGGER_REACH, FIST_REACH, SPEAR_REACH, STAFF_REACH, SWORD_REACH};
@@ -27,10 +27,11 @@ pub struct EntityHitProbe {
     pub body_part: BodyPart,
 }
 
-/// plan-race-system-v1 P0b：直立包围盒半宽/身高不再是本文件的硬编码真源——
-/// `standing_humanoid_aabb` 改读 [`humanoid_plan_static`] 的 `StandingAabbSpec`
-/// （`assets/body_plans/plans/humanoid.json` 的 `hit_geometry.aabb`）。数值本身
-/// 未变（`half_width=0.3`/`height=1.8`），`humanoid_geometry_constants_match_body_plan_json`
+/// plan-race-system-v1 P0c：直立包围盒半宽/身高不再是本文件的硬编码真源——
+/// `standing_humanoid_aabb` 改读调用方已解析好的 `&BodyPlan`（经 `resolve_body_plan`
+/// 按目标实体分派，见 `combat::resolve`/`combat::carrier` 消费点）的 `StandingAabbSpec`
+/// （`assets/body_plans/plans/humanoid.json` 的 `hit_geometry.aabb`）。humanoid 数值
+/// 本身未变（`half_width=0.3`/`height=1.8`），`humanoid_geometry_constants_match_body_plan_json`
 /// pin 测试锁死二者一致。
 const CHEST_AIM_HEIGHT: f64 = 1.2;
 
@@ -166,16 +167,21 @@ pub fn npc_aim_direction(
     yaw_pitch_to_direction(jittered_yaw, jittered_pitch)
 }
 
-/// plan-race-system-v1 P0b —— 数据来源改为 [`humanoid_plan_static`] 的
-/// `hit_geometry.aabb`（`StandingAabbSpec`），不再是本文件的硬编码
-/// `STANDING_HALF_WIDTH`/`STANDING_HEIGHT` 常量。数值本身未变（0.3 / 1.8），行为
-/// bit-for-bit 不变——`humanoid_geometry_constants_match_body_plan_json` pin 测试
-/// 与既有 `classify_body_part_*`/`raycast_humanoid_*` 回归测试共同锁死。
-pub fn standing_humanoid_aabb(feet_position: DVec3) -> Aabb {
-    let HitGeometry::HeightBands { aabb, .. } = &humanoid_plan_static().hit_geometry else {
+/// plan-race-system-v1 P0c —— 直立包围盒规格来自调用方已解析好的 `&BodyPlan`
+/// （经 `resolve_body_plan` 按目标实体分派，缺失 registry 资源时消费点退化到
+/// [`crate::body_plan::humanoid_plan_static`]），不再无条件绑死 humanoid 单例。
+/// humanoid 数值本身未变（0.3 / 1.8），行为 bit-for-bit 不变——
+/// `humanoid_geometry_constants_match_body_plan_json` pin 测试与既有
+/// `classify_body_part_*`/`raycast_humanoid_*` 回归测试（均显式传入
+/// `humanoid_plan_static()`）共同锁死。
+pub fn standing_humanoid_aabb(plan: &BodyPlan, feet_position: DVec3) -> Aabb {
+    let HitGeometry::HeightBands { aabb, .. } = &plan.hit_geometry else {
         panic!(
-            "[bong][body_plan] humanoid.json hit_geometry must be HeightBands mode \
-             (combat::raycast::standing_humanoid_aabb legacy consumption point)"
+            "[bong][body_plan] body plan {} hit_geometry must be HeightBands mode \
+             (combat::raycast::standing_humanoid_aabb only supports the height-band \
+             geometry mode; PartBoxes-mode plans are not yet wired into this consumption \
+             point — see plan-race-system-v1 §P5 whale scope)",
+            plan.id
         );
     };
     Aabb {
@@ -192,21 +198,21 @@ pub fn standing_humanoid_aabb(feet_position: DVec3) -> Aabb {
     }
 }
 
-/// plan-race-system-v1 P0b —— 部位分类算法本身不再是本文件的一串硬编码
+/// plan-race-system-v1 P0c —— 部位分类算法本身不再是本文件的一串硬编码
 /// if/else-if 高度带比较（原 `ARM_LATERAL_THRESHOLD=0.19` 横向阈值 /
 /// `LEG_ABDOMEN_BOUNDARY=0.53` 躯干腿部分界 / `0.88`/`0.55` 头/臂高度带，均系
 /// plan-combat-hit-location-v1 P1 校准值，历史校准依据见该 plan 文档），而是委托给
-/// 通用的 [`classify_height_bands`] 引擎，喂入 [`humanoid_plan_static`] 的
-/// `hit_geometry::HeightBands` 数据（`assets/body_plans/plans/humanoid.json`）。
+/// 通用的 [`classify_height_bands`] 引擎，喂入调用方已解析好的 `&BodyPlan`
+/// （经 `resolve_body_plan` 按目标实体分派）的 `hit_geometry::HeightBands` 数据。
 /// 数值与算法均 bit-for-bit 不变——`humanoid_geometry_constants_match_body_plan_json`
-/// pin 测试 + 本文件既有 `classify_body_part_*` 系列回归测试 + `body_plan::geometry`
-/// 的批量对拍测试共同锁死这条红线。
+/// pin 测试 + 本文件既有 `classify_body_part_*` 系列回归测试（均显式传入
+/// `humanoid_plan_static()`）+ `body_plan::geometry` 的批量对拍测试共同锁死这条红线。
 pub fn classify_body_part(
+    plan: &BodyPlan,
     hit_point: DVec3,
     target_feet_position: DVec3,
     attack_origin: DVec3,
 ) -> BodyPart {
-    let plan = humanoid_plan_static();
     let HitGeometry::HeightBands {
         aabb,
         bands,
@@ -214,8 +220,11 @@ pub fn classify_body_part(
     } = &plan.hit_geometry
     else {
         panic!(
-            "[bong][body_plan] humanoid.json hit_geometry must be HeightBands mode \
-             (combat::raycast::classify_body_part legacy consumption point)"
+            "[bong][body_plan] body plan {} hit_geometry must be HeightBands mode \
+             (combat::raycast::classify_body_part only supports the height-band geometry \
+             mode; PartBoxes-mode plans are not yet wired into this consumption point — \
+             see plan-race-system-v1 §P5 whale scope)",
+            plan.id
         );
     };
     let part_id = classify_height_bands(
@@ -226,16 +235,20 @@ pub fn classify_body_part(
         bands,
         *lateral_threshold,
     )
-    .expect(
-        "humanoid.json bands are validated at BodyPlanRegistry load time to cover the full \
-         [0,1] rel_y range (strictly descending + lowest band min_rel_y < 0.0) — this must \
-         never return None for the humanoid plan",
-    );
+    .unwrap_or_else(|| {
+        panic!(
+            "[bong][body_plan] body plan {} bands must be validated at BodyPlanRegistry load \
+             time to cover the full [0,1] rel_y range (strictly descending + lowest band \
+             min_rel_y < 0.0) — this must never return None for a validated plan",
+            plan.id
+        )
+    });
     id_to_legacy_body_part(part_id).unwrap_or_else(|| {
         panic!(
-            "[bong][body_plan] humanoid.json part id {part_id} has no legacy BodyPart mapping \
-             — every humanoid.json part must be one of the 8 legacy snake_case ids (see \
-             body_plan::legacy)"
+            "[bong][body_plan] body plan {} part id {part_id} has no legacy BodyPart mapping \
+             — every HeightBands-mode plan part must be one of the 8 legacy snake_case ids \
+             (see body_plan::legacy)",
+            plan.id
         )
     })
 }
@@ -244,19 +257,26 @@ pub fn classify_body_part(
 /// 玩家传真实 `Look` 转向向量（缺失时可退化为 [`chest_aim_direction`]）；
 /// NPC 传 [`npc_aim_direction`] 算出的"目标几何中心 + 确定性 jitter"方向。
 /// `raycast_humanoid` 本身不再内置恒定胸心 fallback，只做几何求交 + 部位分类。
+///
+/// plan-race-system-v1 P0c —— `plan` 由调用方经 `resolve_body_plan` 按**目标实体**
+/// 解析（`BodyPlanPurpose::Intrinsic`，缺失 registry 资源时退化到
+/// [`crate::body_plan::humanoid_plan_static`]），本函数自身保持纯几何求交，不做任何
+/// ECS 查询——humanoid 行为 bit-for-bit 不变（既有回归测试全部显式传入
+/// `humanoid_plan_static()`）。
 pub fn raycast_humanoid(
+    plan: &BodyPlan,
     origin: DVec3,
     target_feet_position: DVec3,
     max_distance: f64,
     aim_direction: DVec3,
 ) -> Option<EntityHitProbe> {
-    let aabb = standing_humanoid_aabb(target_feet_position);
+    let aabb = standing_humanoid_aabb(plan, target_feet_position);
     let hit = raycast_aabb(origin, aim_direction, max_distance, aabb)?;
 
     Some(EntityHitProbe {
         distance: hit.distance,
         point: hit.point,
-        body_part: classify_body_part(hit.point, target_feet_position, origin),
+        body_part: classify_body_part(plan, hit.point, target_feet_position, origin),
     })
 }
 pub fn raycast_aabb(
@@ -338,10 +358,11 @@ fn slab_intersection(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::body_plan::HeightBandAssignment;
+    use crate::body_plan::{humanoid_plan_static, HeightBandAssignment};
 
-    // ── plan-race-system-v1 P0b：classify_body_part/standing_humanoid_aabb 现在真的
-    // 读 humanoid.json，而非本文件里独立维护的一份硬编码数字 ───────────────────────
+    // ── plan-race-system-v1 P0c：classify_body_part/standing_humanoid_aabb/raycast_humanoid
+    // 现在按调用方传入的 &BodyPlan 求值（不再无条件读 humanoid.json 单例）——这里的回归
+    // 测试全部显式传入 humanoid_plan_static()，锁死 humanoid 行为 bit-for-bit 不变 ──────
 
     #[test]
     fn humanoid_geometry_constants_match_body_plan_json() {
@@ -399,7 +420,7 @@ mod tests {
     #[test]
     fn standing_humanoid_aabb_matches_body_plan_static_spec() {
         let feet = DVec3::new(1.0, 2.0, 3.0);
-        let aabb = standing_humanoid_aabb(feet);
+        let aabb = standing_humanoid_aabb(humanoid_plan_static(), feet);
         assert_eq!(aabb.min, DVec3::new(0.7, 2.0, 2.7));
         assert_eq!(aabb.max, DVec3::new(1.3, 3.8, 3.3));
     }
@@ -454,7 +475,7 @@ mod tests {
         let origin = DVec3::new(0.0, 0.9, 0.0);
         let target = DVec3::new(2.0, 0.0, 0.0);
         let aim_direction = chest_aim_direction(origin, target);
-        let probe = raycast_humanoid(origin, target, 3.0, aim_direction)
+        let probe = raycast_humanoid(humanoid_plan_static(), origin, target, 3.0, aim_direction)
             .expect("front ray should hit humanoid");
 
         assert_eq!(probe.body_part, BodyPart::Chest);
@@ -469,8 +490,14 @@ mod tests {
         let origin = DVec3::new(0.0, 1.62, -2.0);
         let target = DVec3::new(0.0, 0.0, 0.0);
         let level_aim_direction = DVec3::new(0.0, 0.0, 1.0);
-        let probe = raycast_humanoid(origin, target, 5.0, level_aim_direction)
-            .expect("level ray at eye height should hit humanoid AABB");
+        let probe = raycast_humanoid(
+            humanoid_plan_static(),
+            origin,
+            target,
+            5.0,
+            level_aim_direction,
+        )
+        .expect("level ray at eye height should hit humanoid AABB");
 
         assert_eq!(
             probe.body_part,
@@ -571,7 +598,9 @@ mod tests {
         for tick in 0..3000u64 {
             let seed = npc_aim_seed("npc:zombie:distribution", tick);
             let aim_direction = npc_aim_direction(origin, target, seed, 1.0);
-            if let Some(probe) = raycast_humanoid(origin, target, 5.0, aim_direction) {
+            if let Some(probe) =
+                raycast_humanoid(humanoid_plan_static(), origin, target, 5.0, aim_direction)
+            {
                 *counts.entry(probe.body_part).or_insert(0) += 1;
             }
         }
@@ -599,7 +628,10 @@ mod tests {
         let origin = DVec3::new(0.0, -3.0, -2.0);
         let hit_point = DVec3::new(0.0, 1.62, 0.0);
 
-        assert_eq!(classify_body_part(hit_point, feet, origin), BodyPart::Head);
+        assert_eq!(
+            classify_body_part(humanoid_plan_static(), hit_point, feet, origin),
+            BodyPart::Head
+        );
     }
 
     #[test]
@@ -609,7 +641,10 @@ mod tests {
         let origin = DVec3::new(0.0, 3.0, -2.0);
         let hit_point = DVec3::new(-0.15, 0.15, 0.1);
 
-        assert_eq!(classify_body_part(hit_point, feet, origin), BodyPart::LegR);
+        assert_eq!(
+            classify_body_part(humanoid_plan_static(), hit_point, feet, origin),
+            BodyPart::LegR
+        );
     }
 
     #[test]
@@ -619,7 +654,10 @@ mod tests {
         let origin = DVec3::new(-2.0, 1.2, 0.0);
         let hit_point = DVec3::new(0.0, 1.2, 0.3);
 
-        assert_eq!(classify_body_part(hit_point, feet, origin), BodyPart::ArmR);
+        assert_eq!(
+            classify_body_part(humanoid_plan_static(), hit_point, feet, origin),
+            BodyPart::ArmR
+        );
     }
 
     #[test]
@@ -628,19 +666,39 @@ mod tests {
         let origin = DVec3::new(-2.0, 1.0, 0.0);
 
         assert_eq!(
-            classify_body_part(DVec3::new(0.0, 1.7, 0.0), feet, origin),
+            classify_body_part(
+                humanoid_plan_static(),
+                DVec3::new(0.0, 1.7, 0.0),
+                feet,
+                origin
+            ),
             BodyPart::Head
         );
         assert_eq!(
-            classify_body_part(DVec3::new(0.0, 1.2, 0.0), feet, origin),
+            classify_body_part(
+                humanoid_plan_static(),
+                DVec3::new(0.0, 1.2, 0.0),
+                feet,
+                origin
+            ),
             BodyPart::Chest
         );
         assert_eq!(
-            classify_body_part(DVec3::new(0.0, 1.2, 0.25), feet, origin),
+            classify_body_part(
+                humanoid_plan_static(),
+                DVec3::new(0.0, 1.2, 0.25),
+                feet,
+                origin
+            ),
             BodyPart::ArmR
         );
         assert_eq!(
-            classify_body_part(DVec3::new(0.0, 1.2, -0.25), feet, origin),
+            classify_body_part(
+                humanoid_plan_static(),
+                DVec3::new(0.0, 1.2, -0.25),
+                feet,
+                origin
+            ),
             BodyPart::ArmL
         );
         // P1 校准（决议 §8.1 #4）把 LEG_ABDOMEN_BOUNDARY 从 0.35 上调到 0.53——
@@ -648,23 +706,38 @@ mod tests {
         // 已经跌破 0.53，改判 Leg。这里改用 rel_y=0.97/1.8≈0.539，落在新的
         // 窄 Abdomen 区间 (0.53,0.55] 内，继续钉住 Abdomen 分支存活。
         assert_eq!(
-            classify_body_part(DVec3::new(0.0, 0.97, 0.0), feet, origin),
+            classify_body_part(
+                humanoid_plan_static(),
+                DVec3::new(0.0, 0.97, 0.0),
+                feet,
+                origin
+            ),
             BodyPart::Abdomen,
             "rel_y≈0.539 应落在 P1 校准后的窄 Abdomen 区间 (0.53,0.55] 内"
         );
         // 旧阈值下会判 Abdomen 的 rel_y=0.389 现在必须落入 Leg（P1 校准的核心目的：
         // 把原本被 Abdomen 吞掉的中低段命中让给 Leg，冲高 Leg 命中率到目标区间）。
         assert_eq!(
-            classify_body_part(DVec3::new(0.0, 0.7, 0.0), feet, origin),
+            classify_body_part(humanoid_plan_static(), DVec3::new(0.0, 0.7, 0.0), feet, origin),
             BodyPart::LegL,
             "rel_y≈0.389 应在 P1 校准后的 LEG_ABDOMEN_BOUNDARY=0.53 之下改判 Leg（旧阈值 0.35 下曾是 Abdomen）"
         );
         assert_eq!(
-            classify_body_part(DVec3::new(0.0, 0.2, 0.2), feet, origin),
+            classify_body_part(
+                humanoid_plan_static(),
+                DVec3::new(0.0, 0.2, 0.2),
+                feet,
+                origin
+            ),
             BodyPart::LegR
         );
         assert_eq!(
-            classify_body_part(DVec3::new(0.0, 0.2, -0.2), feet, origin),
+            classify_body_part(
+                humanoid_plan_static(),
+                DVec3::new(0.0, 0.2, -0.2),
+                feet,
+                origin
+            ),
             BodyPart::LegL
         );
     }
@@ -679,12 +752,22 @@ mod tests {
         // rel_y = 1.2/1.8 = 0.667，落在 Chest/Arm 判定带内（不受 leg 边界影响）。
         // 攻击方向沿 +x（origin z=0 == feet z=0）时 lateral 恰等于 hit.z。
         assert_eq!(
-            classify_body_part(DVec3::new(0.0, 1.2, 0.185), feet, origin),
+            classify_body_part(
+                humanoid_plan_static(),
+                DVec3::new(0.0, 1.2, 0.185),
+                feet,
+                origin
+            ),
             BodyPart::Chest,
             "lateral=0.185 未超过 P1 阈值 0.19，应仍判 Chest"
         );
         assert_eq!(
-            classify_body_part(DVec3::new(0.0, 1.2, 0.20), feet, origin),
+            classify_body_part(
+                humanoid_plan_static(),
+                DVec3::new(0.0, 1.2, 0.20),
+                feet,
+                origin
+            ),
             BodyPart::ArmR,
             "lateral=0.20 超过 P1 阈值 0.19，应判 ArmR"
         );
@@ -704,7 +787,9 @@ mod tests {
         for tick in 0..3000u64 {
             let seed = npc_aim_seed("npc:combat_dist_p1", tick);
             let aim_direction = npc_aim_direction(origin, target, seed, 1.0);
-            if let Some(probe) = raycast_humanoid(origin, target, 5.0, aim_direction) {
+            if let Some(probe) =
+                raycast_humanoid(humanoid_plan_static(), origin, target, 5.0, aim_direction)
+            {
                 *counts.entry(probe.body_part).or_insert(0) += 1;
             }
         }

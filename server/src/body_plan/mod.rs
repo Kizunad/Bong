@@ -52,8 +52,8 @@ pub use registry::{
     humanoid_plan_static, BodyPlanLoadError, BodyPlanRegistry, HUMANOID_BODY_PLAN_ID,
 };
 pub use resolve::{
-    body_part_for_mutation_slot, resolve_body_plan, BodyPlanPurpose, BodyPlanResolveInputs,
-    ResolveBodyPlanError,
+    body_part_for_mutation_slot, resolve_body_plan, resolve_body_plan_for_target, BodyPlanPurpose,
+    BodyPlanResolveInputs, ResolveBodyPlanError,
 };
 pub use types::{
     BodyPartDef, BodyPartId, BodyPlan, BodyPlanId, HeightBand, HeightBandAssignment, HitGeometry,

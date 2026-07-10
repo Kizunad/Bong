@@ -6,6 +6,10 @@ use valence::prelude::{
     IntoSystemConfigs, Position, Query, Res, ResMut, UniqueId, Update, With, Without,
 };
 
+use crate::body_plan::{
+    resolve_body_plan_for_target, BodyPlanPurpose, BodyPlanRegistry, BodyPlanResolveInputs,
+    RaceRegistry,
+};
 use crate::combat::components::{
     Lifecycle, LifecycleState, Stamina, Wound, WoundKind, Wounds, TICKS_PER_SECOND,
 };
@@ -857,6 +861,11 @@ type TargetItem<'a> = (
     &'a mut Wounds,
     &'a mut Contamination,
     Option<&'a mut LifeRecord>,
+    // plan-race-system-v1 P0c —— 投射物命中部位分类按目标实体分派：`resolve_body_plan`
+    // 的玩家身份权威真源。不查 `BeastKind`（同 `combat::resolve::body_part_multipliers`
+    // 注释：races.json 现阶段所有 BeastKind 派生种族的 body_plan_id 均为 "humanoid"，
+    // `beast_kind: None` 落进 Tier2/Tier3 分支得到完全相同的 humanoid 解析结果）。
+    Option<&'a Cultivation>,
 );
 
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
@@ -870,6 +879,12 @@ fn projectile_tick_system(
     mut combat_events: EventWriter<CombatEvent>,
     mut impacts: EventWriter<CarrierImpactEvent>,
     mut despawned: EventWriter<ProjectileDespawnedEvent>,
+    // plan-race-system-v1 P0c —— `Option<Res<...>>` 同 `body_part_multipliers` 既有
+    // 约定：大量既有单测未插入这两个资源，缺失时 `classify_body_part` 的目标 plan
+    // 解析优雅退化到 `humanoid_plan_static()`（生产环境 `body_plan::register()` 恒
+    // 装载，这条退化分支不会在真实部署触发）。
+    body_plan_registry: Option<Res<BodyPlanRegistry>>,
+    race_registry: Option<Res<RaceRegistry>>,
 ) {
     let dt = 1.0 / TICKS_PER_SECOND as f64;
     for (projectile_entity, mut position, mut projectile, mut flight) in &mut projectiles {
@@ -909,7 +924,7 @@ fn projectile_tick_system(
         }
 
         let mut hit: Option<(Entity, f32)> = None;
-        for (target_entity, target_pos, _, _, _) in &mut targets {
+        for (target_entity, target_pos, _, _, _, _) in &mut targets {
             if projectile.owner == Some(target_entity) {
                 continue;
             }
@@ -940,7 +955,7 @@ fn projectile_tick_system(
                 );
                 continue;
             }
-            let Ok((_, target_pos, mut wounds, mut contamination, life_record)) =
+            let Ok((_, target_pos, mut wounds, mut contamination, life_record, cultivation)) =
                 targets.get_mut(target_entity)
             else {
                 continue;
@@ -950,10 +965,20 @@ fn projectile_tick_system(
             // 几何分类（与近战 `raycast_humanoid` 共享阈值/语义），以本 tick 飞行段
             // （`current` → `next`）上离目标中心最近的点作为命中点、`flight.spawn_pos`
             // 作为攻方几何原点（弹道起点，决定 lateral 判定的参照方向）。
-            // plan-race-system-v1 P0b —— `classify_body_part` 本身已改为查询
-            // `body_plan::humanoid_plan_static()` 的 `HeightBands` 数据而非硬编码常量
-            // （见 `combat/raycast.rs`），本调用点无需任何改动即"同步改走新入口"：
-            // 函数签名不变，投射物命中分类天然沿用与近战完全相同的数据源。
+            // plan-race-system-v1 P0c —— `classify_body_part` 现在按**目标实体**分派：
+            // 经 `resolve_body_plan_for_target`（与近战 `combat::resolve` 消费点同款
+            // 兜底链路）解析出目标的 `&BodyPlan` 再传入，不再无条件读
+            // `humanoid_plan_static()` 单例。
+            let target_body_plan = resolve_body_plan_for_target(
+                target_entity,
+                BodyPlanPurpose::Intrinsic,
+                BodyPlanResolveInputs {
+                    cultivation,
+                    beast_kind: None,
+                },
+                body_plan_registry.as_deref(),
+                race_registry.as_deref(),
+            );
             let target_feet = target_pos.get();
             let target_center = target_feet + DVec3::new(0.0, 1.0, 0.0);
             let segment = next - current;
@@ -965,6 +990,7 @@ fn projectile_tick_system(
             };
             let projectile_hit_point = current + segment * t;
             let body_part = crate::combat::raycast::classify_body_part(
+                target_body_plan,
                 projectile_hit_point,
                 target_feet,
                 flight.spawn_pos,
