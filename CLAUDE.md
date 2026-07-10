@@ -162,7 +162,7 @@ bughunt 产出的 `docs/plans-skeleton/plan-bughunt-*.md` 由本工作流消费�
 - **一个 skeleton = 一个 subagent = 一个 worktree = 一个 PR**（对齐「一个 PR 只动一个 plan」）
 - 编译型 worktree 并发 **≤2**（3 个并行 cargo 编译历史上 OOM + 塞盘）；validator/验证类 agent 并发 **≤3**。共享 `CARGO_TARGET_DIR` 时删过 worktree 后若报 `No such file` → `cargo clean -p valence_generated`
 - subagent 回报只带结论（PR 链接 / commit hash / validator PASS 证据），不回灌大段 diff/日志进主干上下文
-- subagent 闭环（PR 开出 + e2e 绿）后：关闭 agent、`git worktree unlock` + `remove`、删生成目录，再补一个新 subagent
+- subagent 闭环（PR 开出 + e2e 绿）后**必须完整清理再补位**：关闭 agent → `git worktree unlock` + `remove` → **`git branch -D bugfix/plan-X` 删本地分支**（顺序不能反：分支被 worktree 检出时删不掉）→ 删生成目录/构建缓存 → `git worktree prune`。本地只留 in-flight 的 worktree/分支，历史上残留 worktree + 缓存曾塞掉上百 G。远端分支不动（返工/merge 还要用），PR merge 后由 squash-merge 删或 `git push origin --delete`
 - **review 返工也是主干的调度责任**：首轮 `/review` 由引擎在 PR 创建时自动触发（无需手动发），主干负责盯 in-flight PR 的结果；出现 `/review` / CodeRabbit 修改意见时，派**返工 subagent** 从 PR 分支重建 worktree（原 worktree 已清理无妨，分支在远端）。返工 = **重走 step 4–8 完整闭环**：validator → 按栈门禁 → 合并最新主线 → push 同一远端分支 → 等新 HEAD 的 e2e → **重发 `/review` 评论**（引擎对后续提交不自动跑）——review 意见永远有责任主体，不悬空
 
 ### Subagent（修复）流程
