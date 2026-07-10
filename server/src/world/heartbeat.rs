@@ -51,6 +51,7 @@ use crate::worldgen::transient_zone::{
 
 pub const HEARTBEAT_EVAL_INTERVAL_TICKS: u64 = 10 * TICKS_PER_SECOND;
 pub const EVENT_PSEUDO_VEIN: &str = "pseudo_vein";
+pub(crate) const HEARTBEAT_PSEUDO_VEIN_ZONE_PREFIX: &str = "pseudo_vein_heartbeat_";
 pub const VFX_WORLD_OMEN_PSEUDO_VEIN: &str = "bong:world_omen_pseudo_vein";
 pub const VFX_WORLD_OMEN_BEAST_TIDE: &str = "bong:world_omen_beast_tide";
 pub const VFX_WORLD_OMEN_TIDE_SKY: &str = "bong:world_omen_tide_sky";
@@ -496,17 +497,11 @@ impl WorldHeartbeat {
     ) -> usize {
         let mut restored = 0;
         for record in records {
-            if record.dissipated
-                || !record.zone_id.starts_with("pseudo_vein_")
-                || !finite_array3(record.bounds_min)
-                || !finite_array3(record.bounds_max)
-                || !finite_array2(record.center_xz)
-                || record.bounds_min[0] > record.bounds_max[0]
-                || record.bounds_min[1] > record.bounds_max[1]
-                || record.bounds_min[2] > record.bounds_max[2]
-                || !record.qi_current.is_finite()
-                || !record.total_qi_consumed.is_finite()
-            {
+            if let Err(error) = validate_persisted_pseudo_vein_record(record) {
+                tracing::warn!(
+                    "[bong][heartbeat] skipped invalid persisted pseudo-vein `{}`: {error}",
+                    record.zone_id
+                );
                 continue;
             }
 
@@ -532,7 +527,6 @@ impl WorldHeartbeat {
                     .patrol_anchors
                     .iter()
                     .copied()
-                    .filter(|anchor| finite_array3(*anchor))
                     .map(dvec3_from_array)
                     .collect::<Vec<_>>()
             };
@@ -680,6 +674,74 @@ fn finite_array3(value: [f64; 3]) -> bool {
     value.into_iter().all(f64::is_finite)
 }
 
+pub(crate) fn is_heartbeat_pseudo_vein_zone_id(zone_id: &str) -> bool {
+    heartbeat_pseudo_vein_index(zone_id).is_some()
+}
+
+pub(crate) fn is_heartbeat_pseudo_vein_zone_namespace(zone_id: &str) -> bool {
+    zone_id.starts_with(HEARTBEAT_PSEUDO_VEIN_ZONE_PREFIX)
+}
+
+pub(crate) fn validate_persisted_pseudo_vein_record(
+    record: &HeartbeatPseudoVeinRecord,
+) -> Result<(), String> {
+    if !is_heartbeat_pseudo_vein_zone_id(record.zone_id.as_str()) {
+        return Err(format!(
+            "zone_id must match {HEARTBEAT_PSEUDO_VEIN_ZONE_PREFIX}<u64>"
+        ));
+    }
+    if record.dissipated {
+        return Err("dissipated lifecycle rows must not remain persisted".to_string());
+    }
+    if !finite_array3(record.bounds_min) || !finite_array3(record.bounds_max) {
+        return Err("bounds must contain only finite coordinates".to_string());
+    }
+    if record.bounds_min[0] > record.bounds_max[0]
+        || record.bounds_min[1] > record.bounds_max[1]
+        || record.bounds_min[2] > record.bounds_max[2]
+    {
+        return Err("bounds min must not exceed bounds max".to_string());
+    }
+    if !finite_array2(record.center_xz)
+        || !(record.bounds_min[0]..=record.bounds_max[0]).contains(&record.center_xz[0])
+        || !(record.bounds_min[2]..=record.bounds_max[2]).contains(&record.center_xz[1])
+    {
+        return Err("center_xz must be finite and lie within persisted bounds".to_string());
+    }
+    if record
+        .patrol_anchors
+        .iter()
+        .any(|anchor| !finite_array3(*anchor))
+    {
+        return Err("patrol anchors must contain only finite coordinates".to_string());
+    }
+    if !record.qi_current.is_finite() || !(0.0..=1.0).contains(&record.qi_current) {
+        return Err(format!(
+            "qi_current must be finite within [0, 1], actual {}",
+            record.qi_current
+        ));
+    }
+    if !record.total_qi_consumed.is_finite() || record.total_qi_consumed < 0.0 {
+        return Err(format!(
+            "total_qi_consumed must be finite and non-negative, actual {}",
+            record.total_qi_consumed
+        ));
+    }
+    if record.last_tick < record.spawned_at_tick {
+        return Err(format!(
+            "last_tick {} precedes spawned_at_tick {}",
+            record.last_tick, record.spawned_at_tick
+        ));
+    }
+    if record.snapshot_wall < 0 {
+        return Err(format!(
+            "snapshot_wall must be non-negative, actual {}",
+            record.snapshot_wall
+        ));
+    }
+    Ok(())
+}
+
 fn wall_elapsed_ticks(snapshot_wall: i64, current_wall: i64) -> u64 {
     let elapsed_seconds = current_wall.saturating_sub(snapshot_wall).max(0);
     u64::try_from(elapsed_seconds)
@@ -689,7 +751,7 @@ fn wall_elapsed_ticks(snapshot_wall: i64, current_wall: i64) -> u64 {
 
 fn heartbeat_pseudo_vein_index(zone_id: &str) -> Option<u64> {
     zone_id
-        .strip_prefix("pseudo_vein_heartbeat_")
+        .strip_prefix(HEARTBEAT_PSEUDO_VEIN_ZONE_PREFIX)
         .and_then(|suffix| suffix.parse::<u64>().ok())
 }
 

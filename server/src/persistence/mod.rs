@@ -38,7 +38,11 @@ use crate::schema::social::{
     RenownTagV1,
 };
 use crate::world::dimension::DimensionKind;
-use crate::world::heartbeat::{WorldHeartbeat, HEARTBEAT_EVAL_INTERVAL_TICKS};
+use crate::world::heartbeat::{
+    is_heartbeat_pseudo_vein_zone_id, is_heartbeat_pseudo_vein_zone_namespace,
+    validate_persisted_pseudo_vein_record, WorldHeartbeat, EVENT_PSEUDO_VEIN,
+    HEARTBEAT_EVAL_INTERVAL_TICKS,
+};
 
 #[allow(dead_code)]
 pub mod identity;
@@ -3437,6 +3441,35 @@ fn hydrate_zone_runtime(
     zones: &mut crate::world::zone::ZoneRegistry,
 ) -> io::Result<()> {
     let runtime_rows = load_zone_runtime_snapshot(settings)?;
+    for record in &runtime_rows {
+        if !is_heartbeat_pseudo_vein_zone_namespace(record.zone_id.as_str()) {
+            continue;
+        }
+        let zone = zones
+            .find_zone_by_name(record.zone_id.as_str())
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "orphan pseudo-vein zone runtime `{}` has no restored lifecycle",
+                        record.zone_id
+                    ),
+                )
+            })?;
+        if !zone
+            .active_events
+            .iter()
+            .any(|event| event == EVENT_PSEUDO_VEIN)
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "pseudo-vein zone runtime `{}` is not backed by an active lifecycle",
+                    record.zone_id
+                ),
+            ));
+        }
+    }
     zones.apply_runtime_records(&runtime_rows);
     Ok(())
 }
@@ -3449,12 +3482,81 @@ fn hydrate_heartbeat_pseudo_veins(
     current_wall: i64,
 ) -> io::Result<usize> {
     let pseudo_veins = load_heartbeat_pseudo_veins_snapshot(settings)?;
-    Ok(heartbeat.restore_pseudo_vein_records_at_wall(
+    let runtime_rows = load_zone_runtime_snapshot(settings)?;
+    validate_pseudo_vein_snapshot_pair(&pseudo_veins, &runtime_rows)?;
+    let restored = heartbeat.restore_pseudo_vein_records_at_wall(
         zones,
         &pseudo_veins,
         current_tick,
         current_wall,
-    ))
+    );
+    if restored != pseudo_veins.len() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "restored {restored} of {} validated pseudo-vein lifecycle rows",
+                pseudo_veins.len()
+            ),
+        ));
+    }
+    Ok(restored)
+}
+
+fn validate_pseudo_vein_snapshot_pair(
+    pseudo_veins: &[HeartbeatPseudoVeinRecord],
+    runtime_rows: &[ZoneRuntimeRecord],
+) -> io::Result<()> {
+    let heartbeat_by_id = pseudo_veins
+        .iter()
+        .map(|record| (record.zone_id.as_str(), record))
+        .collect::<HashMap<_, _>>();
+    let runtime_by_id = runtime_rows
+        .iter()
+        .filter(|record| is_heartbeat_pseudo_vein_zone_namespace(record.zone_id.as_str()))
+        .map(|record| (record.zone_id.as_str(), record))
+        .collect::<HashMap<_, _>>();
+
+    for record in pseudo_veins {
+        validate_persisted_pseudo_vein_record(record).map_err(|error| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "invalid pseudo-vein lifecycle `{}`: {error}",
+                    record.zone_id
+                ),
+            )
+        })?;
+        let runtime = runtime_by_id.get(record.zone_id.as_str()).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "pseudo-vein lifecycle `{}` has no matching zones_runtime row",
+                    record.zone_id
+                ),
+            )
+        })?;
+        if !(0.0..=1.0).contains(&runtime.spirit_qi) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "pseudo-vein zone `{}` spirit_qi must be within [0, 1], actual {}",
+                    runtime.zone_id, runtime.spirit_qi
+                ),
+            ));
+        }
+    }
+    for runtime in runtime_by_id.values() {
+        if !heartbeat_by_id.contains_key(runtime.zone_id.as_str()) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "pseudo-vein zones_runtime row `{}` has no matching lifecycle row",
+                    runtime.zone_id
+                ),
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn hydrate_zone_overlays(
@@ -5262,6 +5364,7 @@ fn upsert_zone_runtime(
     record: &ZoneRuntimeRecord,
     wall_clock: i64,
 ) -> io::Result<()> {
+    validate_zone_runtime_record(record)?;
     transaction
         .execute(
             "
@@ -5287,6 +5390,47 @@ fn upsert_zone_runtime(
             ],
         )
         .map_err(io::Error::other)?;
+    Ok(())
+}
+
+fn validate_zone_runtime_record(record: &ZoneRuntimeRecord) -> io::Result<()> {
+    if record.zone_id.trim().is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "zone runtime id must not be empty",
+        ));
+    }
+    if !record.spirit_qi.is_finite() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "zone runtime `{}` spirit_qi must be finite, actual {}",
+                record.zone_id, record.spirit_qi
+            ),
+        ));
+    }
+    if is_heartbeat_pseudo_vein_zone_namespace(record.zone_id.as_str())
+        && !is_heartbeat_pseudo_vein_zone_id(record.zone_id.as_str())
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "pseudo-vein zone runtime id `{}` must end in a decimal u64 index",
+                record.zone_id
+            ),
+        ));
+    }
+    if is_heartbeat_pseudo_vein_zone_id(record.zone_id.as_str())
+        && !(0.0..=1.0).contains(&record.spirit_qi)
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "pseudo-vein zone runtime `{}` spirit_qi must be within [0, 1], actual {}",
+                record.zone_id, record.spirit_qi
+            ),
+        ));
+    }
     Ok(())
 }
 
@@ -5346,6 +5490,15 @@ fn upsert_heartbeat_pseudo_vein(
     record: &HeartbeatPseudoVeinRecord,
     wall_clock: i64,
 ) -> io::Result<()> {
+    validate_persisted_pseudo_vein_record(record).map_err(|error| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "invalid pseudo-vein lifecycle `{}`: {error}",
+                record.zone_id
+            ),
+        )
+    })?;
     let active_events_json = serde_json::to_string(&record.active_events)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
     let patrol_anchors_json = serde_json::to_string(&record.patrol_anchors)
@@ -5907,11 +6060,13 @@ fn load_zone_runtime_snapshot_from_connection(
     let mut records = Vec::new();
     for row in rows {
         let (zone_id, spirit_qi, danger_level) = row.map_err(io::Error::other)?;
-        records.push(ZoneRuntimeRecord {
+        let record = ZoneRuntimeRecord {
             zone_id,
             spirit_qi,
             danger_level: sql_to_u8(danger_level)?,
-        });
+        };
+        validate_zone_runtime_record(&record)?;
+        records.push(record);
     }
     Ok(records)
 }
@@ -7819,6 +7974,84 @@ mod persistence_tests {
             eval_elapsed_ticks: 0,
             snapshot_wall: 0,
         }
+    }
+
+    fn heartbeat_zone_runtime_record(
+        record: &HeartbeatPseudoVeinRecord,
+        spirit_qi: f64,
+    ) -> ZoneRuntimeRecord {
+        ZoneRuntimeRecord {
+            zone_id: record.zone_id.clone(),
+            spirit_qi,
+            danger_level: record.danger_level,
+        }
+    }
+
+    fn assert_pseudo_vein_startup_fails_closed(
+        settings: &PersistenceSettings,
+        zone_id: &str,
+        expected_lifecycle_rows: i64,
+        expected_runtime_rows: i64,
+    ) {
+        let mut app = App::new();
+        app.insert_resource(settings.clone());
+        app.insert_resource(DailyBackupState::default());
+        app.insert_resource(crate::world::zone::ZoneRegistry::fallback());
+        app.insert_resource(WorldHeartbeat::default());
+        app.insert_resource(CultivationClock::default());
+        app.insert_resource(WorldQiAccount::default());
+        app.add_systems(Startup, bootstrap_persistence_system);
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| app.update()));
+        assert!(
+            result.is_err(),
+            "expected inconsistent pseudo-vein persistence to stop startup"
+        );
+        assert_eq!(
+            app.world()
+                .resource::<WorldHeartbeat>()
+                .active_pseudo_vein_count(),
+            0,
+            "failed startup must not install a partial pseudo-vein lifecycle"
+        );
+        assert!(
+            app.world()
+                .resource::<crate::world::zone::ZoneRegistry>()
+                .find_zone_by_name(zone_id)
+                .is_none(),
+            "failed startup must not install a partial pseudo-vein zone"
+        );
+        assert_eq!(
+            app.world()
+                .resource::<WorldQiAccount>()
+                .balance(&QiAccountId::zone(zone_id)),
+            0.0,
+            "failed startup must not mint a pseudo-vein ledger balance"
+        );
+
+        let connection = Connection::open(settings.db_path()).expect("fixture db should reopen");
+        let lifecycle_rows: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM heartbeat_pseudo_veins WHERE zone_id = ?1",
+                params![zone_id],
+                |row| row.get(0),
+            )
+            .expect("heartbeat row count should query");
+        let runtime_rows: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM zones_runtime WHERE zone_id = ?1",
+                params![zone_id],
+                |row| row.get(0),
+            )
+            .expect("zone runtime row count should query");
+        assert_eq!(
+            lifecycle_rows, expected_lifecycle_rows,
+            "failed startup must preserve the authoritative lifecycle row count"
+        );
+        assert_eq!(
+            runtime_rows, expected_runtime_rows,
+            "failed startup must preserve the authoritative runtime row count"
+        );
     }
 
     #[test]
@@ -15320,6 +15553,106 @@ mod persistence_tests {
     }
 
     #[test]
+    fn heartbeat_lifecycle_without_zone_runtime_fails_closed_without_deletion() {
+        let (settings, root) = persistence_settings("heartbeat-missing-runtime-fail-closed");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("fixture sqlite should bootstrap");
+        let record = heartbeat_pseudo_vein_record("pseudo_vein_heartbeat_7");
+        let mut connection = open_persistence_connection(&settings).expect("db should open");
+        let transaction = connection.transaction().expect("transaction should start");
+        upsert_heartbeat_pseudo_vein(&transaction, &record, 100)
+            .expect("valid lifecycle row should persist");
+        transaction
+            .commit()
+            .expect("fixture transaction should commit");
+
+        assert_pseudo_vein_startup_fails_closed(&settings, record.zone_id.as_str(), 1, 0);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn zone_runtime_without_heartbeat_lifecycle_fails_closed_without_deletion() {
+        let (settings, root) = persistence_settings("heartbeat-missing-lifecycle-fail-closed");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("fixture sqlite should bootstrap");
+        let record = heartbeat_pseudo_vein_record("pseudo_vein_heartbeat_7");
+        let mut connection = open_persistence_connection(&settings).expect("db should open");
+        let transaction = connection.transaction().expect("transaction should start");
+        upsert_zone_runtime(
+            &transaction,
+            &heartbeat_zone_runtime_record(&record, record.qi_current),
+            100,
+        )
+        .expect("valid runtime row should persist");
+        transaction
+            .commit()
+            .expect("fixture transaction should commit");
+
+        assert_pseudo_vein_startup_fails_closed(&settings, record.zone_id.as_str(), 0, 1);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn invalid_heartbeat_bounds_fails_closed_without_partial_restore() {
+        let (settings, root) = persistence_settings("heartbeat-invalid-bounds-fail-closed");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("fixture sqlite should bootstrap");
+        let record = heartbeat_pseudo_vein_record("pseudo_vein_heartbeat_7");
+        let mut connection = open_persistence_connection(&settings).expect("db should open");
+        let transaction = connection.transaction().expect("transaction should start");
+        upsert_heartbeat_pseudo_vein(&transaction, &record, 100)
+            .expect("valid lifecycle row should persist before corruption");
+        upsert_zone_runtime(
+            &transaction,
+            &heartbeat_zone_runtime_record(&record, record.qi_current),
+            100,
+        )
+        .expect("matching runtime row should persist");
+        transaction
+            .execute(
+                "UPDATE heartbeat_pseudo_veins SET min_x = 200.0, max_x = 100.0 WHERE zone_id = ?1",
+                params![record.zone_id.as_str()],
+            )
+            .expect("fixture should corrupt persisted bounds");
+        transaction
+            .commit()
+            .expect("fixture transaction should commit");
+
+        assert_pseudo_vein_startup_fails_closed(&settings, record.zone_id.as_str(), 1, 1);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn out_of_range_pseudo_vein_qi_fails_closed_without_ledger_mint() {
+        let (settings, root) = persistence_settings("heartbeat-invalid-zone-qi-fail-closed");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("fixture sqlite should bootstrap");
+        let record = heartbeat_pseudo_vein_record("pseudo_vein_heartbeat_7");
+        let mut connection = open_persistence_connection(&settings).expect("db should open");
+        let transaction = connection.transaction().expect("transaction should start");
+        upsert_heartbeat_pseudo_vein(&transaction, &record, 100)
+            .expect("valid lifecycle row should persist");
+        upsert_zone_runtime(
+            &transaction,
+            &heartbeat_zone_runtime_record(&record, record.qi_current),
+            100,
+        )
+        .expect("valid runtime row should persist before corruption");
+        transaction
+            .execute(
+                "UPDATE zones_runtime SET spirit_qi = 9.0 WHERE zone_id = ?1",
+                params![record.zone_id.as_str()],
+            )
+            .expect("fixture should corrupt persisted zone qi");
+        transaction
+            .commit()
+            .expect("fixture transaction should commit");
+
+        assert_pseudo_vein_startup_fails_closed(&settings, record.zone_id.as_str(), 1, 1);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn corrupt_heartbeat_hydration_panics_without_deleting_valid_rows() {
         let (settings, root) = persistence_settings("heartbeat-corrupt-fail-closed");
         bootstrap_sqlite(settings.db_path(), settings.server_run_id())
@@ -15332,6 +15665,18 @@ mod persistence_tests {
         upsert_heartbeat_pseudo_vein(&transaction, &first, 100).expect("valid row should persist");
         upsert_heartbeat_pseudo_vein(&transaction, &second, 100)
             .expect("second valid row should persist");
+        upsert_zone_runtime(
+            &transaction,
+            &heartbeat_zone_runtime_record(&first, first.qi_current),
+            100,
+        )
+        .expect("first matching runtime row should persist");
+        upsert_zone_runtime(
+            &transaction,
+            &heartbeat_zone_runtime_record(&second, second.qi_current),
+            100,
+        )
+        .expect("second matching runtime row should persist");
         transaction
             .execute(
                 "UPDATE heartbeat_pseudo_veins SET active_events_json = '{' WHERE zone_id = ?1",
@@ -15365,6 +15710,13 @@ mod persistence_tests {
         assert_eq!(
             rows, 2,
             "expected failed hydration not to run destructive empty-state replacement"
+        );
+        let runtime_rows: i64 = connection
+            .query_row("SELECT COUNT(*) FROM zones_runtime", [], |row| row.get(0))
+            .expect("zone runtime row count should query");
+        assert_eq!(
+            runtime_rows, 2,
+            "expected failed hydration not to delete matching zone runtime rows"
         );
         let _ = fs::remove_dir_all(root);
     }
