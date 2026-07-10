@@ -1,5 +1,7 @@
 # plan-npc-trade-bundle-count-loss-v1
 
+> BugFix active plan。来源：`docs/plans-skeleton/plan-npc-trade-bundle-count-loss-v1.md`；promotion 日期：2026-07-11；基线：`origin/main@062cd9bb2ff045ea2d63fb859ff9849d48f4ec48`。
+
 > 一句话主题：NPC 交易 UI / metadata / server 买路三者对 `NpcTradeOffer.count` 的语义不一致。client 明确把报价渲染成 bundle（如“灵草 x3 / 总价 12 骨币”），但 `NpcTradeRequest` 落地时服务端只按静态 catalogue 解析 `template_id + price`，最终固定 `add_item_to_player_inventory(..., 1, ...)`，导致玩家按 bundle 价付款却只拿到 1 件货。
 
 > **这个 bug 对实际游玩体验的影响**：正常游玩里，玩家和散修/凡人 NPC 交易时会直接看到“灵草 x3”“次品丹药 x2”这类 bundle 报价，也会看到对应总价；但真正点“确认交易”后，服务端永远只给 1 件。结果是玩家在完全合法、无 dev 命令、无改包的正常交易流程里，被系统稳定少发货：付了 3 份货的骨币，只收到 1 份，剩下 2 份凭空消失。这会直接破坏 NPC 交易的可信度，也会让前期通过 NPC 买灵草/次品丹药补给的经济曲线失真。
@@ -8,13 +10,24 @@
 
 | 阶段 | 主题 | 状态 |
 |---|---|---|
-| P0 | 核心修复：服务端成交必须消费 live `NpcTradeInventory` offer，而不是只看静态 catalogue | ⬜ |
+| P0 | 核心修复：服务端成交必须消费 live `NpcTradeInventory` offer，而不是只看静态 catalogue | ⏳ |
 | P1 | 契约与 UI 对齐：`count` / `price_bone_coins` / 当前 offer subset 全链路锁定 | ⬜ |
 | P2 | 饱和测试：bundle 成交、单件成交、不可见报价拒绝、金额扣减全覆盖 | ⬜ |
 
-验收日期：全部 P ✅ 后填写（当前为 skeleton，2026-07-05）。
+验收日期：全部 P ✅ 后填写。
+
+## 接入面
+
+- **进料**：`ClientRequestV1::NpcTradeRequest.requested_item_id`、目标 NPC 的 `NpcTradeInventory.offers`、玩家 `PlayerInventory.bone_coins`、既有 `NpcPlayerReputation` / `FactionReputation` 价格修正。
+- **出料**：`add_item_to_player_inventory` 按 live `TradeOffer.count` 入包；骨币按 live `TradeOffer.price_bone_coins` 经既有信誉修正后扣减；聊天反馈回显 `display_name + count`；既有 `NpcInteractionType::Trade` 记忆链保持不变。
+- **共享类型 / event**：复用 `server/src/npc/trade.rs::{NpcTradeInventory, TradeOffer}`、`server/src/network/client_request_handler.rs::NpcEngagementRequestParams`、`server/src/inventory::PlayerInventory`，不新增第二套 bundle DTO 或成交事件。
+- **跨仓库契约**：server `TradeOffer.count` → `NpcTradeOfferS2c.count`；client `NpcTradeOffer.count()` / `NpcTradeScreen`；C2S 继续使用 `NpcTradeRequest.requested_item_id`，协议字段与 schema 不变。
+- **worldview 锚点**：`worldview.md §九 L839-L858` 面对面交易、`worldview.md §十一 L922-L970` 信誉影响交易；唯一货币继续为骨币。
+- **qi_physics 锚点**：本 BugFix 只修物品数量与骨币账，不引入或转移真元 / 灵气，不新增物理常数，也不触碰 `qi_physics` ledger。
 
 ## 证据链
+
+> 本节为 promotion 阶段的静态证据假说；P0 实施前仍须通过当前 `origin/main` 上的完整请求测试独立证真，不能以 skeleton 结论代替复现。
 
 1. **生成端明确生产 bundle 数量**：`server/src/npc/trade.rs:618-631` 从 `TRADE_CATALOGUE.count_min/count_max` 生成 `TradeOffer { template_id, display_name, count: item_count, price_bone_coins }`；其中 `spirit_grass` 明确允许 `count_min=1, count_max=5`（`trade.rs:508-520`）。
 2. **同步链完整保留 `count`**：`server/src/network/npc_metadata.rs:305-313` 把 `offer.count` 原样下发为 `NpcTradeOfferS2c.count`；测试 `npc_metadata_trade_offers_serializes` 也专门构造了 `count: 3`（`npc_metadata.rs:824-851`）。
@@ -49,6 +62,7 @@
 
 - 不改 client 协议字段名。`NpcTradeRequest.requested_item_id` 继续沿用现有字符串字段即可；问题不在协议缺字段，而在 server 没有把该字符串重新绑定回 live `TradeOffer`。
 - 不把 `count` 再手抄一份进第二套 catalogue/映射表。`count` 的唯一运行时来源应继续是 `NpcTradeInventory.offers[*].count`。
+- 不改变现有信誉门控、稀有度拒绝、背包失败原子性与交易记忆链；任何入包失败必须继续保持骨币不扣。
 
 ## P1 — 契约与 UI 对齐
 
@@ -80,13 +94,46 @@
    - catalogue 中 template 合法，但 live offer `count=5` 时仍必须发 `5`。
 5. `npc_trade_request_success_message_includes_bundle_count`
    - 锁住玩家可见反馈不再把 bundle 成交说成单件成交。
+6. `npc_trade_request_uses_live_offer_total_price`
+   - live offer 总价与静态 catalogue 价格刻意不同时，以 live 总价结算一次，证明 `price_bone_coins` 不是单件价也不会被静态表覆盖。
+7. `npc_trade_request_rejects_missing_trade_inventory_without_side_effects`
+   - NPC 缺失 `NpcTradeInventory` 时拒绝；背包物品、骨币、revision 均不变。
 
-## 开放问题
+## 开放问题（已收口）
 
 1. `NpcEngagementTarget` 是直接扩成携带 `Vec<TradeOffer>`，还是只携带 `Entity` 然后在成交分支二次 query `NpcTradeInventory`？
    - 倾向后者：避免把大块交易数据塞进所有 inspect/dialogue 路径共用的 target struct。
 2. `npc_trade_catalog_entry` 的最终定位是什么？
    - 倾向保留为 catalogue 对齐 / 历史 alias（`lingcao` -> `spirit_grass`）辅助，但 bundle 数量与价格一律由 live offer 决定。
+
+## 决议（pre-P0 收口，2026-07-11）
+
+### #1 live offer 读取方式
+
+**决议**：
+1. 在 `NpcEngagementRequestParams` 增加独立只读 `Query<&NpcTradeInventory, With<NpcMarker>>`，成交分支用已经通过距离、维度、生命周期校验的 `target.entity` 二次查询。
+2. 不把 `Vec<TradeOffer>` clone 进 `NpcEngagementTarget`，避免 inspect / dialogue 等非交易分支承担无关数据复制。
+3. 缺 component、空 offers 或请求项不在当前 subset 时均可见拒绝，且不得发生入包、扣币或 revision 变化。
+
+**落点**：`server/src/network/client_request_handler.rs:412-438` + P0/P2。
+
+### #2 静态 catalogue 的职责
+
+**决议**：
+1. `npc_trade_catalog_entry` 只可用于把历史 alias canonicalize 为 live `template_id`；其返回价格不得参与最终结算。
+2. 成交数量、展示名、bundle 总价唯一取自匹配到的 live `TradeOffer`。
+3. 当前 UI 发精确 `template_id`；保留 alias 兼容不会绕过 subset，因为 canonical id 仍必须命中 live offers。
+
+**落点**：`server/src/network/client_request_handler.rs:1335-1525`、`:11220-11250` + P0/P1/P2。
+
+### #3 验收门禁
+
+**决议**：
+1. 先以完整 `NpcTradeRequest` dispatch 测试证明现状 bundle 少发，再做最小修复。
+2. server 栈执行 `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`；不得用单一 targeted test 替代完整门禁。
+3. 合并 fresh `origin/main` 后若带入任何变更，重跑 server 完整门禁；若触及相关文件或 HEAD 改变，重新启动全新 validator。
+
+**落点**：`server/src/network/client_request_handler.rs` tests + P2。
 
 ## 两轮反方裁决摘要
 
