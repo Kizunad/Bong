@@ -447,14 +447,18 @@ def _generated_novice_pois(manifest: dict) -> list[dict]:
     ]
 
 
-def _call_regen_endpoint(app, zone_name: str) -> dict:
+def _call_regen_endpoint(
+    app,
+    zone_name: str,
+    overrides: dict | None = None,
+) -> dict:
     route = next(
         route
         for route in app.routes
         if getattr(route, "path", None) == "/api/regen"
         and "POST" in getattr(route, "methods", set())
     )
-    return route.endpoint(RegenRequest(zone_name=zone_name))
+    return route.endpoint(RegenRequest(zone_name=zone_name, overrides=overrides))
 
 
 def test_regen_rewrites_only_affected_tiles(client: TestClient, baked_world) -> None:
@@ -533,6 +537,24 @@ def test_remote_zone_regen_preserves_global_novice_pois(tmp_path) -> None:
         for poi in original_novice
     ), "complete spawn fields must produce at least one terrain-selected novice POI"
 
+    # A local peaks regen must not rebuild another zone's authored/profile POIs
+    # from the current blueprint. Poison one spawn tutorial entry so the old
+    # all-zones rebuild is guaranteed to erase it and fail this regression.
+    poisoned_manifest = json.loads(json.dumps(original_manifest))
+    preserved_spawn_poi = next(
+        poi
+        for poi in poisoned_manifest["pois"]
+        if poi["zone"] == "spawn" and "poi_novice" not in poi.get("tags", [])
+    )
+    preserved_spawn_poi["name"] = "sentinel:unregenerated-spawn-poi"
+    preserved_spawn_poi["pos_xyz"] = [-1234.0, 77.0, -1234.0]
+    preserved_spawn_poi["tags"] = ["sentinel:preserve-byte-semantics"]
+    preserved_spawn_poi = json.loads(json.dumps(preserved_spawn_poi))
+    manifest_path.write_text(
+        json.dumps(poisoned_manifest, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
     app = create_app(
         out_dir / "rasters",
         blueprint_path=blueprint_path,
@@ -540,13 +562,25 @@ def test_remote_zone_regen_preserves_global_novice_pois(tmp_path) -> None:
         tile_size=NOVICE_REGEN_TILE_SIZE,
         output_dir=out_dir,
     )
-    response = _call_regen_endpoint(app, "peaks")
+    response = _call_regen_endpoint(
+        app,
+        "peaks",
+        overrides={"worldgen": {"terrain_profile": "spawn_plain"}},
+    )
     assert response["rewritten_tiles"], "remote regen must rewrite its tiles"
 
     manifest_after = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert _generated_novice_pois(manifest_after) == original_novice, (
         "a remote zone's local fields must never replace global spawn novice POIs"
     )
+    assert preserved_spawn_poi in manifest_after["pois"], (
+        "a remote zone regen must preserve every non-target authored/profile "
+        "POI exactly as stored in the existing manifest"
+    )
+    assert any(
+        poi["zone"] == "peaks" and poi["kind"] == "spawn_tutorial_coffin"
+        for poi in manifest_after["pois"]
+    ), "the target zone's profile-derived POIs must still refresh"
 
 
 def test_spawn_regen_recomputes_novice_pois_from_complete_fields(tmp_path) -> None:

@@ -478,8 +478,9 @@ def regen_zone(
     ``synthesize_fields(plan, zone_filter={zone_name})`` (or a wider filter that
     still covers ``zone_name``'s tiles). ``novice_poi_fields`` is intentionally
     separate: when omitted, existing global novice POIs are preserved; when
-    supplied, it must cover every tile in the existing full manifest before the
-    six novice POIs may be recomputed. Returns the list of rewritten tile ids.
+    supplied, it must cover every active tile in the plan-derived maximum novice
+    selection window, and the existing manifest must contain that same window,
+    before the six novice POIs may be recomputed. Returns rewritten tile ids.
 
     Raises ``KeyError`` if ``zone_name`` is not a blueprint zone.
     """
@@ -568,22 +569,26 @@ def regen_zone(
     #   - pois         authored/tutorial POIs are gated on blueprint/profile,
     #   - *fossil / corpse_mound / ascension_pit / collapsed_zones are all
     #     profile- or zone-property-gated structure derivations.
-    # All zone-derived values are O(n_zones) recomputations from blueprint zones
-    # we already hold. Global novice POIs are different: they are selected from
-    # the spawn-area terrain field, so a non-spawn zone's local fields must not
-    # replace them. Preserve the old generated novice entries unless the caller
-    # supplied a separately validated complete field set.
+    # Global novice POIs are selected from the spawn-area terrain field, so a
+    # non-spawn zone's local fields must not replace them. Authored/profile POIs
+    # are also patched zone-locally: rebuilding every zone here could publish a
+    # different, not-yet-regenerated zone's blueprint edits ahead of its raster.
     existing_novice_pois = [
         entry
         for entry in manifest.get("pois", [])
         if isinstance(entry, dict) and _is_generated_novice_poi(entry)
     ]
-    pois_payload = _collect_poi_payload(plan.blueprint_zones)
-    pois_payload.extend(
-        novice_payload if novice_payload is not None else existing_novice_pois
+    target_zone = next(zone for zone in plan.blueprint_zones if zone.name == zone_name)
+    refreshed_target_pois = _collect_poi_payload([target_zone])
+    manifest["pois"] = _merge_regen_poi_payload(
+        manifest.get("pois", []),
+        target_zone_name=zone_name,
+        refreshed_target_pois=refreshed_target_pois,
+        novice_pois=(
+            novice_payload if novice_payload is not None else existing_novice_pois
+        ),
     )
     manifest["zones"] = _collect_zone_params(plan.blueprint_zones)
-    manifest["pois"] = pois_payload
     manifest["fossil_bboxes"] = _collect_fossil_bboxes(plan.blueprint_zones)
     manifest["corpse_mounds"] = _collect_corpse_mounds(plan.blueprint_zones)
     manifest["ascension_pits"] = _collect_ascension_pits(plan.blueprint_zones)
@@ -611,6 +616,31 @@ def _is_generated_novice_poi(entry: dict[str, object]) -> bool:
         and isinstance(tags, list)
         and "poi_novice" in tags
     )
+
+
+def _merge_regen_poi_payload(
+    existing_pois: list[object],
+    *,
+    target_zone_name: str,
+    refreshed_target_pois: list[dict[str, object]],
+    novice_pois: list[dict[str, object]],
+) -> list[object]:
+    """Patch one zone's authored/profile POIs and preserve every other entry."""
+    merged: list[object] = []
+    inserted_target = False
+    for entry in existing_pois:
+        if isinstance(entry, dict) and _is_generated_novice_poi(entry):
+            continue
+        if isinstance(entry, dict) and entry.get("zone") == target_zone_name:
+            if not inserted_target:
+                merged.extend(refreshed_target_pois)
+                inserted_target = True
+            continue
+        merged.append(entry)
+    if not inserted_target:
+        merged.extend(refreshed_target_pois)
+    merged.extend(novice_pois)
+    return merged
 
 
 def _poi_dict(zone_name: str, poi: PoiSpec) -> dict[str, object]:
