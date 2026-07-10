@@ -30,6 +30,8 @@ from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from ..poi_novice_selector import novice_poi_selection_tile_ids
+
 from .blueprint import (
     DEFAULT_BLUEPRINT_PATH,
     DEFAULT_PROFILES_PATH,
@@ -367,10 +369,13 @@ def create_app(
         novice_poi_fields = None
         if req.zone_name == blueprint.spawn_zone:
             # The spawn zone itself is smaller than the novice selector's
-            # relaxed search window. Recompute global novice POIs only from a
-            # complete synthesis; the regen writer validates this against the
-            # existing full manifest before touching raster bytes.
-            novice_poi_fields = synthesize_fields(plan)
+            # relaxed search window. Synthesize exactly the active tiles that
+            # intersect the selector's maximum radius; a full-world synthesis
+            # is both unnecessary and prohibitively large on the default map.
+            novice_poi_fields = synthesize_fields(
+                plan,
+                tile_filter=novice_poi_selection_tile_ids(plan),
+            )
         try:
             rewritten = regen_zone(
                 plan,

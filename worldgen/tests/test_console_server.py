@@ -32,6 +32,7 @@ import os
 import struct
 import time
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 import pytest
@@ -43,6 +44,9 @@ pytest.importorskip("httpx")
 
 from fastapi.testclient import TestClient  # noqa: E402
 
+from scripts.poi_novice_selector import (  # noqa: E402
+    novice_poi_selection_tile_ids,
+)
 from scripts.terrain_gen.bakers.raster_export import (  # noqa: E402
     SPANS_COUNT_FILE,
     SPANS_FILE,
@@ -426,6 +430,14 @@ def _tile_sha(path: Path) -> dict[str, bytes]:
     return {f.name: f.read_bytes() for f in sorted(path.iterdir()) if f.is_file()}
 
 
+def _tree_bytes(path: Path) -> dict[str, bytes]:
+    return {
+        file.relative_to(path).as_posix(): file.read_bytes()
+        for file in sorted(path.rglob("*"))
+        if file.is_file()
+    }
+
+
 def _generated_novice_pois(manifest: dict) -> list[dict]:
     return [
         poi
@@ -570,8 +582,49 @@ def test_spawn_regen_recomputes_novice_pois_from_complete_fields(tmp_path) -> No
         tile_size=NOVICE_REGEN_TILE_SIZE,
         output_dir=out_dir,
     )
-    response = _call_regen_endpoint(app, "spawn")
+    blueprint = load_blueprint(blueprint_path)
+    plan = build_generation_plan(
+        blueprint=blueprint,
+        profile_catalog=load_profile_catalog(PROFILES_PATH),
+        blueprint_path=blueprint_path,
+        profiles_path=PROFILES_PATH,
+        output_dir=out_dir,
+        tile_size=NOVICE_REGEN_TILE_SIZE,
+        zone_overlays=load_zone_overlays(None),
+    )
+    required_tile_ids = novice_poi_selection_tile_ids(plan)
+    synthesis_calls: list[tuple[set[str] | None, set[str] | None]] = []
+
+    def recording_synthesize(
+        active_plan,
+        zone_filter=None,
+        tile_filter=None,
+    ):
+        synthesis_calls.append(
+            (
+                None if zone_filter is None else set(zone_filter),
+                None if tile_filter is None else set(tile_filter),
+            )
+        )
+        return synthesize_fields(
+            active_plan,
+            zone_filter=zone_filter,
+            tile_filter=tile_filter,
+        )
+
+    with patch(
+        "scripts.terrain_gen.console_server.synthesize_fields",
+        side_effect=recording_synthesize,
+    ):
+        response = _call_regen_endpoint(app, "spawn")
     assert response["rewritten_tiles"], "spawn regen must rewrite its tiles"
+    assert synthesis_calls == [
+        ({"spawn"}, None),
+        (None, required_tile_ids),
+    ], (
+        "spawn regen must synthesize the local rewrite tiles plus only the "
+        "independently-derived novice selection window, never the full world"
+    )
 
     manifest_after = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert _generated_novice_pois(manifest_after) == original_novice, (
@@ -611,6 +664,13 @@ def test_regen_rejects_partial_novice_fields_before_writing(tmp_path) -> None:
     )
     plan.bake_plan = build_raster_bake_plan(plan, out_dir)
     spawn_only_fields = synthesize_fields(plan, zone_filter={"spawn"})
+    required_tile_ids = novice_poi_selection_tile_ids(plan)
+    assert len(required_tile_ids) > 1, "fixture must expose an incomplete window"
+    omitted_tile_id = sorted(required_tile_ids)[0]
+    partial_novice_fields = synthesize_fields(
+        plan,
+        tile_filter=required_tile_ids - {omitted_tile_id},
+    )
 
     with pytest.raises(ValueError, match="complete novice POI selection window"):
         regen_zone(
@@ -618,7 +678,7 @@ def test_regen_rejects_partial_novice_fields_before_writing(tmp_path) -> None:
             spawn_only_fields,
             "spawn",
             layer_whitelist=_OVERWORLD_WHITELIST,
-            novice_poi_fields=spawn_only_fields,
+            novice_poi_fields=partial_novice_fields,
         )
     assert manifest_path.read_bytes() == manifest_before, (
         "rejecting an incomplete novice field set must be atomic: manifest bytes "
@@ -631,6 +691,92 @@ def test_regen_rejects_partial_novice_fields_before_writing(tmp_path) -> None:
     assert raster_bytes_after == raster_bytes_before, (
         "rejecting an incomplete novice field set must happen before any raster "
         "tile bytes are overwritten"
+    )
+
+
+def test_zone_filtered_full_export_rejects_before_raster_writes(tmp_path) -> None:
+    blueprint_path = tmp_path / "bp.json"
+    blueprint_path.write_text(
+        json.dumps(_novice_regen_blueprint()), encoding="utf-8"
+    )
+    out_dir = tmp_path / "out"
+    _full_bake(
+        out_dir,
+        blueprint_path,
+        tile_size=NOVICE_REGEN_TILE_SIZE,
+    )
+    rasters_dir = out_dir / "rasters"
+    tree_before = _tree_bytes(rasters_dir)
+
+    plan = build_generation_plan(
+        blueprint=load_blueprint(blueprint_path),
+        profile_catalog=load_profile_catalog(PROFILES_PATH),
+        blueprint_path=blueprint_path,
+        profiles_path=PROFILES_PATH,
+        output_dir=out_dir,
+        tile_size=NOVICE_REGEN_TILE_SIZE,
+        zone_overlays=load_zone_overlays(None),
+    )
+    plan.bake_plan = build_raster_bake_plan(plan, out_dir)
+    remote_fields = synthesize_fields(plan, zone_filter={"peaks"})
+
+    with pytest.raises(ValueError, match="complete novice POI selection window"):
+        export_rasters(plan, remote_fields, layer_whitelist=_OVERWORLD_WHITELIST)
+    assert _tree_bytes(rasters_dir) == tree_before, (
+        "a zone-filtered full export missing the spawn selection window must "
+        "fail before deleting or overwriting any existing raster artifact"
+    )
+
+
+def test_spawn_regen_rejects_manifest_missing_selection_tile(tmp_path) -> None:
+    blueprint_path = tmp_path / "bp.json"
+    blueprint_path.write_text(
+        json.dumps(_novice_regen_blueprint()), encoding="utf-8"
+    )
+    out_dir = tmp_path / "out"
+    _full_bake(
+        out_dir,
+        blueprint_path,
+        tile_size=NOVICE_REGEN_TILE_SIZE,
+    )
+    rasters_dir = out_dir / "rasters"
+    manifest_path = rasters_dir / "manifest.json"
+
+    plan = build_generation_plan(
+        blueprint=load_blueprint(blueprint_path),
+        profile_catalog=load_profile_catalog(PROFILES_PATH),
+        blueprint_path=blueprint_path,
+        profiles_path=PROFILES_PATH,
+        output_dir=out_dir,
+        tile_size=NOVICE_REGEN_TILE_SIZE,
+        zone_overlays=load_zone_overlays(None),
+    )
+    plan.bake_plan = build_raster_bake_plan(plan, out_dir)
+    required_tile_ids = novice_poi_selection_tile_ids(plan)
+    omitted_tile_id = sorted(required_tile_ids)[0]
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["tiles"] = [
+        tile for tile in manifest["tiles"] if tile["dir"] != omitted_tile_id
+    ]
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    tree_before = _tree_bytes(rasters_dir)
+
+    spawn_fields = synthesize_fields(plan, zone_filter={"spawn"})
+    novice_fields = synthesize_fields(plan, tile_filter=required_tile_ids)
+    with pytest.raises(ValueError, match="existing manifest.*complete novice POI"):
+        regen_zone(
+            plan,
+            spawn_fields,
+            "spawn",
+            layer_whitelist=_OVERWORLD_WHITELIST,
+            novice_poi_fields=novice_fields,
+        )
+    assert _tree_bytes(rasters_dir) == tree_before, (
+        "manifest coverage validation must fail before any raster or manifest "
+        "bytes are changed"
     )
 
 
