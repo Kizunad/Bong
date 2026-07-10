@@ -82,9 +82,9 @@
 1. `server/src/world/environment_overlay.rs`（已落地）：`FogBank { id, dimension, aabb_min/max: [f64;3], tint_rgb: [u8;3], density: f32, remaining_ticks: Option<u64> }` + `EnvironmentOverlays` Resource。**TTL 状态表（唯一模型，`remaining_ticks` 相对递减，无绝对时钟）**：
    | 状态/输入 | 行为 |
    |---|---|
-   | spawn（duration=N>0） | `remaining_ticks = Some(N)`；spawn 当 tick 即参与组装 |
-   | 每 tick（`sync_zone_environment_effects` 开头 `tick_expiry`） | 饱和递减 1；递减后 = 0 → 当 tick 摘除，**不再参与本 tick 组装** |
-   | 净存活时长 | 恰好 N 个 sync tick |
+   | spawn（duration=N>0） | `remaining_ticks = Some(N)`；spawn 后的首次 sync 即参与组装 |
+   | 每 tick（`sync_zone_environment_effects` **组装/广播之后** `tick_expiry`） | 饱和递减 1；递减后 = 0 → 摘除，下一 tick 组装不再含。**顺序不可倒**：先递减会让 duration=1 在首次组装前就被摘除（PR #1158 review 抓过的 off-by-one） |
+   | 净存活时长 | 自首次组装起**恰好 N 个可观察同步周期**（duration=1 → 恰好广播 1 个周期） |
    | duration = 0 | 命令层 / executor 层拒绝（常驻请省略参数） |
    | duration 省略 | `None`，常驻直到显式 clear |
    | 摘除/清除后的广播 | 靠组装结果变化 → `replace_for_dimension` diff → dirty 重播（无独立 mark 路径） |
