@@ -29,6 +29,7 @@ import {
   renderInfrastructureHandoffComment,
   resolveCircuitStateIssueNumbers,
   selectCircuitStateIssues,
+  spawnCodex,
 } from "./review.mjs";
 
 const reviewer = { id: "A", name: "Plan 原意核查" };
@@ -123,6 +124,29 @@ test("review 总预算: 单次 timeout 被剩余预算截断，并预留清理�
   assert.equal(boundedAttemptTimeout(900_000, 1_000_000), 820_000);
   assert.equal(boundedAttemptTimeout(900_000, 180_000), 0);
   assert.equal(boundedAttemptTimeout(900_000, 60_000, 15_000), 45_000);
+});
+
+test("Codex timeout: 组长先退出后仍强制清理忽略 TERM 的后代", { skip: process.platform === "win32" }, async () => {
+  const script = `(trap '' TERM; exec sleep 60) </dev/null >/dev/null 2>&1 & echo $!; trap 'exit 0' TERM; wait`;
+  const result = await spawnCodex(["-c", script], "", 20, "bash", { killGraceMs: 50, forceResolveMs: 150 });
+  const descendant = Number(result.stdout.trim().split(/\s+/)[0]);
+  await new Promise((resolve) => setTimeout(resolve, 120));
+
+  let running = false;
+  try {
+    const stat = readFileSync(`/proc/${descendant}/stat`, "utf8");
+    running = !/\) Z /.test(stat);
+  } catch {
+    running = false;
+  }
+  if (running) {
+    try {
+      process.kill(descendant, "SIGKILL");
+    } catch {}
+  }
+
+  assert.equal(result.code, 124);
+  assert.equal(running, false);
 });
 test("evaluateCircuit: 阈值前关闭，达到阈值后开启", () => {
   const events = ["00:00", "00:10", "00:20"].map((time) => ({

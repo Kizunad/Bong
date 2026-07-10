@@ -730,18 +730,20 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function spawnCodex(args, stdin, timeoutMs) {
+export function spawnCodex(args, stdin, timeoutMs, command = "codex", timers = {}) {
   return new Promise((resolve) => {
     const env = {
       ...process.env,
       OPENAI_API_KEY: process.env.REVIEW_CODEX_API_KEY || process.env.OPENAI_API_KEY || "",
       CODEX_API_KEY: process.env.REVIEW_CODEX_API_KEY || process.env.CODEX_API_KEY || process.env.OPENAI_API_KEY || "",
     };
-    const child = spawn("codex", args, {
+    const child = spawn(command, args, {
       env,
       stdio: ["pipe", "pipe", "pipe"],
       detached: process.platform !== "win32",
     });
+    const killGraceMs = timers.killGraceMs ?? 5_000;
+    const forceResolveMs = timers.forceResolveMs ?? 10_000;
     let stdout = "";
     let stderr = "";
     let timedOut = false;
@@ -749,21 +751,21 @@ function spawnCodex(args, stdin, timeoutMs) {
     let killTimer = null;
     let forceResolveTimer = null;
     let timer = null;
-    const finish = (result) => {
+    const finish = (result, { preserveKillTimer = false } = {}) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      clearTimeout(killTimer);
+      if (!preserveKillTimer) clearTimeout(killTimer);
       clearTimeout(forceResolveTimer);
       resolve(result);
     };
     timer = setTimeout(() => {
       timedOut = true;
       killCodexProcess(child, "SIGTERM");
-      killTimer = setTimeout(() => killCodexProcess(child, "SIGKILL"), 5_000);
+      killTimer = setTimeout(() => killCodexProcess(child, "SIGKILL"), killGraceMs);
       forceResolveTimer = setTimeout(
         () => finish({ code: 124, signal: "SIGKILL", stdout, stderr: `${stderr}\nCodex 进程组超时后未正常关闭` }),
-        10_000,
+        forceResolveMs,
       );
     }, timeoutMs);
 
@@ -777,7 +779,7 @@ function spawnCodex(args, stdin, timeoutMs) {
       finish({ code: 127, signal: null, stdout, stderr: `${stderr}\n${error.message}` });
     });
     child.on("close", (code, signal) => {
-      finish({ code: timedOut ? 124 : code, signal, stdout, stderr });
+      finish({ code: timedOut ? 124 : code, signal, stdout, stderr }, { preserveKillTimer: timedOut });
     });
     child.stdin.on("error", () => {});
     child.stdin.end(stdin);
