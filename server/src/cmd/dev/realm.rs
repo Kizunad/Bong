@@ -178,9 +178,10 @@ mod tests {
         let mut app = setup_command_app();
         let (bundle, mut helper) = create_mock_client("Alice");
         let player = app.world_mut().spawn(bundle).id();
-        app.world_mut()
-            .entity_mut(player)
-            .insert(Cultivation::default());
+        app.world_mut().entity_mut(player).insert(Cultivation {
+            realm: Realm::Induce,
+            ..Default::default()
+        });
 
         execute_command(&mut app, &mut helper, "realm set bot_e2e_no_such_realm");
 
@@ -194,7 +195,7 @@ mod tests {
         );
         assert_eq!(
             app.world().get::<Cultivation>(player).unwrap().realm,
-            Realm::Awaken,
+            Realm::Induce,
             "非法 realm id 不得修改境界"
         );
     }
