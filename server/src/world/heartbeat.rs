@@ -298,6 +298,7 @@ struct HeartbeatEventSources<'a> {
 pub struct WorldHeartbeat {
     pub last_eval_tick: u64,
     pub eval_interval_ticks: u64,
+    restored_eval_elapsed_ticks: u64,
     pub pseudo_vein_cadence: EventCadence,
     pub beast_tide_cadence: EventCadence,
     pub tide_sky_omen_cadence: EventCadence,
@@ -326,6 +327,7 @@ impl Default for WorldHeartbeat {
         Self {
             last_eval_tick: 0,
             eval_interval_ticks: HEARTBEAT_EVAL_INTERVAL_TICKS,
+            restored_eval_elapsed_ticks: 0,
             pseudo_vein_cadence: EventCadence::new(15 * TICKS_PER_MINUTE),
             beast_tide_cadence: EventCadence::new(30 * TICKS_PER_MINUTE),
             tide_sky_omen_cadence: EventCadence::new(TICKS_PER_HOUR),
@@ -403,6 +405,21 @@ impl WorldHeartbeat {
         &self,
         zone_registry: &ZoneRegistry,
     ) -> Vec<HeartbeatPseudoVeinRecord> {
+        let current_tick = self
+            .active_pseudo_veins
+            .values()
+            .map(PseudoVeinRuntimeState::last_observed_raw_tick)
+            .max()
+            .unwrap_or(self.last_eval_tick);
+        self.active_pseudo_vein_records_at_tick(zone_registry, current_tick)
+    }
+
+    pub(crate) fn active_pseudo_vein_records_at_tick(
+        &self,
+        zone_registry: &ZoneRegistry,
+        current_tick: u64,
+    ) -> Vec<HeartbeatPseudoVeinRecord> {
+        let eval_elapsed_ticks = self.eval_elapsed_ticks(current_tick);
         let mut records = self
             .active_pseudo_veins
             .iter()
@@ -412,6 +429,7 @@ impl WorldHeartbeat {
                 }
                 let zone = zone_registry.find_zone_by_name(zone_id.as_str())?;
                 let (min, max) = zone.bounds;
+                let timing = state.persistence_timing(current_tick);
                 Some(HeartbeatPseudoVeinRecord {
                     zone_id: zone_id.clone(),
                     dimension: zone.dimension,
@@ -435,6 +453,12 @@ impl WorldHeartbeat {
                     warning_sent: state.warning_sent,
                     dissipated: state.dissipated,
                     season_at_spawn: state.season_at_spawn,
+                    observed_age_ticks: timing.observed_age_ticks,
+                    pending_runtime_ticks: timing.pending_runtime_ticks,
+                    pending_offline_ticks: timing.pending_offline_ticks,
+                    occupant_count: timing.occupant_count,
+                    eval_elapsed_ticks,
+                    snapshot_wall: 0,
                 })
             })
             .collect::<Vec<_>>();
@@ -442,11 +466,33 @@ impl WorldHeartbeat {
         records
     }
 
+    pub(crate) fn eval_elapsed_ticks(&self, current_tick: u64) -> u64 {
+        current_tick
+            .saturating_sub(self.last_eval_tick)
+            .saturating_add(self.restored_eval_elapsed_ticks)
+    }
+
+    fn restore_eval_elapsed_ticks(&mut self, current_tick: u64, elapsed_ticks: u64) {
+        self.last_eval_tick = current_tick;
+        self.restored_eval_elapsed_ticks = self.restored_eval_elapsed_ticks.max(elapsed_ticks);
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn restore_pseudo_vein_records(
         &mut self,
         zone_registry: &mut ZoneRegistry,
         records: &[HeartbeatPseudoVeinRecord],
         current_tick: u64,
+    ) -> usize {
+        self.restore_pseudo_vein_records_at_wall(zone_registry, records, current_tick, 0)
+    }
+
+    pub(crate) fn restore_pseudo_vein_records_at_wall(
+        &mut self,
+        zone_registry: &mut ZoneRegistry,
+        records: &[HeartbeatPseudoVeinRecord],
+        current_tick: u64,
+        current_wall: i64,
     ) -> usize {
         let mut restored = 0;
         for record in records {
@@ -514,12 +560,16 @@ impl WorldHeartbeat {
                 }
             }
 
-            let observed_age = record.last_tick.saturating_sub(record.spawned_at_tick);
-            let mut state = PseudoVeinRuntimeState::restored(
+            let offline_ticks = wall_elapsed_ticks(record.snapshot_wall, current_wall);
+            let mut state = PseudoVeinRuntimeState::restored_with_pending_elapsed(
                 record.zone_id.clone(),
                 record.center_xz,
                 current_tick,
-                observed_age,
+                record.observed_age_ticks,
+                record.pending_runtime_ticks,
+                record.pending_offline_ticks,
+                offline_ticks,
+                record.occupant_count,
                 record.season_at_spawn,
             );
             state.qi_current = record.qi_current.clamp(0.0, 1.0);
@@ -531,6 +581,10 @@ impl WorldHeartbeat {
             if let Some(index) = heartbeat_pseudo_vein_index(record.zone_id.as_str()) {
                 self.next_pseudo_vein_index = self.next_pseudo_vein_index.max(index + 1);
             }
+            self.restore_eval_elapsed_ticks(
+                current_tick,
+                record.eval_elapsed_ticks.saturating_add(offline_ticks),
+            );
             restored += 1;
         }
         restored
@@ -624,6 +678,13 @@ fn finite_array2(value: [f64; 2]) -> bool {
 
 fn finite_array3(value: [f64; 3]) -> bool {
     value.into_iter().all(f64::is_finite)
+}
+
+fn wall_elapsed_ticks(snapshot_wall: i64, current_wall: i64) -> u64 {
+    let elapsed_seconds = current_wall.saturating_sub(snapshot_wall).max(0);
+    u64::try_from(elapsed_seconds)
+        .unwrap_or(u64::MAX)
+        .saturating_mul(TICKS_PER_SECOND)
 }
 
 fn heartbeat_pseudo_vein_index(zone_id: &str) -> Option<u64> {
@@ -793,10 +854,11 @@ pub fn heartbeat_tick(
             .last_eval_tick
             .saturating_add(heartbeat.eval_interval_ticks)
     });
-    if current_tick.saturating_sub(heartbeat.last_eval_tick) < heartbeat.eval_interval_ticks {
+    if heartbeat.eval_elapsed_ticks(current_tick) < heartbeat.eval_interval_ticks {
         return;
     }
     heartbeat.last_eval_tick = current_tick;
+    heartbeat.restored_eval_elapsed_ticks = 0;
     heartbeat.prune_expired(current_tick);
 
     let Some(zone_registry) = zone_registry.as_deref_mut() else {
@@ -2818,6 +2880,12 @@ mod tests {
                 warning_sent: true,
                 dissipated: false,
                 season_at_spawn: crate::schema::pseudo_vein::PseudoVeinSeasonV1::Summer,
+                observed_age_ticks: 200,
+                pending_runtime_ticks: 0,
+                pending_offline_ticks: 0,
+                occupant_count: 0,
+                eval_elapsed_ticks: 0,
+                snapshot_wall: 0,
             }],
             2_000,
         );
@@ -2940,6 +3008,87 @@ mod tests {
                 state.last_tick
             );
         }
+    }
+
+    #[test]
+    fn production_heartbeat_gate_restores_phase_and_counts_offline_wall_time() {
+        let mut record = heartbeat_pseudo_vein_record(0.60, false);
+        record.observed_age_ticks = 399;
+        record.pending_runtime_ticks = 199;
+        record.eval_elapsed_ticks = 199;
+        record.snapshot_wall = 100;
+        let mut heartbeat = WorldHeartbeat::default();
+        let mut zones = ZoneRegistry {
+            zones: vec![zone("waste", 0.0, 0.0, 0.1)],
+        };
+        assert_eq!(
+            heartbeat.restore_pseudo_vein_records_at_wall(
+                &mut zones,
+                std::slice::from_ref(&record),
+                0,
+                101,
+            ),
+            1,
+            "expected one runtime to restore for production gate coverage"
+        );
+        assert_eq!(
+            heartbeat.eval_elapsed_ticks(0),
+            219,
+            "expected 199 persisted phase ticks plus 20 offline wall ticks"
+        );
+        let zone_id = record.zone_id.clone();
+        let before_qi = heartbeat
+            .active_pseudo_veins
+            .get(zone_id.as_str())
+            .expect("restored state should exist")
+            .qi_current;
+        zones
+            .find_zone_mut(zone_id.as_str())
+            .expect("restored dynamic zone should exist")
+            .spirit_qi = before_qi;
+        let mut ledger = WorldQiAccount::default();
+        ledger
+            .set_balance(
+                QiAccountId::zone(zone_id.as_str()),
+                before_qi * QI_ZONE_UNIT_CAPACITY,
+            )
+            .expect("zone ledger fixture should initialize");
+        ledger
+            .set_balance(pending_inflow_account(), 10.0)
+            .expect("pending pool fixture should initialize");
+        let total_before = ledger.total();
+
+        let mut app = App::new();
+        app.insert_resource(heartbeat);
+        app.insert_resource(CultivationClock { tick: 0 });
+        app.insert_resource(ActiveEventsResource::default());
+        app.insert_resource(zones);
+        app.insert_resource(ledger);
+        app.add_event::<EventChainTrigger>();
+        app.add_event::<QiTransfer>();
+        app.add_systems(Update, heartbeat_tick);
+        app.update();
+
+        let heartbeat = app.world().resource::<WorldHeartbeat>();
+        let after_qi = heartbeat
+            .active_pseudo_veins
+            .get(zone_id.as_str())
+            .expect("runtime should remain active after a short catch-up")
+            .qi_current;
+        assert!(
+            after_qi < before_qi,
+            "expected first production heartbeat to apply persisted+offline elapsed, before {before_qi}, actual {after_qi}"
+        );
+        assert_eq!(
+            heartbeat.eval_elapsed_ticks(0),
+            0,
+            "expected restored heartbeat phase carry to clear after the due evaluation"
+        );
+        assert_eq!(
+            app.world().resource::<WorldQiAccount>().total(),
+            total_before,
+            "expected catch-up decay to transfer into pending pool without changing ledger total"
+        );
     }
 
     #[test]
@@ -3353,6 +3502,12 @@ mod tests {
             warning_sent,
             dissipated: false,
             season_at_spawn: crate::schema::pseudo_vein::PseudoVeinSeasonV1::Summer,
+            observed_age_ticks: 200,
+            pending_runtime_ticks: 0,
+            pending_offline_ticks: 0,
+            occupant_count: 0,
+            eval_elapsed_ticks: 0,
+            snapshot_wall: 0,
         }
     }
 

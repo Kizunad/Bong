@@ -36,10 +36,21 @@ pub struct PseudoVeinRuntimeState {
     pub lifecycle: PseudoVeinLifecycle,
     pub last_tick: u64,
     tick_epoch_offset: u64,
+    deferred_runtime_ticks: u64,
+    deferred_runtime_occupant_count: usize,
+    deferred_offline_ticks: u64,
     pub qi_current: f64,
     pub total_qi_consumed: f64,
     pub warning_sent: bool,
     pub dissipated: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PseudoVeinPersistenceTiming {
+    pub observed_age_ticks: u64,
+    pub pending_runtime_ticks: u64,
+    pub pending_offline_ticks: u64,
+    pub occupant_count: usize,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -90,6 +101,9 @@ impl PseudoVeinRuntimeState {
             },
             last_tick: spawned_at,
             tick_epoch_offset: 0,
+            deferred_runtime_ticks: 0,
+            deferred_runtime_occupant_count: 0,
+            deferred_offline_ticks: 0,
             qi_current: PSEUDO_VEIN_INITIAL_QI,
             total_qi_consumed: 0.0,
             warning_sent: false,
@@ -110,6 +124,32 @@ impl PseudoVeinRuntimeState {
         observed_age: u64,
         season_at_spawn: PseudoVeinSeasonV1,
     ) -> Self {
+        Self::restored_with_pending_elapsed(
+            id,
+            center_xz,
+            current_tick,
+            observed_age,
+            0,
+            0,
+            0,
+            0,
+            season_at_spawn,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn restored_with_pending_elapsed(
+        id: impl Into<String>,
+        center_xz: [f64; 2],
+        current_tick: u64,
+        observed_age_at_snapshot: u64,
+        pending_runtime_ticks: u64,
+        pending_offline_ticks: u64,
+        offline_ticks_since_snapshot: u64,
+        occupant_count: usize,
+        season_at_spawn: PseudoVeinSeasonV1,
+    ) -> Self {
+        let observed_age = observed_age_at_snapshot.saturating_add(offline_ticks_since_snapshot);
         let effective_current_tick = current_tick.max(observed_age);
         let mut state = Self::new(
             id,
@@ -119,6 +159,12 @@ impl PseudoVeinRuntimeState {
         );
         state.tick_epoch_offset = effective_current_tick.saturating_sub(current_tick);
         state.last_tick = effective_current_tick;
+        state.lifecycle.occupant_count = occupant_count;
+        state.lifecycle.decay_rate = decay_rate_per_tick(occupant_count);
+        state.deferred_runtime_ticks = pending_runtime_ticks;
+        state.deferred_runtime_occupant_count = occupant_count;
+        state.deferred_offline_ticks =
+            pending_offline_ticks.saturating_add(offline_ticks_since_snapshot);
         state
     }
 
@@ -126,17 +172,38 @@ impl PseudoVeinRuntimeState {
         current_tick.saturating_add(self.tick_epoch_offset)
     }
 
+    pub fn persistence_timing(&self, current_tick: u64) -> PseudoVeinPersistenceTiming {
+        let effective_current_tick = self.effective_tick(current_tick);
+        PseudoVeinPersistenceTiming {
+            observed_age_ticks: effective_current_tick.saturating_sub(self.lifecycle.spawned_at),
+            pending_runtime_ticks: self
+                .deferred_runtime_ticks
+                .saturating_add(effective_current_tick.saturating_sub(self.last_tick)),
+            pending_offline_ticks: self.deferred_offline_ticks,
+            occupant_count: self.lifecycle.occupant_count,
+        }
+    }
+
+    pub fn last_observed_raw_tick(&self) -> u64 {
+        self.last_tick.saturating_sub(self.tick_epoch_offset)
+    }
+
     pub fn advance(&mut self, current_tick: u64, occupants: Vec<String>) -> PseudoVeinAdvance {
         let current_tick = self.effective_tick(current_tick);
         let occupant_count = occupants.len();
-        let elapsed = current_tick.saturating_sub(self.last_tick);
+        let live_elapsed = current_tick.saturating_sub(self.last_tick);
+        let deferred_runtime_ticks = std::mem::take(&mut self.deferred_runtime_ticks);
+        let deferred_offline_ticks = std::mem::take(&mut self.deferred_offline_ticks);
+        let deferred_runtime_occupant_count = self.deferred_runtime_occupant_count;
         self.lifecycle.occupant_count = occupant_count;
         self.lifecycle.decay_rate = decay_rate_per_tick(occupant_count);
 
-        if !self.dissipated && elapsed > 0 {
-            let consumed = (elapsed as f64 * self.lifecycle.decay_rate).min(self.qi_current);
-            self.qi_current = (self.qi_current - consumed).max(0.0);
-            self.total_qi_consumed += consumed;
+        if !self.dissipated {
+            self.consume_elapsed(deferred_runtime_ticks, deferred_runtime_occupant_count);
+            self.consume_elapsed(deferred_offline_ticks, 0);
+            self.consume_elapsed(live_elapsed, occupant_count);
+        }
+        if deferred_runtime_ticks > 0 || deferred_offline_ticks > 0 || live_elapsed > 0 {
             self.last_tick = current_tick;
         }
 
@@ -161,6 +228,15 @@ impl PseudoVeinRuntimeState {
             warning_threshold_crossed,
             dissipate_event,
         }
+    }
+
+    fn consume_elapsed(&mut self, elapsed: u64, occupant_count: usize) {
+        if elapsed == 0 || self.qi_current <= 0.0 {
+            return;
+        }
+        let consumed = (elapsed as f64 * decay_rate_per_tick(occupant_count)).min(self.qi_current);
+        self.qi_current = (self.qi_current - consumed).max(0.0);
+        self.total_qi_consumed += consumed;
     }
 
     pub fn snapshot(&self, current_tick: u64, occupants: Vec<String>) -> PseudoVeinSnapshotV1 {
@@ -517,6 +593,44 @@ mod tests {
         );
         state.dissipated = true;
         assert_eq!(can_place_shrine_in_pseudo_vein(&state), Ok(()));
+    }
+
+    #[test]
+    fn restored_state_preserves_pending_phase_and_applies_offline_wall_time_once() {
+        let mut state = PseudoVeinRuntimeState::restored_with_pending_elapsed(
+            "pseudo_vein_restart",
+            [0.0, 0.0],
+            0,
+            399,
+            199,
+            0,
+            200,
+            2,
+            PseudoVeinSeasonV1::Summer,
+        );
+        let timing = state.persistence_timing(0);
+        assert_eq!(
+            timing.observed_age_ticks, 599,
+            "expected snapshot age 399 plus 200 offline ticks, actual {}",
+            timing.observed_age_ticks
+        );
+        assert_eq!(timing.pending_runtime_ticks, 199);
+        assert_eq!(timing.pending_offline_ticks, 200);
+
+        let before = state.qi_current;
+        state.advance(1, vec!["online-now".to_string()]);
+        let expected_consumed = 199.0 * decay_rate_per_tick(2)
+            + 200.0 * decay_rate_per_tick(0)
+            + decay_rate_per_tick(1);
+        assert!(
+            ((before - state.qi_current) - expected_consumed).abs() < 1e-9,
+            "expected persisted runtime, offline wall time, and one live tick to apply exactly once; expected consumed {expected_consumed}, actual {}",
+            before - state.qi_current
+        );
+        let after = state.persistence_timing(1);
+        assert_eq!(after.observed_age_ticks, 600);
+        assert_eq!(after.pending_runtime_ticks, 0);
+        assert_eq!(after.pending_offline_ticks, 0);
     }
 
     #[test]

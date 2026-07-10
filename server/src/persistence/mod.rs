@@ -38,7 +38,7 @@ use crate::schema::social::{
     RenownTagV1,
 };
 use crate::world::dimension::DimensionKind;
-use crate::world::heartbeat::WorldHeartbeat;
+use crate::world::heartbeat::{WorldHeartbeat, HEARTBEAT_EVAL_INTERVAL_TICKS};
 
 #[allow(dead_code)]
 pub mod identity;
@@ -46,8 +46,8 @@ pub mod identity;
 pub const DEFAULT_DATABASE_PATH: &str = "data/bong.db";
 pub const SQLITE_BUSY_TIMEOUT_MS: u64 = 15_000;
 const DEFAULT_DECEASED_PUBLIC_DIR: &str = "../library-web/public/deceased";
-/// v33 新增伪灵脉 heartbeat runtime；v34 持久化无其它物理字段承载的 pending inflow 池。
-const CURRENT_USER_VERSION: i32 = 34;
+/// v33 新增伪灵脉 runtime；v34 持久化 pending inflow；v35 保存年龄/调度相位。
+const CURRENT_USER_VERSION: i32 = 35;
 const AGENT_WORLD_MODEL_ROW_ID: i64 = 1;
 const ASCENSION_QUOTA_ROW_ID: i64 = 1;
 const TRIBULATION_KIND_DU_XU: &str = "du_xu";
@@ -500,6 +500,12 @@ pub struct HeartbeatPseudoVeinRecord {
     pub warning_sent: bool,
     pub dissipated: bool,
     pub season_at_spawn: PseudoVeinSeasonV1,
+    pub observed_age_ticks: u64,
+    pub pending_runtime_ticks: u64,
+    pub pending_offline_ticks: u64,
+    pub occupant_count: usize,
+    pub eval_elapsed_ticks: u64,
+    pub snapshot_wall: i64,
 }
 
 /// plan-territory-v1 P0：区域影响力持久化记录（zone_influence 表一行）。
@@ -737,20 +743,19 @@ fn bootstrap_persistence_system(
         );
     }
 
-    match load_pending_inflow_balance(&settings) {
-        Ok(Some(balance)) => {
-            if let Err(error) = qi_ledger.set_balance(pending_inflow_account(), balance) {
-                tracing::warn!(
-                    "[bong][persistence] failed to hydrate pending inflow balance={balance}: {error}"
-                );
-            }
-        }
-        Ok(None) => {}
-        Err(error) => tracing::warn!(
-            "[bong][persistence] failed to hydrate pending inflow balance at {}: {error}",
+    let pending_inflow_balance = load_pending_inflow_balance(&settings).unwrap_or_else(|error| {
+        panic!(
+            "[bong][persistence] cannot safely hydrate pending inflow at {}: {error}",
             settings.db_path().display()
-        ),
-    }
+        )
+    });
+    qi_ledger
+        .set_balance(pending_inflow_account(), pending_inflow_balance)
+        .unwrap_or_else(|error| {
+            panic!(
+                "[bong][persistence] invalid pending inflow balance={pending_inflow_balance}: {error}"
+            )
+        });
 
     if let Err(error) = scan_orphaned_npc_archives(&settings) {
         tracing::warn!(
@@ -780,6 +785,7 @@ fn bootstrap_persistence_system(
                 heartbeat,
                 zone_registry,
                 clock.tick,
+                wall_clock,
             ) {
                 Ok(count) if count > 0 => {
                     restored_pseudo_vein_zone_ids = heartbeat.active_pseudo_vein_zone_ids();
@@ -788,15 +794,15 @@ fn bootstrap_persistence_system(
                     );
                 }
                 Ok(_) => {}
-                Err(error) => tracing::warn!(
-                    "[bong][persistence] failed to hydrate heartbeat pseudo-veins from sqlite at {}: {error}",
+                Err(error) => panic!(
+                    "[bong][persistence] refusing startup after heartbeat pseudo-vein hydrate failure at {}: {error}",
                     settings.db_path().display()
                 ),
             }
         }
         if let Err(error) = hydrate_zone_runtime(&settings, zone_registry) {
-            tracing::warn!(
-                "[bong][persistence] failed to hydrate zone runtime from sqlite at {}: {error}",
+            panic!(
+                "[bong][persistence] refusing startup after zone runtime hydrate failure at {}: {error}",
                 settings.db_path().display()
             );
         }
@@ -814,8 +820,8 @@ fn bootstrap_persistence_system(
             if let Err(error) =
                 qi_ledger.set_balance(QiAccountId::zone(zone_id.as_str()), absolute_qi)
             {
-                tracing::warn!(
-                    "[bong][persistence] failed to sync restored pseudo-vein ledger mirror zone={} qi={}: {error}",
+                panic!(
+                    "[bong][persistence] refusing startup after pseudo-vein ledger mirror failure zone={} qi={}: {error}",
                     zone_id,
                     absolute_qi
                 );
@@ -879,6 +885,7 @@ fn persist_zone_runtime_system(
     zones: Option<Res<crate::world::zone::ZoneRegistry>>,
     heartbeat: Option<Res<WorldHeartbeat>>,
     qi_ledger: Res<WorldQiAccount>,
+    clock: Res<CultivationClock>,
 ) {
     let Some(zone_registry) = zones else {
         return;
@@ -892,11 +899,12 @@ fn persist_zone_runtime_system(
         return;
     }
 
-    match persist_zone_runtime_snapshot_with_heartbeat(
+    match persist_zone_runtime_snapshot_with_heartbeat_at_tick(
         &settings,
         &zone_registry,
         heartbeat.as_deref(),
         &qi_ledger,
+        clock.tick,
     ) {
         Ok(_) => {
             snapshot_state.last_snapshot_wall = wall_clock;
@@ -914,6 +922,7 @@ fn persist_zone_runtime_on_shutdown_system(
     zones: Option<Res<crate::world::zone::ZoneRegistry>>,
     heartbeat: Option<Res<WorldHeartbeat>>,
     qi_ledger: Res<WorldQiAccount>,
+    clock: Res<CultivationClock>,
 ) {
     if app_exit.read().next().is_none() {
         return;
@@ -922,11 +931,12 @@ fn persist_zone_runtime_on_shutdown_system(
         return;
     };
 
-    if let Err(error) = persist_zone_runtime_snapshot_with_heartbeat(
+    if let Err(error) = persist_zone_runtime_snapshot_with_heartbeat_at_tick(
         &settings,
         &zone_registry,
         heartbeat.as_deref(),
         &qi_ledger,
+        clock.tick,
     ) {
         tracing::warn!(
             "[bong][persistence] failed to flush zone runtime on shutdown at {}: {error}",
@@ -1071,6 +1081,7 @@ fn run_integrity_check(connection: &Connection) -> rusqlite::Result<()> {
 fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<()> {
     let current_version: i32 =
         connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
+    let initial_version = current_version;
     if current_version > CURRENT_USER_VERSION {
         return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
             io::Error::other(format!(
@@ -2188,9 +2199,79 @@ fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<()> {
                 schema_version     INTEGER NOT NULL CHECK (schema_version >= 1),
                 last_updated_wall  INTEGER NOT NULL CHECK (last_updated_wall >= 0)
             );
-            PRAGMA user_version = 34;
             ",
         )?;
+        // 只有全新 v0 数据库能证明历史 pending inflow 必为 0。v33 升级库没有
+        // 旧账本可供重建，故意保留缺行，Startup 会 fail-closed，禁止把未知余额
+        // 静默解释为 0 并在首帧覆盖。
+        if initial_version == 0 {
+            transaction.execute(
+                "
+                INSERT INTO qi_runtime_accounts (
+                    account_id, balance, schema_version, last_updated_wall
+                ) VALUES (?1, 0.0, ?2, 0)
+                ON CONFLICT(account_id) DO NOTHING
+                ",
+                params![PENDING_INFLOW_ACCOUNT_ID, CURRENT_SCHEMA_VERSION],
+            )?;
+        }
+        transaction.execute_batch("PRAGMA user_version = 34;")?;
+        transaction.commit()?;
+    }
+
+    let current_version: i32 =
+        connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
+    if current_version < 35 {
+        let transaction = connection.transaction()?;
+        for (column, definition) in [
+            (
+                "observed_age_ticks",
+                "INTEGER NOT NULL DEFAULT 0 CHECK (observed_age_ticks >= 0)",
+            ),
+            (
+                "pending_runtime_ticks",
+                "INTEGER NOT NULL DEFAULT 0 CHECK (pending_runtime_ticks >= 0)",
+            ),
+            (
+                "pending_offline_ticks",
+                "INTEGER NOT NULL DEFAULT 0 CHECK (pending_offline_ticks >= 0)",
+            ),
+            (
+                "occupant_count",
+                "INTEGER NOT NULL DEFAULT 0 CHECK (occupant_count >= 0)",
+            ),
+            (
+                "eval_elapsed_ticks",
+                "INTEGER NOT NULL DEFAULT 0 CHECK (eval_elapsed_ticks >= 0)",
+            ),
+        ] {
+            let columns = table_columns(&transaction, "heartbeat_pseudo_veins")?;
+            if !columns.iter().any(|existing| existing == column) {
+                transaction.execute_batch(&format!(
+                    "ALTER TABLE heartbeat_pseudo_veins ADD COLUMN {column} {definition};"
+                ))?;
+            }
+        }
+        // v33/v34 没有保存快照发生在 heartbeat 200-tick 周期中的精确位置。
+        // 迁移时按最保守的 interval-1 回填，宁可最多提早 199 tick，也不延长生命周期。
+        let conservative_elapsed = HEARTBEAT_EVAL_INTERVAL_TICKS.saturating_sub(1);
+        transaction.execute(
+            "
+            UPDATE heartbeat_pseudo_veins
+            SET observed_age_ticks =
+                    CASE
+                        WHEN last_tick >= spawned_at_tick
+                        THEN last_tick - spawned_at_tick + ?1
+                        ELSE ?1
+                    END,
+                pending_runtime_ticks = ?1,
+                pending_offline_ticks = 0,
+                occupant_count = 0,
+                eval_elapsed_ticks = ?1
+            ",
+            params![i64::try_from(conservative_elapsed).unwrap_or(i64::MAX)],
+        )?;
+        transaction.execute_batch("PRAGMA user_version = 35;")?;
         transaction.commit()?;
     }
 
@@ -3182,18 +3263,38 @@ pub fn persist_zone_runtime_snapshot(
     transaction.commit().map_err(io::Error::other)
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 fn persist_zone_runtime_snapshot_with_heartbeat(
     settings: &PersistenceSettings,
     zones: &crate::world::zone::ZoneRegistry,
     heartbeat: Option<&WorldHeartbeat>,
     qi_ledger: &WorldQiAccount,
 ) -> io::Result<()> {
+    let current_tick = heartbeat
+        .map(|heartbeat| heartbeat.last_eval_tick)
+        .unwrap_or_default();
+    persist_zone_runtime_snapshot_with_heartbeat_at_tick(
+        settings,
+        zones,
+        heartbeat,
+        qi_ledger,
+        current_tick,
+    )
+}
+
+fn persist_zone_runtime_snapshot_with_heartbeat_at_tick(
+    settings: &PersistenceSettings,
+    zones: &crate::world::zone::ZoneRegistry,
+    heartbeat: Option<&WorldHeartbeat>,
+    qi_ledger: &WorldQiAccount,
+    current_tick: u64,
+) -> io::Result<()> {
     let wall_clock = current_unix_seconds();
     let mut connection = open_persistence_connection(settings)?;
     let transaction = connection.transaction().map_err(io::Error::other)?;
     persist_zone_runtime_records(&transaction, zones, wall_clock)?;
     if let Some(heartbeat) = heartbeat {
-        let pseudo_veins = heartbeat.active_pseudo_vein_records(zones);
+        let pseudo_veins = heartbeat.active_pseudo_vein_records_at_tick(zones, current_tick);
         replace_heartbeat_pseudo_vein_records(&transaction, &pseudo_veins, wall_clock)?;
     }
     upsert_pending_inflow_balance(&transaction, qi_ledger, wall_clock)?;
@@ -3345,9 +3446,15 @@ fn hydrate_heartbeat_pseudo_veins(
     heartbeat: &mut WorldHeartbeat,
     zones: &mut crate::world::zone::ZoneRegistry,
     current_tick: u64,
+    current_wall: i64,
 ) -> io::Result<usize> {
     let pseudo_veins = load_heartbeat_pseudo_veins_snapshot(settings)?;
-    Ok(heartbeat.restore_pseudo_vein_records(zones, &pseudo_veins, current_tick))
+    Ok(heartbeat.restore_pseudo_vein_records_at_wall(
+        zones,
+        &pseudo_veins,
+        current_tick,
+        current_wall,
+    ))
 }
 
 fn hydrate_zone_overlays(
@@ -5267,11 +5374,17 @@ fn upsert_heartbeat_pseudo_vein(
                 warning_sent,
                 dissipated,
                 season_at_spawn,
+                observed_age_ticks,
+                pending_runtime_ticks,
+                pending_offline_ticks,
+                occupant_count,
+                eval_elapsed_ticks,
                 schema_version,
                 last_updated_wall
             ) VALUES (
                 ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11,
-                ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22
+                ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22,
+                ?23, ?24, ?25, ?26, ?27
             )
             ON CONFLICT(zone_id) DO UPDATE SET
                 dimension = excluded.dimension,
@@ -5293,6 +5406,11 @@ fn upsert_heartbeat_pseudo_vein(
                 warning_sent = excluded.warning_sent,
                 dissipated = excluded.dissipated,
                 season_at_spawn = excluded.season_at_spawn,
+                observed_age_ticks = excluded.observed_age_ticks,
+                pending_runtime_ticks = excluded.pending_runtime_ticks,
+                pending_offline_ticks = excluded.pending_offline_ticks,
+                occupant_count = excluded.occupant_count,
+                eval_elapsed_ticks = excluded.eval_elapsed_ticks,
                 schema_version = excluded.schema_version,
                 last_updated_wall = excluded.last_updated_wall
             ",
@@ -5317,6 +5435,11 @@ fn upsert_heartbeat_pseudo_vein(
                 bool_to_sql(record.warning_sent),
                 bool_to_sql(record.dissipated),
                 pseudo_vein_season_to_sql(record.season_at_spawn),
+                tick_to_sql(record.observed_age_ticks)?,
+                tick_to_sql(record.pending_runtime_ticks)?,
+                tick_to_sql(record.pending_offline_ticks)?,
+                i64::try_from(record.occupant_count).unwrap_or(i64::MAX),
+                tick_to_sql(record.eval_elapsed_ticks)?,
                 CURRENT_SCHEMA_VERSION,
                 wall_clock,
             ],
@@ -5793,7 +5916,7 @@ fn load_zone_runtime_snapshot_from_connection(
     Ok(records)
 }
 
-fn load_pending_inflow_balance(settings: &PersistenceSettings) -> io::Result<Option<f64>> {
+fn load_pending_inflow_balance(settings: &PersistenceSettings) -> io::Result<f64> {
     let connection = open_persistence_connection(settings)?;
     let balance = connection
         .query_row(
@@ -5808,12 +5931,15 @@ fn load_pending_inflow_balance(settings: &PersistenceSettings) -> io::Result<Opt
         .optional()
         .map_err(io::Error::other)?;
     match balance {
-        Some(value) if value.is_finite() && value >= 0.0 => Ok(Some(value)),
+        Some(value) if value.is_finite() && value >= 0.0 => Ok(value),
         Some(value) => Err(io::Error::new(
             io::ErrorKind::InvalidData,
             format!("invalid persisted pending inflow balance {value}"),
         )),
-        None => Ok(None),
+        None => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "pending inflow balance is unknown after a pre-v34 upgrade; refusing to invent zero",
+        )),
     }
 }
 
@@ -5836,7 +5962,13 @@ fn load_heartbeat_pseudo_veins_from_connection(
                    total_qi_consumed,
                    warning_sent,
                    dissipated,
-                   season_at_spawn
+                   season_at_spawn,
+                   observed_age_ticks,
+                   pending_runtime_ticks,
+                   pending_offline_ticks,
+                   occupant_count,
+                   eval_elapsed_ticks,
+                   last_updated_wall
             FROM heartbeat_pseudo_veins
             ORDER BY zone_id ASC
             ",
@@ -5879,6 +6011,15 @@ fn load_heartbeat_pseudo_veins_from_connection(
             warning_sent: sql_to_bool(row.get(17).map_err(io::Error::other)?),
             dissipated: sql_to_bool(row.get(18).map_err(io::Error::other)?),
             season_at_spawn: sql_to_pseudo_vein_season(season_at_spawn.as_str())?,
+            observed_age_ticks: sql_to_tick(row.get(20).map_err(io::Error::other)?)?,
+            pending_runtime_ticks: sql_to_tick(row.get(21).map_err(io::Error::other)?)?,
+            pending_offline_ticks: sql_to_tick(row.get(22).map_err(io::Error::other)?)?,
+            occupant_count: usize::try_from(sql_to_tick(row.get(23).map_err(io::Error::other)?)?)
+                .map_err(|_| {
+                io::Error::new(io::ErrorKind::InvalidData, "occupant_count overflow")
+            })?,
+            eval_elapsed_ticks: sql_to_tick(row.get(24).map_err(io::Error::other)?)?,
+            snapshot_wall: row.get(25).map_err(io::Error::other)?,
         });
     }
     Ok(records)
@@ -7671,6 +7812,12 @@ mod persistence_tests {
             warning_sent: true,
             dissipated: false,
             season_at_spawn: PseudoVeinSeasonV1::SummerToWinter,
+            observed_age_ticks: 800,
+            pending_runtime_ticks: 0,
+            pending_offline_ticks: 0,
+            occupant_count: 0,
+            eval_elapsed_ticks: 0,
+            snapshot_wall: 0,
         }
     }
 
@@ -10112,9 +10259,11 @@ mod persistence_tests {
         let records = load_heartbeat_pseudo_veins_snapshot(&settings)
             .expect("heartbeat pseudo-vein snapshot should load");
 
+        let mut expected = record;
+        expected.snapshot_wall = records[0].snapshot_wall;
         assert_eq!(
             records,
-            vec![record],
+            vec![expected],
             "伪灵脉 heartbeat runtime 必须完整保留 bounds/dimension/lifecycle/warning/season"
         );
 
@@ -10993,6 +11142,7 @@ mod persistence_tests {
         let mut app = App::new();
         app.insert_resource(settings.clone());
         app.insert_resource(ZoneRuntimeSnapshotState::default());
+        app.insert_resource(CultivationClock::default());
         app.insert_resource(WorldQiAccount::default());
         app.insert_resource(crate::world::zone::ZoneRegistry {
             zones: vec![crate::world::zone::Zone {
@@ -14889,6 +15039,11 @@ mod persistence_tests {
                 "season_at_spawn",
                 "schema_version",
                 "last_updated_wall",
+                "observed_age_ticks",
+                "pending_runtime_ticks",
+                "pending_offline_ticks",
+                "occupant_count",
+                "eval_elapsed_ticks",
             ],
             "v33 migration 必须保存动态 zone 本体和 heartbeat lifecycle，实际 columns={columns:?}"
         );
@@ -14996,8 +15151,8 @@ mod persistence_tests {
             .expect("temp db dir should create");
         let mut connection = Connection::open(&db_path).expect("db should open");
         connection
-            .execute_batch("PRAGMA user_version = 33;")
-            .expect("v33 fixture should set user_version");
+            .execute_batch("PRAGMA user_version = 32;")
+            .expect("pre-v33 fixture should set user_version");
 
         apply_migrations(&mut connection).expect("v34 migration should succeed");
 
@@ -15018,6 +15173,17 @@ mod persistence_tests {
                 "last_updated_wall",
             ],
             "expected v34 runtime account table to preserve the pending pool, actual {columns:?}"
+        );
+        let migrated_rows: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM qi_runtime_accounts WHERE account_id = ?1",
+                params![PENDING_INFLOW_ACCOUNT_ID],
+                |row| row.get(0),
+            )
+            .expect("migration row count should query");
+        assert_eq!(
+            migrated_rows, 0,
+            "expected a pre-v34 database to retain an explicit unknown balance rather than inventing zero"
         );
         connection
             .execute(
@@ -15048,5 +15214,158 @@ mod persistence_tests {
             user_version, CURRENT_USER_VERSION,
             "expected v34 migration to advance to {CURRENT_USER_VERSION}, actual {user_version}"
         );
+    }
+
+    #[test]
+    fn fresh_database_initializes_known_zero_pending_inflow() {
+        let (settings, root) = persistence_settings("fresh-known-zero-pending");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("fresh sqlite should bootstrap");
+
+        assert_eq!(
+            load_pending_inflow_balance(&settings).expect("fresh pending row should be known"),
+            0.0,
+            "expected only a provably fresh database to initialize pending inflow to zero"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn v35_migration_backfills_conservative_age_and_eval_phase() {
+        let (settings, root) = persistence_settings("v35-heartbeat-timing-backfill");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("fixture sqlite should bootstrap");
+        let mut connection = open_persistence_connection(&settings).expect("db should open");
+        let transaction = connection.transaction().expect("transaction should start");
+        let record = heartbeat_pseudo_vein_record("pseudo_vein_heartbeat_7");
+        upsert_heartbeat_pseudo_vein(&transaction, &record, 100)
+            .expect("fixture heartbeat row should persist");
+        transaction
+            .commit()
+            .expect("fixture transaction should commit");
+        connection
+            .execute_batch(
+                "
+                UPDATE heartbeat_pseudo_veins
+                SET observed_age_ticks = 0,
+                    pending_runtime_ticks = 0,
+                    pending_offline_ticks = 0,
+                    occupant_count = 0,
+                    eval_elapsed_ticks = 0;
+                PRAGMA user_version = 34;
+                ",
+            )
+            .expect("fixture should emulate a pre-v35 row");
+
+        apply_migrations(&mut connection).expect("v35 timing migration should succeed");
+
+        let timing: (i64, i64, i64) = connection
+            .query_row(
+                "
+                SELECT observed_age_ticks, pending_runtime_ticks, eval_elapsed_ticks
+                FROM heartbeat_pseudo_veins
+                WHERE zone_id = ?1
+                ",
+                params![record.zone_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .expect("backfilled timing should query");
+        let conservative = i64::try_from(HEARTBEAT_EVAL_INTERVAL_TICKS - 1).unwrap();
+        assert_eq!(
+            timing,
+            (800 + conservative, conservative, conservative),
+            "expected migration to preserve known age plus a conservative full phase, actual {timing:?}"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn pre_v34_unknown_pending_balance_fails_closed_without_writing_zero() {
+        let (settings, root) = persistence_settings("unknown-pending-fail-closed");
+        fs::create_dir_all(settings.db_path().parent().expect("db parent"))
+            .expect("db parent should create");
+        let connection = Connection::open(settings.db_path()).expect("fixture db should open");
+        connection
+            .execute_batch("PRAGMA user_version = 32;")
+            .expect("pre-v34 fixture should set version");
+        drop(connection);
+
+        let mut app = App::new();
+        app.insert_resource(settings.clone());
+        app.insert_resource(DailyBackupState::default());
+        app.insert_resource(crate::world::zone::ZoneRegistry::fallback());
+        app.insert_resource(WorldHeartbeat::default());
+        app.insert_resource(CultivationClock::default());
+        app.insert_resource(WorldQiAccount::default());
+        app.add_systems(Startup, bootstrap_persistence_system);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| app.update()));
+        assert!(
+            result.is_err(),
+            "expected startup to fail closed because a pre-v34 pending balance is unknowable"
+        );
+
+        let connection = Connection::open(settings.db_path()).expect("fixture db should reopen");
+        let rows: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM qi_runtime_accounts WHERE account_id = ?1",
+                params![PENDING_INFLOW_ACCOUNT_ID],
+                |row| row.get(0),
+            )
+            .expect("pending row count should query");
+        assert_eq!(
+            rows, 0,
+            "expected failed startup not to overwrite the unknown balance with zero"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn corrupt_heartbeat_hydration_panics_without_deleting_valid_rows() {
+        let (settings, root) = persistence_settings("heartbeat-corrupt-fail-closed");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("fixture sqlite should bootstrap");
+        let mut connection = open_persistence_connection(&settings).expect("db should open");
+        let transaction = connection.transaction().expect("transaction should start");
+        let first = heartbeat_pseudo_vein_record("pseudo_vein_heartbeat_7");
+        let mut second = heartbeat_pseudo_vein_record("pseudo_vein_heartbeat_8");
+        second.center_xz = [20.0, -80.0];
+        upsert_heartbeat_pseudo_vein(&transaction, &first, 100).expect("valid row should persist");
+        upsert_heartbeat_pseudo_vein(&transaction, &second, 100)
+            .expect("second valid row should persist");
+        transaction
+            .execute(
+                "UPDATE heartbeat_pseudo_veins SET active_events_json = '{' WHERE zone_id = ?1",
+                params![second.zone_id],
+            )
+            .expect("fixture should corrupt one JSON row");
+        transaction
+            .commit()
+            .expect("fixture transaction should commit");
+
+        let mut app = App::new();
+        app.insert_resource(settings.clone());
+        app.insert_resource(DailyBackupState::default());
+        app.insert_resource(crate::world::zone::ZoneRegistry::fallback());
+        app.insert_resource(WorldHeartbeat::default());
+        app.insert_resource(CultivationClock::default());
+        app.insert_resource(WorldQiAccount::default());
+        app.add_systems(Startup, bootstrap_persistence_system);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| app.update()));
+        assert!(
+            result.is_err(),
+            "expected malformed authoritative heartbeat data to stop startup"
+        );
+
+        let connection = Connection::open(settings.db_path()).expect("fixture db should reopen");
+        let rows: i64 = connection
+            .query_row("SELECT COUNT(*) FROM heartbeat_pseudo_veins", [], |row| {
+                row.get(0)
+            })
+            .expect("heartbeat row count should query");
+        assert_eq!(
+            rows, 2,
+            "expected failed hydration not to run destructive empty-state replacement"
+        );
+        let _ = fs::remove_dir_all(root);
     }
 }
