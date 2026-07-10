@@ -2,6 +2,9 @@
 
 use valence::prelude::DVec3;
 
+use crate::body_plan::geometry::classify_height_bands;
+use crate::body_plan::{humanoid_plan_static, id_to_legacy_body_part, HitGeometry};
+
 use super::components::BodyPart;
 use super::events::{AttackReach, DAGGER_REACH, FIST_REACH, SPEAR_REACH, STAFF_REACH, SWORD_REACH};
 
@@ -24,8 +27,11 @@ pub struct EntityHitProbe {
     pub body_part: BodyPart,
 }
 
-const STANDING_HALF_WIDTH: f64 = 0.3;
-const STANDING_HEIGHT: f64 = 1.8;
+/// plan-race-system-v1 P0b：直立包围盒半宽/身高不再是本文件的硬编码真源——
+/// `standing_humanoid_aabb` 改读 [`humanoid_plan_static`] 的 `StandingAabbSpec`
+/// （`assets/body_plans/plans/humanoid.json` 的 `hit_geometry.aabb`）。数值本身
+/// 未变（`half_width=0.3`/`height=1.8`），`humanoid_geometry_constants_match_body_plan_json`
+/// pin 测试锁死二者一致。
 const CHEST_AIM_HEIGHT: f64 = 1.2;
 
 /// P1 校准值（决议 §8.1 #1，plan-combat-hit-location-v1 P1）：替换 P0 起始值 9.0/7.0。
@@ -160,79 +166,78 @@ pub fn npc_aim_direction(
     yaw_pitch_to_direction(jittered_yaw, jittered_pitch)
 }
 
+/// plan-race-system-v1 P0b —— 数据来源改为 [`humanoid_plan_static`] 的
+/// `hit_geometry.aabb`（`StandingAabbSpec`），不再是本文件的硬编码
+/// `STANDING_HALF_WIDTH`/`STANDING_HEIGHT` 常量。数值本身未变（0.3 / 1.8），行为
+/// bit-for-bit 不变——`humanoid_geometry_constants_match_body_plan_json` pin 测试
+/// 与既有 `classify_body_part_*`/`raycast_humanoid_*` 回归测试共同锁死。
 pub fn standing_humanoid_aabb(feet_position: DVec3) -> Aabb {
+    let HitGeometry::HeightBands { aabb, .. } = &humanoid_plan_static().hit_geometry else {
+        panic!(
+            "[bong][body_plan] humanoid.json hit_geometry must be HeightBands mode \
+             (combat::raycast::standing_humanoid_aabb legacy consumption point)"
+        );
+    };
     Aabb {
         min: DVec3::new(
-            feet_position.x - STANDING_HALF_WIDTH,
+            feet_position.x - aabb.half_width,
             feet_position.y,
-            feet_position.z - STANDING_HALF_WIDTH,
+            feet_position.z - aabb.half_width,
         ),
         max: DVec3::new(
-            feet_position.x + STANDING_HALF_WIDTH,
-            feet_position.y + STANDING_HEIGHT,
-            feet_position.z + STANDING_HALF_WIDTH,
+            feet_position.x + aabb.half_width,
+            feet_position.y + aabb.height,
+            feet_position.z + aabb.half_width,
         ),
     }
 }
 
-/// 臂命中横向阈值（决议 §8.1 #4，plan-combat-hit-location-v1 P1 校准）。
-/// P0 起始值 0.18 → P1 实测微调至 0.19（略收窄 Chest 命中带，把边缘让给 Arm，
-/// 配合下方 `LEG_ABDOMEN_BOUNDARY` 一起把分布推向目标区间）。
-const ARM_LATERAL_THRESHOLD: f64 = 0.19;
-
-/// 躯干/腿部高度分界（决议 §8.1 #4，plan-combat-hit-location-v1 P1 校准）。
-/// P0 起始值 0.35 → P1 实测**大幅上调**至 0.53（决议文本原文猜测方向是"如需可略降"，
-/// 但直方图数据显示的是相反方向：`ATTACKER_EYE_HEIGHT=1.62` 已经贴近 Head 阈值，
-/// 命中 Leg 需要的下压角远大于命中 Head 需要的上仰角，纯调 σ 会让 Head 提前撞
-/// 8-12% 上限而 Leg 仍不到 15% 下限。上调本阈值把原本被 Abdomen 吞掉的中低段命中
-/// 重新划给 Leg，使 Leg 落入 15-20% 目标区间，Abdomen 相应收窄为一个窄带（~3%，
-/// 无强制区间，plan 只给了单值"15%"作参考，本次以数据为准接受偏差，见
-/// `AIM_JITTER_PITCH_SIGMA_DEG` 注释的完整校准说明）。
-const LEG_ABDOMEN_BOUNDARY: f64 = 0.53;
-
+/// plan-race-system-v1 P0b —— 部位分类算法本身不再是本文件的一串硬编码
+/// if/else-if 高度带比较（原 `ARM_LATERAL_THRESHOLD=0.19` 横向阈值 /
+/// `LEG_ABDOMEN_BOUNDARY=0.53` 躯干腿部分界 / `0.88`/`0.55` 头/臂高度带，均系
+/// plan-combat-hit-location-v1 P1 校准值，历史校准依据见该 plan 文档），而是委托给
+/// 通用的 [`classify_height_bands`] 引擎，喂入 [`humanoid_plan_static`] 的
+/// `hit_geometry::HeightBands` 数据（`assets/body_plans/plans/humanoid.json`）。
+/// 数值与算法均 bit-for-bit 不变——`humanoid_geometry_constants_match_body_plan_json`
+/// pin 测试 + 本文件既有 `classify_body_part_*` 系列回归测试 + `body_plan::geometry`
+/// 的批量对拍测试共同锁死这条红线。
 pub fn classify_body_part(
     hit_point: DVec3,
     target_feet_position: DVec3,
     attack_origin: DVec3,
 ) -> BodyPart {
-    let rel_y = ((hit_point.y - target_feet_position.y) / STANDING_HEIGHT).clamp(0.0, 1.0);
-    let attack_dir = DVec3::new(
-        hit_point.x - attack_origin.x,
-        0.0,
-        hit_point.z - attack_origin.z,
-    );
-    let lateral = if attack_dir.length_squared() <= f64::EPSILON {
-        hit_point.z - target_feet_position.z
-    } else {
-        let dir = attack_dir.normalize();
-        let perpendicular = DVec3::new(-dir.z, 0.0, dir.x);
-        let relative = DVec3::new(
-            hit_point.x - target_feet_position.x,
-            0.0,
-            hit_point.z - target_feet_position.z,
+    let plan = humanoid_plan_static();
+    let HitGeometry::HeightBands {
+        aabb,
+        bands,
+        lateral_threshold,
+    } = &plan.hit_geometry
+    else {
+        panic!(
+            "[bong][body_plan] humanoid.json hit_geometry must be HeightBands mode \
+             (combat::raycast::classify_body_part legacy consumption point)"
         );
-        relative.dot(perpendicular)
     };
-
-    if rel_y > 0.88 {
-        BodyPart::Head
-    } else if rel_y > 0.55 {
-        if lateral.abs() > ARM_LATERAL_THRESHOLD {
-            if lateral > 0.0 {
-                BodyPart::ArmR
-            } else {
-                BodyPart::ArmL
-            }
-        } else {
-            BodyPart::Chest
-        }
-    } else if rel_y > LEG_ABDOMEN_BOUNDARY {
-        BodyPart::Abdomen
-    } else if lateral > 0.0 {
-        BodyPart::LegR
-    } else {
-        BodyPart::LegL
-    }
+    let part_id = classify_height_bands(
+        hit_point,
+        target_feet_position,
+        attack_origin,
+        aabb.height,
+        bands,
+        *lateral_threshold,
+    )
+    .expect(
+        "humanoid.json bands are validated at BodyPlanRegistry load time to cover the full \
+         [0,1] rel_y range (strictly descending + lowest band min_rel_y < 0.0) — this must \
+         never return None for the humanoid plan",
+    );
+    id_to_legacy_body_part(part_id).unwrap_or_else(|| {
+        panic!(
+            "[bong][body_plan] humanoid.json part id {part_id} has no legacy BodyPart mapping \
+             — every humanoid.json part must be one of the 8 legacy snake_case ids (see \
+             body_plan::legacy)"
+        )
+    })
 }
 
 /// 命中部位由 `aim_direction` 决定——调用方负责算出真实瞄准方向（决议 §8.1 #1）：
@@ -333,6 +338,71 @@ fn slab_intersection(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::body_plan::HeightBandAssignment;
+
+    // ── plan-race-system-v1 P0b：classify_body_part/standing_humanoid_aabb 现在真的
+    // 读 humanoid.json，而非本文件里独立维护的一份硬编码数字 ───────────────────────
+
+    #[test]
+    fn humanoid_geometry_constants_match_body_plan_json() {
+        let plan = humanoid_plan_static();
+        let HitGeometry::HeightBands {
+            aabb,
+            bands,
+            lateral_threshold,
+        } = &plan.hit_geometry
+        else {
+            panic!("humanoid.json must use HeightBands mode");
+        };
+        assert_eq!(
+            aabb.half_width, 0.3,
+            "humanoid AABB half_width must remain 0.3"
+        );
+        assert_eq!(aabb.height, 1.8, "humanoid AABB height must remain 1.8 (ATTACKER_EYE_HEIGHT/rel_y assumptions depend on this)");
+        assert_eq!(
+            *lateral_threshold, 0.19,
+            "arm lateral threshold must remain the P1-calibrated 0.19"
+        );
+        // 躯干/腿部分界（腹部带下沿）必须仍是 P1 校准值 0.53。
+        let abdomen_band = bands
+            .iter()
+            .find(|band| matches!(&band.assignment, HeightBandAssignment::Single { part } if part.as_str() == "abdomen"))
+            .expect("humanoid.json must declare an abdomen band");
+        assert_eq!(
+            abdomen_band.min_rel_y, 0.53,
+            "abdomen/leg boundary must remain the P1-calibrated 0.53"
+        );
+        // 头部带下沿必须仍是 0.88，胸/臂带下沿必须仍是 0.55。
+        let head_band = bands
+            .iter()
+            .find(|band| matches!(&band.assignment, HeightBandAssignment::Single { part } if part.as_str() == "head"))
+            .expect("humanoid.json must declare a head band");
+        assert_eq!(
+            head_band.min_rel_y, 0.88,
+            "head band threshold must remain 0.88"
+        );
+        let arm_band = bands
+            .iter()
+            .find(|band| {
+                matches!(
+                    &band.assignment,
+                    HeightBandAssignment::LateralSplitWithCenter { .. }
+                )
+            })
+            .expect("humanoid.json must declare a chest/arm lateral-split band");
+        assert_eq!(
+            arm_band.min_rel_y, 0.55,
+            "chest/arm band threshold must remain 0.55"
+        );
+    }
+
+    #[test]
+    fn standing_humanoid_aabb_matches_body_plan_static_spec() {
+        let feet = DVec3::new(1.0, 2.0, 3.0);
+        let aabb = standing_humanoid_aabb(feet);
+        assert_eq!(aabb.min, DVec3::new(0.7, 2.0, 2.7));
+        assert_eq!(aabb.max, DVec3::new(1.3, 3.8, 3.3));
+    }
 
     fn test_box() -> Aabb {
         Aabb {
