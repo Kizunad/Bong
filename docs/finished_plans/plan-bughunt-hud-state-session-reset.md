@@ -1,6 +1,12 @@
 # plan-bughunt-hud-state-session-reset
 
-> Skeleton Plan（BugHunt C4 client-ui 第四轮）。仅记录高置信 bug 与修复骨架；本轮不消费、不归档、不修改实际代码。
+> **Active**（骨架 → active 升级 2026-07-11，BugFix 工作流 subagent 消费）。一句话主题：`BongHudStateStore`（生产 HUD 每帧读取的 static snapshot）断线清理清单漏了它，导致上一 server 写入的 `zoneState`（区域 overlay/atmosphere）与 `visualEffectState`（HUD tint/相机偏移/FOV）跨 session 残留到新连接，直到新服首个 `zone_info` 到达或旧 visual effect 自然过期。第一性原理复核确认 skeleton 结论成立，已按最小修复 + 饱和测试收口。
+
+## 阶段总览
+
+| 阶段 | 主题 | 状态 |
+|------|------|------|
+| P0 | `BongHudStateStore` 断线 reset 收口 | ✅ 2026-07-11 |
 
 ## Bug 摘要
 
@@ -74,3 +80,30 @@
 - reset 放在 disconnect 时机过早/过晚都应只影响离开 session 后的本地 UI，不应吞掉当前 session 正常 payload。
 - `BongHudStateSnapshot.empty()` 会同时清 zone/narration/visualEffect；当前主修复只依赖 zone/visualEffect，但需确认 narration 字段清空不会影响非 toast 的后续逻辑。
 - 如果未来有非网络本地 visual effect 依赖跨世界保留，应明确改为独立 store；生产 HUD session snapshot 不应跨 server 保留。
+
+## Finish Evidence
+
+### 落地清单
+
+- **`client/src/main/java/com/bong/client/hud/BongHudStateStore.java`**：新增 `clear()`，把 static `snapshot` 复位为 `BongHudStateSnapshot.empty()`（zoneState/narrationState/visualEffectState 三字段同一原子重置单元）。
+- **`client/src/main/java/com/bong/client/BongNetworkHandler.java`**：`clearClientStateOnDisconnect()`（`ClientPlayConnectionEvents.DISCONNECT` 唯一路由目标）新增 `BongHudStateStore.clear();` 调用，紧邻同类精神状态清理 `TiandaoPresenceStore.clear()`（F19 fix 同款遗漏模式）。
+- **risk 项验证结论**：`narrationState` 字段清空不影响任何渲染逻辑——独立读码确认 `BongHudOrchestrator` / `BongHud.java` 均不读取 `BongHudStateSnapshot.narrationState()`；真正的 toast/旁白渲染走完全独立的旧 `com.bong.client.NarrationState`（自己的 static 字段），与本次修复的 `BongHudStateStore` 无关。reset 安全，无需拆字段。
+
+### 关键 commit
+
+- `116c9ecc`（2026-07-11）骨架升 active：plan-bughunt-hud-state-session-reset。
+- `4236b32b`（2026-07-11）修复：断线清理清单补上 BongHudStateStore reset，防区域/视觉特效跨 session 残留——新增 `BongHudStateStore.clear()`、`BongNetworkHandler.clearClientStateOnDisconnect()` 接线、`BongHudStateStoreTest`（新文件，8 测）、`BongNetworkHandlerTest` 扩展（+2 测）、`BongZoneHudTest` 扩展（+2 测）。
+
+### 测试结果
+
+- `cd client && ./gradlew test build` → `BUILD SUCCESSFUL`，全量 3720 tests / 0 failed / 0 errors（含新增/扩展的 `BongHudStateStoreTest` 8/8、`BongNetworkHandlerTest` 6/6、`BongZoneHudTest` 11/11）。
+- 独立无上下文 validator agent（`Explore` 只读子代理）对 HEAD `4236b32bcae43bb1098d38376f9196fbb20a60fe` 复核 PASS：确认 `clear()` 落点在真实 disconnect 回调内、非死代码；确认 `BongHudOrchestrator`/`ZoneAtmosphereRenderer` 读取的是同一个被 reset 的 static 类；确认测试直调真实 `clearClientStateOnDisconnect()`，revert 修复会撞红；独立重跑三个测试类 `BUILD SUCCESSFUL`；`git show --stat` 核验仅改动上述 5 个文件、无越界改动。
+
+### 跨仓库核验
+
+- **client（唯一受影响栈）**：`BongHudStateStore.clear()`、`BongNetworkHandler.clearClientStateOnDisconnect()`、`BongHudStateStoreTest`、`BongNetworkHandlerTest#disconnectResetsBongHudStateStoreToPreventCrossSessionZoneAndVisualEffectLeak`、`BongZoneHudTest#emptyZoneStateProducesNoCommands`。
+- **server / agent / schema**：无改动——本 bug 纯 client 侧 static 生命周期问题，不涉及 wire payload、schema 或 server 逻辑。
+
+### 遗留 / 后续
+
+- 无遗留。骨架里明确排除的 `BongToast.activeToast`、legacy `EventAlertState`、legacy `com.bong.client.ZoneState` 按计划未纳入本次修复范围（各自独立状态或已有 PR 覆盖）。
