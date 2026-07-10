@@ -171,13 +171,13 @@ bughunt 产出的 `docs/plans-skeleton/plan-bughunt-*.md` 由本工作流消费�
 1. **Claim + 开独立 worktree/branch**：分支名固定 `bugfix/<plan-basename>`；认领用 create-ref API 原子创建远端分支（见主干节的命令，sha 取当前 `origin/main`），**422 已存在 = 被占用，回报主干换任务**；认领成功后 `git worktree add`（本地分支跟踪该远端 ref），**立即 `git worktree lock`**（防外部 orchestrator prune）
 2. **Promotion**：`git mv docs/plans-skeleton/plan-X.md docs/plan-X.md`，单独中文 commit（本工作流内的 promotion 由 subagent 在自己分支内完成，是「骨架 → Active 人工流转」的授权例外）
 3. **第一性原理验真**：不信 skeleton 的结论，自己读代码 / 写复现证明是不是真 bug
-   - **真 bug** → 最小正确修复 + 饱和测试锁住目标行为，按小阶段中文 commit
+   - **真 bug** → 最小正确修复 + 饱和测试锁住目标行为，按小阶段中文 commit（每个 commit 带 `Model:` 署名 trailer，见「Commit 约定」）
    - **非 bug** → 在 plan 文档写「验证结论 + 证据」（docs-only commit），照常走后续归档 + PR
 4. **对抗验证（强制闭环门）**：修复完成后 subagent **必须自己**再开一个**无上下文、read-only、第一性原理**的 validator agent 对抗审查。validator 只输出 PASS/FAIL + 理由，不改代码。FAIL → 返工 → **重新验证**，循环直到 PASS 才算闭环
 5. **本地门禁**（PASS 后）：**按所触栈在对应目录跑，不跨栈乱调命令**——server：`cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`；client：`cd client && ./gradlew test build`；agent/schema：对应包 `npm test`（schema src 改动先 `cd agent && npm run build -w @bong/schema`）；worldgen：`bash scripts/dev-reload.sh`（仓库根目录执行，`set -euo pipefail` 任一步失败即非零退出；[1/4] regen + [2/4] raster 后验走 `scripts.terrain_gen.harness.raster_check.validate_rasters`）。跨栈修复 = 所有受影响栈都跑。管道尾必须取 `${PIPESTATUS[0]}`（`| tail` 吞退出码假绿）；测试失败绝不甩锅 pre-existing（见「测试诚实性」节）
 6. **合并主线再验**：`git fetch origin && git merge origin/main`（fetch 必须紧邻 merge，防长跑 worktree 拿着陈旧远端引用）。merge 带进任何变更 → **重跑受影响栈完整门禁**（并行 PR 改同一结构体时 auto-merge 会叠出重复字段 E0062/E0415，只重编译不够）；产生冲突或 merge 触及修复相关文件 → **回 step 4 重跑 validator** 直到 PASS
 7. **归档**：补 `## Finish Evidence`（字段按上文「Plan 文件结构」§3），独立中文归档 commit `git mv docs/plan-X.md docs/finished_plans/plan-X.md`——非 bug 的验证结论同样归档，不给 origin/main 留僵尸 active plan
-8. **Push + 开 PR + 触发 review**：`git push` 到 step 1 的 claim 分支并确认成功，`gh pr create --head bugfix/<plan-basename>`（中文标题 + body，两者都带完整 plan basename 供查重检索），随后 `gh pr comment <PR> --body "/review"` **显式发独立评论触发首轮审查**（不依赖自动触发假设；引擎就算自动跑了，重复评论也无害）。等 e2e 绿，回报主干闭环。**merge 不在本工作流内**——按「PR review gate」节走，由用户或后续会话收口；review 修改意见由主干派返工 subagent 接手（见上）
+8. **Push + 开 PR + 触发 review**：`git push` 到 step 1 的 claim 分支并确认成功，`gh pr create --head bugfix/<plan-basename>`（中文标题 + body，两者都带完整 plan basename 供查重检索；body 末尾按「Commit 约定」注明执行模型与 validator 模型），随后 `gh pr comment <PR> --body "/review"` **显式发独立评论触发首轮审查**（不依赖自动触发假设；引擎就算自动跑了，重复评论也无害）。等 e2e 绿，回报主干闭环。**merge 不在本工作流内**——按「PR review gate」节走，由用户或后续会话收口；review 修改意见由主干派返工 subagent 接手（见上）
 
 ## Testing — 饱和化测试
 
@@ -211,6 +211,7 @@ bughunt 产出的 `docs/plans-skeleton/plan-bughunt-*.md` 由本工作流消费�
 
 - commit message **中文**，匹配仓库近 30 提交风格；每个逻辑单元一个 atomic commit，不堆积巨型 commit
 - 归档 commit 形如：`归档 plan-<name>：<一句话总结>`
+- **模型署名（供后续统计，必填）**：agent 产出的每个 commit 末尾必须带 trailer 注明**真实执行模型**：`Model: <精确模型 id>`（如 `claude-fable-5` / `claude-opus-4-8` / `gpt-5.6-sol-xhigh`），`Co-Authored-By` 照旧保留。PR body 末尾同样注明主导模型及参与模型（validator / reviewer 用了不同模型也逐个列出）。不许漏署，不许写泛称 "AI" / "agent"。统计入口：`git log --format='%(trailers:key=Model,valueonly)'`
 
 ## 世界观正典硬锚（写代码/schema/命名前先对，别凭"修仙常识"）
 
