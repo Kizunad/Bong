@@ -80,7 +80,7 @@ pub enum AgentUiSessionState {
     TimedOut,
     /// 同一玩家的新请求替换了此 session（terminal）。
     Replaced,
-    /// 校验错误（境界/离线/allowed_button_ids）。server 侧仅 emit error response（terminal）。
+    /// 校验错误（境界/离线/allowed_button_ids）。server emit error response（terminal）。
     Error,
 }
 
@@ -664,7 +664,7 @@ pub fn receive_agent_ui_response_system(
                     "[bong][agent_ui] button_id={button_id} not in allowed_button_ids for request_id={}",
                     ev.request_id,
                 );
-                // 发 error response；session 仍为 Open（不消耗 session）
+                // 发 error response，并下发 close(reason) 让 client 给出玩家可见反馈。
                 let resp = AgentUiResponsePayloadV1 {
                     request_id: ev.request_id.clone(),
                     action: AgentUiActionType::Error,
@@ -673,6 +673,13 @@ pub fn receive_agent_ui_response_system(
                         .collect(),
                 };
                 let _ = redis.tx_outbound.send(RedisOutbound::AgentUiResponse(resp));
+                let _ = store.take_if_match(ev.player, &ev.request_id);
+                send_agent_ui_close_to_client(
+                    ev.player,
+                    &ev.request_id,
+                    Some("invalid_button_id"),
+                    &mut clients,
+                );
                 continue;
             }
         }
@@ -969,17 +976,24 @@ mod tests {
         }
     }
 
-    /// allowed_button_ids 非法 → Redis emit {action:error, reason:invalid_button_id}；session 保持 Open
+    /// allowed_button_ids 非法 → Redis emit error + client close(reason=invalid_button_id)，session 结束
     #[test]
-    fn system_invalid_button_id_emits_error_response() {
+    fn system_invalid_button_id_emits_error_response_and_close_s2c() {
         let (mut app, rx) = build_agent_ui_app();
-        let entity = spawn_test_player(&mut app, "TestPlayer", Realm::Induce);
+        let (bundle, mut helper) = create_mock_client("TestPlayer");
+        let entity = app.world_mut().spawn(bundle).id();
+        app.world_mut().entity_mut(entity).insert(Cultivation {
+            realm: Realm::Induce,
+            ..Cultivation::default()
+        });
 
         // 建立 Open session
         let cmd = make_cmd("req-btn", "TestPlayer", 0);
         app.world_mut().send_event(AgentUiCmdEvent(cmd));
         app.update();
         while rx.try_recv().is_ok() {} // 清掉 session 创建时的消息
+        flush_all_clients(&mut app);
+        let _ = helper.collect_received(); // 清掉初始 agent_ui_request S2C
 
         // 发非法 button_id
         app.world_mut().send_event(AgentUiResponseEvent {
@@ -1010,11 +1024,31 @@ mod tests {
             "reason 应为 invalid_button_id，实为 {:?}",
             resp.params.get("reason")
         );
-        // session 应仍为 Open
+        let payloads = collect_agent_ui_close_payloads(&mut app, &mut helper);
+        assert_eq!(
+            payloads.len(),
+            1,
+            "invalid_button_id 时 client 应收 1 条 bong:agent_ui_close S2C，实际 {}",
+            payloads.len()
+        );
+        assert_eq!(
+            payloads[0]["request_id"].as_str(),
+            Some("req-btn"),
+            "AgentUiClose 的 request_id 应为 req-btn，实为 {}",
+            payloads[0]["request_id"]
+        );
+        assert_eq!(
+            payloads[0]["reason"].as_str(),
+            Some("invalid_button_id"),
+            "AgentUiClose 的 reason 应为 invalid_button_id，实为 {}",
+            payloads[0]["reason"]
+        );
+
+        // invalid_button_id 是 Error 终态，不能残留 Open session 等待 timeout。
         let store = app.world().resource::<AgentUiSessionStore>();
         assert!(
-            store.get(entity).is_some(),
-            "invalid_button_id 后 session 应仍为 Open"
+            store.get(entity).is_none(),
+            "invalid_button_id 后 session 应已终止并从 store 移除"
         );
     }
 
