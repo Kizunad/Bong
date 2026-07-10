@@ -4,20 +4,78 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   applyPlanIntentGate,
+  classifyReviewRun,
   codexFailureText,
   decideGate,
+  evaluateCircuit,
   excerptLog,
   extractJSON,
   findPlanName,
+  isManualReviewTrigger,
   isRetryableCodexFailure,
   mergeFindings,
   normalizePlanStatus,
   normalizeResult,
   normalizeVote,
+  parseHiddenMarkers,
   redactCodexPromptEcho,
+  renderHiddenMarker,
 } from "./review.mjs";
 
 const reviewer = { id: "A", name: "Plan 原意核查" };
+
+const infraResult = {
+  vote: "REQUEST_CHANGES",
+  confidence: 0,
+  findings: [{ file: ".github/scripts/review.mjs", title: "Codex reviewer initial-A 执行失败" }],
+};
+const realRequestChanges = {
+  vote: "REQUEST_CHANGES",
+  confidence: 95,
+  findings: [{ file: "server/src/main.rs", title: "真实代码缺陷" }],
+};
+
+test("hidden marker: 可往返解析并忽略普通/损坏评论", () => {
+  const marker = { v: 1, kind: "infra_failure", at: "2026-07-10T00:00:00.000Z", reason: "429 -- upstream" };
+  const body = `说明\n${renderHiddenMarker("bong-review-circuit", marker)}`;
+  const parsed = parseHiddenMarkers([{ body }, { body: "普通评论" }, { body: "<!-- bong-review-circuit {bad} -->" }]);
+  assert.equal(parsed.length, 1);
+  assert.equal(parsed[0].kind, "infra_failure");
+  assert.equal(parsed[0].reason, "429 —— upstream");
+});
+
+test("evaluateCircuit: 阈值前关闭，达到阈值后开启", () => {
+  const events = ["00:00", "00:10", "00:20"].map((time) => ({
+    kind: "infra_failure",
+    at: `2026-07-10T${time}:00.000Z`,
+  }));
+  assert.equal(evaluateCircuit(events.slice(0, 2), "2026-07-10T00:20:00.000Z").open, false);
+  const state = evaluateCircuit(events, "2026-07-10T00:20:00.000Z");
+  assert.equal(state.open, true);
+  assert.equal(state.openUntil, "2026-07-10T01:20:00.000Z");
+});
+
+test("evaluateCircuit: 熔断截止时刻精确过期，窗口边界计入", () => {
+  const events = ["00:00", "00:30", "01:00"].map((time) => ({
+    kind: "infra_failure",
+    at: `2026-07-10T${time}:00.000Z`,
+  }));
+  assert.equal(evaluateCircuit(events, "2026-07-10T01:59:59.999Z").open, true);
+  assert.equal(evaluateCircuit(events, "2026-07-10T02:00:00.000Z").open, false);
+});
+
+test("manual bypass: 评论 /review 与 workflow_dispatch 始终旁路", () => {
+  assert.equal(isManualReviewTrigger("pull_request"), false);
+  assert.equal(isManualReviewTrigger("issue_comment"), true);
+  assert.equal(isManualReviewTrigger("workflow_dispatch"), true);
+});
+
+test("infra-only classification: reviewer 执行失败才算 infra，真实 REQUEST_CHANGES 不计数", () => {
+  assert.equal(classifyReviewRun([infraResult], [realRequestChanges]), "infra_failure");
+  assert.equal(classifyReviewRun([realRequestChanges], [realRequestChanges]), "gate_failure");
+  const approve = { vote: "APPROVE", confidence: 90, findings: [] };
+  assert.equal(classifyReviewRun([approve], [approve, approve, approve, realRequestChanges]), "passed");
+});
 
 test("extractJSON: 支持纯 JSON、围栏、前后废话、字符串内括号", () => {
   assert.deepEqual(extractJSON('{"a":1}'), { a: 1 });

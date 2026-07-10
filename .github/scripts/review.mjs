@@ -24,6 +24,8 @@ const CODEX_RETRIES = intEnv("REVIEW_CODEX_RETRIES", 3, 1);
 const CODEX_RETRY_MS = intEnv("REVIEW_CODEX_RETRY_MS", 15_000, 1_000);
 const DRY_RUN = /^(1|true|yes)$/i.test(String(process.env.REVIEW_DRY_RUN || "").trim());
 const FAIL_ON_GATE = process.env.REVIEW_FAIL_ON_GATE !== "0";
+const CIRCUIT_MARKER = "bong-review-circuit";
+const HANDOFF_MARKER = "bong-review-handoff";
 
 const REVIEWERS = [
   {
@@ -65,6 +67,68 @@ const GUIDELINES = `
 export function intEnv(name, fallback, min = Number.MIN_SAFE_INTEGER) {
   const n = parseInt(process.env[name] || "", 10);
   return Number.isFinite(n) ? Math.max(min, n) : fallback;
+}
+
+export function isManualReviewTrigger(eventName) {
+  return eventName === "issue_comment" || eventName === "workflow_dispatch";
+}
+
+export function renderHiddenMarker(name, payload) {
+  const safe = JSON.stringify(payload).replaceAll("--", "——");
+  return `<!-- ${name} ${safe} -->`;
+}
+
+export function parseHiddenMarkers(value, name = CIRCUIT_MARKER) {
+  const bodies = Array.isArray(value) ? value : [value];
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = new RegExp(`<!--\\s*${escaped}\\s+(\\{[^]*?\\})\\s*-->`, "g");
+  const parsed = [];
+  for (const item of bodies) {
+    const body = String(item?.body ?? item ?? "");
+    for (const match of body.matchAll(pattern)) {
+      try {
+        const marker = JSON.parse(match[1]);
+        if (marker && typeof marker === "object") parsed.push(marker);
+      } catch {
+        // 普通评论或损坏 marker 不应阻断 review。
+      }
+    }
+  }
+  return parsed;
+}
+
+export function evaluateCircuit(events, now, { threshold = 3, windowMs = 3_600_000, durationMs = 3_600_000 } = {}) {
+  const nowMs = new Date(now).getTime();
+  const failures = events
+    .filter((event) => event?.kind === "infra_failure")
+    .map((event) => new Date(event.at).getTime())
+    .filter((at) => Number.isFinite(at) && at <= nowMs)
+    .sort((a, b) => a - b);
+
+  let openedAt = null;
+  let openUntil = null;
+  for (let i = threshold - 1; i < failures.length; i += 1) {
+    if (failures[i] - failures[i - threshold + 1] <= windowMs) {
+      const candidateUntil = failures[i] + durationMs;
+      if (candidateUntil > (openUntil ?? Number.NEGATIVE_INFINITY)) {
+        openedAt = failures[i];
+        openUntil = candidateUntil;
+      }
+    }
+  }
+
+  return {
+    open: openUntil !== null && nowMs < openUntil,
+    openedAt: openedAt === null ? null : new Date(openedAt).toISOString(),
+    openUntil: openUntil === null ? null : new Date(openUntil).toISOString(),
+    failureCount: failures.filter((at) => nowMs - at <= windowMs).length,
+  };
+}
+
+export function classifyReviewRun(firstRound, finalRound) {
+  const results = [...(firstRound || []), ...(finalRound || [])];
+  if (results.some(isCodexExecutionFailure)) return "infra_failure";
+  return decideGate(finalRound || []).passed ? "passed" : "gate_failure";
 }
 
 export function extractJSON(text) {
@@ -595,7 +659,7 @@ export function excerptLog(value, limit) {
   return `${text.slice(0, head)}\n...[truncated ${text.length - head - tail} chars]...\n${text.slice(text.length - tail)}`;
 }
 
-function isCodexExecutionFailure(result) {
+export function isCodexExecutionFailure(result) {
   return (
     result?.confidence === 0 &&
     result?.findings?.some((finding) => finding.file === ".github/scripts/review.mjs" && /Codex reviewer .*执行失败/.test(finding.title))
