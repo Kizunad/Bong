@@ -9567,7 +9567,7 @@ const MODULES = [
         "gaps": [
           {
             "severity": "info",
-            "note": "遗骸（RemainsStore）在本模块无世界空间渲染器不是遗漏——服务端 server/src/inventory/mod.rs::spawn_player_remains_entity 用 vanilla PlayerEntityBundle（Pose::Sleeping 躺平 + NoGravity + CustomName）+ PlayerListEntryBundle 生成真实可见实体，走原版实体协议由客户端 vanilla 渲染管线直接呈现（remains_id 即该实体 UUID，见 server/src/network/remains_sync_emit.rs remains_snapshot）；本模块只承接 G 键拾取交互（RemainsLootIntentHandler）"
+            "note": "本模块无遗骸世界渲染器的现状成因：遗骸由服务端 vanilla PlayerEntityBundle（Pose::Sleeping，server/src/inventory/mod.rs::spawn_player_remains_entity）生成、走原版实体协议渲染（remains_id 即实体 UUID，见 remains_sync_emit.rs）。注意该 vanilla 实体形态与「Marker + 自定义渲染」架构硬约束的张力已在 server/inventory 条目登记为 warn gap；本模块仅承接 G 键拾取 C2S 交互（合规），若后续迁移 Marker 则需在 client 补自定义遗骸渲染器"
           }
         ]
       },
@@ -15845,7 +15845,7 @@ const MODULES = [
           },
           {
             "severity": "info",
-            "note": "✅ FALSE-POSITIVE(triage 读码核实,非真缺口): HarvestHazard::ResonanceVision 的 composure_loss 字段在执行路径存在且确实写入 cultivation.composure（apply_completion_hazards 直接扣减），但 composure（心魔/镇定）系统在 botany 之外是否有完整消费者尚不确认，可能是孤岛数值"
+            "note": "✅ FALSE-POSITIVE(读码核实,非真缺口): HarvestHazard::ResonanceVision 的 composure_loss 写入 cultivation.composure（apply_completion_hazards）——composure 在 botany 之外有完整消费链：breakthrough.rs 读值参与突破判定（L505/L514）并按结果扣减（L529/L557），tribulation.rs L3941 读值，composure.rs::composure_tick 按 composure_recover_rate 回升，insight_apply.rs 调 recover 倍率——非孤岛数值"
           }
         ]
       },
@@ -21888,6 +21888,10 @@ const MODULES = [
       {
         "severity": "info",
         "note": "DroppedLootRegistry 和 TsySpawnedFamilies 均无持久化，重启后世界掉落物和 TSY 遗物生成记录清零，属文档明确的 MVP 简化"
+      },
+      {
+        "severity": "warn",
+        "note": "遗骸实体用 vanilla PlayerEntityBundle（Pose::Sleeping + NoGravity + CustomName）+ PlayerListEntryBundle 充当尸体视觉与世界锚（mod.rs::spawn_player_remains_entity L1006-L1046）——与「禁止 vanilla MC entity hack / Bong 实体 = Marker + 自定义渲染」架构硬约束存在张力，仓库内未见明确豁免记录；交互侧已合规走 C2S（client RemainsLootIntentHandler → G 键 remains 拾取 intent）。待架构决策：迁移 Marker + 客户端自定义渲染，或正式登记豁免"
       }
     ]
   },
