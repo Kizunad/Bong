@@ -50,6 +50,17 @@
 //! （决议表数值已锁定、可随时被下游系统读取），暂不改动上述宿主文件，避免单个 P1
 //! 阶段同时牵动过多不相关模块导致测试面失焦。
 //!
+//! ## plan-race-system-v1 P0b —— 主/副手臂身份判定改为 PartConsequence 分发
+//!
+//! `MAIN_ARM`/`OFF_ARM` 两个 `pub const BodyPart` 因外部既有调用点
+//! （`combat/needle.rs`、`combat/anqi_v2.rs`、`combat/resolve.rs` 均以编译期字面量
+//! 使用）而保留——Rust `const` 无法承载"运行时查表得到的 BodyPart"，且改这两处的类型
+//! 会牵动本 work item 声明范围外的文件。真正泛化的是 [`combined_factor`] 的**内部
+//! 分发逻辑**：不再假设"`ArmL`/`ArmR` 这两个 enum 变体就是双臂"，而是查询
+//! [`crate::body_plan::humanoid_plan_static`] 的 `PartConsequence::Manipulator{main_hand}`
+//! 标签（`assets/body_plans/plans/humanoid.json`）——`main_off_arm_consts_match_humanoid_plan_manipulator_consequence`
+//! pin 测试锁死 `MAIN_ARM`/`OFF_ARM` 与该数据表一致，数值行为 bit-for-bit 不变。
+//!
 //! ## Severed 行为级后果落地状态（决议 §8.1 #2 原文额外强调的两条）
 //!
 //! 决议对 Severed 分级除六维倍率外，还点名两条"行为级"后果——本节显式记录两条各自
@@ -264,11 +275,26 @@ impl Default for ArmWoundFactors {
     }
 }
 
+/// plan-race-system-v1 P0b —— 按 `PartConsequence::Manipulator{main_hand}` 标签查询
+/// [`crate::body_plan::humanoid_plan_static`]，取该档全部部位中最重的伤势分级（humanoid
+/// plan 每档恰好一个部位——`ArmR`=`main_hand:true`/`ArmL`=`main_hand:false`——故本函数
+/// 结果与旧版直接 `worst_wound_grade(wounds, MAIN_ARM/OFF_ARM)` bit-for-bit 相同；泛化
+/// 后天然支持未来非人形 plan 声明多个同档 Manipulator 部位）。
+fn manipulator_worst_grade(wounds: &Wounds, main_hand: bool) -> ArmWoundGrade {
+    let plan = crate::body_plan::humanoid_plan_static();
+    crate::body_plan::legacy_body_parts_matching(plan, move |consequence| {
+        matches!(consequence, crate::body_plan::PartConsequence::Manipulator { main_hand: mh } if *mh == main_hand)
+    })
+    .map(|part| worst_wound_grade(wounds, part))
+    .max_by_key(|grade| grade_rank(*grade))
+    .unwrap_or(ArmWoundGrade::Intact)
+}
+
 /// 双臂皆伤取各维度最重值不叠乘（决议 §8.1 #2）：主手臂驱动攻击/冷却/散布/蓄力，
 /// 副手臂驱动格挡，cast_ticks 取两臂较重者——六个维度各自独立读取，互不相乘。
 pub fn combined_factor(wounds: &Wounds) -> ArmWoundFactors {
-    let main_grade = worst_wound_grade(wounds, MAIN_ARM);
-    let off_grade = worst_wound_grade(wounds, OFF_ARM);
+    let main_grade = manipulator_worst_grade(wounds, true);
+    let off_grade = manipulator_worst_grade(wounds, false);
     let cast_grade = worst_of_grades(main_grade, off_grade);
 
     ArmWoundFactors {
@@ -292,7 +318,59 @@ pub fn combined_factor_from_optional(wounds: Option<&Wounds>) -> ArmWoundFactors
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::body_plan::PartConsequence;
     use crate::combat::components::WoundKind;
+
+    // ── plan-race-system-v1 P0b：MAIN_ARM/OFF_ARM 编译期字面量必须与 humanoid.json 的
+    // PartConsequence 数据一致——防止未来有人只改 JSON 忘了 JSON 与硬编码 const 已经脱节 ──
+
+    #[test]
+    fn main_off_arm_consts_match_humanoid_plan_manipulator_consequence() {
+        let plan = crate::body_plan::humanoid_plan_static();
+        let main_id = crate::body_plan::legacy_body_part_to_id(MAIN_ARM);
+        let off_id = crate::body_plan::legacy_body_part_to_id(OFF_ARM);
+        let main_def = plan
+            .parts
+            .iter()
+            .find(|def| def.id == main_id)
+            .expect("humanoid.json must declare MAIN_ARM's part id");
+        let off_def = plan
+            .parts
+            .iter()
+            .find(|def| def.id == off_id)
+            .expect("humanoid.json must declare OFF_ARM's part id");
+        assert_eq!(
+            main_def.consequence,
+            PartConsequence::Manipulator { main_hand: true },
+            "MAIN_ARM const ({MAIN_ARM:?}) must be tagged Manipulator{{main_hand:true}} in humanoid.json"
+        );
+        assert_eq!(
+            off_def.consequence,
+            PartConsequence::Manipulator { main_hand: false },
+            "OFF_ARM const ({OFF_ARM:?}) must be tagged Manipulator{{main_hand:false}} in humanoid.json"
+        );
+    }
+
+    #[test]
+    fn manipulator_worst_grade_ignores_non_manipulator_wounds() {
+        // Chest/Leg 伤势不应被 main_hand 分发误纳入——即使严重度拉满。
+        let wounds = Wounds {
+            entries: vec![
+                wound(BodyPart::Chest, 99.0),
+                wound(BodyPart::LegL, 99.0),
+                wound(BodyPart::LegR, 99.0),
+            ],
+            ..Default::default()
+        };
+        assert_eq!(
+            manipulator_worst_grade(&wounds, true),
+            ArmWoundGrade::Intact
+        );
+        assert_eq!(
+            manipulator_worst_grade(&wounds, false),
+            ArmWoundGrade::Intact
+        );
+    }
 
     fn wound(location: BodyPart, severity: f32) -> Wound {
         Wound {

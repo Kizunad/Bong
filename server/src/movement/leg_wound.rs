@@ -1,3 +1,12 @@
+//! plan-race-system-v1 P0b —— `combined_leg_factor` 的"哪些部位算腿"判定改为查询
+//! [`crate::body_plan::humanoid_plan_static`] 的 `PartConsequence::Locomotion` 标签
+//! （`assets/body_plans/plans/humanoid.json`），不再硬编码假设"`LegL`/`LegR` 这两个
+//! enum 变体就是双腿"。humanoid plan 目前恰好只标了这两个部位为 `Locomotion`，故行为
+//! bit-for-bit 不变；泛化后天然支持未来非人形 plan（如飞鲸尾鳍）声明任意数量的
+//! locomotion 部位取最劣值。本文件其余公开函数签名不变（外部既有调用点
+//! `movement/mod.rs` 不在本 work item 声明范围内）。
+
+use crate::body_plan::PartConsequence;
 use crate::combat::components::{BodyPart, Wound, Wounds};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -25,9 +34,12 @@ pub fn combined_leg_factor_from_optional(wounds: Option<&Wounds>) -> f32 {
 }
 
 pub fn combined_leg_factor(wounds: &Wounds) -> f32 {
-    let left = worst_wound_grade(wounds, BodyPart::LegL);
-    let right = worst_wound_grade(wounds, BodyPart::LegR);
-    leg_wound_to_speed(left).min(leg_wound_to_speed(right))
+    let plan = crate::body_plan::humanoid_plan_static();
+    crate::body_plan::legacy_body_parts_matching(plan, |consequence| {
+        matches!(consequence, PartConsequence::Locomotion)
+    })
+    .map(|part| leg_wound_to_speed(worst_wound_grade(wounds, part)))
+    .fold(1.0_f32, f32::min)
 }
 
 pub fn leg_strain_magnitude(leg_wound_factor: f32) -> f32 {
@@ -99,6 +111,37 @@ mod tests {
         assert_eq!(leg_wound_to_speed(LegWoundGrade::Laceration), 0.7);
         assert_eq!(leg_wound_to_speed(LegWoundGrade::Fracture), 0.4);
         assert_eq!(leg_wound_to_speed(LegWoundGrade::Severed), 0.0);
+    }
+
+    // ── plan-race-system-v1 P0b：LegL/LegR 必须在 humanoid.json 标 Locomotion，否则
+    // combined_leg_factor 的 PartConsequence 分发会静默漏掉腿伤 ──────────────────
+
+    #[test]
+    fn leg_l_and_leg_r_are_tagged_locomotion_in_humanoid_plan() {
+        let plan = crate::body_plan::humanoid_plan_static();
+        for part in [BodyPart::LegL, BodyPart::LegR] {
+            let id = crate::body_plan::legacy_body_part_to_id(part);
+            let def = plan
+                .parts
+                .iter()
+                .find(|def| def.id == id)
+                .unwrap_or_else(|| panic!("humanoid.json must declare part {id}"));
+            assert_eq!(
+                def.consequence,
+                PartConsequence::Locomotion,
+                "{part:?} (id={id}) must be tagged Locomotion in humanoid.json for combined_leg_factor to see it"
+            );
+        }
+    }
+
+    #[test]
+    fn combined_leg_factor_ignores_non_locomotion_wounds_even_when_severed() {
+        // Chest/Arm 伤势即便判 Severed 也不该压低腿部速度系数。
+        let wounds = Wounds {
+            entries: vec![wound(BodyPart::Chest, 99.0), wound(BodyPart::ArmR, 99.0)],
+            ..Default::default()
+        };
+        assert_eq!(combined_leg_factor(&wounds), 1.0);
     }
 
     #[test]
