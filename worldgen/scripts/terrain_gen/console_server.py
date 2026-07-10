@@ -364,12 +364,20 @@ def create_app(
         )
         plan.bake_plan = build_raster_bake_plan(plan, output_dir)
         fields = synthesize_fields(plan, zone_filter={req.zone_name})
+        novice_poi_fields = None
+        if req.zone_name == blueprint.spawn_zone:
+            # The spawn zone itself is smaller than the novice selector's
+            # relaxed search window. Recompute global novice POIs only from a
+            # complete synthesis; the regen writer validates this against the
+            # existing full manifest before touching raster bytes.
+            novice_poi_fields = synthesize_fields(plan)
         try:
             rewritten = regen_zone(
                 plan,
                 fields,
                 req.zone_name,
                 layer_whitelist=regen_whitelist,
+                novice_poi_fields=novice_poi_fields,
             )
         except FileNotFoundError as exc:
             # No prior full bake → manifest.json is absent. Incremental regen has
