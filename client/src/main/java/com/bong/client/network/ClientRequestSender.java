@@ -11,6 +11,8 @@ import net.minecraft.util.math.BlockPos;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Objects;
+import java.util.UUID;
+import java.util.function.Supplier;
 
 /**
  * 向服务端 {@code bong:client_request} 通道发送 CustomPayload。
@@ -52,6 +54,9 @@ public final class ClientRequestSender {
     };
 
     private static volatile AttemptBackend backend = DEFAULT_BACKEND;
+    private static final Supplier<String> DEFAULT_REQUEST_ID_SUPPLIER =
+        () -> UUID.randomUUID().toString();
+    private static volatile Supplier<String> requestIdSupplier = DEFAULT_REQUEST_ID_SUPPLIER;
 
     private ClientRequestSender() {}
 
@@ -328,7 +333,18 @@ public final class ClientRequestSender {
     }
 
     public static boolean sendQuickSlotBind(int slot, String itemId) {
-        return tryDispatch(ClientRequestProtocol.encodeQuickSlotBind(slot, itemId));
+        return sendQuickSlotBindTracked(slot, itemId) != null;
+    }
+
+    /** 返回本地 transport 接受的唯一 request_id；拒绝时返回 null。 */
+    public static String sendQuickSlotBindTracked(int slot, String itemId) {
+        String requestId = Objects.requireNonNull(requestIdSupplier.get(), "requestId");
+        if (requestId.isBlank()) {
+            throw new IllegalStateException("quick-slot requestId must not be blank");
+        }
+        return tryDispatch(ClientRequestProtocol.encodeQuickSlotBind(slot, itemId, requestId))
+            ? requestId
+            : null;
     }
 
     public static void sendSkillBarCast(int slot) {
@@ -651,8 +667,8 @@ public final class ClientRequestSender {
             return backend.trySend(CHANNEL, json.getBytes(StandardCharsets.UTF_8));
         } catch (RuntimeException error) {
             BongClient.LOGGER.warn(
-                "[bong][client_request] local transport rejected payload: {}",
-                json,
+                "[bong][client_request] local transport rejected payload_bytes={}",
+                json.getBytes(StandardCharsets.UTF_8).length,
                 error
             );
             return false;
@@ -671,7 +687,12 @@ public final class ClientRequestSender {
         backend = Objects.requireNonNull(b, "backend");
     }
 
+    public static void setRequestIdSupplierForTests(Supplier<String> supplier) {
+        requestIdSupplier = Objects.requireNonNull(supplier, "supplier");
+    }
+
     public static void resetBackendForTests() {
         backend = DEFAULT_BACKEND;
+        requestIdSupplier = DEFAULT_REQUEST_ID_SUPPLIER;
     }
 }

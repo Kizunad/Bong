@@ -148,10 +148,18 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     private final GridSlotComponent[] quickUseSlots = new GridSlotComponent[HOTBAR_SLOTS];
     private final InventoryItem[] quickUseItems = new InventoryItem[HOTBAR_SLOTS];
     private FlowLayout quickUseStrip;
-    private Consumer<QuickSlotConfig> quickUseStoreListener;
+    private Consumer<QuickUseSlotStore.Update> quickUseStoreListener;
     private Consumer<SkillBarConfig> skillBarStoreListener;
-    private int pendingQuickUseRebindIndex = -1;
-    private String pendingQuickUseRebindItemId;
+    private long lastQuickUseUpdateSequence = -1L;
+    private PendingQuickUseIntent pendingQuickUseIntent;
+
+    private record PendingQuickUseIntent(
+        String requestId,
+        int slot,
+        String expectedItemId,
+        Runnable onAccepted,
+        Runnable onRejected
+    ) {}
 
     // Discard
     private FlowLayout discardStrip;
@@ -287,7 +295,6 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         outerRow.child(hotbarStrip);
         quickUseStrip = buildQuickUseStrip();
         outerRow.child(quickUseStrip);
-        hydrateQuickUseFromStore();
         registerAuthoritativeBarListeners(task -> MinecraftClient.getInstance().execute(task));
 
         // === CENTER: Main panel ===
@@ -828,7 +835,10 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     }
 
     private void hydrateQuickUseFromStore() {
-        QuickSlotConfig config = QuickUseSlotStore.snapshot();
+        hydrateQuickUseFromConfig(QuickUseSlotStore.snapshot());
+    }
+
+    private void hydrateQuickUseFromConfig(QuickSlotConfig config) {
         for (int i = 0; i < HOTBAR_SLOTS; i++) {
             QuickSlotEntry entry = config.slot(i);
             if (entry == null) {
@@ -844,10 +854,12 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
 
     private void registerAuthoritativeBarListeners(Consumer<Runnable> executor) {
         unregisterAuthoritativeBarListeners();
-        quickUseStoreListener = config -> executor.accept(() -> applyAuthoritativeQuickUseConfig(config));
+        quickUseStoreListener = update -> executor.accept(() -> applyQuickUseUpdate(update));
         skillBarStoreListener = ignored -> executor.accept(this::hydrateSkillBarFromStore);
-        QuickUseSlotStore.addListener(quickUseStoreListener);
+        QuickUseSlotStore.Update initial = QuickUseSlotStore.subscribeAndGet(quickUseStoreListener);
         SkillBarStore.addListener(skillBarStoreListener);
+        executor.accept(() -> applyQuickUseUpdate(initial));
+        executor.accept(this::hydrateSkillBarFromStore);
     }
 
     private void unregisterAuthoritativeBarListeners() {
@@ -859,27 +871,37 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             SkillBarStore.removeListener(skillBarStoreListener);
             skillBarStoreListener = null;
         }
-        pendingQuickUseRebindIndex = -1;
-        pendingQuickUseRebindItemId = null;
+        lastQuickUseUpdateSequence = -1L;
+        pendingQuickUseIntent = null;
     }
 
-    private void applyAuthoritativeQuickUseConfig(QuickSlotConfig config) {
-        hydrateQuickUseFromStore();
-        if (pendingQuickUseRebindIndex < 0 || pendingQuickUseRebindItemId == null) {
+    private void applyQuickUseUpdate(QuickUseSlotStore.Update update) {
+        if (update == null || update.sequence() <= lastQuickUseUpdateSequence) {
             return;
         }
-        if (!dragState.isDragging()
-                || dragState.sourceKind() != DragState.SourceKind.QUICK_USE
-                || dragState.sourceQuickUseIndex() != pendingQuickUseRebindIndex) {
-            pendingQuickUseRebindIndex = -1;
-            pendingQuickUseRebindItemId = null;
+        lastQuickUseUpdateSequence = update.sequence();
+        hydrateQuickUseFromConfig(update.config());
+
+        PendingQuickUseIntent pending = pendingQuickUseIntent;
+        if (pending == null
+                || update.source() != QuickUseSlotStore.Source.SERVER
+                || update.ackRequestId() == null
+                || !update.ackRequestId().equals(pending.requestId())
+                || update.bindAccepted() == null) {
             return;
         }
-        QuickSlotEntry confirmed = config == null ? null : config.slot(pendingQuickUseRebindIndex);
-        if (confirmed != null && pendingQuickUseRebindItemId.equals(confirmed.itemId())) {
-            dragState.drop();
-            pendingQuickUseRebindIndex = -1;
-            pendingQuickUseRebindItemId = null;
+
+        pendingQuickUseIntent = null;
+        QuickSlotEntry confirmed = update.config() == null
+            ? null
+            : update.config().slot(pending.slot());
+        boolean expectedState = pending.expectedItemId() == null
+            ? confirmed == null
+            : confirmed != null && pending.expectedItemId().equals(confirmed.itemId());
+        if (update.bindAccepted() && expectedState) {
+            pending.onAccepted().run();
+        } else {
+            pending.onRejected().run();
         }
     }
 
@@ -957,22 +979,28 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         return null;
     }
 
-    private boolean publishQuickUseSlot(int index, InventoryItem item) {
-        if (!com.bong.client.network.ClientRequestSender.sendQuickSlotBind(
-                index, item == null ? null : item.itemId())) {
+    private boolean requestQuickUseSlot(
+        int index,
+        InventoryItem item,
+        Runnable onAccepted,
+        Runnable onRejected
+    ) {
+        if (pendingQuickUseIntent != null) {
             return false;
         }
-        QuickSlotConfig current = QuickUseSlotStore.snapshot();
-        QuickSlotEntry entry = item == null ? null : new QuickSlotEntry(
-            item.itemId(),
-            item.displayName(),
-            QUICK_USE_DEFAULT_CAST_MS,
-            QUICK_USE_DEFAULT_COOLDOWN_MS,
-            ""
+        String itemId = item == null ? null : item.itemId();
+        String requestId = com.bong.client.network.ClientRequestSender.sendQuickSlotBindTracked(
+            index, itemId);
+        if (requestId == null) {
+            return false;
+        }
+        pendingQuickUseIntent = new PendingQuickUseIntent(
+            requestId,
+            index,
+            itemId,
+            onAccepted,
+            onRejected
         );
-        QuickUseSlotStore.replace(current.withSlot(index, entry));
-        quickUseItems[index] = item;
-        setQuickUseSlotVisual(index, item);
         return true;
     }
 
@@ -986,10 +1014,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
      * <p>非方块物品只走 quick_slot 一条路径，行为不变。
      */
     boolean commitQuickUseDrop(int index, InventoryItem item) {
-        if (!publishQuickUseSlot(index, item)) {
-            return false;
-        }
-        return true;
+        return requestQuickUseSlot(index, item, () -> {}, () -> {});
     }
 
     /**
@@ -1870,11 +1895,12 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
 
     /** Headless 回归复用真实 QUICK_USE 拾起语义（解绑 → dragState 记录来源）。 */
     boolean beginQuickUseEquipDragForTests(InventoryItem item, int index) {
-        return publishQuickUseSlot(index, item) && beginQuickUseDrag(index);
+        quickUseItems[index] = item;
+        return beginQuickUseDrag(index);
     }
 
     boolean bindQuickUseForTests(InventoryItem item, int index) {
-        return publishQuickUseSlot(index, item);
+        return requestQuickUseSlot(index, item, () -> {}, () -> {});
     }
 
     boolean beginQuickUseDragForTests(int index) {
@@ -2758,11 +2784,16 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             return false;
         }
         InventoryItem item = quickUseItems[index];
-        if (item == null || !publishQuickUseSlot(index, null)) {
+        if (item == null) {
             return false;
         }
-        dragState.pickupFromQuickUse(item, index);
-        return true;
+        return requestQuickUseSlot(
+            index,
+            null,
+            () -> dragState.pickupFromQuickUse(item, index),
+            () -> com.bong.client.BongClient.LOGGER.warn(
+                "[bong][inspect] quick-use unbind rejected slot={}", index)
+        );
     }
 
     private void attemptDrop(double mouseX, double mouseY) {
@@ -2994,13 +3025,21 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 return;
             }
             InventoryItem old = quickUseItems[qIdx];
-            if (!commitQuickUseDrop(qIdx, dragged)) {
+            if (!requestQuickUseSlot(
+                    qIdx,
+                    dragged,
+                    () -> {
+                        dragState.drop();
+                        if (old != null) placeItemAnywhere(old);
+                        clearAllHighlights();
+                    },
+                    () -> com.bong.client.BongClient.LOGGER.warn(
+                        "[bong][inspect] authoritative quick-use bind rejected slot={}", qIdx)
+                )) {
                 returnDragToSource();
                 clearAllHighlights();
                 return;
             }
-            dragState.drop();
-            if (old != null) placeItemAnywhere(old);
             clearAllHighlights();
             return;
         }
@@ -3439,17 +3478,17 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 ? dragState.originalDraggedItem()
                 : dragState.draggedItem();
             if (index >= 0 && index < HOTBAR_SLOTS && item != null) {
-                if (!com.bong.client.network.ClientRequestSender.sendQuickSlotBind(
-                        index, item.itemId())) {
+                if (!requestQuickUseSlot(
+                        index,
+                        item,
+                        dragState::drop,
+                        () -> com.bong.client.BongClient.LOGGER.warn(
+                            "[bong][inspect] authoritative quick-use rebind rejected slot={}", index)
+                    )) {
                     com.bong.client.BongClient.LOGGER.warn(
                         "[bong][inspect] quick-use rebind rejected; retaining drag for retry slot={}",
                         index);
-                    return;
                 }
-                // 本地 enqueue 不是 server ACK；继续保留 item/source，直到
-                // quickslot_config 确认同一 item_id 后 applyAuthoritativeQuickUseConfig 才 drop。
-                pendingQuickUseRebindIndex = index;
-                pendingQuickUseRebindItemId = item.itemId();
                 return;
             }
             com.bong.client.BongClient.LOGGER.warn(
@@ -3985,10 +4024,19 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         if (grid == null) return;
         var pos = grid.findFreeSpace(item);
         if (pos != null) {
-            if (!publishQuickUseSlot(index, null)) {
-                return;
-            }
-            grid.place(item, pos.row(), pos.col());
+            requestQuickUseSlot(
+                index,
+                null,
+                () -> {
+                    if (grid.canPlace(item, pos.row(), pos.col())) {
+                        grid.place(item, pos.row(), pos.col());
+                    } else {
+                        placeItemAnywhere(item);
+                    }
+                },
+                () -> com.bong.client.BongClient.LOGGER.warn(
+                    "[bong][inspect] authoritative quick-use clear rejected slot={}", index)
+            );
         }
     }
 

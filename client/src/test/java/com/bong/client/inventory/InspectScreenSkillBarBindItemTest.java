@@ -38,6 +38,9 @@ class InspectScreenSkillBarBindItemTest {
     }
 
     private void captureBackend() {
+        int[] requestSequence = {0};
+        ClientRequestSender.setRequestIdSupplierForTests(
+            () -> "quick-bind-test-" + (++requestSequence[0]));
         ClientRequestSender.setBackendForTests(
             (channel, payload) -> sent.add(new Sent(channel, new String(payload, StandardCharsets.UTF_8)))
         );
@@ -113,7 +116,7 @@ class InspectScreenSkillBarBindItemTest {
         assertEquals(1, sent.size(),
             "拖方块进快捷栏应只发一条原子 quick_slot_bind，实际发了 " + sent.size() + " 条");
         assertEquals(
-            "{\"type\":\"quick_slot_bind\",\"v\":1,\"slot\":3,\"item_id\":\"earth_crumb\"}",
+            "{\"type\":\"quick_slot_bind\",\"v\":1,\"slot\":3,\"item_id\":\"earth_crumb\",\"request_id\":\"quick-bind-test-1\"}",
             sent.get(0).body());
         assertNull(
             SkillBarStore.snapshot().slot(3),
@@ -175,7 +178,7 @@ class InspectScreenSkillBarBindItemTest {
         assertEquals(1, sent.size(),
             "非方块物品拖进快捷栏只应发 quick_slot_bind，实际发了 " + sent.size() + " 条");
         assertEquals(
-            "{\"type\":\"quick_slot_bind\",\"v\":1,\"slot\":5,\"item_id\":\"guyuan_pill\"}",
+            "{\"type\":\"quick_slot_bind\",\"v\":1,\"slot\":5,\"item_id\":\"guyuan_pill\",\"request_id\":\"quick-bind-test-1\"}",
             sent.get(0).body());
 
         SkillBarEntry entry = SkillBarStore.snapshot().slot(5);
@@ -194,7 +197,7 @@ class InspectScreenSkillBarBindItemTest {
         assertEquals(1, sent.size(),
             "清快捷栏槽只应发一条 quick_slot_bind(null)");
         assertEquals(
-            "{\"type\":\"quick_slot_bind\",\"v\":1,\"slot\":1,\"item_id\":null}",
+            "{\"type\":\"quick_slot_bind\",\"v\":1,\"slot\":1,\"item_id\":null,\"request_id\":\"quick-bind-test-1\"}",
             sent.get(0).body());
         assertNull(SkillBarStore.snapshot().slot(1));
     }

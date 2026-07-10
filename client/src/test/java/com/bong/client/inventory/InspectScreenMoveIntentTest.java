@@ -12,6 +12,7 @@ import com.bong.client.inventory.model.InventoryModel;
 import com.bong.client.inventory.model.SlotContents;
 import com.bong.client.network.ClientRequestProtocol;
 import com.bong.client.network.ClientRequestSender;
+import com.google.gson.JsonParser;
 import net.minecraft.util.Identifier;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -41,6 +42,13 @@ public class InspectScreenMoveIntentTest {
         ClientRequestSender.setBackendForTests(
             (channel, payload) -> sent.add(new Sent(channel, new String(payload, StandardCharsets.UTF_8)))
         );
+    }
+
+    private String lastQuickBindRequestId() {
+        return JsonParser.parseString(sent.get(sent.size() - 1).body())
+            .getAsJsonObject()
+            .get("request_id")
+            .getAsString();
     }
 
     @Test
@@ -392,8 +400,12 @@ public class InspectScreenMoveIntentTest {
         InspectScreen screen = new InspectScreen(InventoryModel.builder().hotbar(0, tool).build());
         EquipmentPanel panel = new EquipmentPanel();
         screen.configureEquipInteractionForTests(null, panel);
-        screen.beginQuickUseEquipDragForTests(tool, 2);
         screen.registerAuthoritativeBarListenersForTests();
+        assertTrue(screen.beginQuickUseEquipDragForTests(tool, 2));
+        String clearRequestId = lastQuickBindRequestId();
+        QuickUseSlotStore.replaceAuthoritative(
+            QuickSlotConfig.empty(), clearRequestId, true);
+        assertTrue(screen.isDraggingForTests(), "expected accepted clear to start QUICK_USE drag");
         sent.clear();
 
         boolean committed = screen.commitCurrentDragToEquipForTests(EquipSlotType.EXTRA_HAND_1);
@@ -408,9 +420,20 @@ public class InspectScreenMoveIntentTest {
             screen.isDraggingForTests(),
             "expected rebind item/source to remain pending before authoritative config"
         );
-        QuickUseSlotStore.replace(QuickSlotConfig.empty().withSlot(2, new QuickSlotEntry(
-            tool.itemId(), tool.displayName(), 1500, 1500, ""
-        )));
+        String rebindRequestId = lastQuickBindRequestId();
+        QuickSlotConfig rebound = QuickSlotConfig.empty().withSlot(2, new QuickSlotEntry(
+            tool.itemId(), tool.displayName(), 1500, 1500, ""));
+        QuickUseSlotStore.replaceAuthoritative(rebound, null, null);
+        assertTrue(
+            screen.isDraggingForTests(),
+            "expected stale uncorrelated config not to complete pending rebind"
+        );
+        QuickUseSlotStore.replaceLocal(rebound);
+        assertTrue(
+            screen.isDraggingForTests(),
+            "expected local optimistic store update not to complete pending rebind"
+        );
+        QuickUseSlotStore.replaceAuthoritative(rebound, rebindRequestId, true);
         assertEquals(
             tool,
             screen.quickUseItemForTests(2),
@@ -433,14 +456,10 @@ public class InspectScreenMoveIntentTest {
         install();
         InspectScreen screen = new InspectScreen(InventoryModel.empty());
         InventoryItem tool = item(2291L, "stone_pickaxe");
-        assertTrue(
-            screen.bindQuickUseForTests(tool, 3),
-            "expected quick-use fixture bind to be accepted, actual false"
-        );
-        sent.clear();
+        screen.registerAuthoritativeBarListenersForTests();
         ClientRequestSender.setAttemptBackendForTests((channel, payload) -> false);
 
-        boolean beganDrag = screen.beginQuickUseDragForTests(3);
+        boolean beganDrag = screen.beginQuickUseEquipDragForTests(tool, 3);
 
         assertFalse(beganDrag, "expected rejected quick-use unbind to skip drag, actual true");
         assertEquals(
@@ -461,11 +480,14 @@ public class InspectScreenMoveIntentTest {
         InspectScreen screen = new InspectScreen(InventoryModel.builder().hotbar(0, tool).build());
         EquipmentPanel panel = new EquipmentPanel();
         screen.configureEquipInteractionForTests(null, panel);
+        screen.registerAuthoritativeBarListenersForTests();
         assertTrue(
             screen.beginQuickUseEquipDragForTests(tool, 4),
-            "expected accepted bind then unbind to start QUICK_USE drag, actual false"
+            "expected quick-use clear request to enqueue, actual false"
         );
-        screen.registerAuthoritativeBarListenersForTests();
+        QuickUseSlotStore.replaceAuthoritative(
+            QuickSlotConfig.empty(), lastQuickBindRequestId(), true);
+        assertTrue(screen.isDraggingForTests(), "expected authoritative clear to start drag");
         sent.clear();
         ClientRequestSender.setAttemptBackendForTests((channel, payload) -> false);
 
@@ -499,16 +521,23 @@ public class InspectScreenMoveIntentTest {
             "expected slot to remain server-aligned and unbound before authoritative config"
         );
 
-        QuickUseSlotStore.replace(QuickSlotConfig.empty());
+        String rejectedRequestId = lastQuickBindRequestId();
+        QuickUseSlotStore.replaceAuthoritative(
+            QuickSlotConfig.empty(), rejectedRequestId, false);
         assertTrue(
             screen.isDraggingForTests(),
             "expected authoritative rejection to retain item/source for retry"
         );
 
         screen.returnCurrentDragToSourceForTests();
-        QuickUseSlotStore.replace(QuickSlotConfig.empty().withSlot(4, new QuickSlotEntry(
-            tool.itemId(), tool.displayName(), 1500, 1500, ""
-        )));
+        String acceptedRequestId = lastQuickBindRequestId();
+        QuickUseSlotStore.replaceAuthoritative(
+            QuickSlotConfig.empty().withSlot(4, new QuickSlotEntry(
+                tool.itemId(), tool.displayName(), 1500, 1500, ""
+            )),
+            acceptedRequestId,
+            true
+        );
 
         assertEquals(
             tool,
