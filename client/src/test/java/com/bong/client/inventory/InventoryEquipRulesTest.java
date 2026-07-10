@@ -6,6 +6,7 @@ import com.bong.client.inventory.model.SlotContents;
 import org.junit.jupiter.api.Test;
 
 import java.util.EnumMap;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -159,7 +160,7 @@ class InventoryEquipRulesTest {
     }
 
     @Test
-    void stonePickaxeCanEquipBothHands() {
+    void stonePickaxeCanEquipAllHeldHands() {
         InventoryItem pickaxe = item(6006L, "stone_pickaxe", 1, 2);
 
         assertTrue(InventoryEquipRules.isTool(pickaxe), "石镐应被识别为工具(白名单已补全)");
@@ -167,6 +168,10 @@ class InventoryEquipRulesTest {
             "石镐应能装主手");
         assertTrue(InventoryEquipRules.canEquip(pickaxe, EquipSlotType.OFF_HAND, null, equipped()),
             "石镐应能装副手(工具双手可用)");
+        assertTrue(InventoryEquipRules.canEquip(pickaxe, EquipSlotType.EXTRA_HAND_0, null, equipped()),
+            "石镐应能装 EXTRA_HAND_0");
+        assertTrue(InventoryEquipRules.canEquip(pickaxe, EquipSlotType.EXTRA_HAND_1, null, equipped()),
+            "石镐应能装 EXTRA_HAND_1");
         assertFalse(InventoryEquipRules.canPlaceIntoHotbar(pickaxe), "工具不进 hotbar");
     }
 
@@ -246,11 +251,20 @@ class InventoryEquipRulesTest {
     }
 
     @Test
-    void toolAndHoeCanEquipOffHand() {
-        assertTrue(InventoryEquipRules.canEquip(item(5005L, "dun_qi_jia", 1, 1),
-            EquipSlotType.OFF_HAND, null, equipped()), "工具应能装副手");
-        assertTrue(InventoryEquipRules.canEquip(item(7007L, "hoe_iron", 1, 2),
-            EquipSlotType.OFF_HAND, null, equipped()), "锄头应能装副手");
+    void toolAndHoeCanEquipOffHandAndExtraHands() {
+        InventoryItem tool = item(5005L, "dun_qi_jia", 1, 1);
+        InventoryItem hoe = item(7007L, "hoe_iron", 1, 2);
+
+        assertTrue(InventoryEquipRules.canEquip(tool, EquipSlotType.OFF_HAND, null, equipped()),
+            "工具应能装副手");
+        assertTrue(InventoryEquipRules.canEquip(hoe, EquipSlotType.OFF_HAND, null, equipped()),
+            "锄头应能装副手");
+        for (EquipSlotType extraHand : List.of(EquipSlotType.EXTRA_HAND_0, EquipSlotType.EXTRA_HAND_1)) {
+            assertTrue(InventoryEquipRules.canEquip(tool, extraHand, null, equipped()),
+                "工具应能装 " + extraHand);
+            assertTrue(InventoryEquipRules.canEquip(hoe, extraHand, null, equipped()),
+                "锄头应能装 " + extraHand);
+        }
     }
 
     @Test

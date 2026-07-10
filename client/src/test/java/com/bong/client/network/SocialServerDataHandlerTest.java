@@ -84,6 +84,42 @@ public class SocialServerDataHandlerTest {
     }
 
     @Test
+    void exposureKeepsNameTagHiddenUntilAuthoritativeAnonymityRefreshArrives() {
+        SocialStateStore.replaceAnonymity("char:witness", List.of(
+            new SocialStateStore.SocialRemoteIdentity(
+                "char:steve",
+                true,
+                "",
+                "",
+                "无名修士",
+                List.of()
+            )
+        ));
+
+        ServerDataRouter.RouteResult exposure = ServerDataRouter.createDefault().route("""
+            {"v":1,"type":"social_exposure","actor":"char:steve","kind":"chat",
+             "witnesses":["char:witness"],"tick":84000,"zone":"starter_valley"}
+            """, 0);
+        assertTrue(exposure.isHandled(), exposure.logMessage());
+        assertFalse(
+            SocialStateStore.shouldShowRemoteNameTag("char:steve", "Steve"),
+            "social_exposure is HUD/event history only; name tags must wait for social_anonymity"
+        );
+
+        ServerDataRouter.RouteResult anonymity = ServerDataRouter.createDefault().route("""
+            {"v":1,"type":"social_anonymity","viewer":"char:witness","remotes":[
+              {"player_uuid":"char:steve","anonymous":false,"display_name":"char:steve",
+               "realm_band":null,"breath_hint":"无名修士","renown_tags":[]}
+            ]}
+            """, 0);
+        assertTrue(anonymity.isHandled(), anonymity.logMessage());
+        assertTrue(
+            SocialStateStore.shouldShowRemoteNameTag("char:steve", "Steve"),
+            "authoritative social_anonymity refresh should unlock the remote name tag without reconnect"
+        );
+    }
+
+    @Test
     void pactFeudRenownAndSparringUpdateStores() {
         ServerDataRouter router = ServerDataRouter.createDefault();
 
