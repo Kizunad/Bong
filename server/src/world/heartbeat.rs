@@ -423,6 +423,7 @@ impl WorldHeartbeat {
         &mut self,
         zone_registry: &mut ZoneRegistry,
         records: &[HeartbeatPseudoVeinRecord],
+        current_tick: u64,
     ) -> usize {
         let mut restored = 0;
         for record in records {
@@ -488,13 +489,15 @@ impl WorldHeartbeat {
                 }
             }
 
+            let observed_age = record.last_tick.saturating_sub(record.spawned_at_tick);
+            let rebased_spawned_at = current_tick.saturating_sub(observed_age);
             let mut state = PseudoVeinRuntimeState::new(
                 record.zone_id.clone(),
                 record.center_xz,
-                record.spawned_at_tick,
+                rebased_spawned_at,
                 record.season_at_spawn,
             );
-            state.last_tick = record.last_tick;
+            state.last_tick = current_tick;
             state.qi_current = record.qi_current.clamp(0.0, 1.0);
             state.total_qi_consumed = record.total_qi_consumed.max(0.0);
             state.warning_sent = record.warning_sent;
@@ -2684,9 +2687,16 @@ mod tests {
                 dissipated: false,
                 season_at_spawn: crate::schema::pseudo_vein::PseudoVeinSeasonV1::Summer,
             }],
+            2_000,
         );
         assert_eq!(restored, 1);
         assert_eq!(heartbeat.active_pseudo_vein_count(), 1);
+        let restored_state = heartbeat
+            .active_pseudo_veins
+            .get("pseudo_vein_heartbeat_7")
+            .expect("hydrate must restore pseudo-vein lifecycle state");
+        assert_eq!(restored_state.lifecycle.spawned_at, 1_800);
+        assert_eq!(restored_state.last_tick, 2_000);
         let restored_zone = zones
             .find_zone_by_name("pseudo_vein_heartbeat_7")
             .expect("hydrate must recreate runtime pseudo-vein zone");
@@ -2722,6 +2732,52 @@ mod tests {
             zones.find_zone_by_name("pseudo_vein_heartbeat_8").is_some(),
             "restore must advance next_pseudo_vein_index past restored heartbeat suffixes"
         );
+    }
+
+    #[test]
+    fn restored_pseudo_vein_rebases_old_ticks_to_restart_epoch() {
+        let mut heartbeat = WorldHeartbeat::default();
+        let mut zones = ZoneRegistry {
+            zones: vec![zone("waste", 0.0, 0.0, 0.1)],
+        };
+        let restored = heartbeat.restore_pseudo_vein_records(
+            &mut zones,
+            &[HeartbeatPseudoVeinRecord {
+                zone_id: "pseudo_vein_heartbeat_3".to_string(),
+                dimension: DimensionKind::Overworld,
+                bounds_min: [-10.0, 60.0, -10.0],
+                bounds_max: [10.0, 90.0, 10.0],
+                danger_level: PSEUDO_VEIN_DANGER_LEVEL,
+                active_events: vec![EVENT_PSEUDO_VEIN.to_string()],
+                patrol_anchors: Vec::new(),
+                center_xz: [0.0, 0.0],
+                spawned_at_tick: 1_000,
+                last_tick: 1_200,
+                qi_current: 0.42,
+                total_qi_consumed: 0.18,
+                warning_sent: false,
+                dissipated: false,
+                season_at_spawn: crate::schema::pseudo_vein::PseudoVeinSeasonV1::Summer,
+            }],
+            0,
+        );
+        assert_eq!(restored, 1);
+
+        let state = heartbeat
+            .active_pseudo_veins
+            .get_mut("pseudo_vein_heartbeat_3")
+            .expect("restart hydrate must restore pseudo-vein state");
+        assert_eq!(state.lifecycle.spawned_at, 0);
+        assert_eq!(state.last_tick, 0);
+        let qi_before = state.qi_current;
+
+        let _ = state.advance(1, Vec::new());
+
+        assert!(
+            state.qi_current < qi_before,
+            "重启后的第一 tick 必须立即继续衰减，不能等待新时钟追平旧 last_tick"
+        );
+        assert_eq!(state.last_tick, 1);
     }
 
     #[test]

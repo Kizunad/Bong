@@ -20,6 +20,7 @@ use valence::prelude::{
 use crate::combat::components::{Lifecycle, LifecycleState};
 use crate::cultivation::components::{Cultivation, Realm};
 use crate::cultivation::life_record::{BiographyEntry, DeathInsightRecord, LifeRecord};
+use crate::cultivation::tick::CultivationClock;
 use crate::cultivation::void::components::{VoidActionCooldowns, VoidActionKind};
 use crate::npc::brain::{canonical_npc_id, ChaseAction, DashAction, FleeAction, MeleeAttackAction};
 use crate::npc::movement::{MovementController, MovementCooldowns, MovementMode};
@@ -690,6 +691,7 @@ fn bootstrap_persistence_system(
     mut daily_backup_state: valence::prelude::ResMut<DailyBackupState>,
     mut zones: Option<ResMut<crate::world::zone::ZoneRegistry>>,
     mut heartbeat: Option<ResMut<WorldHeartbeat>>,
+    clock: Option<Res<CultivationClock>>,
     mut void_action_cooldowns: Option<ResMut<VoidActionCooldowns>>,
     mut zone_influence_map: Option<ResMut<crate::world::territory::ZoneInfluenceMap>>,
 ) {
@@ -749,7 +751,13 @@ fn bootstrap_persistence_system(
 
     if let Some(zone_registry) = zones.as_deref_mut() {
         if let Some(heartbeat) = heartbeat.as_deref_mut() {
-            match hydrate_heartbeat_pseudo_veins(&settings, heartbeat, zone_registry) {
+            let current_tick = clock.as_deref().map(|clock| clock.tick).unwrap_or_default();
+            match hydrate_heartbeat_pseudo_veins(
+                &settings,
+                heartbeat,
+                zone_registry,
+                current_tick,
+            ) {
                 Ok(count) if count > 0 => tracing::info!(
                     "[bong][persistence] hydrated {count} heartbeat pseudo-vein runtime record(s) from sqlite"
                 ),
@@ -3255,9 +3263,10 @@ fn hydrate_heartbeat_pseudo_veins(
     settings: &PersistenceSettings,
     heartbeat: &mut WorldHeartbeat,
     zones: &mut crate::world::zone::ZoneRegistry,
+    current_tick: u64,
 ) -> io::Result<usize> {
     let pseudo_veins = load_heartbeat_pseudo_veins_snapshot(settings)?;
-    Ok(heartbeat.restore_pseudo_vein_records(zones, &pseudo_veins))
+    Ok(heartbeat.restore_pseudo_vein_records(zones, &pseudo_veins, current_tick))
 }
 
 fn hydrate_zone_overlays(
@@ -9942,8 +9951,11 @@ mod persistence_tests {
         let record = heartbeat_pseudo_vein_record("pseudo_vein_heartbeat_7");
         let mut heartbeat = WorldHeartbeat::default();
         let mut zones = crate::world::zone::ZoneRegistry::fallback();
-        let restored =
-            heartbeat.restore_pseudo_vein_records(&mut zones, std::slice::from_ref(&record));
+        let restored = heartbeat.restore_pseudo_vein_records(
+            &mut zones,
+            std::slice::from_ref(&record),
+            record.last_tick,
+        );
         assert_eq!(
             restored, 1,
             "fixture record must restore into heartbeat before persistence roundtrip"
@@ -10492,8 +10504,11 @@ mod persistence_tests {
         let mut seed_heartbeat = WorldHeartbeat::default();
         let mut seed_zones = crate::world::zone::ZoneRegistry::fallback();
         assert_eq!(
-            seed_heartbeat
-                .restore_pseudo_vein_records(&mut seed_zones, std::slice::from_ref(&record)),
+            seed_heartbeat.restore_pseudo_vein_records(
+                &mut seed_zones,
+                std::slice::from_ref(&record),
+                record.last_tick,
+            ),
             1
         );
         persist_heartbeat_pseudo_veins_snapshot(&settings, &seed_heartbeat, &seed_zones)
@@ -10509,14 +10524,23 @@ mod persistence_tests {
 
         let mut restored_heartbeat = WorldHeartbeat::default();
         let mut restored_zones = crate::world::zone::ZoneRegistry::fallback();
-        let restored_count =
-            hydrate_heartbeat_pseudo_veins(&settings, &mut restored_heartbeat, &mut restored_zones)
-                .expect("heartbeat pseudo-vein hydration should succeed");
+        let restart_tick = 25;
+        let restored_count = hydrate_heartbeat_pseudo_veins(
+            &settings,
+            &mut restored_heartbeat,
+            &mut restored_zones,
+            restart_tick,
+        )
+        .expect("heartbeat pseudo-vein hydration should succeed");
         hydrate_zone_runtime(&settings, &mut restored_zones)
             .expect("zone runtime hydration should succeed after pseudo-vein zone rebuild");
 
         assert_eq!(restored_count, 1);
         assert_eq!(restored_heartbeat.active_pseudo_vein_count(), 1);
+        let restored_records = restored_heartbeat.active_pseudo_vein_records(&restored_zones);
+        assert_eq!(restored_records.len(), 1);
+        assert_eq!(restored_records[0].last_tick, restart_tick);
+        assert_eq!(restored_records[0].spawned_at_tick, 0);
         let restored_zone = restored_zones
             .find_zone_by_name("pseudo_vein_heartbeat_7")
             .expect("hydrate must recreate missing dynamic pseudo-vein zone before runtime rows");
