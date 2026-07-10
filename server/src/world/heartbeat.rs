@@ -652,34 +652,19 @@ pub fn register(app: &mut App) {
         ),
     );
     // heartbeat 事件评估每 200 tick 一次，但修炼/释放等系统会逐 tick 改 zone。
-    // PostUpdate 镜像保证帧末 state/ledger 与物理 zone 同值；持久化本身也直接读 zone，
-    // 因而定时快照不会写出互相矛盾的双表。
-    app.add_systems(PostUpdate, sync_active_pseudo_vein_qi_system);
+    // PostUpdate 只把物理 zone 同步进 lifecycle；账本必须由真实 QiTransfer 路径维护，
+    // 不能在帧末用 set_balance 掩盖未记账流动。持久化本身直接读 zone，双表仍同值。
+    app.add_systems(PostUpdate, sync_active_pseudo_vein_state_system);
 }
 
-pub(crate) fn sync_active_pseudo_vein_qi_system(
+pub(crate) fn sync_active_pseudo_vein_state_system(
     mut heartbeat: ResMut<WorldHeartbeat>,
     zones: Option<Res<ZoneRegistry>>,
-    mut qi_ledger: ResMut<WorldQiAccount>,
 ) {
     let Some(zones) = zones.as_deref() else {
         return;
     };
     heartbeat.sync_active_pseudo_vein_qi_from_zones(zones);
-    for zone_id in heartbeat.active_pseudo_vein_zone_ids() {
-        let Some(zone) = zones.find_zone_by_name(zone_id.as_str()) else {
-            continue;
-        };
-        let absolute_qi = zone.spirit_qi.max(0.0) * QI_ZONE_UNIT_CAPACITY;
-        if let Err(error) = qi_ledger.set_balance(QiAccountId::zone(zone_id.as_str()), absolute_qi)
-        {
-            tracing::warn!(
-                "[bong][heartbeat] failed to mirror dynamic pseudo-vein qi zone={} qi={}: {error}",
-                zone_id,
-                absolute_qi
-            );
-        }
-    }
 }
 
 pub fn season_event_modifiers(season: Season) -> SeasonEventModifiers {
@@ -3096,7 +3081,7 @@ mod tests {
     }
 
     #[test]
-    fn post_update_sync_tracks_external_zone_change_between_heartbeat_evaluations() {
+    fn post_update_sync_tracks_external_zone_change_without_rewriting_ledger() {
         let mut heartbeat = WorldHeartbeat::default();
         let mut zones = ZoneRegistry {
             zones: vec![zone("waste", 0.0, 0.0, 0.1)],
@@ -3130,6 +3115,18 @@ mod tests {
             .find_zone_mut("pseudo_vein_heartbeat_0")
             .expect("spawned dynamic zone must exist")
             .spirit_qi = 0.55;
+        let zone_account = QiAccountId::zone("pseudo_vein_heartbeat_0");
+        let ledger_balance_before = qi_ledger.balance(&zone_account);
+        let ledger_total_before = qi_ledger.total();
+        qi_ledger.push_transfer_audit(
+            QiTransfer::new(
+                zone_account.clone(),
+                QiAccountId::player("external-cultivator"),
+                0.05 * QI_ZONE_UNIT_CAPACITY,
+                QiTransferReason::CultivationRegen,
+            )
+            .expect("external cultivation audit fixture should be valid"),
+        );
 
         let mut app = App::new();
         app.insert_resource(heartbeat);
@@ -3140,7 +3137,7 @@ mod tests {
         app.add_event::<EventChainTrigger>();
         app.add_event::<QiTransfer>();
         app.add_systems(Update, heartbeat_tick);
-        app.add_systems(PostUpdate, sync_active_pseudo_vein_qi_system);
+        app.add_systems(PostUpdate, sync_active_pseudo_vein_state_system);
 
         app.update();
 
@@ -3155,16 +3152,29 @@ mod tests {
         );
         let ledger = app.world().resource::<WorldQiAccount>();
         assert_eq!(
-            ledger.balance(&QiAccountId::zone("pseudo_vein_heartbeat_0")),
-            0.55 * QI_ZONE_UNIT_CAPACITY,
-            "expected dynamic-zone ledger mirror to match the externally changed physical field"
+            ledger.balance(&zone_account),
+            ledger_balance_before,
+            "expected frame-end lifecycle sync not to overwrite the ledger without a real transfer"
+        );
+        assert_eq!(
+            ledger.total(),
+            ledger_total_before,
+            "expected frame-end lifecycle sync to preserve ledger total, actual {}",
+            ledger.total()
+        );
+        assert!(
+            ledger
+                .transfers()
+                .iter()
+                .any(|transfer| transfer.reason == QiTransferReason::CultivationRegen),
+            "expected external zone consumption to retain its audit trail"
         );
         assert!(
             ledger
                 .transfers()
                 .iter()
                 .all(|transfer| transfer.reason != QiTransferReason::PseudoVeinSettle),
-            "expected non-due heartbeat tick to mirror only, not apply lifecycle decay"
+            "expected non-due heartbeat tick not to apply lifecycle decay"
         );
     }
 

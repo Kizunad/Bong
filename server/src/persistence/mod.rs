@@ -28,7 +28,9 @@ use crate::npc::patrol::NpcPatrol;
 use crate::npc::spawn::{NpcBlackboard, NpcCombatLoadout, NpcMarker, NpcMeleeArchetype};
 use crate::player::state::canonical_player_id;
 use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
-use crate::qi_physics::ledger::{QiAccountId, WorldQiAccount};
+use crate::qi_physics::ledger::{
+    pending_inflow_account, QiAccountId, WorldQiAccount, PENDING_INFLOW_ACCOUNT_ID,
+};
 use crate::schema::common::NpcStateKind;
 use crate::schema::pseudo_vein::PseudoVeinSeasonV1;
 use crate::schema::social::{
@@ -44,8 +46,8 @@ pub mod identity;
 pub const DEFAULT_DATABASE_PATH: &str = "data/bong.db";
 pub const SQLITE_BUSY_TIMEOUT_MS: u64 = 15_000;
 const DEFAULT_DECEASED_PUBLIC_DIR: &str = "../library-web/public/deceased";
-/// plan-bughunt-ao-worldgen-state-pseudo-vein-restart-loss-v1：v33 新增伪灵脉 heartbeat runtime 表。
-const CURRENT_USER_VERSION: i32 = 33;
+/// v33 新增伪灵脉 heartbeat runtime；v34 持久化无其它物理字段承载的 pending inflow 池。
+const CURRENT_USER_VERSION: i32 = 34;
 const AGENT_WORLD_MODEL_ROW_ID: i64 = 1;
 const ASCENSION_QUOTA_ROW_ID: i64 = 1;
 const TRIBULATION_KIND_DU_XU: &str = "du_xu";
@@ -735,6 +737,21 @@ fn bootstrap_persistence_system(
         );
     }
 
+    match load_pending_inflow_balance(&settings) {
+        Ok(Some(balance)) => {
+            if let Err(error) = qi_ledger.set_balance(pending_inflow_account(), balance) {
+                tracing::warn!(
+                    "[bong][persistence] failed to hydrate pending inflow balance={balance}: {error}"
+                );
+            }
+        }
+        Ok(None) => {}
+        Err(error) => tracing::warn!(
+            "[bong][persistence] failed to hydrate pending inflow balance at {}: {error}",
+            settings.db_path().display()
+        ),
+    }
+
     if let Err(error) = scan_orphaned_npc_archives(&settings) {
         tracing::warn!(
             "[bong][persistence] failed to scan orphaned npc archives at {}: {error}",
@@ -786,9 +803,9 @@ fn bootstrap_persistence_system(
         if let Some(heartbeat) = heartbeat.as_deref_mut() {
             heartbeat.sync_active_pseudo_vein_qi_from_zones(zone_registry);
         }
-        // WorldQiAccount 按架构在每次启动时重置；zones_runtime 才是跨重启字段权威。
-        // 动态伪灵脉恢复后把该字段同步成 zone ledger 镜像，不发生转账，也不重复从
-        // pending pool 借款。后续消散会通过 PseudoVeinSettle 把剩余余额真实转回池中。
+        // zone 余额从 zones_runtime 重建；pending inflow 是唯一没有 ECS/zone 物理字段
+        // 承载的账户，已由 qi_runtime_accounts 单独恢复。这里仅建立动态 zone 镜像，
+        // 不发生转账、不重复借款；后续消散通过 PseudoVeinSettle 归还到已恢复的池。
         for zone_id in restored_pseudo_vein_zone_ids {
             let Some(zone) = zone_registry.find_zone_by_name(zone_id.as_str()) else {
                 continue;
@@ -861,6 +878,7 @@ fn persist_zone_runtime_system(
     mut snapshot_state: ResMut<ZoneRuntimeSnapshotState>,
     zones: Option<Res<crate::world::zone::ZoneRegistry>>,
     heartbeat: Option<Res<WorldHeartbeat>>,
+    qi_ledger: Res<WorldQiAccount>,
 ) {
     let Some(zone_registry) = zones else {
         return;
@@ -878,6 +896,7 @@ fn persist_zone_runtime_system(
         &settings,
         &zone_registry,
         heartbeat.as_deref(),
+        &qi_ledger,
     ) {
         Ok(_) => {
             snapshot_state.last_snapshot_wall = wall_clock;
@@ -894,6 +913,7 @@ fn persist_zone_runtime_on_shutdown_system(
     mut app_exit: EventReader<AppExit>,
     zones: Option<Res<crate::world::zone::ZoneRegistry>>,
     heartbeat: Option<Res<WorldHeartbeat>>,
+    qi_ledger: Res<WorldQiAccount>,
 ) {
     if app_exit.read().next().is_none() {
         return;
@@ -906,6 +926,7 @@ fn persist_zone_runtime_on_shutdown_system(
         &settings,
         &zone_registry,
         heartbeat.as_deref(),
+        &qi_ledger,
     ) {
         tracing::warn!(
             "[bong][persistence] failed to flush zone runtime on shutdown at {}: {error}",
@@ -2153,6 +2174,26 @@ fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<()> {
         transaction.commit()?;
     }
 
+    let current_version: i32 =
+        connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
+    if current_version < 34 {
+        // pending inflow 没有对应 ECS component / zone 字段可在重启时重建，必须单独
+        // 落盘；其余 WorldQiAccount 条目仍由各自物理权威字段恢复，不持久化审计轨迹。
+        let transaction = connection.transaction()?;
+        transaction.execute_batch(
+            "
+            CREATE TABLE IF NOT EXISTS qi_runtime_accounts (
+                account_id         TEXT PRIMARY KEY,
+                balance            REAL NOT NULL CHECK (balance >= 0),
+                schema_version     INTEGER NOT NULL CHECK (schema_version >= 1),
+                last_updated_wall  INTEGER NOT NULL CHECK (last_updated_wall >= 0)
+            );
+            PRAGMA user_version = 34;
+            ",
+        )?;
+        transaction.commit()?;
+    }
+
     let final_version: i32 = connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
     if final_version != CURRENT_USER_VERSION {
         return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
@@ -3145,6 +3186,7 @@ fn persist_zone_runtime_snapshot_with_heartbeat(
     settings: &PersistenceSettings,
     zones: &crate::world::zone::ZoneRegistry,
     heartbeat: Option<&WorldHeartbeat>,
+    qi_ledger: &WorldQiAccount,
 ) -> io::Result<()> {
     let wall_clock = current_unix_seconds();
     let mut connection = open_persistence_connection(settings)?;
@@ -3154,6 +3196,7 @@ fn persist_zone_runtime_snapshot_with_heartbeat(
         let pseudo_veins = heartbeat.active_pseudo_vein_records(zones);
         replace_heartbeat_pseudo_vein_records(&transaction, &pseudo_veins, wall_clock)?;
     }
+    upsert_pending_inflow_balance(&transaction, qi_ledger, wall_clock)?;
     transaction.commit().map_err(io::Error::other)
 }
 
@@ -5140,6 +5183,43 @@ fn upsert_zone_runtime(
     Ok(())
 }
 
+fn upsert_pending_inflow_balance(
+    transaction: &rusqlite::Transaction<'_>,
+    qi_ledger: &WorldQiAccount,
+    wall_clock: i64,
+) -> io::Result<()> {
+    let balance = qi_ledger.balance(&pending_inflow_account());
+    if !balance.is_finite() || balance < 0.0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("invalid pending inflow balance {balance}"),
+        ));
+    }
+    transaction
+        .execute(
+            "
+            INSERT INTO qi_runtime_accounts (
+                account_id,
+                balance,
+                schema_version,
+                last_updated_wall
+            ) VALUES (?1, ?2, ?3, ?4)
+            ON CONFLICT(account_id) DO UPDATE SET
+                balance = excluded.balance,
+                schema_version = excluded.schema_version,
+                last_updated_wall = excluded.last_updated_wall
+            ",
+            params![
+                PENDING_INFLOW_ACCOUNT_ID,
+                balance,
+                CURRENT_SCHEMA_VERSION,
+                wall_clock,
+            ],
+        )
+        .map_err(io::Error::other)?;
+    Ok(())
+}
+
 fn replace_heartbeat_pseudo_vein_records(
     transaction: &rusqlite::Transaction<'_>,
     records: &[HeartbeatPseudoVeinRecord],
@@ -5711,6 +5791,30 @@ fn load_zone_runtime_snapshot_from_connection(
         });
     }
     Ok(records)
+}
+
+fn load_pending_inflow_balance(settings: &PersistenceSettings) -> io::Result<Option<f64>> {
+    let connection = open_persistence_connection(settings)?;
+    let balance = connection
+        .query_row(
+            "
+            SELECT balance
+            FROM qi_runtime_accounts
+            WHERE account_id = ?1
+            ",
+            params![PENDING_INFLOW_ACCOUNT_ID],
+            |row| row.get::<_, f64>(0),
+        )
+        .optional()
+        .map_err(io::Error::other)?;
+    match balance {
+        Some(value) if value.is_finite() && value >= 0.0 => Ok(Some(value)),
+        Some(value) => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("invalid persisted pending inflow balance {value}"),
+        )),
+        None => Ok(None),
+    }
 }
 
 fn load_heartbeat_pseudo_veins_from_connection(
@@ -7367,7 +7471,7 @@ mod persistence_tests {
     use crate::player::state::{
         save_player_core_slice, save_player_state, PlayerState, PlayerStatePersistence,
     };
-    use crate::schema::common::NpcStateKind;
+    use crate::schema::common::{NpcStateKind, SPIRIT_QI_TOTAL};
     use crate::world::zone::DEFAULT_SPAWN_ZONE_NAME;
     use rusqlite::{params, OptionalExtension};
     use serde_json::Value;
@@ -10040,8 +10144,13 @@ mod persistence_tests {
             .expect("restored dynamic zone must exist")
             .spirit_qi = 0.29;
 
-        persist_zone_runtime_snapshot_with_heartbeat(&settings, &zones, Some(&heartbeat))
-            .expect("atomic zone/lifecycle snapshot should persist");
+        persist_zone_runtime_snapshot_with_heartbeat(
+            &settings,
+            &zones,
+            Some(&heartbeat),
+            &WorldQiAccount::default(),
+        )
+        .expect("atomic zone/lifecycle snapshot should persist");
 
         let heartbeat_rows =
             load_heartbeat_pseudo_veins_snapshot(&settings).expect("heartbeat rows should load");
@@ -10091,8 +10200,14 @@ mod persistence_tests {
             .find_zone_mut(record.zone_id.as_str())
             .expect("restored dynamic zone must exist")
             .spirit_qi = record.qi_current;
-        persist_zone_runtime_snapshot_with_heartbeat(&settings, &zones, Some(&heartbeat))
-            .expect("active pseudo-vein snapshot should persist");
+        let qi_ledger = WorldQiAccount::default();
+        persist_zone_runtime_snapshot_with_heartbeat(
+            &settings,
+            &zones,
+            Some(&heartbeat),
+            &qi_ledger,
+        )
+        .expect("active pseudo-vein snapshot should persist");
         assert!(
             load_zone_runtime_snapshot(&settings)
                 .expect("first zone runtime snapshot should load")
@@ -10103,8 +10218,13 @@ mod persistence_tests {
 
         zones.zones.retain(|zone| zone.name != record.zone_id);
         let no_active_heartbeat = WorldHeartbeat::default();
-        persist_zone_runtime_snapshot_with_heartbeat(&settings, &zones, Some(&no_active_heartbeat))
-            .expect("post-dissipation snapshot should commit");
+        persist_zone_runtime_snapshot_with_heartbeat(
+            &settings,
+            &zones,
+            Some(&no_active_heartbeat),
+            &qi_ledger,
+        )
+        .expect("post-dissipation snapshot should commit");
 
         assert!(
             load_heartbeat_pseudo_veins_snapshot(&settings)
@@ -10762,8 +10882,22 @@ mod persistence_tests {
             .find_zone_mut(record.zone_id.as_str())
             .expect("seed pseudo-vein zone must exist")
             .spirit_qi = record.qi_current;
-        persist_zone_runtime_snapshot_with_heartbeat(&settings, &seed_zones, Some(&seed_heartbeat))
-            .expect("seed pseudo-vein lifecycle and zone runtime should persist atomically");
+        let zone_absolute = record.qi_current * QI_ZONE_UNIT_CAPACITY;
+        let mut seed_ledger = WorldQiAccount::default();
+        seed_ledger
+            .set_balance(QiAccountId::zone(record.zone_id.as_str()), zone_absolute)
+            .expect("seed dynamic zone ledger balance should be finite");
+        seed_ledger
+            .set_balance(pending_inflow_account(), SPIRIT_QI_TOTAL - zone_absolute)
+            .expect("seed pending inflow balance should be finite");
+        let total_before_restart = seed_ledger.total();
+        persist_zone_runtime_snapshot_with_heartbeat(
+            &settings,
+            &seed_zones,
+            Some(&seed_heartbeat),
+            &seed_ledger,
+        )
+        .expect("seed pseudo-vein, zone runtime and pending pool should persist atomically");
 
         let mut app = App::new();
         app.insert_resource(settings.clone());
@@ -10819,6 +10953,18 @@ mod persistence_tests {
             "expected first Update to persist hydrated pseudo-vein spirit_qi {}, actual {}",
             record.qi_current, persisted_pseudo_vein.spirit_qi
         );
+        let restored_ledger = app.world().resource::<WorldQiAccount>();
+        assert_eq!(
+            restored_ledger.balance(&pending_inflow_account()),
+            SPIRIT_QI_TOTAL - zone_absolute,
+            "expected restart to restore the pending pool that backs the active pseudo-vein loan"
+        );
+        assert_eq!(
+            restored_ledger.total(),
+            total_before_restart,
+            "expected pending pool plus dynamic zone balance to conserve across restart, actual {}",
+            restored_ledger.total()
+        );
         let persisted_heartbeat_record = persisted_after_update
             .iter()
             .find(|persisted| persisted.zone_id == record.zone_id)
@@ -10847,6 +10993,7 @@ mod persistence_tests {
         let mut app = App::new();
         app.insert_resource(settings.clone());
         app.insert_resource(ZoneRuntimeSnapshotState::default());
+        app.insert_resource(WorldQiAccount::default());
         app.insert_resource(crate::world::zone::ZoneRegistry {
             zones: vec![crate::world::zone::Zone {
                 name: DEFAULT_SPAWN_ZONE_NAME.to_string(),
@@ -14839,6 +14986,67 @@ mod persistence_tests {
         assert_eq!(
             user_version, CURRENT_USER_VERSION,
             "v33 迁移完成后 user_version 必须是 CURRENT_USER_VERSION={CURRENT_USER_VERSION}，实际 {user_version}"
+        );
+    }
+
+    #[test]
+    fn v34_migration_creates_pending_inflow_runtime_account_table() {
+        let db_path = database_path("v34-pending-inflow-runtime-account");
+        fs::create_dir_all(db_path.parent().expect("db path parent"))
+            .expect("temp db dir should create");
+        let mut connection = Connection::open(&db_path).expect("db should open");
+        connection
+            .execute_batch("PRAGMA user_version = 33;")
+            .expect("v33 fixture should set user_version");
+
+        apply_migrations(&mut connection).expect("v34 migration should succeed");
+
+        let mut statement = connection
+            .prepare("PRAGMA table_info(qi_runtime_accounts)")
+            .expect("qi_runtime_accounts table_info should prepare");
+        let columns = statement
+            .query_map([], |row| Ok(row.get::<_, String>(1)?))
+            .expect("qi_runtime_accounts table_info should query")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("qi_runtime_accounts columns should collect");
+        assert_eq!(
+            columns,
+            vec![
+                "account_id",
+                "balance",
+                "schema_version",
+                "last_updated_wall",
+            ],
+            "expected v34 runtime account table to preserve the pending pool, actual {columns:?}"
+        );
+        connection
+            .execute(
+                "
+                INSERT INTO qi_runtime_accounts
+                    (account_id, balance, schema_version, last_updated_wall)
+                VALUES (?1, 12.5, 1, 0)
+                ",
+                params![PENDING_INFLOW_ACCOUNT_ID],
+            )
+            .expect("valid pending inflow balance should persist");
+        let negative = connection.execute(
+            "
+            INSERT INTO qi_runtime_accounts
+                (account_id, balance, schema_version, last_updated_wall)
+            VALUES ('invalid-negative', -0.1, 1, 0)
+            ",
+            [],
+        );
+        assert!(
+            negative.is_err(),
+            "expected v34 balance CHECK to reject negative pending qi, actual {negative:?}"
+        );
+        let user_version: i32 = connection
+            .query_row("PRAGMA user_version;", [], |row| row.get(0))
+            .expect("user_version should be readable");
+        assert_eq!(
+            user_version, CURRENT_USER_VERSION,
+            "expected v34 migration to advance to {CURRENT_USER_VERSION}, actual {user_version}"
         );
     }
 }

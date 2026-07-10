@@ -5,6 +5,7 @@ use valence::prelude::{Commands, Entity, Events, Query, Res, ResMut, With};
 use crate::inventory::ItemRegistry;
 use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::schema::vfx_event::VfxEventPayloadV1;
+use crate::world::heartbeat::EVENT_PSEUDO_VEIN;
 use crate::world::terrain::TerrainProviders;
 use crate::world::zone::{BotanyZoneTag, Zone, ZoneRegistry};
 
@@ -46,6 +47,9 @@ impl PlantGrowthStage {
 
 #[allow(dead_code)]
 pub fn spawn_static_points_for_zone(zone: &Zone) -> Vec<PlantStaticPoint> {
+    if is_ephemeral_pseudo_vein_zone(zone) {
+        return Vec::new();
+    }
     // MVP 单点：zone 中心近似，Y 贴 zone 顶部（缺地面拾取的近似）
     let position = zone_center_position(zone);
     vec![PlantStaticPoint {
@@ -57,6 +61,12 @@ pub fn spawn_static_points_for_zone(zone: &Zone) -> Vec<PlantStaticPoint> {
         regen_ticks: 7_200,
         bound_entity: None,
     }]
+}
+
+fn is_ephemeral_pseudo_vein_zone(zone: &Zone) -> bool {
+    zone.active_events
+        .iter()
+        .any(|event| event == EVENT_PSEUDO_VEIN)
 }
 
 fn zone_center_position(zone: &Zone) -> [f64; 3] {
@@ -368,6 +378,12 @@ pub fn run_botany_lifecycle_tick(
         let Some(zone) = zone_registry.find_zone_by_name(plant.zone_name.as_str()) else {
             continue;
         };
+        if is_ephemeral_pseudo_vein_zone(zone) {
+            // 动态伪灵脉的余额由 pending-pool 借款与 PseudoVeinSettle 管理；旧进程若已
+            // 误生成植物，只清实体，不向 zone 回填未记账真元。
+            wither_targets.push(entity);
+            continue;
+        }
         let Some(kind) = registry.get(plant.id) else {
             continue;
         };
@@ -446,6 +462,11 @@ pub fn run_botany_lifecycle_tick(
     }
 
     for zone in &mut zone_registry.zones {
+        // heartbeat 动态伪灵脉是短生命周期借款账户，不参与 botany 直接扣写
+        // spirit_qi 的旧路径；否则植物没有真元账户，借款会无审计消失。
+        if is_ephemeral_pseudo_vein_zone(zone) {
+            continue;
+        }
         spawn_v2_plants_for_zone(
             &mut commands,
             zone,
@@ -517,6 +538,9 @@ pub fn run_botany_lifecycle_tick(
         let Some(zone) = zone_registry.find_zone_mut(point.zone_name.as_str()) else {
             continue;
         };
+        if is_ephemeral_pseudo_vein_zone(zone) {
+            continue;
+        }
         let Some(kind) = registry.get(point.preferred_plant) else {
             continue;
         };
@@ -691,6 +715,53 @@ mod tests {
         let zone_registry = app.world().resource::<ZoneRegistry>();
         let after = zone_registry.zones[0].spirit_qi;
         assert!(after < 0.6, "zone refresh should spend spirit_qi");
+    }
+
+    #[test]
+    fn ephemeral_pseudo_vein_skips_unledgered_botany_growth() {
+        let mut app = App::new();
+        app.insert_resource(BotanyKindRegistry::default());
+        app.insert_resource(PlantStaticPointStore::default());
+        app.insert_resource(BotanyVariantRoll::default());
+        app.insert_resource(PlantLifecycleClock {
+            tick: LIFECYCLE_INTERVAL_TICKS - 1,
+        });
+        app.insert_resource(ZoneRegistry {
+            zones: vec![Zone {
+                name: "pseudo_vein_heartbeat_0".to_string(),
+                dimension: crate::world::dimension::DimensionKind::Overworld,
+                bounds: (
+                    Position::new([0.0, 0.0, 0.0]).get(),
+                    Position::new([1.0, 1.0, 1.0]).get(),
+                ),
+                spirit_qi: 0.6,
+                danger_level: 1,
+                active_events: vec![EVENT_PSEUDO_VEIN.to_string()],
+                patrol_anchors: vec![],
+                blocked_tiles: vec![],
+                qi_equilibrium: 0.0,
+                qi_inflow_per_min: 0.0,
+            }],
+        });
+        app.add_systems(Update, run_botany_lifecycle_tick);
+
+        app.update();
+
+        let zones = app.world().resource::<ZoneRegistry>();
+        assert_eq!(
+            zones.zones[0].spirit_qi, 0.6,
+            "expected ephemeral pseudo-vein qi to remain ledger-managed, actual {}",
+            zones.zones[0].spirit_qi
+        );
+        let plant_count = {
+            let world = app.world_mut();
+            let mut query = world.query::<&Plant>();
+            query.iter(world).count()
+        };
+        assert_eq!(
+            plant_count, 0,
+            "expected no plant entity to consume an ephemeral pseudo-vein loan"
+        );
     }
 
     #[test]
