@@ -10767,14 +10767,13 @@ const MODULES = [
     ]
   },
   {
-    "components": [],
-    "crossLayer": [],
-    "gaps": [],
     "id": "client/network",
     "layer": "client",
     "name": "network",
     "path": "client/src/main/java/com/bong/client/network/",
-    "summary": "Fabric 微端的全部网络收发基础设施。S2C 方向：ProtoServerDataBridge 将 protobuf ServerDataEnvelope 解码并归一化为 legacy JSON 信封，ServerDataRouter 按 type-string 路由至 128 个已注册类型的 Handler，VfxEventRouter/AudioEventRouter 走独立 AV 通道；C2S 方向：ClientRequestProtocol 静态编码 JSON intent，ClientRequestSender 通过 Fabric CustomPayload 发往 bong:client_request 通道。",
+    "title": "客户端网络层 — CustomPayload 收发基础设施",
+    "summary": "Fabric 微端的全部网络收发基础设施。S2C 方向：ProtoServerDataBridge 将 protobuf ServerDataEnvelope 解码并归一化为 legacy JSON 信封，ServerDataRouter 按 type-string 路由至 127+ 域 Handler，VfxEventRouter/AudioEventRouter 走独立 AV 通道；C2S 方向：ClientRequestProtocol 静态编码 JSON intent，ClientRequestSender 通过 Fabric CustomPayload 发往 bong:client_request 通道。",
+    "fileCount": 101,
     "tags": [
       "network",
       "CustomPayload",
@@ -10785,8 +10784,536 @@ const MODULES = [
       "Fabric",
       "routing"
     ],
-    "title": "客户端网络层 — CustomPayload 收发基础设施",
-    "fileCount": 101
+    "components": [
+      {
+        "name": "ProtoServerDataBridge",
+        "role": "将 bong:server_data 通道收到的 protobuf 字节解码为 legacy JSON 信封（维护 PayloadCase→type-string 映射表，并对枚举前缀剥离、AoS→SoA、oneof 展开做结构归一化）",
+        "files": [
+          "client/src/main/java/com/bong/client/network/ProtoServerDataBridge.java"
+        ],
+        "keySymbols": [
+          "ProtoServerDataBridge",
+          "BridgeResult",
+          "CASE_TO_TYPE",
+          "bridge(byte[])",
+          "bridgeCultivationDetail",
+          "bridgeCastSync",
+          "bridgeEventStreamPush",
+          "bridgeDeathScreen"
+        ],
+        "deps": [
+          "protobuf-java",
+          "protobuf-java-util",
+          "gson"
+        ],
+        "wiring": {
+          "upstream": [
+            "bong:server_data (proto bytes, Envelope.ServerDataEnvelope)"
+          ],
+          "downstream": [
+            "ServerDataRouter (legacy JSON string)"
+          ]
+        },
+        "gaps": [
+          {
+            "severity": "info",
+            "note": "✅ RESOLVED #807(module-map triage 修复批次): CASE_TO_TYPE 映射表与 proto oneof 手动同步维护（已抽验确认为静态 Map 初始化），新增 proto 变体若忘记加入映射则 bridge 返回 error 丢包，无编译期保护——本轮核验（读代码到 line 193）确认新增的 REMAINS_SYNC / INVENTORY_MOVE_REJECTED / SCROLL_OPEN 三个 case 均已正确双登记（CASE_TO_TYPE + extractInner switch），未见漏注册"
+          },
+          {
+            "severity": "info",
+            "note": "bridgeCastSync / bridgeEventStreamPush / bridgeDeathScreen / bridgeMovementState / bridgeContainerState 各自手写枚举前缀剥离逻辑重复，任一 proto enum 改名可能静默失效"
+          }
+        ]
+      },
+      {
+        "name": "ServerDataRouter",
+        "role": "S2C 路由分发中心：将 legacy JSON 信封按 type-string 派发到 127 个已注册 ServerDataHandler，并捕获 handler 异常防崩溃",
+        "files": [
+          "client/src/main/java/com/bong/client/network/ServerDataRouter.java",
+          "client/src/main/java/com/bong/client/network/ServerDataHandler.java",
+          "client/src/main/java/com/bong/client/network/ServerDataEnvelope.java",
+          "client/src/main/java/com/bong/client/network/ServerDataDispatch.java",
+          "client/src/main/java/com/bong/client/network/AcknowledgingServerDataHandler.java",
+          "client/src/main/java/com/bong/client/network/ServerPayloadParseResult.java",
+          "client/src/main/java/com/bong/client/network/LegacyMessageServerDataHandler.java"
+        ],
+        "keySymbols": [
+          "ServerDataRouter",
+          "createDefault()",
+          "route(String, int)",
+          "RouteResult",
+          "ServerDataHandler",
+          "ServerDataEnvelope",
+          "ServerDataDispatch",
+          "AcknowledgingServerDataHandler"
+        ],
+        "deps": [],
+        "wiring": {
+          "upstream": [
+            "ProtoServerDataBridge (legacy JSON)"
+          ],
+          "downstream": [
+            "所有域 Handler (cultivation/combat/crafting/HUD/social/explore/inventory 等)",
+            "BongNetworkHandler (消费 RouteResult 更新 state 并推 HUD)"
+          ]
+        },
+        "gaps": [
+          {
+            "severity": "info",
+            "note": "status_snapshot 仍由 server 以 legacy JSON 直发（非 proto 路径）——本轮重读 ProtoServerDataBridge.CASE_TO_TYPE 全表确认无 STATUS_SNAPSHOT 映射，router 已注册 handler（line 140）但 proto 侧不覆盖；两条路径并存，依赖 legacy fallback 存活，无编译期保证"
+          }
+        ]
+      },
+      {
+        "name": "C2S 请求协议层",
+        "role": "客户端发向服务端的全部 intent 编码与发送，ClientRequestProtocol 提供 110+ 个静态 encode* 方法生成 JSON，ClientRequestSender 包装 Fabric CustomPayload 发送并暴露可测试 Backend seam",
+        "files": [
+          "client/src/main/java/com/bong/client/network/ClientRequestProtocol.java",
+          "client/src/main/java/com/bong/client/network/ClientRequestSender.java"
+        ],
+        "keySymbols": [
+          "ClientRequestProtocol",
+          "ClientRequestSender",
+          "CHANNEL_NAMESPACE",
+          "CHANNEL_PATH",
+          "MeridianId",
+          "InvLocation",
+          "ForgeAxis",
+          "Backend",
+          "encodeSkillBarCast",
+          "encodeScrollReadRequest"
+        ],
+        "deps": [
+          "fabric-api (ClientPlayNetworking)",
+          "gson"
+        ],
+        "wiring": {
+          "upstream": [
+            "UI 层 / HUD InputHandler / Screen（各 UI 交互触发点）"
+          ],
+          "downstream": [
+            "bong:client_request channel → server ClientRequestHandler（Rust）"
+          ]
+        },
+        "gaps": [
+          {
+            "severity": "info",
+            "note": "ClientRequestSender 主动绕过 ClientPlayNetworking.canSend()（Bong server 是定制 Valence 不走 Fabric minecraft:register 协商），force send；本轮重读 ClientRequestSender.java line 33-38 确认注释与实现均仍是有意设计。Fabric 升级或协议收紧若开始过滤 unregistered_channel 则 C2S 包静默丢失，与 canSend 拒发等价、不崩"
+          }
+        ]
+      },
+      {
+        "name": "VFX 事件系统",
+        "role": "bong:vfx_event 通道的解析与分发，路由到三 bridge：玩家骨骼动画 (play/stop_anim/inline)、粒子特效 (spawn_particle)、非玩家实体招式动画 (play_entity_anim)",
+        "files": [
+          "client/src/main/java/com/bong/client/network/VfxEventRouter.java",
+          "client/src/main/java/com/bong/client/network/VfxEventPayload.java",
+          "client/src/main/java/com/bong/client/network/VfxEventEnvelope.java",
+          "client/src/main/java/com/bong/client/network/VfxEventParseResult.java",
+          "client/src/main/java/com/bong/client/network/VfxEventAnimationBridge.java",
+          "client/src/main/java/com/bong/client/network/VfxParticleBridge.java",
+          "client/src/main/java/com/bong/client/network/VfxEntityAnimationBridge.java"
+        ],
+        "keySymbols": [
+          "VfxEventRouter",
+          "VfxEventPayload.PlayAnim",
+          "VfxEventPayload.PlayAnimInline",
+          "VfxEventPayload.SpawnParticle",
+          "VfxEventPayload.PlayEntityAnim",
+          "VfxEventAnimationBridge",
+          "VfxParticleBridge",
+          "VfxEntityAnimationBridge"
+        ],
+        "deps": [],
+        "wiring": {
+          "upstream": [
+            "bong:vfx_event channel (S2C JSON)"
+          ],
+          "downstream": [
+            "PlayerAnimator API (骨骼动画)",
+            "VfxRegistry / 粒子引擎 (粒子特效)",
+            "GeckoLib FaunaEntity (实体招式动画)"
+          ]
+        },
+        "gaps": []
+      },
+      {
+        "name": "Audio 事件系统",
+        "role": "bong:audio_event 通道的解析与分发，支持 play_sound_recipe（带 instance_id 跟踪）和 stop_sound_recipe 两类事件",
+        "files": [
+          "client/src/main/java/com/bong/client/network/AudioEventRouter.java",
+          "client/src/main/java/com/bong/client/network/AudioEventPayload.java",
+          "client/src/main/java/com/bong/client/network/AudioEventEnvelope.java",
+          "client/src/main/java/com/bong/client/network/AudioEventParseResult.java",
+          "client/src/main/java/com/bong/client/network/AudioPlaybackBridge.java"
+        ],
+        "keySymbols": [
+          "AudioEventRouter",
+          "AudioEventPayload.PlaySoundRecipe",
+          "AudioEventPayload.StopSoundRecipe",
+          "AudioPlaybackBridge",
+          "routePlay",
+          "routeStop"
+        ],
+        "deps": [],
+        "wiring": {
+          "upstream": [
+            "bong:audio_event channel (S2C JSON)"
+          ],
+          "downstream": [
+            "SoundEngine / BongSoundManager (音效播放)"
+          ]
+        },
+        "gaps": []
+      },
+      {
+        "name": "AgentUi 专属通道",
+        "role": "天道 UI 面板的专属 JSON 通道处理器，绕开 bong:server_data proto 路径，分别接收 bong:agent_ui_request 和 bong:agent_ui_close 两条裸 JSON 通道",
+        "files": [
+          "client/src/main/java/com/bong/client/network/AgentUiPayloadHandler.java"
+        ],
+        "keySymbols": [
+          "AgentUiPayloadHandler",
+          "handleRawRequest",
+          "handleRawClose",
+          "AgentUiStore",
+          "AgentUiScreen"
+        ],
+        "deps": [
+          "gson"
+        ],
+        "wiring": {
+          "upstream": [
+            "bong:agent_ui_request channel",
+            "bong:agent_ui_close channel"
+          ],
+          "downstream": [
+            "AgentUiStore (状态存储)",
+            "AgentUiScreen (UI 渲染)"
+          ]
+        },
+        "gaps": []
+      },
+      {
+        "name": "修炼域 Handlers",
+        "role": "修炼核心系统的 S2C handler 群组：经脉/境界/突破/心魔/顿悟/爆脉/蓄力/真元颜色/真脉(zhenmai) HUD 等修炼状态变化的客户端响应",
+        "files": [
+          "client/src/main/java/com/bong/client/network/CultivationDetailHandler.java",
+          "client/src/main/java/com/bong/client/network/PlayerStateHandler.java",
+          "client/src/main/java/com/bong/client/network/BurstMeridianHandler.java",
+          "client/src/main/java/com/bong/client/network/BreakthroughCinematicHandler.java",
+          "client/src/main/java/com/bong/client/network/HeartDemonOfferHandler.java",
+          "client/src/main/java/com/bong/client/network/InsightOfferHandler.java",
+          "client/src/main/java/com/bong/client/network/FullPowerStateHandler.java",
+          "client/src/main/java/com/bong/client/network/QiColorObservedHandler.java",
+          "client/src/main/java/com/bong/client/network/TechniquesSnapshotHandler.java",
+          "client/src/main/java/com/bong/client/network/TechniqueProficiencyUpdateHandler.java"
+        ],
+        "keySymbols": [
+          "CultivationDetailHandler",
+          "PlayerStateHandler",
+          "BreakthroughCinematicHandler",
+          "HeartDemonOfferHandler",
+          "InsightOfferHandler",
+          "FullPowerStateHandler"
+        ],
+        "deps": [],
+        "wiring": {
+          "upstream": [
+            "ServerDataRouter (cultivation_detail / player_state / burst_meridian_event / breakthrough_cinematic / heart_demon_offer / insight_offer / full_power_charging_state / full_power_release / full_power_exhausted_state / qi_color_observed / techniques_snapshot / technique_proficiency_update / zhenmai_hud)"
+          ],
+          "downstream": [
+            "CultivationStore / PlayerStateViewModel / HUD Planners"
+          ]
+        },
+        "gaps": []
+      },
+      {
+        "name": "战斗域 Handlers",
+        "role": "战斗 HUD 状态、施法同步、击退、防御窗口、护盾、武器装备/破损、法宝装备、毒性特征等战斗相关 S2C handler 群组",
+        "files": [
+          "client/src/main/java/com/bong/client/network/CombatHudStateHandler.java",
+          "client/src/main/java/com/bong/client/network/CastSyncHandler.java",
+          "client/src/main/java/com/bong/client/network/DefenseWindowHandler.java",
+          "client/src/main/java/com/bong/client/network/KnockbackSyncHandler.java",
+          "client/src/main/java/com/bong/client/network/ShieldBlockHitHandler.java",
+          "client/src/main/java/com/bong/client/network/ShieldBrokenHandler.java",
+          "client/src/main/java/com/bong/client/network/WeaponEquippedHandler.java",
+          "client/src/main/java/com/bong/client/network/WeaponBrokenHandler.java",
+          "client/src/main/java/com/bong/client/network/TreasureEquippedHandler.java",
+          "client/src/main/java/com/bong/client/network/PoisonTraitServerDataHandler.java"
+        ],
+        "keySymbols": [
+          "CombatHudStateHandler",
+          "CastSyncHandler",
+          "DefenseWindowHandler",
+          "KnockbackSyncHandler",
+          "ShieldBlockHitHandler",
+          "ShieldBrokenHandler",
+          "TreasureEquippedHandler"
+        ],
+        "deps": [],
+        "wiring": {
+          "upstream": [
+            "ServerDataRouter (combat_hud_state / cast_sync / defense_window / knockback_sync / shield_block_hit / shield_broken / weapon_equipped / weapon_broken / treasure_equipped / poison_trait)"
+          ],
+          "downstream": [
+            "CombatHudState / CastStore / WeaponStore / ShieldStore / HUD Planner / VFX 调用"
+          ]
+        },
+        "gaps": []
+      },
+      {
+        "name": "制作子系统 Handlers (alchemy/forge/craft)",
+        "role": "炼丹、炼器、通用手搓三条制作链路的 S2C handler 群组，各自有 session/outcome/furnace/station/recipe-book 等多类型事件（另有 AlchemyContaminationHandler/RecipeUnlockedHandler 仍在 ServerDataRouter 注册但未在下方 files 列出——见 files≤12 体积上限说明）",
+        "files": [
+          "client/src/main/java/com/bong/client/network/alchemy/AlchemyFurnaceHandler.java",
+          "client/src/main/java/com/bong/client/network/alchemy/AlchemySessionHandler.java",
+          "client/src/main/java/com/bong/client/network/alchemy/AlchemyOutcomeForecastHandler.java",
+          "client/src/main/java/com/bong/client/network/alchemy/AlchemyOutcomeResolvedHandler.java",
+          "client/src/main/java/com/bong/client/network/alchemy/AlchemyRecipeBookHandler.java",
+          "client/src/main/java/com/bong/client/network/forge/ForgeStationHandler.java",
+          "client/src/main/java/com/bong/client/network/forge/ForgeSessionHandler.java",
+          "client/src/main/java/com/bong/client/network/forge/ForgeOutcomeHandler.java",
+          "client/src/main/java/com/bong/client/network/forge/ForgeBlueprintBookHandler.java",
+          "client/src/main/java/com/bong/client/network/CraftRecipeListHandler.java",
+          "client/src/main/java/com/bong/client/network/CraftSessionStateHandler.java",
+          "client/src/main/java/com/bong/client/network/CraftOutcomeHandler.java"
+        ],
+        "keySymbols": [
+          "AlchemyFurnaceHandler",
+          "AlchemySessionHandler",
+          "ForgeSessionHandler",
+          "ForgeOutcomeHandler",
+          "CraftSessionStateHandler",
+          "CraftOutcomeHandler"
+        ],
+        "deps": [],
+        "wiring": {
+          "upstream": [
+            "ServerDataRouter (alchemy_*/forge_*/craft_* type strings)"
+          ],
+          "downstream": [
+            "AlchemyStore / ForgeStore / CraftStore / UI Screen (炼丹/炼器/手搓 UI 状态更新)"
+          ]
+        },
+        "gaps": []
+      },
+      {
+        "name": "探索/采集域 Handlers",
+        "role": "采药/挖矿/伐木/聚灵/灵田/加工/矿脉神识探测/蝗灾预警等探索与采集类 S2C handler 群组",
+        "files": [
+          "client/src/main/java/com/bong/client/network/BotanyHarvestProgressHandler.java",
+          "client/src/main/java/com/bong/client/network/BotanyPlantRenderProfileHandler.java",
+          "client/src/main/java/com/bong/client/network/BotanySkillHandler.java",
+          "client/src/main/java/com/bong/client/network/MiningProgressHandler.java",
+          "client/src/main/java/com/bong/client/network/LumberProgressHandler.java",
+          "client/src/main/java/com/bong/client/network/GatheringSessionHandler.java",
+          "client/src/main/java/com/bong/client/network/lingtian/LingtianSessionHandler.java",
+          "client/src/main/java/com/bong/client/network/processing/ProcessingServerDataHandler.java",
+          "client/src/main/java/com/bong/client/network/MineralProbeResultHandler.java",
+          "client/src/main/java/com/bong/client/network/LocustSwarmWarningHandler.java",
+          "client/src/main/java/com/bong/client/network/GatheringProgressPayloadReader.java"
+        ],
+        "keySymbols": [
+          "BotanyHarvestProgressHandler",
+          "LingtianSessionHandler",
+          "ProcessingServerDataHandler",
+          "MineralProbeResultHandler",
+          "GatheringSessionHandler",
+          "LocustSwarmWarningHandler"
+        ],
+        "deps": [],
+        "wiring": {
+          "upstream": [
+            "ServerDataRouter (botany_harvest_progress / mining_progress / lumber_progress / gathering_session / lingtian_session / freshness_update / mineral_probe_result / locust_swarm_warning)"
+          ],
+          "downstream": [
+            "BotanyStore / GatheringStore / LingtianStore / HUD 采集进度条"
+          ]
+        },
+        "gaps": []
+      },
+      {
+        "name": "库存/容器域 Handlers",
+        "role": "背包快照、库存事件（移动/丢弃/耐久变化）、掉落物同步、遗骸容器同步（remains_sync）、外部容器（物资棺搜刮）、延寿棺状态、库存操作拒绝原因失败提示（toast）、可阅读残卷阅读屏等库存/物品交互类 S2C handler 群组",
+        "files": [
+          "client/src/main/java/com/bong/client/network/InventorySnapshotHandler.java",
+          "client/src/main/java/com/bong/client/network/InventoryEventHandler.java",
+          "client/src/main/java/com/bong/client/network/DroppedLootSyncHandler.java",
+          "client/src/main/java/com/bong/client/network/RemainsSyncHandler.java",
+          "client/src/main/java/com/bong/client/network/LootContainerHandler.java",
+          "client/src/main/java/com/bong/client/network/ContainerInteractionHandler.java",
+          "client/src/main/java/com/bong/client/network/CoffinStateHandler.java",
+          "client/src/main/java/com/bong/client/network/InventoryMoveRejectedHandler.java",
+          "client/src/main/java/com/bong/client/network/ScrollOpenHandler.java"
+        ],
+        "keySymbols": [
+          "InventorySnapshotHandler",
+          "InventoryEventHandler",
+          "LootContainerHandler",
+          "ContainerInteractionHandler",
+          "CoffinStateHandler",
+          "RemainsSyncHandler",
+          "InventoryMoveRejectedHandler",
+          "ScrollOpenHandler"
+        ],
+        "deps": [
+          "gson"
+        ],
+        "wiring": {
+          "upstream": [
+            "ServerDataRouter (inventory_snapshot / inventory_event / dropped_loot_sync / remains_sync / loot_container_open/update/close / container_state / search_started/progress/completed/aborted / coffin_state / inventory_move_rejected / scroll_open)"
+          ],
+          "downstream": [
+            "InventoryStore / LootContainerStore / CoffinStore / RemainsStore（client/src/main/java/com/bong/client/inventory/state/RemainsStore.java）",
+            "ScrollReadStore → ScrollReadScreenBootstrap → ScrollReadScreen（client/src/main/java/com/bong/client/scroll/）",
+            "BongToast（库存操作拒绝提示）",
+            "背包 UI"
+          ]
+        },
+        "gaps": [
+          {
+            "severity": "info",
+            "note": "参见 MEMORY: pre-#249 老存档库存布局未迁移，重连卡旧布局；属 server 持久化层问题，非本 net 簇——此处仅链接登记"
+          },
+          {
+            "severity": "info",
+            "note": "InventoryMoveRejectedHandler.java 的 500ms 去重 map（lastShownAtMillis）以 reason 字符串为 key、无过期清理，但键空间被 InventoryMoveRejectReason 的 24 个字面量硬边界（messageFor switch，line 100-128）自然钳住，不构成真实内存泄漏——记录以防未来 reason 集合改为动态/带参数化 key 时复发"
+          }
+        ]
+      },
+      {
+        "name": "HUD/技能配置 Handlers",
+        "role": "快捷栏配置、技能栏绑定、技能快照、技能配置、解锁同步、事件流、丹药 buff 状态等 HUD 驱动类 S2C handler 群组",
+        "files": [
+          "client/src/main/java/com/bong/client/network/QuickSlotConfigHandler.java",
+          "client/src/main/java/com/bong/client/network/SkillBarConfigHandler.java",
+          "client/src/main/java/com/bong/client/network/SkillSnapshotHandler.java",
+          "client/src/main/java/com/bong/client/network/SkillConfigSnapshotHandler.java",
+          "client/src/main/java/com/bong/client/network/SkillEventHandler.java",
+          "client/src/main/java/com/bong/client/network/UnlocksSyncHandler.java",
+          "client/src/main/java/com/bong/client/network/EventStreamPushHandler.java",
+          "client/src/main/java/com/bong/client/network/PillBuffStatusHandler.java"
+        ],
+        "keySymbols": [
+          "QuickSlotConfigHandler",
+          "SkillBarConfigHandler",
+          "SkillSnapshotHandler",
+          "SkillEventHandler",
+          "EventStreamPushHandler",
+          "UnlocksSyncHandler"
+        ],
+        "deps": [],
+        "wiring": {
+          "upstream": [
+            "ServerDataRouter (quickslot_config / skillbar_config / skill_snapshot / skill_config_snapshot / skill_xp_gain / skill_lv_up / unlocks_sync / event_stream_push / pill_buff_status)"
+          ],
+          "downstream": [
+            "SkillStore / HudPlanner / UnlocksStore / UnifiedEventStore"
+          ]
+        },
+        "gaps": []
+      },
+      {
+        "name": "社交/身份域 Handlers",
+        "role": "匿名/暴露/誓约/仇恨/声名/切磋/交易/领地侵入等社交系统以及身份面板 S2C handler 群组",
+        "files": [
+          "client/src/main/java/com/bong/client/network/SocialServerDataHandler.java",
+          "client/src/main/java/com/bong/client/network/IdentityPanelStateHandler.java"
+        ],
+        "keySymbols": [
+          "SocialServerDataHandler",
+          "IdentityPanelStateHandler"
+        ],
+        "deps": [],
+        "wiring": {
+          "upstream": [
+            "ServerDataRouter (social_anonymity / social_exposure / social_pact / social_feud / social_renown_delta / niche_intrusion / sparring_invite / trade_offer / identity_panel_state)"
+          ],
+          "downstream": [
+            "SocialStore / IdentityPanelState / HUD 社交提示"
+          ]
+        },
+        "gaps": []
+      },
+      {
+        "name": "世界/区域 Handlers",
+        "role": "叙事旁白、区域信息（灵气/季节/境界）、环境氛围、事件警报、移动状态、UI 打开指令、秘境提取/搜刮、神识感知目标等世界层 S2C handler 群组",
+        "files": [
+          "client/src/main/java/com/bong/client/network/NarrationHandler.java",
+          "client/src/main/java/com/bong/client/network/ZoneInfoHandler.java",
+          "client/src/main/java/com/bong/client/network/AmbientZoneHandler.java",
+          "client/src/main/java/com/bong/client/network/AmbientZonePayload.java",
+          "client/src/main/java/com/bong/client/network/EventAlertHandler.java",
+          "client/src/main/java/com/bong/client/network/MovementStateHandler.java",
+          "client/src/main/java/com/bong/client/network/UiOpenHandler.java",
+          "client/src/main/java/com/bong/client/network/RealmVisionParamsHandler.java",
+          "client/src/main/java/com/bong/client/network/SpiritualSenseTargetsHandler.java",
+          "client/src/main/java/com/bong/client/network/ExtractServerDataHandler.java"
+        ],
+        "keySymbols": [
+          "NarrationHandler",
+          "ZoneInfoHandler",
+          "EventAlertHandler",
+          "MovementStateHandler",
+          "UiOpenHandler",
+          "ExtractServerDataHandler"
+        ],
+        "deps": [],
+        "wiring": {
+          "upstream": [
+            "ServerDataRouter (narration / zone_info / event_alert / movement_state / ui_open / realm_vision_params / spiritual_sense_targets / rift_portal_state / extract_started/progress/completed/aborted/failed / tsy_collapse_started_ipc)"
+          ],
+          "downstream": [
+            "NarrationState / ZoneState / MovementStore / RealmVisionStore / HUD 渲染层"
+          ]
+        },
+        "gaps": []
+      }
+    ],
+    "crossLayer": [
+      {
+        "with": "server/network",
+        "contract": "bong:server_data S2C — protobuf Envelope.ServerDataEnvelope",
+        "via": "CustomPayload channel bong:server_data (proto bytes → ProtoServerDataBridge)"
+      },
+      {
+        "with": "server/network",
+        "contract": "bong:client_request C2S — JSON ClientRequestV1",
+        "via": "CustomPayload channel bong:client_request (JSON → server client_request_handler.rs)"
+      },
+      {
+        "with": "server/network",
+        "contract": "bong:vfx_event S2C — JSON VfxEvent",
+        "via": "CustomPayload channel bong:vfx_event (JSON → VfxEventRouter)"
+      },
+      {
+        "with": "server/network",
+        "contract": "bong:audio_event S2C — JSON AudioEvent (play/stop sound recipe)",
+        "via": "CustomPayload channel bong:audio_event (JSON → AudioEventRouter)"
+      },
+      {
+        "with": "server/network",
+        "contract": "bong:agent_ui_request / bong:agent_ui_close S2C — 裸 JSON（绕过 proto 路径）",
+        "via": "CustomPayload channel bong:agent_ui_request + bong:agent_ui_close (JSON → AgentUiPayloadHandler)"
+      },
+      {
+        "with": "agent/packages/schema",
+        "contract": "ServerDataV1 envelope schema — TypeBox source of truth，双端 JSON Schema 校验",
+        "via": "agent/packages/schema/samples/*.json (双端 sample 对拍)"
+      }
+    ],
+    "gaps": [
+      {
+        "severity": "info",
+        "note": "status_snapshot 仍由 server 以 legacy JSON 直发（非 proto 路径），其余类型走 proto；依赖 BongNetworkHandler 的 legacy fallback 存活，无编译期保证"
+      },
+      {
+        "severity": "info",
+        "note": "ClientRequestSender force send（绕过 canSend，因 Bong server 是定制 Valence 不走 Fabric register 协商）——有意设计；Fabric 升级或协议收紧若开始过滤 unregistered_channel 则 C2S 包静默丢失（不崩，等价 canSend 拒发）"
+      }
+    ]
   },
   {
     "id": "client/npc",
