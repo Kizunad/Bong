@@ -1,6 +1,6 @@
 # plan-race-system-v1 — 通用身体构型（BodyPlan）与种族系统 + 固元「易形」功法
 
-一句话主题：把「部位 / 经脉 = 人形硬编码」重构为按种族（BodyPlan）数据驱动的通用系统——每种 Entity 可定义各自的部位集合与经脉拓扑；装备 / 功法接入种族三档匹配（种族专属 / 人形通用 / 全通用）；固元境经残卷解锁「易形」功法（外观一对一互换、部位经脉不变），为玩家可扮演非人种族（如飞鲸）铺路。
+一句话主题：把「部位 / 经脉 = 人形硬编码」重构为按种族（BodyPlan）数据驱动的通用系统——每种 Entity 可定义各自的部位集合与经脉拓扑；装备 / 功法接入种族三档匹配（种族专属 / 人形通用 / 全通用）；固元境经残卷解锁「易形」功法（外观与装备形态层一对一互换，命中部位 / 经脉 / 碰撞箱不变），为玩家可扮演非人种族（如飞鲸）铺路。
 
 > **状态：骨架（skeleton）**。升 active 前必须完成 §8 开放问题收口（补 §8.1 决议），其中 #1（零出生论冲突）、#2（机制命名）、#5（易形后 gate 判定基准）需用户拍板。
 >
@@ -31,7 +31,7 @@
   - 易形状态：新 `morph` payload（协议骨架仿 daozhan disguise）→ client 玩家渲染替换（`FakePlayerRendererMixin` 激活重写 + `BongEntityModelKind` geo 模型）
 - **共享类型 / event**：复用 `BreakthroughOutcome`（不另造突破事件）、`EquipSlotV1`（`schema/inventory.rs:39-54`）、`ScrollReadOutcome` / `InventoryMoveRejectReason`（各加 `RaceMismatch` 变体）、`BongEntityModelKind` raw-id 模型注册表；**不复用** dandao `MutationKind/BodySlot` 表达种族（理由见 §7）
 - **跨仓库契约**：proto `MeridianId`（`common.proto:23-47`）与 `CombatBodyPartV1`（`combat_event.rs:5-14`）开放化为 string id；TS `agent/packages/schema/src/cultivation.ts:55-80` / `combat-event.ts:19-29` 同步；client `MeridianChannel.java` / `BodyPart.java` / `ClientRequestProtocol.java` 同步；新增 `BodyPlanLayoutV1` / `MorphStateV1` schema + samples 双端对拍
-- **worldview 锚点**：§一境界（固元 `worldview.md:70`）、§六零出生论（`:590` / `:719`，冲突处理见 §8 #1）、上古大能（`:49` / `:292` / `:1383`）、残卷传承（`:890`）、异兽词系（`:735` / `:892` / `:1580`）。涉及 worldview 增补（种族 / 易形正典化）必须**单独 PR 人工 review**
+- **worldview 锚点**：修炼境界（固元 worldview.md §三 L70）、零出生论（§六 L590 / L719，冲突处理见 §8 #1）、上古大能（§二 L49 / §四 L292 / §十六 L1383）、残卷传承（§十 L890）、异兽词系（§七 L735 / §十 L892 / §十六 L1580）。涉及 worldview 增补（种族 / 易形正典化）必须**单独 PR 人工 review**
 - **qi_physics 锚点**：本 plan 不新增任何物理常数。易形施放的 qi 消耗走既有 skill cast 扣费路径（含 zone 归还，qi 守恒清扫后的现行管线）；经脉容量对 qi_max 的贡献沿用 `MERIDIAN_CAPACITY_ON_OPEN` 既有常数（`meridian_open.rs:140-141`），per-plan 只改「哪些脉、几条」不改「每条值多少」
 
 ## 0. 调研摘要（2026-07-10，5 路并发核验，file:line 基于当日 origin/main）
@@ -44,17 +44,19 @@
 
 **外观 / 化形链路——协议可抄、渲染空白**：物种全 enum 硬编码（`NpcArchetype` 12 族 + `BeastKind` 16 种）；现有 disguise 是「同实体换贴图」应用层旗标（道伥披 Steve 皮 / 拟态蛛披灰烬贴图），只作用于 NPC，从未碰玩家实体；协议骨架可复用（版本化 JSON payload + entity-id 集 + 周期全量 sync + 触发时 64 格半径广播）；`BongEntityModelKind` bbmodel raw-id 注册表现成（含 `expectedRawId` 运行时断言）；「NPC 以 `EntityKind::PLAYER` + MineSkin 装成玩家」反向先例已通。**四大空白**：玩家本体渲染替换 mixin（`FakePlayerRendererMixin` 是未注册空占位）、FPV 处理、动态碰撞箱、动物贴图通道（GameProfile texture 与 `textureForState` 两套材质系统不通）。
 
-**撞车面与正典红线**（详见 §7 / §8）：dandao `MutationState/BodySlot/MutationStage(Bestial)` 是既有「身体改造」系统必须声明关系；「化形」「妖兽」两词违典 / 撞名；零出生论（`worldview.md:590/719`）拦「创建期选种族」；传承断绝设定拦「上古功法完整流传」。
+**撞车面与正典红线**（详见 §7 / §8）：dandao `MutationState/BodySlot/MutationStage(Bestial)` 是既有「身体改造」系统必须声明关系；「化形」「妖兽」两词违典 / 撞名；零出生论（worldview.md §六 L590 / L719）拦「创建期选种族」；传承断绝设定拦「上古功法完整流传」。
 
 ## P0 — 种族 / 构型底盘
 
 **交付物**：
 
 - 新模块 `server/src/body_plan/`：
-  - `struct BodyPlan { id: BodyPlanId, display_name, is_humanoid: bool, parts: Vec<BodyPartDef>, hit_geometry: HitGeometry, equip_slots: Vec<EquipSlotV1>, meridian_profile: MeridianProfile(P1 填), morph_pairs(P4 填) }`——`is_humanoid` 是 P3 `RaceGate::Humanoid` 档的唯一判据（不做名单硬编码）
+  - `struct BodyPlan { id: BodyPlanId, display_name, is_humanoid: bool, parts: Vec<BodyPartDef>, hit_geometry: HitGeometry, equip_slots: Vec<EquipSlotV1>, meridian_profile: Option<MeridianProfile>, morph_pairs: Vec<MorphPair> }`——`is_humanoid` 是 P3 `RaceGate::Humanoid` 档的唯一判据（不做名单硬编码）；`meridian_profile` 带 `#[serde(default)]`（P0 缺省 `None`，P1 起 humanoid 必填并升校验）、`morph_pairs` 默认空集（P4 起填）——**P0 的 humanoid.json 不含这两字段即合法**，缺失 / 空 / 完整三形态各一条 pin 测试；fail-fast 只打真非法（未知字段 / 引用悬空），不打阶段性缺省
   - `struct BodyPartDef { id: BodyPartId(string id), damage_mul, contam_mul, bleed_mul, consequence: PartConsequence }`——`PartConsequence` 枚举化现有「腿伤减速 / 头伤眩晕 / 臂伤六维」后果语义（`Locomotion / Sensory / Manipulator{main_hand} / Core`），非人形部位挂同枚举（如鲸尾鳍 = Locomotion）
   - `enum HitGeometry { HeightBands { aabb, bands, lateral_threshold }, PartBoxes(Vec<PartBox { part_id, offset, half_extents, priority }>) }`——`HeightBands` 是现 `classify_body_part` 高度带 + 横向阈值的参数化（humanoid 用，行为 bit-for-bit）；`PartBoxes` 逐部位局部 AABB、射线逐盒求交取最近命中（非人形用——单一直立 AABB + 人体比例高度带表达不了飞鲸横长构型，P5 whale 必须走此模式）
   - `BodyPlanRegistry` 从 `server/assets/body_plans/*.json` 加载，模式仿 `combat/armor.rs::load_dir`（重复 id / 缺字段 fail-fast）
+- 运行时接线唯一入口：`BodyPlanPlugin`（注册 `BodyPlanRegistry` Resource + startup `load_body_plan_registry`）+ `resolve_body_plan(entity) -> &BodyPlan` 唯一解析函数——优先级：玩家走 `Cultivation.race` → NPC / fauna 走 `BeastKind→BodyPlanId` 派生 → 其余可受击实体一律兜底 humanoid；registry 加载期未知 id fail-fast，运行期悬空引用 warn + humanoid 兜底。**所有消费点（raycast / resolve / 伤残 / 经脉 / 面板 emit / 装备校验）只准走此入口**，绕过直查 registry 的新调用按 review 红旗处理
+- `validate_body_plan` 全图校验（P0 交付，P1/P4 随字段扩展）：part / channel id 唯一、`PartBox.part_id` / coverage / topology 端点 / `part_mapping` 引用全部存在、映射基数一对一、`realm_requirements` 单调且 ≤ channel 总数；每类非法输入独立反例测试 + 带定位信息的错误消息
 - `server/assets/body_plans/humanoid.json` 首个条目：8 部位 / 倍率表 / 1.8m AABB 分段阈值 / 4 护甲槽，**与现状硬编码值逐项 bit-for-bit 对齐**
 - `Race` 表示：`Cultivation.race: RaceId`（`#[serde(default)] = "human"`，RaceId → BodyPlanId 映射）；NPC / fauna 侧 `BeastKind → BodyPlanId` 派生函数（默认全部落 humanoid，P5 起给 whale 换）
 - 战斗消费点改造（行为回归不变）：`body_part_multipliers` / `classify_body_part` / `standing_humanoid_aabb` / `carrier.rs` 投射物分支改为查询目标实体 BodyPlan；`arm_wound` / `leg_wound` 后果分派改走 `PartConsequence`
@@ -77,7 +79,7 @@
 
 **交付物**：
 
-- 新 payload `ServerDataPayloadV1::BodyPlanLayout`（`BodyPlanLayoutV1`）：以 `body_plan_id` 为主键，含部位剪影多边形顶点（归一化坐标）+ 部位锚点（伤口红点位）+ 经脉折线路径（替代 `MERIDIAN_PATHS` 硬编码）+ server 部位 id → 展示段映射（替代 `body_part_wire` 7→16 写死映射）。join 首帧随 `cultivation_detail` 下发；`cultivation_detail` 附带自身 `body_plan_id` 供 client 按 plan id 寻址缓存；实体 plan 变化（真实换 race）时重发，易形不触发（外观 only）
+- 新 payload `ServerDataPayloadV1::BodyPlanLayout`（`BodyPlanLayoutV1`）：以 `body_plan_id` 为主键，含部位剪影多边形顶点（归一化坐标）+ 部位锚点（伤口红点位）+ 经脉折线路径（替代 `MERIDIAN_PATHS` 硬编码）+ server 部位 id → 展示段映射（替代 `body_part_wire` 7→16 写死映射）。join 首帧随 `cultivation_detail` 下发；`cultivation_detail` 附带自身 `body_plan_id` 供 client 按 plan id 寻址缓存；实体 plan 变化（真实换 race）时重发，易形不触发（命中与面板仍走本体 plan，语义见 P4）
 - 布局数据源：humanoid 布局从现 `MiniBodyHudPlanner` / `BodyInspectComponent` 硬编码坐标**原样抽取**进 `server/assets/body_plans/humanoid_layout.json`（首版渲染与现状像素级一致）
 - client 重构：`BodyPlanLayoutStore`（仿 `MeridianStateStore` 单快照 + listener）；`MiniBodyHudPlanner` / `BodyInspectComponent`（剪影 + 经脉图 + `locatePart`）/ `WoundLayerBinding.resolvePart` 全改读 store；无 layout 时 fallback humanoid（老 server 兼容不需要——同版本发布，fallback 仅防御首帧竞态）
 - 破损护甲裂纹 / 丹药部位框逻辑随部位 id 走（`body_part_resist:` status id 前缀机制保持）
@@ -91,7 +93,7 @@
 - 功法侧：`TechniqueDefinition.required_race: RaceGate`（48 条存量补默认 `Any`，首批 Humanoid 划定见 §8 #6）；习得门插 `learn_technique_if_allowed`（境界门后，新增 `ScrollReadOutcome::RaceMismatch`）；施放门插 `handle_skill_bar_cast` 拥有门后经脉门前（sword_path resolver 路径镜像一份，`skill_register.rs:862-877` 旁）
 - 装备侧：`ItemTemplate.wearer_race: RaceGate`（TOML 可选字段默认 any）；校验统一进 `validate_equip_to`（槽位分支判定后、`Ok(())` 前），新增 `InventoryMoveRejectReason::RaceMismatch`；false_skin 散落境界门**不动**（不同轴，境界≠种族）
 - client UI 反馈：不匹配装备格 / 功法条目置灰 + 点击 toast 带原因（对齐 #663 灰按钮 toast 先例）；种族不可用的功法 / 装备**不出现在推荐位**（HUD conditional display 原则）
-- gate 数据下行：client 置灰不靠猜——功法列表 payload 与物品 wire 数据补 `required_race` / `wearer_race` 字段（proto / TS / samples 同改），client 侧结合自身 race + 当前形态本地判定；server 端 `validate_equip_to` 仍是权威（client 判定仅 UX 预览）
+- gate 数据下行（client 身份快照契约）：client 置灰不靠猜——① `cultivation_detail` 附带本体 `race_id` + 当前生效 `form_body_plan_id`（未易形时 = 本体 plan）；② `BodyPlanLayoutV1` 元数据含 `is_humanoid`；③ 功法列表 payload 与物品 wire 数据补 `required_race` / `wearer_race` 字段（proto / TS / samples 同改）。更新时机全枚举：join 首帧 / 易形开始 / 易形解除（含死亡、下线重连）/ 真实 RaceChange——每个时机一条双端 sample + 状态转换测试，三档 gate × 本体 / 易形态矩阵 pin。server 端 `validate_equip_to` 仍是权威（client 判定仅 UX 预览）
 - wire：reject reason 新变体过 proto / TS / samples；`RaceGate` serde 正反 pin
 - **测试**：三档 × 三收拢点矩阵全覆盖（9 组合 happy + 拒绝）；`RaceMismatch` 双 reason 枚举 wire pin；48 条存量功法默认值不回归（全 `Any` 断言防漏标）；bot 场景：race gate 拒绝穿戴回执
 
@@ -99,7 +101,7 @@
 
 **交付物**：
 
-- 解锁路径（对齐残卷传承正典 `worldview.md:890`）：新残卷物品 `yixing_scroll`（TOML 进 `server/assets/items/`，`technique_scroll_spec.skill_id = "morph.yixing"`），掉落面：坍缩渊遗迹 / 道伥 / 高危遗迹容器；`TechniqueDefinition` 新增 `morph.yixing`（`required_realm = "Solidify"`，required_meridians 含 Ren+Du，理由：奇经主形）——**不改突破核心**，固元门槛由既有 `required_realm` 习得门天然承担
+- 解锁路径（对齐残卷传承正典 worldview.md §十 L890）：新残卷物品 `yixing_scroll`（TOML 进 `server/assets/items/`，`technique_scroll_spec.skill_id = "morph.yixing"`），掉落面收敛为两个已存在可核验入口——道伥击杀掉落表 + tsy 遗迹 loot 容器注册（`plan-tsy-loot-v1` 落地面），各配一条真实产出集成测试（击杀 / 开容器 → 背包出现 `yixing_scroll`），其余掉落面留后续；`TechniqueDefinition` 新增 `morph.yixing`（`required_realm = "Solidify"`，required_meridians 含 Ren+Du，理由：奇经主形）——**不改突破核心**，固元门槛由既有 `required_realm` 习得门天然承担
 - 故事线锚点：功法描述文案引太初志「灵脉化形」存疑传闻作暗线（保留传闻外壳，不写实设定）；上古大能仅以「残卷来历不可考，笔迹类上古断代」措辞出现，不写「完整流传」
 - server：`MorphState { form: RaceId, model_kind: u16, since_tick }` 组件；cast 走既有 skill 管线（qi_cost / cooldown / cast_ticks 走 `TechniqueDefinition` 既有字段，扣费归还走现行守恒路径）；一对一映射表 `morph_pairs: Vec<{from_race, to_race, model_kind, part_mapping: Vec<{from_part, to_part}>}>` 进 body_plan json（人↔指定异兽形，非任意变；`part_mapping` 是两构型部位的一对一对应表，装备折算的依据）；死亡 / 濒死 / 下线自动解除
 - **易形语义收敛（四层拆清，防「外观 only」自相矛盾）**：易形改变的是「外观 + 装备形态层」，不变的是「命中部位 / 经脉 / 碰撞箱 / 功法门」。具体：受击仍打本体 `HitGeometry`、伤口落本体部位（协议 hitbox 不动，绕开 valence 动态 EntityDimensions 深水区）；但**装备槽集合与 `validate_equip_to` 的 RaceGate 按当前形态（form plan）判定**——这就是「易形化人后可穿人形装备」的成立方式；form 形态所穿护甲的 `body_coverage` 经 `part_mapping` 折算回本体部位参与减免结算，无对应部位的 coverage 不生效
@@ -109,7 +111,8 @@
   - 激活并重写 `FakePlayerRendererMixin`：命中 morph 缓存的玩家实体 suppress vanilla `PlayerEntityModel` → 渲染 `BongEntityModelKind` 对应 geo 模型（fauna 渲染器已现成）；反向（异兽 NPC 化人形）复用 MineSkin + `EntityKind::PLAYER` 先例
   - FPV：第一版保持 vanilla 手臂不变（明确 scope，兽形 FPV 无先例不做）；TPV 自看生效
   - 名牌 / 队友标识保留（防 grief 误伤，对齐 disguise 半径过滤精神）
-- 视听规格（active 前按 docs/CLAUDE.md 红线细化，此为骨架草案）：
+- 视听规格（active 前按 docs/CLAUDE.md 红线细化为逐招五项表格：animation / VFX / SFX / HUD / icon；此为骨架草案）：
+  - 图标（仓库硬红线，每招必配）：`SkillDef.icon_id = "morph_yixing"` → `client/src/main/resources/assets/bong/textures/skill/<style>/morph_yixing.png`（视觉资产 PR 阶段 /gen-image item 档批量产出，骨架期标 [BLOCKED: 需 /gen-image 生成 morph_yixing icon]）+ schema / client `SkillIconRegistry` 注册 + SkillBar 显示回归 + 缺资源 fallback 测试；`yixing_scroll` 物品图标同批产出并配加载测试
   - 粒子：`BongRibbonParticle` 螺旋环绕 24 条、lifetime 30t、自下而上、#E8DFC8；`BongSpriteParticle` 白雾 burst 40 个、lifetime 20t、radial、复用 `mist` 贴图；`vfx_event = "bong:morph_yixing"`，新 `MorphVfxPlayer`
   - 音效：`audio_recipe yixing_cast.json`——layer1 `entity.evoker.prepare_wololo` pitch 0.8 vol 0.6 delay 0；layer2 `entity.illusioner.mirror_move` pitch 1.2 vol 0.5 delay 8t；layer3 `block.amethyst_block.chime` pitch 0.7 vol 0.4 delay 24t
   - HUD：左下形态图标（仅易形中显示，`HudRenderLayer` 新 morph 槽；结束淡出 10t）；施法期 vignette #FFFFFF opacity 0.15 fade-in 8t / fade-out 12t
@@ -122,16 +125,18 @@
 **交付物**：
 
 - 非人种族获得路径（按 §8 #1 决议实施；推荐形态：后天秘法 / 夺舍类行为达成，角色创建仍统一人族——零出生论合规）；`/race set <id>` dev 命令（brigadier，dev-only 绕过标注）
-- `RaceChange` 原子状态机：换 race 单事务完成 ① 卸下不满足新 gate 的装备（复用易形解除卸装路径）② 经脉集按 §8 #9 规则迁移 ③ `qi_max` 按新 plan 重算，`qi_current` 超出部分走 `qi_release_to_zone` 守恒归还 zone（ledger 断言测试，禁止真元蒸发 / 凭空）④ 功法保留（习得史实不抹），cast 由 race gate 拦截；任一步失败整体回滚不落半态
+- `RaceChange` 两阶段事务（dropped_loot 实体与 ledger 转账均不可逆，**不承诺事后回滚**）：**阶段一纯预检**——只读计算装备去向（含背包容量核验 / 需掉落的清单）、经脉迁移结果（§8 #9 `meridian_mapping`）、`qi_max` 重算与 `qi_current` 超额 delta；任何检查不通过整体拒绝，世界零变更。**阶段二单入口提交**——一次应用组件（race / 经脉）+ 库存变更 + `QiTransfer`（超额走 `qi_release_to_zone` 守恒归还 zone），掉落实体在提交成功后最后生成。测试：逐子步注入失败，断言 race / 装备 / 背包 / 经脉 / qi_current / qi_max / zone 账本 / ledger 全部保持原值、世界无残留掉落实体；功法保留（习得史实不抹），cast 由 race gate 拦截
 - `server/assets/body_plans/whale.json` 完整数据：部位草案 6 段（颅 / 躯干 / 背鳍 / 左胸鳍 / 右胸鳍 / 尾鳍，尾鳍 = Locomotion、颅 = Sensory）；HitGeometry 长扁 AABB 分段；经脉草案（条数与固元配额见 §8 #8）；`whale_layout.json` 面板布局；装备槽草案（非人形首例：`FinRing` 类骨饰槽位，装备件 1-2 个示范；`EquipSlotV1` 以**新增 enum 变体**方式扩展 + proto / TS / Java 镜像同改——槽位集合小且稳定，不随部位 id 一起 string 开放化）
+- FinRing 真实消费链（不止 wire enum）：server 侧装备容器存储 / `validate_equip_to` 槽位分支 / 自动卸装路径 / wire 编解码，client 侧装备面板新槽位格 + 交互；测试：穿 / 拒（RaceMismatch）/ 卸 / 满背包掉落 / 持久化往返 / bot e2e 完成一次真实穿卸
 - 玩家以 whale 构型走通全链：面板渲染 / 受击部位判定 / 经脉开脉突破 / RaceGate 拒穿人形甲 / 易形化人后可穿
 - bot 场景（`scripts/bot/scenarios/`，硬约定）：① race gate 拒绝回执 ② 易形 cast → morph payload 解码 ③ body_plan_layout 首帧解码；CI bot e2e stage 接入
 - e2e：client 发易形 cast → server 结算 → 周边 client 收 morph_state → 渲染路径断言
-- worldview 增补案（种族后天路径 + 易形正典化 + 「异兽化形」词条消歧）**单独 PR 人工 review**；`docs/library/` 配套馆藏 1 篇（残卷来历考，走 /write-book）
+- worldview 增补案（种族后天路径 + 易形正典化 + 「异兽化形」词条消歧）**单独 PR 人工 review**，归档前 land
+- 遗留 / 后续（**不作为本 plan 验收与归档前置**）：`docs/library/` 配套馆藏（残卷来历考，/write-book 另行任务）；飞鲸可玩性（移动 / 出生点 / 碰撞箱适配）另立 plan（§8 #7）
 
 ## §7 与既有系统关系声明（防近义重名红旗）
 
-- **dandao 变异（`MutationState` / `BodySlot` / `MutationKind` / `MutationStage::Bestial`，`dandao/mutation.rs:97-113`）**：变异 = 永久·污染驱动·在人形构型上叠加改造（人形 + 兽征）；本 plan 种族 = 更换整套身体构型；易形 = 可逆·外观 only。三轴正交。**不复用 `MutationKind` 表达种族**——变异槽挂在人形 `BodySlot` 上，语义装不下异构构型。P0 给 humanoid plan 一张 `BodySlot → BodyPartId` 映射表，变异渲染继续走原链路；`MutationStage::Bestial` 与易形兽形的视觉区分在 P4 UI 层标注（变异 = 永久体征叠加，易形 = 整体模型替换）
+- **dandao 变异（`MutationState` / `BodySlot` / `MutationKind` / `MutationStage::Bestial`，`dandao/mutation.rs:97-113`）**：变异 = 永久·污染驱动·在人形构型上叠加改造（人形 + 兽征）；本 plan 种族 = 更换整套身体构型；易形 = 可逆·改「外观 + 装备形态层」（命中部位 / 经脉 / 碰撞箱 / 功法门不变——语义唯一定义见 P4，全文以彼为准）。三轴正交。**不复用 `MutationKind` 表达种族**——变异槽挂在人形 `BodySlot` 上，语义装不下异构构型。P0 给 humanoid plan 一张 `BodySlot → BodyPartId` 映射表，变异渲染继续走原链路；`MutationStage::Bestial` 与易形兽形的视觉区分在 P4 UI 层标注（变异 = 永久体征叠加，易形 = 整体模型替换）
 - **拟态蛛 / 道伥 disguise（`SpiderDisguiseState` 等）**：NPC 侧换贴图伪装，与易形（跨端模型替换 + 玩家实体）不同层；仅复用其协议模式，不共享状态机
 - **beast-horde（active）**：只读 `FaunaKind` 群体迁移，无撞面；本 plan 不改 `BeastKind` enum 本身，只加 `BeastKind → BodyPlanId` 派生
 - **npc-skin 遗留坑**：`Beast / Disciple / GuardianRelic` archetype skin 未实装——P4 反向化形（异兽→人形）演示实体正好落其中一格
@@ -139,7 +144,7 @@
 
 ## §8 开放问题（升 active / P0 前必须补 §8.1 决议收口）
 
-1. **零出生论 vs 玩家选种族**（`worldview.md:590/719` 硬正典）。推荐：非人种族只能后天达成（固元后秘法转生 / 神魂夺舍异兽躯壳类路径），角色创建统一人族，把「选择」落在游玩行为里——合规且叙事更末法；若坚持创建期选择，需 worldview 修正案单独 PR 人工拍板。**用户拍板**
+1. **零出生论 vs 玩家选种族**（worldview.md §六 L590 / L719 硬正典）。推荐：非人种族只能后天达成（固元后秘法转生 / 神魂夺舍异兽躯壳类路径），角色创建统一人族，把「选择」落在游玩行为里——合规且叙事更末法；若坚持创建期选择，需 worldview 修正案单独 PR 人工拍板。**用户拍板**
 2. **机制命名**：「化形」被剑修 manifest（剑意化形）+ 丹道材料（化形根 / 化形大丹）占用。推荐「易形」（易形诀 / 易形残卷）。**用户拍板**
 3. **上古大能措辞**：正典传承已断绝、只认残卷考古路径。推荐功法以残卷散佚形式出现，来历「笔迹类上古断代、不可考」，太初志「灵脉化形」传闻作暗线（保留存疑外壳）。已按此写入 P4，确认即可
 4. **wire 开放化策略**：`MeridianId` / `CombatBodyPartV1` enum → string id，直接改新形状不留 dual-form（老存档仅需 humanoid 默认注入迁移）。风险：一次动 proto/TS/Java/samples 四面，P1 独立 PR 吸收
@@ -147,7 +152,7 @@
 6. **首批 Humanoid 档功法划定**：48 条存量全标 `Humanoid`，还是只标肢体强相关（剑修 / 体修 / 爆脉 / 卧牛）其余留 `Any`？推荐后者 + 逐条清单过目
 7. **飞鲸可玩性边界**：本 plan 只到「数据 + 面板 + gate + 易形演示」；游泳 / 飞行移动、碰撞箱、出生点适配等可玩性问题**不进本 plan**（另立 plan），P5 验收允许 whale 玩家形态在测试场景内静态验证。确认 scope
 8. **非人经脉数值曲线**：whale 经脉几条、各境界配额多少？推荐 P1 只锁机制（per-plan 曲线数据位），数值 P5 结合 halfstep buff 校准表拍；固元「12 正经全通」的人形语义在非人构型下如何等价（按比例 or 全通）需在 §8.1 定公式归属
-9. **race 变更时的经脉迁移规则**（P5 `RaceChange` 状态机第②步的规则来源）：已开经脉如何处理？候选：a) 按 `part_mapping` 同源映射保留开脉进度（有对应者继承、无对应者丢弃）b) 全部重置（换构型 = 重修，叙事最自洽但最狠）c) 总进度折算按比例注入新经脉集。推荐 a) 映射保留 + 无对应丢弃，`qi_max` 差额走 P5 守恒路径；与 #8 数值曲线联动收口
+9. **race 变更时的经脉迁移规则**（P5 `RaceChange` 阶段一的规则来源）：已开经脉如何处理？迁移表用**独立 `meridian_mapping`（channel id → channel id，一对一，registry 校验端点存在与唯一、禁一对多 / 多对一）**——不复用 `part_mapping`（那是部位对应表，表达不了经脉对应）。候选：a) 映射保留（有对应者继承 opened / progress / integrity / severed 全字段，无对应者丢弃）b) 全部重置（换构型 = 重修）c) 总进度折算注入。推荐 a)，`qi_max` 差额走 P5 守恒路径；未映射 severed 脉「丢弃 = 洗白永久断脉？」须在 §8.1 一并定死；与 #8 数值曲线联动收口
 
 ## §10 实施工作流（骨架草案，升 active 时按 docs/CLAUDE.md §六模板细化）
 
