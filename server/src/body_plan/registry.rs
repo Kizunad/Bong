@@ -391,6 +391,33 @@ mod tests {
         cleanup(&dir);
     }
 
+    /// 「混装文件进错目录」反例：`races.json` 的形状（顶层 `races`/`morph_pairs` 数组，
+    /// 不是 `BodyPlan` 的 `id`/`parts`/`hit_geometry` 字段）被误放进 `plans/` 目录——
+    /// `deny_unknown_fields` + 缺失必填字段必须让 `serde_json::from_str::<BodyPlan>`
+    /// 在解析阶段就 fail-fast（`Json` 错误），而不是静默吞掉或误解析出一个残缺 `BodyPlan`。
+    #[test]
+    fn load_dir_rejects_races_file_shape_misplaced_in_plans_dir() {
+        let dir = tempdir();
+        let races_shaped_json = r#"{
+            "races": [
+                {"id": "human", "display_name": "人族", "body_plan_id": "humanoid", "beast_kinds": []}
+            ],
+            "morph_pairs": []
+        }"#;
+        std::fs::write(dir.join("races.json"), races_shaped_json)
+            .expect("write misplaced races.json-shaped file");
+
+        let err = BodyPlanRegistry::load_dir(&dir)
+            .expect_err("races.json 形状的文件混进 plans/ 目录必须在解析期报错，而不是被静默接受");
+        assert!(
+            matches!(err, BodyPlanLoadError::Json { .. }),
+            "expected Json parse error for a races.json-shaped file lacking BodyPlan required \
+             fields (id/parts/hit_geometry/...), got {err:?}"
+        );
+
+        cleanup(&dir);
+    }
+
     #[test]
     fn humanoid_default_returns_the_humanoid_plan() {
         let registry = BodyPlanRegistry::from_plans(vec![minimal_plan(HUMANOID_BODY_PLAN_ID)])
@@ -453,6 +480,29 @@ mod tests {
             assert!(
                 plan.parts.iter().any(|def| def.id.as_str() == expected_id),
                 "humanoid.json 必须声明部位 {expected_id}（legacy BodyPart 8 段全覆盖前提）"
+            );
+        }
+    }
+
+    #[test]
+    fn humanoid_plan_static_declares_mutation_slot_mapping_for_all_five_body_slot_variants() {
+        // 全变体饱和 pin（数据侧）：humanoid.json 的 `mutation_slot_mapping` 必须覆盖
+        // `dandao::mutation::BodySlot` 全部 5 个变体——不是"覆盖率"这种笼统断言，是
+        // 逐变体键存在性对拍。查询函数 `body_part_for_mutation_slot` 逐变体值对拍见
+        // `resolve.rs::body_part_for_mutation_slot_covers_every_body_slot_variant_on_real_humanoid_plan`。
+        use crate::dandao::mutation::BodySlot;
+
+        let plan = humanoid_plan_static();
+        for slot in [
+            BodySlot::Head,
+            BodySlot::Forearm,
+            BodySlot::Back,
+            BodySlot::Torso,
+            BodySlot::Lower,
+        ] {
+            assert!(
+                plan.mutation_slot_mapping.contains_key(&slot),
+                "humanoid.json mutation_slot_mapping 缺失 {slot:?} 变体的映射"
             );
         }
     }

@@ -265,76 +265,142 @@ mod tests {
     }
 
     #[test]
-    fn npc_beast_kind_resolves_via_race_registry_derivation() {
+    fn npc_with_cultivation_and_known_race_resolves_like_player_for_both_purposes() {
+        // "NPC" 轴的另一半：非兽类、携带 Cultivation 的战斗 NPC（如道伥一类人形
+        // 敌对生物，`npc/technique.rs` 同样挂 Cultivation 供功法/经脉判定）与玩家共用
+        // 同一条 Tier2 分支——本测试锁定 Tier2 判定不依赖"是不是玩家"这个身份，
+        // 只认 Cultivation.race，任何携带该组件的实体（NPC 亦然）都走这条路径。
         let (body_plans, races) = registries();
-        let plan = resolve_body_plan(
-            dummy_entity(),
-            BodyPlanPurpose::Intrinsic,
-            BodyPlanResolveInputs {
-                cultivation: None,
-                beast_kind: Some(&BeastKind::Rat),
-            },
-            &body_plans,
-            &races,
-        )
-        .expect("beast kind must resolve via races.json derivation");
-        assert_eq!(plan.id.as_str(), "humanoid");
+        let mut cultivation = Cultivation::default();
+        cultivation.race = RaceId::new("beast_common");
+        for purpose in [BodyPlanPurpose::Intrinsic, BodyPlanPurpose::Form] {
+            let plan = resolve_body_plan(
+                dummy_entity(),
+                purpose,
+                BodyPlanResolveInputs {
+                    cultivation: Some(&cultivation),
+                    beast_kind: None,
+                },
+                &body_plans,
+                &races,
+            )
+            .expect("NPC with a known Cultivation.race must resolve exactly like a player");
+            assert_eq!(plan.id.as_str(), "humanoid", "purpose={purpose:?}");
+        }
     }
 
     #[test]
-    fn fauna_at_enum_boundary_whale_resolves_too() {
+    fn npc_with_cultivation_and_unknown_race_rejected_for_both_purposes() {
         let (body_plans, races) = registries();
-        let plan = resolve_body_plan(
-            dummy_entity(),
-            BodyPlanPurpose::Intrinsic,
-            BodyPlanResolveInputs {
-                cultivation: None,
-                beast_kind: Some(&BeastKind::Whale),
-            },
-            &body_plans,
-            &races,
-        )
-        .expect("whale (last BeastKind variant) must resolve");
-        assert_eq!(plan.id.as_str(), "humanoid");
+        let mut cultivation = Cultivation::default();
+        cultivation.race = RaceId::new("npc_ghost_race");
+        for purpose in [BodyPlanPurpose::Intrinsic, BodyPlanPurpose::Form] {
+            let err = resolve_body_plan(
+                dummy_entity(),
+                purpose,
+                BodyPlanResolveInputs {
+                    cultivation: Some(&cultivation),
+                    beast_kind: None,
+                },
+                &body_plans,
+                &races,
+            )
+            .expect_err(
+                "NPC with an unknown Cultivation.race must be rejected exactly like a player \
+                 — no separate lenient path for non-player humanoid entities",
+            );
+            assert_eq!(
+                err,
+                ResolveBodyPlanError::UnknownPlayerRace(RaceId::new("npc_ghost_race")),
+                "purpose={purpose:?}"
+            );
+        }
     }
 
     #[test]
-    fn beast_kind_takes_priority_over_stray_cultivation_component() {
+    fn npc_beast_kind_resolves_via_race_registry_derivation_for_both_purposes() {
+        // "NPC" 轴（携带 BeastKind 的兽形战斗实体）——Tier1 分支对 Intrinsic/Form 两种
+        // purpose 必须给出相同解析结果（P0 未落地 MorphState 前 Form≡Intrinsic）。
+        let (body_plans, races) = registries();
+        for purpose in [BodyPlanPurpose::Intrinsic, BodyPlanPurpose::Form] {
+            let plan = resolve_body_plan(
+                dummy_entity(),
+                purpose,
+                BodyPlanResolveInputs {
+                    cultivation: None,
+                    beast_kind: Some(&BeastKind::Rat),
+                },
+                &body_plans,
+                &races,
+            )
+            .expect("beast kind must resolve via races.json derivation");
+            assert_eq!(plan.id.as_str(), "humanoid", "purpose={purpose:?}");
+        }
+    }
+
+    #[test]
+    fn fauna_at_enum_boundary_whale_resolves_for_both_purposes() {
+        // "fauna" 轴的枚举边界样本（`BeastKind` 最后一个变体）——同样对两种 purpose
+        // 都要覆盖，不能只验证 Intrinsic 就假设 Form 分支"顺带也对"。
+        let (body_plans, races) = registries();
+        for purpose in [BodyPlanPurpose::Intrinsic, BodyPlanPurpose::Form] {
+            let plan = resolve_body_plan(
+                dummy_entity(),
+                purpose,
+                BodyPlanResolveInputs {
+                    cultivation: None,
+                    beast_kind: Some(&BeastKind::Whale),
+                },
+                &body_plans,
+                &races,
+            )
+            .expect("whale (last BeastKind variant) must resolve");
+            assert_eq!(plan.id.as_str(), "humanoid", "purpose={purpose:?}");
+        }
+    }
+
+    #[test]
+    fn beast_kind_takes_priority_over_stray_cultivation_component_for_both_purposes() {
         // 一只带着残留 Cultivation 组件（例如曾被某个系统误插入）的 spider 必须仍按
         // BeastKind 判定几何，不能被误判为「玩家」（否则会消费 Cultivation.race，
-        // 这不是它的身份来源）。
+        // 这不是它的身份来源）——两种 purpose 下都要保持这一优先级。
         let (body_plans, races) = registries();
         let mut cultivation = Cultivation::default();
         cultivation.race = RaceId::new("does_not_exist"); // 若被误当玩家会直接报错
-        let plan = resolve_body_plan(
-            dummy_entity(),
-            BodyPlanPurpose::Intrinsic,
-            BodyPlanResolveInputs {
-                cultivation: Some(&cultivation),
-                beast_kind: Some(&BeastKind::Spider),
-            },
-            &body_plans,
-            &races,
-        )
-        .expect("BeastKind tier must win over a stray Cultivation component");
-        assert_eq!(plan.id.as_str(), "humanoid");
+        for purpose in [BodyPlanPurpose::Intrinsic, BodyPlanPurpose::Form] {
+            let plan = resolve_body_plan(
+                dummy_entity(),
+                purpose,
+                BodyPlanResolveInputs {
+                    cultivation: Some(&cultivation),
+                    beast_kind: Some(&BeastKind::Spider),
+                },
+                &body_plans,
+                &races,
+            )
+            .expect("BeastKind tier must win over a stray Cultivation component");
+            assert_eq!(plan.id.as_str(), "humanoid", "purpose={purpose:?}");
+        }
     }
 
     #[test]
-    fn entity_with_neither_marker_falls_back_to_humanoid() {
+    fn entity_with_neither_marker_falls_back_to_humanoid_for_both_purposes() {
+        // "其他实体" 轴（既非玩家也非兽类）——Tier3 兜底同样必须对两种 purpose 一致。
         let (body_plans, races) = registries();
-        let plan = resolve_body_plan(
-            dummy_entity(),
-            BodyPlanPurpose::Intrinsic,
-            BodyPlanResolveInputs {
-                cultivation: None,
-                beast_kind: None,
-            },
-            &body_plans,
-            &races,
-        )
-        .expect("entity with no identity markers must fall back to humanoid, not error");
-        assert_eq!(plan.id.as_str(), "humanoid");
+        for purpose in [BodyPlanPurpose::Intrinsic, BodyPlanPurpose::Form] {
+            let plan = resolve_body_plan(
+                dummy_entity(),
+                purpose,
+                BodyPlanResolveInputs {
+                    cultivation: None,
+                    beast_kind: None,
+                },
+                &body_plans,
+                &races,
+            )
+            .expect("entity with no identity markers must fall back to humanoid, not error");
+            assert_eq!(plan.id.as_str(), "humanoid", "purpose={purpose:?}");
+        }
     }
 
     #[test]
@@ -356,6 +422,32 @@ mod tests {
         let mut plan = humanoid_plan();
         plan.mutation_slot_mapping.clear();
         assert_eq!(body_part_for_mutation_slot(&plan, BodySlot::Head), None);
+    }
+
+    #[test]
+    fn body_part_for_mutation_slot_covers_every_body_slot_variant_on_real_humanoid_plan() {
+        // 真实 `assets/body_plans/plans/humanoid.json` 的全变体饱和 pin（§7 声明落点，
+        // 与 `registry.rs` 的同名断言互为独立验证路径——此处直接走
+        // `super::registry::humanoid_plan_static()` 单例，不经 fixture）。
+        use crate::body_plan::registry::humanoid_plan_static;
+
+        let plan = humanoid_plan_static();
+        let expected: [(BodySlot, &str); 5] = [
+            (BodySlot::Head, "head"),
+            (BodySlot::Forearm, "arm_r"),
+            (BodySlot::Back, "back"),
+            (BodySlot::Torso, "chest"),
+            (BodySlot::Lower, "abdomen"),
+        ];
+        for (slot, expected_part_id) in expected {
+            let part = body_part_for_mutation_slot(plan, slot)
+                .unwrap_or_else(|| panic!("real humanoid.json must map {slot:?}"));
+            assert_eq!(
+                part.as_str(),
+                expected_part_id,
+                "slot={slot:?}: expected part {expected_part_id}, got {part}"
+            );
+        }
     }
 
     #[test]

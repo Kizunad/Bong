@@ -492,4 +492,87 @@ mod tests {
         assert!(plan.mutation_slot_mapping.is_empty());
         assert!(validate_body_plan(&plan).is_ok());
     }
+
+    /// 每个 `BodySlot` 变体各自专属 case：悬空引用必须被拒绝，且错误消息带上具体是
+    /// 哪个 slot 出的问题（`{slot:?}` 已格式进 reason，见 `validate_body_plan`）——
+    /// 覆盖全部 5 个变体，而非只测 `Head` 就假设其余变体"应该也一样"。
+    #[test]
+    fn mutation_slot_mapping_dangling_reference_rejected_for_every_body_slot_variant() {
+        use crate::dandao::mutation::BodySlot;
+        for slot in [
+            BodySlot::Head,
+            BodySlot::Forearm,
+            BodySlot::Back,
+            BodySlot::Torso,
+            BodySlot::Lower,
+        ] {
+            let mut plan = base_plan();
+            plan.mutation_slot_mapping.insert(slot, "ghost_part".into());
+            let err =
+                validate_body_plan(&plan).expect_err(&format!("{slot:?} 映射到悬空部位必须被拒绝"));
+            assert!(
+                err.contains("mutation_slot_mapping"),
+                "slot={slot:?}: 错误消息应带上 mutation_slot_mapping 定位信息，got: {err}"
+            );
+        }
+    }
+
+    /// 每个 `BodySlot` 变体各自专属 case：映射到已声明部位（`base_plan()` 的 `head`）
+    /// 时必须通过校验——同样逐变体覆盖，不假设"Head 通过了其余变体也一定通过"。
+    #[test]
+    fn mutation_slot_mapping_valid_reference_accepted_for_every_body_slot_variant() {
+        use crate::dandao::mutation::BodySlot;
+        for slot in [
+            BodySlot::Head,
+            BodySlot::Forearm,
+            BodySlot::Back,
+            BodySlot::Torso,
+            BodySlot::Lower,
+        ] {
+            let mut plan = base_plan();
+            plan.mutation_slot_mapping.insert(slot, "head".into());
+            assert!(
+                validate_body_plan(&plan).is_ok(),
+                "slot={slot:?}: 映射到已声明部位应通过校验"
+            );
+        }
+    }
+
+    /// 缺失映射契约：`mutation_slot_mapping` 不要求覆盖全部 5 个 `BodySlot` 变体——
+    /// 只声明部分变体（其余变体查询走 `body_part_for_mutation_slot` 返回 `None`，
+    /// 见 `resolve.rs` 对应测试）本身是合法状态，不是校验错误。
+    #[test]
+    fn mutation_slot_mapping_partial_coverage_is_valid() {
+        use crate::dandao::mutation::BodySlot;
+        let mut plan = base_plan();
+        plan.mutation_slot_mapping
+            .insert(BodySlot::Head, "head".into());
+        // 故意不声明 Forearm/Back/Torso/Lower——部分映射对非人形构型是正常状态。
+        assert!(
+            validate_body_plan(&plan).is_ok(),
+            "只声明部分 BodySlot 变体的映射必须合法（不要求全变体覆盖）"
+        );
+        assert_eq!(plan.mutation_slot_mapping.len(), 1);
+    }
+
+    /// 全部 5 个 `BodySlot` 变体同时映射到不同部位——多键场景下悬空检测必须逐一生效，
+    /// 不因为其余键合法就漏检其中一个悬空键。
+    #[test]
+    fn mutation_slot_mapping_all_five_variants_mapped_with_one_dangling_still_rejected() {
+        use crate::dandao::mutation::BodySlot;
+        let mut plan = base_plan();
+        plan.mutation_slot_mapping
+            .insert(BodySlot::Head, "head".into());
+        plan.mutation_slot_mapping
+            .insert(BodySlot::Forearm, "chest".into());
+        plan.mutation_slot_mapping
+            .insert(BodySlot::Back, "chest".into());
+        plan.mutation_slot_mapping
+            .insert(BodySlot::Torso, "chest".into());
+        // Lower 映射到悬空部位——即便其余 4 个变体都合法，也必须整体拒绝。
+        plan.mutation_slot_mapping
+            .insert(BodySlot::Lower, "ghost_part".into());
+        let err = validate_body_plan(&plan).unwrap_err();
+        assert!(err.contains("mutation_slot_mapping"), "got: {err}");
+    }
 }

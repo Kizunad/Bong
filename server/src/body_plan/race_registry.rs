@@ -693,6 +693,38 @@ mod tests {
         let _ = std::fs::remove_file(&path);
     }
 
+    /// 「混装文件进错目录」反例的反向验证：`BodyPlan` 形状的文件（顶层 `id`/`parts`/
+    /// `hit_geometry`/`equip_slots`，没有 `races` 数组）被误当成 `races.json` 路径喂给
+    /// `RaceRegistry::load_file`——`races` 是必填字段（无 `#[serde(default)]`），必须在
+    /// 解析阶段就 fail-fast 报 `Json` 错误，而不是静默解析出一个空 `RaceRegistry`。
+    #[test]
+    fn load_file_rejects_body_plan_shape_misplaced_as_races_file() {
+        let body_plans = body_plans_with_humanoid_and("humanoid", &["head"]);
+        let path = std::env::temp_dir().join(format!(
+            "bong-race-registry-test-misplaced-body-plan-{}.json",
+            std::process::id()
+        ));
+        let body_plan_shaped_json = r#"{
+            "id": "humanoid",
+            "display_name": "人形",
+            "is_humanoid": true,
+            "parts": [],
+            "hit_geometry": {"mode": "part_boxes", "boxes": []},
+            "equip_slots": []
+        }"#;
+        std::fs::write(&path, body_plan_shaped_json).expect("write misplaced BodyPlan-shaped file");
+
+        let err = RaceRegistry::load_file(&path, &body_plans).expect_err(
+            "BodyPlan 形状的文件被误当成 races.json 路径必须在解析期报错，而不是被静默接受",
+        );
+        assert!(
+            matches!(err, RaceLoadError::Json { .. }),
+            "expected Json parse error for a BodyPlan-shaped file lacking the required \
+             `races` array, got {err:?}"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
     #[test]
     fn real_races_json_asset_loads_and_covers_all_beast_kinds() {
         // 端到端锚点：真实 server/assets/body_plans/races.json 必须能在真实
