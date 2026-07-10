@@ -162,16 +162,27 @@ class InventoryEquipRulesTest {
     @Test
     void stonePickaxeCanEquipAllHeldHands() {
         InventoryItem pickaxe = item(6006L, "stone_pickaxe", 1, 2);
+        boolean recognizedAsTool = InventoryEquipRules.isTool(pickaxe);
+        boolean canMain = InventoryEquipRules.canEquip(
+            pickaxe, EquipSlotType.MAIN_HAND, null, equipped());
+        boolean canOff = InventoryEquipRules.canEquip(
+            pickaxe, EquipSlotType.OFF_HAND, null, equipped());
+        boolean canExtra0 = InventoryEquipRules.canEquip(
+            pickaxe, EquipSlotType.EXTRA_HAND_0, null, equipped());
+        boolean canExtra1 = InventoryEquipRules.canEquip(
+            pickaxe, EquipSlotType.EXTRA_HAND_1, null, equipped());
 
-        assertTrue(InventoryEquipRules.isTool(pickaxe), "石镐应被识别为工具(白名单已补全)");
-        assertTrue(InventoryEquipRules.canEquip(pickaxe, EquipSlotType.MAIN_HAND, null, equipped()),
-            "石镐应能装主手");
-        assertTrue(InventoryEquipRules.canEquip(pickaxe, EquipSlotType.OFF_HAND, null, equipped()),
-            "石镐应能装副手(工具双手可用)");
-        assertTrue(InventoryEquipRules.canEquip(pickaxe, EquipSlotType.EXTRA_HAND_0, null, equipped()),
-            "石镐应能装 EXTRA_HAND_0");
-        assertTrue(InventoryEquipRules.canEquip(pickaxe, EquipSlotType.EXTRA_HAND_1, null, equipped()),
-            "石镐应能装 EXTRA_HAND_1");
+        assertTrue(recognizedAsTool,
+            "expected stone_pickaxe to be recognized as a tool because it is in the mirrored whitelist, actual "
+                + recognizedAsTool);
+        assertTrue(canMain,
+            "expected stone_pickaxe to equip MAIN_HAND because tools are held items, actual " + canMain);
+        assertTrue(canOff,
+            "expected stone_pickaxe to equip OFF_HAND because tools are ambidextrous, actual " + canOff);
+        assertTrue(canExtra0,
+            "expected stone_pickaxe to equip EXTRA_HAND_0 because extra hands accept tools, actual " + canExtra0);
+        assertTrue(canExtra1,
+            "expected stone_pickaxe to equip EXTRA_HAND_1 because extra hands accept tools, actual " + canExtra1);
         assertFalse(InventoryEquipRules.canPlaceIntoHotbar(pickaxe), "工具不进 hotbar");
     }
 
@@ -254,16 +265,24 @@ class InventoryEquipRulesTest {
     void toolAndHoeCanEquipOffHandAndExtraHands() {
         InventoryItem tool = item(5005L, "dun_qi_jia", 1, 1);
         InventoryItem hoe = item(7007L, "hoe_iron", 1, 2);
+        boolean toolCanOff = InventoryEquipRules.canEquip(
+            tool, EquipSlotType.OFF_HAND, null, equipped());
+        boolean hoeCanOff = InventoryEquipRules.canEquip(
+            hoe, EquipSlotType.OFF_HAND, null, equipped());
 
-        assertTrue(InventoryEquipRules.canEquip(tool, EquipSlotType.OFF_HAND, null, equipped()),
-            "工具应能装副手");
-        assertTrue(InventoryEquipRules.canEquip(hoe, EquipSlotType.OFF_HAND, null, equipped()),
-            "锄头应能装副手");
+        assertTrue(toolCanOff,
+            "expected tool to equip OFF_HAND because tools are ambidextrous, actual " + toolCanOff);
+        assertTrue(hoeCanOff,
+            "expected hoe to equip OFF_HAND because hoes are ambidextrous, actual " + hoeCanOff);
         for (EquipSlotType extraHand : List.of(EquipSlotType.EXTRA_HAND_0, EquipSlotType.EXTRA_HAND_1)) {
-            assertTrue(InventoryEquipRules.canEquip(tool, extraHand, null, equipped()),
-                "工具应能装 " + extraHand);
-            assertTrue(InventoryEquipRules.canEquip(hoe, extraHand, null, equipped()),
-                "锄头应能装 " + extraHand);
+            boolean toolCanExtra = InventoryEquipRules.canEquip(tool, extraHand, null, equipped());
+            boolean hoeCanExtra = InventoryEquipRules.canEquip(hoe, extraHand, null, equipped());
+            assertTrue(toolCanExtra,
+                "expected tool to equip " + extraHand
+                    + " because extra hands accept tools, actual " + toolCanExtra);
+            assertTrue(hoeCanExtra,
+                "expected hoe to equip " + extraHand
+                    + " because extra hands accept hoes, actual " + hoeCanExtra);
         }
     }
 

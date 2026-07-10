@@ -100,10 +100,18 @@ public class SocialServerDataHandlerTest {
             {"v":1,"type":"social_exposure","actor":"char:steve","kind":"chat",
              "witnesses":["char:witness"],"tick":84000,"zone":"starter_valley"}
             """, 0);
-        assertTrue(exposure.isHandled(), exposure.logMessage());
+        boolean exposureHandled = exposure.isHandled();
+        assertTrue(
+            exposureHandled,
+            "expected social_exposure to be handled because it updates event history, actual "
+                + exposureHandled + "; log=" + exposure.logMessage()
+        );
+        boolean visibleAfterExposure =
+            SocialStateStore.shouldShowRemoteNameTag("char:steve", "Steve");
         assertFalse(
-            SocialStateStore.shouldShowRemoteNameTag("char:steve", "Steve"),
-            "social_exposure is HUD/event history only; name tags must wait for social_anonymity"
+            visibleAfterExposure,
+            "expected name tag hidden because social_exposure is history-only until social_anonymity, actual "
+                + visibleAfterExposure
         );
 
         ServerDataRouter.RouteResult anonymity = ServerDataRouter.createDefault().route("""
@@ -112,10 +120,18 @@ public class SocialServerDataHandlerTest {
                "realm_band":null,"breath_hint":"无名修士","renown_tags":[]}
             ]}
             """, 0);
-        assertTrue(anonymity.isHandled(), anonymity.logMessage());
+        boolean anonymityHandled = anonymity.isHandled();
         assertTrue(
-            SocialStateStore.shouldShowRemoteNameTag("char:steve", "Steve"),
-            "authoritative social_anonymity refresh should unlock the remote name tag without reconnect"
+            anonymityHandled,
+            "expected social_anonymity refresh to be handled because it is authoritative, actual "
+                + anonymityHandled + "; log=" + anonymity.logMessage()
+        );
+        boolean visibleAfterAnonymity =
+            SocialStateStore.shouldShowRemoteNameTag("char:steve", "Steve");
+        assertTrue(
+            visibleAfterAnonymity,
+            "expected name tag visible because authoritative social_anonymity removed anonymity, actual "
+                + visibleAfterAnonymity
         );
     }
 
