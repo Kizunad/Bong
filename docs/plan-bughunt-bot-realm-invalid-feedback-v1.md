@@ -1,6 +1,6 @@
-# plan-bughunt-bot-realm-invalid-feedback-v1（骨架）
+# plan-bughunt-bot-realm-invalid-feedback-v1
 
-> **骨架（草案）**。一句话主题：bot-e2e live run 发现 `/realm set <非法 id>` 被命令解析层拒绝后没有玩家可见 chat 反馈；玩家只看到命令静默失败，无法从客户端判断错误是拼写、境界 id 还是命令链路丢包。
+> **Active plan（2026-07-10 由 bughunt skeleton promotion）**。一句话主题：bot-e2e live run 发现 `/realm set <非法 id>` 被命令解析层拒绝后没有玩家可见 chat 反馈；玩家只看到命令静默失败，无法从客户端判断错误是拼写、境界 id 还是命令链路丢包。
 
 > 立项动机：PR #978 的 `cultivation_realm_qi` 场景曾按“dev 命令非法值也应有反馈”建模，但 CI live bot 证明 `/realm set bot_e2e_no_such_realm` 10 秒内无任何 chat。`/qi set -1` 已有明确 `[dev] qi set rejected: value must be finite >= 0`，realm 命令在同类 dev 调试体验上缺一条可观测错误面。
 
@@ -8,7 +8,7 @@
 
 | 阶段 | 主题 | 路由 | 状态 |
 |------|------|------|------|
-| P0 | `/realm set` 非法 id 无玩家可见反馈 | fix_pr | ⬜ |
+| P0 | `/realm set` 非法 id 无玩家可见反馈 | fix_pr | ⏳ |
 
 ## P0 — `/realm set` 非法 id 无玩家可见反馈
 
