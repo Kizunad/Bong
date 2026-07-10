@@ -6,6 +6,10 @@ use valence::prelude::{
     ParamSet, Position, Query, Res, ResMut, Username, With,
 };
 
+use crate::body_plan::{
+    humanoid_plan_static, legacy_body_part_to_id, resolve_body_plan, BodyPlanPurpose,
+    BodyPlanRegistry, BodyPlanResolveInputs, RaceRegistry,
+};
 use crate::combat::anticheat::AntiCheatCounter;
 use crate::combat::arm_wound;
 use crate::combat::armor::{ArmorProfileRegistry, ARMOR_MITIGATION_CAP};
@@ -259,6 +263,14 @@ pub fn resolve_attack_intents(
     // plan-shield-block-v1 P3：shield_broken 事件写出 + ItemRegistry（读 ShieldSpec）
     // plan-shield-block-v1 P4：defender KnownTechniques（shield_block_profile 缩放）+ shield_block_hit emit
     // plan-baomai-v4 P0：dead_armor 免疫区拦截污染（第 13 位，≤16 上限安全）
+    // plan-race-system-v1 P0b：body_part_multipliers 改查目标实体解析出的 BodyPlan（第
+    // 14/15 位，仍 ≤16 上限）——`resolve_attack_intents` 已在函数顶层参数用满 Bevy
+    // SystemParam 元组 16 元素上限（见本函数其余参数 + `CombatResolveEventWriters` 的
+    // "避免 Bevy 0.14 顶层 SystemParam 数量上限" 注释），新增资源只能塞进这个既有 bucket
+    // tuple。`Option<Res<...>>` 与顶层 `armor_profiles: Option<Res<ArmorProfileRegistry>>`
+    // 同款——大量既有单测未插入这两个资源，缺失时 `body_part_multipliers` 优雅退化到
+    // `body_plan::humanoid_plan_static()`（生产环境 `body_plan::register()` 恒装载，
+    // 这条退化分支不会在真实部署触发）。
     weapon_break: (
         Query<&mut Weapon>,
         EventWriter<WeaponBroken>,
@@ -273,6 +285,8 @@ pub fn resolve_attack_intents(
         Option<Res<ItemRegistry>>,
         Query<Option<&KnownTechniques>>,
         Query<Option<&DeadMeridianArmor>>,
+        Option<Res<BodyPlanRegistry>>,
+        Option<Res<RaceRegistry>>,
     ),
 ) {
     let (
@@ -289,6 +303,8 @@ pub fn resolve_attack_intents(
         item_registry,
         defender_known_q,
         dead_armor_q,
+        body_plan_registry,
+        race_registry,
     ) = weapon_break;
 
     for intent in intents.read() {
@@ -559,8 +575,13 @@ pub fn resolve_attack_intents(
         let decay = ((intent.reach.max - distance) / intent.reach.max.max(0.001)).clamp(0.0, 1.0);
         let hit_qi = (intent.qi_invest * decay).max(0.0);
         let is_physical_hit = intent.qi_invest <= f32::EPSILON;
-        let (body_damage_multiplier, contam_multiplier, bleed_multiplier) =
-            body_part_multipliers(hit_probe.body_part);
+        let (body_damage_multiplier, contam_multiplier, bleed_multiplier) = body_part_multipliers(
+            target_entity,
+            defender_cultivation.as_deref(),
+            body_plan_registry.as_deref(),
+            race_registry.as_deref(),
+            hit_probe.body_part,
+        );
         let wound_profile = wound_kind_profile(intent.wound_kind);
         let defender_damage_multiplier = defender_attrs
             .as_ref()
@@ -1908,7 +1929,74 @@ fn record_anticheat_violation(
     counter.record_violation(kind, details);
 }
 
-fn body_part_multipliers(body_part: BodyPart) -> (f32, f32, f32) {
+/// plan-race-system-v1 P0b —— 部位倍率不再是本文件的硬编 8 分支 match，改查目标实体
+/// 解析出的 [`crate::body_plan::BodyPlan`]（经 [`resolve_body_plan`]）的
+/// `BodyPartDef.{damage_mul,contam_mul,bleed_mul}`。查询链：
+/// 1. `body_plans`/`races` 均存在（生产环境恒真，`body_plan::register()` 启动期装载）
+///    → 走 `resolve_body_plan`（玩家走 `Cultivation.race`，见 `BodyPlanPurpose::Intrinsic`
+///    语义）；解析成功即用其结果查表。
+/// 2. 解析失败（未知 race，理论上不会发生——`persistence` 层反序列化早已拒载未知
+///    race）或任一资源缺失（大量既有单测未插入这两个资源，见 `weapon_break` 元组
+///    P0b 注释）→ 退化到 [`humanoid_plan_static`]（与 registry 加载同一份
+///    `humanoid.json`，数值 bit-for-bit 相同，不是第二份硬编码表）。
+///
+/// P0b 未在 `CombatTargetItem` 查询里加 `Option<&BeastKind>`（该 15 元素元组已逼近
+/// Bevy `WorldQuery` 元组 16 元素上限，见 `resolve_attack_intents` 顶层参数同款注释）——
+/// 这在行为上是安全简化：`races.json` 现阶段所有 `BeastKind` 派生种族的
+/// `body_plan_id` 均为 `"humanoid"`（P5 才会引入 whale 等非人形 plan），
+/// `BodyPlanResolveInputs{beast_kind:None}` 落进 `resolve_body_plan` 的 Tier2/Tier3
+/// 分支，与"真的查了 BeastKind"得到完全相同的 `humanoid` 解析结果——bit-for-bit
+/// 不受影响。P5 若要给非人形 NPC 引入差异化命中倍率，需要在此处补上 BeastKind 查询
+/// （届时 `CombatTargetItem` 元组可能需要拆分或改走 `#[derive(SystemParam)]` 结构体）。
+fn body_part_multipliers(
+    target_entity: Entity,
+    defender_cultivation: Option<&Cultivation>,
+    body_plans: Option<&BodyPlanRegistry>,
+    races: Option<&RaceRegistry>,
+    body_part: BodyPart,
+) -> (f32, f32, f32) {
+    let part_id = legacy_body_part_to_id(body_part);
+
+    let plan = match (body_plans, races) {
+        (Some(body_plans), Some(races)) => match resolve_body_plan(
+            target_entity,
+            BodyPlanPurpose::Intrinsic,
+            BodyPlanResolveInputs {
+                cultivation: defender_cultivation,
+                beast_kind: None,
+            },
+            body_plans,
+            races,
+        ) {
+            Ok(plan) => plan,
+            Err(error) => {
+                tracing::error!(
+                    "[bong][body_plan] body_part_multipliers: {error} — falling back to humanoid"
+                );
+                humanoid_plan_static()
+            }
+        },
+        _ => humanoid_plan_static(),
+    };
+
+    plan.parts
+        .iter()
+        .find(|def| def.id == part_id)
+        .map(|def| (def.damage_mul, def.contam_mul, def.bleed_mul))
+        .unwrap_or_else(|| {
+            tracing::error!(
+                "[bong][body_plan] body plan {} has no part definition for legacy BodyPart \
+                 {body_part:?} (id={part_id}) — using neutral 1.0 multipliers",
+                plan.id
+            );
+            (1.0, 1.0, 1.0)
+        })
+}
+
+/// P0b 之前的硬编 8 分支 match（保留供 `legacy_body_part_multipliers_matches_data_driven_defaults`
+/// pin 测试逐项对拍，证明数据驱动路径与旧表 bit-for-bit 一致；生产代码不再调用）。
+#[cfg(test)]
+fn legacy_body_part_multipliers(body_part: BodyPart) -> (f32, f32, f32) {
     match body_part {
         BodyPart::Head => (2.0, 1.5, 1.5),
         BodyPart::Chest => (1.0, 1.0, 1.0),
@@ -2096,6 +2184,252 @@ fn first_open_or_fallback_meridian(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ─────────────────── plan-race-system-v1 P0b: body_part_multipliers ───────────────────
+
+    mod body_part_multipliers_tests {
+        use super::*;
+        use crate::body_plan::race_registry::RaceEntry;
+        use crate::body_plan::types::{
+            BodyPartDef, HeightBand, HeightBandAssignment, HitGeometry, PartConsequence,
+            StandingAabbSpec,
+        };
+        use std::collections::HashMap;
+
+        const ALL_LEGACY_PARTS: [BodyPart; 8] = [
+            BodyPart::Head,
+            BodyPart::Chest,
+            BodyPart::Back,
+            BodyPart::Abdomen,
+            BodyPart::ArmL,
+            BodyPart::ArmR,
+            BodyPart::LegL,
+            BodyPart::LegR,
+        ];
+
+        /// `damage_mul` 与 `legacy_body_part_multipliers` 逐部位一致但数值刻意区分开
+        /// （20/15/15 而非旧表 2.0/1.5/1.5），用于证明结果确实来自这份自定义 registry
+        /// 而非硬编码回退表——如果测试断言命中的是旧表数值，说明 wiring 没生效。
+        fn distinctive_plan() -> crate::body_plan::BodyPlan {
+            crate::body_plan::BodyPlan {
+                id: "distinctive_test_plan".into(),
+                display_name: "测试专用构型".to_string(),
+                is_humanoid: true,
+                parts: vec![
+                    BodyPartDef {
+                        id: "head".into(),
+                        damage_mul: 20.0,
+                        contam_mul: 15.0,
+                        bleed_mul: 15.0,
+                        consequence: PartConsequence::Sensory,
+                    },
+                    BodyPartDef {
+                        id: "chest".into(),
+                        damage_mul: 10.0,
+                        contam_mul: 10.0,
+                        bleed_mul: 10.0,
+                        consequence: PartConsequence::Core,
+                    },
+                ],
+                hit_geometry: HitGeometry::HeightBands {
+                    aabb: StandingAabbSpec {
+                        half_width: 0.3,
+                        height: 1.8,
+                    },
+                    bands: vec![
+                        HeightBand {
+                            min_rel_y: 0.5,
+                            assignment: HeightBandAssignment::Single {
+                                part: "head".into(),
+                            },
+                        },
+                        HeightBand {
+                            min_rel_y: -1.0,
+                            assignment: HeightBandAssignment::Single {
+                                part: "chest".into(),
+                            },
+                        },
+                    ],
+                    lateral_threshold: 0.19,
+                },
+                equip_slots: vec![],
+                meridian_profile: None,
+                mutation_slot_mapping: HashMap::new(),
+            }
+        }
+
+        fn registries_with_distinctive_human_plan() -> (BodyPlanRegistry, RaceRegistry) {
+            let body_plans = BodyPlanRegistry::from_plans(vec![distinctive_plan()])
+                .expect("distinctive_test_plan must validate");
+            let races = RaceRegistry::from_parts_for_test(
+                vec![RaceEntry {
+                    id: crate::body_plan::RaceId::new("human"),
+                    display_name: "人族".to_string(),
+                    body_plan_id: "distinctive_test_plan".into(),
+                    beast_kinds: vec![],
+                }],
+                vec![],
+                &body_plans,
+            )
+            .expect("races.json fixture must validate");
+            (body_plans, races)
+        }
+
+        #[test]
+        fn uses_registry_resolved_plan_when_present_not_hardcoded_legacy_table() {
+            let (body_plans, races) = registries_with_distinctive_human_plan();
+            let cultivation = Cultivation::default(); // race defaults to "human"
+            let (damage_mul, contam_mul, bleed_mul) = body_part_multipliers(
+                Entity::PLACEHOLDER,
+                Some(&cultivation),
+                Some(&body_plans),
+                Some(&races),
+                BodyPart::Head,
+            );
+            assert_eq!(
+                (damage_mul, contam_mul, bleed_mul),
+                (20.0, 15.0, 15.0),
+                "当 BodyPlanRegistry/RaceRegistry 都存在时，必须使用其解析出的 BodyPlan 数据\
+                 （20.0/15.0/15.0），而不是硬编码回退表（2.0/1.5/1.5）——命中旧表数值说明\
+                 wiring 没有真正生效"
+            );
+        }
+
+        #[test]
+        fn falls_back_to_humanoid_static_when_registries_missing() {
+            // 大量既有单测（本文件其余 ~48 处 resolve_attack_intents 系统测试）未插入
+            // 这两个资源——退化路径必须与 legacy 硬编码表 bit-for-bit 一致，否则会让
+            // 那些既有测试全部回归红。
+            for part in ALL_LEGACY_PARTS {
+                assert_eq!(
+                    body_part_multipliers(Entity::PLACEHOLDER, None, None, None, part),
+                    legacy_body_part_multipliers(part),
+                    "part={part:?}: 资源缺失时的退化路径必须与旧硬编码表完全一致"
+                );
+            }
+        }
+
+        #[test]
+        fn falls_back_to_humanoid_static_when_only_body_plans_present() {
+            let (body_plans, _races) = registries_with_distinctive_human_plan();
+            let cultivation = Cultivation::default();
+            assert_eq!(
+                body_part_multipliers(
+                    Entity::PLACEHOLDER,
+                    Some(&cultivation),
+                    Some(&body_plans),
+                    None,
+                    BodyPart::Head,
+                ),
+                legacy_body_part_multipliers(BodyPart::Head),
+                "只有 body_plans 没有 races 时（二者必须同时存在才走数据驱动路径），\
+                 必须退化到 humanoid_plan_static 而不是 panic 或误用 body_plans"
+            );
+        }
+
+        #[test]
+        fn falls_back_to_humanoid_static_when_only_races_present() {
+            let (_body_plans, races) = registries_with_distinctive_human_plan();
+            let cultivation = Cultivation::default();
+            assert_eq!(
+                body_part_multipliers(
+                    Entity::PLACEHOLDER,
+                    Some(&cultivation),
+                    None,
+                    Some(&races),
+                    BodyPart::Head,
+                ),
+                legacy_body_part_multipliers(BodyPart::Head),
+                "只有 races 没有 body_plans 时同样必须退化到 humanoid_plan_static"
+            );
+        }
+
+        #[test]
+        fn unknown_player_race_falls_back_to_humanoid_static_not_panic() {
+            let (body_plans, races) = registries_with_distinctive_human_plan();
+            let mut cultivation = Cultivation::default();
+            cultivation.race = crate::body_plan::RaceId::new("does_not_exist");
+            for part in ALL_LEGACY_PARTS {
+                assert_eq!(
+                    body_part_multipliers(
+                        Entity::PLACEHOLDER,
+                        Some(&cultivation),
+                        Some(&body_plans),
+                        Some(&races),
+                        part,
+                    ),
+                    legacy_body_part_multipliers(part),
+                    "part={part:?}: 未知 race 解析失败必须优雅退化到 humanoid_plan_static，\
+                     而不是 panic 或返回中性 1.0 倍率"
+                );
+            }
+        }
+
+        #[test]
+        fn no_cultivation_component_falls_back_to_humanoid_default_via_resolve() {
+            // 目标实体既非玩家（无 Cultivation）也非 BeastKind——resolve_body_plan Tier3
+            // 兜底 humanoid_default()，registries_with_distinctive_human_plan() 的
+            // registry 里没有注册 "humanoid" 这个 plan id，只注册了
+            // "distinctive_test_plan"，所以这条路径必须走 body_plan_multipliers 自身的
+            // Err/None 退化（因为 resolve_body_plan 会因 humanoid_default() panic 缺失
+            // 而无法直接调用）——改用真实 humanoid registry 验证 Tier3 兜底真的取到
+            // humanoid plan 数据。
+            let body_plans = BodyPlanRegistry::from_plans(vec![real_humanoid_plan_copy()])
+                .expect("humanoid plan must validate");
+            let races = RaceRegistry::from_parts_for_test(
+                vec![RaceEntry {
+                    id: crate::body_plan::RaceId::new("human"),
+                    display_name: "人族".to_string(),
+                    body_plan_id: "humanoid".into(),
+                    beast_kinds: vec![],
+                }],
+                vec![],
+                &body_plans,
+            )
+            .expect("races.json fixture must validate");
+
+            for part in ALL_LEGACY_PARTS {
+                assert_eq!(
+                    body_part_multipliers(
+                        Entity::PLACEHOLDER,
+                        None, // no Cultivation component → Tier3 fallback inside resolve_body_plan
+                        Some(&body_plans),
+                        Some(&races),
+                        part,
+                    ),
+                    legacy_body_part_multipliers(part),
+                    "part={part:?}: 无 Cultivation 组件的实体经 resolve_body_plan Tier3 兜底 \
+                     humanoid_default()，数值必须与旧表一致"
+                );
+            }
+        }
+
+        /// `humanoid_plan_static()` 的真实数据副本（同 P0a `resolve.rs` 测试模块的
+        /// `humanoid_plan()` fixture 手法）——本测试文件不便直接依赖磁盘路径解析。
+        fn real_humanoid_plan_copy() -> crate::body_plan::BodyPlan {
+            crate::body_plan::humanoid_plan_static().clone()
+        }
+
+        #[test]
+        fn legacy_table_matches_humanoid_json_for_all_eight_parts() {
+            // 反向对拍：确保本文件保留的 legacy_body_part_multipliers 硬编码表与
+            // humanoid.json 实际内容仍然一致——如果有人只改了 JSON 忘了这条测试会撞红。
+            let plan = crate::body_plan::humanoid_plan_static();
+            for part in ALL_LEGACY_PARTS {
+                let id = crate::body_plan::legacy_body_part_to_id(part);
+                let def = plan
+                    .parts
+                    .iter()
+                    .find(|def| def.id == id)
+                    .unwrap_or_else(|| panic!("humanoid.json missing part {id}"));
+                assert_eq!(
+                    legacy_body_part_multipliers(part),
+                    (def.damage_mul, def.contam_mul, def.bleed_mul),
+                    "part={part:?}: legacy 硬编码表与 humanoid.json 数据不一致"
+                );
+            }
+        }
+    }
 
     /// bug: Daoxiang TSY NPCs emit AttackIntent{qi_invest:25.0, source:Melee} but
     /// NpcRuntimeBundle sets Cultivation{qi_current:0.0, qi_max:10.0}. TSY zone

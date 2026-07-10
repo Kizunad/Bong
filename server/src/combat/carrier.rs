@@ -950,6 +950,10 @@ fn projectile_tick_system(
             // 几何分类（与近战 `raycast_humanoid` 共享阈值/语义），以本 tick 飞行段
             // （`current` → `next`）上离目标中心最近的点作为命中点、`flight.spawn_pos`
             // 作为攻方几何原点（弹道起点，决定 lateral 判定的参照方向）。
+            // plan-race-system-v1 P0b —— `classify_body_part` 本身已改为查询
+            // `body_plan::humanoid_plan_static()` 的 `HeightBands` 数据而非硬编码常量
+            // （见 `combat/raycast.rs`），本调用点无需任何改动即"同步改走新入口"：
+            // 函数签名不变，投射物命中分类天然沿用与近战完全相同的数据源。
             let target_feet = target_pos.get();
             let target_center = target_feet + DVec3::new(0.0, 1.0, 0.0);
             let segment = next - current;
