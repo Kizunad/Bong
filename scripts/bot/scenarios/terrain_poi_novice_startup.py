@@ -22,6 +22,11 @@ EXPECTED = {
 }
 
 
+def _selection_strategy(detail_text: str) -> str | None:
+    match = re.search(r"(?:^|\s)selection=([^\s]+)(?:\s|$)", detail_text)
+    return match.group(1) if match is not None else None
+
+
 def run(env) -> None:
     with env.new_bot("Poi") as bot:
         bot.expect_event("game_join", timeout=15.0)
@@ -60,9 +65,10 @@ def run(env) -> None:
         for kind, strategy in EXPECTED.items():
             detail = bot.expect_chat(f"[dev] novice_poi {kind} ", timeout=10.0)
             detail_text = detail.data["text"]
-            if f"selection={strategy}" not in detail_text:
+            actual_strategy = _selection_strategy(detail_text)
+            if actual_strategy != strategy:
                 raise BotAssertionError(
                     f"[{bot.username}] 期望 {kind} selection={strategy}，"
-                    f"实际 chat={detail_text!r}"
+                    f"实际 selection={actual_strategy!r}, chat={detail_text!r}"
                 )
         bot.assert_alive("读取 novice POI registry 摘要后")
