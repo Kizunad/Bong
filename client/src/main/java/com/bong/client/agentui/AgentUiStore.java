@@ -44,7 +44,12 @@ public final class AgentUiStore {
         AgentUiScreen screen = activeScreen;
         if (screen != null && screen.requestId().equals(requestId)) {
             activeScreen = null;
-            screen.receiveCloseSignal();
+            screen.receiveCloseSignal(reason);
+            return;
+        }
+        if (screen == null) {
+            // 按钮点击会先本地关屏；server 的错误 close 随后到达时仍须给玩家反馈。
+            AgentUiCloseFeedback.showForReason(reason);
         }
     }
 

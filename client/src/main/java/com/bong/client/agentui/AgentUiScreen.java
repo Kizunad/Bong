@@ -201,6 +201,15 @@ public final class AgentUiScreen extends BaseOwoScreen<FlowLayout> {
      * 关闭面板，不发任何 response（server 已发布终态 Redis）。
      */
     public void receiveCloseSignal() {
+        receiveCloseSignal(null);
+    }
+
+    /**
+     * 收到 server {@code agent_ui_close} 信号后调用。
+     * reason 为空表示 Replaced，保持静默；错误 reason 显示玩家可见提示后关闭。
+     */
+    public void receiveCloseSignal(@Nullable String reason) {
+        AgentUiCloseFeedback.showForReason(reason);
         closeWithoutResponse();
     }
 

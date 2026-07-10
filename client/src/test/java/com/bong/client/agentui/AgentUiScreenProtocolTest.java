@@ -1,5 +1,6 @@
 package com.bong.client.agentui;
 
+import com.bong.client.hud.BongToast;
 import com.bong.client.network.ClientRequestProtocol;
 import com.bong.client.network.ClientRequestSender;
 import com.google.gson.JsonObject;
@@ -48,6 +49,7 @@ public class AgentUiScreenProtocolTest {
     void tearDown() {
         ClientRequestSender.resetBackendForTests();
         AgentUiStore.clear();
+        BongToast.resetForTests();
         sentPayloads.clear();
     }
 
@@ -361,6 +363,28 @@ public class AgentUiScreenProtocolTest {
             "receiveCloseSignal 后不应发任何包，实际发了 " + sentPayloads.size() + " 个包");
         assertNull(AgentUiStore.getActive(),
             "receiveCloseSignal closeWithoutResponse 后应清空 AgentUiStore");
+        assertTrue(BongToast.current(System.currentTimeMillis()).isEmpty(),
+            "无 reason 的 receiveCloseSignal 表示 Replaced，应保持静默");
+    }
+
+    /**
+     * ④b receiveCloseSignal(reason)（Error close）→ 不发包，但显示错误提示。
+     */
+    @Test
+    void agentUiScreen_receiveCloseSignalWithReason_showsFeedbackAndSendsNoPacket() {
+        String xml = "<owo-ui><components><flow-layout/></components></owo-ui>";
+        AgentUiScreen screen = AgentUiScreen.create("req-server-error-close-001", xml, 600, 1000L);
+        AgentUiStore.setActive(screen);
+
+        screen.receiveCloseSignal("invalid_button_id");
+
+        assertEquals(0, sentPayloads.size(),
+            "receiveCloseSignal(reason) 后不应发任何包，实际发了 " + sentPayloads.size() + " 个包");
+        assertNull(AgentUiStore.getActive(),
+            "receiveCloseSignal(reason) closeWithoutResponse 后应清空 AgentUiStore");
+        assertEquals("天道拒绝了这次操作",
+            BongToast.current(System.currentTimeMillis()).text().getString(),
+            "invalid_button_id 应显示拒绝提示");
     }
 
     /**
