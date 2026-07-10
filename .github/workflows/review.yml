@@ -41,17 +41,19 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        timeout-minutes: 3
         with:
           fetch-depth: 0
           persist-credentials: false
 
       - uses: actions/setup-node@v4
+        timeout-minutes: 3
         with:
           node-version: "24"
 
       - name: Review 熔断预检
         id: circuit
-        timeout-minutes: 5
+        timeout-minutes: 3
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number || inputs.pr_number }}
@@ -60,6 +62,7 @@ jobs:
           REVIEW_INFRA_FAILURE_WINDOW_MINUTES: ${{ vars.REVIEW_INFRA_FAILURE_WINDOW_MINUTES || '60' }}
           REVIEW_CIRCUIT_MINUTES: ${{ vars.REVIEW_CIRCUIT_MINUTES || '60' }}
           REVIEW_CIRCUIT_ISSUE_NUMBER: ${{ vars.REVIEW_CIRCUIT_ISSUE_NUMBER }}
+          REVIEW_GH_TIMEOUT_MS: ${{ vars.REVIEW_GH_TIMEOUT_MS || '30000' }}
         run: |
           mkdir -p /tmp/rev
           cp .github/scripts/review.mjs /tmp/rev/review.mjs
@@ -67,6 +70,7 @@ jobs:
 
       - name: 切到 PR head
         if: steps.circuit.outputs.should_run == 'true'
+        timeout-minutes: 3
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PRNUM: ${{ github.event.pull_request.number || github.event.issue.number || inputs.pr_number }}
@@ -78,7 +82,7 @@ jobs:
         id: install
         if: steps.circuit.outputs.should_run == 'true'
         continue-on-error: true
-        timeout-minutes: 10
+        timeout-minutes: 8
         run: |
           npm install -g @openai/codex@0.143.0
           codex --version
@@ -87,7 +91,7 @@ jobs:
         id: configure
         if: steps.circuit.outputs.should_run == 'true' && steps.install.outcome == 'success'
         continue-on-error: true
-        timeout-minutes: 5
+        timeout-minutes: 3
         env:
           REVIEW_CODEX_API_KEY: ${{ secrets.REVIEW_CODEX_API_KEY || secrets.HLOOL_API_KEY || secrets.OPENAI_API_KEY || secrets.PI_CLIPROXY_KEY }}
           REVIEW_CODEX_BASE_URL: ${{ vars.REVIEW_CODEX_BASE_URL || 'https://api.hlool.top' }}
@@ -121,7 +125,7 @@ jobs:
         id: review_run
         if: steps.circuit.outputs.should_run == 'true' && steps.configure.outcome == 'success'
         continue-on-error: true
-        timeout-minutes: 50
+        timeout-minutes: 40
         working-directory: ${{ github.workspace }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -131,7 +135,7 @@ jobs:
           REVIEW_MAX_DIFF: ${{ vars.REVIEW_MAX_DIFF || '40000' }}
           REVIEW_MAX_PLAN: ${{ vars.REVIEW_MAX_PLAN || '20000' }}
           REVIEW_CODEX_TIMEOUT_MS: ${{ vars.REVIEW_CODEX_TIMEOUT_MS || '900000' }}
-          REVIEW_TOTAL_TIMEOUT_MINUTES: ${{ vars.REVIEW_TOTAL_TIMEOUT_MINUTES || '45' }}
+          REVIEW_TOTAL_TIMEOUT_MINUTES: ${{ vars.REVIEW_TOTAL_TIMEOUT_MINUTES || '35' }}
           REVIEW_CODEX_CONCURRENCY: ${{ vars.REVIEW_CODEX_CONCURRENCY || '1' }}
           REVIEW_CODEX_RETRIES: ${{ vars.REVIEW_CODEX_RETRIES || '3' }}
           REVIEW_CODEX_RETRY_MS: ${{ vars.REVIEW_CODEX_RETRY_MS || '15000' }}
@@ -139,6 +143,7 @@ jobs:
           REVIEW_INFRA_FAILURE_WINDOW_MINUTES: ${{ vars.REVIEW_INFRA_FAILURE_WINDOW_MINUTES || '60' }}
           REVIEW_CIRCUIT_MINUTES: ${{ vars.REVIEW_CIRCUIT_MINUTES || '60' }}
           REVIEW_CIRCUIT_ISSUE_NUMBER: ${{ vars.REVIEW_CIRCUIT_ISSUE_NUMBER }}
+          REVIEW_GH_TIMEOUT_MS: ${{ vars.REVIEW_GH_TIMEOUT_MS || '30000' }}
         run: node /tmp/rev/review.mjs
 
       - name: 汇总 Review 结果并执行降级
@@ -154,4 +159,5 @@ jobs:
           REVIEW_INFRA_FAILURE_WINDOW_MINUTES: ${{ vars.REVIEW_INFRA_FAILURE_WINDOW_MINUTES || '60' }}
           REVIEW_CIRCUIT_MINUTES: ${{ vars.REVIEW_CIRCUIT_MINUTES || '60' }}
           REVIEW_CIRCUIT_ISSUE_NUMBER: ${{ vars.REVIEW_CIRCUIT_ISSUE_NUMBER }}
+          REVIEW_GH_TIMEOUT_MS: ${{ vars.REVIEW_GH_TIMEOUT_MS || '30000' }}
         run: node /tmp/rev/review.mjs workflow-finalize

@@ -19,7 +19,8 @@ const MODEL = process.env.REVIEW_CODEX_MODEL || "gpt-5.6-sol";
 const MAX_DIFF = intEnv("REVIEW_MAX_DIFF", 40_000, 10_000);
 const MAX_PLAN = intEnv("REVIEW_MAX_PLAN", 20_000, 5_000);
 const CODEX_TIMEOUT_MS = intEnv("REVIEW_CODEX_TIMEOUT_MS", 900_000, 120_000);
-const REVIEW_TOTAL_TIMEOUT_MS = intEnv("REVIEW_TOTAL_TIMEOUT_MINUTES", 45, 5) * 60_000;
+const REVIEW_TOTAL_TIMEOUT_MS = intEnv("REVIEW_TOTAL_TIMEOUT_MINUTES", 35, 5) * 60_000;
+const GH_TIMEOUT_MS = intEnv("REVIEW_GH_TIMEOUT_MS", 30_000, 1_000);
 const CODEX_CONCURRENCY = intEnv("REVIEW_CODEX_CONCURRENCY", 1, 1);
 const CODEX_RETRIES = intEnv("REVIEW_CODEX_RETRIES", 3, 1);
 const CODEX_RETRY_MS = intEnv("REVIEW_CODEX_RETRY_MS", 15_000, 1_000);
@@ -101,23 +102,27 @@ export function parseHiddenMarkers(value, name = CIRCUIT_MARKER) {
   return parsed;
 }
 
+export function normalizeCircuitEvent(value) {
+  const runId = String(value?.run_id || "");
+  if (
+    value?.v !== 1 ||
+    value?.kind !== "infra_failure" ||
+    !/^\d+$/.test(runId) ||
+    !Number.isFinite(new Date(value.at).getTime())
+  ) {
+    return null;
+  }
+  return { ...value, run_id: runId };
+}
+
 export function parseTrustedCircuitEvents(comments, trustedLogin = "github-actions[bot]") {
   const seenRuns = new Set();
   const events = [];
   for (const comment of comments || []) {
     if (comment?.user?.login !== trustedLogin || comment?.user?.type !== "Bot") continue;
-    const marker = parseHiddenMarkers(comment.body)[0];
-    const runId = String(marker?.run_id || "");
-    if (
-      marker?.v !== 1 ||
-      marker?.kind !== "infra_failure" ||
-      !/^\d+$/.test(runId) ||
-      !Number.isFinite(new Date(marker.at).getTime()) ||
-      seenRuns.has(runId)
-    ) {
-      continue;
-    }
-    seenRuns.add(runId);
+    const marker = normalizeCircuitEvent(parseHiddenMarkers(comment.body)[0]);
+    if (!marker || seenRuns.has(marker.run_id)) continue;
+    seenRuns.add(marker.run_id);
     events.push(marker);
   }
   return events;
@@ -125,13 +130,28 @@ export function parseTrustedCircuitEvents(comments, trustedLogin = "github-actio
 
 export function selectCircuitStateIssues(issues) {
   return (issues || [])
-    .filter((issue) => issue?.title === CIRCUIT_STATE_TITLE && String(issue.body || "").includes(CIRCUIT_STATE_MARKER))
+    .filter(
+      (issue) =>
+        !issue?.pull_request &&
+        issue?.user?.login === "github-actions[bot]" &&
+        issue?.user?.type === "Bot" &&
+        issue?.title === CIRCUIT_STATE_TITLE &&
+        String(issue.body || "").includes(CIRCUIT_STATE_MARKER),
+    )
     .map((issue) => String(issue.number))
     .filter((number) => /^\d+$/.test(number))
     .sort((a, b) => Number(a) - Number(b));
 }
 
-export function boundedAttemptTimeout(configuredMs, remainingMs, cleanupReserveMs = 15_000) {
+export function resolveCircuitStateIssueNumbers(createdNumber, refreshedNumbers) {
+  const refreshed = (refreshedNumbers || [])
+    .map(String)
+    .filter((number) => /^\d+$/.test(number))
+    .sort((a, b) => Number(a) - Number(b));
+  return refreshed.length ? refreshed : [String(createdNumber)];
+}
+
+export function boundedAttemptTimeout(configuredMs, remainingMs, cleanupReserveMs = 180_000) {
   return Math.max(0, Math.min(configuredMs, remainingMs - cleanupReserveMs));
 }
 
@@ -937,20 +957,9 @@ function loadCircuitEvents() {
 function findCircuitStateIssues() {
   const configured = process.env.REVIEW_CIRCUIT_ISSUE_NUMBER;
   if (configured && /^\d+$/.test(configured)) return [configured];
-  const issues = JSON.parse(
-    gh([
-      "issue",
-      "list",
-      "--state",
-      "all",
-      "--search",
-      `${CIRCUIT_STATE_TITLE} in:title`,
-      "--limit",
-      "100",
-      "--json",
-      "number,title,body",
-    ]),
-  );
+  const repo = resolveRepository();
+  const pages = JSON.parse(gh(["api", "--paginate", "--slurp", `repos/${repo}/issues?state=all&per_page=100`]));
+  const issues = Array.isArray(pages[0]) ? pages.flat() : pages;
   return selectCircuitStateIssues(issues);
 }
 
@@ -969,9 +978,8 @@ function ensureCircuitStateIssues() {
       `body=此 issue 由 Review Action 自动维护，用隐藏 marker 持久化 reviewer 基础设施失败；请勿手工编辑。\n\n${CIRCUIT_STATE_MARKER}`,
     ]),
   );
-  return [String(created.number)];
+  return resolveCircuitStateIssueNumbers(created.number, findCircuitStateIssues());
 }
-
 function listIssueComments(issue) {
   const repo = resolveRepository();
   const pages = JSON.parse(gh(["api", "--paginate", "--slurp", `repos/${repo}/issues/${issue}/comments?per_page=100`]));
@@ -989,17 +997,23 @@ async function recordInfrastructureFailure(phase, reason) {
     phase: truncate(String(phase || "unknown"), 80),
     reason: truncate(String(reason || "reviewer 执行失败"), 1200),
   };
+  const circuitEvent = normalizeCircuitEvent(event);
 
   let events = [];
-  try {
-    const issues = ensureCircuitStateIssues();
-    events = parseTrustedCircuitEvents(issues.flatMap(listIssueComments));
-    postIssueComment(issues[0], `Review infra failure · PR #${PR} · ${event.phase}\n\n${renderHiddenMarker(CIRCUIT_MARKER, event)}`);
-  } catch (error) {
-    console.error(`::warning::持久化 Review infra failure 失败：${errorText(error)}`);
+  if (circuitEvent) {
+    try {
+      const issues = ensureCircuitStateIssues();
+      events = parseTrustedCircuitEvents(issues.flatMap(listIssueComments));
+      postIssueComment(issues[0], `Review infra failure · PR #${PR} · ${event.phase}\n\n${renderHiddenMarker(CIRCUIT_MARKER, circuitEvent)}`);
+    } catch (error) {
+      console.error(`::warning::持久化 Review infra failure 失败：${errorText(error)}`);
+    }
+  } else {
+    console.error("::warning::GITHUB_RUN_ID 缺失或非法，本次仅发布 handoff，不写入熔断计数。");
   }
 
-  const combinedEvents = events.some((existing) => String(existing.run_id) === String(event.run_id)) ? events : [...events, event];
+  const combinedEvents =
+    circuitEvent && !events.some((existing) => existing.run_id === circuitEvent.run_id) ? [...events, circuitEvent] : events;
   const state = currentCircuitState(combinedEvents, event.at);
   const body = renderInfrastructureHandoffComment(event, state);
   try {
@@ -1062,7 +1076,7 @@ function errorText(error) {
   return excerptLog(error?.stderr || error?.message || String(error), 1200);
 }
 function gh(args) {
-  return execFileSync("gh", args, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+  return execFileSync("gh", args, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, timeout: GH_TIMEOUT_MS });
 }
 
 function normalizeFindings(value) {

@@ -20,12 +20,14 @@ import {
   normalizePlanStatus,
   normalizeResult,
   normalizeVote,
+  normalizeCircuitEvent,
   parseHiddenMarkers,
   parseTrustedCircuitEvents,
   redactCodexPromptEcho,
   renderCircuitSkipComment,
   renderHiddenMarker,
   renderInfrastructureHandoffComment,
+  resolveCircuitStateIssueNumbers,
   selectCircuitStateIssues,
 } from "./review.mjs";
 
@@ -89,22 +91,38 @@ test("trusted circuit events: 只接受 github-actions bot、单评论单 marker
   assert.deepEqual(parseTrustedCircuitEvents(comments).map((event) => event.run_id), ["101", "104"]);
 });
 
+
+test("circuit event validation: 当前轮与跨 run 对空/非法 run_id 使用同一规则", () => {
+  const base = { v: 1, kind: "infra_failure", at: "2026-07-10T00:00:00Z" };
+  assert.equal(normalizeCircuitEvent({ ...base, run_id: "" }), null);
+  assert.equal(normalizeCircuitEvent({ ...base, run_id: "abc" }), null);
+  assert.equal(normalizeCircuitEvent({ ...base, run_id: "123" }).run_id, "123");
+});
+
+test("state issue concurrency: 两个并发创建者重查后选择相同 canonical issue", () => {
+  assert.deepEqual(resolveCircuitStateIssueNumbers("20", ["21", "20"]), ["20", "21"]);
+  assert.deepEqual(resolveCircuitStateIssueNumbers("21", ["20", "21"]), ["20", "21"]);
+  assert.deepEqual(resolveCircuitStateIssueNumbers("20", []), ["20"]);
+});
 test("state issues: 重复初始化时聚合所有合法状态 issue，并确定性排序", () => {
   const body = "<!-- bong-review-circuit-state:v1 -->";
+  const bot = { login: "github-actions[bot]", type: "Bot" };
   assert.deepEqual(
     selectCircuitStateIssues([
-      { number: 20, title: "[automation] Review infrastructure circuit state", body },
-      { number: 3, title: "[automation] Review infrastructure circuit state", body },
-      { number: 1, title: "其他", body },
+      { number: 20, title: "[automation] Review infrastructure circuit state", body, user: bot },
+      { number: 3, title: "[automation] Review infrastructure circuit state", body, user: bot },
+      { number: 1, title: "其他", body, user: bot },
+      { number: 2, title: "[automation] Review infrastructure circuit state", body, user: { login: "attacker", type: "User" } },
+      { number: 4, title: "[automation] Review infrastructure circuit state", body, user: bot, pull_request: {} },
     ]),
     ["3", "20"],
   );
 });
 
 test("review 总预算: 单次 timeout 被剩余预算截断，并预留清理时间", () => {
-  assert.equal(boundedAttemptTimeout(900_000, 1_000_000), 900_000);
-  assert.equal(boundedAttemptTimeout(900_000, 60_000), 45_000);
-  assert.equal(boundedAttemptTimeout(900_000, 15_000), 0);
+  assert.equal(boundedAttemptTimeout(900_000, 1_000_000), 820_000);
+  assert.equal(boundedAttemptTimeout(900_000, 180_000), 0);
+  assert.equal(boundedAttemptTimeout(900_000, 60_000, 15_000), 45_000);
 });
 test("evaluateCircuit: 阈值前关闭，达到阈值后开启", () => {
   const events = ["00:00", "00:10", "00:20"].map((time) => ({
@@ -167,7 +185,13 @@ test("workflow: 预检先于 CLI，自动失败统一降级，manual trigger 仍
   assert.match(workflow, /REVIEW_INFRA_FAILURE_THRESHOLD.*'3'/);
   assert.match(workflow, /pull-requests: read/);
   assert.doesNotMatch(workflow, /pull-requests: write/);
-  assert.match(workflow, /REVIEW_TOTAL_TIMEOUT_MINUTES.*'45'/);
+  assert.match(workflow, /REVIEW_TOTAL_TIMEOUT_MINUTES.*'35'/);
+  assert.match(workflow, /REVIEW_GH_TIMEOUT_MS.*'30000'/);
+  const jobTimeout = Number(workflow.match(/^    timeout-minutes: (\d+)$/m)[1]);
+  const stepTimeouts = [...workflow.matchAll(/^        timeout-minutes: (\d+)$/gm)].map((match) => Number(match[1]));
+  assert.equal(stepTimeouts.length, 8, "每个 workflow step 都必须有独立 timeout");
+  assert.ok(stepTimeouts.reduce((sum, value) => sum + value, 0) <= jobTimeout - 15, "必须给调度与 finalize 留至少 15 分钟");
+  assert.match(workflow, /timeout-minutes: 40[^]*REVIEW_TOTAL_TIMEOUT_MINUTES:.*'35'/);
 });
 
 test("extractJSON: 支持纯 JSON、围栏、前后废话、字符串内括号", () => {
