@@ -156,13 +156,14 @@ bughunt 产出的 `docs/plans-skeleton/plan-bughunt-*.md` 由本工作流消费�
 
 ### 主干（调度）职责——只调度，不动代码
 
-主干保持上下文干净，只做：分派 skeleton、等待、验收关闭 subagent、清理已闭环 worktree 的生成目录、补齐并发。**不 push、不 merge、不开 PR、不直接修代码。**
+主干保持上下文干净，只做：分派 skeleton、等待、验收关闭 subagent、清理已闭环 worktree 的生成目录、派发 review 返工、补齐并发。**不 push、不 merge、不开 PR、不直接修代码。**
 
-- 任务清单以 **origin/main** 为准：`git fetch` 后读 skeleton 列表，派发前确认该 skeleton 在 origin/main 上仍存在、无同名 active plan、目标 symbol 未被已 merge 的修复覆盖（防跨会话重复消费）
+- 任务清单以 **origin/main** 为准：`git fetch` 后读 skeleton 列表，派发前**四查**——① skeleton 在 origin/main 上仍存在 ② 无同名 active plan ③ 目标 symbol 未被已 merge 的修复覆盖 ④ **无开放 PR / 远端分支正在修同一 skeleton**（`gh pr list --state open --search "plan-X"` + 查远端分支名）。in-flight 占用持续到对应 PR merge/close 才解除，期间不得重派（防同会话下一轮和跨会话重复消费——promotion 只发生在 subagent 分支上，PR 未合并时 origin/main 依旧满足前三查）
 - **一个 skeleton = 一个 subagent = 一个 worktree = 一个 PR**（对齐「一个 PR 只动一个 plan」）
-- 编译型 worktree 并发 **≤2**（3 个并行 cargo 编译历史上 OOM + 塞盘）；共享 `CARGO_TARGET_DIR` 时删过 worktree 后若报 `No such file` → `cargo clean -p valence_generated`
+- 编译型 worktree 并发 **≤2**（3 个并行 cargo 编译历史上 OOM + 塞盘）；validator/验证类 agent 并发 **≤3**。共享 `CARGO_TARGET_DIR` 时删过 worktree 后若报 `No such file` → `cargo clean -p valence_generated`
 - subagent 回报只带结论（PR 链接 / commit hash / validator PASS 证据），不回灌大段 diff/日志进主干上下文
-- subagent 闭环后：关闭 agent、`git worktree unlock` + `remove`、删生成目录，再补一个新 subagent
+- subagent 闭环（PR 开出 + e2e 绿）后：关闭 agent、`git worktree unlock` + `remove`、删生成目录，再补一个新 subagent
+- **review 返工也是主干的调度责任**：in-flight PR 出现 `/review` / CodeRabbit 修改意见时，派**返工 subagent** 从 PR 分支重建 worktree（原 worktree 已清理无妨，分支在远端），修完重走 validator + 本地门禁 + re-review——review 意见永远有责任主体，不悬空
 
 ### Subagent（修复）流程
 
@@ -170,11 +171,12 @@ bughunt 产出的 `docs/plans-skeleton/plan-bughunt-*.md` 由本工作流消费�
 2. **Promotion**：`git mv docs/plans-skeleton/plan-X.md docs/plan-X.md`，单独中文 commit（本工作流内的 promotion 由 subagent 在自己分支内完成，是「骨架 → Active 人工流转」的授权例外）
 3. **第一性原理验真**：不信 skeleton 的结论，自己读代码 / 写复现证明是不是真 bug
    - **真 bug** → 最小正确修复 + 饱和测试锁住目标行为，按小阶段中文 commit
-   - **非 bug** → 在 plan 文档写「验证结论 + 证据」（docs-only commit），照常走后续 PR 把结论归档
+   - **非 bug** → 在 plan 文档写「验证结论 + 证据」（docs-only commit），照常走后续归档 + PR
 4. **对抗验证（强制闭环门）**：修复完成后 subagent **必须自己**再开一个**无上下文、read-only、第一性原理**的 validator agent 对抗审查。validator 只输出 PASS/FAIL + 理由，不改代码。FAIL → 返工 → **重新验证**，循环直到 PASS 才算闭环
-5. **本地门禁**（PASS 后、开 PR 前）：`cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`——管道尾必须取 `${PIPESTATUS[0]}`（`| tail` 吞退出码假绿）；测试失败绝不甩锅 pre-existing（见「测试诚实性」节）
-6. **merge origin/main 进分支再 push**：并行 PR 改同一结构体时 git auto-merge 会叠出重复字段（E0062/E0415），merge 后本地重编译确认再 push
-7. **开 PR**（中文标题 + body），等 e2e 绿，回报主干闭环。**merge 不在本工作流内**——按「PR review gate」节走，由用户或后续会话收口
+5. **本地门禁**（PASS 后）：**按所触栈在对应目录跑，不跨栈乱调命令**——server：`cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`；client：`cd client && ./gradlew test build`；agent/schema：对应包 `npm test`（schema src 改动先 `cd agent && npm run build -w @bong/schema`）；worldgen：`harness/raster_check.py` 等既有校验。跨栈修复 = 所有受影响栈都跑。管道尾必须取 `${PIPESTATUS[0]}`（`| tail` 吞退出码假绿）；测试失败绝不甩锅 pre-existing（见「测试诚实性」节）
+6. **合并主线再验**：`git fetch origin && git merge origin/main`（fetch 必须紧邻 merge，防长跑 worktree 拿着陈旧远端引用）。merge 带进任何变更 → **重跑受影响栈完整门禁**（并行 PR 改同一结构体时 auto-merge 会叠出重复字段 E0062/E0415，只重编译不够）；产生冲突或 merge 触及修复相关文件 → **回 step 4 重跑 validator** 直到 PASS
+7. **归档**：补 `## Finish Evidence`（字段按上文「Plan 文件结构」§3），独立中文归档 commit `git mv docs/plan-X.md docs/finished_plans/plan-X.md`——非 bug 的验证结论同样归档，不给 origin/main 留僵尸 active plan
+8. **开 PR**（中文标题 + body），等 e2e 绿，回报主干闭环。**merge 不在本工作流内**——按「PR review gate」节走，由用户或后续会话收口；review 修改意见由主干派返工 subagent 接手（见上）
 
 ## Testing — 饱和化测试
 
