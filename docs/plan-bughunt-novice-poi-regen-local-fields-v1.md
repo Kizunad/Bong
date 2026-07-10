@@ -1,6 +1,17 @@
 # plan-bughunt-novice-poi-regen-local-fields-v1
 
-> Skeleton Plan. 一句话主题：worldgen console / incremental regen 在重烘非 spawn zone 时，用局部 `fields` 重算并覆盖全局新手 POI manifest，导致下一次用该 raster manifest 启服时，新手炼器台、丹炉、残卷等 POI 坐标漂移到 fallback 或错误局部语义。
+> Active Plan. 一句话主题：worldgen console / incremental regen 在重烘非 spawn zone 时，用局部 `fields` 重算并覆盖全局新手 POI manifest，导致下一次用该 raster manifest 启服时，新手炼器台、丹炉、残卷等 POI 坐标漂移到 fallback 或错误局部语义。
+
+## 阶段总览
+
+| 阶段 | 状态 | 可核验交付物 |
+|---|---|---|
+| P0：POI 局部合并语义 | ✅ 2026-07-10 | `raster_export._merge_regen_poi_payload` 仅替换目标 zone，保留其他 zone 与全局 novice 条目 |
+| P1：完整选择窗口契约 | ✅ 2026-07-10 | `novice_poi_selection_tile_ids` 从 plan + 最大 2000 格搜索半径独立推导 required tiles |
+| P2：console 有界重算 | ✅ 2026-07-10 | `synthesize_fields(tile_filter=...)`；默认蓝图 305 active tiles → 16 required tiles |
+| P3：worldgen 回归与原子性 | ✅ 2026-07-10 | 远区保留、spawn 重算、fields/manifest 缺 tile、写盘前失败、非目标 POI 哨兵测试 |
+| P4：server 启动加载闭环 | ✅ 2026-07-10 | 真实 v2 manifest → `TerrainProvider::load` → Startup `PoiNoviceLoader::load` → registry + `PoiSpawned` 六类断言 |
+| P5：PR gates 与归档 | ⏳ | PR #1153 e2e / snapshot / `/review`；全绿后 `scripts/plan-finish.sh` |
 
 ## 1. 实际游玩体验影响
 
@@ -33,21 +44,22 @@
 - `_select_one()` 候选为空时落入 `FALLBACK_LOCATIONS`，见 `worldgen/scripts/poi_novice_selector.py:98-105` 与 `:301-330`。
 - runtime 闭环成立：`TerrainProvider::load()` 读取 manifest，见 `server/src/world/terrain/raster.rs:712-730`；`PoiNoviceLoader::load()` 在 Startup 从 `providers.overworld.pois()` 导入 `poi_novice` 并 `registry.replace_all(sites)`，见 `server/src/world/poi_novice.rs:237-264` 与 `:277-283`。
 
-## 4. 修复计划骨架
+## 4. 实施阶段
 
-- [ ] P0：拆分 manifest POI 刷新语义。`regen_zone()` 只允许刷新被重烘 zone 的 blueprint 静态 POI / profile 派生 POI；全局 spawn novice POI 必须保留旧 manifest 值，除非本次 regen 覆盖 spawn 周边完整选择范围。
-- [ ] P1：为 novice POI 选择器补显式输入契约：拒绝用不覆盖 spawn selection radius 的局部 `fields` 生成全局 novice POI，或要求调用方传完整 full-world / spawn-window fields。
-- [ ] P2：修复 console `/api/regen`：对非 spawn zone regen 时 patch `tiles[]` 和 zone-derived metadata，但不 clobber `poi_novice` entries；对 spawn zone regen 时重新计算 novice POI，并保证采样窗口完整。
-- [ ] P3：补 regression pin：非 spawn `regen_zone(qingyun_peaks)` 后，`manifest["pois"]` 中所有 `poi_novice` 坐标与完整导出一致；spawn regen 仍允许按完整 spawn window 重算。
-- [ ] P4：文档化边界：blueprint 静态 POI 的刷新是合理需求；本 bug 只针对全局 spawn 周边派生的 novice POI。
+- [x] P0：拆分 manifest POI 刷新语义。`regen_zone()` 只刷新被重烘 zone 的 blueprint 静态 POI / profile 派生 POI；全局 spawn novice POI 保留旧 manifest 值，除非调用方提供完整选择窗口。
+- [x] P1：选择器从 generation plan 与最大 relaxed radius 独立推导 required tile IDs；局部 `GeneratedFieldSet` 不能用自身 IDs 自证完整。
+- [x] P2：console `/api/regen` 对非 spawn zone 保留全局 novice POI；spawn regen 只合成本地 rewrite fields 与 16-tile novice window，不再全图 synthesis。
+- [x] P3：补 regression pin：非 spawn novice 逐项保留、目标 zone profile POI 刷新、非目标 zone authored/profile POI 逐字段保留；spawn 完整窗口允许重算。
+- [x] P4：文档化边界：blueprint/profile POI 仅按目标 zone patch；global novice POI 由 spawn 周边选择窗口独立管理。
 
 ## 5. 验证计划
 
-- [ ] worldgen 单测：构造完整 manifest + 非 spawn 局部 fields，调用 `regen_zone()` 后断言 `poi_novice` entries 未变。
-- [ ] worldgen 单测：构造 spawn 局部 fields 且覆盖选择半径，允许 novice POI 重算，并断言不落入意外 fallback。
-- [ ] console API 测试：`POST /api/regen {zone_name:"qingyun_peaks"}` 后，返回 rewritten tiles，但 manifest 中 `poi_novice` 坐标保持完整导出结果。
-- [ ] server pin：用污染前后 manifest 启动 `PoiNoviceLoader::load` fixture，断言 registry 中 forge/alchemy/scroll_hidden 的坐标来自正确 manifest，且不会被 fallback 误替换。
-- [ ] 集成回归：`BONG_TERRAIN_RASTER_PATH=<regen 后 manifest>` 启服，检查 `PoiNoviceRegistry` 六类新手 POI 均在 spawn 新手半径内且 selection tag 不因非 spawn regen 退化。
+- [x] worldgen：完整 manifest + 远区非 spawn 局部 fields 后，六类 `poi_novice` entries 逐项不变。
+- [x] worldgen：spawn 使用 plan-derived 完整选择窗口重算；默认 blueprint 305 active tiles 降为 16 required tiles，bounded/full 坐标一致。
+- [x] console：目标 zone profile-derived POI 刷新；非目标 zone authored/profile 哨兵条目原样保留。
+- [x] 原子性：novice fields 缺 required tile、existing manifest 缺 required tile、`--zone-filter` full export 缺窗口时，均在 raster/manifest 写入前失败。
+- [x] server：真实磁盘 v2 manifest 经 `TerrainProvider::load` 与 Startup `PoiNoviceLoader::load`，六类 registry 坐标、半径、selection tag 与六个 `PoiSpawned` 全部命中。
+- [ ] PR gate：#1153 e2e、snapshot、统一 `/review` 完成；CodeRabbit 额度/Review 429 仅按 infra 失败记录，不伪装为代码通过。
 
 ## 6. 对抗复核结论
 
@@ -56,4 +68,6 @@
 - 候选观点：非 spawn 增量 regen 用局部 `fields` 重算全局 novice POI，并覆盖同一 `manifest["pois"]`。
 - 反方质疑：影响面可能只是 dev console；`manifest["pois"]` 刷新可能是有意；fallback 本身是设计路径；缺少 server 启服后的玩家可见闭环。
 - 修正/反驳：限定为“原地写坏 manifest 后下一次启服/联调/快照可见”；补齐 `TerrainProvider::load` 与 `PoiNoviceLoader::load` 闭环；明确 blueprint 静态 POI 刷新合理，但 novice POI 是 spawn 全局派生，不能用远区局部 fields 重算。
-- 最终裁决：认可为高置信 BugHunt skeleton 候选；据当前 #969-#1053 主题与仓内 plan 检索，不重复既有 worldgen BugHunt。
+- 首轮无上下文 Ultra validator：FAIL，发现局部 fields 自证完整与 spawn 全图 9.75 GiB synthesis；已分别由 `60343597`、`c98d5c83`、`52417abc` 修复。
+- 二轮无上下文 Ultra validator：PASS；独立确认 305→16、bounded/full 坐标一致、fields/manifest 原子拒绝及 server 坐标直传。
+- PR `/review` 首轮 substantive findings：目标 zone 之外 POI 被全量重建、server pin 绕过生产 Startup、active plan 仍标 skeleton；均已纳入本阶段返工。
