@@ -10608,6 +10608,11 @@ mod persistence_tests {
         app.add_event::<crate::npc::dormant::PendingDormantRelicCreated>();
         crate::world::zone::register(&mut app);
         register(&mut app);
+        let due_snapshot_wall =
+            current_unix_seconds().saturating_sub(ZONE_RUNTIME_SNAPSHOT_INTERVAL_SECS);
+        app.world_mut()
+            .resource_mut::<ZoneRuntimeSnapshotState>()
+            .last_snapshot_wall = due_snapshot_wall;
 
         app.update();
 
@@ -10617,6 +10622,14 @@ mod persistence_tests {
             1,
             "expected production Startup ordering to hydrate one pseudo-vein, actual {}",
             heartbeat.active_pseudo_vein_count()
+        );
+        let snapshot_wall = app
+            .world()
+            .resource::<ZoneRuntimeSnapshotState>()
+            .last_snapshot_wall;
+        assert!(
+            snapshot_wall > due_snapshot_wall,
+            "expected first Update to execute the due zone-runtime snapshot because Startup hydration completed first; previous wall {due_snapshot_wall}, actual {snapshot_wall}"
         );
         let persisted_after_update = load_heartbeat_pseudo_veins_snapshot(&settings)
             .expect("first Update should leave a readable pseudo-vein snapshot");
@@ -10629,6 +10642,17 @@ mod persistence_tests {
         assert_eq!(
             persisted_after_update[0].zone_id, record.zone_id,
             "expected first Update to retain the restored pseudo-vein id"
+        );
+        let persisted_zone_runtime = load_zone_runtime_snapshot(&settings)
+            .expect("first Update should write a readable zone-runtime snapshot");
+        let persisted_pseudo_vein = persisted_zone_runtime
+            .iter()
+            .find(|runtime| runtime.zone_id == record.zone_id)
+            .expect("first Update must snapshot the pseudo-vein created during Startup hydration");
+        assert_eq!(
+            persisted_pseudo_vein.spirit_qi, record.qi_current,
+            "expected first Update to persist hydrated pseudo-vein spirit_qi {}, actual {}",
+            record.qi_current, persisted_pseudo_vein.spirit_qi
         );
 
         let _ = fs::remove_dir_all(root);
