@@ -721,8 +721,11 @@ fn splitmix64(seed: u64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::world::terrain::Poi;
-    use valence::prelude::Entity;
+    use crate::world::terrain::{Poi, TerrainProvider, TerrainProviders};
+    use std::collections::HashSet;
+    use std::fs;
+    use std::path::PathBuf;
+    use valence::prelude::{Biome, BiomeRegistry, Entity, Ident};
 
     fn novice_poi() -> Poi {
         Poi {
@@ -750,51 +753,127 @@ mod tests {
         assert_eq!(site.pos_xyz, [304.0, 71.0, 208.0]);
     }
 
+    #[derive(Resource, Default)]
+    struct CapturedPoiSpawned(Vec<PoiNoviceSite>);
+
+    fn capture_spawned_events(
+        mut events: EventReader<PoiSpawned>,
+        mut captured: ResMut<CapturedPoiSpawned>,
+    ) {
+        captured
+            .0
+            .extend(events.read().map(|event| event.site.clone()));
+    }
+
+    struct ManifestFixture {
+        root: PathBuf,
+    }
+
+    impl ManifestFixture {
+        fn create() -> Self {
+            let unique = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system clock after epoch")
+                .as_nanos();
+            let root = std::env::temp_dir().join(format!(
+                "bong-poi-novice-loader-{}-{unique}",
+                std::process::id()
+            ));
+            fs::create_dir_all(&root).expect("create novice manifest fixture dir");
+            fs::write(root.join("manifest.json"), NOVICE_MANIFEST_FIXTURE)
+                .expect("write novice manifest fixture");
+            Self { root }
+        }
+
+        fn manifest_path(&self) -> PathBuf {
+            self.root.join("manifest.json")
+        }
+    }
+
+    impl Drop for ManifestFixture {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.root);
+        }
+    }
+
+    const NOVICE_MANIFEST_FIXTURE: &str = r#"{
+      "version": 2,
+      "tile_size": 1,
+      "world_bounds": {"min_x": 0, "max_x": 0, "min_z": 0, "max_z": 0},
+      "surface_palette": ["stone"],
+      "biome_palette": ["plains"],
+      "tiles": [],
+      "pois": [
+        {"zone":"spawn","kind":"novice_forge_station","name":"破败炼器台","pos_xyz":[224.0,71.0,-240.0],"tags":["poi_novice","poi_type:forge_station","selection:strict_radius_1500"]},
+        {"zone":"spawn","kind":"novice_alchemy_furnace","name":"凡铁丹炉","pos_xyz":[0.0,72.0,-200.0],"tags":["poi_novice","poi_type:alchemy_furnace","selection:strict_radius_1500"]},
+        {"zone":"spawn","kind":"novice_rogue_village","name":"散修聚居点","pos_xyz":[304.0,71.0,208.0],"tags":["poi_novice","poi_type:rogue_village","selection:strict_radius_1500"]},
+        {"zone":"spawn","kind":"novice_mutant_nest","name":"异变兽巢","pos_xyz":[800.0,70.0,800.0],"tags":["poi_novice","poi_type:mutant_nest","selection:relaxed_radius_2000"]},
+        {"zone":"spawn","kind":"novice_scroll_hidden","name":"残卷藏匿点","pos_xyz":[176.0,72.0,-96.0],"tags":["poi_novice","poi_type:scroll_hidden","selection:strict_radius_1500"]},
+        {"zone":"spawn","kind":"novice_spirit_herb_valley","name":"灵草谷","pos_xyz":[-300.0,70.0,600.0],"tags":["poi_novice","poi_type:spirit_herb_valley","selection:relaxed_radius_2000_qi_margin_0_1"]}
+      ]
+    }"#;
+
     #[test]
-    fn loader_mapping_keeps_regenerated_manifest_coordinates_exact() {
-        let mut forge = novice_poi();
-        forge.pos_xyz = [224.0, 71.0, -240.0];
-
-        let mut alchemy = novice_poi();
-        alchemy.kind = "novice_alchemy_furnace".to_string();
-        alchemy.name = "凡铁丹炉".to_string();
-        alchemy.pos_xyz = [0.0, 72.0, -200.0];
-        alchemy.tags[1] = "poi_type:alchemy_furnace".to_string();
-
-        let mut scroll = novice_poi();
-        scroll.kind = "novice_scroll_hidden".to_string();
-        scroll.name = "残卷藏匿点".to_string();
-        scroll.pos_xyz = [176.0, 72.0, -96.0];
-        scroll.tags[1] = "poi_type:scroll_hidden".to_string();
-
-        let sites = novice_sites_from_manifest(&[forge, alchemy, scroll]);
-        let mut registry = PoiNoviceRegistry::default();
-        registry.replace_all(sites);
-
-        assert_eq!(
-            registry
-                .by_kind(PoiNoviceKind::ForgeStation)
-                .next()
-                .expect("forge site")
-                .pos_xyz,
-            [224.0, 71.0, -240.0]
+    fn startup_loader_reads_real_manifest_into_registry_and_events() {
+        let fixture = ManifestFixture::create();
+        let mut biomes = BiomeRegistry::default();
+        biomes.insert(
+            Ident::new("plains").expect("valid plains biome ident"),
+            Biome::default(),
         );
-        assert_eq!(
-            registry
-                .by_kind(PoiNoviceKind::AlchemyFurnace)
-                .next()
-                .expect("alchemy site")
-                .pos_xyz,
-            [0.0, 72.0, -200.0]
+        let provider = TerrainProvider::load(&fixture.manifest_path(), &fixture.root, &biomes)
+            .expect("production TerrainProvider should load novice manifest fixture");
+        assert_eq!(provider.pois().len(), 6);
+
+        let mut app = App::new();
+        app.insert_resource(TerrainProviders {
+            overworld: provider,
+            tsy: None,
+        })
+        .init_resource::<PoiNoviceRegistry>()
+        .init_resource::<CapturedPoiSpawned>()
+        .add_event::<PoiSpawned>()
+        .add_systems(
+            Startup,
+            (
+                PoiNoviceLoader::load,
+                capture_spawned_events.after(PoiNoviceLoader::load),
+            ),
         );
-        assert_eq!(
-            registry
-                .by_kind(PoiNoviceKind::ScrollHidden)
-                .next()
-                .expect("scroll site")
-                .pos_xyz,
-            [176.0, 72.0, -96.0]
-        );
+        app.update();
+
+        let expected = [
+            (PoiNoviceKind::ForgeStation, [224.0, 71.0, -240.0]),
+            (PoiNoviceKind::AlchemyFurnace, [0.0, 72.0, -200.0]),
+            (PoiNoviceKind::RogueVillage, [304.0, 71.0, 208.0]),
+            (PoiNoviceKind::MutantNest, [800.0, 70.0, 800.0]),
+            (PoiNoviceKind::ScrollHidden, [176.0, 72.0, -96.0]),
+            (PoiNoviceKind::SpiritHerbValley, [-300.0, 70.0, 600.0]),
+        ];
+        let registry = app.world().resource::<PoiNoviceRegistry>();
+        assert_eq!(registry.sites().len(), expected.len());
+        for (kind, pos_xyz) in expected {
+            let site = registry.by_kind(kind).next().expect("expected novice kind");
+            assert_eq!(site.pos_xyz, pos_xyz);
+            assert!(!site.selection_strategy.starts_with("fallback_fixed"));
+            let distance_sq =
+                f64::from(site.pos_xyz[0]).powi(2) + f64::from(site.pos_xyz[2]).powi(2);
+            assert!(distance_sq <= 2000.0_f64.powi(2));
+        }
+
+        let captured = app.world().resource::<CapturedPoiSpawned>();
+        assert_eq!(captured.0.len(), expected.len());
+        let registry_ids = registry
+            .sites()
+            .iter()
+            .map(|site| site.id.as_str())
+            .collect::<HashSet<_>>();
+        let event_ids = captured
+            .0
+            .iter()
+            .map(|site| site.id.as_str())
+            .collect::<HashSet<_>>();
+        assert_eq!(event_ids, registry_ids);
     }
 
     #[test]
