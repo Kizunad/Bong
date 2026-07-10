@@ -444,47 +444,135 @@ mod tests {
         );
     }
 
-    #[test]
-    fn classify_matches_legacy_across_batch_of_npc_aim_samples() {
-        // bit-for-bit 行为对拍：复用 combat::raycast 的确定性 NPC 瞄准分布（同一批
-        // hit_point/feet/origin 三元组）喂给数据驱动的 classify_height_bands，逐样本
-        // 断言与硬编码 classify_body_part 完全一致——这就是 P0 交付物要求的
-        // 「raycast 分类回归（P1 直方图样本重跑）」。
-        use crate::combat::components::BodyPart;
-        use crate::combat::raycast::{
-            classify_body_part, npc_aim_direction, npc_aim_seed, raycast_humanoid,
+    // ── plan-race-system-v1 P0 review 修复（major）：独立 legacy oracle ──────────
+    //
+    // 此前的批量对拍测试拿 `combat::raycast::classify_body_part` 当"legacy"参照组，
+    // 但该函数经 P0c 重构后自身已经是 `classify_height_bands` 的薄包装（内部直接调用
+    // 同一份数据驱动实现）——用改造后的生产路径给改造后的生产路径自证，测不出任何
+    // 回归。以下 oracle 是 PR 前旧算法（git 历史 commit `80b328f8~1` 的
+    // `combat/raycast.rs::classify_body_part`/`standing_humanoid_aabb`）字面量的独立
+    // 重新实现：不 import/调用 `combat::raycast` 的 `classify_body_part`，不读取
+    // `humanoid_plan_static()`/`humanoid.json`，只用下面这组硬编码常量——预期值完全
+    // 由本模块自身产出。
+
+    /// 旧 `combat/raycast.rs::STANDING_HALF_WIDTH`（PR 前字面量）。
+    const LEGACY_ORACLE_STANDING_HALF_WIDTH: f64 = 0.3;
+    /// 旧 `combat/raycast.rs::STANDING_HEIGHT`（PR 前字面量）。
+    const LEGACY_ORACLE_STANDING_HEIGHT: f64 = 1.8;
+    /// 旧 `combat/raycast.rs::ARM_LATERAL_THRESHOLD`（PR 前字面量）。
+    const LEGACY_ORACLE_ARM_LATERAL_THRESHOLD: f64 = 0.19;
+    /// 旧 `combat/raycast.rs::LEG_ABDOMEN_BOUNDARY`（PR 前字面量）。
+    const LEGACY_ORACLE_LEG_ABDOMEN_BOUNDARY: f64 = 0.53;
+    /// 旧 `classify_body_part` 头部高度阈值（PR 前字面量，`rel_y > 0.88`）。
+    const LEGACY_ORACLE_HEAD_BOUNDARY: f64 = 0.88;
+    /// 旧 `classify_body_part` 胸/臂高度阈值（PR 前字面量，`rel_y > 0.55`）。
+    const LEGACY_ORACLE_CHEST_ARM_BOUNDARY: f64 = 0.55;
+
+    /// 旧 `standing_humanoid_aabb(feet_position)`（PR 前签名，无 `&BodyPlan` 参数）的
+    /// 独立重实现——只用上面的字面量常量，不读 `BodyPlan`。
+    fn legacy_oracle_standing_humanoid_aabb(feet_position: DVec3) -> crate::combat::raycast::Aabb {
+        crate::combat::raycast::Aabb {
+            min: DVec3::new(
+                feet_position.x - LEGACY_ORACLE_STANDING_HALF_WIDTH,
+                feet_position.y,
+                feet_position.z - LEGACY_ORACLE_STANDING_HALF_WIDTH,
+            ),
+            max: DVec3::new(
+                feet_position.x + LEGACY_ORACLE_STANDING_HALF_WIDTH,
+                feet_position.y + LEGACY_ORACLE_STANDING_HEIGHT,
+                feet_position.z + LEGACY_ORACLE_STANDING_HALF_WIDTH,
+            ),
+        }
+    }
+
+    /// 旧 `classify_body_part(hit_point, target_feet_position, attack_origin)`（PR 前
+    /// 签名，无 `&BodyPlan` 参数）的独立重实现——字面量 if/else-if 阶梯，与
+    /// `classify_height_bands`/`resolve_band_assignment` 完全不共享代码路径。
+    fn legacy_oracle_classify_body_part(
+        hit_point: DVec3,
+        target_feet_position: DVec3,
+        attack_origin: DVec3,
+    ) -> BodyPartId {
+        let rel_y = ((hit_point.y - target_feet_position.y) / LEGACY_ORACLE_STANDING_HEIGHT)
+            .clamp(0.0, 1.0);
+        let attack_dir = DVec3::new(
+            hit_point.x - attack_origin.x,
+            0.0,
+            hit_point.z - attack_origin.z,
+        );
+        let lateral = if attack_dir.length_squared() <= f64::EPSILON {
+            hit_point.z - target_feet_position.z
+        } else {
+            let dir = attack_dir.normalize();
+            let perpendicular = DVec3::new(-dir.z, 0.0, dir.x);
+            let relative = DVec3::new(
+                hit_point.x - target_feet_position.x,
+                0.0,
+                hit_point.z - target_feet_position.z,
+            );
+            relative.dot(perpendicular)
         };
 
-        fn legacy_part_to_id(part: BodyPart) -> BodyPartId {
-            BodyPartId::new(match part {
-                BodyPart::Head => "head",
-                BodyPart::Chest => "chest",
-                BodyPart::Back => "back",
-                BodyPart::Abdomen => "abdomen",
-                BodyPart::ArmL => "arm_l",
-                BodyPart::ArmR => "arm_r",
-                BodyPart::LegL => "leg_l",
-                BodyPart::LegR => "leg_r",
-            })
-        }
+        BodyPartId::new(if rel_y > LEGACY_ORACLE_HEAD_BOUNDARY {
+            "head"
+        } else if rel_y > LEGACY_ORACLE_CHEST_ARM_BOUNDARY {
+            if lateral.abs() > LEGACY_ORACLE_ARM_LATERAL_THRESHOLD {
+                if lateral > 0.0 {
+                    "arm_r"
+                } else {
+                    "arm_l"
+                }
+            } else {
+                "chest"
+            }
+        } else if rel_y > LEGACY_ORACLE_LEG_ABDOMEN_BOUNDARY {
+            "abdomen"
+        } else if lateral > 0.0 {
+            "leg_r"
+        } else {
+            "leg_l"
+        })
+    }
+
+    #[test]
+    fn legacy_oracle_standing_humanoid_aabb_matches_hardcoded_pr_values() {
+        // 自检：oracle 自身的 AABB 常量与 pin 文档引用的旧数值一致（0.3/1.8），
+        // 防止未来有人手滑改动 oracle 常量却没人发现。
+        let aabb = legacy_oracle_standing_humanoid_aabb(DVec3::new(1.0, 2.0, 3.0));
+        assert_eq!(aabb.min, DVec3::new(0.7, 2.0, 2.7));
+        assert_eq!(aabb.max, DVec3::new(1.3, 3.8, 3.3));
+    }
+
+    #[test]
+    fn classify_matches_independent_legacy_oracle_across_batch_of_npc_aim_samples() {
+        // bit-for-bit 行为对拍：确定性 NPC 瞄准分布产出的 3000 个 (hit_point, feet,
+        // origin) 三元组，逐样本喂给数据驱动的 `classify_height_bands`（新路径）与
+        // 上面独立重实现的 `legacy_oracle_classify_body_part`（旧路径，零生产依赖）
+        // ——这就是 P0 交付物要求的「raycast 分类回归（P1 直方图样本重跑）」，且不再
+        // 让新路径给自己当 oracle。
+        use crate::combat::raycast::{npc_aim_direction, npc_aim_seed, raycast_aabb};
 
         let origin = DVec3::new(0.0, 1.62, -2.0);
         let target = DVec3::new(0.0, 0.0, 0.0);
         let bands = humanoid_bands();
         let mut compared = 0u32;
-        let plan = crate::body_plan::humanoid_plan_static();
+
+        // 采样几何（决定哪些 tick 会产生命中）同样只用 oracle 自身的字面量 AABB +
+        // 与本次重构无关、从未改动过的通用射线-AABB 求交原语 `raycast_aabb`——不经
+        // `combat::raycast::raycast_humanoid`/`standing_humanoid_aabb(plan, ..)`，
+        // 采样阶段也不依赖 `humanoid_plan_static()`。
+        let oracle_aabb = legacy_oracle_standing_humanoid_aabb(target);
 
         for tick in 0..3000u64 {
-            let seed = npc_aim_seed("npc:body_plan_geometry_parity", tick);
+            let seed = npc_aim_seed("npc:body_plan_geometry_parity_v2", tick);
             let aim_direction = npc_aim_direction(origin, target, seed, 1.0);
-            let Some(probe) = raycast_humanoid(plan, origin, target, 5.0, aim_direction) else {
+            let Some(hit) = raycast_aabb(origin, aim_direction, 5.0, oracle_aabb) else {
                 continue;
             };
-            // classify_body_part 内部对同一 hit point 独立重算，双方喂同一批
-            // (hit_point, feet, origin) 三元组以保证严格 apples-to-apples。
-            let legacy = classify_body_part(plan, probe.point, target, origin);
-            let data_driven = classify_height_bands(
-                probe.point,
+
+            let expected = legacy_oracle_classify_body_part(hit.point, target, origin);
+            let actual = classify_height_bands(
+                hit.point,
                 target,
                 origin,
                 HUMANOID_HEIGHT,
@@ -495,10 +583,9 @@ mod tests {
                 panic!("tick {tick}: validated humanoid bands must cover full [0,1] rel_y range")
             });
             assert_eq!(
-                data_driven,
-                &legacy_part_to_id(legacy),
-                "tick {tick}: classify_height_bands({data_driven:?}) 与 legacy classify_body_part \
-                 ({legacy:?}) 不一致 — bit-for-bit 行为对拍失败"
+                actual, &expected,
+                "tick {tick}: classify_height_bands({actual:?}) 与独立 legacy oracle（PR 前\
+                 字面量重实现，非生产路径自证）({expected:?}) 不一致 — bit-for-bit 行为对拍失败"
             );
             compared += 1;
         }
