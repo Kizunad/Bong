@@ -35,6 +35,7 @@ pub struct PseudoVeinRuntimeState {
     pub season_at_spawn: PseudoVeinSeasonV1,
     pub lifecycle: PseudoVeinLifecycle,
     pub last_tick: u64,
+    tick_epoch_offset: u64,
     pub qi_current: f64,
     pub total_qi_consumed: f64,
     pub warning_sent: bool,
@@ -88,6 +89,7 @@ impl PseudoVeinRuntimeState {
                 occupant_count,
             },
             last_tick: spawned_at,
+            tick_epoch_offset: 0,
             qi_current: PSEUDO_VEIN_INITIAL_QI,
             total_qi_consumed: 0.0,
             warning_sent: false,
@@ -95,7 +97,37 @@ impl PseudoVeinRuntimeState {
         }
     }
 
+    /// 从持久化记录恢复到新的进程时钟 epoch。
+    ///
+    /// 当新进程的 `current_tick` 小于旧记录已观察年龄时，单纯使用
+    /// `current_tick.saturating_sub(observed_age)` 会把年龄截断为 0。这里为该 runtime
+    /// 保存一个局部 epoch offset，使内部 tick 至少能无损表达历史年龄；全局
+    /// `CultivationClock` 仍保持自己的启动语义。
+    pub fn restored(
+        id: impl Into<String>,
+        center_xz: [f64; 2],
+        current_tick: u64,
+        observed_age: u64,
+        season_at_spawn: PseudoVeinSeasonV1,
+    ) -> Self {
+        let effective_current_tick = current_tick.max(observed_age);
+        let mut state = Self::new(
+            id,
+            center_xz,
+            effective_current_tick.saturating_sub(observed_age),
+            season_at_spawn,
+        );
+        state.tick_epoch_offset = effective_current_tick.saturating_sub(current_tick);
+        state.last_tick = effective_current_tick;
+        state
+    }
+
+    fn effective_tick(&self, current_tick: u64) -> u64 {
+        current_tick.saturating_add(self.tick_epoch_offset)
+    }
+
     pub fn advance(&mut self, current_tick: u64, occupants: Vec<String>) -> PseudoVeinAdvance {
+        let current_tick = self.effective_tick(current_tick);
         let occupant_count = occupants.len();
         let elapsed = current_tick.saturating_sub(self.last_tick);
         self.lifecycle.occupant_count = occupant_count;
@@ -125,13 +157,21 @@ impl PseudoVeinRuntimeState {
         };
 
         PseudoVeinAdvance {
-            snapshot: self.snapshot(current_tick, occupants),
+            snapshot: self.snapshot_at_effective_tick(current_tick, occupants),
             warning_threshold_crossed,
             dissipate_event,
         }
     }
 
     pub fn snapshot(&self, current_tick: u64, occupants: Vec<String>) -> PseudoVeinSnapshotV1 {
+        self.snapshot_at_effective_tick(self.effective_tick(current_tick), occupants)
+    }
+
+    fn snapshot_at_effective_tick(
+        &self,
+        current_tick: u64,
+        occupants: Vec<String>,
+    ) -> PseudoVeinSnapshotV1 {
         PseudoVeinSnapshotV1 {
             v: 1,
             id: self.id.clone(),

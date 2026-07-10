@@ -490,14 +490,13 @@ impl WorldHeartbeat {
             }
 
             let observed_age = record.last_tick.saturating_sub(record.spawned_at_tick);
-            let rebased_spawned_at = current_tick.saturating_sub(observed_age);
-            let mut state = PseudoVeinRuntimeState::new(
+            let mut state = PseudoVeinRuntimeState::restored(
                 record.zone_id.clone(),
                 record.center_xz,
-                rebased_spawned_at,
+                current_tick,
+                observed_age,
                 record.season_at_spawn,
             );
-            state.last_tick = current_tick;
             state.qi_current = record.qi_current.clamp(0.0, 1.0);
             state.total_qi_consumed = record.total_qi_consumed.max(0.0);
             state.warning_sent = record.warning_sent;
@@ -2408,6 +2407,7 @@ pub fn simulate_unattended_world(hours: u64, player_count: usize) -> HeartbeatSi
 mod tests {
     use super::*;
     use crate::world::dimension::DimensionKind;
+    use crate::worldgen::pseudo_vein::decay_rate_per_tick;
     use valence::prelude::{App, DVec3};
 
     fn zone(name: &str, x: f64, z: f64, spirit_qi: f64) -> Zone {
@@ -2689,14 +2689,30 @@ mod tests {
             }],
             2_000,
         );
-        assert_eq!(restored, 1);
-        assert_eq!(heartbeat.active_pseudo_vein_count(), 1);
+        assert_eq!(
+            restored, 1,
+            "expected one valid pseudo-vein record to restore, actual {restored}"
+        );
+        assert_eq!(
+            heartbeat.active_pseudo_vein_count(),
+            1,
+            "expected one active pseudo-vein because one record restored, actual {}",
+            heartbeat.active_pseudo_vein_count()
+        );
         let restored_state = heartbeat
             .active_pseudo_veins
             .get("pseudo_vein_heartbeat_7")
             .expect("hydrate must restore pseudo-vein lifecycle state");
-        assert_eq!(restored_state.lifecycle.spawned_at, 1_800);
-        assert_eq!(restored_state.last_tick, 2_000);
+        assert_eq!(
+            restored_state.lifecycle.spawned_at, 1_800,
+            "expected spawned_at 1800 because age 200 is rebased onto tick 2000, actual {}",
+            restored_state.lifecycle.spawned_at
+        );
+        assert_eq!(
+            restored_state.last_tick, 2_000,
+            "expected last_tick 2000 because restart clock already represents the full age, actual {}",
+            restored_state.last_tick
+        );
         let restored_zone = zones
             .find_zone_by_name("pseudo_vein_heartbeat_7")
             .expect("hydrate must recreate runtime pseudo-vein zone");
@@ -2735,49 +2751,193 @@ mod tests {
     }
 
     #[test]
-    fn restored_pseudo_vein_rebases_old_ticks_to_restart_epoch() {
+    fn restored_pseudo_vein_preserves_age_across_restart_epoch_boundaries() {
+        const OBSERVED_AGE: u64 = 200;
+        for restart_tick in [0, 199, 200, 201] {
+            let mut heartbeat = WorldHeartbeat::default();
+            let mut zones = ZoneRegistry {
+                zones: vec![zone("waste", 0.0, 0.0, 0.1)],
+            };
+            let restored = heartbeat.restore_pseudo_vein_records(
+                &mut zones,
+                &[heartbeat_pseudo_vein_record(0.42, false)],
+                restart_tick,
+            );
+            assert_eq!(
+                restored, 1,
+                "expected one valid record at restart tick {restart_tick}, actual {restored}"
+            );
+
+            let state = heartbeat
+                .active_pseudo_veins
+                .get_mut("pseudo_vein_heartbeat_3")
+                .expect("restart hydrate must restore pseudo-vein state");
+            let effective_restart_tick = restart_tick.max(OBSERVED_AGE);
+            let actual_age = state.last_tick.saturating_sub(state.lifecycle.spawned_at);
+            assert_eq!(
+                actual_age, OBSERVED_AGE,
+                "expected age {OBSERVED_AGE} to survive restart tick {restart_tick}, actual {actual_age}"
+            );
+            assert_eq!(
+                state.last_tick, effective_restart_tick,
+                "expected effective tick {effective_restart_tick} to represent the full age at raw tick {restart_tick}, actual {}",
+                state.last_tick
+            );
+            let qi_before = state.qi_current;
+
+            let _ = state.advance(restart_tick.saturating_add(1), Vec::new());
+
+            assert!(
+                state.qi_current < qi_before,
+                "expected first post-restart tick to decay qi from {qi_before}, actual {}",
+                state.qi_current
+            );
+            assert_eq!(
+                state.last_tick,
+                effective_restart_tick.saturating_add(1),
+                "expected effective last_tick to advance immediately after restart, actual {}",
+                state.last_tick
+            );
+        }
+    }
+
+    #[test]
+    fn restored_pseudo_vein_preserves_warning_then_dissipation_boundaries() {
+        let mut heartbeat = WorldHeartbeat::default();
+        let mut zones = ZoneRegistry {
+            zones: vec![zone("waste", 0.0, 0.0, 0.1)],
+        };
+        let decay_per_tick = decay_rate_per_tick(0);
+        let restored = heartbeat.restore_pseudo_vein_records(
+            &mut zones,
+            &[heartbeat_pseudo_vein_record(decay_per_tick * 1.5, false)],
+            0,
+        );
+        assert_eq!(
+            restored, 1,
+            "expected low-qi pseudo-vein fixture to restore, actual {restored}"
+        );
+        let state = heartbeat
+            .active_pseudo_veins
+            .get_mut("pseudo_vein_heartbeat_3")
+            .expect("low-qi restart fixture must exist");
+
+        let warning = state.advance(1, Vec::new());
+        assert!(
+            warning.warning_threshold_crossed,
+            "expected first post-restart tick to cross warning threshold, actual {}",
+            warning.warning_threshold_crossed
+        );
+        assert!(
+            warning.dissipate_event.is_none(),
+            "expected warning tick to retain positive qi, actual dissipate_event={:?}",
+            warning.dissipate_event
+        );
+
+        let dissipated = state.advance(2, Vec::new());
+        assert!(
+            dissipated.dissipate_event.is_some(),
+            "expected second post-restart tick to dissipate exhausted vein, actual {:?}",
+            dissipated.dissipate_event
+        );
+        assert!(
+            state.dissipated,
+            "expected runtime state to enter dissipated after qi reaches zero, actual {}",
+            state.dissipated
+        );
+    }
+
+    #[test]
+    fn restored_pseudo_vein_can_persist_and_restore_again_without_losing_age() {
         let mut heartbeat = WorldHeartbeat::default();
         let mut zones = ZoneRegistry {
             zones: vec![zone("waste", 0.0, 0.0, 0.1)],
         };
         let restored = heartbeat.restore_pseudo_vein_records(
             &mut zones,
-            &[HeartbeatPseudoVeinRecord {
-                zone_id: "pseudo_vein_heartbeat_3".to_string(),
-                dimension: DimensionKind::Overworld,
-                bounds_min: [-10.0, 60.0, -10.0],
-                bounds_max: [10.0, 90.0, 10.0],
-                danger_level: PSEUDO_VEIN_DANGER_LEVEL,
-                active_events: vec![EVENT_PSEUDO_VEIN.to_string()],
-                patrol_anchors: Vec::new(),
-                center_xz: [0.0, 0.0],
-                spawned_at_tick: 1_000,
-                last_tick: 1_200,
-                qi_current: 0.42,
-                total_qi_consumed: 0.18,
-                warning_sent: false,
-                dissipated: false,
-                season_at_spawn: crate::schema::pseudo_vein::PseudoVeinSeasonV1::Summer,
-            }],
+            &[heartbeat_pseudo_vein_record(0.42, false)],
             0,
         );
-        assert_eq!(restored, 1);
-
+        assert_eq!(
+            restored, 1,
+            "expected first restart to restore one record, actual {restored}"
+        );
         let state = heartbeat
             .active_pseudo_veins
             .get_mut("pseudo_vein_heartbeat_3")
-            .expect("restart hydrate must restore pseudo-vein state");
-        assert_eq!(state.lifecycle.spawned_at, 0);
-        assert_eq!(state.last_tick, 0);
-        let qi_before = state.qi_current;
-
-        let _ = state.advance(1, Vec::new());
-
-        assert!(
-            state.qi_current < qi_before,
-            "重启后的第一 tick 必须立即继续衰减，不能等待新时钟追平旧 last_tick"
+            .expect("first restart fixture must exist");
+        let _ = state.advance(5, Vec::new());
+        let qi_after_five_ticks = state.qi_current;
+        let records = heartbeat.active_pseudo_vein_records(&zones);
+        assert_eq!(
+            records.len(),
+            1,
+            "expected active restored vein to be persistable, actual record count {}",
+            records.len()
         );
-        assert_eq!(state.last_tick, 1);
+        assert_eq!(
+            records[0]
+                .last_tick
+                .saturating_sub(records[0].spawned_at_tick),
+            205,
+            "expected persisted age 205 after five new ticks, actual {}",
+            records[0]
+                .last_tick
+                .saturating_sub(records[0].spawned_at_tick)
+        );
+
+        let mut second_heartbeat = WorldHeartbeat::default();
+        let mut second_zones = ZoneRegistry {
+            zones: vec![zone("waste", 0.0, 0.0, 0.1)],
+        };
+        let restored_again =
+            second_heartbeat.restore_pseudo_vein_records(&mut second_zones, records.as_slice(), 0);
+        assert_eq!(
+            restored_again, 1,
+            "expected persisted runtime to restore a second time, actual {restored_again}"
+        );
+        let second_state = second_heartbeat
+            .active_pseudo_veins
+            .get("pseudo_vein_heartbeat_3")
+            .expect("second restart fixture must exist");
+        assert_eq!(
+            second_state
+                .last_tick
+                .saturating_sub(second_state.lifecycle.spawned_at),
+            205,
+            "expected second restart to retain age 205, actual {}",
+            second_state
+                .last_tick
+                .saturating_sub(second_state.lifecycle.spawned_at)
+        );
+        assert_eq!(
+            second_state.qi_current, qi_after_five_ticks,
+            "expected second restart to retain qi {qi_after_five_ticks}, actual {}",
+            second_state.qi_current
+        );
+    }
+
+    fn heartbeat_pseudo_vein_record(
+        qi_current: f64,
+        warning_sent: bool,
+    ) -> HeartbeatPseudoVeinRecord {
+        HeartbeatPseudoVeinRecord {
+            zone_id: "pseudo_vein_heartbeat_3".to_string(),
+            dimension: DimensionKind::Overworld,
+            bounds_min: [-10.0, 60.0, -10.0],
+            bounds_max: [10.0, 90.0, 10.0],
+            danger_level: PSEUDO_VEIN_DANGER_LEVEL,
+            active_events: vec![EVENT_PSEUDO_VEIN.to_string()],
+            patrol_anchors: Vec::new(),
+            center_xz: [0.0, 0.0],
+            spawned_at_tick: 1_000,
+            last_tick: 1_200,
+            qi_current,
+            total_qi_consumed: 0.18,
+            warning_sent,
+            dissipated: false,
+            season_at_spawn: crate::schema::pseudo_vein::PseudoVeinSeasonV1::Summer,
+        }
     }
 
     #[test]
