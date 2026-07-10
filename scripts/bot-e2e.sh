@@ -25,6 +25,19 @@ SERVER_LOG="$EVIDENCE_DIR/server.log"
 
 mkdir -p "$EVIDENCE_DIR"
 
+# 测试诚实性约束：Bot 必须能黑盒证明真实 manifest → Startup loader →
+# PoiNoviceRegistry，而不是只看到 register() 无条件创建的空 resource。默认生成
+# 一个 stdlib-only 的 256×256 平地 v2 raster fixture（六类 novice POI 各 1）；
+# 调用方显式提供 BONG_TERRAIN_RASTER_PATH 时尊重其真实世界配置。
+if [ -z "${BONG_TERRAIN_RASTER_PATH:-}" ]; then
+  BOT_NOVICE_RASTER_DIR="$EVIDENCE_DIR/novice-raster"
+  export BONG_TERRAIN_RASTER_PATH
+  BONG_TERRAIN_RASTER_PATH="$(
+    python3 "$ROOT/scripts/bot/make_novice_raster_fixture.py" "$BOT_NOVICE_RASTER_DIR"
+  )"
+  echo "[bot-e2e] novice raster fixture: $BONG_TERRAIN_RASTER_PATH"
+fi
+
 SERVER_PID=""
 STARTED_REDIS=0
 
