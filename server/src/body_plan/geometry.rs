@@ -1,11 +1,16 @@
 //! plan-race-system-v1 P0 — 命中几何的纯几何函数：`HeightBands`（人形高度带分类）与
 //! `PartBoxes`（非人形局部盒求交）两套模式各自的求值逻辑。
 //!
-//! 本文件**不**改动 `combat::raycast` 任何行为——`classify_height_bands` 是
-//! `combat::raycast::classify_body_part` 的数据驱动参数化重实现，两者在
-//! `registry.rs`/独立测试中做 bit-for-bit 批量对拍（见本文件测试
-//! `classify_height_bands_matches_legacy_classify_body_part_for_humanoid_bands`），
-//! 但生产 `combat::raycast` 消费点的改造（真正调用本模块）留给后续阶段。
+//! **现状（P0c 起已接入生产）**：`classify_height_bands` / `resolve_band_assignment`
+//! 已是 `combat::raycast::classify_body_part` 的真实实现——后者按目标实体解析出
+//! `&BodyPlan`（经 `resolve_body_plan_for_target`）后直接委托给本模块，不再有独立的
+//! 硬编码 if/else 阶梯；`standing_humanoid_aabb` 同理委托本模块背后的 `HeightBands.aabb`
+//! 数据。humanoid 路径 bit-for-bit 不变由本文件的批量对拍测试
+//! `classify_matches_independent_legacy_oracle_across_batch_of_npc_aim_samples` 锁死
+//! ——该测试用 PR 前旧算法字面量重新实现的独立 oracle（不读 `humanoid_plan_static`/
+//! `humanoid.json`，不调用生产 `classify_body_part`）逐样本对拍，防止"改造后的代码
+//! 拿自己当基准"这类自证陷阱。`PartBoxes`（非人形局部盒求交，`raycast_part_boxes`）
+//! 尚未接入任何生产消费点，留给 P5 whale 等非人形构型。
 //!
 //! 坐标系约定（`PartBoxes` 专用，P0 只支持 yaw，不支持 pitch/roll）：
 //! - 局部系原点 = 实体位置（`entity_position_world`）
