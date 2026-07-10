@@ -30,6 +30,10 @@ description: 开 worktree → Workflow 多 agent 实施 docs/plan-<name>.md（�
 ```bash
 PLAN="$ARGUMENTS"
 [ -n "$PLAN" ] || { echo "❌ 用法：/consume-plan <plan-name>（不含 plan- 前缀和 .md 后缀）"; exit 1; }
+# plan 名只允许 [A-Za-z0-9._-] 且不以 . / - 开头——挡住路径穿越（../）和 flag 注入
+case "$PLAN" in
+  *[!A-Za-z0-9._-]*|.*|-*) echo "❌ 非法 plan 名：$PLAN"; exit 1;;
+esac
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 cd "$REPO_ROOT"
@@ -402,7 +406,8 @@ gh api "repos/{owner}/{repo}/pulls/$PR_NUM/comments" \
 
 ### 7.1 无需处理 → 直接进 step 8
 
-- 没有任何 review/评论（且 step 6 已记录 reviewer 缺席）
+> reviewer 完全缺席不属于本分支——step 6 已规定 30 min 无任何 review 反馈 = 停交人工，不 merge。
+
 - 评论是纯肯定或纯描述："✅ LGTM" / `APPROVED` review / "整体没问题" / "符合 CLAUDE.md 约定" / 只复述改动
 - 评论与本 PR 改动无关（闲聊、未来规划、其他 PR）
 
@@ -410,7 +415,8 @@ gh api "repos/{owner}/{repo}/pulls/$PR_NUM/comments" \
 
 - **严重（bug / 安全 / 破坏运行时 / 严重违反 CLAUDE.md / 与 plan 目标矛盾 / 与 worldview.md 冲突 / 命中 7.0 强阻断信号）**：必须修
   - 走 step 3 的"有限修复循环（≤2 轮）"：atomic fix commit + 跑对应子项目测试 + `cd "$WT_ABS" && git push`
-  - 修完**回 step 5 重等 CI 全绿**，再回本 step；CI 过 + 已修严重项 → 直接进 step 8（不重新等 review，避免无限循环）
+  - 修完**回 step 5 重等 CI 全绿**，再**重新等 re-review**（push 后 CodeRabbit 自动增量 review；`/review` 引擎需重发 `/review` comment），不自判"我修好了应该过"
+  - re-review 无新严重意见 → 进 step 8；**re-review 最多 2 轮**，仍有新严重意见 → 交人工（7.3），避免无限循环
 - **中等（明确质量问题但不影响功能：错误处理缺失、命名误导、文档与代码不符、明显的边界 case 未处理）**：自行决定
   - 决定修 → 同上有限修复，CI 过后进 step 8
   - 决定不修 → 在 PR 内 `gh pr comment "$PR_NUM" --body "..."` 回一句理由，最终输出里同步写"未采纳：<理由>"，进 step 8

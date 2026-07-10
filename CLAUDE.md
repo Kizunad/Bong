@@ -244,4 +244,4 @@ bash scripts/smoke-test.sh
 
 - **gate 只看 `/review` + CodeRabbit，绝不等 Codex**。`chatgpt-codex-connector`（"Codex usage limits reached"）是与本仓库无关的噪音，忽略。
 - **单一 `/review` 入口**：在 PR 评论 `/review` 触发（独立 issue comment，写在 PR body 不生效）。不要用 `@pi`/`@hive`/`@claude`——会 mention 到 GitHub 上的真实陌生用户。CodeRabbit 仍自动跑（额度耗尽限流失败是计费问题不是代码问题）。
-- 等待用轮询节奏（~20 min/回合，最多 3 回合），别 busy-poll。修完 review 意见要重新等 re-review，不自判"应该过了"。
+- 等待用 `ScheduleWakeup delaySeconds=1200`（~20 min/回合，最多 3 回合卡死才停交人工），禁止 sleep loop / busy-poll。修完 review 意见要重新等 re-review，不自判"应该过了"（完整协议见 `docs/CLAUDE.md §6.5`）。
