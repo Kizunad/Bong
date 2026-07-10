@@ -10,11 +10,11 @@
 
 | 阶段 | 主题 | 状态 |
 |---|---|---|
-| P0 | 核心修复：服务端成交必须消费 live `NpcTradeInventory` offer，而不是只看静态 catalogue | ⏳ |
-| P1 | 契约与 UI 对齐：`count` / `price_bone_coins` / 当前 offer subset 全链路锁定 | ⬜ |
-| P2 | 饱和测试：bundle 成交、单件成交、不可见报价拒绝、金额扣减全覆盖 | ⬜ |
+| P0 | 核心修复：服务端成交必须消费 live `NpcTradeInventory` offer，而不是只看静态 catalogue | ✅ 2026-07-11 |
+| P1 | 契约与 UI 对齐：`count` / `price_bone_coins` / 当前 offer subset 全链路锁定 | ✅ 2026-07-11 |
+| P2 | 饱和测试：bundle 成交、单件成交、不可见报价拒绝、金额扣减全覆盖 | ✅ 2026-07-11 |
 
-验收日期：全部 P ✅ 后填写。
+验收日期：2026-07-11。
 
 ## 接入面
 
@@ -143,3 +143,41 @@
 ## 审计来源
 
 bughunt 线程 AD（worktree `.worktree/bughunt-loop-20260705-ad`，分支 `bughunt-loop-20260705-ad-preview-npc-ui`，基线 `origin/main@fb41c96a4`）在 `npc/world/preview/inventory-ui` 主路径专项扫描中确认。该题与既有 `npc trade gate` 主题不同：这里不是“能不能交易”的门控错误，而是“正常交易后稳定少发货”的成交语义断裂。
+
+## Finish Evidence
+
+### 验真结论
+
+- **真 bug，且正常玩家路径可达**：`NpcTradeScreen` 把当前 offer 的精确 `template_id` 发入 `NpcTradeRequest`；旧 server dispatch 只查静态 catalogue，并固定以 `stack_count=1` 入包，完全不读取同一 NPC 已下发给 UI 的 live `NpcTradeInventory`。
+- 完整请求复现锁定旧契约断裂：live offer 为 `count=3 / price=12` 时，成交必须入包 3 件并只扣一次总价；修复前代码只能发 1 件。
+
+### 落地清单
+
+- **P0**：`server/src/network/client_request_handler.rs::NpcEngagementRequestParams.trade_inventories` 二次读取已通过距离、维度和生命周期校验的目标 NPC；成交数量、展示名与 bundle 总价来自匹配 live `TradeOffer`。
+- **P1**：历史 alias 仍由 `npc_trade_catalog_entry` canonicalize，但 canonical id 必须命中当前 live subset；成功反馈回显 `display_name x count`。
+- **P2**：同文件新增完整 `NpcTradeRequest` dispatch 测试夹具与 8 条交易行为用例，覆盖 bundle / 单件 / alias / subset / live 总价 / 缺 component / 成功反馈 / 入包失败原子性；连同既有 schema 与 Wanted 门控共 10 条 targeted 用例。
+
+### 关键 commit
+
+- `c76504ec`（2026-07-11）：升格 active plan 并收口 live offer 查询与静态 catalogue 职责。
+- `d7e0467d`、`11afa09b`（2026-07-11）：加入完整请求复现矩阵并修正 mock client 位置夹具。
+- `6b767b1a`（2026-07-11）：按 live offer 发放 bundle、结算总价并拒绝非当前报价。
+
+### 测试结果
+
+- `cargo test npc_trade_request_ -- --nocapture`：10 passed，0 failed。
+- `TMPDIR="$PWD/.tmp" cargo test`：lib 10939 passed / 0 failed / 1 ignored；main 11 passed；integration 1 + 4 passed；doc-test 0 failed。
+- `cargo fmt --check`：通过。
+- `cargo clippy --all-targets -- -D warnings`：当前机器 Rust 1.96 对 `origin/main` 触发 69 条新启用 lint（如 `manual_is_multiple_of`），均不在本 PR diff；独立 validator 已核验本 diff 未新增 clippy 诊断。共享 `/tmp` 曾满载，重跑时改用 worktree 私有 `server/.tmp`，未清理其他流程目录。
+- fresh `git fetch origin && git merge origin/main`：Already up to date；待审 HEAD 未因主线合并变化。
+- 全新无上下文 read-only validator：`PASS 6b767b1ab69d7af89a1950437275df47c4b8ce47`。
+
+### 跨仓库核验
+
+- server：`TradeOffer.count` / `price_bone_coins` → `NpcTradeInventory.offers` → `NpcTradeRequest` 成交处理 → `PlayerInventory`。
+- client：既有 `NpcTradeScreen` / `ClientRequestSender.sendNpcTradeRequest` 无需协议改动；展示与 server 成交继续共用同一 live offer 语义。
+- agent/schema：C2S `NpcTradeRequest.requested_item_id` 与 S2C `NpcTradeOfferS2c.count` 均未改形状，无 dist 重建需求。
+
+### 遗留 / 后续
+
+- 无本 plan 范围内遗留。Rust 1.96 全仓 clippy 新 lint 属工具链基线治理，不在本 BugFix 内批量改写。
