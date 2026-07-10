@@ -1,6 +1,6 @@
 # plan-agent-ui-close-reason-drop-v1
 
-> **已完成 BugFix plan**。一句话主题：`agent_ui_close.reason` 的错误关闭语义同时存在 server 生产断点与 client 消费断点，导致 `invalid_button_id/session_expired` 在玩家视角退化为“静默收屏”。
+> **活跃 BugFix plan**。一句话主题：`agent_ui_close.reason` 的错误关闭语义同时存在 server 生产断点与 client 消费断点，导致 `invalid_button_id/session_expired` 在玩家视角退化为“静默收屏”。
 
 > 立项动机：本轮只看 `agent-ui / client bridge / panel runtime`，重点筛 `screen open path / panel state / overlay scope / fallback route / payload 字段`。已避开已知重复题：realm gate 广播泄漏、`button_click` 回流天道推演丢 `player_uuid/scenario`、agent_ui 覆层被 screen gate 提前吞掉、`tiandao_revelation` VFX 语义位丢失；也未与 `#931`/`#927` 重复。
 
@@ -8,7 +8,7 @@
 
 | 阶段 | 主题 | 路由 | 状态 |
 |---|---|---|---|
-| P0 | `agent_ui_close.reason` 生产/消费断链 | bugfix | ✅ 2026-07-10 |
+| P0 | `agent_ui_close.reason` 生产/消费断链 | bugfix | ⏳ |
 
 ## P0 — `agent_ui_close.reason` 生产/消费断链
 
@@ -152,7 +152,7 @@ bughunt 线程 CN（worktree: `bughunt-loop-20260705-cn`，分支：`bughunt-loo
 - server 格式：`cargo fmt --check` → 通过。
 - server 全量：`cargo test` → **10930 passed / 1 timing failure / 1 ignored**；唯一失败为无关的 `world::poi_novice::scatter_surface_stashes_terminates_when_existing_poi_blankets_the_aabb`（并发负载下 11.8 秒越过耗时阈值），立即单独复跑 → **1 passed，6.65 秒**。
 - server clippy：规定命令在 Rust 1.96 下被仓库基线 **69 个**无关 lint 拦截（集中于 botany/combat/cultivation/fauna/world 等）；本次改动文件 `server/src/network/agent_ui.rs` 没有 clippy diagnostic，未越界修改这些模块。
-- 无上下文只读 validator：`fork_context:false`、`gpt-5.6-sol` Ultra/priority → **PASS**；确认协议链、迟到 close/跨 session 防护、测试数字与失败披露可信。
+- 首轮无上下文只读 validator：`fork_context:false`、`gpt-5.6-sol` Ultra/priority → PASS；随后 PR 统一 review 发现更完整的跨生命周期迟到 close 缺口，已重新打开本 plan，不作为最终验收。
 
 ### 跨栈核验
 
@@ -164,3 +164,9 @@ bughunt 线程 CN（worktree: `bughunt-loop-20260705-cn`，分支：`bughunt-loo
 
 - 本修复不修改 schema/wire 版本，不涉及 agent 推演逻辑、世界观或真元守恒。
 - PR 后等待 e2e/相关 checks；仓库级 Rust 1.96 clippy 基线清理不纳入本单一 BugFix plan。
+
+### Review 返工（2026-07-10）
+
+- PR #1159 首轮统一 review 有效指出：active screen 为空时不能无条件接受任意 reason close，必须关联“本地按钮响应已发出、仍待 server 确认”的 request_id。
+- 返工状态机：待确认 request 只在 request_id 匹配且 TTL 未过期时消费一次；重复 close、未知 request、TTL 到期均忽略；新 request 开始时清除旧 pending，避免新生命周期结束后旧 close 误弹。
+- plan 已从 finished 恢复为 active/⏳；完成等价跨端集成或真实 runClient 验收、e2e/相关 checks 与复审 PASS 后再归档。
