@@ -119,6 +119,7 @@ pub const COMMAND_TREE_PATHS: &[&str] = &[
     "time advance <ticks:integer>",
     "top",
     "tppoi <zone:string> <poi:string>",
+    "tppoi novice",
     "tptree <tree:string>",
     "tpzone <zone:string>",
     "tribulation_debug",
