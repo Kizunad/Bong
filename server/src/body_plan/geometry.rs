@@ -247,6 +247,63 @@ pub fn raycast_part_boxes(
     })
 }
 
+/// `PartBoxes` 模式的**点**分类：给定一个已知世界坐标命中点（不是射线——用于调用方已经
+/// 用别的手段算出命中点、只需要"这个点归哪个部位管"的场景，如投射物弹道终点分类，见
+/// `combat::raycast::classify_body_part` 的 `PartBoxes` 分支）。
+///
+/// 语义：世界点变换到实体局部系后，优先选**包含该点**的盒（局部系下逐轴都落在
+/// `[min,max]` 闭区间内，等价于到盒的欧氏距离为 0）；若没有任何盒包含该点（弹道终点落在
+/// 两盒之间的空隙——`PartBoxes` 不要求像 `HeightBands` 那样全高度覆盖，盒间空隙是合法
+/// 状态），退化为按"点到盒表面最近距离"挑最近的盒（标准 AABB 点距离：逐轴 clamp 到
+/// `[min,max]` 内取差值再取模长）。距离相同时优先级裁决与 [`raycast_part_boxes`] 完全一致
+/// （`priority` 越大越优先，再等则声明顺序越靠前越优先）——两个函数共享同一个
+/// [`pick_better`] 裁决器，保证"射线求交"与"点分类"两条路径的稳定序语义永不分叉。
+/// 空集合返回 `None`（防御性——不 panic；调用方对已校验的非空 `PartBoxes` plan 可视为
+/// 必然 `Some`）。
+pub fn classify_part_boxes_point(
+    world_point: DVec3,
+    entity_position_world: DVec3,
+    entity_yaw_radians: f64,
+    boxes: &[PartBox],
+) -> Option<&super::types::BodyPartId> {
+    if boxes.is_empty() {
+        return None;
+    }
+
+    let local_point = world_point_to_local(world_point, entity_position_world, entity_yaw_radians);
+
+    let mut best: Option<(f64, i32, usize)> = None;
+    for (index, part_box) in boxes.iter().enumerate() {
+        let min = DVec3::new(
+            part_box.offset[0] - part_box.half_extents[0],
+            part_box.offset[1] - part_box.half_extents[1],
+            part_box.offset[2] - part_box.half_extents[2],
+        );
+        let max = DVec3::new(
+            part_box.offset[0] + part_box.half_extents[0],
+            part_box.offset[1] + part_box.half_extents[1],
+            part_box.offset[2] + part_box.half_extents[2],
+        );
+        let clamp_axis = |value: f64, lo: f64, hi: f64| -> f64 {
+            let delta_below = (lo - value).max(0.0);
+            let delta_above = (value - hi).max(0.0);
+            delta_below + delta_above
+        };
+        let dx = clamp_axis(local_point.x, min.x, max.x);
+        let dy = clamp_axis(local_point.y, min.y, max.y);
+        let dz = clamp_axis(local_point.z, min.z, max.z);
+        let distance = (dx * dx + dy * dy + dz * dz).sqrt();
+
+        let candidate = (distance, part_box.priority, index);
+        best = Some(match best {
+            None => candidate,
+            Some(current) => pick_better(current, candidate),
+        });
+    }
+
+    best.map(|(_distance, _priority, index)| &boxes[index].part_id)
+}
+
 /// 距离越小越好；等距时 priority 越大越好；再等则原始下标越小越好（稳定序，先声明者赢）。
 fn pick_better(a: (f64, i32, usize), b: (f64, i32, usize)) -> (f64, i32, usize) {
     use std::cmp::Ordering;
@@ -896,6 +953,166 @@ mod tests {
                 "yaw={yaw_degrees} 距离应与基准一致：baseline={} got={}",
                 baseline.distance,
                 hit.distance
+            );
+        }
+    }
+
+    // ───────────────────────── classify_part_boxes_point ─────────────────────────
+
+    #[test]
+    fn classify_part_boxes_point_containment_picks_enclosing_box() {
+        let boxes = vec![
+            PartBox {
+                part_id: "near".into(),
+                offset: [0.0, 0.0, 2.0],
+                half_extents: [0.5, 0.5, 0.5],
+                priority: 0,
+            },
+            PartBox {
+                part_id: "far".into(),
+                offset: [0.0, 0.0, 5.0],
+                half_extents: [0.5, 0.5, 0.5],
+                priority: 0,
+            },
+        ];
+        let part = classify_part_boxes_point(
+            DVec3::new(0.0, 0.0, 2.1),
+            DVec3::new(0.0, 0.0, 0.0),
+            0.0,
+            &boxes,
+        )
+        .expect("point inside 'near' box must classify");
+        assert_eq!(part, &BodyPartId::new("near"));
+    }
+
+    #[test]
+    fn classify_part_boxes_point_gap_between_boxes_falls_back_to_nearest() {
+        // 点落在两盒之间的空隙（PartBoxes 不要求全覆盖）——必须退化为"点到盒表面最近"。
+        let boxes = vec![
+            PartBox {
+                part_id: "left".into(),
+                offset: [0.0, 0.0, 0.0],
+                half_extents: [0.5, 0.5, 0.5],
+                priority: 0,
+            },
+            PartBox {
+                part_id: "right".into(),
+                offset: [0.0, 0.0, 10.0],
+                half_extents: [0.5, 0.5, 0.5],
+                priority: 0,
+            },
+        ];
+        // z=2.0: 到 left 盒表面 (z=0.5) 距离 1.5；到 right 盒表面 (z=9.5) 距离 7.5——left 更近。
+        let part = classify_part_boxes_point(
+            DVec3::new(0.0, 0.0, 2.0),
+            DVec3::new(0.0, 0.0, 0.0),
+            0.0,
+            &boxes,
+        )
+        .expect("gap point must still classify via nearest-box fallback");
+        assert_eq!(part, &BodyPartId::new("left"));
+    }
+
+    #[test]
+    fn classify_part_boxes_point_equal_distance_prefers_higher_priority() {
+        let boxes = vec![
+            PartBox {
+                part_id: "low_priority".into(),
+                offset: [0.0, 0.0, 2.0],
+                half_extents: [0.5, 0.5, 0.5],
+                priority: 0,
+            },
+            PartBox {
+                part_id: "high_priority".into(),
+                offset: [0.0, 0.0, 2.0],
+                half_extents: [0.5, 0.5, 0.5],
+                priority: 5,
+            },
+        ];
+        let part = classify_part_boxes_point(
+            DVec3::new(0.0, 0.0, 2.0),
+            DVec3::new(0.0, 0.0, 0.0),
+            0.0,
+            &boxes,
+        )
+        .expect("should classify");
+        assert_eq!(part, &BodyPartId::new("high_priority"));
+    }
+
+    #[test]
+    fn classify_part_boxes_point_equal_distance_equal_priority_prefers_earlier_declaration() {
+        let boxes = vec![
+            PartBox {
+                part_id: "first".into(),
+                offset: [0.0, 0.0, 2.0],
+                half_extents: [0.5, 0.5, 0.5],
+                priority: 0,
+            },
+            PartBox {
+                part_id: "second".into(),
+                offset: [0.0, 0.0, 2.0],
+                half_extents: [0.5, 0.5, 0.5],
+                priority: 0,
+            },
+        ];
+        let part = classify_part_boxes_point(
+            DVec3::new(0.0, 0.0, 2.0),
+            DVec3::new(0.0, 0.0, 0.0),
+            0.0,
+            &boxes,
+        )
+        .expect("should classify");
+        assert_eq!(
+            part,
+            &BodyPartId::new("first"),
+            "stable tie-break must prefer the earlier-declared box"
+        );
+    }
+
+    #[test]
+    fn classify_part_boxes_point_empty_slice_never_classifies() {
+        assert!(classify_part_boxes_point(
+            DVec3::new(0.0, 0.0, 0.0),
+            DVec3::new(0.0, 0.0, 0.0),
+            0.0,
+            &[],
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn classify_part_boxes_point_yaw_and_translation_invariance() {
+        let boxes = vec![
+            PartBox {
+                part_id: "front".into(),
+                offset: [0.0, 0.0, 2.0],
+                half_extents: [0.5, 0.5, 0.5],
+                priority: 0,
+            },
+            PartBox {
+                part_id: "right".into(),
+                offset: [2.0, 0.0, 0.0],
+                half_extents: [0.5, 0.5, 0.5],
+                priority: 0,
+            },
+        ];
+
+        for (yaw_degrees, entity_position) in [
+            (0.0_f64, DVec3::new(0.0, 0.0, 0.0)),
+            (90.0_f64, DVec3::new(-3.0, 0.0, 7.0)),
+            (180.0_f64, DVec3::new(1.0, 0.0, 1.0)),
+        ] {
+            let yaw = yaw_degrees.to_radians();
+            // 世界系下"局部 (0,0,2.1)"（front 盒内部一点）随 yaw 旋转 + 实体位置平移。
+            let local_offset = DVec3::new(0.0, 0.0, 2.1);
+            let world_point = entity_position + rotate_world_to_local(local_offset, -yaw);
+
+            let part = classify_part_boxes_point(world_point, entity_position, yaw, &boxes)
+                .unwrap_or_else(|| panic!("yaw={yaw_degrees} translated point must classify"));
+            assert_eq!(
+                part,
+                &BodyPartId::new("front"),
+                "yaw={yaw_degrees} 平移+旋转后应仍命中 front（局部系不变性）"
             );
         }
     }

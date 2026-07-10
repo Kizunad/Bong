@@ -278,6 +278,37 @@ pub struct BodyPlan {
 #[derive(Debug, Clone, PartialEq, Eq, Component, Serialize, Deserialize)]
 pub struct IntrinsicRace(pub RaceId);
 
+impl BodyPlan {
+    /// plan-race-system-v1 P0 review r2（BLOCKING-2 收口）—— 按部位 id 查询该部位的
+    /// [`PartConsequence`]。伤残后果消费点（`combat::resolve` 的腿伤减速 / 头伤眩晕 /
+    /// 臂伤脱手判定）用本方法直接按目标实体解析出的 plan 分发，取代此前"把命中部位反向
+    /// 转换成 legacy `BodyPart` 再 match 8 个变体"的做法——**任意** `BodyPartId`（含
+    /// 非人形构型的部位 id，如未来 whale 的 `tail_fin`）都能拿到正确答案，不再要求
+    /// "必须能转换回 legacy enum" 这个人形专属前提。找不到该部位（未知 id，例如伤口写入
+    /// 时 plan 已变更 / 数据损坏）返回 `None`——调用方必须显式处理，不得默认某个后果。
+    pub fn consequence_for(&self, part_id: &BodyPartId) -> Option<&PartConsequence> {
+        self.parts
+            .iter()
+            .find(|def| &def.id == part_id)
+            .map(|def| &def.consequence)
+    }
+
+    /// 按 [`PartConsequence`] 谓词筛选出全部匹配部位的 **id**（不做 legacy `BodyPart`
+    /// 转换——取代 [`super::legacy::legacy_body_parts_matching`] 在 `Wound.location`
+    /// 已经是 `BodyPartId` 之后的用途：`combat::arm_wound` / `movement::leg_wound` 现在
+    /// 需要拿部位 id 去过滤 `Wounds.entries`，而不是拿 legacy enum）。返回顺序 =
+    /// `parts` 数组声明顺序，稳定可复现。
+    pub fn parts_matching<'a>(
+        &'a self,
+        predicate: impl Fn(&PartConsequence) -> bool + 'a,
+    ) -> impl Iterator<Item = &'a BodyPartId> + 'a {
+        self.parts
+            .iter()
+            .filter(move |def| predicate(&def.consequence))
+            .map(|def| &def.id)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -435,5 +466,166 @@ mod tests {
         let c = IntrinsicRace(RaceId::new("beast_common"));
         assert_eq!(a, b);
         assert_ne!(a, c);
+    }
+
+    // ───────────────────── BodyPlan::consequence_for / parts_matching ─────────────────────
+
+    fn plan_with_four_consequence_kinds() -> BodyPlan {
+        BodyPlan {
+            id: "fixture_consequences".into(),
+            display_name: "四类后果测试构型".to_string(),
+            is_humanoid: false,
+            parts: vec![
+                BodyPartDef {
+                    id: "tail_fin".into(),
+                    damage_mul: 0.6,
+                    contam_mul: 0.7,
+                    bleed_mul: 1.0,
+                    consequence: PartConsequence::Locomotion,
+                },
+                BodyPartDef {
+                    id: "skull".into(),
+                    damage_mul: 2.0,
+                    contam_mul: 1.5,
+                    bleed_mul: 1.5,
+                    consequence: PartConsequence::Sensory,
+                },
+                BodyPartDef {
+                    id: "left_pincer".into(),
+                    damage_mul: 0.7,
+                    contam_mul: 0.8,
+                    bleed_mul: 0.8,
+                    consequence: PartConsequence::Manipulator { main_hand: true },
+                },
+                BodyPartDef {
+                    id: "right_pincer".into(),
+                    damage_mul: 0.7,
+                    contam_mul: 0.8,
+                    bleed_mul: 0.8,
+                    consequence: PartConsequence::Manipulator { main_hand: false },
+                },
+                BodyPartDef {
+                    id: "carapace".into(),
+                    damage_mul: 1.0,
+                    contam_mul: 1.0,
+                    bleed_mul: 1.0,
+                    consequence: PartConsequence::Core,
+                },
+            ],
+            hit_geometry: HitGeometry::PartBoxes { boxes: vec![] },
+            equip_slots: vec![],
+            meridian_profile: None,
+            mutation_slot_mapping: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn consequence_for_finds_every_declared_part_by_id() {
+        let plan = plan_with_four_consequence_kinds();
+        assert_eq!(
+            plan.consequence_for(&BodyPartId::new("tail_fin")),
+            Some(&PartConsequence::Locomotion)
+        );
+        assert_eq!(
+            plan.consequence_for(&BodyPartId::new("skull")),
+            Some(&PartConsequence::Sensory)
+        );
+        assert_eq!(
+            plan.consequence_for(&BodyPartId::new("left_pincer")),
+            Some(&PartConsequence::Manipulator { main_hand: true })
+        );
+        assert_eq!(
+            plan.consequence_for(&BodyPartId::new("right_pincer")),
+            Some(&PartConsequence::Manipulator { main_hand: false })
+        );
+        assert_eq!(
+            plan.consequence_for(&BodyPartId::new("carapace")),
+            Some(&PartConsequence::Core)
+        );
+    }
+
+    #[test]
+    fn consequence_for_returns_none_for_unknown_part_id() {
+        let plan = plan_with_four_consequence_kinds();
+        assert_eq!(
+            plan.consequence_for(&BodyPartId::new("does_not_exist")),
+            None,
+            "未知 part id 必须显式返回 None，调用方自行决定无后果策略，而不是猜一个默认后果"
+        );
+    }
+
+    #[test]
+    fn consequence_for_returns_none_on_empty_parts() {
+        let mut plan = plan_with_four_consequence_kinds();
+        plan.parts.clear();
+        assert_eq!(plan.consequence_for(&BodyPartId::new("tail_fin")), None);
+    }
+
+    #[test]
+    fn parts_matching_locomotion_finds_only_tail_fin() {
+        let plan = plan_with_four_consequence_kinds();
+        let found: Vec<&BodyPartId> = plan
+            .parts_matching(|c| matches!(c, PartConsequence::Locomotion))
+            .collect();
+        assert_eq!(found, vec![&BodyPartId::new("tail_fin")]);
+    }
+
+    #[test]
+    fn parts_matching_manipulator_main_hand_true_finds_only_left_pincer() {
+        let plan = plan_with_four_consequence_kinds();
+        let found: Vec<&BodyPartId> = plan
+            .parts_matching(|c| matches!(c, PartConsequence::Manipulator { main_hand: true }))
+            .collect();
+        assert_eq!(found, vec![&BodyPartId::new("left_pincer")]);
+    }
+
+    #[test]
+    fn parts_matching_manipulator_main_hand_false_finds_only_right_pincer() {
+        let plan = plan_with_four_consequence_kinds();
+        let found: Vec<&BodyPartId> = plan
+            .parts_matching(|c| matches!(c, PartConsequence::Manipulator { main_hand: false }))
+            .collect();
+        assert_eq!(found, vec![&BodyPartId::new("right_pincer")]);
+    }
+
+    #[test]
+    fn parts_matching_sensory_finds_only_skull() {
+        let plan = plan_with_four_consequence_kinds();
+        let found: Vec<&BodyPartId> = plan
+            .parts_matching(|c| matches!(c, PartConsequence::Sensory))
+            .collect();
+        assert_eq!(found, vec![&BodyPartId::new("skull")]);
+    }
+
+    #[test]
+    fn parts_matching_core_finds_only_carapace() {
+        let plan = plan_with_four_consequence_kinds();
+        let found: Vec<&BodyPartId> = plan
+            .parts_matching(|c| matches!(c, PartConsequence::Core))
+            .collect();
+        assert_eq!(found, vec![&BodyPartId::new("carapace")]);
+    }
+
+    #[test]
+    fn parts_matching_no_match_yields_empty_iterator() {
+        let plan = plan_with_four_consequence_kinds();
+        let found: Vec<&BodyPartId> = plan.parts_matching(|_| false).collect();
+        assert!(found.is_empty());
+    }
+
+    #[test]
+    fn parts_matching_preserves_declaration_order() {
+        // humanoid.json 声明双腿为 leg_l 后 leg_r（parts 数组序）；parts_matching 必须
+        // 保持这个声明顺序，不做隐式排序——`arm_wound`/`leg_wound` 的调用方依赖这一点
+        // 做"取最重伤"归约时结果与遍历顺序无关，但顺序本身仍需可预期以便调试。
+        let plan = crate::body_plan::humanoid_plan_static();
+        let legs: Vec<&BodyPartId> = plan
+            .parts_matching(|c| matches!(c, PartConsequence::Locomotion))
+            .collect();
+        assert_eq!(
+            legs,
+            vec![&BodyPartId::new("leg_l"), &BodyPartId::new("leg_r")],
+            "humanoid.json 的 parts 数组顺序必须是 leg_l 在前"
+        );
     }
 }
