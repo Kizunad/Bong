@@ -1,4 +1,4 @@
-# Bong · plan-dense-fog-v1（骨架）
+# Bong · plan-dense-fog-v1
 
 **区域浓雾（雾堤）**：把 `FogVeil.density ≥ 0.85` 正式定义为跨端统一的「浓雾档」——client 渲染出"勉强伸手不见五指"（fogEnd ≈ 8 格）的真雾，server 提供不被天气 sync 冲掉的**动态雾堤注入源**（任意 AABB + TTL），天道 agent 获得下雾的命令入口。补齐 `plan-zone-environment-v1` 归档遗留第 5 项「Agent → server 注入 API」。
 
@@ -28,7 +28,7 @@
 
 **阶段总览**：
 - P0 ⬜ client 浓雾渲染档：分段曲线 + 天空/日月星遮蔽 + AABB 边界羽化 + RealmVision sink 仲裁
-- P1 ⬜ server 动态雾堤：`EnvironmentOverlays` Resource（AABB + TTL，并入 sync 组装）+ `/fog` dev 命令 + bot 场景
+- P1 ⏳ server 动态雾堤：`EnvironmentOverlays` Resource（AABB + TTL，并入 sync 组装）+ `/fog` dev 命令 + bot 场景（主体已由「/fog 动态雾堤」PR 交付，见 §9；余：`weather_vision_obscure_system` 集成用例 + 新客户端 join 补发含 overlay 用例）
 - P2 ⬜ 天道接线：`spawn_fog_bank` CommandType + executor handler + narration 预兆 + 双端 sample
 - P3 ⬜ 消费方校准：HeavyHaze/雾堤 runClient 截图基线 + 数值调参 + e2e
 
@@ -92,6 +92,8 @@
 
 ## §8 开放问题（升 active / P0 决策门前需收口）
 
+> 全部已在 §8.1 收口。原表保留以备追溯，**实施时以 §8.1 决议为准**。
+
 1. **HeavyHaze 数值**：0.85 恰好落在浓雾档起点（t=0，视觉与现状几乎无差）。上调到 0.90 让长阴霾真正压视野，还是保持 0.85 只做"遮蔽阈值触发器"？数值 owner 是 plan-zone-weather-v1，改动需在 PR 内注明跨 plan 数值变更
 2. **RealmVision 仲裁语义**：min-combine 是否会让"境界视觉"（看得更远/更清）被浓雾完全吃掉？是否需要"化虚境在浓雾中可视距离 ×1.5"这类境界特权（worldview §三 境界感知差异）？
 3. **nameplate / glow 穿雾**：MC nameplate 在 64 格内穿墙渲染，浓雾中会暴露位置。disguise 系统已有按 ViewDistance 半径过滤先例（(vd+2)×16 Chebyshev）——ViewDistance 被压到 16 后是否已天然解决？需实测后定是否要额外处理
@@ -99,6 +101,63 @@
 5. **雾堤持久化**：server 重启后雾堤是散掉（不入库，v1 简单）还是随 `bong.db` 恢复（TTL 语义要存绝对 tick）？
 6. **wangyintai_atmosphere 半孤儿**：`build_fog_veil()`（density 0.01，纯氛围）生产无调用者。是顺带接进 `default_effects_for_zone_with_profile` 的 wangyintai 分支，还是留给 woliu 后续 plan？本 plan 默认不接，只登记
 
+## §8.1 决议（pre-P0 收口，2026-07-10）
+
+### #1 HeavyHaze 数值
+
+**决议**：
+1. 保持 0.85 不动。
+2. 浓雾档分段曲线在 0.85 处连续（t=0 时与现状视觉一致），HeavyHaze 的职责是"触发 ViewDistance 遮蔽"而非伸手不见五指；伸手不见五指级由雾堤（`EnvironmentOverlays`，density 可到 1.0）承载。
+3. P3 runClient 截图校准后若确认长阴霾压迫感不足，再以单独 PR 上调至 0.90 并在 PR body 注明跨 plan 数值变更（数值 owner `plan-zone-weather-v1`）；本 plan 各阶段不动它。
+
+**落点**：`server/src/world/weather_to_environment.rs:71-83`（HeavyHaze bundle）/ plan §P0-1（分段曲线连续性约束）
+
+### #2 RealmVision 仲裁语义
+
+**决议**：
+1. min-combine（fogStart/fogEnd 各取更近者），与 `mergeFogCommands` 同语义；不引入境界视距特权。
+2. 实现收敛为单一 GL sink：保留 `MixinFogPerZone` 一处写 `RenderSystem`，`RealmVisionFogController` 的命令并入 `EnvironmentFogController` 仲裁后统一输出，消除同 TAIL 注入点执行序未定义的互覆。
+3. 拒绝"化虚穿雾"路线：RealmVision 语义是境界感知染色（plan-perception-v1.1），worldview §三 未定义视距特权，不发明正典；v2 若要做穿雾须先补 worldview。
+
+**落点**：`client/src/main/java/com/bong/client/mixin/MixinBackgroundRendererRealmVision.java:13-26` + `MixinFogPerZone.java:13-29`（同 TAIL 注入点实证）/ `client/.../visual/realm_vision/GlFogParamsSink.java:9-12` / plan §P0-4
+
+### #3 nameplate / glow 穿雾
+
+**决议**：
+1. v1 不额外处理。
+2. density ≥ 0.85 时 `weather_vision_obscure_system` 已把 ViewDistance 压到 16 格（`vision_obscure_radius`），实体包裁剪随 vd 收缩，disguise 过滤半径 (vd+2)×16 同步缩小——穿帮面天然收窄。
+3. P3 实测记录 nameplate 表现；确认穿帮再入 v2，不预支实现。
+
+**落点**：`server/src/world/weather_physics/vision.rs:52-96` / `lingtian/weather_profile.rs:19,66-70` / plan §P3
+
+### #4 游离风暴（移动雾堤）
+
+**决议**：
+1. 不在本 plan scope，v2 另立 plan（暂名 plan-drift-storm）。
+2. 本 plan 的静态雾堤（AABB + TTL）是其视觉载体前置；移动 = AABB 每 tick 平移，属增量改动。
+3. 负压吸真元必须走 `qi_physics::ledger`（worldview §二 L50 游离风暴是负灵域形态），物理耦合是另立 plan 的核心理由——本 plan 保持零 qi_physics 耦合。
+
+**落点**：`docs/worldview.md §二 L50` / plan §8 #4 原表
+
+### #5 雾堤持久化
+
+**决议**：
+1. v1 不入库，server 重启即散。
+2. 雾堤定位是短时天象（dev 测试 + 天道预兆），`FogBank.remaining_ticks` 用相对 tick 递减，无绝对时钟依赖，天然不需要跨重启恢复；`bong.db` 不加表。
+3. 若后续出现"常驻迷雾区"需求，正确形态是 zone 配置（`default_effects_for_zone_with_profile` 分支）而非持久化动态 overlay。
+
+**落点**：`server/src/world/environment_overlay.rs`（「/fog 动态雾堤」PR，见 §9）/ plan §P1-1
+
+### #6 wangyintai_atmosphere 半孤儿
+
+**决议**：
+1. 本 plan 不接。
+2. `build_fog_veil()` density 0.01 是纯氛围雾，与浓雾档（≥ 0.85）无耦合，接线属 woliu 主题不属雾主题。
+3. 归属 woliu 后续 plan；以本节为登记点，归档时抄入 Finish Evidence 遗留清单。
+
+**落点**：`server/src/world/wangyintai_atmosphere.rs:19,56-66` / plan §8 #6 原表
+
 ## §9 进度日志
 
 - **2026-07-10**：骨架立项。调研结论：server 遮蔽机制（vision.rs 0.85 阈值 + ViewDistance 压缩）与 wire（FogVeil 任意 AABB）均已就绪，缺口 = client 渲染档（公式钳死 fogEnd≥44 / 天空穿帮 / 边界瞬跳 / 双 sink 互覆）+ server 动态注入面（sync 每帧全量覆盖）+ 天道命令入口（agent_cmd 7 类无环境类）。已查 finished_plans（zone-environment / zone-weather / zone-atmosphere / perception / woliu）、active、skeleton 与 reminder.md，无同主题重叠
+- **2026-07-10**：升 active（用户拍板）+ §8.1 六条决议收口（基于两路 Explore 实地调研，文件:行号双锚点齐）。P1 主体（`EnvironmentOverlays` + `/fog` dev 命令 + bot 场景 + 17 单测）由 PR #1158 先行交付，P1 置 ⏳；P0/P2/P3 待 consume
