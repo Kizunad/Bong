@@ -78,7 +78,7 @@ use crate::inventory::{
     InventoryMoveRejectReason, ItemInstance, ItemTemplate, PlayerInventory,
 };
 use crate::inventory::{
-    AlchemyItemData, ItemEffect, ItemRegistry,
+    AlchemyItemData, ItemCategory, ItemEffect, ItemRegistry,
     DEFAULT_CAST_DURATION_MS as TEMPLATE_DEFAULT_CAST_MS,
     DEFAULT_COOLDOWN_MS as TEMPLATE_DEFAULT_COOLDOWN_MS,
 };
@@ -2125,12 +2125,16 @@ pub fn handle_client_request_payloads(
                 );
             }
             ClientRequestV1::QuickSlotBind { slot, item_id, .. } => {
-                handle_quick_slot_bind(
-                    ev.client,
-                    slot,
-                    item_id,
+                let (quick_bindings, skillbar_bindings) = (
                     &mut combat_params.bindings_q,
+                    &mut combat_params.skillbar_bindings_q,
+                );
+                handle_quick_slot_bind(
+                    (ev.client, slot, item_id),
+                    quick_bindings,
+                    skillbar_bindings,
                     &inventories,
+                    &combat_params.item_registry,
                     &clients,
                     persistence.as_deref(),
                 );
@@ -6149,6 +6153,56 @@ mod tests {
             bindings.get(0),
             Some(77),
             "quick_slot_bind must resolve template ids from equipped held/worn items"
+        );
+    }
+
+    #[test]
+    fn quick_slot_bind_atomically_mirrors_block_item_into_skill_bar() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        app.insert_resource(crate::inventory::load_item_registry().expect("item registry loads"));
+
+        let inventory = inventory_with_item(inventory_test_item(88, "earth_crumb", 1));
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                QuickSlotBindings::default(),
+                SkillBarBindings::default(),
+                inventory,
+            ))
+            .id();
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"quick_slot_bind","v":1,"slot":3,"item_id":"earth_crumb"}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+
+        app.update();
+
+        let quick = app
+            .world()
+            .get::<QuickSlotBindings>(entity)
+            .expect("player should keep quick slot bindings");
+        assert_eq!(
+            quick.get(3),
+            Some(88),
+            "expected block quick-slot intent to bind instance 88, actual {:?}",
+            quick.get(3)
+        );
+        let skillbar = app
+            .world()
+            .get::<SkillBarBindings>(entity)
+            .expect("player should keep skill bar bindings");
+        assert_eq!(
+            skillbar.get(3),
+            Some(&SkillSlot::Item { instance_id: 88 }),
+            "expected the same server intent to atomically mirror the block into skill bar"
         );
     }
 
@@ -10683,23 +10737,21 @@ fn inventory_instance_id_by_template(inv: &PlayerInventory, template: &str) -> O
 }
 
 fn handle_quick_slot_bind(
-    entity: valence::prelude::Entity,
-    slot: u8,
-    item_id: Option<String>,
+    request: (valence::prelude::Entity, u8, Option<String>),
     bindings_q: &mut Query<&mut QuickSlotBindings>,
+    skillbar_bindings_q: &mut Query<&mut SkillBarBindings>,
     inventories: &Query<&mut PlayerInventory>,
+    item_registry: &ItemRegistry,
     clients: &Query<(&Username, &mut Client)>,
     persistence: Option<&PlayerStatePersistence>,
 ) {
-    let mut bindings = match bindings_q.get_mut(entity) {
-        Ok(b) => b,
-        Err(_) => {
-            tracing::warn!(
-                "[bong][network] quick_slot_bind entity={entity:?} has no QuickSlotBindings"
-            );
-            return;
-        }
-    };
+    let (entity, slot, item_id) = request;
+    if slot >= QuickSlotBindings::SLOT_COUNT as u8 {
+        tracing::warn!(
+            "[bong][network] quick_slot_bind entity={entity:?} slot={slot} out of range"
+        );
+        return;
+    }
     // 把 item_id (template) 解析成实际持有的第一个 instance_id。
     // None / "" → 清空。Plan §10.4 wire 是 ItemId（template id），server 自己
     // 在 player inventory 里查匹配的 instance。
@@ -10711,16 +10763,47 @@ fn handle_quick_slot_bind(
             .ok()
             .and_then(|inv| inventory_instance_id_by_template(inv, template)),
     };
-    if !bindings.set(slot, instance_id) {
-        tracing::warn!(
-            "[bong][network] quick_slot_bind entity={entity:?} slot={slot} out of range"
-        );
-        return;
+    // 方块拖入 F1-F9 时，quick slot 与 1-9 SkillBar 必须作为一个 server intent 原子落地；
+    // 客户端只发这一条 quick_slot_bind，避免两包之间 transport 失败形成半提交。
+    let mirror_block_to_skillbar = instance_id.is_some()
+        && persisted_item_id
+            .and_then(|template| item_registry.get(template))
+            .is_some_and(|template| template.category == ItemCategory::Block);
+    let mut mirrored_skillbar = if mirror_block_to_skillbar {
+        match skillbar_bindings_q.get_mut(entity) {
+            Ok(bindings) => Some(bindings),
+            Err(_) => {
+                tracing::warn!(
+                    "[bong][network] quick_slot_bind block mirror entity={entity:?} has no SkillBarBindings"
+                );
+                return;
+            }
+        }
+    } else {
+        None
+    };
+    let mut bindings = match bindings_q.get_mut(entity) {
+        Ok(bindings) => bindings,
+        Err(_) => {
+            tracing::warn!(
+                "[bong][network] quick_slot_bind entity={entity:?} has no QuickSlotBindings"
+            );
+            return;
+        }
+    };
+    let _ = bindings.set(slot, instance_id);
+    if let (Some(skillbar), Some(instance_id)) = (mirrored_skillbar.as_deref_mut(), instance_id) {
+        let _ = skillbar.set(slot, SkillSlot::Item { instance_id });
     }
     let persisted_item_id = persisted_item_id.map(str::to_string);
     if let (Some(persistence), Ok((username, _))) = (persistence, clients.get(entity)) {
         if let Err(error) = update_player_ui_prefs(persistence, username.0.as_str(), |prefs| {
-            prefs.quick_slots[slot as usize] = persisted_item_id.clone()
+            prefs.quick_slots[slot as usize] = persisted_item_id.clone();
+            if mirror_block_to_skillbar {
+                prefs.skill_bar[slot as usize] = crate::player::state::SkillSlotPersist::Item {
+                    template_id: persisted_item_id.clone().unwrap_or_default(),
+                };
+            }
         }) {
             tracing::warn!(
                 "[bong][network] failed to persist quick_slot_bind for `{}` slot={slot}: {error}",
@@ -10729,7 +10812,7 @@ fn handle_quick_slot_bind(
         }
     }
     tracing::info!(
-        "[bong][network] quick_slot_bind entity={entity:?} slot={slot} item_id={:?} → instance={:?}",
+        "[bong][network] quick_slot_bind entity={entity:?} slot={slot} item_id={:?} → instance={:?} mirror_skillbar={mirror_block_to_skillbar}",
         item_id,
         instance_id
     );
