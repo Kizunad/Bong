@@ -8,7 +8,7 @@
 
 | 阶段 | 主题 | 状态 |
 |------|------|------|
-| P0 | 证真、修复 dash reject one-shot 生命周期并锁定跨层 HUD 时序 | ⏳ |
+| P0 | 证真、修复 dash reject one-shot 生命周期并锁定跨层 HUD 时序 | ✅ 2026-07-11 |
 
 ## 接入面
 
@@ -58,3 +58,38 @@
 5. **修复结果**：`emit_movement_state_payloads` 现在先构造和序列化 payload，仅在 `send_server_data_payload` 交付后调用 `acknowledge_payload_sent`消费 reject（`server/src/movement/mod.rs:484-538`）。序列化失败路径直接 `continue`，不会丢失待重试标记；消费造成的 `Changed<MovementState>` 只会额外下发一份 reject 为空的清理状态，不会再次续命。
 6. **RED 证据**：修复前运行 `cargo test movement::tests::rejected_action_payload_is_one_shot_and_can_be_rearmed -- --exact` 因 one-shot 消费入口缺失而编译红（`E0599: no method named take_payload`）；代码对拍同时确认连续 `to_payload` 会原样复制持久 reject。
 7. **局部 GREEN 证据**：`cargo test movement::tests::` 通过（44 passed, 0 failed）；JDK 17.0.19 下 `./gradlew test --tests 'com.bong.client.hud.MovementHudPlannerTest' --tests 'com.bong.client.network.MovementStateHandlerTest'` 通过。完整门禁与 validator 结果在归档时填入 Finish Evidence。
+
+## Finish Evidence
+
+### 落地清单
+
+- P0 server：`server/src/movement/mod.rs::emit_movement_state_payloads` 在 payload 序列化并交付后调用 `MovementState::acknowledge_payload_sent`，使 `rejected_action` 成为可重试的 edge-triggered one-shot。
+- P0 server tests：覆盖首次拒绝、stamina-only 后续包、连续独立拒绝、未 ack 保留重试、空拒绝幂等性与 tick 边界。
+- P0 client tests：`MovementStateHandlerTest` 锁定 stamina-only 包不刷新历史 reject 时间；`MovementHudPlannerTest` 锁定 300ms 闪红边界与 3000ms + 500ms auto-hide。
+
+### 关键 commit
+
+- `e901c5a8` · 2026-07-11 · 升格 plan 并收口拒绝提示生命周期。
+- `dc22011c` · 2026-07-11 · 增加 server/client 跨层 one-shot 时序 pin。
+- `14845dbd` · 2026-07-11 · 在 server 成功发送边界消费 dash reject。
+- `1dce0256` · 2026-07-11 · 回填第一性原理证真证据。
+
+### 测试结果
+
+- `cd server && cargo fmt --check`：通过。
+- `cd server && cargo test`：`10934 passed, 0 failed, 1 ignored`；其他 test target 为 `11/11`、`1/1`、`4/4` 通过，5 项显式 ignored。
+- `cd client && JAVA_TOOL_OPTIONS=-Djava.io.tmpdir=<worktree-private> JAVA_HOME=<JDK17> PATH=<JDK17>/bin:$PATH ./gradlew test build`：JDK `17.0.19`，`3710` tests，`BUILD SUCCESSFUL`。
+- `cd server && cargo clippy --all-targets -- -D warnings`：当前 Rust `1.96.0` 对 `origin/main` 既有代码报 69 个新 lint（主要为 `manual_is_multiple_of` / `derivable_impls`）；本 PR 新增段无 clippy 诊断。原始结果已如实保留，未跨 scope 修改全仓基线。
+- 无上下文 read-only validator：`PASS 1dce0256a090e752d8b62b231c6803ad7745045d`。
+- `git fetch origin && git merge origin/main`：`Already up to date`，validator 绑定 HEAD 未变。
+
+### 跨仓库核验
+
+- server：`MovementState::rejected_action` → `emit_movement_state_payloads` → `MovementStateV1.rejected_action`。
+- schema：复用既有 `MovementActionRequestV1::Dash` / `MovementStateV1`，未改 wire shape。
+- client：`MovementStateHandler` → `MovementStateStore.replace` → `MovementHudPlanner.REJECT_FLASH_MS/HOVER_VISIBLE_MS/HOVER_FADE_MS`。
+
+### 遗留 / 后续
+
+- Rust 1.96 新 clippy lint 导致 `origin/main` 级全仓 `-D warnings` 基线不绿，需独立的仓库维护 PR 统一处理；与本 movement 生命周期修复无代码依赖。
+- 本 plan 不新增 schema sequence，因为 server one-shot 边界已能区分两次独立 `Dash` reject，避免扩大协议 scope。
