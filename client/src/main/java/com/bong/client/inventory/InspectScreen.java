@@ -4,6 +4,7 @@ import com.bong.client.combat.QuickSlotConfig;
 import com.bong.client.combat.QuickSlotEntry;
 import com.bong.client.combat.QuickUseSlotStore;
 import com.bong.client.combat.SkillBarEntry;
+import com.bong.client.combat.SkillBarConfig;
 import com.bong.client.combat.SkillBarStore;
 import com.bong.client.combat.inspect.TechniqueDragDecision;
 import com.bong.client.block.BlockVanillaIconMap;
@@ -147,6 +148,10 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     private final GridSlotComponent[] quickUseSlots = new GridSlotComponent[HOTBAR_SLOTS];
     private final InventoryItem[] quickUseItems = new InventoryItem[HOTBAR_SLOTS];
     private FlowLayout quickUseStrip;
+    private Consumer<QuickSlotConfig> quickUseStoreListener;
+    private Consumer<SkillBarConfig> skillBarStoreListener;
+    private int pendingQuickUseRebindIndex = -1;
+    private String pendingQuickUseRebindItemId;
 
     // Discard
     private FlowLayout discardStrip;
@@ -241,6 +246,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             com.bong.client.skill.SkillSetStore.removeListener(skillListener);
             skillListener = null;
         }
+        unregisterAuthoritativeBarListeners();
         if (techniquesTabPanel != null) {
             techniquesTabPanel.close();
             techniquesTabPanel = null;
@@ -282,6 +288,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         quickUseStrip = buildQuickUseStrip();
         outerRow.child(quickUseStrip);
         hydrateQuickUseFromStore();
+        registerAuthoritativeBarListeners(task -> MinecraftClient.getInstance().execute(task));
 
         // === CENTER: Main panel ===
         FlowLayout mainPanel = Containers.verticalFlow(Sizing.content(), Sizing.content());
@@ -835,6 +842,47 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         }
     }
 
+    private void registerAuthoritativeBarListeners(Consumer<Runnable> executor) {
+        unregisterAuthoritativeBarListeners();
+        quickUseStoreListener = config -> executor.accept(() -> applyAuthoritativeQuickUseConfig(config));
+        skillBarStoreListener = ignored -> executor.accept(this::hydrateSkillBarFromStore);
+        QuickUseSlotStore.addListener(quickUseStoreListener);
+        SkillBarStore.addListener(skillBarStoreListener);
+    }
+
+    private void unregisterAuthoritativeBarListeners() {
+        if (quickUseStoreListener != null) {
+            QuickUseSlotStore.removeListener(quickUseStoreListener);
+            quickUseStoreListener = null;
+        }
+        if (skillBarStoreListener != null) {
+            SkillBarStore.removeListener(skillBarStoreListener);
+            skillBarStoreListener = null;
+        }
+        pendingQuickUseRebindIndex = -1;
+        pendingQuickUseRebindItemId = null;
+    }
+
+    private void applyAuthoritativeQuickUseConfig(QuickSlotConfig config) {
+        hydrateQuickUseFromStore();
+        if (pendingQuickUseRebindIndex < 0 || pendingQuickUseRebindItemId == null) {
+            return;
+        }
+        if (!dragState.isDragging()
+                || dragState.sourceKind() != DragState.SourceKind.QUICK_USE
+                || dragState.sourceQuickUseIndex() != pendingQuickUseRebindIndex) {
+            pendingQuickUseRebindIndex = -1;
+            pendingQuickUseRebindItemId = null;
+            return;
+        }
+        QuickSlotEntry confirmed = config == null ? null : config.slot(pendingQuickUseRebindIndex);
+        if (confirmed != null && pendingQuickUseRebindItemId.equals(confirmed.itemId())) {
+            dragState.drop();
+            pendingQuickUseRebindIndex = -1;
+            pendingQuickUseRebindItemId = null;
+        }
+    }
+
     private void setQuickUseSlotVisual(int index, InventoryItem item) {
         setSlotVisual(quickUseSlots[index], item);
     }
@@ -931,21 +979,15 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     /**
      * 拖放落到快捷使用栏（F1-F9）槽位时的绑定收口。
      *
-     * <p>按 plan-block-placement-ux-v1 §N.1 决议：quick_slot 栏（F 键 cast/use）与 SkillBarStore
-     * 栏（1-9 选中放置）是两套独立的 server 语义（{@code QuickSlotBindings} vs {@code SkillBarBindings}），
-     * 不合并成单条 C2S。对所有物品照常发 {@code quick_slot_bind}（{@link #publishQuickUseSlot}）；
-     * 仅当落进的是可放置方块（{@link #isBlockQuickBarBindable}）时，<b>额外</b>同时写 SkillBarStore +
-     * 发 {@code skill_bar_bind}（{@link #bindBlockItemToSkillBar}），使「拖放方块到快捷栏」与右键菜单
-     * 「绑定到 N」同效，让选中该槽（1-9）后右键放置可读到该方块实例。
+     * <p>按 plan-block-placement-ux-v1 §N.1 决议：quick slot 与 SkillBar 是两套 server 组件，
+     * 但方块拖放只发送一条 {@code quick_slot_bind}；server 识别 Block 类模板后在同一 handler
+     * 原子写入两份组件并分别回推权威 config，避免两条 C2S 之间失败形成半提交。
      *
      * <p>非方块物品只走 quick_slot 一条路径，行为不变。
      */
     boolean commitQuickUseDrop(int index, InventoryItem item) {
         if (!publishQuickUseSlot(index, item)) {
             return false;
-        }
-        if (isBlockQuickBarBindable(item)) {
-            bindBlockItemToSkillBar(index, item);
         }
         return true;
     }
@@ -1841,6 +1883,14 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
 
     boolean isDraggingForTests() {
         return dragState.isDragging();
+    }
+
+    void registerAuthoritativeBarListenersForTests() {
+        registerAuthoritativeBarListeners(Runnable::run);
+    }
+
+    void unregisterAuthoritativeBarListenersForTests() {
+        unregisterAuthoritativeBarListeners();
     }
 
     void returnCurrentDragToSourceForTests() {
@@ -3389,13 +3439,17 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
                 ? dragState.originalDraggedItem()
                 : dragState.draggedItem();
             if (index >= 0 && index < HOTBAR_SLOTS && item != null) {
-                if (!publishQuickUseSlot(index, item)) {
+                if (!com.bong.client.network.ClientRequestSender.sendQuickSlotBind(
+                        index, item.itemId())) {
                     com.bong.client.BongClient.LOGGER.warn(
                         "[bong][inspect] quick-use rebind rejected; retaining drag for retry slot={}",
                         index);
                     return;
                 }
-                dragState.drop();
+                // 本地 enqueue 不是 server ACK；继续保留 item/source，直到
+                // quickslot_config 确认同一 item_id 后 applyAuthoritativeQuickUseConfig 才 drop。
+                pendingQuickUseRebindIndex = index;
+                pendingQuickUseRebindItemId = item.itemId();
                 return;
             }
             com.bong.client.BongClient.LOGGER.warn(

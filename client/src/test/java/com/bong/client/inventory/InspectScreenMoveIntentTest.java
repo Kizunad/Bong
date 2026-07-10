@@ -1,6 +1,9 @@
 package com.bong.client.inventory;
 
+import com.bong.client.combat.QuickSlotConfig;
+import com.bong.client.combat.QuickSlotEntry;
 import com.bong.client.combat.QuickUseSlotStore;
+import com.bong.client.combat.SkillBarStore;
 import com.bong.client.inventory.component.BackpackGridPanel;
 import com.bong.client.inventory.component.EquipmentPanel;
 import com.bong.client.inventory.model.EquipSlotType;
@@ -31,6 +34,7 @@ public class InspectScreenMoveIntentTest {
     void tearDown() {
         ClientRequestSender.resetBackendForTests();
         QuickUseSlotStore.resetForTests();
+        SkillBarStore.resetForTests();
     }
 
     private void install() {
@@ -382,23 +386,37 @@ public class InspectScreenMoveIntentTest {
     }
 
     @Test
-    void quickUseDragToEquipRestoresSourceWhenMoveLocationCannotBeEncoded() {
+    void quickUseDragToEquipRestoresSourceAfterAuthoritativeConfirmation() {
         install();
-        InspectScreen screen = new InspectScreen(InventoryModel.empty());
-        EquipmentPanel panel = new EquipmentPanel();
         InventoryItem tool = item(2290L, "stone_pickaxe");
+        InspectScreen screen = new InspectScreen(InventoryModel.builder().hotbar(0, tool).build());
+        EquipmentPanel panel = new EquipmentPanel();
         screen.configureEquipInteractionForTests(null, panel);
         screen.beginQuickUseEquipDragForTests(tool, 2);
+        screen.registerAuthoritativeBarListenersForTests();
         sent.clear();
 
         boolean committed = screen.commitCurrentDragToEquipForTests(EquipSlotType.EXTRA_HAND_1);
 
         assertFalse(committed, "expected QUICK_USE source without InvLocation to be rejected, actual true");
         assertEquals(
+            null,
+            screen.quickUseItemForTests(2),
+            "expected local enqueue not to restore quick-use before server confirmation"
+        );
+        assertTrue(
+            screen.isDraggingForTests(),
+            "expected rebind item/source to remain pending before authoritative config"
+        );
+        QuickUseSlotStore.replace(QuickSlotConfig.empty().withSlot(2, new QuickSlotEntry(
+            tool.itemId(), tool.displayName(), 1500, 1500, ""
+        )));
+        assertEquals(
             tool,
             screen.quickUseItemForTests(2),
-            "expected failed QUICK_USE-to-equip move to restore the source slot item"
+            "expected authoritative quickslot_config to restore the source slot item"
         );
+        assertFalse(screen.isDraggingForTests(), "expected confirmed rebind to finish drag, actual pending");
         assertTrue(
             panel.slotFor(EquipSlotType.EXTRA_HAND_1).contents().isEmpty(),
             "expected failed QUICK_USE-to-equip move to leave EXTRA_HAND_1 unchanged, actual non-empty"
@@ -407,6 +425,7 @@ public class InspectScreenMoveIntentTest {
             sent.stream().noneMatch(message -> message.body().contains("inventory_move_intent")),
             "expected no InventoryMoveIntent for an unencodable QUICK_USE source, actual " + sent
         );
+        screen.unregisterAuthoritativeBarListenersForTests();
     }
 
     @Test
@@ -436,16 +455,17 @@ public class InspectScreenMoveIntentTest {
     }
 
     @Test
-    void quickUseReturnRetainsDragUntilRebindTransportRecovers() {
+    void quickUseReturnRetainsDragUntilAuthoritativeRebindConfirmation() {
         install();
-        InspectScreen screen = new InspectScreen(InventoryModel.empty());
-        EquipmentPanel panel = new EquipmentPanel();
         InventoryItem tool = item(2292L, "stone_pickaxe");
+        InspectScreen screen = new InspectScreen(InventoryModel.builder().hotbar(0, tool).build());
+        EquipmentPanel panel = new EquipmentPanel();
         screen.configureEquipInteractionForTests(null, panel);
         assertTrue(
             screen.beginQuickUseEquipDragForTests(tool, 4),
             "expected accepted bind then unbind to start QUICK_USE drag, actual false"
         );
+        screen.registerAuthoritativeBarListenersForTests();
         sent.clear();
         ClientRequestSender.setAttemptBackendForTests((channel, payload) -> false);
 
@@ -469,6 +489,27 @@ public class InspectScreenMoveIntentTest {
         install();
         screen.returnCurrentDragToSourceForTests();
 
+        assertTrue(
+            screen.isDraggingForTests(),
+            "expected local enqueue acceptance not to masquerade as server ACK"
+        );
+        assertEquals(
+            null,
+            screen.quickUseItemForTests(4),
+            "expected slot to remain server-aligned and unbound before authoritative config"
+        );
+
+        QuickUseSlotStore.replace(QuickSlotConfig.empty());
+        assertTrue(
+            screen.isDraggingForTests(),
+            "expected authoritative rejection to retain item/source for retry"
+        );
+
+        screen.returnCurrentDragToSourceForTests();
+        QuickUseSlotStore.replace(QuickSlotConfig.empty().withSlot(4, new QuickSlotEntry(
+            tool.itemId(), tool.displayName(), 1500, 1500, ""
+        )));
+
         assertEquals(
             tool,
             screen.quickUseItemForTests(4),
@@ -482,6 +523,7 @@ public class InspectScreenMoveIntentTest {
             sent.stream().anyMatch(message -> message.body().contains("\"type\":\"quick_slot_bind\"")),
             "expected retry to emit quick_slot_bind, actual " + sent
         );
+        screen.unregisterAuthoritativeBarListenersForTests();
     }
 
     @Test
