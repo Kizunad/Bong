@@ -22,14 +22,17 @@ allowed-tools: Bash Read Edit Write Workflow Grep Glob
 
 ## 跑一轮（标准流程）
 
-### 0. 跑前两查（MANDATORY，"注意 5h" 的硬闸门）
+### 0. 跑前检查（MANDATORY）
 
 ```bash
-bash ~/.claude/quota.sh        # 看 5h%（别用 ccusage，错的）
-df -h /                        # 盘 >90% 先清 worktree build 缓存
+# Claude harness 额外执行：bash ~/.claude/quota.sh（别用 ccusage，错的）
+# GPT/Codex 明确跳过 quota.sh，不读取、不请求权限、不因其失败阻塞。
+df -h /                        # 所有模型都查；盘 >90% 先清 worktree build 缓存
 ```
 
-- **5h governor**：一轮 ~8-12 个 subagent（含 worktree 冷构建）≈ **吃 15-50% 的 5h 窗口**。
+<!-- quota.sh 是 Claude 专属配额闸门。GPT/Codex 直接跳到磁盘检查。 -->
+
+- **5h governor（仅 Claude）**：一轮 ~8-12 个 subagent（含 worktree 冷构建）≈ **吃 15-50% 的 5h 窗口**。
   - 5h **< 75%** → 跑。
   - 5h **≥ 75%** → **停**，别开新轮；ScheduleWakeup 到 5h reset 时刻后再续（reset 时刻见 quota.sh 输出）。
   - 接近 **95% 硬停**。用户令"只看 5h，不管 7d"——但 7d 满（~100%）会强制全锁，撞到也得停。
