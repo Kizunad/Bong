@@ -13,6 +13,7 @@ use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
 use crate::qi_physics::ledger::{
     pending_inflow_account, QiAccountId, QiTransfer, QiTransferReason, WorldQiAccount,
 };
+use crate::qi_physics::QiPhysicsError;
 use crate::schema::common::NarrationStyle;
 use crate::schema::pseudo_vein::PseudoVeinSeasonV1;
 use crate::schema::vfx_event::VfxEventPayloadV1;
@@ -463,10 +464,21 @@ pub fn inject_zone_for_pseudo_vein(
     zone: &mut Zone,
     ledger: &mut WorldQiAccount,
 ) -> Option<QiTransfer> {
+    inject_zone_for_pseudo_vein_target(zone, ledger, PSEUDO_VEIN_MAX_QI)
+}
+
+/// heartbeat 动态伪灵脉复用的定额借出入口。
+///
+/// 与 [`inject_zone_for_pseudo_vein`] 使用同一 pending-pool → zone 账本路径，只把目标
+/// 浓度改为 omen 已裁定的强度；这样动态 zone 不再用 `spirit_qi = intensity` 凭空创生。
+pub(crate) fn inject_zone_for_pseudo_vein_target(
+    zone: &mut Zone,
+    ledger: &mut WorldQiAccount,
+    target_spirit_qi: f64,
+) -> Option<QiTransfer> {
     let before = zone.spirit_qi;
-    let target = zone
-        .spirit_qi
-        .max(PSEUDO_VEIN_MAX_QI)
+    let target = before
+        .max(target_spirit_qi)
         .clamp(ZONE_SPIRIT_QI_MIN, ZONE_SPIRIT_QI_MAX);
     let desired_fraction = (target - before).max(0.0);
     if desired_fraction <= f64::EPSILON {
@@ -507,6 +519,35 @@ pub fn inject_zone_for_pseudo_vein(
     let updated_fraction = ledger.balance(&zone_account) / QI_ZONE_UNIT_CAPACITY;
     zone.spirit_qi = updated_fraction.clamp(ZONE_SPIRIT_QI_MIN, ZONE_SPIRIT_QI_MAX);
     Some(transfer)
+}
+
+/// heartbeat 动态伪灵脉 zone 即将删除前的最终结算。
+///
+/// 普通 [`PseudoVeinRuntime`] 依附既有 zone，只需归还最初借款；heartbeat 版本会删除
+/// 整个动态 zone，因此必须把该 zone 此刻的**全部剩余真元**转回 pending pool，包含借款
+/// 余量以及期间可能由其他守恒路径释放进来的真元，避免随 zone 删除而吞掉余额。
+pub(crate) fn settle_ephemeral_pseudo_vein_zone(
+    zone: &mut Zone,
+    ledger: &mut WorldQiAccount,
+) -> Result<Option<QiTransfer>, QiPhysicsError> {
+    let zone_account = QiAccountId::zone(zone.name.as_str());
+    let current_absolute = round3(zone.spirit_qi.max(0.0) * QI_ZONE_UNIT_CAPACITY);
+    ledger.set_balance(zone_account.clone(), current_absolute)?;
+    if current_absolute <= f64::EPSILON {
+        zone.spirit_qi = 0.0;
+        return Ok(None);
+    }
+
+    let transfer = QiTransfer::new(
+        zone_account.clone(),
+        pending_inflow_account(),
+        current_absolute,
+        QiTransferReason::PseudoVeinSettle,
+    )?;
+    ledger.transfer(transfer.clone())?;
+    zone.spirit_qi = (ledger.balance(&zone_account) / QI_ZONE_UNIT_CAPACITY)
+        .clamp(ZONE_SPIRIT_QI_MIN, ZONE_SPIRIT_QI_MAX);
+    Ok(Some(transfer))
 }
 
 /// plan-zone-qi-economy-v1 P3 §8.1 决议 #3 — 灵潮借款归还：能还多少还多少

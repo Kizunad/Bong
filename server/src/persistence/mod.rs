@@ -27,6 +27,8 @@ use crate::npc::movement::{MovementController, MovementCooldowns, MovementMode};
 use crate::npc::patrol::NpcPatrol;
 use crate::npc::spawn::{NpcBlackboard, NpcCombatLoadout, NpcMarker, NpcMeleeArchetype};
 use crate::player::state::canonical_player_id;
+use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
+use crate::qi_physics::ledger::{QiAccountId, WorldQiAccount};
 use crate::schema::common::NpcStateKind;
 use crate::schema::pseudo_vein::PseudoVeinSeasonV1;
 use crate::schema::social::{
@@ -688,12 +690,14 @@ pub fn register(app: &mut App) {
         .add_systems(Last, persist_zone_runtime_on_shutdown_system);
 }
 
+#[allow(clippy::too_many_arguments)]
 fn bootstrap_persistence_system(
     settings: valence::prelude::Res<PersistenceSettings>,
     mut daily_backup_state: valence::prelude::ResMut<DailyBackupState>,
     mut zones: Option<ResMut<crate::world::zone::ZoneRegistry>>,
     mut heartbeat: Option<ResMut<WorldHeartbeat>>,
     clock: Res<CultivationClock>,
+    mut qi_ledger: ResMut<WorldQiAccount>,
     mut void_action_cooldowns: Option<ResMut<VoidActionCooldowns>>,
     mut zone_influence_map: Option<ResMut<crate::world::territory::ZoneInfluenceMap>>,
 ) {
@@ -751,6 +755,7 @@ fn bootstrap_persistence_system(
         }
     }
 
+    let mut restored_pseudo_vein_zone_ids = Vec::new();
     if let Some(zone_registry) = zones.as_deref_mut() {
         if let Some(heartbeat) = heartbeat.as_deref_mut() {
             match hydrate_heartbeat_pseudo_veins(
@@ -759,9 +764,12 @@ fn bootstrap_persistence_system(
                 zone_registry,
                 clock.tick,
             ) {
-                Ok(count) if count > 0 => tracing::info!(
-                    "[bong][persistence] hydrated {count} heartbeat pseudo-vein runtime record(s) from sqlite"
-                ),
+                Ok(count) if count > 0 => {
+                    restored_pseudo_vein_zone_ids = heartbeat.active_pseudo_vein_zone_ids();
+                    tracing::info!(
+                        "[bong][persistence] hydrated {count} heartbeat pseudo-vein runtime record(s) from sqlite"
+                    );
+                }
                 Ok(_) => {}
                 Err(error) => tracing::warn!(
                     "[bong][persistence] failed to hydrate heartbeat pseudo-veins from sqlite at {}: {error}",
@@ -774,6 +782,24 @@ fn bootstrap_persistence_system(
                 "[bong][persistence] failed to hydrate zone runtime from sqlite at {}: {error}",
                 settings.db_path().display()
             );
+        }
+        // WorldQiAccount 按架构在每次启动时重置；zones_runtime 才是跨重启字段权威。
+        // 动态伪灵脉恢复后把该字段同步成 zone ledger 镜像，不发生转账，也不重复从
+        // pending pool 借款。后续消散会通过 PseudoVeinSettle 把剩余余额真实转回池中。
+        for zone_id in restored_pseudo_vein_zone_ids {
+            let Some(zone) = zone_registry.find_zone_by_name(zone_id.as_str()) else {
+                continue;
+            };
+            let absolute_qi = zone.spirit_qi.max(0.0) * QI_ZONE_UNIT_CAPACITY;
+            if let Err(error) =
+                qi_ledger.set_balance(QiAccountId::zone(zone_id.as_str()), absolute_qi)
+            {
+                tracing::warn!(
+                    "[bong][persistence] failed to sync restored pseudo-vein ledger mirror zone={} qi={}: {error}",
+                    zone_id,
+                    absolute_qi
+                );
+            }
         }
         if let Err(error) = hydrate_zone_overlays(&settings, zone_registry) {
             tracing::warn!(
@@ -10185,6 +10211,7 @@ mod persistence_tests {
         app.insert_resource(settings.clone());
         app.insert_resource(DailyBackupState::default());
         app.insert_resource(CultivationClock::default());
+        app.insert_resource(WorldQiAccount::default());
         app.insert_resource(crate::world::zone::ZoneRegistry::fallback());
         app.add_systems(Startup, bootstrap_persistence_system);
 
@@ -10531,6 +10558,7 @@ mod persistence_tests {
         app.insert_resource(crate::world::zone::ZoneRegistry::fallback());
         app.insert_resource(WorldHeartbeat::default());
         app.insert_resource(CultivationClock { tick: restart_tick });
+        app.insert_resource(WorldQiAccount::default());
         app.add_systems(Startup, bootstrap_persistence_system);
         app.update();
 
@@ -10568,6 +10596,13 @@ mod persistence_tests {
             restored_zone.spirit_qi, 0.33,
             "zones_runtime 三列表应在动态 zone 重建后照常覆盖最新 spirit_qi"
         );
+        assert_eq!(
+            app.world()
+                .resource::<WorldQiAccount>()
+                .balance(&QiAccountId::zone("pseudo_vein_heartbeat_7")),
+            0.33 * QI_ZONE_UNIT_CAPACITY,
+            "expected Startup hydration to sync the persisted pseudo-vein field into its ledger mirror"
+        );
         assert!(
             restored_zone
                 .active_events
@@ -10598,13 +10633,18 @@ mod persistence_tests {
             seeded, 1,
             "expected one seed pseudo-vein before production startup test, actual {seeded}"
         );
-        persist_heartbeat_pseudo_veins_snapshot(&settings, &seed_heartbeat, &seed_zones)
-            .expect("seed pseudo-vein snapshot should persist");
+        seed_zones
+            .find_zone_mut(record.zone_id.as_str())
+            .expect("seed pseudo-vein zone must exist")
+            .spirit_qi = record.qi_current;
+        persist_zone_runtime_snapshot_with_heartbeat(&settings, &seed_zones, Some(&seed_heartbeat))
+            .expect("seed pseudo-vein lifecycle and zone runtime should persist atomically");
 
         let mut app = App::new();
         app.insert_resource(settings.clone());
         app.insert_resource(WorldHeartbeat::default());
         app.insert_resource(CultivationClock { tick: 25 });
+        app.insert_resource(WorldQiAccount::default());
         app.add_event::<crate::npc::dormant::PendingDormantRelicCreated>();
         crate::world::zone::register(&mut app);
         register(&mut app);
@@ -10653,6 +10693,13 @@ mod persistence_tests {
             persisted_pseudo_vein.spirit_qi, record.qi_current,
             "expected first Update to persist hydrated pseudo-vein spirit_qi {}, actual {}",
             record.qi_current, persisted_pseudo_vein.spirit_qi
+        );
+        assert_eq!(
+            app.world()
+                .resource::<WorldQiAccount>()
+                .balance(&QiAccountId::zone(record.zone_id.as_str())),
+            record.qi_current * QI_ZONE_UNIT_CAPACITY,
+            "expected restored pseudo-vein zone field to be mirrored into the fresh ledger"
         );
 
         let _ = fs::remove_dir_all(root);
