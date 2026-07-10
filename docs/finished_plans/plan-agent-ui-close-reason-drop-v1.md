@@ -1,6 +1,6 @@
 # plan-agent-ui-close-reason-drop-v1
 
-> **活跃 BugFix plan**。一句话主题：`agent_ui_close` 的 `reason` 字段虽然由 server 专门下发给 client，用来区分 `Replaced` 与 `invalid_button_id/session_expired` 错误关闭，但在 `AgentUiPayloadHandler -> AgentUiStore -> AgentUiScreen` 链路里被完全吞掉，导致错误关闭与正常替换在玩家视角都变成“静默收屏”。
+> **已完成 BugFix plan**。一句话主题：`agent_ui_close.reason` 的错误关闭语义同时存在 server 生产断点与 client 消费断点，导致 `invalid_button_id/session_expired` 在玩家视角退化为“静默收屏”。
 
 > 立项动机：本轮只看 `agent-ui / client bridge / panel runtime`，重点筛 `screen open path / panel state / overlay scope / fallback route / payload 字段`。已避开已知重复题：realm gate 广播泄漏、`button_click` 回流天道推演丢 `player_uuid/scenario`、agent_ui 覆层被 screen gate 提前吞掉、`tiandao_revelation` VFX 语义位丢失；也未与 `#931`/`#927` 重复。
 
@@ -8,23 +8,24 @@
 
 | 阶段 | 主题 | 路由 | 状态 |
 |---|---|---|---|
-| P0 | `agent_ui_close.reason` 客户端分流丢失 | bugfix | ⬜ |
+| P0 | `agent_ui_close.reason` 生产/消费断链 | bugfix | ✅ 2026-07-10 |
 
-## P0 — `agent_ui_close.reason` 客户端分流丢失
+## P0 — `agent_ui_close.reason` 生产/消费断链
 
-- **候选 bug（major，待第一性原理验证）**：`server` 明确把 `agent_ui_close.reason` 设计成客户端 runtime 分流字段，但 `client` 收到后只按 `request_id` 关面板，**完全不消费 `reason`**，导致 `invalid_button_id` 与 `session_expired` 都退化成与 `Replaced` 完全同形的“静默关闭”。
+- **已确认 bug（major）**：既有契约要求 `invalid_button_id/session_expired` 通过带 reason 的 close 给玩家错误反馈；实际 `invalid_button_id` 在 server 端没有生成 close，`session_expired` 虽能到达 client，却与所有其他 reason 一样被 runtime 丢弃。
 
 ### 复现路径
 
 1. 触发一个 `agent_ui` 面板，让 client 进入 `AgentUiScreen` 活跃态（`client/.../AgentUiPayloadHandler.java:139-148`）。
 2. 让 server 走错误关闭分支之一：
-   - `invalid_button_id`：`server/src/network/agent_ui.rs:671-684` 先向 Agent 发 `{ action:"error", params.reason:"invalid_button_id" }`，并按设计继续向 client 发 close；
-   - `session_expired`：`server/src/network/agent_ui.rs:617-641` 在 stale response/无活跃 session 时向 client 发 `AgentUiClose(session_expired)` 防 UI 悬空。
+   - `invalid_button_id`：修复前只向 Agent 发 `{ action:"error", params.reason:"invalid_button_id" }`，session 仍保持 `Open`，没有任何 `AgentUiClose` S2C；
+   - `session_expired`：在 stale response/无活跃 session 时会向 client 发 `AgentUiClose(session_expired)` 防 UI 悬空。
 3. client 经 `BongNetworkHandler.registerAgentUiChannels()` 收到 `bong:agent_ui_close` 裸 JSON（`client/src/main/java/com/bong/client/BongNetworkHandler.java:1053-1066`）。
 4. `AgentUiPayloadHandler.handleRawClose()` 解析出 `reason` 后，仅调用 `AgentUiStore.receiveClose(requestId, reason)`（`client/.../AgentUiPayloadHandler.java:223-231`）。
-5. `AgentUiStore.receiveClose()` **完全不看 `reason`**，只做 request_id 匹配并调用 `screen.receiveCloseSignal()`（`client/.../AgentUiStore.java:43-48`）。
-6. `AgentUiScreen.receiveCloseSignal()` 又只是 `closeWithoutResponse()`，继续静默清屏（`client/.../AgentUiScreen.java:203-205,247-257`）。
-7. 结果：玩家既看不到计划要求的“天道拒绝了这次操作”提示，也看不到“这次点击已过期/面板已失效”之类反馈，体验上与 `Replaced` 无法区分。
+5. 修复前 `AgentUiStore.receiveClose()` **完全不看 `reason`**，只做 request_id 匹配并调用无参 `screen.receiveCloseSignal()`。
+6. `AgentUiScreen` 的按钮点击会先发送 response 并本地关屏；因此 server 错误 close 到达时 `AgentUiStore` 往往已经为空，不能只修“活跃 screen 匹配”分支。
+7. 修复前 `AgentUiScreen.receiveCloseSignal()` 只是 `closeWithoutResponse()`，继续静默清屏。
+8. 结果：玩家既看不到“天道拒绝了这次操作”，也看不到“面板已过期”，体验上与 `Replaced` 无法区分。
 
 ### 根因链路
 
@@ -32,8 +33,9 @@
   - `docs/finished_plans/plan-agent-ui-data-v1.md:52`：`invalid_button_id` close 信号到 client 后，要求“关闭面板并显示‘天道拒绝了这次操作’提示”。
   - `docs/finished_plans/plan-agent-ui-data-v1.md:210`：`reason=""` 代表 `Replaced`，`reason="invalid_button_id"` 等代表 `Error`，要求 client 依据 reason 分流提示。
   - schema 也把这一层语义保留到了 S2C：`agent/packages/schema/src/payloads/agent-ui.ts:126-139`，注释写明 `reason="invalid_button_id" | "session_expired" 时 client 显示提示后关闭`。
-- **server 确实在生产这些 reason**：
-  - `invalid_button_id` / `session_expired` 均通过 `send_agent_ui_close_to_client(..., Some(reason))` 下发（`server/src/network/agent_ui.rs:523-541,617-641,671-684`）。
+- **server 生产端存在一处断链**：
+  - `session_expired` 已通过 `send_agent_ui_close_to_client(..., Some("session_expired"))` 下发；
+  - `invalid_button_id` 修复前只 emit Redis Error，不移除 Open session，也不发送 client close，与 finished plan 的 Error 终态契约直接冲突。
 - **client bridge 把 reason 读出来却不使用**：
   - `AgentUiPayloadHandler.handleRawClose()` 读出 `reason`（`client/.../AgentUiPayloadHandler.java:229`）；
   - `AgentUiStore.receiveClose(requestId, reason)` 签名保留了 `reason`，实现却只按 request_id 清屏（`client/.../AgentUiStore.java:43-48`）；
@@ -41,6 +43,7 @@
 - **测试把退化行为 pin 成了“正常”**：
   - `client/.../AgentUiPayloadHandlerTest.java:85-101,145-160` 对带 `reason` 的 close 只断言“清掉 active screen”；
   - `client/.../AgentUiScreenProtocolTest.java:350-364` 只要求 `receiveCloseSignal()` “不发任何包 + 清 store”，没有任何错误提示断言。
+  - `server/src/network/agent_ui.rs` 的旧测试反而断言 `invalid_button_id` 后 session 保持 `Open`，把与设计契约相反的状态锁成了绿色。
 
 ### 影响面
 
@@ -49,14 +52,14 @@
   - 当旧面板响应迟到命中 `session_expired` 时，也会静默收屏；玩家看不到“你当前看到的是过期面板”的信号，容易继续把问题归因到随机卡顿或面板 bug。
   - `Replaced` 原本就该静默，而 `invalid_button_id/session_expired` 理应有提示；现在三者在 client 上被压平成同一种关屏结果，等于把 close payload 的语义位白送掉。
 - **涉及范围**：
-  - server：`agent_ui_close` reason 生产逻辑正常；
-  - client bridge/runtime：`AgentUiPayloadHandler`、`AgentUiStore`、`AgentUiScreen` 三段链路共同丢语义；
-  - tests：client 侧现有单测未覆盖“错误关闭提示”契约，导致该缺口长期漏检。
+  - server：`invalid_button_id` 缺 Error 终态与 close S2C；`session_expired` 生产正常；
+  - client bridge/runtime：`AgentUiPayloadHandler` 已正确解析并转交 reason，真正的消费断点在 `AgentUiStore` / `AgentUiScreen`；
+  - tests：server/client 都有与现行契约不完整或相反的断言，导致缺口长期漏检。
 
 ### 修复建议
 
 1. 给 client close 链路补上 reason 语义传递：
-   - `AgentUiPayloadHandler.handleRawClose()` 不仅传 `request_id`，也要把 `reason` 交给 runtime；
+   - 保持 `AgentUiPayloadHandler.handleRawClose()` 现有解析/转交行为，让 runtime 真正消费已传入的 `reason`；
    - `AgentUiStore.receiveClose(...)` / `AgentUiScreen.receiveCloseSignal(...)` 需要能区分 `null`（Replaced）与 `invalid_button_id/session_expired`。
 2. 在 `reason != null` 的错误关闭路径上追加玩家可见反馈：
    - `invalid_button_id`：至少落一条本地 toast/actionbar/chat 提示，对齐 plan 的“天道拒绝了这次操作”；
@@ -65,6 +68,7 @@
    - `handleRawClose(reason="invalid_button_id")` 不仅要清屏，还要断言提示被触发；
    - `session_expired` 同理；
    - `Replaced` 继续保持静默，防止把正常替换路径也改得刷提示。
+4. 修正 server 的 `invalid_button_id` 分支：emit Redis Error 后移除 session，并发送 `{ request_id, reason:"invalid_button_id" }` close S2C。
 
 ### 验收抓手
 
@@ -76,17 +80,18 @@
    - `AgentUiPayloadHandlerTest` 新增 “带 `reason` close 会触发对应反馈” 断言；
    - `AgentUiScreenProtocolTest` 锁定 `Replaced` 静默、`Error close` 非静默的分叉行为；
    - 回归 pin：`reason` 仍可缺省，且不会回流多余 `agent_ui_response`。
+   - server 锁定 `invalid_button_id` 同时产生 Redis Error、close S2C，并终止 Open session。
 
 ## 反方裁决（退化记录）
 
-> 当前会话未启用额外 subagent 流程；本题按用户要求做 **两轮反方裁决**，由当前会话手工完成，并在 plan / PR 中如实记录退化处理。
+> 初始 bughunt 未启用额外 subagent；本 BugFix 闭环在完成后另启无上下文、严格只读 validator，并在 PR 中记录裁决结果。
 
 ### 第一轮反方
 
-- **反方论点**：`reason` 只是文档/注释语义，运行时静默关闭不一定算 bug；server 已经把 `invalid_button_id` / `session_expired` 发给 Agent 了，核心状态机并未损坏。
+- **反方论点**：`reason` 只是文档/注释语义，运行时静默关闭不一定算 bug；server 已经把 `invalid_button_id` 发给 Agent，核心状态机未必损坏。
 - **驳回理由**：
   - 这不是“未来可选增强”，而是已写进 finished plan 与 schema 注释的现行客户端契约（`plan-agent-ui-data-v1.md:52,210`；`agent-ui.ts:129-130`）。
-  - 字段从 server 发到 client、client 也解析出来了，但最终完全不消费，这就是典型的 bridge/payload 语义丢失，不是纯 UX 愿望单。
+  - `session_expired` 字段从 server 发到 client、client 也解析出来了，但最终完全不消费；`invalid_button_id` 甚至没有跨过 server→client，这不是纯 UX 愿望单。
   - 玩家视角把 `Replaced` 与 `Error/Expired` 混成同一个静默结果，会直接影响排障与操作理解，属于 runtime 行为缺口。
 
 ### 第二轮反方
@@ -108,4 +113,54 @@
 
 ## 审计来源
 
-bughunt 线程 CN（worktree: `bughunt-loop-20260705-cn`，分支：`bughunt-loop-20260705-cn-agent-ui3`）。本轮限定 `agent-ui / client bridge / panel runtime`，按 `screen open path / panel state / overlay scope / fallback route / payload 字段` 读码；结论是 **server 已生产、schema 已保留、client 已解析但 runtime 丢弃 `agent_ui_close.reason`**，属于新的 client bridge / panel runtime 真 bug。
+bughunt 线程 CN（worktree: `bughunt-loop-20260705-cn`，分支：`bughunt-loop-20260705-cn-agent-ui3`）。本轮第一性原理复核后更正原 skeleton 结论：**schema 契约完整；server 只生产 `session_expired` close、漏产 `invalid_button_id` close；client 对已收到的 reason 全部丢弃**。这是 server 终态与 client runtime 共同构成的真实协议断链。
+
+## Finish Evidence
+
+### 第一性原理验证
+
+- client 红测：Java 17 下定向运行 `AgentUiPayloadHandlerTest`，新增契约断言得到 **27 tests / 3 failed**；失败精确对应 `invalid_button_id` 无提示、`session_expired` 无提示、screen 已本地关闭后迟到 reason 仍静默。
+- server 红测：`system_invalid_button_id_emits_error_response_and_close_s2c` 修复前失败，实际 close payload 数为 `0`，证明原 skeleton 对 server 已下发 close 的判断不实。
+- 时序补充：`AgentUiScreen.onButtonClicked()` 会先本地清空 `AgentUiStore`，所以错误 close 的消费逻辑必须覆盖“无 active screen”分支，同时在存在不同 request_id 的新 screen 时抑制旧提示。
+
+### 落地清单
+
+- `server/src/network/agent_ui.rs`
+  - `invalid_button_id` 现在 emit Redis Error 后终止 session，并经 `bong:agent_ui_close` 下发同名 reason。
+  - system 测试同时断言 Redis response、close S2C payload 与 session 移除。
+- `client/src/main/java/com/bong/client/agentui/AgentUiCloseFeedback.java`
+  - `invalid_button_id` / `session_expired` 独立中文文案；未知非空 reason 有可见兜底；空 reason 保持 Replaced 静默。
+  - 复用现有 `BongToast` HUD 活链路，警示色展示 3 秒。
+- `AgentUiStore` / `AgentUiScreen`
+  - reason 传入 screen close 语义；active 为空时仍显示迟到错误反馈；active request_id 不匹配时不污染新面板。
+- client tests
+  - `AgentUiCloseFeedbackTest`、`AgentUiPayloadHandlerTest`、`AgentUiScreenProtocolTest` 覆盖映射、wire、状态转换、静默 Replaced、迟到 close 与不回包契约。
+
+### 关键 commit（2026-07-10）
+
+- `fd25b1be` — 提升 agent UI 关闭原因修复 plan
+- `9c514cf4` — 补齐 agent UI 关闭原因提示映射
+- `de3d4488` — 传递 agent UI 关闭原因到面板状态
+- `9ed1b4a4` — 锁定 agent UI 关闭原因全链路回归
+- `a015d0e0` — 收束非法按钮为 agent UI 错误关闭
+
+### 测试结果
+
+- client：Java 17，`./gradlew test build` → **3716 passed / 0 failed**；其中本题三组测试 **59 passed**。
+- schema：`agent/packages/schema npm test` → **790 passed / 0 failed**，其中 `agent-ui.test.ts` 44 passed。
+- server 定向：`cargo test network::agent_ui::tests` → **48 passed / 0 failed**。
+- server 格式：`cargo fmt --check` → 通过。
+- server 全量：`cargo test` → **10930 passed / 1 timing failure / 1 ignored**；唯一失败为无关的 `world::poi_novice::scatter_surface_stashes_terminates_when_existing_poi_blankets_the_aabb`（并发负载下 11.8 秒越过耗时阈值），立即单独复跑 → **1 passed，6.65 秒**。
+- server clippy：规定命令在 Rust 1.96 下被仓库基线 **69 个**无关 lint 拦截（集中于 botany/combat/cultivation/fauna/world 等）；本次改动文件 `server/src/network/agent_ui.rs` 没有 clippy diagnostic，未越界修改这些模块。
+- 无上下文只读 validator：`fork_context:false`、`gpt-5.6-sol` Ultra/priority → **PASS**；确认协议链、迟到 close/跨 session 防护、测试数字与失败披露可信。
+
+### 跨栈核验
+
+- schema：`AgentUiCloseReasonV1 = "invalid_button_id" | "session_expired"` 保持不变。
+- server：`send_agent_ui_close_to_client`、`receive_agent_ui_response_system`。
+- client：`AgentUiPayloadHandler.handleRawClose` → `AgentUiStore.receiveClose` → `AgentUiScreen.receiveCloseSignal(reason)` → `AgentUiCloseFeedback` → `BongToast`。
+
+### 遗留 / 后续
+
+- 本修复不修改 schema/wire 版本，不涉及 agent 推演逻辑、世界观或真元守恒。
+- PR 后等待 e2e/相关 checks；仓库级 Rust 1.96 clippy 基线清理不纳入本单一 BugFix plan。
