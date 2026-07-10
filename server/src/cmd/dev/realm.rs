@@ -1,35 +1,16 @@
+use crate::cultivation::components::{Cultivation, Realm};
 use valence::command::graph::CommandGraphBuilder;
 use valence::command::handler::CommandResultEvent;
-use valence::command::parsers::{CommandArg, CommandArgParseError, ParseInput};
+use valence::command::parsers::{CommandArg, ParseInput};
 use valence::command::{AddCommand, Command};
 use valence::message::SendMessage;
 use valence::prelude::{App, Client, EventReader, Query, Update};
-use valence::protocol::packets::play::command_tree_s2c::Parser;
 
-use crate::cultivation::components::{Cultivation, Realm};
+pub const ALLOWED_REALM_IDS: &str = "awaken|induce|condense|solidify|spirit|void";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RealmArg(pub Realm);
-
-impl CommandArg for RealmArg {
-    fn parse_arg(input: &mut ParseInput) -> Result<Self, CommandArgParseError> {
-        let raw = String::parse_arg(input)?;
-        parse_realm(raw.as_str())
-            .map(Self)
-            .ok_or_else(|| CommandArgParseError::InvalidArgument {
-                expected: "awaken|induce|condense|solidify|spirit|void".to_string(),
-                got: raw,
-            })
-    }
-
-    fn display() -> Parser {
-        String::display()
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RealmCmd {
-    Set { id: Realm },
+    Set { raw: String },
 }
 
 impl Command for RealmCmd {
@@ -39,11 +20,10 @@ impl Command for RealmCmd {
             .literal("realm")
             .literal("set")
             .argument("id")
-            .with_parser::<RealmArg>()
-            .with_executable(|input| RealmCmd::Set {
-                id: RealmArg::parse_arg(input)
-                    .expect("brigadier should pre-validate realm id")
-                    .0,
+            .with_parser::<String>()
+            .with_executable(|input: &mut ParseInput| RealmCmd::Set {
+                raw: String::parse_arg(input)
+                    .expect("brigadier should pre-validate realm id as a string"),
             });
     }
 }
@@ -61,7 +41,13 @@ pub fn handle_realm(
         let Ok((mut cultivation, mut client)) = players.get_mut(event.executor) else {
             continue;
         };
-        let RealmCmd::Set { id } = event.result;
+        let RealmCmd::Set { raw } = &event.result;
+        let Some(id) = parse_realm(raw) else {
+            client.send_chat_message(format!(
+                "[dev] realm set rejected: unknown realm {raw:?}; allowed: {ALLOWED_REALM_IDS}"
+            ));
+            continue;
+        };
         let prev = cultivation.realm;
         cultivation.realm = id;
         tracing::warn!("[dev-cmd] bypass breakthrough: realm {prev:?} -> {id:?}");
@@ -88,6 +74,55 @@ mod tests {
     use crate::cultivation::life_record::LifeRecord;
     use crate::qi_physics::QiTransfer;
     use valence::prelude::Events;
+    use valence::protocol::packets::play::{CommandExecutionC2s, GameMessageS2c};
+    use valence::protocol::{Bounded, FixedBitSet, VarInt};
+    use valence::testing::{create_mock_client, MockClientHelper};
+
+    fn setup_command_app() -> App {
+        let mut app = App::new();
+        app.add_plugins((
+            valence::event_loop::EventLoopPlugin,
+            valence::command::manager::CommandPlugin,
+        ));
+        register(&mut app);
+        app.finish();
+        app.cleanup();
+        app.update();
+        app
+    }
+
+    fn execute_command(app: &mut App, helper: &mut MockClientHelper, command: &str) {
+        helper.send(&CommandExecutionC2s {
+            command: Bounded(command),
+            timestamp: 0,
+            salt: 0,
+            argument_signatures: Vec::new(),
+            message_count: VarInt(0),
+            acknowledgement: FixedBitSet::default(),
+        });
+        app.update();
+    }
+
+    fn flush_and_collect_chat(app: &mut App, helper: &mut MockClientHelper) -> Vec<String> {
+        let world = app.world_mut();
+        let mut clients = world.query::<&mut Client>();
+        for mut client in clients.iter_mut(world) {
+            client
+                .flush_packets()
+                .expect("mock client packets should flush successfully");
+        }
+        helper
+            .collect_received()
+            .0
+            .into_iter()
+            .filter_map(|frame| {
+                frame
+                    .decode::<GameMessageS2c>()
+                    .ok()
+                    .map(|packet| packet.chat.to_legacy_lossy())
+            })
+            .collect()
+    }
 
     #[test]
     fn parse_realm_accepts_english_chinese_and_rejects_unknown() {
@@ -115,6 +150,56 @@ mod tests {
     }
 
     #[test]
+    fn command_integration_valid_realm_preserves_success_contract() {
+        let mut app = setup_command_app();
+        let (bundle, mut helper) = create_mock_client("Alice");
+        let player = app.world_mut().spawn(bundle).id();
+        app.world_mut()
+            .entity_mut(player)
+            .insert(Cultivation::default());
+
+        execute_command(&mut app, &mut helper, "realm set induce");
+
+        let chats = flush_and_collect_chat(&mut app, &mut helper);
+        assert!(
+            chats
+                .iter()
+                .any(|text| text == "[dev] realm set Awaken -> Induce"),
+            "合法 realm 成功反馈契约不得变化，实际：{chats:?}"
+        );
+        assert_eq!(
+            app.world().get::<Cultivation>(player).unwrap().realm,
+            Realm::Induce
+        );
+    }
+
+    #[test]
+    fn command_integration_invalid_realm_returns_player_visible_feedback() {
+        let mut app = setup_command_app();
+        let (bundle, mut helper) = create_mock_client("Alice");
+        let player = app.world_mut().spawn(bundle).id();
+        app.world_mut()
+            .entity_mut(player)
+            .insert(Cultivation::default());
+
+        execute_command(&mut app, &mut helper, "realm set bot_e2e_no_such_realm");
+
+        let chats = flush_and_collect_chat(&mut app, &mut helper);
+        assert!(
+            chats.iter().any(|text| {
+                text.contains("bot_e2e_no_such_realm")
+                    && text.contains("awaken|induce|condense|solidify|spirit|void")
+            }),
+            "非法 realm id 必须返回包含原输入和允许值的玩家 chat，实际：{chats:?}"
+        );
+        assert_eq!(
+            app.world().get::<Cultivation>(player).unwrap().realm,
+            Realm::Awaken,
+            "非法 realm id 不得修改境界"
+        );
+    }
+
+    #[test]
     fn realm_set_mutates_realm_without_life_record_side_effect() {
         let mut app = App::new();
         app.add_event::<CommandResultEvent<RealmCmd>>();
@@ -128,7 +213,9 @@ mod tests {
         app.world_mut()
             .resource_mut::<Events<CommandResultEvent<RealmCmd>>>()
             .send(CommandResultEvent {
-                result: RealmCmd::Set { id: Realm::Void },
+                result: RealmCmd::Set {
+                    raw: "void".to_string(),
+                },
                 executor: player,
                 modifiers: Default::default(),
             });
