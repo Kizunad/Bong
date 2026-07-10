@@ -528,16 +528,18 @@ pub fn handle_client_request_payloads(
             Ok(r) => r,
             Err(err) => {
                 tracing::warn!(
-                    "[bong][network] client_request deserialize failed from {:?}: {err}; body={payload}",
-                    ev.client
+                    "[bong][network] client_request deserialize failed from {:?}: {err}; payload_bytes={}",
+                    ev.client,
+                    ev.data.len()
                 );
                 continue;
             }
         };
-        // 调试：每条 intent 都 log 一行，帮助诊断 client 到 server 通路。
+        // 只记录长度，避免聊天、目标与请求参数进入 server 日志或支持包。
         tracing::info!(
-            "[bong][network] client_request received entity={:?} body={payload}",
-            ev.client
+            "[bong][network] client_request received entity={:?} payload_bytes={}",
+            ev.client,
+            ev.data.len()
         );
 
         let v = match &request {
@@ -648,8 +650,9 @@ pub fn handle_client_request_payloads(
         };
         if v != SUPPORTED_VERSION {
             tracing::warn!(
-                "[bong][network] client_request unsupported version v={v} from {:?}; body={payload}",
-                ev.client
+                "[bong][network] client_request unsupported version v={v} from {:?}; payload_bytes={}",
+                ev.client,
+                ev.data.len()
             );
             continue;
         }
