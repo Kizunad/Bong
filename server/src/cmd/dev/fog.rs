@@ -429,6 +429,56 @@ mod tests {
     }
 
     #[test]
+    fn fog_duration_one_survives_worst_case_schedule_order() {
+        // 最不利执行序：sync 先于 handle_fog——spawn 落在本 tick sync 之后，
+        // 首次组装顺延到下一 tick。TTL 递减与组装原子耦合（同 system 内先组装后递减），
+        // duration=1 仍必须恰好广播一次，不存在零广播执行序。
+        let mut app = App::new();
+        app.insert_resource(ZoneRegistry::fallback());
+        app.insert_resource(EnvironmentOverlays::default());
+        app.insert_resource(ZoneEnvironmentRegistry::new());
+        app.add_event::<CommandResultEvent<FogCmd>>();
+        app.add_systems(
+            Update,
+            (
+                crate::world::weather_to_environment::weather_environment_sync_system,
+                handle_fog,
+            )
+                .chain(),
+        );
+        let center = fallback_zone_center(&app);
+        let player = spawn_test_client(&mut app, "Alice", center);
+        let zone_name = app.world().resource::<ZoneRegistry>().zones[0].name.clone();
+
+        send(&mut app, player, spawn_cmd(32.0, 0.95, Some(1)));
+        run_update(&mut app);
+        assert!(
+            !registry_fog_densities(&app, &zone_name).contains(&0.95),
+            "sync 先跑的 tick：spawn 尚未发生，本 tick 组装不含雾堤"
+        );
+        assert_eq!(
+            app.world()
+                .resource::<EnvironmentOverlays>()
+                .fog_banks()
+                .len(),
+            1,
+            "spawn 在 sync 之后落账，TTL 不得在首次组装前递减"
+        );
+
+        run_update(&mut app);
+        assert!(
+            registry_fog_densities(&app, &zone_name).contains(&0.95),
+            "下一 tick 首次组装必须包含该雾堤（duration=1 恰好一次可观察广播）"
+        );
+
+        run_update(&mut app);
+        assert!(
+            !registry_fog_densities(&app, &zone_name).contains(&0.95),
+            "首次组装后的递减使其到期，再下一 tick 组装不再含"
+        );
+    }
+
+    #[test]
     fn fog_duration_expires_after_exactly_n_sync_cycles() {
         let mut app = setup_app();
         let center = fallback_zone_center(&app);
