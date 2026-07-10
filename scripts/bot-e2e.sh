@@ -127,7 +127,9 @@ else
   # 就绪 = 我们自己的 server 日志出现 world bootstrap 锚点 **且** 端口可连。
   # 只看端口会被环境里别人的瞬时 listener（并发 orchestrator 跑集成测试绑 25565）
   # 骗过；只看日志则可能端口还没 bind。
-  BOOT_ANCHOR="creating overworld test area"
+  # 该锚点在 fallback/raster/anvil 任一 overworld 后端成功创建后统一输出；不能继续
+  # 等 fallback 专属的 `creating overworld test area`，否则默认 raster fixture 会假超时。
+  BOOT_ANCHOR="spawned tsy dimension layer (empty, awaits worldgen)"
   echo "[bot-e2e] 等待 $HOST:$PORT 就绪（最长 600s，冷编译会慢）"
   for _ in $(seq 1 300); do
     if ! kill -0 "$SERVER_PID" 2>/dev/null; then
@@ -135,12 +137,12 @@ else
       tail -n 40 "$SERVER_LOG" >&2
       exit 1
     fi
-    if grep -q "$BOOT_ANCHOR" "$SERVER_LOG" && port_open "$HOST" "$PORT"; then
+    if grep -Fq "$BOOT_ANCHOR" "$SERVER_LOG" && port_open "$HOST" "$PORT"; then
       break
     fi
     sleep 2
   done
-  if ! grep -q "$BOOT_ANCHOR" "$SERVER_LOG" || ! port_open "$HOST" "$PORT"; then
+  if ! grep -Fq "$BOOT_ANCHOR" "$SERVER_LOG" || ! port_open "$HOST" "$PORT"; then
     echo "[bot-e2e] 600s 内未同时满足「日志锚点 $BOOT_ANCHOR + 端口 $PORT 可连」，log 尾部：" >&2
     if grep -q "Blocking waiting for file lock" "$SERVER_LOG"; then
       echo "[bot-e2e] 提示：cargo 卡在 build directory 锁——共享 CARGO_TARGET_DIR 正被其他 cargo 进程占用" >&2
