@@ -49,4 +49,12 @@
 
 ## 验证证据 / 结论
 
-待第一性原理复现与测试完成后填写。
+结论：**真 bug**，且可由正常玩家 dash 输入稳定触发，不是 dev-only 或死代码路径。
+
+1. **玩家路径可达**：`handle_movement_action_intents` 的冷却、体力、动作占用等拒绝分支会在 `server/src/movement/mod.rs:351-370` 把正常 `Dashing` intent 写成 `MovementState.rejected_action = Some(Dash)`。
+2. **重发链成立**：`MovementStateEmitFilter` 在 `server/src/movement/mod.rs:475-481` 包含 `Changed<Stamina>`；`stamina_tick` 在 `server/src/combat/lifecycle.rs:272-304` 每 4 tick 写回恢复中的 `Stamina.current`。修复前 `to_payload` 会在每次下发原样复制同一个持久 reject。
+3. **HUD 续命链成立**：`MovementStateStore.replace` 在 `client/src/main/java/com/bong/client/movement/MovementStateStore.java:21-34` 对每个非空 reject 重置 `rejectedAtMs` 与 `hudActivityAtMs`；重发间隔 200ms 小于 `MovementHudPlanner.REJECT_FLASH_MS = 300ms`，因此会连续刷新闪红与 3.5s auto-hide 计时。
+4. **反方路线排除**：client 不能按相同枚举值去重，因为两次独立合法拒绝同样是 `Dash`，而协议没有 sequence。最小正确断点是 server 发送边界。
+5. **修复结果**：`emit_movement_state_payloads` 现在先构造和序列化 payload，仅在 `send_server_data_payload` 交付后调用 `acknowledge_payload_sent`消费 reject（`server/src/movement/mod.rs:484-538`）。序列化失败路径直接 `continue`，不会丢失待重试标记；消费造成的 `Changed<MovementState>` 只会额外下发一份 reject 为空的清理状态，不会再次续命。
+6. **RED 证据**：修复前运行 `cargo test movement::tests::rejected_action_payload_is_one_shot_and_can_be_rearmed -- --exact` 因 one-shot 消费入口缺失而编译红（`E0599: no method named take_payload`）；代码对拍同时确认连续 `to_payload` 会原样复制持久 reject。
+7. **局部 GREEN 证据**：`cargo test movement::tests::` 通过（44 passed, 0 failed）；JDK 17.0.19 下 `./gradlew test --tests 'com.bong.client.hud.MovementHudPlannerTest' --tests 'com.bong.client.network.MovementStateHandlerTest'` 通过。完整门禁与 validator 结果在归档时填入 Finish Evidence。
