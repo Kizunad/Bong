@@ -1660,7 +1660,7 @@ mod tests {
 
     fn wound_on(location: BodyPart, severity: f32) -> Wound {
         Wound {
-            location,
+            location: crate::body_plan::legacy_body_part_to_id(location),
             kind: crate::combat::components::WoundKind::Cut,
             severity,
             bleeding_per_sec: 0.0,

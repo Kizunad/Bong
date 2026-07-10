@@ -403,6 +403,14 @@ pub fn scaled_grades(base: u8, scale: f32) -> u8 {
         .clamp(0.0, f32::from(u8::MAX)) as u8
 }
 
+/// humanoid-only boundary（P0 决议，本轮不迁移）：丹药部位定向疗伤/致伤/查询体系
+/// （本函数 + [`apply_severed_mend`] / [`apply_wound_worsen`] / [`worst_non_severed_part`] /
+/// [`worst_severed_part`]）仍以 legacy `BodyPart`（8 段人形部位）为公开 API，wire 层的
+/// `parse_wound_heal_body_part`（`network::cast_emit`）本就只解析这 8 个 snake_case 字符串
+/// ——本轮不跟进开放化（P1 经脉/wire 批次范围）。与 `Wound.location: BodyPartId` 交界处
+/// 用 [`crate::body_plan::id_to_legacy_body_part`] 显式转换：非人形部位 id 视为"该丹药
+/// 部位定向逻辑管不到这个部位"（`target` 指定具体部位时不会匹配非人形伤口；`target`
+/// 为 `None` 时"不限部位"仍对非人形伤口生效，因为比较分支被完全跳过）。
 pub fn apply_wound_heal(wounds: &mut Wounds, target: Option<BodyPart>, grades: u8) -> usize {
     if grades == 0 {
         return 0;
@@ -410,7 +418,9 @@ pub fn apply_wound_heal(wounds: &mut Wounds, target: Option<BodyPart>, grades: u
     let delta = wound_grade_delta(grades);
     let mut changed = 0usize;
     for wound in &mut wounds.entries {
-        if target.is_some_and(|part| part != wound.location) {
+        if target.is_some_and(|part| {
+            Some(part) != crate::body_plan::id_to_legacy_body_part(&wound.location)
+        }) {
             continue;
         }
         if is_severed_like(wound) {
@@ -446,7 +456,11 @@ pub fn apply_severed_mend(
         .entries
         .iter()
         .enumerate()
-        .filter(|(_, wound)| target.is_none_or(|part| part == wound.location))
+        .filter(|(_, wound)| {
+            target.is_none_or(|part| {
+                Some(part) == crate::body_plan::id_to_legacy_body_part(&wound.location)
+            })
+        })
         .filter(|(_, wound)| is_severed_like(wound))
         .max_by(|(_, a), (_, b)| a.severity.total_cmp(&b.severity))
         .map(|(index, _)| index)
@@ -474,7 +488,7 @@ pub fn apply_wound_worsen(
     let severity = wound_grade_delta(grades);
     for part in parts {
         wounds.entries.push(Wound {
-            location: *part,
+            location: crate::body_plan::legacy_body_part_to_id(*part),
             kind: WoundKind::Concussion,
             severity,
             bleeding_per_sec: 0.0,
@@ -485,13 +499,17 @@ pub fn apply_wound_worsen(
     parts.len()
 }
 
+/// 找不到"最重非断裂伤"（无匹配伤口 / 该伤所在部位没有 legacy `BodyPart` 对应物——
+/// 非人形构型目前不会走本丹药子系统，理论上不会命中后者）时返回 `None`，调用方
+/// （`worst_non_severed_part` 全部生产调用点）本就把 `None` 当"无定向目标，回落到
+/// `apply_wound_heal(..., None, ...)` 不限部位疗伤"处理，因此这里不需要额外的中间态。
 pub fn worst_non_severed_part(wounds: &Wounds) -> Option<BodyPart> {
     wounds
         .entries
         .iter()
         .filter(|wound| !is_severed_like(wound))
         .max_by(|a, b| a.severity.total_cmp(&b.severity))
-        .map(|wound| wound.location)
+        .and_then(|wound| crate::body_plan::id_to_legacy_body_part(&wound.location))
 }
 
 pub fn worst_severed_part(wounds: &Wounds) -> Option<BodyPart> {
@@ -500,7 +518,7 @@ pub fn worst_severed_part(wounds: &Wounds) -> Option<BodyPart> {
         .iter()
         .filter(|wound| is_severed_like(wound))
         .max_by(|a, b| a.severity.total_cmp(&b.severity))
-        .map(|wound| wound.location)
+        .and_then(|wound| crate::body_plan::id_to_legacy_body_part(&wound.location))
 }
 
 pub fn combat_pill_status_intents(
@@ -1578,7 +1596,7 @@ mod tests {
             ..Default::default()
         };
         wounds.entries.push(Wound {
-            location: BodyPart::ArmL,
+            location: crate::body_plan::legacy_body_part_to_id(BodyPart::ArmL),
             kind: WoundKind::Cut,
             severity: 0.90,
             bleeding_per_sec: 1.0,
@@ -1586,7 +1604,7 @@ mod tests {
             inflicted_by: None,
         });
         wounds.entries.push(Wound {
-            location: BodyPart::Chest,
+            location: crate::body_plan::legacy_body_part_to_id(BodyPart::Chest),
             kind: WoundKind::Cut,
             severity: 0.50,
             bleeding_per_sec: 1.0,
@@ -1598,10 +1616,12 @@ mod tests {
 
         assert_eq!(changed, 1);
         assert!(wounds.entries.iter().any(|wound| {
-            wound.location == BodyPart::ArmL && (wound.severity - 0.90).abs() < 1e-6
+            wound.location == crate::body_plan::legacy_body_part_to_id(BodyPart::ArmL)
+                && (wound.severity - 0.90).abs() < 1e-6
         }));
         assert!(wounds.entries.iter().any(|wound| {
-            wound.location == BodyPart::Chest && (wound.severity - 0.25).abs() < 1e-6
+            wound.location == crate::body_plan::legacy_body_part_to_id(BodyPart::Chest)
+                && (wound.severity - 0.25).abs() < 1e-6
         }));
     }
 
@@ -1609,7 +1629,7 @@ mod tests {
     fn severed_mend_downgrades_only_severed_target() {
         let mut wounds = Wounds::default();
         wounds.entries.push(Wound {
-            location: BodyPart::ArmR,
+            location: crate::body_plan::legacy_body_part_to_id(BodyPart::ArmR),
             kind: WoundKind::Cut,
             severity: 0.92,
             bleeding_per_sec: 2.0,
@@ -1620,7 +1640,10 @@ mod tests {
         assert!(apply_severed_mend(&mut wounds, Some(BodyPart::ArmR), 1.0));
 
         let wound = &wounds.entries[0];
-        assert_eq!(wound.location, BodyPart::ArmR);
+        assert_eq!(
+            wound.location,
+            crate::body_plan::legacy_body_part_to_id(BodyPart::ArmR)
+        );
         assert_eq!(wound.kind, WoundKind::Concussion);
         assert!((wound.severity - 0.55).abs() < 1e-6);
         assert!((wound.bleeding_per_sec - 0.7).abs() < 1e-6);

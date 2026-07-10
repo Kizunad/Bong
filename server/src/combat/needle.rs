@@ -789,7 +789,7 @@ mod tests {
         use crate::combat::components::{Wound, WoundKind};
         Wounds {
             entries: vec![Wound {
-                location: MAIN_ARM,
+                location: crate::body_plan::legacy_body_part_to_id(MAIN_ARM),
                 kind: WoundKind::Cut,
                 severity: 80.0, // Severed grade → spread_multiplier 1.5
                 bleeding_per_sec: 0.0,

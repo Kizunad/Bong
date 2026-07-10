@@ -103,7 +103,7 @@
 //!   network handler）加一个可选的"当前臂伤态"输入，命中"目标槽=weapon 类 && 对侧
 //!   OFF_ARM already Severed"时拒绝，返回新增的 `InventoryMoveRejectReason` 变体。
 
-use crate::body_plan::BodyPlan;
+use crate::body_plan::{BodyPartId, BodyPlan};
 use crate::combat::components::{BodyPart, Wound, Wounds};
 
 /// 与 `movement::leg_wound::LegWoundGrade` 同构的五级分级（决议 §8.1 #2）。
@@ -155,13 +155,17 @@ fn wound_grade(wound: &Wound) -> ArmWoundGrade {
     wound_severity_to_grade(wound.severity)
 }
 
-/// 给定 body part（`ArmL`/`ArmR`），取该侧所有伤口中最严重的分级。
-/// 镜像 `movement::leg_wound::worst_wound_grade` 签名与语义。
-pub fn worst_wound_grade(wounds: &Wounds, part: BodyPart) -> ArmWoundGrade {
+/// 给定部位 id，取该部位所有伤口中最严重的分级。镜像
+/// `movement::leg_wound::worst_wound_grade` 签名与语义。
+///
+/// plan-race-system-v1 P0 review r2（BLOCKING-2 收口）—— 参数从 legacy `BodyPart` 迁移
+/// 为 `&BodyPartId`：`Wound.location` 本身已经是 `BodyPartId`，直接比较部位 id 不再需要
+/// 反压 legacy enum 才能过滤。
+pub fn worst_wound_grade(wounds: &Wounds, part_id: &BodyPartId) -> ArmWoundGrade {
     wounds
         .entries
         .iter()
-        .filter(|wound| wound.location == part)
+        .filter(|wound| &wound.location == part_id)
         .map(wound_grade)
         .max_by_key(|grade| grade_rank(*grade))
         .unwrap_or(ArmWoundGrade::Intact)
@@ -288,18 +292,22 @@ impl Default for ArmWoundFactors {
     }
 }
 
-/// plan-race-system-v1 P0 review 修复 —— 按 `PartConsequence::Manipulator{main_hand}`
-/// 标签查询**调用方传入的** `&BodyPlan`（不再固定读 `humanoid_plan_static`），取该档
-/// 全部部位中最重的伤势分级（humanoid plan 每档恰好一个部位——`ArmR`=`main_hand:true`/
-/// `ArmL`=`main_hand:false`——故本函数对 humanoid plan 的结果与旧版直接
-/// `worst_wound_grade(wounds, MAIN_ARM/OFF_ARM)` bit-for-bit 相同；泛化后天然支持
-/// 非人形 plan 声明多个同档 Manipulator 部位，或把 Manipulator 标签挂在完全不同的
-/// legacy body part 上）。
+/// plan-race-system-v1 P0 review r2（BLOCKING-2 收口）—— 按
+/// `PartConsequence::Manipulator{main_hand}` 标签查询**调用方传入的** `&BodyPlan`
+/// （不再固定读 `humanoid_plan_static`），取该档全部部位中最重的伤势分级（humanoid plan
+/// 每档恰好一个部位——`arm_r`=`main_hand:true`/`arm_l`=`main_hand:false`——故本函数对
+/// humanoid plan 的结果与旧版直接 `worst_wound_grade(wounds, MAIN_ARM/OFF_ARM)`
+/// bit-for-bit 相同；泛化后天然支持非人形 plan 声明多个同档 Manipulator 部位，或把
+/// Manipulator 标签挂在完全不同的部位 id 上）。
+///
+/// 改用 `BodyPlan::parts_matching`（直接产出部位 id）取代
+/// `legacy::legacy_body_parts_matching`（产出 legacy `BodyPart`，会在遇到非人形部位 id
+/// 时静默跳过——`Wound.location` 已经是 `BodyPartId`，不再需要这层 legacy 反压）。
 fn manipulator_worst_grade(wounds: &Wounds, main_hand: bool, plan: &BodyPlan) -> ArmWoundGrade {
-    crate::body_plan::legacy_body_parts_matching(plan, move |consequence| {
+    plan.parts_matching(move |consequence| {
         matches!(consequence, crate::body_plan::PartConsequence::Manipulator { main_hand: mh } if *mh == main_hand)
     })
-    .map(|part| worst_wound_grade(wounds, part))
+    .map(|part_id| worst_wound_grade(wounds, part_id))
     .max_by_key(|grade| grade_rank(*grade))
     .unwrap_or(ArmWoundGrade::Intact)
 }
@@ -395,7 +403,7 @@ mod tests {
 
     fn wound(location: BodyPart, severity: f32) -> Wound {
         Wound {
-            location,
+            location: crate::body_plan::legacy_body_part_to_id(location),
             kind: WoundKind::Blunt,
             severity,
             bleeding_per_sec: 0.0,
@@ -529,11 +537,17 @@ mod tests {
         };
 
         assert_eq!(
-            worst_wound_grade(&wounds, BodyPart::ArmR),
+            worst_wound_grade(
+                &wounds,
+                &crate::body_plan::legacy_body_part_to_id(BodyPart::ArmR)
+            ),
             ArmWoundGrade::Fracture
         );
         assert_eq!(
-            worst_wound_grade(&wounds, BodyPart::ArmL),
+            worst_wound_grade(
+                &wounds,
+                &crate::body_plan::legacy_body_part_to_id(BodyPart::ArmL)
+            ),
             ArmWoundGrade::Severed
         );
     }
@@ -546,11 +560,17 @@ mod tests {
         };
 
         assert_eq!(
-            worst_wound_grade(&wounds, BodyPart::ArmL),
+            worst_wound_grade(
+                &wounds,
+                &crate::body_plan::legacy_body_part_to_id(BodyPart::ArmL)
+            ),
             ArmWoundGrade::Intact
         );
         assert_eq!(
-            worst_wound_grade(&wounds, BodyPart::ArmR),
+            worst_wound_grade(
+                &wounds,
+                &crate::body_plan::legacy_body_part_to_id(BodyPart::ArmR)
+            ),
             ArmWoundGrade::Intact
         );
     }

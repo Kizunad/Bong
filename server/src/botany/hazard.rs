@@ -179,7 +179,9 @@ pub fn apply_completion_hazards(
             } if !has_required_tool(actual_tool, *required_tool) => {
                 if let Some(wounds) = wounds.as_deref_mut() {
                     wounds.entries.push(Wound {
-                        location: BodyPart::ArmR,
+                        // humanoid-only boundary（P0 决议，本轮不迁移）：徒手采集划伤没有
+                        // 攻击几何，固定命中持械手（ArmR）代表部位；玩家恒为人形。
+                        location: crate::body_plan::legacy_body_part_to_id(BodyPart::ArmR),
                         kind: wound_kind(*wound),
                         severity: wound_severity(*wound),
                         bleeding_per_sec: 0.0,

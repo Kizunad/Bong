@@ -7,8 +7,8 @@ use valence::prelude::{
 };
 
 use crate::body_plan::{
-    humanoid_plan_static, legacy_body_part_to_id, resolve_body_plan, resolve_body_plan_for_target,
-    BodyPlanPurpose, BodyPlanRegistry, BodyPlanResolveInputs, RaceRegistry,
+    humanoid_plan_static, resolve_body_plan, resolve_body_plan_for_target, BodyPlanPurpose,
+    BodyPlanRegistry, BodyPlanResolveInputs, RaceRegistry,
 };
 use crate::combat::anticheat::AntiCheatCounter;
 use crate::combat::arm_wound;
@@ -89,7 +89,12 @@ fn apply_armor_mitigation(
     derived: &DerivedAttrs,
     contam: &mut f64,
 ) -> Option<f32> {
-    let &m = derived.defense_profile.get(&(wound.location, wound.kind))?;
+    // humanoid-only boundary（P0 决议，本轮不迁移）：`DerivedAttrs.defense_profile` 仍以
+    // legacy `BodyPart` 为键（护甲/体修被动减伤矩阵本轮不迁移，P1 批次范围）；非人形
+    // 部位 id 没有 legacy 对应物时，视为"该部位没有任何护甲/被动减伤条目"（`None`，
+    // 与今天"这个 (part, kind) 组合没配置"的既有语义完全一致），显式 `?` 提前返回。
+    let legacy_part = crate::body_plan::id_to_legacy_body_part(&wound.location)?;
+    let &m = derived.defense_profile.get(&(legacy_part, wound.kind))?;
     if m <= 0.0 {
         return None;
     }
@@ -511,10 +516,22 @@ pub fn resolve_attack_intents(
             )
         };
 
+        // plan-race-system-v1 P0 review r2（BLOCKING-1 收口）—— `PartBoxes` 分支需要目标
+        // 朝向把世界系射线变换到局部系；`HeightBands` 分支忽略这个参数（既有人形几何不
+        // 依赖朝向）。缺失 `Look`（NPC 常见）时退化到 yaw=0——只影响非人形 `PartBoxes`
+        // 构型的命中判定，人形 `HeightBands` 行为不受影响（bit-for-bit 不变）。
+        let target_yaw_radians = positions
+            .get(target_entity)
+            .ok()
+            .and_then(|(_, look)| look)
+            .map(|look| f64::from(look.yaw).to_radians())
+            .unwrap_or(0.0);
+
         let Some(hit_probe) = raycast_humanoid(
             target_body_plan,
             attacker_eye_position,
             target_position,
+            target_yaw_radians,
             f64::from(
                 intent.reach.max
                     / (juebi_law_env.law_disruption_distance_multiplier() as f32).max(1.0),
@@ -650,7 +667,7 @@ pub fn resolve_attack_intents(
             defender_cultivation.as_deref(),
             body_plan_registry.as_deref(),
             race_registry.as_deref(),
-            hit_probe.body_part,
+            &hit_probe.part_id,
         );
         let wound_profile = wound_kind_profile(intent.wound_kind);
         let defender_damage_multiplier = defender_attrs
@@ -1065,7 +1082,7 @@ pub fn resolve_attack_intents(
                     jiemai_wound_severity = Some(concussion_severity);
 
                     wounds.entries.push(Wound {
-                        location: hit_probe.body_part,
+                        location: hit_probe.part_id.clone(),
                         kind: crate::combat::components::WoundKind::Concussion,
                         severity: concussion_severity,
                         bleeding_per_sec: QI_ZHENMAI_CONCUSSION_BLEEDING_PER_SEC,
@@ -1089,7 +1106,7 @@ pub fn resolve_attack_intents(
         }
 
         let mut wound = Wound {
-            location: hit_probe.body_part,
+            location: hit_probe.part_id.clone(),
             kind: intent.wound_kind,
             severity: damage,
             bleeding_per_sec: damage * 0.05 * bleed_multiplier * wound_profile.bleed_mul,
@@ -1128,7 +1145,13 @@ pub fn resolve_attack_intents(
                                 // plan-combat-hit-location-v1 P2（决议 §8.1 旁路桶 #1）——
                                 // 剑招招架反伤打的是攻方持械的那只手：格挡时兵刃互击的
                                 // 冲击沿武器传回持械臂，物理上不该落在恒定的胸口。
-                                location: crate::combat::arm_wound::MAIN_ARM,
+                                // humanoid-only boundary（plan-race-system-v1 P0 决议，
+                                // 本轮不迁移）：MAIN_ARM 是编译期 legacy BodyPart 字面量
+                                // （见 arm_wound.rs 模块文档"P0b"节），经 legacy_body_part_to_id
+                                // 全双射转换为 BodyPartId。
+                                location: crate::body_plan::legacy_body_part_to_id(
+                                    crate::combat::arm_wound::MAIN_ARM,
+                                ),
                                 kind: crate::combat::components::WoundKind::Blunt,
                                 severity: reflected_damage,
                                 bleeding_per_sec: 0.0,
@@ -1389,7 +1412,14 @@ pub fn resolve_attack_intents(
                     .flat_map(|contents| contents.worn.iter())
                     .filter_map(|item| {
                         let ap = armor_profiles.get(item.template_id.as_str())?;
-                        if !ap.body_coverage.contains(&hit_probe.body_part) {
+                        // humanoid-only boundary（P0 决议，本轮不迁移）：`ArmorProfile.
+                        // body_coverage` 仍以 legacy `BodyPart` 8 段为键（护甲系统本轮不
+                        // 迁移，P1 批次范围）；非人形部位 id 没有 legacy 对应物时，视为
+                        // "这件护甲不可能覆盖该部位"（护甲系统本就假设人形躯体），显式
+                        // 提前返回而非静默吞掉。
+                        let legacy_part =
+                            crate::body_plan::id_to_legacy_body_part(&hit_probe.part_id)?;
+                        if !ap.body_coverage.contains(&legacy_part) {
                             return None;
                         }
                         let base_m = *ap.kind_mitigation.get(&intent.wound_kind).unwrap_or(&0.0);
@@ -1472,13 +1502,21 @@ pub fn resolve_attack_intents(
         // 叠乘生效；`target_body_plan` 已在本轮命中判定时按目标实体解析（见上方
         // "raycast_humanoid 命中几何按目标实体分派"注释）。
         let defender_mutation_state = mutation_states.get(target_entity).ok();
-        let pill_part_multiplier =
-            body_part_damage_multiplier(defender_status_effects, hit_probe.body_part)
-                * crate::dandao::mutation::mutation_damage_multiplier_for_part(
-                    defender_mutation_state,
-                    target_body_plan,
-                    hit_probe.body_part,
-                );
+        // humanoid-only boundary（P0 决议，本轮不迁移）：丹药 BodyPartResist/BodyPartWeaken
+        // 状态效果（`combat::status::body_part_damage_multiplier`）与 dandao 变异伤害倍率
+        // （`dandao::mutation::mutation_damage_multiplier_for_part`）两个函数都仍以 legacy
+        // `BodyPart` 为参数类型（P1 批次范围）；非人形部位 id 没有 legacy 对应物时，视为
+        // "这两套系统都不对该部位生效"，中性倍率 1.0（显式，不是静默吞掉）。
+        let pill_part_multiplier = crate::body_plan::id_to_legacy_body_part(&hit_probe.part_id)
+            .map(|legacy_part| {
+                body_part_damage_multiplier(defender_status_effects, legacy_part)
+                    * crate::dandao::mutation::mutation_damage_multiplier_for_part(
+                        defender_mutation_state,
+                        target_body_plan,
+                        legacy_part,
+                    )
+            })
+            .unwrap_or(1.0);
         if (pill_part_multiplier - 1.0).abs() > f32::EPSILON {
             wound.severity *= pill_part_multiplier;
             wound.bleeding_per_sec *= pill_part_multiplier;
@@ -1529,11 +1567,19 @@ pub fn resolve_attack_intents(
         // plan-baomai-v4 P0 — 死脉甲免疫区拦截污染。
         // 守恒决议：drop_no_release。污染量由伤害公式凭空派生（非攻方真元转移），
         // 拦截后直接丢弃，不调用 qi_release_to_zone（否则通胀）。
-        let dead_armor_blocks = dead_armor_q
-            .get(target_entity)
-            .ok()
-            .flatten()
-            .is_some_and(|armor| should_block_contamination(armor, hit_probe.body_part));
+        // humanoid-only boundary（P0 决议，本轮不迁移）：`DeadMeridianArmor.immune_regions`
+        // 仍以 legacy `BodyPart` 为键（baomai_v4 主动绝脉机制本轮不迁移，P1 批次范围）；
+        // 非人形部位 id 没有 legacy 对应物时，视为"未被授予免疫"（false），显式短路而非
+        // panic/静默吞掉。
+        let dead_armor_blocks =
+            dead_armor_q
+                .get(target_entity)
+                .ok()
+                .flatten()
+                .is_some_and(|armor| {
+                    crate::body_plan::id_to_legacy_body_part(&hit_probe.part_id)
+                        .is_some_and(|legacy_part| should_block_contamination(armor, legacy_part))
+                });
         if dead_armor_blocks {
             emitted_contam_delta = 0.0;
         }
@@ -1541,9 +1587,12 @@ pub fn resolve_attack_intents(
             contamination.entries.push(ContamSource {
                 amount: emitted_contam_delta,
                 color: ColorKind::Mellow,
-                meridian_id: Some(crate::cultivation::dugu::body_part_to_meridian(
-                    hit_probe.body_part,
-                )),
+                // humanoid-only boundary（P0 决议，本轮不迁移）：`dugu::body_part_to_meridian`
+                // 仍按 legacy `BodyPart` 分派经脉污染路由（P1 批次范围）；非人形部位 id 时
+                // 不指定具体经脉（`None`，污染仍计入总量，只是不挂靠某条经脉——显式，
+                // 非静默吞掉）。
+                meridian_id: crate::body_plan::id_to_legacy_body_part(&hit_probe.part_id)
+                    .map(crate::cultivation::dugu::body_part_to_meridian),
                 attacker_id: Some(attacker_id.clone()),
                 introduced_at: clock.tick,
             });
@@ -1554,58 +1603,6 @@ pub fn resolve_attack_intents(
         let wound_bleeding = wound.bleeding_per_sec;
         let wound_severity = wound.severity;
         wounds.entries.push(wound);
-
-        // plan-combat-hit-location-v1 P4（决议 §8.1 #2 Severed 行为级后果 #1 —
-        // 消除 arm_wound::ArmWoundFactors.main_arm_severed 零消费孤岛）——
-        // 主手臂(MAIN_ARM)本次命中直接判定为 Severed 分级 → 该侧持械立即脱手落地。
-        // 与"武器耐久归零脱手"（本文件上方 broken_weapon 分支）刻意不同：耐久归零时
-        // 武器仍完整，优先塞回随身容器；断臂时持械的手已经不在了，没有"塞回背包"
-        // 这个物理动作可言，直接走 dropped_loot 世界掉落（既有链路，`discard_
-        // inventory_item_to_dropped_loot` + `DroppedLootRegistry`，与 §4664 剑招/耐久
-        // 脱手同一套 API，见 inventory::discard_inventory_item_to_dropped_loot）。
-        // 只处理 `EquipSlot::MainHand`：`sync_weapon_component_from_equipped`
-        // 的选择顺序是 main_hand.held > off_hand.held，若目标此刻的 `Weapon` component
-        // 追踪的其实是副手武器（主手空手/主手非武器），断主手臂不应误删副手件。
-        if hit_probe.body_part == arm_wound::MAIN_ARM
-            && arm_wound::is_severed(arm_wound::wound_severity_to_grade(wound_severity))
-        {
-            if let Ok(severed_weapon) = weapons.get(target_entity) {
-                if severed_weapon.slot == EquipSlot::MainHand {
-                    let dropped_instance_id = severed_weapon.instance_id;
-                    if let Ok(mut target_inventory) = inventories.get_mut(target_entity) {
-                        if let Some(dropped_loot_registry) = dropped_loot_registry.as_mut() {
-                            match discard_inventory_item_to_dropped_loot(
-                                &mut target_inventory,
-                                dropped_loot_registry,
-                                [target_position.x, target_position.y, target_position.z],
-                                crate::world::dimension::DimensionKind::Overworld,
-                                dropped_instance_id,
-                                &InventoryLocationV1::Equip {
-                                    slot: EquipSlotV1::MainHand,
-                                    state: EquipStateV1::Held,
-                                },
-                            ) {
-                                Ok(_) => {
-                                    commands.entity(target_entity).remove::<Weapon>();
-                                }
-                                Err(drop_error) => {
-                                    tracing::warn!(
-                                        "[bong][combat][arm_wound] main arm severed but failed to drop weapon instance {} for target: {}",
-                                        dropped_instance_id,
-                                        drop_error
-                                    );
-                                }
-                            }
-                        } else {
-                            tracing::warn!(
-                                "[bong][combat][arm_wound] main arm severed weapon instance {} cannot fall back to dropped loot because DroppedLootRegistry is unavailable",
-                                dropped_instance_id
-                            );
-                        }
-                    }
-                }
-            }
-        }
 
         if wound_bleeding > 0.0 {
             event_writers
@@ -1619,46 +1616,129 @@ pub fn resolve_attack_intents(
                 });
         }
 
-        if matches!(hit_probe.body_part, BodyPart::LegL | BodyPart::LegR)
-            && wound_severity >= LEG_SLOWED_SEVERITY_THRESHOLD
-        {
-            event_writers
-                .status_effect_intents
-                .send(ApplyStatusEffectIntent {
-                    target: target_entity,
-                    kind: StatusEffectKind::Slowed,
-                    magnitude: 0.4,
-                    duration_ticks: LEG_SLOWED_DURATION_TICKS,
-                    issued_at_tick: clock.tick,
-                });
-            // plan-combat-hit-location-v1 P3 — 腿伤减速触发时目标脚下血渍 decal
-            // （复用 client BongGroundDecalParticle 基类，lifetime 100t，无新贴图）。
-            if let Some(events) = event_writers.vfx_events.as_deref_mut() {
-                gameplay_vfx::send_spawn(
-                    events,
-                    gameplay_vfx::spawn_request(
-                        gameplay_vfx::COMBAT_LEG_WOUND_DECAL,
-                        target_position,
-                        None,
-                        "#8C1F1F",
-                        (wound_severity / 20.0).clamp(0.3, 1.0),
-                        1,
-                        100,
-                    ),
+        // plan-race-system-v1 P0 review r2（BLOCKING-2 收口）—— 断臂脱手 / 腿伤减速 /
+        // 头伤眩晕三条部位功能性后果统一改为按**目标实体解析出的 `target_body_plan`**
+        // 查询命中部位的 `PartConsequence`（`Manipulator{main_hand}` / `Locomotion` /
+        // `Sensory`），取代此前分别反压三次 legacy `BodyPart`（`MAIN_ARM` 字面量比较 /
+        // `LegL|LegR` 匹配 / `Head` 比较）的写法——任意 `BodyPlan`（含非人形构型，如
+        // 未来 whale 的 `tail_fin`=Locomotion）都能触发正确的功能性后果，不再要求
+        // "命中部位必须是这 8 个 legacy 变体之一"这个人形专属前提。未知 part id
+        // （`consequence_for` 返回 `None`）走显式 `warn` 分支，不静默无后果。
+        match target_body_plan.consequence_for(&hit_probe.part_id) {
+            Some(crate::body_plan::PartConsequence::Manipulator { main_hand: true }) => {
+                // plan-combat-hit-location-v1 P4（决议 §8.1 #2 Severed 行为级后果 #1 —
+                // 消除 arm_wound::ArmWoundFactors.main_arm_severed 零消费孤岛）——
+                // 主手臂本次命中直接判定为 Severed 分级 → 该侧持械立即脱手落地。
+                // 与"武器耐久归零脱手"（本文件上方 broken_weapon 分支）刻意不同：耐久
+                // 归零时武器仍完整，优先塞回随身容器；断臂时持械的手已经不在了，没有
+                // "塞回背包"这个物理动作可言，直接走 dropped_loot 世界掉落（既有链路，
+                // `discard_inventory_item_to_dropped_loot` + `DroppedLootRegistry`，与
+                // §4664 剑招/耐久脱手同一套 API）。只处理 `EquipSlot::MainHand`：
+                // `sync_weapon_component_from_equipped` 的选择顺序是
+                // main_hand.held > off_hand.held，若目标此刻的 `Weapon` component
+                // 追踪的其实是副手武器（主手空手/主手非武器），断主手臂不应误删副手件。
+                if arm_wound::is_severed(arm_wound::wound_severity_to_grade(wound_severity)) {
+                    if let Ok(severed_weapon) = weapons.get(target_entity) {
+                        if severed_weapon.slot == EquipSlot::MainHand {
+                            let dropped_instance_id = severed_weapon.instance_id;
+                            if let Ok(mut target_inventory) = inventories.get_mut(target_entity) {
+                                if let Some(dropped_loot_registry) = dropped_loot_registry.as_mut()
+                                {
+                                    match discard_inventory_item_to_dropped_loot(
+                                        &mut target_inventory,
+                                        dropped_loot_registry,
+                                        [target_position.x, target_position.y, target_position.z],
+                                        crate::world::dimension::DimensionKind::Overworld,
+                                        dropped_instance_id,
+                                        &InventoryLocationV1::Equip {
+                                            slot: EquipSlotV1::MainHand,
+                                            state: EquipStateV1::Held,
+                                        },
+                                    ) {
+                                        Ok(_) => {
+                                            commands.entity(target_entity).remove::<Weapon>();
+                                        }
+                                        Err(drop_error) => {
+                                            tracing::warn!(
+                                                "[bong][combat][arm_wound] main arm severed but failed to drop weapon instance {} for target: {}",
+                                                dropped_instance_id,
+                                                drop_error
+                                            );
+                                        }
+                                    }
+                                } else {
+                                    tracing::warn!(
+                                        "[bong][combat][arm_wound] main arm severed weapon instance {} cannot fall back to dropped loot because DroppedLootRegistry is unavailable",
+                                        dropped_instance_id
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Some(crate::body_plan::PartConsequence::Manipulator { main_hand: false }) => {
+                // 副手臂断裂当前无独立"行为级"后果（脱手判定只认主手，副手断裂只通过
+                // `arm_wound::combined_factor().block_multiplier` 影响格挡减伤）——
+                // 显式空分支，不是遗漏。
+            }
+            Some(crate::body_plan::PartConsequence::Locomotion) => {
+                if wound_severity >= LEG_SLOWED_SEVERITY_THRESHOLD {
+                    event_writers
+                        .status_effect_intents
+                        .send(ApplyStatusEffectIntent {
+                            target: target_entity,
+                            kind: StatusEffectKind::Slowed,
+                            magnitude: 0.4,
+                            duration_ticks: LEG_SLOWED_DURATION_TICKS,
+                            issued_at_tick: clock.tick,
+                        });
+                    // plan-combat-hit-location-v1 P3 — 腿伤减速触发时目标脚下血渍 decal
+                    // （复用 client BongGroundDecalParticle 基类，lifetime 100t，无新贴图）。
+                    if let Some(events) = event_writers.vfx_events.as_deref_mut() {
+                        gameplay_vfx::send_spawn(
+                            events,
+                            gameplay_vfx::spawn_request(
+                                gameplay_vfx::COMBAT_LEG_WOUND_DECAL,
+                                target_position,
+                                None,
+                                "#8C1F1F",
+                                (wound_severity / 20.0).clamp(0.3, 1.0),
+                                1,
+                                100,
+                            ),
+                        );
+                    }
+                }
+            }
+            Some(crate::body_plan::PartConsequence::Sensory) => {
+                if wound_severity >= HEAD_STUN_SEVERITY_THRESHOLD {
+                    event_writers
+                        .status_effect_intents
+                        .send(ApplyStatusEffectIntent {
+                            target: target_entity,
+                            kind: StatusEffectKind::Stunned,
+                            magnitude: 1.0,
+                            duration_ticks: HEAD_STUN_DURATION_TICKS,
+                            issued_at_tick: clock.tick,
+                        });
+                }
+            }
+            Some(crate::body_plan::PartConsequence::Core) => {
+                // 躯干核心命中对"肢体功能性后果"（脱手/减速/眩晕）无影响——显式空分支。
+            }
+            None => {
+                // plan-race-system-v1 P0 review r2（BLOCKING-2 收口）—— 未知 part id
+                // （命中部位不在 `target_body_plan.parts` 里，理论上不会发生：命中几何
+                // 与部位定义同出一份 `BodyPlan`）：显式 warn + 无功能性后果，不静默吞掉。
+                tracing::warn!(
+                    "[bong][body_plan] resolve_attack_intents: hit part id {} not found in \
+                     resolved BodyPlan {} parts — no locomotion/sensory/manipulator \
+                     consequence dispatched (explicit no-op, not a silent skip)",
+                    hit_probe.part_id,
+                    target_body_plan.id
                 );
             }
-        }
-
-        if hit_probe.body_part == BodyPart::Head && wound_severity >= HEAD_STUN_SEVERITY_THRESHOLD {
-            event_writers
-                .status_effect_intents
-                .send(ApplyStatusEffectIntent {
-                    target: target_entity,
-                    kind: StatusEffectKind::Stunned,
-                    magnitude: 1.0,
-                    duration_ticks: HEAD_STUN_DURATION_TICKS,
-                    issued_at_tick: clock.tick,
-                });
         }
 
         if !is_physical_hit {
@@ -1676,7 +1756,11 @@ pub fn resolve_attack_intents(
         if let Some(mut life_record) = life_record {
             life_record.push(BiographyEntry::CombatHit {
                 attacker_id: attacker_id.clone(),
-                body_part: format!("{:?}", hit_probe.body_part),
+                // `BiographyEntry::CombatHit.body_part` 是自由格式 String（LifeRecord 持久化
+                // 为不透明 JSON blob，无 schema 强绑定）——直接用 part_id 的 Display（如
+                // "head"）而非 legacy Debug（如 "Head"），任意部位 id（含非人形）都能记录，
+                // 不需要经过 legacy 转换。
+                body_part: hit_probe.part_id.to_string(),
                 wound_kind: format!("{:?}", intent.wound_kind),
                 damage: wound_severity,
                 tick: clock.tick,
@@ -1698,11 +1782,11 @@ pub fn resolve_attack_intents(
         let qi_damage = if is_physical_hit { 0.0 } else { wound_severity };
         let physical_damage = if is_physical_hit { wound_severity } else { 0.0 };
         let description = format!(
-            "{} {} -> {} hit {:?} with {:?} for {:.1} qi / {:.1} physical damage (hit_qi {:.1}, jiemai={} sword_parry={} shield_block={} eff={:.2}) at {:.2} reach decay",
+            "{} {} -> {} hit {} with {:?} for {:.1} qi / {:.1} physical damage (hit_qi {:.1}, jiemai={} sword_parry={} shield_block={} eff={:.2}) at {:.2} reach decay",
             action_label,
             attacker_id,
             target_id,
-            hit_probe.body_part,
+            hit_probe.part_id,
             intent.wound_kind,
             qi_damage,
             physical_damage,
@@ -1721,7 +1805,24 @@ pub fn resolve_attack_intents(
             attacker: intent.attacker,
             target: target_entity,
             resolved_at_tick: clock.tick,
-            body_part: hit_probe.body_part,
+            // humanoid-only boundary（P0 决议，边界①）：`CombatEvent.body_part`（走
+            // Redis/JSON 的 `CombatBodyPartV1` 8 值枚举，`network::combat_bridge::
+            // map_body_part`）本轮不开放化（P1 经脉/wire 批次范围）。非人形部位 id 没有
+            // legacy 对应物时，`CombatBodyPartV1` 无法表达该部位——显式记 warn + 落一个
+            // 占位值（`BodyPart::Chest`，与 dead_armor/dugu 等模块的躯干核心占位惯例
+            // 一致），不是静默默认；wire 精确度的开放化留给 P1。
+            body_part: crate::body_plan::id_to_legacy_body_part(&hit_probe.part_id).unwrap_or_else(
+                || {
+                    tracing::warn!(
+                        "[bong][body_plan] CombatEvent wire: part id {} has no legacy BodyPart \
+                         mapping — CombatBodyPartV1 is humanoid-only until P1 opens it up; \
+                         emitting BodyPart::Chest as an explicit placeholder (not a silent \
+                         default)",
+                        hit_probe.part_id
+                    );
+                    BodyPart::Chest
+                },
+            ),
             wound_kind: intent.wound_kind,
             source: intent.source,
             debug_command: intent.debug_command.is_some(),
@@ -1767,8 +1868,12 @@ pub fn resolve_attack_intents(
             };
             // plan-combat-hit-location-v1 P3 — 部位差异视听反馈：头部命中暴击星形 burst，
             // 四肢命中血色三线沿命中法线；胸/腹/背命中维持既有 COMBAT_HIT 不变。
-            match hit_probe.body_part {
-                BodyPart::Head => {
+            // humanoid-only boundary（P0 决议，本轮不迁移）：命中 VFX 分级本身按 legacy
+            // `BodyPart` 三档分类（crit/limb/torso），非人形部位 id 没有 legacy 对应物时
+            // 落回 torso 档默认 `COMBAT_HIT`（既不算 crit 也不算 limb 特化）——显式兜底，
+            // 不是遗漏分支。
+            match crate::body_plan::id_to_legacy_body_part(&hit_probe.part_id) {
+                Some(BodyPart::Head) => {
                     gameplay_vfx::send_spawn(
                         events,
                         gameplay_vfx::spawn_request(
@@ -1782,7 +1887,7 @@ pub fn resolve_attack_intents(
                         ),
                     );
                 }
-                BodyPart::ArmL | BodyPart::ArmR | BodyPart::LegL | BodyPart::LegR => {
+                Some(BodyPart::ArmL | BodyPart::ArmR | BodyPart::LegL | BodyPart::LegR) => {
                     gameplay_vfx::send_spawn(
                         events,
                         gameplay_vfx::spawn_request(
@@ -1796,7 +1901,7 @@ pub fn resolve_attack_intents(
                         ),
                     );
                 }
-                BodyPart::Chest | BodyPart::Abdomen | BodyPart::Back => {
+                Some(BodyPart::Chest | BodyPart::Abdomen | BodyPart::Back) | None => {
                     gameplay_vfx::send_spawn(
                         events,
                         gameplay_vfx::spawn_request(
@@ -1847,8 +1952,10 @@ pub fn resolve_attack_intents(
                 details: Some(std::collections::HashMap::from([
                     ("action".to_string(), json!(action_label)),
                     (
+                        // GameEvent.details 是自由格式 JSON map，直接用 part_id 的原始
+                        // 字符串（如 "head"），任意部位 id（含非人形）都能记录。
                         "body_part".to_string(),
-                        json!(format!("{:?}", hit_probe.body_part)),
+                        json!(hit_probe.part_id.as_str()),
                     ),
                     (
                         "wound_kind".to_string(),
@@ -2034,10 +2141,8 @@ fn body_part_multipliers(
     defender_cultivation: Option<&Cultivation>,
     body_plans: Option<&BodyPlanRegistry>,
     races: Option<&RaceRegistry>,
-    body_part: BodyPart,
+    part_id: &crate::body_plan::BodyPartId,
 ) -> (f32, f32, f32) {
-    let part_id = legacy_body_part_to_id(body_part);
-
     let plan = match (body_plans, races) {
         (Some(body_plans), Some(races)) => match resolve_body_plan(
             target_entity,
@@ -2062,12 +2167,12 @@ fn body_part_multipliers(
 
     plan.parts
         .iter()
-        .find(|def| def.id == part_id)
+        .find(|def| &def.id == part_id)
         .map(|def| (def.damage_mul, def.contam_mul, def.bleed_mul))
         .unwrap_or_else(|| {
             tracing::error!(
-                "[bong][body_plan] body plan {} has no part definition for legacy BodyPart \
-                 {body_part:?} (id={part_id}) — using neutral 1.0 multipliers",
+                "[bong][body_plan] body plan {} has no part definition for part id {part_id} \
+                 — using neutral 1.0 multipliers",
                 plan.id
             );
             (1.0, 1.0, 1.0)
@@ -2365,7 +2470,7 @@ mod tests {
                 Some(&cultivation),
                 Some(&body_plans),
                 Some(&races),
-                BodyPart::Head,
+                &crate::body_plan::legacy_body_part_to_id(BodyPart::Head),
             );
             assert_eq!(
                 (damage_mul, contam_mul, bleed_mul),
@@ -2383,7 +2488,13 @@ mod tests {
             // 那些既有测试全部回归红。
             for part in ALL_LEGACY_PARTS {
                 assert_eq!(
-                    body_part_multipliers(Entity::PLACEHOLDER, None, None, None, part),
+                    body_part_multipliers(
+                        Entity::PLACEHOLDER,
+                        None,
+                        None,
+                        None,
+                        &crate::body_plan::legacy_body_part_to_id(part)
+                    ),
                     legacy_body_part_multipliers(part),
                     "part={part:?}: 资源缺失时的退化路径必须与旧硬编码表完全一致"
                 );
@@ -2400,7 +2511,7 @@ mod tests {
                     Some(&cultivation),
                     Some(&body_plans),
                     None,
-                    BodyPart::Head,
+                    &crate::body_plan::legacy_body_part_to_id(BodyPart::Head),
                 ),
                 legacy_body_part_multipliers(BodyPart::Head),
                 "只有 body_plans 没有 races 时（二者必须同时存在才走数据驱动路径），\
@@ -2418,7 +2529,7 @@ mod tests {
                     Some(&cultivation),
                     None,
                     Some(&races),
-                    BodyPart::Head,
+                    &crate::body_plan::legacy_body_part_to_id(BodyPart::Head),
                 ),
                 legacy_body_part_multipliers(BodyPart::Head),
                 "只有 races 没有 body_plans 时同样必须退化到 humanoid_plan_static"
@@ -2437,7 +2548,7 @@ mod tests {
                         Some(&cultivation),
                         Some(&body_plans),
                         Some(&races),
-                        part,
+                        &crate::body_plan::legacy_body_part_to_id(part),
                     ),
                     legacy_body_part_multipliers(part),
                     "part={part:?}: 未知 race 解析失败必须优雅退化到 humanoid_plan_static，\
@@ -2476,7 +2587,7 @@ mod tests {
                         None, // no Cultivation component → Tier3 fallback inside resolve_body_plan
                         Some(&body_plans),
                         Some(&races),
-                        part,
+                        &crate::body_plan::legacy_body_part_to_id(part),
                     ),
                     legacy_body_part_multipliers(part),
                     "part={part:?}: 无 Cultivation 组件的实体经 resolve_body_plan Tier3 兜底 \
@@ -3080,7 +3191,7 @@ mod tests {
         target_feet: [f64; 3],
         issued_at_tick: u64,
         reach: AttackReach,
-    ) -> BodyPart {
+    ) -> crate::body_plan::BodyPartId {
         let origin = DVec3::new(
             attacker_feet[0],
             attacker_feet[1] + ATTACKER_EYE_HEIGHT,
@@ -3092,15 +3203,17 @@ mod tests {
         let aim_direction = raycast::npc_aim_direction(origin, target, seed, sigma_scale);
         // `resolve_attack_intents` 的目标是 humanoid（本文件测试全用人形 fixture），
         // 显式传入 `humanoid_plan_static()` 与生产资源齐全时的解析结果 bit-for-bit 一致。
+        // yaw=0.0：HeightBands 分支忽略该参数，与生产调用点行为一致。
         raycast_humanoid(
             humanoid_plan_static(),
             origin,
             target,
+            0.0,
             f64::from(reach.max),
             aim_direction,
         )
         .expect("expected npc aim direction to stay within reach and hit target AABB")
-        .body_part
+        .part_id
     }
 
     #[test]
@@ -3179,6 +3292,7 @@ mod tests {
         reach: AttackReach,
         wanted: BodyPart,
     ) -> u64 {
+        let wanted_id = crate::body_plan::legacy_body_part_to_id(wanted);
         (0..2000u64)
             .find(|&tick| {
                 expected_npc_hit_body_part(
@@ -3187,7 +3301,7 @@ mod tests {
                     target_feet,
                     tick,
                     reach,
-                ) == wanted
+                ) == wanted_id
             })
             .unwrap_or_else(|| {
                 panic!("未能在 0..2000 tick 内为部位 {wanted:?} 找到确定性 jitter 命中样本")
@@ -3251,7 +3365,7 @@ mod tests {
             .expect("target should keep wounds");
         assert_eq!(
             wounds.entries[0].location,
-            BodyPart::Head,
+            crate::body_plan::legacy_body_part_to_id(BodyPart::Head),
             "找到的 tick 应确实产出 Head 命中（否则测试自身校准漂移）"
         );
 
@@ -3329,15 +3443,16 @@ mod tests {
         // ArmL/ArmR/LegL/LegR 均应路由到同一个 COMBAT_HIT_LIMB——扫第一个命中任意四肢的 tick。
         let tick = (0..2000u64)
             .find(|&tick| {
+                let hit_part_id = expected_npc_hit_body_part(
+                    attacker_feet,
+                    &canonical,
+                    target_feet,
+                    tick,
+                    FIST_REACH,
+                );
                 matches!(
-                    expected_npc_hit_body_part(
-                        attacker_feet,
-                        &canonical,
-                        target_feet,
-                        tick,
-                        FIST_REACH,
-                    ),
-                    BodyPart::ArmL | BodyPart::ArmR | BodyPart::LegL | BodyPart::LegR
+                    crate::body_plan::id_to_legacy_body_part(&hit_part_id),
+                    Some(BodyPart::ArmL | BodyPart::ArmR | BodyPart::LegL | BodyPart::LegR)
                 )
             })
             .expect("未能在 0..2000 tick 内找到任意四肢命中样本");
@@ -3361,8 +3476,8 @@ mod tests {
             .expect("target should keep wounds");
         assert!(
             matches!(
-                wounds.entries[0].location,
-                BodyPart::ArmL | BodyPart::ArmR | BodyPart::LegL | BodyPart::LegR
+                crate::body_plan::id_to_legacy_body_part(&wounds.entries[0].location),
+                Some(BodyPart::ArmL | BodyPart::ArmR | BodyPart::LegL | BodyPart::LegR)
             ),
             "找到的 tick 应确实产出四肢命中，实际 {:?}",
             wounds.entries[0].location
@@ -3444,15 +3559,16 @@ mod tests {
         // LEG_SLOWED_SEVERITY_THRESHOLD 触发减速与血渍 decal。
         let tick = (0..2000u64)
             .find(|&tick| {
+                let hit_part_id = expected_npc_hit_body_part(
+                    attacker_feet,
+                    &canonical,
+                    target_feet,
+                    tick,
+                    SPEAR_REACH,
+                );
                 matches!(
-                    expected_npc_hit_body_part(
-                        attacker_feet,
-                        &canonical,
-                        target_feet,
-                        tick,
-                        SPEAR_REACH,
-                    ),
-                    BodyPart::LegL | BodyPart::LegR
+                    crate::body_plan::id_to_legacy_body_part(&hit_part_id),
+                    Some(BodyPart::LegL | BodyPart::LegR)
                 )
             })
             .expect("未能在 0..2000 tick 内找到腿部命中样本");
@@ -3476,7 +3592,10 @@ mod tests {
             .expect("target should keep wounds");
         let wound_severity = wounds.entries[0].severity;
         assert!(
-            matches!(wounds.entries[0].location, BodyPart::LegL | BodyPart::LegR),
+            matches!(
+                crate::body_plan::id_to_legacy_body_part(&wounds.entries[0].location),
+                Some(BodyPart::LegL | BodyPart::LegR)
+            ),
             "找到的 tick 应确实产出腿部命中，实际 {:?}",
             wounds.entries[0].location
         );
@@ -3738,7 +3857,7 @@ mod tests {
                 health_current: 5.0,
                 health_max: 100.0,
                 entries: vec![Wound {
-                    location: BodyPart::Chest,
+                    location: crate::body_plan::legacy_body_part_to_id(BodyPart::Chest),
                     kind: WoundKind::Blunt,
                     severity: 3.0,
                     bleeding_per_sec: 0.0,
@@ -4260,7 +4379,10 @@ mod tests {
             "damage should reduce health to zero"
         );
         assert_eq!(wounds.entries.len(), 1, "damage should record one wound");
-        assert_eq!(wounds.entries[0].location, BodyPart::Chest);
+        assert_eq!(
+            wounds.entries[0].location,
+            crate::body_plan::legacy_body_part_to_id(BodyPart::Chest)
+        );
         assert_eq!(wounds.entries[0].kind, WoundKind::Blunt);
         assert!(
             stamina.current < stamina.max,
@@ -4293,11 +4415,15 @@ mod tests {
             meridians.get(MeridianId::Lung).cracks.last(),
             Some(crack) if crack.cause == CrackCause::Attack
         ));
+        // plan-race-system-v1 P0 review r2（BLOCKING-2 收口）—— `BiographyEntry::CombatHit.
+        // body_part` 现在直接来自 `hit_probe.part_id` 的 Display（`BodyPartId` 原始字符串，
+        // 如 "chest"），不再是 legacy `BodyPart` 的 Debug 格式（如 "Chest"）——见
+        // resolve_attack_intents 的 life_record.push 调用点注释。
         assert!(matches!(
             life.biography.last(),
             Some(BiographyEntry::CombatHit { attacker_id, body_part, wound_kind, .. })
                 if attacker_id == "offline:Azure"
-                    && body_part == "Chest"
+                    && body_part == "chest"
                     && wound_kind == "Blunt"
         ));
     }
@@ -4664,7 +4790,10 @@ mod tests {
             1,
             "player->npc should resolve exactly one wound"
         );
-        assert_eq!(npc_wounds.entries[0].location, BodyPart::Chest);
+        assert_eq!(
+            npc_wounds.entries[0].location,
+            crate::body_plan::legacy_body_part_to_id(BodyPart::Chest)
+        );
         assert_eq!(npc_wounds.entries[0].kind, WoundKind::Blunt);
         assert_eq!(
             player_contamination.entries[0].attacker_id.as_deref(),
@@ -4878,7 +5007,7 @@ mod tests {
         );
         assert_eq!(
             npc_wounds.entries[0].location,
-            BodyPart::Head,
+            crate::body_plan::legacy_body_part_to_id(BodyPart::Head),
             "玩家显式设置真实 Look 水平看向僵尸，眼高贴近头部阈值应命中 Head，\
              而非旧实现恒定 fallback 的 Chest（§8.1 #1/#4）"
         );
@@ -6400,7 +6529,10 @@ mod tests {
         let wounds = target_ref.get::<Wounds>().unwrap();
         let status_effects = target_ref.get::<StatusEffects>().unwrap();
 
-        assert!(wounds.entries.iter().any(|w| w.location == BodyPart::Head));
+        assert!(wounds
+            .entries
+            .iter()
+            .any(|w| w.location == crate::body_plan::legacy_body_part_to_id(BodyPart::Head)));
         assert!(status_effects
             .active
             .iter()
@@ -8080,7 +8212,7 @@ mod tests {
         // 攻方持械臂（MAIN_ARM = ArmR），而非旧实现里硬编的恒定 Chest。
         assert_eq!(
             attacker_wounds.entries[0].location,
-            crate::combat::arm_wound::MAIN_ARM,
+            crate::body_plan::legacy_body_part_to_id(crate::combat::arm_wound::MAIN_ARM),
             "招架反伤应命中攻方持械臂（ArmR），实测 {:?}；若这里变回 Chest 说明 P2 \
              反伤旁路清理被回退了",
             attacker_wounds.entries[0].location
@@ -8118,7 +8250,7 @@ mod tests {
 
     fn wound(location: BodyPart, severity: f32) -> Wound {
         Wound {
-            location,
+            location: crate::body_plan::legacy_body_part_to_id(location),
             kind: WoundKind::Blunt,
             severity,
             bleeding_per_sec: 0.0,
@@ -8698,18 +8830,26 @@ mod tests {
 
         let target_wounds = app.world().entity(target).get::<Wounds>().unwrap();
         assert_eq!(
-            target_wounds.entries.last().map(|w| w.location),
-            Some(arm_wound::MAIN_ARM),
+            target_wounds.entries.last().map(|w| w.location.clone()),
+            Some(crate::body_plan::legacy_body_part_to_id(
+                arm_wound::MAIN_ARM
+            )),
             "geometry helper 应命中 MAIN_ARM(ArmR)，实际 {:?}；若此断言先撞红说明射线\
              geometry 算错了，后续脱手断言无意义",
-            target_wounds.entries.last().map(|w| w.location)
+            target_wounds.entries.last().map(|w| w.location.clone())
         );
         assert_eq!(
-            arm_wound::worst_wound_grade(target_wounds, arm_wound::MAIN_ARM),
+            arm_wound::worst_wound_grade(
+                target_wounds,
+                &crate::body_plan::legacy_body_part_to_id(arm_wound::MAIN_ARM)
+            ),
             arm_wound::ArmWoundGrade::Severed,
             "本次命中伤势应达到 Severed 分级，实际最重分级 {:?}（severity={:?}）；\
              断臂脱手的前置条件未达成",
-            arm_wound::worst_wound_grade(target_wounds, arm_wound::MAIN_ARM),
+            arm_wound::worst_wound_grade(
+                target_wounds,
+                &crate::body_plan::legacy_body_part_to_id(arm_wound::MAIN_ARM)
+            ),
             target_wounds.entries.last().map(|w| w.severity)
         );
 
@@ -8799,16 +8939,22 @@ mod tests {
 
         let target_wounds = app.world().entity(target).get::<Wounds>().unwrap();
         assert_eq!(
-            target_wounds.entries.last().map(|w| w.location),
-            Some(arm_wound::OFF_ARM),
+            target_wounds.entries.last().map(|w| w.location.clone()),
+            Some(crate::body_plan::legacy_body_part_to_id(arm_wound::OFF_ARM)),
             "geometry helper 应命中 OFF_ARM(ArmL)，实际 {:?}",
-            target_wounds.entries.last().map(|w| w.location)
+            target_wounds.entries.last().map(|w| w.location.clone())
         );
         assert_eq!(
-            arm_wound::worst_wound_grade(target_wounds, arm_wound::OFF_ARM),
+            arm_wound::worst_wound_grade(
+                target_wounds,
+                &crate::body_plan::legacy_body_part_to_id(arm_wound::OFF_ARM)
+            ),
             arm_wound::ArmWoundGrade::Severed,
             "本次命中应达到 Severed 分级才能验证副手断裂不触发脱手这件事，实际 {:?}",
-            arm_wound::worst_wound_grade(target_wounds, arm_wound::OFF_ARM)
+            arm_wound::worst_wound_grade(
+                target_wounds,
+                &crate::body_plan::legacy_body_part_to_id(arm_wound::OFF_ARM)
+            )
         );
 
         assert!(
@@ -8893,11 +9039,16 @@ mod tests {
 
         let target_wounds = app.world().entity(target).get::<Wounds>().unwrap();
         assert_eq!(
-            target_wounds.entries.last().map(|w| w.location),
-            Some(arm_wound::MAIN_ARM)
+            target_wounds.entries.last().map(|w| w.location.clone()),
+            Some(crate::body_plan::legacy_body_part_to_id(
+                arm_wound::MAIN_ARM
+            ))
         );
         assert_ne!(
-            arm_wound::worst_wound_grade(target_wounds, arm_wound::MAIN_ARM),
+            arm_wound::worst_wound_grade(
+                target_wounds,
+                &crate::body_plan::legacy_body_part_to_id(arm_wound::MAIN_ARM)
+            ),
             arm_wound::ArmWoundGrade::Severed,
             "本测试要验证的是 Severed 以下分级不脱手，前置条件要求本次命中不能是 Severed；\
              实际却是 Severed，说明伤害计算改动了，该测试需要重新校准 attack_power"
@@ -10992,7 +11143,7 @@ mod tests {
         wounds
             .entries
             .iter()
-            .find(|w| w.location == BodyPart::Chest)
+            .find(|w| w.location == crate::body_plan::legacy_body_part_to_id(BodyPart::Chest))
             .expect("命中 Chest 必须写入一条 Chest 位置的 Wound")
             .severity
     }

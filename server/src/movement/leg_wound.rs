@@ -15,8 +15,8 @@
 //! 未插入 `BodyPlanRegistry`/`RaceRegistry`）时优雅退化到 `humanoid_plan_static()`，
 //! humanoid 行为 bit-for-bit 不变。
 
-use crate::body_plan::{BodyPlan, PartConsequence};
-use crate::combat::components::{BodyPart, Wound, Wounds};
+use crate::body_plan::{BodyPartId, BodyPlan, PartConsequence};
+use crate::combat::components::{Wound, Wounds};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LegWoundGrade {
@@ -48,22 +48,25 @@ pub fn combined_leg_factor_from_optional(wounds: Option<&Wounds>, plan: &BodyPla
 /// 解析出的 `BodyPlanPurpose::Intrinsic` 结果——生产调用点不得再传入固定的
 /// `humanoid_plan_static()`（见模块顶部"P0 review 修复"文档）。
 pub fn combined_leg_factor(wounds: &Wounds, plan: &BodyPlan) -> f32 {
-    crate::body_plan::legacy_body_parts_matching(plan, |consequence| {
-        matches!(consequence, PartConsequence::Locomotion)
-    })
-    .map(|part| leg_wound_to_speed(worst_wound_grade(wounds, part)))
-    .fold(1.0_f32, f32::min)
+    // plan-race-system-v1 P0 review r2（BLOCKING-2 收口）—— 改用 `BodyPlan::parts_matching`
+    // 直接产出部位 id，取代会静默跳过非人形部位 id 的 `legacy::legacy_body_parts_matching`
+    // （`Wound.location` 已经是 `BodyPartId`，不再需要反压 legacy `BodyPart` 才能比较）。
+    plan.parts_matching(|consequence| matches!(consequence, PartConsequence::Locomotion))
+        .map(|part_id| leg_wound_to_speed(worst_wound_grade(wounds, part_id)))
+        .fold(1.0_f32, f32::min)
 }
 
 pub fn leg_strain_magnitude(leg_wound_factor: f32) -> f32 {
     ((1.0 - leg_wound_factor.clamp(0.0, 1.0)) / 0.15).clamp(0.0, 1.0)
 }
 
-pub fn worst_wound_grade(wounds: &Wounds, part: BodyPart) -> LegWoundGrade {
+/// plan-race-system-v1 P0 review r2（BLOCKING-2 收口）—— 参数从 legacy `BodyPart` 迁移
+/// 为 `&BodyPartId`，镜像 `combat::arm_wound::worst_wound_grade` 同一次迁移。
+pub fn worst_wound_grade(wounds: &Wounds, part_id: &BodyPartId) -> LegWoundGrade {
     wounds
         .entries
         .iter()
-        .filter(|wound| wound.location == part)
+        .filter(|wound| &wound.location == part_id)
         .map(wound_grade)
         .max_by_key(|grade| grade_rank(*grade))
         .unwrap_or(LegWoundGrade::Intact)
@@ -103,11 +106,11 @@ const fn grade_rank(grade: LegWoundGrade) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::combat::components::{WoundKind, Wounds};
+    use crate::combat::components::{BodyPart, WoundKind, Wounds};
 
     fn wound(location: BodyPart, severity: f32) -> Wound {
         Wound {
-            location,
+            location: crate::body_plan::legacy_body_part_to_id(location),
             kind: WoundKind::Blunt,
             severity,
             bleeding_per_sec: 0.0,

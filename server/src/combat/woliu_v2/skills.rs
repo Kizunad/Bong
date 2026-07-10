@@ -652,7 +652,7 @@ fn apply_turbulence_burst_target_effects(
             // plan-combat-hit-location-v1 P2（决议 §8.1 旁路桶 #3，保留）——涡流冲击是
             // `collect_targets_in_radius` 半径覆盖式 AoE，命中判定不依赖攻方朝向/弹道，
             // "部位"概念在这里本就弱化：Chest 只是代表部位，不是"漏改的 melee 分支"。
-            location: BodyPart::Chest,
+            location: crate::body_plan::legacy_body_part_to_id(BodyPart::Chest),
             kind: WoundKind::Concussion,
             severity: damage,
             bleeding_per_sec: 0.0,
@@ -2264,7 +2264,7 @@ mod tests {
             );
             assert_eq!(
                 wounds.entries[0].location,
-                BodyPart::Chest,
+                crate::body_plan::legacy_body_part_to_id(BodyPart::Chest),
                 "涡流 AoE 冲击（target_offset={target_offset:?}）应恒命中 Chest（代表部位，\
                  AoE 无方向性），实测 {:?}",
                 wounds.entries[0].location

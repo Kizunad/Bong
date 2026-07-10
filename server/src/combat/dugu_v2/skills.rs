@@ -600,7 +600,7 @@ fn apply_damage(
             // Eclipse/Penetrate/Reverse 三招（本函数三处调用点）是浊气/真元层面的内功
             // 侵蚀伤害，无实体弹道或碰撞几何可依：浊气蚀体从真元枢纽向外蔓延，Chest
             // 代表真元枢纽受创，比"随机部位"更贴合语义，不是遗漏的方向性判定。
-            location: BodyPart::Chest,
+            location: crate::body_plan::legacy_body_part_to_id(BodyPart::Chest),
             kind: WoundKind::Pierce,
             severity,
             bleeding_per_sec: 0.0,

@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
+use valence::entity::Look;
 use valence::prelude::{
     bevy_ecs, App, Commands, DVec3, Entity, Event, EventReader, EventWriter, GameMode,
     IntoSystemConfigs, Position, Query, Res, ResMut, UniqueId, Update, With, Without,
@@ -866,6 +867,10 @@ type TargetItem<'a> = (
     // 注释：races.json 现阶段所有 BeastKind 派生种族的 body_plan_id 均为 "humanoid"，
     // `beast_kind: None` 落进 Tier2/Tier3 分支得到完全相同的 humanoid 解析结果）。
     Option<&'a Cultivation>,
+    // plan-race-system-v1 P0 review r2（BLOCKING-1 收口）—— `PartBoxes` 命中几何分类
+    // 需要目标朝向把世界系命中点变换到局部系（见下方 `classify_body_part` 调用）；
+    // `HeightBands` 分支忽略这个值。
+    Option<&'a Look>,
 );
 
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
@@ -924,7 +929,7 @@ fn projectile_tick_system(
         }
 
         let mut hit: Option<(Entity, f32)> = None;
-        for (target_entity, target_pos, _, _, _, _) in &mut targets {
+        for (target_entity, target_pos, _, _, _, _, _) in &mut targets {
             if projectile.owner == Some(target_entity) {
                 continue;
             }
@@ -955,11 +960,14 @@ fn projectile_tick_system(
                 );
                 continue;
             }
-            let Ok((_, target_pos, mut wounds, mut contamination, life_record, cultivation)) =
+            let Ok((_, target_pos, mut wounds, mut contamination, life_record, cultivation, look)) =
                 targets.get_mut(target_entity)
             else {
                 continue;
             };
+            let target_yaw_radians = look
+                .map(|look| f64::from(look.yaw).to_radians())
+                .unwrap_or(0.0);
             // plan-combat-hit-location-v1 P2（决议 §8.1 旁路桶 #2）—— 暗器/凝气弹投射命中
             // 部位应按弹道终点几何算，而非硬编 Chest：复用 `classify_body_part` 同一套
             // 几何分类（与近战 `raycast_humanoid` 共享阈值/语义），以本 tick 飞行段
@@ -994,6 +1002,7 @@ fn projectile_tick_system(
                 projectile_hit_point,
                 target_feet,
                 flight.spawn_pos,
+                target_yaw_radians,
             );
             let ratio = hit_qi_ratio(hit_distance, flight.qi_color, flight.carrier_grade);
             let hit_qi = projectile.qi_payload * ratio;
@@ -1022,7 +1031,7 @@ fn projectile_tick_system(
             wounds.health_current =
                 (wounds.health_current - wound_damage).clamp(0.0, wounds.health_max);
             wounds.entries.push(Wound {
-                location: body_part,
+                location: body_part.clone(),
                 kind: WoundKind::Pierce,
                 severity: wound_damage,
                 bleeding_per_sec: wound_damage * 0.05,
@@ -1050,7 +1059,20 @@ fn projectile_tick_system(
                 attacker,
                 target: target_entity,
                 resolved_at_tick: clock.tick,
-                body_part,
+                // humanoid-only boundary（P0 决议，边界①，同 combat::resolve 同名分支）：
+                // `CombatEvent.body_part` 是 legacy 8 值枚举，非人形部位 id 落回 Chest
+                // 占位 + warn（不是静默默认）。
+                body_part: crate::body_plan::id_to_legacy_body_part(&body_part).unwrap_or_else(
+                    || {
+                        tracing::warn!(
+                            "[bong][body_plan] carrier CombatEvent wire: part id {} has no \
+                             legacy BodyPart mapping — emitting BodyPart::Chest as an explicit \
+                             placeholder (not a silent default)",
+                            body_part
+                        );
+                        crate::combat::components::BodyPart::Chest
+                    },
+                ),
                 wound_kind: WoundKind::Pierce,
                 source: crate::combat::events::AttackSource::Melee,
                 debug_command: false,
@@ -1298,7 +1320,7 @@ fn release_account_to_zone(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::combat::components::BodyPart;
+    use crate::body_plan::BodyPartId;
     use crate::inventory::{InventoryRevision, ItemCategory, ItemRarity, ItemTemplate, WeaponSpec};
     use valence::prelude::{App, Events, Position, Update};
 
@@ -1604,7 +1626,7 @@ mod tests {
     /// 构造一发沿 X 轴飞行、经过给定绝对 Y 高度的暗器投射，命中站在原点的目标。
     /// `flight_y` 决定投射穿过目标 hitbox 时的高度，从而驱动 `classify_body_part`
     /// 落到不同部位——用来证明命中部位不再恒为 `BodyPart::Chest`。
-    fn projectile_hit_body_part_at_height(flight_y: f64) -> BodyPart {
+    fn projectile_hit_body_part_at_height(flight_y: f64) -> crate::body_plan::BodyPartId {
         let mut app = App::new();
         app.insert_resource(CombatClock { tick: 10 });
         app.add_event::<CombatEvent>();
@@ -1657,13 +1679,19 @@ mod tests {
             .iter_current_update_events()
             .collect();
         assert_eq!(combat_events.len(), 1);
+        // `Wound.location`（`BodyPartId`）与 `CombatEvent.body_part`（legacy `BodyPart`，
+        // 边界①转换）必须是同一次 `classify_body_part` 调用结果——humanoid 部位全部能
+        // 干净转换回 legacy，转换失败（非人形，本测试不涉及）会走 Chest 占位而非本断言
+        // 覆盖的路径。
         assert_eq!(
-            wounds.entries[0].location, combat_events[0].body_part,
+            wounds.entries[0].location,
+            crate::body_plan::legacy_body_part_to_id(combat_events[0].body_part),
             "Wound.location 与 CombatEvent.body_part 必须是同一个 classify_body_part \
              调用结果，实测 Wound={:?} CombatEvent={:?} 不一致",
-            wounds.entries[0].location, combat_events[0].body_part
+            wounds.entries[0].location,
+            combat_events[0].body_part
         );
-        wounds.entries[0].location
+        wounds.entries[0].location.clone()
     }
 
     #[test]
@@ -1673,9 +1701,9 @@ mod tests {
         let part = projectile_hit_body_part_at_height(1.65);
         assert_eq!(
             part,
-            BodyPart::Head,
-            "投射沿头部高度（y=1.65，脚底 y=0）飞行应命中 Head，实测 {part:?} —— \
-             若又是 Chest 说明 P2 旁路清理被回退成硬编胸口了"
+            BodyPartId::new("head"),
+            "投射沿头部高度（y=1.65，脚底 y=0）飞行应命中 head，实测 {part:?} —— \
+             若又是 chest 说明 P2 旁路清理被回退成硬编胸口了"
         );
     }
 
@@ -1685,9 +1713,9 @@ mod tests {
         // （|0.5-1.0|=0.5，同样留够命中半径 0.7 的浮点误差余量）。
         let part = projectile_hit_body_part_at_height(0.5);
         assert!(
-            matches!(part, BodyPart::LegL | BodyPart::LegR),
-            "投射沿腿部高度（y=0.5，脚底 y=0）飞行应命中 LegL/LegR，实测 {part:?} —— \
-             若是 Chest 说明命中部位仍是恒定胸口而非按弹道几何算出"
+            part == BodyPartId::new("leg_l") || part == BodyPartId::new("leg_r"),
+            "投射沿腿部高度（y=0.5，脚底 y=0）飞行应命中 leg_l/leg_r，实测 {part:?} —— \
+             若是 chest 说明命中部位仍是恒定胸口而非按弹道几何算出"
         );
     }
 
@@ -1698,8 +1726,8 @@ mod tests {
         let part = projectile_hit_body_part_at_height(1.0);
         assert_eq!(
             part,
-            BodyPart::Chest,
-            "投射沿胸口高度（y=1.0，脚底 y=0）飞行应命中 Chest，实测 {part:?}"
+            BodyPartId::new("chest"),
+            "投射沿胸口高度（y=1.0，脚底 y=0）飞行应命中 chest，实测 {part:?}"
         );
     }
 
