@@ -722,7 +722,6 @@ fn splitmix64(seed: u64) -> u64 {
 mod tests {
     use super::*;
     use crate::world::terrain::{Poi, TerrainProvider, TerrainProviders};
-    use std::collections::HashSet;
     use std::fs;
     use std::path::PathBuf;
     use valence::prelude::{Biome, BiomeRegistry, Entity, Ident};
@@ -830,50 +829,84 @@ mod tests {
             overworld: provider,
             tsy: None,
         })
-        .init_resource::<PoiNoviceRegistry>()
-        .init_resource::<CapturedPoiSpawned>()
-        .add_event::<PoiSpawned>()
-        .add_systems(
-            Startup,
-            (
-                PoiNoviceLoader::load,
-                capture_spawned_events.after(PoiNoviceLoader::load),
-            ),
-        );
+        .init_resource::<CapturedPoiSpawned>();
+        register(&mut app);
+        app.add_systems(Startup, capture_spawned_events.after(PoiNoviceLoader::load));
         app.update();
 
         let expected = [
-            (PoiNoviceKind::ForgeStation, [224.0, 71.0, -240.0]),
-            (PoiNoviceKind::AlchemyFurnace, [0.0, 72.0, -200.0]),
-            (PoiNoviceKind::RogueVillage, [304.0, 71.0, 208.0]),
-            (PoiNoviceKind::MutantNest, [800.0, 70.0, 800.0]),
-            (PoiNoviceKind::ScrollHidden, [176.0, 72.0, -96.0]),
-            (PoiNoviceKind::SpiritHerbValley, [-300.0, 70.0, 600.0]),
+            (
+                PoiNoviceKind::ForgeStation,
+                "spawn:forge_station:x224_y71_z-240",
+                [224.0, 71.0, -240.0],
+                "strict_radius_1500",
+                1500.0_f64,
+            ),
+            (
+                PoiNoviceKind::AlchemyFurnace,
+                "spawn:alchemy_furnace:x0_y72_z-200",
+                [0.0, 72.0, -200.0],
+                "strict_radius_1500",
+                1500.0,
+            ),
+            (
+                PoiNoviceKind::RogueVillage,
+                "spawn:rogue_village:x304_y71_z208",
+                [304.0, 71.0, 208.0],
+                "strict_radius_1500",
+                1500.0,
+            ),
+            (
+                PoiNoviceKind::MutantNest,
+                "spawn:mutant_nest:x800_y70_z800",
+                [800.0, 70.0, 800.0],
+                "relaxed_radius_2000",
+                2000.0,
+            ),
+            (
+                PoiNoviceKind::ScrollHidden,
+                "spawn:scroll_hidden:x176_y72_z-96",
+                [176.0, 72.0, -96.0],
+                "strict_radius_1500",
+                1500.0,
+            ),
+            (
+                PoiNoviceKind::SpiritHerbValley,
+                "spawn:spirit_herb_valley:x-300_y70_z600",
+                [-300.0, 70.0, 600.0],
+                "relaxed_radius_2000_qi_margin_0_1",
+                2000.0,
+            ),
         ];
         let registry = app.world().resource::<PoiNoviceRegistry>();
         assert_eq!(registry.sites().len(), expected.len());
-        for (kind, pos_xyz) in expected {
+        for (kind, id, pos_xyz, strategy, max_radius) in expected {
             let site = registry.by_kind(kind).next().expect("expected novice kind");
+            assert_eq!(site.id, id);
             assert_eq!(site.pos_xyz, pos_xyz);
-            assert!(!site.selection_strategy.starts_with("fallback_fixed"));
+            assert_eq!(site.selection_strategy, strategy);
+            assert!(
+                site.tags
+                    .iter()
+                    .any(|tag| tag == &format!("selection:{strategy}")),
+                "runtime site must preserve the exact manifest selection tag"
+            );
             let distance_sq =
                 f64::from(site.pos_xyz[0]).powi(2) + f64::from(site.pos_xyz[2]).powi(2);
-            assert!(distance_sq <= 2000.0_f64.powi(2));
+            assert!(distance_sq >= 200.0_f64.powi(2));
+            assert!(distance_sq <= max_radius.powi(2));
         }
 
         let captured = app.world().resource::<CapturedPoiSpawned>();
         assert_eq!(captured.0.len(), expected.len());
-        let registry_ids = registry
-            .sites()
-            .iter()
-            .map(|site| site.id.as_str())
-            .collect::<HashSet<_>>();
-        let event_ids = captured
-            .0
-            .iter()
-            .map(|site| site.id.as_str())
-            .collect::<HashSet<_>>();
-        assert_eq!(event_ids, registry_ids);
+        let mut registry_sites = registry.sites().to_vec();
+        registry_sites.sort_by(|left, right| left.id.cmp(&right.id));
+        let mut event_sites = captured.0.clone();
+        event_sites.sort_by(|left, right| left.id.cmp(&right.id));
+        assert_eq!(
+            event_sites, registry_sites,
+            "PoiSpawned payloads must match the production registry entries field-for-field"
+        );
     }
 
     #[test]
