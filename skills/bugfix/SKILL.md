@@ -1,6 +1,6 @@
 ---
 name: bugfix
-description: 持续调度 Bong BugFix 闭环：从 docs/plans-skeleton/ 领取 bug skeleton，最多并行 2 个 gpt-5.6 sol xhigh 实施 subagent，在独立 worktree/branch 中完成原子 claim、promotion、第一性原理证真或证伪、最小修复、绑定 HEAD 的无上下文对抗验证、完整门禁、合并主线复验、归档、PR、review 与 e2e。主 agent 只调度、等待、锁运维和清理，不直接修代码。用于 /bugfix、$bugfix、“跑 BugFix”“持续修 bug”“把 bug skeleton 闭环”等请求。
+description: 持续调度 Bong BugFix 闭环：按用户启动参数并行实施 subagent，在独立 worktree/branch 中完成原子 claim、promotion、第一性原理证真或证伪、最小修复、绑定干净 HEAD 的无上下文对抗验证、完整门禁、合并主线复验、归档、PR、review 与 e2e。用户未指定时默认 2 路实施、gpt-5.6-sol-xhigh 实施与 validator。主 agent 只调度、等待、锁运维和清理，不直接修代码。用于 /bugfix、$bugfix、“跑 BugFix”“持续修 bug”“把 bug skeleton 闭环”等请求。
 ---
 
 # Bong BugFix 主干调度
@@ -11,18 +11,19 @@ description: 持续调度 Bong BugFix 闭环：从 docs/plans-skeleton/ 领取 b
 
 只执行以下主干职责：
 
-1. 维护任务表与最多 2 个实施槽位。
+1. 维护任务表与用户指定的实施槽位。
 2. 启动、等待、唤醒和关闭实施或返工 subagent。
 3. 盯 PR review/e2e，维护 claim ref 生命周期，巡检孤儿锁。
 4. 完整清理已闭环任务的本地 worktree、分支和私有生成物，再立即补位。
 
 禁止主干直接修改业务代码、plan、测试或 PR diff，禁止在主 checkout 提交，禁止 stash/reset 用户工作，禁止替 subagent 创建 claim、push 提交、开 PR 或 merge。删除远端 claim ref 是锁运维，是“不 push”禁令的唯一例外。
 
-## 模型、并发与资源
+## 启动参数、并发与资源
 
-- 最多同时运行 **2 个实施 subagent**，每个只负责 1 个 skeleton；编译型 worktree 并发也不得超过 2。
-- 显式路由实施和 validator 为 **gpt-5.6-sol-xhigh**。若 harness 无法选择该模型/思考度，不得静默降级；把槽位标成 `[BLOCKED: 无法路由 gpt-5.6-sol-xhigh]`。
-- 要求每个实施 subagent 自己启动 1 个全新、无上下文、同模型的 read-only validator。validator/验证类 agent 总并发不得超过 3；平台槽位不足时错峰。
+- 启动时读取并保持三个独立参数：实施数量 `N`、实施模型、validator 模型。用户未指定时才默认 `N=2`、实施模型 `gpt-5.6-sol-xhigh`、validator 模型 `gpt-5.6-sol-xhigh`；不得用默认值覆盖用户输入。
+- 每个实施 subagent 只负责 1 个 skeleton。实施总槽位按 `N`，但**同时执行编译的 worktree 始终不得超过 2**；非编译调查槽位不因这个资源上限被错误固定为两路。
+- 要求每个实施 subagent 自己启动 1 个全新、无上下文、使用 validator 参数模型的 read-only validator；validator/验证类 agent 总并发始终不得超过 3，平台槽位不足时错峰。
+- 用户指定模型不可用时，先按用户明确允许的候选路由；没有允许的替代模型时请求用户决策。只有默认模型不可用且用户未指定时，才说明可用模型并请求选择；不得静默降级，也不得直接阻断整个 loop。
 - Claude 在补位前执行 `bash ~/.claude/quota.sh`；GPT/Codex 跳过该脚本，不读取、不申请权限、不因其失败阻塞。
 - 所有运行者执行 `df -h /`。磁盘超过 90% 时，只删除本轮已闭环 worktree 的私有可再生生成物。
 - **严禁任务级删除或 `cargo clean` 共享 `CARGO_TARGET_DIR`**。只有主干确认所有编译均已停止后，才可统一处理共享缓存；`cargo clean -p valence_generated` 也只用于该前提下的故障恢复。
@@ -43,13 +44,24 @@ phase 只使用：`DISPATCHED → CLAIMED → PROMOTED → VERIFYING → FIXING/
 1. `git fetch origin` 后只从 `origin/main:docs/plans-skeleton/plan-bughunt-*.md` 选择疑似 bug；优先用户指定项，否则按可达性、影响和局部可修性排序。
 2. 派发前四查仅作辅助诊断：skeleton 仍存在、无同名 active plan、目标未被已合并修复覆盖、无同名远端分支/开放 PR。查询存在 TOCTOU，**不得把四查当互斥锁**。
 3. 一个 skeleton、subagent、worktree、branch、PR 必须一一对应。主干只传 skill 路径、skeleton 路径、任务 ID、绝对 worktree 目标路径和模型要求；不要传真伪判断或预设修法。
-4. 没有可领取项时低频刷新，并在每次补位时巡检孤儿 claim；不要制造 skeleton 充数。
+4. 没有可领取项时进入等待；不要制造 skeleton 充数。
+
+## 等待协议
+
+- 等待新 skeleton、空闲编译槽、validator 槽、`/review`、CodeRabbit 或 e2e 时，使用 `ScheduleWakeup delaySeconds=1200`。每次唤醒后刷新任务、PR/check 状态并巡检孤儿 claim，再决定补位或继续等待。
+- 同一等待对象连续最多 3 轮（约 60 分钟）无进展时，保留证据并停交人工；其它可运行任务继续调度。
+- 禁止 shell `sleep` loop、短周期 GitHub 查询和持续占用 agent 的 busy-poll。Codex/harness 没有 `ScheduleWakeup` 时，使用产品提供的 wait/monitor 机制，同样采用约 1200 秒节奏，不用 shell 轮询替代。
 
 ## 实施 subagent 强制状态机
 
 ### 1. 原子 claim 与锁定 worktree
 
 subagent 是 claim ref 的**唯一创建主体**。分支固定为 `bugfix/<plan-basename>`，worktree 固定为仓库下绝对路径 `.agent-worktrees/bugfix-<plan-basename>`。
+
+严格区分作用域：
+
+- **控制面**：以下 claim、fetch、`git worktree add`、失败回滚、最终 remove/prune 命令必须在已经存在的主仓库绝对路径或专用调度目录执行，目标 worktree 尚未创建时不得把 cwd 指向它。
+- **任务面**：只有 worktree 已创建、locked、upstream 与三方 SHA 对拍完成后，才允许在目标绝对 worktree 中读取任务代码、编辑、测试、commit、push 和操作 PR。
 
 1. 执行 `git fetch origin main`，记录 `claim_sha=$(git rev-parse origin/main)`。
 2. 调用 GitHub create-ref API，保留完整 HTTP 状态、响应头和响应体：
@@ -66,9 +78,9 @@ subagent 是 claim ref 的**唯一创建主体**。分支固定为 `bugfix/<plan
 4. 成功后执行 `git fetch origin refs/heads/bugfix/plan-X:refs/remotes/origin/bugfix/plan-X`，核验远端跟踪 ref SHA 等于 `claim_sha`。
 5. 用单条 `git worktree add --lock -b bugfix/plan-X <绝对路径> origin/bugfix/plan-X` 创建并锁定 worktree，再在 worktree 内显式设置 upstream 为 `origin/bugfix/plan-X`。
 6. 对拍 `git -C <绝对路径> rev-parse HEAD`、本地 upstream SHA、远端 claim SHA 三者都等于 `claim_sha`，并检查 worktree 确实处于 locked 状态。
-7. create-ref 成功后，若 fetch、建树、锁定、跟踪或 SHA 对拍任一步失败，先安全移除本轮半成品 worktree/local branch，再由该 subagent 删除刚创建的远端 claim ref并核验不存在；不得留下孤儿锁。
+7. create-ref 成功后，若 fetch、建树、锁定、跟踪或 SHA 对拍任一步失败，在控制面安全移除本轮半成品 worktree/local branch，再由该 subagent 删除刚创建的远端 claim ref并核验不存在；不得留下孤儿锁。
 
-所有 read/edit/test/git/gh 命令都显式在绝对 worktree 内执行。禁止复用别人的 worktree，禁止修改主 checkout。
+进入任务面后，所有任务 read/edit/test/git/gh 命令都显式在绝对 worktree 内执行。禁止复用别人的 worktree，禁止修改主 checkout。
 
 ### 2. Promotion 单独提交
 
@@ -94,21 +106,23 @@ Model: gpt-5.6-sol-xhigh
 
 ### 4. 绑定 HEAD 的无上下文 validator
 
-修复或证伪提交完成后，由实施 subagent 自己创建全新 validator；主干不得代开，实施者不得自证。每轮 prompt 只提供：
+修复或证伪提交完成后，先执行 `git status --porcelain=v1 --untracked-files=all` 并要求输出为空；确认 index、工作区和所有预期生成文件都已分类，需进入 PR 的改动已形成带 `Model:` trailer 的 commit。脏工作区禁止启动 validator。
+
+由实施 subagent 自己创建全新 validator；主干不得代开，实施者不得自证。每轮 prompt 只提供：
 
 - 绝对 worktree 路径；
 - 待审 `target_head_sha=$(git -C <worktree> rev-parse HEAD)`；
 - 允许读取的权威材料：`AGENTS.md`、必要项目文档、active/原 skeleton 历史、`origin/main...target_head_sha` diff、原始测试日志；
 - read-only、第一性原理与固定输出契约。
 
-要求 validator 第一步在该绝对路径运行 `git rev-parse HEAD`，若实际 SHA 不等于 `target_head_sha`，立即输出 `FAIL <target_head_sha>：HEAD_MISMATCH actual=<sha>`。结论只能是：
+要求 validator 第一步在该绝对路径运行 `git status --porcelain=v1 --untracked-files=all` 和 `git rev-parse HEAD`。工作区非空或实际 SHA 不等于 `target_head_sha` 时，立即输出 `FAIL <target_head_sha>：DIRTY_WORKTREE/HEAD_MISMATCH`。结论只能是：
 
 - `PASS <target_head_sha>` + 简短证据；或
 - `FAIL <target_head_sha>` + `file:line` + 必修项 + 失败依据。
 
-要求 validator 对抗检查真伪、可达性、已有防护、回归风险、注册/consumer 接线、测试饱和度、真元守恒与 plan scope。PASS、FAIL、超时、异常四条出口都立即关闭 validator。
+要求 validator 对抗检查真伪、可达性、已有防护、回归风险、注册/consumer 接线、测试饱和度、真元守恒与 plan scope。verdict 返回后，实施 subagent 再次核验 `git status --porcelain=v1 --untracked-files=all` 为空且 HEAD 仍等于 `target_head_sha`；否则 verdict 失效。PASS、FAIL、超时、异常四条出口都立即关闭 validator。
 
-FAIL 后返工、提交、重跑针对性测试，并对**新 HEAD**启动另一个全新无上下文 validator。**HEAD 只要变化，旧 verdict 立即作废，禁止复用。**
+FAIL 后返工、提交、重跑针对性测试，并对**新 HEAD**启动另一个全新无上下文 validator。**HEAD 或工作区只要变化，旧 verdict 立即作废，禁止复用。**
 
 ### 5. 完整本地门禁
 
@@ -121,6 +135,8 @@ FAIL 后返工、提交、重跑针对性测试，并对**新 HEAD**启动另一
 - 跨栈修复：运行所有受影响栈门禁；需要完整联调时运行 e2e，不用 snapshot/smoke 冒充
 
 管道命令必须保留真实退出码（例如检查 `${PIPESTATUS[0]}`），不得把本分支引入的失败称为 pre-existing。
+
+门禁若产生 tracked/untracked 文件，先分类：PR 所需产物必须单独提交并对新 HEAD 回 step 4；纯私有且可再生的 ignored 产物可保留到闭环清理。任何未分类或未提交改动都使旧 PASS 失效。
 
 ### 6. 合并最新主线并复验
 
@@ -146,11 +162,11 @@ FAIL 后返工、提交、重跑针对性测试，并对**新 HEAD**启动另一
 
 ### 8. Push、PR 与 gates
 
-只 push 已获 `PASS <final_sha>` 的最终 HEAD，并确认远端 SHA 与本地一致。创建中文 PR，标题/body 带完整 plan basename；body 必须附证真/证伪结论、完整测试、validator SHA verdict，并以精确模型字段收尾：
+push 前再次要求 `git status --porcelain=v1 --untracked-files=all` 为空、HEAD 等于最后一次 `PASS <final_sha>`，并确认所有预期改动均已提交。只 push 该最终 HEAD，并确认远端 SHA 与本地一致。创建中文 PR，标题/body 带完整 plan basename；body 必须附证真/证伪结论、完整测试、validator SHA verdict，并以实际启动参数的精确模型字段收尾：
 
 ```text
-Model: gpt-5.6-sol-xhigh
-Validator-Model: gpt-5.6-sol-xhigh
+Model: <实际实施模型精确 id>
+Validator-Model: <实际 validator 模型精确 id>
 Reviewer-Model: <review 实际返回的精确模型 id；结果出来后补齐，不得猜>
 ```
 
@@ -165,10 +181,10 @@ Reviewer-Model: <review 实际返回的精确模型 id；结果出来后补齐�
 PR 开出且 e2e/review 全绿后，主干按固定顺序执行：
 
 1. 记录 PR URL、最终 SHA、结论、测试、validator 和 gate 状态，关闭实施 subagent。
-2. 确认远端已 push、worktree 无未提交修改、没有本流程产生的孤儿 stash。
-3. `git worktree unlock <path>`，再 `git worktree remove <path>`。
-4. 删除对应本地 branch；不得先删仍被 worktree 检出的 branch。
-5. 只删除该 worktree 的私有可再生生成物，绝不任务级清理共享 `CARGO_TARGET_DIR`。
+2. 在 worktree 仍存在时执行 `git status --porcelain=v1 --untracked-files=all`，确认没有源码、用户 WIP 或未提交改动，也没有本流程产生的孤儿 stash；不干净则停止清理并派恢复。
+3. 识别并删除**明确属于该 worktree、独占、ignored、可再生**的生成目录，再次确认没有源码/WIP。显式排除共享 `CARGO_TARGET_DIR`，绝不任务级清理它。
+4. 在控制面执行 `git worktree unlock <path>`，再 `git worktree remove <path>`。
+5. 删除对应本地 branch；不得先删仍被 worktree 检出的 branch。
 6. 执行 `git worktree prune`，释放槽位并补下一个 skeleton。远端 claim 分支保留给 review 返工/merge。
 
 ### 远端 claim 释放与孤儿巡检
@@ -182,8 +198,18 @@ PR 开出且 e2e/review 全绿后，主干按固定顺序执行：
 
 review 或 e2e 出现本分支问题时，主干派**新的返工 subagent**，从同一远端 PR branch 重建并锁定 worktree；不要让主干修，也不要假设旧 worktree 仍在。
 
+返工建树不调用 create-ref。在控制面执行以下幂等链：
+
+1. 确认 PR 仍 open，读取 `pr_head_sha` 与远端 branch 名。
+2. `git fetch origin refs/heads/<remote-branch>:refs/remotes/origin/<remote-branch>`，对拍远端跟踪 ref SHA 等于 `pr_head_sha`。
+3. 确认目标 worktree 路径和专用本地返工 branch 未被其它任务使用；执行 `git branch --track <专用本地返工branch> origin/<remote-branch>` 创建唯一专用跟踪分支。若同名本地分支已存在，只能在确认未被 worktree 使用且没有需保留的本地提交后删除并重建；不得盲目 reset。
+4. `git worktree add --lock <绝对路径> <专用本地返工branch>`，再对拍 worktree HEAD、upstream SHA、远端跟踪 ref、PR head 四者都等于 `pr_head_sha`。
+5. 任一步失败时只 unlock/remove 半成品 worktree、删除本轮专用本地 branch并 prune；**开放 PR 的远端 claim ref 不得删除**。
+
+完成四方 SHA 对拍后才进入任务面。
+
 返工必须幂等：不重复 claim、promotion、Finish Evidence 章节或归档移动。按“修复并提交 → 新 HEAD validator → 完整门禁 → 紧邻 fetch/merge 最新主线 → 条件复验与新 SHA validator → 原地更新 Finish Evidence（若证据变化）→ 最终 HEAD validator → push 同一分支 → 等新 HEAD e2e → 独立评论 `/review`”完整闭环。返工产生的每个 commit 和最终 PR body 仍必须使用精确模型字段。
 
 ## 状态汇报
 
-持续运行时只汇报两路任务、phase、最终/validator SHA、PR/gate、BLOCKED 原因与空槽，不把大段 diff/日志灌回主干上下文。用户说“停止”后不再领取新任务；让正在进行的破坏性操作安全落点，再报告所有 worktree、branch、claim 和 PR 状态。
+持续运行时只汇报当前 N 路任务、phase、最终/validator SHA、PR/gate、BLOCKED 原因与空槽，不把大段 diff/日志灌回主干上下文。用户说“停止”后不再领取新任务；让正在进行的破坏性操作安全落点，再报告所有 worktree、branch、claim 和 PR 状态。
