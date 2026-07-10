@@ -28,9 +28,24 @@ description: 持续调度 Bong BugFix 闭环：按用户启动参数并行实施
 - 所有运行者执行 `df -h /`。磁盘超过 90% 时，只删除本轮已闭环 worktree 的私有可再生生成物。
 - **严禁任务级删除或 `cargo clean` 共享 `CARGO_TARGET_DIR`**。只有主干确认所有编译均已停止后，才可统一处理共享缓存；`cargo clean -p valence_generated` 也只用于该前提下的故障恢复。
 
+### 主干唯一 token 准入
+
+主干是资源状态表、等待队列和授权消息的**唯一持有者**，串行处理申请，禁止 subagent 自行计数或先做后报：
+
+| token | 容量 | 持有阶段 | 状态表字段 |
+|---|---:|---|---|
+| `compile_token` | 2 | 进入任何编译/完整门禁前至该轮命令结束 | token id、task、agent、grant time、phase |
+| `validator_token` | 3 | spawn validator 前至 validator 已关闭 | token id、task、agent、validator、target SHA、grant time |
+
+1. subagent 先向主干申请对应 token，进入 FIFO 队列；**未收到主干包含 token id 的明确授权，禁止进入编译门禁或 spawn validator**。
+2. 主干只在当前持有数小于容量、申请 task/agent 仍存活且 phase 合法时原子地“登记持有者 → 发授权”；不得先发授权后记表。
+3. `compile_token` 在该轮门禁 PASS、FAIL、超时、异常或取消时都立即释放；需要返工后重跑时重新排队申请。
+4. `validator_token` 在 validator PASS、FAIL、超时、异常或取消后，先关闭 validator，再释放；spawn 失败也立即释放。新 HEAD 的新 validator 必须重新申请。
+5. agent 崩溃、任务 BLOCKED/CLOSED、用户停止、worktree 清理前，主干核对并取消该 task 的排队项，回收全部持有 token。每次补位/唤醒都对拍状态表持有者与存活 agent，发现悬挂 token 先回收再授权。
+
 ## 启动上下文与任务表
 
-先读 `AGENTS.md`、`CLAUDE.md`、`docs/plans-skeleton/README.md`。要求实施/返工 subagent 在目标 worktree 内重读；涉及 gameplay/真元时再读 `docs/CLAUDE.md` 与 `docs/worldview.md`。
+在任何 skeleton 四查、claim 或 promotion 之前，主干与实施/返工 subagent 都必须无条件完整读取 `docs/CLAUDE.md`；根 `AGENTS.md`、`CLAUDE.md` 与 `docs/plans-skeleton/README.md` 同时读取，但不能替代 `docs/CLAUDE.md`。worktree 建立后在任务面再次读取这些文件；涉及 gameplay/真元时额外读取 `docs/worldview.md`。
 
 维护最小任务表：
 
@@ -108,7 +123,7 @@ Model: gpt-5.6-sol-xhigh
 
 修复或证伪提交完成后，先执行 `git status --porcelain=v1 --untracked-files=all` 并要求输出为空；确认 index、工作区和所有预期生成文件都已分类，需进入 PR 的改动已形成带 `Model:` trailer 的 commit。脏工作区禁止启动 validator。
 
-由实施 subagent 自己创建全新 validator；主干不得代开，实施者不得自证。每轮 prompt 只提供：
+实施 subagent 必须先申请并收到主干的 `validator_token` 明确授权，才能创建全新 validator；主干不得代开，实施者不得自证。每轮 prompt 只提供：
 
 - 绝对 worktree 路径；
 - 待审 `target_head_sha=$(git -C <worktree> rev-parse HEAD)`；
@@ -126,7 +141,7 @@ FAIL 后返工、提交、重跑针对性测试，并对**新 HEAD**启动另一
 
 ### 5. 完整本地门禁
 
-当前 HEAD 获得 PASS 后，按所有受影响栈在正确目录运行完整门禁：
+当前 HEAD 获得 PASS 后，实施 subagent 必须先申请并收到主干的 `compile_token` 明确授权，才能按所有受影响栈在正确目录运行完整门禁：
 
 - server：`cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`
 - client：`cd client && ./gradlew test build`，严格使用 JDK 17
@@ -138,16 +153,17 @@ FAIL 后返工、提交、重跑针对性测试，并对**新 HEAD**启动另一
 
 门禁若产生 tracked/untracked 文件，先分类：PR 所需产物必须单独提交并对新 HEAD 回 step 4；纯私有且可再生的 ignored 产物可保留到闭环清理。任何未分类或未提交改动都使旧 PASS 失效。
 
-### 6. 合并最新主线并复验
+### 6. 同步最新主线并复验
 
-门禁全绿后紧邻执行 `git fetch origin && git merge origin/main`，不得在 fetch 与 merge 之间插入其它工作。
+门禁全绿后执行 `git fetch origin`，立即用 merge-base 分类，不允许直接运行会默认生成提交的 `git merge origin/main`：
 
-- merge 未带入变化：保留当前门禁证据和同 SHA validator PASS。
-- merge 带入任何变化：对合并后 HEAD 重跑所有受影响栈的完整门禁。
-- merge 产生冲突或触及修复相关文件：先正确解决并提交，再重跑完整门禁。
-- **merge 令 HEAD 变化时，无论变更看似是否相关，旧 validator verdict 都失效；必须对新 HEAD 启动全新 validator，直到 `PASS <new_sha>`。**
+- **already-up-to-date**：`origin/main` 已是 HEAD 祖先，不改 HEAD，保留当前门禁与同 SHA validator PASS。
+- **fast-forward**：HEAD 是 `origin/main` 祖先，执行 `git merge --ff-only origin/main`。fast-forward 没有 agent 新建 commit，因此无需新增 trailer；HEAD 变化后重跑受影响栈完整门禁，并对新 SHA 重新申请 validator token 验证。
+- **diverged**：执行 `git merge --no-commit --no-ff origin/main`，禁止自动 commit。解决冲突后，先持有 `compile_token` 对未提交的合并结果运行受影响栈完整门禁；PASS 后用中文消息和精确 trailer 显式提交，例如 `git commit -m "合并主线：复验 plan-X 修复" -m "Model: <实际实施模型精确 id>"`。随后确认工作区干净，并对 merge commit 的新 SHA 重新申请 validator token。
 
-任何返工或新提交都回到 step 4，按“新 SHA validator → 完整门禁 → fetch/merge → 条件复验”重新闭环。
+任何同步带入变化都必须重跑受影响栈完整门禁；冲突或触及修复相关文件时扩大针对性复验。**HEAD 或工作区变化会使旧 validator verdict 失效。**
+
+任何返工或新提交都回到 step 4，按“新 SHA validator → 完整门禁 → fetch 后分类同步主线 → 条件复验”重新闭环。
 
 ### 7. Finish Evidence 与归档
 
@@ -162,15 +178,18 @@ FAIL 后返工、提交、重跑针对性测试，并对**新 HEAD**启动另一
 
 ### 8. Push、PR 与 gates
 
-push 前再次要求 `git status --porcelain=v1 --untracked-files=all` 为空、HEAD 等于最后一次 `PASS <final_sha>`，并确认所有预期改动均已提交。只 push 该最终 HEAD，并确认远端 SHA 与本地一致。创建中文 PR，标题/body 带完整 plan basename；body 必须附证真/证伪结论、完整测试、validator SHA verdict，并以实际启动参数的精确模型字段收尾：
+push 前再次要求 `git status --porcelain=v1 --untracked-files=all` 为空、HEAD 等于最后一次 `PASS <final_sha>`，并确认所有预期改动均已提交。用 `git log origin/main..HEAD` 检查本分支新增的**每一个 commit**都存在且仅使用真实精确 id 的 `Model:` trailer；缺失、空值、`AI`、`agent`、`unknown` 等值一律阻止 push。
+
+只 push 该最终 HEAD，并确认远端 SHA 与本地一致。创建中文 PR，标题/body 带完整 plan basename；body 必须附证真/证伪结论、完整测试、validator SHA verdict。创建时只写入当时已知的两个精确模型字段：
 
 ```text
 Model: <实际实施模型精确 id>
 Validator-Model: <实际 validator 模型精确 id>
-Reviewer-Model: <review 实际返回的精确模型 id；结果出来后补齐，不得猜>
 ```
 
-执行 `gh pr comment <PR> --body "/review"` 发独立评论，等待 `/review`、CodeRabbit、e2e 与相关 checks。review 结果出现后，把实际 reviewer 模型补进 PR body；所有字段必须是真实精确 id。基础设施或计费故障保留原始证据并标 `BLOCKED`，不得伪装通过；忽略无关的 `chatgpt-codex-connector` usage-limit 噪音。
+首轮 review 返回前，PR body 必须**省略** `Reviewer-Model`，禁止猜测、`pending` 或 `unknown` 占位。执行 `gh pr comment <PR> --body "/review"` 发独立评论；review 返回并能从权威结果确认精确模型后，使用 `gh pr edit` 原地补入 `Reviewer-Model: <精确 id>`。若 CLI 的项目字段查询故障，允许用等价 GitHub REST PATCH 更新同一 PR body。等待 `/review`、CodeRabbit、e2e 与相关 checks。
+
+闭环前重新读取 PR body，严格校验 `Model`、`Validator-Model`、`Reviewer-Model` 三字段均存在且为实际精确 id；review 尚未返回模型时不得 CLOSED，继续按等待协议处理，也不得补猜测值。基础设施或计费故障保留原始证据并标 `BLOCKED`，不得伪装通过；忽略无关的 `chatgpt-codex-connector` usage-limit 噪音。
 
 `CLOSED` 定义为：PR 已创建、远端 SHA 对拍、最终 HEAD validator PASS、必需 review 无 blocker/major、e2e 与相关 checks 全绿、PR body 模型字段完整。除非用户另行授权，不自动 merge。
 
@@ -208,7 +227,7 @@ review 或 e2e 出现本分支问题时，主干派**新的返工 subagent**，�
 
 完成四方 SHA 对拍后才进入任务面。
 
-返工必须幂等：不重复 claim、promotion、Finish Evidence 章节或归档移动。按“修复并提交 → 新 HEAD validator → 完整门禁 → 紧邻 fetch/merge 最新主线 → 条件复验与新 SHA validator → 原地更新 Finish Evidence（若证据变化）→ 最终 HEAD validator → push 同一分支 → 等新 HEAD e2e → 独立评论 `/review`”完整闭环。返工产生的每个 commit 和最终 PR body 仍必须使用精确模型字段。
+返工必须幂等：不重复 claim、promotion、Finish Evidence 章节或归档移动。按“修复并提交 → 新 HEAD validator → 完整门禁 → fetch 后按 step 6 分类同步最新主线 → 条件复验与新 SHA validator → 原地更新 Finish Evidence（若证据变化）→ 最终 HEAD validator → push 同一分支 → 等新 HEAD e2e → 独立评论 `/review`”完整闭环。返工产生的每个 commit 和最终 PR body 仍必须使用精确模型字段。
 
 ## 状态汇报
 
