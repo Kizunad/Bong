@@ -150,6 +150,32 @@ bash scripts/smoke-test.sh
 
 其他 `docs/` 文件 / `CLAUDE.md` / `worldview.md` 严禁自动改——遇到必须改的情况停下交人工。
 
+## BugFix 工作流（多 agent 并行修复 bughunt skeleton）
+
+bughunt 产出的 `docs/plans-skeleton/plan-bughunt-*.md` 由本工作流消费（feature plan 走 `/consume-plan`，别混）。形态：**1 个主干调度 agent + N 个并行修复 subagent**——N 和 subagent 模型由用户启动时指定（原型默认 2 个，惯例 gpt-5.6 sol xhigh）。整体 loop 直到用户明确叫停：配额接近阈值只暂停（`ScheduleWakeup` 等 reset），**不自行终止**。
+
+### 主干（调度）职责——只调度，不动代码
+
+主干保持上下文干净，只做：分派 skeleton、等待、验收关闭 subagent、清理已闭环 worktree 的生成目录、补齐并发。**不 push、不 merge、不开 PR、不直接修代码。**
+
+- 任务清单以 **origin/main** 为准：`git fetch` 后读 skeleton 列表，派发前确认该 skeleton 在 origin/main 上仍存在、无同名 active plan、目标 symbol 未被已 merge 的修复覆盖（防跨会话重复消费）
+- **一个 skeleton = 一个 subagent = 一个 worktree = 一个 PR**（对齐「一个 PR 只动一个 plan」）
+- 编译型 worktree 并发 **≤2**（3 个并行 cargo 编译历史上 OOM + 塞盘）；共享 `CARGO_TARGET_DIR` 时删过 worktree 后若报 `No such file` → `cargo clean -p valence_generated`
+- subagent 回报只带结论（PR 链接 / commit hash / validator PASS 证据），不回灌大段 diff/日志进主干上下文
+- subagent 闭环后：关闭 agent、`git worktree unlock` + `remove`、删生成目录，再补一个新 subagent
+
+### Subagent（修复）流程
+
+1. **开独立 worktree/branch**：从 `origin/main` 切分支，`git worktree add` 后**立即 `git worktree lock`**（防外部 orchestrator prune）
+2. **Promotion**：`git mv docs/plans-skeleton/plan-X.md docs/plan-X.md`，单独中文 commit（本工作流内的 promotion 由 subagent 在自己分支内完成，是「骨架 → Active 人工流转」的授权例外）
+3. **第一性原理验真**：不信 skeleton 的结论，自己读代码 / 写复现证明是不是真 bug
+   - **真 bug** → 最小正确修复 + 饱和测试锁住目标行为，按小阶段中文 commit
+   - **非 bug** → 在 plan 文档写「验证结论 + 证据」（docs-only commit），照常走后续 PR 把结论归档
+4. **对抗验证（强制闭环门）**：修复完成后 subagent **必须自己**再开一个**无上下文、read-only、第一性原理**的 validator agent 对抗审查。validator 只输出 PASS/FAIL + 理由，不改代码。FAIL → 返工 → **重新验证**，循环直到 PASS 才算闭环
+5. **本地门禁**（PASS 后、开 PR 前）：`cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`——管道尾必须取 `${PIPESTATUS[0]}`（`| tail` 吞退出码假绿）；测试失败绝不甩锅 pre-existing（见「测试诚实性」节）
+6. **merge origin/main 进分支再 push**：并行 PR 改同一结构体时 git auto-merge 会叠出重复字段（E0062/E0415），merge 后本地重编译确认再 push
+7. **开 PR**（中文标题 + body），等 e2e 绿，回报主干闭环。**merge 不在本工作流内**——按「PR review gate」节走，由用户或后续会话收口
+
 ## Testing — 饱和化测试
 
 **核心原则**：测试要把"目标行为"完全锁住，让任何回归都立刻撞红。我不接受"smoke 过了就行"或"happy path 跑通"的节流——目标没被测试稳稳锁住，就等于没写。
