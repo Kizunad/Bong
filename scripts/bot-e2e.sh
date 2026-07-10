@@ -23,6 +23,13 @@ REUSE="${BOT_E2E_REUSE:-0}"
 EVIDENCE_DIR="$ROOT/.sisyphus/evidence/bot-e2e"
 SERVER_LOG="$EVIDENCE_DIR/server.log"
 
+# 自起 server 固定由当前 checkout 监听本机 IPv4；若要连接远端或 IPv6 server，
+# 必须显式 REUSE，避免 ownership 校验命中 IPv4 子进程、Bot 却连到另一地址族旧服。
+if [ "$REUSE" != "1" ] && [ "$HOST" != "127.0.0.1" ]; then
+  echo "[bot-e2e] 自起模式仅支持 BOT_E2E_HOST=127.0.0.1；远端/IPv6 请同时设置 BOT_E2E_REUSE=1" >&2
+  exit 2
+fi
+
 mkdir -p "$EVIDENCE_DIR"
 
 # 测试诚实性约束：Bot 必须能黑盒证明真实 manifest → Startup loader →
@@ -74,7 +81,7 @@ port_owned_by_tree() {
       return 0
     fi
   done < <(
-    ss -H -ltnp "sport = :$port" 2>/dev/null \
+    ss -4 -H -ltnp "sport = :$port" 2>/dev/null \
       | grep -oE 'pid=[0-9]+' \
       | cut -d= -f2 \
       | sort -u \
