@@ -26,6 +26,12 @@ const DRY_RUN = /^(1|true|yes)$/i.test(String(process.env.REVIEW_DRY_RUN || "").
 const FAIL_ON_GATE = process.env.REVIEW_FAIL_ON_GATE !== "0";
 const CIRCUIT_MARKER = "bong-review-circuit";
 const HANDOFF_MARKER = "bong-review-handoff";
+const CIRCUIT_STATE_MARKER = "<!-- bong-review-circuit-state:v1 -->";
+const CIRCUIT_STATE_TITLE = "[automation] Review infrastructure circuit state";
+const CIRCUIT_THRESHOLD = intEnv("REVIEW_INFRA_FAILURE_THRESHOLD", 3, 1);
+const CIRCUIT_WINDOW_MS = intEnv("REVIEW_INFRA_FAILURE_WINDOW_MINUTES", 60, 1) * 60_000;
+const CIRCUIT_DURATION_MS = intEnv("REVIEW_CIRCUIT_MINUTES", 60, 1) * 60_000;
+const OUTCOME_FILE = process.env.REVIEW_OUTCOME_FILE || "/tmp/review-run-outcome.json";
 
 const REVIEWERS = [
   {
@@ -292,13 +298,18 @@ export function mergeFindings(results) {
 
 // ── 主流程 ───────────────────────────────────────────────────────────────────
 async function main() {
-  if (!PR || !/^\d+$/.test(String(PR))) {
-    console.error("PR_NUMBER 未设置或非法，必须是纯数字。");
-    process.exit(1);
-  }
+  const command = process.argv[2] || "review";
+  if (command === "circuit-preflight") return circuitPreflight();
+  if (command === "workflow-finalize") return workflowFinalize();
+  return runReview();
+}
+
+async function runReview() {
+  requirePrNumber();
   if (!process.env.REVIEW_CODEX_API_KEY && !process.env.OPENAI_API_KEY) {
-    console.error("缺 REVIEW_CODEX_API_KEY / OPENAI_API_KEY。");
-    process.exit(1);
+    await recordInfrastructureFailure("provider_config", "缺 REVIEW_CODEX_API_KEY / OPENAI_API_KEY");
+    writeOutcome("infra_failure");
+    return 0;
   }
 
   const context = loadPrContext(PR);
@@ -318,6 +329,14 @@ async function main() {
     console.error("首轮 Codex reviewer 全部执行失败，跳过复投以保留原始失败诊断。");
   }
   const finalRound = applyPlanIntentGate(finalRoundRaw, Boolean(context.plan));
+  const outcome = classifyReviewRun(firstRound, finalRound);
+  if (outcome === "infra_failure") {
+    const failed = [...firstRound, ...finalRound].filter(isCodexExecutionFailure);
+    const reason = failed.map((result) => result.summary).filter(Boolean).join(" | ");
+    await recordInfrastructureFailure("reviewer_execution", reason || "Codex reviewer 执行失败");
+    writeOutcome("infra_failure");
+    return 0;
+  }
 
   const gate = decideGate(finalRound);
   const body = renderComment(context, firstRound, finalRound, gate);
@@ -330,12 +349,78 @@ async function main() {
     console.error("已发布 review 评论。");
   }
 
+  writeOutcome(gate.passed ? "passed" : "gate_failure", { gate: gate.status });
   if (FAIL_ON_GATE && !gate.passed) {
     console.error(`Review gate 未通过：${gate.label}`);
-    process.exit(1);
+    return 1;
   }
+  return 0;
 }
 
+async function circuitPreflight() {
+  requirePrNumber();
+  const trigger = process.env.REVIEW_TRIGGER || process.env.GITHUB_EVENT_NAME || "";
+  if (isManualReviewTrigger(trigger)) {
+    console.error(`手动触发 ${trigger} 旁路 Review 熔断。`);
+    setOutput("should_run", "true");
+    return 0;
+  }
+
+  let state;
+  try {
+    state = currentCircuitState(loadCircuitEvents());
+  } catch (error) {
+    console.error(`::warning::读取 Review 熔断状态失败，按 fail-open 继续执行：${errorText(error)}`);
+  }
+  if (state?.open) {
+    const body = renderCircuitSkipComment(state);
+    try {
+      if (DRY_RUN) console.log(body);
+      else postIssueComment(PR, body);
+    } catch (error) {
+      console.error(`::warning::发布 Review 熔断跳过评论失败：${errorText(error)}`);
+    }
+    writeOutcome("circuit_skipped", { openUntil: state.openUntil });
+    setOutput("should_run", "false");
+    console.error(`Review 自动触发已熔断跳过，截止 ${state.openUntil}。`);
+    return 0;
+  }
+
+  setOutput("should_run", "true");
+  return 0;
+}
+
+async function workflowFinalize() {
+  requirePrNumber();
+  const install = process.env.REVIEW_INSTALL_OUTCOME || "skipped";
+  const configure = process.env.REVIEW_CONFIGURE_OUTCOME || "skipped";
+  const review = process.env.REVIEW_STEP_OUTCOME || "skipped";
+
+  if (install === "failure") {
+    await recordInfrastructureFailure("cli_install", "Codex CLI 安装或版本检查失败");
+    writeOutcome("infra_failure");
+    return 0;
+  }
+  if (configure === "failure" || (install === "success" && configure === "skipped")) {
+    await recordInfrastructureFailure("provider_config", "Codex provider 配置失败或被意外跳过");
+    writeOutcome("infra_failure");
+    return 0;
+  }
+  if (review === "failure") {
+    const outcome = readOutcome();
+    if (outcome?.kind === "gate_failure") return 1;
+    if (outcome?.kind !== "infra_failure") {
+      await recordInfrastructureFailure("review_process", "Review 脚本、CLI 或沙箱异常退出，且未产出可识别结果");
+      writeOutcome("infra_failure");
+    }
+    return 0;
+  }
+  if (review === "skipped" && configure === "success") {
+    await recordInfrastructureFailure("review_process", "Review 步骤被意外跳过，未执行 reviewer");
+    writeOutcome("infra_failure");
+  }
+  return 0;
+}
 function loadPrContext(pr) {
   const meta = JSON.parse(gh(["pr", "view", pr, "--json", "title,body,headRefName,files"]));
   let diff = gh(["pr", "diff", pr]);
@@ -581,6 +666,13 @@ function spawnCodex(args, stdin, timeoutMs) {
     let stdout = "";
     let stderr = "";
     let timedOut = false;
+    let settled = false;
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(result);
+    };
     const timer = setTimeout(() => {
       timedOut = true;
       child.kill("SIGTERM");
@@ -592,10 +684,13 @@ function spawnCodex(args, stdin, timeoutMs) {
     child.stderr.on("data", (chunk) => {
       stderr = appendCap(stderr, chunk);
     });
-    child.on("close", (code, signal) => {
-      clearTimeout(timer);
-      resolve({ code: timedOut ? 124 : code, signal, stdout, stderr });
+    child.on("error", (error) => {
+      finish({ code: 127, signal: null, stdout, stderr: `${stderr}\n${error.message}` });
     });
+    child.on("close", (code, signal) => {
+      finish({ code: timedOut ? 124 : code, signal, stdout, stderr });
+    });
+    child.stdin.on("error", () => {});
     child.stdin.end(stdin);
   });
 }
@@ -732,6 +827,143 @@ ${truncate(finalRoundDetails, 24_000)}
   return truncate(body, 64_000);
 }
 
+function requirePrNumber() {
+  if (!PR || !/^\d+$/.test(String(PR))) {
+    throw new Error("PR_NUMBER 未设置或非法，必须是纯数字。");
+  }
+}
+
+function currentCircuitState(events, now = nowIso()) {
+  return evaluateCircuit(events, now, {
+    threshold: CIRCUIT_THRESHOLD,
+    windowMs: CIRCUIT_WINDOW_MS,
+    durationMs: CIRCUIT_DURATION_MS,
+  });
+}
+
+function nowIso() {
+  const configured = process.env.REVIEW_NOW;
+  const date = configured ? new Date(configured) : new Date();
+  if (!Number.isFinite(date.getTime())) throw new Error(`REVIEW_NOW 非法：${configured}`);
+  return date.toISOString();
+}
+
+function loadCircuitEvents() {
+  const issue = ensureCircuitStateIssue();
+  return parseHiddenMarkers(listIssueComments(issue));
+}
+
+function ensureCircuitStateIssue() {
+  const configured = process.env.REVIEW_CIRCUIT_ISSUE_NUMBER;
+  if (configured && /^\d+$/.test(configured)) return configured;
+
+  const existing = JSON.parse(
+    gh(["issue", "list", "--state", "all", "--search", `${CIRCUIT_STATE_TITLE} in:title`, "--limit", "20", "--json", "number,title,body"]),
+  ).find((issue) => issue.title === CIRCUIT_STATE_TITLE && String(issue.body || "").includes(CIRCUIT_STATE_MARKER));
+  if (existing) return String(existing.number);
+
+  const repo = resolveRepository();
+  const created = JSON.parse(
+    gh([
+      "api",
+      `repos/${repo}/issues`,
+      "-f",
+      `title=${CIRCUIT_STATE_TITLE}`,
+      "-f",
+      `body=此 issue 由 Review Action 自动维护，用隐藏 marker 持久化 reviewer 基础设施失败；请勿手工编辑。\n\n${CIRCUIT_STATE_MARKER}`,
+    ]),
+  );
+  return String(created.number);
+}
+
+function listIssueComments(issue) {
+  const repo = resolveRepository();
+  const pages = JSON.parse(gh(["api", "--paginate", "--slurp", `repos/${repo}/issues/${issue}/comments?per_page=100`]));
+  return Array.isArray(pages[0]) ? pages.flat() : pages;
+}
+
+async function recordInfrastructureFailure(phase, reason) {
+  requirePrNumber();
+  const event = {
+    v: 1,
+    kind: "infra_failure",
+    at: nowIso(),
+    pr: Number(PR),
+    run_id: process.env.GITHUB_RUN_ID || "",
+    phase: truncate(String(phase || "unknown"), 80),
+    reason: truncate(String(reason || "reviewer 执行失败"), 1200),
+  };
+
+  let events = [];
+  try {
+    const issue = ensureCircuitStateIssue();
+    events = parseHiddenMarkers(listIssueComments(issue));
+    postIssueComment(issue, `Review infra failure · PR #${PR} · ${event.phase}\n\n${renderHiddenMarker(CIRCUIT_MARKER, event)}`);
+  } catch (error) {
+    console.error(`::warning::持久化 Review infra failure 失败：${errorText(error)}`);
+  }
+
+  const state = currentCircuitState([...events, event], event.at);
+  const body = renderInfrastructureHandoffComment(event, state);
+  try {
+    if (DRY_RUN) console.log(body);
+    else postIssueComment(PR, body);
+  } catch (error) {
+    console.error(`::warning::发布 Review 降级评论失败：${errorText(error)}`);
+  }
+}
+
+export function renderInfrastructureHandoffComment(event, state) {
+  const circuitLine = state.open
+    ? `\n\n已达到基础设施失败阈值，自动触发将熔断至 **${state.openUntil}**；评论 \`/review\` 或 \`workflow_dispatch\` 可始终手动旁路重试。`
+    : "";
+  return `## ⚠️ Review Action 基础设施降级\n\n本次 Action review 结果请忽略，改走 agent 自己的博弈式 review 流程，并会向用户反馈。\n\n失败阶段：\`${event.phase}\`。${circuitLine}\n\n${renderHiddenMarker(HANDOFF_MARKER, event)}`;
+}
+
+export function renderCircuitSkipComment(state) {
+  const marker = {
+    v: 1,
+    kind: "circuit_skip",
+    at: nowIso(),
+    pr: Number(PR),
+    run_id: process.env.GITHUB_RUN_ID || "",
+    open_until: state.openUntil,
+  };
+  return `## ⚡ Review Action 自动熔断跳过\n\nreviewer 基础设施熔断中，本次自动触发已快速跳过并成功退出，不影响其他 CI。\n\n熔断截止：**${state.openUntil}**。评论 \`/review\` 或使用 \`workflow_dispatch\` 可始终手动旁路重试。\n\n${renderHiddenMarker(HANDOFF_MARKER, marker)}`;
+}
+
+function postIssueComment(issue, body) {
+  const repo = resolveRepository();
+  gh(["api", `repos/${repo}/issues/${issue}/comments`, "-f", `body=${body}`]);
+}
+
+function resolveRepository() {
+  if (process.env.GITHUB_REPOSITORY) return process.env.GITHUB_REPOSITORY;
+  return gh(["repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"]).trim();
+}
+
+function writeOutcome(kind, extra = {}) {
+  writeFileSync(OUTCOME_FILE, `${JSON.stringify({ kind, ...extra })}\n`);
+}
+
+function readOutcome() {
+  if (!existsSync(OUTCOME_FILE)) return null;
+  try {
+    return JSON.parse(readFileSync(OUTCOME_FILE, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function setOutput(name, value) {
+  const output = process.env.GITHUB_OUTPUT;
+  if (output) writeFileSync(output, `${name}=${value}\n`, { flag: "a" });
+  else console.log(`${name}=${value}`);
+}
+
+function errorText(error) {
+  return excerptLog(error?.stderr || error?.message || String(error), 1200);
+}
 function gh(args) {
   return execFileSync("gh", args, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
 }
@@ -788,8 +1020,12 @@ function escapeCell(value) {
 
 const isEntry = import.meta.url === `file://${process.argv[1]}`;
 if (isEntry) {
-  main().catch((error) => {
-    console.error(error);
-    process.exit(1);
-  });
+  main()
+    .then((code) => {
+      process.exitCode = code || 0;
+    })
+    .catch((error) => {
+      console.error(error);
+      process.exitCode = 1;
+    });
 }
