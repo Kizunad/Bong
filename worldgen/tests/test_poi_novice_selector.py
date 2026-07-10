@@ -87,7 +87,7 @@ def test_selector_falls_back_after_radius_and_qi_relaxation_are_exhausted() -> N
     assert record.pos.as_tuple() == (1200.0, 70.0, 800.0)
 
 
-def test_manifest_payload_exports_six_novice_pois_with_selection_tags() -> None:
+def _single_tile_fields() -> tuple[GeneratedFieldSet, WorldTile]:
     tile_size = 32
     tile = WorldTile(tile_x=0, tile_z=0, min_x=0, max_x=31, min_z=0, max_z=31)
     buffer = TileFieldBuffer.create(
@@ -104,6 +104,11 @@ def test_manifest_payload_exports_six_novice_pois_with_selection_tags() -> None:
         layers=("height", "water_level", "qi_density"),
         tiles=[buffer],
     )
+    return fields, tile
+
+
+def test_manifest_payload_exports_six_novice_pois_with_selection_tags() -> None:
+    fields, tile = _single_tile_fields()
 
     payload = build_novice_poi_manifest_payload(
         fields,
@@ -129,26 +134,22 @@ def test_manifest_payload_exports_six_novice_pois_with_selection_tags() -> None:
 
 
 def test_manifest_payload_rejects_incomplete_selection_tile_window() -> None:
-    tile_size = 32
-    tile = WorldTile(tile_x=0, tile_z=0, min_x=0, max_x=31, min_z=0, max_z=31)
-    buffer = TileFieldBuffer.create(
-        tile,
-        tile_size,
-        ("height", "water_level", "qi_density"),
-    )
-    buffer.layers["height"] = np.full(tile_size * tile_size, 70.0)
-    buffer.layers["water_level"] = np.full(tile_size * tile_size, -1.0)
-    buffer.layers["qi_density"] = np.full(tile_size * tile_size, 0.55)
-    fields = GeneratedFieldSet(
-        tile_size=tile_size,
-        surface_palette=SurfacePalette(),
-        layers=("height", "water_level", "qi_density"),
-        tiles=[buffer],
-    )
+    fields, tile = _single_tile_fields()
 
     with pytest.raises(ValueError, match="complete novice POI selection window"):
         build_novice_poi_manifest_payload(
             fields,
             complete_selection_tile_ids={tile.tile_id, "tile_1_0"},
+            sample_stride=8,
+        )
+
+
+def test_manifest_payload_rejects_empty_selection_tile_window() -> None:
+    fields, _tile = _single_tile_fields()
+
+    with pytest.raises(ValueError, match="non-empty complete tile window"):
+        build_novice_poi_manifest_payload(
+            fields,
+            complete_selection_tile_ids=(),
             sample_stride=8,
         )
