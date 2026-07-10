@@ -188,6 +188,30 @@ class MovementHudPlannerTest {
         );
     }
 
+    @Test
+    void rejectedFlashExpiresAfterExactContractWindowAndHudAutoHides() {
+        MovementState state = state(MovementState.Action.NONE, MovementState.ZoneKind.NORMAL, false, 1_000L, 1_000L)
+            .withTiming(1_000L, 1_000L, 1_000L);
+
+        List<HudRenderCommand> atFlashBoundary = MovementHudPlanner.buildCommands(state, 800, 600, 1_300L);
+        List<HudRenderCommand> afterFlashBoundary = MovementHudPlanner.buildCommands(state, 800, 600, 1_301L);
+        List<HudRenderCommand> atAutoHideBoundary = MovementHudPlanner.buildCommands(state, 800, 600, 4_500L);
+
+        assertTrue(
+            atFlashBoundary.stream().anyMatch(c -> isMovementRect(c) && c.color() == 0xC0FF3030),
+            "expected red reject flash at the inclusive 300ms boundary, commands: " + atFlashBoundary
+        );
+        assertTrue(
+            afterFlashBoundary.stream().noneMatch(c -> isMovementRect(c) && c.color() == 0xC0FF3030),
+            "expected reject flash to expire immediately after 300ms, commands: " + afterFlashBoundary
+        );
+        assertTrue(
+            atAutoHideBoundary.isEmpty(),
+            "expected movement HUD to be fully hidden after 3000ms visible + 500ms fade, commands: "
+                + atAutoHideBoundary
+        );
+    }
+
     private static boolean isMovementRect(HudRenderCommand command) {
         return command.layer() == HudRenderLayer.MOVEMENT_HUD && command.isRect();
     }

@@ -73,6 +73,57 @@ class MovementStateHandlerTest {
     }
 
     @Test
+    void staminaOnlyFollowupDoesNotRenewPriorRejectionTiming() {
+        ServerDataEnvelope rejected = parse("""
+            {
+              "v": 1,
+              "type": "movement_state",
+              "current_speed_multiplier": 0.75,
+              "stamina_cost_active": false,
+              "movement_action": "none",
+              "zone_kind": "normal",
+              "dash_cooldown_remaining_ticks": 0,
+              "hitbox_height_blocks": 1.8,
+              "stamina_current": 4,
+              "stamina_max": 100,
+              "low_stamina": true,
+              "rejected_action": "dash"
+            }
+            """);
+        ServerDataEnvelope staminaOnlyFollowup = parse("""
+            {
+              "v": 1,
+              "type": "movement_state",
+              "current_speed_multiplier": 0.75,
+              "stamina_cost_active": false,
+              "movement_action": "none",
+              "zone_kind": "normal",
+              "dash_cooldown_remaining_ticks": 0,
+              "hitbox_height_blocks": 1.8,
+              "stamina_current": 5,
+              "stamina_max": 100,
+              "low_stamina": true
+            }
+            """);
+
+        assertTrue(new MovementStateHandler().handle(rejected, 3_000L).handled());
+        assertTrue(new MovementStateHandler().handle(staminaOnlyFollowup, 3_200L).handled());
+
+        MovementState state = MovementStateStore.snapshot();
+        assertEquals("", state.rejectedAction());
+        assertEquals(
+            3_000L,
+            state.rejectedAtMs(),
+            "stamina-only followup must not make the prior dash rejection look new"
+        );
+        assertEquals(
+            3_000L,
+            state.hudActivityAtMs(),
+            "stamina recovery packets must not pin the movement HUD"
+        );
+    }
+
+    @Test
     void invalidPayloadIsNoOpAndLeavesStoreUntouched() {
         ServerDataEnvelope envelope = parse("""
             {

@@ -1173,6 +1173,74 @@ mod tests {
     }
 
     #[test]
+    fn rejected_action_payload_is_one_shot_after_successful_send_and_can_be_rearmed() {
+        let mut state = MovementState {
+            rejected_action: Some(MovementActionRequestV1::Dash),
+            ..Default::default()
+        };
+
+        let first = state.to_payload(100, None);
+        assert_eq!(
+            first.rejected_action,
+            Some(MovementActionRequestV1::Dash),
+            "第一次下发必须携带刚发生的 dash reject"
+        );
+        state.acknowledge_payload_sent();
+        let stamina_only_followup = state.to_payload(101, None);
+        assert_eq!(
+            stamina_only_followup.rejected_action, None,
+            "没有新玩家输入时，后续状态包不得重复携带旧 dash reject"
+        );
+
+        state.rejected_action = Some(MovementActionRequestV1::Dash);
+        let second_real_reject = state.to_payload(102, None);
+        assert_eq!(
+            second_real_reject.rejected_action,
+            Some(MovementActionRequestV1::Dash),
+            "新的独立玩家输入必须能够重新触发 dash reject"
+        );
+        state.acknowledge_payload_sent();
+        assert_eq!(
+            state.to_payload(103, None).rejected_action,
+            None,
+            "重新触发的 reject 也只能下发一次"
+        );
+    }
+
+    #[test]
+    fn rejection_is_retained_until_payload_send_is_acknowledged() {
+        let mut state = MovementState {
+            rejected_action: Some(MovementActionRequestV1::Dash),
+            ..Default::default()
+        };
+
+        let serialization_attempt = state.to_payload(0, None);
+        assert_eq!(
+            serialization_attempt.rejected_action,
+            Some(MovementActionRequestV1::Dash)
+        );
+        assert_eq!(
+            state.to_payload(1, None).rejected_action,
+            Some(MovementActionRequestV1::Dash),
+            "序列化或发送失败时没有 ack，reject 必须保留以便重试"
+        );
+
+        state.acknowledge_payload_sent();
+        assert_eq!(state.to_payload(2, None).rejected_action, None);
+    }
+
+    #[test]
+    fn acknowledging_payload_without_rejection_is_idempotent() {
+        let mut state = MovementState::default();
+
+        state.acknowledge_payload_sent();
+        state.acknowledge_payload_sent();
+
+        assert_eq!(state.to_payload(0, None).rejected_action, None);
+        assert_eq!(state.to_payload(u64::MAX, None).rejected_action, None);
+    }
+
+    #[test]
     fn residue_ash_speed_modifier_requires_zone_gate_and_surface_block() {
         let mut ash_zone = Zone {
             name: "south_ash_dead_zone".to_string(),
