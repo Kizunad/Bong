@@ -74,3 +74,4 @@
 - 三轮无上下文 Ultra validator：FAIL；复现 full 输入多带远端 tile 会扩大 selector 外接矩形，使 required tile 边缘从单边梯度切到中央梯度并改变 POI。`db8f6e3f` 改为 plan-derived 固定网格 + 一采样步 halo，并补 edge-only bounded/full 对拍；随后进入四轮复审。
 - 四轮无上下文 Ultra validator：首轮 FAIL 发现非整除 `tile_size/sample_stride` 跨 tile 样本碰撞；`13d2bea8` 改为 selection-bounds 全局采样相位并补正/负 seam 回归。全新 gpt-5.6-sol Ultra 复审 PASS，独立覆盖 630 组正负坐标、缺口、非矩形、单 tile、非整除及 `tile_size < stride`。
 - PR `/review` 二轮 substantive findings：近区非 spawn 与 required window 相交仍保留旧 novice POI、Startup 测试未走生产 register/完整载荷断言、缺 Bot e2e、active plan 未记录 validator PASS；均已纳入本轮返工。
+- 五轮无上下文 Ultra validator：PASS（HEAD `0e34c238`）；独立执行 990 组属性检查，复核空间相交重算、非整除采样网格、目标 zone POI patch、生产 register Startup、`PoiSpawned` 完整载荷及 Bot 只读观察面，未发现 blocking/major correctness finding。
